@@ -147,12 +147,19 @@ Los ADRs en `docs/adr/` son la fuente de verdad arquitectónica del harness. Los
 - **Bloqueados**: label `bloqueado` cuando dependen de otro no cerrado.
 - **Definition of Ready**: ver ADR-0011 — los skills de pipeline lo validan antes de ejecutar.
 
+### Flujo de entrega
+
+- **Nunca trabajar contra `main` directo.** Toda edición de archivos en este repo se hace en una rama nueva y se entrega vía Pull Request.
+- Antes de editar, si la rama activa es `main`, crear una nueva con `git switch -c <rama>` usando un slug descriptivo (`docs/<slug>`, `feat/<slug>`, `fix/<slug>`).
+- Si por error ya se hicieron cambios sin commitear en `main`, mover a rama con `git switch -c <rama>` (preserva los cambios) antes de commitear.
+- Al terminar: `git push -u origin <rama>` + `gh pr create` apuntando a `main`.
+
 ### Código C#
 
 - **Caracteres prohibidos en `.cs`**: nunca `─` (U+2500) ni decorativos Unicode. Solo guión ASCII `-`.
 - **Commits**: en español, descriptivos, frecuentes.
-- **Ramas de trabajo**: `worktree-issue-<num>-<slug>` (los pipelines las crean).
-- **PRs**: deben incluir `Closes #<número>`.
+- **Ramas de trabajo**: `worktree-issue-<num>-<slug>` (los pipelines las crean para el proyecto consumidor).
+- **PRs**: deben incluir `Closes #<número>` cuando resuelven un issue.
 
 ## Notas para definir agentes y skills
 

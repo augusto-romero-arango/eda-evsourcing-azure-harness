@@ -6,6 +6,17 @@ Plugin de [Claude Code](https://code.claude.com/docs/en/plugins) que provee un h
 
 > Estado: **v0.1.0 (internal alpha)** — extraído del proyecto Bitakora.ControlAsistencia el 2026-05-15. La API del harness puede cambiar entre versiones menores hasta `v1.0.0`.
 
+## El nombre
+
+`mefisto` es un guiño a Mefistófeles, el espíritu de *Fausto* de Goethe. La analogía es simple: quien invoca el harness encarna a Fausto — fija la intención y firma el pacto —; el plugin, como Mefisto, ejecuta esa voluntad bajo las reglas del marco (EDA, Event Sourcing, Azure Functions, TDD).
+
+> «Ich will mich hier zu deinem Dienst verbinden,
+> auf deinen Wink nicht rasten und nicht ruhn».
+>
+> — Mefistófeles, *Fausto* I, escena «Studierzimmer», vv. 1656-1657
+>
+> *«Aquí me ataré a tu servicio, a tu menor seña no descansaré ni cesaré».*
+
 ## Qué incluye
 
 - **14 skills** (slash commands): `/implement`, `/tooling`, `/infra`, `/scaffold`, `/parallel`, `/sequential`, `/bug`, `/draft`, `/fix-review`, `/health-check`, `/work-status`, `/show-flow`, `/eraser-diagram`, `/merge`.
