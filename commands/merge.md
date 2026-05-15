@@ -1,0 +1,87 @@
+Mergea uno o varios PRs a main via `pr-sync`. Comunicate en **espanol**.
+
+## Entrada
+
+Los argumentos estan en: $ARGUMENTS
+
+Formas validas:
+
+- `<numero-de-PR>` — un solo PR
+- `<numero-de-PR> <numero-de-PR> ...` — varios PRs en orden
+- `--all` — todos los PRs abiertos
+
+Si `$ARGUMENTS` esta vacio, responde:
+
+```
+Uso: /merge <numero-de-PR> [<numero-de-PR> ...] | --all
+```
+
+Y detente.
+
+---
+
+## Proceso
+
+### 1. Validar PRs
+
+Si los argumentos son `--all`, salta al paso 2.
+
+Si son uno o mas numeros, para cada numero consulta:
+
+```bash
+gh pr view <num> --json number,title,state,headRefName,mergeable,statusCheckRollup
+```
+
+- Si el PR no existe o esta `CLOSED` / `MERGED`: informalo y quitalo de la lista.
+- Si todos los PRs fueron descartados: muestra el motivo y detente.
+
+### 2. Mostrar resumen
+
+Imprime la lista a procesar con titulo, rama y estado de checks para que el usuario vea exactamente que va a pasar:
+
+```
+Se mergearan via pr-sync:
+  #120 [MERGEABLE, checks SUCCESS] Adicionar marcacion a ControlDiario...
+  #121 [MERGEABLE, checks PENDING] Otra cosa...
+```
+
+No pidas confirmacion adicional. El usuario ya la dio al escribir `/merge` explicitamente.
+
+### 3. Invocar el script
+
+Lanza directamente `scripts/pr-sync.sh` con `--merge`. NO invoques al agente `pr-sync` — es un envoltorio delgado sobre el script y el skill ya cumple esa funcion.
+
+Para PRs especificos:
+
+```bash
+./scripts/pr-sync.sh <pr1> <pr2> ... --merge
+```
+
+Para todos los PRs abiertos:
+
+```bash
+./scripts/pr-sync.sh --all --merge
+```
+
+El script imprime progreso en tiempo real. Espera a que termine (no uses `run_in_background`).
+
+### 4. Reportar resultado
+
+El script ya imprime un resumen final con tabla `PR | Rama | Estado` y la ruta del log. Tu solo debes:
+
+- Confirmar el exit code.
+- Si hubo errores, apuntar al log (`.claude/pipeline/logs/pr-sync-<ts>.log`) y ofrecer reintentar con el PR concreto:
+
+  ```
+  Reintentar el PR fallido: ./scripts/pr-sync.sh <num> --merge
+  ```
+
+---
+
+## Reglas
+
+- **Nunca hagas merges manuales** (`gh pr merge`, `git merge` + push, etc.). Todo pasa por `pr-sync.sh`.
+- **No diagnostiques errores del script.** Reporta el error tal cual viene en su output y espera instruccion del usuario.
+- **No reintentes automaticamente** un PR fallido. El script ya hace retry interno del merge con backoff exponencial (ver `scripts/pr-sync.sh:264-291`). Si se rinde, es decision del usuario.
+- **No instales dependencias** ni arregles el entorno. Si falta `claude`, `gh`, `git` o `dotnet`, informa al usuario y detente.
+- **No toques PRs que no esten en la lista final.** Si el usuario pidio `--all`, el script decide cuales procesar.

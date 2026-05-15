@@ -1,0 +1,11 @@
+{
+  "name": "augusto-romero-arango-harness",
+  "owner": { "name": "Augusto Romero Arango" },
+  "plugins": [
+    {
+      "name": "eda-evsourcing-azure-harness",
+      "source": ".",
+      "description": "Harness EDA + Event Sourcing + Azure Functions para Claude Code"
+    }
+  ]
+}
