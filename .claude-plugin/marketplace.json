@@ -3,9 +3,9 @@
   "owner": { "name": "Augusto Romero Arango" },
   "plugins": [
     {
-      "name": "eda-evsourcing-azure-harness",
+      "name": "mefisto",
       "source": "./",
-      "description": "Harness EDA + Event Sourcing + Azure Functions para Claude Code"
+      "description": "Mefisto: harness EDA + Event Sourcing + Azure Functions para Claude Code"
     }
   ]
 }

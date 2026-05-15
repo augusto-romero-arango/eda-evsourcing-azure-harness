@@ -1,6 +1,6 @@
-# CLAUDE.md — eda-evsourcing-azure-harness
+# CLAUDE.md — mefisto
 
-Harness opinionado para Claude Code: orquesta el desarrollo asistido de aplicaciones .NET 10 serverless en Azure con Event Driven Architecture y Event Sourcing.
+Harness opinionado para Claude Code (nombre interno: `mefisto`, repo: `eda-evsourcing-azure-harness`): orquesta el desarrollo asistido de aplicaciones .NET 10 serverless en Azure con Event Driven Architecture y Event Sourcing.
 
 ## Principios de respuesta
 

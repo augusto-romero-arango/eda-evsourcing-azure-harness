@@ -1,4 +1,6 @@
-# eda-evsourcing-azure-harness
+# mefisto
+
+> Repositorio: `eda-evsourcing-azure-harness` · Nombre del plugin: `mefisto`
 
 Plugin de [Claude Code](https://code.claude.com/docs/en/plugins) que provee un harness opinionado para construir aplicaciones .NET 10 serverless en Azure con Event Driven Architecture y Event Sourcing.
 
@@ -44,7 +46,7 @@ Si tu proyecto no encaja con este stack, este harness no es para ti.
 
 ```
 /plugin marketplace add augusto-romero-arango-harness
-/plugin install eda-evsourcing-azure-harness@augusto-romero-arango-harness
+/plugin install mefisto@augusto-romero-arango-harness
 ```
 
 ### 3. Configurar el consumidor
@@ -77,15 +79,15 @@ Y añade una sección a `CLAUDE.md` raíz del consumidor declarando los tokens:
 ### 4. Verificar instalación
 
 ```
-/eda-evsourcing-azure-harness:show-flow
-/eda-evsourcing-azure-harness:work-status
+/mefisto:show-flow
+/mefisto:work-status
 ```
 
 Si responden sin errores, está listo.
 
 ## Uso
 
-Los skills aparecen con el namespace del plugin: `/eda-evsourcing-azure-harness:implement <issue>`, `/eda-evsourcing-azure-harness:scaffold <dominio>`, etc.
+Los skills aparecen con el namespace del plugin: `/mefisto:implement <issue>`, `/mefisto:scaffold <dominio>`, etc.
 
 Flujo típico:
 
@@ -127,7 +129,7 @@ Cambios al schema de `harness.config.json` ⇒ MAJOR + nota de migración en `CH
 ## Actualizar a una versión nueva
 
 ```
-/plugin update eda-evsourcing-azure-harness
+/plugin update mefisto
 ```
 
 Revisa el `CHANGELOG.md` para notas de migración antes de actualizar entre majors.

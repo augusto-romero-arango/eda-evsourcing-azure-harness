@@ -4,6 +4,28 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-05-15
+
+### Changed (BREAKING)
+
+- **Renombrar el plugin de `eda-evsourcing-azure-harness` a `mefisto`** para acortar el namespace de los skills. Los skills ahora son `/mefisto:implement`, `/mefisto:scaffold`, `/mefisto:infra`, etc. (antes `/eda-evsourcing-azure-harness:implement`, etc.).
+- `.claude-plugin/plugin.json.name`: `eda-evsourcing-azure-harness` → `mefisto`.
+- `.claude-plugin/marketplace.json.plugins[0].name`: `eda-evsourcing-azure-harness` → `mefisto`.
+
+El nombre del marketplace (`augusto-romero-arango-harness`) y la URL del repositorio (`eda-evsourcing-azure-harness`) no cambian.
+
+### Migración para consumidores
+
+Quien tuviera v0.1.x instalado debe reinstalar:
+
+```
+/plugin uninstall eda-evsourcing-azure-harness@augusto-romero-arango-harness
+/plugin marketplace update augusto-romero-arango-harness
+/plugin install mefisto@augusto-romero-arango-harness
+```
+
+Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-harness:*` → `/mefisto:*`.
+
 ## [0.1.2] — 2026-05-15
 
 ### Fixed
