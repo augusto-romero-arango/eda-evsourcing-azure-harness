@@ -1,35 +1,37 @@
 {
-  "PostToolUse": [
-    {
-      "matcher": "ExitPlanMode",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "echo '[recordatorio] Si esta sesion tuvo descubrimientos de dominio, decisiones o alternativas descartadas, considera escribir field notes en docs/bitacora/field-notes/ antes de continuar.'"
-        }
-      ]
-    },
-    {
-      "matcher": "Write|Edit",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "jq -r '\"[\" + (now | strftime(\"%H:%M:%S\")) + \"][archivo] \" + (.tool_input.file_path // .tool_input.path // \"(desconocido)\")' 2>/dev/null | tee -a .claude/pipeline/events.log 2>/dev/null || true"
-        }
-      ]
-    },
-    {
-      "matcher": "Bash",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "jq -r 'if (.tool_input.command // \"\") | test(\"dotnet test\") then \"[\" + (now | strftime(\"%H:%M:%S\")) + \"][test] \" + (if (.tool_result // \"\") | test(\"passed|Passed|Superado|Correctas\") then \"PASS\" else \"FAIL\" end) else empty end' 2>/dev/null | tee -a .claude/pipeline/events.log 2>/dev/null || true"
-        },
-        {
-          "type": "command",
-          "command": "jq -r 'if (.tool_input.command // \"\") | test(\"terraform (plan|apply|init|validate)\") then \"[\" + (now | strftime(\"%H:%M:%S\")) + \"][terraform] \" + ((.tool_input.command | split(\" \") | .[1]) // \"?\") + \": \" + (if (.tool_result.exitCode // 0) == 0 then \"OK\" else \"ERROR\" end) else empty end' 2>/dev/null | tee -a .claude/pipeline/events.log 2>/dev/null || true"
-        }
-      ]
-    }
-  ]
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '[recordatorio] Si esta sesion tuvo descubrimientos de dominio, decisiones o alternativas descartadas, considera escribir field notes en docs/bitacora/field-notes/ antes de continuar.'"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '\"[\" + (now | strftime(\"%H:%M:%S\")) + \"][archivo] \" + (.tool_input.file_path // .tool_input.path // \"(desconocido)\")' 2>/dev/null | tee -a .claude/pipeline/events.log 2>/dev/null || true"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r 'if (.tool_input.command // \"\") | test(\"dotnet test\") then \"[\" + (now | strftime(\"%H:%M:%S\")) + \"][test] \" + (if (.tool_result // \"\") | test(\"passed|Passed|Superado|Correctas\") then \"PASS\" else \"FAIL\" end) else empty end' 2>/dev/null | tee -a .claude/pipeline/events.log 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "command": "jq -r 'if (.tool_input.command // \"\") | test(\"terraform (plan|apply|init|validate)\") then \"[\" + (now | strftime(\"%H:%M:%S\")) + \"][terraform] \" + ((.tool_input.command | split(\" \") | .[1]) // \"?\") + \": \" + (if (.tool_result.exitCode // 0) == 0 then \"OK\" else \"ERROR\" end) else empty end' 2>/dev/null | tee -a .claude/pipeline/events.log 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
 }

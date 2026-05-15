@@ -4,6 +4,12 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-05-15
+
+### Fixed
+
+- `hooks/hooks.json`: el contenido debía estar envuelto en `{ "hooks": {...} }` en lugar de tener los eventos como root. Sin este fix, `claude plugin doctor` reporta: `Hook load failed: expected record, received undefined at path "hooks"`.
+
 ## [0.1.1] — 2026-05-15
 
 ### Fixed
