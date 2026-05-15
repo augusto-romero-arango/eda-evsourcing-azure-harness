@@ -4,7 +4,7 @@
   "plugins": [
     {
       "name": "eda-evsourcing-azure-harness",
-      "source": ".",
+      "source": "./",
       "description": "Harness EDA + Event Sourcing + Azure Functions para Claude Code"
     }
   ]

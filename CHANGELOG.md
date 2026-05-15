@@ -4,6 +4,12 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-05-15
+
+### Fixed
+
+- `.claude-plugin/marketplace.json`: el `source` del plugin pasa de `"."` (no soportado, falla con "This plugin uses a source type your Claude Code version does not support") a `"./"`, formato esperado por el schema (pattern `^\.\/.*`). Sin este fix, `/plugin install` falla.
+
 ## [0.1.0] — 2026-05-15
 
 ### Added
