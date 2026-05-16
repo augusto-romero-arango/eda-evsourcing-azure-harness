@@ -21,6 +21,11 @@
 #   HARNESS_APP_INSIGHTS_APP   - Application Insights component (ej: controlasistencias-dev-ai)
 #   HARNESS_DOMAIN_LABELS      - Lista separada por espacios de labels dom:*
 #
+# Campos opcionales del config (no se exportan via load_harness_config; se leen
+# inline donde se necesitan, mismo patron que agents/planner.md):
+#   repoSlug  - Slug owner/repo del fork de Mefisto a usar para drafts cross-repo
+#               y mensajes de error. Default: augusto-romero-arango/eda-evsourcing-azure-harness
+#
 # Si no existe el config file, emite mensaje claro de error y retorna 1.
 load_harness_config() {
     local config="${1:-.claude/harness.config.json}"
@@ -117,13 +122,17 @@ validate_consumer_scope_changes() {
     done <<< "$changed"
 
     if [ ${#violations[@]} -gt 0 ]; then
+        local repo_slug
+        repo_slug=$(jq -r '.repoSlug // empty' .claude/harness.config.json 2>/dev/null)
+        [ -z "$repo_slug" ] && repo_slug="augusto-romero-arango/eda-evsourcing-azure-harness"
+
         echo "ERROR: el agente toco rutas reservadas al plugin Mefisto:" >&2
         printf '  - %s\n' "${violations[@]}" >&2
         echo "" >&2
         echo "Las rutas commands/, agents/, hooks/, .claude-plugin/, docs/adr/" >&2
-        echo "pertenecen al plugin (repo eda-evsourcing-azure-harness)." >&2
+        echo "pertenecen al plugin (repo $repo_slug)." >&2
         echo "Si necesitas modificar el plugin, abre un draft en su repo:" >&2
-        echo "  gh issue create -R augusto-romero-arango/eda-evsourcing-azure-harness \\" >&2
+        echo "  gh issue create -R $repo_slug \\" >&2
         echo "    --label \"estado:borrador,tipo:tooling\" --title \"...\"" >&2
         return 1
     fi
