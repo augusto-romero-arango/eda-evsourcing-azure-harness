@@ -6,8 +6,9 @@
 #      al inicio (presencia del bloque que verifica .claude-plugin/plugin.json).
 #   B) Los skills internos (.claude/commands/mefisto-*.md) llevan el guard inverso.
 #   C) Los pipelines publicados (scripts/tooling-pipeline.sh, scripts/parallel-pipeline.sh,
-#      scripts/batch-pipeline.sh, scripts/pr-sync.sh) abortan si se sourcean en un
-#      contexto donde .claude-plugin/plugin.json existe.
+#      scripts/batch-pipeline.sh, scripts/pr-sync.sh, scripts/tdd-pipeline.sh,
+#      scripts/iac-pipeline.sh, scripts/scaffold-pipeline.sh, scripts/tmux-pipeline.sh)
+#      abortan si se sourcean en un contexto donde .claude-plugin/plugin.json existe.
 #   D) Las funciones validate_*_scope_changes son sourceables sin errores.
 #
 # Uso: scripts/tests/test-guards.sh
@@ -78,6 +79,7 @@ echo "[C] Pipelines publicados: contienen guard contra repo de Mefisto"
 
 PUBLISHED_PIPELINES=(
     tooling-pipeline.sh parallel-pipeline.sh batch-pipeline.sh pr-sync.sh
+    tdd-pipeline.sh iac-pipeline.sh scaffold-pipeline.sh tmux-pipeline.sh
 )
 
 for pipe in "${PUBLISHED_PIPELINES[@]}"; do
