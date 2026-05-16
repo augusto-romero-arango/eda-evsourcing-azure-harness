@@ -112,11 +112,22 @@ La politica del marco prohibe trabajar contra `main` directo (ver `CLAUDE.md` ra
 ```bash
 BRANCH=$(git symbolic-ref --short HEAD)
 if [ "$BRANCH" = "main" ]; then
-    git switch -c "docs/bitacora-${FECHA}"
+    # Si la rama ya existe (re-ejecucion del mismo dia), hace switch a ella;
+    # si no, la crea. Si ambos fallan, no continues: pushear desde main
+    # violaria la politica del marco.
+    git switch -c "docs/bitacora-${FECHA}" 2>/dev/null || git switch "docs/bitacora-${FECHA}"
+fi
+
+# Re-verifica que ya no estas en main antes de cualquier escritura. Si por
+# algun motivo seguis en main, aborta y avisa al usuario.
+BRANCH=$(git symbolic-ref --short HEAD)
+if [ "$BRANCH" = "main" ]; then
+    echo "ERROR: no se pudo cambiar de la rama main. Abortando el cierre atomico."
+    exit 1
 fi
 ```
 
-Si ya estas en una rama distinta de `main` (por ejemplo, la rama de un PR en curso), reusala — no crees otra.
+Si ya estabas en una rama distinta de `main` (por ejemplo, la rama de un PR en curso), reusala — no crees otra.
 
 ### 2. Escribir la entrada de bitacora
 

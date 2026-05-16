@@ -270,7 +270,18 @@ Antes de commitear, verifica que **no estas en `main`**. Si lo estuvieras (caso 
 ```bash
 BRANCH=$(git symbolic-ref --short HEAD)
 if [ "$BRANCH" = "main" ]; then
-    git switch -c "docs/agentes-mejoras-pr-${ARGUMENTS}"
+    # Idempotente: si la rama ya existe (re-ejecucion del fix-review),
+    # hace switch a ella; si no, la crea.
+    git switch -c "docs/agentes-mejoras-pr-${ARGUMENTS}" 2>/dev/null \
+        || git switch "docs/agentes-mejoras-pr-${ARGUMENTS}"
+fi
+
+# Re-verifica antes de commitear. Si por algun motivo seguis en main,
+# aborta para no pushear directo.
+BRANCH=$(git symbolic-ref --short HEAD)
+if [ "$BRANCH" = "main" ]; then
+    echo "ERROR: no se pudo cambiar de main. Aborta la Fase 5.4."
+    exit 1
 fi
 ```
 
