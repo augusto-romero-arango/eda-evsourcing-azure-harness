@@ -44,7 +44,7 @@ Sin GitHub Projects (overhead excesivo para solo dev). En cambio:
 ### 4. Flujo borrador -> listo
 
 - `/draft [idea]` — crea issue `estado:borrador` sin friccion, sin preguntas
-- Planner modo 7 — refina el borrador con contexto tecnico, lo eleva a `estado:listo`
+- Planner modo `refinar` — refina el borrador con contexto tecnico, lo eleva a `estado:listo`
 - El pipeline TDD/IaC solo procesa issues `estado:listo` (por convencion, no por codigo)
 
 ---

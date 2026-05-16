@@ -133,7 +133,7 @@ Por ejemplo:
 Al final del dashboard, siempre agrega:
 
 ```
-Tip: usa /loop 30m /health-check para monitoreo continuo durante tu sesion de trabajo.
+Tip: vuelve a ejecutar /health-check periodicamente durante tu sesion de trabajo para detectar cambios en el entorno.
 ```
 
 ## Reglas

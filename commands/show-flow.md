@@ -20,7 +20,7 @@ fi
 /show-flow <nombre-del-flujo>
 ```
 
-Donde `<nombre-del-flujo>` es el nombre del archivo sin extensión en `architecture/flows/`.
+Donde `<nombre-del-flujo>` es el nombre del archivo sin extensión en `docs/eda/flows/`.
 Ejemplo: `/show-flow calcular-horas-empleado`
 
 Si no se especifica nombre, lista los flujos disponibles.
