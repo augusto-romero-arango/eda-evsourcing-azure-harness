@@ -3,6 +3,7 @@
 #
 # Uso:
 #   ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 42
+#   ./.claude/scripts/mefisto-tmux-pipeline.sh --batch 42 43 44   # secuencial
 #   ./.claude/scripts/mefisto-tmux-pipeline.sh --attach            # reconectar
 #   ./.claude/scripts/mefisto-tmux-pipeline.sh --attach mefisto-tooling-42
 #
@@ -107,9 +108,48 @@ cmd_tooling() {
     print_connect_hint "$session"
 }
 
+cmd_batch() {
+    local issues=("$@")
+
+    if [ ${#issues[@]} -eq 0 ]; then
+        abort "Debes especificar al menos un issue. Uso: --batch 42 43 44"
+    fi
+
+    local session
+    session=$(safe_session_name "mefisto-batch-$(date +%H%M%S)")
+    local issues_str="${issues[*]}"
+
+    check_tmux
+    ensure_events_log
+
+    if session_exists "$session"; then
+        warn "Ya existe una sesion '$session'."
+        print_connect_hint "$session"
+        exit 0
+    fi
+
+    log "Creando sesion tmux '$session' para batch interno: issues ${issues_str}..."
+
+    # Patron pane_id (no indices implicitos) para evitar el bug de pane-base-index
+    # que motivo el commit 6a6b978.
+    local tail_pane script_pane
+    tmux new-session -d -s "$session" -n "main" -c "$PROJECT_ROOT"
+    tail_pane=$(tmux list-panes -t "$session:main" -F '#{pane_id}' | head -n1)
+    tmux set-option -t "$session" remain-on-exit on
+    tmux send-keys -t "$tail_pane" "tail -f '$EVENTS_LOG'" Enter
+
+    script_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
+    tmux send-keys -t "$script_pane" "./.claude/scripts/mefisto-batch-pipeline.sh $issues_str" Enter
+
+    tmux select-layout -t "$session:main" even-horizontal
+
+    success "Batch pipeline interno iniciado: issues $issues_str"
+    print_connect_hint "$session"
+}
+
 # --- Dispatcher ---
 if [ $# -eq 0 ]; then
-    echo "Uso: $0 --tooling <issue> | --attach [sesion]"
+    echo "Uso: $0 --tooling <issue> | --batch <issue1> <issue2> ... | --attach [sesion]"
     exit 1
 fi
 
@@ -118,6 +158,11 @@ case "$1" in
         shift
         [ $# -lt 1 ] && abort "Falta el numero de issue"
         cmd_tooling "$1"
+        ;;
+    --batch)
+        shift
+        [ $# -lt 1 ] && abort "Debes especificar al menos un issue. Uso: --batch 42 43 44"
+        cmd_batch "$@"
         ;;
     --attach)
         shift
