@@ -271,7 +271,7 @@ tests/<RootNamespace>.{Dominio}.Tests/
 **Convenciones obligatorias:**
 - `using AwesomeAssertions;` al inicio
 - Comentario de HU al inicio: `// HU-XX: descripcion`
-- Nombres de metodos en espanol siguiendo ADR-0016: `<Sujeto>_<LoQuePasa>[_Cuando<Condicion>]`. Para command handlers el sujeto es el nombre del comando (`RegistrarMarcacion`, `CrearTurno`), nunca `HandleAsync` ni `Debe...`. El segmento `_Cuando<Condicion>` es opcional cuando el escenario es trivial (`Vacio_TieneRetardoNetoEnCero`). Ver `docs/adr/0022-convencion-naming-tests.md` para ejemplos completos.
+- Nombres de metodos en espanol siguiendo ADR-0016: `<Sujeto>_<LoQuePasa>[_Cuando<Condicion>]`. Para command handlers el sujeto es el nombre del comando (`RegistrarMarcacion`, `CrearTurno`), nunca `HandleAsync` ni `Debe...`. El segmento `_Cuando<Condicion>` es opcional cuando el escenario es trivial (`Vacio_TieneRetardoNetoEnCero`). Ver `docs/adr/0016-convencion-naming-tests.md` para ejemplos completos.
 - Solo `[Fact]`, nunca `[Theory]` ni `[InlineData]`
 - Herencia de `CommandHandlerAsyncTest<TCommand>` (o la variante que corresponda)
 - Override de `Handler` inyectando las dependencias del handler (`EventStore`, `PrivateEventSender`, `PublicEventSender`)

@@ -205,7 +205,7 @@ Verifica que los tests cubren **todos** los criterios de aceptacion:
 
 Si faltan tests, agregarlos ahora siguiendo las convenciones del test-writer:
 - Herencia de `CommandHandlerAsyncTest<TCommand>`
-- Nombre segun ADR-0016: `<Sujeto>_<LoQuePasa>[_Cuando<Condicion>]`. Para command handlers el sujeto es el nombre del comando (`RegistrarMarcacion`, `CrearTurno`), nunca `Debe...` ni `HandleAsync`. Ver `docs/adr/0022-convencion-naming-tests.md`.
+- Nombre segun ADR-0016: `<Sujeto>_<LoQuePasa>[_Cuando<Condicion>]`. Para command handlers el sujeto es el nombre del comando (`RegistrarMarcacion`, `CrearTurno`), nunca `Debe...` ni `HandleAsync`. Ver `docs/adr/0016-convencion-naming-tests.md`.
 - Solo `[Fact]`, nunca `[Theory]`
 - DSL Given/WhenAsync/Then/And
 - **Cada test nuevo DEBE tener `Then(...)` Y al menos un `And<>()`**
