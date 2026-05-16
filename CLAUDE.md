@@ -183,7 +183,7 @@ Mefisto distingue **dos sets** de skills/agentes/pipelines físicamente separado
 
 - Viven en `.claude/commands/`, `.claude/agents/`, `.claude/scripts/`.
 - **NO se publican vía marketplace**. Claude Code los carga automáticamente cuando se abre el repo de Mefisto, porque `.claude/commands/` y `.claude/agents/` son convenciones de configuración por-repo del propio Claude Code (separadas del plugin instalado).
-- Llevan prefijo `mefisto-` para distinguirlos en pantalla: `/mefisto-tooling`, `/mefisto-plan`, `/mefisto-bug`, `/mefisto-fix-review`, `/mefisto-merge`, `/mefisto-work-status`.
+- Llevan prefijo `mefisto-` para distinguirlos en pantalla: `/mefisto-tooling`, `/mefisto-plan`, `/mefisto-bug`, `/mefisto-fix-review`, `/mefisto-merge`, `/mefisto-work-status`, `/mefisto-release`.
 - Cada uno tiene un **guard inverso**: aborta si `.claude-plugin/plugin.json` NO está en el cwd (i.e. si alguien los invoca fuera del repo de Mefisto).
 - Operan exclusivamente sobre archivos del propio plugin: `commands/`, `agents/`, `scripts/`, `hooks/`, `docs/`, `.claude-plugin/`, `.claude/{commands,agents,scripts}/`, archivos de gobierno (`README.md`, `CLAUDE.md`, etc.).
 - El pipeline interno (`.claude/scripts/mefisto-tooling-pipeline.sh`) usa `validate_mefisto_scope_changes` (definido en `.claude/scripts/_mefisto-common.sh`) para rechazar cambios fuera del scope.
