@@ -88,12 +88,18 @@ cmd_tooling() {
 
     log "Creando sesion tmux '$session' para mefisto-tooling issue #$issue..."
 
+    # Captura el pane_id del shell creado por new-session (formato %N).
+    # Usar pane_id en vez de "$session:main.X" evita depender de pane-base-index,
+    # que en muchas configuraciones (incluida la de macOS por defecto al usar
+    # iTerm2) es 1 en vez de 0 y rompe la indexacion implicita.
+    local tail_pane script_pane
     tmux new-session -d -s "$session" -n "main" -c "$PROJECT_ROOT"
+    tail_pane=$(tmux list-panes -t "$session:main" -F '#{pane_id}' | head -n1)
     tmux set-option -t "$session" remain-on-exit on
-    tmux send-keys -t "$session:main" "tail -f '$EVENTS_LOG'" Enter
+    tmux send-keys -t "$tail_pane" "tail -f '$EVENTS_LOG'" Enter
 
-    tmux split-window -h -t "$session:main" -c "$PROJECT_ROOT"
-    tmux send-keys -t "$session:main.1" "./.claude/scripts/mefisto-tooling-pipeline.sh $issue" Enter
+    script_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
+    tmux send-keys -t "$script_pane" "./.claude/scripts/mefisto-tooling-pipeline.sh $issue" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
