@@ -101,15 +101,39 @@ El archivo destino es `docs/bitacora/YYYY-MM-DD.md`. Sigue el formato establecid
 
 Despues de que el usuario aprueba el borrador de la entrada, ejecuta el **cierre atomico**. Antes de empezar, muestra un unico mensaje de confirmacion:
 
-> "Voy a escribir la entrada de bitacora, mover las field notes a `procesadas/` y hacer commit + push. Listo?"
+> "Voy a crear la rama `docs/bitacora-YYYY-MM-DD` (si estoy en main), escribir la entrada de bitacora, mover las field notes a `procesadas/`, commitear y abrir el PR. Listo?"
 
 Espera la confirmacion del usuario. Una vez confirmado, ejecuta toda la secuencia **sin interrupciones adicionales**:
 
-### 1. Escribir la entrada de bitacora
+### 1. Crear rama de trabajo si estas en main
+
+La politica del marco prohibe trabajar contra `main` directo (ver `CLAUDE.md` raiz). Si la rama actual es `main`, crea una rama nueva antes de cualquier cambio:
+
+```bash
+BRANCH=$(git symbolic-ref --short HEAD)
+if [ "$BRANCH" = "main" ]; then
+    # Si la rama ya existe (re-ejecucion del mismo dia), hace switch a ella;
+    # si no, la crea. Si ambos fallan, no continues: pushear desde main
+    # violaria la politica del marco.
+    git switch -c "docs/bitacora-${FECHA}" 2>/dev/null || git switch "docs/bitacora-${FECHA}"
+fi
+
+# Re-verifica que ya no estas en main antes de cualquier escritura. Si por
+# algun motivo seguis en main, aborta y avisa al usuario.
+BRANCH=$(git symbolic-ref --short HEAD)
+if [ "$BRANCH" = "main" ]; then
+    echo "ERROR: no se pudo cambiar de la rama main. Abortando el cierre atomico."
+    exit 1
+fi
+```
+
+Si ya estabas en una rama distinta de `main` (por ejemplo, la rama de un PR en curso), reusala — no crees otra.
+
+### 2. Escribir la entrada de bitacora
 
 Escribe el archivo `docs/bitacora/YYYY-MM-DD.md` con el contenido aprobado.
 
-### 2. Mover field notes a procesadas
+### 3. Mover field notes a procesadas
 
 Usa `git mv` para que las eliminaciones y adiciones queden stageadas en una sola operacion:
 
@@ -126,7 +150,7 @@ mv docs/bitacora/field-notes/${FECHA}-*.md docs/bitacora/field-notes/procesadas/
 git add docs/bitacora/field-notes/ docs/bitacora/field-notes/procesadas/
 ```
 
-### 3. Commit con todos los cambios
+### 4. Commit con todos los cambios
 
 Un solo commit que incluya la entrada de bitacora y los movimientos de field notes:
 
@@ -137,10 +161,15 @@ git commit -m "docs(bitacora): entrada del YYYY-MM-DD — [titulo]
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ```
 
-### 4. Push a la rama actual
+### 5. Push de la rama y apertura de PR
+
+Empuja la rama actual (nunca `main`) y abre un PR apuntando a `main`:
 
 ```bash
-git push
+git push -u origin HEAD
+gh pr create --base main \
+    --title "docs(bitacora): entrada del ${FECHA} — [titulo]" \
+    --body "Entrada de bitacora del ${FECHA}. Consolida field notes del dia."
 ```
 
-Push simple a la rama actual (main), sin force.
+Si la rama ya fue empujada antes (por ejemplo, porque la entrada se itero en commits previos del mismo dia), el `git push -u origin HEAD` actualiza el upstream sin force. Si `gh pr create` reporta que ya existe un PR para la rama, muestra el URL existente al usuario.

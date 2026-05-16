@@ -265,7 +265,29 @@ Muestra las propuestas. **Espera aprobacion explicita.** El usuario puede:
 
 Edita los archivos de agentes/skills con los cambios aprobados. Usa `Edit` para modificar archivos existentes.
 
-Commit separado del de correcciones de codigo:
+Antes de commitear, verifica que **no estas en `main`**. Si lo estuvieras (caso excepcional), crea una rama dedicada antes de cualquier cambio:
+
+```bash
+BRANCH=$(git symbolic-ref --short HEAD)
+if [ "$BRANCH" = "main" ]; then
+    # Idempotente: si la rama ya existe (re-ejecucion del fix-review),
+    # hace switch a ella; si no, la crea.
+    git switch -c "docs/agentes-mejoras-pr-${ARGUMENTS}" 2>/dev/null \
+        || git switch "docs/agentes-mejoras-pr-${ARGUMENTS}"
+fi
+
+# Re-verifica antes de commitear. Si por algun motivo seguis en main,
+# aborta para no pushear directo.
+BRANCH=$(git symbolic-ref --short HEAD)
+if [ "$BRANCH" = "main" ]; then
+    echo "ERROR: no se pudo cambiar de main. Aborta la Fase 5.4."
+    exit 1
+fi
+```
+
+En el flujo normal de fix-review ya estas en la rama del PR (Fase 1.1 hace `git checkout <headRefName>`), asi que el bloque anterior simplemente no dispara.
+
+Commit separado del de correcciones de codigo, en la **misma rama del PR**:
 
 ```
 docs(agentes): mejorar instrucciones a partir de review del PR #N
@@ -275,7 +297,9 @@ docs(agentes): mejorar instrucciones a partir de review del PR #N
 Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
 ```
 
-Push a main (los agentes viven en main, no en ramas de feature).
+Push a la rama del PR (la misma a la que pusheaste las correcciones en la Fase 3.3). No pushees nunca directo a `main`: la politica del marco (ver `CLAUDE.md` raiz) exige entregar siempre via rama + PR.
+
+Si el usuario pidio explicitamente partir las mejoras en un PR separado, crea una rama nueva con `git switch -c docs/agentes-mejoras-pr-<numero>`, commitea ahi y abre un segundo PR con `gh pr create --base main`. Por defecto, todo va en la rama del PR original.
 
 ### 5.5 Field note
 
@@ -323,6 +347,6 @@ Estructura:
 - **Agrupa cambios relacionados en un solo commit.** No hagas un commit por comentario.
 - **Si el triaje revela que todos los comentarios ya estan resueltos**, salta directamente a la Fase 4 (responder).
 - **Siempre verifica build + tests antes de hacer push.** Si fallan, no hagas push.
-- **Las mejoras a agentes van en commit separado y se pushean a main**, no a la rama del PR.
+- **Las mejoras a agentes van en commit separado en la misma rama del PR.** Nunca se pushean directo a `main`; si el usuario quiere partirlas en otro PR, crea rama nueva y abre un segundo PR contra `main`.
 - **La field note siempre se genera**, incluso si no hubo mejoras a agentes — el registro del review tiene valor historico.
 - Comunica en espanol. Las respuestas a los comentarios del PR se redactan en el mismo idioma del comentario original.
