@@ -59,7 +59,7 @@ DRAFTEOF
 Si el dominio es claro, agrega tambien `--label "dom:[dominio]"`.
 
 4. Confirma al usuario en una sola linea:
-   `Issue #N creado como borrador: "[titulo]". Usa el planner modo `refinar` para refinarlo cuando estes listo.`
+   ``Issue #N creado como borrador: "[titulo]". Usa el planner modo `refinar` para refinarlo cuando estes listo.``
 
 ## Reglas
 
