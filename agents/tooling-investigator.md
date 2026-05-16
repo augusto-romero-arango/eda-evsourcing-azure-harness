@@ -90,16 +90,52 @@ Presenta tus hipotesis al usuario de forma estructurada:
 
 NO crees issues sin confirmacion del usuario.
 
-Con el diagnostico validado, propone acciones concretas:
+Con el diagnostico validado, propone acciones concretas.
 
-1. **Crear issues**: para cada fix necesario, propone un issue con titulo, descripcion y labels siguiendo las convenciones del proyecto.
+### Determinar el repo destino del issue
+
+Antes de proponer `gh issue create`, decide donde vive la causa raiz:
+
+| Causa raiz vive en | Repo destino | Como |
+|---|---|---|
+| Pipeline bash del plugin, agente del plugin, skill del plugin, hook (`hooks/hooks.json`), ADR del marco (`docs/adr/`), metadata del plugin (`.claude-plugin/`) | **Repo de Mefisto** | Crear DRAFT con `gh -R` y `estado:borrador` |
+| Workflow del consumidor (`.github/workflows/`), configuracion del consumidor (`.claude/harness.config.json`, `.claude/settings.json`), fixtures/helpers del consumidor (`tests/`), Terraform del consumidor (`infra/`), codigo de dominio (`src/`) | **Repo del consumidor** (este) | Crear issue completo con labels del consumidor |
+| Ambiguo (parece tocar ambos lados) | Preguntar al usuario antes de crear | -- |
+
+#### Si el bug vive en Mefisto: crear DRAFT cross-repo
+
+Lee el slug del repo de Mefisto (configurable para forks):
+```bash
+HARNESS_REPO_SLUG=$(jq -r '.repoSlug // empty' .claude/harness.config.json 2>/dev/null)
+[ -z "$HARNESS_REPO_SLUG" ] && HARNESS_REPO_SLUG="augusto-romero-arango/eda-evsourcing-azure-harness"
+```
+
+Crea el draft (con confirmacion del usuario):
+```bash
+gh issue create -R "$HARNESS_REPO_SLUG" \
+  --title "[verbo infinitivo] [que cosa]" \
+  --label "estado:borrador,tipo:tooling" \
+  --body "..."
+```
+
+**Importante**:
+- Solo `estado:borrador` y `tipo:tooling`. **No agregues** `dom:`, `estado:listo`, ni intentes refinar el issue. El refinamiento es responsabilidad del repo de Mefisto.
+- En el body incluye: sintoma observado, causa raiz hipotesis, evidencia recopilada, URL de las field notes del consumidor (para preservar contexto cuando se trabaje el issue en Mefisto).
+- Captura la URL del draft creado e incluyela en las field notes del consumidor.
+
+Si `gh -R` falla con 403 (sin permisos), no insistas: indica al usuario que cree el draft manualmente desde la UI de GitHub con los datos recopilados.
+
+#### Si el bug vive en el consumidor
 
 ```bash
-# Solo con confirmacion del usuario
 gh issue create --title "Corregir [descripcion]" --body "..." --label "bug,tipo:tooling,dom:tooling,estado:listo"
 ```
 
-2. **Workarounds inmediatos**: si hay una accion urgente, describela pero NO la ejecutes sin confirmacion explicita.
+(Comportamiento actual: labels completos, sin `-R`, en el repo activo.)
+
+### Workarounds inmediatos
+
+Si hay una accion urgente, describela pero NO la ejecutes sin confirmacion explicita.
 
 **Siempre pide confirmacion antes de crear issues o ejecutar acciones.**
 
@@ -132,7 +168,8 @@ tema: [descripcion breve del bug investigado]
 [Hipotesis validada, causa raiz identificada]
 
 ## Acciones
-[Issues creados: #N, #M]
+[Issues creados en el repo del consumidor: #N, #M]
+[Drafts creados en el repo de Mefisto: URL completa (incluye repo slug)]
 [Workarounds aplicados, si los hubo]
 
 ## Preguntas abiertas
