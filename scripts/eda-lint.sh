@@ -12,6 +12,19 @@
 
 set -uo pipefail
 
+# Guard defensivo: este script es del lado publicado y solo aplica al consumidor.
+# Si detectamos .claude-plugin/plugin.json en la raiz, estamos en el repo de Mefisto.
+_REPO_TOP=$(git rev-parse --show-toplevel 2>/dev/null) || {
+    echo "ERROR: no estas en un repositorio git" >&2
+    exit 1
+}
+if [ -f "$_REPO_TOP/.claude-plugin/plugin.json" ]; then
+    echo "ERROR: scripts/eda-lint.sh es del plugin publicado y solo aplica al consumidor." >&2
+    echo "Mefisto no modela flujos EDA." >&2
+    exit 1
+fi
+unset _REPO_TOP
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 

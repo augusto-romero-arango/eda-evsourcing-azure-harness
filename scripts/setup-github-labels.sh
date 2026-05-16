@@ -11,6 +11,20 @@
 set -e
 
 source "$(dirname "${BASH_SOURCE[0]}")/_pipeline-common.sh"
+
+# Guard defensivo: este script es del lado publicado y solo aplica al consumidor.
+# Si detectamos .claude-plugin/plugin.json en la raiz, estamos en el repo de Mefisto.
+_REPO_TOP=$(git rev-parse --show-toplevel 2>/dev/null) || {
+    echo "ERROR: no estas en un repositorio git" >&2
+    exit 1
+}
+if [ -f "$_REPO_TOP/.claude-plugin/plugin.json" ]; then
+    echo "ERROR: scripts/setup-github-labels.sh es del plugin publicado y solo aplica al consumidor." >&2
+    echo "Los labels de Mefisto se configuran manualmente o con un script interno." >&2
+    exit 1
+fi
+unset _REPO_TOP
+
 load_harness_config || exit 1
 
 echo "Eliminando labels default de GitHub..."

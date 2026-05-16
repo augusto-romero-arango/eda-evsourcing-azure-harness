@@ -8,7 +8,9 @@
 #   C) Los pipelines publicados (scripts/tooling-pipeline.sh, scripts/parallel-pipeline.sh,
 #      scripts/batch-pipeline.sh, scripts/pr-sync.sh, scripts/tdd-pipeline.sh,
 #      scripts/iac-pipeline.sh, scripts/scaffold-pipeline.sh, scripts/tmux-pipeline.sh)
-#      abortan si se sourcean en un contexto donde .claude-plugin/plugin.json existe.
+#      y los scripts auxiliares publicados (appinsights-query.sh, eda-lint.sh,
+#      setup-github-ci.sh, setup-github-labels.sh) abortan si se sourcean en un
+#      contexto donde .claude-plugin/plugin.json existe.
 #   D) Las funciones validate_*_scope_changes son sourceables sin errores.
 #
 # Uso: scripts/tests/test-guards.sh
@@ -80,6 +82,7 @@ echo "[C] Pipelines publicados: contienen guard contra repo de Mefisto"
 PUBLISHED_PIPELINES=(
     tooling-pipeline.sh parallel-pipeline.sh batch-pipeline.sh pr-sync.sh
     tdd-pipeline.sh iac-pipeline.sh scaffold-pipeline.sh tmux-pipeline.sh
+    appinsights-query.sh eda-lint.sh setup-github-ci.sh setup-github-labels.sh
 )
 
 for pipe in "${PUBLISHED_PIPELINES[@]}"; do
@@ -99,6 +102,26 @@ for pipe in "${PUBLISHED_PIPELINES[@]}"; do
         pass "$pipe: sintaxis bash valida"
     else
         fail "$pipe: sintaxis bash invalida"
+    fi
+done
+
+# -------- Bloque C2: scripts auxiliares publicados abortan en repo de Mefisto --------
+
+echo ""
+echo "[C2] Scripts auxiliares publicados: el guard aborta cuando se ejecutan en Mefisto"
+
+AUX_SCRIPTS=(
+    appinsights-query.sh eda-lint.sh setup-github-ci.sh setup-github-labels.sh
+)
+
+for aux in "${AUX_SCRIPTS[@]}"; do
+    path="$REPO_ROOT/scripts/$aux"
+    output=$("$path" 2>&1)
+    rc=$?
+    if [ "$rc" -eq 1 ] && echo "$output" | grep -q "plugin publicado y solo aplica al consumidor"; then
+        pass "$aux: aborta con exit 1 y mensaje correcto en repo de Mefisto"
+    else
+        fail "$aux: no aborta como se espera (exit=$rc)"
     fi
 done
 
