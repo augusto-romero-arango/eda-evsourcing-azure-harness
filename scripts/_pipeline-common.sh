@@ -66,6 +66,69 @@ load_harness_config() {
     fi
 }
 
+# is_path_in_consumer_blocklist <path>
+#
+# Retorna 0 si el path cae en una ruta RESERVADA al plugin Mefisto y por tanto
+# no debe ser tocada por un pipeline publicado corriendo en el consumidor.
+# Retorna 1 si el path esta fuera del blocklist (i.e. es valido para el consumidor).
+#
+# Blocklist (rutas que solo deben tocarse desde el repo de Mefisto):
+#   commands/         Skills publicados (viven en el plugin)
+#   agents/           Agentes publicados
+#   hooks/            Hooks del plugin
+#   .claude-plugin/   Metadata del plugin (plugin.json, marketplace.json)
+#   docs/adr/         ADRs del marco (los ADRs del proyecto consumidor deben vivir bajo
+#                     docs/adr-proyecto/ u otra ruta, NO bajo docs/adr/)
+is_path_in_consumer_blocklist() {
+    local path="$1"
+    [ -z "$path" ] && return 1
+
+    case "$path" in
+        commands/*|agents/*|hooks/*) return 0 ;;
+        .claude-plugin/*) return 0 ;;
+        docs/adr/*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# validate_consumer_scope_changes <worktree_path> <base_commit>
+#
+# Verifica que los archivos modificados/creados en el worktree NO caen en
+# rutas reservadas al plugin (ver is_path_in_consumer_blocklist).
+# Llamar despues de cada stage que invoca un agente.
+#
+# Retorna 0 si OK, 1 si hay violaciones (las lista en stderr).
+validate_consumer_scope_changes() {
+    local wt="$1"
+    local base="$2"
+
+    local changed
+    changed=$(
+        git -C "$wt" diff --name-only "$base..HEAD" 2>/dev/null
+        git -C "$wt" status --porcelain 2>/dev/null | sed 's/^...//'
+    )
+
+    local violations=()
+    while IFS= read -r path; do
+        [ -z "$path" ] && continue
+        if is_path_in_consumer_blocklist "$path"; then
+            violations+=("$path")
+        fi
+    done <<< "$changed"
+
+    if [ ${#violations[@]} -gt 0 ]; then
+        echo "ERROR: el agente toco rutas reservadas al plugin Mefisto:" >&2
+        printf '  - %s\n' "${violations[@]}" >&2
+        echo "" >&2
+        echo "Las rutas commands/, agents/, hooks/, .claude-plugin/, docs/adr/" >&2
+        echo "pertenecen al plugin (repo eda-evsourcing-azure-harness)." >&2
+        echo "Si necesitas modificar el plugin, abre un draft en su repo:" >&2
+        echo "  gh issue create -R augusto-romero-arango/eda-evsourcing-azure-harness \\" >&2
+        echo "    --label \"estado:borrador,tipo:tooling\" --title \"...\"" >&2
+        return 1
+    fi
+}
+
 # resolve_pipeline <issue_num> [override]
 #
 # Retorna la ruta del script de pipeline a usar para un issue dado.
