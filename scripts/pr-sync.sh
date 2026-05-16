@@ -139,6 +139,14 @@ done
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) \
     || { echo "No estás en un repositorio git"; exit 1; }
 
+# Guard defensivo: este script es del lado publicado y solo aplica al consumidor.
+# Para mergear PRs del repo de Mefisto, usa /mefisto-merge.
+if [ -f "$REPO_ROOT/.claude-plugin/plugin.json" ]; then
+    echo "ERROR: scripts/pr-sync.sh es del plugin publicado y solo aplica al consumidor." >&2
+    echo "Estás en el repo de Mefisto. Para mergear PRs del plugin, usa /mefisto-merge." >&2
+    exit 1
+fi
+
 cd "$REPO_ROOT"
 
 # ─── Inicializar log ──────────────────────────────────────────────────────────

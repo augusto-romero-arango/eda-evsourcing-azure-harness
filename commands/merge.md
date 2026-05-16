@@ -1,5 +1,17 @@
 Mergea uno o varios PRs a main via `pr-sync`. Comunicate en **espanol**.
 
+## Pre-condicion: cwd != Mefisto
+
+Este skill es del plugin publicado y solo aplica al repo consumidor. Para PRs del propio plugin, usa `/mefisto-merge`:
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
+if [ -f "$REPO_ROOT/.claude-plugin/plugin.json" ]; then
+    echo "ERROR: /merge no aplica al repo de Mefisto. Usa /mefisto-merge en su lugar."
+    exit 1
+fi
+```
+
 ## Entrada
 
 Los argumentos estan en: $ARGUMENTS

@@ -2,6 +2,18 @@
 
 Genera diagramas profesionales usando la API de Eraser. Soporta 5 tipos: sequence, architecture, flowchart, ERD y BPMN.
 
+## Pre-condicion: cwd != Mefisto
+
+Este skill es del plugin publicado y solo aplica al repo consumidor:
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
+if [ -f "$REPO_ROOT/.claude-plugin/plugin.json" ]; then
+    echo "ERROR: /eraser-diagram no aplica al repo de Mefisto."
+    exit 1
+fi
+```
+
 ## Paso 1 - Determinar el tipo de diagrama
 
 Analiza lo que el usuario pide y elige el tipo apropiado:

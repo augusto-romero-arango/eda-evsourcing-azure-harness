@@ -1,0 +1,8 @@
+# Runtime de los pipelines internos de Mefisto (no se versiona):
+.claude/pipeline/
+
+# Claude Code local settings (no aplica al plugin como contenido distribuible):
+.claude/settings.local.json
+
+# Logs ad-hoc en la raiz
+*.log

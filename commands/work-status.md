@@ -1,5 +1,17 @@
 Eres un dashboard unificado de todos los pipelines (TDD, Tooling, IaC). Descubre automaticamente que pipelines estan activos y muestra un panel consolidado.
 
+## Pre-condicion: cwd != Mefisto
+
+Este skill es del plugin publicado y solo aplica al repo consumidor. Para pipelines internos de Mefisto, usa `/mefisto-work-status`:
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
+if [ -f "$REPO_ROOT/.claude-plugin/plugin.json" ]; then
+    echo "ERROR: /work-status no aplica al repo de Mefisto. Usa /mefisto-work-status para ver pipelines internos."
+    exit 1
+fi
+```
+
 ## Paso 1: Leer los datos
 
 Lee estos archivos en paralelo usando Read, Glob y Bash:

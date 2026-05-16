@@ -14,6 +14,20 @@
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/_pipeline-common.sh"
+
+# Guard defensivo: este pipeline es del lado publicado y solo aplica al consumidor.
+# Si detectamos .claude-plugin/plugin.json en la raiz, estamos en el repo de Mefisto.
+_REPO_TOP=$(git rev-parse --show-toplevel 2>/dev/null) || {
+    echo "ERROR: no estas en un repositorio git" >&2
+    exit 1
+}
+if [ -f "$_REPO_TOP/.claude-plugin/plugin.json" ]; then
+    echo "ERROR: scripts/tooling-pipeline.sh es del plugin publicado y solo aplica al consumidor." >&2
+    echo "Estas en el repo de Mefisto. Para mejorar el plugin, usa .claude/scripts/mefisto-tooling-pipeline.sh." >&2
+    exit 1
+fi
+unset _REPO_TOP
+
 load_harness_config || exit 1
 
 # --- Colores ---
@@ -401,9 +415,9 @@ auto_commit_if_needed() {
 
     git -C "$WORKTREE_PATH" checkout -- .claude/settings.json 2>/dev/null || true
 
-    if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ scripts/ .claude/commands/ .claude/agents/ .claude/skills/ .github/ infra/)" ]; then
+    if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ scripts/ .github/ infra/ pipeline-state/)" ]; then
         log "Haciendo commit automatico (fase $phase)..."
-        for dir in tests/ src/ scripts/ .claude/commands/ .claude/agents/ .claude/skills/ .github/ infra/; do
+        for dir in tests/ src/ scripts/ .github/ infra/ pipeline-state/; do
             git -C "$WORKTREE_PATH" add "$dir" 2>/dev/null || true
         done
         git -C "$WORKTREE_PATH" commit -m "$msg" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 || true
@@ -414,20 +428,39 @@ auto_commit_if_needed() {
 if [ "$FROM_STAGE" -le 1 ]; then
     header "Stage 1: Writer (implementacion)"
 
-    STAGE1_PROMPT="Estas en el directorio raiz del proyecto ${HARNESS_PROJECT_NAME}.
+    STAGE1_PROMPT="Estas en el directorio raiz del proyecto consumidor ${HARNESS_PROJECT_NAME} (un consumidor del plugin Mefisto).
 
 Contexto de la tarea de tooling a implementar:
 
 $ISSUE_CONTEXT
 
-Tu tarea: implementa lo descrito en el issue. Esto es una tarea de TOOLING (scripts, fixtures de test, configuracion, agentes, skills, etc.), NO logica de dominio.
+Tu tarea: implementa lo descrito en el issue. Esto es una tarea de TOOLING del CONSUMIDOR (workflows de GitHub Actions, configuracion local, fixtures de test, scripts ad-hoc del consumidor), NO logica de dominio y NO modificaciones al plugin Mefisto.
+
+ALCANCE PERMITIDO de escritura:
+- .github/workflows/                         (workflows del consumidor)
+- .claude/harness.config.json                (configuracion del consumidor)
+- .claude/settings.json                      (configuracion Claude del consumidor)
+- .claude/pipeline/                          (estado runtime; .gitignored)
+- pipeline-state/                            (senales del pipeline)
+- scripts/                                   (scripts ad-hoc del consumidor)
+- tests/                                     (SOLO fixtures, helpers, builders - NO logica de dominio)
+- docs/bitacora/, docs/eda/, docs/adr-proyecto/  (documentacion del consumidor)
+
+PROHIBIDO MODIFICAR (pertenece al plugin Mefisto, no a este repo):
+- commands/, agents/, hooks/, .claude-plugin/
+- docs/adr/ (los ADRs del marco viven en el repo del plugin)
+- src/ (eso es para /implement, no para /tooling)
+
+Si la tarea requiere modificar el plugin Mefisto, NO la ejecutes. En su lugar, propon crear un draft con:
+  gh issue create -R augusto-romero-arango/eda-evsourcing-azure-harness --label \"estado:borrador,tipo:tooling\" --title \"...\" --body \"...\"
+Y registra esto en el resumen del stage.
 
 CONTEXTO DE EJECUCION:
 - Modo no-interactivo (print mode). No hay un humano al otro lado.
 - Nadie puede aprobar, confirmar ni responder preguntas.
 - DEBES usar las herramientas Write y Edit directamente para crear y modificar archivos.
 - Responder con texto pidiendo aprobacion causa un fallo del pipeline.
-- Tienes permisos completos (bypassPermissions activo) sobre TODAS las rutas incluyendo .claude/.
+- Tienes permisos completos (bypassPermissions activo).
 
 Instrucciones:
 1. Lee los archivos existentes relevantes antes de escribir codigo nuevo.
@@ -446,7 +479,7 @@ Instrucciones:
     if ! git -C "$WORKTREE_PATH" diff --quiet "$SNAPSHOT_COMMIT" HEAD 2>/dev/null; then
         HAS_COMMITS=true
     fi
-    if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ scripts/ .claude/commands/ .claude/agents/ .claude/skills/ .github/ infra/ 2>/dev/null)" ]; then
+    if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ scripts/ .github/ infra/ pipeline-state/ 2>/dev/null)" ]; then
         HAS_UNSTAGED=true
     fi
     if [ "$HAS_COMMITS" = false ] && [ "$HAS_UNSTAGED" = false ]; then
@@ -468,7 +501,7 @@ $STAGE1_PROMPT"
             git -C "$WORKTREE_PATH" checkout -- .claude/settings.json 2>/dev/null || true
             HAS_COMMITS=false; HAS_UNSTAGED=false
             if ! git -C "$WORKTREE_PATH" diff --quiet "$SNAPSHOT_COMMIT" HEAD 2>/dev/null; then HAS_COMMITS=true; fi
-            if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ scripts/ .claude/commands/ .claude/agents/ .claude/skills/ .github/ infra/ 2>/dev/null)" ]; then HAS_UNSTAGED=true; fi
+            if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ scripts/ .github/ infra/ pipeline-state/ 2>/dev/null)" ]; then HAS_UNSTAGED=true; fi
         fi
 
         if [ "$HAS_COMMITS" = false ] && [ "$HAS_UNSTAGED" = false ]; then
@@ -489,6 +522,11 @@ $STAGE1_PROMPT"
 
     auto_commit_if_needed "writer" "tooling(#${ISSUE_NUM}): implementacion"
 
+    # Gate de scope: rechazar si el writer toco rutas reservadas al plugin
+    if ! validate_consumer_scope_changes "$WORKTREE_PATH" "$SNAPSHOT_COMMIT"; then
+        abort "Stage 1 fallido: el writer toco rutas reservadas al plugin Mefisto."
+    fi
+
     AGENT_WR_DUR=$LAST_AGENT_DURATION
     AGENT_WR_RES="passed"
     update_status "1-writer" "passed"
@@ -501,7 +539,7 @@ if [ "$FROM_STAGE" -le 2 ]; then
 
     FULL_DIFF=$(git -C "$WORKTREE_PATH" diff "$SNAPSHOT_COMMIT"..HEAD)
 
-    STAGE2_PROMPT="Estas en el directorio raiz del proyecto ${HARNESS_PROJECT_NAME}.
+    STAGE2_PROMPT="Estas en el directorio raiz del proyecto consumidor ${HARNESS_PROJECT_NAME}.
 
 Contexto de la tarea:
 
@@ -513,12 +551,22 @@ $FULL_DIFF
 
 Tu tarea: revisa la calidad del codigo producido por el writer.
 
+ALCANCE PERMITIDO de escritura (igual al del writer):
+.github/workflows/, .claude/harness.config.json, .claude/settings.json,
+.claude/pipeline/, pipeline-state/, scripts/, tests/ (fixtures/helpers),
+docs/bitacora/, docs/eda/, docs/adr-proyecto/.
+
+PROHIBIDO: commands/, agents/, hooks/, .claude-plugin/, docs/adr/, src/.
+
+Si el writer toco rutas prohibidas, reviertelas o reporta el problema en el resumen
+y NO hagas cambios extra al plugin.
+
 CONTEXTO DE EJECUCION:
 - Modo no-interactivo (print mode). No hay un humano al otro lado.
 - Nadie puede aprobar, confirmar ni responder preguntas.
 - DEBES usar las herramientas Write y Edit directamente para corregir problemas.
 - Responder con texto pidiendo aprobacion causa un fallo del pipeline.
-- Tienes permisos completos (bypassPermissions activo) sobre TODAS las rutas incluyendo .claude/.
+- Tienes permisos completos (bypassPermissions activo).
 
 Instrucciones:
 1. Verifica que los cambios cumplen con lo pedido en el issue.
@@ -549,6 +597,11 @@ Instrucciones:
     fi
 
     auto_commit_if_needed "reviewer" "tooling(#${ISSUE_NUM}): revision y correcciones"
+
+    # Gate de scope: rechazar si el reviewer toco rutas reservadas al plugin
+    if ! validate_consumer_scope_changes "$WORKTREE_PATH" "$SNAPSHOT_COMMIT"; then
+        abort "Stage 2 fallido: el reviewer toco rutas reservadas al plugin Mefisto."
+    fi
 
     AGENT_RV_DUR=$LAST_AGENT_DURATION
     AGENT_RV_RES="passed"

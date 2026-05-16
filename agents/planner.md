@@ -30,6 +30,65 @@ Tu trabajo NO es escribir código. Es descubrir, cuestionar, nombrar y organizar
 
 ---
 
+## Routing de target (consumidor vs Mefisto)
+
+Antes de crear o refinar cualquier issue, decide a qué **repo** pertenece:
+
+- **Target consumidor** (default): el issue trata sobre dominio de negocio (aggregates, eventos), workflows del consumidor (`.github/workflows/`), terraform específico, configuración del consumidor (`harness.config.json`), o cualquier código en `src/`/`tests/`/`infra/`. → Se crea/refina en el repo activo (este), sin `-R`. Se aplica el flujo completo de este agente.
+
+- **Target Mefisto**: el issue trata sobre pipelines bash del plugin (`scripts/`), agentes (`agents/`), skills (`commands/`), hooks (`hooks/hooks.json`), ADRs del marco (`docs/adr/`), metadata del plugin (`.claude-plugin/`), o cualquier convención arquitectónica universal. → **Solo puedes crear un draft** con `gh -R`. No refines, no etiquetes más allá de `estado:borrador`, no desgloses, no propongas oleadas, no analices. Todo eso queda en manos del planner interno de Mefisto.
+
+- **Ambiguo**: pregunta al usuario explícitamente antes de continuar.
+
+### Slug del repo de Mefisto
+
+```bash
+HARNESS_REPO_SLUG=$(jq -r '.repoSlug // empty' .claude/harness.config.json 2>/dev/null)
+[ -z "$HARNESS_REPO_SLUG" ] && HARNESS_REPO_SLUG="augusto-romero-arango/eda-evsourcing-azure-harness"
+```
+
+### Crear draft cross-repo (única operación permitida hacia Mefisto)
+
+Cuando el target es Mefisto, solo puedes hacer esto:
+
+```bash
+gh issue create -R "$HARNESS_REPO_SLUG" \
+  --title "[verbo infinitivo] [qué cosa]" \
+  --label "estado:borrador,tipo:tooling" \
+  --body "$(cat <<'DRAFTEOF'
+## Idea
+[la idea con mínima reformulación]
+
+## Origen
+- Descubierto desde el consumidor [nombre o slug del repo del consumidor]
+- Sesión: planner
+- Field notes: [URL del field-notes correspondiente, si aplica]
+DRAFTEOF
+)"
+```
+
+**Después de crear el draft**, detén el flujo y avisa al usuario:
+> "Draft #N creado en `$HARNESS_REPO_SLUG`. El refinamiento se hace dentro del repo de Mefisto con `/mefisto-plan` modo refinar."
+
+No abras secciones adicionales del template, no preguntes por criterios de aceptación, no propongas dependencias. Esa información se levanta dentro de Mefisto, donde vive la causa raíz.
+
+### Refinar / desglosar / oleadas / backlog / analizar / limpiar issues de Mefisto
+
+**No está permitido desde este agente.** Detección:
+
+```bash
+# Si el usuario menciona un número de issue, verifica el repo de origen
+gh issue view <num> --json url -q .url
+# Si el url incluye eda-evsourcing-azure-harness (o el HARNESS_REPO_SLUG configurado), aborta:
+```
+
+Mensaje a mostrar:
+> "El issue #N pertenece al repo de Mefisto (`$HARNESS_REPO_SLUG`). Refinamiento, desglose, oleadas y limpieza solo se hacen dentro de ese repo con `/mefisto-plan`. Cambia al repo de Mefisto y reintenta."
+
+No intentes editar el issue, no propongas labels, no sugieras desgloses. Detente.
+
+---
+
 ## Propósito
 
 Tu misión tiene dos niveles:
@@ -403,6 +462,8 @@ Lee y aplica los criterios de `docs/adr/0014-definition-of-ready.md`. Ese docume
 ---
 
 ## Crear issues
+
+**Antes de crear**, aplica la sección "Routing de target" arriba. Si el target es Mefisto, usa exclusivamente el bloque "Crear draft cross-repo" y detente; los templates de abajo NO aplican a issues del harness.
 
 ### Convención de títulos
 

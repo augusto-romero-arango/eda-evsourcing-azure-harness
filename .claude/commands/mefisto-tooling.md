@@ -1,26 +1,26 @@
-Lanza el pipeline de tooling para un issue de GitHub dentro de una sesion tmux. Comunicate en **espanol**.
+Lanza el pipeline INTERNO de tooling para un issue del repo de Mefisto, dentro de una sesion tmux. Comunicate en **espanol**.
 
-**Alcance**: este skill modifica unicamente artefactos del proyecto consumidor que NO son logica de dominio. Rutas permitidas: `.github/workflows/`, `.claude/harness.config.json`, `.claude/settings.json`, `pipeline-state/`, `scripts/` (custom del consumidor), `tests/` (fixtures y helpers, no logica de dominio). Rutas prohibidas: cualquier archivo bajo `commands/`, `agents/`, `hooks/`, `.claude-plugin/`, `docs/adr/` (esos pertenecen al plugin Mefisto). Si tu cambio requiere tocar el plugin, NO uses este skill: crea un draft en el repo de Mefisto via `gh issue create -R augusto-romero-arango/eda-evsourcing-azure-harness --label "estado:borrador" ...` y luego cambia al repo de Mefisto para trabajarlo con `/mefisto-tooling`.
+**Alcance**: este skill solo opera dentro del repo del propio plugin Mefisto. Modifica archivos del harness (skills, agentes, scripts, hooks, ADRs, metadata del plugin). NO toca codigo de aplicacion ni archivos del consumidor.
 
 ## Entrada
 
 El numero de issue esta en: $ARGUMENTS
 
-Si `$ARGUMENTS` esta vacio, responde: `Uso: /tooling <numero-de-issue>`
+Si `$ARGUMENTS` esta vacio, responde: `Uso: /mefisto-tooling <numero-de-issue>`
 
 ## Proceso
 
-### 0. Verificar que NO estas en el repo de Mefisto
+### 0. Verificar que estas en el repo de Mefisto
 
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
     echo "ERROR: no estas en un repositorio git"; exit 1;
 }
-if [ -f "$REPO_ROOT/.claude-plugin/plugin.json" ]; then
-    echo "ERROR: este skill es del plugin publicado y solo aplica al repo consumidor."
-    echo "Estas en el repo de Mefisto. Para mejorar el plugin, usa /mefisto-tooling."
+[ -f "$REPO_ROOT/.claude-plugin/plugin.json" ] || {
+    echo "ERROR: este skill solo se ejecuta en el repo de Mefisto."
+    echo "Si trabajas en un proyecto consumidor, usa /tooling en su lugar."
     exit 1
-fi
+}
 ```
 
 ### 1. Validar el issue
@@ -43,8 +43,8 @@ Verifica que tenga el label `tipo:tooling`. Si no lo tiene, advierte al usuario:
 
 ```
 Este issue no tiene el label tipo:tooling.
-Si es logica de dominio, usa /implement en su lugar.
-¿Continuar de todos modos? (s/n)
+Mefisto solo procesa issues de tooling con este pipeline.
+Continuar de todos modos? (s/n)
 ```
 
 ### 2.5. Verificar label bloqueado
@@ -69,7 +69,6 @@ gh issue edit $ARGUMENTS --remove-label "bloqueado"
 ```
 El issue #$ARGUMENTS esta bloqueado. Dependencias abiertas:
   - #42: [titulo] (OPEN)
-  - #55: [titulo] (OPEN)
 
 Resuelve estas dependencias antes de lanzar el pipeline.
 ```
@@ -79,14 +78,14 @@ Resuelve estas dependencias antes de lanzar el pipeline.
 Muestra una linea con el issue:
 
 ```
-#18: Implementar smoke tests para Service Bus triggers
-Tipo: tooling | Estado: listo
+#18: Refactorizar pipeline tooling para soportar X
+Tipo: tooling | Estado: listo | Repo: mefisto
 ```
 
-Luego lanza el pipeline en tmux:
+Luego lanza el pipeline interno en tmux:
 
 ```bash
-./scripts/tmux-pipeline.sh --tooling $ARGUMENTS
+./.claude/scripts/mefisto-tmux-pipeline.sh --tooling $ARGUMENTS
 ```
 
 ### 4. Instrucciones de conexion
@@ -94,10 +93,10 @@ Luego lanza el pipeline en tmux:
 Responde con:
 
 ```
-Pipeline tooling lanzado en tmux. Para monitorear:
-  tmux -CC attach -t tooling-<numero>
+Pipeline mefisto-tooling lanzado en tmux. Para monitorear:
+  tmux -CC attach -t mefisto-tooling-<numero>
 
-Usa /work-status para ver el progreso sin salir de aqui.
+Usa /mefisto-work-status para ver el progreso sin salir de aqui.
 ```
 
 ## Reglas
@@ -105,3 +104,4 @@ Usa /work-status para ver el progreso sin salir de aqui.
 - **No esperes a que termine.** El script corre en background dentro de tmux. Devuelve el control inmediatamente.
 - **No implementes nada tu mismo.** Solo lanza el script.
 - Si tmux no esta instalado, el script lo detecta y muestra el error.
+- **Si el cwd no es Mefisto, aborta**. Los skills publicados (`/tooling`) son para el consumidor.

@@ -166,6 +166,60 @@ Los ADRs en `docs/adr/` son la fuente de verdad arquitectónica del harness. Los
 - Las herramientas MCP requieren declaración explícita cuando un agente usa allowlist `tools:`. Usa wildcard: `mcp__<servidor>__*`.
 - Si el agente **no** define `tools:`, hereda todas incluyendo MCP.
 
+## Dos paquetes de tooling: publicado vs interno
+
+Mefisto distingue **dos sets** de skills/agentes/pipelines físicamente separados:
+
+### Skills publicados (top-level del repo)
+
+- Viven en `commands/`, `agents/`, `scripts/`, `hooks/`.
+- Se distribuyen vía marketplace de Claude Code y son los que ve el proyecto consumidor cuando instala `mefisto`.
+- **Operan únicamente sobre archivos del consumidor**. Nunca tocan archivos del propio plugin.
+- Cada uno tiene un **guard defensivo** al inicio que aborta si `.claude-plugin/plugin.json` existe en el cwd (es decir, si por error alguien los invoca dentro del repo de Mefisto).
+- El skill `/tooling` publicado tiene además un **gate de scope** (`validate_consumer_scope_changes` en `scripts/_pipeline-common.sh`) que rechaza el PR si el agente toca rutas reservadas al plugin (`commands/`, `agents/`, `hooks/`, `.claude-plugin/`, `docs/adr/`).
+- El planner publicado y el `tooling-investigator` pueden **crear drafts** en el repo de Mefisto vía `gh -R …` cuando detectan que un problema descubierto en el consumidor pertenece al harness. Solo `estado:borrador`; el refinamiento ocurre dentro del repo de Mefisto.
+
+### Skills internos (en `.claude/` del repo de Mefisto)
+
+- Viven en `.claude/commands/`, `.claude/agents/`, `.claude/scripts/`.
+- **NO se publican vía marketplace**. Claude Code los carga automáticamente cuando se abre el repo de Mefisto, porque `.claude/commands/` y `.claude/agents/` son convenciones de configuración por-repo del propio Claude Code (separadas del plugin instalado).
+- Llevan prefijo `mefisto-` para distinguirlos en pantalla: `/mefisto-tooling`, `/mefisto-plan`, `/mefisto-bug`, `/mefisto-fix-review`, `/mefisto-merge`, `/mefisto-work-status`.
+- Cada uno tiene un **guard inverso**: aborta si `.claude-plugin/plugin.json` NO está en el cwd (i.e. si alguien los invoca fuera del repo de Mefisto).
+- Operan exclusivamente sobre archivos del propio plugin: `commands/`, `agents/`, `scripts/`, `hooks/`, `docs/`, `.claude-plugin/`, `.claude/{commands,agents,scripts}/`, archivos de gobierno (`README.md`, `CLAUDE.md`, etc.).
+- El pipeline interno (`.claude/scripts/mefisto-tooling-pipeline.sh`) usa `validate_mefisto_scope_changes` (definido en `.claude/scripts/_mefisto-common.sh`) para rechazar cambios fuera del scope.
+
+### Skills sin equivalente interno
+
+Mefisto es un harness, no un producto: no tiene aggregates, no es TDD .NET, no tiene infraestructura Terraform/Azure, no genera dominios, no se despliega y no modela flujos EDA. Por tanto **estos skills publicados NO tienen versión interna**:
+
+- `/implement` — TDD .NET de dominio.
+- `/infra` — Terraform/Azure.
+- `/scaffold` — crear nuevo dominio.
+- `/health-check` — App Insights.
+- `/show-flow`, `/eraser-diagram` — flujos EDA y diagramas.
+
+Aún así, todos tienen guard defensivo "cwd != Mefisto" como cinturón + tirantes.
+
+### Routing cross-repo: solo drafts
+
+La única operación cross-repo permitida desde el consumidor hacia Mefisto es **crear un draft** (`estado:borrador`). El refinamiento (`estado:listo`), desglose, oleadas, backlog y limpieza de issues de Mefisto se hacen exclusivamente con `/mefisto-plan` dentro del repo del plugin.
+
+### Grupos de trabajo homogéneos
+
+`/parallel`, `/sequential` y `scripts/batch-pipeline.sh` validan al inicio que **no estamos en Mefisto** y se asumen homogéneos: todos los issues del grupo se consultan con `gh issue view N` sin `-R`, así que solo se procesan los del repo activo. No se admiten grupos mixtos.
+
 ## Instalación en un proyecto
 
 Ver `README.md`.
+
+## Trabajar sobre el propio plugin
+
+Si estás clonando este repo (Mefisto) para evolucionarlo, **no necesitas instalar el plugin sobre sí mismo**. Claude Code carga automáticamente los skills internos desde `.claude/commands/` y `.claude/agents/` del repo activo. Los pipelines internos viven bajo `.claude/scripts/`.
+
+Workflow típico:
+
+1. Captura una idea: `/mefisto-plan` (modo draft) o `gh issue create --label "estado:borrador,tipo:tooling" --title "..."`.
+2. Refina: `/mefisto-plan` (modo refinar) hasta `estado:listo`.
+3. Implementa: `/mefisto-tooling <issue>`. El pipeline crea worktree, ejecuta writer+reviewer, valida scope y abre PR.
+4. Revisa: comentarios del PR → `/mefisto-fix-review <pr>`.
+5. Mergea: `/mefisto-merge <pr>` (squash + delete-branch, sin `pr-sync.sh`).

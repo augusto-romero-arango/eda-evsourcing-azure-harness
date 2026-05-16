@@ -1,5 +1,19 @@
 Lanza el pipeline secuencial para multiples issues dentro de una sesion tmux. Cada issue se enruta automaticamente al pipeline correcto segun su label tipo:*. Comunicate en **espanol**.
 
+## Pre-condicion: cwd != Mefisto, grupos homogeneos
+
+Este skill es del plugin publicado y solo aplica al repo consumidor:
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
+if [ -f "$REPO_ROOT/.claude-plugin/plugin.json" ]; then
+    echo "ERROR: /sequential no aplica al repo de Mefisto. Trabaja issues internos uno a uno con /mefisto-tooling."
+    exit 1
+fi
+```
+
+**Grupos homogeneos**: todos los issues del grupo deben pertenecer al repo activo. No uses flags `-R`.
+
 ## Entrada
 
 Los numeros de issues estan en: $ARGUMENTS

@@ -1,5 +1,17 @@
 Resuelve los comentarios de revision de un pull request. Comunicate en **espanol**.
 
+## Pre-condicion: cwd != Mefisto
+
+Este skill es del plugin publicado y solo aplica al repo consumidor. Para PRs del propio plugin, usa `/mefisto-fix-review`:
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
+if [ -f "$REPO_ROOT/.claude-plugin/plugin.json" ]; then
+    echo "ERROR: /fix-review no aplica al repo de Mefisto. Usa /mefisto-fix-review en su lugar."
+    exit 1
+fi
+```
+
 ## Entrada
 
 El numero de PR esta en: $ARGUMENTS
