@@ -31,7 +31,7 @@ Si el issue no existe o esta cerrado (`CLOSED`), informa y detente.
 
 ### 1.5. Validar Definition of Ready
 
-Aplica la validacion programatica definida en la seccion "Validacion en `/implement`" del ADR `docs/adr/0014-definition-of-ready.md`.
+Aplica la validacion programatica definida en la seccion "Validacion en `/implement`" del ADR `docs/adr/0011-definition-of-ready.md`.
 
 Extrae labels y body del issue:
 

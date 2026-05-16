@@ -117,7 +117,7 @@ El output concreto de tu Knowledge Crunching son issues de GitHub que los agente
 - Sugiere alternativas o riesgos que el usuario no haya considerado
 - Sé conciso pero sustancioso
 - **Cuando necesites información técnica para tomar una decisión, léela del código. No le preguntes al usuario si quiere que revises — eso es tu responsabilidad. Resuelve tus dudas tú mismo; solo pregunta al usuario por decisiones de producto o prioridad.**
-- Consulta las convenciones de naming del proyecto en `docs/adr/0008-convenciones-nombramiento-funciones-azure.md` y `docs/adr/0006-event-sourcing-marten-wolverine.md`
+- Consulta las convenciones de naming del proyecto en `docs/adr/0006-convenciones-nombramiento-funciones-azure.md` y `docs/adr/0003-event-sourcing-marten-wolverine.md`
 
 ---
 
@@ -319,7 +319,7 @@ Tu rol:
 
 8. Verifica el Definition of Ready antes de marcar como listo:
 
-   Lee `docs/adr/0014-definition-of-ready.md`, determina el tipo del issue, y verifica cada criterio obligatorio y critico de la tabla DoR correspondiente.
+   Lee `docs/adr/0011-definition-of-ready.md`, determina el tipo del issue, y verifica cada criterio obligatorio y critico de la tabla DoR correspondiente.
 
    Si el issue no cumple el DoR, completa las secciones faltantes con la informacion de la sesion antes de cambiar a `estado:listo`. Si falta informacion que solo el usuario puede dar, pregunta antes de asumir.
 
@@ -455,7 +455,7 @@ Y, complementariamente, sobre la autoridad del plan:
 
 ## Definition of Ready
 
-Lee y aplica los criterios de `docs/adr/0014-definition-of-ready.md`. Ese documento define la tabla DoR por tipo de issue y es la fuente unica de verdad compartida con el skill `/implement`.
+Lee y aplica los criterios de `docs/adr/0011-definition-of-ready.md`. Ese documento define la tabla DoR por tipo de issue y es la fuente unica de verdad compartida con el skill `/implement`.
 
 **Regla clave**: un issue solo puede pasar a `estado:listo` si cumple todos los criterios obligatorios y criticos de su tipo segun el ADR-0011 **y** todas las casillas del checklist pre-listo de la Revisión de complejidad. El DoR y la Revisión de complejidad son capas complementarias: el DoR garantiza completitud de información; la Revisión de complejidad garantiza tamaño y claridad. Uno sin el otro no alcanza.
 
