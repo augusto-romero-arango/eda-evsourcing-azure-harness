@@ -303,7 +303,7 @@ EOF
     fi
 
     if git show-ref --verify --quiet "refs/heads/$RELEASE_BRANCH"; then
-        abort "Ya existe localmente la rama ${RELEASE_BRANCH}. Bórrala o renombra antes de continuar."
+        abort "Ya existe localmente la rama ${RELEASE_BRANCH}. Borrala o renombra antes de continuar."
     fi
 
     # Asegurar que main esta al dia antes de ramificar
@@ -443,7 +443,7 @@ fi
 
 # Extraer notas del bloque versionado
 RELEASE_NOTES=$(extract_version_section "$NEW_VERSION") \
-    || abort "No se encontro la seccion [${NEW_VERSION}] en el CHANGELOG. ¿Faltan notas en main?"
+    || abort "No se encontro la seccion [${NEW_VERSION}] en el CHANGELOG. Faltan notas en main?"
 
 NOTES_FILE=$(mktemp)
 printf '%s\n' "$RELEASE_NOTES" > "$NOTES_FILE"
