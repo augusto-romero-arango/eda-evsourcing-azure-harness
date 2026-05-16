@@ -1,5 +1,19 @@
 Lanza el pipeline TDD en paralelo para multiples issues dentro de una sesion tmux. Cada issue corre en su propio tab. Los PRs se crean pero NO se mergean automaticamente. Comunicate en **espanol**.
 
+## Pre-condicion: cwd != Mefisto, grupos homogeneos
+
+Este skill es del plugin publicado y solo aplica al repo consumidor:
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
+if [ -f "$REPO_ROOT/.claude-plugin/plugin.json" ]; then
+    echo "ERROR: /parallel no aplica al repo de Mefisto. Trabaja issues internos secuencialmente con /mefisto-tooling."
+    exit 1
+fi
+```
+
+**Grupos homogeneos**: todos los issues del grupo deben pertenecer al repo activo (consumidor). El script subyacente (`parallel-pipeline.sh`) consulta cada issue con `gh issue view N` sin `-R`, asi que issues de otros repos se descartan automaticamente como UNKNOWN. No uses flags `-R` con este skill.
+
 ## Entrada
 
 Los numeros de issues estan en: $ARGUMENTS

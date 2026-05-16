@@ -1,5 +1,17 @@
 Dashboard de salud del entorno desplegado. Ejecuta queries contra App Insights y presenta un resumen con semaforos. Comunicate en **espanol**.
 
+## Pre-condicion: cwd != Mefisto
+
+Este skill es del plugin publicado y solo aplica al repo consumidor. Mefisto no tiene entorno desplegado ni App Insights:
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
+if [ -f "$REPO_ROOT/.claude-plugin/plugin.json" ]; then
+    echo "ERROR: /health-check no aplica al repo de Mefisto."
+    exit 1
+fi
+```
+
 ## Proceso
 
 ### 1. Validar prerequisitos

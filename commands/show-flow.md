@@ -2,6 +2,18 @@
 
 Visualiza un flujo EDA como sequence diagram de Eraser. Lee el YAML del flujo, genera el DSL de Eraser y renderiza el diagrama.
 
+## Pre-condicion: cwd != Mefisto
+
+Este skill es del plugin publicado y solo aplica al repo consumidor (lee `docs/eda/flows/`, ruta del consumidor):
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
+if [ -f "$REPO_ROOT/.claude-plugin/plugin.json" ]; then
+    echo "ERROR: /show-flow no aplica al repo de Mefisto. Mefisto no modela flujos EDA."
+    exit 1
+fi
+```
+
 ## Uso
 
 ```

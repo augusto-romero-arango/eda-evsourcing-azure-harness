@@ -108,7 +108,21 @@ fi
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) \
     || { echo "No estás en un repositorio git"; exit 1; }
 
+# Guard defensivo: este pipeline es del lado publicado y solo aplica al consumidor.
+if [ -f "$REPO_ROOT/.claude-plugin/plugin.json" ]; then
+    echo "ERROR: parallel-pipeline.sh es del plugin publicado y solo aplica al consumidor." >&2
+    echo "Estás en el repo de Mefisto. Los pipelines internos no soportan paralelismo aún;" >&2
+    echo "trabaja los issues de Mefisto secuencialmente con /mefisto-tooling." >&2
+    exit 1
+fi
+
 cd "$REPO_ROOT"
+
+# Validación de homogeneidad: todos los issues del grupo deben pertenecer al
+# repo actual del consumidor. `gh issue view <num>` consulta el repo del cwd
+# por defecto; si un issue no existe en este repo, gh retorna UNKNOWN y el
+# script lo descarta automáticamente más abajo. No se admiten flags -R para
+# evitar mezclar repos.
 
 # ─── Inicializar log ──────────────────────────────────────────────────────────
 mkdir -p "$LOG_DIR"

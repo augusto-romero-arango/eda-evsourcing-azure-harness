@@ -156,7 +156,17 @@ fi
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) \
     || { echo "No estás en un repositorio git"; exit 1; }
 
+# Guard defensivo: este pipeline es del lado publicado y solo aplica al consumidor.
+if [ -f "$REPO_ROOT/.claude-plugin/plugin.json" ]; then
+    echo "ERROR: batch-pipeline.sh es del plugin publicado y solo aplica al consumidor." >&2
+    echo "Estás en el repo de Mefisto. Trabaja los issues internos secuencialmente con /mefisto-tooling." >&2
+    exit 1
+fi
+
 cd "$REPO_ROOT"
+
+# Validación de homogeneidad: igual que en parallel-pipeline.sh, todos los issues
+# del batch se asumen del repo actual; gh issue view N consulta el repo del cwd.
 
 # ─── Inicializar log ──────────────────────────────────────────────────────────
 mkdir -p "$LOG_DIR"

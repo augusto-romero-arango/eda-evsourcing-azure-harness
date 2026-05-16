@@ -1,5 +1,18 @@
 Lanza el pipeline TDD para un issue de GitHub dentro de una sesion tmux. Comunicate en **espanol**.
 
+## Pre-condicion: cwd != Mefisto
+
+Este skill es del plugin publicado y solo aplica al repo consumidor (no a Mefisto). Verifica antes de continuar:
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
+if [ -f "$REPO_ROOT/.claude-plugin/plugin.json" ]; then
+    echo "ERROR: /implement es del plugin publicado y no aplica al repo de Mefisto."
+    echo "Mefisto no es un proyecto .NET con TDD de dominio. Para mejorar el plugin, usa /mefisto-tooling."
+    exit 1
+fi
+```
+
 ## Entrada
 
 El numero de issue esta en: $ARGUMENTS

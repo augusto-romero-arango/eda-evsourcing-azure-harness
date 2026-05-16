@@ -1,5 +1,17 @@
 Investiga un error o sintoma reportado. Clasifica automaticamente si es un bug de tooling local o del entorno desplegado, y enruta al agente apropiado. Comunicate en **espanol**.
 
+## Pre-condicion: cwd != Mefisto
+
+Este skill es del plugin publicado y solo aplica al repo consumidor. Para bugs del propio plugin, usa `/mefisto-bug`:
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
+if [ -f "$REPO_ROOT/.claude-plugin/plugin.json" ]; then
+    echo "ERROR: /bug no aplica al repo de Mefisto. Usa /mefisto-bug para diagnosticar problemas del plugin."
+    exit 1
+fi
+```
+
 ## Entrada
 
 El sintoma esta en: $ARGUMENTS
