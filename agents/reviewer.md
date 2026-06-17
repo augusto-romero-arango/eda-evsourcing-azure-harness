@@ -376,6 +376,7 @@ Si el implementer cito precedentes del codigo en `stage-2-implementer.md`, verif
 | Smoke tests: SkipWhen, secrets, cobertura | ok / falla / n/a | ... |
 | Tests via ToString/comportamiento | ok / falla / n/a | ... |
 | Sin numeros magicos | ok / falla / n/a | ... |
+| Condiciones en positivo (guardas if/else afirmativas) | ok / falla / n/a | ... |
 
 ### Elegancia del codigo
 - [Hallazgos sobre compacidad, legibilidad, idiomatismo, robustez, eficiencia o limpieza]
