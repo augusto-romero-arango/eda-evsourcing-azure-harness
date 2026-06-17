@@ -23,10 +23,10 @@ if [ -f "$_REPO_TOP/.claude-plugin/plugin.json" ]; then
     echo "Mefisto no modela flujos EDA." >&2
     exit 1
 fi
-unset _REPO_TOP
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# Nota: NO se descarta _REPO_TOP; se reusa como PROJECT_ROOT (el repo del
+# consumidor), donde viven los docs/eda/ a validar. NO se deriva de la ubicacion
+# del script porque el plugin ya no vive dentro del repo del consumidor.
+PROJECT_ROOT="$_REPO_TOP"
 
 CATALOG="${PROJECT_ROOT}/docs/eda/catalog.yaml"
 TOPICS="${PROJECT_ROOT}/docs/eda/messaging/topics.yaml"

@@ -32,7 +32,8 @@ if [ -f "$_REPO_TOP/.claude-plugin/plugin.json" ]; then
     echo "Estas en el repo de Mefisto. Para trabajar issues del plugin en tmux usa los skills internos /mefisto-tooling o /mefisto-sequential." >&2
     exit 1
 fi
-unset _REPO_TOP
+# Nota: NO se descarta _REPO_TOP; se reusa mas abajo como PROJECT_ROOT (el repo
+# objetivo del consumidor), distinto de SCRIPT_DIR (la ubicacion del plugin).
 
 # --- Colores ---
 RED='\033[0;31m'
@@ -43,9 +44,21 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+# SCRIPT_DIR: ubicacion de ESTE script (el plugin). Sirve para invocar otros
+# sub-scripts del plugin (tdd/tooling/batch/parallel/iac/scaffold-pipeline.sh).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# PROJECT_ROOT: repo objetivo del consumidor (git toplevel del cwd del usuario),
+# donde se crean las sesiones tmux, los logs y events.log. NO se deriva de
+# SCRIPT_DIR porque el plugin ya no vive dentro del repo del consumidor.
+PROJECT_ROOT="$_REPO_TOP"
 EVENTS_LOG="$PROJECT_ROOT/.claude/pipeline/events.log"
+
+# Convierte la ruta de sub-script devuelta por resolve_pipeline (relativa al
+# cwd, p.ej. ./scripts/tdd-pipeline.sh) en una ruta absoluta dentro del plugin,
+# para que el pane tmux la encuentre aunque su cwd sea el repo del consumidor.
+plugin_script() {
+    echo "$SCRIPT_DIR/$(basename "$1")"
+}
 
 log()     { echo -e "${BLUE}[$(date +%H:%M:%S)]${NC} $1"; }
 success() { echo -e "${GREEN}${BOLD}✓${NC} $1"; }
@@ -132,6 +145,8 @@ cmd_single() {
         local reason="${resolved#SKIP:}"
         abort "Issue #$issue no se puede enrutar a un pipeline ($reason)."
     fi
+    # Ruta absoluta al sub-script del plugin (el pane corre con cwd=consumidor).
+    resolved="$(plugin_script "$resolved")"
 
     local pipeline_name
     pipeline_name=$(basename "$resolved" .sh)
@@ -205,7 +220,7 @@ cmd_batch() {
 
     # Pane derecho: batch pipeline
     tmux split-window -h -t "$session:main" -c "$PROJECT_ROOT"
-    tmux send-keys -t "$session:main.1" "./scripts/batch-pipeline.sh $pipeline_flag $issues_str" Enter
+    tmux send-keys -t "$session:main.1" "$SCRIPT_DIR/batch-pipeline.sh $pipeline_flag $issues_str" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -273,7 +288,8 @@ cmd_parallel() {
             continue
         fi
         resolved_issues+=("$issue")
-        resolved_pipelines+=("$resolved")
+        # Ruta absoluta al sub-script del plugin (el pane corre con cwd=consumidor).
+        resolved_pipelines+=("$(plugin_script "$resolved")")
     done
 
     if [ ${#resolved_issues[@]} -eq 0 ]; then
@@ -300,7 +316,7 @@ cmd_parallel() {
     # Nota: el flag --max-parallel se ignora aqui porque cada issue tiene su propio tab
     if [ -n "$max_parallel" ]; then
         warn "--max-parallel no aplica en modo tmux (cada issue tiene su propio tab)."
-        warn "Para limitar concurrencia usa: ./scripts/parallel-pipeline.sh $max_flag $issues_str"
+        warn "Para limitar concurrencia usa: $SCRIPT_DIR/parallel-pipeline.sh $max_flag $issues_str"
     fi
 }
 
@@ -326,7 +342,7 @@ cmd_tooling() {
     tmux send-keys -t "$session:main" "tail -f '$EVENTS_LOG'" Enter
 
     tmux split-window -h -t "$session:main" -c "$PROJECT_ROOT"
-    tmux send-keys -t "$session:main.1" "./scripts/tooling-pipeline.sh $issue" Enter
+    tmux send-keys -t "$session:main.1" "$SCRIPT_DIR/tooling-pipeline.sh $issue" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -356,7 +372,7 @@ cmd_infra() {
     tmux send-keys -t "$session:main" "tail -f '$EVENTS_LOG'" Enter
 
     tmux split-window -h -t "$session:main" -c "$PROJECT_ROOT"
-    tmux send-keys -t "$session:main.1" "./scripts/iac-pipeline.sh $issue" Enter
+    tmux send-keys -t "$session:main.1" "$SCRIPT_DIR/iac-pipeline.sh $issue" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -420,7 +436,7 @@ cmd_scaffold() {
     tmux send-keys -t "$session:main" "tail -f '$EVENTS_LOG'" Enter
 
     tmux split-window -h -t "$session:main" -c "$PROJECT_ROOT"
-    tmux send-keys -t "$session:main.1" "./scripts/scaffold-pipeline.sh $pipeline_args" Enter
+    tmux send-keys -t "$session:main.1" "$SCRIPT_DIR/scaffold-pipeline.sh $pipeline_args" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
