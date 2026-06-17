@@ -223,6 +223,8 @@ Listo. PR #N:
 
 Cada comentario de review es evidencia de un gap en las instrucciones de un agente. Esta fase traza las correcciones hasta su origen y propone mejoras.
 
+> **Modelo plugin.** Tras la extraccion del harness al plugin `mefisto`, los agentes/skills del marco ya **no viven en el repo consumidor**: estan en el cache del plugin (`~/.claude/plugins/cache/.../mefisto/<version>/agents/`), read-only y versionado. Por eso una mejora a un agente/skill del harness **no se puede editar en la rama del PR del consumidor**: se enruta como **draft** (`estado:borrador`) al repo de Mefisto via `gh -R`, igual que hacen el `planner` y el `tooling-investigator` publicados (ver `CLAUDE.md` "Routing cross-repo: solo drafts" y ADR-0019). La edicion en-rama queda reservada a lo que realmente vive en el consumidor (un ADR local del proyecto, convenciones de su `CLAUDE.md`, un fixture/helper propio).
+
 ### 5.1 Trazar correcciones a su origen
 
 Lee el body del PR — el pipeline TDD registra decisiones de cada agente (test-writer, implementer, reviewer) en secciones `<details>`. Para cada comentario clasificado como "corregir":
@@ -242,7 +244,8 @@ Para cada gap identificado, proponer:
 ## Propuesta de mejora — PR #N
 
 ### Ajuste 1: [descripcion breve]
-- **Agente/skill afectado**: .claude/agents/implementer.md (o skill, o script)
+- **Agente/skill afectado**: `implementer` (o `reviewer`, `test-writer`, skill, pipeline). Si es del harness, vive en el plugin `mefisto`, no en `.claude/agents/` del consumidor.
+- **Destino del ajuste**: draft en el harness | edicion local en el consumidor
 - **Seccion**: [nombre de la seccion donde iria el cambio]
 - **Tipo de gap**: regla faltante | regla ignorada | conocimiento dominio | limitacion framework
 - **Causa raiz**: [por que el agente tomo la decision incorrecta]
@@ -250,6 +253,8 @@ Para cada gap identificado, proponer:
 
 ### Ajuste 2: ...
 ```
+
+El **destino** se decide por donde vive el archivo a tocar: un agente/skill/pipeline/hook del harness va como **draft a Mefisto** (no es editable desde el consumidor); un ADR local o una convencion del `CLAUDE.md` del consumidor se **edita en-rama**. La Fase 5.4 detalla cada caso.
 
 Si el PR no tuvo correcciones que ameriten mejoras (todos los comentarios eran "explicar" o "resuelto"), indica que no hay ajustes necesarios y salta a la field note.
 
@@ -261,23 +266,77 @@ Muestra las propuestas. **Espera aprobacion explicita.** El usuario puede:
 - Reformular la redaccion de una regla
 - Agregar contexto que enriquezca la mejora
 
-### 5.4 Aplicar ajustes aprobados
+### 5.4 Aplicar los ajustes aprobados
 
-Edita los archivos de agentes/skills con los cambios aprobados. Usa `Edit` para modificar archivos existentes.
+Cada ajuste aprobado tiene un **destino** segun donde viva el archivo a tocar:
 
-Antes de commitear, verifica que **no estas en `main`**. Si lo estuvieras (caso excepcional), crea una rama dedicada antes de cualquier cambio:
+| Destino | Donde vive el archivo | Accion |
+|---|---|---|
+| **Harness** (`mefisto`) | Cache del plugin (`~/.claude/plugins/cache/.../mefisto/<version>/`), read-only y versionado | **Crear un draft** (`estado:borrador`) en el repo de Mefisto via `gh -R` |
+| **Consumidor** (este repo) | ADR local del proyecto (`docs/adr/`), convencion de su `CLAUDE.md`, fixture/helper propio | **Editar en-rama** con `Edit`, commit en la rama del PR |
+
+#### Detectar el modelo (plugin vs local)
+
+El guard del inicio del skill ya garantiza que **no** hay `.claude-plugin/plugin.json` en el cwd (no estas en Mefisto). Falta confirmar si los agentes del harness viven localmente o en el cache del plugin:
+
+```bash
+# Modelo plugin: el harness se instala via marketplace; sus agentes NO estan en el consumidor.
+if [ ! -d ".claude/agents" ] || [ -z "$(ls -A .claude/agents 2>/dev/null)" ]; then
+    echo "Modelo plugin: las mejoras a agentes/skills del harness se enrutan como DRAFT a Mefisto."
+fi
+```
+
+- **Modelo plugin** (caso normal hoy): no hay `.claude/agents/` propios en el consumidor → toda mejora a un agente/skill del harness se enruta como draft a Mefisto (siguiente bloque).
+- **Modelo local** (legado pre-extraccion): si el consumidor todavia conserva copias locales en `.claude/agents/`, esos archivos si se pueden editar en-rama como cualquier archivo del consumidor.
+
+#### Si el ajuste es al harness: crear un draft cross-repo
+
+Reutiliza el mismo routing que el `planner` y el `tooling-investigator` publicados (ver `CLAUDE.md` "Routing cross-repo: solo drafts" y ADR-0019). Lee el slug del repo de Mefisto (configurable para forks):
+
+```bash
+HARNESS_REPO_SLUG=$(jq -r '.repoSlug // empty' .claude/harness.config.json 2>/dev/null)
+[ -z "$HARNESS_REPO_SLUG" ] && HARNESS_REPO_SLUG="augusto-romero-arango/eda-evsourcing-azure-harness"
+```
+
+Crea un draft por cada ajuste aprobado (o uno agrupando ajustes al mismo agente), describiendo el gap y el cambio propuesto:
+
+```bash
+gh issue create -R "$HARNESS_REPO_SLUG" \
+  --title "[verbo infinitivo] [que cosa]" \
+  --label "estado:borrador,tipo:tooling" \
+  --body "$(cat <<'DRAFTEOF'
+## Idea
+[Gap detectado + cambio propuesto en el agente/skill del harness]
+
+## Origen
+- Descubierto desde el consumidor [nombre o slug del repo del consumidor], review del PR #<numero>
+- Agente/skill del harness afectado: <implementer | reviewer | test-writer | ...>
+- Tipo de gap: regla faltante | regla ignorada | conocimiento dominio | limitacion framework
+- Causa raiz: [por que el agente tomo la decision incorrecta]
+- Field notes: [URL del field-note de la Fase 5.5]
+DRAFTEOF
+)"
+```
+
+**Importante** (igual que el resto del routing cross-repo):
+- Solo `estado:borrador` y `tipo:tooling`. **No agregues** `dom:`, `estado:listo`, ni intentes refinar el draft. El refinamiento ocurre dentro del repo de Mefisto con `/mefisto-plan`.
+- Captura el numero del draft creado: va en la columna "Ajuste aplicado" de la field note (5.5) como `Draft propuesto en harness #N`.
+- Si `gh -R` falla con 403 (sin permisos), no insistas: indica al usuario que cree el draft manualmente desde la UI de GitHub con los datos recopilados.
+
+> El #37 del repo de Mefisto es exactamente el resultado de aplicar este routing a mano cuando la Fase 5.4 todavia asumia edicion en-rama; sirve de ejemplo del comportamiento esperado.
+
+#### Si el ajuste es local del consumidor: editar en-rama
+
+Solo para lo que **realmente vive en el consumidor** (un ADR local del proyecto, una convencion de su `CLAUDE.md`, un fixture/helper). Edita con `Edit` y commitea en la **misma rama del PR**, en commit separado del de correcciones de codigo.
+
+Antes de commitear, verifica que **no estas en `main`** (guard idempotente; en el flujo normal ya estas en la rama del PR por el `git checkout <headRefName>` de la Fase 1.1, asi que no dispara):
 
 ```bash
 BRANCH=$(git symbolic-ref --short HEAD)
 if [ "$BRANCH" = "main" ]; then
-    # Idempotente: si la rama ya existe (re-ejecucion del fix-review),
-    # hace switch a ella; si no, la crea.
-    git switch -c "docs/agentes-mejoras-pr-${ARGUMENTS}" 2>/dev/null \
-        || git switch "docs/agentes-mejoras-pr-${ARGUMENTS}"
+    git switch -c "docs/convenciones-pr-${ARGUMENTS}" 2>/dev/null \
+        || git switch "docs/convenciones-pr-${ARGUMENTS}"
 fi
-
-# Re-verifica antes de commitear. Si por algun motivo seguis en main,
-# aborta para no pushear directo.
 BRANCH=$(git symbolic-ref --short HEAD)
 if [ "$BRANCH" = "main" ]; then
     echo "ERROR: no se pudo cambiar de main. Aborta la Fase 5.4."
@@ -285,25 +344,19 @@ if [ "$BRANCH" = "main" ]; then
 fi
 ```
 
-En el flujo normal de fix-review ya estas en la rama del PR (Fase 1.1 hace `git checkout <headRefName>`), asi que el bloque anterior simplemente no dispara.
-
-Commit separado del de correcciones de codigo, en la **misma rama del PR**:
-
 ```
-docs(agentes): mejorar instrucciones a partir de review del PR #N
+docs(convenciones): ajustar [archivo local] a partir del review del PR #N
 
-- [resumen de ajustes por agente]
+- [resumen del ajuste]
 
 Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
 ```
 
-Push a la rama del PR (la misma a la que pusheaste las correcciones en la Fase 3.3). No pushees nunca directo a `main`: la politica del marco (ver `CLAUDE.md` raiz) exige entregar siempre via rama + PR.
-
-Si el usuario pidio explicitamente partir las mejoras en un PR separado, crea una rama nueva con `git switch -c docs/agentes-mejoras-pr-<numero>`, commitea ahi y abre un segundo PR con `gh pr create --base main`. Por defecto, todo va en la rama del PR original.
+Push a la rama del PR. No pushees nunca directo a `main`: la politica del marco (ver `CLAUDE.md` raiz) exige entregar siempre via rama + PR.
 
 ### 5.5 Field note
 
-Genera una field note en `docs/bitacora/field-notes/` con el registro de las lecciones aprendidas. Nombre: `review-pr-<numero>.md`.
+Genera una field note en `docs/bitacora/field-notes/` **del consumidor** con el registro de las lecciones aprendidas. Nombre: `review-pr-<numero>.md`. La field note siempre vive en el consumidor, aunque el ajuste se haya enrutado como draft al harness — solo cambia el destino del "ajuste", no donde se documenta el review.
 
 Estructura:
 
@@ -327,10 +380,11 @@ Estructura:
 
 ## Mejoras a agentes
 
-| Agente       | Gap              | Ajuste aplicado                  |
-|--------------|------------------|----------------------------------|
-| implementer  | regla faltante   | Agregar regla sobre StreamId...  |
-| test-writer  | limitacion fw    | Documentar overload de Then()... |
+| Agente       | Gap              | Destino     | Ajuste aplicado                       |
+|--------------|------------------|-------------|---------------------------------------|
+| implementer  | regla faltante   | harness     | Draft propuesto en harness #N         |
+| test-writer  | limitacion fw    | harness     | Draft propuesto en harness #N         |
+| (ADR local)  | conocimiento dom | consumidor  | Editado en-rama (commit abc1234)      |
 
 ## Lecciones
 
@@ -347,6 +401,6 @@ Estructura:
 - **Agrupa cambios relacionados en un solo commit.** No hagas un commit por comentario.
 - **Si el triaje revela que todos los comentarios ya estan resueltos**, salta directamente a la Fase 4 (responder).
 - **Siempre verifica build + tests antes de hacer push.** Si fallan, no hagas push.
-- **Las mejoras a agentes van en commit separado en la misma rama del PR.** Nunca se pushean directo a `main`; si el usuario quiere partirlas en otro PR, crea rama nueva y abre un segundo PR contra `main`.
+- **Las mejoras a agentes/skills del harness se enrutan como draft (`estado:borrador`) al repo de Mefisto via `gh -R`**, no se editan en la rama del PR del consumidor: esos archivos viven en el cache del plugin (read-only). Solo los ajustes a archivos que viven en el consumidor (ADR local, convenciones de su `CLAUDE.md`, fixtures propios) se editan en-rama, en commit separado y nunca directo a `main`.
 - **La field note siempre se genera**, incluso si no hubo mejoras a agentes — el registro del review tiene valor historico.
 - Comunica en espanol. Las respuestas a los comentarios del PR se redactan en el mismo idioma del comentario original.

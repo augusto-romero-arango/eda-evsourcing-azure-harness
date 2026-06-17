@@ -9,6 +9,10 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 - **Microconvencion de estilo "condiciones en positivo"** en `implementer.md`: prescribe preferir `if (existe)` sobre `if (!existe)`, ordenar las ramas `if`/`else` para que la guarda quede afirmativa, y documenta la excepcion de las guard clauses / early-return. El `reviewer` la verifica en fase refactor bajo el lente "Legible". Tambien se corrigio el ejemplo canonico de crear-o-actualizar que mostraba la guarda negada.
 - **Recordatorio de CHANGELOG en `/mefisto-tooling`**: el pipeline interno verifica al final (warning, no gate) si el PR anadio contenido bajo `## [Unreleased]` en `CHANGELOG.md` y, de no ser asi, emite un recordatorio accionable. El PR se crea igual. Evita que los cambios lleguen a `main` con `[Unreleased]` vacio y rompan la fase *prepare* de `/mefisto-release` (issue #36).
 
+### Changed
+
+- **Fase 5 de `/fix-review` (publicado) adaptada al modelo plugin** (issue #38): las mejoras a agentes/skills del harness ya no se editan en la rama del PR del consumidor (esos archivos viven read-only en el cache del plugin), sino que se enrutan como **draft** (`estado:borrador`) al repo de Mefisto via `gh -R`, reutilizando el routing cross-repo del `planner` y el `tooling-investigator`. La edicion en-rama queda reservada a lo que realmente vive en el consumidor (ADR local, convenciones de su `CLAUDE.md`). Se documenta la deteccion de modelo plugin y la field note sigue generandose en el consumidor.
+
 ## [0.3.0] - 2026-06-17
 
 ### Added
