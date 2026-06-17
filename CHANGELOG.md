@@ -4,6 +4,10 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+### Added
+
+- **Recordatorio de CHANGELOG en `/mefisto-tooling`**: el pipeline interno verifica al final (warning, no gate) si el PR anadio contenido bajo `## [Unreleased]` en `CHANGELOG.md` y, de no ser asi, emite un recordatorio accionable. El PR se crea igual. Evita que los cambios lleguen a `main` con `[Unreleased]` vacio y rompan la fase *prepare* de `/mefisto-release` (issue #36).
+
 ## [0.3.0] - 2026-06-17
 
 ### Added

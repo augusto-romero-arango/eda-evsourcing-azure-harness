@@ -469,6 +469,19 @@ if [ -z "$COMMITS_LIST" ]; then
     abort "No hay commits en la rama $BRANCH_NAME."
 fi
 
+# --- Verificar registro en el CHANGELOG (warning, NO gate) ---
+# El PR se crea igual; esto solo recuerda mantener [Unreleased] al dia para que
+# /mefisto-release no aborte luego con la seccion vacia (ver issue #36).
+header "Verificando CHANGELOG [Unreleased]"
+
+if check_unreleased_touched "$WORKTREE_PATH" "$SNAPSHOT_COMMIT"; then
+    success "El PR actualiza la seccion [Unreleased] del CHANGELOG"
+else
+    warn "Este PR no anade contenido bajo '## [Unreleased]' en CHANGELOG.md."
+    warn "Considera anadir una nota bajo '## [Unreleased]' en CHANGELOG.md antes del proximo release."
+    warn "(la fase prepare de /mefisto-release aborta si [Unreleased] esta vacio). El PR se crea igual."
+fi
+
 # --- Sincronizar con main ---
 header "Sincronizando con main"
 
