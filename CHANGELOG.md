@@ -4,6 +4,10 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+### Added
+
+- **Microconvencion de estilo "condiciones en positivo"** en `implementer.md`: prescribe preferir `if (existe)` sobre `if (!existe)`, ordenar las ramas `if`/`else` para que la guarda quede afirmativa, y documenta la excepcion de las guard clauses / early-return. El `reviewer` la verifica en fase refactor bajo el lente "Legible". Tambien se corrigio el ejemplo canonico de crear-o-actualizar que mostraba la guarda negada.
+
 ## [0.3.0] - 2026-06-17
 
 ### Added
