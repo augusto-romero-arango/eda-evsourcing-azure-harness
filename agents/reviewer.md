@@ -255,6 +255,7 @@ Luego revisa manualmente buscando:
 - Nombres de variables, metodos, parametros que no revelan su intencion
 - Codigo verboso donde una expresion idiomatica de C# lo simplificaria (pattern matching, LINQ, records)
 - Codigo duplicado entre metodos o clases
+- Guardas condicionales en negativo (`if (!existe)`) en una bifurcacion `if`/`else` que se leen mejor en positivo (`if (existe)`) permutando las ramas. Excepcion: guard clauses / early-return donde la negacion expresa la precondicion de salida (`if (!valido) return;`), que se mantienen. Ver "Condiciones en positivo" en `implementer.md`.
 
 **Eficiencia algoritmica:**
 - Loops anidados innecesarios sobre colecciones que podrian resolverse con LINQ
@@ -375,6 +376,7 @@ Si el implementer cito precedentes del codigo en `stage-2-implementer.md`, verif
 | Smoke tests: SkipWhen, secrets, cobertura | ok / falla / n/a | ... |
 | Tests via ToString/comportamiento | ok / falla / n/a | ... |
 | Sin numeros magicos | ok / falla / n/a | ... |
+| Condiciones en positivo (guardas if/else afirmativas) | ok / falla / n/a | ... |
 
 ### Elegancia del codigo
 - [Hallazgos sobre compacidad, legibilidad, idiomatismo, robustez, eficiencia o limpieza]
