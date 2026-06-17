@@ -152,16 +152,16 @@ public async Task HandleAsync(MiEvento evento, CancellationToken ct)
 
     var existe = await eventStore.ExistsAsync<ControlDiarioAggregateRoot>(streamId, ct);
 
-    if (!existe)
-    {
-        var control = ControlDiarioAggregateRoot.Iniciar(evento);
-        eventStore.StartStream(control);
-    }
-    else
+    if (existe)
     {
         var control = await eventStore.GetAggregateRootAsync<ControlDiarioAggregateRoot>(
             streamId, ct);
         control!.AsignarTurno(evento);
+    }
+    else
+    {
+        var control = ControlDiarioAggregateRoot.Iniciar(evento);
+        eventStore.StartStream(control);
     }
 }
 ```
@@ -398,6 +398,51 @@ protected const int MinutosPorDia = 1440;
 public int DuracionEnMinutos() => MinutosAbsolutoFin - MinutosAbsolutoInicio;
 public int MinutosAbsolutoInicio => HoraInicio.Hour * MinutosPorHora + HoraInicio.Minute + DiaOffsetInicio * MinutosPorDia;
 ```
+
+### Condiciones en positivo: `if (existe)` sobre `if (!existe)`
+
+Evalua las guardas condicionales en forma afirmativa. Una condicion en positivo (`if (existe)`, `if (esValido)`) se lee mas rapido que su negacion (`if (!existe)`, `if (!esValido)`): el lector no tiene que invertir mentalmente el predicado para entender que rama se ejecuta.
+
+```csharp
+// INCORRECTO: la guarda se evalua en negativo
+if (!existe)
+{
+    var control = ControlDiarioAggregateRoot.Iniciar(evento);
+    eventStore.StartStream(control);
+}
+else
+{
+    var control = await eventStore.GetAggregateRootAsync<ControlDiarioAggregateRoot>(streamId, ct);
+    control!.AsignarTurno(evento);
+}
+
+// CORRECTO: la guarda se evalua en positivo; las ramas se permutan (comportamiento identico)
+if (existe)
+{
+    var control = await eventStore.GetAggregateRootAsync<ControlDiarioAggregateRoot>(streamId, ct);
+    control!.AsignarTurno(evento);
+}
+else
+{
+    var control = ControlDiarioAggregateRoot.Iniciar(evento);
+    eventStore.StartStream(control);
+}
+```
+
+Cuando ambas ramas (`if`/`else`) estan presentes, ordenalas para que la guarda quede afirmativa. La permutacion es puramente sintactica: invierte la condicion e intercambia los cuerpos, sin cambiar el comportamiento.
+
+**Excepcion razonable: guard clauses / early-return.** Cuando la negacion expresa una **precondicion de salida** —corta el flujo antes de continuar— la forma negada es la idiomatica y se mantiene. No hay una rama `else` con la que competir: la negacion marca la condicion que detiene el procesamiento.
+
+```csharp
+// CORRECTO: la negacion es una guard clause, no una bifurcacion if/else
+if (!resultado.IsValid)
+    return new BadRequestObjectResult(...);
+
+if (turno is null)
+    throw new InvalidOperationException(Mensajes.TurnoNoEncontrado);
+```
+
+Invertir una guard clause obligaria a envolver todo el cuerpo restante en un `if`, anadiendo un nivel de anidamiento y reduciendo la legibilidad. La regla aplica a las bifurcaciones `if`/`else`, no a los early-return.
 
 ### Diseño de factories: evaluar si el secundario supera al principal
 

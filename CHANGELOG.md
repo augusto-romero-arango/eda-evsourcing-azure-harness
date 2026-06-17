@@ -6,6 +6,7 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ### Added
 
+- **Microconvencion de estilo "condiciones en positivo"** en `implementer.md`: prescribe preferir `if (existe)` sobre `if (!existe)`, ordenar las ramas `if`/`else` para que la guarda quede afirmativa, y documenta la excepcion de las guard clauses / early-return. El `reviewer` la verifica en fase refactor bajo el lente "Legible". Tambien se corrigio el ejemplo canonico de crear-o-actualizar que mostraba la guarda negada.
 - **Recordatorio de CHANGELOG en `/mefisto-tooling`**: el pipeline interno verifica al final (warning, no gate) si el PR anadio contenido bajo `## [Unreleased]` en `CHANGELOG.md` y, de no ser asi, emite un recordatorio accionable. El PR se crea igual. Evita que los cambios lleguen a `main` con `[Unreleased]` vacio y rompan la fase *prepare* de `/mefisto-release` (issue #36).
 
 ### Changed
