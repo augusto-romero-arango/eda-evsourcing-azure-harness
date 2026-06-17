@@ -171,7 +171,9 @@ cmd_single() {
 
     # Pane derecho: pipeline
     tmux split-window -h -t "$session:main" -c "$PROJECT_ROOT"
-    tmux send-keys -t "$session:main.1" "$resolved $issue $extra_args" Enter
+    # La ruta del sub-script va entre comillas simples por si el plugin esta
+    # instalado bajo una ruta con espacios (mismo criterio que '$EVENTS_LOG').
+    tmux send-keys -t "$session:main.1" "'$resolved' $issue $extra_args" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -220,7 +222,7 @@ cmd_batch() {
 
     # Pane derecho: batch pipeline
     tmux split-window -h -t "$session:main" -c "$PROJECT_ROOT"
-    tmux send-keys -t "$session:main.1" "$SCRIPT_DIR/batch-pipeline.sh $pipeline_flag $issues_str" Enter
+    tmux send-keys -t "$session:main.1" "'$SCRIPT_DIR/batch-pipeline.sh' $pipeline_flag $issues_str" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -300,7 +302,7 @@ cmd_parallel() {
     # Un pane por issue (escalonado para evitar contencion de API)
     for i in "${!resolved_issues[@]}"; do
         tmux split-window -h -t "$session:main" -c "$PROJECT_ROOT"
-        tmux send-keys -t "$session:main" "${resolved_pipelines[$i]} ${resolved_issues[$i]}" Enter
+        tmux send-keys -t "$session:main" "'${resolved_pipelines[$i]}' ${resolved_issues[$i]}" Enter
         # Escalonar lanzamientos: 30s entre cada uno para evitar que multiples
         # invocaciones de claude -p compitan por recursos de API simultaneamente
         if [ "$i" -lt "$(( ${#resolved_issues[@]} - 1 ))" ]; then
@@ -342,7 +344,7 @@ cmd_tooling() {
     tmux send-keys -t "$session:main" "tail -f '$EVENTS_LOG'" Enter
 
     tmux split-window -h -t "$session:main" -c "$PROJECT_ROOT"
-    tmux send-keys -t "$session:main.1" "$SCRIPT_DIR/tooling-pipeline.sh $issue" Enter
+    tmux send-keys -t "$session:main.1" "'$SCRIPT_DIR/tooling-pipeline.sh' $issue" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -372,7 +374,7 @@ cmd_infra() {
     tmux send-keys -t "$session:main" "tail -f '$EVENTS_LOG'" Enter
 
     tmux split-window -h -t "$session:main" -c "$PROJECT_ROOT"
-    tmux send-keys -t "$session:main.1" "$SCRIPT_DIR/iac-pipeline.sh $issue" Enter
+    tmux send-keys -t "$session:main.1" "'$SCRIPT_DIR/iac-pipeline.sh' $issue" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -436,7 +438,7 @@ cmd_scaffold() {
     tmux send-keys -t "$session:main" "tail -f '$EVENTS_LOG'" Enter
 
     tmux split-window -h -t "$session:main" -c "$PROJECT_ROOT"
-    tmux send-keys -t "$session:main.1" "$SCRIPT_DIR/scaffold-pipeline.sh $pipeline_args" Enter
+    tmux send-keys -t "$session:main.1" "'$SCRIPT_DIR/scaffold-pipeline.sh' $pipeline_args" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
