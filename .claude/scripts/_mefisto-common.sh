@@ -111,3 +111,56 @@ validate_mefisto_scope_changes() {
         return 1
     fi
 }
+
+# check_unreleased_touched <worktree_path> <base_commit>
+#
+# Verifica (de forma INFORMATIVA) si los cambios del worktree
+# (base..HEAD + working tree) anadieron contenido nuevo bajo el header
+# "## [Unreleased]" de CHANGELOG.md.
+#
+# No basta con que CHANGELOG.md aparezca en el diff: se compara el cuerpo de la
+# seccion [Unreleased] en el commit base contra el del working tree actual y se
+# considera "tocada" solo si quedo contenido no vacio que difiere del base
+# (es decir, este diff aporto algo a la seccion).
+#
+# Reutiliza el mismo patron regex que extract_unreleased_section en
+# mefisto-release.sh para localizar el bloque [Unreleased].
+#
+# Retorna:
+#   0  -> la seccion [Unreleased] recibio contenido (o no se pudo verificar)
+#   1  -> el diff NO anadio nada a [Unreleased]
+#
+# IMPORTANTE: este es un check de tipo *warning*, NO un gate. El pipeline nunca
+# debe abortar por su resultado; solo emitir un recordatorio accionable. A falta
+# de python3 degrada a 0 (no se pudo verificar) para no emitir falsos avisos.
+check_unreleased_touched() {
+    local wt="$1"
+    local base="$2"
+
+    # CHANGELOG.md vive en la raiz del repo de Mefisto.
+    local changelog="$wt/CHANGELOG.md"
+    [ -f "$changelog" ] || return 1
+
+    # Sin python3 no podemos parsear la seccion con fiabilidad; al ser un check
+    # informativo, retornamos 0 para no emitir un recordatorio que seria un
+    # falso positivo.
+    command -v python3 >/dev/null 2>&1 || return 0
+
+    local base_changelog
+    base_changelog=$(git -C "$wt" show "${base}:CHANGELOG.md" 2>/dev/null || true)
+
+    MEFISTO_BASE_CHANGELOG="$base_changelog" python3 - "$changelog" <<'PYEOF'
+import os, re, sys
+
+def unreleased_body(text):
+    m = re.search(r'(?ms)^##\s*\[Unreleased\][^\n]*\n(.*?)(?=^##\s*\[|\Z)', text)
+    return m.group(1).strip() if m else ""
+
+with open(sys.argv[1], encoding='utf-8') as f:
+    current = unreleased_body(f.read())
+base = unreleased_body(os.environ.get('MEFISTO_BASE_CHANGELOG', ''))
+
+# "Tocada" si hay contenido no vacio que difiere del base (este diff lo aporto).
+sys.exit(0 if (current and current != base) else 1)
+PYEOF
+}
