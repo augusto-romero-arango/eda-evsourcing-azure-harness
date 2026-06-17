@@ -4,6 +4,35 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+### Added
+
+- **Set de skills, agentes y pipelines internos** para evolucionar el propio harness (no se publican vía marketplace; viven en `.claude/`): agentes `mefisto-planner` y `mefisto-investigator`, y comandos `/mefisto-plan`, `/mefisto-tooling`, `/mefisto-bug`, `/mefisto-fix-review`, `/mefisto-merge`, `/mefisto-work-status`, con sus pipelines `_mefisto-common.sh`, `mefisto-tmux-pipeline.sh` y `mefisto-tooling-pipeline.sh`.
+- **Skill interno `/mefisto-release`** para versionar y publicar el plugin siguiendo SemVer y Keep a Changelog (fases prepare y publish).
+- **Skill interno `/mefisto-sequential`** para procesar varios issues internos en cadena dentro de una sesión tmux, con `mefisto-batch-pipeline.sh`.
+- **Routing de drafts cross-repo**: el `planner` y el `tooling-investigator` publicados pueden crear drafts (`estado:borrador`) en el repo de Mefisto cuando detectan que un problema del consumidor pertenece al harness.
+- **Slug del repo de Mefisto configurable** en `validate_consumer_scope_changes`, en lugar de estar hardcoded.
+- **Guards defensivos "cwd != Mefisto"** en todos los skills publicados, en los pipelines TDD/IaC/scaffold/tmux y en los scripts auxiliares (`appinsights-query`, `eda-lint`, `setup-github-*`), para que el tooling publicado nunca opere por error sobre el repo del propio plugin.
+- **Scope-gate del `/tooling` publicado**, que lo restringe a archivos del consumidor y rechaza el PR si toca rutas reservadas al plugin.
+- **ADR-0019** "Skills publicados vs internos", que formaliza la separación entre el paquete distribuido y el tooling interno.
+- **Suite de tests de guards y scope** en `scripts/tests/test-guards.sh`.
+- **LICENSE MIT** al publicar el repositorio.
+
+### Changed
+
+- **Documentado el modelo de skills publicados vs internos** en `CLAUDE.md` y `README.md`.
+- **Regla de entrega**: todo cambio se hace en rama y se entrega vía Pull Request; nunca contra `main` directo (documentado en `CLAUDE.md`).
+- **`eda-modeler`**: eliminados los dominios y contratos hardcoded de un consumidor concreto.
+- **`tooling-investigator`**: aclarados sus límites y retirada la etiqueta `dom:tooling` (inexistente en Mefisto).
+- **Eliminado el `git push` directo a `main`** en el agente `historiador` y en los skills `fix-review` / `mefisto-fix-review`; ahora pasan por rama + PR.
+- **README**: añadida la sección "El nombre" con la cita de Fausto que origina el nombre interno `mefisto`.
+
+### Fixed
+
+- **Resolución del repo objetivo del consumidor** en `tmux-pipeline.sh` y `eda-lint.sh`: ya no se deriva de la ubicación del script (`$SCRIPT_DIR/..`, que bajo el modelo de plugin apunta al propio harness) sino del toplevel del repo activo vía `git rev-parse --show-toplevel`.
+- **Referencias rotas** en los skills `draft`, `health-check` y `show-flow`, y en el ADR-0007.
+- **Referencias a ADRs con numeración del consumidor** en los agentes publicados (`planner`, `reviewer`, `test-writer`) y en `implement`.
+- **Resolución del pane del script en tmux** vía `pane_id` en lugar del índice de pane, frágil ante reordenamientos.
+
 ## [0.2.0] — 2026-05-15
 
 ### Changed (BREAKING)
