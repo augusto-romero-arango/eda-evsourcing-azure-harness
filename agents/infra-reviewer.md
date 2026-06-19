@@ -42,6 +42,7 @@ Busca activamente estos problemas:
 
 **Arquitectura:**
 - Cada Function App tiene su propia managed identity o usa system-assigned
+- **Cada Function App tiene su Service Plan dedicado (no comparten plan)**: cada `module function_app_<dominio>` apunta a su propio `module service_plan_<dominio>` (`service_plan_id = module.service_plan_<dominio>.id`), nunca a un plan compartido. Un plan compartido entre dominios reintroduce el noisy neighbor que proscribe ADR-0020 -- senalalo como hallazgo de arquitectura.
 - El Service Bus usa Standard o Premium (nunca Basic para topics)
 - Los recursos de monitoreo (App Insights, Log Analytics) estan correctamente conectados
 
@@ -103,9 +104,12 @@ Formato del resumen:
 ```
 PLAN APROBADO — <N> recursos a crear, <M> a modificar, <K> a destruir
 - Crear: azurerm_resource_group.main (ej: rg-<proyecto>-dev)
-- Crear: azurerm_linux_function_app.<dominio>
+- Crear: azurerm_service_plan.<dominio> (asp-<proyecto>-<env>-<dominio>, dedicado por dominio, ADR-0020)
+- Crear: azurerm_linux_function_app.<dominio> (en su plan dedicado, no compartido)
 ...
 ```
+
+Si el plan crea Function Apps, verifica que cada una aparezca junto a su propio Service Plan dedicado y reflejalo en el resumen; si dos Function Apps comparten un mismo `azurerm_service_plan`, marcalo como hallazgo de arquitectura (viola ADR-0020).
 
 ### 7. Commitear si hubo correcciones
 
