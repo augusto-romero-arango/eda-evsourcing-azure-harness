@@ -100,9 +100,33 @@ Responde con:
 Batch secuencial mefisto lanzado en tmux. Para monitorear:
   tmux -CC attach -t mefisto-batch-<timestamp>
 
-Los issues se procesaran en orden: pipeline -> PR -> merge -> siguiente.
+Los issues se procesaran en orden: pipeline -> PR -> merge -> sync verificado -> siguiente.
 Usa /mefisto-work-status para ver el progreso sin salir de aqui.
 ```
+
+### 5. Sincronizacion verificada entre eslabones (fail-loud)
+
+El motor (`.claude/scripts/mefisto-batch-pipeline.sh`) procesa los issues en orden
+`pipeline -> PR -> merge -> sync -> siguiente`. Para que una cadena con dependencias
+funcione (ej. #44 depende de #43), cada eslabon debe construirse sobre el merge del
+anterior. El batch lo garantiza asi:
+
+- **Arranca solo en main/master.** Cada worktree del tooling-pipeline se crea desde la
+  rama activa del repo principal; si no estas en main/master, el motor aborta antes de
+  empezar con un mensaje claro (haz `git switch main` primero).
+- **Sync verificado tras cada merge.** Despues de mergear el PR de un eslabon, el motor
+  hace `git fetch origin main`, fast-forwardea (`--ff-only`) main local a `origin/main`
+  y **confirma** que el commit de merge del PR quedo presente en main local antes de
+  arrancar el siguiente issue.
+- **Fail-loud, no best-effort.** Si el sync no se concreta (no se pudo confirmar el
+  merge commit, hay divergencia local, el fetch fallo, etc.) y aun quedan issues por
+  procesar, el motor **aborta la cadena** con un mensaje claro en lugar de continuar en
+  silencio sobre un main desactualizado. Solo en el ultimo eslabon (sin un siguiente que
+  dependa de el) degrada a warning.
+
+Esto reemplaza el viejo `git pull origin main` best-effort, que silenciaba el fallo con
+un warning `(continuando)` y dejaba que la cadena siguiera sobre un main potencialmente
+atrasado.
 
 ## Reglas
 
