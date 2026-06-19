@@ -37,8 +37,10 @@ Esto alinea el harness con la guia oficial de Azure:
 
 ### Proscripciones (que NO usar)
 
-- **No usar el plan Consumption `Y1`** con .NET 10+ / isolated worker para estos dominios. El modelo de escalado dinamico del Consumption es incompatible con un proceso que mantiene un agente de durabilidad always-on con estado de leadership: el host puede apagar la instancia entre invocaciones, matando el poll del outbox. El piso es un plan dedicado (Basic o superior).
-- **No usar Wolverine `DurabilityMode.Serverless`**. Ese modo **desactiva el outbox/inbox durable transaccional**: rompe la garantia de que un evento persistido en Marten se publica a Service Bus de forma confiable (ver ADR-0001 y ADR-0003). El marco depende del outbox durable; `Serverless` lo elimina. El modo correcto sigue siendo `Solo`.
+- **No usar el plan Consumption `Y1`** con .NET 10+ / isolated worker para estos dominios. El modelo de escalado dinamico del Consumption es incompatible con un proceso que mantiene un agente de durabilidad always-on con estado en memoria (los agentes y bucles de polling que `Solo` asigna localmente): el host puede apagar la instancia entre invocaciones, matando el poll del outbox. El piso es un plan dedicado (Basic o superior).
+- **No usar Wolverine `DurabilityMode.Serverless`**. Ese modo **desactiva toda la persistencia de mensajes** -- incluido el outbox/inbox durable transaccional [6]: rompe la garantia de que un evento persistido en Marten se publica a Service Bus de forma confiable (ver ADR-0001 y ADR-0003). El marco depende del outbox durable; `Serverless` lo elimina. El modo correcto sigue siendo `Solo`.
+
+  > **Nota terminologica (evitar confusion)**: el "modo serverless" de ADR-0003 y los helpers `...Serverless` del paquete `Cosmos.EventDriven.*` (p. ej. `AgregarWolverineParaComandosServerless`) se refieren al **contexto de hosting** (Wolverine dentro de Azure Functions, sin bus in-process), **no** al enum `DurabilityMode.Serverless` de Wolverine. El `DurabilityMode` efectivo del marco es `Solo` -- por eso el agente de durabilidad sigue activo y poll-eando, que es justo el sintoma de CPU en reposo descrito arriba. No cambiar a `DurabilityMode.Serverless` "para alinear nombres": eliminaria el outbox durable del que depende el marco.
 
 ### Defaults del plan
 
@@ -114,6 +116,7 @@ Usar el modo balanceado de Wolverine (con eleccion de lider y reparto de agentes
 - **[3]** "Azure App Service and Azure Functions considerations for multitenancy - Isolation models" -- apps con plan compartido: aislamiento de rendimiento bajo-medio, sujeto a noisy neighbor; un plan por inquilino: aislamiento alto. https://learn.microsoft.com/azure/architecture/guide/multitenant/service/app-service#isolation-models
 - **[4]** "What are Azure App Service plans? - Considerations for running and scaling an app" -- las apps de un mismo plan comparten las mismas VM/recursos de computo. https://learn.microsoft.com/azure/app-service/overview-hosting-plans#considerations-for-running-and-scaling-an-app
 - **[5]** "Best practices for reliable Azure Functions - Choose the correct hosting plan" -- planes de hosting disponibles (Flex Consumption, Premium, Dedicated, Consumption). https://learn.microsoft.com/azure/azure-functions/functions-best-practices
+- **[6]** Wolverine, "Wolverine and Serverless" (Jeremy D. Miller) -- `DurabilityMode.Serverless` desactiva toda la persistencia de mensajes (inbox/outbox transaccional y procesos de durabilidad en background) para entornos serverless; `Solo` optimiza la durabilidad para un unico nodo. https://jeremydmiller.com/2023/10/30/wolverine-and-serverless/ y https://wolverinefx.net/guide/durability/
 - Origen: issue #43, investigacion de fallos intermitentes de smoke en `Bitakora.ControlAsistencia` (CPU del plan B1 compartido saturada en reposo).
 - ADR-0001 (Service Bus, topic por evento): el outbox durable de Wolverine publica a estos topics; por eso no se admite `DurabilityMode.Serverless`.
 - ADR-0003 (stack ES: Marten + Wolverine + Postgres): define el modo serverless de Wolverine y el outbox transaccional.
