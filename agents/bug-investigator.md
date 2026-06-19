@@ -36,8 +36,9 @@ Si el sintoma sugiere un fallo en el pipeline de deploy (Function App que no arr
    dotnet publish src/<RootNamespace>.<Dominio>/ -c Release -r linux-x64 --self-contained false -o /tmp/publish
    ls /tmp/publish/functions.metadata /tmp/publish/host.json
    ```
-4. **Verifica la infraestructura contra el ADR de hosting de Azure Functions del proyecto consumidor**:
+4. **Verifica la infraestructura contra ADR-0020 (hosting de Azure Functions: un App Service Plan por Function App)**:
    - Plan de hosting: al menos B1, nunca Consumption Y1 con .NET 10+.
+   - Plan dedicado por dominio: cada Function App corre en su propio App Service Plan (`asp-<proyecto>-<env>-<dominio>`), nunca uno compartido. Un plan compartido reintroduce el noisy neighbor (agentes de durabilidad always-on de Wolverine compitiendo por el mismo core) que origino #43; si el sintoma es timeouts o health checks lentos, revisa la CPU del plan en reposo.
    - App settings obligatorios: `FUNCTIONS_WORKER_RUNTIME`, `FUNCTIONS_EXTENSION_VERSION`, `WEBSITE_USE_PLACEHOLDER_DOTNETISOLATED`, `WEBSITE_RUN_FROM_PACKAGE`.
    - Comandos de publish: `-r linux-x64 --self-contained false`.
 
