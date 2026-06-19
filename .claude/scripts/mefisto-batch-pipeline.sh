@@ -9,7 +9,20 @@
 #   1. ./.claude/scripts/mefisto-tooling-pipeline.sh <issue>
 #   2. Extraer URL del PR del output
 #   3. gh pr merge <num> --squash --delete-branch
-#   4. git pull origin main (actualiza el worktree principal)
+#   4. Sync VERIFICADO de main local: fetch origin/main + fast-forward y se
+#      CONFIRMA que el commit de merge del PR quedo en main local antes de
+#      arrancar el siguiente issue.
+#
+# Sincronizacion entre eslabones (fail-loud, ver issue #46):
+#   Para que una cadena con dependencias funcione, cada eslabon se construye
+#   sobre el merge del anterior. El motor exige arrancar en main/master (cada
+#   worktree del tooling-pipeline se crea desde la rama activa del repo) y, tras
+#   cada merge, sincroniza main de forma verificada (fetch + ff-only + confirmar
+#   que el merge commit del PR esta presente en main local). Si el sync NO se
+#   concreta y aun quedan issues por procesar, ABORTA la cadena en vez de
+#   continuar sobre un main desactualizado. Se elimino el viejo
+#   `git pull origin main || warn (continuando)`: era best-effort y silenciaba el
+#   fallo de un paso critico.
 #
 # En Mefisto solo existe el pipeline de tooling, asi que no hay flag --pipeline
 # ni enrutamiento por label.
@@ -115,6 +128,70 @@ fail_issue() {
     HAVE_ERRORS=true
 }
 
+# --- Sync VERIFICADO de main entre eslabones (issue #46) ---
+# Tras mergear el PR de un eslabon, deja main local fast-forwardeado a origin/main
+# y CONFIRMA que el commit de merge del PR esta presente antes de arrancar el
+# siguiente issue. Reemplaza el viejo `git pull origin main || warn (continuando)`,
+# que era best-effort y silenciaba el fallo.
+#
+# Args:   $1 = numero de PR ya mergeado
+# Lee:    MAIN_BRANCH (rama activa del repo, validada como main/master al inicio)
+# Set:    MERGE_SHA_SYNCED = SHA del commit de merge confirmado en main local
+# Return: 0 si main local incluye el merge; 1 (con motivo via warn) si no.
+sync_main_after_merge() {
+    local pr_num="$1"
+    local merge_sha="" attempt present=false
+    MERGE_SHA_SYNCED=""
+
+    # 1. SHA del commit de merge del PR (puede tardar en propagarse tras el merge).
+    for attempt in 1 2 3; do
+        merge_sha=$(gh pr view "$pr_num" --json mergeCommit -q '.mergeCommit.oid' 2>/dev/null || true)
+        if [ -n "$merge_sha" ] && [ "$merge_sha" != "null" ]; then
+            break
+        fi
+        sleep 2
+    done
+    if [ -z "$merge_sha" ] || [ "$merge_sha" = "null" ]; then
+        warn "sync: no se pudo determinar el commit de merge del PR #$pr_num"
+        return 1
+    fi
+
+    # 2. Traer origin/main (verificado).
+    if ! git fetch origin main >>"$LOG_FILE_ABS" 2>&1; then
+        warn "sync: git fetch origin main fallo"
+        return 1
+    fi
+
+    # 3. Confirmar que el merge commit llego a origin/main (reintenta por lag del remoto).
+    for attempt in 1 2 3; do
+        if git merge-base --is-ancestor "$merge_sha" origin/main 2>/dev/null; then
+            present=true
+            break
+        fi
+        sleep 2
+        git fetch origin main >>"$LOG_FILE_ABS" 2>&1 || true
+    done
+    if [ "$present" != true ]; then
+        warn "sync: el commit de merge $merge_sha del PR #$pr_num no aparece en origin/main"
+        return 1
+    fi
+
+    # 4. Fast-forward de main local a origin/main (sin merge; falla si hay divergencia).
+    if ! git merge --ff-only origin/main >>"$LOG_FILE_ABS" 2>&1; then
+        warn "sync: no se pudo fast-forwardear $MAIN_BRANCH local a origin/main (posible divergencia local)"
+        return 1
+    fi
+
+    # 5. Confirmar que el merge commit esta en main local (HEAD) antes de seguir.
+    if ! git merge-base --is-ancestor "$merge_sha" HEAD 2>/dev/null; then
+        warn "sync: el commit de merge $merge_sha no quedo en $MAIN_BRANCH local tras el sync"
+        return 1
+    fi
+
+    MERGE_SHA_SYNCED="$merge_sha"
+    return 0
+}
+
 # --- Parsear argumentos ---
 ISSUE_NUMS=()
 STOP_ON_ERROR=false
@@ -168,10 +245,21 @@ if [ -n "$MISSING_DEPS" ]; then
     exit 1
 fi
 
+# --- Verificar que el repo principal arranca en main/master ---
+# El batch crea cada worktree del tooling-pipeline desde la rama activa de este
+# repo. Si no estamos en main, la cadena se construiria sobre una base equivocada
+# y el sync verificado entre eslabones no podria garantizar nada. Fail-loud:
+# abortamos con un mensaje claro en vez de seguir (issue #46, robustez).
+MAIN_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [ "$MAIN_BRANCH" != "main" ] && [ "$MAIN_BRANCH" != "master" ]; then
+    abort "El repo principal esta en la rama '$MAIN_BRANCH', no en main/master. El batch secuencial crea cada worktree desde la rama activa del repo, asi que la cadena con dependencias solo es segura si esa rama es main. Haz 'git switch main' antes de lanzar el batch."
+fi
+
 # --- Cabecera ---
 header "mefisto-batch-pipeline --- Procesamiento secuencial de issues internos"
 log "Pipeline: mefisto-tooling (unico pipeline interno de Mefisto)"
 log "Issues a procesar: ${ISSUE_NUMS[*]}"
+log "Rama base: $MAIN_BRANCH (cada worktree y el sync entre eslabones parten de aqui)"
 log "Modo en error: $([ "$STOP_ON_ERROR" = true ] && echo 'detener' || echo 'continuar')"
 log "Log: $LOG_FILE_ABS"
 
@@ -253,13 +341,32 @@ for ISSUE_NUM in "${ISSUE_NUMS[@]}"; do
         continue
     fi
 
-    # -- Stage 4: Actualizar main local para el siguiente issue --
-    log "Actualizando main local..."
-    git pull origin main >>"$LOG_FILE_ABS" 2>&1 || warn "git pull origin main fallo (continuando)"
+    # -- Stage 4: Sincronizar main local de forma VERIFICADA para el siguiente issue --
+    # Critico para cadenas con dependencias (issue #46): el siguiente eslabon DEBE
+    # partir de un main que ya incluye el merge de este. Fail-loud (CA-1/CA-2): si
+    # el sync no se concreta, abortamos la cadena en vez de silenciar con warn.
+    IS_LAST_ISSUE=false
+    [ "$CURRENT" -eq "$TOTAL" ] && IS_LAST_ISSUE=true
 
-    set_status "$ISSUE_NUM" "completado (PR #$PR_NUM mergeado)"
-    COMPLETED=$((COMPLETED + 1))
-    success "Issue #$ISSUE_NUM completado y mergeado"
+    log "Sincronizando $MAIN_BRANCH local con origin (verificado)..."
+    if sync_main_after_merge "$PR_NUM"; then
+        success "$MAIN_BRANCH local incluye el merge del PR #$PR_NUM (commit ${MERGE_SHA_SYNCED:0:12})"
+        set_status "$ISSUE_NUM" "completado (PR #$PR_NUM mergeado)"
+        COMPLETED=$((COMPLETED + 1))
+        success "Issue #$ISSUE_NUM completado y mergeado"
+    else
+        # El PR ya quedo mergeado, asi que el issue en si esta resuelto; pero el
+        # sync que prepara el siguiente eslabon fallo. Nunca continuamos en
+        # silencio: si hay un eslabon posterior, abortamos la cadena entera.
+        set_status "$ISSUE_NUM" "completado (PR #$PR_NUM mergeado; sync de $MAIN_BRANCH FALLIDO)"
+        COMPLETED=$((COMPLETED + 1))
+        HAVE_ERRORS=true
+        if [ "$IS_LAST_ISSUE" = true ]; then
+            warn "El sync verificado de $MAIN_BRANCH fallo, pero #$ISSUE_NUM era el ultimo eslabon: ningun issue posterior depende de este merge."
+        else
+            abort "Sync verificado de $MAIN_BRANCH tras el PR #$PR_NUM fallo: el commit de merge no quedo confirmado en main local. El siguiente eslabon no puede partir del trabajo de #$ISSUE_NUM, asi que la cadena se aborta para no construir sobre un main desactualizado. Revisa el log: $LOG_FILE_ABS"
+        fi
+    fi
 done
 
 # --- Resumen final ---
