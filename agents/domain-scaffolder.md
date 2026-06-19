@@ -21,6 +21,14 @@ Si CLAUDE.md no declara `RootNamespace` o `SolutionFile`, detente y pide al usua
 El usuario debe darte:
 - **Nombre del dominio** en kebab-case (obligatorio). Ejemplo: `marcaciones`, `calculo-horas`, `liquidacion-nomina`.
 
+Ademas puede pasarte (opcional) los **parametros de hosting** del App Service Plan dedicado del dominio. Cada Function App corre en su **propio** plan dedicado (ver ADR-0020); estos parametros configuran ese plan. Si el usuario no los especifica, usa los defaults del ADR-0020:
+
+- **SKU del plan** (`sku_name`) -- default `B1` (Basic, 1 core dedicado por dominio; piso valido del marco, ver ADR-0020). No usar el plan Consumption `Y1` (incompatible con el agente de durabilidad always-on de Wolverine).
+- **Always On** (`always_on`) -- default `false` en dev. En prod evaluar `true` para que el host no descargue el worker e interrumpa el poll del outbox de Wolverine.
+- `worker_count` es siempre `1` y **no es configurable**: `DurabilityMode.Solo` exige un unico nodo (no escalar out; ver ADR-0020).
+
+Respeta el override del usuario; a falta de override, manda el default del ADR-0020.
+
 Si el usuario no especifica el nombre del dominio, pregunta antes de continuar:
 
 > "Dime el nombre del nuevo dominio en kebab-case (ej: `marcaciones`, `calculo-horas`)."
@@ -62,12 +70,26 @@ Si el directorio `src/<RootNamespace>.{PascalCase}/` ya existe, informa al usuar
 
 Y detente sin hacer nada mas.
 
+**Resolver parametros de hosting (ADR-0020):**
+
+Cada dominio recibe su propio App Service Plan dedicado (`asp-{prefix_func}-{kebab}`). Resuelve sus parametros tomando lo que dio el usuario y, a falta de override, los defaults del ADR-0020:
+
+- `sku_name` = el valor que dio el usuario, o `B1` por defecto.
+- `always_on` = el valor que dio el usuario, o `false` por defecto (dev).
+- `worker_count` = `1` siempre (no configurable; `Solo` exige un unico nodo).
+
+Estos valores alimentan el `module service_plan_{snake_case}` que emitiras en el Paso 4.
+
 Antes de continuar muestra al usuario el resumen de lo que vas a crear y pide confirmacion:
 
 ```
 Dominio:          {kebab}
 PascalCase:       {PascalCase}
 Function App:     func-{prefix_func}-{kebab} (N chars)
+App Service Plan: asp-{prefix_func}-{kebab} (dedicado por dominio, ADR-0020)
+  SKU:            {sku_name} (default B1)
+  Always On:      {always_on} (default false en dev)
+  worker_count:   1 (fijo, Solo exige un unico nodo)
 Proyecto src:     src/<RootNamespace>.{PascalCase}/
 Proyecto tests:   tests/<RootNamespace>.{PascalCase}.Tests/
 Smoke tests:      tests/<RootNamespace>.{PascalCase}.SmokeTests/
@@ -1243,9 +1265,9 @@ Si el archivo ya existe con otras propiedades (ej: `sdk`), solo agrega la seccio
 
 ---
 
-## Paso 4 - Actualizar Terraform: agregar Storage Account y Function App
+## Paso 4 - Actualizar Terraform: agregar Service Plan, Storage Account y Function App
 
-Cada Function App tiene su propia Storage Account para aislamiento de performance y escalado independiente (Best Practices, Beginning Azure Functions Cap. 8).
+Cada Function App tiene su propio **App Service Plan dedicado** y su propia Storage Account, para aislamiento de performance y escalado independiente. El plan dedicado es una directiva del marco: dos dominios nunca comparten plan, porque cada uno corre un agente de durabilidad de Wolverine *always-on* que poll-ea Postgres en background y satura el core aun en reposo (noisy neighbor). Ver **ADR-0020** (hosting: un App Service Plan por Function App) y, para la Storage, Best Practices (Beginning Azure Functions Cap. 8).
 
 **Nombre de la Storage Account**: `st` + dominio sin guiones + environment + sufijo aleatorio.
 Ejemplo para `marcaciones` en dev: `stmarcacionesdev{suffix}`.
@@ -1256,7 +1278,7 @@ Antes de continuar, calcula y valida la longitud maxima posible del nombre:
 
 Lee el archivo `infra/environments/dev/main.tf` completo antes de modificarlo.
 
-Agrega al **final del archivo** los siguientes tres bloques:
+Agrega al **final del archivo** los siguientes cuatro bloques. Sustituye `{sku_name}` y `{always_on}` por los parametros de hosting que resolviste en el Paso 0 (defaults `B1` / `false`):
 
 ```hcl
 resource "random_string" "storage_suffix_{snake_case}" {
@@ -1273,12 +1295,24 @@ module "storage_{snake_case}" {
   tags                = local.tags
 }
 
+module "service_plan_{snake_case}" {
+  source              = "../../modules/service-plan"
+  name                = "asp-${local.prefix_func}-{kebab}"
+  resource_group_name = module.resource_group.name
+  location            = module.resource_group.location
+  os_type             = "Linux"
+  sku_name            = "{sku_name}"
+  worker_count        = 1
+  always_on           = {always_on}
+  tags                = local.tags
+}
+
 module "function_app_{snake_case}" {
   source                            = "../../modules/function-app"
   name                              = "func-${local.prefix_func}-{kebab}"
   resource_group_name               = module.resource_group.name
   location                          = module.resource_group.location
-  service_plan_id                   = module.service_plan.id
+  service_plan_id                   = module.service_plan_{snake_case}.id
   storage_account_name              = module.storage_{snake_case}.name
   storage_account_connection_string = module.storage_{snake_case}.primary_connection_string
   storage_account_access_key        = module.storage_{snake_case}.primary_access_key
@@ -1294,8 +1328,13 @@ module "function_app_{snake_case}" {
 
 Donde `{kebab-sin-guiones}` es el nombre del dominio con los guiones eliminados (ej: `calculo-horas` -> `calculohoras`).
 
+**Cada dominio recibe su propio `module service_plan_{snake_case}`**: el `service_plan_id` de la Function App apunta a `module.service_plan_{snake_case}.id`, nunca a un plan compartido. No referencies un `module.service_plan` global; ese patron (todas las Function Apps en un solo plan) es justo el que ADR-0020 proscribe.
+
 > **Nota**: el bloque hace referencia a `module.postgresql` que debe existir en la infraestructura base. Si el modulo PostgreSQL no esta presente en `main.tf`, agrega la siguiente advertencia al usuario antes de hacer commit:
 > "Recuerda que el modulo `postgresql` debe estar en la infraestructura base antes de ejecutar `terraform apply`."
+
+> **Nota (modulo service-plan)**: el bloque `module service_plan_{snake_case}` asume que el modulo `modules/service-plan` del consumidor acepta los inputs `os_type`, `sku_name`, `worker_count` y `always_on` (contrato documentado en ADR-0020). Verifica `infra/modules/service-plan/variables.tf`: si el modulo no declara esas variables, no las pases sin avisar -- `terraform validate` fallaria. Agrega esta advertencia al usuario antes de hacer commit:
+> "El modulo `modules/service-plan` debe aceptar los inputs `os_type`, `sku_name`, `worker_count` y `always_on` (ver contrato en ADR-0020) antes de ejecutar `terraform apply`. Si tu modulo base aun no los expone, actualizalo o ajusta el `module service_plan_{snake_case}` emitido."
 
 ---
 
@@ -1503,7 +1542,8 @@ Scaffold completado para el dominio "{kebab}":
     Health/HealthSmokeTests.cs             - Smoke test del health check
     appsettings.json                       - URL + placeholders vacios para ServiceBus y Postgres
 
-  infra/environments/dev/main.tf           - module storage + module function_app
+  infra/environments/dev/main.tf           - module storage + module service_plan (dedicado) + module function_app
+                                             App Service Plan asp-{prefix_func}-{kebab} (SKU {sku_name}, always_on {always_on}), ADR-0020
                                              (topics se crean bajo demanda con implementer)
 
   .github/workflows/deploy-{kebab}.yml     - Workflow de deploy automatico + smoke tests post-deploy

@@ -68,7 +68,7 @@ Antes de escribir, define:
 - Storage accounts: `st<proyecto><ambiente>func` (sin guiones, max 24 chars)
 - Function Apps: `func-<proyecto>-<ambiente>-<dominio>`
 - Service Bus: `sb-<proyecto>-<ambiente>`
-- Service Plans: `asp-<proyecto>-<ambiente>`
+- Service Plans: `asp-<proyecto>-<ambiente>-<dominio>` (un plan dedicado por Function App; paraleliza el patron de Function Apps, ver ADR-0020). Nunca un `asp-<proyecto>-<ambiente>` compartido entre dominios.
 
 ### 5. Formatear y validar
 
