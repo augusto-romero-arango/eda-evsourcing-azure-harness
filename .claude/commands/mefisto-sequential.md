@@ -39,31 +39,128 @@ Reglas de exclusion/abortar:
 - Si el issue esta `CLOSED`: informalo y excluyelo de la lista.
 - Si el issue **no tiene** el label `tipo:tooling`: advierte y pregunta `s/n`. Si la respuesta es `n` (o no hay confirmacion), excluyelo de la lista.
 
-### 1.5. Verificar label `bloqueado`
+### 1.5. Verificar label `bloqueado` (con resolucion intra-batch)
 
-Para cada issue que sobreviva al paso 1 y tenga el label `bloqueado`, lee la seccion `## Dependencias` del body y extrae los numeros referenciados (patron `#NNN`).
+Para cada issue que sobreviva al paso 1 y tenga el label `bloqueado`, lee la seccion
+`## Dependencias` del body y extrae los numeros referenciados (patron `#NNN`).
 
-Para cada referencia, consulta su estado:
+La idea clave (issue #47): una dependencia abierta **no siempre** es un bloqueo. Como la
+cadena hace `pipeline -> PR -> merge -> sync verificado -> siguiente` (ver paso 5 e issue
+#46), si la dependencia es **otro issue del mismo batch que se procesa antes en el orden**,
+quedara resuelta **durante** la ejecucion. Por eso clasificamos cada dependencia abierta:
+
+- **(a) Satisfactible por el batch**: la dependencia es otro issue del batch y aparece
+  **antes** en el orden. No es un bloqueo: el orden + el sync verificado (#46) garantizan
+  que ya estara mergeada cuando arranque este eslabon.
+- **(b) Bloqueo real**: la dependencia esta **fuera del batch** (y no esta `CLOSED`/`MERGED`),
+  o esta **dentro del batch pero despues** en el orden (mal ordenada). En ambos casos el
+  batch no la puede resolver por si mismo.
+
+Las dependencias ya `CLOSED`/`MERGED` siguen siendo el caso ortogonal de siempre: estan
+satisfechas y no cuentan como bloqueo (no importa si estaban o no en el batch).
+
+**Regla de decision**:
+
+- Si **todas** las dependencias abiertas de un issue son de tipo (a) (o ya estan cerradas):
+  el batch **se puede lanzar** y el issue se procesa en su posicion. Se le **quita** el label
+  `bloqueado` al validar (decision CA-5: el orden + el sync de #46 garantizan su resolucion,
+  asi que mantener el label seria mentir sobre el estado).
+- Si existe **al menos una** dependencia de tipo (b): **aborta** y no lances el batch,
+  mostrando cual es y por que. Si la causa es una dependencia intra-batch mal ordenada,
+  sugiere el reordenamiento concreto (ej. "mueve #44 antes de #43").
+
+Para clasificar, necesitas la **lista ordenada** de issues que sobrevivieron al paso 1
+(en el mismo orden de `$ARGUMENTS`). Ejecuta este bloque sustituyendo `BATCH` por esa lista:
 
 ```bash
-gh issue view <num> --json state -q '.state'
-gh pr view <num> --json state -q '.state'
+# BATCH = issues que sobrevivieron al paso 1, EN ORDEN (separados por espacio).
+BATCH="44 43 45"   # <-- sustituye por tu lista real, respetando el orden del batch
+
+# Posicion 1-based de un issue en el batch; status != 0 si no esta en el batch.
+pos_in_batch() {
+    local target="$1" i=0 n
+    for n in $BATCH; do
+        i=$((i + 1))
+        [ "$n" = "$target" ] && { echo "$i"; return 0; }
+    done
+    return 1
+}
+
+ABORT_MSGS=""        # bloqueos reales (tipo b) acumulados de todo el batch
+LABELS_TO_CLEAR=""   # issues tipo (a) a los que se les quitara 'bloqueado'
+
+for ISSUE in $BATCH; do
+    # Solo nos interesan los issues con label 'bloqueado'.
+    LABELS=$(gh issue view "$ISSUE" --json labels -q '[.labels[].name] | join(",")')
+    case ",$LABELS," in *",bloqueado,"*) ;; *) continue ;; esac
+
+    ISSUE_POS=$(pos_in_batch "$ISSUE")
+
+    # Extraer dependencias SOLO de la seccion '## Dependencias' (patron #NNN).
+    DEPS=$(gh issue view "$ISSUE" --json body -q '.body' \
+        | awk '/^##[[:space:]]*[Dd]ependencias/{f=1;next} /^##[[:space:]]/{f=0} f' \
+        | grep -oE '#[0-9]+' | tr -d '#' | sort -u)
+
+    ISSUE_REAL=""    # bloqueos reales de ESTE issue
+    for DEP in $DEPS; do
+        [ "$DEP" = "$ISSUE" ] && continue
+        # Estado de la dependencia (puede ser issue o PR).
+        DEP_STATE=$(gh issue view "$DEP" --json state -q '.state' 2>/dev/null \
+                 || gh pr view "$DEP" --json state -q '.state' 2>/dev/null || echo "")
+        # CLOSED/MERGED -> dependencia ya satisfecha (caso ortogonal previo).
+        case "$DEP_STATE" in CLOSED|MERGED) continue ;; esac
+        # Abierta (o desconocida) -> clasificar por posicion en el batch.
+        if DEP_POS=$(pos_in_batch "$DEP"); then
+            if [ "$DEP_POS" -lt "$ISSUE_POS" ]; then
+                : # (a) satisfactible: en el batch y ANTES en el orden -> no bloquea
+            else
+                # (b) mal ordenada: en el batch pero DESPUES de este issue.
+                ISSUE_REAL="$ISSUE_REAL
+  - #$DEP esta en el batch pero DESPUES de #$ISSUE (mal ordenada). Mueve #$DEP antes de #$ISSUE."
+            fi
+        else
+            # (b) fuera del batch y no esta cerrada/mergeada.
+            ISSUE_REAL="$ISSUE_REAL
+  - #$DEP esta fuera del batch y no esta CLOSED/MERGED (bloqueo real)."
+        fi
+    done
+
+    if [ -n "$ISSUE_REAL" ]; then
+        ABORT_MSGS="$ABORT_MSGS
+#$ISSUE no se puede lanzar:$ISSUE_REAL"
+    else
+        LABELS_TO_CLEAR="$LABELS_TO_CLEAR $ISSUE"
+    fi
+done
+
+if [ -n "$ABORT_MSGS" ]; then
+    echo "ABORTAR el batch. Bloqueos reales detectados:"
+    echo "$ABORT_MSGS"
+    echo
+    echo "Reordena el batch (dependencias antes que sus dependientes) o cierra las"
+    echo "dependencias externas antes de relanzar."
+else
+    # Solo si TODO el batch paso la validacion mutamos estado (no tocar labels si abortamos).
+    for ISSUE in $LABELS_TO_CLEAR; do
+        gh issue edit "$ISSUE" --remove-label "bloqueado"
+        echo "Quitado 'bloqueado' de #$ISSUE: sus dependencias abiertas se resuelven por el"
+        echo "orden del batch + sync verificado (#46); las cerradas ya estan satisfechas."
+    done
+    echo "Validacion 1.5 OK: el batch se puede lanzar."
+fi
 ```
 
-- Si **todas** las dependencias estan cerradas (`CLOSED`) o mergeadas (`MERGED`): quita el label y deja el issue en la lista:
+**Importante**: el bloque solo quita labels si **todo** el batch pasa. Si hay algun bloqueo
+de tipo (b) no se muta ningun estado (no se retira ningun `bloqueado`): se aborta y punto.
 
-```bash
-gh issue edit <num> --remove-label "bloqueado"
-```
+Ejemplos canonicos (issue #47):
 
-- Si **alguna** dependencia sigue abierta: **detente** y muestra cuales son. No lances el batch (el orden secuencial se rompe si un issue del grupo no puede correr).
-
-```
-El issue #<num> esta bloqueado. Dependencias abiertas:
-  - #42: [titulo] (OPEN)
-
-Resuelve estas dependencias antes de lanzar el batch.
-```
+- `/mefisto-sequential 44 43 45` (43 y 45 dependen de 44) -> **lanza**: 44 va antes que sus
+  dependientes, asi que ambas dependencias son de tipo (a). Se les quita `bloqueado` a #43 y #45.
+- `/mefisto-sequential 43 44` (43 depende de 44) -> **aborta**: 44 esta en el batch pero
+  **despues** de #43 (tipo b). Mensaje: "Mueve #44 antes de #43".
+- `/mefisto-sequential 43` (43 depende de 44, que no esta en el batch y sigue OPEN) ->
+  **aborta**: bloqueo real fuera del batch.
 
 ### 2. Comprobar que queda al menos un issue valido
 
