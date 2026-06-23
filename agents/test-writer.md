@@ -383,6 +383,20 @@ And<ContratoAggregateRoot, TipoContrato>(c => c.Tipo, TipoContrato.IndefinidoTie
 And<SolicitudAggregateRoot, DateTime?>(s => s.FechaAprobacion, null);
 ```
 
+**El valor esperado se construye a mano, nunca derivado de la logica bajo prueba** (regla absoluta 20; ADR-0002, seccion "Oraculo independiente (no-tautologia)"). El esperado de cada `And<>()` debe armarse con las primitivas y factories del dominio, no calcularse ejecutando el SUT ni los colaboradores de produccion que el SUT invoca. Un esperado derivado del mismo codigo que se verifica vuelve el test tautologico: el bug contamina por igual el esperado y el actual, ambos coinciden y la prueba pasa sin detectar la regresion.
+
+```csharp
+// INCORRECTO (tautologico): el esperado se calcula con la misma logica de produccion que el SUT ejecuta
+var esperado = ConsolidadorDesgloseHoras.Consolidar(franjas);   // <- codigo bajo prueba
+And<ControlHorasAggregateRoot, DesgloseHoras>(c => c.Desglose, esperado);
+
+// CORRECTO: el esperado se arma a mano con las primitivas y factories del dominio
+var esperado = new DesgloseHoras(
+    ordinarias: IntervaloTemporal.Crear(new TimeOnly(6, 0), new TimeOnly(14, 0)),
+    nocturnas: IntervaloTemporal.Vacio);
+And<ControlHorasAggregateRoot, DesgloseHoras>(c => c.Desglose, esperado);
+```
+
 **Datos de prueba:**
 
 Usa constantes estaticas para datos que se repiten:
@@ -775,3 +789,4 @@ Crea el archivo `.claude/pipeline/summaries/stage-1-test-writer.md`:
     ```
 18. **Aggregates con stream ID compuesto**: si el aggregate computa su `Id` desde datos del payload (ej. `ComputarStreamId(empleadoId, fecha)`) en lugar de usar un GUID, DEBES usar los overloads con `aggregateId` explicito: `Then(streamId, eventos)` (sobrecarga de dos argumentos - patron idiomatico del proyecto), `And<T,P>(streamId, selector, valor)`, y `Given(streamId, evento)`. Usar los overloads implicitos producira tests que buscan por el `GuidAggregateId` del harness y nunca encontraran el aggregate.
 19. **Si detectas una contradiccion estructural en el issue** (ej. un test listado en "Impacto / Modifica" debe usar API de un proyecto que el test no puede referenciar; una sugerencia de "Interfaz publica propuesta" contradice un ADR; un CA exige un archivo en una ubicacion imposible), **tu decides la resolucion**: reubica el test al proyecto correcto, reemplazalo por uno equivalente, divide la cobertura en dos archivos, o elimina el test obsoleto si el refactor del issue lo vuelve insostenible y otro test cubre el CA. Documenta la decision en tu resumen bajo "Desviaciones del plan del planner" (ver seccion 9) con el formato: *regla/sugerencia del issue / desviacion aplicada / razon tecnica / consecuencia*. **No reportes bloqueo por esto** — la autoridad es tuya. Reportar bloqueo se reserva para situaciones donde no puedes decidir con la informacion disponible (no para contradicciones que tu mismo puedes resolver con criterio).
+20. **El valor esperado de toda asercion (`Then`, `And<>`, `ThenIsPublished*`) se construye SIEMPRE a mano como oraculo independiente**, con las primitivas y factories del dominio. **NUNCA lo derives ejecutando la logica bajo prueba** — ni el SUT ni los colaboradores de produccion que esa logica invoca. Un esperado calculado por el mismo codigo que se verifica vuelve el test tautologico: el bug contamina por igual el esperado y el actual, ambos coinciden, y la prueba pasa sin detectar la regresion. Antipatron: `var esperado = ConsolidadorDesgloseHoras.Consolidar(...)` para luego compararlo contra el resultado que el aggregate produjo con esa misma consolidacion. Patron correcto: armar el esperado con `new MomentoDelDia(...)`, `IntervaloTemporal.Crear(...)`, `new DesgloseHoras(...)`, etc. Fuente del principio: ADR-0002, seccion "Oraculo independiente (no-tautologia)" (ver `docs/adr/0002-estrategia-testing-event-sourcing.md`). Ejemplos en la seccion "Verificacion del estado del agregado" (paso 4).
