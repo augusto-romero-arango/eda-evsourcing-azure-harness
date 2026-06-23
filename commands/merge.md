@@ -61,18 +61,24 @@ No pidas confirmacion adicional. El usuario ya la dio al escribir `/merge` expli
 
 ### 3. Invocar el script
 
-Lanza directamente `scripts/pr-sync.sh` con `--merge`. NO invoques al agente `pr-sync` — es un envoltorio delgado sobre el script y el skill ya cumple esa funcion.
+Lanza directamente el script `pr-sync.sh` del plugin (resuelto via `.claude/pipeline/.plugin-root`) con `--merge`. NO invoques al agente `pr-sync` — es un envoltorio delgado sobre el script y el skill ya cumple esa funcion.
 
 Para PRs especificos:
 
 ```bash
-./scripts/pr-sync.sh <pr1> <pr2> ... --merge
+PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
+"$PLUGIN_SCRIPTS/pr-sync.sh" <pr1> <pr2> ... --merge
 ```
 
 Para todos los PRs abiertos:
 
 ```bash
-./scripts/pr-sync.sh --all --merge
+PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
+"$PLUGIN_SCRIPTS/pr-sync.sh" --all --merge
 ```
 
 El script imprime progreso en tiempo real. Espera a que termine (no uses `run_in_background`).
@@ -85,7 +91,7 @@ El script ya imprime un resumen final con tabla `PR | Rama | Estado` y la ruta d
 - Si hubo errores, apuntar al log (`.claude/pipeline/logs/pr-sync-<ts>.log`) y ofrecer reintentar con el PR concreto:
 
   ```
-  Reintentar el PR fallido: ./scripts/pr-sync.sh <num> --merge
+  Reintentar el PR fallido: /merge <num>
   ```
 
 ---
@@ -94,6 +100,6 @@ El script ya imprime un resumen final con tabla `PR | Rama | Estado` y la ruta d
 
 - **Nunca hagas merges manuales** (`gh pr merge`, `git merge` + push, etc.). Todo pasa por `pr-sync.sh`.
 - **No diagnostiques errores del script.** Reporta el error tal cual viene en su output y espera instruccion del usuario.
-- **No reintentes automaticamente** un PR fallido. El script ya hace retry interno del merge con backoff exponencial (ver `scripts/pr-sync.sh:264-291`). Si se rinde, es decision del usuario.
+- **No reintentes automaticamente** un PR fallido. El script ya hace retry interno del merge con backoff exponencial (ver la logica de retry en `pr-sync.sh`). Si se rinde, es decision del usuario.
 - **No instales dependencias** ni arregles el entorno. Si falta `claude`, `gh`, `git` o `dotnet`, informa al usuario y detente.
 - **No toques PRs que no esten en la lista final.** Si el usuario pidio `--all`, el script decide cuales procesar.

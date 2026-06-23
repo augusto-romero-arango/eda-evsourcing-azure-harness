@@ -1,5 +1,15 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"${CLAUDE_PLUGIN_ROOT}\" ] && mkdir -p .claude/pipeline 2>/dev/null && printf '%s' \"${CLAUDE_PLUGIN_ROOT}\" > .claude/pipeline/.plugin-root 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "ExitPlanMode",

@@ -46,7 +46,10 @@ Paralelo — 3 issues (cada uno en su propio tab):
 Luego lanza:
 
 ```bash
-./scripts/tmux-pipeline.sh --parallel <issue1> <issue2> <issue3>
+PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
+"$PLUGIN_SCRIPTS/tmux-pipeline.sh" --parallel <issue1> <issue2> <issue3>
 ```
 
 ### 3. Instrucciones de conexion
@@ -65,4 +68,4 @@ Usa /work-status para ver el progreso sin salir de aqui.
 
 - **No esperes a que termine.** Devuelve el control inmediatamente.
 - **No implementes nada tu mismo.** Solo lanza el script.
-- Los PRs creados no se mergean. Recuerdale al usuario que puede usar `./scripts/pr-sync.sh <PR_NUM> --merge` despues.
+- Los PRs creados no se mergean. Recuerdale al usuario que puede usar `/merge <PR_NUM>` despues.

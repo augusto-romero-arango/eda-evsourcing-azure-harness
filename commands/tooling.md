@@ -86,7 +86,10 @@ Tipo: tooling | Estado: listo
 Luego lanza el pipeline en tmux:
 
 ```bash
-./scripts/tmux-pipeline.sh --tooling $ARGUMENTS
+PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
+"$PLUGIN_SCRIPTS/tmux-pipeline.sh" --tooling $ARGUMENTS
 ```
 
 ### 4. Instrucciones de conexion

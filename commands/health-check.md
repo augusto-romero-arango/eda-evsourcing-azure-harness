@@ -19,14 +19,17 @@ fi
 Verifica que el script existe y es ejecutable:
 
 ```bash
-test -x scripts/appinsights-query.sh && echo "OK" || echo "FAIL"
+PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
+test -x "$PLUGIN_SCRIPTS/appinsights-query.sh" && echo "OK" || echo "FAIL"
 ```
 
 Si falla, responde:
 
 ```
-El script scripts/appinsights-query.sh no existe o no es ejecutable.
-Asegurate de que el issue #33 esta mergeado.
+El script appinsights-query.sh del plugin no se encontro o no es ejecutable.
+Asegurate de que mefisto este instalado y que el issue #33 esta mergeado.
 ```
 
 Y termina.
@@ -48,18 +51,27 @@ Y termina.
 
 ### 2. Ejecutar queries
 
-Ejecuta las 3 queries en secuencia. Captura la salida completa de cada una:
+Ejecuta las 3 queries en secuencia. Captura la salida completa de cada una. Cada bloque resuelve la ruta del plugin por su cuenta, porque los bloques no comparten variables de shell entre invocaciones:
 
 ```bash
-./scripts/appinsights-query.sh health-summary --hours 24
+PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
+"$PLUGIN_SCRIPTS/appinsights-query.sh" health-summary --hours 24
 ```
 
 ```bash
-./scripts/appinsights-query.sh dead-letters --hours 24
+PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
+"$PLUGIN_SCRIPTS/appinsights-query.sh" dead-letters --hours 24
 ```
 
 ```bash
-./scripts/appinsights-query.sh function-errors --hours 24
+PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
+"$PLUGIN_SCRIPTS/appinsights-query.sh" function-errors --hours 24
 ```
 
 Si alguna query falla, reporta el error pero continua con las demas.
