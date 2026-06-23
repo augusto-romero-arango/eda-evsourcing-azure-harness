@@ -4,6 +4,8 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-06-23
+
 ### Fixed
 
 - **`tmux-pipeline.sh` (publicado) arranca el pipeline en el pane correcto con `pane-base-index 1`** (issue #56): las 6 funciones que abren panes (`cmd_single`, `cmd_batch`, `cmd_parallel`, `cmd_tooling`, `cmd_infra`, `cmd_scaffold`) ya no direccionan el pane del sub-script por indice implicito (`"$session:main.1"`) sino por su `pane_id` (`%N`), estable e independiente de `base-index`/`pane-base-index`. El tail captura su id con `tmux list-panes -F '#{pane_id}' | head -n1` y cada `split-window` devuelve el suyo con `-P -F '#{pane_id}'`. Con `setw -g pane-base-index 1` en `~/.tmux.conf` los panes se numeran 1 y 2 (no 0 y 1), por lo que `main.1` apuntaba al pane del `tail` (que ignora stdin) y el pipeline nunca arrancaba: no aparecia el status file y `/work-status` no mostraba progreso. `cmd_parallel` tenia la variante mas grave (todos los `send-keys` apuntaban a `"$session:main"`, el pane del tail, con cualquier `pane-base-index`); ahora cada issue recibe su sub-script en el `pane_id` que devuelve su propio `split-window`. Es la deuda de paridad de ADR-0019: el mismo patron `pane_id` se aplico solo al gemelo interno (`.claude/scripts/mefisto-tmux-pipeline.sh`, PR #12) y nunca se propago al lado publicado, que es el que consume el proyecto.
@@ -132,7 +134,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.2.0...v0.3.0
 [0.1.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/releases/tag/v0.1.0
