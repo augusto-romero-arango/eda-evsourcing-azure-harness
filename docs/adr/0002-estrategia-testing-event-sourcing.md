@@ -52,6 +52,32 @@ Para cada command handler se deben cubrir:
 3. **Idempotencia o error**: si el comando se ejecuta sobre un estado invalido (ej: repetir un
    comando ya procesado), se verifica que lanza la excepcion correcta.
 
+### Oraculo independiente (no-tautologia)
+
+El valor esperado de toda asercion (`Then`, `And`, `ThenIsPublished*`) DEBE construirse SIEMPRE a
+mano como **oraculo independiente**: armado con las primitivas y factories del dominio, y nunca
+derivado ejecutando la logica bajo prueba -ni el SUT ni los colaboradores de produccion que esa
+logica invoca-.
+
+Un esperado calculado por el mismo codigo que se verifica vuelve el test **tautologico**: si la
+logica de produccion tiene un bug, ese bug contamina por igual el valor esperado y el valor actual,
+ambos coinciden, y la prueba pasa sin detectar la regresion. El test deja de ser una especificacion
+independiente del comportamiento y se convierte en un espejo del codigo bajo prueba: ya no es una
+red de seguridad, porque jamas puede fallar por la razon correcta.
+
+- **Antipatron**: `var esperado = ConsolidadorDesgloseHoras.Consolidar(franjas);` para luego
+  comparar ese `esperado` contra el desglose que el aggregate produjo con esa misma consolidacion.
+  El esperado y el actual recorren el mismo camino de produccion, asi que un error en
+  `Consolidar` los afecta a ambos por igual.
+- **Patron correcto**: armar el esperado a mano -`new MomentoDelDia(...)`,
+  `IntervaloTemporal.Crear(...)`, `new DesgloseHoras(...)`- de modo que represente el resultado
+  deseado calculado por una via distinta a la del codigo bajo prueba.
+
+Este principio esta al mismo nivel normativo que la cobertura obligatoria Then + And: ambos son
+condiciones estructurales que un test de event sourcing DEBE cumplir para tener valor como red de
+seguridad. La cobertura garantiza que se verifican contrato (eventos) y estado; el oraculo
+independiente garantiza que esa verificacion no sea circular.
+
 ### Organizacion de clases de test
 
 - **Una clase por command handler** cuando los handlers son independientes.
@@ -96,6 +122,9 @@ Esto difiere del stack de tests clasico (xunit v2, NSubstitute, coverlet).
 - **Cobertura estructural**: al exigir Then + And, cada test verifica el contrato de eventos y
   la mutacion de estado, eliminando la clase de bugs donde el evento se emite pero el estado
   no se actualiza (o viceversa).
+- **Tests no tautologicos**: al exigir que el esperado sea un oraculo independiente del codigo
+  bajo prueba, un bug en la logica de produccion no puede contaminar a la vez el esperado y el
+  actual; el test conserva su capacidad de detectar regresiones en lugar de reflejarlas.
 - **Legibilidad**: el DSL Given/When/Then/And hace que los tests lean como especificaciones
   del comportamiento del dominio.
 - **Independencia**: la familia de agentes separada permite iterar en los lineamientos de ES
