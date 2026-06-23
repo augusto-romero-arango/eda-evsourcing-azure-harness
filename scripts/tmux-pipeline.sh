@@ -164,16 +164,23 @@ cmd_single() {
 
     log "Creando sesion tmux '$session' para issue #$issue ($pipeline_name)..."
 
-    # Crear sesion con ventana unica y panes lado a lado
+    # Crear sesion con ventana unica y panes lado a lado.
+    # Se capturan los pane_id (formato %N) en vez de referenciar los panes por
+    # indice implicito ("$session:main.1"): ese indice depende de pane-base-index,
+    # que en muchas configuraciones de ~/.tmux.conf es 1 en vez de 0 y haria que
+    # el sub-script se teclee dentro del pane del 'tail' (que ignora stdin) en
+    # lugar de arrancar. El pane_id es estable e independiente de base-index.
+    local tail_pane pipe_pane
     tmux new-session -d -s "$session" -n "main" -c "$PROJECT_ROOT"
+    tail_pane=$(tmux list-panes -t "$session:main" -F '#{pane_id}' | head -n1)
     tmux set-option -t "$session" remain-on-exit on
-    tmux send-keys -t "$session:main" "tail -f '$EVENTS_LOG'" Enter
+    tmux send-keys -t "$tail_pane" "tail -f '$EVENTS_LOG'" Enter
 
-    # Pane derecho: pipeline
-    tmux split-window -h -t "$session:main" -c "$PROJECT_ROOT"
-    # La ruta del sub-script va entre comillas simples por si el plugin esta
-    # instalado bajo una ruta con espacios (mismo criterio que '$EVENTS_LOG').
-    tmux send-keys -t "$session:main.1" "'$resolved' $issue $extra_args" Enter
+    # Pane derecho: pipeline. La ruta del sub-script va entre comillas simples
+    # por si el plugin esta instalado bajo una ruta con espacios (mismo criterio
+    # que '$EVENTS_LOG').
+    pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
+    tmux send-keys -t "$pipe_pane" "'$resolved' $issue $extra_args" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -215,14 +222,19 @@ cmd_batch() {
 
     log "Creando sesion tmux '$session' para batch: issues ${issues_str}..."
 
-    # Crear sesion con ventana unica y panes lado a lado
+    # Crear sesion con ventana unica y panes lado a lado.
+    # Captura de pane_id (ver nota en cmd_single): el indice implicito
+    # "$session:main.1" depende de pane-base-index y rompe el arranque cuando
+    # esa opcion vale 1 en ~/.tmux.conf.
+    local tail_pane pipe_pane
     tmux new-session -d -s "$session" -n "main" -c "$PROJECT_ROOT"
+    tail_pane=$(tmux list-panes -t "$session:main" -F '#{pane_id}' | head -n1)
     tmux set-option -t "$session" remain-on-exit on
-    tmux send-keys -t "$session:main" "tail -f '$EVENTS_LOG'" Enter
+    tmux send-keys -t "$tail_pane" "tail -f '$EVENTS_LOG'" Enter
 
     # Pane derecho: batch pipeline
-    tmux split-window -h -t "$session:main" -c "$PROJECT_ROOT"
-    tmux send-keys -t "$session:main.1" "'$SCRIPT_DIR/batch-pipeline.sh' $pipeline_flag $issues_str" Enter
+    pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
+    tmux send-keys -t "$pipe_pane" "'$SCRIPT_DIR/batch-pipeline.sh' $pipeline_flag $issues_str" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -273,10 +285,14 @@ cmd_parallel() {
 
     log "Creando sesion tmux '$session' para issues paralelos: $issues_str..."
 
-    # Crear sesion con ventana unica y panes lado a lado
+    # Crear sesion con ventana unica y panes lado a lado.
+    # Captura de pane_id (ver nota en cmd_single) para no depender de
+    # pane-base-index al direccionar el pane del 'tail'.
+    local tail_pane
     tmux new-session -d -s "$session" -n "main" -c "$PROJECT_ROOT"
+    tail_pane=$(tmux list-panes -t "$session:main" -F '#{pane_id}' | head -n1)
     tmux set-option -t "$session" remain-on-exit on
-    tmux send-keys -t "$session:main" "tail -f '$EVENTS_LOG'" Enter
+    tmux send-keys -t "$tail_pane" "tail -f '$EVENTS_LOG'" Enter
 
     # Pre-resolver pipelines y filtrar issues no enrutables
     local resolved_issues=()
@@ -299,10 +315,15 @@ cmd_parallel() {
         abort "No hay issues validos para abrir en paralelo."
     fi
 
-    # Un pane por issue (escalonado para evitar contencion de API)
+    # Un pane por issue (escalonado para evitar contencion de API).
+    # Cada split-window devuelve su propio pane_id (-P -F '#{pane_id}') y el
+    # sub-script se envia a ESE pane. Antes los send-keys apuntaban siempre a
+    # "$session:main" (el pane del 'tail'), por lo que ningun pipeline paralelo
+    # arrancaba, con cualquier valor de pane-base-index.
+    local pipe_pane
     for i in "${!resolved_issues[@]}"; do
-        tmux split-window -h -t "$session:main" -c "$PROJECT_ROOT"
-        tmux send-keys -t "$session:main" "'${resolved_pipelines[$i]}' ${resolved_issues[$i]}" Enter
+        pipe_pane=$(tmux split-window -h -t "$session:main" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
+        tmux send-keys -t "$pipe_pane" "'${resolved_pipelines[$i]}' ${resolved_issues[$i]}" Enter
         # Escalonar lanzamientos: 30s entre cada uno para evitar que multiples
         # invocaciones de claude -p compitan por recursos de API simultaneamente
         if [ "$i" -lt "$(( ${#resolved_issues[@]} - 1 ))" ]; then
@@ -339,12 +360,16 @@ cmd_tooling() {
 
     log "Creando sesion tmux '$session' para tooling issue #$issue..."
 
+    # Captura de pane_id (ver nota en cmd_single) para no depender de
+    # pane-base-index al direccionar los panes.
+    local tail_pane pipe_pane
     tmux new-session -d -s "$session" -n "main" -c "$PROJECT_ROOT"
+    tail_pane=$(tmux list-panes -t "$session:main" -F '#{pane_id}' | head -n1)
     tmux set-option -t "$session" remain-on-exit on
-    tmux send-keys -t "$session:main" "tail -f '$EVENTS_LOG'" Enter
+    tmux send-keys -t "$tail_pane" "tail -f '$EVENTS_LOG'" Enter
 
-    tmux split-window -h -t "$session:main" -c "$PROJECT_ROOT"
-    tmux send-keys -t "$session:main.1" "'$SCRIPT_DIR/tooling-pipeline.sh' $issue" Enter
+    pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
+    tmux send-keys -t "$pipe_pane" "'$SCRIPT_DIR/tooling-pipeline.sh' $issue" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -369,12 +394,16 @@ cmd_infra() {
 
     log "Creando sesion tmux '$session' para infra issue #$issue..."
 
+    # Captura de pane_id (ver nota en cmd_single) para no depender de
+    # pane-base-index al direccionar los panes.
+    local tail_pane pipe_pane
     tmux new-session -d -s "$session" -n "main" -c "$PROJECT_ROOT"
+    tail_pane=$(tmux list-panes -t "$session:main" -F '#{pane_id}' | head -n1)
     tmux set-option -t "$session" remain-on-exit on
-    tmux send-keys -t "$session:main" "tail -f '$EVENTS_LOG'" Enter
+    tmux send-keys -t "$tail_pane" "tail -f '$EVENTS_LOG'" Enter
 
-    tmux split-window -h -t "$session:main" -c "$PROJECT_ROOT"
-    tmux send-keys -t "$session:main.1" "'$SCRIPT_DIR/iac-pipeline.sh' $issue" Enter
+    pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
+    tmux send-keys -t "$pipe_pane" "'$SCRIPT_DIR/iac-pipeline.sh' $issue" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -433,12 +462,16 @@ cmd_scaffold() {
 
     log "Creando sesion tmux '$session' para scaffold del dominio '$domain'..."
 
+    # Captura de pane_id (ver nota en cmd_single) para no depender de
+    # pane-base-index al direccionar los panes.
+    local tail_pane pipe_pane
     tmux new-session -d -s "$session" -n "main" -c "$PROJECT_ROOT"
+    tail_pane=$(tmux list-panes -t "$session:main" -F '#{pane_id}' | head -n1)
     tmux set-option -t "$session" remain-on-exit on
-    tmux send-keys -t "$session:main" "tail -f '$EVENTS_LOG'" Enter
+    tmux send-keys -t "$tail_pane" "tail -f '$EVENTS_LOG'" Enter
 
-    tmux split-window -h -t "$session:main" -c "$PROJECT_ROOT"
-    tmux send-keys -t "$session:main.1" "'$SCRIPT_DIR/scaffold-pipeline.sh' $pipeline_args" Enter
+    pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
+    tmux send-keys -t "$pipe_pane" "'$SCRIPT_DIR/scaffold-pipeline.sh' $pipeline_args" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
