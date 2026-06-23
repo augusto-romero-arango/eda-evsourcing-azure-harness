@@ -128,11 +128,15 @@ Scaffold del dominio "{kebab}" incluido en el pipeline (Stage 0 antes de TDD).
 Luego lanza el pipeline en tmux:
 
 ```bash
+PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
+
 # Sin scaffold nuevo:
-./scripts/tmux-pipeline.sh $ARGUMENTS
+"$PLUGIN_SCRIPTS/tmux-pipeline.sh" $ARGUMENTS
 
 # Con scaffold:
-./scripts/tmux-pipeline.sh $ARGUMENTS --scaffold-domain {kebab}
+"$PLUGIN_SCRIPTS/tmux-pipeline.sh" $ARGUMENTS --scaffold-domain {kebab}
 ```
 
 ### 5. Instrucciones de conexion

@@ -82,14 +82,17 @@ y te presentara hipotesis antes de tomar accion.
 Valida prerequisitos de Azure:
 
 ```bash
-test -x scripts/appinsights-query.sh && echo "OK" || echo "FAIL"
+PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
+test -x "$PLUGIN_SCRIPTS/appinsights-query.sh" && echo "OK" || echo "FAIL"
 ```
 
 Si falla, responde:
 
 ```
-El script scripts/appinsights-query.sh no existe o no es ejecutable.
-Asegurate de que el issue #33 esta mergeado.
+El script appinsights-query.sh del plugin no se encontro o no es ejecutable.
+Asegurate de que mefisto este instalado y que el issue #33 esta mergeado.
 ```
 
 ```bash

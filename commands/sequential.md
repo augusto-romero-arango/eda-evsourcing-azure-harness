@@ -46,11 +46,15 @@ Secuencial --- 3 issues:
 Luego lanza, pasando --pipeline si el usuario lo proporciono:
 
 ```bash
+PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
+
 # Sin override (enrutamiento automatico)
-./scripts/tmux-pipeline.sh --batch <issue1> <issue2> <issue3>
+"$PLUGIN_SCRIPTS/tmux-pipeline.sh" --batch <issue1> <issue2> <issue3>
 
 # Con override
-./scripts/tmux-pipeline.sh --batch --pipeline tooling <issue1> <issue2> <issue3>
+"$PLUGIN_SCRIPTS/tmux-pipeline.sh" --batch --pipeline tooling <issue1> <issue2> <issue3>
 ```
 
 ### 3. Instrucciones de conexion
@@ -69,5 +73,5 @@ Usa /work-status para ver el progreso sin salir de aqui.
 
 - **No esperes a que termine.** Devuelve el control inmediatamente.
 - **No implementes nada tu mismo.** Solo lanza el script.
-- Si el usuario pasa `--stop-on-error`, informale que use `./scripts/batch-pipeline.sh` directo para esa opcion (tmux-pipeline.sh no lo soporta directamente).
+- Si el usuario pasa `--stop-on-error`, informale que ese flag requiere lanzar `batch-pipeline.sh` directamente (resuelto via `$PLUGIN_SCRIPTS`, igual que en el bloque de lanzamiento), porque `tmux-pipeline.sh` no lo soporta.
 - Si el usuario pasa `--pipeline tdd|tooling`, pasalo al comando tmux-pipeline.sh.

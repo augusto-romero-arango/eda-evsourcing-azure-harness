@@ -97,11 +97,15 @@ Si dice no, detente.
 ### 6. Lanzar en tmux
 
 ```bash
+PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
+
 # Con issue:
-./scripts/tmux-pipeline.sh --scaffold $ISSUE_NUM --domain $DOMAIN_NAME
+"$PLUGIN_SCRIPTS/tmux-pipeline.sh" --scaffold $ISSUE_NUM --domain $DOMAIN_NAME
 
 # Sin issue:
-./scripts/tmux-pipeline.sh --scaffold --domain $DOMAIN_NAME
+"$PLUGIN_SCRIPTS/tmux-pipeline.sh" --scaffold --domain $DOMAIN_NAME
 ```
 
 ### 7. Instrucciones de conexion
