@@ -91,7 +91,7 @@ El script ya imprime un resumen final con tabla `PR | Rama | Estado` y la ruta d
 - Si hubo errores, apuntar al log (`.claude/pipeline/logs/pr-sync-<ts>.log`) y ofrecer reintentar con el PR concreto:
 
   ```
-  Reintentar el PR fallido: "$PLUGIN_SCRIPTS/pr-sync.sh" <num> --merge
+  Reintentar el PR fallido: /merge <num>
   ```
 
 ---
