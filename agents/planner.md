@@ -15,9 +15,10 @@ Los ADRs del harness viven **dentro del plugin instalado**, no en el repo donde 
 PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
 [ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
 PLUGIN_ROOT="${PLUGIN_ROOT%/}"   # normaliza: sin barra final
+echo "Raiz del plugin: $PLUGIN_ROOT"
 ```
 
-`.claude/pipeline/.plugin-root` lo escribe el hook `SessionStart` del plugin (mecanismo de #31); el fallback localiza el plugin por glob sobre el cache del marketplace tomando la version mas reciente. A partir de aqui, abre cada ADR por su ruta absoluta `"$PLUGIN_ROOT/docs/adr/<archivo>.md"`. **Nunca uses la ruta relativa `docs/adr/...`**: con `cwd = repo consumidor` resolveria contra `<consumer>/docs/adr/...` (inexistente) y el ADR pareceria "ausente".
+`.claude/pipeline/.plugin-root` lo escribe el hook `SessionStart` del plugin; el fallback localiza el plugin por glob sobre el cache del marketplace tomando la version mas reciente. El `echo` imprime la ruta absoluta resuelta: usala tal cual para abrir cada ADR en `"<raiz>/docs/adr/<archivo>.md"` (la herramienta de lectura no expande `$PLUGIN_ROOT` por si sola). **Nunca uses la ruta relativa `docs/adr/...`**: con `cwd = repo consumidor` resolveria contra `<consumer>/docs/adr/...` (inexistente) y el ADR pareceria "ausente".
 
 ## Tu stack de conocimiento
 
