@@ -177,8 +177,9 @@ Antes de declarar el cumplimiento de ADR-0012, recorre **explicitamente** este c
 4. **`InternalsVisibleTo` de Contracts hacia un proyecto de dominio**. Es proscrito por ADR-0012 (regla #4 implementer.md). La logica de conversion vive en el VO via metodo publico (`ToDetalle()`, `ToDto()`).
 5. **`[JsonConstructor]` en un ctor privado de VO con campos privados**. Marten no respeta ese atributo en ctors privados. La forma canonica es `ConfigurarSerializacion` con resolver y campos via reflection (lineas 227-230 de ADR-0012).
 6. **`record` con `IReadOnlyList<T>` como propiedad de igualdad**. La igualdad de `record` por defecto compara por referencia las colecciones. Para VOs con coleccion interna, usar `sealed class` con `IEquatable` manual o helper de igualdad estructural.
+7. **`IPublicEvent` cuyo payload carga modelo de dominio rico** (un campo que es VO con campos privados + `ConfigurarSerializacion`, o un evento publico con ctor privado / dependiente de resolver custom para reconstruirse). Pregunta: "¿este payload se reconstruye con `JsonSerializerOptions` por defecto, sin el resolver del productor?" Si no, **no es portable por Azure Service Bus**: el dominio consumidor lo deserializa sin ese resolver y el dato llega lossy. La forma correcta es un payload plano (primitivos, `string`, fechas, `Guid`, `record` DTO planos) traducido desde el modelo rico al publicar. Verifica ademas que exista el guardrail de round-trip por defecto (test-writer.md seccion 6e). Autoridad: ADR-0012, "Frontera de serializacion: event store vs bus". Cuidado con el falso verde: el round-trip de 6d (con `CrearOpcionesMarten()`) pasa aunque el tipo sea no-portable -- registra el resolver que el bus no tiene.
 
-Para cada item: si la violacion existe y NO esta documentada como desviacion con alternativa Tell-don't-Ask explorada en el resumen del implementer, intenta corregir el codigo (mover la operacion al VO, eliminar el getter, etc.). Si no es trivial corregir, documentalo como hallazgo bloqueante.
+Para cada item: si la violacion existe y NO esta documentada como desviacion con alternativa Tell-don't-Ask explorada en el resumen del implementer, intenta corregir el codigo (mover la operacion al VO, eliminar el getter, aplanar el payload publico, etc.). Si no es trivial corregir, documentalo como hallazgo bloqueante.
 
 **Convenciones del pipeline que NO estan en ADRs** (revisa tambien):
 
@@ -253,6 +254,33 @@ Escribe tests directamente (no hay clase base — el setup de `JsonSerializerOpt
 Archivo: `{NombreClase}SerializacionTests.cs` en la misma carpeta de tests del value object.
 
 Despues de agregar tests, corre `dotnet test` para confirmar que pasan.
+
+**Este round-trip con el resolver custom (`CrearOpcionesMarten()`) NO detecta el defecto de
+portabilidad por el bus.** Cubre el event store de Marten -- registra el resolver del dominio, asi
+que un VO con campos privados pasa en verde. Pero un `IPublicEvent` cruza un **segundo canal**:
+sale por `IPublicEventSender` a Azure Service Bus y lo deserializa otro dominio con **otro**
+`JsonSerializerOptions` sin ese resolver. Si el payload publico carga un tipo rico, en produccion
+llega lossy y este test no lo ve. Ver ADR-0012, "Frontera de serializacion: event store vs bus".
+
+**`IPublicEvent` — portabilidad por el bus (vigilancia activa):**
+
+Para cada evento que implementa `IPublicEvent` en el diff, verifica **ambas** cosas:
+
+1. **El payload es plano y portable**: solo tipos serializables con el serializador por defecto
+   (primitivos, `enum`, `string`, fechas, `Guid`, colecciones de esos tipos, `record` DTO planos).
+   Si un campo del evento publico es un VO con campos privados + `ConfigurarSerializacion`, o el
+   evento depende de un constructor privado / resolver custom para reconstruirse, es **no
+   portable** -- hallazgo bloqueante. El modelo rico debe aplanarse antes de publicar.
+2. **Existe el guardrail de round-trip con serializador por defecto** (test-writer.md seccion 6e):
+   un test que serializa y deserializa el `IPublicEvent` con `JsonSerializerOptions` **por defecto
+   (sin el resolver custom)** y verifica que no hay perdida de datos. Si falta, agregalo siguiendo
+   la seccion 6e del test-writer (es un test de contrato, no de comportamiento -- generarlo en
+   fase refactor no viola TDD). Corre `dotnet test` para confirmar.
+
+**No confundas este guardrail con el "sin registro falla" de 6d**: aquel afirma que un tipo del
+event store **falla** sin resolver (comportamiento esperado en Marten); para un `IPublicEvent` la
+expectativa se invierte -- **debe sobrevivir** sin resolver. Un `IPublicEvent` que falla el
+round-trip por defecto es el bug que esta convencion previene.
 
 ---
 

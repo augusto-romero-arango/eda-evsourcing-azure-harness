@@ -523,6 +523,17 @@ public override string ToString()
 
 Un evento es publico si otro dominio lo consume (via ServiceBus). La verdad viaja en el evento — el consumidor solo depende de Contracts.
 
+**Restriccion de forma del payload publico (no es solo ubicacion).** El payload de un
+`IPublicEvent` debe ser **plano y portable por el bus**: solo tipos serializables con el
+serializador por defecto (primitivos, `enum`, `string`, fechas, `Guid`, colecciones de esos
+tipos, `record` DTO planos). **El modelo de dominio rico no cruza el bus** -- un VO con campos
+privados, factory privado y `ConfigurarSerializacion` se serializa bien en el event store de
+Marten (resolver registrado en el `Program.cs` del dominio) pero el consumidor lo deserializa
+con **otro** `JsonSerializerOptions` sin ese resolver, y el payload llega lossy. Al publicar,
+traduce el VO a su forma plana. La autoridad de esta regla es **ADR-0012, seccion "Frontera de
+serializacion: event store vs bus"** -- leela completa antes de definir o emitir un evento
+publico; este agente no la duplica.
+
 ### No exponer internals entre proyectos
 
 **NUNCA agregues `InternalsVisibleTo` de Contracts a un proyecto de dominio.** Si necesitas acceder a estado interno de un VO para construir un DTO, agrega un metodo publico de conversion en el propio VO (ej. `ToDetalle()`). La logica de conversion pertenece al objeto que tiene los datos (Tell Don't Ask).
