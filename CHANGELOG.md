@@ -4,6 +4,10 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+### Changed
+
+- **El check de `[Unreleased]` del pipeline interno `/mefisto-tooling` pasa de warning a GATE, y el writer redacta la entrada por defecto** (issue #70): el patron cinturon + tirantes sube el liston de "recordatorio pasivo" a "trabajo exigido". *Cinturon*: el `STAGE1_PROMPT` del writer (`.claude/scripts/mefisto-tooling-pipeline.sh`) gana una instruccion explicita para anadir una entrada bajo `## [Unreleased]` en `CHANGELOG.md` con la categoria Keep a Changelog correcta (`Added`/`Changed`/`Fixed`/`Removed`), con excepcion de cambios que toquen exclusivamente bitacora o gobierno no notable. *Tirantes*: el bloque que antes solo emitia `warn` (introducido en #36, que en modo no-interactivo se ignoraba y dejaba PRs sin entrada que `/mefisto-release` tenia que backfillear -evidencia: PRs #62/#63/#67-) ahora ABORTA cuando el cambio es notable y `[Unreleased]` no recibio contenido. Se anaden a `.claude/scripts/_mefisto-common.sh` las funciones `is_path_changelog_exempt` (clasifica rutas exentas: `docs/bitacora/**`, `README.md`, `CLAUDE.md`, `.gitignore`) y `changes_require_changelog` (un cambio es notable si toca al menos una ruta no exenta). El gate corre tras el reviewer (Stage 2) y antes de crear el PR; si el writer omitio la entrada, el operador la anade y retoma con `--from-stage 2`. Se mantiene la degradacion benigna sin `python3` (no aborta para evitar falsos positivos). Cubierto por el test interno `.claude/scripts/tests/test-changelog-gate.sh`. Acotado al pipeline INTERNO (ADR-0019); el equivalente para el pipeline publicado queda como follow-up opt-in.
+
 ## [0.6.0] - 2026-06-24
 
 ### Added

@@ -377,7 +377,8 @@ Instrucciones:
 2. Reutiliza patrones y convenciones del repo (mira archivos similares).
 3. Haz commits frecuentes con mensajes descriptivos en espanol.
 4. Si modificaste un skill o agente publicado, considera si necesitas tambien la version interna (con prefijo mefisto-).
-5. Al terminar, escribe un resumen de lo que hiciste en .claude/pipeline/summaries/stage-1-writer.md"
+5. Actualiza el CHANGELOG: como parte de implementar el issue, anade una entrada bajo '## [Unreleased]' en CHANGELOG.md siguiendo Keep a Changelog, con la categoria correcta ('Added' para funcionalidad nueva, 'Changed' para cambios de comportamiento, 'Fixed' para bugs, 'Removed' para eliminaciones). Excepcion: si el cambio toca exclusivamente bitacora (docs/bitacora/**) u otros archivos de gobierno no notables (README.md, CLAUDE.md, .gitignore), omite la entrada. Un gate del pipeline aborta el PR si un cambio notable llega sin entrada en [Unreleased].
+6. Al terminar, escribe un resumen de lo que hiciste en .claude/pipeline/summaries/stage-1-writer.md"
 
     # Sustituir $ISSUE_CONTEXT manualmente (evita expansion temprana en la heredoc)
     STAGE1_PROMPT="${STAGE1_PROMPT//\$ISSUE_CONTEXT/$ISSUE_CONTEXT}"
@@ -471,17 +472,27 @@ if [ -z "$COMMITS_LIST" ]; then
     abort "No hay commits en la rama $BRANCH_NAME."
 fi
 
-# --- Verificar registro en el CHANGELOG (warning, NO gate) ---
-# El PR se crea igual; esto solo recuerda mantener [Unreleased] al dia para que
-# /mefisto-release no aborte luego con la seccion vacia (ver issue #36).
+# --- Gate del CHANGELOG [Unreleased] (cinturon + tirantes, issue #70) ---
+# Cinturon: el writer (Stage 1) redacta la entrada por defecto. Tirantes: aqui el
+# script ABORTA si un cambio NOTABLE llega al PR sin entrada en [Unreleased].
+# Si todas las rutas tocadas son exentas (bitacora / gobierno no notable) no se
+# exige entrada y el gate pasa. Reemplaza el warning informativo de #36, que en
+# modo no-interactivo se ignoraba y dejaba PRs sin entrada que /mefisto-release
+# tenia que backfillear. Corre tras el reviewer (Stage 2) y antes de crear el PR.
+# Degradacion benigna: sin python3, check_unreleased_touched retorna 0 y no aborta.
 header "Verificando CHANGELOG [Unreleased]"
 
 if check_unreleased_touched "$WORKTREE_PATH" "$SNAPSHOT_COMMIT"; then
     success "El PR actualiza la seccion [Unreleased] del CHANGELOG"
+elif ! changes_require_changelog "$WORKTREE_PATH" "$SNAPSHOT_COMMIT"; then
+    success "Cambio exento (solo bitacora/gobierno no notable): no se exige entrada en [Unreleased]"
 else
-    warn "Este PR no anade contenido bajo '## [Unreleased]' en CHANGELOG.md."
-    warn "Considera anadir una nota bajo '## [Unreleased]' en CHANGELOG.md antes del proximo release."
-    warn "(la fase prepare de /mefisto-release aborta si [Unreleased] esta vacio). El PR se crea igual."
+    abort "Cambio notable sin entrada bajo '## [Unreleased]' en CHANGELOG.md.
+El writer debio redactar la entrada con la categoria Keep a Changelog correcta
+(Added/Changed/Fixed/Removed). La fase prepare de /mefisto-release aborta si
+[Unreleased] esta vacio, asi que ningun PR notable debe crearse sin ella.
+Anade la entrada en CHANGELOG.md del worktree ($WORKTREE_PATH) y retoma con:
+  /mefisto-tooling $ISSUE_NUM --from-stage 2"
 fi
 
 # --- Sincronizar con main ---
