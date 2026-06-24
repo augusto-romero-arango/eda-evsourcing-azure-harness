@@ -492,7 +492,7 @@ El writer debio redactar la entrada con la categoria Keep a Changelog correcta
 (Added/Changed/Fixed/Removed). La fase prepare de /mefisto-release aborta si
 [Unreleased] esta vacio, asi que ningun PR notable debe crearse sin ella.
 Anade la entrada en CHANGELOG.md del worktree ($WORKTREE_PATH) y retoma con:
-  /mefisto-tooling $ISSUE_NUM --from-stage 2"
+  ./.claude/scripts/mefisto-tooling-pipeline.sh $ISSUE_NUM --from-stage 2"
 fi
 
 # --- Sincronizar con main ---
