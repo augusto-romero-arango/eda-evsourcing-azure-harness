@@ -31,7 +31,18 @@ Si el issue no existe o esta cerrado (`CLOSED`), informa y detente.
 
 ### 1.5. Validar Definition of Ready
 
-Aplica la validacion programatica definida en la seccion "Validacion en `/implement`" del ADR `docs/adr/0011-definition-of-ready.md`.
+Resuelve primero la raiz del plugin — los ADRs del marco viven **dentro del plugin instalado**, no en el repo consumidor donde corre el skill (`cwd = repo consumidor`):
+
+```bash
+PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+PLUGIN_ROOT="${PLUGIN_ROOT%/}"   # normaliza: sin barra final
+echo "ADR-0011 en: $PLUGIN_ROOT/docs/adr/0011-definition-of-ready.md"
+```
+
+`.claude/pipeline/.plugin-root` lo escribe el hook `SessionStart` del plugin; el fallback localiza el plugin por glob sobre el cache del marketplace tomando la version mas reciente.
+
+Aplica la validacion programatica definida en la seccion "Validacion en `/implement`" del ADR ubicado en `"$PLUGIN_ROOT/docs/adr/0011-definition-of-ready.md"` (la ruta absoluta que imprimio el bloque anterior). **Nunca abras la ruta relativa `docs/adr/...`**: con `cwd = repo consumidor` resolveria contra `<consumer>/docs/adr/...` (inexistente) y reportaria erroneamente "ADR-0011 ausente".
 
 Extrae labels y body del issue:
 
