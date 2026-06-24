@@ -4,6 +4,10 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+### Fixed
+
+- **Los pipelines que crean worktree ramifican siempre desde `origin/main` actualizado** (issue #66): los cinco scripts que crean un worktree nuevo (`scripts/tdd-pipeline.sh`, `scripts/tooling-pipeline.sh`, `scripts/iac-pipeline.sh`, `scripts/scaffold-pipeline.sh` y el interno `.claude/scripts/mefisto-tooling-pipeline.sh`) lo hacian desde el HEAD del directorio donde se lanzaba el pipeline. Si el cwd estaba parado en una rama de feature vieja, el worktree nacia de una base desactualizada y los conflictos con main aparecian tarde (en la sincronizacion final de la fase verde) en vez de evitarse desde el inicio. El antipatron era identico en los cinco: un guard que solo emitia `warn` si el cwd no estaba en `main`/`master` (sin abortar ni corregir), un `git pull origin "$CURRENT_BRANCH"` que actualizaba la rama equivocada, y un `git worktree add ... -b <rama>` sin commit-ish base. Se reemplaza por `git fetch origin main` (con `abort` si falla) + `git worktree add ... -b <rama> origin/main`, replicando el patron ya probado de `.claude/scripts/mefisto-release.sh`. El worktree se ramifica **siempre** desde `origin/main` sea cual sea la rama del cwd (el guard queda degradado a contexto informativo en el log); el `fetch` es seguro desde cualquier rama porque no muta el working tree ni el HEAD del cwd. La sincronizacion final con `origin/main` (`merge origin/main --no-edit`) se mantiene intacta como red de seguridad para PRs mergeados durante la ejecucion, pero en el caso comun `BEHIND_COUNT` sera 0. Cubre lado publicado (`scripts/`) e interno (`.claude/scripts/`); los orquestadores (`parallel-pipeline.sh`, `batch-pipeline.sh`, `mefisto-batch-pipeline.sh`) no crean worktrees y quedan cubiertos transitivamente. Origen: pipeline TDD del consumidor Bitakora.ControlAsistencia cuyo worktree nacio 7 commits detras de `origin/main`.
+
 ## [0.5.0] - 2026-06-24
 
 ### Added
