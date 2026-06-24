@@ -129,7 +129,7 @@ Los ADRs en `docs/adr/` son la fuente de verdad arquitectónica del harness. Los
 | Mensajes en `.resx` por aggregate/handler | ADR-0009 |
 | Pipeline de conocimiento del dominio | ADR-0010 |
 | Definition of Ready por tipo de issue | ADR-0011 |
-| Encapsulamiento, Tell-don't-Ask, value objects, serialización Marten | ADR-0012 |
+| Encapsulamiento, Tell-don't-Ask, value objects, frontera de serialización (event store Marten vs bus) | ADR-0012 |
 | Smoke tests contra entorno dev | ADR-0013 |
 | Coverage gate en pipeline TDD | ADR-0014 |
 | Snapshots de Marten como excepción | ADR-0015 |

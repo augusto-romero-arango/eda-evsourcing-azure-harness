@@ -316,6 +316,65 @@ tests unitarios con opciones propias, nunca en produccion a traves de Marten.
 con el runtime JIT. No es compatible con NativeAOT/trimming. Este proyecto usa Azure
 Functions isolated worker sin NativeAOT, por lo que el riesgo no aplica actualmente.
 
+### Frontera de serializacion: event store vs bus
+
+`ConfigurarSerializacion` (seccion anterior) resuelve la serializacion de un tipo **dentro del
+event store de Marten del dominio**: el `Program.cs` del dominio registra el resolver via
+`ConfigureMarten` y, a partir de ahi, Marten serializa y deserializa el tipo con campos privados
+sin perdida. Ese registro es **local al dominio productor** -- vive en su `Program.cs` y en
+ningun otro lado.
+
+Un evento **publico** (`IPublicEvent`; ver `implementer.md` "Donde vive cada tipo de evento" y
+ADR-0003) cruza un **segundo canal de serializacion** que el resolver del dominio no alcanza:
+sale por `IPublicEventSender` hacia Azure Service Bus (ADR-0001: un topic por tipo de evento) y
+lo deserializa **otro dominio**, con **otro** `JsonSerializerOptions` que **no tiene registrado
+ese resolver**. El destino solo dispone del serializador por defecto. Si el payload contiene un
+value object rico (campos privados + `ConfigurarSerializacion`), en el productor serializa bien
+y en el consumidor se reconstruye lossy o falla: el contrato publico se rompe en silencio.
+
+**Regla: el payload de un `IPublicEvent` contiene solo tipos serializables con el serializador
+por defecto** -- primitivos, `enum`, `string`, fechas (`DateOnly` / `DateTime` /
+`DateTimeOffset`), `Guid`, colecciones de esos tipos, y `record` DTO planos compuestos de lo
+anterior. **El modelo de dominio rico no cruza el bus**: un VO con factory privado, campos
+privados y `ConfigurarSerializacion` se queda en el event store del dominio; al publicar se
+**traduce a una forma plana y portable**. Esta regla no prescribe **quien** traduce (un mapper,
+el handler, o un metodo `ToContrato()` del propio VO -- Tell-don't-Ask aplica); prescribe que el
+tipo que cruza el bus sea plano.
+
+```csharp
+// INCORRECTO: el evento publico carga un VO rico -> no portable por el bus
+public record TurnoPublicado(Guid TurnoId, Cedula Responsable) : IPublicEvent;
+// Cedula = sealed class con campos privados + ConfigurarSerializacion.
+// En el productor (Marten con resolver) serializa bien; en el consumidor
+// (otro dominio, JsonSerializerOptions por defecto) Responsable llega lossy
+// o la deserializacion falla.
+
+// CORRECTO: el evento publico es plano y portable
+public record TurnoPublicado(Guid TurnoId, string Responsable) : IPublicEvent;
+// string viaja por el bus con cualquier serializador, sin resolver.
+```
+
+**`ConfigurarSerializacion` es valido para el event store de Marten, NO para el payload del
+bus.** No es un mecanismo de portabilidad entre dominios; es un detalle de persistencia local.
+Un tipo que depende de el para reconstruirse **no debe** ser parte de un `IPublicEvent`.
+
+**Corolario sobre construccion:** un `IPublicEvent` tampoco debe depender de un constructor
+privado para reconstruirse. Si necesita validar invariantes al construirse en el productor, esa
+validacion puede vivir en un factory, pero la **forma serializada** debe ser reconstruible por
+STJ por defecto (propiedades publicas, constructor que STJ pueda invocar). Si el tipo necesita un
+resolver custom para volver del JSON, por definicion no es portable por el bus.
+
+Esta convencion blinda el contrato publico (ADR-0005: naming y versionado de eventos): un evento
+plano es estable, versionable de forma aditiva y deserializable por cualquier consumidor sin
+acoplarse a la mecanica de serializacion interna del productor.
+
+**El guardrail que la hace cumplir** es un test de round-trip con el serializador **por defecto,
+sin el resolver custom** (ver `test-writer.md` seccion 6e): si el `IPublicEvent` sobrevive un
+`Serialize` / `Deserialize` con `JsonSerializerOptions` vanilla sin perdida de datos, es portable
+por el bus. El round-trip que usa `CrearOpcionesMarten()` (con el resolver registrado; seccion 6d)
+**no** detecta este defecto -- pasa en verde justamente porque registra el resolver que el bus no
+tiene.
+
 ### Otras heuristicas transversales
 
 - `{ get; init; }` prohibido en objetos con invariantes -- `with {}` bypasea la validacion del factory
@@ -347,5 +406,8 @@ Functions isolated worker sin NativeAOT, por lo que el riesgo no aplica actualme
 ## Referencias
 
 - ADR-0004: Manejo de errores -- aggregate nunca throw para logica de negocio
+- ADR-0001: Service Bus -- un topic por tipo de evento (el canal que el `IPublicEvent` cruza)
+- ADR-0003: Marten + Wolverine -- `IPublicEventSender` / `IPrivateEventSender` (el segundo canal de serializacion)
+- ADR-0005: Naming y versionado de eventos -- el contrato publico que la frontera de serializacion blinda
 - ADR de Contracts del proyecto consumidor: Contracts -- records de eventos y value objects compartidos
 - Vaughn Vernon -- "Implementing Domain-Driven Design", Value Objects
