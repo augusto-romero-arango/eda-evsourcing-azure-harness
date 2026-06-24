@@ -199,12 +199,14 @@ if [ "$FROM_STAGE" -gt 1 ]; then
     SNAPSHOT_COMMIT=$(git -C "$WORKTREE_PATH" merge-base HEAD main)
     log "Snapshot detectado: $SNAPSHOT_COMMIT"
 else
+    # El worktree se ramifica SIEMPRE desde origin/main actualizado, sea cual sea
+    # la rama del cwd. El guard queda solo como contexto informativo en el log.
     if [ "$CURRENT_BRANCH" != "main" ] && [ "$CURRENT_BRANCH" != "master" ]; then
-        warn "No estas en main/master (rama actual: $CURRENT_BRANCH)"
+        warn "cwd en rama '$CURRENT_BRANCH' (no main/master): el worktree se creara igual desde origin/main"
     fi
 
-    log "Actualizando desde origin..."
-    git pull origin "${CURRENT_BRANCH}" >>"$LOG_FILE" 2>&1 || warn "No se pudo hacer pull (continuando)"
+    log "Actualizando origin/main..."
+    git fetch origin main >>"$LOG_FILE" 2>&1 || abort "No se pudo hacer fetch de origin/main"
 
     if [ -d "$WORKTREE_PATH" ]; then
         warn "El worktree ya existe: $WORKTREE_PATH -- limpiando para reiniciar..."
@@ -216,9 +218,9 @@ else
         git branch -D "$BRANCH_NAME" >>"$LOG_FILE" 2>&1 || true
     fi
 
-    log "Creando worktree: $WORKTREE_PATH"
-    git worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME" >>"$LOG_FILE" 2>&1 \
-        || abort "No se pudo crear el worktree"
+    log "Creando worktree: $WORKTREE_PATH (base: origin/main)"
+    git worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME" origin/main >>"$LOG_FILE" 2>&1 \
+        || abort "No se pudo crear el worktree desde origin/main"
 
     success "Worktree creado: $WORKTREE_PATH"
 
