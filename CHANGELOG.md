@@ -4,6 +4,8 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-24
+
 ### Added
 
 - **Regla del "oraculo independiente" en `test-writer` y ADR-0002** (issue #59): el agente `test-writer` gana la regla absoluta 20, que exige construir el valor esperado de toda asercion (`Then`, `And<>`, `ThenIsPublished*`) a mano como oraculo independiente -armado con las primitivas y factories del dominio- y **prohibe** derivarlo ejecutando la logica bajo prueba (ni el SUT ni los colaboradores de produccion que esa logica invoca). Un esperado calculado por el mismo codigo que se verifica vuelve el test tautologico: el bug contamina por igual el esperado y el actual, ambos coinciden y la prueba pasa sin detectar la regresion. La seccion "Verificacion del estado del agregado" (paso 4) lo refuerza con ejemplo de antipatron (`var esperado = ConsolidadorDesgloseHoras.Consolidar(...)`) y de patron correcto (esperado armado con `new DesgloseHoras(...)` + `IntervaloTemporal.Crear(...)`). El principio queda registrado como decision arquitectonica en **ADR-0002**, subseccion "Oraculo independiente (no-tautologia)", al mismo nivel normativo que la cobertura obligatoria Then + And ya documentada ahi, y la regla 20 lo referencia como fuente. Origen: review del PR #180 del consumidor Bitakora.ControlAsistencia, donde sin esta prohibicion el test-writer tomo el atajo de calcular el esperado con la misma consolidacion del SUT. Acotado a `test-writer`; `smoke-test-writer` no se toca.
@@ -138,7 +140,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.2.0...v0.3.0
