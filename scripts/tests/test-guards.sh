@@ -83,6 +83,7 @@ PUBLISHED_PIPELINES=(
     tooling-pipeline.sh parallel-pipeline.sh batch-pipeline.sh pr-sync.sh
     tdd-pipeline.sh iac-pipeline.sh scaffold-pipeline.sh tmux-pipeline.sh
     appinsights-query.sh eda-lint.sh setup-github-ci.sh setup-github-labels.sh
+    bootstrap-backend.sh
 )
 
 for pipe in "${PUBLISHED_PIPELINES[@]}"; do
@@ -112,6 +113,7 @@ echo "[C2] Scripts auxiliares publicados: el guard aborta cuando se ejecutan en 
 
 AUX_SCRIPTS=(
     appinsights-query.sh eda-lint.sh setup-github-ci.sh setup-github-labels.sh
+    bootstrap-backend.sh
 )
 
 for aux in "${AUX_SCRIPTS[@]}"; do

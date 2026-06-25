@@ -77,6 +77,8 @@ Crea `.claude/harness.config.json` en la raíz del proyecto consumidor:
 }
 ```
 
+**Campo opcional `azureLocation`**: la región de Azure (ej. `"eastus2"`, `"westeurope"`) donde `scripts/bootstrap-backend.sh` crea el backend de Terraform (Resource Group, Storage Account y container del tfstate). Si lo declaras, el bootstrap lo usa por defecto sin tener que pasar `--location` en cada corrida; el flag `--location` siempre lo sobrescribe. Si no lo declaras y tampoco pasas `--location`, el bootstrap aborta pidiéndote uno de los dos. Es **opcional**, así que añadirlo no es un cambio incompatible del schema (no es MAJOR).
+
 Y añade una sección a `CLAUDE.md` raíz del consumidor declarando los tokens:
 
 ```markdown
@@ -95,6 +97,93 @@ Y añade una sección a `CLAUDE.md` raíz del consumidor declarando los tokens:
 ```
 
 Si responden sin errores, está listo.
+
+## Primeros pasos con el harness (greenfield)
+
+Esta es la ruta de arranque para un proyecto **nuevo** (sin código ni infraestructura aún), en orden. Asume que ya completaste la sección **Instalación**.
+
+### 1. Habilitar el plugin y verificar
+
+Registra el marketplace e instala el plugin (sección Instalación, pasos 1-2) y comprueba que los skills responden:
+
+```
+/plugin marketplace add augusto-romero-arango-harness
+/plugin install mefisto@augusto-romero-arango-harness
+/mefisto:work-status
+```
+
+Si `/mefisto:work-status` responde sin errores, el plugin está cargado.
+
+### 2. Crear `.claude/harness.config.json`
+
+Crea el archivo de configuración en la raíz del consumidor (sección Instalación, paso 3). Para el bootstrap de infra conviene declarar también el campo opcional `azureLocation` con tu región de Azure (ej. `"eastus2"`), así no tienes que pasar `--location` en cada corrida. Añade además la sección "Tokens del harness" a tu `CLAUDE.md` raíz.
+
+### 3. Entender el modelo de ejecución (importante)
+
+**Los scripts del harness NO viven en tu repo.** El plugin se instala en el cache del marketplace (`~/.claude/plugins/cache/.../mefisto/.../`, read-only). Por eso **nunca** invocas `./scripts/...` desde el consumidor: esa ruta resolvería contra `<tu-repo>/scripts/...` (inexistente). Los skills y agentes localizan el script por **ruta absoluta al plugin** pero operan sobre tu repo (`cwd = consumidor`, vía `git rev-parse --show-toplevel` y `load_harness_config`).
+
+El patrón canónico para resolver la raíz del plugin es:
+
+```bash
+PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
+"$PLUGIN_SCRIPTS/<script>.sh" <args>
+```
+
+`.claude/pipeline/.plugin-root` lo escribe el hook `SessionStart` del plugin al abrir la sesión (persiste `${CLAUDE_PLUGIN_ROOT}`); el fallback localiza el plugin por glob sobre el cache tomando la versión más reciente. Normalmente **no necesitas correr esto a mano**: lo hacen los skills (`/infra`, etc.) y los agentes (`infra-bootstrap`, `planner`) por ti.
+
+### 4. Bootstrap de infraestructura
+
+El backend remoto de Terraform (donde vive el `tfstate`) es prerequisito de todo lo demás. El orden es:
+
+1. **Crear el backend del tfstate** con `bootstrap-backend.sh` (idempotente; crea Resource Group `rg-<proyecto>-tfstate`, Storage Account endurecida y container `tfstate`, y escribe `infra/environments/<env>/backend.tf`):
+
+   ```bash
+   PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+   [ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+   PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
+   "$PLUGIN_SCRIPTS/bootstrap-backend.sh" --subscription <subscription-id> --env dev
+   ```
+
+   (Pasa `--location <region>` si no declaraste `azureLocation` en el config.) También puedes dejar que lo orqueste el agente `infra-bootstrap`, que encadena este paso con el primer `/infra`.
+
+2. **Configurar el Service Principal de CI** con `setup-github-ci.sh` (crea el SP de GitHub Actions y le asigna lectura sobre el tfstate ya creado):
+
+   ```bash
+   "$PLUGIN_SCRIPTS/setup-github-ci.sh" <subscription-id>
+   ```
+
+   Copia los secrets que imprime a *Settings > Secrets and variables > Actions* de tu repo.
+
+3. **Primer `/infra`**: lanza el pipeline IaC para tu primer issue `tipo:infra`, que escribe el HCL, ejecuta `terraform plan` y aplica:
+
+   ```
+   /mefisto:infra <numero-de-issue>
+   ```
+
+### 5. Scaffold del primer dominio y primer ciclo TDD
+
+Con el backend listo, crea el scaffold de tu primer dominio y arranca el ciclo TDD:
+
+```
+/mefisto:scaffold <dominio>      # estructura src/ + tests/ + módulos de infra del dominio
+/draft "primera capacidad del dominio"   # captura la idea como issue borrador
+# el planner refina el issue a estado:listo
+/mefisto:implement <issue>       # pipeline TDD: test-writer (rojo) -> implementer (verde) -> reviewer -> PR
+```
+
+### 6. Qué corre dónde
+
+| Acción | `cwd` | Dónde vive el binario/artefacto |
+|---|---|---|
+| Skills (`/infra`, `/implement`, `/scaffold`, ...) | tu repo consumidor | definición en el plugin (cache del marketplace) |
+| `bootstrap-backend.sh`, `setup-github-ci.sh`, `iac-pipeline.sh`, `tdd-pipeline.sh`, ... | operan sobre tu repo consumidor | binario en el plugin; se resuelven vía `$PLUGIN_SCRIPTS` |
+| ADRs del marco (`docs/adr/`) | — | en el plugin; los agentes los leen vía `$PLUGIN_ROOT/docs/adr/` |
+| `.claude/harness.config.json`, `CLAUDE.md`, `src/`, `tests/`, `infra/` | tu repo consumidor | **tu repo** (los crea/edita el harness operando sobre el consumidor) |
+| `infra/environments/<env>/backend.tf` | tu repo consumidor | **tu repo** (lo escribe `bootstrap-backend.sh` en runtime) |
+
+Regla mnemónica: **los binarios viven en el plugin; los archivos del proyecto viven en tu repo.** Nunca edites archivos dentro del cache del plugin ni invoques sus scripts con rutas relativas.
 
 ## Uso
 
