@@ -268,6 +268,32 @@ else
     sed "s|\.claude/pipeline/events\.log|${EVENTS_LOG_ABS}|g" \
         "$REPO_ROOT/.claude/settings.json" > "$WORKTREE_PATH/.claude/settings.json"
 
+    # --- Copiar y commitear backend.tf del working tree al worktree (issue #86) ---
+    # bootstrap-backend.sh escribe infra/environments/<env>/backend.tf en el working
+    # tree del consumidor, pero este worktree se ramifica SIEMPRE desde origin/main,
+    # donde ese backend.tf puede no estar versionado aun (flujo greenfield). Sin esta
+    # copia, el terraform init/plan del reviewer correria con estado LOCAL en vez del
+    # backend remoto -- justo el fallo que el bootstrap busca eliminar. Copiamos el
+    # backend.tf y lo commiteamos en la rama del worktree para que viaje en el PR del
+    # pipeline y se versione en main via merge (sin push directo a main).
+    BACKEND_SRC="$REPO_ROOT/$INFRA_ENV_DIR/backend.tf"
+    if [ -f "$BACKEND_SRC" ]; then
+        log "Copiando backend.tf del working tree al worktree..."
+        mkdir -p "$INFRA_ENV_DIR_ABS_WT"
+        cp "$BACKEND_SRC" "$INFRA_ENV_DIR_ABS_WT/backend.tf"
+        # Si el backend.tf ya estaba identico en origin/main (no-greenfield), la copia
+        # es un no-op en el diff y no hay nada que commitear.
+        if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- "$INFRA_ENV_DIR/backend.tf")" ]; then
+            git -C "$WORKTREE_PATH" add "$INFRA_ENV_DIR/backend.tf"
+            git -C "$WORKTREE_PATH" commit -m "infra($ENVIRONMENT): incluir backend.tf generado por bootstrap"
+            success "backend.tf copiado y commiteado en la rama del worktree"
+        else
+            log "backend.tf ya estaba versionado e identico en origin/main -- sin cambios que commitear"
+        fi
+    else
+        warn "No existe $INFRA_ENV_DIR/backend.tf en el working tree -- el pipeline continua sin abortar; si necesitas backend remoto, ejecuta primero bootstrap-backend.sh"
+    fi
+
     INFRA_ENV_DIR_ABS="$(realpath "$INFRA_ENV_DIR_ABS_WT")"
 
     update_status "setup" "running"
