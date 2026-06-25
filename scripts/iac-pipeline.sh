@@ -291,7 +291,7 @@ else
             log "backend.tf ya estaba versionado e identico en origin/main -- sin cambios que commitear"
         fi
     else
-        warn "No existe $INFRA_ENV_DIR/backend.tf en el working tree -- el pipeline continua, pero corre bootstrap-backend.sh si necesitas backend remoto"
+        warn "No existe $INFRA_ENV_DIR/backend.tf en el working tree -- el pipeline continua sin abortar; si necesitas backend remoto, ejecuta primero bootstrap-backend.sh"
     fi
 
     INFRA_ENV_DIR_ABS="$(realpath "$INFRA_ENV_DIR_ABS_WT")"
