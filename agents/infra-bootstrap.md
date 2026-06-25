@@ -61,7 +61,7 @@ PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
 
 El script es **idempotente**: si reporta que el Resource Group, la Storage Account o el container "ya existe(n)" y termina con éxito (exit 0), el backend ya está listo. **No abortes ni lo trates como error: continúa al paso 4.** Solo detente si el script termina con exit distinto de 0; en ese caso muestra el error completo y no continues.
 
-El bootstrap escribe `infra/environments/<ambiente>/backend.tf` en el working tree. El pipeline IaC del paso 4 ramifica su worktree desde `origin/main`, así que ese `backend.tf` solo llega al `terraform init` del reviewer si ya está versionado allí. Si es la primera vez (greenfield) y `backend.tf` no está en `origin/main`, avisa al usuario para que lo commitee y suba a `main` antes de continuar; de lo contrario el primer `terraform plan/apply` correría con estado local.
+El bootstrap escribe `infra/environments/<ambiente>/backend.tf` en el working tree. El pipeline IaC del paso 4 ramifica su worktree desde `origin/main`, pero **automatiza** que ese `backend.tf` llegue al worktree: lo copia del working tree al worktree y lo commitea en la rama del pipeline, de modo que viaja en el PR y se versiona en `main` vía merge (sin push directo a `main`). No necesitas pedirle al usuario que commitee ni suba el `backend.tf` a `main` antes de continuar al paso 4: aunque sea greenfield (el `backend.tf` aún no está en `origin/main`), el pipeline lo incluye y el `terraform init` del reviewer encuentra el backend remoto en vez de caer a estado local.
 
 ### 4. Lanzar el pipeline IaC
 
