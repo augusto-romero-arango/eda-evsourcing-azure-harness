@@ -148,6 +148,8 @@ El backend remoto de Terraform (donde vive el `tfstate`) es prerequisito de todo
 
    (Pasa `--location <region>` si no declaraste `azureLocation` en el config.) También puedes dejar que lo orqueste el agente `infra-bootstrap`, que encadena este paso con el primer `/infra`.
 
+   > **Importante**: el script escribe `backend.tf` en tu working tree, pero el pipeline IaC (`/infra`) ramifica su worktree desde `origin/main`. Haz commit de `infra/environments/<env>/backend.tf` y súbelo a `origin/main` **antes** del primer `/infra`, para que el `terraform init` del reviewer encuentre el backend remoto (de lo contrario Terraform caería a estado local).
+
 2. **Configurar el Service Principal de CI** con `setup-github-ci.sh` (crea el SP de GitHub Actions y le asigna lectura sobre el tfstate ya creado):
 
    ```bash
@@ -168,7 +170,7 @@ Con el backend listo, crea el scaffold de tu primer dominio y arranca el ciclo T
 
 ```
 /mefisto:scaffold <dominio>      # estructura src/ + tests/ + módulos de infra del dominio
-/draft "primera capacidad del dominio"   # captura la idea como issue borrador
+/mefisto:draft "primera capacidad del dominio"   # captura la idea como issue borrador
 # el planner refina el issue a estado:listo
 /mefisto:implement <issue>       # pipeline TDD: test-writer (rojo) -> implementer (verde) -> reviewer -> PR
 ```
@@ -245,7 +247,7 @@ Sigue [SemVer](https://semver.org/):
 - **MINOR**: nuevos skills/agentes/scripts.
 - **PATCH**: fixes.
 
-Cambios al schema de `harness.config.json` ⇒ MAJOR + nota de migración en `CHANGELOG.md`.
+Cambios **incompatibles** al schema de `harness.config.json` (quitar o renombrar campos, cambiar su tipo, o volver obligatorio uno que no lo era) ⇒ MAJOR + nota de migración en `CHANGELOG.md`. Añadir un campo **opcional** (con default o flag que lo sobrescriba, como `azureLocation`) es retrocompatible ⇒ MINOR, no requiere nota de migración.
 
 ## Actualizar a una versión nueva
 
