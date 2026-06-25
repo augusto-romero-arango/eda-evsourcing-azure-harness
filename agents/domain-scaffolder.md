@@ -1358,9 +1358,9 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
@@ -1380,9 +1380,9 @@ jobs:
     needs: build-and-test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
@@ -1412,12 +1412,12 @@ jobs:
           test -f ./publish/<RootNamespace>.{PascalCase}.dll
 
       - name: Azure Authentication
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Deploy to Azure Functions
-        uses: Azure/functions-action@v1
+        uses: Azure/functions-action@v1  # v1 es la version mayor vigente
         with:
           app-name: func-{prefix_func}-{kebab}
           package: ./publish
