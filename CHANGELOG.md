@@ -4,6 +4,10 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+### Changed
+
+- **El scaffold de dominio emite los GitHub Actions en su version mayor estable mas reciente** (issue #90): el bloque YAML del workflow de deploy del consumidor (`.github/workflows/deploy-{kebab}.yml`) que emite el agente `domain-scaffolder` en el Paso 5 referenciaba actions atrasados, de modo que todo dominio nuevo nacia con avisos de deprecacion (runtimes de Node antiguos) y obligaba a actualizarlos a mano. Verificado contra la API de GitHub el 2026-06-25, se suben las versiones mayores flotantes: `actions/checkout@v4` -> `@v7` (jobs `build-and-test` y `deploy`), `actions/setup-dotnet@v4` -> `@v5` (ambos jobs; el input `dotnet-version: '10.0.x'` se conserva) y `azure/login@v2` -> `@v3` (el input `creds: ${{ secrets.AZURE_CREDENTIALS }}` se conserva). `Azure/functions-action@v1` queda sin cambio (v1 sigue siendo la mayor vigente y el tag flotante ya recibe parches) y se anota con un comentario aclaratorio. Los bumps son seguros bajo `ubuntu-latest`: los breaking changes de `setup-dotnet@v5` (runner Node 24+) y `azure/login@v3` (Node 20 -> 24) solo afectan al runtime del runner hosteado por GitHub, que siempre esta actualizado, y no tocan ningun input usado por el template. Se mantiene el patron del harness de fijar por tag mayor flotante (no por SHA), coherente con lo que ya emitia y con la guia de GitHub para actions de primera parte; el pin por SHA queda como decision de hardening del consumidor, fuera de alcance. El resto del bloque (estructura de jobs, `needs`, paths del trigger, pasos de publish/validacion, llamada a `smoke-tests-dominio.yml`) queda intacto. Punto unico de cambio: `agents/domain-scaffolder.md`; Mefisto es un harness y no tiene `.github/workflows/` propio que actualizar.
+
 ## [0.7.0] - 2026-06-25
 
 ### Added
