@@ -2,6 +2,10 @@
 # Crea el Service Principal para GitHub Actions CI y asigna permisos en el tfstate.
 # Uso: ./scripts/setup-github-ci.sh <subscription-id>
 # Ejemplo: ./scripts/setup-github-ci.sh 50fc1901-9723-4971-9d63-b3f1a015e8b8
+#
+# Resuelve el nombre REAL de la Storage Account del tfstate (que bootstrap-backend.sh
+# pudo crear con un sufijo de unicidad global, issue #92) antes de asignar el rol,
+# para no apuntar a una cuenta inexistente. Correr DESPUES de bootstrap-backend.sh.
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/_pipeline-common.sh"
@@ -29,9 +33,39 @@ fi
 
 SUBSCRIPTION_ID="$1"
 SP_NAME="$HARNESS_SP_NAME"
-TFSTATE_STORAGE="$HARNESS_TFSTATE_STORAGE"
 TFSTATE_RG="${HARNESS_RG_PREFIX}-tfstate"
 SCOPE="/subscriptions/${SUBSCRIPTION_ID}"
+
+# Nombre de la Storage Account del tfstate: bootstrap-backend.sh le anexa un
+# sufijo de unicidad global (issue #92), asi que el nombre REAL puede no coincidir
+# con el campo base 'terraformStateStorage' del config. Resolver el nombre FINAL
+# para no asignar 'Storage Blob Data Reader' sobre una cuenta inexistente (este
+# script corre DESPUES del bootstrap; ver README "Primeros pasos", paso 2). Mismo
+# orden de precedencia durable que usa el bootstrap, con los helpers compartidos:
+#   1. storage_account_name escrito en algun infra/environments/*/backend.tf
+#      (lo que el bootstrap acaba de escribir; es lo que usara 'terraform init').
+#   2. cuenta ya creada en el RG dedicado cuyo nombre arranca con la base truncada.
+#   3. fallback: el nombre base del config (compat con backends pre-#92 sin sufijo).
+resolve_tfstate_storage_name() {
+    local dir from_backend base existing
+    for dir in infra/environments/*/; do
+        from_backend=$(read_backend_storage_account_name "$dir")
+        if [ -n "$from_backend" ]; then
+            printf '%s' "$from_backend"; return 0
+        fi
+    done
+    base=$(truncate_storage_base "$HARNESS_TFSTATE_STORAGE")
+    existing=$(az storage account list \
+        --subscription "$SUBSCRIPTION_ID" \
+        --resource-group "$TFSTATE_RG" \
+        --query "[?starts_with(name, '${base}')].name | [0]" \
+        -o tsv 2>/dev/null) || existing=""
+    if [ -n "$existing" ] && [ "$existing" != "None" ]; then
+        printf '%s' "$existing"; return 0
+    fi
+    printf '%s' "$HARNESS_TFSTATE_STORAGE"
+}
+TFSTATE_STORAGE=$(resolve_tfstate_storage_name)
 
 echo "=== Setup CI para ${HARNESS_PROJECT_NAME} ==="
 echo ""

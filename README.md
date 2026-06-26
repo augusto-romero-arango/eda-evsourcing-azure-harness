@@ -170,7 +170,7 @@ El backend remoto de Terraform (donde vive el `tfstate`) es prerequisito de todo
 
    > **Nota**: el script escribe `backend.tf` en tu working tree. El pipeline IaC (`/infra`) ramifica su worktree desde `origin/main`, así que **automatiza** que ese `backend.tf` llegue al worktree: lo copia del working tree al worktree y lo commitea en la rama del pipeline, de modo que viaja en el PR y se versiona en `main` vía merge. No necesitas commitearlo ni subirlo a `main` a mano antes del primer `/infra` (el `terraform init` del reviewer ya encuentra el backend remoto y no cae a estado local).
 
-2. **Configurar el Service Principal de CI** con `setup-github-ci.sh` (crea el SP de GitHub Actions y le asigna lectura sobre el tfstate ya creado):
+2. **Configurar el Service Principal de CI** con `setup-github-ci.sh` (crea el SP de GitHub Actions y le asigna lectura sobre el tfstate ya creado; resuelve el nombre **final** de la Storage Account —con el sufijo que le puso el bootstrap— leyéndolo del `backend.tf` recién escrito, así que la asignación de rol apunta a la cuenta real, no al nombre base del config). Por eso corre **después** del paso 1:
 
    ```bash
    "$PLUGIN_SCRIPTS/setup-github-ci.sh" <subscription-id>
