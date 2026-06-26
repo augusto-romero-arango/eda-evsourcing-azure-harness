@@ -312,7 +312,8 @@ Scaffold del dominio **$PASCAL_CASE** (\`$DOMAIN_NAME\`) creado con domain-scaff
 - Tests: \`tests/${HARNESS_NAMESPACE_PREFIX}.$PASCAL_CASE.Tests/\`
 - Smoke Tests: \`tests/${HARNESS_NAMESPACE_PREFIX}.$PASCAL_CASE.SmokeTests/\`
 - Terraform: storage account + function app en \`infra/environments/dev/main.tf\`
-- GitHub Actions: \`.github/workflows/deploy-$DOMAIN_NAME.yml\`
+- GitHub Actions: \`.github/workflows/deploy-$DOMAIN_NAME.yml\` (+ workflows \`smoke-tests-dominio.yml\` y \`smoke-tests.yml\` la primera vez en el repo)
+- Smoke tests: registro del dominio en \`.github/smoke-tests-dominios.json\`
 
 ## Commits
 

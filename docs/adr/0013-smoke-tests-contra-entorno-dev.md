@@ -201,7 +201,11 @@ La infraestructura del proyecto de smoke tests (csproj, fixtures, appsettings, w
 Responsabilidades separadas:
 - **domain-scaffolder**: crea `tests/*.SmokeTests/` con los 3 fixtures, Polling, appsettings.json
   con placeholders, csproj con ProjectReference a Contracts (para igualdad de records), y el job
-  `smoke-tests` con secrets opcionales en el workflow de deploy.
+  `smoke-tests` con secrets opcionales en el workflow de deploy. La **primera vez** que corre en
+  un repo genera tambien (idempotente, no sobreescribe si ya existen) el workflow reutilizable
+  `.github/workflows/smoke-tests-dominio.yml` (`workflow_call`) que el deploy referencia, y el
+  workflow global `.github/workflows/smoke-tests.yml` que corre los smoke tests de todos los
+  dominios registrados en `.github/smoke-tests-dominios.json` en una matrix.
 - **smoke-test-writer**: escribe tests dentro de ese proyecto. Verifica todos los efectos secundarios
   de cada funcion. Usa `Assert.SkipWhen` para tests que dependen de ServiceBus o Postgres.
 - **reviewer**: verifica que cada smoke test con operacion exitosa cubra todos los efectos secundarios
@@ -209,18 +213,27 @@ Responsabilidades separadas:
 
 ### CI/CD
 
-El workflow de deploy de cada dominio tiene tres jobs:
+El workflow de deploy de cada dominio (`.github/workflows/deploy-<dominio>.yml`) tiene tres jobs:
 
 ```
 build-and-test (unit tests, --filter "Category!=Smoke") -> deploy -> smoke-tests
 ```
 
-El job `smoke-tests` pasa secrets opcionales (`required: false`) para ServiceBus y Postgres. Si los
-secrets no estan configurados en el repo, los tests que dependen de ellos se omiten via `Assert.SkipWhen`
-en vez de fallar. Esto permite que el pipeline funcione desde el primer deploy sin configuracion extra.
+El job `smoke-tests` no corre los tests en linea: invoca el workflow **reutilizable**
+`.github/workflows/smoke-tests-dominio.yml` (`on: workflow_call`) pasandole `base_url` y `test_project`,
+y los secrets opcionales (`required: false`) `SERVICEBUS_CONNECTION_STRING` y `POSTGRES_CONNECTION_STRING`
+para ServiceBus y Postgres. Si los secrets no estan configurados en el repo, los tests que dependen de
+ellos se omiten via `Assert.SkipWhen` en vez de fallar. Esto permite que el pipeline funcione desde el
+primer deploy sin configuracion extra. El reutilizable mapea esos secrets a las variables de entorno
+`ServiceBus__ConnectionString` / `Postgres__ConnectionString` y `base_url` a `Api__BaseUrl`.
 
-Los smoke tests tambien se pueden ejecutar manualmente desde GitHub Actions via el workflow reutilizable
-`smoke-tests.yml` con `workflow_dispatch`, que permite especificar la URL base del entorno.
+Ademas existe un workflow **global** `.github/workflows/smoke-tests.yml` (`workflow_dispatch` + `schedule`)
+que lee `.github/smoke-tests-dominios.json` y corre los smoke tests de **todos** los dominios registrados
+en una matrix, reusando el mismo `smoke-tests-dominio.yml`. Sirve como verificacion periodica y como
+disparo manual del estado del entorno completo.
+
+Ambos workflows (el reutilizable y el global) los genera el `domain-scaffolder` la primera vez que corre
+en el repo (idempotente; ver "Integracion en el proceso de desarrollo").
 
 ## Consecuencias
 
