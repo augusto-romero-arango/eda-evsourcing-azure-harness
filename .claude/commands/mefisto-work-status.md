@@ -1,3 +1,7 @@
+---
+model: haiku
+---
+
 Dashboard de los pipelines INTERNOS de Mefisto (en tmux). Solo opera dentro del repo de Mefisto.
 
 ## Paso 0: Verificar que estas en el repo de Mefisto

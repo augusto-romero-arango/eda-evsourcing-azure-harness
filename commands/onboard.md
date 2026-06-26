@@ -1,3 +1,7 @@
+---
+model: haiku
+---
+
 Diagnostica el onboarding del consumidor: valida `.claude/harness.config.json`, los labels y el CI, y reporta un checklist de que esta listo y que falta. Es un **doctor de solo lectura**: no crea ni modifica nada (ni labels, ni archivos, ni recursos de Azure). Comunicate en **espanol**.
 
 ## Pre-condicion: cwd != Mefisto

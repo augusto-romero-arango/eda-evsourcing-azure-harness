@@ -1,3 +1,7 @@
+---
+model: haiku
+---
+
 Lanza el agente `mefisto-planner` para planear, refinar o reorganizar issues del propio repo de Mefisto. Comunicate en **espanol**.
 
 **Alcance**: solo opera sobre issues del repo de Mefisto. Para planear issues de un proyecto consumidor, usa el skill `/planner` publicado desde el repo del consumidor.

@@ -1,3 +1,7 @@
+---
+model: sonnet
+---
+
 Versiona y publica el plugin Mefisto siguiendo SemVer y Keep a Changelog. Comunicate en **espanol**.
 
 **Alcance**: solo opera sobre el propio repo de Mefisto. No tiene equivalente publicado (el versionado del plugin es un artefacto de empaquetado del harness, no del marco arquitectonico).

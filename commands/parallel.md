@@ -1,3 +1,7 @@
+---
+model: haiku
+---
+
 Lanza el pipeline TDD en paralelo para multiples issues dentro de una sesion tmux. Cada issue corre en su propio tab. Los PRs se crean pero NO se mergean automaticamente. Comunicate en **espanol**.
 
 ## Pre-condicion: cwd != Mefisto, grupos homogeneos

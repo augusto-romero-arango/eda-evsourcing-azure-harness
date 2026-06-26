@@ -1,3 +1,7 @@
+---
+model: haiku
+---
+
 Lanza el pipeline IaC para un issue de GitHub dentro de una sesion tmux. Comunicate en **espanol**.
 
 ## Pre-condicion: cwd != Mefisto

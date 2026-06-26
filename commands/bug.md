@@ -1,3 +1,7 @@
+---
+model: haiku
+---
+
 Investiga un error o sintoma reportado. Clasifica automaticamente si es un bug de tooling local o del entorno desplegado, y enruta al agente apropiado. Comunicate en **espanol**.
 
 ## Pre-condicion: cwd != Mefisto

@@ -1,3 +1,7 @@
+---
+model: haiku
+---
+
 Lanza el pipeline secuencial para multiples issues dentro de una sesion tmux. Cada issue se enruta automaticamente al pipeline correcto segun su label tipo:*. Comunicate en **espanol**.
 
 ## Pre-condicion: cwd != Mefisto, grupos homogeneos

@@ -1,5 +1,6 @@
 ---
 name: domain-scaffolder
+model: sonnet
 description: Crea el scaffold completo para un nuevo dominio (Function App, tests, Terraform, GitHub Actions).
 tools: Bash, Read, Write, Edit, Glob, Grep
 ---

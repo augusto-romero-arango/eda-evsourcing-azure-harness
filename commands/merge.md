@@ -1,3 +1,7 @@
+---
+model: haiku
+---
+
 Mergea uno o varios PRs a main via `pr-sync`. Comunicate en **espanol**.
 
 ## Pre-condicion: cwd != Mefisto

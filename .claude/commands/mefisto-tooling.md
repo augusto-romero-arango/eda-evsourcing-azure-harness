@@ -1,3 +1,7 @@
+---
+model: haiku
+---
+
 Lanza el pipeline INTERNO de tooling para un issue del repo de Mefisto, dentro de una sesion tmux. Comunicate en **espanol**.
 
 **Alcance**: este skill solo opera dentro del repo del propio plugin Mefisto. Modifica archivos del harness (skills, agentes, scripts, hooks, ADRs, metadata del plugin). NO toca codigo de aplicacion ni archivos del consumidor.
