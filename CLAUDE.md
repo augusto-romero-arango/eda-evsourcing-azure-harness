@@ -149,6 +149,7 @@ Los ADRs en `docs/adr/` son la fuente de verdad arquitectónica del harness. Los
 | Hosting de Azure Functions (un App Service Plan por dominio) | ADR-0020 |
 | Infraestructura base (7 módulos + entorno) generada por agente | ADR-0021 |
 | Autenticación de CI hacia Azure por OIDC (Workload Identity Federation) | ADR-0022 |
+| Bounded Context, topología de dos namespaces de ASB y Open Host Service | ADR-0023 |
 
 ## Convenciones del marco
 
