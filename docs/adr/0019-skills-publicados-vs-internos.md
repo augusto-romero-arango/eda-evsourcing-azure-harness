@@ -57,7 +57,7 @@ Los skills internos:
 La unica operacion permitida desde el consumidor hacia el repo de Mefisto es **crear un draft** (`estado:borrador`). El refinamiento, desglose, oleadas, backlog, analisis y limpieza de issues del plugin se hacen exclusivamente con `/mefisto-plan` dentro del repo del plugin.
 
 - `agents/tooling-investigator.md` y `agents/planner.md` (publicados) implementan esta restriccion: si la causa raiz vive en el plugin, abren un draft con `gh -R augusto-romero-arango/eda-evsourcing-azure-harness ...` y detienen el flujo.
-- El slug del repo de Mefisto se lee de `.claude-plugin/plugin.json` (campo `repoSlug`) o de `.claude/harness.config.json` (campo `harnessRepoSlug`); default: `augusto-romero-arango/eda-evsourcing-azure-harness`. Esto soporta forks.
+- El slug del repo de Mefisto se lee del campo `repoSlug` en `.claude/harness.config.json` (opcional; se lee inline con `jq`, no se exporta como `HARNESS_*`); default: `augusto-romero-arango/eda-evsourcing-azure-harness`. Esto soporta forks.
 
 ### D. Grupos de trabajo homogeneos
 
@@ -108,7 +108,7 @@ Pros: separacion fisica dura. Contras: dos artefactos a publicar y mantener, dep
 
 - **Duplicacion inicial**: los pipelines y agentes empezaran muy parecidos (mefisto-tooling-pipeline.sh es ~85% identico a tooling-pipeline.sh). Aceptado deliberadamente; refactorizar a un common compartido solo cuando la duplicacion duela en la practica (regla de tres -- ADR-0018).
 - **Guard defensivo en cada skill**: cada `.md` lleva un bloque de pre-condicion. Un developer puede olvidarlo al anadir un skill nuevo. Mitigacion: test de guards (`scripts/tests/`) que itera sobre todos los skills publicados y verifica que abortan al invocarse en Mefisto.
-- **Fork del repo de Mefisto**: el slug hardcodeado en el routing del publicado queda incorrecto para forks. Mitigado con `HARNESS_REPO_SLUG` configurable (campo nuevo `repoSlug` en `plugin.json` o `harnessRepoSlug` en `.claude/harness.config.json`).
+- **Fork del repo de Mefisto**: el slug hardcodeado en el routing del publicado queda incorrecto para forks. Mitigado con el campo opcional `repoSlug` en `.claude/harness.config.json` (default: `augusto-romero-arango/eda-evsourcing-azure-harness`).
 - **Documentacion adicional**: este ADR + secciones nuevas en CLAUDE.md y README.md son necesarias para que un nuevo developer entienda los dos sets.
 
 ## Referencias

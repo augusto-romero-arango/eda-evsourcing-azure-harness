@@ -52,6 +52,12 @@ Tokens operativos consumidos por los scripts shell. Estructura:
 
 `scripts/_pipeline-common.sh` carga este archivo con `jq` y exporta variables `HARNESS_*` que el resto de scripts consumen.
 
+Notas sobre campos concretos:
+
+- **`terraformStateStorage`** es el nombre **base** de la Storage Account del tfstate. Azure exige **3-24 caracteres, solo minúsculas y dígitos** ([reglas de nombres de recursos, `Microsoft.Storage`](https://learn.microsoft.com/azure/azure-resource-manager/management/resource-name-rules#microsoftstorage)); `load_harness_config` valida `^[a-z0-9]{3,24}$` y aborta temprano si no cumple. El patrón `st<proyecto>tfstate<env>` deja ~12 chars para `<proyecto>`, así que para nombres largos abrevia el prefijo (p. ej. `stmicontrolplanetfstatedev` = 26 chars **inválido** → `stmcptfstatedev` = 15 válido). `bootstrap-backend.sh` le añade además un sufijo de unicidad global (detalle en README §3).
+- **`repoSlug`** (opcional): slug `owner/repo` del fork de Mefisto al que se enrutan los drafts cross-repo (`estado:borrador`) que crean el `planner` y el `tooling-investigator`. Default: `augusto-romero-arango/eda-evsourcing-azure-harness`. **No** se exporta como `HARNESS_*`; se lee inline con `jq` donde se necesita (`_pipeline-common.sh`, `agents/planner.md`, `agents/tooling-investigator.md`).
+- **`azureLocation`** (opcional): región de Azure para `bootstrap-backend.sh`; el flag `--location` la sobrescribe.
+
 ### 2. Sección "Tokens del harness" en `CLAUDE.md` raíz del consumidor
 
 Necesaria porque los agentes/skills del harness no pueden hacer sustitución de variables. Los placeholders `<RootNamespace>`, `<SolutionFile>`, `<ProjectDisplayName>` se resuelven leyendo `CLAUDE.md` del proyecto. Ejemplo mínimo:
