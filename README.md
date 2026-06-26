@@ -45,7 +45,7 @@ Si tu proyecto no encaja con este stack, este harness no es para ti.
   "extraKnownMarketplaces": {
     "augusto-romero-arango-harness": {
       "source": {
-        "type": "github",
+        "source": "github",
         "repo": "augusto-romero-arango/eda-evsourcing-azure-harness"
       }
     }
@@ -59,6 +59,8 @@ Si tu proyecto no encaja con este stack, este harness no es para ti.
 /plugin marketplace add augusto-romero-arango-harness
 /plugin install mefisto@augusto-romero-arango-harness
 ```
+
+> **Si vas a correr los pipelines (`/infra`, `/implement`, `/scaffold`), instala a scope `user`**, no `project`: `claude plugin install mefisto@augusto-romero-arango-harness --scope user`. Esos pipelines invocan a sus agentes dentro de un git worktree hermano del repo consumidor (`${REPO_ROOT}/../<rama>`), que un scope `project` no carga. Ver "Primeros pasos con el harness (greenfield)", paso 1, para el porqué detallado.
 
 ### 3. Configurar el consumidor
 
@@ -76,6 +78,8 @@ Crea `.claude/harness.config.json` en la raíz del proyecto consumidor:
   "domainLabels": ["dominio1", "dominio2"]
 }
 ```
+
+**Campo `terraformStateStorage` (nombre BASE)**: el nombre de una Storage Account es un endpoint DNS público (`*.blob.core.windows.net`) y por tanto **único en todo Azure**, no solo en tu suscripción. Por eso `scripts/bootstrap-backend.sh` trata este campo como un nombre **base**: le anexa un sufijo aleatorio de 6 caracteres para garantizar unicidad global (mismo patrón `random_string` que el scaffolder usa en las Storage de dominio) y valida la disponibilidad con `az storage account check-name` antes de crear. El nombre **final** (con sufijo) es el que queda en `infra/environments/<env>/backend.tf`, así que `terraform init` usa exactamente la cuenta creada. Declara la base sin sufijo (ej. `stmiproyectotfstatedev`); si la base más el sufijo no cabe en el límite de 24 caracteres de Azure, el script trunca la base y avisa. Las corridas posteriores reutilizan la cuenta ya creada (idempotente; ancla el nombre en el `backend.tf` versionado y en la cuenta existente del Resource Group del tfstate), no generan un sufijo nuevo.
 
 **Campo opcional `azureLocation`**: la región de Azure (ej. `"eastus2"`, `"westeurope"`) donde `scripts/bootstrap-backend.sh` crea el backend de Terraform (Resource Group, Storage Account y container del tfstate). Si lo declaras, el bootstrap lo usa por defecto sin tener que pasar `--location` en cada corrida; el flag `--location` siempre lo sobrescribe. Si no lo declaras y tampoco pasas `--location`, el bootstrap aborta pidiéndote uno de los dos. Es **opcional**, así que añadirlo no es un cambio incompatible del schema (no es MAJOR).
 
@@ -102,17 +106,33 @@ Si responden sin errores, está listo.
 
 Esta es la ruta de arranque para un proyecto **nuevo** (sin código ni infraestructura aún), en orden. Asume que ya completaste la sección **Instalación**.
 
-### 1. Habilitar el plugin y verificar
+### 1. Habilitar el plugin **a scope user** y verificar
 
-Registra el marketplace e instala el plugin (sección Instalación, pasos 1-2) y comprueba que los skills responden:
+Registra el marketplace e instala el plugin (sección Instalación, pasos 1-2), pero **instálalo a scope `user`, no a scope `project`** (es requisito para que los pipelines funcionen — ver el recuadro "Por qué scope `user`" al final de este paso).
+
+Registra el marketplace desde una sesión de Claude Code:
 
 ```
 /plugin marketplace add augusto-romero-arango-harness
-/plugin install mefisto@augusto-romero-arango-harness
+```
+
+E **instala con `--scope user`** desde una terminal en la raíz del repo consumidor (el flag `--scope` solo existe en el CLI; el slash `/plugin install` no lo acepta). Verificado contra Claude Code 2.1.x:
+
+```bash
+claude plugin install mefisto@augusto-romero-arango-harness --scope user
+```
+
+> Si prefieres el flujo interactivo (`/plugin install mefisto@augusto-romero-arango-harness` dentro de la sesión), elige **user** cuando te pregunte por el scope. El comando de terminal de arriba lo fija explícito y es el camino verificado en campo.
+
+Comprueba que los skills responden:
+
+```
 /mefisto:work-status
 ```
 
 Si `/mefisto:work-status` responde sin errores, el plugin está cargado.
+
+> **Por qué scope `user` y no `project` (requisito para los pipelines).** Los pipelines (`/infra`, `/implement`, `/scaffold`) **no** corren sus agentes dentro de tu repo: crean un **git worktree** en `${REPO_ROOT}/../<rama>` —un directorio **hermano del repo consumidor, fuera de él**— e invocan cada agente ahí con `claude -p ... --agent <nombre> ...` (ver `scripts/iac-pipeline.sh`, `scripts/tdd-pipeline.sh` y `scripts/scaffold-pipeline.sh`, que comparten el patrón `WORKTREE_PATH="${REPO_ROOT}/../${BRANCH_NAME}"`). Con el plugin a **scope `project`**, Claude Code solo lo carga para el path del repo consumidor; ese worktree hermano queda fuera de alcance, el agente no se encuentra y el pipeline aborta con `agent '<nombre>' not found`. El **scope `user`** carga el plugin para todos los paths de tu usuario —incluido el worktree—, por eso es **requisito antes del paso 4 (Bootstrap de infraestructura / `/infra`)**, el primer paso de esta guía que dispara un pipeline. En Claude Code 2.1.x `--scope user` es además el default de `claude plugin install`; declararlo explícito evita que un flujo interactivo previo lo haya dejado a scope `project` (la causa raíz del fallo en el primer greenfield real del harness).
 
 ### 2. Crear `.claude/harness.config.json`
 
@@ -137,7 +157,7 @@ PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
 
 El backend remoto de Terraform (donde vive el `tfstate`) es prerequisito de todo lo demás. El orden es:
 
-1. **Crear el backend del tfstate** con `bootstrap-backend.sh` (idempotente; crea Resource Group `rg-<proyecto>-tfstate`, Storage Account endurecida y container `tfstate`, y escribe `infra/environments/<env>/backend.tf`):
+1. **Crear el backend del tfstate** con `bootstrap-backend.sh` (idempotente; crea Resource Group `rg-<proyecto>-tfstate`, Storage Account endurecida —con un **sufijo de unicidad global** sobre el nombre base de `terraformStateStorage`, ver la nota de ese campo arriba— y container `tfstate`, y escribe `infra/environments/<env>/backend.tf` con el nombre final resuelto):
 
    ```bash
    PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
@@ -150,7 +170,7 @@ El backend remoto de Terraform (donde vive el `tfstate`) es prerequisito de todo
 
    > **Nota**: el script escribe `backend.tf` en tu working tree. El pipeline IaC (`/infra`) ramifica su worktree desde `origin/main`, así que **automatiza** que ese `backend.tf` llegue al worktree: lo copia del working tree al worktree y lo commitea en la rama del pipeline, de modo que viaja en el PR y se versiona en `main` vía merge. No necesitas commitearlo ni subirlo a `main` a mano antes del primer `/infra` (el `terraform init` del reviewer ya encuentra el backend remoto y no cae a estado local).
 
-2. **Configurar el Service Principal de CI** con `setup-github-ci.sh` (crea el SP de GitHub Actions y le asigna lectura sobre el tfstate ya creado):
+2. **Configurar el Service Principal de CI** con `setup-github-ci.sh` (crea el SP de GitHub Actions y le asigna lectura sobre el tfstate ya creado; resuelve el nombre **final** de la Storage Account —con el sufijo que le puso el bootstrap— leyéndolo del `backend.tf` recién escrito, así que la asignación de rol apunta a la cuenta real, no al nombre base del config). Por eso corre **después** del paso 1:
 
    ```bash
    "$PLUGIN_SCRIPTS/setup-github-ci.sh" <subscription-id>
