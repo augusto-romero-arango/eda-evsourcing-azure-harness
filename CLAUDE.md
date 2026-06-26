@@ -83,7 +83,7 @@ Necesaria porque los agentes/skills del harness no pueden hacer sustitución de 
 
 | Skill | Propósito |
 |---|---|
-| `/onboard` | Diagnostica el onboarding del consumidor (config, labels, CI) y reporta un checklist; solo lectura, no provisiona |
+| `/onboard` | Diagnostica el onboarding del consumidor (config, labels, CI) y reporta un checklist; por defecto solo diagnostica, con provision opt-in de los labels faltantes bajo confirmacion |
 | `/draft` | Captura una idea como issue `estado:borrador` |
 | `/implement` | Pipeline TDD para un issue `estado:listo` |
 | `/tooling` | Pipeline de tooling (scripts, fixtures, config, agentes) |

@@ -153,13 +153,13 @@ El criterio de éxito es **"los comandos `/mefisto:*` aparecen disponibles"**, n
 
 > **En un proyecto greenfield es esperable que los skills de runtime no muestren nada — y eso NO indica un fallo de instalación.** `/mefisto:show-flow` lee `docs/eda/flows/` (carpeta que aún no existe) y responde "No hay flujos en docs/eda/flows/"; `/mefisto:work-status` lee `.claude/pipeline/pipeline-status-*.json` (aún sin pipelines corridos) y muestra un dashboard vacío. Esa salida vacía solo significa que todavía no has modelado flujos ni corrido pipelines: la instalación se verifica con los dos checks de arriba, no con que esos skills devuelvan datos.
 
-Para un diagnóstico del onboarding (¿está bien formado el `harness.config.json`?, ¿existen los labels?, ¿está configurado el CI?), corre el doctor de solo lectura:
+Para un diagnóstico del onboarding (¿está bien formado el `harness.config.json`?, ¿existen los labels?, ¿está configurado el CI?), corre el doctor de onboarding (por defecto solo diagnostica):
 
 ```
 /mefisto:onboard
 ```
 
-Imprime un checklist con estado por ítem (OK / FALTA / NO VERIFICADO) y, para cada FALTA, el comando que lo resuelve. No crea ni modifica nada.
+Imprime un checklist con estado por ítem (OK / FALTA / NO VERIFICADO) y, para cada FALTA, el comando que lo resuelve. Por defecto no crea ni modifica nada; como única excepción opt-in puede provisionar los labels faltantes, pero solo tras tu confirmación explícita.
 
 ## Primeros pasos con el harness (greenfield)
 
@@ -197,7 +197,7 @@ Comprueba que el plugin cargó (mismo criterio que "Verificar instalación", pas
 
 Crea el archivo de configuración en la raíz del consumidor (sección Instalación, paso 3). Para el bootstrap de infra conviene declarar también el campo opcional `azureLocation` con tu región de Azure (ej. `"eastus2"`), así no tienes que pasar `--location` en cada corrida. Añade además la sección "Tokens del harness" a tu `CLAUDE.md` raíz.
 
-Cuando lo tengas, corre `/mefisto:onboard` para verificar de un vistazo que el config está bien formado y qué te falta (labels, CI). Es solo diagnóstico (no provisiona nada); la creación de labels y la configuración del CI se hacen con `setup-github-labels.sh` y `setup-github-ci.sh` en los pasos siguientes.
+Cuando lo tengas, corre `/mefisto:onboard` para verificar de un vistazo que el config está bien formado y qué te falta (labels, CI). Por defecto solo diagnostica; puede provisionar los **labels** faltantes bajo tu confirmación explícita (el script subyacente es destructivo). La configuración del **CI** sigue siendo manual con `setup-github-ci.sh` en los pasos siguientes; también puedes correr `setup-github-labels.sh` a mano si prefieres.
 
 ### 3. Entender el modelo de ejecución (importante)
 
@@ -218,7 +218,7 @@ PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
 
 Antes del primer `/draft` o `/implement`, tu repo necesita dos prerequisitos operativos que el harness **no** crea solo: el esquema de **labels** de GitHub y la **autenticación de CI** hacia Azure. Ambos se provisionan con scripts del plugin, así que se invocan **plugin-relative** (nunca `./scripts/...` desde tu repo —los scripts del harness no viven en él, ver paso 3): resuelve `$PLUGIN_SCRIPTS` y llama al script por ruta absoluta. Los dos llevan el guard defensivo de ADR-0019 y **abortan si se corren dentro del repo de Mefisto** (solo aplican al consumidor).
 
-Para verificar de un vistazo qué falta (labels ausentes, CI sin configurar) antes y después de este paso, corre el doctor de solo lectura `/mefisto:onboard`.
+Para verificar de un vistazo qué falta (labels ausentes, CI sin configurar) antes y después de este paso, corre el doctor de onboarding `/mefisto:onboard` (por defecto solo diagnostica; puede provisionar los labels faltantes bajo tu confirmación).
 
 **a. Labels de GitHub** — `setup-github-labels.sh`. El `planner`, `/draft` y los pipelines exigen los labels dimensionales `tipo:*`, `dom:*` y `estado:{borrador|listo}` como prerequisito operativo (**ADR-0007**); sin ellos el primer `/draft` falla al etiquetar. El script **elimina los 9 labels default de GitHub** (`documentation`, `enhancement`, `good first issue`, etc.) y crea el esquema del harness, incluyendo un `dom:<x>` por cada entrada de `domainLabels` en `.claude/harness.config.json`. **Prerequisitos**: `gh auth login` y el campo `domainLabels` ya declarado en el config (paso 2).
 
