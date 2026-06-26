@@ -100,6 +100,7 @@ Crea `.claude/harness.config.json` en la raíz del proyecto consumidor:
   "terraformStateStorage": "stmiproyectotfstatedev",
   "githubServicePrincipalName": "github-miproyecto-ci",
   "appInsightsApp": "miproyecto-dev-ai",
+  "azureLocation": "eastus2",
   "domainLabels": ["dominio1", "dominio2"]
 }
 ```
@@ -107,6 +108,14 @@ Crea `.claude/harness.config.json` en la raíz del proyecto consumidor:
 **Campo `terraformStateStorage` (nombre BASE)**: el nombre de una Storage Account es un endpoint DNS público (`*.blob.core.windows.net`) y por tanto **único en todo Azure**, no solo en tu suscripción. Por eso `scripts/bootstrap-backend.sh` trata este campo como un nombre **base**: le anexa un sufijo aleatorio de 6 caracteres para garantizar unicidad global (mismo patrón `random_string` que el scaffolder usa en las Storage de dominio) y valida la disponibilidad con `az storage account check-name` antes de crear. El nombre **final** (con sufijo) es el que queda en `infra/environments/<env>/backend.tf`, así que `terraform init` usa exactamente la cuenta creada. Declara la base sin sufijo (ej. `stmiproyectotfstatedev`, 22 chars). **Restricción de Azure**: el nombre de una Storage Account debe tener **3-24 caracteres, solo minúsculas y dígitos** ([Microsoft Learn — reglas de nombres de recursos, `Microsoft.Storage`](https://learn.microsoft.com/azure/azure-resource-manager/management/resource-name-rules#microsoftstorage)). El patrón sugerido `st<proyecto>tfstate<env>` deja ~12 caracteres para `<proyecto>` (`st`=2, `tfstate`=7, `dev`=3), así que **para nombres largos abrevia el prefijo del proyecto**: p. ej. `micontrolplane` produce `stmicontrolplanetfstatedev` = **26 chars (inválido)**; abreviado a `mcp` queda `stmcptfstatedev` = 15 chars (válido). `load_harness_config` valida este formato (`^[a-z0-9]{3,24}$`) al cargar el config (issue #78) y aborta temprano si no cumple, en vez de fallar tarde en el `apply`. Si la base **válida** más el sufijo de unicidad no cabe en 24 caracteres, `bootstrap-backend.sh` trunca la base y avisa. Las corridas posteriores reutilizan la cuenta ya creada (idempotente; ancla el nombre en el `backend.tf` versionado y en la cuenta existente del Resource Group del tfstate), no generan un sufijo nuevo.
 
 **Campo opcional `azureLocation`**: la región de Azure (ej. `"eastus2"`, `"westeurope"`) donde `scripts/bootstrap-backend.sh` crea el backend de Terraform (Resource Group, Storage Account y container del tfstate). Si lo declaras, el bootstrap lo usa por defecto sin tener que pasar `--location` en cada corrida; el flag `--location` siempre lo sobrescribe. Si no lo declaras y tampoco pasas `--location`, el bootstrap aborta pidiéndote uno de los dos. Es **opcional**, así que añadirlo no es un cambio incompatible del schema (no es MAJOR).
+
+> **`azureLocation` (backend del tfstate) ≠ región de PostgreSQL.** `azureLocation` solo fija dónde vive el backend del `tfstate` (Resource Group, Storage Account, container); **no** es la región del PostgreSQL Flexible Server que `/infra-base` provisiona como event store de Marten (ADR-0003, ADR-0021). Esa región es `postgresql_location` en `infra/environments/<env>/terraform.tfvars` y **puede —y a veces debe— diferir** de `azureLocation`: en el primer greenfield real (`Bitakora.ControlAsistencia`), `eastus2` —válido para el backend del tfstate— devolvió `LocationIsOfferRestricted` al crear el PostgreSQL Flexible Server, y se resolvió usando `centralus`. Ese error depende de tu **suscripción/oferta** (la región figura como soportada en la [lista oficial de regiones de Postgres](https://learn.microsoft.com/azure/postgresql/overview#azure-regions), pero la oferta no está habilitada para tu suscripción ahí), no es una indisponibilidad global de la región — por eso no hay una región "apta" universal y conviene verificar la tuya **antes del primer `terraform apply`**, no descubrir la restricción en el apply:
+>
+> ```bash
+> az postgres flexible-server list-skus --location <region> -o table
+> ```
+>
+> Si lista SKUs (entre ellas `Standard_B1ms`, la que usa el módulo `postgresql`), la región sirve para tu suscripción; si sale vacío o falla, elige otra (p. ej. `centralus`). El comando es la referencia oficial de Azure CLI ([`az postgres flexible-server list-skus`](https://learn.microsoft.com/cli/azure/postgres/flexible-server)). Ver ADR-0021, sección "Región de PostgreSQL Flexible Server".
 
 **Campo opcional `repoSlug`**: el slug `owner/repo` del repositorio de Mefisto al que se enrutan los **drafts cross-repo** (`estado:borrador`) que crean el `planner` y el `tooling-investigator` cuando detectan que un problema descubierto en tu proyecto pertenece al harness. Sirve para redirigir esos drafts a **tu fork** de Mefisto en vez del repo upstream. Si no lo declaras, el default es `augusto-romero-arango/eda-evsourcing-azure-harness`. No se exporta como variable `HARNESS_*`: se lee directo con `jq` donde se necesita (`scripts/_pipeline-common.sh`, `agents/planner.md`, `agents/tooling-investigator.md`). Es **opcional** (añadirlo no es MAJOR).
 
@@ -254,6 +263,8 @@ El backend remoto de Terraform (donde vive el `tfstate`) es prerequisito de todo
    ```
 
    Luego provee las variables requeridas en `infra/environments/dev/terraform.tfvars` (`alert_email`, `postgresql_admin_password`, `subscription_id`) y revisa los defaults derivados (`project`, `project_short`, `postgresql_location`). Sin esta base, `/infra` y `/scaffold` asumen módulos que no existirían y fallarían.
+
+   > **Valida `postgresql_location` antes del primer `terraform apply`.** No tiene por qué coincidir con `azureLocation` (que es solo la región del backend del tfstate). Algunas regiones devuelven `LocationIsOfferRestricted` al crear el PostgreSQL Flexible Server según tu suscripción —`eastus2` lo hizo en el primer greenfield real, resuelto con `centralus`—. Verifica la tuya con `az postgres flexible-server list-skus --location <region> -o table` (debe listar `Standard_B1ms`); ver la nota del campo `azureLocation` (sección "Configurar el consumidor") y ADR-0021.
 
 4. **Primer `/infra`**: lanza el pipeline IaC para tu primer issue `tipo:infra`, que escribe el HCL, ejecuta `terraform plan` y aplica:
 

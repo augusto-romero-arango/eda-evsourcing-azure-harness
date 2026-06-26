@@ -62,6 +62,22 @@ Los nombres globalmente unicos (Storage Account, PostgreSQL y Service Bus) se re
 
 El `infra/environments/<env>/main.tf` generado instancia **solo** los modulos compartidos (`resource_group`, `monitoring`, `postgresql`, `service_bus`); las instancias por dominio (`storage`, `service-plan`, `function-app`) las agrega el `domain-scaffolder` al crear cada dominio. El `outputs.tf` expone a nivel raiz, como minimo, `resource_group_name`, `service_bus_name` y `postgresql_fqdn`, de modo que `terraform output` no salga vacio tras el primer apply. El `providers.tf` declara `azurerm` y `random` y el bloque `provider "azurerm"`, pero **no** incluye `backend "azurerm"`: el backend lo materializa `scripts/bootstrap-backend.sh` en `backend.tf`, y duplicarlo haria fallar a Terraform por doble definicion de backend.
 
+### Region de PostgreSQL Flexible Server: la restriccion de oferta por suscripcion (issue #99)
+
+El modulo `postgresql` recibe su region via `var.location`, que en el esqueleto del entorno se alimenta del local `postgresql_location` (revisable en `infra/environments/<env>/terraform.tfvars`). **Esa region es independiente del campo `azureLocation` de `harness.config.json`** -el que `scripts/bootstrap-backend.sh` usa para el backend del `tfstate` (Resource Group + Storage Account + container)- y puede, y a veces debe, **diferir**.
+
+El motivo: la creacion de un PostgreSQL Flexible Server puede abortar con `LocationIsOfferRestricted` aunque la region figure como disponible en la lista oficial de regiones del servicio. Es una restriccion de **oferta a nivel de suscripcion** (la SKU/oferta de Flexible Server no esta habilitada para esa suscripcion en esa region), no una indisponibilidad global de la region. En el primer greenfield real (`Bitakora.ControlAsistencia`), `eastus2` -region perfectamente valida para el backend del tfstate, y listada como soportada en el overview de Postgres- devolvio `LocationIsOfferRestricted` al crear el servidor; se resolvio con `centralus` (region verificada con oferta de Postgres para esa suscripcion, y que quedo solo como comentario en el HCL de campo). Por eso **no existe una region "apta" universal** que el harness pueda fijar por defecto: depende de la suscripcion del consumidor.
+
+**Verificacion antes del primer `apply`.** Como la restriccion es por suscripcion, cada consumidor debe verificar la suya antes de provisionar, en vez de descubrir el `LocationIsOfferRestricted` recien en el `terraform apply`:
+
+```bash
+az postgres flexible-server list-skus --location <region> -o table
+```
+
+Si el comando lista SKUs -incluida `Standard_B1ms`, la que usa este modulo (ver tabla de los 7 modulos)- la region sirve para esa suscripcion; si sale vacio o falla, hay que elegir otra (p. ej. `centralus`).
+
+Esta nota vive a nivel del **entorno/consumidor**, no del modulo: el `postgresql` recibe `location` ya resuelto via `var.location` y no decide la region. La documentacion operativa del campo `azureLocation` y del paso de bootstrap en el `README.md` enlaza a esta seccion, de modo que el proximo greenfield no reincida en el roce.
+
 ### Idempotencia
 
 Re-ejecutar el generador sobre un repo que ya tiene parte de la base **no sobrescribe** lo presente: el agente detecta cada archivo existente y solo crea lo faltante, reportando que omitio (para no pisar personalizaciones del consumidor). No hay sobrescritura destructiva.
@@ -103,4 +119,5 @@ Un solo agente que crea backend + modulos + entorno.
 - ADR-0020 (un App Service Plan por dominio): contrato de inputs del modulo `service-plan`.
 - Origen: issue #93 (primer greenfield real `Bitakora.ControlAsistencia`). El sufijo de unicidad global en `postgresql`/`service-bus` se aplico en el esqueleto del entorno generado aqui (issue #94, ver seccion "El sufijo de unicidad vive en el ENTORNO"); relacionado con #99 (region de PostgreSQL) y con #92 (mismo patron de unicidad global para la Storage del tfstate en `bootstrap-backend.sh`).
 - Reglas de naming y unicidad global (Microsoft Learn, "Naming rules and restrictions for Azure resources", `https://learn.microsoft.com/azure/azure-resource-manager/management/resource-name-rules`): `Microsoft.DBforPostgreSQL/servers` es scope **global**, 3-63 chars, minusculas/numeros/guiones, no puede empezar ni terminar en guion; `Microsoft.ServiceBus/namespaces` es scope **global**, 6-50 chars, alfanumericos/guiones, empieza con letra y termina en letra o numero. El scope **global** de ambos es la fuente verificable de que el nombre debe ser unico en todo Azure (no solo en el resource group), lo que motiva el sufijo. Mismo origen que confirma el limite de la Storage Account citado en #92/#78.
+- Region de PostgreSQL Flexible Server (issue #99): verificacion de SKUs por region via Azure CLI (Microsoft Learn, "az postgres flexible-server list-skus", `https://learn.microsoft.com/cli/azure/postgres/flexible-server`) -- "Lists available sku's in the given region"; y lista oficial de regiones del servicio (Microsoft Learn, "What is Azure Database for PostgreSQL flexible server?", `https://learn.microsoft.com/azure/postgresql/overview#azure-regions`), que muestra `eastus2` como soportada -- evidencia de que `LocationIsOfferRestricted` es una restriccion de oferta por suscripcion, no una indisponibilidad global de la region.
 - Fuente de referencia de campo: `Bitakora.ControlAsistencia/infra/modules/*` y `infra/environments/dev/*` (de donde se generalizaron los tokens hardcodeados).
