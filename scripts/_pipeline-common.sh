@@ -84,6 +84,86 @@ load_harness_config() {
     fi
 }
 
+# --- Helpers de naming de Azure Storage Account (tfstate backend) -------------
+#
+# El nombre de una Storage Account es un endpoint DNS publico
+# (*.blob.core.windows.net) y por tanto unico en TODO Azure, no solo en la
+# suscripcion. Estas funciones puras (sin 'az') resuelven el nombre dentro del
+# limite de 24 chars y permiten anexar un sufijo de unicidad global, reutilizando
+# el patron de 'random_string' que agents/domain-scaffolder.md (Paso 4) ya aplica
+# a las Storage Accounts de dominio. bootstrap-backend.sh las compone con
+# 'az storage account check-name' para resolver el nombre final.
+# Fuente: Microsoft Learn -- "Storage account overview" (reglas de naming).
+
+# truncate_storage_base <base> [max_total] [suffix_len]
+#
+# Echo de <base> truncada para que <base>+<sufijo de suffix_len> quepa en
+# max_total caracteres (Azure: 24). Mismo calculo que el scaffolder
+# (st + dominio + env + 6 chars de suffix <= 24). Pura (no consulta Azure).
+truncate_storage_base() {
+    local base="$1"
+    local max_total="${2:-24}"
+    local suffix_len="${3:-6}"
+    local max_base=$((max_total - suffix_len))
+    if [ "${#base}" -gt "$max_base" ]; then
+        printf '%s' "${base:0:$max_base}"
+    else
+        printf '%s' "$base"
+    fi
+}
+
+# gen_storage_suffix [n]
+#
+# Echo de n (default 6) caracteres aleatorios [a-z0-9], validos para un nombre de
+# Storage Account. Equivalente en bash al 'random_string { length = 6; special =
+# false; upper = false }' del scaffolder. Usa openssl si esta disponible y cae a
+# $RANDOM (builtin de bash, presente en 3.2/macOS) si no. Pura.
+gen_storage_suffix() {
+    local n="${1:-6}"
+    local out=""
+    local chars="abcdefghijklmnopqrstuvwxyz0123456789"
+    local i
+    if command -v openssl >/dev/null 2>&1; then
+        out=$(openssl rand -hex 32 2>/dev/null) || out=""
+        out="${out:0:$n}"
+    fi
+    if [ "${#out}" -lt "$n" ]; then
+        out=""
+        for ((i = 0; i < n; i++)); do
+            out="${out}${chars:RANDOM % ${#chars}:1}"
+        done
+    fi
+    printf '%s' "$out"
+}
+
+# read_backend_storage_account_name <dir>
+#
+# Busca en <dir>/*.tf un bloque backend "azurerm" y, si existe, echo del
+# storage_account_name declarado, SOLO si es un nombre de Storage Account valido
+# (^[a-z0-9]{3,24}$). Permite que bootstrap-backend.sh reuse de forma idempotente
+# el nombre ya escrito en backend.tf (registro versionado: es lo que usara
+# 'terraform init'). Echo vacio si no hay backend o el valor no es literal/valido.
+# Pura (no consulta Azure). Siempre retorna 0.
+read_backend_storage_account_name() {
+    local dir="$1"
+    local f name
+    [ -d "$dir" ] || return 0
+    for f in "$dir"/*.tf; do
+        [ -f "$f" ] || continue
+        grep -Eq 'backend[[:space:]]*"azurerm"' "$f" || continue
+        # '|| name=""' protege a un caller con 'set -e'/'pipefail' si grep no
+        # encuentra la linea (pipeline -> exit 1): el nombre queda vacio igual.
+        name=$(grep -E '^[[:space:]]*storage_account_name[[:space:]]*=' "$f" \
+            | head -n1 \
+            | sed -E 's/.*=[[:space:]]*"([^"]+)".*/\1/') || name=""
+        if printf '%s' "$name" | grep -Eq '^[a-z0-9]{3,24}$'; then
+            printf '%s' "$name"
+            return 0
+        fi
+    done
+    return 0
+}
+
 # is_path_in_consumer_blocklist <path>
 #
 # Retorna 0 si el path cae en una ruta RESERVADA al plugin Mefisto y por tanto
