@@ -324,56 +324,75 @@ event store de Marten del dominio**: el `Program.cs` del dominio registra el res
 sin perdida. Ese registro es **local al dominio productor** -- vive en su `Program.cs` y en
 ningun otro lado.
 
-Un evento **publico** (`IPublicEvent`; ver `implementer.md` "Donde vive cada tipo de evento" y
-ADR-0003) cruza un **segundo canal de serializacion** que el resolver del dominio no alcanza:
-sale por `IPublicEventSender` hacia Azure Service Bus (ADR-0001: un topic por tipo de evento) y
-lo deserializa **otro dominio**, con **otro** `JsonSerializerOptions` que **no tiene registrado
-ese resolver**. El destino solo dispone del serializador por defecto. Si el payload contiene un
-value object rico (campos privados + `ConfigurarSerializacion`), en el productor serializa bien
-y en el consumidor se reconstruye lossy o falla: el contrato publico se rompe en silencio.
+Todo evento o comando que **cruza cualquiera de los dos namespaces de Azure Service Bus** del
+Bounded Context -- el namespace interno (via `IPrivateEventSender`, intra-BC; ADR-0023) o el
+namespace de integracion (via `IPublicEventSender`, inter-BC; ADR-0023) -- cruza un **canal de
+serializacion que el resolver del dominio no alcanza**: el destino opera con **otro**
+`JsonSerializerOptions` que **no tiene registrado ese resolver**. El destino solo dispone del
+serializador por defecto. Si el payload contiene un value object rico (campos privados +
+`ConfigurarSerializacion`), en el productor serializa bien y en el consumidor se reconstruye
+lossy o falla: el contrato se rompe en silencio.
 
-**Regla: el payload de un `IPublicEvent` contiene solo tipos serializables con el serializador
+**Regla unica: todo tipo que cruza un bus contiene solo tipos serializables con el serializador
 por defecto** -- primitivos, `enum`, `string`, fechas (`DateOnly` / `DateTime` /
 `DateTimeOffset`), `Guid`, colecciones de esos tipos, y `record` DTO planos compuestos de lo
-anterior. **El modelo de dominio rico no cruza el bus**: un VO con factory privado, campos
-privados y `ConfigurarSerializacion` se queda en el event store del dominio; al publicar se
-**traduce a una forma plana y portable**. Esta regla no prescribe **quien** traduce (un mapper,
-el handler, o un metodo `ToContrato()` del propio VO -- Tell-don't-Ask aplica); prescribe que el
-tipo que cruza el bus sea plano.
+anterior. El criterio es **"¿cruza un bus?"**, no "¿es `IPublicEvent`?": un evento privado
+(`IPrivateEvent`) que cruza el namespace interno tiene exactamente la misma exigencia de forma
+que un evento publico (`IPublicEvent`) que cruza el namespace de integracion. **El modelo de
+dominio rico no cruza ningun bus**: un VO con factory privado, campos privados y
+`ConfigurarSerializacion` se queda en el event store del dominio; al publicar o al enviar por
+el bus interno se **traduce a una forma plana y portable**. Esta regla no prescribe **quien**
+traduce (un mapper, el handler, o un metodo `ToContrato()` del propio VO -- Tell-don't-Ask
+aplica); prescribe que el tipo que cruza el bus sea plano.
 
 ```csharp
-// INCORRECTO: el evento publico carga un VO rico -> no portable por el bus
+// INCORRECTO: el tipo que cruza el bus (IPublicEvent o IPrivateEvent)
+// carga un VO rico -> no portable por el serializador por defecto
 public record TurnoPublicado(Guid TurnoId, Cedula Responsable) : IPublicEvent;
 // Cedula = sealed class con campos privados + ConfigurarSerializacion.
 // En el productor (Marten con resolver) serializa bien; en el consumidor
-// (otro dominio, JsonSerializerOptions por defecto) Responsable llega lossy
-// o la deserializacion falla.
+// (namespace interno o de integracion, JsonSerializerOptions por defecto)
+// Responsable llega lossy o la deserializacion falla.
 
-// CORRECTO: el evento publico es plano y portable
+// CORRECTO: el tipo que cruza cualquier bus es plano y portable
 public record TurnoPublicado(Guid TurnoId, string Responsable) : IPublicEvent;
-// string viaja por el bus con cualquier serializador, sin resolver.
+// string viaja por cualquier bus (namespace interno o de integracion) con
+// cualquier serializador, sin resolver. La misma regla aplica a IPrivateEvent.
 ```
 
-**`ConfigurarSerializacion` es valido para el event store de Marten, NO para el payload del
-bus.** No es un mecanismo de portabilidad entre dominios; es un detalle de persistencia local.
-Un tipo que depende de el para reconstruirse **no debe** ser parte de un `IPublicEvent`.
+**`ConfigurarSerializacion` es valido para el event store de Marten, NO para el payload de
+ningun bus.** No es un mecanismo de portabilidad entre dominios ni entre namespaces; es un
+detalle de persistencia local. Un tipo que depende de el para reconstruirse **no debe** cruzar
+ningun bus, ni el namespace interno ni el de integracion.
 
-**Corolario sobre construccion:** un `IPublicEvent` tampoco debe depender de un constructor
-privado para reconstruirse. Si necesita validar invariantes al construirse en el productor, esa
-validacion puede vivir en un factory, pero la **forma serializada** debe ser reconstruible por
-STJ por defecto (propiedades publicas, constructor que STJ pueda invocar). Si el tipo necesita un
-resolver custom para volver del JSON, por definicion no es portable por el bus.
+**Corolario sobre construccion:** un tipo que cruza un bus tampoco debe depender de un
+constructor privado para reconstruirse. Si necesita validar invariantes al construirse en el
+productor, esa validacion puede vivir en un factory, pero la **forma serializada** debe ser
+reconstruible por STJ por defecto (propiedades publicas, constructor que STJ pueda invocar). Si
+el tipo necesita un resolver custom para volver del JSON, por definicion no es portable por
+ningun bus.
 
-Esta convencion blinda el contrato publico (ADR-0005: naming y versionado de eventos): un evento
-plano es estable, versionable de forma aditiva y deserializable por cualquier consumidor sin
-acoplarse a la mecanica de serializacion interna del productor.
+Esta convencion blinda el contrato (ADR-0005: naming y versionado de eventos): un tipo plano es
+estable, versionable de forma aditiva y deserializable por cualquier consumidor sin acoplarse a
+la mecanica de serializacion interna del productor. Aplica por igual al namespace interno
+(eventos privados intra-BC) y al namespace de integracion (eventos publicos inter-BC).
 
 **El guardrail que la hace cumplir** es un test de round-trip con el serializador **por defecto,
-sin el resolver custom** (ver `test-writer.md` seccion 6e): si el `IPublicEvent` sobrevive un
-`Serialize` / `Deserialize` con `JsonSerializerOptions` vanilla sin perdida de datos, es portable
-por el bus. El round-trip que usa `CrearOpcionesMarten()` (con el resolver registrado; seccion 6d)
-**no** detecta este defecto -- pasa en verde justamente porque registra el resolver que el bus no
-tiene.
+sin el resolver custom** (ver `test-writer.md` seccion 6e -- la regla generalizada aplica a
+todo tipo que cruza un bus, no solo a `IPublicEvent`): si el tipo que cruza el bus sobrevive un
+`Serialize` / `Deserialize` con `JsonSerializerOptions` vanilla sin perdida de datos, es
+portable. El round-trip que usa `CrearOpcionesMarten()` (con el resolver registrado; seccion 6d)
+**no** detecta este defecto -- pasa en verde justamente porque registra el resolver que el bus
+no tiene.
+
+> **Nota de version (2026-06-26, issue #122):** Esta seccion fue reformada in-place para
+> generalizar la regla de portabilidad de "`IPublicEvent` debe ser plano" a "todo tipo que cruza
+> cualquier bus (namespace interno o de integracion) debe ser plano". La doctrina que justifica
+> este cambio es ADR-0023 (issue #121), que desacopla el eje de serializacion (rico/plano) del
+> eje de alcance (publico/privado) y establece que el criterio de forma es "¿cruza un bus?", no
+> "¿es `IPublicEvent`?". La propagacion de esta regla al texto de `agents/test-writer.md`
+> (seccion 6e) y `agents/implementer.md` ("Donde vive cada tipo de evento") queda en los issues
+> #125 y #126.
 
 ### Otras heuristicas transversales
 
@@ -406,8 +425,9 @@ tiene.
 ## Referencias
 
 - ADR-0004: Manejo de errores -- aggregate nunca throw para logica de negocio
-- ADR-0001: Service Bus -- un topic por tipo de evento (el canal que el `IPublicEvent` cruza)
-- ADR-0003: Marten + Wolverine -- `IPublicEventSender` / `IPrivateEventSender` (el segundo canal de serializacion)
-- ADR-0005: Naming y versionado de eventos -- el contrato publico que la frontera de serializacion blinda
+- ADR-0001: Service Bus -- un topic por tipo de evento (los topics viven en el namespace interno o de integracion segun ADR-0023)
+- ADR-0003: Marten + Wolverine -- `IPublicEventSender` / `IPrivateEventSender` (los dos senders; el namespace destino de cada uno lo define ADR-0023)
+- ADR-0005: Naming y versionado de eventos -- el contrato que la frontera de serializacion blinda (aplica a ambos namespaces)
+- ADR-0023: Bounded Context, topologia de dos namespaces de ASB y Open Host Service -- raiz estrategica que establece "todo lo que cruza un bus es plano" y desacopla el eje de forma del eje de alcance; origen del cambio de doctrina de esta seccion (issue #121)
 - ADR de Contracts del proyecto consumidor: Contracts -- records de eventos y value objects compartidos
 - Vaughn Vernon -- "Implementing Domain-Driven Design", Value Objects
