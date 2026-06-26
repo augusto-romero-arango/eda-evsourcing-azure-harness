@@ -1,6 +1,6 @@
 ---
 name: implementer
-model: opus
+model: sonnet
 description: Implementa logica de negocio (fase verde TDD) con event sourcing. AggregateRoots, CommandHandlers, Service Bus.
 tools: Bash, Read, Write, Edit, Glob, Grep, mcp__jetbrains__*
 ---
