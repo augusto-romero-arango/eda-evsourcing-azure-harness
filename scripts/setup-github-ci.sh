@@ -1,7 +1,17 @@
 #!/bin/bash
-# Crea el Service Principal para GitHub Actions CI y asigna permisos en el tfstate.
-# Uso: ./scripts/setup-github-ci.sh <subscription-id>
-# Ejemplo: ./scripts/setup-github-ci.sh 50fc1901-9723-4971-9d63-b3f1a015e8b8
+# Configura la autenticacion de GitHub Actions hacia Azure para el deploy de CI.
+# Usa OIDC (Workload Identity Federation, ADR-0022): crea el Service Principal SIN
+# secret y le anade un federated credential que confia en los tokens que GitHub emite
+# para la rama main del repo. El workflow de deploy del scaffolder se autentica con
+# azure/login pasando client-id / tenant-id / subscription-id (sin AZURE_CREDENTIALS ni
+# secret que expire). Asigna ademas Contributor a nivel suscripcion y lectura del tfstate.
+#
+# Uso: ./scripts/setup-github-ci.sh <subscription-id> [<owner/repo>]
+# Ejemplo: ./scripts/setup-github-ci.sh 50fc1901-9723-4971-9d63-b3f1a015e8b8 acme/mi-proyecto
+#
+# El slug owner/repo del repositorio (subject del federated credential) se resuelve
+# automaticamente con 'gh repo view' o el remote 'origin'; pasalo como 2do argumento
+# para forzarlo.
 #
 # Resuelve el nombre REAL de la Storage Account del tfstate (que bootstrap-backend.sh
 # pudo crear con un sufijo de unicidad global, issue #92) antes de asignar el rol,
@@ -26,8 +36,8 @@ unset _REPO_TOP
 load_harness_config || exit 1
 
 if [ -z "${1:-}" ]; then
-    echo "Uso: $0 <subscription-id>"
-    echo "Ejemplo: $0 50fc1901-9723-4971-9d63-b3f1a015e8b8"
+    echo "Uso: $0 <subscription-id> [<owner/repo>]"
+    echo "Ejemplo: $0 50fc1901-9723-4971-9d63-b3f1a015e8b8 acme/mi-proyecto"
     exit 1
 fi
 
@@ -35,6 +45,40 @@ SUBSCRIPTION_ID="$1"
 SP_NAME="$HARNESS_SP_NAME"
 TFSTATE_RG="${HARNESS_RG_PREFIX}-tfstate"
 SCOPE="/subscriptions/${SUBSCRIPTION_ID}"
+
+# Fijar la suscripcion explicitamente antes de cualquier operacion 'az'. El script
+# recibe la suscripcion como argumento, pero las operaciones 'az ad app/sp create' y el
+# 'az account show --query tenantId' (de donde sale AZURE_TENANT_ID) operan contra el
+# TENANT de la suscripcion ACTIVA, no contra la pasada como $1. Si difieren, la app/SP se
+# crearia en el tenant equivocado, AZURE_TENANT_ID quedaria mal y el role assignment
+# cross-tenant fallaria. Mismo patron que bootstrap-backend.sh.
+echo "Fijando la suscripcion activa..."
+az account set --subscription "$SUBSCRIPTION_ID" || {
+    echo "ERROR: no se pudo fijar la suscripcion '$SUBSCRIPTION_ID'." >&2
+    echo "  Verifica que 'az login' este hecho y que la suscripcion exista." >&2
+    exit 1
+}
+
+# Slug owner/repo para el subject del federated credential de OIDC. Precedencia:
+#   1. 2do argumento explicito.
+#   2. 'gh repo view' (resuelve el repo del cwd via la API de GitHub; gh es dependencia
+#      dura del harness, ya se usa para issues/PRs).
+#   3. parseo del remote 'origin' (https o ssh), por si 'gh' no esta autenticado.
+REPO_SLUG="${2:-}"
+if [ -z "$REPO_SLUG" ]; then
+    REPO_SLUG=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || REPO_SLUG=""
+fi
+if [ -z "$REPO_SLUG" ]; then
+    _origin=$(git remote get-url origin 2>/dev/null) || _origin=""
+    REPO_SLUG=$(printf '%s' "$_origin" | sed -E 's#^(https://[^/]+/|git@[^:]+:)##; s#\.git$##')
+    unset _origin
+fi
+if [ -z "$REPO_SLUG" ] || [ "$REPO_SLUG" = "None" ]; then
+    echo "ERROR: no se pudo resolver el slug owner/repo del repositorio." >&2
+    echo "Pasalo como 2do argumento ($0 $SUBSCRIPTION_ID <owner/repo>) o configura un" >&2
+    echo "remote 'origin' de GitHub / autentica 'gh', y reintenta." >&2
+    exit 1
+fi
 
 # Nombre de la Storage Account del tfstate: bootstrap-backend.sh le anexa un
 # sufijo de unicidad global (issue #92), asi que el nombre REAL puede no coincidir
@@ -68,37 +112,91 @@ resolve_tfstate_storage_name() {
 TFSTATE_STORAGE=$(resolve_tfstate_storage_name)
 
 echo "=== Setup CI para ${HARNESS_PROJECT_NAME} ==="
+echo "Repositorio GitHub: ${REPO_SLUG}"
 echo ""
 
-echo "Creando service principal '${SP_NAME}'..."
-SP_OUTPUT=$(az ad sp create-for-rbac \
-    --name "$SP_NAME" \
+# 1. Aplicacion de Microsoft Entra + Service Principal, SIN secret (OIDC).
+#    Idempotente: reutiliza la app si ya existe por displayName.
+echo "Resolviendo aplicacion de Entra '${SP_NAME}'..."
+APP_ID=$(az ad app list --display-name "$SP_NAME" --query "[0].appId" -o tsv 2>/dev/null) || APP_ID=""
+if [ -z "$APP_ID" ] || [ "$APP_ID" = "None" ]; then
+    echo "Creando aplicacion '${SP_NAME}'..."
+    APP_ID=$(az ad app create --display-name "$SP_NAME" --query appId -o tsv)
+else
+    echo "La aplicacion ya existe (appId ${APP_ID}); se reutiliza."
+fi
+
+# Service principal de la app (idempotente).
+if ! az ad sp show --id "$APP_ID" >/dev/null 2>&1; then
+    echo "Creando service principal para appId ${APP_ID}..."
+    az ad sp create --id "$APP_ID" -o none
+fi
+SP_OBJECT_ID=$(az ad sp show --id "$APP_ID" --query id -o tsv)
+TENANT_ID=$(az account show --query tenantId -o tsv)
+
+# 2. Contributor a nivel suscripcion: alcance necesario para el deploy de Functions e
+#    infraestructura, no solo lectura del tfstate. Asignar por object-id + principal-type
+#    evita el race de replicacion del SP recien creado en Microsoft Graph.
+#    'az role assignment create' es idempotente (no falla si la asignacion ya existe).
+echo "Asignando Contributor en ${SCOPE}..."
+az role assignment create \
+    --assignee-object-id "$SP_OBJECT_ID" \
+    --assignee-principal-type ServicePrincipal \
     --role "Contributor" \
-    --scopes "$SCOPE" \
-    --query "{clientId:appId, clientSecret:password, tenantId:tenant}" \
-    -o json)
+    --scope "$SCOPE" \
+    -o none
 
-CLIENT_ID=$(echo "$SP_OUTPUT" | python3 -c "import sys,json; print(json.load(sys.stdin)['clientId'])")
-CLIENT_SECRET=$(echo "$SP_OUTPUT" | python3 -c "import sys,json; print(json.load(sys.stdin)['clientSecret'])")
-TENANT_ID=$(echo "$SP_OUTPUT" | python3 -c "import sys,json; print(json.load(sys.stdin)['tenantId'])")
-
+# 3. Lectura del tfstate sobre la cuenta REAL resuelta (sufijo de unicidad, issue #92).
 echo "Asignando Storage Blob Data Reader en ${TFSTATE_STORAGE}..."
 az role assignment create \
-    --assignee "$CLIENT_ID" \
+    --assignee-object-id "$SP_OBJECT_ID" \
+    --assignee-principal-type ServicePrincipal \
     --role "Storage Blob Data Reader" \
     --scope "${SCOPE}/resourceGroups/${TFSTATE_RG}/providers/Microsoft.Storage/storageAccounts/${TFSTATE_STORAGE}" \
     -o none
+
+# 4. Federated credential para GitHub Actions OIDC. El subject debe coincidir EXACTO con
+#    el claim que GitHub pone en el token. El workflow de deploy del scaffolder dispara en
+#    'push: branches: [main]' (+ workflow_dispatch desde main), jobs NO atados a un
+#    Environment, asi que el subject es 'repo:<owner/repo>:ref:refs/heads/main'.
+#    Fuentes: learn.microsoft.com/azure/app-service/deploy-github-actions y
+#    learn.microsoft.com/entra/workload-id/workload-identity-federation-create-trust.
+FED_NAME="github-actions-deploy-main"
+FED_SUBJECT="repo:${REPO_SLUG}:ref:refs/heads/main"
+_existing_fed=$(az ad app federated-credential list --id "$APP_ID" \
+    --query "[?subject=='${FED_SUBJECT}'] | [0].name" -o tsv 2>/dev/null) || _existing_fed=""
+if [ -n "$_existing_fed" ] && [ "$_existing_fed" != "None" ]; then
+    echo "Federated credential para '${FED_SUBJECT}' ya existe; se reutiliza."
+else
+    echo "Creando federated credential para '${FED_SUBJECT}'..."
+    FED_PARAMS=$(cat <<EOF
+{
+  "name": "${FED_NAME}",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "${FED_SUBJECT}",
+  "description": "GitHub Actions OIDC: deploy de ${HARNESS_PROJECT_NAME} desde la rama main",
+  "audiences": ["api://AzureADTokenExchange"]
+}
+EOF
+)
+    az ad app federated-credential create --id "$APP_ID" --parameters "$FED_PARAMS" -o none
+fi
+unset _existing_fed
 
 echo ""
 echo "=== Configura estos secrets en GitHub ==="
 echo "Settings > Secrets and variables > Actions > New repository secret"
 echo ""
-echo "  AZURE_CLIENT_ID       = ${CLIENT_ID}"
-echo "  AZURE_CLIENT_SECRET   = ${CLIENT_SECRET}"
+echo "  AZURE_CLIENT_ID       = ${APP_ID}"
 echo "  AZURE_TENANT_ID       = ${TENANT_ID}"
 echo "  AZURE_SUBSCRIPTION_ID = ${SUBSCRIPTION_ID}"
 echo ""
-echo "NOTA: El client secret expira en 1 ano. Renovar con:"
-echo "  az ad sp credential reset --id ${CLIENT_ID}"
+echo "Autenticacion por OIDC (Workload Identity Federation): NO hay client secret que"
+echo "copiar ni que expire. El workflow de deploy ya declara 'permissions: id-token: write'"
+echo "y se loguea con azure/login pasando esos tres valores (sin AZURE_CREDENTIALS)."
+echo ""
+echo "El federated credential confia en la rama 'main' (subject ${FED_SUBJECT})."
+echo "Si despliegas desde otra rama, tag o un GitHub Environment, anade otro federated"
+echo "credential con el subject correspondiente (ver ADR-0022)."
 echo ""
 echo "Listo."

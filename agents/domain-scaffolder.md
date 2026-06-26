@@ -1381,6 +1381,9 @@ jobs:
   deploy:
     needs: build-and-test
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # requerido para el login OIDC de azure/login (sin secret) - ADR-0022
+      contents: read    # requerido por actions/checkout cuando se declara 'permissions'
     steps:
       - uses: actions/checkout@v7
 
@@ -1416,7 +1419,9 @@ jobs:
       - name: Azure Authentication
         uses: azure/login@v3
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Deploy to Azure Functions
         uses: Azure/functions-action@v1  # v1 es la version mayor vigente
@@ -1436,6 +1441,8 @@ jobs:
 ```
 
 > `smoke-tests-dominio.yml` acepta estos secrets como opcionales (`required: false`). Si no estan configurados en el repo, los smoke tests que dependen de ServiceBus o Postgres se skipean gracefully via `Assert.SkipWhen`.
+
+> **Autenticacion del deploy (OIDC, ADR-0022)**: el job `deploy` se autentica con `azure/login` por **OpenID Connect**, NO con un client secret. Por eso declara `permissions: id-token: write` y pasa `client-id` / `tenant-id` / `subscription-id` (los secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`), en vez del JSON unico `AZURE_CREDENTIALS`. Esos tres secrets, el Service Principal sin secret y el **federated credential** que confia en la rama `main` los emite `scripts/setup-github-ci.sh` (paso de bootstrap del README). No hay secret que expire. Si cambias el trigger del workflow para desplegar desde otra rama, tag o un GitHub Environment, debes anadir el federated credential correspondiente (el subject debe coincidir exacto con el claim del token de GitHub).
 
 ---
 
@@ -1551,8 +1558,9 @@ Scaffold completado para el dominio "{kebab}":
   .github/workflows/deploy-{kebab}.yml     - Workflow de deploy automatico + smoke tests post-deploy
 
 Proximos pasos:
-  1. Asegurate de que los secrets esten configurados en GitHub:
-     - AZURE_CREDENTIALS (deploy)
+  1. Asegurate de que los secrets esten configurados en GitHub (los emite setup-github-ci.sh):
+     - AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID (deploy via OIDC; el
+       workflow ya declara permissions: id-token: write y NO usa AZURE_CREDENTIALS)
      - SERVICEBUS_CONNECTION_STRING (smoke tests, opcional)
      - POSTGRES_CONNECTION_STRING (smoke tests, opcional)
   2. Ejecuta "terraform apply" en infra/environments/dev/ para crear la infraestructura

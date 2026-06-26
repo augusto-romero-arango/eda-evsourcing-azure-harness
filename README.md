@@ -22,7 +22,7 @@ Plugin de [Claude Code](https://code.claude.com/docs/en/plugins) que provee un h
 - **15 skills** (slash commands): `/implement`, `/tooling`, `/infra`, `/infra-base`, `/scaffold`, `/parallel`, `/sequential`, `/bug`, `/draft`, `/fix-review`, `/health-check`, `/work-status`, `/show-flow`, `/eraser-diagram`, `/merge`.
 - **17 agentes** especializados: `planner`, `test-writer`, `implementer`, `reviewer`, `smoke-test-writer`, `domain-scaffolder`, `infra-base-scaffolder`, `eda-modeler`, `event-stormer`, `historiador`, `infra-writer`, `infra-reviewer`, `infra-applier`, `infra-bootstrap`, `pr-sync`, `bug-investigator`, `tooling-investigator`.
 - **Pipelines bash** que orquestan el ciclo TDD, IaC y tooling sobre `tmux` y `git worktree`.
-- **21 ADRs** del marco arquitectónico.
+- **22 ADRs** del marco arquitectónico.
 - **Hooks** para logging del pipeline.
 
 ## Stack supuesto en el consumidor
@@ -170,13 +170,13 @@ El backend remoto de Terraform (donde vive el `tfstate`) es prerequisito de todo
 
    > **Nota**: el script escribe `backend.tf` en tu working tree. El pipeline IaC (`/infra`) ramifica su worktree desde `origin/main`, así que **automatiza** que ese `backend.tf` llegue al worktree: lo copia del working tree al worktree y lo commitea en la rama del pipeline, de modo que viaja en el PR y se versiona en `main` vía merge. No necesitas commitearlo ni subirlo a `main` a mano antes del primer `/infra` (el `terraform init` del reviewer ya encuentra el backend remoto y no cae a estado local).
 
-2. **Configurar el Service Principal de CI** con `setup-github-ci.sh` (crea el SP de GitHub Actions y le asigna lectura sobre el tfstate ya creado; resuelve el nombre **final** de la Storage Account —con el sufijo que le puso el bootstrap— leyéndolo del `backend.tf` recién escrito, así que la asignación de rol apunta a la cuenta real, no al nombre base del config). Por eso corre **después** del paso 1:
+2. **Configurar la autenticación de CI hacia Azure** con `setup-github-ci.sh`. Usa **OIDC** (Workload Identity Federation, ver **ADR-0022**): crea el Service Principal de GitHub Actions **sin secret**, le asigna `Contributor` a nivel suscripción (alcance del deploy de Functions, no solo lectura) y `Storage Blob Data Reader` sobre el tfstate ya creado (resuelve el nombre **final** de la Storage Account —con el sufijo que le puso el bootstrap— leyéndolo del `backend.tf` recién escrito, así que la asignación de rol apunta a la cuenta real, no al nombre base del config), y le añade un **federated credential** que confía en la rama `main` del repo. Por eso corre **después** del paso 1:
 
    ```bash
    "$PLUGIN_SCRIPTS/setup-github-ci.sh" <subscription-id>
    ```
 
-   Copia los secrets que imprime a *Settings > Secrets and variables > Actions* de tu repo.
+   El slug `owner/repo` (subject del federated credential) se resuelve automáticamente vía `gh` o el remote `origin`; pásalo como 2º argumento si necesitas forzarlo. Copia los **tres** secrets que imprime —`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`— a *Settings > Secrets and variables > Actions* de tu repo. **No hay client secret que expire**: el workflow de deploy del scaffolder se autentica con `azure/login` por OIDC (declara `permissions: id-token: write`), no con el JSON único `AZURE_CREDENTIALS`.
 
 3. **Generar la infraestructura base** con `/infra-base` (agente `infra-base-scaffolder`). Es el eslabón entre el backend y el primer `/infra`: escribe los 7 módulos Terraform base (`resource-group`, `monitoring`, `postgresql`, `service-bus`, `service-plan`, `storage`, `function-app`) y el esqueleto del entorno (`main.tf`, `variables.tf`, `providers.tf`, `outputs.tf`) — **sin** `backend.tf` (ese lo escribió el paso 1). Es idempotente: si ya existen archivos, los respeta. Ver **ADR-0021**.
 
