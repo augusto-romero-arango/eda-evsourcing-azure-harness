@@ -1446,6 +1446,132 @@ jobs:
 
 ---
 
+## Paso 6 - Generar los workflows de smoke tests (reutilizable + global)
+
+El workflow de deploy del Paso 5 referencia el reutilizable `./.github/workflows/smoke-tests-dominio.yml` (job `smoke-tests`). Ese reutilizable, y el workflow global que corre los smoke tests de todos los dominios, los genera **el scaffolder la primera vez** que corre en el repo. En greenfield no existen aun; sin este paso el primer deploy fallaria al resolver el `uses:` a un archivo inexistente.
+
+Ambos archivos son **idempotentes** (misma logica de "si existe / si no existe" que el Paso 6b aplica al JSON): se generan solo si faltan y **nunca se sobrescriben** (a partir del segundo dominio ya existen y se respetan, incluidas personalizaciones del consumidor).
+
+**6.1 - Reutilizable `smoke-tests-dominio.yml`**
+
+```bash
+if [ -f .github/workflows/smoke-tests-dominio.yml ]; then
+  echo "smoke-tests-dominio.yml ya existe; no se sobrescribe (idempotencia)."
+else
+  mkdir -p .github/workflows
+  # escribe el archivo con el contenido de abajo
+fi
+```
+
+Si **no existe**, crea `.github/workflows/smoke-tests-dominio.yml` con este contenido:
+
+```yaml
+name: Smoke tests (reutilizable)
+
+# Workflow reutilizable por dominio. Lo invoca cada deploy-<dominio>.yml (job
+# smoke-tests, post-deploy) y el workflow global smoke-tests.yml (matrix). Corre
+# los smoke tests del test_project recibido contra base_url. ADR-0013.
+
+on:
+  workflow_call:
+    inputs:
+      base_url:
+        description: 'URL base del entorno desplegado contra el que corren los smoke tests'
+        required: true
+        type: string
+      test_project:
+        description: 'Ruta al proyecto de smoke tests (ej: tests/<RootNamespace>.{PascalCase}.SmokeTests/)'
+        required: true
+        type: string
+    secrets:
+      SERVICEBUS_CONNECTION_STRING:
+        required: false
+      POSTGRES_CONNECTION_STRING:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Smoke tests
+        env:
+          # appsettings.json del proyecto SmokeTests lee Api:BaseUrl, ServiceBus:ConnectionString
+          # y Postgres:ConnectionString; las variables con doble guion bajo las sobreescriben (ADR-0013).
+          Api__BaseUrl: ${{ inputs.base_url }}
+          ServiceBus__ConnectionString: ${{ secrets.SERVICEBUS_CONNECTION_STRING }}
+          Postgres__ConnectionString: ${{ secrets.POSTGRES_CONNECTION_STRING }}
+        # Los tests que dependen de ServiceBus o Postgres se skipean gracefully via
+        # Assert.SkipWhen si el secret no esta configurado (required: false). ADR-0013.
+        run: dotnet test "${{ inputs.test_project }}" --configuration Release
+```
+
+> El reutilizable NO se autentica contra Azure: los smoke tests son black-box (HTTP contra `base_url`) y acceden a ServiceBus/Postgres por connection string, no por OIDC. Por eso solo declara `permissions: contents: read` (lo que necesita `actions/checkout`) y no `id-token: write`.
+
+**6.2 - Global `smoke-tests.yml`**
+
+```bash
+if [ -f .github/workflows/smoke-tests.yml ]; then
+  echo "smoke-tests.yml ya existe; no se sobrescribe (idempotencia)."
+else
+  mkdir -p .github/workflows
+  # escribe el archivo con el contenido de abajo
+fi
+```
+
+Si **no existe**, crea `.github/workflows/smoke-tests.yml` con este contenido:
+
+```yaml
+name: Smoke tests (global)
+
+# Corre los smoke tests de TODOS los dominios registrados en
+# .github/smoke-tests-dominios.json (lo mantiene el domain-scaffolder, Paso 6b),
+# uno por entrada de la matrix, reusando smoke-tests-dominio.yml. ADR-0013.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * *'   # verificacion diaria 06:00 UTC; ajustable o eliminable
+
+permissions:
+  contents: read
+
+jobs:
+  cargar-dominios:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.leer.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: leer
+        name: Leer dominios registrados
+        run: echo "matrix=$(jq -c . .github/smoke-tests-dominios.json)" >> "$GITHUB_OUTPUT"
+
+  smoke-tests:
+    needs: cargar-dominios
+    strategy:
+      fail-fast: false
+      matrix:
+        dominio: ${{ fromJson(needs.cargar-dominios.outputs.matrix) }}
+    uses: ./.github/workflows/smoke-tests-dominio.yml
+    with:
+      base_url: ${{ matrix.dominio.base_url }}
+      test_project: ${{ matrix.dominio.test_project }}
+    secrets: inherit
+```
+
+> El global lee `.github/smoke-tests-dominios.json` (que el Paso 6b mantiene) y expande una entrada de matrix por dominio. Cada celda reusa el mismo `smoke-tests-dominio.yml` del 6.1 con `secrets: inherit`, asi que la logica de ejecucion vive en un solo lugar (DRY). Si el JSON esta vacio (`[]`), la matrix queda sin combinaciones y el job `smoke-tests` simplemente se omite. `jq` viene preinstalado en `ubuntu-latest`.
+
+---
+
 ## Paso 6b - Registrar dominio en smoke tests global
 
 Agrega el nuevo dominio al archivo `.github/smoke-tests-dominios.json` para que el workflow global de smoke tests lo incluya en su matrix.
@@ -1515,7 +1641,15 @@ git add \
   "<SolutionFile>" \
   "global.json" \
   "infra/environments/dev/main.tf" \
-  ".github/workflows/deploy-{kebab}.yml"
+  ".github/workflows/deploy-{kebab}.yml" \
+  ".github/smoke-tests-dominios.json"
+
+# Los workflows de smoke tests solo existen como cambio la primera vez (Paso 6);
+# en corridas posteriores ya estan versionados y 'git add' no los toca. Inclúyelos
+# condicionalmente para no fallar si no se generaron en esta corrida:
+for f in .github/workflows/smoke-tests-dominio.yml .github/workflows/smoke-tests.yml; do
+  [ -f "$f" ] && git add "$f"
+done
 
 git commit -m "scaffold({kebab}): nuevo dominio {PascalCase} - Function App, tests, Terraform y deploy workflow"
 ```
@@ -1556,6 +1690,11 @@ Scaffold completado para el dominio "{kebab}":
                                              (topics se crean bajo demanda con implementer)
 
   .github/workflows/deploy-{kebab}.yml     - Workflow de deploy automatico + smoke tests post-deploy
+  .github/smoke-tests-dominios.json        - Registro de dominios para el workflow global de smoke tests
+
+  (solo la primera vez en el repo; en dominios posteriores ya existen y no se tocan)
+  .github/workflows/smoke-tests-dominio.yml - Workflow reutilizable de smoke tests (workflow_call)
+  .github/workflows/smoke-tests.yml         - Workflow global: corre los smoke tests de todos los dominios en matrix
 
 Proximos pasos:
   1. Asegurate de que los secrets esten configurados en GitHub (los emite setup-github-ci.sh):
