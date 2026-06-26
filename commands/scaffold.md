@@ -1,3 +1,7 @@
+---
+model: haiku
+---
+
 Lanza el pipeline de scaffold para crear un nuevo dominio, opcionalmente asociado a un issue de GitHub. Comunicate en **espanol**.
 
 ## Pre-condicion: cwd != Mefisto

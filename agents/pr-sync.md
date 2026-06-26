@@ -1,6 +1,6 @@
 ---
 name: pr-sync
-model: haiku
+model: sonnet
 description: Sincroniza ramas de PRs abiertos con main. Resuelve conflictos, corre tests, y opcionalmente mergea a main.
 tools: Bash
 ---

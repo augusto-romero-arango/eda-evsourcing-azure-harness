@@ -1,3 +1,7 @@
+---
+model: sonnet
+---
+
 # Skill: show-flow
 
 Visualiza un flujo EDA como sequence diagram de Eraser. Lee el YAML del flujo, genera el DSL de Eraser y renderiza el diagrama.

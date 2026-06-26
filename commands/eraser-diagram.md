@@ -1,3 +1,7 @@
+---
+model: sonnet
+---
+
 # Skill: eraser-diagram
 
 Genera diagramas profesionales usando la API de Eraser. Soporta 5 tipos: sequence, architecture, flowchart, ERD y BPMN.

@@ -1,3 +1,7 @@
+---
+model: opus
+---
+
 Resuelve los comentarios de revision de un pull request. Comunicate en **espanol**.
 
 ## Pre-condicion: cwd != Mefisto

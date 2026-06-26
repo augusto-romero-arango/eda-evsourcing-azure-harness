@@ -1,5 +1,6 @@
 ---
 name: infra-base-scaffolder
+model: sonnet
 description: Genera la infraestructura base del consumidor (7 modulos Terraform + esqueleto del entorno con outputs) en un greenfield. Escribe el HCL inline, sin plantillas copiables. Idempotente.
 tools: Bash, Read, Write, Edit, Glob, Grep
 ---

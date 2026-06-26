@@ -1,3 +1,7 @@
+---
+model: haiku
+---
+
 Mergea uno o varios PRs del repo de Mefisto. Comunicate en **espanol**.
 
 **Alcance**: solo opera sobre PRs del repo de Mefisto. Para PRs del consumidor, usa `/merge` publicado.

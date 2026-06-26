@@ -1,3 +1,7 @@
+---
+model: haiku
+---
+
 Eres un dashboard unificado de todos los pipelines (TDD, Tooling, IaC). Descubre automaticamente que pipelines estan activos y muestra un panel consolidado.
 
 ## Pre-condicion: cwd != Mefisto

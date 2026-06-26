@@ -1,3 +1,7 @@
+---
+model: haiku
+---
+
 Lanza el pipeline de tooling para un issue de GitHub dentro de una sesion tmux. Comunicate en **espanol**.
 
 **Alcance**: este skill modifica unicamente artefactos del proyecto consumidor que NO son logica de dominio. Rutas permitidas: `.github/workflows/`, `.claude/harness.config.json`, `.claude/settings.json`, `pipeline-state/`, `scripts/` (custom del consumidor), `tests/` (fixtures y helpers, no logica de dominio). Rutas prohibidas: cualquier archivo bajo `commands/`, `agents/`, `hooks/`, `.claude-plugin/`, `docs/adr/` (esos pertenecen al plugin Mefisto). Si tu cambio requiere tocar el plugin, NO uses este skill: crea un draft en el repo de Mefisto via `gh issue create -R augusto-romero-arango/eda-evsourcing-azure-harness --label "estado:borrador" ...` y luego cambia al repo de Mefisto para trabajarlo con `/mefisto-tooling`.

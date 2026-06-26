@@ -1,3 +1,7 @@
+---
+model: sonnet
+---
+
 Dashboard de salud del entorno desplegado. Ejecuta queries contra App Insights y presenta un resumen con semaforos. Comunicate en **espanol**.
 
 ## Pre-condicion: cwd != Mefisto
