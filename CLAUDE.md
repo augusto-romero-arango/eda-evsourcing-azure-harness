@@ -11,7 +11,7 @@ Harness opinionado para Claude Code (nombre interno: `mefisto`, repo: `eda-evsou
 
 Es un **Claude Code Plugin** (ver `.claude-plugin/plugin.json`) que empaqueta:
 
-- 15 **skills** (slash commands) en `commands/`
+- 16 **skills** (slash commands) en `commands/`
 - 17 **agentes** especializados en `agents/`
 - Pipelines bash en `scripts/` (TDD, IaC, tooling, scaffolding, pr-sync, etc.)
 - 22 **ADRs** del marco arquitectónico en `docs/adr/`
@@ -77,6 +77,7 @@ Necesaria porque los agentes/skills del harness no pueden hacer sustitución de 
 
 | Skill | Propósito |
 |---|---|
+| `/onboard` | Diagnostica el onboarding del consumidor (config, labels, CI) y reporta un checklist; solo lectura, no provisiona |
 | `/draft` | Captura una idea como issue `estado:borrador` |
 | `/implement` | Pipeline TDD para un issue `estado:listo` |
 | `/tooling` | Pipeline de tooling (scripts, fixtures, config, agentes) |
@@ -203,6 +204,7 @@ Mefisto es un harness, no un producto: no tiene aggregates, no es TDD .NET, no t
 - `/infra-base` — infraestructura base Terraform del consumidor.
 - `/scaffold` — crear nuevo dominio.
 - `/health-check` — App Insights.
+- `/onboard` — diagnostica el onboarding del consumidor (su `harness.config.json`, sus labels, su CI hacia Azure); Mefisto no es un consumidor del harness, así que no hay nada que diagnosticar en su repo.
 - `/show-flow`, `/eraser-diagram` — flujos EDA y diagramas.
 
 Aún así, todos tienen guard defensivo "cwd != Mefisto" como cinturón + tirantes.
