@@ -122,12 +122,27 @@ Y añade una sección a `CLAUDE.md` raíz del consumidor declarando los tokens:
 
 ### 4. Verificar instalación
 
-```
-/mefisto:show-flow
-/mefisto:work-status
-```
+El objetivo es confirmar que el plugin quedó **instalado y habilitado**, no que existan flujos o pipelines (que en un proyecto recién creado todavía no hay). Dos checks que funcionan en greenfield, sin depender de artefactos de runtime (`docs/eda/flows/`, `.claude/pipeline/`):
 
-Si responden sin errores, está listo.
+1. **El plugin aparece instalado.** Lista los plugins instalados sin abrir el gestor:
+
+   ```
+   /plugin list
+   ```
+
+   Debe aparecer `mefisto@augusto-romero-arango-harness` (con `/plugin list --enabled` ves solo los habilitados). Como alternativa, `/plugin` abre el gestor: en la pestaña **Installed** el plugin aparece con los componentes que aporta (skills, agentes, hooks). Ver la [doc oficial de plugins](https://code.claude.com/docs/en/discover-plugins#manage-installed-plugins).
+
+2. **Los skills `/mefisto:*` están disponibles.** Corre:
+
+   ```
+   /help
+   ```
+
+   y verifica que los comandos del namespace del plugin aparecen en el catálogo (p. ej. `/mefisto:draft`, `/mefisto:implement`, `/mefisto:onboard`). Que `/help` liste los skills bajo el namespace del plugin es la señal documentada de que el plugin cargó (ver la [guía oficial de plugins](https://code.claude.com/docs/en/plugins), sección «Test your plugin»).
+
+El criterio de éxito es **"los comandos `/mefisto:*` aparecen disponibles"**, no "responden sin datos".
+
+> **En un proyecto greenfield es esperable que los skills de runtime no muestren nada — y eso NO indica un fallo de instalación.** `/mefisto:show-flow` lee `docs/eda/flows/` (carpeta que aún no existe) y responde "No hay flujos en docs/eda/flows/"; `/mefisto:work-status` lee `.claude/pipeline/pipeline-status-*.json` (aún sin pipelines corridos) y muestra un dashboard vacío. Esa salida vacía solo significa que todavía no has modelado flujos ni corrido pipelines: la instalación se verifica con los dos checks de arriba, no con que esos skills devuelvan datos.
 
 Para un diagnóstico del onboarding (¿está bien formado el `harness.config.json`?, ¿existen los labels?, ¿está configurado el CI?), corre el doctor de solo lectura:
 
@@ -159,13 +174,13 @@ claude plugin install mefisto@augusto-romero-arango-harness --scope user
 
 > Si prefieres el flujo interactivo (`/plugin install mefisto@augusto-romero-arango-harness` dentro de la sesión), elige **user** cuando te pregunte por el scope. El comando de terminal de arriba lo fija explícito y es el camino verificado en campo.
 
-Comprueba que los skills responden:
+Comprueba que el plugin cargó (mismo criterio que "Verificar instalación", paso 4 de la sección Instalación):
 
 ```
-/mefisto:work-status
+/plugin list
 ```
 
-Si `/mefisto:work-status` responde sin errores, el plugin está cargado.
+`mefisto@augusto-romero-arango-harness` debe aparecer instalado, y `/help` debe listar los skills `/mefisto:*`. En este punto greenfield aún no hay pipelines, así que `/mefisto:work-status` mostrará un dashboard vacío: eso es esperable y no indica un fallo de instalación.
 
 > **Por qué scope `user` y no `project` (requisito para los pipelines).** Los pipelines (`/infra`, `/implement`, `/scaffold`) **no** corren sus agentes dentro de tu repo: crean un **git worktree** en `${REPO_ROOT}/../<rama>` —un directorio **hermano del repo consumidor, fuera de él**— e invocan cada agente ahí con `claude -p ... --agent <nombre> ...` (ver `scripts/iac-pipeline.sh`, `scripts/tdd-pipeline.sh` y `scripts/scaffold-pipeline.sh`, que comparten el patrón `WORKTREE_PATH="${REPO_ROOT}/../${BRANCH_NAME}"`). Con el plugin a **scope `project`**, Claude Code solo lo carga para el path del repo consumidor; ese worktree hermano queda fuera de alcance, el agente no se encuentra y el pipeline aborta con `agent '<nombre>' not found`. El **scope `user`** carga el plugin para todos los paths de tu usuario —incluido el worktree—, por eso es **requisito antes del paso 5 (Bootstrap de infraestructura / `/infra`)**, el primer paso de esta guía que dispara un pipeline. En Claude Code 2.1.x `--scope user` es además el default de `claude plugin install`; declararlo explícito evita que un flujo interactivo previo lo haya dejado a scope `project` (la causa raíz del fallo en el primer greenfield real del harness).
 
