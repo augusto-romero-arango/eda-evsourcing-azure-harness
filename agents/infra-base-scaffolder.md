@@ -732,7 +732,7 @@ El `main.tf` instancia **solo los modulos compartidos** (`resource_group`, `moni
 
 ### 2.1 `infra/environments/<env>/providers.tf`
 
-Declara `azurerm` y `random` (el provider `random` lo usa el `domain-scaffolder` para el sufijo de las Storage). **Sin** bloque `backend`.
+Declara `azurerm` y `random`. El provider `random` lo usan tanto el **esqueleto del entorno** (sufijo de unicidad global de PostgreSQL y Service Bus, ver Paso 2.3) como el `domain-scaffolder` (sufijo de las Storage por dominio). **Sin** bloque `backend`.
 
 ```hcl
 terraform {
@@ -844,9 +844,36 @@ locals {
 
 ### 2.3 `infra/environments/<env>/main.tf`
 
-Instancia los 4 modulos compartidos. Nombres globales sin sufijo (el sufijo de unicidad lo aplica un issue posterior en este mismo entorno; ver ADR-0021). `topics_config` arranca vacio en greenfield (los topics por evento los agrega `/infra` al implementar cada flujo); el comentario muestra el patron con subscription de smoke-tests (ADR-0013).
+Instancia los 4 modulos compartidos y declara los **sufijos de unicidad global** de PostgreSQL y Service Bus. `topics_config` arranca vacio en greenfield (los topics por evento los agrega `/infra` al implementar cada flujo); el comentario muestra el patron con subscription de smoke-tests (ADR-0013).
+
+**Unicidad global (ADR-0021).** El nombre de un PostgreSQL Flexible Server (`*.postgres.database.azure.com`) y el de un namespace de Service Bus (`*.servicebus.windows.net`) deben ser unicos en **TODO Azure**, no solo dentro del resource group, porque ambos exponen un endpoint DNS publico. Por eso cada uno recibe un sufijo de un `random_string` (length 6, `special = false`, `upper = false`) -- el mismo patron que usan las Storage por dominio. Sin sufijo, el primer `terraform apply` de un greenfield aborta con `ServerNameAlreadyExists` (Postgres) o con colision de namespace (Service Bus). Origen: issue #94 (segunda mitad del patron de #92, que resolvio lo mismo para la Storage del tfstate en `bootstrap-backend.sh`).
+
+**Limites de Azure (CA-3).** Los nombres resultantes caben holgadamente: el PostgreSQL Flexible Server admite 3-63 chars (minusculas, numeros y guiones) y `psql-${local.prefix_func}-${sufijo}` ronda los 19-24 chars para los prefijos tipicos del harness; el namespace de Service Bus admite 6-50 chars, debe empezar con letra y terminar en letra/numero, y `sb-${local.prefix}-${sufijo}` empieza con `s` y termina en el sufijo alfanumerico. Si el consumidor configura un `project` muy largo, acortalo en `variables.tf` para no exceder los 50 chars del namespace.
+
+**Idempotencia y limitacion de migracion.** `random_string` **no** lleva `keepers`: Terraform persiste su valor en el state en el primer `apply` y lo mantiene estable de por vida del recurso (idempotente por diseno). **El sufijo aplica solo a provisiones nuevas (greenfield).** Anadirlo a un PostgreSQL o Service Bus **ya desplegado** sin sufijo cambia su `name` (atributo `ForceNew`) y, como ambos modulos declaran `prevent_destroy = true`, Terraform bloqueara el destroy+recreate. Migrar un recurso ya aplicado exige intervencion manual (`terraform state mv`/`import` o aceptar el nombre nuevo); no es automatico.
+
+**Outputs (CA-4).** Los outputs raiz `postgresql_fqdn` y `service_bus_name` (Paso 2.4) siguen leyendo el output del modulo (`module.postgresql.server_fqdn`, `module.service_bus.name`), que refleja el nombre real con el sufijo ya resuelto por el recurso. **No** referencies el nombre "construido" (`"psql-..."`/`"sb-..."`) en los outputs: usa siempre el output del modulo.
 
 ```hcl
+# Sufijos de unicidad global (ADR-0021, issue #94). El nombre del PostgreSQL Flexible
+# Server (*.postgres.database.azure.com) y del namespace de Service Bus
+# (*.servicebus.windows.net) es unico en TODO Azure, no solo en el resource group:
+# ambos exponen un endpoint DNS publico. Mismo patron que las Storage por dominio.
+# Sin keepers -> el valor se persiste en el state en el primer apply y queda estable
+# de por vida del recurso (idempotente por diseno). Cambiar este sufijo en un recurso
+# YA desplegado es ForceNew y choca con prevent_destroy: el sufijo es para greenfield.
+resource "random_string" "postgresql_suffix" {
+  length  = 6
+  special = false
+  upper   = false
+}
+
+resource "random_string" "service_bus_suffix" {
+  length  = 6
+  special = false
+  upper   = false
+}
+
 module "resource_group" {
   source   = "../../modules/resource-group"
   name     = "rg-${local.prefix}"
@@ -865,7 +892,7 @@ module "monitoring" {
 
 module "postgresql" {
   source                 = "../../modules/postgresql"
-  name                   = "psql-${local.prefix_func}"
+  name                   = "psql-${local.prefix_func}-${random_string.postgresql_suffix.result}"
   resource_group_name    = module.resource_group.name
   location               = var.postgresql_location
   zone                   = var.postgresql_zone
@@ -877,7 +904,7 @@ module "postgresql" {
 
 module "service_bus" {
   source              = "../../modules/service-bus"
-  name                = "sb-${local.prefix}"
+  name                = "sb-${local.prefix}-${random_string.service_bus_suffix.result}"
   resource_group_name = module.resource_group.name
   location            = module.resource_group.location
   sku                 = "Standard"
