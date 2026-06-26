@@ -196,7 +196,8 @@ assert_eq "F4: Superado 10 + Passed 20 + correctas 5 => 35" "35" "$(extract_test
 # ─── Escenario G: reubicar tests entre proyectos NO dispara el abort ────────
 # CA-2: un refactor que MUEVE tests de Contracts.Tests a ControlHoras.Tests sin
 # cambiar el total -> baseline y post-count suman la suite completa -> iguales ->
-# la condicion `post < baseline` del gate (tdd-pipeline.sh:891) es falsa.
+# la condicion `[ "$POST_TEST_COUNT" -lt "$BASELINE_TEST_COUNT" ]` del gate en
+# tdd-pipeline.sh es falsa y no se dispara el abort.
 echo "Escenario G: reubicacion de tests sin cambiar el total => baseline == post"
 BASELINE_G=$'correcto: 100\ncorrecto: 325'   # Contracts.Tests=100, ControlHoras.Tests=325
 POST_G=$'correcto: 60\ncorrecto: 365'        # 40 tests movidos a ControlHoras.Tests
