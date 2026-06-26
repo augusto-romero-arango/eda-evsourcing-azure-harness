@@ -60,6 +60,8 @@ Si tu proyecto no encaja con este stack, este harness no es para ti.
 /plugin install mefisto@augusto-romero-arango-harness
 ```
 
+> **Si vas a correr los pipelines (`/infra`, `/implement`, `/scaffold`), instala a scope `user`**, no `project`: `claude plugin install mefisto@augusto-romero-arango-harness --scope user`. Esos pipelines invocan a sus agentes dentro de un git worktree hermano del repo consumidor (`${REPO_ROOT}/../<rama>`), que un scope `project` no carga. Ver "Primeros pasos con el harness (greenfield)", paso 1, para el porqué detallado.
+
 ### 3. Configurar el consumidor
 
 Crea `.claude/harness.config.json` en la raíz del proyecto consumidor:
@@ -102,17 +104,33 @@ Si responden sin errores, está listo.
 
 Esta es la ruta de arranque para un proyecto **nuevo** (sin código ni infraestructura aún), en orden. Asume que ya completaste la sección **Instalación**.
 
-### 1. Habilitar el plugin y verificar
+### 1. Habilitar el plugin **a scope user** y verificar
 
-Registra el marketplace e instala el plugin (sección Instalación, pasos 1-2) y comprueba que los skills responden:
+Registra el marketplace e instala el plugin (sección Instalación, pasos 1-2), pero **instálalo a scope `user`, no a scope `project`** (es requisito para que los pipelines funcionen — ver el recuadro "Por qué scope `user`" al final de este paso).
+
+Registra el marketplace desde una sesión de Claude Code:
 
 ```
 /plugin marketplace add augusto-romero-arango-harness
-/plugin install mefisto@augusto-romero-arango-harness
+```
+
+E **instala con `--scope user`** desde una terminal en la raíz del repo consumidor (el flag `--scope` solo existe en el CLI; el slash `/plugin install` no lo acepta). Verificado contra Claude Code 2.1.x:
+
+```bash
+claude plugin install mefisto@augusto-romero-arango-harness --scope user
+```
+
+> Si prefieres el flujo interactivo (`/plugin install mefisto@augusto-romero-arango-harness` dentro de la sesión), elige **user** cuando te pregunte por el scope. El comando de terminal de arriba lo fija explícito y es el camino verificado en campo.
+
+Comprueba que los skills responden:
+
+```
 /mefisto:work-status
 ```
 
 Si `/mefisto:work-status` responde sin errores, el plugin está cargado.
+
+> **Por qué scope `user` y no `project` (requisito para los pipelines).** Los pipelines (`/infra`, `/implement`, `/scaffold`) **no** corren sus agentes dentro de tu repo: crean un **git worktree** en `${REPO_ROOT}/../<rama>` —un directorio **hermano del repo consumidor, fuera de él**— e invocan cada agente ahí con `claude -p ... --agent <nombre> ...` (ver `scripts/iac-pipeline.sh`, `scripts/tdd-pipeline.sh` y `scripts/scaffold-pipeline.sh`, que comparten el patrón `WORKTREE_PATH="${REPO_ROOT}/../${BRANCH_NAME}"`). Con el plugin a **scope `project`**, Claude Code solo lo carga para el path del repo consumidor; ese worktree hermano queda fuera de alcance, el agente no se encuentra y el pipeline aborta con `agent '<nombre>' not found`. El **scope `user`** carga el plugin para todos los paths de tu usuario —incluido el worktree—, por eso es **requisito antes del paso 4 (Bootstrap de infraestructura / `/infra`)**, el primer paso de esta guía que dispara un pipeline. En Claude Code 2.1.x `--scope user` es además el default de `claude plugin install`; declararlo explícito evita que un flujo interactivo previo lo haya dejado a scope `project` (la causa raíz del fallo en el primer greenfield real del harness).
 
 ### 2. Crear `.claude/harness.config.json`
 
