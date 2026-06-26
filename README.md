@@ -45,7 +45,7 @@ Si tu proyecto no encaja con este stack, este harness no es para ti.
   "extraKnownMarketplaces": {
     "augusto-romero-arango-harness": {
       "source": {
-        "type": "github",
+        "source": "github",
         "repo": "augusto-romero-arango/eda-evsourcing-azure-harness"
       }
     }
