@@ -1330,11 +1330,13 @@ Donde `{kebab-sin-guiones}` es el nombre del dominio con los guiones eliminados 
 
 **Cada dominio recibe su propio `module service_plan_{snake_case}`**: el `service_plan_id` de la Function App apunta a `module.service_plan_{snake_case}.id`, nunca a un plan compartido. No referencies un `module.service_plan` global; ese patron (todas las Function Apps en un solo plan) es justo el que ADR-0020 proscribe.
 
-> **Nota**: el bloque hace referencia a `module.postgresql` que debe existir en la infraestructura base. Si el modulo PostgreSQL no esta presente en `main.tf`, agrega la siguiente advertencia al usuario antes de hacer commit:
-> "Recuerda que el modulo `postgresql` debe estar en la infraestructura base antes de ejecutar `terraform apply`."
+> **Nota (infraestructura base)**: estos bloques referencian `module.resource_group`, `module.monitoring`, `module.postgresql`, `module.service_bus` y los modulos `../../modules/storage`, `../../modules/service-plan`, `../../modules/function-app`. **El harness los provee**: los genera el agente `infra-base-scaffolder` (skill `/infra-base`), que escribe los 7 modulos base y el esqueleto del entorno (ver **ADR-0021**). Verifica que existan antes de hacer commit:
+> ```bash
+> test -d infra/modules/postgresql && test -d infra/modules/service-plan && test -d infra/modules/function-app && test -f infra/environments/{env}/main.tf && echo "base OK" || echo "FALTA la infraestructura base"
+> ```
+> Si falta (`FALTA la infraestructura base`), no emitas una advertencia pasiva: indica al usuario que genere la base primero con `/infra-base` (o el agente `infra-base-scaffolder`) y luego reintente el scaffold del dominio.
 
-> **Nota (modulo service-plan)**: el bloque `module service_plan_{snake_case}` asume que el modulo `modules/service-plan` del consumidor acepta los inputs `os_type`, `sku_name`, `worker_count` y `always_on` (contrato documentado en ADR-0020). Verifica `infra/modules/service-plan/variables.tf`: si el modulo no declara esas variables, no las pases sin avisar -- `terraform validate` fallaria. Agrega esta advertencia al usuario antes de hacer commit:
-> "El modulo `modules/service-plan` debe aceptar los inputs `os_type`, `sku_name`, `worker_count` y `always_on` (ver contrato en ADR-0020) antes de ejecutar `terraform apply`. Si tu modulo base aun no los expone, actualizalo o ajusta el `module service_plan_{snake_case}` emitido."
+> **Nota (modulo service-plan)**: el bloque `module service_plan_{snake_case}` pasa los inputs `os_type`, `sku_name`, `worker_count` y `always_on`. El modulo `modules/service-plan` que genera `infra-base-scaffolder` **ya acepta** esos cuatro inputs (contrato de **ADR-0020**, garantizado por ADR-0021/CA-2), de modo que `terraform validate` pasa. Si el consumidor tiene un `modules/service-plan` heredado que **no** los declara, regeneralo con `/infra-base` (idempotente: no pisa lo demas) o ajusta el `module service_plan_{snake_case}` emitido a los inputs que ese modulo si exponga.
 
 ---
 

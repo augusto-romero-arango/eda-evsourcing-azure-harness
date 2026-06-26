@@ -19,10 +19,10 @@ Plugin de [Claude Code](https://code.claude.com/docs/en/plugins) que provee un h
 
 ## Qué incluye
 
-- **14 skills** (slash commands): `/implement`, `/tooling`, `/infra`, `/scaffold`, `/parallel`, `/sequential`, `/bug`, `/draft`, `/fix-review`, `/health-check`, `/work-status`, `/show-flow`, `/eraser-diagram`, `/merge`.
-- **16 agentes** especializados: `planner`, `test-writer`, `implementer`, `reviewer`, `smoke-test-writer`, `domain-scaffolder`, `eda-modeler`, `event-stormer`, `historiador`, `infra-writer`, `infra-reviewer`, `infra-applier`, `infra-bootstrap`, `pr-sync`, `bug-investigator`, `tooling-investigator`.
+- **15 skills** (slash commands): `/implement`, `/tooling`, `/infra`, `/infra-base`, `/scaffold`, `/parallel`, `/sequential`, `/bug`, `/draft`, `/fix-review`, `/health-check`, `/work-status`, `/show-flow`, `/eraser-diagram`, `/merge`.
+- **17 agentes** especializados: `planner`, `test-writer`, `implementer`, `reviewer`, `smoke-test-writer`, `domain-scaffolder`, `infra-base-scaffolder`, `eda-modeler`, `event-stormer`, `historiador`, `infra-writer`, `infra-reviewer`, `infra-applier`, `infra-bootstrap`, `pr-sync`, `bug-investigator`, `tooling-investigator`.
 - **Pipelines bash** que orquestan el ciclo TDD, IaC y tooling sobre `tmux` y `git worktree`.
-- **20 ADRs** del marco arquitectónico.
+- **21 ADRs** del marco arquitectónico.
 - **Hooks** para logging del pipeline.
 
 ## Stack supuesto en el consumidor
@@ -178,7 +178,15 @@ El backend remoto de Terraform (donde vive el `tfstate`) es prerequisito de todo
 
    Copia los secrets que imprime a *Settings > Secrets and variables > Actions* de tu repo.
 
-3. **Primer `/infra`**: lanza el pipeline IaC para tu primer issue `tipo:infra`, que escribe el HCL, ejecuta `terraform plan` y aplica:
+3. **Generar la infraestructura base** con `/infra-base` (agente `infra-base-scaffolder`). Es el eslabón entre el backend y el primer `/infra`: escribe los 7 módulos Terraform base (`resource-group`, `monitoring`, `postgresql`, `service-bus`, `service-plan`, `storage`, `function-app`) y el esqueleto del entorno (`main.tf`, `variables.tf`, `providers.tf`, `outputs.tf`) — **sin** `backend.tf` (ese lo escribió el paso 1). Es idempotente: si ya existen archivos, los respeta. Ver **ADR-0021**.
+
+   ```
+   /mefisto:infra-base dev
+   ```
+
+   Luego provee las variables requeridas en `infra/environments/dev/terraform.tfvars` (`alert_email`, `postgresql_admin_password`, `subscription_id`) y revisa los defaults derivados (`project`, `project_short`, `postgresql_location`). Sin esta base, `/infra` y `/scaffold` asumen módulos que no existirían y fallarían.
+
+4. **Primer `/infra`**: lanza el pipeline IaC para tu primer issue `tipo:infra`, que escribe el HCL, ejecuta `terraform plan` y aplica:
 
    ```
    /mefisto:infra <numero-de-issue>

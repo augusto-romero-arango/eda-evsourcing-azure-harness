@@ -26,8 +26,8 @@ El prompt que recibes contiene el issue con los recursos de infraestructura a cr
 find infra/ -name "*.tf" | head -30
 ```
 
-- Lee los modulos existentes en `infra/modules/` que puedas reutilizar
-- Lee el ambiente target en `infra/environments/<env>/`
+- Lee los modulos existentes en `infra/modules/` que puedas reutilizar. El harness provee 7 modulos base (`resource-group`, `monitoring`, `postgresql`, `service-bus`, `service-plan`, `storage`, `function-app`) generados por el agente `infra-base-scaffolder` / skill `/infra-base` (ver **ADR-0021**). Si `infra/modules/` esta vacio o incompleto (greenfield aun sin base), **no asumas que existen**: avisa al usuario que genere la base primero con `/infra-base` antes de continuar.
+- Lee el ambiente target en `infra/environments/<env>/`. Si no existe el esqueleto (`main.tf`/`variables.tf`/`providers.tf`/`outputs.tf`), tambien lo genera `/infra-base`.
 
 ### 2. Consultar documentacion (MCP de Terraform)
 
@@ -54,6 +54,7 @@ Antes de escribir, define:
 ### 4. Escribir el HCL
 
 **En modulos** (`infra/modules/<tipo>/main.tf`):
+- Los 7 modulos base ya existen si se corrio `/infra-base` (ADR-0021); reutilizalos antes de crear uno nuevo. Crea un modulo nuevo solo para recursos que la base no cubre.
 - Cada modulo tiene exactamente: `main.tf`, `variables.tf` (opcional si los vars van inline), `outputs.tf` (si hay outputs)
 - Los recursos criticos llevan `lifecycle { prevent_destroy = true }`
 - Los secretos (connection strings, keys) van en outputs marcados como `sensitive = true`

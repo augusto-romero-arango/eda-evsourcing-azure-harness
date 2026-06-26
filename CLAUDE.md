@@ -11,10 +11,10 @@ Harness opinionado para Claude Code (nombre interno: `mefisto`, repo: `eda-evsou
 
 Es un **Claude Code Plugin** (ver `.claude-plugin/plugin.json`) que empaqueta:
 
-- 14 **skills** (slash commands) en `commands/`
-- 16 **agentes** especializados en `agents/`
+- 15 **skills** (slash commands) en `commands/`
+- 17 **agentes** especializados en `agents/`
 - Pipelines bash en `scripts/` (TDD, IaC, tooling, scaffolding, pr-sync, etc.)
-- 20 **ADRs** del marco arquitectónico en `docs/adr/`
+- 21 **ADRs** del marco arquitectónico en `docs/adr/`
 - Hooks en `hooks/hooks.json`
 
 Está pensado para instalarse vía marketplace en cualquier proyecto que adopte el marco (EDA + Event Sourcing + Azure Functions + Marten + Wolverine + Postgres).
@@ -81,6 +81,7 @@ Necesaria porque los agentes/skills del harness no pueden hacer sustitución de 
 | `/implement` | Pipeline TDD para un issue `estado:listo` |
 | `/tooling` | Pipeline de tooling (scripts, fixtures, config, agentes) |
 | `/infra` | Pipeline IaC con Terraform (write → review → apply) |
+| `/infra-base` | Genera la infraestructura base (7 módulos + esqueleto del entorno) en greenfield |
 | `/parallel` | Corre varios issues en worktrees aislados |
 | `/sequential` | Cadena de issues con merge automático |
 | `/scaffold` | Crea el scaffold de un nuevo dominio |
@@ -101,6 +102,7 @@ Necesaria porque los agentes/skills del harness no pueden hacer sustitución de 
 | `eda-modeler` | Formaliza flujos y aggregates en `docs/eda/` |
 | `historiador` | Consolida field notes en la bitácora del día |
 | `domain-scaffolder` | Crea scaffold de un nuevo dominio |
+| `infra-base-scaffolder` | Genera la infraestructura base del consumidor (7 módulos + entorno) en greenfield |
 | `test-writer` | Fase roja del pipeline TDD |
 | `implementer` | Fase verde del pipeline TDD |
 | `reviewer` | Revisión antes de crear PR |
@@ -138,6 +140,7 @@ Los ADRs en `docs/adr/` son la fuente de verdad arquitectónica del harness. Los
 | Heurísticas de evolución y reuso del código (Rule of Three, etc.) | ADR-0018 |
 | Separación física de skills publicados vs internos | ADR-0019 |
 | Hosting de Azure Functions (un App Service Plan por dominio) | ADR-0020 |
+| Infraestructura base (7 módulos + entorno) generada por agente | ADR-0021 |
 
 ## Convenciones del marco
 
@@ -196,6 +199,7 @@ Mefisto es un harness, no un producto: no tiene aggregates, no es TDD .NET, no t
 
 - `/implement` — TDD .NET de dominio.
 - `/infra` — Terraform/Azure.
+- `/infra-base` — infraestructura base Terraform del consumidor.
 - `/scaffold` — crear nuevo dominio.
 - `/health-check` — App Insights.
 - `/show-flow`, `/eraser-diagram` — flujos EDA y diagramas.
