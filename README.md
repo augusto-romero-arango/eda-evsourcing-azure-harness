@@ -38,7 +38,9 @@ Si tu proyecto no encaja con este stack, este harness no es para ti.
 
 ## Instalación
 
-### 1. Registrar el marketplace en `.claude/settings.json` del repo consumidor
+### 1. Configurar `.claude/settings.json` del repo consumidor
+
+Crea (o extiende) `.claude/settings.json` en la raíz del repo consumidor con tres bloques — el marketplace, la habilitación del plugin y los permisos recomendados:
 
 ```json
 {
@@ -49,9 +51,30 @@ Si tu proyecto no encaja con este stack, este harness no es para ti.
         "repo": "augusto-romero-arango/eda-evsourcing-azure-harness"
       }
     }
+  },
+  "enabledPlugins": {
+    "mefisto@augusto-romero-arango-harness": true
+  },
+  "permissions": {
+    "allow": [
+      "Bash(dotnet:*)",
+      "Bash(git:*)",
+      "Bash(gh:*)",
+      "Bash(terraform:*)",
+      "Bash(az:*)"
+    ],
+    "deny": [
+      "Bash(terraform destroy:*)",
+      "Bash(az group delete:*)",
+      "Bash(git push --force:*)"
+    ]
   }
 }
 ```
+
+- **`extraKnownMarketplaces`** registra el marketplace que aloja a Mefisto (el repo de GitHub). El esquema del bloque `source` usa la clave `source` (no `type`) con valor `"github"` — ver issue #75.
+- **`enabledPlugins`** habilita el plugin de forma **reproducible y commiteable**: al estar en el `settings.json` versionado, cualquiera que clone el repo arranca con Mefisto ya habilitado. La clave es `<plugin.name>@<marketplace.name>` = `mefisto@augusto-romero-arango-harness` (verificado contra `.claude-plugin/plugin.json` y `.claude-plugin/marketplace.json`). El `/plugin install` interactivo del paso 2 habilita el plugin en tu instalación local pero **no deja artefacto en el repo**, así que sin esta clave la habilitación no es reproducible.
+- **`permissions`** es un **punto de partida ajustable** (sintaxis `Bash(<cmd>:*)` de Claude Code; ver la [doc de settings](https://code.claude.com/docs/en/settings)). El `allow` evita la fricción de aprobar uno a uno los `dotnet`/`git`/`gh`/`terraform`/`az` que disparan los pipelines; el `deny` es una red de seguridad contra comandos destructivos (`terraform destroy`, `az group delete`, `git push --force`). Endurécelo o relájalo según la política de tu equipo — el `deny` tiene prioridad sobre el `allow`.
 
 ### 2. Instalar el plugin (desde Claude Code)
 
@@ -59,6 +82,8 @@ Si tu proyecto no encaja con este stack, este harness no es para ti.
 /plugin marketplace add augusto-romero-arango-harness
 /plugin install mefisto@augusto-romero-arango-harness
 ```
+
+> El `/plugin install` interactivo no deja rastro en el repo; el bloque `enabledPlugins` del paso 1 es lo que hace la habilitación reproducible y commiteable. Si declaraste `enabledPlugins`, este paso sigue siendo útil la primera vez para que Claude Code descargue el plugin al cache local.
 
 > **Si vas a correr los pipelines (`/infra`, `/implement`, `/scaffold`), instala a scope `user`**, no `project`: `claude plugin install mefisto@augusto-romero-arango-harness --scope user`. Esos pipelines invocan a sus agentes dentro de un git worktree hermano del repo consumidor (`${REPO_ROOT}/../<rama>`), que un scope `project` no carga. Ver "Primeros pasos con el harness (greenfield)", paso 1, para el porqué detallado.
 
@@ -79,9 +104,11 @@ Crea `.claude/harness.config.json` en la raíz del proyecto consumidor:
 }
 ```
 
-**Campo `terraformStateStorage` (nombre BASE)**: el nombre de una Storage Account es un endpoint DNS público (`*.blob.core.windows.net`) y por tanto **único en todo Azure**, no solo en tu suscripción. Por eso `scripts/bootstrap-backend.sh` trata este campo como un nombre **base**: le anexa un sufijo aleatorio de 6 caracteres para garantizar unicidad global (mismo patrón `random_string` que el scaffolder usa en las Storage de dominio) y valida la disponibilidad con `az storage account check-name` antes de crear. El nombre **final** (con sufijo) es el que queda en `infra/environments/<env>/backend.tf`, así que `terraform init` usa exactamente la cuenta creada. Declara la base sin sufijo (ej. `stmiproyectotfstatedev`); si la base más el sufijo no cabe en el límite de 24 caracteres de Azure, el script trunca la base y avisa. Las corridas posteriores reutilizan la cuenta ya creada (idempotente; ancla el nombre en el `backend.tf` versionado y en la cuenta existente del Resource Group del tfstate), no generan un sufijo nuevo.
+**Campo `terraformStateStorage` (nombre BASE)**: el nombre de una Storage Account es un endpoint DNS público (`*.blob.core.windows.net`) y por tanto **único en todo Azure**, no solo en tu suscripción. Por eso `scripts/bootstrap-backend.sh` trata este campo como un nombre **base**: le anexa un sufijo aleatorio de 6 caracteres para garantizar unicidad global (mismo patrón `random_string` que el scaffolder usa en las Storage de dominio) y valida la disponibilidad con `az storage account check-name` antes de crear. El nombre **final** (con sufijo) es el que queda en `infra/environments/<env>/backend.tf`, así que `terraform init` usa exactamente la cuenta creada. Declara la base sin sufijo (ej. `stmiproyectotfstatedev`, 22 chars). **Restricción de Azure**: el nombre de una Storage Account debe tener **3-24 caracteres, solo minúsculas y dígitos** ([Microsoft Learn — reglas de nombres de recursos, `Microsoft.Storage`](https://learn.microsoft.com/azure/azure-resource-manager/management/resource-name-rules#microsoftstorage)). El patrón sugerido `st<proyecto>tfstate<env>` deja ~12 caracteres para `<proyecto>` (`st`=2, `tfstate`=7, `dev`=3), así que **para nombres largos abrevia el prefijo del proyecto**: p. ej. `micontrolplane` produce `stmicontrolplanetfstatedev` = **26 chars (inválido)**; abreviado a `mcp` queda `stmcptfstatedev` = 15 chars (válido). `load_harness_config` valida este formato (`^[a-z0-9]{3,24}$`) al cargar el config (issue #78) y aborta temprano si no cumple, en vez de fallar tarde en el `apply`. Si la base **válida** más el sufijo de unicidad no cabe en 24 caracteres, `bootstrap-backend.sh` trunca la base y avisa. Las corridas posteriores reutilizan la cuenta ya creada (idempotente; ancla el nombre en el `backend.tf` versionado y en la cuenta existente del Resource Group del tfstate), no generan un sufijo nuevo.
 
 **Campo opcional `azureLocation`**: la región de Azure (ej. `"eastus2"`, `"westeurope"`) donde `scripts/bootstrap-backend.sh` crea el backend de Terraform (Resource Group, Storage Account y container del tfstate). Si lo declaras, el bootstrap lo usa por defecto sin tener que pasar `--location` en cada corrida; el flag `--location` siempre lo sobrescribe. Si no lo declaras y tampoco pasas `--location`, el bootstrap aborta pidiéndote uno de los dos. Es **opcional**, así que añadirlo no es un cambio incompatible del schema (no es MAJOR).
+
+**Campo opcional `repoSlug`**: el slug `owner/repo` del repositorio de Mefisto al que se enrutan los **drafts cross-repo** (`estado:borrador`) que crean el `planner` y el `tooling-investigator` cuando detectan que un problema descubierto en tu proyecto pertenece al harness. Sirve para redirigir esos drafts a **tu fork** de Mefisto en vez del repo upstream. Si no lo declaras, el default es `augusto-romero-arango/eda-evsourcing-azure-harness`. No se exporta como variable `HARNESS_*`: se lee directo con `jq` donde se necesita (`scripts/_pipeline-common.sh`, `agents/planner.md`, `agents/tooling-investigator.md`). Es **opcional** (añadirlo no es MAJOR).
 
 Y añade una sección a `CLAUDE.md` raíz del consumidor declarando los tokens:
 
@@ -140,7 +167,7 @@ Comprueba que los skills responden:
 
 Si `/mefisto:work-status` responde sin errores, el plugin está cargado.
 
-> **Por qué scope `user` y no `project` (requisito para los pipelines).** Los pipelines (`/infra`, `/implement`, `/scaffold`) **no** corren sus agentes dentro de tu repo: crean un **git worktree** en `${REPO_ROOT}/../<rama>` —un directorio **hermano del repo consumidor, fuera de él**— e invocan cada agente ahí con `claude -p ... --agent <nombre> ...` (ver `scripts/iac-pipeline.sh`, `scripts/tdd-pipeline.sh` y `scripts/scaffold-pipeline.sh`, que comparten el patrón `WORKTREE_PATH="${REPO_ROOT}/../${BRANCH_NAME}"`). Con el plugin a **scope `project`**, Claude Code solo lo carga para el path del repo consumidor; ese worktree hermano queda fuera de alcance, el agente no se encuentra y el pipeline aborta con `agent '<nombre>' not found`. El **scope `user`** carga el plugin para todos los paths de tu usuario —incluido el worktree—, por eso es **requisito antes del paso 4 (Bootstrap de infraestructura / `/infra`)**, el primer paso de esta guía que dispara un pipeline. En Claude Code 2.1.x `--scope user` es además el default de `claude plugin install`; declararlo explícito evita que un flujo interactivo previo lo haya dejado a scope `project` (la causa raíz del fallo en el primer greenfield real del harness).
+> **Por qué scope `user` y no `project` (requisito para los pipelines).** Los pipelines (`/infra`, `/implement`, `/scaffold`) **no** corren sus agentes dentro de tu repo: crean un **git worktree** en `${REPO_ROOT}/../<rama>` —un directorio **hermano del repo consumidor, fuera de él**— e invocan cada agente ahí con `claude -p ... --agent <nombre> ...` (ver `scripts/iac-pipeline.sh`, `scripts/tdd-pipeline.sh` y `scripts/scaffold-pipeline.sh`, que comparten el patrón `WORKTREE_PATH="${REPO_ROOT}/../${BRANCH_NAME}"`). Con el plugin a **scope `project`**, Claude Code solo lo carga para el path del repo consumidor; ese worktree hermano queda fuera de alcance, el agente no se encuentra y el pipeline aborta con `agent '<nombre>' not found`. El **scope `user`** carga el plugin para todos los paths de tu usuario —incluido el worktree—, por eso es **requisito antes del paso 5 (Bootstrap de infraestructura / `/infra`)**, el primer paso de esta guía que dispara un pipeline. En Claude Code 2.1.x `--scope user` es además el default de `claude plugin install`; declararlo explícito evita que un flujo interactivo previo lo haya dejado a scope `project` (la causa raíz del fallo en el primer greenfield real del harness).
 
 ### 2. Crear `.claude/harness.config.json`
 
@@ -163,7 +190,24 @@ PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
 
 `.claude/pipeline/.plugin-root` lo escribe el hook `SessionStart` del plugin al abrir la sesión (persiste `${CLAUDE_PLUGIN_ROOT}`); el fallback localiza el plugin por glob sobre el cache tomando la versión más reciente. Normalmente **no necesitas correr esto a mano**: lo hacen los skills (`/infra`, etc.) y los agentes (`infra-bootstrap`, `planner`) por ti.
 
-### 4. Bootstrap de infraestructura
+### 4. Bootstrap del repo del consumidor (labels y CI)
+
+Antes del primer `/draft` o `/implement`, tu repo necesita dos prerequisitos operativos que el harness **no** crea solo: el esquema de **labels** de GitHub y la **autenticación de CI** hacia Azure. Ambos se provisionan con scripts del plugin, así que se invocan **plugin-relative** (nunca `./scripts/...` desde tu repo —los scripts del harness no viven en él, ver paso 3): resuelve `$PLUGIN_SCRIPTS` y llama al script por ruta absoluta. Los dos llevan el guard defensivo de ADR-0019 y **abortan si se corren dentro del repo de Mefisto** (solo aplican al consumidor).
+
+Para verificar de un vistazo qué falta (labels ausentes, CI sin configurar) antes y después de este paso, corre el doctor de solo lectura `/mefisto:onboard`.
+
+**a. Labels de GitHub** — `setup-github-labels.sh`. El `planner`, `/draft` y los pipelines exigen los labels dimensionales `tipo:*`, `dom:*` y `estado:{borrador|listo}` como prerequisito operativo (**ADR-0007**); sin ellos el primer `/draft` falla al etiquetar. El script **elimina los 9 labels default de GitHub** (`documentation`, `enhancement`, `good first issue`, etc.) y crea el esquema del harness, incluyendo un `dom:<x>` por cada entrada de `domainLabels` en `.claude/harness.config.json`. **Prerequisitos**: `gh auth login` y el campo `domainLabels` ya declarado en el config (paso 2).
+
+```bash
+PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
+"$PLUGIN_SCRIPTS/setup-github-labels.sh"
+```
+
+**b. CI hacia Azure** — `setup-github-ci.sh <subscription-id>`. Crea el Service Principal de GitHub Actions (sin secret, vía OIDC — **ADR-0022**), le asigna `Contributor` a nivel suscripción y lectura sobre el tfstate, y añade el federated credential que confía en la rama `main`. **Prerequisitos**: `gh auth login`, `az login` y el `<subscription-id>` de Azure. Como **resuelve el nombre real de la Storage Account del tfstate** (con el sufijo de unicidad que le puso el bootstrap) para asignar el rol, **depende del backend del tfstate y debe ejecutarse DESPUÉS de crearlo**: por eso su invocación completa vive en el paso 5 (Bootstrap de infraestructura, sub-paso 2), no aquí.
+
+### 5. Bootstrap de infraestructura
 
 El backend remoto de Terraform (donde vive el `tfstate`) es prerequisito de todo lo demás. El orden es:
 
@@ -209,7 +253,7 @@ El backend remoto de Terraform (donde vive el `tfstate`) es prerequisito de todo
    >
    > Así el issue representa "infra aplicada", no "infra previsualizada", y el cierre del PR de preview no bloquea el apply posterior.
 
-### 5. Scaffold del primer dominio y primer ciclo TDD
+### 6. Scaffold del primer dominio y primer ciclo TDD
 
 Con el backend listo, crea el scaffold de tu primer dominio y arranca el ciclo TDD:
 
@@ -220,7 +264,7 @@ Con el backend listo, crea el scaffold de tu primer dominio y arranca el ciclo T
 /mefisto:implement <issue>       # pipeline TDD: test-writer (rojo) -> implementer (verde) -> reviewer -> PR
 ```
 
-### 6. Qué corre dónde
+### 7. Qué corre dónde
 
 | Acción | `cwd` | Dónde vive el binario/artefacto |
 |---|---|---|
