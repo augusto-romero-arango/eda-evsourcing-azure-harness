@@ -79,6 +79,8 @@ Crea `.claude/harness.config.json` en la raíz del proyecto consumidor:
 }
 ```
 
+**Campo `terraformStateStorage` (nombre BASE)**: el nombre de una Storage Account es un endpoint DNS público (`*.blob.core.windows.net`) y por tanto **único en todo Azure**, no solo en tu suscripción. Por eso `scripts/bootstrap-backend.sh` trata este campo como un nombre **base**: le anexa un sufijo aleatorio de 6 caracteres para garantizar unicidad global (mismo patrón `random_string` que el scaffolder usa en las Storage de dominio) y valida la disponibilidad con `az storage account check-name` antes de crear. El nombre **final** (con sufijo) es el que queda en `infra/environments/<env>/backend.tf`, así que `terraform init` usa exactamente la cuenta creada. Declara la base sin sufijo (ej. `stmiproyectotfstatedev`); si la base más el sufijo no cabe en el límite de 24 caracteres de Azure, el script trunca la base y avisa. Las corridas posteriores reutilizan la cuenta ya creada (idempotente; ancla el nombre en el `backend.tf` versionado y en la cuenta existente del Resource Group del tfstate), no generan un sufijo nuevo.
+
 **Campo opcional `azureLocation`**: la región de Azure (ej. `"eastus2"`, `"westeurope"`) donde `scripts/bootstrap-backend.sh` crea el backend de Terraform (Resource Group, Storage Account y container del tfstate). Si lo declaras, el bootstrap lo usa por defecto sin tener que pasar `--location` en cada corrida; el flag `--location` siempre lo sobrescribe. Si no lo declaras y tampoco pasas `--location`, el bootstrap aborta pidiéndote uno de los dos. Es **opcional**, así que añadirlo no es un cambio incompatible del schema (no es MAJOR).
 
 Y añade una sección a `CLAUDE.md` raíz del consumidor declarando los tokens:
@@ -155,7 +157,7 @@ PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
 
 El backend remoto de Terraform (donde vive el `tfstate`) es prerequisito de todo lo demás. El orden es:
 
-1. **Crear el backend del tfstate** con `bootstrap-backend.sh` (idempotente; crea Resource Group `rg-<proyecto>-tfstate`, Storage Account endurecida y container `tfstate`, y escribe `infra/environments/<env>/backend.tf`):
+1. **Crear el backend del tfstate** con `bootstrap-backend.sh` (idempotente; crea Resource Group `rg-<proyecto>-tfstate`, Storage Account endurecida —con un **sufijo de unicidad global** sobre el nombre base de `terraformStateStorage`, ver la nota de ese campo arriba— y container `tfstate`, y escribe `infra/environments/<env>/backend.tf` con el nombre final resuelto):
 
    ```bash
    PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
@@ -168,7 +170,7 @@ El backend remoto de Terraform (donde vive el `tfstate`) es prerequisito de todo
 
    > **Nota**: el script escribe `backend.tf` en tu working tree. El pipeline IaC (`/infra`) ramifica su worktree desde `origin/main`, así que **automatiza** que ese `backend.tf` llegue al worktree: lo copia del working tree al worktree y lo commitea en la rama del pipeline, de modo que viaja en el PR y se versiona en `main` vía merge. No necesitas commitearlo ni subirlo a `main` a mano antes del primer `/infra` (el `terraform init` del reviewer ya encuentra el backend remoto y no cae a estado local).
 
-2. **Configurar el Service Principal de CI** con `setup-github-ci.sh` (crea el SP de GitHub Actions y le asigna lectura sobre el tfstate ya creado):
+2. **Configurar el Service Principal de CI** con `setup-github-ci.sh` (crea el SP de GitHub Actions y le asigna lectura sobre el tfstate ya creado; resuelve el nombre **final** de la Storage Account —con el sufijo que le puso el bootstrap— leyéndolo del `backend.tf` recién escrito, así que la asignación de rol apunta a la cuenta real, no al nombre base del config). Por eso corre **después** del paso 1:
 
    ```bash
    "$PLUGIN_SCRIPTS/setup-github-ci.sh" <subscription-id>

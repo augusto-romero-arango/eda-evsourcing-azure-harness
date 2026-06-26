@@ -8,6 +8,19 @@
 # por dominio (ADR-0020). Este script NO crea planes ni Function Apps: solo el
 # backend del tfstate.
 #
+# Nombre de la Storage Account: el nombre de una Storage Account es un endpoint
+# DNS publico (*.blob.core.windows.net) y por tanto UNICO en todo Azure, no solo
+# en la suscripcion. Por eso el campo 'terraformStateStorage' del config se trata
+# como un nombre BASE: este script le anexa un sufijo aleatorio de unicidad global
+# (mismo patron 'random_string' que agents/domain-scaffolder.md aplica a las
+# Storage de dominio) y valida la disponibilidad con 'az storage account
+# check-name' antes de crear. El nombre FINAL resuelto es el que se escribe en
+# backend.tf y se imprime, asi que 'terraform init' usa exactamente la cuenta
+# creada. La idempotencia se ancla en dos fuentes durables -no en un archivo de
+# estado local-: el storage_account_name ya escrito en backend.tf (versionado) y
+# la cuenta ya creada en el RG dedicado del tfstate; una segunda corrida reusa esa
+# cuenta en vez de crear otra con un sufijo distinto.
+#
 # Uso:
 #   ./scripts/bootstrap-backend.sh --subscription <id>
 #   ./scripts/bootstrap-backend.sh --subscription <id> --env dev
@@ -130,17 +143,27 @@ fi
 
 # --- Nombres resueltos desde el config (sin hardcodear) ---
 RG="${HARNESS_RG_PREFIX}-tfstate"
-STORAGE="${HARNESS_TFSTATE_STORAGE}"
 CONTAINER="tfstate"
 INFRA_ENV_DIR="infra/environments/${ENVIRONMENT}"
 BACKEND_KEY="${ENVIRONMENT}.tfstate"
+
+# Nombre BASE de la Storage Account (del config). El nombre FINAL puede llevar un
+# sufijo de unicidad global (ver resolucion mas abajo). Azure exige <= 24 chars;
+# reservamos SUFFIX_LEN para el sufijo y truncamos la base si no cabe (mismo
+# calculo que agents/domain-scaffolder.md Paso 4: base + 6 chars <= 24).
+STORAGE_SUFFIX_LEN=6
+STORAGE_MAX_LEN=24
+STORAGE_BASE=$(truncate_storage_base "$HARNESS_TFSTATE_STORAGE" "$STORAGE_MAX_LEN" "$STORAGE_SUFFIX_LEN")
+if [ "$STORAGE_BASE" != "$HARNESS_TFSTATE_STORAGE" ]; then
+    echo "AVISO: 'terraformStateStorage' ('${HARNESS_TFSTATE_STORAGE}', ${#HARNESS_TFSTATE_STORAGE} chars) no deja espacio para el sufijo de ${STORAGE_SUFFIX_LEN} chars dentro del limite de ${STORAGE_MAX_LEN}; se trunca la base a '${STORAGE_BASE}'." >&2
+fi
 
 echo "=== Bootstrap del backend de Terraform para ${HARNESS_PROJECT_NAME} ==="
 echo "  Ambiente:        ${ENVIRONMENT}"
 echo "  Suscripcion:     ${SUBSCRIPTION_ID}"
 echo "  Region:          ${LOCATION}"
 echo "  Resource Group:  ${RG}"
-echo "  Storage Account: ${STORAGE}"
+echo "  Storage (base):  ${STORAGE_BASE}"
 echo "  Container:       ${CONTAINER}"
 echo ""
 
@@ -151,6 +174,57 @@ az account set --subscription "$SUBSCRIPTION_ID" || {
     echo "  Verifica que 'az login' este hecho y que la suscripcion exista." >&2
     exit 1
 }
+
+# --- Resolver el nombre FINAL de la Storage Account (idempotente + unico) ------
+# Precedencia:
+#   1. storage_account_name ya declarado en un backend "azurerm" del ambiente
+#      (registro versionado y canonico: es lo que usara 'terraform init').
+#   2. Cuenta ya creada en el RG dedicado del tfstate cuyo nombre arranca con la
+#      base (cubre una corrida previa interrumpida antes de escribir backend.tf).
+#   3. Nombre nuevo: base + sufijo aleatorio, validando unicidad GLOBAL con
+#      'az storage account check-name' y reintentando si el nombre esta tomado.
+resolve_storage_account_name() {
+    local from_backend existing candidate suffix attempt available
+
+    from_backend=$(read_backend_storage_account_name "$INFRA_ENV_DIR")
+    if [ -n "$from_backend" ]; then
+        printf '%s' "$from_backend"
+        return 0
+    fi
+
+    existing=$(az storage account list \
+        --resource-group "$RG" \
+        --query "[?starts_with(name, '${STORAGE_BASE}')].name | [0]" \
+        -o tsv 2>/dev/null) || existing=""
+    if [ -n "$existing" ] && [ "$existing" != "None" ]; then
+        printf '%s' "$existing"
+        return 0
+    fi
+
+    for attempt in {1..10}; do
+        suffix=$(gen_storage_suffix "$STORAGE_SUFFIX_LEN")
+        candidate="${STORAGE_BASE}${suffix}"
+        available=$(az storage account check-name --name "$candidate" \
+            --query nameAvailable -o tsv 2>/dev/null) || available=""
+        case "$available" in
+            [Tt]rue)
+                printf '%s' "$candidate"; return 0 ;;
+            [Ff]alse)
+                continue ;;
+            *)
+                echo "AVISO: 'az storage account check-name' no fue concluyente para '${candidate}'; se usara de todas formas (si colisiona, el create fallara de forma explicita)." >&2
+                printf '%s' "$candidate"; return 0 ;;
+        esac
+    done
+
+    echo "ERROR: no se pudo resolver un nombre globalmente unico para la Storage Account tras 10 intentos con sufijo aleatorio." >&2
+    return 1
+}
+
+echo "Resolviendo el nombre de la Storage Account (base '${STORAGE_BASE}')..."
+STORAGE=$(resolve_storage_account_name) || exit 1
+echo "  Storage Account: ${STORAGE}"
+echo ""
 
 # --- 1. Resource Group (idempotente) ---
 RG_EXISTS=$(az group exists --name "$RG" 2>/dev/null || echo "false")
