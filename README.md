@@ -197,7 +197,7 @@ Comprueba que el plugin cargó (mismo criterio que "Verificar instalación", pas
 
 Crea el archivo de configuración en la raíz del consumidor (sección Instalación, paso 3). Para el bootstrap de infra conviene declarar también el campo opcional `azureLocation` con tu región de Azure (ej. `"eastus2"`), así no tienes que pasar `--location` en cada corrida. Añade además la sección "Tokens del harness" a tu `CLAUDE.md` raíz.
 
-Cuando lo tengas, corre `/mefisto:onboard` para verificar de un vistazo que el config está bien formado y qué te falta (labels, CI). Por defecto solo diagnostica; puede provisionar los **labels** faltantes bajo tu confirmación explícita (el script subyacente es destructivo). La configuración del **CI** sigue siendo manual con `setup-github-ci.sh` en los pasos siguientes; también puedes correr `setup-github-labels.sh` a mano si prefieres.
+Cuando lo tengas, corre `/mefisto:onboard` para verificar de un vistazo que el config está bien formado y qué te falta (labels, CI). Por defecto solo diagnostica; bajo tu confirmación explícita puede además provisionar los **labels** faltantes (el script subyacente es destructivo) y configurar el **CI** hacia Azure (crea recursos reales en Azure vía OIDC; debe correr **después** de `bootstrap-backend.sh`, ver paso 5). También puedes correr `setup-github-labels.sh` / `setup-github-ci.sh` a mano si prefieres.
 
 ### 3. Entender el modelo de ejecución (importante)
 
@@ -218,7 +218,7 @@ PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
 
 Antes del primer `/draft` o `/implement`, tu repo necesita dos prerequisitos operativos que el harness **no** crea solo: el esquema de **labels** de GitHub y la **autenticación de CI** hacia Azure. Ambos se provisionan con scripts del plugin, así que se invocan **plugin-relative** (nunca `./scripts/...` desde tu repo —los scripts del harness no viven en él, ver paso 3): resuelve `$PLUGIN_SCRIPTS` y llama al script por ruta absoluta. Los dos llevan el guard defensivo de ADR-0019 y **abortan si se corren dentro del repo de Mefisto** (solo aplican al consumidor).
 
-Para verificar de un vistazo qué falta (labels ausentes, CI sin configurar) antes y después de este paso, corre el doctor de onboarding `/mefisto:onboard` (por defecto solo diagnostica; puede provisionar los labels faltantes bajo tu confirmación).
+Para verificar de un vistazo qué falta (labels ausentes, CI sin configurar) antes y después de este paso, corre el doctor de onboarding `/mefisto:onboard` (por defecto solo diagnostica; bajo tu confirmación puede provisionar los labels faltantes y configurar el CI hacia Azure —este último, después del bootstrap del backend del paso 5).
 
 **a. Labels de GitHub** — `setup-github-labels.sh`. El `planner`, `/draft` y los pipelines exigen los labels dimensionales `tipo:*`, `dom:*` y `estado:{borrador|listo}` como prerequisito operativo (**ADR-0007**); sin ellos el primer `/draft` falla al etiquetar. El script **elimina los 9 labels default de GitHub** (`documentation`, `enhancement`, `good first issue`, etc.) y crea el esquema del harness, incluyendo un `dom:<x>` por cada entrada de `domainLabels` en `.claude/harness.config.json`. **Prerequisitos**: `gh auth login` y el campo `domainLabels` ya declarado en el config (paso 2).
 
