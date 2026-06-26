@@ -281,12 +281,18 @@ run_agent() {
         writer)   AGENT_WR_RES="running" ;;
         reviewer) AGENT_RV_RES="running" ;;
     esac
+    # Modelo por etapa: escritura (writer y merge) en sonnet, revision en opus.
+    local AGENT_MODEL
+    case "$agent" in
+        reviewer) AGENT_MODEL="opus" ;;
+        *)        AGENT_MODEL="sonnet" ;;
+    esac
     update_status "$stage-$agent" "running"
     log "Invocando $agent..."
 
     local AGENT_TIMEOUT_SECONDS=1800
     local NONINTERACTIVE_SYSTEM="You are running in non-interactive print mode. There is no human to approve anything. You MUST use Write and Edit tools directly to create and modify files at any path including .claude/. Never output text asking for permissions or confirmations -- doing so causes pipeline failure."
-    (cd "$WORKTREE_PATH" && claude -p "$prompt" \
+    (cd "$WORKTREE_PATH" && claude -p "$prompt" --model "$AGENT_MODEL" \
         --permission-mode bypassPermissions \
         --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
         --output-format text \
@@ -327,7 +333,7 @@ run_agent() {
                 echo "[$(date +%H:%M:%S)] RETRY $agent: API error 5xx" >> "$EVENTS_LOG_ABS"
                 local log_stage_retry="$LOG_DIR_ABS/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_NUM}-retry.log"
                 CLAUDE_EXIT=0
-                (cd "$WORKTREE_PATH" && claude -p "$prompt" \
+                (cd "$WORKTREE_PATH" && claude -p "$prompt" --model "$AGENT_MODEL" \
                     --permission-mode bypassPermissions \
                     --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
                     --output-format text \
@@ -355,7 +361,7 @@ run_agent() {
                 echo "[$(date +%H:%M:%S)] RETRY $agent: bloqueo por permisos" >> "$EVENTS_LOG_ABS"
                 local log_stage_perm_retry="$LOG_DIR_ABS/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_NUM}-perm-retry.log"
                 CLAUDE_EXIT=0
-                (cd "$WORKTREE_PATH" && claude -p "$prompt" \
+                (cd "$WORKTREE_PATH" && claude -p "$prompt" --model "$AGENT_MODEL" \
                     --permission-mode bypassPermissions \
                     --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
                     --output-format text \
