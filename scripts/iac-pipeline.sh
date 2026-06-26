@@ -5,10 +5,16 @@
 #   ./scripts/iac-pipeline.sh 42
 #   ./scripts/iac-pipeline.sh 42 --env dev
 #   ./scripts/iac-pipeline.sh 42 --auto-apply    # Omite confirmacion (solo dev)
-#   ./scripts/iac-pipeline.sh 42 --skip-apply    # Solo write + review, crea PR
+#   ./scripts/iac-pipeline.sh 42 --skip-apply    # Solo write + review, crea PR (preview)
 #   ./scripts/iac-pipeline.sh 42 --from-stage 2  # Retomar desde Stage 2
+#   ./scripts/iac-pipeline.sh 42 --from-stage 3  # Aplicar (fase apply del flujo preview)
 #
 # Ciclo completo: Issue -> Worktree -> Write (HCL) -> Review (plan) -> Apply -> PR -> Cleanup
+#
+# Flujo preview -> apply (issue #96): con --skip-apply el pipeline escribe+revisa el HCL
+# y crea un PR SIN 'Closes #N' (el issue queda abierto), conservando el worktree y el
+# tfplan. Tras mergear ese PR, se aplica con --from-stage 3, que reutiliza el worktree y
+# el tfplan revisados, provisiona la infra y cierra el issue (representa "infra aplicada").
 
 set -euo pipefail
 
@@ -204,7 +210,21 @@ ISSUE_JSON=$(gh issue view "$ISSUE_NUM" --json number,title,body,state 2>>"$LOG_
     || abort "No se pudo obtener el issue #$ISSUE_NUM"
 ISSUE_STATE=$(echo "$ISSUE_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['state'])" 2>/dev/null || echo "UNKNOWN")
 if [ "$ISSUE_STATE" != "OPEN" ]; then
-    abort "El issue #$ISSUE_NUM esta $ISSUE_STATE -- solo se procesan issues abiertos."
+    # Flujo preview -> apply (issue #96): en --skip-apply el PR de preview NO lleva
+    # 'Closes #N', asi que tras mergearlo el issue sigue abierto y el apply posterior
+    # lo encuentra OPEN. Pero si el issue llego cerrado y estamos reanudando una etapa
+    # de apply (--from-stage 3 sin --skip-apply), permitimos continuar: el apply
+    # representa "infra aplicada" sobre HCL ya revisado (y, en su caso, ya mergeado).
+    # El worktree requerido se valida mas abajo (lineas del bloque FROM_STAGE > 1).
+    if [ "$FROM_STAGE" -ge 3 ] && [ "$SKIP_APPLY" = false ]; then
+        warn "El issue #$ISSUE_NUM esta $ISSUE_STATE, pero se reanuda el apply (--from-stage 3): se continua para aplicar la infra ya revisada."
+    else
+        abort "El issue #$ISSUE_NUM esta $ISSUE_STATE -- una corrida nueva solo procesa issues abiertos.
+Si la infra ya fue previsualizada (PR de --skip-apply mergeado) y solo falta aplicarla:
+  - reanuda el apply con: $0 $ISSUE_NUM --env $ENVIRONMENT --from-stage 3
+    (reutiliza el worktree y el tfplan revisados del preview); o
+  - reabre el issue si necesitas reescribir/revisar la infra desde cero."
+    fi
 fi
 ISSUE_TITLE=$(echo "$ISSUE_JSON" | grep -o '"title":"[^"]*"' | sed 's/"title":"//;s/"//')
 ISSUE_BODY=$(echo "$ISSUE_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['body'])" 2>/dev/null \
@@ -300,6 +320,19 @@ else
 
     SNAPSHOT_COMMIT=$(git -C "$WORKTREE_PATH" rev-parse HEAD)
     log "Snapshot: $SNAPSHOT_COMMIT"
+fi
+
+# --- Flujo preview -> apply (issue #96): detectar marcador del PR de preview ---
+# Una corrida previa con --skip-apply conserva el worktree y deja este marcador con la
+# URL del PR de preview. Si esta presente al reanudar (--from-stage 3), estamos en la
+# FASE DE APPLY de un flujo preview -> apply: el HCL ya tiene PR (y se asume mergeado),
+# asi que esta corrida solo provisiona (Stage 3) y cierra el issue, sin crear un PR
+# nuevo ni re-sincronizar. En una corrida normal el marcador no existe (CA-2 intacto).
+PREVIEW_MARKER="$WORKTREE_PATH/.claude/pipeline/.preview-pr"
+PREVIEW_PR_URL=""
+if [ -f "$PREVIEW_MARKER" ]; then
+    PREVIEW_PR_URL=$(cat "$PREVIEW_MARKER" 2>/dev/null || echo "")
+    [ -n "$PREVIEW_PR_URL" ] && log "Marcador de preview detectado (PR: $PREVIEW_PR_URL) -- esta corrida solo aplica y cierra el issue."
 fi
 
 # --- Funcion auxiliar: recolectar resumen de agente ---
@@ -467,50 +500,87 @@ Tu tarea: aplica el plan Terraform pre-generado siguiendo todas las instruccione
     fi
 fi
 
-# --- Verificar que hay commits ---
-COMMITS_LIST=$(git -C "$WORKTREE_PATH" log "${SNAPSHOT_COMMIT}..HEAD" --oneline)
-if [ -z "$COMMITS_LIST" ]; then
-    abort "No hay commits en la rama $BRANCH_NAME."
-fi
+REPO_SLUG="$(git -C "$WORKTREE_PATH" remote get-url origin | sed 's/.*github.com[:/]\(.*\)\.git/\1/')"
 
-# --- Sincronizar con main ---
-header "Sincronizando con main"
+if [ -n "$PREVIEW_PR_URL" ]; then
+    # ===== Fase APPLY de un flujo preview -> apply (issue #96) =====
+    # El PR con el HCL ya existe (corrida --skip-apply) y se asume mergeado a main. No
+    # re-sincronizamos, no empujamos la rama ni creamos un PR nuevo: el Stage 3 ya
+    # provisiono la infra. Solo cerramos el issue, que el PR de preview dejo abierto
+    # (no llevaba 'Closes #N'), para que represente "infra aplicada".
+    header "Apply de infra previsualizada"
 
-log "Actualizando main desde origin..."
-git -C "$WORKTREE_PATH" fetch origin main >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 \
-    || abort "No se pudo hacer fetch de origin/main"
+    PR_URL="$PREVIEW_PR_URL"
+    PIPELINE_PR="$PR_URL"
+    COMMITS_LIST=$(git -C "$WORKTREE_PATH" log "${SNAPSHOT_COMMIT}..HEAD" --oneline 2>/dev/null || echo "")
 
-BEHIND_COUNT=$(git -C "$WORKTREE_PATH" rev-list HEAD..origin/main --count)
-if [ "$BEHIND_COUNT" -eq 0 ]; then
-    log "La rama ya esta al dia con main"
+    if [ "$AGENT_AP_RES" = "passed" ]; then
+        log "Cerrando el issue #$ISSUE_NUM (infra aplicada)..."
+        gh issue close "$ISSUE_NUM" \
+            --comment "Infra aplicada en $ENVIRONMENT (flujo preview -> apply). PR del HCL: $PREVIEW_PR_URL" \
+            --repo "$REPO_SLUG" >>"$LOG_FILE_ABS" 2>&1 \
+            && success "Issue #$ISSUE_NUM cerrado: infra aplicada" \
+            || warn "No se pudo cerrar el issue #$ISSUE_NUM automaticamente; cierralo manualmente."
+    else
+        warn "El apply no quedo marcado como 'passed'; el issue #$ISSUE_NUM se deja abierto."
+    fi
 else
-    log "main tiene $BEHIND_COUNT commit(s) nuevos. Haciendo merge..."
-    git -C "$WORKTREE_PATH" merge origin/main --no-edit >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 \
-        || abort "Merge con main tiene conflictos. Resuelve manualmente en: $WORKTREE_PATH"
-    success "Merge automatico exitoso"
-fi
+    # ===== Flujo normal (write+review+apply) o preview (--skip-apply) =====
 
-# --- Crear PR ---
-header "Creando PR"
+    # --- Verificar que hay commits ---
+    COMMITS_LIST=$(git -C "$WORKTREE_PATH" log "${SNAPSHOT_COMMIT}..HEAD" --oneline)
+    if [ -z "$COMMITS_LIST" ]; then
+        abort "No hay commits en la rama $BRANCH_NAME."
+    fi
 
-log "Haciendo push de la rama..."
-git -C "$WORKTREE_PATH" push -u origin "$BRANCH_NAME" >>"$LOG_FILE_ABS" 2>&1 \
-    || abort "No se pudo hacer push de la rama $BRANCH_NAME"
+    # --- Sincronizar con main ---
+    header "Sincronizando con main"
 
-APPLY_STATUS="pendiente de aplicar"
-[ "$SKIP_APPLY" = false ] && [ "$AGENT_AP_RES" = "passed" ] && APPLY_STATUS="aplicado en $ENVIRONMENT"
+    log "Actualizando main desde origin..."
+    git -C "$WORKTREE_PATH" fetch origin main >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 \
+        || abort "No se pudo hacer fetch de origin/main"
 
-WR_SUMMARY=$(collect_summary "1" "infra-writer")
-RV_SUMMARY=$(collect_summary "2" "infra-reviewer")
+    BEHIND_COUNT=$(git -C "$WORKTREE_PATH" rev-list HEAD..origin/main --count)
+    if [ "$BEHIND_COUNT" -eq 0 ]; then
+        log "La rama ya esta al dia con main"
+    else
+        log "main tiene $BEHIND_COUNT commit(s) nuevos. Haciendo merge..."
+        git -C "$WORKTREE_PATH" merge origin/main --no-edit >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 \
+            || abort "Merge con main tiene conflictos. Resuelve manualmente en: $WORKTREE_PATH"
+        success "Merge automatico exitoso"
+    fi
 
-_fmt_dur() { local s="${1:-0}"; echo "$((s/60))m $((s%60))s"; }
-WR_DUR_FMT=$(_fmt_dur "${AGENT_WR_DUR:-0}")
-RV_DUR_FMT=$(_fmt_dur "${AGENT_RV_DUR:-0}")
-AP_DUR_FMT=$(_fmt_dur "${AGENT_AP_DUR:-0}")
+    # --- Crear PR ---
+    header "Creando PR"
 
-PR_URL=$(gh pr create \
-    --title "infra($ENVIRONMENT): #$ISSUE_NUM $ISSUE_TITLE" \
-    --body "$(cat <<EOF
+    log "Haciendo push de la rama..."
+    git -C "$WORKTREE_PATH" push -u origin "$BRANCH_NAME" >>"$LOG_FILE_ABS" 2>&1 \
+        || abort "No se pudo hacer push de la rama $BRANCH_NAME"
+
+    APPLY_STATUS="pendiente de aplicar"
+    [ "$SKIP_APPLY" = false ] && [ "$AGENT_AP_RES" = "passed" ] && APPLY_STATUS="aplicado en $ENVIRONMENT"
+
+    # CA-1/CA-2 (issue #96): el 'Closes #N' solo se emite cuando el apply realmente
+    # ocurrio en ESTA corrida (flujo normal). En --skip-apply (preview) el PR NO cierra
+    # el issue: representa "infra previsualizada", no "aplicada", y el issue se cierra
+    # recien en el apply posterior (corrida --from-stage 3 sobre este worktree).
+    if [ "$SKIP_APPLY" = false ]; then
+        CLOSES_LINE="Closes #$ISSUE_NUM"
+    else
+        CLOSES_LINE="> **Preview (\`--skip-apply\`)**: este PR no cierra el issue #$ISSUE_NUM. Tras mergearlo, aplica la infra revisada con \`iac-pipeline.sh $ISSUE_NUM --env $ENVIRONMENT --from-stage 3\` (reutiliza este worktree y el tfplan); el apply cerrara el issue."
+    fi
+
+    WR_SUMMARY=$(collect_summary "1" "infra-writer")
+    RV_SUMMARY=$(collect_summary "2" "infra-reviewer")
+
+    _fmt_dur() { local s="${1:-0}"; echo "$((s/60))m $((s%60))s"; }
+    WR_DUR_FMT=$(_fmt_dur "${AGENT_WR_DUR:-0}")
+    RV_DUR_FMT=$(_fmt_dur "${AGENT_RV_DUR:-0}")
+    AP_DUR_FMT=$(_fmt_dur "${AGENT_AP_DUR:-0}")
+
+    PR_URL=$(gh pr create \
+        --title "infra($ENVIRONMENT): #$ISSUE_NUM $ISSUE_TITLE" \
+        --body "$(cat <<EOF
 ## Infraestructura
 
 Implementa los cambios de infraestructura del issue #$ISSUE_NUM.
@@ -543,22 +613,28 @@ $(git -C "$WORKTREE_PATH" diff main...HEAD --stat -- infra/ 2>/dev/null || echo 
 
 $COMMITS_LIST
 
-Closes #$ISSUE_NUM
+$CLOSES_LINE
 EOF
 )" \
-    --base main \
-    --head "$BRANCH_NAME" \
-    --repo "$(git -C "$WORKTREE_PATH" remote get-url origin | sed 's/.*github.com[:/]\(.*\)\.git/\1/')" \
-    2>>"$LOG_FILE_ABS") || warn "No se pudo crear el PR automaticamente"
+        --base main \
+        --head "$BRANCH_NAME" \
+        --repo "$REPO_SLUG" \
+        2>>"$LOG_FILE_ABS") || warn "No se pudo crear el PR automaticamente"
 
-[ -n "${PR_URL:-}" ] && success "PR creado: $PR_URL"
+    [ -n "${PR_URL:-}" ] && success "PR creado: $PR_URL"
 
-PIPELINE_PR="${PR_URL:-}"
+    PIPELINE_PR="${PR_URL:-}"
 
-gh issue comment "$ISSUE_NUM" \
-    --body "Pipeline IaC completado. PR: ${PR_URL:-pendiente}" \
-    --repo "$(git -C "$WORKTREE_PATH" remote get-url origin | sed 's/.*github.com[:/]\(.*\)\.git/\1/')" \
-    >>"$LOG_FILE" 2>&1 || warn "No se pudo comentar en el issue #$ISSUE_NUM"
+    if [ "$SKIP_APPLY" = true ]; then
+        ISSUE_COMMENT="Preview IaC completado (sin aplicar). PR: ${PR_URL:-pendiente}. Tras mergearlo, aplica con: iac-pipeline.sh $ISSUE_NUM --env $ENVIRONMENT --from-stage 3"
+    else
+        ISSUE_COMMENT="Pipeline IaC completado. PR: ${PR_URL:-pendiente}"
+    fi
+    gh issue comment "$ISSUE_NUM" \
+        --body "$ISSUE_COMMENT" \
+        --repo "$REPO_SLUG" \
+        >>"$LOG_FILE" 2>&1 || warn "No se pudo comentar en el issue #$ISSUE_NUM"
+fi
 
 # --- Historial ---
 echo "{\"issue\":\"$ISSUE_NUM\",\"title\":\"$(echo "$ISSUE_TITLE" | sed 's/"/\\"/g')\",\"pipeline\":\"infra\",\"environment\":\"$ENVIRONMENT\",\"started\":\"$TIMESTAMP\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"completed\",\"agents\":{\"infra-writer\":{\"duration\":${AGENT_WR_DUR:-null},\"result\":\"$AGENT_WR_RES\"},\"infra-reviewer\":{\"duration\":${AGENT_RV_DUR:-null},\"result\":\"$AGENT_RV_RES\"},\"infra-applier\":{\"duration\":${AGENT_AP_DUR:-null},\"result\":\"$AGENT_AP_RES\"}},\"pr\":\"${PR_URL:-}\"}" \
@@ -571,6 +647,36 @@ rm -f "$PIPELINE_DIR_ABS/$STATUS_FILENAME"
 
 # --- Cleanup ---
 header "Cleanup"
+
+if [ "$SKIP_APPLY" = true ]; then
+    # Flujo preview -> apply (issue #96): NO eliminamos el worktree. El apply posterior
+    # (--from-stage 3) reutiliza este worktree y el tfplan ya revisados, sin reescribir
+    # ni re-planear. Dejamos el marcador con la URL del PR de preview: la corrida de
+    # apply lo detecta para cerrar el issue sin crear un PR duplicado.
+    mkdir -p "$WORKTREE_PATH/.claude/pipeline"
+    echo "${PR_URL:-}" > "$PREVIEW_MARKER"
+
+    cd "$REPO_ROOT"
+    warn "Modo --skip-apply: el worktree se conserva para el apply posterior ($WORKTREE_PATH)."
+
+    echo ""
+    echo -e "${CYAN}${BOLD}=== Preview IaC completado (sin aplicar) ===${NC}"
+    echo ""
+    echo -e "  Issue:     #$ISSUE_NUM -- $ISSUE_TITLE"
+    echo -e "  Ambiente:  $ENVIRONMENT"
+    echo -e "  Rama:      $BRANCH_NAME"
+    echo -e "  Worktree:  $WORKTREE_PATH"
+    [ -n "${PR_URL:-}" ] && echo -e "  PR:        $PR_URL"
+    echo -e "  Log:       $LOG_FILE_ABS"
+    echo ""
+    echo -e "${YELLOW}${BOLD}Siguiente paso (preview -> apply):${NC}"
+    echo -e "  1. Revisa y mergea el PR de preview. ${YELLOW}No cierra el issue${NC} (no lleva 'Closes')."
+    echo -e "  2. Aplica la infra revisada reanudando el apply:"
+    echo -e "       ${BOLD}iac-pipeline.sh $ISSUE_NUM --env $ENVIRONMENT --from-stage 3${NC}"
+    echo -e "     Reutiliza este worktree y el tfplan; al aplicar, el pipeline cierra el issue #$ISSUE_NUM."
+    echo ""
+    exit 0
+fi
 
 log "Eliminando worktree..."
 cd "$REPO_ROOT"

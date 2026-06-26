@@ -192,6 +192,13 @@ El backend remoto de Terraform (donde vive el `tfstate`) es prerequisito de todo
    /mefisto:infra <numero-de-issue>
    ```
 
+   > **Flujo preview -> apply (revisar antes de tocar Azure).** Si prefieres mergear el HCL antes de provisionar (recomendado para la primera infra), corre el pipeline en dos fases con el script `iac-pipeline.sh`:
+   > 1. `iac-pipeline.sh <issue> --env dev --skip-apply` escribe+revisa el HCL y crea un PR de **preview** que **no cierra el issue** (sin `Closes #N`), conservando el worktree y el `tfplan`.
+   > 2. Mergeas ese PR; el issue sigue **abierto**.
+   > 3. `iac-pipeline.sh <issue> --env dev --from-stage 3` reutiliza el worktree/`tfplan` ya revisados, aplica la infra y **cierra el issue** (sin PR duplicado).
+   >
+   > Así el issue representa "infra aplicada", no "infra previsualizada", y el cierre del PR de preview no bloquea el apply posterior.
+
 ### 5. Scaffold del primer dominio y primer ciclo TDD
 
 Con el backend listo, crea el scaffold de tu primer dominio y arranca el ciclo TDD:
