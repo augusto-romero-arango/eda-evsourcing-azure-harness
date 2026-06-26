@@ -74,6 +74,20 @@ Pipeline infra lanzado en tmux. Para monitorear:
 Usa /work-status para ver el progreso sin salir de aqui.
 ```
 
+## Flujo preview -> apply (revisar antes de provisionar)
+
+El lanzamiento por defecto (este skill) hace el ciclo completo en una corrida: Write -> Review -> Apply -> PR (con `Closes #N`), y el issue se cierra al mergear el PR.
+
+Cuando convenga **revisar y mergear el HCL antes de tocar Azure** (p. ej. la primera infra de un greenfield), el pipeline soporta un flujo en dos fases que se corre con el script `iac-pipeline.sh` directamente (o via el agente `infra-bootstrap`):
+
+1. **Preview**: `iac-pipeline.sh <issue> --env <ambiente> --skip-apply`
+   Escribe+revisa el HCL y crea un PR que **NO** cierra el issue (sin `Closes #N`); conserva el worktree y el `tfplan` revisados.
+2. **Mergeas el PR de preview**; el issue sigue **abierto** (representa "infra aplicada", no "previsualizada").
+3. **Apply**: `iac-pipeline.sh <issue> --env <ambiente> --from-stage 3`
+   Reutiliza el worktree y el `tfplan`, aplica la infra y **cierra el issue** (sin PR duplicado).
+
+Si el issue aparece `CLOSED` y solo falta aplicarlo (un PR de preview legado con `Closes` se mergeo), reanuda con `--from-stage 3`: el pipeline acepta un issue cerrado en la fase de apply.
+
 ## Reglas
 
 - **No esperes a que termine.** El script corre en background dentro de tmux. Devuelve el control inmediatamente.

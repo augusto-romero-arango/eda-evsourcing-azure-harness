@@ -75,16 +75,28 @@ PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
 El pipeline ejecuta: Write (HCL) -> Review (terraform plan) -> Apply.
 
 Opciones adicionales segun contexto:
-- `--skip-apply`: solo escribe y revisa HCL sin provisionar (util para revisar primero)
+- `--skip-apply`: solo escribe y revisa HCL sin provisionar, crea un PR de **preview** y conserva el worktree (flujo preview -> apply, ver abajo)
 - `--auto-apply`: solo en dev, omite confirmacion manual
 
 Espera a que termine. El script imprime el progreso en tiempo real.
+
+#### Flujo preview -> apply (revisar antes de provisionar)
+
+Cuando convenga revisar y mergear el HCL **antes** de tocar Azure (p. ej. la primera infra de un greenfield), usa el flujo en dos fases:
+
+1. **Preview**: `"$PLUGIN_SCRIPTS/iac-pipeline.sh" <numero> --env <ambiente> --skip-apply`
+   Escribe+revisa el HCL y crea un PR que **NO** cierra el issue (no lleva `Closes #N`): el issue representa "infra aplicada", no "infra previsualizada". El worktree y el `tfplan` revisados se **conservan** para la fase de apply.
+2. **Mergeas el PR de preview** (queda en `main`); el issue sigue **abierto**.
+3. **Apply**: `"$PLUGIN_SCRIPTS/iac-pipeline.sh" <numero> --env <ambiente> --from-stage 3`
+   Reutiliza el worktree y el `tfplan` ya revisados, aplica la infra y **cierra el issue** (sin crear un PR duplicado).
+
+No reabras el issue ni lo cierres a mano entre fases: el pipeline gestiona el cierre en el apply.
 
 ### 5. Reportar resultado
 
 Cuando el pipeline termine:
 - Si el apply fue exitoso: muestra los recursos creados y los outputs de Terraform
-- Si termino con `--skip-apply`: muestra la URL del PR creado
+- Si termino con `--skip-apply`: muestra la URL del PR de preview e indica los dos pasos restantes (mergear el PR y luego aplicar con `--from-stage 3`, que cierra el issue)
 - Si algo fallo: muestra el error y la ruta al log
 
 ## Manejo de errores
