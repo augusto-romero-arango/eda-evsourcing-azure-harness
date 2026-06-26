@@ -2,7 +2,7 @@
 model: haiku
 ---
 
-Diagnostica el onboarding del consumidor: valida `.claude/harness.config.json`, los labels y el CI, y reporta un checklist de que esta listo y que falta. Es un **doctor de solo lectura**: no crea ni modifica nada (ni labels, ni archivos, ni recursos de Azure). Comunicate en **espanol**.
+Diagnostica el onboarding del consumidor: valida `.claude/harness.config.json`, los labels y el CI, y reporta un checklist de que esta listo y que falta. Es un **doctor**: por defecto solo diagnostica (no crea ni modifica nada). Como unica excepcion **opt-in**, puede provisionar los labels faltantes si lo confirmas explicitamente (el script subyacente es destructivo: borra los labels default de GitHub). Comunicate en **espanol**.
 
 ## Pre-condicion: cwd != Mefisto
 
@@ -26,7 +26,7 @@ Si el bloque imprime `ERROR`, detente y muestra el mensaje al usuario.
 2. **Labels de GitHub** (ADR-0007): que existan `tipo:*`, `estado:borrador`, `estado:listo`, `dom:<x>` por cada `domainLabels`, mas `bug` y `bloqueado`.
 3. **CI hacia Azure** (ADR-0022): que exista la aplicacion de Entra / Service Principal y los secrets OIDC del repo. Tolerante: si no hay `az` o sesion, reporta `NO VERIFICADO` en vez de fallar.
 
-La provision real (crear labels, crear el Service Principal) la cubren los seguimientos del onboarding (79b para labels, 79c para CI); `/onboard` solo diagnostica.
+La provision del **CI** (crear el Service Principal) la cubre el seguimiento 79c; `/onboard` no lo crea. La provision de **labels** ya la ofrece `/onboard` como paso **opt-in** (bajo confirmacion explicita, porque el script es destructivo; ver paso 3). El diagnostico en si sigue siendo de solo lectura: sin tu confirmacion no se crea ni borra nada.
 
 ## Proceso
 
@@ -120,7 +120,7 @@ else
     row OK "esquema completo (tipo:*, estado:*, dom:*, bug, bloqueado)"
   else
     row FALTA "faltan labels:$MISSING"
-    ACTIONS="${ACTIONS}  - Crea los labels faltantes con \"$PLUGIN_SCRIPTS/setup-github-labels.sh\" (la provision automatizada llega en el seguimiento 79b). /onboard NO los crea.
+    ACTIONS="${ACTIONS}  - Faltan labels del esquema. /onboard puede crearlos en el paso de provision opt-in (te lo ofrece tras el diagnostico, bajo confirmacion: el script borra los labels default de GitHub y recrea el esquema). O ejecutalo tu mismo: \"$PLUGIN_SCRIPTS/setup-github-labels.sh\".
 "
   fi
   if [ -z "${HARNESS_DOMAIN_LABELS:-}" ]; then
@@ -174,7 +174,7 @@ fi
 # --- 4. Acciones y resumen ---
 echo ""
 if [ -n "$ACTIONS" ]; then
-  echo "Acciones sugeridas (ninguna la ejecuta /onboard; es solo diagnostico):"
+  echo "Acciones sugeridas (el diagnostico no ejecuta ninguna; los labels faltantes los puede provisionar el paso opt-in, bajo tu confirmacion):"
   printf '%s' "$ACTIONS"
   echo ""
 fi
@@ -200,9 +200,62 @@ Muestra al usuario la salida del checklist tal como la imprimio el bloque (el fo
 
 No reinterpretes ni recalcules el checklist: el bloque ya hizo el diagnostico.
 
+### 3. Provision opt-in de los labels faltantes
+
+Este es el **unico** paso que puede escribir algo, y solo bajo confirmacion explicita del usuario. El diagnostico (pasos 1-2) nunca crea ni borra labels.
+
+Aplica este paso **solo si** la seccion "Labels de GitHub" del diagnostico reporto `[FALTA] faltan labels: ...`. Si los labels salieron `OK`, no hay nada que provisionar -- omite el paso. Si salieron `NO VERIFICADO` (gh sin autenticar o sin repo), no se puede saber que falta: pide al usuario `gh auth login` y que vuelva a correr `/onboard`; no intentes provisionar a ciegas.
+
+1. **Advierte que es destructivo y pide confirmacion.** `scripts/setup-github-labels.sh` **borra los 9 labels default de GitHub** (documentation, duplicate, enhancement, good first issue, help wanted, invalid, question, wontfix) antes de crear el esquema del harness. Dilo explicitamente y pregunta, p. ej.: "Faltan estos labels: <lista>. ¿Quieres que los provisione ahora? Esto **borra los labels default de GitHub** y recrea el esquema del harness. [si/no]".
+2. **No ejecutes nada sin un "si" explicito.** Si el usuario no confirma (o prefiere hacerlo a mano), no corras el script: recuerdale el comando de las "Acciones sugeridas" y termina. El comportamiento por defecto de `/onboard` es solo diagnostico.
+3. **Solo si el usuario confirma**, corre el bloque de provision. Reusa la misma resolucion de `PLUGIN_SCRIPTS` del paso 1 e invoca el script plugin-relative:
+
+```bash
+PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
+
+PLUGIN_SCRIPTS="$PLUGIN_SCRIPTS" bash <<'PROVISION'
+set +e
+
+# Guard defensivo (cwd != Mefisto), por si el bloque se ejecuta aislado.
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
+if [ -f "$REPO_ROOT/.claude-plugin/plugin.json" ]; then
+  echo "ERROR: /onboard no aplica al repo de Mefisto."; exit 1
+fi
+
+LABELS_SCRIPT="${PLUGIN_SCRIPTS%/}/setup-github-labels.sh"
+if [ ! -f "$LABELS_SCRIPT" ]; then
+  echo "ERROR: no se hallo setup-github-labels.sh en el plugin ($LABELS_SCRIPT)."
+  echo "       Reinstala mefisto o reabre la sesion (hook SessionStart) y reintenta."
+  exit 1
+fi
+
+echo "Provisionando labels con: $LABELS_SCRIPT"
+echo "(borra los labels default de GitHub y recrea el esquema dimensional del harness)"
+echo ""
+bash "$LABELS_SCRIPT"
+PROV_RC=$?
+echo ""
+if [ "$PROV_RC" -eq 0 ]; then
+  echo "OK: labels provisionados. Vuelve a correr /onboard para ver el diagnostico en verde."
+else
+  echo "FALLO (exit $PROV_RC): la provision de labels NO se completo."
+  echo "Causas tipicas:"
+  echo "  - gh no autenticado -> corre 'gh auth login' y reintenta."
+  echo "  - un label tipo:*/estado:*/bloqueado YA existia: setup-github-labels.sh los crea sin --force"
+  echo "    y aborta por 'set -e' (solo es idempotente en bug y dom:*). Borra el/los label(s) en conflicto,"
+  echo "    o crea a mano los que falten con 'gh label create', y reintenta."
+  echo "El onboarding no queda en estado ambiguo: vuelve a correr /onboard para ver que labels existen realmente."
+fi
+PROVISION
+```
+
+4. **Reporta el resultado al usuario** tal como lo imprimio el bloque. Si fallo, no abortes ni reescribas el resto del flujo: el diagnostico (pasos 1-2) ya se mostro y sus otras secciones (config, CI) son independientes de los labels. En ambos casos sugiere volver a correr `/onboard` para confirmar el estado real tras la provision.
+
 ## Reglas
 
-- **Solo lectura.** Nunca ejecutes `gh label create`, `az ... create`, ni escribas archivos o recursos. Si el usuario quiere provisionar, apuntalo a los comandos de las "Acciones sugeridas" (los seguimientos 79b/79c automatizaran esa provision).
+- **Diagnostico de solo lectura por defecto.** El diagnostico (pasos 1-2) no ejecuta `gh label create`, `az ... create`, ni escribe archivos o recursos. La **unica** accion de escritura permitida es la **provision opt-in de labels** del paso 3, y solo tras la confirmacion explicita del usuario (el script es destructivo): nunca la ejecutes sin un "si". Para provisionar el CI apunta al comando de las "Acciones sugeridas" (lo automatizara el seguimiento 79c); /onboard no crea el Service Principal.
 - **No abortes ante un fallo parcial.** Cada seccion del diagnostico es independiente: si `gh` o `az` no estan disponibles, reporta `NO VERIFICADO` y continua con el resto.
 - **No dupliques la validacion del config.** El formato de `terraformStateStorage` y los campos requeridos los valida `load_harness_config` (issue #78); este skill solo reporta su resultado.
 - Si `$ARGUMENTS` trae algo, ignoralo: `/onboard` no toma argumentos.
