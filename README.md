@@ -122,7 +122,7 @@ Y añade una sección a `CLAUDE.md` raíz del consumidor declarando los tokens:
 
 ### 4. Verificar instalación
 
-El objetivo es confirmar que el plugin quedó **instalado y habilitado** — no que existan flujos o pipelines, que en un proyecto recién creado todavía no hay—. Dos checks que funcionan en greenfield, sin depender de artefactos de runtime (`docs/eda/flows/`, `.claude/pipeline/`):
+El objetivo es confirmar que el plugin quedó **instalado y habilitado**, no que existan flujos o pipelines (que en un proyecto recién creado todavía no hay). Dos checks que funcionan en greenfield, sin depender de artefactos de runtime (`docs/eda/flows/`, `.claude/pipeline/`):
 
 1. **El plugin aparece instalado.** Lista los plugins instalados sin abrir el gestor:
 
