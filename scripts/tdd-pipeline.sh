@@ -129,10 +129,27 @@ EOJSON
 
 # Extraer conteo de tests pasando del resumen de dotnet test.
 # Soporta MTP ("correcto: N") y VSTest clásico ("Superado: N" / "Passed: N").
+#
+# Suma los N de TODAS las lineas de resumen del output combinado (una por cada
+# proyecto de test que corre run_tests_projects), no solo el primero. Antes
+# usaba `head -1` y solo contaba el primer proyecto alfabetico; eso disparaba un
+# falso "se perdieron tests" en el gate de refactoring cuando un refactor movia
+# tests entre proyectos sin cambiar el total (issue #80). Al sumar la suite
+# completa, baseline y post-count son comparables y el gate no aborta.
+#
+# Contratos preservados:
+#   - Sentinela "?": si no hubo ninguna linea parseable, awk imprime "?" en su
+#     bloque END (NR==0), no 0 — para que el gate lo trate como "no comparable"
+#     y no aborte por una suma vacia interpretada como 0.
+#   - Salida entera limpia: imprime un unico entero (la suma) para la comparacion
+#     `-lt` de bash del gate.
+#   - La asignacion lleva `|| true` porque, bajo `set -euo pipefail`, los grep sin
+#     match retornan != 0 y el pipefail abortaria el script antes de leer el "?".
 extract_test_count() {
     local count
     count=$(echo "$1" | grep -oiE '(correcto|correctas|passed|superado):[[:space:]]+[0-9]+' \
-        | grep -oE '[0-9]+' | head -1)
+        | grep -oE '[0-9]+' \
+        | awk '{ s += $1 } END { if (NR == 0) print "?"; else print s }') || true
     echo "${count:-?}"
 }
 
