@@ -14,7 +14,7 @@ Es un **Claude Code Plugin** (ver `.claude-plugin/plugin.json`) que empaqueta:
 - 15 **skills** (slash commands) en `commands/`
 - 17 **agentes** especializados en `agents/`
 - Pipelines bash en `scripts/` (TDD, IaC, tooling, scaffolding, pr-sync, etc.)
-- 21 **ADRs** del marco arquitectónico en `docs/adr/`
+- 22 **ADRs** del marco arquitectónico en `docs/adr/`
 - Hooks en `hooks/hooks.json`
 
 Está pensado para instalarse vía marketplace en cualquier proyecto que adopte el marco (EDA + Event Sourcing + Azure Functions + Marten + Wolverine + Postgres).
@@ -141,6 +141,7 @@ Los ADRs en `docs/adr/` son la fuente de verdad arquitectónica del harness. Los
 | Separación física de skills publicados vs internos | ADR-0019 |
 | Hosting de Azure Functions (un App Service Plan por dominio) | ADR-0020 |
 | Infraestructura base (7 módulos + entorno) generada por agente | ADR-0021 |
+| Autenticación de CI hacia Azure por OIDC (Workload Identity Federation) | ADR-0022 |
 
 ## Convenciones del marco
 
