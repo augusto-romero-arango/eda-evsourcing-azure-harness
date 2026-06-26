@@ -46,6 +46,19 @@ SP_NAME="$HARNESS_SP_NAME"
 TFSTATE_RG="${HARNESS_RG_PREFIX}-tfstate"
 SCOPE="/subscriptions/${SUBSCRIPTION_ID}"
 
+# Fijar la suscripcion explicitamente antes de cualquier operacion 'az'. El script
+# recibe la suscripcion como argumento, pero las operaciones 'az ad app/sp create' y el
+# 'az account show --query tenantId' (de donde sale AZURE_TENANT_ID) operan contra el
+# TENANT de la suscripcion ACTIVA, no contra la pasada como $1. Si difieren, la app/SP se
+# crearia en el tenant equivocado, AZURE_TENANT_ID quedaria mal y el role assignment
+# cross-tenant fallaria. Mismo patron que bootstrap-backend.sh.
+echo "Fijando la suscripcion activa..."
+az account set --subscription "$SUBSCRIPTION_ID" || {
+    echo "ERROR: no se pudo fijar la suscripcion '$SUBSCRIPTION_ID'." >&2
+    echo "  Verifica que 'az login' este hecho y que la suscripcion exista." >&2
+    exit 1
+}
+
 # Slug owner/repo para el subject del federated credential de OIDC. Precedencia:
 #   1. 2do argumento explicito.
 #   2. 'gh repo view' (resuelve el repo del cwd via la API de GitHub; gh es dependencia
