@@ -159,7 +159,7 @@ Para un diagnóstico del onboarding (¿está bien formado el `harness.config.jso
 /mefisto:onboard
 ```
 
-Imprime un checklist con estado por ítem (OK / FALTA / NO VERIFICADO) y, para cada FALTA, el comando que lo resuelve. Por defecto no crea ni modifica nada; como única excepción opt-in puede provisionar los labels faltantes, pero solo tras tu confirmación explícita.
+Imprime un checklist con estado por ítem (OK / FALTA / NO VERIFICADO) y, para cada FALTA, el comando que lo resuelve. Por defecto no crea ni modifica nada; como excepciones opt-in puede provisionar los labels faltantes y configurar el CI hacia Azure (OIDC, ADR-0022), pero solo tras tu confirmación explícita para cada una.
 
 ## Primeros pasos con el harness (greenfield)
 
