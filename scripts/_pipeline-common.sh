@@ -69,6 +69,19 @@ load_harness_config() {
         echo "ERROR: campos obligatorios ausentes en $config: ${missing[*]}" >&2
         return 1
     fi
+
+    # terraformStateStorage es opcional (consumidores sin IaC lo dejan vacio),
+    # pero si tiene valor debe cumplir las reglas de nombramiento de Azure Storage
+    # Account: 3-24 caracteres, solo minusculas y digitos, unico globalmente.
+    # Fuente: Microsoft Learn -- "Storage account overview" (reglas de naming).
+    # Validar aqui evita que un nombre invalido falle tarde, en el apply de /infra.
+    if [ -n "$HARNESS_TFSTATE_STORAGE" ] && \
+       ! printf '%s' "$HARNESS_TFSTATE_STORAGE" | grep -Eq '^[a-z0-9]{3,24}$'; then
+        echo "ERROR: terraformStateStorage='$HARNESS_TFSTATE_STORAGE' no cumple las reglas de Azure Storage Account." >&2
+        echo "  Debe tener 3-24 caracteres, solo minusculas y digitos ([a-z0-9])." >&2
+        echo "  Sugerencia: abrevia el prefijo del proyecto (ej. micontrolplane -> mcp -> stmcptfstatedev)." >&2
+        return 1
+    fi
 }
 
 # is_path_in_consumer_blocklist <path>
