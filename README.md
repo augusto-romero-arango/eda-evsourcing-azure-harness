@@ -19,7 +19,7 @@ Plugin de [Claude Code](https://code.claude.com/docs/en/plugins) que provee un h
 
 ## Qué incluye
 
-- **15 skills** (slash commands): `/implement`, `/tooling`, `/infra`, `/infra-base`, `/scaffold`, `/parallel`, `/sequential`, `/bug`, `/draft`, `/fix-review`, `/health-check`, `/work-status`, `/show-flow`, `/eraser-diagram`, `/merge`.
+- **16 skills** (slash commands): `/onboard`, `/implement`, `/tooling`, `/infra`, `/infra-base`, `/scaffold`, `/parallel`, `/sequential`, `/bug`, `/draft`, `/fix-review`, `/health-check`, `/work-status`, `/show-flow`, `/eraser-diagram`, `/merge`.
 - **17 agentes** especializados: `planner`, `test-writer`, `implementer`, `reviewer`, `smoke-test-writer`, `domain-scaffolder`, `infra-base-scaffolder`, `eda-modeler`, `event-stormer`, `historiador`, `infra-writer`, `infra-reviewer`, `infra-applier`, `infra-bootstrap`, `pr-sync`, `bug-investigator`, `tooling-investigator`.
 - **Pipelines bash** que orquestan el ciclo TDD, IaC y tooling sobre `tmux` y `git worktree`.
 - **22 ADRs** del marco arquitectónico.
@@ -102,6 +102,14 @@ Y añade una sección a `CLAUDE.md` raíz del consumidor declarando los tokens:
 
 Si responden sin errores, está listo.
 
+Para un diagnóstico del onboarding (¿está bien formado el `harness.config.json`?, ¿existen los labels?, ¿está configurado el CI?), corre el doctor de solo lectura:
+
+```
+/mefisto:onboard
+```
+
+Imprime un checklist con estado por ítem (OK / FALTA / NO VERIFICADO) y, para cada FALTA, el comando que lo resuelve. No crea ni modifica nada.
+
 ## Primeros pasos con el harness (greenfield)
 
 Esta es la ruta de arranque para un proyecto **nuevo** (sin código ni infraestructura aún), en orden. Asume que ya completaste la sección **Instalación**.
@@ -137,6 +145,8 @@ Si `/mefisto:work-status` responde sin errores, el plugin está cargado.
 ### 2. Crear `.claude/harness.config.json`
 
 Crea el archivo de configuración en la raíz del consumidor (sección Instalación, paso 3). Para el bootstrap de infra conviene declarar también el campo opcional `azureLocation` con tu región de Azure (ej. `"eastus2"`), así no tienes que pasar `--location` en cada corrida. Añade además la sección "Tokens del harness" a tu `CLAUDE.md` raíz.
+
+Cuando lo tengas, corre `/mefisto:onboard` para verificar de un vistazo que el config está bien formado y qué te falta (labels, CI). Es solo diagnóstico (no provisiona nada); la creación de labels y la configuración del CI se hacen con `setup-github-labels.sh` y `setup-github-ci.sh` en los pasos siguientes.
 
 ### 3. Entender el modelo de ejecución (importante)
 
