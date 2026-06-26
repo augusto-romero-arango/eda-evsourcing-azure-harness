@@ -77,5 +77,5 @@ rm infra/environments/<env>/tfplan
 1. **NUNCA** ejecutes `terraform plan` ni generes un tfplan propio.
 2. **NUNCA** uses `terraform apply -auto-approve` directamente — solo aplica el tfplan pre-generado.
 3. **NUNCA** ejecutes `terraform destroy`.
-4. Solo aplica si el tfplan existe en disco (generado por infra-reviewer en la misma sesion).
+4. Solo aplica si el tfplan existe en disco (generado por infra-reviewer; en el flujo preview -> apply del pipeline IaC puede provenir de una corrida de preview anterior conservada en el worktree, no necesariamente de la misma sesion -- lo que importa es que lo haya generado el infra-reviewer, no tu).
 5. En staging y prod, **siempre** pide confirmacion explicita del usuario.
