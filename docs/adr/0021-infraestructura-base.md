@@ -74,7 +74,9 @@ El motivo: la creacion de un PostgreSQL Flexible Server puede abortar con `Locat
 az postgres flexible-server list-skus --location <region> -o table
 ```
 
-Si el comando lista SKUs -incluida `Standard_B1ms`, la que usa este modulo (ver tabla de los 7 modulos)- la region sirve para esa suscripcion; si sale vacio o falla, hay que elegir otra (p. ej. `centralus`).
+Si el comando lista SKUs -incluida `Standard_B1ms`, la SKU de computo que usa este modulo- la region sirve para esa suscripcion; si sale vacio o falla, hay que elegir otra (p. ej. `centralus`).
+
+**Naming de la SKU: `Standard_B1ms` (CLI) vs `B_Standard_B1ms` (Terraform).** `az postgres flexible-server list-skus` y `az postgres flexible-server create --sku-name` nombran esta SKU de computo `Standard_B1ms` (con el tier `Burstable` como parametro aparte); el provider `azurerm` la declara en `sku_name` como `B_Standard_B1ms`, anteponiendo el tier -ese es el valor que figura en la fila `postgresql` de la tabla de los 7 modulos-. Son la misma SKU de computo en dos convenciones, asi que al leer la salida de `list-skus` se busca `Standard_B1ms`, no `B_Standard_B1ms`.
 
 Esta nota vive a nivel del **entorno/consumidor**, no del modulo: el `postgresql` recibe `location` ya resuelto via `var.location` y no decide la region. La documentacion operativa del campo `azureLocation` y del paso de bootstrap en el `README.md` enlaza a esta seccion, de modo que el proximo greenfield no reincida en el roce.
 
