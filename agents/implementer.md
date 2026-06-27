@@ -515,24 +515,28 @@ public override string ToString()
 
 ### Donde vive cada tipo de evento
 
-| Tipo | Interfaz | Ubicacion | Namespace |
-|------|----------|-----------|-----------|
-| Publico (entre dominios) | `IPublicEvent` | `Contracts/Eventos/` | `<RootNamespace>.Contracts.Eventos` |
-| Privado (dentro del dominio) | `IPrivateEvent` | `{Dominio}/{Feature}/Eventos/` | `...{Dominio}.{Feature}.Eventos` |
-| Event sourcing (aggregate) | ninguna | `{Dominio}/Entities/` o `{Feature}/Eventos/` | segun organizacion vertical |
+| Tipo | Interfaz | Ubicacion | Namespace | Forma del payload |
+|------|----------|-----------|-----------|-------------------|
+| Publico (entre dominios) | `IPublicEvent` | `Contracts/Eventos/` | `<RootNamespace>.Contracts.Eventos` | **plano y portable** |
+| Privado (dentro del dominio) | `IPrivateEvent` | `{Dominio}/{Feature}/Eventos/` | `...{Dominio}.{Feature}.Eventos` | **plano y portable** |
+| Event sourcing (aggregate) | ninguna | `{Dominio}/Entities/` o `{Feature}/Eventos/` | segun organizacion vertical | modelo rico permitido |
 
 Un evento es publico si otro dominio lo consume (via ServiceBus). La verdad viaja en el evento — el consumidor solo depende de Contracts.
 
-**Restriccion de forma del payload publico (no es solo ubicacion).** El payload de un
-`IPublicEvent` debe ser **plano y portable por el bus**: solo tipos serializables con el
-serializador por defecto (primitivos, `enum`, `string`, fechas, `Guid`, colecciones de esos
-tipos, `record` DTO planos). **El modelo de dominio rico no cruza el bus** -- un VO con campos
-privados, factory privado y `ConfigurarSerializacion` se serializa bien en el event store de
-Marten (resolver registrado en el `Program.cs` del dominio) pero el consumidor lo deserializa
-con **otro** `JsonSerializerOptions` sin ese resolver, y el payload llega lossy. Al publicar,
-traduce el VO a su forma plana. La autoridad de esta regla es **ADR-0012, seccion "Frontera de
-serializacion: event store vs bus"** -- leela completa antes de definir o emitir un evento
-publico; este agente no la duplica.
+**Restriccion de forma del payload (criterio: ¿cruza un bus?).** Todo evento con marker de bus
+(`IPublicEvent` o `IPrivateEvent`) debe tener un payload **plano y portable**: solo tipos
+serializables con el serializador por defecto (primitivos, `enum`, `string`, fechas, `Guid`,
+colecciones de esos tipos, `record` DTO planos). Un `IPublicEvent` cruza el namespace de
+integracion (via `IPublicEventSender`); un `IPrivateEvent` cruza el namespace interno del
+Bounded Context (via `IPrivateEventSender`); en ambos casos el destino deserializa con **otro**
+`JsonSerializerOptions` que **no tiene el resolver custom del productor**. **El modelo de dominio
+rico no cruza el bus**: un VO con campos privados, factory privado y `ConfigurarSerializacion` se
+serializa bien en el event store de Marten (resolver registrado en el `Program.cs` del dominio)
+pero llega lossy al destino del bus. Al emitir por el bus, traduce el VO a su forma plana.
+**Solo la tercera fila** -- eventos de event sourcing sin marker de bus -- admite modelo rico +
+`ConfigurarSerializacion`. La autoridad de esta regla es **ADR-0012, seccion "Frontera de
+serializacion: event store vs bus"** (criterio "¿cruza un bus?"; leela completa antes de definir
+o emitir un evento con marker); este agente no la duplica. Doctrina raiz: **ADR-0023**.
 
 ### No exponer internals entre proyectos
 
