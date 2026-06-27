@@ -6,6 +6,8 @@
 
 ## Contexto
 
+El marco organiza dominios en **Bounded Contexts: grupos de dominios relacionados** con su propio resource group (ADR-0023). Dentro de un BC, cada dominio es una Function App independiente.
+
 El marco despliega **una Function App por dominio** (ver ADR-0006). Cada Function App corre sobre Marten + Wolverine + PostgreSQL en modo serverless (ver ADR-0003) y publica sus eventos a Service Bus a traves del outbox transaccional de Wolverine (ver ADR-0001).
 
 Hasta ahora el harness no tenia una directiva canonica de hosting: `domain-scaffolder.md` y `bug-investigator.md` apuntaban vagamente "al ADR de hosting del proyecto consumidor", y la guia informal permitia que varias Function Apps **compartieran un mismo App Service Plan** en dev para ahorrar costo. El scaffolder generaba todos los `module.function_app_*` apuntando a un unico `module.service_plan.id`.
@@ -28,7 +30,7 @@ Conclusion: con `Solo`, el unico eje de crecimiento disponible es el **vertical*
 
 ## Decision
 
-**Cada Function App (cada dominio) corre en su propio App Service Plan dedicado. Los planes no se comparten entre dominios.**
+**Cada Function App (cada dominio) corre en su propio App Service Plan dedicado. Los planes no se comparten entre dominios.** Esta directiva aplica a cada dominio dentro de un Bounded Context (ADR-0023); el resource group que agrupa el BC es responsabilidad de la infraestructura base (ADR-0021).
 
 Esto alinea el harness con la guia oficial de Azure:
 
@@ -122,3 +124,4 @@ Usar el modo balanceado de Wolverine (con eleccion de lider y reparto de agentes
 - ADR-0003 (stack ES: Marten + Wolverine + Postgres): define el modo serverless de Wolverine y el outbox transaccional.
 - ADR-0006 (convenciones de nombramiento de funciones Azure): una Function App por dominio, base de "un plan por dominio".
 - ADR-0013 (smoke tests contra entorno dev): suite cuyos fallos intermitentes destaparon el problema.
+- ADR-0023: Bounded Context, topologia de dos namespaces ASB y Open Host Service — define BC como grupo de dominios sobre un resource group; este ADR fija el hosting por dominio dentro del BC.

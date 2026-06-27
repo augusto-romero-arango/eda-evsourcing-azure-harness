@@ -31,6 +31,10 @@ ocurrio. Ejemplos: `MarcacionesRegistradas`, `HorasCalculadas`, `EmpleadoActuali
 Para la convencion de naming de topics y subscriptions de Service Bus, ver
 [ADR-0001: Service Bus - un topic por tipo de evento](0001-service-bus-topics-por-evento.md).
 
+### Eventos publicos como Published Language del Bounded Context
+
+Los eventos **publicos** son el **Published Language** del bounded context (Evans, *Domain-Driven Design*, 2003, cap. 14) y se publican al namespace de integracion (ADR-0023). El contrato externo que fija el Published Language se blinda con el versionado aditivo y la regla V2 descritos en este ADR.
+
 ### Versionado aditivo
 
 Agregar campos opcionales (con valor por defecto) a un evento existente no constituye
@@ -71,3 +75,8 @@ en el proyecto Contracts con los siguientes campos:
   (e.g. `HorasCalculadas` y `HorasCalculadasV2`) mientras todos los consumidores migran.
   Esta deuda tecnica temporal debe gestionarse activamente para evitar que el proyecto
   Contracts acumule versiones obsoletas indefinidamente.
+
+## Referencias
+
+- ADR-0001 (Service Bus, un topic por tipo de evento): las convenciones de naming de topics y subscriptions de ADR-0001 y este ADR aplican por igual dentro del namespace interno y del namespace de integracion del bounded context.
+- ADR-0023: Bounded Context, topologia de dos namespaces ASB y Open Host Service — define que los eventos publicos son el Published Language del BC y viven en el namespace de integracion; este ADR fija el naming y el versionado que blindan ese contrato externo.

@@ -47,6 +47,10 @@ Las demas formas (`...:environment:<Name>` para jobs atados a un Environment, `.
 - **Superficie de credenciales mas pequena.** No se almacena ningun secreto de larga vida en GitHub; un secret filtrado de los repositorios deja de ser un vector.
 - **El harness ya estaba a un paso.** El issue #90 subio el workflow a `azure/login@v3`, la version nativa de OIDC. Adoptar OIDC cierra el contrato en su forma moderna en vez de revivir el JSON deprecado.
 
+### Frontera de alcance: autenticacion runtime cross-BC
+
+Este ADR cubre la autenticacion de **CI/deploy** hacia Azure (OIDC / Workload Identity Federation). La autenticacion **runtime entre bounded contexts** — como un consumidor externo se autentica y autoriza contra el namespace de integracion del productor — **queda fuera de alcance** y es trabajo diferido. La seguridad inter-BC se logra primariamente por **topologia** (namespaces separados, ADR-0023); el RBAC least-privilege por entidad es una **recomendacion diferida** que se decidira al materializar la integracion cross-BC, no doctrina firme de este ADR.
+
 ## Alternativas consideradas
 
 ### Alt 1: alinear con el secret de cliente (`AZURE_CREDENTIALS`)
@@ -85,3 +89,4 @@ Usar una user-assigned managed identity en vez de una app de Entra [1][5].
 - **[5]** "Deploy Bicep files by using GitHub Actions — Generate deployment credentials (OpenID Connect)". https://learn.microsoft.com/azure/azure-resource-manager/bicep/deploy-github-actions#generate-deployment-credentials
 - **[6]** Azure Verified Modules, "Bicep Contribution Flow — Configure a deployment identity": OIDC como opcion recomendada y "Option 2 [Deprecated]: Configure Service Principal + Secret". https://azure.github.io/Azure-Verified-Modules/contributing/bicep/bicep-contribution-flow/#2-configure-a-deployment-identity-in-azure
 - **[7]** GitHub, "Azure Login action — Login with OpenID Connect (OIDC) (recommended)". https://github.com/Azure/login#login-with-openid-connect-oidc-recommended
+- ADR-0023: Bounded Context, topologia de dos namespaces ASB y Open Host Service — recoge el eje runtime-cross-BC (diferido) que este ADR explicitamente no cubre.
