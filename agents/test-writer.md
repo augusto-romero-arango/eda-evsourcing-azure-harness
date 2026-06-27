@@ -736,6 +736,13 @@ public class TurnoPublicadoPortabilidadTests
 }
 ```
 
+**Ubicacion del test segun el marker.** El ejemplo de arriba es un `IPublicEvent`, cuyo test vive
+en `Contracts.Tests/` (el evento publico vive en `Contracts/Eventos/`). Para un `IPrivateEvent` el
+test vive en el proyecto de tests del dominio (`{Dominio}.Tests/`), junto a donde reside el evento
+privado (`{Dominio}/{Feature}/Eventos/`) -- no en `Contracts.Tests/`, que no puede referenciar el
+dominio. En ambos casos el round-trip usa `JsonSerializerOptions` por defecto; solo cambia el
+proyecto anfitrion.
+
 **Distincion critica frente a 6d -- la expectativa se invierte.** El test
 `Deserializar_Falla_CuandoResolverNoTieneRegistro...` de 6d afirma que un tipo del **event
 store** **falla** (`NotSupportedException`) cuando se deserializa con un resolver vacio; esa
