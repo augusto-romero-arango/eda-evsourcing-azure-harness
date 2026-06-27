@@ -34,6 +34,8 @@ reglas:
 - Subscriptions: kebab-case, patron `{consumidor}-escucha-{productor}`. Ej: `depuracion-escucha-marcaciones`, `calculo-horas-escucha-programacion`
 - Sin prefijos artificiales (ni `sbt-`, ni `eventos-`). El nombre comunica el contrato de dominio.
 
+Un topic por tipo de evento aplica **dentro de cada namespace**. Los eventos privados (via `IPrivateEventSender`) se publican a topics del namespace interno del bounded context; los eventos publicos (via `IPublicEventSender`) al namespace de integracion del bounded context. Las subscriptions de consumidores externos viven en el namespace de integracion del **productor** (patron Open Host Service, ADR-0023: el consumidor se conecta a suscribirse; no se empuja a ASB ajenos).
+
 Cada dominio publica **unicamente** a los topics de los eventos que produce. Ningun dominio
 publica al topic de otro dominio.
 
@@ -68,3 +70,4 @@ eventos publicos.
 
 - MassTransit usa topic-per-event como topologia por defecto en Azure Service Bus
 - Azure Service Bus Standard: limite de 10,000 topics, sin costo adicional por cantidad
+- ADR-0023: Bounded Context, topologia de dos namespaces ASB y Open Host Service — define la topologia que justifica la separacion por namespace (interno vs integracion) segun el alcance del evento.
