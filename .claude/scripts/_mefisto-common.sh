@@ -175,6 +175,72 @@ changes_require_changelog() {
     return 1
 }
 
+# detect_misplaced_changelog_entry <worktree_path> <base_commit>
+#
+# Detecta si los cambios del worktree anadieron contenido bajo una seccion de
+# version publicada ## [x.y.z] en CHANGELOG.md, en vez de bajo ## [Unreleased].
+# Diagnostica el caso "escritura en la seccion equivocada" que el gate generico
+# (check_unreleased_touched) no distingue de "sin entrada".
+#
+# Retorna:
+#   0  -> se encontro una entrada mal colocada; imprime el header de version a stdout
+#          (ej: "0.8.0")
+#   1  -> sin entrada bajo seccion de version publicada (o python3 no disponible)
+#
+# Utiliza el mismo patron de MEFISTO_BASE_CHANGELOG que check_unreleased_touched.
+detect_misplaced_changelog_entry() {
+    local wt="$1"
+    local base="$2"
+
+    local changelog="$wt/CHANGELOG.md"
+    [ -f "$changelog" ] || return 1
+
+    command -v python3 >/dev/null 2>&1 || return 1
+
+    local base_changelog
+    base_changelog=$(git -C "$wt" show "${base}:CHANGELOG.md" 2>/dev/null || true)
+
+    MEFISTO_BASE_CHANGELOG="$base_changelog" python3 - "$changelog" <<'PYEOF'
+import os, re, sys
+
+def extract_sections(text):
+    sections = {}
+    current_header = None
+    current_body = []
+    for line in text.splitlines():
+        m = re.match(r'^##\s*\[([^\]]+)\]', line)
+        if m:
+            if current_header is not None:
+                sections[current_header] = '\n'.join(current_body).strip()
+            current_header = m.group(1)
+            current_body = []
+        elif current_header is not None:
+            current_body.append(line)
+    if current_header is not None:
+        sections[current_header] = '\n'.join(current_body).strip()
+    return sections
+
+with open(sys.argv[1], encoding='utf-8') as f:
+    current_text = f.read()
+base_text = os.environ.get('MEFISTO_BASE_CHANGELOG', '')
+
+base_sections = extract_sections(base_text)
+current_sections = extract_sections(current_text)
+
+for header, body in current_sections.items():
+    if header.lower() == 'unreleased':
+        continue
+    if not re.match(r'^\d+\.\d+\.\d+', header):
+        continue
+    base_body = base_sections.get(header, '')
+    if body != base_body and len(body) > len(base_body):
+        print(header)
+        sys.exit(0)
+
+sys.exit(1)
+PYEOF
+}
+
 # check_unreleased_touched <worktree_path> <base_commit>
 #
 # Verifica si los cambios del worktree (base..HEAD + working tree) anadieron

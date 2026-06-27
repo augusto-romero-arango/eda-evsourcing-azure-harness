@@ -383,7 +383,7 @@ Instrucciones:
 2. Reutiliza patrones y convenciones del repo (mira archivos similares).
 3. Haz commits frecuentes con mensajes descriptivos en espanol.
 4. Si modificaste un skill o agente publicado, considera si necesitas tambien la version interna (con prefijo mefisto-).
-5. Actualiza el CHANGELOG: como parte de implementar el issue, anade una entrada bajo '## [Unreleased]' en CHANGELOG.md siguiendo Keep a Changelog, con la categoria correcta ('Added' para funcionalidad nueva, 'Changed' para cambios de comportamiento, 'Fixed' para bugs, 'Removed' para eliminaciones). Excepcion: si el cambio toca exclusivamente bitacora (docs/bitacora/**) u otros archivos de gobierno no notables (README.md, CLAUDE.md, .gitignore), omite la entrada. Un gate del pipeline aborta el PR si un cambio notable llega sin entrada en [Unreleased].
+5. Actualiza el CHANGELOG: como parte de implementar el issue, anade una entrada bajo '## [Unreleased]' en CHANGELOG.md siguiendo Keep a Changelog, con la categoria correcta ('Added' para funcionalidad nueva, 'Changed' para cambios de comportamiento, 'Fixed' para bugs, 'Removed' para eliminaciones). CRITICO: '## [Unreleased]' es SIEMPRE la PRIMERA seccion del archivo (antes de cualquier '## [x.y.z]'). Coloca la entrada ahi, NUNCA bajo una seccion de version publicada como '## [0.8.0]' o similar -- aunque esa seccion tenga una subseccion '### Changed' o '### Added' justo debajo y parezca tentador insertarla ahi. Si falta la subseccion de categoria ('### Added', '### Changed', '### Fixed', '### Removed') dentro de '## [Unreleased]', creala ahi. Excepcion: si el cambio toca exclusivamente bitacora (docs/bitacora/**) u otros archivos de gobierno no notables (README.md, CLAUDE.md, .gitignore), omite la entrada. Un gate del pipeline aborta el PR si un cambio notable llega sin entrada en [Unreleased] o si la entrada quedo bajo una seccion de version publicada.
 6. Al terminar, escribe un resumen de lo que hiciste en .claude/pipeline/summaries/stage-1-writer.md"
 
     # Sustituir $ISSUE_CONTEXT manualmente (evita expansion temprana en la heredoc)
@@ -492,6 +492,11 @@ if check_unreleased_touched "$WORKTREE_PATH" "$SNAPSHOT_COMMIT"; then
     success "El PR actualiza la seccion [Unreleased] del CHANGELOG"
 elif ! changes_require_changelog "$WORKTREE_PATH" "$SNAPSHOT_COMMIT"; then
     success "Cambio exento (solo bitacora/gobierno no notable): no se exige entrada en [Unreleased]"
+elif MISPLACED_VER=$(detect_misplaced_changelog_entry "$WORKTREE_PATH" "$SNAPSHOT_COMMIT") && [ -n "$MISPLACED_VER" ]; then
+    abort "La entrada del CHANGELOG fue colocada bajo '## [$MISPLACED_VER]' (version publicada) en vez de bajo '## [Unreleased]'.
+'## [Unreleased]' es SIEMPRE la primera seccion del archivo, antes de '## [$MISPLACED_VER]'.
+Mueve la entrada a '## [Unreleased]' en CHANGELOG.md del worktree ($WORKTREE_PATH) y retoma con:
+  ./.claude/scripts/mefisto-tooling-pipeline.sh $ISSUE_NUM --from-stage 2"
 else
     abort "Cambio notable sin entrada bajo '## [Unreleased]' en CHANGELOG.md.
 El writer debio redactar la entrada con la categoria Keep a Changelog correcta

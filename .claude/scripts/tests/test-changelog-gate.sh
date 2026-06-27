@@ -43,7 +43,7 @@ gate_would_abort() {
 # -------- Bloque pre: funciones existen (CA-1) --------
 
 echo "[pre] Las funciones del gate estan definidas (CA-1)"
-for fn in is_path_changelog_exempt changes_require_changelog check_unreleased_touched; do
+for fn in is_path_changelog_exempt changes_require_changelog check_unreleased_touched detect_misplaced_changelog_entry; do
     if declare -F "$fn" >/dev/null; then
         pass "$fn definida en _mefisto-common.sh"
     else
@@ -180,6 +180,76 @@ if gate_would_abort "$TMP" "$BASE"; then
 else
     pass "CA-6: el gate PASA ante cambio notable con entrada"
 fi
+
+# -------- Bloque C: detect_misplaced_changelog_entry (CA-7/CA-8, issue #133) --------
+
+echo ""
+echo "[C] detect_misplaced_changelog_entry distingue entrada mal colocada (CA-7/CA-8)"
+
+if [ "$HAVE_PY" -eq 0 ]; then
+    echo "  (sin python3: detect_misplaced_changelog_entry degrada a 1; se omiten CA-7/CA-8)"
+else
+
+# --- CA-7: entrada bajo version publicada -> detectada como mal colocada y el gate aborta ---
+reset_wt
+echo "nuevo skill" > "$TMP/commands/foo.md"
+cat > "$TMP/CHANGELOG.md" <<'EOF'
+# Changelog
+
+## [Unreleased]
+
+## [0.1.0] - 2026-01-01
+
+### Added
+
+- inicial
+- Nueva funcionalidad mal colocada bajo version publicada.
+EOF
+MISPLACED=""
+MISPLACED=$(detect_misplaced_changelog_entry "$TMP" "$BASE") && true
+if [ -n "$MISPLACED" ]; then
+    pass "CA-7: detect_misplaced detecta entrada bajo version publicada ('$MISPLACED')"
+else
+    fail "CA-7: detect_misplaced debia detectar entrada bajo '[0.1.0]'"
+fi
+if gate_would_abort "$TMP" "$BASE"; then
+    pass "CA-7: el gate ABORTA ante entrada en seccion de version publicada"
+else
+    fail "CA-7: el gate debia abortar"
+fi
+
+# --- CA-8: entrada bajo [Unreleased] -> no detectada como mal colocada ---
+reset_wt
+echo "nuevo skill" > "$TMP/commands/foo.md"
+cat > "$TMP/CHANGELOG.md" <<'EOF'
+# Changelog
+
+## [Unreleased]
+
+### Added
+
+- Nueva funcionalidad correctamente colocada bajo Unreleased.
+
+## [0.1.0] - 2026-01-01
+
+### Added
+
+- inicial
+EOF
+MISPLACED=""
+MISPLACED=$(detect_misplaced_changelog_entry "$TMP" "$BASE") && true
+if [ -n "$MISPLACED" ]; then
+    fail "CA-8: detect_misplaced NO debia detectar entrada correctamente colocada en [Unreleased]"
+else
+    pass "CA-8: detect_misplaced NO detecta entrada en [Unreleased] como mal colocada"
+fi
+if gate_would_abort "$TMP" "$BASE"; then
+    fail "CA-8: el gate NO debia abortar cuando [Unreleased] tiene entrada"
+else
+    pass "CA-8: el gate PASA con entrada correctamente colocada en [Unreleased]"
+fi
+
+fi # fin HAVE_PY
 
 # -------- Resumen --------
 
