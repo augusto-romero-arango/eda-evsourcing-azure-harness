@@ -678,7 +678,7 @@ public class MiEventoSerializacionTests
 }
 ```
 
-**Cuando usar helper inline en vez de `CrearOpcionesMarten()`**: solo si el test vive en un proyecto que no puede depender del dominio (ej. `Contracts.Tests` no puede referenciar `{Dominio}`). En ese caso, mueve los tests de round-trip al proyecto `{Dominio}.Tests/Infraestructura/` — eso ejercita el registro real.
+**Cuando usar helper inline en vez de `CrearOpcionesMarten()`** (solo aplica a 6d — event store de Marten): solo si el test vive en un proyecto que no puede depender del dominio (ej. `Contracts.Tests` no puede referenciar `{Dominio}`). En ese caso, mueve los tests de round-trip al proyecto `{Dominio}.Tests/Infraestructura/` — eso ejercita el registro real. Los tests de portabilidad por el bus (6e) usan `JsonSerializerOptions` por defecto, no `CrearOpcionesMarten()`, y viven junto a los eventos con marker.
 
 **Reglas criticas:**
 
@@ -695,19 +695,22 @@ public class MiEventoSerializacionTests
 
 **Referencia canonica**: `SubFranjaSerializacionTests.cs` (patron antiguo con helper inline) y `DetalleRetardoSerializacionTests.cs` en `ControlHoras.Tests/Infraestructura/` (patron nuevo con `CrearOpcionesMarten()` + CA-regresion).
 
-### 6e. Tests de portabilidad por el bus para eventos publicos (`IPublicEvent`)
+### 6e. Tests de portabilidad por el bus para eventos con marker de bus (`IPrivateEvent` e `IPublicEvent`)
 
 La seccion 6d cubre el **event store de Marten**: usa `CrearOpcionesMarten()`, que registra el
 resolver custom del dominio. Eso garantiza que un VO con campos privados sobrevive el round-trip
-**dentro del dominio**. Pero un `IPublicEvent` cruza un **segundo canal**: sale por
-`IPublicEventSender` a Azure Service Bus y lo deserializa **otro dominio**, con **otro**
-`JsonSerializerOptions` que **no tiene ese resolver**. El round-trip de 6d **no detecta** si el
-payload publico es portable -- pasa en verde porque registra el resolver que el bus no tiene.
-Autoridad: **ADR-0012, seccion "Frontera de serializacion: event store vs bus"**.
+**dentro del dominio**. Pero todo evento con marker de bus cruza un **canal adicional**: un
+`IPrivateEvent` sale por `IPrivateEventSender` al namespace interno del Bounded Context; un
+`IPublicEvent` sale por `IPublicEventSender` al namespace de integracion. En ambos casos, el
+destino opera con **otro** `JsonSerializerOptions` que **no tiene ese resolver**. El round-trip
+de 6d **no detecta** si el payload es portable -- pasa en verde porque registra el resolver que
+el bus no tiene. Autoridad: **ADR-0012, seccion "Frontera de serializacion: event store vs
+bus"**; doctrina raiz: **ADR-0023** (criterio "¿cruza un bus?" como determinante de forma plana).
 
-**Regla: para cada `IPublicEvent`, escribe un test de round-trip con `JsonSerializerOptions` POR
-DEFECTO (sin el resolver custom)** que verifique que no hay perdida de datos. Esas opciones son
-exactamente las que ve el dominio consumidor al recibir el mensaje.
+**Regla: para cada evento con marker de bus (`IPrivateEvent` o `IPublicEvent`), escribe un test
+de round-trip con `JsonSerializerOptions` POR DEFECTO (sin el resolver custom)** que verifique
+que no hay perdida de datos. Esas opciones son exactamente las que ve el destino (namespace
+interno u otro dominio) al recibir el mensaje.
 
 ```csharp
 // El test vive junto a los demas tests de Contracts (el evento publico vive en Contracts/Eventos/).
@@ -733,22 +736,32 @@ public class TurnoPublicadoPortabilidadTests
 }
 ```
 
+**Ubicacion del test segun el marker.** El ejemplo de arriba es un `IPublicEvent`, cuyo test vive
+en `Contracts.Tests/` (el evento publico vive en `Contracts/Eventos/`). Para un `IPrivateEvent` el
+test vive en el proyecto de tests del dominio (`{Dominio}.Tests/`), junto a donde reside el evento
+privado (`{Dominio}/{Feature}/Eventos/`) -- no en `Contracts.Tests/`, que no puede referenciar el
+dominio. En ambos casos el round-trip usa `JsonSerializerOptions` por defecto; solo cambia el
+proyecto anfitrion.
+
 **Distincion critica frente a 6d -- la expectativa se invierte.** El test
 `Deserializar_Falla_CuandoResolverNoTieneRegistro...` de 6d afirma que un tipo del **event
 store** **falla** (`NotSupportedException`) cuando se deserializa con un resolver vacio; esa
-perdida es el comportamiento **esperado** para tipos que solo viven en Marten. Para un
-`IPublicEvent` la expectativa es la **opuesta**: el evento publico **DEBE sobrevivir** el
-round-trip con el serializador por defecto. No copies el patron "sin registro falla" a un evento
-publico -- ahi un fallo sin resolver es exactamente el bug que esta seccion previene. Si el
-`IPublicEvent` no sobrevive con `JsonSerializerOptions` vanilla, no es portable: su payload carga
-un tipo rico que debe aplanarse antes de publicar (responsabilidad del implementer; ver
-`implementer.md` "Donde vive cada tipo de evento").
+perdida es el comportamiento **esperado** para tipos que solo viven en Marten. Para un evento con
+marker de bus (`IPrivateEvent` o `IPublicEvent`) la expectativa es la **opuesta**: el evento
+**DEBE sobrevivir** el round-trip con el serializador por defecto. No copies el patron "sin
+registro falla" a un evento con marker de bus -- ahi un fallo sin resolver es exactamente el bug
+que esta seccion previene. Si el evento no sobrevive con `JsonSerializerOptions` vanilla, no es
+portable: su payload carga un tipo rico que debe aplanarse antes de publicar por el bus interno
+o de integracion (responsabilidad del implementer; ver `implementer.md` "Donde vive cada tipo de
+evento"). La distincion de expectativa invertida aplica por igual a `IPrivateEvent` (namespace
+interno) e `IPublicEvent` (namespace de integracion). Autoridad: ADR-0023, seccion "Todo lo que
+cruza un bus es plano y portable".
 
 | Test | Opciones | Que cubre | Resultado esperado |
 |---|---|---|---|
 | 6d round-trip (`CrearOpcionesMarten()`) | con resolver custom | event store del dominio | sobrevive |
 | 6d "sin registro falla" (resolver vacio) | sin resolver | anti-regresion del registro Marten | **falla** (`NotSupportedException`) |
-| 6e portabilidad (`JsonSerializerOptions` por defecto) | sin resolver | bus / `IPublicEvent` | **sobrevive** |
+| 6e portabilidad (`JsonSerializerOptions` por defecto) | sin resolver | bus / evento con marker (`IPrivateEvent` o `IPublicEvent`) | **sobrevive** |
 
 ---
 
@@ -858,4 +871,4 @@ Crea el archivo `.claude/pipeline/summaries/stage-1-test-writer.md`:
 18. **Aggregates con stream ID compuesto**: si el aggregate computa su `Id` desde datos del payload (ej. `ComputarStreamId(empleadoId, fecha)`) en lugar de usar un GUID, DEBES usar los overloads con `aggregateId` explicito: `Then(streamId, eventos)` (sobrecarga de dos argumentos - patron idiomatico del proyecto), `And<T,P>(streamId, selector, valor)`, y `Given(streamId, evento)`. Usar los overloads implicitos producira tests que buscan por el `GuidAggregateId` del harness y nunca encontraran el aggregate.
 19. **Si detectas una contradiccion estructural en el issue** (ej. un test listado en "Impacto / Modifica" debe usar API de un proyecto que el test no puede referenciar; una sugerencia de "Interfaz publica propuesta" contradice un ADR; un CA exige un archivo en una ubicacion imposible), **tu decides la resolucion**: reubica el test al proyecto correcto, reemplazalo por uno equivalente, divide la cobertura en dos archivos, o elimina el test obsoleto si el refactor del issue lo vuelve insostenible y otro test cubre el CA. Documenta la decision en tu resumen bajo "Desviaciones del plan del planner" (ver seccion 9) con el formato: *regla/sugerencia del issue / desviacion aplicada / razon tecnica / consecuencia*. **No reportes bloqueo por esto** — la autoridad es tuya. Reportar bloqueo se reserva para situaciones donde no puedes decidir con la informacion disponible (no para contradicciones que tu mismo puedes resolver con criterio).
 20. **El valor esperado de toda asercion (`Then`, `And<>`, `ThenIsPublished*`) se construye SIEMPRE a mano como oraculo independiente**, con las primitivas y factories del dominio. **NUNCA lo derives ejecutando la logica bajo prueba** — ni el SUT ni los colaboradores de produccion que esa logica invoca. Un esperado calculado por el mismo codigo que se verifica vuelve el test tautologico: el bug contamina por igual el esperado y el actual, ambos coinciden, y la prueba pasa sin detectar la regresion. Antipatron: `var esperado = ConsolidadorDesgloseHoras.Consolidar(...)` para luego compararlo contra el resultado que el aggregate produjo con esa misma consolidacion. Patron correcto: armar el esperado con `new MomentoDelDia(...)`, `IntervaloTemporal.Crear(...)`, `new DesgloseHoras(...)`, etc. Fuente del principio: ADR-0002, seccion "Oraculo independiente (no-tautologia)" (ver `"$PLUGIN_ROOT/docs/adr/0002-estrategia-testing-event-sourcing.md"`, resuelto como en "Localizar los ADRs del marco"). Ejemplos en la seccion "Verificacion del estado del agregado" (paso 4).
-21. **Todo `IPublicEvent` DEBE tener ademas un test de portabilidad por el bus** (seccion 6e): round-trip con `JsonSerializerOptions` POR DEFECTO (sin el resolver custom) que verifique que no hay perdida de datos. Es distinto del round-trip de Marten (regla 16 / seccion 6d, que usa `CrearOpcionesMarten()` con resolver): aquel cubre el event store; este cubre el segundo canal de serializacion del bus, donde el consumidor no tiene el resolver del productor. **NUNCA** repliques el test "sin registro falla" de 6d sobre un evento publico -- para un `IPublicEvent` la expectativa se invierte: debe **sobrevivir** sin resolver, no fallar. Autoridad: ADR-0012, "Frontera de serializacion: event store vs bus".
+21. **Todo evento con marker de bus (`IPrivateEvent` o `IPublicEvent`) DEBE tener ademas un test de portabilidad por el bus** (seccion 6e): round-trip con `JsonSerializerOptions` POR DEFECTO (sin el resolver custom) que verifique que no hay perdida de datos. Es distinto del round-trip de Marten (regla 16 / seccion 6d, que usa `CrearOpcionesMarten()` con resolver): aquel cubre el event store; este cubre el canal de serializacion del bus (namespace interno o de integracion), donde el destino no tiene el resolver del productor. **NUNCA** repliques el test "sin registro falla" de 6d sobre un evento con marker de bus -- para un `IPrivateEvent` o `IPublicEvent` la expectativa se invierte: debe **sobrevivir** sin resolver, no fallar. Autoridad: ADR-0012, "Frontera de serializacion: event store vs bus"; doctrina raiz: ADR-0023 (criterio "¿cruza un bus?").
