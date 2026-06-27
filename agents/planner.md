@@ -514,7 +514,7 @@ gh issue create \
 - **Eventos de exito**: `EventoExitoso` → campos del evento
 - **Eventos de fallo**: `EventoFallido` → campos y condicion que lo causa
 - **Consumidores**: dominio X escucha `EventoExitoso` via topic `eventos-dominio` (o "Ninguno - evento interno")
-- **Construccion del evento publico** (incluir solo cuando algun evento es `IPublicEvent`): el payload que cruza Azure Service Bus debe ser **plano y portable** -- solo tipos serializables con el serializador por defecto (primitivos, `enum`, `string`, fechas, `Guid`, `record` DTO planos). El modelo de dominio rico (VO con campos privados + `ConfigurarSerializacion`) **no cruza el bus**: se traduce a forma plana al publicar (ADR-0012, "Frontera de serializacion: event store vs bus"). Declara esta consideracion en el handoff; no prescribas quien traduce (handler, mapper o un `ToContrato()` del VO) -- esa decision la toma el pipeline.
+- **Construccion del evento que cruza un bus** (incluir cuando algun evento cruza un bus (`IPrivateEvent` o `IPublicEvent`)): el payload que cruza Azure Service Bus debe ser **plano y portable** -- solo tipos serializables con el serializador por defecto (primitivos, `enum`, `string`, fechas, `Guid`, `record` DTO planos). Esto aplica a ambos namespaces: el namespace interno (via `IPrivateEventSender`) y el namespace de integracion (via `IPublicEventSender`); el criterio es "¿cruza un bus?", no "¿es `IPublicEvent`?" (ADR-0023, doctrina raiz). El modelo de dominio rico (VO con campos privados + `ConfigurarSerializacion`) **no cruza el bus**: se traduce a forma plana al publicar/enviar (ADR-0012, "Frontera de serializacion: event store vs bus"). Declara esta consideracion en el handoff; no prescribas quien traduce (handler, mapper o un `ToContrato()` del VO) -- esa decision la toma el pipeline.
 
 (Si el issue no involucra comportamiento de dominio — ej: refactor, tooling — omitir esta seccion)
 
@@ -579,7 +579,7 @@ La sección **Modelo de eventos** es la más importante para issues de dominio. 
 - Escribir los `Given/When/Then` de los tests
 - Saber qué propiedades verificar con `And<>()`
 - Decidir si necesitan infraestructura Service Bus (topics/subscriptions)
-- Saber, cuando hay un `IPublicEvent`, que su payload debe ser **plano y portable por el bus** (la línea "Construcción del evento público"): así el test-writer escribe el round-trip con serializador por defecto y el implementer traduce el modelo rico a forma plana antes de publicar. Sin esta consideración en el handoff, el evento puede emitirse cargando un VO rico que se rompe al cruzar a otro dominio (ADR-0012, "Frontera de serialización: event store vs bus").
+- Saber, cuando hay un evento que cruza un bus (`IPrivateEvent` o `IPublicEvent`), que su payload debe ser **plano y portable por el bus** (la línea "Construcción del evento que cruza un bus"): así el test-writer escribe el round-trip con serializador por defecto y el implementer traduce el modelo rico a forma plana antes de publicar/enviar. Sin esta consideración en el handoff, el evento puede emitirse cargando un VO rico que se rompe al cruzar el namespace interno o de integracion (ADR-0012, "Frontera de serialización: event store vs bus"; ADR-0023, criterio "¿cruza un bus?").
 
 La sección **Interfaz pública** es obligatoria para issues que crean value objects complejos o aggregates con comportamiento rico. Define el contrato que el test-writer usa como superficie de testing y que el implementer debe respetar. Sin ella, los agentes adivinan qué exponer y tienden a romper el encapsulamiento.
 
