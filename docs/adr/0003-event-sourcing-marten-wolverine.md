@@ -76,6 +76,8 @@ Wolverine opera en modo serverless: no hay bus in-process. Los eventos se public
 explicitamente a Azure Service Bus usando `IPublicEventSender` o `IPrivateEventSender`.
 Los triggers de Service Bus (`[ServiceBusTrigger]`) despachan mensajes al `ICommandRouter`.
 
+Wolverine en modo serverless distingue **dos destinos fisicos**: `IPrivateEventSender` publica a Azure Service Bus del namespace **interno** del bounded context (eventos privados intra-BC); `IPublicEventSender` publica al namespace de **integracion** del bounded context (eventos publicos inter-BC). Ambos se configuran con dos calls a `HabilitarAzureServiceBusParaServerLess` recibiendo las dos connection strings respectivas. El soporte de esta topologia depende de la version del paquete `Cosmos.EventDriven.CritterStack.AzureServiceBus` (verificar en spike #129).
+
 ### Observabilidad
 
 Se configura OpenTelemetry con AddSource para "Wolverine", "Marten" y el namespace del
@@ -103,3 +105,8 @@ que el agente de Application Insights reciba las trazas de OpenTelemetry.
 - Event Sourcing agrega complejidad en las consultas (queries requieren proyecciones o
   snapshots), lo cual no se necesita para simples operaciones CRUD de baja frecuencia.
 - La curva de aprendizaje de Marten y Wolverine es mas alta que la de un ORM tradicional.
+- El wiring real de dos namespaces ASB (dos connection strings, dos llamadas a `HabilitarAzureServiceBusParaServerLess` en Program.cs) depende del soporte de `Cosmos.EventDriven.CritterStack.AzureServiceBus` para distinguir destinos fisicos por sender. Spike #129 valida viabilidad; si no es soportado, requerira enmienda a `Cosmos.*` o evolucion del patron.
+
+## Referencias
+
+- ADR-0023: Bounded Context, topologia de dos namespaces ASB y Open Host Service — define la topologia que justifica la separacion por namespace y la necesidad de dos senders fisicos (`IPrivateEventSender` al namespace interno, `IPublicEventSender` al namespace de integracion).
