@@ -46,7 +46,11 @@ Tokens operativos consumidos por los scripts shell. Estructura:
   "terraformStateStorage": "<storage account del tfstate>",
   "githubServicePrincipalName": "github-<proyecto>-ci",
   "appInsightsApp": "<app-insights-component>",
-  "domainLabels": ["<dominio1>", "<dominio2>", "..."]
+  "domainLabels": ["<dominio1>", "<dominio2>", "..."],
+  "boundedContext": {
+    "name": "<NombreDelBC>",
+    "domains": ["<dominio1>", "<dominio2>", "..."]
+  }
 }
 ```
 
@@ -54,13 +58,18 @@ Tokens operativos consumidos por los scripts shell. Estructura:
 
 Notas sobre campos concretos:
 
+- **`boundedContext`** (**obligatorio**, ADR-0023): declara el Bounded Context del proyecto. Un BC es un grupo de dominios relacionados que comparte un resource group de Azure y dos namespaces de Azure Service Bus (interno e integración). Tiene dos subfields:
+  - **`name`**: nombre del BC, 1-63 caracteres alfanuméricos y guiones. Puede coincidir o no con `projectName` (ej: un proyecto "ControlAsistencias" puede tener BC "Principal"). `load_harness_config` valida `^[a-zA-Z0-9-]{1,63}$` y exporta `HARNESS_BC_NAME`.
+  - **`domains`**: lista de dominios del BC, no vacía. Cada elemento debe estar presente en `domainLabels` (los dominios del BC son un subconjunto de todos los dominios del proyecto). `load_harness_config` valida la pertenencia y exporta `HARNESS_BC_DOMAINS` (lista separada por espacios).
+  - El **resource group** del BC se genera como `infraResourceGroupPrefix`+`-`+`name` (ej: `rg-miproyecto-principal`). Lo computa el `infra-base-scaffolder` al provisionar la infraestructura base.
+  - El **context map** (registro de BCs externos consumidos por este BC) es trabajo diferido a futuras evoluciones; hoy el BC solo se nombra a sí mismo. Ver nota en `load_harness_config`.
 - **`terraformStateStorage`** es el nombre **base** de la Storage Account del tfstate. Azure exige **3-24 caracteres, solo minúsculas y dígitos** ([reglas de nombres de recursos, `Microsoft.Storage`](https://learn.microsoft.com/azure/azure-resource-manager/management/resource-name-rules#microsoftstorage)); `load_harness_config` valida `^[a-z0-9]{3,24}$` y aborta temprano si no cumple. El patrón `st<proyecto>tfstate<env>` deja ~12 chars para `<proyecto>`, así que para nombres largos abrevia el prefijo (p. ej. `stmicontrolplanetfstatedev` = 26 chars **inválido** → `stmcptfstatedev` = 15 válido). `bootstrap-backend.sh` le añade además un sufijo de unicidad global (detalle en README §3).
 - **`repoSlug`** (opcional): slug `owner/repo` del fork de Mefisto al que se enrutan los drafts cross-repo (`estado:borrador`) que crean el `planner` y el `tooling-investigator`. Default: `augusto-romero-arango/eda-evsourcing-azure-harness`. **No** se exporta como `HARNESS_*`; se lee inline con `jq` donde se necesita (`_pipeline-common.sh`, `agents/planner.md`, `agents/tooling-investigator.md`).
 - **`azureLocation`** (opcional): región de Azure para `bootstrap-backend.sh`; el flag `--location` la sobrescribe.
 
 ### 2. Sección "Tokens del harness" en `CLAUDE.md` raíz del consumidor
 
-Necesaria porque los agentes/skills del harness no pueden hacer sustitución de variables. Los placeholders `<RootNamespace>`, `<SolutionFile>`, `<ProjectDisplayName>` se resuelven leyendo `CLAUDE.md` del proyecto. Ejemplo mínimo:
+Necesaria porque los agentes/skills del harness no pueden hacer sustitución de variables. Los placeholders `<RootNamespace>`, `<SolutionFile>`, `<ProjectDisplayName>`, `<BoundedContext>` y `<BoundedContextDomains>` se resuelven leyendo `CLAUDE.md` del proyecto. Ejemplo mínimo:
 
 ```markdown
 ### Tokens del harness
@@ -68,7 +77,11 @@ Necesaria porque los agentes/skills del harness no pueden hacer sustitución de 
 - **RootNamespace**: MiProyecto.Nombre
 - **SolutionFile**: MiProyecto.slnx
 - **ProjectDisplayName**: MiProyecto
+- **BoundedContext**: Principal  (nombre del BC; corresponde a `boundedContext.name` en harness.config.json)
+- **BoundedContextDomains**: dominio1, dominio2  (lista separada por comas; corresponde a `boundedContext.domains`)
 ```
+
+`BoundedContext` es el nombre del Bounded Context declarado en `harness.config.json` (ADR-0023): grupo de dominios relacionados que comparte un resource group de Azure y dos namespaces de Azure Service Bus (interno e integración). El nombre puede coincidir o no con `ProjectDisplayName`.
 
 ### 3. Estructura de carpetas esperada
 

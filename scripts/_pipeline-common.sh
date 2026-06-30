@@ -20,11 +20,17 @@
 #   HARNESS_SP_NAME            - Service Principal de GitHub Actions (ej: github-controlasistencias-ci)
 #   HARNESS_APP_INSIGHTS_APP   - Application Insights component (ej: controlasistencias-dev-ai)
 #   HARNESS_DOMAIN_LABELS      - Lista separada por espacios de labels dom:*
+#   HARNESS_BC_NAME            - Nombre del Bounded Context (ej: Principal)
+#   HARNESS_BC_DOMAINS         - Lista separada por espacios de dominios del BC (ej: "dominio1 dominio2")
 #
 # Campos opcionales del config (no se exportan via load_harness_config; se leen
 # inline donde se necesitan, mismo patron que agents/planner.md):
 #   repoSlug  - Slug owner/repo del fork de Mefisto a usar para drafts cross-repo
 #               y mensajes de error. Default: augusto-romero-arango/eda-evsourcing-azure-harness
+#
+# Nota: el context map (registro de BCs externos) es trabajo diferido a futuras
+# evoluciones; hoy el BC solo se nombra a si mismo via boundedContext.name y
+# boundedContext.domains.
 #
 # Si no existe el config file, emite mensaje claro de error y retorna 1.
 load_harness_config() {
@@ -41,7 +47,8 @@ load_harness_config() {
         echo "      \"infraResourceGroupPrefix\": \"...\"," >&2
         echo "      \"githubServicePrincipalName\": \"...\"," >&2
         echo "      \"appInsightsApp\": \"...\"," >&2
-        echo "      \"domainLabels\": [\"...\", \"...\"]" >&2
+        echo "      \"domainLabels\": [\"...\", \"...\"]," >&2
+        echo "      \"boundedContext\": { \"name\": \"<NombreBC>\", \"domains\": [\"...\"] }" >&2
         echo "    }" >&2
         return 1
     fi
@@ -59,6 +66,8 @@ load_harness_config() {
     export HARNESS_SP_NAME=$(jq -r '.githubServicePrincipalName // ""' "$config")
     export HARNESS_APP_INSIGHTS_APP=$(jq -r '.appInsightsApp // ""' "$config")
     export HARNESS_DOMAIN_LABELS=$(jq -r '.domainLabels // [] | join(" ")' "$config")
+    export HARNESS_BC_NAME=$(jq -r '.boundedContext.name // ""' "$config")
+    export HARNESS_BC_DOMAINS=$(jq -r '.boundedContext.domains // [] | join(" ")' "$config")
 
     local missing=()
     [ -z "$HARNESS_PROJECT_NAME" ]     && missing+=("projectName")
@@ -67,6 +76,64 @@ load_harness_config() {
 
     if [ ${#missing[@]} -gt 0 ]; then
         echo "ERROR: campos obligatorios ausentes en $config: ${missing[*]}" >&2
+        return 1
+    fi
+
+    # boundedContext es obligatorio desde v0.9.0 (issue #131, ADR-0023).
+    # Si esta ausente, emite un mensaje accionable de migracion con el shape
+    # exacto a anadir y un ejemplo usando los domainLabels ya presentes.
+    local bc_present
+    bc_present=$(jq -r 'if has("boundedContext") then "yes" else "no" end' "$config")
+    if [ "$bc_present" = "no" ]; then
+        local example_domains
+        example_domains=$(jq -r '.domainLabels // [] | map("\"" + . + "\"") | join(", ")' "$config")
+        echo "ERROR: falta 'boundedContext' en $config (campo obligatorio desde v0.9.0)." >&2
+        echo "  El campo 'boundedContext' es requerido por ADR-0023 (Bounded Context)." >&2
+        echo "  Anade el siguiente bloque a tu harness.config.json:" >&2
+        echo "    \"boundedContext\": {" >&2
+        echo "      \"name\": \"<NombreDetuBC>\",   // ej: Principal, Admin, Core" >&2
+        echo "      \"domains\": [${example_domains}]" >&2
+        echo "    }" >&2
+        echo "  Los dominios deben ser un subconjunto de tus domainLabels existentes." >&2
+        echo "  Ver /onboard para diagnostico o README seccion 'Migracion para consumidores existentes'." >&2
+        return 1
+    fi
+
+    # Validar boundedContext.name: 1-63 chars, alfanumericos y guiones.
+    # Coherente con Azure resource naming conventions (compatible con nombres de RG).
+    if [ -z "$HARNESS_BC_NAME" ]; then
+        echo "ERROR: boundedContext.name esta vacio en $config." >&2
+        echo "  Debe ser un string de 1-63 caracteres alfanumericos y guiones (ej: Principal)." >&2
+        return 1
+    fi
+    if ! printf '%s' "$HARNESS_BC_NAME" | grep -Eq '^[a-zA-Z0-9-]{1,63}$'; then
+        echo "ERROR: boundedContext.name='$HARNESS_BC_NAME' no es valido en $config." >&2
+        echo "  Debe tener 1-63 caracteres alfanumericos y guiones ([a-zA-Z0-9-])." >&2
+        return 1
+    fi
+
+    # Validar boundedContext.domains: array no vacio, cada elemento en domainLabels.
+    local bc_domains_count
+    bc_domains_count=$(jq -r '.boundedContext.domains // [] | length' "$config")
+    if [ "$bc_domains_count" -eq 0 ]; then
+        echo "ERROR: boundedContext.domains esta vacio en $config." >&2
+        echo "  Debe contener al menos un dominio presente en domainLabels." >&2
+        return 1
+    fi
+
+    # Verificar que cada dominio del BC esta en domainLabels.
+    local invalid_domains=()
+    while IFS= read -r domain; do
+        [ -z "$domain" ] && continue
+        if ! printf '%s' "$HARNESS_DOMAIN_LABELS" | tr ' ' '\n' | grep -Fqx "$domain"; then
+            invalid_domains+=("$domain")
+        fi
+    done < <(jq -r '.boundedContext.domains[]' "$config" 2>/dev/null)
+
+    if [ ${#invalid_domains[@]} -gt 0 ]; then
+        echo "ERROR: boundedContext.domains contiene dominios no declarados en domainLabels:" >&2
+        printf "  '%s' no esta en domainLabels\n" "${invalid_domains[@]}" >&2
+        echo "  Los dominios del BC deben ser un subconjunto de domainLabels." >&2
         return 1
     fi
 
