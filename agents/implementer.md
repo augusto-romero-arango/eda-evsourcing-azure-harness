@@ -619,29 +619,51 @@ src/<RootNamespace>.{Dominio}/
 
 ## Infraestructura (topics y subscriptions)
 
-Cuando implementas un handler que publica eventos publicos (usando `IPublicEventSender`), verifica que la infraestructura de mensajeria existe.
+Cuando implementas un handler que publica eventos (usando `IPublicEventSender` o `IPrivateEventSender`), verifica que la infraestructura de mensajeria existe. El namespace destino depende del tipo del evento.
 
 **Nomenclatura ServiceBus:**
 - Topics: kebab-case, nombre del evento en pasado. Ej: `turno-creado`, `empleado-asignado`
 - Subscriptions: kebab-case, patron `{consumidor}-escucha-{productor}` (ADR-0005). Ej: `depuracion-escucha-marcaciones`, `calculo-horas-escucha-programacion`
 - Sin prefijos artificiales (ni `sbt-`, ni `eventos-`)
 
-**Archivo a modificar:** solo `infra/environments/dev/main.tf` — bloque `topics_config` del modulo `service_bus`. No toques los modulos ni otros ambientes.
+**Enrutamiento topic → namespace (ADR-0023, decision #2):**
+
+| Tipo de evento | Sender | Registro en Program.cs | Modulo Terraform |
+|---|---|---|---|
+| `IPrivateEvent` | `IPrivateEventSender` | `PublicarEventoServerless<T>(topic)` → broker default | `module "service_bus_interno"` |
+| `IPublicEvent` | `IPublicEventSender` | `PublicarEventoServerless<T>("integracion", topic)` → named broker | `module "service_bus_integracion"` |
+
+El criterio de enrutamiento del topic (a que modulo va) esta ligado al broker al que `Program.cs` registra ese evento: coherencia publish<->infra (ADR-0023). El `domain-scaffolder` genera ese registro al crear el dominio; el implementer no lo toca, solo respeta el namespace que corresponde al tipo del evento.
+
+**Wolverine en modo serverless NO auto-provisiona topics** (SendInline). Los namespaces son always-on (los crea la infra base); los topics se agregan JIT por flujo aqui (ADR-0001, ADR-0023).
+
+**Archivo a modificar:** solo `infra/environments/dev/main.tf` — bloque `topics_config` del modulo correcto (interno o integracion segun el tipo del evento). No toques los modulos ni otros ambientes.
+
+Evento privado (`IPrivateEvent`) → agrega el topic al bloque `topics_config` de `module "service_bus_interno"`:
 
 ```hcl
-module "service_bus" {
-  source = "../../modules/service-bus"
-  # ...
+module "service_bus_interno" {
+  # ... (parametros existentes sin cambios)
   topics_config = {
     "turno-creado" = {          # <- agregar el topic si no existe
       subscriptions = [
         { name = "depuracion-escucha-programacion", filter = null },  # <- patron: {consumidor}-escucha-{productor}
-        { name = "smoke-tests", filter = null, default_message_ttl = "PT5M" }  # <- siempre presente para verificar publicacion en smoke tests
+        { name = "smoke-tests", filter = null, default_message_ttl = "PT5M" }  # <- siempre presente (ADR-0013)
       ]
     }
-    "empleado-asignado" = {
+  }
+}
+```
+
+Evento publico (`IPublicEvent`) → agrega el topic al bloque `topics_config` de `module "service_bus_integracion"`:
+
+```hcl
+module "service_bus_integracion" {
+  # ... (parametros existentes sin cambios)
+  topics_config = {
+    "empleado-asignado" = {     # <- agregar el topic si no existe
       subscriptions = [
-        { name = "smoke-tests", filter = null, default_message_ttl = "PT5M" }  # <- aunque ningun dominio consuma aun
+        { name = "smoke-tests", filter = null, default_message_ttl = "PT5M" }  # <- aunque ningun dominio externo consuma aun
       ]
     }
   }
@@ -649,6 +671,8 @@ module "service_bus" {
 ```
 
 **Suscripcion `smoke-tests` siempre presente.** Cada topic publicado debe llevar la suscripcion `smoke-tests` con TTL 5m, incluso si no hay consumidores reales todavia. Razon: el smoke test del feature que publica al topic necesita esa suscripcion para verificar la publicacion (ADR-0013: cobertura completa de efectos secundarios). **No usar el argumento "el topic no tiene consumidores aun" para omitir la suscripcion** — ese fue el gap del PR #157, donde el feature publicaba un evento al topic `dia-calculado` sin suscripcion `smoke-tests`, dejando la publicacion sin cobertura. Si el issue del planner no listo el alta de la suscripcion en `## Impacto en archivos`, agregala tu aqui y documentalo en tu resumen como complemento al plan.
+
+**RBAC del productor:** el role assignment Azure Service Bus Data Sender (sobre el namespace de integracion) lo agrega el `domain-scaffolder` al crear el dominio, no el implementer (ver `agents/domain-scaffolder.md`). El implementer no emite role assignments.
 
 ---
 
@@ -766,7 +790,7 @@ una limitacion del framework, o un malentendido del requisito]
 
 ### 5. Verificar infraestructura (si aplica)
 
-Si el handler publica eventos publicos (`IPublicEventSender`), verifica que el topic y las subscriptions existen en `infra/environments/dev/main.tf`. Agrega lo que falte.
+Si el handler publica eventos (`IPublicEventSender` o `IPrivateEventSender`), verifica que el topic y las subscriptions existen en `infra/environments/dev/main.tf` en el modulo correcto (`service_bus_integracion` para `IPublicEvent`, `service_bus_interno` para `IPrivateEvent`). Agrega lo que falte segun la tabla de enrutamiento de la seccion "Infraestructura (topics y subscriptions)".
 
 ### 6. Verificar suite completa
 
@@ -847,7 +871,7 @@ Estas son reglas procedimentales del pipeline. **Las reglas arquitectonicas (pat
 4. **NUNCA** hagas try-catch de excepciones de dominio en el CommandHandler.
 5. **NUNCA** uses for/foreach cuando LINQ resuelve el problema.
 6. **NUNCA** adornes comentarios con caracteres decorativos Unicode ni composiciones complejas de separadores. Los comentarios deben ser simples y directos.
-7. **Solo modifica** `infra/environments/dev/main.tf` para infraestructura (y solo el bloque `topics_config`).
+7. **Solo modifica** `infra/environments/dev/main.tf` para infraestructura (y solo el bloque `topics_config` del modulo correcto: `service_bus_interno` para `IPrivateEvent`, `service_bus_integracion` para `IPublicEvent`).
 8. **Lee los ADRs listados en `## ADRs aplicables` del issue antes de escribir codigo.** Si el issue no tiene esa seccion o esta vacia, detente y reporta gap al llamador (ver paso 1b). No asumas. No improvises.
 9. **Precedente ≠ autoridad.** Un patron visto en otro archivo, PR o commit del proyecto NO es fuente de verdad arquitectonica — los ADRs lo son. Antes de replicar cualquier patron del codigo existente, verifica que cumple los ADRs aplicables. Si el precedente los viola (ejemplo tipico: `[JsonConstructor]` en ctor privado cuando ADR-0012 lo proscribe), reportalo como bug en tu resumen de decisiones y NO lo replicues. Aplica el patron correcto segun el ADR.
 10. **Documenta toda desviacion consciente de un ADR o del plan del planner.** Si decides apartarte deliberadamente de un ADR listado en el issue (por razon tecnica legitima), registralo en la seccion "Desviaciones de ADRs" del resumen del pipeline con el formato especificado (regla del ADR, desviacion aplicada, razon, consecuencia conocida). Si decides apartarte de una sugerencia concreta del planner (nombre de archivo de "Impacto en archivos", visibilidad o firma de "Interfaz publica propuesta"), registralo en una seccion paralela "Desviaciones del plan del planner" con el mismo formato (sugerencia del issue, desviacion aplicada, razon tecnica, consecuencia). Recuerda: el plan del planner es una sugerencia basada en su investigacion, no un mandato — pero apartarse sin documentar es el peor outcome posible. Esto queda disponible para evaluacion del usuario.
