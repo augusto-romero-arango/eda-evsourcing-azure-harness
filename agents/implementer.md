@@ -285,7 +285,7 @@ El `Connection` del trigger determina a que namespace de ASB se conecta Azure Fu
 | Namespace de integracion del propio BC (`sbext-*`) | `IPublicEvent` del mismo BC | `SERVICE_BUS_CONNECTION_INTEGRACION` |
 | Namespace de integracion de **otro** BC | Evento publico inter-BC | **Diferido** (Context Map, #131) |
 
-**Caso soportado hoy** — consumo intra-BC: un dominio reacciona a un evento privado (`IPrivateEvent`) publicado por otro dominio del mismo BC al namespace interno. Usar `SERVICE_BUS_CONNECTION_INTERNO`.
+**Caso soportado hoy** — consumo intra-BC: un dominio reacciona a un evento privado (`IPrivateEvent`) publicado por otro dominio del mismo BC al namespace interno. Usar `SERVICE_BUS_CONNECTION_INTERNO`. Mismo criterio BC-aware que "Donde vive cada tipo de evento" (mas abajo): privado significa mismo BC, no mismo dominio.
 
 **Consumo inter-BC diferido**: suscribirse al namespace de integracion de un BC ajeno queda fuera de alcance hasta que el Context Map (#131) defina el mecanismo de credenciales cross-BC. No se wirea hoy; al mencionarlo en el codigo o en la guia, dejarlo como `// TODO(#131): inter-BC diferido`.
 
@@ -531,11 +531,16 @@ public override string ToString()
 
 | Tipo | Interfaz | Ubicacion | Namespace | Forma del payload |
 |------|----------|-----------|-----------|-------------------|
-| Publico (entre dominios) | `IPublicEvent` | `Contracts/Eventos/` | `<RootNamespace>.Contracts.Eventos` | **plano y portable** |
-| Privado (dentro del dominio) | `IPrivateEvent` | `{Dominio}/{Feature}/Eventos/` | `...{Dominio}.{Feature}.Eventos` | **plano y portable** |
+| Publico (inter-BC) | `IPublicEvent` | `Contracts/Eventos/` | `<RootNamespace>.Contracts.Eventos` | **plano y portable** |
+| Privado (intra-BC) | `IPrivateEvent` | `{Dominio}/{Feature}/Eventos/` | `...{Dominio}.{Feature}.Eventos` | **plano y portable** |
 | Event sourcing (aggregate) | ninguna | `{Dominio}/Entities/` o `{Feature}/Eventos/` | segun organizacion vertical | modelo rico permitido |
 
-Un evento es publico si otro dominio lo consume (via ServiceBus). La verdad viaja en el evento — el consumidor solo depende de Contracts.
+**Criterio BC-aware (ADR-0023, decisiones #2 y #4):** un evento es **publico (inter-BC)** si lo
+consume un dominio de **otro Bounded Context**; es **privado (intra-BC)** si lo consume un dominio
+del **mismo BC**, aunque sea un dominio distinto al productor. Cruzar de dominio no alcanza por si
+solo para ser publico -- el factor decisivo es el Bounded Context del consumidor, no si comparte
+codigo con el productor. Ver el mismo criterio aplicado del lado consumo en "El Connection del
+trigger" (mas arriba). Doctrina raiz: **ADR-0023**; este agente no la duplica.
 
 **Restriccion de forma del payload (criterio: ¿cruza un bus?).** Todo evento con marker de bus
 (`IPublicEvent` o `IPrivateEvent`) debe tener un payload **plano y portable**: solo tipos
