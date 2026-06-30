@@ -277,7 +277,7 @@ Registrar en Program.cs: `builder.Services.AddScoped<IRequestValidator, RequestV
 
 **Convencion de `Connection` del `[ServiceBusTrigger]` (ADR-0023)**
 
-El `Connection` del trigger determina a que namespace de ASB se conecta Azure Functions para escuchar el topic. Debe coincidir con el app setting del namespace donde el **productor** publico el evento. Los app settings los provisiona Terraform (via `domain-scaffolder`) y los registra Wolverine en `Program.cs`; publish y consumo usan exactamente los mismos nombres:
+El `Connection` del trigger determina a que namespace de ASB se conecta Azure Functions para escuchar el topic. Debe coincidir con el app setting del namespace donde el **productor** publico el evento. Esos app settings los provisiona Terraform (via `domain-scaffolder`); el lado **publish** lee sus valores en `Program.cs` para registrar los brokers de Wolverine, mientras que en el lado **consumo** es Azure Functions —no Wolverine— quien lee el `Connection` del `[ServiceBusTrigger]`. Ambos lados citan exactamente los mismos nombres de app setting:
 
 | Origen del topic | Tipo de evento | `Connection` del trigger |
 |---|---|---|
