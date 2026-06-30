@@ -645,9 +645,14 @@ Evento privado (`IPrivateEvent`) → agrega el topic al bloque `topics_config` d
 module "service_bus_interno" {
   # ... (parametros existentes sin cambios)
   topics_config = {
-    "turno-creado" = {          # <- agregar el topic si no existe
+    "turno-creado" = {          # <- IPrivateEvent (lo publica CrearTurnoCommandHandler via IPrivateEventSender)
       subscriptions = [
         { name = "depuracion-escucha-programacion", filter = null },  # <- patron: {consumidor}-escucha-{productor}
+        { name = "smoke-tests", filter = null, default_message_ttl = "PT5M" }  # <- siempre presente (ADR-0013)
+      ]
+    }
+    "empleado-asignado" = {     # <- IPrivateEvent (lo publica AsignarEmpleadoATurnoCommandHandler via IPrivateEventSender)
+      subscriptions = [
         { name = "smoke-tests", filter = null, default_message_ttl = "PT5M" }  # <- siempre presente (ADR-0013)
       ]
     }
@@ -661,9 +666,9 @@ Evento publico (`IPublicEvent`) → agrega el topic al bloque `topics_config` de
 module "service_bus_integracion" {
   # ... (parametros existentes sin cambios)
   topics_config = {
-    "empleado-asignado" = {     # <- agregar el topic si no existe
+    "dia-calculado" = {         # <- IPublicEvent (se publica via IPublicEventSender al namespace de integracion)
       subscriptions = [
-        { name = "smoke-tests", filter = null, default_message_ttl = "PT5M" }  # <- aunque ningun dominio externo consuma aun
+        { name = "smoke-tests", filter = null, default_message_ttl = "PT5M" }  # <- siempre presente (ADR-0013), aunque ningun dominio de otro BC consuma aun
       ]
     }
   }
