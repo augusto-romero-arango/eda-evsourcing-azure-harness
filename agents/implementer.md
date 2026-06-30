@@ -275,6 +275,20 @@ Registrar en Program.cs: `builder.Services.AddScoped<IRequestValidator, RequestV
 
 ### Endpoint ServiceBus
 
+**Convencion de `Connection` del `[ServiceBusTrigger]` (ADR-0023)**
+
+El `Connection` del trigger determina a que namespace de ASB se conecta Azure Functions para escuchar el topic. Debe coincidir con el app setting del namespace donde el **productor** publico el evento. Esos app settings los provisiona Terraform (via `domain-scaffolder`); el lado **publish** lee sus valores en `Program.cs` para registrar los brokers de Wolverine, mientras que en el lado **consumo** es Azure Functions —no Wolverine— quien lee el `Connection` del `[ServiceBusTrigger]`. Ambos lados citan exactamente los mismos nombres de app setting:
+
+| Origen del topic | Tipo de evento | `Connection` del trigger |
+|---|---|---|
+| Namespace interno del BC (`sbint-*`) | `IPrivateEvent` intra-BC | `SERVICE_BUS_CONNECTION_INTERNO` |
+| Namespace de integracion del propio BC (`sbext-*`) | `IPublicEvent` del mismo BC | `SERVICE_BUS_CONNECTION_INTEGRACION` |
+| Namespace de integracion de **otro** BC | Evento publico inter-BC | **Diferido** (Context Map, #131) |
+
+**Caso soportado hoy** — consumo intra-BC: un dominio reacciona a un evento privado (`IPrivateEvent`) publicado por otro dominio del mismo BC al namespace interno. Usar `SERVICE_BUS_CONNECTION_INTERNO`.
+
+**Consumo inter-BC diferido**: suscribirse al namespace de integracion de un BC ajeno queda fuera de alcance hasta que el Context Map (#131) defina el mecanismo de credenciales cross-BC. No se wirea hoy; al mencionarlo en el codigo o en la guia, dejarlo como `// TODO(#131): inter-BC diferido`.
+
 ```csharp
 public class FunctionEndpoint(ICommandRouter commandRouter, ILogger<FunctionEndpoint> logger)
 {
@@ -282,10 +296,6 @@ public class FunctionEndpoint(ICommandRouter commandRouter, ILogger<FunctionEndp
     public async Task DepurarMarcacionesCuandoTurnoCreado(
         [ServiceBusTrigger("turno-creado", "depuracion-escucha-programacion",
             Connection = "SERVICE_BUS_CONNECTION_INTERNO")]
-        // NOTA: El Connection debe coincidir con el app setting provisionado por Terraform
-        // (domain-scaffolder: SERVICE_BUS_CONNECTION_INTERNO para eventos intra-BC via IPrivateEvent;
-        // SERVICE_BUS_CONNECTION_INTEGRACION para eventos inter-BC via IPublicEvent).
-        // Pendiente de unificar nomenclatura exacta con decision de issue #147.
         ServiceBusReceivedMessage message,
         ServiceBusMessageActions messageActions,
         CancellationToken ct)

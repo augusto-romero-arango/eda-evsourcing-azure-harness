@@ -408,6 +408,9 @@ namespace <RootNamespace>.{PascalCase}.Infraestructura;
 /// Clase base para FunctionEndpoints de ServiceBus.
 /// Encapsula la orquestacion: deserializar -> despachar al command router -> complete/lock-lost/dead-letter.
 /// Cada endpoint concreto hereda, define [Function] + [ServiceBusTrigger] y delega a <see cref="ProcesarMensaje"/>.
+/// El Connection del [ServiceBusTrigger] lo elige el endpoint concreto segun el namespace de origen del topic
+/// (SERVICE_BUS_CONNECTION_INTERNO para IPrivateEvent intra-BC; SERVICE_BUS_CONNECTION_INTEGRACION para IPublicEvent
+/// del mismo BC). Ver la tabla de convencion en la seccion "Endpoint ServiceBus" de agents/implementer.md (ADR-0023).
 /// </summary>
 public abstract class ServiceBusEndpointBase<TEvento>(ICommandRouter commandRouter, ILogger logger)
     where TEvento : class
