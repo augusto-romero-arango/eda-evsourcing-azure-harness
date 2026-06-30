@@ -200,7 +200,9 @@ var builder = FunctionsApplication.CreateBuilder(args);
 builder.ConfigureFunctionsWebApplication();
 
 var martenConnectionString = Environment.GetEnvironmentVariable("MartenConnectionString")!;
-var serviceBusConnectionString = Environment.GetEnvironmentVariable("SERVICE_BUS_CONNECTION")!;
+// Dos namespaces ASB por BC (ADR-0023): interno para IPrivateEvent, integracion para IPublicEvent.
+var serviceBusInterno = Environment.GetEnvironmentVariable("SERVICE_BUS_CONNECTION_INTERNO")!;
+var serviceBusIntegracion = Environment.GetEnvironmentVariable("SERVICE_BUS_CONNECTION_INTEGRACION")!;
 
 builder.Services.AgregarWolverineParaComandosServerless(
     typeof(I{PascalCase}AssemblyMarker).Assembly,
@@ -209,7 +211,16 @@ builder.Services.AgregarWolverineParaComandosServerless(
     builder.Environment.IsDevelopment(),
     options =>
     {
-        options.HabilitarAzureServiceBusParaServerLess(serviceBusConnectionString);
+        // Broker default: namespace interno (IPrivateEvent -> sbint-*). ADR-0023, decision #2.
+        options.HabilitarAzureServiceBusParaServerLess(serviceBusInterno);
+        // Named broker: namespace de integracion (IPublicEvent -> sbext-*). ADR-0023, decision #2.
+        options.AgregarAzureServiceBusNombradoServerless("integracion", serviceBusIntegracion);
+        // Enrutamiento por tipo (ADR-0023, decision #4):
+        //   IPrivateEvent -> PublicarEventoServerless<T>(topic)                -> broker default -> interno
+        //   IPublicEvent  -> PublicarEventoServerless<T>("integracion", topic) -> named broker  -> integracion
+        // AVISO CA-9: NO usar PublicarEventosServerless(Assembly contratos) completo: filtra por
+        //   IsAssignableTo(typeof(IEvent)), captura IPrivateEvent e IPublicEvent juntos y enruta
+        //   todo al mismo broker, rompiendo la separacion de namespaces. Registrar siempre por tipo.
     });
 
 builder.Services.AgregarMartenEventStore();
@@ -235,6 +246,10 @@ builder.Services.AddValidatorsFromAssemblyContaining<I{PascalCase}AssemblyMarker
 
 await builder.Build().RunAsync();
 ```
+
+> **CA-9 — Aviso sobre el helper bulk `PublicarEventosServerless`**: No uses `PublicarEventosServerless(nombreConexion, topicName, Assembly contratos)` con el assembly completo de contratos para registrar eventos. Ese helper filtra por `IsAssignableTo(typeof(IEvent))` y captura tanto `IPrivateEvent` como `IPublicEvent` juntos, enrutando todo al mismo broker y rompiendo la separacion de namespaces (ADR-0023, decision #2). El registro debe hacerse **por tipo**, separando explicitamente privados de publicos:
+> - `IPrivateEvent`: `options.PublicarEventoServerless<TEvento>(topic)` → broker default → namespace interno
+> - `IPublicEvent`: `options.PublicarEventoServerless<TEvento>("integracion", topic)` → named broker → namespace de integracion
 
 **7. Crear la interface marker `I{PascalCase}AssemblyMarker.cs`** en la raiz del proyecto (marker para assembly scanning de Wolverine y FluentValidation):
 
@@ -287,7 +302,8 @@ public interface I{PascalCase}AssemblyMarker;
 
 ```json
 "MartenConnectionString": "Host=localhost;Database=controlasistencias;Username=postgres;Password=postgres",
-"SERVICE_BUS_CONNECTION": "<pendiente-configurar>"
+"SERVICE_BUS_CONNECTION_INTERNO": "<pendiente-configurar-namespace-interno>",
+"SERVICE_BUS_CONNECTION_INTEGRACION": "<pendiente-configurar-namespace-integracion>"
 ```
 
 **10. Verificar que Contracts tenga `Cosmos.EventDriven.Abstractions`:**
@@ -1319,11 +1335,20 @@ module "function_app_{snake_case}" {
   storage_account_access_key        = module.storage_{snake_case}.primary_access_key
   app_insights_connection_string    = module.monitoring.connection_string
   app_settings = {
-    SERVICE_BUS_CONNECTION = module.service_bus.default_primary_connection_string
-    DOMINIO                = "{kebab}"
-    MartenConnectionString = "Host=${module.postgresql.server_fqdn};Database=${module.postgresql.database_name};Username=pgadmin;Password=${var.postgresql_admin_password};SSL Mode=Require"
+    SERVICE_BUS_CONNECTION_INTERNO     = module.service_bus_interno.default_primary_connection_string
+    SERVICE_BUS_CONNECTION_INTEGRACION = module.service_bus_integracion.default_primary_connection_string
+    DOMINIO                            = "{kebab}"
+    MartenConnectionString             = "Host=${module.postgresql.server_fqdn};Database=${module.postgresql.database_name};Username=pgadmin;Password=${var.postgresql_admin_password};SSL Mode=Require"
   }
   tags = local.tags
+}
+
+# Rol Data Sender del productor sobre el namespace de integracion (ADR-0023, decision #5).
+# Scope a nivel de namespace; RBAC fino por topic/subscription es recomendacion diferida.
+resource "azurerm_role_assignment" "sb_integracion_sender_{snake_case}" {
+  scope                = module.service_bus_integracion.id
+  role_definition_name = "Azure Service Bus Data Sender"
+  principal_id         = module.function_app_{snake_case}.principal_id
 }
 ```
 
@@ -1331,7 +1356,7 @@ Donde `{kebab-sin-guiones}` es el nombre del dominio con los guiones eliminados 
 
 **Cada dominio recibe su propio `module service_plan_{snake_case}`**: el `service_plan_id` de la Function App apunta a `module.service_plan_{snake_case}.id`, nunca a un plan compartido. No referencies un `module.service_plan` global; ese patron (todas las Function Apps en un solo plan) es justo el que ADR-0020 proscribe.
 
-> **Nota (infraestructura base)**: estos bloques referencian `module.resource_group`, `module.monitoring`, `module.postgresql`, `module.service_bus` y los modulos `../../modules/storage`, `../../modules/service-plan`, `../../modules/function-app`. **El harness los provee**: los genera el agente `infra-base-scaffolder` (skill `/infra-base`), que escribe los 7 modulos base y el esqueleto del entorno (ver **ADR-0021**). Verifica que existan antes de hacer commit:
+> **Nota (infraestructura base)**: estos bloques referencian `module.resource_group`, `module.monitoring`, `module.postgresql`, `module.service_bus_interno`, `module.service_bus_integracion` y los modulos `../../modules/storage`, `../../modules/service-plan`, `../../modules/function-app`. **El harness los provee**: los genera el agente `infra-base-scaffolder` (skill `/infra-base`), que escribe los 7 modulos base y el esqueleto del entorno con los dos namespaces ASB (ver **ADR-0021**, **ADR-0023**). Verifica que existan antes de hacer commit:
 > ```bash
 > test -d infra/modules/postgresql && test -d infra/modules/service-plan && test -d infra/modules/function-app && test -f infra/environments/{env}/main.tf && echo "base OK" || echo "FALTA la infraestructura base"
 > ```
@@ -1687,6 +1712,7 @@ Scaffold completado para el dominio "{kebab}":
     appsettings.json                       - URL + placeholders vacios para ServiceBus y Postgres
 
   infra/environments/dev/main.tf           - module storage + module service_plan (dedicado) + module function_app
+                                             + azurerm_role_assignment Data Sender en namespace de integracion (ADR-0023)
                                              App Service Plan asp-{prefix_func}-{kebab} (SKU {sku_name}, always_on {always_on}), ADR-0020
                                              (topics se crean bajo demanda con implementer)
 
