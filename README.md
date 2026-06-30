@@ -101,7 +101,11 @@ Crea `.claude/harness.config.json` en la raíz del proyecto consumidor:
   "githubServicePrincipalName": "github-miproyecto-ci",
   "appInsightsApp": "miproyecto-dev-ai",
   "azureLocation": "eastus2",
-  "domainLabels": ["dominio1", "dominio2"]
+  "domainLabels": ["dominio1", "dominio2"],
+  "boundedContext": {
+    "name": "Principal",
+    "domains": ["dominio1", "dominio2"]
+  }
 }
 ```
 
@@ -117,6 +121,15 @@ Crea `.claude/harness.config.json` en la raíz del proyecto consumidor:
 >
 > Si lista SKUs (entre ellas `Standard_B1ms`, la SKU de cómputo que usa el módulo `postgresql` — `list-skus` y `--sku-name` la nombran así, con el tier `Burstable` como parámetro aparte; el provider `azurerm` la declara en `sku_name` como `B_Standard_B1ms`, anteponiendo el tier, que es el valor que figura en la tabla de módulos del ADR-0021), la región sirve para tu suscripción; si sale vacío o falla, elige otra (p. ej. `centralus`). El comando es la referencia oficial de Azure CLI ([`az postgres flexible-server list-skus`](https://learn.microsoft.com/cli/azure/postgres/flexible-server)). Ver ADR-0021, sección "Región de PostgreSQL Flexible Server".
 
+**Campo `boundedContext`** (**obligatorio**, ADR-0023): declara el Bounded Context del proyecto. Un BC es un grupo de dominios relacionados que comparte un resource group de Azure y dos namespaces de Azure Service Bus (interno e integración). `load_harness_config` valida los dos subfields y exporta `HARNESS_BC_NAME` y `HARNESS_BC_DOMAINS`:
+
+- **`name`**: nombre del BC, 1-63 caracteres alfanuméricos y guiones. Puede coincidir o no con `projectName` (ej: "Principal", "Admin", "Core").
+- **`domains`**: array de dominios del BC, no vacío. Cada elemento debe estar en `domainLabels`. Los dominios del BC son un subconjunto de todos los dominios del proyecto (en proyectos con un solo BC, el subconjunto es igual a `domainLabels`).
+
+El resource group del BC se forma como `infraResourceGroupPrefix`+`-`+`name` (ej: `rg-miproyecto-principal`). El context map (registro de BCs externos) es trabajo diferido; hoy el BC solo se nombra a sí mismo.
+
+> **Proyectos existentes (que vienen de una versión sin este campo)**: si `boundedContext` no está en tu config, `load_harness_config` aborta con un mensaje accionable que muestra el shape exacto a añadir y un ejemplo con tus `domainLabels` actuales. Corre `/mefisto:onboard` para obtener el diagnóstico, o lee la sección **"Migración para consumidores existentes"** al final de este documento.
+
 **Campo opcional `repoSlug`**: el slug `owner/repo` del repositorio de Mefisto al que se enrutan los **drafts cross-repo** (`estado:borrador`) que crean el `planner` y el `tooling-investigator` cuando detectan que un problema descubierto en tu proyecto pertenece al harness. Sirve para redirigir esos drafts a **tu fork** de Mefisto en vez del repo upstream. Si no lo declaras, el default es `augusto-romero-arango/eda-evsourcing-azure-harness`. No se exporta como variable `HARNESS_*`: se lee directo con `jq` donde se necesita (`scripts/_pipeline-common.sh`, `agents/planner.md`, `agents/tooling-investigator.md`). Es **opcional** (añadirlo no es MAJOR).
 
 Y añade una sección a `CLAUDE.md` raíz del consumidor declarando los tokens:
@@ -127,7 +140,11 @@ Y añade una sección a `CLAUDE.md` raíz del consumidor declarando los tokens:
 - **RootNamespace**: MiOrg.MiProyecto
 - **SolutionFile**: MiProyecto.slnx
 - **ProjectDisplayName**: MiProyecto
+- **BoundedContext**: Principal  (nombre del BC; corresponde a `boundedContext.name` en harness.config.json)
+- **BoundedContextDomains**: dominio1, dominio2  (lista separada por comas; corresponde a `boundedContext.domains`)
 ```
+
+`BoundedContext` es el nombre del Bounded Context: grupo de dominios relacionados que comparte resource group y namespaces de Azure Service Bus (ADR-0023).
 
 ### 4. Verificar instalación
 
@@ -353,6 +370,35 @@ Skills internos disponibles (todos con prefijo `mefisto-`):
 Cada skill interno verifica al inicio que estás en el repo de Mefisto (presencia de `.claude-plugin/plugin.json`) y aborta si no.
 
 Cuando descubras desde un consumidor un problema atribuible al plugin, el tooling-investigator publicado puede **crear un draft cross-repo** en este repo (con `gh issue create -R augusto-romero-arango/eda-evsourcing-azure-harness --label "estado:borrador" …`). Luego, dentro del repo de Mefisto, refinas el draft con `/mefisto-plan` y lo implementas con `/mefisto-tooling`.
+
+## Migración para consumidores existentes
+
+### Añadir `boundedContext`
+
+El campo `boundedContext` es **obligatorio** (ADR-0023). Si actualizas desde una versión que no lo exigía, `load_harness_config` abortará con un mensaje que muestra el shape exacto a añadir. Para migrar:
+
+1. **Abre `.claude/harness.config.json`** de tu proyecto y añade el campo `boundedContext` antes del cierre `}`:
+
+   ```json
+   "boundedContext": {
+     "name": "Principal",
+     "domains": ["dominio1", "dominio2"]
+   }
+   ```
+
+   - `name`: elige un nombre para tu BC (ej: "Principal", "Admin", "Core"). Puede coincidir con `projectName`.
+   - `domains`: lista tus `domainLabels` actuales. Si todos tus dominios pertenecen a un solo BC (caso más común), pon todos. Si tienes múltiples BCs futuros, pon solo los que pertenecen a este BC.
+
+2. **Añade los tokens al `CLAUDE.md`** de tu proyecto (sección "Tokens del harness"):
+
+   ```markdown
+   - **BoundedContext**: Principal
+   - **BoundedContextDomains**: dominio1, dominio2
+   ```
+
+3. **Verifica con `/mefisto:onboard`**: el checklist mostrará `[OK] boundedContext declarado: name='Principal' domains='...'`.
+
+> **Tip**: si tienes dudas sobre el nombre del BC, usa el mismo `projectName`. La convención del harness es `BC name ≈ projectName` cuando hay un solo BC por proyecto.
 
 ## Compatibilidad y versionado
 

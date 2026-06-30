@@ -22,7 +22,7 @@ Si el bloque imprime `ERROR`, detente y muestra el mensaje al usuario.
 
 `/onboard` es el primer corte del onboarding automatizado (el "doctor" diagnostico). Reporta, sin tocar nada:
 
-1. **Configuracion** (`.claude/harness.config.json`): existencia, parseo con `jq`, campos requeridos (`projectName`, `namespacePrefix`, `solutionFile`) y formato de `terraformStateStorage`. La validacion la hace `load_harness_config` del plugin, que es la **unica fuente de verdad** de la regla del tfstate (`^[a-z0-9]{3,24}$`).
+1. **Configuracion** (`.claude/harness.config.json`): existencia, parseo con `jq`, campos requeridos (`projectName`, `namespacePrefix`, `solutionFile`, `boundedContext`) y formato de `terraformStateStorage`. La validacion la hace `load_harness_config` del plugin, que es la **unica fuente de verdad** de las reglas del tfstate (`^[a-z0-9]{3,24}$`) y del BC (`name` 1-63 chars; `domains` subconjunto de `domainLabels`).
 2. **Labels de GitHub** (ADR-0007): que existan `tipo:*`, `estado:borrador`, `estado:listo`, `dom:<x>` por cada `domainLabels`, mas `bug` y `bloqueado`.
 3. **CI hacia Azure** (ADR-0022): que exista la aplicacion de Entra / Service Principal y los secrets OIDC del repo. Tolerante: si no hay `az` o sesion, reporta `NO VERIFICADO` en vez de fallar.
 
@@ -79,6 +79,15 @@ if [ -n "${PLUGIN_COMMON:-}" ] && [ -f "${PLUGIN_COMMON:-}" ]; then
   if [ "$LHC_RC" -eq 0 ]; then
     row OK "el archivo existe y parsea con jq"
     row OK "campos requeridos presentes (projectName, namespacePrefix, solutionFile)"
+    if [ -n "${HARNESS_BC_NAME:-}" ]; then
+      row OK "boundedContext declarado: name='${HARNESS_BC_NAME}' domains='${HARNESS_BC_DOMAINS}'"
+    else
+      row FALTA "boundedContext ausente o invalido (campo obligatorio, ADR-0023)"
+      ACTIONS="${ACTIONS}  - Falta 'boundedContext' en .claude/harness.config.json. Añade:
+    \"boundedContext\": { \"name\": \"<NombreDetuBC>\", \"domains\": [<tus domainLabels>] }
+  Los dominios deben ser un subconjunto de domainLabels. Ver README seccion 'Migracion para consumidores existentes'.
+"
+    fi
     if [ -n "${HARNESS_TFSTATE_STORAGE:-}" ]; then
       row OK "terraformStateStorage valido: ${HARNESS_TFSTATE_STORAGE}"
     else
