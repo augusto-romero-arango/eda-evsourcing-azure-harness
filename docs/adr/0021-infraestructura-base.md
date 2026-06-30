@@ -41,7 +41,7 @@ ADR-0023 (decision #2) establece que cada Bounded Context provisiona exactamente
 | **Namespace interno** | Eventos privados intra-BC; mensajeria entre dominios del mismo BC | `IPrivateEventSender` |
 | **Namespace de integracion** | Eventos publicos inter-BC; los consumidores externos se suscriben aqui | `IPublicEventSender` |
 
-La separacion es **topologica** (dos namespaces fisicos), no una convencion de naming dentro de un namespace unico. El namespace interno no es alcanzable desde fuera del BC: un consumidor externo solo puede recibir credenciales/RBAC sobre el namespace de integracion; el namespace interno no existe en su contexto de autenticacion. Este aislamiento es una propiedad arquitectonica del diseño, no una responsabilidad de configuracion.
+La separacion es **topologica** (dos namespaces fisicos), no una convencion de naming dentro de un namespace unico. El namespace interno no es alcanzable desde fuera del BC: un consumidor externo solo puede recibir credenciales/RBAC sobre el namespace de integracion, al que se suscribe siguiendo el patron Open Host Service (ADR-0023, decision #5); el namespace interno no existe en su contexto de autenticacion. Este aislamiento es una propiedad arquitectonica del diseño, no una responsabilidad de configuracion.
 
 **El enrutamiento (privado/publico) es puramente topologico**: la unica diferencia entre publicar en el namespace interno y en el de integracion es el namespace destino (`IPrivateEventSender` vs `IPublicEventSender`). Ambas categorias de evento son planas y portables (ADR-0023 decision #3, reformado en #122): el criterio de "plano" es "¿cruza un bus?", no "¿es publico?". No existe una regla distinta de serializacion entre eventos privados y publicos; ambos deben ser planos porque ambos cruzan un bus.
 
@@ -157,7 +157,7 @@ Un solo agente que crea backend + modulos + entorno.
 
 - **El HCL base vive como prosa en el prompt del agente** (no como archivos `.tf` versionados del plugin), igual que el HCL del Paso 4 del `domain-scaffolder`. Mantenerlo exige editar el agente, no un archivo Terraform. Es el costo consciente del patron "agente emisor" del harness (ADR-0019) y se acepta por consistencia.
 - **Deriva potencial entre el HCL del agente y el del Paso 4 del scaffolder**: ambos deben mantenerse coherentes (mismos nombres de modulo, mismos locals `prefix`/`prefix_func`). Se mitiga documentando el contrato en este ADR.
-- **Cada BC provisiona dos namespaces de Service Bus en vez de uno, duplicando el recurso** (nombres DNS publicos, planes de precios del namespace, gestion de topics/subscriptions). Mitigado por `infra-base-scaffolder` (siendo #130) que emite el HCL base del BC con ambas instancias ya parametrizadas.
+- **Cada BC provisiona dos namespaces de Service Bus en vez de uno, duplicando el recurso** (nombres DNS publicos, planes de precios del namespace, gestion de topics/subscriptions). Mitigado por `infra-base-scaffolder` (que materializara el HCL en el issue #130) que emite el HCL base del BC con ambas instancias ya parametrizadas.
 - **El Context Map queda diferido**: la declaracion formal de que BCs existen y como se conectan entre si (que BCs producen eventos publicos, que BCs los consumen, asignacion de RBAC cross-BC) no se materializa en este ADR; un consumidor que integra multiples BCs debe gestionar manualmente las conexiones hasta que #131 y sus sucesores lo formalicen.
 
 ## Referencias
