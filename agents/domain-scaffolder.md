@@ -218,7 +218,7 @@ builder.Services.AgregarWolverineParaComandosServerless(
         // Enrutamiento por tipo (ADR-0023, decision #4):
         //   IPrivateEvent -> PublicarEventoServerless<T>(topic)                -> broker default -> interno
         //   IPublicEvent  -> PublicarEventoServerless<T>("integracion", topic) -> named broker  -> integracion
-        // AVISO CA-9: NO usar PublicarEventosServerless(Assembly contratos) completo: filtra por
+        // AVISO: NO usar PublicarEventosServerless(Assembly contratos) completo: filtra por
         //   IsAssignableTo(typeof(IEvent)), captura IPrivateEvent e IPublicEvent juntos y enruta
         //   todo al mismo broker, rompiendo la separacion de namespaces. Registrar siempre por tipo.
     });
