@@ -79,7 +79,7 @@ load_harness_config() {
         return 1
     fi
 
-    # boundedContext es obligatorio desde v0.9.0 (issue #131, ADR-0023).
+    # boundedContext es obligatorio (issue #131, ADR-0023).
     # Si esta ausente, emite un mensaje accionable de migracion con el shape
     # exacto a anadir y un ejemplo usando los domainLabels ya presentes.
     local bc_present
@@ -87,7 +87,7 @@ load_harness_config() {
     if [ "$bc_present" = "no" ]; then
         local example_domains
         example_domains=$(jq -r '.domainLabels // [] | map("\"" + . + "\"") | join(", ")' "$config")
-        echo "ERROR: falta 'boundedContext' en $config (campo obligatorio desde v0.9.0)." >&2
+        echo "ERROR: falta 'boundedContext' en $config (campo obligatorio, ADR-0023)." >&2
         echo "  El campo 'boundedContext' es requerido por ADR-0023 (Bounded Context)." >&2
         echo "  Anade el siguiente bloque a tu harness.config.json:" >&2
         echo "    \"boundedContext\": {" >&2

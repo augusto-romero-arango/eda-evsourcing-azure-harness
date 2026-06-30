@@ -121,14 +121,14 @@ Crea `.claude/harness.config.json` en la raíz del proyecto consumidor:
 >
 > Si lista SKUs (entre ellas `Standard_B1ms`, la SKU de cómputo que usa el módulo `postgresql` — `list-skus` y `--sku-name` la nombran así, con el tier `Burstable` como parámetro aparte; el provider `azurerm` la declara en `sku_name` como `B_Standard_B1ms`, anteponiendo el tier, que es el valor que figura en la tabla de módulos del ADR-0021), la región sirve para tu suscripción; si sale vacío o falla, elige otra (p. ej. `centralus`). El comando es la referencia oficial de Azure CLI ([`az postgres flexible-server list-skus`](https://learn.microsoft.com/cli/azure/postgres/flexible-server)). Ver ADR-0021, sección "Región de PostgreSQL Flexible Server".
 
-**Campo `boundedContext`** (**obligatorio** desde v0.9.0, ADR-0023): declara el Bounded Context del proyecto. Un BC es un grupo de dominios relacionados que comparte un resource group de Azure y dos namespaces de Azure Service Bus (interno e integración). `load_harness_config` valida los dos subfields y exporta `HARNESS_BC_NAME` y `HARNESS_BC_DOMAINS`:
+**Campo `boundedContext`** (**obligatorio**, ADR-0023): declara el Bounded Context del proyecto. Un BC es un grupo de dominios relacionados que comparte un resource group de Azure y dos namespaces de Azure Service Bus (interno e integración). `load_harness_config` valida los dos subfields y exporta `HARNESS_BC_NAME` y `HARNESS_BC_DOMAINS`:
 
 - **`name`**: nombre del BC, 1-63 caracteres alfanuméricos y guiones. Puede coincidir o no con `projectName` (ej: "Principal", "Admin", "Core").
 - **`domains`**: array de dominios del BC, no vacío. Cada elemento debe estar en `domainLabels`. Los dominios del BC son un subconjunto de todos los dominios del proyecto (en proyectos con un solo BC, el subconjunto es igual a `domainLabels`).
 
 El resource group del BC se forma como `infraResourceGroupPrefix`+`-`+`name` (ej: `rg-miproyecto-principal`). El context map (registro de BCs externos) es trabajo diferido; hoy el BC solo se nombra a sí mismo.
 
-> **Proyectos existentes (anteriores a v0.9.0)**: si `boundedContext` no está en tu config, `load_harness_config` aborta con un mensaje accionable que muestra el shape exacto a añadir y un ejemplo con tus `domainLabels` actuales. Corre `/mefisto:onboard` para obtener el diagnóstico, o lee la sección **"Migración para consumidores existentes"** al final de este documento.
+> **Proyectos existentes (que vienen de una versión sin este campo)**: si `boundedContext` no está en tu config, `load_harness_config` aborta con un mensaje accionable que muestra el shape exacto a añadir y un ejemplo con tus `domainLabels` actuales. Corre `/mefisto:onboard` para obtener el diagnóstico, o lee la sección **"Migración para consumidores existentes"** al final de este documento.
 
 **Campo opcional `repoSlug`**: el slug `owner/repo` del repositorio de Mefisto al que se enrutan los **drafts cross-repo** (`estado:borrador`) que crean el `planner` y el `tooling-investigator` cuando detectan que un problema descubierto en tu proyecto pertenece al harness. Sirve para redirigir esos drafts a **tu fork** de Mefisto en vez del repo upstream. Si no lo declaras, el default es `augusto-romero-arango/eda-evsourcing-azure-harness`. No se exporta como variable `HARNESS_*`: se lee directo con `jq` donde se necesita (`scripts/_pipeline-common.sh`, `agents/planner.md`, `agents/tooling-investigator.md`). Es **opcional** (añadirlo no es MAJOR).
 
@@ -373,9 +373,9 @@ Cuando descubras desde un consumidor un problema atribuible al plugin, el toolin
 
 ## Migración para consumidores existentes
 
-### Añadir `boundedContext` (v0.9.0+)
+### Añadir `boundedContext`
 
-El campo `boundedContext` es **obligatorio** desde v0.9.0 (ADR-0023). Si actualizas desde una versión anterior, `load_harness_config` abortará con un mensaje que muestra el shape exacto a añadir. Para migrar:
+El campo `boundedContext` es **obligatorio** (ADR-0023). Si actualizas desde una versión que no lo exigía, `load_harness_config` abortará con un mensaje que muestra el shape exacto a añadir. Para migrar:
 
 1. **Abre `.claude/harness.config.json`** de tu proyecto y añade el campo `boundedContext` antes del cierre `}`:
 

@@ -82,7 +82,7 @@ if [ -n "${PLUGIN_COMMON:-}" ] && [ -f "${PLUGIN_COMMON:-}" ]; then
     if [ -n "${HARNESS_BC_NAME:-}" ]; then
       row OK "boundedContext declarado: name='${HARNESS_BC_NAME}' domains='${HARNESS_BC_DOMAINS}'"
     else
-      row FALTA "boundedContext ausente o invalido (campo obligatorio desde v0.9.0)"
+      row FALTA "boundedContext ausente o invalido (campo obligatorio, ADR-0023)"
       ACTIONS="${ACTIONS}  - Falta 'boundedContext' en .claude/harness.config.json. Añade:
     \"boundedContext\": { \"name\": \"<NombreDetuBC>\", \"domains\": [<tus domainLabels>] }
   Los dominios deben ser un subconjunto de domainLabels. Ver README seccion 'Migracion para consumidores existentes'.
