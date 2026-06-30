@@ -847,19 +847,19 @@ locals {
 
 Instancia los 4 modulos compartidos y declara los **sufijos de unicidad global** de PostgreSQL y Service Bus. `topics_config` arranca vacio en greenfield (los topics por evento los agrega `/infra` al implementar cada flujo); el comentario muestra el patron con subscription de smoke-tests (ADR-0013).
 
-**Unicidad global (ADR-0021).** El nombre de un PostgreSQL Flexible Server (`*.postgres.database.azure.com`) y el de un namespace de Service Bus (`*.servicebus.windows.net`) deben ser unicos en **TODO Azure**, no solo dentro del resource group, porque ambos exponen un endpoint DNS publico. Por eso cada uno recibe un sufijo de un `random_string` (length 6, `special = false`, `upper = false`) -- el mismo patron que usan las Storage por dominio. Sin sufijo, el primer `terraform apply` de un greenfield aborta con `ServerNameAlreadyExists` (Postgres) o con colision de namespace (Service Bus). Origen: issue #94 (segunda mitad del patron de #92, que resolvio lo mismo para la Storage del tfstate en `bootstrap-backend.sh`).
+**Unicidad global (ADR-0021).** El nombre de un PostgreSQL Flexible Server (`*.postgres.database.azure.com`) y el de un namespace de Azure Service Bus (`*.servicebus.windows.net`) deben ser unicos en **TODO Azure**, no solo dentro del resource group, porque ambos exponen un endpoint DNS publico. Por eso cada uno recibe un sufijo de un `random_string` (length 6, `special = false`, `upper = false`) -- el mismo patron que usan las Storage por dominio. Los **dos** namespaces de Service Bus (interno e integracion, ADR-0023) reciben cada uno su propio `random_string` independiente. Sin sufijo, el primer `terraform apply` de un greenfield aborta con `ServerNameAlreadyExists` (Postgres) o con colision de namespace (Service Bus). Origen: issue #94 (segunda mitad del patron de #92, que resolvio lo mismo para la Storage del tfstate en `bootstrap-backend.sh`).
 
-**Limites de Azure (CA-3).** Los nombres resultantes caben holgadamente: el PostgreSQL Flexible Server admite 3-63 chars (minusculas, numeros y guiones) y `psql-${local.prefix_func}-${sufijo}` ronda los 19-24 chars para los prefijos tipicos del harness; el namespace de Service Bus admite 6-50 chars, debe empezar con letra y terminar en letra/numero, y `sb-${local.prefix}-${sufijo}` empieza con `s` y termina en el sufijo alfanumerico. Si el consumidor configura un `project` muy largo, acortalo en `variables.tf` para no exceder los 50 chars del namespace.
+**Limites de Azure (CA-2).** Los nombres resultantes caben holgadamente: el PostgreSQL Flexible Server admite 3-63 chars (minusculas, numeros y guiones) y `psql-${local.prefix_func}-${sufijo}` ronda los 19-24 chars para los prefijos tipicos del harness; el namespace de Service Bus admite 6-50 chars, debe empezar con letra y terminar en letra/numero. Los patrones `sbint-${local.prefix}-${sufijo}` (interno) y `sbext-${local.prefix}-${sufijo}` (integracion) empiezan con letra y terminan en el sufijo alfanumerico. Si el consumidor configura un `project` muy largo, acortalo en `variables.tf` para no exceder los 50 chars del namespace.
 
 **Idempotencia y limitacion de migracion.** `random_string` **no** lleva `keepers`: Terraform persiste su valor en el state en el primer `apply` y lo mantiene estable de por vida del recurso (idempotente por diseno). **El sufijo aplica solo a provisiones nuevas (greenfield).** Anadirlo a un PostgreSQL o Service Bus **ya desplegado** sin sufijo cambia su `name` (atributo `ForceNew`) y, como ambos modulos declaran `prevent_destroy = true`, Terraform bloqueara el destroy+recreate. Migrar un recurso ya aplicado exige intervencion manual (`terraform state mv`/`import` o aceptar el nombre nuevo); no es automatico.
 
-**Outputs (CA-4).** Los outputs raiz `postgresql_fqdn` y `service_bus_name` (Paso 2.4) siguen leyendo el output del modulo (`module.postgresql.server_fqdn`, `module.service_bus.name`), que refleja el nombre real con el sufijo ya resuelto por el recurso. **No** referencies el nombre "construido" (`"psql-..."`/`"sb-..."`) en los outputs: usa siempre el output del modulo.
+**Outputs (CA-4).** Los outputs raiz `postgresql_fqdn` y los de los dos namespaces de Service Bus (Paso 2.4) leen el output del modulo (`module.postgresql.server_fqdn`, `module.service_bus_interno.name`, etc.), que refleja el nombre real con el sufijo ya resuelto por el recurso. **No** referencies el nombre "construido" (`"psql-..."`/`"sbint-..."`/`"sbext-..."`) en los outputs: usa siempre el output del modulo.
 
 ```hcl
-# Sufijos de unicidad global (ADR-0021, issue #94). El nombre del PostgreSQL Flexible
-# Server (*.postgres.database.azure.com) y del namespace de Service Bus
-# (*.servicebus.windows.net) es unico en TODO Azure, no solo en el resource group:
-# ambos exponen un endpoint DNS publico. Mismo patron que las Storage por dominio.
+# Sufijos de unicidad global (ADR-0021, issue #94). Los nombres de PostgreSQL Flexible
+# Server (*.postgres.database.azure.com) y de los namespaces de Service Bus
+# (*.servicebus.windows.net) son unicos en TODO Azure, no solo en el resource group:
+# todos exponen un endpoint DNS publico. Mismo patron que las Storage por dominio.
 # Sin keepers -> el valor se persiste en el state en el primer apply y queda estable
 # de por vida del recurso (idempotente por diseno). Cambiar este sufijo en un recurso
 # YA desplegado es ForceNew y choca con prevent_destroy: el sufijo es para greenfield.
@@ -869,7 +869,14 @@ resource "random_string" "postgresql_suffix" {
   upper   = false
 }
 
-resource "random_string" "service_bus_suffix" {
+# Cada namespace ASB recibe su propio sufijo independiente (ADR-0021 + ADR-0023).
+resource "random_string" "sb_interno_suffix" {
+  length  = 6
+  special = false
+  upper   = false
+}
+
+resource "random_string" "sb_integracion_suffix" {
   length  = 6
   special = false
   upper   = false
@@ -903,17 +910,32 @@ module "postgresql" {
   tags                   = local.tags
 }
 
-module "service_bus" {
+# Namespace interno: eventos privados intra-BC (IPrivateEventSender, ADR-0023 decision #2).
+module "service_bus_interno" {
   source              = "../../modules/service-bus"
-  name                = "sb-${local.prefix}-${random_string.service_bus_suffix.result}"
+  name                = "sbint-${local.prefix}-${random_string.sb_interno_suffix.result}"
   resource_group_name = module.resource_group.name
   location            = module.resource_group.location
   sku                 = "Standard"
 
-  # Los topics por evento (ADR-0001) los agrega /infra al implementar cada flujo.
+  # Los topics para eventos privados (ADR-0001) los agrega /infra al implementar cada flujo.
+  topics_config = {}
+
+  tags = local.tags
+}
+
+# Namespace de integracion: eventos publicos inter-BC (IPublicEventSender, ADR-0023 decision #2).
+module "service_bus_integracion" {
+  source              = "../../modules/service-bus"
+  name                = "sbext-${local.prefix}-${random_string.sb_integracion_suffix.result}"
+  resource_group_name = module.resource_group.name
+  location            = module.resource_group.location
+  sku                 = "Standard"
+
+  # Los topics para eventos publicos (ADR-0001) los agrega /infra al implementar cada flujo.
   # Patron de subscription para smoke-tests (ADR-0013):
   #   topics_config = {
-  #     "mi-evento" = {
+  #     "mi-evento-pub" = {
   #       subscriptions = [
   #         { name = "smoke-tests", filter = null, default_message_ttl = "PT5M" }
   #       ]
@@ -924,6 +946,12 @@ module "service_bus" {
   tags = local.tags
 }
 
+# Los role assignments Azure Service Bus Data Sender (ADR-0023, decision #5) los agrega
+# el domain-scaffolder (Paso 4) al crear cada Function App, usando
+# module.function_app_<dominio>.principal_id como principal_id y
+# module.service_bus_integracion.id como scope. El namespace interno no recibe
+# asignaciones de rol para entidades externas (ADR-0023, decision #2).
+
 # Las instancias por dominio (module.storage_<dominio>, module.service_plan_<dominio>,
 # module.function_app_<dominio>) las agrega el domain-scaffolder (Paso 4) al crear
 # cada dominio. Un greenfield arranca sin Function Apps.
@@ -931,7 +959,7 @@ module "service_bus" {
 
 ### 2.4 `infra/environments/<env>/outputs.tf`
 
-**CA-4:** expone a nivel raiz, como minimo, `resource_group_name`, `service_bus_name` y `postgresql_fqdn`, para que `terraform output` no salga vacio.
+**CA-4:** expone a nivel raiz, como minimo, `resource_group_name`, `postgresql_fqdn` y los outputs de **ambos** namespaces de Service Bus (`service_bus_interno_name`, `service_bus_interno_connection_string`, `service_bus_integracion_name`, `service_bus_integracion_connection_string`), para que `terraform output` no salga vacio y el `domain-scaffolder` pueda referenciarlos.
 
 ```hcl
 output "resource_group_name" {
@@ -939,9 +967,26 @@ output "resource_group_name" {
   value       = module.resource_group.name
 }
 
-output "service_bus_name" {
-  description = "Nombre del Service Bus namespace"
-  value       = module.service_bus.name
+output "service_bus_interno_name" {
+  description = "Nombre del namespace interno (eventos privados intra-BC, IPrivateEventSender)"
+  value       = module.service_bus_interno.name
+}
+
+output "service_bus_interno_connection_string" {
+  description = "Connection string del namespace interno (SERVICE_BUS_CONNECTION_INTERNO)"
+  value       = module.service_bus_interno.default_primary_connection_string
+  sensitive   = true
+}
+
+output "service_bus_integracion_name" {
+  description = "Nombre del namespace de integracion (eventos publicos inter-BC, IPublicEventSender)"
+  value       = module.service_bus_integracion.name
+}
+
+output "service_bus_integracion_connection_string" {
+  description = "Connection string del namespace de integracion (SERVICE_BUS_CONNECTION_INTEGRACION)"
+  value       = module.service_bus_integracion.default_primary_connection_string
+  sensitive   = true
 }
 
 output "postgresql_fqdn" {
