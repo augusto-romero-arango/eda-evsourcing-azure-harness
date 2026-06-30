@@ -58,11 +58,8 @@ La integracion entre BCs sigue el patron **Open Host Service + Published Languag
 
 - **El productor publica en SU namespace de integracion** y los BCs externos **se suscriben conectandose a el**. El productor nunca empuja a ASB ajenos.
 - El namespace de integracion del productor es el "host" que expone su Published Language [1]: el conjunto de topics y contratos de eventos que ese BC garantiza como superficie publica estable.
-- La seguridad se logra por **topologia + RBAC least-privilege por entidad**:
-  - El productor tiene rol **Azure Service Bus Data Sender** sobre sus propios topics del namespace de integracion [2][3].
-  - El consumidor externo tiene rol **Azure Service Bus Data Receiver** sobre la subscription que le corresponde dentro del namespace de integracion del productor [2][3].
-  - **Los roles se asignan a nivel de topic/subscription, no de namespace**: un consumidor externo recibe acceso solo a la subscription que le corresponde, no al namespace completo.
-  - El namespace interno del BC no tiene ninguna asignacion de rol para entidades externas.
+- La seguridad se logra **por topologia**: el namespace interno del BC no tiene ninguna asignacion de rol para entidades externas y no es alcanzable desde fuera del BC; el consumidor externo solo puede operar sobre el namespace de integracion. Azure Service Bus no tiene acceso anonimo, por lo que cualquier consumidor externo necesita alguna credencial sobre el namespace de integracion — pero el mecanismo exacto (RBAC fino a nivel de topic/subscription vs acceso mas grueso al namespace de integracion) es una **decision de la fase de integracion cross-BC**, explicitamente diferida junto con el Context Map (#131).
+- **Recomendacion diferida** (a decidir al materializar la integracion cross-BC): el mecanismo de autorizacion recomendado es RBAC least-privilege por entidad — el productor con rol **Azure Service Bus Data Sender** sobre sus topics del namespace de integracion [2][3]; el consumidor externo con rol **Azure Service Bus Data Receiver** sobre la subscription que le corresponde [2][3]; roles asignados a nivel de topic/subscription, no de namespace. Esta decision se tomara al formalizar el Context Map (#131) y la infraestructura de identidades de los BCs externos.
 
 ### Context Map: concepto diferido, no implementacion
 
@@ -90,13 +87,13 @@ El productor publica un evento publico escribiendo directamente en el namespace 
 - **Autonomia del productor**: el BC productor no necesita conocer ni tener credenciales sobre los BCs consumidores; ellos se suscriben a el.
 - **Desacoplamiento de ejes**: separar "alcance" (a que namespace se publica) de "forma" (plano/rico) hace que cada eje evolucione independientemente. Hoy el criterio de forma es identico para ambos namespaces; en el futuro podria diferir sin reestructurar la topologia.
 - **Lenguaje preciso**: "publico" y "privado" pasan a ser terminos de enrutamiento con significado topologico exacto, no etiquetas ambiguas de serializacion.
-- **Least-privilege por entidad**: los roles de Azure Service Bus se asignan a nivel de topic/subscription, no de namespace; un consumidor externo no tiene acceso de lectura al namespace completo del productor.
+- **Least-privilege como norte diferido**: el principio de least-privilege por entidad (roles a nivel de topic/subscription) es la recomendacion para cuando se materialice la integracion cross-BC; hasta entonces, la frontera de seguridad establecida es la topologia de namespaces separados — el namespace interno no es alcanzable desde fuera del BC.
 - **Raiz de la cascada**: las reformas de ADR-0012 (#122) y la evolucion de los agentes (#125, #126) tienen ahora una raiz comun a referenciar, en vez de razonar cada uno sobre un eje distinto.
 
 ### Negativas
 
 - **Mas namespaces de ASB**: cada BC provisiona dos namespaces en vez de uno. Impacto en costo y en superficie de administracion de Terraform. Mitigado por el `infra-base-scaffolder` (ADR-0021) que genera la infraestructura base del BC.
-- **RBAC por topic/subscription es mas granular**: asignar roles a nivel de topic/subscription requiere mas entradas de role assignment en Terraform que asignar un rol al namespace completo. Mitigado por la generacion del infra-writer.
+- **RBAC fino es trabajo diferido**: la granularidad de los role assignments (topic/subscription vs namespace completo) y su implementacion en Terraform se decide al materializar la integracion cross-BC (#131); hasta entonces no hay costo operativo de RBAC inter-BC.
 - **El Context Map queda diferido**: la declaracion formal de que BCs existen y como se conectan no se materializa en este ADR; un consumidor que integra multiples BCs debe gestionar manualmente las conexiones hasta que #131 y sus sucesores lo formalicen.
 - **La reforma de ADR-0012 es un issue separado**: el desacoplamiento "plano = cruza un bus" vs "plano = es `IPublicEvent`" que este ADR establece como doctrina no se refleja aun en el texto de ADR-0012 hasta que #122 lo edite.
 
@@ -111,4 +108,4 @@ El productor publica un evento publico escribiendo directamente en el namespace 
 - ADR-0012 (heuristicas de modelado de objetos de dominio): la seccion "Frontera de serializacion: event store vs bus" establece que el payload de un `IPublicEvent` debe ser plano y portable. ADR-0023 extiende esa regla a los eventos privados (todo lo que cruza un bus es plano) y clarifica que el criterio de forma es "cruza un bus", no "es `IPublicEvent`". La reforma del texto de ADR-0012 para reflejar este desacoplamiento es #122.
 - ADR-0020 (un App Service Plan por dominio): el dominio como unidad de Function App sigue vigente; ADR-0023 anade el nivel superior — el BC como resource group que agrupa dominios relacionados.
 - ADR-0021 (infraestructura base del consumidor): el `infra-base-scaffolder` genera hoy un namespace de Service Bus por BC; la evolucion a dos namespaces (interno + integracion) es el trabajo del issue #128.
-- ADR-0022 (autenticacion de CI hacia Azure por OIDC): el RBAC least-privilege por entidad de ADR-0023 (roles Data Sender / Data Receiver a nivel de topic/subscription) se enmarca en el mismo patron de autorizacion de identidades Azure que ADR-0022 establece para el Service Principal de CI.
+- ADR-0022 (autenticacion de CI hacia Azure por OIDC): ADR-0022 cubre el eje CI/deploy (Service Principal de GitHub Actions); el eje de autenticacion runtime cross-BC (como se autoriza a un consumidor externo sobre el namespace de integracion del productor) es trabajo **explicitamente diferido** — ADR-0022 lo declara fuera de su alcance en su seccion "Frontera de alcance: autenticacion runtime cross-BC". Cuando se materialice la integracion cross-BC, la recomendacion diferida de RBAC least-privilege de ADR-0023 (roles Data Sender / Data Receiver) se enmarcara en el mismo patron de autorizacion de identidades Azure que ADR-0022 establece.
