@@ -281,7 +281,11 @@ public class FunctionEndpoint(ICommandRouter commandRouter, ILogger<FunctionEndp
     [Function("DepurarMarcacionesCuandoTurnoCreado")]
     public async Task DepurarMarcacionesCuandoTurnoCreado(
         [ServiceBusTrigger("turno-creado", "depuracion-escucha-programacion",
-            Connection = "ServiceBusConnectionString")]
+            Connection = "SERVICE_BUS_CONNECTION_INTERNO")]
+        // NOTA: El Connection debe coincidir con el app setting provisionado por Terraform
+        // (domain-scaffolder: SERVICE_BUS_CONNECTION_INTERNO para eventos intra-BC via IPrivateEvent;
+        // SERVICE_BUS_CONNECTION_INTEGRACION para eventos inter-BC via IPublicEvent).
+        // Pendiente de unificar nomenclatura exacta con decision de issue #147.
         ServiceBusReceivedMessage message,
         ServiceBusMessageActions messageActions,
         CancellationToken ct)
