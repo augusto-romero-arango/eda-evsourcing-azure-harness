@@ -72,7 +72,30 @@ se lean por error decisiones superadas. (Guardada en memoria del coordinador.)
 - Enmiendas concretas a ADR-0021/0023/0003 + implementer.md: issues de implementacion posteriores
   a la aceptacion de ADR-0024, honrando la regla de "eliminar, no marcar obsoleto".
 
+## Revision del ADR-0024 (misma sesion)
+
+Al revisar el borrador de ADR-0024 con el usuario, el modelo se simplifico y se cerraron detalles:
+
+- **Los dos extremos verdaderamente externos son cero-caso y simetricos**, unificados en UNA
+  excepcion diferida: (a) que una app ajena consuma de nosotros (hostear ns de integracion propio,
+  el viejo P2) y (b) que consumamos de un ASB ajeno que no controlamos (el viejo "ajeno").
+- **Alcance de ASB** como concepto: propio del BC (privado, comun) / compartido del producto
+  (publico, comun; infra dueno del ns, productor crea topics, consumidor crea subscriptions) /
+  verdaderamente externo (diferido).
+- **Acceso al backbone compartido: por cadena de conexion; NO se toca el paquete.** Verificado
+  contra el codigo: `Cosmos.EventDriven.CritterStack.AzureServiceBus` (WolverineFx.AzureServiceBus
+  6.1.0) solo expone wiring por cadena; no referencia Azure.Identity ni acepta TokenCredential. El
+  `[ServiceBusTrigger]` si soporta identidad nativa, pero la publicacion (Wolverine) no sin un
+  overload nuevo. Decision: mantener cadenas; **managed identity queda como norte diferido** (Alt 4).
+- **Custodia** en Key Vault + referencia en app settings + permiso de la MI de la Function App para
+  leer el secreto; el valor lo coloca infra/admin. Queda en el camino comun (el backbone se accede
+  por cadena), no en el bucket diferido.
+- Un namespace interno **por BC, compartido por sus dominios** (no uno por dominio).
+- ADR-0024 reescrito con todo esto; #158 reencuadrado sobre el caso comun (backbone compartido).
+
 ## Referencias
 
 - ADR-0024 (nuevo, propuesta), ADR-0023 (#2/#4/#5), ADR-0021, ADR-0003, ADR-0012, ADR-0018, ADR-0022.
 - issue #156 (criterio publico/privado BC-aware, mergeado). issue #158 (consumo inter-BC, borrador).
+- Paquete Cosmos.EventDriven.CritterStack.AzureServiceBus (WolverineFx.AzureServiceBus 6.1.0):
+  wiring solo por cadena de conexion; base de la decision de mantener cadenas (Alt 4).
