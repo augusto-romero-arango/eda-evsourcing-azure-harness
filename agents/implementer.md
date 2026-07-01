@@ -323,7 +323,7 @@ Consumo de un evento publico de otro BC via el backbone compartido — mismo pat
 ```csharp
 [Function("NotificarCuandoDiaCalculado")]
 public async Task NotificarCuandoDiaCalculado(
-    [ServiceBusTrigger("dia-calculado", "notificaciones-escucha-programacion",
+    [ServiceBusTrigger("dia-calculado", "notificaciones-escucha-calculo-horas",
         Connection = "SERVICE_BUS_CONNECTION_COSMOS")]
     ServiceBusReceivedMessage message,
     ServiceBusMessageActions messageActions,
