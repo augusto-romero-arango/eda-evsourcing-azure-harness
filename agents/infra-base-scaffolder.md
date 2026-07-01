@@ -1010,11 +1010,13 @@ module "service_bus_interno" {
   tags = local.tags
 }
 
-# Custodia de cadenas de conexion de ASB (ADR-0024 decision #6, issue #170). RBAC
-# habilitado (enable_rbac_authorization = true dentro del modulo): sin access policies.
-# El modulo NO crea secretos -- el valor de cada cadena lo coloca infra/admin de forma
-# administrativa (az keyvault secret set), nunca Terraform (CA-4): asi el valor nunca
-# queda materializado en el state de este Key Vault.
+# Almacen general de secretos del BC (ADR-0025 decision #5): custodia las cadenas de
+# conexion de ASB (ADR-0024 decision #6, issue #170), el password de PostgreSQL (secreto
+# marten-connection) y la connection string de App Insights (secreto app-insights-connection).
+# RBAC habilitado (enable_rbac_authorization = true dentro del modulo): sin access policies.
+# El modulo NO crea secretos -- el valor de cada uno lo coloca infra/admin de forma
+# administrativa (az keyvault secret set), nunca Terraform (ADR-0025 decision #6): asi el
+# valor nunca queda materializado en el state de este Key Vault.
 module "key_vault" {
   source              = "../../modules/key-vault"
   name                = "kv-${var.project_short}-${random_string.key_vault_suffix.result}"
