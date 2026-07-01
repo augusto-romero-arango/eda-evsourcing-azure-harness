@@ -275,19 +275,21 @@ Registrar en Program.cs: `builder.Services.AddScoped<IRequestValidator, RequestV
 
 ### Endpoint ServiceBus
 
-**Convencion de `Connection` del `[ServiceBusTrigger]` (ADR-0023)**
+**Convencion de `Connection` del `[ServiceBusTrigger]` (ADR-0023 criterio publico/privado; ADR-0024 transporte)**
 
-El `Connection` del trigger determina a que namespace de ASB se conecta Azure Functions para escuchar el topic. Debe coincidir con el app setting del namespace donde el **productor** publico el evento. Esos app settings los provisiona Terraform (via `domain-scaffolder`); el lado **publish** lee sus valores en `Program.cs` para registrar los brokers de Wolverine, mientras que en el lado **consumo** es Azure Functions —no Wolverine— quien lee el `Connection` del `[ServiceBusTrigger]`. Ambos lados citan exactamente los mismos nombres de app setting:
+El `Connection` del trigger determina a que ASB se conecta Azure Functions para escuchar el topic: el namespace interno del BC para eventos privados, o el backbone compartido del producto para eventos publicos comunes (ADR-0024 decision #4). Debe coincidir con el app setting de la cadena de conexion donde el **productor** publico el evento — cadena custodiada en Key Vault y referenciada via `@Microsoft.KeyVault(...)` (ADR-0024 decision #6). Esos app settings los provisiona Terraform (via `domain-scaffolder`/`infra-base-scaffolder`); el lado **publish** lee sus valores en `Program.cs` para registrar los brokers de Wolverine, mientras que en el lado **consumo** es Azure Functions —no Wolverine— quien lee el `Connection` del `[ServiceBusTrigger]`. Ambos lados citan exactamente el mismo nombre de app setting, siguiendo el patron `SERVICE_BUS_CONNECTION_<ALIAS>` (fijado en el contrato de `harness.config.json`, issue #163; `INTERNO` es el alias reservado del ASB propio del BC):
 
 | Origen del topic | Tipo de evento | `Connection` del trigger |
 |---|---|---|
-| Namespace interno del BC (`sbint-*`) | `IPrivateEvent` intra-BC | `SERVICE_BUS_CONNECTION_INTERNO` |
-| Namespace de integracion del propio BC (`sbext-*`) | `IPublicEvent` del mismo BC | `SERVICE_BUS_CONNECTION_INTEGRACION` |
-| Namespace de integracion de **otro** BC | Evento publico inter-BC | **Diferido** (Context Map, #131) |
+| Namespace interno del BC | `IPrivateEvent` intra-BC | `SERVICE_BUS_CONNECTION_INTERNO` (alias reservado) |
+| Backbone compartido del producto | `IPublicEvent` comun (inter-BC dentro del producto) | `SERVICE_BUS_CONNECTION_<ALIAS>` — `<ALIAS>` es el del backbone declarado en `serviceBus.external` (alcance `compartido`) |
+| ASB verdaderamente externo (aplicacion ajena al producto) | Integracion externa | **Diferido** (ADR-0024 decision #5, default-off) |
 
-**Caso soportado hoy** — consumo intra-BC: un dominio reacciona a un evento privado (`IPrivateEvent`) publicado por otro dominio del mismo BC al namespace interno. Usar `SERVICE_BUS_CONNECTION_INTERNO`. Mismo criterio BC-aware que "Donde vive cada tipo de evento" (mas abajo): privado significa mismo BC, no mismo dominio.
+**Casos soportados hoy:**
+- **Consumo intra-BC** (privado): un dominio reacciona a un evento privado (`IPrivateEvent`) publicado por otro dominio del mismo BC al namespace interno. Usar `SERVICE_BUS_CONNECTION_INTERNO`. Mismo criterio BC-aware que "Donde vive cada tipo de evento" (mas abajo): privado significa mismo BC, no mismo dominio.
+- **Consumo inter-BC via backbone** (publico comun): un dominio de este BC reacciona a un evento publico (`IPublicEvent`) publicado por un dominio de **otro** BC del mismo producto al backbone compartido. Usar `SERVICE_BUS_CONNECTION_<ALIAS>` con el alias del backbone (`serviceBus.external`, alcance `compartido`). El consumidor crea su propia subscription sobre el topic del productor (naming ADR-0005: `{consumidor}-escucha-{productor}`); no requiere coordinacion de credenciales adicional a la cadena de conexion custodiada.
 
-**Consumo inter-BC diferido**: suscribirse al namespace de integracion de un BC ajeno queda fuera de alcance hasta que el Context Map (#131) defina el mecanismo de credenciales cross-BC. No se wirea hoy; al mencionarlo en el codigo o en la guia, dejarlo como `// TODO(#131): inter-BC diferido`.
+**Integracion externa diferida**: consumir de un ASB verdaderamente externo (aplicacion ajena al producto) queda fuera de alcance hasta que exista el primer caso real (ADR-0024 decision #5, default-off). No se wirea hoy; al mencionarlo en el codigo o en la guia, dejarlo como `// TODO(ADR-0024 #5): integracion externa diferida`.
 
 ```csharp
 public class FunctionEndpoint(ICommandRouter commandRouter, ILogger<FunctionEndpoint> logger)
@@ -313,6 +315,21 @@ public class FunctionEndpoint(ICommandRouter commandRouter, ILogger<FunctionEndp
             await messageActions.DeadLetterMessageAsync(message);
         }
     }
+}
+```
+
+Consumo de un evento publico de otro BC via el backbone compartido — mismo patron, `Connection` apunta al alias del backbone (ej. `COSMOS`):
+
+```csharp
+[Function("NotificarCuandoDiaCalculado")]
+public async Task NotificarCuandoDiaCalculado(
+    [ServiceBusTrigger("dia-calculado", "notificaciones-escucha-programacion",
+        Connection = "SERVICE_BUS_CONNECTION_COSMOS")]
+    ServiceBusReceivedMessage message,
+    ServiceBusMessageActions messageActions,
+    CancellationToken ct)
+{
+    // mismo cuerpo: deserializar, invocar el comando, completar o dead-letter
 }
 ```
 
@@ -535,7 +552,7 @@ public override string ToString()
 | Privado (intra-BC) | `IPrivateEvent` | `{Dominio}/{Feature}/Eventos/` | `...{Dominio}.{Feature}.Eventos` | **plano y portable** |
 | Event sourcing (aggregate) | ninguna | `{Dominio}/Entities/` o `{Feature}/Eventos/` | segun organizacion vertical | modelo rico permitido |
 
-**Criterio BC-aware (ADR-0023, decisiones #2 y #4):** un evento es **publico (inter-BC)** si lo
+**Criterio BC-aware (ADR-0023, decision #4):** un evento es **publico (inter-BC)** si lo
 consume un dominio de **otro Bounded Context**; es **privado (intra-BC)** si lo consume un dominio
 del **mismo BC**, aunque sea un dominio distinto al productor. Cruzar de dominio no alcanza por si
 solo para ser publico -- el factor decisivo es el Bounded Context del consumidor, no si comparte
@@ -545,10 +562,11 @@ trigger" (mas arriba). Doctrina raiz: **ADR-0023**; este agente no la duplica.
 **Restriccion de forma del payload (criterio: ¿cruza un bus?).** Todo evento con marker de bus
 (`IPublicEvent` o `IPrivateEvent`) debe tener un payload **plano y portable**: solo tipos
 serializables con el serializador por defecto (primitivos, `enum`, `string`, fechas, `Guid`,
-colecciones de esos tipos, `record` DTO planos). Un `IPublicEvent` cruza el namespace de
-integracion (via `IPublicEventSender`); un `IPrivateEvent` cruza el namespace interno del
-Bounded Context (via `IPrivateEventSender`); en ambos casos el destino deserializa con **otro**
-`JsonSerializerOptions` que **no tiene el resolver custom del productor**. **El modelo de dominio
+colecciones de esos tipos, `record` DTO planos). Un `IPublicEvent` cruza el backbone compartido
+del producto o, en el caso diferido, un ASB externo (via `IPublicEventSender`); un `IPrivateEvent`
+cruza el namespace interno del Bounded Context (via `IPrivateEventSender`); en ambos casos el
+destino deserializa con **otro** `JsonSerializerOptions` que **no tiene el resolver custom del
+productor**. **El modelo de dominio
 rico no cruza el bus**: un VO con campos privados, factory privado y `ConfigurarSerializacion` se
 serializa bien en el event store de Marten (resolver registrado en el `Program.cs` del dominio)
 pero llega lossy al destino del bus. Al emitir por el bus, traduce el VO a su forma plana.
@@ -645,18 +663,18 @@ Cuando implementas un handler que publica eventos (usando `IPublicEventSender` o
 - Subscriptions: kebab-case, patron `{consumidor}-escucha-{productor}` (ADR-0005). Ej: `depuracion-escucha-marcaciones`, `calculo-horas-escucha-programacion`
 - Sin prefijos artificiales (ni `sbt-`, ni `eventos-`)
 
-**Enrutamiento topic → namespace (ADR-0023, decision #2):**
+**Enrutamiento topic → broker (ADR-0024, decisiones #1, #4 y #7):**
 
-| Tipo de evento | Sender | Registro en Program.cs | Modulo Terraform |
+| Tipo de evento | Sender | Registro en Program.cs | Terraform de este BC |
 |---|---|---|---|
 | `IPrivateEvent` | `IPrivateEventSender` | `PublicarEventoServerless<T>(topic)` → broker default | `module "service_bus_interno"` |
-| `IPublicEvent` | `IPublicEventSender` | `PublicarEventoServerless<T>("integracion", topic)` → named broker | `module "service_bus_integracion"` |
+| `IPublicEvent` | `IPublicEventSender` | `PublicarEventoServerless<T>("<alias>", topic)` → broker nombrado (backbone compartido) | Ninguno — el backbone lo administra infra, fuera del alcance del Terraform de este BC |
 
-El criterio de enrutamiento del topic (a que modulo va) esta ligado al broker al que `Program.cs` registra ese evento: coherencia publish<->infra (ADR-0023). El `domain-scaffolder` genera ese registro al crear el dominio; el implementer no lo toca, solo respeta el namespace que corresponde al tipo del evento.
+El criterio de enrutamiento del topic (a que broker va) esta ligado al registro que `Program.cs` hace de ese evento: coherencia publish<->infra (ADR-0024 decision #7). El `domain-scaffolder` genera ese registro al crear el dominio; el implementer no lo toca, solo respeta el broker que corresponde al tipo del evento.
 
-**Wolverine en modo serverless NO auto-provisiona topics** (SendInline). Los namespaces son always-on (los crea la infra base); los topics se agregan JIT por flujo aqui (ADR-0001, ADR-0023).
+**Wolverine en modo serverless NO auto-provisiona topics** (SendInline). El namespace interno del BC es always-on (lo crea la infra base, `infra-base-scaffolder`); sus topics se agregan JIT por flujo aqui (ADR-0001, ADR-0024). El backbone compartido ya existe (lo provisiona infra, fuera de este repo): sus topics tambien se agregan JIT por flujo, pero no via el Terraform de este BC — ver mas abajo.
 
-**Archivo a modificar:** solo `infra/environments/dev/main.tf` — bloque `topics_config` del modulo correcto (interno o integracion segun el tipo del evento). No toques los modulos ni otros ambientes.
+**Archivo a modificar (solo `IPrivateEvent`):** `infra/environments/dev/main.tf` — bloque `topics_config` de `module "service_bus_interno"`. No toques los modulos ni otros ambientes. Para `IPublicEvent` no hay archivo Terraform de este repo que modificar: el backbone compartido lo administra infra (ver mas abajo).
 
 Evento privado (`IPrivateEvent`) → agrega el topic al bloque `topics_config` de `module "service_bus_interno"`:
 
@@ -679,24 +697,16 @@ module "service_bus_interno" {
 }
 ```
 
-Evento publico (`IPublicEvent`) → agrega el topic al bloque `topics_config` de `module "service_bus_integracion"`:
+Evento publico (`IPublicEvent`) → el topic y la subscription viven en el **backbone compartido del producto**, no en el Terraform de este BC (ADR-0024 decision #4):
 
-```hcl
-module "service_bus_integracion" {
-  # ... (parametros existentes sin cambios)
-  topics_config = {
-    "dia-calculado" = {         # <- IPublicEvent (se publica via IPublicEventSender al namespace de integracion)
-      subscriptions = [
-        { name = "smoke-tests", filter = null, default_message_ttl = "PT5M" }  # <- siempre presente (ADR-0013), aunque ningun dominio de otro BC consuma aun
-      ]
-    }
-  }
-}
-```
+- El **productor** (este BC, si publica el evento) crea su topic en el backbone. Naming: kebab-case, nombre del evento en pasado — misma convencion que un topic interno (ADR-0001/ADR-0005).
+- El **consumidor** crea su propia subscription sobre ese topic. Naming: `{consumidor}-escucha-{productor}` (ADR-0005), misma convencion que en el namespace interno.
+- El acceso (productor y consumidor) es por la cadena de conexion custodiada en Key Vault del alias del backbone (`SERVICE_BUS_CONNECTION_<ALIAS>`), no por RBAC de Azure Service Bus sobre el namespace (ADR-0024 decision #6); infra otorga permisos baseline al provisionar el backbone.
+- **El implementer no provisiona esto en Terraform**: no existe ningun `module` en `infra/environments/dev/main.tf` para el backbone (lo administra infra, fuera de este repo). Si tu implementacion necesita un topic o subscription nuevo en el backbone que aun no existe, documenta la necesidad en la seccion "Infraestructura modificada" de tu resumen para seguimiento administrativo — no la agregues tu mismo a ningun archivo de este repo.
 
-**Suscripcion `smoke-tests` siempre presente.** Cada topic publicado debe llevar la suscripcion `smoke-tests` con TTL 5m, incluso si no hay consumidores reales todavia. Razon: el smoke test del feature que publica al topic necesita esa suscripcion para verificar la publicacion (ADR-0013: cobertura completa de efectos secundarios). **No usar el argumento "el topic no tiene consumidores aun" para omitir la suscripcion** — ese fue el gap del PR #157, donde el feature publicaba un evento al topic `dia-calculado` sin suscripcion `smoke-tests`, dejando la publicacion sin cobertura. Si el issue del planner no listo el alta de la suscripcion en `## Impacto en archivos`, agregala tu aqui y documentalo en tu resumen como complemento al plan.
+**Suscripcion `smoke-tests` siempre presente en el namespace interno.** Cada topic privado que agregues a `module "service_bus_interno"` debe llevar la suscripcion `smoke-tests` con TTL 5m, incluso si no hay consumidores reales todavia. Razon: el smoke test del feature que publica al topic necesita esa suscripcion para verificar la publicacion (ADR-0013: cobertura completa de efectos secundarios). **No uses el argumento "el topic no tiene consumidores aun" para omitir la suscripcion** — ese fue el gap del PR #157, donde el feature publicaba un evento publico (`dia-calculado`) sin suscripcion `smoke-tests`, dejando la publicacion sin cobertura. La misma cobertura aplica hoy a los topics del backbone compartido, pero su alta corre por la via administrativa descrita arriba, no por este archivo: si tu feature publica un evento publico nuevo, documenta en tu resumen la necesidad de su subscripcion `smoke-tests` en el backbone para seguimiento.
 
-**RBAC del productor:** el role assignment Azure Service Bus Data Sender (sobre el namespace de integracion) lo agrega el `domain-scaffolder` al crear el dominio, no el implementer (ver `agents/domain-scaffolder.md`). El implementer no emite role assignments.
+**Acceso al backbone:** ya no es un role assignment de Azure Service Bus Data Sender sobre un namespace propio del BC — ese modelo quedo superado (ADR-0024 decision #6). El acceso es por la cadena de conexion custodiada en Key Vault del alias del backbone; la referencia `@Microsoft.KeyVault(...)` en el app setting y el permiso "Key Vault Secrets User" de la managed identity los agrega el `infra-base-scaffolder`/`domain-scaffolder` al crear la infraestructura base o el dominio, no el implementer (ver `agents/infra-base-scaffolder.md`). El implementer no emite referencias de Key Vault ni role assignments.
 
 ---
 
@@ -814,7 +824,7 @@ una limitacion del framework, o un malentendido del requisito]
 
 ### 5. Verificar infraestructura (si aplica)
 
-Si el handler publica eventos (`IPublicEventSender` o `IPrivateEventSender`), verifica que el topic y las subscriptions existen en `infra/environments/dev/main.tf` en el modulo correcto (`service_bus_integracion` para `IPublicEvent`, `service_bus_interno` para `IPrivateEvent`). Agrega lo que falte segun la tabla de enrutamiento de la seccion "Infraestructura (topics y subscriptions)".
+Si el handler publica un evento privado (`IPrivateEventSender`), verifica que el topic y las subscriptions existen en `infra/environments/dev/main.tf`, bloque `topics_config` de `module "service_bus_interno"`. Agrega lo que falte segun la tabla de enrutamiento de la seccion "Infraestructura (topics y subscriptions)". Si el handler publica un evento publico (`IPublicEventSender`), el topic/subscription vive en el backbone compartido, fuera del Terraform de este repo: si detectas que falta, documentalo en tu resumen de decisiones para seguimiento administrativo — no lo agregues a ningun archivo de este repo.
 
 ### 6. Verificar suite completa
 
@@ -895,7 +905,7 @@ Estas son reglas procedimentales del pipeline. **Las reglas arquitectonicas (pat
 4. **NUNCA** hagas try-catch de excepciones de dominio en el CommandHandler.
 5. **NUNCA** uses for/foreach cuando LINQ resuelve el problema.
 6. **NUNCA** adornes comentarios con caracteres decorativos Unicode ni composiciones complejas de separadores. Los comentarios deben ser simples y directos.
-7. **Solo modifica** `infra/environments/dev/main.tf` para infraestructura (y solo el bloque `topics_config` del modulo correcto: `service_bus_interno` para `IPrivateEvent`, `service_bus_integracion` para `IPublicEvent`).
+7. **Solo modifica** `infra/environments/dev/main.tf` para infraestructura, y solo el bloque `topics_config` de `module "service_bus_interno"` (eventos `IPrivateEvent`). Los topics/subscriptions de eventos `IPublicEvent` viven en el backbone compartido del producto, administrado por infra: no crees ni edites ningun `module` para el en este repo; si falta uno, documentalo en tu resumen.
 8. **Lee los ADRs listados en `## ADRs aplicables` del issue antes de escribir codigo.** Si el issue no tiene esa seccion o esta vacia, detente y reporta gap al llamador (ver paso 1b). No asumas. No improvises.
 9. **Precedente ≠ autoridad.** Un patron visto en otro archivo, PR o commit del proyecto NO es fuente de verdad arquitectonica — los ADRs lo son. Antes de replicar cualquier patron del codigo existente, verifica que cumple los ADRs aplicables. Si el precedente los viola (ejemplo tipico: `[JsonConstructor]` en ctor privado cuando ADR-0012 lo proscribe), reportalo como bug en tu resumen de decisiones y NO lo replicues. Aplica el patron correcto segun el ADR.
 10. **Documenta toda desviacion consciente de un ADR o del plan del planner.** Si decides apartarte deliberadamente de un ADR listado en el issue (por razon tecnica legitima), registralo en la seccion "Desviaciones de ADRs" del resumen del pipeline con el formato especificado (regla del ADR, desviacion aplicada, razon, consecuencia conocida). Si decides apartarte de una sugerencia concreta del planner (nombre de archivo de "Impacto en archivos", visibilidad o firma de "Interfaz publica propuesta"), registralo en una seccion paralela "Desviaciones del plan del planner" con el mismo formato (sugerencia del issue, desviacion aplicada, razon tecnica, consecuencia). Recuerda: el plan del planner es una sugerencia basada en su investigacion, no un mandato — pero apartarse sin documentar es el peor outcome posible. Esto queda disponible para evaluacion del usuario.
