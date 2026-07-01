@@ -76,7 +76,7 @@ Wolverine opera en modo serverless: no hay bus in-process. Los eventos se public
 explicitamente a Azure Service Bus usando `IPublicEventSender` o `IPrivateEventSender`.
 Los triggers de Service Bus (`[ServiceBusTrigger]`) despachan mensajes al `ICommandRouter`.
 
-Wolverine en modo serverless distingue **dos destinos fisicos**: `IPrivateEventSender` publica a Azure Service Bus del namespace **interno** del bounded context (eventos privados intra-BC); `IPublicEventSender` publica al namespace de **integracion** del bounded context (eventos publicos inter-BC). El wiring registra el namespace interno como broker default con `HabilitarAzureServiceBusParaServerLess(serviceBusInterno)` y el namespace de integracion como named broker con `AgregarAzureServiceBusNombradoServerless("integracion", serviceBusIntegracion)`. El paquete `Cosmos.EventDriven.CritterStack.AzureServiceBus` v0.0.6 soporta esta topologia (spike #129 cerrado positivo).
+Wolverine en modo serverless distingue **dos senders** segun el marcador del evento: `IPrivateEventSender` publica al Azure Service Bus **propio** del bounded context (eventos privados intra-BC); `IPublicEventSender` publica al backbone compartido del producto (eventos publicos comunes) o, en el caso diferido de integracion verdaderamente externa, a un ASB externo. El wiring registra el ASB propio del BC como **broker default**, siempre, con `HabilitarAzureServiceBusParaServerLess(serviceBusInterno)`; el backbone compartido y, si aplica, cada ASB externo se registran como **brokers nombrados**, uno por ASB, con `AgregarAzureServiceBusNombradoServerless(<nombre>, <cadena>)`, cada uno leyendo su cadena de conexion custodiada. El wiring se mantiene **por cadena de conexion**, coherente con el paquete `Cosmos.EventDriven.CritterStack.AzureServiceBus` actual (spike #129 cerrado positivo); la custodia de las cadenas (Key Vault) y el acceso por managed identity como norte diferido se definen en ADR-0024 (decision #6 y Alt 4 respectivamente).
 
 ### Observabilidad
 
@@ -108,4 +108,9 @@ que el agente de Application Insights reciba las trazas de OpenTelemetry.
 
 ## Referencias
 
-- ADR-0023: Bounded Context, topologia de dos namespaces ASB y Open Host Service — define la topologia que justifica la separacion por namespace y la necesidad de dos senders fisicos (`IPrivateEventSender` al namespace interno, `IPublicEventSender` al namespace de integracion).
+- ADR-0023: Bounded Context — define el ASB propio del BC (namespace interno, compartido por todos sus dominios) al que publica `IPrivateEventSender`.
+- ADR-0024: modelo de eventos de bus (privado propio, publico via backbone compartido, integracion externa diferida) — define a que broker enruta `IPublicEventSender` (backbone compartido comun o ASB externo diferido) y el wiring de broker default mas N brokers nombrados por cadena de conexion custodiada.
+
+## Control de cambios
+
+- 2026-07-01: enmendado (issue #162, mandato de ADR-0024) para reemplazar el wiring fijo de dos brokers por Bounded Context (namespace interno como broker default + namespace de integracion como named broker `"integracion"`) por broker interno por defecto (siempre) mas N brokers nombrados (backbone compartido y, si aplica, externos), uno por ASB, por cadena de conexion custodiada.
