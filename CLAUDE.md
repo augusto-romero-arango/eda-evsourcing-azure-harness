@@ -64,7 +64,7 @@ Tokens operativos consumidos por los scripts shell. Estructura:
 
 Notas sobre campos concretos:
 
-- **`boundedContext`** (**obligatorio**, ADR-0023): declara el Bounded Context del proyecto. Un BC es un grupo de dominios relacionados que comparte un resource group de Azure y dos namespaces de Azure Service Bus (interno e integración). Tiene dos subfields:
+- **`boundedContext`** (**obligatorio**, ADR-0023): declara el Bounded Context del proyecto. Un BC es un grupo de dominios relacionados que comparte un resource group de Azure y un namespace interno de Azure Service Bus (ADR-0021, ADR-0023); lo público viaja por el backbone compartido del producto o, en el caso diferido, por integración externa (ADR-0024). Tiene dos subfields:
   - **`name`**: nombre del BC, 1-63 caracteres alfanuméricos y guiones. Puede coincidir o no con `projectName` (ej: un proyecto "ControlAsistencias" puede tener BC "Principal"). `load_harness_config` valida `^[a-zA-Z0-9-]{1,63}$` y exporta `HARNESS_BC_NAME`.
   - **`domains`**: lista de dominios del BC, no vacía. Cada elemento debe estar presente en `domainLabels` (los dominios del BC son un subconjunto de todos los dominios del proyecto). `load_harness_config` valida la pertenencia y exporta `HARNESS_BC_DOMAINS` (lista separada por espacios).
   - El **resource group** del BC se genera como `infraResourceGroupPrefix`+`-`+`name` (ej: `rg-miproyecto-principal`). Lo computa el `infra-base-scaffolder` al provisionar la infraestructura base.
@@ -93,7 +93,7 @@ Necesaria porque los agentes/skills del harness no pueden hacer sustitución de 
 - **BoundedContextDomains**: dominio1, dominio2  (lista separada por comas; corresponde a `boundedContext.domains`)
 ```
 
-`BoundedContext` es el nombre del Bounded Context declarado en `harness.config.json` (ADR-0023): grupo de dominios relacionados que comparte un resource group de Azure y dos namespaces de Azure Service Bus (interno e integración). El nombre puede coincidir o no con `ProjectDisplayName`.
+`BoundedContext` es el nombre del Bounded Context declarado en `harness.config.json` (ADR-0023): grupo de dominios relacionados que comparte un resource group de Azure y un namespace interno de Azure Service Bus (ADR-0021, ADR-0023); lo público viaja por el backbone compartido del producto o, en el caso diferido, por integración externa (ADR-0024). El nombre puede coincidir o no con `ProjectDisplayName`.
 
 ### 3. Estructura de carpetas esperada
 

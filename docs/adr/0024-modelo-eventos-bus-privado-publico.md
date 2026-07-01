@@ -67,7 +67,7 @@ La integracion con una app ajena al producto, en cualquiera de sus dos direccion
 
 ### 6. Custodia de cadenas de conexion
 
-Las cadenas de conexion (al backbone compartido y a cualquier ASB externo) se custodian en **Azure Key Vault** y se referencian desde los app settings de la Function App con `@Microsoft.KeyVault(...)`. El **valor** del secreto lo coloca infra / un admin (el acceso se gestiona administrativamente); el harness provisiona (a) la **referencia** en app settings y (b) el **permiso de la managed identity** de la Function App para leer ese secreto de Key Vault. La cadena **nunca** queda en texto plano en `harness.config.json`, en app settings literales ni en el estado de Terraform.
+Todas las cadenas de conexion de Azure Service Bus que el BC toca -- la del ASB **propio (interno)**, la del backbone compartido y la de cualquier ASB externo -- se custodian en **Azure Key Vault** y se referencian desde los app settings de la Function App con `@Microsoft.KeyVault(...)`. El **valor** del secreto lo coloca infra / un admin (el acceso se gestiona administrativamente); el harness provisiona (a) la **referencia** en app settings y (b) el **permiso de la managed identity** de la Function App para leer ese secreto de Key Vault. La cadena **nunca** queda en texto plano en `harness.config.json`, en app settings literales ni en el estado de Terraform. Esta custodia es una **instancia** del principio general de custodia de secretos (ADR-0025): Key Vault no es exclusivo de las cadenas de ASB, es el almacen general de secretos del BC; el mecanismo alterno para secretos que el runtime necesita antes de resolver referencias de Key Vault es la **identidad administrada** (ADR-0025 decision #3).
 
 ### 7. Wiring
 
@@ -130,7 +130,8 @@ Al implementar estas enmiendas, el contenido superado se **elimina del cuerpo** 
 - ADR-0021 (infraestructura base): este ADR enmienda la provision de namespaces del `infra-base-scaffolder`.
 - ADR-0003 (stack ES: Marten + Wolverine + Postgres): este ADR enmienda el wiring de brokers de Azure Service Bus (se mantiene por cadena de conexion).
 - ADR-0012 (encapsulamiento y frontera de serializacion event store vs bus): frontera intacta; los eventos de event sourcing no cruzan el bus.
-- ADR-0022 (autenticacion de CI hacia Azure por OIDC): el acceso runtime a ASB (backbone y externos) se gestiona administrativamente y por cadena de conexion custodiada; la migracion a identidad (Alt 4) se enmarcaria en el mismo espiritu identity-based cuando el paquete lo soporte.
+- ADR-0022 (autenticacion de CI hacia Azure por OIDC): el acceso runtime a ASB (propio/interno, backbone y externos) se gestiona administrativamente y por cadena de conexion custodiada; la migracion a identidad (Alt 4) se enmarcaria en el mismo espiritu identity-based cuando el paquete lo soporte.
+- ADR-0025 (custodia de secretos): generaliza la decision #6 -- Key Vault no es exclusivo de las cadenas de ASB, es el almacen general de secretos del BC -- e incluye explicitamente la cadena del ASB propio/interno en la custodia.
 - issue #156 (criterio publico/privado BC-aware en `implementer.md`): el criterio semantico que este ADR reafirma.
 - issue #158 (consumo de eventos publicos de otro BC): se reencuadra sobre el modelo de este ADR (el caso comun es el backbone compartido).
 - Paquete `Cosmos.EventDriven.CritterStack.AzureServiceBus` (`WolverineFx.AzureServiceBus` 6.1.0): el wiring solo acepta cadena de conexion; base de la decision de Alt 4.
@@ -140,3 +141,4 @@ Al implementar estas enmiendas, el contenido superado se **elimina del cuerpo** 
 
 - 2026-07-01: creacion como `propuesta` (incorpora la revision inicial con el equipo: simplificacion de la integracion externa a una unica excepcion diferida de dos direcciones; acceso por cadena de conexion sin cambio de paquete; managed identity como norte diferido).
 - 2026-07-01: `aceptado` tras la revision con el equipo.
+- 2026-07-01: enmendado (issue #184, mandato de ADR-0025) para generalizar la decision #6: la custodia en Key Vault deja de presentarse como exclusiva de las cadenas de ASB y remite a ADR-0025 como doctrina general; se incluye explicitamente la cadena del ASB propio/interno, que el cuerpo omitia.
