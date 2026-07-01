@@ -50,6 +50,12 @@ Tokens operativos consumidos por los scripts shell. Estructura:
   "boundedContext": {
     "name": "<NombreDelBC>",
     "domains": ["<dominio1>", "<dominio2>", "..."]
+  },
+  "serviceBus": {
+    "internal": { "secretName": "<nombre del secreto KV de la cadena interna>" },
+    "external": [
+      { "alias": "COSMOS", "alcance": "compartido", "secretName": "<nombre del secreto KV>" }
+    ]
   }
 }
 ```
@@ -63,6 +69,12 @@ Notas sobre campos concretos:
   - **`domains`**: lista de dominios del BC, no vacía. Cada elemento debe estar presente en `domainLabels` (los dominios del BC son un subconjunto de todos los dominios del proyecto). `load_harness_config` valida la pertenencia y exporta `HARNESS_BC_DOMAINS` (lista separada por espacios).
   - El **resource group** del BC se genera como `infraResourceGroupPrefix`+`-`+`name` (ej: `rg-miproyecto-principal`). Lo computa el `infra-base-scaffolder` al provisionar la infraestructura base.
   - El **context map** (registro de BCs externos consumidos por este BC) es trabajo diferido a futuras evoluciones; hoy el BC solo se nombra a sí mismo. Ver nota en `load_harness_config`.
+- **`serviceBus`** (opcional, ADR-0024 decisiones #1 y #6): registro de los Azure Service Bus que el BC toca, clasificados por **alcance**. El harness provisiona siempre el ASB **propio del BC** (interno, alias reservado `INTERNO`, decision #1); este registro declara su secreto de Key Vault y, opcionalmente, los ASB **compartidos del producto** o **verdaderamente externos** (decision #5, diferido) que el BC consume/publica. Subfields:
+  - **`internal.secretName`**: nombre del secreto de Key Vault con la cadena de conexion del ASB propio del BC. **Obligatorio si se declara `serviceBus`**; `load_harness_config` aborta con mensaje accionable si esta vacio. La cadena de conexion **nunca** aparece en `harness.config.json` (decision #6).
+  - **`external`** (opcional): lista de entradas `{ alias, alcance, secretName }`. `alias` identifica el ASB (no vacio, unico, distinto de `INTERNO` que queda reservado); `alcance` es `compartido` (backbone del producto) o `externo` (integracion verdaderamente externa, decision #5, diferida); `secretName` es el nombre del secreto de Key Vault de esa cadena (nunca en claro). Su ausencia no aborta la carga de config: un BC puede no consumir/publicar publico todavia.
+  - `load_harness_config` valida la forma completa (secreto interno no vacio; cada entrada externa con alias/alcance/secretName no vacios y alcance en el enum; aliases unicos; `INTERNO` no reutilizable) y aborta temprano con mensaje explicito si es invalida. Exporta `HARNESS_SB_INTERNAL_SECRET` y, para `external`, tres listas paralelas separadas por espacios con el mismo orden posicional: `HARNESS_SB_EXTERNAL_ALIASES`, `HARNESS_SB_EXTERNAL_ALCANCES`, `HARNESS_SB_EXTERNAL_SECRETS`.
+  - **Patron oficial del app setting**: cada cadena (interna o externa) se referencia en la Function App como `SERVICE_BUS_CONNECTION_<ALIAS>` — patron, no un token fijo; `INTERNO` es el alias reservado de la interna. La **clave de broker de Wolverine es el mismo alias** (ej. broker `"cosmos"` <-> `SERVICE_BUS_CONNECTION_COSMOS` <-> secreto de Key Vault del alias `COSMOS`). Reemplaza al viejo `SERVICE_BUS_CONNECTION_INTEGRACION` (namespace de integracion por BC, superado por ADR-0024). Esta es la convencion ancla que consumen `implementer`, `infra-base-scaffolder`, `domain-scaffolder` y el issue de Key Vault; no la reinventan.
+  - El **diseño fino de wiring/provision** del alcance verdaderamente externo (ambas direcciones) queda diferido y default-off (ADR-0024 decision #5): este registro solo lo nombra, no lo materializa.
 - **`terraformStateStorage`** es el nombre **base** de la Storage Account del tfstate. Azure exige **3-24 caracteres, solo minúsculas y dígitos** ([reglas de nombres de recursos, `Microsoft.Storage`](https://learn.microsoft.com/azure/azure-resource-manager/management/resource-name-rules#microsoftstorage)); `load_harness_config` valida `^[a-z0-9]{3,24}$` y aborta temprano si no cumple. El patrón `st<proyecto>tfstate<env>` deja ~12 chars para `<proyecto>`, así que para nombres largos abrevia el prefijo (p. ej. `stmicontrolplanetfstatedev` = 26 chars **inválido** → `stmcptfstatedev` = 15 válido). `bootstrap-backend.sh` le añade además un sufijo de unicidad global (detalle en README §3).
 - **`repoSlug`** (opcional): slug `owner/repo` del fork de Mefisto al que se enrutan los drafts cross-repo (`estado:borrador`) que crean el `planner` y el `tooling-investigator`. Default: `augusto-romero-arango/eda-evsourcing-azure-harness`. **No** se exporta como `HARNESS_*`; se lee inline con `jq` donde se necesita (`_pipeline-common.sh`, `agents/planner.md`, `agents/tooling-investigator.md`).
 - **`azureLocation`** (opcional): región de Azure para `bootstrap-backend.sh`; el flag `--location` la sobrescribe.

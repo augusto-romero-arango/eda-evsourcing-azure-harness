@@ -15,6 +15,17 @@
 #   BC-3: name vacio o con caracteres invalidos (>63 chars, espacios, puntos) aborta.
 #   BC-4: domains vacio, o con un dominio fuera de domainLabels, aborta.
 #
+# Cubre la validacion del registro serviceBus (issue #163, ADR-0024):
+#   SB-1: serviceBus ausente NO aborta (opcional) y deja los HARNESS_SB_* vacios.
+#   SB-2: serviceBus.internal.secretName vacio o ausente aborta con mensaje accionable.
+#   SB-3: serviceBus valido con internal + external pasa y exporta HARNESS_SB_* (listas
+#         paralelas separadas por espacios, mismo orden posicional).
+#   SB-4: serviceBus con solo internal (sin external) pasa y deja los HARNESS_SB_EXTERNAL_*
+#         vacios.
+#   SB-5..SB-7: una entrada de external con alias/alcance/secretName invalido aborta.
+#   SB-8: alias reservado INTERNO reutilizado en external aborta (case-insensitive).
+#   SB-9: aliases duplicados en external abortan (case-insensitive).
+#
 # Uso: scripts/tests/test-harness-config.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
 
@@ -106,6 +117,49 @@ bc_exports() {
         source "$REPO_ROOT/scripts/_pipeline-common.sh" 2>/dev/null
         load_harness_config "$cfg" >/dev/null 2>&1 || true
         echo "${HARNESS_BC_NAME:-}|${HARNESS_BC_DOMAINS:-}"
+    )
+}
+
+# write_sb_config <archivo> <fragmento_serviceBus|__OMIT__>
+# Genera un config con required + domainLabels + boundedContext valido, y el
+# bloque serviceBus indicado tal cual (debe ser JSON valido). __OMIT__ omite
+# por completo el campo serviceBus (caso consumidor que aun no lo declara).
+write_sb_config() {
+    local file="$1"
+    local sb="$2"
+    if [ "$sb" = "__OMIT__" ]; then
+        cat > "$file" <<'JSON'
+{
+  "projectName": "MiControlPlane",
+  "namespacePrefix": "MiControlPlane.Dominio",
+  "solutionFile": "MiControlPlane.slnx",
+  "domainLabels": ["dominio1", "dominio2"],
+  "boundedContext": { "name": "Principal", "domains": ["dominio1"] }
+}
+JSON
+    else
+        cat > "$file" <<JSON
+{
+  "projectName": "MiControlPlane",
+  "namespacePrefix": "MiControlPlane.Dominio",
+  "solutionFile": "MiControlPlane.slnx",
+  "domainLabels": ["dominio1", "dominio2"],
+  "boundedContext": { "name": "Principal", "domains": ["dominio1"] },
+  "serviceBus": $sb
+}
+JSON
+    fi
+}
+
+# sb_exports <config_path> -> imprime "INTERNAL|ALIASES|ALCANCES|SECRETS"
+# tras cargar el config (independiente del exit code).
+sb_exports() {
+    local cfg="$1"
+    (
+        set +u
+        source "$REPO_ROOT/scripts/_pipeline-common.sh" 2>/dev/null
+        load_harness_config "$cfg" >/dev/null 2>&1 || true
+        echo "${HARNESS_SB_INTERNAL_SECRET:-}|${HARNESS_SB_EXTERNAL_ALIASES:-}|${HARNESS_SB_EXTERNAL_ALCANCES:-}|${HARNESS_SB_EXTERNAL_SECRETS:-}"
     )
 }
 
@@ -259,6 +313,93 @@ write_bc_config "$CFG" '{ "name": "Principal", "domains": ["ventas"] }'
 ERR="$(run_load "$CFG" 2>&1)"; RC=$?
 if [ "$RC" -eq 1 ]; then pass "dominio fuera de domainLabels -> return 1"; else fail "dominio fuera de domainLabels deberia abortar (rc=$RC)"; fi
 if echo "$ERR" | grep -q "ventas"; then pass "el mensaje nombra el dominio invalido ('ventas')"; else fail "el mensaje no nombra el dominio invalido"; fi
+
+echo ""
+echo "[SB-1] serviceBus ausente NO aborta (opcional) y deja HARNESS_SB_* vacios"
+
+CFG="$TMP_DIR/sb-omit.json"
+write_sb_config "$CFG" "__OMIT__"
+RC=0; run_load "$CFG" >/dev/null 2>&1 || RC=$?
+if [ "$RC" -eq 0 ]; then pass "serviceBus ausente -> return 0"; else fail "serviceBus ausente NO deberia abortar (rc=$RC)"; fi
+if [ "$(sb_exports "$CFG")" = "|||" ]; then pass "HARNESS_SB_* quedan vacios"; else fail "exports deberian quedar vacios: $(sb_exports "$CFG")"; fi
+
+echo ""
+echo "[SB-2] serviceBus.internal.secretName vacio o ausente aborta"
+
+CFG="$TMP_DIR/sb-internal-empty.json"
+write_sb_config "$CFG" '{ "internal": { "secretName": "" } }'
+ERR="$(run_load "$CFG" 2>&1)"; RC=$?
+if [ "$RC" -eq 1 ]; then pass "internal.secretName vacio -> return 1"; else fail "internal.secretName vacio deberia abortar (rc=$RC)"; fi
+if echo "$ERR" | grep -q "internal.secretName"; then pass "el mensaje menciona 'internal.secretName'"; else fail "el mensaje no menciona 'internal.secretName'"; fi
+
+CFG="$TMP_DIR/sb-internal-missing.json"
+write_sb_config "$CFG" '{ }'
+RC=0; run_load "$CFG" >/dev/null 2>&1 || RC=$?
+if [ "$RC" -eq 1 ]; then pass "internal ausente -> return 1"; else fail "internal ausente deberia abortar (rc=$RC)"; fi
+
+echo ""
+echo "[SB-3] serviceBus valido con internal + external pasa y exporta listas paralelas"
+
+CFG="$TMP_DIR/sb-valid.json"
+write_sb_config "$CFG" '{ "internal": { "secretName": "sb-connection-interno" }, "external": [ { "alias": "COSMOS", "alcance": "compartido", "secretName": "sb-connection-cosmos" }, { "alias": "FACTURACION", "alcance": "externo", "secretName": "sb-connection-facturacion" } ] }'
+RC=0; run_load "$CFG" >/dev/null 2>&1 || RC=$?
+if [ "$RC" -eq 0 ]; then pass "serviceBus valido -> return 0"; else fail "serviceBus valido NO deberia abortar (rc=$RC)"; fi
+EXPECTED="sb-connection-interno|COSMOS FACTURACION|compartido externo|sb-connection-cosmos sb-connection-facturacion"
+if [ "$(sb_exports "$CFG")" = "$EXPECTED" ]; then pass "exporta HARNESS_SB_* con listas paralelas en el mismo orden"; else fail "exports incorrectos: $(sb_exports "$CFG")"; fi
+
+echo ""
+echo "[SB-4] serviceBus con solo internal (sin external) pasa y deja HARNESS_SB_EXTERNAL_* vacios"
+
+CFG="$TMP_DIR/sb-only-internal.json"
+write_sb_config "$CFG" '{ "internal": { "secretName": "sb-connection-interno" } }'
+RC=0; run_load "$CFG" >/dev/null 2>&1 || RC=$?
+if [ "$RC" -eq 0 ]; then pass "sin external -> return 0"; else fail "serviceBus sin external NO deberia abortar (rc=$RC)"; fi
+if [ "$(sb_exports "$CFG")" = "sb-connection-interno|||" ]; then pass "HARNESS_SB_EXTERNAL_* quedan vacios"; else fail "exports incorrectos: $(sb_exports "$CFG")"; fi
+
+echo ""
+echo "[SB-5] entrada external con alias vacio aborta"
+
+CFG="$TMP_DIR/sb-ext-alias-empty.json"
+write_sb_config "$CFG" '{ "internal": { "secretName": "sb-connection-interno" }, "external": [ { "alias": "", "alcance": "compartido", "secretName": "sb-x" } ] }'
+ERR="$(run_load "$CFG" 2>&1)"; RC=$?
+if [ "$RC" -eq 1 ]; then pass "alias vacio -> return 1"; else fail "alias vacio deberia abortar (rc=$RC)"; fi
+if echo "$ERR" | grep -q "'alias' vacio"; then pass "el mensaje menciona 'alias' vacio"; else fail "el mensaje no menciona 'alias' vacio"; fi
+
+echo ""
+echo "[SB-6] entrada external con alcance invalido aborta"
+
+CFG="$TMP_DIR/sb-ext-alcance-invalido.json"
+write_sb_config "$CFG" '{ "internal": { "secretName": "sb-connection-interno" }, "external": [ { "alias": "COSMOS", "alcance": "publico", "secretName": "sb-x" } ] }'
+ERR="$(run_load "$CFG" 2>&1)"; RC=$?
+if [ "$RC" -eq 1 ]; then pass "alcance='publico' -> return 1"; else fail "alcance invalido deberia abortar (rc=$RC)"; fi
+if echo "$ERR" | grep -q "alcance 'publico' invalido"; then pass "el mensaje nombra el alcance invalido"; else fail "el mensaje no nombra el alcance invalido"; fi
+
+echo ""
+echo "[SB-7] entrada external con secretName vacio aborta"
+
+CFG="$TMP_DIR/sb-ext-secret-empty.json"
+write_sb_config "$CFG" '{ "internal": { "secretName": "sb-connection-interno" }, "external": [ { "alias": "COSMOS", "alcance": "compartido", "secretName": "" } ] }'
+ERR="$(run_load "$CFG" 2>&1)"; RC=$?
+if [ "$RC" -eq 1 ]; then pass "secretName vacio -> return 1"; else fail "secretName vacio deberia abortar (rc=$RC)"; fi
+if echo "$ERR" | grep -q "'secretName' vacio"; then pass "el mensaje menciona 'secretName' vacio"; else fail "el mensaje no menciona 'secretName' vacio"; fi
+
+echo ""
+echo "[SB-8] alias reservado INTERNO reutilizado en external aborta (case-insensitive)"
+
+CFG="$TMP_DIR/sb-ext-alias-interno.json"
+write_sb_config "$CFG" '{ "internal": { "secretName": "sb-connection-interno" }, "external": [ { "alias": "Interno", "alcance": "compartido", "secretName": "sb-x" } ] }'
+ERR="$(run_load "$CFG" 2>&1)"; RC=$?
+if [ "$RC" -eq 1 ]; then pass "alias 'Interno' -> return 1"; else fail "alias reservado deberia abortar (rc=$RC)"; fi
+if echo "$ERR" | grep -qi "reservado"; then pass "el mensaje indica que INTERNO esta reservado"; else fail "el mensaje no indica que INTERNO esta reservado"; fi
+
+echo ""
+echo "[SB-9] aliases duplicados en external abortan (case-insensitive)"
+
+CFG="$TMP_DIR/sb-ext-alias-dup.json"
+write_sb_config "$CFG" '{ "internal": { "secretName": "sb-connection-interno" }, "external": [ { "alias": "COSMOS", "alcance": "compartido", "secretName": "sb-a" }, { "alias": "cosmos", "alcance": "externo", "secretName": "sb-b" } ] }'
+ERR="$(run_load "$CFG" 2>&1)"; RC=$?
+if [ "$RC" -eq 1 ]; then pass "alias duplicado (distinto case) -> return 1"; else fail "alias duplicado deberia abortar (rc=$RC)"; fi
+if echo "$ERR" | grep -q "duplicado"; then pass "el mensaje indica alias duplicado"; else fail "el mensaje no indica alias duplicado"; fi
 
 echo ""
 echo "----------------------------------------"
