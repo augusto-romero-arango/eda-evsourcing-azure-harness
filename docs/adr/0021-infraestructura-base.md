@@ -42,7 +42,7 @@ ADR-0024 establece que el harness provisiona por defecto **un** namespace de Azu
 
 El namespace interno no es alcanzable desde fuera del BC: no recibe ninguna asignacion de rol para identidades externas al BC. Este aislamiento es una propiedad arquitectonica del diseño, no una responsabilidad de configuracion.
 
-El evento publico (`IPublicEventSender`) no se publica a un namespace propio del BC: viaja por el backbone compartido del producto, provisionado por el equipo de infra (ADR-0024, decision #4). El `infra-base-scaffolder` no provisiona ese backbone ni su wiring — solo genera el namespace interno del BC; la custodia de la cadena de conexion del backbone (Key Vault) y el wiring de brokers nombrados quedan en issues derivados (#165).
+El evento publico (`IPublicEventSender`) no se publica a un namespace propio del BC: viaja por el backbone compartido del producto, provisionado por el equipo de infra (ADR-0024, decision #4). El `infra-base-scaffolder` no provisiona ese backbone ni wirea sus brokers por dominio (eso lo hace el `domain-scaffolder`): genera el namespace interno del BC y el Key Vault del BC, que es el **almacen general de secretos del BC** (ADR-0025), no un modulo exclusivo de custodia de cadenas de ASB.
 
 Todo evento que cruza el namespace interno es plano y portable (ADR-0023 decision #3, reformado en #122): el criterio de "plano" es "¿cruza un bus?", no "¿es publico?".
 
@@ -60,7 +60,7 @@ El modulo Terraform `service-bus` **no cambia su definicion**: sigue siendo "un 
 | `storage` | `azurerm_storage_account` Standard LRS | `name`, `resource_group_name`, `location`, `tags` | `id`, `name`, `primary_connection_string` (sensitive), `primary_access_key` (sensitive) | **si** |
 | `function-app` | `azurerm_linux_function_app` (.NET 10 isolated, SystemAssigned identity) | `name`, `resource_group_name`, `location`, `service_plan_id`, `storage_account_name`, `storage_account_connection_string`, `storage_account_access_key`, `app_insights_connection_string`, `app_settings`, `tags` | `id`, `name`, `principal_id` | no |
 
-**Nota sobre el modulo `service-bus`:** el modulo es parametrico (un namespace + topics/subscriptions) y el entorno lo instancia **una vez**, para el namespace interno del BC (ver "El esqueleto del entorno y sus outputs"). Los inputs `name`, `resource_group_name`, `location`, `sku`, `topics_config`, `tags` aplican a esa instancia; el entorno le pasa el nombre con su sufijo de unicidad. La instancia expone `name`, `id` y `default_primary_connection_string`, que el entorno y los agentes usan para la variable de entorno del dominio (`SERVICE_BUS_CONNECTION_INTERNO`). El wiring del backbone compartido para eventos publicos (brokers nombrados por cadena de conexion custodiada en Key Vault) queda diferido a #165 (scaffolder) y a la materializacion del Context Map (#131).
+**Nota sobre el modulo `service-bus`:** el modulo es parametrico (un namespace + topics/subscriptions) y el entorno lo instancia **una vez**, para el namespace interno del BC (ver "El esqueleto del entorno y sus outputs"). Los inputs `name`, `resource_group_name`, `location`, `sku`, `topics_config`, `tags` aplican a esa instancia; el entorno le pasa el nombre con su sufijo de unicidad. La instancia expone `name`, `id` y `default_primary_connection_string`, que el entorno y los agentes usan para la variable de entorno del dominio (`SERVICE_BUS_CONNECTION_INTERNO`). El wiring de brokers nombrados del backbone compartido para eventos publicos, por cadena de conexion custodiada en el Key Vault del BC (ADR-0025), lo asume el `domain-scaffolder` por dominio; la materializacion formal del Context Map queda diferida (#131).
 
 ### El modulo `service-plan` cumple el contrato de ADR-0020 (resuelve la divergencia de campo)
 
@@ -157,7 +157,9 @@ Un solo agente que crea backend + modulos + entorno.
 
 - ADR-0024 (modelo de eventos de bus del BC: privado propio, publico via backbone compartido): **raiz doctrinal de esta reforma**. Establece que el BC provisiona por defecto un unico namespace interno, always-on, y que el evento publico comun viaja por el backbone compartido del producto, provisionado por infra y fuera del alcance de este agente. La reduccion de ADR-0021 de dos namespaces a uno es la consecuencia directa de ADR-0024.
 - ADR-0023 (Bounded Context y regla de portabilidad de eventos que cruzan un bus): define el BC como grupo de dominios con su propio resource group (que este ADR materializa) y la regla de que todo lo que cruza un bus es plano y portable; la topologia de namespaces del BC queda fijada por ADR-0024.
-- Issue #165 (Actualizar `infra-base-scaffolder`): materializa en HCL el namespace interno unico que este ADR fija como doctrina, junto con la custodia en Key Vault de la cadena de conexion del backbone compartido.
+- Issue #165 (Actualizar `infra-base-scaffolder`): materializa en HCL el namespace interno unico que este ADR fija como doctrina.
+- Issue #170 (Anadir modulo Key Vault a la infraestructura base): genera el modulo Key Vault del BC como almacen general de secretos (ADR-0025) y enruta las cadenas de Azure Service Bus por referencias `@Microsoft.KeyVault(...)`.
+- ADR-0025 (custodia de secretos): reencuadra el modulo Key Vault de este ADR como almacen general de secretos del BC, no custodia exclusiva de la cadena del backbone compartido.
 - ADR-0001 (Service Bus, topic por evento): el modulo `service-bus` con `topics_config` parametrizable lo respeta.
 - ADR-0003 (stack ES: Marten + Wolverine + Postgres): el modulo `postgresql`; origen de `IPublicEventSender` / `IPrivateEventSender`.
 - ADR-0013 (smoke tests contra entorno dev): el modulo `service-bus` admite subscriptions de smoke-tests via `topics_config`.
@@ -172,3 +174,4 @@ Un solo agente que crea backend + modulos + entorno.
 
 - 2026-06-30: reformado (issue #128) para alinear la infraestructura base con la topologia de dos namespaces de Azure Service Bus por Bounded Context fijada por ADR-0023 (decision #2).
 - 2026-07-01: reformado (issue #160) para provisionar un unico namespace interno por Bounded Context, siguiendo el mandato de ADR-0024. Se elimina del cuerpo la provision del namespace de integracion (recursos, outputs, RBAC Data Sender y sufijo de unicidad asociados); el evento publico comun viaja por el backbone compartido del producto, fuera del alcance de este ADR.
+- 2026-07-01: enmendado (issue #184, mandato de ADR-0025) para reencuadrar el modulo Key Vault como almacen general de secretos del BC, no custodia exclusiva de la cadena del backbone compartido; se corrige la atribucion de issues (#165 vs #170) en el cuerpo.
