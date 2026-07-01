@@ -1348,30 +1348,53 @@ module "service_plan_{snake_case}" {
 }
 
 module "function_app_{snake_case}" {
-  source                            = "../../modules/function-app"
-  name                              = "func-${local.prefix_func}-{kebab}"
-  resource_group_name               = module.resource_group.name
-  location                          = module.resource_group.location
-  service_plan_id                   = module.service_plan_{snake_case}.id
-  storage_account_name              = module.storage_{snake_case}.name
-  storage_account_connection_string = module.storage_{snake_case}.primary_connection_string
-  storage_account_access_key        = module.storage_{snake_case}.primary_access_key
-  app_insights_connection_string    = module.monitoring.connection_string
+  source                         = "../../modules/function-app"
+  name                           = "func-${local.prefix_func}-{kebab}"
+  resource_group_name            = module.resource_group.name
+  location                       = module.resource_group.location
+  service_plan_id                = module.service_plan_{snake_case}.id
+  storage_account_name           = module.storage_{snake_case}.name
+  app_insights_connection_string = local.app_insights_connection_kv_ref
   app_settings = {
     SERVICE_BUS_CONNECTION_INTERNO = local.service_bus_connection_interno_kv_ref
     SERVICE_BUS_CONNECTION_COSMOS  = local.service_bus_connection_external_kv_refs["COSMOS"]
     DOMINIO                        = "{kebab}"
-    MartenConnectionString         = "Host=${module.postgresql.server_fqdn};Database=${module.postgresql.database_name};Username=pgadmin;Password=${var.postgresql_admin_password};SSL Mode=Require"
+    MartenConnectionString         = local.marten_connection_kv_ref
   }
   tags = local.tags
 }
 
-# Lectura de secretos del Key Vault (ADR-0024 decision #6): la managed identity de la
+# Lectura de secretos del Key Vault (ADR-0025 decision #2): la managed identity de la
 # Function App necesita "Key Vault Secrets User" sobre el Key Vault del BC para resolver
-# en runtime las referencias @Microsoft.KeyVault(...) de sus app settings SERVICE_BUS_CONNECTION_*.
+# en runtime las referencias @Microsoft.KeyVault(...) de sus app settings
+# SERVICE_BUS_CONNECTION_*, MartenConnectionString y APPLICATIONINSIGHTS_CONNECTION_STRING.
 resource "azurerm_role_assignment" "function_app_{snake_case}_kv_secrets_user" {
   scope                = module.key_vault.id
   role_definition_name = "Key Vault Secrets User"
+  principal_id         = module.function_app_{snake_case}.principal_id
+}
+
+# Storage por identidad (ADR-0025 decision #3): AzureWebJobsStorage no puede ir por
+# referencia de Key Vault (el runtime lo necesita al arrancar, antes de resolver
+# referencias). El modulo function-app ya wirea storage_uses_managed_identity = true;
+# estos tres roles de datos (convencion anclada en infra-base-scaffolder.md, seccion
+# posterior al Paso 1.8) son los que la managed identity necesita para que el runtime
+# arranque sin fallar por permisos.
+resource "azurerm_role_assignment" "function_app_{snake_case}_storage_blob_data_owner" {
+  scope                = module.storage_{snake_case}.id
+  role_definition_name = "Storage Blob Data Owner"
+  principal_id         = module.function_app_{snake_case}.principal_id
+}
+
+resource "azurerm_role_assignment" "function_app_{snake_case}_storage_queue_data_contributor" {
+  scope                = module.storage_{snake_case}.id
+  role_definition_name = "Storage Queue Data Contributor"
+  principal_id         = module.function_app_{snake_case}.principal_id
+}
+
+resource "azurerm_role_assignment" "function_app_{snake_case}_storage_table_data_contributor" {
+  scope                = module.storage_{snake_case}.id
+  role_definition_name = "Storage Table Data Contributor"
   principal_id         = module.function_app_{snake_case}.principal_id
 }
 ```
@@ -1380,9 +1403,11 @@ Donde `{kebab-sin-guiones}` es el nombre del dominio con los guiones eliminados 
 
 **Cada dominio recibe su propio `module service_plan_{snake_case}`**: el `service_plan_id` de la Function App apunta a `module.service_plan_{snake_case}.id`, nunca a un plan compartido. No referencies un `module.service_plan` global; ese patron (todas las Function Apps en un solo plan) es justo el que ADR-0020 proscribe.
 
-**El app setting `SERVICE_BUS_CONNECTION_COSMOS` del ejemplo se repite por cada alias del backbone compartido** resuelto en el Paso 0 (`serviceBus.external` filtrado por `alcance == "compartido"`), leyendo su referencia versionless de `local.service_bus_connection_external_kv_refs["<ALIAS>"]`. Si el Paso 0 no resolvio ningun alias todavia, omite esas lineas del `app_settings`: la Function App arranca solo con `SERVICE_BUS_CONNECTION_INTERNO`. La `azurerm_role_assignment` de Key Vault Secrets User se emite siempre (la Function App siempre necesita leer, minimo, el secreto interno).
+**El app setting `SERVICE_BUS_CONNECTION_COSMOS` del ejemplo se repite por cada alias del backbone compartido** resuelto en el Paso 0 (`serviceBus.external` filtrado por `alcance == "compartido"`), leyendo su referencia versionless de `local.service_bus_connection_external_kv_refs["<ALIAS>"]`. Si el Paso 0 no resolvio ningun alias todavia, omite esas lineas del `app_settings`: la Function App arranca solo con `SERVICE_BUS_CONNECTION_INTERNO`. Los cuatro `azurerm_role_assignment` (Key Vault Secrets User + los tres roles de datos de Storage) se emiten siempre, sin condicionamiento por alias: la Function App siempre necesita leer, minimo, los secretos `SERVICE_BUS_CONNECTION_INTERNO`, `marten-connection` y `app-insights-connection`, y siempre necesita acceso identity-based a su propia Storage Account para `AzureWebJobsStorage` (ADR-0025).
 
-> **Nota (infraestructura base)**: estos bloques referencian `module.resource_group`, `module.monitoring`, `module.postgresql`, `module.service_bus_interno`, `module.key_vault`, los locals `local.service_bus_connection_interno_kv_ref` / `local.service_bus_connection_external_kv_refs`, y los modulos `../../modules/storage`, `../../modules/service-plan`, `../../modules/function-app`. **El harness los provee**: los genera el agente `infra-base-scaffolder` (skill `/infra-base`), que escribe los 8 modulos base y el esqueleto del entorno con el namespace interno del BC y el Key Vault de custodia (ver **ADR-0021**, **ADR-0024**). Verifica que existan antes de hacer commit:
+> **Nota (modulo function-app, ADR-0025)**: el modulo `../../modules/function-app` que genera `infra-base-scaffolder` **ya no acepta** `storage_account_access_key` ni `storage_account_connection_string` -- resuelve `AzureWebJobsStorage` por identidad (`storage_uses_managed_identity = true`) internamente. Su input `app_insights_connection_string` espera la referencia `@Microsoft.KeyVault(...)` versionless, nunca el valor literal de `module.monitoring.connection_string`. Si el consumidor tiene un `modules/function-app` heredado que todavia declara esos inputs viejos, regeneralo con `/infra-base` (idempotente) o ajusta el `module function_app_{snake_case}` emitido a los inputs que ese modulo si exponga.
+
+> **Nota (infraestructura base)**: estos bloques referencian `module.resource_group`, `module.key_vault`, los locals `local.service_bus_connection_interno_kv_ref` / `local.service_bus_connection_external_kv_refs` / `local.marten_connection_kv_ref` / `local.app_insights_connection_kv_ref` (que a su vez encapsulan `module.postgresql` y `module.monitoring` -- el `domain-scaffolder` ya no los referencia directo, solo consume sus referencias de Key Vault), y los modulos `../../modules/storage`, `../../modules/service-plan`, `../../modules/function-app`. **El harness los provee**: los genera el agente `infra-base-scaffolder` (skill `/infra-base`), que escribe los modulos base y el esqueleto del entorno con el namespace interno del BC y el Key Vault de custodia (ver **ADR-0021**, **ADR-0024**, **ADR-0025**). Verifica que existan antes de hacer commit:
 > ```bash
 > test -d infra/modules/postgresql && test -d infra/modules/service-plan && test -d infra/modules/function-app && test -d infra/modules/key-vault && test -f infra/environments/{env}/main.tf && echo "base OK" || echo "FALTA la infraestructura base"
 > ```
@@ -1738,8 +1763,10 @@ Scaffold completado para el dominio "{kebab}":
     appsettings.json                       - URL + placeholders vacios para ServiceBus y Postgres
 
   infra/environments/dev/main.tf           - module storage + module service_plan (dedicado) + module function_app
-                                             + azurerm_role_assignment Key Vault Secrets User (ADR-0024)
-                                             app settings SERVICE_BUS_CONNECTION_INTERNO / _<ALIAS> por referencia @Microsoft.KeyVault(...)
+                                             + azurerm_role_assignment Key Vault Secrets User (ADR-0024/ADR-0025)
+                                             + azurerm_role_assignment Storage Blob/Queue/Table Data Owner-Contributor (storage por identidad, ADR-0025)
+                                             app settings SERVICE_BUS_CONNECTION_INTERNO / _<ALIAS>, MartenConnectionString y
+                                             APPLICATIONINSIGHTS_CONNECTION_STRING por referencia @Microsoft.KeyVault(...) (ADR-0025)
                                              App Service Plan asp-{prefix_func}-{kebab} (SKU {sku_name}, always_on {always_on}), ADR-0020
                                              (topics privados se crean bajo demanda con implementer; el backbone compartido lo administra infra)
 
