@@ -1,7 +1,7 @@
 # ADR-0024: Modelo de eventos de bus del Bounded Context (privado propio, publico via backbone compartido, integracion externa diferida)
 
 - **Fecha**: 2026-07-01
-- **Estado**: propuesta
+- **Estado**: aceptado
 - **Aplica a**: doctrina de mensajeria del marco; gobierno de los agentes `implementer`, `domain-scaffolder`, `infra-base-scaffolder` e `infra-writer`; contrato `harness.config.json`. Enmienda ADR-0021, ADR-0023 (decisiones #2 y #5) y ADR-0003.
 
 ## Contexto
@@ -139,3 +139,4 @@ Al implementar estas enmiendas, el contenido superado se **elimina del cuerpo** 
 ## Control de cambios
 
 - 2026-07-01: creacion como `propuesta` (incorpora la revision inicial con el equipo: simplificacion de la integracion externa a una unica excepcion diferida de dos direcciones; acceso por cadena de conexion sin cambio de paquete; managed identity como norte diferido).
+- 2026-07-01: `aceptado` tras la revision con el equipo.
