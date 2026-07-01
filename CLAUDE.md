@@ -11,10 +11,10 @@ Harness opinionado para Claude Code (nombre interno: `mefisto`, repo: `eda-evsou
 
 Es un **Claude Code Plugin** (ver `.claude-plugin/plugin.json`) que empaqueta:
 
-- 16 **skills** (slash commands) en `commands/`
-- 17 **agentes** especializados en `agents/`
+- **Skills** (slash commands) en `commands/`
+- **Agentes** especializados en `agents/`
 - Pipelines bash en `scripts/` (TDD, IaC, tooling, scaffolding, pr-sync, etc.)
-- 22 **ADRs** del marco arquitectónico en `docs/adr/`
+- **ADRs** del marco arquitectónico en `docs/adr/`
 - Hooks en `hooks/hooks.json`
 
 Está pensado para instalarse vía marketplace en cualquier proyecto que adopte el marco (EDA + Event Sourcing + Azure Functions + Marten + Wolverine + Postgres).
@@ -60,24 +60,17 @@ Tokens operativos consumidos por los scripts shell. Estructura:
 }
 ```
 
-`scripts/_pipeline-common.sh` carga este archivo con `jq` y exporta variables `HARNESS_*` que el resto de scripts consumen.
+Los scripts del harness consumen estos tokens (validación y variables derivadas viven en `scripts/`).
 
 Notas sobre campos concretos:
 
-- **`boundedContext`** (**obligatorio**, ADR-0023): declara el Bounded Context del proyecto. Un BC es un grupo de dominios relacionados que comparte un resource group de Azure y un namespace interno de Azure Service Bus (ADR-0021, ADR-0023); lo público viaja por el backbone compartido del producto o, en el caso diferido, por integración externa (ADR-0024). Tiene dos subfields:
-  - **`name`**: nombre del BC, 1-63 caracteres alfanuméricos y guiones. Puede coincidir o no con `projectName` (ej: un proyecto "ControlAsistencias" puede tener BC "Principal"). `load_harness_config` valida `^[a-zA-Z0-9-]{1,63}$` y exporta `HARNESS_BC_NAME`.
-  - **`domains`**: lista de dominios del BC, no vacía. Cada elemento debe estar presente en `domainLabels` (los dominios del BC son un subconjunto de todos los dominios del proyecto). `load_harness_config` valida la pertenencia y exporta `HARNESS_BC_DOMAINS` (lista separada por espacios).
-  - El **resource group** del BC se genera como `infraResourceGroupPrefix`+`-`+`name` (ej: `rg-miproyecto-principal`). Lo computa el `infra-base-scaffolder` al provisionar la infraestructura base.
-  - El **context map** (registro de BCs externos consumidos por este BC) es trabajo diferido a futuras evoluciones; hoy el BC solo se nombra a sí mismo. Ver nota en `load_harness_config`.
-- **`serviceBus`** (opcional, ADR-0024 decisiones #1 y #6): registro de los Azure Service Bus que el BC toca, clasificados por **alcance**. El harness provisiona siempre el ASB **propio del BC** (interno, alias reservado `INTERNO`, decision #1); este registro declara su secreto de Key Vault y, opcionalmente, los ASB **compartidos del producto** o **verdaderamente externos** (decision #5, diferido) que el BC consume/publica. Subfields:
-  - **`internal.secretName`**: nombre del secreto de Key Vault con la cadena de conexion del ASB propio del BC. **Obligatorio si se declara `serviceBus`**; `load_harness_config` aborta con mensaje accionable si esta vacio. La cadena de conexion **nunca** aparece en `harness.config.json` (decision #6).
-  - **`external`** (opcional): lista de entradas `{ alias, alcance, secretName }`. `alias` identifica el ASB (no vacio, unico, distinto de `INTERNO` que queda reservado); `alcance` es `compartido` (backbone del producto) o `externo` (integracion verdaderamente externa, decision #5, diferida); `secretName` es el nombre del secreto de Key Vault de esa cadena (nunca en claro). Su ausencia no aborta la carga de config: un BC puede no consumir/publicar publico todavia.
-  - `load_harness_config` valida la forma completa (secreto interno no vacio; cada entrada externa con alias/alcance/secretName no vacios y alcance en el enum; aliases unicos; `INTERNO` no reutilizable) y aborta temprano con mensaje explicito si es invalida. Exporta `HARNESS_SB_INTERNAL_SECRET` y, para `external`, tres listas paralelas separadas por espacios con el mismo orden posicional: `HARNESS_SB_EXTERNAL_ALIASES`, `HARNESS_SB_EXTERNAL_ALCANCES`, `HARNESS_SB_EXTERNAL_SECRETS`.
-  - **Patron oficial del app setting**: cada cadena (interna o externa) se referencia en la Function App como `SERVICE_BUS_CONNECTION_<ALIAS>` — patron, no un token fijo; `INTERNO` es el alias reservado de la interna. La **clave de broker de Wolverine es el mismo alias** (ej. broker `"cosmos"` <-> `SERVICE_BUS_CONNECTION_COSMOS` <-> secreto de Key Vault del alias `COSMOS`). Reemplaza al viejo `SERVICE_BUS_CONNECTION_INTEGRACION` (namespace de integracion por BC, superado por ADR-0024). Esta es la convencion ancla que consumen `implementer`, `infra-base-scaffolder`, `domain-scaffolder` y el issue de Key Vault; no la reinventan.
-  - El **diseño fino de wiring/provision** del alcance verdaderamente externo (ambas direcciones) queda diferido y default-off (ADR-0024 decision #5): este registro solo lo nombra, no lo materializa.
-- **`terraformStateStorage`** es el nombre **base** de la Storage Account del tfstate. Azure exige **3-24 caracteres, solo minúsculas y dígitos** ([reglas de nombres de recursos, `Microsoft.Storage`](https://learn.microsoft.com/azure/azure-resource-manager/management/resource-name-rules#microsoftstorage)); `load_harness_config` valida `^[a-z0-9]{3,24}$` y aborta temprano si no cumple. El patrón `st<proyecto>tfstate<env>` deja ~12 chars para `<proyecto>`, así que para nombres largos abrevia el prefijo (p. ej. `stmicontrolplanetfstatedev` = 26 chars **inválido** → `stmcptfstatedev` = 15 válido). `bootstrap-backend.sh` le añade además un sufijo de unicidad global (detalle en README §3).
-- **`repoSlug`** (opcional): slug `owner/repo` del fork de Mefisto al que se enrutan los drafts cross-repo (`estado:borrador`) que crean el `planner` y el `tooling-investigator`. Default: `augusto-romero-arango/eda-evsourcing-azure-harness`. **No** se exporta como `HARNESS_*`; se lee inline con `jq` donde se necesita (`_pipeline-common.sh`, `agents/planner.md`, `agents/tooling-investigator.md`).
-- **`azureLocation`** (opcional): región de Azure para `bootstrap-backend.sh`; el flag `--location` la sobrescribe.
+- **`boundedContext`** (**obligatorio**, ADR-0023): declara el Bounded Context del proyecto. Subfields:
+  - **`name`**: nombre del BC; puede coincidir o no con `projectName`.
+  - **`domains`**: dominios del BC; subconjunto de `domainLabels`.
+- **`serviceBus`** (opcional, ADR-0024): registro de los Azure Service Bus que el BC toca. `internal.secretName` (obligatorio si se declara `serviceBus`) nombra el secreto de Key Vault del ASB propio del BC; `external` lista los ASB compartidos/externos que consume o publica. Ningún secreto viaja en claro (ADR-0025).
+- **`terraformStateStorage`** es el nombre **base** de la Storage Account del tfstate. Debe cumplir el naming de Azure Storage (3-24 caracteres, solo minúsculas y dígitos — [reglas de nombres de recursos, `Microsoft.Storage`](https://learn.microsoft.com/azure/azure-resource-manager/management/resource-name-rules#microsoftstorage)); para nombres largos abrevia el prefijo. Detalle en README §3.
+- **`repoSlug`** (opcional): slug `owner/repo` del fork de Mefisto al que se enrutan los drafts cross-repo (`estado:borrador`). Default: `augusto-romero-arango/eda-evsourcing-azure-harness`.
+- **`azureLocation`** (opcional): región de Azure por defecto para `bootstrap-backend.sh`.
 
 ### 2. Sección "Tokens del harness" en `CLAUDE.md` raíz del consumidor
 
@@ -93,7 +86,7 @@ Necesaria porque los agentes/skills del harness no pueden hacer sustitución de 
 - **BoundedContextDomains**: dominio1, dominio2  (lista separada por comas; corresponde a `boundedContext.domains`)
 ```
 
-`BoundedContext` es el nombre del Bounded Context declarado en `harness.config.json` (ADR-0023): grupo de dominios relacionados que comparte un resource group de Azure y un namespace interno de Azure Service Bus (ADR-0021, ADR-0023); lo público viaja por el backbone compartido del producto o, en el caso diferido, por integración externa (ADR-0024). El nombre puede coincidir o no con `ProjectDisplayName`.
+`BoundedContext` es el nombre del Bounded Context declarado en `harness.config.json` (ADR-0023); puede coincidir o no con `ProjectDisplayName`.
 
 ### 3. Estructura de carpetas esperada
 
@@ -108,7 +101,7 @@ Necesaria porque los agentes/skills del harness no pueden hacer sustitución de 
 
 | Skill | Propósito |
 |---|---|
-| `/onboard` | Diagnostica el onboarding del consumidor (config, labels, CI) y reporta un checklist; por defecto solo diagnostica, con provision opt-in (bajo confirmacion) de los labels faltantes y del CI hacia Azure (OIDC, ADR-0022) |
+| `/onboard` | Diagnostica el onboarding del consumidor (config, labels, CI) y reporta un checklist; provisión opt-in bajo confirmación |
 | `/draft` | Captura una idea como issue `estado:borrador` |
 | `/implement` | Pipeline TDD para un issue `estado:listo` |
 | `/tooling` | Pipeline de tooling (scripts, fixtures, config, agentes) |
@@ -209,47 +202,12 @@ Los ADRs en `docs/adr/` son la fuente de verdad arquitectónica del harness. Los
 
 ## Dos paquetes de tooling: publicado vs interno
 
-Mefisto distingue **dos sets** de skills/agentes/pipelines físicamente separados:
+Mefisto mantiene **dos sets** de skills/agentes/pipelines físicamente separados (doctrina completa en ADR-0019):
 
-### Skills publicados (top-level del repo)
+- **Publicados** (`commands/`, `agents/`, `scripts/`, `hooks/`): se distribuyen vía marketplace y operan únicamente sobre archivos del consumidor.
+- **Internos** (`.claude/commands/`, `.claude/agents/`, `.claude/scripts/`): no se publican; Claude Code los carga al abrir este repo. Llevan prefijo `mefisto-` y operan solo sobre archivos del propio plugin.
 
-- Viven en `commands/`, `agents/`, `scripts/`, `hooks/`.
-- Se distribuyen vía marketplace de Claude Code y son los que ve el proyecto consumidor cuando instala `mefisto`.
-- **Operan únicamente sobre archivos del consumidor**. Nunca tocan archivos del propio plugin.
-- Cada uno tiene un **guard defensivo** al inicio que aborta si `.claude-plugin/plugin.json` existe en el cwd (es decir, si por error alguien los invoca dentro del repo de Mefisto).
-- El skill `/tooling` publicado tiene además un **gate de scope** (`validate_consumer_scope_changes` en `scripts/_pipeline-common.sh`) que rechaza el PR si el agente toca rutas reservadas al plugin (`commands/`, `agents/`, `hooks/`, `.claude-plugin/`, `docs/adr/`).
-- El planner publicado y el `tooling-investigator` pueden **crear drafts** en el repo de Mefisto vía `gh -R …` cuando detectan que un problema descubierto en el consumidor pertenece al harness. Solo `estado:borrador`; el refinamiento ocurre dentro del repo de Mefisto.
-
-### Skills internos (en `.claude/` del repo de Mefisto)
-
-- Viven en `.claude/commands/`, `.claude/agents/`, `.claude/scripts/`.
-- **NO se publican vía marketplace**. Claude Code los carga automáticamente cuando se abre el repo de Mefisto, porque `.claude/commands/` y `.claude/agents/` son convenciones de configuración por-repo del propio Claude Code (separadas del plugin instalado).
-- Llevan prefijo `mefisto-` para distinguirlos en pantalla: `/mefisto-tooling`, `/mefisto-sequential`, `/mefisto-plan`, `/mefisto-bug`, `/mefisto-fix-review`, `/mefisto-merge`, `/mefisto-work-status`, `/mefisto-release`.
-- Cada uno tiene un **guard inverso**: aborta si `.claude-plugin/plugin.json` NO está en el cwd (i.e. si alguien los invoca fuera del repo de Mefisto).
-- Operan exclusivamente sobre archivos del propio plugin: `commands/`, `agents/`, `scripts/`, `hooks/`, `docs/`, `.claude-plugin/`, `.claude/{commands,agents,scripts}/`, archivos de gobierno (`README.md`, `CLAUDE.md`, etc.).
-- El pipeline interno (`.claude/scripts/mefisto-tooling-pipeline.sh`) usa `validate_mefisto_scope_changes` (definido en `.claude/scripts/_mefisto-common.sh`) para rechazar cambios fuera del scope.
-
-### Skills sin equivalente interno
-
-Mefisto es un harness, no un producto: no tiene aggregates, no es TDD .NET, no tiene infraestructura Terraform/Azure, no genera dominios, no se despliega y no modela flujos EDA. Por tanto **estos skills publicados NO tienen versión interna**:
-
-- `/implement` — TDD .NET de dominio.
-- `/infra` — Terraform/Azure.
-- `/infra-base` — infraestructura base Terraform del consumidor.
-- `/scaffold` — crear nuevo dominio.
-- `/health-check` — App Insights.
-- `/onboard` — diagnostica el onboarding del consumidor (su `harness.config.json`, sus labels, su CI hacia Azure); Mefisto no es un consumidor del harness, así que no hay nada que diagnosticar en su repo.
-- `/show-flow`, `/eraser-diagram` — flujos EDA y diagramas.
-
-Aún así, todos tienen guard defensivo "cwd != Mefisto" como cinturón + tirantes.
-
-### Routing cross-repo: solo drafts
-
-La única operación cross-repo permitida desde el consumidor hacia Mefisto es **crear un draft** (`estado:borrador`). El refinamiento (`estado:listo`), desglose, oleadas, backlog y limpieza de issues de Mefisto se hacen exclusivamente con `/mefisto-plan` dentro del repo del plugin.
-
-### Grupos de trabajo homogéneos
-
-`/parallel`, `/sequential` y `scripts/batch-pipeline.sh` validan al inicio que **no estamos en Mefisto** y se asumen homogéneos: todos los issues del grupo se consultan con `gh issue view N` sin `-R`, así que solo se procesan los del repo activo. No se admiten grupos mixtos.
+La única operación cross-repo desde el consumidor hacia Mefisto es **crear drafts** (`estado:borrador`); el refinamiento y demás gestión de issues ocurre con `/mefisto-plan` dentro de este repo.
 
 ## Instalación en un proyecto
 
