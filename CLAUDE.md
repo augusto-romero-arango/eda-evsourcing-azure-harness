@@ -176,6 +176,7 @@ Los ADRs en `docs/adr/` son la fuente de verdad arquitectónica del harness. Los
 | Autenticación de CI hacia Azure por OIDC (Workload Identity Federation) | ADR-0022 |
 | Bounded Context, namespace interno de ASB y frontera publico/privado | ADR-0023 |
 | Modelo de eventos de bus (privado propio, publico via backbone compartido, externo diferido) | ADR-0024 |
+| Custodia de secretos (ningun secreto/key en texto plano; Key Vault o identidad administrada) | ADR-0025 |
 
 ## Convenciones del marco
 
