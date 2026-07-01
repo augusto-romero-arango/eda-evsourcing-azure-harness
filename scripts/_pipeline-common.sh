@@ -22,6 +22,18 @@
 #   HARNESS_DOMAIN_LABELS      - Lista separada por espacios de labels dom:*
 #   HARNESS_BC_NAME            - Nombre del Bounded Context (ej: Principal)
 #   HARNESS_BC_DOMAINS         - Lista separada por espacios de dominios del BC (ej: "dominio1 dominio2")
+#   HARNESS_SB_INTERNAL_SECRET    - Nombre del secreto de Key Vault de la cadena del ASB
+#                                   propio del BC (alias reservado INTERNO). Vacio si el
+#                                   config no declara serviceBus (ADR-0024, opcional).
+#   HARNESS_SB_EXTERNAL_ALIASES   - Lista separada por espacios de los alias declarados en
+#                                   serviceBus.external (ej: "COSMOS FACTURACION"). Vacia
+#                                   si serviceBus/external esta ausente.
+#   HARNESS_SB_EXTERNAL_ALCANCES  - Lista separada por espacios, MISMO ORDEN posicional
+#                                   que HARNESS_SB_EXTERNAL_ALIASES, con el alcance de cada
+#                                   entrada (compartido|externo).
+#   HARNESS_SB_EXTERNAL_SECRETS   - Lista separada por espacios, MISMO ORDEN posicional que
+#                                   HARNESS_SB_EXTERNAL_ALIASES, con el nombre del secreto de
+#                                   Key Vault de cada entrada.
 #
 # Campos opcionales del config (no se exportan via load_harness_config; se leen
 # inline donde se necesitan, mismo patron que agents/planner.md):
@@ -31,6 +43,16 @@
 # Nota: el context map (registro de BCs externos) es trabajo diferido a futuras
 # evoluciones; hoy el BC solo se nombra a si mismo via boundedContext.name y
 # boundedContext.domains.
+#
+# serviceBus (opcional, ADR-0024 decision #1 y #6): registro de los ASB que el
+# BC toca, clasificados por alcance (propio/compartido/externo), con el nombre
+# del secreto de Key Vault de cada cadena (nunca la cadena en claro). El patron
+# oficial del app setting de cada cadena es SERVICE_BUS_CONNECTION_<ALIAS> (con
+# INTERNO como alias reservado del ASB propio del BC); la clave de broker de
+# Wolverine es el mismo alias. serviceBus.external es opcional (un BC puede no
+# consumir/publicar publico todavia); su ausencia no aborta la carga de config.
+# El alcance verdaderamente externo se declara pero su wiring queda diferido
+# (ADR-0024 decision #5, default-off).
 #
 # Si no existe el config file, emite mensaje claro de error y retorna 1.
 load_harness_config() {
@@ -148,6 +170,95 @@ load_harness_config() {
         echo "  Debe tener 3-24 caracteres, solo minusculas y digitos ([a-z0-9])." >&2
         echo "  Sugerencia: abrevia el prefijo del proyecto (ej. micontrolplane -> mcp -> stmcptfstatedev)." >&2
         return 1
+    fi
+
+    # serviceBus es opcional (ADR-0024): un consumidor que aun no provisiona el
+    # backbone compartido/externos, o que aun no tiene Key Vault, no declara
+    # este registro. Ausente por completo -> exports vacios, sin error.
+    export HARNESS_SB_INTERNAL_SECRET=""
+    export HARNESS_SB_EXTERNAL_ALIASES=""
+    export HARNESS_SB_EXTERNAL_ALCANCES=""
+    export HARNESS_SB_EXTERNAL_SECRETS=""
+
+    local sb_present
+    sb_present=$(jq -r 'if has("serviceBus") then "yes" else "no" end' "$config")
+    if [ "$sb_present" = "yes" ]; then
+        HARNESS_SB_INTERNAL_SECRET=$(jq -r '.serviceBus.internal.secretName // ""' "$config")
+        if [ -z "$HARNESS_SB_INTERNAL_SECRET" ]; then
+            echo "ERROR: serviceBus.internal.secretName esta vacio o ausente en $config (ADR-0024)." >&2
+            echo "  Si declaras 'serviceBus', el secreto de Key Vault de la cadena del ASB" >&2
+            echo "  propio del BC (alias reservado INTERNO) es obligatorio. Nunca la cadena" >&2
+            echo "  en claro (ADR-0024 decision #6). Anade:" >&2
+            echo "    \"serviceBus\": { \"internal\": { \"secretName\": \"<nombre-secreto-kv>\" } }" >&2
+            return 1
+        fi
+        export HARNESS_SB_INTERNAL_SECRET
+
+        local ext_count
+        ext_count=$(jq -r '.serviceBus.external // [] | length' "$config")
+
+        local invalid_entries=() aliases=() alcances=() secrets=()
+        local i entry_alias entry_alcance entry_secret entry_alias_upper is_dup existing
+        for ((i = 0; i < ext_count; i++)); do
+            entry_alias=$(jq -r ".serviceBus.external[$i].alias // \"\"" "$config")
+            entry_alcance=$(jq -r ".serviceBus.external[$i].alcance // \"\"" "$config")
+            entry_secret=$(jq -r ".serviceBus.external[$i].secretName // \"\"" "$config")
+
+            if [ -z "$entry_alias" ]; then
+                invalid_entries+=("entrada #$i: 'alias' vacio o ausente")
+                continue
+            fi
+
+            entry_alias_upper=$(printf '%s' "$entry_alias" | tr '[:lower:]' '[:upper:]')
+            if [ "$entry_alias_upper" = "INTERNO" ]; then
+                invalid_entries+=("entrada #$i: alias '$entry_alias' es el alias reservado INTERNO (ASB propio del BC)")
+                continue
+            fi
+
+            if [ "$entry_alcance" != "compartido" ] && [ "$entry_alcance" != "externo" ]; then
+                invalid_entries+=("entrada #$i (alias '$entry_alias'): alcance '$entry_alcance' invalido, debe ser 'compartido' o 'externo'")
+                continue
+            fi
+
+            if [ -z "$entry_secret" ]; then
+                invalid_entries+=("entrada #$i (alias '$entry_alias'): 'secretName' vacio o ausente")
+                continue
+            fi
+
+            is_dup="no"
+            if [ ${#aliases[@]} -gt 0 ]; then
+                for existing in "${aliases[@]}"; do
+                    if [ "$(printf '%s' "$existing" | tr '[:lower:]' '[:upper:]')" = "$entry_alias_upper" ]; then
+                        is_dup="yes"
+                        break
+                    fi
+                done
+            fi
+            if [ "$is_dup" = "yes" ]; then
+                invalid_entries+=("entrada #$i: alias '$entry_alias' duplicado")
+                continue
+            fi
+
+            aliases+=("$entry_alias")
+            alcances+=("$entry_alcance")
+            secrets+=("$entry_secret")
+        done
+
+        if [ ${#invalid_entries[@]} -gt 0 ]; then
+            echo "ERROR: serviceBus.external mal formado en $config (ADR-0024):" >&2
+            printf '  - %s\n' "${invalid_entries[@]}" >&2
+            echo "  Cada entrada requiere: 'alias' no vacio y distinto de INTERNO (reservado)," >&2
+            echo "  'alcance' en {compartido, externo}, y 'secretName' no vacio (nombre del" >&2
+            echo "  secreto de Key Vault; nunca la cadena en claro)." >&2
+            return 1
+        fi
+
+        if [ ${#aliases[@]} -gt 0 ]; then
+            HARNESS_SB_EXTERNAL_ALIASES="${aliases[*]}"
+            HARNESS_SB_EXTERNAL_ALCANCES="${alcances[*]}"
+            HARNESS_SB_EXTERNAL_SECRETS="${secrets[*]}"
+        fi
+        export HARNESS_SB_EXTERNAL_ALIASES HARNESS_SB_EXTERNAL_ALCANCES HARNESS_SB_EXTERNAL_SECRETS
     fi
 }
 
