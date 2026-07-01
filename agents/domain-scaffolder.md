@@ -17,6 +17,8 @@ Antes de cualquier accion, lee `CLAUDE.md` raiz del proyecto para resolver estos
 
 Si CLAUDE.md no declara `RootNamespace` o `SolutionFile`, detente y pide al usuario que los declare antes de continuar.
 
+Ademas, lee `.claude/harness.config.json` para resolver el **backbone compartido** del producto (ADR-0024 decision #4, #7): los alias declarados en `serviceBus.external` con `alcance == "compartido"` son los que este dominio wirea como brokers nombrados de Wolverine (Paso 1) y como app settings `SERVICE_BUS_CONNECTION_<ALIAS>` provistos por referencia de Key Vault (Paso 4). Ver el detalle de resolucion en el Paso 0.
+
 ## Parametros de entrada
 
 El usuario debe darte:
@@ -81,6 +83,14 @@ Cada dominio recibe su propio App Service Plan dedicado (`asp-{prefix_func}-{keb
 
 Estos valores alimentan el `module service_plan_{snake_case}` que emitiras en el Paso 4.
 
+**Resolver alias del backbone compartido (ADR-0024, decision #4 y #7):**
+
+```bash
+jq -r '.serviceBus.external // [] | map(select(.alcance == "compartido")) | .[].alias' /ruta-del-proyecto/.claude/harness.config.json 2>/dev/null
+```
+
+Cada alias resultante es una clave de broker nombrado (== alias declarado en `serviceBus.external`, contrato de `harness.config.json` fijado en issue #163) y determina el app setting `SERVICE_BUS_CONNECTION_<ALIAS>` que se lee en `Program.cs` (Paso 1) y se provisiona por referencia de Key Vault en Terraform (Paso 4). Si la lista viene vacia (el BC aun no declara ningun alias `compartido`), el dominio arranca sin brokers nombrados: solo el broker default (`SERVICE_BUS_CONNECTION_INTERNO`). **No wirees ningun alias con `alcance == "externo"`**: la integracion verdaderamente externa queda diferida y default-off (ADR-0024 decision #5).
+
 Antes de continuar muestra al usuario el resumen de lo que vas a crear y pide confirmacion:
 
 ```
@@ -98,6 +108,7 @@ Workflow deploy:  .github/workflows/deploy-{kebab}.yml
 
 Fixtures:         ApiFixture, ServiceBusFixture, PostgresFixture, Polling
 Suscripciones a:  [lista si la proporcionaron, o "ninguna"]
+Backbone comun:   [alias resueltos arriba, o "ninguno todavia (ADR-0024)"]
 
 Continuar? (s/n)
 ```
@@ -180,7 +191,7 @@ La estructura de carpetas sigue el estilo de vertical slicing:
 
 **6. Reemplazar el `Program.cs`** generado por `func init`:
 
-Lee el Program.cs generado para ver su contenido actual, luego reemplazalo completo con:
+Lee el Program.cs generado para ver su contenido actual, luego reemplazalo completo. La base es fija; la seccion de brokers nombrados es **dinamica**: agrega una variable de entorno y una linea `AgregarAzureServiceBusNombradoServerless` **por cada alias del backbone compartido** resuelto en el Paso 0 (`serviceBus.external` filtrado por `alcance == "compartido"`). El ejemplo siguiente ilustra un dominio con un unico alias `COSMOS`:
 
 ```csharp
 using System.Text.Json;
@@ -200,9 +211,12 @@ var builder = FunctionsApplication.CreateBuilder(args);
 builder.ConfigureFunctionsWebApplication();
 
 var martenConnectionString = Environment.GetEnvironmentVariable("MartenConnectionString")!;
-// Dos namespaces ASB por BC (ADR-0023): interno para IPrivateEvent, integracion para IPublicEvent.
+// Namespace interno del BC (ADR-0024 decision #3): unico ASB propio, siempre presente.
 var serviceBusInterno = Environment.GetEnvironmentVariable("SERVICE_BUS_CONNECTION_INTERNO")!;
-var serviceBusIntegracion = Environment.GetEnvironmentVariable("SERVICE_BUS_CONNECTION_INTEGRACION")!;
+// Backbone compartido del producto (ADR-0024 decision #4): una variable por alias declarado
+// en serviceBus.external con alcance "compartido" (contrato de harness.config.json, issue #163).
+// Ejemplo con el alias COSMOS; repite el patron var + linea de registro por cada alias adicional.
+var serviceBusCosmos = Environment.GetEnvironmentVariable("SERVICE_BUS_CONNECTION_COSMOS")!;
 
 builder.Services.AgregarWolverineParaComandosServerless(
     typeof(I{PascalCase}AssemblyMarker).Assembly,
@@ -211,16 +225,17 @@ builder.Services.AgregarWolverineParaComandosServerless(
     builder.Environment.IsDevelopment(),
     options =>
     {
-        // Broker default: namespace interno (IPrivateEvent -> sbint-*). ADR-0023, decision #2.
+        // Broker default: namespace interno del BC (ADR-0024 decision #3, #7).
         options.HabilitarAzureServiceBusParaServerLess(serviceBusInterno);
-        // Named broker: namespace de integracion (IPublicEvent -> sbext-*). ADR-0023, decision #2.
-        options.AgregarAzureServiceBusNombradoServerless("integracion", serviceBusIntegracion);
-        // Enrutamiento por tipo (ADR-0023, decision #4):
-        //   IPrivateEvent -> PublicarEventoServerless<T>(topic)                -> broker default -> interno
-        //   IPublicEvent  -> PublicarEventoServerless<T>("integracion", topic) -> named broker  -> integracion
+        // Broker(s) nombrado(s): uno por alias del backbone compartido (ADR-0024 decision #4, #7).
+        // La clave de broker es el mismo alias declarado en serviceBus.external.
+        options.AgregarAzureServiceBusNombradoServerless("COSMOS", serviceBusCosmos);
+        // Enrutamiento por tipo (ADR-0024 decision #2, #4):
+        //   IPrivateEvent -> PublicarEventoServerless<T>(topic)            -> broker default  -> namespace interno
+        //   IPublicEvent  -> PublicarEventoServerless<T>("<alias>", topic) -> broker nombrado -> backbone compartido
         // AVISO: NO usar PublicarEventosServerless(Assembly contratos) completo: filtra por
         //   IsAssignableTo(typeof(IEvent)), captura IPrivateEvent e IPublicEvent juntos y enruta
-        //   todo al mismo broker, rompiendo la separacion de namespaces. Registrar siempre por tipo.
+        //   todo al mismo broker, rompiendo la separacion privado/publico. Registrar siempre por tipo.
     });
 
 builder.Services.AgregarMartenEventStore();
@@ -247,9 +262,11 @@ builder.Services.AddValidatorsFromAssemblyContaining<I{PascalCase}AssemblyMarker
 await builder.Build().RunAsync();
 ```
 
-> **CA-9 — Aviso sobre el helper bulk `PublicarEventosServerless`**: No uses `PublicarEventosServerless(nombreConexion, topicName, Assembly contratos)` con el assembly completo de contratos para registrar eventos. Ese helper filtra por `IsAssignableTo(typeof(IEvent))` y captura tanto `IPrivateEvent` como `IPublicEvent` juntos, enrutando todo al mismo broker y rompiendo la separacion de namespaces (ADR-0023, decision #2). El registro debe hacerse **por tipo**, separando explicitamente privados de publicos:
+Si el Paso 0 no resolvio ningun alias `serviceBus.external` con `alcance == "compartido"`, omite la variable `serviceBusCosmos` y la linea `AgregarAzureServiceBusNombradoServerless`; deja solo el broker default y un comentario: `// Backbone compartido: sin alias "compartido" declarado en serviceBus.external todavia (ADR-0024 decision #4). Agrega su broker nombrado cuando el BC publique/consuma su primer evento publico.` Si hay mas de un alias, repite el par variable + linea de registro por cada uno. No wirees ningun alias con `alcance == "externo"` (integracion verdaderamente externa, diferida por ADR-0024 decision #5, default-off).
+
+> **CA-9 — Aviso sobre el helper bulk `PublicarEventosServerless`**: No uses `PublicarEventosServerless(nombreConexion, topicName, Assembly contratos)` con el assembly completo de contratos para registrar eventos. Ese helper filtra por `IsAssignableTo(typeof(IEvent))` y captura tanto `IPrivateEvent` como `IPublicEvent` juntos, enrutando todo al mismo broker y rompiendo la separacion privado/publico (ADR-0024 decision #2, #4). El registro debe hacerse **por tipo**, separando explicitamente privados de publicos:
 > - `IPrivateEvent`: `options.PublicarEventoServerless<TEvento>(topic)` → broker default → namespace interno
-> - `IPublicEvent`: `options.PublicarEventoServerless<TEvento>("integracion", topic)` → named broker → namespace de integracion
+> - `IPublicEvent`: `options.PublicarEventoServerless<TEvento>("<alias>", topic)` → broker nombrado → backbone compartido (alias)
 
 **7. Crear la interface marker `I{PascalCase}AssemblyMarker.cs`** en la raiz del proyecto (marker para assembly scanning de Wolverine y FluentValidation):
 
@@ -303,8 +320,10 @@ public interface I{PascalCase}AssemblyMarker;
 ```json
 "MartenConnectionString": "Host=localhost;Database=controlasistencias;Username=postgres;Password=postgres",
 "SERVICE_BUS_CONNECTION_INTERNO": "<pendiente-configurar-namespace-interno>",
-"SERVICE_BUS_CONNECTION_INTEGRACION": "<pendiente-configurar-namespace-integracion>"
+"SERVICE_BUS_CONNECTION_COSMOS": "<pendiente-configurar-backbone-compartido-COSMOS>"
 ```
+
+Agrega una clave `SERVICE_BUS_CONNECTION_<ALIAS>` por cada alias del backbone compartido resuelto en el Paso 0 (el ejemplo usa `COSMOS`); si no hay ninguno todavia, omite esa clave y deja solo `SERVICE_BUS_CONNECTION_INTERNO`. En Azure, ambas claves se resuelven via referencia `@Microsoft.KeyVault(...)` (ADR-0024 decision #6, Paso 4); aqui solo necesitas un placeholder de desarrollo local. No queda ninguna referencia a un namespace de integracion propio del BC.
 
 **10. Verificar que Contracts tenga `Cosmos.EventDriven.Abstractions`:**
 
@@ -408,9 +427,10 @@ namespace <RootNamespace>.{PascalCase}.Infraestructura;
 /// Clase base para FunctionEndpoints de ServiceBus.
 /// Encapsula la orquestacion: deserializar -> despachar al command router -> complete/lock-lost/dead-letter.
 /// Cada endpoint concreto hereda, define [Function] + [ServiceBusTrigger] y delega a <see cref="ProcesarMensaje"/>.
-/// El Connection del [ServiceBusTrigger] lo elige el endpoint concreto segun el namespace de origen del topic
-/// (SERVICE_BUS_CONNECTION_INTERNO para IPrivateEvent intra-BC; SERVICE_BUS_CONNECTION_INTEGRACION para IPublicEvent
-/// del mismo BC). Ver la tabla de convencion en la seccion "Endpoint ServiceBus" de agents/implementer.md (ADR-0023).
+/// El Connection del [ServiceBusTrigger] lo elige el endpoint concreto segun el origen del topic
+/// (SERVICE_BUS_CONNECTION_INTERNO para IPrivateEvent intra-BC; SERVICE_BUS_CONNECTION_&lt;ALIAS&gt; del
+/// backbone compartido para IPublicEvent comun). Ver la tabla de convencion en la seccion
+/// "Endpoint ServiceBus" de agents/implementer.md (ADR-0024).
 /// </summary>
 public abstract class ServiceBusEndpointBase<TEvento>(ICommandRouter commandRouter, ILogger logger)
     where TEvento : class
@@ -1338,19 +1358,20 @@ module "function_app_{snake_case}" {
   storage_account_access_key        = module.storage_{snake_case}.primary_access_key
   app_insights_connection_string    = module.monitoring.connection_string
   app_settings = {
-    SERVICE_BUS_CONNECTION_INTERNO     = module.service_bus_interno.default_primary_connection_string
-    SERVICE_BUS_CONNECTION_INTEGRACION = module.service_bus_integracion.default_primary_connection_string
-    DOMINIO                            = "{kebab}"
-    MartenConnectionString             = "Host=${module.postgresql.server_fqdn};Database=${module.postgresql.database_name};Username=pgadmin;Password=${var.postgresql_admin_password};SSL Mode=Require"
+    SERVICE_BUS_CONNECTION_INTERNO = local.service_bus_connection_interno_kv_ref
+    SERVICE_BUS_CONNECTION_COSMOS  = local.service_bus_connection_external_kv_refs["COSMOS"]
+    DOMINIO                        = "{kebab}"
+    MartenConnectionString         = "Host=${module.postgresql.server_fqdn};Database=${module.postgresql.database_name};Username=pgadmin;Password=${var.postgresql_admin_password};SSL Mode=Require"
   }
   tags = local.tags
 }
 
-# Rol Data Sender del productor sobre el namespace de integracion (ADR-0023, decision #5).
-# Scope a nivel de namespace; RBAC fino por topic/subscription es recomendacion diferida.
-resource "azurerm_role_assignment" "sb_integracion_sender_{snake_case}" {
-  scope                = module.service_bus_integracion.id
-  role_definition_name = "Azure Service Bus Data Sender"
+# Lectura de secretos del Key Vault (ADR-0024 decision #6): la managed identity de la
+# Function App necesita "Key Vault Secrets User" sobre el Key Vault del BC para resolver
+# en runtime las referencias @Microsoft.KeyVault(...) de sus app settings SERVICE_BUS_CONNECTION_*.
+resource "azurerm_role_assignment" "function_app_{snake_case}_kv_secrets_user" {
+  scope                = module.key_vault.id
+  role_definition_name = "Key Vault Secrets User"
   principal_id         = module.function_app_{snake_case}.principal_id
 }
 ```
@@ -1359,9 +1380,11 @@ Donde `{kebab-sin-guiones}` es el nombre del dominio con los guiones eliminados 
 
 **Cada dominio recibe su propio `module service_plan_{snake_case}`**: el `service_plan_id` de la Function App apunta a `module.service_plan_{snake_case}.id`, nunca a un plan compartido. No referencies un `module.service_plan` global; ese patron (todas las Function Apps en un solo plan) es justo el que ADR-0020 proscribe.
 
-> **Nota (infraestructura base)**: estos bloques referencian `module.resource_group`, `module.monitoring`, `module.postgresql`, `module.service_bus_interno`, `module.service_bus_integracion` y los modulos `../../modules/storage`, `../../modules/service-plan`, `../../modules/function-app`. **El harness los provee**: los genera el agente `infra-base-scaffolder` (skill `/infra-base`), que escribe los 7 modulos base y el esqueleto del entorno con los dos namespaces ASB (ver **ADR-0021**, **ADR-0023**). Verifica que existan antes de hacer commit:
+**El app setting `SERVICE_BUS_CONNECTION_COSMOS` del ejemplo se repite por cada alias del backbone compartido** resuelto en el Paso 0 (`serviceBus.external` filtrado por `alcance == "compartido"`), leyendo su referencia versionless de `local.service_bus_connection_external_kv_refs["<ALIAS>"]`. Si el Paso 0 no resolvio ningun alias todavia, omite esas lineas del `app_settings`: la Function App arranca solo con `SERVICE_BUS_CONNECTION_INTERNO`. La `azurerm_role_assignment` de Key Vault Secrets User se emite siempre (la Function App siempre necesita leer, minimo, el secreto interno).
+
+> **Nota (infraestructura base)**: estos bloques referencian `module.resource_group`, `module.monitoring`, `module.postgresql`, `module.service_bus_interno`, `module.key_vault`, los locals `local.service_bus_connection_interno_kv_ref` / `local.service_bus_connection_external_kv_refs`, y los modulos `../../modules/storage`, `../../modules/service-plan`, `../../modules/function-app`. **El harness los provee**: los genera el agente `infra-base-scaffolder` (skill `/infra-base`), que escribe los 8 modulos base y el esqueleto del entorno con el namespace interno del BC y el Key Vault de custodia (ver **ADR-0021**, **ADR-0024**). Verifica que existan antes de hacer commit:
 > ```bash
-> test -d infra/modules/postgresql && test -d infra/modules/service-plan && test -d infra/modules/function-app && test -f infra/environments/{env}/main.tf && echo "base OK" || echo "FALTA la infraestructura base"
+> test -d infra/modules/postgresql && test -d infra/modules/service-plan && test -d infra/modules/function-app && test -d infra/modules/key-vault && test -f infra/environments/{env}/main.tf && echo "base OK" || echo "FALTA la infraestructura base"
 > ```
 > Si falta (`FALTA la infraestructura base`), no emitas una advertencia pasiva: indica al usuario que genere la base primero con `/infra-base` (o el agente `infra-base-scaffolder`) y luego reintente el scaffold del dominio.
 
@@ -1715,9 +1738,10 @@ Scaffold completado para el dominio "{kebab}":
     appsettings.json                       - URL + placeholders vacios para ServiceBus y Postgres
 
   infra/environments/dev/main.tf           - module storage + module service_plan (dedicado) + module function_app
-                                             + azurerm_role_assignment Data Sender en namespace de integracion (ADR-0023)
+                                             + azurerm_role_assignment Key Vault Secrets User (ADR-0024)
+                                             app settings SERVICE_BUS_CONNECTION_INTERNO / _<ALIAS> por referencia @Microsoft.KeyVault(...)
                                              App Service Plan asp-{prefix_func}-{kebab} (SKU {sku_name}, always_on {always_on}), ADR-0020
-                                             (topics se crean bajo demanda con implementer)
+                                             (topics privados se crean bajo demanda con implementer; el backbone compartido lo administra infra)
 
   .github/workflows/deploy-{kebab}.yml     - Workflow de deploy automatico + smoke tests post-deploy
   .github/smoke-tests-dominios.json        - Registro de dominios para el workflow global de smoke tests
