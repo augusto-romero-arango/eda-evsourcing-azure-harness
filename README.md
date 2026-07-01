@@ -273,7 +273,7 @@ El backend remoto de Terraform (donde vive el `tfstate`) es prerequisito de todo
 
    El slug `owner/repo` (subject del federated credential) se resuelve automáticamente vía `gh` o el remote `origin`; pásalo como 2º argumento si necesitas forzarlo. Copia los **tres** secrets que imprime —`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`— a *Settings > Secrets and variables > Actions* de tu repo. **No hay client secret que expire**: el workflow de deploy del scaffolder se autentica con `azure/login` por OIDC (declara `permissions: id-token: write`), no con el JSON único `AZURE_CREDENTIALS`.
 
-3. **Generar la infraestructura base** con `/infra-base` (agente `infra-base-scaffolder`). Es el eslabón entre el backend y el primer `/infra`: escribe los 7 módulos Terraform base (`resource-group`, `monitoring`, `postgresql`, `service-bus`, `service-plan`, `storage`, `function-app`) y el esqueleto del entorno (`main.tf`, `variables.tf`, `providers.tf`, `outputs.tf`) — **sin** `backend.tf` (ese lo escribió el paso 1). Es idempotente: si ya existen archivos, los respeta. Ver **ADR-0021**.
+3. **Generar la infraestructura base** con `/infra-base` (agente `infra-base-scaffolder`). Es el eslabón entre el backend y el primer `/infra`: escribe los 8 módulos Terraform base (`resource-group`, `monitoring`, `postgresql`, `service-bus`, `service-plan`, `storage`, `function-app`, `key-vault`) y el esqueleto del entorno (`main.tf`, `variables.tf`, `providers.tf`, `outputs.tf`) — **sin** `backend.tf` (ese lo escribió el paso 1). Es idempotente: si ya existen archivos, los respeta. Ver **ADR-0021**.
 
    ```
    /mefisto:infra-base dev

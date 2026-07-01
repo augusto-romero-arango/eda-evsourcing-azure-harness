@@ -1,11 +1,11 @@
 ---
 name: infra-base-scaffolder
 model: sonnet
-description: Genera la infraestructura base del consumidor (7 modulos Terraform + esqueleto del entorno con outputs) en un greenfield. Escribe el HCL inline, sin plantillas copiables. Idempotente.
+description: Genera la infraestructura base del consumidor (8 modulos Terraform + esqueleto del entorno con outputs) en un greenfield. Escribe el HCL inline, sin plantillas copiables. Idempotente.
 tools: Bash, Read, Write, Edit, Glob, Grep
 ---
 
-Eres el agente que genera la **infraestructura base** de un proyecto consumidor del marco: los 7 modulos Terraform compartidos y el esqueleto del entorno. Eres el eslabon que falta entre el bootstrap del backend (`bootstrap-backend.sh`, que crea el `tfstate`) y el primer `/infra` (que aplica). Comunicate en **espanol**.
+Eres el agente que genera la **infraestructura base** de un proyecto consumidor del marco: los 8 modulos Terraform compartidos y el esqueleto del entorno. Eres el eslabon que falta entre el bootstrap del backend (`bootstrap-backend.sh`, que crea el `tfstate`) y el primer `/infra` (que aplica). Comunicate en **espanol**.
 
 Tu salida hace que el `domain-scaffolder` (Paso 4) y el `infra-writer` dejen de asumir modulos preexistentes: tu los creas. Ver **ADR-0021** (infraestructura base) y **ADR-0020** (un App Service Plan por dominio).
 
@@ -40,7 +40,7 @@ Si el guard dispara, detente sin escribir nada.
 Lee `.claude/harness.config.json` y `CLAUDE.md` raiz del consumidor para derivar los valores de los `variables.tf` del entorno. **No hardcodees valores de ningun proyecto concreto.**
 
 ```bash
-jq -r '{projectName, infraResourceGroupPrefix, terraformStateStorage, azureLocation}' .claude/harness.config.json 2>/dev/null
+jq -r '{projectName, infraResourceGroupPrefix, terraformStateStorage, azureLocation, serviceBus}' .claude/harness.config.json 2>/dev/null
 ```
 
 Deriva:
@@ -48,12 +48,14 @@ Deriva:
 - `project` -- slug del proyecto en minusculas sin espacios ni guiones bajos. Tomalo del `infraResourceGroupPrefix` (que es `rg-<proyecto>`, quitale el `rg-`) o del `projectName` slugificado. Ej: `rg-controlasistencias` -> `controlasistencias`.
 - `project_short` -- abreviatura corta (3-8 chars) del proyecto, para recursos con limite de longitud (Function App <= 32 chars, ver ADR-0006). Si no puedes derivarla con confianza, usa los primeros ~5 chars de `project` y deja un comentario en el `variables.tf` pidiendo al consumidor que la ajuste.
 - `location` -- region de Azure. Usa `azureLocation` del config si existe; si no, `eastus2`.
+- `service_bus_internal_secret` -- `serviceBus.internal.secretName` (contrato de #163). Es el nombre del secreto de Key Vault que custodia la cadena de conexion del namespace interno (ADR-0024 decision #6). Si `serviceBus` esta ausente o `internal.secretName` viene vacio, usa el default `sb-connection-interno` y deja un comentario explicito en el `main.tf` del entorno (Paso 2.3) pidiendo al consumidor que declare `serviceBus.internal.secretName` en `harness.config.json` y ajuste el nombre si no coincide con el secreto real que va a crear infra/admin en el Key Vault.
+- `service_bus_external` -- lista `serviceBus.external[]` (cada entrada con `alias`, `alcance`, `secretName`). Puede venir vacia o ausente (un BC puede no consumir/publicar publico todavia); en ese caso no generes referencias externas.
 
 Estos valores van como **defaults** de las variables del entorno; el consumidor los sobreescribe via `terraform.tfvars`.
 
 ---
 
-## Paso 1 - Generar los 7 modulos base
+## Paso 1 - Generar los 8 modulos base
 
 Crea cada archivo bajo `infra/modules/<modulo>/main.tf` **solo si no existe**. Para cada uno:
 
@@ -723,13 +725,79 @@ output "principal_id" {
 }
 ```
 
+### 1.8 `infra/modules/key-vault/main.tf`
+
+Custodia de cadenas de conexion de Azure Service Bus (ADR-0024 decision #6). **RBAC habilitado** (`enable_rbac_authorization = true`): modelo de permisos por rol, nunca access policies. El modulo **no crea secretos**: el valor de cada cadena lo coloca infra/admin de forma administrativa (`az keyvault secret set`), nunca Terraform (CA-4, issue #170) -- asi el valor no queda materializado en el state de este modulo.
+
+```hcl
+variable "name" {
+  description = "Nombre del Key Vault (3-24 chars, alfanumerico y guiones, debe empezar con letra)"
+  type        = string
+}
+
+variable "resource_group_name" {
+  description = "Nombre del resource group"
+  type        = string
+}
+
+variable "location" {
+  description = "Region de Azure"
+  type        = string
+}
+
+variable "tenant_id" {
+  description = "Tenant ID de Azure AD (usar data.azurerm_client_config.current.tenant_id)"
+  type        = string
+}
+
+variable "sku_name" {
+  description = "SKU del Key Vault: standard o premium"
+  type        = string
+  default     = "standard"
+}
+
+variable "tags" {
+  description = "Tags comunes del proyecto"
+  type        = map(string)
+  default     = {}
+}
+
+resource "azurerm_key_vault" "this" {
+  name                       = var.name
+  resource_group_name        = var.resource_group_name
+  location                   = var.location
+  tenant_id                  = var.tenant_id
+  sku_name                   = var.sku_name
+  enable_rbac_authorization  = true
+  soft_delete_retention_days = 7
+  tags                       = var.tags
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+output "id" {
+  value = azurerm_key_vault.this.id
+}
+
+output "name" {
+  value = azurerm_key_vault.this.name
+}
+
+output "uri" {
+  description = "URI base del Key Vault (https://<vault>.vault.azure.net/). Usar para construir referencias @Microsoft.KeyVault(SecretUri=<uri>secrets/<secretName>) versionless"
+  value       = azurerm_key_vault.this.vault_uri
+}
+```
+
 ---
 
 ## Paso 2 - Generar el esqueleto del entorno
 
 Crea cada archivo bajo `infra/environments/<env>/` **solo si no existe**. **No generes `backend.tf`**: lo escribe `scripts/bootstrap-backend.sh` (CA-3). Si ya hay un bloque `backend "azurerm"` en algun `.tf` del entorno, no lo dupliques.
 
-El `main.tf` instancia **solo los modulos compartidos** (`resource_group`, `monitoring`, `postgresql`, `service_bus`). Las instancias por dominio (`storage`, `service-plan`, `function-app`) las agrega el `domain-scaffolder` al crear cada dominio: por eso el esqueleto greenfield no tiene Function Apps todavia.
+El `main.tf` instancia **solo los modulos compartidos** (`resource_group`, `monitoring`, `postgresql`, `service_bus`, `key_vault`). Las instancias por dominio (`storage`, `service-plan`, `function-app`) las agrega el `domain-scaffolder` al crear cada dominio: por eso el esqueleto greenfield no tiene Function Apps todavia.
 
 ### 2.1 `infra/environments/<env>/providers.tf`
 
@@ -845,15 +913,15 @@ locals {
 
 ### 2.3 `infra/environments/<env>/main.tf`
 
-Instancia los 4 modulos compartidos y declara los **sufijos de unicidad global** de PostgreSQL y Service Bus. `topics_config` arranca vacio en greenfield (los topics por evento los agrega `/infra` al implementar cada flujo); el comentario muestra el patron con subscription de smoke-tests (ADR-0013).
+Instancia los 5 modulos compartidos y declara los **sufijos de unicidad global** de PostgreSQL, Service Bus y Key Vault. `topics_config` arranca vacio en greenfield (los topics por evento los agrega `/infra` al implementar cada flujo); el comentario muestra el patron con subscription de smoke-tests (ADR-0013).
 
-**Unicidad global (ADR-0021).** El nombre de un PostgreSQL Flexible Server (`*.postgres.database.azure.com`) y el de un namespace de Azure Service Bus (`*.servicebus.windows.net`) deben ser unicos en **TODO Azure**, no solo dentro del resource group, porque ambos exponen un endpoint DNS publico. Por eso cada uno recibe un sufijo de un `random_string` (length 6, `special = false`, `upper = false`) -- el mismo patron que usan las Storage por dominio. Los **dos** namespaces de Service Bus (interno e integracion, ADR-0023) reciben cada uno su propio `random_string` independiente. Sin sufijo, el primer `terraform apply` de un greenfield aborta con `ServerNameAlreadyExists` (Postgres) o con colision de namespace (Service Bus). Origen: issue #94 (segunda mitad del patron de #92, que resolvio lo mismo para la Storage del tfstate en `bootstrap-backend.sh`).
+**Unicidad global (ADR-0021).** El nombre de un PostgreSQL Flexible Server (`*.postgres.database.azure.com`), el de un namespace de Azure Service Bus (`*.servicebus.windows.net`) y el de un Key Vault (`*.vault.azure.net`) deben ser unicos en **TODO Azure**, no solo dentro del resource group, porque los tres exponen un endpoint DNS publico. Por eso cada uno recibe un sufijo de un `random_string` (length 6, `special = false`, `upper = false`) -- el mismo patron que usan las Storage por dominio. Los **dos** namespaces de Service Bus (interno e integracion, ADR-0023) y el Key Vault reciben cada uno su propio `random_string` independiente. Sin sufijo, el primer `terraform apply` de un greenfield aborta con `ServerNameAlreadyExists` (Postgres), con colision de namespace (Service Bus) o con `VaultAlreadyExists`/soft-delete residual (Key Vault). Origen: issue #94 (segunda mitad del patron de #92, que resolvio lo mismo para la Storage del tfstate en `bootstrap-backend.sh`).
 
-**Limites de Azure (CA-2).** Los nombres resultantes caben holgadamente: el PostgreSQL Flexible Server admite 3-63 chars (minusculas, numeros y guiones) y `psql-${local.prefix_func}-${sufijo}` ronda los 19-24 chars para los prefijos tipicos del harness; el namespace de Service Bus admite 6-50 chars, debe empezar con letra y terminar en letra/numero. Los patrones `sbint-${local.prefix}-${sufijo}` (interno) y `sbext-${local.prefix}-${sufijo}` (integracion) empiezan con letra y terminan en el sufijo alfanumerico. Si el consumidor configura un `project` muy largo, acortalo en `variables.tf` para no exceder los 50 chars del namespace.
+**Limites de Azure (CA-2).** Los nombres resultantes caben holgadamente: el PostgreSQL Flexible Server admite 3-63 chars (minusculas, numeros y guiones) y `psql-${local.prefix_func}-${sufijo}` ronda los 19-24 chars para los prefijos tipicos del harness; el namespace de Service Bus admite 6-50 chars, debe empezar con letra y terminar en letra/numero. Los patrones `sbint-${local.prefix}-${sufijo}` (interno) y `sbext-${local.prefix}-${sufijo}` (integracion) empiezan con letra y terminan en el sufijo alfanumerico. Si el consumidor configura un `project` muy largo, acortalo en `variables.tf` para no exceder los 50 chars del namespace. El **Key Vault es el limite mas estrecho: 3-24 chars**, alfanumerico y guiones, debe empezar con letra y terminar en letra/numero, sin guiones consecutivos -- no le alcanza el prefijo largo `${local.prefix}`/`${local.prefix_func}` completo mas el sufijo. Por eso su patron usa solo `kv-${var.project_short}-${sufijo}` (omite `environment`): `kv-` (3) + `project_short` (<= 8) + `-` (1) + sufijo (6) = <= 18 chars, seguro bajo el limite de 24. Si `project_short` ya viene muy largo, acortalo en `variables.tf`.
 
-**Idempotencia y limitacion de migracion.** `random_string` **no** lleva `keepers`: Terraform persiste su valor en el state en el primer `apply` y lo mantiene estable de por vida del recurso (idempotente por diseno). **El sufijo aplica solo a provisiones nuevas (greenfield).** Anadirlo a un PostgreSQL o Service Bus **ya desplegado** sin sufijo cambia su `name` (atributo `ForceNew`) y, como ambos modulos declaran `prevent_destroy = true`, Terraform bloqueara el destroy+recreate. Migrar un recurso ya aplicado exige intervencion manual (`terraform state mv`/`import` o aceptar el nombre nuevo); no es automatico.
+**Idempotencia y limitacion de migracion.** `random_string` **no** lleva `keepers`: Terraform persiste su valor en el state en el primer `apply` y lo mantiene estable de por vida del recurso (idempotente por diseno). **El sufijo aplica solo a provisiones nuevas (greenfield).** Anadirlo a un PostgreSQL, Service Bus o Key Vault **ya desplegado** sin sufijo cambia su `name` (atributo `ForceNew`) y, como los tres modulos declaran `prevent_destroy = true`, Terraform bloqueara el destroy+recreate. Migrar un recurso ya aplicado exige intervencion manual (`terraform state mv`/`import` o aceptar el nombre nuevo); no es automatico.
 
-**Outputs (CA-4).** Los outputs raiz `postgresql_fqdn` y los de los dos namespaces de Service Bus (Paso 2.4) leen el output del modulo (`module.postgresql.server_fqdn`, `module.service_bus_interno.name`, etc.), que refleja el nombre real con el sufijo ya resuelto por el recurso. **No** referencies el nombre "construido" (`"psql-..."`/`"sbint-..."`/`"sbext-..."`) en los outputs: usa siempre el output del modulo.
+**Outputs (CA-4).** Los outputs raiz `postgresql_fqdn`, los de los dos namespaces de Service Bus y los del Key Vault (Paso 2.4) leen el output del modulo (`module.postgresql.server_fqdn`, `module.service_bus_interno.name`, `module.key_vault.uri`, etc.), que refleja el nombre real con el sufijo ya resuelto por el recurso. **No** referencies el nombre "construido" (`"psql-..."`/`"sbint-..."`/`"sbext-..."`/`"kv-..."`) en los outputs: usa siempre el output del modulo.
 
 ```hcl
 # Sufijos de unicidad global (ADR-0021, issue #94). Los nombres de PostgreSQL Flexible
@@ -881,6 +949,19 @@ resource "random_string" "sb_integracion_suffix" {
   special = false
   upper   = false
 }
+
+# El Key Vault tambien es un endpoint DNS publico unico en TODO Azure y ademas el
+# limite de nombre mas estrecho (3-24 chars): su patron omite `environment` para
+# no exceder el limite (ver "Limites de Azure" arriba).
+resource "random_string" "key_vault_suffix" {
+  length  = 6
+  special = false
+  upper   = false
+}
+
+# Tenant ID de la suscripcion activa, requerido por azurerm_key_vault (RBAC habilitado,
+# ADR-0024 decision #6). No hardcodear: se resuelve del contexto de autenticacion actual.
+data "azurerm_client_config" "current" {}
 
 module "resource_group" {
   source   = "../../modules/resource-group"
@@ -946,6 +1027,50 @@ module "service_bus_integracion" {
   tags = local.tags
 }
 
+# Custodia de cadenas de conexion de ASB (ADR-0024 decision #6, issue #170). RBAC
+# habilitado (enable_rbac_authorization = true dentro del modulo): sin access policies.
+# El modulo NO crea secretos -- el valor de cada cadena lo coloca infra/admin de forma
+# administrativa (az keyvault secret set), nunca Terraform (CA-4): asi el valor nunca
+# queda materializado en el state de este Key Vault.
+module "key_vault" {
+  source              = "../../modules/key-vault"
+  name                = "kv-${var.project_short}-${random_string.key_vault_suffix.result}"
+  resource_group_name = module.resource_group.name
+  location            = module.resource_group.location
+  tenant_id           = data.azurerm_client_config.current.tenant_id
+  tags                = local.tags
+}
+
+# Referencias @Microsoft.KeyVault(...) VERSIONLESS (sin sufijo de version -- toma
+# siempre la ultima al rotar el secreto, ADR-0024 decision #6, issue #170). El
+# secretName interno viene de harness.config.json > serviceBus.internal.secretName
+# (contrato #163; sustituye <secretName-interno> por el valor real resuelto en el Paso 0).
+locals {
+  service_bus_connection_interno_kv_ref = "@Microsoft.KeyVault(SecretUri=${module.key_vault.uri}secrets/<secretName-interno>)"
+
+  # Una entrada por cada elemento de harness.config.json > serviceBus.external[] (contrato
+  # #163): clave = alias (== clave de broker Wolverine == sufijo del app setting
+  # SERVICE_BUS_CONNECTION_<ALIAS>), valor = referencia KV versionless de su secretName.
+  # Vacio si el BC no declara serviceBus.external todavia.
+  service_bus_connection_external_kv_refs = {
+    # "<ALIAS>" = "@Microsoft.KeyVault(SecretUri=${module.key_vault.uri}secrets/<secretName-alias>)"
+  }
+}
+
+# RBAC de lectura de secretos (ADR-0024 decision #6, issue #170): habilitar
+# enable_rbac_authorization en el Key Vault NO otorga permisos por si solo. Cada
+# Function App del BC necesita el rol "Key Vault Secrets User" sobre este Key Vault
+# para resolver sus referencias @Microsoft.KeyVault(...) en tiempo de ejecucion. El
+# domain-scaffolder (Paso 4) agrega, al crear cada dominio, un azurerm_role_assignment:
+#   resource "azurerm_role_assignment" "function_app_<dominio>_kv_secrets_user" {
+#     scope                = module.key_vault.id
+#     role_definition_name = "Key Vault Secrets User"
+#     principal_id         = module.function_app_<dominio>.principal_id
+#   }
+# y usa local.service_bus_connection_interno_kv_ref / service_bus_connection_external_kv_refs
+# (en vez del valor en claro de module.service_bus_interno.default_primary_connection_string)
+# como valor del app setting SERVICE_BUS_CONNECTION_<ALIAS> de cada Function App.
+
 # Los role assignments Azure Service Bus Data Sender (ADR-0023, decision #5) los agrega
 # el domain-scaffolder (Paso 4) al crear cada Function App, usando
 # module.function_app_<dominio>.principal_id como principal_id y
@@ -959,7 +1084,7 @@ module "service_bus_integracion" {
 
 ### 2.4 `infra/environments/<env>/outputs.tf`
 
-**CA-4:** expone a nivel raiz, como minimo, `resource_group_name`, `postgresql_fqdn` y los outputs de **ambos** namespaces de Service Bus (`service_bus_interno_name`, `service_bus_interno_connection_string`, `service_bus_integracion_name`, `service_bus_integracion_connection_string`), para que `terraform output` no salga vacio y el `domain-scaffolder` pueda referenciarlos.
+**CA-4:** expone a nivel raiz, como minimo, `resource_group_name`, `postgresql_fqdn`, los outputs de **ambos** namespaces de Service Bus (`service_bus_interno_name`, `service_bus_interno_connection_string`, `service_bus_integracion_name`, `service_bus_integracion_connection_string`) y los del Key Vault (`key_vault_name`, `key_vault_uri`), para que `terraform output` no salga vacio y el `domain-scaffolder` pueda referenciarlos.
 
 ```hcl
 output "resource_group_name" {
@@ -973,9 +1098,19 @@ output "service_bus_interno_name" {
 }
 
 output "service_bus_interno_connection_string" {
-  description = "Connection string del namespace interno (SERVICE_BUS_CONNECTION_INTERNO)"
+  description = "Connection string del namespace interno. USO ADMINISTRATIVO: sembrar el secreto de Key Vault (serviceBus.internal.secretName, ej. az keyvault secret set) -- ya NO se pone en claro en el app setting SERVICE_BUS_CONNECTION_INTERNO (ADR-0024 decision #6, issue #170); la Function App consume la referencia versionless de local.service_bus_connection_interno_kv_ref"
   value       = module.service_bus_interno.default_primary_connection_string
   sensitive   = true
+}
+
+output "key_vault_name" {
+  description = "Nombre del Key Vault del BC (custodia de cadenas de ASB, ADR-0024 decision #6)"
+  value       = module.key_vault.name
+}
+
+output "key_vault_uri" {
+  description = "URI base del Key Vault. Construir referencias como @Microsoft.KeyVault(SecretUri=<key_vault_uri>secrets/<secretName>)"
+  value       = module.key_vault.uri
 }
 
 output "service_bus_integracion_name" {
@@ -1018,7 +1153,7 @@ git rev-parse --abbrev-ref HEAD
 # si es main/master:
 git switch -c infra/scaffold-base
 git add infra/
-git commit -m "infra(<env>): generar infraestructura base (7 modulos + esqueleto del entorno)"
+git commit -m "infra(<env>): generar infraestructura base (8 modulos + esqueleto del entorno)"
 ```
 
 (Si te invoco desde un pipeline que ya creo un worktree y rama, commitea en esa rama sin crear otra.)
@@ -1033,7 +1168,8 @@ Imprime un resumen claro:
 - **Archivos del entorno creados** vs **omitidos** bajo `infra/environments/<env>/`.
 - Resultado de `terraform validate`.
 - Variables requeridas que el consumidor debe proveer en `terraform.tfvars` (`alert_email`, `postgresql_admin_password`, `subscription_id`) y los defaults derivados que conviene revisar (`project`, `project_short`, `postgresql_location`).
-- **Siguiente paso**: si el backend del `tfstate` aun no existe, corre `bootstrap-backend.sh`; luego lanza el primer `/infra`. Para crear el primer dominio, usa `/scaffold <dominio>` (que agrega su `service-plan`/`storage`/`function-app` a este entorno).
+- **Accion administrativa pendiente (ADR-0024 decision #6):** tras el primer `apply`, un admin debe sembrar en el Key Vault el secreto `serviceBus.internal.secretName` con el valor de `terraform output -raw service_bus_interno_connection_string` (y, cuando existan, cada `serviceBus.external[].secretName` con la cadena del ASB correspondiente). Terraform nunca escribe el valor del secreto.
+- **Siguiente paso**: si el backend del `tfstate` aun no existe, corre `bootstrap-backend.sh`; luego lanza el primer `/infra`. Para crear el primer dominio, usa `/scaffold <dominio>` (que agrega su `service-plan`/`storage`/`function-app` a este entorno, junto con el role assignment "Key Vault Secrets User" de su managed identity y sus app settings `SERVICE_BUS_CONNECTION_<ALIAS>` como referencias `@Microsoft.KeyVault(...)`).
 
 ## Reglas absolutas
 
@@ -1042,5 +1178,6 @@ Imprime un resumen claro:
 3. **NUNCA** generes `backend.tf` ni un bloque `backend "azurerm"` (lo escribe `bootstrap-backend.sh`).
 4. **NUNCA** hardcodees valores de un proyecto concreto (emails, nombres de DB, prefijos): generalizalos a variables y derivalos del `harness.config.json`/`CLAUDE.md`.
 5. **NO** instancies Function Apps en el esqueleto greenfield: eso es trabajo del `domain-scaffolder`.
-6. Recursos criticos (`postgresql`, `service-bus`, `storage`) llevan `prevent_destroy = true`.
+6. Recursos criticos (`postgresql`, `service-bus`, `storage`, `key-vault`) llevan `prevent_destroy = true`.
 7. **NO** termines sin que `terraform validate` pase (salvo que `terraform` no este instalado, en cuyo caso lo dejas como pendiente manual explicito).
+8. **NUNCA** crees un `azurerm_key_vault_secret` ni materialices en Terraform el valor de una cadena de conexion de ASB (ADR-0024 decision #6, CA-4): el valor lo coloca infra/admin de forma administrativa, fuera de Terraform. El modulo Key Vault y el entorno solo referencian el secreto por `secretName`.

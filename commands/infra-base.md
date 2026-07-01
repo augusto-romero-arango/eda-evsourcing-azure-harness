@@ -2,7 +2,7 @@
 model: haiku
 ---
 
-Genera la infraestructura base del consumidor (7 modulos Terraform + esqueleto del entorno con outputs) invocando al agente `infra-base-scaffolder`. Es el eslabon greenfield entre `bootstrap-backend.sh` (crea el `tfstate`) y el primer `/infra` (aplica). Comunicate en **espanol**.
+Genera la infraestructura base del consumidor (8 modulos Terraform + esqueleto del entorno con outputs) invocando al agente `infra-base-scaffolder`. Es el eslabon greenfield entre `bootstrap-backend.sh` (crea el `tfstate`) y el primer `/infra` (aplica). Comunicate en **espanol**.
 
 ## Pre-condicion: cwd != Mefisto
 

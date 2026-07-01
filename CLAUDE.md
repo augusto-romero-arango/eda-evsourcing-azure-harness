@@ -113,7 +113,7 @@ Necesaria porque los agentes/skills del harness no pueden hacer sustitución de 
 | `/implement` | Pipeline TDD para un issue `estado:listo` |
 | `/tooling` | Pipeline de tooling (scripts, fixtures, config, agentes) |
 | `/infra` | Pipeline IaC con Terraform (write → review → apply) |
-| `/infra-base` | Genera la infraestructura base (7 módulos + esqueleto del entorno) en greenfield |
+| `/infra-base` | Genera la infraestructura base (8 módulos + esqueleto del entorno) en greenfield |
 | `/parallel` | Corre varios issues en worktrees aislados |
 | `/sequential` | Cadena de issues con merge automático |
 | `/scaffold` | Crea el scaffold de un nuevo dominio |
@@ -134,7 +134,7 @@ Necesaria porque los agentes/skills del harness no pueden hacer sustitución de 
 | `eda-modeler` | Formaliza flujos y aggregates en `docs/eda/` |
 | `historiador` | Consolida field notes en la bitácora del día |
 | `domain-scaffolder` | Crea scaffold de un nuevo dominio |
-| `infra-base-scaffolder` | Genera la infraestructura base del consumidor (7 módulos + entorno) en greenfield |
+| `infra-base-scaffolder` | Genera la infraestructura base del consumidor (8 módulos + entorno) en greenfield |
 | `test-writer` | Fase roja del pipeline TDD |
 | `implementer` | Fase verde del pipeline TDD |
 | `reviewer` | Revisión antes de crear PR |
@@ -172,7 +172,7 @@ Los ADRs en `docs/adr/` son la fuente de verdad arquitectónica del harness. Los
 | Heurísticas de evolución y reuso del código (Rule of Three, etc.) | ADR-0018 |
 | Separación física de skills publicados vs internos | ADR-0019 |
 | Hosting de Azure Functions (un App Service Plan por dominio) | ADR-0020 |
-| Infraestructura base (7 módulos + entorno) generada por agente | ADR-0021 |
+| Infraestructura base (8 módulos + entorno) generada por agente | ADR-0021 |
 | Autenticación de CI hacia Azure por OIDC (Workload Identity Federation) | ADR-0022 |
 | Bounded Context, namespace interno de ASB y frontera publico/privado | ADR-0023 |
 | Modelo de eventos de bus (privado propio, publico via backbone compartido, externo diferido) | ADR-0024 |
