@@ -34,7 +34,7 @@ reglas:
 - Subscriptions: kebab-case, patron `{consumidor}-escucha-{productor}`. Ej: `depuracion-escucha-marcaciones`, `calculo-horas-escucha-programacion`
 - Sin prefijos artificiales (ni `sbt-`, ni `eventos-`). El nombre comunica el contrato de dominio.
 
-Un topic por tipo de evento aplica **dentro de cada namespace**. Los eventos privados (via `IPrivateEventSender`) se publican a topics del namespace interno del bounded context; los eventos publicos (via `IPublicEventSender`) al namespace de integracion del bounded context. Las subscriptions de consumidores externos viven en el namespace de integracion del **productor** (patron Open Host Service, ADR-0023: el consumidor se conecta a suscribirse; no se empuja a ASB ajenos).
+Un topic por tipo de evento aplica **dentro de cada namespace o backbone**. Los eventos privados (via `IPrivateEventSender`) se publican a topics del namespace interno del bounded context; los eventos publicos (via `IPublicEventSender`) al backbone compartido del producto (caso comun) o, en el caso diferido de integracion verdaderamente externa, a un namespace de integracion propio del productor (ADR-0024). En el backbone compartido, el **productor** crea sus topics y cada BC **consumidor** crea su propia subscription (permisos baseline de infra); en el caso diferido, las subscriptions del consumidor externo viven en el namespace de integracion del **productor** (patron Open Host Service, ADR-0023 decision #5: el consumidor se conecta a suscribirse; no se empuja a ASB ajenos).
 
 Cada dominio publica **unicamente** a los topics de los eventos que produce. Ningun dominio
 publica al topic de otro dominio.
@@ -70,4 +70,9 @@ eventos publicos.
 
 - MassTransit usa topic-per-event como topologia por defecto en Azure Service Bus
 - Azure Service Bus Standard: limite de 10,000 topics, sin costo adicional por cantidad
-- ADR-0023: Bounded Context, topologia de dos namespaces ASB y Open Host Service — define la topologia que justifica la separacion por namespace (interno vs integracion) segun el alcance del evento.
+- ADR-0023: Bounded Context, namespace interno de Azure Service Bus y frontera publico/privado — define el namespace interno del BC (eventos privados) y el criterio publico/privado por frontera de BC.
+- ADR-0024: Modelo de eventos de bus (privado propio, publico via backbone compartido, integracion externa diferida) — define el transporte del evento publico: backbone compartido del producto (caso comun) o namespace de integracion externo (caso diferido, Open Host Service).
+
+## Control de cambios
+
+- 2026-07-01: enmendado (issue #167, barrido de coherencia hacia ADR-0024) para reemplazar "namespace de integracion del bounded context" como destino por defecto del evento publico por el modelo de ADR-0024: backbone compartido del producto (caso comun) o namespace de integracion externo (caso diferido). El criterio "un topic por tipo de evento" y la convencion de naming no cambian.

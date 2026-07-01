@@ -124,4 +124,8 @@ Usar el modo balanceado de Wolverine (con eleccion de lider y reparto de agentes
 - ADR-0003 (stack ES: Marten + Wolverine + Postgres): define el modo serverless de Wolverine y el outbox transaccional.
 - ADR-0006 (convenciones de nombramiento de funciones Azure): una Function App por dominio, base de "un plan por dominio".
 - ADR-0013 (smoke tests contra entorno dev): suite cuyos fallos intermitentes destaparon el problema.
-- ADR-0023: Bounded Context, topologia de dos namespaces ASB y Open Host Service — define BC como grupo de dominios sobre un resource group; este ADR fija el hosting por dominio dentro del BC.
+- ADR-0023: Bounded Context, namespace interno de Azure Service Bus y frontera publico/privado — define BC como grupo de dominios sobre un resource group; este ADR fija el hosting por dominio dentro del BC.
+
+## Control de cambios
+
+- 2026-07-01: enmendado (issue #167, barrido de coherencia hacia ADR-0024) para actualizar la referencia a ADR-0023, cuyo titulo y topologia (un namespace interno por BC; lo publico via ADR-0024) ya no era "topologia de dos namespaces ASB y Open Host Service". No hay cambio de doctrina de hosting.

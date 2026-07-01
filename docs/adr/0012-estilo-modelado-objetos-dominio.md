@@ -324,10 +324,10 @@ event store de Marten del dominio**: el `Program.cs` del dominio registra el res
 sin perdida. Ese registro es **local al dominio productor** -- vive en su `Program.cs` y en
 ningun otro lado.
 
-Todo evento o comando que **cruza cualquiera de los dos namespaces de Azure Service Bus** del
-Bounded Context -- el namespace interno (via `IPrivateEventSender`, intra-BC; ADR-0023) o el
-namespace de integracion (via `IPublicEventSender`, inter-BC; ADR-0023) -- cruza un **canal de
-serializacion que el resolver del dominio no alcanza**: el destino opera con **otro**
+Todo evento o comando que **cruza un bus de Azure Service Bus** -- el namespace interno del
+Bounded Context (via `IPrivateEventSender`, intra-BC; ADR-0023) o el backbone compartido del
+producto / namespace de integracion externo diferido (via `IPublicEventSender`, inter-BC;
+ADR-0024) -- cruza un **canal de serializacion que el resolver del dominio no alcanza**: el destino opera con **otro**
 `JsonSerializerOptions` que **no tiene registrado ese resolver**. El destino solo dispone del
 serializador por defecto. Si el payload contiene un value object rico (campos privados +
 `ConfigurarSerializacion`), en el productor serializa bien y en el consumidor se reconstruye
@@ -338,7 +338,8 @@ por defecto** -- primitivos, `enum`, `string`, fechas (`DateOnly` / `DateTime` /
 `DateTimeOffset`), `Guid`, colecciones de esos tipos, y `record` DTO planos compuestos de lo
 anterior. El criterio es **"¿cruza un bus?"**, no "¿es `IPublicEvent`?": un evento privado
 (`IPrivateEvent`) que cruza el namespace interno tiene exactamente la misma exigencia de forma
-que un evento publico (`IPublicEvent`) que cruza el namespace de integracion. **El modelo de
+que un evento publico (`IPublicEvent`) que cruza el backbone compartido (o, en el caso diferido,
+un namespace de integracion externo). **El modelo de
 dominio rico no cruza ningun bus**: un VO con factory privado, campos privados y
 `ConfigurarSerializacion` se queda en el event store del dominio; al publicar o al enviar por
 el bus interno se **traduce a una forma plana y portable**. Esta regla no prescribe **quien**
@@ -375,7 +376,8 @@ ningun bus.
 Esta convencion blinda el contrato (ADR-0005: naming y versionado de eventos): un tipo plano es
 estable, versionable de forma aditiva y deserializable por cualquier consumidor sin acoplarse a
 la mecanica de serializacion interna del productor. Aplica por igual al namespace interno
-(eventos privados intra-BC) y al namespace de integracion (eventos publicos inter-BC).
+(eventos privados intra-BC) y al backbone compartido / namespace de integracion externo diferido
+(eventos publicos inter-BC).
 
 **El guardrail que la hace cumplir** es un test de round-trip con el serializador **por defecto,
 sin el resolver custom** (ver `test-writer.md` seccion 6e -- la regla generalizada aplica a
@@ -425,9 +427,14 @@ no tiene.
 ## Referencias
 
 - ADR-0004: Manejo de errores -- aggregate nunca throw para logica de negocio
-- ADR-0001: Service Bus -- un topic por tipo de evento (los topics viven en el namespace interno o de integracion segun ADR-0023)
-- ADR-0003: Marten + Wolverine -- `IPublicEventSender` / `IPrivateEventSender` (los dos senders; el namespace destino de cada uno lo define ADR-0023)
-- ADR-0005: Naming y versionado de eventos -- el contrato que la frontera de serializacion blinda (aplica a ambos namespaces)
-- ADR-0023: Bounded Context, topologia de dos namespaces de ASB y Open Host Service -- raiz estrategica que establece "todo lo que cruza un bus es plano" y desacopla el eje de forma del eje de alcance; origen del cambio de doctrina de esta seccion (issue #121)
+- ADR-0001: Service Bus -- un topic por tipo de evento (los topics viven en el namespace interno del BC o, para lo publico, en el backbone compartido del producto o un namespace de integracion externo diferido, segun ADR-0024)
+- ADR-0003: Marten + Wolverine -- `IPublicEventSender` / `IPrivateEventSender` (los dos senders; el destino de cada uno lo definen ADR-0023 y ADR-0024)
+- ADR-0005: Naming y versionado de eventos -- el contrato que la frontera de serializacion blinda (aplica por igual al namespace interno y al transporte de lo publico)
+- ADR-0023: Bounded Context, namespace interno de Azure Service Bus y frontera publico/privado -- raiz estrategica que establece "todo lo que cruza un bus es plano" y desacopla el eje de forma del eje de alcance; origen del cambio de doctrina de esta seccion (issue #121)
+- ADR-0024: Modelo de eventos de bus (privado propio, publico via backbone compartido, integracion externa diferida) -- define el transporte de lo publico (backbone compartido comun o namespace de integracion externo diferido) al que aplica por igual esta regla de forma plana
 - ADR de Contracts del proyecto consumidor: Contracts -- records de eventos y value objects compartidos
 - Vaughn Vernon -- "Implementing Domain-Driven Design", Value Objects
+
+## Control de cambios
+
+- 2026-07-01: enmendado (issue #167, barrido de coherencia hacia ADR-0024) para reemplazar "namespace de integracion" como destino por defecto de `IPublicEventSender` en la seccion "Frontera de serializacion: event store vs bus" por el modelo de ADR-0024: backbone compartido del producto (caso comun) o namespace de integracion externo (caso diferido). La regla "todo lo que cruza un bus es plano y portable" y el guardrail de round-trip con serializador por defecto no cambian.

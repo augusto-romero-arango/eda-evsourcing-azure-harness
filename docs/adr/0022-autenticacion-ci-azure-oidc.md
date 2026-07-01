@@ -89,4 +89,9 @@ Usar una user-assigned managed identity en vez de una app de Entra [1][5].
 - **[5]** "Deploy Bicep files by using GitHub Actions — Generate deployment credentials (OpenID Connect)". https://learn.microsoft.com/azure/azure-resource-manager/bicep/deploy-github-actions#generate-deployment-credentials
 - **[6]** Azure Verified Modules, "Bicep Contribution Flow — Configure a deployment identity": OIDC como opcion recomendada y "Option 2 [Deprecated]: Configure Service Principal + Secret". https://azure.github.io/Azure-Verified-Modules/contributing/bicep/bicep-contribution-flow/#2-configure-a-deployment-identity-in-azure
 - **[7]** GitHub, "Azure Login action — Login with OpenID Connect (OIDC) (recommended)". https://github.com/Azure/login#login-with-openid-connect-oidc-recommended
-- ADR-0023: Bounded Context, topologia de dos namespaces ASB y Open Host Service — recoge el eje runtime-cross-BC (diferido) que este ADR explicitamente no cubre.
+- ADR-0023: Bounded Context, namespace interno de Azure Service Bus y frontera publico/privado — recoge el eje runtime-cross-BC (diferido) que este ADR explicitamente no cubre.
+- ADR-0024: Modelo de eventos de bus (privado propio, publico via backbone compartido, integracion externa diferida) — reencuadra el namespace de integracion citado en la seccion anterior como el transporte del caso diferido de integracion verdaderamente externa, no como el default del evento publico.
+
+## Control de cambios
+
+- 2026-07-01: enmendado (issue #167, barrido de coherencia hacia ADR-0024) para actualizar la referencia a ADR-0023 y anadir remision a ADR-0024. La seccion "Frontera de alcance: autenticacion runtime cross-BC" no cambia: sigue describiendo el caso diferido de integracion verdaderamente externa (ADR-0024 decision #5), vigente.

@@ -701,9 +701,10 @@ La seccion 6d cubre el **event store de Marten**: usa `CrearOpcionesMarten()`, q
 resolver custom del dominio. Eso garantiza que un VO con campos privados sobrevive el round-trip
 **dentro del dominio**. Pero todo evento con marker de bus cruza un **canal adicional**: un
 `IPrivateEvent` sale por `IPrivateEventSender` al namespace interno del Bounded Context; un
-`IPublicEvent` sale por `IPublicEventSender` al namespace de integracion. En ambos casos, el
-destino opera con **otro** `JsonSerializerOptions` que **no tiene ese resolver**. El round-trip
-de 6d **no detecta** si el payload es portable -- pasa en verde porque registra el resolver que
+`IPublicEvent` sale por `IPublicEventSender` al backbone compartido del producto o, en el caso
+diferido de integracion verdaderamente externa, a un namespace de integracion propio del
+productor. En ambos casos, el destino opera con **otro** `JsonSerializerOptions` que **no tiene
+ese resolver**. El round-trip de 6d **no detecta** si el payload es portable -- pasa en verde porque registra el resolver que
 el bus no tiene. Autoridad: **ADR-0012, seccion "Frontera de serializacion: event store vs
 bus"**; doctrina raiz: **ADR-0023** (criterio "¿cruza un bus?" como determinante de forma plana).
 
@@ -752,10 +753,11 @@ marker de bus (`IPrivateEvent` o `IPublicEvent`) la expectativa es la **opuesta*
 registro falla" a un evento con marker de bus -- ahi un fallo sin resolver es exactamente el bug
 que esta seccion previene. Si el evento no sobrevive con `JsonSerializerOptions` vanilla, no es
 portable: su payload carga un tipo rico que debe aplanarse antes de publicar por el bus interno
-o de integracion (responsabilidad del implementer; ver `implementer.md` "Donde vive cada tipo de
-evento"). La distincion de expectativa invertida aplica por igual a `IPrivateEvent` (namespace
-interno) e `IPublicEvent` (namespace de integracion). Autoridad: ADR-0023, seccion "Todo lo que
-cruza un bus es plano y portable".
+o el backbone compartido / la integracion externa diferida (responsabilidad del implementer; ver
+`implementer.md` "Donde vive cada tipo de evento"). La distincion de expectativa invertida aplica
+por igual a `IPrivateEvent` (namespace interno) e `IPublicEvent` (backbone compartido o namespace
+de integracion externo diferido). Autoridad: ADR-0023, seccion "Todo lo que cruza un bus es plano
+y portable".
 
 | Test | Opciones | Que cubre | Resultado esperado |
 |---|---|---|---|
