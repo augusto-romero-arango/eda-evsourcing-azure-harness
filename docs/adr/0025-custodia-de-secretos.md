@@ -1,7 +1,7 @@
 # ADR-0025: Custodia de secretos (ningun secreto ni key en texto plano en app settings)
 
 - **Fecha**: 2026-07-01
-- **Estado**: propuesta
+- **Estado**: aceptado
 - **Aplica a**: doctrina de manejo de secretos del marco; gobierno de los agentes `infra-base-scaffolder`, `domain-scaffolder`, `implementer` e `infra-writer`. Generaliza ADR-0024 (decision #6) y reencuadra el modulo Key Vault de ADR-0021.
 
 ## Contexto
@@ -103,3 +103,4 @@ Al implementar estas enmiendas, el contenido superado se **elimina del cuerpo** 
 ## Control de cambios
 
 - 2026-07-01: creacion como `propuesta` (nace de la auditoria de secretos posterior a la implementacion de ADR-0024: el password de Postgres, la access key de Storage y la connection string de App Insights quedaban en texto plano en app settings; se generaliza el principio de custodia mas alla de las cadenas de ASB).
+- 2026-07-01: `aceptado` tras la revision con el usuario.
