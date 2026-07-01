@@ -1,6 +1,6 @@
 # ADR-0021: Infraestructura base del consumidor - 7 modulos + esqueleto del entorno generados por un agente
 
-- **Fecha**: 2026-06-25 (reformado 2026-06-30)
+- **Fecha**: 2026-06-25 (reformado 2026-06-30, 2026-07-01)
 - **Estado**: aceptado
 - **Aplica a**: scaffolding de infraestructura del proyecto consumidor (Terraform), agentes `infra-base-scaffolder`, `domain-scaffolder` e `infra-writer`, flujo greenfield.
 
@@ -17,7 +17,7 @@ Pero **el harness no proveia esa base de ninguna forma**: ni plantilla copiable,
 - El `terraform output` de un greenfield salia **vacio** porque nadie generaba el esqueleto del entorno con sus `outputs.tf`.
 - El modulo `service-plan` que se escribio a mano en campo **incumplia el contrato de ADR-0020**: solo aceptaba `name`, `resource_group_name`, `location`, `sku_name`, `tags`, mientras el scaffolder le pasa ademas `os_type`, `worker_count` y `always_on`. Sin esos inputs, el `terraform validate` del Paso 4 falla.
 
-**Nueva raiz doctrinal: ADR-0023 (#121, cerrado).** Este ADR fue escrito antes de que ADR-0023 existiera. ADR-0023 establece la topologia de dos namespaces de Azure Service Bus por Bounded Context — namespace interno (eventos privados intra-BC) y namespace de integracion (eventos publicos inter-BC) — como doctrina estrategica del marco. ADR-0021 describia el modelo anterior de "un namespace de Service Bus compartido"; esta reforma alinea ADR-0021 con la raiz de ADR-0023 para que la infraestructura base que genera el agente refleje la topologia correcta desde el primer greenfield.
+**Raiz doctrinal: ADR-0024 (#159, aceptado).** ADR-0024 establece que el harness provisiona por defecto **un solo** namespace de Azure Service Bus por Bounded Context: el namespace interno, compartido por todos los dominios del BC. El evento publico comun no vive en un namespace de integracion propio del BC: se publica al backbone compartido del producto, provisionado por el equipo de infra, fuera del alcance de este agente. Esta reforma alinea ADR-0021 con esa doctrina, de modo que la infraestructura base que genera el `infra-base-scaffolder` refleje la topologia correcta desde el primer greenfield.
 
 ## Decision
 
@@ -32,20 +32,21 @@ Pero **el harness no proveia esa base de ninguna forma**: ni plantilla copiable,
 2. **El contenido no es estatico.** El `service-plan` debe cumplir ADR-0020 (que la plantilla de campo incumplia), la region de PostgreSQL depende del consumidor (algunas regiones restringen Flexible Server) y los nombres globales pueden necesitar un sufijo de unicidad. Un agente aplica reglas y lee `harness.config.json`/`CLAUDE.md` para parametrizar; un archivo copiado las congela.
 3. **Encaja en el flujo greenfield existente.** `infra-bootstrap` ya orquesta "bootstrap del tfstate -> primer `/infra`". El esqueleto base es el eslabon que faltaba entre ambos: `bootstrap-backend.sh` crea el backend del `tfstate`; `infra-base-scaffolder` crea los modulos y el entorno; `/infra` aplica.
 
-### Dos namespaces ASB por Bounded Context: cambio respecto a la version anterior
+### Un namespace de Service Bus interno por Bounded Context
 
-ADR-0023 (decision #2) establece que cada Bounded Context provisiona exactamente **dos** namespaces de Azure Service Bus con responsabilidades ortogonales:
+ADR-0024 establece que el harness provisiona por defecto **un** namespace de Azure Service Bus por Bounded Context: el namespace interno, compartido por todos los dominios del BC (ADR-0020), always-on.
 
 | Namespace | Proposito | Interfaz de publicacion |
 |---|---|---|
 | **Namespace interno** | Eventos privados intra-BC; mensajeria entre dominios del mismo BC | `IPrivateEventSender` |
-| **Namespace de integracion** | Eventos publicos inter-BC; los consumidores externos se suscriben aqui | `IPublicEventSender` |
 
-La separacion es **topologica** (dos namespaces fisicos), no una convencion de naming dentro de un namespace unico. El namespace interno no es alcanzable desde fuera del BC: un consumidor externo solo puede recibir credenciales/RBAC sobre el namespace de integracion, al que se suscribe siguiendo el patron Open Host Service (ADR-0023, decision #5); el namespace interno no existe en su contexto de autenticacion. Este aislamiento es una propiedad arquitectonica del diseño, no una responsabilidad de configuracion.
+El namespace interno no es alcanzable desde fuera del BC: no recibe ninguna asignacion de rol para identidades externas al BC. Este aislamiento es una propiedad arquitectonica del diseño, no una responsabilidad de configuracion.
 
-**El enrutamiento (privado/publico) es puramente topologico**: la unica diferencia entre publicar en el namespace interno y en el de integracion es el namespace destino (`IPrivateEventSender` vs `IPublicEventSender`). Ambas categorias de evento son planas y portables (ADR-0023 decision #3, reformado en #122): el criterio de "plano" es "¿cruza un bus?", no "¿es publico?". No existe una regla distinta de serializacion entre eventos privados y publicos; ambos deben ser planos porque ambos cruzan un bus.
+El evento publico (`IPublicEventSender`) no se publica a un namespace propio del BC: viaja por el backbone compartido del producto, provisionado por el equipo de infra (ADR-0024, decision #4). El `infra-base-scaffolder` no provisiona ese backbone ni su wiring — solo genera el namespace interno del BC; la custodia de la cadena de conexion del backbone (Key Vault) y el wiring de brokers nombrados quedan en issues derivados (#165).
 
-El modulo Terraform `service-bus` **no cambia su definicion**: sigue siendo "un namespace + topics/subscriptions parametrizables". Lo que cambia es que el **esqueleto del entorno lo instancia dos veces** — una para el namespace interno y otra para el de integracion — de modo que el BC queda con la topologia de dos namespaces desde el primer `terraform apply`.
+Todo evento que cruza el namespace interno es plano y portable (ADR-0023 decision #3, reformado en #122): el criterio de "plano" es "¿cruza un bus?", no "¿es publico?".
+
+El modulo Terraform `service-bus` **no cambia su definicion**: sigue siendo "un namespace + topics/subscriptions parametrizables". El esqueleto del entorno lo instancia **una sola vez**, para el namespace interno del BC.
 
 ### Los 7 modulos base y su contrato
 
@@ -54,12 +55,12 @@ El modulo Terraform `service-bus` **no cambia su definicion**: sigue siendo "un 
 | `resource-group` | `azurerm_resource_group` | `name`, `location`, `tags` | `name`, `location`, `id` | no |
 | `monitoring` | Log Analytics + Application Insights + action group + 2 alertas de costo | `name`, `resource_group_name`, `location`, `alert_action_group_email` (requerido), `daily_data_cap_in_gb`, `daily_cap_warning_percent`, `tags` | `connection_string` (sensitive), `instrumentation_key` (sensitive) | no |
 | `postgresql` | `azurerm_postgresql_flexible_server` (v17, `B_Standard_B1ms`) + database + firewall `allow-azure-services` | `name`, `resource_group_name`, `location`, `administrator_login`, `administrator_password` (sensitive), `database_name`, `zone`, `tags` | `server_fqdn`, `database_name`, `administrator_login` | **si** |
-| `service-bus` | `azurerm_servicebus_namespace` + topics/subscriptions parametrizables + RBAC Data Sender del productor en el namespace de integracion | `name`, `resource_group_name`, `location`, `sku`, `topics_config`, `tags` | `id`, `name`, `default_primary_connection_string` (sensitive), `topic_ids` | **si** |
+| `service-bus` | `azurerm_servicebus_namespace` + topics/subscriptions parametrizables | `name`, `resource_group_name`, `location`, `sku`, `topics_config`, `tags` | `id`, `name`, `default_primary_connection_string` (sensitive), `topic_ids` | **si** |
 | `service-plan` | `azurerm_service_plan` Linux | `name`, `resource_group_name`, `location`, `os_type`, `sku_name`, `worker_count`, `always_on`, `tags` | `id`, `always_on` | no |
 | `storage` | `azurerm_storage_account` Standard LRS | `name`, `resource_group_name`, `location`, `tags` | `id`, `name`, `primary_connection_string` (sensitive), `primary_access_key` (sensitive) | **si** |
 | `function-app` | `azurerm_linux_function_app` (.NET 10 isolated, SystemAssigned identity) | `name`, `resource_group_name`, `location`, `service_plan_id`, `storage_account_name`, `storage_account_connection_string`, `storage_account_access_key`, `app_insights_connection_string`, `app_settings`, `tags` | `id`, `name`, `principal_id` | no |
 
-**Nota sobre el modulo `service-bus`:** el modulo es parametrico (un namespace + topics/subscriptions) y se instancia **dos veces** en el entorno: una para el namespace interno y otra para el namespace de integracion (ver "El esqueleto del entorno y sus outputs"). Los inputs `name`, `resource_group_name`, `location`, `sku`, `topics_config`, `tags` aplican a cada instancia por separado; el entorno pasa nombres distintos a cada una. Ambas instancias exponen `name`, `id` y `default_primary_connection_string` que el entorno y los agentes usan para las dos variables de entorno del dominio (una por namespace). El RBAC Data Sender del productor (rol `Azure Service Bus Data Sender` sobre el namespace de integracion) se lista como recurso emitido por esta instancia del modulo; el detalle de implementacion HCL y las asignaciones de rol fino cross-BC quedan diferidos a #130 (scaffolder) y a la materializacion del Context Map (#131).
+**Nota sobre el modulo `service-bus`:** el modulo es parametrico (un namespace + topics/subscriptions) y el entorno lo instancia **una vez**, para el namespace interno del BC (ver "El esqueleto del entorno y sus outputs"). Los inputs `name`, `resource_group_name`, `location`, `sku`, `topics_config`, `tags` aplican a esa instancia; el entorno le pasa el nombre con su sufijo de unicidad. La instancia expone `name`, `id` y `default_primary_connection_string`, que el entorno y los agentes usan para la variable de entorno del dominio (`SERVICE_BUS_CONNECTION_INTERNO`). El wiring del backbone compartido para eventos publicos (brokers nombrados por cadena de conexion custodiada en Key Vault) queda diferido a #165 (scaffolder) y a la materializacion del Context Map (#131).
 
 ### El modulo `service-plan` cumple el contrato de ADR-0020 (resuelve la divergencia de campo)
 
@@ -69,41 +70,34 @@ Nota sobre `always_on`: `azurerm_service_plan` no tiene un argumento `always_on`
 
 ### El sufijo de unicidad vive en el ENTORNO, no en los modulos
 
-Los nombres globalmente unicos (Storage Account, PostgreSQL y los dos namespaces de Service Bus) se resuelven en `infra/environments/<env>/`, no dentro de los `main.tf` de los modulos. Los modulos `postgresql`/`service-bus` reciben el nombre ya formado via `var.name`; es el esqueleto del entorno quien decide si lleva sufijo. Por eso el provider `random` se declara en el `providers.tf` del esqueleto.
+Los nombres globalmente unicos (Storage Account, PostgreSQL y el namespace de Service Bus) se resuelven en `infra/environments/<env>/`, no dentro de los `main.tf` de los modulos. Los modulos `postgresql`/`service-bus` reciben el nombre ya formado via `var.name`; es el esqueleto del entorno quien decide si lleva sufijo. Por eso el provider `random` se declara en el `providers.tf` del esqueleto.
 
-**El sufijo de unicidad aplica a ambos namespaces de Service Bus.** Cada instancia del modulo `service-bus` (interno e integracion) recibe su propio `random_string` (length 6, `special = false`, `upper = false`), de modo que los nombres de DNS publico no colisionan entre si ni con otros tenants. Ejemplo de naming:
+**El sufijo de unicidad aplica al namespace de Service Bus interno.** La instancia del modulo `service-bus` recibe su propio `random_string` (length 6, `special = false`, `upper = false`), de modo que el nombre de DNS publico no colisiona con el de otros tenants. Ejemplo de naming:
 
 - Namespace interno: `sbint-controlasistencias-abc123` (prefix corto `sbint-`, identificador del proyecto, sufijo de unicidad)
-- Namespace de integracion: `sbext-controlasistencias-def456` (prefix corto `sbext-`, mismo identificador del proyecto, sufijo de unicidad distinto)
 
-Los dos sufijos son independientes entre si (dos recursos `random_string` distintos) y del sufijo de PostgreSQL.
+El sufijo del namespace de Service Bus es independiente del sufijo de PostgreSQL (dos recursos `random_string` distintos).
 
-**Unicidad global: que recursos la necesitan y por que (issue #94).** El nombre de un PostgreSQL Flexible Server (`*.postgres.database.azure.com`), de un namespace de Service Bus (`*.servicebus.windows.net`) y de una Storage Account (`*.blob.core.windows.net`) es un endpoint DNS publico y, por tanto, **unico en TODO Azure**, no solo dentro del resource group o de la suscripcion. Un nombre derivado solo de `local.prefix` choca con cualquier otro tenant que ya lo haya reservado. El primer greenfield real (`Bitakora.ControlAsistencia`) lo evidencio en dos mitades: la Storage del `tfstate` con `StorageAccountAlreadyTaken` (resuelto en `bootstrap-backend.sh`, issue #92) y el servidor PostgreSQL con `ServerNameAlreadyExists` (este issue #94). Por eso el esqueleto del entorno que genera el agente declara un `random_string` (length 6, `special = false`, `upper = false`) **por cada uno** de PostgreSQL y los dos namespaces de Service Bus, e incorpora su `.result` al `name` que pasa a cada modulo. Las Storage por dominio ya seguian este patron (lo agrega el `domain-scaffolder`). Es el mismo mecanismo que la Storage del tfstate, de modo que todos los tipos de recurso con DNS publico convergen al mismo patron.
+**Unicidad global: que recursos la necesitan y por que (issue #94).** El nombre de un PostgreSQL Flexible Server (`*.postgres.database.azure.com`), de un namespace de Service Bus (`*.servicebus.windows.net`) y de una Storage Account (`*.blob.core.windows.net`) es un endpoint DNS publico y, por tanto, **unico en TODO Azure**, no solo dentro del resource group o de la suscripcion. Un nombre derivado solo de `local.prefix` choca con cualquier otro tenant que ya lo haya reservado. El primer greenfield real (`Bitakora.ControlAsistencia`) lo evidencio en dos mitades: la Storage del `tfstate` con `StorageAccountAlreadyTaken` (resuelto en `bootstrap-backend.sh`, issue #92) y el servidor PostgreSQL con `ServerNameAlreadyExists` (este issue #94). Por eso el esqueleto del entorno que genera el agente declara un `random_string` (length 6, `special = false`, `upper = false`) **por cada uno** de PostgreSQL y el namespace de Service Bus interno, e incorpora su `.result` al `name` que pasa a cada modulo. Las Storage por dominio ya seguian este patron (lo agrega el `domain-scaffolder`). Es el mismo mecanismo que la Storage del tfstate, de modo que todos los tipos de recurso con DNS publico convergen al mismo patron.
 
-**Limites de nombre de Azure.** Los nombres con sufijo deben caber en los limites de la plataforma: PostgreSQL Flexible Server admite 3-63 chars (minusculas, numeros, guiones) y Service Bus namespace 6-50 chars (empieza con letra, termina en letra/numero). Para los prefijos tipicos del harness, los patrones `sbint-${proyecto}-${sufijo}` y `sbext-${proyecto}-${sufijo}` quedan bajo 50 chars para proyectos con nombre de hasta ~25 chars; si el consumidor configura un `project` muy largo, debe acortarlo en `variables.tf` para no exceder el limite del namespace.
+**Limites de nombre de Azure.** Los nombres con sufijo deben caber en los limites de la plataforma: PostgreSQL Flexible Server admite 3-63 chars (minusculas, numeros, guiones) y Service Bus namespace 6-50 chars (empieza con letra, termina en letra/numero). Para los prefijos tipicos del harness, el patron `sbint-${proyecto}-${sufijo}` queda bajo 50 chars para proyectos con nombre de hasta ~25 chars; si el consumidor configura un `project` muy largo, debe acortarlo en `variables.tf` para no exceder el limite del namespace.
 
 **Limitacion: el sufijo es para greenfield, no migra recursos ya desplegados.** `random_string` es idempotente sin `keepers` (Terraform persiste su valor en el state en el primer `apply` y lo mantiene estable). Pero anadir el sufijo a un PostgreSQL o namespace de Service Bus **ya creado** sin el cambia su `name`, que es un atributo `ForceNew`: Terraform querria destruir+recrear y el `prevent_destroy = true` de ambos modulos lo bloqueara. Por tanto el sufijo solo es seguro en el primer `apply` (recurso aun inexistente). Un consumidor que ya aplico sin sufijo debe migrar manualmente (`terraform state mv`/`import` o aceptar el nombre nuevo); no es automatico.
 
 ### El esqueleto del entorno y sus outputs
 
-El `infra/environments/<env>/main.tf` generado instancia **solo** los modulos compartidos (`resource_group`, `monitoring`, `postgresql` y los **dos** modulos `service_bus`); las instancias por dominio (`storage`, `service-plan`, `function-app`) las agrega el `domain-scaffolder` al crear cada dominio. Las dos instancias del modulo `service-bus` viven en el mismo `main.tf`, no en archivos separados:
+El `infra/environments/<env>/main.tf` generado instancia **solo** los modulos compartidos (`resource_group`, `monitoring`, `postgresql` y `service_bus_interno`); las instancias por dominio (`storage`, `service-plan`, `function-app`) las agrega el `domain-scaffolder` al crear cada dominio:
 
 ```hcl
 module "service_bus_interno" {
   source = "../../modules/service-bus"
   # ... name = "sbint-${local.prefix}-${random_string.sb_interno_suffix.result}"
 }
-
-module "service_bus_integracion" {
-  source = "../../modules/service-bus"
-  # ... name = "sbext-${local.prefix}-${random_string.sb_integracion_suffix.result}"
-}
 ```
 
-El `outputs.tf` expone a nivel raiz, como minimo, `resource_group_name`, `postgresql_fqdn` y los outputs de **ambos** namespaces de Service Bus, de modo que `terraform output` no salga vacio tras el primer apply:
+El `outputs.tf` expone a nivel raiz, como minimo, `resource_group_name`, `postgresql_fqdn` y los outputs del namespace de Service Bus interno, de modo que `terraform output` no salga vacio tras el primer apply:
 
 - `service_bus_interno_name` y `service_bus_interno_connection_string` (sensitive)
-- `service_bus_integracion_name` y `service_bus_integracion_connection_string` (sensitive)
 
 El `providers.tf` declara `azurerm` y `random` y el bloque `provider "azurerm"`, pero **no** incluye `backend "azurerm"`: el backend lo materializa `scripts/bootstrap-backend.sh` en `backend.tf`, y duplicarlo haria fallar a Terraform por doble definicion de backend.
 
@@ -149,22 +143,22 @@ Un solo agente que crea backend + modulos + entorno.
 
 - **El greenfield ya no reinventa la base a mano**: un agente genera los 7 modulos y el entorno con outputs.
 - **El contrato de ADR-0020 se cumple desde el origen**: el `service-plan` generado acepta `os_type`/`sku_name`/`worker_count`/`always_on`; desaparece la advertencia pasiva del Paso 4.
-- **`terraform output` deja de salir vacio**: el esqueleto expone outputs raiz, incluidos los de ambos namespaces de Service Bus.
+- **`terraform output` deja de salir vacio**: el esqueleto expone outputs raiz, incluidos los del namespace de Service Bus interno.
 - **Idempotente**: re-ejecutable sin pisar personalizaciones.
-- **Aislamiento estructural por topologia**: la separacion de dos namespaces (no por convencion de naming) garantiza que el namespace interno es inaccesible desde fuera del BC, incluso si la configuracion de RBAC falla; es una propiedad arquitectonica del diseño, no una responsabilidad de configuracion.
+- **Aislamiento por default**: el namespace interno del BC no recibe ninguna asignacion de rol para identidades externas al BC; es alcanzable solo por los dominios del propio BC. Es una propiedad del diseño, no una responsabilidad de configuracion caso por caso.
 
 ### Negativas
 
 - **El HCL base vive como prosa en el prompt del agente** (no como archivos `.tf` versionados del plugin), igual que el HCL del Paso 4 del `domain-scaffolder`. Mantenerlo exige editar el agente, no un archivo Terraform. Es el costo consciente del patron "agente emisor" del harness (ADR-0019) y se acepta por consistencia.
 - **Deriva potencial entre el HCL del agente y el del Paso 4 del scaffolder**: ambos deben mantenerse coherentes (mismos nombres de modulo, mismos locals `prefix`/`prefix_func`). Se mitiga documentando el contrato en este ADR.
-- **Cada BC provisiona dos namespaces de Service Bus en vez de uno, duplicando el recurso** (nombres DNS publicos, planes de precios del namespace, gestion de topics/subscriptions). Mitigado por `infra-base-scaffolder` (que materializara el HCL en el issue #130) que emite el HCL base del BC con ambas instancias ya parametrizadas.
-- **El Context Map queda diferido**: la declaracion formal de que BCs existen y como se conectan entre si (que BCs producen eventos publicos, que BCs los consumen, asignacion de RBAC cross-BC) no se materializa en este ADR; un consumidor que integra multiples BCs debe gestionar manualmente las conexiones hasta que #131 y sus sucesores lo formalicen.
+- **El Context Map queda diferido**: la declaracion formal de que BCs existen y como se conectan entre si (que BCs producen eventos publicos, que BCs los consumen, asignacion de permisos cross-BC sobre el backbone compartido) no se materializa en este ADR; un consumidor que integra multiples BCs debe gestionar manualmente las conexiones hasta que #131 y sus sucesores lo formalicen.
 
 ## Referencias
 
-- ADR-0023 (topologia de dos namespaces ASB y Open Host Service): **raiz doctrinal de esta reforma**. Define el proposito de cada namespace (interno vs integracion), la separacion topologica (no por naming), la estrategia de acceso inter-BC (Open Host Service + Published Language) y la regla de portabilidad de eventos que cruzan un bus. La evolucion de ADR-0021 de un namespace a dos es la consecuencia directa de ADR-0023.
-- Issue #130 (Actualizar scaffolders): materializa en HCL las dos instancias del modulo `service-bus` que este ADR fija como doctrina, y completa el detalle de RBAC Data Sender del productor en el namespace de integracion.
-- ADR-0001 (Service Bus, topic por evento): el modulo `service-bus` con `topics_config` parametrizable lo respeta; ADR-0023 anade la dimension faltante — en que namespace (interno o integracion) vive cada topic segun el alcance del evento.
+- ADR-0024 (modelo de eventos de bus del BC: privado propio, publico via backbone compartido): **raiz doctrinal de esta reforma**. Establece que el BC provisiona por defecto un unico namespace interno, always-on, y que el evento publico comun viaja por el backbone compartido del producto, provisionado por infra y fuera del alcance de este agente. La reduccion de ADR-0021 de dos namespaces a uno es la consecuencia directa de ADR-0024.
+- ADR-0023 (Bounded Context y regla de portabilidad de eventos que cruzan un bus): define el BC como grupo de dominios con su propio resource group (que este ADR materializa) y la regla de que todo lo que cruza un bus es plano y portable; la topologia de namespaces del BC queda fijada por ADR-0024.
+- Issue #165 (Actualizar `infra-base-scaffolder`): materializa en HCL el namespace interno unico que este ADR fija como doctrina, junto con la custodia en Key Vault de la cadena de conexion del backbone compartido.
+- ADR-0001 (Service Bus, topic por evento): el modulo `service-bus` con `topics_config` parametrizable lo respeta.
 - ADR-0003 (stack ES: Marten + Wolverine + Postgres): el modulo `postgresql`; origen de `IPublicEventSender` / `IPrivateEventSender`.
 - ADR-0013 (smoke tests contra entorno dev): el modulo `service-bus` admite subscriptions de smoke-tests via `topics_config`.
 - ADR-0019 (skills publicados vs internos): el `infra-base-scaffolder` es del lado publicado, opera solo sobre el consumidor y lleva guard "cwd != Mefisto"; sin equivalente interno (Mefisto no tiene infraestructura propia).
@@ -173,3 +167,8 @@ Un solo agente que crea backend + modulos + entorno.
 - Reglas de naming y unicidad global (Microsoft Learn, "Naming rules and restrictions for Azure resources", `https://learn.microsoft.com/azure/azure-resource-manager/management/resource-name-rules`): `Microsoft.DBforPostgreSQL/servers` es scope **global**, 3-63 chars, minusculas/numeros/guiones, no puede empezar ni terminar en guion; `Microsoft.ServiceBus/namespaces` es scope **global**, 6-50 chars, alfanumericos/guiones, empieza con letra y termina en letra o numero. El scope **global** de ambos es la fuente verificable de que el nombre debe ser unico en todo Azure (no solo en el resource group), lo que motiva el sufijo.
 - Region de PostgreSQL Flexible Server (issue #99): verificacion de SKUs por region via Azure CLI (Microsoft Learn, "az postgres flexible-server list-skus", `https://learn.microsoft.com/cli/azure/postgres/flexible-server`) -- "Lists available sku's in the given region"; y lista oficial de regiones del servicio (Microsoft Learn, "What is Azure Database for PostgreSQL flexible server?", `https://learn.microsoft.com/azure/postgresql/overview#azure-regions`), que muestra `eastus2` como soportada -- evidencia de que `LocationIsOfferRestricted` es una restriccion de oferta por suscripcion, no una indisponibilidad global de la region.
 - Fuente de referencia de campo: `Bitakora.ControlAsistencia/infra/modules/*` y `infra/environments/dev/*` (de donde se generalizaron los tokens hardcodeados).
+
+## Control de cambios
+
+- 2026-06-30: reformado (issue #128) para alinear la infraestructura base con la topologia de dos namespaces de Azure Service Bus por Bounded Context fijada por ADR-0023 (decision #2).
+- 2026-07-01: reformado (issue #160) para provisionar un unico namespace interno por Bounded Context, siguiendo el mandato de ADR-0024. Se elimina del cuerpo la provision del namespace de integracion (recursos, outputs, RBAC Data Sender y sufijo de unicidad asociados); el evento publico comun viaja por el backbone compartido del producto, fuera del alcance de este ADR.
