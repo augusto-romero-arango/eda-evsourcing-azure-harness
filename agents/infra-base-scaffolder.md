@@ -925,7 +925,7 @@ Instancia los 5 modulos compartidos y declara los **sufijos de unicidad global**
 
 ```hcl
 # Sufijos de unicidad global (ADR-0021, issue #94). Los nombres de PostgreSQL Flexible
-# Server (*.postgres.database.azure.com) y de los namespaces de Service Bus
+# Server (*.postgres.database.azure.com) y del namespace de Service Bus interno
 # (*.servicebus.windows.net) son unicos en TODO Azure, no solo en el resource group:
 # todos exponen un endpoint DNS publico. Mismo patron que las Storage por dominio.
 # Sin keepers -> el valor se persiste en el state en el primer apply y queda estable
