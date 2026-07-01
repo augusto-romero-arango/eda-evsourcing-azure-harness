@@ -259,7 +259,8 @@ Despues de agregar tests, corre `dotnet test` para confirmar que pasan.
 portabilidad por el bus.** Cubre el event store de Marten -- registra el resolver del dominio, asi
 que un VO con campos privados pasa en verde. Pero todo evento con marker de bus cruza un **canal
 adicional**: un `IPrivateEvent` sale por `IPrivateEventSender` al namespace interno del Bounded
-Context; un `IPublicEvent` sale por `IPublicEventSender` al backbone compartido del producto o, en el caso diferido, a un namespace de integracion externo. En ambos
+Context; un `IPublicEvent` sale por `IPublicEventSender` al backbone compartido del producto o, en
+el caso diferido, a un namespace de integracion externo. En ambos
 casos el destino deserializa con **otro** `JsonSerializerOptions` sin ese resolver. Si el payload
 carga un tipo rico, en produccion llega lossy y este test no lo ve. Ver ADR-0012, "Frontera de
 serializacion: event store vs bus".
@@ -273,7 +274,8 @@ Para cada evento que implementa `IPrivateEvent` o `IPublicEvent` en el diff, ver
    Si un campo del evento es un VO con campos privados + `ConfigurarSerializacion`, o el evento
    depende de un constructor privado / resolver custom para reconstruirse, es **no portable** --
    hallazgo bloqueante. El modelo rico debe aplanarse antes de emitir por el bus, tanto si el
-   destino es el namespace interno (`IPrivateEvent`) como el backbone compartido o un namespace de integracion externo diferido (`IPublicEvent`).
+   destino es el namespace interno (`IPrivateEvent`) como el backbone compartido o un namespace
+   de integracion externo diferido (`IPublicEvent`).
 2. **Existe el guardrail de round-trip con serializador por defecto** (test-writer.md seccion 6e
    -- regla generalizada a todo evento con marker de bus): un test que serializa y deserializa el
    evento con `JsonSerializerOptions` **por defecto (sin el resolver custom)** y verifica que no

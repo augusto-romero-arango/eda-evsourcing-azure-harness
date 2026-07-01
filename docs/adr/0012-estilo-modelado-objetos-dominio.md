@@ -327,11 +327,11 @@ ningun otro lado.
 Todo evento o comando que **cruza un bus de Azure Service Bus** -- el namespace interno del
 Bounded Context (via `IPrivateEventSender`, intra-BC; ADR-0023) o el backbone compartido del
 producto / namespace de integracion externo diferido (via `IPublicEventSender`, inter-BC;
-ADR-0024) -- cruza un **canal de serializacion que el resolver del dominio no alcanza**: el destino opera con **otro**
-`JsonSerializerOptions` que **no tiene registrado ese resolver**. El destino solo dispone del
-serializador por defecto. Si el payload contiene un value object rico (campos privados +
-`ConfigurarSerializacion`), en el productor serializa bien y en el consumidor se reconstruye
-lossy o falla: el contrato se rompe en silencio.
+ADR-0024) -- cruza un **canal de serializacion que el resolver del dominio no alcanza**: el
+destino opera con **otro** `JsonSerializerOptions` que **no tiene registrado ese resolver**. El
+destino solo dispone del serializador por defecto. Si el payload contiene un value object rico
+(campos privados + `ConfigurarSerializacion`), en el productor serializa bien y en el consumidor
+se reconstruye lossy o falla: el contrato se rompe en silencio.
 
 **Regla unica: todo tipo que cruza un bus contiene solo tipos serializables con el serializador
 por defecto** -- primitivos, `enum`, `string`, fechas (`DateOnly` / `DateTime` /
@@ -339,10 +339,10 @@ por defecto** -- primitivos, `enum`, `string`, fechas (`DateOnly` / `DateTime` /
 anterior. El criterio es **"¿cruza un bus?"**, no "¿es `IPublicEvent`?": un evento privado
 (`IPrivateEvent`) que cruza el namespace interno tiene exactamente la misma exigencia de forma
 que un evento publico (`IPublicEvent`) que cruza el backbone compartido (o, en el caso diferido,
-un namespace de integracion externo). **El modelo de
-dominio rico no cruza ningun bus**: un VO con factory privado, campos privados y
-`ConfigurarSerializacion` se queda en el event store del dominio; al publicar o al enviar por
-el bus interno se **traduce a una forma plana y portable**. Esta regla no prescribe **quien**
+un namespace de integracion externo). **El modelo de dominio rico no cruza ningun bus**: un VO
+con factory privado, campos privados y `ConfigurarSerializacion` se queda en el event store del
+dominio; al publicar o al enviar por el bus interno se **traduce a una forma plana y portable**.
+Esta regla no prescribe **quien**
 traduce (un mapper, el handler, o un metodo `ToContrato()` del propio VO -- Tell-don't-Ask
 aplica); prescribe que el tipo que cruza el bus sea plano.
 

@@ -704,9 +704,10 @@ resolver custom del dominio. Eso garantiza que un VO con campos privados sobrevi
 `IPublicEvent` sale por `IPublicEventSender` al backbone compartido del producto o, en el caso
 diferido de integracion verdaderamente externa, a un namespace de integracion propio del
 productor. En ambos casos, el destino opera con **otro** `JsonSerializerOptions` que **no tiene
-ese resolver**. El round-trip de 6d **no detecta** si el payload es portable -- pasa en verde porque registra el resolver que
-el bus no tiene. Autoridad: **ADR-0012, seccion "Frontera de serializacion: event store vs
-bus"**; doctrina raiz: **ADR-0023** (criterio "¿cruza un bus?" como determinante de forma plana).
+ese resolver**. El round-trip de 6d **no detecta** si el payload es portable -- pasa en verde
+porque registra el resolver que el bus no tiene. Autoridad: **ADR-0012, seccion "Frontera de
+serializacion: event store vs bus"**; doctrina raiz: **ADR-0023** (criterio "¿cruza un bus?" como
+determinante de forma plana).
 
 **Regla: para cada evento con marker de bus (`IPrivateEvent` o `IPublicEvent`), escribe un test
 de round-trip con `JsonSerializerOptions` POR DEFECTO (sin el resolver custom)** que verifique
