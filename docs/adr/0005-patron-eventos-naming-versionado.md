@@ -33,7 +33,7 @@ Para la convencion de naming de topics y subscriptions de Service Bus, ver
 
 ### Eventos publicos como Published Language del Bounded Context
 
-Los eventos **publicos** son el **Published Language** del bounded context (Evans, *Domain-Driven Design*, 2003, cap. 14) y se publican al namespace de integracion (ADR-0023). El contrato externo que fija el Published Language se blinda con el versionado aditivo y la regla V2 descritos en este ADR.
+Los eventos **publicos** son el **Published Language** del bounded context (Evans, *Domain-Driven Design*, 2003, cap. 14) y se publican al backbone compartido del producto (caso comun) o, en el caso diferido de integracion verdaderamente externa, al namespace de integracion propio del productor (ADR-0024). El contrato externo que fija el Published Language se blinda con el versionado aditivo y la regla V2 descritos en este ADR.
 
 ### Versionado aditivo
 
@@ -78,5 +78,10 @@ en el proyecto Contracts con los siguientes campos:
 
 ## Referencias
 
-- ADR-0001 (Service Bus, un topic por tipo de evento): las convenciones de naming de topics y subscriptions de ADR-0001 y este ADR aplican por igual dentro del namespace interno y del namespace de integracion del bounded context.
-- ADR-0023: Bounded Context, topologia de dos namespaces ASB y Open Host Service — define que los eventos publicos son el Published Language del BC y viven en el namespace de integracion; este ADR fija el naming y el versionado que blindan ese contrato externo.
+- ADR-0001 (Service Bus, un topic por tipo de evento): las convenciones de naming de topics y subscriptions de ADR-0001 y este ADR aplican por igual dentro del namespace interno, del backbone compartido del producto y de cualquier namespace de integracion externo (ADR-0024).
+- ADR-0023: Bounded Context, namespace interno de Azure Service Bus y frontera publico/privado — define que los eventos publicos son el Published Language del BC; este ADR fija el naming y el versionado que blindan ese contrato externo.
+- ADR-0024: Modelo de eventos de bus (privado propio, publico via backbone compartido, integracion externa diferida) — define donde vive ese Published Language: el backbone compartido del producto (caso comun) o un namespace de integracion externo (caso diferido).
+
+## Control de cambios
+
+- 2026-07-01: enmendado (issue #167, barrido de coherencia hacia ADR-0024) para reemplazar "namespace de integracion (ADR-0023)" como destino por defecto del Published Language por el modelo de ADR-0024: backbone compartido del producto (caso comun) o namespace de integracion externo (caso diferido). El naming, el versionado aditivo y la regla V2 no cambian.
