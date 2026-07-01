@@ -93,7 +93,7 @@ Necesaria porque los agentes/skills del harness no pueden hacer sustitución de 
 - **BoundedContextDomains**: dominio1, dominio2  (lista separada por comas; corresponde a `boundedContext.domains`)
 ```
 
-`BoundedContext` es el nombre del Bounded Context declarado en `harness.config.json` (ADR-0023): grupo de dominios relacionados que comparte un resource group de Azure y un namespace interno de Azure Service Bus (ADR-0021); lo público viaja por el backbone compartido del producto o, en el caso diferido, por integración externa (ADR-0024). El nombre puede coincidir o no con `ProjectDisplayName`.
+`BoundedContext` es el nombre del Bounded Context declarado en `harness.config.json` (ADR-0023): grupo de dominios relacionados que comparte un resource group de Azure y un namespace interno de Azure Service Bus (ADR-0021, ADR-0023); lo público viaja por el backbone compartido del producto o, en el caso diferido, por integración externa (ADR-0024). El nombre puede coincidir o no con `ProjectDisplayName`.
 
 ### 3. Estructura de carpetas esperada
 

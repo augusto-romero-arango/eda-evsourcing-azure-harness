@@ -1,4 +1,4 @@
-# ADR-0021: Infraestructura base del consumidor - 7 modulos + esqueleto del entorno generados por un agente
+# ADR-0021: Infraestructura base del consumidor - 8 modulos + esqueleto del entorno generados por un agente
 
 - **Fecha**: 2026-06-25 (reformado 2026-06-30, 2026-07-01)
 - **Estado**: aceptado
@@ -23,7 +23,7 @@ Pero **el harness no proveia esa base de ninguna forma**: ni plantilla copiable,
 
 **El harness provee la infraestructura base mediante un agente generador (`infra-base-scaffolder`) que escribe el HCL inline con la tool `Write`, NO mediante un directorio de plantillas copiables.** El agente genera, en el consumidor:
 
-1. Los **7 modulos base** bajo `infra/modules/`.
+1. Los **8 modulos base** bajo `infra/modules/`.
 2. El **esqueleto del entorno** bajo `infra/environments/<env>/` (`main.tf`, `variables.tf`, `providers.tf`, `outputs.tf`), **sin** `backend.tf` (lo escribe `scripts/bootstrap-backend.sh`).
 
 ### Por que un agente y no un directorio de plantillas
@@ -48,7 +48,7 @@ Todo evento que cruza el namespace interno es plano y portable (ADR-0023 decisio
 
 El modulo Terraform `service-bus` **no cambia su definicion**: sigue siendo "un namespace + topics/subscriptions parametrizables". El esqueleto del entorno lo instancia **una sola vez**, para el namespace interno del BC.
 
-### Los 7 modulos base y su contrato
+### Los 8 modulos base y su contrato
 
 | Modulo | Recursos | Inputs principales | Outputs | `prevent_destroy` |
 |---|---|---|---|---|
@@ -59,6 +59,7 @@ El modulo Terraform `service-bus` **no cambia su definicion**: sigue siendo "un 
 | `service-plan` | `azurerm_service_plan` Linux | `name`, `resource_group_name`, `location`, `os_type`, `sku_name`, `worker_count`, `always_on`, `tags` | `id`, `always_on` | no |
 | `storage` | `azurerm_storage_account` Standard LRS | `name`, `resource_group_name`, `location`, `tags` | `id`, `name`, `primary_connection_string` (sensitive), `primary_access_key` (sensitive) | **si** |
 | `function-app` | `azurerm_linux_function_app` (.NET 10 isolated, SystemAssigned identity) | `name`, `resource_group_name`, `location`, `service_plan_id`, `storage_account_name`, `storage_account_connection_string`, `storage_account_access_key`, `app_insights_connection_string`, `app_settings`, `tags` | `id`, `name`, `principal_id` | no |
+| `key-vault` | `azurerm_key_vault` (RBAC habilitado, no crea secretos) | `name`, `resource_group_name`, `location`, `tenant_id`, `sku_name`, `tags` | `id`, `name`, `uri` | **si** |
 
 **Nota sobre el modulo `service-bus`:** el modulo es parametrico (un namespace + topics/subscriptions) y el entorno lo instancia **una vez**, para el namespace interno del BC (ver "El esqueleto del entorno y sus outputs"). Los inputs `name`, `resource_group_name`, `location`, `sku`, `topics_config`, `tags` aplican a esa instancia; el entorno le pasa el nombre con su sufijo de unicidad. La instancia expone `name`, `id` y `default_primary_connection_string`, que el entorno y los agentes usan para la variable de entorno del dominio (`SERVICE_BUS_CONNECTION_INTERNO`). El wiring de brokers nombrados del backbone compartido para eventos publicos, por cadena de conexion custodiada en el Key Vault del BC (ADR-0025), lo asume el `domain-scaffolder` por dominio; la materializacion formal del Context Map queda diferida (#131).
 
@@ -86,7 +87,7 @@ El sufijo del namespace de Service Bus es independiente del sufijo de PostgreSQL
 
 ### El esqueleto del entorno y sus outputs
 
-El `infra/environments/<env>/main.tf` generado instancia **solo** los modulos compartidos (`resource_group`, `monitoring`, `postgresql` y `service_bus_interno`); las instancias por dominio (`storage`, `service-plan`, `function-app`) las agrega el `domain-scaffolder` al crear cada dominio:
+El `infra/environments/<env>/main.tf` generado instancia **solo** los modulos compartidos (`resource_group`, `monitoring`, `postgresql`, `service_bus_interno` y `key_vault`); las instancias por dominio (`storage`, `service-plan`, `function-app`) las agrega el `domain-scaffolder` al crear cada dominio:
 
 ```hcl
 module "service_bus_interno" {
@@ -95,9 +96,10 @@ module "service_bus_interno" {
 }
 ```
 
-El `outputs.tf` expone a nivel raiz, como minimo, `resource_group_name`, `postgresql_fqdn` y los outputs del namespace de Service Bus interno, de modo que `terraform output` no salga vacio tras el primer apply:
+El `outputs.tf` expone a nivel raiz, como minimo, `resource_group_name`, `postgresql_fqdn`, los outputs del namespace de Service Bus interno y los del Key Vault del BC, de modo que `terraform output` no salga vacio tras el primer apply:
 
 - `service_bus_interno_name` y `service_bus_interno_connection_string` (sensitive)
+- `key_vault_name` y `key_vault_uri`
 
 El `providers.tf` declara `azurerm` y `random` y el bloque `provider "azurerm"`, pero **no** incluye `backend "azurerm"`: el backend lo materializa `scripts/bootstrap-backend.sh` en `backend.tf`, y duplicarlo haria fallar a Terraform por doble definicion de backend.
 
@@ -115,7 +117,7 @@ az postgres flexible-server list-skus --location <region> -o table
 
 Si el comando lista SKUs -incluida `Standard_B1ms`, la SKU de computo que usa este modulo- la region sirve para esa suscripcion; si sale vacio o falla, hay que elegir otra (p. ej. `centralus`).
 
-**Naming de la SKU: `Standard_B1ms` (CLI) vs `B_Standard_B1ms` (Terraform).** `az postgres flexible-server list-skus` y `az postgres flexible-server create --sku-name` nombran esta SKU de computo `Standard_B1ms` (con el tier `Burstable` como parametro aparte); el provider `azurerm` la declara en `sku_name` como `B_Standard_B1ms`, anteponiendo el tier -ese es el valor que figura en la fila `postgresql` de la tabla de los 7 modulos-. Son la misma SKU de computo en dos convenciones, asi que al leer la salida de `list-skus` se busca `Standard_B1ms`, no `B_Standard_B1ms`.
+**Naming de la SKU: `Standard_B1ms` (CLI) vs `B_Standard_B1ms` (Terraform).** `az postgres flexible-server list-skus` y `az postgres flexible-server create --sku-name` nombran esta SKU de computo `Standard_B1ms` (con el tier `Burstable` como parametro aparte); el provider `azurerm` la declara en `sku_name` como `B_Standard_B1ms`, anteponiendo el tier -ese es el valor que figura en la fila `postgresql` de la tabla de los 8 modulos-. Son la misma SKU de computo en dos convenciones, asi que al leer la salida de `list-skus` se busca `Standard_B1ms`, no `B_Standard_B1ms`.
 
 Esta nota vive a nivel del **entorno/consumidor**, no del modulo: el `postgresql` recibe `location` ya resuelto via `var.location` y no decide la region. La documentacion operativa del campo `azureLocation` y del paso de bootstrap en el `README.md` enlaza a esta seccion, de modo que el proximo greenfield no reincida en el roce.
 
@@ -141,7 +143,7 @@ Un solo agente que crea backend + modulos + entorno.
 
 ### Positivas
 
-- **El greenfield ya no reinventa la base a mano**: un agente genera los 7 modulos y el entorno con outputs.
+- **El greenfield ya no reinventa la base a mano**: un agente genera los 8 modulos y el entorno con outputs.
 - **El contrato de ADR-0020 se cumple desde el origen**: el `service-plan` generado acepta `os_type`/`sku_name`/`worker_count`/`always_on`; desaparece la advertencia pasiva del Paso 4.
 - **`terraform output` deja de salir vacio**: el esqueleto expone outputs raiz, incluidos los del namespace de Service Bus interno.
 - **Idempotente**: re-ejecutable sin pisar personalizaciones.
@@ -174,4 +176,4 @@ Un solo agente que crea backend + modulos + entorno.
 
 - 2026-06-30: reformado (issue #128) para alinear la infraestructura base con la topologia de dos namespaces de Azure Service Bus por Bounded Context fijada por ADR-0023 (decision #2).
 - 2026-07-01: reformado (issue #160) para provisionar un unico namespace interno por Bounded Context, siguiendo el mandato de ADR-0024. Se elimina del cuerpo la provision del namespace de integracion (recursos, outputs, RBAC Data Sender y sufijo de unicidad asociados); el evento publico comun viaja por el backbone compartido del producto, fuera del alcance de este ADR.
-- 2026-07-01: enmendado (issue #184, mandato de ADR-0025) para reencuadrar el modulo Key Vault como almacen general de secretos del BC, no custodia exclusiva de la cadena del backbone compartido; se corrige la atribucion de issues (#165 vs #170) en el cuerpo.
+- 2026-07-01: enmendado (issue #184, mandato de ADR-0025) para reencuadrar el modulo Key Vault como almacen general de secretos del BC, no custodia exclusiva de la cadena del backbone compartido; se corrige la atribucion de issues (#165 vs #170) en el cuerpo. Se completa el conteo/tabla de modulos base de 7 a 8 (fila `key-vault`, esqueleto del entorno, nota de SKU y consecuencias), actualizacion que el issue #170 dejo pendiente para sucesores al introducir el modulo.
