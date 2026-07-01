@@ -913,15 +913,15 @@ locals {
 
 ### 2.3 `infra/environments/<env>/main.tf`
 
-Instancia los 5 modulos compartidos y declara los **sufijos de unicidad global** de PostgreSQL, Service Bus y Key Vault. `topics_config` arranca vacio en greenfield (los topics por evento los agrega `/infra` al implementar cada flujo); el comentario muestra el patron con subscription de smoke-tests (ADR-0013).
+Instancia los 5 modulos compartidos y declara los **sufijos de unicidad global** de PostgreSQL, Service Bus y Key Vault. `topics_config` del namespace interno arranca vacio en greenfield: los topics por evento privado (ADR-0001) los agrega `/infra` al implementar cada flujo. El patron de subscription para smoke-tests (ADR-0013) es sobre eventos publicos y aplica al backbone compartido del producto (ADR-0024 decision #4), fuera de lo que este scaffolder provisiona.
 
-**Unicidad global (ADR-0021).** El nombre de un PostgreSQL Flexible Server (`*.postgres.database.azure.com`), el de un namespace de Azure Service Bus (`*.servicebus.windows.net`) y el de un Key Vault (`*.vault.azure.net`) deben ser unicos en **TODO Azure**, no solo dentro del resource group, porque los tres exponen un endpoint DNS publico. Por eso cada uno recibe un sufijo de un `random_string` (length 6, `special = false`, `upper = false`) -- el mismo patron que usan las Storage por dominio. Los **dos** namespaces de Service Bus (interno e integracion, ADR-0023) y el Key Vault reciben cada uno su propio `random_string` independiente. Sin sufijo, el primer `terraform apply` de un greenfield aborta con `ServerNameAlreadyExists` (Postgres), con colision de namespace (Service Bus) o con `VaultAlreadyExists`/soft-delete residual (Key Vault). Origen: issue #94 (segunda mitad del patron de #92, que resolvio lo mismo para la Storage del tfstate en `bootstrap-backend.sh`).
+**Unicidad global (ADR-0021).** El nombre de un PostgreSQL Flexible Server (`*.postgres.database.azure.com`), el de un namespace de Azure Service Bus (`*.servicebus.windows.net`) y el de un Key Vault (`*.vault.azure.net`) deben ser unicos en **TODO Azure**, no solo dentro del resource group, porque los tres exponen un endpoint DNS publico. Por eso cada uno recibe un sufijo de un `random_string` (length 6, `special = false`, `upper = false`) -- el mismo patron que usan las Storage por dominio. El namespace de Service Bus interno del BC (ADR-0024 decision #3) y el Key Vault reciben cada uno su propio `random_string` independiente. Sin sufijo, el primer `terraform apply` de un greenfield aborta con `ServerNameAlreadyExists` (Postgres), con colision de namespace (Service Bus) o con `VaultAlreadyExists`/soft-delete residual (Key Vault). Origen: issue #94 (segunda mitad del patron de #92, que resolvio lo mismo para la Storage del tfstate en `bootstrap-backend.sh`).
 
-**Limites de Azure (CA-2).** Los nombres resultantes caben holgadamente: el PostgreSQL Flexible Server admite 3-63 chars (minusculas, numeros y guiones) y `psql-${local.prefix_func}-${sufijo}` ronda los 19-24 chars para los prefijos tipicos del harness; el namespace de Service Bus admite 6-50 chars, debe empezar con letra y terminar en letra/numero. Los patrones `sbint-${local.prefix}-${sufijo}` (interno) y `sbext-${local.prefix}-${sufijo}` (integracion) empiezan con letra y terminan en el sufijo alfanumerico. Si el consumidor configura un `project` muy largo, acortalo en `variables.tf` para no exceder los 50 chars del namespace. El **Key Vault es el limite mas estrecho: 3-24 chars**, alfanumerico y guiones, debe empezar con letra y terminar en letra/numero, sin guiones consecutivos -- no le alcanza el prefijo largo `${local.prefix}`/`${local.prefix_func}` completo mas el sufijo. Por eso su patron usa solo `kv-${var.project_short}-${sufijo}` (omite `environment`): `kv-` (3) + `project_short` (<= 8) + `-` (1) + sufijo (6) = <= 18 chars, seguro bajo el limite de 24. Si `project_short` ya viene muy largo, acortalo en `variables.tf`.
+**Limites de Azure (CA-2).** Los nombres resultantes caben holgadamente: el PostgreSQL Flexible Server admite 3-63 chars (minusculas, numeros y guiones) y `psql-${local.prefix_func}-${sufijo}` ronda los 19-24 chars para los prefijos tipicos del harness; el namespace de Service Bus admite 6-50 chars, debe empezar con letra y terminar en letra/numero. El patron `sbint-${local.prefix}-${sufijo}` (namespace interno del BC) empieza con letra y termina en el sufijo alfanumerico. Si el consumidor configura un `project` muy largo, acortalo en `variables.tf` para no exceder los 50 chars del namespace. El **Key Vault es el limite mas estrecho: 3-24 chars**, alfanumerico y guiones, debe empezar con letra y terminar en letra/numero, sin guiones consecutivos -- no le alcanza el prefijo largo `${local.prefix}`/`${local.prefix_func}` completo mas el sufijo. Por eso su patron usa solo `kv-${var.project_short}-${sufijo}` (omite `environment`): `kv-` (3) + `project_short` (<= 8) + `-` (1) + sufijo (6) = <= 18 chars, seguro bajo el limite de 24. Si `project_short` ya viene muy largo, acortalo en `variables.tf`.
 
 **Idempotencia y limitacion de migracion.** `random_string` **no** lleva `keepers`: Terraform persiste su valor en el state en el primer `apply` y lo mantiene estable de por vida del recurso (idempotente por diseno). **El sufijo aplica solo a provisiones nuevas (greenfield).** Anadirlo a un PostgreSQL, Service Bus o Key Vault **ya desplegado** sin sufijo cambia su `name` (atributo `ForceNew`) y, como los tres modulos declaran `prevent_destroy = true`, Terraform bloqueara el destroy+recreate. Migrar un recurso ya aplicado exige intervencion manual (`terraform state mv`/`import` o aceptar el nombre nuevo); no es automatico.
 
-**Outputs (CA-4).** Los outputs raiz `postgresql_fqdn`, los de los dos namespaces de Service Bus y los del Key Vault (Paso 2.4) leen el output del modulo (`module.postgresql.server_fqdn`, `module.service_bus_interno.name`, `module.key_vault.uri`, etc.), que refleja el nombre real con el sufijo ya resuelto por el recurso. **No** referencies el nombre "construido" (`"psql-..."`/`"sbint-..."`/`"sbext-..."`/`"kv-..."`) en los outputs: usa siempre el output del modulo.
+**Outputs (CA-4).** Los outputs raiz `postgresql_fqdn`, los del namespace de Service Bus interno y los del Key Vault (Paso 2.4) leen el output del modulo (`module.postgresql.server_fqdn`, `module.service_bus_interno.name`, `module.key_vault.uri`, etc.), que refleja el nombre real con el sufijo ya resuelto por el recurso. **No** referencies el nombre "construido" (`"psql-..."`/`"sbint-..."`/`"kv-..."`) en los outputs: usa siempre el output del modulo.
 
 ```hcl
 # Sufijos de unicidad global (ADR-0021, issue #94). Los nombres de PostgreSQL Flexible
@@ -937,14 +937,8 @@ resource "random_string" "postgresql_suffix" {
   upper   = false
 }
 
-# Cada namespace ASB recibe su propio sufijo independiente (ADR-0021 + ADR-0023).
+# El namespace ASB interno del BC recibe su propio sufijo (ADR-0021 + ADR-0024 decision #3).
 resource "random_string" "sb_interno_suffix" {
-  length  = 6
-  special = false
-  upper   = false
-}
-
-resource "random_string" "sb_integracion_suffix" {
   length  = 6
   special = false
   upper   = false
@@ -991,7 +985,11 @@ module "postgresql" {
   tags                   = local.tags
 }
 
-# Namespace interno: eventos privados intra-BC (IPrivateEventSender, ADR-0023 decision #2).
+# Namespace interno del BC: unico namespace de Service Bus que provisiona el
+# scaffolder por defecto (ADR-0024 decision #3). Todo evento privado intra-BC
+# (IPrivateEventSender) cruza este namespace; el evento publico comun (IPublicEventSender)
+# no vive en un namespace propio del BC: viaja por el backbone compartido del producto,
+# provisionado por infra fuera de este scaffolder (ADR-0024 decision #4).
 module "service_bus_interno" {
   source              = "../../modules/service-bus"
   name                = "sbint-${local.prefix}-${random_string.sb_interno_suffix.result}"
@@ -1000,28 +998,6 @@ module "service_bus_interno" {
   sku                 = "Standard"
 
   # Los topics para eventos privados (ADR-0001) los agrega /infra al implementar cada flujo.
-  topics_config = {}
-
-  tags = local.tags
-}
-
-# Namespace de integracion: eventos publicos inter-BC (IPublicEventSender, ADR-0023 decision #2).
-module "service_bus_integracion" {
-  source              = "../../modules/service-bus"
-  name                = "sbext-${local.prefix}-${random_string.sb_integracion_suffix.result}"
-  resource_group_name = module.resource_group.name
-  location            = module.resource_group.location
-  sku                 = "Standard"
-
-  # Los topics para eventos publicos (ADR-0001) los agrega /infra al implementar cada flujo.
-  # Patron de subscription para smoke-tests (ADR-0013):
-  #   topics_config = {
-  #     "mi-evento-pub" = {
-  #       subscriptions = [
-  #         { name = "smoke-tests", filter = null, default_message_ttl = "PT5M" }
-  #       ]
-  #     }
-  #   }
   topics_config = {}
 
   tags = local.tags
@@ -1071,11 +1047,10 @@ locals {
 # (en vez del valor en claro de module.service_bus_interno.default_primary_connection_string)
 # como valor del app setting SERVICE_BUS_CONNECTION_<ALIAS> de cada Function App.
 
-# Los role assignments Azure Service Bus Data Sender (ADR-0023, decision #5) los agrega
-# el domain-scaffolder (Paso 4) al crear cada Function App, usando
-# module.function_app_<dominio>.principal_id como principal_id y
-# module.service_bus_integracion.id como scope. El namespace interno no recibe
-# asignaciones de rol para entidades externas (ADR-0023, decision #2).
+# El namespace interno no recibe asignaciones de rol para entidades externas al BC
+# (ADR-0024 decision #3): es alcanzable solo por los dominios del propio BC. El acceso
+# al backbone compartido del producto (evento publico, ADR-0024 decision #4) es por
+# cadena de conexion custodiada en Key Vault, no por RBAC sobre un namespace del BC.
 
 # Las instancias por dominio (module.storage_<dominio>, module.service_plan_<dominio>,
 # module.function_app_<dominio>) las agrega el domain-scaffolder (Paso 4) al crear
@@ -1084,7 +1059,7 @@ locals {
 
 ### 2.4 `infra/environments/<env>/outputs.tf`
 
-**CA-4:** expone a nivel raiz, como minimo, `resource_group_name`, `postgresql_fqdn`, los outputs de **ambos** namespaces de Service Bus (`service_bus_interno_name`, `service_bus_interno_connection_string`, `service_bus_integracion_name`, `service_bus_integracion_connection_string`) y los del Key Vault (`key_vault_name`, `key_vault_uri`), para que `terraform output` no salga vacio y el `domain-scaffolder` pueda referenciarlos.
+**CA-4:** expone a nivel raiz, como minimo, `resource_group_name`, `postgresql_fqdn`, los outputs del namespace de Service Bus interno (`service_bus_interno_name`, `service_bus_interno_connection_string`) y los del Key Vault (`key_vault_name`, `key_vault_uri`), para que `terraform output` no salga vacio y el `domain-scaffolder` pueda referenciarlos.
 
 ```hcl
 output "resource_group_name" {
@@ -1111,17 +1086,6 @@ output "key_vault_name" {
 output "key_vault_uri" {
   description = "URI base del Key Vault. Construir referencias como @Microsoft.KeyVault(SecretUri=<key_vault_uri>secrets/<secretName>)"
   value       = module.key_vault.uri
-}
-
-output "service_bus_integracion_name" {
-  description = "Nombre del namespace de integracion (eventos publicos inter-BC, IPublicEventSender)"
-  value       = module.service_bus_integracion.name
-}
-
-output "service_bus_integracion_connection_string" {
-  description = "Connection string del namespace de integracion (SERVICE_BUS_CONNECTION_INTEGRACION)"
-  value       = module.service_bus_integracion.default_primary_connection_string
-  sensitive   = true
 }
 
 output "postgresql_fqdn" {
