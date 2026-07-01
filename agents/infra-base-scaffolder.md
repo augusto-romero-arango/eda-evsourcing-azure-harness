@@ -619,7 +619,7 @@ output "primary_access_key" {
 
 ### 1.7 `infra/modules/function-app/main.tf`
 
-Function App .NET 10 isolated con managed identity `SystemAssigned`. La instancia el `domain-scaffolder` por dominio (Paso 4).
+Function App .NET 10 isolated con managed identity `SystemAssigned`. La instancia el `domain-scaffolder` por dominio (Paso 4). **Storage por identidad** (ADR-0025 decision #3): `storage_uses_managed_identity = true` sustituye la access key nativa -- el runtime resuelve `AzureWebJobsStorage` via la managed identity, no via secreto, porque lo necesita al arrancar, antes de que se resuelvan las referencias `@Microsoft.KeyVault(...)`. El `domain-scaffolder` debe otorgar los tres roles de datos de Storage a esa identidad (ver "Convencion anclada" tras el Paso 1.8) para que el arranque no falle por permisos.
 
 ```hcl
 variable "name" {
@@ -647,20 +647,8 @@ variable "storage_account_name" {
   type        = string
 }
 
-variable "storage_account_connection_string" {
-  description = "Connection string de la storage account (para App Settings)"
-  type        = string
-  sensitive   = true
-}
-
-variable "storage_account_access_key" {
-  description = "Access key de la storage account (requerida por azurerm_linux_function_app)"
-  type        = string
-  sensitive   = true
-}
-
 variable "app_insights_connection_string" {
-  description = "Connection string de Application Insights"
+  description = "Referencia @Microsoft.KeyVault(SecretUri=...) VERSIONLESS al secreto app-insights-connection (ADR-0025 decision #2) -- nunca el valor literal de la connection string"
   type        = string
   sensitive   = true
 }
@@ -682,9 +670,9 @@ resource "azurerm_linux_function_app" "this" {
   resource_group_name = var.resource_group_name
   location            = var.location
 
-  service_plan_id            = var.service_plan_id
-  storage_account_name       = var.storage_account_name
-  storage_account_access_key = var.storage_account_access_key
+  service_plan_id               = var.service_plan_id
+  storage_account_name          = var.storage_account_name
+  storage_uses_managed_identity = true
 
   site_config {
     application_stack {
@@ -727,7 +715,7 @@ output "principal_id" {
 
 ### 1.8 `infra/modules/key-vault/main.tf`
 
-Custodia de cadenas de conexion de Azure Service Bus (ADR-0024 decision #6). **RBAC habilitado** (`enable_rbac_authorization = true`): modelo de permisos por rol, nunca access policies. El modulo **no crea secretos**: el valor de cada cadena lo coloca infra/admin de forma administrativa (`az keyvault secret set`), nunca Terraform (CA-4, issue #170) -- asi el valor no queda materializado en el state de este modulo.
+**Almacen general de secretos del BC** (ADR-0025 decision #5): custodia cualquier secreto que emerja del BC -- cadenas de conexion de Azure Service Bus (ADR-0024 decision #6), password de PostgreSQL (secreto `marten-connection`) y connection string de Application Insights (secreto `app-insights-connection`) -- no solo las de ASB. **RBAC habilitado** (`enable_rbac_authorization = true`): modelo de permisos por rol, nunca access policies. El modulo **no crea secretos**: el valor de cada uno lo coloca infra/admin de forma administrativa (`az keyvault secret set`), nunca Terraform (ADR-0025 decision #6) -- asi el valor no queda materializado en el state de este modulo.
 
 ```hcl
 variable "name" {
@@ -790,6 +778,25 @@ output "uri" {
   value       = azurerm_key_vault.this.vault_uri
 }
 ```
+
+### Convencion anclada: secretos de Key Vault y roles de Storage (ADR-0025)
+
+Esta seccion fija la convencion que el `domain-scaffolder` (issue derivado) debe consumir **sin reinventarla** -- es el ancla de coordinacion entre ambos agentes (leccion #146: quien crea la referencia+rol y quien la consume deben coincidir en nombres).
+
+**Nombres de secretos de Key Vault, fijos** (NO en `harness.config.json`: a diferencia de `serviceBus`, que registra N alias variables por BC, Postgres y App Insights son exactamente **uno** por BC -- no hay eleccion que delegar al consumidor):
+
+- Postgres (`MartenConnectionString`): secreto `marten-connection`.
+- Application Insights (`APPLICATIONINSIGHTS_CONNECTION_STRING`): secreto `app-insights-connection`.
+
+**Claves de app setting: no cambian** (las fijan los frameworks). Solo su **valor** pasa de literal a referencia `@Microsoft.KeyVault(SecretUri=<key_vault_uri>secrets/<secreto>)` versionless.
+
+**Roles de datos de Storage** para la managed identity de la Function App (`AzureWebJobsStorage` por identidad, `storage_uses_managed_identity = true`, Paso 1.7), segun la doc oficial de Azure Functions "Connect to host storage with an identity":
+
+- `Storage Blob Data Owner`
+- `Storage Queue Data Contributor`
+- `Storage Table Data Contributor`
+
+Los tres se emiten como `azurerm_role_assignment` con `scope` = la Storage Account del dominio y `principal_id` = la managed identity de la Function App. Este agente solo documenta el patron y prepara el modulo `function-app` para consumirlo; los role assignments concretos por dominio los emite el `domain-scaffolder` al crear cada dominio (mismo patron que ya usa para "Key Vault Secrets User").
 
 ---
 
@@ -1021,6 +1028,11 @@ module "key_vault" {
 # siempre la ultima al rotar el secreto, ADR-0024 decision #6, issue #170). El
 # secretName interno viene de harness.config.json > serviceBus.internal.secretName
 # (contrato #163; sustituye <secretName-interno> por el valor real resuelto en el Paso 0).
+#
+# marten_connection_kv_ref y app_insights_connection_kv_ref usan nombres de secreto FIJOS
+# (marten-connection, app-insights-connection -- convencion anclada de ADR-0025, ver seccion
+# "Convencion anclada" tras el Paso 1.8): a diferencia de serviceBus, Postgres y App Insights
+# son exactamente un secreto por BC, sin eleccion que delegar al consumidor.
 locals {
   service_bus_connection_interno_kv_ref = "@Microsoft.KeyVault(SecretUri=${module.key_vault.uri}secrets/<secretName-interno>)"
 
@@ -1031,9 +1043,19 @@ locals {
   service_bus_connection_external_kv_refs = {
     # "<ALIAS>" = "@Microsoft.KeyVault(SecretUri=${module.key_vault.uri}secrets/<secretName-alias>)"
   }
+
+  # ADR-0025 decision #2: el domain-scaffolder usa este local como valor del app setting
+  # MartenConnectionString de cada Function App, en vez del connection string literal con
+  # el password de PostgreSQL en claro.
+  marten_connection_kv_ref = "@Microsoft.KeyVault(SecretUri=${module.key_vault.uri}secrets/marten-connection)"
+
+  # ADR-0025 decision #2: el domain-scaffolder usa este local como valor de
+  # var.app_insights_connection_string del modulo function-app (Paso 1.7), en vez de la
+  # connection string literal de Application Insights.
+  app_insights_connection_kv_ref = "@Microsoft.KeyVault(SecretUri=${module.key_vault.uri}secrets/app-insights-connection)"
 }
 
-# RBAC de lectura de secretos (ADR-0024 decision #6, issue #170): habilitar
+# RBAC de lectura de secretos (ADR-0024 decision #6 / ADR-0025 decision #2): habilitar
 # enable_rbac_authorization en el Key Vault NO otorga permisos por si solo. Cada
 # Function App del BC necesita el rol "Key Vault Secrets User" sobre este Key Vault
 # para resolver sus referencias @Microsoft.KeyVault(...) en tiempo de ejecucion. El
@@ -1044,8 +1066,18 @@ locals {
 #     principal_id         = module.function_app_<dominio>.principal_id
 #   }
 # y usa local.service_bus_connection_interno_kv_ref / service_bus_connection_external_kv_refs
-# (en vez del valor en claro de module.service_bus_interno.default_primary_connection_string)
-# como valor del app setting SERVICE_BUS_CONNECTION_<ALIAS> de cada Function App.
+# como valor del app setting SERVICE_BUS_CONNECTION_<ALIAS>, local.marten_connection_kv_ref
+# como valor de MartenConnectionString y local.app_insights_connection_kv_ref como valor de
+# var.app_insights_connection_string del modulo function-app -- nunca el valor en claro de
+# module.service_bus_interno.default_primary_connection_string / module.postgresql /
+# module.monitoring.connection_string.
+
+# Storage por identidad (ADR-0025 decision #3): AzureWebJobsStorage no puede ir por
+# referencia de Key Vault (el runtime la necesita al arrancar, antes de resolver referencias).
+# El domain-scaffolder agrega, al crear cada dominio, los tres azurerm_role_assignment de
+# datos de Storage sobre la Storage Account del dominio (Storage Blob Data Owner, Storage
+# Queue Data Contributor, Storage Table Data Contributor -- ver "Convencion anclada" tras
+# el Paso 1.8) con principal_id = module.function_app_<dominio>.principal_id.
 
 # El namespace interno no recibe asignaciones de rol para entidades externas al BC
 # (ADR-0024 decision #3): es alcanzable solo por los dominios del propio BC. El acceso
@@ -1060,6 +1092,8 @@ locals {
 ### 2.4 `infra/environments/<env>/outputs.tf`
 
 **CA-4:** expone a nivel raiz, como minimo, `resource_group_name`, `postgresql_fqdn`, los outputs del namespace de Service Bus interno (`service_bus_interno_name`, `service_bus_interno_connection_string`) y los del Key Vault (`key_vault_name`, `key_vault_uri`), para que `terraform output` no salga vacio y el `domain-scaffolder` pueda referenciarlos.
+
+**CA-5:** ademas expone `postgresql_database_name`, `postgresql_administrator_login` y `app_insights_connection_string` -- **uso administrativo**, ninguno lo consume Terraform como secreto: son los datos crudos que un admin necesita para construir y sembrar en el Key Vault, tras el primer `apply`, los secretos `marten-connection` y `app-insights-connection` (`az keyvault secret set`; Terraform nunca escribe el valor).
 
 ```hcl
 output "resource_group_name" {
@@ -1079,7 +1113,7 @@ output "service_bus_interno_connection_string" {
 }
 
 output "key_vault_name" {
-  description = "Nombre del Key Vault del BC (custodia de cadenas de ASB, ADR-0024 decision #6)"
+  description = "Nombre del Key Vault del BC (almacen general de secretos, ADR-0025 decision #5)"
   value       = module.key_vault.name
 }
 
@@ -1091,6 +1125,22 @@ output "key_vault_uri" {
 output "postgresql_fqdn" {
   description = "FQDN del servidor PostgreSQL"
   value       = module.postgresql.server_fqdn
+}
+
+output "postgresql_database_name" {
+  description = "Nombre de la base de datos PostgreSQL. USO ADMINISTRATIVO: junto con postgresql_fqdn, postgresql_administrator_login y el postgresql_admin_password que configuraste en terraform.tfvars, construye el connection string completo (Host=<postgresql_fqdn>;Database=<postgresql_database_name>;Username=<postgresql_administrator_login>;Password=<tu password>;SSL Mode=Require) para sembrar el secreto marten-connection (ADR-0025 decision #2) con az keyvault secret set. Terraform nunca escribe el valor del secreto."
+  value       = module.postgresql.database_name
+}
+
+output "postgresql_administrator_login" {
+  description = "Usuario administrador de PostgreSQL. USO ADMINISTRATIVO: ver postgresql_database_name."
+  value       = module.postgresql.administrator_login
+}
+
+output "app_insights_connection_string" {
+  description = "Connection string de Application Insights (incluye la instrumentation key). USO ADMINISTRATIVO: sembrar el secreto de Key Vault app-insights-connection (ADR-0025 decision #2) con az keyvault secret set -- ya NO se pone en claro en el app setting APPLICATIONINSIGHTS_CONNECTION_STRING; la Function App consume la referencia versionless de local.app_insights_connection_kv_ref."
+  value       = module.monitoring.connection_string
+  sensitive   = true
 }
 ```
 
@@ -1132,8 +1182,8 @@ Imprime un resumen claro:
 - **Archivos del entorno creados** vs **omitidos** bajo `infra/environments/<env>/`.
 - Resultado de `terraform validate`.
 - Variables requeridas que el consumidor debe proveer en `terraform.tfvars` (`alert_email`, `postgresql_admin_password`, `subscription_id`) y los defaults derivados que conviene revisar (`project`, `project_short`, `postgresql_location`).
-- **Accion administrativa pendiente (ADR-0024 decision #6):** tras el primer `apply`, un admin debe sembrar en el Key Vault el secreto `serviceBus.internal.secretName` con el valor de `terraform output -raw service_bus_interno_connection_string` (y, cuando existan, cada `serviceBus.external[].secretName` con la cadena del ASB correspondiente). Terraform nunca escribe el valor del secreto.
-- **Siguiente paso**: si el backend del `tfstate` aun no existe, corre `bootstrap-backend.sh`; luego lanza el primer `/infra`. Para crear el primer dominio, usa `/scaffold <dominio>` (que agrega su `service-plan`/`storage`/`function-app` a este entorno, junto con el role assignment "Key Vault Secrets User" de su managed identity y sus app settings `SERVICE_BUS_CONNECTION_<ALIAS>` como referencias `@Microsoft.KeyVault(...)`).
+- **Accion administrativa pendiente (ADR-0024 decision #6 / ADR-0025 decision #2):** tras el primer `apply`, un admin debe sembrar en el Key Vault: el secreto `serviceBus.internal.secretName` con `terraform output -raw service_bus_interno_connection_string` (y, cuando existan, cada `serviceBus.external[].secretName` con la cadena del ASB correspondiente); el secreto `marten-connection` con el connection string construido a partir de `terraform output -raw postgresql_fqdn`, `postgresql_database_name`, `postgresql_administrator_login` y el password que puso en `terraform.tfvars`; y el secreto `app-insights-connection` con `terraform output -raw app_insights_connection_string`. Terraform nunca escribe el valor de ningun secreto.
+- **Siguiente paso**: si el backend del `tfstate` aun no existe, corre `bootstrap-backend.sh`; luego lanza el primer `/infra`. Para crear el primer dominio, usa `/scaffold <dominio>` (que agrega su `service-plan`/`storage`/`function-app` a este entorno, junto con el role assignment "Key Vault Secrets User" de su managed identity, los tres role assignments de datos de Storage para `AzureWebJobsStorage` por identidad, y sus app settings `SERVICE_BUS_CONNECTION_<ALIAS>`, `MartenConnectionString` y `APPLICATIONINSIGHTS_CONNECTION_STRING` como referencias `@Microsoft.KeyVault(...)`).
 
 ## Reglas absolutas
 
@@ -1144,4 +1194,5 @@ Imprime un resumen claro:
 5. **NO** instancies Function Apps en el esqueleto greenfield: eso es trabajo del `domain-scaffolder`.
 6. Recursos criticos (`postgresql`, `service-bus`, `storage`, `key-vault`) llevan `prevent_destroy = true`.
 7. **NO** termines sin que `terraform validate` pase (salvo que `terraform` no este instalado, en cuyo caso lo dejas como pendiente manual explicito).
-8. **NUNCA** crees un `azurerm_key_vault_secret` ni materialices en Terraform el valor de una cadena de conexion de ASB (ADR-0024 decision #6, CA-4): el valor lo coloca infra/admin de forma administrativa, fuera de Terraform. El modulo Key Vault y el entorno solo referencian el secreto por `secretName`.
+8. **NUNCA** crees un `azurerm_key_vault_secret` ni materialices en Terraform el valor de un secreto (cadena de ASB, password de Postgres, connection string de App Insights -- ADR-0025 decision #6): el valor lo coloca infra/admin de forma administrativa, fuera de Terraform. El modulo Key Vault y el entorno solo referencian el secreto por nombre.
+9. **NUNCA** pases `storage_account_access_key` ni una connection string con access key literal al modulo `function-app` (ADR-0025 decision #3): usa `storage_uses_managed_identity = true` y los role assignments de datos de Storage sobre la managed identity.
