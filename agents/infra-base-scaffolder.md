@@ -49,7 +49,7 @@ Deriva:
 - `project_short` -- abreviatura corta (3-8 chars) del proyecto, para recursos con limite de longitud (Function App <= 32 chars, ver ADR-0006). Si no puedes derivarla con confianza, usa los primeros ~5 chars de `project` y deja un comentario en el `variables.tf` pidiendo al consumidor que la ajuste.
 - `location` -- region de Azure. Usa `azureLocation` del config si existe; si no, `eastus2`.
 - `service_bus_internal_secret` -- `serviceBus.internal.secretName` (contrato de #163). Es el nombre del secreto de Key Vault que custodia la cadena de conexion del namespace interno (ADR-0024 decision #6). Si `serviceBus` esta ausente o `internal.secretName` viene vacio, usa el default `sb-connection-interno` y deja un comentario explicito en el `main.tf` del entorno (Paso 2.3) pidiendo al consumidor que declare `serviceBus.internal.secretName` en `harness.config.json` y ajuste el nombre si no coincide con el secreto real que va a crear infra/admin en el Key Vault.
-- `service_bus_external` -- lista `serviceBus.external[]` (cada entrada con `alias`, `alcance`, `secretName`). Puede venir vacia o ausente (un BC puede no consumir/publicar publico todavia); en ese caso no generes referencias externas.
+- `service_bus_external` -- lista `serviceBus.external[]` (cada entrada con `alias`, `alcance`, `secretName`). Puede venir vacia o ausente (un BC puede no consumir/publicar publico todavia); en ese caso no generes referencias externas. Si trae entradas, agrega una entrada por alias al mapa `service_bus_connection_external_kv_refs` del Paso 2.3 (clave = `alias`, valor = la referencia KV versionless de su `secretName`), coherente con el patron `SERVICE_BUS_CONNECTION_<ALIAS>` (CA-2, CA-5).
 
 Estos valores van como **defaults** de las variables del entorno; el consumidor los sobreescribe via `terraform.tfvars`.
 
@@ -801,7 +801,7 @@ El `main.tf` instancia **solo los modulos compartidos** (`resource_group`, `moni
 
 ### 2.1 `infra/environments/<env>/providers.tf`
 
-Declara `azurerm` y `random`. El provider `random` lo usan tanto el **esqueleto del entorno** (sufijo de unicidad global de PostgreSQL y Service Bus, ver Paso 2.3) como el `domain-scaffolder` (sufijo de las Storage por dominio). **Sin** bloque `backend`.
+Declara `azurerm` y `random`. El provider `random` lo usan tanto el **esqueleto del entorno** (sufijo de unicidad global de PostgreSQL, Service Bus y Key Vault, ver Paso 2.3) como el `domain-scaffolder` (sufijo de las Storage por dominio). **Sin** bloque `backend`.
 
 ```hcl
 terraform {
