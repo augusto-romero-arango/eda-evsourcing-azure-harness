@@ -86,7 +86,7 @@ El sufijo del namespace de Service Bus es independiente del sufijo de PostgreSQL
 
 ### El esqueleto del entorno y sus outputs
 
-El `infra/environments/<env>/main.tf` generado instancia **solo** los modulos compartidos (`resource_group`, `monitoring`, `postgresql` y `service_bus`); las instancias por dominio (`storage`, `service-plan`, `function-app`) las agrega el `domain-scaffolder` al crear cada dominio:
+El `infra/environments/<env>/main.tf` generado instancia **solo** los modulos compartidos (`resource_group`, `monitoring`, `postgresql` y `service_bus_interno`); las instancias por dominio (`storage`, `service-plan`, `function-app`) las agrega el `domain-scaffolder` al crear cada dominio:
 
 ```hcl
 module "service_bus_interno" {
