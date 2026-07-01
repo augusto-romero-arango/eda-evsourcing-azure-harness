@@ -826,6 +826,8 @@ una limitacion del framework, o un malentendido del requisito]
 
 Si el handler publica un evento privado (`IPrivateEventSender`), verifica que el topic y las subscriptions existen en `infra/environments/dev/main.tf`, bloque `topics_config` de `module "service_bus_interno"`. Agrega lo que falte segun la tabla de enrutamiento de la seccion "Infraestructura (topics y subscriptions)". Si el handler publica un evento publico (`IPublicEventSender`), el topic/subscription vive en el backbone compartido, fuera del Terraform de este repo: si detectas que falta, documentalo en tu resumen de decisiones para seguimiento administrativo — no lo agregues a ningun archivo de este repo.
 
+Si el handler **consume** un evento publico de otro BC (define `[ServiceBusTrigger]` con `Connection = "SERVICE_BUS_CONNECTION_<ALIAS>"` del backbone compartido, ADR-0024 decision #4), verifica que tu subscription con naming ADR-0005 (`{consumidor}-escucha-{productor}`) existe sobre el topic del productor en el backbone. Esa subscription vive fuera del Terraform de este repo, igual que el topic del productor (seccion "Infraestructura (topics y subscriptions)"): si aun no existe, documentala en la seccion "Infraestructura modificada" de tu resumen para seguimiento administrativo — no la agregues tu mismo a ningun archivo de este repo. El consumo intra-BC de un evento privado (`SERVICE_BUS_CONNECTION_INTERNO`) no requiere este paso: su subscription ya queda cubierta por el bloque `topics_config` del productor, verificado arriba.
+
 ### 6. Verificar suite completa
 
 ```bash
