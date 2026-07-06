@@ -1,17 +1,23 @@
 #!/bin/bash
-# Configura la autenticacion de GitHub Actions hacia Azure para el deploy de CI.
-# Usa OIDC (Workload Identity Federation, ADR-0022): crea el Service Principal SIN
-# secret y le anade un federated credential que confia en los tokens que GitHub emite
-# para la rama main del repo. El workflow de deploy del scaffolder se autentica con
-# azure/login pasando client-id / tenant-id / subscription-id (sin AZURE_CREDENTIALS ni
-# secret que expire). Asigna ademas Contributor a nivel suscripcion y lectura del tfstate.
+# Configura la autenticacion de GitHub Actions hacia Azure para que CI aplique
+# infraestructura y despliegue codigo (ADR-0022, reformado issue #196). Usa OIDC
+# (Workload Identity Federation): crea el Service Principal SIN secret y le anade
+# los federated credentials que confian en los tokens que GitHub emite para la
+# rama main (deploy/apply) y para pull_request (plan). El workflow de deploy y
+# el de CI de Terraform (infra-cd.yml) se autentican con azure/login pasando
+# client-id / tenant-id / subscription-id (sin AZURE_CREDENTIALS ni secret que
+# expire). Asigna ademas, a nivel suscripcion: Contributor (deploy + infra) y
+# Role Based Access Control Administrator con condicion anti-escalacion (para que
+# el apply de CI pueda crear los role assignments que emiten los scaffolders,
+# ADR-0025); y sobre la Storage del tfstate: Storage Blob Data Contributor
+# (lectura+escritura por AAD, backend keyless de #198).
 #
 # Uso: ./scripts/setup-github-ci.sh <subscription-id> [<owner/repo>]
 # Ejemplo: ./scripts/setup-github-ci.sh 50fc1901-9723-4971-9d63-b3f1a015e8b8 acme/mi-proyecto
 #
-# El slug owner/repo del repositorio (subject del federated credential) se resuelve
-# automaticamente con 'gh repo view' o el remote 'origin'; pasalo como 2do argumento
-# para forzarlo.
+# El slug owner/repo del repositorio (subject de los federated credentials) se
+# resuelve automaticamente con 'gh repo view' o el remote 'origin'; pasalo como
+# 2do argumento para forzarlo.
 #
 # Resuelve el nombre REAL de la Storage Account del tfstate (que bootstrap-backend.sh
 # pudo crear con un sufijo de unicidad global, issue #92) antes de asignar el rol,
@@ -83,7 +89,7 @@ fi
 # Nombre de la Storage Account del tfstate: bootstrap-backend.sh le anexa un
 # sufijo de unicidad global (issue #92), asi que el nombre REAL puede no coincidir
 # con el campo base 'terraformStateStorage' del config. Resolver el nombre FINAL
-# para no asignar 'Storage Blob Data Reader' sobre una cuenta inexistente (este
+# para no asignar 'Storage Blob Data Contributor' sobre una cuenta inexistente (este
 # script corre DESPUES del bootstrap; ver README "Primeros pasos", paso 2). Mismo
 # orden de precedencia durable que usa el bootstrap, con los helpers compartidos:
 #   1. storage_account_name escrito en algun infra/environments/*/backend.tf
@@ -146,43 +152,110 @@ az role assignment create \
     --scope "$SCOPE" \
     -o none
 
-# 3. Lectura del tfstate sobre la cuenta REAL resuelta (sufijo de unicidad, issue #92).
-echo "Asignando Storage Blob Data Reader en ${TFSTATE_STORAGE}..."
+# 3. Role Based Access Control Administrator a nivel suscripcion, con una condicion
+#    ABAC (version 2.0) anti-escalacion. 'Contributor' EXCLUYE explicitamente
+#    'Microsoft.Authorization/roleAssignments/write' (Azure built-in roles,
+#    learn.microsoft.com/azure/role-based-access-control/built-in-roles/general#contributor),
+#    asi que sin este rol el 'terraform apply' de CI falla con AuthorizationFailed al
+#    crear los role assignments que emiten los scaffolders (Key Vault Secrets User,
+#    roles de datos de Storage; ADR-0025). 'Role Based Access Control Administrator' es
+#    el rol de MENOR privilegio documentado para delegar gestion de role assignments
+#    (frente a 'User Access Administrator', que ademas puede reclamar el rol de
+#    administrador de acceso para si mismo). La condicion sigue la plantilla integrada
+#    "Allow all except specific roles" (Azure portal) / "Constrain roles that can be
+#    assigned": excluye que el SP pueda asignar los roles privilegiados Owner, User
+#    Access Administrator o el propio Role Based Access Control Administrator, para que
+#    este rol no se convierta en una via de escalacion a Owner.
+#    Fuentes: learn.microsoft.com/azure/role-based-access-control/delegate-role-assignments-overview
+#    y learn.microsoft.com/azure/role-based-access-control/delegate-role-assignments-examples
+#    (seccion "Allow most roles, but don't allow others to assign roles").
+#
+# Los IDs de rol se resuelven por nombre (no se hardcodean los GUIDs) para no
+# depender de que coincidan entre nubes/tenants.
+resolve_role_definition_id() {
+    az role definition list --name "$1" --query "[0].name" -o tsv 2>/dev/null
+}
+OWNER_ROLE_ID=$(resolve_role_definition_id "Owner")
+USER_ACCESS_ADMIN_ROLE_ID=$(resolve_role_definition_id "User Access Administrator")
+RBAC_ADMIN_ROLE_ID=$(resolve_role_definition_id "Role Based Access Control Administrator")
+if [ -z "$OWNER_ROLE_ID" ] || [ -z "$USER_ACCESS_ADMIN_ROLE_ID" ] || [ -z "$RBAC_ADMIN_ROLE_ID" ]; then
+    echo "ERROR: no se pudieron resolver los IDs de los roles integrados Owner," >&2
+    echo "  'User Access Administrator' y/o 'Role Based Access Control Administrator'." >&2
+    exit 1
+fi
+
+ANTI_ESCALATION_CONDITION="((!(ActionMatches{'Microsoft.Authorization/roleAssignments/write'})) OR (@Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAllValues:GuidNotEquals {${OWNER_ROLE_ID}, ${RBAC_ADMIN_ROLE_ID}, ${USER_ACCESS_ADMIN_ROLE_ID}})) AND ((!(ActionMatches{'Microsoft.Authorization/roleAssignments/delete'})) OR (@Resource[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAllValues:GuidNotEquals {${OWNER_ROLE_ID}, ${RBAC_ADMIN_ROLE_ID}, ${USER_ACCESS_ADMIN_ROLE_ID}}))"
+
+echo "Asignando Role Based Access Control Administrator (con condicion anti-escalacion) en ${SCOPE}..."
 az role assignment create \
     --assignee-object-id "$SP_OBJECT_ID" \
     --assignee-principal-type ServicePrincipal \
-    --role "Storage Blob Data Reader" \
+    --role "Role Based Access Control Administrator" \
+    --scope "$SCOPE" \
+    --condition "$ANTI_ESCALATION_CONDITION" \
+    --condition-version "2.0" \
+    -o none
+
+# 4. Storage Blob Data Contributor (lectura+escritura) sobre la cuenta REAL resuelta
+#    (sufijo de unicidad, issue #92). El 'terraform apply' escribe el state y toma el
+#    lease/lock del blob; con el backend keyless por AAD (use_azuread_auth, #198) el SP
+#    necesita escritura, no solo lectura. Reemplaza a 'Storage Blob Data Reader'.
+echo "Asignando Storage Blob Data Contributor en ${TFSTATE_STORAGE}..."
+az role assignment create \
+    --assignee-object-id "$SP_OBJECT_ID" \
+    --assignee-principal-type ServicePrincipal \
+    --role "Storage Blob Data Contributor" \
     --scope "${SCOPE}/resourceGroups/${TFSTATE_RG}/providers/Microsoft.Storage/storageAccounts/${TFSTATE_STORAGE}" \
     -o none
 
-# 4. Federated credential para GitHub Actions OIDC. El subject debe coincidir EXACTO con
-#    el claim que GitHub pone en el token. El workflow de deploy del scaffolder dispara en
-#    'push: branches: [main]' (+ workflow_dispatch desde main), jobs NO atados a un
-#    Environment, asi que el subject es 'repo:<owner/repo>:ref:refs/heads/main'.
+# 5. Federated credentials para GitHub Actions OIDC. El subject debe coincidir EXACTO
+#    con el claim que GitHub pone en el token; el matching de patrones no esta
+#    soportado para ramas/tags (ADR-0022). El SP de CI necesita DOS:
+#    - 'ref:refs/heads/main': lo usan el workflow de deploy del scaffolder y el job
+#      'apply' de infra-cd.yml, que disparan en 'push: branches: [main]'.
+#    - 'pull_request': lo usa el job 'plan' de infra-cd.yml (modelo plan-en-PR /
+#      apply-en-merge-a-main, ADR-0022); su subject NO lleva el ref de la rama.
 #    Fuentes: learn.microsoft.com/azure/app-service/deploy-github-actions y
 #    learn.microsoft.com/entra/workload-id/workload-identity-federation-create-trust.
-FED_NAME="github-actions-deploy-main"
-FED_SUBJECT="repo:${REPO_SLUG}:ref:refs/heads/main"
-_existing_fed=$(az ad app federated-credential list --id "$APP_ID" \
-    --query "[?subject=='${FED_SUBJECT}'] | [0].name" -o tsv 2>/dev/null) || _existing_fed=""
-if [ -n "$_existing_fed" ] && [ "$_existing_fed" != "None" ]; then
-    echo "Federated credential para '${FED_SUBJECT}' ya existe; se reutiliza."
-else
-    echo "Creando federated credential para '${FED_SUBJECT}'..."
-    FED_PARAMS=$(cat <<EOF
+ensure_federated_credential() {
+    local name="$1" subject="$2" description="$3" existing
+    existing=$(az ad app federated-credential list --id "$APP_ID" \
+        --query "[?subject=='${subject}'] | [0].name" -o tsv 2>/dev/null) || existing=""
+    if [ -n "$existing" ] && [ "$existing" != "None" ]; then
+        echo "Federated credential para '${subject}' ya existe; se reutiliza."
+        return 0
+    fi
+    echo "Creando federated credential para '${subject}'..."
+    local params
+    params=$(cat <<EOF
 {
-  "name": "${FED_NAME}",
+  "name": "${name}",
   "issuer": "https://token.actions.githubusercontent.com",
-  "subject": "${FED_SUBJECT}",
-  "description": "GitHub Actions OIDC: deploy de ${HARNESS_PROJECT_NAME} desde la rama main",
+  "subject": "${subject}",
+  "description": "${description}",
   "audiences": ["api://AzureADTokenExchange"]
 }
 EOF
 )
-    az ad app federated-credential create --id "$APP_ID" --parameters "$FED_PARAMS" -o none
-fi
-unset _existing_fed
+    az ad app federated-credential create --id "$APP_ID" --parameters "$params" -o none
+}
 
+FED_SUBJECT_MAIN="repo:${REPO_SLUG}:ref:refs/heads/main"
+ensure_federated_credential "github-actions-deploy-main" "$FED_SUBJECT_MAIN" \
+    "GitHub Actions OIDC: deploy de codigo y apply de infra de ${HARNESS_PROJECT_NAME} desde la rama main"
+
+FED_SUBJECT_PR="repo:${REPO_SLUG}:pull_request"
+ensure_federated_credential "github-actions-plan-pr" "$FED_SUBJECT_PR" \
+    "GitHub Actions OIDC: terraform plan de ${HARNESS_PROJECT_NAME} en pull requests"
+
+echo ""
+echo "=== Roles asignados al Service Principal (${SP_NAME}) ==="
+echo ""
+echo "  Contributor                              -> ${SCOPE}"
+echo "  Role Based Access Control Administrator  -> ${SCOPE}"
+echo "    (con condicion anti-escalacion: no puede asignar Owner, User Access"
+echo "    Administrator ni Role Based Access Control Administrator)"
+echo "  Storage Blob Data Contributor            -> Storage Account del tfstate (${TFSTATE_STORAGE})"
 echo ""
 echo "=== Configura estos secrets en GitHub ==="
 echo "Settings > Secrets and variables > Actions > New repository secret"
@@ -192,11 +265,30 @@ echo "  AZURE_TENANT_ID       = ${TENANT_ID}"
 echo "  AZURE_SUBSCRIPTION_ID = ${SUBSCRIPTION_ID}"
 echo ""
 echo "Autenticacion por OIDC (Workload Identity Federation): NO hay client secret que"
-echo "copiar ni que expire. El workflow de deploy ya declara 'permissions: id-token: write'"
-echo "y se loguea con azure/login pasando esos tres valores (sin AZURE_CREDENTIALS)."
+echo "copiar ni que expire. Los workflows ya declaran 'permissions: id-token: write'"
+echo "y se loguean con azure/login pasando esos tres valores (sin AZURE_CREDENTIALS)."
 echo ""
-echo "El federated credential confia en la rama 'main' (subject ${FED_SUBJECT})."
+echo "=== Federated credentials (subjects OIDC) ==="
+echo ""
+echo "  ${FED_SUBJECT_MAIN}"
+echo "    (deploy de codigo y apply de infra: push a main)"
+echo "  ${FED_SUBJECT_PR}"
+echo "    (terraform plan de infra: pull_request)"
+echo ""
 echo "Si despliegas desde otra rama, tag o un GitHub Environment, anade otro federated"
 echo "credential con el subject correspondiente (ver ADR-0022)."
+echo ""
+echo "=== Por que el SP necesita estos permisos ==="
+echo ""
+echo "El apply de infraestructura ocurre en CI bajo esta identidad federada, nunca"
+echo "localmente (ADR-0022). El SP necesita:"
+echo "  - Contributor: aplicar infra (Function Apps, Storage, etc.) y desplegar codigo."
+echo "  - Role Based Access Control Administrator: crear los role assignments que"
+echo "    emiten los scaffolders (Key Vault Secrets User, roles de datos de Storage;"
+echo "    ADR-0025) -- Contributor los excluye explicitamente."
+echo "  - Storage Blob Data Contributor: escribir el tfstate y tomar su lock por AAD"
+echo "    (backend keyless, ADR-0025)."
+echo "  - Federated credential 'pull_request': autenticar el 'terraform plan' que"
+echo "    corre en cada PR sobre infra/** (modelo plan-en-PR / apply-en-merge-a-main)."
 echo ""
 echo "Listo."
