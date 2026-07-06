@@ -28,7 +28,7 @@ Habia que elegir **una** via para alinear ambos lados. El espacio de soluciones 
 
 Concretamente:
 
-- `scripts/setup-github-ci.sh` crea la aplicacion de Microsoft Entra + su Service Principal **sin** credencial de password, le asigna los roles de "Roles del Service Principal de CI" a nivel de suscripcion y sobre la Storage del tfstate, y le anade los **federated credentials** de "El subject del federated credential".
+- `scripts/setup-github-ci.sh` crea la aplicacion de Microsoft Entra + su Service Principal **sin** credencial de password, le asigna los roles de la seccion "Roles del Service Principal de CI" (a nivel de suscripcion y sobre la Storage del tfstate) y le anade los **federated credentials** de la seccion "El subject del federated credential".
 - El workflow de deploy declara `permissions: id-token: write` (y `contents: read` para `actions/checkout`) en el job `deploy`, y usa `azure/login` con los inputs separados `client-id` / `tenant-id` / `subscription-id`, NO `creds:`.
 - El workflow de CI de Terraform (`infra-cd.yml`, emitido por `infra-base-scaffolder`, ADR-0021) usa la misma identidad: `azure/login` con los mismos tres inputs, sin `creds:` ni secret adicional.
 - Los unicos secrets de GitHub son **tres**: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`. **Ninguno es un secret de password.**
