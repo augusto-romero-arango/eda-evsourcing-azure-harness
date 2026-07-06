@@ -1430,14 +1430,67 @@ on:
     paths:
       - 'src/<RootNamespace>.{PascalCase}/**'
       - 'src/<RootNamespace>.Contracts/**'
-      - 'infra/environments/dev/**'
+  workflow_run:
+    workflows: ['Infra CD']
+    types: [completed]
   workflow_dispatch:
 
 jobs:
+  # El apply de infra (infra-cd.yml, ADR-0022) y el deploy de codigo pueden correr en
+  # el mismo push a main. Encadenar por workflow_run (en vez de un 'push' que dispare
+  # ambos) garantiza el orden infra -> deploy (ADR-0022, "Orden: infra antes que deploy
+  # de codigo"). Pero workflow_run por si solo redesplegaria TODOS los dominios tras
+  # CADA apply de infra (seguro por idempotencia, pero costoso); este job filtra por si
+  # el PR que se acaba de mergear toco este dominio (src/<RootNamespace>.{PascalCase}/**)
+  # y salta el redeploy si no. Se resuelve via la API de PRs asociados al commit (no
+  # depende de la estrategia de merge: squash, merge o rebase).
+  determinar-alcance:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      debe_desplegar: ${{ steps.check.outputs.debe_desplegar }}
+    steps:
+      - id: check
+        name: Decidir si corresponde desplegar este dominio
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # push directo (src/**) o workflow_dispatch: siempre despliega.
+          if [ "${{ github.event_name }}" != "workflow_run" ]; then
+            echo "debe_desplegar=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # 'Infra CD' tambien corre su job 'plan' en pull_request (rama != main);
+          # cualquier corrida suya (plan o apply) dispara este workflow_run, asi que
+          # hay que filtrar explicitamente por la corrida de 'apply' (rama main,
+          # exitosa) y no reaccionar a un plan sobre una PR de infra sin mergear.
+          if [ "${{ github.event.workflow_run.conclusion }}" != "success" ] || \
+             [ "${{ github.event.workflow_run.head_branch }}" != "main" ]; then
+            echo "debe_desplegar=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # ...y el PR mergeado toco este dominio.
+          PR_NUM=$(gh api "repos/${{ github.repository }}/commits/${{ github.event.workflow_run.head_sha }}/pulls" --jq '.[0].number // empty')
+          if [ -z "$PR_NUM" ]; then
+            echo "debe_desplegar=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if gh api "repos/${{ github.repository }}/pulls/${PR_NUM}/files" --paginate --jq '.[].filename' | grep -q '^src/<RootNamespace>.{PascalCase}/'; then
+            echo "debe_desplegar=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "debe_desplegar=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build-and-test:
+    needs: determinar-alcance
+    if: needs.determinar-alcance.outputs.debe_desplegar == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - uses: actions/setup-dotnet@v5
         with:
@@ -1456,13 +1509,16 @@ jobs:
           done
 
   deploy:
-    needs: build-and-test
+    needs: [determinar-alcance, build-and-test]
+    if: needs.determinar-alcance.outputs.debe_desplegar == 'true'
     runs-on: ubuntu-latest
     permissions:
       id-token: write   # requerido para el login OIDC de azure/login (sin secret) - ADR-0022
       contents: read    # requerido por actions/checkout cuando se declara 'permissions'
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - uses: actions/setup-dotnet@v5
         with:
@@ -1520,6 +1576,8 @@ jobs:
 > `smoke-tests-dominio.yml` acepta estos secrets como opcionales (`required: false`). Si no estan configurados en el repo, los smoke tests que dependen de ServiceBus o Postgres se skipean gracefully via `Assert.SkipWhen`.
 
 > **Autenticacion del deploy (OIDC, ADR-0022)**: el job `deploy` se autentica con `azure/login` por **OpenID Connect**, NO con un client secret. Por eso declara `permissions: id-token: write` y pasa `client-id` / `tenant-id` / `subscription-id` (los secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`), en vez del JSON unico `AZURE_CREDENTIALS`. Esos tres secrets, el Service Principal sin secret y el **federated credential** que confia en la rama `main` los emite `scripts/setup-github-ci.sh` (paso de bootstrap del README). No hay secret que expire. Si cambias el trigger del workflow para desplegar desde otra rama, tag o un GitHub Environment, debes anadir el federated credential correspondiente (el subject debe coincidir exacto con el claim del token de GitHub).
+
+> **Orden infra -> deploy (ADR-0022, issue #197)**: el `push` a `main` ya NO dispara este workflow para cambios bajo `infra/**` -- ese trigger vive ahora en `infra-cd.yml` (`infra-base-scaffolder`). En su lugar, `deploy-{kebab}.yml` se encadena tras `Infra CD` via `workflow_run`, de modo que el codigo nunca se despliega antes de que el `apply` de infra haya creado o actualizado la Function App. El job `determinar-alcance` evita el costo de redesplegar **todos** los dominios tras cada apply de infra: solo continua si el PR de infra que se acaba de mergear toco `src/<RootNamespace>.{PascalCase}/**`. **Caso limite**: si el `apply` de infra llega a `main` por un push directo sin PR asociado (fuera del flujo de `scripts/iac-pipeline.sh`), la API de PRs por commit no encuentra nada y el redeploy se omite por diseno (evita falsos despliegues); en ese caso, dispara el deploy manualmente con `workflow_dispatch`.
 
 ---
 
@@ -1771,6 +1829,8 @@ Scaffold completado para el dominio "{kebab}":
                                              (topics privados se crean bajo demanda con implementer; el backbone compartido lo administra infra)
 
   .github/workflows/deploy-{kebab}.yml     - Workflow de deploy automatico + smoke tests post-deploy
+                                             (encadenado tras infra-cd.yml via workflow_run; salta el
+                                             redeploy si el apply de infra no toco este dominio, ADR-0022)
   .github/smoke-tests-dominios.json        - Registro de dominios para el workflow global de smoke tests
 
   (solo la primera vez en el repo; en dominios posteriores ya existen y no se tocan)

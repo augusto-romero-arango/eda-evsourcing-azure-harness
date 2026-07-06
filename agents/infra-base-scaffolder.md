@@ -1148,6 +1148,203 @@ output "app_insights_connection_string" {
 
 ---
 
+## Paso 2b - Generar el workflow de CI de Terraform (`infra-cd.yml`)
+
+Crea `.github/workflows/infra-cd.yml` **solo si no existe** (mismo patron idempotente que los workflows de smoke-tests del `domain-scaffolder`, Paso 6: se genera una sola vez y nunca se sobrescribe, para no pisar personalizaciones del consumidor):
+
+```bash
+if [ -f .github/workflows/infra-cd.yml ]; then
+  echo "infra-cd.yml ya existe; no se sobrescribe (idempotencia, ADR-0021/CA-7)."
+else
+  mkdir -p .github/workflows
+  # escribe el archivo con el contenido de abajo
+fi
+```
+
+Este workflow es el mecanismo concreto que fija **ADR-0022** (autenticacion OIDC, modelo plan-en-PR/apply-en-merge) y **ADR-0021** (CA-3: el `infra-base-scaffolder` emite su propio workflow de CI, analogo a como el `domain-scaffolder` emite los workflows de smoke-tests). Sustituye `<env>` por el ambiente resuelto en el Paso 0 (`dev` por defecto).
+
+Si **no existe**, crea `.github/workflows/infra-cd.yml` con este contenido:
+
+```yaml
+name: Infra CD
+
+# Workflow de CI de Terraform para infra/environments/<env>/ (ADR-0021, ADR-0022).
+# Modelo plan-en-PR / apply-en-merge-a-main (HashiCorp, "Automate Terraform with
+# GitHub Actions"):
+#   - pull_request sobre infra/**  -> job 'plan': terraform plan, publicado como
+#     comentario del PR. Nunca aplica.
+#   - push a main sobre infra/**   -> job 'apply': terraform apply -auto-approve,
+#     y cierre del issue de infra correspondiente (ADR-0022, "Cierre del issue de
+#     infra: al aplicar en CI, no al mergear el PR").
+# Autenticacion por OIDC (Workload Identity Federation), sin secret de password
+# ni AZURE_CREDENTIALS (ADR-0022). El backend remoto es keyless por AAD
+# (use_azuread_auth, ADR-0025): ARM_USE_OIDC habilita tanto al provider azurerm
+# como al backend azurerm a autenticarse con el mismo token federado.
+
+on:
+  pull_request:
+    paths:
+      - 'infra/**'
+  push:
+    branches: [main]
+    paths:
+      - 'infra/**'
+
+permissions:
+  contents: read
+
+env:
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ARM_USE_OIDC: true
+
+jobs:
+  plan:
+    name: Terraform Plan
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write      # requerido para el login OIDC de azure/login (sin secret) - ADR-0022
+      contents: read
+      pull-requests: write # requerido para publicar el plan como comentario del PR
+    defaults:
+      run:
+        working-directory: infra/environments/<env>
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Format Check
+        id: fmt
+        run: terraform fmt -check -recursive ../..
+        continue-on-error: true
+
+      - name: Terraform Init
+        id: init
+        run: terraform init -input=false
+
+      - name: Terraform Validate
+        id: validate
+        run: terraform validate -no-color
+
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -no-color -input=false
+        continue-on-error: true
+
+      - name: Publicar el plan como comentario del PR
+        uses: actions/github-script@v7
+        env:
+          PLAN: ${{ steps.plan.outputs.stdout }}
+        with:
+          script: |
+            const maxLength = 60000;
+            let plan = process.env.PLAN || '(sin salida)';
+            if (plan.length > maxLength) {
+              plan = plan.slice(0, maxLength) + '\n... (plan truncado, ver el log del job para el detalle completo)';
+            }
+            // El cuerpo se arma linea por linea con join('\n'), NO con un template literal
+            // multilinea: la sangria del bloque YAML se arrastraria a cada linea del string
+            // y markdown la interpretaria como bloque de codigo indentado (los '####' no
+            // renderizarian como encabezados y el fence quedaria literal). El unico
+            // contenido con sangria propia es 'plan', que va dentro de su propio fence.
+            const fence = '`'.repeat(3);
+            const body = [
+              `#### Terraform Format: \`${{ steps.fmt.outcome }}\``,
+              `#### Terraform Init: \`${{ steps.init.outcome }}\``,
+              `#### Terraform Validate: \`${{ steps.validate.outcome }}\``,
+              `#### Terraform Plan: \`${{ steps.plan.outcome }}\``,
+              '',
+              '<details><summary>Ver el plan completo</summary>',
+              '',
+              fence,
+              plan,
+              fence,
+              '',
+              '</details>',
+              '',
+              `*Workflow: \`Infra CD\`, disparado por @${{ github.actor }}*`,
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
+
+      - name: Fallar el job si el plan fallo
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
+
+  apply:
+    name: Terraform Apply
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write      # requerido para el login OIDC de azure/login (sin secret) - ADR-0022
+      contents: read
+      issues: write        # requerido para cerrar el issue de infra tras el apply exitoso
+      pull-requests: read  # requerido por 'gh api commits/{sha}/pulls' y 'pulls/{num}' (deriva el issue)
+    defaults:
+      run:
+        working-directory: infra/environments/<env>
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -input=false
+
+      - name: Cerrar el issue de infra tras el apply exitoso
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # El PR del pipeline IaC NO lleva 'Closes #N' (ADR-0022, "Cierre del issue de
+          # infra: al aplicar en CI, no al mergear el PR"): el issue representa "infra
+          # aplicada", no "infra mergeada". El numero de issue se deriva de la rama
+          # infra-issue-<num>-<slug> (scripts/iac-pipeline.sh) del PR que se acaba de
+          # mergear, via la API de PRs asociados al commit de merge -- funciona con
+          # squash, merge o rebase, a diferencia de parsear el mensaje del commit.
+          PR_NUM=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" --jq '.[0].number // empty')
+          if [ -z "$PR_NUM" ]; then
+            echo "No se encontro un PR asociado al commit ${{ github.sha }}; no se cierra ningun issue."
+            exit 0
+          fi
+          BRANCH=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUM}" --jq '.head.ref // empty')
+          ISSUE_NUM=$(echo "$BRANCH" | grep -oE 'infra-issue-[0-9]+' | grep -oE '[0-9]+' || true)
+          if [ -z "$ISSUE_NUM" ]; then
+            echo "La rama '$BRANCH' del PR #$PR_NUM no sigue el patron infra-issue-<num>-*; no se cierra ningun issue."
+            exit 0
+          fi
+          gh issue close "$ISSUE_NUM" \
+            --comment "Infraestructura aplicada por CI (workflow **Infra CD**, run ${{ github.run_id }}, commit ${{ github.sha }})."
+```
+
+> **Por que `commits/{sha}/pulls` y no parsear el mensaje del merge commit**: el mensaje de un commit de squash-merge no conserva el nombre de la rama origen, asi que no hay forma fiable de extraer `infra-issue-<num>` de el. El endpoint `GET /repos/{owner}/{repo}/commits/{sha}/pulls` de la API de GitHub devuelve el PR asociado a un commit sin importar la estrategia de merge usada.
+>
+> **No confundir con `Closes #N`**: si el PR del pipeline IaC llevara `Closes #N`, GitHub cerraria el issue automaticamente al mergear -- exactamente lo que ADR-0022 prohibe (el issue representa "infra aplicada", no "infra mergeada"). Por eso el cierre lo hace este job, despues del `apply`, nunca el propio merge del PR.
+
+---
+
 ## Paso 3 - Formatear y validar
 
 ```bash
@@ -1169,7 +1366,11 @@ git rev-parse --abbrev-ref HEAD
 # si es main/master:
 git switch -c infra/scaffold-base
 git add infra/
-git commit -m "infra(<env>): generar infraestructura base (8 modulos + esqueleto del entorno)"
+# infra-cd.yml solo existe como cambio la primera vez (Paso 2b); en corridas
+# posteriores ya esta versionado y 'git add' no lo toca. Se incluye
+# condicionalmente para no fallar si no se genero en esta corrida:
+[ -f .github/workflows/infra-cd.yml ] && git add .github/workflows/infra-cd.yml
+git commit -m "infra(<env>): generar infraestructura base (8 modulos + esqueleto del entorno + workflow de CI)"
 ```
 
 (Si te invoco desde un pipeline que ya creo un worktree y rama, commitea en esa rama sin crear otra.)
@@ -1182,10 +1383,12 @@ Imprime un resumen claro:
 
 - **Modulos creados** vs **omitidos** (ya existian) bajo `infra/modules/`.
 - **Archivos del entorno creados** vs **omitidos** bajo `infra/environments/<env>/`.
+- **Workflow de CI** (`.github/workflows/infra-cd.yml`): creado u omitido (ya existia).
 - Resultado de `terraform validate`.
 - Variables requeridas que el consumidor debe proveer en `terraform.tfvars` (`alert_email`, `postgresql_admin_password`, `subscription_id`) y los defaults derivados que conviene revisar (`project`, `project_short`, `postgresql_location`).
+- **Secrets de GitHub requeridos por `infra-cd.yml`** (ADR-0022): `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` (OIDC, sin `AZURE_CREDENTIALS` ni access keys) -- los emite `scripts/setup-github-ci.sh`. El SP de CI necesita ademas el federated credential de subject `pull_request` (job `plan`) junto al de `ref:refs/heads/main` (job `apply`), y los roles ampliados de ADR-0022 (`Role Based Access Control Administrator` con condicion anti-escalacion, `Storage Blob Data Contributor` sobre el tfstate).
 - **Accion administrativa pendiente (ADR-0024 decision #6 / ADR-0025 decision #2):** tras el primer `apply`, un admin debe sembrar en el Key Vault: el secreto `serviceBus.internal.secretName` con `terraform output -raw service_bus_interno_connection_string` (y, cuando existan, cada `serviceBus.external[].secretName` con la cadena del ASB correspondiente); el secreto `marten-connection` con el connection string construido a partir de `terraform output -raw postgresql_fqdn`, `postgresql_database_name`, `postgresql_administrator_login` y el password que puso en `terraform.tfvars`; y el secreto `app-insights-connection` con `terraform output -raw app_insights_connection_string`. Terraform nunca escribe el valor de ningun secreto.
-- **Siguiente paso**: si el backend del `tfstate` aun no existe, corre `bootstrap-backend.sh`; luego lanza el primer `/infra`. Para crear el primer dominio, usa `/scaffold <dominio>` (que agrega su `service-plan`/`storage`/`function-app` a este entorno, junto con el role assignment "Key Vault Secrets User" de su managed identity, los tres role assignments de datos de Storage para `AzureWebJobsStorage` por identidad, y sus app settings `SERVICE_BUS_CONNECTION_<ALIAS>`, `MartenConnectionString` y `APPLICATIONINSIGHTS_CONNECTION_STRING` como referencias `@Microsoft.KeyVault(...)`).
+- **Siguiente paso**: si el backend del `tfstate` aun no existe, corre `bootstrap-backend.sh`; luego abre un PR con este HCL (`/infra`) -- el `plan` corre en el PR y el `apply` real lo ejecuta `infra-cd.yml` en CI al mergear a `main` (ADR-0022), nunca localmente. Para crear el primer dominio, usa `/scaffold <dominio>` (que agrega su `service-plan`/`storage`/`function-app` a este entorno, junto con el role assignment "Key Vault Secrets User" de su managed identity, los tres role assignments de datos de Storage para `AzureWebJobsStorage` por identidad, y sus app settings `SERVICE_BUS_CONNECTION_<ALIAS>`, `MartenConnectionString` y `APPLICATIONINSIGHTS_CONNECTION_STRING` como referencias `@Microsoft.KeyVault(...)`; su workflow de deploy se encadena tras `infra-cd.yml`, ver `domain-scaffolder.md` Paso 5).
 
 ## Reglas absolutas
 
@@ -1198,3 +1401,4 @@ Imprime un resumen claro:
 7. **NO** termines sin que `terraform validate` pase (salvo que `terraform` no este instalado, en cuyo caso lo dejas como pendiente manual explicito).
 8. **NUNCA** crees un `azurerm_key_vault_secret` ni materialices en Terraform el valor de un secreto (cadena de ASB, password de Postgres, connection string de App Insights -- ADR-0025 decision #6): el valor lo coloca infra/admin de forma administrativa, fuera de Terraform. El modulo Key Vault y el entorno solo referencian el secreto por nombre.
 9. **NUNCA** pases `storage_account_access_key` ni una connection string con access key literal al modulo `function-app` (ADR-0025 decision #3): usa `storage_uses_managed_identity = true` y los role assignments de datos de Storage sobre la managed identity.
+10. **NUNCA** sobrescribas `.github/workflows/infra-cd.yml` si ya existe (idempotencia, mismo patron que los workflows de smoke-tests del `domain-scaffolder`): omitelo y reportalo.
