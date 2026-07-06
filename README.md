@@ -289,7 +289,7 @@ El backend remoto de Terraform (donde vive el `tfstate`) es prerequisito de todo
    /mefisto:infra <numero-de-issue>
    ```
 
-   > **El apply es de CI, no local (ADR-0021, ADR-0022).** En el flujo *ongoing* el desarrollador que usa Mefisto no necesita permisos de Azure: `/infra` solo escribe/revisa el HCL y abre el PR (que **no** lleva `Closes #N`). El `terraform plan` real se publica como comentario del PR y el `terraform apply` real corre al mergearlo a `main`, ambos en CI (workflow `Infra CD`); ese workflow cierra el issue cuando el apply termina exitosamente. El bootstrap inicial (backend + CI, pasos 1-2) sí es una operación privilegiada de una sola vez que corre un admin con permisos de Azure.
+   > **El apply es de CI, no local (ADR-0021, ADR-0022).** En el flujo *ongoing* el desarrollador que usa Mefisto no aplica ni planifica local: no necesita `az login` con permisos elevados de Azure ni acceso al tfstate. `/infra` solo escribe/revisa el HCL y abre el PR (que **no** lleva `Closes #N`). El `terraform plan` real se publica como comentario del PR y el `terraform apply` real corre al mergearlo a `main`, ambos en CI (workflow `Infra CD`); ese workflow cierra el issue cuando el apply termina exitosamente. El bootstrap inicial (backend + CI, pasos 1-2) sí es una operación privilegiada de una sola vez que corre un admin con permisos de Azure.
 
 ### 6. Scaffold del primer dominio y primer ciclo TDD
 
@@ -308,11 +308,12 @@ Con el backend listo, crea el scaffold de tu primer dominio y arranca el ciclo T
 |---|---|---|
 | Skills (`/infra`, `/implement`, `/scaffold`, ...) | tu repo consumidor | definición en el plugin (cache del marketplace) |
 | `bootstrap-backend.sh`, `setup-github-ci.sh`, `iac-pipeline.sh`, `tdd-pipeline.sh`, ... | operan sobre tu repo consumidor | binario en el plugin; se resuelven vía `$PLUGIN_SCRIPTS` |
+| `terraform plan` (en cada PR) / `terraform apply` (al mergear a `main`) | **runner de GitHub Actions**, nunca tu máquina | workflow `.github/workflows/infra-cd.yml` (lo genera `/infra-base`; ADR-0021, ADR-0022) |
 | ADRs del marco (`docs/adr/`) | — | en el plugin; los agentes los leen vía `$PLUGIN_ROOT/docs/adr/` |
 | `.claude/harness.config.json`, `CLAUDE.md`, `src/`, `tests/`, `infra/` | tu repo consumidor | **tu repo** (los crea/edita el harness operando sobre el consumidor) |
 | `infra/environments/<env>/backend.tf` | tu repo consumidor | **tu repo** (lo escribe `bootstrap-backend.sh` en runtime) |
 
-Regla mnemónica: **los binarios viven en el plugin; los archivos del proyecto viven en tu repo.** Nunca edites archivos dentro del cache del plugin ni invoques sus scripts con rutas relativas.
+Regla mnemónica: **los binarios viven en el plugin; los archivos del proyecto viven en tu repo.** Nunca edites archivos dentro del cache del plugin ni invoques sus scripts con rutas relativas. Y desde la reforma de la oleada "apply en CI" (ADR-0021, ADR-0022): **el plan/apply de infraestructura vive en CI, nunca en tu máquina** — la única excepción es el bootstrap inicial (backend + CI, sección "Bootstrap de infraestructura" arriba), una operación privilegiada de una sola vez que corre un admin con permisos de Azure.
 
 ## Uso
 
