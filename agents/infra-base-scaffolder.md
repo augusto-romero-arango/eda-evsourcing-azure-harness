@@ -1251,26 +1251,34 @@ jobs:
             if (plan.length > maxLength) {
               plan = plan.slice(0, maxLength) + '\n... (plan truncado, ver el log del job para el detalle completo)';
             }
-            const output = `#### Terraform Format: \`${{ steps.fmt.outcome }}\`
-            #### Terraform Init: \`${{ steps.init.outcome }}\`
-            #### Terraform Validate: \`${{ steps.validate.outcome }}\`
-            #### Terraform Plan: \`${{ steps.plan.outcome }}\`
+            // El cuerpo se arma linea por linea con join('\n'), NO con un template literal
+            // multilinea: la sangria del bloque YAML se arrastraria a cada linea del string
+            // y markdown la interpretaria como bloque de codigo indentado (los '####' no
+            // renderizarian como encabezados y el fence quedaria literal). El unico
+            // contenido con sangria propia es 'plan', que va dentro de su propio fence.
+            const fence = '`'.repeat(3);
+            const body = [
+              `#### Terraform Format: \`${{ steps.fmt.outcome }}\``,
+              `#### Terraform Init: \`${{ steps.init.outcome }}\``,
+              `#### Terraform Validate: \`${{ steps.validate.outcome }}\``,
+              `#### Terraform Plan: \`${{ steps.plan.outcome }}\``,
+              '',
+              '<details><summary>Ver el plan completo</summary>',
+              '',
+              fence,
+              plan,
+              fence,
+              '',
+              '</details>',
+              '',
+              `*Workflow: \`Infra CD\`, disparado por @${{ github.actor }}*`,
+            ].join('\n');
 
-            <details><summary>Ver el plan completo</summary>
-
-            \`\`\`
-            ${plan}
-            \`\`\`
-
-            </details>
-
-            *Workflow: \`Infra CD\`, disparado por @${{ github.actor }}*`;
-
-            github.rest.issues.createComment({
+            await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: output
+              body,
             });
 
       - name: Fallar el job si el plan fallo
