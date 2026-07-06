@@ -89,7 +89,7 @@ fi
 # Nombre de la Storage Account del tfstate: bootstrap-backend.sh le anexa un
 # sufijo de unicidad global (issue #92), asi que el nombre REAL puede no coincidir
 # con el campo base 'terraformStateStorage' del config. Resolver el nombre FINAL
-# para no asignar 'Storage Blob Data Reader' sobre una cuenta inexistente (este
+# para no asignar 'Storage Blob Data Contributor' sobre una cuenta inexistente (este
 # script corre DESPUES del bootstrap; ver README "Primeros pasos", paso 2). Mismo
 # orden de precedencia durable que usa el bootstrap, con los helpers compartidos:
 #   1. storage_account_name escrito en algun infra/environments/*/backend.tf

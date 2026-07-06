@@ -264,12 +264,12 @@ PROVISION
 
 ### 4. Provision opt-in del CI hacia Azure
 
-Es la **segunda** (y ultima) escritura que puede hacer `/onboard`, y solo bajo confirmacion explicita del usuario, porque `scripts/setup-github-ci.sh` **crea recursos reales en Azure** (la aplicacion de Entra + Service Principal, dos role assignments y un federated credential OIDC). El diagnostico (pasos 1-2) nunca crea recursos en Azure.
+Es la **segunda** (y ultima) escritura que puede hacer `/onboard`, y solo bajo confirmacion explicita del usuario, porque `scripts/setup-github-ci.sh` **crea recursos reales en Azure** (la aplicacion de Entra + Service Principal, tres role assignments y dos federated credentials OIDC). El diagnostico (pasos 1-2) nunca crea recursos en Azure.
 
 Aplica este paso **solo si** la seccion "CI hacia Azure" del diagnostico reporto `FALTA` -- ya sea la app de Entra (`aplicacion de Entra "..." no encontrada`) o los secrets OIDC (`faltan secrets OIDC: ...`). Ambos los resuelve `setup-github-ci.sh`: es **idempotente** (si la app/SP/federated credential ya existen, los reutiliza) y siempre re-imprime los 3 secrets OIDC al final, asi que tambien sirve cuando solo faltan los secrets en GitHub. Si la seccion salio `OK`, no hay nada que provisionar -- omite el paso. Si salio `NO VERIFICADO` (sin `az`, sin sesion de Azure, o `githubServicePrincipalName` ausente en el config), **no provisiones a ciegas**: pide al usuario instalar Azure CLI / correr `az login` / completar el config segun corresponda, y que vuelva a correr `/onboard`.
 
 1. **Valida prerequisitos y reune los datos (CA-3).** Antes de ofrecer nada, confirma que se puede: `az` instalado y con **sesion activa** (`az account show`). El `<subscription-id>` **no esta en el config**: pideselo al usuario. El `<owner/repo>` el script lo auto-resuelve (via `gh` o el remote `origin`); ofrece pasarlo solo si la resolucion falla. Si falta `az`, la sesion o el subscription-id, **reportalo claro y no invoques el script** (en vez de dejarlo fallar opaco).
-2. **Advierte que crea recursos reales en Azure y pide confirmacion (CA-2).** Antes de ejecutar nada, dilo explicitamente y pregunta, p. ej.: "Esto configura el CI hacia Azure: crea la app de Entra + Service Principal (sin secret), le asigna `Contributor` y lectura del tfstate, y anade un federated credential OIDC para la rama `main`. **Crea recursos reales en Azure.** Recuerda que debe correr **despues** de `bootstrap-backend.sh` (resuelve el nombre real del tfstate del backend ya creado). ¿Quieres que lo configure ahora? [si/no]".
+2. **Advierte que crea recursos reales en Azure y pide confirmacion (CA-2).** Antes de ejecutar nada, dilo explicitamente y pregunta, p. ej.: "Esto configura el CI hacia Azure: crea la app de Entra + Service Principal (sin secret), le asigna `Contributor` y `Role Based Access Control Administrator` (con condicion anti-escalacion) a nivel suscripcion y `Storage Blob Data Contributor` sobre el tfstate, y anade dos federated credentials OIDC (rama `main` y `pull_request`). **Crea recursos reales en Azure.** Recuerda que debe correr **despues** de `bootstrap-backend.sh` (resuelve el nombre real del tfstate del backend ya creado). ¿Quieres que lo configure ahora? [si/no]".
 3. **No ejecutes nada sin un "si" explicito (CA-4).** Si el usuario no confirma (o prefiere hacerlo a mano), no corras el script: recuerdale el comando de las "Acciones sugeridas" y termina. El comportamiento por defecto de `/onboard` es solo diagnostico: una corrida sin confirmar **no crea ningun recurso en Azure ni copia secrets**.
 4. **Solo si el usuario confirma**, corre el bloque de provision. Reusa la misma resolucion de `PLUGIN_SCRIPTS` del paso 1 e invoca el script plugin-relative, sustituyendo `<subscription-id>` por el que dio el usuario (y `OWNER_REPO` solo si la auto-resolucion fallo):
 
@@ -310,7 +310,7 @@ if [ ! -f "$CI_SCRIPT" ]; then
 fi
 
 echo "Configurando el CI con: $CI_SCRIPT $SUBSCRIPTION_ID ${OWNER_REPO}"
-echo "(crea app de Entra + Service Principal SIN secret, role assignments y federated credential OIDC -- ADR-0022)"
+echo "(crea app de Entra + Service Principal SIN secret, role assignments y federated credentials OIDC -- ADR-0022)"
 echo "Debe correr DESPUES de bootstrap-backend.sh: resuelve el nombre real del tfstate del backend ya creado."
 echo ""
 if [ -n "$OWNER_REPO" ]; then
