@@ -1462,8 +1462,12 @@ jobs:
             echo "debe_desplegar=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # workflow_run tras infra-cd.yml: solo si el apply de infra fue exitoso...
-          if [ "${{ github.event.workflow_run.conclusion }}" != "success" ]; then
+          # 'Infra CD' tambien corre su job 'plan' en pull_request (rama != main);
+          # cualquier corrida suya (plan o apply) dispara este workflow_run, asi que
+          # hay que filtrar explicitamente por la corrida de 'apply' (rama main,
+          # exitosa) y no reaccionar a un plan sobre una PR de infra sin mergear.
+          if [ "${{ github.event.workflow_run.conclusion }}" != "success" ] || \
+             [ "${{ github.event.workflow_run.head_branch }}" != "main" ]; then
             echo "debe_desplegar=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi

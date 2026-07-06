@@ -1282,9 +1282,10 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
-      id-token: write   # requerido para el login OIDC de azure/login (sin secret) - ADR-0022
+      id-token: write      # requerido para el login OIDC de azure/login (sin secret) - ADR-0022
       contents: read
-      issues: write     # requerido para cerrar el issue de infra tras el apply exitoso
+      issues: write        # requerido para cerrar el issue de infra tras el apply exitoso
+      pull-requests: read  # requerido por 'gh api commits/{sha}/pulls' y 'pulls/{num}' (deriva el issue)
     defaults:
       run:
         working-directory: infra/environments/<env>
