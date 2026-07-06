@@ -78,19 +78,17 @@ Pipeline infra lanzado en tmux. Para monitorear:
 Usa /work-status para ver el progreso sin salir de aqui.
 ```
 
-## Flujo preview -> apply (revisar antes de provisionar)
+## Flujo: cero permisos de Azure en local (ADR-0021, ADR-0022)
 
-El lanzamiento por defecto (este skill) hace el ciclo completo en una corrida: Write -> Review -> Apply -> PR (con `Closes #N`), y el issue se cierra al mergear el PR.
+En el flujo *ongoing*, el desarrollador que usa Mefisto **no tiene ningun permiso de Azure**. Este pipeline (`iac-pipeline.sh`) corre enteramente sin credenciales de Azure y sin sesion `az login`:
 
-Cuando convenga **revisar y mergear el HCL antes de tocar Azure** (p. ej. la primera infra de un greenfield), el pipeline soporta un flujo en dos fases que se corre con el script `iac-pipeline.sh` directamente (o via el agente `infra-bootstrap`):
+1. **Write** (`infra-writer`): escribe o modifica el HCL en un worktree aislado.
+2. **Review** (`infra-reviewer`): revisa seguridad/calidad del HCL y hace **revision estatica** (`terraform fmt -check` + `terraform init -backend=false` + `terraform validate`). **No** ejecuta `terraform plan`.
+3. **PR**: el pipeline crea un PR con el HCL escrito y revisado. El PR **nunca** lleva `Closes #N`.
 
-1. **Preview**: `iac-pipeline.sh <issue> --env <ambiente> --skip-apply`
-   Escribe+revisa el HCL y crea un PR que **NO** cierra el issue (sin `Closes #N`); conserva el worktree y el `tfplan` revisados.
-2. **Mergeas el PR de preview**; el issue sigue **abierto** (representa "infra aplicada", no "previsualizada").
-3. **Apply**: `iac-pipeline.sh <issue> --env <ambiente> --from-stage 3`
-   Reutiliza el worktree y el `tfplan`, aplica la infra y **cierra el issue** (sin PR duplicado).
+El **plan real** corre en CI cuando se abre el PR (workflow `infra-cd.yml`, job `plan`, publicado como comentario del PR) y el **apply real** corre en CI al mergear el PR a `main` (job `apply`). Ese mismo job cierra el issue tras un apply exitoso (ADR-0022) -- nunca el propio merge del PR ni este pipeline local.
 
-Si el issue aparece `CLOSED` y solo falta aplicarlo (un PR de preview legado con `Closes` se mergeo), reanuda con `--from-stage 3`: el pipeline acepta un issue cerrado en la fase de apply.
+**Distincion bootstrap vs ongoing**: el bootstrap inicial (`bootstrap-backend.sh` para el tfstate, `setup-github-ci.sh` para el Service Principal de CI) es una operacion **privilegiada de una sola vez** que corre un admin con permisos de Azure para habilitar la CI. No es parte de este flujo ongoing.
 
 ## Reglas
 

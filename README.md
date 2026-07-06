@@ -20,7 +20,7 @@ Plugin de [Claude Code](https://code.claude.com/docs/en/plugins) que provee un h
 ## Qué incluye
 
 - **16 skills** (slash commands): `/onboard`, `/implement`, `/tooling`, `/infra`, `/infra-base`, `/scaffold`, `/parallel`, `/sequential`, `/bug`, `/draft`, `/fix-review`, `/health-check`, `/work-status`, `/show-flow`, `/eraser-diagram`, `/merge`.
-- **17 agentes** especializados: `planner`, `test-writer`, `implementer`, `reviewer`, `smoke-test-writer`, `domain-scaffolder`, `infra-base-scaffolder`, `eda-modeler`, `event-stormer`, `historiador`, `infra-writer`, `infra-reviewer`, `infra-applier`, `infra-bootstrap`, `pr-sync`, `bug-investigator`, `tooling-investigator`.
+- **16 agentes** especializados: `planner`, `test-writer`, `implementer`, `reviewer`, `smoke-test-writer`, `domain-scaffolder`, `infra-base-scaffolder`, `eda-modeler`, `event-stormer`, `historiador`, `infra-writer`, `infra-reviewer`, `infra-bootstrap`, `pr-sync`, `bug-investigator`, `tooling-investigator`.
 - **Pipelines bash** que orquestan el ciclo TDD, IaC y tooling sobre `tmux` y `git worktree`.
 - **22 ADRs** del marco arquitectónico.
 - **Hooks** para logging del pipeline.
@@ -283,18 +283,13 @@ El backend remoto de Terraform (donde vive el `tfstate`) es prerequisito de todo
 
    > **Valida `postgresql_location` antes del primer `terraform apply`.** No tiene por qué coincidir con `azureLocation` (que es solo la región del backend del tfstate). Algunas regiones devuelven `LocationIsOfferRestricted` al crear el PostgreSQL Flexible Server según tu suscripción —`eastus2` lo hizo en el primer greenfield real, resuelto con `centralus`—. Verifica la tuya con `az postgres flexible-server list-skus --location <region> -o table` (debe listar `Standard_B1ms`); ver la nota del campo `azureLocation` (sección "Configurar el consumidor") y ADR-0021.
 
-4. **Primer `/infra`**: lanza el pipeline IaC para tu primer issue `tipo:infra`, que escribe el HCL, ejecuta `terraform plan` y aplica:
+4. **Primer `/infra`**: lanza el pipeline IaC para tu primer issue `tipo:infra`. El pipeline escribe y revisa el HCL de forma **estática** (sin `terraform plan` ni `apply` local, sin credenciales de Azure) y abre un PR:
 
    ```
    /mefisto:infra <numero-de-issue>
    ```
 
-   > **Flujo preview -> apply (revisar antes de tocar Azure).** Si prefieres mergear el HCL antes de provisionar (recomendado para la primera infra), corre el pipeline en dos fases con el script `iac-pipeline.sh`:
-   > 1. `iac-pipeline.sh <issue> --env dev --skip-apply` escribe+revisa el HCL y crea un PR de **preview** que **no cierra el issue** (sin `Closes #N`), conservando el worktree y el `tfplan`.
-   > 2. Mergeas ese PR; el issue sigue **abierto**.
-   > 3. `iac-pipeline.sh <issue> --env dev --from-stage 3` reutiliza el worktree/`tfplan` ya revisados, aplica la infra y **cierra el issue** (sin PR duplicado).
-   >
-   > Así el issue representa "infra aplicada", no "infra previsualizada", y el cierre del PR de preview no bloquea el apply posterior.
+   > **El apply es de CI, no local (ADR-0021, ADR-0022).** En el flujo *ongoing* el desarrollador que usa Mefisto no necesita permisos de Azure: `/infra` solo escribe/revisa el HCL y abre el PR (que **no** lleva `Closes #N`). El `terraform plan` real se publica como comentario del PR y el `terraform apply` real corre al mergearlo a `main`, ambos en CI (workflow `Infra CD`); ese workflow cierra el issue cuando el apply termina exitosamente. El bootstrap inicial (backend + CI, pasos 1-2) sí es una operación privilegiada de una sola vez que corre un admin con permisos de Azure.
 
 ### 6. Scaffold del primer dominio y primer ciclo TDD
 

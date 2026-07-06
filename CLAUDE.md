@@ -132,7 +132,7 @@ Necesaria porque los agentes/skills del harness no pueden hacer sustitución de 
 | `implementer` | Fase verde del pipeline TDD |
 | `reviewer` | Revisión antes de crear PR |
 | `smoke-test-writer` | Smoke tests contra entorno dev |
-| `infra-writer` / `infra-reviewer` / `infra-applier` / `infra-bootstrap` | Etapas del pipeline IaC |
+| `infra-writer` / `infra-reviewer` / `infra-bootstrap` | Etapas del pipeline IaC (escritura y revision estatica local; el plan y el apply corren en CI, ADR-0022) |
 | `pr-sync` | Integra PRs de un batch paralelo |
 | `bug-investigator` | Investiga errores del entorno desplegado |
 | `tooling-investigator` | Investiga errores del tooling local |
