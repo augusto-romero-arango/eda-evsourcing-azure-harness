@@ -1843,7 +1843,11 @@ Proximos pasos:
        workflow ya declara permissions: id-token: write y NO usa AZURE_CREDENTIALS)
      - SERVICEBUS_CONNECTION_STRING (smoke tests, opcional)
      - POSTGRES_CONNECTION_STRING (smoke tests, opcional)
-  2. Ejecuta "terraform apply" en infra/environments/dev/ para crear la infraestructura
+  2. Abre un PR con este scaffold para que CI cree la infraestructura: el "terraform plan"
+     corre sobre el PR y el "terraform apply" (workflow Infra CD) se ejecuta al mergear a
+     main (ADR-0021, ADR-0022). Al mergear, deploy-{kebab}.yml se encadena y despliega el
+     codigo. No ejecutes "terraform apply" en local: en el flujo ongoing no se aplica
+     infraestructura desde tu maquina.
   3. Crea appsettings.local.json (gitignored) con las cadenas reales para desarrollo local
   4. Usa el agente test-writer para escribir los primeros tests del dominio
   5. Usa el agente smoke-test-writer para escribir los smoke tests contra dev

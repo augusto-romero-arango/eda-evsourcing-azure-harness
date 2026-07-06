@@ -2,7 +2,7 @@
 model: haiku
 ---
 
-Genera la infraestructura base del consumidor (8 modulos Terraform + esqueleto del entorno con outputs) invocando al agente `infra-base-scaffolder`. Es el eslabon greenfield entre `bootstrap-backend.sh` (crea el `tfstate`) y el primer `/infra` (aplica). Comunicate en **espanol**.
+Genera la infraestructura base del consumidor (8 modulos Terraform + esqueleto del entorno con outputs + el workflow de CI `infra-cd.yml`) invocando al agente `infra-base-scaffolder`. Es el eslabon greenfield entre `bootstrap-backend.sh` (crea el `tfstate`) y el primer `/infra`, que solo escribe y revisa el HCL: el `apply` real lo ejecuta CI al mergear el PR (ADR-0021, ADR-0022). Comunicate en **espanol**.
 
 ## Pre-condicion: cwd != Mefisto
 
@@ -35,6 +35,8 @@ Se va a generar la infraestructura base del consumidor (ambiente: <env>):
                    service-plan, storage, function-app}/main.tf
   - infra/environments/<env>/{main, variables, providers, outputs}.tf
     (NO se genera backend.tf: lo escribe bootstrap-backend.sh)
+  - .github/workflows/infra-cd.yml (si no existe aun): plan en cada PR sobre
+    infra/**, apply al mergear a main, autenticado por OIDC (ADR-0022)
 
 El generador es idempotente: si ya existen archivos, los respeta y solo crea lo que falta.
 ```
@@ -55,12 +57,13 @@ Infraestructura base generada. Siguiente:
   2. Provee las variables requeridas en terraform.tfvars (alert_email,
      postgresql_admin_password, subscription_id) y revisa los defaults
      derivados (project, project_short, postgresql_location).
-  3. Primer /infra para aplicar.
+  3. Primer /infra: escribe y revisa el HCL, abre un PR. El apply real
+     ocurre en CI al mergear a main (workflow Infra CD), nunca en local.
   4. /scaffold <dominio> agrega su service-plan/storage/function-app a este entorno.
 ```
 
 ## Reglas
 
 - **No generes la infraestructura tu mismo.** Solo valida la pre-condicion, informa y lanza el agente.
-- El agente nunca corre `terraform plan`/`apply`: solo `fmt`, `init -backend=false` y `validate`.
-- El agente es idempotente: no sobrescribe archivos `.tf` existentes (ADR-0021).
+- El agente nunca corre `terraform plan`/`apply`: solo `fmt`, `init -backend=false` y `validate`. El plan real corre en CI al abrir el PR y el apply real al mergearlo a `main` (workflow `infra-cd.yml`, ADR-0021, ADR-0022).
+- El agente es idempotente: no sobrescribe archivos `.tf` ni el workflow `infra-cd.yml` existentes (ADR-0021).
