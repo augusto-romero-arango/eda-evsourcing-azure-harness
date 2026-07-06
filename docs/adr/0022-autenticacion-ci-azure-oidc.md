@@ -35,7 +35,7 @@ Concretamente:
 
 ### El apply de infraestructura ocurre en CI, nunca localmente
 
-El desarrollador que usa Mefisto **planifica y revisa** el HCL/plan; nunca ejecuta `terraform apply` en su maquina ni necesita permisos elevados de Azure ni custodia secretos. El `apply` real -- el unico paso que escribe recursos y requiere acceso a los secretos custodiados (Key Vault, tfstate) -- lo ejecuta el Service Principal de CI, por OIDC, dentro de GitHub Actions.
+El desarrollador que usa Mefisto **escribe y revisa** el HCL (revision estatica: `fmt`/`init -backend=false`/`validate`); nunca ejecuta `terraform plan` ni `terraform apply` en su maquina, ni necesita permisos de Azure ni custodia secretos. El `plan` y el `apply` reales -- los unicos pasos que leen el tfstate/escriben recursos y requieren acceso a los secretos custodiados (Key Vault, tfstate) -- los ejecuta el Service Principal de CI, por OIDC, dentro de GitHub Actions (el `plan` al abrir el PR, el `apply` al mergear a `main`). **Excepcion del bootstrap:** este "cero permisos" aplica al flujo *ongoing* del desarrollador; el bootstrap inicial (`scripts/bootstrap-backend.sh` crea el tfstate y `scripts/setup-github-ci.sh` crea el SP y sus federated credentials) es una operacion privilegiada de una sola vez que ejecuta un admin con permisos de Azure para habilitar la CI, fuera de esta doctrina.
 
 **Modelo plan-en-PR / apply-en-merge-a-main**, siguiendo la guia de automatizacion de HashiCorp para Terraform con GitHub Actions [8]:
 
@@ -44,7 +44,7 @@ El desarrollador que usa Mefisto **planifica y revisa** el HCL/plan; nunca ejecu
 | `pull_request` sobre `infra/**` | `plan` | `terraform init` + `terraform plan`; publica el resumen del plan (comentario o check del PR). No aplica. |
 | `push` a `main` sobre `infra/**` (tras mergear el PR) | `apply` | `terraform init` + `terraform apply`. |
 
-El pipeline local (`scripts/iac-pipeline.sh`) deja de tener un Stage que aplica: sus Stages 1 (`infra-writer`) y 2 (`infra-reviewer`, plan) siguen corriendo localmente contra el worktree, pero el resultado es un PR con el HCL y el plan revisados, nunca un `terraform apply` ejecutado por el desarrollador. El agente `infra-applier` (que hoy invoca `terraform apply` con las credenciales locales) y el propio pipeline se reimplementan para este modelo en el issue #199; este ADR fija el criterio, no el mecanismo de script.
+El pipeline local (`scripts/iac-pipeline.sh`) deja de tener un Stage que aplica y tampoco corre `terraform plan`: sus Stages 1 (`infra-writer`) y 2 (`infra-reviewer`, revision estatica: `fmt -check` + `init -backend=false` + `validate`) siguen corriendo localmente contra el worktree, pero el resultado es un PR con el HCL revisado, nunca un `terraform plan` ni un `terraform apply` ejecutados por el desarrollador. El `plan` real corre en el job `plan` de `infra-cd.yml` al abrir el PR. El agente `infra-applier` (que invocaba `terraform apply` con las credenciales locales) se retira y el propio pipeline se reimplementa para este modelo en el issue #199; este ADR fija el criterio, no el mecanismo de script.
 
 ### Roles del Service Principal de CI
 
@@ -120,7 +120,7 @@ Para la decision de **donde** corre el `apply` (issue #196): usar Privileged Ide
 - **Sin secret que rote ni expire**: elimina el modo de falla "el deploy muere al ano".
 - **Alineado con la guia vigente de Azure/GitHub** [1][5] y sin depender de comandos/flujos deprecados [6].
 - **Menos secrets** (3 en vez de 4) y ninguno sensible de larga vida.
-- **Ningun desarrollador custodia credenciales elevadas de Azure en su maquina**: el `apply` de infra -- el unico paso que necesita escribir recursos y leer/escribir secretos -- corre en CI bajo la identidad federada; el humano solo planifica y revisa (issue #196).
+- **Ningun desarrollador custodia credenciales elevadas de Azure en su maquina**: el `apply` de infra -- el unico paso que necesita escribir recursos y leer/escribir secretos -- corre en CI bajo la identidad federada; el humano solo escribe y revisa el HCL (revision estatica), sin correr `terraform plan` ni `apply` localmente (issue #196).
 
 ### Negativas
 
@@ -145,9 +145,10 @@ Para la decision de **donde** corre el `apply` (issue #196): usar Privileged Ide
 - ADR-0023: Bounded Context, namespace interno de Azure Service Bus y frontera publico/privado — recoge el eje runtime-cross-BC (diferido) que este ADR explicitamente no cubre.
 - ADR-0024: Modelo de eventos de bus (privado propio, publico via backbone compartido, integracion externa diferida) — reencuadra el namespace de integracion citado en la seccion anterior como el transporte del caso diferido de integracion verdaderamente externa, no como el default del evento publico.
 - ADR-0021 (infraestructura base): reformado junto con este ADR (issue #196); el `infra-base-scaffolder` emite el workflow `infra-cd.yml` que se autentica con la identidad y los roles que este ADR fija.
-- ADR-0025 (custodia de secretos): reformado junto con este ADR (issue #196); el backend keyless (`use_azuread_auth`) del tfstate es el mecanismo que hace posible que ni el `plan` local ni el `apply` de CI dependan de una access key.
+- ADR-0025 (custodia de secretos): reformado junto con este ADR (issue #196); el backend keyless (`use_azuread_auth`) del tfstate es el mecanismo que hace posible que ni el `plan` ni el `apply` de CI dependan de una access key.
 
 ## Control de cambios
 
 - 2026-07-01: enmendado (issue #167, barrido de coherencia hacia ADR-0024) para actualizar la referencia a ADR-0023 y anadir remision a ADR-0024. La seccion "Frontera de alcance: autenticacion runtime cross-BC" no cambia: sigue describiendo el caso diferido de integracion verdaderamente externa (ADR-0024 decision #5), vigente.
 - 2026-07-06: reformado (issue #196, ancla doctrinal de la oleada de apply-en-CI, junto con ADR-0021 y ADR-0025) para fijar que el `apply` de infraestructura ocurre en CI bajo identidad federada, nunca localmente (modelo plan-en-PR / apply-en-merge-a-main). Se amplian los roles del SP (`Role Based Access Control Administrator` con condicion anti-escalacion a nivel suscripcion; `Storage Blob Data Contributor` en vez de `Storage Blob Data Reader` sobre el tfstate) y se anade el federated credential de subject `pull_request` junto al de `ref:refs/heads/main`. Se fija que el issue de infra se cierra al completar el `apply` de CI, no al mergear el PR (continuidad de la doctrina de #96), y el principio de que el deploy de codigo no debe correr antes que el `apply` de infra. Se elimina del cuerpo la afirmacion de que el subject `pull_request` "queda fuera del workflow que emite el marco" (seccion "El subject del federated credential") y la asignacion de solo `Storage Blob Data Reader` sobre el tfstate; el mecanismo concreto (workflow `infra-cd.yml`, reimplementacion de `iac-pipeline.sh`/`infra-applier`, plantilla ABAC de la condicion anti-escalacion) lo materializan los issues #197, #198, #195, #199 y #200.
+- 2026-07-06: corregido para eliminar del cuerpo la descripcion residual de un `terraform plan` local del desarrollador ("planifica y revisa el HCL/plan"; "Stage 2 `infra-reviewer`, plan"), inconsistente con la decision de la oleada de #196 (`plan` solo en CI, cero permisos de Azure para el desarrollador en el flujo ongoing) y con la implementacion ya mergeada de #199. Se aclara que el pipeline local hace solo revision estatica y que el `plan` real corre en CI (job `plan` de `infra-cd.yml`) al abrir el PR, y se explicita la excepcion del bootstrap (el "cero permisos" aplica al flujo ongoing; el bootstrap inicial de backend + SP es una operacion privilegiada de una sola vez).
