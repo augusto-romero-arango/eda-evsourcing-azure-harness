@@ -1,8 +1,8 @@
 # ADR-0021: Infraestructura base del consumidor - 8 modulos + esqueleto del entorno generados por un agente
 
-- **Fecha**: 2026-06-25 (reformado 2026-06-30, 2026-07-01)
+- **Fecha**: 2026-06-25 (reformado 2026-06-30, 2026-07-01, 2026-07-06)
 - **Estado**: aceptado
-- **Aplica a**: scaffolding de infraestructura del proyecto consumidor (Terraform), agentes `infra-base-scaffolder`, `domain-scaffolder` e `infra-writer`, flujo greenfield.
+- **Aplica a**: scaffolding de infraestructura del proyecto consumidor (Terraform), agentes `infra-base-scaffolder`, `domain-scaffolder` e `infra-writer`, flujo greenfield, y el flujo del pipeline IaC (`scripts/iac-pipeline.sh`) hasta el punto en que el `apply` se delega a CI (ADR-0022).
 
 ## Contexto
 
@@ -25,12 +25,13 @@ Pero **el harness no proveia esa base de ninguna forma**: ni plantilla copiable,
 
 1. Los **8 modulos base** bajo `infra/modules/`.
 2. El **esqueleto del entorno** bajo `infra/environments/<env>/` (`main.tf`, `variables.tf`, `providers.tf`, `outputs.tf`), **sin** `backend.tf` (lo escribe `scripts/bootstrap-backend.sh`).
+3. El **workflow de CI de Terraform** (`.github/workflows/infra-cd.yml`): `terraform plan` en `pull_request` sobre `infra/**`, `terraform apply` en `push` a `main` sobre `infra/**`, autenticado por la identidad federada del Service Principal de CI (ADR-0022). Analogo a como el `domain-scaffolder` emite los workflows de smoke-tests (ADR-0013): el scaffolder de infra tambien emite su propio workflow de CI.
 
 ### Por que un agente y no un directorio de plantillas
 
 1. **Es el unico patron de scaffold que el harness ya usa.** El `domain-scaffolder` no copia archivos de un `templates/`: emite el contenido inline desde su prompt (HCL del Paso 4, YAML del Paso 5). El harness no tiene directorio `templates/` ni mecanismo de copia. Crear uno seria inventar un mecanismo sin precedente (coherente con la separacion publicado/interno de ADR-0019: los agentes operan sobre el consumidor emitiendo contenido, no copiando blobs del plugin).
 2. **El contenido no es estatico.** El `service-plan` debe cumplir ADR-0020 (que la plantilla de campo incumplia), la region de PostgreSQL depende del consumidor (algunas regiones restringen Flexible Server) y los nombres globales pueden necesitar un sufijo de unicidad. Un agente aplica reglas y lee `harness.config.json`/`CLAUDE.md` para parametrizar; un archivo copiado las congela.
-3. **Encaja en el flujo greenfield existente.** `infra-bootstrap` ya orquesta "bootstrap del tfstate -> primer `/infra`". El esqueleto base es el eslabon que faltaba entre ambos: `bootstrap-backend.sh` crea el backend del `tfstate`; `infra-base-scaffolder` crea los modulos y el entorno; `/infra` aplica.
+3. **Encaja en el flujo greenfield existente.** `infra-bootstrap` ya orquesta "bootstrap del tfstate -> primer `/infra`". El esqueleto base es el eslabon que faltaba entre ambos: `bootstrap-backend.sh` crea el backend del `tfstate`; `infra-base-scaffolder` crea los modulos, el entorno y el workflow de CI de Terraform; `/infra` planifica y revisa el HCL, pero el `apply` real lo ejecuta CI al mergear el PR del pipeline a `main` (ADR-0022).
 
 ### Un namespace de Service Bus interno por Bounded Context
 
@@ -103,6 +104,21 @@ El `outputs.tf` expone a nivel raiz, como minimo, `resource_group_name`, `postgr
 
 El `providers.tf` declara `azurerm` y `random` y el bloque `provider "azurerm"`, pero **no** incluye `backend "azurerm"`: el backend lo materializa `scripts/bootstrap-backend.sh` en `backend.tf`, y duplicarlo haria fallar a Terraform por doble definicion de backend.
 
+### El workflow de CI de Terraform (`infra-cd.yml`)
+
+Ademas de los modulos y el esqueleto del entorno, el `infra-base-scaffolder` emite `.github/workflows/infra-cd.yml` en el consumidor -- el mismo patron que ya usa el `domain-scaffolder` al emitir el workflow de smoke-tests (ADR-0013) y el workflow de deploy (Paso 5, ADR-0022): el agente que crea el recurso tambien crea el pipeline de CI que lo opera.
+
+| Job | Trigger | Que hace |
+|---|---|---|
+| `plan` | `pull_request` sobre `infra/**` | `terraform init` + `terraform plan`; no aplica. |
+| `apply` | `push` a `main` sobre `infra/**` | `terraform init` + `terraform apply`. |
+
+Ambos jobs se autentican con `azure/login` por OIDC (`client-id`/`tenant-id`/`subscription-id`, `permissions: id-token: write`), bajo el Service Principal de CI cuyos roles ampliados fija ADR-0022 (`Role Based Access Control Administrator` con condicion anti-escalacion, `Storage Blob Data Contributor` sobre el tfstate). El backend `azurerm` que ambos jobs usan es **keyless** (`use_azuread_auth = true`, ADR-0025): ni el `plan` de CI en el PR ni el `apply` en `main` dependen de una access key de la Storage del tfstate.
+
+### El apply ya no ocurre localmente
+
+El flujo del pipeline IaC (`scripts/iac-pipeline.sh`) deja de tener un Stage de `apply` local: sus stages de escritura (`infra-writer`) y revision/plan (`infra-reviewer`) siguen corriendo localmente contra el worktree del pipeline, pero producen un PR con el HCL y el plan ya revisados -- nunca un `terraform apply` ejecutado con las credenciales de Azure del desarrollador. El `apply` real lo ejecuta el job `apply` de `infra-cd.yml` al mergear ese PR a `main`. El issue de infraestructura se cierra cuando ese `apply` de CI termina exitosamente, no al mergear el PR (doctrina de cierre de #96, reafirmada en ADR-0022); y el deploy de codigo de un dominio no debe correr antes de que su Function App exista por ese mismo `apply` (ver ADR-0022, "Orden: infra antes que deploy de codigo"). El mecanismo concreto (reimplementacion de `iac-pipeline.sh` y del agente `infra-applier`) lo materializa el issue #199; este ADR fija que la responsabilidad del `apply` es de CI, no del pipeline local. Ver ADR-0022 para la doctrina completa (roles del SP, subjects OIDC, criterio de cierre).
+
 ### Region de PostgreSQL Flexible Server: la restriccion de oferta por suscripcion (issue #99)
 
 El modulo `postgresql` recibe su region via `var.location`, que en el esqueleto del entorno se alimenta del local `postgresql_location` (revisable en `infra/environments/<env>/terraform.tfvars`). **Esa region es independiente del campo `azureLocation` de `harness.config.json`** -el que `scripts/bootstrap-backend.sh` usa para el backend del `tfstate` (Resource Group + Storage Account + container)- y puede, y a veces debe, **diferir**.
@@ -171,9 +187,13 @@ Un solo agente que crea backend + modulos + entorno.
 - Reglas de naming y unicidad global (Microsoft Learn, "Naming rules and restrictions for Azure resources", `https://learn.microsoft.com/azure/azure-resource-manager/management/resource-name-rules`): `Microsoft.DBforPostgreSQL/servers` es scope **global**, 3-63 chars, minusculas/numeros/guiones, no puede empezar ni terminar en guion; `Microsoft.ServiceBus/namespaces` es scope **global**, 6-50 chars, alfanumericos/guiones, empieza con letra y termina en letra o numero. El scope **global** de ambos es la fuente verificable de que el nombre debe ser unico en todo Azure (no solo en el resource group), lo que motiva el sufijo.
 - Region de PostgreSQL Flexible Server (issue #99): verificacion de SKUs por region via Azure CLI (Microsoft Learn, "az postgres flexible-server list-skus", `https://learn.microsoft.com/cli/azure/postgres/flexible-server`) -- "Lists available sku's in the given region"; y lista oficial de regiones del servicio (Microsoft Learn, "What is Azure Database for PostgreSQL flexible server?", `https://learn.microsoft.com/azure/postgresql/overview#azure-regions`), que muestra `eastus2` como soportada -- evidencia de que `LocationIsOfferRestricted` es una restriccion de oferta por suscripcion, no una indisponibilidad global de la region.
 - Fuente de referencia de campo: `Bitakora.ControlAsistencia/infra/modules/*` y `infra/environments/dev/*` (de donde se generalizaron los tokens hardcodeados).
+- ADR-0022 (autenticacion de CI por OIDC): reformado junto con este ADR (issue #196) para fijar que el `apply` de infraestructura ocurre en CI bajo identidad federada, nunca localmente; el workflow `infra-cd.yml` que este ADR atribuye al `infra-base-scaffolder` se autentica con esa misma identidad y hereda sus roles ampliados.
+- ADR-0025 (custodia de secretos): el backend `azurerm` de `infra-cd.yml` es keyless (`use_azuread_auth`), coherente con el principio de "ningun secreto ni key en texto plano".
+- ADR-0013 (smoke tests contra entorno dev): mismo patron de "el agente que crea el recurso tambien crea su workflow de CI" que ya sigue el `domain-scaffolder`, extendido aqui al `infra-base-scaffolder`.
 
 ## Control de cambios
 
 - 2026-06-30: reformado (issue #128) para alinear la infraestructura base con la topologia de dos namespaces de Azure Service Bus por Bounded Context fijada por ADR-0023 (decision #2).
 - 2026-07-01: reformado (issue #160) para provisionar un unico namespace interno por Bounded Context, siguiendo el mandato de ADR-0024. Se elimina del cuerpo la provision del namespace de integracion (recursos, outputs, RBAC Data Sender y sufijo de unicidad asociados); el evento publico comun viaja por el backbone compartido del producto, fuera del alcance de este ADR.
 - 2026-07-01: enmendado (issue #184, mandato de ADR-0025) para reencuadrar el modulo Key Vault como almacen general de secretos del BC, no custodia exclusiva de la cadena del backbone compartido; se corrige la atribucion de issues (#165 vs #170) en el cuerpo. Se completa el conteo/tabla de modulos base de 7 a 8 (fila `key-vault`, esqueleto del entorno, nota de SKU y consecuencias), actualizacion que el issue #170 dejo pendiente para sucesores al introducir el modulo.
+- 2026-07-06: reformado (issue #196, ancla doctrinal de la oleada de apply-en-CI, junto con ADR-0022 y ADR-0025) para fijar que el `infra-base-scaffolder` tambien emite el workflow de CI de Terraform (`infra-cd.yml`, plan en pull_request / apply en push a main) y que el `apply` real de infraestructura ocurre en ese workflow, nunca localmente. Se elimina del cuerpo la afirmacion de que `/infra aplica` (seccion "Por que un agente y no un directorio de plantillas", punto 3); el pipeline local queda acotado a escritura y revision/plan. El mecanismo concreto (reimplementacion de `iac-pipeline.sh` y de `infra-applier`) lo materializa el issue #199.
