@@ -615,9 +615,9 @@ Enumera los ADRs que rigen este issue de infra. Tipicamente:
 (Si no aplica ningun ADR, escribir "Ninguno".)
 
 ## Criterios de aceptacion
-- [ ] CA-1: terraform validate pasa sin errores
-- [ ] CA-2: terraform plan no contiene destrucciones inesperadas
-- [ ] CA-3: terraform apply exitoso en ambiente {{ambiente}}
+- [ ] CA-1: terraform validate pasa sin errores (revision estatica local, sin plan ni apply)
+- [ ] CA-2: el terraform plan de CI (comentario del PR, workflow Infra CD) no contiene destrucciones inesperadas
+- [ ] CA-3: el terraform apply de CI (workflow Infra CD, al mergear a main) termina exitosamente
 - [ ] CA-4: Recurso verificable: az {{tipo}} show -n {{nombre}}
 
 ## Ambiente
