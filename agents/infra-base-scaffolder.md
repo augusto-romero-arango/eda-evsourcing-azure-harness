@@ -827,8 +827,11 @@ terraform {
 }
 
 provider "azurerm" {
-  subscription_id = var.subscription_id
-
+  # subscription_id se omite: el provider lo resuelve nativamente de la variable
+  # de entorno ARM_SUBSCRIPTION_ID, ya declarada en el env de infra-cd.yml (Paso 2b)
+  # (HashiCorp, azurerm provider -- "Argument Reference", subscription_id "can also
+  # be sourced from the ARM_SUBSCRIPTION_ID Environment Variable"). Evita una variable
+  # Terraform requerida adicional (ADR-0022).
   features {
     resource_group {
       prevent_deletion_if_contains_resources = true
@@ -839,14 +842,9 @@ provider "azurerm" {
 
 ### 2.2 `infra/environments/<env>/variables.tf`
 
-Sustituye `<project>`, `<project_short>` y `<location>` por lo que derivaste en el Paso 0. Define los locals `prefix` y `prefix_func` (el `domain-scaffolder` lee `local.prefix_func` de este archivo). `postgresql_admin_login` por defecto `pgadmin` (el scaffolder usa `Username=pgadmin` en su `MartenConnectionString`; manten el acople o ajusta ambos a la vez). `alert_email` y `postgresql_admin_password` son requeridos (sin default): se pasan via `terraform.tfvars`.
+Sustituye `<project>`, `<project_short>` y `<location>` por lo que derivaste en el Paso 0. Define los locals `prefix` y `prefix_func` (el `domain-scaffolder` lee `local.prefix_func` de este archivo). `postgresql_admin_login` por defecto `pgadmin` (el scaffolder usa `Username=pgadmin` en su `MartenConnectionString`; manten el acople o ajusta ambos a la vez). `alert_email` y `postgresql_admin_password` son requeridos (sin default): en CI los alimenta el `env` de `infra-cd.yml` via `TF_VAR_alert_email`/`TF_VAR_postgresql_admin_password` (Paso 2b), nunca un `terraform.tfvars` commiteado (ADR-0025). `subscription_id` **no** es una variable de este archivo: el provider `azurerm` (Paso 2.1) la resuelve nativamente de `ARM_SUBSCRIPTION_ID`.
 
 ```hcl
-variable "subscription_id" {
-  description = "ID de la suscripcion de Azure"
-  type        = string
-}
-
 variable "project" {
   description = "Nombre corto del proyecto (sin espacios)"
   type        = string
@@ -1130,7 +1128,7 @@ output "postgresql_fqdn" {
 }
 
 output "postgresql_database_name" {
-  description = "Nombre de la base de datos PostgreSQL. USO ADMINISTRATIVO: junto con postgresql_fqdn, postgresql_administrator_login y el postgresql_admin_password que configuraste en terraform.tfvars, construye el connection string completo (Host=<postgresql_fqdn>;Database=<postgresql_database_name>;Username=<postgresql_administrator_login>;Password=<tu password>;SSL Mode=Require) para sembrar el secreto marten-connection (ADR-0025 decision #2) con az keyvault secret set. Terraform nunca escribe el valor del secreto."
+  description = "Nombre de la base de datos PostgreSQL. USO ADMINISTRATIVO: junto con postgresql_fqdn, postgresql_administrator_login y el mismo password que puso en el secreto de GitHub TF_VAR_POSTGRESQL_ADMIN_PASSWORD (nunca en terraform.tfvars), construye el connection string completo (Host=<postgresql_fqdn>;Database=<postgresql_database_name>;Username=<postgresql_administrator_login>;Password=<tu password>;SSL Mode=Require) para sembrar el secreto marten-connection (ADR-0025 decision #2) con az keyvault secret set. Terraform nunca escribe el valor del secreto."
   value       = module.postgresql.database_name
 }
 
@@ -1144,6 +1142,34 @@ output "app_insights_connection_string" {
   value       = module.monitoring.connection_string
   sensitive   = true
 }
+```
+
+### 2.5 `infra/environments/<env>/.gitignore`
+
+**Blindaje de secretos (ADR-0025 decision #1).** Un consumidor puede crear `terraform.tfvars` en el entorno para overridear defaults no sensibles (`project`, `project_short`, `postgresql_location`, etc.); si alguna vez pone ahi el `postgresql_admin_password` (por habito del patron previo a este agente) y lo commitea, el secreto viaja en texto plano en el repo y en su historial de git. `alert_email` y `postgresql_admin_password` ya no dependen de `terraform.tfvars` en CI (Paso 2b), pero el archivo sigue siendo una via de fuga si el consumidor lo usa localmente. Crea `infra/environments/<env>/.gitignore` **solo si no existe**, con el patron estandar de Terraform (HashiCorp, "Automate Terraform with GitHub Actions"; plantilla `Terraform.gitignore` de `github/gitignore`):
+
+```gitignore
+# Directorio local de providers/modulos (se regenera con terraform init)
+.terraform/
+.terraform.lock.hcl
+
+# Nunca commitear el tfstate local ni sus backups (el backend remoto es la fuente de verdad)
+*.tfstate
+*.tfstate.*
+
+# Nunca commitear valores concretos: pueden llevar postgresql_admin_password u otro
+# secreto (ADR-0025 decision #1). alert_email/postgresql_admin_password se alimentan
+# por TF_VAR_* en CI (Paso 2b), nunca por este archivo.
+terraform.tfvars
+terraform.tfvars.json
+*.auto.tfvars
+*.auto.tfvars.json
+
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
 ```
 
 ---
@@ -1180,6 +1206,10 @@ name: Infra CD
 # ni AZURE_CREDENTIALS (ADR-0022). El backend remoto es keyless por AAD
 # (use_azuread_auth, ADR-0025): ARM_USE_OIDC habilita tanto al provider azurerm
 # como al backend azurerm a autenticarse con el mismo token federado.
+# Variables Terraform requeridas (ADR-0022): TF_VAR_alert_email/TF_VAR_postgresql_admin_password
+# se alimentan de una GitHub variable/secret creados por un admin (ver Paso 5); nunca de un
+# terraform.tfvars commiteado (ADR-0025). subscription_id no es una variable: el provider
+# azurerm la resuelve nativamente de ARM_SUBSCRIPTION_ID (ya declarada abajo).
 
 on:
   pull_request:
@@ -1198,6 +1228,12 @@ env:
   ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
   ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
   ARM_USE_OIDC: true
+  # Variables Terraform requeridas por infra/environments/<env>/variables.tf, sin default
+  # (ADR-0022/ADR-0025): TF_VAR_alert_email desde una GitHub variable (no sensible);
+  # TF_VAR_postgresql_admin_password desde un GitHub secret (nunca un terraform.tfvars
+  # commiteado). Ambos los crea un admin manualmente (ver Paso 5 de infra-base-scaffolder).
+  TF_VAR_alert_email: ${{ vars.ALERT_EMAIL }}
+  TF_VAR_postgresql_admin_password: ${{ secrets.TF_VAR_POSTGRESQL_ADMIN_PASSWORD }}
 
 jobs:
   plan:
@@ -1382,12 +1418,14 @@ git commit -m "infra(<env>): generar infraestructura base (8 modulos + esqueleto
 Imprime un resumen claro:
 
 - **Modulos creados** vs **omitidos** (ya existian) bajo `infra/modules/`.
-- **Archivos del entorno creados** vs **omitidos** bajo `infra/environments/<env>/`.
+- **Archivos del entorno creados** vs **omitidos** bajo `infra/environments/<env>/` (incluido `.gitignore`, Paso 2.5).
 - **Workflow de CI** (`.github/workflows/infra-cd.yml`): creado u omitido (ya existia).
 - Resultado de `terraform validate`.
-- Variables requeridas que el consumidor debe proveer en `terraform.tfvars` (`alert_email`, `postgresql_admin_password`, `subscription_id`) y los defaults derivados que conviene revisar (`project`, `project_short`, `postgresql_location`).
-- **Secrets de GitHub requeridos por `infra-cd.yml`** (ADR-0022): `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` (OIDC, sin `AZURE_CREDENTIALS` ni access keys) -- los emite `scripts/setup-github-ci.sh`. El SP de CI necesita ademas el federated credential de subject `pull_request` (job `plan`) junto al de `ref:refs/heads/main` (job `apply`), y los roles ampliados de ADR-0022 (`Role Based Access Control Administrator` con condicion anti-escalacion, `Storage Blob Data Contributor` sobre el tfstate).
-- **Accion administrativa pendiente (ADR-0024 decision #6 / ADR-0025 decision #2):** tras el primer `apply`, un admin debe sembrar en el Key Vault: el secreto `serviceBus.internal.secretName` con `terraform output -raw service_bus_interno_connection_string` (y, cuando existan, cada `serviceBus.external[].secretName` con la cadena del ASB correspondiente); el secreto `marten-connection` con el connection string construido a partir de `terraform output -raw postgresql_fqdn`, `postgresql_database_name`, `postgresql_administrator_login` y el password que puso en `terraform.tfvars`; y el secreto `app-insights-connection` con `terraform output -raw app_insights_connection_string`. Terraform nunca escribe el valor de ningun secreto.
+- Variables requeridas por `variables.tf` sin default (`alert_email`, `postgresql_admin_password`) y como se alimentan en CI -- **nunca** por `terraform.tfvars` commiteado (ADR-0025): `infra-cd.yml` las inyecta como `TF_VAR_alert_email`/`TF_VAR_postgresql_admin_password` (Paso 2b). `subscription_id` no es una variable de este entorno: la resuelve nativamente `ARM_SUBSCRIPTION_ID`. Defaults derivados que conviene revisar: `project`, `project_short`, `postgresql_location`.
+- **Secrets/variables de GitHub requeridos por `infra-cd.yml`** (ADR-0022, ADR-0025), y quien los crea:
+  - `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` (OIDC, sin `AZURE_CREDENTIALS` ni access keys) -- los emite `scripts/setup-github-ci.sh`. El SP de CI necesita ademas el federated credential de subject `pull_request` (job `plan`) junto al de `ref:refs/heads/main` (job `apply`), y los roles ampliados de ADR-0022 (`Role Based Access Control Administrator` con condicion anti-escalacion, `Storage Blob Data Contributor` sobre el tfstate).
+  - La GitHub **variable** `ALERT_EMAIL` (*Settings > Secrets and variables > Actions > Variables*) y el GitHub **secret** `TF_VAR_POSTGRESQL_ADMIN_PASSWORD` (misma pantalla, pestana *Secrets*) los crea **manualmente el admin del repo** -- `setup-github-ci.sh` no los toca. Usa como valor de `TF_VAR_POSTGRESQL_ADMIN_PASSWORD` el **mismo** password que luego sembrara en el secreto `marten-connection` del Key Vault (accion administrativa siguiente): mismo valor en ambos lugares, sin generarlo dos veces ni imprimirlo en ningun log.
+- **Accion administrativa pendiente (ADR-0024 decision #6 / ADR-0025 decision #2):** tras el primer `apply`, un admin debe sembrar en el Key Vault: el secreto `serviceBus.internal.secretName` con `terraform output -raw service_bus_interno_connection_string` (y, cuando existan, cada `serviceBus.external[].secretName` con la cadena del ASB correspondiente); el secreto `marten-connection` con el connection string construido a partir de `terraform output -raw postgresql_fqdn`, `postgresql_database_name`, `postgresql_administrator_login` y el mismo password que puso en el secreto de GitHub `TF_VAR_POSTGRESQL_ADMIN_PASSWORD`; y el secreto `app-insights-connection` con `terraform output -raw app_insights_connection_string`. Terraform nunca escribe el valor de ningun secreto.
 - **Siguiente paso**: si el backend del `tfstate` aun no existe, corre `bootstrap-backend.sh`; luego abre un PR con este HCL (`/infra`) -- el `plan` corre en el PR y el `apply` real lo ejecuta `infra-cd.yml` en CI al mergear a `main` (ADR-0022), nunca localmente. Para crear el primer dominio, usa `/scaffold <dominio>` (que agrega su `service-plan`/`storage`/`function-app` a este entorno, junto con el role assignment "Key Vault Secrets User" de su managed identity, los tres role assignments de datos de Storage para `AzureWebJobsStorage` por identidad, y sus app settings `SERVICE_BUS_CONNECTION_<ALIAS>`, `MartenConnectionString` y `APPLICATIONINSIGHTS_CONNECTION_STRING` como referencias `@Microsoft.KeyVault(...)`; su workflow de deploy se encadena tras `infra-cd.yml`, ver `domain-scaffolder.md` Paso 5).
 
 ## Reglas absolutas
@@ -1402,3 +1440,4 @@ Imprime un resumen claro:
 8. **NUNCA** crees un `azurerm_key_vault_secret` ni materialices en Terraform el valor de un secreto (cadena de ASB, password de Postgres, connection string de App Insights -- ADR-0025 decision #6): el valor lo coloca infra/admin de forma administrativa, fuera de Terraform. El modulo Key Vault y el entorno solo referencian el secreto por nombre.
 9. **NUNCA** pases `storage_account_access_key` ni una connection string con access key literal al modulo `function-app` (ADR-0025 decision #3): usa `storage_uses_managed_identity = true` y los role assignments de datos de Storage sobre la managed identity.
 10. **NUNCA** sobrescribas `.github/workflows/infra-cd.yml` si ya existe (idempotencia, mismo patron que los workflows de smoke-tests del `domain-scaffolder`): omitelo y reportalo.
+11. **NUNCA** instruyas pasar `alert_email` o `postgresql_admin_password` por `terraform.tfvars` en CI (ADR-0025 decision #1): ambos se alimentan por `TF_VAR_*` desde una GitHub variable/secret (Paso 2b). Siempre genera `infra/environments/<env>/.gitignore` (Paso 2.5) para que un `terraform.tfvars` local nunca se commitee por error.

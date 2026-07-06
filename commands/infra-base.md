@@ -54,9 +54,13 @@ Recuerda al usuario el orden del flujo greenfield:
 ```
 Infraestructura base generada. Siguiente:
   1. Si el backend del tfstate aun no existe -> bootstrap-backend.sh
-  2. Provee las variables requeridas en terraform.tfvars (alert_email,
-     postgresql_admin_password, subscription_id) y revisa los defaults
-     derivados (project, project_short, postgresql_location).
+  2. Crea la GitHub variable ALERT_EMAIL y el GitHub secret
+     TF_VAR_POSTGRESQL_ADMIN_PASSWORD (Settings > Secrets and variables > Actions;
+     setup-github-ci.sh no los crea) -- infra-cd.yml los inyecta como
+     TF_VAR_alert_email/TF_VAR_postgresql_admin_password, nunca via terraform.tfvars
+     commiteado (ADR-0025). subscription_id ya no es una variable: se resuelve de
+     ARM_SUBSCRIPTION_ID. Revisa tambien los defaults derivados en variables.tf
+     (project, project_short, postgresql_location).
   3. Primer /infra: escribe y revisa el HCL, abre un PR. El apply real
      ocurre en CI al mergear a main (workflow Infra CD), nunca en local.
   4. /scaffold <dominio> agrega su service-plan/storage/function-app a este entorno.
