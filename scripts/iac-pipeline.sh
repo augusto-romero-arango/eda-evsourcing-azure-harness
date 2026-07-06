@@ -522,8 +522,6 @@ EOF
 
 [ -n "${PR_URL:-}" ] && success "PR creado: $PR_URL"
 
-PIPELINE_PR="${PR_URL:-}"
-
 gh issue comment "$ISSUE_NUM" \
     --body "Pipeline IaC completado (HCL escrito y revisado, sin plan ni apply local). PR: ${PR_URL:-pendiente}. Infra pendiente de aplicar por CI: el workflow **Infra CD** aplica al mergear a main y cierra este issue tras un apply exitoso (ADR-0022)." \
     --repo "$REPO_SLUG" \
