@@ -1146,12 +1146,16 @@ output "app_insights_connection_string" {
 
 ### 2.5 `infra/environments/<env>/.gitignore`
 
-**Blindaje de secretos (ADR-0025 decision #1).** Un consumidor puede crear `terraform.tfvars` en el entorno para overridear defaults no sensibles (`project`, `project_short`, `postgresql_location`, etc.); si alguna vez pone ahi el `postgresql_admin_password` (por habito del patron previo a este agente) y lo commitea, el secreto viaja en texto plano en el repo y en su historial de git. `alert_email` y `postgresql_admin_password` ya no dependen de `terraform.tfvars` en CI (Paso 2b), pero el archivo sigue siendo una via de fuga si el consumidor lo usa localmente. Crea `infra/environments/<env>/.gitignore` **solo si no existe**, con el patron estandar de Terraform (HashiCorp, "Automate Terraform with GitHub Actions"; plantilla `Terraform.gitignore` de `github/gitignore`):
+**Blindaje de secretos (ADR-0025 decision #1).** Un consumidor puede crear `terraform.tfvars` en el entorno para overridear defaults no sensibles (`project`, `project_short`, `postgresql_location`, etc.); si alguna vez pone ahi el `postgresql_admin_password` (por habito del patron previo a este agente) y lo commitea, el secreto viaja en texto plano en el repo y en su historial de git. `alert_email` y `postgresql_admin_password` ya no dependen de `terraform.tfvars` en CI (Paso 2b), pero el archivo sigue siendo una via de fuga si el consumidor lo usa localmente. Crea `infra/environments/<env>/.gitignore` **solo si no existe**, con el patron estandar de Terraform (plantilla `Terraform.gitignore` de `github/gitignore`). Igual que esa plantilla, **no** lista `.terraform.lock.hcl`: el lock file de dependencias se commitea a proposito, para que el `plan` (en el PR) y el `apply` (al mergear a `main`) resuelvan providers a las mismas versiones/hashes (HashiCorp, "Dependency Lock File"):
 
 ```gitignore
 # Directorio local de providers/modulos (se regenera con terraform init)
 .terraform/
-.terraform.lock.hcl
+
+# NO ignores .terraform.lock.hcl: el lock file de dependencias SI se commitea, para
+# que el plan (en el PR) y el apply (al mergear a main) usen exactamente las mismas
+# versiones/hashes de providers (HashiCorp, "Dependency Lock File": "You should include
+# this file in your version control repository"). No aparece aqui a proposito.
 
 # Nunca commitear el tfstate local ni sus backups (el backend remoto es la fuente de verdad)
 *.tfstate
