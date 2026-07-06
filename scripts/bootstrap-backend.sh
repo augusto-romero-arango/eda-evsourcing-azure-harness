@@ -304,12 +304,15 @@ else
     cat > "$BACKEND_FILE" <<EOF
 # Generado por scripts/bootstrap-backend.sh -- no editar a mano.
 # Backend remoto del estado de Terraform para el ambiente '${ENVIRONMENT}'.
+# 'use_azuread_auth = true': acceso keyless por AAD/RBAC, nunca por access key
+# (ADR-0025, ADR-0022; developer.hashicorp.com/terraform/language/backend/azurerm).
 terraform {
   backend "azurerm" {
     resource_group_name  = "${RG}"
     storage_account_name = "${STORAGE}"
     container_name       = "${CONTAINER}"
     key                  = "${BACKEND_KEY}"
+    use_azuread_auth     = true
   }
 }
 EOF
@@ -326,9 +329,16 @@ terraform {
     storage_account_name = "${STORAGE}"
     container_name       = "${CONTAINER}"
     key                  = "${BACKEND_KEY}"
+    use_azuread_auth     = true
   }
 }
 EOF
+echo ""
+echo "El backend es keyless (AAD/RBAC, ADR-0025): ningun access key se emite ni se"
+echo "persiste para el tfstate. El principal que hace 'terraform apply' en CI"
+echo "requiere el rol 'Storage Blob Data Contributor' (lectura+escritura, no solo"
+echo "lectura) sobre esta Storage Account -- lo asigna scripts/setup-github-ci.sh"
+echo "(issue #195), no este script."
 echo ""
 echo "Siguiente paso: el pipeline IaC ejecuta 'terraform init' en ${INFRA_ENV_DIR}"
 echo "y reutiliza este backend. Lanzalo con /infra o scripts/iac-pipeline.sh."
