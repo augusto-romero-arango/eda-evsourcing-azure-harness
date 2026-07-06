@@ -1,8 +1,8 @@
 # ADR-0022: Autenticacion de CI hacia Azure por OIDC (Workload Identity Federation)
 
-- **Fecha**: 2026-06-26
+- **Fecha**: 2026-06-26 (reformado 2026-07-06)
 - **Estado**: aceptado
-- **Aplica a**: pipeline de CI/CD del proyecto consumidor (GitHub Actions), `scripts/setup-github-ci.sh`, el workflow de deploy que emite `domain-scaffolder` (Paso 5) y el bootstrap de infraestructura documentado en el README.
+- **Aplica a**: pipeline de CI/CD del proyecto consumidor (GitHub Actions), `scripts/setup-github-ci.sh`, el workflow de deploy que emite `domain-scaffolder` (Paso 5), el workflow de CI de Terraform (`infra-cd.yml`) que emite `infra-base-scaffolder`, `scripts/iac-pipeline.sh` (que deja de aplicar localmente) y el bootstrap de infraestructura documentado en el README.
 
 ## Contexto
 
@@ -20,25 +20,66 @@ Habia que elegir **una** via para alinear ambos lados. El espacio de soluciones 
 1. **Secret de cliente**: emitir el JSON unico `AZURE_CREDENTIALS` (formato `clientId`/`clientSecret`/`tenantId`/`subscriptionId`) y consumirlo con `creds:`.
 2. **OIDC (OpenID Connect / Workload Identity Federation)**: un Service Principal **sin secret** con un *federated credential* que confia en los tokens efimeros que GitHub emite por workflow; `azure/login` recibe `client-id`/`tenant-id`/`subscription-id` y obtiene un token de acceso de corta vida por intercambio.
 
+**Reforma (issue #196): el `apply` de infraestructura tambien vive en CI.** Hasta aqui este ADR solo cubria la autenticacion del **deploy de codigo** (`deploy-<dominio>.yml`). El `terraform apply` de infraestructura (`scripts/iac-pipeline.sh` Stage 3, agente `infra-applier`) seguia siendo **100% local**: corria con las credenciales de Azure del desarrollador que ejecuta Mefisto, exigiendole permisos elevados sobre la suscripcion (Contributor + `roleAssignments/write` + acceso a los secretos custodiados) en su propia maquina -- exactamente el perfil de riesgo que OIDC ya evitaba para el deploy de codigo desde el issue #97. Este ADR se reforma para cerrar esa asimetria: el `apply` de infra pasa a ejecutarse tambien en CI, bajo la misma identidad federada.
+
 ## Decision
 
-**El CI del marco se autentica hacia Azure por OIDC (Workload Identity Federation). El Service Principal de CI no tiene secret.**
+**El CI del marco se autentica hacia Azure por OIDC (Workload Identity Federation). El Service Principal de CI no tiene secret. El `apply` de infraestructura ocurre en CI, bajo esta misma identidad federada -- nunca localmente.**
 
 Concretamente:
 
-- `scripts/setup-github-ci.sh` crea la aplicacion de Microsoft Entra + su Service Principal **sin** credencial de password, le asigna `Contributor` a nivel de suscripcion (alcance del deploy de Functions, no solo lectura del tfstate) y `Storage Blob Data Reader` sobre la Storage del tfstate, y le anade un **federated credential** que confia en `repo:<owner/repo>:ref:refs/heads/main`.
+- `scripts/setup-github-ci.sh` crea la aplicacion de Microsoft Entra + su Service Principal **sin** credencial de password, le asigna los roles de la seccion "Roles del Service Principal de CI" (a nivel de suscripcion y sobre la Storage del tfstate) y le anade los **federated credentials** de la seccion "El subject del federated credential".
 - El workflow de deploy declara `permissions: id-token: write` (y `contents: read` para `actions/checkout`) en el job `deploy`, y usa `azure/login` con los inputs separados `client-id` / `tenant-id` / `subscription-id`, NO `creds:`.
+- El workflow de CI de Terraform (`infra-cd.yml`, emitido por `infra-base-scaffolder`, ADR-0021) usa la misma identidad: `azure/login` con los mismos tres inputs, sin `creds:` ni secret adicional.
 - Los unicos secrets de GitHub son **tres**: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`. **Ninguno es un secret de password.**
+
+### El apply de infraestructura ocurre en CI, nunca localmente
+
+El desarrollador que usa Mefisto **planifica y revisa** el HCL/plan; nunca ejecuta `terraform apply` en su maquina ni necesita permisos elevados de Azure ni custodia secretos. El `apply` real -- el unico paso que escribe recursos y requiere acceso a los secretos custodiados (Key Vault, tfstate) -- lo ejecuta el Service Principal de CI, por OIDC, dentro de GitHub Actions.
+
+**Modelo plan-en-PR / apply-en-merge-a-main**, siguiendo la guia de automatizacion de HashiCorp para Terraform con GitHub Actions [8]:
+
+| Evento | Job | Que hace |
+|---|---|---|
+| `pull_request` sobre `infra/**` | `plan` | `terraform init` + `terraform plan`; publica el resumen del plan (comentario o check del PR). No aplica. |
+| `push` a `main` sobre `infra/**` (tras mergear el PR) | `apply` | `terraform init` + `terraform apply`. |
+
+El pipeline local (`scripts/iac-pipeline.sh`) deja de tener un Stage que aplica: sus Stages 1 (`infra-writer`) y 2 (`infra-reviewer`, plan) siguen corriendo localmente contra el worktree, pero el resultado es un PR con el HCL y el plan revisados, nunca un `terraform apply` ejecutado por el desarrollador. El agente `infra-applier` (que hoy invoca `terraform apply` con las credenciales locales) y el propio pipeline se reimplementan para este modelo en el issue #199; este ADR fija el criterio, no el mecanismo de script.
+
+### Roles del Service Principal de CI
+
+La asignacion de roles a nivel de **suscripcion** (mismo scope que ya tenia `Contributor`) se amplia para soportar el `apply` de infraestructura completo:
+
+| Rol | Scope | Motivo |
+|---|---|---|
+| `Contributor` | Suscripcion | Deploy de Functions e infraestructura (ya asignado, sin cambios). |
+| `Role Based Access Control Administrator` (con condicion anti-escalacion) | Suscripcion | Los scaffolders de ADR-0025 emiten `azurerm_role_assignment` (Key Vault Secrets User, roles de datos de Storage); `Contributor` **excluye explicitamente** `Microsoft.Authorization/roleAssignments/write` [9], asi que sin este rol el `apply` de CI falla al crear esos role assignments. |
+| `Storage Blob Data Contributor` | Storage Account del tfstate | El `apply` **escribe** el state y toma el lease/lock del blob; con el backend keyless de AAD (ADR-0025) necesita lectura y escritura por AAD, no solo lectura. Reemplaza a `Storage Blob Data Reader`. |
+
+**Por que `Role Based Access Control Administrator` y no `User Access Administrator`.** Microsoft Learn documenta `Role Based Access Control Administrator` como el rol de **menor privilegio** para delegar la gestion de asignaciones de rol, frente a `User Access Administrator`, que ademas puede reclamar el rol de administrador de acceso para si mismo y gestionar cualquier aspecto del control de acceso [10]. El SP de CI solo necesita crear role assignments (Key Vault Secrets User, roles de datos de Storage) sobre recursos que el propio `apply` acaba de crear; no necesita el resto de capacidades de `User Access Administrator`.
+
+**La condicion anti-escalacion es un detalle de implementacion (issue #195, RBAC del SP).** Este ADR fija que el rol se asigna **con una condicion** que excluye que el SP pueda asignar roles privilegiados (`Owner`, `User Access Administrator`, el propio `Role Based Access Control Administrator`) a si mismo o a otro principal -- el patron estandar para evitar que un rol de administracion de roles se convierta en una via de escalacion a `Owner`. La plantilla concreta de la condicion (sintaxis ABAC) la escribe #195.
+
+**Por que scope de suscripcion y no del resource group del BC.** `scripts/setup-github-ci.sh` corre en el **bootstrap**, antes de que exista el Resource Group del BC -- ese RG lo crea el propio `terraform apply`, como el modulo `resource-group` de ADR-0021. Acotar la asignacion al RG introduce un problema de huevo y gallina: el permiso se necesitaria antes de que el recurso al que se acotaria exista. Resolverlo sacaria la creacion del RG fuera de Terraform, lo que rompe la decision de ADR-0021 de que la infraestructura base provisiona el RG como un modulo mas. Dada la arquitectura actual, el menor privilegio **viable** es scope de suscripcion + condicion anti-escalacion, no scope de RG.
 
 ### El subject del federated credential
 
-El *subject* del federated credential debe coincidir **exacto** con el claim que GitHub pone en el OIDC token; el matching de patrones no esta soportado para ramas/tags [3]. El workflow de deploy del scaffolder dispara en `push: branches: [main]` (mas `workflow_dispatch`, que desde `main` produce el mismo ref), con jobs **no atados a un GitHub Environment**, de modo que el subject canonico es:
+El *subject* del federated credential debe coincidir **exacto** con el claim que GitHub pone en el OIDC token; el matching de patrones no esta soportado para ramas/tags [3]. El SP de CI necesita **dos** federated credentials, uno por cada evento que dispara un job que se autentica contra Azure:
 
-```
-repo:<owner/repo>:ref:refs/heads/main
-```
+| Workflow / job | Evento | Subject |
+|---|---|---|
+| `deploy-<dominio>.yml` (deploy de codigo) y `infra-cd.yml` job `apply` | `push: branches: [main]` (jobs no atados a un GitHub Environment) | `repo:<owner/repo>:ref:refs/heads/main` |
+| `infra-cd.yml` job `plan` | `pull_request` sobre `infra/**` | `repo:<owner/repo>:pull_request` |
 
-Las demas formas (`...:environment:<Name>` para jobs atados a un Environment, `...:pull_request` para eventos de pull request) [2][4] quedan fuera del workflow que emite el marco. Si un consumidor cambia el trigger para desplegar desde otra rama, tag o un Environment, debe anadir el federated credential correspondiente; el script lo documenta en su salida y el scaffolder en la nota del Paso 5.
+El subject de un evento `pull_request` **no** lleva el ref de la rama ni matchea por patrones [3][4]: es un valor fijo por repositorio, distinto del subject de push a `main`. Por eso el `apply` (que corre en push a `main`) reutiliza el federated credential ya existente, pero el `plan` (que corre en `pull_request`) necesita uno **adicional** con ese subject; sin el, `azure/login` en el job `plan` falla con "no matching federated identity record" aunque el `apply` funcione. La forma `...:environment:<Name>` [2][4] sigue fuera del workflow que emite el marco (ningun job del marco esta atado a un GitHub Environment). Si un consumidor cambia el trigger de deploy a otra rama, tag o un Environment, debe anadir el federated credential correspondiente; el script lo documenta en su salida y el scaffolder en la nota del Paso 5.
+
+### Cierre del issue de infra: al aplicar en CI, no al mergear el PR
+
+El flujo preview -> apply del pipeline IaC (issue #96) ya establecia que el issue de infraestructura representa **"infra aplicada"**, no "infra previsualizada" ni "infra mergeada": con `--skip-apply` el PR de preview no lleva `Closes #N` y el issue se cierra recien cuando el `apply` posterior corre exitosamente. Migrar el `apply` a CI **no cambia ese criterio**, solo cambia **quien** ejecuta el cierre: el PR del pipeline IaC tampoco lleva `Closes #N` (el HCL puede necesitar ajustes en revision antes de aplicarse), y es el job `apply` de `infra-cd.yml` -- o el pipeline que lo orquesta -- quien cierra el issue tras un `terraform apply` exitoso en `main`. El mecanismo concreto (`gh issue close` desde el workflow, con que credencial de GitHub) lo materializan #197/#199; este ADR fija el criterio de cierre.
+
+### Orden: infra antes que deploy de codigo
+
+El deploy de codigo de un dominio (`deploy-<dominio>.yml`) no debe ejecutarse antes de que su Function App exista o este actualizada por el `apply` de infra: es una dependencia fisica, no puede publicarse codigo a una Function App inexistente. Con el `apply` migrado a CI, ambos workflows (`infra-cd.yml` y `deploy-<dominio>.yml`) pueden correr en el mismo evento (`push` a `main`), asi que el orden entre ellos deja de estar garantizado por el orden manual del desarrollador (bootstrap -> `/infra` -> `/scaffold` -> deploy) y pasa a depender de como CI encadena los workflows. Este ADR fija el **principio**; el **mecanismo** concreto (p. ej. encadenar `deploy-<dominio>.yml` tras `infra-cd.yml` via `workflow_run` cuando el push toco `infra/**`, conservando el disparo directo por `src/**` para cambios de solo codigo) lo decide el issue #197. En greenfield, mientras ese mecanismo no exista, el orden lo sigue garantizando el flujo manual documentado en el README (bootstrap -> infra-base -> primer `/infra` -> `/scaffold` + deploy).
 
 ### Por que OIDC y no el secret de cliente
 
@@ -65,6 +106,12 @@ Usar una user-assigned managed identity en vez de una app de Entra [1][5].
 
 **Descartado**: una managed identity vive como recurso de Azure (necesita un resource group, ciclo de vida en Terraform) y aporta poco frente a la app de Entra para el caso "GitHub Actions deplega a una suscripcion". La app + SP es el patron documentado por defecto para GitHub→Azure y es lo que el script ya gestionaba.
 
+### Alt 3: mantener el apply local, con elevacion temporal (PIM / Just-In-Time)
+
+Para la decision de **donde** corre el `apply` (issue #196): usar Privileged Identity Management (PIM) de Microsoft Entra para que el desarrollador active los roles elevados (`Contributor`, `Role Based Access Control Administrator`) solo durante la ventana del `apply`, en vez de correrlo en CI.
+
+**Descartado**: PIM requiere licenciamiento Entra ID P2, que el harness no puede asumir disponible en toda suscripcion consumidora. Ademas la credencial elevada sigue viajando por la maquina del desarrollador durante la ventana activa (superficie de robo de token/sesion), y el audit trail de un `apply` en CI (log del workflow, revision del PR que lo precede) es mas fuerte y uniforme que el de una sesion interactiva local. Migrar el `apply` a CI resuelve el mismo problema de exposicion sin depender de una feature de licenciamiento opcional.
+
 ## Consecuencias
 
 ### Positivas
@@ -73,12 +120,15 @@ Usar una user-assigned managed identity en vez de una app de Entra [1][5].
 - **Sin secret que rote ni expire**: elimina el modo de falla "el deploy muere al ano".
 - **Alineado con la guia vigente de Azure/GitHub** [1][5] y sin depender de comandos/flujos deprecados [6].
 - **Menos secrets** (3 en vez de 4) y ninguno sensible de larga vida.
+- **Ningun desarrollador custodia credenciales elevadas de Azure en su maquina**: el `apply` de infra -- el unico paso que necesita escribir recursos y leer/escribir secretos -- corre en CI bajo la identidad federada; el humano solo planifica y revisa (issue #196).
 
 ### Negativas
 
 - **Acoplamiento al subject**: el federated credential confia en `ref:refs/heads/main`. Si el consumidor despliega desde otro ref o detras de un Environment sin anadir el credential correspondiente, `azure/login` falla con un error de "no matching federated identity record". Mitigado: el marco controla el trigger generado (`branches: [main]`), el script imprime el subject configurado y advierte el caso, y la nota del Paso 5 del scaffolder lo documenta.
 - **Permisos de Graph para el setup**: crear la app, el SP y el federated credential requiere permisos de gestion de aplicaciones en Microsoft Entra (comparables a los que ya exigia `az ad sp create-for-rbac`). No cambia el perfil del operador que corria el script.
 - **Resolucion del slug del repo**: el script necesita el `owner/repo` para el subject. Se resuelve via `gh repo view` o el remote `origin`, con override por argumento; si no hay remote de GitHub ni `gh` autenticado, aborta pidiendo el slug.
+- **Mayor superficie de IAM en el SP de CI**: `Role Based Access Control Administrator` a nivel de suscripcion es mas privilegio que `Contributor` + `Storage Blob Data Reader` del estado anterior. Mitigado por la condicion anti-escalacion (issue #195) que impide que el SP se otorgue a si mismo -- o a otro principal -- roles de administracion (`Owner`, `User Access Administrator`, el propio `Role Based Access Control Administrator`).
+- **Dos federated credentials en vez de uno**: el SP debe mantener el subject de `pull_request` (plan) ademas del de `ref:refs/heads/main` (deploy y apply); un tercer trigger nuevo (otro evento o rama) exigiria un tercer credential, mismo patron que la nota ya existente sobre acoplamiento al subject.
 
 ## Referencias
 
@@ -89,9 +139,15 @@ Usar una user-assigned managed identity en vez de una app de Entra [1][5].
 - **[5]** "Deploy Bicep files by using GitHub Actions — Generate deployment credentials (OpenID Connect)". https://learn.microsoft.com/azure/azure-resource-manager/bicep/deploy-github-actions#generate-deployment-credentials
 - **[6]** Azure Verified Modules, "Bicep Contribution Flow — Configure a deployment identity": OIDC como opcion recomendada y "Option 2 [Deprecated]: Configure Service Principal + Secret". https://azure.github.io/Azure-Verified-Modules/contributing/bicep/bicep-contribution-flow/#2-configure-a-deployment-identity-in-azure
 - **[7]** GitHub, "Azure Login action — Login with OpenID Connect (OIDC) (recommended)". https://github.com/Azure/login#login-with-openid-connect-oidc-recommended
+- **[8]** HashiCorp, "Automate Terraform with GitHub Actions" — modelo plan-en-pull-request / apply-en-merge-a-main. https://developer.hashicorp.com/terraform/tutorials/automation/github-actions
+- **[9]** Microsoft Learn, "Azure built-in roles — Contributor" — el rol excluye explicitamente `Microsoft.Authorization/*/Delete`, `Microsoft.Authorization/*/Write` (con las excepciones puntuales que lista la definicion) y `Microsoft.Authorization/elevateAccess/Action`. https://learn.microsoft.com/azure/role-based-access-control/built-in-roles/general#contributor
+- **[10]** Microsoft Learn, "Azure built-in roles — Identity" / "Delegate Azure access management to others" — `Role Based Access Control Administrator` como delegacion de menor privilegio que `User Access Administrator` para gestionar asignaciones de rol. https://learn.microsoft.com/azure/role-based-access-control/built-in-roles/identity#role-based-access-control-administrator
 - ADR-0023: Bounded Context, namespace interno de Azure Service Bus y frontera publico/privado — recoge el eje runtime-cross-BC (diferido) que este ADR explicitamente no cubre.
 - ADR-0024: Modelo de eventos de bus (privado propio, publico via backbone compartido, integracion externa diferida) — reencuadra el namespace de integracion citado en la seccion anterior como el transporte del caso diferido de integracion verdaderamente externa, no como el default del evento publico.
+- ADR-0021 (infraestructura base): reformado junto con este ADR (issue #196); el `infra-base-scaffolder` emite el workflow `infra-cd.yml` que se autentica con la identidad y los roles que este ADR fija.
+- ADR-0025 (custodia de secretos): reformado junto con este ADR (issue #196); el backend keyless (`use_azuread_auth`) del tfstate es el mecanismo que hace posible que ni el `plan` local ni el `apply` de CI dependan de una access key.
 
 ## Control de cambios
 
 - 2026-07-01: enmendado (issue #167, barrido de coherencia hacia ADR-0024) para actualizar la referencia a ADR-0023 y anadir remision a ADR-0024. La seccion "Frontera de alcance: autenticacion runtime cross-BC" no cambia: sigue describiendo el caso diferido de integracion verdaderamente externa (ADR-0024 decision #5), vigente.
+- 2026-07-06: reformado (issue #196, ancla doctrinal de la oleada de apply-en-CI, junto con ADR-0021 y ADR-0025) para fijar que el `apply` de infraestructura ocurre en CI bajo identidad federada, nunca localmente (modelo plan-en-PR / apply-en-merge-a-main). Se amplian los roles del SP (`Role Based Access Control Administrator` con condicion anti-escalacion a nivel suscripcion; `Storage Blob Data Contributor` en vez de `Storage Blob Data Reader` sobre el tfstate) y se anade el federated credential de subject `pull_request` junto al de `ref:refs/heads/main`. Se fija que el issue de infra se cierra al completar el `apply` de CI, no al mergear el PR (continuidad de la doctrina de #96), y el principio de que el deploy de codigo no debe correr antes que el `apply` de infra. Se elimina del cuerpo la afirmacion de que el subject `pull_request` "queda fuera del workflow que emite el marco" (seccion "El subject del federated credential") y la asignacion de solo `Storage Blob Data Reader` sobre el tfstate; el mecanismo concreto (workflow `infra-cd.yml`, reimplementacion de `iac-pipeline.sh`/`infra-applier`, plantilla ABAC de la condicion anti-escalacion) lo materializan los issues #197, #198, #195, #199 y #200.
