@@ -30,6 +30,8 @@ Si el bloque imprime `ERROR`, detente y muestra el mensaje al usuario.
 
 La provision de **labels** (paso 3) y la del **CI** hacia Azure (paso 4) las ofrece `/onboard` como pasos **opt-in**, bajo confirmacion explicita: el script de labels es destructivo (borra los labels default de GitHub) y el de CI crea recursos reales en Azure (app de Entra, role assignments, federated credential -- OIDC, ADR-0022). El diagnostico en si sigue siendo de solo lectura: sin tu confirmacion no se crea, borra ni provisiona nada.
 
+Al cerrar el reporte, `/onboard` imprime un bloque **"Proximos pasos"**: deriva del mismo diagnostico ya hecho (sin re-verificar nada) el comando exacto a correr a continuacion -- labels (ADR-0007), CI (ADR-0022), infraestructura base (`/mefisto:infra-base dev`, ADR-0021) o la siembra recurrente de secretos en Key Vault (ADR-0025), segun que seccion reporto `FALTA` -- y cierra con un puntero descubrible al quickstart narrativo del arranque greenfield (`docs/greenfield-quickstart.md` del harness). Es **puramente informativo**: no ejecuta `gh`/`az` ni provisiona nada; las unicas escrituras siguen siendo los pasos opt-in 3 y 4.
+
 ## Proceso
 
 ### 1. Ejecutar el diagnostico
@@ -42,12 +44,15 @@ PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
 PLUGIN_COMMON="${PLUGIN_ROOT%/}/scripts/_pipeline-common.sh"
 PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
 
-PLUGIN_COMMON="$PLUGIN_COMMON" PLUGIN_SCRIPTS="$PLUGIN_SCRIPTS" bash <<'ONBOARD'
+PLUGIN_COMMON="$PLUGIN_COMMON" PLUGIN_SCRIPTS="$PLUGIN_SCRIPTS" PLUGIN_ROOT="$PLUGIN_ROOT" bash <<'ONBOARD'
 set +e
 
 CONFIG=".claude/harness.config.json"
 N_OK=0; N_FALTA=0; N_NV=0
 ACTIONS=""
+# Flags para el bloque de cierre "Proximos pasos" (CA-1): se fijan junto a cada row() FALTA
+# correspondiente, para no re-diagnosticar nada al construir el bloque en la seccion 6.
+PA_CONFIG_FALTA=0; PA_TOKENS_FALTA=0; PA_LABELS_FALTA=0; PA_CI_FALTA=0; PA_INFRA_BASE_MISSING=0
 
 row() {
   estado="$1"; shift; item="$*"
@@ -85,6 +90,7 @@ if [ -n "${PLUGIN_COMMON:-}" ] && [ -f "${PLUGIN_COMMON:-}" ]; then
       row OK "boundedContext declarado: name='${HARNESS_BC_NAME}' domains='${HARNESS_BC_DOMAINS}'"
     else
       row FALTA "boundedContext ausente o invalido (campo obligatorio, ADR-0023)"
+      PA_CONFIG_FALTA=1
       ACTIONS="${ACTIONS}  - Falta 'boundedContext' en .claude/harness.config.json. Añade:
     \"boundedContext\": { \"name\": \"<NombreDetuBC>\", \"domains\": [<tus domainLabels>] }
   Los dominios deben ser un subconjunto de domainLabels. Ver README seccion 'Migracion para consumidores existentes'.
@@ -97,6 +103,7 @@ if [ -n "${PLUGIN_COMMON:-}" ] && [ -f "${PLUGIN_COMMON:-}" ]; then
     fi
   else
     row FALTA "configuracion invalida o incompleta"
+    PA_CONFIG_FALTA=1
     printf '%s\n' "$LHC_ERR" | while IFS= read -r l; do [ -n "$l" ] && echo "                  $l"; done
     ACTIONS="${ACTIONS}  - Corrige .claude/harness.config.json segun el detalle de arriba (README, seccion \"Configurar el consumidor\").
 "
@@ -121,6 +128,7 @@ if [ -r "$CLAUDE_MD" ]; then
     row OK "los 5 tokens estan presentes (RootNamespace, SolutionFile, ProjectDisplayName, BoundedContext, BoundedContextDomains)"
   else
     row FALTA "faltan tokens en CLAUDE.md:$MISSING_TOKENS"
+    PA_TOKENS_FALTA=1
     ACTIONS="${ACTIONS}  - Completa la seccion \"Tokens del harness\" de tu CLAUDE.md raiz con los tokens faltantes ($MISSING_TOKENS). Ver CLAUDE.md del harness, seccion \"Contrato con el proyecto consumidor\" punto 2, para el formato exacto.
 "
   fi
@@ -138,6 +146,7 @@ for dir in src tests infra/environments; do
     row OK "$dir/ existe"
   else
     row NV "$dir/ no existe todavia (normal en greenfield antes del primer /scaffold o /infra-base; no bloqueante)"
+    [ "$dir" = "infra/environments" ] && PA_INFRA_BASE_MISSING=1
   fi
 done
 
@@ -164,6 +173,7 @@ else
     row OK "esquema completo (tipo:*, estado:*, dom:*, bug, bloqueado)"
   else
     row FALTA "faltan labels:$MISSING"
+    PA_LABELS_FALTA=1
     ACTIONS="${ACTIONS}  - Faltan labels del esquema. /onboard puede crearlos en el paso de provision opt-in (te lo ofrece tras el diagnostico, bajo confirmacion: el script borra los labels default de GitHub y recrea el esquema). O ejecutalo tu mismo: \"$PLUGIN_SCRIPTS/setup-github-labels.sh\".
 "
   fi
@@ -191,6 +201,7 @@ else
     row OK "aplicacion de Entra \"$HARNESS_SP_NAME\" existe (appId $APP_ID)"
   else
     row FALTA "aplicacion de Entra \"$HARNESS_SP_NAME\" no encontrada"
+    PA_CI_FALTA=1
     ACTIONS="${ACTIONS}  - Falta la app de Entra del CI. /onboard puede configurarlo en el paso de provision opt-in (te lo ofrece tras el diagnostico, bajo confirmacion: crea recursos reales en Azure -- app de Entra, role assignments y federated credential OIDC, ADR-0022 -- y debe correr DESPUES de bootstrap-backend.sh). O ejecutalo tu mismo: \"$PLUGIN_SCRIPTS/setup-github-ci.sh <subscription-id>\".
 "
   fi
@@ -210,6 +221,7 @@ else
     row OK "secrets OIDC presentes (AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID)"
   else
     row FALTA "faltan secrets OIDC:$MISS_S"
+    PA_CI_FALTA=1
     ACTIONS="${ACTIONS}  - Copia los tres secrets OIDC (AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID) que imprime \"$PLUGIN_SCRIPTS/setup-github-ci.sh <subscription-id>\" a Settings > Secrets and variables > Actions. El script (y el paso de provision opt-in de /onboard) NO los sube: pegalos a mano. No hay client secret que expire (OIDC, ADR-0022).
 "
   fi
@@ -232,17 +244,64 @@ else
   echo "  Estado: INCOMPLETO - resuelve los FALTA antes de usar los pipelines."
 fi
 echo "===================================================================="
+echo ""
+echo "Proximos pasos (informativo -- no ejecuta nada; los comandos abajo son los que tu corres o confirmas):"
+if [ "$N_FALTA" -eq 0 ]; then
+  if [ "$PA_INFRA_BASE_MISSING" -eq 1 ]; then
+    echo "  1. Genera la infraestructura base: /mefisto:infra-base dev"
+  else
+    echo "  1. El harness esta configurado: arranca (o continua) el dominio con /mefisto:scaffold <dominio>,"
+    echo "     luego /mefisto:draft y /mefisto:implement para tu primer ciclo TDD."
+    echo "  2. Recordatorio recurrente: si Terraform crea secretos nuevos (o sumas un alias externo de"
+    echo "     Service Bus), siembra sus valores en Key Vault a mano (\"az keyvault secret set\","
+    echo "     rol admin/infra -- ADR-0025)."
+  fi
+else
+  PA_STEP=0
+  if [ "$PA_CONFIG_FALTA" -eq 1 ]; then
+    PA_STEP=$((PA_STEP+1))
+    echo "  $PA_STEP. Corrige .claude/harness.config.json (detalle en \"Acciones sugeridas\" arriba)."
+  fi
+  if [ "$PA_TOKENS_FALTA" -eq 1 ]; then
+    PA_STEP=$((PA_STEP+1))
+    echo "  $PA_STEP. Completa la seccion \"Tokens del harness\" en tu CLAUDE.md raiz (detalle arriba)."
+  fi
+  if [ "$PA_LABELS_FALTA" -eq 1 ]; then
+    PA_STEP=$((PA_STEP+1))
+    echo "  $PA_STEP. Provisiona los labels de GitHub: \"$PLUGIN_SCRIPTS/setup-github-labels.sh\""
+    echo "     (o confirma el paso opt-in que te ofrece este mismo /onboard)."
+  fi
+  if [ "$PA_CI_FALTA" -eq 1 ]; then
+    PA_STEP=$((PA_STEP+1))
+    echo "  $PA_STEP. Configura el CI hacia Azure: \"$PLUGIN_SCRIPTS/setup-github-ci.sh <subscription-id>\""
+    echo "     (o confirma el paso opt-in). Corre DESPUES de \"bootstrap-backend.sh\" (ADR-0022)."
+  fi
+  if [ "$PA_INFRA_BASE_MISSING" -eq 1 ]; then
+    PA_STEP=$((PA_STEP+1))
+    echo "  $PA_STEP. Genera la infraestructura base: /mefisto:infra-base dev"
+  fi
+  if [ "$PA_STEP" -eq 0 ]; then
+    echo "  Resuelve primero los \"NO VERIFICADO\" de arriba (instala/autentica lo que falte) para que"
+    echo "  /onboard pueda indicarte el siguiente comando exacto."
+  fi
+fi
+echo ""
+QUICKSTART_URL="https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/blob/main/docs/greenfield-quickstart.md"
+if [ -n "${PLUGIN_ROOT:-}" ] && [ -f "${PLUGIN_ROOT%/}/.claude-plugin/plugin.json" ] && command -v jq >/dev/null 2>&1; then
+  HOMEPAGE=$(jq -r '.homepage // empty' "${PLUGIN_ROOT%/}/.claude-plugin/plugin.json" 2>/dev/null)
+  [ -n "$HOMEPAGE" ] && QUICKSTART_URL="${HOMEPAGE%/}/blob/main/docs/greenfield-quickstart.md"
+fi
+echo "Guia narrativa completa del arranque greenfield (10 pasos, roles admin/infra vs dev ongoing):"
+echo "  $QUICKSTART_URL"
+echo "===================================================================="
 ONBOARD
 ```
 
 ### 2. Presentar el resultado
 
-Muestra al usuario la salida del checklist tal como la imprimio el bloque (el formato ya esta consolidado). Luego, en una o dos lineas:
+Muestra al usuario la salida del checklist tal como la imprimio el bloque (el formato ya esta consolidado), **incluyendo el cierre "Proximos pasos" y el puntero al quickstart greenfield** -- ese bloque ya decidio el siguiente comando exacto a partir del mismo diagnostico, no lo repitas ni lo reformules. Luego, en una o dos lineas, resume el estado (cuantos `FALTA`/`NO VERIFICADO` hay, o que quedo LISTO) sin duplicar el contenido de "Proximos pasos".
 
-- Si el estado es **LISTO**: confirma que el harness esta configurado y sugiere el siguiente paso del flujo greenfield (`/mefisto:infra-base` o `/mefisto:scaffold <dominio>`, segun corresponda).
-- Si el estado es **LISTO con salvedades** o **INCOMPLETO**: resume cuantos `FALTA`/`NO VERIFICADO` hay y recuerda que las acciones sugeridas son los comandos que los resuelven.
-
-No reinterpretes ni recalcules el checklist: el bloque ya hizo el diagnostico.
+No reinterpretes ni recalcules el checklist ni el bloque "Proximos pasos": el bloque bash ya hizo el diagnostico y ya derivo el siguiente paso.
 
 ### 3. Provision opt-in de los labels faltantes
 
@@ -381,4 +440,5 @@ PROVISION_CI
 - **No abortes ante un fallo parcial.** Cada seccion del diagnostico es independiente: si `gh` o `az` no estan disponibles, reporta `NO VERIFICADO` y continua con el resto.
 - **No dupliques la validacion del config.** El formato de `terraformStateStorage` y los campos requeridos los valida `load_harness_config` (issue #78); este skill solo reporta su resultado.
 - **La estructura de carpetas es informativa, nunca `FALTA`.** Un greenfield legitimo aun no tiene `src/`, `tests/` ni `infra/environments/` antes del primer `/scaffold` o `/infra-base`; marcarla como bloqueante daria un falso negativo (issue #212).
+- **El bloque de cierre "Proximos pasos" es puramente informativo (issue #222).** Solo lee las mismas variables que ya acumulo el diagnostico (`N_FALTA`, `N_NV`, y los flags `PA_*` por seccion) para imprimir el comando exacto a correr a continuacion y el puntero al quickstart greenfield; nunca ejecuta `gh`/`az` ni escribe nada. No reemplaza ni condiciona las provisiones opt-in (pasos 3 y 4), que siguen requiriendo confirmacion explicita para cada una.
 - Si `$ARGUMENTS` trae algo, ignoralo: `/onboard` no toma argumentos.
