@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Provisiona el esquema de labels del proyecto en GitHub.
-# Elimina los 9 labels default y crea el esquema dimensional.
+# Borra 8 de los 9 labels default de GitHub y recrea "bug" con el esquema
+# del harness, luego crea el resto del esquema dimensional.
 #
 # Los labels de dominio (dom:*) se leen de .claude/harness.config.json
 # campo "domainLabels".
