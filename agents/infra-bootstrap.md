@@ -81,7 +81,7 @@ PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
 "$PLUGIN_SCRIPTS/setup-github-labels.sh"
 ```
 
-El script es **idempotente**: los labels de tipo/dominio/estado se crean con `--force` (se sobrescriben sin fallar si ya existen) y los labels default se borran con `2>/dev/null` (no aborta si ya no están). Si reporta labels "no encontrado (ok)" o los recrea sin error, el esquema ya está listo: **continúa al paso 5**. Solo detente si el script termina con exit distinto de 0.
+El script es **idempotente**: todos los labels del esquema (tipo/dominio/estado/`bloqueado`/`bug`) se crean con `--force` (se sobrescriben sin fallar si ya existen) y los labels default se borran con `2>/dev/null` (no aborta si ya no están). Si reporta labels "no encontrado (ok)" o los recrea sin error, el esquema ya está listo: **continúa al paso 5**. Solo detente si el script termina con exit distinto de 0.
 
 ### 5. Configurar la autenticación de CI hacia Azure
 
