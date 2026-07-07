@@ -291,6 +291,17 @@ El backend remoto de Terraform (donde vive el `tfstate`) es prerequisito de todo
 
    > **El apply es de CI, no local (ADR-0021, ADR-0022).** En el flujo *ongoing* el desarrollador que usa Mefisto no aplica ni planifica local: no necesita `az login` con permisos elevados de Azure ni acceso al tfstate. `/infra` solo escribe/revisa el HCL y abre el PR (que **no** lleva `Closes #N`). El `terraform plan` real se publica como comentario del PR y el `terraform apply` real corre al mergearlo a `main`, ambos en CI (workflow `Infra CD`); ese workflow cierra el issue cuando el apply termina exitosamente. El bootstrap inicial (backend + CI, pasos 1-2) sí es una operación privilegiada de una sola vez que corre un admin con permisos de Azure.
 
+5. **Sembrar los secretos de Key Vault** -- perfil de acceso **infra/admin recurrente**, distinto del bootstrap de los pasos 1-2 (ver **ADR-0025** decisión #10, "tres perfiles de acceso"). Tras el `apply` que corre en CI al mergear el PR del paso 4, el módulo `key-vault` existe pero **sin valores**: Terraform nunca escribe el valor de ningún secreto (ADR-0025 decisión #6). Un admin siembra manualmente con `az keyvault secret set`:
+
+   | Secreto | Cómo se obtiene el valor |
+   |---|---|
+   | `serviceBus.internal.secretName` | `terraform output -raw service_bus_interno_connection_string` |
+   | `app-insights-connection` | `terraform output -raw app_insights_connection_string` |
+   | `marten-connection` | `terraform output -raw postgresql_fqdn` + `postgresql_database_name` + `postgresql_administrator_login`, más el **mismo** password que usaste en el secret de GitHub `TF_VAR_POSTGRESQL_ADMIN_PASSWORD` (paso 3) -- **no es un output**: es el input que tú mismo elegiste |
+   | cada `serviceBus.external[].secretName` con `alcance: "compartido"` | lo provee el equipo de infra que administra el backbone compartido (ADR-0024 decisión #4), fuera de este state |
+
+   **Por qué `marten-connection` no se puede derivar solo con `terraform output`**: a diferencia de las otras dos filas, el password de Postgres es un **input** que el admin eligió (ADR-0025 decisión #9), nunca un output del state. Este paso **se repite** cada vez que el `apply` crea un secreto nuevo y cada vez que el BC declara un alias nuevo en `serviceBus.external` -- no es un evento de una sola vez como el bootstrap. Detalle completo en **ADR-0025** decisión #10.
+
 ### 6. Scaffold del primer dominio y primer ciclo TDD
 
 Con el backend listo, crea el scaffold de tu primer dominio y arranca el ciclo TDD:
@@ -313,7 +324,7 @@ Con el backend listo, crea el scaffold de tu primer dominio y arranca el ciclo T
 | `.claude/harness.config.json`, `CLAUDE.md`, `src/`, `tests/`, `infra/` | tu repo consumidor | **tu repo** (los crea/edita el harness operando sobre el consumidor) |
 | `infra/environments/<env>/backend.tf` | tu repo consumidor | **tu repo** (lo escribe `bootstrap-backend.sh` en runtime) |
 
-Regla mnemónica: **los binarios viven en el plugin; los archivos del proyecto viven en tu repo.** Nunca edites archivos dentro del cache del plugin ni invoques sus scripts con rutas relativas. Y desde la reforma de la oleada "apply en CI" (ADR-0021, ADR-0022): **el plan/apply de infraestructura vive en CI, nunca en tu máquina** — la única excepción es el bootstrap inicial (backend + CI, sección "Bootstrap de infraestructura" arriba), una operación privilegiada de una sola vez que corre un admin con permisos de Azure.
+Regla mnemónica: **los binarios viven en el plugin; los archivos del proyecto viven en tu repo.** Nunca edites archivos dentro del cache del plugin ni invoques sus scripts con rutas relativas. Y desde la reforma de la oleada "apply en CI" (ADR-0021, ADR-0022): **el plan/apply de infraestructura vive en CI, nunca en tu máquina** — las excepciones son dos perfiles de infra/admin distintos del desarrollador ongoing (ADR-0025 decisión #10): el bootstrap inicial (backend + CI, sección "Bootstrap de infraestructura" arriba), una operación privilegiada de una sola vez, y la siembra/custodia de secretos de Key Vault (mismo paso 5), un privilegio **recurrente** que se repite tras cada `apply` que crea un secreto y con cada alias externo nuevo.
 
 ## Uso
 
