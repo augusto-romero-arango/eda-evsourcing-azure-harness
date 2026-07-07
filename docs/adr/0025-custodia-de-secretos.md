@@ -69,7 +69,7 @@ La doctrina de "cero permisos"/"cero credenciales" (decision #7, ADR-0022) descr
 |---|---|---|---|---|
 | (a) Desarrollador ongoing | cualquier dev que usa Mefisto | cada `/infra`, `/scaffold`, cada PR | escribe y revisa HCL de forma estatica; nunca corre `plan`/`apply` local; cero credenciales de Azure (decision #7) | continua, sin privilegio |
 | (b) Bootstrap | admin | antes de que exista el backend del tfstate y el SP de CI | `bootstrap-backend.sh` + `setup-github-ci.sh`, con permisos elevados de Azure/Entra en su propia maquina (ADR-0022) | una sola vez |
-| (c) Siembra/custodia de secretos de Key Vault | infra/admin | tras el `apply` de CI que crea o rota un secreto derivable, y con cada alias nuevo en `serviceBus.external` | `az keyvault secret set` fuera de Terraform (decision #6); nunca lo hace el CI ni el desarrollador | **recurrente**, ongoing -- no un evento de una sola vez |
+| (c) Siembra/custodia de secretos de Key Vault | infra/admin | tras el `apply` de CI que crea o rota un secreto (el primero los siembra todos, derivables y no derivables), y con cada alias nuevo en `serviceBus.external` | `az keyvault secret set` fuera de Terraform (decision #6); nunca lo hace el CI ni el desarrollador | **recurrente**, ongoing -- no un evento de una sola vez |
 
 El perfil (c) es el que la doctrina previa no nombraba explicitamente: a diferencia del bootstrap (b), no se agota la primera vez que se habilita el marco -- se repite cada vez que un `apply` crea un secreto nuevo o el BC suma un alias al backbone compartido.
 
