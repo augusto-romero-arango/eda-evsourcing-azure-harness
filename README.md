@@ -182,6 +182,8 @@ Imprime un checklist con estado por ítem (OK / FALTA / NO VERIFICADO) y, para c
 
 Esta es la ruta de arranque para un proyecto **nuevo** (sin código ni infraestructura aún), en orden. Asume que ya completaste la sección **Instalación**.
 
+> **¿Prefieres la versión corta primero?** [`docs/greenfield-quickstart.md`](docs/greenfield-quickstart.md) narra este mismo camino en 10 pasos y el modelo de dos roles (admin/infra vs dev ongoing) — léelo si quieres el mapa antes del detalle exhaustivo de abajo.
+
 ### 1. Habilitar el plugin **a scope user** y verificar
 
 Registra el marketplace e instala el plugin (sección Instalación, pasos 1-2), pero **instálalo a scope `user`, no a scope `project`** (es requisito para que los pipelines funcionen — ver el recuadro "Por qué scope `user`" al final de este paso).
