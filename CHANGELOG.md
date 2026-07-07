@@ -4,6 +4,8 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-07
+
 ### Fixed
 
 - **Sanear la coherencia de la documentacion de onboarding greenfield (issue #213, ADR-0007, ADR-0022)**: barrido de coherencia sobre el onboarding operativo que dejaba afirmaciones contradictorias y caveats verificados en campo sin documentar. **CA-1**: el conteo de labels default queda unico y preciso -- `README.md` (paso 4a) y el comentario de `scripts/setup-github-labels.sh` decian "elimina los 9 labels default"; se corrigen a la formulacion exacta ya vigente en `commands/onboard.md` (borra 8 de los 9 default y recrea `bug`). **CA-2**: `setup-github-ci.sh` se describia dos veces con distinto nivel de detalle en `README.md` (paso 4b y paso 5 sub-paso 2); el paso 4b se recorta a lo esencial (proposito, prerequisitos, dependencia del backend) y remite al paso 5 como descripcion canonica unica. **CA-3**: se verifico que el orden `/onboard` <-> backend ya estaba bien anclado (paso 2 y paso 4 del README ya remiten la provision de CI al paso 5, tras el backend) -- no requirio cambios. **CA-4**: se documenta en el paso 1 del bootstrap de infraestructura (`README.md`) el caveat de que la primera corrida de `bootstrap-backend.sh` con `--auth-mode login` exige el rol `Storage Blob Data Contributor` sobre la Storage del tfstate (ya advertido por el script pero ausente del README). **CA-5**: se documenta, en `README.md` (paso 5 sub-paso 2) y `commands/onboard.md` (provision opt-in del CI), la idempotencia parcial de la condicion ABAC de `setup-github-ci.sh`: `az role assignment create` no actualiza la condicion de una asignacion de `Role Based Access Control Administrator` que ya exista para el mismo principal/rol/alcance (la introdujo el issue #195, asi que en un onboarding limpio se crea de una vez con la condicion; el caso a vigilar es una asignacion sin condicion creada fuera del script -- p. ej. a mano -- o un cambio futuro de la expresion de la condicion), por lo que re-correrlo no le aplica ni actualiza la condicion anti-escalacion; se documenta el diagnostico y la remediacion manual, y el arreglo del script queda diferido a un issue aparte. Archivos modificados: `README.md`, `commands/onboard.md`, `scripts/setup-github-labels.sh`.
@@ -285,7 +287,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.6.0...v0.7.0
