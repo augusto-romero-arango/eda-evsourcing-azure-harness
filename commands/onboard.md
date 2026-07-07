@@ -23,8 +23,10 @@ Si el bloque imprime `ERROR`, detente y muestra el mensaje al usuario.
 `/onboard` es el primer corte del onboarding automatizado (el "doctor" diagnostico). Reporta, sin tocar nada:
 
 1. **Configuracion** (`.claude/harness.config.json`): existencia, parseo con `jq`, campos requeridos (`projectName`, `namespacePrefix`, `solutionFile`, `boundedContext`) y formato de `terraformStateStorage`. La validacion la hace `load_harness_config` del plugin, que es la **unica fuente de verdad** de las reglas del tfstate (`^[a-z0-9]{3,24}$`) y del BC (`name` 1-63 chars; `domains` subconjunto de `domainLabels`).
-2. **Labels de GitHub** (ADR-0007): que existan `tipo:*`, `estado:borrador`, `estado:listo`, `dom:<x>` por cada `domainLabels`, mas `bug` y `bloqueado`.
-3. **CI hacia Azure** (ADR-0022): que exista la aplicacion de Entra / Service Principal y los secrets OIDC del repo. Tolerante: si no hay `az` o sesion, reporta `NO VERIFICADO` en vez de fallar.
+2. **Tokens del harness en `CLAUDE.md`** (contrato del harness, "Contrato con el proyecto consumidor" punto 2): que el `CLAUDE.md` raiz del consumidor tenga la seccion "Tokens del harness" con los 5 tokens obligatorios (`RootNamespace`, `SolutionFile`, `ProjectDisplayName`, `BoundedContext`, `BoundedContextDomains`). Es un artefacto separado de `harness.config.json`: los agentes/skills resuelven estos placeholders leyendo `CLAUDE.md` porque no pueden hacer sustitucion de variables. Reporta `NO VERIFICADO` si no hay un `CLAUDE.md` legible en la raiz.
+3. **Estructura de carpetas esperada** (contrato del harness, punto 3): reporta de forma **informativa** (no bloqueante) la presencia de `src/`, `tests/` e `infra/environments/`. No la marca como `FALTA` cuando falta: un greenfield legitimo aun no tiene estas carpetas antes del primer `/scaffold` o `/infra-base`, y tratarla como bloqueante daria un falso negativo.
+4. **Labels de GitHub** (ADR-0007): que existan `tipo:*`, `estado:borrador`, `estado:listo`, `dom:<x>` por cada `domainLabels`, mas `bug` y `bloqueado`.
+5. **CI hacia Azure** (ADR-0022): que exista la aplicacion de Entra / Service Principal y los secrets OIDC del repo. Tolerante: si no hay `az` o sesion, reporta `NO VERIFICADO` en vez de fallar.
 
 La provision de **labels** (paso 3) y la del **CI** hacia Azure (paso 4) las ofrece `/onboard` como pasos **opt-in**, bajo confirmacion explicita: el script de labels es destructivo (borra los labels default de GitHub) y el de CI crea recursos reales en Azure (app de Entra, role assignments, federated credential -- OIDC, ADR-0022). El diagnostico en si sigue siendo de solo lectura: sin tu confirmacion no se crea, borra ni provisiona nada.
 
@@ -106,7 +108,40 @@ else
 "
 fi
 
-# --- 2. Labels de GitHub (ADR-0007) ---
+# --- 2. Tokens del harness en CLAUDE.md (contrato punto 2) ---
+echo ""
+echo "Tokens del harness (seccion \"Tokens del harness\" en CLAUDE.md raiz):"
+CLAUDE_MD="CLAUDE.md"
+if [ -r "$CLAUDE_MD" ]; then
+  MISSING_TOKENS=""
+  for tok in RootNamespace SolutionFile ProjectDisplayName BoundedContext BoundedContextDomains; do
+    grep -Eq "\*\*${tok}\*\*" "$CLAUDE_MD" || MISSING_TOKENS="$MISSING_TOKENS $tok"
+  done
+  if [ -z "$MISSING_TOKENS" ]; then
+    row OK "los 5 tokens estan presentes (RootNamespace, SolutionFile, ProjectDisplayName, BoundedContext, BoundedContextDomains)"
+  else
+    row FALTA "faltan tokens en CLAUDE.md:$MISSING_TOKENS"
+    ACTIONS="${ACTIONS}  - Completa la seccion \"Tokens del harness\" de tu CLAUDE.md raiz con los tokens faltantes ($MISSING_TOKENS). Ver CLAUDE.md del harness, seccion \"Contrato con el proyecto consumidor\" punto 2, para el formato exacto.
+"
+  fi
+else
+  row NV "no se hallo un CLAUDE.md legible en la raiz del proyecto"
+  ACTIONS="${ACTIONS}  - Crea CLAUDE.md en la raiz del proyecto con la seccion \"Tokens del harness\" (ver CLAUDE.md del harness, seccion \"Contrato con el proyecto consumidor\" punto 2).
+"
+fi
+
+# --- 3. Estructura de carpetas esperada (contrato punto 3, informativo) ---
+echo ""
+echo "Estructura de carpetas esperada (informativo, no bloqueante):"
+for dir in src tests infra/environments; do
+  if [ -d "$dir" ]; then
+    row OK "$dir/ existe"
+  else
+    row NV "$dir/ no existe todavia (normal en greenfield antes del primer /scaffold o /infra-base; no bloqueante)"
+  fi
+done
+
+# --- 4. Labels de GitHub (ADR-0007) ---
 echo ""
 echo "Labels de GitHub (esquema del harness - ADR-0007):"
 EXISTING=$(gh label list --json name -q '.[].name' 2>/dev/null)
@@ -137,7 +172,7 @@ else
   fi
 fi
 
-# --- 3. CI hacia Azure (ADR-0022) ---
+# --- 5. CI hacia Azure (ADR-0022) ---
 echo ""
 echo "CI hacia Azure (OIDC / Service Principal - ADR-0022):"
 if ! command -v az >/dev/null 2>&1; then
@@ -180,7 +215,7 @@ else
   fi
 fi
 
-# --- 4. Acciones y resumen ---
+# --- 6. Acciones y resumen ---
 echo ""
 if [ -n "$ACTIONS" ]; then
   echo "Acciones sugeridas (el diagnostico no ejecuta ninguna; los labels faltantes y el CI los pueden provisionar los pasos opt-in, bajo tu confirmacion):"
@@ -343,4 +378,5 @@ PROVISION_CI
 - **Diagnostico de solo lectura por defecto.** El diagnostico (pasos 1-2) no ejecuta `gh label create`, `az ... create`, ni escribe archivos o recursos. Las **unicas** acciones de escritura permitidas son las **provisiones opt-in** -- labels (paso 3, el script borra los labels default de GitHub) y CI hacia Azure (paso 4, el script crea app de Entra, role assignments y federated credential OIDC) -- y solo tras la confirmacion explicita del usuario **para cada una**: nunca las ejecutes sin un "si". Sin confirmacion, una corrida de `/onboard` no crea, borra ni provisiona nada (ni labels, ni recursos de Azure, ni copia secrets).
 - **No abortes ante un fallo parcial.** Cada seccion del diagnostico es independiente: si `gh` o `az` no estan disponibles, reporta `NO VERIFICADO` y continua con el resto.
 - **No dupliques la validacion del config.** El formato de `terraformStateStorage` y los campos requeridos los valida `load_harness_config` (issue #78); este skill solo reporta su resultado.
+- **La estructura de carpetas es informativa, nunca `FALTA`.** Un greenfield legitimo aun no tiene `src/`, `tests/` ni `infra/environments/` antes del primer `/scaffold` o `/infra-base`; marcarla como bloqueante daria un falso negativo (issue #212).
 - Si `$ARGUMENTS` trae algo, ignoralo: `/onboard` no toma argumentos.
