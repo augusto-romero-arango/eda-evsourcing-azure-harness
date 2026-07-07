@@ -34,10 +34,10 @@ done
 
 echo ""
 echo "Creando labels de tipo (azul)..."
-gh label create "tipo:feature"   --color "0052CC" --description "Funcionalidad nueva de dominio"
-gh label create "tipo:infra"     --color "0052CC" --description "Infraestructura Azure / Terraform"
-gh label create "tipo:refactor"  --color "0052CC" --description "Reestructuracion sin comportamiento nuevo"
-gh label create "tipo:tooling"   --color "0052CC" --description "Mejoras a pipeline, agentes o scripts"
+gh label create "tipo:feature"   --color "0052CC" --description "Funcionalidad nueva de dominio" --force
+gh label create "tipo:infra"     --color "0052CC" --description "Infraestructura Azure / Terraform" --force
+gh label create "tipo:refactor"  --color "0052CC" --description "Reestructuracion sin comportamiento nuevo" --force
+gh label create "tipo:tooling"   --color "0052CC" --description "Mejoras a pipeline, agentes o scripts" --force
 
 echo ""
 echo "Creando labels de origen (naranja)..."
@@ -51,12 +51,12 @@ done
 
 echo ""
 echo "Creando labels de estado (amarillo/rojo)..."
-gh label create "estado:borrador" --color "FBCA04" --description "Idea capturada - requiere refinamiento antes del pipeline"
-gh label create "estado:listo"    --color "B60205" --description "Refinado y listo para pipeline TDD o IaC"
+gh label create "estado:borrador" --color "FBCA04" --description "Idea capturada - requiere refinamiento antes del pipeline" --force
+gh label create "estado:listo"    --color "B60205" --description "Refinado y listo para pipeline TDD o IaC" --force
 
 echo ""
 echo "Creando labels especiales..."
-gh label create "bloqueado" --color "D93F0B" --description "Depende de otro issue aun no cerrado"
+gh label create "bloqueado" --color "D93F0B" --description "Depende de otro issue aun no cerrado" --force
 
 echo ""
 echo "Listo. Labels actuales:"
