@@ -1328,7 +1328,7 @@ Si el archivo ya existe con otras propiedades (ej: `sdk`), solo agrega la seccio
 
 Cada Function App tiene su propio **App Service Plan dedicado** y su propia Storage Account, para aislamiento de performance y escalado independiente. El plan dedicado es una directiva del marco: dos dominios nunca comparten plan, porque cada uno corre un agente de durabilidad de Wolverine *always-on* que poll-ea Postgres en background y satura el core aun en reposo (noisy neighbor). Ver **ADR-0020** (hosting: un App Service Plan por Function App) y, para la Storage, Best Practices (Beginning Azure Functions Cap. 8).
 
-**Nombre de la Storage Account**: `st` + dominio sin guiones + environment + sufijo aleatorio.
+**Nombre de la Storage Account**: `st` + dominio sin guiones (truncado a 13 chars, ver "Truncado determinista" abajo) + environment + sufijo aleatorio.
 Ejemplo para `marcaciones` en dev: `stmarcacionesdev{suffix}`.
 
 **Truncado determinista (issue #245)**: el nombre es `st` + `{kebab-storage}` + `{environment}` + 6 chars de sufijo aleatorio, y no puede superar 24 caracteres (`Microsoft.Storage/storageAccounts`). Para el entorno `dev` (3 chars) el presupuesto del dominio es `24 - 2 ("st") - 3 ("dev") - 6 (sufijo) = 13` caracteres. Calcula `{kebab-storage}` con una regla **mecanica y fija** (no la dejes a tu criterio: dos corridas del scaffolder para el mismo dominio deben producir el mismo archivo byte a byte -- misma clase de no-determinismo que investigamos en #238):
