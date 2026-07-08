@@ -111,3 +111,11 @@ AggregateRoot, Endpoint) son en ingles.
 - Los nombres de funciones ServiceBus son largos (`DepurarMarcacionesCuandoTurnoCreado`)
 - Los directorios tambien son largos, lo que puede afectar la legibilidad en el explorador de archivos
 - El patron `{Accion}Cuando{Evento}` requiere disciplina desde el dia 1
+
+## Nota (issue #245): limite real del nombre de la Function App
+
+Esta ADR cubre el nombramiento de funciones y clases en codigo; el nombre del **recurso** Azure (`func-{prefix_func}-{kebab}`) tiene su propio limite, verificado contra las naming rules de Azure:
+
+- El nombre de recurso `Microsoft.Web/sites` (Function App) admite **2-60 caracteres** (https://learn.microsoft.com/azure/azure-resource-manager/management/resource-name-rules#microsoftweb). El App Service Plan (`Microsoft.Web/serverfarms`) admite 1-60 en la misma tabla.
+- Existe un limite distinto de **32 caracteres** para el **host ID** de Azure Functions (truncado del nombre), pero su colision solo ocurre **cuando dos Function Apps comparten la misma storage account** (https://learn.microsoft.com/azure/azure-functions/storage-considerations#host-id-considerations; evento de diagnostico AZFD0004: https://learn.microsoft.com/azure/azure-functions/errors-diagnostics/diagnostic-events/azfd0004). En este marco cada Function App tiene su propia Storage Account y su propio App Service Plan dedicado sin deployment slots (ADR-0020), por lo que esa colision no aplica y el limite de 32 no rige el nombre del recurso.
+- `agents/domain-scaffolder.md` (Paso 0, Validacion 1) valida el nombre completo `func-{prefix_func}-{kebab}` contra el limite real de 60.
