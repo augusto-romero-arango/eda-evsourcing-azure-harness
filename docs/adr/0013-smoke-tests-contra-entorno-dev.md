@@ -201,11 +201,12 @@ La infraestructura del proyecto de smoke tests (csproj, fixtures, appsettings, w
 Responsabilidades separadas:
 - **domain-scaffolder**: crea `tests/*.SmokeTests/` con los 3 fixtures, Polling, appsettings.json
   con placeholders, csproj con ProjectReference a Contracts (para igualdad de records), y el job
-  `smoke-tests` con secrets opcionales en el workflow de deploy. La **primera vez** que corre en
-  un repo genera tambien (idempotente, no sobreescribe si ya existen) el workflow reutilizable
-  `.github/workflows/smoke-tests-dominio.yml` (`workflow_call`) que el deploy referencia, y el
-  workflow global `.github/workflows/smoke-tests.yml` que corre los smoke tests de todos los
-  dominios registrados en `.github/smoke-tests-dominios.json` en una matrix.
+  `smoke-tests` con secrets opcionales en el workflow de deploy, y registra el dominio en su propio
+  archivo `.github/smoke-tests/{kebab}.json` (un objeto JSON por dominio, issue #234). La **primera
+  vez** que corre en un repo genera tambien (idempotente, no sobreescribe si ya existen) el workflow
+  reutilizable `.github/workflows/smoke-tests-dominio.yml` (`workflow_call`) que el deploy referencia,
+  y el workflow global `.github/workflows/smoke-tests.yml` que arma su matrix por glob de
+  `.github/smoke-tests/*.json`.
 - **smoke-test-writer**: escribe tests dentro de ese proyecto. Verifica todos los efectos secundarios
   de cada funcion. Usa `Assert.SkipWhen` para tests que dependen de ServiceBus o Postgres.
 - **reviewer**: verifica que cada smoke test con operacion exitosa cubra todos los efectos secundarios
@@ -228,9 +229,10 @@ primer deploy sin configuracion extra. El reutilizable mapea esos secrets a las 
 `ServiceBus__ConnectionString` / `Postgres__ConnectionString` y `base_url` a `Api__BaseUrl`.
 
 Ademas existe un workflow **global** `.github/workflows/smoke-tests.yml` (`workflow_dispatch` + `schedule`)
-que lee `.github/smoke-tests-dominios.json` y corre los smoke tests de **todos** los dominios registrados
-en una matrix, reusando el mismo `smoke-tests-dominio.yml`. Sirve como verificacion periodica y como
-disparo manual del estado del entorno completo.
+que arma su matrix por glob de `.github/smoke-tests/*.json` (un archivo por dominio; tolerante a cero
+archivos, el job se omite sin fallar) y corre los smoke tests de **todos** los dominios registrados,
+reusando el mismo `smoke-tests-dominio.yml`. Sirve como verificacion periodica y como disparo manual
+del estado del entorno completo.
 
 Ambos workflows (el reutilizable y el global) los genera el `domain-scaffolder` la primera vez que corre
 en el repo (idempotente; ver "Integracion en el proceso de desarrollo").
@@ -261,3 +263,12 @@ en el repo (idempotente; ver "Integracion en el proceso de desarrollo").
 - **Ejecucion secuencial**: los smoke tests no se paralelizan dentro de un dominio. Esto es aceptable
   porque son pocos tests contra infraestructura real donde el cuello de botella es la latencia de red,
   no la concurrencia del runner.
+
+## Control de cambios
+
+- 2026-07-08: reformado (issue #234) para que el registro de dominios del workflow global deje de ser
+  un array compartido (`.github/smoke-tests-dominios.json`) y pase a ser un archivo propio por dominio
+  (`.github/smoke-tests/{kebab}.json`), cuya matrix arma `smoke-tests.yml` por glob. Motivo: dos
+  dominios scaffoldeados en ramas separadas desde el mismo `origin/main` ya no compiten por el mismo
+  archivo, lo que hace viable el scaffold en paralelo. Se elimina del cuerpo la descripcion del array
+  compartido (secciones "Integracion en el proceso de desarrollo" y "CI/CD").

@@ -73,6 +73,18 @@ Si el directorio `src/<RootNamespace>.{PascalCase}/` ya existe, informa al usuar
 
 Y detente sin hacer nada mas.
 
+**Validacion 3 - archivo Terraform del dominio (issue #234):**
+
+```bash
+test -f /ruta-del-proyecto/infra/environments/dev/dominio-{kebab}.tf && echo "existe"
+```
+
+Si `infra/environments/dev/dominio-{kebab}.tf` ya existe, informa al usuario:
+
+> "El archivo `infra/environments/dev/dominio-{kebab}.tf` ya existe. Si quieres recrearlo, eliminalo primero."
+
+Y detente sin hacer nada mas.
+
 **Resolver parametros de hosting (ADR-0020):**
 
 Cada dominio recibe su propio App Service Plan dedicado (`asp-{prefix_func}-{kebab}`). Resuelve sus parametros tomando lo que dio el usuario y, a falta de override, los defaults del ADR-0020:
@@ -1287,6 +1299,8 @@ dotnet sln <SolutionFile> add "tests/<RootNamespace>.{PascalCase}.Tests/"
 dotnet sln <SolutionFile> add "tests/<RootNamespace>.{PascalCase}.SmokeTests/"
 ```
 
+> **`.slnx` como residual benigno (issue #234, frente 3)**: a diferencia de `infra/environments/dev/main.tf` y `.github/smoke-tests-dominios.json`, `<SolutionFile>` **sigue siendo compartido** entre dominios scaffoldeados en paralelo — no se cambia codigo, `dotnet sln add` se mantiene igual. Si dos dominios se dan de alta en ramas separadas desde el mismo `origin/main`, el merge de `<SolutionFile>` puede requerir resolucion manual, pero es un conflicto **add/add aditivo trivial** (cada rama agrega lineas de proyecto distintas, sin cuerpo compartido que reconstruir a mano) — no comparable al conflicto no trivial que este issue elimina en `main.tf`.
+
 **Verificar `global.json`:** .NET 10 con xunit v3 mtp-v2 requiere que `global.json` en la raiz del repo tenga la seccion `test` para que `dotnet test` funcione. Lee el archivo `global.json` en `$REPO_ROOT`. Si no existe, crealo. Si existe, verifica que contenga la seccion `test`. El contenido minimo necesario es:
 
 ```json
@@ -1305,7 +1319,7 @@ Si el archivo ya existe con otras propiedades (ej: `sdk`), solo agrega la seccio
 
 ---
 
-## Paso 4 - Actualizar Terraform: agregar Service Plan, Storage Account y Function App
+## Paso 4 - Crear el Terraform del dominio: Service Plan, Storage Account y Function App
 
 Cada Function App tiene su propio **App Service Plan dedicado** y su propia Storage Account, para aislamiento de performance y escalado independiente. El plan dedicado es una directiva del marco: dos dominios nunca comparten plan, porque cada uno corre un agente de durabilidad de Wolverine *always-on* que poll-ea Postgres en background y satura el core aun en reposo (noisy neighbor). Ver **ADR-0020** (hosting: un App Service Plan por Function App) y, para la Storage, Best Practices (Beginning Azure Functions Cap. 8).
 
@@ -1316,9 +1330,9 @@ Antes de continuar, calcula y valida la longitud maxima posible del nombre:
 - `st` + `{kebab-sin-guiones}` + `dev` + 6 chars de suffix <= 24 caracteres (limite de Azure)
 - Si el nombre base (`st` + `{kebab-sin-guiones}` + `dev`) supera 18 caracteres, el nombre completo superaria 24. En ese caso avisa al usuario y trunca el nombre del dominio en el prefijo de storage hasta que quepa.
 
-Lee el archivo `infra/environments/dev/main.tf` completo antes de modificarlo.
+**Archivo plano por dominio (issue #234, decision D1/D2)**: estos bloques van completos en un archivo **nuevo y propio** del dominio, `infra/environments/dev/dominio-{kebab}.tf`, **NO al final de `main.tf`**. No leas ni modifiques `main.tf`: el root module del entorno lo genera y mantiene `infra-base-scaffolder` (ADR-0021) y queda intacto al dar de alta un dominio. Terraform evalua todos los `.tf` del directorio del entorno como un unico root module y **no recorre subdirectorios** (fuente: HashiCorp, Terraform Language — "Files and Directories"), por lo que un archivo plano preserva sin cambios las referencias a `local.*`, `module.*` y `var.environment` del root module. La Validacion 3 del Paso 0 ya confirmo que este archivo no existe todavia; si en este punto existiera, detente sin pisarlo.
 
-Agrega al **final del archivo** los siguientes cuatro bloques. Sustituye `{sku_name}` y `{always_on}` por los parametros de hosting que resolviste en el Paso 0 (defaults `B1` / `false`):
+Crea el archivo `infra/environments/dev/dominio-{kebab}.tf` con el siguiente contenido completo (los cuatro bloques de abajo son el archivo entero, no un agregado a otro archivo existente). Sustituye `{sku_name}` y `{always_on}` por los parametros de hosting que resolviste en el Paso 0 (defaults `B1` / `false`):
 
 ```hcl
 resource "random_string" "storage_suffix_{snake_case}" {
@@ -1667,9 +1681,11 @@ Si **no existe**, crea `.github/workflows/smoke-tests.yml` con este contenido:
 ```yaml
 name: Smoke tests (global)
 
-# Corre los smoke tests de TODOS los dominios registrados en
-# .github/smoke-tests-dominios.json (lo mantiene el domain-scaffolder, Paso 6b),
-# uno por entrada de la matrix, reusando smoke-tests-dominio.yml. ADR-0013.
+# Corre los smoke tests de TODOS los dominios registrados como archivos sueltos
+# en .github/smoke-tests/*.json (cada uno lo crea el domain-scaffolder, Paso 6b,
+# uno por dominio -- issue #234 elimina el array compartido para permitir alta
+# en paralelo sin conflictos), uno por entrada de la matrix, reusando
+# smoke-tests-dominio.yml. ADR-0013.
 
 on:
   workflow_dispatch:
@@ -1688,10 +1704,18 @@ jobs:
       - uses: actions/checkout@v7
       - id: leer
         name: Leer dominios registrados
-        run: echo "matrix=$(jq -c . .github/smoke-tests-dominios.json)" >> "$GITHUB_OUTPUT"
+        run: |
+          shopt -s nullglob
+          archivos=(.github/smoke-tests/*.json)
+          if [ ${#archivos[@]} -eq 0 ]; then
+            echo "matrix=[]" >> "$GITHUB_OUTPUT"
+          else
+            echo "matrix=$(jq -sc . "${archivos[@]}")" >> "$GITHUB_OUTPUT"
+          fi
 
   smoke-tests:
     needs: cargar-dominios
+    if: needs.cargar-dominios.outputs.matrix != '[]'
     strategy:
       fail-fast: false
       matrix:
@@ -1703,32 +1727,34 @@ jobs:
     secrets: inherit
 ```
 
-> El global lee `.github/smoke-tests-dominios.json` (que el Paso 6b mantiene) y expande una entrada de matrix por dominio. Cada celda reusa el mismo `smoke-tests-dominio.yml` del 6.1 con `secrets: inherit`, asi que la logica de ejecucion vive en un solo lugar (DRY). Si el JSON esta vacio (`[]`), la matrix queda sin combinaciones y el job `smoke-tests` simplemente se omite. `jq` viene preinstalado en `ubuntu-latest`.
+> El global arma la matrix por **glob** de `.github/smoke-tests/*.json` (un archivo por dominio, cada uno un objeto JSON suelto) con `jq -sc` (slurp: agrupa N archivos en un unico array), en vez de leer el array compartido `.github/smoke-tests-dominios.json` de versiones anteriores del scaffolder. `shopt -s nullglob` hace que el glob se expanda a cero elementos si no hay archivos todavia (en vez de quedar literal `*.json`), asi que el paso emite `matrix=[]` sin fallar y el job `smoke-tests` se omite via el `if:` (matrix vacia -> sin combinaciones -> `fromJson('[]')` ya las omite, pero el `if:` evita incluso evaluar la strategy). Cada celda reusa el mismo `smoke-tests-dominio.yml` del 6.1 con `secrets: inherit`, asi que la logica de ejecucion vive en un solo lugar (DRY). `jq` viene preinstalado en `ubuntu-latest`.
+>
+> **Migracion desde `.github/smoke-tests-dominios.json` (issue #234)**: si el repo consumidor todavia tiene el archivo monolitico de versiones anteriores del scaffolder, este workflow **lo ignora** (no lee ese path, no rompe si sigue presente) -- conviven sin interferencia. Para que los dominios que quedaron solo ahi vuelvan a correr en la matrix, migra cada entrada de su array a su propio archivo `.github/smoke-tests/<kebab>.json` (mismo shape que una entrada del array: `dominio`, `base_url`, `test_project`) y, opcionalmente, elimina el archivo legacy una vez migrado todo.
 
 ---
 
 ## Paso 6b - Registrar dominio en smoke tests global
 
-Agrega el nuevo dominio al archivo `.github/smoke-tests-dominios.json` para que el workflow global de smoke tests lo incluya en su matrix.
+Registra el nuevo dominio en su **propio archivo** `.github/smoke-tests/{kebab}.json` para que el workflow global de smoke tests (Paso 6.2) lo incluya en su matrix por glob. A diferencia de versiones anteriores del scaffolder, **no** se toca ningun array compartido: cada dominio es un archivo independiente, asi que dos dominios scaffoldeados en paralelo nunca chocan aqui (issue #234, frente 2).
 
-**Si el archivo existe**, lee su contenido, agrega la nueva entrada al array y escribe el archivo actualizado.
+```bash
+mkdir -p .github/smoke-tests
+```
 
-**Si el archivo no existe**, crealo con la entrada del nuevo dominio:
+Crea `.github/smoke-tests/{kebab}.json` con un unico objeto JSON (no un array):
 
 ```json
-[
-  {
-    "dominio": "{PascalCase}",
-    "base_url": "https://func-{prefix_func}-{kebab}.azurewebsites.net",
-    "test_project": "tests/<RootNamespace>.{PascalCase}.SmokeTests/"
-  }
-]
+{
+  "dominio": "{PascalCase}",
+  "base_url": "https://func-{prefix_func}-{kebab}.azurewebsites.net",
+  "test_project": "tests/<RootNamespace>.{PascalCase}.SmokeTests/"
+}
 ```
 
 **Validacion**: verifica que el JSON resultante sea valido:
 
 ```bash
-cat .github/smoke-tests-dominios.json | python3 -m json.tool > /dev/null
+cat .github/smoke-tests/{kebab}.json | python3 -m json.tool > /dev/null
 ```
 
 ---
@@ -1775,9 +1801,9 @@ git add \
   "tests/<RootNamespace>.{PascalCase}.SmokeTests/" \
   "<SolutionFile>" \
   "global.json" \
-  "infra/environments/dev/main.tf" \
+  "infra/environments/dev/dominio-{kebab}.tf" \
   ".github/workflows/deploy-{kebab}.yml" \
-  ".github/smoke-tests-dominios.json"
+  ".github/smoke-tests/{kebab}.json"
 
 # Los workflows de smoke tests solo existen como cambio la primera vez (Paso 6);
 # en corridas posteriores ya estan versionados y 'git add' no los toca. Inclúyelos
@@ -1820,7 +1846,8 @@ Scaffold completado para el dominio "{kebab}":
     Health/HealthSmokeTests.cs             - Smoke test del health check
     appsettings.json                       - URL + placeholders vacios para ServiceBus y Postgres
 
-  infra/environments/dev/main.tf           - module storage + module service_plan (dedicado) + module function_app
+  infra/environments/dev/dominio-{kebab}.tf - Archivo plano y propio del dominio (issue #234, no toca main.tf):
+                                             module storage + module service_plan (dedicado) + module function_app
                                              + azurerm_role_assignment Key Vault Secrets User (ADR-0024/ADR-0025)
                                              + azurerm_role_assignment Storage Blob/Queue/Table Data Owner-Contributor (storage por identidad, ADR-0025)
                                              app settings SERVICE_BUS_CONNECTION_INTERNO / _<ALIAS>, MartenConnectionString y
@@ -1831,7 +1858,8 @@ Scaffold completado para el dominio "{kebab}":
   .github/workflows/deploy-{kebab}.yml     - Workflow de deploy automatico + smoke tests post-deploy
                                              (encadenado tras infra-cd.yml via workflow_run; salta el
                                              redeploy si el apply de infra no toco este dominio, ADR-0022)
-  .github/smoke-tests-dominios.json        - Registro de dominios para el workflow global de smoke tests
+  .github/smoke-tests/{kebab}.json         - Registro propio del dominio (issue #234, archivo por dominio,
+                                             no un array compartido) para el workflow global de smoke tests
 
   (solo la primera vez en el repo; en dominios posteriores ya existen y no se tocan)
   .github/workflows/smoke-tests-dominio.yml - Workflow reutilizable de smoke tests (workflow_call)
