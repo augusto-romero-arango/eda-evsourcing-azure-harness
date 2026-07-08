@@ -27,10 +27,11 @@ Si el bloque imprime `ERROR`, detente y muestra el mensaje al usuario.
 3. **Estructura de carpetas esperada** (contrato del harness, punto 3): reporta de forma **informativa** (no bloqueante) la presencia de `src/`, `tests/` e `infra/environments/`. No la marca como `FALTA` cuando falta: un greenfield legitimo aun no tiene estas carpetas antes del primer `/scaffold` o `/infra-base`, y tratarla como bloqueante daria un falso negativo.
 4. **Labels de GitHub** (ADR-0007): que existan `tipo:*`, `estado:borrador`, `estado:listo`, `dom:<x>` por cada `domainLabels`, mas `bug` y `bloqueado`.
 5. **CI hacia Azure** (ADR-0022): que exista la aplicacion de Entra / Service Principal y los secrets OIDC del repo. Tolerante: si no hay `az` o sesion, reporta `NO VERIFICADO` en vez de fallar.
+6. **Secretos que alimentan la siembra en CI** (ADR-0025, informativo): que existan en GitHub `TF_VAR_POSTGRESQL_ADMIN_PASSWORD` y un `SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` por cada alias de `serviceBus.external[]`. Son los **inputs** que `infra-cd.yml` usa para sembrar el Key Vault del BC en un step posterior al `apply`; ya no hay siembra manual del admin ni verificacion del data plane del vault (ADR-0025 decision #6/#10). Reusa la misma lectura de `gh secret list` del punto 5; si falta, reporta `NO VERIFICADO` sin bloquear (un greenfield legitimo aun no tiene Postgres provisionado ni alias externos declarados).
 
 La provision de **labels** (paso 3) y la del **CI** hacia Azure (paso 4) las ofrece `/onboard` como pasos **opt-in**, bajo confirmacion explicita: el script de labels es destructivo (borra los labels default de GitHub) y el de CI crea recursos reales en Azure (app de Entra, role assignments, federated credential -- OIDC, ADR-0022). El diagnostico en si sigue siendo de solo lectura: sin tu confirmacion no se crea, borra ni provisiona nada.
 
-Al cerrar el reporte, `/onboard` imprime un bloque **"Proximos pasos"**: deriva del mismo diagnostico ya hecho (sin re-verificar nada) el comando exacto a correr a continuacion -- labels (ADR-0007), CI (ADR-0022), infraestructura base (`/mefisto:infra-base dev`, ADR-0021) o la siembra recurrente de secretos en Key Vault (ADR-0025), segun que seccion reporto `FALTA` -- y cierra con un puntero descubrible al quickstart narrativo del arranque greenfield (`docs/greenfield-quickstart.md` del harness). Es **puramente informativo**: no ejecuta `gh`/`az` ni provisiona nada; las unicas escrituras siguen siendo los pasos opt-in 3 y 4.
+Al cerrar el reporte, `/onboard` imprime un bloque **"Proximos pasos"**: deriva del mismo diagnostico ya hecho (sin re-verificar nada) el comando exacto a correr a continuacion -- labels (ADR-0007), CI (ADR-0022), infraestructura base (`/mefisto:infra-base dev`, ADR-0021) o el recordatorio recurrente de mantener al dia los GitHub secrets que alimentan la siembra en CI (ADR-0025), segun que seccion reporto `FALTA` -- y cierra con un puntero descubrible al quickstart narrativo del arranque greenfield (`docs/greenfield-quickstart.md` del harness). Es **puramente informativo**: no ejecuta `gh`/`az` ni provisiona nada; las unicas escrituras siguen siendo los pasos opt-in 3 y 4.
 
 ## Proceso
 
@@ -227,7 +228,26 @@ else
   fi
 fi
 
-# --- 6. Acciones y resumen ---
+# --- 6. Secretos que alimentan la siembra en Key Vault (ADR-0025, informativo) ---
+echo ""
+echo "Secretos que alimentan la siembra en Key Vault (ADR-0025 -- la siembra la hace CI tras el apply):"
+if [ "$GS_RC" -ne 0 ]; then
+  row NV "no se pudieron listar los secrets (mismo motivo que la seccion anterior)"
+else
+  printf '%s\n' "$SECRETS" | awk '{print $1}' | grep -Fqx "TF_VAR_POSTGRESQL_ADMIN_PASSWORD" \
+    && row OK "TF_VAR_POSTGRESQL_ADMIN_PASSWORD presente (alimenta marten-connection, ADR-0025 decision #9)" \
+    || row NV "TF_VAR_POSTGRESQL_ADMIN_PASSWORD no encontrado (crealo cuando provisiones Postgres -- ADR-0025 decision #9)"
+  if [ -n "${HARNESS_SB_EXTERNAL_ALIASES:-}" ]; then
+    for alias in $HARNESS_SB_EXTERNAL_ALIASES; do
+      SECNAME="SB_EXTERNAL_${alias}_CONNECTION_STRING"
+      printf '%s\n' "$SECRETS" | awk '{print $1}' | grep -Fqx "$SECNAME" \
+        && row OK "$SECNAME presente" \
+        || row NV "$SECNAME no encontrado (uno por alias de serviceBus.external[] -- ADR-0025 decision #10)"
+    done
+  fi
+fi
+
+# --- 7. Acciones y resumen ---
 echo ""
 if [ -n "$ACTIONS" ]; then
   echo "Acciones sugeridas (el diagnostico no ejecuta ninguna; los labels faltantes y el CI los pueden provisionar los pasos opt-in, bajo tu confirmacion):"
@@ -252,9 +272,10 @@ if [ "$N_FALTA" -eq 0 ]; then
   else
     echo "  1. El harness esta configurado: arranca (o continua) el dominio con /mefisto:scaffold <dominio>,"
     echo "     luego /mefisto:draft y /mefisto:implement para tu primer ciclo TDD."
-    echo "  2. Recordatorio recurrente: si Terraform crea secretos nuevos (o sumas un alias externo de"
-    echo "     Service Bus), siembra sus valores en Key Vault a mano (\"az keyvault secret set\","
-    echo "     rol admin/infra -- ADR-0025)."
+    echo "  2. Recordatorio recurrente: la siembra de secretos en Key Vault la hace CI (infra-cd.yml)"
+    echo "     tras el apply -- ADR-0025. Tu unica accion manual es crear/verificar los GitHub secrets"
+    echo "     que la alimentan (TF_VAR_POSTGRESQL_ADMIN_PASSWORD y un SB_EXTERNAL_<ALIAS>_CONNECTION_STRING"
+    echo "     por cada alias nuevo de serviceBus.external[]) en Settings > Secrets and variables > Actions."
   fi
 else
   PA_STEP=0
@@ -440,5 +461,6 @@ PROVISION_CI
 - **No abortes ante un fallo parcial.** Cada seccion del diagnostico es independiente: si `gh` o `az` no estan disponibles, reporta `NO VERIFICADO` y continua con el resto.
 - **No dupliques la validacion del config.** El formato de `terraformStateStorage` y los campos requeridos los valida `load_harness_config` (issue #78); este skill solo reporta su resultado.
 - **La estructura de carpetas es informativa, nunca `FALTA`.** Un greenfield legitimo aun no tiene `src/`, `tests/` ni `infra/environments/` antes del primer `/scaffold` o `/infra-base`; marcarla como bloqueante daria un falso negativo (issue #212).
+- **Los secretos que alimentan la siembra en Key Vault (ADR-0025) son informativos, nunca `FALTA`.** La siembra en el Key Vault del BC la hace CI (`infra-cd.yml`) tras el `apply`; ningun humano custodia secretos en su data plane. El diagnostico solo reporta si los GitHub secrets que la alimentan (`TF_VAR_POSTGRESQL_ADMIN_PASSWORD`, `SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` por alias) existen -- un greenfield legitimo aun no los tiene antes de provisionar Postgres o declarar `serviceBus.external[]` (issue #232).
 - **El bloque de cierre "Proximos pasos" es puramente informativo (issue #222).** Solo lee las mismas variables que ya acumulo el diagnostico (`N_FALTA`, `N_NV`, y los flags `PA_*` por seccion) para imprimir el comando exacto a correr a continuacion y el puntero al quickstart greenfield; nunca ejecuta `gh`/`az` ni escribe nada. No reemplaza ni condiciona las provisiones opt-in (pasos 3 y 4), que siguen requiriendo confirmacion explicita para cada una.
 - Si `$ARGUMENTS` trae algo, ignoralo: `/onboard` no toma argumentos.
