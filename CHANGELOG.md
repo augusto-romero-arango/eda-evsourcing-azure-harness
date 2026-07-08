@@ -4,6 +4,10 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+### Fixed
+
+- **Corregir `REPO_ROOT` en `scaffold-pipeline.sh`: apuntaba al cache del plugin, no al repo consumidor (issue #228)**: tras la migracion de ADR-0019 (el plugin dejo de vivir dentro del repo del consumidor), `REPO_ROOT` se seguia derivando de `$SCRIPT_DIR/..` (la ubicacion del script, en instalaciones marketplace el cache del plugin) en vez del cwd del consumidor -- el cache no es un repo git, asi que la primera operacion que usaba `REPO_ROOT` (`git -C "$REPO_ROOT" remote get-url origin`) abortaba con `fatal: not a git repository` (exit 128) antes de crear worktree, rama o PR, inutilizando `/scaffold` en cualquier instalacion via marketplace. **CA-1**: `REPO_ROOT` ahora se obtiene con `git rev-parse --show-toplevel`, mismo patron ya vigente en los otros cinco pipelines publicados (`tdd-pipeline.sh`, `tooling-pipeline.sh`, `iac-pipeline.sh`, `batch-pipeline.sh`, `parallel-pipeline.sh`). **CA-2**: se elimina la linea `SCRIPT_DIR=...`, que solo alimentaba el calculo anterior de `REPO_ROOT` y queda huerfana. El guard defensivo (lineas 16-28) y el `source` de `_pipeline-common.sh` (que resuelve su propia ruta via `dirname "${BASH_SOURCE[0]}"`, correcto porque busca la libreria comun en el cache del plugin, no el repo consumidor) no se tocan. Archivo modificado: unicamente `scripts/scaffold-pipeline.sh`.
+
 ## [0.10.0] - 2026-07-07
 
 ### Fixed
