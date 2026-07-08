@@ -161,14 +161,14 @@ resource "azurerm_log_analytics_workspace" "this" {
 }
 
 resource "azurerm_application_insights" "this" {
-  name                                  = "${var.name}-ai"
-  location                              = var.location
-  resource_group_name                   = var.resource_group_name
-  workspace_id                          = azurerm_log_analytics_workspace.this.id
-  application_type                      = "web"
-  daily_data_cap_in_gb                  = var.daily_data_cap_in_gb
-  daily_data_cap_notifications_disabled = false
-  tags                                  = var.tags
+  name                                 = "${var.name}-ai"
+  location                             = var.location
+  resource_group_name                  = var.resource_group_name
+  workspace_id                         = azurerm_log_analytics_workspace.this.id
+  application_type                     = "web"
+  daily_data_cap_in_gb                 = var.daily_data_cap_in_gb
+  daily_data_cap_notifications_enabled = true
+  tags                                 = var.tags
 }
 
 resource "azurerm_monitor_action_group" "cost_alerts" {
@@ -715,7 +715,7 @@ output "principal_id" {
 
 ### 1.8 `infra/modules/key-vault/main.tf`
 
-**Almacen general de secretos del BC** (ADR-0025 decision #5): custodia cualquier secreto que emerja del BC -- cadenas de conexion de Azure Service Bus (ADR-0024 decision #6), password de PostgreSQL (secreto `marten-connection`) y connection string de Application Insights (secreto `app-insights-connection`) -- no solo las de ASB. **RBAC habilitado** (`enable_rbac_authorization = true`): modelo de permisos por rol, nunca access policies. El modulo **no crea secretos**: el valor de cada uno lo siembra **CI**, en un step de `infra-cd.yml` posterior al `apply` (`az keyvault secret set`, ADR-0025 decision #6), nunca Terraform -- asi el valor no queda materializado en el state de este modulo. El esqueleto del entorno (Paso 2.3) crea ademas el `azurerm_role_assignment` de `Key Vault Secrets Officer` para el propio SP de CI (mecanismo M1, ADR-0022) que habilita esa siembra.
+**Almacen general de secretos del BC** (ADR-0025 decision #5): custodia cualquier secreto que emerja del BC -- cadenas de conexion de Azure Service Bus (ADR-0024 decision #6), password de PostgreSQL (secreto `marten-connection`) y connection string de Application Insights (secreto `app-insights-connection`) -- no solo las de ASB. **RBAC habilitado** (`rbac_authorization_enabled = true`): modelo de permisos por rol, nunca access policies. El modulo **no crea secretos**: el valor de cada uno lo siembra **CI**, en un step de `infra-cd.yml` posterior al `apply` (`az keyvault secret set`, ADR-0025 decision #6), nunca Terraform -- asi el valor no queda materializado en el state de este modulo. El esqueleto del entorno (Paso 2.3) crea ademas el `azurerm_role_assignment` de `Key Vault Secrets Officer` para el propio SP de CI (mecanismo M1, ADR-0022) que habilita esa siembra.
 
 ```hcl
 variable "name" {
@@ -756,7 +756,7 @@ resource "azurerm_key_vault" "this" {
   location                   = var.location
   tenant_id                  = var.tenant_id
   sku_name                   = var.sku_name
-  enable_rbac_authorization  = true
+  rbac_authorization_enabled = true
   soft_delete_retention_days = 7
   tags                       = var.tags
 
@@ -1011,7 +1011,7 @@ module "service_bus_interno" {
 # Almacen general de secretos del BC (ADR-0025 decision #5): custodia las cadenas de
 # conexion de ASB (ADR-0024 decision #6, issue #170), el password de PostgreSQL (secreto
 # marten-connection) y la connection string de App Insights (secreto app-insights-connection).
-# RBAC habilitado (enable_rbac_authorization = true dentro del modulo): sin access policies.
+# RBAC habilitado (rbac_authorization_enabled = true dentro del modulo): sin access policies.
 # El modulo NO crea secretos -- el valor de cada uno lo siembra CI, en un step de
 # infra-cd.yml posterior al apply (az keyvault secret set), nunca Terraform (ADR-0025
 # decision #6): asi el valor nunca queda materializado en el state de este Key Vault.
@@ -1069,7 +1069,7 @@ locals {
 }
 
 # RBAC de lectura de secretos (ADR-0024 decision #6 / ADR-0025 decision #2): habilitar
-# enable_rbac_authorization en el Key Vault NO otorga permisos por si solo. Cada
+# rbac_authorization_enabled en el Key Vault NO otorga permisos por si solo. Cada
 # Function App del BC necesita el rol "Key Vault Secrets User" sobre este Key Vault
 # para resolver sus referencias @Microsoft.KeyVault(...) en tiempo de ejecucion. El
 # domain-scaffolder (Paso 4) agrega, al crear cada dominio, un azurerm_role_assignment:
