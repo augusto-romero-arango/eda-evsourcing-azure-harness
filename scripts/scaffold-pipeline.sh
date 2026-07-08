@@ -39,8 +39,7 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 # --- Logging ---
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(git rev-parse --show-toplevel)"
 PIPELINE_DIR="$REPO_ROOT/.claude/pipeline"
 LOG_DIR="$PIPELINE_DIR/logs"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
