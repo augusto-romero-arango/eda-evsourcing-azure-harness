@@ -114,7 +114,7 @@ El dominio "{kebab}" no tiene proyecto aun.
 Se necesita crear el scaffold antes de lanzar el pipeline:
   - Function App:  src/<RootNamespace>.{PascalCase}/
   - Tests:         tests/<RootNamespace>.{PascalCase}.Tests/
-  - Terraform:     infra/environments/dev/main.tf (storage + function app)
+  - Terraform:     infra/environments/dev/dominio-{kebab}.tf (storage + function app)
   - Workflow:      .github/workflows/deploy-{kebab}.yml
 
 El scaffold se hara en el mismo worktree del issue — el PR incluira ambos.

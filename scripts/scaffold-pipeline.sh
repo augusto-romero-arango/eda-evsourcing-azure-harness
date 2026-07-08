@@ -43,7 +43,10 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 PIPELINE_DIR="$REPO_ROOT/.claude/pipeline"
 LOG_DIR="$PIPELINE_DIR/logs"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-LOG_FILE="$LOG_DIR/scaffold-$TIMESTAMP.log"
+# Sufijo de PID ademas del TIMESTAMP: dos pipelines lanzados en paralelo en el
+# mismo segundo (scaffold de varios dominios a la vez, issue #234) no deben
+# compartir LOG_FILE. DOMAIN_NAME aun no se conoce en este punto del script.
+LOG_FILE="$LOG_DIR/scaffold-$TIMESTAMP-$$.log"
 EVENTS_LOG="$PIPELINE_DIR/events.log"
 
 mkdir -p "$LOG_DIR"
@@ -241,7 +244,9 @@ header "Invocando domain-scaffolder"
 
 SCAFFOLD_PROMPT="Crea el scaffold para el dominio '$DOMAIN_NAME'. El usuario ya confirmo la creacion -- omite la confirmacion del Paso 0 y procede directamente a crear el proyecto."
 SCAFFOLD_TIMEOUT=1800
-SCAFFOLD_LOG="$LOG_DIR/scaffold-agent-$TIMESTAMP.log"
+# Sufijo de DOMAIN_NAME + PID: ya se conoce el dominio en este punto, y sumar
+# el PID evita colision si el mismo dominio se relanza en el mismo segundo.
+SCAFFOLD_LOG="$LOG_DIR/scaffold-agent-$TIMESTAMP-$DOMAIN_NAME-$$.log"
 
 echo "[$(date +%H:%M:%S)] === SCAFFOLD: domain-scaffolder para '$DOMAIN_NAME' ===" >> "$EVENTS_LOG"
 
@@ -310,9 +315,9 @@ Scaffold del dominio **$PASCAL_CASE** (\`$DOMAIN_NAME\`) creado con domain-scaff
 - Function App: \`src/${HARNESS_NAMESPACE_PREFIX}.$PASCAL_CASE/\`
 - Tests: \`tests/${HARNESS_NAMESPACE_PREFIX}.$PASCAL_CASE.Tests/\`
 - Smoke Tests: \`tests/${HARNESS_NAMESPACE_PREFIX}.$PASCAL_CASE.SmokeTests/\`
-- Terraform: storage account + function app en \`infra/environments/dev/main.tf\`
+- Terraform: storage account + function app en \`infra/environments/dev/dominio-$DOMAIN_NAME.tf\`
 - GitHub Actions: \`.github/workflows/deploy-$DOMAIN_NAME.yml\` (+ workflows \`smoke-tests-dominio.yml\` y \`smoke-tests.yml\` la primera vez en el repo)
-- Smoke tests: registro del dominio en \`.github/smoke-tests-dominios.json\`
+- Smoke tests: registro del dominio en \`.github/smoke-tests/$DOMAIN_NAME.json\`
 
 ## Commits
 
