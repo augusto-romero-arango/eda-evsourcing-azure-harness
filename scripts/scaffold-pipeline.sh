@@ -293,7 +293,8 @@ git -C "$WORKTREE_PATH" checkout -- .claude/ 2>/dev/null || true
 # falle con "No commits between main and ...".
 if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain)" ]; then
     warn "El agente dejo cambios sin commitear; commiteando defensivamente."
-    git -C "$WORKTREE_PATH" add -A
+    git -C "$WORKTREE_PATH" add -A >>"$LOG_FILE" 2>&1 \
+        || abort "Fallo el 'git add -A' del commit defensivo del scaffold"
     git -C "$WORKTREE_PATH" commit -m "scaffold($DOMAIN_NAME): nuevo dominio $PASCAL_CASE" \
         >>"$LOG_FILE" 2>&1 || abort "Fallo el commit defensivo del scaffold"
 fi
