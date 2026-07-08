@@ -283,6 +283,27 @@ fi
 echo "[$(date +%H:%M:%S)] OK domain-scaffolder (${scaffold_elapsed}s)" >> "$EVENTS_LOG"
 success "Scaffold completado en ${scaffold_elapsed}s"
 
+# --- Commit defensivo ---
+# El pipeline parcha .claude/settings.json en el worktree (runtime, no debe
+# viajar en el commit). Restaurarlo antes de evaluar/commitear.
+git -C "$WORKTREE_PATH" checkout -- .claude/ 2>/dev/null || true
+
+# El Paso 8 del agente (git add + commit) es no determinista por ser un LLM:
+# si dejo cambios sin commitear, los commiteamos aqui para que el PR nunca
+# falle con "No commits between main and ...".
+if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain)" ]; then
+    warn "El agente dejo cambios sin commitear; commiteando defensivamente."
+    git -C "$WORKTREE_PATH" add -A
+    git -C "$WORKTREE_PATH" commit -m "scaffold($DOMAIN_NAME): nuevo dominio $PASCAL_CASE" \
+        >>"$LOG_FILE" 2>&1 || abort "Fallo el commit defensivo del scaffold"
+fi
+
+# Red de seguridad final antes del push: si tras el agente + commit defensivo
+# no hay ningun commit por delante de origin/main, no hay nada que pushear.
+if [ -z "$(git -C "$WORKTREE_PATH" log --oneline origin/main..HEAD 2>/dev/null)" ]; then
+    abort "El scaffold no genero ningun commit sobre origin/main; nada que pushear. Revisa: $SCAFFOLD_LOG"
+fi
+
 # --- Push + Crear PR ---
 header "Creando PR"
 
