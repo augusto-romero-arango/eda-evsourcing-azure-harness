@@ -144,13 +144,14 @@ func init "src/<RootNamespace>.{PascalCase}" \
   --target-framework net10.0
 ```
 
-Despues de `func init`, elimina los archivos que no deben trackearse (ya cubiertos por el .gitignore raiz):
+Despues de `func init`, elimina los archivos de scaffolding que no aportan (VS Code local, launch settings), pero **conserva el `.gitignore` per-proyecto que `func init` genera**:
 
 ```bash
-rm -f "$REPO_ROOT/src/<RootNamespace>.{PascalCase}/.gitignore"
 rm -rf "$REPO_ROOT/src/<RootNamespace>.{PascalCase}/.vscode"
 rm -f "$REPO_ROOT/src/<RootNamespace>.{PascalCase}/Properties/launchSettings.json"
 ```
+
+> **Dependencia de orden y blindaje de secretos (issue #241, ADR-0025):** el `.gitignore` **raiz** del repo lo emite `infra-base-scaffolder` (Paso 2c), no este agente -- por contrato ya corre antes del primer `/scaffold` (el Paso 4 de este agente asume los modulos base del entorno, ver la nota tras el Paso 4). Este agente no vuelve a emitir el raiz ni duplica su contenido (fuente unica). Por eso el `.gitignore` per-proyecto que `func init` acaba de generar **ya no se borra**: ya ignora `local.settings.json`, `bin/` y `obj/` por defecto, y es el guard local que evita que el secreto de desarrollo (`Password=postgres`, Paso 9) se cuele en el `git add` del Paso 8 aunque el raiz todavia no exista o el orden de invocacion se rompa. Vive en `src/<RootNamespace>.{PascalCase}/`, una ruta distinta por dominio, asi que dos scaffolds en paralelo nunca chocan en este archivo.
 
 Una vez creado, lee el archivo `.csproj` generado para ver su contenido actual antes de modificarlo.
 
@@ -1600,6 +1601,8 @@ jobs:
 El workflow de deploy del Paso 5 referencia el reutilizable `./.github/workflows/smoke-tests-dominio.yml` (job `smoke-tests`). Ese reutilizable, y el workflow global que corre los smoke tests de todos los dominios, los genera **el scaffolder la primera vez** que corre en el repo. En greenfield no existen aun; sin este paso el primer deploy fallaria al resolver el `uses:` a un archivo inexistente.
 
 Ambos archivos son **idempotentes** (misma logica de "si existe / si no existe" que el Paso 6b aplica al JSON): se generan solo si faltan y **nunca se sobrescriben** (a partir del segundo dominio ya existen y se respetan, incluidas personalizaciones del consumidor).
+
+**Transcripcion byte-a-byte (issue #241).** Dos dominios pueden scaffoldearse en paralelo desde el mismo `origin/main`, cada uno viendo estos archivos ausentes y generandolos a la vez. Si ambas ramas los transcriben literal, el merge es un add/add de archivos identicos (benigno, sin conflicto); si alguna normaliza espacios, reordena claves o resume comentarios, el add/add se vuelve un conflicto real. Copia los bloques YAML de 6.1 y 6.2 **tal cual aparecen abajo**: sin normalizar indentacion, sin reordenar, sin resumir ni omitir comentarios.
 
 **6.1 - Reutilizable `smoke-tests-dominio.yml`**
 
