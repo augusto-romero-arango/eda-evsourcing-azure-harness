@@ -56,8 +56,12 @@ nombre="func-{prefix_func}-{kebab}"
 echo ${#nombre}
 ```
 
-Si supera 32 caracteres, informa al usuario:
-> "El nombre `func-{prefix_func}-{kebab}` tiene N caracteres y supera el limite de 32 que impone Azure. Por favor elige un nombre mas corto."
+El limite real es **60 caracteres**: es el rango del nombre de recurso `Microsoft.Web/sites` (Function App), 2-60, segun las naming rules de Azure (https://learn.microsoft.com/azure/azure-resource-manager/management/resource-name-rules#microsoftweb). El "32" que aparecia aqui antes corresponde al truncado del host ID de Azure Functions, cuya colision **solo ocurre si dos Function Apps comparten la misma storage account** (https://learn.microsoft.com/azure/azure-functions/storage-considerations#host-id-considerations; ver tambien el evento de diagnostico AZFD0004: https://learn.microsoft.com/azure/azure-functions/errors-diagnostics/diagnostic-events/azfd0004). En este marco cada Function App tiene su **propia** Storage Account (Paso 4) y su propio plan dedicado sin deployment slots (ADR-0020), asi que esa colision no puede darse: el limite de 32 no aplica.
+
+Como `func-` (5 chars) es el prefijo mas largo entre los dos recursos que usan `{prefix_func}-{kebab}` (el App Service Plan usa `asp-`, 4 chars), validar el nombre de la Function App a 60 cubre tambien al App Service Plan (`Microsoft.Web/serverfarms`, rango 1-60 en la misma tabla de naming rules).
+
+Si supera 60 caracteres, informa al usuario el presupuesto real disponible para el kebab (`60 - 5 ("func-") - 1 ("-") - len(prefix_func)` caracteres):
+> "El nombre `func-{prefix_func}-{kebab}` tiene N caracteres y supera el limite de 60 que impone Azure para `Microsoft.Web/sites`. Con `prefix_func = {prefix_func}` el presupuesto para el nombre del dominio es de M caracteres. Por favor elige un nombre mas corto."
 
 Y detente sin hacer nada mas.
 
@@ -1324,12 +1328,17 @@ Si el archivo ya existe con otras propiedades (ej: `sdk`), solo agrega la seccio
 
 Cada Function App tiene su propio **App Service Plan dedicado** y su propia Storage Account, para aislamiento de performance y escalado independiente. El plan dedicado es una directiva del marco: dos dominios nunca comparten plan, porque cada uno corre un agente de durabilidad de Wolverine *always-on* que poll-ea Postgres en background y satura el core aun en reposo (noisy neighbor). Ver **ADR-0020** (hosting: un App Service Plan por Function App) y, para la Storage, Best Practices (Beginning Azure Functions Cap. 8).
 
-**Nombre de la Storage Account**: `st` + dominio sin guiones + environment + sufijo aleatorio.
+**Nombre de la Storage Account**: `st` + dominio sin guiones (truncado a 13 chars, ver "Truncado determinista" abajo) + environment + sufijo aleatorio.
 Ejemplo para `marcaciones` en dev: `stmarcacionesdev{suffix}`.
 
-Antes de continuar, calcula y valida la longitud maxima posible del nombre:
-- `st` + `{kebab-sin-guiones}` + `dev` + 6 chars de suffix <= 24 caracteres (limite de Azure)
-- Si el nombre base (`st` + `{kebab-sin-guiones}` + `dev`) supera 18 caracteres, el nombre completo superaria 24. En ese caso avisa al usuario y trunca el nombre del dominio en el prefijo de storage hasta que quepa.
+**Truncado determinista (issue #245)**: el nombre es `st` + `{kebab-storage}` + `{environment}` + 6 chars de sufijo aleatorio, y no puede superar 24 caracteres (`Microsoft.Storage/storageAccounts`). Para el entorno `dev` (3 chars) el presupuesto del dominio es `24 - 2 ("st") - 3 ("dev") - 6 (sufijo) = 13` caracteres. Calcula `{kebab-storage}` con una regla **mecanica y fija** (no la dejes a tu criterio: dos corridas del scaffolder para el mismo dominio deben producir el mismo archivo byte a byte -- misma clase de no-determinismo que investigamos en #238):
+
+- Parte de `{kebab-sin-guiones}` (el dominio en kebab con los guiones eliminados).
+- Si tiene mas de 13 caracteres, `{kebab-storage}` son sus **primeros 13 caracteres**; si tiene 13 o menos, `{kebab-storage}` es `{kebab-sin-guiones}` completo.
+
+No "avises al usuario" ni preguntes nada: el agente corre no interactivo (`claude -p`, ver issue #245), asi que la regla tiene que ser determinista, no un dialogo. La unicidad global del nombre la garantiza el sufijo aleatorio de 6 chars (`random_string`), aun si dos dominios largos comparten los primeros 13 caracteres.
+
+> **Por que la Storage Account es el unico recurso que se trunca (issue #245)**: su limite real es 24 caracteres (`Microsoft.Storage/storageAccounts`, naming rules de Azure), muy por debajo de los 60 de la Function App y el App Service Plan (Validacion 1 del Paso 0). No es una compuerta interna del harness: es el limite que impone Azure sobre este tipo de recurso especifico.
 
 **Archivo plano por dominio (issue #234, decision D1/D2)**: estos bloques van completos en un archivo **nuevo y propio** del dominio, `infra/environments/dev/dominio-{kebab}.tf`, **NO al final de `main.tf`**. No leas ni modifiques `main.tf`: el root module del entorno lo genera y mantiene `infra-base-scaffolder` (ADR-0021) y queda intacto al dar de alta un dominio. Terraform evalua todos los `.tf` del directorio del entorno como un unico root module y **no recorre subdirectorios** (fuente: HashiCorp, Terraform Language — "Files and Directories"), por lo que un archivo plano preserva sin cambios las referencias a `local.*`, `module.*` y `var.environment` del root module. La Validacion 3 del Paso 0 ya confirmo que este archivo no existe todavia; si en este punto existiera, detente sin pisarlo.
 
@@ -1344,7 +1353,7 @@ resource "random_string" "storage_suffix_{snake_case}" {
 
 module "storage_{snake_case}" {
   source              = "../../modules/storage"
-  name                = "st{kebab-sin-guiones}${var.environment}${random_string.storage_suffix_{snake_case}.result}"
+  name                = "st{kebab-storage}${var.environment}${random_string.storage_suffix_{snake_case}.result}"
   resource_group_name = module.resource_group.name
   location            = module.resource_group.location
   tags                = local.tags
@@ -1414,7 +1423,7 @@ resource "azurerm_role_assignment" "function_app_{snake_case}_storage_table_data
 }
 ```
 
-Donde `{kebab-sin-guiones}` es el nombre del dominio con los guiones eliminados (ej: `calculo-horas` -> `calculohoras`).
+Donde `{kebab-sin-guiones}` es el nombre del dominio con los guiones eliminados (ej: `calculo-horas` -> `calculohoras`), y `{kebab-storage}` es ese mismo valor truncado de forma determinista a 13 caracteres cuando excede el presupuesto de la Storage Account (ver "Truncado determinista" arriba; ej: `tenantprovisioning` (18) -> `tenantprovisi` (13), `calculohoras` (12) -> sin cambios).
 
 **Cada dominio recibe su propio `module service_plan_{snake_case}`**: el `service_plan_id` de la Function App apunta a `module.service_plan_{snake_case}.id`, nunca a un plan compartido. No referencies un `module.service_plan` global; ese patron (todas las Function Apps en un solo plan) es justo el que ADR-0020 proscribe.
 
