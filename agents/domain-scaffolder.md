@@ -1331,9 +1331,12 @@ Cada Function App tiene su propio **App Service Plan dedicado** y su propia Stor
 **Nombre de la Storage Account**: `st` + dominio sin guiones + environment + sufijo aleatorio.
 Ejemplo para `marcaciones` en dev: `stmarcacionesdev{suffix}`.
 
-Antes de continuar, calcula y valida la longitud maxima posible del nombre:
-- `st` + `{kebab-sin-guiones}` + `dev` + 6 chars de suffix <= 24 caracteres (limite de Azure)
-- Si el nombre base (`st` + `{kebab-sin-guiones}` + `dev`) supera 18 caracteres, el nombre completo superaria 24. En ese caso avisa al usuario y trunca el nombre del dominio en el prefijo de storage hasta que quepa.
+**Truncado determinista (issue #245)**: el nombre es `st` + `{kebab-storage}` + `{environment}` + 6 chars de sufijo aleatorio, y no puede superar 24 caracteres (`Microsoft.Storage/storageAccounts`). Para el entorno `dev` (3 chars) el presupuesto del dominio es `24 - 2 ("st") - 3 ("dev") - 6 (sufijo) = 13` caracteres. Calcula `{kebab-storage}` con una regla **mecanica y fija** (no la dejes a tu criterio: dos corridas del scaffolder para el mismo dominio deben producir el mismo archivo byte a byte -- misma clase de no-determinismo que investigamos en #238):
+
+- Parte de `{kebab-sin-guiones}` (el dominio en kebab con los guiones eliminados).
+- Si tiene mas de 13 caracteres, `{kebab-storage}` son sus **primeros 13 caracteres**; si tiene 13 o menos, `{kebab-storage}` es `{kebab-sin-guiones}` completo.
+
+No "avises al usuario" ni preguntes nada: el agente corre no interactivo (`claude -p`, ver issue #245), asi que la regla tiene que ser determinista, no un dialogo. La unicidad global del nombre la garantiza el sufijo aleatorio de 6 chars (`random_string`), aun si dos dominios largos comparten los primeros 13 caracteres.
 
 > **Por que la Storage Account es el unico recurso que se trunca (issue #245)**: su limite real es 24 caracteres (`Microsoft.Storage/storageAccounts`, naming rules de Azure), muy por debajo de los 60 de la Function App y el App Service Plan (Validacion 1 del Paso 0). No es una compuerta interna del harness: es el limite que impone Azure sobre este tipo de recurso especifico.
 
@@ -1350,7 +1353,7 @@ resource "random_string" "storage_suffix_{snake_case}" {
 
 module "storage_{snake_case}" {
   source              = "../../modules/storage"
-  name                = "st{kebab-sin-guiones}${var.environment}${random_string.storage_suffix_{snake_case}.result}"
+  name                = "st{kebab-storage}${var.environment}${random_string.storage_suffix_{snake_case}.result}"
   resource_group_name = module.resource_group.name
   location            = module.resource_group.location
   tags                = local.tags
@@ -1420,7 +1423,7 @@ resource "azurerm_role_assignment" "function_app_{snake_case}_storage_table_data
 }
 ```
 
-Donde `{kebab-sin-guiones}` es el nombre del dominio con los guiones eliminados (ej: `calculo-horas` -> `calculohoras`).
+Donde `{kebab-sin-guiones}` es el nombre del dominio con los guiones eliminados (ej: `calculo-horas` -> `calculohoras`), y `{kebab-storage}` es ese mismo valor truncado de forma determinista a 13 caracteres cuando excede el presupuesto de la Storage Account (ver "Truncado determinista" arriba; ej: `tenantprovisioning` (18) -> `tenantprovisi` (13), `calculohoras` (12) -> sin cambios).
 
 **Cada dominio recibe su propio `module service_plan_{snake_case}`**: el `service_plan_id` de la Function App apunta a `module.service_plan_{snake_case}.id`, nunca a un plan compartido. No referencies un `module.service_plan` global; ese patron (todas las Function Apps en un solo plan) es justo el que ADR-0020 proscribe.
 
