@@ -1472,6 +1472,45 @@ jobs:
 
 ---
 
+## Paso 2c - Generar el `.gitignore` raiz del repo consumidor
+
+Crea el `.gitignore` **raiz** del repo consumidor -- distinto del `.gitignore` del entorno Terraform (Paso 2.5, que solo cubre `infra/environments/<env>/`) -- **solo si no existe** (idempotencia, mismo patron que `infra-cd.yml`, ADR-0021/CA-7: protege personalizaciones del consumidor en re-corridas). El determinismo viene de que este agente corre **una sola vez** en greenfield, antes del primer `/scaffold`; el guard "solo si no existe" por si solo no evitaria un add/add si dos ramas paralelas lo vieran ausente a la vez (issue #241).
+
+**Motivacion de primer orden (ADR-0025).** Sin este paso, ningun componente del harness emite el raiz: aparece por improvisacion del LLM en cada corrida de `/scaffold`, con contenido divergente entre corridas -- eso no es solo ruido de merge. Si el raiz improvisado no ignora `local.settings.json`, el `Password=postgres` que `domain-scaffolder` escribe ahi (su Paso 9) se commitea al repo y a su historial de git. El contenido de abajo es **byte-fijo**: transcribelo literal, sin normalizar espacios, orden ni comentarios, para que corridas repetidas (o una regeneracion manual) produzcan siempre el mismo archivo.
+
+```bash
+test -f .gitignore && echo "EXISTE (omitir)" || echo "FALTA (crear)"
+```
+
+Si falta, crea `.gitignore` en la raiz del repo consumidor con este contenido exacto (base: plantillas `VisualStudio.gitignore`/`Dotnet.gitignore` de `github/gitignore`, mismo criterio que el Paso 2.5 con `Terraform.gitignore`):
+
+```gitignore
+# Build output .NET
+bin/
+obj/
+
+# Azure Functions: settings locales con secretos de desarrollo (ADR-0025)
+local.settings.json
+
+# Visual Studio / Rider / VS Code (artefactos de usuario)
+.vs/
+.vscode/
+*.user
+*.suo
+*.userprefs
+
+# Logs
+*.log
+
+# Resultados de test / coverage
+[Tt]est[Rr]esult*/
+*.trx
+*.coverage
+coverage/
+```
+
+---
+
 ## Paso 3 - Formatear y validar
 
 ```bash
@@ -1493,11 +1532,12 @@ git rev-parse --abbrev-ref HEAD
 # si es main/master:
 git switch -c infra/scaffold-base
 git add infra/
-# infra-cd.yml solo existe como cambio la primera vez (Paso 2b); en corridas
-# posteriores ya esta versionado y 'git add' no lo toca. Se incluye
-# condicionalmente para no fallar si no se genero en esta corrida:
+# .gitignore raiz (Paso 2c) e infra-cd.yml (Paso 2b) solo existen como cambio la
+# primera vez; en corridas posteriores ya estan versionados y 'git add' no los toca.
+# Se incluyen condicionalmente para no fallar si no se generaron en esta corrida:
+[ -f .gitignore ] && git add .gitignore
 [ -f .github/workflows/infra-cd.yml ] && git add .github/workflows/infra-cd.yml
-git commit -m "infra(<env>): generar infraestructura base (8 modulos + esqueleto del entorno + workflow de CI)"
+git commit -m "infra(<env>): generar infraestructura base (8 modulos + esqueleto del entorno + workflow de CI + .gitignore raiz)"
 ```
 
 (Si te invoco desde un pipeline que ya creo un worktree y rama, commitea en esa rama sin crear otra.)
@@ -1510,6 +1550,7 @@ Imprime un resumen claro:
 
 - **Modulos creados** vs **omitidos** (ya existian) bajo `infra/modules/`.
 - **Archivos del entorno creados** vs **omitidos** bajo `infra/environments/<env>/` (incluido `.gitignore`, Paso 2.5).
+- **`.gitignore` raiz del repo consumidor** (Paso 2c): creado u omitido (ya existia). Blinda `local.settings.json` desde el primer `/scaffold` (ADR-0025, issue #241).
 - **Workflow de CI** (`.github/workflows/infra-cd.yml`): creado u omitido (ya existia).
 - Resultado de `terraform validate`.
 - Variables requeridas por `variables.tf` sin default (`alert_email`, `postgresql_admin_password`) y como se alimentan en CI -- **nunca** por `terraform.tfvars` commiteado (ADR-0025): `infra-cd.yml` las inyecta como `TF_VAR_alert_email`/`TF_VAR_postgresql_admin_password` (Paso 2b). `subscription_id` no es una variable de este entorno: la resuelve nativamente `ARM_SUBSCRIPTION_ID`. Defaults derivados que conviene revisar: `project`, `project_short`, `postgresql_location`.
@@ -1534,3 +1575,4 @@ Imprime un resumen claro:
 9. **NUNCA** pases `storage_account_access_key` ni una connection string con access key literal al modulo `function-app` (ADR-0025 decision #3): usa `storage_uses_managed_identity = true` y los role assignments de datos de Storage sobre la managed identity.
 10. **NUNCA** sobrescribas `.github/workflows/infra-cd.yml` si ya existe (idempotencia, mismo patron que los workflows de smoke-tests del `domain-scaffolder`): omitelo y reportalo.
 11. **NUNCA** instruyas pasar `alert_email` o `postgresql_admin_password` por `terraform.tfvars` en CI (ADR-0025 decision #1): ambos se alimentan por `TF_VAR_*` desde una GitHub variable/secret (Paso 2b). Siempre genera `infra/environments/<env>/.gitignore` (Paso 2.5) para que un `terraform.tfvars` local nunca se commitee por error.
+12. **NUNCA** sobrescribas el `.gitignore` **raiz** del repo consumidor si ya existe (Paso 2c, idempotencia): omitelo y reportalo. Su contenido es byte-fijo -- transcribelo literal, sin normalizar espacios, orden ni comentarios (issue #241).
