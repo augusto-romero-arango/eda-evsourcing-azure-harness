@@ -4,6 +4,8 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-09
+
 ### Added
 
 - **`infra-base-scaffolder` emite el `.gitignore` raiz del repo consumidor de forma deterministica (issue #241, ADR-0021, ADR-0025)**: en greenfield ningun componente del harness generaba el `.gitignore` **raiz** -- solo el del entorno Terraform (Paso 2.5). Aparecia por improvisacion del LLM en cada corrida de `/scaffold`, con contenido divergente entre corridas: en el scaffold en paralelo de 5 dominios (Cosmos.ControlPlane, SincoERP, investigacion #238) dos ramas generaron el raiz con contenido distinto y un add/add que deberia mergear limpio se volvio conflicto real -- y, mas grave (ADR-0025), si el raiz improvisado no ignoraba `local.settings.json`, el `Password=postgres` que `domain-scaffolder` escribe ahi (Paso 9) podia commitearse al historial de git. **CA-1/CA-2**: nuevo **Paso 2c** en `infra-base-scaffolder` que emite `.gitignore` en la raiz del repo consumidor con contenido **byte-fijo** (build output .NET, `local.settings.json`, artefactos de IDE, logs, resultados de test) **solo si no existe** (idempotencia, mismo patron que `infra-cd.yml`) -- el determinismo viene de ser una corrida unica en greenfield, no del guard; se stagea en el Paso 4 (`git add .gitignore` condicional, junto a `git add infra/`) y se reporta en el Paso 5. Nueva regla absoluta 12. **CA-3/CA-4**: `domain-scaffolder` deja de borrar el `.gitignore` per-proyecto que `func init` genera en `src/<RootNamespace>.{PascalCase}/` (ya ignora `local.settings.json`, `bin/`, `obj/` por defecto) -- queda como blindaje local que evita el leak del secreto de desarrollo aunque el raiz todavia no exista o el orden de invocacion se rompa; se documenta ademas, junto al Paso 1, la dependencia de orden con `infra-base-scaffolder`. **CA-5**: se refuerza en el Paso 6 la instruccion de transcribir byte-a-byte `smoke-tests-dominio.yml` y `smoke-tests.yml`, para que dos scaffolds en paralelo produzcan archivos identicos. Archivos modificados: `agents/infra-base-scaffolder.md`, `agents/domain-scaffolder.md`.
@@ -311,7 +313,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.7.0...v0.8.0
