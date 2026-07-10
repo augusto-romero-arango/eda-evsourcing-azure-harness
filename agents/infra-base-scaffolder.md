@@ -1193,6 +1193,33 @@ override.tf.json
 
 ## Paso 2b - Generar el workflow de CI de Terraform (`infra-cd.yml`)
 
+### Paso 2b.0 - Registrar los secretos fijos en `harness.config.json > secrets[]`
+
+**Corre siempre**, exista ya o no `infra-cd.yml` (a diferencia del resto de este paso, que es estrictamente "solo si no existe"): el step de siembra que genera este agente ya no enumera secretos -- es **data-driven** (issue #256, CA-2): itera en runtime el array `secrets[]` de `harness.config.json`. Este agente es quien conoce los secretos **fijos** del BC (el interno de ASB, `marten-connection`, `app-insights-connection`, y uno por cada `serviceBus.external[]` alias), asi que los registra ahi de forma idempotente, reusando el helper `upsert_harness_secret` de `_pipeline-common.sh` (el mismo que usa `scripts/seed-secret.sh` para registrar secretos nuevos post-greenfield):
+
+```bash
+PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+source "${PLUGIN_ROOT%/}/scripts/_pipeline-common.sh"
+
+# Secretos fijos del BC (ADR-0025 decision #4/#5): siempre presentes. 'marten-connection' es
+# el unico 'composite' (formula fija de Postgres, ver Paso 2b mas abajo) -- ni este agente ni
+# /seed-secret emiten otro 'composite': es un vocabulario cerrado, reservado a este secreto.
+upsert_harness_secret "<secretName-interno>" "output" "service_bus_interno_connection_string"
+upsert_harness_secret "marten-connection" "composite" "marten-connection"
+upsert_harness_secret "app-insights-connection" "output" "app_insights_connection_string"
+
+# Uno por cada alias de serviceBus.external[] resuelto en el Paso 0 (omite el bloque
+# entero si no hay ninguno). El GitHub secret sigue el patron SB_EXTERNAL_<ALIAS>_CONNECTION_STRING
+# (CA-3, ADR-0024 decision #4); <secretName-alias-cosmos> es serviceBus.external[].secretName
+# del alias COSMOS del ejemplo -- repite una linea por alias real.
+upsert_harness_secret "<secretName-alias-cosmos>" "github-secret" "SB_EXTERNAL_COSMOS_CONNECTION_STRING"
+```
+
+Sustituye `<secretName-interno>` y `<secretName-alias-cosmos>` por los valores reales resueltos en el Paso 0 (`service_bus_internal_secret` y `serviceBus.external[].secretName` de cada alias, respectivamente). Como `upsert_harness_secret` es idempotente (busca por `name` y actualiza en vez de duplicar), correr este bloque en cada invocacion del agente mantiene `secrets[]` al dia aunque `infra-cd.yml` ya exista y no se regenere (p. ej. si el consumidor agrega un alias nuevo a `serviceBus.external[]` despues del primer `/infra-base`: el registro ya lo cubre incluso antes de que el workflow data-driven pueda leerlo, y si el consumidor regenera el workflow a mano mas adelante, el registro ya esta completo).
+
+### Generar (o respetar) el archivo del workflow
+
 Crea `.github/workflows/infra-cd.yml` **solo si no existe** (mismo patron idempotente que los workflows de smoke-tests del `domain-scaffolder`, Paso 6: se genera una sola vez y nunca se sobrescribe, para no pisar personalizaciones del consumidor):
 
 ```bash
@@ -1206,7 +1233,9 @@ fi
 
 Este workflow es el mecanismo concreto que fija **ADR-0022** (autenticacion OIDC, modelo plan-en-PR/apply-en-merge) y **ADR-0021** (CA-3: el `infra-base-scaffolder` emite su propio workflow de CI, analogo a como el `domain-scaffolder` emite los workflows de smoke-tests). Sustituye `<env>` por el ambiente resuelto en el Paso 0 (`dev` por defecto).
 
-El job `apply` gana ademas un step de **siembra de secretos** que materializa **ADR-0025** (decision #6/#10): tras el `terraform apply`, siembra con `az keyvault secret set` los tres secretos fijos del BC (`serviceBus.internal.secretName`, `marten-connection`, `app-insights-connection`) mas uno por cada `serviceBus.external[]` alias declarado en `harness.config.json`. Lo habilita el `azurerm_role_assignment` de `Key Vault Secrets Officer` que el propio `main.tf` del entorno se auto-asigna (Paso 2.3, mecanismo M1, ADR-0022): sin ese rol de datos, el step fallaria con `ForbiddenByRbac`. Sustituye `<secretName-interno>` por `serviceBus.internal.secretName` (resuelto en el Paso 0) y genera, por cada alias de `serviceBus.external[]`, (a) una entrada `SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` en el `env` del job `apply` (CA-3) y (b) su linea de siembra correspondiente con `<secretName-alias>` sustituido por `serviceBus.external[].secretName` de ese alias. Si `serviceBus.external[]` viene vacio o ausente, omite tanto las entradas de `env` como sus lineas de siembra.
+El job `apply` gana ademas un step de **siembra de secretos** que materializa **ADR-0025** (decision #6/#10) y el registro data-driven de #256: tras el `terraform apply`, itera `harness.config.json > secrets[]` (el mismo array que acaba de registrar el Paso 2b.0, mas cualquier secreto que `/seed-secret` haya agregado despues) y siembra cada entrada con `az keyvault secret set` segun su `source.type` -- **sin ninguna linea hardcodeada por secreto** (CA-2, CA-3): `output` lee un `terraform output`, `github-secret` busca el valor en `${{ toJSON(secrets) }}` (ver "Riesgo tecnico" abajo) y `composite` resuelve la unica formula fija reservada (`marten-connection`). Lo habilita el `azurerm_role_assignment` de `Key Vault Secrets Officer` que el propio `main.tf` del entorno se auto-asigna (Paso 2.3, mecanismo M1, ADR-0022): sin ese rol de datos, el step fallaria con `ForbiddenByRbac`.
+
+> **Riesgo tecnico (CA-2): `${{ secrets.X }}` no se indexa por variable dentro de un `run`.** La sintaxis de expresiones de GitHub Actions no permite `secrets[matrix.name]` con un nombre dinamico resuelto en runtime -- el contexto `secrets` solo se indexa con una clave literal conocida al parsear el YAML. Como este workflow se genera **una sola vez** y nunca se reescribe (regla 10), no puede declarar de antemano una entrada `env: NOMBRE: ${{ secrets.NOMBRE }}` por cada secreto `github-secret` que un futuro `/seed-secret` vaya a agregar. La solucion: el job `apply` declara `env: ALL_SECRETS: ${{ toJSON(secrets) }}` (serializa **todo** el contexto `secrets` a JSON) y el script del step hace el lookup por nombre en runtime con `jq` sobre esa variable. GitHub sigue enmascarando en los logs el valor de cualquier secreto asi consumido (el enmascarado se activa por el valor, no por la sintaxis de acceso). Este mecanismo sustituye por completo al `env` con una entrada `SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` hardcodeada por alias que este agente generaba antes de #256.
 
 Si **no existe**, crea `.github/workflows/infra-cd.yml` con este contenido:
 
@@ -1219,10 +1248,10 @@ name: Infra CD
 #   - pull_request sobre infra/**  -> job 'plan': terraform plan, publicado como
 #     comentario del PR. Nunca aplica.
 #   - push a main sobre infra/**   -> job 'apply': terraform apply -auto-approve,
-#     siembra TODOS los secretos del BC en el Key Vault (ADR-0025 decision #6, ver
-#     step "Sembrar los secretos del Key Vault" mas abajo) y cierra el issue de
-#     infra correspondiente (ADR-0022, "Cierre del issue de infra: al aplicar en
-#     CI, no al mergear el PR").
+#     siembra TODOS los secretos de harness.config.json > secrets[] en el Key Vault
+#     (ADR-0025 decision #6, issue #256, ver step "Sembrar los secretos del Key Vault"
+#     mas abajo) y cierra el issue de infra correspondiente (ADR-0022, "Cierre del
+#     issue de infra: al aplicar en CI, no al mergear el PR").
 # Autenticacion por OIDC (Workload Identity Federation), sin secret de password
 # ni AZURE_CREDENTIALS (ADR-0022). El backend remoto es keyless por AAD
 # (use_azuread_auth, ADR-0025): ARM_USE_OIDC habilita tanto al provider azurerm
@@ -1231,12 +1260,14 @@ name: Infra CD
 # se alimentan de una GitHub variable/secret creados por un admin (ver Paso 5); nunca de un
 # terraform.tfvars commiteado (ADR-0025). subscription_id no es una variable: el provider
 # azurerm la resuelve nativamente de ARM_SUBSCRIPTION_ID (ya declarada abajo).
-# Siembra de secretos (ADR-0025 decision #6/#10, mecanismo M1 ADR-0022): el job 'apply'
-# se auto-asigna Key Vault Secrets Officer sobre el vault (azurerm_role_assignment del
-# main.tf, Paso 2.3) y siembra, con az keyvault secret set, los tres secretos fijos del
-# BC mas uno por cada serviceBus.external[] alias (GitHub secret
-# SB_EXTERNAL_<ALIAS>_CONNECTION_STRING, CA-3). Reintenta ante ForbiddenByRbac: el role
-# assignment recien creado puede tardar 1-2 min en propagarse (CA-4).
+# Siembra de secretos (ADR-0025 decision #6/#10, mecanismo M1 ADR-0022, registro
+# data-driven issue #256): el job 'apply' se auto-asigna Key Vault Secrets Officer sobre
+# el vault (azurerm_role_assignment del main.tf, Paso 2.3) e itera harness.config.json >
+# secrets[] (registrado por el Paso 2b.0 de este agente y por /seed-secret) sembrando cada
+# entrada con az keyvault secret set segun su source.type (output|github-secret|composite).
+# Sin ninguna linea hardcodeada por secreto: agregar uno nuevo nunca exige tocar este
+# archivo. Reintenta ante ForbiddenByRbac: el role assignment recien creado puede tardar
+# 1-2 min en propagarse (CA-4).
 
 on:
   pull_request:
@@ -1361,12 +1392,14 @@ jobs:
       run:
         working-directory: infra/environments/<env>
     env:
-      # Uno por cada alias de serviceBus.external[] (harness.config.json), convencion
-      # SB_EXTERNAL_<ALIAS>_CONNECTION_STRING (CA-3, ADR-0024 decision #4). El valor lo
-      # crea manualmente el admin del repo (Paso 5). Ejemplo con el alias COSMOS: genera
-      # una entrada real por cada alias declarado y omite este bloque 'env' por completo
-      # si serviceBus.external[] viene vacio o ausente.
-      SB_EXTERNAL_COSMOS_CONNECTION_STRING: ${{ secrets.SB_EXTERNAL_COSMOS_CONNECTION_STRING }}
+      # Serializa TODO el contexto 'secrets' a JSON (issue #256): la unica forma de que el
+      # step de siembra busque, en runtime y por nombre, el valor de un GitHub secret
+      # arbitrario declarado en harness.config.json > secrets[] (source.type=github-secret)
+      # -- incluidos los que /seed-secret registre despues de generado este workflow. La
+      # sintaxis de expresiones de Actions no permite '${{ secrets[nombre-dinamico] }}'; ver
+      # el recuadro "Riesgo tecnico" en agents/infra-base-scaffolder.md (Paso 2b). GitHub
+      # sigue enmascarando en los logs cualquier valor de 'secrets' consumido asi.
+      ALL_SECRETS: ${{ toJSON(secrets) }}
     steps:
       - uses: actions/checkout@v7
 
@@ -1386,14 +1419,17 @@ jobs:
 
       - name: Sembrar los secretos del Key Vault
         run: |
-          # ADR-0025 decision #6/#10: CI siembra TODOS los secretos del BC despues del
-          # apply, nunca un admin a mano ni Terraform en el state. Lo habilita el
+          # ADR-0025 decision #6/#10 + registro data-driven (issue #256): CI siembra TODOS
+          # los secretos declarados en harness.config.json > secrets[] despues del apply,
+          # nunca un admin a mano ni Terraform en el state. Lo habilita el
           # azurerm_role_assignment de Key Vault Secrets Officer que el propio apply se
           # auto-asigno un momento antes (main.tf del entorno, Paso 2.3, mecanismo M1,
-          # ADR-0022).
+          # ADR-0022). Sin ninguna linea hardcodeada por secreto: agregar uno nuevo
+          # (/seed-secret) nunca exige tocar este workflow.
           set -euo pipefail
 
           KEY_VAULT_NAME=$(terraform output -raw key_vault_name)
+          CONFIG="$GITHUB_WORKSPACE/.claude/harness.config.json"
 
           # Un role assignment de Azure puede tardar 1-2 min en propagarse antes de que
           # las llamadas de datos lo respeten (Microsoft Learn, "Provide access to Key
@@ -1418,28 +1454,57 @@ jobs:
             echo "Secreto '$name' sembrado en $KEY_VAULT_NAME."
           }
 
-          # (i) Cadena de conexion del namespace interno del BC -- derivable de terraform
-          # output. <secretName-interno> = serviceBus.internal.secretName (Paso 0).
-          seed_secret "<secretName-interno>" "$(terraform output -raw service_bus_interno_connection_string)"
+          # Itera harness.config.json > secrets[] (CA-2): cada entrada declara 'name' (el
+          # secreto en Key Vault) y 'source.type'/'source.value' (de donde sale el valor).
+          # 'composite' es un vocabulario cerrado -- hoy solo reconoce 'marten-connection',
+          # la unica formula fija tejida a Postgres/Marten (ADR-0003, ADR-0021); ni este
+          # agente ni /seed-secret registran otro 'composite'.
+          COUNT=$(jq -r '.secrets // [] | length' "$CONFIG")
+          for ((i = 0; i < COUNT; i++)); do
+            NAME=$(jq -r ".secrets[$i].name" "$CONFIG")
+            TYPE=$(jq -r ".secrets[$i].source.type" "$CONFIG")
+            VALUE_REF=$(jq -r ".secrets[$i].source.value" "$CONFIG")
 
-          # (ii) marten-connection -- NO derivable del state (el password es un input del
-          # admin, nunca un output, ADR-0025 decision #10). Se compone con los outputs no
-          # sensibles del entorno mas el mismo GitHub secret que alimenta
-          # TF_VAR_postgresql_admin_password (decision #9: un solo valor, un solo punto
-          # de entrada humano).
-          MARTEN_CONNECTION="Host=$(terraform output -raw postgresql_fqdn);Database=$(terraform output -raw postgresql_database_name);Username=$(terraform output -raw postgresql_administrator_login);Password=${TF_VAR_postgresql_admin_password};SSL Mode=Require"
-          seed_secret "marten-connection" "$MARTEN_CONNECTION"
+            case "$TYPE" in
+              output)
+                # Derivable del state de este BC (ej. la cadena del namespace interno de
+                # ASB o app-insights-connection): un unico terraform output ya contiene
+                # el valor completo.
+                VALUE=$(terraform output -raw "$VALUE_REF")
+                ;;
+              github-secret)
+                # NO derivable del state (ej. cada serviceBus.external[] compartido, o
+                # cualquier secreto nuevo registrado con /seed-secret --from-github-secret):
+                # el valor viene de un GitHub secret, creado manualmente por un admin.
+                # Busqueda en runtime sobre ALL_SECRETS (ver "Riesgo tecnico", Paso 2b):
+                # el nombre del secreto no se conoce al parsear este YAML.
+                VALUE=$(echo "$ALL_SECRETS" | jq -r --arg k "$VALUE_REF" '.[$k] // empty')
+                if [ -z "$VALUE" ]; then
+                  echo "::error::secrets[$i] ('$NAME') declara github-secret '$VALUE_REF', pero ese GitHub secret no existe o esta vacio."
+                  exit 1
+                fi
+                ;;
+              composite)
+                # Unico caso soportado hoy: la formula fija de marten-connection. NO
+                # derivable de un solo output (el password es un input del admin, nunca
+                # un output, ADR-0025 decision #10): se compone con los outputs no
+                # sensibles del entorno mas el mismo GitHub secret que alimenta
+                # TF_VAR_postgresql_admin_password (decision #9: un solo valor, un solo
+                # punto de entrada humano).
+                if [ "$VALUE_REF" != "marten-connection" ]; then
+                  echo "::warning::secrets[$i] ('$NAME') declara source.type=composite con value='$VALUE_REF', no reconocido; se omite."
+                  continue
+                fi
+                VALUE="Host=$(terraform output -raw postgresql_fqdn);Database=$(terraform output -raw postgresql_database_name);Username=$(terraform output -raw postgresql_administrator_login);Password=${TF_VAR_postgresql_admin_password};SSL Mode=Require"
+                ;;
+              *)
+                echo "::warning::secrets[$i] ('$NAME') declara source.type='$TYPE' desconocido; se omite."
+                continue
+                ;;
+            esac
 
-          # (iii) Connection string de Application Insights -- derivable de terraform output.
-          seed_secret "app-insights-connection" "$(terraform output -raw app_insights_connection_string)"
-
-          # (iv) Un az keyvault secret set por cada serviceBus.external[] -- NO derivable
-          # (el ASB compartido lo administra otro equipo, fuera de este state); el valor
-          # viene del GitHub secret de su alias (env de este job, ver arriba). Genera una
-          # linea por alias real (mismo alias que la entrada de 'env'); omite este bloque
-          # por completo si serviceBus.external[] viene vacio o ausente. Ejemplo con el
-          # alias COSMOS y su secretName de harness.config.json:
-          seed_secret "<secretName-alias-cosmos>" "$SB_EXTERNAL_COSMOS_CONNECTION_STRING"
+            seed_secret "$NAME" "$VALUE"
+          done
 
       - name: Cerrar el issue de infra tras el apply exitoso
         env:
@@ -1552,14 +1617,14 @@ Imprime un resumen claro:
 - **Archivos del entorno creados** vs **omitidos** bajo `infra/environments/<env>/` (incluido `.gitignore`, Paso 2.5).
 - **`.gitignore` raiz del repo consumidor** (Paso 2c): creado u omitido (ya existia). Blinda `local.settings.json` desde el primer `/scaffold` (ADR-0025, issue #241).
 - **Workflow de CI** (`.github/workflows/infra-cd.yml`): creado u omitido (ya existia).
+- **Registro `harness.config.json > secrets[]`** (Paso 2b.0, issue #256): las entradas registradas o actualizadas (interno de ASB, `marten-connection`, `app-insights-connection`, una por alias de `serviceBus.external[]`). Corre siempre, incluso si el workflow ya existia.
 - Resultado de `terraform validate`.
 - Variables requeridas por `variables.tf` sin default (`alert_email`, `postgresql_admin_password`) y como se alimentan en CI -- **nunca** por `terraform.tfvars` commiteado (ADR-0025): `infra-cd.yml` las inyecta como `TF_VAR_alert_email`/`TF_VAR_postgresql_admin_password` (Paso 2b). `subscription_id` no es una variable de este entorno: la resuelve nativamente `ARM_SUBSCRIPTION_ID`. Defaults derivados que conviene revisar: `project`, `project_short`, `postgresql_location`.
 - **Secrets/variables de GitHub requeridos por `infra-cd.yml`** (ADR-0022, ADR-0025), y quien los crea:
   - `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` (OIDC, sin `AZURE_CREDENTIALS` ni access keys) -- los emite `scripts/setup-github-ci.sh`. El SP de CI necesita ademas el federated credential de subject `pull_request` (job `plan`) junto al de `ref:refs/heads/main` (job `apply`), y los roles ampliados de ADR-0022 (`Role Based Access Control Administrator` con condicion anti-escalacion, `Storage Blob Data Contributor` sobre el tfstate).
   - La GitHub **variable** `ALERT_EMAIL` (*Settings > Secrets and variables > Actions > Variables*) y el GitHub **secret** `TF_VAR_POSTGRESQL_ADMIN_PASSWORD` (misma pantalla, pestana *Secrets*) los crea **manualmente el admin del repo** -- `setup-github-ci.sh` no los toca. CI reutiliza ese mismo valor para dos fines dentro del `apply`: crear el servidor PostgreSQL y, en el step de siembra posterior, componer y sembrar el secreto `marten-connection` del Key Vault (ADR-0025 decision #9) -- un solo valor, un solo punto de entrada humano.
-  - Un GitHub **secret** `SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` por cada alias de `serviceBus.external[]` declarado en `harness.config.json` (CA-3, ADR-0024 decision #4; p. ej. `SB_EXTERNAL_COSMOS_CONNECTION_STRING`), tambien creado **manualmente por el admin del repo**, con el valor que provee el equipo de infra que administra ese ASB compartido.
-- **Siembra de secretos automatica en CI (ADR-0025 decision #6/#10, perfil (c)):** ya **no** hace falta que ningun admin ejecute `az keyvault secret set` a mano. El job `apply` de `infra-cd.yml` siembra, dentro del mismo `apply`, todos los secretos del BC: `serviceBus.internal.secretName` (desde `terraform output -raw service_bus_interno_connection_string`), `marten-connection` (compuesto desde `postgresql_fqdn`/`postgresql_database_name`/`postgresql_administrator_login` + `TF_VAR_POSTGRESQL_ADMIN_PASSWORD`), `app-insights-connection` (desde `terraform output -raw app_insights_connection_string`) y un secreto por cada `serviceBus.external[].secretName` (valor desde su GitHub secret `SB_EXTERNAL_<ALIAS>_CONNECTION_STRING`). Lo habilita el `azurerm_role_assignment` de `Key Vault Secrets Officer` que el propio `main.tf` del entorno se auto-asigna (Paso 2.3, mecanismo M1, ADR-0022): ningun humano necesita un rol de datos de Key Vault. Terraform nunca escribe el valor de ningun secreto.
-- **Caveat de evolvabilidad:** como `infra-cd.yml` no se sobrescribe una vez creado (regla 10), si el consumidor agrega despues un nuevo alias a `serviceBus.external[]` debera (a) crear el GitHub secret `SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` correspondiente y (b) anadir a mano, en su `infra-cd.yml` ya generado, la entrada de `env` y la linea de siembra de ese alias (mismo patron que los aliases existentes).
+  - Un GitHub **secret** por cada entrada de `secrets[]` con `source.type: "github-secret"` (`SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` para cada alias de `serviceBus.external[]`, CA-3, ADR-0024 decision #4; y cualquier secreto nuevo que registre `/seed-secret --from-github-secret`), tambien creado **manualmente por el admin del repo** (o por quien opere `/seed-secret`).
+- **Siembra de secretos automatica en CI (ADR-0025 decision #6/#10, perfil (c); data-driven desde el issue #256):** ya **no** hace falta que ningun admin ejecute `az keyvault secret set` a mano, y el step de siembra **no tiene ninguna linea hardcodeada por secreto**: itera `harness.config.json > secrets[]` en runtime y siembra cada entrada segun su `source.type` (`output` lee un `terraform output`; `github-secret` busca el valor en el contexto `secrets` serializado; `composite` resuelve la formula fija de `marten-connection`). Lo habilita el `azurerm_role_assignment` de `Key Vault Secrets Officer` que el propio `main.tf` del entorno se auto-asigna (Paso 2.3, mecanismo M1, ADR-0022): ningun humano necesita un rol de datos de Key Vault. Terraform nunca escribe el valor de ningun secreto. Agregar un secreto nuevo despues del greenfield ya no exige editar `infra-cd.yml` a mano: usa `/seed-secret` (registra la entrada en `secrets[]` y cablea la referencia en la Function App del dominio que la consume).
 - **Siguiente paso**: si el backend del `tfstate` aun no existe, corre `bootstrap-backend.sh`; luego abre un PR con este HCL (`/infra`) -- el `plan` corre en el PR y el `apply` real lo ejecuta `infra-cd.yml` en CI al mergear a `main` (ADR-0022), nunca localmente. Para crear el primer dominio, usa `/scaffold <dominio>` (que agrega su `service-plan`/`storage`/`function-app` a este entorno, junto con el role assignment "Key Vault Secrets User" de su managed identity, los tres role assignments de datos de Storage para `AzureWebJobsStorage` por identidad, y sus app settings `SERVICE_BUS_CONNECTION_<ALIAS>`, `MartenConnectionString` y `APPLICATIONINSIGHTS_CONNECTION_STRING` como referencias `@Microsoft.KeyVault(...)`; su workflow de deploy se encadena tras `infra-cd.yml`, ver `domain-scaffolder.md` Paso 5).
 
 ## Reglas absolutas
@@ -1576,3 +1641,4 @@ Imprime un resumen claro:
 10. **NUNCA** sobrescribas `.github/workflows/infra-cd.yml` si ya existe (idempotencia, mismo patron que los workflows de smoke-tests del `domain-scaffolder`): omitelo y reportalo.
 11. **NUNCA** instruyas pasar `alert_email` o `postgresql_admin_password` por `terraform.tfvars` en CI (ADR-0025 decision #1): ambos se alimentan por `TF_VAR_*` desde una GitHub variable/secret (Paso 2b). Siempre genera `infra/environments/<env>/.gitignore` (Paso 2.5) para que un `terraform.tfvars` local nunca se commitee por error.
 12. **NUNCA** sobrescribas el `.gitignore` **raiz** del repo consumidor si ya existe (Paso 2c, idempotencia): omitelo y reportalo. Su contenido es byte-fijo -- transcribelo literal, sin normalizar espacios, orden ni comentarios (issue #241).
+13. El registro de `secrets[]` (Paso 2b.0) es la **unica** parte de este paso que corre **siempre**, incluso si `infra-cd.yml` ya existe (regla 10): usa `upsert_harness_secret` (idempotente por `name`), nunca escribas el array a mano con `jq` inline ni dupliques una entrada existente.
