@@ -160,6 +160,20 @@ Y añade una sección a `CLAUDE.md` raíz del consumidor declarando los tokens:
 
 `BoundedContext` es el nombre del Bounded Context: grupo de dominios relacionados que comparte resource group y namespaces de Azure Service Bus (ADR-0023).
 
+Añade también, verbatim, la sección "Verificación de fuentes" al mismo `CLAUDE.md` — propaga al consumidor el principio de verificación de fuentes del propio harness, para que aplique aunque el usuario nunca invoque los skills/agentes de Mefisto:
+
+```markdown
+### Verificación de fuentes (obligatorio para agentes)
+
+Antes de proponer o aplicar un ajuste técnico, verifica el enfoque contra la
+**documentación oficial y vigente** de las tecnologías del stack (.NET, Azure
+Functions, Marten, Wolverine, Azure Service Bus, Terraform, …). No te apoyes en
+conocimiento memorizado: puede estar desactualizado. Al afirmar una best practice
+o recomendación, **cita la fuente** (URL oficial, versión del paquete, ADR). Si un
+dato no pudiste verificarlo contra la fuente, decláralo como *no verificado* en
+tu propuesta en vez de darlo por cierto.
+```
+
 ### 4. Verificar instalación
 
 El objetivo es confirmar que el plugin quedó **instalado y habilitado**, no que existan flujos o pipelines (que en un proyecto recién creado todavía no hay). Dos checks que funcionan en greenfield, sin depender de artefactos de runtime (`docs/eda/flows/`, `.claude/pipeline/`):
@@ -228,7 +242,7 @@ Comprueba que el plugin cargó (mismo criterio que "Verificar instalación", pas
 
 ### 2. Crear `.claude/harness.config.json`
 
-Crea el archivo de configuración en la raíz del consumidor (sección Instalación, paso 3). Para el bootstrap de infra conviene declarar también el campo opcional `azureLocation` con tu región de Azure (ej. `"eastus2"`), así no tienes que pasar `--location` en cada corrida. Añade además la sección "Tokens del harness" a tu `CLAUDE.md` raíz.
+Crea el archivo de configuración en la raíz del consumidor (sección Instalación, paso 3). Para el bootstrap de infra conviene declarar también el campo opcional `azureLocation` con tu región de Azure (ej. `"eastus2"`), así no tienes que pasar `--location` en cada corrida. Añade además las secciones "Tokens del harness" y "Verificación de fuentes" a tu `CLAUDE.md` raíz.
 
 Cuando lo tengas, corre `/mefisto:onboard` para verificar de un vistazo que el config está bien formado y qué te falta (labels, CI). Por defecto solo diagnostica; bajo tu confirmación explícita puede además provisionar los **labels** faltantes (el script subyacente es destructivo) y configurar el **CI** hacia Azure (crea recursos reales en Azure vía OIDC; debe correr **después** de `bootstrap-backend.sh`, ver paso 5). También puedes correr `setup-github-labels.sh` / `setup-github-ci.sh` a mano si prefieres.
 

@@ -83,7 +83,7 @@ Notas sobre campos concretos:
 - **`repoSlug`** (opcional): slug `owner/repo` del fork de Mefisto al que se enrutan los drafts cross-repo (`estado:borrador`). Default: `augusto-romero-arango/eda-evsourcing-azure-harness`.
 - **`azureLocation`** (opcional): región de Azure por defecto para `bootstrap-backend.sh`.
 
-### 2. Sección "Tokens del harness" en `CLAUDE.md` raíz del consumidor
+### 2. Secciones "Tokens del harness" y "Verificación de fuentes" en `CLAUDE.md` raíz del consumidor
 
 Necesaria porque los agentes/skills del harness no pueden hacer sustitución de variables. Los placeholders `<RootNamespace>`, `<SolutionFile>`, `<ProjectDisplayName>`, `<BoundedContext>` y `<BoundedContextDomains>` se resuelven leyendo `CLAUDE.md` del proyecto. Ejemplo mínimo:
 
@@ -98,6 +98,20 @@ Necesaria porque los agentes/skills del harness no pueden hacer sustitución de 
 ```
 
 `BoundedContext` es el nombre del Bounded Context declarado en `harness.config.json` (ADR-0023); puede coincidir o no con `ProjectDisplayName`.
+
+Además de "Tokens del harness", el `CLAUDE.md` mínimo del consumidor debe incluir la siguiente sección, verbatim, propagando al consumidor el principio de verificación de fuentes del propio harness (ver "Principios de respuesta" arriba):
+
+```markdown
+### Verificación de fuentes (obligatorio para agentes)
+
+Antes de proponer o aplicar un ajuste técnico, verifica el enfoque contra la
+**documentación oficial y vigente** de las tecnologías del stack (.NET, Azure
+Functions, Marten, Wolverine, Azure Service Bus, Terraform, …). No te apoyes en
+conocimiento memorizado: puede estar desactualizado. Al afirmar una best practice
+o recomendación, **cita la fuente** (URL oficial, versión del paquete, ADR). Si un
+dato no pudiste verificarlo contra la fuente, decláralo como *no verificado* en
+tu propuesta en vez de darlo por cierto.
+```
 
 ### 3. Estructura de carpetas esperada
 
