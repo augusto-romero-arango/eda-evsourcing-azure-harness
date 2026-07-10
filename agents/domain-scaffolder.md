@@ -178,7 +178,8 @@ Elimina estas lineas del `.csproj`:
 <PackageReference Include="Cosmos.EventDriven.CritterStack.AzureServiceBus" Version="0.0.6" />
 <PackageReference Include="Cosmos.EventSourcing.Abstractions" Version="0.0.12" />
 <PackageReference Include="Cosmos.EventSourcing.CritterStack" Version="0.1.9" />
-<PackageReference Include="Azure.Monitor.OpenTelemetry.AspNetCore" Version="1.4.0" />
+<PackageReference Include="Microsoft.Azure.Functions.Worker.OpenTelemetry" Version="1.4.0" />
+<PackageReference Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.4.0" />
 <PackageReference Include="FluentValidation.DependencyInjectionExtensions" Version="11.*" />
 ```
 
@@ -214,12 +215,14 @@ Lee el Program.cs generado para ver su contenido actual, luego reemplazalo compl
 using System.Text.Json;
 using <RootNamespace>.{PascalCase};
 using <RootNamespace>.{PascalCase}.Infraestructura;
+using Azure.Monitor.OpenTelemetry.Exporter;
 using Cosmos.EventDriven.CritterStack;
 using Cosmos.EventDriven.CritterStack.AzureServiceBus;
 using Cosmos.EventSourcing.CritterStack;
 using Cosmos.EventSourcing.CritterStack.Commands;
 using FluentValidation;
 using Microsoft.Azure.Functions.Worker.Builder;
+using Microsoft.Azure.Functions.Worker.OpenTelemetry;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using OpenTelemetry.Trace;
@@ -260,10 +263,12 @@ builder.Services.AgregarWolverineCommandRouter();
 builder.Services.AgregarWolverineEventSender();
 
 builder.Services.AddOpenTelemetry()
+    .UseFunctionsWorkerDefaults()
     .WithTracing(tracing => tracing
         .AddSource("Wolverine")
         .AddSource("Marten")
-        .AddSource("<RootNamespace>.{PascalCase}.*"));
+        .AddSource("<RootNamespace>.{PascalCase}.*"))
+    .UseAzureMonitorExporter();
 
 // Serializacion JSON global: camelCase hacia el cliente, case-insensitive en lectura
 builder.Services.Configure<JsonSerializerOptions>(options =>
@@ -296,11 +301,12 @@ namespace <RootNamespace>.{PascalCase};
 public interface I{PascalCase}AssemblyMarker;
 ```
 
-**8. Actualizar `host.json`** para agregar la configuracion de Service Bus. Lee el archivo generado por `func init` y agrega la seccion `extensions` al JSON:
+**8. Actualizar `host.json`** para agregar `telemetryMode` y la configuracion de Service Bus. Lee el archivo generado por `func init` y agrega ambas claves al JSON:
 
 ```json
 {
     "version": "2.0",
+    "telemetryMode": "OpenTelemetry",
     "logging": {
         "logLevel": {
             "default": "Warning",
@@ -331,6 +337,8 @@ public interface I{PascalCase}AssemblyMarker;
     }
 }
 ```
+
+> **`telemetryMode: "OpenTelemetry"` inhabilita `logging.applicationInsights` (opentelemetry-howto, "Considerations for OpenTelemetry")**: la doc oficial es explicita -- "If you set telemetryMode to OpenTelemetry, the configuration in the logging.applicationInsights section of host.json doesn't apply." Ese bloque queda en el JSON generado sin efecto; no lo elimines (`func init` lo genera y no rompe nada dejarlo inerte), pero no esperes que `samplingSettings` filtre nada mientras `telemetryMode` sea `OpenTelemetry`.
 
 **9. Actualizar `local.settings.json`** para incluir las variables de entorno que `Program.cs` necesita para desarrollo local. Lee el archivo y agrega las siguientes claves dentro de `Values`:
 
@@ -1866,8 +1874,9 @@ Scaffold completado para el dominio "{kebab}":
                                              module storage + module service_plan (dedicado) + module function_app
                                              + azurerm_role_assignment Key Vault Secrets User (ADR-0024/ADR-0025)
                                              + azurerm_role_assignment Storage Blob/Queue/Table Data Owner-Contributor (storage por identidad, ADR-0025)
-                                             app settings SERVICE_BUS_CONNECTION_INTERNO / _<ALIAS>, MartenConnectionString y
-                                             APPLICATIONINSIGHTS_CONNECTION_STRING por referencia @Microsoft.KeyVault(...) (ADR-0025)
+                                             app settings SERVICE_BUS_CONNECTION_INTERNO / _<ALIAS> y MartenConnectionString por
+                                             referencia @Microsoft.KeyVault(...) (ADR-0025); APPLICATIONINSIGHTS_CONNECTION_STRING
+                                             via site_config.application_insights_connection_string del modulo function-app (issue #259)
                                              App Service Plan asp-{prefix_func}-{kebab} (SKU {sku_name}, always_on {always_on}), ADR-0020
                                              (topics privados se crean bajo demanda con implementer; el backbone compartido lo administra infra)
 
