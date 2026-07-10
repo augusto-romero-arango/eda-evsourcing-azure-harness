@@ -4,6 +4,10 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+### Fixed
+
+- **Corregir el `run:` de `smoke-tests-dominio.yml` generado por `domain-scaffolder` para .NET 10 Microsoft Testing Platform (issue #253, ADR-0013)**: reporte de campo verificado (consumidor Cosmos.ControlPlane, Luis Felipe Diaz) -- el `run:` del reutilizable (Paso 6.1) invocaba `dotnet test "${{ inputs.test_project }}" --configuration Release` pasando un **directorio** como argumento posicional; con el SDK de .NET 10 y `global.json` fijando `test.runner = Microsoft.Testing.Platform` (default del scaffold), `dotnet test` ya no acepta un directorio posicional y aborta con exit code 1 antes de correr ningun test ("Specifying a directory for 'dotnet test' should be via '--project' or '--solution'"), rompiendo tanto el job `smoke-tests` post-deploy de cada `deploy-<dominio>.yml` como el workflow global `smoke-tests.yml`, y marcando en rojo la corrida de deploy aunque el deploy en si fuera exitoso. El resto del harness ya usaba la forma correcta (`agents/smoke-test-writer.md`, ADR-0013, y el propio `domain-scaffolder.md` en otras dos lineas) -- solo este `run:` habia quedado con la forma vieja. **CA-1**: se corrige a `dotnet test --project "${{ inputs.test_project }}" --configuration Release`. **CA-2**: no cambia el contrato de entrada -- `test_project` sigue siendo un directorio, que `--project` resuelve al unico `.csproj` que contiene; no se toca `.github/smoke-tests/*.json` ni el `test_project` que pasan los `deploy-<dominio>.yml`. **CA-3**: se documenta junto al Paso 6 que la idempotencia (el scaffolder nunca reescribe un `smoke-tests-dominio.yml` ya existente) implica que los repos ya scaffoldeados antes de este fix deben aplicar el mismo parche a mano. Archivo modificado: unicamente `agents/domain-scaffolder.md`.
+
 ## [0.11.0] - 2026-07-09
 
 ### Added
