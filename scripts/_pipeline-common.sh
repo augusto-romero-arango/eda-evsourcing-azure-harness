@@ -34,6 +34,13 @@
 #   HARNESS_SB_EXTERNAL_SECRETS   - Lista separada por espacios, MISMO ORDEN posicional que
 #                                   HARNESS_SB_EXTERNAL_ALIASES, con el nombre del secreto de
 #                                   Key Vault de cada entrada.
+#   HARNESS_SECRETS_NAMES      - Lista separada por espacios de 'name' de cada entrada de
+#                                 secrets[] (issue #256). Vacia si el config no declara 'secrets'.
+#   HARNESS_SECRETS_TYPES      - Lista separada por espacios, MISMO ORDEN posicional que
+#                                 HARNESS_SECRETS_NAMES, con 'source.type' de cada entrada
+#                                 (output|github-secret|composite).
+#   HARNESS_SECRETS_VALUES     - Lista separada por espacios, MISMO ORDEN posicional que
+#                                 HARNESS_SECRETS_NAMES, con 'source.value' de cada entrada.
 #
 # Campos opcionales del config (no se exportan via load_harness_config; se leen
 # inline donde se necesitan, mismo patron que agents/planner.md):
@@ -260,6 +267,144 @@ load_harness_config() {
         fi
         export HARNESS_SB_EXTERNAL_ALIASES HARNESS_SB_EXTERNAL_ALCANCES HARNESS_SB_EXTERNAL_SECRETS
     fi
+
+    # secrets es opcional (issue #256): registro declarativo de todo secreto del BC que
+    # el step de siembra data-driven de infra-cd.yml itera en runtime (agents/infra-base-scaffolder.md,
+    # Paso 2b), en vez de tener una linea hardcodeada por secreto. Cada entrada declara 'name'
+    # (el secreto en Key Vault) y 'source.type'/'source.value' (de donde CI toma el valor a
+    # sembrar): 'output' (un unico terraform output, derivable), 'github-secret' (un unico
+    # GitHub secret, no derivable) o 'composite' (formula fija reservada para marten-connection --
+    # el unico secreto compuesto de varios outputs + un GitHub secret; solo infra-base-scaffolder
+    # la escribe, /seed-secret nunca emite 'composite'). Ausente por completo -> exports vacios,
+    # sin error (greenfield antes del primer /infra-base).
+    export HARNESS_SECRETS_NAMES=""
+    export HARNESS_SECRETS_TYPES=""
+    export HARNESS_SECRETS_VALUES=""
+
+    local secrets_present
+    secrets_present=$(jq -r 'if has("secrets") then "yes" else "no" end' "$config")
+    if [ "$secrets_present" = "yes" ]; then
+        local secrets_type
+        secrets_type=$(jq -r '.secrets | type' "$config")
+        if [ "$secrets_type" != "array" ]; then
+            echo "ERROR: 'secrets' en $config debe ser un array (issue #256)." >&2
+            return 1
+        fi
+
+        local sec_count
+        sec_count=$(jq -r '.secrets | length' "$config")
+
+        local sec_invalid=() sec_names=() sec_types=() sec_values=()
+        local j sec_name sec_type sec_value is_dup_sec existing_name
+        for ((j = 0; j < sec_count; j++)); do
+            sec_name=$(jq -r ".secrets[$j].name // \"\"" "$config")
+            sec_type=$(jq -r ".secrets[$j].source.type // \"\"" "$config")
+            sec_value=$(jq -r ".secrets[$j].source.value // \"\"" "$config")
+
+            if [ -z "$sec_name" ]; then
+                sec_invalid+=("entrada #$j: 'name' vacio o ausente")
+                continue
+            fi
+
+            if [ "$sec_type" != "output" ] && [ "$sec_type" != "github-secret" ] && [ "$sec_type" != "composite" ]; then
+                sec_invalid+=("entrada #$j (name '$sec_name'): source.type '$sec_type' invalido, debe ser 'output', 'github-secret' o 'composite'")
+                continue
+            fi
+
+            if [ -z "$sec_value" ]; then
+                sec_invalid+=("entrada #$j (name '$sec_name'): 'source.value' vacio o ausente")
+                continue
+            fi
+
+            is_dup_sec="no"
+            if [ ${#sec_names[@]} -gt 0 ]; then
+                for existing_name in "${sec_names[@]}"; do
+                    if [ "$existing_name" = "$sec_name" ]; then
+                        is_dup_sec="yes"
+                        break
+                    fi
+                done
+            fi
+            if [ "$is_dup_sec" = "yes" ]; then
+                sec_invalid+=("entrada #$j: name '$sec_name' duplicado")
+                continue
+            fi
+
+            sec_names+=("$sec_name")
+            sec_types+=("$sec_type")
+            sec_values+=("$sec_value")
+        done
+
+        if [ ${#sec_invalid[@]} -gt 0 ]; then
+            echo "ERROR: 'secrets' mal formado en $config (issue #256):" >&2
+            printf '  - %s\n' "${sec_invalid[@]}" >&2
+            echo "  Cada entrada requiere: 'name' no vacio y unico, y 'source.type' en" >&2
+            echo "  {output, github-secret, composite} con 'source.value' no vacio." >&2
+            return 1
+        fi
+
+        if [ ${#sec_names[@]} -gt 0 ]; then
+            HARNESS_SECRETS_NAMES="${sec_names[*]}"
+            HARNESS_SECRETS_TYPES="${sec_types[*]}"
+            HARNESS_SECRETS_VALUES="${sec_values[*]}"
+        fi
+        export HARNESS_SECRETS_NAMES HARNESS_SECRETS_TYPES HARNESS_SECRETS_VALUES
+    fi
+}
+
+# upsert_harness_secret <name> <source_type> <source_value> [config_path]
+#
+# Inserta o actualiza, de forma idempotente, una entrada de harness.config.json > secrets[]
+# (issue #256): busca por 'name' (match exacto) y sobreescribe su 'source' si ya existe, o
+# agrega la entrada al final del array si no. Crea el array 'secrets' si el config todavia
+# no lo declara. Escribe con jq a un temporal y hace 'mv' atomico, para no dejar el config
+# a medio escribir si el proceso se interrumpe. La usan infra-base-scaffolder (registro de
+# los secretos fijos del BC) y scripts/seed-secret.sh (registro de secretos nuevos).
+#
+# <source_type> debe ser 'output', 'github-secret' o 'composite' -- no se revalida aqui
+# (el caller ya restringe los valores que pasa; load_harness_config valida el resultado
+# final la proxima vez que se cargue el config).
+#
+# Retorna 0 si escribio bien, 1 si el config no existe o jq falla.
+upsert_harness_secret() {
+    local name="$1"
+    local source_type="$2"
+    local source_value="$3"
+    local config="${4:-.claude/harness.config.json}"
+
+    if [ ! -f "$config" ]; then
+        echo "ERROR: no se encontro $config" >&2
+        return 1
+    fi
+
+    if ! command -v jq >/dev/null 2>&1; then
+        echo "ERROR: jq no esta instalado. Requerido para actualizar $config" >&2
+        return 1
+    fi
+
+    local tmp
+    tmp=$(mktemp) || return 1
+
+    if ! jq \
+        --arg name "$name" \
+        --arg type "$source_type" \
+        --arg value "$source_value" \
+        '
+        (.secrets // []) as $existing
+        | .secrets = (
+            if ($existing | map(.name) | index($name)) != null then
+              $existing | map(if .name == $name then {name: $name, source: {type: $type, value: $value}} else . end)
+            else
+              $existing + [{name: $name, source: {type: $type, value: $value}}]
+            end
+          )
+        ' "$config" > "$tmp"; then
+        echo "ERROR: jq fallo al actualizar 'secrets' en $config" >&2
+        rm -f "$tmp"
+        return 1
+    fi
+
+    mv "$tmp" "$config"
 }
 
 # --- Helpers de naming de Azure Storage Account (tfstate backend) -------------
