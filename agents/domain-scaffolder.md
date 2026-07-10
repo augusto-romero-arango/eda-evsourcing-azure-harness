@@ -1611,6 +1611,8 @@ El workflow de deploy del Paso 5 referencia el reutilizable `./.github/workflows
 
 Ambos archivos son **idempotentes** (misma logica de "si existe / si no existe" que el Paso 6b aplica al JSON): se generan solo si faltan y **nunca se sobrescriben** (a partir del segundo dominio ya existen y se respetan, incluidas personalizaciones del consumidor).
 
+> **Repos ya scaffoldeados antes del fix del issue #253**: la misma idempotencia que preserva personalizaciones del consumidor implica que el scaffolder **no reescribe** un `smoke-tests-dominio.yml` existente aunque el fix de este agente haya cambiado su contenido de referencia. Si el repo consumidor ya tiene ese archivo con `dotnet test "${{ inputs.test_project }}" --configuration Release` (forma vieja, rota en .NET 10 con Microsoft Testing Platform), hay que aplicar el mismo parche a mano: cambiar el `run:` del job `smoke-tests` a `dotnet test --project "${{ inputs.test_project }}" --configuration Release`.
+
 **Transcripcion byte-a-byte (issue #241).** Dos dominios pueden scaffoldearse en paralelo desde el mismo `origin/main`, cada uno viendo estos archivos ausentes y generandolos a la vez. Si ambas ramas los transcriben literal, el merge es un add/add de archivos identicos (benigno, sin conflicto); si alguna normaliza espacios, reordena claves o resume comentarios, el add/add se vuelve un conflicto real. Copia los bloques YAML de 6.1 y 6.2 **tal cual aparecen abajo**: sin normalizar indentacion, sin reordenar, sin resumir ni omitir comentarios.
 
 **6.1 - Reutilizable `smoke-tests-dominio.yml`**
@@ -1672,7 +1674,7 @@ jobs:
           Postgres__ConnectionString: ${{ secrets.POSTGRES_CONNECTION_STRING }}
         # Los tests que dependen de ServiceBus o Postgres se skipean gracefully via
         # Assert.SkipWhen si el secret no esta configurado (required: false). ADR-0013.
-        run: dotnet test "${{ inputs.test_project }}" --configuration Release
+        run: dotnet test --project "${{ inputs.test_project }}" --configuration Release
 ```
 
 > El reutilizable NO se autentica contra Azure: los smoke tests son black-box (HTTP contra `base_url`) y acceden a ServiceBus/Postgres por connection string, no por OIDC. Por eso solo declara `permissions: contents: read` (lo que necesita `actions/checkout`) y no `id-token: write`.
