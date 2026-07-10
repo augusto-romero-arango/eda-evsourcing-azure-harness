@@ -675,6 +675,8 @@ resource "azurerm_linux_function_app" "this" {
   storage_uses_managed_identity = true
 
   site_config {
+    application_insights_connection_string = var.app_insights_connection_string
+
     application_stack {
       dotnet_version              = "10.0"
       use_dotnet_isolated_runtime = true
@@ -683,7 +685,6 @@ resource "azurerm_linux_function_app" "this" {
 
   app_settings = merge(
     {
-      APPLICATIONINSIGHTS_CONNECTION_STRING  = var.app_insights_connection_string
       FUNCTIONS_EXTENSION_VERSION            = "~4"
       FUNCTIONS_WORKER_RUNTIME               = "dotnet-isolated"
       WEBSITE_USE_PLACEHOLDER_DOTNETISOLATED = "1"
@@ -788,7 +789,7 @@ Esta seccion fija la convencion que el `domain-scaffolder` (issue derivado) debe
 - Postgres (`MartenConnectionString`): secreto `marten-connection`.
 - Application Insights (`APPLICATIONINSIGHTS_CONNECTION_STRING`): secreto `app-insights-connection`.
 
-**Claves de app setting: no cambian** (las fijan los frameworks). Solo su **valor** pasa de literal a referencia `@Microsoft.KeyVault(SecretUri=<key_vault_uri>secrets/<secreto>)` versionless.
+**Claves de app setting: no cambian** (las fijan los frameworks). Solo su **valor** pasa de literal a referencia `@Microsoft.KeyVault(SecretUri=<key_vault_uri>secrets/<secreto>)` versionless. **Excepcion de wiring, no de valor (issue #259):** `APPLICATIONINSIGHTS_CONNECTION_STRING` no se declara en `app_settings` -- el modulo `function-app` (Paso 1.7) pasa la referencia via `site_config.application_insights_connection_string`, y `azurerm` gestiona ese app setting por su cuenta a partir de ese argumento. Declararlo tambien en `app_settings` produce un setting duplicado.
 
 **Roles de datos de Storage** para la managed identity de la Function App (`AzureWebJobsStorage` por identidad, `storage_uses_managed_identity = true`, Paso 1.7), segun la doc oficial de Azure Functions "Connect to host storage with an identity":
 
@@ -1625,7 +1626,7 @@ Imprime un resumen claro:
   - La GitHub **variable** `ALERT_EMAIL` (*Settings > Secrets and variables > Actions > Variables*) y el GitHub **secret** `TF_VAR_POSTGRESQL_ADMIN_PASSWORD` (misma pantalla, pestana *Secrets*) los crea **manualmente el admin del repo** -- `setup-github-ci.sh` no los toca. CI reutiliza ese mismo valor para dos fines dentro del `apply`: crear el servidor PostgreSQL y, en el step de siembra posterior, componer y sembrar el secreto `marten-connection` del Key Vault (ADR-0025 decision #9) -- un solo valor, un solo punto de entrada humano.
   - Un GitHub **secret** por cada entrada de `secrets[]` con `source.type: "github-secret"` (`SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` para cada alias de `serviceBus.external[]`, CA-3, ADR-0024 decision #4; y cualquier secreto nuevo que registre `/seed-secret --from-github-secret`), tambien creado **manualmente por el admin del repo** (o por quien opere `/seed-secret`).
 - **Siembra de secretos automatica en CI (ADR-0025 decision #6/#10, perfil (c); data-driven desde el issue #256):** ya **no** hace falta que ningun admin ejecute `az keyvault secret set` a mano, y el step de siembra **no tiene ninguna linea hardcodeada por secreto**: itera `harness.config.json > secrets[]` en runtime y siembra cada entrada segun su `source.type` (`output` lee un `terraform output`; `github-secret` busca el valor en el contexto `secrets` serializado; `composite` resuelve la formula fija de `marten-connection`). Lo habilita el `azurerm_role_assignment` de `Key Vault Secrets Officer` que el propio `main.tf` del entorno se auto-asigna (Paso 2.3, mecanismo M1, ADR-0022): ningun humano necesita un rol de datos de Key Vault. Terraform nunca escribe el valor de ningun secreto. Agregar un secreto nuevo despues del greenfield ya no exige editar `infra-cd.yml` a mano: usa `/seed-secret` (registra la entrada en `secrets[]` y cablea la referencia en la Function App del dominio que la consume).
-- **Siguiente paso**: si el backend del `tfstate` aun no existe, corre `bootstrap-backend.sh`; luego abre un PR con este HCL (`/infra`) -- el `plan` corre en el PR y el `apply` real lo ejecuta `infra-cd.yml` en CI al mergear a `main` (ADR-0022), nunca localmente. Para crear el primer dominio, usa `/scaffold <dominio>` (que agrega su `service-plan`/`storage`/`function-app` a este entorno, junto con el role assignment "Key Vault Secrets User" de su managed identity, los tres role assignments de datos de Storage para `AzureWebJobsStorage` por identidad, y sus app settings `SERVICE_BUS_CONNECTION_<ALIAS>`, `MartenConnectionString` y `APPLICATIONINSIGHTS_CONNECTION_STRING` como referencias `@Microsoft.KeyVault(...)`; su workflow de deploy se encadena tras `infra-cd.yml`, ver `domain-scaffolder.md` Paso 5).
+- **Siguiente paso**: si el backend del `tfstate` aun no existe, corre `bootstrap-backend.sh`; luego abre un PR con este HCL (`/infra`) -- el `plan` corre en el PR y el `apply` real lo ejecuta `infra-cd.yml` en CI al mergear a `main` (ADR-0022), nunca localmente. Para crear el primer dominio, usa `/scaffold <dominio>` (que agrega su `service-plan`/`storage`/`function-app` a este entorno, junto con el role assignment "Key Vault Secrets User" de su managed identity, los tres role assignments de datos de Storage para `AzureWebJobsStorage` por identidad, y sus app settings `SERVICE_BUS_CONNECTION_<ALIAS>` y `MartenConnectionString` como referencias `@Microsoft.KeyVault(...)` (`APPLICATIONINSIGHTS_CONNECTION_STRING` via `site_config.application_insights_connection_string`, issue #259); su workflow de deploy se encadena tras `infra-cd.yml`, ver `domain-scaffolder.md` Paso 5).
 
 ## Reglas absolutas
 
