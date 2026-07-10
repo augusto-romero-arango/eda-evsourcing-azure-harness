@@ -56,7 +56,17 @@ Tokens operativos consumidos por los scripts shell. Estructura:
     "external": [
       { "alias": "COSMOS", "alcance": "compartido", "secretName": "<nombre del secreto KV>" }
     ]
-  }
+  },
+  "secrets": [
+    {
+      "name": "<nombre del secreto en Key Vault>",
+      "source": { "type": "output", "value": "<nombre del output de terraform>" }
+    },
+    {
+      "name": "<nombre del secreto en Key Vault>",
+      "source": { "type": "github-secret", "value": "<NOMBRE_DEL_GITHUB_SECRET>" }
+    }
+  ]
 }
 ```
 
@@ -68,6 +78,7 @@ Notas sobre campos concretos:
   - **`name`**: nombre del BC; puede coincidir o no con `projectName`.
   - **`domains`**: dominios del BC; subconjunto de `domainLabels`.
 - **`serviceBus`** (opcional, ADR-0024): registro de los Azure Service Bus que el BC toca. `internal.secretName` (obligatorio si se declara `serviceBus`) nombra el secreto de Key Vault del ASB propio del BC; `external` lista los ASB compartidos/externos que consume o publica. Ningún secreto viaja en claro (ADR-0025).
+- **`secrets`** (opcional, issue #256): registro declarativo de todo secreto del BC que el step de siembra de `infra-cd.yml` itera en runtime (data-driven, sin líneas hardcodeadas por secreto). Cada entrada declara `name` (el secreto en Key Vault) y `source.type`/`source.value` — de dónde CI toma el valor a sembrar: `output` (un único `terraform output`, derivable) o `github-secret` (un único GitHub secret, no derivable). El tipo `composite` (fórmula fija reservada para `marten-connection`, el único secreto compuesto de varios outputs + un GitHub secret) lo escribe únicamente `infra-base-scaffolder`; el skill `/seed-secret` (que registra secretos nuevos post-greenfield) solo emite `output`/`github-secret`. `infra-base-scaffolder` registra idempotentemente los secretos fijos del BC (interno de ASB, `app-insights-connection`, `marten-connection`, uno por alias de `serviceBus.external[]`) la primera vez que genera `infra-cd.yml`.
 - **`terraformStateStorage`** es el nombre **base** de la Storage Account del tfstate. Debe cumplir el naming de Azure Storage (3-24 caracteres, solo minúsculas y dígitos — [reglas de nombres de recursos, `Microsoft.Storage`](https://learn.microsoft.com/azure/azure-resource-manager/management/resource-name-rules#microsoftstorage)); para nombres largos abrevia el prefijo. Detalle en README §3.
 - **`repoSlug`** (opcional): slug `owner/repo` del fork de Mefisto al que se enrutan los drafts cross-repo (`estado:borrador`). Default: `augusto-romero-arango/eda-evsourcing-azure-harness`.
 - **`azureLocation`** (opcional): región de Azure por defecto para `bootstrap-backend.sh`.
@@ -107,6 +118,7 @@ Necesaria porque los agentes/skills del harness no pueden hacer sustitución de 
 | `/tooling` | Pipeline de tooling (scripts, fixtures, config, agentes) |
 | `/infra` | Pipeline IaC con Terraform (write → review → apply) |
 | `/infra-base` | Genera la infraestructura base (8 módulos + esqueleto del entorno) en greenfield |
+| `/seed-secret` | Registra y cablea un secreto nuevo post-greenfield (Key Vault + Function App de un dominio) |
 | `/parallel` | Corre varios issues en worktrees aislados |
 | `/sequential` | Cadena de issues con merge automático |
 | `/scaffold` | Crea el scaffold de un nuevo dominio |

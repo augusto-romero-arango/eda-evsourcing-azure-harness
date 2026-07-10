@@ -30,6 +30,7 @@ Si el bloque imprime `ERROR`, detente y muestra el mensaje al usuario.
    > **Presupuesto de nombres para el scaffold (issue #245, informativo, no verificado aqui):** cada `domainLabels` termina, al scaffoldear, en el nombre de una Function App `func-{prefix_func}-{kebab}`. El limite real es 60 caracteres (`Microsoft.Web/sites`, naming rules de Azure: https://learn.microsoft.com/azure/azure-resource-manager/management/resource-name-rules#microsoftweb), asi que el presupuesto para el `kebab` del dominio es `60 - 5 ("func-") - 1 ("-") - len(prefix_func)` caracteres. `/onboard` no lo valida (`prefix_func` vive en `infra/environments/dev/variables.tf`, fuera de `harness.config.json`); la Validacion 1 del Paso 0 de `domain-scaffolder` lo hace al momento de scaffoldear cada dominio.
 5. **CI hacia Azure** (ADR-0022): que exista la aplicacion de Entra / Service Principal y los secrets OIDC del repo. Tolerante: si no hay `az` o sesion, reporta `NO VERIFICADO` en vez de fallar.
 6. **Secretos que alimentan la siembra en CI** (ADR-0025, informativo): que existan en GitHub `TF_VAR_POSTGRESQL_ADMIN_PASSWORD` y un `SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` por cada alias de `serviceBus.external[]`. Son los **inputs** que `infra-cd.yml` usa para sembrar el Key Vault del BC en un step posterior al `apply`; ya no hay siembra manual del admin ni verificacion del data plane del vault (ADR-0025 decision #6/#10). Reusa la misma lectura de `gh secret list` del punto 5; si falta, reporta `NO VERIFICADO` sin bloquear (un greenfield legitimo aun no tiene Postgres provisionado ni alias externos declarados).
+7. **Registro `secrets[]`** (issue #256, informativo): cuantas entradas hay registradas (las siembra el step data-driven de `infra-cd.yml`, sin ninguna linea hardcodeada por secreto) y, para cada entrada con `source.type: "github-secret"`, si el GitHub secret que referencia existe en el repo. La **forma** del array (`name` unico, `source.type` en {`output`, `github-secret`, `composite`}, `source.value` no vacio) ya la valida `load_harness_config` como parte del punto 1 (`Configuracion`): un `secrets[]` mal formado hace que esa seccion reporte `FALTA`, con el mensaje exacto que emite la funcion. Ausente por completo, reporta `NO VERIFICADO` sin bloquear (normal antes del primer `/infra-base`).
 
 La provision de **labels** (paso 3) y la del **CI** hacia Azure (paso 4) las ofrece `/onboard` como pasos **opt-in**, bajo confirmacion explicita: el script de labels es destructivo (borra los labels default de GitHub) y el de CI crea recursos reales en Azure (app de Entra, role assignments, federated credential -- OIDC, ADR-0022). El diagnostico en si sigue siendo de solo lectura: sin tu confirmacion no se crea, borra ni provisiona nada.
 
@@ -249,7 +250,30 @@ else
   fi
 fi
 
-# --- 7. Acciones y resumen ---
+# --- 7. Registro secrets[] (issue #256, informativo) ---
+echo ""
+echo "Registro harness.config.json > secrets[] (siembra data-driven -- ADR-0025, issue #256):"
+if [ -n "${HARNESS_SECRETS_NAMES:-}" ]; then
+  read -ra SEC_NAMES <<< "$HARNESS_SECRETS_NAMES"
+  read -ra SEC_TYPES <<< "$HARNESS_SECRETS_TYPES"
+  read -ra SEC_VALUES <<< "$HARNESS_SECRETS_VALUES"
+  row OK "secrets[] registra ${#SEC_NAMES[@]} entrada(s)"
+  if [ "$GS_RC" -ne 0 ]; then
+    row NV "no se pudo verificar la existencia de los GitHub secrets que referencian (mismo motivo que la seccion CI)"
+  else
+    for ((si = 0; si < ${#SEC_NAMES[@]}; si++)); do
+      if [ "${SEC_TYPES[$si]}" = "github-secret" ]; then
+        printf '%s\n' "$SECRETS" | awk '{print $1}' | grep -Fqx "${SEC_VALUES[$si]}" \
+          && row OK "secrets[].name='${SEC_NAMES[$si]}': GitHub secret '${SEC_VALUES[$si]}' presente" \
+          || row NV "secrets[].name='${SEC_NAMES[$si]}': GitHub secret '${SEC_VALUES[$si]}' no encontrado (crealo antes del proximo apply que lo siembre)"
+      fi
+    done
+  fi
+else
+  row NV "secrets[] no declarado todavia (normal antes del primer /infra-base o si el config es invalido -- ver seccion Configuracion)"
+fi
+
+# --- 8. Acciones y resumen ---
 echo ""
 if [ -n "$ACTIONS" ]; then
   echo "Acciones sugeridas (el diagnostico no ejecuta ninguna; los labels faltantes y el CI los pueden provisionar los pasos opt-in, bajo tu confirmacion):"
@@ -274,10 +298,11 @@ if [ "$N_FALTA" -eq 0 ]; then
   else
     echo "  1. El harness esta configurado: arranca (o continua) el dominio con /mefisto:scaffold <dominio>,"
     echo "     luego /mefisto:draft y /mefisto:implement para tu primer ciclo TDD."
-    echo "  2. Recordatorio recurrente: la siembra de secretos en Key Vault la hace CI (infra-cd.yml)"
-    echo "     tras el apply -- ADR-0025. Tu unica accion manual es crear/verificar los GitHub secrets"
-    echo "     que la alimentan (TF_VAR_POSTGRESQL_ADMIN_PASSWORD y un SB_EXTERNAL_<ALIAS>_CONNECTION_STRING"
-    echo "     por cada alias nuevo de serviceBus.external[]) en Settings > Secrets and variables > Actions."
+    echo "  2. Recordatorio recurrente: la siembra de secretos en Key Vault la hace CI (infra-cd.yml),"
+    echo "     iterando harness.config.json > secrets[] -- ADR-0025, issue #256. Tu unica accion manual"
+    echo "     es crear/verificar los GitHub secrets que alimentan cada entrada github-secret"
+    echo "     (TF_VAR_POSTGRESQL_ADMIN_PASSWORD, un SB_EXTERNAL_<ALIAS>_CONNECTION_STRING por alias, o el"
+    echo "     que declares con /seed-secret) en Settings > Secrets and variables > Actions."
   fi
 else
   PA_STEP=0
@@ -464,5 +489,6 @@ PROVISION_CI
 - **No dupliques la validacion del config.** El formato de `terraformStateStorage` y los campos requeridos los valida `load_harness_config` (issue #78); este skill solo reporta su resultado.
 - **La estructura de carpetas es informativa, nunca `FALTA`.** Un greenfield legitimo aun no tiene `src/`, `tests/` ni `infra/environments/` antes del primer `/scaffold` o `/infra-base`; marcarla como bloqueante daria un falso negativo (issue #212).
 - **Los secretos que alimentan la siembra en Key Vault (ADR-0025) son informativos, nunca `FALTA`.** La siembra en el Key Vault del BC la hace CI (`infra-cd.yml`) tras el `apply`; ningun humano custodia secretos en su data plane. El diagnostico solo reporta si los GitHub secrets que la alimentan (`TF_VAR_POSTGRESQL_ADMIN_PASSWORD`, `SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` por alias) existen -- un greenfield legitimo aun no los tiene antes de provisionar Postgres o declarar `serviceBus.external[]` (issue #232).
+- **El registro `secrets[]` (issue #256) tambien es informativo, nunca `FALTA` por si solo.** Su **forma** (`name`/`source.type`/`source.value`) ya la valida `load_harness_config` como parte de la seccion "Configuracion" (punto 1) -- un `secrets[]` mal formado hace que ESA seccion reporte `FALTA`, no esta. Esta seccion solo cuenta las entradas registradas y, para las de tipo `github-secret`, si el GitHub secret que referencian existe -- lo mismo que ya hacia para `serviceBus.external[]`, generalizado a cualquier entrada.
 - **El bloque de cierre "Proximos pasos" es puramente informativo (issue #222).** Solo lee las mismas variables que ya acumulo el diagnostico (`N_FALTA`, `N_NV`, y los flags `PA_*` por seccion) para imprimir el comando exacto a correr a continuacion y el puntero al quickstart greenfield; nunca ejecuta `gh`/`az` ni escribe nada. No reemplaza ni condiciona las provisiones opt-in (pasos 3 y 4), que siguen requiriendo confirmacion explicita para cada una.
 - Si `$ARGUMENTS` trae algo, ignoralo: `/onboard` no toma argumentos.

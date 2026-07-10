@@ -26,6 +26,19 @@
 #   SB-8: alias reservado INTERNO reutilizado en external aborta (case-insensitive).
 #   SB-9: aliases duplicados en external abortan (case-insensitive).
 #
+# Cubre la validacion del registro secrets[] y el helper upsert_harness_secret
+# (issue #256, siembra data-driven de infra-cd.yml):
+#   SEC-1: secrets ausente NO aborta (opcional) y deja los HARNESS_SECRETS_* vacios.
+#   SEC-2: secrets valido (output/github-secret/composite) pasa y exporta listas paralelas.
+#   SEC-3: entrada con 'name' vacio aborta.
+#   SEC-4: entrada con 'source.type' invalido aborta.
+#   SEC-5: entrada con 'source.value' vacio aborta.
+#   SEC-6: 'name' duplicado aborta.
+#   SEC-7: 'secrets' que no es un array aborta.
+#   UPSERT-1: upsert_harness_secret crea el array 'secrets' si el config no lo declara.
+#   UPSERT-2: upsert_harness_secret agrega una entrada nueva sin tocar las existentes.
+#   UPSERT-3: upsert_harness_secret actualiza (no duplica) una entrada existente por 'name'.
+#
 # Uso: scripts/tests/test-harness-config.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
 
@@ -170,6 +183,60 @@ run_load() {
         set +u
         source "$REPO_ROOT/scripts/_pipeline-common.sh" 2>/dev/null
         load_harness_config "$cfg"
+    )
+}
+
+# write_secrets_config <archivo> <fragmento_secrets|__OMIT__>
+# Genera un config con required + domainLabels + boundedContext valido, y el campo
+# 'secrets' indicado tal cual (debe ser JSON valido). __OMIT__ omite el campo por completo.
+write_secrets_config() {
+    local file="$1"
+    local sec="$2"
+    if [ "$sec" = "__OMIT__" ]; then
+        cat > "$file" <<'JSON'
+{
+  "projectName": "MiControlPlane",
+  "namespacePrefix": "MiControlPlane.Dominio",
+  "solutionFile": "MiControlPlane.slnx",
+  "domainLabels": ["dominio1", "dominio2"],
+  "boundedContext": { "name": "Principal", "domains": ["dominio1"] }
+}
+JSON
+    else
+        cat > "$file" <<JSON
+{
+  "projectName": "MiControlPlane",
+  "namespacePrefix": "MiControlPlane.Dominio",
+  "solutionFile": "MiControlPlane.slnx",
+  "domainLabels": ["dominio1", "dominio2"],
+  "boundedContext": { "name": "Principal", "domains": ["dominio1"] },
+  "secrets": $sec
+}
+JSON
+    fi
+}
+
+# secrets_exports <config_path> -> imprime "NAMES|TYPES|VALUES" tras cargar el config
+# (independiente del exit code).
+secrets_exports() {
+    local cfg="$1"
+    (
+        set +u
+        source "$REPO_ROOT/scripts/_pipeline-common.sh" 2>/dev/null
+        load_harness_config "$cfg" >/dev/null 2>&1 || true
+        echo "${HARNESS_SECRETS_NAMES:-}|${HARNESS_SECRETS_TYPES:-}|${HARNESS_SECRETS_VALUES:-}"
+    )
+}
+
+# run_upsert <config_path> <name> <type> <value> -> corre upsert_harness_secret sobre
+# <config_path>. El subshell no impide que el archivo quede escrito: 'mv' es una
+# escritura real a disco, no una variable exportada que se perderia al salir del subshell.
+run_upsert() {
+    local cfg="$1" name="$2" type="$3" value="$4"
+    (
+        set +u
+        source "$REPO_ROOT/scripts/_pipeline-common.sh" 2>/dev/null
+        upsert_harness_secret "$name" "$type" "$value" "$cfg"
     )
 }
 
@@ -400,6 +467,114 @@ write_sb_config "$CFG" '{ "internal": { "secretName": "sb-connection-interno" },
 ERR="$(run_load "$CFG" 2>&1)"; RC=$?
 if [ "$RC" -eq 1 ]; then pass "alias duplicado (distinto case) -> return 1"; else fail "alias duplicado deberia abortar (rc=$RC)"; fi
 if echo "$ERR" | grep -q "duplicado"; then pass "el mensaje indica alias duplicado"; else fail "el mensaje no indica alias duplicado"; fi
+
+echo ""
+echo "[SEC-1] secrets ausente NO aborta y deja HARNESS_SECRETS_* vacios"
+
+CFG="$TMP_DIR/sec-omit.json"
+write_secrets_config "$CFG" "__OMIT__"
+RC=0; run_load "$CFG" >/dev/null 2>&1 || RC=$?
+if [ "$RC" -eq 0 ]; then pass "secrets ausente -> return 0"; else fail "secrets ausente NO deberia abortar (rc=$RC)"; fi
+if [ "$(secrets_exports "$CFG")" = "||" ]; then pass "HARNESS_SECRETS_* quedan vacios"; else fail "exports deberian quedar vacios: $(secrets_exports "$CFG")"; fi
+
+echo ""
+echo "[SEC-2] secrets valido (output/github-secret/composite) pasa y exporta listas paralelas"
+
+CFG="$TMP_DIR/sec-valid.json"
+write_secrets_config "$CFG" '[
+  { "name": "sb-connection-interno", "source": { "type": "output", "value": "service_bus_interno_connection_string" } },
+  { "name": "sb-connection-cosmos", "source": { "type": "github-secret", "value": "SB_EXTERNAL_COSMOS_CONNECTION_STRING" } },
+  { "name": "marten-connection", "source": { "type": "composite", "value": "marten-connection" } }
+]'
+RC=0; run_load "$CFG" >/dev/null 2>&1 || RC=$?
+if [ "$RC" -eq 0 ]; then pass "secrets valido -> return 0"; else fail "secrets valido NO deberia abortar (rc=$RC)"; fi
+EXPECTED="sb-connection-interno sb-connection-cosmos marten-connection|output github-secret composite|service_bus_interno_connection_string SB_EXTERNAL_COSMOS_CONNECTION_STRING marten-connection"
+if [ "$(secrets_exports "$CFG")" = "$EXPECTED" ]; then pass "exporta HARNESS_SECRETS_* con listas paralelas en el mismo orden"; else fail "exports incorrectos: $(secrets_exports "$CFG")"; fi
+
+echo ""
+echo "[SEC-3] entrada con 'name' vacio aborta"
+
+CFG="$TMP_DIR/sec-name-empty.json"
+write_secrets_config "$CFG" '[ { "name": "", "source": { "type": "output", "value": "x" } } ]'
+ERR="$(run_load "$CFG" 2>&1)"; RC=$?
+if [ "$RC" -eq 1 ]; then pass "name vacio -> return 1"; else fail "name vacio deberia abortar (rc=$RC)"; fi
+if echo "$ERR" | grep -q "'name' vacio"; then pass "el mensaje menciona 'name' vacio"; else fail "el mensaje no menciona 'name' vacio"; fi
+
+echo ""
+echo "[SEC-4] entrada con 'source.type' invalido aborta"
+
+CFG="$TMP_DIR/sec-type-invalid.json"
+write_secrets_config "$CFG" '[ { "name": "x", "source": { "type": "literal", "value": "y" } } ]'
+ERR="$(run_load "$CFG" 2>&1)"; RC=$?
+if [ "$RC" -eq 1 ]; then pass "source.type='literal' -> return 1"; else fail "source.type invalido deberia abortar (rc=$RC)"; fi
+if echo "$ERR" | grep -q "source.type 'literal' invalido"; then pass "el mensaje nombra el source.type invalido"; else fail "el mensaje no nombra el source.type invalido"; fi
+
+echo ""
+echo "[SEC-5] entrada con 'source.value' vacio aborta"
+
+CFG="$TMP_DIR/sec-value-empty.json"
+write_secrets_config "$CFG" '[ { "name": "x", "source": { "type": "output", "value": "" } } ]'
+ERR="$(run_load "$CFG" 2>&1)"; RC=$?
+if [ "$RC" -eq 1 ]; then pass "source.value vacio -> return 1"; else fail "source.value vacio deberia abortar (rc=$RC)"; fi
+if echo "$ERR" | grep -q "'source.value' vacio"; then pass "el mensaje menciona 'source.value' vacio"; else fail "el mensaje no menciona 'source.value' vacio"; fi
+
+echo ""
+echo "[SEC-6] 'name' duplicado aborta"
+
+CFG="$TMP_DIR/sec-name-dup.json"
+write_secrets_config "$CFG" '[
+  { "name": "x", "source": { "type": "output", "value": "a" } },
+  { "name": "x", "source": { "type": "github-secret", "value": "B" } }
+]'
+ERR="$(run_load "$CFG" 2>&1)"; RC=$?
+if [ "$RC" -eq 1 ]; then pass "name duplicado -> return 1"; else fail "name duplicado deberia abortar (rc=$RC)"; fi
+if echo "$ERR" | grep -q "duplicado"; then pass "el mensaje indica name duplicado"; else fail "el mensaje no indica name duplicado"; fi
+
+echo ""
+echo "[SEC-7] 'secrets' que no es un array aborta"
+
+CFG="$TMP_DIR/sec-not-array.json"
+write_secrets_config "$CFG" '{ "name": "x" }'
+RC=0; run_load "$CFG" >/dev/null 2>&1 || RC=$?
+if [ "$RC" -eq 1 ]; then pass "secrets como objeto -> return 1"; else fail "secrets no-array deberia abortar (rc=$RC)"; fi
+
+echo ""
+echo "[UPSERT-1] upsert_harness_secret crea el array 'secrets' si el config no lo declara"
+
+CFG="$TMP_DIR/upsert-create.json"
+write_secrets_config "$CFG" "__OMIT__"
+RC=0; run_upsert "$CFG" "app-insights-connection" "output" "app_insights_connection_string" >/dev/null 2>&1 || RC=$?
+if [ "$RC" -eq 0 ]; then pass "upsert sobre config sin 'secrets' -> return 0"; else fail "upsert deberia poder crear 'secrets' (rc=$RC)"; fi
+RESULT=$(jq -c '.secrets' "$CFG" 2>/dev/null)
+if [ "$RESULT" = '[{"name":"app-insights-connection","source":{"type":"output","value":"app_insights_connection_string"}}]' ]; then
+    pass "el array 'secrets' queda con la entrada nueva"
+else
+    fail "el array 'secrets' no quedo como se esperaba: $RESULT"
+fi
+
+echo ""
+echo "[UPSERT-2] upsert_harness_secret agrega una entrada nueva sin tocar las existentes"
+
+CFG="$TMP_DIR/upsert-add.json"
+write_secrets_config "$CFG" '[ { "name": "marten-connection", "source": { "type": "composite", "value": "marten-connection" } } ]'
+run_upsert "$CFG" "sb-connection-cosmos" "github-secret" "SB_EXTERNAL_COSMOS_CONNECTION_STRING" >/dev/null 2>&1
+COUNT=$(jq '.secrets | length' "$CFG" 2>/dev/null)
+if [ "$COUNT" = "2" ]; then pass "el array queda con 2 entradas (1 previa + 1 nueva)"; else fail "se esperaban 2 entradas, hay $COUNT"; fi
+if [ "$(jq -r '.secrets[0].name' "$CFG")" = "marten-connection" ]; then pass "la entrada previa no se toco"; else fail "la entrada previa se modifico"; fi
+
+echo ""
+echo "[UPSERT-3] upsert_harness_secret actualiza (no duplica) una entrada existente por 'name'"
+
+CFG="$TMP_DIR/upsert-update.json"
+write_secrets_config "$CFG" '[ { "name": "sb-connection-cosmos", "source": { "type": "github-secret", "value": "OLD_NAME" } } ]'
+run_upsert "$CFG" "sb-connection-cosmos" "github-secret" "SB_EXTERNAL_COSMOS_CONNECTION_STRING" >/dev/null 2>&1
+COUNT=$(jq '.secrets | length' "$CFG" 2>/dev/null)
+if [ "$COUNT" = "1" ]; then pass "re-ejecutar sobre el mismo 'name' no duplica la entrada"; else fail "se esperaba 1 entrada (idempotente), hay $COUNT"; fi
+if [ "$(jq -r '.secrets[0].source.value' "$CFG")" = "SB_EXTERNAL_COSMOS_CONNECTION_STRING" ]; then
+    pass "el 'source.value' queda actualizado al nuevo"
+else
+    fail "el 'source.value' no se actualizo"
+fi
 
 echo ""
 echo "----------------------------------------"

@@ -34,7 +34,7 @@ echo "[A] Skills publicados (commands/*.md): guard 'cwd != Mefisto' presente"
 PUBLISHED_SKILLS=(
     bug.md draft.md eraser-diagram.md fix-review.md health-check.md
     implement.md infra.md infra-base.md merge.md onboard.md parallel.md scaffold.md
-    sequential.md show-flow.md tooling.md work-status.md
+    seed-secret.md sequential.md show-flow.md tooling.md work-status.md
 )
 
 for skill in "${PUBLISHED_SKILLS[@]}"; do
@@ -83,7 +83,7 @@ PUBLISHED_PIPELINES=(
     tooling-pipeline.sh parallel-pipeline.sh batch-pipeline.sh pr-sync.sh
     tdd-pipeline.sh iac-pipeline.sh scaffold-pipeline.sh tmux-pipeline.sh
     appinsights-query.sh eda-lint.sh setup-github-ci.sh setup-github-labels.sh
-    bootstrap-backend.sh
+    bootstrap-backend.sh seed-secret.sh
 )
 
 for pipe in "${PUBLISHED_PIPELINES[@]}"; do
@@ -113,7 +113,7 @@ echo "[C2] Scripts auxiliares publicados: el guard aborta cuando se ejecutan en 
 
 AUX_SCRIPTS=(
     appinsights-query.sh eda-lint.sh setup-github-ci.sh setup-github-labels.sh
-    bootstrap-backend.sh
+    bootstrap-backend.sh seed-secret.sh
 )
 
 for aux in "${AUX_SCRIPTS[@]}"; do

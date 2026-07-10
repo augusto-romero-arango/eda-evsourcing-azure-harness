@@ -19,7 +19,7 @@ Plugin de [Claude Code](https://code.claude.com/docs/en/plugins) que provee un h
 
 ## Qué incluye
 
-- **16 skills** (slash commands): `/onboard`, `/implement`, `/tooling`, `/infra`, `/infra-base`, `/scaffold`, `/parallel`, `/sequential`, `/bug`, `/draft`, `/fix-review`, `/health-check`, `/work-status`, `/show-flow`, `/eraser-diagram`, `/merge`.
+- **17 skills** (slash commands): `/onboard`, `/implement`, `/tooling`, `/infra`, `/infra-base`, `/scaffold`, `/seed-secret`, `/parallel`, `/sequential`, `/bug`, `/draft`, `/fix-review`, `/health-check`, `/work-status`, `/show-flow`, `/eraser-diagram`, `/merge`.
 - **16 agentes** especializados: `planner`, `test-writer`, `implementer`, `reviewer`, `smoke-test-writer`, `domain-scaffolder`, `infra-base-scaffolder`, `eda-modeler`, `event-stormer`, `historiador`, `infra-writer`, `infra-reviewer`, `infra-bootstrap`, `pr-sync`, `bug-investigator`, `tooling-investigator`.
 - **Pipelines bash** que orquestan el ciclo TDD, IaC y tooling sobre `tmux` y `git worktree`.
 - **22 ADRs** del marco arquitectónico.
@@ -105,7 +105,13 @@ Crea `.claude/harness.config.json` en la raíz del proyecto consumidor:
   "boundedContext": {
     "name": "Principal",
     "domains": ["dominio1", "dominio2"]
-  }
+  },
+  "secrets": [
+    {
+      "name": "stripe-api-key",
+      "source": { "type": "github-secret", "value": "STRIPE_API_KEY" }
+    }
+  ]
 }
 ```
 
@@ -131,6 +137,14 @@ El resource group del BC se forma como `infraResourceGroupPrefix`+`-`+`name` (ej
 > **Proyectos existentes (que vienen de una versión sin este campo)**: si `boundedContext` no está en tu config, `load_harness_config` aborta con un mensaje accionable que muestra el shape exacto a añadir y un ejemplo con tus `domainLabels` actuales. Corre `/mefisto:onboard` para obtener el diagnóstico, o lee la sección **"Migración para consumidores existentes"** al final de este documento.
 
 **Campo opcional `repoSlug`**: el slug `owner/repo` del repositorio de Mefisto al que se enrutan los **drafts cross-repo** (`estado:borrador`) que crean el `planner` y el `tooling-investigator` cuando detectan que un problema descubierto en tu proyecto pertenece al harness. Sirve para redirigir esos drafts a **tu fork** de Mefisto en vez del repo upstream. Si no lo declaras, el default es `augusto-romero-arango/eda-evsourcing-azure-harness`. No se exporta como variable `HARNESS_*`: se lee directo con `jq` donde se necesita (`scripts/_pipeline-common.sh`, `agents/planner.md`, `agents/tooling-investigator.md`). Es **opcional** (añadirlo no es MAJOR).
+
+**Campo opcional `secrets`** (issue #256): registro **declarativo** de todo secreto del BC que el step de siembra de `infra-cd.yml` itera en runtime, sin ninguna línea hardcodeada por secreto. Cada entrada declara:
+
+- **`name`**: el nombre del secreto en el Key Vault del BC.
+- **`source.type`**: de dónde CI toma el valor a sembrar -- `output` (un único `terraform output`, derivable) o `github-secret` (un único GitHub secret, no derivable; lo crea manualmente un admin). Un tercer valor, `composite` (fórmula fija reservada para `marten-connection`, el único secreto compuesto de varios outputs + un GitHub secret), lo escribe **únicamente** `infra-base-scaffolder` -- nunca lo emite `/seed-secret`.
+- **`source.value`**: el nombre del output de Terraform o del GitHub secret, según `source.type`.
+
+`infra-base-scaffolder` registra idempotentemente los secretos **fijos** del BC (el interno de ASB, `app-insights-connection`, `marten-connection` y uno por cada alias de `serviceBus.external[]`) la primera vez que genera `infra-cd.yml` (ver "Bootstrap de infraestructura", paso 3). Para sembrar un secreto **nuevo** después del greenfield -- p. ej. la API key de un proveedor externo --, usa el skill `/seed-secret` (ver catálogo de skills), que registra la entrada y cablea la referencia en la Function App del dominio que la consume. `load_harness_config` valida la forma del array (`name` único, `source.type` en el vocabulario de arriba, `source.value` no vacío); es **opcional** (añadirlo no es MAJOR).
 
 Y añade una sección a `CLAUDE.md` raíz del consumidor declarando los tokens:
 
@@ -297,7 +311,7 @@ El backend remoto de Terraform (donde vive el `tfstate`) es prerequisito de todo
 
    > **El apply es de CI, no local (ADR-0021, ADR-0022).** En el flujo *ongoing* el desarrollador que usa Mefisto no aplica ni planifica local: no necesita `az login` con permisos elevados de Azure ni acceso al tfstate. `/infra` solo escribe/revisa el HCL y abre el PR (que **no** lleva `Closes #N`). El `terraform plan` real se publica como comentario del PR y el `terraform apply` real corre al mergearlo a `main`, ambos en CI (workflow `Infra CD`); ese workflow cierra el issue cuando el apply termina exitosamente. El bootstrap inicial (backend + CI, pasos 1-2) sí es una operación privilegiada de una sola vez que corre un admin con permisos de Azure.
 
-5. **GitHub secrets que alimentan la siembra de secretos en CI** -- ya no hay ninguna acción manual sobre el Key Vault (**ADR-0025** decisión #10, perfil (c) reformado). Tras el `apply` que corre en CI al mergear el PR del paso 4, el mismo job siembra con `az keyvault secret set` **todos** los secretos del BC -- Terraform nunca escribe su valor (ADR-0025 decisión #6) --, habilitado por el rol de datos `Key Vault Secrets Officer` que el propio `apply` se autoasigna sobre el vault (mecanismo M1, **ADR-0022**). Ningún humano necesita un rol de datos de Key Vault.
+5. **GitHub secrets que alimentan la siembra de secretos en CI** -- ya no hay ninguna acción manual sobre el Key Vault (**ADR-0025** decisión #10, perfil (c) reformado). Tras el `apply` que corre en CI al mergear el PR del paso 4, el mismo job itera `harness.config.json > secrets[]` y siembra con `az keyvault secret set` **todos** los secretos del BC -- Terraform nunca escribe su valor (ADR-0025 decisión #6) --, habilitado por el rol de datos `Key Vault Secrets Officer` que el propio `apply` se autoasigna sobre el vault (mecanismo M1, **ADR-0022**). Ningún humano necesita un rol de datos de Key Vault. `/infra-base` ya registró en `secrets[]`, de forma idempotente, los secretos fijos del BC (ver campo `secrets` en "Configurar el consumidor"); el step de siembra es **data-driven**: no tiene ninguna línea hardcodeada por secreto, así que agregar uno nuevo después del greenfield (`/seed-secret`, ver catálogo de skills) nunca exige editar `infra-cd.yml` a mano.
 
    Lo único que le queda al admin del repo es crear, en *Settings > Secrets and variables > Actions*, los GitHub secrets que alimentan los valores que CI no puede derivar de `terraform output`:
 
@@ -305,10 +319,9 @@ El backend remoto de Terraform (donde vive el `tfstate`) es prerequisito de todo
    |---|---|---|
    | `marten-connection` | `TF_VAR_POSTGRESQL_ADMIN_PASSWORD` | ya lo creaste en el paso 3 -- el mismo valor sirve para crear el servidor PostgreSQL y para componer este secreto |
    | cada `serviceBus.external[].secretName` con `alcance: "compartido"` | `SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` (uno por alias, ADR-0024 decisión #4) | antes del primer `apply` que declare ese alias, con el valor que provee el equipo de infra dueño del backbone compartido |
+   | cada secreto nuevo con `source.type: "github-secret"` (`/seed-secret --from-github-secret`) | el nombre que declares en `source.value` | antes del primer `apply` que lo siembre |
 
-   `serviceBus.internal.secretName` y `app-insights-connection` no requieren ningún GitHub secret: CI los deriva directamente de `terraform output` (`service_bus_interno_connection_string` y `app_insights_connection_string`, respectivamente).
-
-   **Caveat de evolvabilidad**: agregar un alias nuevo a `serviceBus.external[]` después del greenfield exige crear su `SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` y añadir a mano, en el `infra-cd.yml` ya generado, la entrada de `env` y la línea de siembra correspondientes -- el scaffolder no sobrescribe el workflow una vez creado. Detalle completo (inventario derivable/no derivable, roles, mecanismo M1) en **ADR-0025** decisión #10.
+   `serviceBus.internal.secretName` y `app-insights-connection` no requieren ningún GitHub secret: CI los deriva directamente de `terraform output` (`service_bus_interno_connection_string` y `app_insights_connection_string`, respectivamente); lo mismo aplica a cualquier secreto nuevo registrado con `source.type: "output"`.
 
 ### 6. Scaffold del primer dominio y primer ciclo TDD
 
@@ -319,6 +332,12 @@ Con el backend listo, crea el scaffold de tu primer dominio y arranca el ciclo T
 /mefisto:draft "primera capacidad del dominio"   # captura la idea como issue borrador
 # el planner refina el issue a estado:listo
 /mefisto:implement <issue>       # pipeline TDD: test-writer (rojo) -> implementer (verde) -> reviewer -> PR
+```
+
+Si tu dominio necesita un secreto nuevo (una API key de un proveedor externo, otra cadena de conexión, etc.), registra y cablea la referencia con:
+
+```
+/mefisto:seed-secret <nombre> --domain <Dominio> (--from-output <output-de-terraform> | --from-github-secret <NOMBRE_DEL_GITHUB_SECRET>)
 ```
 
 ### 7. Qué corre dónde
