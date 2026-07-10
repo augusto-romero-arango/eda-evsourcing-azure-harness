@@ -172,16 +172,20 @@ Elimina estas lineas del `.csproj`:
 **2. Agregar los paquetes** dentro del `<ItemGroup>` de PackageReferences:
 
 ```xml
+<PackageReference Include="Microsoft.Azure.Functions.Worker" Version="2.52.0" />
 <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.ServiceBus" Version="5.*" />
-<PackageReference Include="Cosmos.EventDriven.Abstractions" Version="0.0.8" />
-<PackageReference Include="Cosmos.EventDriven.CritterStack" Version="0.0.5" />
-<PackageReference Include="Cosmos.EventDriven.CritterStack.AzureServiceBus" Version="0.0.6" />
-<PackageReference Include="Cosmos.EventSourcing.Abstractions" Version="0.0.12" />
-<PackageReference Include="Cosmos.EventSourcing.CritterStack" Version="0.1.9" />
-<PackageReference Include="Microsoft.Azure.Functions.Worker.OpenTelemetry" Version="1.4.0" />
-<PackageReference Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.4.0" />
+<PackageReference Include="Cosmos.EventDriven.Abstractions" Version="1.3.0" />
+<PackageReference Include="Cosmos.EventDriven.CritterStack" Version="1.3.0" />
+<PackageReference Include="Cosmos.EventDriven.CritterStack.AzureServiceBus" Version="1.3.0" />
+<PackageReference Include="Cosmos.EventSourcing.Abstractions" Version="1.3.0" />
+<PackageReference Include="Cosmos.EventSourcing.CritterStack" Version="1.3.0" />
+<PackageReference Include="Microsoft.Azure.Functions.Worker.OpenTelemetry" Version="1.2.0" />
+<PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.13.1" />
+<PackageReference Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.8.2" />
 <PackageReference Include="FluentValidation.DependencyInjectionExtensions" Version="11.*" />
 ```
+
+> **Lockstep del metapaquete `Microsoft.Azure.Functions.Worker` y versiones del trio OpenTelemetry (issue #263)**: `Microsoft.Azure.Functions.Worker` se fija explicitamente en `2.52.0` porque `Microsoft.Azure.Functions.Worker.OpenTelemetry` 1.2.0 exige `Microsoft.Azure.Functions.Worker.Core >= 2.52.0` (nuspec del paquete, api.nuget.org). Si el metapaquete queda en una version menor -- por ejemplo la que trae por defecto una plantilla `func init` desactualizada --, `Worker.Core` sube a 2.52.0 por resolucion transitiva pero `Worker.Grpc` puede quedar rezagado en una version anterior; ese desalineamiento Core/Grpc dispara `MissingMethodException` en `DefaultTraceContext..ctor` al arrancar el host, tumbando con HTTP 500 **toda** funcion del dominio (verificado por el consumidor Cosmos.ControlPlane, PR #46). Fijar el metapaquete completo a `2.52.0` mantiene Core y Grpc siempre en la misma version. Las versiones de `Microsoft.Azure.Functions.Worker.OpenTelemetry` (1.2.0 -- `1.4.0` nunca existio en NuGet, era un dato erroneo), `OpenTelemetry.Extensions.Hosting` (1.13.1, el minimo que exige el paquete anterior) y `Azure.Monitor.OpenTelemetry.Exporter` (1.8.2) son las vigentes en NuGet.org al momento de este cambio; revalidalas contra la fuente si ha pasado tiempo desde entonces.
 
 **3. Agregar la referencia al proyecto Contracts:**
 
@@ -357,7 +361,7 @@ Lee `src/<RootNamespace>.Contracts/<RootNamespace>.Contracts.csproj`. Si no tien
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Cosmos.EventDriven.Abstractions" Version="0.0.8" />
+  <PackageReference Include="Cosmos.EventDriven.Abstractions" Version="1.3.0" />
 </ItemGroup>
 ```
 
@@ -544,11 +548,11 @@ rm -f "$REPO_ROOT/tests/<RootNamespace>.{PascalCase}.Tests/UnitTest1.cs"
 Y agregar en su lugar (en el mismo `<ItemGroup>` o en uno nuevo):
 
 ```xml
-<PackageReference Include="Cosmos.EventSourcing.Testing.Utilities" Version="0.1.*" />
+<PackageReference Include="Cosmos.EventSourcing.Testing.Utilities" Version="1.3.0" />
 <PackageReference Include="xunit.v3.mtp-v2" Version="3.*" />
 ```
 
-`Cosmos.EventSourcing.Testing.Utilities` trae transitivamente AwesomeAssertions, xunit v3, Cosmos.EventSourcing.Abstractions y Cosmos.EventDriven.Abstractions — no hace falta declararlos.
+`Cosmos.EventSourcing.Testing.Utilities` trae transitivamente `AwesomeAssertions` y `xunit.v3.extensibility.core` (nuspec del paquete, api.nuget.org) — no hace falta declararlos. **No** trae transitivamente `Cosmos.EventSourcing.Abstractions` ni `Cosmos.EventDriven.Abstractions` (verificado en 1.3.0 contra el nuspec real, corrigiendo una afirmacion previa inexacta): esos dos llegan al proyecto de tests via el `ProjectReference` al proyecto de dominio (paso 4 mas abajo), que ya los referencia directamente.
 
 **3b. Agregar `<OutputType>Exe</OutputType>` al `<PropertyGroup>`** del csproj de tests. xunit v3 con mtp-v2 requiere que el proyecto compile como ejecutable:
 

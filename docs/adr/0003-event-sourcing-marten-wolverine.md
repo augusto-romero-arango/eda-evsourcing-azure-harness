@@ -25,13 +25,23 @@ Se adoptan los siguientes paquetes para todos los dominios de ControlAsistencias
 
 | Paquete | Version | Rol |
 |---------|---------|-----|
-| `Cosmos.EventSourcing.CritterStack` | 0.1.9 | Configura Marten como event store |
-| `Cosmos.EventSourcing.Abstractions` | 0.0.12 | Interfaces de event sourcing (IEventStore, etc.) |
-| `Cosmos.EventDriven.CritterStack` | 0.0.5 | Configura Wolverine como mediador de comandos |
-| `Cosmos.EventDriven.CritterStack.AzureServiceBus` | 0.0.6 | Integra Wolverine con Azure Service Bus |
-| `Cosmos.EventDriven.Abstractions` | 0.0.8 | Interfaces de mensajeria (ICommandRouter, IPublicEventSender, etc.) |
-| `Microsoft.Azure.Functions.Worker.OpenTelemetry` | 1.4.0 | Defaults de OpenTelemetry para el worker aislado de Functions |
-| `Azure.Monitor.OpenTelemetry.Exporter` | 1.4.0 | Exporter de OpenTelemetry hacia Application Insights |
+| `Cosmos.EventSourcing.CritterStack` | 1.3.0 | Configura Marten como event store |
+| `Cosmos.EventSourcing.Abstractions` | 1.3.0 | Interfaces de event sourcing (IEventStore, etc.) |
+| `Cosmos.EventDriven.CritterStack` | 1.3.0 | Configura Wolverine como mediador de comandos |
+| `Cosmos.EventDriven.CritterStack.AzureServiceBus` | 1.3.0 | Integra Wolverine con Azure Service Bus |
+| `Cosmos.EventDriven.Abstractions` | 1.3.0 | Interfaces de mensajeria (ICommandRouter, IPublicEventSender, etc.) |
+| `Microsoft.Azure.Functions.Worker` | 2.52.0 | Metapaquete del worker aislado; fijado en lockstep con `Worker.OpenTelemetry` para evitar desalineamiento Core/Grpc |
+| `Microsoft.Azure.Functions.Worker.OpenTelemetry` | 1.2.0 | Defaults de OpenTelemetry para el worker aislado de Functions |
+| `OpenTelemetry.Extensions.Hosting` | 1.13.1 | SDK de hosting de OpenTelemetry; minimo exigido por `Worker.OpenTelemetry` |
+| `Azure.Monitor.OpenTelemetry.Exporter` | 1.8.2 | Exporter de OpenTelemetry hacia Application Insights |
+
+`Cosmos.EventSourcing.CritterStack` 1.3.0 arrastra Marten 9.12.0 (antes 8.23.0), version que ya
+resuelve [GHSA-vmw2-qwm8-x84c](https://github.com/advisories/GHSA-vmw2-qwm8-x84c) (CVE-2026-45288 --
+sanitizacion insuficiente del parametro `regConfig` en las APIs de busqueda de texto completo de
+Marten, permitiendo inyeccion de SQL arbitrario; corregida en Marten 8.37.0). El salto 0.x -> 1.3.0
+de los cinco paquetes `Cosmos.*` no introduce breaking changes de API (verificado por el consumidor
+Cosmos.ControlPlane: `dotnet build -c Release` limpio y 111 tests unitarios en verde tras el bump, y
+`dotnet list package --vulnerable --include-transitive` sin paquetes vulnerables).
 
 Los paquetes `Microsoft.ApplicationInsights.WorkerService` y
 `Microsoft.Azure.Functions.Worker.ApplicationInsights` se reemplazan por OpenTelemetry.
@@ -87,9 +97,11 @@ recolecta esos traces/metrics/logs y los descarta, y a Application Insights solo
 Azure Functions" -- el Azure Monitor OpenTelemetry Exporter es el metodo **recomendado** para apps
 nuevas y existentes, ver "Monitor executions in Azure Functions") exige tres piezas:
 
-1. Los paquetes `Microsoft.Azure.Functions.Worker.OpenTelemetry` y `Azure.Monitor.OpenTelemetry.Exporter`
-   (tabla de paquetes arriba) -- no `Azure.Monitor.OpenTelemetry.AspNetCore` (la distro de ASP.NET Core,
-   no soportada para Functions isolated worker).
+1. El trio de paquetes `Microsoft.Azure.Functions.Worker.OpenTelemetry`, `OpenTelemetry.Extensions.Hosting`
+   y `Azure.Monitor.OpenTelemetry.Exporter` (tabla de paquetes arriba) -- no
+   `Azure.Monitor.OpenTelemetry.AspNetCore` (la distro de ASP.NET Core, no soportada para Functions
+   isolated worker: trae `AspNetCoreInstrumentation` y duplica la telemetria de requests que el host
+   de Functions ya emite).
 2. En `Program.cs`, encadenar `.UseFunctionsWorkerDefaults()` y `.UseAzureMonitorExporter()` sobre
    `AddOpenTelemetry()`, junto al `.WithTracing(...).AddSource(...)` de siempre.
 3. En `host.json`, `"telemetryMode": "OpenTelemetry"` en la raiz, para que el host tambien emita
@@ -98,6 +110,15 @@ nuevas y existentes, ver "Monitor executions in Azure Functions") exige tres pie
 El exporter lee `APPLICATIONINSIGHTS_CONNECTION_STRING` (no soporta instrumentation key); ese valor
 lo provee el `site_config.application_insights_connection_string` del modulo Terraform `function-app`
 (ADR-0021), como referencia `@Microsoft.KeyVault(...)` versionless (ADR-0025).
+
+**Nota de compatibilidad de versiones (issue #263):** `Microsoft.Azure.Functions.Worker.OpenTelemetry`
+1.2.0 exige `Microsoft.Azure.Functions.Worker.Core >= 2.52.0` (nuspec del paquete, api.nuget.org). Por
+eso el metapaquete `Microsoft.Azure.Functions.Worker` se fija explicitamente en `2.52.0` (tabla de
+paquetes arriba): si queda en una version menor -- por ejemplo la que trae por defecto una plantilla
+`func init` desactualizada --, `Worker.Core` sube a esa version minima por resolucion transitiva pero
+`Worker.Grpc` puede quedar rezagado, y el desalineamiento entre ambos dispara `MissingMethodException`
+en `DefaultTraceContext..ctor` al arrancar el host -- HTTP 500 en toda funcion del dominio (verificado
+por el consumidor Cosmos.ControlPlane, PR #46).
 
 ## Consecuencias
 
@@ -132,3 +153,4 @@ lo provee el `site_config.application_insights_connection_string` del modulo Ter
 
 - 2026-07-01: enmendado (issue #162, mandato de ADR-0024) para reemplazar el wiring fijo de dos brokers por Bounded Context (namespace interno como broker default + namespace de integracion como named broker `"integracion"`) por broker interno por defecto (siempre) mas N brokers nombrados (backbone compartido y, si aplica, externos), uno por ASB, por cadena de conexion custodiada.
 - 2026-07-10: enmendado (issue #259) para corregir la seccion "Observabilidad" y la tabla de paquetes -- `Azure.Monitor.OpenTelemetry.AspNetCore` (distro de ASP.NET Core, no soportada para Functions isolated worker) se reemplaza por `Microsoft.Azure.Functions.Worker.OpenTelemetry` + `Azure.Monitor.OpenTelemetry.Exporter` (camino oficial de Functions), y se documenta que la telemetria del worker exige un exporter explicito (`.UseFunctionsWorkerDefaults()` + `.UseAzureMonitorExporter()`, `host.json` con `telemetryMode: "OpenTelemetry"`) -- sin ellos, OpenTelemetry recolecta y descarta, y Application Insights solo recibe los `requests` del host. La afirmacion previa de que "la infraestructura de Azure Monitor sigue siendo necesaria para que el agente de Application Insights reciba las trazas" describia una ingesta automatica que no existe para Functions isolated worker; se elimina del cuerpo.
+- 2026-07-10: enmendado (issue #263) en dos frentes. **(a)** bump de los cinco paquetes `Cosmos.*` de pre-1.0 a `1.3.0` (sin breaking changes de API, verificado por el consumidor Cosmos.ControlPlane), que arrastra Marten `9.12.0` y resuelve [GHSA-vmw2-qwm8-x84c](https://github.com/advisories/GHSA-vmw2-qwm8-x84c)/CVE-2026-45288 (inyeccion SQL en Marten <= 8.36). **(b)** se completa el trio de OpenTelemetry del worker -- el bump de #259 solo habia agregado `Microsoft.Azure.Functions.Worker.OpenTelemetry` + `Azure.Monitor.OpenTelemetry.Exporter`, sin `OpenTelemetry.Extensions.Hosting` -- y se corrige `Microsoft.Azure.Functions.Worker.OpenTelemetry` de `1.4.0` (version que nunca existio en NuGet) a `1.2.0`; se fija ademas el metapaquete `Microsoft.Azure.Functions.Worker` en `2.52.0` en lockstep con el requisito `Worker.Core >= 2.52.0` de `Worker.OpenTelemetry` 1.2.0, para evitar el `MissingMethodException` en `DefaultTraceContext..ctor` (HTTP 500 en toda funcion) que dispara un desalineamiento Core/Grpc -- verificado por el consumidor Cosmos.ControlPlane (PR #46). Todas las versiones se verificaron contra el nuspec real de cada paquete en api.nuget.org al momento de este cambio.
