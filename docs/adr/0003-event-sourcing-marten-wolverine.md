@@ -30,12 +30,11 @@ Se adoptan los siguientes paquetes para todos los dominios de ControlAsistencias
 | `Cosmos.EventDriven.CritterStack` | 0.0.5 | Configura Wolverine como mediador de comandos |
 | `Cosmos.EventDriven.CritterStack.AzureServiceBus` | 0.0.6 | Integra Wolverine con Azure Service Bus |
 | `Cosmos.EventDriven.Abstractions` | 0.0.8 | Interfaces de mensajeria (ICommandRouter, IPublicEventSender, etc.) |
-| `Azure.Monitor.OpenTelemetry.AspNetCore` | 1.4.0 | Observabilidad via OpenTelemetry |
+| `Microsoft.Azure.Functions.Worker.OpenTelemetry` | 1.4.0 | Defaults de OpenTelemetry para el worker aislado de Functions |
+| `Azure.Monitor.OpenTelemetry.Exporter` | 1.4.0 | Exporter de OpenTelemetry hacia Application Insights |
 
 Los paquetes `Microsoft.ApplicationInsights.WorkerService` y
 `Microsoft.Azure.Functions.Worker.ApplicationInsights` se reemplazan por OpenTelemetry.
-La infraestructura de Azure Monitor sigue configurada via app settings (no hay cambios en
-Terraform para esta parte); solo cambia el SDK usado en el codigo C#.
 
 ### Patron de configuracion en Program.cs
 
@@ -81,9 +80,24 @@ Wolverine en modo serverless distingue **dos senders** segun el marcador del eve
 ### Observabilidad
 
 Se configura OpenTelemetry con AddSource para "Wolverine", "Marten" y el namespace del
-dominio, en lugar del SDK propietario de ApplicationInsights. La infraestructura de Azure
-Monitor (APPLICATIONINSIGHTS_CONNECTION_STRING en app settings) sigue siendo necesaria para
-que el agente de Application Insights reciba las trazas de OpenTelemetry.
+dominio, en lugar del SDK propietario de ApplicationInsights. Para Azure Functions en modo
+worker aislado no existe una ingesta automatica del host: sin un exporter explicito, OpenTelemetry
+recolecta esos traces/metrics/logs y los descarta, y a Application Insights solo llegan los
+`requests` que emite el propio host. El camino oficial (Microsoft Learn, "Use OpenTelemetry with
+Azure Functions" -- el Azure Monitor OpenTelemetry Exporter es el metodo **recomendado** para apps
+nuevas y existentes, ver "Monitor executions in Azure Functions") exige tres piezas:
+
+1. Los paquetes `Microsoft.Azure.Functions.Worker.OpenTelemetry` y `Azure.Monitor.OpenTelemetry.Exporter`
+   (tabla de paquetes arriba) -- no `Azure.Monitor.OpenTelemetry.AspNetCore` (la distro de ASP.NET Core,
+   no soportada para Functions isolated worker).
+2. En `Program.cs`, encadenar `.UseFunctionsWorkerDefaults()` y `.UseAzureMonitorExporter()` sobre
+   `AddOpenTelemetry()`, junto al `.WithTracing(...).AddSource(...)` de siempre.
+3. En `host.json`, `"telemetryMode": "OpenTelemetry"` en la raiz, para que el host tambien emita
+   OpenTelemetry y se correlacione con el worker.
+
+El exporter lee `APPLICATIONINSIGHTS_CONNECTION_STRING` (no soporta instrumentation key); ese valor
+lo provee el `site_config.application_insights_connection_string` del modulo Terraform `function-app`
+(ADR-0021), como referencia `@Microsoft.KeyVault(...)` versionless (ADR-0025).
 
 ## Consecuencias
 
@@ -110,7 +124,11 @@ que el agente de Application Insights reciba las trazas de OpenTelemetry.
 
 - ADR-0023: Bounded Context — define el ASB propio del BC (namespace interno, compartido por todos sus dominios) al que publica `IPrivateEventSender`.
 - ADR-0024: modelo de eventos de bus (privado propio, publico via backbone compartido, integracion externa diferida) — define a que broker enruta `IPublicEventSender` (backbone compartido comun o ASB externo diferido) y el wiring de broker default mas N brokers nombrados por cadena de conexion custodiada.
+- ADR-0021: infraestructura base — define el modulo Terraform `function-app` cuyo `site_config.application_insights_connection_string` provee el valor que el exporter de OpenTelemetry lee en runtime.
+- ADR-0025: custodia de secretos — la connection string de Application Insights viaja como referencia `@Microsoft.KeyVault(...)` versionless, nunca en claro.
+- Microsoft Learn: [Guide for running C# Azure Functions in the isolated worker model](https://learn.microsoft.com/azure/azure-functions/dotnet-isolated-process-guide#logging), [Use OpenTelemetry with Azure Functions](https://learn.microsoft.com/azure/azure-functions/opentelemetry-howto), [Monitor executions in Azure Functions](https://learn.microsoft.com/azure/azure-functions/functions-monitoring#telemetry-export-options).
 
 ## Control de cambios
 
 - 2026-07-01: enmendado (issue #162, mandato de ADR-0024) para reemplazar el wiring fijo de dos brokers por Bounded Context (namespace interno como broker default + namespace de integracion como named broker `"integracion"`) por broker interno por defecto (siempre) mas N brokers nombrados (backbone compartido y, si aplica, externos), uno por ASB, por cadena de conexion custodiada.
+- 2026-07-10: enmendado (issue #259) para corregir la seccion "Observabilidad" y la tabla de paquetes -- `Azure.Monitor.OpenTelemetry.AspNetCore` (distro de ASP.NET Core, no soportada para Functions isolated worker) se reemplaza por `Microsoft.Azure.Functions.Worker.OpenTelemetry` + `Azure.Monitor.OpenTelemetry.Exporter` (camino oficial de Functions), y se documenta que la telemetria del worker exige un exporter explicito (`.UseFunctionsWorkerDefaults()` + `.UseAzureMonitorExporter()`, `host.json` con `telemetryMode: "OpenTelemetry"`) -- sin ellos, OpenTelemetry recolecta y descarta, y Application Insights solo recibe los `requests` del host. La afirmacion previa de que "la infraestructura de Azure Monitor sigue siendo necesaria para que el agente de Application Insights reciba las trazas" describia una ingesta automatica que no existe para Functions isolated worker; se elimina del cuerpo.
