@@ -241,10 +241,12 @@ necesitar ambas a la vez -- son ortogonales y **no deben compartir la misma prop
 decision #5).
 
 **Trabajo downstream, no del harness.** Si al implementar un flujo que necesita este enrutamiento
-descubres que el paquete aun no soporta application properties arbitrarias, documenta la
-necesidad en la seccion "Infraestructura modificada" de tu resumen -- misma disciplina que con
-topics/subscriptions faltantes -- para seguimiento administrativo. No intentes anadir la
-sobrecarga al paquete ni simular el estampado por otra via (ej. codificar la clave en el body):
+descubres que el paquete aun no soporta application properties arbitrarias, documenta el hallazgo
+en tu resumen para seguimiento administrativo -- misma disciplina de reportar-sin-corregir que con
+la invariante `groupId` downstream (seccion "`groupId` en `PublishAsync`" arriba). Es un gap de
+capacidad del paquete (codigo cross-repo), no infraestructura de este repo, asi que no va en la
+seccion "Infraestructura modificada" del resumen (reservada a topics/subscriptions). No intentes
+anadir la sobrecarga al paquete ni simular el estampado por otra via (ej. codificar la clave en el body):
 sin la propiedad en el sobre, ningun correlation filter la ve [Microsoft Learn, "Topic filters
 and actions"].
 
