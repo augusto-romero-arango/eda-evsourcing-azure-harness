@@ -4,6 +4,10 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+### Fixed
+
+- **Anadir guard `[ -f ]` al `sed` de `settings.json` en `tdd-pipeline.sh` e `iac-pipeline.sh` (issue #267)**: draft reportado desde un consumidor por Luis Felipe Diaz -- al lanzar `/implement` (o `/infra`) en un consumidor **sin** `.claude/settings.json` (legitimo desde que los hooks de eventos vienen globales via `hooks/hooks.json`), el pipeline abortaba en el setup del worktree, antes de invocar cualquier agente: `sed` fallaba con `No such file or directory` y, bajo `set -euo pipefail`, tumbaba el script entero, dejando ademas un `settings.json` de 0 bytes en el worktree (el redirect `>` se ejecuta aunque `sed` falle al leer el input). `scaffold-pipeline.sh` y `pr-sync.sh` ya envolvian su `sed` equivalente en `if [ -f ... ]; then ... fi`; `tdd-pipeline.sh` (L366-368) e `iac-pipeline.sh` (L260-262) no. **CA-1/CA-2**: se envuelve el `sed` que parchea `settings.json` del worktree con el mismo guard `if [ -f "$REPO_ROOT/.claude/settings.json" ]; then ... fi` en ambos scripts. **CA-3/CA-5**: sin el archivo fuente, el bloque se saltea entero -- no se invoca `sed` ni se crea un `settings.json` vacio, y el pipeline continua hasta invocar test-writer/implementer (o el equivalente de IaC). **CA-4**: con el archivo fuente presente, el comportamiento no cambia -- el worktree sigue recibiendo el `settings.json` parcheado con la ruta absoluta del `events.log`. Se difiere unificar las 4 copias de este patron en un helper de `_pipeline-common.sh` (divergen en la variable de ruta y el destino) para un tercer issue si el patron vuelve a divergir (Rule of Three, ADR-0018). Archivos modificados: `scripts/tdd-pipeline.sh`, `scripts/iac-pipeline.sh`.
+
 ## [0.12.0] - 2026-07-10
 
 ### Added

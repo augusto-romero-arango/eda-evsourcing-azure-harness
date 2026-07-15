@@ -364,8 +364,10 @@ else
     mkdir -p "$WORKTREE_PATH/.claude/pipeline/summaries"
 
     # Parchear settings.json del worktree con ruta absoluta del events.log
-    sed "s|\.claude/pipeline/events\.log|${EVENTS_LOG_ABS}|g" \
-        "$REPO_ROOT/.claude/settings.json" > "$WORKTREE_PATH/.claude/settings.json"
+    if [ -f "$REPO_ROOT/.claude/settings.json" ]; then
+        sed "s|\.claude/pipeline/events\.log|${EVENTS_LOG_ABS}|g" \
+            "$REPO_ROOT/.claude/settings.json" > "$WORKTREE_PATH/.claude/settings.json"
+    fi
 
     update_status "setup" "running"
 
