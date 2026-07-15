@@ -196,6 +196,7 @@ Los ADRs en `docs/adr/` son la fuente de verdad arquitectónica del harness. Los
 | Bounded Context, namespace interno de ASB y frontera publico/privado | ADR-0023 |
 | Modelo de eventos de bus (privado propio, publico via backbone compartido, externo diferido) | ADR-0024 |
 | Custodia de secretos (ningun secreto/key en texto plano; Key Vault o identidad administrada) | ADR-0025 |
+| Colas de Service Bus con sesion para fan-in y serializacion por clave de aggregate | ADR-0026 |
 
 ## Convenciones del marco
 

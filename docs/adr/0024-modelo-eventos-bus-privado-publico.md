@@ -136,9 +136,11 @@ Al implementar estas enmiendas, el contenido superado se **elimina del cuerpo** 
 - issue #158 (consumo de eventos publicos de otro BC): se reencuadra sobre el modelo de este ADR (el caso comun es el backbone compartido).
 - Paquete `Cosmos.EventDriven.CritterStack.AzureServiceBus` (`WolverineFx.AzureServiceBus` 6.1.0): el wiring solo acepta cadena de conexion; base de la decision de Alt 4.
 - "Use Key Vault references for App Service and Azure Functions" — referencias `@Microsoft.KeyVault(...)` en app settings. https://learn.microsoft.com/azure/app-service/app-service-key-vault-references
+- ADR-0026 (colas de Service Bus con sesion para fan-in y serializacion por clave de aggregate): el `groupId` de `IPrivateEventSender` que este ADR expone es el mecanismo por el cual el productor fija el `SessionId` que exige el queue de fan-in con sesion de ADR-0026. Sin cambio a la firma ni a la doctrina de enrutamiento privado/publico de este ADR.
 
 ## Control de cambios
 
 - 2026-07-01: creacion como `propuesta` (incorpora la revision inicial con el equipo: simplificacion de la integracion externa a una unica excepcion diferida de dos direcciones; acceso por cadena de conexion sin cambio de paquete; managed identity como norte diferido).
 - 2026-07-01: `aceptado` tras la revision con el equipo.
 - 2026-07-01: enmendado (issue #184, mandato de ADR-0025) para generalizar la decision #6: la custodia en Key Vault deja de presentarse como exclusiva de las cadenas de ASB y remite a ADR-0025 como doctrina general; se incluye explicitamente la cadena del ASB propio/interno, que el cuerpo omitia.
+- 2026-07-15: enmendado (issue #269, doctrina fundacional de ADR-0026) para agregar la referencia cruzada a ADR-0026: el `groupId` de `IPrivateEventSender` es el mecanismo por el que el productor fija el `SessionId` de un queue de fan-in con sesion. Sin cambio a la firma ni a la doctrina de este ADR.

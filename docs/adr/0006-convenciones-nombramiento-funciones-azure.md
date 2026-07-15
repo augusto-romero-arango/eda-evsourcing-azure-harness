@@ -50,6 +50,8 @@ reacciones no rompe las existentes.
 Inspirado en el patron del proyecto eShop de Microsoft:
 `ValidateOrAddBuyerAggregateWhenOrderStartedDomainEventHandler`
 
+**Excepcion: Functions de fan-in sobre un queue con sesion (ADR-0026).** El patron `{Accion}Cuando{Evento}` asume un estimulo unico. Cuando la Function consume un queue de fan-in donde convergen N eventos (potencialmente de tipos distintos) sobre la misma decision de aggregate, no hay un unico estimulo que nombrar sin ser enganoso. La convencion para este caso es distinta: el nombre de la Function es el nombre del **queue** en PascalCase (el queue en si va en kebab-case), y describe la decision o convergencia que resuelve, no un evento puntual. Ejemplo: queue `consolidar-cierre-turno` -> Function `ConsolidarCierreTurno`. El detalle de la doctrina de fan-in vive en ADR-0026; esta seccion documenta unicamente la desviacion de naming.
+
 ### Organizacion vertical de directorios
 
 Cada comando o reaccion a evento vive en su propio directorio:
@@ -119,3 +121,7 @@ Esta ADR cubre el nombramiento de funciones y clases en codigo; el nombre del **
 - El nombre de recurso `Microsoft.Web/sites` (Function App) admite **2-60 caracteres** (https://learn.microsoft.com/azure/azure-resource-manager/management/resource-name-rules#microsoftweb). El App Service Plan (`Microsoft.Web/serverfarms`) admite 1-60 en la misma tabla.
 - Existe un limite distinto de **32 caracteres** para el **host ID** de Azure Functions (truncado del nombre), pero su colision solo ocurre **cuando dos Function Apps comparten la misma storage account** (https://learn.microsoft.com/azure/azure-functions/storage-considerations#host-id-considerations; evento de diagnostico AZFD0004: https://learn.microsoft.com/azure/azure-functions/errors-diagnostics/diagnostic-events/azfd0004). En este marco cada Function App tiene su propia Storage Account y su propio App Service Plan dedicado sin deployment slots (ADR-0020), por lo que esa colision no aplica y el limite de 32 no rige el nombre del recurso.
 - `agents/domain-scaffolder.md` (Paso 0, Validacion 1) valida el nombre completo `func-{prefix_func}-{kebab}` contra el limite real de 60.
+
+## Nota (issue #269, ADR-0026): excepcion de naming para Functions de fan-in
+
+ADR-0026 (colas de Service Bus con sesion para fan-in y serializacion por clave de aggregate) documenta un caso donde el patron `{Accion}Cuando{Evento}` de este ADR no aplica: la Function que consume un queue de fan-in no reacciona a un estimulo unico, sino a la convergencia de N eventos sobre la misma decision de aggregate. La seccion "Decision > Funciones ServiceBus" arriba fija la convencion alterna para ese caso (nombre de la Function = nombre del queue en PascalCase); ADR-0026 fija la invariante completa "queue kebab-case = nombre de la Function que lo consume" y el porque de la excepcion.

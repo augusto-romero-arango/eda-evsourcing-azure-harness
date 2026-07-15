@@ -41,6 +41,8 @@ Un topic por tipo de evento aplica **dentro de cada namespace o backbone**. Los 
 Cada dominio publica **unicamente** a los topics de los eventos que produce. Ningun dominio
 publica al topic de otro dominio.
 
+Esta topologia es **fan-out** por diseno: N subscriptions independientes de un mismo topic procesan en paralelo, sin estado compartido entre ellas. Cuando varios eventos deben converger en una decision sobre el **mismo aggregate** y ese paralelismo rompe la concurrencia optimista de Marten, la primitiva complementaria es un queue de Service Bus con sesion, alimentado por auto-forward desde subscriptions de este ADR — ver ADR-0026. Topic vs queue **nunca es decision del productor**: el productor siempre publica a topics; el queue, cuando aplica, es una construccion exclusiva del lado consumidor que no altera esta topologia.
+
 Los topics y subscriptions se gestionan como infraestructura mediante Terraform en
 `infra/environments/{ambiente}/main.tf`. El agente `es-implementer` es responsable de
 agregar los topics y subscriptions necesarios cuando implementa un handler que publica
@@ -74,8 +76,10 @@ eventos publicos.
 - Azure Service Bus Standard: limite de 10,000 topics, sin costo adicional por cantidad
 - ADR-0023: Bounded Context, namespace interno de Azure Service Bus y frontera publico/privado — define el namespace interno del BC (eventos privados) y el criterio publico/privado por frontera de BC.
 - ADR-0024: Modelo de eventos de bus (privado propio, publico via backbone compartido, integracion externa diferida) — define el transporte del evento publico: backbone compartido del producto (caso comun) o namespace de integracion externo (caso diferido, Open Host Service).
+- ADR-0026: Colas de Service Bus con sesion para fan-in y serializacion por clave de aggregate — complementa la topologia fan-out de este ADR con la primitiva de fan-in (queue con sesion, alimentado por auto-forward desde subscriptions de este ADR) para el caso en que varios eventos convergen en una decision sobre el mismo aggregate. No reemplaza ni modifica el naming de topics/subscriptions de este ADR.
 
 ## Control de cambios
 
 - 2026-07-01: enmendado (issue #167, barrido de coherencia hacia ADR-0024) para reemplazar "namespace de integracion del bounded context" como destino por defecto del evento publico por el modelo de ADR-0024: backbone compartido del producto (caso comun) o namespace de integracion externo (caso diferido). El criterio "un topic por tipo de evento" y la convencion de naming no cambian.
 - 2026-07-10: se evaluo simplificar el patron de subscription a `{consumidor}` a secas -- eliminando el segmento `{productor}`, redundante con el topic (issue #252) -- y se **descarto**. La redundancia es deliberada: el nombre auto-documentado facilita la revision de flujos asistida por agentes y el instruir acciones sobre subscriptions concretas, beneficio que supera el ahorro frente al limite de 50 caracteres de Azure. El patron `{consumidor}-escucha-{productor}` y su hogar canonico (este ADR) no cambian; se agrego el rationale explicito a la seccion "Decision".
+- 2026-07-15: enmendado (issue #269, doctrina fundacional de ADR-0026) para anadir, en la seccion "Decision", el parrafo que aclara que esta topologia es fan-out por diseno y que ADR-0026 la complementa con la primitiva de fan-in (queue con sesion) sin alterar el naming ni la topologia de este ADR; se agrega la referencia cruzada a ADR-0026.
