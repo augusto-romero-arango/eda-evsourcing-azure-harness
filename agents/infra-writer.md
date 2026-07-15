@@ -110,14 +110,19 @@ module "service_bus_interno" {
 **Enrutamiento multi-destinatario: correlation filter de igualdad (ADR-0027).** Cuando el issue describe que un **unico** evento publico debe llegar a **N destinatarios** distintos, cada uno interesado solo en su subconjunto -- el eje es el destinatario, no el tipo de evento (eso sigue siendo topic-por-evento, ADR-0001) -- usa `correlation_filter` en la subscription de cada destinatario en vez de suscribirlos al topic completo a descartar en el handler:
 
 - El productor sigue publicando **unicamente** al topic del evento (ADR-0001/ADR-0024); su unica obligacion nueva es estampar la clave de enrutamiento como **application property** al publicar -- los filtros no leen el body [Microsoft Learn, "Topic filters and actions"].
-- Cada destinatario declara su propia subscription dentro de `topics_config[<topic>].subscriptions` con `correlation_filter = { "<clave>" = "<valor-del-destinatario>" }` (>=1 property; el modulo `service-bus` lo exige via `validation`).
+- Cada destinatario se selecciona con `correlation_filter = { "<clave>" = "<valor-del-destinatario>" }` (>=1 property; el modulo `service-bus` lo exige via `validation`) en su subscription dentro de `topics_config[<topic>].subscriptions`.
+- **Donde viven las N subscriptions.** El modulo `service-bus` **crea** un namespace (`azurerm_servicebus_namespace`), asi que solo modela namespaces que el BC **posee**. Un solo `topics_config` agrupa el topic + sus N subscriptions cuando un unico dueno las declara en su propio namespace: el **productor** en su namespace de integracion (patron Open Host, ADR-0024 -- el precedente que motivo ADR-0027). En el **backbone compartido** del producto, en cambio, cada BC consumidor agrega su **propia** subscription (ADR-0001), de modo que no quedan todas en un mismo `topics_config`, y ese backbone se provisiona fuera de este modulo. El namespace **interno** del BC (`module.service_bus_interno`) es privado (ADR-0023): hospeda solo eventos privados intra-BC, nunca subscriptions de otros BCs.
 - La clave de enrutamiento (p. ej. `destinatarioId`, `tenantId`) la decide el flujo concreto -- no la conflaciones con `SessionId`/`groupId` (ADR-0026): son mecanismos distintos, uno de enrutamiento y otro de serializacion de fan-in.
 - Nunca uses una expresion SQL para este eje. El modulo `service-bus` no expone `SqlFilter` (ADR-0027 lo removio del modulo): si necesitas algo distinto a igualdad exacta, no es un correlation filter y sigue cayendo, sin excepcion, bajo el rechazo de ADR-0001 -- no instances `azurerm_servicebus_subscription_rule` con `SqlFilter` a mano fuera del modulo.
 
-Ejemplo minimo (un topic, dos destinatarios filtrados por igualdad sobre la misma clave):
+Ejemplo minimo (el namespace de integracion del productor -- patron Open Host, ADR-0024 -- con un topic y dos destinatarios filtrados por igualdad sobre la misma clave):
 
 ```hcl
-module "service_bus_interno" {
+# Namespace del PRODUCTOR del evento publico (su namespace de integracion, patron Open Host
+# de ADR-0024): el productor declara aqui el topic y las N subscriptions destinatarias. NO es
+# el namespace interno del BC consumidor -- ese es privado (ADR-0023) y no hospeda subscriptions
+# de otros BCs; el backbone compartido, por su parte, se provisiona fuera de este modulo.
+module "service_bus_integracion" {
   # ...
   topics_config = {
     "aprovisionamiento-solicitado" = {
