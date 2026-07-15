@@ -373,7 +373,7 @@ output "administrator_login" {
 
 ### 1.4 `infra/modules/service-bus/main.tf`
 
-Namespace + topics/subscriptions parametrizables via `topics_config` (ADR-0001: topic por evento). El shape de `topics_config` admite subscriptions de smoke-tests con `default_message_ttl` (ADR-0013). `prevent_destroy = true`.
+Namespace + topics/subscriptions parametrizables via `topics_config` (ADR-0001: topic por evento) + queues de fan-in parametrizables via `queues_config` (ADR-0026: colas con sesion para fan-in y serializacion por clave de aggregate). El shape de `topics_config` admite subscriptions de smoke-tests con `default_message_ttl` (ADR-0013) y subscriptions de fan-in con `forward_to` (ADR-0026). `prevent_destroy = true`.
 
 ```hcl
 variable "name" {
@@ -398,13 +398,23 @@ variable "sku" {
 }
 
 variable "topics_config" {
-  description = "Topics con sus subscriptions opcionales"
+  description = "Topics con sus subscriptions opcionales. `forward_to` (ADR-0026) nombra una clave de `queues_config` en este mismo namespace: la subscription se vuelve fuente de auto-forward hacia ese queue de fan-in. Este objeto no expone `requires_session` a proposito -- una subscription NUNCA puede ser fuente de forward si tiene sesion habilitada (restriccion dura de la plataforma, ver `queues_config` mas abajo); al no exponer el campo, el modulo hace esa violacion irrepresentable."
   type = map(object({
     subscriptions = optional(list(object({
       name                = string
       filter              = optional(string)
       default_message_ttl = optional(string)
+      forward_to          = optional(string)
     })), [])
+  }))
+  default = {}
+}
+
+variable "queues_config" {
+  description = "Queues del namespace (ADR-0026: primitiva de fan-in). `requires_session = true` agrupa mensajes por SessionId (el `groupId` que fija el productor via IPrivateEventSender, ADR-0024) y garantiza entrega serializada dentro de cada sesion -- lo consume una Function con ServiceBusTrigger(IsSessionsEnabled = true). Es el unico lado de la cadena forward que puede llevar sesion: ver la nota de `topics_config`."
+  type = map(object({
+    requires_session    = optional(bool, false)
+    default_message_ttl = optional(string)
   }))
   default = {}
 }
@@ -433,6 +443,17 @@ resource "azurerm_servicebus_topic" "topics" {
   namespace_id = azurerm_servicebus_namespace.this.id
 }
 
+# Queues de fan-in (ADR-0026). Varias subscriptions -- de topics distintos -- pueden
+# hacer forward al MISMO queue: es justamente el mecanismo de convergencia.
+resource "azurerm_servicebus_queue" "queues" {
+  for_each            = var.queues_config
+  name                = each.key
+  namespace_id        = azurerm_servicebus_namespace.this.id
+  requires_session    = each.value.requires_session
+  max_delivery_count  = 10
+  default_message_ttl = each.value.default_message_ttl
+}
+
 locals {
   subscriptions_flat = flatten([
     for topic_name, topic in var.topics_config : [
@@ -442,6 +463,7 @@ locals {
         sub_name            = sub.name
         filter              = sub.filter
         default_message_ttl = sub.default_message_ttl
+        forward_to          = sub.forward_to
       }
     ]
   ])
@@ -454,6 +476,11 @@ resource "azurerm_servicebus_subscription" "subs" {
   topic_id            = azurerm_servicebus_topic.topics[each.value.topic_name].id
   max_delivery_count  = 10
   default_message_ttl = each.value.default_message_ttl
+
+  # ADR-0026: `forward_to` toma el NOMBRE del queue destino (no su ID); Azure preserva
+  # el SessionId del mensaje a traves del forward. Esta subscription (la fuente) nunca
+  # declara requires_session -- el objeto de topics_config no expone ese campo.
+  forward_to = each.value.forward_to != null ? azurerm_servicebus_queue.queues[each.value.forward_to].name : null
 }
 
 resource "azurerm_servicebus_subscription_rule" "filters" {
@@ -484,7 +511,14 @@ output "topic_ids" {
   description = "IDs de los topics creados"
   value       = { for k, v in azurerm_servicebus_topic.topics : k => v.id }
 }
+
+output "queue_ids" {
+  description = "IDs de las queues creadas (ADR-0026)"
+  value       = { for k, v in azurerm_servicebus_queue.queues : k => v.id }
+}
 ```
+
+**Restriccion de plataforma (ADR-0026, verificada contra el provider `azurerm`).** Tanto `azurerm_servicebus_queue` como `azurerm_servicebus_subscription` exponen `requires_session` y `forward_to` [HashiCorp, `azurerm_servicebus_queue`/`azurerm_servicebus_subscription` — Argument Reference]. Este modulo deja `requires_session` fuera del objeto de `subscriptions` (dentro de `topics_config`) **a proposito**: la unica entidad que puede declarar sesion en este modulo es un queue de `queues_config` -- nunca una subscription. Como la subscription es siempre la fuente del forward (nunca el destino, en la topologia de este modulo) y nunca puede tener sesion, la restriccion de Azure ("a session-enabled queue or subscription can't be the source of autoforwarding") queda satisfecha por construccion, sin necesidad de una validacion adicional en HCL.
 
 ### 1.5 `infra/modules/service-plan/main.tf`
 

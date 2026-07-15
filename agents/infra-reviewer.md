@@ -44,6 +44,7 @@ Busca activamente estos problemas:
 - Cada Function App tiene su propia managed identity o usa system-assigned
 - **Cada Function App tiene su Service Plan dedicado (no comparten plan)**: cada `module function_app_<dominio>` apunta a su propio `module service_plan_<dominio>` (`service_plan_id = module.service_plan_<dominio>.id`), nunca a un plan compartido. Un plan compartido entre dominios reintroduce el noisy neighbor que proscribe ADR-0020 -- senalalo como hallazgo de arquitectura.
 - El Service Bus usa Standard o Premium (nunca Basic para topics)
+- **Fan-in con sesion (ADR-0026): la entidad FUENTE de un `forward_to` nunca lleva sesion.** Es una restriccion dura de la plataforma -- Azure rechaza `ForwardTo` sobre una entidad `requires_session = true` [HashiCorp, `azurerm_servicebus_queue`/`azurerm_servicebus_subscription` -- Argument Reference]. Revisa cada `azurerm_servicebus_subscription`/`azurerm_servicebus_queue` con `forward_to != null`: esa misma entidad no puede declarar `requires_session = true`; solo el queue **destino** del forward lo declara. Si encuentras la violacion (p. ej. alguien instancio el modulo `service-bus` pasando `requires_session` a una subscription via un campo que no deberia existir, o un queue con `requires_session = true` que a su vez tiene `forward_to` hacia otro queue), corrigela removiendo la sesion de la fuente y senalalo como hallazgo de arquitectura.
 - Los recursos de monitoreo (App Insights, Log Analytics) estan correctamente conectados
 
 ### 3. Corregir problemas encontrados
