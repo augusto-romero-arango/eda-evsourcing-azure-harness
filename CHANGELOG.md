@@ -4,6 +4,10 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+### Fixed
+
+- **Robustecer la Validacion 1.5 de `/mefisto-sequential` ante shells sin word-splitting (issue #274)**: el bloque bash embebido en `.claude/commands/mefisto-sequential.md` corria en el shell del invocador -- zsh en macOS -- que, a diferencia de bash, no hace word-splitting de una variable sin comillas por defecto (`SH_WORD_SPLIT` off). Los 4 loops `for X in $VAR` del bloque (sobre `$BATCH`, `$DEPS`, `$LABELS_TO_CLEAR`) iteraban una sola vez con la cadena completa en vez de una vez por elemento: al ejecutar `/mefisto-sequential 267 269 270 271 272` bajo zsh, `gh issue view "267 269 270 271 272"` fallaba con `invalid issue format` y el bloque caia en el `else`, imprimiendo `Validacion 1.5 OK` **sin haber validado ni mutado ningun label** -- falso positivo, observado dos veces en la misma sesion. **CA-1**: se envuelve el bloque completo en `bash <<'BASH' ... BASH` (heredoc *quoted*, sin reescribir los loops), mismo patron ya usado por `commands/onboard.md` para el mismo motivo. **CA-2/CA-3/CA-5**: verificado bajo zsh con mocks de `gh` -- un batch multi-issue ya no dispara `invalid issue format` y procesa issue por issue; los casos canonicos de lanzamiento (`44 43 45`) y aborto (`43 44`, "Mueve #44 antes de #43") se preservan identicos a como corrian bajo bash. **CA-4**: auditoria confirmada -- ninguna otra instancia desprotegida del patron `for <var> in $<VAR>` fuera de un heredoc bash en `.claude/commands/` ni `commands/` (las de `onboard.md` ya estaban protegidas). Archivo modificado: `.claude/commands/mefisto-sequential.md`.
+
 ## [0.13.0] - 2026-07-15
 
 ### Added
