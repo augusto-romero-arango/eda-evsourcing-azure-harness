@@ -197,6 +197,7 @@ Los ADRs en `docs/adr/` son la fuente de verdad arquitectónica del harness. Los
 | Modelo de eventos de bus (privado propio, publico via backbone compartido, externo diferido) | ADR-0024 |
 | Custodia de secretos (ningun secreto/key en texto plano; Key Vault o identidad administrada) | ADR-0025 |
 | Colas de Service Bus con sesion para fan-in y serializacion por clave de aggregate | ADR-0026 |
+| Enrutamiento multi-destinatario de un evento por correlation filter de igualdad | ADR-0027 |
 
 ## Convenciones del marco
 
