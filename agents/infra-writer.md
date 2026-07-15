@@ -68,8 +68,44 @@ Antes de escribir, define:
 - Resource groups: `rg-<proyecto>-<ambiente>`
 - Storage accounts: `st<proyecto><ambiente>func` (sin guiones, max 24 chars)
 - Function Apps: `func-<proyecto>-<ambiente>-<dominio>`
-- Service Bus: `sb-<proyecto>-<ambiente>`
+- Service Bus (namespace): `sb-<proyecto>-<ambiente>`
+- Service Bus topics/subscriptions: kebab-case, ver ADR-0001 (`{evento-en-pasado}` para topics, `{consumidor}-escucha-{productor}` para subscriptions)
+- Service Bus queues de fan-in (ADR-0026): kebab-case, **excepcion deliberada** a este patron -- el nombre es el de la Function que consume el queue (no `<tipo>-<proyecto>-<ambiente>`), porque el queue representa una decision de convergencia, no un recurso por-proyecto/ambiente
 - Service Plans: `asp-<proyecto>-<ambiente>-<dominio>` (un plan dedicado por Function App; paraleliza el patron de Function Apps, ver ADR-0020). Nunca un `asp-<proyecto>-<ambiente>` compartido entre dominios.
+
+**Fan-in: queues con sesion (ADR-0026).** Cuando el issue describe que varios eventos (mismo tipo o distintos, mismo productor o distintos) deben converger en una decision sobre el **mismo aggregate** y el fan-out de ADR-0001 permitiria escrituras concurrentes sobre el mismo stream de Marten, usa la primitiva de fan-in del modulo `service-bus` (`queues_config` + `topics_config[].subscriptions[].forward_to`) en vez de subscriptions independientes:
+
+- Declara el queue de fan-in en `queues_config` del namespace que corresponda (tipicamente `module.service_bus_interno`, ADR-0023), con `requires_session = true`.
+- Por cada topic de evento que converge, agrega una subscription normal dentro de `topics_config` (sin `requires_session`: el modulo no expone ese campo en subscriptions, ver el comentario del modulo) con `forward_to = "<nombre-del-queue-de-fan-in>"`. Varias subscriptions de topics distintos pueden apuntar al mismo queue.
+- `forward_to` toma el **nombre** del queue (no su ID) -- asi lo expone el modulo.
+- **Restriccion dura de la plataforma, verificada contra el provider `azurerm`**: una entidad con `requires_session = true` no puede ser la fuente de un `forward_to` [HashiCorp, `azurerm_servicebus_queue`/`azurerm_servicebus_subscription` -- Argument Reference; ver tambien Microsoft Learn, "Chaining Service Bus entities with autoforwarding"]. Por eso la sesion va **solo** en el queue destino, nunca en la subscription fuente.
+- El `SessionId` lo fija el productor al publicar (no es trabajo de este agente); tu responsabilidad aqui es solo la topologia de infraestructura.
+
+Ejemplo minimo (dos topics convergen en un queue de fan-in):
+
+```hcl
+module "service_bus_interno" {
+  # ...
+  topics_config = {
+    "turno-creado" = {
+      subscriptions = [
+        { name = "consolidar-cierre-turno-escucha-turnos", forward_to = "consolidar-cierre-turno" }
+      ]
+    }
+    "empleado-asignado" = {
+      subscriptions = [
+        { name = "consolidar-cierre-turno-escucha-empleados", forward_to = "consolidar-cierre-turno" }
+      ]
+    }
+  }
+
+  queues_config = {
+    "consolidar-cierre-turno" = {
+      requires_session = true
+    }
+  }
+}
+```
 
 ### 5. Formatear y validar
 
