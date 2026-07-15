@@ -9,7 +9,7 @@
 ADR-0001 fija topic-por-tipo-de-evento como topologia por defecto y descarta explicitamente los
 filtros SQL "por complejidad operativa": si un consumidor se suscribe a un topic, quiere **todos**
 los mensajes de ese topic; sin filtros SQL, la topologia es completamente declarativa
-(`docs/adr/0001-service-bus-topics-por-evento.md:15-26,55-56`). Ese rechazo razona sobre un eje
+(`docs/adr/0001-service-bus-topics-por-evento.md:15-26,57-61`). Ese rechazo razona sobre un eje
 concreto: **varios tipos de evento** conviviendo en un topic de dominio, filtrados por **tipo** con
 SQL.
 
