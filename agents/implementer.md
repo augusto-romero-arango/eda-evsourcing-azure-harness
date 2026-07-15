@@ -191,6 +191,26 @@ public partial class AsignarEmpleadoATurnoCommandHandler(IEventStore eventStore,
 - NUNCA hagas try-catch de excepciones de dominio
 - Para triggers ServiceBus: si el aggregate no existe o falla, el aggregate emite evento de fallo — no throw
 
+### `groupId` en `PublishAsync`: invariante dura con `requires_session` (ADR-0026)
+
+Los ejemplos de arriba publican con `eventSender.PublishAsync(turno.GetPrivateEvents())`, sin `groupId` -- es el caso normal: un topic con subscriptions simples (fan-out, ADR-0001) no necesita sesion. `IPrivateEventSender.PublishAsync` tiene tambien una sobrecarga con `groupId` como primer argumento (uso real verificado en un consumidor: `PublishAsync(comando.TenantId.ToString(), aggregate.GetPrivateEvents())`); ese `groupId` fija el `SessionId` del mensaje -- a nivel de protocolo AMQP viaja como la propiedad `group-id` [Microsoft Learn, "Message sessions"]. La firma completa vive en el paquete externo `Cosmos.EventDriven.Abstractions`; este agente no la agrega, solo ensena el CUANDO/COMO de usarla.
+
+**Invariante dura (ADR-0026).** Si el topic al que publicas alimenta, via `forward_to`, un queue con `requires_session = true` (fan-in -- ver "Endpoint de fan-in" mas abajo y "Infraestructura (topics y subscriptions)" mas abajo), el productor **debe** publicar con `groupId` = la clave del aggregate destino (el mismo valor usado en `StartStream`/`GetAggregateRootAsync`). `requires_session` en el destino y `groupId` en el productor se despliegan **juntos** -- nunca uno sin el otro.
+
+**Consecuencia de omitirlo.** Un mensaje **sin** `SessionId` que llega, via auto-forward, a un destino con sesion habilitada se dead-lettera en la entidad **fuente** (la subscription que hace el forward) -- no en el queue destino ni en la Function que lo consume: la entidad session-enabled solo acepta mensajes con `SessionId` [Microsoft Learn, "Chaining Service Bus entities with autoforwarding"]. El mensaje se pierde en silencio si nadie monitorea esa dead-letter.
+
+```csharp
+await eventSender.PublishAsync(
+    comando.TurnoId.ToString(),   // groupId = SessionId = clave del aggregate destino
+    turno.GetPrivateEvents());
+```
+
+**Como saber si aplica.** Revisa, en `infra/environments/dev/main.tf`, el bloque `topics_config` de `module "service_bus_interno"`: si alguna subscription de tu topic declara `forward_to = "<queue>"` y ese `<queue>` existe en `queues_config` con `requires_session = true`, usa la sobrecarga con `groupId`. Si ninguna subscription del topic tiene `forward_to`, sigue publicando sin `groupId` (los ejemplos de arriba).
+
+**Trabajo downstream, no del harness.** Si al implementar en un consumidor encuentras un handler que aun no cumple este invariante -- por ejemplo, que publica sin `groupId` desde antes de que existiera esta doctrina; caso real: `CreateAdminUserCommandHandler` en `Cosmos.ControlPlane` -- no lo refactorices como parte de un issue no relacionado. Homologarlo contra esta seccion y completar el wiring de infraestructura/endpoint (ADR-0026, issues #270/#271) es tarea del **consumidor**, con su propio seguimiento en el backlog de ese repo. Documenta el hallazgo en tu resumen para seguimiento administrativo; no lo corrijas por tu cuenta.
+
+Doctrina completa (criterio de dos condiciones, topologia fuente/destino, restriccion de plataforma, naming de la Function de fan-in): **ADR-0026**. Este agente no la duplica.
+
 ### Endpoint HTTP
 
 ```csharp
@@ -337,11 +357,11 @@ public async Task NotificarCuandoDiaCalculado(
 
 Los dos endpoints anteriores consumen una **subscription** de un unico topic (un `TEvento`). Existe un caso distinto: cuando varios eventos -- mismo tipo o tipos distintos, mismo productor o productores distintos -- deben converger en una decision sobre el **mismo aggregate**, y consumirlos con subscriptions independientes permitiria que dos o mas ejecuciones concurrentes del handler escriban sobre el mismo stream de Marten al mismo tiempo (carrera de concurrencia optimista). ADR-0026 fija el criterio completo de dos condiciones para reconocer este caso (seccion "Decision" #1); si tu caso no las cumple ambas, el patron de subscription simple de arriba sigue siendo lo correcto -- este no es un atajo para "varios eventos, una Function".
 
-**Trigger**: un unico argumento posicional con el nombre del **queue** (no topic+subscription), mas `IsSessionsEnabled = true`. **`Connection` es siempre `SERVICE_BUS_CONNECTION_INTERNO`**: a diferencia de la tabla de arriba, el queue de fan-in vive siempre en el namespace interno del BC (ADR-0026 seccion 2, ADR-0023) -- nunca en el backbone compartido, no hay variante de alias aqui. El `SessionId` lo fija el productor al publicar (`groupId` de `IPrivateEventSender`, doctrina completa en issue #272, fuera del alcance de este agente); la serializacion dentro de cada sesion es la que elimina la carrera. `maxConcurrentSessions` en `host.json` solo acota cuantas sesiones **distintas** corren en paralelo por instancia escalada, sin romper el orden dentro de cada una: el `host.json` que genera el `domain-scaffolder` lo fija en 16; el default del worker aislado con la extension `Microsoft.Azure.Functions.Worker.Extensions.ServiceBus` 5.x es 8 (el valor 2000 es el default del modelo legacy in-process/Functions 2.x y no aplica a este stack — [host.json settings](https://learn.microsoft.com/azure/azure-functions/functions-bindings-service-bus?pivots=programming-language-csharp#hostjson-settings)).
+**Trigger**: un unico argumento posicional con el nombre del **queue** (no topic+subscription), mas `IsSessionsEnabled = true`. **`Connection` es siempre `SERVICE_BUS_CONNECTION_INTERNO`**: a diferencia de la tabla de arriba, el queue de fan-in vive siempre en el namespace interno del BC (ADR-0026 seccion 2, ADR-0023) -- nunca en el backbone compartido, no hay variante de alias aqui. El `SessionId` lo fija el productor al publicar (`groupId` de `IPrivateEventSender`, doctrina completa en la seccion "`groupId` en `PublishAsync`" mas arriba); la serializacion dentro de cada sesion es la que elimina la carrera. `maxConcurrentSessions` en `host.json` solo acota cuantas sesiones **distintas** corren en paralelo por instancia escalada, sin romper el orden dentro de cada una: el `host.json` que genera el `domain-scaffolder` lo fija en 16; el default del worker aislado con la extension `Microsoft.Azure.Functions.Worker.Extensions.ServiceBus` 5.x es 8 (el valor 2000 es el default del modelo legacy in-process/Functions 2.x y no aplica a este stack — [host.json settings](https://learn.microsoft.com/azure/azure-functions/functions-bindings-service-bus?pivots=programming-language-csharp#hostjson-settings)).
 
 **`switch` por `message.Subject`** cuando el queue recibe varios tipos de evento convergentes: `Subject` es la propiedad AMQP "subject", una etiqueta de aplicacion que el productor fija al publicar (`ServiceBusReceivedMessage.Subject`, [Azure.Messaging.ServiceBus](https://learn.microsoft.com/dotnet/api/azure.messaging.servicebus.servicebusreceivedmessage.subject)). Usa el `nameof` de cada tipo de evento convergente (`nameof(TurnoCreado)`, `nameof(EmpleadoAsignado)`, ...) como discriminante.
 
-Que el productor fije `Subject` con ese mismo nombre al emitir es una **invariante del lado productor** que este agente no garantiza: al igual que el `SessionId`/`groupId`, pertenece a la doctrina del productor (issue #272). Si un `Subject` no coincide con ningun `case`, el `switch` cae al `default`, lanza y el mensaje se dead-letterea — por eso el switch no puede quedar a medias. **No verificado**: si `IPrivateEventSender` fija el `Subject` por defecto o si el emisor debe hacerlo explicitamente. Si al scaffoldear este endpoint detectas que el productor no lo esta fijando, documentalo en tu resumen (misma disciplina que con topics/subscriptions faltantes) — sin ese `Subject` el fan-in no despacha nada.
+Que el productor fije `Subject` con ese mismo nombre al emitir es una **invariante del lado productor** que este agente no garantiza: al igual que el `SessionId`/`groupId` (seccion "`groupId` en `PublishAsync`" mas arriba), pertenece a la doctrina del productor. Si un `Subject` no coincide con ningun `case`, el `switch` cae al `default`, lanza y el mensaje se dead-letterea — por eso el switch no puede quedar a medias. **No verificado**: si `IPrivateEventSender` fija el `Subject` por defecto o si el emisor debe hacerlo explicitamente. Si al scaffoldear este endpoint detectas que el productor no lo esta fijando, documentalo en tu resumen (misma disciplina que con topics/subscriptions faltantes) — sin ese `Subject` el fan-in no despacha nada.
 
 ```csharp
 public class ConsolidarCierreTurno(ICommandRouter commandRouter, ILogger<ConsolidarCierreTurno> logger)
@@ -382,7 +402,7 @@ public class ConsolidarCierreTurno(ICommandRouter commandRouter, ILogger<Consoli
 
 **Infraestructura del queue**: el queue de fan-in, las subscriptions de forward (sin sesion, en las fuentes) y el `requires_session = true` del destino se provisionan en Terraform por separado (ADR-0026, trabajo diferido a infra en issue #270). El implementer no crea ni edita esas entidades -- verifica que el queue ya exista antes de escribir este endpoint; si falta, documenta la necesidad en tu resumen igual que ya haces con topics/subscriptions faltantes (seccion "Infraestructura (topics y subscriptions)").
 
-Doctrina completa (cuando aplica esta excepcion, topologia fuente/destino, invariante `groupId`): **ADR-0026**. Este agente no la duplica, solo enseña el scaffolding del endpoint consumidor.
+Doctrina completa (cuando aplica esta excepcion, topologia fuente/destino): **ADR-0026**. La invariante `groupId` del lado productor se ensena en la seccion "`groupId` en `PublishAsync`" mas arriba; este agente no duplica el resto de ADR-0026, solo enseña el scaffolding del endpoint consumidor.
 
 **Nota sobre deserializacion:** La configuracion global de JSON (CamelCase + CaseInsensitive) es responsabilidad del `domain-scaffolder` en el Program.cs. Si detectas que falta esta configuracion, reportalo en el resumen pero no la agregues.
 
@@ -712,6 +732,8 @@ src/<RootNamespace>.{Dominio}/
 ## Infraestructura (topics y subscriptions)
 
 Cuando implementas un handler que publica eventos (usando `IPublicEventSender` o `IPrivateEventSender`), verifica que la infraestructura de mensajeria existe. El namespace destino depende del tipo del evento.
+
+**Si alguna subscription de tu topic tiene `forward_to` hacia un queue con `requires_session = true`** (fan-in, ADR-0026), tu handler debe publicar con `groupId` -- ver la seccion "`groupId` en `PublishAsync`" (arriba, dentro de "CommandHandler — orquestador puro").
 
 **Nomenclatura ServiceBus:**
 - Topics: kebab-case, nombre del evento en pasado. Ej: `turno-creado`, `empleado-asignado`
