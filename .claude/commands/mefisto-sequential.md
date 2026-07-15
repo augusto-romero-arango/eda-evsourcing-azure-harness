@@ -76,7 +76,15 @@ satisfechas y no cuentan como bloqueo (no importa si estaban o no en el batch).
 Para clasificar, necesitas la **lista ordenada** de issues que sobrevivieron al paso 1
 (en el mismo orden de `$ARGUMENTS`). Ejecuta este bloque sustituyendo `BATCH` por esa lista:
 
+Este bloque depende de word-splitting sin comillas (`for X in $VAR`) sobre listas separadas
+por espacio y newlines; en zsh (shell del invocador en macOS) eso no ocurre por defecto
+(`SH_WORD_SPLIT` off -- https://zsh.sourceforge.io/Doc/Release/Options.html#Shell-Emulation),
+asi que corre bajo `bash` explicito (mismo patron que `commands/onboard.md`):
+
 ```bash
+bash <<'BASH'
+set +e
+
 # BATCH = issues que sobrevivieron al paso 1, EN ORDEN (separados por espacio).
 BATCH="44 43 45"   # <-- sustituye por tu lista real, respetando el orden del batch
 
@@ -152,6 +160,7 @@ else
     done
     echo "Validacion 1.5 OK: el batch se puede lanzar."
 fi
+BASH
 ```
 
 **Importante**: el bloque solo quita labels si **todo** el batch pasa. Si hay algun bloqueo
