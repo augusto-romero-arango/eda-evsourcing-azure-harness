@@ -373,7 +373,7 @@ output "administrator_login" {
 
 ### 1.4 `infra/modules/service-bus/main.tf`
 
-Namespace + topics/subscriptions parametrizables via `topics_config` (ADR-0001: topic por evento) + queues de fan-in parametrizables via `queues_config` (ADR-0026: colas con sesion para fan-in y serializacion por clave de aggregate). El shape de `topics_config` admite subscriptions de smoke-tests con `default_message_ttl` (ADR-0013) y subscriptions de fan-in con `forward_to` (ADR-0026). `prevent_destroy = true`.
+Namespace + topics/subscriptions parametrizables via `topics_config` (ADR-0001: topic por evento) + queues de fan-in parametrizables via `queues_config` (ADR-0026: colas con sesion para fan-in y serializacion por clave de aggregate). El shape de `topics_config` admite subscriptions de smoke-tests con `default_message_ttl` (ADR-0013), subscriptions de fan-in con `forward_to` (ADR-0026) y subscriptions de enrutamiento multi-destinatario con `correlation_filter` (ADR-0027: filtro de igualdad exacta, nunca SQL). El modulo no expone ningun mecanismo de `SqlFilter`: ADR-0001 rechaza los filtros SQL sin excepcion y ADR-0027 cubre por completo el unico eje que los necesitaba (un evento, N destinatarios) con un correlation filter de igualdad -- no queda ningun caso legitimo que justifique conservar ese escape-hatch en el modulo. `prevent_destroy = true`.
 
 ```hcl
 variable "name" {
@@ -398,16 +398,26 @@ variable "sku" {
 }
 
 variable "topics_config" {
-  description = "Topics con sus subscriptions opcionales. `forward_to` (ADR-0026) nombra una clave de `queues_config` en este mismo namespace: la subscription se vuelve fuente de auto-forward hacia ese queue de fan-in. Este objeto no expone `requires_session` a proposito -- una subscription NUNCA puede ser fuente de forward si tiene sesion habilitada (restriccion dura de la plataforma, ver `queues_config` mas abajo); al no exponer el campo, el modulo hace esa violacion irrepresentable."
+  description = "Topics con sus subscriptions opcionales. `correlation_filter` (ADR-0027) declara un filtro de igualdad exacta por destinatario -- mapa de >=1 application property, matcheadas con AND; es el unico mecanismo de filtro que este modulo expone (nunca `SqlFilter`: ADR-0001 lo rechaza sin excepcion). `forward_to` (ADR-0026) nombra una clave de `queues_config` en este mismo namespace: la subscription se vuelve fuente de auto-forward hacia ese queue de fan-in. Este objeto no expone `requires_session` a proposito -- una subscription NUNCA puede ser fuente de forward si tiene sesion habilitada (restriccion dura de la plataforma, ver `queues_config` mas abajo); al no exponer el campo, el modulo hace esa violacion irrepresentable."
   type = map(object({
     subscriptions = optional(list(object({
       name                = string
-      filter              = optional(string)
       default_message_ttl = optional(string)
       forward_to          = optional(string)
+      correlation_filter  = optional(map(string))
     })), [])
   }))
   default = {}
+
+  validation {
+    condition = alltrue(flatten([
+      for topic in var.topics_config : [
+        for sub in topic.subscriptions :
+        sub.correlation_filter == null || length(sub.correlation_filter) > 0
+      ]
+    ]))
+    error_message = "correlation_filter, si se declara, exige al menos una property (ADR-0027)."
+  }
 }
 
 variable "queues_config" {
@@ -461,9 +471,9 @@ locals {
         key                 = "${topic_name}/${sub.name}"
         topic_name          = topic_name
         sub_name            = sub.name
-        filter              = sub.filter
         default_message_ttl = sub.default_message_ttl
         forward_to          = sub.forward_to
+        correlation_filter  = sub.correlation_filter
       }
     ]
   ])
@@ -483,15 +493,18 @@ resource "azurerm_servicebus_subscription" "subs" {
   forward_to = each.value.forward_to != null ? azurerm_servicebus_queue.queues[each.value.forward_to].name : null
 }
 
-resource "azurerm_servicebus_subscription_rule" "filters" {
+resource "azurerm_servicebus_subscription_rule" "correlation_filters" {
   for_each = {
     for k, v in local.subscriptions_map : k => v
-    if v.filter != null
+    if v.correlation_filter != null
   }
-  name            = "filter"
+  name            = "correlation-filter"
   subscription_id = azurerm_servicebus_subscription.subs[each.key].id
-  filter_type     = "SqlFilter"
-  sql_filter      = each.value.filter
+  filter_type     = "CorrelationFilter"
+
+  correlation_filter {
+    properties = each.value.correlation_filter
+  }
 }
 
 output "id" {
@@ -519,6 +532,8 @@ output "queue_ids" {
 ```
 
 **Restriccion de plataforma (ADR-0026, verificada contra el provider `azurerm`).** Tanto `azurerm_servicebus_queue` como `azurerm_servicebus_subscription` exponen `requires_session` y `forward_to` [HashiCorp, `azurerm_servicebus_queue`/`azurerm_servicebus_subscription` -- Argument Reference]. Este modulo deja `requires_session` fuera del objeto de `subscriptions` (dentro de `topics_config`) **a proposito**: la unica entidad que puede declarar sesion en este modulo es un queue de `queues_config` -- nunca una subscription. Como la subscription es siempre la fuente del forward (nunca el destino, en la topologia de este modulo) y nunca puede tener sesion, la restriccion de Azure ("a session-enabled queue or subscription can't be the source of autoforwarding") queda satisfecha por construccion, sin necesidad de una validacion adicional en HCL.
+
+**Correlation filter de igualdad (ADR-0027, verificado contra el provider `azurerm`).** `azurerm_servicebus_subscription_rule` acepta `filter_type = "CorrelationFilter"` con un bloque `correlation_filter` cuyo atributo `properties` es un mapa de application properties de usuario, matcheadas por **igualdad exacta** (AND si hay mas de una); soportado desde la version 2.30.0 del provider y el bloque exige al menos una property [HashiCorp, `azurerm_servicebus_subscription_rule` -- Argument Reference; Microsoft Learn, "Topic filters and actions"]. Este modulo refuerza esa exigencia con la `validation` de `topics_config` de arriba, en vez de dejar que falle solo en `terraform apply` contra la suscripcion real. Es el **unico** mecanismo de filtro que el modulo expone: reconcilia el escape-hatch `SqlFilter` que antes emitia el campo `sub.filter` para todo `sub.filter != null` (ver el "Trabajo diferido" y la consecuencia negativa de ADR-0027). Se **removio** en vez de documentarlo como prohibido -- ADR-0001 rechaza los filtros SQL sin excepcion y ADR-0027 cubre por completo el unico eje (un evento, N destinatarios) que ese escape-hatch pretendia servir, asi que no queda ningun caso legitimo que justifique mantenerlo vivo en el modulo. Un topic + N subscriptions, cada una con un `correlation_filter` sobre la misma clave de enrutamiento con un valor distinto por destinatario, es el mecanismo de fan-out por destinatario -- ver el ejemplo end-to-end en `infra-writer.md`.
 
 ### 1.5 `infra/modules/service-plan/main.tf`
 

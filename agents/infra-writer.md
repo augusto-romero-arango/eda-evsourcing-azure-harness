@@ -107,6 +107,35 @@ module "service_bus_interno" {
 }
 ```
 
+**Enrutamiento multi-destinatario: correlation filter de igualdad (ADR-0027).** Cuando el issue describe que un **unico** evento publico debe llegar a **N destinatarios** distintos, cada uno interesado solo en su subconjunto -- el eje es el destinatario, no el tipo de evento (eso sigue siendo topic-por-evento, ADR-0001) -- usa `correlation_filter` en la subscription de cada destinatario en vez de suscribirlos al topic completo a descartar en el handler:
+
+- El productor sigue publicando **unicamente** al topic del evento (ADR-0001/ADR-0024); su unica obligacion nueva es estampar la clave de enrutamiento como **application property** al publicar -- los filtros no leen el body [Microsoft Learn, "Topic filters and actions"].
+- Cada destinatario declara su propia subscription dentro de `topics_config[<topic>].subscriptions` con `correlation_filter = { "<clave>" = "<valor-del-destinatario>" }` (>=1 property; el modulo `service-bus` lo exige via `validation`).
+- La clave de enrutamiento (p. ej. `destinatarioId`, `tenantId`) la decide el flujo concreto -- no la conflaciones con `SessionId`/`groupId` (ADR-0026): son mecanismos distintos, uno de enrutamiento y otro de serializacion de fan-in.
+- Nunca uses una expresion SQL para este eje. El modulo `service-bus` no expone `SqlFilter` (ADR-0027 lo removio del modulo): si necesitas algo distinto a igualdad exacta, no es un correlation filter y sigue cayendo, sin excepcion, bajo el rechazo de ADR-0001 -- no instances `azurerm_servicebus_subscription_rule` con `SqlFilter` a mano fuera del modulo.
+
+Ejemplo minimo (un topic, dos destinatarios filtrados por igualdad sobre la misma clave):
+
+```hcl
+module "service_bus_interno" {
+  # ...
+  topics_config = {
+    "aprovisionamiento-solicitado" = {
+      subscriptions = [
+        {
+          name               = "control-plane-escucha-aprovisionamiento"
+          correlation_filter = { destinatarioId = "control-plane" }
+        },
+        {
+          name               = "facturacion-escucha-aprovisionamiento"
+          correlation_filter = { destinatarioId = "facturacion" }
+        }
+      ]
+    }
+  }
+}
+```
+
 ### 5. Formatear y validar
 
 ```bash
