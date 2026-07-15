@@ -4,6 +4,8 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-07-15
+
 ### Fixed
 
 - **Robustecer la Validacion 1.5 de `/mefisto-sequential` ante shells sin word-splitting (issue #274)**: el bloque bash embebido en `.claude/commands/mefisto-sequential.md` corria en el shell del invocador -- zsh en macOS -- que, a diferencia de bash, no hace word-splitting de una variable sin comillas por defecto (`SH_WORD_SPLIT` off). Los 4 loops `for X in $VAR` del bloque (sobre `$BATCH`, `$DEPS`, `$LABELS_TO_CLEAR`) iteraban una sola vez con la cadena completa en vez de una vez por elemento: al ejecutar `/mefisto-sequential 267 269 270 271 272` bajo zsh, `gh issue view "267 269 270 271 272"` fallaba con `invalid issue format` y el bloque caia en el `else`, imprimiendo `Validacion 1.5 OK` **sin haber validado ni mutado ningun label** -- falso positivo, observado dos veces en la misma sesion. **CA-1**: se envuelve el bloque completo en `bash <<'BASH' ... BASH` (heredoc *quoted*, sin reescribir los loops), mismo patron ya usado por `commands/onboard.md` para el mismo motivo. **CA-2/CA-3/CA-5**: verificado bajo zsh con mocks de `gh` -- un batch multi-issue ya no dispara `invalid issue format` y procesa issue por issue; los casos canonicos de lanzamiento (`44 43 45`) y aborto (`43 44`, "Mueve #44 antes de #43") se preservan identicos a como corrian bajo bash. **CA-4**: auditoria confirmada -- ninguna otra instancia desprotegida del patron `for <var> in $<VAR>` fuera de un heredoc bash en `.claude/commands/` ni `commands/` (las de `onboard.md` ya estaban protegidas). Archivo modificado: `.claude/commands/mefisto-sequential.md`.
@@ -353,7 +355,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.13.1...HEAD
+[0.13.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.10.0...v0.11.0
