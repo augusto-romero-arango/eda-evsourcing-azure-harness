@@ -494,6 +494,64 @@ public abstract class ServiceBusEndpointBase<TEvento>(ICommandRouter commandRout
 }
 ```
 
+**11d. Crear el `ServiceBusSessionEndpointBase.cs` en `Infraestructura/`:**
+
+Contraparte de `ServiceBusEndpointBase<TEvento>` para el caso de fan-in de ADR-0026 (issue #271): un queue en modo sesion donde convergen N tipos de evento no tiene un unico `TEvento` que deserializar, asi que el despacho no puede vivir en la clase base. Esta clase encapsula solo lo que es identico entre ambos casos (complete/lock-lost/dead-letter) y delega la deserializacion + invocacion del comando al endpoint concreto via el metodo abstracto `DespacharPorSubject`.
+
+```csharp
+using Azure.Messaging.ServiceBus;
+using Microsoft.Azure.Functions.Worker;
+using Microsoft.Extensions.Logging;
+
+namespace <RootNamespace>.{PascalCase}.Infraestructura;
+
+/// <summary>
+/// Clase base para FunctionEndpoints de fan-in sobre un queue de ServiceBus en modo sesion (ADR-0026).
+/// A diferencia de <see cref="ServiceBusEndpointBase{TEvento}"/> (un unico tipo de evento por
+/// subscription), aqui convergen N tipos de evento sobre el mismo queue: el endpoint concreto
+/// implementa <see cref="DespacharPorSubject"/> para deserializar y enrutar segun message.Subject;
+/// esta clase solo encapsula complete/lock-lost/dead-letter, igual que ServiceBusEndpointBase.
+/// El Connection del [ServiceBusTrigger] es siempre SERVICE_BUS_CONNECTION_INTERNO: el queue de
+/// fan-in vive en el namespace interno del BC (ADR-0026 seccion 2, ADR-0023) -- nunca en el
+/// backbone compartido. Ver la seccion "Endpoint de fan-in: queue en modo sesion" de
+/// agents/implementer.md (ADR-0026).
+/// </summary>
+public abstract class ServiceBusSessionEndpointBase(ILogger logger)
+{
+    protected async Task ProcesarMensajeDeSesion(
+        ServiceBusReceivedMessage message,
+        ServiceBusMessageActions messageActions,
+        CancellationToken ct)
+    {
+        try
+        {
+            await DespacharPorSubject(message, ct);
+            await messageActions.CompleteMessageAsync(message, ct);
+        }
+        catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessageLockLost)
+        {
+            logger.LogWarning(ex,
+                "Lock de sesion perdido para mensaje {MessageId}, sesion {SessionId} - Service Bus la re-entregara automaticamente",
+                message.MessageId, message.SessionId);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex,
+                "Error procesando mensaje {MessageId} de la sesion {SessionId}",
+                message.MessageId, message.SessionId);
+            await messageActions.DeadLetterMessageAsync(message, cancellationToken: ct);
+        }
+    }
+
+    /// <summary>
+    /// Deserializa y despacha el mensaje segun message.Subject (nombre del tipo de evento convergente).
+    /// El endpoint concreto implementa el switch; un Subject no reconocido debe lanzar -- la clase
+    /// base lo captura como cualquier otro error y dead-letterea el mensaje.
+    /// </summary>
+    protected abstract Task DespacharPorSubject(ServiceBusReceivedMessage message, CancellationToken ct);
+}
+```
+
 **12. Crear el HealthCheck en `HealthCheck.cs` (raiz del proyecto):**
 
 ```csharp
@@ -764,6 +822,116 @@ internal class FakeLogger : ILogger
 }
 ```
 
+**7. Crear `Infraestructura/ServiceBusSessionEndpointBaseTests.cs`:**
+
+Tests de la orquestacion de `ServiceBusSessionEndpointBase` (ADR-0026). Cubren los mismos 4 escenarios que `ServiceBusEndpointBaseTests`, con "JSON invalido" reemplazado por "Subject no reconocido" (el equivalente de fan-in: el switch del endpoint concreto no sabe que hacer con el mensaje). Reusa `FakeCommandRouter`, `FakeServiceBusMessageActions` y `FakeLogger` del archivo anterior (mismo namespace de test, misma assembly).
+
+```csharp
+using AwesomeAssertions;
+using Azure.Messaging.ServiceBus;
+using <RootNamespace>.{PascalCase}.Infraestructura;
+using Cosmos.EventSourcing.Abstractions.Commands;
+using Microsoft.Azure.Functions.Worker;
+using Microsoft.Extensions.Logging;
+
+namespace <RootNamespace>.{PascalCase}.Tests.Infraestructura;
+
+public class ServiceBusSessionEndpointBaseTests
+{
+    private const string JsonValido = """{"nombre": "test"}""";
+
+    private static ServiceBusReceivedMessage CrearMensaje(string subject, string json = JsonValido)
+        => ServiceBusModelFactory.ServiceBusReceivedMessage(
+            body: BinaryData.FromString(json), subject: subject, sessionId: "sesion-1");
+
+    // Camino feliz: Subject reconocido, despacha al command router, completa el mensaje
+    [Fact]
+    public async Task DebeCompletarMensaje_CuandoSubjectReconocidoYProcesamientoEsExitoso()
+    {
+        var router = new FakeCommandRouter();
+        var actions = new FakeServiceBusMessageActions();
+        var endpoint = new StubSessionEndpoint(router, new FakeLogger());
+
+        await endpoint.Procesar(CrearMensaje(nameof(EventoStubSesion)), actions, CancellationToken.None);
+
+        actions.MensajeCompletado.Should().BeTrue();
+        actions.MensajeEnDeadLetter.Should().BeFalse();
+    }
+
+    // Lock de sesion perdido -> log warning, NO dead-letter
+    [Fact]
+    public async Task DebeLoguearWarning_CuandoSePierdeLockDeSesion()
+    {
+        var lockLost = new ServiceBusException(
+            "Lock de sesion expirado", ServiceBusFailureReason.MessageLockLost);
+        var router = new FakeCommandRouter();
+        var actions = new FakeServiceBusMessageActions(excepcionAlCompletar: lockLost);
+        var logger = new FakeLogger();
+        var endpoint = new StubSessionEndpoint(router, logger);
+
+        await endpoint.Procesar(CrearMensaje(nameof(EventoStubSesion)), actions, CancellationToken.None);
+
+        actions.MensajeEnDeadLetter.Should().BeFalse("el lock ya no es valido, no se puede dead-letter");
+        logger.WarningLogueado.Should().BeTrue();
+    }
+
+    // Error generico durante el despacho -> dead-letter el mensaje
+    [Fact]
+    public async Task DebeEnviarADeadLetter_CuandoOcurreErrorGenerico()
+    {
+        var router = new FakeCommandRouter(
+            excepcion: new InvalidOperationException("Error inesperado"));
+        var actions = new FakeServiceBusMessageActions();
+        var endpoint = new StubSessionEndpoint(router, new FakeLogger());
+
+        await endpoint.Procesar(CrearMensaje(nameof(EventoStubSesion)), actions, CancellationToken.None);
+
+        actions.MensajeEnDeadLetter.Should().BeTrue();
+        actions.MensajeCompletado.Should().BeFalse();
+    }
+
+    // Subject no reconocido -> dead-letter (el switch del endpoint concreto lanza, ADR-0026)
+    [Fact]
+    public async Task DebeEnviarADeadLetter_CuandoSubjectNoReconocido()
+    {
+        var router = new FakeCommandRouter();
+        var actions = new FakeServiceBusMessageActions();
+        var endpoint = new StubSessionEndpoint(router, new FakeLogger());
+
+        await endpoint.Procesar(CrearMensaje("TipoDeEventoInexistente"), actions, CancellationToken.None);
+
+        actions.MensajeEnDeadLetter.Should().BeTrue();
+        actions.MensajeCompletado.Should().BeFalse();
+    }
+}
+
+// ---- Stub concreto minimo para testear la clase base ----
+
+internal record EventoStubSesion(string? Nombre);
+
+internal class StubSessionEndpoint(ICommandRouter commandRouter, ILogger logger)
+    : ServiceBusSessionEndpointBase(logger)
+{
+    public Task Procesar(
+        ServiceBusReceivedMessage message,
+        ServiceBusMessageActions actions,
+        CancellationToken ct)
+        => ProcesarMensajeDeSesion(message, actions, ct);
+
+    protected override async Task DespacharPorSubject(ServiceBusReceivedMessage message, CancellationToken ct)
+    {
+        switch (message.Subject)
+        {
+            case nameof(EventoStubSesion):
+                var evento = ServiceBusDeserializador.Deserializar<EventoStubSesion>(message.Body);
+                await commandRouter.InvokeAsync(evento, ct);
+                break;
+            default:
+                throw new InvalidOperationException($"Subject no reconocido: {message.Subject}");
+        }
+    }
+}
+```
 
 ---
 
@@ -1862,11 +2030,13 @@ Scaffold completado para el dominio "{kebab}":
     HealthCheck.cs                         - Trigger HTTP de health check (raiz del proyecto)
     Infraestructura/RequestValidator.cs    - IRequestValidator + implementacion
     Infraestructura/ServiceBusDeserializador.cs - Helper de deserializacion case-insensitive
-    Infraestructura/ServiceBusEndpointBase.cs   - Clase base para endpoints de ServiceBus
+    Infraestructura/ServiceBusEndpointBase.cs   - Clase base para endpoints de ServiceBus (topic+subscription)
+    Infraestructura/ServiceBusSessionEndpointBase.cs - Clase base para endpoints de fan-in (queue en modo sesion, ADR-0026)
     Entities/                              - AggregateRoots y eventos del dominio (siempre raiz)
 
   tests/<RootNamespace>.{PascalCase}.Tests/
     Infraestructura/ServiceBusEndpointBaseTests.cs - Tests de orquestacion (feliz, lock-lost, dead-letter, JSON invalido)
+    Infraestructura/ServiceBusSessionEndpointBaseTests.cs - Tests de orquestacion de fan-in (feliz, lock-lost, dead-letter, Subject no reconocido)
                                            - Proyecto de tests unitarios (xUnit v3 + AwesomeAssertions)
 
   tests/<RootNamespace>.{PascalCase}.SmokeTests/

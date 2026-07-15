@@ -333,6 +333,55 @@ public async Task NotificarCuandoDiaCalculado(
 }
 ```
 
+### Endpoint de fan-in: queue en modo sesion (ADR-0026)
+
+Los dos endpoints anteriores consumen una **subscription** de un unico topic (un `TEvento`). Existe un caso distinto: cuando varios eventos -- mismo tipo o tipos distintos, mismo productor o productores distintos -- deben converger en una decision sobre el **mismo aggregate**, y consumirlos con subscriptions independientes permitiria que dos o mas ejecuciones concurrentes del handler escriban sobre el mismo stream de Marten al mismo tiempo (carrera de concurrencia optimista). ADR-0026 fija el criterio completo de dos condiciones para reconocer este caso (seccion "Decision" #1); si tu caso no las cumple ambas, el patron de subscription simple de arriba sigue siendo lo correcto -- este no es un atajo para "varios eventos, una Function".
+
+**Trigger**: un unico argumento posicional con el nombre del **queue** (no topic+subscription), mas `IsSessionsEnabled = true`. **`Connection` es siempre `SERVICE_BUS_CONNECTION_INTERNO`**: a diferencia de la tabla de arriba, el queue de fan-in vive siempre en el namespace interno del BC (ADR-0026 seccion 2, ADR-0023) -- nunca en el backbone compartido, no hay variante de alias aqui. El `SessionId` lo fija el productor al publicar (`groupId` de `IPrivateEventSender`, doctrina completa en issue #272, fuera del alcance de este agente); la serializacion dentro de cada sesion es la que elimina la carrera (`maxConcurrentSessions`, default 2000, en `host.json`).
+
+**`switch` por `message.Subject`** cuando el queue recibe varios tipos de evento convergentes: `Subject` es la propiedad AMQP "subject", una etiqueta de aplicacion que el productor fija al publicar (`ServiceBusReceivedMessage.Subject`, [Azure.Messaging.ServiceBus](https://learn.microsoft.com/dotnet/api/azure.messaging.servicebus.servicebusreceivedmessage.subject)). Usa el nombre del tipo de evento (`nameof(TEvento)`) como discriminante:
+
+```csharp
+public class ConsolidarCierreTurno(ICommandRouter commandRouter, ILogger<ConsolidarCierreTurno> logger)
+    : ServiceBusSessionEndpointBase(logger)
+{
+    [Function("ConsolidarCierreTurno")]
+    public Task Run(
+        [ServiceBusTrigger("consolidar-cierre-turno", Connection = "SERVICE_BUS_CONNECTION_INTERNO",
+            IsSessionsEnabled = true)]
+        ServiceBusReceivedMessage message,
+        ServiceBusMessageActions messageActions,
+        CancellationToken ct)
+        => ProcesarMensajeDeSesion(message, messageActions, ct);
+
+    protected override async Task DespacharPorSubject(ServiceBusReceivedMessage message, CancellationToken ct)
+    {
+        switch (message.Subject)
+        {
+            case nameof(TurnoCreado):
+                var turnoCreado = ServiceBusDeserializador.Deserializar<TurnoCreado>(message.Body);
+                await commandRouter.InvokeAsync(new ConsolidarDesdeTurnoCreado(turnoCreado.TurnoId), ct);
+                break;
+            case nameof(EmpleadoAsignado):
+                var empleadoAsignado = ServiceBusDeserializador.Deserializar<EmpleadoAsignado>(message.Body);
+                await commandRouter.InvokeAsync(new ConsolidarDesdeEmpleadoAsignado(empleadoAsignado.EmpleadoId), ct);
+                break;
+            default:
+                throw new InvalidOperationException(
+                    $"Subject no reconocido en el queue consolidar-cierre-turno: {message.Subject}");
+        }
+    }
+}
+```
+
+`ServiceBusSessionEndpointBase` (en `Infraestructura/`, la crea el `domain-scaffolder`) es la contraparte de `ServiceBusEndpointBase<TEvento>` para este caso: encapsula complete/lock-lost/dead-letter, pero delega el despacho al metodo abstracto `DespacharPorSubject` porque aqui no hay un unico `TEvento` -- el `switch` decide, caso por caso, que evento deserializar y que comando invocar. Un `Subject` no reconocido debe lanzar (el `default` del switch); la clase base lo captura como cualquier otro error y dead-letterea el mensaje.
+
+**Naming (ADR-0026 seccion 4, excepcion documentada de ADR-0006)**: el patron `{Accion}Cuando{Evento}` asume un estimulo unico y no aplica aqui -- exigirlo obligaria a elegir arbitrariamente uno de los N eventos convergentes. La convencion para Functions de fan-in es distinta: **el nombre del queue en kebab-case es el nombre de la Function que lo consume** (en PascalCase), y describe la decision o convergencia que resuelve, no un evento puntual. Ejemplo: queue `consolidar-cierre-turno` -> Function `ConsolidarCierreTurno`.
+
+**Infraestructura del queue**: el queue de fan-in, las subscriptions de forward (sin sesion, en las fuentes) y el `requires_session = true` del destino se provisionan en Terraform por separado (ADR-0026, trabajo diferido a infra en issue #270). El implementer no crea ni edita esas entidades -- verifica que el queue ya exista antes de escribir este endpoint; si falta, documenta la necesidad en tu resumen igual que ya haces con topics/subscriptions faltantes (seccion "Infraestructura (topics y subscriptions)").
+
+Doctrina completa (cuando aplica esta excepcion, topologia fuente/destino, invariante `groupId`): **ADR-0026**. Este agente no la duplica, solo enseña el scaffolding del endpoint consumidor.
+
 **Nota sobre deserializacion:** La configuracion global de JSON (CamelCase + CaseInsensitive) es responsabilidad del `domain-scaffolder` en el Program.cs. Si detectas que falta esta configuracion, reportalo en el resumen pero no la agregues.
 
 ### Validator (FluentValidation)
@@ -612,7 +661,8 @@ Cuando necesites convertir el tipo de una secuencia LINQ (ej. `IEnumerable<Deriv
 
 **Funciones Azure:**
 - HTTP trigger: `[Function("NombreDelComando")]` — el nombre de la funcion es el nombre del comando
-- ServiceBus trigger: `[Function("{Accion}Cuando{Evento}")]` — siempre describe la accion Y el estimulo
+- ServiceBus trigger (topic+subscription): `[Function("{Accion}Cuando{Evento}")]` — siempre describe la accion Y el estimulo
+- ServiceBus trigger de fan-in (queue en modo sesion, ADR-0026): excepcion documentada — ver seccion "Endpoint de fan-in: queue en modo sesion" mas arriba
 
 ```csharp
 // HTTP — string literal con el nombre del comando
@@ -621,6 +671,9 @@ Cuando necesites convertir el tipo de una secuencia LINQ (ej. `IEnumerable<Deriv
 // ServiceBus - siempre accion + estimulo, a prueba de crecimiento
 [Function("DepurarMarcacionesCuandoTurnoCreado")]
 [Function("NotificarSupervisorCuandoTurnoCreado")]  // se puede agregar sin romper el primero
+
+// ServiceBus fan-in (excepcion ADR-0026) - nombre del queue en kebab-case, en PascalCase
+[Function("ConsolidarCierreTurno")]
 ```
 
 **Organizacion vertical de directorios:**
