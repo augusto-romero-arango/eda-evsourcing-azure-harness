@@ -2,7 +2,7 @@
 
 - **Fecha**: 2026-07-15
 - **Estado**: aceptado
-- **Aplica a**: doctrina de mensajeria del marco; complementa ADR-0001 (no lo reemplaza) con la primitiva de fan-in; cross-referencia ADR-0001, ADR-0006, ADR-0023 y ADR-0024; referencia ADR-0004 (manejo de errores) y ADR-0024 (`groupId` de `IPrivateEventSender`). Gobierno futuro de `infra-base-scaffolder`/`infra-writer`/`infra-reviewer` (issue #270) e `implementer`/`domain-scaffolder` (issues #271, #272).
+- **Aplica a**: doctrina de mensajeria del marco; complementa ADR-0001 (no lo reemplaza) con la primitiva de fan-in; cross-referencia ADR-0001, ADR-0006, ADR-0023 y ADR-0024 (el `groupId` de `IPrivateEventSender` como mecanismo del `SessionId`); referencia ademas ADR-0004 (manejo de errores). Gobierno futuro de `infra-base-scaffolder`/`infra-writer`/`infra-reviewer` (issue #270) e `implementer`/`domain-scaffolder` (issues #271, #272).
 
 ## Contexto
 
@@ -39,7 +39,7 @@ Topic-evento-B --> Subscription-B (sin sesion) --forward--/
 
 - Las subscriptions **fuente** del forward **nunca** llevan sesion habilitada. Es una restriccion dura de la plataforma: una entidad con sesion habilitada no puede ser fuente de auto-forward — Service Bus rechaza configurar `ForwardTo` sobre una entidad session-enabled [1].
 - El queue **destino** es el unico que declara `requires_session = true`.
-- El `SessionId` lo fija el **productor**, al publicar, como el `groupId` de `IPrivateEventSender` (ADR-0024) — el valor debe ser la clave del aggregate destino. Un mensaje forwardeado **conserva su `SessionId`** a traves de la cadena [1].
+- El `SessionId` lo fija el **productor**, al publicar, como el `groupId` de `IPrivateEventSender` (ADR-0024): a nivel de protocolo AMQP ese `groupId` viaja como la propiedad `group-id`, que Service Bus expone como `SessionId` [6]. El valor debe ser la clave del aggregate destino. Un mensaje forwardeado **conserva su `SessionId`** a traves de la cadena [1].
 - Un mensaje **sin** `SessionId` que llega a un destino con sesion habilitada se dead-lettera en la entidad **fuente** (no en el destino): la entidad session-enabled solo acepta mensajes con `SessionId` [1]. Esto hace el `groupId` una invariante dura del productor cuando el destino final es un queue con sesion (issue #272 la documenta en la guia del productor).
 - El queue de fan-in vive en el **namespace interno del BC** (ADR-0023), como cualquier entidad de consumo privada. No hay cambio a la topologia de namespaces: el queue es una entidad mas dentro del namespace que ya existe.
 - Varias subscriptions (una por topic de origen) pueden forward al **mismo** queue de fan-in — es justamente el mecanismo de convergencia.
