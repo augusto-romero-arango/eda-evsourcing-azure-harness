@@ -211,6 +211,48 @@ await eventSender.PublishAsync(
 
 Doctrina completa (criterio de dos condiciones, topologia fuente/destino, restriccion de plataforma, naming de la Function de fan-in): **ADR-0026**. Este agente no la duplica.
 
+### Clave de enrutamiento como application property (ADR-0027)
+
+Cuando un `IPublicEvent` debe llegar a **N destinatarios** distintos y cada uno solo quiere su
+subconjunto -- el eje que fija ADR-0027, distinto de "varios tipos de evento en un topic" que
+razona ADR-0001 -- cada destinatario provisiona su subscription con un **correlation filter de
+igualdad** sobre una clave de enrutamiento: una application property **string**, matcheada por
+**igualdad exacta** (ADR-0027 decision #2), cuyo nombre concreto lo decide el flujo (ej.
+`bundleId`, `tenantId` -- este agente no hardcodea un nombre). Los correlation filters solo
+evaluan **propiedades del mensaje**, nunca el body [Microsoft Learn, "Topic filters and
+actions"] -- por eso el productor tiene una obligacion nueva, coherente con la subscription que
+el consumidor provisiono: **estampar la clave de enrutamiento como application property** al
+publicar (ADR-0027 decision #4).
+
+**LIMITE verificado: el paquete no expone la capacidad hoy.** `IPublicEventSender.PublishAsync`
+(igual que `IPrivateEventSender`, seccion anterior) solo expone `PublishAsync(events)` y
+`PublishAsync(groupId, events)` -- ninguna sobrecarga permite estampar application properties
+arbitrarias. El paquete `Cosmos.EventDriven.CritterStack.AzureServiceBus`/
+`Cosmos.EventDriven.Abstractions` (1.3.0) no lo soporta todavia. Igual que Alt 4 de ADR-0024
+(managed identity diferida por el mismo tipo de limite de paquete), esta capacidad queda
+**diferida** hasta que el paquete evolucione -- es trabajo **downstream** (cross-repo), no del
+harness: este agente ensena el CUANDO/COMO, no agrega la sobrecarga.
+
+**No reusar `groupId`/`SessionId` como clave de enrutamiento.** `groupId` (seccion "`groupId` en
+`PublishAsync`" arriba) esta **reservado** a la serializacion de fan-in por clave de aggregate
+(ADR-0026); la clave de enrutamiento de ADR-0027 es una propiedad **distinta**, con proposito
+distinto (seleccion de destinatario, no serializacion de escritura concurrente). Un flujo podria
+necesitar ambas a la vez -- son ortogonales y **no deben compartir la misma propiedad** (ADR-0027
+decision #5).
+
+**Trabajo downstream, no del harness.** Si al implementar un flujo que necesita este enrutamiento
+descubres que el paquete aun no soporta application properties arbitrarias, documenta el hallazgo
+en tu resumen para seguimiento administrativo -- misma disciplina de reportar-sin-corregir que con
+la invariante `groupId` downstream (seccion "`groupId` en `PublishAsync`" arriba). Es un gap de
+capacidad del paquete (codigo cross-repo), no infraestructura de este repo, asi que no va en la
+seccion "Infraestructura modificada" del resumen (reservada a topics/subscriptions). No intentes
+anadir la sobrecarga al paquete ni simular el estampado por otra via (ej. codificar la clave en el body):
+sin la propiedad en el sobre, ningun correlation filter la ve [Microsoft Learn, "Topic filters
+and actions"].
+
+Doctrina completa (por que correlation filter y no SQL filter, topologia topic + N subscriptions,
+custodia de la clave): **ADR-0027**. Este agente no la duplica.
+
 ### Endpoint HTTP
 
 ```csharp
