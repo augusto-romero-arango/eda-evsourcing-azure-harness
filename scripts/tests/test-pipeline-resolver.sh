@@ -39,11 +39,7 @@ trap 'rm -rf "$FAKE_CONSUMER"' EXIT
 
 echo "[R-1] resolve_pipeline con override retorna ruta absoluta y existente"
 for override in tdd tooling; do
-    (
-        cd "$FAKE_CONSUMER" || exit 1
-        resolve_pipeline 999 "$override"
-    ) > /tmp/.test-pipeline-resolver-out 2>&1
-    RESULT="$(cat /tmp/.test-pipeline-resolver-out)"
+    RESULT=$(cd "$FAKE_CONSUMER" && resolve_pipeline 999 "$override")
     case "$RESULT" in
         /*) pass "override '$override': ruta absoluta ($RESULT)" ;;
         *)  fail "override '$override': ruta NO absoluta ($RESULT)" ;;
@@ -54,7 +50,6 @@ for override in tdd tooling; do
         fail "override '$override': el archivo resuelto NO existe ($RESULT)"
     fi
 done
-rm -f /tmp/.test-pipeline-resolver-out
 
 echo ""
 echo "[R-2] _resolve_from_labels retorna ruta absoluta y existente por tipo"
@@ -93,25 +88,47 @@ else
 fi
 
 echo ""
-echo "[R-4] resolve_pipeline_with_state antepone estado y absolutiza"
-RESULT=$(cd "$FAKE_CONSUMER" && resolve_pipeline_with_state 999 tdd)
+echo "[R-4] resolve_pipeline_with_state antepone estado y absolutiza (gh mockeado)"
+# batch-pipeline.sh y parallel-pipeline.sh usan ESTA funcion (no resolve_pipeline
+# directo), asi que es el call-site exacto del bug #289. gh se mockea para
+# exografiar la ruta de forma determinista, sin red ni un issue real: el mock
+# emite el mismo formato "STATE|label\nlabel..." que gh produce tras aplicar -q.
+
+# Via override: antepone el estado y absolutiza el pipeline forzado.
+RESULT=$(cd "$FAKE_CONSUMER" && { gh() { echo "OPEN|tipo:feature"; }; resolve_pipeline_with_state 999 tooling; })
 STATE="${RESULT%%|*}"
 PIPELINE="${RESULT#*|}"
-if [ "$STATE" = "UNKNOWN" ]; then
-    pass "sin gh/red -> estado UNKNOWN (fallback esperado)"
+if [ "$STATE" = "OPEN" ]; then
+    pass "override: estado antepuesto ($STATE)"
 else
-    pass "estado resuelto: $STATE"
+    fail "override: se esperaba estado OPEN, fue '$STATE'"
 fi
 case "$PIPELINE" in
-    /*tdd-pipeline.sh|SKIP:*)
-        if [[ "$PIPELINE" == /* ]]; then
-            pass "resolve_pipeline_with_state con override: ruta absoluta ($PIPELINE)"
-        else
-            pass "resolve_pipeline_with_state: gh no disponible, retorno $PIPELINE (no aplica en este entorno)"
-        fi
-        ;;
-    *) fail "resolve_pipeline_with_state con override: ruta inesperada '$PIPELINE'" ;;
+    /*tooling-pipeline.sh) pass "override: ruta absoluta a tooling-pipeline.sh ($PIPELINE)" ;;
+    *) fail "override: se esperaba ruta absoluta a tooling-pipeline.sh, fue '$PIPELINE'" ;;
 esac
+if [ -f "$PIPELINE" ]; then
+    pass "override: el archivo resuelto existe"
+else
+    fail "override: el archivo resuelto NO existe ($PIPELINE)"
+fi
+
+# Via labels (sin override): resuelve por label y absolutiza igual.
+RESULT=$(cd "$FAKE_CONSUMER" && { gh() { echo "OPEN|tipo:feature"; }; resolve_pipeline_with_state 999; })
+STATE="${RESULT%%|*}"
+PIPELINE="${RESULT#*|}"
+case "$PIPELINE" in
+    /*tdd-pipeline.sh) pass "labels: estado $STATE + ruta absoluta a tdd-pipeline.sh ($PIPELINE)" ;;
+    *) fail "labels: se esperaba ruta absoluta a tdd-pipeline.sh, fue '$PIPELINE'" ;;
+esac
+
+# Fallback: si gh falla, retorna UNKNOWN|SKIP:no-tipo sin absolutizar (sentinel intacto).
+RESULT=$(cd "$FAKE_CONSUMER" && { gh() { return 1; }; resolve_pipeline_with_state 999 tdd; })
+if [ "$RESULT" = "UNKNOWN|SKIP:no-tipo" ]; then
+    pass "gh falla -> UNKNOWN|SKIP:no-tipo (fallback intacto)"
+else
+    fail "gh falla -> se esperaba UNKNOWN|SKIP:no-tipo, fue '$RESULT'"
+fi
 
 echo ""
 echo "[R-5] la ruta resuelta no depende del cwd"
