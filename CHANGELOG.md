@@ -4,6 +4,10 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+### Fixed
+
+- **El gate de tests del `tooling-pipeline.sh` corria los `*.SmokeTests` y abortaba con falsos 401/404 (issue #302)**: `Stage 2` y el re-check post-merge de `scripts/tooling-pipeline.sh` ejecutaban `dotnet test --solution "$WORKTREE_PATH/${HARNESS_SOLUTION_FILE}"`, que corre **toda** la solucion, incluidos los proyectos `*.SmokeTests`. Los smoke tests son black-box contra el entorno dev desplegado (endpoints `AuthorizationLevel.Function` que exigen function key, con dependencias reales de ServiceBus/Postgres): en el gate -- que corre sin credenciales de entorno -- devuelven 401/404 y abortan el pipeline aunque el cambio de codigo este bien. Observado en un run de `/sequential` sobre `Cosmos-SincoERP/Cosmos.ControlPlane`: el issue #74 (alinear smoke tests al contrato `ApplicationBundleId`) llego al `Stage 2` y aborto con *"tests fallan despues del reviewer (exit code: 2)"* por 10 assertions `Expected ... but found HttpStatusCode.Unauthorized {value: 401}`, todas de proyectos `*.SmokeTests`, pese a que el cambio (solo el bundleId en 4 payloads) era correcto. Es la misma clase de asimetria con `tdd-pipeline.sh` que ya aparecio en #295/#297: `tdd-pipeline.sh` ya excluia los smoke tests del gate via `run_tests_projects`, pero `tooling-pipeline.sh` nunca adopto ese patron. **Fix**: `tooling-pipeline.sh` suma `run_tests_projects` (mismo patron que `tdd-pipeline.sh`: itera `tests/<prefix>.*.Tests/`, cuyo glob excluye `*.SmokeTests/` por nombre, y corre `dotnet test --project` en cada uno); los dos gates pasan de `--solution` a `run_tests_projects`; y `extract_test_count` ahora **suma** el resumen de todos los proyectos (antes `head -1` contaba solo el primero, incorrecto al haber una linea de resumen por `--project`). Los smoke tests siguen corriendo post-deploy via `smoke-tests-dominio.yml`, que es donde tienen entorno y credenciales. Archivo modificado: `scripts/tooling-pipeline.sh`.
+
 ## [0.14.1] - 2026-07-16
 
 ### Fixed
