@@ -618,21 +618,27 @@ _resolve_from_labels() {
 #
 # Retorna "STATE|PIPELINE" en una sola linea (ej: "OPEN|/ruta/absoluta/al/plugin/scripts/tdd-pipeline.sh").
 # Combina la consulta de estado y labels en una sola llamada a gh, reduciendo API calls.
+#
+# El override se evalua SIEMPRE (incluso si gh falla), igual que resolve_pipeline
+# (issue #291): un override invalido retorna error sin importar gh, y un override
+# valido se honra aunque el estado no se haya podido verificar (queda UNKNOWN,
+# nunca se finge OPEN -- los llamadores siguen pudiendo saltar issues no
+# verificables).
 resolve_pipeline_with_state() {
     local issue="$1"
     local override="${2:-}"
     local sd
     sd="$(_pc_script_dir)"
 
-    local state_and_labels
-    state_and_labels=$(gh issue view "$issue" --json state,labels \
-        -q '"\(.state)|\(.labels | map(.name) | join("\n"))"' 2>/dev/null) || {
-        echo "UNKNOWN|SKIP:no-tipo"
-        return
-    }
-
-    local state="${state_and_labels%%|*}"
-    local labels="${state_and_labels#*|}"
+    local state_and_labels state labels
+    if state_and_labels=$(gh issue view "$issue" --json state,labels \
+        -q '"\(.state)|\(.labels | map(.name) | join("\n"))"' 2>/dev/null); then
+        state="${state_and_labels%%|*}"
+        labels="${state_and_labels#*|}"
+    else
+        state="UNKNOWN"
+        labels=""
+    fi
 
     if [ -n "$override" ]; then
         case "$override" in
@@ -643,7 +649,5 @@ resolve_pipeline_with_state() {
         return
     fi
 
-    local pipeline
-    pipeline=$(_resolve_from_labels "$labels")
-    echo "$state|$pipeline"
+    echo "$state|$(_resolve_from_labels "$labels")"
 }
