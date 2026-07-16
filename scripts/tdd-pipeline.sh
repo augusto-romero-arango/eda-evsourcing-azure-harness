@@ -64,6 +64,7 @@ CURRENT_STAGE="setup"
 IS_REFACTOR=false
 REFACTOR_JUSTIFICATION=""
 BASELINE_TEST_COUNT="?"
+REMOVED_TESTS=0
 
 _strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
 _log_file()   { echo -e "$1" | _strip_ansi >> "${LOG_FILE_ABS:-$LOG_FILE}"; }
@@ -631,7 +632,13 @@ Tu tarea: escribe los tests unitarios para esta HU y crea los stubs mínimos de 
     if [ -f "$REFACTOR_SIGNAL_PATH" ] && [ "$IS_REFACTOR" = false ]; then
         IS_REFACTOR=true
         REFACTOR_JUSTIFICATION=$(grep "^JUSTIFICATION=" "$REFACTOR_SIGNAL_PATH" | cut -d= -f2- || echo "no especificada")
-        log "Señal de refactoring detectada: $REFACTOR_JUSTIFICATION"
+        # REMOVED_TESTS es opcional (compatibilidad con senales viejas, issue #294): default 0.
+        REMOVED_TESTS=$(grep "^REMOVED_TESTS=" "$REFACTOR_SIGNAL_PATH" | cut -d= -f2- || echo "0")
+        if ! [[ "$REMOVED_TESTS" =~ ^[0-9]+$ ]]; then
+            warn "REMOVED_TESTS='$REMOVED_TESTS' en la señal no es un entero valido — se usa 0"
+            REMOVED_TESTS=0
+        fi
+        log "Señal de refactoring detectada: $REFACTOR_JUSTIFICATION (REMOVED_TESTS=$REMOVED_TESTS)"
     fi
 
     # Validar que el agente produjo trabajo: cambios en tests/src O senal de refactor.
@@ -845,14 +852,14 @@ Contexto de la tarea:
 
 $ISSUE_CONTEXT
 
-Tu misión: ejecutar el refactoring descrito en el issue. Los tests existentes DEBEN seguir pasando en todo momento.
+Tu misión: ejecutar el refactoring descrito en el issue. Los tests existentes DEBEN seguir pasando en todo momento, salvo los tests obsoletos que la JUSTIFICACION de arriba declara explicitamente: el test-writer los señalizo pero no los toco (no edita produccion ni tests en el carril de señal) — eliminarlos o ajustarlos es tu responsabilidad como parte de este refactor. Tests declarados como eliminados en la señal: ${REMOVED_TESTS:-0}.
 
 Reglas:
 1. Corre dotnet test ANTES de empezar para confirmar el baseline verde.
-2. Ejecuta el refactoring en pasos pequeños y seguros.
+2. Ejecuta el refactoring en pasos pequeños y seguros. Si la JUSTIFICACION declara tests obsoletos, eliminalos o ajustalos como parte del refactor — no son una regresion.
 3. Después de cada cambio significativo, corre dotnet test.
-4. Si un cambio rompe tests, reviértelo inmediatamente: git checkout -- <archivo>
-5. Al terminar, corre dotnet test una última vez para confirmar que todo sigue verde.
+4. Si un cambio rompe un test que NO esta declarado como obsoleto en la JUSTIFICACION, reviértelo inmediatamente: git checkout -- <archivo>
+5. Al terminar, corre dotnet test una última vez para confirmar que todo sigue verde (descontando los tests obsoletos que eliminaste).
 6. Haz commit de tu trabajo con mensaje: refactor(hu-${ISSUE_NUM:-?}): [descripción]
 
 Sigue todas las instrucciones de tu rol de reviewer."
@@ -905,10 +912,11 @@ ATENCION: El implementer reporto tests bloqueados. Lee el reporte en .claude/pip
     # Verificación adicional para refactoring: no deben perderse tests
     if [ "$IS_REFACTOR" = true ]; then
         POST_TEST_COUNT=$(extract_test_count "$TEST_OUTPUT_G3")
-        log "Tests post-refactoring: $POST_TEST_COUNT (baseline: $BASELINE_TEST_COUNT)"
+        log "Tests post-refactoring: $POST_TEST_COUNT (baseline: $BASELINE_TEST_COUNT, declarados como eliminados: $REMOVED_TESTS)"
         if [ "$POST_TEST_COUNT" != "?" ] && [ "$BASELINE_TEST_COUNT" != "?" ]; then
-            if [ "$POST_TEST_COUNT" -lt "$BASELINE_TEST_COUNT" ]; then
-                abort "El refactoring perdió tests: antes=$BASELINE_TEST_COUNT, después=$POST_TEST_COUNT"
+            ALLOWED_MIN_TEST_COUNT=$((BASELINE_TEST_COUNT - REMOVED_TESTS))
+            if [ "$POST_TEST_COUNT" -lt "$ALLOWED_MIN_TEST_COUNT" ]; then
+                abort "El refactoring perdió tests: antes=$BASELINE_TEST_COUNT, después=$POST_TEST_COUNT, declarados como eliminados=$REMOVED_TESTS (minimo permitido=$ALLOWED_MIN_TEST_COUNT)"
             fi
         fi
         PIPELINE_TESTS="$POST_TEST_COUNT"
