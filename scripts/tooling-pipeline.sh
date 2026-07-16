@@ -109,12 +109,53 @@ update_status() {
 EOJSON
 }
 
-# Extraer conteo de tests del resumen de dotnet test
+# Extraer conteo de tests del resumen de dotnet test.
+# Suma los N de TODAS las lineas de resumen del output combinado (una por cada
+# proyecto que corre run_tests_projects), no solo el primero: con --project por
+# proyecto el output trae una linea de resumen por cada uno. El sentinela "?"
+# (NR==0) distingue "no hubo linea parseable" de un cero real.
 extract_test_count() {
     local count
     count=$(echo "$1" | grep -oiE '(correcto|correctas|passed|superado):[[:space:]]+[0-9]+' \
-        | grep -oE '[0-9]+' | head -1)
+        | grep -oE '[0-9]+' \
+        | awk '{ s += $1 } END { if (NR == 0) print "?"; else print s }') || true
     echo "${count:-?}"
+}
+
+# Ejecutar dotnet test solo sobre los proyectos *.Tests/ (unit + contratos),
+# excluyendo *.SmokeTests/. Los smoke tests son black-box contra el entorno dev
+# desplegado (endpoints AuthorizationLevel.Function, ServiceBus/Postgres reales);
+# incluirlos en el gate hace que cualquier cambio aborte el pipeline con 401/404
+# aunque el codigo este bien, porque el gate corre sin credenciales de entorno.
+# Los smoke tests corren post-deploy via smoke-tests-dominio.yml. Mismo patron
+# que tdd-pipeline.sh::run_tests_projects.
+#
+# Uso: run_tests_projects [flags-extra-de-dotnet-test...]
+# Imprime: stdout combinado de todos los proyectos.
+# Exit code: 0 si todos pasan, primer codigo de fallo (!= 0 y != 8) si alguno
+# falla, 8 si NINGUN proyecto tenia tests para ejecutar.
+run_tests_projects() {
+    local combined_output=""
+    local combined_rc=0
+    local any_tests_ran=false
+    local proj proj_rc proj_output
+    for proj in "$WORKTREE_PATH"/tests/${HARNESS_NAMESPACE_PREFIX}.*.Tests/; do
+        [ -d "$proj" ] || continue
+        proj_rc=0
+        proj_output=$(dotnet test --project "$proj" "$@" 2>&1) || proj_rc=$?
+        combined_output+="$proj_output"$'\n'
+        if [ "$proj_rc" -ne 8 ]; then
+            any_tests_ran=true
+        fi
+        if [ "$proj_rc" -ne 0 ] && [ "$proj_rc" -ne 8 ] && [ "$combined_rc" -eq 0 ]; then
+            combined_rc=$proj_rc
+        fi
+    done
+    printf "%s" "$combined_output"
+    if [ "$combined_rc" -eq 0 ] && [ "$any_tests_ran" = false ]; then
+        return 8
+    fi
+    return $combined_rc
 }
 
 # --- Parsear argumentos ---
@@ -592,7 +633,7 @@ Instrucciones:
     if [ -n "$(git -C "$WORKTREE_PATH" diff --name-only "$SNAPSHOT_COMMIT"..HEAD -- '*.cs' '*.csproj' 2>/dev/null)" ]; then
         log "Gate: verificando compilacion y tests..."
         g2_rc=0
-        TEST_OUTPUT_G2=$(dotnet test --solution "$WORKTREE_PATH/${HARNESS_SOLUTION_FILE}" 2>&1) || g2_rc=$?
+        TEST_OUTPUT_G2=$(run_tests_projects 2>&1) || g2_rc=$?
         echo "$TEST_OUTPUT_G2" | tee -a "${LOG_FILE_ABS:-$LOG_FILE}" >/dev/null
         if [ "$g2_rc" -ne 0 ]; then
             echo "$TEST_OUTPUT_G2" | tail -20
@@ -664,7 +705,7 @@ Despues de resolver cada archivo, haz git add. Cuando todos esten resueltos, haz
     if [ -n "$(git -C "$WORKTREE_PATH" diff --name-only "$SNAPSHOT_COMMIT"..HEAD -- '*.cs' '*.csproj' 2>/dev/null)" ]; then
         log "Verificando tests despues del merge..."
         merge_rc=0
-        TEST_OUTPUT_MERGE=$(dotnet test --solution "$WORKTREE_PATH/${HARNESS_SOLUTION_FILE}" 2>&1) || merge_rc=$?
+        TEST_OUTPUT_MERGE=$(run_tests_projects 2>&1) || merge_rc=$?
         echo "$TEST_OUTPUT_MERGE" | tee -a "${LOG_FILE_ABS:-$LOG_FILE}" >/dev/null
         if [ "$merge_rc" -ne 0 ]; then
             abort "Tests fallan despues del merge con main (exit code: $merge_rc)."
