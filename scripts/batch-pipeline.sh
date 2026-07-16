@@ -272,7 +272,7 @@ for ISSUE_NUM in "${ISSUE_NUMS[@]}"; do
     log "Mergeando PR #$PR_NUM a main..."
 
     SYNC_EXIT=0
-    ./scripts/pr-sync.sh "$PR_NUM" --merge 2>&1 | tee -a "$ISSUE_LOG" || SYNC_EXIT=$?
+    "$(_pc_script_dir)/pr-sync.sh" "$PR_NUM" --merge 2>&1 | tee -a "$ISSUE_LOG" || SYNC_EXIT=$?
 
     cat "$ISSUE_LOG" | _strip_ansi >> "$LOG_FILE_ABS"
 
