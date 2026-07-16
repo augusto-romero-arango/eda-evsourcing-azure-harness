@@ -407,6 +407,84 @@ upsert_harness_secret() {
     mv "$tmp" "$config"
 }
 
+# --- Helpers de tests, compartidos por los gates de tdd-pipeline.sh, ---------
+# --- tooling-pipeline.sh y pr-sync.sh (issue #305) ----------------------------
+#
+# Consolida run_tests_projects y extract_test_count, que hasta el issue #305
+# vivian duplicadas byte-a-byte en tdd-pipeline.sh y tooling-pipeline.sh — y
+# ausentes en pr-sync.sh, que corria `dotnet test --solution` y por tanto
+# incluia los proyectos *.SmokeTests en su gate post-merge (401/ServiceBus no
+# configurado en runs locales sin credenciales de entorno). Una sola
+# definicion evita que un fix futuro (como #302) tenga que aplicarse mas de
+# una vez.
+
+# extract_test_count <dotnet_test_output>
+#
+# Extrae el conteo de tests pasando del resumen de dotnet test. Soporta MTP
+# ("correcto: N") y VSTest clasico ("Superado: N" / "Passed: N").
+#
+# Suma los N de TODAS las lineas de resumen del output combinado (una por cada
+# proyecto de test que corre run_tests_projects), no solo el primero: con
+# --project por proyecto el output trae una linea de resumen por cada uno.
+# Sumar la suite completa evita un falso "se perdieron tests" en el gate de
+# refactoring cuando un refactor mueve tests entre proyectos sin cambiar el
+# total (issue #80).
+#
+# Contratos preservados:
+#   - Sentinela "?": si no hubo ninguna linea parseable, awk imprime "?" en su
+#     bloque END (NR==0), no 0 — para que el gate lo trate como "no comparable"
+#     y no aborte por una suma vacia interpretada como 0.
+#   - Salida entera limpia: imprime un unico entero (la suma) para la comparacion
+#     `-lt` de bash del gate.
+#   - La asignacion lleva `|| true` porque, bajo `set -euo pipefail`, los grep sin
+#     match retornan != 0 y el pipefail abortaria el script antes de leer el "?".
+extract_test_count() {
+    local count
+    count=$(echo "$1" | grep -oiE '(correcto|correctas|passed|superado):[[:space:]]+[0-9]+' \
+        | grep -oE '[0-9]+' \
+        | awk '{ s += $1 } END { if (NR == 0) print "?"; else print s }') || true
+    echo "${count:-?}"
+}
+
+# run_tests_projects <worktree_path> [flags-extra-de-dotnet-test...]
+#
+# Ejecuta dotnet test solo sobre los proyectos *.Tests/ (unit + contratos) de
+# <worktree_path>, excluyendo *.SmokeTests/. Los smoke tests son black-box
+# contra el entorno dev desplegado (endpoints AuthorizationLevel.Function,
+# dependencias reales de ServiceBus/Postgres); incluirlos en un gate local que
+# corre sin credenciales de entorno los hace fallar con 401/404 aunque el
+# codigo este bien. Los smoke tests siguen cubiertos post-deploy via
+# smoke-tests-dominio.yml (ADR-0013).
+#
+# Imprime: stdout combinado de todos los proyectos.
+# Exit code: 0 si todos pasan, primer codigo de fallo (!= 0 y != 8) si alguno
+# falla, 8 si NINGUN proyecto tenia tests para ejecutar.
+run_tests_projects() {
+    local worktree="$1"
+    shift
+    local combined_output=""
+    local combined_rc=0
+    local any_tests_ran=false
+    local proj proj_rc proj_output
+    for proj in "$worktree"/tests/${HARNESS_NAMESPACE_PREFIX}.*.Tests/; do
+        [ -d "$proj" ] || continue
+        proj_rc=0
+        proj_output=$(dotnet test --project "$proj" "$@" 2>&1) || proj_rc=$?
+        combined_output+="$proj_output"$'\n'
+        if [ "$proj_rc" -ne 8 ]; then
+            any_tests_ran=true
+        fi
+        if [ "$proj_rc" -ne 0 ] && [ "$proj_rc" -ne 8 ] && [ "$combined_rc" -eq 0 ]; then
+            combined_rc=$proj_rc
+        fi
+    done
+    printf "%s" "$combined_output"
+    if [ "$combined_rc" -eq 0 ] && [ "$any_tests_ran" = false ]; then
+        return 8
+    fi
+    return $combined_rc
+}
+
 # --- Helpers de naming de Azure Storage Account (tfstate backend) -------------
 #
 # El nombre de una Storage Account es un endpoint DNS publico

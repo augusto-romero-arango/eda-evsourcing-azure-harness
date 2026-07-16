@@ -240,31 +240,28 @@ validate_tests() {
         return 2  # error de compilación
     fi
 
+    # run_tests_projects (scripts/_pipeline-common.sh) corre solo los proyectos
+    # *.Tests/, excluyendo *.SmokeTests/ (issue #305): los smoke tests son
+    # black-box contra el entorno dev desplegado y abortarian aqui con 401 /
+    # "ServiceBus no configurado" porque este gate corre local, sin credenciales
+    # de entorno (ADR-0013 — siguen cubiertos post-deploy por smoke-tests-dominio.yml).
+    #
+    # Contrato de run_tests_projects: 0 = todos pasan, 8 = ningun proyecto tenia
+    # tests para ejecutar, otro codigo = fallo real de tests (el build explicito
+    # previo ya descarto el error de compilación).
     local test_rc=0
-    test_output=$(dotnet test --solution "$worktree/${HARNESS_SOLUTION_FILE}" --no-build 2>&1) || test_rc=$?
+    test_output=$(run_tests_projects "$worktree" --no-build 2>&1) || test_rc=$?
     echo "$test_output" >> "$LOG_FILE_ABS"
 
-    # Exit codes de Microsoft.Testing.Platform:
-    #   0 = todos pasan, 2 = tests fallando, 8 = sin tests
-    # Errores de compilación producen exit code 1 con "error CS/MSB" en la salida
     case "$test_rc" in
         0) ;;  # todo bien, continuar
-        2)
-            echo "$test_output"
-            return 1  # tests fallidos
-            ;;
         8)
             echo "$test_output"
             return 3  # no se ejecutaron tests
             ;;
         *)
-            # Exit code 1 u otro: verificar si es error de compilación
-            if echo "$test_output" | grep -qE "error CS[0-9]+:|error MSB[0-9]+:|Build FAILED"; then
-                echo "$test_output"
-                return 2  # error de compilación
-            fi
             echo "$test_output"
-            return 1  # otro error de tests
+            return 1  # tests fallidos
             ;;
     esac
 
