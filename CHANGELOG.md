@@ -4,6 +4,8 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-07-16
+
 ### Fixed
 
 - **`batch-pipeline.sh` invocaba `pr-sync.sh` con ruta relativa y `tooling-pipeline.sh` abortaba sin `.claude/settings.json` (issue #295)**: un run de `/sequential` sobre un consumidor real (`Cosmos-SincoERP/Cosmos.ControlPlane`, batch `batch-221650`) expuso dos bugs independientes de la misma familia (scripts publicados que asumen el layout del harness o la presencia de archivos del consumidor). **BUG 1**: `scripts/batch-pipeline.sh:275` ejecutaba `./scripts/pr-sync.sh "$PR_NUM" --merge` relativo al cwd (la raiz del consumidor tras el `cd "$REPO_ROOT"` de la linea 166), donde ese script no existe -- solo vive en el cache del plugin; el merge fallaba siempre (`No such file or directory`) y el issue quedaba marcado como fallo aunque el PR se creara `MERGEABLE/CLEAN`. Es la unica invocacion del batch que no seguia el patron de rutas absolutas ya fijado por el resolver de pipelines (`_pc_script_dir`, issue #289). **BUG 2**: `scripts/tooling-pipeline.sh:253-255` hacia `sed` sobre `$REPO_ROOT/.claude/settings.json` sin el guard `[ -f ]` que si tiene `tdd-pipeline.sh:368-371` -- en un consumidor sin ese archivo (como Cosmos.ControlPlane, que solo versiona `.claude/harness.config.json`), el `sed` fallaba y `set -e` abortaba el pipeline antes de invocar a ningun agente. **Fix**: `batch-pipeline.sh` ahora resuelve `pr-sync.sh` via `"$(_pc_script_dir)/pr-sync.sh"` (mismo helper de `_pipeline-common.sh` que ya usa el resolver), y `tooling-pipeline.sh` envuelve el `sed` en el mismo guard `[ -f "$REPO_ROOT/.claude/settings.json" ]` de `tdd-pipeline.sh`, sin cambiar el comportamiento cuando el archivo si existe. Adyacente: `scripts/parallel-pipeline.sh` sugeria al humano `./scripts/pr-sync.sh <PR_NUM> --merge` (ruta igual de invalida en el consumidor) como paso manual tras el batch paralelo; se corrige el mensaje para apuntar al skill `/merge <PR_NUM>` (que ya resuelve la ruta del plugin correctamente). Archivos modificados: `scripts/batch-pipeline.sh`, `scripts/tooling-pipeline.sh`, `scripts/parallel-pipeline.sh`.
@@ -371,7 +373,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.13.2...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.13.2...v0.14.0
 [0.13.2]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.12.0...v0.13.0
