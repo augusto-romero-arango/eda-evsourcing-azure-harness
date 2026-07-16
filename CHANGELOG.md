@@ -4,6 +4,8 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.14.3] - 2026-07-16
+
 ### Fixed
 
 - **El gate de tests de `pr-sync.sh` corria los `*.SmokeTests` en su validacion post-merge (issue #305)**: `validate_tests()` (`scripts/pr-sync.sh`) ejecutaba `dotnet test --solution "$worktree/${HARNESS_SOLUTION_FILE}" --no-build`, que corre toda la solucion, incluidos los proyectos `*.SmokeTests` -- black-box contra el entorno dev desplegado, sin credenciales en un run local. Era el ultimo de los tres gates de tests del harness sin el fix ya aplicado a `tdd-pipeline.sh` (#295/#297) y `tooling-pipeline.sh` (#302). Observado en `Cosmos-SincoERP/Cosmos.ControlPlane` (harness v0.14.2): el merge del PR #84 (refactor puro de `TenantCreated`, solo dominio `TenantManagement`) fue exitoso, pero el gate post-merge aborto por 5 fallos -- todos smoke tests de dominios ajenos (`Onboarding.SmokeTests`, `UserManagement.SmokeTests`) con `401 Unauthorized`/`ServiceBus no configurado`. **Fix**: `run_tests_projects` y `extract_test_count` -- que vivian duplicadas byte a byte en `tdd-pipeline.sh` y `tooling-pipeline.sh` -- se consolidan en `scripts/_pipeline-common.sh`, parametrizando la ruta del worktree (antes la global `$WORKTREE_PATH` hardcodeada); los tres pipelines (`tdd`, `tooling`, `pr-sync`) comparten ahora la misma exclusion de `*.SmokeTests/` via el runner comun. `pr-sync.sh::validate_tests` reemplaza `dotnet test --solution` por `run_tests_projects "$worktree" --no-build`, preservando su contrato de retorno propio (0 pasan / 1 tests fallidos / 2 error de compilacion, detectado por el `dotnet build` explicito previo / 3 sin tests). Nuevo `scripts/tests/test-run-tests-projects.sh` fija la exclusion compartida y la ausencia de definiciones locales duplicadas; la suite completa de `scripts/tests/` sigue verde. Archivos modificados: `scripts/_pipeline-common.sh`, `scripts/pr-sync.sh`, `scripts/tdd-pipeline.sh`, `scripts/tooling-pipeline.sh`, `scripts/tests/test-refactor-gate.sh`. Archivo nuevo: `scripts/tests/test-run-tests-projects.sh`.
@@ -389,7 +391,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.14.2...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.14.3...HEAD
+[0.14.3]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.14.2...v0.14.3
 [0.14.2]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.14.1...v0.14.2
 [0.14.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.13.2...v0.14.0
