@@ -53,9 +53,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$_REPO_TOP"
 EVENTS_LOG="$PROJECT_ROOT/.claude/pipeline/events.log"
 
-# Convierte la ruta de sub-script devuelta por resolve_pipeline (relativa al
-# cwd, p.ej. ./scripts/tdd-pipeline.sh) en una ruta absoluta dentro del plugin,
-# para que el pane tmux la encuentre aunque su cwd sea el repo del consumidor.
+# Normaliza la ruta de sub-script devuelta por resolve_pipeline a una ruta
+# absoluta dentro del plugin, para que el pane tmux la encuentre aunque su cwd
+# sea el repo del consumidor. Usa basename, asi que es indiferente a si el
+# resolver ya devuelve ruta absoluta (issue #289) o, en llamadores futuros,
+# relativa.
 plugin_script() {
     echo "$SCRIPT_DIR/$(basename "$1")"
 }

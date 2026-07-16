@@ -554,9 +554,23 @@ validate_consumer_scope_changes() {
     fi
 }
 
+# _pc_script_dir
+#
+# Retorna el directorio absoluto donde vive este archivo (scripts/ del plugin),
+# derivado de BASH_SOURCE -- indiferente al cwd desde el que se invoque. Fuente
+# unica que usa el resolver de pipelines para devolver rutas absolutas (issue
+# #289): batch-pipeline.sh y parallel-pipeline.sh hacen 'cd "$REPO_ROOT"' (cwd =
+# raiz del consumidor) antes de ejecutar la ruta devuelta tal cual, y el plugin
+# ya no vive dentro del repo del consumidor, asi que una ruta relativa como
+# "./scripts/tdd-pipeline.sh" no existe alli.
+_pc_script_dir() {
+    cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
+}
+
 # resolve_pipeline <issue_num> [override]
 #
-# Retorna la ruta del script de pipeline a usar para un issue dado.
+# Retorna la ruta ABSOLUTA (al plugin) del script de pipeline a usar para un
+# issue dado.
 # - Sin override: consulta labels del issue via gh y enruta automaticamente
 # - Con override "tdd" o "tooling": retorna el pipeline forzado sin consultar labels
 # - Issues tipo:infra retornan "SKIP:infra"
@@ -564,11 +578,13 @@ validate_consumer_scope_changes() {
 resolve_pipeline() {
     local issue="$1"
     local override="${2:-}"
+    local sd
+    sd="$(_pc_script_dir)"
 
     if [ -n "$override" ]; then
         case "$override" in
-            tdd)     echo "./scripts/tdd-pipeline.sh" ;;
-            tooling) echo "./scripts/tooling-pipeline.sh" ;;
+            tdd)     echo "$sd/tdd-pipeline.sh" ;;
+            tooling) echo "$sd/tooling-pipeline.sh" ;;
             *)       echo "ERROR: override desconocido '$override'" >&2; return 1 ;;
         esac
         return
@@ -581,13 +597,16 @@ resolve_pipeline() {
 }
 
 # _resolve_from_labels <labels_text>
-# Funcion interna: determina el pipeline a partir de texto de labels (una por linea).
+# Funcion interna: determina el pipeline (ruta absoluta) a partir de texto de
+# labels (una por linea). Los sentinels SKIP:* se retornan sin alterar.
 _resolve_from_labels() {
     local labels="$1"
+    local sd
+    sd="$(_pc_script_dir)"
     if echo "$labels" | grep -qE '^tipo:(feature|refactor)$'; then
-        echo "./scripts/tdd-pipeline.sh"
+        echo "$sd/tdd-pipeline.sh"
     elif echo "$labels" | grep -q '^tipo:tooling$'; then
-        echo "./scripts/tooling-pipeline.sh"
+        echo "$sd/tooling-pipeline.sh"
     elif echo "$labels" | grep -q '^tipo:infra$'; then
         echo "SKIP:infra"
     else
@@ -597,11 +616,13 @@ _resolve_from_labels() {
 
 # resolve_pipeline_with_state <issue_num> [override]
 #
-# Retorna "STATE|PIPELINE" en una sola linea (ej: "OPEN|./scripts/tdd-pipeline.sh").
+# Retorna "STATE|PIPELINE" en una sola linea (ej: "OPEN|/ruta/absoluta/al/plugin/scripts/tdd-pipeline.sh").
 # Combina la consulta de estado y labels en una sola llamada a gh, reduciendo API calls.
 resolve_pipeline_with_state() {
     local issue="$1"
     local override="${2:-}"
+    local sd
+    sd="$(_pc_script_dir)"
 
     local state_and_labels
     state_and_labels=$(gh issue view "$issue" --json state,labels \
@@ -615,8 +636,8 @@ resolve_pipeline_with_state() {
 
     if [ -n "$override" ]; then
         case "$override" in
-            tdd)     echo "$state|./scripts/tdd-pipeline.sh" ;;
-            tooling) echo "$state|./scripts/tooling-pipeline.sh" ;;
+            tdd)     echo "$state|$sd/tdd-pipeline.sh" ;;
+            tooling) echo "$state|$sd/tooling-pipeline.sh" ;;
             *)       echo "ERROR: override desconocido '$override'" >&2; return 1 ;;
         esac
         return
