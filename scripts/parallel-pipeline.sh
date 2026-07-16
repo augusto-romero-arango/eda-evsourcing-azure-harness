@@ -437,7 +437,7 @@ echo -e "  Total: $TOTAL  |  ${GREEN}Completados: $COMPLETED${NC}  |  ${RED}Fall
 echo -e "  Log: $LOG_FILE_ABS"
 echo ""
 echo -e "  ${YELLOW}Nota: los PRs NO se mergearon automáticamente.${NC}"
-echo -e "  Para integrar a main usa: ${CYAN}./scripts/pr-sync.sh <PR_NUM> --merge${NC}"
+echo -e "  Para integrar a main usa: ${CYAN}/merge <PR_NUM>${NC}"
 echo ""
 
 # ─── Cleanup de status files ──────────────────────────────────────────────────
