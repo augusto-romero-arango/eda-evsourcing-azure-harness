@@ -285,27 +285,30 @@ assert_eq "H9: post=? => NOT_COMPARABLE" "NOT_COMPARABLE" "$(check_test_loss_gat
 # divergencias, verificamos que las cadenas clave (paths y regex de heuristica)
 # aparezcan literalmente en scripts/tdd-pipeline.sh. Si alguien las cambia en
 # un solo lugar, este test lo detecta.
-echo "Escenario E: coherencia entre test y scripts/tdd-pipeline.sh"
+echo "Escenario E: coherencia entre test y scripts/tdd-pipeline.sh / _pipeline-common.sh"
 TDD_SCRIPT="$REPO_ROOT/scripts/tdd-pipeline.sh"
+COMMON_SCRIPT="$REPO_ROOT/scripts/_pipeline-common.sh"
 
-assert_script_contains() {
-    local name="$1" needle="$2"
-    if grep -qF -- "$needle" "$TDD_SCRIPT"; then
+assert_file_contains() {
+    local name="$1" needle="$2" file="$3"
+    if grep -qF -- "$needle" "$file"; then
         echo "  PASS: $name"
         PASS=$((PASS + 1))
     else
         echo "  FAIL: $name"
-        echo "    cadena ausente en $TDD_SCRIPT: $needle"
+        echo "    cadena ausente en $file: $needle"
         FAIL=$((FAIL + 1))
     fi
 }
 
+assert_script_contains() { assert_file_contains "$1" "$2" "$TDD_SCRIPT"; }
+
 assert_script_contains "E1: path nuevo pipeline-state/refactor-signal.md" "pipeline-state/refactor-signal.md"
 assert_script_contains "E2: path legacy .claude/pipeline/refactor-signal.md" ".claude/pipeline/refactor-signal.md"
 assert_script_contains "E3: regex heuristica de log" "refactor.*pur|REFACTOR_ONLY|refactor-signal|refactoring puro"
-# Coherencia de extract_test_count (issue #80): el script real debe SUMAR con
-# awk y conservar el sentinela "?", no usar `head -1`.
-assert_script_contains "E4: extract_test_count suma con awk" "awk '{ s += \$1 } END { if (NR == 0) print \"?\"; else print s }'"
+# Coherencia de extract_test_count (issue #80): consolidada en _pipeline-common.sh
+# (issue #305). Debe SUMAR con awk y conservar el sentinela "?", no usar `head -1`.
+assert_file_contains "E4: extract_test_count suma con awk (_pipeline-common.sh)" "awk '{ s += \$1 } END { if (NR == 0) print \"?\"; else print s }'" "$COMMON_SCRIPT"
 # Coherencia del parseo de REMOVED_TESTS y del calculo allowed_min (issue #294).
 assert_script_contains "E6: parseo de REMOVED_TESTS con default 0" 'REMOVED_TESTS=$(grep "^REMOVED_TESTS=" "$REFACTOR_SIGNAL_PATH" | cut -d= -f2- || echo "0")'
 assert_script_contains "E7: gate calcula allowed_min = baseline - removed" 'ALLOWED_MIN_TEST_COUNT=$((BASELINE_TEST_COUNT - REMOVED_TESTS))'
