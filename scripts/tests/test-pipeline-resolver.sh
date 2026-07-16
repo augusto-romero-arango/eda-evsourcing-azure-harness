@@ -14,7 +14,11 @@
 #   R-3: los sentinels SKIP:infra y SKIP:no-tipo se retornan intactos (no se
 #        absolutizan).
 #   R-4: resolve_pipeline_with_state antepone el estado y absolutiza la ruta,
-#        tanto con override como resolviendo por labels.
+#        tanto con override como resolviendo por labels. El override se honra
+#        incluso si gh falla (issue #291): el estado queda UNKNOWN (honesto,
+#        sin fingir OPEN) pero el pipeline forzado se retorna igual; sin
+#        override y con gh fallando se preserva el fallback UNKNOWN|SKIP:no-tipo;
+#        y un override desconocido sigue siendo error aunque gh falle.
 #   R-5: la ruta devuelta no depende del cwd (misma ruta con distintos cwd).
 #
 # Uso: scripts/tests/test-pipeline-resolver.sh
@@ -122,12 +126,41 @@ case "$PIPELINE" in
     *) fail "labels: se esperaba ruta absoluta a tdd-pipeline.sh, fue '$PIPELINE'" ;;
 esac
 
-# Fallback: si gh falla, retorna UNKNOWN|SKIP:no-tipo sin absolutizar (sentinel intacto).
-RESULT=$(cd "$FAKE_CONSUMER" && { gh() { return 1; }; resolve_pipeline_with_state 999 tdd; })
+# Override con gh fallando: el override se sigue honrando (issue #291) -- el
+# estado queda UNKNOWN (honesto) pero el pipeline forzado no se pierde.
+for override_gh_fail in tdd tooling; do
+    expected_basename="tdd-pipeline.sh"
+    [ "$override_gh_fail" = "tooling" ] && expected_basename="tooling-pipeline.sh"
+    RESULT=$(cd "$FAKE_CONSUMER" && { gh() { return 1; }; resolve_pipeline_with_state 999 "$override_gh_fail"; })
+    STATE="${RESULT%%|*}"
+    PIPELINE="${RESULT#*|}"
+    if [ "$STATE" = "UNKNOWN" ]; then
+        pass "override '$override_gh_fail' + gh falla: estado UNKNOWN (honesto, sin fingir OPEN)"
+    else
+        fail "override '$override_gh_fail' + gh falla: se esperaba estado UNKNOWN, fue '$STATE'"
+    fi
+    case "$PIPELINE" in
+        /*"$expected_basename") pass "override '$override_gh_fail' + gh falla: override honrado, ruta absoluta a $expected_basename ($PIPELINE)" ;;
+        *) fail "override '$override_gh_fail' + gh falla: se esperaba ruta absoluta a $expected_basename, fue '$PIPELINE'" ;;
+    esac
+done
+
+# Sin override y gh fallando: se preserva el fallback UNKNOWN|SKIP:no-tipo byte a byte.
+RESULT=$(cd "$FAKE_CONSUMER" && { gh() { return 1; }; resolve_pipeline_with_state 999; })
 if [ "$RESULT" = "UNKNOWN|SKIP:no-tipo" ]; then
-    pass "gh falla -> UNKNOWN|SKIP:no-tipo (fallback intacto)"
+    pass "sin override + gh falla -> UNKNOWN|SKIP:no-tipo (fallback intacto)"
 else
-    fail "gh falla -> se esperaba UNKNOWN|SKIP:no-tipo, fue '$RESULT'"
+    fail "sin override + gh falla -> se esperaba UNKNOWN|SKIP:no-tipo, fue '$RESULT'"
+fi
+
+# Override desconocido: error aunque gh falle (el contrato de override invalido
+# no debe quedar enmascarado por el fallback de gh).
+RESULT=$(cd "$FAKE_CONSUMER" && { gh() { return 1; }; resolve_pipeline_with_state 999 foo; } 2>&1)
+RC=$?
+if [ "$RC" -ne 0 ] && echo "$RESULT" | grep -q "ERROR: override desconocido 'foo'"; then
+    pass "override desconocido 'foo' + gh falla -> ERROR y return != 0"
+else
+    fail "override desconocido 'foo' + gh falla -> se esperaba ERROR y return != 0, fue rc=$RC '$RESULT'"
 fi
 
 echo ""
