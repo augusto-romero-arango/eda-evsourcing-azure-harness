@@ -279,14 +279,43 @@ merge_pr_with_retry() {
     local wait_seconds=3
     local attempt
 
+    # Detectar el método de merge permitido por el repositorio. `gh pr merge`
+    # exige exactamente uno de --merge/--squash/--rebase en modo no interactivo;
+    # hardcodear --merge rompe en repos que prohíben merge commits (p. ej. con
+    # `required_linear_history` o `allow_merge_commit=false`), devolviendo
+    # "Merge commits are not allowed on this repository". Preferencia:
+    # merge > squash > rebase, cayendo al primer método que el repo permita.
+    local merge_flag methods
+    methods=$(gh api "repos/{owner}/{repo}" \
+        --jq '(if .allow_merge_commit then "merge " else "" end)
+            + (if .allow_squash_merge then "squash " else "" end)
+            + (if .allow_rebase_merge then "rebase" else "" end)' 2>/dev/null || echo "")
+    case "$methods" in
+        *merge*)  merge_flag="--merge" ;;
+        *squash*) merge_flag="--squash" ;;
+        *rebase*) merge_flag="--rebase" ;;
+        *)        merge_flag="--merge" ;;  # fallback: comportamiento previo
+    esac
+    log "Método de merge permitido por el repo: ${merge_flag#--}"
+
     for attempt in $(seq 1 "$max_retries"); do
         # Consultar estado de mergeabilidad en GitHub
         local status
         status=$(gh pr view "$pr_num" --json mergeStateStatus -q '.mergeStateStatus' 2>/dev/null || echo "UNKNOWN")
 
         if [ "$status" = "CLEAN" ] || [ "$status" = "UNSTABLE" ] || [ "$status" = "HAS_HOOKS" ]; then
-            if gh pr merge "$pr_num" --merge --delete-branch >>"$LOG_FILE_ABS" 2>&1; then
+            local merge_out
+            if merge_out=$(gh pr merge "$pr_num" "$merge_flag" --delete-branch 2>&1); then
+                printf '%s\n' "$merge_out" >>"$LOG_FILE_ABS"
                 return 0
+            fi
+            printf '%s\n' "$merge_out" >>"$LOG_FILE_ABS"
+            # Rechazos que NO se resuelven reintentando (método no permitido,
+            # checks/reviews requeridos, conflictos): abortar con la causa real
+            # en lugar de reportar falsamente "aún no mergeable".
+            if printf '%s' "$merge_out" | grep -qiE "not allowed|not mergeable|required|not authorized|changes requested|conflict"; then
+                warn "PR #$pr_num: GitHub rechazó el merge y no es reintentable → $merge_out"
+                return 1
             fi
         fi
 
