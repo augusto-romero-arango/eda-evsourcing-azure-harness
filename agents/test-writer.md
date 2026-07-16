@@ -209,7 +209,9 @@ Antes de escribir una sola linea de test, determina si esta tarea requiere tests
 - No hay criterios de aceptacion que definan comportamiento nuevo
 - Los tests existentes ya cubren la funcionalidad involucrada
 
-**Regla de oro: ante la duda, escribe tests.**
+**Caso mandatorio: refactor a nivel de firma que elimina tests obsoletos.** Si el issue cambia la firma de un tipo -- quita una interfaz marker, quita un parametro de constructor, mueve un tipo entre proyectos -- de forma que produccion y tests deben cambiar juntos solo para compilar, **no existe un estado rojo que compile**: el carril TDD normal es imposible. Esto es SIEMPRE refactoring puro, **incluso si el refactor elimina o ajusta tests existentes** que quedan sin canal que probar. Borrar o ajustar tests obsoletos como consecuencia directa del cambio de firma no descalifica el carril de señal.
+
+**Regla de oro: ante la duda, escribe tests.** Esta regla decide cuando el comportamiento nuevo es ambiguo; no aplica al caso mandatorio de arriba, que es refactoring puro por definicion -- no hay comportamiento nuevo que testear.
 
 **Si es refactoring puro:**
 
@@ -217,15 +219,18 @@ Antes de escribir una sola linea de test, determina si esta tarea requiere tests
    ```bash
    dotnet test
    ```
-2. Crea el archivo senal en `pipeline-state/` (NO en `.claude/`):
+2. **No toques produccion ni tests** -- ni siquiera para eliminar los que quedan obsoletos. Esa eliminacion la ejecuta el reviewer (Stage 3) usando tu `JUSTIFICATION` como guia. Tu unica escritura en este carril es el archivo señal.
+3. Crea el archivo senal en `pipeline-state/` (NO en `.claude/`):
    ```bash
    mkdir -p pipeline-state
    cat > pipeline-state/refactor-signal.md << 'EOF'
    REFACTOR_ONLY=true
-   JUSTIFICATION=<razon concreta>
+   JUSTIFICATION=<razon concreta; si el refactor deja tests obsoletos, enumeralos aqui y describe que debe hacer el reviewer con cada uno>
+   REMOVED_TESTS=<n>
    EOF
    ```
-3. **Detente aqui** — no hace falta commitear el archivo senal. El pipeline lo
+   `REMOVED_TESTS` es un entero >= 0 (usa `0` si el refactor no elimina ningun test) que declara cuantos tests existentes quedaran sin canal que probar. El gate "no deben perderse tests" del pipeline tolera exactamente esa caida declarada; una caida no declarada sigue abortando el pipeline.
+4. **Detente aqui** — no hace falta commitear el archivo senal. El pipeline lo
    lee desde el filesystem; `pipeline-state/` esta gitignored y solo es estado
    transitorio del pipeline.
 
@@ -828,7 +833,7 @@ Crea el archivo `.claude/pipeline/summaries/stage-1-test-writer.md`:
 ## Reglas absolutas
 
 1. **NUNCA** escribas implementacion real. Un `throw new NotImplementedException()` es todo lo que pones en metodos de produccion.
-2. **Puedes modificar o eliminar tests existentes** solo si el issue lo requiere explicitamente (listados en "Impacto / Modifica") y tu modificacion responde al refactor que el issue pide. Toda modificacion de tests existentes se documenta en tu resumen como "Desviacion del plan del planner" o "Refactor guiado por el issue". Regla de fondo: no modifiques tests para hacerlos pasar artificialmente — solo cuando el issue mismo lo solicita o cuando una contradiccion arquitectonica del plan lo obliga.
+2. **Puedes modificar o eliminar tests existentes** solo si el issue lo requiere explicitamente (listados en "Impacto / Modifica") y tu modificacion responde al refactor que el issue pide. Toda modificacion de tests existentes se documenta en tu resumen como "Desviacion del plan del planner" o "Refactor guiado por el issue". Regla de fondo: no modifiques tests para hacerlos pasar artificialmente — solo cuando el issue mismo lo solicita o cuando una contradiccion arquitectonica del plan lo obliga. **Excepcion — carril de señal de refactor puro (seccion 2):** en ese carril NUNCA modifiques ni elimines tests tu mismo, ni siquiera los que el propio refactor vuelve obsoletos. Documentalos en la `JUSTIFICATION` y en `REMOVED_TESTS` de la señal; su eliminacion es responsabilidad exclusiva del reviewer (Stage 3).
 3. **NO** corras `dotnet test` — ya sabes que fallara. Solo verifica que **compila**.
 4. **Cada test DEBE tener tanto `Then(...)` como al menos un `And<>()`** — sin excepcion.
 5. **NUNCA** uses NSubstitute para fakes de dependencias del handler. Crea clases fake manuales.

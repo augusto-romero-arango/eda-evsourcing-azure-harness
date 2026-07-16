@@ -6,6 +6,10 @@
 #   B) Refactor puro probable pero senal ausente (log evidencia razonamiento de refactor)
 #   C) Agente fallo — ni senal, ni cambios, ni evidencia en log
 #
+# Tambien valida el campo REMOVED_TESTS del gate "no deben perderse tests"
+# (Stage 3, issue #294): parseo con default 0 y el calculo
+# allowed_min = BASELINE_TEST_COUNT - REMOVED_TESTS.
+#
 # Uso: scripts/tests/test-refactor-gate.sh
 # Exit code: 0 si todos los escenarios pasan, 1 si alguno falla.
 
@@ -73,6 +77,37 @@ extract_test_count() {
         | grep -oE '[0-9]+' \
         | awk '{ s += $1 } END { if (NR == 0) print "?"; else print s }') || true
     echo "${count:-?}"
+}
+
+# Reproduccion del parseo de REMOVED_TESTS de la senal (issue #294): mismo
+# patron que JUSTIFICATION (grep + cut), default "0" si el campo no existe, y
+# validacion de entero >= 0 antes de usarlo en la resta del gate. Cualquier
+# cambio aqui debe acompanarse de un cambio en el script real (Escenario E).
+parse_removed_tests() {
+    local signal_path="$1"
+    local removed
+    removed=$(grep "^REMOVED_TESTS=" "$signal_path" | cut -d= -f2- || echo "0")
+    if ! [[ "$removed" =~ ^[0-9]+$ ]]; then
+        removed=0
+    fi
+    echo "$removed"
+}
+
+# Reproduccion del gate "no deben perderse tests" (Stage 3, issue #294):
+# tolera exactamente la caida declarada en REMOVED_TESTS; preserva el
+# sentinela "?" (no comparable) y el backstop contra caidas no declaradas.
+check_test_loss_gate() {
+    local baseline="$1" post="$2" removed="$3"
+    if [ "$post" = "?" ] || [ "$baseline" = "?" ]; then
+        echo "NOT_COMPARABLE"
+        return 0
+    fi
+    local allowed_min=$((baseline - removed))
+    if [ "$post" -lt "$allowed_min" ]; then
+        echo "ABORT"
+        return 0
+    fi
+    echo "OK"
 }
 
 setup_fake_worktree() {
@@ -194,10 +229,12 @@ OUT_F4=$'Superado: 10  con errores: 0\nPassed: 20\nPruebas correctas: 5'
 assert_eq "F4: Superado 10 + Passed 20 + correctas 5 => 35" "35" "$(extract_test_count "$OUT_F4")"
 
 # ─── Escenario G: reubicar tests entre proyectos NO dispara el abort ────────
-# CA-2: un refactor que MUEVE tests de Contracts.Tests a ControlHoras.Tests sin
-# cambiar el total -> baseline y post-count suman la suite completa -> iguales ->
-# la condicion `[ "$POST_TEST_COUNT" -lt "$BASELINE_TEST_COUNT" ]` del gate en
-# tdd-pipeline.sh es falsa y no se dispara el abort.
+# CA-2 (issue #80): un refactor que MUEVE tests de Contracts.Tests a
+# ControlHoras.Tests sin cambiar el total -> baseline y post-count suman la
+# suite completa -> iguales -> la condicion del gate en tdd-pipeline.sh
+# (`POST_TEST_COUNT -lt ALLOWED_MIN_TEST_COUNT`, donde
+# ALLOWED_MIN_TEST_COUNT = BASELINE_TEST_COUNT - REMOVED_TESTS, issue #294) es
+# falsa con REMOVED_TESTS=0 y no se dispara el abort.
 echo "Escenario G: reubicacion de tests sin cambiar el total => baseline == post"
 BASELINE_G=$'correcto: 100\ncorrecto: 325'   # Contracts.Tests=100, ControlHoras.Tests=325
 POST_G=$'correcto: 60\ncorrecto: 365'        # 40 tests movidos a ControlHoras.Tests
@@ -206,6 +243,42 @@ POST_COUNT_G=$(extract_test_count "$POST_G")
 assert_eq "G1: baseline suma la suite completa" "425" "$BASELINE_COUNT_G"
 assert_eq "G2: post suma la suite completa" "425" "$POST_COUNT_G"
 assert_eq "G3: baseline == post tras reubicar (no dispara abort)" "$BASELINE_COUNT_G" "$POST_COUNT_G"
+
+# ─── Escenario H: REMOVED_TESTS tolera la caida declarada (issue #294) ──────
+echo "Escenario H: REMOVED_TESTS tolera exactamente la caida declarada"
+
+WT_H1="$TMPDIR_BASE/wt_h1"
+mkdir -p "$WT_H1"
+cat > "$WT_H1/signal.md" <<'EOF'
+REFACTOR_ONLY=true
+JUSTIFICATION=Refactor de firma sin campo REMOVED_TESTS (senal vieja)
+EOF
+assert_eq "H1: senal sin REMOVED_TESTS => default 0" "0" "$(parse_removed_tests "$WT_H1/signal.md")"
+
+WT_H2="$TMPDIR_BASE/wt_h2"
+mkdir -p "$WT_H2"
+cat > "$WT_H2/signal.md" <<'EOF'
+REFACTOR_ONLY=true
+JUSTIFICATION=Quita IPublicEvent de TenantCreated; elimina 2 tests de portabilidad obsoletos
+REMOVED_TESTS=2
+EOF
+assert_eq "H2: REMOVED_TESTS=2 parseado" "2" "$(parse_removed_tests "$WT_H2/signal.md")"
+
+WT_H3="$TMPDIR_BASE/wt_h3"
+mkdir -p "$WT_H3"
+cat > "$WT_H3/signal.md" <<'EOF'
+REFACTOR_ONLY=true
+JUSTIFICATION=Valor no entero
+REMOVED_TESTS=dos
+EOF
+assert_eq "H3: REMOVED_TESTS no entero => default 0" "0" "$(parse_removed_tests "$WT_H3/signal.md")"
+
+assert_eq "H4: caida declarada exacta (425->423, removed=2) => OK" "OK" "$(check_test_loss_gate 425 423 2)"
+assert_eq "H5: caida mayor a la declarada (425->422, removed=2) => ABORT" "ABORT" "$(check_test_loss_gate 425 422 2)"
+assert_eq "H6: sin caida, removed=0 (comportamiento previo intacto) => OK" "OK" "$(check_test_loss_gate 425 425 0)"
+assert_eq "H7: caida no declarada, removed=0 => ABORT (backstop intacto)" "ABORT" "$(check_test_loss_gate 425 424 0)"
+assert_eq "H8: baseline=? => NOT_COMPARABLE" "NOT_COMPARABLE" "$(check_test_loss_gate "?" 100 0)"
+assert_eq "H9: post=? => NOT_COMPARABLE" "NOT_COMPARABLE" "$(check_test_loss_gate 100 "?" 0)"
 
 # ─── Escenario E: smoke check de coherencia con el script real ──────────────
 # El gate_logic() de este test reproduce la logica del script. Para detectar
@@ -233,6 +306,9 @@ assert_script_contains "E3: regex heuristica de log" "refactor.*pur|REFACTOR_ONL
 # Coherencia de extract_test_count (issue #80): el script real debe SUMAR con
 # awk y conservar el sentinela "?", no usar `head -1`.
 assert_script_contains "E4: extract_test_count suma con awk" "awk '{ s += \$1 } END { if (NR == 0) print \"?\"; else print s }'"
+# Coherencia del parseo de REMOVED_TESTS y del calculo allowed_min (issue #294).
+assert_script_contains "E6: parseo de REMOVED_TESTS con default 0" 'REMOVED_TESTS=$(grep "^REMOVED_TESTS=" "$REFACTOR_SIGNAL_PATH" | cut -d= -f2- || echo "0")'
+assert_script_contains "E7: gate calcula allowed_min = baseline - removed" 'ALLOWED_MIN_TEST_COUNT=$((BASELINE_TEST_COUNT - REMOVED_TESTS))'
 
 assert_script_not_contains() {
     local name="$1" needle="$2"
