@@ -4,6 +4,8 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-07-16
+
 ### Fixed
 
 - **`pr-sync.sh` mergeaba con `--merge` hardcodeado y fallaba en repos squash-only (issue #299)**: `merge_pr_with_retry` (`scripts/pr-sync.sh`) ejecutaba `gh pr merge "$pr_num" --merge --delete-branch` con el metodo de merge fijo (merge commit). En repos cuyo `main` prohibe merge commits -- via ruleset `required_linear_history` o el setting `allow_merge_commit=false` -- GitHub respondia `Merge commits are not allowed on this repository. (mergePullRequest)` y el merge nunca prosperaba; peor, como `mergeStateStatus` era `CLEAN`, el loop de reintentos lo repetia 5 veces imprimiendo *"GitHub aun no reporta el PR como mergeable (estado: CLEAN)"*, ocultando la causa real (el metodo, no la mergeabilidad). Observado en un consumidor real (`Cosmos-SincoERP/Cosmos.ControlPlane`, org ruleset `baseline-default-branch` con linear history + `allow_merge_commit=false`, solo squash permitido): fallaron los merges de `pr-sync`/`/sequential` para #77, #78, #79 mientras que el squash manual si funcionaba. Es un tercer bug distinto de los dos que cerro #295/#297 (`pr-sync.sh` no se toco en aquella correccion, por lo que el merge seguia roto en repos squash-only). **Fix**: `merge_pr_with_retry` detecta una sola vez el metodo permitido via `gh api repos/{owner}/{repo}` (`allow_merge_commit`/`allow_squash_merge`/`allow_rebase_merge`, con preferencia merge > squash > rebase) y pasa el flag correspondiente -- sin cambios de comportamiento en repos que permiten merge commits --, y captura el stderr de `gh pr merge` para abortar de inmediato ante rechazos no reintentables (metodo no permitido, checks/reviews requeridos, conflictos), reportando la causa real en vez de agotar los reintentos con un mensaje enganoso. Archivo modificado: `scripts/pr-sync.sh`.
@@ -377,7 +379,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.14.1...HEAD
+[0.14.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.13.2...v0.14.0
 [0.13.2]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.13.0...v0.13.1
