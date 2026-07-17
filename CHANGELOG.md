@@ -4,6 +4,10 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+### Fixed
+
+- **`local` fuera de funcion abortaba `tooling-pipeline.sh` (Stage 1) y `tdd-pipeline.sh` (Stage 0) (issue #308)**: bash solo permite `local` dentro de funciones; con `set -e` activo, una declaracion `local` en el cuerpo top-level de un script la mata con `local: can only be used in a function` antes de llegar a su terminacion limpia. Un barrido con `shellcheck` (regla SC2168) encontro dos ocurrencias genuinas: `scripts/tooling-pipeline.sh:493` (rama "writer del Stage 1 sin cambios", `declare local writer_log`) y `scripts/tdd-pipeline.sh:334` (bloque Stage 0 de scaffold de dominio, `declare local NONINTERACTIVE_SYSTEM`). En el caso principal, el crash ocurria **antes** del `abort()` limpio que ya marca `state: failed` -- el operador veia el error de bash en vez del mensaje claro, y el `pipeline-status-*.json` quedaba en `running`. Observado en `/implement 85` sobre `Cosmos-SincoERP/Cosmos.ControlPlane` (harness v0.14.2): el writer de tooling no genero cambios (correctamente, por su prompt) y el pipeline murio en la linea del `local` en vez de reportar "El writer no genero ningun cambio". **Fix**: se elimina `local` en ambas declaraciones (quedan como asignaciones a nivel de script, sin colision con la `local` legitima de `run_agent` en `tdd-pipeline.sh:420`); ambos scripts llegan ahora a su `abort()` limpio. Nuevo `scripts/tests/test-no-toplevel-local.sh`: guard estatico via `shellcheck` SC2168 sobre `scripts/*.sh` (falla explicitamente si `shellcheck` no esta instalado) y test de comportamiento que ejerce el camino "writer sin cambios" de `tooling-pipeline.sh` (con y sin retry por deteccion de "pidio permisos"), verificando que no crashea por `local` y llega al abort limpio. Confirmado que el mirror interno (`.claude/scripts/*.sh`) esta libre de este patron. Archivos modificados: `scripts/tooling-pipeline.sh`, `scripts/tdd-pipeline.sh`. Archivo nuevo: `scripts/tests/test-no-toplevel-local.sh`.
+
 ## [0.14.3] - 2026-07-16
 
 ### Fixed
