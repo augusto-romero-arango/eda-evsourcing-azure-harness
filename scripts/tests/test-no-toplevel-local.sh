@@ -8,8 +8,8 @@
 #
 # Valida:
 #   [A] Guard estatico: cero ocurrencias de `local` fuera de funcion en los
-#       scripts publicados (scripts/*.sh), via shellcheck regla SC2168. Si
-#       shellcheck no esta instalado, el guard FALLA explicitamente (no
+#       scripts publicados (scripts/*.sh), via shellcheck regla SC2168. Si el
+#       binario no esta instalado, el guard FALLA explicitamente (no
 #       silenciosamente) -- awk de BSD no soporta \b y un grep '\blocal\b'
 #       da falsos positivos con la palabra "local" en prosa/prompts.
 #   [B] Comportamiento: cuando el writer del Stage 1 de tooling-pipeline.sh no
@@ -138,6 +138,15 @@ EOF
         fail "B2 (con retry): el bloque crashea con 'local: can only be used in a function'"
     else
         pass "B2 (con retry): el bloque no crashea con el error de 'local' top-level"
+    fi
+
+    # Afirma que la rama de retry se ejercito de verdad: sin este chequeo, B2
+    # pasaria igual aunque la deteccion de "pidio permisos" (grep + path del
+    # writer_log) dejara de dispararse -- degradando en silencio a un clon de B1.
+    if echo "$OUTPUT_B2" | grep -q "Writer pidio permisos"; then
+        pass "B2 (con retry): la rama de retry se disparo (deteccion de 'pidio permisos')"
+    else
+        fail "B2 (con retry): la rama de retry NO se disparo -- el escenario no ejercita el retry: $OUTPUT_B2"
     fi
 
     if [ "$RC_B2" -eq 42 ] && echo "$OUTPUT_B2" | grep -q "El writer no genero ningun cambio"; then
