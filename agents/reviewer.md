@@ -304,6 +304,7 @@ Luego revisa manualmente buscando:
 - Codigo verboso donde una expresion idiomatica de C# lo simplificaria (pattern matching, LINQ, records)
 - Codigo duplicado entre metodos o clases
 - Guardas condicionales en negativo (`if (!existe)`) en una bifurcacion `if`/`else` que se leen mejor en positivo (`if (existe)`) permutando las ramas. Excepcion: guard clauses / early-return donde la negacion expresa la precondicion de salida (`if (!valido) return;`), que se mantienen. Ver "Condiciones en positivo" en `implementer.md`.
+- `switch`/cadena de `if` que selecciona un valor o comportamiento por una clave discreta (string, enum, id) → deberia ser un lookup map (`Dictionary<Key, ...>`) definido a nivel de modulo. Excepcion: `switch` exhaustivo sobre discriminated union / pattern matching por tipo (idiomatico y type-safe en C#, no convertir), guard clauses y rangos/umbrales numericos. Ver "Lookup map sobre switch/if para seleccion por clave discreta" en `implementer.md`.
 
 **Eficiencia algoritmica:**
 - Loops anidados innecesarios sobre colecciones que podrian resolverse con LINQ

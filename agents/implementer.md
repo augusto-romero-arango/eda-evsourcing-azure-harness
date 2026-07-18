@@ -407,14 +407,29 @@ Los dos endpoints anteriores consumen una **subscription** de un unico topic (un
 
 **Trigger**: un unico argumento posicional con el nombre del **queue** (no topic+subscription), mas `IsSessionsEnabled = true`. **`Connection` es siempre `SERVICE_BUS_CONNECTION_INTERNO`**: a diferencia de la tabla de arriba, el queue de fan-in vive siempre en el namespace interno del BC (ADR-0026 seccion 2, ADR-0023) -- nunca en el backbone compartido, no hay variante de alias aqui. El `SessionId` lo fija el productor al publicar (`groupId` de `IPrivateEventSender`, doctrina completa en la seccion "`groupId` en `PublishAsync`" mas arriba); la serializacion dentro de cada sesion es la que elimina la carrera. `maxConcurrentSessions` en `host.json` solo acota cuantas sesiones **distintas** corren en paralelo por instancia escalada, sin romper el orden dentro de cada una: el `host.json` que genera el `domain-scaffolder` lo fija en 16; el default del worker aislado con la extension `Microsoft.Azure.Functions.Worker.Extensions.ServiceBus` 5.x es 8 (el valor 2000 es el default del modelo legacy in-process/Functions 2.x y no aplica a este stack — [host.json settings](https://learn.microsoft.com/azure/azure-functions/functions-bindings-service-bus?pivots=programming-language-csharp#hostjson-settings)).
 
-**`switch` por `message.Subject`** cuando el queue recibe varios tipos de evento convergentes: `Subject` es la propiedad AMQP "subject", una etiqueta de aplicacion que el productor fija al publicar (`ServiceBusReceivedMessage.Subject`, [Azure.Messaging.ServiceBus](https://learn.microsoft.com/dotnet/api/azure.messaging.servicebus.servicebusreceivedmessage.subject)). Usa el `nameof` de cada tipo de evento convergente (`nameof(TurnoCreado)`, `nameof(EmpleadoAsignado)`, ...) como discriminante.
+**Lookup map por `message.Subject`** cuando el queue recibe varios tipos de evento convergentes: `Subject` es la propiedad AMQP "subject", una etiqueta de aplicacion que el productor fija al publicar (`ServiceBusReceivedMessage.Subject`, [Azure.Messaging.ServiceBus](https://learn.microsoft.com/dotnet/api/azure.messaging.servicebus.servicebusreceivedmessage.subject)). Este despacho -- elegir que evento deserializar y que comando invocar segun una clave discreta -- es el caso canonico de la heuristica "Lookup map sobre switch/if para seleccion por clave discreta" (mas abajo): usa un `Dictionary<string, ...>` **estatico a nivel de modulo**, no un `switch`.
 
-Que el productor fije `Subject` con ese mismo nombre al emitir es una **invariante del lado productor** que este agente no garantiza: al igual que el `SessionId`/`groupId` (seccion "`groupId` en `PublishAsync`" mas arriba), pertenece a la doctrina del productor. Si un `Subject` no coincide con ningun `case`, el `switch` cae al `default`, lanza y el mensaje se dead-letterea — por eso el switch no puede quedar a medias. **No verificado**: si `IPrivateEventSender` fija el `Subject` por defecto o si el emisor debe hacerlo explicitamente. Si al scaffoldear este endpoint detectas que el productor no lo esta fijando, documentalo en tu resumen (misma disciplina que con topics/subscriptions faltantes) — sin ese `Subject` el fan-in no despacha nada.
+El emisor de Wolverine (`WolverinePrivateEventSender`) publica via `messageBus.PublishAsync<IPrivateEvent>(@event, ...)`; el mapper de Azure Service Bus de Wolverine fija `ServiceBusMessage.Subject = envelope.MessageType`, y el naming por defecto de Wolverine (`WolverineMessageNaming`, estrategia `FullTypeNaming`) devuelve `Type.FullName` para tipos sin `[MessageIdentity]` -- los contratos EDA de este marco son records DTO planos, sin ese atributo. **Verificado empiricamente** en un consumidor real (`Cosmos.ControlPlane`, PR #95, fan-in `NotificarProgresoOnboarding`): con `nameof(TEvento)` como clave, el discriminante nunca casaba contra el `Subject` real (`Type.FullName`, con namespace completo) y **todas** las patas del fan-in terminaban en dead-letter (16 mensajes muertos, 0 activos en dev). El discriminante correcto es **`typeof(TEvento).FullName`**, no `nameof(TEvento)`. Si un `Subject` no coincide con ninguna clave del mapa, el `TryGetValue` falla, lanza y el mensaje se dead-letterea — por eso el mapa no puede quedar a medias. Si al scaffoldear este endpoint detectas que el productor no esta fijando `Subject` (por ejemplo, un emisor que no es Wolverine), documentalo en tu resumen (misma disciplina que con topics/subscriptions faltantes) — sin ese `Subject` el fan-in no despacha nada.
 
 ```csharp
 public class ConsolidarCierreTurno(ICommandRouter commandRouter, ILogger<ConsolidarCierreTurno> logger)
     : ServiceBusSessionEndpointBase(logger)
 {
+    // El discriminante (Subject) es una clave discreta -> mapa a nivel de modulo, no switch.
+    // La decision "que evento deserializar y que comando invocar" vive en un solo lugar; agregar
+    // un evento convergente es agregar una fila. Un Subject no reconocido cae al TryGetValue y
+    // lanza (boundary), y la clase base lo dead-letterea.
+    private static readonly IReadOnlyDictionary<string, Func<BinaryData, ICommandRouter, CancellationToken, Task>>
+        DespachadorPorSubject = new Dictionary<string, Func<BinaryData, ICommandRouter, CancellationToken, Task>>
+        {
+            [typeof(TurnoCreado).FullName!] = (body, router, ct) =>
+                router.InvokeAsync(
+                    new ConsolidarDesdeTurnoCreado(ServiceBusDeserializador.Deserializar<TurnoCreado>(body).TurnoId), ct),
+            [typeof(EmpleadoAsignado).FullName!] = (body, router, ct) =>
+                router.InvokeAsync(
+                    new ConsolidarDesdeEmpleadoAsignado(ServiceBusDeserializador.Deserializar<EmpleadoAsignado>(body).EmpleadoId), ct),
+        };
+
     [Function("ConsolidarCierreTurno")]
     public Task Run(
         [ServiceBusTrigger("consolidar-cierre-turno", Connection = "SERVICE_BUS_CONNECTION_INTERNO",
@@ -424,27 +439,18 @@ public class ConsolidarCierreTurno(ICommandRouter commandRouter, ILogger<Consoli
         CancellationToken ct)
         => ProcesarMensajeDeSesion(message, messageActions, ct);
 
-    protected override async Task DespacharPorSubject(ServiceBusReceivedMessage message, CancellationToken ct)
+    protected override Task DespacharPorSubject(ServiceBusReceivedMessage message, CancellationToken ct)
     {
-        switch (message.Subject)
-        {
-            case nameof(TurnoCreado):
-                var turnoCreado = ServiceBusDeserializador.Deserializar<TurnoCreado>(message.Body);
-                await commandRouter.InvokeAsync(new ConsolidarDesdeTurnoCreado(turnoCreado.TurnoId), ct);
-                break;
-            case nameof(EmpleadoAsignado):
-                var empleadoAsignado = ServiceBusDeserializador.Deserializar<EmpleadoAsignado>(message.Body);
-                await commandRouter.InvokeAsync(new ConsolidarDesdeEmpleadoAsignado(empleadoAsignado.EmpleadoId), ct);
-                break;
-            default:
-                throw new InvalidOperationException(
-                    $"Subject no reconocido en el queue consolidar-cierre-turno: {message.Subject}");
-        }
+        if (!DespachadorPorSubject.TryGetValue(message.Subject ?? string.Empty, out var despachar))
+            throw new InvalidOperationException(
+                $"Subject no reconocido en el queue consolidar-cierre-turno: {message.Subject}");
+
+        return despachar(message.Body, commandRouter, ct);
     }
 }
 ```
 
-`ServiceBusSessionEndpointBase` (en `Infraestructura/`, la crea el `domain-scaffolder`) es la contraparte de `ServiceBusEndpointBase<TEvento>` para este caso: encapsula complete/lock-lost/dead-letter, pero delega el despacho al metodo abstracto `DespacharPorSubject` porque aqui no hay un unico `TEvento` -- el `switch` decide, caso por caso, que evento deserializar y que comando invocar. Un `Subject` no reconocido debe lanzar (el `default` del switch); la clase base lo captura como cualquier otro error y dead-letterea el mensaje.
+`ServiceBusSessionEndpointBase` (en `Infraestructura/`, la crea el `domain-scaffolder`) es la contraparte de `ServiceBusEndpointBase<TEvento>` para este caso: encapsula complete/lock-lost/dead-letter, pero delega el despacho al metodo abstracto `DespacharPorSubject` porque aqui no hay un unico `TEvento` -- el mapa decide, caso por caso, que evento deserializar y que comando invocar. Un `Subject` no reconocido debe lanzar (el `TryGetValue` fallido); la clase base lo captura como cualquier otro error y dead-letterea el mensaje.
 
 **Naming (ADR-0026 seccion 4, excepcion documentada de ADR-0006)**: el patron `{Accion}Cuando{Evento}` asume un estimulo unico y no aplica aqui -- exigirlo obligaria a elegir arbitrariamente uno de los N eventos convergentes. La convencion para Functions de fan-in es distinta: **el nombre del queue en kebab-case es el nombre de la Function que lo consume** (en PascalCase), y describe la decision o convergencia que resuelve, no un evento puntual. Ejemplo: queue `consolidar-cierre-turno` -> Function `ConsolidarCierreTurno`.
 
@@ -593,6 +599,39 @@ if (turno is null)
 ```
 
 Invertir una guard clause obligaria a envolver todo el cuerpo restante en un `if`, anadiendo un nivel de anidamiento y reduciendo la legibilidad. La regla aplica a las bifurcaciones `if`/`else`, no a los early-return.
+
+### Lookup map sobre switch/if para seleccion por clave discreta
+
+Antes de escribir un `switch` o una cadena de `if`/`else`, pregunta: ¿esto elige un valor o un comportamiento segun una clave? Si la respuesta es si, es un **mapa**, no control de flujo -- un `switch`/`if` asi es datos disfrazados de control de flujo.
+
+```csharp
+// INCORRECTO: datos disfrazados de control de flujo
+switch (tipo)
+{
+    case "a": return new Handler1();
+    case "b": return new Handler2();
+    case "c": return new Handler3();
+}
+
+// CORRECTO: la decision vive en un solo lugar, declarativa
+private static readonly IReadOnlyDictionary<string, Func<Handler>> Handlers = new Dictionary<string, Func<Handler>>
+{
+    ["a"] = () => new Handler1(),
+    ["b"] = () => new Handler2(),
+    ["c"] = () => new Handler3(),
+};
+```
+
+Ventajas: la tabla se lee de un vistazo, se extiende agregando una fila (no una rama), y el "no encontrado" es un `TryGetValue` explicito en el boundary. Cuando el valor depende de algo en runtime, el mapa sigue aplicando como `Dictionary<Key, Func<deps, Value>>` **definido a nivel de modulo** (una sola vez, no por invocacion) -- ver el ejemplo real en "Endpoint de fan-in: queue en modo sesion" mas arriba.
+
+**Cuando NO forzarlo (igual de importante).** Forzar un mapa donde no corresponde es el anti-patron opuesto. Deja el `switch`/`if` cuando:
+
+- **Guard clauses / early-return** de nulidad o precondicion (`if (!valido) return;` -- ver "Condiciones en positivo" arriba).
+- **Validacion en boundaries** (input HTTP, respuestas de API).
+- **`switch` exhaustivo sobre una discriminated union / pattern matching por tipo** (`switch (evento) { case TurnoCreado t: ... }`). En C# esto es idiomatico y type-safe: da narrowing por caso y, con tipo de retorno declarado, error de compilacion si falta un caso. Un `Dictionary` recibiria la union completa y perderia el narrowing. **No lo conviertas.**
+- **Rangos/umbrales numericos** (`x >= 3 ? ... : x >= 1 ? ...`): son cortes en un continuo, no claves discretas.
+
+La distincion fina: el mapa aplica cuando la clave es **un dato discreto** (un string, un enum, un id). El `switch` se queda cuando es pattern matching por forma del tipo o una guarda de precondicion.
 
 ### Diseño de factories: evaluar si el secundario supera al principal
 
