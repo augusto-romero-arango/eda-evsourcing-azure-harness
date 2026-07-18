@@ -72,7 +72,8 @@ Then(new EventoEmitido(...));
 Then(new Evento1(...), new Evento2(...));   // multiples eventos = una llamada
 
 // Verificar publicacion de eventos distribuidos
-ThenIsPublishedPrivately(AggregateId, new EventoPrivado(...));
+// PublishOptions (Cosmos.EventDriven.Abstractions >= 2.0.0) reemplaza el viejo `string groupId`
+ThenIsPublishedPrivately(new PublishOptions { GroupId = AggregateId }, new EventoPrivado(...));
 ThenIsPublishedPrivately();           // verificar que NO se publico nada privado
 ThenIsPublishedPublicly(new EventoPublico(...));
 ThenIsPublishedPublicly(              // multiples eventos = una llamada

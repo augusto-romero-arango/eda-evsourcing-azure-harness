@@ -175,11 +175,11 @@ Elimina estas lineas del `.csproj`:
 <!-- func init YA genera este metapaquete: ACTUALIZA su version a 2.52.0. NO lo agregues como segunda referencia (ver nota "Actualizar, no duplicar" tras el bloque). -->
 <PackageReference Include="Microsoft.Azure.Functions.Worker" Version="2.52.0" />
 <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.ServiceBus" Version="5.*" />
-<PackageReference Include="Cosmos.EventDriven.Abstractions" Version="1.3.0" />
-<PackageReference Include="Cosmos.EventDriven.CritterStack" Version="1.3.0" />
-<PackageReference Include="Cosmos.EventDriven.CritterStack.AzureServiceBus" Version="1.3.0" />
-<PackageReference Include="Cosmos.EventSourcing.Abstractions" Version="1.3.0" />
-<PackageReference Include="Cosmos.EventSourcing.CritterStack" Version="1.3.0" />
+<PackageReference Include="Cosmos.EventDriven.Abstractions" Version="2.1.0" />
+<PackageReference Include="Cosmos.EventDriven.CritterStack" Version="2.1.0" />
+<PackageReference Include="Cosmos.EventDriven.CritterStack.AzureServiceBus" Version="2.1.0" />
+<PackageReference Include="Cosmos.EventSourcing.Abstractions" Version="2.1.0" />
+<PackageReference Include="Cosmos.EventSourcing.CritterStack" Version="2.1.0" />
 <PackageReference Include="Microsoft.Azure.Functions.Worker.OpenTelemetry" Version="1.2.0" />
 <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.13.1" />
 <PackageReference Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.8.2" />
@@ -364,7 +364,7 @@ Lee `src/<RootNamespace>.Contracts/<RootNamespace>.Contracts.csproj`. Si no tien
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Cosmos.EventDriven.Abstractions" Version="1.3.0" />
+  <PackageReference Include="Cosmos.EventDriven.Abstractions" Version="2.1.0" />
 </ItemGroup>
 ```
 
@@ -609,11 +609,11 @@ rm -f "$REPO_ROOT/tests/<RootNamespace>.{PascalCase}.Tests/UnitTest1.cs"
 Y agregar en su lugar (en el mismo `<ItemGroup>` o en uno nuevo):
 
 ```xml
-<PackageReference Include="Cosmos.EventSourcing.Testing.Utilities" Version="1.3.0" />
+<PackageReference Include="Cosmos.EventSourcing.Testing.Utilities" Version="2.1.0" />
 <PackageReference Include="xunit.v3.mtp-v2" Version="3.*" />
 ```
 
-`Cosmos.EventSourcing.Testing.Utilities` trae transitivamente `AwesomeAssertions` y `xunit.v3.extensibility.core` (nuspec del paquete, api.nuget.org) — no hace falta declararlos. **No** trae transitivamente `Cosmos.EventSourcing.Abstractions` ni `Cosmos.EventDriven.Abstractions` (verificado en 1.3.0 contra el nuspec real, corrigiendo una afirmacion previa inexacta): esos dos llegan al proyecto de tests via el `ProjectReference` al proyecto de dominio (paso 4 mas abajo), que ya los referencia directamente.
+`Cosmos.EventSourcing.Testing.Utilities` trae transitivamente `AwesomeAssertions`, `JetBrains.Annotations` y `xunit.v3.extensibility.core` (nuspec del paquete, api.nuget.org) — no hace falta declararlos. **No** trae transitivamente `Cosmos.EventSourcing.Abstractions` ni `Cosmos.EventDriven.Abstractions` (reverificado en 2.1.0 contra el nuspec real, issue #312 -- la afirmacion ya era valida en 1.3.0 y se mantiene): esos dos llegan al proyecto de tests via el `ProjectReference` al proyecto de dominio (paso 4 mas abajo), que ya los referencia directamente.
 
 **3b. Agregar `<OutputType>Exe</OutputType>` al `<PropertyGroup>`** del csproj de tests. xunit v3 con mtp-v2 requiere que el proyecto compile como ejecutable:
 

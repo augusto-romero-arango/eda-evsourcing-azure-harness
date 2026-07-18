@@ -193,21 +193,21 @@ public partial class AsignarEmpleadoATurnoCommandHandler(IEventStore eventStore,
 
 ### `groupId` en `PublishAsync`: invariante dura con `requires_session` (ADR-0026)
 
-Los ejemplos de arriba publican con `eventSender.PublishAsync(turno.GetPrivateEvents())`, sin `groupId` -- es el caso normal: un topic con subscriptions simples (fan-out, ADR-0001) no necesita sesion. `IPrivateEventSender.PublishAsync` tiene tambien una sobrecarga con `groupId` como primer argumento (uso real verificado en un consumidor: `PublishAsync(comando.TenantId.ToString(), aggregate.GetPrivateEvents())`); ese `groupId` fija el `SessionId` del mensaje -- a nivel de protocolo AMQP viaja como la propiedad `group-id` [Microsoft Learn, "Message sessions"]. La firma completa vive en el paquete externo `Cosmos.EventDriven.Abstractions`; este agente no la agrega, solo ensena el CUANDO/COMO de usarla.
+Los ejemplos de arriba publican con `eventSender.PublishAsync(turno.GetPrivateEvents())`, sin `groupId` -- es el caso normal: un topic con subscriptions simples (fan-out, ADR-0001) no necesita sesion. `IPrivateEventSender.PublishAsync` tiene tambien una sobrecarga con un parametro `PublishOptions` (`Cosmos.EventDriven.Abstractions` >= 2.0.0; hasta 1.3.0 era un `string groupId` posicional -- signature bump verificado en issue #312, ver ADR-0003 "Control de cambios"): `PublishAsync(PublishOptions options, params IPrivateEvent[] events)`, donde `PublishOptions.GroupId` fija el `SessionId` del mensaje -- a nivel de protocolo AMQP viaja como la propiedad `group-id` [Microsoft Learn, "Message sessions"]. La firma completa vive en el paquete externo `Cosmos.EventDriven.Abstractions`; este agente no la agrega, solo ensena el CUANDO/COMO de usarla.
 
-**Invariante dura (ADR-0026).** Si el topic al que publicas alimenta, via `forward_to`, un queue con `requires_session = true` (fan-in -- ver "Endpoint de fan-in" mas abajo y "Infraestructura (topics y subscriptions)" mas abajo), el productor **debe** publicar con `groupId` = la clave del aggregate destino (el mismo valor usado en `StartStream`/`GetAggregateRootAsync`). `requires_session` en el destino y `groupId` en el productor se despliegan **juntos** -- nunca uno sin el otro.
+**Invariante dura (ADR-0026).** Si el topic al que publicas alimenta, via `forward_to`, un queue con `requires_session = true` (fan-in -- ver "Endpoint de fan-in" mas abajo y "Infraestructura (topics y subscriptions)" mas abajo), el productor **debe** publicar con `PublishOptions.GroupId` = la clave del aggregate destino (el mismo valor usado en `StartStream`/`GetAggregateRootAsync`). `requires_session` en el destino y `GroupId` en el productor se despliegan **juntos** -- nunca uno sin el otro.
 
 **Consecuencia de omitirlo.** Un mensaje **sin** `SessionId` que llega, via auto-forward, a un destino con sesion habilitada se dead-lettera en la entidad **fuente** (la subscription que hace el forward) -- no en el queue destino ni en la Function que lo consume: la entidad session-enabled solo acepta mensajes con `SessionId` [Microsoft Learn, "Chaining Service Bus entities with autoforwarding"]. El mensaje se pierde en silencio si nadie monitorea esa dead-letter.
 
 ```csharp
 await eventSender.PublishAsync(
-    comando.TurnoId.ToString(),   // groupId = SessionId = clave del aggregate destino
+    new PublishOptions { GroupId = comando.TurnoId.ToString() },   // GroupId = SessionId = clave del aggregate destino
     turno.GetPrivateEvents());
 ```
 
-**Como saber si aplica.** Revisa, en `infra/environments/dev/main.tf`, el bloque `topics_config` de `module "service_bus_interno"`: si alguna subscription de tu topic declara `forward_to = "<queue>"` y ese `<queue>` existe en `queues_config` con `requires_session = true`, usa la sobrecarga con `groupId`. Si ninguna subscription del topic tiene `forward_to`, sigue publicando sin `groupId` (los ejemplos de arriba).
+**Como saber si aplica.** Revisa, en `infra/environments/dev/main.tf`, el bloque `topics_config` de `module "service_bus_interno"`: si alguna subscription de tu topic declara `forward_to = "<queue>"` y ese `<queue>` existe en `queues_config` con `requires_session = true`, usa la sobrecarga con `PublishOptions.GroupId`. Si ninguna subscription del topic tiene `forward_to`, sigue publicando sin `PublishOptions` (los ejemplos de arriba).
 
-**Trabajo downstream, no del harness.** Si al implementar en un consumidor encuentras un handler que aun no cumple este invariante -- por ejemplo, que publica sin `groupId` desde antes de que existiera esta doctrina; caso real: `CreateAdminUserCommandHandler` en `Cosmos.ControlPlane` -- no lo refactorices como parte de un issue no relacionado. Homologarlo contra esta seccion y completar el wiring de infraestructura/endpoint (ADR-0026, issues #270/#271) es tarea del **consumidor**, con su propio seguimiento en el backlog de ese repo. Documenta el hallazgo en tu resumen para seguimiento administrativo; no lo corrijas por tu cuenta.
+**Trabajo downstream, no del harness.** Si al implementar en un consumidor encuentras un handler que aun no cumple este invariante -- por ejemplo, que publica sin `GroupId` desde antes de que existiera esta doctrina; caso real: `CreateAdminUserCommandHandler` en `Cosmos.ControlPlane` -- no lo refactorices como parte de un issue no relacionado. Homologarlo contra esta seccion y completar el wiring de infraestructura/endpoint (ADR-0026, issues #270/#271) es tarea del **consumidor**, con su propio seguimiento en el backlog de ese repo. Documenta el hallazgo en tu resumen para seguimiento administrativo; no lo corrijas por tu cuenta.
 
 Doctrina completa (criterio de dos condiciones, topologia fuente/destino, restriccion de plataforma, naming de la Function de fan-in): **ADR-0026**. Este agente no la duplica.
 
@@ -224,21 +224,27 @@ actions"] -- por eso el productor tiene una obligacion nueva, coherente con la s
 el consumidor provisiono: **estampar la clave de enrutamiento como application property** al
 publicar (ADR-0027 decision #4).
 
-**LIMITE verificado: el paquete no expone la capacidad hoy.** `IPublicEventSender.PublishAsync`
-(igual que `IPrivateEventSender`, seccion anterior) solo expone `PublishAsync(events)` y
-`PublishAsync(groupId, events)` -- ninguna sobrecarga permite estampar application properties
-arbitrarias. El paquete `Cosmos.EventDriven.CritterStack.AzureServiceBus`/
-`Cosmos.EventDriven.Abstractions` (1.3.0) no lo soporta todavia. Igual que Alt 4 de ADR-0024
-(managed identity diferida por el mismo tipo de limite de paquete), esta capacidad queda
-**diferida** hasta que el paquete evolucione -- es trabajo **downstream** (cross-repo), no del
-harness: este agente ensena el CUANDO/COMO, no agrega la sobrecarga.
+**LIMITE verificado (actualizado en issue #312): el paquete ahora expone `PublishOptions.Headers`,
+pero su traduccion a application properties de Azure Service Bus no esta verificada.**
+`IPublicEventSender.PublishAsync` (igual que `IPrivateEventSender`, seccion anterior) expone
+`PublishAsync(events)` y, desde `Cosmos.EventDriven.Abstractions` 2.0.0 (antes `PublishAsync(groupId,
+events)` con `groupId` posicional; hasta 1.3.0 no existia otra sobrecarga), `PublishAsync(PublishOptions
+options, events)` con `PublishOptions.Headers` (`IReadOnlyDictionary<string, string>?`) ademas de
+`GroupId`. Decompilando `Cosmos.EventDriven.CritterStack` (`ilspycmd`) se confirma que cada entrada de
+`Headers` se estampa como header de Wolverine (`DeliveryOptions.WithHeader`) antes de publicar. **No
+verificado en este cambio**: si el transporte `Cosmos.EventDriven.CritterStack.AzureServiceBus`
+traduce esos headers de Wolverine a application properties de Azure Service Bus -- la unica pieza que
+falta para que esta seccion deje de tener un limite. Igual que Alt 4 de ADR-0024 (managed identity
+diferida por el mismo tipo de limite de paquete), confirmar esa traduccion y, si aplica, adoptar
+`Headers` para el estampado de la clave de enrutamiento queda **diferido** a un issue de seguimiento
+-- es trabajo **downstream** (cross-repo) que este agente no implementa especulativamente.
 
-**No reusar `groupId`/`SessionId` como clave de enrutamiento.** `groupId` (seccion "`groupId` en
-`PublishAsync`" arriba) esta **reservado** a la serializacion de fan-in por clave de aggregate
-(ADR-0026); la clave de enrutamiento de ADR-0027 es una propiedad **distinta**, con proposito
-distinto (seleccion de destinatario, no serializacion de escritura concurrente). Un flujo podria
-necesitar ambas a la vez -- son ortogonales y **no deben compartir la misma propiedad** (ADR-0027
-decision #5).
+**No reusar `GroupId`/`SessionId` como clave de enrutamiento.** `PublishOptions.GroupId` (seccion
+"`groupId` en `PublishAsync`" arriba) esta **reservado** a la serializacion de fan-in por clave de
+aggregate (ADR-0026); la clave de enrutamiento de ADR-0027 es una propiedad **distinta**, con
+proposito distinto (seleccion de destinatario, no serializacion de escritura concurrente). Un flujo
+podria necesitar ambas a la vez -- son ortogonales y **no deben compartir la misma propiedad**
+(ADR-0027 decision #5).
 
 **Trabajo downstream, no del harness.** Si al implementar un flujo que necesita este enrutamiento
 descubres que el paquete aun no soporta application properties arbitrarias, documenta el hallazgo
