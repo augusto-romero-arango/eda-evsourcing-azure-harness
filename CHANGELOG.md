@@ -4,6 +4,8 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-07-18
+
 ### Changed
 
 - **`implementer`/`reviewer` ensenan la heuristica lookup map sobre switch/if para seleccion por clave discreta, y se corrige el bug de correctitud `nameof` -> `Type.FullName` en el ejemplo de fan-in (issue #311)**: `agents/implementer.md` suma la seccion "Lookup map sobre switch/if para seleccion por clave discreta" (junto a "Condiciones en positivo"): preferir un `Dictionary<Key, ...>` estatico a nivel de modulo sobre un `switch`/cadena de `if` cuando el condicional selecciona un valor o comportamiento por una clave discreta (string, enum, id), con los caveats de cuando NO forzarlo (guard clauses, validacion en boundaries, `switch` exhaustivo sobre discriminated union/pattern matching por tipo, rangos numericos). El ejemplo canonico de fan-in (seccion "Endpoint de fan-in: queue en modo sesion", ADR-0026) reemplaza el `switch (message.Subject)` por ese lookup map. De paso se corrige un bug de correctitud en el mismo ejemplo, confirmado empiricamente en un consumidor real (`Cosmos.ControlPlane`, PR #95, fan-in `NotificarProgresoOnboarding`): el discriminante no es `nameof(TEvento)` (que la guia marcaba como "no verificado") sino `typeof(TEvento).FullName` -- Wolverine (`WolverinePrivateEventSender` + `WolverineMessageNaming`/`FullTypeNaming`) estampa `ServiceBusMessage.Subject` con el nombre completo del tipo para contratos sin `[MessageIdentity]`; con `nameof` el discriminante nunca casaba y las 3 patas del fan-in terminaban en dead-letter (16 mensajes muertos, 0 activos en dev). `agents/reviewer.md` (seccion 5, "Estilo y elegancia") suma el chequeo correspondiente en fase refactor, con la misma excepcion de discriminated unions/guard clauses. Archivos modificados: `agents/implementer.md`, `agents/reviewer.md`.
@@ -405,7 +407,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.14.4...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.14.4...v0.15.0
 [0.14.4]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.14.3...v0.14.4
 [0.14.3]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.14.2...v0.14.3
 [0.14.2]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.14.1...v0.14.2
