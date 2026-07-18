@@ -25,23 +25,68 @@ Se adoptan los siguientes paquetes para todos los dominios de ControlAsistencias
 
 | Paquete | Version | Rol |
 |---------|---------|-----|
-| `Cosmos.EventSourcing.CritterStack` | 1.3.0 | Configura Marten como event store |
-| `Cosmos.EventSourcing.Abstractions` | 1.3.0 | Interfaces de event sourcing (IEventStore, etc.) |
-| `Cosmos.EventDriven.CritterStack` | 1.3.0 | Configura Wolverine como mediador de comandos |
-| `Cosmos.EventDriven.CritterStack.AzureServiceBus` | 1.3.0 | Integra Wolverine con Azure Service Bus |
-| `Cosmos.EventDriven.Abstractions` | 1.3.0 | Interfaces de mensajeria (ICommandRouter, IPublicEventSender, etc.) |
+| `Cosmos.EventSourcing.CritterStack` | 2.1.0 | Configura Marten como event store |
+| `Cosmos.EventSourcing.Abstractions` | 2.1.0 | Interfaces de event sourcing (IEventStore, etc.) |
+| `Cosmos.EventDriven.CritterStack` | 2.1.0 | Configura Wolverine como mediador de comandos |
+| `Cosmos.EventDriven.CritterStack.AzureServiceBus` | 2.1.0 | Integra Wolverine con Azure Service Bus |
+| `Cosmos.EventDriven.Abstractions` | 2.1.0 | Interfaces de mensajeria (ICommandRouter, IPublicEventSender, etc.) |
 | `Microsoft.Azure.Functions.Worker` | 2.52.0 | Metapaquete del worker aislado; fijado en lockstep con `Worker.OpenTelemetry` para evitar desalineamiento Core/Grpc |
 | `Microsoft.Azure.Functions.Worker.OpenTelemetry` | 1.2.0 | Defaults de OpenTelemetry para el worker aislado de Functions |
 | `OpenTelemetry.Extensions.Hosting` | 1.13.1 | SDK de hosting de OpenTelemetry; minimo exigido por `Worker.OpenTelemetry` |
 | `Azure.Monitor.OpenTelemetry.Exporter` | 1.8.2 | Exporter de OpenTelemetry hacia Application Insights |
 
-`Cosmos.EventSourcing.CritterStack` 1.3.0 arrastra Marten 9.12.0 (antes 8.23.0), version que ya
-resuelve [GHSA-vmw2-qwm8-x84c](https://github.com/advisories/GHSA-vmw2-qwm8-x84c) (CVE-2026-45288 --
-sanitizacion insuficiente del parametro `regConfig` en las APIs de busqueda de texto completo de
-Marten, permitiendo inyeccion de SQL arbitrario; corregida en Marten 8.37.0). El salto 0.x -> 1.3.0
-de los cinco paquetes `Cosmos.*` no introduce breaking changes de API (verificado por el consumidor
-Cosmos.ControlPlane: `dotnet build -c Release` limpio y 111 tests unitarios en verde tras el bump, y
-`dotnet list package --vulnerable --include-transitive` sin paquetes vulnerables).
+`Cosmos.EventSourcing.CritterStack` 2.1.0 arrastra Marten 9.12.0 -- la misma version que ya fijaba
+1.3.0, sin cambio transitorio en este bump (verificado contra el nuspec real de
+`Cosmos.EventSourcing.CritterStack` 2.0.0 y 2.1.0 en api.nuget.org: ambas declaran `Marten [9.12.0, )`,
+igual que 1.3.0) --, que sigue resolviendo [GHSA-vmw2-qwm8-x84c](https://github.com/advisories/GHSA-vmw2-qwm8-x84c)
+(CVE-2026-45288 -- sanitizacion insuficiente del parametro `regConfig` en las APIs de busqueda de
+texto completo de Marten, permitiendo inyeccion de SQL arbitrario; corregida en Marten 8.37.0). No
+hay reintroduccion del CVE. El salto 0.x -> 1.3.0 de los cinco paquetes `Cosmos.*` no introdujo
+breaking changes de API (verificado por el consumidor Cosmos.ControlPlane: `dotnet build -c Release`
+limpio y 111 tests unitarios en verde tras el bump, y `dotnet list package --vulnerable --include-transitive`
+sin paquetes vulnerables).
+
+El salto `1.3.0 -> 2.0.0 -> 2.1.0` (issue #312) se verifico decompilando con `ilspycmd` las tres
+versiones de cada uno de los cinco `.dll` (descargados de `api.nuget.org/v3-flatcontainer/`) y
+diffeando la superficie publica resultante -- los paquetes shipean solo binario, sin `.cs` publico
+ni release notes en el nuspec. Resultado:
+
+- **Sin cambios de API** en `Cosmos.EventSourcing.Abstractions`, `Cosmos.EventSourcing.CritterStack`
+  y `Cosmos.EventDriven.CritterStack.AzureServiceBus`: el diff entre versiones solo toca
+  `AssemblyInformationalVersion`. Todos los simbolos que citan los agentes del harness --
+  `IEventStore`, `ICommandRouter`, `ICommandHandlerAsync<T>`, `AgregarWolverineParaComandosServerless`,
+  `AgregarWolverineCommandRouter`, `AgregarWolverineEventSender`, `AgregarMartenEventStore`,
+  `CommandHandlerAsyncTest<T>` -- mantienen nombre, namespace y firma sin cambios.
+- **Breaking change real en `Cosmos.EventDriven.Abstractions` 2.0.0** (se conserva en 2.1.0): la
+  sobrecarga `IPrivateEventSender.PublishAsync(string groupId, ...)` /
+  `IPublicEventSender.PublishAsync(string groupId, ...)` se reemplaza por
+  `PublishAsync(PublishOptions options, ...)`, con `PublishOptions { GroupId, Headers }` (record
+  nuevo). La sobrecarga sin opciones (`PublishAsync(params IPrivateEvent[])` /
+  `PublishAsync(params IPublicEvent[])`) no cambia. Este cambio rompe
+  la invariante `groupId`/`SessionId` de ADR-0026 documentada en `agents/implementer.md` (seccion
+  "`groupId` en `PublishAsync`") y el harness de testing `Cosmos.EventSourcing.Testing.Utilities`
+  (`ThenIsPublishedPrivately(string groupId, ...)` / `ThenIsPublishedPublicly(string groupId, ...)`
+  -> `(PublishOptions expectedOptions, ...)`; `TestPrivateEventSender.GetEventsByGroupId` /
+  `TestPublicEventSender.GetEventsByGroupId` -> propiedad `PublishedWithOptions`). Corregido en el
+  mismo cambio que este bump: `agents/implementer.md`, `agents/test-writer.md` y
+  `docs/testing/harness-cheatsheet.md`. La doctrina de ADR-0024/ADR-0026/ADR-0027 no cambia -- el
+  concepto `groupId` sigue existiendo, ahora como propiedad de `PublishOptions` en vez de argumento
+  posicional -- y no requirio enmienda: ninguna contiene codigo C# literal con la firma vieja.
+- **Aditivo en 2.1.0** (no rompe nada existente, prerrequisito de issue #313): `Cosmos.EventDriven.Abstractions`/
+  `Cosmos.EventDriven.CritterStack` suman `IPrivateEventHandlerAsync<TEvent>`, `IPrivateEventRouter`,
+  la clase `WolverinePrivateEventRouter` y el metodo de extension `AgregarWolverinePrivateEventRouter()`.
+  `Cosmos.EventSourcing.Testing.Utilities` suma `PrivateEventHandlerAsyncTest<TEvent>`. Estos simbolos
+  no existen antes de 2.1.0.
+- **No verificado / fuera de alcance de issue #312**: `PublishOptions.Headers` (nuevo desde 2.0.0,
+  `IReadOnlyDictionary<string, string>?`) estampa headers de Wolverine (`DeliveryOptions.WithHeader`,
+  confirmado decompilando `Cosmos.EventDriven.CritterStack`) y podria levantar el "LIMITE verificado"
+  que `agents/implementer.md` documenta en la seccion "Clave de enrutamiento como application
+  property" (ADR-0027) -- no se confirmo en este cambio si el transporte
+  `Cosmos.EventDriven.CritterStack.AzureServiceBus` traduce esos headers de Wolverine a application
+  properties de Azure Service Bus. Se corrige unicamente la mencion de firma en esa seccion
+  (`PublishAsync(groupId, events)` -> `PublishAsync(PublishOptions options, events)`); confirmar la
+  traduccion a application properties y, si aplica, adoptar `Headers` para resolver el limite de
+  ADR-0027 queda diferido a un issue de seguimiento -- no se implemento especulativamente.
 
 Los paquetes `Microsoft.ApplicationInsights.WorkerService` y
 `Microsoft.Azure.Functions.Worker.ApplicationInsights` se reemplazan por OpenTelemetry.
@@ -154,3 +199,4 @@ por el consumidor Cosmos.ControlPlane, PR #46).
 - 2026-07-01: enmendado (issue #162, mandato de ADR-0024) para reemplazar el wiring fijo de dos brokers por Bounded Context (namespace interno como broker default + namespace de integracion como named broker `"integracion"`) por broker interno por defecto (siempre) mas N brokers nombrados (backbone compartido y, si aplica, externos), uno por ASB, por cadena de conexion custodiada.
 - 2026-07-10: enmendado (issue #259) para corregir la seccion "Observabilidad" y la tabla de paquetes -- `Azure.Monitor.OpenTelemetry.AspNetCore` (distro de ASP.NET Core, no soportada para Functions isolated worker) se reemplaza por `Microsoft.Azure.Functions.Worker.OpenTelemetry` + `Azure.Monitor.OpenTelemetry.Exporter` (camino oficial de Functions), y se documenta que la telemetria del worker exige un exporter explicito (`.UseFunctionsWorkerDefaults()` + `.UseAzureMonitorExporter()`, `host.json` con `telemetryMode: "OpenTelemetry"`) -- sin ellos, OpenTelemetry recolecta y descarta, y Application Insights solo recibe los `requests` del host. La afirmacion previa de que "la infraestructura de Azure Monitor sigue siendo necesaria para que el agente de Application Insights reciba las trazas" describia una ingesta automatica que no existe para Functions isolated worker; se elimina del cuerpo.
 - 2026-07-10: enmendado (issue #263) en dos frentes. **(a)** bump de los cinco paquetes `Cosmos.*` de pre-1.0 a `1.3.0` (sin breaking changes de API, verificado por el consumidor Cosmos.ControlPlane), que arrastra Marten `9.12.0` y resuelve [GHSA-vmw2-qwm8-x84c](https://github.com/advisories/GHSA-vmw2-qwm8-x84c)/CVE-2026-45288 (inyeccion SQL en Marten <= 8.36). **(b)** se completa el trio de OpenTelemetry del worker -- el bump de #259 solo habia agregado `Microsoft.Azure.Functions.Worker.OpenTelemetry` + `Azure.Monitor.OpenTelemetry.Exporter`, sin `OpenTelemetry.Extensions.Hosting` -- y se corrige `Microsoft.Azure.Functions.Worker.OpenTelemetry` de `1.4.0` (version que nunca existio en NuGet) a `1.2.0`; se fija ademas el metapaquete `Microsoft.Azure.Functions.Worker` en `2.52.0` en lockstep con el requisito `Worker.Core >= 2.52.0` de `Worker.OpenTelemetry` 1.2.0, para evitar el `MissingMethodException` en `DefaultTraceContext..ctor` (HTTP 500 en toda funcion) que dispara un desalineamiento Core/Grpc -- verificado por el consumidor Cosmos.ControlPlane (PR #46). Todas las versiones se verificaron contra el nuspec real de cada paquete en api.nuget.org al momento de este cambio.
+- 2026-07-18: enmendado (issue #312, prerrequisito de issue #313) para bumpear los cinco paquetes `Cosmos.*` de `1.3.0` a `2.1.0`. El delta `1.3.0 -> 2.0.0 -> 2.1.0` se verifico decompilando con `ilspycmd` las tres versiones de cada `.dll` (los paquetes no publican codigo fuente ni release notes): Marten se mantiene en `9.12.0` (sin reintroducir GHSA-vmw2-qwm8-x84c/CVE-2026-45288) y los simbolos `IEventStore`, `ICommandRouter`, `ICommandHandlerAsync<T>`, `AgregarWolverineParaComandosServerless`, `AgregarWolverineCommandRouter`, `AgregarWolverineEventSender`, `AgregarMartenEventStore`, `CommandHandlerAsyncTest<T>` no cambiaron. Se encontro un breaking change real en `Cosmos.EventDriven.Abstractions` 2.0.0 (se conserva en 2.1.0): `IPrivateEventSender.PublishAsync(string groupId, ...)`/`IPublicEventSender.PublishAsync(string groupId, ...)` se reemplaza por `PublishAsync(PublishOptions options, ...)`; el mismo cambio corrige, ademas de `agents/domain-scaffolder.md` y este ADR, `agents/implementer.md` (seccion "`groupId` en `PublishAsync`") y `agents/test-writer.md`/`docs/testing/harness-cheatsheet.md` (DSL `ThenIsPublishedPrivately`/`ThenIsPublishedPublicly`), que citaban la firma vieja. 2.1.0 ademas agrega (aditivo, sin romper nada) `IPrivateEventHandlerAsync<TEvent>`, `IPrivateEventRouter`, `AgregarWolverinePrivateEventRouter()` y `PrivateEventHandlerAsyncTest<TEvent>` -- el prerrequisito que issue #313 necesita para enseñar el patron `PrivateEventHandler`. Queda diferido a un issue de seguimiento verificar si `PublishOptions.Headers` (nuevo desde 2.0.0) resuelve el "LIMITE verificado" de ADR-0027 sobre estampado de application properties arbitrarias.

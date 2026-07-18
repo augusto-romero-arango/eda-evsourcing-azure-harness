@@ -1,6 +1,6 @@
 # Cheatsheet: `Cosmos.EventSourcing.Testing.Utilities`
 
-Referencia rapida del harness de testing de command handlers. Todas las firmas y comportamientos de este documento se verificaron contra la fuente del package (ver "Fuentes").
+Referencia rapida del harness de testing de command handlers. Todas las firmas y comportamientos de este documento se verificaron contra la fuente del package (ver "Fuentes"). Version verificada: `2.1.0` (issue #312, 2026-07-18).
 
 > **Regla de uso**: si dudas si el harness soporta algo, **consulta este archivo antes de rumiar**. Si el archivo no cubre la duda, ve a la fuente. Ver politica anti-rumination en `.claude/agents/test-writer.md`.
 
@@ -159,23 +159,25 @@ Then(streamId,
 
 ### `ThenIsPublishedPrivately` - verificar publicacion privada
 
-Firmas (`CommandHandlerTestBase.cs:118,125`):
+Firmas (verificadas decompilando `Cosmos.EventSourcing.Testing.Utilities.dll` 2.1.0 con `ilspycmd` -- el package solo shipea binario, sin `.cs` publico ni PDB con lineas de fuente):
 
 ```csharp
 public void ThenIsPublishedPrivately(params IPrivateEvent[] expectedEvents);
-public void ThenIsPublishedPrivately(string groupId, params IPrivateEvent[] expectedEvents);
+public void ThenIsPublishedPrivately(PublishOptions expectedOptions, params IPrivateEvent[] expectedEvents);
 ```
 
-La variante con `groupId` consulta `PrivateEventSender.GetEventsByGroupId(groupId)` (`TestPrivateEventSender.cs:12-15`); la otra usa `PrivateEventSender.Events` globales.
+**Cambio de firma en 2.0.0 (issue #312):** hasta `1.3.0` la segunda variante era `ThenIsPublishedPrivately(string groupId, ...)` y consultaba `PrivateEventSender.GetEventsByGroupId(groupId)`. Desde `2.0.0` recibe un `PublishOptions expectedOptions` (record con `GroupId` y `Headers`, de `Cosmos.EventDriven.Abstractions`) y verifica contra la propiedad `PrivateEventSender.PublishedWithOptions` -- una lista de tuplas `(PublishOptions Options, IReadOnlyList<IPrivateEvent> Events)`. El assert exige `PublishedWithOptions.Count == 1` ("se espera exactamente una publicación con opciones de sobre") y compara `expectedOptions.GroupId`/`Headers` exactos ademas de los eventos -- si tu handler llama `PublishAsync(options, ...)` mas de una vez con opciones distintas, este assert falla. La variante sin argumentos sigue usando `PrivateEventSender.Events` globales, sin cambios.
 
 ### `ThenIsPublishedPublicly` - verificar publicacion publica
 
-Firmas (`CommandHandlerTestBase.cs:132,139`):
+Firmas (verificadas decompilando `Cosmos.EventSourcing.Testing.Utilities.dll` 2.1.0 con `ilspycmd`):
 
 ```csharp
 public void ThenIsPublishedPublicly(params IPublicEvent[] expectedEvents);
-public void ThenIsPublishedPublicly(string groupId, params IPublicEvent[] expectedEvents);
+public void ThenIsPublishedPublicly(PublishOptions expectedOptions, params IPublicEvent[] expectedEvents);
 ```
+
+Mismo cambio de firma que `ThenIsPublishedPrivately` (ver arriba): `string groupId` (hasta 1.3.0) -> `PublishOptions expectedOptions` (desde 2.0.0), verificado contra `PublicEventSender.PublishedWithOptions`.
 
 Ambas familias (`ThenIsPublishedPrivately`/`ThenIsPublishedPublicly`) delegan en `AssertEvents` (`CommandHandlerTestBase.cs:142-173`), que tiene **dos comportamientos distintos segun el count de `expectedEvents`**:
 
@@ -308,6 +310,9 @@ And<TurnoAggregateRoot, Turno>(
 
 - **¿Puedo sobrescribir los fakes `EventStore`/`PrivateEventSender`/`PublicEventSender`?**
   No debes. Son `protected readonly` e instanciados en la clase base (`CommandHandlerTestBase.cs:25-35`). Inyectalos tal cual en el `Handler` del test. Nunca crees clases que implementen `IEventStore` en tests - el unico valido es el heredado.
+
+- **¿Que reemplazo a `ThenIsPublishedPrivately(string groupId, ...)`/`ThenIsPublishedPublicly(string groupId, ...)` desde que el paquete subio a 2.0.0/2.1.0 (issue #312)?**
+  `ThenIsPublishedPrivately(PublishOptions expectedOptions, ...)`/`ThenIsPublishedPublicly(PublishOptions expectedOptions, ...)`. `PublishOptions` es un record de `Cosmos.EventDriven.Abstractions` con `GroupId` y `Headers`; constrúyelo inline: `new PublishOptions { GroupId = AggregateId }`. El fake ya no expone `GetEventsByGroupId(groupId)` - expone `PublishedWithOptions`, una lista de tuplas `(PublishOptions Options, IReadOnlyList<T> Events)` que el assert exige tenga exactamente un elemento.
 
 - **¿`When`/`WhenAsync` llama `SaveChanges`?**
   Si, despues de invocar el handler (`CommandHandlerAsyncTest.cs:20` y `CommandHandlerTest.cs:20`). Por eso en `Then` ya ves los eventos persistidos.
