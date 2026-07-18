@@ -61,7 +61,8 @@ ni release notes en el nuspec. Resultado:
   sobrecarga `IPrivateEventSender.PublishAsync(string groupId, ...)` /
   `IPublicEventSender.PublishAsync(string groupId, ...)` se reemplaza por
   `PublishAsync(PublishOptions options, ...)`, con `PublishOptions { GroupId, Headers }` (record
-  nuevo). La sobrecarga sin `groupId` (`PublishAsync(params IEvent[])`) no cambia. Este cambio rompe
+  nuevo). La sobrecarga sin opciones (`PublishAsync(params IPrivateEvent[])` /
+  `PublishAsync(params IPublicEvent[])`) no cambia. Este cambio rompe
   la invariante `groupId`/`SessionId` de ADR-0026 documentada en `agents/implementer.md` (seccion
   "`groupId` en `PublishAsync`") y el harness de testing `Cosmos.EventSourcing.Testing.Utilities`
   (`ThenIsPublishedPrivately(string groupId, ...)` / `ThenIsPublishedPublicly(string groupId, ...)`
