@@ -46,6 +46,26 @@ El proyecto usa `Cosmos.EventSourcing.Testing.Utilities`. La **referencia canoni
 | `CommandHandlerAsyncTest<TCommand>` | Handler es `ICommandHandlerAsync<TCommand>` |
 | `CommandHandlerAsyncTest<TCommand, TResult>` | Handler retorna un resultado |
 | `CommandHandlerTest<TCommand>` | Handler es `ICommandHandler<TCommand>` (sincrono) |
+| `PrivateEventHandlerAsyncTest<TEvent>` | Handler es `IPrivateEventHandlerAsync<TEvent>` -- EventHandler directo sobre un evento privado, sin comando espejo (ver `implementer.md` "EventHandler — reaccionar a un evento privado") |
+
+**`PrivateEventHandlerAsyncTest<TEvent>` -- diferencia clave: `WhenAsync` recibe el EVENTO, no un comando:**
+
+```csharp
+public class TurnoCreadoEventHandlerTests : PrivateEventHandlerAsyncTest<TurnoCreado>
+{
+    protected override IPrivateEventHandlerAsync<TurnoCreado> Handler => new TurnoCreadoEventHandler(EventStore);
+
+    [Fact]
+    public async Task TurnoCreado_DepuraMarcaciones()
+    {
+        Given();
+        await WhenAsync(new TurnoCreado(GuidAggregateId, "Turno Manana", new TimeOnly(6, 0), new TimeOnly(14, 0)));
+        Then(new MarcacionesDepuradas(GuidAggregateId));
+    }
+}
+```
+
+El resto del DSL (`Given`, `Then`, `ThenIsPublishedPrivately`, `And<>`, `EventStore`, `PrivateEventSender`, `GuidAggregateId`) es identico al de `CommandHandlerAsyncTest<TCommand>` -- ambos heredan de la misma `CommandHandlerTestBase`. El endpoint (`PrivateEventEndpointBase<TEvento>`) se testea con un fake de `IPrivateEventRouter`, contraparte del fake de `ICommandRouter` que se usa para `ServiceBusEndpointBase<TEvento>`.
 
 **Propiedades heredadas:**
 

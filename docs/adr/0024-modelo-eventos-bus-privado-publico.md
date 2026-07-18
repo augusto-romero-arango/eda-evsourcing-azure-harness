@@ -2,7 +2,7 @@
 
 - **Fecha**: 2026-07-01
 - **Estado**: aceptado
-- **Aplica a**: doctrina de mensajeria del marco; gobierno de los agentes `implementer`, `domain-scaffolder`, `infra-base-scaffolder` e `infra-writer`; contrato `harness.config.json`. Enmienda ADR-0021, ADR-0023 (decisiones #2 y #5) y ADR-0003.
+- **Aplica a**: doctrina de mensajeria del marco; gobierno de los agentes `implementer`, `domain-scaffolder`, `test-writer`, `reviewer`, `infra-base-scaffolder` e `infra-writer`; contrato `harness.config.json`. Enmienda ADR-0021, ADR-0023 (decisiones #2 y #5) y ADR-0003.
 
 ## Contexto
 
@@ -75,6 +75,23 @@ Todas las cadenas de conexion de Azure Service Bus que el BC toca -- la del ASB 
 - El backbone compartido y, si aplica, cada ASB externo se registran como **brokers nombrados**, uno por ASB, leyendo su cadena de conexion custodiada.
 - El wiring se mantiene **por cadena de conexion**, coherente con el paquete `Cosmos.EventDriven.CritterStack.AzureServiceBus` actual. El acceso por managed identity queda fuera de alcance de este ADR (ver Alt 4).
 
+### 8. Consumo directo de eventos privados: EventHandler sin comando espejo (issue #313)
+
+`Cosmos.EventDriven` 2.1.0 agrega un segundo camino de consumo para el ASB propio del BC (decision #3): cuando un dominio reacciona a un evento privado y el comando que escribiria seria un **espejo** del evento (mismos campos o un subconjunto, sin identidad ni semantica propia), el consumidor **no** traduce a comando -- consume el evento **directamente** con `IPrivateEventHandlerAsync<TEvent> where TEvent : IPrivateEvent`, ruteado por `IPrivateEventRouter` (`Cosmos.EventDriven.Abstractions`), registrado en DI via `AgregarWolverinePrivateEventRouter()` (`Cosmos.EventDriven.CritterStack`). El endpoint hereda de `PrivateEventEndpointBase<TPrivateEvent>` -- contraparte de `ServiceBusEndpointBase<TEvento>` -- en vez de rutear via `ICommandRouter`.
+
+**Asimetria privado/publico (deliberada, no un descuido).** 2.1.0 solo agrega el lado **privado**: no existe `IPublicEventHandlerAsync` ni `IPublicEventRouter`. Un `IPublicEvent` (decision #4, backbone compartido) sigue traduciendose siempre a un comando via `ICommandRouter`. El principio de que "todo evento de bus cruza fisicamente el ASB" (Contexto) no cambia -- cambia unicamente el mecanismo de consumo del lado privado, cuando el comando equivalente no aportaria nada.
+
+**Criterio de aplicacion (las tres condiciones juntas):**
+1. El estimulo es un `IPrivateEvent` (el gate `where TEvent : IPrivateEvent`).
+2. Se consume por una subscription de un unico topic, no un fan-in multi-tipo (la doctrina de ADR-0026 no cambia: el fan-in nunca usa este patron, porque el despacho por `Subject` no tiene un unico `TEvento`).
+3. El comando equivalente seria un espejo del evento -- si aporta identidad, semantica o campos propios, se queda como comando explicito ruteado por `ICommandRouter`.
+
+**Naming y testing:** `{Evento}EventHandler`, en subcarpeta `EventHandler/` del feature folder (espejo de `CommandHandler/`). Base de test: `PrivateEventHandlerAsyncTest<TEvent>` (`Cosmos.EventSourcing.Testing.Utilities`), con `WhenAsync(evento)` en vez de `WhenAsync(comando)`.
+
+**Precedente verificado:** `Cosmos.ControlPlane` migro 4 consumidores de `ICommandHandlerAsync<TEvento>` a `IPrivateEventHandlerAsync<TEvento>` en PR #94 (ver tambien #92/#93, unificacion previa). Ejemplo real: `CreateBillingAccountFunction`, `TenantOnboardingStartedEventHandler : IPrivateEventHandlerAsync<TenantOnboardingStarted>`.
+
+Doctrina detallada del patron (before/after, regla de decision, tabla completa de "cuando NO usarlo"): `agents/implementer.md`, seccion "EventHandler — reaccionar a un evento privado". Este ADR no la duplica.
+
 ## Alternativas consideradas
 
 ### Alt 1: mantener "dos namespaces por BC, always-on" (ADR-0023 #2)
@@ -137,6 +154,9 @@ Al implementar estas enmiendas, el contenido superado se **elimina del cuerpo** 
 - Paquete `Cosmos.EventDriven.CritterStack.AzureServiceBus` (`WolverineFx.AzureServiceBus` 6.1.0): el wiring solo acepta cadena de conexion; base de la decision de Alt 4.
 - "Use Key Vault references for App Service and Azure Functions" — referencias `@Microsoft.KeyVault(...)` en app settings. https://learn.microsoft.com/azure/app-service/app-service-key-vault-references
 - ADR-0026 (colas de Service Bus con sesion para fan-in y serializacion por clave de aggregate): el `groupId` de `IPrivateEventSender` que este ADR expone es el mecanismo por el cual el productor fija el `SessionId` que exige el queue de fan-in con sesion de ADR-0026. Sin cambio a la firma ni a la doctrina de enrutamiento privado/publico de este ADR.
+- issue #313 (EventHandler directo para eventos privados sin comando espejo): agrega la decision #8 de este ADR. Consumidor de referencia: `Cosmos.ControlPlane` PR #94 (migracion de 4 handlers), #92/#93 (unificacion previa).
+- Heuristica *no-tipos-espejo* (motiva eliminar el comando espejo cuando no aporta identidad/semantica propia sobre el evento): `~/.claude/heuristics/general/no-tipos-espejo.md` (heuristica del harness, no versionada en este repo).
+- issue #312 (prerrequisito de #313): bump de `Cosmos.EventDriven`/`Cosmos.EventSourcing` a `2.1.0`, version minima que trae `IPrivateEventHandlerAsync<TEvent>`, `IPrivateEventRouter`, `AgregarWolverinePrivateEventRouter()` y `PrivateEventHandlerAsyncTest<TEvent>` (ver `docs/adr/0003-event-sourcing-marten-wolverine.md`).
 
 ## Control de cambios
 
@@ -144,3 +164,4 @@ Al implementar estas enmiendas, el contenido superado se **elimina del cuerpo** 
 - 2026-07-01: `aceptado` tras la revision con el equipo.
 - 2026-07-01: enmendado (issue #184, mandato de ADR-0025) para generalizar la decision #6: la custodia en Key Vault deja de presentarse como exclusiva de las cadenas de ASB y remite a ADR-0025 como doctrina general; se incluye explicitamente la cadena del ASB propio/interno, que el cuerpo omitia.
 - 2026-07-15: enmendado (issue #269, doctrina fundacional de ADR-0026) para agregar la referencia cruzada a ADR-0026: el `groupId` de `IPrivateEventSender` es el mecanismo por el que el productor fija el `SessionId` de un queue de fan-in con sesion. Sin cambio a la firma ni a la doctrina de este ADR.
+- 2026-07-18: enmendado (issue #313, sobre el prerrequisito de version de issue #312) para agregar la decision #8: consumo directo de eventos privados sin comando espejo via `IPrivateEventHandlerAsync<TEvent>`/`IPrivateEventRouter` (`Cosmos.EventDriven` 2.1.0), con la asimetria deliberada de que el lado publico no tiene contraparte todavia (`IPublicEventHandlerAsync` no existe en 2.1.0). Sin cambio a las decisiones #1-#7 ni a la doctrina de enrutamiento privado/publico existente.

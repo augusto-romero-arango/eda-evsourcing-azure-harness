@@ -191,6 +191,61 @@ public partial class AsignarEmpleadoATurnoCommandHandler(IEventStore eventStore,
 - NUNCA hagas try-catch de excepciones de dominio
 - Para triggers ServiceBus: si el aggregate no existe o falla, el aggregate emite evento de fallo — no throw
 
+### EventHandler — reaccionar a un evento privado (sin comando espejo)
+
+`Cosmos.EventDriven` 2.1.0 agrega un segundo camino para reaccionar a un evento del mismo Bounded Context: consumirlo **directamente** con `IPrivateEventHandlerAsync<TEvent>`, sin traducirlo antes a un comando espejo. Las cuatro abstracciones nuevas estan **todas restringidas a `IPrivateEvent`** -- ese es el gate tecnico que decide donde aplica el patron:
+
+| Simbolo | Paquete | Rol |
+|---|---|---|
+| `IPrivateEventHandlerAsync<TEvent> where TEvent : IPrivateEvent` | `Cosmos.EventDriven.Abstractions` | Handler que reacciona a un evento privado. `HandleAsync(TEvent @event, CancellationToken)`. |
+| `IPrivateEventRouter` (`InvokeAsync<TEvent>(TEvent, CancellationToken) where TEvent : class, IPrivateEvent`) | `Cosmos.EventDriven.Abstractions` | Rutea el evento privado entrante a su handler. |
+| `AgregarWolverinePrivateEventRouter()` | `Cosmos.EventDriven.CritterStack` | Registra `IPrivateEventRouter` en DI (el `domain-scaffolder` lo agrega en `Program.cs`, junto a `AgregarWolverineEventSender()`). |
+| `PrivateEventHandlerAsyncTest<TEvent>` | `Cosmos.EventSourcing.Testing.Utilities` | Base de test (`Given`/`WhenAsync(evento)`/`Then`/`ThenIsPublishedPrivately`) — ver `test-writer.md`. |
+
+**No existe `IPublicEventHandlerAsync` ni `IPublicEventRouter` en 2.1.0.** Solo se agrego el lado privado: un evento publico (`IPublicEvent`) sigue traduciendose siempre a un comando via `ICommandRouter` (ver tabla "Cuando NO usarlo" abajo).
+
+**Cuando usarlo (las tres condiciones juntas):**
+1. El estimulo es un `IPrivateEvent` (intra-BC; el gate `where TEvent : IPrivateEvent`).
+2. Se consume por una subscription de un unico topic (un `TEvento`), no un fan-in multi-tipo (ver "Endpoint de fan-in" mas abajo).
+3. El comando que escribirias seria un **espejo** del evento: mismos campos (o un subconjunto), sin identidad ni semantica propia.
+
+**Antes (evento → comando espejo — el patron de "Endpoint ServiceBus" mas abajo, cuando el comando no aporta nada nuevo):**
+```csharp
+public partial class DepurarMarcacionesDeTurnoCommandHandler(IEventStore eventStore)
+    : ICommandHandlerAsync<DepurarMarcacionesDeTurno>   // DepurarMarcacionesDeTurno(Guid TurnoId) es espejo de TurnoCreado(Guid TurnoId)
+{
+    public async Task HandleAsync(DepurarMarcacionesDeTurno command, CancellationToken ct) { ... }
+}
+```
+
+**Despues (EventHandler directo, patron 2.1.0):**
+```csharp
+public partial class TurnoCreadoEventHandler(IEventStore eventStore)
+    : IPrivateEventHandlerAsync<TurnoCreado>
+{
+    public async Task HandleAsync(TurnoCreado @event, CancellationToken cancellationToken) { ... }
+}
+```
+
+El endpoint correspondiente hereda de `PrivateEventEndpointBase<TurnoCreado>` (lo crea el `domain-scaffolder`, contraparte de `ServiceBusEndpointBase<TEvento>`) en vez de rutear un `ICommandRouter` — mismo `[Function]`/`[ServiceBusTrigger]`, mismo manejo de fallos (complete/lock-lost/dead-letter), solo cambia el router inyectado.
+
+**DI (`Program.cs`):** agregar `builder.Services.AgregarWolverinePrivateEventRouter();` junto a `AgregarWolverineEventSender()` (registro barato, lo hace el `domain-scaffolder` por defecto). Si el dominio ya no rutea ningun comando, `AgregarWolverineCommandRouter()` puede retirarse; si ademas tiene endpoints HTTP o de fan-in, ambos routers conviven sin conflicto.
+
+**Cuando NO usarlo (mantener evento → comando por `ICommandRouter`):**
+
+| Caso | Por que | Que usar |
+|---|---|---|
+| Consumir un `IPublicEvent` (inter-BC via backbone, u otro plano del producto) | 2.1.0 no trae `IPublicEventHandlerAsync`/router publico; `IPrivateEventRouter` esta restringido a `IPrivateEvent` | `ServiceBusEndpointBase<T>` + `ICommandRouter`, deserializando a un comando local |
+| Fan-in: varios tipos de evento en un queue de sesion (ADR-0026) | No hay un unico `TEvento` -- el despacho es por `Subject`; ademas el comando no es espejo (estampa datos de transporte, aplana/renombra) | `ServiceBusSessionEndpointBase` + `ICommandRouter` |
+| La traduccion agrega semantica o campos que el evento no trae (timestamp de recepcion, aplanamiento, combinar fuentes, validacion/identidad propia) | El comando **no** es espejo: tiene razon de existir | Comando explicito + `ICommandHandlerAsync<TComando>` |
+| Comando genuino desde el boundary externo (endpoint HTTP) | No hay evento; es un comando del cliente | `ICommandHandlerAsync<TComando>` (patron CommandHandler intacto) |
+
+**Regla de decision (una linea):** ¿el estimulo es un `IPrivateEvent` y el comando que escribirias seria un espejo suyo? → EventHandler directo. Si el estimulo es publico/externo, o el comando aporta identidad/semantica/campos propios, o es un fan-in multi-tipo → se queda como comando.
+
+**Naming:** `{Evento}EventHandler` (ej. `TurnoCreadoEventHandler`), en subcarpeta `EventHandler/` del feature folder (espejo de `CommandHandler/`) — ver "Convenciones de nombramiento" mas abajo.
+
+Doctrina completa (asimetria privado/publico, precedente real `Cosmos.ControlPlane` PR #94): **ADR-0024**. Este agente no la duplica.
+
 ### `groupId` en `PublishAsync`: invariante dura con `requires_session` (ADR-0026)
 
 Los ejemplos de arriba publican con `eventSender.PublishAsync(turno.GetPrivateEvents())`, sin `groupId` -- es el caso normal: un topic con subscriptions simples (fan-out, ADR-0001) no necesita sesion. `IPrivateEventSender.PublishAsync` tiene tambien una sobrecarga con un parametro `PublishOptions` (`Cosmos.EventDriven.Abstractions` >= 2.0.0; hasta 1.3.0 era un `string groupId` posicional -- signature bump verificado en issue #312, ver ADR-0003 "Control de cambios"): `PublishAsync(PublishOptions options, params IPrivateEvent[] events)`, donde `PublishOptions.GroupId` fija el `SessionId` del mensaje -- a nivel de protocolo AMQP viaja como la propiedad `group-id` [Microsoft Learn, "Message sessions"]. La firma completa vive en el paquete externo `Cosmos.EventDriven.Abstractions`; este agente no la agrega, solo ensena el CUANDO/COMO de usarla.
@@ -342,6 +397,8 @@ public class RequestValidator(IServiceProvider serviceProvider) : IRequestValida
 Registrar en Program.cs: `builder.Services.AddScoped<IRequestValidator, RequestValidator>();`
 
 ### Endpoint ServiceBus
+
+**Este patron -- deserializar el evento y rutear un comando via `ICommandRouter` -- aplica cuando el comando no es un espejo del evento** (aporta identidad, semantica o campos propios; o el estimulo es un `IPublicEvent`, un fan-in, o un boundary externo). Si el estimulo es un `IPrivateEvent` y el comando que escribirias seria un espejo suyo (mismos campos, sin semantica nueva), no uses este patron: usa el EventHandler directo de la seccion "EventHandler — reaccionar a un evento privado" mas arriba. El ejemplo de mas abajo (`DepurarMarcacionesDeTurno` a partir de `TurnoCreado`) es precisamente ese caso limite: si `DepurarMarcacionesDeTurno` no aportara nada que `TurnoCreado` no trajera, la forma correcta seria `TurnoCreadoEventHandler : IPrivateEventHandlerAsync<TurnoCreado>` sobre `PrivateEventEndpointBase<TurnoCreado>`, sin este comando ni este endpoint.
 
 **Convencion de `Connection` del `[ServiceBusTrigger]` (ADR-0023 criterio publico/privado; ADR-0024 transporte)**
 
@@ -765,6 +822,7 @@ Cuando necesites convertir el tipo de una secuencia LINQ (ej. `IEnumerable<Deriv
 | Evento de fallo | Pasado + contexto | `AsignacionEmpleadoFallida` |
 | Comando | Verbo infinitivo + sustantivo | `CrearTurno`, `AsignarEmpleado` |
 | CommandHandler | `{Comando}CommandHandler` | `CrearTurnoCommandHandler` |
+| EventHandler | `{Evento}EventHandler` | `TurnoCreadoEventHandler` |
 | Validator | `{Comando}Validator` | `CrearTurnoValidator` |
 | AggregateRoot | `{Entidad}AggregateRoot` | `TurnoAggregateRoot` |
 
@@ -805,14 +863,19 @@ src/<RootNamespace>.{Dominio}/
       CrearTurnoValidator.cs
   DepurarMarcacionesCuandoTurnoCreado/   <- ServiceBus trigger (sin sufijo Function)
     FunctionEndpoint.cs
+  NotificarSupervisorCuandoTurnoCreado/  <- ServiceBus trigger, EventHandler directo (comando seria espejo de TurnoCreado)
+    FunctionEndpoint.cs                  <- hereda PrivateEventEndpointBase<TurnoCreado>
+    EventHandler/                        <- subcarpeta para el EventHandler y sus mensajes (espejo de CommandHandler/)
+      TurnoCreadoEventHandler.cs         <- IPrivateEventHandlerAsync<TurnoCreado>
 ```
 
 - `FunctionEndpoint.cs` como nombre de clase del endpoint en cada feature folder
 - Sufijo `Function` solo para HTTP triggers (evita colision namespace vs record del comando). ServiceBus triggers sin sufijo
 - `Entities/` siempre a nivel raiz del dominio — las entities son de dominio, no de funcion
 - `CommandHandler/` como subcarpeta dentro del feature folder para handler, validator y mensajes
+- `EventHandler/` como subcarpeta dentro del feature folder para el EventHandler directo (`IPrivateEventHandlerAsync<TEvent>`, sin comando espejo) y sus mensajes, cuando el endpoint reacciona a un evento privado
 - El directorio es el namespace
-- Clases en espanol, sufijos de patrones en ingles (CommandHandler, Validator, AggregateRoot)
+- Clases en espanol, sufijos de patrones en ingles (CommandHandler, EventHandler, Validator, AggregateRoot)
 
 ---
 

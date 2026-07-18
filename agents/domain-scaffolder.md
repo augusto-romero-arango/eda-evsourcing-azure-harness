@@ -269,6 +269,8 @@ builder.Services.AgregarWolverineParaComandosServerless(
 builder.Services.AgregarMartenEventStore();
 builder.Services.AgregarWolverineCommandRouter();
 builder.Services.AgregarWolverineEventSender();
+// Enruta IPrivateEvent directo a IPrivateEventHandlerAsync<TEvent>, sin comando espejo (ADR-0024, issue #313).
+builder.Services.AgregarWolverinePrivateEventRouter();
 
 builder.Services.AddOpenTelemetry()
     .UseFunctionsWorkerDefaults()
@@ -549,6 +551,54 @@ public abstract class ServiceBusSessionEndpointBase(ILogger logger)
     /// base lo captura como cualquier otro error y dead-letterea el mensaje.
     /// </summary>
     protected abstract Task DespacharPorSubject(ServiceBusReceivedMessage message, CancellationToken ct);
+}
+```
+
+**11e. Crear el `PrivateEventEndpointBase.cs` en `Infraestructura/`:**
+
+Contraparte de `ServiceBusEndpointBase<TEvento>` para el patron EventHandler directo (issue #313, `Cosmos.EventDriven` 2.1.0): cuando un dominio reacciona a un evento privado y el comando equivalente seria un espejo del evento, el endpoint no traduce a comando -- rutea el evento **directamente** via `IPrivateEventRouter` a su `IPrivateEventHandlerAsync<TEvent>`. Mismo manejo de fallos (complete/lock-lost/dead-letter) que `ServiceBusEndpointBase`; solo cambia el router inyectado y el tipo restringido a `IPrivateEvent`.
+
+```csharp
+using Azure.Messaging.ServiceBus;
+using Cosmos.EventDriven.Abstractions;
+using Microsoft.Azure.Functions.Worker;
+using Microsoft.Extensions.Logging;
+
+namespace <RootNamespace>.{PascalCase}.Infraestructura;
+
+/// <summary>
+/// Clase base para FunctionEndpoints que reaccionan a un evento privado sin comando espejo (issue #313).
+/// Contraparte de <see cref="ServiceBusEndpointBase{TEvento}"/>: en vez de traducir el evento a un
+/// comando y rutearlo por ICommandRouter, lo despacha directamente a su IPrivateEventHandlerAsync&lt;TPrivateEvent&gt;
+/// via IPrivateEventRouter. Usar solo cuando el comando equivalente seria un espejo del evento -- ver la
+/// seccion "EventHandler — reaccionar a un evento privado" de agents/implementer.md (ADR-0024).
+/// </summary>
+public abstract class PrivateEventEndpointBase<TPrivateEvent>(IPrivateEventRouter privateEventRouter, ILogger logger)
+    where TPrivateEvent : class, IPrivateEvent
+{
+    protected async Task ProcesarMensaje(
+        ServiceBusReceivedMessage message,
+        ServiceBusMessageActions messageActions,
+        CancellationToken ct)
+    {
+        try
+        {
+            var evento = ServiceBusDeserializador.Deserializar<TPrivateEvent>(message.Body);
+            await privateEventRouter.InvokeAsync(evento, ct);
+            await messageActions.CompleteMessageAsync(message, ct);
+        }
+        catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessageLockLost)
+        {
+            logger.LogWarning(ex,
+                "Lock perdido para mensaje {MessageId} - Service Bus lo re-entregara automaticamente",
+                message.MessageId);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error procesando mensaje {MessageId}", message.MessageId);
+            await messageActions.DeadLetterMessageAsync(message, cancellationToken: ct);
+        }
+    }
 }
 ```
 
@@ -929,6 +979,119 @@ internal class StubSessionEndpoint(ICommandRouter commandRouter, ILogger logger)
             default:
                 throw new InvalidOperationException($"Subject no reconocido: {message.Subject}");
         }
+    }
+}
+```
+
+**8. Crear `Infraestructura/PrivateEventEndpointBaseTests.cs`:**
+
+Tests de la orquestacion de `PrivateEventEndpointBase<TPrivateEvent>` (issue #313). Cubren los mismos 4 escenarios que `ServiceBusEndpointBaseTests`, con `IPrivateEventRouter` en vez de `ICommandRouter`. Reusa `FakeServiceBusMessageActions` y `FakeLogger` del archivo del punto 6 (mismo namespace de test, misma assembly).
+
+```csharp
+using AwesomeAssertions;
+using Azure.Messaging.ServiceBus;
+using <RootNamespace>.{PascalCase}.Infraestructura;
+using Cosmos.EventDriven.Abstractions;
+using Microsoft.Azure.Functions.Worker;
+using Microsoft.Extensions.Logging;
+
+namespace <RootNamespace>.{PascalCase}.Tests.Infraestructura;
+
+public class PrivateEventEndpointBaseTests
+{
+    private const string JsonValido = """{"nombre": "test"}""";
+
+    private static ServiceBusReceivedMessage CrearMensaje(string json = JsonValido)
+        => ServiceBusModelFactory.ServiceBusReceivedMessage(body: BinaryData.FromString(json));
+
+    // Camino feliz: deserializa, despacha al private event router, completa el mensaje
+    [Fact]
+    public async Task DebeCompletarMensaje_CuandoProcesamientoEsExitoso()
+    {
+        var router = new FakePrivateEventRouter();
+        var actions = new FakeServiceBusMessageActions();
+        var endpoint = new StubPrivateEventEndpoint(router, new FakeLogger());
+
+        await endpoint.Procesar(CrearMensaje(), actions, CancellationToken.None);
+
+        actions.MensajeCompletado.Should().BeTrue();
+        actions.MensajeEnDeadLetter.Should().BeFalse();
+    }
+
+    // Lock perdido -> log warning, NO dead-letter
+    [Fact]
+    public async Task DebeLoguearWarning_CuandoSePierdeLock()
+    {
+        var lockLost = new ServiceBusException(
+            "Lock expirado", ServiceBusFailureReason.MessageLockLost);
+        var router = new FakePrivateEventRouter();
+        var actions = new FakeServiceBusMessageActions(excepcionAlCompletar: lockLost);
+        var logger = new FakeLogger();
+        var endpoint = new StubPrivateEventEndpoint(router, logger);
+
+        await endpoint.Procesar(CrearMensaje(), actions, CancellationToken.None);
+
+        actions.MensajeEnDeadLetter.Should().BeFalse("el lock ya no es valido, no se puede dead-letter");
+        logger.WarningLogueado.Should().BeTrue();
+    }
+
+    // Error generico -> dead-letter el mensaje
+    [Fact]
+    public async Task DebeEnviarADeadLetter_CuandoOcurreErrorGenerico()
+    {
+        var router = new FakePrivateEventRouter(
+            excepcion: new InvalidOperationException("Error inesperado"));
+        var actions = new FakeServiceBusMessageActions();
+        var endpoint = new StubPrivateEventEndpoint(router, new FakeLogger());
+
+        await endpoint.Procesar(CrearMensaje(), actions, CancellationToken.None);
+
+        actions.MensajeEnDeadLetter.Should().BeTrue();
+        actions.MensajeCompletado.Should().BeFalse();
+    }
+
+    // JSON invalido -> dead-letter (error de deserializacion)
+    [Fact]
+    public async Task DebeEnviarADeadLetter_CuandoJsonEsInvalido()
+    {
+        var router = new FakePrivateEventRouter();
+        var actions = new FakeServiceBusMessageActions();
+        var endpoint = new StubPrivateEventEndpoint(router, new FakeLogger());
+
+        await endpoint.Procesar(CrearMensaje("no-es-json"), actions, CancellationToken.None);
+
+        actions.MensajeEnDeadLetter.Should().BeTrue();
+        actions.MensajeCompletado.Should().BeFalse();
+    }
+}
+
+// ---- Stub concreto minimo para testear la clase base ----
+
+internal record EventoPrivadoStub(string? Nombre) : IPrivateEvent;
+
+internal class StubPrivateEventEndpoint(IPrivateEventRouter privateEventRouter, ILogger logger)
+    : PrivateEventEndpointBase<EventoPrivadoStub>(privateEventRouter, logger)
+{
+    public Task Procesar(
+        ServiceBusReceivedMessage message,
+        ServiceBusMessageActions actions,
+        CancellationToken ct)
+        => ProcesarMensaje(message, actions, ct);
+}
+
+// ---- Fake manual - NO NSubstitute ----
+
+internal class FakePrivateEventRouter : IPrivateEventRouter
+{
+    private readonly Exception? _excepcion;
+
+    public FakePrivateEventRouter(Exception? excepcion = null) => _excepcion = excepcion;
+
+    public Task InvokeAsync<TEvent>(TEvent @event, CancellationToken ct = default)
+        where TEvent : class, IPrivateEvent
+    {
+        if (_excepcion is not null) throw _excepcion;
+        return Task.CompletedTask;
     }
 }
 ```
@@ -2032,11 +2195,13 @@ Scaffold completado para el dominio "{kebab}":
     Infraestructura/ServiceBusDeserializador.cs - Helper de deserializacion case-insensitive
     Infraestructura/ServiceBusEndpointBase.cs   - Clase base para endpoints de ServiceBus (topic+subscription)
     Infraestructura/ServiceBusSessionEndpointBase.cs - Clase base para endpoints de fan-in (queue en modo sesion, ADR-0026)
+    Infraestructura/PrivateEventEndpointBase.cs - Clase base para EventHandler directo, sin comando espejo (issue #313)
     Entities/                              - AggregateRoots y eventos del dominio (siempre raiz)
 
   tests/<RootNamespace>.{PascalCase}.Tests/
     Infraestructura/ServiceBusEndpointBaseTests.cs - Tests de orquestacion (feliz, lock-lost, dead-letter, JSON invalido)
     Infraestructura/ServiceBusSessionEndpointBaseTests.cs - Tests de orquestacion de fan-in (feliz, lock-lost, dead-letter, Subject no reconocido)
+    Infraestructura/PrivateEventEndpointBaseTests.cs - Tests de orquestacion del EventHandler directo (feliz, lock-lost, dead-letter, JSON invalido)
                                            - Proyecto de tests unitarios (xUnit v3 + AwesomeAssertions)
 
   tests/<RootNamespace>.{PascalCase}.SmokeTests/
