@@ -1579,7 +1579,7 @@ public class ApiFixture : IAsyncLifetime
 
 **4. Crear `Fixtures/ServiceBusFixture.cs`:**
 
-El fixture incluye: `PurgeAsync` (para limpiar mensajes residuales antes de cada test), `PublishAsync` (para enviar comandos/eventos) y `WaitForMessageAsync` (por predicado `Func<T, bool>`). Usa el patron `IsConfigured` para skip graceful.
+El fixture incluye: `PurgeAsync` (para limpiar mensajes residuales antes de cada test), `PublishAsync` (para enviar comandos/eventos), `WaitForMessageAsync` (por predicado `Func<T, bool>`) y `ExisteDeadLetterDeLaCorridaAsync` (para acotar los asserts de dead-letter a la corrida actual, MEF-ADR-0013, issue #324). Usa el patron `IsConfigured` para skip graceful.
 
 > **Importante**: Se usa `CompleteMessageAsync` en todas las ramas (match, no-match, JsonException) en vez de `AbandonMessageAsync`. Abandonar mensajes los devuelve a la suscripcion y, tras agotar los reintentos, los envia a dead letters, acumulando basura en la suscripcion `smoke-tests`. Completar siempre evita este problema.
 
@@ -1707,16 +1707,64 @@ public class ServiceBusFixture : IAsyncLifetime
             $"del topic {topicName} en {timeout.TotalSeconds}s");
     }
 
-    public async Task<IReadOnlyList<ServiceBusReceivedMessage>> PeekDeadLetterMessagesAsync(
+    // Peekea el DLQ completo iterando el cursor (fromSequenceNumber), no con un tope fijo:
+    // un tope pequeno perderia el mensaje relevante si hay muchos residuales de corridas
+    // anteriores (MEF-ADR-0013, issue #324).
+    public async Task<IReadOnlyList<ServiceBusReceivedMessage>> PeekAllDeadLetterMessagesAsync(
         string topicName,
-        string subscriptionName,
-        int maxMessages = 10)
+        string subscriptionName)
     {
         var options = new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter };
         await using var receiver = _client!.CreateReceiver(topicName, subscriptionName, options);
 
-        var messages = await receiver.PeekMessagesAsync(maxMessages);
-        return messages;
+        var mensajes = new List<ServiceBusReceivedMessage>();
+        long? ultimoSequenceNumber = null;
+
+        while (true)
+        {
+            var lote = ultimoSequenceNumber is null
+                ? await receiver.PeekMessagesAsync(maxMessages: 100)
+                : await receiver.PeekMessagesAsync(maxMessages: 100, fromSequenceNumber: ultimoSequenceNumber.Value + 1);
+
+            if (lote.Count == 0)
+                break;
+
+            mensajes.AddRange(lote);
+            ultimoSequenceNumber = lote[^1].SequenceNumber;
+        }
+
+        return mensajes;
+    }
+
+    // Acota el assert de dead-letter a la corrida actual: deserializa cada mensaje a una
+    // forma minima (solo el identificador de la corrida, ej. un record con el SolicitudId)
+    // en vez de depender de la deserializacion de value objects ricos. Un dead-letter que no
+    // matchea el shape minimo (JsonException) se ignora -- no es de esta corrida.
+    // Reemplaza el patron "DLQ globalmente vacio", fragil ante residuales de corridas
+    // anteriores (MEF-ADR-0013, issue #324).
+    public async Task<bool> ExisteDeadLetterDeLaCorridaAsync<TIdentificador>(
+        string topicName,
+        string subscriptionName,
+        Func<TIdentificador, bool> match)
+    {
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var deadLetters = await PeekAllDeadLetterMessagesAsync(topicName, subscriptionName);
+
+        foreach (var mensaje in deadLetters)
+        {
+            try
+            {
+                var identificador = JsonSerializer.Deserialize<TIdentificador>(mensaje.Body.ToString(), options);
+                if (identificador is not null && match(identificador))
+                    return true;
+            }
+            catch (JsonException)
+            {
+                continue;
+            }
+        }
+
+        return false;
     }
 
     public async ValueTask DisposeAsync()
