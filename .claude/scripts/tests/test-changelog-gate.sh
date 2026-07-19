@@ -64,7 +64,7 @@ for exempt in "docs/bitacora/algo.md" "docs/bitacora/field-notes/2026-x.md" "REA
     fi
 done
 
-for notable in "commands/x.md" "agents/y.md" "scripts/z.sh" ".claude/scripts/w.sh" "docs/adr/0021-x.md" "hooks/hooks.json" "CHANGELOG.md"; do
+for notable in "commands/x.md" "agents/y.md" "scripts/z.sh" ".claude/scripts/w.sh" "docs/adr/mef-adr-0021-infraestructura-base.md" "hooks/hooks.json" "CHANGELOG.md"; do
     if is_path_changelog_exempt "$notable"; then
         fail "'$notable' deberia ser NOTABLE (exige entrada)"
     else

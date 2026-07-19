@@ -27,7 +27,7 @@ set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/_pipeline-common.sh"
 
-# Guard defensivo: este script es del lado publicado y solo aplica al consumidor (ADR-0019).
+# Guard defensivo: este script es del lado publicado y solo aplica al consumidor (MEF-ADR-0019).
 _REPO_TOP=$(git rev-parse --show-toplevel 2>/dev/null) || {
     echo "ERROR: no estas en un repositorio git" >&2
     exit 1

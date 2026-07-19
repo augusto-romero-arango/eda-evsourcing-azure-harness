@@ -2,7 +2,7 @@
 model: haiku
 ---
 
-Diagnostica el onboarding del consumidor: valida `.claude/harness.config.json`, los labels y el CI, y reporta un checklist de que esta listo y que falta. Es un **doctor**: por defecto solo diagnostica (no crea ni modifica nada). Como excepciones **opt-in**, si lo confirmas explicitamente puede provisionar los labels faltantes (el script subyacente es destructivo: borra los labels default de GitHub) y configurar el CI hacia Azure (crea recursos reales en Azure -- app de Entra, role assignments y federated credential, por OIDC; ver ADR-0022). Comunicate en **espanol**.
+Diagnostica el onboarding del consumidor: valida `.claude/harness.config.json`, los labels y el CI, y reporta un checklist de que esta listo y que falta. Es un **doctor**: por defecto solo diagnostica (no crea ni modifica nada). Como excepciones **opt-in**, si lo confirmas explicitamente puede provisionar los labels faltantes (el script subyacente es destructivo: borra los labels default de GitHub) y configurar el CI hacia Azure (crea recursos reales en Azure -- app de Entra, role assignments y federated credential, por OIDC; ver MEF-ADR-0022). Comunicate en **espanol**.
 
 ## Pre-condicion: cwd != Mefisto
 
@@ -25,16 +25,16 @@ Si el bloque imprime `ERROR`, detente y muestra el mensaje al usuario.
 1. **Configuracion** (`.claude/harness.config.json`): existencia, parseo con `jq`, campos requeridos (`projectName`, `namespacePrefix`, `solutionFile`, `boundedContext`) y formato de `terraformStateStorage`. La validacion la hace `load_harness_config` del plugin, que es la **unica fuente de verdad** de las reglas del tfstate (`^[a-z0-9]{3,24}$`) y del BC (`name` 1-63 chars; `domains` subconjunto de `domainLabels`).
 2. **Tokens del harness en `CLAUDE.md`** (contrato del harness, "Contrato con el proyecto consumidor" punto 2): que el `CLAUDE.md` raiz del consumidor tenga la seccion "Tokens del harness" con los 5 tokens obligatorios (`RootNamespace`, `SolutionFile`, `ProjectDisplayName`, `BoundedContext`, `BoundedContextDomains`). Es un artefacto separado de `harness.config.json`: los agentes/skills resuelven estos placeholders leyendo `CLAUDE.md` porque no pueden hacer sustitucion de variables. Reporta `NO VERIFICADO` si no hay un `CLAUDE.md` legible en la raiz.
 3. **Estructura de carpetas esperada** (contrato del harness, punto 3): reporta de forma **informativa** (no bloqueante) la presencia de `src/`, `tests/` e `infra/environments/`. No la marca como `FALTA` cuando falta: un greenfield legitimo aun no tiene estas carpetas antes del primer `/scaffold` o `/infra-base`, y tratarla como bloqueante daria un falso negativo.
-4. **Labels de GitHub** (ADR-0007): que existan `tipo:*`, `estado:borrador`, `estado:listo`, `dom:<x>` por cada `domainLabels`, mas `bug` y `bloqueado`.
+4. **Labels de GitHub** (MEF-ADR-0007): que existan `tipo:*`, `estado:borrador`, `estado:listo`, `dom:<x>` por cada `domainLabels`, mas `bug` y `bloqueado`.
 
    > **Presupuesto de nombres para el scaffold (issue #245, informativo, no verificado aqui):** cada `domainLabels` termina, al scaffoldear, en el nombre de una Function App `func-{prefix_func}-{kebab}`. El limite real es 60 caracteres (`Microsoft.Web/sites`, naming rules de Azure: https://learn.microsoft.com/azure/azure-resource-manager/management/resource-name-rules#microsoftweb), asi que el presupuesto para el `kebab` del dominio es `60 - 5 ("func-") - 1 ("-") - len(prefix_func)` caracteres. `/onboard` no lo valida (`prefix_func` vive en `infra/environments/dev/variables.tf`, fuera de `harness.config.json`); la Validacion 1 del Paso 0 de `domain-scaffolder` lo hace al momento de scaffoldear cada dominio.
-5. **CI hacia Azure** (ADR-0022): que exista la aplicacion de Entra / Service Principal y los secrets OIDC del repo. Tolerante: si no hay `az` o sesion, reporta `NO VERIFICADO` en vez de fallar.
-6. **Secretos que alimentan la siembra en CI** (ADR-0025, informativo): que existan en GitHub `TF_VAR_POSTGRESQL_ADMIN_PASSWORD` y un `SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` por cada alias de `serviceBus.external[]`. Son los **inputs** que `infra-cd.yml` usa para sembrar el Key Vault del BC en un step posterior al `apply`; ya no hay siembra manual del admin ni verificacion del data plane del vault (ADR-0025 decision #6/#10). Reusa la misma lectura de `gh secret list` del punto 5; si falta, reporta `NO VERIFICADO` sin bloquear (un greenfield legitimo aun no tiene Postgres provisionado ni alias externos declarados).
+5. **CI hacia Azure** (MEF-ADR-0022): que exista la aplicacion de Entra / Service Principal y los secrets OIDC del repo. Tolerante: si no hay `az` o sesion, reporta `NO VERIFICADO` en vez de fallar.
+6. **Secretos que alimentan la siembra en CI** (MEF-ADR-0025, informativo): que existan en GitHub `TF_VAR_POSTGRESQL_ADMIN_PASSWORD` y un `SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` por cada alias de `serviceBus.external[]`. Son los **inputs** que `infra-cd.yml` usa para sembrar el Key Vault del BC en un step posterior al `apply`; ya no hay siembra manual del admin ni verificacion del data plane del vault (MEF-ADR-0025 decision #6/#10). Reusa la misma lectura de `gh secret list` del punto 5; si falta, reporta `NO VERIFICADO` sin bloquear (un greenfield legitimo aun no tiene Postgres provisionado ni alias externos declarados).
 7. **Registro `secrets[]`** (issue #256, informativo): cuantas entradas hay registradas (las siembra el step data-driven de `infra-cd.yml`, sin ninguna linea hardcodeada por secreto) y, para cada entrada con `source.type: "github-secret"`, si el GitHub secret que referencia existe en el repo. La **forma** del array (`name` unico, `source.type` en {`output`, `github-secret`, `composite`}, `source.value` no vacio) ya la valida `load_harness_config` como parte del punto 1 (`Configuracion`): un `secrets[]` mal formado hace que esa seccion reporte `FALTA`, con el mensaje exacto que emite la funcion. Ausente por completo, reporta `NO VERIFICADO` sin bloquear (normal antes del primer `/infra-base`).
 
-La provision de **labels** (paso 3) y la del **CI** hacia Azure (paso 4) las ofrece `/onboard` como pasos **opt-in**, bajo confirmacion explicita: el script de labels es destructivo (borra los labels default de GitHub) y el de CI crea recursos reales en Azure (app de Entra, role assignments, federated credential -- OIDC, ADR-0022). El diagnostico en si sigue siendo de solo lectura: sin tu confirmacion no se crea, borra ni provisiona nada.
+La provision de **labels** (paso 3) y la del **CI** hacia Azure (paso 4) las ofrece `/onboard` como pasos **opt-in**, bajo confirmacion explicita: el script de labels es destructivo (borra los labels default de GitHub) y el de CI crea recursos reales en Azure (app de Entra, role assignments, federated credential -- OIDC, MEF-ADR-0022). El diagnostico en si sigue siendo de solo lectura: sin tu confirmacion no se crea, borra ni provisiona nada.
 
-Al cerrar el reporte, `/onboard` imprime un bloque **"Proximos pasos"**: deriva del mismo diagnostico ya hecho (sin re-verificar nada) el comando exacto a correr a continuacion -- labels (ADR-0007), CI (ADR-0022), infraestructura base (`/mefisto:infra-base dev`, ADR-0021) o el recordatorio recurrente de mantener al dia los GitHub secrets que alimentan la siembra en CI (ADR-0025), segun que seccion reporto `FALTA` -- y cierra con un puntero descubrible al quickstart narrativo del arranque greenfield (`docs/greenfield-quickstart.md` del harness). Es **puramente informativo**: no ejecuta `gh`/`az` ni provisiona nada; las unicas escrituras siguen siendo los pasos opt-in 3 y 4.
+Al cerrar el reporte, `/onboard` imprime un bloque **"Proximos pasos"**: deriva del mismo diagnostico ya hecho (sin re-verificar nada) el comando exacto a correr a continuacion -- labels (MEF-ADR-0007), CI (MEF-ADR-0022), infraestructura base (`/mefisto:infra-base dev`, MEF-ADR-0021) o el recordatorio recurrente de mantener al dia los GitHub secrets que alimentan la siembra en CI (MEF-ADR-0025), segun que seccion reporto `FALTA` -- y cierra con un puntero descubrible al quickstart narrativo del arranque greenfield (`docs/greenfield-quickstart.md` del harness). Es **puramente informativo**: no ejecuta `gh`/`az` ni provisiona nada; las unicas escrituras siguen siendo los pasos opt-in 3 y 4.
 
 ## Proceso
 
@@ -93,7 +93,7 @@ if [ -n "${PLUGIN_COMMON:-}" ] && [ -f "${PLUGIN_COMMON:-}" ]; then
     if [ -n "${HARNESS_BC_NAME:-}" ]; then
       row OK "boundedContext declarado: name='${HARNESS_BC_NAME}' domains='${HARNESS_BC_DOMAINS}'"
     else
-      row FALTA "boundedContext ausente o invalido (campo obligatorio, ADR-0023)"
+      row FALTA "boundedContext ausente o invalido (campo obligatorio, MEF-ADR-0023)"
       PA_CONFIG_FALTA=1
       ACTIONS="${ACTIONS}  - Falta 'boundedContext' en .claude/harness.config.json. Añade:
     \"boundedContext\": { \"name\": \"<NombreDetuBC>\", \"domains\": [<tus domainLabels>] }
@@ -154,9 +154,9 @@ for dir in src tests infra/environments; do
   fi
 done
 
-# --- 4. Labels de GitHub (ADR-0007) ---
+# --- 4. Labels de GitHub (MEF-ADR-0007) ---
 echo ""
-echo "Labels de GitHub (esquema del harness - ADR-0007):"
+echo "Labels de GitHub (esquema del harness - MEF-ADR-0007):"
 EXISTING=$(gh label list --json name -q '.[].name' 2>/dev/null)
 GH_RC=$?
 if [ "$GH_RC" -ne 0 ]; then
@@ -186,9 +186,9 @@ else
   fi
 fi
 
-# --- 5. CI hacia Azure (ADR-0022) ---
+# --- 5. CI hacia Azure (MEF-ADR-0022) ---
 echo ""
-echo "CI hacia Azure (OIDC / Service Principal - ADR-0022):"
+echo "CI hacia Azure (OIDC / Service Principal - MEF-ADR-0022):"
 if ! command -v az >/dev/null 2>&1; then
   row NV "Service Principal de CI (Azure CLI no instalado)"
   ACTIONS="${ACTIONS}  - Instala Azure CLI y ejecuta \"az login\" para verificar el Service Principal del CI.
@@ -206,7 +206,7 @@ else
   else
     row FALTA "aplicacion de Entra \"$HARNESS_SP_NAME\" no encontrada"
     PA_CI_FALTA=1
-    ACTIONS="${ACTIONS}  - Falta la app de Entra del CI. /onboard puede configurarlo en el paso de provision opt-in (te lo ofrece tras el diagnostico, bajo confirmacion: crea recursos reales en Azure -- app de Entra, role assignments y federated credential OIDC, ADR-0022 -- y debe correr DESPUES de bootstrap-backend.sh). O ejecutalo tu mismo: \"$PLUGIN_SCRIPTS/setup-github-ci.sh <subscription-id>\".
+    ACTIONS="${ACTIONS}  - Falta la app de Entra del CI. /onboard puede configurarlo en el paso de provision opt-in (te lo ofrece tras el diagnostico, bajo confirmacion: crea recursos reales en Azure -- app de Entra, role assignments y federated credential OIDC, MEF-ADR-0022 -- y debe correr DESPUES de bootstrap-backend.sh). O ejecutalo tu mismo: \"$PLUGIN_SCRIPTS/setup-github-ci.sh <subscription-id>\".
 "
   fi
 fi
@@ -226,33 +226,33 @@ else
   else
     row FALTA "faltan secrets OIDC:$MISS_S"
     PA_CI_FALTA=1
-    ACTIONS="${ACTIONS}  - Copia los tres secrets OIDC (AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID) que imprime \"$PLUGIN_SCRIPTS/setup-github-ci.sh <subscription-id>\" a Settings > Secrets and variables > Actions. El script (y el paso de provision opt-in de /onboard) NO los sube: pegalos a mano. No hay client secret que expire (OIDC, ADR-0022).
+    ACTIONS="${ACTIONS}  - Copia los tres secrets OIDC (AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID) que imprime \"$PLUGIN_SCRIPTS/setup-github-ci.sh <subscription-id>\" a Settings > Secrets and variables > Actions. El script (y el paso de provision opt-in de /onboard) NO los sube: pegalos a mano. No hay client secret que expire (OIDC, MEF-ADR-0022).
 "
   fi
 fi
 
-# --- 6. Secretos que alimentan la siembra en Key Vault (ADR-0025, informativo) ---
+# --- 6. Secretos que alimentan la siembra en Key Vault (MEF-ADR-0025, informativo) ---
 echo ""
-echo "Secretos que alimentan la siembra en Key Vault (ADR-0025 -- la siembra la hace CI tras el apply):"
+echo "Secretos que alimentan la siembra en Key Vault (MEF-ADR-0025 -- la siembra la hace CI tras el apply):"
 if [ "$GS_RC" -ne 0 ]; then
   row NV "no se pudieron listar los secrets (mismo motivo que la seccion anterior)"
 else
   printf '%s\n' "$SECRETS" | awk '{print $1}' | grep -Fqx "TF_VAR_POSTGRESQL_ADMIN_PASSWORD" \
-    && row OK "TF_VAR_POSTGRESQL_ADMIN_PASSWORD presente (alimenta marten-connection, ADR-0025 decision #9)" \
-    || row NV "TF_VAR_POSTGRESQL_ADMIN_PASSWORD no encontrado (crealo cuando provisiones Postgres -- ADR-0025 decision #9)"
+    && row OK "TF_VAR_POSTGRESQL_ADMIN_PASSWORD presente (alimenta marten-connection, MEF-ADR-0025 decision #9)" \
+    || row NV "TF_VAR_POSTGRESQL_ADMIN_PASSWORD no encontrado (crealo cuando provisiones Postgres -- MEF-ADR-0025 decision #9)"
   if [ -n "${HARNESS_SB_EXTERNAL_ALIASES:-}" ]; then
     for alias in $HARNESS_SB_EXTERNAL_ALIASES; do
       SECNAME="SB_EXTERNAL_${alias}_CONNECTION_STRING"
       printf '%s\n' "$SECRETS" | awk '{print $1}' | grep -Fqx "$SECNAME" \
         && row OK "$SECNAME presente" \
-        || row NV "$SECNAME no encontrado (uno por alias de serviceBus.external[] -- ADR-0025 decision #10)"
+        || row NV "$SECNAME no encontrado (uno por alias de serviceBus.external[] -- MEF-ADR-0025 decision #10)"
     done
   fi
 fi
 
 # --- 7. Registro secrets[] (issue #256, informativo) ---
 echo ""
-echo "Registro harness.config.json > secrets[] (siembra data-driven -- ADR-0025, issue #256):"
+echo "Registro harness.config.json > secrets[] (siembra data-driven -- MEF-ADR-0025, issue #256):"
 if [ -n "${HARNESS_SECRETS_NAMES:-}" ]; then
   read -ra SEC_NAMES <<< "$HARNESS_SECRETS_NAMES"
   read -ra SEC_TYPES <<< "$HARNESS_SECRETS_TYPES"
@@ -299,7 +299,7 @@ if [ "$N_FALTA" -eq 0 ]; then
     echo "  1. El harness esta configurado: arranca (o continua) el dominio con /mefisto:scaffold <dominio>,"
     echo "     luego /mefisto:draft y /mefisto:implement para tu primer ciclo TDD."
     echo "  2. Recordatorio recurrente: la siembra de secretos en Key Vault la hace CI (infra-cd.yml),"
-    echo "     iterando harness.config.json > secrets[] -- ADR-0025, issue #256. Tu unica accion manual"
+    echo "     iterando harness.config.json > secrets[] -- MEF-ADR-0025, issue #256. Tu unica accion manual"
     echo "     es crear/verificar los GitHub secrets que alimentan cada entrada github-secret"
     echo "     (TF_VAR_POSTGRESQL_ADMIN_PASSWORD, un SB_EXTERNAL_<ALIAS>_CONNECTION_STRING por alias, o el"
     echo "     que declares con /seed-secret) en Settings > Secrets and variables > Actions."
@@ -322,7 +322,7 @@ else
   if [ "$PA_CI_FALTA" -eq 1 ]; then
     PA_STEP=$((PA_STEP+1))
     echo "  $PA_STEP. Configura el CI hacia Azure: \"$PLUGIN_SCRIPTS/setup-github-ci.sh <subscription-id>\""
-    echo "     (o confirma el paso opt-in). Corre DESPUES de \"bootstrap-backend.sh\" (ADR-0022)."
+    echo "     (o confirma el paso opt-in). Corre DESPUES de \"bootstrap-backend.sh\" (MEF-ADR-0022)."
   fi
   if [ "$PA_INFRA_BASE_MISSING" -eq 1 ]; then
     PA_STEP=$((PA_STEP+1))
@@ -452,7 +452,7 @@ if [ ! -f "$CI_SCRIPT" ]; then
 fi
 
 echo "Configurando el CI con: $CI_SCRIPT $SUBSCRIPTION_ID ${OWNER_REPO}"
-echo "(crea app de Entra + Service Principal SIN secret, role assignments y federated credentials OIDC -- ADR-0022)"
+echo "(crea app de Entra + Service Principal SIN secret, role assignments y federated credentials OIDC -- MEF-ADR-0022)"
 echo "Debe correr DESPUES de bootstrap-backend.sh: resuelve el nombre real del tfstate del backend ya creado."
 echo ""
 if [ -n "$OWNER_REPO" ]; then
@@ -465,7 +465,7 @@ echo ""
 if [ "$CI_RC" -eq 0 ]; then
   echo "OK: CI configurado. El script imprimio arriba los 3 secrets OIDC (AZURE_CLIENT_ID,"
   echo "AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID): pegalos A MANO en GitHub (Settings > Secrets and"
-  echo "variables > Actions). El script NO los sube y no hay client secret que expire (OIDC, ADR-0022)."
+  echo "variables > Actions). El script NO los sube y no hay client secret que expire (OIDC, MEF-ADR-0022)."
   echo "Luego vuelve a correr /onboard para ver el diagnostico del CI en verde."
 else
   echo "FALLO (exit $CI_RC): la configuracion del CI NO se completo."
@@ -478,7 +478,7 @@ fi
 PROVISION_CI
 ```
 
-5. **Reporta el resultado al usuario (CA-5)** tal como lo imprimio el bloque. Si la provision fue exitosa, **recuerdale explicitamente que el script imprime 3 secrets OIDC** (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`) que debe **pegar a mano** en GitHub (Settings > Secrets and variables > Actions), porque ni el script ni `/onboard` los suben; no hay client secret que expire (OIDC, ADR-0022). Si fallo, no abortes ni reescribas el resto del flujo: el diagnostico (pasos 1-2) y las otras provisiones (labels) son independientes. En ambos casos sugiere volver a correr `/onboard` para confirmar el estado real tras la provision.
+5. **Reporta el resultado al usuario (CA-5)** tal como lo imprimio el bloque. Si la provision fue exitosa, **recuerdale explicitamente que el script imprime 3 secrets OIDC** (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`) que debe **pegar a mano** en GitHub (Settings > Secrets and variables > Actions), porque ni el script ni `/onboard` los suben; no hay client secret que expire (OIDC, MEF-ADR-0022). Si fallo, no abortes ni reescribas el resto del flujo: el diagnostico (pasos 1-2) y las otras provisiones (labels) son independientes. En ambos casos sugiere volver a correr `/onboard` para confirmar el estado real tras la provision.
 
 **Caveat: idempotencia parcial de la condicion ABAC.** `az role assignment create` no actualiza la condicion de una asignacion que ya exista con el mismo principal/rol/alcance. La asignacion de `Role Based Access Control Administrator` con la condicion anti-escalacion la introdujo el issue #195; en un onboarding limpio se crea de una vez **con** la condicion. Pero si el SP ya tuviera esa asignacion **sin** la condicion --creada fuera de este script (p. ej. a mano), o si una version futura del script cambia la expresion de la condicion-- re-correr el script aqui **no** se la aplica ni actualiza. El SP quedaria con ese rol sin la restriccion anti-escalacion, aunque `/onboard` reporte el CI en verde. Ver el diagnostico y la remediacion completa en el README, seccion "Bootstrap de infraestructura", paso 2. El arreglo del script (deteccion y recreacion automatica) queda diferido a un issue aparte.
 
@@ -488,7 +488,7 @@ PROVISION_CI
 - **No abortes ante un fallo parcial.** Cada seccion del diagnostico es independiente: si `gh` o `az` no estan disponibles, reporta `NO VERIFICADO` y continua con el resto.
 - **No dupliques la validacion del config.** El formato de `terraformStateStorage` y los campos requeridos los valida `load_harness_config` (issue #78); este skill solo reporta su resultado.
 - **La estructura de carpetas es informativa, nunca `FALTA`.** Un greenfield legitimo aun no tiene `src/`, `tests/` ni `infra/environments/` antes del primer `/scaffold` o `/infra-base`; marcarla como bloqueante daria un falso negativo (issue #212).
-- **Los secretos que alimentan la siembra en Key Vault (ADR-0025) son informativos, nunca `FALTA`.** La siembra en el Key Vault del BC la hace CI (`infra-cd.yml`) tras el `apply`; ningun humano custodia secretos en su data plane. El diagnostico solo reporta si los GitHub secrets que la alimentan (`TF_VAR_POSTGRESQL_ADMIN_PASSWORD`, `SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` por alias) existen -- un greenfield legitimo aun no los tiene antes de provisionar Postgres o declarar `serviceBus.external[]` (issue #232).
+- **Los secretos que alimentan la siembra en Key Vault (MEF-ADR-0025) son informativos, nunca `FALTA`.** La siembra en el Key Vault del BC la hace CI (`infra-cd.yml`) tras el `apply`; ningun humano custodia secretos en su data plane. El diagnostico solo reporta si los GitHub secrets que la alimentan (`TF_VAR_POSTGRESQL_ADMIN_PASSWORD`, `SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` por alias) existen -- un greenfield legitimo aun no los tiene antes de provisionar Postgres o declarar `serviceBus.external[]` (issue #232).
 - **El registro `secrets[]` (issue #256) tambien es informativo, nunca `FALTA` por si solo.** Su **forma** (`name`/`source.type`/`source.value`) ya la valida `load_harness_config` como parte de la seccion "Configuracion" (punto 1) -- un `secrets[]` mal formado hace que ESA seccion reporte `FALTA`, no esta. Esta seccion solo cuenta las entradas registradas y, para las de tipo `github-secret`, si el GitHub secret que referencian existe -- lo mismo que ya hacia para `serviceBus.external[]`, generalizado a cualquier entrada.
 - **El bloque de cierre "Proximos pasos" es puramente informativo (issue #222).** Solo lee las mismas variables que ya acumulo el diagnostico (`N_FALTA`, `N_NV`, y los flags `PA_*` por seccion) para imprimir el comando exacto a correr a continuacion y el puntero al quickstart greenfield; nunca ejecuta `gh`/`az` ni escribe nada. No reemplaza ni condiciona las provisiones opt-in (pasos 3 y 4), que siguen requiriendo confirmacion explicita para cada una.
 - Si `$ARGUMENTS` trae algo, ignoralo: `/onboard` no toma argumentos.

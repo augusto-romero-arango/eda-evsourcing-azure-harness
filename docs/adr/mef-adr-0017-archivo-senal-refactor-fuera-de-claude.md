@@ -1,4 +1,4 @@
-# ADR-0017: El archivo señal de refactor puro vive fuera de `.claude/`
+# MEF-ADR-0017: El archivo señal de refactor puro vive fuera de `.claude/`
 
 ## Estado
 
@@ -137,8 +137,8 @@ parchear el runtime ni heuristicas fragiles.
   `FranjaTemporal.DuracionEnHorasDecimales`).
 - Log del agente test-writer del issue #128:
   `.claude/pipeline/logs/stage-1-test-writer-20260423-091111-issue-128.log` linea 48.
-- ADR-0011: Definition of Ready (contexto del pipeline TDD).
-- ADR-0014: Coverage gate del pipeline TDD.
+- MEF-ADR-0011: Definition of Ready (contexto del pipeline TDD).
+- MEF-ADR-0014: Coverage gate del pipeline TDD.
 - Issue #294: "Extender el carril de señal de refactor del pipeline TDD para
   refactors a nivel de firma que eliminan tests obsoletos".
 

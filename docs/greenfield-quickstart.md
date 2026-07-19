@@ -9,7 +9,7 @@ Mefisto asume que **no todo el mundo en el equipo tiene permisos de Azure**, y d
 - **Admin/infra**: la persona (o cuenta) con permisos elevados en la suscripción de Azure. Hace el bootstrap privilegiado (una sola vez) y siembra los secretos de Key Vault (recurrente, cada vez que aparece uno nuevo).
 - **Dev ongoing**: cualquiera del equipo que use Mefisto día a día. **Cero credenciales de Azure.** Escribe y revisa Terraform de forma estática, corre los pipelines, abre PRs — nunca hace `terraform plan`/`apply` local ni toca el tfstate.
 
-El modelo completo (con un tercer matiz de cadencia dentro del rol admin/infra) está en **[ADR-0025, decisión #10](adr/0025-custodia-de-secretos.md)**. Aquí solo hace falta saber a qué rol pertenece cada paso de abajo.
+El modelo completo (con un tercer matiz de cadencia dentro del rol admin/infra) está en **[MEF-ADR-0025, decisión #10](adr/mef-adr-0025-custodia-de-secretos.md)**. Aquí solo hace falta saber a qué rol pertenece cada paso de abajo.
 
 ## El camino en 10 pasos
 
@@ -31,6 +31,6 @@ Los pasos 4-6 son el **bootstrap**: una ráfaga privilegiada de una sola vez, al
 ## Para el detalle exhaustivo
 
 - Cada paso de arriba, con el comando completo, sus flags y los caveats verificados en campo (regiones restringidas, roles de datos, idempotencia parcial de condiciones ABAC): [README, "Primeros pasos con el harness (greenfield)"](../README.md#primeros-pasos-con-el-harness-greenfield).
-- Los 8 módulos Terraform base y el workflow de CI que generan los pasos 7-8: **[ADR-0021](adr/0021-infraestructura-base.md)**.
-- El Service Principal, sus roles y los federated credentials del paso 5: **[ADR-0022](adr/0022-autenticacion-ci-azure-oidc.md)**.
-- El modelo de dos roles y los tres perfiles de acceso (decisión #10), y por qué ningún secreto viaja en texto plano: **[ADR-0025](adr/0025-custodia-de-secretos.md)**.
+- Los 8 módulos Terraform base y el workflow de CI que generan los pasos 7-8: **[MEF-ADR-0021](adr/mef-adr-0021-infraestructura-base.md)**.
+- El Service Principal, sus roles y los federated credentials del paso 5: **[MEF-ADR-0022](adr/mef-adr-0022-autenticacion-ci-azure-oidc.md)**.
+- El modelo de dos roles y los tres perfiles de acceso (decisión #10), y por qué ningún secreto viaja en texto plano: **[MEF-ADR-0025](adr/mef-adr-0025-custodia-de-secretos.md)**.

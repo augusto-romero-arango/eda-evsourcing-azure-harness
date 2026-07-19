@@ -24,8 +24,8 @@ Está pensado para instalarse vía marketplace en cualquier proyecto que adopte 
 - **Runtime**: .NET 10, C#, Azure Functions isolated worker
 - **Persistencia**: PostgreSQL + Marten (event store)
 - **Mediación de comandos**: Wolverine en modo serverless
-- **Mensajería entre dominios**: Azure Service Bus (topic por evento — ver ADR-0001)
-- **Testing**: xUnit v3 + `Cosmos.EventSourcing.Testing.Utilities` (DSL Given/When/Then/And — ver ADR-0002)
+- **Mensajería entre dominios**: Azure Service Bus (topic por evento — ver MEF-ADR-0001)
+- **Testing**: xUnit v3 + `Cosmos.EventSourcing.Testing.Utilities` (DSL Given/When/Then/And — ver MEF-ADR-0002)
 - **IaC**: Terraform
 - **CI/CD**: GitHub Actions
 
@@ -74,10 +74,10 @@ Los scripts del harness consumen estos tokens (validación y variables derivadas
 
 Notas sobre campos concretos:
 
-- **`boundedContext`** (**obligatorio**, ADR-0023): declara el Bounded Context del proyecto. Subfields:
+- **`boundedContext`** (**obligatorio**, MEF-ADR-0023): declara el Bounded Context del proyecto. Subfields:
   - **`name`**: nombre del BC; puede coincidir o no con `projectName`.
   - **`domains`**: dominios del BC; subconjunto de `domainLabels`.
-- **`serviceBus`** (opcional, ADR-0024): registro de los Azure Service Bus que el BC toca. `internal.secretName` (obligatorio si se declara `serviceBus`) nombra el secreto de Key Vault del ASB propio del BC; `external` lista los ASB compartidos/externos que consume o publica. Ningún secreto viaja en claro (ADR-0025).
+- **`serviceBus`** (opcional, MEF-ADR-0024): registro de los Azure Service Bus que el BC toca. `internal.secretName` (obligatorio si se declara `serviceBus`) nombra el secreto de Key Vault del ASB propio del BC; `external` lista los ASB compartidos/externos que consume o publica. Ningún secreto viaja en claro (MEF-ADR-0025).
 - **`secrets`** (opcional, issue #256): registro declarativo de todo secreto del BC que el step de siembra de `infra-cd.yml` itera en runtime (data-driven, sin líneas hardcodeadas por secreto). Cada entrada declara `name` (el secreto en Key Vault) y `source.type`/`source.value` — de dónde CI toma el valor a sembrar: `output` (un único `terraform output`, derivable) o `github-secret` (un único GitHub secret, no derivable). El tipo `composite` (fórmula fija reservada para `marten-connection`, el único secreto compuesto de varios outputs + un GitHub secret) lo escribe únicamente `infra-base-scaffolder`; el skill `/seed-secret` (que registra secretos nuevos post-greenfield) solo emite `output`/`github-secret`. `infra-base-scaffolder` registra idempotentemente los secretos fijos del BC (interno de ASB, `app-insights-connection`, `marten-connection`, uno por alias de `serviceBus.external[]`) la primera vez que genera `infra-cd.yml`.
 - **`terraformStateStorage`** es el nombre **base** de la Storage Account del tfstate. Debe cumplir el naming de Azure Storage (3-24 caracteres, solo minúsculas y dígitos — [reglas de nombres de recursos, `Microsoft.Storage`](https://learn.microsoft.com/azure/azure-resource-manager/management/resource-name-rules#microsoftstorage)); para nombres largos abrevia el prefijo. Detalle en README §3.
 - **`repoSlug`** (opcional): slug `owner/repo` del fork de Mefisto al que se enrutan los drafts cross-repo (`estado:borrador`). Default: `augusto-romero-arango/eda-evsourcing-azure-harness`.
@@ -97,7 +97,7 @@ Necesaria porque los agentes/skills del harness no pueden hacer sustitución de 
 - **BoundedContextDomains**: dominio1, dominio2  (lista separada por comas; corresponde a `boundedContext.domains`)
 ```
 
-`BoundedContext` es el nombre del Bounded Context declarado en `harness.config.json` (ADR-0023); puede coincidir o no con `ProjectDisplayName`.
+`BoundedContext` es el nombre del Bounded Context declarado en `harness.config.json` (MEF-ADR-0023); puede coincidir o no con `ProjectDisplayName`.
 
 Además de "Tokens del harness", el `CLAUDE.md` mínimo del consumidor debe incluir la siguiente sección, verbatim, propagando al consumidor el principio de verificación de fuentes del propio harness (ver "Principios de respuesta" arriba):
 
@@ -158,46 +158,49 @@ tu propuesta en vez de darlo por cierto.
 | `implementer` | Fase verde del pipeline TDD |
 | `reviewer` | Revisión antes de crear PR |
 | `smoke-test-writer` | Smoke tests contra entorno dev |
-| `infra-writer` / `infra-reviewer` / `infra-bootstrap` | Etapas del pipeline IaC (escritura y revision estatica local; el plan y el apply corren en CI, ADR-0022) |
+| `infra-writer` / `infra-reviewer` / `infra-bootstrap` | Etapas del pipeline IaC (escritura y revision estatica local; el plan y el apply corren en CI, MEF-ADR-0022) |
 | `pr-sync` | Integra PRs de un batch paralelo |
 | `bug-investigator` | Investiga errores del entorno desplegado |
 | `tooling-investigator` | Investiga errores del tooling local |
 
 ## ADRs del marco
 
-Los ADRs en `docs/adr/` son la fuente de verdad arquitectónica del harness. Los agentes los consultan, los aplican y documentan cuando se desvían. El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o configuración específica).
+Los ADRs en `docs/adr/` son la fuente de verdad arquitectónica del harness, identificados con el prefijo `MEF-ADR-` (esquema de identificación con prefijo por proyecto, ver **MEF-ADR-0030**). Los agentes los consultan, los aplican y documentan cuando se desvían.
+
+El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o configuración específica). Adoptar el mismo esquema de prefijo es **opcional**: un consumidor nuevo puede elegir su propio código corto (p. ej. `CA-ADR-` para Control de Asistencias, `CPC-ADR-` para Cosmos ControlPlane) para desambiguar sus ADRs frente a los del marco; un consumidor con ADRs legados puede quedarse citándolos como `ADR-XXXX` a secas, sin conflicto — `ADR-XXXX` nunca coincide textualmente con `MEF-ADR-XXXX`.
 
 ### Índice temático
 
 | Tema | ADR |
 |---|---|
-| Topics de Service Bus por evento | ADR-0001 |
-| Estrategia de testing con event sourcing (Given/When/Then) | ADR-0002 |
-| Stack ES: Marten + Wolverine + Postgres | ADR-0003 |
-| Manejo de errores en ES (eventos de fallo vs excepciones) | ADR-0004 |
-| Naming y versionado de eventos | ADR-0005 |
-| Convenciones de nombramiento de funciones Azure | ADR-0006 |
-| Gestión de proyecto con GitHub Issues | ADR-0007 |
-| Knowledge Crunching como propósito del planner | ADR-0008 |
-| Mensajes en `.resx` por aggregate/handler | ADR-0009 |
-| Pipeline de conocimiento del dominio | ADR-0010 |
-| Definition of Ready por tipo de issue | ADR-0011 |
-| Encapsulamiento, Tell-don't-Ask, value objects, frontera de serialización (event store Marten vs bus) | ADR-0012 |
-| Smoke tests contra entorno dev | ADR-0013 |
-| Coverage gate en pipeline TDD | ADR-0014 |
-| Snapshots de Marten como excepción | ADR-0015 |
-| Convención de naming para métodos de test | ADR-0016 |
-| Archivo señal de refactor puro vive fuera de `.claude/` | ADR-0017 |
-| Heurísticas de evolución y reuso del código (Rule of Three, etc.) | ADR-0018 |
-| Separación física de skills publicados vs internos | ADR-0019 |
-| Hosting de Azure Functions (un App Service Plan por dominio) | ADR-0020 |
-| Infraestructura base (8 módulos + entorno) generada por agente | ADR-0021 |
-| Autenticación de CI hacia Azure por OIDC (Workload Identity Federation) | ADR-0022 |
-| Bounded Context, namespace interno de ASB y frontera publico/privado | ADR-0023 |
-| Modelo de eventos de bus (privado propio, publico via backbone compartido, externo diferido) | ADR-0024 |
-| Custodia de secretos (ningun secreto/key en texto plano; Key Vault o identidad administrada) | ADR-0025 |
-| Colas de Service Bus con sesion para fan-in y serializacion por clave de aggregate | ADR-0026 |
-| Enrutamiento multi-destinatario de un evento por correlation filter de igualdad | ADR-0027 |
+| Topics de Service Bus por evento | MEF-ADR-0001 |
+| Estrategia de testing con event sourcing (Given/When/Then) | MEF-ADR-0002 |
+| Stack ES: Marten + Wolverine + Postgres | MEF-ADR-0003 |
+| Manejo de errores en ES (eventos de fallo vs excepciones) | MEF-ADR-0004 |
+| Naming y versionado de eventos | MEF-ADR-0005 |
+| Convenciones de nombramiento de funciones Azure | MEF-ADR-0006 |
+| Gestión de proyecto con GitHub Issues | MEF-ADR-0007 |
+| Knowledge Crunching como propósito del planner | MEF-ADR-0008 |
+| Mensajes en `.resx` por aggregate/handler | MEF-ADR-0009 |
+| Pipeline de conocimiento del dominio | MEF-ADR-0010 |
+| Definition of Ready por tipo de issue | MEF-ADR-0011 |
+| Encapsulamiento, Tell-don't-Ask, value objects, frontera de serialización (event store Marten vs bus) | MEF-ADR-0012 |
+| Smoke tests contra entorno dev | MEF-ADR-0013 |
+| Coverage gate en pipeline TDD | MEF-ADR-0014 |
+| Snapshots de Marten como excepción | MEF-ADR-0015 |
+| Convención de naming para métodos de test | MEF-ADR-0016 |
+| Archivo señal de refactor puro vive fuera de `.claude/` | MEF-ADR-0017 |
+| Heurísticas de evolución y reuso del código (Rule of Three, etc.) | MEF-ADR-0018 |
+| Separación física de skills publicados vs internos | MEF-ADR-0019 |
+| Hosting de Azure Functions (un App Service Plan por dominio) | MEF-ADR-0020 |
+| Infraestructura base (8 módulos + entorno) generada por agente | MEF-ADR-0021 |
+| Autenticación de CI hacia Azure por OIDC (Workload Identity Federation) | MEF-ADR-0022 |
+| Bounded Context, namespace interno de ASB y frontera publico/privado | MEF-ADR-0023 |
+| Modelo de eventos de bus (privado propio, publico via backbone compartido, externo diferido) | MEF-ADR-0024 |
+| Custodia de secretos (ningun secreto/key en texto plano; Key Vault o identidad administrada) | MEF-ADR-0025 |
+| Colas de Service Bus con sesion para fan-in y serializacion por clave de aggregate | MEF-ADR-0026 |
+| Enrutamiento multi-destinatario de un evento por correlation filter de igualdad | MEF-ADR-0027 |
+| Esquema de identificación de ADRs con prefijo por proyecto (adopción opcional para consumidores) | MEF-ADR-0030 |
 
 ## Convenciones del marco
 
@@ -207,7 +210,7 @@ Los ADRs en `docs/adr/` son la fuente de verdad arquitectónica del harness. Los
 - **Labels obligatorios**: `tipo:X` + `dom:X` + `estado:{borrador|listo}` (asignados por el planner).
 - **Dependencias**: declaradas en sección `## Dependencias`.
 - **Bloqueados**: label `bloqueado` cuando dependen de otro no cerrado.
-- **Definition of Ready**: ver ADR-0011 — los skills de pipeline lo validan antes de ejecutar.
+- **Definition of Ready**: ver MEF-ADR-0011 — los skills de pipeline lo validan antes de ejecutar.
 
 ### Flujo de entrega
 
@@ -230,7 +233,7 @@ Los ADRs en `docs/adr/` son la fuente de verdad arquitectónica del harness. Los
 
 ## Dos paquetes de tooling: publicado vs interno
 
-Mefisto mantiene **dos sets** de skills/agentes/pipelines físicamente separados (doctrina completa en ADR-0019):
+Mefisto mantiene **dos sets** de skills/agentes/pipelines físicamente separados (doctrina completa en MEF-ADR-0019):
 
 - **Publicados** (`commands/`, `agents/`, `scripts/`, `hooks/`): se distribuyen vía marketplace y operan únicamente sobre archivos del consumidor.
 - **Internos** (`.claude/commands/`, `.claude/agents/`, `.claude/scripts/`): no se publican; Claude Code los carga al abrir este repo. Llevan prefijo `mefisto-` y operan solo sobre archivos del propio plugin.

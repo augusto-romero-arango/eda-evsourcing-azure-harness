@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-refactor-gate.sh — Tests del gate post-Stage-1 del pipeline TDD.
 #
-# Valida tres escenarios documentados en issue #150 / ADR-0017:
+# Valida tres escenarios documentados en issue #150 / MEF-ADR-0017:
 #   A) Refactor puro detectado correctamente (existe pipeline-state/refactor-signal.md)
 #   B) Refactor puro probable pero senal ausente (log evidencia razonamiento de refactor)
 #   C) Agente fallo — ni senal, ni cambios, ni evidencia en log

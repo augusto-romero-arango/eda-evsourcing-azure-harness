@@ -8,14 +8,14 @@
 #   CA-3: un nombre valido (3-24 chars, minusculas + digitos) pasa sin error.
 #   CA-4: el mensaje de error indica el limite y sugiere abreviar el prefijo.
 #
-# Cubre la validacion de boundedContext (issue #131, ADR-0023):
+# Cubre la validacion de boundedContext (issue #131, MEF-ADR-0023):
 #   BC-1: boundedContext ausente aborta (return 1) con mensaje accionable de migracion.
 #   BC-2: un boundedContext valido (name + domains subconjunto de domainLabels) pasa
 #         (return 0) y exporta HARNESS_BC_NAME / HARNESS_BC_DOMAINS.
 #   BC-3: name vacio o con caracteres invalidos (>63 chars, espacios, puntos) aborta.
 #   BC-4: domains vacio, o con un dominio fuera de domainLabels, aborta.
 #
-# Cubre la validacion del registro serviceBus (issue #163, ADR-0024):
+# Cubre la validacion del registro serviceBus (issue #163, MEF-ADR-0024):
 #   SB-1: serviceBus ausente NO aborta (opcional) y deja los HARNESS_SB_* vacios.
 #   SB-2: serviceBus.internal.secretName vacio o ausente aborta con mensaje accionable.
 #   SB-3: serviceBus valido con internal + external pasa y exporta HARNESS_SB_* (listas

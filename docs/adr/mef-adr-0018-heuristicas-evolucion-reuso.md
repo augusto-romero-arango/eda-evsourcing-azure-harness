@@ -1,4 +1,4 @@
-# ADR-0018: Heuristicas de evolucion y reuso del codigo
+# MEF-ADR-0018: Heuristicas de evolucion y reuso del codigo
 
 ## Estado
 
@@ -23,7 +23,7 @@ colombiano puede introducir reglas distintas que harian forzada una API
 unificada. Ese razonamiento quedo cargado en las notas tecnicas de cada issue,
 pero no como heuristica del proyecto.
 
-ADR-0012 abrio el patron de "ADR como tabla de heuristicas con disclaimer de
+MEF-ADR-0012 abrio el patron de "ADR como tabla de heuristicas con disclaimer de
 heuristicas vs principios". Este ADR replica el patron en un eje ortogonal: la
 evolucion y el reuso del codigo.
 
@@ -68,7 +68,7 @@ la extraccion con el caso documentado.
 - **Tools de deteccion** (linters, analisis de duplicacion). Este ADR es sobre
   criterio de diseno, no sobre automatizacion.
 - **Naming, estructura de carpetas u otros ejes de evolucion**. Si esas
-  heuristicas crecen, merecen su propio ADR (igual que ADR-0012 se mantuvo
+  heuristicas crecen, merecen su propio ADR (igual que MEF-ADR-0012 se mantuvo
   focalizado en modelado de objetos).
 - **Reuso de utilidades sin riesgo de divergencia** (helpers de fechas,
   formatters, etc.). La heuristica aplica cuando el codigo expresa **reglas del
@@ -100,7 +100,7 @@ la extraccion con el caso documentado.
 
 ## Referencias
 
-- ADR-0012 (Heuristicas de modelado de objetos de dominio) -- precedente del
+- MEF-ADR-0012 (Heuristicas de modelado de objetos de dominio) -- precedente del
   formato y del disclaimer de heuristicas vs principios.
 - Issue #136 (Calcular retardo, compensacion intra-franja y ensamblar
   DesgloseFranja) -- caso ejemplificador, sitio 1.

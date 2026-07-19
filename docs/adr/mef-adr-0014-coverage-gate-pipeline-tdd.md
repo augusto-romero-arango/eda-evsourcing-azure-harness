@@ -1,4 +1,4 @@
-# ADR-0014: Coverage gate en el pipeline TDD
+# MEF-ADR-0014: Coverage gate en el pipeline TDD
 
 **Fecha**: 2026-04-11  
 **Estado**: Aceptado
@@ -60,7 +60,7 @@ Los archivos se clasifican en dos categorias con umbrales diferenciados:
 
 Razon del 95%: la logica de dominio ya esta consistentemente al 100% cuando los agentes trabajan bien. Un 95% deja margen para lineas inalcanzables (constructores privados de serializacion, fallbacks defensivos) sin esconder gaps reales. Un umbral mas bajo (80-90%) no detectaria los atajos que queremos atrapar.
 
-Razon de excluir boilerplate: estas clases no contienen decisiones de negocio. Testearlas unitariamente no aporta confianza real — su correctitud se verifica via smoke tests contra el entorno desplegado (ADR-0013). Incluirlas en la medicion genera ruido que oculta los gaps verdaderos.
+Razon de excluir boilerplate: estas clases no contienen decisiones de negocio. Testearlas unitariamente no aporta confianza real — su correctitud se verifica via smoke tests contra el entorno desplegado (MEF-ADR-0013). Incluirlas en la medicion genera ruido que oculta los gaps verdaderos.
 
 Archivos que no matchean ningun patron se clasifican como "no evaluados" — se reportan sin bloquear.
 

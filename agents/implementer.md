@@ -236,7 +236,7 @@ El endpoint correspondiente hereda de `PrivateEventEndpointBase<TurnoCreado>` (l
 | Caso | Por que | Que usar |
 |---|---|---|
 | Consumir un `IPublicEvent` (inter-BC via backbone, u otro plano del producto) | 2.1.0 no trae `IPublicEventHandlerAsync`/router publico; `IPrivateEventRouter` esta restringido a `IPrivateEvent` | `ServiceBusEndpointBase<T>` + `ICommandRouter`, deserializando a un comando local |
-| Fan-in: varios tipos de evento en un queue de sesion (ADR-0026) | No hay un unico `TEvento` -- el despacho es por `Subject`; ademas el comando no es espejo (estampa datos de transporte, aplana/renombra) | `ServiceBusSessionEndpointBase` + `ICommandRouter` |
+| Fan-in: varios tipos de evento en un queue de sesion (MEF-ADR-0026) | No hay un unico `TEvento` -- el despacho es por `Subject`; ademas el comando no es espejo (estampa datos de transporte, aplana/renombra) | `ServiceBusSessionEndpointBase` + `ICommandRouter` |
 | La traduccion agrega semantica o campos que el evento no trae (timestamp de recepcion, aplanamiento, combinar fuentes, validacion/identidad propia) | El comando **no** es espejo: tiene razon de existir | Comando explicito + `ICommandHandlerAsync<TComando>` |
 | Comando genuino desde el boundary externo (endpoint HTTP) | No hay evento; es un comando del cliente | `ICommandHandlerAsync<TComando>` (patron CommandHandler intacto) |
 
@@ -244,13 +244,13 @@ El endpoint correspondiente hereda de `PrivateEventEndpointBase<TurnoCreado>` (l
 
 **Naming:** `{Evento}EventHandler` (ej. `TurnoCreadoEventHandler`), en subcarpeta `EventHandler/` del feature folder (espejo de `CommandHandler/`) — ver "Convenciones de nombramiento" mas abajo.
 
-Doctrina completa (asimetria privado/publico, precedente real `Cosmos.ControlPlane` PR #94): **ADR-0024**. Este agente no la duplica.
+Doctrina completa (asimetria privado/publico, precedente real `Cosmos.ControlPlane` PR #94): **MEF-ADR-0024**. Este agente no la duplica.
 
-### `groupId` en `PublishAsync`: invariante dura con `requires_session` (ADR-0026)
+### `groupId` en `PublishAsync`: invariante dura con `requires_session` (MEF-ADR-0026)
 
-Los ejemplos de arriba publican con `eventSender.PublishAsync(turno.GetPrivateEvents())`, sin `groupId` -- es el caso normal: un topic con subscriptions simples (fan-out, ADR-0001) no necesita sesion. `IPrivateEventSender.PublishAsync` tiene tambien una sobrecarga con un parametro `PublishOptions` (`Cosmos.EventDriven.Abstractions` >= 2.0.0; hasta 1.3.0 era un `string groupId` posicional -- signature bump verificado en issue #312, ver ADR-0003 "Control de cambios"): `PublishAsync(PublishOptions options, params IPrivateEvent[] events)`, donde `PublishOptions.GroupId` fija el `SessionId` del mensaje -- a nivel de protocolo AMQP viaja como la propiedad `group-id` [Microsoft Learn, "Message sessions"]. La firma completa vive en el paquete externo `Cosmos.EventDriven.Abstractions`; este agente no la agrega, solo ensena el CUANDO/COMO de usarla.
+Los ejemplos de arriba publican con `eventSender.PublishAsync(turno.GetPrivateEvents())`, sin `groupId` -- es el caso normal: un topic con subscriptions simples (fan-out, MEF-ADR-0001) no necesita sesion. `IPrivateEventSender.PublishAsync` tiene tambien una sobrecarga con un parametro `PublishOptions` (`Cosmos.EventDriven.Abstractions` >= 2.0.0; hasta 1.3.0 era un `string groupId` posicional -- signature bump verificado en issue #312, ver MEF-ADR-0003 "Control de cambios"): `PublishAsync(PublishOptions options, params IPrivateEvent[] events)`, donde `PublishOptions.GroupId` fija el `SessionId` del mensaje -- a nivel de protocolo AMQP viaja como la propiedad `group-id` [Microsoft Learn, "Message sessions"]. La firma completa vive en el paquete externo `Cosmos.EventDriven.Abstractions`; este agente no la agrega, solo ensena el CUANDO/COMO de usarla.
 
-**Invariante dura (ADR-0026).** Si el topic al que publicas alimenta, via `forward_to`, un queue con `requires_session = true` (fan-in -- ver "Endpoint de fan-in" mas abajo y "Infraestructura (topics y subscriptions)" mas abajo), el productor **debe** publicar con `PublishOptions.GroupId` = la clave del aggregate destino (el mismo valor usado en `StartStream`/`GetAggregateRootAsync`). `requires_session` en el destino y `GroupId` en el productor se despliegan **juntos** -- nunca uno sin el otro.
+**Invariante dura (MEF-ADR-0026).** Si el topic al que publicas alimenta, via `forward_to`, un queue con `requires_session = true` (fan-in -- ver "Endpoint de fan-in" mas abajo y "Infraestructura (topics y subscriptions)" mas abajo), el productor **debe** publicar con `PublishOptions.GroupId` = la clave del aggregate destino (el mismo valor usado en `StartStream`/`GetAggregateRootAsync`). `requires_session` en el destino y `GroupId` en el productor se despliegan **juntos** -- nunca uno sin el otro.
 
 **Consecuencia de omitirlo.** Un mensaje **sin** `SessionId` que llega, via auto-forward, a un destino con sesion habilitada se dead-lettera en la entidad **fuente** (la subscription que hace el forward) -- no en el queue destino ni en la Function que lo consume: la entidad session-enabled solo acepta mensajes con `SessionId` [Microsoft Learn, "Chaining Service Bus entities with autoforwarding"]. El mensaje se pierde en silencio si nadie monitorea esa dead-letter.
 
@@ -262,22 +262,22 @@ await eventSender.PublishAsync(
 
 **Como saber si aplica.** Revisa, en `infra/environments/dev/main.tf`, el bloque `topics_config` de `module "service_bus_interno"`: si alguna subscription de tu topic declara `forward_to = "<queue>"` y ese `<queue>` existe en `queues_config` con `requires_session = true`, usa la sobrecarga con `PublishOptions.GroupId`. Si ninguna subscription del topic tiene `forward_to`, sigue publicando sin `PublishOptions` (los ejemplos de arriba).
 
-**Trabajo downstream, no del harness.** Si al implementar en un consumidor encuentras un handler que aun no cumple este invariante -- por ejemplo, que publica sin `GroupId` desde antes de que existiera esta doctrina; caso real: `CreateAdminUserCommandHandler` en `Cosmos.ControlPlane` -- no lo refactorices como parte de un issue no relacionado. Homologarlo contra esta seccion y completar el wiring de infraestructura/endpoint (ADR-0026, issues #270/#271) es tarea del **consumidor**, con su propio seguimiento en el backlog de ese repo. Documenta el hallazgo en tu resumen para seguimiento administrativo; no lo corrijas por tu cuenta.
+**Trabajo downstream, no del harness.** Si al implementar en un consumidor encuentras un handler que aun no cumple este invariante -- por ejemplo, que publica sin `GroupId` desde antes de que existiera esta doctrina; caso real: `CreateAdminUserCommandHandler` en `Cosmos.ControlPlane` -- no lo refactorices como parte de un issue no relacionado. Homologarlo contra esta seccion y completar el wiring de infraestructura/endpoint (MEF-ADR-0026, issues #270/#271) es tarea del **consumidor**, con su propio seguimiento en el backlog de ese repo. Documenta el hallazgo en tu resumen para seguimiento administrativo; no lo corrijas por tu cuenta.
 
-Doctrina completa (criterio de dos condiciones, topologia fuente/destino, restriccion de plataforma, naming de la Function de fan-in): **ADR-0026**. Este agente no la duplica.
+Doctrina completa (criterio de dos condiciones, topologia fuente/destino, restriccion de plataforma, naming de la Function de fan-in): **MEF-ADR-0026**. Este agente no la duplica.
 
-### Clave de enrutamiento como application property (ADR-0027)
+### Clave de enrutamiento como application property (MEF-ADR-0027)
 
 Cuando un `IPublicEvent` debe llegar a **N destinatarios** distintos y cada uno solo quiere su
-subconjunto -- el eje que fija ADR-0027, distinto de "varios tipos de evento en un topic" que
-razona ADR-0001 -- cada destinatario provisiona su subscription con un **correlation filter de
+subconjunto -- el eje que fija MEF-ADR-0027, distinto de "varios tipos de evento en un topic" que
+razona MEF-ADR-0001 -- cada destinatario provisiona su subscription con un **correlation filter de
 igualdad** sobre una clave de enrutamiento: una application property **string**, matcheada por
-**igualdad exacta** (ADR-0027 decision #2), cuyo nombre concreto lo decide el flujo (ej.
+**igualdad exacta** (MEF-ADR-0027 decision #2), cuyo nombre concreto lo decide el flujo (ej.
 `bundleId`, `tenantId` -- este agente no hardcodea un nombre). Los correlation filters solo
 evaluan **propiedades del mensaje**, nunca el body [Microsoft Learn, "Topic filters and
 actions"] -- por eso el productor tiene una obligacion nueva, coherente con la subscription que
 el consumidor provisiono: **estampar la clave de enrutamiento como application property** al
-publicar (ADR-0027 decision #4).
+publicar (MEF-ADR-0027 decision #4).
 
 **LIMITE verificado (actualizado en issue #312): el paquete ahora expone `PublishOptions.Headers`,
 pero su traduccion a application properties de Azure Service Bus no esta verificada.**
@@ -289,17 +289,17 @@ options, events)` con `PublishOptions.Headers` (`IReadOnlyDictionary<string, str
 `Headers` se estampa como header de Wolverine (`DeliveryOptions.WithHeader`) antes de publicar. **No
 verificado en este cambio**: si el transporte `Cosmos.EventDriven.CritterStack.AzureServiceBus`
 traduce esos headers de Wolverine a application properties de Azure Service Bus -- la unica pieza que
-falta para que esta seccion deje de tener un limite. Igual que Alt 4 de ADR-0024 (managed identity
+falta para que esta seccion deje de tener un limite. Igual que Alt 4 de MEF-ADR-0024 (managed identity
 diferida por el mismo tipo de limite de paquete), confirmar esa traduccion y, si aplica, adoptar
 `Headers` para el estampado de la clave de enrutamiento queda **diferido** a un issue de seguimiento
 -- es trabajo **downstream** (cross-repo) que este agente no implementa especulativamente.
 
 **No reusar `GroupId`/`SessionId` como clave de enrutamiento.** `PublishOptions.GroupId` (seccion
 "`groupId` en `PublishAsync`" arriba) esta **reservado** a la serializacion de fan-in por clave de
-aggregate (ADR-0026); la clave de enrutamiento de ADR-0027 es una propiedad **distinta**, con
+aggregate (MEF-ADR-0026); la clave de enrutamiento de MEF-ADR-0027 es una propiedad **distinta**, con
 proposito distinto (seleccion de destinatario, no serializacion de escritura concurrente). Un flujo
 podria necesitar ambas a la vez -- son ortogonales y **no deben compartir la misma propiedad**
-(ADR-0027 decision #5).
+(MEF-ADR-0027 decision #5).
 
 **Trabajo downstream, no del harness.** Si al implementar un flujo que necesita este enrutamiento
 descubres que el paquete aun no soporta application properties arbitrarias, documenta el hallazgo
@@ -312,7 +312,7 @@ sin la propiedad en el sobre, ningun correlation filter la ve [Microsoft Learn, 
 and actions"].
 
 Doctrina completa (por que correlation filter y no SQL filter, topologia topic + N subscriptions,
-custodia de la clave): **ADR-0027**. Este agente no la duplica.
+custodia de la clave): **MEF-ADR-0027**. Este agente no la duplica.
 
 ### Endpoint HTTP
 
@@ -400,21 +400,21 @@ Registrar en Program.cs: `builder.Services.AddScoped<IRequestValidator, RequestV
 
 **Este patron -- deserializar el evento y rutear un comando via `ICommandRouter` -- aplica cuando el comando no es un espejo del evento** (aporta identidad, semantica o campos propios; o el estimulo es un `IPublicEvent`, un fan-in, o un boundary externo). Si el estimulo es un `IPrivateEvent` y el comando que escribirias seria un espejo suyo (mismos campos, sin semantica nueva), no uses este patron: usa el EventHandler directo de la seccion "EventHandler — reaccionar a un evento privado" mas arriba. El ejemplo de mas abajo (`DepurarMarcacionesDeTurno` a partir de `TurnoCreado`) es precisamente ese caso limite: si `DepurarMarcacionesDeTurno` no aportara nada que `TurnoCreado` no trajera, la forma correcta seria `TurnoCreadoEventHandler : IPrivateEventHandlerAsync<TurnoCreado>` sobre `PrivateEventEndpointBase<TurnoCreado>`, sin este comando ni este endpoint.
 
-**Convencion de `Connection` del `[ServiceBusTrigger]` (ADR-0023 criterio publico/privado; ADR-0024 transporte)**
+**Convencion de `Connection` del `[ServiceBusTrigger]` (MEF-ADR-0023 criterio publico/privado; MEF-ADR-0024 transporte)**
 
-El `Connection` del trigger determina a que ASB se conecta Azure Functions para escuchar el topic: el namespace interno del BC para eventos privados, o el backbone compartido del producto para eventos publicos comunes (ADR-0024 decision #4). Debe coincidir con el app setting de la cadena de conexion donde el **productor** publico el evento — cadena custodiada en Key Vault y referenciada via `@Microsoft.KeyVault(...)` (ADR-0024 decision #6). Esos app settings los provisiona Terraform (via `domain-scaffolder`/`infra-base-scaffolder`); el lado **publish** lee sus valores en `Program.cs` para registrar los brokers de Wolverine, mientras que en el lado **consumo** es Azure Functions —no Wolverine— quien lee el `Connection` del `[ServiceBusTrigger]`. Ambos lados citan exactamente el mismo nombre de app setting, siguiendo el patron `SERVICE_BUS_CONNECTION_<ALIAS>` (fijado en el contrato de `harness.config.json`, issue #163; `INTERNO` es el alias reservado del ASB propio del BC):
+El `Connection` del trigger determina a que ASB se conecta Azure Functions para escuchar el topic: el namespace interno del BC para eventos privados, o el backbone compartido del producto para eventos publicos comunes (MEF-ADR-0024 decision #4). Debe coincidir con el app setting de la cadena de conexion donde el **productor** publico el evento — cadena custodiada en Key Vault y referenciada via `@Microsoft.KeyVault(...)` (MEF-ADR-0024 decision #6). Esos app settings los provisiona Terraform (via `domain-scaffolder`/`infra-base-scaffolder`); el lado **publish** lee sus valores en `Program.cs` para registrar los brokers de Wolverine, mientras que en el lado **consumo** es Azure Functions —no Wolverine— quien lee el `Connection` del `[ServiceBusTrigger]`. Ambos lados citan exactamente el mismo nombre de app setting, siguiendo el patron `SERVICE_BUS_CONNECTION_<ALIAS>` (fijado en el contrato de `harness.config.json`, issue #163; `INTERNO` es el alias reservado del ASB propio del BC):
 
 | Origen del topic | Tipo de evento | `Connection` del trigger |
 |---|---|---|
 | Namespace interno del BC | `IPrivateEvent` intra-BC | `SERVICE_BUS_CONNECTION_INTERNO` (alias reservado) |
 | Backbone compartido del producto | `IPublicEvent` comun (inter-BC dentro del producto) | `SERVICE_BUS_CONNECTION_<ALIAS>` — `<ALIAS>` es el del backbone declarado en `serviceBus.external` (alcance `compartido`) |
-| ASB verdaderamente externo (aplicacion ajena al producto) | Integracion externa | **Diferido** (ADR-0024 decision #5, default-off) |
+| ASB verdaderamente externo (aplicacion ajena al producto) | Integracion externa | **Diferido** (MEF-ADR-0024 decision #5, default-off) |
 
 **Casos soportados hoy:**
 - **Consumo intra-BC** (privado): un dominio reacciona a un evento privado (`IPrivateEvent`) publicado por otro dominio del mismo BC al namespace interno. Usar `SERVICE_BUS_CONNECTION_INTERNO`. Mismo criterio BC-aware que "Donde vive cada tipo de evento" (mas abajo): privado significa mismo BC, no mismo dominio.
-- **Consumo inter-BC via backbone** (publico comun): un dominio de este BC reacciona a un evento publico (`IPublicEvent`) publicado por un dominio de **otro** BC del mismo producto al backbone compartido. Usar `SERVICE_BUS_CONNECTION_<ALIAS>` con el alias del backbone (`serviceBus.external`, alcance `compartido`). El consumidor crea su propia subscription sobre el topic del productor (naming ADR-0005: `{consumidor}-escucha-{productor}`); no requiere coordinacion de credenciales adicional a la cadena de conexion custodiada.
+- **Consumo inter-BC via backbone** (publico comun): un dominio de este BC reacciona a un evento publico (`IPublicEvent`) publicado por un dominio de **otro** BC del mismo producto al backbone compartido. Usar `SERVICE_BUS_CONNECTION_<ALIAS>` con el alias del backbone (`serviceBus.external`, alcance `compartido`). El consumidor crea su propia subscription sobre el topic del productor (naming MEF-ADR-0005: `{consumidor}-escucha-{productor}`); no requiere coordinacion de credenciales adicional a la cadena de conexion custodiada.
 
-**Integracion externa diferida**: consumir de un ASB verdaderamente externo (aplicacion ajena al producto) queda fuera de alcance hasta que exista el primer caso real (ADR-0024 decision #5, default-off). No se wirea hoy; al mencionarlo en el codigo o en la guia, dejarlo como `// TODO(ADR-0024 #5): integracion externa diferida`.
+**Integracion externa diferida**: consumir de un ASB verdaderamente externo (aplicacion ajena al producto) queda fuera de alcance hasta que exista el primer caso real (MEF-ADR-0024 decision #5, default-off). No se wirea hoy; al mencionarlo en el codigo o en la guia, dejarlo como `// TODO(MEF-ADR-0024 #5): integracion externa diferida`.
 
 ```csharp
 public class FunctionEndpoint(ICommandRouter commandRouter, ILogger<FunctionEndpoint> logger)
@@ -458,11 +458,11 @@ public async Task NotificarCuandoDiaCalculado(
 }
 ```
 
-### Endpoint de fan-in: queue en modo sesion (ADR-0026)
+### Endpoint de fan-in: queue en modo sesion (MEF-ADR-0026)
 
-Los dos endpoints anteriores consumen una **subscription** de un unico topic (un `TEvento`). Existe un caso distinto: cuando varios eventos -- mismo tipo o tipos distintos, mismo productor o productores distintos -- deben converger en una decision sobre el **mismo aggregate**, y consumirlos con subscriptions independientes permitiria que dos o mas ejecuciones concurrentes del handler escriban sobre el mismo stream de Marten al mismo tiempo (carrera de concurrencia optimista). ADR-0026 fija el criterio completo de dos condiciones para reconocer este caso (seccion "Decision" #1); si tu caso no las cumple ambas, el patron de subscription simple de arriba sigue siendo lo correcto -- este no es un atajo para "varios eventos, una Function".
+Los dos endpoints anteriores consumen una **subscription** de un unico topic (un `TEvento`). Existe un caso distinto: cuando varios eventos -- mismo tipo o tipos distintos, mismo productor o productores distintos -- deben converger en una decision sobre el **mismo aggregate**, y consumirlos con subscriptions independientes permitiria que dos o mas ejecuciones concurrentes del handler escriban sobre el mismo stream de Marten al mismo tiempo (carrera de concurrencia optimista). MEF-ADR-0026 fija el criterio completo de dos condiciones para reconocer este caso (seccion "Decision" #1); si tu caso no las cumple ambas, el patron de subscription simple de arriba sigue siendo lo correcto -- este no es un atajo para "varios eventos, una Function".
 
-**Trigger**: un unico argumento posicional con el nombre del **queue** (no topic+subscription), mas `IsSessionsEnabled = true`. **`Connection` es siempre `SERVICE_BUS_CONNECTION_INTERNO`**: a diferencia de la tabla de arriba, el queue de fan-in vive siempre en el namespace interno del BC (ADR-0026 seccion 2, ADR-0023) -- nunca en el backbone compartido, no hay variante de alias aqui. El `SessionId` lo fija el productor al publicar (`groupId` de `IPrivateEventSender`, doctrina completa en la seccion "`groupId` en `PublishAsync`" mas arriba); la serializacion dentro de cada sesion es la que elimina la carrera. `maxConcurrentSessions` en `host.json` solo acota cuantas sesiones **distintas** corren en paralelo por instancia escalada, sin romper el orden dentro de cada una: el `host.json` que genera el `domain-scaffolder` lo fija en 16; el default del worker aislado con la extension `Microsoft.Azure.Functions.Worker.Extensions.ServiceBus` 5.x es 8 (el valor 2000 es el default del modelo legacy in-process/Functions 2.x y no aplica a este stack — [host.json settings](https://learn.microsoft.com/azure/azure-functions/functions-bindings-service-bus?pivots=programming-language-csharp#hostjson-settings)).
+**Trigger**: un unico argumento posicional con el nombre del **queue** (no topic+subscription), mas `IsSessionsEnabled = true`. **`Connection` es siempre `SERVICE_BUS_CONNECTION_INTERNO`**: a diferencia de la tabla de arriba, el queue de fan-in vive siempre en el namespace interno del BC (MEF-ADR-0026 seccion 2, MEF-ADR-0023) -- nunca en el backbone compartido, no hay variante de alias aqui. El `SessionId` lo fija el productor al publicar (`groupId` de `IPrivateEventSender`, doctrina completa en la seccion "`groupId` en `PublishAsync`" mas arriba); la serializacion dentro de cada sesion es la que elimina la carrera. `maxConcurrentSessions` en `host.json` solo acota cuantas sesiones **distintas** corren en paralelo por instancia escalada, sin romper el orden dentro de cada una: el `host.json` que genera el `domain-scaffolder` lo fija en 16; el default del worker aislado con la extension `Microsoft.Azure.Functions.Worker.Extensions.ServiceBus` 5.x es 8 (el valor 2000 es el default del modelo legacy in-process/Functions 2.x y no aplica a este stack — [host.json settings](https://learn.microsoft.com/azure/azure-functions/functions-bindings-service-bus?pivots=programming-language-csharp#hostjson-settings)).
 
 **Lookup map por `message.Subject`** cuando el queue recibe varios tipos de evento convergentes: `Subject` es la propiedad AMQP "subject", una etiqueta de aplicacion que el productor fija al publicar (`ServiceBusReceivedMessage.Subject`, [Azure.Messaging.ServiceBus](https://learn.microsoft.com/dotnet/api/azure.messaging.servicebus.servicebusreceivedmessage.subject)). Este despacho -- elegir que evento deserializar y que comando invocar segun una clave discreta -- es el caso canonico de la heuristica "Lookup map sobre switch/if para seleccion por clave discreta" (mas abajo): usa un `Dictionary<string, ...>` **estatico a nivel de modulo**, no un `switch`.
 
@@ -509,11 +509,11 @@ public class ConsolidarCierreTurno(ICommandRouter commandRouter, ILogger<Consoli
 
 `ServiceBusSessionEndpointBase` (en `Infraestructura/`, la crea el `domain-scaffolder`) es la contraparte de `ServiceBusEndpointBase<TEvento>` para este caso: encapsula complete/lock-lost/dead-letter, pero delega el despacho al metodo abstracto `DespacharPorSubject` porque aqui no hay un unico `TEvento` -- el mapa decide, caso por caso, que evento deserializar y que comando invocar. Un `Subject` no reconocido debe lanzar (el `TryGetValue` fallido); la clase base lo captura como cualquier otro error y dead-letterea el mensaje.
 
-**Naming (ADR-0026 seccion 4, excepcion documentada de ADR-0006)**: el patron `{Accion}Cuando{Evento}` asume un estimulo unico y no aplica aqui -- exigirlo obligaria a elegir arbitrariamente uno de los N eventos convergentes. La convencion para Functions de fan-in es distinta: **el nombre del queue en kebab-case es el nombre de la Function que lo consume** (en PascalCase), y describe la decision o convergencia que resuelve, no un evento puntual. Ejemplo: queue `consolidar-cierre-turno` -> Function `ConsolidarCierreTurno`.
+**Naming (MEF-ADR-0026 seccion 4, excepcion documentada de MEF-ADR-0006)**: el patron `{Accion}Cuando{Evento}` asume un estimulo unico y no aplica aqui -- exigirlo obligaria a elegir arbitrariamente uno de los N eventos convergentes. La convencion para Functions de fan-in es distinta: **el nombre del queue en kebab-case es el nombre de la Function que lo consume** (en PascalCase), y describe la decision o convergencia que resuelve, no un evento puntual. Ejemplo: queue `consolidar-cierre-turno` -> Function `ConsolidarCierreTurno`.
 
-**Infraestructura del queue**: el queue de fan-in, las subscriptions de forward (sin sesion, en las fuentes) y el `requires_session = true` del destino se provisionan en Terraform por separado (ADR-0026, trabajo diferido a infra en issue #270). El implementer no crea ni edita esas entidades -- verifica que el queue ya exista antes de escribir este endpoint; si falta, documenta la necesidad en tu resumen igual que ya haces con topics/subscriptions faltantes (seccion "Infraestructura (topics y subscriptions)").
+**Infraestructura del queue**: el queue de fan-in, las subscriptions de forward (sin sesion, en las fuentes) y el `requires_session = true` del destino se provisionan en Terraform por separado (MEF-ADR-0026, trabajo diferido a infra en issue #270). El implementer no crea ni edita esas entidades -- verifica que el queue ya exista antes de escribir este endpoint; si falta, documenta la necesidad en tu resumen igual que ya haces con topics/subscriptions faltantes (seccion "Infraestructura (topics y subscriptions)").
 
-Doctrina completa (cuando aplica esta excepcion, topologia fuente/destino): **ADR-0026**. La invariante `groupId` del lado productor se ensena en la seccion "`groupId` en `PublishAsync`" mas arriba; este agente no duplica el resto de ADR-0026, solo enseña el scaffolding del endpoint consumidor.
+Doctrina completa (cuando aplica esta excepcion, topologia fuente/destino): **MEF-ADR-0026**. La invariante `groupId` del lado productor se ensena en la seccion "`groupId` en `PublishAsync`" mas arriba; este agente no duplica el resto de MEF-ADR-0026, solo enseña el scaffolding del endpoint consumidor.
 
 **Nota sobre deserializacion:** La configuracion global de JSON (CamelCase + CaseInsensitive) es responsabilidad del `domain-scaffolder` en el Program.cs. Si detectas que falta esta configuracion, reportalo en el resumen pero no la agregues.
 
@@ -541,11 +541,11 @@ builder.Services.AddValidatorsFromAssemblyContaining<I{Dominio}AssemblyMarker>()
 
 ## Modelado de objetos de dominio
 
-Las reglas de forma (`record` vs `sealed class`), constructor, serializacion (`ConfigurarSerializacion`, proscripcion de `[JsonConstructor]`) y registro en infraestructura viven **en ADR-0012**. Este agente **no las duplica** — leelo completo antes de crear un value object, un evento o cualquier tipo persistido.
+Las reglas de forma (`record` vs `sealed class`), constructor, serializacion (`ConfigurarSerializacion`, proscripcion de `[JsonConstructor]`) y registro en infraestructura viven **en MEF-ADR-0012**. Este agente **no las duplica** — leelo completo antes de crear un value object, un evento o cualquier tipo persistido.
 
-Aviso de "precedente ≠ autoridad" (didactico, no reglas enumeradas): reviews pasados (PR 142, PR 144) replicaron violaciones de ADR-0012 (`[JsonConstructor]` en ctor privado, `record` con `IReadOnlyList<T>`, `ConfigurarSerializacion` sin registro) porque el implementer uso el precedente como justificacion. Si tu patron parece resolverlo pero el ADR dice otra cosa, **gana el ADR**. Reportalo como bug del precedente en tu resumen.
+Aviso de "precedente ≠ autoridad" (didactico, no reglas enumeradas): reviews pasados (PR 142, PR 144) replicaron violaciones de MEF-ADR-0012 (`[JsonConstructor]` en ctor privado, `record` con `IReadOnlyList<T>`, `ConfigurarSerializacion` sin registro) porque el implementer uso el precedente como justificacion. Si tu patron parece resolverlo pero el ADR dice otra cosa, **gana el ADR**. Reportalo como bug del precedente en tu resumen.
 
-Referencias canonicas en el codigo (alineadas con ADR-0012): `SubFranja` (VO con `sealed class` + `ConfigurarSerializacion` + `IEquatable` manual); `TurnoDiarioAsignado` (evento con precondiciones + `ConfigurarSerializacion`). Antes de usarlas como plantilla, verifica que siguen alineadas — el ADR es la autoridad, no el archivo.
+Referencias canonicas en el codigo (alineadas con MEF-ADR-0012): `SubFranja` (VO con `sealed class` + `ConfigurarSerializacion` + `IEquatable` manual); `TurnoDiarioAsignado` (evento con precondiciones + `ConfigurarSerializacion`). Antes de usarlas como plantilla, verifica que siguen alineadas — el ADR es la autoridad, no el archivo.
 
 ### Encapsulamiento: propiedades internas
 
@@ -767,12 +767,12 @@ public override string ToString()
 | Privado (intra-BC) | `IPrivateEvent` | `{Dominio}/{Feature}/Eventos/` | `...{Dominio}.{Feature}.Eventos` | **plano y portable** |
 | Event sourcing (aggregate) | ninguna | `{Dominio}/Entities/` o `{Feature}/Eventos/` | segun organizacion vertical | modelo rico permitido |
 
-**Criterio BC-aware (ADR-0023, decision #4):** un evento es **publico (inter-BC)** si lo
+**Criterio BC-aware (MEF-ADR-0023, decision #4):** un evento es **publico (inter-BC)** si lo
 consume un dominio de **otro Bounded Context**; es **privado (intra-BC)** si lo consume un dominio
 del **mismo BC**, aunque sea un dominio distinto al productor. Cruzar de dominio no alcanza por si
 solo para ser publico -- el factor decisivo es el Bounded Context del consumidor, no si comparte
 codigo con el productor. Ver el mismo criterio aplicado del lado consumo en "El Connection del
-trigger" (mas arriba). Doctrina raiz: **ADR-0023**; este agente no la duplica.
+trigger" (mas arriba). Doctrina raiz: **MEF-ADR-0023**; este agente no la duplica.
 
 **Restriccion de forma del payload (criterio: ¿cruza un bus?).** Todo evento con marker de bus
 (`IPublicEvent` o `IPrivateEvent`) debe tener un payload **plano y portable**: solo tipos
@@ -786,9 +786,9 @@ rico no cruza el bus**: un VO con campos privados, factory privado y `Configurar
 serializa bien en el event store de Marten (resolver registrado en el `Program.cs` del dominio)
 pero llega lossy al destino del bus. Al emitir por el bus, traduce el VO a su forma plana.
 **Solo la tercera fila** -- eventos de event sourcing sin marker de bus -- admite modelo rico +
-`ConfigurarSerializacion`. La autoridad de esta regla es **ADR-0012, seccion "Frontera de
+`ConfigurarSerializacion`. La autoridad de esta regla es **MEF-ADR-0012, seccion "Frontera de
 serializacion: event store vs bus"** (criterio "¿cruza un bus?"; leela completa antes de definir
-o emitir un evento con marker); este agente no la duplica. Doctrina raiz: **ADR-0023**.
+o emitir un evento con marker); este agente no la duplica. Doctrina raiz: **MEF-ADR-0023**.
 
 ### No exponer internals entre proyectos
 
@@ -829,7 +829,7 @@ Cuando necesites convertir el tipo de una secuencia LINQ (ej. `IEnumerable<Deriv
 **Funciones Azure:**
 - HTTP trigger: `[Function("NombreDelComando")]` — el nombre de la funcion es el nombre del comando
 - ServiceBus trigger (topic+subscription): `[Function("{Accion}Cuando{Evento}")]` — siempre describe la accion Y el estimulo
-- ServiceBus trigger de fan-in (queue en modo sesion, ADR-0026): excepcion documentada — ver seccion "Endpoint de fan-in: queue en modo sesion" mas arriba
+- ServiceBus trigger de fan-in (queue en modo sesion, MEF-ADR-0026): excepcion documentada — ver seccion "Endpoint de fan-in: queue en modo sesion" mas arriba
 
 ```csharp
 // HTTP — string literal con el nombre del comando
@@ -839,7 +839,7 @@ Cuando necesites convertir el tipo de una secuencia LINQ (ej. `IEnumerable<Deriv
 [Function("DepurarMarcacionesCuandoTurnoCreado")]
 [Function("NotificarSupervisorCuandoTurnoCreado")]  // se puede agregar sin romper el primero
 
-// ServiceBus fan-in (excepcion ADR-0026) - nombre del queue en kebab-case, en PascalCase
+// ServiceBus fan-in (excepcion MEF-ADR-0026) - nombre del queue en kebab-case, en PascalCase
 [Function("ConsolidarCierreTurno")]
 ```
 
@@ -883,23 +883,23 @@ src/<RootNamespace>.{Dominio}/
 
 Cuando implementas un handler que publica eventos (usando `IPublicEventSender` o `IPrivateEventSender`), verifica que la infraestructura de mensajeria existe. El namespace destino depende del tipo del evento.
 
-**Si alguna subscription de tu topic tiene `forward_to` hacia un queue con `requires_session = true`** (fan-in, ADR-0026), tu handler debe publicar con `groupId` -- ver la seccion "`groupId` en `PublishAsync`" (arriba, dentro de "CommandHandler — orquestador puro").
+**Si alguna subscription de tu topic tiene `forward_to` hacia un queue con `requires_session = true`** (fan-in, MEF-ADR-0026), tu handler debe publicar con `groupId` -- ver la seccion "`groupId` en `PublishAsync`" (arriba, dentro de "CommandHandler — orquestador puro").
 
 **Nomenclatura ServiceBus:**
 - Topics: kebab-case, nombre del evento en pasado. Ej: `turno-creado`, `empleado-asignado`
-- Subscriptions: kebab-case, patron `{consumidor}-escucha-{productor}` (ADR-0005). Ej: `depuracion-escucha-marcaciones`, `calculo-horas-escucha-programacion`
+- Subscriptions: kebab-case, patron `{consumidor}-escucha-{productor}` (MEF-ADR-0005). Ej: `depuracion-escucha-marcaciones`, `calculo-horas-escucha-programacion`
 - Sin prefijos artificiales (ni `sbt-`, ni `eventos-`)
 
-**Enrutamiento topic → broker (ADR-0024, decisiones #1, #4 y #7):**
+**Enrutamiento topic → broker (MEF-ADR-0024, decisiones #1, #4 y #7):**
 
 | Tipo de evento | Sender | Registro en Program.cs | Terraform de este BC |
 |---|---|---|---|
 | `IPrivateEvent` | `IPrivateEventSender` | `PublicarEventoServerless<T>(topic)` → broker default | `module "service_bus_interno"` |
 | `IPublicEvent` | `IPublicEventSender` | `PublicarEventoServerless<T>("<alias>", topic)` → broker nombrado (backbone compartido) | Ninguno — el backbone lo administra infra, fuera del alcance del Terraform de este BC |
 
-El criterio de enrutamiento del topic (a que broker va) esta ligado al registro que `Program.cs` hace de ese evento: coherencia publish<->infra (ADR-0024 decision #7). El `domain-scaffolder` genera ese registro al crear el dominio; el implementer no lo toca, solo respeta el broker que corresponde al tipo del evento.
+El criterio de enrutamiento del topic (a que broker va) esta ligado al registro que `Program.cs` hace de ese evento: coherencia publish<->infra (MEF-ADR-0024 decision #7). El `domain-scaffolder` genera ese registro al crear el dominio; el implementer no lo toca, solo respeta el broker que corresponde al tipo del evento.
 
-**Wolverine en modo serverless NO auto-provisiona topics** (SendInline). El namespace interno del BC es always-on (lo crea la infra base, `infra-base-scaffolder`); sus topics se agregan JIT por flujo aqui (ADR-0001, ADR-0024). El backbone compartido ya existe (lo provisiona infra, fuera de este repo): sus topics tambien se agregan JIT por flujo, pero no via el Terraform de este BC — ver mas abajo.
+**Wolverine en modo serverless NO auto-provisiona topics** (SendInline). El namespace interno del BC es always-on (lo crea la infra base, `infra-base-scaffolder`); sus topics se agregan JIT por flujo aqui (MEF-ADR-0001, MEF-ADR-0024). El backbone compartido ya existe (lo provisiona infra, fuera de este repo): sus topics tambien se agregan JIT por flujo, pero no via el Terraform de este BC — ver mas abajo.
 
 **Archivo a modificar (solo `IPrivateEvent`):** `infra/environments/dev/main.tf` — bloque `topics_config` de `module "service_bus_interno"`. No toques los modulos ni otros ambientes. Para `IPublicEvent` no hay archivo Terraform de este repo que modificar: el backbone compartido lo administra infra (ver mas abajo).
 
@@ -912,37 +912,37 @@ module "service_bus_interno" {
     "turno-creado" = {          # <- IPrivateEvent (lo publica CrearTurnoCommandHandler via IPrivateEventSender)
       subscriptions = [
         { name = "depuracion-escucha-programacion", filter = null },  # <- patron: {consumidor}-escucha-{productor}
-        { name = "smoke-tests", filter = null, default_message_ttl = "PT5M" }  # <- siempre presente (ADR-0013)
+        { name = "smoke-tests", filter = null, default_message_ttl = "PT5M" }  # <- siempre presente (MEF-ADR-0013)
       ]
     }
     "empleado-asignado" = {     # <- IPrivateEvent (lo publica AsignarEmpleadoATurnoCommandHandler via IPrivateEventSender)
       subscriptions = [
-        { name = "smoke-tests", filter = null, default_message_ttl = "PT5M" }  # <- siempre presente (ADR-0013)
+        { name = "smoke-tests", filter = null, default_message_ttl = "PT5M" }  # <- siempre presente (MEF-ADR-0013)
       ]
     }
   }
 }
 ```
 
-Evento publico (`IPublicEvent`) → el topic y la subscription viven en el **backbone compartido del producto**, no en el Terraform de este BC (ADR-0024 decision #4):
+Evento publico (`IPublicEvent`) → el topic y la subscription viven en el **backbone compartido del producto**, no en el Terraform de este BC (MEF-ADR-0024 decision #4):
 
-- El **productor** (este BC, si publica el evento) crea su topic en el backbone. Naming: kebab-case, nombre del evento en pasado — misma convencion que un topic interno (ADR-0001/ADR-0005).
-- El **consumidor** crea su propia subscription sobre ese topic. Naming: `{consumidor}-escucha-{productor}` (ADR-0005), misma convencion que en el namespace interno.
-- El acceso (productor y consumidor) es por la cadena de conexion custodiada en Key Vault del alias del backbone (`SERVICE_BUS_CONNECTION_<ALIAS>`), no por RBAC de Azure Service Bus sobre el namespace (ADR-0024 decision #6); infra otorga permisos baseline al provisionar el backbone.
+- El **productor** (este BC, si publica el evento) crea su topic en el backbone. Naming: kebab-case, nombre del evento en pasado — misma convencion que un topic interno (MEF-ADR-0001/MEF-ADR-0005).
+- El **consumidor** crea su propia subscription sobre ese topic. Naming: `{consumidor}-escucha-{productor}` (MEF-ADR-0005), misma convencion que en el namespace interno.
+- El acceso (productor y consumidor) es por la cadena de conexion custodiada en Key Vault del alias del backbone (`SERVICE_BUS_CONNECTION_<ALIAS>`), no por RBAC de Azure Service Bus sobre el namespace (MEF-ADR-0024 decision #6); infra otorga permisos baseline al provisionar el backbone.
 - **El implementer no provisiona esto en Terraform**: no existe ningun `module` en `infra/environments/dev/main.tf` para el backbone (lo administra infra, fuera de este repo). Si tu implementacion necesita un topic o subscription nuevo en el backbone que aun no existe, documenta la necesidad en la seccion "Infraestructura modificada" de tu resumen para seguimiento administrativo — no la agregues tu mismo a ningun archivo de este repo.
 
-**Suscripcion `smoke-tests` siempre presente en el namespace interno.** Cada topic privado que agregues a `module "service_bus_interno"` debe llevar la suscripcion `smoke-tests` con TTL 5m, incluso si no hay consumidores reales todavia. Razon: el smoke test del feature que publica al topic necesita esa suscripcion para verificar la publicacion (ADR-0013: cobertura completa de efectos secundarios). **No uses el argumento "el topic no tiene consumidores aun" para omitir la suscripcion** — ese fue el gap del PR #157, donde el feature publicaba un evento publico (`dia-calculado`) sin suscripcion `smoke-tests`, dejando la publicacion sin cobertura. La misma cobertura aplica hoy a los topics del backbone compartido, pero su alta corre por la via administrativa descrita arriba, no por este archivo: si tu feature publica un evento publico nuevo, documenta en tu resumen la necesidad de su subscripcion `smoke-tests` en el backbone para seguimiento.
+**Suscripcion `smoke-tests` siempre presente en el namespace interno.** Cada topic privado que agregues a `module "service_bus_interno"` debe llevar la suscripcion `smoke-tests` con TTL 5m, incluso si no hay consumidores reales todavia. Razon: el smoke test del feature que publica al topic necesita esa suscripcion para verificar la publicacion (MEF-ADR-0013: cobertura completa de efectos secundarios). **No uses el argumento "el topic no tiene consumidores aun" para omitir la suscripcion** — ese fue el gap del PR #157, donde el feature publicaba un evento publico (`dia-calculado`) sin suscripcion `smoke-tests`, dejando la publicacion sin cobertura. La misma cobertura aplica hoy a los topics del backbone compartido, pero su alta corre por la via administrativa descrita arriba, no por este archivo: si tu feature publica un evento publico nuevo, documenta en tu resumen la necesidad de su subscripcion `smoke-tests` en el backbone para seguimiento.
 
-**Acceso al backbone:** ya no es un role assignment de Azure Service Bus Data Sender sobre un namespace propio del BC — ese modelo quedo superado (ADR-0024 decision #6). El acceso es por la cadena de conexion custodiada en Key Vault del alias del backbone; la referencia `@Microsoft.KeyVault(...)` en el app setting y el permiso "Key Vault Secrets User" de la managed identity los agrega el `infra-base-scaffolder`/`domain-scaffolder` al crear la infraestructura base o el dominio, no el implementer (ver `agents/infra-base-scaffolder.md`). El implementer no emite referencias de Key Vault ni role assignments.
+**Acceso al backbone:** ya no es un role assignment de Azure Service Bus Data Sender sobre un namespace propio del BC — ese modelo quedo superado (MEF-ADR-0024 decision #6). El acceso es por la cadena de conexion custodiada en Key Vault del alias del backbone; la referencia `@Microsoft.KeyVault(...)` en el app setting y el permiso "Key Vault Secrets User" de la managed identity los agrega el `infra-base-scaffolder`/`domain-scaffolder` al crear la infraestructura base o el dominio, no el implementer (ver `agents/infra-base-scaffolder.md`). El implementer no emite referencias de Key Vault ni role assignments.
 
-## Custodia de secretos nuevos (ADR-0025)
+## Custodia de secretos nuevos (MEF-ADR-0025)
 
-La custodia de las cadenas de ASB descrita arriba (Key Vault, ADR-0024 decision #6) es una **instancia** de una doctrina general (ADR-0025): si tu implementacion introduce un secreto nuevo -- API key de terceros, token, credencial, cualquier valor sensible que no existia antes -- ese secreto **nunca** va en texto plano en un app setting ni se materializa en claro en el state de Terraform. Se custodia por uno de dos mecanismos:
+La custodia de las cadenas de ASB descrita arriba (Key Vault, MEF-ADR-0024 decision #6) es una **instancia** de una doctrina general (MEF-ADR-0025): si tu implementacion introduce un secreto nuevo -- API key de terceros, token, credencial, cualquier valor sensible que no existia antes -- ese secreto **nunca** va en texto plano en un app setting ni se materializa en claro en el state de Terraform. Se custodia por uno de dos mecanismos:
 
 - **Por defecto: referencia a Key Vault.** El valor vive en el Key Vault del BC; el app setting lleva `@Microsoft.KeyVault(SecretUri=...)` versionless. Mismo mecanismo que ya custodia las cadenas de ASB.
-- **Alterno: identidad administrada**, cuando el runtime necesita el valor antes de que resuelvan las referencias de Key Vault (caso `AzureWebJobsStorage`, ADR-0025 decision #3) -- coherente con el modelo identity-based de ADR-0022 (OIDC).
+- **Alterno: identidad administrada**, cuando el runtime necesita el valor antes de que resuelvan las referencias de Key Vault (caso `AzureWebJobsStorage`, MEF-ADR-0025 decision #3) -- coherente con el modelo identity-based de MEF-ADR-0022 (OIDC).
 
-**Reparto de responsabilidades (igual al ya vigente para ASB): el implementer no emite referencias `@Microsoft.KeyVault(...)`, no coloca el valor del secreto en Key Vault, ni crea role assignments** (`Key Vault Secrets User` o roles de datos identity-based). La referencia en el app setting y el RBAC los provisiona `infra-base-scaffolder`/`domain-scaffolder`; el **valor** del secreto se coloca de forma administrativa (`az keyvault secret set`), fuera del ciclo de Terraform y del repo -- el harness nunca materializa el valor (ADR-0025 decisiones #2 y #6). Si tu feature necesita un secreto nuevo cuya custodia aun no existe, documenta la necesidad en la seccion "Infraestructura modificada" de tu resumen para seguimiento administrativo -- igual que ya haces con topics/subscriptions faltantes del backbone -- nunca la agregues tu mismo a un archivo de Terraform ni escribas el valor en claro en ningun app setting. Ver ADR-0025 para la doctrina completa y la clasificacion de casos.
+**Reparto de responsabilidades (igual al ya vigente para ASB): el implementer no emite referencias `@Microsoft.KeyVault(...)`, no coloca el valor del secreto en Key Vault, ni crea role assignments** (`Key Vault Secrets User` o roles de datos identity-based). La referencia en el app setting y el RBAC los provisiona `infra-base-scaffolder`/`domain-scaffolder`; el **valor** del secreto se coloca de forma administrativa (`az keyvault secret set`), fuera del ciclo de Terraform y del repo -- el harness nunca materializa el valor (MEF-ADR-0025 decisiones #2 y #6). Si tu feature necesita un secreto nuevo cuya custodia aun no existe, documenta la necesidad en la seccion "Infraestructura modificada" de tu resumen para seguimiento administrativo -- igual que ya haces con topics/subscriptions faltantes del backbone -- nunca la agregues tu mismo a un archivo de Terraform ni escribas el valor en claro en ningun app setting. Ver MEF-ADR-0025 para la doctrina completa y la clasificacion de casos.
 
 ---
 
@@ -965,7 +965,7 @@ Si el issue **no** tiene la seccion `## ADRs aplicables` o esta vacia:
 - Reporta el gap al llamador del pipeline (escribe en `.claude/pipeline/blockage-report.md` seccion "Issue incompleto: falta ADRs aplicables") y termina normalmente.
 - El planner debe completar el issue antes de que el pipeline reanude.
 
-**Precedente ≠ autoridad**: si vas a replicar un patron visto en otro archivo del proyecto o en un PR previo, **verifica primero que ese patron cumple los ADRs aplicables**. Si descubres que el precedente viola un ADR (por ejemplo, un archivo existente usa `[JsonConstructor]` en ctor privado cuando ADR-0012 lo proscribe), **NO lo repliques**. Reporta el hallazgo en tu resumen de decisiones y aplica el patron correcto.
+**Precedente ≠ autoridad**: si vas a replicar un patron visto en otro archivo del proyecto o en un PR previo, **verifica primero que ese patron cumple los ADRs aplicables**. Si descubres que el precedente viola un ADR (por ejemplo, un archivo existente usa `[JsonConstructor]` en ctor privado cuando MEF-ADR-0012 lo proscribe), **NO lo repliques**. Reporta el hallazgo en tu resumen de decisiones y aplica el patron correcto.
 
 ### 2. Ver el estado actual
 
@@ -1062,7 +1062,7 @@ una limitacion del framework, o un malentendido del requisito]
 
 Si el handler publica un evento privado (`IPrivateEventSender`), verifica que el topic y las subscriptions existen en `infra/environments/dev/main.tf`, bloque `topics_config` de `module "service_bus_interno"`. Agrega lo que falte segun la tabla de enrutamiento de la seccion "Infraestructura (topics y subscriptions)". Si el handler publica un evento publico (`IPublicEventSender`), el topic/subscription vive en el backbone compartido, fuera del Terraform de este repo: si detectas que falta, documentalo en tu resumen de decisiones para seguimiento administrativo — no lo agregues a ningun archivo de este repo.
 
-Si el handler **consume** un evento publico de otro BC (define `[ServiceBusTrigger]` con `Connection = "SERVICE_BUS_CONNECTION_<ALIAS>"` del backbone compartido, ADR-0024 decision #4), verifica que tu subscription con naming ADR-0005 (`{consumidor}-escucha-{productor}`) existe sobre el topic del productor en el backbone. Esa subscription vive fuera del Terraform de este repo, igual que el topic del productor (seccion "Infraestructura (topics y subscriptions)"): si aun no existe, documentala en la seccion "Infraestructura modificada" de tu resumen para seguimiento administrativo — no la agregues tu mismo a ningun archivo de este repo. El consumo intra-BC de un evento privado (`SERVICE_BUS_CONNECTION_INTERNO`) no requiere este paso: su subscription ya queda cubierta por el bloque `topics_config` del productor, verificado arriba.
+Si el handler **consume** un evento publico de otro BC (define `[ServiceBusTrigger]` con `Connection = "SERVICE_BUS_CONNECTION_<ALIAS>"` del backbone compartido, MEF-ADR-0024 decision #4), verifica que tu subscription con naming MEF-ADR-0005 (`{consumidor}-escucha-{productor}`) existe sobre el topic del productor en el backbone. Esa subscription vive fuera del Terraform de este repo, igual que el topic del productor (seccion "Infraestructura (topics y subscriptions)"): si aun no existe, documentala en la seccion "Infraestructura modificada" de tu resumen para seguimiento administrativo — no la agregues tu mismo a ningun archivo de este repo. El consumo intra-BC de un evento privado (`SERVICE_BUS_CONNECTION_INTERNO`) no requiere este paso: su subscription ya queda cubierta por el bloque `topics_config` del productor, verificado arriba.
 
 ### 6. Verificar suite completa
 
@@ -1145,9 +1145,9 @@ Estas son reglas procedimentales del pipeline. **Las reglas arquitectonicas (pat
 6. **NUNCA** adornes comentarios con caracteres decorativos Unicode ni composiciones complejas de separadores. Los comentarios deben ser simples y directos.
 7. **Solo modifica** `infra/environments/dev/main.tf` para infraestructura, y solo el bloque `topics_config` de `module "service_bus_interno"` (eventos `IPrivateEvent`). Los topics/subscriptions de eventos `IPublicEvent` viven en el backbone compartido del producto, administrado por infra: no crees ni edites ningun `module` para el en este repo; si falta uno, documentalo en tu resumen.
 8. **Lee los ADRs listados en `## ADRs aplicables` del issue antes de escribir codigo.** Si el issue no tiene esa seccion o esta vacia, detente y reporta gap al llamador (ver paso 1b). No asumas. No improvises.
-9. **Precedente ≠ autoridad.** Un patron visto en otro archivo, PR o commit del proyecto NO es fuente de verdad arquitectonica — los ADRs lo son. Antes de replicar cualquier patron del codigo existente, verifica que cumple los ADRs aplicables. Si el precedente los viola (ejemplo tipico: `[JsonConstructor]` en ctor privado cuando ADR-0012 lo proscribe), reportalo como bug en tu resumen de decisiones y NO lo replicues. Aplica el patron correcto segun el ADR.
+9. **Precedente ≠ autoridad.** Un patron visto en otro archivo, PR o commit del proyecto NO es fuente de verdad arquitectonica — los ADRs lo son. Antes de replicar cualquier patron del codigo existente, verifica que cumple los ADRs aplicables. Si el precedente los viola (ejemplo tipico: `[JsonConstructor]` en ctor privado cuando MEF-ADR-0012 lo proscribe), reportalo como bug en tu resumen de decisiones y NO lo replicues. Aplica el patron correcto segun el ADR.
 10. **Documenta toda desviacion consciente de un ADR o del plan del planner.** Si decides apartarte deliberadamente de un ADR listado en el issue (por razon tecnica legitima), registralo en la seccion "Desviaciones de ADRs" del resumen del pipeline con el formato especificado (regla del ADR, desviacion aplicada, razon, consecuencia conocida). Si decides apartarte de una sugerencia concreta del planner (nombre de archivo de "Impacto en archivos", visibilidad o firma de "Interfaz publica propuesta"), registralo en una seccion paralela "Desviaciones del plan del planner" con el mismo formato (sugerencia del issue, desviacion aplicada, razon tecnica, consecuencia). Recuerda: el plan del planner es una sugerencia basada en su investigacion, no un mandato — pero apartarse sin documentar es el peor outcome posible. Esto queda disponible para evaluacion del usuario.
 
-    **Cuando la desviacion expone estado interno** (agregar una propiedad publica nueva en un VO o aggregate, abrir un getter, cambiar `private`/`internal` a `public`, agregar `InternalsVisibleTo`), aplica esta regla extra **antes** de implementar la desviacion: enumera al menos una alternativa Tell-don't-Ask (tipicamente "mover la operacion al objeto que tiene los datos") y el motivo tecnico concreto por el que se descarta. La alternativa debe ir documentada en el campo "Alternativas exploradas y descartadas" del bloque de la desviacion. **Si no logras formular una alternativa creible, NO te desvies**: la imposibilidad de articular alternativas es senal de que la decision arquitectonica corresponde al planner — detente y reporta gap. Caso real (PR #155): el implementer expuso `MinutosAbsolutosInicio` para que un servicio externo operase sobre `IntervaloTemporal`. No exploro mover `Segmentar` al propio VO; el reviewer humano rechazo el PR. Ver ADR-0012 seccion "Encapsulamiento: Tell Don't Ask" — aplica por igual a aggregates y VOs.
+    **Cuando la desviacion expone estado interno** (agregar una propiedad publica nueva en un VO o aggregate, abrir un getter, cambiar `private`/`internal` a `public`, agregar `InternalsVisibleTo`), aplica esta regla extra **antes** de implementar la desviacion: enumera al menos una alternativa Tell-don't-Ask (tipicamente "mover la operacion al objeto que tiene los datos") y el motivo tecnico concreto por el que se descarta. La alternativa debe ir documentada en el campo "Alternativas exploradas y descartadas" del bloque de la desviacion. **Si no logras formular una alternativa creible, NO te desvies**: la imposibilidad de articular alternativas es senal de que la decision arquitectonica corresponde al planner — detente y reporta gap. Caso real (PR #155): el implementer expuso `MinutosAbsolutosInicio` para que un servicio externo operase sobre `IntervaloTemporal`. No exploro mover `Segmentar` al propio VO; el reviewer humano rechazo el PR. Ver MEF-ADR-0012 seccion "Encapsulamiento: Tell Don't Ask" — aplica por igual a aggregates y VOs.
 11. **Cuando detectes que estas girando en circulos** (5 intentos enfocados sobre el mismo test con enfoques distintos), DETENTE. Haz commit de tu progreso, escribe el reporte de bloqueo (seccion 4b), y termina normalmente. No mueras por timeout.
-12. **NUNCA** introduzcas un secreto nuevo (API key, token, credencial) en texto plano en un app setting ni en el state de Terraform (ADR-0025). Va por referencia de Key Vault o por identidad administrada; el implementer no emite esas referencias ni role assignments -- ver seccion "Custodia de secretos nuevos" arriba. Si la custodia aun no existe, documenta la necesidad en tu resumen; no la provisiones tu mismo.
+12. **NUNCA** introduzcas un secreto nuevo (API key, token, credencial) en texto plano en un app setting ni en el state de Terraform (MEF-ADR-0025). Va por referencia de Key Vault o por identidad administrada; el implementer no emite esas referencias ni role assignments -- ver seccion "Custodia de secretos nuevos" arriba. Si la custodia aun no existe, documenta la necesidad en tu resumen; no la provisiones tu mismo.

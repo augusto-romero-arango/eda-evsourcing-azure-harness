@@ -1,4 +1,4 @@
-# ADR-0010: Pipeline de conocimiento del dominio
+# MEF-ADR-0010: Pipeline de conocimiento del dominio
 
 **Estado**: Aceptado
 **Fecha**: 2026-04-04
@@ -107,10 +107,10 @@ Descartado: requiere un equipo multidisciplinario para sacarle valor. Para un so
 
 - ADR del proyecto consumidor sobre Function App por dominio (define los bounded contexts base)
 - ADR del proyecto consumidor sobre Contracts compartidos (el shared kernel)
-- ADR-0001: Topics de Service Bus por evento
-- ADR-0005: Naming y versionado de eventos
-- ADR-0003: Event Sourcing con Marten y Wolverine
-- ADR-0008: Knowledge Crunching como proposito del planner
+- MEF-ADR-0001: Topics de Service Bus por evento
+- MEF-ADR-0005: Naming y versionado de eventos
+- MEF-ADR-0003: Event Sourcing con Marten y Wolverine
+- MEF-ADR-0008: Knowledge Crunching como proposito del planner
 - ddd-crew/aggregate-design-canvas: https://github.com/ddd-crew/aggregate-design-canvas
 - ddd-crew/eventstorming-glossary-cheat-sheet: https://github.com/ddd-crew/eventstorming-glossary-cheat-sheet
 - Oskar Dudycz - Projections and Read Models: https://event-driven.io/en/projections_and_read_models_in_event_driven_architecture/

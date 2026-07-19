@@ -1,6 +1,6 @@
 #!/bin/bash
 # Configura la autenticacion de GitHub Actions hacia Azure para que CI aplique
-# infraestructura y despliegue codigo (ADR-0022, reformado issue #196). Usa OIDC
+# infraestructura y despliegue codigo (MEF-ADR-0022, reformado issue #196). Usa OIDC
 # (Workload Identity Federation): crea el Service Principal SIN secret y le anade
 # los federated credentials que confian en los tokens que GitHub emite para la
 # rama main (deploy/apply) y para pull_request (plan). El workflow de deploy y
@@ -9,7 +9,7 @@
 # expire). Asigna ademas, a nivel suscripcion: Contributor (deploy + infra) y
 # Role Based Access Control Administrator con condicion anti-escalacion (para que
 # el apply de CI pueda crear los role assignments que emiten los scaffolders,
-# ADR-0025); y sobre la Storage del tfstate: Storage Blob Data Contributor
+# MEF-ADR-0025); y sobre la Storage del tfstate: Storage Blob Data Contributor
 # (lectura+escritura por AAD, backend keyless de #198).
 #
 # Uso: ./scripts/setup-github-ci.sh <subscription-id> [<owner/repo>]
@@ -158,7 +158,7 @@ az role assignment create \
 #    learn.microsoft.com/azure/role-based-access-control/built-in-roles/general#contributor),
 #    asi que sin este rol el 'terraform apply' de CI falla con AuthorizationFailed al
 #    crear los role assignments que emiten los scaffolders (Key Vault Secrets User,
-#    roles de datos de Storage; ADR-0025). 'Role Based Access Control Administrator' es
+#    roles de datos de Storage; MEF-ADR-0025). 'Role Based Access Control Administrator' es
 #    el rol de MENOR privilegio documentado para delegar gestion de role assignments
 #    (frente a 'User Access Administrator', que ademas puede reclamar el rol de
 #    administrador de acceso para si mismo). La condicion sigue la plantilla integrada
@@ -210,11 +210,11 @@ az role assignment create \
 
 # 5. Federated credentials para GitHub Actions OIDC. El subject debe coincidir EXACTO
 #    con el claim que GitHub pone en el token; el matching de patrones no esta
-#    soportado para ramas/tags (ADR-0022). El SP de CI necesita DOS:
+#    soportado para ramas/tags (MEF-ADR-0022). El SP de CI necesita DOS:
 #    - 'ref:refs/heads/main': lo usan el workflow de deploy del scaffolder y el job
 #      'apply' de infra-cd.yml, que disparan en 'push: branches: [main]'.
 #    - 'pull_request': lo usa el job 'plan' de infra-cd.yml (modelo plan-en-PR /
-#      apply-en-merge-a-main, ADR-0022); su subject NO lleva el ref de la rama.
+#      apply-en-merge-a-main, MEF-ADR-0022); su subject NO lleva el ref de la rama.
 #    Fuentes: learn.microsoft.com/azure/app-service/deploy-github-actions y
 #    learn.microsoft.com/entra/workload-id/workload-identity-federation-create-trust.
 ensure_federated_credential() {
@@ -276,18 +276,18 @@ echo "  ${FED_SUBJECT_PR}"
 echo "    (terraform plan de infra: pull_request)"
 echo ""
 echo "Si despliegas desde otra rama, tag o un GitHub Environment, anade otro federated"
-echo "credential con el subject correspondiente (ver ADR-0022)."
+echo "credential con el subject correspondiente (ver MEF-ADR-0022)."
 echo ""
 echo "=== Por que el SP necesita estos permisos ==="
 echo ""
 echo "El apply de infraestructura ocurre en CI bajo esta identidad federada, nunca"
-echo "localmente (ADR-0022). El SP necesita:"
+echo "localmente (MEF-ADR-0022). El SP necesita:"
 echo "  - Contributor: aplicar infra (Function Apps, Storage, etc.) y desplegar codigo."
 echo "  - Role Based Access Control Administrator: crear los role assignments que"
 echo "    emiten los scaffolders (Key Vault Secrets User, roles de datos de Storage;"
-echo "    ADR-0025) -- Contributor los excluye explicitamente."
+echo "    MEF-ADR-0025) -- Contributor los excluye explicitamente."
 echo "  - Storage Blob Data Contributor: escribir el tfstate y tomar su lock por AAD"
-echo "    (backend keyless, ADR-0025)."
+echo "    (backend keyless, MEF-ADR-0025)."
 echo "  - Federated credential 'pull_request': autenticar el 'terraform plan' que"
 echo "    corre en cada PR sobre infra/** (modelo plan-en-PR / apply-en-merge-a-main)."
 echo ""

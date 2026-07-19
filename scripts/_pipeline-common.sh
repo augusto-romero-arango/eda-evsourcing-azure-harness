@@ -24,7 +24,7 @@
 #   HARNESS_BC_DOMAINS         - Lista separada por espacios de dominios del BC (ej: "dominio1 dominio2")
 #   HARNESS_SB_INTERNAL_SECRET    - Nombre del secreto de Key Vault de la cadena del ASB
 #                                   propio del BC (alias reservado INTERNO). Vacio si el
-#                                   config no declara serviceBus (ADR-0024, opcional).
+#                                   config no declara serviceBus (MEF-ADR-0024, opcional).
 #   HARNESS_SB_EXTERNAL_ALIASES   - Lista separada por espacios de los alias declarados en
 #                                   serviceBus.external (ej: "COSMOS FACTURACION"). Vacia
 #                                   si serviceBus/external esta ausente.
@@ -51,7 +51,7 @@
 # evoluciones; hoy el BC solo se nombra a si mismo via boundedContext.name y
 # boundedContext.domains.
 #
-# serviceBus (opcional, ADR-0024 decision #1 y #6): registro de los ASB que el
+# serviceBus (opcional, MEF-ADR-0024 decision #1 y #6): registro de los ASB que el
 # BC toca, clasificados por alcance (propio/compartido/externo), con el nombre
 # del secreto de Key Vault de cada cadena (nunca la cadena en claro). El patron
 # oficial del app setting de cada cadena es SERVICE_BUS_CONNECTION_<ALIAS> (con
@@ -59,7 +59,7 @@
 # Wolverine es el mismo alias. serviceBus.external es opcional (un BC puede no
 # consumir/publicar publico todavia); su ausencia no aborta la carga de config.
 # El alcance verdaderamente externo se declara pero su wiring queda diferido
-# (ADR-0024 decision #5, default-off).
+# (MEF-ADR-0024 decision #5, default-off).
 #
 # Si no existe el config file, emite mensaje claro de error y retorna 1.
 load_harness_config() {
@@ -108,7 +108,7 @@ load_harness_config() {
         return 1
     fi
 
-    # boundedContext es obligatorio (issue #131, ADR-0023).
+    # boundedContext es obligatorio (issue #131, MEF-ADR-0023).
     # Si esta ausente, emite un mensaje accionable de migracion con el shape
     # exacto a anadir y un ejemplo usando los domainLabels ya presentes.
     local bc_present
@@ -116,8 +116,8 @@ load_harness_config() {
     if [ "$bc_present" = "no" ]; then
         local example_domains
         example_domains=$(jq -r '.domainLabels // [] | map("\"" + . + "\"") | join(", ")' "$config")
-        echo "ERROR: falta 'boundedContext' en $config (campo obligatorio, ADR-0023)." >&2
-        echo "  El campo 'boundedContext' es requerido por ADR-0023 (Bounded Context)." >&2
+        echo "ERROR: falta 'boundedContext' en $config (campo obligatorio, MEF-ADR-0023)." >&2
+        echo "  El campo 'boundedContext' es requerido por MEF-ADR-0023 (Bounded Context)." >&2
         echo "  Anade el siguiente bloque a tu harness.config.json:" >&2
         echo "    \"boundedContext\": {" >&2
         echo "      \"name\": \"<NombreDetuBC>\",   // ej: Principal, Admin, Core" >&2
@@ -179,7 +179,7 @@ load_harness_config() {
         return 1
     fi
 
-    # serviceBus es opcional (ADR-0024): un consumidor que aun no provisiona el
+    # serviceBus es opcional (MEF-ADR-0024): un consumidor que aun no provisiona el
     # backbone compartido/externos, o que aun no tiene Key Vault, no declara
     # este registro. Ausente por completo -> exports vacios, sin error.
     export HARNESS_SB_INTERNAL_SECRET=""
@@ -192,10 +192,10 @@ load_harness_config() {
     if [ "$sb_present" = "yes" ]; then
         HARNESS_SB_INTERNAL_SECRET=$(jq -r '.serviceBus.internal.secretName // ""' "$config")
         if [ -z "$HARNESS_SB_INTERNAL_SECRET" ]; then
-            echo "ERROR: serviceBus.internal.secretName esta vacio o ausente en $config (ADR-0024)." >&2
+            echo "ERROR: serviceBus.internal.secretName esta vacio o ausente en $config (MEF-ADR-0024)." >&2
             echo "  Si declaras 'serviceBus', el secreto de Key Vault de la cadena del ASB" >&2
             echo "  propio del BC (alias reservado INTERNO) es obligatorio. Nunca la cadena" >&2
-            echo "  en claro (ADR-0024 decision #6). Anade:" >&2
+            echo "  en claro (MEF-ADR-0024 decision #6). Anade:" >&2
             echo "    \"serviceBus\": { \"internal\": { \"secretName\": \"<nombre-secreto-kv>\" } }" >&2
             return 1
         fi
@@ -252,7 +252,7 @@ load_harness_config() {
         done
 
         if [ ${#invalid_entries[@]} -gt 0 ]; then
-            echo "ERROR: serviceBus.external mal formado en $config (ADR-0024):" >&2
+            echo "ERROR: serviceBus.external mal formado en $config (MEF-ADR-0024):" >&2
             printf '  - %s\n' "${invalid_entries[@]}" >&2
             echo "  Cada entrada requiere: 'alias' no vacio y distinto de INTERNO (reservado)," >&2
             echo "  'alcance' en {compartido, externo}, y 'secretName' no vacio (nombre del" >&2
@@ -454,7 +454,7 @@ extract_test_count() {
 # dependencias reales de ServiceBus/Postgres); incluirlos en un gate local que
 # corre sin credenciales de entorno los hace fallar con 401/404 aunque el
 # codigo este bien. Los smoke tests siguen cubiertos post-deploy via
-# smoke-tests-dominio.yml (ADR-0013).
+# smoke-tests-dominio.yml (MEF-ADR-0013).
 #
 # Imprime: stdout combinado de todos los proyectos.
 # Exit code: 0 si todos pasan, primer codigo de fallo (!= 0 y != 8) si alguno

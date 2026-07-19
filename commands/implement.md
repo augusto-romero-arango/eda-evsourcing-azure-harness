@@ -41,12 +41,12 @@ Resuelve primero la raiz del plugin — los ADRs del marco viven **dentro del pl
 PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
 [ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
 PLUGIN_ROOT="${PLUGIN_ROOT%/}"   # normaliza: sin barra final
-echo "ADR-0011 en: $PLUGIN_ROOT/docs/adr/0011-definition-of-ready.md"
+echo "MEF-ADR-0011 en: $PLUGIN_ROOT/docs/adr/mef-adr-0011-definition-of-ready.md"
 ```
 
 `.claude/pipeline/.plugin-root` lo escribe el hook `SessionStart` del plugin; el fallback localiza el plugin por glob sobre el cache del marketplace tomando la version mas reciente.
 
-Aplica la validacion programatica definida en la seccion "Validacion en `/implement`" del ADR ubicado en `"$PLUGIN_ROOT/docs/adr/0011-definition-of-ready.md"` (la ruta absoluta que imprimio el bloque anterior). **Nunca abras la ruta relativa `docs/adr/...`**: con `cwd = repo consumidor` resolveria contra `<consumer>/docs/adr/...` (inexistente) y reportaria erroneamente "ADR-0011 ausente".
+Aplica la validacion programatica definida en la seccion "Validacion en `/implement`" del ADR ubicado en `"$PLUGIN_ROOT/docs/adr/mef-adr-0011-definition-of-ready.md"` (la ruta absoluta que imprimio el bloque anterior). **Nunca abras la ruta relativa `docs/adr/...`**: con `cwd = repo consumidor` resolveria contra `<consumer>/docs/adr/...` (inexistente) y reportaria erroneamente "MEF-ADR-0011 ausente".
 
 Extrae labels y body del issue:
 
@@ -54,7 +54,7 @@ Extrae labels y body del issue:
 gh issue view $ARGUMENTS --json labels,body
 ```
 
-Determina el tipo del issue buscando el label `tipo:X`. Luego verifica los 5 criterios del ADR-0011 y acumula todos los fallos antes de reportar.
+Determina el tipo del issue buscando el label `tipo:X`. Luego verifica los 5 criterios del MEF-ADR-0011 y acumula todos los fallos antes de reportar.
 
 Si **uno o mas criterios fallan**: muestra la lista completa de lo que falta, sugiere `claude --agent planner` en modo `refinar` para completarlos, y **detente**.
 

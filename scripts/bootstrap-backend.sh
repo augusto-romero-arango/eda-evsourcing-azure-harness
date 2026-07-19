@@ -5,7 +5,7 @@
 # que alojan el estado de Terraform, y escribe infra/environments/<env>/backend.tf
 # con el bloque backend "azurerm" resuelto. Es el prerequisito del pipeline IaC
 # (/infra), que recien entonces materializa los App Service Plans y Function Apps
-# por dominio (ADR-0020). Este script NO crea planes ni Function Apps: solo el
+# por dominio (MEF-ADR-0020). Este script NO crea planes ni Function Apps: solo el
 # backend del tfstate.
 #
 # Nombre de la Storage Account: el nombre de una Storage Account es un endpoint
@@ -36,7 +36,7 @@
 #                              .claude/harness.config.json. Si tampoco existe,
 #                              aborta pidiendo el flag o el campo de config.
 #
-# Es del lado PUBLICADO (ADR-0019): opera sobre el repo consumidor, nunca sobre
+# Es del lado PUBLICADO (MEF-ADR-0019): opera sobre el repo consumidor, nunca sobre
 # Mefisto, y lleva guard defensivo .claude-plugin/plugin.json igual que
 # scripts/setup-github-ci.sh y scripts/iac-pipeline.sh.
 #
@@ -305,7 +305,7 @@ else
 # Generado por scripts/bootstrap-backend.sh -- no editar a mano.
 # Backend remoto del estado de Terraform para el ambiente '${ENVIRONMENT}'.
 # 'use_azuread_auth = true': acceso keyless por AAD/RBAC, nunca por access key
-# (ADR-0025, ADR-0022; developer.hashicorp.com/terraform/language/backend/azurerm).
+# (MEF-ADR-0025, MEF-ADR-0022; developer.hashicorp.com/terraform/language/backend/azurerm).
 terraform {
   backend "azurerm" {
     resource_group_name  = "${RG}"
@@ -334,7 +334,7 @@ terraform {
 }
 EOF
 echo ""
-echo "El backend es keyless (AAD/RBAC, ADR-0025): ningun access key se emite ni se"
+echo "El backend es keyless (AAD/RBAC, MEF-ADR-0025): ningun access key se emite ni se"
 echo "persiste para el tfstate. El principal que hace 'terraform apply' en CI"
 echo "requiere el rol 'Storage Blob Data Contributor' (lectura+escritura, no solo"
 echo "lectura) sobre esta Storage Account -- lo asigna scripts/setup-github-ci.sh"

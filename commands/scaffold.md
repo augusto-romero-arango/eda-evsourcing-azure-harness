@@ -86,7 +86,7 @@ Se va a crear el scaffold del dominio "{domain-name}" ({PascalCase}):
   - Tests:          tests/<RootNamespace>.{PascalCase}.Tests/
   - Smoke Tests:    tests/<RootNamespace>.{PascalCase}.SmokeTests/
   - Terraform:      infra/environments/dev/dominio-{kebab}.tf (archivo propio del dominio)
-                    (Service Plan dedicado asp-...-{kebab} + Storage + Function App, ADR-0020)
+                    (Service Plan dedicado asp-...-{kebab} + Storage + Function App, MEF-ADR-0020)
   - GitHub Actions: .github/workflows/deploy-{kebab}.yml
                     (+ smoke-tests-dominio.yml y smoke-tests.yml la primera vez en el repo)
   - Smoke tests:    .github/smoke-tests/{kebab}.json (registro propio del dominio)

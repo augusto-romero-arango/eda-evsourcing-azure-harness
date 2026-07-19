@@ -1,4 +1,4 @@
-# ADR-0013: Smoke tests contra entorno dev desplegado
+# MEF-ADR-0013: Smoke tests contra entorno dev desplegado
 
 ## Estado
 
@@ -6,7 +6,7 @@ Aceptado (actualizado 2026-04-13: cobertura completa de efectos secundarios, una
 
 ## Contexto
 
-Los unit tests (ADR-0002) verifican logica de dominio con un event store en memoria (TestStore). Esto
+Los unit tests (MEF-ADR-0002) verifican logica de dominio con un event store en memoria (TestStore). Esto
 cubre correctamente la logica de negocio pero no verifica que el sistema desplegado funcione: que la
 Function App responda, que la persistencia en PostgreSQL via Marten funcione, que la serializacion JSON
 sea correcta, ni que la validacion opere end-to-end.

@@ -1,4 +1,4 @@
-# ADR-0012: Heuristicas de modelado de objetos de dominio
+# MEF-ADR-0012: Heuristicas de modelado de objetos de dominio
 
 ## Estado
 
@@ -26,7 +26,7 @@ en ausencia de un diseno especifico.
 | Evento con precondiciones | `sealed class` con factory static | Privado parametrizado + privado vacio | Factory static -> throw |
 | Value Object simple | `record` con constructor primario | Publico | Ninguna |
 | Value Object con invariantes | `sealed class` con factory static | Privado parametrizado + privado vacio | Factory static -> throw |
-| AggregateRoot | `partial class` | Factory static (`Crear`) | Eventos de fallo (ADR-0004) |
+| AggregateRoot | `partial class` | Factory static (`Crear`) | Eventos de fallo (MEF-ADR-0004) |
 
 La distincion entre record y clase se basa en **invariantes**, no solo en mutabilidad:
 - Si el objeto no tiene invariantes de construccion -> `record` (comandos, eventos simples, VOs planos)
@@ -116,7 +116,7 @@ con factory static -- el mismo patron que los value objects con invariantes, per
 `IEquatable<T>` (los eventos no se comparan por valor).
 
 El CommandHandler construye el evento antes de pasarlo al aggregate. Si la construccion falla,
-el throw ocurre en el handler -- no en el aggregate (ADR-0004 se mantiene).
+el throw ocurre en el handler -- no en el aggregate (MEF-ADR-0004 se mantiene).
 
 ```csharp
 // Evento con precondiciones - sealed class, no record
@@ -325,9 +325,9 @@ sin perdida. Ese registro es **local al dominio productor** -- vive en su `Progr
 ningun otro lado.
 
 Todo evento o comando que **cruza un bus de Azure Service Bus** -- el namespace interno del
-Bounded Context (via `IPrivateEventSender`, intra-BC; ADR-0023) o el backbone compartido del
+Bounded Context (via `IPrivateEventSender`, intra-BC; MEF-ADR-0023) o el backbone compartido del
 producto / namespace de integracion externo diferido (via `IPublicEventSender`, inter-BC;
-ADR-0024) -- cruza un **canal de serializacion que el resolver del dominio no alcanza**: el
+MEF-ADR-0024) -- cruza un **canal de serializacion que el resolver del dominio no alcanza**: el
 destino opera con **otro** `JsonSerializerOptions` que **no tiene registrado ese resolver**. El
 destino solo dispone del serializador por defecto. Si el payload contiene un value object rico
 (campos privados + `ConfigurarSerializacion`), en el productor serializa bien y en el consumidor
@@ -373,7 +373,7 @@ reconstruible por STJ por defecto (propiedades publicas, constructor que STJ pue
 el tipo necesita un resolver custom para volver del JSON, por definicion no es portable por
 ningun bus.
 
-Esta convencion blinda el contrato (ADR-0005: naming y versionado de eventos): un tipo plano es
+Esta convencion blinda el contrato (MEF-ADR-0005: naming y versionado de eventos): un tipo plano es
 estable, versionable de forma aditiva y deserializable por cualquier consumidor sin acoplarse a
 la mecanica de serializacion interna del productor. Aplica por igual al namespace interno
 (eventos privados intra-BC) y al backbone compartido / namespace de integracion externo diferido
@@ -390,7 +390,7 @@ no tiene.
 > **Nota de version (2026-06-26, issue #122):** Esta seccion fue reformada in-place para
 > generalizar la regla de portabilidad de "`IPublicEvent` debe ser plano" a "todo tipo que cruza
 > cualquier bus (namespace interno o de integracion) debe ser plano". La doctrina que justifica
-> este cambio es ADR-0023 (issue #121), que desacopla el eje de serializacion (rico/plano) del
+> este cambio es MEF-ADR-0023 (issue #121), que desacopla el eje de serializacion (rico/plano) del
 > eje de alcance (publico/privado) y establece que el criterio de forma es "¿cruza un bus?", no
 > "¿es `IPublicEvent`?". La propagacion de esta regla al texto de `agents/test-writer.md`
 > (seccion 6e) y `agents/implementer.md` ("Donde vive cada tipo de evento") queda en los issues
@@ -426,15 +426,15 @@ no tiene.
 
 ## Referencias
 
-- ADR-0004: Manejo de errores -- aggregate nunca throw para logica de negocio
-- ADR-0001: Service Bus -- un topic por tipo de evento (los topics viven en el namespace interno del BC o, para lo publico, en el backbone compartido del producto o un namespace de integracion externo diferido, segun ADR-0024)
-- ADR-0003: Marten + Wolverine -- `IPublicEventSender` / `IPrivateEventSender` (los dos senders; el destino de cada uno lo definen ADR-0023 y ADR-0024)
-- ADR-0005: Naming y versionado de eventos -- el contrato que la frontera de serializacion blinda (aplica por igual al namespace interno y al transporte de lo publico)
-- ADR-0023: Bounded Context, namespace interno de Azure Service Bus y frontera publico/privado -- raiz estrategica que establece "todo lo que cruza un bus es plano" y desacopla el eje de forma del eje de alcance; origen del cambio de doctrina de esta seccion (issue #121)
-- ADR-0024: Modelo de eventos de bus (privado propio, publico via backbone compartido, integracion externa diferida) -- define el transporte de lo publico (backbone compartido comun o namespace de integracion externo diferido) al que aplica por igual esta regla de forma plana
+- MEF-ADR-0004: Manejo de errores -- aggregate nunca throw para logica de negocio
+- MEF-ADR-0001: Service Bus -- un topic por tipo de evento (los topics viven en el namespace interno del BC o, para lo publico, en el backbone compartido del producto o un namespace de integracion externo diferido, segun MEF-ADR-0024)
+- MEF-ADR-0003: Marten + Wolverine -- `IPublicEventSender` / `IPrivateEventSender` (los dos senders; el destino de cada uno lo definen MEF-ADR-0023 y MEF-ADR-0024)
+- MEF-ADR-0005: Naming y versionado de eventos -- el contrato que la frontera de serializacion blinda (aplica por igual al namespace interno y al transporte de lo publico)
+- MEF-ADR-0023: Bounded Context, namespace interno de Azure Service Bus y frontera publico/privado -- raiz estrategica que establece "todo lo que cruza un bus es plano" y desacopla el eje de forma del eje de alcance; origen del cambio de doctrina de esta seccion (issue #121)
+- MEF-ADR-0024: Modelo de eventos de bus (privado propio, publico via backbone compartido, integracion externa diferida) -- define el transporte de lo publico (backbone compartido comun o namespace de integracion externo diferido) al que aplica por igual esta regla de forma plana
 - ADR de Contracts del proyecto consumidor: Contracts -- records de eventos y value objects compartidos
 - Vaughn Vernon -- "Implementing Domain-Driven Design", Value Objects
 
 ## Control de cambios
 
-- 2026-07-01: enmendado (issue #167, barrido de coherencia hacia ADR-0024) para reemplazar "namespace de integracion" como destino por defecto de `IPublicEventSender` en la seccion "Frontera de serializacion: event store vs bus" por el modelo de ADR-0024: backbone compartido del producto (caso comun) o namespace de integracion externo (caso diferido). La regla "todo lo que cruza un bus es plano y portable" y el guardrail de round-trip con serializador por defecto no cambian.
+- 2026-07-01: enmendado (issue #167, barrido de coherencia hacia MEF-ADR-0024) para reemplazar "namespace de integracion" como destino por defecto de `IPublicEventSender` en la seccion "Frontera de serializacion: event store vs bus" por el modelo de MEF-ADR-0024: backbone compartido del producto (caso comun) o namespace de integracion externo (caso diferido). La regla "todo lo que cruza un bus es plano y portable" y el guardrail de round-trip con serializador por defecto no cambian.

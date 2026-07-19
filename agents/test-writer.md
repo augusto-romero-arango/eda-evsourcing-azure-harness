@@ -256,7 +256,7 @@ Antes de escribir una sola linea de test, determina si esta tarea requiere tests
    transitorio del pipeline.
 
 > **Importante**: el archivo senal vive en `pipeline-state/refactor-signal.md`
-> en la raiz del worktree, **no** en `.claude/pipeline/`. Razon en ADR-0017: el
+> en la raiz del worktree, **no** en `.claude/pipeline/`. Razon en MEF-ADR-0017: el
 > runtime de Claude Code intercepta escrituras a `.claude/**` en worktrees aun
 > con `bypassPermissions`. Si ves la ruta legacy `.claude/pipeline/refactor-signal.md`
 > en documentacion antigua, ignorala — usa siempre `pipeline-state/`.
@@ -310,7 +310,7 @@ tests/<RootNamespace>.{Dominio}.Tests/
 **Convenciones obligatorias:**
 - `using AwesomeAssertions;` al inicio
 - Comentario de HU al inicio: `// HU-XX: descripcion`
-- Nombres de metodos en espanol siguiendo ADR-0016: `<Sujeto>_<LoQuePasa>[_Cuando<Condicion>]`. Para command handlers el sujeto es el nombre del comando (`RegistrarMarcacion`, `CrearTurno`), nunca `HandleAsync` ni `Debe...`. El segmento `_Cuando<Condicion>` es opcional cuando el escenario es trivial (`Vacio_TieneRetardoNetoEnCero`). Ver `"$PLUGIN_ROOT/docs/adr/0016-convencion-naming-tests.md"` (resuelve `$PLUGIN_ROOT` como en "Localizar los ADRs del marco") para ejemplos completos.
+- Nombres de metodos en espanol siguiendo MEF-ADR-0016: `<Sujeto>_<LoQuePasa>[_Cuando<Condicion>]`. Para command handlers el sujeto es el nombre del comando (`RegistrarMarcacion`, `CrearTurno`), nunca `HandleAsync` ni `Debe...`. El segmento `_Cuando<Condicion>` es opcional cuando el escenario es trivial (`Vacio_TieneRetardoNetoEnCero`). Ver `"$PLUGIN_ROOT/docs/adr/mef-adr-0016-convencion-naming-tests.md"` (resuelve `$PLUGIN_ROOT` como en "Localizar los ADRs del marco") para ejemplos completos.
 - Solo `[Fact]`, nunca `[Theory]` ni `[InlineData]`
 - Herencia de `CommandHandlerAsyncTest<TCommand>` (o la variante que corresponda)
 - Override de `Handler` inyectando las dependencias del handler (`EventStore`, `PrivateEventSender`, `PublicEventSender`)
@@ -422,7 +422,7 @@ And<ContratoAggregateRoot, TipoContrato>(c => c.Tipo, TipoContrato.IndefinidoTie
 And<SolicitudAggregateRoot, DateTime?>(s => s.FechaAprobacion, null);
 ```
 
-**El valor esperado se construye a mano, nunca derivado de la logica bajo prueba** (regla absoluta 20; ADR-0002, seccion "Oraculo independiente (no-tautologia)"). El esperado de cada `And<>()` debe armarse con las primitivas y factories del dominio, no calcularse ejecutando el SUT ni los colaboradores de produccion que el SUT invoca. Un esperado derivado del mismo codigo que se verifica vuelve el test tautologico: el bug contamina por igual el esperado y el actual, ambos coinciden y la prueba pasa sin detectar la regresion.
+**El valor esperado se construye a mano, nunca derivado de la logica bajo prueba** (regla absoluta 20; MEF-ADR-0002, seccion "Oraculo independiente (no-tautologia)"). El esperado de cada `And<>()` debe armarse con las primitivas y factories del dominio, no calcularse ejecutando el SUT ni los colaboradores de produccion que el SUT invoca. Un esperado derivado del mismo codigo que se verifica vuelve el test tautologico: el bug contamina por igual el esperado y el actual, ambos coinciden y la prueba pasa sin detectar la regresion.
 
 ```csharp
 // INCORRECTO (tautologico): el esperado se calcula con la misma logica de produccion que el SUT ejecuta
@@ -662,7 +662,7 @@ Esta heuristica te ayuda a detectar si el implementer rompió el encapsulamiento
 
 ### 6d. Tests de serializacion roundtrip para eventos y VOs
 
-Todo evento o value object persistido en Marten **DEBE** tener tests de round-trip JSON. `[JsonConstructor]` en ctor privado NO funciona con Marten — detalle en ADR-0012 seccion "Serializacion sin atributos".
+Todo evento o value object persistido en Marten **DEBE** tener tests de round-trip JSON. `[JsonConstructor]` en ctor privado NO funciona con Marten — detalle en MEF-ADR-0012 seccion "Serializacion sin atributos".
 
 **Las opciones del test deben ser las que Marten usa en produccion**, no un resolver armado inline. Si usas un helper local que registra los tipos uno por uno, el test pasa aunque el tipo **no este registrado** en `ConfiguracionSerializacion{Dominio}.ConfigurarResolver` — y en produccion falla.
 
@@ -731,8 +731,8 @@ resolver custom del dominio. Eso garantiza que un VO con campos privados sobrevi
 diferido de integracion verdaderamente externa, a un namespace de integracion propio del
 productor. En ambos casos, el destino opera con **otro** `JsonSerializerOptions` que **no tiene
 ese resolver**. El round-trip de 6d **no detecta** si el payload es portable -- pasa en verde
-porque registra el resolver que el bus no tiene. Autoridad: **ADR-0012, seccion "Frontera de
-serializacion: event store vs bus"**; doctrina raiz: **ADR-0023** (criterio "¿cruza un bus?" como
+porque registra el resolver que el bus no tiene. Autoridad: **MEF-ADR-0012, seccion "Frontera de
+serializacion: event store vs bus"**; doctrina raiz: **MEF-ADR-0023** (criterio "¿cruza un bus?" como
 determinante de forma plana).
 
 **Regla: para cada evento con marker de bus (`IPrivateEvent` o `IPublicEvent`), escribe un test
@@ -783,7 +783,7 @@ portable: su payload carga un tipo rico que debe aplanarse antes de publicar por
 o el backbone compartido / la integracion externa diferida (responsabilidad del implementer; ver
 `implementer.md` "Donde vive cada tipo de evento"). La distincion de expectativa invertida aplica
 por igual a `IPrivateEvent` (namespace interno) e `IPublicEvent` (backbone compartido o namespace
-de integracion externo diferido). Autoridad: ADR-0023, seccion "Todo lo que cruza un bus es plano
+de integracion externo diferido). Autoridad: MEF-ADR-0023, seccion "Todo lo que cruza un bus es plano
 y portable".
 
 | Test | Opciones | Que cubre | Resultado esperado |
@@ -869,7 +869,7 @@ Crea el archivo `.claude/pipeline/summaries/stage-1-test-writer.md`:
     **Auditoria activa de Tell-don't-Ask antes de crear stubs**: la "Interfaz publica propuesta" no es infalible — el planner pudo no tener todo el contexto arquitectonico. Antes de aceptar la propuesta, recorre este checklist sobre cada propiedad publica listada:
     - ¿Es un valor observable externamente (lo que el caller necesita para tomar decisiones), o es un dato intermedio (insumo de calculo que solo tiene sentido dentro del VO/aggregate)? Datos intermedios no se exponen.
     - ¿Su unico consumidor sera una clase externa que opera sobre el objeto? Si si, la operacion deberia vivir en el objeto, no en la clase externa — y el getter no se necesita. Senalalo en el resumen y propon la operacion como metodo del objeto.
-    - Caso real (PR #155): el planner propuso exponer `MinutosAbsolutosInicio` para que `SegmentadorHorario` lo consumiera. La auditoria de Tell-don't-Ask habria detectado que el unico consumidor era un servicio externo y que la operacion `Segmentar` debia vivir en el propio VO. Ver ADR-0012 seccion "Encapsulamiento: Tell Don't Ask".
+    - Caso real (PR #155): el planner propuso exponer `MinutosAbsolutosInicio` para que `SegmentadorHorario` lo consumiera. La auditoria de Tell-don't-Ask habria detectado que el unico consumidor era un servicio externo y que la operacion `Segmentar` debia vivir en el propio VO. Ver MEF-ADR-0012 seccion "Encapsulamiento: Tell Don't Ask".
 
     Si detectas un problema, no escribas el stub silenciosamente con la propuesta del planner: documentalo en tu resumen como "Cuestionamiento al plan del planner" con una alternativa concreta. El skill de pipeline lo escalara para evaluacion del usuario antes de avanzar.
 13. **Multiples eventos = UNA sola llamada a `Then`, `ThenIsPublishedPublicly` o `ThenIsPublishedPrivately`** con todos los eventos como argumentos. NUNCA hagas llamadas separadas — el harness valida count exacto contra el total de eventos y falla en CI.
@@ -899,5 +899,5 @@ Crea el archivo `.claude/pipeline/summaries/stage-1-test-writer.md`:
     ```
 18. **Aggregates con stream ID compuesto**: si el aggregate computa su `Id` desde datos del payload (ej. `ComputarStreamId(empleadoId, fecha)`) en lugar de usar un GUID, DEBES usar los overloads con `aggregateId` explicito: `Then(streamId, eventos)` (sobrecarga de dos argumentos - patron idiomatico del proyecto), `And<T,P>(streamId, selector, valor)`, y `Given(streamId, evento)`. Usar los overloads implicitos producira tests que buscan por el `GuidAggregateId` del harness y nunca encontraran el aggregate.
 19. **Si detectas una contradiccion estructural en el issue** (ej. un test listado en "Impacto / Modifica" debe usar API de un proyecto que el test no puede referenciar; una sugerencia de "Interfaz publica propuesta" contradice un ADR; un CA exige un archivo en una ubicacion imposible), **tu decides la resolucion**: reubica el test al proyecto correcto, reemplazalo por uno equivalente, divide la cobertura en dos archivos, o elimina el test obsoleto si el refactor del issue lo vuelve insostenible y otro test cubre el CA. Documenta la decision en tu resumen bajo "Desviaciones del plan del planner" (ver seccion 9) con el formato: *regla/sugerencia del issue / desviacion aplicada / razon tecnica / consecuencia*. **No reportes bloqueo por esto** — la autoridad es tuya. Reportar bloqueo se reserva para situaciones donde no puedes decidir con la informacion disponible (no para contradicciones que tu mismo puedes resolver con criterio).
-20. **El valor esperado de toda asercion (`Then`, `And<>`, `ThenIsPublished*`) se construye SIEMPRE a mano como oraculo independiente**, con las primitivas y factories del dominio. **NUNCA lo derives ejecutando la logica bajo prueba** — ni el SUT ni los colaboradores de produccion que esa logica invoca. Un esperado calculado por el mismo codigo que se verifica vuelve el test tautologico: el bug contamina por igual el esperado y el actual, ambos coinciden, y la prueba pasa sin detectar la regresion. Antipatron: `var esperado = ConsolidadorDesgloseHoras.Consolidar(...)` para luego compararlo contra el resultado que el aggregate produjo con esa misma consolidacion. Patron correcto: armar el esperado con `new MomentoDelDia(...)`, `IntervaloTemporal.Crear(...)`, `new DesgloseHoras(...)`, etc. Fuente del principio: ADR-0002, seccion "Oraculo independiente (no-tautologia)" (ver `"$PLUGIN_ROOT/docs/adr/0002-estrategia-testing-event-sourcing.md"`, resuelto como en "Localizar los ADRs del marco"). Ejemplos en la seccion "Verificacion del estado del agregado" (paso 4).
-21. **Todo evento con marker de bus (`IPrivateEvent` o `IPublicEvent`) DEBE tener ademas un test de portabilidad por el bus** (seccion 6e): round-trip con `JsonSerializerOptions` POR DEFECTO (sin el resolver custom) que verifique que no hay perdida de datos. Es distinto del round-trip de Marten (regla 16 / seccion 6d, que usa `CrearOpcionesMarten()` con resolver): aquel cubre el event store; este cubre el canal de serializacion del bus (namespace interno o de integracion), donde el destino no tiene el resolver del productor. **NUNCA** repliques el test "sin registro falla" de 6d sobre un evento con marker de bus -- para un `IPrivateEvent` o `IPublicEvent` la expectativa se invierte: debe **sobrevivir** sin resolver, no fallar. Autoridad: ADR-0012, "Frontera de serializacion: event store vs bus"; doctrina raiz: ADR-0023 (criterio "¿cruza un bus?").
+20. **El valor esperado de toda asercion (`Then`, `And<>`, `ThenIsPublished*`) se construye SIEMPRE a mano como oraculo independiente**, con las primitivas y factories del dominio. **NUNCA lo derives ejecutando la logica bajo prueba** — ni el SUT ni los colaboradores de produccion que esa logica invoca. Un esperado calculado por el mismo codigo que se verifica vuelve el test tautologico: el bug contamina por igual el esperado y el actual, ambos coinciden, y la prueba pasa sin detectar la regresion. Antipatron: `var esperado = ConsolidadorDesgloseHoras.Consolidar(...)` para luego compararlo contra el resultado que el aggregate produjo con esa misma consolidacion. Patron correcto: armar el esperado con `new MomentoDelDia(...)`, `IntervaloTemporal.Crear(...)`, `new DesgloseHoras(...)`, etc. Fuente del principio: MEF-ADR-0002, seccion "Oraculo independiente (no-tautologia)" (ver `"$PLUGIN_ROOT/docs/adr/mef-adr-0002-estrategia-testing-event-sourcing.md"`, resuelto como en "Localizar los ADRs del marco"). Ejemplos en la seccion "Verificacion del estado del agregado" (paso 4).
+21. **Todo evento con marker de bus (`IPrivateEvent` o `IPublicEvent`) DEBE tener ademas un test de portabilidad por el bus** (seccion 6e): round-trip con `JsonSerializerOptions` POR DEFECTO (sin el resolver custom) que verifique que no hay perdida de datos. Es distinto del round-trip de Marten (regla 16 / seccion 6d, que usa `CrearOpcionesMarten()` con resolver): aquel cubre el event store; este cubre el canal de serializacion del bus (namespace interno o de integracion), donde el destino no tiene el resolver del productor. **NUNCA** repliques el test "sin registro falla" de 6d sobre un evento con marker de bus -- para un `IPrivateEvent` o `IPublicEvent` la expectativa se invierte: debe **sobrevivir** sin resolver, no fallar. Autoridad: MEF-ADR-0012, "Frontera de serializacion: event store vs bus"; doctrina raiz: MEF-ADR-0023 (criterio "¿cruza un bus?").

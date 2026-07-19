@@ -2,7 +2,7 @@
 model: sonnet
 ---
 
-Registra un secreto nuevo post-greenfield en `harness.config.json > secrets[]` (registro declarativo que itera el step de siembra data-driven de `infra-cd.yml`, issue #256) y cablea su referencia `@Microsoft.KeyVault(...)` versionless + el rol `Key Vault Secrets User` en la Function App del dominio que lo consume. **No** toca el `Key Vault Secrets Officer` del SP de CI (ADR-0022, mecanismo M1): ese rol de escritura ya se auto-asigna el propio `apply`; este skill solo agrega -- o verifica que ya exista -- el rol de lectura de la app. Ningun valor de secreto viaja en claro (ADR-0025): este skill solo referencia nombres de GitHub secrets o de `terraform output`. Comunicate en **espanol**.
+Registra un secreto nuevo post-greenfield en `harness.config.json > secrets[]` (registro declarativo que itera el step de siembra data-driven de `infra-cd.yml`, issue #256) y cablea su referencia `@Microsoft.KeyVault(...)` versionless + el rol `Key Vault Secrets User` en la Function App del dominio que lo consume. **No** toca el `Key Vault Secrets Officer` del SP de CI (MEF-ADR-0022, mecanismo M1): ese rol de escritura ya se auto-asigna el propio `apply`; este skill solo agrega -- o verifica que ya exista -- el rol de lectura de la app. Ningun valor de secreto viaja en claro (MEF-ADR-0025): este skill solo referencia nombres de GitHub secrets o de `terraform output`. Comunicate en **espanol**.
 
 ## Pre-condicion: cwd != Mefisto
 
@@ -53,7 +53,7 @@ Se va a sembrar el secreto "<nombre>" (fuente: <output <x> | github-secret <NAME
                (nunca se duplica; nunca se toca el rol del SP de CI)
 
 El apply real -- el que siembra el VALOR del secreto en el Key Vault -- corre en CI al mergear
-el PR (ADR-0022); este skill nunca ve ni escribe el valor.
+el PR (MEF-ADR-0022); este skill nunca ve ni escribe el valor.
 
 ¿Continuar? (s/n)
 ```
@@ -112,7 +112,7 @@ Busca en el mismo archivo un `azurerm_role_assignment` con `role_definition_name
 - **Si ya existe** (es el caso normal: `domain-scaffolder` lo emite siempre al crear un dominio, y ese rol de datos cubre **todos** los secretos del Key Vault, no solo los que existian al momento de scaffoldear), no hagas nada -- reportalo como verificado.
 - **Si por alguna razon falta** (un dominio scaffoldeado antes de que este role assignment formara parte del patron), agregalo con el mismo bloque HCL que emite `domain-scaffolder.md`.
 
-**Nunca** toques ni agregues un `azurerm_role_assignment` de `Key Vault Secrets Officer`: ese rol es exclusivo del SP de CI (mecanismo M1, ADR-0022) y ya se auto-asigna en el `main.tf` del entorno -- fuera del alcance de este skill.
+**Nunca** toques ni agregues un `azurerm_role_assignment` de `Key Vault Secrets Officer`: ese rol es exclusivo del SP de CI (mecanismo M1, MEF-ADR-0022) y ya se auto-asigna en el `main.tf` del entorno -- fuera del alcance de este skill.
 
 ### 7. Formatear y validar (si `terraform` esta instalado)
 
@@ -122,7 +122,7 @@ terraform -chdir=infra/environments/<env> init -backend=false
 terraform -chdir=infra/environments/<env> validate
 ```
 
-Si `terraform validate` falla, corrige el HCL insertado y vuelve a validar. Si `terraform` no esta instalado, avisa y deja el formateo/validacion como paso manual pendiente -- no es motivo para detenerte. **Nunca** ejecutes `terraform plan` ni `terraform apply`: el `apply` real (el que siembra el valor del secreto) corre en CI al mergear el PR (ADR-0021, ADR-0022).
+Si `terraform validate` falla, corrige el HCL insertado y vuelve a validar. Si `terraform` no esta instalado, avisa y deja el formateo/validacion como paso manual pendiente -- no es motivo para detenerte. **Nunca** ejecutes `terraform plan` ni `terraform apply`: el `apply` real (el que siembra el valor del secreto) corre en CI al mergear el PR (MEF-ADR-0021, MEF-ADR-0022).
 
 ### 8. Commitear
 
@@ -139,15 +139,15 @@ Resumen claro:
 - **Cableado**: app setting agregado, o ya presente (sin duplicar).
 - **Rol `Key Vault Secrets User`**: verificado, o agregado si faltaba.
 - Si la fuente es `--from-github-secret` y el script reporto que el GitHub secret **no** existe: recuerda explicitamente crearlo (*Settings > Secrets and variables > Actions*) **antes** del proximo `apply` que deba sembrar este secreto -- si no, ese `apply` fallara al no encontrar el valor.
-- **Siguiente paso**: `git push -u origin <rama>` + `gh pr create` apuntando a `main`. El `plan` corre en el PR y el `apply` real -- el que siembra el valor en el Key Vault, iterando el `secrets[]` ya actualizado -- lo ejecuta `infra-cd.yml` en CI al mergear (ADR-0022), nunca localmente.
+- **Siguiente paso**: `git push -u origin <rama>` + `gh pr create` apuntando a `main`. El `plan` corre en el PR y el `apply` real -- el que siembra el valor en el Key Vault, iterando el `secrets[]` ya actualizado -- lo ejecuta `infra-cd.yml` en CI al mergear (MEF-ADR-0022), nunca localmente.
 
 ## Reglas
 
 - **Nunca crees el dominio.** Si `--domain` no existe (el script lo valida contra `infra/environments/<env>/dominio-*.tf`), detente e indica al usuario que corra `/scaffold <dominio>` primero.
 - **Nunca dupliques** un app setting, una referencia `@Microsoft.KeyVault(...)` o un `azurerm_role_assignment` ya presentes -- verifica antes de escribir (idempotencia, CA-5/CA-6).
-- **Nunca toques** el `Key Vault Secrets Officer` del SP de CI (ADR-0022, mecanismo M1): este skill solo agrega o verifica el rol de **lectura** (`Key Vault Secrets User`) de la Function App consumidora, nunca el rol de **escritura** del SP.
-- **Ningun valor de secreto viaja en claro** (ADR-0025). Este skill solo maneja **nombres** -- el nombre del secreto en Key Vault, el nombre de un GitHub secret, el nombre de un `terraform output` --; nunca pidas ni escribas el valor real de un secreto.
+- **Nunca toques** el `Key Vault Secrets Officer` del SP de CI (MEF-ADR-0022, mecanismo M1): este skill solo agrega o verifica el rol de **lectura** (`Key Vault Secrets User`) de la Function App consumidora, nunca el rol de **escritura** del SP.
+- **Ningun valor de secreto viaja en claro** (MEF-ADR-0025). Este skill solo maneja **nombres** -- el nombre del secreto en Key Vault, el nombre de un GitHub secret, el nombre de un `terraform output` --; nunca pidas ni escribas el valor real de un secreto.
 - **Nunca ejecutes** `terraform plan` ni `terraform apply`: solo `fmt`, `init -backend=false` y `validate`. El `apply` real ocurre en CI al mergear el PR.
 - **Nunca trabajes contra `main` directo**: crea una rama antes de editar si hace falta (Paso 3).
-- **Nunca crees un `azurerm_key_vault_secret`** ni materialices el valor de un secreto en Terraform (ADR-0025 decision #6): la siembra del valor es siempre un step de CI via `az keyvault secret set`, nunca Terraform.
+- **Nunca crees un `azurerm_key_vault_secret`** ni materialices el valor de un secreto en Terraform (MEF-ADR-0025 decision #6): la siembra del valor es siempre un step de CI via `az keyvault secret set`, nunca Terraform.
 - Si `$ARGUMENTS` no trae `<nombre>`, `--domain`, o exactamente uno de los dos flags de fuente, responde con el uso exacto y detente -- no adivines valores faltantes.

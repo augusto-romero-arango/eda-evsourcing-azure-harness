@@ -17,20 +17,20 @@ Antes de cualquier accion, lee `CLAUDE.md` raiz del proyecto para resolver estos
 
 Si CLAUDE.md no declara `RootNamespace` o `SolutionFile`, detente y pide al usuario que los declare antes de continuar.
 
-Ademas, lee `.claude/harness.config.json` para resolver el **backbone compartido** del producto (ADR-0024 decision #4, #7): los alias declarados en `serviceBus.external` con `alcance == "compartido"` son los que este dominio wirea como brokers nombrados de Wolverine (Paso 1) y como app settings `SERVICE_BUS_CONNECTION_<ALIAS>` provistos por referencia de Key Vault (Paso 4). Ver el detalle de resolucion en el Paso 0.
+Ademas, lee `.claude/harness.config.json` para resolver el **backbone compartido** del producto (MEF-ADR-0024 decision #4, #7): los alias declarados en `serviceBus.external` con `alcance == "compartido"` son los que este dominio wirea como brokers nombrados de Wolverine (Paso 1) y como app settings `SERVICE_BUS_CONNECTION_<ALIAS>` provistos por referencia de Key Vault (Paso 4). Ver el detalle de resolucion en el Paso 0.
 
 ## Parametros de entrada
 
 El usuario debe darte:
 - **Nombre del dominio** en kebab-case (obligatorio). Ejemplo: `marcaciones`, `calculo-horas`, `liquidacion-nomina`.
 
-Ademas puede pasarte (opcional) los **parametros de hosting** del App Service Plan dedicado del dominio. Cada Function App corre en su **propio** plan dedicado (ver ADR-0020); estos parametros configuran ese plan. Si el usuario no los especifica, usa los defaults del ADR-0020:
+Ademas puede pasarte (opcional) los **parametros de hosting** del App Service Plan dedicado del dominio. Cada Function App corre en su **propio** plan dedicado (ver MEF-ADR-0020); estos parametros configuran ese plan. Si el usuario no los especifica, usa los defaults del MEF-ADR-0020:
 
-- **SKU del plan** (`sku_name`) -- default `B1` (Basic, 1 core dedicado por dominio; piso valido del marco, ver ADR-0020). No usar el plan Consumption `Y1` (incompatible con el agente de durabilidad always-on de Wolverine).
+- **SKU del plan** (`sku_name`) -- default `B1` (Basic, 1 core dedicado por dominio; piso valido del marco, ver MEF-ADR-0020). No usar el plan Consumption `Y1` (incompatible con el agente de durabilidad always-on de Wolverine).
 - **Always On** (`always_on`) -- default `false` en dev. En prod evaluar `true` para que el host no descargue el worker e interrumpa el poll del outbox de Wolverine.
-- `worker_count` es siempre `1` y **no es configurable**: `DurabilityMode.Solo` exige un unico nodo (no escalar out; ver ADR-0020).
+- `worker_count` es siempre `1` y **no es configurable**: `DurabilityMode.Solo` exige un unico nodo (no escalar out; ver MEF-ADR-0020).
 
-Respeta el override del usuario; a falta de override, manda el default del ADR-0020.
+Respeta el override del usuario; a falta de override, manda el default del MEF-ADR-0020.
 
 Si el usuario no especifica el nombre del dominio, pregunta antes de continuar:
 
@@ -56,7 +56,7 @@ nombre="func-{prefix_func}-{kebab}"
 echo ${#nombre}
 ```
 
-El limite real es **60 caracteres**: es el rango del nombre de recurso `Microsoft.Web/sites` (Function App), 2-60, segun las naming rules de Azure (https://learn.microsoft.com/azure/azure-resource-manager/management/resource-name-rules#microsoftweb). El "32" que aparecia aqui antes corresponde al truncado del host ID de Azure Functions, cuya colision **solo ocurre si dos Function Apps comparten la misma storage account** (https://learn.microsoft.com/azure/azure-functions/storage-considerations#host-id-considerations; ver tambien el evento de diagnostico AZFD0004: https://learn.microsoft.com/azure/azure-functions/errors-diagnostics/diagnostic-events/azfd0004). En este marco cada Function App tiene su **propia** Storage Account (Paso 4) y su propio plan dedicado sin deployment slots (ADR-0020), asi que esa colision no puede darse: el limite de 32 no aplica.
+El limite real es **60 caracteres**: es el rango del nombre de recurso `Microsoft.Web/sites` (Function App), 2-60, segun las naming rules de Azure (https://learn.microsoft.com/azure/azure-resource-manager/management/resource-name-rules#microsoftweb). El "32" que aparecia aqui antes corresponde al truncado del host ID de Azure Functions, cuya colision **solo ocurre si dos Function Apps comparten la misma storage account** (https://learn.microsoft.com/azure/azure-functions/storage-considerations#host-id-considerations; ver tambien el evento de diagnostico AZFD0004: https://learn.microsoft.com/azure/azure-functions/errors-diagnostics/diagnostic-events/azfd0004). En este marco cada Function App tiene su **propia** Storage Account (Paso 4) y su propio plan dedicado sin deployment slots (MEF-ADR-0020), asi que esa colision no puede darse: el limite de 32 no aplica.
 
 Como `func-` (5 chars) es el prefijo mas largo entre los dos recursos que usan `{prefix_func}-{kebab}` (el App Service Plan usa `asp-`, 4 chars), validar el nombre de la Function App a 60 cubre tambien al App Service Plan (`Microsoft.Web/serverfarms`, rango 1-60 en la misma tabla de naming rules).
 
@@ -89,9 +89,9 @@ Si `infra/environments/dev/dominio-{kebab}.tf` ya existe, informa al usuario:
 
 Y detente sin hacer nada mas.
 
-**Resolver parametros de hosting (ADR-0020):**
+**Resolver parametros de hosting (MEF-ADR-0020):**
 
-Cada dominio recibe su propio App Service Plan dedicado (`asp-{prefix_func}-{kebab}`). Resuelve sus parametros tomando lo que dio el usuario y, a falta de override, los defaults del ADR-0020:
+Cada dominio recibe su propio App Service Plan dedicado (`asp-{prefix_func}-{kebab}`). Resuelve sus parametros tomando lo que dio el usuario y, a falta de override, los defaults del MEF-ADR-0020:
 
 - `sku_name` = el valor que dio el usuario, o `B1` por defecto.
 - `always_on` = el valor que dio el usuario, o `false` por defecto (dev).
@@ -99,13 +99,13 @@ Cada dominio recibe su propio App Service Plan dedicado (`asp-{prefix_func}-{keb
 
 Estos valores alimentan el `module service_plan_{snake_case}` que emitiras en el Paso 4.
 
-**Resolver alias del backbone compartido (ADR-0024, decision #4 y #7):**
+**Resolver alias del backbone compartido (MEF-ADR-0024, decision #4 y #7):**
 
 ```bash
 jq -r '.serviceBus.external // [] | map(select(.alcance == "compartido")) | .[].alias' /ruta-del-proyecto/.claude/harness.config.json 2>/dev/null
 ```
 
-Cada alias resultante es una clave de broker nombrado (== alias declarado en `serviceBus.external`, contrato de `harness.config.json` fijado en issue #163) y determina el app setting `SERVICE_BUS_CONNECTION_<ALIAS>` que se lee en `Program.cs` (Paso 1) y se provisiona por referencia de Key Vault en Terraform (Paso 4). Si la lista viene vacia (el BC aun no declara ningun alias `compartido`), el dominio arranca sin brokers nombrados: solo el broker default (`SERVICE_BUS_CONNECTION_INTERNO`). **No wirees ningun alias con `alcance == "externo"`**: la integracion verdaderamente externa queda diferida y default-off (ADR-0024 decision #5).
+Cada alias resultante es una clave de broker nombrado (== alias declarado en `serviceBus.external`, contrato de `harness.config.json` fijado en issue #163) y determina el app setting `SERVICE_BUS_CONNECTION_<ALIAS>` que se lee en `Program.cs` (Paso 1) y se provisiona por referencia de Key Vault en Terraform (Paso 4). Si la lista viene vacia (el BC aun no declara ningun alias `compartido`), el dominio arranca sin brokers nombrados: solo el broker default (`SERVICE_BUS_CONNECTION_INTERNO`). **No wirees ningun alias con `alcance == "externo"`**: la integracion verdaderamente externa queda diferida y default-off (MEF-ADR-0024 decision #5).
 
 Antes de continuar muestra al usuario el resumen de lo que vas a crear y pide confirmacion:
 
@@ -113,7 +113,7 @@ Antes de continuar muestra al usuario el resumen de lo que vas a crear y pide co
 Dominio:          {kebab}
 PascalCase:       {PascalCase}
 Function App:     func-{prefix_func}-{kebab} (N chars)
-App Service Plan: asp-{prefix_func}-{kebab} (dedicado por dominio, ADR-0020)
+App Service Plan: asp-{prefix_func}-{kebab} (dedicado por dominio, MEF-ADR-0020)
   SKU:            {sku_name} (default B1)
   Always On:      {always_on} (default false en dev)
   worker_count:   1 (fijo, Solo exige un unico nodo)
@@ -124,7 +124,7 @@ Workflow deploy:  .github/workflows/deploy-{kebab}.yml
 
 Fixtures:         ApiFixture, ServiceBusFixture, PostgresFixture, Polling
 Suscripciones a:  [lista si la proporcionaron, o "ninguna"]
-Backbone comun:   [alias resueltos arriba, o "ninguno todavia (ADR-0024)"]
+Backbone comun:   [alias resueltos arriba, o "ninguno todavia (MEF-ADR-0024)"]
 
 Continuar? (s/n)
 ```
@@ -155,7 +155,7 @@ rm -rf "$REPO_ROOT/src/<RootNamespace>.{PascalCase}/.vscode"
 rm -f "$REPO_ROOT/src/<RootNamespace>.{PascalCase}/Properties/launchSettings.json"
 ```
 
-> **Dependencia de orden y blindaje de secretos (issue #241, ADR-0025):** el `.gitignore` **raiz** del repo lo emite `infra-base-scaffolder` (Paso 2c), no este agente -- por contrato ya corre antes del primer `/scaffold` (el Paso 4 de este agente asume los modulos base del entorno -- su HCL referencia `module.resource_group`, `local.tags`, `local.prefix_func` y `var.environment` del root module que genera y mantiene `infra-base-scaffolder`). Este agente no vuelve a emitir el raiz ni duplica su contenido (fuente unica). Por eso el `.gitignore` per-proyecto que `func init` acaba de generar **ya no se borra**: ya ignora `local.settings.json`, `bin/` y `obj/` por defecto, y es el guard local que evita que el secreto de desarrollo (`Password=postgres`, Paso 9) se cuele en el `git add` del Paso 8 aunque el raiz todavia no exista o el orden de invocacion se rompa. Vive en `src/<RootNamespace>.{PascalCase}/`, una ruta distinta por dominio, asi que dos scaffolds en paralelo nunca chocan en este archivo.
+> **Dependencia de orden y blindaje de secretos (issue #241, MEF-ADR-0025):** el `.gitignore` **raiz** del repo lo emite `infra-base-scaffolder` (Paso 2c), no este agente -- por contrato ya corre antes del primer `/scaffold` (el Paso 4 de este agente asume los modulos base del entorno -- su HCL referencia `module.resource_group`, `local.tags`, `local.prefix_func` y `var.environment` del root module que genera y mantiene `infra-base-scaffolder`). Este agente no vuelve a emitir el raiz ni duplica su contenido (fuente unica). Por eso el `.gitignore` per-proyecto que `func init` acaba de generar **ya no se borra**: ya ignora `local.settings.json`, `bin/` y `obj/` por defecto, y es el guard local que evita que el secreto de desarrollo (`Password=postgres`, Paso 9) se cuele en el `git add` del Paso 8 aunque el raiz todavia no exista o el orden de invocacion se rompa. Vive en `src/<RootNamespace>.{PascalCase}/`, una ruta distinta por dominio, asi que dos scaffolds en paralelo nunca chocan en este archivo.
 
 Una vez creado, lee el archivo `.csproj` generado para ver su contenido actual antes de modificarlo.
 
@@ -239,9 +239,9 @@ var builder = FunctionsApplication.CreateBuilder(args);
 builder.ConfigureFunctionsWebApplication();
 
 var martenConnectionString = Environment.GetEnvironmentVariable("MartenConnectionString")!;
-// Namespace interno del BC (ADR-0024 decision #3): unico ASB propio, siempre presente.
+// Namespace interno del BC (MEF-ADR-0024 decision #3): unico ASB propio, siempre presente.
 var serviceBusInterno = Environment.GetEnvironmentVariable("SERVICE_BUS_CONNECTION_INTERNO")!;
-// Backbone compartido del producto (ADR-0024 decision #4): una variable por alias declarado
+// Backbone compartido del producto (MEF-ADR-0024 decision #4): una variable por alias declarado
 // en serviceBus.external con alcance "compartido" (contrato de harness.config.json, issue #163).
 // Ejemplo con el alias COSMOS; repite el patron var + linea de registro por cada alias adicional.
 var serviceBusCosmos = Environment.GetEnvironmentVariable("SERVICE_BUS_CONNECTION_COSMOS")!;
@@ -253,12 +253,12 @@ builder.Services.AgregarWolverineParaComandosServerless(
     builder.Environment.IsDevelopment(),
     options =>
     {
-        // Broker default: namespace interno del BC (ADR-0024 decision #3, #7).
+        // Broker default: namespace interno del BC (MEF-ADR-0024 decision #3, #7).
         options.HabilitarAzureServiceBusParaServerLess(serviceBusInterno);
-        // Broker(s) nombrado(s): uno por alias del backbone compartido (ADR-0024 decision #4, #7).
+        // Broker(s) nombrado(s): uno por alias del backbone compartido (MEF-ADR-0024 decision #4, #7).
         // La clave de broker es el mismo alias declarado en serviceBus.external.
         options.AgregarAzureServiceBusNombradoServerless("COSMOS", serviceBusCosmos);
-        // Enrutamiento por tipo (ADR-0024 decision #2, #4):
+        // Enrutamiento por tipo (MEF-ADR-0024 decision #2, #4):
         //   IPrivateEvent -> PublicarEventoServerless<T>(topic)            -> broker default  -> namespace interno
         //   IPublicEvent  -> PublicarEventoServerless<T>("<alias>", topic) -> broker nombrado -> backbone compartido
         // AVISO: NO usar PublicarEventosServerless(Assembly contratos) completo: filtra por
@@ -269,7 +269,7 @@ builder.Services.AgregarWolverineParaComandosServerless(
 builder.Services.AgregarMartenEventStore();
 builder.Services.AgregarWolverineCommandRouter();
 builder.Services.AgregarWolverineEventSender();
-// Enruta IPrivateEvent directo a IPrivateEventHandlerAsync<TEvent>, sin comando espejo (ADR-0024, issue #313).
+// Enruta IPrivateEvent directo a IPrivateEventHandlerAsync<TEvent>, sin comando espejo (MEF-ADR-0024, issue #313).
 builder.Services.AgregarWolverinePrivateEventRouter();
 
 builder.Services.AddOpenTelemetry()
@@ -294,9 +294,9 @@ builder.Services.AddValidatorsFromAssemblyContaining<I{PascalCase}AssemblyMarker
 await builder.Build().RunAsync();
 ```
 
-Si el Paso 0 no resolvio ningun alias `serviceBus.external` con `alcance == "compartido"`, omite la variable `serviceBusCosmos` y la linea `AgregarAzureServiceBusNombradoServerless`; deja solo el broker default y un comentario: `// Backbone compartido: sin alias "compartido" declarado en serviceBus.external todavia (ADR-0024 decision #4). Agrega su broker nombrado cuando el BC publique/consuma su primer evento publico.` Si hay mas de un alias, repite el par variable + linea de registro por cada uno. No wirees ningun alias con `alcance == "externo"` (integracion verdaderamente externa, diferida por ADR-0024 decision #5, default-off).
+Si el Paso 0 no resolvio ningun alias `serviceBus.external` con `alcance == "compartido"`, omite la variable `serviceBusCosmos` y la linea `AgregarAzureServiceBusNombradoServerless`; deja solo el broker default y un comentario: `// Backbone compartido: sin alias "compartido" declarado en serviceBus.external todavia (MEF-ADR-0024 decision #4). Agrega su broker nombrado cuando el BC publique/consuma su primer evento publico.` Si hay mas de un alias, repite el par variable + linea de registro por cada uno. No wirees ningun alias con `alcance == "externo"` (integracion verdaderamente externa, diferida por MEF-ADR-0024 decision #5, default-off).
 
-> **CA-9 — Aviso sobre el helper bulk `PublicarEventosServerless`**: No uses `PublicarEventosServerless(nombreConexion, topicName, Assembly contratos)` con el assembly completo de contratos para registrar eventos. Ese helper filtra por `IsAssignableTo(typeof(IEvent))` y captura tanto `IPrivateEvent` como `IPublicEvent` juntos, enrutando todo al mismo broker y rompiendo la separacion privado/publico (ADR-0024 decision #2, #4). El registro debe hacerse **por tipo**, separando explicitamente privados de publicos:
+> **CA-9 — Aviso sobre el helper bulk `PublicarEventosServerless`**: No uses `PublicarEventosServerless(nombreConexion, topicName, Assembly contratos)` con el assembly completo de contratos para registrar eventos. Ese helper filtra por `IsAssignableTo(typeof(IEvent))` y captura tanto `IPrivateEvent` como `IPublicEvent` juntos, enrutando todo al mismo broker y rompiendo la separacion privado/publico (MEF-ADR-0024 decision #2, #4). El registro debe hacerse **por tipo**, separando explicitamente privados de publicos:
 > - `IPrivateEvent`: `options.PublicarEventoServerless<TEvento>(topic)` → broker default → namespace interno
 > - `IPublicEvent`: `options.PublicarEventoServerless<TEvento>("<alias>", topic)` → broker nombrado → backbone compartido (alias)
 
@@ -358,7 +358,7 @@ public interface I{PascalCase}AssemblyMarker;
 "SERVICE_BUS_CONNECTION_COSMOS": "<pendiente-configurar-backbone-compartido-COSMOS>"
 ```
 
-Agrega una clave `SERVICE_BUS_CONNECTION_<ALIAS>` por cada alias del backbone compartido resuelto en el Paso 0 (el ejemplo usa `COSMOS`); si no hay ninguno todavia, omite esa clave y deja solo `SERVICE_BUS_CONNECTION_INTERNO`. En Azure, ambas claves se resuelven via referencia `@Microsoft.KeyVault(...)` (ADR-0024 decision #6, Paso 4); aqui solo necesitas un placeholder de desarrollo local. No queda ninguna referencia a un namespace de integracion propio del BC.
+Agrega una clave `SERVICE_BUS_CONNECTION_<ALIAS>` por cada alias del backbone compartido resuelto en el Paso 0 (el ejemplo usa `COSMOS`); si no hay ninguno todavia, omite esa clave y deja solo `SERVICE_BUS_CONNECTION_INTERNO`. En Azure, ambas claves se resuelven via referencia `@Microsoft.KeyVault(...)` (MEF-ADR-0024 decision #6, Paso 4); aqui solo necesitas un placeholder de desarrollo local. No queda ninguna referencia a un namespace de integracion propio del BC.
 
 **10. Verificar que Contracts tenga `Cosmos.EventDriven.Abstractions`:**
 
@@ -465,7 +465,7 @@ namespace <RootNamespace>.{PascalCase}.Infraestructura;
 /// El Connection del [ServiceBusTrigger] lo elige el endpoint concreto segun el origen del topic
 /// (SERVICE_BUS_CONNECTION_INTERNO para IPrivateEvent intra-BC; SERVICE_BUS_CONNECTION_&lt;ALIAS&gt; del
 /// backbone compartido para IPublicEvent comun). Ver la tabla de convencion en la seccion
-/// "Endpoint ServiceBus" de agents/implementer.md (ADR-0024).
+/// "Endpoint ServiceBus" de agents/implementer.md (MEF-ADR-0024).
 /// </summary>
 public abstract class ServiceBusEndpointBase<TEvento>(ICommandRouter commandRouter, ILogger logger)
     where TEvento : class
@@ -498,7 +498,7 @@ public abstract class ServiceBusEndpointBase<TEvento>(ICommandRouter commandRout
 
 **11d. Crear el `ServiceBusSessionEndpointBase.cs` en `Infraestructura/`:**
 
-Contraparte de `ServiceBusEndpointBase<TEvento>` para el caso de fan-in de ADR-0026 (issue #271): un queue en modo sesion donde convergen N tipos de evento no tiene un unico `TEvento` que deserializar, asi que el despacho no puede vivir en la clase base. Esta clase encapsula solo lo que es identico entre ambos casos (complete/lock-lost/dead-letter) y delega la deserializacion + invocacion del comando al endpoint concreto via el metodo abstracto `DespacharPorSubject`.
+Contraparte de `ServiceBusEndpointBase<TEvento>` para el caso de fan-in de MEF-ADR-0026 (issue #271): un queue en modo sesion donde convergen N tipos de evento no tiene un unico `TEvento` que deserializar, asi que el despacho no puede vivir en la clase base. Esta clase encapsula solo lo que es identico entre ambos casos (complete/lock-lost/dead-letter) y delega la deserializacion + invocacion del comando al endpoint concreto via el metodo abstracto `DespacharPorSubject`.
 
 ```csharp
 using Azure.Messaging.ServiceBus;
@@ -508,15 +508,15 @@ using Microsoft.Extensions.Logging;
 namespace <RootNamespace>.{PascalCase}.Infraestructura;
 
 /// <summary>
-/// Clase base para FunctionEndpoints de fan-in sobre un queue de ServiceBus en modo sesion (ADR-0026).
+/// Clase base para FunctionEndpoints de fan-in sobre un queue de ServiceBus en modo sesion (MEF-ADR-0026).
 /// A diferencia de <see cref="ServiceBusEndpointBase{TEvento}"/> (un unico tipo de evento por
 /// subscription), aqui convergen N tipos de evento sobre el mismo queue: el endpoint concreto
 /// implementa <see cref="DespacharPorSubject"/> para deserializar y enrutar segun message.Subject;
 /// esta clase solo encapsula complete/lock-lost/dead-letter, igual que ServiceBusEndpointBase.
 /// El Connection del [ServiceBusTrigger] es siempre SERVICE_BUS_CONNECTION_INTERNO: el queue de
-/// fan-in vive en el namespace interno del BC (ADR-0026 seccion 2, ADR-0023) -- nunca en el
+/// fan-in vive en el namespace interno del BC (MEF-ADR-0026 seccion 2, MEF-ADR-0023) -- nunca en el
 /// backbone compartido. Ver la seccion "Endpoint de fan-in: queue en modo sesion" de
-/// agents/implementer.md (ADR-0026).
+/// agents/implementer.md (MEF-ADR-0026).
 /// </summary>
 public abstract class ServiceBusSessionEndpointBase(ILogger logger)
 {
@@ -571,7 +571,7 @@ namespace <RootNamespace>.{PascalCase}.Infraestructura;
 /// Contraparte de <see cref="ServiceBusEndpointBase{TEvento}"/>: en vez de traducir el evento a un
 /// comando y rutearlo por ICommandRouter, lo despacha directamente a su IPrivateEventHandlerAsync&lt;TPrivateEvent&gt;
 /// via IPrivateEventRouter. Usar solo cuando el comando equivalente seria un espejo del evento -- ver la
-/// seccion "EventHandler — reaccionar a un evento privado" de agents/implementer.md (ADR-0024).
+/// seccion "EventHandler — reaccionar a un evento privado" de agents/implementer.md (MEF-ADR-0024).
 /// </summary>
 public abstract class PrivateEventEndpointBase<TPrivateEvent>(IPrivateEventRouter privateEventRouter, ILogger logger)
     where TPrivateEvent : class, IPrivateEvent
@@ -874,7 +874,7 @@ internal class FakeLogger : ILogger
 
 **7. Crear `Infraestructura/ServiceBusSessionEndpointBaseTests.cs`:**
 
-Tests de la orquestacion de `ServiceBusSessionEndpointBase` (ADR-0026). Cubren los mismos 4 escenarios que `ServiceBusEndpointBaseTests`, con "JSON invalido" reemplazado por "Subject no reconocido" (el equivalente de fan-in: el switch del endpoint concreto no sabe que hacer con el mensaje). Reusa `FakeCommandRouter`, `FakeServiceBusMessageActions` y `FakeLogger` del archivo anterior (mismo namespace de test, misma assembly).
+Tests de la orquestacion de `ServiceBusSessionEndpointBase` (MEF-ADR-0026). Cubren los mismos 4 escenarios que `ServiceBusEndpointBaseTests`, con "JSON invalido" reemplazado por "Subject no reconocido" (el equivalente de fan-in: el switch del endpoint concreto no sabe que hacer con el mensaje). Reusa `FakeCommandRouter`, `FakeServiceBusMessageActions` y `FakeLogger` del archivo anterior (mismo namespace de test, misma assembly).
 
 ```csharp
 using AwesomeAssertions;
@@ -940,7 +940,7 @@ public class ServiceBusSessionEndpointBaseTests
         actions.MensajeCompletado.Should().BeFalse();
     }
 
-    // Subject no reconocido -> dead-letter (el switch del endpoint concreto lanza, ADR-0026)
+    // Subject no reconocido -> dead-letter (el switch del endpoint concreto lanza, MEF-ADR-0026)
     [Fact]
     public async Task DebeEnviarADeadLetter_CuandoSubjectNoReconocido()
     {
@@ -1673,7 +1673,7 @@ Si el archivo ya existe con otras propiedades (ej: `sdk`), solo agrega la seccio
 
 ## Paso 4 - Crear el Terraform del dominio: Service Plan, Storage Account y Function App
 
-Cada Function App tiene su propio **App Service Plan dedicado** y su propia Storage Account, para aislamiento de performance y escalado independiente. El plan dedicado es una directiva del marco: dos dominios nunca comparten plan, porque cada uno corre un agente de durabilidad de Wolverine *always-on* que poll-ea Postgres en background y satura el core aun en reposo (noisy neighbor). Ver **ADR-0020** (hosting: un App Service Plan por Function App) y, para la Storage, Best Practices (Beginning Azure Functions Cap. 8).
+Cada Function App tiene su propio **App Service Plan dedicado** y su propia Storage Account, para aislamiento de performance y escalado independiente. El plan dedicado es una directiva del marco: dos dominios nunca comparten plan, porque cada uno corre un agente de durabilidad de Wolverine *always-on* que poll-ea Postgres en background y satura el core aun en reposo (noisy neighbor). Ver **MEF-ADR-0020** (hosting: un App Service Plan por Function App) y, para la Storage, Best Practices (Beginning Azure Functions Cap. 8).
 
 **Nombre de la Storage Account**: `st` + dominio sin guiones (truncado a 13 chars, ver "Truncado determinista" abajo) + environment + sufijo aleatorio.
 Ejemplo para `marcaciones` en dev: `stmarcacionesdev{suffix}`.
@@ -1687,7 +1687,7 @@ No "avises al usuario" ni preguntes nada: el agente corre no interactivo (`claud
 
 > **Por que la Storage Account es el unico recurso que se trunca (issue #245)**: su limite real es 24 caracteres (`Microsoft.Storage/storageAccounts`, naming rules de Azure), muy por debajo de los 60 de la Function App y el App Service Plan (Validacion 1 del Paso 0). No es una compuerta interna del harness: es el limite que impone Azure sobre este tipo de recurso especifico.
 
-**Archivo plano por dominio (issue #234, decision D1/D2)**: estos bloques van completos en un archivo **nuevo y propio** del dominio, `infra/environments/dev/dominio-{kebab}.tf`, **NO al final de `main.tf`**. No leas ni modifiques `main.tf`: el root module del entorno lo genera y mantiene `infra-base-scaffolder` (ADR-0021) y queda intacto al dar de alta un dominio. Terraform evalua todos los `.tf` del directorio del entorno como un unico root module y **no recorre subdirectorios** (fuente: HashiCorp, Terraform Language — "Files and Directories"), por lo que un archivo plano preserva sin cambios las referencias a `local.*`, `module.*` y `var.environment` del root module. La Validacion 3 del Paso 0 ya confirmo que este archivo no existe todavia; si en este punto existiera, detente sin pisarlo.
+**Archivo plano por dominio (issue #234, decision D1/D2)**: estos bloques van completos en un archivo **nuevo y propio** del dominio, `infra/environments/dev/dominio-{kebab}.tf`, **NO al final de `main.tf`**. No leas ni modifiques `main.tf`: el root module del entorno lo genera y mantiene `infra-base-scaffolder` (MEF-ADR-0021) y queda intacto al dar de alta un dominio. Terraform evalua todos los `.tf` del directorio del entorno como un unico root module y **no recorre subdirectorios** (fuente: HashiCorp, Terraform Language — "Files and Directories"), por lo que un archivo plano preserva sin cambios las referencias a `local.*`, `module.*` y `var.environment` del root module. La Validacion 3 del Paso 0 ya confirmo que este archivo no existe todavia; si en este punto existiera, detente sin pisarlo.
 
 Crea el archivo `infra/environments/dev/dominio-{kebab}.tf` con el siguiente contenido completo (los cuatro bloques de abajo son el archivo entero, no un agregado a otro archivo existente). Sustituye `{sku_name}` y `{always_on}` por los parametros de hosting que resolviste en el Paso 0 (defaults `B1` / `false`):
 
@@ -1735,7 +1735,7 @@ module "function_app_{snake_case}" {
   tags = local.tags
 }
 
-# Lectura de secretos del Key Vault (ADR-0025 decision #2): la managed identity de la
+# Lectura de secretos del Key Vault (MEF-ADR-0025 decision #2): la managed identity de la
 # Function App necesita "Key Vault Secrets User" sobre el Key Vault del BC para resolver
 # en runtime las referencias @Microsoft.KeyVault(...) de sus app settings
 # SERVICE_BUS_CONNECTION_*, MartenConnectionString y APPLICATIONINSIGHTS_CONNECTION_STRING.
@@ -1745,7 +1745,7 @@ resource "azurerm_role_assignment" "function_app_{snake_case}_kv_secrets_user" {
   principal_id         = module.function_app_{snake_case}.principal_id
 }
 
-# Storage por identidad (ADR-0025 decision #3): AzureWebJobsStorage no puede ir por
+# Storage por identidad (MEF-ADR-0025 decision #3): AzureWebJobsStorage no puede ir por
 # referencia de Key Vault (el runtime lo necesita al arrancar, antes de resolver
 # referencias). El modulo function-app ya wirea storage_uses_managed_identity = true;
 # estos tres roles de datos (convencion anclada en infra-base-scaffolder.md, seccion
@@ -1772,19 +1772,19 @@ resource "azurerm_role_assignment" "function_app_{snake_case}_storage_table_data
 
 Donde `{kebab-sin-guiones}` es el nombre del dominio con los guiones eliminados (ej: `calculo-horas` -> `calculohoras`), y `{kebab-storage}` es ese mismo valor truncado de forma determinista a 13 caracteres cuando excede el presupuesto de la Storage Account (ver "Truncado determinista" arriba; ej: `tenantprovisioning` (18) -> `tenantprovisi` (13), `calculohoras` (12) -> sin cambios).
 
-**Cada dominio recibe su propio `module service_plan_{snake_case}`**: el `service_plan_id` de la Function App apunta a `module.service_plan_{snake_case}.id`, nunca a un plan compartido. No referencies un `module.service_plan` global; ese patron (todas las Function Apps en un solo plan) es justo el que ADR-0020 proscribe.
+**Cada dominio recibe su propio `module service_plan_{snake_case}`**: el `service_plan_id` de la Function App apunta a `module.service_plan_{snake_case}.id`, nunca a un plan compartido. No referencies un `module.service_plan` global; ese patron (todas las Function Apps en un solo plan) es justo el que MEF-ADR-0020 proscribe.
 
-**El app setting `SERVICE_BUS_CONNECTION_COSMOS` del ejemplo se repite por cada alias del backbone compartido** resuelto en el Paso 0 (`serviceBus.external` filtrado por `alcance == "compartido"`), leyendo su referencia versionless de `local.service_bus_connection_external_kv_refs["<ALIAS>"]`. Si el Paso 0 no resolvio ningun alias todavia, omite esas lineas del `app_settings`: la Function App arranca solo con `SERVICE_BUS_CONNECTION_INTERNO`. Los cuatro `azurerm_role_assignment` (Key Vault Secrets User + los tres roles de datos de Storage) se emiten siempre, sin condicionamiento por alias: la Function App siempre necesita leer, minimo, los secretos `SERVICE_BUS_CONNECTION_INTERNO`, `marten-connection` y `app-insights-connection`, y siempre necesita acceso identity-based a su propia Storage Account para `AzureWebJobsStorage` (ADR-0025).
+**El app setting `SERVICE_BUS_CONNECTION_COSMOS` del ejemplo se repite por cada alias del backbone compartido** resuelto en el Paso 0 (`serviceBus.external` filtrado por `alcance == "compartido"`), leyendo su referencia versionless de `local.service_bus_connection_external_kv_refs["<ALIAS>"]`. Si el Paso 0 no resolvio ningun alias todavia, omite esas lineas del `app_settings`: la Function App arranca solo con `SERVICE_BUS_CONNECTION_INTERNO`. Los cuatro `azurerm_role_assignment` (Key Vault Secrets User + los tres roles de datos de Storage) se emiten siempre, sin condicionamiento por alias: la Function App siempre necesita leer, minimo, los secretos `SERVICE_BUS_CONNECTION_INTERNO`, `marten-connection` y `app-insights-connection`, y siempre necesita acceso identity-based a su propia Storage Account para `AzureWebJobsStorage` (MEF-ADR-0025).
 
-> **Nota (modulo function-app, ADR-0025)**: el modulo `../../modules/function-app` que genera `infra-base-scaffolder` **ya no acepta** `storage_account_access_key` ni `storage_account_connection_string` -- resuelve `AzureWebJobsStorage` por identidad (`storage_uses_managed_identity = true`) internamente. Su input `app_insights_connection_string` espera la referencia `@Microsoft.KeyVault(...)` versionless, nunca el valor literal de `module.monitoring.connection_string`. Si el consumidor tiene un `modules/function-app` heredado que todavia declara esos inputs viejos, regeneralo con `/infra-base` (idempotente) o ajusta el `module function_app_{snake_case}` emitido a los inputs que ese modulo si exponga.
+> **Nota (modulo function-app, MEF-ADR-0025)**: el modulo `../../modules/function-app` que genera `infra-base-scaffolder` **ya no acepta** `storage_account_access_key` ni `storage_account_connection_string` -- resuelve `AzureWebJobsStorage` por identidad (`storage_uses_managed_identity = true`) internamente. Su input `app_insights_connection_string` espera la referencia `@Microsoft.KeyVault(...)` versionless, nunca el valor literal de `module.monitoring.connection_string`. Si el consumidor tiene un `modules/function-app` heredado que todavia declara esos inputs viejos, regeneralo con `/infra-base` (idempotente) o ajusta el `module function_app_{snake_case}` emitido a los inputs que ese modulo si exponga.
 
-> **Nota (infraestructura base)**: estos bloques referencian `module.resource_group`, `module.key_vault`, los locals `local.service_bus_connection_interno_kv_ref` / `local.service_bus_connection_external_kv_refs` / `local.marten_connection_kv_ref` / `local.app_insights_connection_kv_ref` (que a su vez encapsulan `module.postgresql` y `module.monitoring` -- el `domain-scaffolder` ya no los referencia directo, solo consume sus referencias de Key Vault), y los modulos `../../modules/storage`, `../../modules/service-plan`, `../../modules/function-app`. **El harness los provee**: los genera el agente `infra-base-scaffolder` (skill `/infra-base`), que escribe los modulos base y el esqueleto del entorno con el namespace interno del BC y el Key Vault de custodia (ver **ADR-0021**, **ADR-0024**, **ADR-0025**). Verifica que existan antes de hacer commit:
+> **Nota (infraestructura base)**: estos bloques referencian `module.resource_group`, `module.key_vault`, los locals `local.service_bus_connection_interno_kv_ref` / `local.service_bus_connection_external_kv_refs` / `local.marten_connection_kv_ref` / `local.app_insights_connection_kv_ref` (que a su vez encapsulan `module.postgresql` y `module.monitoring` -- el `domain-scaffolder` ya no los referencia directo, solo consume sus referencias de Key Vault), y los modulos `../../modules/storage`, `../../modules/service-plan`, `../../modules/function-app`. **El harness los provee**: los genera el agente `infra-base-scaffolder` (skill `/infra-base`), que escribe los modulos base y el esqueleto del entorno con el namespace interno del BC y el Key Vault de custodia (ver **MEF-ADR-0021**, **MEF-ADR-0024**, **MEF-ADR-0025**). Verifica que existan antes de hacer commit:
 > ```bash
 > test -d infra/modules/postgresql && test -d infra/modules/service-plan && test -d infra/modules/function-app && test -d infra/modules/key-vault && test -f infra/environments/{env}/main.tf && echo "base OK" || echo "FALTA la infraestructura base"
 > ```
 > Si falta (`FALTA la infraestructura base`), no emitas una advertencia pasiva: indica al usuario que genere la base primero con `/infra-base` (o el agente `infra-base-scaffolder`) y luego reintente el scaffold del dominio.
 
-> **Nota (modulo service-plan)**: el bloque `module service_plan_{snake_case}` pasa los inputs `os_type`, `sku_name`, `worker_count` y `always_on`. El modulo `modules/service-plan` que genera `infra-base-scaffolder` **ya acepta** esos cuatro inputs (contrato de **ADR-0020**, garantizado por ADR-0021/CA-2), de modo que `terraform validate` pasa. Si el consumidor tiene un `modules/service-plan` heredado que **no** los declara, regeneralo con `/infra-base` (idempotente: no pisa lo demas) o ajusta el `module service_plan_{snake_case}` emitido a los inputs que ese modulo si exponga.
+> **Nota (modulo service-plan)**: el bloque `module service_plan_{snake_case}` pasa los inputs `os_type`, `sku_name`, `worker_count` y `always_on`. El modulo `modules/service-plan` que genera `infra-base-scaffolder` **ya acepta** esos cuatro inputs (contrato de **MEF-ADR-0020**, garantizado por MEF-ADR-0021/CA-2), de modo que `terraform validate` pasa. Si el consumidor tiene un `modules/service-plan` heredado que **no** los declara, regeneralo con `/infra-base` (idempotente: no pisa lo demas) o ajusta el `module service_plan_{snake_case}` emitido a los inputs que ese modulo si exponga.
 
 ---
 
@@ -1807,9 +1807,9 @@ on:
   workflow_dispatch:
 
 jobs:
-  # El apply de infra (infra-cd.yml, ADR-0022) y el deploy de codigo pueden correr en
+  # El apply de infra (infra-cd.yml, MEF-ADR-0022) y el deploy de codigo pueden correr en
   # el mismo push a main. Encadenar por workflow_run (en vez de un 'push' que dispare
-  # ambos) garantiza el orden infra -> deploy (ADR-0022, "Orden: infra antes que deploy
+  # ambos) garantiza el orden infra -> deploy (MEF-ADR-0022, "Orden: infra antes que deploy
   # de codigo"). Pero workflow_run por si solo redesplegaria TODOS los dominios tras
   # CADA apply de infra (seguro por idempotencia, pero costoso); este job filtra por si
   # el PR que se acaba de mergear toco este dominio (src/<RootNamespace>.{PascalCase}/**)
@@ -1884,7 +1884,7 @@ jobs:
     if: needs.determinar-alcance.outputs.debe_desplegar == 'true'
     runs-on: ubuntu-latest
     permissions:
-      id-token: write   # requerido para el login OIDC de azure/login (sin secret) - ADR-0022
+      id-token: write   # requerido para el login OIDC de azure/login (sin secret) - MEF-ADR-0022
       contents: read    # requerido por actions/checkout cuando se declara 'permissions'
     steps:
       - uses: actions/checkout@v7
@@ -1946,9 +1946,9 @@ jobs:
 
 > `smoke-tests-dominio.yml` acepta estos secrets como opcionales (`required: false`). Si no estan configurados en el repo, los smoke tests que dependen de ServiceBus o Postgres se skipean gracefully via `Assert.SkipWhen`.
 
-> **Autenticacion del deploy (OIDC, ADR-0022)**: el job `deploy` se autentica con `azure/login` por **OpenID Connect**, NO con un client secret. Por eso declara `permissions: id-token: write` y pasa `client-id` / `tenant-id` / `subscription-id` (los secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`), en vez del JSON unico `AZURE_CREDENTIALS`. Esos tres secrets, el Service Principal sin secret y el **federated credential** que confia en la rama `main` los emite `scripts/setup-github-ci.sh` (paso de bootstrap del README). No hay secret que expire. Si cambias el trigger del workflow para desplegar desde otra rama, tag o un GitHub Environment, debes anadir el federated credential correspondiente (el subject debe coincidir exacto con el claim del token de GitHub).
+> **Autenticacion del deploy (OIDC, MEF-ADR-0022)**: el job `deploy` se autentica con `azure/login` por **OpenID Connect**, NO con un client secret. Por eso declara `permissions: id-token: write` y pasa `client-id` / `tenant-id` / `subscription-id` (los secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`), en vez del JSON unico `AZURE_CREDENTIALS`. Esos tres secrets, el Service Principal sin secret y el **federated credential** que confia en la rama `main` los emite `scripts/setup-github-ci.sh` (paso de bootstrap del README). No hay secret que expire. Si cambias el trigger del workflow para desplegar desde otra rama, tag o un GitHub Environment, debes anadir el federated credential correspondiente (el subject debe coincidir exacto con el claim del token de GitHub).
 
-> **Orden infra -> deploy (ADR-0022, issue #197)**: el `push` a `main` ya NO dispara este workflow para cambios bajo `infra/**` -- ese trigger vive ahora en `infra-cd.yml` (`infra-base-scaffolder`). En su lugar, `deploy-{kebab}.yml` se encadena tras `Infra CD` via `workflow_run`, de modo que el codigo nunca se despliega antes de que el `apply` de infra haya creado o actualizado la Function App. El job `determinar-alcance` evita el costo de redesplegar **todos** los dominios tras cada apply de infra: solo continua si el PR de infra que se acaba de mergear toco `src/<RootNamespace>.{PascalCase}/**`. **Caso limite**: si el `apply` de infra llega a `main` por un push directo sin PR asociado (fuera del flujo de `scripts/iac-pipeline.sh`), la API de PRs por commit no encuentra nada y el redeploy se omite por diseno (evita falsos despliegues); en ese caso, dispara el deploy manualmente con `workflow_dispatch`.
+> **Orden infra -> deploy (MEF-ADR-0022, issue #197)**: el `push` a `main` ya NO dispara este workflow para cambios bajo `infra/**` -- ese trigger vive ahora en `infra-cd.yml` (`infra-base-scaffolder`). En su lugar, `deploy-{kebab}.yml` se encadena tras `Infra CD` via `workflow_run`, de modo que el codigo nunca se despliega antes de que el `apply` de infra haya creado o actualizado la Function App. El job `determinar-alcance` evita el costo de redesplegar **todos** los dominios tras cada apply de infra: solo continua si el PR de infra que se acaba de mergear toco `src/<RootNamespace>.{PascalCase}/**`. **Caso limite**: si el `apply` de infra llega a `main` por un push directo sin PR asociado (fuera del flujo de `scripts/iac-pipeline.sh`), la API de PRs por commit no encuentra nada y el redeploy se omite por diseno (evita falsos despliegues); en ese caso, dispara el deploy manualmente con `workflow_dispatch`.
 
 ---
 
@@ -1980,7 +1980,7 @@ name: Smoke tests (reutilizable)
 
 # Workflow reutilizable por dominio. Lo invoca cada deploy-<dominio>.yml (job
 # smoke-tests, post-deploy) y el workflow global smoke-tests.yml (matrix). Corre
-# los smoke tests del test_project recibido contra base_url. ADR-0013.
+# los smoke tests del test_project recibido contra base_url. MEF-ADR-0013.
 
 on:
   workflow_call:
@@ -2015,12 +2015,12 @@ jobs:
       - name: Smoke tests
         env:
           # appsettings.json del proyecto SmokeTests lee Api:BaseUrl, ServiceBus:ConnectionString
-          # y Postgres:ConnectionString; las variables con doble guion bajo las sobreescriben (ADR-0013).
+          # y Postgres:ConnectionString; las variables con doble guion bajo las sobreescriben (MEF-ADR-0013).
           Api__BaseUrl: ${{ inputs.base_url }}
           ServiceBus__ConnectionString: ${{ secrets.SERVICEBUS_CONNECTION_STRING }}
           Postgres__ConnectionString: ${{ secrets.POSTGRES_CONNECTION_STRING }}
         # Los tests que dependen de ServiceBus o Postgres se skipean gracefully via
-        # Assert.SkipWhen si el secret no esta configurado (required: false). ADR-0013.
+        # Assert.SkipWhen si el secret no esta configurado (required: false). MEF-ADR-0013.
         run: dotnet test --project "${{ inputs.test_project }}" --configuration Release
 ```
 
@@ -2046,7 +2046,7 @@ name: Smoke tests (global)
 # en .github/smoke-tests/*.json (cada uno lo crea el domain-scaffolder, Paso 6b,
 # uno por dominio -- issue #234 elimina el array compartido para permitir alta
 # en paralelo sin conflictos), uno por entrada de la matrix, reusando
-# smoke-tests-dominio.yml. ADR-0013.
+# smoke-tests-dominio.yml. MEF-ADR-0013.
 
 on:
   workflow_dispatch:
@@ -2194,7 +2194,7 @@ Scaffold completado para el dominio "{kebab}":
     Infraestructura/RequestValidator.cs    - IRequestValidator + implementacion
     Infraestructura/ServiceBusDeserializador.cs - Helper de deserializacion case-insensitive
     Infraestructura/ServiceBusEndpointBase.cs   - Clase base para endpoints de ServiceBus (topic+subscription)
-    Infraestructura/ServiceBusSessionEndpointBase.cs - Clase base para endpoints de fan-in (queue en modo sesion, ADR-0026)
+    Infraestructura/ServiceBusSessionEndpointBase.cs - Clase base para endpoints de fan-in (queue en modo sesion, MEF-ADR-0026)
     Infraestructura/PrivateEventEndpointBase.cs - Clase base para EventHandler directo, sin comando espejo (issue #313)
     Entities/                              - AggregateRoots y eventos del dominio (siempre raiz)
 
@@ -2215,17 +2215,17 @@ Scaffold completado para el dominio "{kebab}":
 
   infra/environments/dev/dominio-{kebab}.tf - Archivo plano y propio del dominio (issue #234, no toca main.tf):
                                              module storage + module service_plan (dedicado) + module function_app
-                                             + azurerm_role_assignment Key Vault Secrets User (ADR-0024/ADR-0025)
-                                             + azurerm_role_assignment Storage Blob/Queue/Table Data Owner-Contributor (storage por identidad, ADR-0025)
+                                             + azurerm_role_assignment Key Vault Secrets User (MEF-ADR-0024/MEF-ADR-0025)
+                                             + azurerm_role_assignment Storage Blob/Queue/Table Data Owner-Contributor (storage por identidad, MEF-ADR-0025)
                                              app settings SERVICE_BUS_CONNECTION_INTERNO / _<ALIAS> y MartenConnectionString por
-                                             referencia @Microsoft.KeyVault(...) (ADR-0025); APPLICATIONINSIGHTS_CONNECTION_STRING
+                                             referencia @Microsoft.KeyVault(...) (MEF-ADR-0025); APPLICATIONINSIGHTS_CONNECTION_STRING
                                              via site_config.application_insights_connection_string del modulo function-app (issue #259)
-                                             App Service Plan asp-{prefix_func}-{kebab} (SKU {sku_name}, always_on {always_on}), ADR-0020
+                                             App Service Plan asp-{prefix_func}-{kebab} (SKU {sku_name}, always_on {always_on}), MEF-ADR-0020
                                              (topics privados se crean bajo demanda con implementer; el backbone compartido lo administra infra)
 
   .github/workflows/deploy-{kebab}.yml     - Workflow de deploy automatico + smoke tests post-deploy
                                              (encadenado tras infra-cd.yml via workflow_run; salta el
-                                             redeploy si el apply de infra no toco este dominio, ADR-0022)
+                                             redeploy si el apply de infra no toco este dominio, MEF-ADR-0022)
   .github/smoke-tests/{kebab}.json         - Registro propio del dominio (issue #234, archivo por dominio,
                                              no un array compartido) para el workflow global de smoke tests
 
@@ -2241,7 +2241,7 @@ Proximos pasos:
      - POSTGRES_CONNECTION_STRING (smoke tests, opcional)
   2. Abre un PR con este scaffold para que CI cree la infraestructura: el "terraform plan"
      corre sobre el PR y el "terraform apply" (workflow Infra CD) se ejecuta al mergear a
-     main (ADR-0021, ADR-0022). Al mergear, deploy-{kebab}.yml se encadena y despliega el
+     main (MEF-ADR-0021, MEF-ADR-0022). Al mergear, deploy-{kebab}.yml se encadena y despliega el
      codigo. No ejecutes "terraform apply" en local: en el flujo ongoing no se aplica
      infraestructura desde tu maquina.
   3. Crea appsettings.local.json (gitignored) con las cadenas reales para desarrollo local

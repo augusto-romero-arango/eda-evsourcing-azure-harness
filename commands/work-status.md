@@ -165,7 +165,7 @@ Para responder preguntas, usa Read sobre el archivo necesario (NO uses Bash):
   - TDD: `Read .claude/pipeline/logs/stage-3-reviewer-{{TIMESTAMP}}.log`
   - Tooling: `Read .claude/pipeline/logs/tooling-stage-2-reviewer-{{TIMESTAMP}}.log`
   - Infra: `Read .claude/pipeline/logs/iac-stage-2-infra-reviewer-{{TIMESTAMP}}.log`
-- **Revision estatica de infra (fmt/validate) / hallazgos de seguridad-calidad**: `Read .claude/pipeline/logs/iac-stage-2-infra-reviewer-{{TIMESTAMP}}.log`. El plan real (recursos a crear/modificar/destruir) no corre en este pipeline local: se publica como comentario del PR por el workflow de CI `infra-cd.yml` (ADR-0022).
+- **Revision estatica de infra (fmt/validate) / hallazgos de seguridad-calidad**: `Read .claude/pipeline/logs/iac-stage-2-infra-reviewer-{{TIMESTAMP}}.log`. El plan real (recursos a crear/modificar/destruir) no corre en este pipeline local: se publica como comentario del PR por el workflow de CI `infra-cd.yml` (MEF-ADR-0022).
 - **Duracion de agentes**: campo `agents` del JSON de status o de la entrada del historial
 - **PR**: campo `pr` del JSON de status o del historial
 
