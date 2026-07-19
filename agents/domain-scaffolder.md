@@ -216,25 +216,12 @@ La estructura de carpetas sigue el estilo de vertical slicing:
 
 **6. Reemplazar el `Program.cs`** generado por `func init`:
 
-Lee el Program.cs generado para ver su contenido actual, luego reemplazalo completo. La base es fija; la seccion de brokers nombrados es **dinamica**: agrega una variable de entorno y una linea `AgregarAzureServiceBusNombradoServerless` **por cada alias del backbone compartido** resuelto en el Paso 0 (`serviceBus.external` filtrado por `alcance == "compartido"`). El ejemplo siguiente ilustra un dominio con un unico alias `COSMOS`:
+Lee el Program.cs generado para ver su contenido actual, luego reemplazalo completo. Desde el issue #319 (MEF-ADR-0029), `Program.cs` **no** wirea servicios directamente: solo arma el host y delega toda la composicion de DI al metodo de extension `AgregarServicios{PascalCase}` que crea el Paso 6b — asi el test de composicion (Paso 2, punto 9) puede construir el mismo grafo sin levantar el host completo, sin duplicar el wiring en dos lugares (CA-1).
 
 ```csharp
-using System.Text.Json;
-using <RootNamespace>.{PascalCase};
 using <RootNamespace>.{PascalCase}.Infraestructura;
-using Azure.Monitor.OpenTelemetry.Exporter;
-using Cosmos.EventDriven.CritterStack;
-using Cosmos.EventDriven.CritterStack.AzureServiceBus;
-using Cosmos.EventSourcing.CritterStack;
-using Cosmos.EventSourcing.CritterStack.Commands;
-using Cosmos.MultiTenancy;
-using FluentValidation;
 using Microsoft.Azure.Functions.Worker.Builder;
-using Microsoft.Azure.Functions.Worker.OpenTelemetry;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using OpenTelemetry;
-using OpenTelemetry.Trace;
 
 var builder = FunctionsApplication.CreateBuilder(args);
 builder.ConfigureFunctionsWebApplication();
@@ -244,64 +231,114 @@ var martenConnectionString = Environment.GetEnvironmentVariable("MartenConnectio
 var serviceBusInterno = Environment.GetEnvironmentVariable("SERVICE_BUS_CONNECTION_INTERNO")!;
 // Backbone compartido del producto (MEF-ADR-0024 decision #4): una variable por alias declarado
 // en serviceBus.external con alcance "compartido" (contrato de harness.config.json, issue #163).
-// Ejemplo con el alias COSMOS; repite el patron var + linea de registro por cada alias adicional.
+// Ejemplo con el alias COSMOS; repite el patron var + argumento por cada alias adicional.
 var serviceBusCosmos = Environment.GetEnvironmentVariable("SERVICE_BUS_CONNECTION_COSMOS")!;
 
-builder.Services.AgregarWolverineParaComandosServerless(
-    typeof(I{PascalCase}AssemblyMarker).Assembly,
+// Composicion de servicios (issue #319, MEF-ADR-0029): unica fuente de verdad del wiring de DI,
+// compartida con el test de composicion. Program.cs solo invoca, no wirea inline.
+builder.Services.AgregarServicios{PascalCase}(
     martenConnectionString,
-    "{snake_case}",
-    builder.Environment.IsDevelopment(),
-    options =>
-    {
-        // Broker default: namespace interno del BC (MEF-ADR-0024 decision #3, #7).
-        options.HabilitarAzureServiceBusParaServerLess(serviceBusInterno);
-        // Broker(s) nombrado(s): uno por alias del backbone compartido (MEF-ADR-0024 decision #4, #7).
-        // La clave de broker es el mismo alias declarado en serviceBus.external.
-        options.AgregarAzureServiceBusNombradoServerless("COSMOS", serviceBusCosmos);
-        // Enrutamiento por tipo (MEF-ADR-0024 decision #2, #4):
-        //   IPrivateEvent -> PublicarEventoServerless<T>(topic)            -> broker default  -> namespace interno
-        //   IPublicEvent  -> PublicarEventoServerless<T>("<alias>", topic) -> broker nombrado -> backbone compartido
-        // AVISO: NO usar PublicarEventosServerless(Assembly contratos) completo: filtra por
-        //   IsAssignableTo(typeof(IEvent)), captura IPrivateEvent e IPublicEvent juntos y enruta
-        //   todo al mismo broker, rompiendo la separacion privado/publico. Registrar siempre por tipo.
-    });
-
-builder.Services.AgregarMartenEventStore();
-builder.Services.AgregarWolverineCommandRouter();
-builder.Services.AgregarWolverineEventSender();
-// Enruta IPrivateEvent directo a IPrivateEventHandlerAsync<TEvent>, sin comando espejo (MEF-ADR-0024, issue #313).
-builder.Services.AgregarWolverinePrivateEventRouter();
-
-// Tenancy transitorio (MEF-ADR-0028): mono-tenant por defecto mientras el proyecto no tiene
-// autenticacion que produzca un TenantContext. Reemplazar por el resolver real (header-based /
-// hibrido de Cosmos.MultiTenancy.CritterStack) cuando esa autenticacion exista -- ver el TODO
-// en Infraestructura/TenantResolverMonoTenantPorDefecto.cs.
-builder.Services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>();
-
-builder.Services.AddOpenTelemetry()
-    .UseFunctionsWorkerDefaults()
-    .WithTracing(tracing => tracing
-        .AddSource("Wolverine")
-        .AddSource("Marten")
-        .AddSource("<RootNamespace>.{PascalCase}.*"))
-    .UseAzureMonitorExporter();
-
-// Serializacion JSON global: camelCase hacia el cliente, case-insensitive en lectura
-builder.Services.Configure<JsonSerializerOptions>(options =>
-{
-    options.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
-    options.PropertyNameCaseInsensitive = true;
-});
-
-// Validacion de requests
-builder.Services.AddScoped<IRequestValidator, RequestValidator>();
-builder.Services.AddValidatorsFromAssemblyContaining<I{PascalCase}AssemblyMarker>();
+    serviceBusInterno,
+    serviceBusCosmos,
+    builder.Environment.IsDevelopment());
 
 await builder.Build().RunAsync();
 ```
 
-Si el Paso 0 no resolvio ningun alias `serviceBus.external` con `alcance == "compartido"`, omite la variable `serviceBusCosmos` y la linea `AgregarAzureServiceBusNombradoServerless`; deja solo el broker default y un comentario: `// Backbone compartido: sin alias "compartido" declarado en serviceBus.external todavia (MEF-ADR-0024 decision #4). Agrega su broker nombrado cuando el BC publique/consuma su primer evento publico.` Si hay mas de un alias, repite el par variable + linea de registro por cada uno. No wirees ningun alias con `alcance == "externo"` (integracion verdaderamente externa, diferida por MEF-ADR-0024 decision #5, default-off).
+Si el Paso 0 no resolvio ningun alias `serviceBus.external` con `alcance == "compartido"`, omite la variable `serviceBusCosmos` y el argumento correspondiente (el metodo de extension del Paso 6b tampoco declara ese parametro en ese caso). Si hay mas de un alias, repite el par variable + argumento por cada uno. No wirees ningun alias con `alcance == "externo"` (integracion verdaderamente externa, diferida por MEF-ADR-0024 decision #5, default-off).
+
+**6b. Crear `Infraestructura/ComposicionServicios{PascalCase}.cs`** con el metodo de extension que concentra toda la composicion de DI que antes vivia inline en `Program.cs` (issue #319, MEF-ADR-0029). La seccion de brokers nombrados es **dinamica**, con la misma regla del Paso 6: un parametro y una linea `AgregarAzureServiceBusNombradoServerless` **por cada alias del backbone compartido** resuelto en el Paso 0. El ejemplo siguiente ilustra un dominio con un unico alias `COSMOS`:
+
+```csharp
+using System.Text.Json;
+using <RootNamespace>.{PascalCase};
+using Azure.Monitor.OpenTelemetry.Exporter;
+using Cosmos.EventDriven.CritterStack;
+using Cosmos.EventDriven.CritterStack.AzureServiceBus;
+using Cosmos.EventSourcing.CritterStack;
+using Cosmos.EventSourcing.CritterStack.Commands;
+using Cosmos.MultiTenancy;
+using FluentValidation;
+using Microsoft.Azure.Functions.Worker.OpenTelemetry;
+using Microsoft.Extensions.DependencyInjection;
+using OpenTelemetry;
+using OpenTelemetry.Trace;
+
+namespace <RootNamespace>.{PascalCase}.Infraestructura;
+
+/// <summary>
+/// Composicion de servicios del dominio {PascalCase} (issue #319, MEF-ADR-0029): unica fuente de
+/// verdad del wiring de DI. <c>Program.cs</c> solo invoca este metodo; el test de composicion
+/// (<c>ComposicionContenedorTests</c>, tests/.../Infraestructura/) lo ejercita con
+/// <c>BuildServiceProvider(ValidateOnBuild: true, ValidateScopes: true)</c> sin levantar el host
+/// completo.
+/// </summary>
+public static class ComposicionServicios{PascalCase}
+{
+    public static IServiceCollection AgregarServicios{PascalCase}(
+        this IServiceCollection services,
+        string martenConnectionString,
+        string serviceBusInterno,
+        string serviceBusCosmos,
+        bool isDev)
+    {
+        services.AgregarWolverineParaComandosServerless(
+            typeof(I{PascalCase}AssemblyMarker).Assembly,
+            martenConnectionString,
+            "{snake_case}",
+            isDev,
+            options =>
+            {
+                // Broker default: namespace interno del BC (MEF-ADR-0024 decision #3, #7).
+                options.HabilitarAzureServiceBusParaServerLess(serviceBusInterno);
+                // Broker(s) nombrado(s): uno por alias del backbone compartido (MEF-ADR-0024 decision #4, #7).
+                // La clave de broker es el mismo alias declarado en serviceBus.external.
+                options.AgregarAzureServiceBusNombradoServerless("COSMOS", serviceBusCosmos);
+                // Enrutamiento por tipo (MEF-ADR-0024 decision #2, #4):
+                //   IPrivateEvent -> PublicarEventoServerless<T>(topic)            -> broker default  -> namespace interno
+                //   IPublicEvent  -> PublicarEventoServerless<T>("<alias>", topic) -> broker nombrado -> backbone compartido
+                // AVISO: NO usar PublicarEventosServerless(Assembly contratos) completo: filtra por
+                //   IsAssignableTo(typeof(IEvent)), captura IPrivateEvent e IPublicEvent juntos y enruta
+                //   todo al mismo broker, rompiendo la separacion privado/publico. Registrar siempre por tipo.
+            });
+
+        services.AgregarMartenEventStore();
+        services.AgregarWolverineCommandRouter();
+        services.AgregarWolverineEventSender();
+        // Enruta IPrivateEvent directo a IPrivateEventHandlerAsync<TEvent>, sin comando espejo (MEF-ADR-0024, issue #313).
+        services.AgregarWolverinePrivateEventRouter();
+
+        // Tenancy transitorio (MEF-ADR-0028): mono-tenant por defecto mientras el proyecto no tiene
+        // autenticacion que produzca un TenantContext. Reemplazar por el resolver real (header-based /
+        // hibrido de Cosmos.MultiTenancy.CritterStack) cuando esa autenticacion exista -- ver el TODO
+        // en Infraestructura/TenantResolverMonoTenantPorDefecto.cs.
+        services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>();
+
+        services.AddOpenTelemetry()
+            .UseFunctionsWorkerDefaults()
+            .WithTracing(tracing => tracing
+                .AddSource("Wolverine")
+                .AddSource("Marten")
+                .AddSource("<RootNamespace>.{PascalCase}.*"))
+            .UseAzureMonitorExporter();
+
+        // Serializacion JSON global: camelCase hacia el cliente, case-insensitive en lectura
+        services.Configure<JsonSerializerOptions>(options =>
+        {
+            options.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+            options.PropertyNameCaseInsensitive = true;
+        });
+
+        // Validacion de requests
+        services.AddScoped<IRequestValidator, RequestValidator>();
+        services.AddValidatorsFromAssemblyContaining<I{PascalCase}AssemblyMarker>();
+
+        return services;
+    }
+}
+```
+
+Si el Paso 0 no resolvio ningun alias `serviceBus.external` con `alcance == "compartido"`, omite el parametro `serviceBusCosmos` y la linea `AgregarAzureServiceBusNombradoServerless`; deja solo el broker default y un comentario: `// Backbone compartido: sin alias "compartido" declarado en serviceBus.external todavia (MEF-ADR-0024 decision #4). Agrega su broker nombrado cuando el BC publique/consuma su primer evento publico.` Si hay mas de un alias, repite el par parametro + linea de registro por cada uno (y su argumento correspondiente en la llamada de `Program.cs` y en el test de composicion, Paso 2 punto 9). No wirees ningun alias con `alcance == "externo"` (integracion verdaderamente externa, diferida por MEF-ADR-0024 decision #5, default-off).
 
 > **CA-9 — Aviso sobre el helper bulk `PublicarEventosServerless`**: No uses `PublicarEventosServerless(nombreConexion, topicName, Assembly contratos)` con el assembly completo de contratos para registrar eventos. Ese helper filtra por `IsAssignableTo(typeof(IEvent))` y captura tanto `IPrivateEvent` como `IPublicEvent` juntos, enrutando todo al mismo broker y rompiendo la separacion privado/publico (MEF-ADR-0024 decision #2, #4). El registro debe hacerse **por tipo**, separando explicitamente privados de publicos:
 > - `IPrivateEvent`: `options.PublicarEventoServerless<TEvento>(topic)` → broker default → namespace interno
@@ -1127,6 +1164,108 @@ internal class FakePrivateEventRouter : IPrivateEventRouter
     }
 }
 ```
+
+**9. Crear `Infraestructura/ComposicionContenedorTests.cs`** (issue #319, MEF-ADR-0029):
+
+Test de composicion del contenedor DI. A diferencia de los tests ES del DSL Given/When/Then
+(MEF-ADR-0002), que no construyen el grafo de DI del host, este test invoca el mismo metodo de
+extension que `Program.cs` (`AgregarServicios{PascalCase}`, Paso 6b) con cadenas de conexion dummy
+y valida el resultado con `BuildServiceProvider(ValidateOnBuild: true, ValidateScopes: true)`. Es
+el guardrail que detecta en segundos, en CI, un registro faltante que de otro modo solo revienta
+en runtime (issue #221 del consumidor Bitakora.ControlAsistencia: `ITenantResolver` sin registrar
+paso "compila + unit tests verdes" y solo se detecto post-deploy en smoke tests).
+
+```csharp
+using AwesomeAssertions;
+using <RootNamespace>.{PascalCase}.Infraestructura;
+using Cosmos.EventDriven.Abstractions;
+using Cosmos.EventSourcing.Abstractions.Commands;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace <RootNamespace>.{PascalCase}.Tests.Infraestructura;
+
+// Limite conocido (MEF-ADR-0029): ValidateOnBuild NO valida open generics ni el interior de
+// registros por factory-lambda (AddScoped(sp => ...)), de los que Wolverine/Marten registran
+// muchos -- cubre los registros por tipo mapeado (los routers de abajo). Por eso los tres
+// routers se resuelven explicitamente: es el complemento que ejercita tambien lo que
+// ValidateOnBuild no puede validar de forma estatica.
+public class ComposicionContenedorTests
+{
+    private const string ConnectionStringDummy =
+        "Host=dummy;Database=dummy;Username=dummy;Password=dummy";
+    private const string ServiceBusDummy =
+        "Endpoint=sb://dummy.servicebus.windows.net/;SharedAccessKeyName=dummy;SharedAccessKey=dummy";
+
+    // Construir/validar el proveedor no abre conexiones reales (eso ocurre al arrancar el host);
+    // las cadenas dummy de arriba nunca se usan.
+    private static ServiceProvider ConstruirProveedor()
+    {
+        var services = new ServiceCollection();
+
+        services.AgregarServicios{PascalCase}(
+            martenConnectionString: ConnectionStringDummy,
+            serviceBusInterno: ServiceBusDummy,
+            serviceBusCosmos: ServiceBusDummy,
+            isDev: true);
+
+        return services.BuildServiceProvider(new ServiceProviderOptions
+        {
+            ValidateOnBuild = true,
+            ValidateScopes = true
+        });
+    }
+
+    [Fact]
+    public void AgregarServicios{PascalCase}_ConstruyeProveedorValido()
+    {
+        var construir = () => ConstruirProveedor();
+
+        construir.Should().NotThrow();
+    }
+
+    // Nota (verificado en runtime): usar CreateAsyncScope()/await using, NO CreateScope()/using.
+    // Wolverine registra internamente Wolverine.Persistence.MessageStoreCollection, que solo
+    // implementa IAsyncDisposable -- disponer el scope de forma sincrona lanza
+    // "'...MessageStoreCollection' type only implements IAsyncDisposable" al construir cualquiera
+    // de los tres routers (todos dependen transitivamente de IMessageBus de Wolverine).
+    [Fact]
+    public async Task AgregarServicios{PascalCase}_RegistraElCommandRouter()
+    {
+        await using var proveedor = ConstruirProveedor();
+        await using var scope = proveedor.CreateAsyncScope();
+
+        var router = scope.ServiceProvider.GetRequiredService<ICommandRouter>();
+
+        router.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task AgregarServicios{PascalCase}_RegistraElPrivateEventSender()
+    {
+        await using var proveedor = ConstruirProveedor();
+        await using var scope = proveedor.CreateAsyncScope();
+
+        var eventSender = scope.ServiceProvider.GetRequiredService<IPrivateEventSender>();
+
+        eventSender.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task AgregarServicios{PascalCase}_RegistraElPrivateEventRouter()
+    {
+        await using var proveedor = ConstruirProveedor();
+        await using var scope = proveedor.CreateAsyncScope();
+
+        var router = scope.ServiceProvider.GetRequiredService<IPrivateEventRouter>();
+
+        router.Should().NotBeNull();
+    }
+}
+```
+
+Si el Paso 6b agrego o quito parametros `serviceBus<Alias>` (segun los alias del backbone
+compartido resueltos en el Paso 0), pasa el mismo numero de argumentos dummy en la llamada a
+`AgregarServicios{PascalCase}` de este test -- misma regla dinamica que en `Program.cs`.
 
 ---
 
@@ -2172,7 +2311,7 @@ cd "$REPO_ROOT"
 dotnet test --project "tests/<RootNamespace>.{PascalCase}.Tests/"
 ```
 
-(El proyecto de tests estara vacio; un resultado de 0 tests con exit code 8 es correcto — el codigo 8 significa "no se encontraron tests".)
+Todos los tests generados por el Paso 2 (orquestacion de endpoints + composicion del contenedor DI, issue #319/MEF-ADR-0029) deben quedar en verde -- el dominio aun no tiene logica de negocio propia, pero el wiring que el scaffold genera ya es exigible. Si el test de composicion (`ComposicionContenedorTests`) falla, no hagas commit: revisa que el Paso 6b (`ComposicionServicios{PascalCase}`) registre todo lo que `Program.cs` invocaba antes de la extraccion, sin wiring duplicado ni faltante.
 
 **Validacion de Terraform:**
 
@@ -2221,8 +2360,9 @@ Scaffold completado para el dominio "{kebab}":
 
   src/<RootNamespace>.{PascalCase}/
     I{PascalCase}AssemblyMarker.cs         - Assembly marker para FluentValidation y Wolverine
-    Program.cs                             - JSON global, IRequestValidator, FluentValidation
+    Program.cs                             - Arma el host y delega toda la composicion de DI a ComposicionServicios{PascalCase} (issue #319, MEF-ADR-0029)
     HealthCheck.cs                         - Trigger HTTP de health check (raiz del proyecto)
+    Infraestructura/ComposicionServicios{PascalCase}.cs - Unica fuente de verdad del wiring de DI (Wolverine, Marten, routers, tenancy, OpenTelemetry, validacion) - MEF-ADR-0029
     Infraestructura/RequestValidator.cs    - IRequestValidator + implementacion
     Infraestructura/TenantResolverMonoTenantPorDefecto.cs - ITenantResolver mono-tenant transitorio (MEF-ADR-0028)
     Infraestructura/ServiceBusDeserializador.cs - Helper de deserializacion case-insensitive
@@ -2235,6 +2375,7 @@ Scaffold completado para el dominio "{kebab}":
     Infraestructura/ServiceBusEndpointBaseTests.cs - Tests de orquestacion (feliz, lock-lost, dead-letter, JSON invalido)
     Infraestructura/ServiceBusSessionEndpointBaseTests.cs - Tests de orquestacion de fan-in (feliz, lock-lost, dead-letter, Subject no reconocido)
     Infraestructura/PrivateEventEndpointBaseTests.cs - Tests de orquestacion del EventHandler directo (feliz, lock-lost, dead-letter, JSON invalido)
+    Infraestructura/ComposicionContenedorTests.cs - Test de composicion del contenedor DI: BuildServiceProvider(ValidateOnBuild + ValidateScopes) + resolucion explicita de los routers (issue #319, MEF-ADR-0029)
                                            - Proyecto de tests unitarios (xUnit v3 + AwesomeAssertions)
 
   tests/<RootNamespace>.{PascalCase}.SmokeTests/
