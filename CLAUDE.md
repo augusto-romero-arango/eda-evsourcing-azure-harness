@@ -200,6 +200,7 @@ El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o
 | Custodia de secretos (ningun secreto/key en texto plano; Key Vault o identidad administrada) | MEF-ADR-0025 |
 | Colas de Service Bus con sesion para fan-in y serializacion por clave de aggregate | MEF-ADR-0026 |
 | Enrutamiento multi-destinatario de un evento por correlation filter de igualdad | MEF-ADR-0027 |
+| Estrategia de tenancy (mono-tenant transitorio en greenfield + resolver real basado en TenantContext) | MEF-ADR-0028 |
 | Esquema de identificación de ADRs con prefijo por proyecto (adopción opcional para consumidores) | MEF-ADR-0030 |
 
 ## Convenciones del marco
