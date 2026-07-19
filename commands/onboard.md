@@ -2,7 +2,7 @@
 model: haiku
 ---
 
-Diagnostica el onboarding del consumidor: valida `.claude/harness.config.json`, los labels y el CI, y reporta un checklist de que esta listo y que falta. Es un **doctor**: por defecto solo diagnostica (no crea ni modifica nada). Como excepciones **opt-in**, si lo confirmas explicitamente puede provisionar los labels faltantes (el script subyacente es destructivo: borra los labels default de GitHub) y configurar el CI hacia Azure (crea recursos reales en Azure -- app de Entra, role assignments y federated credential, por OIDC; ver MEF-ADR-0022). Comunicate en **espanol**.
+Diagnostica el onboarding del consumidor: valida `.claude/harness.config.json`, los labels y el CI, y reporta un checklist de que esta listo y que falta. Es un **doctor**: por defecto solo diagnostica (no crea ni modifica nada). Como excepciones **opt-in**, si lo confirmas explicitamente puede provisionar los labels faltantes (el script subyacente es destructivo: borra los labels default de GitHub), configurar el CI hacia Azure (crea recursos reales en Azure -- app de Entra, role assignments y federated credential, por OIDC; ver MEF-ADR-0022) y escribir/actualizar la estrategia de tenancy vigente (`tenancy.strategy`, MEF-ADR-0028) en el config. Comunicate en **espanol**.
 
 ## Pre-condicion: cwd != Mefisto
 
@@ -31,10 +31,11 @@ Si el bloque imprime `ERROR`, detente y muestra el mensaje al usuario.
 5. **CI hacia Azure** (MEF-ADR-0022): que exista la aplicacion de Entra / Service Principal y los secrets OIDC del repo. Tolerante: si no hay `az` o sesion, reporta `NO VERIFICADO` en vez de fallar.
 6. **Secretos que alimentan la siembra en CI** (MEF-ADR-0025, informativo): que existan en GitHub `TF_VAR_POSTGRESQL_ADMIN_PASSWORD` y un `SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` por cada alias de `serviceBus.external[]`. Son los **inputs** que `infra-cd.yml` usa para sembrar el Key Vault del BC en un step posterior al `apply`; ya no hay siembra manual del admin ni verificacion del data plane del vault (MEF-ADR-0025 decision #6/#10). Reusa la misma lectura de `gh secret list` del punto 5; si falta, reporta `NO VERIFICADO` sin bloquear (un greenfield legitimo aun no tiene Postgres provisionado ni alias externos declarados).
 7. **Registro `secrets[]`** (issue #256, informativo): cuantas entradas hay registradas (las siembra el step data-driven de `infra-cd.yml`, sin ninguna linea hardcodeada por secreto) y, para cada entrada con `source.type: "github-secret"`, si el GitHub secret que referencia existe en el repo. La **forma** del array (`name` unico, `source.type` en {`output`, `github-secret`, `composite`}, `source.value` no vacio) ya la valida `load_harness_config` como parte del punto 1 (`Configuracion`): un `secrets[]` mal formado hace que esa seccion reporte `FALTA`, con el mensaje exacto que emite la funcion. Ausente por completo, reporta `NO VERIFICADO` sin bloquear (normal antes del primer `/infra-base`).
+8. **Estrategia de tenancy** (`tenancy.strategy`, MEF-ADR-0028, issue #323, informativo): que etapa del modelo de dos etapas declara el proyecto -- `mono-tenant-transitorio` (etapa a, greenfield sin autenticacion) o `multi-tenant-header` (etapa b, ya existe una autenticacion que produce un `TenantContext`). No se sondea en codigo (no hay señal fiable: el harness no referencia ningun tipo `Cosmos.MultiTenancy.*`/autenticacion); es un token **declarado** por el humano. Ausente equivale a la etapa (a) por defecto, asi que nunca reporta `FALTA` -- solo `OK` (valor reconocido, cualquiera de los dos) o `NO VERIFICADO` (ausente, o con un valor no reconocido).
 
-La provision de **labels** (paso 3) y la del **CI** hacia Azure (paso 4) las ofrece `/onboard` como pasos **opt-in**, bajo confirmacion explicita: el script de labels es destructivo (borra los labels default de GitHub) y el de CI crea recursos reales en Azure (app de Entra, role assignments, federated credential -- OIDC, MEF-ADR-0022). El diagnostico en si sigue siendo de solo lectura: sin tu confirmacion no se crea, borra ni provisiona nada.
+La provision de **labels** (paso 3), la del **CI** hacia Azure (paso 4) y la escritura de la **estrategia de tenancy** (paso 5) las ofrece `/onboard` como pasos **opt-in**, bajo confirmacion explicita: el script de labels es destructivo (borra los labels default de GitHub), el de CI crea recursos reales en Azure (app de Entra, role assignments, federated credential -- OIDC, MEF-ADR-0022) y el de tenancy escribe `.claude/harness.config.json`. El diagnostico en si sigue siendo de solo lectura: sin tu confirmacion no se crea, borra, escribe ni provisiona nada. (Los writes opt-in de `/onboard` pasan asi de 2 -- labels, CI -- a 3, sumando el token `tenancy.strategy`.)
 
-Al cerrar el reporte, `/onboard` imprime un bloque **"Proximos pasos"**: deriva del mismo diagnostico ya hecho (sin re-verificar nada) el comando exacto a correr a continuacion -- labels (MEF-ADR-0007), CI (MEF-ADR-0022), infraestructura base (`/mefisto:infra-base dev`, MEF-ADR-0021) o el recordatorio recurrente de mantener al dia los GitHub secrets que alimentan la siembra en CI (MEF-ADR-0025), segun que seccion reporto `FALTA` -- y cierra con un puntero descubrible al quickstart narrativo del arranque greenfield (`docs/greenfield-quickstart.md` del harness). Es **puramente informativo**: no ejecuta `gh`/`az` ni provisiona nada; las unicas escrituras siguen siendo los pasos opt-in 3 y 4.
+Al cerrar el reporte, `/onboard` imprime un bloque **"Proximos pasos"**: deriva del mismo diagnostico ya hecho (sin re-verificar nada) el comando exacto a correr a continuacion -- labels (MEF-ADR-0007), CI (MEF-ADR-0022), infraestructura base (`/mefisto:infra-base dev`, MEF-ADR-0021) o el recordatorio recurrente de mantener al dia los GitHub secrets que alimentan la siembra en CI (MEF-ADR-0025), segun que seccion reporto `FALTA` -- y cierra con un puntero descubrible al quickstart narrativo del arranque greenfield (`docs/greenfield-quickstart.md` del harness). Es **puramente informativo**: no ejecuta `gh`/`az` ni provisiona nada; las escrituras que puede derivar siguen siendo los pasos opt-in 3 (labels) y 4 (CI) -- la escritura de tenancy (paso 5) se ofrece siempre, independientemente de este bloque, porque nunca reporta `FALTA`.
 
 ## Proceso
 
@@ -273,7 +274,26 @@ else
   row NV "secrets[] no declarado todavia (normal antes del primer /infra-base o si el config es invalido -- ver seccion Configuracion)"
 fi
 
-# --- 8. Acciones y resumen ---
+# --- 8. Estrategia de tenancy (tenancy.strategy, MEF-ADR-0028, issue #323, informativo) ---
+echo ""
+echo "Estrategia de tenancy (tenancy.strategy, MEF-ADR-0028):"
+TENANCY_STRATEGY=$(jq -r '.tenancy.strategy // ""' "$CONFIG" 2>/dev/null)
+case "$TENANCY_STRATEGY" in
+  "")
+    row NV "tenancy.strategy ausente -- etapa (a) mono-tenant-transitorio por defecto (valido, no bloqueante)"
+    ;;
+  mono-tenant-transitorio)
+    row OK "tenancy.strategy = mono-tenant-transitorio (etapa a: greenfield sin autenticacion instalada)"
+    ;;
+  multi-tenant-header)
+    row OK "tenancy.strategy = multi-tenant-header (etapa b: resolver real basado en TenantContext)"
+    ;;
+  *)
+    row NV "tenancy.strategy tiene un valor no reconocido: '$TENANCY_STRATEGY' (esperado mono-tenant-transitorio | multi-tenant-header)"
+    ;;
+esac
+
+# --- 9. Acciones y resumen ---
 echo ""
 if [ -n "$ACTIONS" ]; then
   echo "Acciones sugeridas (el diagnostico no ejecuta ninguna; los labels faltantes y el CI los pueden provisionar los pasos opt-in, bajo tu confirmacion):"
@@ -482,13 +502,54 @@ PROVISION_CI
 
 **Caveat: idempotencia parcial de la condicion ABAC.** `az role assignment create` no actualiza la condicion de una asignacion que ya exista con el mismo principal/rol/alcance. La asignacion de `Role Based Access Control Administrator` con la condicion anti-escalacion la introdujo el issue #195; en un onboarding limpio se crea de una vez **con** la condicion. Pero si el SP ya tuviera esa asignacion **sin** la condicion --creada fuera de este script (p. ej. a mano), o si una version futura del script cambia la expresion de la condicion-- re-correr el script aqui **no** se la aplica ni actualiza. El SP quedaria con ese rol sin la restriccion anti-escalacion, aunque `/onboard` reporte el CI en verde. Ver el diagnostico y la remediacion completa en el README, seccion "Bootstrap de infraestructura", paso 2. El arreglo del script (deteccion y recreacion automatica) queda diferido a un issue aparte.
 
+### 5. Provision opt-in de la estrategia de tenancy
+
+Es la **tercera** escritura opt-in de `/onboard` (junto a labels y CI), y la unica que toca `.claude/harness.config.json` en vez de recursos externos -- no requiere `gh` ni `az`. El diagnostico (pasos 1-2) nunca escribe este token; solo lo reporta.
+
+`/onboard` **no sondea codigo** para inferir la etapa de tenancy vigente (MEF-ADR-0028): no hay señal fiable (un grep del harness confirmo cero referencias a `MultiTenancy`/`TenantResolver`/`TenantContext` en agentes/scripts/commands/ADRs). La etapa la declara el humano; este paso solo la pregunta y, si se confirma, la escribe.
+
+Ofrece este paso siempre (a diferencia de labels/CI, no depende de que el diagnostico haya reportado `FALTA` -- la seccion de tenancy nunca lo reporta). Si el usuario no tiene interes en tocar la estrategia de tenancy ahora, omite el paso sin insistir.
+
+1. **Pregunta la estrategia vigente.** Independientemente de lo que reporto el diagnostico (punto 8), pregunta al usuario: "¿Tu proyecto ya tiene instalada una autenticacion que produce un `TenantContext` (header-based, o el hibrido HTTP+Wolverine de `Cosmos.MultiTenancy.CritterStack`)? [si/no]".
+   - Si responde **no** (o no sabe / aun no instala autenticacion): la etapa vigente es (a), `mono-tenant-transitorio`. Si el token ya esta ausente o ya vale eso, no hay nada que escribir -- informa y termina el paso sin tocar el archivo.
+   - Si responde **si**: la etapa vigente es (b), `multi-tenant-header`.
+2. **No escribas nada sin confirmar el valor exacto (mismo patron que los pasos 3 y 4).** Muestra el valor que vas a escribir/actualizar y pide confirmacion explicita, p. ej.: "Voy a escribir `tenancy.strategy = \"multi-tenant-header\"` en `.claude/harness.config.json`. ¿Confirmas? [si/no]". Si el usuario no confirma, no toques el archivo: recuerdale que puede editarlo a mano y termina el paso. El comportamiento por defecto de `/onboard` sigue siendo solo diagnostico.
+3. **Solo si el usuario confirma**, escribe/actualiza el campo con `jq`, preservando el resto del archivo:
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
+if [ -f "$REPO_ROOT/.claude-plugin/plugin.json" ]; then
+  echo "ERROR: /onboard no aplica al repo de Mefisto."; exit 1
+fi
+
+CONFIG=".claude/harness.config.json"
+ESTRATEGIA="<mono-tenant-transitorio|multi-tenant-header>"  # la que confirmo el usuario en el paso 2
+
+if [ ! -f "$CONFIG" ]; then
+  echo "ERROR: no existe $CONFIG. Crealo primero (ver README, seccion \"Configurar el consumidor\")."
+elif ! command -v jq >/dev/null 2>&1; then
+  echo "ERROR: jq no esta instalado. Requerido para escribir $CONFIG."
+else
+  TMP=$(mktemp)
+  if jq --arg s "$ESTRATEGIA" '.tenancy = {strategy: $s}' "$CONFIG" > "$TMP" && mv "$TMP" "$CONFIG"; then
+    echo "OK: tenancy.strategy = \"$ESTRATEGIA\" escrito en $CONFIG."
+  else
+    rm -f "$TMP"
+    echo "ERROR: no se pudo escribir $CONFIG (revisa que sea JSON valido)."
+  fi
+fi
+```
+
+4. **Reporta el resultado al usuario.** Si escribio el token, recuerdale que `domain-scaffolder` (Paso 0) solo lo lee en el **proximo** dominio que scaffoldee -- no re-scaffoldea dominios ya existentes. Si el proyecto tiene dominios en etapa (a) y acaba de declarar la etapa (b), reemplazar el `ITenantResolver` de esos dominios existentes sigue siendo manual (ver el `// TODO(tenancy etapa b)` que `domain-scaffolder` deja en `TenantResolverMonoTenantPorDefecto.cs`, MEF-ADR-0028).
+
 ## Reglas
 
-- **Diagnostico de solo lectura por defecto.** El diagnostico (pasos 1-2) no ejecuta `gh label create`, `az ... create`, ni escribe archivos o recursos. Las **unicas** acciones de escritura permitidas son las **provisiones opt-in** -- labels (paso 3, el script borra los labels default de GitHub) y CI hacia Azure (paso 4, el script crea app de Entra, role assignments y federated credential OIDC) -- y solo tras la confirmacion explicita del usuario **para cada una**: nunca las ejecutes sin un "si". Sin confirmacion, una corrida de `/onboard` no crea, borra ni provisiona nada (ni labels, ni recursos de Azure, ni copia secrets).
+- **Diagnostico de solo lectura por defecto.** El diagnostico (pasos 1-2) no ejecuta `gh label create`, `az ... create`, ni escribe archivos o recursos. Las **unicas** acciones de escritura permitidas son las **provisiones opt-in** -- labels (paso 3, el script borra los labels default de GitHub), CI hacia Azure (paso 4, el script crea app de Entra, role assignments y federated credential OIDC) y la estrategia de tenancy (paso 5, escribe `tenancy.strategy` en `.claude/harness.config.json`) -- y solo tras la confirmacion explicita del usuario **para cada una**: nunca las ejecutes sin un "si". Sin confirmacion, una corrida de `/onboard` no crea, borra, escribe ni provisiona nada (ni labels, ni recursos de Azure, ni copia secrets, ni toca el config).
 - **No abortes ante un fallo parcial.** Cada seccion del diagnostico es independiente: si `gh` o `az` no estan disponibles, reporta `NO VERIFICADO` y continua con el resto.
 - **No dupliques la validacion del config.** El formato de `terraformStateStorage` y los campos requeridos los valida `load_harness_config` (issue #78); este skill solo reporta su resultado.
 - **La estructura de carpetas es informativa, nunca `FALTA`.** Un greenfield legitimo aun no tiene `src/`, `tests/` ni `infra/environments/` antes del primer `/scaffold` o `/infra-base`; marcarla como bloqueante daria un falso negativo (issue #212).
 - **Los secretos que alimentan la siembra en Key Vault (MEF-ADR-0025) son informativos, nunca `FALTA`.** La siembra en el Key Vault del BC la hace CI (`infra-cd.yml`) tras el `apply`; ningun humano custodia secretos en su data plane. El diagnostico solo reporta si los GitHub secrets que la alimentan (`TF_VAR_POSTGRESQL_ADMIN_PASSWORD`, `SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` por alias) existen -- un greenfield legitimo aun no los tiene antes de provisionar Postgres o declarar `serviceBus.external[]` (issue #232).
 - **El registro `secrets[]` (issue #256) tambien es informativo, nunca `FALTA` por si solo.** Su **forma** (`name`/`source.type`/`source.value`) ya la valida `load_harness_config` como parte de la seccion "Configuracion" (punto 1) -- un `secrets[]` mal formado hace que ESA seccion reporte `FALTA`, no esta. Esta seccion solo cuenta las entradas registradas y, para las de tipo `github-secret`, si el GitHub secret que referencian existe -- lo mismo que ya hacia para `serviceBus.external[]`, generalizado a cualquier entrada.
-- **El bloque de cierre "Proximos pasos" es puramente informativo (issue #222).** Solo lee las mismas variables que ya acumulo el diagnostico (`N_FALTA`, `N_NV`, y los flags `PA_*` por seccion) para imprimir el comando exacto a correr a continuacion y el puntero al quickstart greenfield; nunca ejecuta `gh`/`az` ni escribe nada. No reemplaza ni condiciona las provisiones opt-in (pasos 3 y 4), que siguen requiriendo confirmacion explicita para cada una.
+- **La estrategia de tenancy (`tenancy.strategy`, MEF-ADR-0028, issue #323) es informativa, nunca `FALTA`.** Ausente equivale a la etapa (a) por defecto (retrocompatible); no hay señal de codigo fiable para inferir la etapa, asi que `/onboard` nunca la sondea -- solo reporta el valor declarado (o su ausencia) y ofrece el paso opt-in 5 para escribirlo bajo confirmacion.
+- **El bloque de cierre "Proximos pasos" es puramente informativo (issue #222).** Solo lee las mismas variables que ya acumulo el diagnostico (`N_FALTA`, `N_NV`, y los flags `PA_*` por seccion) para imprimir el comando exacto a correr a continuacion y el puntero al quickstart greenfield; nunca ejecuta `gh`/`az` ni escribe nada. No reemplaza ni condiciona las provisiones opt-in (pasos 3, 4 y 5), que siguen requiriendo confirmacion explicita para cada una.
 - Si `$ARGUMENTS` trae algo, ignoralo: `/onboard` no toma argumentos.

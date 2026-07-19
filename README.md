@@ -106,6 +106,7 @@ Crea `.claude/harness.config.json` en la raíz del proyecto consumidor:
     "name": "Principal",
     "domains": ["dominio1", "dominio2"]
   },
+  "tenancy": { "strategy": "mono-tenant-transitorio" },
   "secrets": [
     {
       "name": "stripe-api-key",
@@ -137,6 +138,13 @@ El resource group del BC se forma como `infraResourceGroupPrefix`+`-`+`name` (ej
 > **Proyectos existentes (que vienen de una versión sin este campo)**: si `boundedContext` no está en tu config, `load_harness_config` aborta con un mensaje accionable que muestra el shape exacto a añadir y un ejemplo con tus `domainLabels` actuales. Corre `/mefisto:onboard` para obtener el diagnóstico, o lee la sección **"Migración para consumidores existentes"** al final de este documento.
 
 **Campo opcional `repoSlug`**: el slug `owner/repo` del repositorio de Mefisto al que se enrutan los **drafts cross-repo** (`estado:borrador`) que crean el `planner` y el `tooling-investigator` cuando detectan que un problema descubierto en tu proyecto pertenece al harness. Sirve para redirigir esos drafts a **tu fork** de Mefisto en vez del repo upstream. Si no lo declaras, el default es `augusto-romero-arango/eda-evsourcing-azure-harness`. No se exporta como variable `HARNESS_*`: se lee directo con `jq` donde se necesita (`scripts/_pipeline-common.sh`, `agents/planner.md`, `agents/tooling-investigator.md`). Es **opcional** (añadirlo no es MAJOR).
+
+**Campo opcional `tenancy`** (MEF-ADR-0028, issue #323): declara la etapa vigente del `ITenantResolver` del BC. Único subfield, `strategy`, con dos valores válidos:
+
+- **`"mono-tenant-transitorio"`** (etapa a): greenfield sin autenticación instalada. Es el default de `domain-scaffolder` (issue #318) y el valor asumido si el campo está **ausente** (retrocompatible con todo consumidor existente).
+- **`"multi-tenant-header"`** (etapa b): el proyecto ya instaló una autenticación que produce un `TenantContext` (header-based o el híbrido HTTP+Wolverine de `Cosmos.MultiTenancy.CritterStack`).
+
+`domain-scaffolder` lee este campo inline con `jq` en su Paso 0 (mismo patrón que `serviceBus.external`) para elegir el `ITenantResolver` que registra en el `Program.cs` del dominio que scaffoldea: en etapa (a) genera el resolver mono-tenant transitorio (sin cambios respecto a #318); en etapa (b) auto-cablea el resolver híbrido genérico de `Cosmos.MultiTenancy.CritterStack`, dejando un `// TODO(tenancy claims)` para el mapping claims → `TenantContext` (siempre project-specific). `/onboard` reporta el valor de forma informativa (ausente o cualquiera de los dos valores nunca es `FALTA`) y ofrece un paso opt-in que pregunta la estrategia vigente y escribe/actualiza el campo, solo bajo confirmación explícita -- `/onboard` no sondea código para inferir la etapa. Es **opcional** (añadirlo no es MAJOR). Ver MEF-ADR-0028 para el modelo completo de dos etapas.
 
 **Campo opcional `secrets`** (issue #256): registro **declarativo** de todo secreto del BC que el step de siembra de `infra-cd.yml` itera en runtime, sin ninguna línea hardcodeada por secreto. Cada entrada declara:
 

@@ -2,7 +2,7 @@
 
 - **Fecha**: 2026-07-19
 - **Estado**: aceptado
-- **Aplica a**: doctrina de tenancy del marco; gobierna al `domain-scaffolder` (registro del `ITenantResolver` en el `Program.cs` que genera) y, en trabajo diferido, a `onboard`/`scaffold` (deteccion de la etapa vigente). Cross-referencia MEF-ADR-0003 (stack ES Marten+Wolverine), MEF-ADR-0021 (infraestructura base) y MEF-ADR-0023 (Bounded Context/topologia de ASB).
+- **Aplica a**: doctrina de tenancy del marco; gobierna al `domain-scaffolder` (registro del `ITenantResolver` en el `Program.cs` que genera, ramificado por etapa) y a `/onboard` (diagnostico informativo y escritura opt-in del token de deteccion). Cross-referencia MEF-ADR-0003 (stack ES Marten+Wolverine), MEF-ADR-0021 (infraestructura base) y MEF-ADR-0023 (Bounded Context/topologia de ASB).
 
 ## Contexto
 
@@ -110,12 +110,50 @@ public class TenantResolverMonoTenantPorDefecto : ITenantResolver
   que produzca un `TenantContext`, reemplazar este resolver por el real de la etapa (b); no dejar el
   default mono-tenant una vez que exista esa autenticacion.
 
-### 3. Alcance de este ADR: solo el registro en el scaffold
+### 3. Deteccion de la etapa vigente: token declarativo `tenancy.strategy` (issue #323)
 
-Este ADR fija el modelo de dos etapas y la forma concreta del resolver de la etapa (a) que
-`domain-scaffolder` genera. La **deteccion** de cuando un proyecto ya tiene autenticacion que produce
-un `TenantContext` -- y el consiguiente cambio automatico/propuesto a la etapa (b) desde
-`onboard`/`scaffold` -- queda fuera de este ADR (ver "Trabajo diferido").
+La eleccion entre (a) y (b) no se sondea en codigo: un grep del harness (agentes/scripts/commands/ADRs)
+confirmo cero referencias a `MultiTenancy`/`TenantResolver`/`TenantContext`, asi que no hay ninguna señal
+fiable que un agente pueda inspeccionar para inferir si el proyecto ya instalo autenticacion fuerte. La
+etapa vigente se **declara**, en un token opcional de nivel superior en `.claude/harness.config.json`:
+
+```json
+"tenancy": { "strategy": "mono-tenant-transitorio" }
+```
+
+- `strategy`: `"mono-tenant-transitorio"` (etapa a, el default de este ADR) | `"multi-tenant-header"`
+  (etapa b).
+- **Ausente equivale a `"mono-tenant-transitorio"`** (etapa a): retrocompatible con todo consumidor
+  existente y con el greenfield que aun no declara el campo.
+
+**`/onboard`** reporta el valor de este token de forma puramente informativa -- ausente o con cualquiera
+de los dos valores validos nunca es `FALTA`, solo `OK`/`NO VERIFICADO` (un greenfield legitimo vive en
+etapa (a) por defecto, no es un estado incompleto) -- y gana un paso **opt-in** (tercero, junto a labels
+y CI) que pregunta al usuario la estrategia vigente y **escribe/actualiza** `tenancy.strategy` en el
+config, solo tras confirmacion explicita: `/onboard` no sondea codigo ni infiere la etapa por su cuenta.
+
+**`domain-scaffolder`** lee `tenancy.strategy` inline con `jq` en su Paso 0 (mismo patron ya usado para
+`serviceBus.external`, MEF-ADR-0024) y rama la generacion del `ITenantResolver` que registra en
+`Infraestructura/ComposicionServicios{Dominio}.cs`:
+
+- **Etapa (a)** (ausente o `"mono-tenant-transitorio"`): genera `TenantResolverMonoTenantPorDefecto.cs`
+  y su registro, exactamente como fija la seccion 2 de este ADR -- sin cambios.
+- **Etapa (b)** (`"multi-tenant-header"`): en vez del default transitorio, auto-cablea
+  `services.AgregarTenantResolverHibrido()` (`Cosmos.MultiTenancy.CritterStack`, registra
+  `ProxyTenantResolver`) -- el resolver hibrido HTTP + daemon de Wolverine descrito en el "Contexto",
+  apto porque todo dominio del marco corre handlers de Wolverine. Antes de cablearlo, el agente debe
+  **re-confirmar** el tipo y la firma de registro contra la version vigente del paquete (verificados
+  aqui por decompilacion, seccion "Contexto") -- si no puede confirmarlos, trata el resolver como **NO
+  VERIFICADO** y **degrada a "proponer"** (deja el `PackageReference` y un snippet documentado, sin
+  cablearlo) en vez de auto-cablear a ciegas. El archivo generado lleva un `// TODO(tenancy claims)`
+  explicito: el mapping de los claims de la autenticacion instalada al header `X-Tenant-Id`/`X-User-Id`
+  (o a `IMessageContext.TenantId`) es **siempre project-specific** -- ningun paquete del marco lo
+  automatiza, asi que ningun auto-cableo puede completarlo por si solo.
+
+**Limite deliberado**: pasar un dominio ya scaffoldeado de (a) a (b) sigue siendo manual -- actualizar
+el token y volver a correr `/scaffold` no re-scaffoldea dominios existentes. El
+`// TODO(tenancy etapa b)` que deja `TenantResolverMonoTenantPorDefecto.cs` (seccion 2) es el
+recordatorio en el codigo generado.
 
 ## Alternativas consideradas
 
@@ -138,7 +176,8 @@ por el propio scaffold en vez de por una regresion de upgrade.
 **Descartada**: mezclaria las dos etapas en una sola implementacion con logica condicional oculta,
 contra el principio de este ADR de que la eleccion entre (a) y (b) sea explicita y visible en el
 `Program.cs` (una linea de registro, un tipo concreto). Ademas oscureceria el momento exacto en que un
-proyecto matura de (a) a (b), que es precisamente lo que "Trabajo diferido" quiere poder detectar.
+proyecto matura de (a) a (b), que es precisamente lo que el token declarativo `tenancy.strategy`
+(seccion 3) permite detectar sin ambiguedad.
 
 ## Consecuencias
 
@@ -154,18 +193,12 @@ proyecto matura de (a) a (b), que es precisamente lo que "Trabajo diferido" quie
 ### Negativas
 
 - **El default mono-tenant es un estado que hay que recordar reemplazar**: si un proyecto instala
-  autenticacion fuerte y nadie actualiza el registro de `Program.cs`, el dominio sigue funcionando
-  (no rompe) pero **todo** evento se atribuye a `*DEFAULT*`/`"usuario-no-autenticado"` aunque ya haya
-  usuarios/tenants reales identificables -- un bug silencioso de negocio, no un crash. El
-  `// TODO(tenancy etapa b)` mitiga esto pero no lo hace imposible; la deteccion automatica
-  (ver "Trabajo diferido") es lo que cerraria el vacio.
-
-### Trabajo diferido
-
-- **Deteccion de la etapa vigente en `onboard`/`scaffold`** (issue #323, depende de este ADR/issue
-  #318): detectar si el proyecto ya tiene una autenticacion que produce un `TenantContext` y, en ese
-  caso, registrar o proponer el resolver real de la etapa (b) en vez de dejar (o reinstalar) el
-  default transitorio.
+  autenticacion fuerte y nadie actualiza `tenancy.strategy` (y vuelve a scaffoldear o migra a mano el
+  dominio), el dominio sigue funcionando (no rompe) pero **todo** evento se atribuye a
+  `*DEFAULT*`/`"usuario-no-autenticado"` aunque ya haya usuarios/tenants reales identificables -- un bug
+  silencioso de negocio, no un crash. El `// TODO(tenancy etapa b)` y el diagnostico informativo de
+  `/onboard` (seccion 3) mitigan esto, pero no lo hacen imposible: pasar de (a) a (b) sigue exigiendo
+  que un humano declare el cambio.
 
 ## Referencias
 
@@ -198,3 +231,11 @@ proyecto matura de (a) a (b), que es precisamente lo que "Trabajo diferido" quie
   transitorio en greenfield / resolver real basado en `TenantContext`) y la forma concreta del resolver
   de la etapa (a) que `domain-scaffolder` registra por defecto. Bloquea al issue #323 (deteccion de la
   etapa vigente en `onboard`/`scaffold`).
+- 2026-07-19: enmienda (issue #323). Operacionaliza la deteccion de la etapa vigente: token declarativo
+  `tenancy.strategy` (opcional, ausente = etapa a) en `harness.config.json`, reportado informativamente
+  por `/onboard` (nunca `FALTA`) y escrito bajo confirmacion en un tercer paso opt-in. `domain-scaffolder`
+  lee el token inline con `jq` en su Paso 0 y rama el `ITenantResolver` que registra: etapa (a) sin
+  cambios, etapa (b) auto-cablea `AgregarTenantResolverHibrido()` (`Cosmos.MultiTenancy.CritterStack`),
+  sujeto a re-verificar tipo/firma contra la version vigente del paquete y a degradar a "proponer" si el
+  resolver no resulta generico para el proyecto, dejando un `// TODO(tenancy claims)` para el mapping
+  claims -> `TenantContext` (siempre project-specific).
