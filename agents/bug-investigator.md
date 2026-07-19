@@ -101,7 +101,7 @@ La firma diagnostica es **"compila + unit tests verdes pero revienta en runtime"
 1. **Correlaciona la excepcion en App Insights con el stack de activacion del host de Functions**: busca en el stacktrace la cadena `DefaultFunctionActivator.CreateInstance` -> constructor del servicio que fallo -> tipo de la dependencia no resuelta. Esa cadena confirma que el fallo es de activacion/DI del host, no de logica de negocio.
    ```bash
    ./scripts/appinsights-query.sh exceptions
-   # busca el tipo de excepcion (InvalidOperationException / DependencyResolutionException) y su conteo en la ventana del deploy
+   # busca el tipo de excepcion (p. ej. InvalidOperationException: "Unable to resolve service for type ...", la excepcion que lanza el contenedor Microsoft.Extensions.DependencyInjection del worker isolated) y su conteo en la ventana del deploy
    ```
 2. **Localiza ambas versiones del paquete en el cache de NuGet**:
    ```bash
@@ -112,10 +112,15 @@ La firma diagnostica es **"compila + unit tests verdes pero revienta en runtime"
    ```bash
    dotnet tool install -g ilspycmd
    ```
-   Comando de decompilacion (placeholders `<paquete>`, `<version-vieja>`, `<version-nueva>`, `<TargetFramework>`):
+   Comando de decompilacion. Ojo con el casing: NuGet normaliza el id del paquete a minusculas para la **carpeta** del cache (`<paquete>`), pero el `.dll` conserva el casing real del **ensamblado** (`<Ensamblado>`), que suele ser PascalCase y puede diferir de la carpeta — una sustitucion literal del mismo placeholder en ambos sitios falla en sistemas de archivos sensibles a mayusculas (Linux). Placeholders: `<paquete>` (carpeta, minusculas), `<Ensamblado>.dll` (ensamblado, casing real), `<version-vieja>`, `<version-nueva>`, `<TargetFramework>`:
    ```bash
-   ilspycmd ~/.nuget/packages/<paquete>/<version-vieja>/lib/<TargetFramework>/<paquete>.dll -o /tmp/decompiled-vieja
-   ilspycmd ~/.nuget/packages/<paquete>/<version-nueva>/lib/<TargetFramework>/<paquete>.dll -o /tmp/decompiled-nueva
+   ilspycmd ~/.nuget/packages/<paquete>/<version-vieja>/lib/<TargetFramework>/<Ensamblado>.dll -o /tmp/decompiled-vieja
+   ilspycmd ~/.nuget/packages/<paquete>/<version-nueva>/lib/<TargetFramework>/<Ensamblado>.dll -o /tmp/decompiled-nueva
+   ```
+   Ejemplo concreto del casing (caso de origen): carpeta `cosmos.eventsourcing.critterstack`, ensamblado `Cosmos.EventSourcing.CritterStack.dll`, TargetFramework `net10.0` —
+   ```bash
+   ilspycmd ~/.nuget/packages/cosmos.eventsourcing.critterstack/0.1.9/lib/net10.0/Cosmos.EventSourcing.CritterStack.dll -o /tmp/decompiled-vieja
+   ilspycmd ~/.nuget/packages/cosmos.eventsourcing.critterstack/2.1.0/lib/net10.0/Cosmos.EventSourcing.CritterStack.dll -o /tmp/decompiled-nueva
    ```
 4. **Diffea los tipos relevantes**: los metodos de extension de registro (los que el proyecto invoca en su `Program.cs`, p. ej. `AgregarWolverine*Router`) y los constructores de los servicios que el stacktrace senala como no resueltos:
    ```bash
