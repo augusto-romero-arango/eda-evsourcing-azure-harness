@@ -4,6 +4,8 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-07-19
+
 ### Added
 
 - **`bug-investigator` documenta la tecnica de decompilacion old-vs-new para diagnosticar breaking changes de wiring de DI en upgrades de building blocks (issue #321)**: durante la investigacion del incidente `ITenantResolver` en el consumidor Bitakora.ControlAsistencia (upgrade `Cosmos.Event*` 0.1.9 -> 2.1.0, refs #207/#219), el agente confirmo la causa raiz decompilando con `ilspycmd` las versiones vieja y nueva del paquete desde el cache de NuGet (`~/.nuget/packages`) y diffeando los metodos de registro (`AgregarWolverine*Router`) y los constructores de los routers -- el diff revelo que 2.x elimino el `AddScoped<ITenantResolver, ...>()`. Esa tecnica no estaba documentada en el playbook. `agents/bug-investigator.md` suma la seccion "Patron de diagnostico: breaking change de wiring de DI tras upgrade de building blocks" (mismo nivel que el patron de noisy neighbor, #43): nombra la firma diagnostica "compila + unit tests verdes pero revienta en runtime" como indicativa de un breaking change de wiring de DI escondido detras de firmas publicas sin cambios; indica correlacionar el tipo y conteo de la excepcion en App Insights con el stack de activacion del host (`DefaultFunctionActivator.CreateInstance` -> constructor del servicio -> dependencia faltante); y documenta el flujo completo de decompilacion (localizar ambas versiones en el cache de NuGet, instalar `ilspycmd` solo si falta -- `dotnet tool install -g ilspycmd`, sin instalarlo por cuenta propia --, comando de decompilacion con placeholders y diff de los tipos relevantes). El Stage 2 ("Correlacion", punto 4 "Revisa cambios recientes") gana un puntero cruzado hacia el nuevo patron cuando el cambio reciente es un upgrade de paquete y no codigo propio. Archivo modificado: `agents/bug-investigator.md`.
@@ -425,7 +427,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.14.4...v0.15.0
 [0.14.4]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.14.3...v0.14.4
 [0.14.3]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.14.2...v0.14.3
