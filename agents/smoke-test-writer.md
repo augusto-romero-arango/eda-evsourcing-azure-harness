@@ -232,7 +232,6 @@ public class SolicitarProgramacionTurnoSmokeTests(ApiFixture api, ServiceBusFixt
 
     private const string TopicSalida = "programacion-turno-diario-solicitada";
     private const string Suscripcion = "smoke-tests";
-    private const string SuscripcionConsumidor = "{consumidor}-escucha-{productor}";
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
 
     [Fact]
@@ -266,16 +265,10 @@ public class SolicitarProgramacionTurnoSmokeTests(ApiFixture api, ServiceBusFixt
             empleadoId, "CC", "555666777", "[TEST] Smoke", "[TEST] SB");
         evento!.Empleado.Should().Be(empleadoEsperado);
 
-        // Assert: verificar ausencia de dead letters en la suscripcion del consumidor real.
-        // Esperar a que el consumidor haya tenido tiempo de procesar el mensaje.
-        await Task.Delay(TimeSpan.FromSeconds(5), ct);
-
-        var deadLetters = await serviceBus.PeekDeadLetterMessagesAsync(
-            TopicSalida, SuscripcionConsumidor);
-
-        deadLetters.Should().BeEmpty(
-            "no deberia haber mensajes en dead letter de '{0}' - si los hay, el consumidor fallo al procesar el evento",
-            SuscripcionConsumidor);
+        // NO se verifica el dead-letter de la suscripcion del consumidor aqui: esa suscripcion
+        // pertenece al dominio consumidor, no a este. Assertar sobre ella acopla este smoke test
+        // cross-domain (MEF-ADR-0013, issue #324). El dominio consumidor verifica su propio DLQ
+        // en su propio smoke test -- ver Patron 2.
     }
 }
 ```
@@ -288,7 +281,7 @@ public class SolicitarProgramacionTurnoSmokeTests(ApiFixture api, ServiceBusFixt
 - **Consumo de multiples eventos**: cuando el handler publica mas de un evento (ej: un evento por fecha), usar un predicado amplio que matchee por un campo compartido (ej: `SolicitudId`) en lugar de campos especificos (ej: `Fecha`). Esto evita fallos por orden de llegada -- si el primer mensaje que llega no matchea el predicado especifico, el fail-on-mismatch del fixture lanzara excepcion
 - Timeout estandar: `TimeSpan.FromSeconds(30)`
 - El tipo `T` del mensaje es el evento publico de `Contracts` (igualdad natural de records)
-- **Verificacion de dead letter obligatoria**: despues de consumir el evento, esperar ~5s y verificar que la suscripcion del consumidor real no tenga dead letters con `PeekDeadLetterMessagesAsync`
+- **Sin assert de dead letter del consumidor**: este patron no verifica el DLQ de `SuscripcionConsumidor` -- esa suscripcion es del dominio consumidor. Verificarla desde aqui seria un assert cross-domain (MEF-ADR-0013, issue #324)
 
 ### Patron 2: Dominio consumidor (Service Bus -> Postgres)
 
@@ -303,6 +296,10 @@ public class AsignarTurnoSmokeTests(ServiceBusFixture serviceBus, PostgresFixtur
     private const string SuscripcionConsumidor = "{consumidor}-escucha-{productor}";
     private const string SchemaControlHoras = "control_horas";
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
+
+    // Forma minima para acotar el assert de dead-letter a la corrida: solo el identificador,
+    // sin depender de la deserializacion de value objects ricos (MEF-ADR-0013, issue #324).
+    private record IdentificadorDeadLetter(Guid SolicitudId);
 
     [Fact]
     [Trait("Category", "Smoke")]
@@ -350,13 +347,15 @@ public class AsignarTurnoSmokeTests(ServiceBusFixture serviceBus, PostgresFixtur
             .GetProperty("InformacionEmpleado").Deserialize<InformacionEmpleado>();
         empleadoPersistido.Should().Be(empleadoEsperado);
 
-        // Assert: verificar ausencia de dead letters en la suscripcion del consumidor
-        var deadLetters = await serviceBus.PeekDeadLetterMessagesAsync(
-            TopicEntrada, SuscripcionConsumidor);
+        // Assert: verificar que no haya un dead-letter DE ESTA CORRIDA en la suscripcion propia.
+        // Acotado por SolicitudId -- no exige el DLQ globalmente vacio, asi que un residual de
+        // una corrida anterior (o de un warmup) no tumba este test (MEF-ADR-0013, issue #324).
+        var dlqDeEstaCorrida = await serviceBus.ExisteDeadLetterDeLaCorridaAsync<IdentificadorDeadLetter>(
+            TopicEntrada, SuscripcionConsumidor, m => m.SolicitudId == solicitudId);
 
-        deadLetters.Should().BeEmpty(
-            "no deberia haber mensajes en dead letter de '{0}' - si los hay, el consumidor fallo al procesar el evento",
-            SuscripcionConsumidor);
+        dlqDeEstaCorrida.Should().BeFalse(
+            "no deberia haber un dead-letter de SolicitudId {0} en '{1}' - si lo hay, el consumidor fallo al procesar el evento",
+            solicitudId, SuscripcionConsumidor);
     }
 }
 ```
@@ -367,14 +366,14 @@ public class AsignarTurnoSmokeTests(ServiceBusFixture serviceBus, PostgresFixtur
 - El evento se construye como objeto anonimo (no usa clases de produccion) con PascalCase (Service Bus no aplica JsonNamingPolicy)
 - `ExisteEventoAsync` y `ObtenerEventoAsync` verifican persistencia filtrando por campo unico
 - **Siempre** filtrar por campo identificador (ej: `SolicitudId`), nunca por posicion en el stream
-- **Verificacion de dead letter obligatoria**: despues de verificar persistencia, comprobar que no haya dead letters en la suscripcion del consumidor con `PeekDeadLetterMessagesAsync`
+- **Assert de dead letter acotado a la corrida**: despues de verificar persistencia, comprobar con `ExisteDeadLetterDeLaCorridaAsync<T>` que no exista un dead-letter de **este** `SolicitudId` en `SuscripcionConsumidor` (la propia del dominio, no de otro). Nunca `PeekDeadLetterMessagesAsync(...).Should().BeEmpty()` -- un residual ajeno a esta corrida no debe fallar el test
 
 ### Fixtures: cuando usar cada uno
 
 | Fixture | Cuando usarlo | Metodos principales |
 |---|---|---|
 | `ApiFixture` | Siempre que el test haga llamadas HTTP | `.Client` (HttpClient preconfigurado) |
-| `ServiceBusFixture` | Publicar eventos, consumir de suscripciones o verificar dead letters | `.PublishAsync(topic, mensaje, correlationId)`, `.WaitForMessageAsync<T>(topic, suscripcion, match, timeout)`, `.PeekDeadLetterMessagesAsync(topic, suscripcion, maxMessages)`, `.PurgeAsync(topic, suscripcion)` |
+| `ServiceBusFixture` | Publicar eventos, consumir de suscripciones o verificar dead letters | `.PublishAsync(topic, mensaje, correlationId)`, `.WaitForMessageAsync<T>(topic, suscripcion, match, timeout)`, `.ExisteDeadLetterDeLaCorridaAsync<T>(topic, suscripcion, match)`, `.PurgeAsync(topic, suscripcion)` |
 | `PostgresFixture` | Verificar eventos persistidos en Marten/Postgres | `.ExisteEventoAsync(schema, streamId, tipo, timeout, campoJson, valorJson)`, `.ObtenerEventoAsync<T>(schema, streamId, tipo, campo, valor, timeout)` |
 | `Polling` | Usado internamente por PostgresFixture; no lo uses directamente en tests | `.WaitUntilAsync<T>(probe, timeout)`, `.WaitUntilTrueAsync(condition, timeout)` |
 
@@ -382,7 +381,7 @@ public class AsignarTurnoSmokeTests(ServiceBusFixture serviceBus, PostgresFixtur
 
 - **Topic**: nombre del evento en kebab-case (`programacion-turno-diario-solicitada`, `turno-diario-asignado`)
 - **Suscripcion de smoke tests**: siempre `smoke-tests` (nombre generico, una por topic)
-- **Suscripcion de produccion**: `{consumidor}-escucha-{productor}` (usarla solo para verificar dead letters, no para consumir mensajes)
+- **Suscripcion de produccion**: `{consumidor}-escucha-{productor}` (usarla solo para verificar dead letters **desde el smoke test del propio dominio consumidor**, nunca desde el smoke test de otro dominio -- ver "Sin assert de dead letter del consumidor" en el Patron 1; no para consumir mensajes)
 - **Timeout estandar**: `TimeSpan.FromSeconds(30)` para esperar mensajes o persistencia
 
 ### Aserciones con Contracts
@@ -443,6 +442,8 @@ Esto permite que:
 - **NO usar `Skip.When()`** - no existe en xUnit v3, usa `Assert.SkipWhen()`
 - **NO filtrar eventos por posicion** (`eventos[^1]`) - siempre filtrar por campo identificador unico
 - **NO escribir un test que genera una operacion exitosa sin verificar todos sus efectos secundarios** - un 202 sin verificar los eventos publicados es cobertura incompleta. Lee el command handler para identificar todos los efectos (`PublishAsync`, `StartStream`, `AppendToStream`) y verificalos en el test
+- **NO exigir el DLQ globalmente vacio** (`PeekDeadLetterMessagesAsync(...).Should().BeEmpty()` o equivalente) - un dead-letter residual de una corrida anterior, de un warmup contra codigo viejo, o de un race deploy->smoke tumba el test aunque esta corrida haya sido correcta. Acota siempre el assert a la corrida con `ExisteDeadLetterDeLaCorridaAsync<T>` filtrando por el identificador unico de la corrida (MEF-ADR-0013, issue #324)
+- **NO assertar sobre el DLQ/subscription de un dominio distinto** - un smoke test solo verifica la suscripcion que pertenece a su propio dominio. Verificar la suscripcion de otro dominio (patron cross-domain) acopla los smoke tests entre dominios; "acotar a la corrida" no elimina ese acoplamiento, por eso se prohibe por separado (MEF-ADR-0013, issue #324)
 
 ---
 

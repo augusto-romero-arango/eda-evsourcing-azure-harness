@@ -2,7 +2,7 @@
 
 ## Estado
 
-Aceptado (actualizado 2026-04-13: cobertura completa de efectos secundarios, una clase por comando, ejecucion secuencial, patron purge-before-act)
+Aceptado (actualizado 2026-04-13: cobertura completa de efectos secundarios, una clase por comando, ejecucion secuencial, patron purge-before-act; actualizado 2026-07-19: asserts de dead-letter acotados a la corrida, prohibicion del assert cross-domain)
 
 ## Contexto
 
@@ -131,6 +131,37 @@ e => e.SolicitudId == solicitudId && e.Fecha == fecha1
 
 Se llama `WaitForMessageAsync` N veces con el predicado amplio. Cada llamada consume un mensaje. Las
 verificaciones de campos especificos (Fecha, etc.) se hacen sobre los objetos retornados.
+
+### Hermeticidad del assert de dead-letter: acotado a la corrida
+
+El dead-letter queue (DLQ) de una suscripcion es un recurso compartido que no se auto-vacia. Un smoke
+test que exige el DLQ **globalmente vacio** (`PeekDeadLetterMessagesAsync(...).Should().BeEmpty()`) es
+fragil: un dead-letter residual de una corrida anterior fallida, de un warmup contra codigo viejo, o de
+un race deploy->smoke tumba el test aunque el flujo de la corrida actual haya sido correcto — un falso
+rojo determinista.
+
+El assert de dead-letter debe estar **acotado a la corrida**: filtra los dead-letters por un
+identificador unico de la corrida (ej. `SolicitudId`, `EmpleadoId`, `CorrelationId`) en vez de exigir
+ausencia total. El fixture expone esto con dos metodos:
+
+- `PeekAllDeadLetterMessagesAsync(topic, suscripcion)`: peekea el DLQ **completo iterando el cursor**
+  (`fromSequenceNumber`), nunca con un tope fijo pequeno — un tope bajo (ej. `maxMessages = 10`) perderia
+  el mensaje relevante si hay muchos residuales acumulados.
+- `ExisteDeadLetterDeLaCorridaAsync<TIdentificador>(topic, suscripcion, match)`: deserializa cada
+  dead-letter a una **forma minima** (un record con solo el identificador de la corrida) y evalua el
+  predicado `match`. No depende de la deserializacion de value objects ricos: un dead-letter con un
+  shape distinto simplemente no matchea (la `JsonException` se ignora, igual que en `WaitForMessageAsync`
+  cuando el mensaje no deserializa al tipo esperado).
+
+El patron `purge-before-act` (seccion anterior) se conserva sin cambios donde aplique — hermeticidad del
+assert de dead-letter y purga previa de la suscripcion `smoke-tests` son complementarios, no alternativos.
+
+**Prohibido el assert cross-domain.** Un dominio nunca verifica el DLQ/subscription de **otro** dominio.
+"Acotar a la corrida" reduce los falsos rojos por residuales, pero no elimina el acoplamiento de que un
+smoke test conozca y dependa del nombre de la suscripcion de un dominio ajeno. Por eso el Patron 1
+(dominio publicador, HTTP -> Service Bus) del `smoke-test-writer` ya no verifica el DLQ de la suscripcion
+del consumidor: esa suscripcion pertenece a otro dominio. Solo el Patron 2 (dominio consumidor,
+Service Bus -> Postgres) verifica dead-letters, y unicamente los de su **propia** suscripcion.
 
 ### Fixtures obligatorios
 
@@ -266,6 +297,16 @@ en el repo (idempotente; ver "Integracion en el proceso de desarrollo").
 
 ## Control de cambios
 
+- 2026-07-19: enmienda (issue #324) para acotar a la corrida los asserts de dead-letter: se agrega la
+  seccion "Hermeticidad del assert de dead-letter: acotado a la corrida" (filtrar por identificador
+  unico de la corrida en vez de exigir DLQ globalmente vacio; peek completo iterando el cursor sin tope
+  fijo; deserializacion a forma minima; prohibicion del assert cross-domain). Motivo: incidente en el
+  consumidor `Bitakora.ControlAsistencia` (issue #223, field note `2026-07-18-2027-bug-investigation.md`)
+  donde un dead-letter residual de una corrida anterior produjo un falso rojo determinista en un smoke
+  test que exigia el DLQ globalmente vacio, agravado por un assert cross-domain (un dominio assertando
+  sobre la subscripcion de otro). El `smoke-test-writer` deja de generar por defecto
+  `PeekDeadLetterMessagesAsync(...).Should().BeEmpty()` y el Patron 1 (dominio publicador) deja de
+  verificar el DLQ de la suscripcion del consumidor.
 - 2026-07-08: reformado (issue #234) para que el registro de dominios del workflow global deje de ser
   un array compartido (`.github/smoke-tests-dominios.json`) y pase a ser un archivo propio por dominio
   (`.github/smoke-tests/{kebab}.json`), cuya matrix arma `smoke-tests.yml` por glob. Motivo: dos
