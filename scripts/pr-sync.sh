@@ -244,7 +244,7 @@ validate_tests() {
     # *.Tests/, excluyendo *.SmokeTests/ (issue #305): los smoke tests son
     # black-box contra el entorno dev desplegado y abortarian aqui con 401 /
     # "ServiceBus no configurado" porque este gate corre local, sin credenciales
-    # de entorno (ADR-0013 — siguen cubiertos post-deploy por smoke-tests-dominio.yml).
+    # de entorno (MEF-ADR-0013 — siguen cubiertos post-deploy por smoke-tests-dominio.yml).
     #
     # Contrato de run_tests_projects: 0 = todos pasan, 8 = ningun proyecto tenia
     # tests para ejecutar, otro codigo = fallo real de tests (el build explicito

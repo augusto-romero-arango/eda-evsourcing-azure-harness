@@ -2,7 +2,7 @@
 model: haiku
 ---
 
-Genera la infraestructura base del consumidor (8 modulos Terraform + esqueleto del entorno con outputs + el workflow de CI `infra-cd.yml`) invocando al agente `infra-base-scaffolder`. Es el eslabon greenfield entre `bootstrap-backend.sh` (crea el `tfstate`) y el primer `/infra`, que solo escribe y revisa el HCL: el `apply` real lo ejecuta CI al mergear el PR (ADR-0021, ADR-0022). Comunicate en **espanol**.
+Genera la infraestructura base del consumidor (8 modulos Terraform + esqueleto del entorno con outputs + el workflow de CI `infra-cd.yml`) invocando al agente `infra-base-scaffolder`. Es el eslabon greenfield entre `bootstrap-backend.sh` (crea el `tfstate`) y el primer `/infra`, que solo escribe y revisa el HCL: el `apply` real lo ejecuta CI al mergear el PR (MEF-ADR-0021, MEF-ADR-0022). Comunicate en **espanol**.
 
 ## Pre-condicion: cwd != Mefisto
 
@@ -36,7 +36,7 @@ Se va a generar la infraestructura base del consumidor (ambiente: <env>):
   - infra/environments/<env>/{main, variables, providers, outputs}.tf
     (NO se genera backend.tf: lo escribe bootstrap-backend.sh)
   - .github/workflows/infra-cd.yml (si no existe aun): plan en cada PR sobre
-    infra/**, apply al mergear a main, autenticado por OIDC (ADR-0022)
+    infra/**, apply al mergear a main, autenticado por OIDC (MEF-ADR-0022)
 
 El generador es idempotente: si ya existen archivos, los respeta y solo crea lo que falta.
 ```
@@ -58,7 +58,7 @@ Infraestructura base generada. Siguiente:
      TF_VAR_POSTGRESQL_ADMIN_PASSWORD (Settings > Secrets and variables > Actions;
      setup-github-ci.sh no los crea) -- infra-cd.yml los inyecta como
      TF_VAR_alert_email/TF_VAR_postgresql_admin_password, nunca via terraform.tfvars
-     commiteado (ADR-0025). subscription_id ya no es una variable: se resuelve de
+     commiteado (MEF-ADR-0025). subscription_id ya no es una variable: se resuelve de
      ARM_SUBSCRIPTION_ID. Revisa tambien los defaults derivados en variables.tf
      (project, project_short, postgresql_location).
   3. Primer /infra: escribe y revisa el HCL, abre un PR. El apply real
@@ -69,5 +69,5 @@ Infraestructura base generada. Siguiente:
 ## Reglas
 
 - **No generes la infraestructura tu mismo.** Solo valida la pre-condicion, informa y lanza el agente.
-- El agente nunca corre `terraform plan`/`apply`: solo `fmt`, `init -backend=false` y `validate`. El plan real corre en CI al abrir el PR y el apply real al mergearlo a `main` (workflow `infra-cd.yml`, ADR-0021, ADR-0022).
-- El agente es idempotente: no sobrescribe archivos `.tf` ni el workflow `infra-cd.yml` existentes (ADR-0021).
+- El agente nunca corre `terraform plan`/`apply`: solo `fmt`, `init -backend=false` y `validate`. El plan real corre en CI al abrir el PR y el apply real al mergearlo a `main` (workflow `infra-cd.yml`, MEF-ADR-0021, MEF-ADR-0022).
+- El agente es idempotente: no sobrescribe archivos `.tf` ni el workflow `infra-cd.yml` existentes (MEF-ADR-0021).

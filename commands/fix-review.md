@@ -73,7 +73,7 @@ Muestra una tabla con la clasificacion:
 | # | Archivo                    | Categoria   | Resumen                              |
 |---|----------------------------|-------------|--------------------------------------|
 | 1 | src/.../MiArchivo.cs:42    | corregir    | Falta parametro X en constructor     |
-| 2 | tests/.../MiTest.cs:15     | explicar    | El patron es correcto segun ADR-0005  |
+| 2 | tests/.../MiTest.cs:15     | explicar    | El patron es correcto segun MEF-ADR-0005  |
 | 3 | infra/.../main.tf:51       | resuelto    | Ya corregido en commit abc1234       |
 | 4 | tests/.../Smoke.cs:14      | investigar  | Requiere investigacion de approach   |
 ```
@@ -195,7 +195,7 @@ Respuesta: "Corregido en abc1234. Se agrego el parametro X al constructor..."
 ### Comentario 2 (tests/.../MiTest.cs:15) — explicar
 > [cita del comentario original]
 
-Respuesta: "El patron es correcto segun ADR-0005 porque..."
+Respuesta: "El patron es correcto segun MEF-ADR-0005 porque..."
 ```
 
 **Espera aprobacion del usuario antes de publicar.**
@@ -227,7 +227,7 @@ Listo. PR #N:
 
 Cada comentario de review es evidencia de un gap en las instrucciones de un agente. Esta fase traza las correcciones hasta su origen y propone mejoras.
 
-> **Modelo plugin.** Tras la extraccion del harness al plugin `mefisto`, los agentes/skills del marco ya **no viven en el repo consumidor**: estan en el cache del plugin (`~/.claude/plugins/cache/.../mefisto/<version>/agents/`), read-only y versionado. Por eso una mejora a un agente/skill del harness **no se puede editar en la rama del PR del consumidor**: se enruta como **draft** (`estado:borrador`) al repo de Mefisto via `gh -R`, igual que hacen el `planner` y el `tooling-investigator` publicados (ver `CLAUDE.md` "Routing cross-repo: solo drafts" y ADR-0019). La edicion en-rama queda reservada a lo que realmente vive en el consumidor (un ADR local del proyecto, convenciones de su `CLAUDE.md`, un fixture/helper propio).
+> **Modelo plugin.** Tras la extraccion del harness al plugin `mefisto`, los agentes/skills del marco ya **no viven en el repo consumidor**: estan en el cache del plugin (`~/.claude/plugins/cache/.../mefisto/<version>/agents/`), read-only y versionado. Por eso una mejora a un agente/skill del harness **no se puede editar en la rama del PR del consumidor**: se enruta como **draft** (`estado:borrador`) al repo de Mefisto via `gh -R`, igual que hacen el `planner` y el `tooling-investigator` publicados (ver `CLAUDE.md` "Routing cross-repo: solo drafts" y MEF-ADR-0019). La edicion en-rama queda reservada a lo que realmente vive en el consumidor (un ADR local del proyecto, convenciones de su `CLAUDE.md`, un fixture/helper propio).
 
 ### 5.1 Trazar correcciones a su origen
 
@@ -295,7 +295,7 @@ fi
 
 #### Si el ajuste es al harness: crear un draft cross-repo
 
-Reutiliza el mismo routing que el `planner` y el `tooling-investigator` publicados (ver `CLAUDE.md` "Routing cross-repo: solo drafts" y ADR-0019). Lee el slug del repo de Mefisto (configurable para forks):
+Reutiliza el mismo routing que el `planner` y el `tooling-investigator` publicados (ver `CLAUDE.md` "Routing cross-repo: solo drafts" y MEF-ADR-0019). Lee el slug del repo de Mefisto (configurable para forks):
 
 ```bash
 HARNESS_REPO_SLUG=$(jq -r '.repoSlug // empty' .claude/harness.config.json 2>/dev/null)

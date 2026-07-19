@@ -2,7 +2,7 @@
 model: sonnet
 ---
 
-Dashboard de salud del entorno desplegado. Ejecuta queries contra App Insights, verifica el ultimo apply de infraestructura en CI (workflow `infra-cd.yml`, ADR-0021/ADR-0022) y presenta un resumen con semaforos. Comunicate en **espanol**.
+Dashboard de salud del entorno desplegado. Ejecuta queries contra App Insights, verifica el ultimo apply de infraestructura en CI (workflow `infra-cd.yml`, MEF-ADR-0021/MEF-ADR-0022) y presenta un resumen con semaforos. Comunicate en **espanol**.
 
 ## Pre-condicion: cwd != Mefisto
 
@@ -55,7 +55,7 @@ Y termina.
 
 ### 2. Verificar el ultimo apply de infraestructura (workflow Infra CD)
 
-El `apply` de infraestructura ya no corre en local: corre en CI, en el job `apply` de `.github/workflows/infra-cd.yml` al mergear a `main` (ADR-0021, ADR-0022). Consulta el ultimo run de ese workflow sobre `main`:
+El `apply` de infraestructura ya no corre en local: corre en CI, en el job `apply` de `.github/workflows/infra-cd.yml` al mergear a `main` (MEF-ADR-0021, MEF-ADR-0022). Consulta el ultimo run de ese workflow sobre `main`:
 
 ```bash
 gh run list --workflow=infra-cd.yml --branch main --limit 1 --json status,conclusion,createdAt,url -q '.[0] // empty'

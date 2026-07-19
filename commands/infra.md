@@ -78,7 +78,7 @@ Pipeline infra lanzado en tmux. Para monitorear:
 Usa /work-status para ver el progreso sin salir de aqui.
 ```
 
-## Flujo: cero permisos de Azure en local (ADR-0021, ADR-0022)
+## Flujo: cero permisos de Azure en local (MEF-ADR-0021, MEF-ADR-0022)
 
 En el flujo *ongoing*, el desarrollador que usa Mefisto **no tiene ningun permiso de Azure**. Este pipeline (`iac-pipeline.sh`) corre enteramente sin credenciales de Azure y sin sesion `az login`:
 
@@ -86,7 +86,7 @@ En el flujo *ongoing*, el desarrollador que usa Mefisto **no tiene ningun permis
 2. **Review** (`infra-reviewer`): revisa seguridad/calidad del HCL y hace **revision estatica** (`terraform fmt -check` + `terraform init -backend=false` + `terraform validate`). **No** ejecuta `terraform plan`.
 3. **PR**: el pipeline crea un PR con el HCL escrito y revisado. El PR **nunca** lleva `Closes #N`.
 
-El **plan real** corre en CI cuando se abre el PR (workflow `infra-cd.yml`, job `plan`, publicado como comentario del PR) y el **apply real** corre en CI al mergear el PR a `main` (job `apply`). Ese mismo job cierra el issue tras un apply exitoso (ADR-0022) -- nunca el propio merge del PR ni este pipeline local.
+El **plan real** corre en CI cuando se abre el PR (workflow `infra-cd.yml`, job `plan`, publicado como comentario del PR) y el **apply real** corre en CI al mergear el PR a `main` (job `apply`). Ese mismo job cierra el issue tras un apply exitoso (MEF-ADR-0022) -- nunca el propio merge del PR ni este pipeline local.
 
 **Distincion bootstrap vs ongoing**: el bootstrap inicial (`bootstrap-backend.sh` para el tfstate, `setup-github-ci.sh` para el Service Principal de CI) es una operacion **privilegiada de una sola vez** que corre un admin con permisos de Azure para habilitar la CI. No es parte de este flujo ongoing.
 

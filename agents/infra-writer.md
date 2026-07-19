@@ -26,7 +26,7 @@ El prompt que recibes contiene el issue con los recursos de infraestructura a cr
 find infra/ -name "*.tf" | head -30
 ```
 
-- Lee los modulos existentes en `infra/modules/` que puedas reutilizar. El harness provee 8 modulos base (`resource-group`, `monitoring`, `postgresql`, `service-bus`, `service-plan`, `storage`, `function-app`, `key-vault`) generados por el agente `infra-base-scaffolder` / skill `/infra-base` (ver **ADR-0021**). Si `infra/modules/` esta vacio o incompleto (greenfield aun sin base), **no asumas que existen**: avisa al usuario que genere la base primero con `/infra-base` antes de continuar.
+- Lee los modulos existentes en `infra/modules/` que puedas reutilizar. El harness provee 8 modulos base (`resource-group`, `monitoring`, `postgresql`, `service-bus`, `service-plan`, `storage`, `function-app`, `key-vault`) generados por el agente `infra-base-scaffolder` / skill `/infra-base` (ver **MEF-ADR-0021**). Si `infra/modules/` esta vacio o incompleto (greenfield aun sin base), **no asumas que existen**: avisa al usuario que genere la base primero con `/infra-base` antes de continuar.
 - Lee el ambiente target en `infra/environments/<env>/`. Si no existe el esqueleto (`main.tf`/`variables.tf`/`providers.tf`/`outputs.tf`), tambien lo genera `/infra-base`.
 
 ### 2. Consultar documentacion (MCP de Terraform)
@@ -54,7 +54,7 @@ Antes de escribir, define:
 ### 4. Escribir el HCL
 
 **En modulos** (`infra/modules/<tipo>/main.tf`):
-- Los 8 modulos base ya existen si se corrio `/infra-base` (ADR-0021); reutilizalos antes de crear uno nuevo. Crea un modulo nuevo solo para recursos que la base no cubre.
+- Los 8 modulos base ya existen si se corrio `/infra-base` (MEF-ADR-0021); reutilizalos antes de crear uno nuevo. Crea un modulo nuevo solo para recursos que la base no cubre.
 - Cada modulo tiene exactamente: `main.tf`, `variables.tf` (opcional si los vars van inline), `outputs.tf` (si hay outputs)
 - Los recursos criticos llevan `lifecycle { prevent_destroy = true }`
 - Los secretos (connection strings, keys) van en outputs marcados como `sensitive = true`
@@ -69,13 +69,13 @@ Antes de escribir, define:
 - Storage accounts: `st<proyecto><ambiente>func` (sin guiones, max 24 chars)
 - Function Apps: `func-<proyecto>-<ambiente>-<dominio>`
 - Service Bus (namespace): `sb-<proyecto>-<ambiente>`
-- Service Bus topics/subscriptions: kebab-case, ver ADR-0001 (`{evento-en-pasado}` para topics, `{consumidor}-escucha-{productor}` para subscriptions)
-- Service Bus queues de fan-in (ADR-0026): kebab-case, **excepcion deliberada** a este patron -- el nombre es el de la Function que consume el queue (no `<tipo>-<proyecto>-<ambiente>`), porque el queue representa una decision de convergencia, no un recurso por-proyecto/ambiente
-- Service Plans: `asp-<proyecto>-<ambiente>-<dominio>` (un plan dedicado por Function App; paraleliza el patron de Function Apps, ver ADR-0020). Nunca un `asp-<proyecto>-<ambiente>` compartido entre dominios.
+- Service Bus topics/subscriptions: kebab-case, ver MEF-ADR-0001 (`{evento-en-pasado}` para topics, `{consumidor}-escucha-{productor}` para subscriptions)
+- Service Bus queues de fan-in (MEF-ADR-0026): kebab-case, **excepcion deliberada** a este patron -- el nombre es el de la Function que consume el queue (no `<tipo>-<proyecto>-<ambiente>`), porque el queue representa una decision de convergencia, no un recurso por-proyecto/ambiente
+- Service Plans: `asp-<proyecto>-<ambiente>-<dominio>` (un plan dedicado por Function App; paraleliza el patron de Function Apps, ver MEF-ADR-0020). Nunca un `asp-<proyecto>-<ambiente>` compartido entre dominios.
 
-**Fan-in: queues con sesion (ADR-0026).** Cuando el issue describe que varios eventos (mismo tipo o distintos, mismo productor o distintos) deben converger en una decision sobre el **mismo aggregate** y el fan-out de ADR-0001 permitiria escrituras concurrentes sobre el mismo stream de Marten, usa la primitiva de fan-in del modulo `service-bus` (`queues_config` + `topics_config[].subscriptions[].forward_to`) en vez de subscriptions independientes:
+**Fan-in: queues con sesion (MEF-ADR-0026).** Cuando el issue describe que varios eventos (mismo tipo o distintos, mismo productor o distintos) deben converger en una decision sobre el **mismo aggregate** y el fan-out de MEF-ADR-0001 permitiria escrituras concurrentes sobre el mismo stream de Marten, usa la primitiva de fan-in del modulo `service-bus` (`queues_config` + `topics_config[].subscriptions[].forward_to`) en vez de subscriptions independientes:
 
-- Declara el queue de fan-in en `queues_config` del namespace que corresponda (tipicamente `module.service_bus_interno`, ADR-0023), con `requires_session = true`.
+- Declara el queue de fan-in en `queues_config` del namespace que corresponda (tipicamente `module.service_bus_interno`, MEF-ADR-0023), con `requires_session = true`.
 - Por cada topic de evento que converge, agrega una subscription normal dentro de `topics_config` (sin `requires_session`: el modulo no expone ese campo en subscriptions, ver el comentario del modulo) con `forward_to = "<nombre-del-queue-de-fan-in>"`. Varias subscriptions de topics distintos pueden apuntar al mismo queue.
 - `forward_to` toma el **nombre** del queue (no su ID) -- asi lo expone el modulo.
 - **Restriccion dura de la plataforma, verificada contra el provider `azurerm`**: una entidad con `requires_session = true` no puede ser la fuente de un `forward_to` [HashiCorp, `azurerm_servicebus_queue`/`azurerm_servicebus_subscription` -- Argument Reference; ver tambien Microsoft Learn, "Chaining Service Bus entities with autoforwarding"]. Por eso la sesion va **solo** en el queue destino, nunca en la subscription fuente.
@@ -107,20 +107,20 @@ module "service_bus_interno" {
 }
 ```
 
-**Enrutamiento multi-destinatario: correlation filter de igualdad (ADR-0027).** Cuando el issue describe que un **unico** evento publico debe llegar a **N destinatarios** distintos, cada uno interesado solo en su subconjunto -- el eje es el destinatario, no el tipo de evento (eso sigue siendo topic-por-evento, ADR-0001) -- usa `correlation_filter` en la subscription de cada destinatario en vez de suscribirlos al topic completo a descartar en el handler:
+**Enrutamiento multi-destinatario: correlation filter de igualdad (MEF-ADR-0027).** Cuando el issue describe que un **unico** evento publico debe llegar a **N destinatarios** distintos, cada uno interesado solo en su subconjunto -- el eje es el destinatario, no el tipo de evento (eso sigue siendo topic-por-evento, MEF-ADR-0001) -- usa `correlation_filter` en la subscription de cada destinatario en vez de suscribirlos al topic completo a descartar en el handler:
 
-- El productor sigue publicando **unicamente** al topic del evento (ADR-0001/ADR-0024); su unica obligacion nueva es estampar la clave de enrutamiento como **application property** al publicar -- los filtros no leen el body [Microsoft Learn, "Topic filters and actions"].
+- El productor sigue publicando **unicamente** al topic del evento (MEF-ADR-0001/MEF-ADR-0024); su unica obligacion nueva es estampar la clave de enrutamiento como **application property** al publicar -- los filtros no leen el body [Microsoft Learn, "Topic filters and actions"].
 - Cada destinatario se selecciona con `correlation_filter = { "<clave>" = "<valor-del-destinatario>" }` (>=1 property; el modulo `service-bus` lo exige via `validation`) en su subscription dentro de `topics_config[<topic>].subscriptions`.
-- **Donde viven las N subscriptions.** El modulo `service-bus` **crea** un namespace (`azurerm_servicebus_namespace`), asi que solo modela namespaces que el BC **posee**. Un solo `topics_config` agrupa el topic + sus N subscriptions cuando un unico dueno las declara en su propio namespace: el **productor** en su namespace de integracion (patron Open Host, ADR-0024 -- el precedente que motivo ADR-0027). En el **backbone compartido** del producto, en cambio, cada BC consumidor agrega su **propia** subscription (ADR-0001), de modo que no quedan todas en un mismo `topics_config`, y ese backbone se provisiona fuera de este modulo. El namespace **interno** del BC (`module.service_bus_interno`) es privado (ADR-0023): hospeda solo eventos privados intra-BC, nunca subscriptions de otros BCs.
-- La clave de enrutamiento (p. ej. `destinatarioId`, `tenantId`) la decide el flujo concreto -- no la conflaciones con `SessionId`/`groupId` (ADR-0026): son mecanismos distintos, uno de enrutamiento y otro de serializacion de fan-in.
-- Nunca uses una expresion SQL para este eje. El modulo `service-bus` no expone `SqlFilter` (ADR-0027 lo removio del modulo): si necesitas algo distinto a igualdad exacta, no es un correlation filter y sigue cayendo, sin excepcion, bajo el rechazo de ADR-0001 -- no instances `azurerm_servicebus_subscription_rule` con `SqlFilter` a mano fuera del modulo.
+- **Donde viven las N subscriptions.** El modulo `service-bus` **crea** un namespace (`azurerm_servicebus_namespace`), asi que solo modela namespaces que el BC **posee**. Un solo `topics_config` agrupa el topic + sus N subscriptions cuando un unico dueno las declara en su propio namespace: el **productor** en su namespace de integracion (patron Open Host, MEF-ADR-0024 -- el precedente que motivo MEF-ADR-0027). En el **backbone compartido** del producto, en cambio, cada BC consumidor agrega su **propia** subscription (MEF-ADR-0001), de modo que no quedan todas en un mismo `topics_config`, y ese backbone se provisiona fuera de este modulo. El namespace **interno** del BC (`module.service_bus_interno`) es privado (MEF-ADR-0023): hospeda solo eventos privados intra-BC, nunca subscriptions de otros BCs.
+- La clave de enrutamiento (p. ej. `destinatarioId`, `tenantId`) la decide el flujo concreto -- no la conflaciones con `SessionId`/`groupId` (MEF-ADR-0026): son mecanismos distintos, uno de enrutamiento y otro de serializacion de fan-in.
+- Nunca uses una expresion SQL para este eje. El modulo `service-bus` no expone `SqlFilter` (MEF-ADR-0027 lo removio del modulo): si necesitas algo distinto a igualdad exacta, no es un correlation filter y sigue cayendo, sin excepcion, bajo el rechazo de MEF-ADR-0001 -- no instances `azurerm_servicebus_subscription_rule` con `SqlFilter` a mano fuera del modulo.
 
-Ejemplo minimo (el namespace de integracion del productor -- patron Open Host, ADR-0024 -- con un topic y dos destinatarios filtrados por igualdad sobre la misma clave):
+Ejemplo minimo (el namespace de integracion del productor -- patron Open Host, MEF-ADR-0024 -- con un topic y dos destinatarios filtrados por igualdad sobre la misma clave):
 
 ```hcl
 # Namespace del PRODUCTOR del evento publico (su namespace de integracion, patron Open Host
-# de ADR-0024): el productor declara aqui el topic y las N subscriptions destinatarias. NO es
-# el namespace interno del BC consumidor -- ese es privado (ADR-0023) y no hospeda subscriptions
+# de MEF-ADR-0024): el productor declara aqui el topic y las N subscriptions destinatarias. NO es
+# el namespace interno del BC consumidor -- ese es privado (MEF-ADR-0023) y no hospeda subscriptions
 # de otros BCs; el backbone compartido, por su parte, se provisiona fuera de este modulo.
 module "service_bus_integracion" {
   # ...

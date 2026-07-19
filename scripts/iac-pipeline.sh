@@ -8,12 +8,12 @@
 #
 # Ciclo: Issue -> Worktree -> Write (HCL) -> Review (revision estatica) -> PR -> Cleanup
 #
-# El pipeline local NUNCA ejecuta 'terraform plan' ni 'terraform apply' (ADR-0021, ADR-0022,
+# El pipeline local NUNCA ejecuta 'terraform plan' ni 'terraform apply' (MEF-ADR-0021, MEF-ADR-0022,
 # issue #199): Stage 1 (infra-writer) escribe el HCL y Stage 2 (infra-reviewer) hace revision
 # estatica (fmt -check + init -backend=false + validate), sin credenciales de Azure. El PR
 # resultante NO lleva 'Closes #N': el plan real corre en el PR (workflow infra-cd.yml, #197) y
 # el apply real en el merge a main; el cierre del issue lo hace ese workflow de CI tras un
-# apply exitoso (ADR-0022).
+# apply exitoso (MEF-ADR-0022).
 
 set -euo pipefail
 
@@ -168,7 +168,7 @@ INFRA_ENV_DIR="infra/environments/$ENVIRONMENT"
 [ -d "$INFRA_ENV_DIR" ] || abort "No existe el directorio de ambiente: $INFRA_ENV_DIR"
 
 # --- Verificar dependencias ---
-# NUNCA se requiere 'az' ni sesion de Azure (ADR-0021/ADR-0022, issue #199): el pipeline local
+# NUNCA se requiere 'az' ni sesion de Azure (MEF-ADR-0021/MEF-ADR-0022, issue #199): el pipeline local
 # solo escribe y revisa HCL de forma estatica (fmt/init -backend=false/validate); no hay plan
 # ni apply local que autenticar contra Azure.
 for cmd in claude gh git terraform; do
@@ -196,7 +196,7 @@ ISSUE_STATE=$(echo "$ISSUE_JSON" | python3 -c "import sys,json; print(json.load(
 if [ "$ISSUE_STATE" != "OPEN" ]; then
     abort "El issue #$ISSUE_NUM esta $ISSUE_STATE -- una corrida solo procesa issues abiertos.
 El cierre de un issue de infra lo hace el workflow de CI (infra-cd.yml) tras un 'terraform
-apply' exitoso en main (ADR-0022), no este pipeline. Si necesitas reescribir/revisar la infra
+apply' exitoso en main (MEF-ADR-0022), no este pipeline. Si necesitas reescribir/revisar la infra
 de un issue ya cerrado, reabrelo primero."
 fi
 ISSUE_TITLE=$(echo "$ISSUE_JSON" | grep -o '"title":"[^"]*"' | sed 's/"title":"//;s/"//')
@@ -268,7 +268,7 @@ else
     # tree del consumidor, pero este worktree se ramifica SIEMPRE desde origin/main,
     # donde ese backend.tf puede no estar versionado aun (flujo greenfield). Sin esta
     # copia, el terraform init/validate del reviewer correria sin el backend remoto
-    # configurado en el HCL versionado -- y CI (que aplica sobre este mismo HCL, ADR-0022)
+    # configurado en el HCL versionado -- y CI (que aplica sobre este mismo HCL, MEF-ADR-0022)
     # se quedaria sin backend.tf en su checkout. Copiamos el backend.tf y lo commiteamos
     # en la rama del worktree para que viaje en el PR del pipeline y se versione en main
     # via merge (sin push directo a main). El reviewer sigue corriendo con
@@ -466,11 +466,11 @@ log "Haciendo push de la rama..."
 git -C "$WORKTREE_PATH" push -u origin "$BRANCH_NAME" >>"$LOG_FILE_ABS" 2>&1 \
     || abort "No se pudo hacer push de la rama $BRANCH_NAME"
 
-# ADR-0022 ("Cierre del issue de infra: al aplicar en CI, no al mergear el PR"): el PR de este
+# MEF-ADR-0022 ("Cierre del issue de infra: al aplicar en CI, no al mergear el PR"): el PR de este
 # pipeline NUNCA lleva 'Closes #N'. El plan real corre en el PR (workflow infra-cd.yml, job
 # 'plan', #197) y el apply real en el merge a main (job 'apply'); ese job deriva el numero de
 # issue de la rama 'infra-issue-<num>-*' y cierra el issue tras un apply exitoso (#197 CA-5).
-CLOSES_LINE="> **Apply pendiente en CI**: este PR no cierra el issue #$ISSUE_NUM. El \`terraform apply\` lo ejecuta el workflow **Infra CD** al mergear este PR a \`main\` (ADR-0022); el issue se cierra automaticamente cuando ese apply termine exitosamente."
+CLOSES_LINE="> **Apply pendiente en CI**: este PR no cierra el issue #$ISSUE_NUM. El \`terraform apply\` lo ejecuta el workflow **Infra CD** al mergear este PR a \`main\` (MEF-ADR-0022); el issue se cierra automaticamente cuando ese apply termine exitosamente."
 
 WR_SUMMARY=$(collect_summary "1" "infra-writer")
 RV_SUMMARY=$(collect_summary "2" "infra-reviewer")
@@ -525,7 +525,7 @@ EOF
 [ -n "${PR_URL:-}" ] && success "PR creado: $PR_URL"
 
 gh issue comment "$ISSUE_NUM" \
-    --body "Pipeline IaC completado (HCL escrito y revisado, sin plan ni apply local). PR: ${PR_URL:-pendiente}. Infra pendiente de aplicar por CI: el workflow **Infra CD** aplica al mergear a main y cierra este issue tras un apply exitoso (ADR-0022)." \
+    --body "Pipeline IaC completado (HCL escrito y revisado, sin plan ni apply local). PR: ${PR_URL:-pendiente}. Infra pendiente de aplicar por CI: el workflow **Infra CD** aplica al mergear a main y cierra este issue tras un apply exitoso (MEF-ADR-0022)." \
     --repo "$REPO_SLUG" \
     >>"$LOG_FILE" 2>&1 || warn "No se pudo comentar en el issue #$ISSUE_NUM"
 
@@ -562,5 +562,5 @@ echo -e "  Rama:      $BRANCH_NAME"
 [ -n "${PR_URL:-}" ] && echo -e "  PR:        $PR_URL"
 echo -e "  Log:       $LOG_FILE_ABS"
 echo ""
-echo -e "${YELLOW}Infra pendiente de aplicar por CI:${NC} el workflow Infra CD aplica al mergear el PR a main y cierra el issue #$ISSUE_NUM tras un apply exitoso (ADR-0022)."
+echo -e "${YELLOW}Infra pendiente de aplicar por CI:${NC} el workflow Infra CD aplica al mergear el PR a main y cierra el issue #$ISSUE_NUM tras un apply exitoso (MEF-ADR-0022)."
 echo ""

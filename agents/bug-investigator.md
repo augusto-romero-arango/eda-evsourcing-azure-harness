@@ -36,11 +36,11 @@ Si el sintoma sugiere un fallo en el pipeline de deploy (Function App que no arr
    dotnet publish src/<RootNamespace>.<Dominio>/ -c Release -r linux-x64 --self-contained false -o /tmp/publish
    ls /tmp/publish/functions.metadata /tmp/publish/host.json
    ```
-4. **Verifica la infraestructura contra ADR-0020 del harness (hosting de Azure Functions: un App Service Plan dedicado por Function App)**. ADR-0020 del marco es la fuente de verdad del aislamiento por plan; el proyecto consumidor puede tener un ADR local complementario (p. ej. SKUs o ambientes propios), pero no puede contradecir esta directiva:
+4. **Verifica la infraestructura contra MEF-ADR-0020 del harness (hosting de Azure Functions: un App Service Plan dedicado por Function App)**. MEF-ADR-0020 del marco es la fuente de verdad del aislamiento por plan; el proyecto consumidor puede tener un ADR local complementario (p. ej. SKUs o ambientes propios), pero no puede contradecir esta directiva:
    - Plan de hosting: al menos B1, nunca Consumption Y1 con .NET 10+.
-   - **Aislamiento por plan (ADR-0020)**: cada Function App corre en su propio App Service Plan dedicado (`asp-<proyecto>-<env>-<dominio>`), nunca uno compartido entre dominios. Verifica que el plan no esta compartido:
+   - **Aislamiento por plan (MEF-ADR-0020)**: cada Function App corre en su propio App Service Plan dedicado (`asp-<proyecto>-<env>-<dominio>`), nunca uno compartido entre dominios. Verifica que el plan no esta compartido:
      ```bash
-     az appservice plan show --ids <id-del-plan> --query "numberOfSites"   # 1 => dedicado; >1 => compartido (viola ADR-0020)
+     az appservice plan show --ids <id-del-plan> --query "numberOfSites"   # 1 => dedicado; >1 => compartido (viola MEF-ADR-0020)
      ```
      Tambien puedes revisar en Terraform que cada `module function_app_<dominio>` apunta a su propio `service_plan_id` (un `module service_plan_<dominio>` por dominio, sin plan compartido global). Un plan compartido reintroduce el *noisy neighbor* que origino #43: si el sintoma es timeouts, health checks lentos o fallos intermitentes de smoke, ve directo al «Patron de diagnostico: noisy neighbor por plan compartido» mas abajo.
    - App settings obligatorios: `FUNCTIONS_WORKER_RUNTIME`, `FUNCTIONS_EXTENSION_VERSION`, `WEBSITE_USE_PLACEHOLDER_DOTNETISOLATED`, `WEBSITE_RUN_FROM_PACKAGE`.
@@ -52,7 +52,7 @@ Si el triage descarta deploy como causa, continua con los cuatro stages.
 
 ## Patron de diagnostico: noisy neighbor por plan compartido (origen #43)
 
-Algunos sintomas no son de deploy ni de codigo, sino de **contencion de CPU en el App Service Plan**. Sospecha este patron cuando el usuario reporta: timeouts intermitentes, health checks lentos (decenas de segundos), latencia alta sin causa aparente, o fallos esporadicos de smoke (ADR-0013) **sin excepciones correlacionadas en App Insights**.
+Algunos sintomas no son de deploy ni de codigo, sino de **contencion de CPU en el App Service Plan**. Sospecha este patron cuando el usuario reporta: timeouts intermitentes, health checks lentos (decenas de segundos), latencia alta sin causa aparente, o fallos esporadicos de smoke (MEF-ADR-0013) **sin excepciones correlacionadas en App Insights**.
 
 ### Firma del sintoma
 
@@ -74,19 +74,19 @@ Evidencia de referencia (#43, `Bitakora.ControlAsistencia`): ventana 11:15-12:00
 2. **Trafico real en esa misma ventana** (para confirmar el "en reposo"): cuenta requests y mensajes procesados con las queries del Stage 1 (`health-summary`, o un `custom` que sume `requests` y `customEvents` por `bin(timestamp, 5m)`). CPU alta + ~0 trafico = firma confirmada.
 3. **Aislamiento del plan**: confirma si la Function App comparte plan con otra:
    ```bash
-   az appservice plan show --ids <id-del-plan> --query "numberOfSites"   # >1 => plan compartido (viola ADR-0020)
+   az appservice plan show --ids <id-del-plan> --query "numberOfSites"   # >1 => plan compartido (viola MEF-ADR-0020)
    ```
 
-### Causa raiz (ADR-0020)
+### Causa raiz (MEF-ADR-0020)
 
 Wolverine corre en `DurabilityMode.Solo`. En ese modo cada worker levanta el **agente de durabilidad always-on** que poll-ea PostgreSQL en background de forma continua (outbox/inbox transaccional) — trabaja **aunque no haya trafico de entrada**. Con dos Function Apps en un mismo core hay **dos agentes always-on compitiendo por el nucleo**: noisy neighbor mutuo que produce los timeouts y health lentos observados.
 
 ### Eje de mitigacion (critico)
 
-- **El unico eje de crecimiento es vertical o aislar por app**: subir el SKU del plan dedicado, o (lo correcto) dar a cada Function App su propio App Service Plan, segun ADR-0020.
-- **NUNCA escalar out (`worker_count` > 1) con `DurabilityMode.Solo`.** `Solo` asume nodo unico: N instancias procesarian el mismo outbox/inbox -> doble publicacion de eventos y perdida de la garantia de entrega-una-vez (ADR-0020, ADR-0001). Escalar horizontal exigiria cambiar de runtime (Wolverine `Balanced`), fuera del modelo soportado hoy.
+- **El unico eje de crecimiento es vertical o aislar por app**: subir el SKU del plan dedicado, o (lo correcto) dar a cada Function App su propio App Service Plan, segun MEF-ADR-0020.
+- **NUNCA escalar out (`worker_count` > 1) con `DurabilityMode.Solo`.** `Solo` asume nodo unico: N instancias procesarian el mismo outbox/inbox -> doble publicacion de eventos y perdida de la garantia de entrega-una-vez (MEF-ADR-0020, MEF-ADR-0001). Escalar horizontal exigiria cambiar de runtime (Wolverine `Balanced`), fuera del modelo soportado hoy.
 
-Si confirmas este patron, el fix es de **infraestructura** (`tipo:infra`): separar los planes por dominio segun ADR-0020. No propongas tocar codigo de dominio ni cambiar el `DurabilityMode`.
+Si confirmas este patron, el fix es de **infraestructura** (`tipo:infra`): separar los planes por dominio segun MEF-ADR-0020. No propongas tocar codigo de dominio ni cambiar el `DurabilityMode`.
 
 ## Cuatro stages de investigacion
 
