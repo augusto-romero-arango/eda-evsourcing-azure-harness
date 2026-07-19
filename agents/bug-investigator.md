@@ -88,6 +88,47 @@ Wolverine corre en `DurabilityMode.Solo`. En ese modo cada worker levanta el **a
 
 Si confirmas este patron, el fix es de **infraestructura** (`tipo:infra`): separar los planes por dominio segun MEF-ADR-0020. No propongas tocar codigo de dominio ni cambiar el `DurabilityMode`.
 
+## Patron de diagnostico: breaking change de wiring de DI tras upgrade de building blocks (origen incidente ITenantResolver)
+
+Algunos sintomas no son de deploy, de codigo de dominio ni de contencion de recursos, sino de un **breaking change de wiring de Dependency Injection escondido detras de firmas publicas sin cambios** en una libreria/building block que el proyecto acaba de actualizar. Sospecha este patron cuando el sintoma correlaciona con un upgrade reciente de paquetes NuGet (especialmente `Cosmos.Event*` u otro building block compartido) y el codigo **compila y los unit tests pasan en verde**, pero el servicio revienta en runtime.
+
+### Firma del sintoma
+
+La firma diagnostica es **"compila + unit tests verdes pero revienta en runtime"**: nada en la superficie publica del paquete cambio (mismos metodos, misma firma), pero el registro interno de servicios en el contenedor DI si cambio entre versiones. El caso de origen: `InvalidOperationException: Unable to resolve service for type 'Cosmos.MultiTenancy.ITenantResolver'` -> HTTP 500 en todos los endpoints tras actualizar `Cosmos.Event*` de 0.1.9 a 2.1.0 (Bitakora.ControlAsistencia, ver #207/#219).
+
+### Como confirmarlo
+
+1. **Correlaciona la excepcion en App Insights con el stack de activacion del host de Functions**: busca en el stacktrace la cadena `DefaultFunctionActivator.CreateInstance` -> constructor del servicio que fallo -> tipo de la dependencia no resuelta. Esa cadena confirma que el fallo es de activacion/DI del host, no de logica de negocio.
+   ```bash
+   ./scripts/appinsights-query.sh exceptions
+   # busca el tipo de excepcion (InvalidOperationException / DependencyResolutionException) y su conteo en la ventana del deploy
+   ```
+2. **Localiza ambas versiones del paquete en el cache de NuGet**:
+   ```bash
+   ls ~/.nuget/packages/<paquete>/
+   # ej: ls ~/.nuget/packages/cosmos.eventsourcing/
+   ```
+3. **Decompila cada version con `ilspycmd`** (dotnet global tool). Si el tool no esta instalado, indica el comando de instalacion — **no lo instales por cuenta propia**:
+   ```bash
+   dotnet tool install -g ilspycmd
+   ```
+   Comando de decompilacion (placeholders `<paquete>`, `<version-vieja>`, `<version-nueva>`, `<TargetFramework>`):
+   ```bash
+   ilspycmd ~/.nuget/packages/<paquete>/<version-vieja>/lib/<TargetFramework>/<paquete>.dll -o /tmp/decompiled-vieja
+   ilspycmd ~/.nuget/packages/<paquete>/<version-nueva>/lib/<TargetFramework>/<paquete>.dll -o /tmp/decompiled-nueva
+   ```
+4. **Diffea los tipos relevantes**: los metodos de extension de registro (los que el proyecto invoca en su `Program.cs`, p. ej. `AgregarWolverine*Router`) y los constructores de los servicios que el stacktrace senala como no resueltos:
+   ```bash
+   diff -u /tmp/decompiled-vieja/<Namespace>/<TipoConMetodoDeRegistro>.cs /tmp/decompiled-nueva/<Namespace>/<TipoConMetodoDeRegistro>.cs
+   ```
+   Precedente exacto (caso de origen): el diff mostro que 2.x elimino la linea `AddScoped<ITenantResolver, ...>()` dentro de los metodos `AgregarWolverine*Router` — el registro del servicio desaparecio silenciosamente entre versiones sin que cambiara ninguna firma publica.
+
+### Causa raiz
+
+La libreria/building block cambio su **wiring interno de DI** (que servicios registra un metodo de extension) entre versiones minor/major sin documentarlo como breaking change, porque la superficie publica (firmas, tipos exportados) no cambio. Los unit tests del consumidor no lo detectan porque tipicamente no levantan el contenedor DI completo del host; solo un test de composicion del contenedor (MEF-ADR-0029) o el runtime real lo revela.
+
+Si confirmas este patron, el fix es registrar explicitamente el servicio eliminado en el `Program.cs` del consumidor (o fijar la version del paquete hasta que el building block lo restaure), y proponer como issue de tooling anadir/objetar un test de composicion del contenedor (MEF-ADR-0029) que hubiera detectado la regresion antes del deploy.
+
 ## Cuatro stages de investigacion
 
 ### Stage 1: Recoleccion
@@ -135,7 +176,7 @@ Con los datos de App Insights en mano:
 1. **Sigue los stacktraces**: usa Grep y Read para localizar el codigo fuente que aparece en las excepciones
 2. **Mapea el flujo**: identifica que funcion, comando o evento esta involucrado
 3. **Investiga errores desconocidos**: si el error es de una libreria, framework o servicio externo, usa WebSearch y WebFetch para buscar la causa conocida. Cita las fuentes.
-4. **Revisa cambios recientes**: consulta el historial git para ver si hay commits recientes en los archivos afectados
+4. **Revisa cambios recientes**: consulta el historial git para ver si hay commits recientes en los archivos afectados. Si lo que cambio recientemente es un **upgrade de version de un paquete/building block** (no codigo propio) y el sintoma es "compila + unit tests verdes pero revienta en runtime", ve directo al «Patron de diagnostico: breaking change de wiring de DI tras upgrade de building blocks» mas arriba.
 5. **Query ad-hoc (si las predefinidas no alcanzan)**: si las queries del Stage 1 no contienen la informacion necesaria para correlacionar, puedes usar el comando `custom` con una query KQL minima. Principios: filtrar agresivamente con `where`, usar `take 10`, preferir `summarize` sobre `project`. Maximo 3 queries custom por sesion de investigacion.
 
 ```bash
