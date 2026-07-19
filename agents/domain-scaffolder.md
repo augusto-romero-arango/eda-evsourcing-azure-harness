@@ -227,6 +227,7 @@ using Cosmos.EventDriven.CritterStack;
 using Cosmos.EventDriven.CritterStack.AzureServiceBus;
 using Cosmos.EventSourcing.CritterStack;
 using Cosmos.EventSourcing.CritterStack.Commands;
+using Cosmos.MultiTenancy;
 using FluentValidation;
 using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Azure.Functions.Worker.OpenTelemetry;
@@ -271,6 +272,12 @@ builder.Services.AgregarWolverineCommandRouter();
 builder.Services.AgregarWolverineEventSender();
 // Enruta IPrivateEvent directo a IPrivateEventHandlerAsync<TEvent>, sin comando espejo (MEF-ADR-0024, issue #313).
 builder.Services.AgregarWolverinePrivateEventRouter();
+
+// Tenancy transitorio (MEF-ADR-0028): mono-tenant por defecto mientras el proyecto no tiene
+// autenticacion que produzca un TenantContext. Reemplazar por el resolver real (header-based /
+// hibrido de Cosmos.MultiTenancy.CritterStack) cuando esa autenticacion exista -- ver el TODO
+// en Infraestructura/TenantResolverMonoTenantPorDefecto.cs.
+builder.Services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>();
 
 builder.Services.AddOpenTelemetry()
     .UseFunctionsWorkerDefaults()
@@ -599,6 +606,31 @@ public abstract class PrivateEventEndpointBase<TPrivateEvent>(IPrivateEventRoute
             await messageActions.DeadLetterMessageAsync(message, cancellationToken: ct);
         }
     }
+}
+```
+
+**11f. Crear el `TenantResolverMonoTenantPorDefecto.cs` en `Infraestructura/`:**
+
+Implementacion mono-tenant **transitoria** del `ITenantResolver` de `Cosmos.MultiTenancy` (ya
+disponible transitivamente via `Cosmos.EventSourcing.CritterStack`, sin paquete nuevo que agregar).
+Cubre la etapa (a) de MEF-ADR-0028 -- greenfield sin autenticacion instalada -- y **no** debe
+sobrevivir a la instalacion de una autenticacion que produzca un `TenantContext` (etapa b, ver el
+TODO):
+
+```csharp
+using Cosmos.MultiTenancy;
+
+namespace <RootNamespace>.{PascalCase}.Infraestructura;
+
+// TODO(tenancy etapa b): resolver mono-tenant transitorio (MEF-ADR-0028). Cuando el proyecto
+// instale una autenticacion que produzca un TenantContext, reemplazar este resolver por el real
+// basado en ese TenantContext (header-based / hibrido de Cosmos.MultiTenancy.CritterStack via
+// AgregarTenantResolverHibrido()). No dejar este default una vez que exista esa autenticacion.
+public class TenantResolverMonoTenantPorDefecto : ITenantResolver
+{
+    public string TenantId => JasperFx.StorageConstants.DefaultTenantId;
+
+    public string UserId => "usuario-no-autenticado";
 }
 ```
 
@@ -2192,6 +2224,7 @@ Scaffold completado para el dominio "{kebab}":
     Program.cs                             - JSON global, IRequestValidator, FluentValidation
     HealthCheck.cs                         - Trigger HTTP de health check (raiz del proyecto)
     Infraestructura/RequestValidator.cs    - IRequestValidator + implementacion
+    Infraestructura/TenantResolverMonoTenantPorDefecto.cs - ITenantResolver mono-tenant transitorio (MEF-ADR-0028)
     Infraestructura/ServiceBusDeserializador.cs - Helper de deserializacion case-insensitive
     Infraestructura/ServiceBusEndpointBase.cs   - Clase base para endpoints de ServiceBus (topic+subscription)
     Infraestructura/ServiceBusSessionEndpointBase.cs - Clase base para endpoints de fan-in (queue en modo sesion, MEF-ADR-0026)
