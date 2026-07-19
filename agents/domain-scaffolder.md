@@ -2577,6 +2577,7 @@ Scaffold completado para el dominio "{kebab}":
     I{PascalCase}AssemblyMarker.cs         - Assembly marker para FluentValidation y Wolverine
     Program.cs                             - Arma el host y delega toda la composicion de DI a ComposicionServicios{PascalCase} (issue #319, MEF-ADR-0029)
     HealthCheck.cs                         - Trigger HTTP de health check (raiz del proyecto)
+    VersionCheck.cs                        - Trigger HTTP de /api/version (readiness gate por SHA, issue #325, MEF-ADR-0031)
     Infraestructura/ComposicionServicios{PascalCase}.cs - Unica fuente de verdad del wiring de DI (Wolverine, Marten, routers, tenancy, OpenTelemetry, validacion) - MEF-ADR-0029
     Infraestructura/RequestValidator.cs    - IRequestValidator + implementacion
     Infraestructura/TenantResolverMonoTenantPorDefecto.cs - ITenantResolver mono-tenant transitorio (MEF-ADR-0028)
@@ -2584,7 +2585,6 @@ Scaffold completado para el dominio "{kebab}":
     Infraestructura/ServiceBusEndpointBase.cs   - Clase base para endpoints de ServiceBus (topic+subscription)
     Infraestructura/ServiceBusSessionEndpointBase.cs - Clase base para endpoints de fan-in (queue en modo sesion, MEF-ADR-0026)
     Infraestructura/PrivateEventEndpointBase.cs - Clase base para EventHandler directo, sin comando espejo (issue #313)
-    VersionCheck.cs                        - Trigger HTTP de /api/version (readiness gate por SHA, issue #325, MEF-ADR-0031)
     Entities/                              - AggregateRoots y eventos del dominio (siempre raiz)
 
   tests/<RootNamespace>.{PascalCase}.Tests/
