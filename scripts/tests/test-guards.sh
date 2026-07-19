@@ -179,7 +179,7 @@ echo "[E] is_path_in_consumer_blocklist clasifica correctamente"
     source "$REPO_ROOT/scripts/_pipeline-common.sh" 2>/dev/null
 
     # Rutas que deben estar en el blocklist (reservadas al plugin)
-    for blocked in "commands/foo.md" "agents/bar.md" "hooks/baz.json" ".claude-plugin/plugin.json" "docs/adr/0001.md"; do
+    for blocked in "commands/foo.md" "agents/bar.md" "hooks/baz.json" ".claude-plugin/plugin.json" "docs/adr/mef-adr-0001-service-bus-topics-por-evento.md"; do
         if is_path_in_consumer_blocklist "$blocked"; then
             echo "  PASS: '$blocked' detectado como blocklist"
         else
@@ -208,7 +208,7 @@ echo "[E2] is_path_in_mefisto_scope clasifica correctamente"
     source "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" 2>/dev/null
 
     # Rutas validas en Mefisto
-    for valid in "commands/foo.md" "agents/bar.md" "scripts/baz.sh" "hooks/hooks.json" "docs/adr/0001.md" ".claude-plugin/plugin.json" ".claude/commands/mefisto-foo.md" "README.md"; do
+    for valid in "commands/foo.md" "agents/bar.md" "scripts/baz.sh" "hooks/hooks.json" "docs/adr/mef-adr-0001-service-bus-topics-por-evento.md" ".claude-plugin/plugin.json" ".claude/commands/mefisto-foo.md" "README.md"; do
         if is_path_in_mefisto_scope "$valid"; then
             echo "  PASS: '$valid' en scope de Mefisto"
         else
