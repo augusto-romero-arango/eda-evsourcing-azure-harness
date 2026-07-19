@@ -798,6 +798,40 @@ public class HealthCheck
 
 Este archivo garantiza que la Function App siempre tenga al menos un trigger y que el deploy no falle con "malformed content".
 
+**13. Crear el `VersionCheck.cs` (raiz del proyecto) -- endpoint del readiness gate por SHA (issue #325, MEF-ADR-0031):**
+
+Expone el SHA del commit horneado en el ensamblado (Paso 5, `-p:SourceRevisionId=...` del paso `dotnet build`) para que el warmup del smoke test (Paso 2b, `ApiFixture`) pueda distinguir "el host ya responde 200" de "el host ya sirve el codigo nuevo". Endpoint anonimo y dedicado -- `/api/health` (punto 12) queda intacto, sin enriquecer.
+
+```csharp
+using System.Reflection;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Azure.Functions.Worker;
+
+namespace <RootNamespace>.{PascalCase};
+
+public class VersionCheck
+{
+    [Function("version")]
+    public IActionResult Run(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "version")]
+        HttpRequest req)
+    {
+        var informationalVersion = Assembly.GetExecutingAssembly()
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion;
+
+        // SourceRevisionId se hornea en InformationalVersion como "{Version}+{SourceRevisionId}"
+        // (SDK de .NET desde la 8.0, Source Link -- MEF-ADR-0031). Sin el separador '+' (build local
+        // sin SourceRevisionId) no hay SHA que extraer.
+        var indiceSeparador = informationalVersion?.IndexOf('+') ?? -1;
+        var sha = indiceSeparador >= 0 ? informationalVersion![(indiceSeparador + 1)..] : null;
+
+        return new OkObjectResult(new { sha });
+    }
+}
+```
+
 ---
 
 ## Paso 2 - Crear el proyecto de Tests
@@ -1433,7 +1467,8 @@ Crea el archivo `tests/<RootNamespace>.{PascalCase}.SmokeTests/<RootNamespace>.{
 ```json
 {
   "Api": {
-    "BaseUrl": "https://func-{prefix_func}-{kebab}.azurewebsites.net"
+    "BaseUrl": "https://func-{prefix_func}-{kebab}.azurewebsites.net",
+    "ExpectedSha": ""
   },
   "ServiceBus": {
     "ConnectionString": ""
@@ -1444,18 +1479,30 @@ Crea el archivo `tests/<RootNamespace>.{PascalCase}.SmokeTests/<RootNamespace>.{
 }
 ```
 
-> Los valores reales se configuran en `appsettings.local.json` (gitignored) o via variables de entorno (`ServiceBus__ConnectionString`, `Postgres__ConnectionString`).
+> Los valores reales se configuran en `appsettings.local.json` (gitignored) o via variables de entorno (`ServiceBus__ConnectionString`, `Postgres__ConnectionString`). `Api:ExpectedSha` normalmente **no** se toca aqui: en CI la reemplaza el workflow via `Api__ExpectedSha` (Paso 6.1, MEF-ADR-0031); vacio (default) es "no hay SHA esperado, el warmup degrada a solo 200".
 
 **3. Crear `Fixtures/ApiFixture.cs`:**
 
+El warmup hace poll contra `/api/version` y solo abre la compuerta cuando el `sha` que devuelve
+coincide con el `Api:ExpectedSha` recibido (`Api__ExpectedSha`, Paso 6.1) -- gate por version, no un
+simple 200 (issue #325, MEF-ADR-0031). Cuando no hay `ExpectedSha` configurado (workflow global de
+smoke tests, sin un deploy al que atarse), degrada al comportamiento previo: una unica llamada a
+`/api/health` que debe responder 200.
+
 ```csharp
 using System.Net;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 
 namespace <RootNamespace>.{PascalCase}.SmokeTests.Fixtures;
 
 public class ApiFixture : IAsyncLifetime
 {
+    // MEF-ADR-0031: el doble de la ventana de swap observada en el incidente de origen (~1 minuto),
+    // como margen de seguridad. Ajustable si un dominio concreto necesita mas.
+    private static readonly TimeSpan TimeoutGatePorVersion = TimeSpan.FromSeconds(120);
+    private static readonly TimeSpan IntervaloPoll = TimeSpan.FromSeconds(5);
+
     public HttpClient Client { get; private set; } = null!;
 
     public async ValueTask InitializeAsync()
@@ -1473,10 +1520,51 @@ public class ApiFixture : IAsyncLifetime
 
         Client = new HttpClient { BaseAddress = new Uri(baseUrl) };
 
-        var response = await Client.GetAsync("/api/health");
-        if (response.StatusCode != HttpStatusCode.OK)
-            throw new InvalidOperationException(
-                $"El entorno {baseUrl} no esta disponible. Health check retorno {response.StatusCode}.");
+        var expectedSha = configuration["Api:ExpectedSha"];
+        if (string.IsNullOrWhiteSpace(expectedSha))
+        {
+            // Sin SHA esperado (MEF-ADR-0031): degrada a "solo 200" contra /api/health, sin gate
+            // por version -- comportamiento previo a este ADR.
+            var response = await Client.GetAsync("/api/health");
+            if (response.StatusCode != HttpStatusCode.OK)
+                throw new InvalidOperationException(
+                    $"El entorno {baseUrl} no esta disponible. Health check retorno {response.StatusCode}.");
+            return;
+        }
+
+        // Gate por SHA (MEF-ADR-0031): Azure/functions-action reporta exito al SUBIR el paquete, no
+        // cuando WEBSITE_RUN_FROM_PACKAGE termina el swap/reinicio y el host ya sirve el codigo
+        // nuevo. Poll de /api/version hasta que reporte el SHA horneado en este deploy.
+        var deadline = DateTime.UtcNow + TimeoutGatePorVersion;
+        string? ultimoShaVisto = null;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                var response = await Client.GetAsync("/api/version");
+                if (response.StatusCode == HttpStatusCode.OK)
+                {
+                    var body = await response.Content.ReadAsStringAsync();
+                    var version = JsonSerializer.Deserialize<VersionResponse>(body,
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                    ultimoShaVisto = version?.Sha;
+                    if (string.Equals(ultimoShaVisto, expectedSha, StringComparison.OrdinalIgnoreCase))
+                        return;
+                }
+            }
+            catch (HttpRequestException)
+            {
+                // El host puede estar reiniciando durante el swap; se reintenta hasta el timeout.
+            }
+
+            await Task.Delay(IntervaloPoll);
+        }
+
+        throw new InvalidOperationException(
+            $"El entorno {baseUrl} no sirvio el SHA esperado ({expectedSha}) en " +
+            $"{TimeoutGatePorVersion.TotalSeconds}s. Ultimo SHA visto: {ultimoShaVisto ?? "ninguno"}.");
     }
 
     public ValueTask DisposeAsync()
@@ -1484,6 +1572,8 @@ public class ApiFixture : IAsyncLifetime
         Client.Dispose();
         return ValueTask.CompletedTask;
     }
+
+    private record VersionResponse(string? Sha);
 }
 ```
 
@@ -2164,6 +2254,8 @@ jobs:
     permissions:
       id-token: write   # requerido para el login OIDC de azure/login (sin secret) - MEF-ADR-0022
       contents: read    # requerido por actions/checkout cuando se declara 'permissions'
+    outputs:
+      sha: ${{ github.event.workflow_run.head_sha || github.sha }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -2181,7 +2273,8 @@ jobs:
           dotnet build src/<RootNamespace>.{PascalCase}/ \
             --configuration Release \
             --no-restore \
-            -r linux-x64
+            -r linux-x64 \
+            -p:SourceRevisionId=${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Publish
         run: |
@@ -2217,12 +2310,15 @@ jobs:
     with:
       base_url: https://func-{prefix_func}-{kebab}.azurewebsites.net
       test_project: tests/<RootNamespace>.{PascalCase}.SmokeTests/
+      expected_sha: ${{ needs.deploy.outputs.sha }}
     secrets:
       SERVICEBUS_CONNECTION_STRING: ${{ secrets.SERVICEBUS_CONNECTION_STRING }}
       POSTGRES_CONNECTION_STRING: ${{ secrets.POSTGRES_CONNECTION_STRING }}
 ```
 
 > `smoke-tests-dominio.yml` acepta estos secrets como opcionales (`required: false`). Si no estan configurados en el repo, los smoke tests que dependen de ServiceBus o Postgres se skipean gracefully via `Assert.SkipWhen`.
+
+> **Readiness gate por SHA (issue #325, MEF-ADR-0031)**: el paso `Build` del job `deploy` hornea `-p:SourceRevisionId=${{ github.event.workflow_run.head_sha || github.sha }}` -- la **misma** expresion que ya resuelve el `ref:` del checkout de este job, nunca `github.sha` a secas (en un run disparado por `workflow_run`, `github.sha` no es necesariamente el commit que este run esta construyendo -- ver el detalle en MEF-ADR-0031). El job `deploy` expone ese mismo valor como output (`outputs.sha`) para no duplicar la expresion, y el job `smoke-tests` lo pasa como `expected_sha` al reutilizable: el warmup del smoke test (Paso 2b, `ApiFixture`) hace poll contra `/api/version` hasta que el host reporte ese SHA, en vez de abrir la compuerta con el primer 200 (que puede ser el codigo viejo todavia sirviendo durante la ventana de swap de `WEBSITE_RUN_FROM_PACKAGE`).
 
 > **Autenticacion del deploy (OIDC, MEF-ADR-0022)**: el job `deploy` se autentica con `azure/login` por **OpenID Connect**, NO con un client secret. Por eso declara `permissions: id-token: write` y pasa `client-id` / `tenant-id` / `subscription-id` (los secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`), en vez del JSON unico `AZURE_CREDENTIALS`. Esos tres secrets, el Service Principal sin secret y el **federated credential** que confia en la rama `main` los emite `scripts/setup-github-ci.sh` (paso de bootstrap del README). No hay secret que expire. Si cambias el trigger del workflow para desplegar desde otra rama, tag o un GitHub Environment, debes anadir el federated credential correspondiente (el subject debe coincidir exacto con el claim del token de GitHub).
 
@@ -2271,6 +2367,11 @@ on:
         description: 'Ruta al proyecto de smoke tests (ej: tests/<RootNamespace>.{PascalCase}.SmokeTests/)'
         required: true
         type: string
+      expected_sha:
+        description: 'SHA que debe reportar /api/version para abrir el gate del warmup (issue #325, MEF-ADR-0031). Vacio = degrada a "solo 200" contra /api/health.'
+        required: false
+        type: string
+        default: ''
     secrets:
       SERVICEBUS_CONNECTION_STRING:
         required: false
@@ -2295,6 +2396,9 @@ jobs:
           # appsettings.json del proyecto SmokeTests lee Api:BaseUrl, ServiceBus:ConnectionString
           # y Postgres:ConnectionString; las variables con doble guion bajo las sobreescriben (MEF-ADR-0013).
           Api__BaseUrl: ${{ inputs.base_url }}
+          # Gate por SHA del warmup (issue #325, MEF-ADR-0031): vacio (default del input) degrada a
+          # "solo 200" contra /api/health, sin gate por version -- ver ApiFixture.
+          Api__ExpectedSha: ${{ inputs.expected_sha }}
           ServiceBus__ConnectionString: ${{ secrets.SERVICEBUS_CONNECTION_STRING }}
           Postgres__ConnectionString: ${{ secrets.POSTGRES_CONNECTION_STRING }}
         # Los tests que dependen de ServiceBus o Postgres se skipean gracefully via
@@ -2303,6 +2407,8 @@ jobs:
 ```
 
 > El reutilizable NO se autentica contra Azure: los smoke tests son black-box (HTTP contra `base_url`) y acceden a ServiceBus/Postgres por connection string, no por OIDC. Por eso solo declara `permissions: contents: read` (lo que necesita `actions/checkout`) y no `id-token: write`.
+>
+> **`expected_sha` es opcional a proposito (MEF-ADR-0031)**: solo lo pasa `deploy-{kebab}.yml` (Paso 5), que siempre conoce el SHA que acaba de desplegar. El workflow global `smoke-tests.yml` (Paso 6.2) invoca este mismo reutilizable **sin** pasar `expected_sha` -- no esta atado a ningun deploy que acabe de ocurrir -- y el `ApiFixture` degrada a "solo 200" cuando el valor llega vacio.
 
 **6.2 - Global `smoke-tests.yml`**
 
@@ -2371,6 +2477,8 @@ jobs:
 > **Migracion desde `.github/smoke-tests-dominios.json` (issue #234)**: si el repo consumidor todavia tiene el archivo monolitico de versiones anteriores del scaffolder, este workflow **lo ignora** (no lee ese path, no rompe si sigue presente) -- conviven sin interferencia. Para que los dominios que quedaron solo ahi vuelvan a correr en la matrix, migra cada entrada de su array a su propio archivo `.github/smoke-tests/<kebab>.json` (mismo shape que una entrada del array: `dominio`, `base_url`, `test_project`) y, opcionalmente, elimina el archivo legacy una vez migrado todo.
 >
 > **Ojo con la idempotencia del Paso 6**: en un consumidor que ya tenia el `smoke-tests.yml` global de versiones anteriores (el que hacia `jq -c . .github/smoke-tests-dominios.json`), este scaffolder **no lo regenera** (el Paso 6 nunca sobrescribe un workflow existente). Ese workflow viejo sigue leyendo el array monolitico e **ignora** los archivos por dominio de `.github/smoke-tests/*.json` -- un dominio nuevo nunca apareceria en la matrix aunque su JSON exista. La migracion en un consumidor existente es, por tanto, de **dos partes**: (a) reemplazar a mano el step `Leer dominios registrados` del `smoke-tests.yml` existente por la version de glob de arriba (`shopt -s nullglob` + `jq -sc`), y (b) migrar los datos entrada-por-entrada como se describe arriba. En greenfield esto no aplica: el scaffolder emite ya la version de glob.
+>
+> **Este workflow no pasa `expected_sha` (issue #325, MEF-ADR-0031)**: a diferencia del job `smoke-tests` de `deploy-{kebab}.yml` (Paso 5), esta corrida global (`workflow_dispatch` manual o el `schedule` diario) no esta atada a ningun deploy que acabe de ocurrir -- no hay un "SHA recien desplegado" que pasarle. El `with:` de la celda de la matrix deliberadamente omite `expected_sha`; el reutilizable usa su default `''` y el `ApiFixture` del dominio degrada a "solo 200" contra `/api/health`, el mismo comportamiento que tenia antes de este ADR.
 
 ---
 
@@ -2469,6 +2577,7 @@ Scaffold completado para el dominio "{kebab}":
     I{PascalCase}AssemblyMarker.cs         - Assembly marker para FluentValidation y Wolverine
     Program.cs                             - Arma el host y delega toda la composicion de DI a ComposicionServicios{PascalCase} (issue #319, MEF-ADR-0029)
     HealthCheck.cs                         - Trigger HTTP de health check (raiz del proyecto)
+    VersionCheck.cs                        - Trigger HTTP de /api/version (readiness gate por SHA, issue #325, MEF-ADR-0031)
     Infraestructura/ComposicionServicios{PascalCase}.cs - Unica fuente de verdad del wiring de DI (Wolverine, Marten, routers, tenancy, OpenTelemetry, validacion) - MEF-ADR-0029
     Infraestructura/RequestValidator.cs    - IRequestValidator + implementacion
     Infraestructura/TenantResolverMonoTenantPorDefecto.cs - ITenantResolver mono-tenant transitorio (MEF-ADR-0028)
@@ -2486,7 +2595,7 @@ Scaffold completado para el dominio "{kebab}":
                                            - Proyecto de tests unitarios (xUnit v3 + AwesomeAssertions)
 
   tests/<RootNamespace>.{PascalCase}.SmokeTests/
-    Fixtures/ApiFixture.cs                 - HttpClient + config + health check fail-fast
+    Fixtures/ApiFixture.cs                 - HttpClient + config + warmup: gate por SHA contra /api/version, degrada a solo 200 sin ExpectedSha (issue #325, MEF-ADR-0031)
     Fixtures/ServiceBusFixture.cs          - PurgeAsync + PublishAsync + WaitForMessageAsync (predicado)
     Fixtures/PostgresFixture.cs            - IsConfigured + SkipReason + firewall catch + consulta Marten
     Fixtures/Polling.cs                    - Polling tolerante a excepciones con backoff
@@ -2507,6 +2616,8 @@ Scaffold completado para el dominio "{kebab}":
   .github/workflows/deploy-{kebab}.yml     - Workflow de deploy automatico + smoke tests post-deploy
                                              (encadenado tras infra-cd.yml via workflow_run; salta el
                                              redeploy si el apply de infra no toco este dominio, MEF-ADR-0022)
+                                             hornea el SHA en el build (-p:SourceRevisionId) y lo pasa
+                                             como expected_sha al smoke-tests (readiness gate, MEF-ADR-0031)
   .github/smoke-tests/{kebab}.json         - Registro propio del dominio (issue #234, archivo por dominio,
                                              no un array compartido) para el workflow global de smoke tests
 
