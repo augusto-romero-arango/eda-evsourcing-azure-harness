@@ -201,6 +201,7 @@ El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o
 | Colas de Service Bus con sesion para fan-in y serializacion por clave de aggregate | MEF-ADR-0026 |
 | Enrutamiento multi-destinatario de un evento por correlation filter de igualdad | MEF-ADR-0027 |
 | Estrategia de tenancy (mono-tenant transitorio en greenfield + resolver real basado en TenantContext) | MEF-ADR-0028 |
+| Test de composicion del contenedor DI del host generado por el scaffold | MEF-ADR-0029 |
 | Esquema de identificación de ADRs con prefijo por proyecto (adopción opcional para consumidores) | MEF-ADR-0030 |
 
 ## Convenciones del marco

@@ -199,7 +199,7 @@ public partial class AsignarEmpleadoATurnoCommandHandler(IEventStore eventStore,
 |---|---|---|
 | `IPrivateEventHandlerAsync<TEvent> where TEvent : IPrivateEvent` | `Cosmos.EventDriven.Abstractions` | Handler que reacciona a un evento privado. `HandleAsync(TEvent @event, CancellationToken)`. |
 | `IPrivateEventRouter` (`InvokeAsync<TEvent>(TEvent, CancellationToken) where TEvent : class, IPrivateEvent`) | `Cosmos.EventDriven.Abstractions` | Rutea el evento privado entrante a su handler. |
-| `AgregarWolverinePrivateEventRouter()` | `Cosmos.EventDriven.CritterStack` | Registra `IPrivateEventRouter` en DI (el `domain-scaffolder` lo agrega en `Program.cs`, junto a `AgregarWolverineEventSender()`). |
+| `AgregarWolverinePrivateEventRouter()` | `Cosmos.EventDriven.CritterStack` | Registra `IPrivateEventRouter` en DI (el `domain-scaffolder` lo agrega en la composicion de servicios `ComposicionServicios{Dominio}.cs`, junto a `AgregarWolverineEventSender()`; MEF-ADR-0029). |
 | `PrivateEventHandlerAsyncTest<TEvent>` | `Cosmos.EventSourcing.Testing.Utilities` | Base de test (`Given`/`WhenAsync(evento)`/`Then`/`ThenIsPublishedPrivately`) — ver `test-writer.md`. |
 
 **No existe `IPublicEventHandlerAsync` ni `IPublicEventRouter` en 2.1.0.** Solo se agrego el lado privado: un evento publico (`IPublicEvent`) sigue traduciendose siempre a un comando via `ICommandRouter` (ver tabla "Cuando NO usarlo" abajo).
@@ -229,7 +229,7 @@ public partial class TurnoCreadoEventHandler(IEventStore eventStore)
 
 El endpoint correspondiente hereda de `PrivateEventEndpointBase<TurnoCreado>` (lo crea el `domain-scaffolder`, contraparte de `ServiceBusEndpointBase<TEvento>`) en vez de rutear un `ICommandRouter` — mismo `[Function]`/`[ServiceBusTrigger]`, mismo manejo de fallos (complete/lock-lost/dead-letter), solo cambia el router inyectado.
 
-**DI (`Program.cs`):** agregar `builder.Services.AgregarWolverinePrivateEventRouter();` junto a `AgregarWolverineEventSender()` (registro barato, lo hace el `domain-scaffolder` por defecto). Si el dominio ya no rutea ningun comando, `AgregarWolverineCommandRouter()` puede retirarse; si ademas tiene endpoints HTTP o de fan-in, ambos routers conviven sin conflicto.
+**DI (composicion de servicios, `ComposicionServicios{Dominio}.cs`):** agregar `services.AgregarWolverinePrivateEventRouter();` junto a `AgregarWolverineEventSender()` (registro barato, lo hace el `domain-scaffolder` por defecto). Desde MEF-ADR-0029 el wiring vive en el metodo de extension `AgregarServicios{Dominio}`, no inline en `Program.cs` -- registra ahi para que el test de composicion (`ComposicionContenedorTests`) lo cubra. Si el dominio ya no rutea ningun comando, `AgregarWolverineCommandRouter()` puede retirarse; si ademas tiene endpoints HTTP o de fan-in, ambos routers conviven sin conflicto.
 
 **Cuando NO usarlo (mantener evento → comando por `ICommandRouter`):**
 
@@ -394,7 +394,7 @@ public class RequestValidator(IServiceProvider serviceProvider) : IRequestValida
 }
 ```
 
-Registrar en Program.cs: `builder.Services.AddScoped<IRequestValidator, RequestValidator>();`
+Registrar en la composicion de servicios (`AgregarServicios{Dominio}` en `ComposicionServicios{Dominio}.cs`, MEF-ADR-0029): `services.AddScoped<IRequestValidator, RequestValidator>();`
 
 ### Endpoint ServiceBus
 
@@ -515,7 +515,7 @@ public class ConsolidarCierreTurno(ICommandRouter commandRouter, ILogger<Consoli
 
 Doctrina completa (cuando aplica esta excepcion, topologia fuente/destino): **MEF-ADR-0026**. La invariante `groupId` del lado productor se ensena en la seccion "`groupId` en `PublishAsync`" mas arriba; este agente no duplica el resto de MEF-ADR-0026, solo enseña el scaffolding del endpoint consumidor.
 
-**Nota sobre deserializacion:** La configuracion global de JSON (CamelCase + CaseInsensitive) es responsabilidad del `domain-scaffolder` en el Program.cs. Si detectas que falta esta configuracion, reportalo en el resumen pero no la agregues.
+**Nota sobre deserializacion:** La configuracion global de JSON (CamelCase + CaseInsensitive) es responsabilidad del `domain-scaffolder` en la composicion de servicios (`ComposicionServicios{Dominio}.cs`, MEF-ADR-0029). Si detectas que falta esta configuracion, reportalo en el resumen pero no la agregues.
 
 ### Validator (FluentValidation)
 
@@ -532,9 +532,9 @@ public class CrearTurnoValidator : AbstractValidator<CrearTurno>
 }
 ```
 
-Registrar en Program.cs:
+Registrar en la composicion de servicios (`AgregarServicios{Dominio}` en `ComposicionServicios{Dominio}.cs`, MEF-ADR-0029):
 ```csharp
-builder.Services.AddValidatorsFromAssemblyContaining<I{Dominio}AssemblyMarker>();
+services.AddValidatorsFromAssemblyContaining<I{Dominio}AssemblyMarker>();
 ```
 
 ---
@@ -783,7 +783,7 @@ cruza el namespace interno del Bounded Context (via `IPrivateEventSender`); en a
 destino deserializa con **otro** `JsonSerializerOptions` que **no tiene el resolver custom del
 productor**. **El modelo de dominio
 rico no cruza el bus**: un VO con campos privados, factory privado y `ConfigurarSerializacion` se
-serializa bien en el event store de Marten (resolver registrado en el `Program.cs` del dominio)
+serializa bien en el event store de Marten (resolver registrado en la composicion de servicios del dominio, `ComposicionServicios{Dominio}.cs`)
 pero llega lossy al destino del bus. Al emitir por el bus, traduce el VO a su forma plana.
 **Solo la tercera fila** -- eventos de event sourcing sin marker de bus -- admite modelo rico +
 `ConfigurarSerializacion`. La autoridad de esta regla es **MEF-ADR-0012, seccion "Frontera de
@@ -892,12 +892,12 @@ Cuando implementas un handler que publica eventos (usando `IPublicEventSender` o
 
 **Enrutamiento topic → broker (MEF-ADR-0024, decisiones #1, #4 y #7):**
 
-| Tipo de evento | Sender | Registro en Program.cs | Terraform de este BC |
+| Tipo de evento | Sender | Registro en la composicion de servicios | Terraform de este BC |
 |---|---|---|---|
 | `IPrivateEvent` | `IPrivateEventSender` | `PublicarEventoServerless<T>(topic)` → broker default | `module "service_bus_interno"` |
 | `IPublicEvent` | `IPublicEventSender` | `PublicarEventoServerless<T>("<alias>", topic)` → broker nombrado (backbone compartido) | Ninguno — el backbone lo administra infra, fuera del alcance del Terraform de este BC |
 
-El criterio de enrutamiento del topic (a que broker va) esta ligado al registro que `Program.cs` hace de ese evento: coherencia publish<->infra (MEF-ADR-0024 decision #7). El `domain-scaffolder` genera ese registro al crear el dominio; el implementer no lo toca, solo respeta el broker que corresponde al tipo del evento.
+El criterio de enrutamiento del topic (a que broker va) esta ligado al registro que la composicion de servicios (`AgregarServicios{Dominio}` en `ComposicionServicios{Dominio}.cs`, MEF-ADR-0029) hace de ese evento: coherencia publish<->infra (MEF-ADR-0024 decision #7). El `domain-scaffolder` genera ese registro al crear el dominio; el implementer no lo toca, solo respeta el broker que corresponde al tipo del evento.
 
 **Wolverine en modo serverless NO auto-provisiona topics** (SendInline). El namespace interno del BC es always-on (lo crea la infra base, `infra-base-scaffolder`); sus topics se agregan JIT por flujo aqui (MEF-ADR-0001, MEF-ADR-0024). El backbone compartido ya existe (lo provisiona infra, fuera de este repo): sus topics tambien se agregan JIT por flujo, pero no via el Terraform de este BC — ver mas abajo.
 
