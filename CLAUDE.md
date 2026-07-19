@@ -205,6 +205,7 @@ El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o
 | Estrategia de tenancy (mono-tenant transitorio en greenfield + resolver real basado en TenantContext) | MEF-ADR-0028 |
 | Test de composicion del contenedor DI del host generado por el scaffold | MEF-ADR-0029 |
 | Esquema de identificación de ADRs con prefijo por proyecto (adopción opcional para consumidores) | MEF-ADR-0030 |
+| Readiness gate por SHA (endpoint `/api/version` + gate deploy->smoke) | MEF-ADR-0031 |
 
 ## Convenciones del marco
 
