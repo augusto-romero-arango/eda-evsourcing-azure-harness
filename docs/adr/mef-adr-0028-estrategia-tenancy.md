@@ -148,7 +148,13 @@ config, solo tras confirmacion explicita: `/onboard` no sondea codigo ni infiere
   cablearlo) en vez de auto-cablear a ciegas. El archivo generado lleva un `// TODO(tenancy claims)`
   explicito: el mapping de los claims de la autenticacion instalada al header `X-Tenant-Id`/`X-User-Id`
   (o a `IMessageContext.TenantId`) es **siempre project-specific** -- ningun paquete del marco lo
-  automatiza, asi que ningun auto-cableo puede completarlo por si solo.
+  automatiza, asi que ningun auto-cableo puede completarlo por si solo. En cualquiera de las dos ramas
+  (auto-cableo o fallback a "proponer") el `ITenantResolver` debe quedar **registrado y construible**:
+  el test de composicion del contenedor (MEF-ADR-0029) resuelve los tres routers, que dependen de
+  `ITenantResolver` en su constructor, y es un gate duro del scaffold -- si el resolver real arrastra
+  dependencias no registradas o si el fallback deja el contrato sin registrar, ese test revienta
+  (reintroduciendo el incidente #318). El fallback registra el resolver transitorio de la etapa (a) como
+  placeholder para no romperlo.
 
 **Limite deliberado**: pasar un dominio ya scaffoldeado de (a) a (b) sigue siendo manual -- actualizar
 el token y volver a correr `/scaffold` no re-scaffoldea dominios existentes. El

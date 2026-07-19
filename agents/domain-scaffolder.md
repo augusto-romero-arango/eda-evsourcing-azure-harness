@@ -696,9 +696,11 @@ El registro en `Infraestructura/ComposicionServicios{PascalCase}.cs` (Paso 6b) e
 
 ### Etapa (b) -- `tenancy.strategy = "multi-tenant-header"`
 
-**No** generes `TenantResolverMonoTenantPorDefecto.cs`: la etapa (b) no lo necesita. En su lugar,
-auto-cablea el resolver real -- sujeto a la verificacion de fuente obligatoria (CA-6) y al fallback a
-"proponer" (CA-7) descritos abajo.
+En el auto-cableo (happy path) **no** generes `TenantResolverMonoTenantPorDefecto.cs`: la etapa (b) no
+lo necesita. En su lugar, auto-cablea el resolver real -- sujeto a la verificacion de fuente obligatoria
+(CA-6) y al fallback a "proponer" (CA-7) descritos abajo. (El fallback CA-7 **si** genera el resolver
+transitorio de la etapa (a) como placeholder registrado -- ver "Coherencia con el test de composicion"
+al final de esta rama.)
 
 **CA-6 — verificacion de fuente obligatoria antes de cablear.** MEF-ADR-0028 (seccion "Contexto") ya
 verifico -- decompilando con `ilspycmd` los ensamblados 2.1.0, unica fuente disponible para estos
@@ -746,6 +748,30 @@ Si procede el auto-cableo (fuente verificada, CA-6 satisfecho):
    // (o a IMessageContext.TenantId) -- ese mapping es siempre project-specific, ningun paquete lo automatiza.
    services.AgregarTenantResolverHibrido();
    ```
+
+**Coherencia con el test de composicion del contenedor (MEF-ADR-0029, issue #319/#328).** El test
+`ComposicionContenedorTests` que generas en el Paso 2 (punto 9) es un **gate duro** (si falla, no haces
+commit): invoca `AgregarServicios{PascalCase}` con `BuildServiceProvider(ValidateOnBuild: true,
+ValidateScopes: true)` y ademas resuelve los tres routers (`ICommandRouter`, `IPrivateEventSender`,
+`IPrivateEventRouter`), cada uno de los cuales **depende de `ITenantResolver` en su constructor**
+(MEF-ADR-0029). En etapa (b), `ITenantResolver` pasa a ser `ProxyTenantResolver` (registro por tipo
+mapeado), asi que `ValidateOnBuild` recorrera su arbol de constructor y la resolucion de los routers
+tendra que **construir `ProxyTenantResolver` con todas sus dependencias**. Si
+`AgregarTenantResolverHibrido()` introduce dependencias que el scaffold no registra (p. ej.
+`IHttpContextAccessor`, que `TrustedHeadersTenantResolver` lee segun la seccion "Contexto" de
+MEF-ADR-0028), el test de composicion **fallara** y el Paso 2 no debe commitear. Como parte de la
+verificacion CA-6, confirma que dependencias exige `ProxyTenantResolver` y si la propia extension las
+registra; si no lo hace, registra las que falten en `AgregarServicios{PascalCase}` (p. ej.
+`services.AddHttpContextAccessor();`) para que el test quede verde.
+
+**El fallback CA-7 tambien debe dejar el contenedor construible.** Si degradas a "proponer" (no cableas
+`AgregarTenantResolverHibrido()`), **no** dejes `ITenantResolver` sin registrar: seria exactamente el
+incidente #318 que MEF-ADR-0029 existe para atrapar -- el test de composicion quedaria en rojo y el
+dominio naceria roto. En ese caso genera el `TenantResolverMonoTenantPorDefecto.cs` de la etapa (a) como
+placeholder registrado (`services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>();`, con
+el `using Cosmos.MultiTenancy;`): el contenedor construye y el dominio arranca atribuyendo a `*DEFAULT*`
+mientras documentas el snippet de `AgregarTenantResolverHibrido()` + el `// TODO(tenancy claims)` como el
+paso manual pendiente, avisando al usuario de que el resolver real no esta activo hasta completarlo.
 
 **Limite deliberado:** pasar un dominio ya scaffoldeado de etapa (a) a (b) sigue siendo manual --
 actualizar `tenancy.strategy` y volver a correr `/scaffold` no re-scaffoldea dominios existentes. El
