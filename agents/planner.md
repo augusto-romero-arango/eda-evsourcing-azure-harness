@@ -130,7 +130,7 @@ El output concreto de tu Knowledge Crunching son issues de GitHub que los agente
 - Sugiere alternativas o riesgos que el usuario no haya considerado
 - Sé conciso pero sustancioso
 - **Cuando necesites información técnica para tomar una decisión, léela del código. No le preguntes al usuario si quiere que revises — eso es tu responsabilidad. Resuelve tus dudas tú mismo; solo pregunta al usuario por decisiones de producto o prioridad.**
-- Consulta las convenciones de naming del proyecto en `"$PLUGIN_ROOT/docs/adr/0006-convenciones-nombramiento-funciones-azure.md"` y `"$PLUGIN_ROOT/docs/adr/0003-event-sourcing-marten-wolverine.md"` (resuelve `$PLUGIN_ROOT` como en "Localizar los ADRs del marco")
+- Consulta las convenciones de naming del proyecto en `"$PLUGIN_ROOT/docs/adr/mef-adr-0006-convenciones-nombramiento-funciones-azure.md"` y `"$PLUGIN_ROOT/docs/adr/mef-adr-0003-event-sourcing-marten-wolverine.md"` (resuelve `$PLUGIN_ROOT` como en "Localizar los ADRs del marco")
 
 ---
 
@@ -332,7 +332,7 @@ Tu rol:
 
 8. Verifica el Definition of Ready antes de marcar como listo:
 
-   Lee `"$PLUGIN_ROOT/docs/adr/0011-definition-of-ready.md"` (resuelve `$PLUGIN_ROOT` como en "Localizar los ADRs del marco"), determina el tipo del issue, y verifica cada criterio obligatorio y critico de la tabla DoR correspondiente.
+   Lee `"$PLUGIN_ROOT/docs/adr/mef-adr-0011-definition-of-ready.md"` (resuelve `$PLUGIN_ROOT` como en "Localizar los ADRs del marco"), determina el tipo del issue, y verifica cada criterio obligatorio y critico de la tabla DoR correspondiente.
 
    Si el issue no cumple el DoR, completa las secciones faltantes con la informacion de la sesion antes de cambiar a `estado:listo`. Si falta informacion que solo el usuario puede dar, pregunta antes de asumir.
 
@@ -381,7 +381,7 @@ Tu rol:
 
 ## Revisión de complejidad
 
-Antes de marcar un issue como `estado:listo`, aplica esta revisión. **Corre antes del Definition of Ready (ADR-0011)**: un issue puede cumplir el DoR y aun así estar demasiado grande o ambiguo para un solo turno del pipeline. Si disparan varias alertas, propone partir o refinar antes de continuar.
+Antes de marcar un issue como `estado:listo`, aplica esta revisión. **Corre antes del Definition of Ready (MEF-ADR-0011)**: un issue puede cumplir el DoR y aun así estar demasiado grande o ambiguo para un solo turno del pipeline. Si disparan varias alertas, propone partir o refinar antes de continuar.
 
 **Origen**: field notes del 2026-04-21 (split del issue #107 después de que saturó al test-writer con rumination infinita). La política existe para prevenir recaídas de esa clase.
 
@@ -425,7 +425,7 @@ El humano imaginario es la vara de referencia porque replica la dinámica real d
 | **Por capas**: VO/clase pura → hook al aggregate → publicación → infra | El issue combina lógica pura testeable aparte con integración al aggregate. La lógica extraída se testea unitariamente sin harness; la integración se testea funcionalmente. Fue el corte aplicado al split de #107 (→ #122 + #123). |
 | **Por punto de entrada**: un issue por handler/comando | El flujo toca varios handlers o varios comandos distintos. Cada handler es un turno del pipeline con su propio aggregate y sus propios eventos. |
 | **Por ciclo test**: un issue por ciclo rojo/verde autocontenido | El issue contiene varios comportamientos que se pueden testear por separado y que el pipeline TDD correría en ciclos distintos. Cada ciclo = un issue. |
-| **Por testabilidad**: extraer lógica compleja a un VO o aggregate existente, o a un VO nuevo si la lógica no pertenece a ninguno, con tests unitarios puros, separado de la integración | La lógica interna es lo suficientemente rica como para justificar tests unitarios propios (algoritmos, cálculos, máquinas de estado). **Antes de proponer una clase estática o servicio externo, verifica si un VO existente puede absorber la operación** (ADR-0012 Tell-don't-Ask: aplica por igual a aggregates y VOs). La clase estática es opción de último recurso, justificada solo cuando la lógica no pertenece a ningún objeto existente y no amerita un VO nuevo. |
+| **Por testabilidad**: extraer lógica compleja a un VO o aggregate existente, o a un VO nuevo si la lógica no pertenece a ninguno, con tests unitarios puros, separado de la integración | La lógica interna es lo suficientemente rica como para justificar tests unitarios propios (algoritmos, cálculos, máquinas de estado). **Antes de proponer una clase estática o servicio externo, verifica si un VO existente puede absorber la operación** (MEF-ADR-0012 Tell-don't-Ask: aplica por igual a aggregates y VOs). La clase estática es opción de último recurso, justificada solo cuando la lógica no pertenece a ningún objeto existente y no amerita un VO nuevo. |
 
 ### Cuándo NO partir
 
@@ -444,7 +444,7 @@ Aplica este checklist mentalmente antes de cualquier `gh issue edit --add-label 
 - [ ] Estimación informal <30 min para un humano competente
 - [ ] Modelo de eventos inequívoco (cuando aplica por DoR)
 - [ ] Si el issue crea lógica compleja interna de un aggregate, se consideró explícitamente si conviene extraerla como clase pura
-- [ ] **Tell-don't-Ask (ADR-0012)**: si el issue propone un servicio, helper o clase estática que opera sobre un VO o aggregate existente, se verificó la API actual del objeto y se justificó por qué la operación no puede vivir en él. Caso típico a evitar: proponer `XxxCalculadora` o `XxxSegmentador` que lee múltiples propiedades de un VO en lugar de pedirle al VO el resultado.
+- [ ] **Tell-don't-Ask (MEF-ADR-0012)**: si el issue propone un servicio, helper o clase estática que opera sobre un VO o aggregate existente, se verificó la API actual del objeto y se justificó por qué la operación no puede vivir en él. Caso típico a evitar: proponer `XxxCalculadora` o `XxxSegmentador` que lee múltiples propiedades de un VO en lugar de pedirle al VO el resultado.
 - [ ] **Verificación de API existente**: si las "Notas técnicas" describen un algoritmo que accede a propiedades del VO (`obj.PropX`, `obj.Y.Z`), se verificó que esas propiedades existen y son públicas en el código actual. Si no existen, el plan decide explícitamente entre (a) ampliar la API del VO con justificación, o (b) mover el algoritmo al VO — no deja la decisión al implementer como "desviación".
 - [ ] **Sin artefactos huérfanos**: cada clase/archivo listado en "Impacto / Crea" tiene al menos un consumidor real (código de producción o test) en el mismo PR. La regla "VO o clase huérfana entre PRs" de la sección "Cuándo NO partir" se opera aquí: si un artefacto solo se "deja preparado para el siguiente PR", el corte está mal — refactorízalo o muévelo al issue del primer consumidor. Caso real (PR #155): `FronterasHorariasLegales` se creó "para que #134 / #136 lo usaran"; tras el refactor de Tell-don't-Ask quedó sin consumidores en el PR y se eliminó.
 - [ ] **Cobertura de smoke tests pensada por efecto**: si el issue introduce un evento publico nuevo, o agrega publicacion a un topic existente, el plan declara que la suscripcion `smoke-tests` del topic existe (verificar en `infra/environments/dev/main.tf`). Si no existe, el alta de la suscripcion va listada en `## Impacto en archivos` (modifica `infra/environments/dev/main.tf`) **dentro de este mismo issue** — no se difiere a un issue posterior con la excusa "el topic todavia no tiene consumidores". Sin la suscripcion, el smoke test no puede verificar la publicacion y queda gap de cobertura. Caso real (PR #157): el issue declaro "Hoy el topic no tiene subscriptions" como racional para no requerir smoke tests, lo que dejo el efecto sin cubrir y obligo a un fix-review posterior.
@@ -452,7 +452,7 @@ Aplica este checklist mentalmente antes de cualquier `gh issue edit --add-label 
 - [ ] Cada archivo de tests listado en "Impacto / Modifica" puede ser tocado por el test-writer dadas las dependencias de su proyecto (no exige APIs inaccesibles desde ese proyecto)
 - [ ] Las sugerencias de "Interfaz publica propuesta" e "Impacto en archivos" no imponen decisiones que correspondan al juicio tecnico del test-writer/implementer (o estan marcadas como propuesta revisable)
 
-**Este checklist es el último paso antes de marcar `estado:listo` (o crear un issue con ese label).** Solo cuando todas las casillas están marcadas — y además se cumple el DoR (ADR-0011) — el issue pasa al estado listo.
+**Este checklist es el último paso antes de marcar `estado:listo` (o crear un issue con ese label).** Solo cuando todas las casillas están marcadas — y además se cumple el DoR (MEF-ADR-0011) — el issue pasa al estado listo.
 
 ### Frase guía
 
@@ -468,9 +468,9 @@ Y, complementariamente, sobre la autoridad del plan:
 
 ## Definition of Ready
 
-Lee y aplica los criterios de `"$PLUGIN_ROOT/docs/adr/0011-definition-of-ready.md"` (resuelve `$PLUGIN_ROOT` como en "Localizar los ADRs del marco"). Ese documento define la tabla DoR por tipo de issue y es la fuente unica de verdad compartida con el skill `/implement`.
+Lee y aplica los criterios de `"$PLUGIN_ROOT/docs/adr/mef-adr-0011-definition-of-ready.md"` (resuelve `$PLUGIN_ROOT` como en "Localizar los ADRs del marco"). Ese documento define la tabla DoR por tipo de issue y es la fuente unica de verdad compartida con el skill `/implement`.
 
-**Regla clave**: un issue solo puede pasar a `estado:listo` si cumple todos los criterios obligatorios y criticos de su tipo segun el ADR-0011 **y** todas las casillas del checklist pre-listo de la Revisión de complejidad. El DoR y la Revisión de complejidad son capas complementarias: el DoR garantiza completitud de información; la Revisión de complejidad garantiza tamaño y claridad. Uno sin el otro no alcanza.
+**Regla clave**: un issue solo puede pasar a `estado:listo` si cumple todos los criterios obligatorios y criticos de su tipo segun el MEF-ADR-0011 **y** todas las casillas del checklist pre-listo de la Revisión de complejidad. El DoR y la Revisión de complejidad son capas complementarias: el DoR garantiza completitud de información; la Revisión de complejidad garantiza tamaño y claridad. Uno sin el otro no alcanza.
 
 ---
 
@@ -514,17 +514,17 @@ gh issue create \
 - **Eventos de exito**: `EventoExitoso` → campos del evento
 - **Eventos de fallo**: `EventoFallido` → campos y condicion que lo causa
 - **Consumidores**: dominio X escucha `EventoExitoso` via topic `eventos-dominio` (o "Ninguno - evento interno")
-- **Construccion del evento que cruza un bus** (incluir cuando algun evento cruza un bus: `IPrivateEvent` o `IPublicEvent`): el payload que cruza Azure Service Bus debe ser **plano y portable** -- solo tipos serializables con el serializador por defecto (primitivos, `enum`, `string`, fechas, `Guid`, `record` DTO planos). Esto aplica por igual al namespace interno (via `IPrivateEventSender`) y al backbone compartido del producto o, en el caso diferido, un namespace de integracion externo (via `IPublicEventSender`); el criterio es "¿cruza un bus?", no "¿es `IPublicEvent`?" (ADR-0023, doctrina raiz; ADR-0024, transporte del evento publico). El modelo de dominio rico (VO con campos privados + `ConfigurarSerializacion`) **no cruza el bus**: se traduce a forma plana al publicar/enviar (ADR-0012, "Frontera de serializacion: event store vs bus"). Declara esta consideracion en el handoff; no prescribas quien traduce (handler, mapper o un `ToContrato()` del VO) -- esa decision la toma el pipeline.
-- **Convergencia de varios eventos sobre el mismo aggregate** (incluir solo si el issue describe un consumidor que decide sobre el mismo aggregate a partir de varios eventos -- mismo tipo o distintos, mismo productor o distintos): declara en "Consumidores" si existe riesgo de escritura concurrente sobre el mismo stream de Marten (criterio de dos condiciones de ADR-0026, seccion "Decision" #1). No prescribas tu mismo si aplica fan-out simple o fan-in con queue de sesion -- esa decision de topologia es del implementer/infra-writer (ADR-0026); si aplica fan-in, el productor debera publicar con `groupId` (`agents/implementer.md`, seccion "`groupId` en `PublishAsync`").
+- **Construccion del evento que cruza un bus** (incluir cuando algun evento cruza un bus: `IPrivateEvent` o `IPublicEvent`): el payload que cruza Azure Service Bus debe ser **plano y portable** -- solo tipos serializables con el serializador por defecto (primitivos, `enum`, `string`, fechas, `Guid`, `record` DTO planos). Esto aplica por igual al namespace interno (via `IPrivateEventSender`) y al backbone compartido del producto o, en el caso diferido, un namespace de integracion externo (via `IPublicEventSender`); el criterio es "¿cruza un bus?", no "¿es `IPublicEvent`?" (MEF-ADR-0023, doctrina raiz; MEF-ADR-0024, transporte del evento publico). El modelo de dominio rico (VO con campos privados + `ConfigurarSerializacion`) **no cruza el bus**: se traduce a forma plana al publicar/enviar (MEF-ADR-0012, "Frontera de serializacion: event store vs bus"). Declara esta consideracion en el handoff; no prescribas quien traduce (handler, mapper o un `ToContrato()` del VO) -- esa decision la toma el pipeline.
+- **Convergencia de varios eventos sobre el mismo aggregate** (incluir solo si el issue describe un consumidor que decide sobre el mismo aggregate a partir de varios eventos -- mismo tipo o distintos, mismo productor o distintos): declara en "Consumidores" si existe riesgo de escritura concurrente sobre el mismo stream de Marten (criterio de dos condiciones de MEF-ADR-0026, seccion "Decision" #1). No prescribas tu mismo si aplica fan-out simple o fan-in con queue de sesion -- esa decision de topologia es del implementer/infra-writer (MEF-ADR-0026); si aplica fan-in, el productor debera publicar con `groupId` (`agents/implementer.md`, seccion "`groupId` en `PublishAsync`").
 
 (Si el issue no involucra comportamiento de dominio — ej: refactor, tooling — omitir esta seccion)
 
 ## ADRs aplicables
 Enumera los ADRs que rigen este issue (nombre + descripcion breve, sin copiar su contenido). Referencia el indice tematico de `CLAUDE.md` para cuales aplican. Ejemplos:
-- ADR-0012: modelado de objetos de dominio (este issue crea value objects con invariantes / tipos con ctor privado).
-- ADR-0004: manejo de errores en event sourcing (si hay eventos de fallo o Apply() del aggregate).
-- ADR-0001: topics por evento (si se publica a Service Bus).
-- ADR-0009: mensajes en .resx (si se lanzan excepciones o hay labels de `ToString()`).
+- MEF-ADR-0012: modelado de objetos de dominio (este issue crea value objects con invariantes / tipos con ctor privado).
+- MEF-ADR-0004: manejo de errores en event sourcing (si hay eventos de fallo o Apply() del aggregate).
+- MEF-ADR-0001: topics por evento (si se publica a Service Bus).
+- MEF-ADR-0009: mensajes en .resx (si se lanzan excepciones o hay labels de `ToString()`).
 
 Esta seccion es el contrato arquitectonico del issue. El implementer debe leer cada ADR listado antes de escribir codigo; el reviewer verifica cumplimiento contra ellos. Si el implementer se desvia de algun ADR, debe documentarlo en el reporte del pipeline.
 
@@ -547,7 +547,7 @@ Para command handlers simples sin value objects propios, omitir esta seccion.)
 
 **Lo que liste aqui son sugerencias del planner basadas en la investigacion.** El test-writer y el implementer pueden ajustar con justificacion documentada si su juicio tecnico difiere (ej. la visibilidad propuesta rompe la compilacion, el nombre entra en conflicto con un precedente no visto por el planner, la firma propuesta contradice un ADR). Las desviaciones se documentan en el resumen del agente, no se reportan como bloqueo.
 
-**Antes de listar una propiedad como publica, pregunta si es un valor observable externamente** (lo que el caller necesita leer para tomar decisiones) **o un dato intermedio** (suma, agregado o insumo de calculo que solo tiene sentido dentro del VO). Los datos intermedios deben quedar privados; si hace falta exponerlos para auditoria/visualizacion, hazlo via `ToString()`, no via propiedades. Referencia: ADR-0012 "Encapsulamiento: Tell Don't Ask" (proscribe que calculos externos operen sobre datos crudos del VO).
+**Antes de listar una propiedad como publica, pregunta si es un valor observable externamente** (lo que el caller necesita leer para tomar decisiones) **o un dato intermedio** (suma, agregado o insumo de calculo que solo tiene sentido dentro del VO). Los datos intermedios deben quedar privados; si hace falta exponerlos para auditoria/visualizacion, hazlo via `ToString()`, no via propiedades. Referencia: MEF-ADR-0012 "Encapsulamiento: Tell Don't Ask" (proscribe que calculos externos operen sobre datos crudos del VO).
 
 ### NombreClase
 - `static Crear(...): NombreClase` — factory con invariantes
@@ -580,7 +580,7 @@ La sección **Modelo de eventos** es la más importante para issues de dominio. 
 - Escribir los `Given/When/Then` de los tests
 - Saber qué propiedades verificar con `And<>()`
 - Decidir si necesitan infraestructura Service Bus (topics/subscriptions)
-- Saber, cuando hay un evento que cruza un bus (`IPrivateEvent` o `IPublicEvent`), que su payload debe ser **plano y portable por el bus** (la línea "Construcción del evento que cruza un bus"): así el test-writer escribe el round-trip con serializador por defecto y el implementer traduce el modelo rico a forma plana antes de publicar/enviar. Sin esta consideración en el handoff, el evento puede emitirse cargando un VO rico que se rompe al cruzar el namespace interno o de integracion (ADR-0012, "Frontera de serialización: event store vs bus"; ADR-0023, criterio "¿cruza un bus?").
+- Saber, cuando hay un evento que cruza un bus (`IPrivateEvent` o `IPublicEvent`), que su payload debe ser **plano y portable por el bus** (la línea "Construcción del evento que cruza un bus"): así el test-writer escribe el round-trip con serializador por defecto y el implementer traduce el modelo rico a forma plana antes de publicar/enviar. Sin esta consideración en el handoff, el evento puede emitirse cargando un VO rico que se rompe al cruzar el namespace interno o de integracion (MEF-ADR-0012, "Frontera de serialización: event store vs bus"; MEF-ADR-0023, criterio "¿cruza un bus?").
 
 La sección **Interfaz pública** es obligatoria para issues que crean value objects complejos o aggregates con comportamiento rico. Define el contrato que el test-writer usa como superficie de testing y que el implementer debe respetar. Sin ella, los agentes adivinan qué exponer y tienden a romper el encapsulamiento.
 
@@ -610,7 +610,7 @@ gh issue create \
 
 ## ADRs aplicables
 Enumera los ADRs que rigen este issue de infra. Tipicamente:
-- ADR-0001: topics por evento / subscriptions por consumidor (si provisiona recursos de Service Bus).
+- MEF-ADR-0001: topics por evento / subscriptions por consumidor (si provisiona recursos de Service Bus).
 - Otros ADRs de infra que apliquen al recurso en cuestion.
 
 (Si no aplica ningun ADR, escribir "Ninguno".)

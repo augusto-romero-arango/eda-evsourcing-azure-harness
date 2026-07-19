@@ -1,4 +1,4 @@
-# ADR-0019: Separacion fisica de skills publicados (consumidor) vs internos (Mefisto)
+# MEF-ADR-0019: Separacion fisica de skills publicados (consumidor) vs internos (Mefisto)
 
 - **Fecha**: 2026-05-15
 - **Estado**: aceptado
@@ -106,7 +106,7 @@ Pros: separacion fisica dura. Contras: dos artefactos a publicar y mantener, dep
 
 ### Negativas
 
-- **Duplicacion inicial**: los pipelines y agentes empezaran muy parecidos (mefisto-tooling-pipeline.sh es ~85% identico a tooling-pipeline.sh). Aceptado deliberadamente; refactorizar a un common compartido solo cuando la duplicacion duela en la practica (regla de tres -- ADR-0018).
+- **Duplicacion inicial**: los pipelines y agentes empezaran muy parecidos (mefisto-tooling-pipeline.sh es ~85% identico a tooling-pipeline.sh). Aceptado deliberadamente; refactorizar a un common compartido solo cuando la duplicacion duela en la practica (regla de tres -- MEF-ADR-0018).
 - **Guard defensivo en cada skill**: cada `.md` lleva un bloque de pre-condicion. Un developer puede olvidarlo al anadir un skill nuevo. Mitigacion: test de guards (`scripts/tests/`) que itera sobre todos los skills publicados y verifica que abortan al invocarse en Mefisto.
 - **Fork del repo de Mefisto**: el slug hardcodeado en el routing del publicado queda incorrecto para forks. Mitigado con el campo opcional `repoSlug` en `.claude/harness.config.json` (default: `augusto-romero-arango/eda-evsourcing-azure-harness`).
 - **Documentacion adicional**: este ADR + secciones nuevas en CLAUDE.md y README.md son necesarias para que un nuevo developer entienda los dos sets.
@@ -114,6 +114,6 @@ Pros: separacion fisica dura. Contras: dos artefactos a publicar y mantener, dep
 ## Referencias
 
 - Conversacion de diseno y plan detallado: `~/.claude/plans/me-qued-con-una-quiet-bunny.md` (commits del 2026-05-15).
-- ADR-0018 (heuristicas de evolucion y reuso): justifica posponer el refactor a un common compartido entre lado publicado e interno.
-- ADR-0007 (gestion de proyecto con GitHub Issues): los labels `tipo:tooling` y `estado:borrador|listo` se aplican igual en ambos repos.
-- ADR-0011 (Definition of Ready por tipo de issue): el DoR del harness es una version simplificada del DoR del consumidor (sin "Modelo de eventos", sin `dom:`).
+- MEF-ADR-0018 (heuristicas de evolucion y reuso): justifica posponer el refactor a un common compartido entre lado publicado e interno.
+- MEF-ADR-0007 (gestion de proyecto con GitHub Issues): los labels `tipo:tooling` y `estado:borrador|listo` se aplican igual en ambos repos.
+- MEF-ADR-0011 (Definition of Ready por tipo de issue): el DoR del harness es una version simplificada del DoR del consumidor (sin "Modelo de eventos", sin `dom:`).

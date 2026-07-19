@@ -1,4 +1,4 @@
-# ADR-0009: Patron de mensajes con .resx per-aggregate y clase Mensajes anidada
+# MEF-ADR-0009: Patron de mensajes con .resx per-aggregate y clase Mensajes anidada
 
 **Estado**: Aceptado  
 **Fecha**: 2026-04-04

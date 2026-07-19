@@ -1,4 +1,4 @@
-# ADR-0015: Snapshots de Marten como excepción, no como regla
+# MEF-ADR-0015: Snapshots de Marten como excepción, no como regla
 
 ## Estado
 
@@ -62,7 +62,7 @@ Ambas son aceptables. Preferir campo recalculado cuando el mismo valor se lee va
 
 ## Referencias
 
-- ADR-0003: Event sourcing con Marten + Wolverine (define el stack; este ADR restringe una capacidad de Marten específicamente).
+- MEF-ADR-0003: Event sourcing con Marten + Wolverine (define el stack; este ADR restringe una capacidad de Marten específicamente).
 - ADR de control de costos de App Insights del proyecto consumidor: Control de costos Application Insights (la telemetría que permite detectar el momento en que la excepción se justifique).
-- ADR-0012: Estilo de modelado de objetos de dominio (explica el enfoque de aggregates ricos y cómo exponen estado).
+- MEF-ADR-0012: Estilo de modelado de objetos de dominio (explica el enfoque de aggregates ricos y cómo exponen estado).
 - Patrón de `ControlesDeFranja` en `ControlDiarioAggregateRoot`: campo recalculado al final de cada `Apply` — ejemplo canónico del enfoque recomendado en este ADR.

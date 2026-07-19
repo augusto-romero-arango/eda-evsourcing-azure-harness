@@ -374,7 +374,7 @@ fi
 # Ubicacion: pipeline-state/ en la raiz del worktree (NO .claude/) — el runtime
 # de Claude Code intercepta escrituras a .claude/** en worktrees aun con
 # bypassPermissions, lo que dejaba al agente sin forma de senalizar refactor puro.
-# Decision documentada en docs/adr/0017-archivo-senal-refactor-fuera-de-claude.md.
+# Decision documentada en docs/adr/mef-adr-0017-archivo-senal-refactor-fuera-de-claude.md.
 REFACTOR_SIGNAL_PATH="$WORKTREE_PATH/pipeline-state/refactor-signal.md"
 # Compatibilidad: aceptar la ubicacion legacy si existe (worktrees previos)
 LEGACY_REFACTOR_SIGNAL_PATH="$WORKTREE_PATH/.claude/pipeline/refactor-signal.md"

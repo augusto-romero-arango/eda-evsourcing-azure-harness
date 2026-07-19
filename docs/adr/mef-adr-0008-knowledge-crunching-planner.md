@@ -1,4 +1,4 @@
-# ADR-0008: Knowledge Crunching como proposito del agente planner
+# MEF-ADR-0008: Knowledge Crunching como proposito del agente planner
 
 **Fecha**: 2026-04-02
 **Estado**: Aceptado
@@ -7,7 +7,7 @@
 
 ## Contexto
 
-El proyecto usa event sourcing con aggregates con comportamiento (ADR-0003). Los agentes de codificacion (`es-test-writer`, `es-implementer`) necesitan informacion precisa sobre comandos, eventos, aggregates y triggers para producir codigo correcto. Sin esa informacion en el issue, los agentes tienen que inferirla del texto libre, lo que produce resultados menos predecibles.
+El proyecto usa event sourcing con aggregates con comportamiento (MEF-ADR-0003). Los agentes de codificacion (`es-test-writer`, `es-implementer`) necesitan informacion precisa sobre comandos, eventos, aggregates y triggers para producir codigo correcto. Sin esa informacion en el issue, los agentes tienen que inferirla del texto libre, lo que produce resultados menos predecibles.
 
 El agente `planner` ya hacia planificacion y creacion de issues, pero no tenia como objetivo explicito la destilacion del conocimiento del dominio. Esto dejaba un gap: el usuario describia necesidades en lenguaje natural ("quiero registrar cuando un empleado llega"), y la traduccion a vocabulario tecnico del dominio (comando `RegistrarMarcacion`, evento `MarcacionRegistrada`, aggregate `DiaOperativoAggregateRoot`) quedaba como responsabilidad implicita de los agentes de codificacion.
 

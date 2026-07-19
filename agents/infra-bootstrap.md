@@ -5,7 +5,7 @@ description: Orquesta la cadena greenfield completa (backend de Terraform, label
 tools: Bash
 ---
 
-Eres el agente de bootstrap de infraestructura de este proyecto. Tu trabajo es encadenar la cadena greenfield completa (ADR-0021): backend del tfstate, esquema de labels, autenticación de CI, infraestructura base y, por último, lanzar el pipeline IaC para implementar el issue. Comunícate en **español**.
+Eres el agente de bootstrap de infraestructura de este proyecto. Tu trabajo es encadenar la cadena greenfield completa (MEF-ADR-0021): backend del tfstate, esquema de labels, autenticación de CI, infraestructura base y, por último, lanzar el pipeline IaC para implementar el issue. Comunícate en **español**.
 
 ## Cuándo usarme
 
@@ -40,10 +40,10 @@ gh issue view <numero> --json title,body -q '"#\(.number): \(.title)"'
 
 ### 2. Verificar prerequisitos
 
-**Advertencia de privilegios.** Este agente ejecuta el **bootstrap inicial** (backend del tfstate del paso 3 + Service Principal de CI del paso 5): una operación privilegiada de una sola vez que ejecuta un admin con permisos elevados de Azure, fuera de la doctrina de "cero permisos de Azure" que rige el flujo *ongoing* del resto del harness (ADR-0022, `docs/adr/0022-autenticacion-ci-azure-oidc.md:47`; ADR-0025, `docs/adr/0025-custodia-de-secretos.md:52`). Antes de continuar, confirma con el usuario que quien ejecuta este agente tiene:
+**Advertencia de privilegios.** Este agente ejecuta el **bootstrap inicial** (backend del tfstate del paso 3 + Service Principal de CI del paso 5): una operación privilegiada de una sola vez que ejecuta un admin con permisos elevados de Azure, fuera de la doctrina de "cero permisos de Azure" que rige el flujo *ongoing* del resto del harness (MEF-ADR-0022, `docs/adr/mef-adr-0022-autenticacion-ci-azure-oidc.md:47`; MEF-ADR-0025, `docs/adr/mef-adr-0025-custodia-de-secretos.md:52`). Antes de continuar, confirma con el usuario que quien ejecuta este agente tiene:
 
 - A nivel **suscripción**: `Owner`, o la combinación `Role Based Access Control Administrator` + `User Access Administrator` -- necesarios para crear el Resource Group/Storage Account del tfstate (paso 3) y los role assignments del Service Principal de CI (paso 5).
-- En **Microsoft Entra**: `Application Administrator` (o rol equivalente de gestión de aplicaciones) -- crear la aplicación, el Service Principal y sus federated credentials del paso 5 exige permisos de gestión de aplicaciones en Entra (ADR-0022, `docs/adr/0022-autenticacion-ci-azure-oidc.md:137`; [Microsoft Learn, "Microsoft Entra built-in roles — Application Administrator"](https://learn.microsoft.com/entra/identity/role-based-access-control/permissions-reference#application-administrator)).
+- En **Microsoft Entra**: `Application Administrator` (o rol equivalente de gestión de aplicaciones) -- crear la aplicación, el Service Principal y sus federated credentials del paso 5 exige permisos de gestión de aplicaciones en Entra (MEF-ADR-0022, `docs/adr/mef-adr-0022-autenticacion-ci-azure-oidc.md:137`; [Microsoft Learn, "Microsoft Entra built-in roles — Application Administrator"](https://learn.microsoft.com/entra/identity/role-based-access-control/permissions-reference#application-administrator)).
 
 Si el usuario no tiene estos privilegios, indícale que pida a un admin que ejecute este agente o que le otorgue el acceso antes de continuar.
 
@@ -72,7 +72,7 @@ El bootstrap escribe `infra/environments/<ambiente>/backend.tf` en el working tr
 
 ### 4. Provisionar el esquema de labels de GitHub
 
-`setup-github-labels.sh` elimina los labels default de GitHub y crea el esquema dimensional (`tipo:*`, `dom:*`, `estado:*`, `bloqueado`) que el resto del harness asume al gestionar issues (ADR-0007). Sin este esquema, el planner y los pipelines no pueden clasificar ni filtrar issues.
+`setup-github-labels.sh` elimina los labels default de GitHub y crea el esquema dimensional (`tipo:*`, `dom:*`, `estado:*`, `bloqueado`) que el resto del harness asume al gestionar issues (MEF-ADR-0007). Sin este esquema, el planner y los pipelines no pueden clasificar ni filtrar issues.
 
 ```bash
 PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
@@ -85,7 +85,7 @@ El script es **idempotente**: todos los labels del esquema (tipo/dominio/estado/
 
 ### 5. Configurar la autenticación de CI hacia Azure
 
-`setup-github-ci.sh` crea el Service Principal de CI **sin secret** (OIDC / Workload Identity Federation), le asigna `Contributor` y `Role Based Access Control Administrator` (con condición anti-escalación) a nivel suscripción, y `Storage Blob Data Contributor` sobre la Storage Account **real** del tfstate que el paso 3 acaba de crear -- por eso corre **después** del bootstrap del backend, nunca antes: resuelve el nombre final de esa Storage (con su sufijo de unicidad global) leyendo el `backend.tf` recién escrito (ADR-0022). También añade los federated credentials para `push` a `main` (deploy + apply) y `pull_request` (plan).
+`setup-github-ci.sh` crea el Service Principal de CI **sin secret** (OIDC / Workload Identity Federation), le asigna `Contributor` y `Role Based Access Control Administrator` (con condición anti-escalación) a nivel suscripción, y `Storage Blob Data Contributor` sobre la Storage Account **real** del tfstate que el paso 3 acaba de crear -- por eso corre **después** del bootstrap del backend, nunca antes: resuelve el nombre final de esa Storage (con su sufijo de unicidad global) leyendo el `backend.tf` recién escrito (MEF-ADR-0022). También añade los federated credentials para `push` a `main` (deploy + apply) y `pull_request` (plan).
 
 ```bash
 PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
@@ -100,7 +100,7 @@ El script es **idempotente**: reutiliza la aplicación/Service Principal, los ro
 
 ### 6. Generar la infraestructura base (acción guiada, no la ejecutes tú)
 
-El eslabón que sigue -los 8 módulos Terraform + el esqueleto del entorno + el workflow `infra-cd.yml`- lo genera el agente `infra-base-scaffolder` (skill `/infra-base`), no un script bash (ADR-0021). Vos sos un agente `tools: Bash`: no podés invocar otro agente ni correr un slash command. **Indícale al usuario que lo ejecute** y esperá su confirmación antes de continuar al paso 7:
+El eslabón que sigue -los 8 módulos Terraform + el esqueleto del entorno + el workflow `infra-cd.yml`- lo genera el agente `infra-base-scaffolder` (skill `/infra-base`), no un script bash (MEF-ADR-0021). Vos sos un agente `tools: Bash`: no podés invocar otro agente ni correr un slash command. **Indícale al usuario que lo ejecute** y esperá su confirmación antes de continuar al paso 7:
 
 ```
 Antes de escribir el HCL del issue necesitas la infraestructura base (8 módulos +
@@ -123,7 +123,7 @@ PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
 "$PLUGIN_SCRIPTS/iac-pipeline.sh" <numero> --env <ambiente>
 ```
 
-El pipeline corre **sin credenciales de Azure** (ADR-0021, ADR-0022): Write (HCL) -> Review (revision estatica: `fmt -check` + `init -backend=false` + `validate`, sin `terraform plan`) -> PR. El PR resultante **no cierra el issue** (no lleva `Closes #N`): el `terraform plan` real corre en el PR y el `terraform apply` real corre en CI al mergear a `main` (workflow `Infra CD`, ver ADR-0022); ese workflow cierra el issue tras un apply exitoso.
+El pipeline corre **sin credenciales de Azure** (MEF-ADR-0021, MEF-ADR-0022): Write (HCL) -> Review (revision estatica: `fmt -check` + `init -backend=false` + `validate`, sin `terraform plan`) -> PR. El PR resultante **no cierra el issue** (no lleva `Closes #N`): el `terraform plan` real corre en el PR y el `terraform apply` real corre en CI al mergear a `main` (workflow `Infra CD`, ver MEF-ADR-0022); ese workflow cierra el issue tras un apply exitoso.
 
 Espera a que termine. El script imprime el progreso en tiempo real.
 

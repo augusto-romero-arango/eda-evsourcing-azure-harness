@@ -1,4 +1,4 @@
-# ADR-0004: Manejo de errores en event sourcing - eventos de fallo vs excepciones
+# MEF-ADR-0004: Manejo de errores en event sourcing - eventos de fallo vs excepciones
 
 ## Estado
 

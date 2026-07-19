@@ -1,4 +1,4 @@
-# ADR-0020: Hosting de Azure Functions - un App Service Plan por Function App (dominio)
+# MEF-ADR-0020: Hosting de Azure Functions - un App Service Plan por Function App (dominio)
 
 - **Fecha**: 2026-06-18
 - **Estado**: aceptado
@@ -6,15 +6,15 @@
 
 ## Contexto
 
-El marco organiza dominios en **Bounded Contexts: grupos de dominios relacionados** con su propio resource group (ADR-0023). Dentro de un BC, cada dominio es una Function App independiente.
+El marco organiza dominios en **Bounded Contexts: grupos de dominios relacionados** con su propio resource group (MEF-ADR-0023). Dentro de un BC, cada dominio es una Function App independiente.
 
-El marco despliega **una Function App por dominio** (ver ADR-0006). Cada Function App corre sobre Marten + Wolverine + PostgreSQL en modo serverless (ver ADR-0003) y publica sus eventos a Service Bus a traves del outbox transaccional de Wolverine (ver ADR-0001).
+El marco despliega **una Function App por dominio** (ver MEF-ADR-0006). Cada Function App corre sobre Marten + Wolverine + PostgreSQL en modo serverless (ver MEF-ADR-0003) y publica sus eventos a Service Bus a traves del outbox transaccional de Wolverine (ver MEF-ADR-0001).
 
 Hasta ahora el harness no tenia una directiva canonica de hosting: `domain-scaffolder.md` y `bug-investigator.md` apuntaban vagamente "al ADR de hosting del proyecto consumidor", y la guia informal permitia que varias Function Apps **compartieran un mismo App Service Plan** en dev para ahorrar costo. El scaffolder generaba todos los `module.function_app_*` apuntando a un unico `module.service_plan.id`.
 
 ### Sintoma observado (origen: issue #43)
 
-En `Bitakora.ControlAsistencia`, dos Function Apps (`control-horas` y `programacion`) compartian un plan **B1 (1 core)**. Las smoke tests (ADR-0013) fallaban de forma intermitente: timeouts, health checks que tardaban hasta 148 s, fallos esporadicos. Azure Monitor mostro la CPU del plan **saturada en reposo**: con 0 requests HTTP y 0 mensajes de Service Bus en cola, la CPU promediaba ~60 % con picos de 96-100 %.
+En `Bitakora.ControlAsistencia`, dos Function Apps (`control-horas` y `programacion`) compartian un plan **B1 (1 core)**. Las smoke tests (MEF-ADR-0013) fallaban de forma intermitente: timeouts, health checks que tardaban hasta 148 s, fallos esporadicos. Azure Monitor mostro la CPU del plan **saturada en reposo**: con 0 requests HTTP y 0 mensajes de Service Bus en cola, la CPU promediaba ~60 % con picos de 96-100 %.
 
 ### Causa raiz
 
@@ -30,7 +30,7 @@ Conclusion: con `Solo`, el unico eje de crecimiento disponible es el **vertical*
 
 ## Decision
 
-**Cada Function App (cada dominio) corre en su propio App Service Plan dedicado. Los planes no se comparten entre dominios.** Esta directiva aplica a cada dominio dentro de un Bounded Context (ADR-0023); el resource group que agrupa el BC es responsabilidad de la infraestructura base (ADR-0021).
+**Cada Function App (cada dominio) corre en su propio App Service Plan dedicado. Los planes no se comparten entre dominios.** Esta directiva aplica a cada dominio dentro de un Bounded Context (MEF-ADR-0023); el resource group que agrupa el BC es responsabilidad de la infraestructura base (MEF-ADR-0021).
 
 Esto alinea el harness con la guia oficial de Azure:
 
@@ -40,9 +40,9 @@ Esto alinea el harness con la guia oficial de Azure:
 ### Proscripciones (que NO usar)
 
 - **No usar el plan Consumption `Y1`** con .NET 10+ / isolated worker para estos dominios. El modelo de escalado dinamico del Consumption es incompatible con un proceso que mantiene un agente de durabilidad always-on con estado en memoria (los agentes y bucles de polling que `Solo` asigna localmente): el host puede apagar la instancia entre invocaciones, matando el poll del outbox. El piso es un plan dedicado (Basic o superior).
-- **No usar Wolverine `DurabilityMode.Serverless`**. Ese modo **desactiva toda la persistencia de mensajes** -- incluido el outbox/inbox durable transaccional [6]: rompe la garantia de que un evento persistido en Marten se publica a Service Bus de forma confiable (ver ADR-0001 y ADR-0003). El marco depende del outbox durable; `Serverless` lo elimina. El modo correcto sigue siendo `Solo`.
+- **No usar Wolverine `DurabilityMode.Serverless`**. Ese modo **desactiva toda la persistencia de mensajes** -- incluido el outbox/inbox durable transaccional [6]: rompe la garantia de que un evento persistido en Marten se publica a Service Bus de forma confiable (ver MEF-ADR-0001 y MEF-ADR-0003). El marco depende del outbox durable; `Serverless` lo elimina. El modo correcto sigue siendo `Solo`.
 
-  > **Nota terminologica (evitar confusion)**: el "modo serverless" de ADR-0003 y los helpers `...Serverless` del paquete `Cosmos.EventDriven.*` (p. ej. `AgregarWolverineParaComandosServerless`) se refieren al **contexto de hosting** (Wolverine dentro de Azure Functions, sin bus in-process), **no** al enum `DurabilityMode.Serverless` de Wolverine. El `DurabilityMode` efectivo del marco es `Solo` -- por eso el agente de durabilidad sigue activo y poll-eando, que es justo el sintoma de CPU en reposo descrito arriba. No cambiar a `DurabilityMode.Serverless` "para alinear nombres": eliminaria el outbox durable del que depende el marco.
+  > **Nota terminologica (evitar confusion)**: el "modo serverless" de MEF-ADR-0003 y los helpers `...Serverless` del paquete `Cosmos.EventDriven.*` (p. ej. `AgregarWolverineParaComandosServerless`) se refieren al **contexto de hosting** (Wolverine dentro de Azure Functions, sin bus in-process), **no** al enum `DurabilityMode.Serverless` de Wolverine. El `DurabilityMode` efectivo del marco es `Solo` -- por eso el agente de durabilidad sigue activo y poll-eando, que es justo el sintoma de CPU en reposo descrito arriba. No cambiar a `DurabilityMode.Serverless` "para alinear nombres": eliminaria el outbox durable del que depende el marco.
 
 ### Defaults del plan
 
@@ -86,7 +86,7 @@ Mantener un plan unico y escalar verticalmente para dar mas cores al conjunto.
 
 Colapsar los dominios en una unica app para tener un solo agente de durabilidad.
 
-**Descartado**: viola ADR-0006 (una Function App por dominio) y el principio de que cada dominio es duenno de su deploy, su escalado y su ciclo de vida. Acopla deploys y reintroduce el riesgo de que un dominio tumbe a los demas dentro del mismo proceso.
+**Descartado**: viola MEF-ADR-0006 (una Function App por dominio) y el principio de que cada dominio es duenno de su deploy, su escalado y su ciclo de vida. Acopla deploys y reintroduce el riesgo de que un dominio tumbe a los demas dentro del mismo proceso.
 
 ### Alt 3: migrar a `DurabilityMode.Balanced` + escalado horizontal
 
@@ -120,12 +120,12 @@ Usar el modo balanceado de Wolverine (con eleccion de lider y reparto de agentes
 - **[5]** "Best practices for reliable Azure Functions - Choose the correct hosting plan" -- planes de hosting disponibles (Flex Consumption, Premium, Dedicated, Consumption). https://learn.microsoft.com/azure/azure-functions/functions-best-practices
 - **[6]** Wolverine, "Wolverine and Serverless" (Jeremy D. Miller) -- `DurabilityMode.Serverless` desactiva toda la persistencia de mensajes (inbox/outbox transaccional y procesos de durabilidad en background) para entornos serverless; `Solo` optimiza la durabilidad para un unico nodo. https://jeremydmiller.com/2023/10/30/wolverine-and-serverless/ y https://wolverinefx.net/guide/durability/
 - Origen: issue #43, investigacion de fallos intermitentes de smoke en `Bitakora.ControlAsistencia` (CPU del plan B1 compartido saturada en reposo).
-- ADR-0001 (Service Bus, topic por evento): el outbox durable de Wolverine publica a estos topics; por eso no se admite `DurabilityMode.Serverless`.
-- ADR-0003 (stack ES: Marten + Wolverine + Postgres): define el modo serverless de Wolverine y el outbox transaccional.
-- ADR-0006 (convenciones de nombramiento de funciones Azure): una Function App por dominio, base de "un plan por dominio".
-- ADR-0013 (smoke tests contra entorno dev): suite cuyos fallos intermitentes destaparon el problema.
-- ADR-0023: Bounded Context, namespace interno de Azure Service Bus y frontera publico/privado — define BC como grupo de dominios sobre un resource group; este ADR fija el hosting por dominio dentro del BC.
+- MEF-ADR-0001 (Service Bus, topic por evento): el outbox durable de Wolverine publica a estos topics; por eso no se admite `DurabilityMode.Serverless`.
+- MEF-ADR-0003 (stack ES: Marten + Wolverine + Postgres): define el modo serverless de Wolverine y el outbox transaccional.
+- MEF-ADR-0006 (convenciones de nombramiento de funciones Azure): una Function App por dominio, base de "un plan por dominio".
+- MEF-ADR-0013 (smoke tests contra entorno dev): suite cuyos fallos intermitentes destaparon el problema.
+- MEF-ADR-0023: Bounded Context, namespace interno de Azure Service Bus y frontera publico/privado — define BC como grupo de dominios sobre un resource group; este ADR fija el hosting por dominio dentro del BC.
 
 ## Control de cambios
 
-- 2026-07-01: enmendado (issue #167, barrido de coherencia hacia ADR-0024) para actualizar la referencia a ADR-0023, cuyo titulo y topologia (un namespace interno por BC; lo publico via ADR-0024) ya no era "topologia de dos namespaces ASB y Open Host Service". No hay cambio de doctrina de hosting.
+- 2026-07-01: enmendado (issue #167, barrido de coherencia hacia MEF-ADR-0024) para actualizar la referencia a MEF-ADR-0023, cuyo titulo y topologia (un namespace interno por BC; lo publico via MEF-ADR-0024) ya no era "topologia de dos namespaces ASB y Open Host Service". No hay cambio de doctrina de hosting.

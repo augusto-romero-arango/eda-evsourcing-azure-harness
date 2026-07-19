@@ -1,12 +1,12 @@
-# ADR-0024: Modelo de eventos de bus del Bounded Context (privado propio, publico via backbone compartido, integracion externa diferida)
+# MEF-ADR-0024: Modelo de eventos de bus del Bounded Context (privado propio, publico via backbone compartido, integracion externa diferida)
 
 - **Fecha**: 2026-07-01
 - **Estado**: aceptado
-- **Aplica a**: doctrina de mensajeria del marco; gobierno de los agentes `implementer`, `domain-scaffolder`, `test-writer`, `reviewer`, `infra-base-scaffolder` e `infra-writer`; contrato `harness.config.json`. Enmienda ADR-0021, ADR-0023 (decisiones #2 y #5) y ADR-0003.
+- **Aplica a**: doctrina de mensajeria del marco; gobierno de los agentes `implementer`, `domain-scaffolder`, `test-writer`, `reviewer`, `infra-base-scaffolder` e `infra-writer`; contrato `harness.config.json`. Enmienda MEF-ADR-0021, MEF-ADR-0023 (decisiones #2 y #5) y MEF-ADR-0003.
 
 ## Contexto
 
-ADR-0023 fijo dos piezas de la topologia de mensajeria: (a) cada Bounded Context provisiona **dos** namespaces de Azure Service Bus siempre (interno + integracion) y (b) el flujo inter-BC sigue Open Host Service (OHS): el productor publica en **su** namespace de integracion y los externos se suscriben conectandose a el.
+MEF-ADR-0023 fijo dos piezas de la topologia de mensajeria: (a) cada Bounded Context provisiona **dos** namespaces de Azure Service Bus siempre (interno + integracion) y (b) el flujo inter-BC sigue Open Host Service (OHS): el productor publica en **su** namespace de integracion y los externos se suscriben conectandose a el.
 
 La operacion real de los proyectos que usan el harness no encaja con ese modelo. Clasificando los ASB que un BC toca por su **alcance** (quien tiene dominio sobre ellos):
 
@@ -18,11 +18,11 @@ La operacion real de los proyectos que usan el harness no encaja con ese modelo.
 
 Ambos extremos verdaderamente externos son simetricos y cero-caso: se tratan como **una misma excepcion diferida**.
 
-Ademas, dos precisiones de comportamiento que ADR-0023 no fijaba:
+Ademas, dos precisiones de comportamiento que MEF-ADR-0023 no fijaba:
 
 - **Todo evento de bus cruza fisicamente el ASB**, aun cuando productor y consumidor viven en el mismo Function App: no hay entrega en memoria de Wolverine. Aplica a los eventos con marker de bus (`IPrivateEvent` / `IPublicEvent`).
 - **Los comandos no cambian**: se siguen mediando en proceso por Wolverine (`ICommandRouter`); no cruzan el ASB por esta regla.
-- **Los eventos de event sourcing** (los del aggregate) viven en el event store de Marten con modelo rico y **no cruzan ASB**; quedan fuera del alcance de este ADR (frontera de ADR-0012 intacta).
+- **Los eventos de event sourcing** (los del aggregate) viven en el event store de Marten con modelo rico y **no cruzan ASB**; quedan fuera del alcance de este ADR (frontera de MEF-ADR-0012 intacta).
 
 Provisionar siempre un namespace de integracion por BC que casi nunca se usa es costo y superficie de administracion de Terraform innecesarios, y desalinea el lenguaje del harness respecto de como se opera de verdad.
 
@@ -44,17 +44,17 @@ Provisionar siempre un namespace de integracion por BC que casi nunca se usa es 
 | Privado | `IPrivateEvent` | ASB propio del BC | plano y portable | Si, siempre |
 | Publico | `IPublicEvent` | backbone compartido (comun) o integracion externa (diferido) | plano y portable | Si |
 
-El criterio semantico publico/privado es el de la frontera de Bounded Context (ADR-0023 decision #4, materializado en el `implementer` via issue #156): un evento es **publico** si lo consume un dominio de **otro** BC; es **privado** si lo consume un dominio del **mismo** BC, aunque sea un dominio distinto al productor. Este ADR no cambia ese criterio; cambia el **transporte** de cada categoria.
+El criterio semantico publico/privado es el de la frontera de Bounded Context (MEF-ADR-0023 decision #4, materializado en el `implementer` via issue #156): un evento es **publico** si lo consume un dominio de **otro** BC; es **privado** si lo consume un dominio del **mismo** BC, aunque sea un dominio distinto al productor. Este ADR no cambia ese criterio; cambia el **transporte** de cada categoria.
 
 ### 3. Privado por defecto: el ASB propio del BC
 
-El BC tiene **un** namespace interno, **compartido por todos sus dominios** (Function Apps, ADR-0020), provisionado siempre (always-on). Es el unico ASB que el harness provisiona por defecto. Todo evento privado se publica a ese ASB y se consume via `[ServiceBusTrigger]`, **aun si el consumidor esta en el mismo Function App que el productor**: no hay atajo en memoria. Los comandos se siguen mediando en proceso por Wolverine, sin cambio.
+El BC tiene **un** namespace interno, **compartido por todos sus dominios** (Function Apps, MEF-ADR-0020), provisionado siempre (always-on). Es el unico ASB que el harness provisiona por defecto. Todo evento privado se publica a ese ASB y se consume via `[ServiceBusTrigger]`, **aun si el consumidor esta en el mismo Function App que el productor**: no hay atajo en memoria. Los comandos se siguen mediando en proceso por Wolverine, sin cambio.
 
 ### 4. Publico comun: el backbone compartido del producto
 
 El evento publico comun se publica al ASB compartido del producto, provisionado por infra. Consecuencias:
 
-- Infra es dueno del namespace; el **productor** crea sus topics y el **consumidor** crea sus subscriptions, con permisos baseline que otorga infra. La convencion de naming de subscriptions de ADR-0005 (`{consumidor}-escucha-{productor}`) aplica por igual en el backbone compartido.
+- Infra es dueno del namespace; el **productor** crea sus topics y el **consumidor** crea sus subscriptions, con permisos baseline que otorga infra. La convencion de naming de subscriptions de MEF-ADR-0005 (`{consumidor}-escucha-{productor}`) aplica por igual en el backbone compartido.
 - El acceso al backbone se hace por **cadena de conexion**, custodiada segun la decision #6.
 - No es opt-in: es el camino publico normal del producto.
 
@@ -67,7 +67,7 @@ La integracion con una app ajena al producto, en cualquiera de sus dos direccion
 
 ### 6. Custodia de cadenas de conexion
 
-Todas las cadenas de conexion de Azure Service Bus que el BC toca -- la del ASB **propio (interno)**, la del backbone compartido y la de cualquier ASB externo -- se custodian en **Azure Key Vault** y se referencian desde los app settings de la Function App con `@Microsoft.KeyVault(...)`. El **valor** del secreto lo coloca infra / un admin (el acceso se gestiona administrativamente); el harness provisiona (a) la **referencia** en app settings y (b) el **permiso de la managed identity** de la Function App para leer ese secreto de Key Vault. La cadena **nunca** queda en texto plano en `harness.config.json`, en app settings literales ni en el estado de Terraform. Esta custodia es una **instancia** del principio general de custodia de secretos (ADR-0025): Key Vault no es exclusivo de las cadenas de ASB, es el almacen general de secretos del BC; el mecanismo alterno para secretos que el runtime necesita antes de resolver referencias de Key Vault es la **identidad administrada** (ADR-0025 decision #3).
+Todas las cadenas de conexion de Azure Service Bus que el BC toca -- la del ASB **propio (interno)**, la del backbone compartido y la de cualquier ASB externo -- se custodian en **Azure Key Vault** y se referencian desde los app settings de la Function App con `@Microsoft.KeyVault(...)`. El **valor** del secreto lo coloca infra / un admin (el acceso se gestiona administrativamente); el harness provisiona (a) la **referencia** en app settings y (b) el **permiso de la managed identity** de la Function App para leer ese secreto de Key Vault. La cadena **nunca** queda en texto plano en `harness.config.json`, en app settings literales ni en el estado de Terraform. Esta custodia es una **instancia** del principio general de custodia de secretos (MEF-ADR-0025): Key Vault no es exclusivo de las cadenas de ASB, es el almacen general de secretos del BC; el mecanismo alterno para secretos que el runtime necesita antes de resolver referencias de Key Vault es la **identidad administrada** (MEF-ADR-0025 decision #3).
 
 ### 7. Wiring
 
@@ -83,7 +83,7 @@ Todas las cadenas de conexion de Azure Service Bus que el BC toca -- la del ASB 
 
 **Criterio de aplicacion (las tres condiciones juntas):**
 1. El estimulo es un `IPrivateEvent` (el gate `where TEvent : IPrivateEvent`).
-2. Se consume por una subscription de un unico topic, no un fan-in multi-tipo (la doctrina de ADR-0026 no cambia: el fan-in nunca usa este patron, porque el despacho por `Subject` no tiene un unico `TEvento`).
+2. Se consume por una subscription de un unico topic, no un fan-in multi-tipo (la doctrina de MEF-ADR-0026 no cambia: el fan-in nunca usa este patron, porque el despacho por `Subject` no tiene un unico `TEvento`).
 3. El comando equivalente seria un espejo del evento -- si aporta identidad, semantica o campos propios, se queda como comando explicito ruteado por `ICommandRouter`.
 
 **Naming y testing:** `{Evento}EventHandler`, en subcarpeta `EventHandler/` del feature folder (espejo de `CommandHandler/`). Base de test: `PrivateEventHandlerAsyncTest<TEvent>` (`Cosmos.EventSourcing.Testing.Utilities`), con `WhenAsync(evento)` en vez de `WhenAsync(comando)`.
@@ -94,7 +94,7 @@ Doctrina detallada del patron (before/after, regla de decision, tabla completa d
 
 ## Alternativas consideradas
 
-### Alt 1: mantener "dos namespaces por BC, always-on" (ADR-0023 #2)
+### Alt 1: mantener "dos namespaces por BC, always-on" (MEF-ADR-0023 #2)
 
 **Descartada**: provisiona una superficie (el namespace de integracion por BC) que la operacion real casi nunca usa; el evento publico comun no vive en un namespace de integracion propio sino en el backbone compartido del producto.
 
@@ -108,7 +108,7 @@ Doctrina detallada del patron (before/after, regla de decision, tabla completa d
 
 ### Alt 4: acceso a Azure Service Bus por managed identity
 
-**Diferida (norte, no ahora)**: es el best-practice de Azure (sin secretos SAS, RBAC least-privilege) y alinea con ADR-0022 (OIDC) y ADR-0023 #5 (Data Sender/Receiver). Pero el paquete `Cosmos.EventDriven.CritterStack.AzureServiceBus` (sobre `WolverineFx.AzureServiceBus` 6.1.0) solo expone wiring **por cadena de conexion**; no referencia `Azure.Identity` ni acepta `TokenCredential` / `fullyQualifiedNamespace`. El consumo via `[ServiceBusTrigger]` si soporta identidad de forma nativa, pero la publicacion (Wolverine) no, sin un overload nuevo en el paquete. Se decide **no tocar el paquete por ahora** y mantener cadenas de conexion. MI queda como direccion futura cuando se evolucione el paquete.
+**Diferida (norte, no ahora)**: es el best-practice de Azure (sin secretos SAS, RBAC least-privilege) y alinea con MEF-ADR-0022 (OIDC) y MEF-ADR-0023 #5 (Data Sender/Receiver). Pero el paquete `Cosmos.EventDriven.CritterStack.AzureServiceBus` (sobre `WolverineFx.AzureServiceBus` 6.1.0) solo expone wiring **por cadena de conexion**; no referencia `Azure.Identity` ni acepta `TokenCredential` / `fullyQualifiedNamespace`. El consumo via `[ServiceBusTrigger]` si soporta identidad de forma nativa, pero la publicacion (Wolverine) no, sin un overload nuevo en el paquete. Se decide **no tocar el paquete por ahora** y mantener cadenas de conexion. MI queda como direccion futura cuando se evolucione el paquete.
 
 ## Consecuencias
 
@@ -129,10 +129,10 @@ Doctrina detallada del patron (before/after, regla de decision, tabla completa d
 
 Al implementar estas enmiendas, el contenido superado se **elimina del cuerpo** del ADR afectado; no se marca como "obsoleto" ni se deja lenguaje ambiguo en el cuerpo. El registro del cambio vive solo en la seccion de control de cambios del ADR correspondiente. (Convencion del proyecto: evitar que se lean por error decisiones superadas.)
 
-- **ADR-0021** (infraestructura base): eliminar del cuerpo la provision del namespace de integracion por BC. El `infra-base-scaffolder` genera un namespace interno por BC; no provisiona namespace de integracion.
-- **ADR-0023 decision #2**: eliminar "cada BC provisiona exactamente dos namespaces". Queda un namespace interno por BC; lo publico viaja por el backbone compartido (comun) o por integracion externa (diferida).
-- **ADR-0023 decision #5** (OHS): reencuadrar como el caso **diferido** de "nos consumen desde afuera" (hostear namespace de integracion propio), no como el default.
-- **ADR-0003** (wiring): eliminar el wiring fijo de dos brokers por BC. Queda broker interno por defecto + N brokers nombrados (backbone compartido / externos) por cadena de conexion.
+- **MEF-ADR-0021** (infraestructura base): eliminar del cuerpo la provision del namespace de integracion por BC. El `infra-base-scaffolder` genera un namespace interno por BC; no provisiona namespace de integracion.
+- **MEF-ADR-0023 decision #2**: eliminar "cada BC provisiona exactamente dos namespaces". Queda un namespace interno por BC; lo publico viaja por el backbone compartido (comun) o por integracion externa (diferida).
+- **MEF-ADR-0023 decision #5** (OHS): reencuadrar como el caso **diferido** de "nos consumen desde afuera" (hostear namespace de integracion propio), no como el default.
+- **MEF-ADR-0003** (wiring): eliminar el wiring fijo de dos brokers por BC. Queda broker interno por defecto + N brokers nombrados (backbone compartido / externos) por cadena de conexion.
 - **`agents/implementer.md`**: realinear la guia de enrutamiento de infraestructura — el publico comun va al backbone compartido por cadena de conexion custodiada, no a un `module "service_bus_integracion"` por BC. Revisar el nombre de app setting `SERVICE_BUS_CONNECTION_INTEGRACION` (que implicaba un namespace de integracion por BC) hacia una cadena del backbone compartido. El criterio semantico publico/privado (issue #156) queda intacto.
 
 ### Trabajo diferido
@@ -143,25 +143,25 @@ Al implementar estas enmiendas, el contenido superado se **elimina del cuerpo** 
 
 ## Referencias
 
-- ADR-0023 (Bounded Context, topologia de dos namespaces ASB y OHS): este ADR enmienda sus decisiones #2 y #5 y reafirma su decision #4 (criterio publico/privado por frontera de BC).
-- ADR-0021 (infraestructura base): este ADR enmienda la provision de namespaces del `infra-base-scaffolder`.
-- ADR-0003 (stack ES: Marten + Wolverine + Postgres): este ADR enmienda el wiring de brokers de Azure Service Bus (se mantiene por cadena de conexion).
-- ADR-0012 (encapsulamiento y frontera de serializacion event store vs bus): frontera intacta; los eventos de event sourcing no cruzan el bus.
-- ADR-0022 (autenticacion de CI hacia Azure por OIDC): el acceso runtime a ASB (propio/interno, backbone y externos) se gestiona administrativamente y por cadena de conexion custodiada; la migracion a identidad (Alt 4) se enmarcaria en el mismo espiritu identity-based cuando el paquete lo soporte.
-- ADR-0025 (custodia de secretos): generaliza la decision #6 -- Key Vault no es exclusivo de las cadenas de ASB, es el almacen general de secretos del BC -- e incluye explicitamente la cadena del ASB propio/interno en la custodia.
+- MEF-ADR-0023 (Bounded Context, topologia de dos namespaces ASB y OHS): este ADR enmienda sus decisiones #2 y #5 y reafirma su decision #4 (criterio publico/privado por frontera de BC).
+- MEF-ADR-0021 (infraestructura base): este ADR enmienda la provision de namespaces del `infra-base-scaffolder`.
+- MEF-ADR-0003 (stack ES: Marten + Wolverine + Postgres): este ADR enmienda el wiring de brokers de Azure Service Bus (se mantiene por cadena de conexion).
+- MEF-ADR-0012 (encapsulamiento y frontera de serializacion event store vs bus): frontera intacta; los eventos de event sourcing no cruzan el bus.
+- MEF-ADR-0022 (autenticacion de CI hacia Azure por OIDC): el acceso runtime a ASB (propio/interno, backbone y externos) se gestiona administrativamente y por cadena de conexion custodiada; la migracion a identidad (Alt 4) se enmarcaria en el mismo espiritu identity-based cuando el paquete lo soporte.
+- MEF-ADR-0025 (custodia de secretos): generaliza la decision #6 -- Key Vault no es exclusivo de las cadenas de ASB, es el almacen general de secretos del BC -- e incluye explicitamente la cadena del ASB propio/interno en la custodia.
 - issue #156 (criterio publico/privado BC-aware en `implementer.md`): el criterio semantico que este ADR reafirma.
 - issue #158 (consumo de eventos publicos de otro BC): se reencuadra sobre el modelo de este ADR (el caso comun es el backbone compartido).
 - Paquete `Cosmos.EventDriven.CritterStack.AzureServiceBus` (`WolverineFx.AzureServiceBus` 6.1.0): el wiring solo acepta cadena de conexion; base de la decision de Alt 4.
 - "Use Key Vault references for App Service and Azure Functions" — referencias `@Microsoft.KeyVault(...)` en app settings. https://learn.microsoft.com/azure/app-service/app-service-key-vault-references
-- ADR-0026 (colas de Service Bus con sesion para fan-in y serializacion por clave de aggregate): el `groupId` de `IPrivateEventSender` que este ADR expone es el mecanismo por el cual el productor fija el `SessionId` que exige el queue de fan-in con sesion de ADR-0026. Sin cambio a la firma ni a la doctrina de enrutamiento privado/publico de este ADR.
+- MEF-ADR-0026 (colas de Service Bus con sesion para fan-in y serializacion por clave de aggregate): el `groupId` de `IPrivateEventSender` que este ADR expone es el mecanismo por el cual el productor fija el `SessionId` que exige el queue de fan-in con sesion de MEF-ADR-0026. Sin cambio a la firma ni a la doctrina de enrutamiento privado/publico de este ADR.
 - issue #313 (EventHandler directo para eventos privados sin comando espejo): agrega la decision #8 de este ADR. Consumidor de referencia: `Cosmos.ControlPlane` PR #94 (migracion de 4 handlers), #92/#93 (unificacion previa).
 - Heuristica *no-tipos-espejo* (motiva eliminar el comando espejo cuando no aporta identidad/semantica propia sobre el evento): `~/.claude/heuristics/general/no-tipos-espejo.md` (heuristica del harness, no versionada en este repo).
-- issue #312 (prerrequisito de #313): bump de `Cosmos.EventDriven`/`Cosmos.EventSourcing` a `2.1.0`, version minima que trae `IPrivateEventHandlerAsync<TEvent>`, `IPrivateEventRouter`, `AgregarWolverinePrivateEventRouter()` y `PrivateEventHandlerAsyncTest<TEvent>` (ver `docs/adr/0003-event-sourcing-marten-wolverine.md`).
+- issue #312 (prerrequisito de #313): bump de `Cosmos.EventDriven`/`Cosmos.EventSourcing` a `2.1.0`, version minima que trae `IPrivateEventHandlerAsync<TEvent>`, `IPrivateEventRouter`, `AgregarWolverinePrivateEventRouter()` y `PrivateEventHandlerAsyncTest<TEvent>` (ver `docs/adr/mef-adr-0003-event-sourcing-marten-wolverine.md`).
 
 ## Control de cambios
 
 - 2026-07-01: creacion como `propuesta` (incorpora la revision inicial con el equipo: simplificacion de la integracion externa a una unica excepcion diferida de dos direcciones; acceso por cadena de conexion sin cambio de paquete; managed identity como norte diferido).
 - 2026-07-01: `aceptado` tras la revision con el equipo.
-- 2026-07-01: enmendado (issue #184, mandato de ADR-0025) para generalizar la decision #6: la custodia en Key Vault deja de presentarse como exclusiva de las cadenas de ASB y remite a ADR-0025 como doctrina general; se incluye explicitamente la cadena del ASB propio/interno, que el cuerpo omitia.
-- 2026-07-15: enmendado (issue #269, doctrina fundacional de ADR-0026) para agregar la referencia cruzada a ADR-0026: el `groupId` de `IPrivateEventSender` es el mecanismo por el que el productor fija el `SessionId` de un queue de fan-in con sesion. Sin cambio a la firma ni a la doctrina de este ADR.
+- 2026-07-01: enmendado (issue #184, mandato de MEF-ADR-0025) para generalizar la decision #6: la custodia en Key Vault deja de presentarse como exclusiva de las cadenas de ASB y remite a MEF-ADR-0025 como doctrina general; se incluye explicitamente la cadena del ASB propio/interno, que el cuerpo omitia.
+- 2026-07-15: enmendado (issue #269, doctrina fundacional de MEF-ADR-0026) para agregar la referencia cruzada a MEF-ADR-0026: el `groupId` de `IPrivateEventSender` es el mecanismo por el que el productor fija el `SessionId` de un queue de fan-in con sesion. Sin cambio a la firma ni a la doctrina de este ADR.
 - 2026-07-18: enmendado (issue #313, sobre el prerrequisito de version de issue #312) para agregar la decision #8: consumo directo de eventos privados sin comando espejo via `IPrivateEventHandlerAsync<TEvent>`/`IPrivateEventRouter` (`Cosmos.EventDriven` 2.1.0), con la asimetria deliberada de que el lado publico no tiene contraparte todavia (`IPublicEventHandlerAsync` no existe en 2.1.0). Sin cambio a las decisiones #1-#7 ni a la doctrina de enrutamiento privado/publico existente.
