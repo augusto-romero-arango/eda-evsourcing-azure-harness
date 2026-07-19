@@ -57,6 +57,7 @@ Tokens operativos consumidos por los scripts shell. Estructura:
       { "alias": "COSMOS", "alcance": "compartido", "secretName": "<nombre del secreto KV>" }
     ]
   },
+  "tenancy": { "strategy": "mono-tenant-transitorio" },
   "secrets": [
     {
       "name": "<nombre del secreto en Key Vault>",
@@ -78,6 +79,7 @@ Notas sobre campos concretos:
   - **`name`**: nombre del BC; puede coincidir o no con `projectName`.
   - **`domains`**: dominios del BC; subconjunto de `domainLabels`.
 - **`serviceBus`** (opcional, MEF-ADR-0024): registro de los Azure Service Bus que el BC toca. `internal.secretName` (obligatorio si se declara `serviceBus`) nombra el secreto de Key Vault del ASB propio del BC; `external` lista los ASB compartidos/externos que consume o publica. Ningún secreto viaja en claro (MEF-ADR-0025).
+- **`tenancy`** (opcional, MEF-ADR-0028): declara la etapa vigente del `ITenantResolver` del BC. `strategy` es `"mono-tenant-transitorio"` (etapa a, greenfield sin autenticación instalada) o `"multi-tenant-header"` (etapa b, ya existe una autenticación que produce un `TenantContext`). **Ausente equivale a `"mono-tenant-transitorio"`** (retrocompatible). Lo consume `domain-scaffolder` inline con `jq` en su Paso 0 (mismo patrón que `serviceBus.external`) para elegir el resolver que registra en el `Program.cs` generado; `/onboard` lo reporta de forma informativa (nunca `FALTA`) y puede escribirlo/actualizarlo en un paso opt-in bajo confirmación explícita.
 - **`secrets`** (opcional, issue #256): registro declarativo de todo secreto del BC que el step de siembra de `infra-cd.yml` itera en runtime (data-driven, sin líneas hardcodeadas por secreto). Cada entrada declara `name` (el secreto en Key Vault) y `source.type`/`source.value` — de dónde CI toma el valor a sembrar: `output` (un único `terraform output`, derivable) o `github-secret` (un único GitHub secret, no derivable). El tipo `composite` (fórmula fija reservada para `marten-connection`, el único secreto compuesto de varios outputs + un GitHub secret) lo escribe únicamente `infra-base-scaffolder`; el skill `/seed-secret` (que registra secretos nuevos post-greenfield) solo emite `output`/`github-secret`. `infra-base-scaffolder` registra idempotentemente los secretos fijos del BC (interno de ASB, `app-insights-connection`, `marten-connection`, uno por alias de `serviceBus.external[]`) la primera vez que genera `infra-cd.yml`.
 - **`terraformStateStorage`** es el nombre **base** de la Storage Account del tfstate. Debe cumplir el naming de Azure Storage (3-24 caracteres, solo minúsculas y dígitos — [reglas de nombres de recursos, `Microsoft.Storage`](https://learn.microsoft.com/azure/azure-resource-manager/management/resource-name-rules#microsoftstorage)); para nombres largos abrevia el prefijo. Detalle en README §3.
 - **`repoSlug`** (opcional): slug `owner/repo` del fork de Mefisto al que se enrutan los drafts cross-repo (`estado:borrador`). Default: `augusto-romero-arango/eda-evsourcing-azure-harness`.

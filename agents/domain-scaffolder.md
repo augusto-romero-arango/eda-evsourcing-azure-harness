@@ -107,6 +107,19 @@ jq -r '.serviceBus.external // [] | map(select(.alcance == "compartido")) | .[].
 
 Cada alias resultante es una clave de broker nombrado (== alias declarado en `serviceBus.external`, contrato de `harness.config.json` fijado en issue #163) y determina el app setting `SERVICE_BUS_CONNECTION_<ALIAS>` que se lee en `Program.cs` (Paso 1) y se provisiona por referencia de Key Vault en Terraform (Paso 4). Si la lista viene vacia (el BC aun no declara ningun alias `compartido`), el dominio arranca sin brokers nombrados: solo el broker default (`SERVICE_BUS_CONNECTION_INTERNO`). **No wirees ningun alias con `alcance == "externo"`**: la integracion verdaderamente externa queda diferida y default-off (MEF-ADR-0024 decision #5).
 
+**Resolver estrategia de tenancy (MEF-ADR-0028, issue #323):**
+
+```bash
+jq -r '.tenancy.strategy // "mono-tenant-transitorio"' /ruta-del-proyecto/.claude/harness.config.json 2>/dev/null
+```
+
+El token `tenancy.strategy` (opcional en `harness.config.json`; ausente equivale a `"mono-tenant-transitorio"`) declara en cual de las dos etapas de MEF-ADR-0028 esta el proyecto. **No lo sondees en codigo** -- no hay señal fiable (el harness no referencia ningun tipo `Cosmos.MultiTenancy.*`/autenticacion); es un token declarado por el humano, el mismo que escribe `/onboard` bajo confirmacion. Dos valores:
+
+- **`mono-tenant-transitorio`** (etapa a, default): genera el `ITenantResolver` mono-tenant transitorio de #318, **sin ningun cambio**. Ver el detalle en el punto 11f del Paso 1.
+- **`multi-tenant-header`** (etapa b): en vez del default transitorio, auto-cablea el resolver hibrido generico de `Cosmos.MultiTenancy.CritterStack` -- con verificacion de fuente obligatoria y fallback a "proponer" si no resulta generico. Ver el detalle completo (incluida la verificacion CA-6 y el fallback CA-7) en el punto 11f del Paso 1.
+
+Un valor no reconocido en `tenancy.strategy` (ni `mono-tenant-transitorio` ni `multi-tenant-header`) es un error de config: informa al usuario y trata el caso como si el campo estuviera ausente (etapa a, el default seguro) hasta que lo corrija.
+
 Antes de continuar muestra al usuario el resumen de lo que vas a crear y pide confirmacion:
 
 ```
@@ -125,6 +138,7 @@ Workflow deploy:  .github/workflows/deploy-{kebab}.yml
 Fixtures:         ApiFixture, ServiceBusFixture, PostgresFixture, Polling
 Suscripciones a:  [lista si la proporcionaron, o "ninguna"]
 Backbone comun:   [alias resueltos arriba, o "ninguno todavia (MEF-ADR-0024)"]
+Tenancy:          [etapa (a) mono-tenant-transitorio, o etapa (b) multi-tenant-header -- MEF-ADR-0028]
 
 Continuar? (s/n)
 ```
@@ -308,8 +322,8 @@ public static class ComposicionServicios{PascalCase}
         // Enruta IPrivateEvent directo a IPrivateEventHandlerAsync<TEvent>, sin comando espejo (MEF-ADR-0024, issue #313).
         services.AgregarWolverinePrivateEventRouter();
 
-        // Tenancy transitorio (MEF-ADR-0028): mono-tenant por defecto mientras el proyecto no tiene
-        // autenticacion que produzca un TenantContext. Reemplazar por el resolver real (header-based /
+        // Tenancy (MEF-ADR-0028): etapa (a), mono-tenant transitorio por defecto mientras el proyecto no
+        // tiene autenticacion que produzca un TenantContext. Reemplazar por el resolver real (header-based /
         // hibrido de Cosmos.MultiTenancy.CritterStack) cuando esa autenticacion exista -- ver el TODO
         // en Infraestructura/TenantResolverMonoTenantPorDefecto.cs.
         services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>();
@@ -339,6 +353,8 @@ public static class ComposicionServicios{PascalCase}
 ```
 
 Si el Paso 0 no resolvio ningun alias `serviceBus.external` con `alcance == "compartido"`, omite el parametro `serviceBusCosmos` y la linea `AgregarAzureServiceBusNombradoServerless`; deja solo el broker default y un comentario: `// Backbone compartido: sin alias "compartido" declarado en serviceBus.external todavia (MEF-ADR-0024 decision #4). Agrega su broker nombrado cuando el BC publique/consuma su primer evento publico.` Si hay mas de un alias, repite el par parametro + linea de registro por cada uno (y su argumento correspondiente en la llamada de `Program.cs` y en el test de composicion, Paso 2 punto 9). No wirees ningun alias con `alcance == "externo"` (integracion verdaderamente externa, diferida por MEF-ADR-0024 decision #5, default-off).
+
+Si el Paso 0 resolvio `tenancy.strategy = "multi-tenant-header"` (etapa b, MEF-ADR-0028), **reemplaza** la linea `services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>();` (y el `using Cosmos.MultiTenancy;` de arriba) por el registro del resolver hibrido -- ver el detalle completo (verificacion de fuente obligatoria, CA-6, y el fallback a "proponer", CA-7) en el punto 11f del Paso 1.
 
 > **CA-9 — Aviso sobre el helper bulk `PublicarEventosServerless`**: No uses `PublicarEventosServerless(nombreConexion, topicName, Assembly contratos)` con el assembly completo de contratos para registrar eventos. Ese helper filtra por `IsAssignableTo(typeof(IEvent))` y captura tanto `IPrivateEvent` como `IPublicEvent` juntos, enrutando todo al mismo broker y rompiendo la separacion privado/publico (MEF-ADR-0024 decision #2, #4). El registro debe hacerse **por tipo**, separando explicitamente privados de publicos:
 > - `IPrivateEvent`: `options.PublicarEventoServerless<TEvento>(topic)` → broker default → namespace interno
@@ -646,13 +662,17 @@ public abstract class PrivateEventEndpointBase<TPrivateEvent>(IPrivateEventRoute
 }
 ```
 
-**11f. Crear el `TenantResolverMonoTenantPorDefecto.cs` en `Infraestructura/`:**
+**11f. Resolver el `ITenantResolver` segun la etapa de tenancy (MEF-ADR-0028, issue #323):**
 
-Implementacion mono-tenant **transitoria** del `ITenantResolver` de `Cosmos.MultiTenancy` (ya
-disponible transitivamente via `Cosmos.EventSourcing.CritterStack`, sin paquete nuevo que agregar).
-Cubre la etapa (a) de MEF-ADR-0028 -- greenfield sin autenticacion instalada -- y **no** debe
-sobrevivir a la instalacion de una autenticacion que produzca un `TenantContext` (etapa b, ver el
-TODO):
+El Paso 0 ya resolvio `tenancy.strategy`. Aplica **una sola** de las dos ramas siguientes -- nunca ambas.
+
+### Etapa (a) -- `tenancy.strategy` ausente o `"mono-tenant-transitorio"` (default, issue #318)
+
+Crea el `TenantResolverMonoTenantPorDefecto.cs` en `Infraestructura/`: implementacion mono-tenant
+**transitoria** del `ITenantResolver` de `Cosmos.MultiTenancy` (ya disponible transitivamente via
+`Cosmos.EventSourcing.CritterStack`, sin paquete nuevo que agregar). Cubre el greenfield sin
+autenticacion instalada y **no** debe sobrevivir a la instalacion de una autenticacion que produzca un
+`TenantContext` (etapa b, ver el TODO). Contenido **sin ningun cambio** respecto a #318:
 
 ```csharp
 using Cosmos.MultiTenancy;
@@ -670,6 +690,93 @@ public class TenantResolverMonoTenantPorDefecto : ITenantResolver
     public string UserId => "usuario-no-autenticado";
 }
 ```
+
+El registro en `Infraestructura/ComposicionServicios{PascalCase}.cs` (Paso 6b) es
+`services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>();`, como ya fija #318.
+
+### Etapa (b) -- `tenancy.strategy = "multi-tenant-header"`
+
+En el auto-cableo (happy path) **no** generes `TenantResolverMonoTenantPorDefecto.cs`: la etapa (b) no
+lo necesita. En su lugar, auto-cablea el resolver real -- sujeto a la verificacion de fuente obligatoria
+(CA-6) y al fallback a "proponer" (CA-7) descritos abajo. (El fallback CA-7 **si** genera el resolver
+transitorio de la etapa (a) como placeholder registrado -- ver "Coherencia con el test de composicion"
+al final de esta rama.)
+
+**CA-6 — verificacion de fuente obligatoria antes de cablear.** MEF-ADR-0028 (seccion "Contexto") ya
+verifico -- decompilando con `ilspycmd` los ensamblados 2.1.0, unica fuente disponible para estos
+paquetes privados sin documentacion publica -- que `Cosmos.MultiTenancy.CritterStack` 2.1.0 aporta:
+
+- El tipo `ProxyTenantResolver` (implementa `ITenantResolver`; delega en
+  `WolverineMessageContextTenantResolver` dentro de handlers de Wolverine sin `HttpContext`, o en
+  `TrustedHeadersTenantResolver` cuando si hay `HttpContext`).
+- La extension `AgregarTenantResolverHibrido()`, que registra
+  `services.AddScoped<ITenantResolver, ProxyTenantResolver>()`.
+
+Antes de generar el registro, confirma que la version de `Cosmos.MultiTenancy.CritterStack` que vas a
+fijar en el `.csproj` (`2.1.0`, en lockstep con `Cosmos.EventSourcing.CritterStack`, MEF-ADR-0003)
+sigue exponiendo ese mismo tipo y esa misma firma de extension. Si el consumidor exige una version
+distinta, o si no puedes confirmar el tipo/firma exactos (p. ej. `ilspycmd` no disponible para
+decompilar y reverificar), **no cablees a ciegas**: trata el resolver como **NO VERIFICADO** y aplica
+el fallback de "proponer" (siguiente parrafo) en vez de auto-cablearlo.
+
+**CA-7 — fallback a "proponer" si el resolver no resulta generico.** `ProxyTenantResolver`/
+`TrustedHeadersTenantResolver` exigen que el header `X-Tenant-Id`/`X-User-Id` (via
+`IHttpContextAccessor`) o `IMessageContext.TenantId` esten presentes; producir esos valores a partir de
+los claims de la autenticacion real instalada (JWT, Azure AD B2C, lo que sea) **es siempre
+project-specific** -- ningun paquete del marco lo automatiza. Si al implementar se confirma que ese
+mapping claims -> header/`TenantContext` no puede resolverse de forma generica para este proyecto,
+**degrada a "proponer"**: deja el andamiaje (el `PackageReference`, el `// TODO` de abajo) pero
+documenta el snippet de registro como sugerencia -- avisando al usuario que debe completar el mapping
+antes de que el resolver funcione -- en vez de escribirlo ya cableado en `ComposicionServicios{PascalCase}.cs`.
+
+Si procede el auto-cableo (fuente verificada, CA-6 satisfecho):
+
+1. **Agrega el `PackageReference`** en el `<ItemGroup>` de paquetes del `.csproj` del dominio (Paso 1,
+   punto 2): `<PackageReference Include="Cosmos.MultiTenancy.CritterStack" Version="2.1.0" />` (mismo
+   lockstep de version `2.1.0` que el resto del stack `Cosmos.Event*`, MEF-ADR-0003/issue #312). **No**
+   agregues `Cosmos.MultiTenancy` explicito: ya es transitivo via `Cosmos.EventSourcing.CritterStack`
+   (MEF-ADR-0028, seccion "Contexto").
+2. **En `Infraestructura/ComposicionServicios{PascalCase}.cs`** (Paso 6b), reemplaza el `using
+   Cosmos.MultiTenancy;` por `using Cosmos.MultiTenancy.CritterStack;` (el tipo `ITenantResolver` ya no
+   se referencia por nombre en el archivo) y sustituye la linea
+   `services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>();` por:
+
+   ```csharp
+   // Tenancy (MEF-ADR-0028 etapa b): resolver real basado en TenantContext -- header confiable via
+   // HttpContext, o WolverineMessageContextTenantResolver dentro de handlers de Wolverine sin HttpContext.
+   // TODO(tenancy claims): mapear los claims de la autenticacion instalada al header X-Tenant-Id/X-User-Id
+   // (o a IMessageContext.TenantId) -- ese mapping es siempre project-specific, ningun paquete lo automatiza.
+   services.AgregarTenantResolverHibrido();
+   ```
+
+**Coherencia con el test de composicion del contenedor (MEF-ADR-0029, issue #319/#328).** El test
+`ComposicionContenedorTests` que generas en el Paso 2 (punto 9) es un **gate duro** (si falla, no haces
+commit): invoca `AgregarServicios{PascalCase}` con `BuildServiceProvider(ValidateOnBuild: true,
+ValidateScopes: true)` y ademas resuelve los tres routers (`ICommandRouter`, `IPrivateEventSender`,
+`IPrivateEventRouter`), cada uno de los cuales **depende de `ITenantResolver` en su constructor**
+(MEF-ADR-0029). En etapa (b), `ITenantResolver` pasa a ser `ProxyTenantResolver` (registro por tipo
+mapeado), asi que `ValidateOnBuild` recorrera su arbol de constructor y la resolucion de los routers
+tendra que **construir `ProxyTenantResolver` con todas sus dependencias**. Si
+`AgregarTenantResolverHibrido()` introduce dependencias que el scaffold no registra (p. ej.
+`IHttpContextAccessor`, que `TrustedHeadersTenantResolver` lee segun la seccion "Contexto" de
+MEF-ADR-0028), el test de composicion **fallara** y el Paso 2 no debe commitear. Como parte de la
+verificacion CA-6, confirma que dependencias exige `ProxyTenantResolver` y si la propia extension las
+registra; si no lo hace, registra las que falten en `AgregarServicios{PascalCase}` (p. ej.
+`services.AddHttpContextAccessor();`) para que el test quede verde.
+
+**El fallback CA-7 tambien debe dejar el contenedor construible.** Si degradas a "proponer" (no cableas
+`AgregarTenantResolverHibrido()`), **no** dejes `ITenantResolver` sin registrar: seria exactamente el
+incidente #318 que MEF-ADR-0029 existe para atrapar -- el test de composicion quedaria en rojo y el
+dominio naceria roto. En ese caso genera el `TenantResolverMonoTenantPorDefecto.cs` de la etapa (a) como
+placeholder registrado (`services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>();`, con
+el `using Cosmos.MultiTenancy;`): el contenedor construye y el dominio arranca atribuyendo a `*DEFAULT*`
+mientras documentas el snippet de `AgregarTenantResolverHibrido()` + el `// TODO(tenancy claims)` como el
+paso manual pendiente, avisando al usuario de que el resolver real no esta activo hasta completarlo.
+
+**Limite deliberado:** pasar un dominio ya scaffoldeado de etapa (a) a (b) sigue siendo manual --
+actualizar `tenancy.strategy` y volver a correr `/scaffold` no re-scaffoldea dominios existentes. El
+`// TODO(tenancy etapa b)` que deja `TenantResolverMonoTenantPorDefecto.cs` (etapa a, arriba) es el
+recordatorio en el codigo generado para ese caso.
 
 **12. Crear el HealthCheck en `HealthCheck.cs` (raiz del proyecto):**
 
