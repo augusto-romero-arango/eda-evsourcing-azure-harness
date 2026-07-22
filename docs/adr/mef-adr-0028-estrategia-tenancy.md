@@ -2,7 +2,7 @@
 
 - **Fecha**: 2026-07-19
 - **Estado**: aceptado
-- **Aplica a**: doctrina de tenancy del marco; gobierna al `domain-scaffolder` (registro del `ITenantResolver` en el `Program.cs` que genera, ramificado por etapa), a `/onboard` (diagnostico informativo y escritura opt-in del token de deteccion) y a la futura familia `/install-workos`/`/install-apim`/`/install-auth` (aun no implementados, issue #340: ejecutan la migracion automatizada (a)->(b) que fija la seccion 4, introducida por la enmienda del issue #337). Cross-referencia MEF-ADR-0003 (stack ES Marten+Wolverine), MEF-ADR-0021 (infraestructura base), MEF-ADR-0023 (Bounded Context/topologia de ASB) y MEF-ADR-0032 (identidad y autenticacion en el borde WorkOS+APIM, fuente del insight de normalizacion de claims que habilita la seccion 4).
+- **Aplica a**: doctrina de tenancy del marco; gobierna al `domain-scaffolder` (registro del `ITenantResolver` en el `Program.cs` que genera, ramificado por etapa), a `/onboard` (diagnostico informativo y escritura opt-in del token de deteccion) y a la familia `/install-workos` (issue #339, implementado)/`/install-apim` (issue #340, implementado: ejecuta la migracion automatizada (a)->(b) que fija la seccion 4, introducida por la enmienda del issue #337)/`/install-auth` (aun no implementado). Cross-referencia MEF-ADR-0003 (stack ES Marten+Wolverine), MEF-ADR-0021 (infraestructura base), MEF-ADR-0023 (Bounded Context/topologia de ASB) y MEF-ADR-0032 (identidad y autenticacion en el borde WorkOS+APIM, fuente del insight de normalizacion de claims que habilita la seccion 4).
 
 ## Contexto
 
@@ -179,9 +179,9 @@ automatizable, especificamente para ese camino, la transicion (a)->(b) que el re
 deja manual.
 
 - **La transicion concreta**: instalar WorkOS+APIM (MEF-ADR-0032) **es** la transicion (a)->(b)
-  concreta del BC. La ejecuta el skill `/install-apim` (invocado por `/install-auth`, orquestador de
-  la familia de instalacion de autenticacion junto a `/install-workos`) -- ninguno implementado aun
-  (issue #340). En ese camino especifico, la transicion **deja de ser manual**.
+  concreta del BC. La ejecuta el skill `/install-apim` (issue #340, implementado -- `commands/install-apim.md`;
+  invocable directo o, a futuro, orquestado por `/install-auth` junto a `/install-workos`, ese
+  orquestador aun no implementado). En ese camino especifico, la transicion **deja de ser manual**.
 - **Que automatiza `/install-apim`**: al instalar el modulo APIM, el skill ejecuta, sin intervencion
   humana adicional:
   1. **Flip del token**: `tenancy.strategy` en `.claude/harness.config.json` pasa de
@@ -293,8 +293,8 @@ proyecto matura de (a) a (b), que es precisamente lo que el token declarativo `t
   que sigue vigente tras la migracion automatizada.
 - Bitakora.ControlAsistencia issues #207 (upgrade `Cosmos.EventSourcing.CritterStack` 0.1.9 -> 2.1.0)
   y #219 (fix del incidente): origen real del vacio que este ADR cierra.
-- issue #337 (esta enmienda) e issue #340 (`/install-apim`, aun no implementado): origen y consumidor
-  concreto de la seccion 4.
+- issue #337 (esta enmienda) e issue #340 (`/install-apim`, implementado -- `commands/install-apim.md`):
+  origen y consumidor concreto de la seccion 4.
 
 ## Control de cambios
 
@@ -321,3 +321,9 @@ proyecto matura de (a) a (b), que es precisamente lo que el token declarativo `t
   la seccion 3 se acota explicitamente al camino WorkOS+APIM: para cualquier otra autenticacion, sigue
   siendo manual. Se ajustan en el cuerpo el parrafo "Limite deliberado" (seccion 3) y la consecuencia
   negativa del bug silencioso, sin marcarlos obsoletos.
+- 2026-07-22: implementacion (issue #340). El skill `/install-apim` (`commands/install-apim.md`) ejecuta
+  la transicion automatizada (a)->(b) que fija la seccion 4: invoca `apim-gateway-scaffolder` (#335) para
+  el modulo APIM, luego el flip de `tenancy.strategy` y la migracion del resolver de todos los dominios
+  ya scaffoldeados del BC, gateada en cada dominio por el test de composicion (MEF-ADR-0029). Se
+  actualizan en el cuerpo ("Aplica a", seccion 4, Referencias) las menciones a `/install-apim` de "aun no
+  implementado" a implementado, sin marcarlas obsoletas -- ninguna decision de este ADR cambia.
