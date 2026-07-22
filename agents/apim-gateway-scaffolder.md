@@ -194,6 +194,21 @@ resource "azurerm_api_management" "this" {
 # esta politica NUNCA lleva <base/> en ninguna seccion -- a diferencia de la politica por-API
 # del modulo apim-function-api, que SI hereda de esta.
 #
+# Trampas que viven DENTRO del xml_content de abajo y por eso se documentan aca como comentario
+# HCL (B6 prohibe comentarios XML <!-- --> interpuestos entre los hijos de validate-jwt):
+#   B2: <backend> DEBE contener <forward-request /> -- si queda vacio, APIM responde
+#       200/Content-Length: 0 y NUNCA reenvia al backend (el bug mas traicionero del catalogo:
+#       "acepta y no hace nada", confirmado por ausencia total de requests en App Insights).
+#   B3: <cors> es el PRIMER hijo de <inbound>, ANTES de <validate-jwt> -- el preflight OPTIONS no
+#       trae header Authorization; si validate-jwt lo intercepta primero lo tumba con 401.
+#   B4: WorkOS AuthKit no emite el claim `aud` -> nada de <audiences>; la "audiencia" se valida
+#       con <required-claims> sobre client_id.
+#   B6: orden estricto openid-config -> issuers -> required-claims dentro de <validate-jwt>.
+#   B10: los <set-header> de identidad van DESPUES de </validate-jwt> (usan context.Variables["jwt"],
+#        capturado por output-token-variable-name="jwt") y SIEMPRE con exists-action="override"
+#        (anti-spoofing: sin override, un cliente que manda su propio X-User-Id/X-Tenant-Id lo
+#        cuela intacto hasta el backend).
+#
 # B7 (diagnostico): si `terraform apply` falla aca con un 400 ValidationError generico/truncado
 # ("One or more fields contain incorrect values:" sin decir que campo), reproduce el PUT de la
 # politica directo con `az rest --method put --url ".../policies/policy?api-version=2022-08-01"
