@@ -1285,6 +1285,12 @@ Este workflow es el mecanismo concreto que fija **MEF-ADR-0022** (autenticacion 
 
 El job `apply` gana ademas un step de **siembra de secretos** que materializa **MEF-ADR-0025** (decision #6/#10) y el registro data-driven de #256: tras el `terraform apply`, itera `harness.config.json > secrets[]` (el mismo array que acaba de registrar el Paso 2b.0, mas cualquier secreto que `/seed-secret` haya agregado despues) y siembra cada entrada con `az keyvault secret set` segun su `source.type` -- **sin ninguna linea hardcodeada por secreto** (CA-2, CA-3): `output` lee un `terraform output`, `github-secret` busca el valor en `${{ toJSON(secrets) }}` (ver "Riesgo tecnico" abajo) y `composite` resuelve la unica formula fija reservada (`marten-connection`). Lo habilita el `azurerm_role_assignment` de `Key Vault Secrets Officer` que el propio `main.tf` del entorno se auto-asigna (Paso 2.3, mecanismo M1, MEF-ADR-0022): sin ese rol de datos, el step fallaria con `ForbiddenByRbac`.
 
+**Reciclado (stop/start) posterior a la siembra, para reflejar rotaciones (issue #343).** La siembra por si sola no basta: si un secreto **ya sembrado antes** rota (cambia de valor en una corrida posterior), la Function App que lo consume via `@Microsoft.KeyVault(...)` versionless puede seguir sirviendo el valor viejo. Dos caches independientes lo explican -- ninguna la invalida un `az functionapp restart`:
+- **Cache de resolucion de KV references de App Service/Functions**: solo se refresca cada 24h o ante un "configuration change" del sitio (Microsoft Learn, "Use Key Vault references as app settings in Azure App Service, Azure Functions, and Azure Logic Apps (Standard)", seccion "Understand rotation" -- https://learn.microsoft.com/azure/app-service/app-service-key-vault-references#understand-rotation). Un `restart` aislado no es ese tipo de cambio.
+- **Cache en memoria del propio worker**: cualquier codigo que lea el secreto una sola vez al arrancar (p. ej. un adapter que hace `SetApiKey` en `Program.cs`) lo retiene mientras el proceso siga vivo; un `restart` "soft" no garantiza tumbar ese proceso.
+
+Por eso, tras el loop de siembra, un step nuevo hace **`az functionapp stop` + `az functionapp start`** (nunca `az functionapp restart`, que no fuerza ninguna de las dos re-lecturas) de **todas** las Function Apps del resource group del BC -- no solo la que consume la API key de WorkOS del #335 original (CA-3): descubre la lista en runtime con `az functionapp list` (mismo principio data-driven que la siembra: agregar un dominio nuevo via `/scaffold` nunca exige tocar este workflow). Corre incondicionalmente en cada `apply`, igual que la siembra misma ya reescribe los `secrets[]` completos en cada corrida sin diffear contra el valor anterior -- mismo nivel de simplicidad, sin inventar un mecanismo de deteccion de cambios que ningun CA pide. El SP de CI no necesita ningun rol nuevo: `Contributor` a nivel de suscripcion (ya asignado, MEF-ADR-0022) alcanza para `stop`/`start` de un Function App.
+
 > **Riesgo tecnico (CA-2): `${{ secrets.X }}` no se indexa por variable dentro de un `run`.** La sintaxis de expresiones de GitHub Actions no permite `secrets[matrix.name]` con un nombre dinamico resuelto en runtime -- el contexto `secrets` solo se indexa con una clave literal conocida al parsear el YAML. Como este workflow se genera **una sola vez** y nunca se reescribe (regla 10), no puede declarar de antemano una entrada `env: NOMBRE: ${{ secrets.NOMBRE }}` por cada secreto `github-secret` que un futuro `/seed-secret` vaya a agregar. La solucion: el job `apply` declara `env: ALL_SECRETS: ${{ toJSON(secrets) }}` (serializa **todo** el contexto `secrets` a JSON) y el script del step hace el lookup por nombre en runtime con `jq` sobre esa variable. GitHub sigue enmascarando en los logs el valor de cualquier secreto asi consumido (el enmascarado se activa por el valor, no por la sintaxis de acceso). Este mecanismo sustituye por completo al `env` con una entrada `SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` hardcodeada por alias que este agente generaba antes de #256.
 
 Si **no existe**, crea `.github/workflows/infra-cd.yml` con este contenido:
@@ -1318,6 +1324,14 @@ name: Infra CD
 # Sin ninguna linea hardcodeada por secreto: agregar uno nuevo nunca exige tocar este
 # archivo. Reintenta ante ForbiddenByRbac: el role assignment recien creado puede tardar
 # 1-2 min en propagarse (CA-4).
+# Reciclado post-siembra (issue #343): un secreto que ROTA (cambia de valor en una corrida
+# posterior) no se refleja solo con la siembra -- ni la cache de KV references versionless
+# de Functions (se refresca cada 24h o ante un configuration change, no ante un restart
+# aislado) ni la copia en memoria que el worker haya cacheado al arrancar se invalidan con
+# 'az functionapp restart'. Por eso el step "Reciclar las Function Apps" hace
+# 'az functionapp stop' + 'az functionapp start' (nunca 'restart') de TODAS las Function
+# Apps del resource group -- descubiertas en runtime con 'az functionapp list', nunca una
+# lista hardcodeada por dominio.
 
 on:
   pull_request:
@@ -1556,6 +1570,53 @@ jobs:
             seed_secret "$NAME" "$VALUE"
           done
 
+      - name: Reciclar las Function Apps (stop/start) para reflejar rotaciones
+        run: |
+          # issue #343: la siembra de arriba sobrescribe el VALOR del secreto en el Key
+          # Vault, pero eso no basta si el secreto YA estaba sembrado antes y rota (cambia
+          # de valor en una corrida posterior) -- dos caches independientes retienen el
+          # valor viejo, y ninguna de las dos se invalida con 'az functionapp restart':
+          #
+          #  1. Cache de resolucion de Key Vault references (versionless, sin SecretVersion)
+          #     de App Service/Functions: solo se refresca cada 24h o ante un "configuration
+          #     change" del sitio (Microsoft Learn, "Use Key Vault references as app
+          #     settings...", seccion "Understand rotation" --
+          #     https://learn.microsoft.com/azure/app-service/app-service-key-vault-references#understand-rotation).
+          #     Un restart aislado no cuenta como ese tipo de cambio.
+          #  2. Cache en memoria del propio worker: cualquier codigo que lea el secreto una
+          #     sola vez al arrancar (p. ej. un adapter externo que hace SetApiKey en
+          #     Program.cs) lo retiene mientras el proceso siga vivo; un restart "soft" no
+          #     garantiza tumbar ese proceso.
+          #
+          # 'stop' + 'start' fuerza un ciclo frio completo -- el sitio se da de baja y se
+          # vuelve a levantar -- que dispara la re-resolucion de TODAS las KV references Y
+          # un proceso de worker nuevo sin cache en memoria. NUNCA reemplazar por
+          # 'az functionapp restart': no reproduce ninguno de los dos efectos (no revertir
+          # este step a restart aunque parezca una simplificacion inocua).
+          #
+          # Aplica a TODAS las Function Apps del resource group (CA-3, issue #343), no solo
+          # a la que consume un secreto externo puntual (p. ej. la API key de WorkOS del
+          # #335 original): cualquier dominio puede consumir cualquier secreto del Key
+          # Vault via su referencia versionless, y harness.config.json no registra esa
+          # relacion secreto->dominio. La lista se descubre en runtime con
+          # 'az functionapp list', nunca hardcodeada por dominio: agregar uno nuevo
+          # (/scaffold) nunca exige tocar este workflow.
+          set -euo pipefail
+
+          RESOURCE_GROUP=$(terraform output -raw resource_group_name)
+          FUNCTION_APPS=$(az functionapp list --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv)
+
+          if [ -z "$FUNCTION_APPS" ]; then
+            echo "Ninguna Function App todavia en $RESOURCE_GROUP; nada que reciclar."
+          else
+            while IFS= read -r app; do
+              echo "Reciclando '$app' (stop + start) para re-resolver Key Vault references..."
+              az functionapp stop --name "$app" --resource-group "$RESOURCE_GROUP"
+              az functionapp start --name "$app" --resource-group "$RESOURCE_GROUP"
+              echo "Function App '$app' reciclada."
+            done <<< "$FUNCTION_APPS"
+          fi
+
       - name: Cerrar el issue de infra tras el apply exitoso
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1675,6 +1736,7 @@ Imprime un resumen claro:
   - La GitHub **variable** `ALERT_EMAIL` (*Settings > Secrets and variables > Actions > Variables*) y el GitHub **secret** `TF_VAR_POSTGRESQL_ADMIN_PASSWORD` (misma pantalla, pestana *Secrets*) los crea **manualmente el admin del repo** -- `setup-github-ci.sh` no los toca. CI reutiliza ese mismo valor para dos fines dentro del `apply`: crear el servidor PostgreSQL y, en el step de siembra posterior, componer y sembrar el secreto `marten-connection` del Key Vault (MEF-ADR-0025 decision #9) -- un solo valor, un solo punto de entrada humano.
   - Un GitHub **secret** por cada entrada de `secrets[]` con `source.type: "github-secret"` (`SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` para cada alias de `serviceBus.external[]`, CA-3, MEF-ADR-0024 decision #4; y cualquier secreto nuevo que registre `/seed-secret --from-github-secret`), tambien creado **manualmente por el admin del repo** (o por quien opere `/seed-secret`).
 - **Siembra de secretos automatica en CI (MEF-ADR-0025 decision #6/#10, perfil (c); data-driven desde el issue #256):** ya **no** hace falta que ningun admin ejecute `az keyvault secret set` a mano, y el step de siembra **no tiene ninguna linea hardcodeada por secreto**: itera `harness.config.json > secrets[]` en runtime y siembra cada entrada segun su `source.type` (`output` lee un `terraform output`; `github-secret` busca el valor en el contexto `secrets` serializado; `composite` resuelve la formula fija de `marten-connection`). Lo habilita el `azurerm_role_assignment` de `Key Vault Secrets Officer` que el propio `main.tf` del entorno se auto-asigna (Paso 2.3, mecanismo M1, MEF-ADR-0022): ningun humano necesita un rol de datos de Key Vault. Terraform nunca escribe el valor de ningun secreto. Agregar un secreto nuevo despues del greenfield ya no exige editar `infra-cd.yml` a mano: usa `/seed-secret` (registra la entrada en `secrets[]` y cablea la referencia en la Function App del dominio que la consume).
+- **Reciclado post-siembra para reflejar rotaciones (issue #343):** tras la siembra, un step `stop`/`start` (nunca `restart` -- no re-resuelve las KV references versionless ni descarta el cache en memoria del worker) recicla **todas** las Function Apps del resource group, descubiertas en runtime con `az functionapp list` -- no solo la que consume un secreto externo puntual. Corre incondicionalmente en cada `apply`, igual que la siembra misma. No requiere ningun rol nuevo (`Contributor` de suscripcion, ya asignado, alcanza).
 - **Siguiente paso**: si el backend del `tfstate` aun no existe, corre `bootstrap-backend.sh`; luego abre un PR con este HCL (`/infra`) -- el `plan` corre en el PR y el `apply` real lo ejecuta `infra-cd.yml` en CI al mergear a `main` (MEF-ADR-0022), nunca localmente. Para crear el primer dominio, usa `/scaffold <dominio>` (que agrega su `service-plan`/`storage`/`function-app` a este entorno, junto con el role assignment "Key Vault Secrets User" de su managed identity, los tres role assignments de datos de Storage para `AzureWebJobsStorage` por identidad, y sus app settings `SERVICE_BUS_CONNECTION_<ALIAS>` y `MartenConnectionString` como referencias `@Microsoft.KeyVault(...)` (`APPLICATIONINSIGHTS_CONNECTION_STRING` via `site_config.application_insights_connection_string`, issue #259); su workflow de deploy se encadena tras `infra-cd.yml`, ver `domain-scaffolder.md` Paso 5).
 
 ## Reglas absolutas
@@ -1692,3 +1754,4 @@ Imprime un resumen claro:
 11. **NUNCA** instruyas pasar `alert_email` o `postgresql_admin_password` por `terraform.tfvars` en CI (MEF-ADR-0025 decision #1): ambos se alimentan por `TF_VAR_*` desde una GitHub variable/secret (Paso 2b). Siempre genera `infra/environments/<env>/.gitignore` (Paso 2.5) para que un `terraform.tfvars` local nunca se commitee por error.
 12. **NUNCA** sobrescribas el `.gitignore` **raiz** del repo consumidor si ya existe (Paso 2c, idempotencia): omitelo y reportalo. Su contenido es byte-fijo -- transcribelo literal, sin normalizar espacios, orden ni comentarios (issue #241).
 13. El registro de `secrets[]` (Paso 2b.0) es la **unica** parte de este paso que corre **siempre**, incluso si `infra-cd.yml` ya existe (regla 10): usa `upsert_harness_secret` (idempotente por `name`), nunca escribas el array a mano con `jq` inline ni dupliques una entrada existente.
+14. **NUNCA** uses `az functionapp restart` para reciclar una Function App tras sembrar secretos (issue #343): no re-resuelve las Key Vault references versionless (cache de App Service, se refresca cada 24h o ante un configuration change, no ante un restart aislado) ni descarta el cache en memoria del worker. El step "Reciclar las Function Apps" siempre usa `az functionapp stop` + `az functionapp start`.
