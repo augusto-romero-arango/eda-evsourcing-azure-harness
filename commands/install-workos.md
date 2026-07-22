@@ -193,7 +193,7 @@ PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
     --from-github-secret "WORKOS_API_KEY"
 ```
 
-Sigue exactamente el resto del Proceso de `commands/seed-secret.md` (pasos 4 en adelante) sobre la salida de ese script -- cablear el app setting en el archivo Terraform del dominio, verificar (nunca duplicar) el rol `Key Vault Secrets User`, formatear/validar con `terraform`, y commitear. **No** repitas el paso de confirmacion de `/seed-secret` (ya confirmaste todo en el paso 3 de este skill) ni su propio "Siguiente paso" de push+PR (lo hace este skill una sola vez, en el paso 10).
+Sigue exactamente el resto del Proceso de `commands/seed-secret.md` (pasos 5 en adelante; el paso 4 de `/seed-secret` es la invocacion de `seed-secret.sh` que ya corriste arriba -- no la repitas) sobre la salida de ese script -- cablear el app setting en el archivo Terraform del dominio, verificar (nunca duplicar) el rol `Key Vault Secrets User`, formatear/validar con `terraform`, y commitear. **No** repitas el paso de confirmacion de `/seed-secret` (ya confirmaste todo en el paso 3 de este skill) ni su propio "Siguiente paso" de push+PR (lo hace este skill una sola vez, en el paso 10).
 
 ### 10. Push + PR unico (solo si no quedo nada sin commitear)
 
