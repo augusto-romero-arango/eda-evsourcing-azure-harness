@@ -157,6 +157,7 @@ tu propuesta en vez de darlo por cierto.
 | `domain-scaffolder` | Crea scaffold de un nuevo dominio |
 | `infra-base-scaffolder` | Genera la infraestructura base del consumidor (8 módulos + entorno) en greenfield |
 | `apim-gateway-scaffolder` | Genera el gateway APIM (validate-jwt WorkOS AuthKit + claims→headers) fiel al catálogo de trampas de MEF-ADR-0032 |
+| `workos-identity-scaffolder` | Genera el adapter WorkOS (IIdentityProvider + WorkOsIdentityProvider) y su wiring en un dominio, fiel a la referencia de Cosmos.ControlPlane (MEF-ADR-0032) |
 | `test-writer` | Fase roja del pipeline TDD |
 | `implementer` | Fase verde del pipeline TDD |
 | `reviewer` | Revisión antes de crear PR |

@@ -20,7 +20,7 @@ Plugin de [Claude Code](https://code.claude.com/docs/en/plugins) que provee un h
 ## Qué incluye
 
 - **17 skills** (slash commands): `/onboard`, `/implement`, `/tooling`, `/infra`, `/infra-base`, `/scaffold`, `/seed-secret`, `/parallel`, `/sequential`, `/bug`, `/draft`, `/fix-review`, `/health-check`, `/work-status`, `/show-flow`, `/eraser-diagram`, `/merge`.
-- **17 agentes** especializados: `planner`, `test-writer`, `implementer`, `reviewer`, `smoke-test-writer`, `domain-scaffolder`, `infra-base-scaffolder`, `apim-gateway-scaffolder`, `eda-modeler`, `event-stormer`, `historiador`, `infra-writer`, `infra-reviewer`, `infra-bootstrap`, `pr-sync`, `bug-investigator`, `tooling-investigator`.
+- **18 agentes** especializados: `planner`, `test-writer`, `implementer`, `reviewer`, `smoke-test-writer`, `domain-scaffolder`, `infra-base-scaffolder`, `apim-gateway-scaffolder`, `workos-identity-scaffolder`, `eda-modeler`, `event-stormer`, `historiador`, `infra-writer`, `infra-reviewer`, `infra-bootstrap`, `pr-sync`, `bug-investigator`, `tooling-investigator`.
 - **Pipelines bash** que orquestan el ciclo TDD, IaC y tooling sobre `tmux` y `git worktree`.
 - **32 ADRs** del marco arquitectónico (prefijo `MEF-ADR-`).
 - **Hooks** para logging del pipeline.
