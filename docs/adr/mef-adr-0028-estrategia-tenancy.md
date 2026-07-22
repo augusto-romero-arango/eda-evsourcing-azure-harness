@@ -2,7 +2,7 @@
 
 - **Fecha**: 2026-07-19
 - **Estado**: aceptado
-- **Aplica a**: doctrina de tenancy del marco; gobierna al `domain-scaffolder` (registro del `ITenantResolver` en el `Program.cs` que genera, ramificado por etapa) y a `/onboard` (diagnostico informativo y escritura opt-in del token de deteccion). Cross-referencia MEF-ADR-0003 (stack ES Marten+Wolverine), MEF-ADR-0021 (infraestructura base) y MEF-ADR-0023 (Bounded Context/topologia de ASB).
+- **Aplica a**: doctrina de tenancy del marco; gobierna al `domain-scaffolder` (registro del `ITenantResolver` en el `Program.cs` que genera, ramificado por etapa), a `/onboard` (diagnostico informativo y escritura opt-in del token de deteccion) y a la futura familia `/install-workos`/`/install-apim`/`/install-auth` (issue #337, aun no implementados: ejecutan la migracion automatizada (a)->(b) que fija la seccion 4). Cross-referencia MEF-ADR-0003 (stack ES Marten+Wolverine), MEF-ADR-0021 (infraestructura base), MEF-ADR-0023 (Bounded Context/topologia de ASB) y MEF-ADR-0032 (identidad y autenticacion en el borde WorkOS+APIM, fuente del insight de normalizacion de claims que habilita la seccion 4).
 
 ## Contexto
 
@@ -147,8 +147,11 @@ config, solo tras confirmacion explicita: `/onboard` no sondea codigo ni infiere
   VERIFICADO** y **degrada a "proponer"** (deja el `PackageReference` y un snippet documentado, sin
   cablearlo) en vez de auto-cablear a ciegas. El archivo generado lleva un `// TODO(tenancy claims)`
   explicito: el mapping de los claims de la autenticacion instalada al header `X-Tenant-Id`/`X-User-Id`
-  (o a `IMessageContext.TenantId`) es **siempre project-specific** -- ningun paquete del marco lo
-  automatiza, asi que ningun auto-cableo puede completarlo por si solo. En cualquiera de las dos ramas
+  (o a `IMessageContext.TenantId`) es project-specific para toda autenticacion **fuera** del camino
+  WorkOS+APIM que fija MEF-ADR-0032 -- ningun paquete del marco lo automatiza en ese caso general, asi
+  que ningun auto-cableo puede completarlo por si solo. La excepcion es el camino WorkOS+APIM: la
+  seccion 4 de este ADR documenta por que ese TODO queda resuelto por construccion cuando la
+  autenticacion instalada es la que fija MEF-ADR-0032. En cualquiera de las dos ramas
   (auto-cableo o fallback a "proponer") el `ITenantResolver` debe quedar **registrado y construible**:
   el test de composicion del contenedor (MEF-ADR-0029) resuelve los tres routers, que dependen de
   `ITenantResolver` en su constructor, y es un gate duro del scaffold -- si el resolver real arrastra
@@ -156,10 +159,58 @@ config, solo tras confirmacion explicita: `/onboard` no sondea codigo ni infiere
   (reintroduciendo el incidente #318). El fallback registra el resolver transitorio de la etapa (a) como
   placeholder para no romperlo.
 
-**Limite deliberado**: pasar un dominio ya scaffoldeado de (a) a (b) sigue siendo manual -- actualizar
+**Limite manual, salvo el camino automatizado de la seccion 4**: pasar un dominio ya scaffoldeado de
+(a) a (b) sigue siendo manual para cualquier autenticacion fuera del camino WorkOS+APIM -- actualizar
 el token y volver a correr `/scaffold` no re-scaffoldea dominios existentes. El
-`// TODO(tenancy etapa b)` que deja `TenantResolverMonoTenantPorDefecto.cs` (seccion 2) es el
-recordatorio en el codigo generado.
+`// TODO(tenancy etapa b)` que deja `TenantResolverMonoTenantPorDefecto.cs` (seccion 2) sigue siendo el
+recordatorio en el codigo generado para ese caso manual. Cuando la autenticacion instalada es WorkOS
+AuthKit + Azure API Management (MEF-ADR-0032), la seccion 4 de este ADR fija esa instalacion como la
+transicion (a)->(b) concreta, ejecutada por `/install-apim` -- deja de ser manual **en ese camino
+especifico**.
+
+### 4. Transicion automatizada (a)->(b) via WorkOS+APIM (issue #337)
+
+MEF-ADR-0032 (identidad y autenticacion en el borde) fija WorkOS AuthKit + Azure API Management como
+el patron de referencia del marco para instalar autenticacion real sobre un BC, y en su seccion 4/5
+establece que la politica global de APIM normaliza los claims del JWT a los headers canonicos
+`X-Tenant-Id`/`X-User-Id` **antes** de que el request llegue a cualquier Function App -- ese mapping
+vive una sola vez, en la politica del gateway, no repetido por dominio. Ese insight vuelve
+automatizable, especificamente para ese camino, la transicion (a)->(b) que el resto de esta seccion
+deja manual.
+
+- **La transicion concreta**: instalar WorkOS+APIM (MEF-ADR-0032) **es** la transicion (a)->(b)
+  concreta del BC. La ejecuta el skill `/install-apim` (invocado por `/install-auth`, orquestador de
+  la familia de instalacion de autenticacion junto a `/install-workos`) -- ninguno implementado aun
+  (issue #340). En ese camino especifico, la transicion **deja de ser manual**.
+- **Que automatiza `/install-apim`**: al instalar el modulo APIM, el skill ejecuta, sin intervencion
+  humana adicional:
+  1. **Flip del token**: `tenancy.strategy` en `.claude/harness.config.json` pasa de
+     `"mono-tenant-transitorio"` a `"multi-tenant-header"` (o se agrega, si estaba ausente).
+  2. **Migracion del resolver en todos los dominios ya scaffoldeados** del BC: cada
+     `Infraestructura/ComposicionServicios{Dominio}.cs` que registraba
+     `builder.Services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>()` (seccion 2)
+     pasa a invocar `services.AgregarTenantResolverHibrido()` (`Cosmos.MultiTenancy.CritterStack`,
+     registra `ProxyTenantResolver` -- seccion "Contexto"), y se elimina el archivo
+     `TenantResolverMonoTenantPorDefecto.cs` junto con su `// TODO(tenancy etapa b)` de cada dominio
+     migrado -- no uno a la vez via `/scaffold`, sino en un solo paso sobre todos los dominios
+     existentes del BC.
+- **Sin mapping por dominio**: a diferencia del auto-cableo generico que describe la seccion 3 (donde
+  el `// TODO(tenancy claims)` queda project-specific porque ningun paquete del marco sabe de donde
+  sale cada claim), la migracion via `/install-apim` **no requiere ese mapping por dominio**:
+  MEF-ADR-0032 seccion 4 ya fija, en la politica global de APIM, el mapping `user_email -> X-User-Id`
+  / `tenant_id -> X-Tenant-Id` con anti-spoofing (`exists-action="override"`) -- un unico lugar,
+  compartido por todos los dominios del BC. El `// TODO(tenancy claims)` que dejaria un auto-cableo
+  generico queda **resuelto por construccion**: `AgregarTenantResolverHibrido()`/
+  `TrustedHeadersTenantResolver` ya leen exactamente esos dos headers canonicos, y `/install-apim` no
+  necesita generar ni proponer ningun snippet de parsing de claims especifico del proyecto.
+- **El gate no se relaja**: el test de composicion del contenedor DI (MEF-ADR-0029) sigue siendo un
+  gate duro despues de la migracion -- resuelve los tres routers (`ICommandRouter`,
+  `IPrivateEventSender`, `IPrivateEventRouter`), que dependen de `ITenantResolver` en su constructor,
+  y debe seguir en verde en cada dominio migrado. `/install-apim` migra el resolver de forma que el
+  contrato quede **registrado y construible** en el mismo commit, sin ninguna ventana donde el
+  contenedor quede sin `ITenantResolver` resuelto. El levantamiento del limite "(a)->(b) manual" que
+  fija esta seccion aplica **unicamente** al camino WorkOS+APIM: un BC que instale cualquier otra
+  autenticacion (Entra External ID, un IdP propio, etc.) sigue sujeto al limite manual descrito arriba.
 
 ## Alternativas consideradas
 
@@ -195,16 +246,23 @@ proyecto matura de (a) a (b), que es precisamente lo que el token declarativo `t
   tipo concreto en `Infraestructura/`, sin logica condicional oculta.
 - **Reusa el mismo default de tenant que ya usa Marten** (`*DEFAULT*`) en vez de inventar un segundo
   valor, evitando confusion en el event store.
+- **El camino WorkOS+APIM (MEF-ADR-0032) cierra el riesgo de bug silencioso de la seccion "Negativas"
+  para ese caso**: `/install-apim` (seccion 4) automatiza el flip del token y la migracion del resolver
+  de todos los dominios ya scaffoldeados en un solo paso, sin dejar una ventana donde un humano deba
+  recordar declarar el cambio.
 
 ### Negativas
 
-- **El default mono-tenant es un estado que hay que recordar reemplazar**: si un proyecto instala
-  autenticacion fuerte y nadie actualiza `tenancy.strategy` (y vuelve a scaffoldear o migra a mano el
-  dominio), el dominio sigue funcionando (no rompe) pero **todo** evento se atribuye a
-  `*DEFAULT*`/`"usuario-no-autenticado"` aunque ya haya usuarios/tenants reales identificables -- un bug
-  silencioso de negocio, no un crash. El `// TODO(tenancy etapa b)` y el diagnostico informativo de
-  `/onboard` (seccion 3) mitigan esto, pero no lo hacen imposible: pasar de (a) a (b) sigue exigiendo
-  que un humano declare el cambio.
+- **El default mono-tenant es un estado que hay que recordar reemplazar, fuera del camino
+  WorkOS+APIM**: si un proyecto instala una autenticacion distinta de WorkOS+APIM (MEF-ADR-0032) y
+  nadie actualiza `tenancy.strategy` (y vuelve a scaffoldear o migra a mano el dominio), el dominio
+  sigue funcionando (no rompe) pero **todo** evento se atribuye a `*DEFAULT*`/`"usuario-no-autenticado"`
+  aunque ya haya usuarios/tenants reales identificables -- un bug silencioso de negocio, no un crash. El
+  `// TODO(tenancy etapa b)` y el diagnostico informativo de `/onboard` (seccion 3) mitigan esto, pero
+  no lo hacen imposible en ese camino manual: pasar de (a) a (b) sigue exigiendo que un humano declare
+  el cambio. Cuando el proyecto instala WorkOS+APIM, la seccion 4 elimina esta consecuencia:
+  `/install-apim` ejecuta la migracion completa (token + resolver de todos los dominios) por
+  construccion, sin depender de que un humano recuerde el paso manual.
 
 ## Referencias
 
@@ -228,8 +286,15 @@ proyecto matura de (a) a (b), que es precisamente lo que el token declarativo `t
   `domain-scaffolder` como parte del scaffold de cada dominio.
 - MEF-ADR-0023 (Bounded Context, topologia de ASB): contexto organizativo del scaffolding de dominios
   al que este ADR aplica.
+- MEF-ADR-0032 (identidad y autenticacion en el borde, WorkOS AuthKit + Azure API Management): fija el
+  patron que la seccion 4 de este ADR adopta como transicion (a)->(b) automatizada; su seccion 4/5 es
+  la fuente del insight de normalizacion de claims en el borde.
+- MEF-ADR-0029 (test de composicion del contenedor DI): gate duro que la seccion 4 de este ADR confirma
+  que sigue vigente tras la migracion automatizada.
 - Bitakora.ControlAsistencia issues #207 (upgrade `Cosmos.EventSourcing.CritterStack` 0.1.9 -> 2.1.0)
   y #219 (fix del incidente): origen real del vacio que este ADR cierra.
+- issue #337 (esta enmienda) e issue #340 (`/install-apim`, aun no implementado): origen y consumidor
+  concreto de la seccion 4.
 
 ## Control de cambios
 
@@ -245,3 +310,14 @@ proyecto matura de (a) a (b), que es precisamente lo que el token declarativo `t
   sujeto a re-verificar tipo/firma contra la version vigente del paquete y a degradar a "proponer" si el
   resolver no resulta generico para el proyecto, dejando un `// TODO(tenancy claims)` para el mapping
   claims -> `TenantContext` (siempre project-specific).
+- 2026-07-22: enmienda (issue #337). Fija la seccion 4, "Transicion automatizada (a)->(b) via
+  WorkOS+APIM": instalar WorkOS+APIM (MEF-ADR-0032) es la transicion (a)->(b) concreta, ejecutada por
+  el futuro skill `/install-apim` (via `/install-auth`), que automatiza el flip de `tenancy.strategy`,
+  la migracion del resolver de todos los dominios ya scaffoldeados
+  (`TenantResolverMonoTenantPorDefecto` -> `AgregarTenantResolverHibrido()`, removiendo el archivo
+  transitorio y su `// TODO(tenancy etapa b)`) y no requiere mapping de claims por dominio (resuelto
+  por construccion via la normalizacion de claims en la politica global de APIM, MEF-ADR-0032 seccion
+  4/5); el test de composicion (MEF-ADR-0029) sigue siendo gate duro. El limite "(a)->(b) manual" de
+  la seccion 3 se acota explicitamente al camino WorkOS+APIM: para cualquier otra autenticacion, sigue
+  siendo manual. Se ajustan en el cuerpo el parrafo "Limite deliberado" (seccion 3) y la consecuencia
+  negativa del bug silencioso, sin marcarlos obsoletos.
