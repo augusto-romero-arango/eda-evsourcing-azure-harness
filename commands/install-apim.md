@@ -225,6 +225,8 @@ por
         services.AgregarTenantResolverHibrido();
 ```
 
+El bloque de comentario de 4 lineas de arriba es el que emite `domain-scaffolder` en etapa (a) (el caso normal del flujo greenfield -> `/scaffold` -> `/install-apim`). Un dominio scaffoldeado **directo** en etapa (b) que degrado al fallback CA-7 de `domain-scaffolder` (ver `agents/domain-scaffolder.md`, "El fallback CA-7 tambien debe dejar el contenedor construible") lleva la **misma** linea `services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>();` -- la que dispara la deteccion del paso 9.3 -- pero bajo un comentario distinto. En ese caso reemplaza igual la linea de registro (y el comentario de tenancy que la precede, sea cual sea): el invariante que debe quedar es que `AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>()` pase a `services.AgregarTenantResolverHibrido()` y el `using` quede en `Cosmos.MultiTenancy.CritterStack` -- no que el comentario previo matchee textualmente.
+
 **c. Elimina** `Infraestructura/TenantResolverMonoTenantPorDefecto.cs` de ese dominio -- ya no lo referencia nadie.
 
 **d. Gate MEF-ADR-0029 (obligatorio -- "el gate no se relaja"):** corre el test de composicion de ese dominio:
@@ -235,7 +237,15 @@ dotnet test "tests/<RootNamespace>.{PascalCase}.Tests" --filter "FullyQualifiedN
 
 - Si pasa, el dominio queda migrado y construible -- segui con el siguiente.
 - Si falla porque `ProxyTenantResolver`/`TrustedHeadersTenantResolver` exige una dependencia no registrada (tipicamente `IHttpContextAccessor`, ver `agents/domain-scaffolder.md` seccion CA-6), agrega `services.AddHttpContextAccessor();` en `AgregarServicios{PascalCase}` (junto al resto de registros de infraestructura) y vuelve a correr el test.
-- Si sigue fallando, o `dotnet`/el SDK no estan disponibles para correr el test: **revierte las ediciones a-c de este dominio** (el `.csproj`, `ComposicionServicios{PascalCase}.cs`, y restaura `TenantResolverMonoTenantPorDefecto.cs` con su contenido original) y reportalo como "degradado -- migracion manual pendiente para este dominio". **No** dejes un dominio commiteado con el contenedor sin construir (reintroduciria el incidente #318/#207 que MEF-ADR-0028/0029 existen para atrapar). No abortes el resto del batch por un dominio que degrada.
+- Si sigue fallando, o `dotnet`/el SDK no estan disponibles para correr el test: **revierte las ediciones a-c de este dominio**. Los tres archivos estan tracked en `HEAD` (la eliminacion del paso c es solo del working tree, todavia sin commitear -- el commit es el paso 10), asi que `git restore` los devuelve a su estado original sin reconstruir nada a mano -- incluido `TenantResolverMonoTenantPorDefecto.cs`, que vuelve tal cual estaba:
+
+  ```bash
+  git restore "src/<RootNamespace>.{PascalCase}/<RootNamespace>.{PascalCase}.csproj" \
+              "src/<RootNamespace>.{PascalCase}/Infraestructura/ComposicionServicios{PascalCase}.cs" \
+              "src/<RootNamespace>.{PascalCase}/Infraestructura/TenantResolverMonoTenantPorDefecto.cs"
+  ```
+
+  y reportalo como "degradado -- migracion manual pendiente para este dominio". **No** dejes un dominio commiteado con el contenedor sin construir (reintroduciria el incidente #318/#207 que MEF-ADR-0028/0029 existen para atrapar). No abortes el resto del batch por un dominio que degrada.
 
 ### 10. Commitear la migracion de tenancy
 
