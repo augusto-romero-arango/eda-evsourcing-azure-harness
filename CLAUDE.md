@@ -135,6 +135,7 @@ tu propuesta en vez de darlo por cierto.
 | `/infra` | Pipeline IaC con Terraform (write → review → apply) |
 | `/infra-base` | Genera la infraestructura base (8 módulos + esqueleto del entorno) en greenfield |
 | `/seed-secret` | Registra y cablea un secreto nuevo post-greenfield (Key Vault + Function App de un dominio) |
+| `/install-workos` | Guia el dashboard de WorkOS AuthKit (cuenta, client_id, API key, rol admin) y cablea el adapter (agente de identidad) + la custodia de la API key (`/seed-secret`) |
 | `/parallel` | Corre varios issues en worktrees aislados |
 | `/sequential` | Cadena de issues con merge automático |
 | `/scaffold` | Crea el scaffold de un nuevo dominio |
