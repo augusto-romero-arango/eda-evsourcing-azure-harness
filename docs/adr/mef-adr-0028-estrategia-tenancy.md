@@ -2,7 +2,7 @@
 
 - **Fecha**: 2026-07-19
 - **Estado**: aceptado
-- **Aplica a**: doctrina de tenancy del marco; gobierna al `domain-scaffolder` (registro del `ITenantResolver` en el `Program.cs` que genera, ramificado por etapa), a `/onboard` (diagnostico informativo y escritura opt-in del token de deteccion) y a la futura familia `/install-workos`/`/install-apim`/`/install-auth` (issue #337, aun no implementados: ejecutan la migracion automatizada (a)->(b) que fija la seccion 4). Cross-referencia MEF-ADR-0003 (stack ES Marten+Wolverine), MEF-ADR-0021 (infraestructura base), MEF-ADR-0023 (Bounded Context/topologia de ASB) y MEF-ADR-0032 (identidad y autenticacion en el borde WorkOS+APIM, fuente del insight de normalizacion de claims que habilita la seccion 4).
+- **Aplica a**: doctrina de tenancy del marco; gobierna al `domain-scaffolder` (registro del `ITenantResolver` en el `Program.cs` que genera, ramificado por etapa), a `/onboard` (diagnostico informativo y escritura opt-in del token de deteccion) y a la futura familia `/install-workos`/`/install-apim`/`/install-auth` (aun no implementados, issue #340: ejecutan la migracion automatizada (a)->(b) que fija la seccion 4, introducida por la enmienda del issue #337). Cross-referencia MEF-ADR-0003 (stack ES Marten+Wolverine), MEF-ADR-0021 (infraestructura base), MEF-ADR-0023 (Bounded Context/topologia de ASB) y MEF-ADR-0032 (identidad y autenticacion en el borde WorkOS+APIM, fuente del insight de normalizacion de claims que habilita la seccion 4).
 
 ## Contexto
 
@@ -188,7 +188,7 @@ deja manual.
      `"mono-tenant-transitorio"` a `"multi-tenant-header"` (o se agrega, si estaba ausente).
   2. **Migracion del resolver en todos los dominios ya scaffoldeados** del BC: cada
      `Infraestructura/ComposicionServicios{Dominio}.cs` que registraba
-     `builder.Services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>()` (seccion 2)
+     `services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>()` (seccion 2)
      pasa a invocar `services.AgregarTenantResolverHibrido()` (`Cosmos.MultiTenancy.CritterStack`,
      registra `ProxyTenantResolver` -- seccion "Contexto"), y se elimina el archivo
      `TenantResolverMonoTenantPorDefecto.cs` junto con su `// TODO(tenancy etapa b)` de cada dominio
