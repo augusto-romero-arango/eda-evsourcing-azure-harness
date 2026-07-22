@@ -274,6 +274,8 @@ dotnet build "$CSPROJ" 2>&1 | tail -40
 - **Si el build falla** por un error que referencia tipos/miembros del namespace `WorkOS` (el adapter no compila contra el paquete restaurado -- version incorrecta, breaking change del SDK, o sin red para restaurar): **degrada a "proponer"** (CA-5). No toques Program.cs ni la composicion (Pasos 5/6). Deja el puerto, el adapter y el `PackageReference` en disco -- son la propuesta -- y copia el error de compilacion textual en el reporte final para que un humano lo reconcilie contra la version vigente del SDK.
 - **Si el build pasa**: las firmas del SDK quedan confirmadas contra el paquete efectivamente restaurado. Continua a los Pasos 5 y 6.
 
+En **cualquiera** de los dos casos de degrade anteriores (sin `dotnet`, sin red, o build rojo contra tipos de `WorkOS`) el proyecto del dominio puede quedar **sin compilar** -- el adapter del Paso 2 referencia tipos de `WorkOS` que no pudiste confirmar. **No commitees un build rojo/no verificado** (mismo principio que el resto del harness: un dominio que no compila nunca llega a `main`): **salta el Paso 8** (no hagas commit), deja la propuesta (puerto + adapter + `PackageReference`) sin commitear en el working tree y pasa directo al Paso 9 (reporte), que debe instruir al humano a reconciliar el adapter contra el SDK instalado, correr `dotnet build` hasta que pase y recien entonces commitear. Solo el camino verde (build del Paso 4 OK) llega al wiring de los Pasos 5-7 y al commit del Paso 8.
+
 ---
 
 ## Paso 5 - Cablear `WorkOsApiKey` + `WorkOSConfiguration.SetApiKey` en `Program.cs` (defensivo)
@@ -319,6 +321,8 @@ Si el Paso 0.4 detecto "ya instalado, nada que hacer" (todo existia), corre igua
 
 ## Paso 8 - Commitear
 
+Este paso corre **solo** si en esta corrida hay un build verde que respalde el commit: el Paso 4 verifico por compilacion y, si hubo wiring, el Paso 7 tambien paso (o el Paso 7 fallo pero revertiste el wiring, restaurando el estado ya verificado por el Paso 4 -- que compila). **Nunca commitees un proyecto que no compila.** Si degradaste a "proponer" en el Paso 4 (sin `dotnet`, sin red, o build rojo contra tipos de `WorkOS`), **no llegues aca**: no hay build verde: deja la propuesta sin commitear y que el reporte (Paso 9) le pida al humano reconciliar y commitear tras un `dotnet build` verde.
+
 Nunca trabajes contra `main` directo. Si la rama activa es `main`, crea una rama nueva primero:
 
 ```bash
@@ -346,7 +350,7 @@ Imprime un resumen claro:
 - **Gate de compilacion (CA-5)**: `VERIFICADO` (el build paso, wiring aplicado) o `NO VERIFICADO -- degradado a proponer` (con el motivo exacto: sin `dotnet`, sin red, o el error de compilacion textual).
 - **Wiring**: si se cableo `SetApiKey`/`AddSingleton`, en que archivo (`Program.cs` o `ComposicionServicios{PascalCase}.cs`, forma SPLIT/INLINE), o si quedo pendiente por el gate degradado.
 - **Pendiente para el operador humano** (fuera de alcance de este agente): sembrar el valor real de la API key de WorkOS en el Key Vault del BC y cablear el app setting `<AppSettingKey>` con `/seed-secret` (MEF-ADR-0025) -- este agente nunca vio ni escribio ese valor. Recordar tambien la separacion de credenciales de MEF-ADR-0032 seccion 6: la API key que este adapter consume es la del **proyecto de negocio** de WorkOS, nunca la del `client_id` de login que usa la politica del gateway APIM.
-- **Siguiente paso**: `git push -u origin <rama>` + `gh pr create` apuntando a `main`.
+- **Siguiente paso**: si el build quedo verde y commiteaste (Paso 8), `git push -u origin <rama>` + `gh pr create` apuntando a `main`. Si degradaste a "proponer" (build rojo o sin `dotnet`/sin red), **primero** reconcilia el adapter contra el SDK instalado hasta que `dotnet build` pase, commitea, y recien entonces push + PR -- nunca abras un PR con el dominio sin compilar.
 
 ---
 
@@ -360,3 +364,4 @@ Imprime un resumen claro:
 6. **NUNCA** ejecutes `dotnet run` ni `dotnet publish`: solo `dotnet build`, como gate de verificacion.
 7. **NUNCA** trabajes contra `main` directo; crea una rama o reusa la del pipeline que te invoco.
 8. **SIEMPRE** que degrades a "proponer" (Paso 4), documenta en el reporte final (Paso 9) el error de compilacion exacto -- nunca dejes la degradacion sin explicar por que.
+9. **NUNCA** commitees (Paso 8) un proyecto del dominio que no compila. Si degradaste a "proponer" (build rojo o no verificable por falta de `dotnet`/red), deja la propuesta sin commitear en el working tree; el commit lo hace un humano tras reconciliar el adapter y confirmar `dotnet build` verde. Un dominio que no compila nunca debe llegar a un PR.
