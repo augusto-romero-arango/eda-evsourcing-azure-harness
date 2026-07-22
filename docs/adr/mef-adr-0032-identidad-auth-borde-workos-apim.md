@@ -2,7 +2,7 @@
 
 - **Fecha**: 2026-07-22
 - **Estado**: aceptado
-- **Aplica a**: doctrina de identidad, autenticacion y autorizacion en el borde del marco. Es el **ancla** del agente `apim-gateway-scaffolder` (issue #335, generador del modulo APIM) y de la familia de skills `/install-workos`, `/install-apim` (issue #340) y `/install-auth`, aun no implementados. Cross-referencia MEF-ADR-0025 (custodia de secretos), MEF-ADR-0028 (estrategia de tenancy, materializa la etapa b), MEF-ADR-0022 (autenticacion de CI por OIDC), MEF-ADR-0021 (infraestructura base), MEF-ADR-0020 (hosting de Functions) y MEF-ADR-0030 (esquema de numeracion de ADRs).
+- **Aplica a**: doctrina de identidad, autenticacion y autorizacion en el borde del marco. Es el **ancla** del agente `apim-gateway-scaffolder` (issue #335, generador del modulo APIM) y de la familia de skills `/install-workos` (issue #339, implementado), `/install-apim` (issue #340, implementado) y `/install-auth` (aun no implementado). Cross-referencia MEF-ADR-0025 (custodia de secretos), MEF-ADR-0028 (estrategia de tenancy, materializa la etapa b), MEF-ADR-0022 (autenticacion de CI por OIDC), MEF-ADR-0021 (infraestructura base), MEF-ADR-0020 (hosting de Functions) y MEF-ADR-0030 (esquema de numeracion de ADRs).
 
 ## Contexto
 
@@ -168,3 +168,8 @@ El editor de politicas del portal de APIM incluye `<base/>` por defecto en cada 
 ## Control de cambios
 
 - 2026-07-22: creacion como `aceptado` (issue #336). Fija WorkOS AuthKit como IdP de referencia y Azure API Management Consumption como front door unico que valida el JWT en el borde sin tocar codigo de las Function Apps; embebe el catalogo de trampas verificadas B1-B10 de APIM/Terraform (origen: issue #335, incidente real en Cosmos.ControlPlane); fija la propagacion de identidad claim -> header canonico (`user_email` -> `X-User-Id`, `tenant_id` -> `X-Tenant-Id`) con anti-spoofing (`exists-action="override"`) y documenta por que centralizar ese mapping en el borde habilita la migracion generica de la etapa (a) a la (b) de MEF-ADR-0028; fija la separacion de credenciales/proyectos del IdP (client_id de login en la politica del gateway, API key de negocio en la Function App); y marca explicitamente que partes del catalogo (issuer client-specific, ausencia de `aud`, nombres de claim) estan verificadas solo empiricamente contra un token real de ControlPlane y no contra documentacion publica generica de WorkOS, exigiendo re-verificacion contra el discovery doc en vivo de cada consumidor. Bloquea al agente `apim-gateway-scaffolder` (issue #335) y a la familia de skills `/install-workos`/`/install-apim`/`/install-auth`.
+- 2026-07-22: implementacion (issue #340). El skill `/install-apim` (`commands/install-apim.md`) invoca
+  `apim-gateway-scaffolder` (#335) para instalar/actualizar el gateway y ejecuta la transicion de tenancy
+  que fija MEF-ADR-0028 seccion 4. Se actualiza en el cuerpo ("Aplica a") la mencion a `/install-apim` de
+  "aun no implementado" a implementado (`/install-workos`, issue #339, ya estaba implementado); `/install-auth`
+  sigue sin implementar. Ninguna decision de este ADR cambia.
