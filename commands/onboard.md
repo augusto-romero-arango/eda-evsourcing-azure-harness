@@ -2,7 +2,7 @@
 model: haiku
 ---
 
-Diagnostica el onboarding del consumidor: valida `.claude/harness.config.json`, los labels y el CI, y reporta un checklist de que esta listo y que falta. Es un **doctor**: por defecto solo diagnostica (no crea ni modifica nada). Como excepciones **opt-in**, si lo confirmas explicitamente puede provisionar los labels faltantes (el script subyacente es destructivo: borra los labels default de GitHub), configurar el CI hacia Azure (crea recursos reales en Azure -- app de Entra, role assignments y federated credential, por OIDC; ver MEF-ADR-0022) y escribir/actualizar la estrategia de tenancy vigente (`tenancy.strategy`, MEF-ADR-0028) en el config. Comunicate en **espanol**.
+Diagnostica el onboarding del consumidor: valida `.claude/harness.config.json`, los labels y el CI, y reporta un checklist de que esta listo y que falta. Presenta ademas la **bifurcacion de dos caminos de auth** (MEF-ADR-0028 + enmienda #337): (A) crecer -- autenticacion orquestada desde el inicio, etapa `multi-tenant-header` -- vs (B) POC -- sin autenticacion, etapa `mono-tenant-transitorio`, el default. Es un **doctor**: por defecto solo diagnostica (no crea ni modifica nada). Como excepciones **opt-in**, si lo confirmas explicitamente puede provisionar los labels faltantes (el script subyacente es destructivo: borra los labels default de GitHub), configurar el CI hacia Azure (crea recursos reales en Azure -- app de Entra, role assignments y federated credential, por OIDC; ver MEF-ADR-0022) y escribir/actualizar la estrategia de tenancy vigente (`tenancy.strategy`, MEF-ADR-0028) que materializa el camino elegido. Comunicate en **espanol**.
 
 ## Pre-condicion: cwd != Mefisto
 
@@ -31,11 +31,11 @@ Si el bloque imprime `ERROR`, detente y muestra el mensaje al usuario.
 5. **CI hacia Azure** (MEF-ADR-0022): que exista la aplicacion de Entra / Service Principal y los secrets OIDC del repo. Tolerante: si no hay `az` o sesion, reporta `NO VERIFICADO` en vez de fallar.
 6. **Secretos que alimentan la siembra en CI** (MEF-ADR-0025, informativo): que existan en GitHub `TF_VAR_POSTGRESQL_ADMIN_PASSWORD` y un `SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` por cada alias de `serviceBus.external[]`. Son los **inputs** que `infra-cd.yml` usa para sembrar el Key Vault del BC en un step posterior al `apply`; ya no hay siembra manual del admin ni verificacion del data plane del vault (MEF-ADR-0025 decision #6/#10). Reusa la misma lectura de `gh secret list` del punto 5; si falta, reporta `NO VERIFICADO` sin bloquear (un greenfield legitimo aun no tiene Postgres provisionado ni alias externos declarados).
 7. **Registro `secrets[]`** (issue #256, informativo): cuantas entradas hay registradas (las siembra el step data-driven de `infra-cd.yml`, sin ninguna linea hardcodeada por secreto) y, para cada entrada con `source.type: "github-secret"`, si el GitHub secret que referencia existe en el repo. La **forma** del array (`name` unico, `source.type` en {`output`, `github-secret`, `composite`}, `source.value` no vacio) ya la valida `load_harness_config` como parte del punto 1 (`Configuracion`): un `secrets[]` mal formado hace que esa seccion reporte `FALTA`, con el mensaje exacto que emite la funcion. Ausente por completo, reporta `NO VERIFICADO` sin bloquear (normal antes del primer `/infra-base`).
-8. **Estrategia de tenancy** (`tenancy.strategy`, MEF-ADR-0028, issue #323, informativo): que etapa del modelo de dos etapas declara el proyecto -- `mono-tenant-transitorio` (etapa a, greenfield sin autenticacion) o `multi-tenant-header` (etapa b, ya existe una autenticacion que produce un `TenantContext`). No se sondea en codigo (no hay señal fiable: el harness no referencia ningun tipo `Cosmos.MultiTenancy.*`/autenticacion); es un token **declarado** por el humano. Ausente equivale a la etapa (a) por defecto, asi que nunca reporta `FALTA` -- solo `OK` (valor reconocido, cualquiera de los dos) o `NO VERIFICADO` (ausente, o con un valor no reconocido).
+8. **Bifurcacion de dos caminos de auth** (`tenancy.strategy`, MEF-ADR-0028 + enmienda #337, MEF-ADR-0032, issue #323 + #341, informativo): que camino declaro el proyecto, mapeado 1:1 a las dos etapas de tenancy de MEF-ADR-0028 -- **(A) crecer**: autenticacion orquestada desde el inicio (`multi-tenant-header`, etapa b, ya existe o se planea una autenticacion que produce un `TenantContext`) o **(B) POC**: sin autenticacion (`mono-tenant-transitorio`, etapa a, greenfield, el default). No se sondea en codigo (no hay señal fiable: el harness no referencia ningun tipo `Cosmos.MultiTenancy.*`/autenticacion); es un token **declarado** por el humano. Ausente equivale al camino (B) POC/etapa (a) por defecto, asi que nunca reporta `FALTA` -- solo `OK` (valor reconocido, cualquiera de los dos caminos) o `NO VERIFICADO` (ausente, o con un valor no reconocido).
 
-La provision de **labels** (paso 3), la del **CI** hacia Azure (paso 4) y la escritura de la **estrategia de tenancy** (paso 5) las ofrece `/onboard` como pasos **opt-in**, bajo confirmacion explicita: el script de labels es destructivo (borra los labels default de GitHub), el de CI crea recursos reales en Azure (app de Entra, role assignments, federated credential -- OIDC, MEF-ADR-0022) y el de tenancy escribe `.claude/harness.config.json`. El diagnostico en si sigue siendo de solo lectura: sin tu confirmacion no se crea, borra, escribe ni provisiona nada. (Los writes opt-in de `/onboard` pasan asi de 2 -- labels, CI -- a 3, sumando el token `tenancy.strategy`.)
+La provision de **labels** (paso 3), la del **CI** hacia Azure (paso 4) y la escritura de la **estrategia de tenancy** (paso 5, la bifurcacion de caminos de auth) las ofrece `/onboard` como pasos **opt-in**, bajo confirmacion explicita: el script de labels es destructivo (borra los labels default de GitHub), el de CI crea recursos reales en Azure (app de Entra, role assignments, federated credential -- OIDC, MEF-ADR-0022) y el de tenancy escribe `.claude/harness.config.json`. El diagnostico en si sigue siendo de solo lectura: sin tu confirmacion no se crea, borra, escribe ni provisiona nada. (Los writes opt-in de `/onboard` pasan asi de 2 -- labels, CI -- a 3, sumando el token `tenancy.strategy` que materializa el camino de auth elegido.)
 
-Al cerrar el reporte, `/onboard` imprime un bloque **"Proximos pasos"**: deriva del mismo diagnostico ya hecho (sin re-verificar nada) el comando exacto a correr a continuacion -- labels (MEF-ADR-0007), CI (MEF-ADR-0022), infraestructura base (`/mefisto:infra-base dev`, MEF-ADR-0021) o el recordatorio recurrente de mantener al dia los GitHub secrets que alimentan la siembra en CI (MEF-ADR-0025), segun que seccion reporto `FALTA` -- y cierra con un puntero descubrible al quickstart narrativo del arranque greenfield (`docs/greenfield-quickstart.md` del harness). Es **puramente informativo**: no ejecuta `gh`/`az` ni provisiona nada; las escrituras que puede derivar siguen siendo los pasos opt-in 3 (labels) y 4 (CI) -- la escritura de tenancy (paso 5) se ofrece siempre, independientemente de este bloque, porque nunca reporta `FALTA`.
+Al cerrar el reporte, `/onboard` imprime un bloque **"Proximos pasos"**: deriva del mismo diagnostico ya hecho (sin re-verificar nada) el comando exacto a correr a continuacion -- labels (MEF-ADR-0007), CI (MEF-ADR-0022), infraestructura base (`/mefisto:infra-base dev`, MEF-ADR-0021), el recordatorio recurrente de mantener al dia los GitHub secrets que alimentan la siembra en CI (MEF-ADR-0025), o -- cuando el camino declarado es (A) crecer (`tenancy.strategy = multi-tenant-header`) -- el puntero a `/install-auth` (tras infra base + `/scaffold`, issue #341) para instalar WorkOS+APIM (MEF-ADR-0032), segun que seccion reporto `FALTA` o que camino de auth quedo declarado -- y cierra con un puntero descubrible al quickstart narrativo del arranque greenfield (`docs/greenfield-quickstart.md` del harness). Es **puramente informativo**: no ejecuta `gh`/`az` ni provisiona nada; las escrituras que puede derivar siguen siendo los pasos opt-in 3 (labels) y 4 (CI) -- la escritura de tenancy (paso 5) se ofrece siempre, independientemente de este bloque, porque nunca reporta `FALTA`.
 
 ## Proceso
 
@@ -57,7 +57,8 @@ N_OK=0; N_FALTA=0; N_NV=0
 ACTIONS=""
 # Flags para el bloque de cierre "Proximos pasos" (CA-1): se fijan junto a cada row() FALTA
 # correspondiente, para no re-diagnosticar nada al construir el bloque en la seccion 6.
-PA_CONFIG_FALTA=0; PA_TOKENS_FALTA=0; PA_LABELS_FALTA=0; PA_CI_FALTA=0; PA_INFRA_BASE_MISSING=0
+# PA_AUTH_PATH (issue #341) no acompaña un FALTA -- se fija cuando el camino declarado es (A) crecer.
+PA_CONFIG_FALTA=0; PA_TOKENS_FALTA=0; PA_LABELS_FALTA=0; PA_CI_FALTA=0; PA_INFRA_BASE_MISSING=0; PA_AUTH_PATH=0
 
 row() {
   estado="$1"; shift; item="$*"
@@ -274,19 +275,20 @@ else
   row NV "secrets[] no declarado todavia (normal antes del primer /infra-base o si el config es invalido -- ver seccion Configuracion)"
 fi
 
-# --- 8. Estrategia de tenancy (tenancy.strategy, MEF-ADR-0028, issue #323, informativo) ---
+# --- 8. Bifurcacion de dos caminos de auth (tenancy.strategy, MEF-ADR-0028, issue #323 + #341, informativo) ---
 echo ""
-echo "Estrategia de tenancy (tenancy.strategy, MEF-ADR-0028):"
+echo "Bifurcacion de dos caminos de auth -- (A) crecer / (B) POC (tenancy.strategy, MEF-ADR-0028):"
 TENANCY_STRATEGY=$(jq -r '.tenancy.strategy // ""' "$CONFIG" 2>/dev/null)
 case "$TENANCY_STRATEGY" in
   "")
-    row NV "tenancy.strategy ausente -- etapa (a) mono-tenant-transitorio por defecto (valido, no bloqueante)"
+    row NV "tenancy.strategy ausente -- camino (B) POC por defecto (etapa a, mono-tenant-transitorio, valido, no bloqueante)"
     ;;
   mono-tenant-transitorio)
-    row OK "tenancy.strategy = mono-tenant-transitorio (etapa a: greenfield sin autenticacion instalada)"
+    row OK "tenancy.strategy = mono-tenant-transitorio -- camino (B) POC: sin autenticacion (etapa a)"
     ;;
   multi-tenant-header)
-    row OK "tenancy.strategy = multi-tenant-header (etapa b: resolver real basado en TenantContext)"
+    row OK "tenancy.strategy = multi-tenant-header -- camino (A) crecer: autenticacion orquestada desde el inicio (etapa b)"
+    PA_AUTH_PATH=1
     ;;
   *)
     row NV "tenancy.strategy tiene un valor no reconocido: '$TENANCY_STRATEGY' (esperado mono-tenant-transitorio | multi-tenant-header)"
@@ -313,16 +315,27 @@ echo "===================================================================="
 echo ""
 echo "Proximos pasos (informativo -- no ejecuta nada; los comandos abajo son los que tu corres o confirmas):"
 if [ "$N_FALTA" -eq 0 ]; then
+  PA_STEP=0
   if [ "$PA_INFRA_BASE_MISSING" -eq 1 ]; then
-    echo "  1. Genera la infraestructura base: /mefisto:infra-base dev"
+    PA_STEP=$((PA_STEP+1))
+    echo "  $PA_STEP. Genera la infraestructura base: /mefisto:infra-base dev"
   else
-    echo "  1. El harness esta configurado: arranca (o continua) el dominio con /mefisto:scaffold <dominio>,"
+    PA_STEP=$((PA_STEP+1))
+    echo "  $PA_STEP. El harness esta configurado: arranca (o continua) el dominio con /mefisto:scaffold <dominio>,"
     echo "     luego /mefisto:draft y /mefisto:implement para tu primer ciclo TDD."
-    echo "  2. Recordatorio recurrente: la siembra de secretos en Key Vault la hace CI (infra-cd.yml),"
+    PA_STEP=$((PA_STEP+1))
+    echo "  $PA_STEP. Recordatorio recurrente: la siembra de secretos en Key Vault la hace CI (infra-cd.yml),"
     echo "     iterando harness.config.json > secrets[] -- MEF-ADR-0025, issue #256. Tu unica accion manual"
     echo "     es crear/verificar los GitHub secrets que alimentan cada entrada github-secret"
     echo "     (TF_VAR_POSTGRESQL_ADMIN_PASSWORD, un SB_EXTERNAL_<ALIAS>_CONNECTION_STRING por alias, o el"
     echo "     que declares con /seed-secret) en Settings > Secrets and variables > Actions."
+  fi
+  if [ "$PA_AUTH_PATH" -eq 1 ]; then
+    PA_STEP=$((PA_STEP+1))
+    echo "  $PA_STEP. Camino auth elegido (tenancy.strategy = multi-tenant-header, MEF-ADR-0028): tras"
+    echo "     /mefisto:infra-base y /mefisto:scaffold <dominio>, corre /install-auth para instalar WorkOS+APIM"
+    echo "     (MEF-ADR-0032). Aun no implementado -- mientras tanto corre /install-workos --domain <Dominio>"
+    echo "     y despues /install-apim --domain <Dominio> (mismo resultado, sin el orquestador)."
   fi
 else
   PA_STEP=0
@@ -347,6 +360,13 @@ else
   if [ "$PA_INFRA_BASE_MISSING" -eq 1 ]; then
     PA_STEP=$((PA_STEP+1))
     echo "  $PA_STEP. Genera la infraestructura base: /mefisto:infra-base dev"
+  fi
+  if [ "$PA_AUTH_PATH" -eq 1 ]; then
+    PA_STEP=$((PA_STEP+1))
+    echo "  $PA_STEP. Camino auth elegido (tenancy.strategy = multi-tenant-header, MEF-ADR-0028): una vez"
+    echo "     resueltos los FALTA de arriba, con infra base y al menos un dominio scaffoldeado, corre"
+    echo "     /install-auth para instalar WorkOS+APIM (MEF-ADR-0032). Aun no implementado -- mientras tanto"
+    echo "     corre /install-workos --domain <Dominio> y despues /install-apim --domain <Dominio>."
   fi
   if [ "$PA_STEP" -eq 0 ]; then
     echo "  Resuelve primero los \"NO VERIFICADO\" de arriba (instala/autentica lo que falte) para que"
@@ -502,17 +522,17 @@ PROVISION_CI
 
 **Caveat: idempotencia parcial de la condicion ABAC.** `az role assignment create` no actualiza la condicion de una asignacion que ya exista con el mismo principal/rol/alcance. La asignacion de `Role Based Access Control Administrator` con la condicion anti-escalacion la introdujo el issue #195; en un onboarding limpio se crea de una vez **con** la condicion. Pero si el SP ya tuviera esa asignacion **sin** la condicion --creada fuera de este script (p. ej. a mano), o si una version futura del script cambia la expresion de la condicion-- re-correr el script aqui **no** se la aplica ni actualiza. El SP quedaria con ese rol sin la restriccion anti-escalacion, aunque `/onboard` reporte el CI en verde. Ver el diagnostico y la remediacion completa en el README, seccion "Bootstrap de infraestructura", paso 2. El arreglo del script (deteccion y recreacion automatica) queda diferido a un issue aparte.
 
-### 5. Provision opt-in de la estrategia de tenancy
+### 5. Bifurcacion de auth: provision opt-in de la estrategia de tenancy (crecer vs POC)
 
 Es la **tercera** escritura opt-in de `/onboard` (junto a labels y CI), y la unica que toca `.claude/harness.config.json` en vez de recursos externos -- no requiere `gh` ni `az`. El diagnostico (pasos 1-2) nunca escribe este token; solo lo reporta.
 
-`/onboard` **no sondea codigo** para inferir la etapa de tenancy vigente (MEF-ADR-0028): no hay señal fiable (un grep del harness confirmo cero referencias a `MultiTenancy`/`TenantResolver`/`TenantContext` en agentes/scripts/commands/ADRs). La etapa la declara el humano; este paso solo la pregunta y, si se confirma, la escribe.
+`/onboard` **no sondea codigo** para inferir el camino de auth vigente (MEF-ADR-0028): no hay señal fiable (un grep del harness confirmo cero referencias a `MultiTenancy`/`TenantResolver`/`TenantContext` en agentes/scripts/commands/ADRs). El camino lo declara el humano; este paso solo lo pregunta como una bifurcacion explicita de dos caminos (CA-1) y, si se confirma, escribe la etapa de tenancy que lo materializa.
 
 Ofrece este paso siempre (a diferencia de labels/CI, no depende de que el diagnostico haya reportado `FALTA` -- la seccion de tenancy nunca lo reporta). Si el usuario no tiene interes en tocar la estrategia de tenancy ahora, omite el paso sin insistir.
 
-1. **Pregunta la estrategia vigente.** Independientemente de lo que reporto el diagnostico (punto 8), pregunta al usuario: "¿Tu proyecto ya tiene instalada una autenticacion que produce un `TenantContext` (header-based, o el hibrido HTTP+Wolverine de `Cosmos.MultiTenancy.CritterStack`)? [si/no]".
-   - Si responde **no** (o no sabe / aun no instala autenticacion): la etapa vigente es (a), `mono-tenant-transitorio`. Si el token ya esta ausente o ya vale eso, no hay nada que escribir -- informa y termina el paso sin tocar el archivo.
-   - Si responde **si**: la etapa vigente es (b), `multi-tenant-header`.
+1. **Presenta la bifurcacion de dos caminos y pregunta cual aplica (CA-1).** Independientemente de lo que reporto el diagnostico (punto 8), presenta al usuario los dos caminos -- mapeados 1:1 a las dos etapas de MEF-ADR-0028 -- y pregunta cual elige, p. ej.: "Tu proyecto puede seguir uno de dos caminos de auth: **(A) crecer** -- va a madurar mas alla de esto y necesita autenticacion orquestada desde el inicio (WorkOS AuthKit + Azure API Management, MEF-ADR-0032; etapa `multi-tenant-header`) -- o **(B) POC** -- no va a madurar mas alla de una prueba de concepto y no necesita autenticacion (etapa `mono-tenant-transitorio`, el default). ¿Cual de los dos elegis? [A/B]".
+   - Si responde **(B) POC** (o no sabe / prefiere decidir despues): el camino vigente es (a), `mono-tenant-transitorio`. Si el token ya esta ausente o ya vale eso, no hay nada que escribir (CA-2) -- informa y termina el paso sin tocar el archivo.
+   - Si responde **(A) crecer**: el camino vigente es (b), `multi-tenant-header`.
 2. **No escribas nada sin confirmar el valor exacto (mismo patron que los pasos 3 y 4).** Muestra el valor que vas a escribir/actualizar y pide confirmacion explicita, p. ej.: "Voy a escribir `tenancy.strategy = \"multi-tenant-header\"` en `.claude/harness.config.json`. ¿Confirmas? [si/no]". Si el usuario no confirma, no toques el archivo: recuerdale que puede editarlo a mano y termina el paso. El comportamiento por defecto de `/onboard` sigue siendo solo diagnostico.
 3. **Solo si el usuario confirma**, escribe/actualiza el campo con `jq`, preservando el resto del archivo:
 
@@ -540,7 +560,7 @@ else
 fi
 ```
 
-4. **Reporta el resultado al usuario.** Si escribio el token, recuerdale que `domain-scaffolder` (Paso 0) solo lo lee en el **proximo** dominio que scaffoldee -- no re-scaffoldea dominios ya existentes. Si el proyecto tiene dominios en etapa (a) y acaba de declarar la etapa (b), reemplazar el `ITenantResolver` de esos dominios existentes sigue siendo manual (ver el `// TODO(tenancy etapa b)` que `domain-scaffolder` deja en `TenantResolverMonoTenantPorDefecto.cs`, MEF-ADR-0028).
+4. **Reporta el resultado al usuario.** Si escribio el token, recuerdale que `domain-scaffolder` (Paso 0) solo lo lee en el **proximo** dominio que scaffoldee -- no re-scaffoldea dominios ya existentes. Si el proyecto tiene dominios en etapa (a) y acaba de declarar la etapa (b), reemplazar el `ITenantResolver` de esos dominios existentes sigue siendo manual (ver el `// TODO(tenancy etapa b)` que `domain-scaffolder` deja en `TenantResolverMonoTenantPorDefecto.cs`, MEF-ADR-0028). Si el camino elegido fue **(A) crecer**, suma el puntero al orquestador (CA-3): tras `/mefisto:infra-base` y `/mefisto:scaffold <dominio>`, el siguiente paso es correr `/install-auth` para instalar WorkOS+APIM (MEF-ADR-0032) -- aun no implementado; mientras tanto, corre `/install-workos --domain <Dominio>` y despues `/install-apim --domain <Dominio>` (mismo resultado, sin el orquestador).
 
 ## Reglas
 
@@ -550,6 +570,6 @@ fi
 - **La estructura de carpetas es informativa, nunca `FALTA`.** Un greenfield legitimo aun no tiene `src/`, `tests/` ni `infra/environments/` antes del primer `/scaffold` o `/infra-base`; marcarla como bloqueante daria un falso negativo (issue #212).
 - **Los secretos que alimentan la siembra en Key Vault (MEF-ADR-0025) son informativos, nunca `FALTA`.** La siembra en el Key Vault del BC la hace CI (`infra-cd.yml`) tras el `apply`; ningun humano custodia secretos en su data plane. El diagnostico solo reporta si los GitHub secrets que la alimentan (`TF_VAR_POSTGRESQL_ADMIN_PASSWORD`, `SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` por alias) existen -- un greenfield legitimo aun no los tiene antes de provisionar Postgres o declarar `serviceBus.external[]` (issue #232).
 - **El registro `secrets[]` (issue #256) tambien es informativo, nunca `FALTA` por si solo.** Su **forma** (`name`/`source.type`/`source.value`) ya la valida `load_harness_config` como parte de la seccion "Configuracion" (punto 1) -- un `secrets[]` mal formado hace que ESA seccion reporte `FALTA`, no esta. Esta seccion solo cuenta las entradas registradas y, para las de tipo `github-secret`, si el GitHub secret que referencian existe -- lo mismo que ya hacia para `serviceBus.external[]`, generalizado a cualquier entrada.
-- **La estrategia de tenancy (`tenancy.strategy`, MEF-ADR-0028, issue #323) es informativa, nunca `FALTA`.** Ausente equivale a la etapa (a) por defecto (retrocompatible); no hay señal de codigo fiable para inferir la etapa, asi que `/onboard` nunca la sondea -- solo reporta el valor declarado (o su ausencia) y ofrece el paso opt-in 5 para escribirlo bajo confirmacion.
-- **El bloque de cierre "Proximos pasos" es puramente informativo (issue #222).** Solo lee las mismas variables que ya acumulo el diagnostico (`N_FALTA`, `N_NV`, y los flags `PA_*` por seccion) para imprimir el comando exacto a correr a continuacion y el puntero al quickstart greenfield; nunca ejecuta `gh`/`az` ni escribe nada. No reemplaza ni condiciona las provisiones opt-in (pasos 3, 4 y 5), que siguen requiriendo confirmacion explicita para cada una.
+- **La bifurcacion de dos caminos de auth (`tenancy.strategy`, MEF-ADR-0028, issue #323, issue #341) es informativa, nunca `FALTA`.** Mapeada 1:1 a las dos etapas de tenancy -- (A) crecer = etapa b `multi-tenant-header`, (B) POC = etapa a `mono-tenant-transitorio`. Ausente equivale al camino (B) POC por defecto (retrocompatible); no hay señal de codigo fiable para inferir el camino, asi que `/onboard` nunca lo sondea -- solo reporta el valor declarado (o su ausencia) y ofrece el paso opt-in 5 para escribirlo bajo confirmacion. `/onboard` no absorbe la orquestacion de auth (eso vive en `/install-auth`): solo presenta la bifurcacion, la registra y apunta al orquestador en "Proximos pasos".
+- **El bloque de cierre "Proximos pasos" es puramente informativo (issue #222).** Solo lee las mismas variables que ya acumulo el diagnostico (`N_FALTA`, `N_NV`, y los flags `PA_*` por seccion, incluyendo `PA_AUTH_PATH` -- issue #341) para imprimir el comando exacto a correr a continuacion (incluido el puntero a `/install-auth` cuando el camino declarado es (A) crecer) y el puntero al quickstart greenfield; nunca ejecuta `gh`/`az` ni escribe nada. No reemplaza ni condiciona las provisiones opt-in (pasos 3, 4 y 5), que siguen requiriendo confirmacion explicita para cada una.
 - Si `$ARGUMENTS` trae algo, ignoralo: `/onboard` no toma argumentos.
