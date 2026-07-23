@@ -389,12 +389,16 @@ desbloquear_issues_dependientes() {
         done
 
         if [ "$referencia_cerrado" = true ]; then
-            # Extraer TODAS las dependencias del issue bloqueado
+            # Extraer SOLO las dependencias forward canonicas ('Depende de' / 'Bloqueado por'),
+            # ignorando refs inversas/notas ('Consumido por', 'Bloquea'/'Bloquea a',
+            # 'se traslada a', 'Relacionado con', prosa libre).
             local all_deps=()
             local dep_num
             while IFS= read -r dep_num; do
                 [ -n "$dep_num" ] && all_deps+=("$dep_num")
-            done < <(echo "$deps_section" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' | sort -u)
+            done < <(echo "$deps_section" \
+                | grep -ioE '(Depende de|Bloqueado por)[[:space:]]+#[0-9]+' \
+                | grep -oE '[0-9]+' | sort -u)
 
             # Verificar si TODAS las dependencias estan cerradas/mergeadas
             local todas_cerradas=true
