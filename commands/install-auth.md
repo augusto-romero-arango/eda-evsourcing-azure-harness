@@ -62,6 +62,19 @@ test -f "infra/environments/${ENV}/dominio-<kebab-de-identity-domain>.tf" || {
 
 Si cualquiera de los tres falta, detente con el mensaje -- no continues con el resto del proceso. (Los `--domain` de la etapa 2 que no esten scaffoldeados **no** se validan aca: el agente `apim-gateway-scaffolder` que invoca esa etapa ya los omite y los reporta sin abortar el resto del batch.)
 
+**Fail-fast de `--cors-origin` (primera instalacion del gateway).** La etapa 2 (`/install-apim`, su Paso 5) aborta si es la primera instalacion del gateway en este entorno (`apim.tf` ausente) y no recibio ningun `--cors-origin`. Pero para entonces la **etapa 1 completa** ya corrio (walkthrough manual del dashboard de WorkOS + custodia del secreto + commits), asi que el usuario habria hecho todo ese trabajo para chocar contra un flag faltante que pertenece conceptualmente al borde. Como el orquestador ya tiene aca toda la informacion para detectarlo, chequealo **antes** de invocar nada (mismo criterio que `/install-apim`, no una reimplementacion de su logica):
+
+```bash
+if [ ! -f "infra/environments/${ENV}/apim.tf" ] && [ "${#CORS_ORIGINS[@]}" -eq 0 ]; then
+  echo "FALTA: es la primera instalacion del gateway APIM en el entorno ${ENV} y no pasaste ningun --cors-origin."
+  echo "       --cors-origin es obligatorio la primera vez (mismo criterio que /install-apim). Reintenta con:"
+  echo "       /install-auth --identity-domain <Dominio> --domain <Dominio> --cors-origin <origin-del-SPA>"
+  exit 1
+fi
+```
+
+Si el gateway ya existe (`apim.tf` presente), este chequeo es un no-op -- un `--cors-origin` nuevo sobre un gateway ya instalado se maneja fuera de este skill (ver etapa 2).
+
 ### 3. Confirmar con el usuario
 
 Muestra exactamente lo que va a pasar (las dos etapas completas + el gate humano) y pide confirmacion explicita -- a partir de aca este skill escribe codigo C#, Terraform, GitHub variables/secrets, y **reescribe codigo C# existente** en todos los dominios del BC (la migracion de tenancy de la etapa 2):
