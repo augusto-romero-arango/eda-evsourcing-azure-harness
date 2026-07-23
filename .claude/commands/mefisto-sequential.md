@@ -46,7 +46,11 @@ Reglas de exclusion/abortar:
 ### 1.5. Verificar label `bloqueado` (con resolucion intra-batch)
 
 Para cada issue que sobreviva al paso 1 y tenga el label `bloqueado`, lee la seccion
-`## Dependencias` del body y extrae los numeros referenciados (patron `#NNN`).
+`## Dependencias` del body y extrae **solo** los numeros precedidos por un marcador forward
+canonico (`Depende de #NNN` / `Bloqueado por #NNN`, case-insensitive, en la misma linea).
+Ignora referencias inversas (`Consumido por #NNN`, `Bloquea #NNN` / `Bloquea a #NNN`), notas
+libres (`... se traslada a #NNN`, `Relacionado con #NNN`) y prosa: no son dependencias forward
+de este issue.
 
 La idea clave (issue #47): una dependencia abierta **no siempre** es un bloqueo. Como la
 cadena hace `pipeline -> PR -> merge -> sync verificado -> siguiente` (ver paso 5 e issue
@@ -108,10 +112,13 @@ for ISSUE in $BATCH; do
 
     ISSUE_POS=$(pos_in_batch "$ISSUE")
 
-    # Extraer dependencias SOLO de la seccion '## Dependencias' (patron #NNN).
+    # Extraer dependencias SOLO de la seccion '## Dependencias' y SOLO tras un marcador
+    # forward canonico ('Depende de' / 'Bloqueado por'), ignorando refs inversas/notas
+    # ('Consumido por', 'Bloquea'/'Bloquea a', 'se traslada a', 'Relacionado con', prosa).
     DEPS=$(gh issue view "$ISSUE" --json body -q '.body' \
         | awk '/^##[[:space:]]*[Dd]ependencias/{f=1;next} /^##[[:space:]]/{f=0} f' \
-        | grep -oE '#[0-9]+' | tr -d '#' | sort -u)
+        | grep -ioE '(Depende de|Bloqueado por)[[:space:]]+#[0-9]+' \
+        | grep -oE '[0-9]+' | sort -u)
 
     ISSUE_REAL=""    # bloqueos reales de ESTE issue
     for DEP in $DEPS; do
