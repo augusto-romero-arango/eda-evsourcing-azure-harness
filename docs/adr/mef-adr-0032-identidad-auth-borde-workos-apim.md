@@ -2,7 +2,7 @@
 
 - **Fecha**: 2026-07-22
 - **Estado**: aceptado
-- **Aplica a**: doctrina de identidad, autenticacion y autorizacion en el borde del marco. Es el **ancla** del agente `apim-gateway-scaffolder` (issue #335, generador del modulo APIM) y de la familia de skills `/install-workos` (issue #339, implementado), `/install-apim` (issue #340, implementado) y `/install-auth` (aun no implementado). Cross-referencia MEF-ADR-0025 (custodia de secretos), MEF-ADR-0028 (estrategia de tenancy, materializa la etapa b), MEF-ADR-0022 (autenticacion de CI por OIDC), MEF-ADR-0021 (infraestructura base), MEF-ADR-0020 (hosting de Functions) y MEF-ADR-0030 (esquema de numeracion de ADRs).
+- **Aplica a**: doctrina de identidad, autenticacion y autorizacion en el borde del marco. Es el **ancla** del agente `apim-gateway-scaffolder` (issue #335, generador del modulo APIM) y de la familia de skills `/install-workos` (issue #339, implementado), `/install-apim` (issue #340, implementado) y `/install-auth` (issue #342, implementado: orquesta a los dos anteriores con un gate humano en medio). Cross-referencia MEF-ADR-0025 (custodia de secretos), MEF-ADR-0028 (estrategia de tenancy, materializa la etapa b), MEF-ADR-0022 (autenticacion de CI por OIDC), MEF-ADR-0021 (infraestructura base), MEF-ADR-0020 (hosting de Functions) y MEF-ADR-0030 (esquema de numeracion de ADRs).
 
 ## Contexto
 
@@ -173,3 +173,11 @@ El editor de politicas del portal de APIM incluye `<base/>` por defecto en cada 
   que fija MEF-ADR-0028 seccion 4. Se actualiza en el cuerpo ("Aplica a") la mencion a `/install-apim` de
   "aun no implementado" a implementado (`/install-workos`, issue #339, ya estaba implementado); `/install-auth`
   sigue sin implementar. Ninguna decision de este ADR cambia.
+- 2026-07-22: implementacion (issue #342). El skill `/install-auth` (`commands/install-auth.md`) orquesta
+  la familia completa: encadena `/install-workos` (etapa 1) y `/install-apim` (etapa 2) con un gate humano
+  en medio que verifica (via `gh secret`/`variable list`) que `WORKOS_CLIENT_ID` y `WORKOS_API_KEY` existen
+  en el repo antes de arrancar la etapa 2 -- el mismo requisito de credenciales que ya documentaba este ADR
+  (seccion 6/7), ahora reforzado como gate bloqueante en vez de dejarlo a criterio del usuario. Es stateless:
+  delega integramente en la idempotencia de ambos sub-skills, sin reimplementar su logica. Se actualiza en
+  el cuerpo ("Aplica a") la mencion a `/install-auth` de "aun no implementado" a implementado. Ninguna
+  decision de este ADR cambia.

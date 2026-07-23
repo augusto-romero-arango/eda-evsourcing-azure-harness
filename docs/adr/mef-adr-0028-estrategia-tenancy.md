@@ -2,7 +2,7 @@
 
 - **Fecha**: 2026-07-19
 - **Estado**: aceptado
-- **Aplica a**: doctrina de tenancy del marco; gobierna al `domain-scaffolder` (registro del `ITenantResolver` en el `Program.cs` que genera, ramificado por etapa), a `/onboard` (diagnostico informativo y escritura opt-in del token de deteccion) y a la familia `/install-workos` (issue #339, implementado)/`/install-apim` (issue #340, implementado: ejecuta la migracion automatizada (a)->(b) que fija la seccion 4, introducida por la enmienda del issue #337)/`/install-auth` (aun no implementado). Cross-referencia MEF-ADR-0003 (stack ES Marten+Wolverine), MEF-ADR-0021 (infraestructura base), MEF-ADR-0023 (Bounded Context/topologia de ASB) y MEF-ADR-0032 (identidad y autenticacion en el borde WorkOS+APIM, fuente del insight de normalizacion de claims que habilita la seccion 4).
+- **Aplica a**: doctrina de tenancy del marco; gobierna al `domain-scaffolder` (registro del `ITenantResolver` en el `Program.cs` que genera, ramificado por etapa), a `/onboard` (diagnostico informativo y escritura opt-in del token de deteccion) y a la familia `/install-workos` (issue #339, implementado)/`/install-apim` (issue #340, implementado: ejecuta la migracion automatizada (a)->(b) que fija la seccion 4, introducida por la enmienda del issue #337)/`/install-auth` (issue #342, implementado: orquesta a los dos anteriores con un gate humano en medio). Cross-referencia MEF-ADR-0003 (stack ES Marten+Wolverine), MEF-ADR-0021 (infraestructura base), MEF-ADR-0023 (Bounded Context/topologia de ASB) y MEF-ADR-0032 (identidad y autenticacion en el borde WorkOS+APIM, fuente del insight de normalizacion de claims que habilita la seccion 4).
 
 ## Contexto
 
@@ -180,8 +180,8 @@ deja manual.
 
 - **La transicion concreta**: instalar WorkOS+APIM (MEF-ADR-0032) **es** la transicion (a)->(b)
   concreta del BC. La ejecuta el skill `/install-apim` (issue #340, implementado -- `commands/install-apim.md`;
-  invocable directo o, a futuro, orquestado por `/install-auth` junto a `/install-workos`, ese
-  orquestador aun no implementado). En ese camino especifico, la transicion **deja de ser manual**.
+  invocable directo o, orquestado por `/install-auth` (issue #342, implementado -- `commands/install-auth.md`)
+  junto a `/install-workos`). En ese camino especifico, la transicion **deja de ser manual**.
 - **Que automatiza `/install-apim`**: al instalar el modulo APIM, el skill ejecuta, sin intervencion
   humana adicional:
   1. **Flip del token**: `tenancy.strategy` en `.claude/harness.config.json` pasa de
@@ -327,3 +327,9 @@ proyecto matura de (a) a (b), que es precisamente lo que el token declarativo `t
   ya scaffoldeados del BC, gateada en cada dominio por el test de composicion (MEF-ADR-0029). Se
   actualizan en el cuerpo ("Aplica a", seccion 4, Referencias) las menciones a `/install-apim` de "aun no
   implementado" a implementado, sin marcarlas obsoletas -- ninguna decision de este ADR cambia.
+- 2026-07-22: implementacion (issue #342). El skill `/install-auth` (`commands/install-auth.md`) orquesta
+  `/install-workos` y `/install-apim` (la transicion (a)->(b) de la seccion 4) en el orden correcto, con
+  un gate humano en medio que verifica que `WORKOS_CLIENT_ID`/`WORKOS_API_KEY` existen antes de arrancar
+  la migracion de tenancy. Se actualizan en el cuerpo ("Aplica a", seccion 4) las menciones a
+  `/install-auth` de "aun no implementado"/"a futuro" a implementado, sin marcarlas obsoletas -- ninguna
+  decision de este ADR cambia.

@@ -35,7 +35,7 @@ Si el bloque imprime `ERROR`, detente y muestra el mensaje al usuario.
 
 La provision de **labels** (paso 3), la del **CI** hacia Azure (paso 4) y la escritura de la **estrategia de tenancy** (paso 5, la bifurcacion de caminos de auth) las ofrece `/onboard` como pasos **opt-in**, bajo confirmacion explicita: el script de labels es destructivo (borra los labels default de GitHub), el de CI crea recursos reales en Azure (app de Entra, role assignments, federated credential -- OIDC, MEF-ADR-0022) y el de tenancy escribe `.claude/harness.config.json`. El diagnostico en si sigue siendo de solo lectura: sin tu confirmacion no se crea, borra, escribe ni provisiona nada. (Los writes opt-in de `/onboard` pasan asi de 2 -- labels, CI -- a 3, sumando el token `tenancy.strategy` que materializa el camino de auth elegido.)
 
-Al cerrar el reporte, `/onboard` imprime un bloque **"Proximos pasos"**: deriva del mismo diagnostico ya hecho (sin re-verificar nada) el comando exacto a correr a continuacion -- labels (MEF-ADR-0007), CI (MEF-ADR-0022), infraestructura base (`/mefisto:infra-base dev`, MEF-ADR-0021), el recordatorio recurrente de mantener al dia los GitHub secrets que alimentan la siembra en CI (MEF-ADR-0025), o -- cuando el camino declarado es (A) crecer (`tenancy.strategy = multi-tenant-header`) -- el puntero a `/install-auth` (tras infra base + `/scaffold`, issue #341) para instalar WorkOS+APIM (MEF-ADR-0032), segun que seccion reporto `FALTA` o que camino de auth quedo declarado -- y cierra con un puntero descubrible al quickstart narrativo del arranque greenfield (`docs/greenfield-quickstart.md` del harness). Es **puramente informativo**: no ejecuta `gh`/`az` ni provisiona nada; las escrituras que puede derivar siguen siendo los pasos opt-in 3 (labels) y 4 (CI) -- la escritura de tenancy (paso 5) se ofrece siempre, independientemente de este bloque, porque nunca reporta `FALTA`.
+Al cerrar el reporte, `/onboard` imprime un bloque **"Proximos pasos"**: deriva del mismo diagnostico ya hecho (sin re-verificar nada) el comando exacto a correr a continuacion -- labels (MEF-ADR-0007), CI (MEF-ADR-0022), infraestructura base (`/mefisto:infra-base dev`, MEF-ADR-0021), el recordatorio recurrente de mantener al dia los GitHub secrets que alimentan la siembra en CI (MEF-ADR-0025), o -- cuando el camino declarado es (A) crecer (`tenancy.strategy = multi-tenant-header`) -- el puntero a `/install-auth` (tras infra base + `/scaffold`, issue #342, implementado) para instalar WorkOS+APIM (MEF-ADR-0032), segun que seccion reporto `FALTA` o que camino de auth quedo declarado -- y cierra con un puntero descubrible al quickstart narrativo del arranque greenfield (`docs/greenfield-quickstart.md` del harness). Es **puramente informativo**: no ejecuta `gh`/`az` ni provisiona nada; las escrituras que puede derivar siguen siendo los pasos opt-in 3 (labels) y 4 (CI) -- la escritura de tenancy (paso 5) se ofrece siempre, independientemente de este bloque, porque nunca reporta `FALTA`.
 
 ## Proceso
 
@@ -334,8 +334,7 @@ if [ "$N_FALTA" -eq 0 ]; then
     PA_STEP=$((PA_STEP+1))
     echo "  $PA_STEP. Camino auth elegido (tenancy.strategy = multi-tenant-header, MEF-ADR-0028): tras"
     echo "     /mefisto:infra-base y /mefisto:scaffold <dominio>, corre /install-auth para instalar WorkOS+APIM"
-    echo "     (MEF-ADR-0032). Aun no implementado -- mientras tanto corre /install-workos --domain <Dominio>"
-    echo "     y despues /install-apim --domain <Dominio> (mismo resultado, sin el orquestador)."
+    echo "     (MEF-ADR-0032): encadena /install-workos y /install-apim con el gate humano en medio."
   fi
 else
   PA_STEP=0
@@ -365,8 +364,8 @@ else
     PA_STEP=$((PA_STEP+1))
     echo "  $PA_STEP. Camino auth elegido (tenancy.strategy = multi-tenant-header, MEF-ADR-0028): una vez"
     echo "     resueltos los FALTA de arriba, con infra base y al menos un dominio scaffoldeado, corre"
-    echo "     /install-auth para instalar WorkOS+APIM (MEF-ADR-0032). Aun no implementado -- mientras tanto"
-    echo "     corre /install-workos --domain <Dominio> y despues /install-apim --domain <Dominio>."
+    echo "     /install-auth para instalar WorkOS+APIM (MEF-ADR-0032): encadena /install-workos y"
+    echo "     /install-apim con el gate humano en medio."
   fi
   if [ "$PA_STEP" -eq 0 ]; then
     echo "  Resuelve primero los \"NO VERIFICADO\" de arriba (instala/autentica lo que falte) para que"
@@ -560,7 +559,7 @@ else
 fi
 ```
 
-4. **Reporta el resultado al usuario.** Si escribio el token, recuerdale que `domain-scaffolder` (Paso 0) solo lo lee en el **proximo** dominio que scaffoldee -- no re-scaffoldea dominios ya existentes. Si el proyecto tiene dominios en etapa (a) y acaba de declarar la etapa (b), reemplazar el `ITenantResolver` de esos dominios existentes sigue siendo manual (ver el `// TODO(tenancy etapa b)` que `domain-scaffolder` deja en `TenantResolverMonoTenantPorDefecto.cs`, MEF-ADR-0028). Si el camino elegido fue **(A) crecer**, suma el puntero al orquestador (CA-3): tras `/mefisto:infra-base` y `/mefisto:scaffold <dominio>`, el siguiente paso es correr `/install-auth` para instalar WorkOS+APIM (MEF-ADR-0032) -- aun no implementado; mientras tanto, corre `/install-workos --domain <Dominio>` y despues `/install-apim --domain <Dominio>` (mismo resultado, sin el orquestador).
+4. **Reporta el resultado al usuario.** Si escribio el token, recuerdale que `domain-scaffolder` (Paso 0) solo lo lee en el **proximo** dominio que scaffoldee -- no re-scaffoldea dominios ya existentes. Si el proyecto tiene dominios en etapa (a) y acaba de declarar la etapa (b), reemplazar el `ITenantResolver` de esos dominios existentes sigue siendo manual (ver el `// TODO(tenancy etapa b)` que `domain-scaffolder` deja en `TenantResolverMonoTenantPorDefecto.cs`, MEF-ADR-0028). Si el camino elegido fue **(A) crecer**, suma el puntero al orquestador (CA-3): tras `/mefisto:infra-base` y `/mefisto:scaffold <dominio>`, el siguiente paso es correr `/install-auth` para instalar WorkOS+APIM (MEF-ADR-0032, issue #342) -- encadena `/install-workos` y `/install-apim` con el gate humano en medio, sin que tengas que conocer el orden ni invocar cada skill de capa por separado.
 
 ## Reglas
 
