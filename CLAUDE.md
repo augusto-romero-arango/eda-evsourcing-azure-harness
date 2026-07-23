@@ -137,6 +137,7 @@ tu propuesta en vez de darlo por cierto.
 | `/seed-secret` | Registra y cablea un secreto nuevo post-greenfield (Key Vault + Function App de un dominio) |
 | `/install-workos` | Guia el dashboard de WorkOS AuthKit (cuenta, client_id, API key, rol admin) y cablea el adapter (agente de identidad) + la custodia de la API key (`/seed-secret`) |
 | `/install-apim` | Instala/actualiza el gateway APIM (agente `apim-gateway-scaffolder`), cablea `TF_VAR_workos_client_id`/`TF_VAR_cors_allowed_origins` y ejecuta la transicion a->b de tenancy (MEF-ADR-0028 seccion 4): flip de `tenancy.strategy` + migracion del `ITenantResolver` de todos los dominios ya scaffoldeados a `AgregarTenantResolverHibrido()` |
+| `/install-auth` | Orquesta el camino completo de auth: encadena `/install-workos` -> gate humano (verifica `WORKOS_CLIENT_ID`/`WORKOS_API_KEY` via `gh`) -> `/install-apim`, stateless (delega en la idempotencia de ambos) |
 | `/parallel` | Corre varios issues en worktrees aislados |
 | `/sequential` | Cadena de issues con merge automático |
 | `/scaffold` | Crea el scaffold de un nuevo dominio |
