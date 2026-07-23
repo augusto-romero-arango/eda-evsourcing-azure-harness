@@ -4,6 +4,10 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+### Fixed
+
+- **El paso 1.5 de `/mefisto-sequential` ya no aborta batches validos por falsos positivos de dependencias inversas/notas (issue #344)**: el extractor `DEPS` capturaba **cualquier** `#NNN` de la seccion `## Dependencias` sin distinguir la direccion semantica de la relacion, asi que referencias inversas (`Consumido por #NNN`, `Bloquea a #NNN`) y notas libres (`... se traslada a #NNN`) se trataban como dependencias forward -- repro real (2026-07-22): la seccion `## Dependencias` de #335 mezclaba una forward real (`Depende de #336`) con una inversa (`Consumido por #340`) y una nota (`se traslada a #343`); el extractor viejo devolvia las tres, y como #340/#343 estaban despues de #335 en el orden del batch, el paso 1.5 las clasificaba como bloqueo real tipo (b) y abortaba un batch topologicamente valido. `.claude/commands/mefisto-sequential.md` (paso 1.5) ahora dirige el extractor a los marcadores forward canonicos de la convencion de facto del planner (`Depende de #NNN` / `Bloqueado por #NNN`, case-insensitive, misma linea que el `#NNN`) via `grep -ioE '(Depende de|Bloqueado por)[[:space:]]+#[0-9]+' | grep -oE '[0-9]+'`, ignorando `Consumido por`, `Bloquea`/`Bloquea a`, `se traslada a`, `Relacionado con` y prosa libre; la prosa del paso (antes "extrae los numeros referenciados, patron `#NNN`") y el comentario inline del extractor se actualizan para reflejar el nuevo contrato. Fuera de alcance de este issue (issue hermano pendiente, mismo defecto direccion-agnostico pero lado publicado con failure mode distinto): `scripts/pr-sync.sh`. Archivo modificado: `.claude/commands/mefisto-sequential.md`.
+
 ## [0.17.0] - 2026-07-23
 
 ### Added
