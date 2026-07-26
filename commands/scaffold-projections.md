@@ -2,7 +2,7 @@
 model: haiku
 ---
 
-Genera el worker de proyecciones `<RootNamespace>.Projections` (daemon asincronico `HotCold` de Marten) invocando al agente `projections-scaffolder`, al estilo de `infra-base-scaffolder`. **Alcance acotado (fase 1, issue #367)**: solo el worker y su cableado en la solucion -- el proyecto `ReadModels` y el `Projections.Tests` base son fase 2 (issue #375), y el registro del store de cada dominio lo hace `domain-scaffolder` (issue #370). Comunicate en **espanol**.
+Genera el worker de proyecciones `<RootNamespace>.Projections` (daemon asincronico `HotCold` de Marten), la biblioteca `<RootNamespace>.ReadModels` y el config-test base `<RootNamespace>.Projections.Tests` invocando al agente `projections-scaffolder`, al estilo de `infra-base-scaffolder`. **Alcance acotado (fase 1, issue #367 + fase 2, issue #375)**: el registro del store de cada dominio lo hace `domain-scaffolder` (issue #370); ninguna proyeccion ni read model concreto se genera aqui (issues `tipo:projection`). Comunicate en **espanol**.
 
 ## Pre-condicion 1: cwd != Mefisto
 
@@ -58,7 +58,8 @@ Si `RAW` es `"true"`, continua.
 ### 1. Informar que se va a generar
 
 ```
-Se va a generar el worker de proyecciones (fase 1, issue #367):
+Se va a generar el worker de proyecciones y su andamiaje read-side (fase 1,
+issue #367 + fase 2, issue #375):
 
   src/<RootNamespace>.Projections/
     <RootNamespace>.Projections.csproj  (SDK Microsoft.NET.Sdk.Worker)
@@ -66,12 +67,20 @@ Se va a generar el worker de proyecciones (fase 1, issue #367):
     Infraestructura/ConfiguracionMartenProjections.cs  (seam base, sin dominios todavia)
     Dockerfile                          (imagen sobre runtime, sin ingress)
 
-  <SolutionFile>: se agrega el proyecto nuevo
+  src/<RootNamespace>.ReadModels/       (biblioteca vacia; una carpeta por dominio
+                                          ya registrado en el worker, si aplica)
+
+  tests/<RootNamespace>.Projections.Tests/
+    Infraestructura/AssertsProyecciones.cs   (helper AssertOpcionesDeEvento)
+    ConfiguracionMartenProjectionsTests.cs   (config-test base, sin dominios todavia)
+
+  <SolutionFile>: se agregan los tres proyectos nuevos
   global.json: se verifica/crea la seccion "test"
 
 Este agente NO registra ningun store de dominio (eso lo hace domain-scaffolder,
-issue #370) NI genera el proyecto ReadModels ni Projections.Tests (fase 2,
-issue #375). Es idempotente: re-ejecutar no duplica ni pisa contenido existente.
+issue #370) NI escribe ninguna proyeccion o read model concreto (issues
+tipo:projection). Es idempotente: re-ejecutar no duplica ni pisa contenido
+existente.
 ```
 
 ### 2. Lanzar el agente
@@ -85,11 +94,13 @@ claude --agent projections-scaffolder "Genera el worker de proyecciones."
 Recuerda al usuario el resto de la cadena de issues relacionados:
 
 ```
-Worker de proyecciones generado. Siguiente:
+Worker de proyecciones, ReadModels y config-test base generados. Siguiente:
   1. domain-scaffolder (issue #370) registra el named store de cada dominio que
-     adopte proyecciones dentro del seam ConfiguracionMartenProjections.
-  2. El proyecto <RootNamespace>.ReadModels y el config-test
-     <RootNamespace>.Projections.Tests son fase 2 (issue #375).
+     adopte proyecciones dentro del seam ConfiguracionMartenProjections y crea
+     su carpeta en ReadModels.
+  2. projection-test-writer/projection-implementer (issue #365) agregan sobre
+     Projections.Tests las guardas por dominio (partial + ciclo de vida Async),
+     reutilizando el helper AssertOpcionesDeEvento para la guarda de metadata.
   3. Los modulos Terraform del Container App (container-registry,
      container-app-environment, container-app) son opt-in y los genera
      infra-base-scaffolder cuando corra de nuevo con el token ya habilitado
@@ -98,6 +109,6 @@ Worker de proyecciones generado. Siguiente:
 
 ## Reglas
 
-- **No generes el worker tu mismo.** Solo valida las dos pre-condiciones, informa y lanza el agente.
-- El agente nunca registra un store de dominio ni toca Azure Service Bus (MEF-ADR-0034 seccion 4): esa es responsabilidad de `domain-scaffolder`/`implementer` de cada dominio, no de este skill.
-- El agente es idempotente: no sobrescribe `Program.cs` ni el seam de composicion si ya existen (pueden llevar registros de dominio agregados por `domain-scaffolder`).
+- **No generes nada tu mismo.** Solo valida las dos pre-condiciones, informa y lanza el agente.
+- El agente nunca registra un store de dominio, un read model concreto ni toca Azure Service Bus (MEF-ADR-0034 seccion 4): esa es responsabilidad de `domain-scaffolder`/`projection-implementer` de cada dominio, no de este skill.
+- El agente es idempotente: no sobrescribe `Program.cs`, el seam de composicion ni el config-test base si ya existen (pueden llevar registros o guardas de dominio agregados por `domain-scaffolder`/`projection-test-writer`).
