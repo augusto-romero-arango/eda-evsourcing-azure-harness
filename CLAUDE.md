@@ -141,6 +141,7 @@ tu propuesta en vez de darlo por cierto.
 | `/parallel` | Corre varios issues en worktrees aislados |
 | `/sequential` | Cadena de issues con merge automático |
 | `/scaffold` | Crea el scaffold de un nuevo dominio |
+| `/scaffold-projections` | Genera el worker de proyecciones (`{RootNamespace}.Projections`) cuando el BC habilita el token `projections.enabled` (fase 1, agente `projections-scaffolder`) |
 | `/bug` | Investiga un síntoma (bug-investigator o tooling-investigator) |
 | `/fix-review` | Resuelve comentarios pendientes de un PR |
 | `/health-check` | Dashboard del entorno desplegado |
@@ -167,6 +168,7 @@ Doctrina pesada empaquetada con *progressive disclosure* (MEF-ADR-0033); no son 
 | `historiador` | Consolida field notes en la bitácora del día |
 | `domain-scaffolder` | Crea scaffold de un nuevo dominio |
 | `infra-base-scaffolder` | Genera la infraestructura base del consumidor (8 módulos + entorno) en greenfield |
+| `projections-scaffolder` | Genera el worker de proyecciones (`{RootNamespace}.Projections`: Program.cs, seam base, Dockerfile) cuando el BC habilita `projections.enabled` (fase 1, MEF-ADR-0034) |
 | `apim-gateway-scaffolder` | Genera el gateway APIM (validate-jwt WorkOS AuthKit + claims→headers) fiel al catálogo de trampas de MEF-ADR-0032 |
 | `workos-identity-scaffolder` | Genera el adapter WorkOS (IIdentityProvider + WorkOsIdentityProvider) y su wiring en un dominio, fiel a la referencia de Cosmos.ControlPlane (MEF-ADR-0032) |
 | `test-writer` | Fase roja del pipeline TDD |
