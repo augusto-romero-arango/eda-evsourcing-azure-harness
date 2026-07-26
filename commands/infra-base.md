@@ -2,7 +2,7 @@
 model: haiku
 ---
 
-Genera la infraestructura base del consumidor (8 modulos Terraform + esqueleto del entorno con outputs + el workflow de CI `infra-cd.yml`) invocando al agente `infra-base-scaffolder`. Es el eslabon greenfield entre `bootstrap-backend.sh` (crea el `tfstate`) y el primer `/infra`, que solo escribe y revisa el HCL: el `apply` real lo ejecuta CI al mergear el PR (MEF-ADR-0021, MEF-ADR-0022). Comunicate en **espanol**.
+Genera la infraestructura base del consumidor (8 modulos Terraform + esqueleto del entorno con outputs + el workflow de CI `infra-cd.yml`) invocando al agente `infra-base-scaffolder`. Es el eslabon greenfield entre `bootstrap-backend.sh` (crea el `tfstate`) y el primer `/infra`, que solo escribe y revisa el HCL: el `apply` real lo ejecuta CI al mergear el PR (MEF-ADR-0021, MEF-ADR-0022). Si el BC declara `projections.enabled` en `.claude/harness.config.json`, el mismo agente suma los 3 modulos **opt-in** del worker de proyecciones (`container-registry`, `container-app-environment`, `container-app`) y su wiring en el entorno (MEF-ADR-0034); sin ese token no genera ninguno. Comunicate en **espanol**.
 
 ## Pre-condicion: cwd != Mefisto
 
