@@ -2087,6 +2087,123 @@ Si el archivo ya existe con otras propiedades (ej: `sdk`), solo agrega la seccio
 
 ---
 
+## Paso 3b - Registrar el named store de proyecciones en el worker (si existe, issue #370, MEF-ADR-0034)
+
+Con un unico worker de proyecciones por Bounded Context (MEF-ADR-0034 seccion 1), al nacer un dominio nuevo **no se crea otro worker**: se registra su named store en el worker existente. Este paso es el andamiaje de esa registracion -- ninguna proyeccion concreta todavia (eso lo hace `projection-implementer` en un issue `tipo:projection` posterior).
+
+**CA-1 -- paso condicional.** Verifica si el worker de proyecciones ya existe en este repo:
+
+```bash
+REPO_ROOT=$(git -C /ruta-conocida rev-parse --show-toplevel)
+test -f "$REPO_ROOT/src/<RootNamespace>.Projections/Infraestructura/ConfiguracionMartenProjections.cs" && echo "EXISTE (worker activo, continuar Paso 3b)" || echo "FALTA (sin worker de proyecciones, omitir Paso 3b completo)"
+```
+
+Si el archivo **falta** -- el BC no habilito `projections.enabled` o todavia no corrio `/scaffold-projections` (issue #367) --, **omite el resto de este paso por completo**: no crees ningun archivo, no edites nada, no imprimas ninguna advertencia. Continua directo al Paso 4. Es retrocompatible: un dominio scaffoldeado sin worker de proyecciones se comporta exactamente igual que antes de este issue.
+
+Si el archivo existe, continua con los puntos 1-6.
+
+**1. Idempotencia (CA-4):**
+
+```bash
+test -f "$REPO_ROOT/src/<RootNamespace>.Projections/Infraestructura/ConfiguracionMartenProjections{PascalCase}.cs" && echo "YA REGISTRADO (omitir Paso 3b, continuar al Paso 4)" || echo "FALTA (registrar)"
+```
+
+Si ese archivo ya existe -- re-corrida del mismo scaffold --, el registro ya esta hecho: omite los puntos 2-6 y continua directo al Paso 4.
+
+**2. Agregar la referencia a `Marten` en el `.csproj` del worker (si falta).** `projections-scaffolder` (issue #367) solo agrega `Microsoft.Extensions.Hosting` al worker -- `AddMartenStore<T>`, `IDocumentStore` y `DaemonMode` (paquete `Marten`, namespaces `Marten`/`Marten.Events.Daemon`) todavia no estan declarados porque hasta ahora ningun dominio registraba un named store. Lee `src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj`: si ya tiene un `PackageReference Include="Marten"` (lo agrego un dominio anterior), no lo dupliques. Si no lo tiene, agregalo al `<ItemGroup>` de paquetes en la misma version `9.12.0` que fija MEF-ADR-0003 (la que ya arrastra `Cosmos.EventSourcing.CritterStack` 2.1.0 en el write-side -- mismo paquete, mismo lockstep de version, sin reintroducir GHSA-vmw2-qwm8-x84c/CVE-2026-45288):
+
+```xml
+<PackageReference Include="Marten" Version="9.12.0" />
+```
+
+**3. Crear `Infraestructura/ConfiguracionMartenProjections{PascalCase}.cs`** en `src/<RootNamespace>.Projections/` (CA-2, CA-3) -- el marker del named store y el seam de composicion de proyecciones del dominio, hermano read-side de `ComposicionServicios{PascalCase}` (MEF-ADR-0029, Paso 6b) y con el naming que fija MEF-ADR-0006 (enmienda issue #363):
+
+```csharp
+using Marten;
+using Marten.Events.Daemon;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace <RootNamespace>.Projections.Infraestructura;
+
+/// <summary>
+/// Marker del named store de proyecciones del dominio {PascalCase} (MEF-ADR-0034 seccion 2).
+/// </summary>
+public interface I{PascalCase}ProjectionStore : IDocumentStore;
+
+/// <summary>
+/// Seam de composicion de proyecciones del dominio {PascalCase} (MEF-ADR-0006/MEF-ADR-0034 seccion
+/// 2, 6) -- hermano read-side de ComposicionServicios{PascalCase} (MEF-ADR-0029). Registra el named
+/// store de Marten sobre el mismo schema que ya usa el write-side de este dominio; sin ninguna
+/// proyeccion concreta todavia -- las agrega projection-implementer (issue tipo:projection) sobre
+/// este mismo seam.
+/// </summary>
+public static class ConfiguracionMartenProjections{PascalCase}
+{
+    public static IServiceCollection Configurar{PascalCase}(
+        this IServiceCollection services, string martenConnectionString)
+    {
+        services.AddMartenStore<I{PascalCase}ProjectionStore>(opts =>
+        {
+            opts.Connection(martenConnectionString);
+            opts.DatabaseSchemaName = "{snake_case}"; // mismo schema que el write-side de este dominio (MEF-ADR-0003)
+        })
+        .AddAsyncDaemon(DaemonMode.HotCold);
+
+        return services;
+    }
+}
+```
+
+`{snake_case}` es el mismo valor derivado en el Paso 0 y usado como schema del write-side (Paso 1, punto 6b: tercer argumento de `AgregarWolverineParaComandosServerless`) -- el named store del read-side reutiliza la misma conexion y el mismo schema, nunca uno nuevo (MEF-ADR-0034 seccion 2).
+
+**4. Editar `Infraestructura/ConfiguracionMartenProjections.cs`** (el seam de nivel BC que ya existe, creado por `projections-scaffolder`) para encadenar la llamada del dominio dentro de `ConfigurarEventos`. Lee el archivo actual antes de modificarlo:
+
+- Si `ConfigurarEventos` todavia tiene el comentario `// Extension point (issue #370): ...` (primer dominio que adopta proyecciones en este BC), reemplaza ese bloque de comentario por la llamada:
+
+  ```csharp
+  services.Configurar{PascalCase}(martenConnectionString);
+  ```
+
+- Si `ConfigurarEventos` ya tiene una o mas llamadas `services.Configurar{OtroDominio}(martenConnectionString);` de dominios previos, **no las remuevas**: agrega la nueva linea inmediatamente despues de la ultima, antes del `return services;`.
+
+El metodo queda, por ejemplo con dos dominios ya registrados:
+
+```csharp
+public static IServiceCollection ConfigurarEventos(this IServiceCollection services, string martenConnectionString)
+{
+    services.ConfigurarVentas(martenConnectionString);
+    services.Configurar{PascalCase}(martenConnectionString);
+
+    return services;
+}
+```
+
+`Program.cs` del worker no cambia: sigue invocando un unico `builder.Services.ConfigurarEventos(martenConnectionString);` (MEF-ADR-0034 seccion 6) -- este paso nunca lo toca.
+
+**5. Verificar que el worker sigue compilando:**
+
+```bash
+cd "$REPO_ROOT"
+dotnet build "src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj"
+```
+
+Si falla, lee el error y corrigelo antes de continuar -- no hagas commit del resto del scaffold hasta que este build quede verde.
+
+**6. Correr `Projections.Tests` si ya existe (CA-5).** El config-test del worker (`<RootNamespace>.Projections.Tests`) es alcance de la fase 2 (issues #365/#375) y puede no existir todavia en este BC -- en ese caso, omite este punto sin fallar:
+
+```bash
+cd "$REPO_ROOT"
+if [ -d "tests/<RootNamespace>.Projections.Tests" ]; then
+  dotnet test --project "tests/<RootNamespace>.Projections.Tests/"
+else
+  echo "Projections.Tests no existe todavia (fase 2, issue #375) -- omitir"
+fi
+```
+
+Si el proyecto existe y el test falla, lee el error -- probablemente el config-test espera que `Configurar{PascalCase}` replique la configuracion de metadata de eventos del write-side (MEF-ADR-0034 seccion 6, punto 3) -- y corrige antes de continuar.
+
+---
+
 ## Paso 4 - Crear el Terraform del dominio: Service Plan, Storage Account y Function App
 
 Cada Function App tiene su propio **App Service Plan dedicado** y su propia Storage Account, para aislamiento de performance y escalado independiente. El plan dedicado es una directiva del marco: dos dominios nunca comparten plan, porque cada uno corre un agente de durabilidad de Wolverine *always-on* que poll-ea Postgres en background y satura el core aun en reposo (noisy neighbor). Ver **MEF-ADR-0020** (hosting: un App Service Plan por Function App) y, para la Storage, Best Practices (Beginning Azure Functions Cap. 8).
@@ -2609,6 +2726,14 @@ for f in .github/workflows/smoke-tests-dominio.yml .github/workflows/smoke-tests
   [ -f "$f" ] && git add "$f"
 done
 
+# Registro del store de proyecciones (Paso 3b, issue #370) -- solo si el worker existe:
+if [ -f "src/<RootNamespace>.Projections/Infraestructura/ConfiguracionMartenProjections.cs" ]; then
+  git add \
+    "src/<RootNamespace>.Projections/Infraestructura/ConfiguracionMartenProjections.cs" \
+    "src/<RootNamespace>.Projections/Infraestructura/ConfiguracionMartenProjections{PascalCase}.cs" \
+    "src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj"
+fi
+
 git commit -m "scaffold({kebab}): nuevo dominio {PascalCase} - Function App, tests, Terraform y deploy workflow"
 ```
 
@@ -2673,6 +2798,16 @@ Scaffold completado para el dominio "{kebab}":
   .github/workflows/smoke-tests-dominio.yml - Workflow reutilizable de smoke tests (workflow_call)
   .github/workflows/smoke-tests.yml         - Workflow global: corre los smoke tests de todos los dominios en matrix
 
+  (solo si el worker de proyecciones existe -- Paso 3b, issue #370, MEF-ADR-0034; omitido sin advertencia si no)
+  src/<RootNamespace>.Projections/Infraestructura/ConfiguracionMartenProjections{PascalCase}.cs
+                                             - Marker I{PascalCase}ProjectionStore + seam Configurar{PascalCase}:
+                                               AddMartenStore sobre el mismo schema del write-side, daemon HotCold,
+                                               sin ninguna proyeccion concreta todavia
+  src/<RootNamespace>.Projections/Infraestructura/ConfiguracionMartenProjections.cs
+                                             - Editado: ConfigurarEventos ahora encadena Configurar{PascalCase}
+  src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj
+                                             - PackageReference Marten 9.12.0 agregado si faltaba (MEF-ADR-0003)
+
 Proximos pasos:
   1. Asegurate de que los secrets esten configurados en GitHub (los emite setup-github-ci.sh):
      - AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID (deploy via OIDC; el
@@ -2702,3 +2837,5 @@ Proximos pasos:
 - Si el build falla despues de los cambios al `.csproj`, lee el error, identifica el archivo con problema y corrígelo antes de hacer commit.
 
 - Si `terraform validate` falla, lee el error y corrige el bloque HCL que agregaste. No hagas commit hasta que la validacion pase (o terraform no este instalado).
+
+- Si el `dotnet build` del worker de proyecciones (Paso 3b, punto 5) falla despues de agregar `ConfiguracionMartenProjections{PascalCase}.cs`, revisa primero que el `PackageReference Marten` del punto 2 haya quedado en el `.csproj` (sin duplicarlo si ya lo tenia un dominio anterior) y que el `using Marten.Events.Daemon;` este presente para `DaemonMode`. No hagas commit hasta que compile.
