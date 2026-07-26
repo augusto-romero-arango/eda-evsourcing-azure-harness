@@ -107,6 +107,7 @@ Crea `.claude/harness.config.json` en la raíz del proyecto consumidor:
     "domains": ["dominio1", "dominio2"]
   },
   "tenancy": { "strategy": "mono-tenant-transitorio" },
+  "projections": { "enabled": true },
   "secrets": [
     {
       "name": "stripe-api-key",
@@ -145,6 +146,13 @@ El resource group del BC se forma como `infraResourceGroupPrefix`+`-`+`name` (ej
 - **`"multi-tenant-header"`** (etapa b): el proyecto ya instaló una autenticación que produce un `TenantContext` (header-based o el híbrido HTTP+Wolverine de `Cosmos.MultiTenancy.CritterStack`).
 
 `domain-scaffolder` lee este campo inline con `jq` en su Paso 0 (mismo patrón que `serviceBus.external`) para elegir el `ITenantResolver` que registra en el `Program.cs` del dominio que scaffoldea: en etapa (a) genera el resolver mono-tenant transitorio (sin cambios respecto a #318); en etapa (b) auto-cablea el resolver híbrido genérico de `Cosmos.MultiTenancy.CritterStack`, dejando un `// TODO(tenancy claims)` para el mapping claims → `TenantContext` (siempre project-specific). `/onboard` reporta el valor de forma informativa (ausente o cualquiera de los dos valores nunca es `FALTA`) y ofrece un paso opt-in que pregunta la estrategia vigente y escribe/actualiza el campo, solo bajo confirmación explícita -- `/onboard` no sondea código para inferir la etapa. Es **opcional** (añadirlo no es MAJOR). Ver MEF-ADR-0028 para el modelo completo de dos etapas.
+
+**Campo opcional `projections`** (MEF-ADR-0034, issue #369): declara si el Bounded Context adopta el worker de proyecciones (`<RootNamespace>.Projections`, el daemon asíncrono `HotCold` de Marten que materializa los read models). Único subfield, `enabled` (booleano):
+
+- **Ausente, `null`, `false`, o cualquier valor/tipo distinto del booleano `true`** equivale a **deshabilitado** -- retrocompatible: sin este campo, ningún generador del harness cambia su salida.
+- **`true`**: el BC adopta proyecciones. Habilita, de forma opt-in: los 3 módulos Terraform del Container App sin ingress que suma `infra-base-scaffolder` (`container-registry`, `container-app-environment`, `container-app`, ver "Bootstrap de infraestructura" paso 3 y MEF-ADR-0034 sección 8) y el worker en sí, que genera `/scaffold-projections` (agente `projections-scaffolder`).
+
+`load_harness_config` expone la variable derivada `HARNESS_PROJECTIONS_ENABLED` (nunca aborta la carga por este campo, issue #369); `infra-base-scaffolder` y `/scaffold-projections`/`projections-scaffolder` hoy lo consumen inline con `jq` (mismo patrón minimalista que `tenancy.strategy`). `/onboard` reporta el estado -- habilitado y si el worker ya existe -- de forma informativa (nunca `FALTA` si está deshabilitado) y, cuando el token está en `true` pero el worker todavía no existe, ofrece encadenar `/scaffold-projections` bajo confirmación explícita. Es **opcional** (añadirlo no es MAJOR). Ver MEF-ADR-0034 para la doctrina completa del worker.
 
 **Campo opcional `secrets`** (issue #256): registro **declarativo** de todo secreto del BC que el step de siembra de `infra-cd.yml` itera en runtime, sin ninguna línea hardcodeada por secreto. Cada entrada declara:
 
