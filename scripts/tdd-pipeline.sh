@@ -328,7 +328,9 @@ else
         SCAFFOLD_START_TS=$(date +%s)
         echo "[$(date +%H:%M:%S)] === STAGE 0: domain-scaffolder ===" >> "$EVENTS_LOG_ABS"
 
-        SCAFFOLD_PROMPT="Crea el scaffold para el dominio '$SCAFFOLD_DOMAIN'. El usuario ya confirmo la creacion — omite la confirmacion del Paso 0 y procede directamente a crear el proyecto."
+        SCAFFOLD_PROMPT="Crea el scaffold para el dominio '$SCAFFOLD_DOMAIN'. El usuario ya confirmo la creacion — omite la confirmacion del Paso 0 y procede directamente a crear el proyecto.
+
+PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
         SCAFFOLD_TIMEOUT=1800
         NONINTERACTIVE_SYSTEM="You are running in non-interactive print mode. There is no human to approve anything. You MUST use Write and Edit tools directly to create and modify files at any path including .claude/. Never output text asking for permissions or confirmations -- doing so causes pipeline failure."
@@ -562,7 +564,9 @@ Contexto de la historia de usuario a implementar:
 
 $ISSUE_CONTEXT
 
-Tu tarea: escribe los tests unitarios para esta HU y crea los stubs mínimos de compilación. Sigue todas las instrucciones de tu rol de test-writer."
+Tu tarea: escribe los tests unitarios para esta HU y crea los stubs mínimos de compilación. Sigue todas las instrucciones de tu rol de test-writer.
+
+PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
     run_agent "1" "test-writer" "$STAGE1_PROMPT"
 
@@ -675,7 +679,9 @@ $ISSUE_CONTEXT
 El test-writer creó/modificó los siguientes archivos:
 $STAGE1_FILES
 
-Tu tarea: implementa la lógica de negocio para hacer pasar todos los tests. Sigue todas las instrucciones de tu rol de implementer."
+Tu tarea: implementa la lógica de negocio para hacer pasar todos los tests. Sigue todas las instrucciones de tu rol de implementer.
+
+PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
     run_agent "2" "implementer" "$STAGE2_PROMPT"
 
@@ -743,7 +749,9 @@ Tu tarea: escribe smoke tests para los endpoints nuevos o modificados.
 IMPORTANTE: Solo escribe y compila. NO ejecutes los tests (el entorno dev puede no tener este código desplegado aún).
 Usa 'dotnet build' para verificar compilación, pero NO uses 'dotnet test'.
 
-Sigue todas las instrucciones de tu rol de smoke-test-writer."
+Sigue todas las instrucciones de tu rol de smoke-test-writer.
+
+PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
             run_agent "2b" "smoke-test-writer" "$STAGE2B_PROMPT"
 
@@ -806,7 +814,9 @@ Reglas:
 5. Al terminar, corre dotnet test una última vez para confirmar que todo sigue verde (descontando los tests obsoletos que eliminaste).
 6. Haz commit de tu trabajo con mensaje: refactor(hu-${ISSUE_NUM:-?}): [descripción]
 
-Sigue todas las instrucciones de tu rol de reviewer."
+Sigue todas las instrucciones de tu rol de reviewer.
+
+PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
     else
         FULL_DIFF=$(git -C "$WORKTREE_PATH" diff "$SNAPSHOT_COMMIT"..HEAD)
 
@@ -822,7 +832,9 @@ $FULL_DIFF
 
 Tu tarea: revisa la calidad del código, refactoriza si es necesario, y verifica que los criterios de aceptación estén bien cubiertos.
 Si el diff incluye smoke tests (archivos en *SmokeTests/), revísalos también: verifica que cubran los escenarios principales del endpoint (camino feliz, validación, duplicados) y que sigan las convenciones del proyecto.
-Sigue todas las instrucciones de tu rol de reviewer."
+Sigue todas las instrucciones de tu rol de reviewer.
+
+PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
     fi
 
     # Agregar contexto de bloqueo al prompt si el implementer reporto tests bloqueados
@@ -911,7 +923,8 @@ $CONFLICT_FILES
 Resuelve los conflictos manteniendo tanto la funcionalidad nueva (de esta rama) como la existente (de main).
 Después de resolver cada archivo, haz git add del archivo.
 Cuando todos estén resueltos, haz git commit para completar el merge.
-NO elimines código de ninguna de las dos ramas — integra ambos cambios."
+NO elimines código de ninguna de las dos ramas — integra ambos cambios.
+PROHIBIDO hacer 'git push' o 'gh pr create': eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
         run_agent "merge" "implementer" "$MERGE_PROMPT"
 
@@ -1336,7 +1349,8 @@ IMPORTANTE:
 - Escribe tests que ejerciten esos paths especificos
 - Dado que la implementacion ya existe, los tests nuevos probablemente PASARAN directamente
 - Sigue las mismas convenciones de testing del proyecto (Given/When/Then, AwesomeAssertions)
-- Haz commit con mensaje: test(hu-${ISSUE_NUM:-?}): tests de cobertura para brechas detectadas"
+- Haz commit con mensaje: test(hu-${ISSUE_NUM:-?}): tests de cobertura para brechas detectadas
+- PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
         CG_REMEDIATION_TIMEOUT=1800  # 30 minutos para remediacion
 
@@ -1382,7 +1396,9 @@ IMPORTANTE:
 El coverage gate detecto brechas de cobertura y el test-writer agrego tests adicionales, pero no compilan.
 Tu tarea: haz que SOLO los tests nuevos de cobertura compilen y pasen. No modifiques la logica de negocio existente.
 
-Pista: revisa los ultimos archivos de test creados/modificados y corrige errores de compilacion."
+Pista: revisa los ultimos archivos de test creados/modificados y corrige errores de compilacion.
+
+PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
                 LOG_CG_IM="$LOG_DIR_ABS/stage-4-implementer-patch-${TIMESTAMP}.log"
                 echo "[$(date +%H:%M:%S)] REMEDIATION: relanzando implementer" >> "$EVENTS_LOG_ABS"
@@ -1528,92 +1544,101 @@ log "Haciendo push de la rama..."
 git -C "$WORKTREE_PATH" push -u origin "$BRANCH_NAME" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 \
     || abort "No se pudo hacer push de la rama $BRANCH_NAME"
 
-CLOSES_LINE=""
-if [ -n "$ISSUE_NUM" ]; then
-    CLOSES_LINE="Closes #$ISSUE_NUM"
-fi
+REPO_SLUG_PR="$(git -C "$WORKTREE_PATH" remote get-url origin | sed 's/.*github.com[:/]\(.*\)\.git/\1/')"
 
-log "Creando PR..."
+log "Verificando si ya existe un PR abierto para la rama..."
+EXISTING_PR_URL=$(find_open_pr_for_branch "$BRANCH_NAME" "$REPO_SLUG_PR")
 
-# Recolectar resumenes de agentes
-TW_SUMMARY=$(collect_summary "1" "test-writer")
-IM_SUMMARY=$(collect_summary "2" "implementer")
-ST_SUMMARY=$(collect_summary "2b" "smoke-test-writer")
-RV_SUMMARY=$(collect_summary "3" "reviewer")
+if [ -n "$EXISTING_PR_URL" ]; then
+    PR_URL="$EXISTING_PR_URL"
+    success "PR existente reutilizado: $PR_URL"
+else
+    CLOSES_LINE=""
+    if [ -n "$ISSUE_NUM" ]; then
+        CLOSES_LINE="Closes #$ISSUE_NUM"
+    fi
 
-# Formatear duraciones
-_fmt_dur() { local s="${1:-0}"; echo "$((s/60))m $((s%60))s"; }
-TW_DUR_FMT=$(_fmt_dur "${AGENT_TW_DUR:-0}")
-IM_DUR_FMT=$(_fmt_dur "${AGENT_IM_DUR:-0}")
-ST_DUR_FMT=$(_fmt_dur "${AGENT_ST_DUR:-0}")
-RV_DUR_FMT=$(_fmt_dur "${AGENT_RV_DUR:-0}")
-CG_DUR_FMT=$(_fmt_dur "${AGENT_CG_DUR:-0}")
+    log "Creando PR..."
 
-if [ "$IS_REFACTOR" = true ]; then
-    PR_BODY_SUMMARY="Pipeline TDD completado (refactoring puro):
+    # Recolectar resumenes de agentes
+    TW_SUMMARY=$(collect_summary "1" "test-writer")
+    IM_SUMMARY=$(collect_summary "2" "implementer")
+    ST_SUMMARY=$(collect_summary "2b" "smoke-test-writer")
+    RV_SUMMARY=$(collect_summary "3" "reviewer")
+
+    # Formatear duraciones
+    _fmt_dur() { local s="${1:-0}"; echo "$((s/60))m $((s%60))s"; }
+    TW_DUR_FMT=$(_fmt_dur "${AGENT_TW_DUR:-0}")
+    IM_DUR_FMT=$(_fmt_dur "${AGENT_IM_DUR:-0}")
+    ST_DUR_FMT=$(_fmt_dur "${AGENT_ST_DUR:-0}")
+    RV_DUR_FMT=$(_fmt_dur "${AGENT_RV_DUR:-0}")
+    CG_DUR_FMT=$(_fmt_dur "${AGENT_CG_DUR:-0}")
+
+    if [ "$IS_REFACTOR" = true ]; then
+        PR_BODY_SUMMARY="Pipeline TDD completado (refactoring puro):
 - Análisis: no se requieren tests nuevos
 - Justificación: $REFACTOR_JUSTIFICATION
 - Baseline: $BASELINE_TEST_COUNT tests pasando
 - Refactoring ejecutado manteniendo todos los tests verdes"
-    IMPLEMENTER_SECTION=""
-    SMOKE_TEST_SECTION=""
-else
-    if [ "$AGENT_ST_RES" = "passed" ]; then
-        PR_BODY_SUMMARY="Pipeline TDD completado:
+        IMPLEMENTER_SECTION=""
+        SMOKE_TEST_SECTION=""
+    else
+        if [ "$AGENT_ST_RES" = "passed" ]; then
+            PR_BODY_SUMMARY="Pipeline TDD completado:
 - Fase roja: tests escritos con stubs
 - Fase verde: implementación completa
 - Smoke tests: escritos para endpoints detectados
 - Fase refactor: revisión de calidad"
-    else
-        PR_BODY_SUMMARY="Pipeline TDD completado:
+        else
+            PR_BODY_SUMMARY="Pipeline TDD completado:
 - Fase roja: tests escritos con stubs
 - Fase verde: implementación completa
 - Fase refactor: revisión de calidad"
-    fi
-    IMPLEMENTER_SECTION="<details>
+        fi
+        IMPLEMENTER_SECTION="<details>
 <summary>Implementer (fase verde) — ${IM_DUR_FMT}</summary>
 
 ${IM_SUMMARY}
 
 </details>
 "
-    if [ "$AGENT_ST_RES" = "passed" ]; then
-        SMOKE_TEST_SECTION="<details>
+        if [ "$AGENT_ST_RES" = "passed" ]; then
+            SMOKE_TEST_SECTION="<details>
 <summary>Smoke Test Writer — ${ST_DUR_FMT}</summary>
 
 ${ST_SUMMARY}
 
 </details>
 "
-    else
-        SMOKE_TEST_SECTION=""
+        else
+            SMOKE_TEST_SECTION=""
+        fi
     fi
-fi
 
-# Construir seccion de cobertura para el PR
-COVERAGE_SECTION=""
-if [ -n "$COV_TABLE" ]; then
-    COVERAGE_SECTION="## Cobertura
+    # Construir seccion de cobertura para el PR
+    COVERAGE_SECTION=""
+    if [ -n "$COV_TABLE" ]; then
+        COVERAGE_SECTION="## Cobertura
 
 $COV_TABLE
 "
-    if [ "$COV_PATCH_APPLIED" = true ] && [ -n "$COV_REMEDIATION_SUMMARY" ]; then
-        COVERAGE_SECTION="${COVERAGE_SECTION}
+        if [ "$COV_PATCH_APPLIED" = true ] && [ -n "$COV_REMEDIATION_SUMMARY" ]; then
+            COVERAGE_SECTION="${COVERAGE_SECTION}
 ### Remediacion
 
 $COV_REMEDIATION_SUMMARY
 "
-    fi
-    if [ "$COV_GAPS_REMAINING" -gt 0 ]; then
-        COVERAGE_SECTION="${COVERAGE_SECTION}
+        fi
+        if [ "$COV_GAPS_REMAINING" -gt 0 ]; then
+            COVERAGE_SECTION="${COVERAGE_SECTION}
 > **Gaps pendientes**: $COV_GAPS_REMAINING archivo(s) no alcanzan el umbral de cobertura. Requiere revision humana.
 "
+        fi
     fi
-fi
 
-PR_URL=$(gh pr create \
-    --title "$ISSUE_TITLE" \
-    --body "$(cat <<EOF
+    PR_URL=$(gh pr create \
+        --title "$ISSUE_TITLE" \
+        --body "$(cat <<EOF
 ## Resumen
 
 $PR_BODY_SUMMARY
@@ -1641,17 +1666,19 @@ $COMMITS_LIST
 $CLOSES_LINE
 EOF
 )" \
-    --base main \
-    --head "$BRANCH_NAME" \
-    --repo "$(git -C "$WORKTREE_PATH" remote get-url origin | sed 's/.*github.com[:/]\(.*\)\.git/\1/')" \
-    2>>"$LOG_FILE") \
-    || abort "No se pudo crear el PR"
+        --base main \
+        --head "$BRANCH_NAME" \
+        --repo "$REPO_SLUG_PR" \
+        2>>"$LOG_FILE") \
+        || abort "No se pudo crear el PR"
+
+    success "PR creado: $PR_URL"
+fi
 
 # Si hay bloqueo, agregar label y nota al PR
 if [ "${HAS_BLOCKAGE:-false}" = true ]; then
     PR_NUM=$(echo "$PR_URL" | grep -o '[0-9]*$')
-    REPO_SLUG=$(git -C "$WORKTREE_PATH" remote get-url origin | sed 's/.*github.com[:/]\(.*\)\.git/\1/')
-    gh pr edit "$PR_NUM" --add-label "bloqueado" --repo "$REPO_SLUG" >>"$LOG_FILE" 2>&1 \
+    gh pr edit "$PR_NUM" --add-label "bloqueado" --repo "$REPO_SLUG_PR" >>"$LOG_FILE" 2>&1 \
         || warn "No se pudo agregar label 'bloqueado' al PR"
     BLOCKAGE_REPORT="$WORKTREE_PATH/.claude/pipeline/blockage-report.md"
     if [ -f "$BLOCKAGE_REPORT" ]; then
@@ -1667,19 +1694,18 @@ Este PR tiene tests en rojo que ni el implementer ni el reviewer pudieron resolv
 $BLOCKAGE_CONTENT
 
 </details>" \
-            --repo "$REPO_SLUG" >>"$LOG_FILE" 2>&1 \
+            --repo "$REPO_SLUG_PR" >>"$LOG_FILE" 2>&1 \
             || warn "No se pudo comentar reporte de bloqueo en el PR"
     fi
 fi
 
 PIPELINE_PR="$PR_URL"
 update_status "done" "completed"
-success "PR creado: $PR_URL"
 
 if [ -n "$ISSUE_NUM" ]; then
     gh issue comment "$ISSUE_NUM" \
         --body "Pipeline TDD completado. Decisiones de los agentes en el PR: $PR_URL" \
-        --repo "$(git -C "$WORKTREE_PATH" remote get-url origin | sed 's/.*github.com[:/]\(.*\)\.git/\1/')" \
+        --repo "$REPO_SLUG_PR" \
         >>"$LOG_FILE" 2>&1 || warn "No se pudo comentar en el issue #$ISSUE_NUM"
 fi
 

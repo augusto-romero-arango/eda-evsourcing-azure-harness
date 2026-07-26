@@ -242,7 +242,9 @@ fi
 # --- Invocar domain-scaffolder ---
 header "Invocando domain-scaffolder"
 
-SCAFFOLD_PROMPT="Crea el scaffold para el dominio '$DOMAIN_NAME'. El usuario ya confirmo la creacion -- omite la confirmacion del Paso 0 y procede directamente a crear el proyecto."
+SCAFFOLD_PROMPT="Crea el scaffold para el dominio '$DOMAIN_NAME'. El usuario ya confirmo la creacion -- omite la confirmacion del Paso 0 y procede directamente a crear el proyecto.
+
+PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 SCAFFOLD_TIMEOUT=1800
 # Sufijo de DOMAIN_NAME + PID: ya se conoce el dominio en este punto, y sumar
 # el PID evita colision si el mismo dominio se relanza en el mismo segundo.
@@ -312,23 +314,30 @@ log "Haciendo push de la rama..."
 git -C "$WORKTREE_PATH" push -u origin "$BRANCH_NAME" >>"$LOG_FILE" 2>&1 \
     || abort "No se pudo hacer push de la rama $BRANCH_NAME"
 
-CLOSES_LINE=""
-if [ -n "$ISSUE_NUM" ]; then
-    CLOSES_LINE="Closes #$ISSUE_NUM"
-fi
+log "Verificando si ya existe un PR abierto para la rama..."
+EXISTING_PR_URL=$(find_open_pr_for_branch "$BRANCH_NAME" "$REPO_SLUG")
 
-# Listar commits en la rama
-COMMITS_LIST=$(git -C "$WORKTREE_PATH" log --oneline main..HEAD 2>/dev/null || echo "(sin commits)")
+if [ -n "$EXISTING_PR_URL" ]; then
+    PR_URL="$EXISTING_PR_URL"
+    success "PR existente reutilizado: $PR_URL"
+else
+    CLOSES_LINE=""
+    if [ -n "$ISSUE_NUM" ]; then
+        CLOSES_LINE="Closes #$ISSUE_NUM"
+    fi
 
-PR_TITLE="scaffold($DOMAIN_NAME): nuevo dominio $PASCAL_CASE"
-if [ -n "$ISSUE_NUM" ]; then
-    PR_TITLE="#$ISSUE_NUM scaffold($DOMAIN_NAME): nuevo dominio $PASCAL_CASE"
-fi
+    # Listar commits en la rama
+    COMMITS_LIST=$(git -C "$WORKTREE_PATH" log --oneline main..HEAD 2>/dev/null || echo "(sin commits)")
 
-log "Creando PR..."
-PR_URL=$(gh pr create \
-    --title "$PR_TITLE" \
-    --body "$(cat <<EOF
+    PR_TITLE="scaffold($DOMAIN_NAME): nuevo dominio $PASCAL_CASE"
+    if [ -n "$ISSUE_NUM" ]; then
+        PR_TITLE="#$ISSUE_NUM scaffold($DOMAIN_NAME): nuevo dominio $PASCAL_CASE"
+    fi
+
+    log "Creando PR..."
+    PR_URL=$(gh pr create \
+        --title "$PR_TITLE" \
+        --body "$(cat <<EOF
 ## Resumen
 
 Scaffold del dominio **$PASCAL_CASE** (\`$DOMAIN_NAME\`) creado con domain-scaffolder.
@@ -348,13 +357,14 @@ $COMMITS_LIST
 $CLOSES_LINE
 EOF
 )" \
-    --base main \
-    --head "$BRANCH_NAME" \
-    --repo "$REPO_SLUG" \
-    2>>"$LOG_FILE") \
-    || abort "No se pudo crear el PR"
+        --base main \
+        --head "$BRANCH_NAME" \
+        --repo "$REPO_SLUG" \
+        2>>"$LOG_FILE") \
+        || abort "No se pudo crear el PR"
 
-success "PR creado: $PR_URL"
+    success "PR creado: $PR_URL"
+fi
 
 if [ -n "$ISSUE_NUM" ]; then
     gh issue comment "$ISSUE_NUM" \

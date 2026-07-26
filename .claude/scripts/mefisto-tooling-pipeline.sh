@@ -377,6 +377,7 @@ CONTEXTO DE EJECUCION:
 - DEBES usar las herramientas Write y Edit directamente.
 - Responder con texto pidiendo aprobacion causa un fallo del pipeline.
 - Tienes permisos completos (bypassPermissions activo).
+- PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya.
 
 Instrucciones:
 1. Lee los archivos existentes relevantes antes de escribir nuevos.
@@ -445,6 +446,7 @@ CONTEXTO DE EJECUCION:
 - Modo no-interactivo (print mode). DEBES usar Write/Edit directamente.
 - Responder con texto pidiendo aprobacion causa un fallo del pipeline.
 - Tienes permisos completos (bypassPermissions activo).
+- PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya.
 
 Instrucciones:
 1. Verifica que los cambios cumplen con lo pedido en el issue.
@@ -530,7 +532,8 @@ else
 $CONFLICT_FILES
 
 Resuelve los conflictos manteniendo tanto la funcionalidad nueva como la existente.
-Despues de resolver cada archivo, haz git add. Cuando todos esten resueltos, haz git commit."
+Despues de resolver cada archivo, haz git add. Cuando todos esten resueltos, haz git commit.
+PROHIBIDO hacer 'git push' o 'gh pr create': eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
         run_agent "merge" "writer" "$MERGE_PROMPT"
 
@@ -549,18 +552,25 @@ log "Haciendo push de la rama..."
 git -C "$WORKTREE_PATH" push -u origin "$BRANCH_NAME" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 \
     || abort "No se pudo hacer push de la rama $BRANCH_NAME"
 
-log "Creando PR..."
+log "Verificando si ya existe un PR abierto para la rama..."
+EXISTING_PR_URL=$(find_open_pr_for_branch "$BRANCH_NAME")
 
-WR_SUMMARY=$(collect_summary "1" "writer")
-RV_SUMMARY=$(collect_summary "2" "reviewer")
+if [ -n "$EXISTING_PR_URL" ]; then
+    PR_URL="$EXISTING_PR_URL"
+    success "PR existente reutilizado: $PR_URL"
+else
+    log "Creando PR..."
 
-_fmt_dur() { local s="${1:-0}"; echo "$((s/60))m $((s%60))s"; }
-WR_DUR_FMT=$(_fmt_dur "${AGENT_WR_DUR:-0}")
-RV_DUR_FMT=$(_fmt_dur "${AGENT_RV_DUR:-0}")
+    WR_SUMMARY=$(collect_summary "1" "writer")
+    RV_SUMMARY=$(collect_summary "2" "reviewer")
 
-PR_URL=$(gh pr create \
-    --title "$ISSUE_TITLE" \
-    --body "$(cat <<EOF
+    _fmt_dur() { local s="${1:-0}"; echo "$((s/60))m $((s%60))s"; }
+    WR_DUR_FMT=$(_fmt_dur "${AGENT_WR_DUR:-0}")
+    RV_DUR_FMT=$(_fmt_dur "${AGENT_RV_DUR:-0}")
+
+    PR_URL=$(gh pr create \
+        --title "$ISSUE_TITLE" \
+        --body "$(cat <<EOF
 ## Resumen
 
 Pipeline mefisto-tooling completado:
@@ -590,14 +600,16 @@ $COMMITS_LIST
 Closes #$ISSUE_NUM
 EOF
 )" \
-    --base main \
-    --head "$BRANCH_NAME" \
-    2>>"$LOG_FILE") \
-    || abort "No se pudo crear el PR"
+        --base main \
+        --head "$BRANCH_NAME" \
+        2>>"$LOG_FILE") \
+        || abort "No se pudo crear el PR"
+
+    success "PR creado: $PR_URL"
+fi
 
 PIPELINE_PR="$PR_URL"
 update_status "done" "completed"
-success "PR creado: $PR_URL"
 
 gh issue comment "$ISSUE_NUM" \
     --body "Pipeline mefisto-tooling completado. PR: $PR_URL" \

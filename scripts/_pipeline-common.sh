@@ -730,3 +730,53 @@ resolve_pipeline_with_state() {
 
     echo "$state|$(_resolve_from_labels "$labels")"
 }
+
+# find_open_pr_for_branch <branch_name> [repo_slug] [base_branch]
+#
+# Busca un PR ABIERTO existente para <branch_name> via `gh pr list --head`, para
+# que el pipeline lo REUTILICE en vez de abortar cuando `gh pr create` fallaria
+# con "a pull request for branch ... already exists" (issue #378 -- incidente
+# del batch mefisto-batch-125628: un agente del Stage 1 crea el PR el mismo,
+# violando la prohibicion de push/PR de su prompt, y el bloque "Creando PR" del
+# pipeline abortaba en vez de recuperar la URL ya existente).
+#
+# [repo_slug] es opcional (formato owner/repo); se pasa a `gh pr list --repo`
+# cuando el caller no invoca gh desde dentro del repo (p. ej. el pipeline se
+# queda en REPO_ROOT y no hace cd al worktree).
+#
+# [base_branch] (default 'main') filtra por rama base. Es deliberado y no
+# cosmetico: la unicidad que GitHub impone -- y que produce el error que este
+# gate esquiva -- es por par (head, base), como lo dice el propio mensaje
+# (`a pull request for branch "X" into branch "main" already exists`). Sin el
+# filtro, un PR abierto de la misma rama hacia OTRA base se devolveria como si
+# fuera el PR del pipeline, y el `gh pr create --base main` que si habria
+# funcionado nunca correria: el pipeline reportaria una URL equivocada.
+#
+# Imprime la URL a stdout si existe un PR abierto, cadena vacia si no hay PR o
+# si el chequeo no se pudo hacer (gh ausente o gh fallo). NUNCA aborta: es un
+# chequeo defensivo antes de `gh pr create`, no una fuente de verdad -- si gh
+# esta roto de verdad (auth, red), ese fallo lo reporta el `gh pr create`
+# normal que sigue a continuacion.
+#
+# Retorna siempre 0.
+find_open_pr_for_branch() {
+    local branch="$1"
+    local repo="${2:-}"
+    local base="${3:-main}"
+    [ -z "$branch" ] && { echo ""; return 0; }
+
+    command -v gh >/dev/null 2>&1 || { echo ""; return 0; }
+
+    local gh_args=(pr list --head "$branch" --base "$base" --state open --json url -q '.[0].url')
+    [ -n "$repo" ] && gh_args+=(--repo "$repo")
+
+    local url
+    url=$(gh "${gh_args[@]}" 2>/dev/null) || url=""
+    # gh 2.92 imprime cadena vacia cuando la lista viene vacia, pero `.[0].url`
+    # sobre `[]` es `null` en jq: normalizamos para no depender de como cada
+    # version de gh serializa ese null (un "null" con fuga aqui haria que el
+    # pipeline reutilizara un PR inexistente con URL literal "null").
+    [ "$url" = "null" ] && url=""
+    echo "$url"
+    return 0
+}
