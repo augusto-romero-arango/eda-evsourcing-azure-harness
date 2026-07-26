@@ -185,7 +185,7 @@ El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o
 | Stack ES: Marten + Wolverine + Postgres | MEF-ADR-0003 |
 | Manejo de errores en ES (eventos de fallo vs excepciones) | MEF-ADR-0004 |
 | Naming y versionado de eventos | MEF-ADR-0005 |
-| Convenciones de nombramiento de funciones Azure | MEF-ADR-0006 |
+| Convenciones de nombramiento de funciones Azure (comando, ServiceBus, fan-in, query GET) y de artefactos de proyeccion | MEF-ADR-0006 |
 | Gestión de proyecto con GitHub Issues | MEF-ADR-0007 |
 | Knowledge Crunching como propósito del planner | MEF-ADR-0008 |
 | Mensajes en `.resx` por aggregate/handler | MEF-ADR-0009 |
