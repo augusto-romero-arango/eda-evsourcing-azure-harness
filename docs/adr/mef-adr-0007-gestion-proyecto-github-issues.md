@@ -19,7 +19,7 @@ El proyecto es de un solo desarrollador en fase de exploracion y aprendizaje. La
 
 Reemplazar los 9 labels default de GitHub con un esquema por facetas:
 
-- **Tipo** — indica el pipeline de implementacion (`tipo:feature`, `tipo:infra`, `tipo:refactor`, `tipo:tooling`)
+- **Tipo** — indica el pipeline de implementacion (`tipo:feature`, `tipo:infra`, `tipo:refactor`, `tipo:tooling`, `tipo:projection`)
 - **Origen** — indica por que existe el issue (`bug`)
 - **Dominio** (`dom:programacion`, `dom:contracts`, `dom:asistencia`, + nuevos conforme crecen)
 - **Estado** (`estado:borrador`, `estado:listo`)
@@ -65,3 +65,9 @@ Sin GitHub Projects (overhead excesivo para solo dev). En cambio:
 - Issues `estado:borrador` no deben enviarse al pipeline TDD/IaC — son borradores, no estan refinados
 - Cuando se crea un nuevo dominio con `domain-scaffolder`, se debe agregar su label `dom:X` a GitHub con `gh label create`
 - El flujo de trabajo correcto es: brain dump con `/draft` → refinamiento con planner → implementacion con pipeline
+
+---
+
+## Control de cambios
+
+- 2026-07-26: sumado `tipo:projection` al eje **Tipo** (issue #373), para issues de lectura/consulta (proyecciones Marten y sus Functions GET). `scripts/setup-github-labels.sh` lo provisiona junto al resto de `tipo:*` y `/onboard` lo diagnostica; su Definition of Ready es la columna `projection` de MEF-ADR-0011. El eje sigue siendo uno de los 4 dimensionales; no cambia ninguna otra decision de este ADR.
