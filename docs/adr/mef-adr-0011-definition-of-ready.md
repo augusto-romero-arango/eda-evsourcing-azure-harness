@@ -23,21 +23,26 @@ Establecer un **Definition of Ready (DoR)** que define los criterios minimos que
 
 ### Tabla DoR por tipo de issue
 
-| Seccion | `feature` | `refactor` | `infra` | `tooling` |
-|---|---|---|---|---|
-| Titulo: `[verbo infinitivo] [que cosa]` | Obligatorio | Obligatorio | Obligatorio | Obligatorio |
-| Label `tipo:X` | Obligatorio | Obligatorio | Obligatorio | Obligatorio |
-| Label `dom:X` | Obligatorio | Obligatorio | Opcional | Opcional |
-| Label `estado:listo` | Obligatorio | Obligatorio | Obligatorio | Obligatorio |
-| `## Contexto` | Obligatorio | Obligatorio | Obligatorio | Obligatorio |
-| `## Dependencias` | Obligatorio | Obligatorio | Obligatorio | Obligatorio |
-| `## Modelo de eventos` | **Critico** | No aplica | No aplica | No aplica |
-| `## Criterios de aceptacion` | **Critico** | **Critico** | **Critico** | **Critico** |
-| `## Notas tecnicas` | Recomendado | Recomendado | Recomendado | Recomendado |
-| `## Impacto en archivos` | Recomendado | Obligatorio | Obligatorio | Recomendado |
-| `## Ambiente` | No aplica | No aplica | Obligatorio | No aplica |
+| Seccion | `feature` | `refactor` | `infra` | `tooling` | `projection` |
+|---|---|---|---|---|---|
+| Titulo: `[verbo infinitivo] [que cosa]` | Obligatorio | Obligatorio | Obligatorio | Obligatorio | Obligatorio |
+| Label `tipo:X` | Obligatorio | Obligatorio | Obligatorio | Obligatorio | Obligatorio |
+| Label `dom:X` | Obligatorio | Obligatorio | Opcional | Opcional | Obligatorio |
+| Label `estado:listo` | Obligatorio | Obligatorio | Obligatorio | Obligatorio | Obligatorio |
+| `## Contexto` | Obligatorio | Obligatorio | Obligatorio | Obligatorio | Obligatorio |
+| `## Dependencias` | Obligatorio | Obligatorio | Obligatorio | Obligatorio | Obligatorio |
+| `## Modelo de eventos` | **Critico** | No aplica | No aplica | No aplica | No aplica |
+| `## Necesidad de lectura` | No aplica | No aplica | No aplica | No aplica | **Critico** |
+| `## Endpoints / rutas` | No aplica | No aplica | No aplica | No aplica | **Critico** |
+| `## Criterios de aceptacion` | **Critico** | **Critico** | **Critico** | **Critico** | **Critico** |
+| `## Notas tecnicas` | Recomendado | Recomendado | Recomendado | Recomendado | Recomendado |
+| `## Capas de test esperadas` | No aplica | No aplica | No aplica | No aplica | Obligatorio |
+| `## Impacto en archivos` | Recomendado | Obligatorio | Obligatorio | Recomendado | Recomendado |
+| `## Ambiente` | No aplica | No aplica | Obligatorio | No aplica | No aplica |
 
-**Nota sobre bugs**: un issue con label `bug` siempre lleva un `tipo:` valido (`feature`, `refactor`, `tooling` o `infra`). Los criterios DoR se aplican segun ese `tipo:`, no segun el label `bug`. Si el bug involucra comportamiento del aggregate, el `## Modelo de eventos` es obligatorio (esto aplica cuando el tipo es `feature`).
+**Nota sobre bugs**: un issue con label `bug` siempre lleva un `tipo:` valido (`feature`, `refactor`, `tooling`, `infra` o `projection`). Los criterios DoR se aplican segun ese `tipo:`, no segun el label `bug`. Si el bug involucra comportamiento del aggregate, el `## Modelo de eventos` es obligatorio (esto aplica cuando el tipo es `feature`).
+
+**Nota sobre `projection`**: este tipo cubre issues de lectura/consulta (proyecciones Marten y sus Functions GET) que el `planner` reconoce en la seccion "Necesidades de lectura y proyecciones" de `agents/planner.md` y emite con el "Template para issues de proyeccion" (bajo `## Crear issues` del mismo agente). No reutiliza `## Modelo de eventos` porque un issue `projection` no cambia el estado de ningun aggregate: los eventos que consume **ya existen**, producidos por un issue `feature` previo. Los agentes que consumen este tipo (`projection-test-writer`/`projection-implementer`) y la doctrina completa (arbol de decision N1/N2/N3, estilo canonico, read APIs) viven en el Skill `projections` (MEF-ADR-0035, MEF-ADR-0034, MEF-ADR-0006).
 
 Los issues con label `bug` aplican los criterios de la columna correspondiente a su `tipo:`.
 
@@ -47,7 +52,13 @@ Los issues con label `bug` aplican los criterios de la columna correspondiente a
 
 - **Criterios de aceptacion**: el `test-writer` crea al menos un test por criterio. El `reviewer` valida cobertura con tabla `Criterio | Estado | Test(s)`. Sin CAs, ambos agentes trabajan a ciegas.
 
-- **Label `dom:X`**: el skill `/implement` usa este label para detectar si el dominio necesita scaffold (proyecto .NET, tests, Terraform, GitHub Actions). Sin el, no puede verificar si el dominio existe.
+- **Label `dom:X`**: el skill `/implement` usa este label para detectar si el dominio necesita scaffold (proyecto .NET, tests, Terraform, GitHub Actions). Sin el, no puede verificar si el dominio existe. En `projection` es igual de obligatorio que en `feature`/`refactor`: todo artefacto read-side (`I{Dominio}ProjectionStore`, `ConfiguracionMartenProjections{Dominio}`, la Function GET) vive dentro de un dominio concreto (`agents/planner.md`, seccion "Necesidades de lectura y proyecciones").
+
+- **Necesidad de lectura**: input directo de `projection-test-writer`/`projection-implementer` -- fija la via de consulta ((a) materializada, (b1) aggregate en vivo o (b2) eventos crudos), la vista a materializar (`{Concepto}View`) y sus campos, los eventos que la alimentan, la receta propuesta (N1/N2, con N3 como escape hatch justificado) y el **lifecycle** de la proyeccion (`Async` es el default -- materializada en el worker de proyecciones; `Inline` es una excepcion opt-in del write-side que el issue debe justificar explicitamente, MEF-ADR-0034). Sin ella, el pipeline read-side no puede nombrar el read model, elegir la receta de proyeccion ni saber donde se materializa (MEF-ADR-0035).
+
+- **Endpoints / rutas**: fija que Functions GET expone la vista (`Obtener{Concepto}`/`Listar{Concepto}s`) y su ruta REST, con el naming de MEF-ADR-0006. Tambien es donde el issue debe declarar si verifico colision de nombres con Functions ya existentes en el dominio. Sin ella, el pipeline no sabe que Function componer ni si el nombre ya esta en uso.
+
+- **Capas de test esperadas** (Obligatorio en `projection`): un issue read-side se cubre con tres categorias complementarias, no intercambiables -- unit tests de la proyeccion (`Create`/`Apply`/`ShouldDelete`), config-test del worker (guarda del `partial`, lifecycle `Async`, replica de metadata -- MEF-ADR-0034 seccion 6) y test de composicion de la Function GET (hermano de MEF-ADR-0029). Declararlas en el issue evita que la fase roja cubra solo la proyeccion y deje el registro en el worker o la Function sin verificar.
 
 ### Niveles de obligatoriedad
 
@@ -63,11 +74,13 @@ El skill valida programaticamente un subconjunto del DoR antes de lanzar el pipe
 
 1. Label `estado:listo` presente
 2. Label `tipo:X` presente
-3. Label `dom:X` presente (si tipo es `feature` o `refactor`)
+3. Label `dom:X` presente (si tipo es `feature`, `refactor` o `projection`)
 4. Body contiene `## Criterios de aceptaci` (prefijo, tolera tildes)
-5. Body contiene `## Modelo de eventos` (solo si tipo es `feature`)
+5. Body contiene `## Modelo de eventos` (si tipo es `feature`) o `## Necesidad de lectura` (si tipo es `projection`)
 
 Si falla cualquier criterio, muestra todos los que fallan y sugiere `planner refinar`.
+
+**Nota sobre `projection` y el routing del pipeline**: esta validacion programatica verifica completitud de informacion, **no** disponibilidad del pipeline read-side. El enrutamiento por label todavia no conoce el tipo: hoy `tipo:projection` cae en el caso por defecto del resolver (`feature`/`refactor` -> pipeline TDD, `tooling` -> pipeline de tooling, `infra` -> SKIP), asi que `/implement` no lanza los agentes read-side (`projection-test-writer`/`projection-implementer`) **ni** los write-side: **aborta** antes de crear la sesion tmux con `Issue #N no se puede enrutar a un pipeline (no-tipo)`. Un issue `projection` puede entonces pasar el DoR y quedar `estado:listo` legitimamente, pero su implementacion se coordina aparte hasta que se cierren los issues #371 (rama read-side de `tdd-pipeline.sh`) y #372 (enrutamiento de `tipo:projection` en los routers). El `planner` debe advertirselo al usuario antes de marcar `estado:listo` (`agents/planner.md`, seccion "Necesidades de lectura y proyecciones").
 
 ---
 
@@ -90,3 +103,8 @@ Si falla cualquier criterio, muestra todos los que fallan y sugiere `planner ref
 - Issues sin modelo de eventos que causan naming incorrecto en el codigo
 - Issues sin criterios de aceptacion donde el reviewer no puede validar cobertura
 - Issues sin label `dom:X` que impiden la deteccion automatica de scaffold de dominio nuevo
+- Issues `projection` sin via de consulta, vista o receta declaradas, que dejan a `projection-test-writer`/`projection-implementer` adivinando el read model o la correlacion de streams
+
+## Control de cambios
+
+- 2026-07-26: enmendado (issue #373) para sumar la variante de DoR de `tipo:projection` -- nueva columna en la tabla y las filas `## Necesidad de lectura` (via de consulta, vista a materializar, eventos que la alimentan, receta N1/N2) y `## Endpoints / rutas` como **Criticas**, `## Capas de test esperadas` como Obligatoria, `dom:X` Obligatorio (igual que `feature`/`refactor`, nunca opcional como en `infra`/`tooling`: todo artefacto read-side es por dominio) y `## Modelo de eventos` como No aplica (los eventos que consume una proyeccion ya existen, no los crea el issue). Extiende la validacion programatica de `/implement` (criterios 3 y 5) para cubrir el nuevo tipo, y deja constancia del estado real del routing: el resolver por label todavia no conoce `tipo:projection`, asi que `/implement` aborta el lanzamiento (`no-tipo`) en vez de enrutarlo -- ni a los agentes read-side ni a los write-side -- hasta que cierren los issues #371/#372. El label en si lo provisiona `scripts/setup-github-labels.sh` y lo diagnostica `/onboard` (eje **Tipo** de MEF-ADR-0007).

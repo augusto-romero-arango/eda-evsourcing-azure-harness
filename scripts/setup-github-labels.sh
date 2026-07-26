@@ -35,10 +35,11 @@ done
 
 echo ""
 echo "Creando labels de tipo (azul)..."
-gh label create "tipo:feature"   --color "0052CC" --description "Funcionalidad nueva de dominio" --force
-gh label create "tipo:infra"     --color "0052CC" --description "Infraestructura Azure / Terraform" --force
-gh label create "tipo:refactor"  --color "0052CC" --description "Reestructuracion sin comportamiento nuevo" --force
-gh label create "tipo:tooling"   --color "0052CC" --description "Mejoras a pipeline, agentes o scripts" --force
+gh label create "tipo:feature"    --color "0052CC" --description "Funcionalidad nueva de dominio" --force
+gh label create "tipo:infra"      --color "0052CC" --description "Infraestructura Azure / Terraform" --force
+gh label create "tipo:refactor"   --color "0052CC" --description "Reestructuracion sin comportamiento nuevo" --force
+gh label create "tipo:tooling"    --color "0052CC" --description "Mejoras a pipeline, agentes o scripts" --force
+gh label create "tipo:projection" --color "0052CC" --description "Proyeccion Marten y query read-side" --force
 
 echo ""
 echo "Creando labels de origen (naranja)..."

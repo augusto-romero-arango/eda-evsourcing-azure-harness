@@ -168,7 +168,7 @@ if [ "$GH_RC" -ne 0 ]; then
 "
 else
   MISSING=""
-  for lbl in tipo:feature tipo:infra tipo:refactor tipo:tooling estado:borrador estado:listo bug bloqueado; do
+  for lbl in tipo:feature tipo:infra tipo:refactor tipo:tooling tipo:projection estado:borrador estado:listo bug bloqueado; do
     printf '%s\n' "$EXISTING" | grep -Fqx "$lbl" || MISSING="$MISSING $lbl"
   done
   if [ -n "${HARNESS_DOMAIN_LABELS:-}" ]; then
