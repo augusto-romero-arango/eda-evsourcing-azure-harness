@@ -242,13 +242,16 @@ El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o
 
 - Las herramientas MCP requieren declaración explícita cuando un agente usa allowlist `tools:`. Usa wildcard: `mcp__<servidor>__*`.
 - Si el agente **no** define `tools:`, hereda todas incluyendo MCP.
+- Para **doctrina extensa** que solo aplica a algunas tareas, usa un **Agent Skill** (`skills/<nombre>/SKILL.md` publicado, `.claude/skills/<nombre>/SKILL.md` interno) en vez de otra sección en el body del agente: el Skill se carga por niveles y no se paga cuando la tarea no lo necesita. Un agente lo precarga con el campo frontmatter `skills:` (no requiere la tool `Skill` en `tools:`). Doctrina completa y caveats de versión en MEF-ADR-0033.
 
 ## Dos paquetes de tooling: publicado vs interno
 
 Mefisto mantiene **dos sets** de skills/agentes/pipelines físicamente separados (doctrina completa en MEF-ADR-0019):
 
-- **Publicados** (`commands/`, `agents/`, `scripts/`, `hooks/`): se distribuyen vía marketplace y operan únicamente sobre archivos del consumidor.
-- **Internos** (`.claude/commands/`, `.claude/agents/`, `.claude/scripts/`): no se publican; Claude Code los carga al abrir este repo. Llevan prefijo `mefisto-` y operan solo sobre archivos del propio plugin.
+- **Publicados** (`commands/`, `skills/`, `agents/`, `scripts/`, `hooks/`): se distribuyen vía marketplace y operan únicamente sobre archivos del consumidor.
+- **Internos** (`.claude/commands/`, `.claude/skills/`, `.claude/agents/`, `.claude/scripts/`): no se publican; Claude Code los carga al abrir este repo. Llevan prefijo `mefisto-` y operan solo sobre archivos del propio plugin.
+
+`skills/` y `.claude/skills/` son las ubicaciones de Agent Skills (MEF-ADR-0033); aún no hay ninguno creado, pero las rutas ya están registradas en los gates de scope. **Todo tipo de artefacto nuevo del plugin debe registrarse a mano** en el blocklist publicado (`is_path_in_consumer_blocklist`) y en la allowlist interna (`is_path_in_mefisto_scope`): ambos enumeran rutas explícitamente.
 
 La única operación cross-repo desde el consumidor hacia Mefisto es **crear drafts** (`estado:borrador`); el refinamiento y demás gestión de issues ocurre con `/mefisto-plan` dentro de este repo.
 

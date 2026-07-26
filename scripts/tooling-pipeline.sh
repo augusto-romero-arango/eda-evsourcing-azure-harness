@@ -453,7 +453,7 @@ ALCANCE PERMITIDO de escritura:
 - docs/bitacora/, docs/eda/, docs/adr-proyecto/  (documentacion del consumidor)
 
 PROHIBIDO MODIFICAR (pertenece al plugin Mefisto, no a este repo):
-- commands/, agents/, hooks/, .claude-plugin/
+- commands/, skills/, agents/, hooks/, .claude-plugin/
 - docs/adr/ (los ADRs del marco viven en el repo del plugin)
 - src/ (eso es para /implement, no para /tooling)
 
@@ -562,7 +562,7 @@ ALCANCE PERMITIDO de escritura (igual al del writer):
 .claude/pipeline/, pipeline-state/, scripts/, tests/ (fixtures/helpers),
 docs/bitacora/, docs/eda/, docs/adr-proyecto/.
 
-PROHIBIDO: commands/, agents/, hooks/, .claude-plugin/, docs/adr/, src/.
+PROHIBIDO: commands/, skills/, agents/, hooks/, .claude-plugin/, docs/adr/, src/.
 
 Si el writer toco rutas prohibidas, reviertelas o reporta el problema en el resumen
 y NO hagas cambios extra al plugin.

@@ -54,13 +54,15 @@ assert_in_mefisto() {
 # 1 en caso contrario. Usado por los gates de scope del pipeline interno.
 #
 # Allowlist:
-#   commands/                Skills publicados (los modifica /mefisto-tooling)
+#   commands/                Skills publicados como slash command (los modifica /mefisto-tooling)
+#   skills/                  Agent Skills publicados del plugin (MEF-ADR-0033)
 #   agents/                  Agentes publicados
 #   scripts/                 Pipelines publicados
 #   hooks/                   Hooks publicados
 #   docs/                    ADRs, testing, field-notes, cheatsheets
 #   .claude-plugin/          Metadata del plugin (plugin.json, marketplace.json)
 #   .claude/commands/        Skills internos del propio Mefisto
+#   .claude/skills/          Agent Skills internos (MEF-ADR-0033)
 #   .claude/agents/          Agentes internos
 #   .claude/scripts/         Pipelines internos
 #   README.md, CHANGELOG.md, CLAUDE.md, .gitignore   Gobierno del repo
@@ -69,9 +71,9 @@ is_path_in_mefisto_scope() {
     [ -z "$path" ] && return 1
 
     case "$path" in
-        commands/*|agents/*|scripts/*|hooks/*|docs/*) return 0 ;;
+        commands/*|skills/*|agents/*|scripts/*|hooks/*|docs/*) return 0 ;;
         .claude-plugin/*) return 0 ;;
-        .claude/commands/*|.claude/agents/*|.claude/scripts/*) return 0 ;;
+        .claude/commands/*|.claude/skills/*|.claude/agents/*|.claude/scripts/*) return 0 ;;
         README.md|CHANGELOG.md|CLAUDE.md|.gitignore) return 0 ;;
         *) return 1 ;;
     esac
