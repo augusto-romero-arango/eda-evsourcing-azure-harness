@@ -171,6 +171,8 @@ Doctrina pesada empaquetada con *progressive disclosure* (MEF-ADR-0033); no son 
 | `workos-identity-scaffolder` | Genera el adapter WorkOS (IIdentityProvider + WorkOsIdentityProvider) y su wiring en un dominio, fiel a la referencia de Cosmos.ControlPlane (MEF-ADR-0032) |
 | `test-writer` | Fase roja del pipeline TDD |
 | `implementer` | Fase verde del pipeline TDD |
+| `projection-test-writer` | Fase roja read-side: unit tests de proyeccion (Create/Apply/ShouldDelete), config-test del worker y composicion de la Function GET |
+| `projection-implementer` | Fase verde read-side: proyecciones, read models, registro del store (Configurar{Dominio}) y Functions GET |
 | `reviewer` | Revisión antes de crear PR |
 | `smoke-test-writer` | Smoke tests contra entorno dev |
 | `infra-writer` / `infra-reviewer` / `infra-bootstrap` | Etapas del pipeline IaC (escritura y revision estatica local; el plan y el apply corren en CI, MEF-ADR-0022) |
