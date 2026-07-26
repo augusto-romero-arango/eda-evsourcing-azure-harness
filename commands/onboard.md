@@ -32,7 +32,7 @@ Si el bloque imprime `ERROR`, detente y muestra el mensaje al usuario.
 6. **Secretos que alimentan la siembra en CI** (MEF-ADR-0025, informativo): que existan en GitHub `TF_VAR_POSTGRESQL_ADMIN_PASSWORD` y un `SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` por cada alias de `serviceBus.external[]`. Son los **inputs** que `infra-cd.yml` usa para sembrar el Key Vault del BC en un step posterior al `apply`; ya no hay siembra manual del admin ni verificacion del data plane del vault (MEF-ADR-0025 decision #6/#10). Reusa la misma lectura de `gh secret list` del punto 5; si falta, reporta `NO VERIFICADO` sin bloquear (un greenfield legitimo aun no tiene Postgres provisionado ni alias externos declarados).
 7. **Registro `secrets[]`** (issue #256, informativo): cuantas entradas hay registradas (las siembra el step data-driven de `infra-cd.yml`, sin ninguna linea hardcodeada por secreto) y, para cada entrada con `source.type: "github-secret"`, si el GitHub secret que referencia existe en el repo. La **forma** del array (`name` unico, `source.type` en {`output`, `github-secret`, `composite`}, `source.value` no vacio) ya la valida `load_harness_config` como parte del punto 1 (`Configuracion`): un `secrets[]` mal formado hace que esa seccion reporte `FALTA`, con el mensaje exacto que emite la funcion. Ausente por completo, reporta `NO VERIFICADO` sin bloquear (normal antes del primer `/infra-base`).
 8. **Bifurcacion de dos caminos de auth** (`tenancy.strategy`, MEF-ADR-0028 + enmienda #337, MEF-ADR-0032, issue #323 + #341, informativo): que camino declaro el proyecto, mapeado 1:1 a las dos etapas de tenancy de MEF-ADR-0028 -- **(A) crecer**: autenticacion orquestada desde el inicio (`multi-tenant-header`, etapa b, ya existe o se planea una autenticacion que produce un `TenantContext`) o **(B) POC**: sin autenticacion (`mono-tenant-transitorio`, etapa a, greenfield, el default). No se sondea en codigo (no hay señal fiable: el harness no referencia ningun tipo `Cosmos.MultiTenancy.*`/autenticacion); es un token **declarado** por el humano. Ausente equivale al camino (B) POC/etapa (a) por defecto, asi que nunca reporta `FALTA` -- solo `OK` (valor reconocido, cualquiera de los dos caminos) o `NO VERIFICADO` (ausente, o con un valor no reconocido).
-9. **Worker de proyecciones** (`projections.enabled`, MEF-ADR-0034, issue #369, informativo): si el BC declaro que adopta proyecciones y, si lo declaro, si el worker `<RootNamespace>.Projections` ya existe. Usa `HARNESS_PROJECTIONS_ENABLED` (`load_harness_config`, nunca sondea codigo mas alla de la existencia del csproj). Ausente, `null`, `false` o cualquier valor distinto de `true` nunca reporta `FALTA` -- es opt-in, igual que `tenancy.strategy`. Si esta en `true` y el worker ya existe, reporta `OK`; si esta en `true` pero el worker no existe todavia, reporta `NO VERIFICADO` y habilita el paso opt-in 6 (encadenar `/scaffold-projections`).
+9. **Worker de proyecciones** (`projections.enabled`, MEF-ADR-0034, issue #369, informativo): si el BC declaro que adopta proyecciones y, si lo declaro, si el worker `<RootNamespace>.Projections` ya existe. Usa `HARNESS_PROJECTIONS_ENABLED` (`load_harness_config`) y, si esa variable no llego exportada -- config invalido, que hace abortar la funcion, o `_pipeline-common.sh` del plugin no hallado --, re-deriva el token inline con `jq` desde el config, igual que la seccion 8 con `tenancy.strategy`: reportar "ausente" un token que si esta declarado seria un falso negativo, y apagaria en silencio el paso opt-in 6. Nunca sondea codigo mas alla de la existencia del csproj. Ausente, `null`, `false` o cualquier valor distinto de `true` nunca reporta `FALTA` -- es opt-in, igual que `tenancy.strategy`. Si esta en `true` y el worker ya existe, reporta `OK`; si esta en `true` pero el worker no existe todavia, reporta `NO VERIFICADO` y habilita el paso opt-in 6 (encadenar `/scaffold-projections`).
 
 La provision de **labels** (paso 3), la del **CI** hacia Azure (paso 4), la escritura de la **estrategia de tenancy** (paso 5, la bifurcacion de caminos de auth) y encadenar **`/scaffold-projections`** (paso 6, cuando el worker de proyecciones falta) las ofrece `/onboard` como pasos **opt-in**, bajo confirmacion explicita: el script de labels es destructivo (borra los labels default de GitHub), el de CI crea recursos reales en Azure (app de Entra, role assignments, federated credential -- OIDC, MEF-ADR-0022), el de tenancy escribe `.claude/harness.config.json`, y el de proyecciones genera codigo nuevo (invoca al agente `projections-scaffolder`). El diagnostico en si sigue siendo de solo lectura: sin tu confirmacion no se crea, borra, escribe, genera ni provisiona nada. (Los writes opt-in de `/onboard` pasan asi de 2 -- labels, CI -- a 4, sumando el token `tenancy.strategy` que materializa el camino de auth elegido y la cadena hacia `/scaffold-projections`.)
 
@@ -57,7 +57,7 @@ CONFIG=".claude/harness.config.json"
 N_OK=0; N_FALTA=0; N_NV=0
 ACTIONS=""
 # Flags para el bloque de cierre "Proximos pasos" (CA-1): se fijan junto a cada row() FALTA
-# correspondiente, para no re-diagnosticar nada al construir el bloque en la seccion 6.
+# correspondiente, para no re-diagnosticar nada al construir el bloque en la seccion 10.
 # PA_AUTH_PATH (issue #341) no acompaña un FALTA -- se fija cuando el camino declarado es (A) crecer.
 PA_CONFIG_FALTA=0; PA_TOKENS_FALTA=0; PA_LABELS_FALTA=0; PA_CI_FALTA=0; PA_INFRA_BASE_MISSING=0; PA_AUTH_PATH=0; PA_PROJECTIONS_MISSING=0
 
@@ -299,16 +299,32 @@ esac
 # --- 9. Worker de proyecciones (projections.enabled, MEF-ADR-0034, issue #369, informativo) ---
 echo ""
 echo "Worker de proyecciones (projections.enabled, MEF-ADR-0034):"
-if [ "${HARNESS_PROJECTIONS_ENABLED:-false}" != "true" ]; then
+# Fuente preferida: la variable derivada de load_harness_config. Pero esa funcion aborta
+# (return 1, sin exportar nada) cuando el config es invalido -- p. ej. sin 'boundedContext',
+# el estado exacto de un consumidor a medio migrar -- y ni siquiera corre cuando no se hallo
+# el _pipeline-common.sh del plugin. En ambos casos la variable queda vacia, y reportar por eso
+# "token ausente" seria FALSO: ademas apagaria en silencio el paso opt-in 6 (CA-4). Por eso, si
+# no llego exportada, se re-deriva inline con jq desde $CONFIG -- mismo patron que la seccion 8
+# (tenancy.strategy) y que los consumidores inline del token (infra-base-scaffolder,
+# /scaffold-projections). Sin operador '//': en jq 'false' es falsy, asi que 'false // X'
+# devuelve X y confundiria "deshabilitado" con "ausente".
+PROJECTIONS_ENABLED="${HARNESS_PROJECTIONS_ENABLED:-}"
+NS_PREFIX="${HARNESS_NAMESPACE_PREFIX:-}"
+if [ -z "$PROJECTIONS_ENABLED" ]; then
+  PROJ_RAW=$(jq -r '.projections.enabled' "$CONFIG" 2>/dev/null)
+  if [ "$PROJ_RAW" = "true" ]; then PROJECTIONS_ENABLED="true"; else PROJECTIONS_ENABLED="false"; fi
+fi
+[ -z "$NS_PREFIX" ] && NS_PREFIX=$(jq -r '.namespacePrefix // ""' "$CONFIG" 2>/dev/null)
+if [ "$PROJECTIONS_ENABLED" != "true" ]; then
   row NV "projections.enabled ausente o en false -- BC no adopta proyecciones (opt-in, valido, no bloqueante)"
-elif [ -z "${HARNESS_NAMESPACE_PREFIX:-}" ]; then
-  row NV "projections.enabled=true, pero no se pudo determinar la ruta del worker (revisa la seccion Configuracion)"
+elif [ -z "$NS_PREFIX" ]; then
+  row NV "projections.enabled=true, pero falta 'namespacePrefix' para derivar la ruta del worker (revisa la seccion Configuracion)"
 else
-  WORKER_CSPROJ="src/${HARNESS_NAMESPACE_PREFIX}.Projections/${HARNESS_NAMESPACE_PREFIX}.Projections.csproj"
+  WORKER_CSPROJ="src/${NS_PREFIX}.Projections/${NS_PREFIX}.Projections.csproj"
   if [ -f "$WORKER_CSPROJ" ]; then
-    row OK "projections.enabled=true -- worker ${HARNESS_NAMESPACE_PREFIX}.Projections presente"
+    row OK "projections.enabled=true -- worker ${NS_PREFIX}.Projections presente"
   else
-    row NV "projections.enabled=true, pero el worker ${HARNESS_NAMESPACE_PREFIX}.Projections no existe todavia (corre /scaffold-projections)"
+    row NV "projections.enabled=true, pero el worker ${NS_PREFIX}.Projections no existe todavia (corre /scaffold-projections)"
     PA_PROJECTIONS_MISSING=1
   fi
 fi
