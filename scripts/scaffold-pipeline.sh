@@ -242,7 +242,9 @@ fi
 # --- Invocar domain-scaffolder ---
 header "Invocando domain-scaffolder"
 
-SCAFFOLD_PROMPT="Crea el scaffold para el dominio '$DOMAIN_NAME'. El usuario ya confirmo la creacion -- omite la confirmacion del Paso 0 y procede directamente a crear el proyecto."
+SCAFFOLD_PROMPT="Crea el scaffold para el dominio '$DOMAIN_NAME'. El usuario ya confirmo la creacion -- omite la confirmacion del Paso 0 y procede directamente a crear el proyecto.
+
+PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 SCAFFOLD_TIMEOUT=1800
 # Sufijo de DOMAIN_NAME + PID: ya se conoce el dominio en este punto, y sumar
 # el PID evita colision si el mismo dominio se relanza en el mismo segundo.

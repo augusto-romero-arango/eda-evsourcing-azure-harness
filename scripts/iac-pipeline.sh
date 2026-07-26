@@ -368,7 +368,9 @@ $ISSUE_CONTEXT
 Ambiente target: $ENVIRONMENT
 Directorio del ambiente: $INFRA_ENV_DIR_ABS
 
-Tu tarea: escribe o modifica los archivos Terraform necesarios para implementar este issue en el ambiente '$ENVIRONMENT'. Sigue todas las instrucciones de tu rol de infra-writer."
+Tu tarea: escribe o modifica los archivos Terraform necesarios para implementar este issue en el ambiente '$ENVIRONMENT'. Sigue todas las instrucciones de tu rol de infra-writer.
+
+PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
     run_agent "1" "infra-writer" "$STAGE1_PROMPT"
 
@@ -410,7 +412,9 @@ Directorio del ambiente: $INFRA_ENV_DIR_ABS
 Diff de archivos .tf modificados en esta rama:
 $DIFF_CONTEXT
 
-Tu tarea: revisa el HCL producido por infra-writer, corrige problemas de seguridad o calidad, y ejecuta la revision estatica ('terraform fmt -check', 'terraform init -backend=false' y 'terraform validate') en '$INFRA_ENV_DIR_ABS'. NUNCA ejecutes 'terraform plan' ni 'terraform apply': no hay credenciales de Azure disponibles en este flujo local. Sigue todas las instrucciones de tu rol de infra-reviewer."
+Tu tarea: revisa el HCL producido por infra-writer, corrige problemas de seguridad o calidad, y ejecuta la revision estatica ('terraform fmt -check', 'terraform init -backend=false' y 'terraform validate') en '$INFRA_ENV_DIR_ABS'. NUNCA ejecutes 'terraform plan' ni 'terraform apply': no hay credenciales de Azure disponibles en este flujo local. Sigue todas las instrucciones de tu rol de infra-reviewer.
+
+PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
 run_agent "2" "infra-reviewer" "$STAGE2_PROMPT"
 
@@ -465,6 +469,18 @@ header "Creando PR"
 log "Haciendo push de la rama..."
 git -C "$WORKTREE_PATH" push -u origin "$BRANCH_NAME" >>"$LOG_FILE_ABS" 2>&1 \
     || abort "No se pudo hacer push de la rama $BRANCH_NAME"
+
+# Gate de PR existente (issue #378): si un agente del pipeline creo el PR el mismo (violando la
+# prohibicion de push/PR de su prompt), reutilizamos su URL en vez de dejar PR_URL vacio -- el
+# 'gh pr create' de abajo degrada con 'warn', asi que sin este gate el pipeline seguia pero
+# reportaba 'PR: pendiente' en el issue y "" en el historial, perdiendo el rastro del PR real.
+log "Verificando si ya existe un PR abierto para la rama..."
+EXISTING_PR_URL=$(find_open_pr_for_branch "$BRANCH_NAME" "$REPO_SLUG")
+
+if [ -n "$EXISTING_PR_URL" ]; then
+    PR_URL="$EXISTING_PR_URL"
+    success "PR existente reutilizado: $PR_URL"
+else
 
 # MEF-ADR-0022 ("Cierre del issue de infra: al aplicar en CI, no al mergear el PR"): el PR de este
 # pipeline NUNCA lleva 'Closes #N'. El plan real corre en el PR (workflow infra-cd.yml, job
@@ -523,6 +539,8 @@ EOF
     2>>"$LOG_FILE_ABS") || warn "No se pudo crear el PR automaticamente"
 
 [ -n "${PR_URL:-}" ] && success "PR creado: $PR_URL"
+
+fi  # cierre del gate de PR existente
 
 gh issue comment "$ISSUE_NUM" \
     --body "Pipeline IaC completado (HCL escrito y revisado, sin plan ni apply local). PR: ${PR_URL:-pendiente}. Infra pendiente de aplicar por CI: el workflow **Infra CD** aplica al mergear a main y cierra este issue tras un apply exitoso (MEF-ADR-0022)." \

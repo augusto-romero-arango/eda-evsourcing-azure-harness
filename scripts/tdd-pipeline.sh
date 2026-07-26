@@ -328,7 +328,9 @@ else
         SCAFFOLD_START_TS=$(date +%s)
         echo "[$(date +%H:%M:%S)] === STAGE 0: domain-scaffolder ===" >> "$EVENTS_LOG_ABS"
 
-        SCAFFOLD_PROMPT="Crea el scaffold para el dominio '$SCAFFOLD_DOMAIN'. El usuario ya confirmo la creacion — omite la confirmacion del Paso 0 y procede directamente a crear el proyecto."
+        SCAFFOLD_PROMPT="Crea el scaffold para el dominio '$SCAFFOLD_DOMAIN'. El usuario ya confirmo la creacion — omite la confirmacion del Paso 0 y procede directamente a crear el proyecto.
+
+PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
         SCAFFOLD_TIMEOUT=1800
         NONINTERACTIVE_SYSTEM="You are running in non-interactive print mode. There is no human to approve anything. You MUST use Write and Edit tools directly to create and modify files at any path including .claude/. Never output text asking for permissions or confirmations -- doing so causes pipeline failure."
@@ -747,7 +749,9 @@ Tu tarea: escribe smoke tests para los endpoints nuevos o modificados.
 IMPORTANTE: Solo escribe y compila. NO ejecutes los tests (el entorno dev puede no tener este código desplegado aún).
 Usa 'dotnet build' para verificar compilación, pero NO uses 'dotnet test'.
 
-Sigue todas las instrucciones de tu rol de smoke-test-writer."
+Sigue todas las instrucciones de tu rol de smoke-test-writer.
+
+PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
             run_agent "2b" "smoke-test-writer" "$STAGE2B_PROMPT"
 
@@ -810,7 +814,9 @@ Reglas:
 5. Al terminar, corre dotnet test una última vez para confirmar que todo sigue verde (descontando los tests obsoletos que eliminaste).
 6. Haz commit de tu trabajo con mensaje: refactor(hu-${ISSUE_NUM:-?}): [descripción]
 
-Sigue todas las instrucciones de tu rol de reviewer."
+Sigue todas las instrucciones de tu rol de reviewer.
+
+PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
     else
         FULL_DIFF=$(git -C "$WORKTREE_PATH" diff "$SNAPSHOT_COMMIT"..HEAD)
 
@@ -826,7 +832,9 @@ $FULL_DIFF
 
 Tu tarea: revisa la calidad del código, refactoriza si es necesario, y verifica que los criterios de aceptación estén bien cubiertos.
 Si el diff incluye smoke tests (archivos en *SmokeTests/), revísalos también: verifica que cubran los escenarios principales del endpoint (camino feliz, validación, duplicados) y que sigan las convenciones del proyecto.
-Sigue todas las instrucciones de tu rol de reviewer."
+Sigue todas las instrucciones de tu rol de reviewer.
+
+PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
     fi
 
     # Agregar contexto de bloqueo al prompt si el implementer reporto tests bloqueados
@@ -1341,7 +1349,8 @@ IMPORTANTE:
 - Escribe tests que ejerciten esos paths especificos
 - Dado que la implementacion ya existe, los tests nuevos probablemente PASARAN directamente
 - Sigue las mismas convenciones de testing del proyecto (Given/When/Then, AwesomeAssertions)
-- Haz commit con mensaje: test(hu-${ISSUE_NUM:-?}): tests de cobertura para brechas detectadas"
+- Haz commit con mensaje: test(hu-${ISSUE_NUM:-?}): tests de cobertura para brechas detectadas
+- PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
         CG_REMEDIATION_TIMEOUT=1800  # 30 minutos para remediacion
 
@@ -1387,7 +1396,9 @@ IMPORTANTE:
 El coverage gate detecto brechas de cobertura y el test-writer agrego tests adicionales, pero no compilan.
 Tu tarea: haz que SOLO los tests nuevos de cobertura compilen y pasen. No modifiques la logica de negocio existente.
 
-Pista: revisa los ultimos archivos de test creados/modificados y corrige errores de compilacion."
+Pista: revisa los ultimos archivos de test creados/modificados y corrige errores de compilacion.
+
+PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
                 LOG_CG_IM="$LOG_DIR_ABS/stage-4-implementer-patch-${TIMESTAMP}.log"
                 echo "[$(date +%H:%M:%S)] REMEDIATION: relanzando implementer" >> "$EVENTS_LOG_ABS"
