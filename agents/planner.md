@@ -518,7 +518,7 @@ Lee y aplica los criterios de `"$PLUGIN_ROOT/docs/adr/mef-adr-0011-definition-of
 
 **Regla clave**: un issue solo puede pasar a `estado:listo` si cumple todos los criterios obligatorios y criticos de su tipo segun el MEF-ADR-0011 **y** todas las casillas del checklist pre-listo de la Revisión de complejidad. El DoR y la Revisión de complejidad son capas complementarias: el DoR garantiza completitud de información; la Revisión de complejidad garantiza tamaño y claridad. Uno sin el otro no alcanza.
 
-**Caso `tipo:projection`**: MEF-ADR-0011 todavia no tiene su propia fila para este tipo (la enmienda vive en un issue de seguimiento aun no cerrado). Hasta que esa fila exista, la sección "Necesidades de lectura y proyecciones" de este agente y el "Template para issues de proyección" (bajo `## Crear issues`) son la fuente del DoR de `tipo:projection` -- exigen los campos criticos del handoff (via de consulta, vista, eventos, receta, endpoints, lifecycle) mas las capas de test esperadas, y el label `dom:` como **obligatorio** (equivalente a la columna `feature` de la tabla, no a `infra`/`tooling`: todo artefacto read-side es por dominio). No marques `estado:listo` un issue `tipo:projection` sin esos campos solo porque la tabla del ADR no lo menciona todavia.
+**Caso `tipo:projection`**: MEF-ADR-0011 ya tiene su propia columna para este tipo (issue #373). La sección "Necesidades de lectura y proyecciones" de este agente y el "Template para issues de proyección" (bajo `## Crear issues`) implementan esa fila -- exigen los campos criticos del handoff (via de consulta, vista, eventos, receta, endpoints, lifecycle) mas las capas de test esperadas, y el label `dom:` como **obligatorio** (equivalente a la columna `feature` de la tabla, no a `infra`/`tooling`: todo artefacto read-side es por dominio). No marques `estado:listo` un issue `tipo:projection` sin esos campos.
 
 ---
 
@@ -688,7 +688,7 @@ Si el issue de infra está asociado a un dominio específico, agrega también `-
 
 Cuando la sección "Necesidades de lectura y proyecciones" concluya en un `tipo:projection`, usa este template. No dupliques aquí la doctrina del Skill `projections` (arbol de decisión, estilo canónico, read APIs) -- solo el handoff concreto de esta idea.
 
-El esquema base de labels del consumidor (`scripts/setup-github-labels.sh`) todavía no incluye `tipo:projection`, así que `gh issue create` fallaría con "label not found". Asegúralo antes de crear el issue (no destructivo: solo lo crea si falta, y respeta el azul del esquema de tipos):
+El esquema base de labels del consumidor (`scripts/setup-github-labels.sh`) ya incluye `tipo:projection` (issue #373). Si el consumidor no ha vuelto a correr ese script desde que actualizó el plugin, `gh issue create` fallaría con "label not found" -- asegúralo antes de crear el issue (no destructivo: solo lo crea si falta, y respeta el azul del esquema de tipos):
 
 ```bash
 gh label list --limit 200 --json name -q '.[].name' | grep -qx "tipo:projection" \
