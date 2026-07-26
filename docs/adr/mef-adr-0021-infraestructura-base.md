@@ -2,7 +2,7 @@
 
 - **Fecha**: 2026-06-25 (reformado 2026-06-30, 2026-07-01, 2026-07-06)
 - **Estado**: aceptado
-- **Aplica a**: scaffolding de infraestructura del proyecto consumidor (Terraform), agentes `infra-base-scaffolder`, `domain-scaffolder` e `infra-writer`, flujo greenfield, y el flujo del pipeline IaC (`scripts/iac-pipeline.sh`) hasta el punto en que el `apply` se delega a CI (MEF-ADR-0022).
+- **Aplica a**: scaffolding de infraestructura del proyecto consumidor (Terraform), agentes `infra-base-scaffolder`, `domain-scaffolder` e `infra-writer`, flujo greenfield, y el flujo del pipeline IaC (`scripts/iac-pipeline.sh`) hasta el punto en que el `apply` se delega a CI (MEF-ADR-0022). Cross-referencia MEF-ADR-0034 (worker de proyecciones y read models), que enmienda este ADR sumando 3 modulos Terraform opt-in de Container App.
 
 ## Contexto
 
@@ -143,6 +143,10 @@ Esta nota vive a nivel del **entorno/consumidor**, no del modulo: el `postgresql
 
 Re-ejecutar el generador sobre un repo que ya tiene parte de la base **no sobrescribe** lo presente: el agente detecta cada archivo existente y solo crea lo faltante, reportando que omitio (para no pisar personalizaciones del consumidor). No hay sobrescritura destructiva.
 
+### Modulos opt-in del worker de proyecciones (MEF-ADR-0034)
+
+Los 8 modulos de este ADR son los que `infra-base-scaffolder` genera **siempre**, sin condicion. MEF-ADR-0034 (worker de proyecciones y read models) suma **3 modulos adicionales, opt-in**, bajo `infra/modules/` -- `container-registry`, `container-app-environment` y `container-app` -- que el mismo agente genera **solo** cuando el Bounded Context declara que adopta el worker de proyecciones del async daemon de Marten (mecanismo de deteccion: token `projections` en `harness.config.json`, a materializar por issue posterior). El contrato completo de esos 3 modulos (inputs, outputs, por que `container-app` no lleva bloque `ingress` ni `prevent_destroy`) vive en MEF-ADR-0034, no en este documento: esta seccion solo deja constancia de que el alcance de este agente ya no se agota en los 8 modulos base incondicionales.
+
 ## Alternativas consideradas
 
 ### Alt 1: directorio `templates/` copiable dentro del plugin
@@ -192,6 +196,7 @@ Un solo agente que crea backend + modulos + entorno.
 - MEF-ADR-0022 (autenticacion de CI por OIDC): reformado junto con este ADR (issue #196) para fijar que el `apply` de infraestructura ocurre en CI bajo identidad federada, nunca localmente; el workflow `infra-cd.yml` que este ADR atribuye al `infra-base-scaffolder` se autentica con esa misma identidad y hereda sus roles ampliados.
 - MEF-ADR-0025 (custodia de secretos): el backend `azurerm` de `infra-cd.yml` es keyless (`use_azuread_auth`), coherente con el principio de "ningun secreto ni key en texto plano".
 - MEF-ADR-0013 (smoke tests contra entorno dev): mismo patron de "el agente que crea el recurso tambien crea su workflow de CI" que ya sigue el `domain-scaffolder`, extendido aqui al `infra-base-scaffolder`.
+- MEF-ADR-0034 (worker de proyecciones y read models): enmienda este ADR sumando 3 modulos Terraform opt-in (`container-registry`, `container-app-environment`, `container-app`) que `infra-base-scaffolder` genera cuando el BC adopta el worker de proyecciones; el contrato de esos 3 modulos vive en MEF-ADR-0034, no aqui.
 
 ## Control de cambios
 
@@ -201,3 +206,4 @@ Un solo agente que crea backend + modulos + entorno.
 - 2026-07-06: reformado (issue #196, ancla doctrinal de la oleada de apply-en-CI, junto con MEF-ADR-0022 y MEF-ADR-0025) para fijar que el `infra-base-scaffolder` tambien emite el workflow de CI de Terraform (`infra-cd.yml`, plan en pull_request / apply en push a main) y que el `apply` real de infraestructura ocurre en ese workflow, nunca localmente. Se elimina del cuerpo la afirmacion de que `/infra aplica` (seccion "Por que un agente y no un directorio de plantillas", punto 3); el pipeline local queda acotado a escritura y revision estatica (`fmt`/`validate`, sin `terraform plan` local). El mecanismo concreto lo materializan la emision de `infra-cd.yml` por el scaffolder (issue #197) y la reimplementacion de `iac-pipeline.sh` y el retiro de `infra-applier` (issue #199).
 - 2026-07-06: corregido para eliminar del cuerpo la descripcion residual de un `terraform plan` local del desarrollador (seccion "El apply ya no ocurre localmente" y punto 3 de "Por que un agente..."), inconsistente con la decision de la oleada de #196 (`plan` solo en CI, cero permisos de Azure para el desarrollador en el flujo ongoing) y con la implementacion ya mergeada de #199 (`iac-pipeline.sh` hace solo revision estatica `fmt`/`init -backend=false`/`validate`). Queda registrado que el pipeline local no ejecuta `terraform plan`; el `plan` real corre en CI (job `plan` de `infra-cd.yml`) al abrir el PR.
 - 2026-07-06: corregido (issue #210) para alinear la fila `function-app` de la tabla de los 8 modulos con el contrato real del modulo (MEF-ADR-0025 decision #3, storage por identidad administrada): se elimina del cuerpo la mencion de los inputs `storage_account_connection_string` y `storage_account_access_key`, que el modulo ya no acepta, y se deja constancia de `storage_uses_managed_identity = true` en la columna de recursos.
+- 2026-07-26: enmendado (issue #361, mandato de MEF-ADR-0034) para sumar 3 modulos Terraform **opt-in** (`container-registry`, `container-app-environment`, `container-app`) que `infra-base-scaffolder` genera cuando el BC adopta el worker de proyecciones del async daemon de Marten -- gateados por un token en `harness.config.json` (a materializar por issue posterior), sin alterar el contrato incondicional de los 8 modulos base. El contrato de esos 3 modulos vive en MEF-ADR-0034, no en el cuerpo de este ADR.

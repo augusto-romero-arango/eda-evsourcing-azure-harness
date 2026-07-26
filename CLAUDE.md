@@ -212,6 +212,7 @@ El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o
 | Esquema de identificación de ADRs con prefijo por proyecto (adopción opcional para consumidores) | MEF-ADR-0030 |
 | Readiness gate por SHA (endpoint `/api/version` + gate deploy->smoke) | MEF-ADR-0031 |
 | Identidad y autenticación en el borde: WorkOS AuthKit + Azure API Management | MEF-ADR-0032 |
+| Worker de proyecciones y read models por Bounded Context (Container App sin ingress, named store por dominio, config-test) | MEF-ADR-0034 |
 
 ## Convenciones del marco
 
