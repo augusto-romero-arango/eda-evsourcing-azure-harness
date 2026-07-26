@@ -45,6 +45,12 @@ LOG_DIR="$PIPELINE_DIR/logs"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 LOG_FILE="$LOG_DIR/tooling-pipeline-$TIMESTAMP.log"
 
+# Lineas de log que abort() muestra a stderr al fallar (issue #379): la causa
+# real de un fallo externo (gh, git, dotnet...) vive en el log del pipeline,
+# no en el mensaje de abort, y sin esto solo llega al log del batch abriendo
+# un segundo archivo.
+TAIL_LOG_LINES=20
+
 # --- Tracking de estado ---
 AGENT_WR_DUR="" AGENT_WR_RES="pending"
 AGENT_RV_DUR="" AGENT_RV_RES="pending"
@@ -57,6 +63,24 @@ CURRENT_STAGE="setup"
 _strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
 _log_file()   { echo -e "$1" | _strip_ansi >> "${LOG_FILE_ABS:-$LOG_FILE}"; }
 
+# _tail_log_for_abort <log_file> <n>
+#
+# Imprime a stderr las ultimas <n> lineas de <log_file> sin codigos ANSI, bajo
+# un encabezado explicito. Usado por abort() para que la causa real de un
+# fallo externo (gh, git, dotnet...) viaje al log del batch sin que el humano
+# tenga que abrir un segundo archivo (issue #379). Tolera log ausente, vacio o
+# con menos de <n> lineas -- en esos casos no imprime nada y no falla. Nunca
+# reentra a abort/warn si el propio tail falla.
+_tail_log_for_abort() {
+    local log_file="$1" n="$2"
+    [ -s "$log_file" ] || return 0
+    local tail_lines
+    tail_lines="$(tail -n "$n" "$log_file" 2>/dev/null | _strip_ansi)" || return 0
+    [ -n "$tail_lines" ] || return 0
+    echo -e "${YELLOW}Ultimas $n lineas del log:${NC}" >&2
+    echo "$tail_lines" >&2
+}
+
 log()     { local m="${BLUE}[$(date +%H:%M:%S)]${NC} $1"; echo -e "$m"; _log_file "$m"; }
 success() { local m="${GREEN}${BOLD}v${NC} $1"; echo -e "$m"; _log_file "$m"; }
 warn()    { local m="${YELLOW}!${NC} $1"; echo -e "$m"; _log_file "$m"; }
@@ -65,6 +89,7 @@ abort() {
     PIPELINE_ERROR="$(echo "$1" | sed 's/"/\\"/g' | tr '\n' ' ')"
     echo -e "\n${RED}${BOLD}x ERROR: $1${NC}" | tee -a "${LOG_FILE_ABS:-$LOG_FILE}"
     echo -e "${YELLOW}Revisa el log: ${LOG_FILE_ABS:-$LOG_FILE}${NC}"
+    _tail_log_for_abort "${LOG_FILE_ABS:-$LOG_FILE}" "$TAIL_LOG_LINES" || true
     if [ -n "${WORKTREE_PATH:-}" ] && [ -d "$WORKTREE_PATH" ]; then
         echo -e "${YELLOW}El worktree queda en: $WORKTREE_PATH${NC}"
         echo -e "${YELLOW}Para inspeccionar: cd $WORKTREE_PATH${NC}"
@@ -186,7 +211,7 @@ echo "=== SESSION TOOLING $TIMESTAMP issue:$ISSUE_NUM from-stage:$FROM_STAGE ===
 header "Preparando contexto"
 
 log "Descargando issue #$ISSUE_NUM..."
-ISSUE_JSON=$(gh issue view "$ISSUE_NUM" --json number,title,body,state 2>>"$LOG_FILE") \
+ISSUE_JSON=$(gh issue view "$ISSUE_NUM" --json number,title,body,state 2>>"$LOG_FILE_ABS") \
     || abort "No se pudo obtener el issue #$ISSUE_NUM"
 ISSUE_STATE=$(echo "$ISSUE_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['state'])" 2>/dev/null || echo "UNKNOWN")
 if [ "$ISSUE_STATE" != "OPEN" ]; then
@@ -732,7 +757,7 @@ EOF
         --base main \
         --head "$BRANCH_NAME" \
         --repo "$REPO_SLUG_PR" \
-        2>>"$LOG_FILE") \
+        2>>"$LOG_FILE_ABS") \
         || abort "No se pudo crear el PR"
 
     success "PR creado: $PR_URL"
