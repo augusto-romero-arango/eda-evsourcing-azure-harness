@@ -133,7 +133,7 @@ tu propuesta en vez de darlo por cierto.
 | `/implement` | Pipeline TDD para un issue `estado:listo` |
 | `/tooling` | Pipeline de tooling (scripts, fixtures, config, agentes) |
 | `/infra` | Pipeline IaC con Terraform (write → review → apply) |
-| `/infra-base` | Genera la infraestructura base (8 módulos + esqueleto del entorno) en greenfield |
+| `/infra-base` | Genera la infraestructura base (8 módulos + esqueleto del entorno) en greenfield; suma los 3 módulos del worker de proyecciones si `projections.enabled` |
 | `/seed-secret` | Registra y cablea un secreto nuevo post-greenfield (Key Vault + Function App de un dominio) |
 | `/install-workos` | Guia el dashboard de WorkOS AuthKit (cuenta, client_id, API key, rol admin) y cablea el adapter (agente de identidad) + la custodia de la API key (`/seed-secret`) |
 | `/install-apim` | Instala/actualiza el gateway APIM (agente `apim-gateway-scaffolder`), cablea `TF_VAR_workos_client_id`/`TF_VAR_cors_allowed_origins` y ejecuta la transicion a->b de tenancy (MEF-ADR-0028 seccion 4): flip de `tenancy.strategy` + migracion del `ITenantResolver` de todos los dominios ya scaffoldeados a `AgregarTenantResolverHibrido()` |
@@ -167,7 +167,7 @@ Doctrina pesada empaquetada con *progressive disclosure* (MEF-ADR-0033); no son 
 | `eda-modeler` | Formaliza flujos y aggregates en `docs/eda/` |
 | `historiador` | Consolida field notes en la bitácora del día |
 | `domain-scaffolder` | Crea scaffold de un nuevo dominio |
-| `infra-base-scaffolder` | Genera la infraestructura base del consumidor (8 módulos + entorno) en greenfield |
+| `infra-base-scaffolder` | Genera la infraestructura base del consumidor (8 módulos + entorno) en greenfield, más los 3 módulos opt-in de Container App del worker de proyecciones cuando `projections.enabled` (MEF-ADR-0034) |
 | `projections-scaffolder` | Genera el worker de proyecciones (`{RootNamespace}.Projections`: Program.cs, seam base, Dockerfile) cuando el BC habilita `projections.enabled` (fase 1, MEF-ADR-0034) |
 | `apim-gateway-scaffolder` | Genera el gateway APIM (validate-jwt WorkOS AuthKit + claims→headers) fiel al catálogo de trampas de MEF-ADR-0032 |
 | `workos-identity-scaffolder` | Genera el adapter WorkOS (IIdentityProvider + WorkOsIdentityProvider) y su wiring en un dominio, fiel a la referencia de Cosmos.ControlPlane (MEF-ADR-0032) |
