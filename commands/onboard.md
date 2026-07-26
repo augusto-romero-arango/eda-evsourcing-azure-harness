@@ -2,7 +2,7 @@
 model: haiku
 ---
 
-Diagnostica el onboarding del consumidor: valida `.claude/harness.config.json`, los labels y el CI, y reporta un checklist de que esta listo y que falta. Presenta ademas la **bifurcacion de dos caminos de auth** (MEF-ADR-0028 + enmienda #337): (A) crecer -- autenticacion orquestada desde el inicio, etapa `multi-tenant-header` -- vs (B) POC -- sin autenticacion, etapa `mono-tenant-transitorio`, el default. Es un **doctor**: por defecto solo diagnostica (no crea ni modifica nada). Como excepciones **opt-in**, si lo confirmas explicitamente puede provisionar los labels faltantes (el script subyacente es destructivo: borra los labels default de GitHub), configurar el CI hacia Azure (crea recursos reales en Azure -- app de Entra, role assignments y federated credential, por OIDC; ver MEF-ADR-0022) y escribir/actualizar la estrategia de tenancy vigente (`tenancy.strategy`, MEF-ADR-0028) que materializa el camino elegido. Comunicate en **espanol**.
+Diagnostica el onboarding del consumidor: valida `.claude/harness.config.json`, los labels y el CI, y reporta un checklist de que esta listo y que falta. Presenta ademas la **bifurcacion de dos caminos de auth** (MEF-ADR-0028 + enmienda #337): (A) crecer -- autenticacion orquestada desde el inicio, etapa `multi-tenant-header` -- vs (B) POC -- sin autenticacion, etapa `mono-tenant-transitorio`, el default. Es un **doctor**: por defecto solo diagnostica (no crea ni modifica nada). Como excepciones **opt-in**, si lo confirmas explicitamente puede provisionar los labels faltantes (el script subyacente es destructivo: borra los labels default de GitHub), configurar el CI hacia Azure (crea recursos reales en Azure -- app de Entra, role assignments y federated credential, por OIDC; ver MEF-ADR-0022), escribir/actualizar la estrategia de tenancy vigente (`tenancy.strategy`, MEF-ADR-0028) que materializa el camino elegido, y encadenar `/scaffold-projections` (MEF-ADR-0034, issue #369) cuando el BC declara `projections.enabled: true` pero el worker de proyecciones todavia no existe. Comunicate en **espanol**.
 
 ## Pre-condicion: cwd != Mefisto
 
@@ -32,10 +32,11 @@ Si el bloque imprime `ERROR`, detente y muestra el mensaje al usuario.
 6. **Secretos que alimentan la siembra en CI** (MEF-ADR-0025, informativo): que existan en GitHub `TF_VAR_POSTGRESQL_ADMIN_PASSWORD` y un `SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` por cada alias de `serviceBus.external[]`. Son los **inputs** que `infra-cd.yml` usa para sembrar el Key Vault del BC en un step posterior al `apply`; ya no hay siembra manual del admin ni verificacion del data plane del vault (MEF-ADR-0025 decision #6/#10). Reusa la misma lectura de `gh secret list` del punto 5; si falta, reporta `NO VERIFICADO` sin bloquear (un greenfield legitimo aun no tiene Postgres provisionado ni alias externos declarados).
 7. **Registro `secrets[]`** (issue #256, informativo): cuantas entradas hay registradas (las siembra el step data-driven de `infra-cd.yml`, sin ninguna linea hardcodeada por secreto) y, para cada entrada con `source.type: "github-secret"`, si el GitHub secret que referencia existe en el repo. La **forma** del array (`name` unico, `source.type` en {`output`, `github-secret`, `composite`}, `source.value` no vacio) ya la valida `load_harness_config` como parte del punto 1 (`Configuracion`): un `secrets[]` mal formado hace que esa seccion reporte `FALTA`, con el mensaje exacto que emite la funcion. Ausente por completo, reporta `NO VERIFICADO` sin bloquear (normal antes del primer `/infra-base`).
 8. **Bifurcacion de dos caminos de auth** (`tenancy.strategy`, MEF-ADR-0028 + enmienda #337, MEF-ADR-0032, issue #323 + #341, informativo): que camino declaro el proyecto, mapeado 1:1 a las dos etapas de tenancy de MEF-ADR-0028 -- **(A) crecer**: autenticacion orquestada desde el inicio (`multi-tenant-header`, etapa b, ya existe o se planea una autenticacion que produce un `TenantContext`) o **(B) POC**: sin autenticacion (`mono-tenant-transitorio`, etapa a, greenfield, el default). No se sondea en codigo (no hay señal fiable: el harness no referencia ningun tipo `Cosmos.MultiTenancy.*`/autenticacion); es un token **declarado** por el humano. Ausente equivale al camino (B) POC/etapa (a) por defecto, asi que nunca reporta `FALTA` -- solo `OK` (valor reconocido, cualquiera de los dos caminos) o `NO VERIFICADO` (ausente, o con un valor no reconocido).
+9. **Worker de proyecciones** (`projections.enabled`, MEF-ADR-0034, issue #369, informativo): si el BC declaro que adopta proyecciones y, si lo declaro, si el worker `<RootNamespace>.Projections` ya existe. Usa `HARNESS_PROJECTIONS_ENABLED` (`load_harness_config`, nunca sondea codigo mas alla de la existencia del csproj). Ausente, `null`, `false` o cualquier valor distinto de `true` nunca reporta `FALTA` -- es opt-in, igual que `tenancy.strategy`. Si esta en `true` y el worker ya existe, reporta `OK`; si esta en `true` pero el worker no existe todavia, reporta `NO VERIFICADO` y habilita el paso opt-in 6 (encadenar `/scaffold-projections`).
 
-La provision de **labels** (paso 3), la del **CI** hacia Azure (paso 4) y la escritura de la **estrategia de tenancy** (paso 5, la bifurcacion de caminos de auth) las ofrece `/onboard` como pasos **opt-in**, bajo confirmacion explicita: el script de labels es destructivo (borra los labels default de GitHub), el de CI crea recursos reales en Azure (app de Entra, role assignments, federated credential -- OIDC, MEF-ADR-0022) y el de tenancy escribe `.claude/harness.config.json`. El diagnostico en si sigue siendo de solo lectura: sin tu confirmacion no se crea, borra, escribe ni provisiona nada. (Los writes opt-in de `/onboard` pasan asi de 2 -- labels, CI -- a 3, sumando el token `tenancy.strategy` que materializa el camino de auth elegido.)
+La provision de **labels** (paso 3), la del **CI** hacia Azure (paso 4), la escritura de la **estrategia de tenancy** (paso 5, la bifurcacion de caminos de auth) y encadenar **`/scaffold-projections`** (paso 6, cuando el worker de proyecciones falta) las ofrece `/onboard` como pasos **opt-in**, bajo confirmacion explicita: el script de labels es destructivo (borra los labels default de GitHub), el de CI crea recursos reales en Azure (app de Entra, role assignments, federated credential -- OIDC, MEF-ADR-0022), el de tenancy escribe `.claude/harness.config.json`, y el de proyecciones genera codigo nuevo (invoca al agente `projections-scaffolder`). El diagnostico en si sigue siendo de solo lectura: sin tu confirmacion no se crea, borra, escribe, genera ni provisiona nada. (Los writes opt-in de `/onboard` pasan asi de 2 -- labels, CI -- a 4, sumando el token `tenancy.strategy` que materializa el camino de auth elegido y la cadena hacia `/scaffold-projections`.)
 
-Al cerrar el reporte, `/onboard` imprime un bloque **"Proximos pasos"**: deriva del mismo diagnostico ya hecho (sin re-verificar nada) el comando exacto a correr a continuacion -- labels (MEF-ADR-0007), CI (MEF-ADR-0022), infraestructura base (`/mefisto:infra-base dev`, MEF-ADR-0021), el recordatorio recurrente de mantener al dia los GitHub secrets que alimentan la siembra en CI (MEF-ADR-0025), o -- cuando el camino declarado es (A) crecer (`tenancy.strategy = multi-tenant-header`) -- el puntero a `/install-auth` (tras infra base + `/scaffold`, issue #342, implementado) para instalar WorkOS+APIM (MEF-ADR-0032), segun que seccion reporto `FALTA` o que camino de auth quedo declarado -- y cierra con un puntero descubrible al quickstart narrativo del arranque greenfield (`docs/greenfield-quickstart.md` del harness). Es **puramente informativo**: no ejecuta `gh`/`az` ni provisiona nada; las escrituras que puede derivar siguen siendo los pasos opt-in 3 (labels) y 4 (CI) -- la escritura de tenancy (paso 5) se ofrece siempre, independientemente de este bloque, porque nunca reporta `FALTA`.
+Al cerrar el reporte, `/onboard` imprime un bloque **"Proximos pasos"**: deriva del mismo diagnostico ya hecho (sin re-verificar nada) el comando exacto a correr a continuacion -- labels (MEF-ADR-0007), CI (MEF-ADR-0022), infraestructura base (`/mefisto:infra-base dev`, MEF-ADR-0021), el recordatorio recurrente de mantener al dia los GitHub secrets que alimentan la siembra en CI (MEF-ADR-0025), el camino declarado (A) crecer (`tenancy.strategy = multi-tenant-header`) -- el puntero a `/install-auth` (tras infra base + `/scaffold`, issue #342, implementado) para instalar WorkOS+APIM (MEF-ADR-0032) --, o el worker de proyecciones faltante (`/scaffold-projections`, MEF-ADR-0034, issue #369), segun que seccion reporto `FALTA`/`NO VERIFICADO` o que camino/token quedo declarado -- y cierra con un puntero descubrible al quickstart narrativo del arranque greenfield (`docs/greenfield-quickstart.md` del harness). Es **puramente informativo**: no ejecuta `gh`/`az` ni provisiona nada; las escrituras que puede derivar siguen siendo los pasos opt-in 3 (labels) y 4 (CI) -- la escritura de tenancy (paso 5) y la cadena hacia `/scaffold-projections` (paso 6) se ofrecen siempre que corresponda, independientemente de este bloque, porque ninguna de las dos reporta `FALTA`.
 
 ## Proceso
 
@@ -58,7 +59,7 @@ ACTIONS=""
 # Flags para el bloque de cierre "Proximos pasos" (CA-1): se fijan junto a cada row() FALTA
 # correspondiente, para no re-diagnosticar nada al construir el bloque en la seccion 6.
 # PA_AUTH_PATH (issue #341) no acompaña un FALTA -- se fija cuando el camino declarado es (A) crecer.
-PA_CONFIG_FALTA=0; PA_TOKENS_FALTA=0; PA_LABELS_FALTA=0; PA_CI_FALTA=0; PA_INFRA_BASE_MISSING=0; PA_AUTH_PATH=0
+PA_CONFIG_FALTA=0; PA_TOKENS_FALTA=0; PA_LABELS_FALTA=0; PA_CI_FALTA=0; PA_INFRA_BASE_MISSING=0; PA_AUTH_PATH=0; PA_PROJECTIONS_MISSING=0
 
 row() {
   estado="$1"; shift; item="$*"
@@ -295,7 +296,24 @@ case "$TENANCY_STRATEGY" in
     ;;
 esac
 
-# --- 9. Acciones y resumen ---
+# --- 9. Worker de proyecciones (projections.enabled, MEF-ADR-0034, issue #369, informativo) ---
+echo ""
+echo "Worker de proyecciones (projections.enabled, MEF-ADR-0034):"
+if [ "${HARNESS_PROJECTIONS_ENABLED:-false}" != "true" ]; then
+  row NV "projections.enabled ausente o en false -- BC no adopta proyecciones (opt-in, valido, no bloqueante)"
+elif [ -z "${HARNESS_NAMESPACE_PREFIX:-}" ]; then
+  row NV "projections.enabled=true, pero no se pudo determinar la ruta del worker (revisa la seccion Configuracion)"
+else
+  WORKER_CSPROJ="src/${HARNESS_NAMESPACE_PREFIX}.Projections/${HARNESS_NAMESPACE_PREFIX}.Projections.csproj"
+  if [ -f "$WORKER_CSPROJ" ]; then
+    row OK "projections.enabled=true -- worker ${HARNESS_NAMESPACE_PREFIX}.Projections presente"
+  else
+    row NV "projections.enabled=true, pero el worker ${HARNESS_NAMESPACE_PREFIX}.Projections no existe todavia (corre /scaffold-projections)"
+    PA_PROJECTIONS_MISSING=1
+  fi
+fi
+
+# --- 10. Acciones y resumen ---
 echo ""
 if [ -n "$ACTIONS" ]; then
   echo "Acciones sugeridas (el diagnostico no ejecuta ninguna; los labels faltantes y el CI los pueden provisionar los pasos opt-in, bajo tu confirmacion):"
@@ -336,6 +354,12 @@ if [ "$N_FALTA" -eq 0 ]; then
     echo "     /mefisto:infra-base y /mefisto:scaffold <dominio>, corre /install-auth para instalar WorkOS+APIM"
     echo "     (MEF-ADR-0032): encadena /install-workos y /install-apim con el gate humano en medio."
   fi
+  if [ "$PA_PROJECTIONS_MISSING" -eq 1 ]; then
+    PA_STEP=$((PA_STEP+1))
+    echo "  $PA_STEP. El BC declara projections.enabled=true pero el worker de proyecciones no existe:"
+    echo "     corre /scaffold-projections para generarlo (MEF-ADR-0034), o confirma el paso opt-in que"
+    echo "     te ofrece este mismo /onboard."
+  fi
 else
   PA_STEP=0
   if [ "$PA_CONFIG_FALTA" -eq 1 ]; then
@@ -366,6 +390,12 @@ else
     echo "     resueltos los FALTA de arriba, con infra base y al menos un dominio scaffoldeado, corre"
     echo "     /install-auth para instalar WorkOS+APIM (MEF-ADR-0032): encadena /install-workos y"
     echo "     /install-apim con el gate humano en medio."
+  fi
+  if [ "$PA_PROJECTIONS_MISSING" -eq 1 ]; then
+    PA_STEP=$((PA_STEP+1))
+    echo "  $PA_STEP. El BC declara projections.enabled=true pero el worker de proyecciones no existe:"
+    echo "     corre /scaffold-projections para generarlo (MEF-ADR-0034), o confirma el paso opt-in que"
+    echo "     te ofrece este mismo /onboard."
   fi
   if [ "$PA_STEP" -eq 0 ]; then
     echo "  Resuelve primero los \"NO VERIFICADO\" de arriba (instala/autentica lo que falte) para que"
@@ -561,14 +591,35 @@ fi
 
 4. **Reporta el resultado al usuario.** Si escribio el token, recuerdale que `domain-scaffolder` (Paso 0) solo lo lee en el **proximo** dominio que scaffoldee -- no re-scaffoldea dominios ya existentes. Si el proyecto tiene dominios en etapa (a) y acaba de declarar la etapa (b), reemplazar el `ITenantResolver` de esos dominios existentes sigue siendo manual (ver el `// TODO(tenancy etapa b)` que `domain-scaffolder` deja en `TenantResolverMonoTenantPorDefecto.cs`, MEF-ADR-0028). Si el camino elegido fue **(A) crecer**, suma el puntero al orquestador (CA-3): tras `/mefisto:infra-base` y `/mefisto:scaffold <dominio>`, el siguiente paso es correr `/install-auth` para instalar WorkOS+APIM (MEF-ADR-0032, issue #342) -- encadena `/install-workos` y `/install-apim` con el gate humano en medio, sin que tengas que conocer el orden ni invocar cada skill de capa por separado.
 
+### 6. Worker de proyecciones: provision opt-in encadenando `/scaffold-projections`
+
+Es la **cuarta** escritura opt-in de `/onboard` (junto a labels, CI y tenancy), y la unica que genera codigo nuevo -- invoca al agente `projections-scaffolder` -- en vez de tocar `.claude/harness.config.json` o recursos externos. El diagnostico (pasos 1-2) nunca genera el worker; solo reporta si falta (CA-3).
+
+Aplica este paso **solo si** la seccion "Worker de proyecciones" del diagnostico reporto `projections.enabled=true, pero el worker ... no existe todavia` (issue #369). Si `projections.enabled` no esta en `true`, o el worker ya existe, no hay nada que ofrecer -- omite el paso sin insistir.
+
+1. **Pide confirmacion explicita (CA-4).** El BC ya declaro que adopta proyecciones (el token esta en `true`); este paso solo pregunta si generar el worker ahora, p. ej.: "El BC declara `projections.enabled: true` pero el worker de proyecciones (`<RootNamespace>.Projections`) todavia no existe. ¿Quieres que corra `/scaffold-projections` ahora para generarlo (MEF-ADR-0034)? [si/no]".
+2. **No ejecutes nada sin un "si" explicito.** Si el usuario no confirma (o prefiere hacerlo despues), no invoques nada: recuerdale que puede correr `/scaffold-projections` el mismo cuando quiera, y termina el paso. El comportamiento por defecto de `/onboard` sigue siendo solo diagnostico.
+3. **Solo si el usuario confirma**, encadena `/scaffold-projections` leyendo integramente su `Proceso` -- mismo patron que `/install-auth` encadena `/install-workos`/`/install-apim`: nunca reimplementes la logica del skill ni la del agente `projections-scaffolder`. Resuelve `$PLUGIN_ROOT` (mismo patron que el paso 1) y lee el skill del plugin:
+
+```bash
+PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+cat "${PLUGIN_ROOT%/}/commands/scaffold-projections.md"
+```
+
+Ejecuta sus dos pre-condiciones (cwd != Mefisto, token `projections.enabled`) y su `Proceso` completo tal cual -- incluida su propia idempotencia interna: si el worker ya existiera (condicion de carrera improbable entre el diagnostico y este paso), `projections-scaffolder` lo reporta el mismo sin duplicar nada.
+
+4. **Reporta el resultado al usuario** tal como lo reporto `/scaffold-projections` (su seccion "3. Tras terminar", incluida la cadena de issues relacionados que recuerda: `domain-scaffolder` para registrar el store de cada dominio, y los modulos Terraform del Container App si `/infra-base` no corrio todavia con el token habilitado). Si `/scaffold-projections` aborto (p. ej. el token resulto deshabilitado entre el diagnostico y este paso), propala su mensaje sin reinterpretarlo.
+
 ## Reglas
 
-- **Diagnostico de solo lectura por defecto.** El diagnostico (pasos 1-2) no ejecuta `gh label create`, `az ... create`, ni escribe archivos o recursos. Las **unicas** acciones de escritura permitidas son las **provisiones opt-in** -- labels (paso 3, el script borra los labels default de GitHub), CI hacia Azure (paso 4, el script crea app de Entra, role assignments y federated credential OIDC) y la estrategia de tenancy (paso 5, escribe `tenancy.strategy` en `.claude/harness.config.json`) -- y solo tras la confirmacion explicita del usuario **para cada una**: nunca las ejecutes sin un "si". Sin confirmacion, una corrida de `/onboard` no crea, borra, escribe ni provisiona nada (ni labels, ni recursos de Azure, ni copia secrets, ni toca el config).
+- **Diagnostico de solo lectura por defecto.** El diagnostico (pasos 1-2) no ejecuta `gh label create`, `az ... create`, ni escribe archivos o recursos. Las **unicas** acciones de escritura permitidas son las **provisiones opt-in** -- labels (paso 3, el script borra los labels default de GitHub), CI hacia Azure (paso 4, el script crea app de Entra, role assignments y federated credential OIDC), la estrategia de tenancy (paso 5, escribe `tenancy.strategy` en `.claude/harness.config.json`) y encadenar `/scaffold-projections` (paso 6, genera el worker de proyecciones invocando al agente `projections-scaffolder`) -- y solo tras la confirmacion explicita del usuario **para cada una**: nunca las ejecutes sin un "si". Sin confirmacion, una corrida de `/onboard` no crea, borra, escribe, genera ni provisiona nada (ni labels, ni recursos de Azure, ni copia secrets, ni toca el config, ni codigo nuevo).
 - **No abortes ante un fallo parcial.** Cada seccion del diagnostico es independiente: si `gh` o `az` no estan disponibles, reporta `NO VERIFICADO` y continua con el resto.
 - **No dupliques la validacion del config.** El formato de `terraformStateStorage` y los campos requeridos los valida `load_harness_config` (issue #78); este skill solo reporta su resultado.
 - **La estructura de carpetas es informativa, nunca `FALTA`.** Un greenfield legitimo aun no tiene `src/`, `tests/` ni `infra/environments/` antes del primer `/scaffold` o `/infra-base`; marcarla como bloqueante daria un falso negativo (issue #212).
 - **Los secretos que alimentan la siembra en Key Vault (MEF-ADR-0025) son informativos, nunca `FALTA`.** La siembra en el Key Vault del BC la hace CI (`infra-cd.yml`) tras el `apply`; ningun humano custodia secretos en su data plane. El diagnostico solo reporta si los GitHub secrets que la alimentan (`TF_VAR_POSTGRESQL_ADMIN_PASSWORD`, `SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` por alias) existen -- un greenfield legitimo aun no los tiene antes de provisionar Postgres o declarar `serviceBus.external[]` (issue #232).
 - **El registro `secrets[]` (issue #256) tambien es informativo, nunca `FALTA` por si solo.** Su **forma** (`name`/`source.type`/`source.value`) ya la valida `load_harness_config` como parte de la seccion "Configuracion" (punto 1) -- un `secrets[]` mal formado hace que ESA seccion reporte `FALTA`, no esta. Esta seccion solo cuenta las entradas registradas y, para las de tipo `github-secret`, si el GitHub secret que referencian existe -- lo mismo que ya hacia para `serviceBus.external[]`, generalizado a cualquier entrada.
 - **La bifurcacion de dos caminos de auth (`tenancy.strategy`, MEF-ADR-0028, issue #323, issue #341) es informativa, nunca `FALTA`.** Mapeada 1:1 a las dos etapas de tenancy -- (A) crecer = etapa b `multi-tenant-header`, (B) POC = etapa a `mono-tenant-transitorio`. Ausente equivale al camino (B) POC por defecto (retrocompatible); no hay señal de codigo fiable para inferir el camino, asi que `/onboard` nunca lo sondea -- solo reporta el valor declarado (o su ausencia) y ofrece el paso opt-in 5 para escribirlo bajo confirmacion. `/onboard` no absorbe la orquestacion de auth (eso vive en `/install-auth`): solo presenta la bifurcacion, la registra y apunta al orquestador en "Proximos pasos".
-- **El bloque de cierre "Proximos pasos" es puramente informativo (issue #222).** Solo lee las mismas variables que ya acumulo el diagnostico (`N_FALTA`, `N_NV`, y los flags `PA_*` por seccion, incluyendo `PA_AUTH_PATH` -- issue #341) para imprimir el comando exacto a correr a continuacion (incluido el puntero a `/install-auth` cuando el camino declarado es (A) crecer) y el puntero al quickstart greenfield; nunca ejecuta `gh`/`az` ni escribe nada. No reemplaza ni condiciona las provisiones opt-in (pasos 3, 4 y 5), que siguen requiriendo confirmacion explicita para cada una.
+- **El worker de proyecciones (`projections.enabled`, MEF-ADR-0034, issue #369) es informativo, nunca `FALTA`.** Es un token opt-in (mismo criterio que `tenancy.strategy`): ausente, `null`, `false` o cualquier valor distinto de `true` es un estado valido, no bloqueante. Solo cuando esta en `true` y el worker todavia no existe se ofrece el paso opt-in 6 (encadenar `/scaffold-projections`) -- `/onboard` no genera codigo por si mismo, delega en el skill/agente.
+- **El bloque de cierre "Proximos pasos" es puramente informativo (issue #222).** Solo lee las mismas variables que ya acumulo el diagnostico (`N_FALTA`, `N_NV`, y los flags `PA_*` por seccion, incluyendo `PA_AUTH_PATH` -- issue #341 -- y `PA_PROJECTIONS_MISSING` -- issue #369) para imprimir el comando exacto a correr a continuacion (incluido el puntero a `/install-auth` cuando el camino declarado es (A) crecer, y el puntero a `/scaffold-projections` cuando el worker de proyecciones falta) y el puntero al quickstart greenfield; nunca ejecuta `gh`/`az` ni escribe nada. No reemplaza ni condiciona las provisiones opt-in (pasos 3, 4, 5 y 6), que siguen requiriendo confirmacion explicita para cada una.
 - Si `$ARGUMENTS` trae algo, ignoralo: `/onboard` no toma argumentos.
