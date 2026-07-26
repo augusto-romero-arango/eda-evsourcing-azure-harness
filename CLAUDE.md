@@ -214,6 +214,7 @@ El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o
 | Identidad y autenticación en el borde: WorkOS AuthKit + Azure API Management | MEF-ADR-0032 |
 | Adopción de Agent Skills (progressive disclosure) para doctrina pesada del marco | MEF-ADR-0033 |
 | Worker de proyecciones y read models por Bounded Context (Container App sin ingress, named store por dominio, config-test) | MEF-ADR-0034 |
+| Doctrina de proyección y query read-side (recetas en 3 niveles, estilo record inmutable, superficie de consulta sobre QuerySession tenant-scoped) | MEF-ADR-0035 |
 
 ## Convenciones del marco
 
