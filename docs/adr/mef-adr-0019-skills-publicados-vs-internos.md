@@ -26,7 +26,8 @@ Separar fisicamente los dos sets:
 
 Permanece en el top-level del repo del plugin:
 
-- `commands/` -- skills publicados.
+- `commands/` -- skills publicados (slash commands).
+- `skills/` -- Agent Skills publicados (MEF-ADR-0033).
 - `agents/` -- agentes publicados.
 - `scripts/` -- pipelines bash publicados.
 - `hooks/hooks.json` -- hooks publicados.
@@ -35,7 +36,7 @@ Los skills publicados:
 
 - Solo operan sobre archivos del consumidor (workflows en `.github/`, fixtures de `tests/`, `.claude/harness.config.json`, `.claude/settings.json`, `pipeline-state/`, scripts ad-hoc del consumidor).
 - Tienen un **guard defensivo** al inicio que aborta si detectan `.claude-plugin/plugin.json` en el cwd (i.e., si por error alguien los invoca dentro del repo de Mefisto).
-- El pipeline `scripts/tooling-pipeline.sh` aplica un **gate de scope** (`validate_consumer_scope_changes`) que rechaza el PR si el agente toca `commands/`, `agents/`, `hooks/`, `.claude-plugin/` o `docs/adr/` (rutas reservadas al plugin).
+- El pipeline `scripts/tooling-pipeline.sh` aplica un **gate de scope** (`validate_consumer_scope_changes`) que rechaza el PR si el agente toca `commands/`, `skills/`, `agents/`, `hooks/`, `.claude-plugin/` o `docs/adr/` (rutas reservadas al plugin). El blocklist enumera rutas explicitamente (`is_path_in_consumer_blocklist`), asi que **cada tipo de artefacto nuevo del plugin hay que registrarlo a mano** -- omitirlo abre un hueco silencioso en esta frontera.
 - Los pipelines de orquestacion (`parallel-pipeline.sh`, `batch-pipeline.sh`, `pr-sync.sh`) abortan si se invocan dentro del repo de Mefisto.
 
 ### B. Lado interno (NO distribuido)
@@ -43,12 +44,13 @@ Los skills publicados:
 Vive en `.claude/` del repo del propio plugin:
 
 - `.claude/commands/` -- skills internos con prefijo `mefisto-` (`/mefisto-tooling`, `/mefisto-plan`, `/mefisto-bug`, `/mefisto-fix-review`, `/mefisto-merge`, `/mefisto-work-status`).
+- `.claude/skills/` -- Agent Skills internos (MEF-ADR-0033).
 - `.claude/agents/` -- agentes internos (`mefisto-investigator`, `mefisto-planner`).
 - `.claude/scripts/` -- pipelines internos (`_mefisto-common.sh`, `mefisto-tooling-pipeline.sh`, `mefisto-tmux-pipeline.sh`).
 
 Los skills internos:
 
-- Solo operan sobre archivos del propio plugin (`commands/`, `agents/`, `scripts/`, `hooks/`, `docs/`, `.claude-plugin/`, `.claude/{commands,agents,scripts}/`, gobierno del repo).
+- Solo operan sobre archivos del propio plugin (`commands/`, `skills/`, `agents/`, `scripts/`, `hooks/`, `docs/`, `.claude-plugin/`, `.claude/{commands,skills,agents,scripts}/`, gobierno del repo). La allowlist tambien enumera rutas explicitamente (`is_path_in_mefisto_scope`), asi que un artefacto nuevo no registrado hace que el pipeline interno rechace su propio PR.
 - Tienen un **guard inverso**: abortan si NO detectan `.claude-plugin/plugin.json` (i.e., si alguien los invoca fuera del repo de Mefisto).
 - Claude Code los carga automaticamente cuando se abre el repo de Mefisto, **sin necesidad de instalar el plugin sobre si mismo**. Esto se basa en que `.claude/commands/` y `.claude/agents/` son convenciones de configuracion por-repo del propio Claude Code, separadas del plugin distribuido.
 
@@ -117,3 +119,9 @@ Pros: separacion fisica dura. Contras: dos artefactos a publicar y mantener, dep
 - MEF-ADR-0018 (heuristicas de evolucion y reuso): justifica posponer el refactor a un common compartido entre lado publicado e interno.
 - MEF-ADR-0007 (gestion de proyecto con GitHub Issues): los labels `tipo:tooling` y `estado:borrador|listo` se aplican igual en ambos repos.
 - MEF-ADR-0011 (Definition of Ready por tipo de issue): el DoR del harness es una version simplificada del DoR del consumidor (sin "Modelo de eventos", sin `dom:`).
+- MEF-ADR-0033 (adopcion de Agent Skills): extiende esta misma separacion publicado/interno a un tercer tipo de artefacto (`skills/` y `.claude/skills/`) y registra ambas rutas en los gates de scope.
+
+## Control de cambios
+
+- 2026-05-15: creacion como `aceptado`.
+- 2026-07-26: enmienda por MEF-ADR-0033 (issue #360). Se agrega el tercer tipo de artefacto a los dos lados de la separacion (`skills/` publicado, `.claude/skills/` interno) y se registra en los gates de scope: `skills/*` en el blocklist publicado (`is_path_in_consumer_blocklist`), `skills/*` y `.claude/skills/*` en la allowlist interna (`is_path_in_mefisto_scope`), con cobertura en `scripts/tests/test-guards.sh`. Se explicita que ambos gates enumeran rutas de forma explicita, por lo que todo tipo de artefacto nuevo debe registrarse a mano.

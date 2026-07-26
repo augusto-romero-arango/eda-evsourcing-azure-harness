@@ -572,7 +572,8 @@ read_backend_storage_account_name() {
 # Retorna 1 si el path esta fuera del blocklist (i.e. es valido para el consumidor).
 #
 # Blocklist (rutas que solo deben tocarse desde el repo de Mefisto):
-#   commands/         Skills publicados (viven en el plugin)
+#   commands/         Skills publicados como slash command (viven en el plugin)
+#   skills/           Agent Skills publicados del plugin (MEF-ADR-0033)
 #   agents/           Agentes publicados
 #   hooks/            Hooks del plugin
 #   .claude-plugin/   Metadata del plugin (plugin.json, marketplace.json)
@@ -583,7 +584,7 @@ is_path_in_consumer_blocklist() {
     [ -z "$path" ] && return 1
 
     case "$path" in
-        commands/*|agents/*|hooks/*) return 0 ;;
+        commands/*|skills/*|agents/*|hooks/*) return 0 ;;
         .claude-plugin/*) return 0 ;;
         docs/adr/*) return 0 ;;
         *) return 1 ;;
