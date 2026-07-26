@@ -87,7 +87,7 @@ Si los tests referencian tipos que no existen, crealos con `throw new NotImpleme
 
 - **Read model** (record, estilo canonico de `modelos-marten.md`): `public sealed partial record TurnoView(...)` con `Create`/`Apply`/`ShouldDelete` como stub.
 - **Clase de proyeccion N2** (si aplica): `public sealed partial class {Concepto}Projection : MultiStreamProjection<...>` -- el constructor de correlacion (`Identity<T>(...)`) no es un stub, no tiene logica que fallar; los `Create`/`Apply` si son stub.
-- **Seam de composicion**: `public static partial class ConfiguracionMartenProjections{Dominio} { public static partial void Configurar{Dominio}(IServiceCollection services, string dummyConnectionString); }` -- declaralo **con** modificadores de acceso y retorno no-`void` para que el compilador exija su implementacion (`CS8795`); si lo declaras sin ellos, la unica red de seguridad pasa a ser el config-test (MEF-ADR-0034 punto 1). Documenta en tu resumen cual forma elegiste.
+- **Seam de composicion** (`ConfiguracionMartenProjections{Dominio}.Configurar{Dominio}`; la firma exacta la fija `config-test.md`): el config-test lo invoca **desde otro ensamblado** (`<RootNamespace>.Projections.Tests`), asi que el seam necesita modificadores de acceso para ser alcanzable (`public`, o `internal` + `InternalsVisibleTo`) -- y con ellos el compilador **exige** la parte implementadora (`CS8795`: *"Partial member must have an implementation part because it has accessibility modifiers"*). Deja por tanto la declaracion **y** una parte implementadora con `throw new NotImplementedException()`, el stub normal de la fase roja: el config-test queda rojo por esa excepcion, que es exactamente el rojo que buscas. **No** uses la forma que puede desaparecer en silencio (sin modificadores, `void`, sin `out` -- MEF-ADR-0034 punto 1): es implicitamente `private` y el config-test no podria llamarla desde su ensamblado. Documenta la forma elegida en tu resumen: con modificadores, el compilador ya cubre la guarda 1 de `config-test.md` y el test conserva valor por las guardas 2 y 3.
 - **Marker del named store**: `public interface I{Dominio}ProjectionStore : IDocumentStore;`
 - **`FunctionEndpoint`** de cada query: clase con el metodo `Run` que lanza `NotImplementedException`.
 
@@ -109,7 +109,7 @@ Si los tests referencian tipos que no existen, crealos con `throw new NotImpleme
    git add tests/ src/
    git commit -m "test(hu-XX): tests read-side para [descripcion breve] (fase roja)"
    ```
-7. Escribe el resumen en `.claude/pipeline/summaries/stage-1-test-writer.md` (mismo formato que `test-writer.md`: tests creados, estructura elegida, stubs creados, cobertura de criterios, desviaciones del plan del planner). No lo incluyas en el commit.
+7. Escribe el resumen en `.claude/pipeline/summaries/stage-1-projection-test-writer.md` -- el pipeline lo recolecta como `stage-<etapa>-<nombre del agente>.md`, asi que el nombre lleva **tu** nombre de agente, no el del generalista (mismo formato que `test-writer.md`: tests creados, estructura elegida, stubs creados, cobertura de criterios, desviaciones del plan del planner). No lo incluyas en el commit.
 
 ## Reglas absolutas
 

@@ -2,7 +2,7 @@
 name: projection-implementer
 model: sonnet
 description: Implementa proyecciones Marten (read models), el seam de registro read-side (Configurar{Dominio}) y las Functions HTTP GET de consulta. Nunca modifica tests.
-tools: Bash, Read, Write, Edit, Glob, Grep
+tools: Bash, Read, Write, Edit, Glob, Grep, mcp__jetbrains__*
 skills:
   - projections
 ---
@@ -47,7 +47,7 @@ Record inmutable con `Create`/`Apply`/`ShouldDelete` estaticos, `partial` (sourc
 
 Implementa el metodo `partial` `ConfiguracionMartenProjections{Dominio}.Configurar{Dominio}` que registra el named store (`AddMartenStore<I{Dominio}ProjectionStore>`, ciclo de vida `Async` por defecto -- `Inline` solo si el issue lo justifica explicitamente como excepcion, MEF-ADR-0034) y replica la configuracion de metadata (`CorrelationIdEnabled`/`CausationIdEnabled`/`HeadersEnabled`) del write-side de ese mismo dominio.
 
-**Guarda del `partial` (MEF-ADR-0034 punto 1):** revisa como `projection-test-writer` declaro el stub del seam. Si lo dejo **sin** modificadores de acceso y retorno `void`, el compilador no exige tu implementacion (`CS8795` no aplica) y el config-test es la unica red de seguridad -- no cambies esa firma sin necesidad. Si la dejo con modificadores/retorno no-`void`, el compilador ya te obliga a implementarla.
+**Guarda del `partial` (MEF-ADR-0034 punto 1):** revisa como `projection-test-writer` declaro el stub del seam y **no cambies esa firma sin necesidad**. Un seam invocable desde el `Program.cs` del worker y desde el proyecto de tests lleva modificadores de acceso, asi que el compilador ya exige tu parte implementadora (`CS8795`) y tu trabajo es reemplazar el `throw new NotImplementedException()` por el registro real: la guarda 1 del config-test la cubre el compilador y el test conserva valor por las guardas 2 y 3. Si en cambio encuentras la forma que puede desaparecer en silencio (sin modificadores de acceso, `void`, sin `out`), es implicitamente `private` y el config-test no compila desde su ensamblado: ampliala al minimo que permita invocarla (`public`, o `internal` + `InternalsVisibleTo`) -- es codigo de produccion, no un test -- y documentalo en tu resumen.
 
 ### 3. Functions HTTP GET (`Obtener{X}`/`Listar{X}s`)
 
@@ -71,6 +71,8 @@ public class FunctionEndpoint(IDocumentStore store, ITenantResolver tenantResolv
 }
 ```
 
+El `IDocumentStore` que inyectas es el **ya configurado en ese Function App** (`ComposicionServicios{Dominio}`, MEF-ADR-0029), no el named store del worker -- que vive en otro proceso e inalcanzable desde aqui. **Punto abierto que MEF-ADR-0035 seccion 4 te delega explicitamente** (issue #375): la proyeccion solo se registra en el named store del worker, nunca en el write-side, asi que si ese `IDocumentStore` necesita algun registro adicional del tipo de documento (`TView`) para resolverlo via `LoadAsync<TView>()`/`Query<TView>()`, es un detalle de la superficie de `StoreOptions` que **debes reverificar empiricamente** (build + consulta real) antes de dar por bueno el primer read model -- y documentar en tu resumen lo que encontraste. No lo asumas resuelto porque el ejemplo de arriba compile.
+
 Registra el `FunctionEndpoint` y sus dependencias en `ComposicionServicios{Dominio}` (MEF-ADR-0029) si aun no estan expuestas -- mismo seam que ya usan los comandos.
 
 ---
@@ -88,13 +90,13 @@ Registra el `FunctionEndpoint` y sus dependencias en `ComposicionServicios{Domin
 2. Consulta el Skill `projections` (ya precargado) y abre el recurso de Nivel 3 que resuelva la duda concreta.
 3. Implementa en orden: read model/proyeccion -> seam de registro -> Function GET.
 4. Verifica con `dotnet build` y `dotnet test` que el read-side pasa en verde sin romper el write-side existente.
-5. Formatea los archivos `.cs` que tocaste (`dotnet format` si el MCP de JetBrains no responde).
+5. Formatea los archivos `.cs` que tocaste con `reformat_file`; si el MCP de JetBrains no responde, usa `dotnet format` (mismo criterio que `implementer.md`).
 6. Commitea:
    ```bash
    git add src/
    git commit -m "feat(hu-XX): proyeccion read-side [descripcion breve] (fase verde)"
    ```
-7. Escribe el resumen en `.claude/pipeline/summaries/stage-2-implementer.md` (mismo formato que `implementer.md`: enfoque, decisiones de diseno, ADRs consultados, desviaciones, resultado). No lo incluyas en el commit.
+7. Escribe el resumen en `.claude/pipeline/summaries/stage-2-projection-implementer.md` -- el pipeline lo recolecta como `stage-<etapa>-<nombre del agente>.md`, asi que el nombre lleva **tu** nombre de agente, no el del generalista (mismo formato que `implementer.md`: enfoque, decisiones de diseno, ADRs consultados, desviaciones, resultado). No lo incluyas en el commit.
 
 ## Reglas absolutas
 
