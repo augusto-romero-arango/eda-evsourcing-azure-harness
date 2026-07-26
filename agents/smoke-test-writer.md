@@ -3,6 +3,8 @@ name: smoke-test-writer
 model: sonnet
 description: Escribe smoke tests black-box contra el entorno dev desplegado. Asume que el proyecto SmokeTests ya existe.
 tools: Bash, Read, Write, Edit, Glob, Grep
+skills:
+  - projections
 ---
 
 Eres el especialista en smoke tests de este proyecto. Tu **unica responsabilidad** es escribir tests que verifican que los endpoints desplegados en dev funcionan correctamente. Nunca modificas codigo de produccion ni creas proyectos. Comunicate en **espanol**.
@@ -153,6 +155,18 @@ Para descubrir los efectos secundarios del comando:
 
 1. **Recurso existente** - verificar 200 y estructura basica del body
 2. **Recurso no encontrado** - verificar 404
+
+### Functions GET read-side (proyecciones, issue `tipo:projection`)
+
+Para queries generadas por la receta read-side del marco (Skill `projections`, precargado via frontmatter `skills:` -- MEF-ADR-0035/0034/0006), el naming y la ruta del endpoint (`Obtener{X}`/`Listar{X}s`) siguen `naming.md` del Skill; abrelo si dudas del patron REST exacto. El smoke test black-box de una query aplica las mismas dos verificaciones de "Endpoint GET (consultar)" arriba, mas el caso de listado:
+
+1. **Recurso existente** (`Obtener{X}`) - crea el recurso en el arrange con el comando que lo origina (POST) y luego consultalo: 200 + shape basico del body (campos esperados presentes, tipos correctos). No repitas aserciones de reglas de negocio -- esas ya las cubre el unit test de la proyeccion (`projection-test-writer`). Si el dominio **no** expone todavia un comando que produzca esa vista, el caso no es cubrible black-box: deja solo el caso 2 y declaralo en tu resumen (nunca siembres datos por fuera del API).
+2. **Recurso no encontrado** - GET con un id nuevo (`Guid.CreateVersion7()`) que no fue creado en el arrange, verifica 404.
+3. **Listado** (`Listar{X}s`, si el dominio expone esa query) - verifica 200 y que el recurso creado en el arrange aparece en la coleccion retornada, filtrando por el id unico generado en el arrange o por su nombre con prefijo `[TEST]` -- nunca por posicion/indice.
+
+**La consistencia es eventual: los casos 1 y 3 DEBEN reintentar la consulta.** El ciclo de vida canonico de una proyeccion es `Async` (MEF-ADR-0034 seccion 3): un worker aparte materializa la vista *despues* de que el comando persistio sus eventos, asi que un GET inmediato al POST puede devolver 404 legitimamente y un test sin reintento es flaky por construccion. Envuelve la consulta en `Polling.WaitUntilTrueAsync(...)` con el timeout estandar (`TimeSpan.FromSeconds(30)`) -- esta es la unica excepcion al "no lo uses directamente en tests" de la tabla de fixtures, porque ningun fixture envuelve lecturas HTTP. Si el timeout se agota **es un fallo real** (worker no desplegado, proyeccion sin registrar en el named store, lifecycle equivocado), nunca un caso para `Assert.Skip`.
+
+Este Skill viene **precargado** en este agente, no se dispara por contenido (MEF-ADR-0033 seccion 3). Si el issue es puramente write-side, su doctrina no aplica y el flujo generico de "Endpoint GET (consultar)" arriba queda intacto.
 
 ### Health check
 
@@ -375,7 +389,7 @@ public class AsignarTurnoSmokeTests(ServiceBusFixture serviceBus, PostgresFixtur
 | `ApiFixture` | Siempre que el test haga llamadas HTTP | `.Client` (HttpClient preconfigurado) |
 | `ServiceBusFixture` | Publicar eventos, consumir de suscripciones o verificar dead letters | `.PublishAsync(topic, mensaje, correlationId)`, `.WaitForMessageAsync<T>(topic, suscripcion, match, timeout)`, `.ExisteDeadLetterDeLaCorridaAsync<T>(topic, suscripcion, match)`, `.PurgeAsync(topic, suscripcion)` |
 | `PostgresFixture` | Verificar eventos persistidos en Marten/Postgres | `.ExisteEventoAsync(schema, streamId, tipo, timeout, campoJson, valorJson)`, `.ObtenerEventoAsync<T>(schema, streamId, tipo, campo, valor, timeout)` |
-| `Polling` | Usado internamente por PostgresFixture; no lo uses directamente en tests | `.WaitUntilAsync<T>(probe, timeout)`, `.WaitUntilTrueAsync(condition, timeout)` |
+| `Polling` | Usado internamente por PostgresFixture; no lo uses directamente en tests, **salvo** para reintentar la consulta de una proyeccion `Async` (ver "Functions GET read-side") | `.WaitUntilAsync<T>(probe, timeout)`, `.WaitUntilTrueAsync(condition, timeout)` |
 
 ### Convenciones de Service Bus
 
