@@ -45,6 +45,8 @@
 #   PROJ-3: projections.enabled=false pasa y deja HARNESS_PROJECTIONS_ENABLED="false".
 #   PROJ-4: projections.enabled con un valor no-booleano (ej. string) NO aborta (retrocompatible)
 #           y normaliza a HARNESS_PROJECTIONS_ENABLED="false".
+#   PROJ-5: 'projections' no-objeto (ej. "projections": true) NO mata la carga bajo el
+#           'set -euo pipefail' que usan los 9 callers reales, y normaliza a "false".
 #
 # Uso: scripts/tests/test-harness-config.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -287,6 +289,27 @@ projections_exports() {
         load_harness_config "$cfg" >/dev/null 2>&1 || true
         echo "${HARNESS_PROJECTIONS_ENABLED:-}"
     )
+}
+
+# run_load_strict <config_path> -> imprime "SOBREVIVE:<valor>" solo si load_harness_config
+# llego hasta el final; nada si murio a medio camino.
+#
+# Reproduce el entorno REAL de los callers: los 9 pipelines de scripts/ que usan la funcion
+# corren bajo `set -euo pipefail`, y ahi cualquier asignacion `x=$(cmd)` con cmd != 0 mata el
+# script entero. run_load/projections_exports NO pueden detectar esa clase de muerte: no activan
+# `set -e`.
+#
+# La llamada va SIN `|| true` a proposito: bash desactiva `set -e` dentro de una funcion cuyo
+# exit status se esta testeando (`||`, `&&`, `if`), asi que un `|| true` aqui enmascararia
+# exactamente el fallo que este helper existe para detectar.
+run_load_strict() {
+    local cfg="$1"
+    (
+        set -euo pipefail
+        source "$REPO_ROOT/scripts/_pipeline-common.sh"
+        load_harness_config "$cfg" >/dev/null 2>&1
+        echo "SOBREVIVE:${HARNESS_PROJECTIONS_ENABLED:-unset}"
+    ) 2>/dev/null
 }
 
 echo "[CA-1] terraformStateStorage invalido aborta con return 1"
@@ -660,6 +683,34 @@ write_projections_config "$CFG" '{ "enabled": "yes" }'
 RC=0; run_load "$CFG" >/dev/null 2>&1 || RC=$?
 if [ "$RC" -eq 0 ]; then pass "projections.enabled='yes' -> return 0 (retrocompatible)"; else fail "projections.enabled invalido NO deberia abortar (rc=$RC)"; fi
 if [ "$(projections_exports "$CFG")" = "false" ]; then pass "HARNESS_PROJECTIONS_ENABLED normaliza a 'false'"; else fail "exports incorrectos: $(projections_exports "$CFG")"; fi
+
+echo ""
+echo "[PROJ-5] 'projections' no-objeto NO mata la carga bajo 'set -euo pipefail'"
+
+# El typo plausible es escribir el booleano directo en vez del objeto: "projections": true.
+# jq no puede indexar un booleano con "enabled" y sale con 5; sin el '|| true' de la asignacion,
+# esa salida != 0 aborta el pipeline COMPLETO dentro de load_harness_config, con el error de jq
+# ya tragado por el 2>/dev/null -- muerte silenciosa, y lo contrario del contrato documentado
+# ("nunca aborta la carga por este campo"). Se verifica bajo el mismo modo que usan los callers.
+CFG="$TMP_DIR/proj-no-objeto.json"
+write_projections_config "$CFG" 'true'
+OUT=$(run_load_strict "$CFG")
+if [ "$OUT" = "SOBREVIVE:false" ]; then
+    pass "la carga sobrevive y normaliza a 'false' (rc=0, sin abortar)"
+else
+    fail "load_harness_config murio o normalizo mal con 'projections' no-objeto (salida: '${OUT:-<vacia: aborto>}')"
+fi
+
+# Contraprueba de que el helper si detecta la muerte: un config valido tambien debe SOBREVIVIR,
+# para que un PROJ-5 verde no pueda deberse a que run_load_strict siempre falla.
+CFG="$TMP_DIR/proj-strict-ok.json"
+write_projections_config "$CFG" '{ "enabled": true }'
+OUT=$(run_load_strict "$CFG")
+if [ "$OUT" = "SOBREVIVE:true" ]; then
+    pass "contraprueba: un config valido sobrevive el mismo modo estricto (enabled='true')"
+else
+    fail "contraprueba fallida: run_load_strict no sobrevive ni con un config valido (salida: '${OUT:-<vacia>}')"
+fi
 
 echo ""
 echo "----------------------------------------"

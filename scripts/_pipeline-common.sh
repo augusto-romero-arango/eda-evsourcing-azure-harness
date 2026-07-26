@@ -359,8 +359,14 @@ load_harness_config() {
     # adopta el worker de proyecciones. Ausente, null, false, o cualquier valor/tipo distinto
     # del booleano true equivale a deshabilitado -- retrocompatible, nunca aborta la carga
     # (mismo criterio ya usado inline por infra-base-scaffolder/projections-scaffolder).
+    # La asignacion lleva `|| true` (mismo motivo que extract_test_count) porque los 9 callers
+    # reales corren bajo `set -euo pipefail`: si 'projections' no es un objeto -- el typo
+    # `"projections": true` en vez de `{ "enabled": true }` --, jq no puede indexarlo y sale con
+    # 5, y sin el `|| true` esa asignacion abortaria TODO el pipeline aqui, con el error de jq ya
+    # tragado por el 2>/dev/null: una muerte silenciosa, y justo lo contrario del contrato
+    # ("nunca aborta la carga por este campo"). Con `|| true`, proj_raw queda vacio -> "false".
     local proj_raw
-    proj_raw=$(jq -r '.projections.enabled // false' "$config" 2>/dev/null)
+    proj_raw=$(jq -r '.projections.enabled // false' "$config" 2>/dev/null) || true
     if [ "$proj_raw" = "true" ]; then
         export HARNESS_PROJECTIONS_ENABLED="true"
     else
