@@ -484,6 +484,8 @@ Preguntas que fuerzan la precisión:
 - ¿Qué necesita ver el usuario exactamente? ¿Un solo registro por id, o una colección filtrable?
 - ¿De qué aggregate(s) y qué eventos sale esa información?
 - ¿La vista se arma a partir de un único stream (siempre el mismo `AggregateId`), o correlaciona eventos de varios streams/aggregates distintos?
+- ¿Hay algo que **materializar**, o la lectura se resuelve hidratando el aggregate en vivo (vía (b1)) o devolviendo los eventos crudos (vía (b2))? El Skill fija (a) —proyección materializada— como default y las otras dos como excepción justificada (`read-apis.md`).
+- ¿A qué **dominio** pertenece? Todo artefacto read-side es por dominio (`I{Dominio}ProjectionStore`, `ConfiguracionMartenProjections{Dominio}`, la Function GET dentro del Function App de ese dominio), así que el label `dom:` nunca se omite en un issue `tipo:projection`.
 
 ### Proponer la receta (N1 / N2; N3 como escape hatch)
 
@@ -497,12 +499,16 @@ Con las respuestas anteriores, propone uno de los tres niveles del Skill `projec
 
 Cuando la idea esté clara, ofrece convertirla en un issue `tipo:projection` (ver "Template para issues de proyección" en `## Crear issues`). El handoff mínimo que `projection-test-writer`/`projection-implementer` necesitan, sin ambigüedad:
 
-- **Vista a materializar**: el nombre del read model (`{Concepto}View`) y qué campos expone.
+- **Dominio**: el label `dom:` es **obligatorio** en `tipo:projection` (no opcional): sin él, `/implement` no resuelve en qué Function App vive la Function GET ni qué `I{Dominio}ProjectionStore` registra el worker.
+- **Vía de consulta**: (a) proyección materializada -- el default. Si la lectura necesita (b1) aggregate en vivo o (b2) eventos crudos, decláralo y justifícalo: en esos casos no hay read model, ni clase de proyección, ni lifecycle que materializar -- solo la Function GET (`read-apis.md` del Skill).
+- **Vista a materializar**: el nombre del read model (`{Concepto}View`) y qué campos expone. (Solo aplica en la vía (a).)
 - **Eventos que la alimentan**: los eventos concretos (y su aggregate de origen) que la proyección consume.
 - **Receta propuesta**: N1 o N2 (con justificación), o N3 explícitamente discutido.
-- **Endpoints/rutas**: qué Functions de query expone (`Obtener{Concepto}` por id y/o `Listar{Concepto}s` por filtro), con su ruta REST -- naming fijado por MEF-ADR-0006 y el recurso `naming.md` del Skill.
+- **Endpoints/rutas**: qué Functions de query expone (`Obtener{Concepto}` por id y/o `Listar{Concepto}s` por filtro), con su ruta REST -- naming fijado por MEF-ADR-0006 y el recurso `naming.md` del Skill. **Verifica colisión de nombres antes de escribir el issue**: dos Functions no pueden compartir el mismo `[Function("...")]`, y las vías (a) y (b1) producen el mismo nombre cuando el read model y el aggregate comparten concepto (`TurnoView`/`TurnoAggregateRoot` -> ambas `ObtenerTurno`). Revisa `src/` del dominio: si ya existe esa Function, el issue debe desambiguar el nombre explícitamente -- `naming.md` delega esa decisión al issue que la pida, no al pipeline.
 - **Lifecycle**: `Async` (el default -- materializada en el worker de proyecciones, MEF-ADR-0034). Si el issue cree que necesita `Inline`, es una excepción opt-in del write-side que hay que justificar explícitamente, no asumir.
 - **Capas de test esperadas**: unit tests de la proyección (`Create`/`Apply`/`ShouldDelete`), el config-test del worker (guarda del `partial`, lifecycle `Async`, réplica de metadata -- MEF-ADR-0034 sección 6) y el test de composición de la Function GET (hermano de MEF-ADR-0029). Las tres son categorías complementarias, no intercambiables.
+
+**Antes de marcar `estado:listo`, avísale al usuario** que el enrutamiento de `tipo:projection` hacia la rama read-side del pipeline (`projection-test-writer`/`projection-implementer`) todavía no está cableado: hoy `/implement` lanzaría los agentes write-side (`test-writer`/`implementer`), que no cargan el Skill `projections`. El issue puede quedar `estado:listo` -- el DoR mide completitud de información, no disponibilidad del pipeline --, pero el usuario debe saber que su implementación se coordina aparte hasta que esa rama exista.
 
 ---
 
@@ -512,7 +518,7 @@ Lee y aplica los criterios de `"$PLUGIN_ROOT/docs/adr/mef-adr-0011-definition-of
 
 **Regla clave**: un issue solo puede pasar a `estado:listo` si cumple todos los criterios obligatorios y criticos de su tipo segun el MEF-ADR-0011 **y** todas las casillas del checklist pre-listo de la Revisión de complejidad. El DoR y la Revisión de complejidad son capas complementarias: el DoR garantiza completitud de información; la Revisión de complejidad garantiza tamaño y claridad. Uno sin el otro no alcanza.
 
-**Caso `tipo:projection`**: MEF-ADR-0011 todavia no tiene su propia fila para este tipo (la enmienda vive en un issue de seguimiento aun no cerrado). Hasta que esa fila exista, la sección "Necesidades de lectura y proyecciones" de este agente y el "Template para issues de proyección" (bajo `## Crear issues`) son la fuente del DoR de `tipo:projection` -- exigen los mismos cinco campos criticos (vista, eventos, receta, endpoints, lifecycle) mas las capas de test esperadas. No marques `estado:listo` un issue `tipo:projection` sin esos campos solo porque la tabla del ADR no lo menciona todavia.
+**Caso `tipo:projection`**: MEF-ADR-0011 todavia no tiene su propia fila para este tipo (la enmienda vive en un issue de seguimiento aun no cerrado). Hasta que esa fila exista, la sección "Necesidades de lectura y proyecciones" de este agente y el "Template para issues de proyección" (bajo `## Crear issues`) son la fuente del DoR de `tipo:projection` -- exigen los campos criticos del handoff (via de consulta, vista, eventos, receta, endpoints, lifecycle) mas las capas de test esperadas, y el label `dom:` como **obligatorio** (equivalente a la columna `feature` de la tabla, no a `infra`/`tooling`: todo artefacto read-side es por dominio). No marques `estado:listo` un issue `tipo:projection` sin esos campos solo porque la tabla del ADR no lo menciona todavia.
 
 ---
 
@@ -531,13 +537,13 @@ Sin prefijos de tipo, dominio o número en el título. Los labels y el número d
 
 ### Template para issues de dominio
 
-Cuando una idea esté lista para convertirse en issue, confirma con el usuario el tipo y el dominio, y usa:
+Cuando una idea esté lista para convertirse en issue, confirma con el usuario el tipo y el dominio, y usa (los `dom:` válidos viven en `.claude/harness.config.json`, campo `domainLabels`):
 
 ```bash
 gh issue create \
   --title "[verbo infinitivo] [que cosa]" \
   --label "tipo:[feature|refactor|tooling]" \
-  --label "dom:<dominio>" \                            # los labels validos viven en .claude/harness.config.json (campo domainLabels)
+  --label "dom:<dominio>" \
   --label "estado:listo" \
   --body "$(cat <<'ISSUEEOF'
 ## Contexto
@@ -682,11 +688,18 @@ Si el issue de infra está asociado a un dominio específico, agrega también `-
 
 Cuando la sección "Necesidades de lectura y proyecciones" concluya en un `tipo:projection`, usa este template. No dupliques aquí la doctrina del Skill `projections` (arbol de decisión, estilo canónico, read APIs) -- solo el handoff concreto de esta idea.
 
+El esquema base de labels del consumidor (`scripts/setup-github-labels.sh`) todavía no incluye `tipo:projection`, así que `gh issue create` fallaría con "label not found". Asegúralo antes de crear el issue (no destructivo: solo lo crea si falta, y respeta el azul del esquema de tipos):
+
+```bash
+gh label list --limit 200 --json name -q '.[].name' | grep -qx "tipo:projection" \
+  || gh label create "tipo:projection" --color "0052CC" --description "Proyeccion Marten y query read-side"
+```
+
 ```bash
 gh issue create \
   --title "[verbo infinitivo] [que cosa]" \
   --label "tipo:projection" \
-  --label "dom:<dominio>" \                            # omite si no aplica
+  --label "dom:<dominio>" \
   --label "estado:listo" \
   --body "$(cat <<'ISSUEEOF'
 ## Contexto
@@ -697,6 +710,7 @@ gh issue create \
 (o "Ninguna")
 
 ## Necesidad de lectura
+- **Via de consulta**: (a) proyeccion materializada [default] | (b1) aggregate en vivo | (b2) eventos crudos -- justifica si no es (a). Con (b1)/(b2) no hay read model, clase de proyeccion ni lifecycle: solo la Function GET, y las tres vinetas siguientes no aplican.
 - **Vista a materializar**: `{Concepto}View` -- [campos que expone]
 - **Eventos que la alimentan**: `EventoA`, `EventoB` (del aggregate `{Aggregate}`)
 - **Receta propuesta**: N1 (`SingleStreamProjection`, un solo stream por `{Aggregate}Id`) | N2 (`MultiStreamProjection`, correlaciona streams de X e Y) -- justifica la eleccion. N3 (`EventProjection`/`IProjection` custom) es un escape hatch: solo si N1/N2 no alcanzan, documenta por que y que se discutio con el usuario (Rule of Three, MEF-ADR-0018).
@@ -706,6 +720,7 @@ gh issue create \
 - `Obtener{Concepto}` -- GET `{RutaRecurso}/{id}` (por id)
 - `Listar{Concepto}s` -- GET `{RutaRecurso}` (por filtro/lista)
 (Omite el que no aplique. Naming y ruta REST: MEF-ADR-0006 y el recurso `naming.md` del Skill `projections`.)
+Colision verificada: [ninguna Function del dominio declara ya estos nombres] | [desambiguacion acordada, con el motivo].
 
 ## ADRs aplicables
 - MEF-ADR-0035: doctrina read-side (receta, estilo canonico, superficie de consulta sobre `QuerySession`).
@@ -733,7 +748,7 @@ ISSUEEOF
 )"
 ```
 
-Si el dominio no aplica, omite el label `dom:`. Si el issue depende de otro no cerrado, agrega también `--label "bloqueado"`.
+El label `dom:` **no se omite** en este tipo: todo artefacto read-side (store nombrado, seam de composición, Function GET) vive dentro de un dominio concreto. Si el issue depende de otro no cerrado, agrega también `--label "bloqueado"`.
 
 ### Principios de cada issue
 
