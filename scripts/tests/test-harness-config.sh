@@ -39,6 +39,13 @@
 #   UPSERT-2: upsert_harness_secret agrega una entrada nueva sin tocar las existentes.
 #   UPSERT-3: upsert_harness_secret actualiza (no duplica) una entrada existente por 'name'.
 #
+# Cubre la validacion del token projections (issue #369, MEF-ADR-0034):
+#   PROJ-1: projections ausente NO aborta (opcional) y deja HARNESS_PROJECTIONS_ENABLED="false".
+#   PROJ-2: projections.enabled=true pasa y deja HARNESS_PROJECTIONS_ENABLED="true".
+#   PROJ-3: projections.enabled=false pasa y deja HARNESS_PROJECTIONS_ENABLED="false".
+#   PROJ-4: projections.enabled con un valor no-booleano (ej. string) NO aborta (retrocompatible)
+#           y normaliza a HARNESS_PROJECTIONS_ENABLED="false".
+#
 # Uso: scripts/tests/test-harness-config.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
 
@@ -237,6 +244,48 @@ run_upsert() {
         set +u
         source "$REPO_ROOT/scripts/_pipeline-common.sh" 2>/dev/null
         upsert_harness_secret "$name" "$type" "$value" "$cfg"
+    )
+}
+
+# write_projections_config <archivo> <fragmento_projections|__OMIT__>
+# Genera un config con required + domainLabels + boundedContext valido, y el campo
+# 'projections' indicado tal cual (debe ser JSON valido). __OMIT__ omite el campo por completo.
+write_projections_config() {
+    local file="$1"
+    local proj="$2"
+    if [ "$proj" = "__OMIT__" ]; then
+        cat > "$file" <<'JSON'
+{
+  "projectName": "MiControlPlane",
+  "namespacePrefix": "MiControlPlane.Dominio",
+  "solutionFile": "MiControlPlane.slnx",
+  "domainLabels": ["dominio1", "dominio2"],
+  "boundedContext": { "name": "Principal", "domains": ["dominio1"] }
+}
+JSON
+    else
+        cat > "$file" <<JSON
+{
+  "projectName": "MiControlPlane",
+  "namespacePrefix": "MiControlPlane.Dominio",
+  "solutionFile": "MiControlPlane.slnx",
+  "domainLabels": ["dominio1", "dominio2"],
+  "boundedContext": { "name": "Principal", "domains": ["dominio1"] },
+  "projections": $proj
+}
+JSON
+    fi
+}
+
+# projections_exports <config_path> -> imprime HARNESS_PROJECTIONS_ENABLED tras cargar
+# el config (independiente del exit code).
+projections_exports() {
+    local cfg="$1"
+    (
+        set +u
+        source "$REPO_ROOT/scripts/_pipeline-common.sh" 2>/dev/null
+        load_harness_config "$cfg" >/dev/null 2>&1 || true
+        echo "${HARNESS_PROJECTIONS_ENABLED:-}"
     )
 }
 
@@ -575,6 +624,42 @@ if [ "$(jq -r '.secrets[0].source.value' "$CFG")" = "SB_EXTERNAL_COSMOS_CONNECTI
 else
     fail "el 'source.value' no se actualizo"
 fi
+
+echo ""
+echo "[PROJ-1] projections ausente NO aborta y deja HARNESS_PROJECTIONS_ENABLED=\"false\""
+
+CFG="$TMP_DIR/proj-omit.json"
+write_projections_config "$CFG" "__OMIT__"
+RC=0; run_load "$CFG" >/dev/null 2>&1 || RC=$?
+if [ "$RC" -eq 0 ]; then pass "projections ausente -> return 0"; else fail "projections ausente NO deberia abortar (rc=$RC)"; fi
+if [ "$(projections_exports "$CFG")" = "false" ]; then pass "HARNESS_PROJECTIONS_ENABLED='false'"; else fail "exports incorrectos: $(projections_exports "$CFG")"; fi
+
+echo ""
+echo "[PROJ-2] projections.enabled=true pasa y exporta HARNESS_PROJECTIONS_ENABLED=\"true\""
+
+CFG="$TMP_DIR/proj-enabled.json"
+write_projections_config "$CFG" '{ "enabled": true }'
+RC=0; run_load "$CFG" >/dev/null 2>&1 || RC=$?
+if [ "$RC" -eq 0 ]; then pass "projections.enabled=true -> return 0"; else fail "projections.enabled=true NO deberia abortar (rc=$RC)"; fi
+if [ "$(projections_exports "$CFG")" = "true" ]; then pass "HARNESS_PROJECTIONS_ENABLED='true'"; else fail "exports incorrectos: $(projections_exports "$CFG")"; fi
+
+echo ""
+echo "[PROJ-3] projections.enabled=false pasa y exporta HARNESS_PROJECTIONS_ENABLED=\"false\""
+
+CFG="$TMP_DIR/proj-disabled.json"
+write_projections_config "$CFG" '{ "enabled": false }'
+RC=0; run_load "$CFG" >/dev/null 2>&1 || RC=$?
+if [ "$RC" -eq 0 ]; then pass "projections.enabled=false -> return 0"; else fail "projections.enabled=false NO deberia abortar (rc=$RC)"; fi
+if [ "$(projections_exports "$CFG")" = "false" ]; then pass "HARNESS_PROJECTIONS_ENABLED='false'"; else fail "exports incorrectos: $(projections_exports "$CFG")"; fi
+
+echo ""
+echo "[PROJ-4] projections.enabled con valor no-booleano NO aborta y normaliza a \"false\""
+
+CFG="$TMP_DIR/proj-invalid.json"
+write_projections_config "$CFG" '{ "enabled": "yes" }'
+RC=0; run_load "$CFG" >/dev/null 2>&1 || RC=$?
+if [ "$RC" -eq 0 ]; then pass "projections.enabled='yes' -> return 0 (retrocompatible)"; else fail "projections.enabled invalido NO deberia abortar (rc=$RC)"; fi
+if [ "$(projections_exports "$CFG")" = "false" ]; then pass "HARNESS_PROJECTIONS_ENABLED normaliza a 'false'"; else fail "exports incorrectos: $(projections_exports "$CFG")"; fi
 
 echo ""
 echo "----------------------------------------"

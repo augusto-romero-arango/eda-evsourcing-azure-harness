@@ -41,6 +41,10 @@
 #                                 (output|github-secret|composite).
 #   HARNESS_SECRETS_VALUES     - Lista separada por espacios, MISMO ORDEN posicional que
 #                                 HARNESS_SECRETS_NAMES, con 'source.value' de cada entrada.
+#   HARNESS_PROJECTIONS_ENABLED - "true" si projections.enabled es exactamente el booleano
+#                                 true; "false" en cualquier otro caso (ausente, null, false,
+#                                 o un tipo/valor invalido -- issue #369, MEF-ADR-0034). Nunca
+#                                 aborta la carga: es un token opt-in, retrocompatible.
 #
 # Campos opcionales del config (no se exportan via load_harness_config; se leen
 # inline donde se necesitan, mismo patron que agents/planner.md):
@@ -349,6 +353,18 @@ load_harness_config() {
             HARNESS_SECRETS_VALUES="${sec_values[*]}"
         fi
         export HARNESS_SECRETS_NAMES HARNESS_SECRETS_TYPES HARNESS_SECRETS_VALUES
+    fi
+
+    # projections es opcional (issue #369, MEF-ADR-0034): token opt-in que declara si el BC
+    # adopta el worker de proyecciones. Ausente, null, false, o cualquier valor/tipo distinto
+    # del booleano true equivale a deshabilitado -- retrocompatible, nunca aborta la carga
+    # (mismo criterio ya usado inline por infra-base-scaffolder/projections-scaffolder).
+    local proj_raw
+    proj_raw=$(jq -r '.projections.enabled // false' "$config" 2>/dev/null)
+    if [ "$proj_raw" = "true" ]; then
+        export HARNESS_PROJECTIONS_ENABLED="true"
+    else
+        export HARNESS_PROJECTIONS_ENABLED="false"
     fi
 }
 
