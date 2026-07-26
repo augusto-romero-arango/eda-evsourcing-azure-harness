@@ -18,6 +18,15 @@ El proyecto de referencia (ControlPlane) tenia inconsistencias: `HandleOnboardin
 el nombre del topic con un prefijo Handle, y los nombres camelCase se destruian por el
 lowercase forzado de Azure Service Bus.
 
+**Queries y artefactos de proyeccion (issue #363).** El read-side suma dos familias de nombres a
+las de comando/ServiceBus: las Functions HTTP de query (GET) y los artefactos de proyeccion (read
+models, clases de proyeccion, named store) que introducen MEF-ADR-0034 (worker de proyecciones) y
+MEF-ADR-0035 (doctrina read-side). ControlPlane volvio a ser inconsistente ahi: agrupo sus queries
+en un unico `XQueriesEndpoint` por dominio en vez de una carpeta por query, uso verbos en ingles
+(`Get`/`List`) en vez de espanol, y no fijo un criterio unico de singular/plural para las
+colecciones. Los subagentes read-side (Skill `projections`, `/scaffold-projections`, extension de
+`domain-scaffolder`) necesitan un molde igual de predecible para estos nombres.
+
 ## Decision
 
 ### Funciones HTTP
@@ -30,6 +39,104 @@ El nombre de la funcion Azure es el nombre del comando, como string literal:
 
 El string literal evita la necesidad de `using` aliases por colision de namespaces
 en la organizacion vertical (el record del comando y la clase del endpoint comparten namespace).
+
+### Funciones HTTP de query (GET)
+
+Una Function de query (lectura, GET) se nombra igual que un comando -- **verbo infinitivo espanol
++ sustantivo** -- pero con dos verbos fijos segun la cardinalidad del resultado:
+
+| Cardinalidad | Patron | Ejemplo |
+|---|---|---|
+| Un item, por id | `Obtener{X}` | `ObtenerTurno` |
+| Coleccion/filtro | `Listar{X}s` | `ListarTurnos` |
+
+El `s` de `Listar{X}s` es el **plural correcto del espanol**, no un sufijo literal: `Perfil` ->
+`ListarPerfiles`, `Mes` -> `ListarMeses`, nunca `ListarPerfils`. Es la **misma palabra plural** que
+nombra el recurso en la ruta HTTP (ver abajo; ahi la capitalizacion y el prefijo los hereda del
+segmento que ya declaro el comando de ese recurso), de modo que nombre de Function y ruta no se
+derivan por separado -- es el criterio unico de singular/plural que faltaba en ControlPlane.
+
+`{X}` es el **concepto** que la Function devuelve. Las tres vias de consulta que fija
+MEF-ADR-0035 (seccion 3) mapean a este patron asi:
+
+- **(a) Proyeccion materializada** (`session.LoadAsync<TView>(id)` / `session.Query<TView>()`):
+  `Obtener{Concepto}` por id, `Listar{Concepto}s` por filtro/lista -- `{Concepto}` es el nombre
+  base del read model (`TurnoView` -> `ObtenerTurno`).
+- **(b1) Aggregate en vivo** (`session.Events.AggregateStreamAsync<T>(id)`, el mismo mecanismo
+  `Live` que MEF-ADR-0015 ya fija como default de rehidratacion): `Obtener{Aggregate}` --
+  `{Aggregate}` es el nombre del aggregate sin el sufijo `AggregateRoot`
+  (`TurnoAggregateRoot` -> `ObtenerTurno`).
+- **(b2) Eventos crudos del stream** (`session.Events.FetchStreamAsync(id)`):
+  `ListarEventosDe{Aggregate}` (`ListarEventosDeTurno`).
+
+**Colision deliberada entre (a) y (b1), y como se resuelve.** Cuando el read model y el aggregate
+comparten concepto (el caso comun: `TurnoView` proyecta `TurnoAggregateRoot`), (a) y (b1)
+producen el **mismo** nombre de Function (`ObtenerTurno`) -- y dos Functions con identico
+`[Function("...")]` no pueden coexistir en la misma Function App. Esto no es un defecto del
+patron: para un mismo concepto, un dominio expone **una sola** via de lectura por id a la vez
+(la materializada (a) es la default de MEF-ADR-0035; (b1) es la excepcion cuando no existe --
+todavia, o nunca -- una proyeccion materializada para ese concepto). Un dominio que de verdad
+necesite ambas vias sobre el mismo concepto debe desambiguar el nombre explicitamente en el
+issue que lo pida; este ADR no fija un calificador generico para ese caso porque MEF-ADR-0035 no
+registra ningun caso real que lo necesite hoy (Rule of Three, MEF-ADR-0018).
+
+**Ruta HTTP: REST por recurso, nunca el nombre de la Function.** Toda Function HTTP del marco --
+comando y query -- declara su `Route` explicitamente; el default del atributo nunca se usa. Una
+query reutiliza **el mismo segmento de recurso que ya usa el comando de ese recurso** (el ejemplo
+canonico del marco es `Route = "Programacion/Turnos"` del endpoint de comando en
+`agents/implementer.md`), sumando `{id}` para el caso de un item:
+
+```csharp
+// ObtenerTurno/FunctionEndpoint.cs
+[Function("ObtenerTurno")]
+public async Task<IActionResult> Run(
+    [HttpTrigger(AuthorizationLevel.Function, "get", Route = "Programacion/Turnos/{id}")]
+    HttpRequest req,
+    Guid id,
+    CancellationToken ct)
+
+// ListarTurnos/FunctionEndpoint.cs  <- clase y namespace distintos: una carpeta por query
+[Function("ListarTurnos")]
+public async Task<IActionResult> Run(
+    [HttpTrigger(AuthorizationLevel.Function, "get", Route = "Programacion/Turnos")]
+    HttpRequest req,
+    CancellationToken ct)
+```
+
+El tipo de la request es `HttpRequest` y el retorno `IActionResult` -- la **integracion ASP.NET
+Core** del worker aislado --, no `HttpRequestData`/`HttpResponseData`: es el modelo que ya usan
+todos los endpoints que genera el marco (`agents/domain-scaffolder.md` para `health`/`version`,
+`agents/implementer.md` para el endpoint de comando). El modelo alterno (built-in, con tipos
+propios del worker) la documentacion oficial lo describe como *"maintained for backward
+compatibility with previous .NET isolated worker apps"*
+(https://learn.microsoft.com/azure/azure-functions/dotnet-isolated-process-guide#http-trigger):
+una query escrita con esos tipos quedaria fuera de convencion en su propio host.
+
+**Por que `Route` explicito**: verificado contra la documentacion oficial, el `Route` del
+`HttpTriggerAttribute` es opcional y *"the default value if none is provided is `<functionname>`"*
+(https://learn.microsoft.com/azure/azure-functions/functions-bindings-http-webhook-trigger#attributes)
+-- sin el atributo, la ruta seria `/api/ObtenerTurno`, no el recurso REST que este ADR fija.
+
+**Cada Function declara su verbo, siempre.** El GET y el POST del mismo recurso se distinguen por
+el **metodo HTTP**, nunca por el nombre de la Function -- y eso obliga a declarar el metodo en
+**ambos** lados. Verificado contra la misma referencia: el parametro `Methods` tambien es opcional
+y *"if not specified, the function responds to all HTTP methods"*, asi que un comando que omita su
+`"post"` captura tambien el GET del mismo segmento y se pisa con la query. El diseno "misma URL
+para GET y POST del mismo recurso logico" es el que documenta ASP.NET Core para APIs REST
+(*"many operations, such as GET and POST on the same logical resource, use the same URL"*,
+https://learn.microsoft.com/aspnet/core/mvc/controllers/routing#http-verb-templates); lo que
+**no** esta verificado aqui es que dos Functions con plantilla de ruta identica y verbos disjuntos
+convivan sin conflicto en el host de Azure Functions -- la referencia del HTTP trigger no cubre
+ese caso. La query por id no lo necesita (su plantilla lleva `{id}` y no coincide con la del POST
+de creacion); el par que si comparte plantilla (`ListarTurnos` GET vs `CrearTurno` POST) debe
+verificarse empiricamente en el primer dominio que lo implemente.
+
+**Nunca `Route = ""`**: fijar la ruta vacia para que una query quede en la raiz de `/api`
+produce 404 en el worker aislado -- comportamiento observado en campo, **no verificado** aqui
+contra un caso reproducible de la documentacion oficial (que solo documenta el default
+`<functionname>` y la opcion de quitar el prefijo `api` entero via `host.json`, no el caso
+especifico de una plantilla vacia con el prefijo presente). Se trata como regla operativa de
+este ADR hasta que un issue puntual la reverifique empiricamente.
 
 ### Funciones ServiceBus
 
@@ -77,12 +184,21 @@ src/Bitakora.ControlAsistencia.{Dominio}/
     RequestValidator.cs
   DepurarMarcacionesCuandoTurnoCreado/   <- feature folder por reaccion a evento (sin sufijo Function)
     FunctionEndpoint.cs                  <- [Function("DepurarMarcacionesCuandoTurnoCreado")]
+  ObtenerTurno/                          <- feature folder por query GET (sin sufijo Function)
+    FunctionEndpoint.cs                  <- [Function("ObtenerTurno")], Route = "Programacion/Turnos/{id}"
+  ListarTurnos/
+    FunctionEndpoint.cs                  <- [Function("ListarTurnos")], Route = "Programacion/Turnos"
 ```
 
 - `FunctionEndpoint.cs` como nombre de clase en cada directorio. No colisiona porque cada
   directorio es un namespace diferente.
-- Sufijo `Function` en directorios HTTP para evitar colision entre el namespace y el record del comando.
-  ServiceBus triggers sin sufijo (no tienen record con nombre colisionante).
+- Sufijo `Function` en directorios HTTP **de comando** para evitar colision entre el namespace y
+  el record del comando. ServiceBus triggers y Functions de query GET van sin sufijo: ninguno de
+  los dos tiene un record de comando con nombre colisionante en su propio directorio.
+- Las Functions de query GET van **una carpeta por query**, nunca agrupadas en una sola clase que
+  aloje todas las queries del dominio (p. ej. `XQueriesEndpoint`, patron descartado -- ver "Nota"
+  al final de este ADR): es el mismo criterio de organizacion vertical que ya rige comandos y
+  reacciones a evento (una carpeta = un namespace = una responsabilidad).
 - El directorio comunica la intencion; la clase es generica.
 
 ### Convenciones de nombramiento en codigo C#
@@ -95,9 +211,23 @@ src/Bitakora.ControlAsistencia.{Dominio}/
 | CommandHandler | `{Comando}CommandHandler` | `CrearTurnoCommandHandler` |
 | Validator | `{Comando}Validator` | `CrearTurnoValidator` |
 | AggregateRoot | `{Entidad}AggregateRoot` | `TurnoAggregateRoot` |
+| Query (Function/metodo GET) | Verbo infinitivo + sustantivo: `Obtener{X}` (item por id) / `Listar{X}s` (coleccion) | `ObtenerTurno`, `ListarTurnos` |
+| Read model (view) | `{Concepto}View` | `TurnoView` |
+| Clase de proyeccion (companion, N2 de MEF-ADR-0035) | `{Concepto}Projection` (`partial`, mismo stem que su View) | `ResumenEquipoProjection` -> `ResumenEquipoView` |
+| Marker del named store de proyecciones | `I{Dominio}ProjectionStore` | `IVentasProjectionStore` |
+| Seam de composicion de proyecciones (por dominio) | `ConfiguracionMartenProjections{Dominio}`, metodo `Configurar{Dominio}` | `ConfiguracionMartenProjectionsVentas.ConfigurarVentas()` |
+
+El seam de proyecciones es el hermano read-side del seam de composicion del write-side que fija
+MEF-ADR-0029 (`ComposicionServicios{Dominio}` / `AgregarServicios{Dominio}`): misma idea de una
+fuente unica de wiring por dominio compartida entre el host y su test, distinto proceso y distinto
+nombre para que nunca se confundan al leer un `Program.cs`.
 
 Las clases son en espanol. Los sufijos de patrones reconocidos (CommandHandler, Validator,
-AggregateRoot, Endpoint) son en ingles.
+AggregateRoot, Endpoint, View, Projection, ProjectionStore) son en ingles. El estilo de codigo y
+la superficie de consulta de estos artefactos de proyeccion (record inmutable, metodos
+convencionales `Create`/`Apply`/`ShouldDelete`, el `partial` que exige el source generator -- que
+aplica tanto al read model auto-agregante de N1 como a la clase de proyeccion de N2 --, y la
+`QuerySession` acotada al tenant) los fija MEF-ADR-0035, no este ADR: aqui solo se fija el naming.
 
 ## Consecuencias
 
@@ -125,3 +255,13 @@ Esta ADR cubre el nombramiento de funciones y clases en codigo; el nombre del **
 ## Nota (issue #269, MEF-ADR-0026): excepcion de naming para Functions de fan-in
 
 MEF-ADR-0026 (colas de Service Bus con sesion para fan-in y serializacion por clave de aggregate) documenta un caso donde el patron `{Accion}Cuando{Evento}` de este ADR no aplica: la Function que consume un queue de fan-in no reacciona a un estimulo unico, sino a la convergencia de N eventos sobre la misma decision de aggregate. La seccion "Decision > Funciones ServiceBus" arriba fija la convencion alterna para ese caso (nombre de la Function = nombre del queue en PascalCase); MEF-ADR-0026 fija la invariante completa "queue kebab-case = nombre de la Function que lo consume" y el porque de la excepcion.
+
+## Nota (issue #363, MEF-ADR-0035): patron `XQueriesEndpoint` descartado
+
+Se descarta explicitamente el patron `XQueriesEndpoint` (una unica clase agrupando todas las queries de un dominio) que uso el proyecto de referencia ControlPlane: rompe el mismo invariante de organizacion vertical que ya rige comandos y reacciones a evento (una carpeta = un namespace = una responsabilidad), y reintroduce el riesgo de colision de nombres que el sufijo `Function`/su ausencia ya resuelven caso por caso. Las secciones "Funciones HTTP de query (GET)" y las filas de query/proyeccion de "Convenciones de nombramiento en codigo C#" arriba fijan la alternativa.
+
+Cross-referencias: MEF-ADR-0035 (superficie de consulta y estilo de codigo de las proyecciones que estas Functions exponen -- su seccion 6 delega en este ADR el naming exacto de las Functions de query), MEF-ADR-0034 (worker de proyecciones, que fija el named store y el seam de composicion cuyos nombres registra la tabla de arriba) y MEF-ADR-0029 (el endpoint GET vive en el Function App del write-side, mismo host cuyo grafo de DI valida el test de composicion).
+
+## Control de cambios
+
+- 2026-07-26: enmendado (issue #363, hermano de MEF-ADR-0035) para fijar el naming de las Functions HTTP de query (GET) -- `Obtener{X}`/`Listar{X}s` con plural real del espanol, y los casos especificos `Obtener{Aggregate}` (via (b1) `Live`) y `ListarEventosDe{Aggregate}` (via (b2) eventos crudos) que fija MEF-ADR-0035 seccion 3 --, su ruta HTTP (REST por recurso, reutilizando el segmento del comando de ese recurso, con verbo HTTP declarado explicitamente en ambos lados y nunca `Route = ""`), la organizacion vertical (una carpeta por query sin sufijo `Function`, descartando el patron agrupado `XQueriesEndpoint` de ControlPlane) y el naming de los artefactos de proyeccion (`{Concepto}View`, `{Concepto}Projection`, `I{Dominio}ProjectionStore`, seam `ConfiguracionMartenProjections{Dominio}`/`Configurar{Dominio}`, hermano del seam write-side de MEF-ADR-0029).
