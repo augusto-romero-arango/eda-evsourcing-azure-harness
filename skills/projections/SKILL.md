@@ -5,7 +5,7 @@ description: Doctrina de proyecciones Marten y de Functions de query read-only d
 
 # Proyecciones y query read-side
 
-Fuente unica de la doctrina read-side del marco -- MEF-ADR-0035 (estilo de codigo y superficie de consulta), MEF-ADR-0034 (worker de proyecciones y config-test) y MEF-ADR-0006 (naming). El `planner` la usa para proponer un issue `tipo:projection`; los subagentes read-side (`projection-test-writer`/`projection-implementer`/`projections-scaffolder`) la usan para generar codigo. **No duplicar este contenido en agentes generalistas** (`implementer`/`test-writer`): si el issue no toca proyecciones, este Skill no se dispara y su costo es cero (MEF-ADR-0033).
+Fuente unica de la doctrina read-side del marco -- MEF-ADR-0035 (estilo de codigo y superficie de consulta), MEF-ADR-0034 (worker de proyecciones y config-test) y MEF-ADR-0006 (naming). El `planner` la usa para proponer un issue `tipo:projection`; los subagentes read-side (`projection-test-writer`/`projection-implementer`/`projections-scaffolder`) la usaran para generar codigo -- **esos tres agentes aun no existen** (issues #365/#367), asi que hoy este Skill se dispara por su `description` o por un `skills:` que un agente declare, no por delegacion a ellos. **No duplicar este contenido en agentes generalistas** (`implementer`/`test-writer`): si el issue no toca proyecciones, este Skill no se dispara y su costo es cero (MEF-ADR-0033).
 
 **Stack verificado**: Marten `9.12.0` pinneado (MEF-ADR-0003). Toda receta de este Skill debe re-verificarse por compilacion antes de asumir que el ejemplo compila tal cual -- varios detalles de abajo (el `partial`, la superficie de `StoreOptions`) tienen caveats de verificacion documentados en las fuentes citadas.
 

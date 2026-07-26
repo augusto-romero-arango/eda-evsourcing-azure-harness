@@ -46,19 +46,23 @@ El tipo de la request es `HttpRequest` y el retorno `IActionResult` -- la integr
 
 **Por que `Route` explicito**: el `Route` del `HttpTriggerAttribute` es opcional y *"the default value if none is provided is `<functionname>`"* -- sin el atributo, la ruta seria `/api/ObtenerTurno`, no el recurso REST.
 
-**Cada Function declara su verbo, siempre**: el GET y el POST del mismo recurso se distinguen por el **metodo HTTP**, nunca por el nombre de la Function -- y eso obliga a declarar el metodo en **ambos** lados (`Methods` es opcional y responde a todos los verbos si se omite).
+**Cada Function declara su verbo, siempre**: el GET y el POST del mismo recurso se distinguen por el **metodo HTTP**, nunca por el nombre de la Function -- y eso obliga a declarar el metodo en **ambos** lados (`Methods` es opcional y responde a todos los verbos si se omite, asi que un comando que omita su `"post"` captura tambien el GET del mismo segmento y se pisa con la query).
 
-**Nunca `Route = ""`**: fijar la ruta vacia para que una query quede en la raiz de `/api` produce 404 en el worker aislado -- regla operativa hasta que un issue puntual la reverifique empiricamente.
+**NO VERIFICADO -- dos Functions con plantilla de ruta identica y verbos disjuntos**: que convivan sin conflicto en el host de Azure Functions no esta verificado contra la documentacion oficial (MEF-ADR-0006 lo registra explicitamente como tal). La query por id no depende de esto (su plantilla lleva `{id}` y no coincide con la del POST de creacion); el par que **si** comparte plantilla (`ListarTurnos` GET vs `CrearTurno` POST) debe verificarse empiricamente en el primer dominio que lo implemente, antes de asumir que arranca.
+
+**Nunca `Route = ""`**: fijar la ruta vacia para que una query quede en la raiz de `/api` produce 404 en el worker aislado -- comportamiento observado en campo, **no verificado** contra un caso reproducible de la documentacion oficial. Regla operativa hasta que un issue puntual la reverifique empiricamente.
 
 ## Organizacion vertical: una carpeta por query, sin sufijo `Function`
 
 ```
-src/Bitakora.ControlAsistencia.{Dominio}/
+src/<RootNamespace>.{Dominio}/
   ObtenerTurno/                          <- feature folder por query GET (sin sufijo Function)
     FunctionEndpoint.cs                  <- [Function("ObtenerTurno")], Route = "Programacion/Turnos/{id}"
   ListarTurnos/
     FunctionEndpoint.cs                  <- [Function("ListarTurnos")], Route = "Programacion/Turnos"
 ```
+
+(`<RootNamespace>` se resuelve leyendo el `CLAUDE.md` raiz del consumidor, seccion "Tokens del harness".)
 
 - `FunctionEndpoint.cs` como nombre de clase en cada directorio -- no colisiona porque cada directorio es un namespace diferente.
 - Sin sufijo `Function` (ese sufijo es solo para comandos, que si tienen un record colisionante en su propio directorio).
