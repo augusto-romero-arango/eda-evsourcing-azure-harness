@@ -19,8 +19,8 @@ Plugin de [Claude Code](https://code.claude.com/docs/en/plugins) que provee un h
 
 ## Qué incluye
 
-- **20 skills** (slash commands): `/onboard`, `/implement`, `/tooling`, `/infra`, `/infra-base`, `/scaffold`, `/seed-secret`, `/install-workos`, `/install-apim`, `/install-auth`, `/parallel`, `/sequential`, `/bug`, `/draft`, `/fix-review`, `/health-check`, `/work-status`, `/show-flow`, `/eraser-diagram`, `/merge`.
-- **20 agentes** especializados: `planner`, `test-writer`, `implementer`, `projection-test-writer`, `projection-implementer`, `reviewer`, `smoke-test-writer`, `domain-scaffolder`, `infra-base-scaffolder`, `apim-gateway-scaffolder`, `workos-identity-scaffolder`, `eda-modeler`, `event-stormer`, `historiador`, `infra-writer`, `infra-reviewer`, `infra-bootstrap`, `pr-sync`, `bug-investigator`, `tooling-investigator`.
+- **21 skills** (slash commands): `/onboard`, `/implement`, `/tooling`, `/infra`, `/infra-base`, `/scaffold`, `/scaffold-projections`, `/seed-secret`, `/install-workos`, `/install-apim`, `/install-auth`, `/parallel`, `/sequential`, `/bug`, `/draft`, `/fix-review`, `/health-check`, `/work-status`, `/show-flow`, `/eraser-diagram`, `/merge`.
+- **21 agentes** especializados: `planner`, `test-writer`, `implementer`, `projection-test-writer`, `projection-implementer`, `projections-scaffolder`, `reviewer`, `smoke-test-writer`, `domain-scaffolder`, `infra-base-scaffolder`, `apim-gateway-scaffolder`, `workos-identity-scaffolder`, `eda-modeler`, `event-stormer`, `historiador`, `infra-writer`, `infra-reviewer`, `infra-bootstrap`, `pr-sync`, `bug-investigator`, `tooling-investigator`.
 - **Pipelines bash** que orquestan el ciclo TDD, IaC y tooling sobre `tmux` y `git worktree`.
 - **35 ADRs** del marco arquitectónico (prefijo `MEF-ADR-`).
 - **Hooks** para logging del pipeline.
