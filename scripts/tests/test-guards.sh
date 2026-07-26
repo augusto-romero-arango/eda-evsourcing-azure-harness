@@ -12,6 +12,15 @@
 #      setup-github-ci.sh, setup-github-labels.sh) abortan si se sourcean en un
 #      contexto donde .claude-plugin/plugin.json existe.
 #   D) Las funciones validate_*_scope_changes son sourceables sin errores.
+#   F) Integridad de los Agent Skills (MEF-ADR-0033 seccion 4): el `name` del
+#      frontmatter de cada SKILL.md coincide con su directorio, tiene
+#      `description` no vacio, sus recursos de Nivel 3 referenciados existen, y
+#      todo valor de `skills:` declarado por un agente resuelve a un Skill real.
+#      Esta es la mitigacion que MEF-ADR-0033 delego al issue que creara el
+#      primer Skill: un `skills:` mal escrito NO aborta el agente ni emite error
+#      visible ("Claude Code skips it and logs a warning to the debug log"), asi
+#      que en los pipelines headless (`claude -p`) el subagente correria sin su
+#      doctrina y produciria codigo plausible pero ciego a ella.
 #
 # Uso: scripts/tests/test-guards.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -230,6 +239,121 @@ echo "[E2] is_path_in_mefisto_scope clasifica correctamente"
     done
     exit 0
 ) && PASS=$((PASS+1)) || FAIL=$((FAIL+1))
+
+# -------- Bloque F: integridad de los Agent Skills (MEF-ADR-0033) --------
+
+echo ""
+echo "[F] Agent Skills: frontmatter, recursos Nivel-3 y referencias 'skills:' de agentes"
+
+# frontmatter_field <archivo> <campo> -- imprime el valor del campo dentro del
+# bloque de frontmatter YAML delimitado por '---' al inicio del archivo.
+frontmatter_field() {
+    awk -v field="$2" '
+        NR == 1 { if ($0 != "---") exit; next }
+        $0 == "---" { exit }
+        index($0, field ":") == 1 {
+            sub("^" field ":[ \t]*", "")
+            gsub(/^["'"'"']|["'"'"']$/, "")
+            print
+            exit
+        }
+    ' "$1"
+}
+
+SKILL_FILES="$(find "$REPO_ROOT/skills" "$REPO_ROOT/.claude/skills" -name 'SKILL.md' 2>/dev/null | sort)"
+SKILL_NAMES=""
+
+if [ -z "$SKILL_FILES" ]; then
+    pass "no hay Agent Skills en el repo todavia: nada que validar en [F]"
+else
+    while IFS= read -r skill_file; do
+        [ -n "$skill_file" ] || continue
+        skill_dir="$(dirname "$skill_file")"
+        dir_name="$(basename "$skill_dir")"
+        rel="${skill_file#"$REPO_ROOT"/}"
+
+        # F1: el `name` del frontmatter es el valor que un agente lista en `skills:`
+        # (MEF-ADR-0033 seccion 4: "el campo `name` de su frontmatter, no el nombre
+        # del directorio"). Exigirlos iguales elimina la ambiguedad de origen.
+        skill_name="$(frontmatter_field "$skill_file" name)"
+        if [ -z "$skill_name" ]; then
+            fail "$rel: frontmatter sin campo 'name'"
+        elif [ "$skill_name" != "$dir_name" ]; then
+            fail "$rel: name '$skill_name' != directorio '$dir_name'"
+        else
+            pass "$rel: name '$skill_name' coincide con su directorio"
+            SKILL_NAMES="$SKILL_NAMES $skill_name"
+        fi
+
+        # F2: sin `description` el Skill nunca se dispara automaticamente (Nivel 1).
+        if [ -z "$(frontmatter_field "$skill_file" description)" ]; then
+            fail "$rel: frontmatter sin campo 'description' (Nivel 1 vacio: nunca se dispara)"
+        else
+            pass "$rel: tiene 'description' en el frontmatter"
+        fi
+
+        # F3: todo recurso de Nivel 3 referenciado por el body debe existir --
+        # un link roto deja la doctrina inalcanzable sin ningun error visible.
+        missing_resources=""
+        while IFS= read -r resource; do
+            [ -n "$resource" ] || continue
+            case "$resource" in
+                http*|"#"*|/*) continue ;;
+            esac
+            [ -f "$skill_dir/$resource" ] || missing_resources="$missing_resources $resource"
+        done <<EOF
+$(grep -o '](\([^)]*\.md\))' "$skill_file" 2>/dev/null | sed 's/^](//; s/)$//' | sort -u)
+EOF
+        if [ -n "$missing_resources" ]; then
+            fail "$rel: recursos Nivel-3 referenciados que no existen:$missing_resources"
+        else
+            pass "$rel: todos los recursos Nivel-3 referenciados existen"
+        fi
+    done <<EOF
+$SKILL_FILES
+EOF
+fi
+
+# F4: todo valor de `skills:` de un agente resuelve a un Skill real del repo.
+# Cubre la forma de lista YAML del ejemplo de MEF-ADR-0033 seccion 3
+# (`skills:` + items `- nombre`) y la forma inline (`skills: [a, b]`).
+AGENT_FILES="$(find "$REPO_ROOT/agents" "$REPO_ROOT/.claude/agents" -name '*.md' 2>/dev/null | sort)"
+SKILLS_REFS_FOUND=0
+
+while IFS= read -r agent_file; do
+    [ -n "$agent_file" ] || continue
+    rel="${agent_file#"$REPO_ROOT"/}"
+    refs="$(awk '
+        NR == 1 { if ($0 != "---") exit; next }
+        $0 == "---" { exit }
+        /^skills:[ \t]*$/ { inlist = 1; next }
+        inlist && /^[ \t]*-[ \t]*/ { sub(/^[ \t]*-[ \t]*/, ""); print; next }
+        inlist { inlist = 0 }
+        index($0, "skills:") == 1 {
+            sub(/^skills:[ \t]*/, "")
+            gsub(/[][,]/, " ")
+            print
+        }
+    ' "$agent_file" | tr -s ' \t' '\n' | tr -d '"'"'" | sort -u)"
+
+    while IFS= read -r ref; do
+        [ -n "$ref" ] || continue
+        SKILLS_REFS_FOUND=$((SKILLS_REFS_FOUND+1))
+        if echo " $SKILL_NAMES " | grep -q " $ref "; then
+            pass "$rel: skills: '$ref' resuelve a un SKILL.md real"
+        else
+            fail "$rel: skills: '$ref' NO resuelve a ningun SKILL.md del repo (degradaria en silencio)"
+        fi
+    done <<EOF
+$refs
+EOF
+done <<EOF
+$AGENT_FILES
+EOF
+
+if [ "$SKILLS_REFS_FOUND" -eq 0 ]; then
+    pass "ningun agente declara 'skills:' todavia: nada que resolver (guard activo para cuando lo declaren)"
+fi
 
 # -------- Resumen --------
 

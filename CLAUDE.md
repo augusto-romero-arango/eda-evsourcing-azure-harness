@@ -149,6 +149,14 @@ tu propuesta en vez de darlo por cierto.
 | `/eraser-diagram` | Genera diagrama para Eraser |
 | `/merge` | Mergea uno o varios PRs a main |
 
+## Agent Skills disponibles
+
+Doctrina pesada empaquetada con *progressive disclosure* (MEF-ADR-0033); no son slash commands. Un agente las precarga con el frontmatter `skills:`, o Claude las dispara solo cuando la tarea coincide con su `description`.
+
+| Agent Skill | Doctrina que empaqueta |
+|---|---|
+| `projections` (`skills/projections/`) | Read-side: recetas de proyección Marten (N1/N2/N3), estilo canónico de read model, read APIs sobre `QuerySession` tenant-scoped, naming de Functions de query y config-test del worker (MEF-ADR-0035/0034/0006) |
+
 ## Agentes disponibles
 
 | Agente | Cuándo usarlo |
@@ -253,7 +261,7 @@ Mefisto mantiene **dos sets** de skills/agentes/pipelines físicamente separados
 - **Publicados** (`commands/`, `skills/`, `agents/`, `scripts/`, `hooks/`): se distribuyen vía marketplace y operan únicamente sobre archivos del consumidor.
 - **Internos** (`.claude/commands/`, `.claude/skills/`, `.claude/agents/`, `.claude/scripts/`): no se publican; Claude Code los carga al abrir este repo. Llevan prefijo `mefisto-` y operan solo sobre archivos del propio plugin.
 
-`skills/` y `.claude/skills/` son las ubicaciones de Agent Skills (MEF-ADR-0033); aún no hay ninguno creado, pero las rutas ya están registradas en los gates de scope. **Todo tipo de artefacto nuevo del plugin debe registrarse a mano** en el blocklist publicado (`is_path_in_consumer_blocklist`) y en la allowlist interna (`is_path_in_mefisto_scope`): ambos enumeran rutas explícitamente.
+`skills/` y `.claude/skills/` son las ubicaciones de Agent Skills (MEF-ADR-0033) y ya están registradas en los gates de scope; el primero publicado es `skills/projections/` (ver "Agent Skills disponibles"), y del lado interno todavía no hay ninguno. La integridad de todo Skill nuevo (su `name` frontmatter, sus recursos de Nivel 3 y las referencias `skills:` de los agentes) la valida el bloque `[F]` de `scripts/tests/test-guards.sh`: un `skills:` mal escrito degrada en silencio, sin error visible en un pipeline headless. **Todo tipo de artefacto nuevo del plugin debe registrarse a mano** en el blocklist publicado (`is_path_in_consumer_blocklist`) y en la allowlist interna (`is_path_in_mefisto_scope`): ambos enumeran rutas explícitamente.
 
 La única operación cross-repo desde el consumidor hacia Mefisto es **crear drafts** (`estado:borrador`); el refinamiento y demás gestión de issues ocurre con `/mefisto-plan` dentro de este repo.
 
