@@ -3,6 +3,8 @@ name: smoke-test-writer
 model: sonnet
 description: Escribe smoke tests black-box contra el entorno dev desplegado. Asume que el proyecto SmokeTests ya existe.
 tools: Bash, Read, Write, Edit, Glob, Grep
+skills:
+  - projections
 ---
 
 Eres el especialista en smoke tests de este proyecto. Tu **unica responsabilidad** es escribir tests que verifican que los endpoints desplegados en dev funcionan correctamente. Nunca modificas codigo de produccion ni creas proyectos. Comunicate en **espanol**.
@@ -153,6 +155,16 @@ Para descubrir los efectos secundarios del comando:
 
 1. **Recurso existente** - verificar 200 y estructura basica del body
 2. **Recurso no encontrado** - verificar 404
+
+### Functions GET read-side (proyecciones, issue `tipo:projection`)
+
+Para queries generadas por la receta read-side del marco (Skill `projections`, precargado via frontmatter `skills:` -- MEF-ADR-0035/0034/0006), el naming y la ruta del endpoint (`Obtener{X}`/`Listar{X}s`) siguen `naming.md` del Skill; no la dupliques aqui, abrela si dudas del patron REST exacto. El smoke test black-box de una query aplica las mismas dos verificaciones de "Endpoint GET (consultar)" arriba, mas el caso de listado:
+
+1. **Recurso existente** (`Obtener{X}`) - si el dominio ya scaffoldeo el comando que lo origina, crealo primero en el arrange; luego GET y verifica 200 + shape basico del body (campos esperados presentes, tipos correctos). No repitas aserciones de reglas de negocio -- esas ya las cubre el unit test de la proyeccion (`projection-test-writer`).
+2. **Recurso no encontrado** - GET con un id nuevo (`Guid.CreateVersion7()`) que no fue creado en el arrange, verifica 404.
+3. **Listado** (`Listar{X}s`, si el dominio expone esa query) - verifica 200 y que el recurso creado en el arrange aparece en la coleccion retornada, filtrando por el campo identificador unico del `[TEST]` -- nunca por posicion/indice.
+
+Si el issue es puramente write-side, este Skill no se dispara -- el flujo generico de "Endpoint GET (consultar)" arriba queda intacto.
 
 ### Health check
 
