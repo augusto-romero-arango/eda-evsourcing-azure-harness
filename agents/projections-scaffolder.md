@@ -30,12 +30,15 @@ Si el guard dispara, detente sin escribir nada.
 Aunque `/scaffold-projections` (el skill que te invoca) ya valida este token, revalida aqui por si te invocan directo (`claude --agent projections-scaffolder ...`), sin pasar por el skill:
 
 ```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
 RAW=$(jq -r '.projections.enabled' "$REPO_ROOT/.claude/harness.config.json" 2>/dev/null)
 if [ "$RAW" != "true" ]; then
-    echo "ERROR: 'projections.enabled' no esta en 'true' en .claude/harness.config.json. Detente sin generar nada."
+    echo "ERROR: 'projections.enabled' no esta en 'true' (o falta .claude/harness.config.json). Detente sin generar nada."
     exit 1
 fi
 ```
+
+> **Cada bloque `bash` corre en un shell nuevo**: las variables no se heredan entre bloques. Vuelve a derivar `REPO_ROOT` (`git rev-parse --show-toplevel`) al inicio de cada bloque que la use -- o usa rutas absolutas ya resueltas. Los bloques de abajo la escriben como `"$REPO_ROOT/..."` por legibilidad; ese es el valor que debes reponer, no una variable que sobreviva del bloque anterior.
 
 ## Principio fundamental
 
@@ -57,6 +60,7 @@ Si `CLAUDE.md` no declara alguno de los dos, detente y pide al usuario que los d
 **Probe de idempotencia (gate de todo el Paso 1):**
 
 ```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
 test -f "$REPO_ROOT/src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj" && echo "EXISTE (proyecto ya scaffoldeado, omitir Paso 1)" || echo "FALTA (crear proyecto)"
 ```
 
@@ -69,13 +73,17 @@ Si el csproj ya existe, **no** ejecutes ningun comando del Paso 1 (evita pisar `
 Solo si el Paso 0 determino que el proyecto **falta**.
 
 ```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
 cd "$REPO_ROOT"
 dotnet new worker -n "<RootNamespace>.Projections" -o "src/<RootNamespace>.Projections" --framework net10.0
 ```
 
-`dotnet new worker` genera, ademas del csproj, un `Worker.cs` (subclase de `BackgroundService`) y `Properties/launchSettings.json` que este worker no necesita: verificado contra la documentacion oficial de Marten (MEF-ADR-0034, seccion 2), *"the daemon itself runs inside an IHostedService implementation in your application"* -- el propio `AddAsyncDaemon(...)` encadenado a `AddMartenStore<T>()` ya registra el hosted service que corre el daemon; un `Worker : BackgroundService` custom quedaria sin proposito. Elimina ambos, **conservando** el `.gitignore` per-proyecto que el template genera (mismo criterio que `domain-scaffolder` con `func init`: ya ignora `bin/`/`obj/` por defecto):
+El template genera exactamente estos archivos (verificado con SDK `10.0.201`): el `.csproj`, `Program.cs`, `Worker.cs`, `appsettings.json`, `appsettings.Development.json` y `Properties/launchSettings.json`. **No genera ningun `.gitignore`** -- a diferencia de `func init` en `domain-scaffolder`, aqui no hay un `.gitignore` per-proyecto que conservar, y no hace falta crearlo: `bin/`/`obj/` los cubre el `.gitignore` **raiz** que emite `infra-base-scaffolder` (su Paso 2c), y este worker no escribe ningun archivo de settings locales con secretos (no hay `local.settings.json`).
+
+`Worker.cs` (subclase de `BackgroundService`) y `Properties/launchSettings.json` no le sirven a este worker: verificado contra la documentacion oficial de Marten (MEF-ADR-0034, seccion 2), *"the daemon itself runs inside an IHostedService implementation in your application"* -- el propio `AddAsyncDaemon(...)` encadenado a `AddMartenStore<T>()` ya registra el hosted service que corre el daemon; un `Worker : BackgroundService` custom quedaria sin proposito. Elimina ambos:
 
 ```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
 rm -f "$REPO_ROOT/src/<RootNamespace>.Projections/Worker.cs"
 rm -rf "$REPO_ROOT/src/<RootNamespace>.Projections/Properties"
 ```
@@ -85,9 +93,9 @@ Deja `appsettings.json`/`appsettings.Development.json` tal como los genero el te
 **Ajusta el `.csproj` generado.** Lee su contenido actual antes de modificarlo, luego:
 
 1. Agrega `<DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>` al `<PropertyGroup>` (el worker se despliega como Azure Container App **Linux**, MEF-ADR-0034 seccion 8).
-2. Fija (o agrega, si el template no la trae) la version del `PackageReference Include="Microsoft.Extensions.Hosting"` a `10.0.10` -- version estable vigente en NuGet.org al momento de escribir este agente (verificado, https://www.nuget.org/packages/Microsoft.Extensions.Hosting). **Reverifica contra NuGet.org** si ha pasado tiempo desde entonces: el paquete recibe releases de parche con frecuencia.
+2. Sube la version del `PackageReference Include="Microsoft.Extensions.Hosting"` que **el template ya trae** (`10.0.5` con SDK `10.0.201`) a `10.0.10` -- ultima estable de la linea 10.x en NuGet.org al momento de escribir este agente (verificado contra `api.nuget.org/v3-flatcontainer/microsoft.extensions.hosting/index.json`). Actualiza esa referencia, **no agregues una segunda linea** al mismo paquete (un `PackageReference` duplicado resuelve a la version mas baja, mismo detalle que documenta `domain-scaffolder` con `Microsoft.Azure.Functions.Worker`). **Reverifica contra NuGet.org** si ha pasado tiempo desde entonces: el paquete recibe releases de parche con frecuencia.
 
-El elemento MSBuild `RootNamespace` (que el template ya completo con el valor correcto gracias al `-n` del Paso 1) y `UserSecretsId` (GUID autogenerado) quedan como el template los dejo -- no los edites. El resto del `.csproj` final debe verse asi:
+No toques el `<UserSecretsId>` que el template ya escribio (GUID autogenerado): dejalo intacto en su lugar. El template **no** emite un elemento `<RootNamespace>` y no hace falta agregarlo: por defecto MSBuild lo deriva del nombre del assembly (`<RootNamespace>.Projections`, exactamente el namespace que quieres). Con eso, el `.csproj` final debe verse asi:
 
 ```xml
 <Project Sdk="Microsoft.NET.Sdk.Worker">
@@ -96,8 +104,7 @@ El elemento MSBuild `RootNamespace` (que el template ya completo con el valor co
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <RootNamespace>(ya completo por el template -- no lo edites)</RootNamespace>
-    <UserSecretsId>(ya completo por el template -- no lo edites)</UserSecretsId>
+    <!-- Aqui va, intacto, el <UserSecretsId> con el GUID que escribio el template -->
     <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
   </PropertyGroup>
 
@@ -108,9 +115,12 @@ El elemento MSBuild `RootNamespace` (que el template ya completo con el valor co
 </Project>
 ```
 
+Esta receta completa (csproj + `Program.cs` + seam de abajo) esta verificada: compila con `dotnet build` sin advertencias ni errores sobre SDK `10.0.201`.
+
 **Crea `Infraestructura/ConfiguracionMartenProjections.cs`** -- el seam base de composicion (hermano read-side del `ComposicionServicios{Dominio}` del write-side, MEF-ADR-0029, pero a nivel de BC, no de dominio: no hay `{Dominio}` en su nombre porque en esta fase no hay ningun dominio adoptado todavia, MEF-ADR-0034 seccion 6):
 
 ```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
 mkdir -p "$REPO_ROOT/src/<RootNamespace>.Projections/Infraestructura"
 ```
 
@@ -138,7 +148,9 @@ public static class ConfiguracionMartenProjections
 }
 ```
 
-**Reemplaza el `Program.cs`** generado por `dotnet new worker`:
+> **Relacion con el seam por dominio (issue #370 y fase 2).** Este seam de nivel BC es el **punto de agregacion**; no reemplaza al seam canonico **por dominio** que fija MEF-ADR-0006 (enmienda #363) y el Agent Skill `projections` (`naming.md`, `config-test.md`): cada dominio sigue aportando su propio `ConfiguracionMartenProjections{Dominio}.Configurar{Dominio}(services, martenConnectionString)` -- metodo `partial` con modificadores de acceso, para que el config-test lo alcance desde el ensamblado `<RootNamespace>.Projections.Tests`. El config-test de la fase 2 invoca **esos** metodos por dominio directamente, no este `ConfigurarEventos`; lo unico que `ConfigurarEventos` hace es encadenar una llamada por dominio para que `Program.cs` invoque un solo seam. Consecuencia que el implementador de #370 debe conocer: si un dominio implementa su seam pero nadie agrega su llamada **aqui**, el config-test sigue verde y el daemon de ese dominio nunca corre -- misma disciplina de fuente unica compartida que exige MEF-ADR-0034 seccion 6.
+
+**Reemplaza el `Program.cs`** generado por `dotnet new worker` (el template lo deja con `AddHostedService<Worker>()`, que ya no compila tras borrar `Worker.cs`):
 
 ```csharp
 using <RootNamespace>.Projections.Infraestructura;
@@ -164,6 +176,7 @@ await builder.Build().RunAsync();
 ## Paso 2 - Generar el Dockerfile (CA-3)
 
 ```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
 test -f "$REPO_ROOT/src/<RootNamespace>.Projections/Dockerfile" && echo "EXISTE (omitir)" || echo "FALTA (crear)"
 ```
 
@@ -203,6 +216,7 @@ ENTRYPOINT ["dotnet", "<RootNamespace>.Projections.dll"]
 ## Paso 3 - Agregar a la solucion y verificar `global.json` (CA-4)
 
 ```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
 cd "$REPO_ROOT"
 dotnet sln <SolutionFile> add "src/<RootNamespace>.Projections/"
 ```
@@ -228,19 +242,28 @@ dotnet sln <SolutionFile> add "src/<RootNamespace>.Projections/"
 ## Paso 4 - Verificar
 
 ```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
 cd "$REPO_ROOT"
 dotnet build "src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj"
 ```
 
 Si el build falla, lee el error, corrige y vuelve a intentar. **No hagas commit hasta que compile.**
 
-Si `docker` esta instalado, valida tambien el Dockerfile (opcional, no bloqueante si `docker` no esta disponible):
+Si `docker` esta instalado **y su daemon responde**, valida tambien el Dockerfile (opcional, no bloqueante). El `| tail` se queda con el exit code de `tail`, no del build, asi que captura el del build explicitamente antes de concluir que paso:
 
 ```bash
-docker build -f "src/<RootNamespace>.Projections/Dockerfile" -t projections-worker-check "$REPO_ROOT" 2>&1 | tail -20
+REPO_ROOT=$(git rev-parse --show-toplevel)
+cd "$REPO_ROOT"
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    docker build -f "src/<RootNamespace>.Projections/Dockerfile" -t projections-worker-check "$REPO_ROOT" > /tmp/projections-docker-build.log 2>&1
+    echo "docker build exit=$?"
+    tail -20 /tmp/projections-docker-build.log
+else
+    echo "docker no disponible: validacion del Dockerfile pendiente manual"
+fi
 ```
 
-Si `docker` no esta instalado, informa al usuario y deja esta validacion como pendiente manual explicito.
+Si `docker` no esta disponible, informa al usuario y deja esta validacion como pendiente manual explicito (nunca la reportes como exitosa). La primera corrida descarga las imagenes `dotnet/sdk:10.0` y `dotnet/runtime:10.0` (varios cientos de MB): si tarda o falla por red, tratala igual que "no disponible" -- no bloquea el commit.
 
 ---
 
@@ -249,13 +272,14 @@ Si `docker` no esta instalado, informa al usuario y deja esta validacion como pe
 Nunca trabajes contra `main` directo. Si la rama activa es `main`, crea una rama nueva primero:
 
 ```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
 cd "$REPO_ROOT"
 git rev-parse --abbrev-ref HEAD
 # si es main/master:
 git switch -c projections/scaffold-worker
 git add "src/<RootNamespace>.Projections/" "<SolutionFile>"
 [ -f global.json ] && git add global.json
-git commit -m "projections: generar el worker de proyecciones (Program.cs + seam base + Dockerfile)"
+git commit -m "scaffold(projections): generar el worker de proyecciones (Program.cs + seam base + Dockerfile)"
 ```
 
 (Si te invoco desde un pipeline que ya creo un worktree y rama, commitea en esa rama sin crear otra.)

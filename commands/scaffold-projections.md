@@ -18,12 +18,22 @@ fi
 
 ## Pre-condicion 2: token `projections.enabled` (CA-1)
 
-El worker solo se genera si el BC declaro explicitamente que adopta proyecciones. El token vive en `.claude/harness.config.json` bajo `projections.enabled` -- mecanismo de deteccion que fija MEF-ADR-0034 (seccion 8); su contrato formal completo en `harness.config.json` (validacion, `/onboard`, etc.) es alcance del issue #369, todavia no implementado. Mientras tanto, este skill consume el token en la forma minima que necesita:
+El worker solo se genera si el BC declaro explicitamente que adopta proyecciones. El token vive en `.claude/harness.config.json` bajo `projections.enabled` -- mecanismo de deteccion que fija MEF-ADR-0034 (seccion 8); su contrato formal completo en `harness.config.json` (validacion, `/onboard`, etc.) es alcance del issue #369, todavia no implementado. Mientras tanto, este skill consume el token en la forma minima que necesita.
+
+Cada bloque `bash` corre en un shell nuevo: `REPO_ROOT` se vuelve a derivar aqui, no se hereda del bloque anterior (mismo patron que `/onboard`, que lo re-deriva en cada bloque).
 
 ```bash
-RAW=$(jq -r '.projections.enabled' "$REPO_ROOT/.claude/harness.config.json" 2>/dev/null)
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
+CONFIG="$REPO_ROOT/.claude/harness.config.json"
+if [ ! -f "$CONFIG" ]; then
+    echo "ERROR: no existe .claude/harness.config.json. Corre /onboard antes de este skill."
+    exit 1
+fi
+# Sin '//' en el filtro jq: 'false // "null"' devuelve "null" (false es falsy en jq) y
+# confundiria "deshabilitado" con "ausente".
+RAW=$(jq -r '.projections.enabled' "$CONFIG" 2>/dev/null)
 if [ "$RAW" != "true" ]; then
-    if [ -z "$RAW" ] || [ "$RAW" == "null" ]; then
+    if [ -z "$RAW" ] || [ "$RAW" = "null" ]; then
         MOTIVO="ausente"
     else
         MOTIVO="deshabilitado (projections.enabled = $RAW)"

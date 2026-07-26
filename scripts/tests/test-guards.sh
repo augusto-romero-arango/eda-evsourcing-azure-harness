@@ -42,7 +42,8 @@ echo "[A] Skills publicados (commands/*.md): guard 'cwd != Mefisto' presente"
 
 PUBLISHED_SKILLS=(
     bug.md draft.md eraser-diagram.md fix-review.md health-check.md
-    implement.md infra.md infra-base.md install-workos.md merge.md onboard.md parallel.md scaffold.md
+    implement.md infra.md infra-base.md install-apim.md install-auth.md install-workos.md
+    merge.md onboard.md parallel.md scaffold.md scaffold-projections.md
     seed-secret.md sequential.md show-flow.md tooling.md work-status.md
 )
 
@@ -56,6 +57,21 @@ for skill in "${PUBLISHED_SKILLS[@]}"; do
         pass "$skill: menciona .claude-plugin/plugin.json"
     else
         fail "$skill: no menciona .claude-plugin/plugin.json (falta guard)"
+    fi
+done
+
+# Cobertura del listado: un skill nuevo que nadie agregue a PUBLISHED_SKILLS quedaria sin
+# verificar su guard, en silencio (fue el caso de install-apim/install-auth hasta el issue #367).
+for path in "$REPO_ROOT"/commands/*.md; do
+    skill="$(basename "$path")"
+    listed=0
+    for known in "${PUBLISHED_SKILLS[@]}"; do
+        [ "$known" = "$skill" ] && listed=1 && break
+    done
+    if [ "$listed" -eq 1 ]; then
+        pass "$skill: enumerado en PUBLISHED_SKILLS"
+    else
+        fail "$skill: existe en commands/ pero no esta en PUBLISHED_SKILLS (agregalo a este test)"
     fi
 done
 
