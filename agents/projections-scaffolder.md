@@ -177,14 +177,14 @@ await builder.Build().RunAsync();
 
 Biblioteca de clases donde viven los read models y las clases de proyeccion de todos los dominios del BC (MEF-ADR-0034 seccion 5) -- el worker la referencia; el sentido de la dependencia es unico, `ReadModels` no referencia al worker.
 
-**Probe de idempotencia:**
+**Probe de idempotencia (gate de la creacion del proyecto, no del paso entero):**
 
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel)
-test -f "$REPO_ROOT/src/<RootNamespace>.ReadModels/<RootNamespace>.ReadModels.csproj" && echo "EXISTE (proyecto ya scaffoldeado, omitir Paso 1b)" || echo "FALTA (crear proyecto)"
+test -f "$REPO_ROOT/src/<RootNamespace>.ReadModels/<RootNamespace>.ReadModels.csproj" && echo "EXISTE (omitir creacion y ajuste del csproj)" || echo "FALTA (crear proyecto)"
 ```
 
-Si el csproj ya existe, **no** ejecutes ningun comando de este paso -- puede llevar read models de dominios ya implementados por `projection-implementer` (issue #365). Continua directo al Paso 1c.
+Si el csproj ya existe, **omite la creacion del proyecto y el ajuste del `.csproj`** -- puede llevar read models de dominios ya implementados por `projection-implementer` (issue #365), y su `.csproj` pudo sumar paquetes que este agente no conoce. Los dos ultimos sub-pasos (**carpetas por dominio** y **`ProjectReference` del worker**) corren **siempre**, existiera o no el proyecto: ambos son idempotentes por construccion (`mkdir -p`, `dotnet add reference`) y son los que cierran el hueco cuando un dominio nacio despues de la ultima corrida de `/scaffold-projections`. Gatear el paso completo dejaria esos dos huecos abiertos para siempre -- el mismo motivo por el que el Paso 0 ya no salta directo al Paso 2.
 
 Si falta, crealo:
 
@@ -205,7 +205,7 @@ rm -f "$REPO_ROOT/src/<RootNamespace>.ReadModels/Class1.cs"
 
 **Por que este proyecto necesita el paquete `Marten` ya, y no solo el worker.** Los read models y las clases de proyeccion `partial` (N1/N2, `modelos-marten.md` del Skill `projections`) dependen del source generator `JasperFx.Events.SourceGenerator` para emitir su `[GeneratedEvolver]` en tiempo de compilacion -- ese analizador **viaja dentro del paquete NuGet `Marten`** (verificado contra el codigo fuente y los issues de `JasperFx/marten`: el analizador se resuelve transitivamente con una simple `PackageReference Include="Marten"`, sin declarar `JasperFx.Events.SourceGenerator` aparte). Sin esta referencia en **este** `.csproj` -- el ensamblado donde de verdad viven los tipos `partial` --, un read model sin el analizador compila limpio pero falla en **runtime** con *"No source-generated dispatcher found for ..."* (issue #4557 de `JasperFx/marten`, ya citado en `modelos-marten.md`). El worker (`<RootNamespace>.Projections`) no necesita este paquete por si mismo hasta que un dominio registre su primer named store (`domain-scaffolder`, Paso 3b, issue #370, lo agrega ahi en ese momento) -- son dos ensamblados distintos con necesidades independientes del mismo paquete.
 
-**Estructura por dominio (vacia, CA-1).** Si el worker ya tiene dominios con named store registrado -- los dos ordenes de ejecucion son validos, `domain-scaffolder` (issue #370) pudo correr antes que este agente --, crea una carpeta vacia por dominio detectado, lista para que `projection-implementer` (issue #365) la llene con su primer read model. Si no hay ninguno todavia (orden tipico en greenfield: primero el worker, despues los dominios), el proyecto queda sin carpetas de dominio -- retrocompatible, un `<RootNamespace>.ReadModels` vacio es un scaffold valido:
+**Estructura por dominio (vacia, CA-1) -- corre siempre.** Si el worker ya tiene dominios con named store registrado -- los dos ordenes de ejecucion son validos, `domain-scaffolder` (issue #370) pudo correr antes que este agente --, crea una carpeta vacia por dominio detectado, lista para que `projection-implementer` (issue #365) la llene con su primer read model. Si no hay ninguno todavia (orden tipico en greenfield: primero el worker, despues los dominios), el proyecto queda sin carpetas de dominio -- retrocompatible, un `<RootNamespace>.ReadModels` vacio es un scaffold valido. `mkdir -p` no pisa una carpeta ya poblada, asi que este bloque es seguro tambien cuando el proyecto ya existia (CA-4):
 
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel)
@@ -214,13 +214,20 @@ for seam in "$REPO_ROOT"/src/<RootNamespace>.Projections/Infraestructura/Configu
     nombre=$(basename "$seam" .cs)
     [ "$nombre" = "ConfiguracionMartenProjections" ] && continue   # el seam de nivel BC, no un dominio
     dominio="${nombre#ConfiguracionMartenProjections}"
-    mkdir -p "$REPO_ROOT/src/<RootNamespace>.ReadModels/$dominio"
-    touch "$REPO_ROOT/src/<RootNamespace>.ReadModels/$dominio/.gitkeep"
-    echo "Carpeta creada para dominio detectado: $dominio"
+    destino="$REPO_ROOT/src/<RootNamespace>.ReadModels/$dominio"
+    mkdir -p "$destino"
+    # .gitkeep solo mientras la carpeta este vacia: git no versiona directorios vacios, y una
+    # carpeta ya poblada por projection-implementer no lo necesita.
+    if [ -z "$(ls -A "$destino")" ]; then
+        touch "$destino/.gitkeep"
+        echo "Carpeta creada para dominio detectado: $dominio"
+    else
+        echo "Carpeta ya poblada para dominio: $dominio (omitida)"
+    fi
 done
 ```
 
-**Referenciar `ReadModels` desde el worker.** El worker referencia la biblioteca de read models (MEF-ADR-0034 seccion 5); wireala ahora para que ningun issue posterior tenga que tocar el `.csproj` del worker solo para agregar esta referencia:
+**Referenciar `ReadModels` desde el worker -- corre siempre.** El worker referencia la biblioteca de read models (MEF-ADR-0034 seccion 5); wireala ahora para que ningun issue posterior tenga que tocar el `.csproj` del worker solo para agregar esta referencia:
 
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel)
@@ -235,16 +242,19 @@ dotnet add "$REPO_ROOT/src/<RootNamespace>.Projections/<RootNamespace>.Projectio
 
 El config-test del worker (MEF-ADR-0034 seccion 6, hermano read-side de `ComposicionContenedorTests`/MEF-ADR-0029): construye el `IServiceCollection` invocando el seam de composicion con una cadena de conexion dummy, sin Postgres real (Marten 7+ no fuerza IO sincronico al bootstrapear el `IHost`, `config-test.md` del Skill `projections`).
 
-**Probe de idempotencia:**
+**Probe de idempotencia (un gate por artefacto, CA-4):**
 
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel)
-test -f "$REPO_ROOT/tests/<RootNamespace>.Projections.Tests/<RootNamespace>.Projections.Tests.csproj" && echo "EXISTE (proyecto ya scaffoldeado, omitir Paso 1c)" || echo "FALTA (crear proyecto)"
+BASE="$REPO_ROOT/tests/<RootNamespace>.Projections.Tests"
+test -f "$BASE/<RootNamespace>.Projections.Tests.csproj"      && echo "csproj: EXISTE (omitir creacion y ajuste)"  || echo "csproj: FALTA"
+test -f "$BASE/Infraestructura/AssertsProyecciones.cs"        && echo "helper: EXISTE (omitir)"                    || echo "helper: FALTA"
+test -f "$BASE/ConfiguracionMartenProjectionsTests.cs"        && echo "config-test: EXISTE (omitir)"               || echo "config-test: FALTA"
 ```
 
-Si el csproj ya existe, **no** ejecutes ningun comando de este paso -- `projection-test-writer` (issue #365) pudo haber agregado guardas de dominio sobre el config-test base que este paso no debe pisar. Continua directo al Paso 2.
+Cada uno de los tres se evalua por separado, como fija el "Principio fundamental": el config-test base pudo crecer con guardas de dominio de `projection-test-writer` (issue #365) que **nunca** debes pisar, pero eso no debe impedir que crees el helper si falta (p. ej. un proyecto scaffoldeado con una version de este agente anterior a la fase 2). **Caveat**: si el `.csproj` ya existia y vas a escribir el helper, leelo primero y confirma que declare `AwesomeAssertions` y `Marten` -- si falta alguno, agregalo antes de escribir el archivo, o rompes un build que hasta ahora estaba verde.
 
-Si falta, crealo:
+Si el csproj falta, crealo:
 
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel)
