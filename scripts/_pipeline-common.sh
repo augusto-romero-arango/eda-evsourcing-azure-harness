@@ -887,3 +887,134 @@ find_open_pr_for_branch() {
     echo "$url"
     return 0
 }
+
+# --- Clasificacion de archivos para el coverage gate (Stage 4) --------------
+
+# coverage_classify_file <filepath> <worktree_path> [is_projection=false]
+#
+# Clasifica un archivo .cs del PR para el coverage gate del Stage 4 de
+# scripts/tdd-pipeline.sh (MEF-ADR-0014). Extraida del cuerpo del Stage 4 para
+# poder testearla con fixtures reales en vez de con una reimplementacion que
+# puede divergir del script (issue #416) -- mismo motivo que can_launch_now.
+#
+# NO es pura: en tres ramas (eventos/Entities y ValueObjects con factory
+# Crear(), y la exclusion de records DTO) lee <worktree_path>/<filepath> del
+# disco. Por eso recibe worktree_path/is_projection como parametros explicitos
+# en vez de leer $WORKTREE_PATH/$IS_PROJECTION del entorno del caller: el
+# motivo es eliminar acoplamiento oculto en un archivo que sourcean todos los
+# pipelines publicados, no solo habilitar la testabilidad (un test que sourcea
+# tambien podria setear esos globales antes de llamar).
+#
+#   <filepath>       ruta relativa del archivo dentro del worktree (ej:
+#                     src/Foo.Bar/Feature/FunctionEndpoint.cs)
+#   <worktree_path>   ruta absoluta del worktree del consumidor
+#   [is_projection]   "true"/"false" (default "false"). Gatea el carve-out
+#                     read-side de FunctionEndpoint.cs (issue #371)
+#
+# Imprime a stdout una de: "logic" (exige 95% de cobertura de lineas),
+# "excluded" (no se mide) o "not_evaluated" (no matchea ningun patron vigente;
+# se loguea en la tabla de cobertura pero nunca bloquea el gate). Retorna
+# siempre 0.
+coverage_classify_file() {
+    local filepath="$1"
+    local worktree_path="$2"
+    local is_projection="${3:-false}"
+    local basename
+    basename=$(basename "$filepath")
+    local dirname
+    dirname=$(dirname "$filepath")
+
+    # Excluidos por nombre
+    case "$basename" in
+        HealthCheck.cs|Program.cs|*Mensajes.cs|*AssemblyMarker.cs|ConfiguracionSerializacion*.cs|*.resx)
+            echo "excluded"; return ;;
+    esac
+
+    # Excluidos por directorio de infraestructura (wiring puro)
+    if echo "$dirname" | grep -q '/Infraestructura/'; then
+        case "$basename" in
+            RequestValidator.cs|ServiceBusDeserializador.cs)
+                echo "excluded"; return ;;
+        esac
+    fi
+
+    # Carve-out read-side (issue #371, MEF-ADR-0014 + MEF-ADR-0035 seccion 6):
+    # el FunctionEndpoint.cs de una query GET delgada (Obtener{X}/Listar{X}s,
+    # naming.md del Skill projections) no exige cobertura unitaria -- se cubre
+    # por el test de composicion (MEF-ADR-0029) y los smoke tests (MEF-ADR-0013).
+    # Acotado a issues tipo:projection y al naming exacto de esas carpetas (sin
+    # sufijo "Function", a diferencia de un FunctionEndpoint.cs de comando) para
+    # no aflojar el gate del resto: la ausencia del sufijo es parte del criterio,
+    # no solo del comentario -- una carpeta `Obtener...Function` seria un comando
+    # y sigue exigiendo el 95%.
+    local query_dir
+    query_dir=$(basename "$dirname")
+    if [ "$is_projection" = true ] && [ "$basename" = "FunctionEndpoint.cs" ] \
+       && [ "${query_dir%Function}" = "$query_dir" ] \
+       && echo "$query_dir" | grep -qE '^(Obtener|Listar)[A-Za-z0-9]*$'; then
+        echo "excluded"; return
+    fi
+
+    # Logica: patrones que requieren 95%
+    # *Projection.cs (MEF-ADR-0034 seccion 9): la clase de proyeccion
+    # companion lleva logica real (que evento aplica, como transforma el
+    # documento) y no va gateada por is_projection -- a diferencia del
+    # carve-out de arriba (que afloja), esta regla endurece el gate, y una
+    # regla que endurece gateada por label dejaria sin medir una proyeccion
+    # tocada por un issue tipo:feature. Patron en singular: no coincide con
+    # ConfiguracionMartenProjections{Dominio}.cs (plural + sufijo dominio)
+    # ni ConfiguracionMartenProjections.cs (plural) -- MEF-ADR-0006 no
+    # registra otro artefacto del marco con el sufijo "Projection".
+    case "$basename" in
+        *CommandHandler.cs|*AggregateRoot.cs|*Validator.cs|FunctionEndpoint.cs|*Projection.cs)
+            echo "logic"; return ;;
+    esac
+
+    # Logica: Eventos con factory Crear()
+    if echo "$dirname" | grep -q '/Eventos/\|/Entities/'; then
+        if [ -f "$worktree_path/$filepath" ] && grep -q 'static.*Crear(' "$worktree_path/$filepath" 2>/dev/null; then
+            echo "logic"; return
+        fi
+    fi
+
+    # Logica: ValueObjects con factory Crear()
+    if echo "$dirname" | grep -q '/ValueObjects/'; then
+        if [ -f "$worktree_path/$filepath" ] && grep -q 'static.*Crear(' "$worktree_path/$filepath" 2>/dev/null; then
+            echo "logic"; return
+        fi
+    fi
+
+    # Excluir: records DTO puros del estilo canonico (MEF-ADR-0035 seccion
+    # 2: 'public sealed record X(...)', companion de proyeccion aparte).
+    # Sin depender del conteo de lineas -- el estilo canonico es
+    # multilinea -- ni de 'public record' adyacente -- el estilo canonico
+    # es 'public sealed record'. Se aplana el contenido (una sola linea) y
+    # se ubica la declaracion del record con sus modificadores opcionales
+    # (sealed/partial, en cualquier combinacion); si tras cerrar la lista
+    # de parametros el archivo termina en ';' es un DTO sin cuerpo -> se
+    # excluye. Si en cambio abre un cuerpo '{' (metodos u otros miembros)
+    # no se excluye por esta regla.
+    # Segunda condicion: el archivo declara UN solo tipo. Es lo que sustituye
+    # el rol acotador del viejo 'line_count -le 3' (que ademas de acotar
+    # rechazaba el estilo canonico multilinea): sin ella, un archivo con un
+    # record DTO junto a -- o dentro de -- una clase con metodos se etiquetaria
+    # "excluido" por su primer match, escondiendo de la revision humana un
+    # archivo que en realidad nadie midio (hoy sale como "no evaluado").
+    if [ -f "$worktree_path/$filepath" ]; then
+        local content
+        content=$(grep -v '^\s*//' "$worktree_path/$filepath" | grep -v '^\s*$' | grep -v '^using ' | grep -v '^namespace ' || true)
+        local content_flat
+        content_flat=$(echo "$content" | tr '\n' ' ')
+        local record_decl
+        record_decl=$(echo "$content_flat" | grep -oE 'public\s+(sealed\s+|partial\s+)*record\s+\w+\([^()]*\)[^;{]*[;{]' 2>/dev/null | head -1)
+        local type_decls
+        type_decls=$(echo "$content_flat" | grep -oE '(class|record|struct|interface|enum)\s+\w+' 2>/dev/null | wc -l | tr -d ' ')
+        if [ -n "$record_decl" ] && [ "$type_decls" -eq 1 ]; then
+            case "$record_decl" in
+                *\;) echo "excluded"; return ;;
+            esac
+        fi
+    fi
+
+    echo "not_evaluated"
+}
