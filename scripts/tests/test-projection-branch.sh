@@ -6,10 +6,15 @@
 #   A) Deteccion de tipo:projection desde el JSON del issue -> agentes read-side
 #   B) tipo:feature/refactor sin el label -> agentes write-side intactos (CA-2)
 #   C) Carve-out de coverage: FunctionEndpoint.cs de una query GET (Obtener{X}/
-#      Listar{X}s) se excluye del gate de 95% solo bajo tipo:projection (CA-3)
+#      Listar{X}s) se excluye del gate de 95% solo bajo tipo:projection (CA-3).
+#      Ejercita la funcion real (coverage_classify_file de
+#      scripts/_pipeline-common.sh), no una copia local -- ver el comentario de
+#      classify_function_endpoint mas abajo
 #   D) Deteccion de Stage 2b (smoke-test-writer) para Functions read-side sin
 #      sufijo "Function" en su carpeta (CA-1)
-#   E) Coherencia entre este test y scripts/tdd-pipeline.sh (deteccion de drift)
+#   E) Coherencia entre este test y los scripts reales (deteccion de drift):
+#      scripts/tdd-pipeline.sh para lo que sigue inline en el pipeline, y
+#      scripts/_pipeline-common.sh para el carve-out de clasificacion
 #
 # Uso: scripts/tests/test-projection-branch.sh
 # Exit code: 0 si todos los escenarios pasan, 1 si alguno falla.
@@ -20,6 +25,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TDD_SCRIPT="$REPO_ROOT/scripts/tdd-pipeline.sh"
 COMMON_SCRIPT="$REPO_ROOT/scripts/_pipeline-common.sh"
+
+source "$COMMON_SCRIPT"
+
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
 
 PASS=0
 FAIL=0
@@ -57,26 +67,29 @@ detect_stage_agents() {
     echo "$stage1_agent|$stage2_agent|$stage1_label|$stage2_label"
 }
 
-# Reproduccion del carve-out de coverage de la funcion de clasificacion del
-# Stage 4 (issue #371; desde el #416 vive en scripts/_pipeline-common.sh como
-# coverage_classify_file). Cualquier cambio aqui debe acompanarse de un cambio
-# en el script real.
+# Carve-out de coverage del Stage 4 (issue #371). Desde el #416 la funcion de
+# clasificacion vive en scripts/_pipeline-common.sh como coverage_classify_file
+# y es sourceable, asi que el Escenario C ejercita la FUNCION REAL en vez de
+# reimplementarla. Este wrapper solo adapta el orden de los argumentos a los
+# asserts C1..C7 y aporta el worktree que pide la firma.
+#
+# La reimplementacion que vivia aqui declaraba "cualquier cambio aqui debe
+# acompanarse de un cambio en el script real" y aun asi derivo en silencio: se
+# quedo sin el patron *Projection.cs que le sumo el #414 al original, de modo
+# que clasificaba un TurnoProjection.cs como "not_evaluated" cuando el gate
+# real ya exigia "logic" -- y ningun escenario de coherencia por grep lo noto,
+# porque el grep verifica que una linea siga presente, no que la logica de al
+# lado siga dando el mismo resultado. Es exactamente el modo de fallo que
+# motivo el #416; con la funcion ya sourceable, dejar la copia seria conservar
+# el defecto teniendo la solucion al lado.
+#
+# Ninguno de los casos C1..C7 llega a leer disco (todos resuelven por
+# basename/dirname antes de las ramas que abren archivos), pero se pasa un
+# directorio real para que un caso futuro que si lea no dependa de una ruta
+# inexistente.
 classify_function_endpoint() {
     local is_projection="$1" filepath="$2"
-    local basename dirname dirbasename
-    basename=$(basename "$filepath")
-    dirname=$(dirname "$filepath")
-    dirbasename=$(basename "$dirname")
-    if [ "$is_projection" = true ] && [ "$basename" = "FunctionEndpoint.cs" ] \
-       && [ "${dirbasename%Function}" = "$dirbasename" ] \
-       && echo "$dirbasename" | grep -qE '^(Obtener|Listar)[A-Za-z0-9]*$'; then
-        echo "excluded"; return
-    fi
-    case "$basename" in
-        *CommandHandler.cs|*AggregateRoot.cs|*Validator.cs|FunctionEndpoint.cs)
-            echo "logic"; return ;;
-    esac
-    echo "not_evaluated"
+    coverage_classify_file "$filepath" "$TMP_DIR" "$is_projection"
 }
 
 # Reproduccion de la deteccion de SMOKE_FILES (Stage 2b, issue #371).
@@ -157,7 +170,7 @@ assert_eq "D4: write-side (sin tipo:projection) sigue detectando *Function/ (CA-
     "$(echo "$SMOKE_D2" | grep -qF 'CrearTurnoFunction/FunctionEndpoint.cs' && echo true || echo false)"
 
 # ─── Escenario E: coherencia con el script real ─────────────────────────────
-echo "Escenario E: coherencia entre este test y scripts/tdd-pipeline.sh"
+echo "Escenario E: coherencia entre este test y los scripts reales"
 
 assert_script_contains() {
     local name="$1" needle="$2" target="${3:-$TDD_SCRIPT}"
