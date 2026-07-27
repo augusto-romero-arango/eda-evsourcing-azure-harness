@@ -461,13 +461,21 @@ find_open_pr_for_branch() {
     return 0
 }
 
-# run_agent_with_watchdog <workdir> <timeout_seconds> <log_file> <events_log> <label> <signal_file> <cmd...>
+# run_agent_with_watchdog <workdir> <timeout_seconds> <stdout_file> <stderr_file> <events_log> <label> <signal_file> <cmd...>
 #
 # Ejecuta <cmd...> (sin `eval` -- se preserva "$@" tal cual, asi que las
 # comillas/backticks/`$` del prompt del agente nunca se re-interpretan) en
-# <workdir>, redirigiendo su stdout/stderr a <log_file>, bajo un watchdog de
-# <timeout_seconds>. Imprime por stdout el exit code de <cmd...> (capturable
-# con `EXIT=$(run_agent_with_watchdog ...)`).
+# <workdir>, redirigiendo su stdout a <stdout_file> y su stderr a
+# <stderr_file> POR SEPARADO, bajo un watchdog de <timeout_seconds>. Imprime
+# por stdout el exit code de <cmd...> (capturable con
+# `EXIT=$(run_agent_with_watchdog ...)`).
+#
+# La separacion stdout/stderr es deliberada (issue #425): desde que el caller
+# invoca `claude -p` con `--output-format stream-json`, <stdout_file> recibe
+# el stream JSON crudo (una linea por evento) mientras que los mensajes de
+# error del propio CLI (`API Error: ...`, cortes de conexion) siguen llegando
+# como texto plano por stderr. Un `2>&1` clasico mezclaria ese texto DENTRO
+# del JSONL y lo corromperia -- exactamente lo que este cambio evita.
 #
 # Arregla dos grietas de correctitud del watchdog original de
 # mefisto-tooling-pipeline.sh (issue #424), con evidencia en el historico: los
@@ -511,13 +519,13 @@ find_open_pr_for_branch() {
 # de que el exit code que observe `wait` sea justo 137/143 -- una senal de
 # grupo no siempre se refleja asi.
 run_agent_with_watchdog() {
-    local workdir="$1" timeout_s="$2" log_file="$3" events_log="$4" label="$5" signal_file="$6"
-    shift 6
+    local workdir="$1" timeout_s="$2" stdout_file="$3" stderr_file="$4" events_log="$5" label="$6" signal_file="$7"
+    shift 7
 
     rm -f "$signal_file"
 
     set -m
-    ( cd "$workdir" && "$@" ) >"$log_file" 2>&1 &
+    ( cd "$workdir" && "$@" ) >"$stdout_file" 2>"$stderr_file" &
     local pid=$!
 
     (
@@ -547,6 +555,96 @@ run_agent_with_watchdog() {
     fi
 
     echo "$exit_code"
+}
+
+# derive_stage_log_from_stream <stream_file> <stderr_file> <out_file>
+#
+# Deriva el log legible de un stage (issue #425) a partir del stream JSON
+# crudo que run_agent_with_watchdog capturo en <stream_file> bajo
+# `--output-format stream-json --verbose`: una linea por cada bloque de texto
+# del asistente y una linea "[tool] <nombre>" por cada tool_use, en el orden
+# en que aparecen en el stream. Al final anexa el contenido de <stderr_file>
+# tal cual (ya es texto plano). Sobreescribe <out_file> si ya existia.
+#
+# CA-5 -- por que tambien se deriva el evento `result` cuando `is_error` es
+# true: verificado contra el CLI instalado (v2.1.220) que en una corrida
+# fallida el texto del error NO viaja por stderr. Una invocacion con un modelo
+# inexistente termino con exit 1, stderr sin una sola linea de error, y todo
+# el diagnostico dentro del evento `result` de stdout:
+# `{"is_error":true,"terminal_reason":"api_error","api_error_status":404,
+# "result":"There's an issue with the selected model ..."}`. Derivar solo los
+# eventos `assistant` dejaria ese texto fuera del log, y entonces los
+# `grep "API Error: 5"`/`"API Error: 4"` y agent_log_has_stream_cut de
+# run_agent no matchearian nunca: un 5xx se clasificaria CLI_ERROR, seria
+# "recuperable" y el pipeline volveria a abrir PRs con trabajo truncado --
+# exactamente el bug de #416 que arreglo #424. Por eso el filtro emite,
+# ademas, una linea por cada `result` con `is_error == true`, prefijada con
+# el token canonico `API Error: <status>` cuando el CLI reporta
+# `api_error_status` (el status es dato del propio CLI; solo se lo re-expresa
+# en el vocabulario que la clasificacion ya leia). Un `result` sin error no
+# emite nada: no se introducen falsos positivos en corridas sanas.
+#
+# El nombre y la ruta de <out_file> NO cambian (sigue siendo
+# mefisto-tooling-stage-<N>-<agente>-<TS>-issue-<N>.log): _mefisto-work-status
+# y mefisto-investigator lo referencian, y run_agent sigue clasificando
+# fallos (grep "API Error"/agent_log_has_stream_cut) y mostrando el `tail`
+# de diagnostico del abort contra este mismo archivo derivado -- por eso el
+# stderr anexado tiene que llegar aqui, no solo quedarse en <stderr_file>.
+#
+# CA-4: tolera una traza truncada (la ultima linea puede haber quedado a
+# medias si el proceso murio a mitad de escritura) y una traza vacia. La
+# tolerancia la da `fromjson?`: jq lee cada linea como texto (`-R`) y el `?`
+# descarta en silencio la que no parsea, sin abortar y sin perder lo ya
+# derivado de las lineas anteriores. El `select(type == "object")` cubre el
+# otro caso degenerado -- una linea que SI es JSON valido pero no un objeto
+# (`.type` sobre un string es un error duro de jq, no algo que `?` atrape).
+#
+# Es una sola invocacion de jq para todo el archivo, no una por linea:
+# medido sobre un stream sintetico de 1000 eventos, un jq por linea tarda 5s
+# y una sola pasada 0.01s. Un stage real de 30 min produce bastante mas que
+# eso, asi que la version por-linea le sumaba decenas de segundos por stage
+# al mismo wall-clock que este issue existe para medir (el bash orquestador
+# entero cuesta hoy ~10s por issue).
+#
+# Si jq no esta disponible, degrada con gracia (issue #425, notas tecnicas):
+# deja una nota explicita en vez de intentar parsear JSON a mano, y de todos
+# modos anexa <stderr_file> -- que ya es texto plano y es donde vive la causa
+# de la mayoria de los fallos que le importan a run_agent. Un fallo de
+# instrumentacion (falta jq, stream vacio o inexistente) nunca debe tumbar el
+# pipeline: la funcion siempre retorna 0.
+derive_stage_log_from_stream() {
+    local stream_file="$1" stderr_file="$2" out_file="$3"
+
+    : > "$out_file" 2>/dev/null || return 0
+
+    if [ -s "$stream_file" ]; then
+        if command -v jq >/dev/null 2>&1; then
+            jq -R -r '
+                fromjson?
+                | select(type == "object")
+                | if .type == "assistant" then
+                      (.message.content // [])[]?
+                      | if .type == "text" then (.text // "")
+                        elif .type == "tool_use" then "[tool] " + (.name // "?")
+                        else empty end
+                  elif .type == "result" and .is_error == true then
+                      (if (.api_error_status // null) != null
+                         then "API Error: " + (.api_error_status | tostring) + " "
+                         else "" end)
+                      + ((.result // .error // .terminal_reason // .subtype // "error") | tostring)
+                  else empty end
+            ' "$stream_file" >> "$out_file" 2>/dev/null || true
+        else
+            echo "(jq no disponible: no se pudo derivar texto legible del stream crudo -- ver $stream_file)" >> "$out_file"
+        fi
+    fi
+
+    if [ -s "$stderr_file" ]; then
+        [ -s "$out_file" ] && echo "" >> "$out_file"
+        cat "$stderr_file" >> "$out_file" 2>/dev/null || true
+    fi
+
+    return 0
 }
 
 # agent_log_has_stream_cut <log_file>
