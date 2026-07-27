@@ -1098,8 +1098,17 @@ if [ "$IS_REFACTOR" != true ] && [ "$FROM_STAGE" -le 4 ]; then
         fi
 
         # Logica: patrones que requieren 95%
+        # *Projection.cs (MEF-ADR-0034 seccion 9): la clase de proyeccion
+        # companion lleva logica real (que evento aplica, como transforma el
+        # documento) y no va gateada por IS_PROJECTION -- a diferencia del
+        # carve-out de arriba (que afloja), esta regla endurece el gate, y una
+        # regla que endurece gateada por label dejaria sin medir una proyeccion
+        # tocada por un issue tipo:feature. Patron en singular: no coincide con
+        # ConfiguracionMartenProjections{Dominio}.cs (plural + sufijo dominio)
+        # ni ConfiguracionMartenProjections.cs (plural) -- MEF-ADR-0006 no
+        # registra otro artefacto del marco con el sufijo "Projection".
         case "$basename" in
-            *CommandHandler.cs|*AggregateRoot.cs|*Validator.cs|FunctionEndpoint.cs)
+            *CommandHandler.cs|*AggregateRoot.cs|*Validator.cs|FunctionEndpoint.cs|*Projection.cs)
                 echo "logic"; return ;;
         esac
 
@@ -1117,14 +1126,35 @@ if [ "$IS_REFACTOR" != true ] && [ "$FROM_STAGE" -le 4 ]; then
             fi
         fi
 
-        # Excluir: records DTO puros (solo 'public record X(...)' sin metodos)
+        # Excluir: records DTO puros del estilo canonico (MEF-ADR-0035 seccion
+        # 2: 'public sealed record X(...)', companion de proyeccion aparte).
+        # Sin depender del conteo de lineas -- el estilo canonico es
+        # multilinea -- ni de 'public record' adyacente -- el estilo canonico
+        # es 'public sealed record'. Se aplana el contenido (una sola linea) y
+        # se ubica la declaracion del record con sus modificadores opcionales
+        # (sealed/partial, en cualquier combinacion); si tras cerrar la lista
+        # de parametros el archivo termina en ';' es un DTO sin cuerpo -> se
+        # excluye. Si en cambio abre un cuerpo '{' (metodos u otros miembros)
+        # no se excluye por esta regla.
+        # Segunda condicion: el archivo declara UN solo tipo. Es lo que sustituye
+        # el rol acotador del viejo 'line_count -le 3' (que ademas de acotar
+        # rechazaba el estilo canonico multilinea): sin ella, un archivo con un
+        # record DTO junto a -- o dentro de -- una clase con metodos se etiquetaria
+        # "excluido" por su primer match, escondiendo de la revision humana un
+        # archivo que en realidad nadie midio (hoy sale como "no evaluado").
         if [ -f "$WORKTREE_PATH/$filepath" ]; then
             local content
             content=$(grep -v '^\s*//' "$WORKTREE_PATH/$filepath" | grep -v '^\s*$' | grep -v '^using ' | grep -v '^namespace ' || true)
-            local line_count
-            line_count=$(echo "$content" | wc -l | tr -d ' ')
-            if [ "$line_count" -le 3 ] && echo "$content" | grep -qE '^\s*public\s+record\s+\w+\(' 2>/dev/null; then
-                echo "excluded"; return
+            local content_flat
+            content_flat=$(echo "$content" | tr '\n' ' ')
+            local record_decl
+            record_decl=$(echo "$content_flat" | grep -oE 'public\s+(sealed\s+|partial\s+)*record\s+\w+\([^()]*\)[^;{]*[;{]' 2>/dev/null | head -1)
+            local type_decls
+            type_decls=$(echo "$content_flat" | grep -oE '(class|record|struct|interface|enum)\s+\w+' 2>/dev/null | wc -l | tr -d ' ')
+            if [ -n "$record_decl" ] && [ "$type_decls" -eq 1 ]; then
+                case "$record_decl" in
+                    *\;) echo "excluded"; return ;;
+                esac
             fi
         fi
 
