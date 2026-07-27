@@ -172,6 +172,8 @@ El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o
 
 ### Índice temático
 
+> Esta tabla NO se edita a mano por-PR (issue #380): un issue que añade o enmienda un ADR anota su fila como fragmento en `changelog.d/<issue>.adr-index.md` (ver `changelog.d/README.md`), y `/mefisto-release` la consolida aquí en su propia rama de release.
+
 | Tema | ADR |
 |---|---|
 | Topics de Service Bus por evento | MEF-ADR-0001 |

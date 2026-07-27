@@ -402,6 +402,7 @@ ALCANCE DE ESCRITURA PERMITIDO:
 - docs/            (ADRs, testing, field-notes, cheatsheets)
 - .claude-plugin/  (plugin.json, marketplace.json)
 - .claude/commands/, .claude/agents/, .claude/scripts/  (skills/agentes/pipelines INTERNOS de Mefisto)
+- changelog.d/  (fragmentos de CHANGELOG e indice de ADRs, ver instruccion 5 abajo)
 - README.md, CHANGELOG.md, CLAUDE.md, .gitignore  (gobierno del repo)
 
 NO MODIFIQUES NADA FUERA DE ESE SCOPE. Mefisto no tiene src/, tests/, infra/, ni .github/workflows/.
@@ -419,7 +420,11 @@ Instrucciones:
 2. Reutiliza patrones y convenciones del repo (mira archivos similares).
 3. Haz commits frecuentes con mensajes descriptivos en espanol.
 4. Si modificaste un skill o agente publicado, considera si necesitas tambien la version interna (con prefijo mefisto-).
-5. Actualiza el CHANGELOG: como parte de implementar el issue, anade una entrada bajo '## [Unreleased]' en CHANGELOG.md siguiendo Keep a Changelog, con la categoria correcta ('Added' para funcionalidad nueva, 'Changed' para cambios de comportamiento, 'Fixed' para bugs, 'Removed' para eliminaciones). CRITICO: '## [Unreleased]' es SIEMPRE la PRIMERA seccion del archivo (antes de cualquier '## [x.y.z]'). Coloca la entrada ahi, NUNCA bajo una seccion de version publicada como '## [0.8.0]' o similar -- aunque esa seccion tenga una subseccion '### Changed' o '### Added' justo debajo y parezca tentador insertarla ahi. Si falta la subseccion de categoria ('### Added', '### Changed', '### Fixed', '### Removed') dentro de '## [Unreleased]', creala ahi. Excepcion: si el cambio toca exclusivamente bitacora (docs/bitacora/**) u otros archivos de gobierno no notables (README.md, CLAUDE.md, .gitignore), omite la entrada. Un gate del pipeline aborta el PR si un cambio notable llega sin entrada en [Unreleased] o si la entrada quedo bajo una seccion de version publicada.
+5. Anota el cambio como FRAGMENTO en changelog.d/ (issue #380): NUNCA edites CHANGELOG.md ni la tabla \"Indice tematico\" de CLAUDE.md directamente -- son archivos-indice compartidos que /mefisto-release consolida en su propia rama de release, no cada PR (editarlos por-issue es exactamente la contencion que este mecanismo elimina). En su lugar:
+   - Crea 'changelog.d/${ISSUE_NUM}.<categoria>.md' con una o mas lineas '- texto de la entrada' en estilo Keep a Changelog, donde <categoria> es 'added' (funcionalidad nueva), 'changed' (cambio de comportamiento), 'fixed' (bug) o 'removed' (eliminacion).
+   - Si el issue anade o enmienda un ADR (docs/adr/), crea ademas 'changelog.d/${ISSUE_NUM}.adr-index.md' con la fila '| <Tema del ADR> | MEF-ADR-XXXX |' lista para insertarse en la tabla de indice de CLAUDE.md.
+   - Ve changelog.d/README.md para el formato completo y ejemplos.
+   Excepcion: si el cambio toca exclusivamente bitacora (docs/bitacora/**) u otros archivos de gobierno no notables (README.md, CLAUDE.md, .gitignore), omite el fragmento. Un gate del pipeline aborta el PR si un cambio notable llega sin fragmento en changelog.d/.
 6. Al terminar, escribe un resumen de lo que hiciste en .claude/pipeline/summaries/stage-1-writer.md"
 
     # Sustituir $ISSUE_CONTEXT manualmente (evita expansion temprana en la heredoc)
@@ -474,7 +479,7 @@ Tu tarea: revisa la calidad de los cambios producidos por el writer.
 
 ALCANCE DE ESCRITURA PERMITIDO (igual al del writer):
 commands/, agents/, scripts/, hooks/, docs/, .claude-plugin/,
-.claude/commands/, .claude/agents/, .claude/scripts/,
+.claude/commands/, .claude/agents/, .claude/scripts/, changelog.d/,
 README.md, CHANGELOG.md, CLAUDE.md, .gitignore.
 
 CONTEXTO DE EJECUCION:
@@ -515,36 +520,27 @@ if [ -z "$COMMITS_LIST" ]; then
     abort "No hay commits en la rama $BRANCH_NAME."
 fi
 
-# --- Gate del CHANGELOG [Unreleased] (cinturon + tirantes, issue #70) ---
-# Cinturon: el writer (Stage 1) redacta la entrada por defecto. Tirantes: aqui el
-# script ABORTA si un cambio NOTABLE llega al PR sin entrada en [Unreleased].
-# Si todas las rutas tocadas son exentas (bitacora / gobierno no notable) no se
-# exige entrada y el gate pasa. Reemplaza el warning informativo de #36, que en
-# modo no-interactivo se ignoraba y dejaba PRs sin entrada que /mefisto-release
-# tenia que backfillear. Corre tras el reviewer (Stage 2) y antes de crear el PR.
-# Degradacion benigna: sin python3, check_unreleased_touched retorna 0 y no aborta.
-# Transitorio (issue #380): un fragmento en changelog.d/ satisface el gate igual
-# que una entrada en [Unreleased], para que el PR que introduce los fragmentos
-# pueda anotarse con su propio mecanismo sin ser rechazado por el gate anterior.
-header "Verificando CHANGELOG [Unreleased]"
+# --- Gate de fragmentos de CHANGELOG (changelog.d/, issue #380) ---
+# Reemplaza el gate cinturon+tirantes sobre CHANGELOG.md (issue #70) que exigia
+# editar directamente '## [Unreleased]': esa edicion por-PR era el punto de
+# contencion (varios PRs tocando las mismas pocas lineas de un archivo-indice
+# compartido) que este mecanismo elimina. Ahora el gate exige un FRAGMENTO
+# propio en changelog.d/ -- CHANGELOG.md y el indice de ADRs de CLAUDE.md dejan
+# de ser rutas editadas por-issue; los consolida /mefisto-release en su propia
+# rama de release. Si todas las rutas tocadas son exentas (bitacora / gobierno
+# no notable) no se exige fragmento y el gate pasa. Corre tras el reviewer
+# (Stage 2) y antes de crear el PR.
+header "Verificando fragmento de CHANGELOG (changelog.d/)"
 
-if check_unreleased_touched "$WORKTREE_PATH" "$SNAPSHOT_COMMIT"; then
-    success "El PR actualiza la seccion [Unreleased] del CHANGELOG"
-elif changelog_fragment_added "$WORKTREE_PATH" "$SNAPSHOT_COMMIT"; then
+if changelog_fragment_added "$WORKTREE_PATH" "$SNAPSHOT_COMMIT"; then
     success "El PR anota su cambio como fragmento en changelog.d/"
 elif ! changes_require_changelog "$WORKTREE_PATH" "$SNAPSHOT_COMMIT"; then
-    success "Cambio exento (solo bitacora/gobierno no notable): no se exige entrada en [Unreleased]"
-elif MISPLACED_VER=$(detect_misplaced_changelog_entry "$WORKTREE_PATH" "$SNAPSHOT_COMMIT") && [ -n "$MISPLACED_VER" ]; then
-    abort "La entrada del CHANGELOG fue colocada bajo '## [$MISPLACED_VER]' (version publicada) en vez de bajo '## [Unreleased]'.
-'## [Unreleased]' es SIEMPRE la primera seccion del archivo, antes de '## [$MISPLACED_VER]'.
-Mueve la entrada a '## [Unreleased]' en CHANGELOG.md del worktree ($WORKTREE_PATH) y retoma con:
-  ./.claude/scripts/mefisto-tooling-pipeline.sh $ISSUE_NUM --from-stage 2"
+    success "Cambio exento (solo bitacora/gobierno no notable): no se exige fragmento"
 else
-    abort "Cambio notable sin entrada bajo '## [Unreleased]' en CHANGELOG.md.
-El writer debio redactar la entrada con la categoria Keep a Changelog correcta
-(Added/Changed/Fixed/Removed). La fase prepare de /mefisto-release aborta si
-[Unreleased] esta vacio, asi que ningun PR notable debe crearse sin ella.
-Anade la entrada en CHANGELOG.md del worktree ($WORKTREE_PATH) y retoma con:
+    abort "Cambio notable sin fragmento en changelog.d/.
+El writer debio crear 'changelog.d/${ISSUE_NUM}.<categoria>.md' (added/changed/fixed/removed)
+-- ver changelog.d/README.md para el formato. NUNCA se edita CHANGELOG.md directamente.
+Crea el fragmento en el worktree ($WORKTREE_PATH) y retoma con:
   ./.claude/scripts/mefisto-tooling-pipeline.sh $ISSUE_NUM --from-stage 2"
 fi
 

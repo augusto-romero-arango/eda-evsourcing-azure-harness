@@ -297,11 +297,6 @@ EOF
         abort "Ya existe un GitHub Release ${NEW_TAG}. Aborta."
     fi
 
-    UNRELEASED_BODY=$(extract_unreleased_section || true)
-    if [ -z "$UNRELEASED_BODY" ] || [ -z "$(echo "$UNRELEASED_BODY" | tr -d '[:space:]')" ]; then
-        abort "La seccion [Unreleased] del CHANGELOG esta vacia. Agrega notas antes de hacer release."
-    fi
-
     if git show-ref --verify --quiet "refs/heads/$RELEASE_BRANCH"; then
         abort "Ya existe localmente la rama ${RELEASE_BRANCH}. Borrala o renombra antes de continuar."
     fi
@@ -317,6 +312,22 @@ EOF
     git switch -c "$RELEASE_BRANCH" origin/main >/dev/null 2>&1 \
         || abort "No se pudo crear la rama ${RELEASE_BRANCH} (verifica que origin/main existe)"
 
+    # Consolidar fragmentos de changelog.d/ (issue #380): cada PR anoto su
+    # cambio como fragmento propio en vez de editar CHANGELOG.md/CLAUDE.md
+    # directo. Se consolida AQUI -- ya en la rama de release, ramificada de
+    # origin/main -- para leer el estado real y completo de los fragmentos
+    # mergeados, no el working tree previo (potencialmente desactualizado).
+    log_info "Consolidando fragmentos de changelog.d/..."
+    consolidate_changelog_fragments "$MEFISTO_REPO_ROOT" \
+        || abort "Fallo al consolidar los fragmentos de CHANGELOG (changelog.d/): revisa el nombre de cada fragmento (<issue>.<categoria>.md)"
+    consolidate_adr_index_fragments "$MEFISTO_REPO_ROOT" \
+        || abort "Fallo al consolidar los fragmentos del indice de ADRs (changelog.d/*.adr-index.md)"
+
+    UNRELEASED_BODY=$(extract_unreleased_section || true)
+    if [ -z "$UNRELEASED_BODY" ] || [ -z "$(echo "$UNRELEASED_BODY" | tr -d '[:space:]')" ]; then
+        abort "La seccion [Unreleased] del CHANGELOG esta vacia (ni fragmentos en changelog.d/ ni entradas previas). Agrega notas antes de hacer release."
+    fi
+
     # Reescribir CHANGELOG y bumpear plugin.json
     log_info "Reescribiendo CHANGELOG.md..."
     rewrite_changelog_prepare "$NEW_VERSION" "$PREV_VERSION" "$RELEASE_DATE" \
@@ -325,8 +336,9 @@ EOF
     log_info "Bumpeando .claude-plugin/plugin.json a ${NEW_VERSION}..."
     bump_plugin_json "$NEW_VERSION"
 
-    # Verificar que tenemos cambios stage-ables
-    git add CHANGELOG.md .claude-plugin/plugin.json
+    # Verificar que tenemos cambios stage-ables (incluye CLAUDE.md y el borrado
+    # de fragmentos consumidos en changelog.d/, ademas del CHANGELOG y plugin.json)
+    git add CHANGELOG.md CLAUDE.md changelog.d/ .claude-plugin/plugin.json
     if git diff --cached --quiet; then
         abort "No se produjeron cambios en CHANGELOG ni plugin.json (algo va mal)"
     fi
@@ -349,6 +361,7 @@ EOF
 
 PR de release ${NEW_TAG} (${BUMP_PART}: ${PREV_VERSION} -> ${NEW_VERSION}).
 
+- Consolida los fragmentos de \`changelog.d/\` (CHANGELOG e indice de ADRs de \`CLAUDE.md\`) y los borra.
 - Mueve \`[Unreleased]\` a \`[${NEW_VERSION}] - ${RELEASE_DATE}\` en \`CHANGELOG.md\`.
 - Bumpea \`.claude-plugin/plugin.json\` a ${NEW_VERSION}.
 - Actualiza links de comparacion al pie del CHANGELOG.
