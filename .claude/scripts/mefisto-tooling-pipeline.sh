@@ -305,30 +305,30 @@ run_agent() {
 
     local AGENT_TIMEOUT_SECONDS=1800
     local NONINTERACTIVE_SYSTEM="You are running in non-interactive print mode. There is no human to approve anything. You MUST use Write and Edit tools directly to create and modify files at any path including .claude/. Never output text asking for permissions or confirmations -- doing so causes pipeline failure."
-    (cd "$WORKTREE_PATH" && claude -p "$prompt" --model "$AGENT_MODEL" \
+    local TIMEOUT_SIGNAL_FILE="$PIPELINE_DIR_ABS/watchdog-timeout-${stage}-${agent}-${TIMESTAMP}"
+
+    local CLAUDE_EXIT
+    CLAUDE_EXIT=$(run_agent_with_watchdog "$WORKTREE_PATH" "$AGENT_TIMEOUT_SECONDS" "$log_stage" "$EVENTS_LOG_ABS" "$agent" "$TIMEOUT_SIGNAL_FILE" \
+        claude -p "$prompt" --model "$AGENT_MODEL" \
         --permission-mode bypassPermissions \
         --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
-        --output-format text \
-        >"$log_stage" 2>&1) &
-    local CLAUDE_PID=$!
-    (sleep $AGENT_TIMEOUT_SECONDS && kill -9 -$CLAUDE_PID 2>/dev/null && echo "[$(date +%H:%M:%S)] TIMEOUT: $agent supero ${AGENT_TIMEOUT_SECONDS}s" >> "$EVENTS_LOG_ABS") </dev/null >/dev/null 2>&1 &
-    local WATCHDOG_PID=$!
-
-    local CLAUDE_EXIT=0
-    wait $CLAUDE_PID || CLAUDE_EXIT=$?
-
-    kill $WATCHDOG_PID 2>/dev/null || true
-    wait $WATCHDOG_PID 2>/dev/null || true
+        --output-format text)
     local elapsed=$(( $(date +%s) - start_ts ))
 
-    if [ "$CLAUDE_EXIT" -ne 0 ]; then
+    local TIMED_OUT=false
+    [ -f "$TIMEOUT_SIGNAL_FILE" ] && TIMED_OUT=true
+    rm -f "$TIMEOUT_SIGNAL_FILE"
+
+    if [ "$CLAUDE_EXIT" -ne 0 ] || [ "$TIMED_OUT" = true ]; then
         local failure_type
-        if [ "$CLAUDE_EXIT" -eq 137 ] || [ "$CLAUDE_EXIT" -eq 143 ]; then
-            failure_type="TIMEOUT (signal $CLAUDE_EXIT, ${elapsed}s)"
+        if [ "$TIMED_OUT" = true ] || [ "$CLAUDE_EXIT" -eq 137 ] || [ "$CLAUDE_EXIT" -eq 143 ]; then
+            failure_type="TIMEOUT (${elapsed}s)"
         elif grep -q "API Error: 5" "$log_stage" 2>/dev/null; then
             failure_type="API_ERROR_SERVER (exit $CLAUDE_EXIT)"
         elif grep -q "API Error: 4" "$log_stage" 2>/dev/null; then
             failure_type="API_ERROR_CLIENT (exit $CLAUDE_EXIT)"
+        elif grep -qE "Connection closed mid-response|API Error" "$log_stage" 2>/dev/null; then
+            failure_type="STREAM_CUT (exit $CLAUDE_EXIT)"
         else
             failure_type="CLI_ERROR (exit $CLAUDE_EXIT)"
         fi
@@ -336,16 +336,23 @@ run_agent() {
         log "$agent fallo despues de ${elapsed}s -- tipo: $failure_type"
         echo "[$(date +%H:%M:%S)] FALLO $agent: $failure_type" >> "$EVENTS_LOG_ABS"
 
-        # Verificar si produjo trabajo util a pesar del exit code
-        local has_work=false
-        if ! git -C "$WORKTREE_PATH" diff --quiet "${SNAPSHOT_COMMIT:-HEAD}..HEAD" 2>/dev/null; then
-            has_work=true
-        fi
-        if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain 2>/dev/null)" ]; then
-            has_work=true
+        # CA-4: un TIMEOUT o un corte de stream a mitad de respuesta nunca es
+        # recuperable via has_work -- el incidente de #416 fue justo esto (el
+        # reviewer murio con "API Error: Connection closed mid-response" y el
+        # pipeline abrio igual el PR con una revision truncada a mitad de frase).
+        local UNRECOVERABLE=false
+        if [ "$TIMED_OUT" = true ] || [ "$CLAUDE_EXIT" -eq 137 ] || [ "$CLAUDE_EXIT" -eq 143 ]; then
+            UNRECOVERABLE=true
+        elif grep -qE "Connection closed mid-response|API Error" "$log_stage" 2>/dev/null; then
+            UNRECOVERABLE=true
         fi
 
-        if [ "$has_work" = true ]; then
+        # CA-5: para el resto de fallos, has_work exige ademas que el resumen
+        # de stage exista y no este vacio -- evidencia de que el agente llego
+        # al final de su contrato (ver agent_work_is_trustworthy).
+        local SUMMARY_FILE="$WORKTREE_PATH/.claude/pipeline/summaries/stage-${stage}-${agent}.md"
+
+        if agent_work_is_trustworthy "$WORKTREE_PATH" "${SNAPSHOT_COMMIT:-HEAD}" "$UNRECOVERABLE" "$SUMMARY_FILE"; then
             warn "$agent: CLI retorno error ($failure_type) pero hay trabajo util -- continuando"
             echo "[$(date +%H:%M:%S)] RECUPERADO $agent: trabajo util detectado" >> "$EVENTS_LOG_ABS"
         else

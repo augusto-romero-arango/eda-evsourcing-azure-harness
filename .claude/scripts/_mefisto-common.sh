@@ -460,3 +460,125 @@ find_open_pr_for_branch() {
     echo "$url"
     return 0
 }
+
+# run_agent_with_watchdog <workdir> <timeout_seconds> <log_file> <events_log> <label> <signal_file> <cmd...>
+#
+# Ejecuta <cmd...> (sin `eval` -- se preserva "$@" tal cual, asi que las
+# comillas/backticks/`$` del prompt del agente nunca se re-interpretan) en
+# <workdir>, redirigiendo su stdout/stderr a <log_file>, bajo un watchdog de
+# <timeout_seconds>. Imprime por stdout el exit code de <cmd...> (capturable
+# con `EXIT=$(run_agent_with_watchdog ...)`).
+#
+# Arregla dos grietas de correctitud del watchdog original de
+# mefisto-tooling-pipeline.sh (issue #424), con evidencia en el historico: los
+# stages de #416 (writer, 1883s) y #414 (reviewer, 1919s) excedieron el limite
+# nominal de 1800s y events.log no tuvo una sola linea TIMEOUT en toda la
+# corrida -- el limite de 30 min era decorativo.
+#
+# CA-1 (mata todo el arbol, no solo el subshell): `kill -9 -$pid` apunta al
+# GRUPO de procesos, pero un subshell lanzado con `&` hereda por defecto el
+# PGID del shell que lo lanza -- no es lider de su propio grupo, asi que ese
+# kill no alcanzaba ni al `claude` ni a sus hijos node. `setsid` no existe en
+# macOS (verificado: `command -v setsid` -> vacio). El arreglo verificado en
+# bash 3.2/darwin es activar job control (`set -m`) justo antes de lanzar
+# <cmd...> en background: con monitor mode activo ese job SI se vuelve lider
+# de su propio grupo (PGID == PID del job), y `kill -9 -$pid` alcanza a todo
+# el arbol. `set +m` restaura el modo normal enseguida despues del lanzamiento
+# -- con job control activo bash reporta cambios de estado de jobs por
+# stderr, y acotar la ventana evita ese ruido en el resto de la funcion.
+#
+# CA-2 (evento TIMEOUT incondicional): el `touch`/`kill`/`echo` del watchdog
+# ya NO cuelgan de un `&&` en cadena -- antes, si el `kill` fallaba (como
+# pasaba siempre por CA-1, al no ser el subshell lider de grupo), el `echo`
+# que le seguia nunca corria y el evento TIMEOUT jamas se escribia en
+# events.log. Ahora son tres sentencias independientes: el evento se escribe
+# pase lo que pase con el kill.
+#
+# CA-3 (senal de timeout para clasificacion post-mortem): si el watchdog
+# dispara, ademas de matar el grupo y loguear el evento, deja creado
+# <signal_file> (se borra primero, por si quedo de una corrida anterior). El
+# caller (run_agent) la usa para clasificar failure_type=TIMEOUT sin depender
+# de que el exit code que observe `wait` sea justo 137/143 -- una senal de
+# grupo no siempre se refleja asi.
+run_agent_with_watchdog() {
+    local workdir="$1" timeout_s="$2" log_file="$3" events_log="$4" label="$5" signal_file="$6"
+    shift 6
+
+    rm -f "$signal_file"
+
+    set -m
+    ( cd "$workdir" && "$@" ) >"$log_file" 2>&1 &
+    local pid=$!
+    set +m
+
+    (
+        sleep "$timeout_s"
+        touch "$signal_file" 2>/dev/null
+        kill -9 -"$pid" 2>/dev/null
+        echo "[$(date +%H:%M:%S)] TIMEOUT: $label supero ${timeout_s}s" >> "$events_log"
+    ) </dev/null >/dev/null 2>&1 &
+    local watchdog_pid=$!
+
+    local exit_code=0
+    wait "$pid" || exit_code=$?
+
+    # Si <signal_file> ya existe aqui, el watchdog fue quien mato a <pid> --
+    # esta a mitad de escribir su evento TIMEOUT (touch precede a kill en su
+    # propio cuerpo, en el mismo proceso, sin concurrencia posible entre
+    # ambos). Un SIGTERM nuestro en ese instante podria cortarlo antes de
+    # llegar al `echo` incondicional (CA-2) -- se lo deja terminar solo, NUNCA
+    # se lo mata; solo se cancela (kill) el watchdog cuando <pid> termino por
+    # su cuenta y el watchdog sigue dormido en el `sleep`.
+    if [ -f "$signal_file" ]; then
+        wait "$watchdog_pid" 2>/dev/null || true
+    else
+        kill "$watchdog_pid" 2>/dev/null || true
+        wait "$watchdog_pid" 2>/dev/null || true
+    fi
+
+    echo "$exit_code"
+}
+
+# agent_work_is_trustworthy <worktree_path> <base_commit> <unrecoverable> <summary_file>
+#
+# Decide si el trabajo que dejo un agente fallido en <worktree_path> es
+# confiable para recuperar el stage (el atajo "has_work" que evita abortar
+# cuando el CLI vuelve con exit code distinto de cero). Retorna 0 si es
+# confiable, 1 si no. Usada por run_agent tras un fallo del CLI (issue #424).
+#
+# CA-4: <unrecoverable>="true" descalifica la recuperacion sin mirar nada mas
+# -- el caller la marca en TIMEOUT o cuando el log del stage contiene un corte
+# de stream a mitad de respuesta (`Connection closed mid-response`, `API
+# Error`). El incidente de #416 fue justo esto: el reviewer murio con `API
+# Error: Connection closed mid-response` a los 882s, y como el worktree tenia
+# archivos sucios el pipeline abrio igual el PR #421 con una revision
+# truncada a mitad de frase -- un CLI que muere a mitad de su contrato nunca
+# es recuperable, sin importar cuantos archivos sucios deje.
+#
+# CA-5: para el resto de fallos (los que SI admiten recuperacion), exige
+# ademas que <summary_file> exista y no este vacio -- el mismo archivo que ya
+# lee collect_summary
+# ($worktree/.claude/pipeline/summaries/stage-<N>-<agente>.md). Es la
+# evidencia de que el agente llego al final de su contrato: la ultima
+# instruccion de cada prompt de stage es escribir ese resumen, asi que un
+# agente que muere antes de esa linea nunca lo deja escrito, aunque haya
+# tocado archivos antes de morir.
+#
+# Solo si ninguno de los dos gates anteriores descalifica, mira el has_work
+# original: diff sucio contra <base_commit> o working tree con cambios sin
+# commitear.
+agent_work_is_trustworthy() {
+    local wt="$1" base="$2" unrecoverable="$3" summary_file="$4"
+
+    [ "$unrecoverable" = "true" ] && return 1
+
+    [ -s "$summary_file" ] || return 1
+
+    if ! git -C "$wt" diff --quiet "${base:-HEAD}..HEAD" 2>/dev/null; then
+        return 0
+    fi
+    if [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]; then
+        return 0
+    fi
+    return 1
+}
