@@ -371,7 +371,12 @@ auto_commit_if_needed() {
 
     git -C "$WORKTREE_PATH" checkout -- .claude/settings.json 2>/dev/null || true
 
-    local paths="commands/ agents/ scripts/ hooks/ docs/ .claude-plugin/ .claude/commands/ .claude/agents/ .claude/scripts/ README.md CHANGELOG.md CLAUDE.md .gitignore"
+    # changelog.d/ va en la lista (issue #380): desde el gate de fragmentos, el
+    # fragmento es lo UNICO que acredita el cambio notable, y el gate lo da por
+    # bueno viendolo tambien en el working tree. Si el auto-commit no lo stagea,
+    # el gate pasa pero el fragmento no entra al PR y /mefisto-release no tiene
+    # nada que consolidar: la anotacion se perderia en silencio.
+    local paths="commands/ agents/ scripts/ hooks/ docs/ .claude-plugin/ .claude/commands/ .claude/agents/ .claude/scripts/ changelog.d/ README.md CHANGELOG.md CLAUDE.md .gitignore"
 
     if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- $paths 2>/dev/null)" ]; then
         log "Haciendo commit automatico (fase $phase)..."
@@ -439,7 +444,7 @@ Instrucciones:
     if ! git -C "$WORKTREE_PATH" diff --quiet "$SNAPSHOT_COMMIT" HEAD 2>/dev/null; then
         HAS_COMMITS=true
     fi
-    if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- commands/ agents/ scripts/ hooks/ docs/ .claude-plugin/ .claude/commands/ .claude/agents/ .claude/scripts/ README.md CHANGELOG.md CLAUDE.md .gitignore 2>/dev/null)" ]; then
+    if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- commands/ agents/ scripts/ hooks/ docs/ .claude-plugin/ .claude/commands/ .claude/agents/ .claude/scripts/ changelog.d/ README.md CHANGELOG.md CLAUDE.md .gitignore 2>/dev/null)" ]; then
         HAS_UNSTAGED=true
     fi
     if [ "$HAS_COMMITS" = false ] && [ "$HAS_UNSTAGED" = false ]; then

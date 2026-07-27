@@ -221,6 +221,23 @@ else
     pass "D-4: _mefisto-common.sh ya no define funciones del gate obsoleto"
 fi
 
+# D-5: el fragmento tiene que llegar al PR, no solo satisfacer el gate.
+# changelog_fragment_added acepta un fragmento que solo existe en el working
+# tree, asi que si changelog.d/ falta en la lista de paths del auto-commit el
+# gate pasaria y el fragmento nunca entraria a un commit: anotacion perdida en
+# silencio y /mefisto-release sin nada que consolidar. Las dos listas de paths
+# del pipeline (auto_commit_if_needed y la deteccion de cambios del writer)
+# deben incluir changelog.d/.
+# Las listas de pathspec de git son las que enumeran 'commands/ agents/ scripts/'
+# separadas por espacios (no la prosa del prompt, que las separa por comas).
+PATH_LISTS_TOTAL=$(grep -c 'commands/ agents/ scripts/ hooks/' "$PIPE" || true)
+PATH_LISTS_OK=$(grep -c 'commands/ agents/ scripts/ hooks/.*changelog\.d/ ' "$PIPE" || true)
+if [ "$PATH_LISTS_TOTAL" -gt 0 ] && [ "$PATH_LISTS_OK" -eq "$PATH_LISTS_TOTAL" ]; then
+    pass "D-5: las $PATH_LISTS_TOTAL listas de paths del pipeline incluyen changelog.d/ (el fragmento se commitea)"
+else
+    fail "D-5: solo $PATH_LISTS_OK de $PATH_LISTS_TOTAL listas de paths incluyen changelog.d/ (el fragmento podria no llegar al PR)"
+fi
+
 # -------- Resumen --------
 
 echo ""

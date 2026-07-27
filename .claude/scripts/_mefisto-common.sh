@@ -282,7 +282,11 @@ header, body = m.group(1), m.group(2)
 
 # Parsear subsecciones "### Categoria" ya existentes en [Unreleased],
 # preservando orden y contenido -- puede haber quedado una nota manual antes
-# de que existieran fragmentos.
+# de que existieran fragmentos. Lo que aparezca ANTES de la primera "###"
+# (preambulo suelto, sin subseccion) tambien se conserva, tal cual y en su
+# sitio: la consolidacion reescribe el bloque entero, asi que descartarlo
+# equivaldria a borrar en silencio una nota escrita a mano.
+preamble = []
 existing = {}
 order = []
 current = None
@@ -292,13 +296,17 @@ for line in body.splitlines():
     if hm:
         if current is not None:
             existing[current] = current_lines
+        else:
+            preamble = current_lines
         current = hm.group(1)
         order.append(current)
         current_lines = []
-    elif current is not None:
+    else:
         current_lines.append(line)
 if current is not None:
     existing[current] = current_lines
+else:
+    preamble = current_lines
 
 def strip_blank_edges(lines):
     while lines and not lines[0].strip():
@@ -307,6 +315,7 @@ def strip_blank_edges(lines):
         lines.pop()
     return lines
 
+preamble = strip_blank_edges(preamble)
 for key in existing:
     existing[key] = strip_blank_edges(existing[key])
 
@@ -321,6 +330,9 @@ for category in CATEGORIES:
         existing[header_name].extend(entry.splitlines())
 
 lines = ['']
+if preamble:
+    lines.extend(preamble)
+    lines.append('')
 for header_name in order:
     lines.append(f'### {header_name}')
     lines.append('')

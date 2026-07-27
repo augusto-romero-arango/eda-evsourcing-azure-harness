@@ -145,6 +145,50 @@ else
     fail "A-3: sin changelog.d/ no deberia abortar"
 fi
 
+# A-4: la consolidacion reescribe el bloque [Unreleased] entero, asi que todo lo
+# que ya vivia ahi debe sobrevivir: tanto las entradas de una subseccion previa
+# como un preambulo suelto escrito a mano ANTES de la primera '###'. Perder ese
+# preambulo seria un borrado silencioso de notas del release.
+TMP=$(new_tmp_repo)
+mkdir -p "$TMP/changelog.d"
+cat > "$TMP/CHANGELOG.md" <<'EOF'
+# Changelog
+
+## [Unreleased]
+
+Nota manual suelta, sin subseccion.
+
+### Added
+
+- entrada previa
+
+## [0.1.0] - 2026-01-01
+EOF
+echo "- entrada del fragmento" > "$TMP/changelog.d/380.added.md"
+if consolidate_changelog_fragments "$TMP"; then
+    pass "A-4: consolidate_changelog_fragments retorna 0 sobre un [Unreleased] con contenido previo"
+else
+    fail "A-4: consolidate_changelog_fragments deberia retornar 0"
+fi
+if grep -q 'Nota manual suelta, sin subseccion.' "$TMP/CHANGELOG.md"; then
+    pass "A-4: el preambulo suelto de [Unreleased] sobrevive la consolidacion"
+else
+    fail "A-4: el preambulo suelto de [Unreleased] se perdio (borrado silencioso)"
+fi
+if grep -q 'entrada previa' "$TMP/CHANGELOG.md" && grep -q 'entrada del fragmento' "$TMP/CHANGELOG.md"; then
+    pass "A-4: la entrada previa y la del fragmento conviven bajo '### Added'"
+else
+    fail "A-4: se perdio la entrada previa o la del fragmento"
+fi
+# El preambulo va antes del primer '### ', no dentro de una subseccion.
+LINE_NOTA=$(grep -n 'Nota manual suelta' "$TMP/CHANGELOG.md" | head -1 | cut -d: -f1)
+LINE_ADDED=$(grep -n '^### Added' "$TMP/CHANGELOG.md" | head -1 | cut -d: -f1)
+if [ "$LINE_NOTA" -lt "$LINE_ADDED" ]; then
+    pass "A-4: el preambulo conserva su posicion (antes de la primera subseccion)"
+else
+    fail "A-4: el preambulo quedo fuera de sitio"
+fi
+
 # -------- Bloque B: consolidate_adr_index_fragments --------
 
 echo ""

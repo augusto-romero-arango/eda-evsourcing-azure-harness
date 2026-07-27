@@ -337,8 +337,14 @@ EOF
     bump_plugin_json "$NEW_VERSION"
 
     # Verificar que tenemos cambios stage-ables (incluye CLAUDE.md y el borrado
-    # de fragmentos consumidos en changelog.d/, ademas del CHANGELOG y plugin.json)
-    git add CHANGELOG.md CLAUDE.md changelog.d/ .claude-plugin/plugin.json
+    # de fragmentos consumidos en changelog.d/, ademas del CHANGELOG y plugin.json).
+    # changelog.d/ se stagea aparte y bajo guarda: git no versiona directorios, asi
+    # que la carpeta no existe en un checkout donde no quede ningun archivo dentro,
+    # y con 'set -e' un pathspec sin match abortaria el release entero.
+    git add CHANGELOG.md CLAUDE.md .claude-plugin/plugin.json
+    if [ -d changelog.d ]; then
+        git add -A changelog.d/
+    fi
     if git diff --cached --quiet; then
         abort "No se produjeron cambios en CHANGELOG ni plugin.json (algo va mal)"
     fi
