@@ -213,7 +213,7 @@ src/Bitakora.ControlAsistencia.{Dominio}/
 | AggregateRoot | `{Entidad}AggregateRoot` | `TurnoAggregateRoot` |
 | Query (Function/metodo GET) | Verbo infinitivo + sustantivo: `Obtener{X}` (item por id) / `Listar{X}s` (coleccion) | `ObtenerTurno`, `ListarTurnos` |
 | Read model (view) | `{Concepto}View` | `TurnoView` |
-| Clase de proyeccion (companion, N2 de MEF-ADR-0035) | `{Concepto}Projection` (`partial`, mismo stem que su View) | `ResumenEquipoProjection` -> `ResumenEquipoView` |
+| Clase de proyeccion (companion, N1/N2 de MEF-ADR-0035) | `{Concepto}Projection` (`partial`, mismo stem que su View) | `ResumenEquipoProjection` -> `ResumenEquipoView` |
 | Marker del named store de proyecciones | `I{Dominio}ProjectionStore` | `IVentasProjectionStore` |
 | Seam de composicion de proyecciones (por dominio) | `ConfiguracionMartenProjections{Dominio}`, metodo `Configurar{Dominio}` | `ConfiguracionMartenProjectionsVentas.ConfigurarVentas()` |
 
@@ -224,10 +224,10 @@ nombre para que nunca se confundan al leer un `Program.cs`.
 
 Las clases son en espanol. Los sufijos de patrones reconocidos (CommandHandler, Validator,
 AggregateRoot, Endpoint, View, Projection, ProjectionStore) son en ingles. El estilo de codigo y
-la superficie de consulta de estos artefactos de proyeccion (record inmutable, metodos
-convencionales `Create`/`Apply`/`ShouldDelete`, el `partial` que exige el source generator -- que
-aplica tanto al read model auto-agregante de N1 como a la clase de proyeccion de N2 --, y la
-`QuerySession` acotada al tenant) los fija MEF-ADR-0035, no este ADR: aqui solo se fija el naming.
+la superficie de consulta de estos artefactos de proyeccion (record de read model plano sin
+`partial`, clase de proyeccion companion `partial` con metodos convencionales
+`Create`/`Apply`/`ShouldDelete` -- misma forma en N1 y N2 --, y la `QuerySession` acotada al
+tenant) los fija MEF-ADR-0035, no este ADR: aqui solo se fija el naming.
 
 ## Consecuencias
 
@@ -265,3 +265,4 @@ Cross-referencias: MEF-ADR-0035 (superficie de consulta y estilo de codigo de la
 ## Control de cambios
 
 - 2026-07-26: enmendado (issue #363, hermano de MEF-ADR-0035) para fijar el naming de las Functions HTTP de query (GET) -- `Obtener{X}`/`Listar{X}s` con plural real del espanol, y los casos especificos `Obtener{Aggregate}` (via (b1) `Live`) y `ListarEventosDe{Aggregate}` (via (b2) eventos crudos) que fija MEF-ADR-0035 seccion 3 --, su ruta HTTP (REST por recurso, reutilizando el segmento del comando de ese recurso, con verbo HTTP declarado explicitamente en ambos lados y nunca `Route = ""`), la organizacion vertical (una carpeta por query sin sufijo `Function`, descartando el patron agrupado `XQueriesEndpoint` de ControlPlane) y el naming de los artefactos de proyeccion (`{Concepto}View`, `{Concepto}Projection`, `I{Dominio}ProjectionStore`, seam `ConfiguracionMartenProjections{Dominio}`/`Configurar{Dominio}`, hermano del seam write-side de MEF-ADR-0029).
+- 2026-07-27: enmendada la fila `{Concepto}Projection` de la tabla de naming y su nota (issue #412, hermano de la enmienda de MEF-ADR-0034/0035). La clase de proyeccion companion deja de ser exclusiva de N2: con el estilo canonico unificado que fija MEF-ADR-0035 seccion 2, N1 tambien la usa (el read model auto-agregante con `partial` deja de ser el canonico del marco). La nota sobre el `partial` se ajusta: aplica a la clase de proyeccion companion en ambos niveles, nunca al record de read model.
