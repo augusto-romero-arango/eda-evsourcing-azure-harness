@@ -36,6 +36,7 @@ source "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" 2>/dev/null
 gate_would_abort() {
     local wt="$1" base="$2"
     if check_unreleased_touched "$wt" "$base"; then return 1; fi          # tocada -> no aborta
+    if changelog_fragment_added "$wt" "$base"; then return 1; fi          # fragmento -> no aborta (#380)
     if ! changes_require_changelog "$wt" "$base"; then return 1; fi       # exento -> no aborta
     return 0                                                               # notable y sin entrada -> aborta
 }
@@ -43,7 +44,7 @@ gate_would_abort() {
 # -------- Bloque pre: funciones existen (CA-1) --------
 
 echo "[pre] Las funciones del gate estan definidas (CA-1)"
-for fn in is_path_changelog_exempt changes_require_changelog check_unreleased_touched detect_misplaced_changelog_entry; do
+for fn in is_path_changelog_exempt changes_require_changelog check_unreleased_touched detect_misplaced_changelog_entry changelog_fragment_added; do
     if declare -F "$fn" >/dev/null; then
         pass "$fn definida en _mefisto-common.sh"
     else
@@ -250,6 +251,67 @@ else
 fi
 
 fi # fin HAVE_PY
+
+# -------- Bloque D: fragmentos en changelog.d/ (gate transitorio, issue #380) --------
+
+echo ""
+echo "[D] changelog_fragment_added acepta el fragmento como alternativa a [Unreleased]"
+
+# D-1: cambio notable anotado SOLO como fragmento -> el gate NO aborta.
+# Es el caso exacto que rechazo al writer de #380: toca scripts (notable), no
+# toca CHANGELOG.md, y anota su cambio en changelog.d/.
+reset_wt
+mkdir -p "$TMP/changelog.d"
+echo "cambio" > "$TMP/commands/existente.md"
+echo "- entrada del fragmento" > "$TMP/changelog.d/380.added.md"
+if changelog_fragment_added "$TMP" "$BASE"; then
+    pass "D-1: detecta el fragmento changelog.d/380.added.md"
+else
+    fail "D-1: NO detecto el fragmento changelog.d/380.added.md"
+fi
+if gate_would_abort "$TMP" "$BASE"; then
+    fail "D-1: el gate NO debia abortar con un cambio notable anotado como fragmento"
+else
+    pass "D-1: el gate PASA con un cambio notable anotado como fragmento"
+fi
+
+# D-2: el README del propio mecanismo NO cuenta como fragmento. Si contara, el
+# PR que crea changelog.d/README.md quedaria eximido sin anotar su cambio.
+reset_wt
+mkdir -p "$TMP/changelog.d"
+echo "cambio" > "$TMP/commands/existente.md"
+echo "# Como funcionan los fragmentos" > "$TMP/changelog.d/README.md"
+if changelog_fragment_added "$TMP" "$BASE"; then
+    fail "D-2: changelog.d/README.md NO debia contar como fragmento"
+else
+    pass "D-2: changelog.d/README.md no cuenta como fragmento"
+fi
+
+# D-3: sin fragmento ni entrada, un cambio notable sigue abortando (no se aflojo
+# el gate para el resto de los PRs).
+reset_wt
+echo "cambio" > "$TMP/commands/existente.md"
+if changelog_fragment_added "$TMP" "$BASE"; then
+    fail "D-3: no habia fragmento y lo detecto igual"
+else
+    pass "D-3: sin fragmento, changelog_fragment_added retorna 1"
+fi
+if [ "$HAVE_PY" -eq 1 ]; then
+    if gate_would_abort "$TMP" "$BASE"; then
+        pass "D-3: el gate SIGUE abortando un cambio notable sin fragmento ni entrada"
+    else
+        fail "D-3: el gate debia abortar sin fragmento ni entrada"
+    fi
+fi
+
+# D-4: paridad con el pipeline real -- la rama del fragmento existe en el gate
+# que corre de verdad. Sin esto, gate_would_abort podria divergir del script.
+PIPE="$REPO_ROOT/.claude/scripts/mefisto-tooling-pipeline.sh"
+if grep -q 'elif changelog_fragment_added "\$WORKTREE_PATH" "\$SNAPSHOT_COMMIT"; then' "$PIPE"; then
+    pass "D-4: mefisto-tooling-pipeline.sh invoca changelog_fragment_added en el gate"
+else
+    fail "D-4: el pipeline real NO invoca changelog_fragment_added (gate_would_abort divergiria)"
+fi
 
 # -------- Resumen --------
 

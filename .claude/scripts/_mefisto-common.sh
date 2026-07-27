@@ -179,6 +179,46 @@ changes_require_changelog() {
     return 1
 }
 
+# changelog_fragment_added <worktree_path> <base_commit>
+#
+# Retorna 0 si los cambios del worktree anaden al menos un FRAGMENTO de changelog
+# bajo changelog.d/ (un .md que no sea el README del propio mecanismo), 1 si no.
+#
+# Gate transitorio (issue #380): mientras convive el CHANGELOG.md monolitico con
+# los fragmentos, un PR satisface el gate de changelog por CUALQUIERA de las dos
+# vias. Sin esto, el propio PR que introduce el mecanismo de fragmentos no puede
+# pasar su gate: anota su cambio como fragmento (correcto segun su definicion de
+# hecho) y check_unreleased_touched -- que solo mira CHANGELOG.md -- lo rechaza.
+# Es el mismo bloqueo auto-referencial que el de is_path_in_mefisto_scope con
+# changelog.d/ (PR #399): el gate se carga desde main, nunca desde el worktree
+# que lo modifica.
+#
+# Solo detecta la PRESENCIA del fragmento; no valida su formato ni su categoria
+# (de eso se encarga el gate estricto que instala #380).
+changelog_fragment_added() {
+    local wt="$1"
+    local base="$2"
+
+    # Mismo patron de recoleccion que changes_require_changelog: diff commiteado
+    # mas working tree, con --untracked-files=all para que un changelog.d/ recien
+    # creado no se colapse a su directorio raiz y quede invisible al match.
+    local changed
+    changed=$(
+        git -C "$wt" diff --name-only "$base..HEAD" 2>/dev/null
+        git -C "$wt" status --porcelain --untracked-files=all 2>/dev/null | sed 's/^...//'
+    )
+
+    while IFS= read -r path; do
+        [ -z "$path" ] && continue
+        case "$path" in
+            changelog.d/README.md) continue ;;
+            changelog.d/*.md) return 0 ;;
+        esac
+    done <<< "$changed"
+
+    return 1
+}
+
 # detect_misplaced_changelog_entry <worktree_path> <base_commit>
 #
 # Detecta si los cambios del worktree anadieron contenido bajo una seccion de
