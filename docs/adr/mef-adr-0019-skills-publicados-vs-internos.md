@@ -65,6 +65,22 @@ La unica operacion permitida desde el consumidor hacia el repo de Mefisto es **c
 
 Los pipelines de orquestacion (`/parallel`, `/sequential`, `scripts/batch-pipeline.sh`) consultan cada issue con `gh issue view N` sin `-R`. Issues de otros repos retornan `UNKNOWN` y se descartan automaticamente. No se admiten flags `-R` ni grupos mixtos.
 
+### E. Secuencia de registro de rutas nuevas en los gates
+
+Los dos gates de scope (`is_path_in_consumer_blocklist` en el lado publicado, `is_path_in_mefisto_scope` en el lado interno; ambos enumeran rutas explicitamente, seccion A y B arriba) comparten una mecanica que la doctrina previa no explicitaba: **cuando** hay que registrar una ruta nueva, no solo que hay que hacerlo.
+
+**Regla**: registrar una ruta o tipo de artefacto nuevo en los gates y usar esa ruta son dos PRs distintos. El de registro va primero, y no crea ningun archivo bajo la ruta que registra.
+
+**Causa.** Cada pipeline carga su gate con `source` desde la ubicacion del propio script y corre siempre sobre la version de `main` (p. ej. `.claude/scripts/mefisto-tooling-pipeline.sh:17` hace `source ".../_mefisto-common.sh"` antes de crear el worktree). El gate evaluado es entonces el que existia *antes* del PR, nunca la copia que el propio PR pueda llevar. Un PR que intenta registrar una ruta y poblarla al mismo tiempo se autobloquea: corre contra el gate viejo, que todavia no la conoce.
+
+**Esto no es un defecto a corregir, es una propiedad de seguridad deliberada.** Si el gate leyera la copia del worktree en vez de la de `main`, cualquier writer podria anadirse a si mismo una entrada como `*) return 0 ;;` en la allowlist o el blocklist dentro de su propio PR y anular el scope por completo, sin que ninguna revision previa lo detuviera. Cargar siempre desde `main` fuerza a que el registro de una ruta nueva pase por su propio PR -- con su propia revision -- antes de que exista contenido bajo esa ruta.
+
+**Precedente canonico** (issue #360 -> #364, MEF-ADR-0033): el PR #376 (commit `7b2c5b1`) registro `skills/*` y `.claude/skills/*` en ambos gates sin crear ningun archivo bajo esas rutas -- el unico archivo nuevo del PR fue el propio ADR MEF-ADR-0033. El PR #385 (commit `ac52351`), que resolvio el issue #364, creo `skills/projections/SKILL.md` despues, cuando `main` ya conocia la ruta. Dos PRs, ningun bloqueo.
+
+**Contraejemplo** (issue #380): al intentar registrar `changelog.d/` y usarla en el mismo PR, `is_path_in_mefisto_scope` rechazo `changelog.d/380.added.md` porque `main` todavia no conocia la ruta. El PR #399 (commit `a9f514b`) la registro primero. El mismo issue volvio a fallar despues por el gate de CHANGELOG, que exigia una entrada en `[Unreleased]` -- justo lo que el fragmento reemplaza; el PR #401 (commit `c947844`) introdujo `changelog_fragment_added` como alternativa aceptada. Solo con ambos gates enterados en `main`, el PR #403 pudo cerrar #380.
+
+La regla aplica por igual a los dos lados: el blocklist publicado (`is_path_in_consumer_blocklist`, `scripts/_pipeline-common.sh`) y la allowlist interna (`is_path_in_mefisto_scope`, `.claude/scripts/_mefisto-common.sh`) comparten la misma mecanica de sourcing desde `main`.
+
 ## Skills sin equivalente interno
 
 Mefisto es un harness, no un producto. Estos skills publicados **no tienen version interna** porque no aplican conceptualmente al harness:
@@ -125,3 +141,4 @@ Pros: separacion fisica dura. Contras: dos artefactos a publicar y mantener, dep
 
 - 2026-05-15: creacion como `aceptado`.
 - 2026-07-26: enmienda por MEF-ADR-0033 (issue #360). Se agrega el tercer tipo de artefacto a los dos lados de la separacion (`skills/` publicado, `.claude/skills/` interno) y se registra en los gates de scope: `skills/*` en el blocklist publicado (`is_path_in_consumer_blocklist`), `skills/*` y `.claude/skills/*` en la allowlist interna (`is_path_in_mefisto_scope`), con cobertura en `scripts/tests/test-guards.sh`. Se explicita que ambos gates enumeran rutas de forma explicita, por lo que todo tipo de artefacto nuevo debe registrarse a mano.
+- 2026-07-26: enmienda por issue #406, a raiz de los dos bloqueos consecutivos del issue #380 (PRs #399 y #401). Se agrega la seccion E ("Secuencia de registro de rutas nuevas en los gates"): registrar una ruta y usarla son dos PRs distintos porque los pipelines cargan su gate con `source` desde `main`, no desde el worktree -- se documenta esa mecanica como propiedad de seguridad deliberada (no un defecto) y se cita el precedente canonico #360/PR #376 -> #364/PR #385 frente al contraejemplo #380.
