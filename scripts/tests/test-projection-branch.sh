@@ -19,6 +19,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TDD_SCRIPT="$REPO_ROOT/scripts/tdd-pipeline.sh"
+COMMON_SCRIPT="$REPO_ROOT/scripts/_pipeline-common.sh"
 
 PASS=0
 FAIL=0
@@ -56,8 +57,10 @@ detect_stage_agents() {
     echo "$stage1_agent|$stage2_agent|$stage1_label|$stage2_label"
 }
 
-# Reproduccion del carve-out de coverage de classify_file() (Stage 4, issue
-# #371). Cualquier cambio aqui debe acompanarse de un cambio en el script real.
+# Reproduccion del carve-out de coverage de la funcion de clasificacion del
+# Stage 4 (issue #371; desde el #416 vive en scripts/_pipeline-common.sh como
+# coverage_classify_file). Cualquier cambio aqui debe acompanarse de un cambio
+# en el script real.
 classify_function_endpoint() {
     local is_projection="$1" filepath="$2"
     local basename dirname dirbasename
@@ -157,13 +160,13 @@ assert_eq "D4: write-side (sin tipo:projection) sigue detectando *Function/ (CA-
 echo "Escenario E: coherencia entre este test y scripts/tdd-pipeline.sh"
 
 assert_script_contains() {
-    local name="$1" needle="$2"
-    if grep -qF -- "$needle" "$TDD_SCRIPT"; then
+    local name="$1" needle="$2" target="${3:-$TDD_SCRIPT}"
+    if grep -qF -- "$needle" "$target"; then
         echo "  PASS: $name"
         PASS=$((PASS + 1))
     else
         echo "  FAIL: $name"
-        echo "    cadena ausente en $TDD_SCRIPT: $needle"
+        echo "    cadena ausente en $target: $needle"
         FAIL=$((FAIL + 1))
     fi
 }
@@ -173,9 +176,13 @@ assert_script_contains "E1b: los labels se extraen parseando el JSON, no grepean
     "json.load(sys.stdin).get('labels')"
 assert_script_contains "E2: seleccion de projection-test-writer" 'STAGE1_AGENT="projection-test-writer"'
 assert_script_contains "E3: seleccion de projection-implementer" 'STAGE2_AGENT="projection-implementer"'
-assert_script_contains "E4: carve-out classify_file (regex Obtener/Listar)" "grep -qE '^(Obtener|Listar)[A-Za-z0-9]*\$'"
+# E4/E4b: la funcion de clasificacion se movio a scripts/_pipeline-common.sh
+# (issue #416, coverage_classify_file) -- el needle ahora se busca ahi, no en
+# TDD_SCRIPT.
+assert_script_contains "E4: carve-out de coverage_classify_file (regex Obtener/Listar)" \
+    "grep -qE '^(Obtener|Listar)[A-Za-z0-9]*\$'" "$COMMON_SCRIPT"
 assert_script_contains "E4b: carve-out excluye carpetas con sufijo Function (comandos)" \
-    '[ "${query_dir%Function}" = "$query_dir" ]'
+    '[ "${query_dir%Function}" = "$query_dir" ]' "$COMMON_SCRIPT"
 assert_script_contains "E5: SMOKE_FILES suma el patron read-side bajo IS_PROJECTION" '/(Obtener|Listar)[A-Za-z0-9]*/FunctionEndpoint\.cs$'
 assert_script_contains "E6: reviewer y smoke-test-writer se mantienen (sin STAGE variable en run_agent)" 'run_agent "3" "reviewer"'
 # El campo "stage" de status.json es lo que /work-status parsea para saber que
