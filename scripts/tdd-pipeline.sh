@@ -1059,110 +1059,12 @@ if [ "$IS_REFACTOR" != true ] && [ "$FROM_STAGE" -le 4 ]; then
     EXCLUDED_FILES=""
     NOT_EVALUATED_FILES=""
 
-    classify_file() {
-        local filepath="$1"
-        local basename
-        basename=$(basename "$filepath")
-        local dirname
-        dirname=$(dirname "$filepath")
-
-        # Excluidos por nombre
-        case "$basename" in
-            HealthCheck.cs|Program.cs|*Mensajes.cs|*AssemblyMarker.cs|ConfiguracionSerializacion*.cs|*.resx)
-                echo "excluded"; return ;;
-        esac
-
-        # Excluidos por directorio de infraestructura (wiring puro)
-        if echo "$dirname" | grep -q '/Infraestructura/'; then
-            case "$basename" in
-                RequestValidator.cs|ServiceBusDeserializador.cs)
-                    echo "excluded"; return ;;
-            esac
-        fi
-
-        # Carve-out read-side (issue #371, MEF-ADR-0014 + MEF-ADR-0035 seccion 6):
-        # el FunctionEndpoint.cs de una query GET delgada (Obtener{X}/Listar{X}s,
-        # naming.md del Skill projections) no exige cobertura unitaria -- se cubre
-        # por el test de composicion (MEF-ADR-0029) y los smoke tests (MEF-ADR-0013).
-        # Acotado a issues tipo:projection y al naming exacto de esas carpetas (sin
-        # sufijo "Function", a diferencia de un FunctionEndpoint.cs de comando) para
-        # no aflojar el gate del resto: la ausencia del sufijo es parte del criterio,
-        # no solo del comentario -- una carpeta `Obtener...Function` seria un comando
-        # y sigue exigiendo el 95%.
-        local query_dir
-        query_dir=$(basename "$dirname")
-        if [ "$IS_PROJECTION" = true ] && [ "$basename" = "FunctionEndpoint.cs" ] \
-           && [ "${query_dir%Function}" = "$query_dir" ] \
-           && echo "$query_dir" | grep -qE '^(Obtener|Listar)[A-Za-z0-9]*$'; then
-            echo "excluded"; return
-        fi
-
-        # Logica: patrones que requieren 95%
-        # *Projection.cs (MEF-ADR-0034 seccion 9): la clase de proyeccion
-        # companion lleva logica real (que evento aplica, como transforma el
-        # documento) y no va gateada por IS_PROJECTION -- a diferencia del
-        # carve-out de arriba (que afloja), esta regla endurece el gate, y una
-        # regla que endurece gateada por label dejaria sin medir una proyeccion
-        # tocada por un issue tipo:feature. Patron en singular: no coincide con
-        # ConfiguracionMartenProjections{Dominio}.cs (plural + sufijo dominio)
-        # ni ConfiguracionMartenProjections.cs (plural) -- MEF-ADR-0006 no
-        # registra otro artefacto del marco con el sufijo "Projection".
-        case "$basename" in
-            *CommandHandler.cs|*AggregateRoot.cs|*Validator.cs|FunctionEndpoint.cs|*Projection.cs)
-                echo "logic"; return ;;
-        esac
-
-        # Logica: Eventos con factory Crear()
-        if echo "$dirname" | grep -q '/Eventos/\|/Entities/'; then
-            if [ -f "$WORKTREE_PATH/$filepath" ] && grep -q 'static.*Crear(' "$WORKTREE_PATH/$filepath" 2>/dev/null; then
-                echo "logic"; return
-            fi
-        fi
-
-        # Logica: ValueObjects con factory Crear()
-        if echo "$dirname" | grep -q '/ValueObjects/'; then
-            if [ -f "$WORKTREE_PATH/$filepath" ] && grep -q 'static.*Crear(' "$WORKTREE_PATH/$filepath" 2>/dev/null; then
-                echo "logic"; return
-            fi
-        fi
-
-        # Excluir: records DTO puros del estilo canonico (MEF-ADR-0035 seccion
-        # 2: 'public sealed record X(...)', companion de proyeccion aparte).
-        # Sin depender del conteo de lineas -- el estilo canonico es
-        # multilinea -- ni de 'public record' adyacente -- el estilo canonico
-        # es 'public sealed record'. Se aplana el contenido (una sola linea) y
-        # se ubica la declaracion del record con sus modificadores opcionales
-        # (sealed/partial, en cualquier combinacion); si tras cerrar la lista
-        # de parametros el archivo termina en ';' es un DTO sin cuerpo -> se
-        # excluye. Si en cambio abre un cuerpo '{' (metodos u otros miembros)
-        # no se excluye por esta regla.
-        # Segunda condicion: el archivo declara UN solo tipo. Es lo que sustituye
-        # el rol acotador del viejo 'line_count -le 3' (que ademas de acotar
-        # rechazaba el estilo canonico multilinea): sin ella, un archivo con un
-        # record DTO junto a -- o dentro de -- una clase con metodos se etiquetaria
-        # "excluido" por su primer match, escondiendo de la revision humana un
-        # archivo que en realidad nadie midio (hoy sale como "no evaluado").
-        if [ -f "$WORKTREE_PATH/$filepath" ]; then
-            local content
-            content=$(grep -v '^\s*//' "$WORKTREE_PATH/$filepath" | grep -v '^\s*$' | grep -v '^using ' | grep -v '^namespace ' || true)
-            local content_flat
-            content_flat=$(echo "$content" | tr '\n' ' ')
-            local record_decl
-            record_decl=$(echo "$content_flat" | grep -oE 'public\s+(sealed\s+|partial\s+)*record\s+\w+\([^()]*\)[^;{]*[;{]' 2>/dev/null | head -1)
-            local type_decls
-            type_decls=$(echo "$content_flat" | grep -oE '(class|record|struct|interface|enum)\s+\w+' 2>/dev/null | wc -l | tr -d ' ')
-            if [ -n "$record_decl" ] && [ "$type_decls" -eq 1 ]; then
-                case "$record_decl" in
-                    *\;) echo "excluded"; return ;;
-                esac
-            fi
-        fi
-
-        echo "not_evaluated"
-    }
-
+    # La funcion de clasificacion (antes inline en este Stage) vive ahora en
+    # scripts/_pipeline-common.sh como coverage_classify_file (issue #416):
+    # sourceable, para poder testearla con la funcion real en vez de con una
+    # reimplementacion.
     while IFS= read -r file; do
-        classification=$(classify_file "$file")
+        classification=$(coverage_classify_file "$file" "$WORKTREE_PATH" "$IS_PROJECTION")
         case "$classification" in
             logic) LOGIC_FILES="${LOGIC_FILES:+$LOGIC_FILES
 }$file" ;;
