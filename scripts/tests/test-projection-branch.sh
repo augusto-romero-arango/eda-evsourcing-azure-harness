@@ -43,7 +43,11 @@ detect_stage_agents() {
     local issue_json="$1"
     local stage1_agent="test-writer" stage2_agent="implementer"
     local stage1_label="Test Writer" stage2_label="Implementer"
-    if echo "$issue_json" | grep -q '"name":"tipo:projection"'; then
+    local issue_labels
+    issue_labels=$(echo "$issue_json" \
+        | python3 -c "import sys,json; print('\n'.join(l['name'] for l in json.load(sys.stdin).get('labels') or []))" 2>/dev/null \
+        || echo "")
+    if echo "$issue_labels" | grep -qx 'tipo:projection'; then
         stage1_agent="projection-test-writer"
         stage2_agent="projection-implementer"
         stage1_label="Projection Test Writer"
@@ -61,6 +65,7 @@ classify_function_endpoint() {
     dirname=$(dirname "$filepath")
     dirbasename=$(basename "$dirname")
     if [ "$is_projection" = true ] && [ "$basename" = "FunctionEndpoint.cs" ] \
+       && [ "${dirbasename%Function}" = "$dirbasename" ] \
        && echo "$dirbasename" | grep -qE '^(Obtener|Listar)[A-Za-z0-9]*$'; then
         echo "excluded"; return
     fi
@@ -101,6 +106,20 @@ ISSUE_JSON_NO_LABELS='{"labels":[],"number":997,"state":"OPEN","title":"z"}'
 RESULT_B2=$(detect_stage_agents "$ISSUE_JSON_NO_LABELS")
 assert_eq "B3: sin labels -> test-writer/implementer (default)" "test-writer|implementer|Test Writer|Implementer" "$RESULT_B2"
 
+# El match es sobre el NOMBRE completo del label (grep -qx), no un substring del
+# JSON: un label que solo contiene 'tipo:projection' como prefijo no debe activar
+# la rama read-side (mismo criterio anclado que _resolve_from_labels).
+ISSUE_JSON_PREFIJO='{"labels":[{"id":"LA_1","name":"tipo:projection-experimental","description":"","color":"0052CC"}],"number":996,"state":"OPEN","title":"w"}'
+RESULT_B3=$(detect_stage_agents "$ISSUE_JSON_PREFIJO")
+assert_eq "B4: label con prefijo tipo:projection- no activa la rama read-side" "test-writer" "${RESULT_B3%%|*}"
+
+# La deteccion parsea el JSON, no su serializacion: si gh emitiera el JSON con
+# espacios/indentacion, un grep sobre el texto crudo fallaria en silencio y
+# despacharia los agentes write-side sobre un issue read-side.
+ISSUE_JSON_INDENTADO=$(echo "$ISSUE_JSON_PROJECTION" | python3 -m json.tool)
+RESULT_B4=$(detect_stage_agents "$ISSUE_JSON_INDENTADO")
+assert_eq "B5: JSON indentado sigue activando la rama read-side" "projection-test-writer" "${RESULT_B4%%|*}"
+
 # ─── Escenario C: carve-out de coverage del endpoint GET delgado (CA-3) ─────
 echo "Escenario C: FunctionEndpoint.cs de query GET se excluye solo bajo tipo:projection"
 assert_eq "C1: Obtener{X} bajo tipo:projection -> excluded" "excluded" \
@@ -111,6 +130,12 @@ assert_eq "C3: comando (carpeta con sufijo Function) sigue siendo logic" "logic"
     "$(classify_function_endpoint true "src/Foo.Bar/CrearTurnoFunction/FunctionEndpoint.cs")"
 assert_eq "C4: el mismo Obtener{X} FUERA de tipo:projection sigue siendo logic (CA-2)" "logic" \
     "$(classify_function_endpoint false "src/Foo.Bar/ObtenerTurno/FunctionEndpoint.cs")"
+assert_eq "C5: carpeta Obtener{X}Function (comando) no entra al carve-out" "logic" \
+    "$(classify_function_endpoint true "src/Foo.Bar/ObtenerCodigoFunction/FunctionEndpoint.cs")"
+assert_eq "C6: ListarEventosDe{Aggregate} (receta b2, MEF-ADR-0035) -> excluded" "excluded" \
+    "$(classify_function_endpoint true "src/Foo.Bar/ListarEventosDeTurno/FunctionEndpoint.cs")"
+assert_eq "C7: CommandHandler bajo tipo:projection sigue exigiendo 95% (gate intacto)" "logic" \
+    "$(classify_function_endpoint true "src/Foo.Bar/CrearTurnoFunction/CommandHandler/CrearTurnoCommandHandler.cs")"
 
 # ─── Escenario D: Stage 2b detecta Functions read-side sin sufijo (CA-1) ────
 echo "Escenario D: SMOKE_FILES detecta Functions GET de query bajo tipo:projection"
@@ -143,12 +168,21 @@ assert_script_contains() {
     fi
 }
 
-assert_script_contains "E1: deteccion del label tipo:projection" 'grep -q '"'"'"name":"tipo:projection"'"'"
+assert_script_contains "E1: deteccion por nombre exacto del label (grep -qx sobre ISSUE_LABELS)" "grep -qx 'tipo:projection'"
+assert_script_contains "E1b: los labels se extraen parseando el JSON, no grepeando su texto" \
+    "json.load(sys.stdin).get('labels')"
 assert_script_contains "E2: seleccion de projection-test-writer" 'STAGE1_AGENT="projection-test-writer"'
 assert_script_contains "E3: seleccion de projection-implementer" 'STAGE2_AGENT="projection-implementer"'
 assert_script_contains "E4: carve-out classify_file (regex Obtener/Listar)" "grep -qE '^(Obtener|Listar)[A-Za-z0-9]*\$'"
+assert_script_contains "E4b: carve-out excluye carpetas con sufijo Function (comandos)" \
+    '[ "${query_dir%Function}" = "$query_dir" ]'
 assert_script_contains "E5: SMOKE_FILES suma el patron read-side bajo IS_PROJECTION" '/(Obtener|Listar)[A-Za-z0-9]*/FunctionEndpoint\.cs$'
 assert_script_contains "E6: reviewer y smoke-test-writer se mantienen (sin STAGE variable en run_agent)" 'run_agent "3" "reviewer"'
+# El campo "stage" de status.json es lo que /work-status parsea para saber que
+# agente corrio: si el estado "passed" lo escribiera hardcodeado como
+# 1-test-writer, un run read-side reportaria el agente equivocado.
+assert_script_contains "E7: update_status de Stage 1 usa el agente resuelto" 'update_status "1-${STAGE1_AGENT}"'
+assert_script_contains "E8: update_status de Stage 2 usa el agente resuelto" 'update_status "2-${STAGE2_AGENT}"'
 
 echo
 echo "─── Resumen ───"

@@ -287,8 +287,16 @@ $ISSUE_BODY"
     log "Issue: $ISSUE_TITLE"
 
     # Rama read-side (issue #371, CA-4): la deteccion usa el label tipo:projection
-    # del issue, igual que _resolve_from_labels en _pipeline-common.sh.
-    if echo "$ISSUE_JSON" | grep -q '"name":"tipo:projection"'; then
+    # del issue, con el mismo criterio de match exacto sobre el NOMBRE del label que
+    # _resolve_from_labels en _pipeline-common.sh (grep -x, no substring). Se extrae
+    # con python3 desde el JSON ya descargado -- sin segunda llamada a gh y sin
+    # depender de que gh serialice sin espacios: un grep sobre el JSON crudo se
+    # rompe en silencio si el formato cambia y despacharia los agentes write-side
+    # sobre un issue read-side, sin error visible en un pipeline headless.
+    ISSUE_LABELS=$(echo "$ISSUE_JSON" \
+        | python3 -c "import sys,json; print('\n'.join(l['name'] for l in json.load(sys.stdin).get('labels') or []))" 2>/dev/null \
+        || echo "")
+    if echo "$ISSUE_LABELS" | grep -qx 'tipo:projection'; then
         IS_PROJECTION=true
         STAGE1_AGENT="projection-test-writer"
         STAGE2_AGENT="projection-implementer"
@@ -697,7 +705,7 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
 
     AGENT_TW_DUR=$LAST_AGENT_DURATION
     AGENT_TW_RES="passed"
-    update_status "1-test-writer" "passed"
+    update_status "1-${STAGE1_AGENT}" "passed"
     success "Stage 1 completado — fase roja confirmada"
 else
     log "Saltando Stage 1 (--from-stage $FROM_STAGE)"
@@ -720,7 +728,7 @@ fi
 if [ "$IS_REFACTOR" = true ]; then
     log "Saltando Stage 2 (refactoring puro — no hay tests que hacer pasar)"
     AGENT_IM_RES="skipped"
-    update_status "2-implementer" "skipped"
+    update_status "2-${STAGE2_AGENT}" "skipped"
 elif [ "$FROM_STAGE" -le 2 ]; then
     header "Stage 2: $STAGE2_LABEL (fase verde)"
 
@@ -766,11 +774,11 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
     AGENT_IM_DUR=$LAST_AGENT_DURATION
     if [ "$HAS_BLOCKAGE" = true ]; then
         AGENT_IM_RES="blocked"
-        update_status "2-implementer" "blocked"
+        update_status "2-${STAGE2_AGENT}" "blocked"
         warn "Stage 2 completado con tests bloqueados — el reviewer intentara resolverlos"
     else
         AGENT_IM_RES="passed"
-        update_status "2-implementer" "passed"
+        update_status "2-${STAGE2_AGENT}" "passed"
         success "Stage 2 completado — fase verde confirmada"
     fi
 else
@@ -1078,9 +1086,14 @@ if [ "$IS_REFACTOR" != true ] && [ "$FROM_STAGE" -le 4 ]; then
         # por el test de composicion (MEF-ADR-0029) y los smoke tests (MEF-ADR-0013).
         # Acotado a issues tipo:projection y al naming exacto de esas carpetas (sin
         # sufijo "Function", a diferencia de un FunctionEndpoint.cs de comando) para
-        # no aflojar el gate del resto.
+        # no aflojar el gate del resto: la ausencia del sufijo es parte del criterio,
+        # no solo del comentario -- una carpeta `Obtener...Function` seria un comando
+        # y sigue exigiendo el 95%.
+        local query_dir
+        query_dir=$(basename "$dirname")
         if [ "$IS_PROJECTION" = true ] && [ "$basename" = "FunctionEndpoint.cs" ] \
-           && echo "$(basename "$dirname")" | grep -qE '^(Obtener|Listar)[A-Za-z0-9]*$'; then
+           && [ "${query_dir%Function}" = "$query_dir" ] \
+           && echo "$query_dir" | grep -qE '^(Obtener|Listar)[A-Za-z0-9]*$'; then
             echo "excluded"; return
         fi
 
