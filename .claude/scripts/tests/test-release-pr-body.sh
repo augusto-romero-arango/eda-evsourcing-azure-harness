@@ -13,6 +13,16 @@
 #       las declare en otro orden.
 #   [D] Release pequeno (1 entrada, 1 categoria): el resumen sigue siendo no
 #       vacio y legible (CA-5 -- la solucion no degrada el caso comun).
+#   [E] Guarda de regresion sobre el template REAL del body en
+#       mefisto-release.sh: [A] mide una replica escrita a mano del body, asi
+#       que por si sola no detectaria que alguien vuelva a interpolar las notas
+#       integras. Este bloque lee el heredoc real y exige que NO referencie
+#       RELEASE_NOTES y que SI traiga el resumen, el link al CHANGELOG y la
+#       seccion "Siguiente paso" (CA-1 a CA-3).
+#   [F] Robustez del conteo: las lineas "- ..." dentro de un bloque cercado
+#       (```) no son entradas y no deben inflar el indice; y una seccion sin
+#       subsecciones "### Categoria" produce resumen vacio, caso para el que el
+#       script trae un fallback (el body nunca queda con una seccion muda).
 #
 # summarize_version_section vive en mefisto-release.sh, que NO es sourceable
 # (ejecuta el pipeline completo -- git switch, push, gh pr create -- en su
@@ -170,6 +180,72 @@ if [ -n "$SMALL_SUMMARY" ] && echo "$SMALL_SUMMARY" | grep -q '\*\*Fixed\*\*: 1 
     pass "D-1: un release de 1 entrada produce un resumen no vacio con el conteo correcto"
 else
     fail "D-1: el resumen de un release pequeno no deberia degradar a vacio -- salida: $SMALL_SUMMARY"
+fi
+
+# -------- Bloque E: el template real del body (guarda de regresion) --------
+
+echo ""
+echo "[E] El heredoc real del body en mefisto-release.sh no vuelca las notas integras"
+
+# Heredoc del body: desde 'cat > "$PR_BODY_FILE" <<EOF' hasta su 'EOF' de cierre.
+REAL_TEMPLATE=$(sed -n '/^    cat > "\$PR_BODY_FILE" <<EOF$/,/^EOF$/p' "$RELEASE_SCRIPT")
+
+if [ -n "$REAL_TEMPLATE" ]; then
+    pass "E-0: se localizo el heredoc del body del PR en mefisto-release.sh"
+else
+    fail "E-0: no se localizo el heredoc del body del PR (¿cambio la forma del 'cat > \$PR_BODY_FILE'?)"
+fi
+
+if ! echo "$REAL_TEMPLATE" | grep -q 'RELEASE_NOTES'; then
+    pass "E-1: el template no interpola RELEASE_NOTES (causa raiz del issue #405)"
+else
+    fail "E-1: el template volvio a interpolar RELEASE_NOTES -- el body excedera 65536 caracteres"
+fi
+
+for token in 'RELEASE_SUMMARY' 'CHANGELOG_LINK' '## Siguiente paso'; do
+    if echo "$REAL_TEMPLATE" | grep -qF "$token"; then
+        pass "E-2: el template conserva '${token}'"
+    else
+        fail "E-2: el template deberia conservar '${token}'"
+    fi
+done
+
+# -------- Bloque F: robustez del conteo --------
+
+echo ""
+echo "[F] Bloques cercados y seccion sin categorias"
+
+FENCED_NOTES=$(cat <<'EOF'
+### Added
+
+- entrada real con un snippet:
+
+  ```yaml
+- no soy una entrada
+- yo tampoco
+  ```
+
+- segunda entrada real
+EOF
+)
+FENCED_SUMMARY=$(summarize_version_section "$FENCED_NOTES")
+if echo "$FENCED_SUMMARY" | grep -q '\*\*Added\*\*: 2 entrada(s)'; then
+    pass "F-1: las lineas '- ...' dentro de un bloque cercado no cuentan como entradas"
+else
+    fail "F-1: Added deberia contar 2 entradas (las 2 reales, no las del snippet) -- salida: $FENCED_SUMMARY"
+fi
+
+NOCAT_SUMMARY=$(summarize_version_section "- entrada suelta sin subseccion")
+if [ -z "$NOCAT_SUMMARY" ]; then
+    pass "F-2: una seccion sin subsecciones '### Categoria' produce resumen vacio"
+else
+    fail "F-2: sin '### Categoria' el resumen deberia ser vacio -- salida: $NOCAT_SUMMARY"
+fi
+
+if grep -q 'if \[ -z "\$RELEASE_SUMMARY" \]; then' "$RELEASE_SCRIPT"; then
+    pass "F-2: mefisto-release.sh trae el fallback para resumen vacio (el body no queda con una seccion muda)"
+else
+    fail "F-2: falta en mefisto-release.sh la guarda de resumen vacio"
 fi
 
 # -------- Resumen --------

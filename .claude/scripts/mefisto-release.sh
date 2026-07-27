@@ -142,6 +142,19 @@ import os, re
 
 text = os.environ['SUMMARIZE_INPUT']
 order = ["Added", "Changed", "Fixed", "Removed"]
+
+# Descartar los bloques cercados (```) antes de contar: una entrada del
+# CHANGELOG de este repo puede embeber un snippet, y una linea "- ..." dentro
+# del snippet no es una entrada -- contarla inflaria el indice en silencio.
+kept, fenced = [], False
+for line in text.split("\n"):
+    if re.match(r'^\s*```', line):
+        fenced = not fenced
+        continue
+    if not fenced:
+        kept.append(line)
+text = "\n".join(kept)
+
 counts = {}
 for m in re.finditer(r'(?ms)^###\s*(\w+)[^\n]*\n(.*?)(?=^###\s|\Z)', text):
     name = m.group(1)
@@ -399,7 +412,14 @@ EOF
     # propio PR y, en la fase publish, en el GitHub Release.
     RELEASE_NOTES=$(extract_version_section "$NEW_VERSION") \
         || abort "No se pudieron extraer las notas de [${NEW_VERSION}] del CHANGELOG"
-    RELEASE_SUMMARY=$(summarize_version_section "$RELEASE_NOTES")
+    RELEASE_SUMMARY=$(summarize_version_section "$RELEASE_NOTES") \
+        || abort "No se pudo resumir las notas de [${NEW_VERSION}] para el body del PR"
+    # Fallback: la seccion no traia subsecciones "### Categoria" (entradas
+    # escritas a mano directo bajo [Unreleased], sin pasar por changelog.d/).
+    # El indice queda vacio, pero el body no debe degradar a una seccion muda.
+    if [ -z "$RELEASE_SUMMARY" ]; then
+        RELEASE_SUMMARY="- Sin subsecciones \`### Categoria\` en \`[${NEW_VERSION}]\`; ver las notas completas."
+    fi
     CHANGELOG_LINK="${REPO_URL}/blob/${RELEASE_BRANCH}/CHANGELOG.md"
 
     PR_BODY_FILE=$(mktemp)
@@ -504,13 +524,15 @@ if release_exists "$NEW_TAG"; then
 fi
 
 # Extraer notas del bloque versionado. A diferencia del body del PR (issue
-# #405), aqui SI se publican integras: la documentacion oficial de la REST API
-# (gh.io/rest/releases/releases#create-a-release) no declara un maximo para
-# 'body', pero el limite real observado en la API (confirmado por multiples
-# reportes independientes contra el mismo mensaje de error, p. ej.
-# github.com/cli/cli/issues/7705 y github.com/changesets/action/issues/304:
-# "body is too long (maximum is 125000 characters)") es 125000 caracteres --
-# casi el doble del limite de 65536 de PRs/issues (GraphQL) que origino este
+# #405), aqui SI se publican integras. La documentacion oficial de la REST API
+# no declara un maximo para 'body':
+#   https://docs.github.com/en/rest/releases/releases#create-a-release
+# El limite real que aplica la API es 125000 caracteres, verificado en el
+# mensaje de error que devuelve (HTTP 422 "body is too long (maximum is 125000
+# characters)") segun dos reportes independientes:
+#   https://github.com/cli/cli/issues/7705
+#   https://github.com/changesets/action/issues/304
+# Es casi el doble del limite de 65536 de PRs/issues (GraphQL) que origino este
 # issue. La seccion [0.18.0] medida en #405 (109010 caracteres, la mayor hasta
 # la fecha) queda por debajo con margen (~16000 caracteres), asi que se deja
 # esta fase sin truncar. Si una seccion futura se acerca a 125000, revisar
