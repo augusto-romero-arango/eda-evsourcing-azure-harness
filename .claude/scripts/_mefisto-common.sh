@@ -460,3 +460,185 @@ find_open_pr_for_branch() {
     echo "$url"
     return 0
 }
+
+# run_agent_with_watchdog <workdir> <timeout_seconds> <log_file> <events_log> <label> <signal_file> <cmd...>
+#
+# Ejecuta <cmd...> (sin `eval` -- se preserva "$@" tal cual, asi que las
+# comillas/backticks/`$` del prompt del agente nunca se re-interpretan) en
+# <workdir>, redirigiendo su stdout/stderr a <log_file>, bajo un watchdog de
+# <timeout_seconds>. Imprime por stdout el exit code de <cmd...> (capturable
+# con `EXIT=$(run_agent_with_watchdog ...)`).
+#
+# Arregla dos grietas de correctitud del watchdog original de
+# mefisto-tooling-pipeline.sh (issue #424), con evidencia en el historico: los
+# stages de #416 (writer, 1883s) y #414 (reviewer, 1919s) excedieron el limite
+# nominal de 1800s y events.log no tuvo una sola linea TIMEOUT en toda la
+# corrida -- el limite de 30 min era decorativo.
+#
+# CA-1 (mata todo el arbol, no solo el subshell): `kill -9 -$pid` apunta al
+# GRUPO de procesos, pero un subshell lanzado con `&` hereda por defecto el
+# PGID del shell que lo lanza -- no es lider de su propio grupo, asi que ese
+# kill no alcanzaba ni al `claude` ni a sus hijos node. `setsid` no existe en
+# macOS (verificado: `command -v setsid` -> vacio). El arreglo verificado en
+# bash 3.2/darwin es activar job control (`set -m`) justo antes de lanzar
+# <cmd...> en background: con monitor mode activo ese job SI se vuelve lider
+# de su propio grupo (PGID == PID del job), y `kill -9 -$pid` alcanza a todo
+# el arbol. `set +m` restaura el modo normal enseguida despues del lanzamiento
+# -- con job control activo bash reporta cambios de estado de jobs por
+# stderr, y acotar la ventana evita ese ruido en el resto de la funcion.
+#
+# El watchdog se lanza DENTRO de esa misma ventana de `set -m`, por el mismo
+# motivo del otro lado: cuando <cmd...> termina solo y hay que cancelarlo, un
+# `kill` al PID del subshell del watchdog mata al subshell pero deja su
+# `sleep <timeout_s>` huerfano hasta media hora (verificado: un `sleep`
+# colgado por stage). Siendo lider de su propio grupo, `kill -9 -$watchdog_pid`
+# se lleva subshell y `sleep` de una. Tiene que ser SIGKILL al GRUPO y no
+# SIGTERM al `sleep` por separado: matar solo al `sleep` haria que el subshell
+# despertara y siguiera con el `touch`/`kill`/`echo`, escribiendo un evento
+# TIMEOUT espurio de un stage que en realidad termino bien.
+#
+# CA-2 (evento TIMEOUT incondicional): el `touch`/`kill`/`echo` del watchdog
+# ya NO cuelgan de un `&&` en cadena -- antes, si el `kill` fallaba (como
+# pasaba siempre por CA-1, al no ser el subshell lider de grupo), el `echo`
+# que le seguia nunca corria y el evento TIMEOUT jamas se escribia en
+# events.log. Ahora son tres sentencias independientes: el evento se escribe
+# pase lo que pase con el kill.
+#
+# CA-3 (senal de timeout para clasificacion post-mortem): si el watchdog
+# dispara, ademas de matar el grupo y loguear el evento, deja creado
+# <signal_file> (se borra primero, por si quedo de una corrida anterior). El
+# caller (run_agent) la usa para clasificar failure_type=TIMEOUT sin depender
+# de que el exit code que observe `wait` sea justo 137/143 -- una senal de
+# grupo no siempre se refleja asi.
+run_agent_with_watchdog() {
+    local workdir="$1" timeout_s="$2" log_file="$3" events_log="$4" label="$5" signal_file="$6"
+    shift 6
+
+    rm -f "$signal_file"
+
+    set -m
+    ( cd "$workdir" && "$@" ) >"$log_file" 2>&1 &
+    local pid=$!
+
+    (
+        sleep "$timeout_s"
+        touch "$signal_file" 2>/dev/null
+        kill -9 -"$pid" 2>/dev/null
+        echo "[$(date +%H:%M:%S)] TIMEOUT: $label supero ${timeout_s}s" >> "$events_log"
+    ) </dev/null >/dev/null 2>&1 &
+    local watchdog_pid=$!
+    set +m
+
+    local exit_code=0
+    wait "$pid" || exit_code=$?
+
+    # Si <signal_file> ya existe aqui, el watchdog fue quien mato a <pid> --
+    # esta a mitad de escribir su evento TIMEOUT (touch precede a kill en su
+    # propio cuerpo, en el mismo proceso, sin concurrencia posible entre
+    # ambos). Una senal nuestra en ese instante podria cortarlo antes de
+    # llegar al `echo` incondicional (CA-2) -- se lo deja terminar solo, NUNCA
+    # se lo mata; solo se cancela el watchdog cuando <pid> termino por su
+    # cuenta y el watchdog sigue dormido en el `sleep`.
+    if [ -f "$signal_file" ]; then
+        wait "$watchdog_pid" 2>/dev/null || true
+    else
+        kill -9 -"$watchdog_pid" 2>/dev/null || true
+        wait "$watchdog_pid" 2>/dev/null || true
+    fi
+
+    echo "$exit_code"
+}
+
+# agent_log_has_stream_cut <log_file>
+#
+# Retorna 0 si el log de un stage muestra que el CLI murio a mitad de
+# respuesta. Unico lugar donde vive el patron: lo consumen tanto
+# agent_failure_is_unrecoverable (que decide si se aborta) como la
+# clasificacion de failure_type de run_agent (que solo pone la etiqueta
+# STREAM_CUT). Con el patron duplicado en los dos, una edicion de uno solo
+# desincroniza etiqueta y decision en silencio -- el log diria STREAM_CUT
+# mientras el pipeline sigue de largo, que es exactamente el bug de #416.
+#
+# El match es a proposito amplio (`API Error` sin anclar al codigo de estado,
+# asi cubre tanto `API Error: 5xx` como el corte de conexion): la unica
+# consecuencia de un falso positivo es abortar un stage que quiza era
+# recuperable -- se relanza y listo -- mientras que un falso negativo es
+# exactamente el bug que este issue arregla, trabajo truncado llegando a main.
+# Ante la duda, se aborta.
+agent_log_has_stream_cut() {
+    local log_file="$1"
+    grep -qE "Connection closed mid-response|API Error" "$log_file" 2>/dev/null
+}
+
+# agent_failure_is_unrecoverable <timed_out> <exit_code> <log_file>
+#
+# Deriva el flag <unrecoverable> que consume agent_work_is_trustworthy (CA-4
+# del issue #424): retorna 0 si el fallo del CLI es de los que NUNCA admiten
+# el atajo de recuperacion por has_work, 1 si es un fallo ordinario que si lo
+# admite. Vive aqui, y no inline en run_agent, porque es la decision que de
+# hecho corta el paso a un PR con trabajo a medias -- extraerla la hace
+# testeable directamente (mismo criterio que classify_file del coverage gate,
+# issue #421).
+#
+# Dos familias son irrecuperables:
+#   - TIMEOUT: <timed_out>="true" (la senal que dejo el watchdog) o un exit
+#     code de senal (137 SIGKILL / 143 SIGTERM).
+#   - Corte de stream a mitad de respuesta (agent_log_has_stream_cut). Fue el
+#     incidente de #416 -- el reviewer murio con `API Error: Connection closed
+#     mid-response` a los 882s y el pipeline abrio igual el PR #421 con una
+#     revision truncada a mitad de frase.
+agent_failure_is_unrecoverable() {
+    local timed_out="$1" exit_code="$2" log_file="$3"
+
+    [ "$timed_out" = "true" ] && return 0
+    [ "$exit_code" = "137" ] && return 0
+    [ "$exit_code" = "143" ] && return 0
+
+    agent_log_has_stream_cut "$log_file" && return 0
+
+    return 1
+}
+
+# agent_work_is_trustworthy <worktree_path> <base_commit> <unrecoverable> <summary_file>
+#
+# Decide si el trabajo que dejo un agente fallido en <worktree_path> es
+# confiable para recuperar el stage (el atajo "has_work" que evita abortar
+# cuando el CLI vuelve con exit code distinto de cero). Retorna 0 si es
+# confiable, 1 si no. Usada por run_agent tras un fallo del CLI (issue #424).
+#
+# CA-4: <unrecoverable>="true" descalifica la recuperacion sin mirar nada mas
+# -- el caller la marca en TIMEOUT o cuando el log del stage contiene un corte
+# de stream a mitad de respuesta (`Connection closed mid-response`, `API
+# Error`). El incidente de #416 fue justo esto: el reviewer murio con `API
+# Error: Connection closed mid-response` a los 882s, y como el worktree tenia
+# archivos sucios el pipeline abrio igual el PR #421 con una revision
+# truncada a mitad de frase -- un CLI que muere a mitad de su contrato nunca
+# es recuperable, sin importar cuantos archivos sucios deje.
+#
+# CA-5: para el resto de fallos (los que SI admiten recuperacion), exige
+# ademas que <summary_file> exista y no este vacio -- el mismo archivo que ya
+# lee collect_summary
+# ($worktree/.claude/pipeline/summaries/stage-<N>-<agente>.md). Es la
+# evidencia de que el agente llego al final de su contrato: la ultima
+# instruccion de cada prompt de stage es escribir ese resumen, asi que un
+# agente que muere antes de esa linea nunca lo deja escrito, aunque haya
+# tocado archivos antes de morir.
+#
+# Solo si ninguno de los dos gates anteriores descalifica, mira el has_work
+# original: diff sucio contra <base_commit> o working tree con cambios sin
+# commitear.
+agent_work_is_trustworthy() {
+    local wt="$1" base="$2" unrecoverable="$3" summary_file="$4"
+
+    [ "$unrecoverable" = "true" ] && return 1
+
+    [ -s "$summary_file" ] || return 1
+
+    if ! git -C "$wt" diff --quiet "${base:-HEAD}..HEAD" 2>/dev/null; then
+        return 0
+    fi
+    if [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]; then
+        return 0
+    fi
+    return 1
+}
