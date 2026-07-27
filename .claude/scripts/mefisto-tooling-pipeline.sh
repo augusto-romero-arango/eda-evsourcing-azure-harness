@@ -327,7 +327,7 @@ run_agent() {
             failure_type="API_ERROR_SERVER (exit $CLAUDE_EXIT)"
         elif grep -q "API Error: 4" "$log_stage" 2>/dev/null; then
             failure_type="API_ERROR_CLIENT (exit $CLAUDE_EXIT)"
-        elif grep -qE "Connection closed mid-response|API Error" "$log_stage" 2>/dev/null; then
+        elif agent_log_has_stream_cut "$log_stage"; then
             failure_type="STREAM_CUT (exit $CLAUDE_EXIT)"
         else
             failure_type="CLI_ERROR (exit $CLAUDE_EXIT)"
@@ -341,9 +341,7 @@ run_agent() {
         # reviewer murio con "API Error: Connection closed mid-response" y el
         # pipeline abrio igual el PR con una revision truncada a mitad de frase).
         local UNRECOVERABLE=false
-        if [ "$TIMED_OUT" = true ] || [ "$CLAUDE_EXIT" -eq 137 ] || [ "$CLAUDE_EXIT" -eq 143 ]; then
-            UNRECOVERABLE=true
-        elif grep -qE "Connection closed mid-response|API Error" "$log_stage" 2>/dev/null; then
+        if agent_failure_is_unrecoverable "$TIMED_OUT" "$CLAUDE_EXIT" "$log_stage"; then
             UNRECOVERABLE=true
         fi
 

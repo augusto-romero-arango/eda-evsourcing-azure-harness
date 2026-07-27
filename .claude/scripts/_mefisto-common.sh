@@ -487,6 +487,16 @@ find_open_pr_for_branch() {
 # -- con job control activo bash reporta cambios de estado de jobs por
 # stderr, y acotar la ventana evita ese ruido en el resto de la funcion.
 #
+# El watchdog se lanza DENTRO de esa misma ventana de `set -m`, por el mismo
+# motivo del otro lado: cuando <cmd...> termina solo y hay que cancelarlo, un
+# `kill` al PID del subshell del watchdog mata al subshell pero deja su
+# `sleep <timeout_s>` huerfano hasta media hora (verificado: un `sleep`
+# colgado por stage). Siendo lider de su propio grupo, `kill -9 -$watchdog_pid`
+# se lleva subshell y `sleep` de una. Tiene que ser SIGKILL al GRUPO y no
+# SIGTERM al `sleep` por separado: matar solo al `sleep` haria que el subshell
+# despertara y siguiera con el `touch`/`kill`/`echo`, escribiendo un evento
+# TIMEOUT espurio de un stage que en realidad termino bien.
+#
 # CA-2 (evento TIMEOUT incondicional): el `touch`/`kill`/`echo` del watchdog
 # ya NO cuelgan de un `&&` en cadena -- antes, si el `kill` fallaba (como
 # pasaba siempre por CA-1, al no ser el subshell lider de grupo), el `echo`
@@ -509,7 +519,6 @@ run_agent_with_watchdog() {
     set -m
     ( cd "$workdir" && "$@" ) >"$log_file" 2>&1 &
     local pid=$!
-    set +m
 
     (
         sleep "$timeout_s"
@@ -518,6 +527,7 @@ run_agent_with_watchdog() {
         echo "[$(date +%H:%M:%S)] TIMEOUT: $label supero ${timeout_s}s" >> "$events_log"
     ) </dev/null >/dev/null 2>&1 &
     local watchdog_pid=$!
+    set +m
 
     local exit_code=0
     wait "$pid" || exit_code=$?
@@ -525,18 +535,68 @@ run_agent_with_watchdog() {
     # Si <signal_file> ya existe aqui, el watchdog fue quien mato a <pid> --
     # esta a mitad de escribir su evento TIMEOUT (touch precede a kill en su
     # propio cuerpo, en el mismo proceso, sin concurrencia posible entre
-    # ambos). Un SIGTERM nuestro en ese instante podria cortarlo antes de
+    # ambos). Una senal nuestra en ese instante podria cortarlo antes de
     # llegar al `echo` incondicional (CA-2) -- se lo deja terminar solo, NUNCA
-    # se lo mata; solo se cancela (kill) el watchdog cuando <pid> termino por
-    # su cuenta y el watchdog sigue dormido en el `sleep`.
+    # se lo mata; solo se cancela el watchdog cuando <pid> termino por su
+    # cuenta y el watchdog sigue dormido en el `sleep`.
     if [ -f "$signal_file" ]; then
         wait "$watchdog_pid" 2>/dev/null || true
     else
-        kill "$watchdog_pid" 2>/dev/null || true
+        kill -9 -"$watchdog_pid" 2>/dev/null || true
         wait "$watchdog_pid" 2>/dev/null || true
     fi
 
     echo "$exit_code"
+}
+
+# agent_log_has_stream_cut <log_file>
+#
+# Retorna 0 si el log de un stage muestra que el CLI murio a mitad de
+# respuesta. Unico lugar donde vive el patron: lo consumen tanto
+# agent_failure_is_unrecoverable (que decide si se aborta) como la
+# clasificacion de failure_type de run_agent (que solo pone la etiqueta
+# STREAM_CUT). Con el patron duplicado en los dos, una edicion de uno solo
+# desincroniza etiqueta y decision en silencio -- el log diria STREAM_CUT
+# mientras el pipeline sigue de largo, que es exactamente el bug de #416.
+#
+# El match es a proposito amplio (`API Error` sin anclar al codigo de estado,
+# asi cubre tanto `API Error: 5xx` como el corte de conexion): la unica
+# consecuencia de un falso positivo es abortar un stage que quiza era
+# recuperable -- se relanza y listo -- mientras que un falso negativo es
+# exactamente el bug que este issue arregla, trabajo truncado llegando a main.
+# Ante la duda, se aborta.
+agent_log_has_stream_cut() {
+    local log_file="$1"
+    grep -qE "Connection closed mid-response|API Error" "$log_file" 2>/dev/null
+}
+
+# agent_failure_is_unrecoverable <timed_out> <exit_code> <log_file>
+#
+# Deriva el flag <unrecoverable> que consume agent_work_is_trustworthy (CA-4
+# del issue #424): retorna 0 si el fallo del CLI es de los que NUNCA admiten
+# el atajo de recuperacion por has_work, 1 si es un fallo ordinario que si lo
+# admite. Vive aqui, y no inline en run_agent, porque es la decision que de
+# hecho corta el paso a un PR con trabajo a medias -- extraerla la hace
+# testeable directamente (mismo criterio que classify_file del coverage gate,
+# issue #421).
+#
+# Dos familias son irrecuperables:
+#   - TIMEOUT: <timed_out>="true" (la senal que dejo el watchdog) o un exit
+#     code de senal (137 SIGKILL / 143 SIGTERM).
+#   - Corte de stream a mitad de respuesta (agent_log_has_stream_cut). Fue el
+#     incidente de #416 -- el reviewer murio con `API Error: Connection closed
+#     mid-response` a los 882s y el pipeline abrio igual el PR #421 con una
+#     revision truncada a mitad de frase.
+agent_failure_is_unrecoverable() {
+    local timed_out="$1" exit_code="$2" log_file="$3"
+
+    [ "$timed_out" = "true" ] && return 0
+    [ "$exit_code" = "137" ] && return 0
+    [ "$exit_code" = "143" ] && return 0
+
+    agent_log_has_stream_cut "$log_file" && return 0
+
+    return 1
 }
 
 # agent_work_is_trustworthy <worktree_path> <base_commit> <unrecoverable> <summary_file>

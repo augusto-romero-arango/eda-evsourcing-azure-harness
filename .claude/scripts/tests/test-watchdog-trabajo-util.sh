@@ -23,11 +23,12 @@
 #     procesos -- asi `kill -9 -$pid` SI alcanza a todo el arbol (CA-1); deja
 #     el evento TIMEOUT como sentencia independiente, nunca colgada de un
 #     `&&` (CA-2); y deja una senal en disco cuando dispara (CA-3).
+#   - agent_log_has_stream_cut / agent_failure_is_unrecoverable: derivan si el
+#     fallo admite recuperacion (CA-4).
 #   - agent_work_is_trustworthy: el atajo has_work deja de aplicar cuando el
-#     fallo es TIMEOUT o un corte de stream a mitad de respuesta (CA-4), y
-#     para el resto de fallos exige ademas que el resumen de stage exista y
-#     no este vacio -- evidencia de que el agente llego al final de su
-#     contrato (CA-5).
+#     fallo es irrecuperable (CA-4), y para el resto de fallos exige ademas
+#     que el resumen de stage exista y no este vacio -- evidencia de que el
+#     agente llego al final de su contrato (CA-5).
 #
 # Casos cubiertos:
 #   [pre] Las funciones nuevas estan definidas en _mefisto-common.sh.
@@ -36,10 +37,13 @@
 #   [B] CA-2: el evento TIMEOUT se escribe en events.log de forma
 #       incondicional al vencer el timeout.
 #   [C] CA-3: la senal de timeout se crea SOLO cuando el watchdog dispara; un
-#       comando que termina antes del timeout no la deja, y el exit code real
-#       del comando (no 137) viaja intacto.
-#   [D] CA-4: agent_work_is_trustworthy nunca recupera cuando el fallo es
-#       marcado unrecoverable, sin importar cuan sucio este el worktree.
+#       comando que termina antes del timeout no la deja, el exit code real
+#       del comando (no 137) viaja intacto, y cancelar el watchdog no deja su
+#       `sleep` huerfano.
+#   [D] CA-4: agent_failure_is_unrecoverable deriva bien el flag (senal de
+#       timeout, exit de senal, corte de stream en el log) y
+#       agent_work_is_trustworthy nunca recupera cuando el flag esta puesto,
+#       sin importar cuan sucio este el worktree.
 #   [E] CA-5: para fallos recuperables, has_work exige ademas el resumen de
 #       stage no vacio -- fixtures de worktree sucio con y sin resumen.
 #   [F] Paridad: run_agent en el pipeline real invoca las funciones nuevas y
@@ -68,7 +72,7 @@ trap cleanup EXIT
 # -------- Bloque pre: funciones existen --------
 
 echo "[pre] Las funciones nuevas estan definidas en _mefisto-common.sh"
-for fn in run_agent_with_watchdog agent_work_is_trustworthy; do
+for fn in run_agent_with_watchdog agent_log_has_stream_cut agent_failure_is_unrecoverable agent_work_is_trustworthy; do
     if declare -F "$fn" >/dev/null; then
         pass "$fn definida"
     else
@@ -125,7 +129,12 @@ else
 fi
 
 WT_C="$TMP/wt-c"; mkdir -p "$WT_C"
-EXIT_C=$(run_agent_with_watchdog "$WT_C" 5 "$TMP/c-log.txt" "$TMP/c-events.log" "writer" "$TMP/c-signal" \
+# Timeout deliberadamente largo y con un valor irrepetible: el comando termina
+# de inmediato, asi que el watchdog tiene que quedar cancelado -- y C-5 busca
+# su `sleep` por ese valor exacto para que no se confunda con ningun otro
+# `sleep` de la maquina.
+C_TIMEOUT=3607
+EXIT_C=$(run_agent_with_watchdog "$WT_C" "$C_TIMEOUT" "$TMP/c-log.txt" "$TMP/c-events.log" "writer" "$TMP/c-signal" \
     bash -c "echo hola; exit 3")
 
 if [ "$EXIT_C" = "3" ]; then
@@ -142,6 +151,19 @@ if [ ! -s "$TMP/c-events.log" ]; then
     pass "C-4: sin timeout, events.log queda vacio (ningun evento espurio)"
 else
     fail "C-4: events.log no deberia tener contenido: $(cat "$TMP/c-events.log")"
+fi
+
+# C-5: cancelar el watchdog tiene que llevarse tambien su `sleep`. Matar solo
+# el PID del subshell dejaba el `sleep <timeout>` huerfano hasta media hora
+# (uno por stage). Por eso el watchdog se lanza dentro de la ventana de
+# `set -m` -- como lider de su propio grupo -- y se cancela con
+# `kill -9 -$watchdog_pid`, que barre subshell y `sleep` de una.
+sleep 1
+ORPHANS=$(pgrep -f "sleep $C_TIMEOUT" 2>/dev/null | wc -l | tr -d ' ')
+if [ "$ORPHANS" = "0" ]; then
+    pass "C-5: cancelar el watchdog no deja el 'sleep' huerfano"
+else
+    fail "C-5: quedaron $ORPHANS 'sleep $C_TIMEOUT' huerfanos tras cancelar el watchdog"
 fi
 
 # -------- Fixtures de worktree para los bloques D y E --------
@@ -174,21 +196,56 @@ SUMMARY="$WT/.claude/pipeline/summaries/stage-1-writer.md"
 echo ""
 echo "[D] CA-4: unrecoverable (TIMEOUT / corte de stream) nunca se recupera"
 
-# D-1: worktree bien sucio + resumen presente y no vacio, pero unrecoverable=true.
+# Primero la DERIVACION del flag (agent_failure_is_unrecoverable): es la
+# decision que de hecho corta el paso a un PR truncado, asi que se testea la
+# funcion real y no una reimplementacion del criterio.
+LOG_LIMPIO="$TMP/d-log-limpio.txt"
+printf 'todo bien\nresumen escrito\n' > "$LOG_LIMPIO"
+LOG_CORTE="$TMP/d-log-corte.txt"
+printf 'trabajando...\nAPI Error: Connection closed mid-response\n' > "$LOG_CORTE"
+
+if agent_failure_is_unrecoverable "true" "0" "$LOG_LIMPIO"; then
+    pass "D-1: la senal de TIMEOUT marca irrecuperable aunque el exit code sea 0"
+else
+    fail "D-1: timed_out=true deberia marcar irrecuperable"
+fi
+
+if agent_failure_is_unrecoverable "false" "137" "$LOG_LIMPIO"; then
+    pass "D-2: exit 137 (SIGKILL) marca irrecuperable sin mirar el log"
+else
+    fail "D-2: exit 137 deberia marcar irrecuperable"
+fi
+
+# El incidente literal de #416: exit code ordinario, log con el corte de stream.
+if agent_failure_is_unrecoverable "false" "1" "$LOG_CORTE"; then
+    pass "D-3: 'API Error: Connection closed mid-response' en el log marca irrecuperable (incidente #416)"
+else
+    fail "D-3: el corte de stream a mitad de respuesta deberia marcar irrecuperable"
+fi
+
+if agent_failure_is_unrecoverable "false" "1" "$LOG_LIMPIO"; then
+    fail "D-4 (control): un fallo ordinario NO deberia marcarse irrecuperable"
+else
+    pass "D-4 (control): fallo ordinario (exit 1, log sin corte) sigue siendo recuperable"
+fi
+
+# Y ahora el EFECTO del flag sobre el criterio de recuperacion.
+
+# D-5: worktree bien sucio + resumen presente y no vacio, pero unrecoverable=true.
 reset_wt
 echo "cambio" > "$WT/commands/base.md"
 echo "resumen del writer" > "$SUMMARY"
 if agent_work_is_trustworthy "$WT" "$BASE_COMMIT" "true" "$SUMMARY"; then
-    fail "D-1: unrecoverable=true NO deberia recuperar aunque el worktree este sucio y haya resumen"
+    fail "D-5: unrecoverable=true NO deberia recuperar aunque el worktree este sucio y haya resumen"
 else
-    pass "D-1: unrecoverable=true aborta pese a worktree sucio y resumen presente"
+    pass "D-5: unrecoverable=true aborta pese a worktree sucio y resumen presente"
 fi
 
-# D-2: mismo escenario pero unrecoverable=false -- debe SI recuperar (control).
+# D-6: mismo escenario pero unrecoverable=false -- debe SI recuperar (control).
 if agent_work_is_trustworthy "$WT" "$BASE_COMMIT" "false" "$SUMMARY"; then
-    pass "D-2 (control): unrecoverable=false SI recupera con worktree sucio y resumen"
+    pass "D-6 (control): unrecoverable=false SI recupera con worktree sucio y resumen"
 else
-    fail "D-2 (control): deberia recuperar con worktree sucio, resumen presente y unrecoverable=false"
+    fail "D-6 (control): deberia recuperar con worktree sucio, resumen presente y unrecoverable=false"
 fi
 
 # -------- Bloque E: CA-5, has_work exige resumen de stage no vacio --------
@@ -255,13 +312,33 @@ else
     fail "F-2: mefisto-tooling-pipeline.sh NO invoca agent_work_is_trustworthy"
 fi
 
+# El pipeline tiene que DERIVAR el flag con la funcion testeada arriba, no con
+# una copia inline del grep: una copia se desincroniza en silencio y el bloque
+# D dejaria de cubrir lo que el pipeline realmente ejecuta.
+if grep -q "agent_failure_is_unrecoverable" "$PIPE"; then
+    pass "F-3: mefisto-tooling-pipeline.sh deriva el flag con agent_failure_is_unrecoverable"
+else
+    fail "F-3: mefisto-tooling-pipeline.sh NO invoca agent_failure_is_unrecoverable"
+fi
+
 # El patron viejo era exactamente esta cadena de `&&`: kill ... && echo ... El
 # arreglo la elimina; si reaparece, el evento TIMEOUT volveria a colgar del
 # exito del kill (la grieta original).
 if grep -qE 'kill -9 -\$[A-Za-z_]+ 2>/dev/null && echo' "$PIPE"; then
-    fail "F-3: reaparecio el patron viejo (kill encadenado con && antes del echo)"
+    fail "F-4: reaparecio el patron viejo (kill encadenado con && antes del echo)"
 else
-    pass "F-3: no quedo el patron viejo de kill encadenado con && antes del echo"
+    pass "F-4: no quedo el patron viejo de kill encadenado con && antes del echo"
+fi
+
+# El patron del corte de stream tiene que vivir en UN solo lugar
+# (agent_log_has_stream_cut). Si reaparece como grep inline en el pipeline,
+# etiqueta (STREAM_CUT) y decision (abortar) pueden desincronizarse en
+# silencio. Se busca la llamada a grep, no la frase suelta: el pipeline la
+# menciona legitimamente en un comentario.
+if grep -q 'grep -qE "Connection closed mid-response' "$PIPE"; then
+    fail "F-5: quedo una copia inline del grep de corte de stream en el pipeline"
+else
+    pass "F-5: el criterio de corte de stream no quedo duplicado inline en el pipeline"
 fi
 
 echo ""
