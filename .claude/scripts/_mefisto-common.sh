@@ -118,9 +118,10 @@ validate_mefisto_scope_changes() {
 
 # is_path_changelog_exempt <path>
 #
-# Retorna 0 si el path es EXENTO de exigir entrada en el CHANGELOG (un cambio que
-# toca solo rutas exentas no es "notable" y no obliga a actualizar [Unreleased]),
-# 1 si el path es NOTABLE (exige entrada). Usado por changes_require_changelog.
+# Retorna 0 si el path es EXENTO de exigir fragmento de changelog (un cambio que
+# toca solo rutas exentas no es "notable" y no obliga a dejar fragmento en
+# changelog.d/), 1 si el path es NOTABLE (exige fragmento). Usado por
+# changes_require_changelog.
 #
 # Rutas exentas (cambios de bitacora / gobierno no notable):
 #   docs/bitacora/**   Bitacora y field notes (no son cambios de comportamiento)
@@ -130,7 +131,7 @@ validate_mefisto_scope_changes() {
 #
 # Todo lo demas dentro del scope de Mefisto (commands/, agents/, scripts/, hooks/,
 # docs/adr/, docs/ no-bitacora, .claude-plugin/, .claude/{commands,agents,scripts}/,
-# CHANGELOG.md) es NOTABLE y exige entrada en [Unreleased].
+# CHANGELOG.md) es NOTABLE y exige un fragmento en changelog.d/ (issue #380).
 is_path_changelog_exempt() {
     local path="$1"
     [ -z "$path" ] && return 1
@@ -145,14 +146,14 @@ is_path_changelog_exempt() {
 # changes_require_changelog <worktree_path> <base_commit>
 #
 # Clasifica si los cambios del worktree (base..HEAD + working tree) son "notables"
-# y por tanto exigen una entrada bajo "## [Unreleased]" en CHANGELOG.md.
+# y por tanto exigen un fragmento propio en changelog.d/ (issue #380).
 #
 # Retorna:
-#   0  -> al menos una ruta tocada es NOTABLE: se exige entrada en [Unreleased]
-#   1  -> TODAS las rutas tocadas son exentas (o no hay cambios): no se exige entrada
+#   0  -> al menos una ruta tocada es NOTABLE: se exige fragmento en changelog.d/
+#   1  -> TODAS las rutas tocadas son exentas (o no hay cambios): no se exige fragmento
 #
-# Solo clasifica rutas; NO parsea el CHANGELOG (de eso se encarga
-# check_unreleased_touched). Reutiliza el patron de recoleccion de rutas de
+# Solo clasifica rutas; NO revisa la presencia del fragmento (de eso se encarga
+# changelog_fragment_added). Reutiliza el patron de recoleccion de rutas de
 # validate_mefisto_scope_changes.
 changes_require_changelog() {
     local wt="$1"
@@ -184,17 +185,17 @@ changes_require_changelog() {
 # Retorna 0 si los cambios del worktree anaden al menos un FRAGMENTO de changelog
 # bajo changelog.d/ (un .md que no sea el README del propio mecanismo), 1 si no.
 #
-# Gate transitorio (issue #380): mientras convive el CHANGELOG.md monolitico con
-# los fragmentos, un PR satisface el gate de changelog por CUALQUIERA de las dos
-# vias. Sin esto, el propio PR que introduce el mecanismo de fragmentos no puede
-# pasar su gate: anota su cambio como fragmento (correcto segun su definicion de
-# hecho) y check_unreleased_touched -- que solo mira CHANGELOG.md -- lo rechaza.
-# Es el mismo bloqueo auto-referencial que el de is_path_in_mefisto_scope con
-# changelog.d/ (PR #399): el gate se carga desde main, nunca desde el worktree
-# que lo modifica.
+# Mecanismo de fragmentos (issue #380): cada PR notable anota su cambio en un
+# archivo propio bajo changelog.d/ en vez de editar CHANGELOG.md o la tabla de
+# indice de ADRs de CLAUDE.md directamente -- esa edicion por-PR de archivos
+# indice compartidos era el punto de contencion que colisionaba entre PRs
+# paralelos (o en la ventana entre sync y merge). /mefisto-release consolida
+# los fragmentos -- vuelca su contenido en CHANGELOG.md/CLAUDE.md y los borra --
+# en su propia rama de release, nunca en la rama de un issue.
 #
 # Solo detecta la PRESENCIA del fragmento; no valida su formato ni su categoria
-# (de eso se encarga el gate estricto que instala #380).
+# (de eso se encargan consolidate_changelog_fragments/consolidate_adr_index_fragments,
+# mas abajo, que abortan ante un nombre de fragmento invalido).
 changelog_fragment_added() {
     local wt="$1"
     local base="$2"
@@ -219,123 +220,194 @@ changelog_fragment_added() {
     return 1
 }
 
-# detect_misplaced_changelog_entry <worktree_path> <base_commit>
+# consolidate_changelog_fragments <repo_root>
 #
-# Detecta si los cambios del worktree anadieron contenido bajo una seccion de
-# version publicada ## [x.y.z] en CHANGELOG.md, en vez de bajo ## [Unreleased].
-# Diagnostica el caso "escritura en la seccion equivocada" que el gate generico
-# (check_unreleased_touched) no distingue de "sin entrada".
+# Consolida los fragmentos de CHANGELOG bajo <repo_root>/changelog.d/ (issue
+# #380): cada fragmento tiene forma <issue>.<categoria>.md, con categoria en
+# added/changed/fixed/removed (Keep a Changelog). Agrupa su contenido por
+# categoria y lo anexa a la subseccion "### <Categoria>" del bloque
+# [Unreleased] de CHANGELOG.md (creandola si falta, preservando el orden de
+# las subsecciones ya presentes), y borra del disco los fragmentos consumidos
+# (el caller los stagea con git add junto al resto). Ignora
+# changelog.d/README.md y los fragmentos *.adr-index.md (los consume
+# consolidate_adr_index_fragments). Usada por la fase prepare de
+# mefisto-release.sh, en la propia rama de release.
 #
-# Retorna:
-#   0  -> se encontro una entrada mal colocada; imprime el header de version a stdout
-#          (ej: "0.8.0")
-#   1  -> sin entrada bajo seccion de version publicada (o python3 no disponible)
-#
-# Utiliza el mismo patron de MEFISTO_BASE_CHANGELOG que check_unreleased_touched.
-detect_misplaced_changelog_entry() {
-    local wt="$1"
-    local base="$2"
+# Sin changelog.d/ o sin fragmentos de changelog dentro, es un no-op (exit 0).
+# Aborta (exit 1) si algun fragmento no sigue el patron <issue>.<categoria>.md
+# con categoria valida -- mejor fallar el release que consolidar en silencio
+# un fragmento mal nombrado.
+consolidate_changelog_fragments() {
+    local repo_root="$1"
+    local dir="$repo_root/changelog.d"
+    [ -d "$dir" ] || return 0
 
-    local changelog="$wt/CHANGELOG.md"
-    [ -f "$changelog" ] || return 1
+    CHANGELOG_FRAGMENTS_DIR="$dir" python3 - "$repo_root/CHANGELOG.md" <<'PYEOF'
+import glob, os, re, sys
 
-    command -v python3 >/dev/null 2>&1 || return 1
+changelog_path = sys.argv[1]
+frag_dir = os.environ['CHANGELOG_FRAGMENTS_DIR']
 
-    local base_changelog
-    base_changelog=$(git -C "$wt" show "${base}:CHANGELOG.md" 2>/dev/null || true)
+CATEGORIES = ['added', 'changed', 'fixed', 'removed']
+CATEGORY_HEADER = {'added': 'Added', 'changed': 'Changed', 'fixed': 'Fixed', 'removed': 'Removed'}
 
-    MEFISTO_BASE_CHANGELOG="$base_changelog" python3 - "$changelog" <<'PYEOF'
-import os, re, sys
+buckets = {c: [] for c in CATEGORIES}
+consumed = []
 
-def extract_sections(text):
-    sections = {}
-    current_header = None
-    current_body = []
-    for line in text.splitlines():
-        m = re.match(r'^##\s*\[([^\]]+)\]', line)
-        if m:
-            if current_header is not None:
-                sections[current_header] = '\n'.join(current_body).strip()
-            current_header = m.group(1)
-            current_body = []
-        elif current_header is not None:
-            current_body.append(line)
-    if current_header is not None:
-        sections[current_header] = '\n'.join(current_body).strip()
-    return sections
-
-with open(sys.argv[1], encoding='utf-8') as f:
-    current_text = f.read()
-base_text = os.environ.get('MEFISTO_BASE_CHANGELOG', '')
-
-base_sections = extract_sections(base_text)
-current_sections = extract_sections(current_text)
-
-for header, body in current_sections.items():
-    if header.lower() == 'unreleased':
+for path in sorted(glob.glob(os.path.join(frag_dir, '*.md'))):
+    name = os.path.basename(path)
+    if name == 'README.md' or name.endswith('.adr-index.md'):
         continue
-    if not re.match(r'^\d+\.\d+\.\d+', header):
-        continue
-    base_body = base_sections.get(header, '')
-    if body != base_body and len(body) > len(base_body):
-        print(header)
-        sys.exit(0)
+    m = re.match(r'^\d+\.([a-z]+)\.md$', name)
+    if not m or m.group(1) not in CATEGORIES:
+        print(f"ERROR: fragmento de changelog con nombre invalido: {name}", file=sys.stderr)
+        sys.exit(1)
+    with open(path, encoding='utf-8') as f:
+        body = f.read().strip()
+    if body:
+        buckets[m.group(1)].append(body)
+    consumed.append(path)
 
-sys.exit(1)
+if not consumed:
+    sys.exit(0)
+
+with open(changelog_path, encoding='utf-8') as f:
+    text = f.read()
+
+m = re.search(r'(?ms)^(##\s*\[Unreleased\][^\n]*\n)(.*?)(?=^##\s*\[|\Z)', text)
+if not m:
+    print("ERROR: no se encontro la seccion [Unreleased]", file=sys.stderr)
+    sys.exit(1)
+header, body = m.group(1), m.group(2)
+
+# Parsear subsecciones "### Categoria" ya existentes en [Unreleased],
+# preservando orden y contenido -- puede haber quedado una nota manual antes
+# de que existieran fragmentos. Lo que aparezca ANTES de la primera "###"
+# (preambulo suelto, sin subseccion) tambien se conserva, tal cual y en su
+# sitio: la consolidacion reescribe el bloque entero, asi que descartarlo
+# equivaldria a borrar en silencio una nota escrita a mano.
+preamble = []
+existing = {}
+order = []
+current = None
+current_lines = []
+for line in body.splitlines():
+    hm = re.match(r'^###\s*(\w+)', line)
+    if hm:
+        if current is not None:
+            existing[current] = current_lines
+        else:
+            preamble = current_lines
+        current = hm.group(1)
+        order.append(current)
+        current_lines = []
+    else:
+        current_lines.append(line)
+if current is not None:
+    existing[current] = current_lines
+else:
+    preamble = current_lines
+
+def strip_blank_edges(lines):
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return lines
+
+preamble = strip_blank_edges(preamble)
+for key in existing:
+    existing[key] = strip_blank_edges(existing[key])
+
+for category in CATEGORIES:
+    if not buckets[category]:
+        continue
+    header_name = CATEGORY_HEADER[category]
+    if header_name not in order:
+        order.append(header_name)
+        existing[header_name] = []
+    for entry in buckets[category]:
+        existing[header_name].extend(entry.splitlines())
+
+lines = ['']
+if preamble:
+    lines.extend(preamble)
+    lines.append('')
+for header_name in order:
+    lines.append(f'### {header_name}')
+    lines.append('')
+    lines.extend(existing[header_name])
+    lines.append('')
+
+new_body = '\n'.join(lines).rstrip('\n') + '\n\n'
+text = text[:m.start()] + header + new_body + text[m.end():]
+
+with open(changelog_path, 'w', encoding='utf-8') as f:
+    f.write(text)
+
+for path in consumed:
+    os.remove(path)
 PYEOF
 }
 
-# check_unreleased_touched <worktree_path> <base_commit>
+# consolidate_adr_index_fragments <repo_root>
 #
-# Verifica si los cambios del worktree (base..HEAD + working tree) anadieron
-# contenido nuevo bajo el header "## [Unreleased]" de CHANGELOG.md.
+# Consolida los fragmentos del indice de ADRs bajo <repo_root>/changelog.d/
+# (issue #380): cada uno tiene forma <issue>.adr-index.md y contiene una o mas
+# filas "| Tema | MEF-ADR-XXXX |". Las anexa, en orden de nombre de archivo, al
+# final de la tabla del "Indice tematico" de CLAUDE.md, y borra del disco los
+# fragmentos consumidos (el caller los stagea con git add junto al resto).
+# Usada por la fase prepare de mefisto-release.sh, en la propia rama de release.
 #
-# No basta con que CHANGELOG.md aparezca en el diff: se compara el cuerpo de la
-# seccion [Unreleased] en el commit base contra el del working tree actual y se
-# considera "tocada" solo si quedo contenido no vacio que difiere del base
-# (es decir, este diff aporto algo a la seccion).
-#
-# Reutiliza el mismo patron regex que extract_unreleased_section en
-# mefisto-release.sh para localizar el bloque [Unreleased].
-#
-# Retorna:
-#   0  -> la seccion [Unreleased] recibio contenido (o no se pudo verificar)
-#   1  -> el diff NO anadio nada a [Unreleased]
-#
-# Desde el issue #70 este check es el componente "tirantes" de un GATE: el
-# pipeline interno aborta cuando el cambio es notable (changes_require_changelog
-# retorna 0) Y esta funcion retorna 1 (entrada ausente). A falta de python3
-# degrada a 0 ("no se pudo verificar") para NO abortar por un falso positivo en
-# entornos sin python (degradacion benigna que se mantiene con el gate).
-check_unreleased_touched() {
-    local wt="$1"
-    local base="$2"
+# Sin changelog.d/ o sin fragmentos *.adr-index.md dentro, es un no-op.
+consolidate_adr_index_fragments() {
+    local repo_root="$1"
+    local dir="$repo_root/changelog.d"
+    [ -d "$dir" ] || return 0
 
-    # CHANGELOG.md vive en la raiz del repo de Mefisto.
-    local changelog="$wt/CHANGELOG.md"
-    [ -f "$changelog" ] || return 1
+    CLAUDE_MD_PATH="$repo_root/CLAUDE.md" CHANGELOG_FRAGMENTS_DIR="$dir" python3 <<'PYEOF'
+import glob, os, re, sys
 
-    # Sin python3 no podemos parsear la seccion con fiabilidad; al ser un check
-    # informativo, retornamos 0 para no emitir un recordatorio que seria un
-    # falso positivo.
-    command -v python3 >/dev/null 2>&1 || return 0
+claude_md_path = os.environ['CLAUDE_MD_PATH']
+frag_dir = os.environ['CHANGELOG_FRAGMENTS_DIR']
 
-    local base_changelog
-    base_changelog=$(git -C "$wt" show "${base}:CHANGELOG.md" 2>/dev/null || true)
+fragments = sorted(glob.glob(os.path.join(frag_dir, '*.adr-index.md')))
+if not fragments:
+    sys.exit(0)
 
-    MEFISTO_BASE_CHANGELOG="$base_changelog" python3 - "$changelog" <<'PYEOF'
-import os, re, sys
+rows = []
+consumed = []
+for path in fragments:
+    with open(path, encoding='utf-8') as f:
+        body = f.read().strip()
+    rows.extend(line for line in body.splitlines() if line.strip())
+    consumed.append(path)
 
-def unreleased_body(text):
-    m = re.search(r'(?ms)^##\s*\[Unreleased\][^\n]*\n(.*?)(?=^##\s*\[|\Z)', text)
-    return m.group(1).strip() if m else ""
+if not rows:
+    sys.exit(0)
 
-with open(sys.argv[1], encoding='utf-8') as f:
-    current = unreleased_body(f.read())
-base = unreleased_body(os.environ.get('MEFISTO_BASE_CHANGELOG', ''))
+with open(claude_md_path, encoding='utf-8') as f:
+    text = f.read()
 
-# "Tocada" si hay contenido no vacio que difiere del base (este diff lo aporto).
-sys.exit(0 if (current and current != base) else 1)
+marker = '| Tema | ADR |\n|---|---|\n'
+idx = text.find(marker)
+if idx == -1:
+    print("ERROR: no se encontro la tabla de indice de ADRs en CLAUDE.md", file=sys.stderr)
+    sys.exit(1)
+insert_at = idx + len(marker)
+
+rest = text[insert_at:]
+end_match = re.search(r'(?m)^(?!\|)', rest)
+table_body_end = insert_at + (end_match.start() if end_match else len(rest))
+
+new_rows_text = ''.join(row + '\n' for row in rows)
+text = text[:table_body_end] + new_rows_text + text[table_body_end:]
+
+with open(claude_md_path, 'w', encoding='utf-8') as f:
+    f.write(text)
+
+for path in consumed:
+    os.remove(path)
 PYEOF
 }
 
