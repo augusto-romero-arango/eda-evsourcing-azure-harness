@@ -38,11 +38,18 @@
 #       run_agent (CA-5); idem con "API Error: 400" y con un corte de stream
 #       a mitad de respuesta (agent_log_has_stream_cut sigue detectandolo
 #       sobre el log derivado, sin cambios).
-#   [E] jq ausente -> degrada con gracia: no aborta, dej una nota legible y
+#   [E] jq ausente -> degrada con gracia: no aborta, deja una nota legible y
 #       de todos modos anexa el stderr (CA-4, notas tecnicas del issue).
 #   [F] run_agent_with_watchdog separa stdout/stderr en dos archivos propios
 #       (nunca los mezcla) -- verificado con un comando stand-in, no el CLI
 #       real (CA-2).
+#   [G] Evento `result` con is_error y stderr VACIO -> el error igual llega al
+#       log derivado y la clasificacion de run_agent lo sigue viendo (CA-5).
+#       Es el caso que de verdad ocurre: verificado contra el CLI v2.1.220
+#       que una corrida fallida deja stderr sin una sola linea de error y
+#       reporta todo dentro del evento `result` de stdout. Incluye el caso
+#       negativo (un `result` sano no debe ensuciar el log) y una linea de
+#       JSON valido pero no-objeto, que no debe tumbar la derivacion.
 #
 # Uso: .claude/scripts/tests/test-stream-json-trace.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -281,6 +288,85 @@ if grep -q "API Error: 500 de prueba" "$TMP/f-stderr.log" 2>/dev/null && ! grep 
     pass "F-3: el stderr quedo en su propio archivo, sin JSON del stdout"
 else
     fail "F-3: el archivo de stderr no es el esperado: $(cat "$TMP/f-stderr.log" 2>/dev/null)"
+fi
+
+# -------- Bloque G: el evento result con is_error llega al log derivado (CA-5) --------
+
+echo ""
+echo "[G] Evento 'result' con is_error y stderr vacio -> el error igual se clasifica (CA-5)"
+
+# Forma real capturada del CLI v2.1.220 en una corrida fallida: subtype
+# "success" pero is_error true, el status en api_error_status y el texto en
+# .result -- y stderr sin una sola linea de error.
+cat > "$TMP/g-stream-5xx.jsonl" <<'EOF'
+{"type":"assistant","message":{"content":[{"type":"text","text":"Empiezo a trabajar."}]}}
+{"type":"result","is_error":true,"terminal_reason":"api_error","api_error_status":500,"subtype":"success","result":"Overloaded","num_turns":3,"duration_ms":90000}
+EOF
+: > "$TMP/g-stderr-vacio.log"
+
+derive_stage_log_from_stream "$TMP/g-stream-5xx.jsonl" "$TMP/g-stderr-vacio.log" "$TMP/g-out-5xx.log"
+
+if grep -q "API Error: 5" "$TMP/g-out-5xx.log"; then
+    pass "G-1: un 5xx reportado SOLO en el evento result se clasifica API_ERROR_SERVER (sin esto volvia el bug de #416)"
+else
+    fail "G-1: el 5xx del evento result no llego al log derivado: $(cat "$TMP/g-out-5xx.log")"
+fi
+
+if agent_log_has_stream_cut "$TMP/g-out-5xx.log"; then
+    pass "G-2: agent_failure_is_unrecoverable seguira marcando el stage como irrecuperable (no se abre PR con trabajo truncado)"
+else
+    fail "G-2: el fallo de API quedaria como recuperable"
+fi
+
+if grep -qF "Empiezo a trabajar." "$TMP/g-out-5xx.log"; then
+    pass "G-3: el texto del asistente previo al fallo se conserva"
+else
+    fail "G-3: se perdio el texto del asistente"
+fi
+
+cat > "$TMP/g-stream-4xx.jsonl" <<'EOF'
+{"type":"result","is_error":true,"terminal_reason":"api_error","api_error_status":404,"subtype":"success","result":"There's an issue with the selected model."}
+EOF
+derive_stage_log_from_stream "$TMP/g-stream-4xx.jsonl" "$TMP/g-stderr-vacio.log" "$TMP/g-out-4xx.log"
+if grep -q "API Error: 4" "$TMP/g-out-4xx.log"; then
+    pass "G-4: un 4xx del evento result se clasifica API_ERROR_CLIENT"
+else
+    fail "G-4: el 4xx del evento result no llego al log derivado: $(cat "$TMP/g-out-4xx.log")"
+fi
+
+# Caso negativo: una corrida sana no debe dejar rastro del result en el log --
+# si lo dejara, un `result` cualquiera podria disparar los grep de fallo.
+cat > "$TMP/g-stream-ok.jsonl" <<'EOF'
+{"type":"assistant","message":{"content":[{"type":"text","text":"Listo."}]}}
+{"type":"result","is_error":false,"subtype":"success","result":"ok","num_turns":2,"duration_ms":3490,"duration_api_ms":1727}
+EOF
+derive_stage_log_from_stream "$TMP/g-stream-ok.jsonl" "$TMP/g-stderr-vacio.log" "$TMP/g-out-ok.log"
+if [ "$(cat "$TMP/g-out-ok.log")" = "Listo." ]; then
+    pass "G-5: un result sin error no agrega nada al log derivado (no introduce falsos positivos)"
+else
+    fail "G-5: el result de una corrida sana ensucio el log: $(cat "$TMP/g-out-ok.log")"
+fi
+
+# Linea de JSON valido pero no-objeto: `.type` sobre un string es un error duro
+# de jq que `fromjson?` NO atrapa -- el select(type=="object") es lo que evita
+# que una sola linea rara contamine la derivacion de todo el stage.
+printf '"una linea suelta"\n{"type":"assistant","message":{"content":[{"type":"text","text":"texto posterior"}]}}\n' > "$TMP/g-stream-raro.jsonl"
+(
+    set -euo pipefail
+    derive_stage_log_from_stream "$TMP/g-stream-raro.jsonl" "$TMP/g-stderr-vacio.log" "$TMP/g-out-raro.log"
+) 2>"$TMP/g-raro.stderr"
+RC=$?
+
+if [ "$RC" -eq 0 ] && grep -qF "texto posterior" "$TMP/g-out-raro.log"; then
+    pass "G-6: una linea de JSON valido pero no-objeto no aborta ni corta la derivacion del resto"
+else
+    fail "G-6: la linea no-objeto rompio la derivacion (rc=$RC): $(cat "$TMP/g-out-raro.log" 2>/dev/null)"
+fi
+
+if [ ! -s "$TMP/g-raro.stderr" ]; then
+    pass "G-7: la derivacion no escupe ruido de jq por stderr"
+else
+    fail "G-7: jq dejo ruido por stderr: $(cat "$TMP/g-raro.stderr")"
 fi
 
 echo ""

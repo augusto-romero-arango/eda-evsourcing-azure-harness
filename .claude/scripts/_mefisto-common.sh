@@ -564,8 +564,25 @@ run_agent_with_watchdog() {
 # `--output-format stream-json --verbose`: una linea por cada bloque de texto
 # del asistente y una linea "[tool] <nombre>" por cada tool_use, en el orden
 # en que aparecen en el stream. Al final anexa el contenido de <stderr_file>
-# tal cual (ya es texto plano -- ahi siguen viviendo los `API Error: ...` y
-# los cortes de conexion del CLI). Sobreescribe <out_file> si ya existia.
+# tal cual (ya es texto plano). Sobreescribe <out_file> si ya existia.
+#
+# CA-5 -- por que tambien se deriva el evento `result` cuando `is_error` es
+# true: verificado contra el CLI instalado (v2.1.220) que en una corrida
+# fallida el texto del error NO viaja por stderr. Una invocacion con un modelo
+# inexistente termino con exit 1, stderr sin una sola linea de error, y todo
+# el diagnostico dentro del evento `result` de stdout:
+# `{"is_error":true,"terminal_reason":"api_error","api_error_status":404,
+# "result":"There's an issue with the selected model ..."}`. Derivar solo los
+# eventos `assistant` dejaria ese texto fuera del log, y entonces los
+# `grep "API Error: 5"`/`"API Error: 4"` y agent_log_has_stream_cut de
+# run_agent no matchearian nunca: un 5xx se clasificaria CLI_ERROR, seria
+# "recuperable" y el pipeline volveria a abrir PRs con trabajo truncado --
+# exactamente el bug de #416 que arreglo #424. Por eso el filtro emite,
+# ademas, una linea por cada `result` con `is_error == true`, prefijada con
+# el token canonico `API Error: <status>` cuando el CLI reporta
+# `api_error_status` (el status es dato del propio CLI; solo se lo re-expresa
+# en el vocabulario que la clasificacion ya leia). Un `result` sin error no
+# emite nada: no se introducen falsos positivos en corridas sanas.
 #
 # El nombre y la ruta de <out_file> NO cambian (sigue siendo
 # mefisto-tooling-stage-<N>-<agente>-<TS>-issue-<N>.log): _mefisto-work-status
@@ -575,11 +592,19 @@ run_agent_with_watchdog() {
 # stderr anexado tiene que llegar aqui, no solo quedarse en <stderr_file>.
 #
 # CA-4: tolera una traza truncada (la ultima linea puede haber quedado a
-# medias si el proceso murio a mitad de escritura) y una traza vacia. Una
-# linea que jq no puede parsear se ignora sin abortar el pipeline (el `||
-# parsed=""` neutraliza el `set -euo pipefail` del caller ante un jq que
-# retorna distinto de cero) y sin perder el texto ya derivado de las lineas
-# anteriores -- solo se pierde esa unica linea incompleta.
+# medias si el proceso murio a mitad de escritura) y una traza vacia. La
+# tolerancia la da `fromjson?`: jq lee cada linea como texto (`-R`) y el `?`
+# descarta en silencio la que no parsea, sin abortar y sin perder lo ya
+# derivado de las lineas anteriores. El `select(type == "object")` cubre el
+# otro caso degenerado -- una linea que SI es JSON valido pero no un objeto
+# (`.type` sobre un string es un error duro de jq, no algo que `?` atrape).
+#
+# Es una sola invocacion de jq para todo el archivo, no una por linea:
+# medido sobre un stream sintetico de 1000 eventos, un jq por linea tarda 5s
+# y una sola pasada 0.01s. Un stage real de 30 min produce bastante mas que
+# eso, asi que la version por-linea le sumaba decenas de segundos por stage
+# al mismo wall-clock que este issue existe para medir (el bash orquestador
+# entero cuesta hoy ~10s por issue).
 #
 # Si jq no esta disponible, degrada con gracia (issue #425, notas tecnicas):
 # deja una nota explicita en vez de intentar parsear JSON a mano, y de todos
@@ -594,19 +619,21 @@ derive_stage_log_from_stream() {
 
     if [ -s "$stream_file" ]; then
         if command -v jq >/dev/null 2>&1; then
-            local line parsed
-            while IFS= read -r line || [ -n "$line" ]; do
-                [ -n "$line" ] || continue
-                parsed=$(printf '%s' "$line" | jq -r '
-                    if .type == "assistant" then
-                        (.message.content // [])[]?
-                        | if .type == "text" then .text
-                          elif .type == "tool_use" then "[tool] " + .name
-                          else empty end
-                    else empty end
-                ' 2>/dev/null) || parsed=""
-                [ -n "$parsed" ] && printf '%s\n' "$parsed" >> "$out_file"
-            done < "$stream_file"
+            jq -R -r '
+                fromjson?
+                | select(type == "object")
+                | if .type == "assistant" then
+                      (.message.content // [])[]?
+                      | if .type == "text" then (.text // "")
+                        elif .type == "tool_use" then "[tool] " + (.name // "?")
+                        else empty end
+                  elif .type == "result" and .is_error == true then
+                      (if (.api_error_status // null) != null
+                         then "API Error: " + (.api_error_status | tostring) + " "
+                         else "" end)
+                      + ((.result // .error // .terminal_reason // .subtype // "error") | tostring)
+                  else empty end
+            ' "$stream_file" >> "$out_file" 2>/dev/null || true
         else
             echo "(jq no disponible: no se pudo derivar texto legible del stream crudo -- ver $stream_file)" >> "$out_file"
         fi
