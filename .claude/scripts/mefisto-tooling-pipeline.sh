@@ -523,10 +523,15 @@ fi
 # modo no-interactivo se ignoraba y dejaba PRs sin entrada que /mefisto-release
 # tenia que backfillear. Corre tras el reviewer (Stage 2) y antes de crear el PR.
 # Degradacion benigna: sin python3, check_unreleased_touched retorna 0 y no aborta.
+# Transitorio (issue #380): un fragmento en changelog.d/ satisface el gate igual
+# que una entrada en [Unreleased], para que el PR que introduce los fragmentos
+# pueda anotarse con su propio mecanismo sin ser rechazado por el gate anterior.
 header "Verificando CHANGELOG [Unreleased]"
 
 if check_unreleased_touched "$WORKTREE_PATH" "$SNAPSHOT_COMMIT"; then
     success "El PR actualiza la seccion [Unreleased] del CHANGELOG"
+elif changelog_fragment_added "$WORKTREE_PATH" "$SNAPSHOT_COMMIT"; then
+    success "El PR anota su cambio como fragmento en changelog.d/"
 elif ! changes_require_changelog "$WORKTREE_PATH" "$SNAPSHOT_COMMIT"; then
     success "Cambio exento (solo bitacora/gobierno no notable): no se exige entrada en [Unreleased]"
 elif MISPLACED_VER=$(detect_misplaced_changelog_entry "$WORKTREE_PATH" "$SNAPSHOT_COMMIT") && [ -n "$MISPLACED_VER" ]; then
