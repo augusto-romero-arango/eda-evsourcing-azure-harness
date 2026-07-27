@@ -66,9 +66,13 @@ issue #367 + fase 2, issue #375):
     Program.cs                          (arma el host, invoca el seam, nada mas)
     Infraestructura/ConfiguracionMartenProjections.cs  (seam base, sin dominios todavia)
     Dockerfile                          (imagen sobre runtime, sin ingress)
+    {Dominio}/                          (carpeta vacia por dominio ya registrado en el
+                                          worker, si aplica -- ahi vive la clase de
+                                          proyeccion companion de cada dominio)
 
-  src/<RootNamespace>.ReadModels/       (biblioteca vacia; una carpeta por dominio
-                                          ya registrado en el worker, si aplica)
+  src/<RootNamespace>.ReadModels/       (biblioteca vacia, sin PackageReference a Marten;
+                                          una carpeta por dominio ya registrado en el
+                                          worker, si aplica -- solo read models planos)
 
   tests/<RootNamespace>.Projections.Tests/
     Infraestructura/AssertsProyecciones.cs   (helper AssertOpcionesDeEvento)
@@ -96,8 +100,9 @@ Recuerda al usuario el resto de la cadena de issues relacionados:
 ```
 Worker de proyecciones, ReadModels y config-test base generados. Siguiente:
   1. domain-scaffolder (issue #370) registra el named store de cada dominio que
-     adopte proyecciones dentro del seam ConfiguracionMartenProjections y crea
-     su carpeta en ReadModels.
+     adopte proyecciones dentro del seam ConfiguracionMartenProjections (no
+     crea carpetas: las de los dominios ya existentes las dejo este scaffold,
+     en ReadModels y en la raiz del worker).
   2. projection-test-writer/projection-implementer (issue #365) agregan sobre
      Projections.Tests las guardas por dominio (partial + ciclo de vida Async),
      reutilizando el helper AssertOpcionesDeEvento para la guarda de metadata.

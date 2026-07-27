@@ -41,17 +41,17 @@ Antes de explorar codigo, lee `CLAUDE.md` raiz para resolver `<RootNamespace>` y
 
 ### 1. Unit tests de proyeccion (`Create`/`Apply`/`ShouldDelete`)
 
-Invocacion **directa** de los metodos estaticos de la clase de proyeccion (N1/N2 -- arbol de decision completo en `modelos-marten.md`). No uses el DSL `Given`/`When`/`Then` de `CommandHandlerTestBase` (ese harness testea command handlers contra el event store, MEF-ADR-0002); aqui testeas funciones puras evento -> vista.
+Viven en `tests/<RootNamespace>.Projections.Tests/{Dominio}/{Concepto}ProjectionTests.cs` -- el mismo proyecto que aloja el config-test del worker (`config-test.md`), en una subcarpeta por dominio. Invocacion **directa** de los metodos estaticos de la clase de proyeccion companion (`{Concepto}Projection`, N1/N2 -- arbol de decision completo en `modelos-marten.md`; el read model es un record plano sin comportamiento propio). No uses el DSL `Given`/`When`/`Then` de `CommandHandlerTestBase` (ese harness testea command handlers contra el event store, MEF-ADR-0002); aqui testeas funciones puras evento -> vista.
 
 ```csharp
-public class TurnoViewTests
+public class TurnoProjectionTests
 {
     [Fact]
     public void Create_ProyectaTurnoAbierto_DesdeTurnoCreado()
     {
         var evento = new TurnoCreado(Guid.NewGuid(), "Turno Manana", new TimeOnly(6, 0), new TimeOnly(14, 0));
 
-        var view = TurnoView.Create(evento);
+        var view = TurnoProjection.Create(evento);
 
         // Oraculo independiente: el esperado se arma a mano, nunca reusando la logica del SUT (MEF-ADR-0002)
         view.Should().Be(new TurnoView(evento.TurnoId, "Abierto", evento.HoraInicio));
@@ -62,14 +62,14 @@ public class TurnoViewTests
     {
         var previa = new TurnoView(Guid.NewGuid(), "Abierto", new TimeOnly(6, 0));
 
-        var view = TurnoView.Apply(new TurnoCerrado(previa.Id), previa);
+        var view = TurnoProjection.Apply(new TurnoCerrado(previa.Id), previa);
 
         view.Should().Be(previa with { Estado = "Cerrado" });
     }
 }
 ```
 
-Cubre cada metodo que el read model declara (`Create` para el evento fundacional, un `Apply` por cada evento que muta la vista, `ShouldDelete` si el issue lo requiere). Para N2 (`MultiStreamProjection`), agrega ademas un test de correlacion que verifique que dos streams distintos (`Identity<TEvento>`/`Identities<TEvento>`) producen o actualizan el mismo documento.
+Cubre cada metodo que la clase de proyeccion declara (`Create` para el evento fundacional, un `Apply` por cada evento que muta la vista, `ShouldDelete` si el issue lo requiere). Para N2 (`MultiStreamProjection`), agrega ademas un test de correlacion que verifique que dos streams distintos (`Identity<TEvento>`/`Identities<TEvento>`) producen o actualizan el mismo documento.
 
 ### 2. Config-test del worker (`<RootNamespace>.Projections.Tests`)
 
@@ -85,9 +85,9 @@ Un test de composicion, hermano del `ComposicionContenedorTests` de MEF-ADR-0029
 
 Si los tests referencian tipos que no existen, crealos con `throw new NotImplementedException()` -- mismo principio que `test-writer.md`:
 
-- **Read model** (record, estilo canonico de `modelos-marten.md`): `public sealed partial record TurnoView(...)` con `Create`/`Apply`/`ShouldDelete` como stub.
-- **Clase de proyeccion N2** (si aplica): `public sealed partial class {Concepto}Projection : MultiStreamProjection<...>` -- el constructor de correlacion (`Identity<T>(...)`) no es un stub, no tiene logica que fallar; los `Create`/`Apply` si son stub.
-- **Seam de composicion** (`ConfiguracionMartenProjections{Dominio}.Configurar{Dominio}`): **antes de declarar nada, verifica si ya existe** `src/<RootNamespace>.Projections/Infraestructura/ConfiguracionMartenProjections{Dominio}.cs`. `domain-scaffolder` (Paso 3b, issue #370) lo emite al nacer el dominio cuando el BC ya tiene worker de proyecciones, con el marker y el seam **ya implementado y sin `partial`**: `public static IServiceCollection Configurar{Dominio}(this IServiceCollection services, string martenConnectionString)`. Si esta ahi, esa es la firma que invoca tu config-test y **no declaras ni re-declaras nada** (seria `CS0101`/`CS0111`/`CS0260`); tu rojo viene de los `Create`/`Apply` del read model, no del seam. El ejemplo de `config-test.md` usa el argumento nombrado `dummyConnectionString:` de forma ilustrativa -- invoca el seam **posicionalmente** o con el nombre real del parametro, o el test no compila (`CS1739`). Solo si el archivo **no** existe (dominio scaffoldeado antes de que el BC adoptara proyecciones) creas el stub, y entonces si aplica todo lo que sigue: el config-test lo invoca **desde otro ensamblado** (`<RootNamespace>.Projections.Tests`), asi que el seam necesita modificadores de acceso para ser alcanzable (`public`, o `internal` + `InternalsVisibleTo`) -- y con ellos el compilador **exige** la parte implementadora (`CS8795`: *"Partial member must have an implementation part because it has accessibility modifiers"*). Deja por tanto la declaracion **y** una parte implementadora con `throw new NotImplementedException()`, el stub normal de la fase roja: el config-test queda rojo por esa excepcion, que es exactamente el rojo que buscas. **No** uses la forma que puede desaparecer en silencio (sin modificadores, `void`, sin `out` -- MEF-ADR-0034 punto 1): es implicitamente `private` y el config-test no podria llamarla desde su ensamblado. Documenta la forma elegida en tu resumen: con modificadores, el compilador ya cubre la guarda 1 de `config-test.md` y el test conserva valor por las guardas 2 y 3.
+- **Read model** (record plano, estilo canonico de `modelos-marten.md`): `public sealed record TurnoView(...)` -- **sin** `partial`, sin `Create`/`Apply`/`ShouldDelete` propios; vive en `<RootNamespace>.ReadModels`.
+- **Clase de proyeccion companion** (N1 y N2, mismo estilo en ambos niveles): `public sealed partial class {Concepto}Projection : SingleStreamProjection<{Concepto}View, Guid>` (N1) o `: MultiStreamProjection<{Concepto}View, Guid>` (N2, con el constructor de correlacion `Identity<T>(...)`/`Identities<T>(...)` -- no es un stub, no tiene logica que fallar); vive en el worker (`src/<RootNamespace>.Projections/{Dominio}/{Concepto}Projection.cs`). Los `Create`/`Apply`/`ShouldDelete` de esta clase si son stub (`throw new NotImplementedException()`), en ambos niveles.
+- **Seam de composicion** (`ConfiguracionMartenProjections{Dominio}.Configurar{Dominio}`): **antes de declarar nada, verifica si ya existe** `src/<RootNamespace>.Projections/Infraestructura/ConfiguracionMartenProjections{Dominio}.cs`. `domain-scaffolder` (Paso 3b, issue #370) lo emite al nacer el dominio cuando el BC ya tiene worker de proyecciones, con el marker y el seam **ya implementado y sin `partial`**: `public static IServiceCollection Configurar{Dominio}(this IServiceCollection services, string martenConnectionString)`. Si esta ahi, esa es la firma que invoca tu config-test y **no declaras ni re-declaras nada** (seria `CS0101`/`CS0111`/`CS0260`); tu rojo viene de los `Create`/`Apply` de la clase de proyeccion, no del seam. El ejemplo de `config-test.md` usa el argumento nombrado `dummyConnectionString:` de forma ilustrativa -- invoca el seam **posicionalmente** o con el nombre real del parametro, o el test no compila (`CS1739`). Solo si el archivo **no** existe (dominio scaffoldeado antes de que el BC adoptara proyecciones) creas el stub, y entonces si aplica todo lo que sigue: el config-test lo invoca **desde otro ensamblado** (`<RootNamespace>.Projections.Tests`), asi que el seam necesita modificadores de acceso para ser alcanzable (`public`, o `internal` + `InternalsVisibleTo`) -- y con ellos el compilador **exige** la parte implementadora (`CS8795`: *"Partial member must have an implementation part because it has accessibility modifiers"*). Deja por tanto la declaracion **y** una parte implementadora con `throw new NotImplementedException()`, el stub normal de la fase roja: el config-test queda rojo por esa excepcion, que es exactamente el rojo que buscas. **No** uses la forma que puede desaparecer en silencio (sin modificadores, `void`, sin `out` -- MEF-ADR-0034 punto 1): es implicitamente `private` y el config-test no podria llamarla desde su ensamblado. Documenta la forma elegida en tu resumen: con modificadores, el compilador ya cubre la guarda 1 de `config-test.md` y el test conserva valor por las guardas 2 y 3.
 - **Marker del named store**: `public interface I{Dominio}ProjectionStore : IDocumentStore;` -- **solo si no existe ya**: vive en el mismo archivo del punto anterior y `domain-scaffolder` lo emite junto al seam.
 - **`FunctionEndpoint`** de cada query: clase con el metodo `Run` que lanza `NotImplementedException`.
 
@@ -101,7 +101,7 @@ Si los tests referencian tipos que no existen, crealos con `throw new NotImpleme
 
 1. Lee el issue (`tipo:projection`) e identifica el read model, el nivel de receta (N1/N2/N3) y las queries GET que expone.
 2. Consulta el Skill `projections` (ya precargado) y abre el recurso de Nivel 3 que resuelva tu duda concreta -- naming exacto, arbol de decision, plantilla del config-test, o las read APIs.
-3. Explora convenciones existentes del dominio (`ls src/<RootNamespace>.ReadModels/`, `ls tests/`), igual que `test-writer.md`.
+3. Explora convenciones existentes del dominio (`ls src/<RootNamespace>.ReadModels/`, `ls src/<RootNamespace>.Projections/`, `ls tests/<RootNamespace>.Projections.Tests/`), igual que `test-writer.md` -- los tres proyectos que toca un issue read-side: el record en `ReadModels`, la clase de proyeccion en el worker y tus tests.
 4. Escribe los tests de "Que escribes" y los stubs minimos que compilen.
 5. Verifica que compila (`dotnet build`). **No** corras `dotnet test` -- ya sabes que fallara.
 6. Commitea:
@@ -117,5 +117,5 @@ Si los tests referencian tipos que no existen, crealos con `throw new NotImpleme
 2. **Cada assert sobre una vista es un oraculo independiente** armado a mano (MEF-ADR-0002) -- nunca derivado ejecutando la logica de proyeccion bajo prueba.
 3. Nombres de metodos de test en espanol, MEF-ADR-0016: `<Metodo>_<LoQuePasa>[_Cuando<Condicion>]` -- aqui el sujeto es el metodo de proyeccion (`Create`, `Apply`, `ShouldDelete`), nunca `HandleAsync` ni `Debe...`.
 4. **NUNCA** uses el caracter "─" (U+2500, box drawing) en archivos `.cs`. Usa siempre el guion ASCII "-".
-5. Los read models y clases de proyeccion **SIEMPRE** son `partial` (source generator de Marten, `modelos-marten.md`) -- un stub sin `partial` compila pero falla en runtime con `[GeneratedEvolver]` ausente.
+5. La clase de proyeccion companion **SIEMPRE** es `partial` (source generator de Marten, `modelos-marten.md`) -- un stub sin `partial` compila pero falla en runtime con `[GeneratedEvolver]` ausente. El read model **nunca** lleva `partial`: es un record plano sin comportamiento propio.
 6. Si detectas una contradiccion estructural entre el issue y la doctrina del Skill/ADRs, tu decides la resolucion y la documentas en tu resumen bajo "Desviaciones del plan del planner" -- mismo criterio de autoridad que `test-writer.md` regla 19. No reportes bloqueo por algo que puedes resolver con criterio.
