@@ -1136,6 +1136,12 @@ if [ "$IS_REFACTOR" != true ] && [ "$FROM_STAGE" -le 4 ]; then
         # de parametros el archivo termina en ';' es un DTO sin cuerpo -> se
         # excluye. Si en cambio abre un cuerpo '{' (metodos u otros miembros)
         # no se excluye por esta regla.
+        # Segunda condicion: el archivo declara UN solo tipo. Es lo que sustituye
+        # el rol acotador del viejo 'line_count -le 3' (que ademas de acotar
+        # rechazaba el estilo canonico multilinea): sin ella, un archivo con un
+        # record DTO junto a -- o dentro de -- una clase con metodos se etiquetaria
+        # "excluido" por su primer match, escondiendo de la revision humana un
+        # archivo que en realidad nadie midio (hoy sale como "no evaluado").
         if [ -f "$WORKTREE_PATH/$filepath" ]; then
             local content
             content=$(grep -v '^\s*//' "$WORKTREE_PATH/$filepath" | grep -v '^\s*$' | grep -v '^using ' | grep -v '^namespace ' || true)
@@ -1143,7 +1149,9 @@ if [ "$IS_REFACTOR" != true ] && [ "$FROM_STAGE" -le 4 ]; then
             content_flat=$(echo "$content" | tr '\n' ' ')
             local record_decl
             record_decl=$(echo "$content_flat" | grep -oE 'public\s+(sealed\s+|partial\s+)*record\s+\w+\([^()]*\)[^;{]*[;{]' 2>/dev/null | head -1)
-            if [ -n "$record_decl" ]; then
+            local type_decls
+            type_decls=$(echo "$content_flat" | grep -oE '(class|record|struct|interface|enum)\s+\w+' 2>/dev/null | wc -l | tr -d ' ')
+            if [ -n "$record_decl" ] && [ "$type_decls" -eq 1 ]; then
                 case "$record_decl" in
                     *\;) echo "excluded"; return ;;
                 esac

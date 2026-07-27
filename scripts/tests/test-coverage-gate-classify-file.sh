@@ -11,7 +11,8 @@
 #   D) La exclusion de records DTO reconoce el estilo canonico -- modificadores
 #      entre 'public' y 'record' (sealed/partial) y forma multilinea -- sin
 #      depender del conteo de lineas (CA-2), sin regresionar el caso de una
-#      linea (CA-5) ni excluir un record CON metodos (CA-3)
+#      linea (CA-5) ni excluir un record CON metodos, ni un DTO que convive con
+#      una clase con metodos en el mismo archivo (CA-3)
 #   E) El orden de evaluacion de classify_file no cambia: un evento con
 #      factory Crear() en /Eventos/ resuelve a logic antes de llegar a la
 #      exclusion de DTOs (CA-3)
@@ -104,7 +105,9 @@ classify_file_local() {
         content_flat=$(echo "$content" | tr '\n' ' ')
         local record_decl
         record_decl=$(echo "$content_flat" | grep -oE 'public\s+(sealed\s+|partial\s+)*record\s+\w+\([^()]*\)[^;{]*[;{]' 2>/dev/null | head -1)
-        if [ -n "$record_decl" ]; then
+        local type_decls
+        type_decls=$(echo "$content_flat" | grep -oE '(class|record|struct|interface|enum)\s+\w+' 2>/dev/null | wc -l | tr -d ' ')
+        if [ -n "$record_decl" ] && [ "$type_decls" -eq 1 ]; then
             case "$record_decl" in
                 *\;) echo "excluded"; return ;;
             esac
@@ -183,6 +186,65 @@ public sealed partial record OtraView(Guid Id);
 assert_eq "D4: modificadores sealed+partial combinados -> excluded" "excluded" \
     "$(classify_file_local "$TMP_DIR" false "src/Foo.ReadModels/OtraView.cs")"
 
+# El viejo limite 'line_count -le 3' acotaba la exclusion a un archivo con un
+# unico record de una linea. Al quitarlo (CA-2) hay que reponer esa cota, o el
+# primer match de la busqueda excluiria un archivo que declara un DTO junto a --
+# o dentro de -- una clase con metodos: lo etiquetaria "excluido" (deliberado)
+# cuando en realidad nadie lo midio ("no evaluado"), escondiendolo de la revision
+# humana. CA-3: nada del gate vigente se afloja.
+write_fixture "src/Foo.Bar/AyudanteConDto.cs" 'namespace Foo.Bar;
+
+public sealed record DatosAuxiliares(Guid Id);
+
+public static class AyudanteConDto
+{
+    public static bool EsValido(DatosAuxiliares d) => d.Id != Guid.Empty;
+}
+'
+assert_eq "D5: DTO junto a una clase con metodos no se excluye (CA-3)" "not_evaluated" \
+    "$(classify_file_local "$TMP_DIR" false "src/Foo.Bar/AyudanteConDto.cs")"
+
+write_fixture "src/Foo.Bar/ClaseConRecordAnidado.cs" 'namespace Foo.Bar;
+
+public sealed class ClaseConRecordAnidado
+{
+    public sealed record Anidado(Guid Id);
+
+    public bool EsValido(Anidado a) => a.Id != Guid.Empty;
+}
+'
+assert_eq "D6: record anidado dentro de una clase con metodos no se excluye (CA-3)" "not_evaluated" \
+    "$(classify_file_local "$TMP_DIR" false "src/Foo.Bar/ClaseConRecordAnidado.cs")"
+
+# Varios DTOs sin cuerpo en el mismo archivo (dos records de contrato) tampoco se
+# excluyen: la cota es "un solo tipo declarado", deliberadamente conservadora --
+# de mas a menos exclusion solo se pierde precision del reporte, nunca medicion.
+write_fixture "src/Foo.ReadModels/DosViews.cs" 'namespace Foo.ReadModels;
+
+public sealed record UnaView(Guid Id);
+public sealed record OtraMasView(Guid Id);
+'
+assert_eq "D7: dos records en el mismo archivo -> no evaluado (cota conservadora)" "not_evaluated" \
+    "$(classify_file_local "$TMP_DIR" false "src/Foo.ReadModels/DosViews.cs")"
+
+# Forma realista del read model canonico (skills/projections/modelos-marten.md):
+# doc comment, coleccion generica, tipo enum y parametro nullable. Ninguna de esas
+# formas debe engañar a la cota de "un unico tipo declarado".
+write_fixture "src/Foo.ReadModels/DetalleView.cs" 'using System;
+using System.Collections.Generic;
+
+namespace Foo.ReadModels;
+
+/// Read model canonico con coleccion, enum y nullable.
+public sealed record DetalleView(
+    Guid Id,
+    EstadoTurno Estado,
+    IReadOnlyList<string> Etiquetas,
+    DateOnly? FechaCierre);
+'
+assert_eq "D8: read model canonico con coleccion/enum/nullable -> excluded" "excluded" \
+    "$(classify_file_local "$TMP_DIR" false "src/Foo.ReadModels/DetalleView.cs")"
+
 # ─── Escenario E: orden de evaluacion intacto (CA-3) ────────────────────────
 echo "Escenario E: evento con factory Crear() en /Eventos/ resuelve logic antes de la exclusion de DTOs"
 # Nota (hallazgo fuera de alcance de #414, no corregido aqui): el check
@@ -249,6 +311,8 @@ assert_script_contains "F3: regex admite modificadores sealed/partial entre publ
     "grep -oE 'public\s+(sealed\s+|partial\s+)*record\s+\w+\([^()]*\)[^;{]*[;{]'"
 assert_script_contains "F4: DTO sin cuerpo se detecta por terminar en ';' tras la exclusion" \
     '*\;) echo "excluded"; return ;;'
+assert_script_contains "F5: la exclusion exige un unico tipo declarado en el archivo (cota que reemplaza a line_count)" \
+    '[ -n "$record_decl" ] && [ "$type_decls" -eq 1 ]'
 
 echo
 echo "─── Resumen ───"
