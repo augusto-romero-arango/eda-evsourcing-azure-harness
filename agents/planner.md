@@ -266,9 +266,9 @@ Aplica estas reglas para cada par de issues:
 | Ambos **CREAN** archivos en una carpeta/capa que aún no existe | Secuencial |
 | Uno **MODIFICA**, el otro solo **LEE** el mismo archivo | Paralelo |
 | Tocan carpetas/capas completamente distintas | Paralelo |
-| Ambos son **`tipo:projection`** | Secuencial siempre, sin excepcion |
+| Ambos son **`tipo:projection`** | Secuencial siempre, sin excepción |
 
-**`tipo:projection` es secuencial siempre entre si, sin importar que archivos declare cada issue en la tabla del Paso 2.** Todas las proyecciones de un mismo BC comparten los archivos del worker de proyecciones (`Projections/Program.cs`, `ConfiguracionMartenProjections` -- MEF-ADR-0034), asi que dos issues `tipo:projection` en la misma oleada paralela producirian PRs que compiten por el mismo merge, sin importar que sus read models o eventos fuente sean distintos. `parallel-pipeline.sh` ya aplica esta regla como guarda de codigo (issue #372: cualquier par `tipo:projection` se serializa dentro del lote), pero en el analisis de oleadas nunca los agrupes en la misma oleada paralela -- `/sequential` es su camino natural cuando hay mas de uno pendiente.
+**`tipo:projection` es secuencial siempre entre sí, sin importar qué archivos declare cada issue en la tabla del Paso 2.** Todas las proyecciones de un mismo BC comparten los archivos del worker de proyecciones (`Projections/Program.cs`, `ConfiguracionMartenProjections` -- MEF-ADR-0034), así que dos issues `tipo:projection` en la misma oleada paralela producirían PRs que compiten por el mismo merge, sin importar que sus read models o eventos fuente sean distintos. `parallel-pipeline.sh` ya aplica esta regla como guarda de código (issue #372: cualquier par `tipo:projection` se serializa dentro del lote), pero en el análisis de oleadas nunca los agrupes en la misma oleada paralela -- `/sequential` es su camino natural cuando hay más de uno pendiente.
 
 **Regla de oro: si no puedes determinar con certeza que no hay conflicto, van en secuencial.**
 

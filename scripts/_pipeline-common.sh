@@ -726,6 +726,9 @@ _resolve_from_labels() {
 #
 # Retorna "STATE|PIPELINE" en una sola linea (ej: "OPEN|/ruta/absoluta/al/plugin/scripts/tdd-pipeline.sh").
 # Combina la consulta de estado y labels en una sola llamada a gh, reduciendo API calls.
+# Es una vista de dos campos sobre resolve_issue_facts (abajo), que hace esa unica
+# llamada; los llamadores que ademas necesitan saber si el issue es tipo:projection
+# usan esa funcion directamente en vez de sumar una segunda consulta.
 #
 # El override se evalua SIEMPRE (incluso si gh falla), igual que resolve_pipeline
 # (issue #291): un override invalido retorna error sin importar gh, y un override
@@ -733,6 +736,29 @@ _resolve_from_labels() {
 # nunca se finge OPEN -- los llamadores siguen pudiendo saltar issues no
 # verificables).
 resolve_pipeline_with_state() {
+    local facts state
+    facts=$(resolve_issue_facts "$@") || return 1
+    state="${facts%%|*}"
+    # facts = "STATE|IS_PROJECTION|PIPELINE": descarta el campo del medio.
+    facts="${facts#*|}"
+    echo "$state|${facts#*|}"
+}
+
+# resolve_issue_facts <issue_num> [override]
+#
+# Retorna "STATE|IS_PROJECTION|PIPELINE" en una sola linea (ej:
+# "OPEN|false|/ruta/absoluta/al/plugin/scripts/tdd-pipeline.sh"), con
+# IS_PROJECTION en "true"/"false". Misma semantica de estado y override que
+# resolve_pipeline_with_state (que delega en esta funcion), sumando la deteccion de
+# tipo:projection que parallel-pipeline.sh necesita para serializar (issue #372)
+# SIN una segunda llamada a gh: el JSON que esta funcion ya descarga trae los
+# labels, igual que la deteccion del label dentro de tdd-pipeline.sh reusa el
+# JSON que el pipeline ya tenia (issue #371).
+#
+# Con override, IS_PROJECTION se reporta igual (sale de los labels, no del
+# pipeline resuelto): forzar --pipeline no cambia que archivos del worker de
+# proyecciones toca el issue, asi que la serializacion se mantiene.
+resolve_issue_facts() {
     local issue="$1"
     local override="${2:-}"
     local sd
@@ -748,16 +774,19 @@ resolve_pipeline_with_state() {
         labels=""
     fi
 
+    local is_projection="false"
+    _is_tipo_projection_from_labels "$labels" && is_projection="true"
+
     if [ -n "$override" ]; then
         case "$override" in
-            tdd)     echo "$state|$sd/tdd-pipeline.sh" ;;
-            tooling) echo "$state|$sd/tooling-pipeline.sh" ;;
+            tdd)     echo "$state|$is_projection|$sd/tdd-pipeline.sh" ;;
+            tooling) echo "$state|$is_projection|$sd/tooling-pipeline.sh" ;;
             *)       echo "ERROR: override desconocido '$override'" >&2; return 1 ;;
         esac
         return
     fi
 
-    echo "$state|$(_resolve_from_labels "$labels")"
+    echo "$state|$is_projection|$(_resolve_from_labels "$labels")"
 }
 
 # --- Serializacion de issues tipo:projection dentro de un lote paralelo ------
@@ -776,22 +805,12 @@ resolve_pipeline_with_state() {
 #
 # Funcion interna pura: determina si el texto de labels (una por linea, mismo
 # formato que _resolve_from_labels) incluye el label EXACTO tipo:projection (no
-# un prefijo como tipo:projection-experimental).
+# un prefijo como tipo:projection-experimental). La consume resolve_issue_facts,
+# que ya tiene los labels a mano; si gh no pudo resolverlos, el texto llega vacio
+# y el issue simplemente no se trata como projection (mismo fallo silencioso que
+# _resolve_from_labels, que cae a SKIP:no-tipo).
 _is_tipo_projection_from_labels() {
     echo "$1" | grep -qx 'tipo:projection'
-}
-
-# is_tipo_projection <issue_num>
-#
-# Retorna 0 si el issue tiene el label tipo:projection, 1 en caso contrario
-# (incluye cuando gh no pudo resolver los labels -- fallo silencioso: el issue
-# simplemente no se trata como projection, igual que _resolve_from_labels cae a
-# SKIP:no-tipo si gh falla).
-is_tipo_projection() {
-    local issue="$1"
-    local labels
-    labels=$(gh issue view "$issue" --json labels -q '.labels[].name' 2>/dev/null)
-    _is_tipo_projection_from_labels "$labels"
 }
 
 # can_launch_now <max_parallel> <running_count> <is_projection> <projection_running>

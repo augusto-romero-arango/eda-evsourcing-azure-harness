@@ -10,8 +10,9 @@
 #
 #   S-1: _is_tipo_projection_from_labels reconoce el label EXACTO tipo:projection
 #        y no un prefijo como tipo:projection-experimental.
-#   S-2: is_tipo_projection (gh mockeado) refleja los labels del issue; si gh
-#        falla, degrada a "no es projection" (no aborta el lote).
+#   S-2: resolve_issue_facts (gh mockeado) reporta el flag de projection desde la
+#        MISMA llamada a gh que ya trae estado y pipeline -- una sola consulta por
+#        issue --, y resolve_pipeline_with_state sigue devolviendo dos campos.
 #   S-3: can_launch_now cubre la matriz de las 4 combinaciones de
 #        (limite de paralelismo alcanzado) x (projection ya corriendo).
 #
@@ -61,27 +62,92 @@ else
 fi
 
 echo ""
-echo "[S-2] is_tipo_projection (gh mockeado)"
+echo "[S-2] resolve_issue_facts (gh mockeado): estado + projection + pipeline en UNA consulta"
+# parallel-pipeline.sh consume esta funcion y NO una segunda llamada a gh por
+# issue: el flag de projection sale de los mismos labels que ya resuelven el
+# pipeline. El mock emite el formato "STATE|label\nlabel..." que gh produce tras
+# aplicar el -q de la funcion.
 
-RESULT_A=$(cd /tmp && { gh() { echo "tipo:projection"; }; is_tipo_projection 999 && echo "true" || echo "false"; })
-if [ "$RESULT_A" = "true" ]; then
-    pass "gh devuelve tipo:projection -> is_tipo_projection true"
+# facts_field <facts> <n>  -> campo n (1..3) de "STATE|IS_PROJECTION|PIPELINE"
+facts_field() {
+    local facts="$1" n="$2"
+    case "$n" in
+        1) echo "${facts%%|*}" ;;
+        2) facts="${facts#*|}"; echo "${facts%%|*}" ;;
+        3) facts="${facts#*|}"; echo "${facts#*|}" ;;
+    esac
+}
+
+GH_CALLS=$(mktemp)
+FACTS=$( { gh() { echo "call" >>"$GH_CALLS"; printf 'OPEN|tipo:projection\nestado:listo\n'; }; resolve_issue_facts 999; } )
+CALLS=$(wc -l <"$GH_CALLS" | tr -d ' ')
+rm -f "$GH_CALLS"
+
+if [ "$(facts_field "$FACTS" 1)" = "OPEN" ]; then
+    pass "tipo:projection -> estado OPEN antepuesto"
 else
-    fail "gh devuelve tipo:projection -> se esperaba true, fue '$RESULT_A'"
+    fail "tipo:projection -> se esperaba estado OPEN, fue '$(facts_field "$FACTS" 1)'"
 fi
 
-RESULT_B=$(cd /tmp && { gh() { echo "tipo:feature"; }; is_tipo_projection 998 && echo "true" || echo "false"; })
-if [ "$RESULT_B" = "false" ]; then
-    pass "gh devuelve tipo:feature -> is_tipo_projection false"
+if [ "$(facts_field "$FACTS" 2)" = "true" ]; then
+    pass "tipo:projection -> flag de projection en true"
 else
-    fail "gh devuelve tipo:feature -> se esperaba false, fue '$RESULT_B'"
+    fail "tipo:projection -> se esperaba flag true, fue '$(facts_field "$FACTS" 2)'"
 fi
 
-RESULT_C=$(cd /tmp && { gh() { return 1; }; is_tipo_projection 997 && echo "true" || echo "false"; })
-if [ "$RESULT_C" = "false" ]; then
-    pass "gh falla -> is_tipo_projection degrada a false (no aborta el lote)"
+case "$(facts_field "$FACTS" 3)" in
+    /*tdd-pipeline.sh) pass "tipo:projection -> ruta absoluta a tdd-pipeline.sh" ;;
+    *) fail "tipo:projection -> se esperaba ruta absoluta a tdd-pipeline.sh, fue '$(facts_field "$FACTS" 3)'" ;;
+esac
+
+if [ "$CALLS" = "1" ]; then
+    pass "una sola llamada a gh por issue (estado + labels + projection combinados)"
 else
-    fail "gh falla -> se esperaba false, fue '$RESULT_C'"
+    fail "se esperaba 1 llamada a gh por issue, hubo $CALLS"
+fi
+
+FACTS=$( { gh() { printf 'OPEN|tipo:feature\n'; }; resolve_issue_facts 998; } )
+if [ "$(facts_field "$FACTS" 2)" = "false" ]; then
+    pass "tipo:feature -> flag de projection en false"
+else
+    fail "tipo:feature -> se esperaba flag false, fue '$(facts_field "$FACTS" 2)'"
+fi
+
+FACTS=$( { gh() { return 1; }; resolve_issue_facts 997; } )
+if [ "$(facts_field "$FACTS" 1)|$(facts_field "$FACTS" 2)|$(facts_field "$FACTS" 3)" = "UNKNOWN|false|SKIP:no-tipo" ]; then
+    pass "gh falla -> UNKNOWN|false|SKIP:no-tipo (degrada, no aborta el lote)"
+else
+    fail "gh falla -> se esperaba 'UNKNOWN|false|SKIP:no-tipo', fue '$FACTS'"
+fi
+
+# Con override el flag se sigue reportando desde los labels: forzar --pipeline no
+# cambia que archivos del worker toca el issue, asi que la serializacion se mantiene.
+FACTS=$( { gh() { printf 'OPEN|tipo:projection\n'; }; resolve_issue_facts 996 tdd; } )
+if [ "$(facts_field "$FACTS" 2)" = "true" ]; then
+    pass "override tdd + tipo:projection -> flag sigue en true (se serializa igual)"
+else
+    fail "override tdd + tipo:projection -> se esperaba flag true, fue '$(facts_field "$FACTS" 2)'"
+fi
+
+# El contrato de dos campos de resolve_pipeline_with_state (batch-pipeline.sh y
+# tmux-pipeline.sh lo parsean asi) no debe filtrar el campo nuevo del medio.
+RESULT=$( { gh() { printf 'OPEN|tipo:projection\n'; }; resolve_pipeline_with_state 995; } )
+if [ "${RESULT%%|*}" = "OPEN" ]; then
+    pass "resolve_pipeline_with_state: primer campo sigue siendo el estado"
+else
+    fail "resolve_pipeline_with_state: se esperaba estado OPEN, fue '${RESULT%%|*}'"
+fi
+# Si el flag intermedio se filtrara, este campo seria "true|/...".
+case "${RESULT#*|}" in
+    /*tdd-pipeline.sh) pass "resolve_pipeline_with_state: segundo campo sigue siendo el pipeline (sin filtrar el flag)" ;;
+    *) fail "resolve_pipeline_with_state: se esperaba la ruta del pipeline, fue '${RESULT#*|}'" ;;
+esac
+
+RESULT=$( { gh() { return 1; }; resolve_pipeline_with_state 994 no-existe 2>/dev/null; } )
+if [ -z "$RESULT" ]; then
+    pass "resolve_pipeline_with_state con override invalido -> sin stdout (propaga el error)"
+else
+    fail "resolve_pipeline_with_state con override invalido -> se esperaba stdout vacio, fue '$RESULT'"
 fi
 
 echo ""

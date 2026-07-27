@@ -11,9 +11,9 @@
 #
 # Enrutamiento automatico: sin --pipeline, cada issue se enruta segun su label tipo:*
 #   tipo:feature|refactor|projection -> tdd-pipeline.sh
-#   tipo:tooling               -> tooling-pipeline.sh
-#   tipo:infra                 -> SKIP (warning, no aborta)
-#   sin label tipo:*           -> SKIP (warning, no aborta)
+#   tipo:tooling                     -> tooling-pipeline.sh
+#   tipo:infra                       -> SKIP (warning, no aborta)
+#   sin label tipo:*                 -> SKIP (warning, no aborta)
 #
 # Flujo: lanza N pipelines en background (cada uno en su worktree aislado),
 # monitorea el progreso consolidado, y crea los PRs sin merge automatico.
@@ -156,15 +156,19 @@ log "Paralelismo maximo: $([ "$MAX_PARALLEL" -gt 0 ] && echo "$MAX_PARALLEL" || 
 log "Log: $LOG_FILE_ABS"
 
 # ─── Pre-validacion: verificar estado y resolver pipeline por issue ──────────
-# Una sola llamada a gh por issue (estado + labels combinados)
+# Una sola llamada a gh por issue (estado + labels combinados): resolve_issue_facts
+# devuelve tambien el flag de tipo:projection que necesita el scheduler (issue
+# #372), derivado de los mismos labels, sin una segunda consulta a la API.
 log "Verificando estado de los issues y resolviendo pipelines..."
 VALID_ISSUES=()
 ISSUE_PIPELINES=()
 ISSUE_IS_PROJECTION=()   # "true"/"false" paralelo a VALID_ISSUES (issue #372)
 for ISSUE_NUM in "${ISSUE_NUMS[@]}"; do
-    STATE_AND_PIPELINE=$(resolve_pipeline_with_state "$ISSUE_NUM" "$PIPELINE_OVERRIDE")
-    ISSUE_STATE="${STATE_AND_PIPELINE%%|*}"
-    RESOLVED="${STATE_AND_PIPELINE#*|}"
+    ISSUE_FACTS=$(resolve_issue_facts "$ISSUE_NUM" "$PIPELINE_OVERRIDE")
+    ISSUE_STATE="${ISSUE_FACTS%%|*}"
+    FACTS_REST="${ISSUE_FACTS#*|}"
+    IS_PROJECTION="${FACTS_REST%%|*}"
+    RESOLVED="${FACTS_REST#*|}"
 
     if [ "$ISSUE_STATE" != "OPEN" ]; then
         warn "Issue #$ISSUE_NUM esta $ISSUE_STATE --- saltando."
@@ -179,12 +183,8 @@ for ISSUE_NUM in "${ISSUE_NUMS[@]}"; do
 
     VALID_ISSUES+=("$ISSUE_NUM")
     ISSUE_PIPELINES+=("$RESOLVED")
-    if is_tipo_projection "$ISSUE_NUM"; then
-        ISSUE_IS_PROJECTION+=("true")
-    else
-        ISSUE_IS_PROJECTION+=("false")
-    fi
-    log "Issue #$ISSUE_NUM -> $(basename "$RESOLVED")"
+    ISSUE_IS_PROJECTION+=("$IS_PROJECTION")
+    log "Issue #$ISSUE_NUM -> $(basename "$RESOLVED")$([ "$IS_PROJECTION" = "true" ] && echo " (read-side: se serializa con otras projections)")"
 done
 
 if [ ${#VALID_ISSUES[@]} -eq 0 ]; then
@@ -203,7 +203,9 @@ if [ "$PROJECTION_COUNT" -gt 1 ]; then
     warn "$PROJECTION_COUNT issues tipo:projection detectados --- se serializaran entre si (comparten el worker de proyecciones del BC, MEF-ADR-0034)."
 fi
 
-# ─── Lanzar pipelines en paralelo ─────────────────────────────────────────────
+# ─── Estado y helpers de lanzamiento ──────────────────────────────────────────
+# (el scheduler que los usa vive mas abajo, despues de print_dashboard)
+#
 # Los issues tipo:projection de un mismo lote se serializan entre si (nunca 2
 # corriendo a la vez), ademas de respetar --max-parallel para el resto (issue
 # #372). PIDS/STATUS_FILES/ISSUE_LOGS/START_TIMES quedan indexados IGUAL que
@@ -271,37 +273,6 @@ is_projection_running() {
     return 1
 }
 
-# Scheduler: recorre los pendientes en cada pasada y lanza los que ya pueden
-# correr (can_launch_now de _pipeline-common.sh). Un pendiente bloqueado no
-# detiene a los demas: se reintenta en la siguiente pasada mientras otros
-# pendientes de tipo distinto avanzan.
-PENDING_IDXS=()
-for ((i = 0; i < TOTAL; i++)); do PENDING_IDXS+=("$i"); done
-
-while [ ${#PENDING_IDXS[@]} -gt 0 ]; do
-    NEXT_PENDING=()
-    for idx in "${PENDING_IDXS[@]}"; do
-        _proj_running="false"
-        is_projection_running && _proj_running="true"
-        if can_launch_now "$MAX_PARALLEL" "$(running_count)" "${ISSUE_IS_PROJECTION[$idx]}" "$_proj_running"; then
-            launch_pipeline "$idx"
-        else
-            NEXT_PENDING+=("$idx")
-        fi
-    done
-    # Reasignar evitando "${NEXT_PENDING[@]}" cuando queda vacio: en bash 3.2
-    # (macOS) un array declarado pero sin elementos se trata como "unset" bajo
-    # 'set -u' y expandirlo aborta el script (fijo en bash 4.4+, no disponible aqui).
-    if [ ${#NEXT_PENDING[@]} -gt 0 ]; then
-        PENDING_IDXS=("${NEXT_PENDING[@]}")
-    else
-        PENDING_IDXS=()
-    fi
-    if [ ${#PENDING_IDXS[@]} -gt 0 ]; then
-        sleep 5
-    fi
-done
-
 # ─── Función de lectura de status ────────────────────────────────────────────
 read_status_field() {
     local file="$1" field="$2"
@@ -341,8 +312,17 @@ print_dashboard() {
 
     for i in "${!ISSUE_NUMS[@]}"; do
         local issue="${ISSUE_NUMS[$i]}"
+        local pid="${PIDS[$i]:-}"
+
+        # Issue todavia sin lanzar: el scheduler le esta reteniendo el turno
+        # (--max-parallel copado, u otra tipo:projection viva -- issue #372). No
+        # hay status file ni cronometro que leer todavia.
+        if [ -z "$pid" ]; then
+            printf "  ${YELLOW}%-6s  %-14s  %-8s  %s${NC}\n" "#$issue" "en espera" "-" ""
+            continue
+        fi
+
         local status_file="${STATUS_FILES[$i]}"
-        local pid="${PIDS[$i]}"
         local start="${START_TIMES[$i]}"
         local elapsed=$(( now - start ))
         local mins=$(( elapsed / 60 ))
@@ -402,11 +382,51 @@ print_dashboard() {
     printf "%s\n" "----------------------------------------------------------------------"
 }
 
+MONITOR_INTERVAL=10
+
+# ─── Scheduler de lanzamiento ─────────────────────────────────────────────────
+# Recorre los pendientes en cada pasada y lanza los que ya pueden correr
+# (can_launch_now de _pipeline-common.sh). Un pendiente bloqueado no detiene a
+# los demas: se reintenta en la siguiente pasada mientras otros pendientes que
+# si pueden correr avanzan. Va DESPUES de print_dashboard (y no junto a
+# launch_pipeline) porque mientras retiene turnos ya hay pipelines vivos que
+# reportar: sin dibujar el dashboard aca, un lote con dos tipo:projection
+# quedaria mudo durante todo el primer pipeline -- decenas de minutos sin
+# ninguna senal de los issues que si estan corriendo.
+PENDING_IDXS=()
+for ((i = 0; i < TOTAL; i++)); do PENDING_IDXS+=("$i"); done
+
+while [ ${#PENDING_IDXS[@]} -gt 0 ]; do
+    NEXT_PENDING=()
+    for idx in "${PENDING_IDXS[@]}"; do
+        _proj_running="false"
+        is_projection_running && _proj_running="true"
+        if can_launch_now "$MAX_PARALLEL" "$(running_count)" "${ISSUE_IS_PROJECTION[$idx]}" "$_proj_running"; then
+            launch_pipeline "$idx"
+        else
+            NEXT_PENDING+=("$idx")
+        fi
+    done
+    # Reasignar evitando "${NEXT_PENDING[@]}" cuando queda vacio: en bash 3.2
+    # (macOS) un array declarado pero sin elementos se trata como "unset" bajo
+    # 'set -u' y expandirlo aborta el script (fijo en bash 4.4+, no disponible aqui).
+    if [ ${#NEXT_PENDING[@]} -gt 0 ]; then
+        PENDING_IDXS=("${NEXT_PENDING[@]}")
+    else
+        PENDING_IDXS=()
+    fi
+    if [ ${#PENDING_IDXS[@]} -gt 0 ]; then
+        print_dashboard
+        echo ""
+        log "${#PENDING_IDXS[@]} issue(s) esperando turno. Actualizando en ${MONITOR_INTERVAL}s... (Ctrl+C para cancelar)"
+        sleep "$MONITOR_INTERVAL"
+    fi
+done
+
 # ─── Loop de monitoreo ────────────────────────────────────────────────────────
 log "Todos los pipelines lanzados. Monitoreando progreso (Ctrl+C para cancelar)..."
 echo ""
 
-MONITOR_INTERVAL=10
 while true; do
     # Verificar si todos los procesos terminaron
     ALL_DONE=true

@@ -504,8 +504,11 @@ ${BOLD}Uso:${NC}
 ${BOLD}Enrutamiento automatico:${NC}
   Sin --pipeline ni --tooling/--infra, el pipeline se determina por el label tipo:* del issue:
     tipo:feature|refactor|projection -> tdd-pipeline.sh
-    tipo:tooling               -> tooling-pipeline.sh
-    tipo:infra                 -> SKIP (usar --infra explicitamente)
+    tipo:tooling                     -> tooling-pipeline.sh
+    tipo:infra                       -> SKIP (usar --infra explicitamente)
+
+  Con --parallel, dos issues tipo:projection nunca corren a la vez: comparten los
+  archivos del worker de proyecciones del BC, asi que se serializan entre si.
 
 ${BOLD}En iTerm2 (recomendado):${NC}
   1. Corre el comando anterior desde tu terminal normal

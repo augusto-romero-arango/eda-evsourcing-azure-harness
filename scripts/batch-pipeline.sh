@@ -9,9 +9,9 @@
 #
 # Enrutamiento automatico: sin --pipeline, cada issue se enruta segun su label tipo:*
 #   tipo:feature|refactor|projection -> tdd-pipeline.sh
-#   tipo:tooling               -> tooling-pipeline.sh
-#   tipo:infra                 -> SKIP (warning, no aborta)
-#   sin label tipo:*           -> SKIP (warning, no aborta)
+#   tipo:tooling                     -> tooling-pipeline.sh
+#   tipo:infra                       -> SKIP (warning, no aborta)
+#   sin label tipo:*                 -> SKIP (warning, no aborta)
 #
 # Flujo por issue: pipeline -> extraer PR -> pr-sync.sh --merge -> siguiente issue
 #

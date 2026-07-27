@@ -73,3 +73,4 @@ Usa /work-status para ver el progreso sin salir de aqui.
 - **No esperes a que termine.** Devuelve el control inmediatamente.
 - **No implementes nada tu mismo.** Solo lanza el script.
 - Los PRs creados no se mergean. Recuerdale al usuario que puede usar `/merge <PR_NUM>` despues.
+- **Issues `tipo:projection`: nunca corren dos a la vez.** Todas las proyecciones del BC comparten los archivos del worker de proyecciones (MEF-ADR-0034), asi que `parallel-pipeline.sh` los serializa entre si dentro del lote (el resto de issues sigue paralelizando con normalidad). Si el grupo trae mas de uno, avisale al usuario en el resumen del paso 2 que esos dos correran en fila y que `/sequential` es el camino natural para un lote de puras proyecciones.
