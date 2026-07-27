@@ -124,6 +124,39 @@ sys.stdout.write(body + "\n")
 PYEOF
 }
 
+# summarize_version_section <notas>: recibe el cuerpo de una seccion
+# versionada (la salida de extract_version_section) y emite, por cada
+# categoria Keep a Changelog presente (Added/Changed/Fixed/Removed, en ese
+# orden), una linea con el conteo de entradas de primer nivel ("- ...").
+# Cota superior de tamano garantizada: el numero de categorias es fijo (4),
+# a diferencia de las notas completas cuyo tamano crece con cada entrada.
+# No modifica ni trunca las notas originales -- solo alimenta el resumen del
+# body del PR de release; el CHANGELOG.md y el GitHub Release (fase publish)
+# siguen llevando las notas integras via extract_version_section.
+# El texto viaja por variable de entorno (no por stdin ni argv): un heredoc
+# `python3 - <<'PYEOF'` ya usa stdin para pasar el propio script a python, y
+# el texto puede superar los ~100K caracteres de una seccion real.
+summarize_version_section() {
+    SUMMARIZE_INPUT="$1" python3 - <<'PYEOF'
+import os, re
+
+text = os.environ['SUMMARIZE_INPUT']
+order = ["Added", "Changed", "Fixed", "Removed"]
+counts = {}
+for m in re.finditer(r'(?ms)^###\s*(\w+)[^\n]*\n(.*?)(?=^###\s|\Z)', text):
+    name = m.group(1)
+    entries = len(re.findall(r'(?m)^-\s', m.group(2)))
+    counts[name] = counts.get(name, 0) + entries
+
+for name in order:
+    if name in counts:
+        print(f"- **{name}**: {counts[name]} entrada(s)")
+for name, count in counts.items():
+    if name not in order:
+        print(f"- **{name}**: {count} entrada(s)")
+PYEOF
+}
+
 # rewrite_changelog_prepare <new_version> <prev_version> <date>
 # Reescribe el CHANGELOG: mueve [Unreleased] a [new] y actualiza/agrega
 # links de comparacion al pie.
@@ -357,9 +390,17 @@ EOF
     git push -u origin "$RELEASE_BRANCH" >/dev/null 2>&1 \
         || abort "No se pudo pushear la rama ${RELEASE_BRANCH}"
 
-    # Extraer notas de la nueva seccion versionada para el body del PR
+    # Extraer notas de la nueva seccion versionada. El body del PR NO las
+    # vuelca completas (issue #405: la API de GitHub rechaza un body de PR de
+    # mas de 65536 caracteres, y una sola seccion versionada de este repo ya
+    # supera ese limite 1.66x) -- se resumen a un indice de categorias con
+    # conteo (cota superior de tamano fija) y se enlaza el CHANGELOG completo
+    # en la rama de release. Las notas integras siguen viviendo en el diff del
+    # propio PR y, en la fase publish, en el GitHub Release.
     RELEASE_NOTES=$(extract_version_section "$NEW_VERSION") \
         || abort "No se pudieron extraer las notas de [${NEW_VERSION}] del CHANGELOG"
+    RELEASE_SUMMARY=$(summarize_version_section "$RELEASE_NOTES")
+    CHANGELOG_LINK="${REPO_URL}/blob/${RELEASE_BRANCH}/CHANGELOG.md"
 
     PR_BODY_FILE=$(mktemp)
     cat > "$PR_BODY_FILE" <<EOF
@@ -372,9 +413,11 @@ PR de release ${NEW_TAG} (${BUMP_PART}: ${PREV_VERSION} -> ${NEW_VERSION}).
 - Bumpea \`.claude-plugin/plugin.json\` a ${NEW_VERSION}.
 - Actualiza links de comparacion al pie del CHANGELOG.
 
-## Notas del release
+## Categorias del release
 
-${RELEASE_NOTES}
+${RELEASE_SUMMARY}
+
+Notas completas: [\`CHANGELOG.md\`](${CHANGELOG_LINK}) en esta rama (\`${RELEASE_BRANCH}\`).
 
 ## Siguiente paso
 
@@ -460,7 +503,18 @@ if release_exists "$NEW_TAG"; then
     abort "Ya existe un GitHub Release ${NEW_TAG}. Aborta."
 fi
 
-# Extraer notas del bloque versionado
+# Extraer notas del bloque versionado. A diferencia del body del PR (issue
+# #405), aqui SI se publican integras: la documentacion oficial de la REST API
+# (gh.io/rest/releases/releases#create-a-release) no declara un maximo para
+# 'body', pero el limite real observado en la API (confirmado por multiples
+# reportes independientes contra el mismo mensaje de error, p. ej.
+# github.com/cli/cli/issues/7705 y github.com/changesets/action/issues/304:
+# "body is too long (maximum is 125000 characters)") es 125000 caracteres --
+# casi el doble del limite de 65536 de PRs/issues (GraphQL) que origino este
+# issue. La seccion [0.18.0] medida en #405 (109010 caracteres, la mayor hasta
+# la fecha) queda por debajo con margen (~16000 caracteres), asi que se deja
+# esta fase sin truncar. Si una seccion futura se acerca a 125000, revisar
+# esta cuenta.
 RELEASE_NOTES=$(extract_version_section "$NEW_VERSION") \
     || abort "No se encontro la seccion [${NEW_VERSION}] en el CHANGELOG. Faltan notas en main?"
 
