@@ -175,7 +175,7 @@ await builder.Build().RunAsync();
 
 ## Paso 1b - Crear el proyecto `<RootNamespace>.ReadModels` (CA-1, issue #375)
 
-Biblioteca de clases donde viven los read models y las clases de proyeccion de todos los dominios del BC (MEF-ADR-0034 seccion 5) -- el worker la referencia; el sentido de la dependencia es unico, `ReadModels` no referencia al worker.
+Biblioteca de clases donde viven los read models (records planos, sin Marten ni transitivamente) de todos los dominios del BC (MEF-ADR-0034 seccion 5) -- el worker la referencia; el sentido de la dependencia es unico, `ReadModels` no referencia al worker. Las clases de proyeccion companion (`{Concepto}Projection`, `partial`) **no** viven aqui: viven en el worker mismo (`src/<RootNamespace>.Projections/{Dominio}/`), el ensamblado que si referencia Marten -- este paso crea tambien esas carpetas espejo por dominio.
 
 **Probe de idempotencia (gate de la creacion del proyecto, no del paso entero):**
 
@@ -195,17 +195,9 @@ dotnet new classlib -n "<RootNamespace>.ReadModels" -o "src/<RootNamespace>.Read
 rm -f "$REPO_ROOT/src/<RootNamespace>.ReadModels/Class1.cs"
 ```
 
-**Ajusta el `.csproj` generado.** Lee su contenido actual antes de modificarlo. El template `dotnet new classlib` ya trae `TargetFramework`/`ImplicitUsings`/`Nullable`; agrega el `PackageReference` a `Marten` en la misma version que fija MEF-ADR-0003 (`9.12.0`, lockstep con el resto del stack `Cosmos.Event*`):
+**Ajusta el `.csproj` generado.** Lee su contenido actual antes de modificarlo. El template `dotnet new classlib` ya trae `TargetFramework`/`ImplicitUsings`/`Nullable`, y son los unicos ajustes que este `.csproj` necesita -- **sin ningun `PackageReference` a Marten, ni ahora ni transitivamente** (MEF-ADR-0034 seccion 5): `ReadModels` es el contrato compartido de records planos entre el worker y el Function App del dominio, y el analizador `JasperFx.Events.SourceGenerator` que exige el `partial` de las clases de proyeccion (`modelos-marten.md` del Skill `projections`) vive en el ensamblado del **worker**, donde esas clases companion realmente estan declaradas -- `ReadModels` no aloja ningun tipo `partial` y por eso no necesita el paquete.
 
-```xml
-<ItemGroup>
-  <PackageReference Include="Marten" Version="9.12.0" />
-</ItemGroup>
-```
-
-**Por que este proyecto necesita el paquete `Marten` ya, y no solo el worker.** Los read models y las clases de proyeccion `partial` (N1/N2, `modelos-marten.md` del Skill `projections`) dependen del source generator `JasperFx.Events.SourceGenerator` para emitir su `[GeneratedEvolver]` en tiempo de compilacion -- ese analizador **viaja dentro del paquete NuGet `Marten`** (verificado contra el codigo fuente y los issues de `JasperFx/marten`: el analizador se resuelve transitivamente con una simple `PackageReference Include="Marten"`, sin declarar `JasperFx.Events.SourceGenerator` aparte). Sin esta referencia en **este** `.csproj` -- el ensamblado donde de verdad viven los tipos `partial` --, un read model sin el analizador compila limpio pero falla en **runtime** con *"No source-generated dispatcher found for ..."* (issue #4557 de `JasperFx/marten`, ya citado en `modelos-marten.md`). El worker (`<RootNamespace>.Projections`) no necesita este paquete por si mismo hasta que un dominio registre su primer named store (`domain-scaffolder`, Paso 3b, issue #370, lo agrega ahi en ese momento) -- son dos ensamblados distintos con necesidades independientes del mismo paquete.
-
-**Estructura por dominio (vacia, CA-1) -- corre siempre.** Si el worker ya tiene dominios con named store registrado -- los dos ordenes de ejecucion son validos, `domain-scaffolder` (issue #370) pudo correr antes que este agente --, crea una carpeta vacia por dominio detectado, lista para que `projection-implementer` (issue #365) la llene con su primer read model. Si no hay ninguno todavia (orden tipico en greenfield: primero el worker, despues los dominios), el proyecto queda sin carpetas de dominio -- retrocompatible, un `<RootNamespace>.ReadModels` vacio es un scaffold valido. `mkdir -p` no pisa una carpeta ya poblada, asi que este bloque es seguro tambien cuando el proyecto ya existia (CA-4):
+**Estructura por dominio (vacia, CA-1) -- corre siempre.** Si el worker ya tiene dominios con named store registrado -- los dos ordenes de ejecucion son validos, `domain-scaffolder` (issue #370) pudo correr antes que este agente --, crea una carpeta vacia por dominio detectado en `ReadModels`, lista para que `projection-implementer` (issue #365) la llene con su primer read model. Si no hay ninguno todavia (orden tipico en greenfield: primero el worker, despues los dominios), el proyecto queda sin carpetas de dominio -- retrocompatible, un `<RootNamespace>.ReadModels` vacio es un scaffold valido. `mkdir -p` no pisa una carpeta ya poblada, asi que este bloque es seguro tambien cuando el proyecto ya existia (CA-4):
 
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel)
@@ -223,6 +215,26 @@ for seam in "$REPO_ROOT"/src/<RootNamespace>.Projections/Infraestructura/Configu
         echo "Carpeta creada para dominio detectado: $dominio"
     else
         echo "Carpeta ya poblada para dominio: $dominio (omitida)"
+    fi
+done
+```
+
+**Estructura por dominio en el worker (vacia) -- corre siempre.** Mismo criterio y misma lista de dominios detectados que el bloque anterior, pero espejando la carpeta en la **raiz del worker** (`src/<RootNamespace>.Projections/{Dominio}/`, MEF-ADR-0034 seccion 5) en vez de en `ReadModels`: ahi es donde `projection-implementer` (issue #365) escribira la clase de proyeccion companion (`{Concepto}Projection.cs`) de cada dominio. `mkdir -p` no pisa una carpeta ya poblada, asi que este bloque es seguro tambien cuando el worker ya existia:
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+for seam in "$REPO_ROOT"/src/<RootNamespace>.Projections/Infraestructura/ConfiguracionMartenProjections*.cs; do
+    [ -e "$seam" ] || continue
+    nombre=$(basename "$seam" .cs)
+    [ "$nombre" = "ConfiguracionMartenProjections" ] && continue   # el seam de nivel BC, no un dominio
+    dominio="${nombre#ConfiguracionMartenProjections}"
+    destino="$REPO_ROOT/src/<RootNamespace>.Projections/$dominio"
+    mkdir -p "$destino"
+    if [ -z "$(ls -A "$destino")" ]; then
+        touch "$destino/.gitkeep"
+        echo "Carpeta creada en el worker para dominio detectado: $dominio"
+    else
+        echo "Carpeta ya poblada en el worker para dominio: $dominio (omitida)"
     fi
 done
 ```
@@ -487,7 +499,7 @@ Imprime un resumen claro:
 
 - **Proyecto worker**: creado u omitido (ya existia, csproj respetado).
 - **`Program.cs`** y **`Infraestructura/ConfiguracionMartenProjections.cs`**: creados u omitidos.
-- **Proyecto `<RootNamespace>.ReadModels`**: creado u omitido (ya existia); carpetas de dominio creadas (lista de dominios detectados) o ninguna (sin dominios registrados todavia); `ProjectReference` del worker hacia `ReadModels` verificada.
+- **Proyecto `<RootNamespace>.ReadModels`**: creado u omitido (ya existia), sin ningun `PackageReference` a Marten; carpetas de dominio creadas en `ReadModels` (lista de dominios detectados) o ninguna (sin dominios registrados todavia); carpetas espejo creadas en la raiz del worker para esos mismos dominios (o ninguna); `ProjectReference` del worker hacia `ReadModels` verificada.
 - **Proyecto `<RootNamespace>.Projections.Tests`**: creado u omitido (ya existia); helper `AssertOpcionesDeEvento` y config-test base creados u omitidos.
 - **`Dockerfile`**: creado u omitido.
 - **`<SolutionFile>`**: los tres proyectos agregados (o ya estaban).
@@ -498,7 +510,7 @@ Imprime un resumen claro:
 ## Reglas absolutas
 
 1. **NUNCA** sobrescribas `Program.cs`, `Infraestructura/ConfiguracionMartenProjections.cs` ni el config-test base de `Projections.Tests` si ya existen (CA-5 issue #367, CA-4 issue #375): pueden llevar registros de dominio agregados por `domain-scaffolder` o guardas agregadas por `projection-test-writer`. Omitelos y reportalo.
-2. **NUNCA** registres un named store de dominio (`AddMartenStore<I{Dominio}ProjectionStore>`) ni ningun tipo de read model concreto (CA-6): eso es alcance exclusivo de `domain-scaffolder` (issue #370) y de `projection-implementer` (issue #365). Las carpetas de dominio que crees en `ReadModels` quedan vacias (solo un `.gitkeep`).
+2. **NUNCA** registres un named store de dominio (`AddMartenStore<I{Dominio}ProjectionStore>`) ni ningun tipo de read model o clase de proyeccion concreta (CA-6): eso es alcance exclusivo de `domain-scaffolder` (issue #370) y de `projection-implementer` (issue #365). Las carpetas de dominio que crees en `ReadModels` y en la raiz del worker quedan vacias (solo un `.gitkeep`).
 3. **NUNCA** wirees Azure Service Bus, Wolverine, `IPrivateEventSender`/`IPublicEventSender` en este worker (MEF-ADR-0034 seccion 4): el daemon lee eventos directo de Postgres, no consume mensajes de ningun bus.
 4. **NUNCA** agregues al helper `AssertOpcionesDeEvento` ni al config-test base ninguna asercion sobre un dominio concreto (guardas 1 y 2 de `config-test.md`): esas dependen de un named store real y son alcance de `projection-test-writer` (issue #365), no de este scaffold base.
 5. **NUNCA** generes ni edites ningun archivo Terraform: los 3 modulos opt-in del Container App (MEF-ADR-0034 seccion 8) son alcance de `infra-base-scaffolder` (issue #368), no de este agente.

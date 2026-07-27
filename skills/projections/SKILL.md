@@ -12,7 +12,7 @@ Fuente unica de la doctrina read-side del marco -- MEF-ADR-0035 (estilo de codig
 ## 1. Donde corre cada cosa
 
 - El **worker de proyecciones** (`<RootNamespace>.Projections`, un unico proceso por Bounded Context) hostea el daemon asincronico de Marten que materializa proyecciones `Async`. Fija **donde** corre esto MEF-ADR-0034; este Skill no repite esa doctrina de infraestructura.
-- Los **read models y clases de proyeccion** viven en `<RootNamespace>.ReadModels`, biblioteca separada referenciada por el worker (MEF-ADR-0034 seccion 5).
+- Los **read models** (records planos, sin Marten ni transitivamente) viven en `<RootNamespace>.ReadModels`, biblioteca separada referenciada por el worker. Las **clases de proyeccion** (companion `partial`) viven en el **worker** (`<RootNamespace>.Projections`), el ensamblado que si referencia Marten (MEF-ADR-0034 seccion 5).
 - El **endpoint HTTP GET** de lectura vive en el Function App del **write-side** del dominio (el worker no tiene ingress) y abre su `QuerySession` desde el `IDocumentStore` ya configurado ahi (MEF-ADR-0035 seccion 4).
 
 ## 2. Elegir la receta: arbol de 3 niveles
@@ -21,11 +21,11 @@ De las recetas de proyeccion de Marten, el marco adopta 3 niveles -- ver **[mode
 
 | Nivel | Receta | Cuando | Auto-generada |
 |---|---|---|---|
-| N1 | `SingleStreamProjection<T, TId>` (self-hosting, `Snapshot<T>()`) | Un solo stream, mismo `AggregateId` | Si (default del scaffolder) |
-| N2 | `MultiStreamProjection<T, TId>` (companion class, `Add<T>()`) | Correlaciona varios streams | Si, cuando el arbol lo indica |
+| N1 | `SingleStreamProjection<T, TId>` (companion class `partial`, `Add<T>()`) | Un solo stream, mismo `AggregateId` | Si (default del scaffolder) |
+| N2 | `MultiStreamProjection<T, TId>` (companion class `partial`, `Add<T>()`) | Correlaciona varios streams | Si, cuando el arbol lo indica |
 | N3 | `EventProjection`/`IProjection` custom | Ninguna de las anteriores alcanza | No -- exige justificacion (Rule of Three, MEF-ADR-0018) |
 
-Ambos niveles auto-generados (N1/N2) registran su ciclo de vida en el named store del **worker** (`ProjectionLifecycle.Async` / `SnapshotLifecycle.Async`) -- nunca en el write-side. `Inline` es una excepcion opt-in que vive en el write-side (MEF-ADR-0034 seccion 3), no en este worker.
+N1 y N2 comparten un unico estilo: record de read model plano (sin `partial`) en `ReadModels` + clase de proyeccion companion `partial` en el worker. Ambos niveles registran su ciclo de vida en el named store del **worker** (`opts.Projections.Add<T>(ProjectionLifecycle.Async)`) -- nunca en el write-side. `Inline` es una excepcion opt-in que vive en el write-side (MEF-ADR-0034 seccion 3), no en este worker.
 
 ## 3. Consultar el resultado: tres vias, todas sobre `QuerySession`
 
@@ -49,7 +49,7 @@ Ver **[naming.md](naming.md)** para el patron completo (verbo + cardinalidad, ru
 | Query por id | `Obtener{X}` | `ObtenerTurno` |
 | Query por filtro/lista | `Listar{X}s` (plural real del espanol) | `ListarTurnos` |
 | Read model | `{Concepto}View` | `TurnoView` |
-| Clase de proyeccion (N2) | `{Concepto}Projection` (`partial`) | `ResumenEquipoProjection` |
+| Clase de proyeccion (N1/N2) | `{Concepto}Projection` (`partial`) | `ResumenEquipoProjection` |
 | Marker del named store | `I{Dominio}ProjectionStore` | `IVentasProjectionStore` |
 | Seam de composicion | `ConfiguracionMartenProjections{Dominio}.Configurar{Dominio}()` | `ConfiguracionMartenProjectionsVentas.ConfigurarVentas()` |
 

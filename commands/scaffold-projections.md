@@ -66,9 +66,13 @@ issue #367 + fase 2, issue #375):
     Program.cs                          (arma el host, invoca el seam, nada mas)
     Infraestructura/ConfiguracionMartenProjections.cs  (seam base, sin dominios todavia)
     Dockerfile                          (imagen sobre runtime, sin ingress)
+    {Dominio}/                          (carpeta vacia por dominio ya registrado en el
+                                          worker, si aplica -- ahi vive la clase de
+                                          proyeccion companion de cada dominio)
 
-  src/<RootNamespace>.ReadModels/       (biblioteca vacia; una carpeta por dominio
-                                          ya registrado en el worker, si aplica)
+  src/<RootNamespace>.ReadModels/       (biblioteca vacia, sin PackageReference a Marten;
+                                          una carpeta por dominio ya registrado en el
+                                          worker, si aplica -- solo read models planos)
 
   tests/<RootNamespace>.Projections.Tests/
     Infraestructura/AssertsProyecciones.cs   (helper AssertOpcionesDeEvento)

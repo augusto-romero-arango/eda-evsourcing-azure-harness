@@ -745,7 +745,7 @@ Colision verificada: [ninguna Function del dominio declara ya estos nombres] | [
 
 ## Impacto esperado en archivos (sugerencia)
 - **Modifica**: [ej: `ConfiguracionMartenProjections{Dominio}.cs`, si el dominio ya tiene worker registrado]
-- **Crea**: [ej: `<RootNamespace>.ReadModels/{Concepto}View.cs`, `<RootNamespace>.{Dominio}/Obtener{Concepto}/FunctionEndpoint.cs`]
+- **Crea**: [ej: `<RootNamespace>.ReadModels/{Dominio}/{Concepto}View.cs`, `<RootNamespace>.Projections/{Dominio}/{Concepto}Projection.cs`, `<RootNamespace>.Projections.Tests/{Dominio}/{Concepto}ProjectionTests.cs`, `<RootNamespace>.{Dominio}/Obtener{Concepto}/FunctionEndpoint.cs`]
 - **Lee**: [aggregate fuente, eventos existentes]
 ISSUEEOF
 )"
