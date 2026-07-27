@@ -266,6 +266,9 @@ Aplica estas reglas para cada par de issues:
 | Ambos **CREAN** archivos en una carpeta/capa que aún no existe | Secuencial |
 | Uno **MODIFICA**, el otro solo **LEE** el mismo archivo | Paralelo |
 | Tocan carpetas/capas completamente distintas | Paralelo |
+| Ambos son **`tipo:projection`** | Secuencial siempre, sin excepción |
+
+**`tipo:projection` es secuencial siempre entre sí, sin importar qué archivos declare cada issue en la tabla del Paso 2.** Todas las proyecciones de un mismo BC comparten los archivos del worker de proyecciones (`Projections/Program.cs`, `ConfiguracionMartenProjections` -- MEF-ADR-0034), así que dos issues `tipo:projection` en la misma oleada paralela producirían PRs que compiten por el mismo merge, sin importar que sus read models o eventos fuente sean distintos. `parallel-pipeline.sh` ya aplica esta regla como guarda de código (issue #372: cualquier par `tipo:projection` se serializa dentro del lote), pero en el análisis de oleadas nunca los agrupes en la misma oleada paralela -- `/sequential` es su camino natural cuando hay más de uno pendiente.
 
 **Regla de oro: si no puedes determinar con certeza que no hay conflicto, van en secuencial.**
 
@@ -508,7 +511,7 @@ Cuando la idea esté clara, ofrece convertirla en un issue `tipo:projection` (ve
 - **Lifecycle**: `Async` (el default -- materializada en el worker de proyecciones, MEF-ADR-0034). Si el issue cree que necesita `Inline`, es una excepción opt-in del write-side que hay que justificar explícitamente, no asumir.
 - **Capas de test esperadas**: unit tests de la proyección (`Create`/`Apply`/`ShouldDelete`), el config-test del worker (guarda del `partial`, lifecycle `Async`, réplica de metadata -- MEF-ADR-0034 sección 6) y el test de composición de la Function GET (hermano de MEF-ADR-0029). Las tres son categorías complementarias, no intercambiables.
 
-**Antes de marcar `estado:listo`, avísale al usuario** que el enrutamiento de `tipo:projection` hacia la rama read-side del pipeline (`projection-test-writer`/`projection-implementer`) todavía no está cableado: el resolver por label no conoce el tipo, así que hoy `/implement` **aborta** con `Issue #N no se puede enrutar a un pipeline (no-tipo)` -- no lanza los agentes read-side, pero tampoco los write-side (`test-writer`/`implementer`). El issue puede quedar `estado:listo` -- el DoR mide completitud de información, no disponibilidad del pipeline (MEF-ADR-0011, nota de routing) --, pero el usuario debe saber que su implementación se coordina aparte hasta que esa rama exista.
+**Si el usuario va a implementar varios `tipo:projection` a la vez**, avísale que se serializan siempre entre sí (comparten el worker de proyecciones del BC, MEF-ADR-0034) y que `/sequential` es su camino natural -- no los agrupes en una misma oleada paralela al proponer el plan (ver sección "oleadas", Paso 3, matriz de conflictos). Con un único `tipo:projection` pendiente, `/implement` o `/parallel` funcionan igual que con cualquier otro tipo.
 
 ---
 

@@ -10,7 +10,8 @@
 #   R-1: resolve_pipeline con override "tdd"/"tooling" retorna una ruta absoluta
 #        y existente, sin importar el cwd desde el que se invoque.
 #   R-2: _resolve_from_labels retorna ruta absoluta y existente para tipo:feature,
-#        tipo:refactor y tipo:tooling.
+#        tipo:refactor, tipo:tooling y tipo:projection (issue #372 -- despacha a
+#        tdd-pipeline.sh, que ya trae la rama read-side del issue #371).
 #   R-3: los sentinels SKIP:infra y SKIP:no-tipo se retornan intactos (no se
 #        absolutizan).
 #   R-4: resolve_pipeline_with_state antepone el estado y absolutiza la ruta,
@@ -58,8 +59,8 @@ done
 echo ""
 echo "[R-2] _resolve_from_labels retorna ruta absoluta y existente por tipo"
 # Arrays paralelos (no asociativos: bash 3.2 de macOS no los soporta).
-LABEL_CASES=("tipo:feature" "tipo:refactor" "tipo:tooling")
-LABEL_EXPECTED=("tdd-pipeline.sh" "tdd-pipeline.sh" "tooling-pipeline.sh")
+LABEL_CASES=("tipo:feature" "tipo:refactor" "tipo:tooling" "tipo:projection")
+LABEL_EXPECTED=("tdd-pipeline.sh" "tdd-pipeline.sh" "tooling-pipeline.sh" "tdd-pipeline.sh")
 for idx in "${!LABEL_CASES[@]}"; do
     label="${LABEL_CASES[$idx]}"
     expected_basename="${LABEL_EXPECTED[$idx]}"

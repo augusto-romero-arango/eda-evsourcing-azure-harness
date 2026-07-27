@@ -674,6 +674,9 @@ _pc_script_dir() {
 # issue dado.
 # - Sin override: consulta labels del issue via gh y enruta automaticamente
 # - Con override "tdd" o "tooling": retorna el pipeline forzado sin consultar labels
+# - Issues tipo:feature, tipo:refactor o tipo:projection retornan tdd-pipeline.sh
+#   (tipo:projection despacha a la rama read-side dentro de tdd-pipeline.sh --
+#   issue #371, MEF-ADR-0034/0035)
 # - Issues tipo:infra retornan "SKIP:infra"
 # - Issues sin label tipo:* retornan "SKIP:no-tipo"
 resolve_pipeline() {
@@ -700,11 +703,15 @@ resolve_pipeline() {
 # _resolve_from_labels <labels_text>
 # Funcion interna: determina el pipeline (ruta absoluta) a partir de texto de
 # labels (una por linea). Los sentinels SKIP:* se retornan sin alterar.
+#
+# tipo:projection enruta a tdd-pipeline.sh (issue #372): ese script ya trae la
+# rama read-side (issue #371) que detecta el label internamente y despacha
+# projection-test-writer/projection-implementer en vez de test-writer/implementer.
 _resolve_from_labels() {
     local labels="$1"
     local sd
     sd="$(_pc_script_dir)"
-    if echo "$labels" | grep -qE '^tipo:(feature|refactor)$'; then
+    if echo "$labels" | grep -qE '^tipo:(feature|refactor|projection)$'; then
         echo "$sd/tdd-pipeline.sh"
     elif echo "$labels" | grep -q '^tipo:tooling$'; then
         echo "$sd/tooling-pipeline.sh"
@@ -719,6 +726,9 @@ _resolve_from_labels() {
 #
 # Retorna "STATE|PIPELINE" en una sola linea (ej: "OPEN|/ruta/absoluta/al/plugin/scripts/tdd-pipeline.sh").
 # Combina la consulta de estado y labels en una sola llamada a gh, reduciendo API calls.
+# Es una vista de dos campos sobre resolve_issue_facts (abajo), que hace esa unica
+# llamada; los llamadores que ademas necesitan saber si el issue es tipo:projection
+# usan esa funcion directamente en vez de sumar una segunda consulta.
 #
 # El override se evalua SIEMPRE (incluso si gh falla), igual que resolve_pipeline
 # (issue #291): un override invalido retorna error sin importar gh, y un override
@@ -726,6 +736,29 @@ _resolve_from_labels() {
 # nunca se finge OPEN -- los llamadores siguen pudiendo saltar issues no
 # verificables).
 resolve_pipeline_with_state() {
+    local facts state
+    facts=$(resolve_issue_facts "$@") || return 1
+    state="${facts%%|*}"
+    # facts = "STATE|IS_PROJECTION|PIPELINE": descarta el campo del medio.
+    facts="${facts#*|}"
+    echo "$state|${facts#*|}"
+}
+
+# resolve_issue_facts <issue_num> [override]
+#
+# Retorna "STATE|IS_PROJECTION|PIPELINE" en una sola linea (ej:
+# "OPEN|false|/ruta/absoluta/al/plugin/scripts/tdd-pipeline.sh"), con
+# IS_PROJECTION en "true"/"false". Misma semantica de estado y override que
+# resolve_pipeline_with_state (que delega en esta funcion), sumando la deteccion de
+# tipo:projection que parallel-pipeline.sh necesita para serializar (issue #372)
+# SIN una segunda llamada a gh: el JSON que esta funcion ya descarga trae los
+# labels, igual que la deteccion del label dentro de tdd-pipeline.sh reusa el
+# JSON que el pipeline ya tenia (issue #371).
+#
+# Con override, IS_PROJECTION se reporta igual (sale de los labels, no del
+# pipeline resuelto): forzar --pipeline no cambia que archivos del worker de
+# proyecciones toca el issue, asi que la serializacion se mantiene.
+resolve_issue_facts() {
     local issue="$1"
     local override="${2:-}"
     local sd
@@ -741,16 +774,68 @@ resolve_pipeline_with_state() {
         labels=""
     fi
 
+    local is_projection="false"
+    _is_tipo_projection_from_labels "$labels" && is_projection="true"
+
     if [ -n "$override" ]; then
         case "$override" in
-            tdd)     echo "$state|$sd/tdd-pipeline.sh" ;;
-            tooling) echo "$state|$sd/tooling-pipeline.sh" ;;
+            tdd)     echo "$state|$is_projection|$sd/tdd-pipeline.sh" ;;
+            tooling) echo "$state|$is_projection|$sd/tooling-pipeline.sh" ;;
             *)       echo "ERROR: override desconocido '$override'" >&2; return 1 ;;
         esac
         return
     fi
 
-    echo "$state|$(_resolve_from_labels "$labels")"
+    echo "$state|$is_projection|$(_resolve_from_labels "$labels")"
+}
+
+# --- Serializacion de issues tipo:projection dentro de un lote paralelo ------
+#
+# Todas las proyecciones de un mismo Bounded Context comparten los archivos del
+# worker de proyecciones (Projections/Program.cs, ConfiguracionMartenProjections
+# -- MEF-ADR-0034): dos issues tipo:projection corriendo a la vez en
+# parallel-pipeline.sh producirian dos PRs read-side editando el mismo archivo,
+# con el conflicto de merge resuelto por el segundo en llegar. El contrato de un
+# solo Bounded Context por repo (MEF-ADR-0023) mas la homogeneidad de repo que
+# parallel-pipeline.sh ya exige hacen innecesaria cualquier deteccion de BC: dentro
+# de una misma invocacion, CUALQUIER par de issues tipo:projection es incompatible
+# entre si (issue #372).
+
+# _is_tipo_projection_from_labels <labels_text>
+#
+# Funcion interna pura: determina si el texto de labels (una por linea, mismo
+# formato que _resolve_from_labels) incluye el label EXACTO tipo:projection (no
+# un prefijo como tipo:projection-experimental). La consume resolve_issue_facts,
+# que ya tiene los labels a mano; si gh no pudo resolverlos, el texto llega vacio
+# y el issue simplemente no se trata como projection (mismo fallo silencioso que
+# _resolve_from_labels, que cae a SKIP:no-tipo).
+_is_tipo_projection_from_labels() {
+    echo "$1" | grep -qx 'tipo:projection'
+}
+
+# can_launch_now <max_parallel> <running_count> <is_projection> <projection_running>
+#
+# Decide si un issue pendiente puede lanzarse ya, dado el estado actual del
+# lote. Pura (sin gh, sin procesos, sin arrays) para poder testear las
+# combinaciones sin lanzar background jobs reales -- el llamador (scheduler de
+# parallel-pipeline.sh) es quien calcula running_count/projection_running
+# inspeccionando sus propios PIDs.
+#
+#   <max_parallel>       entero; 0 = sin limite
+#   <running_count>      entero; cuantos pipelines siguen vivos ahora mismo
+#   <is_projection>      "true"/"false"; el pendiente evaluado es tipo:projection
+#   <projection_running> "true"/"false"; ya hay un tipo:projection vivo ahora mismo
+#
+# Retorna 0 si puede lanzarse, 1 si debe esperar.
+can_launch_now() {
+    local max_parallel="$1" running="$2" is_projection="$3" projection_running="$4"
+    if [ "$max_parallel" -gt 0 ] && [ "$running" -ge "$max_parallel" ]; then
+        return 1
+    fi
+    if [ "$is_projection" = "true" ] && [ "$projection_running" = "true" ]; then
+        return 1
+    fi
+    return 0
 }
 
 # find_open_pr_for_branch <branch_name> [repo_slug] [base_branch]
