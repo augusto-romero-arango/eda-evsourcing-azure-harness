@@ -41,7 +41,7 @@ echo "Raiz del plugin: $PLUGIN_ROOT"
 
 ### 1. Read model + clase de proyeccion (N1/N2 -- arbol de decision en `modelos-marten.md`)
 
-El read model es un record plano, **sin** `partial`, en `<RootNamespace>.ReadModels` (no referencia Marten). El comportamiento (`Create`/`Apply`/`ShouldDelete` estaticos) vive en la clase de proyeccion companion, `partial`, en el **worker** (`<RootNamespace>.Projections/{Dominio}/{Concepto}Projection.cs`) -- mismo estilo en N1 y N2 (gotcha de dos condiciones documentado en `modelos-marten.md`, reverificalo con un build antes de asumir que compila). Para N2, la clase companion con el constructor de correlacion (`Identity<TEvento>`/`Identities<TEvento>`) ya la dejo declarada `projection-test-writer` como stub; solo implementas los `Create`/`Apply`.
+El read model es un record plano, **sin** `partial`, en `<RootNamespace>.ReadModels` (no referencia Marten). El comportamiento (`Create`/`Apply`/`ShouldDelete` estaticos) vive en la clase de proyeccion companion, `partial`, en el **worker** (`src/<RootNamespace>.Projections/{Dominio}/{Concepto}Projection.cs`) -- mismo estilo en N1 y N2 (gotcha de dos condiciones documentado en `modelos-marten.md`, reverificalo con un build antes de asumir que compila). En **ambos** niveles la clase companion ya la dejo declarada `projection-test-writer` como stub (en N2, con el constructor de correlacion `Identity<TEvento>`/`Identities<TEvento>` ya escrito -- eso no es un stub, no tiene logica que fallar); tu implementas sus `Create`/`Apply`/`ShouldDelete`.
 
 ### 2. Registro en el named store del worker (`Configurar{Dominio}`)
 

@@ -2,7 +2,7 @@
 
 Fuente: MEF-ADR-0034 seccion 6 (plantilla del PR 134 de Cosmos.ControlPlane, consumidor de referencia). Hermano directo del test de composicion de MEF-ADR-0029, pero **no identico**: no valida un grafo de DI generico, sino la configuracion especifica de Marten que cada named store arma.
 
-**`<RootNamespace>.Projections.Tests` aloja dos cosas, en subcarpetas por dominio**: el config-test de este documento (a nivel raiz del proyecto) y los **unit tests de proyeccion** (`Create`/`Apply`/`ShouldDelete` de cada `{Concepto}Projection`, `tests/<RootNamespace>.Projections.Tests/{Dominio}/{Concepto}ProjectionTests.cs`). El proyecto ya lleva `ProjectReference` al worker y ve `ReadModels` transitivamente (MEF-ADR-0034 seccion 5), asi que ningun `.csproj` cambia por alojar ambas cosas.
+**`<RootNamespace>.Projections.Tests` aloja dos cosas**: el config-test de este documento, un unico archivo a nivel raiz del proyecto (`ConfiguracionMartenProjectionsTests.cs`), y los **unit tests de proyeccion** (`Create`/`Apply`/`ShouldDelete` de cada `{Concepto}Projection`), estos si en una subcarpeta por dominio -- `tests/<RootNamespace>.Projections.Tests/{Dominio}/{Concepto}ProjectionTests.cs`. El proyecto ya lleva `ProjectReference` al worker y ve `ReadModels` transitivamente (MEF-ADR-0034 seccion 5), asi que ningun `.csproj` cambia por alojar ambas cosas.
 
 ## Fuente unica de composicion
 
@@ -56,6 +56,6 @@ Son tres categorias de test complementarias, cada una sobre una capa distinta.
 
 ## Clasificacion frente al coverage gate (MEF-ADR-0014)
 
-- `<RootNamespace>.Projections` (el worker): **medido** -- su `Program.cs` y los `ConfiguracionMartenProjections{Dominio}.cs` siguen siendo composicion pura y quedan **excluidos** (cubiertos por este config-test, no por cobertura de linea), pero las clases de proyeccion (`{Concepto}Projection.cs`) llevan logica real (que evento aplica, como transforma el documento) y pasan a **medidas** -- las cubren los unit tests de proyeccion de la seccion anterior, complementados por este config-test.
+- `<RootNamespace>.Projections` (el worker): **medido** -- su `Program.cs` y los `ConfiguracionMartenProjections{Dominio}.cs` siguen siendo composicion pura y quedan **excluidos** (cubiertos por este config-test, no por cobertura de linea), pero las clases de proyeccion (`{Concepto}Projection.cs`) llevan logica real (que evento aplica, como transforma el documento) y pasan a **medidas** -- las cubren los unit tests de proyeccion que ubica el encabezado de este documento, complementados -- no sustituidos -- por este config-test.
 - `<RootNamespace>.ReadModels`: **excluido** uniformemente -- con las clases de proyeccion movidas al worker, lo unico que queda aqui son records de read model sin comportamiento, categoria "records DTO sin metodos" que MEF-ADR-0014 ya excluye.
 - `<RootNamespace>.Projections.Tests` (config-test y unit tests de proyeccion): vive en `tests/`, fuera del alcance del gate.

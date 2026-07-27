@@ -100,8 +100,9 @@ Recuerda al usuario el resto de la cadena de issues relacionados:
 ```
 Worker de proyecciones, ReadModels y config-test base generados. Siguiente:
   1. domain-scaffolder (issue #370) registra el named store de cada dominio que
-     adopte proyecciones dentro del seam ConfiguracionMartenProjections y crea
-     su carpeta en ReadModels.
+     adopte proyecciones dentro del seam ConfiguracionMartenProjections (no
+     crea carpetas: las de los dominios ya existentes las dejo este scaffold,
+     en ReadModels y en la raiz del worker).
   2. projection-test-writer/projection-implementer (issue #365) agregan sobre
      Projections.Tests las guardas por dominio (partial + ciclo de vida Async),
      reutilizando el helper AssertOpcionesDeEvento para la guarda de metadata.

@@ -101,7 +101,7 @@ Si los tests referencian tipos que no existen, crealos con `throw new NotImpleme
 
 1. Lee el issue (`tipo:projection`) e identifica el read model, el nivel de receta (N1/N2/N3) y las queries GET que expone.
 2. Consulta el Skill `projections` (ya precargado) y abre el recurso de Nivel 3 que resuelva tu duda concreta -- naming exacto, arbol de decision, plantilla del config-test, o las read APIs.
-3. Explora convenciones existentes del dominio (`ls src/<RootNamespace>.ReadModels/`, `ls tests/`), igual que `test-writer.md`.
+3. Explora convenciones existentes del dominio (`ls src/<RootNamespace>.ReadModels/`, `ls src/<RootNamespace>.Projections/`, `ls tests/<RootNamespace>.Projections.Tests/`), igual que `test-writer.md` -- los tres proyectos que toca un issue read-side: el record en `ReadModels`, la clase de proyeccion en el worker y tus tests.
 4. Escribe los tests de "Que escribes" y los stubs minimos que compilen.
 5. Verifica que compila (`dotnet build`). **No** corras `dotnet test` -- ya sabes que fallara.
 6. Commitea:

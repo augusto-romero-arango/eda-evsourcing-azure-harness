@@ -74,7 +74,7 @@ src/<RootNamespace>.{Dominio}/
 |---|---|---|
 | Query (Function/metodo GET) | `Obtener{X}` (item por id) / `Listar{X}s` (coleccion) | `ObtenerTurno`, `ListarTurnos` |
 | Read model (view) | `{Concepto}View` | `TurnoView` |
-| Clase de proyeccion (companion, N2) | `{Concepto}Projection` (`partial`, mismo stem que su View) | `ResumenEquipoProjection` -> `ResumenEquipoView` |
+| Clase de proyeccion (companion, N1/N2) | `{Concepto}Projection` (`partial`, en el worker, mismo stem que su View) | `ResumenEquipoProjection` -> `ResumenEquipoView` |
 | Marker del named store de proyecciones | `I{Dominio}ProjectionStore` | `IVentasProjectionStore` |
 | Seam de composicion de proyecciones (por dominio) | `ConfiguracionMartenProjections{Dominio}`, metodo `Configurar{Dominio}` | `ConfiguracionMartenProjectionsVentas.ConfigurarVentas()` |
 
