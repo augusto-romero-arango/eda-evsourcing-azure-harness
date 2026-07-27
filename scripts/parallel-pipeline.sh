@@ -10,13 +10,19 @@
 #   ./scripts/parallel-pipeline.sh 42 43 44 --keep-status               # no borrar status files al terminar
 #
 # Enrutamiento automatico: sin --pipeline, cada issue se enruta segun su label tipo:*
-#   tipo:feature|refactor       -> tdd-pipeline.sh
+#   tipo:feature|refactor|projection -> tdd-pipeline.sh
 #   tipo:tooling               -> tooling-pipeline.sh
 #   tipo:infra                 -> SKIP (warning, no aborta)
 #   sin label tipo:*           -> SKIP (warning, no aborta)
 #
 # Flujo: lanza N pipelines en background (cada uno en su worktree aislado),
 # monitorea el progreso consolidado, y crea los PRs sin merge automatico.
+#
+# Serializacion de tipo:projection (issue #372): todas las proyecciones de un
+# mismo Bounded Context comparten los archivos del worker de proyecciones
+# (MEF-ADR-0034), asi que dos issues tipo:projection NUNCA corren a la vez --
+# se serializan entre si dentro del lote, sin afectar el paralelismo del resto
+# de issues ni requerir deteccion de BC (un repo = un BC, MEF-ADR-0023).
 #
 # Compatible con bash 3.2+ (macOS nativo)
 
@@ -154,6 +160,7 @@ log "Log: $LOG_FILE_ABS"
 log "Verificando estado de los issues y resolviendo pipelines..."
 VALID_ISSUES=()
 ISSUE_PIPELINES=()
+ISSUE_IS_PROJECTION=()   # "true"/"false" paralelo a VALID_ISSUES (issue #372)
 for ISSUE_NUM in "${ISSUE_NUMS[@]}"; do
     STATE_AND_PIPELINE=$(resolve_pipeline_with_state "$ISSUE_NUM" "$PIPELINE_OVERRIDE")
     ISSUE_STATE="${STATE_AND_PIPELINE%%|*}"
@@ -172,6 +179,11 @@ for ISSUE_NUM in "${ISSUE_NUMS[@]}"; do
 
     VALID_ISSUES+=("$ISSUE_NUM")
     ISSUE_PIPELINES+=("$RESOLVED")
+    if is_tipo_projection "$ISSUE_NUM"; then
+        ISSUE_IS_PROJECTION+=("true")
+    else
+        ISSUE_IS_PROJECTION+=("false")
+    fi
     log "Issue #$ISSUE_NUM -> $(basename "$RESOLVED")"
 done
 
@@ -183,15 +195,35 @@ ISSUE_NUMS=("${VALID_ISSUES[@]}")
 TOTAL=${#ISSUE_NUMS[@]}
 log "$TOTAL issue(s) valido(s): ${ISSUE_NUMS[*]}"
 
-# ─── Lanzar pipelines en paralelo ─────────────────────────────────────────────
-PIDS=()          # PID de cada proceso background
-STATUS_FILES=()  # Archivo status correspondiente a cada PID
-ISSUE_LOGS=()    # Log individual de cada issue
-START_TIMES=()   # Timestamp de inicio de cada pipeline
+PROJECTION_COUNT=0
+for _flag in "${ISSUE_IS_PROJECTION[@]}"; do
+    [ "$_flag" = "true" ] && PROJECTION_COUNT=$((PROJECTION_COUNT + 1))
+done
+if [ "$PROJECTION_COUNT" -gt 1 ]; then
+    warn "$PROJECTION_COUNT issues tipo:projection detectados --- se serializaran entre si (comparten el worker de proyecciones del BC, MEF-ADR-0034)."
+fi
 
+# ─── Lanzar pipelines en paralelo ─────────────────────────────────────────────
+# Los issues tipo:projection de un mismo lote se serializan entre si (nunca 2
+# corriendo a la vez), ademas de respetar --max-parallel para el resto (issue
+# #372). PIDS/STATUS_FILES/ISSUE_LOGS/START_TIMES quedan indexados IGUAL que
+# ISSUE_NUMS/ISSUE_PIPELINES/ISSUE_IS_PROJECTION (asignacion por indice, no
+# '+='), porque el scheduler puede lanzar issues fuera de orden cuando un
+# tipo:projection anterior todavia bloquea su turno -- el dashboard y la
+# recoleccion de resultados mas abajo dependen de esa correspondencia posicional.
+PIDS=()
+STATUS_FILES=()
+ISSUE_LOGS=()
+START_TIMES=()
+
+# launch_pipeline <idx>
+#
+# Lanza el issue en la posicion <idx> de ISSUE_NUMS/ISSUE_PIPELINES y registra
+# PID/status/log/inicio en esa MISMA posicion.
 launch_pipeline() {
-    local issue="$1"
-    local pipeline_script="$2"
+    local idx="$1"
+    local issue="${ISSUE_NUMS[$idx]}"
+    local pipeline_script="${ISSUE_PIPELINES[$idx]}"
     # Determinar tipo de pipeline segun el script
     local pipeline_type="tdd"
     case "$(basename "$pipeline_script")" in
@@ -205,42 +237,70 @@ launch_pipeline() {
     "$pipeline_script" "$issue" --status-file "$status_file" \
         >"$issue_log" 2>&1 &
 
-    PIDS+=($!)
-    STATUS_FILES+=("$PIPELINE_DIR_ABS/$status_file")
-    ISSUE_LOGS+=("$issue_log")
-    START_TIMES+=("$(date +%s)")
+    PIDS[$idx]=$!
+    STATUS_FILES[$idx]="$PIPELINE_DIR_ABS/$status_file"
+    ISSUE_LOGS[$idx]="$issue_log"
+    START_TIMES[$idx]="$(date +%s)"
 
     log "Lanzado issue #$issue con $(basename "$pipeline_script") (PID $!) -> $status_file"
 }
 
-if [ "$MAX_PARALLEL" -eq 0 ] || [ "$TOTAL" -le "$MAX_PARALLEL" ]; then
-    # Lanzar todos de una vez
-    for i in "${!ISSUE_NUMS[@]}"; do
-        launch_pipeline "${ISSUE_NUMS[$i]}" "${ISSUE_PIPELINES[$i]}"
+# running_count
+#
+# Cuenta procesos lanzados que siguen vivos. PIDS puede tener huecos (indices
+# aun no lanzados); "${!PIDS[@]}" solo recorre los que ya tienen valor.
+running_count() {
+    local c=0 i
+    for i in "${!PIDS[@]}"; do
+        [ -n "${PIDS[$i]:-}" ] && kill -0 "${PIDS[$i]}" 2>/dev/null && c=$((c + 1))
     done
-else
-    # Lanzar los primeros N y agregar mas a medida que terminan
-    PENDING_IDX=0
-    # Lanzar los primeros MAX_PARALLEL
-    for ((i=0; i<MAX_PARALLEL && i<TOTAL; i++)); do
-        launch_pipeline "${ISSUE_NUMS[$i]}" "${ISSUE_PIPELINES[$i]}"
-        PENDING_IDX=$((PENDING_IDX + 1))
-    done
+    echo "$c"
+}
 
-    # A medida que terminen, lanzar los siguientes
-    while [ "$PENDING_IDX" -lt "$TOTAL" ]; do
-        sleep 5
-        for i in "${!PIDS[@]}"; do
-            if [ -n "${PIDS[$i]}" ] && ! kill -0 "${PIDS[$i]}" 2>/dev/null; then
-                # Este slot termino, lanzar el siguiente pendiente
-                if [ "$PENDING_IDX" -lt "$TOTAL" ]; then
-                    launch_pipeline "${ISSUE_NUMS[$PENDING_IDX]}" "${ISSUE_PIPELINES[$PENDING_IDX]}"
-                    PENDING_IDX=$((PENDING_IDX + 1))
-                fi
-            fi
-        done
+# is_projection_running
+#
+# Retorna 0 si algun issue tipo:projection ya lanzado sigue vivo.
+is_projection_running() {
+    local i
+    for i in "${!PIDS[@]}"; do
+        if [ -n "${PIDS[$i]:-}" ] && [ "${ISSUE_IS_PROJECTION[$i]}" = "true" ] \
+            && kill -0 "${PIDS[$i]}" 2>/dev/null; then
+            return 0
+        fi
     done
-fi
+    return 1
+}
+
+# Scheduler: recorre los pendientes en cada pasada y lanza los que ya pueden
+# correr (can_launch_now de _pipeline-common.sh). Un pendiente bloqueado no
+# detiene a los demas: se reintenta en la siguiente pasada mientras otros
+# pendientes de tipo distinto avanzan.
+PENDING_IDXS=()
+for ((i = 0; i < TOTAL; i++)); do PENDING_IDXS+=("$i"); done
+
+while [ ${#PENDING_IDXS[@]} -gt 0 ]; do
+    NEXT_PENDING=()
+    for idx in "${PENDING_IDXS[@]}"; do
+        _proj_running="false"
+        is_projection_running && _proj_running="true"
+        if can_launch_now "$MAX_PARALLEL" "$(running_count)" "${ISSUE_IS_PROJECTION[$idx]}" "$_proj_running"; then
+            launch_pipeline "$idx"
+        else
+            NEXT_PENDING+=("$idx")
+        fi
+    done
+    # Reasignar evitando "${NEXT_PENDING[@]}" cuando queda vacio: en bash 3.2
+    # (macOS) un array declarado pero sin elementos se trata como "unset" bajo
+    # 'set -u' y expandirlo aborta el script (fijo en bash 4.4+, no disponible aqui).
+    if [ ${#NEXT_PENDING[@]} -gt 0 ]; then
+        PENDING_IDXS=("${NEXT_PENDING[@]}")
+    else
+        PENDING_IDXS=()
+    fi
+    if [ ${#PENDING_IDXS[@]} -gt 0 ]; then
+        sleep 5
+    fi
+done
 
 # ─── Función de lectura de status ────────────────────────────────────────────
 read_status_field() {

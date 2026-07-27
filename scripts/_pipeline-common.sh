@@ -674,6 +674,9 @@ _pc_script_dir() {
 # issue dado.
 # - Sin override: consulta labels del issue via gh y enruta automaticamente
 # - Con override "tdd" o "tooling": retorna el pipeline forzado sin consultar labels
+# - Issues tipo:feature, tipo:refactor o tipo:projection retornan tdd-pipeline.sh
+#   (tipo:projection despacha a la rama read-side dentro de tdd-pipeline.sh --
+#   issue #371, MEF-ADR-0034/0035)
 # - Issues tipo:infra retornan "SKIP:infra"
 # - Issues sin label tipo:* retornan "SKIP:no-tipo"
 resolve_pipeline() {
@@ -700,11 +703,15 @@ resolve_pipeline() {
 # _resolve_from_labels <labels_text>
 # Funcion interna: determina el pipeline (ruta absoluta) a partir de texto de
 # labels (una por linea). Los sentinels SKIP:* se retornan sin alterar.
+#
+# tipo:projection enruta a tdd-pipeline.sh (issue #372): ese script ya trae la
+# rama read-side (issue #371) que detecta el label internamente y despacha
+# projection-test-writer/projection-implementer en vez de test-writer/implementer.
 _resolve_from_labels() {
     local labels="$1"
     local sd
     sd="$(_pc_script_dir)"
-    if echo "$labels" | grep -qE '^tipo:(feature|refactor)$'; then
+    if echo "$labels" | grep -qE '^tipo:(feature|refactor|projection)$'; then
         echo "$sd/tdd-pipeline.sh"
     elif echo "$labels" | grep -q '^tipo:tooling$'; then
         echo "$sd/tooling-pipeline.sh"
@@ -751,6 +758,65 @@ resolve_pipeline_with_state() {
     fi
 
     echo "$state|$(_resolve_from_labels "$labels")"
+}
+
+# --- Serializacion de issues tipo:projection dentro de un lote paralelo ------
+#
+# Todas las proyecciones de un mismo Bounded Context comparten los archivos del
+# worker de proyecciones (Projections/Program.cs, ConfiguracionMartenProjections
+# -- MEF-ADR-0034): dos issues tipo:projection corriendo a la vez en
+# parallel-pipeline.sh producirian dos PRs read-side editando el mismo archivo,
+# con el conflicto de merge resuelto por el segundo en llegar. El contrato de un
+# solo Bounded Context por repo (MEF-ADR-0023) mas la homogeneidad de repo que
+# parallel-pipeline.sh ya exige hacen innecesaria cualquier deteccion de BC: dentro
+# de una misma invocacion, CUALQUIER par de issues tipo:projection es incompatible
+# entre si (issue #372).
+
+# _is_tipo_projection_from_labels <labels_text>
+#
+# Funcion interna pura: determina si el texto de labels (una por linea, mismo
+# formato que _resolve_from_labels) incluye el label EXACTO tipo:projection (no
+# un prefijo como tipo:projection-experimental).
+_is_tipo_projection_from_labels() {
+    echo "$1" | grep -qx 'tipo:projection'
+}
+
+# is_tipo_projection <issue_num>
+#
+# Retorna 0 si el issue tiene el label tipo:projection, 1 en caso contrario
+# (incluye cuando gh no pudo resolver los labels -- fallo silencioso: el issue
+# simplemente no se trata como projection, igual que _resolve_from_labels cae a
+# SKIP:no-tipo si gh falla).
+is_tipo_projection() {
+    local issue="$1"
+    local labels
+    labels=$(gh issue view "$issue" --json labels -q '.labels[].name' 2>/dev/null)
+    _is_tipo_projection_from_labels "$labels"
+}
+
+# can_launch_now <max_parallel> <running_count> <is_projection> <projection_running>
+#
+# Decide si un issue pendiente puede lanzarse ya, dado el estado actual del
+# lote. Pura (sin gh, sin procesos, sin arrays) para poder testear las
+# combinaciones sin lanzar background jobs reales -- el llamador (scheduler de
+# parallel-pipeline.sh) es quien calcula running_count/projection_running
+# inspeccionando sus propios PIDs.
+#
+#   <max_parallel>       entero; 0 = sin limite
+#   <running_count>      entero; cuantos pipelines siguen vivos ahora mismo
+#   <is_projection>      "true"/"false"; el pendiente evaluado es tipo:projection
+#   <projection_running> "true"/"false"; ya hay un tipo:projection vivo ahora mismo
+#
+# Retorna 0 si puede lanzarse, 1 si debe esperar.
+can_launch_now() {
+    local max_parallel="$1" running="$2" is_projection="$3" projection_running="$4"
+    if [ "$max_parallel" -gt 0 ] && [ "$running" -ge "$max_parallel" ]; then
+        return 1
+    fi
+    if [ "$is_projection" = "true" ] && [ "$projection_running" = "true" ]; then
+        return 1
+    fi
+    return 0
 }
 
 # find_open_pr_for_branch <branch_name> [repo_slug] [base_branch]

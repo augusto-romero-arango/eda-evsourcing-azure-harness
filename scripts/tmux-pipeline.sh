@@ -503,7 +503,7 @@ ${BOLD}Uso:${NC}
 
 ${BOLD}Enrutamiento automatico:${NC}
   Sin --pipeline ni --tooling/--infra, el pipeline se determina por el label tipo:* del issue:
-    tipo:feature|refactor       -> tdd-pipeline.sh
+    tipo:feature|refactor|projection -> tdd-pipeline.sh
     tipo:tooling               -> tooling-pipeline.sh
     tipo:infra                 -> SKIP (usar --infra explicitamente)
 

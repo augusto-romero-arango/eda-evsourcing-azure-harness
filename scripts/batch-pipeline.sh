@@ -8,7 +8,7 @@
 #   ./scripts/batch-pipeline.sh 42 43 --stop-on-error             # abortar en primer fallo
 #
 # Enrutamiento automatico: sin --pipeline, cada issue se enruta segun su label tipo:*
-#   tipo:feature|refactor       -> tdd-pipeline.sh
+#   tipo:feature|refactor|projection -> tdd-pipeline.sh
 #   tipo:tooling               -> tooling-pipeline.sh
 #   tipo:infra                 -> SKIP (warning, no aborta)
 #   sin label tipo:*           -> SKIP (warning, no aborta)
