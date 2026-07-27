@@ -160,6 +160,8 @@ Doctrina pesada empaquetada con *progressive disclosure* (MEF-ADR-0033); no son 
 |---|---|
 | `projections` (`skills/projections/`) | Read-side: recetas de proyección Marten (N1/N2/N3), estilo canónico de read model, read APIs sobre `QuerySession` tenant-scoped, naming de Functions de query y config-test del worker (MEF-ADR-0035/0034/0006) |
 
+## Agentes
+
 El catálogo y propósito de cada agente vive en el frontmatter `description` de `agents/*.md` (listables con `ls agents/`).
 
 ## ADRs del marco
