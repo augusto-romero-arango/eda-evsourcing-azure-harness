@@ -160,29 +160,7 @@ Doctrina pesada empaquetada con *progressive disclosure* (MEF-ADR-0033); no son 
 |---|---|
 | `projections` (`skills/projections/`) | Read-side: recetas de proyección Marten (N1/N2/N3), estilo canónico de read model, read APIs sobre `QuerySession` tenant-scoped, naming de Functions de query y config-test del worker (MEF-ADR-0035/0034/0006) |
 
-## Agentes disponibles
-
-| Agente | Cuándo usarlo |
-|---|---|
-| `planner` | Knowledge crunching, crear/refinar issues, organizar backlog |
-| `event-stormer` | Sesión de descubrimiento de dominio (genera field notes) |
-| `eda-modeler` | Formaliza flujos y aggregates en `docs/eda/` |
-| `historiador` | Consolida field notes en la bitácora del día |
-| `domain-scaffolder` | Crea scaffold de un nuevo dominio |
-| `infra-base-scaffolder` | Genera la infraestructura base del consumidor (8 módulos + entorno) en greenfield, más los 3 módulos opt-in de Container App del worker de proyecciones cuando `projections.enabled` (MEF-ADR-0034) |
-| `projections-scaffolder` | Genera el worker de proyecciones (`{RootNamespace}.Projections`: Program.cs, seam base, Dockerfile), `{RootNamespace}.ReadModels` y el config-test base `{RootNamespace}.Projections.Tests` (helper `AssertOpcionesDeEvento`) cuando el BC habilita `projections.enabled` (fase 1+2, MEF-ADR-0034) |
-| `apim-gateway-scaffolder` | Genera el gateway APIM (validate-jwt WorkOS AuthKit + claims→headers) fiel al catálogo de trampas de MEF-ADR-0032 |
-| `workos-identity-scaffolder` | Genera el adapter WorkOS (IIdentityProvider + WorkOsIdentityProvider) y su wiring en un dominio, fiel a la referencia de Cosmos.ControlPlane (MEF-ADR-0032) |
-| `test-writer` | Fase roja del pipeline TDD |
-| `implementer` | Fase verde del pipeline TDD |
-| `projection-test-writer` | Fase roja read-side: unit tests de proyeccion (Create/Apply/ShouldDelete), config-test del worker y composicion de la Function GET |
-| `projection-implementer` | Fase verde read-side: proyecciones, read models, registro del store (Configurar{Dominio}) y Functions GET |
-| `reviewer` | Revisión antes de crear PR |
-| `smoke-test-writer` | Smoke tests contra entorno dev |
-| `infra-writer` / `infra-reviewer` / `infra-bootstrap` | Etapas del pipeline IaC (escritura y revision estatica local; el plan y el apply corren en CI, MEF-ADR-0022) |
-| `pr-sync` | Integra PRs de un batch paralelo |
-| `bug-investigator` | Investiga errores del entorno desplegado |
-| `tooling-investigator` | Investiga errores del tooling local |
+El catálogo y propósito de cada agente vive en el frontmatter `description` de `agents/*.md` (listables con `ls agents/`).
 
 ## ADRs del marco
 
