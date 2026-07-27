@@ -70,6 +70,14 @@ IS_REFACTOR=false
 REFACTOR_JUSTIFICATION=""
 BASELINE_TEST_COUNT="?"
 REMOVED_TESTS=0
+# Rama read-side (issue #371): tipo:projection despacha projection-test-writer/
+# projection-implementer en vez de test-writer/implementer. reviewer y
+# smoke-test-writer se mantienen (ya son read-side-aware via skills: projections).
+IS_PROJECTION=false
+STAGE1_AGENT="test-writer"
+STAGE2_AGENT="implementer"
+STAGE1_LABEL="Test Writer"
+STAGE2_LABEL="Implementer"
 
 _strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
 _log_file()   { echo -e "$1" | _strip_ansi >> "${LOG_FILE_ABS:-$LOG_FILE}"; }
@@ -264,7 +272,7 @@ ISSUE_TITLE=""
 
 if [ -n "$ISSUE_NUM" ]; then
     log "Descargando issue #$ISSUE_NUM..."
-    ISSUE_JSON=$(gh issue view "$ISSUE_NUM" --json number,title,body,state 2>>"${LOG_FILE_ABS:-$LOG_FILE}") \
+    ISSUE_JSON=$(gh issue view "$ISSUE_NUM" --json number,title,body,state,labels 2>>"${LOG_FILE_ABS:-$LOG_FILE}") \
         || abort "No se pudo obtener el issue #$ISSUE_NUM"
     ISSUE_STATE=$(echo "$ISSUE_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['state'])" 2>/dev/null || echo "UNKNOWN")
     if [ "$ISSUE_STATE" != "OPEN" ]; then
@@ -277,6 +285,25 @@ if [ -n "$ISSUE_NUM" ]; then
 
 $ISSUE_BODY"
     log "Issue: $ISSUE_TITLE"
+
+    # Rama read-side (issue #371, CA-4): la deteccion usa el label tipo:projection
+    # del issue, con el mismo criterio de match exacto sobre el NOMBRE del label que
+    # _resolve_from_labels en _pipeline-common.sh (grep -x, no substring). Se extrae
+    # con python3 desde el JSON ya descargado -- sin segunda llamada a gh y sin
+    # depender de que gh serialice sin espacios: un grep sobre el JSON crudo se
+    # rompe en silencio si el formato cambia y despacharia los agentes write-side
+    # sobre un issue read-side, sin error visible en un pipeline headless.
+    ISSUE_LABELS=$(echo "$ISSUE_JSON" \
+        | python3 -c "import sys,json; print('\n'.join(l['name'] for l in json.load(sys.stdin).get('labels') or []))" 2>/dev/null \
+        || echo "")
+    if echo "$ISSUE_LABELS" | grep -qx 'tipo:projection'; then
+        IS_PROJECTION=true
+        STAGE1_AGENT="projection-test-writer"
+        STAGE2_AGENT="projection-implementer"
+        STAGE1_LABEL="Projection Test Writer"
+        STAGE2_LABEL="Projection Implementer"
+        log "Label tipo:projection detectado — despachando trio read-side ($STAGE1_AGENT / $STAGE2_AGENT)"
+    fi
 
 elif [ -n "$INPUT_FILE" ]; then
     [ -f "$INPUT_FILE" ] || abort "Archivo no encontrado: $INPUT_FILE"
@@ -446,9 +473,9 @@ run_agent() {
 
     echo "[$(date +%H:%M:%S)] === STAGE $stage: $agent ===" >> "$EVENTS_LOG_ABS"
     case "$agent" in
-        test-writer) AGENT_TW_RES="running" ;;
-        implementer) AGENT_IM_RES="running" ;;
-        reviewer)    AGENT_RV_RES="running" ;;
+        test-writer|projection-test-writer) AGENT_TW_RES="running" ;;
+        implementer|projection-implementer) AGENT_IM_RES="running" ;;
+        reviewer)                           AGENT_RV_RES="running" ;;
     esac
     update_status "$stage-$agent" "running"
     log "Invocando $agent..."
@@ -555,9 +582,9 @@ run_agent() {
                 # Continuar sin abortar — los gates del pipeline verificaran el resultado
             else
                 case "$agent" in
-                    test-writer) AGENT_TW_DUR=$elapsed; AGENT_TW_RES="failed" ;;
-                    implementer) AGENT_IM_DUR=$elapsed; AGENT_IM_RES="failed" ;;
-                    reviewer)    AGENT_RV_DUR=$elapsed; AGENT_RV_RES="failed" ;;
+                    test-writer|projection-test-writer) AGENT_TW_DUR=$elapsed; AGENT_TW_RES="failed" ;;
+                    implementer|projection-implementer) AGENT_IM_DUR=$elapsed; AGENT_IM_RES="failed" ;;
+                    reviewer)                           AGENT_RV_DUR=$elapsed; AGENT_RV_RES="failed" ;;
                 esac
                 update_status "$stage-$agent" "failed"
                 echo -e "\n${RED}── Ultimas lineas del log de $agent:${NC}"
@@ -591,7 +618,7 @@ auto_commit_if_needed() {
 
 # ─── STAGE 1: Test Writer (fase roja) ────────────────────────────────────────
 if [ "$FROM_STAGE" -le 1 ]; then
-    header "Stage 1: Test Writer (fase roja)"
+    header "Stage 1: $STAGE1_LABEL (fase roja)"
 
     STAGE1_PROMPT="Estás en el directorio raíz del proyecto ${HARNESS_PROJECT_NAME}.
 
@@ -599,11 +626,11 @@ Contexto de la historia de usuario a implementar:
 
 $ISSUE_CONTEXT
 
-Tu tarea: escribe los tests unitarios para esta HU y crea los stubs mínimos de compilación. Sigue todas las instrucciones de tu rol de test-writer.
+Tu tarea: escribe los tests unitarios para esta HU y crea los stubs mínimos de compilación. Sigue todas las instrucciones de tu rol de $STAGE1_AGENT.
 
 PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
-    run_agent "1" "test-writer" "$STAGE1_PROMPT"
+    run_agent "1" "$STAGE1_AGENT" "$STAGE1_PROMPT"
 
     # Detectar señal de refactor ANTES del gate de "no genero archivos".
     # Si el agente concluyo refactoring puro, la senal es la unica evidencia
@@ -630,17 +657,17 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
     if [ "$IS_REFACTOR" = false ] \
        && git -C "$WORKTREE_PATH" diff --quiet "$SNAPSHOT_COMMIT" HEAD 2>/dev/null \
        && [ -z "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/)" ]; then
-        STAGE1_LOG="$LOG_DIR_ABS/stage-1-test-writer-${TIMESTAMP}-issue-${ISSUE_NUM}.log"
+        STAGE1_LOG="$LOG_DIR_ABS/stage-1-${STAGE1_AGENT}-${TIMESTAMP}-issue-${ISSUE_NUM}.log"
         if [ -f "$STAGE1_LOG" ] && grep -qiE "refactor.*pur|REFACTOR_ONLY|refactor-signal|refactoring puro" "$STAGE1_LOG"; then
-            abort "El test-writer detecto refactor puro pero no creo el archivo señal en $REFACTOR_SIGNAL_PATH (ni en la ubicacion legacy). Probable causa: el runtime intercepto la escritura. Revisa el log: $STAGE1_LOG"
+            abort "El $STAGE1_AGENT detecto refactor puro pero no creo el archivo señal en $REFACTOR_SIGNAL_PATH (ni en la ubicacion legacy). Probable causa: el runtime intercepto la escritura. Revisa el log: $STAGE1_LOG"
         fi
-        abort "El test-writer no generó ningún archivo. Verifica que la definición del agente (.claude/agents/test-writer.md) existe en el repo."
+        abort "El $STAGE1_AGENT no generó ningún archivo. Verifica que la definición del agente (.claude/agents/${STAGE1_AGENT}.md) existe en el repo."
     fi
 
     # Gate 1a: debe compilar
     log "Gate: verificando compilación..."
     dotnet build "$WORKTREE_PATH" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 \
-        || abort "Stage 1 fallido: el proyecto no compila después del test-writer. Revisa $LOG_DIR/stage-1-test-writer.log"
+        || abort "Stage 1 fallido: el proyecto no compila después del $STAGE1_AGENT. Revisa $LOG_DIR/stage-1-${STAGE1_AGENT}.log"
 
     if [ "$IS_REFACTOR" = false ]; then
         # Gate 1b: los tests nuevos deben FALLAR (exit code != 0)
@@ -651,10 +678,10 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
         TEST_OUTPUT_G1=$(run_tests_projects "$WORKTREE_PATH" --no-build 2>&1) || g1_rc=$?
         echo "$TEST_OUTPUT_G1" | tee -a "${LOG_FILE_ABS:-$LOG_FILE}" >/dev/null
         if [ "$g1_rc" -eq 0 ]; then
-            abort "Stage 1 fallido: todos los tests pasan (exit code: 0) — el test-writer pudo haber escrito implementacion real en lugar de stubs"
+            abort "Stage 1 fallido: todos los tests pasan (exit code: 0) — el $STAGE1_AGENT pudo haber escrito implementacion real en lugar de stubs"
         fi
         if [ "$g1_rc" -eq 8 ]; then
-            abort "Stage 1 fallido: no se encontraron tests para ejecutar (exit code: 8) — el test-writer no genero tests validos"
+            abort "Stage 1 fallido: no se encontraron tests para ejecutar (exit code: 8) — el $STAGE1_AGENT no genero tests validos"
         fi
         log "Fase roja confirmada (exit code: $g1_rc)"
     fi
@@ -678,7 +705,7 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
 
     AGENT_TW_DUR=$LAST_AGENT_DURATION
     AGENT_TW_RES="passed"
-    update_status "1-test-writer" "passed"
+    update_status "1-${STAGE1_AGENT}" "passed"
     success "Stage 1 completado — fase roja confirmada"
 else
     log "Saltando Stage 1 (--from-stage $FROM_STAGE)"
@@ -688,9 +715,9 @@ fi
 if [ "$IS_REFACTOR" = false ]; then
     STAGE1_FILES=$(git -C "$WORKTREE_PATH" diff --name-only "$SNAPSHOT_COMMIT"..HEAD)
     if [ -z "$STAGE1_FILES" ]; then
-        abort "No se detectaron archivos nuevos después de Stage 1. El test-writer no generó ni commitió cambios válidos. Verifica el log del test-writer."
+        abort "No se detectaron archivos nuevos después de Stage 1. El $STAGE1_AGENT no generó ni commitió cambios válidos. Verifica el log del $STAGE1_AGENT."
     fi
-    log "Archivos del test-writer:"
+    log "Archivos del $STAGE1_AGENT:"
     echo "$STAGE1_FILES" | while read -r f; do log "  + $f"; done
 else
     STAGE1_FILES=""
@@ -701,9 +728,9 @@ fi
 if [ "$IS_REFACTOR" = true ]; then
     log "Saltando Stage 2 (refactoring puro — no hay tests que hacer pasar)"
     AGENT_IM_RES="skipped"
-    update_status "2-implementer" "skipped"
+    update_status "2-${STAGE2_AGENT}" "skipped"
 elif [ "$FROM_STAGE" -le 2 ]; then
-    header "Stage 2: Implementer (fase verde)"
+    header "Stage 2: $STAGE2_LABEL (fase verde)"
 
     STAGE2_PROMPT="Estás en el directorio raíz del proyecto ${HARNESS_PROJECT_NAME}.
 
@@ -711,14 +738,14 @@ Contexto de la historia de usuario:
 
 $ISSUE_CONTEXT
 
-El test-writer creó/modificó los siguientes archivos:
+El $STAGE1_AGENT creó/modificó los siguientes archivos:
 $STAGE1_FILES
 
-Tu tarea: implementa la lógica de negocio para hacer pasar todos los tests. Sigue todas las instrucciones de tu rol de implementer.
+Tu tarea: implementa la lógica de negocio para hacer pasar todos los tests. Sigue todas las instrucciones de tu rol de $STAGE2_AGENT.
 
 PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
-    run_agent "2" "implementer" "$STAGE2_PROMPT"
+    run_agent "2" "$STAGE2_AGENT" "$STAGE2_PROMPT"
 
     # Gate 2: verificar tests
     log "Gate: verificando fase verde..."
@@ -728,12 +755,12 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
     if [ "$g2_rc" -ne 0 ]; then
         BLOCKAGE_REPORT="$WORKTREE_PATH/.claude/pipeline/blockage-report.md"
         if [ -f "$BLOCKAGE_REPORT" ]; then
-            warn "Stage 2: hay tests rojos pero el implementer reporto bloqueo — continuando al reviewer"
-            echo "[$(date +%H:%M:%S)] BLOCKAGE: implementer reporto tests bloqueados, continuando" >> "$EVENTS_LOG_ABS"
+            warn "Stage 2: hay tests rojos pero el $STAGE2_AGENT reporto bloqueo — continuando al reviewer"
+            echo "[$(date +%H:%M:%S)] BLOCKAGE: $STAGE2_AGENT reporto tests bloqueados, continuando" >> "$EVENTS_LOG_ABS"
             HAS_BLOCKAGE=true
         else
             echo "$TEST_OUTPUT_G2" | tail -20
-            abort "Stage 2 fallido: no todos los tests pasan después del implementer (exit code: $g2_rc). Revisa $LOG_DIR_ABS/stage-2-implementer.log"
+            abort "Stage 2 fallido: no todos los tests pasan después del $STAGE2_AGENT (exit code: $g2_rc). Revisa $LOG_DIR_ABS/stage-2-${STAGE2_AGENT}.log"
         fi
     fi
 
@@ -747,11 +774,11 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
     AGENT_IM_DUR=$LAST_AGENT_DURATION
     if [ "$HAS_BLOCKAGE" = true ]; then
         AGENT_IM_RES="blocked"
-        update_status "2-implementer" "blocked"
+        update_status "2-${STAGE2_AGENT}" "blocked"
         warn "Stage 2 completado con tests bloqueados — el reviewer intentara resolverlos"
     else
         AGENT_IM_RES="passed"
-        update_status "2-implementer" "passed"
+        update_status "2-${STAGE2_AGENT}" "passed"
         success "Stage 2 completado — fase verde confirmada"
     fi
 else
@@ -759,9 +786,18 @@ else
 fi
 
 # ─── STAGE 2b: Smoke Test Writer (condicional) ───────────────────────────────
-# Solo se ejecuta si hay Function Apps modificadas y el proyecto SmokeTests existe
+# Solo se ejecuta si hay Function Apps modificadas y el proyecto SmokeTests existe.
+# Rama read-side (issue #371): las Functions GET de query (Obtener{X}/Listar{X}s,
+# MEF-ADR-0006) viven en una carpeta SIN sufijo "Function" -- el patron 'Function/'
+# no las detecta, asi que el issue tipo:projection suma el patron de esas carpetas
+# para que Stage 2b siga corriendo (CA-1: smoke-test-writer se mantiene).
 if [ "$IS_REFACTOR" != true ] && [ "$FROM_STAGE" -le 2 ]; then
-    SMOKE_FILES=$(git -C "$WORKTREE_PATH" diff --name-only "$SNAPSHOT_COMMIT"..HEAD | grep -E 'Function/' || true)
+    if [ "$IS_PROJECTION" = true ]; then
+        SMOKE_FILES=$(git -C "$WORKTREE_PATH" diff --name-only "$SNAPSHOT_COMMIT"..HEAD \
+            | grep -E 'Function/|/(Obtener|Listar)[A-Za-z0-9]*/FunctionEndpoint\.cs$' || true)
+    else
+        SMOKE_FILES=$(git -C "$WORKTREE_PATH" diff --name-only "$SNAPSHOT_COMMIT"..HEAD | grep -E 'Function/' || true)
+    fi
 
     if [ -n "$SMOKE_FILES" ]; then
         # Detectar dominio desde los archivos modificados
@@ -777,7 +813,7 @@ Contexto de la historia de usuario:
 
 $ISSUE_CONTEXT
 
-El implementer creó/modificó los siguientes endpoints:
+El $STAGE2_AGENT creó/modificó los siguientes endpoints:
 $SMOKE_FILES
 
 Tu tarea: escribe smoke tests para los endpoints nuevos o modificados.
@@ -1042,6 +1078,23 @@ if [ "$IS_REFACTOR" != true ] && [ "$FROM_STAGE" -le 4 ]; then
                 RequestValidator.cs|ServiceBusDeserializador.cs)
                     echo "excluded"; return ;;
             esac
+        fi
+
+        # Carve-out read-side (issue #371, MEF-ADR-0014 + MEF-ADR-0035 seccion 6):
+        # el FunctionEndpoint.cs de una query GET delgada (Obtener{X}/Listar{X}s,
+        # naming.md del Skill projections) no exige cobertura unitaria -- se cubre
+        # por el test de composicion (MEF-ADR-0029) y los smoke tests (MEF-ADR-0013).
+        # Acotado a issues tipo:projection y al naming exacto de esas carpetas (sin
+        # sufijo "Function", a diferencia de un FunctionEndpoint.cs de comando) para
+        # no aflojar el gate del resto: la ausencia del sufijo es parte del criterio,
+        # no solo del comentario -- una carpeta `Obtener...Function` seria un comando
+        # y sigue exigiendo el 95%.
+        local query_dir
+        query_dir=$(basename "$dirname")
+        if [ "$IS_PROJECTION" = true ] && [ "$basename" = "FunctionEndpoint.cs" ] \
+           && [ "${query_dir%Function}" = "$query_dir" ] \
+           && echo "$query_dir" | grep -qE '^(Obtener|Listar)[A-Za-z0-9]*$'; then
+            echo "excluded"; return
         fi
 
         # Logica: patrones que requieren 95%
@@ -1389,19 +1442,19 @@ IMPORTANTE:
 
         CG_REMEDIATION_TIMEOUT=1800  # 30 minutos para remediacion
 
-        log "Relanzando test-writer para remediacion..."
-        LOG_CG_TW="$LOG_DIR_ABS/stage-4-test-writer-patch-${TIMESTAMP}.log"
-        echo "[$(date +%H:%M:%S)] REMEDIATION: relanzando test-writer" >> "$EVENTS_LOG_ABS"
+        log "Relanzando $STAGE1_AGENT para remediacion..."
+        LOG_CG_TW="$LOG_DIR_ABS/stage-4-${STAGE1_AGENT}-patch-${TIMESTAMP}.log"
+        echo "[$(date +%H:%M:%S)] REMEDIATION: relanzando $STAGE1_AGENT" >> "$EVENTS_LOG_ABS"
 
         (cd "$WORKTREE_PATH" && claude -p "$PATCH_TW_PROMPT" \
-            --agent test-writer \
+            --agent "$STAGE1_AGENT" \
             --permission-mode bypassPermissions \
             --append-system-prompt "You are running in non-interactive print mode. No human is present. Use Write and Edit tools directly. Never ask for permissions." \
             --output-format text \
             >"$LOG_CG_TW" 2>&1) &
         CG_TW_PID=$!
         (sleep $CG_REMEDIATION_TIMEOUT && kill -9 $CG_TW_PID 2>/dev/null && \
-            echo "[$(date +%H:%M:%S)] TIMEOUT: coverage test-writer supero ${CG_REMEDIATION_TIMEOUT}s" >> "$EVENTS_LOG_ABS") </dev/null >/dev/null 2>&1 &
+            echo "[$(date +%H:%M:%S)] TIMEOUT: coverage $STAGE1_AGENT supero ${CG_REMEDIATION_TIMEOUT}s" >> "$EVENTS_LOG_ABS") </dev/null >/dev/null 2>&1 &
         CG_TW_WATCHDOG=$!
 
         CG_TW_EXIT=0
@@ -1410,9 +1463,9 @@ IMPORTANTE:
         wait $CG_TW_WATCHDOG 2>/dev/null || true
 
         if [ "$CG_TW_EXIT" -ne 0 ]; then
-            warn "Test-writer de remediacion fallo (exit $CG_TW_EXIT) — continuando con gaps pendientes"
-            echo "[$(date +%H:%M:%S)] REMEDIATION_FAILED: test-writer exit $CG_TW_EXIT" >> "$EVENTS_LOG_ABS"
-            COV_REMEDIATION_SUMMARY="El test-writer de remediacion fallo (exit $CG_TW_EXIT). Los gaps quedan pendientes."
+            warn "$STAGE1_AGENT de remediacion fallo (exit $CG_TW_EXIT) — continuando con gaps pendientes"
+            echo "[$(date +%H:%M:%S)] REMEDIATION_FAILED: $STAGE1_AGENT exit $CG_TW_EXIT" >> "$EVENTS_LOG_ABS"
+            COV_REMEDIATION_SUMMARY="El $STAGE1_AGENT de remediacion fallo (exit $CG_TW_EXIT). Los gaps quedan pendientes."
         else
             # Auto-commit si necesario
             auto_commit_if_needed "cobertura" "test(hu-${ISSUE_NUM:-?}): tests de cobertura para brechas detectadas"
@@ -1423,30 +1476,30 @@ IMPORTANTE:
             dotnet build "$WORKTREE_PATH" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 || cg_build_rc=$?
 
             if [ "$cg_build_rc" -ne 0 ]; then
-                warn "Build fallo post-remediacion — relanzando implementer..."
-                echo "[$(date +%H:%M:%S)] REMEDIATION: build fallo, relanzando implementer" >> "$EVENTS_LOG_ABS"
+                warn "Build fallo post-remediacion — relanzando $STAGE2_AGENT..."
+                echo "[$(date +%H:%M:%S)] REMEDIATION: build fallo, relanzando $STAGE2_AGENT" >> "$EVENTS_LOG_ABS"
 
                 PATCH_IM_PROMPT="Estas en el directorio raiz del proyecto ${HARNESS_PROJECT_NAME}.
 
-El coverage gate detecto brechas de cobertura y el test-writer agrego tests adicionales, pero no compilan.
+El coverage gate detecto brechas de cobertura y el $STAGE1_AGENT agrego tests adicionales, pero no compilan.
 Tu tarea: haz que SOLO los tests nuevos de cobertura compilen y pasen. No modifiques la logica de negocio existente.
 
 Pista: revisa los ultimos archivos de test creados/modificados y corrige errores de compilacion.
 
 PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
-                LOG_CG_IM="$LOG_DIR_ABS/stage-4-implementer-patch-${TIMESTAMP}.log"
-                echo "[$(date +%H:%M:%S)] REMEDIATION: relanzando implementer" >> "$EVENTS_LOG_ABS"
+                LOG_CG_IM="$LOG_DIR_ABS/stage-4-${STAGE2_AGENT}-patch-${TIMESTAMP}.log"
+                echo "[$(date +%H:%M:%S)] REMEDIATION: relanzando $STAGE2_AGENT" >> "$EVENTS_LOG_ABS"
 
                 (cd "$WORKTREE_PATH" && claude -p "$PATCH_IM_PROMPT" \
-                    --agent implementer \
+                    --agent "$STAGE2_AGENT" \
                     --permission-mode bypassPermissions \
                     --append-system-prompt "You are running in non-interactive print mode. No human is present. Use Write and Edit tools directly. Never ask for permissions." \
                     --output-format text \
                     >"$LOG_CG_IM" 2>&1) &
                 CG_IM_PID=$!
                 (sleep $CG_REMEDIATION_TIMEOUT && kill -9 $CG_IM_PID 2>/dev/null && \
-                    echo "[$(date +%H:%M:%S)] TIMEOUT: coverage implementer supero ${CG_REMEDIATION_TIMEOUT}s" >> "$EVENTS_LOG_ABS") </dev/null >/dev/null 2>&1 &
+                    echo "[$(date +%H:%M:%S)] TIMEOUT: coverage $STAGE2_AGENT supero ${CG_REMEDIATION_TIMEOUT}s" >> "$EVENTS_LOG_ABS") </dev/null >/dev/null 2>&1 &
                 CG_IM_WATCHDOG=$!
 
                 CG_IM_EXIT=0
@@ -1455,8 +1508,8 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
                 wait $CG_IM_WATCHDOG 2>/dev/null || true
 
                 if [ "$CG_IM_EXIT" -ne 0 ]; then
-                    warn "Implementer de remediacion fallo (exit $CG_IM_EXIT)"
-                    echo "[$(date +%H:%M:%S)] REMEDIATION_FAILED: implementer exit $CG_IM_EXIT" >> "$EVENTS_LOG_ABS"
+                    warn "$STAGE2_AGENT de remediacion fallo (exit $CG_IM_EXIT)"
+                    echo "[$(date +%H:%M:%S)] REMEDIATION_FAILED: $STAGE2_AGENT exit $CG_IM_EXIT" >> "$EVENTS_LOG_ABS"
                 fi
 
                 auto_commit_if_needed "cobertura" "feat(hu-${ISSUE_NUM:-?}): fix compilacion tests de cobertura"
@@ -1596,8 +1649,8 @@ else
     log "Creando PR..."
 
     # Recolectar resumenes de agentes
-    TW_SUMMARY=$(collect_summary "1" "test-writer")
-    IM_SUMMARY=$(collect_summary "2" "implementer")
+    TW_SUMMARY=$(collect_summary "1" "$STAGE1_AGENT")
+    IM_SUMMARY=$(collect_summary "2" "$STAGE2_AGENT")
     ST_SUMMARY=$(collect_summary "2b" "smoke-test-writer")
     RV_SUMMARY=$(collect_summary "3" "reviewer")
 
@@ -1631,7 +1684,7 @@ else
 - Fase refactor: revisión de calidad"
         fi
         IMPLEMENTER_SECTION="<details>
-<summary>Implementer (fase verde) — ${IM_DUR_FMT}</summary>
+<summary>${STAGE2_LABEL} (fase verde) — ${IM_DUR_FMT}</summary>
 
 ${IM_SUMMARY}
 
@@ -1681,7 +1734,7 @@ $PR_BODY_SUMMARY
 ## Decisiones del pipeline
 
 <details>
-<summary>Test Writer (fase roja) — ${TW_DUR_FMT}</summary>
+<summary>${STAGE1_LABEL} (fase roja) — ${TW_DUR_FMT}</summary>
 
 ${TW_SUMMARY}
 

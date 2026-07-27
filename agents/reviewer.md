@@ -74,7 +74,9 @@ Leelo todo antes de hacer cualquier cambio.
 
 El issue debe tener una seccion `## ADRs aplicables`. **Lee cada ADR listado completo**. Son la fuente de verdad contra la cual vas a verificar el codigo — no reglas equivalentes replicadas en este agente.
 
-Lee tambien `.claude/pipeline/summaries/stage-2-implementer.md` para identificar:
+Lee tambien el resumen de la fase verde para identificar (en un issue `tipo:projection` el pipeline
+despacha `projection-implementer`, asi que el archivo es `stage-2-projection-implementer.md`; en el
+resto, `stage-2-implementer.md` — abre el que exista):
 - Que ADRs declaro haber consultado.
 - Si registro **desviaciones** de algun ADR (formato: "Regla / Desviacion / Razon / Consecuencia / Status").
 - Que precedentes del codigo cito el implementer como referencia.
@@ -401,7 +403,7 @@ Si el issue no tenia seccion `## ADRs aplicables` o estaba vacia, reportarlo aqu
 
 ### Desviaciones de ADRs
 
-**Desviaciones declaradas por el implementer** (copiadas de `stage-2-implementer.md`):
+**Desviaciones declaradas por el implementer** (copiadas del resumen de la fase verde — `stage-2-implementer.md` o `stage-2-projection-implementer.md`):
 
 #### Desviacion: ADR-XXXX
 - **Regla del ADR**: [cita breve]
@@ -423,7 +425,7 @@ Si no hay desviaciones en ningun lado, escribe explicitamente "Ninguna desviacio
 
 ### Precedentes consultados por el implementer
 
-Si el implementer cito precedentes del codigo en `stage-2-implementer.md`, verificalos:
+Si el implementer cito precedentes del codigo en su resumen de fase verde, verificalos:
 
 | Precedente | ADR aplicable | Veredicto |
 |---|---|---|

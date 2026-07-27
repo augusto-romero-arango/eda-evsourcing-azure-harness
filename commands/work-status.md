@@ -90,6 +90,8 @@ Porcentajes por tipo de pipeline y stage:
 
 Para calcular el porcentaje, extrae el nombre del agente del campo `stage` (ej: `"1-test-writer"` -> `test-writer`) y busca en la tabla.
 
+En un issue `tipo:projection` el pipeline TDD despacha la rama read-side (issue #371), asi que el campo `stage` trae `projection-test-writer` / `projection-implementer` en las etapas 1 y 2: usa los mismos porcentajes de `test-writer` / `implementer` (las etapas 2b, 3 y 4 no cambian de nombre).
+
 Agentes completados: muestra `- nombre(Ns)` con su duracion del campo `agents`.
 
 **Si hay pipelines con `state == "failed"`:**
