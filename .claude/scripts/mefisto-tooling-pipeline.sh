@@ -285,7 +285,10 @@ run_agent() {
     local stage="$1"
     local agent="$2"
     local prompt="$3"
-    local log_stage="$LOG_DIR_ABS/mefisto-tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_NUM}.log"
+    local log_base="$LOG_DIR_ABS/mefisto-tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_NUM}"
+    local log_stage="${log_base}.log"
+    local stream_file="${log_base}.stream.jsonl"
+    local stderr_file="${log_base}.stderr.log"
     local start_ts
     start_ts=$(date +%s)
 
@@ -308,12 +311,20 @@ run_agent() {
     local TIMEOUT_SIGNAL_FILE="$PIPELINE_DIR_ABS/watchdog-timeout-${stage}-${agent}-${TIMESTAMP}"
 
     local CLAUDE_EXIT
-    CLAUDE_EXIT=$(run_agent_with_watchdog "$WORKTREE_PATH" "$AGENT_TIMEOUT_SECONDS" "$log_stage" "$EVENTS_LOG_ABS" "$agent" "$TIMEOUT_SIGNAL_FILE" \
+    CLAUDE_EXIT=$(run_agent_with_watchdog "$WORKTREE_PATH" "$AGENT_TIMEOUT_SECONDS" "$stream_file" "$stderr_file" "$EVENTS_LOG_ABS" "$agent" "$TIMEOUT_SIGNAL_FILE" \
         claude -p "$prompt" --model "$AGENT_MODEL" \
         --permission-mode bypassPermissions \
         --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
-        --output-format text)
+        --output-format stream-json --verbose)
     local elapsed=$(( $(date +%s) - start_ts ))
+
+    # CA-1/CA-3: el stream crudo (una linea JSON por evento) queda en
+    # $stream_file para analisis posterior; $log_stage se deriva de el (texto
+    # del asistente + una linea por tool call) mas el contenido de
+    # $stderr_file, con el mismo nombre de archivo de siempre -- la
+    # clasificacion de fallos de mas abajo sigue leyendo $log_stage sin
+    # cambios.
+    derive_stage_log_from_stream "$stream_file" "$stderr_file" "$log_stage"
 
     local TIMED_OUT=false
     [ -f "$TIMEOUT_SIGNAL_FILE" ] && TIMED_OUT=true

@@ -87,7 +87,7 @@ echo "[A] CA-1: el watchdog mata TODO el arbol de procesos, no solo el subshell"
 
 WT_A="$TMP/wt-a"; mkdir -p "$WT_A"
 CHILD_PID_FILE="$TMP/a-child.pid"
-EXIT_A=$(run_agent_with_watchdog "$WT_A" 1 "$TMP/a-log.txt" "$TMP/a-events.log" "writer" "$TMP/a-signal" \
+EXIT_A=$(run_agent_with_watchdog "$WT_A" 1 "$TMP/a-log.txt" "$TMP/a-stderr.txt" "$TMP/a-events.log" "writer" "$TMP/a-signal" \
     bash -c "sleep 30 & echo \$! > '$CHILD_PID_FILE'; sleep 30")
 
 if [ "$EXIT_A" = "137" ]; then
@@ -134,7 +134,7 @@ WT_C="$TMP/wt-c"; mkdir -p "$WT_C"
 # su `sleep` por ese valor exacto para que no se confunda con ningun otro
 # `sleep` de la maquina.
 C_TIMEOUT=3607
-EXIT_C=$(run_agent_with_watchdog "$WT_C" "$C_TIMEOUT" "$TMP/c-log.txt" "$TMP/c-events.log" "writer" "$TMP/c-signal" \
+EXIT_C=$(run_agent_with_watchdog "$WT_C" "$C_TIMEOUT" "$TMP/c-log.txt" "$TMP/c-stderr.txt" "$TMP/c-events.log" "writer" "$TMP/c-signal" \
     bash -c "echo hola; exit 3")
 
 if [ "$EXIT_C" = "3" ]; then
