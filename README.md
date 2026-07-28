@@ -405,7 +405,7 @@ Flujo típico:
 commands/              # skills publicados (los que ve el consumidor)
 agents/                # agentes publicados
 scripts/               # pipelines + utilidades bash publicadas
-hooks/hooks.json       # PostToolUse para logging
+hooks/hooks.json       # SessionStart (.plugin-root, sessions.jsonl) + PostToolUse para logging
 .claude/               # skills/agentes/pipelines INTERNOS (no se publican)
   commands/            # /mefisto-tooling, /mefisto-plan, /mefisto-bug, ...
   agents/              # mefisto-investigator, mefisto-planner

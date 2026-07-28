@@ -123,7 +123,7 @@ tu propuesta en vez de darlo por cierto.
 - `tests/<RootNamespace>.{Dominio}.Tests/` — tests unitarios ES por dominio
 - `tests/<RootNamespace>.{Dominio}.SmokeTests/` — smoke tests black-box (opcional)
 - `infra/environments/{env}/` — Terraform por ambiente
-- `.claude/pipeline/` — estado runtime de los pipelines (lo crea el harness en primer arranque)
+- `.claude/pipeline/` — estado runtime de los pipelines (lo crea el harness en primer arranque, y nunca viaja en un commit del consumidor); incluye `sessions.jsonl`, un log append-only que el hook `SessionStart` del plugin anota con `session_id`/`transcript_path`/`cwd`/`source`/`timestamp` en **cada** arranque de sesion de Claude Code sobre el repo — las headless de `claude -p` que corren los stages y tambien las interactivas, con `source` distinguiendo `startup`/`resume`/`clear`/`compact` —, para correlacionar un stage con su transcript completo en `~/.claude/projects/`
 - `docs/bitacora/field-notes/` — output de los agentes investigadores y de event-storming
 
 ## Catálogo de skills
