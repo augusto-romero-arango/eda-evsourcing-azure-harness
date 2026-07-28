@@ -9,7 +9,7 @@
           },
           {
             "type": "command",
-            "command": "mkdir -p .claude/pipeline 2>/dev/null && jq -c '{session_id, transcript_path, cwd, source, timestamp: (now | strftime(\"%Y-%m-%dT%H:%M:%SZ\"))}' 2>/dev/null >> .claude/pipeline/sessions.jsonl 2>/dev/null || true"
+            "command": "mkdir -p .claude/pipeline 2>/dev/null && jq -c '{session_id, transcript_path, cwd, source, timestamp: (now | strftime(\"%Y-%m-%dT%H:%M:%SZ\"))}' 2>/dev/null >> .claude/pipeline/sessions.jsonl || true"
           }
         ]
       }

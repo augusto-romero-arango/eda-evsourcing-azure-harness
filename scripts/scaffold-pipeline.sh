@@ -293,9 +293,14 @@ git -C "$WORKTREE_PATH" checkout -- .claude/ 2>/dev/null || true
 # El Paso 8 del agente (git add + commit) es no determinista por ser un LLM:
 # si dejo cambios sin commitear, los commiteamos aqui para que el PR nunca
 # falle con "No commits between main and ...".
-if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain)" ]; then
+# El pathspec excluye `.claude/pipeline/`: los hooks del plugin escriben ahi su
+# estado runtime en el worktree (`.plugin-root`, `sessions.jsonl`, ...) y el
+# `.gitignore` raiz del consumidor solo cubre `events.log` (via `*.log`), asi que
+# un `git add -A` a secas los colaria al PR del consumidor. Va en el guard *y* en
+# el add para que "la unica suciedad es estado runtime" no intente un commit vacio.
+if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- . ':!.claude/pipeline')" ]; then
     warn "El agente dejo cambios sin commitear; commiteando defensivamente."
-    git -C "$WORKTREE_PATH" add -A >>"$LOG_FILE" 2>&1 \
+    git -C "$WORKTREE_PATH" add -A -- . ':!.claude/pipeline' >>"$LOG_FILE" 2>&1 \
         || abort "Fallo el 'git add -A' del commit defensivo del scaffold"
     git -C "$WORKTREE_PATH" commit -m "scaffold($DOMAIN_NAME): nuevo dominio $PASCAL_CASE" \
         >>"$LOG_FILE" 2>&1 || abort "Fallo el commit defensivo del scaffold"
