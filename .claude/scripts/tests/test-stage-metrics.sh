@@ -40,12 +40,23 @@
 #       fraccion, ver notas tecnicas del issue).
 #   [H] Tool call sin `tool_result` emparejado (huerfana) -> cuenta en
 #       `count` pero no contribuye a `duration_ms_sum`/`duration_ms_median`.
+#   [K] Tool call sin `id` -> no cuesta TODAS las metricas del stage. En jq
+#       indexar un objeto con null es un error duro que aborta la expresion
+#       entera, asi que un unico evento malformado devolvia "null" pese a
+#       traer el `result` completo. Cubre tambien los campos opcionales
+#       ausentes (ttft_ms, permission_denials).
 #   [I] build_agents_history_json: agrega "metrics" preservando "duration"
 #       intacto (CA-2); con jq ausente degrada al formato plano legado
 #       (mismas dos claves de siempre, sin "metrics") (CA-5).
 #   [J] Integracion: la linea resultante es JSON valido de una sola linea
 #       (CA-4) y conserva `agents.writer.duration` numerico ademas de
 #       agregar `agents.writer.metrics`.
+#   [L] Cableado en mefisto-tooling-pipeline.sh: las dos entradas de
+#       historial (completed y la de abort) pasan por
+#       build_agents_history_json, y las metricas se cosechan por stage y no
+#       por nombre de agente -- el stage de merge corre como
+#       `run_agent "merge" "writer"` y con un case por agente un merge
+#       fallido pisaba las metricas del writer de stage 1.
 #
 # Uso: .claude/scripts/tests/test-stage-metrics.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -94,7 +105,8 @@ cat > "$TMP/a-stream.jsonl" <<'EOF'
 {"type":"user","timestamp":"2026-07-27T22:09:35.900Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_2","content":"ok"}]}}
 {"type":"assistant","timestamp":"2026-07-27T22:09:36.000Z","message":{"content":[{"type":"tool_use","id":"toolu_3","name":"Write","input":{}}]}}
 {"type":"user","timestamp":"2026-07-27T22:09:37.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_3","content":"ok"}]}}
-{"type":"result","num_turns":4,"duration_ms":9451,"duration_api_ms":5289,"total_cost_usd":0.0234,"is_error":false,"stop_reason":"end_turn","terminal_reason":null,"usage":{"input_tokens":1200,"output_tokens":340,"cache_read_input_tokens":900,"cache_creation_input_tokens":100}}
+{"type":"rate_limit_event","timestamp":"2026-07-27T22:09:37.500Z","status":"allowed_warning"}
+{"type":"result","num_turns":4,"duration_ms":9451,"duration_api_ms":5289,"total_cost_usd":0.0234,"is_error":false,"stop_reason":"end_turn","terminal_reason":null,"ttft_ms":3797,"permission_denials":[{"tool_name":"Bash"},{"tool_name":"Write"}],"usage":{"input_tokens":1200,"output_tokens":340,"cache_read_input_tokens":900,"cache_creation_input_tokens":100}}
 EOF
 
 A_OUT=$(compute_stage_metrics "$TMP/a-stream.jsonl")
@@ -129,10 +141,15 @@ assert_field "A-16: tool_calls[Read].duration_ms_median" "550" "$(echo "$A_OUT" 
 assert_field "A-17: tool_calls[Write].count" "1" "$(echo "$A_OUT" | jq -r '.tool_calls[] | select(.name=="Write") | .count')"
 assert_field "A-18: tool_calls[Write].duration_ms_sum" "1000" "$(echo "$A_OUT" | jq -r '.tool_calls[] | select(.name=="Write") | .duration_ms_sum')"
 
-if echo "$A_OUT" | jq -e '. as $r | ($r | tostring) | length > 0' >/dev/null 2>&1 && echo "$A_OUT" | jq -c . >/dev/null 2>&1; then
-    pass "A-19: la salida es JSON valido"
+# Senales de lentitud que el issue marca opcionales "si son baratos de derivar".
+assert_field "A-19: ttft_ms" "3797" "$(echo "$A_OUT" | jq -r '.ttft_ms')"
+assert_field "A-20: permission_denials cuenta la cardinalidad, no el arreglo" "2" "$(echo "$A_OUT" | jq -r '.permission_denials')"
+assert_field "A-21: rate_limit_events contados desde el stream" "1" "$(echo "$A_OUT" | jq -r '.rate_limit_events')"
+
+if [ "$(printf '%s' "$A_OUT" | wc -l | tr -d ' ')" = "0" ] && echo "$A_OUT" | jq -e 'type == "object"' >/dev/null 2>&1; then
+    pass "A-22: la salida es un objeto JSON valido en una sola linea"
 else
-    fail "A-19: la salida no es JSON valido: $A_OUT"
+    fail "A-22: la salida no es un objeto JSON de una sola linea: $A_OUT"
 fi
 
 # -------- Bloque B: sin evento result --------
@@ -270,6 +287,33 @@ assert_field "H-1: count incluye la tool call huerfana" "1" "$(echo "$H_OUT" | j
 assert_field "H-2: duration_ms_sum es null (sin tool_result para emparejar)" "null" "$(echo "$H_OUT" | jq -r '.tool_calls[0].duration_ms_sum')"
 assert_field "H-3: duration_ms_median es null" "null" "$(echo "$H_OUT" | jq -r '.tool_calls[0].duration_ms_median')"
 
+# -------- Bloque K: tool_use sin `id` no tumba las metricas del stage --------
+
+echo ""
+echo "[K] Un tool_use sin \`id\` no puede costar TODAS las metricas del stage (CA-5)"
+
+cat > "$TMP/k-stream.jsonl" <<'EOF'
+{"type":"assistant","timestamp":"2026-07-27T22:09:34.000Z","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}]}}
+{"type":"assistant","timestamp":"2026-07-27T22:09:35.000Z","message":{"content":[{"type":"tool_use","id":"toolu_ok","name":"Read","input":{}}]}}
+{"type":"user","timestamp":"2026-07-27T22:09:35.400Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_ok","content":"ok"}]}}
+{"type":"result","num_turns":2,"duration_ms":500,"duration_api_ms":300,"is_error":false}
+EOF
+
+K_OUT=$(compute_stage_metrics "$TMP/k-stream.jsonl")
+# En jq, indexar un objeto con null es un error duro que aborta la expresion
+# entera: sin el guardarraiz `// ""` del lookup, este stream devolvia "null" y
+# el stage se quedaba sin una sola cifra pese a traer el `result` completo.
+assert_field "K-1: las metricas del result se derivan igual" "2" "$(echo "$K_OUT" | jq -r '.turns')"
+assert_field "K-2: la tool call con id si obtiene su tiempo atribuido" "400" "$(echo "$K_OUT" | jq -r '.tool_calls[] | select(.name=="Read") | .duration_ms_sum')"
+assert_field "K-3: la tool call sin id sigue contando en count" "1" "$(echo "$K_OUT" | jq -r '.tool_calls[] | select(.name=="Bash") | .count')"
+assert_field "K-4: la tool call sin id no inventa tiempo atribuido" "null" "$(echo "$K_OUT" | jq -r '.tool_calls[] | select(.name=="Bash") | .duration_ms_sum')"
+
+# CLI sin los campos opcionales (o version futura que deje de emitirlos):
+# quedan en null / 0 sin abortar.
+assert_field "K-5: ttft_ms ausente -> null" "null" "$(echo "$K_OUT" | jq -r '.ttft_ms')"
+assert_field "K-6: permission_denials ausente -> null (no 0, que sonaria a medido)" "null" "$(echo "$K_OUT" | jq -r '.permission_denials')"
+assert_field "K-7: rate_limit_events sin eventos -> 0" "0" "$(echo "$K_OUT" | jq -r '.rate_limit_events')"
+
 # -------- Bloque I: build_agents_history_json --------
 
 echo ""
@@ -309,6 +353,42 @@ fi
 
 assert_field "J-3: agents.writer.duration sigue siendo numerico (campo legado intacto)" "125" "$(echo "$HISTORY_LINE" | jq -r '.agents.writer.duration')"
 assert_field "J-4: agents.writer.metrics.turns esta presente (campo nuevo)" "4" "$(echo "$HISTORY_LINE" | jq -r '.agents.writer.metrics.turns')"
+
+# -------- Bloque L: cableado en el pipeline interno --------
+
+echo ""
+echo "[L] Cableado en mefisto-tooling-pipeline.sh (CA-1/CA-2/CA-3)"
+
+PIPE="$REPO_ROOT/.claude/scripts/mefisto-tooling-pipeline.sh"
+
+if grep -q "compute_stage_metrics" "$PIPE"; then
+    pass "L-1: el pipeline invoca compute_stage_metrics al cerrar cada stage"
+else
+    fail "L-1: el pipeline NO invoca compute_stage_metrics"
+fi
+
+if [ "$(grep -c "build_agents_history_json" "$PIPE")" -ge 2 ]; then
+    pass "L-2: build_agents_history_json alimenta las dos entradas de historial (completed y la de abort)"
+else
+    fail "L-2: build_agents_history_json no se usa en las dos entradas de historial"
+fi
+
+# El stage de resolucion de conflictos corre como `run_agent "merge" "writer"`:
+# cosechar las metricas con un case por "$agent" hace que un merge fallido pise
+# las del writer de stage 1 y el historial reporte, bajo agents.writer.metrics,
+# los turnos y tokens de otro stage. Por eso la cosecha va por "$stage".
+if grep -q 'run_agent "merge" "writer"' "$PIPE"; then
+    pass "L-3: existe el stage merge reusando el nombre de agente 'writer' (premisa de L-4)"
+else
+    fail "L-3: cambio el stage merge -- revisar si L-4 sigue teniendo sentido"
+fi
+
+if grep -qE 'AGENT_WR_METRICS_JSON="\$metrics_json"' "$PIPE" \
+   && ! grep -qE 'writer\).*AGENT_WR_METRICS_JSON' "$PIPE"; then
+    pass "L-4: las metricas se cosechan por stage, no por nombre de agente (el merge no pisa al writer)"
+else
+    fail "L-4: las metricas se cosechan por nombre de agente -- un merge fallido pisaria las del writer"
+fi
 
 echo ""
 echo "----------------------------------------"

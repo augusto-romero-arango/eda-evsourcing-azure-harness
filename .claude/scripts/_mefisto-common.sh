@@ -762,9 +762,16 @@ agent_work_is_trustworthy() {
 # `system`/`init` (`.model`) y, si falta, en `.message.model` del primer
 # evento `assistant` -- si ninguno lo trae, queda "model": null sin abortar.
 #
-# `permission_denials` y `ttft_ms` del evento `result` quedan fuera a
-# proposito (el issue los marca opcionales; este issue solo persiste lo que
-# CA-1 exige).
+# Ademas de lo que CA-1 exige se persisten tres cifras que el issue marca
+# opcionales "si son baratos de derivar": `ttft_ms`, el conteo de
+# `permission_denials` (solo la cardinalidad -- el arreglo trae los inputs
+# denegados, que pueden cargar rutas y comandos y no aportan al analisis de
+# tiempos) y el conteo de eventos `rate_limit_event` del stream. Las tres
+# apuntan directo a dos causas candidatas de la lentitud que este issue
+# existe para medir: denegaciones de permiso que obligan a reintentar, y
+# throttling. `permission_denials` y `ttft_ms` estan verificados en el evento
+# `result` del CLI instalado (v2.1.220); si un CLI futuro dejara de emitirlos
+# quedan en null sin abortar.
 compute_stage_metrics() {
     local stream_file="$1"
 
@@ -826,7 +833,15 @@ compute_stage_metrics() {
                     . as $group
                     | ($group | map(
                         . as $u
-                        | ($results_by_id[$u.id]) as $r
+                        # `// ""` y no `[$u.id]` a secas: en jq indexar un
+                        # objeto con null es un error DURO (no algo que `try`
+                        # local atrape aqui), y ese error tumba la expresion
+                        # entera -- un unico tool_use sin `id` dejaria el
+                        # stage sin NINGUNA metrica, aunque el evento
+                        # `result` viniera completo. Con la clave vacia el
+                        # lookup solo devuelve null: la tool call sigue
+                        # contando en `count` y las demas no se pierden.
+                        | ($results_by_id[$u.id // ""]) as $r
                         | select($r != null and $u.ts != null and $r.ts != null)
                         | ($r.ts - $u.ts)
                       )) as $durations
@@ -855,6 +870,9 @@ compute_stage_metrics() {
                 is_error: $result.is_error,
                 stop_reason: $result.stop_reason,
                 terminal_reason: $result.terminal_reason,
+                ttft_ms: $result.ttft_ms,
+                permission_denials: (if ($result.permission_denials | type) == "array" then ($result.permission_denials | length) else null end),
+                rate_limit_events: ($events | map(select(.type == "rate_limit_event")) | length),
                 tool_calls: $tool_calls
               }
           end

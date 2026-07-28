@@ -102,7 +102,7 @@ abort() {
         # entender y hasta este issue quedaban sin ninguna cifra por agente.
         local abort_agents_json
         abort_agents_json=$(build_agents_history_json "${AGENT_WR_DUR:-}" "${AGENT_WR_METRICS_JSON:-}" "${AGENT_RV_DUR:-}" "${AGENT_RV_METRICS_JSON:-}" 2>/dev/null) \
-            || abort_agents_json='{"writer":{"duration":null},"reviewer":{"duration":null}}'
+            || abort_agents_json="{\"writer\":{\"duration\":${AGENT_WR_DUR:-null}},\"reviewer\":{\"duration\":${AGENT_RV_DUR:-null}}}"
         echo "{\"issue\":\"${ISSUE_NUM:-}\",\"title\":\"$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')\",\"pipeline\":\"mefisto-tooling\",\"started\":\"${TIMESTAMP:-}\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"failed\",\"stage\":\"$CURRENT_STAGE\",\"agents\":$abort_agents_json,\"error\":\"$PIPELINE_ERROR\"}" \
             >> "$PIPELINE_DIR_ABS/pipeline-history.jsonl" 2>/dev/null || true
     fi
@@ -386,8 +386,19 @@ run_agent() {
             echo "[$(date +%H:%M:%S)] RECUPERADO $agent: trabajo util detectado" >> "$EVENTS_LOG_ABS"
         else
             case "$agent" in
-                writer)   AGENT_WR_DUR=$elapsed; AGENT_WR_RES="failed"; AGENT_WR_METRICS_JSON="$metrics_json" ;;
-                reviewer) AGENT_RV_DUR=$elapsed; AGENT_RV_RES="failed"; AGENT_RV_METRICS_JSON="$metrics_json" ;;
+                writer)   AGENT_WR_DUR=$elapsed; AGENT_WR_RES="failed" ;;
+                reviewer) AGENT_RV_DUR=$elapsed; AGENT_RV_RES="failed" ;;
+            esac
+            # Las metricas se cosechan por STAGE, no por agente: el stage de
+            # resolucion de conflictos corre como `run_agent "merge" "writer"`,
+            # asi que un case por "$agent" haria que un merge fallido pisara
+            # las metricas del writer de stage 1 y el historial reportara,
+            # bajo agents.writer.metrics, los turnos y tokens de otro stage.
+            # Las del merge no se pierden: quedan en su propio archivo
+            # metrics/...-stage-merge-writer.json (CA-1).
+            case "$stage" in
+                1) AGENT_WR_METRICS_JSON="$metrics_json" ;;
+                2) AGENT_RV_METRICS_JSON="$metrics_json" ;;
             esac
             update_status "$stage-$agent" "failed"
             echo -e "\n${RED}-- Ultimas lineas del log de $agent:${NC}"
