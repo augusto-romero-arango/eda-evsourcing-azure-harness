@@ -1201,6 +1201,58 @@ provider "azurerm" {
 }
 ```
 
+### 2.1b - Registro opt-in del resource provider `Microsoft.App` (MEF-ADR-0034)
+
+**Corre solo si `projections.enabled` es `true`** (mismo gate del Paso 1.9/2.3b/2.4b). Si no, omite este paso completo -- el `providers.tf` que emitiste arriba queda identico al de hoy, sin el argumento ni un comentario (CA-3).
+
+**Re-deriva `PROJECTIONS_ENABLED` en este bloque.** Mismo caveat que el Paso 2.3b/2.4b: cada bloque `bash` corre en un shell nuevo, la variable del Paso 1.9 no sobrevive hasta aqui. Sin re-derivarla, `[ "$PROJECTIONS_ENABLED" = "true" ]` compara contra la cadena vacia y el registro se omite en silencio incluso con el token habilitado.
+
+**Por que hace falta.** `Microsoft.App` no aparece en ninguno de los cinco sets (`core`/`extended`/`all`/`none`/`legacy`) que el argumento `resource_provider_registrations` del provider `azurerm` v4 puede auto-registrar -- verificado contra [`internal/resourceproviders/required.go`](https://github.com/hashicorp/terraform-provider-azurerm/blob/main/internal/resourceproviders/required.go) del propio provider (unicos namespaces `Microsoft.App*` presentes: `Microsoft.AppConfiguration` y `Microsoft.AppPlatform`, en `extended`/`all`/`legacy`). Sin registrarlo, el primer `apply` que crea el Managed Environment del worker de proyecciones falla con `409 MissingSubscriptionRegistration` (detalle completo, incluido el estado parcial en que queda el `apply`, en MEF-ADR-0034 seccion 8). **Subir `resource_provider_registrations` a `extended` o `all` no lo arregla** -- `Microsoft.App` no esta en ninguno de los cinco sets --, y la [pagina del registry de `azurerm_resource_provider_registration`](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/resource_provider_registration) que todavia afirma que el provider *"will automatically register all of the Resource Providers which it supports"* esta desactualizada frente a `required.go`. La unica via declarativa es el argumento complementario `resource_providers_to_register` (["4.0 Upgrade Guide"](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/guides/4.0-upgrade-guide), HashiCorp: *"A custom list of RPs to explicitly register for the subscription, in addition to those specified by the resource_provider_registrations property"*). **Nunca uses el recurso `azurerm_resource_provider_registration`** para esto: su `destroy` intenta desregistrar el namespace y falla si quedan recursos de ese namespace en la suscripcion, y su state quedaria compartido entre todos los entornos que comparten suscripcion -- doctrina completa en MEF-ADR-0034 seccion 8.
+
+**Los tres casos de idempotencia (CA-2) -- nunca reescribas el bloque `provider "azurerm"` completo, edita aditivamente (regla 2):**
+
+```bash
+PROJECTIONS_ENABLED=$(jq -r '.projections.enabled // false' .claude/harness.config.json 2>/dev/null)
+if [ "$PROJECTIONS_ENABLED" = "true" ]; then
+  if grep -q '"Microsoft.App"' infra/environments/<env>/providers.tf 2>/dev/null; then
+    echo "Microsoft.App ya esta registrado en resource_providers_to_register (omitir)."
+  elif grep -q 'resource_providers_to_register' infra/environments/<env>/providers.tf 2>/dev/null; then
+    echo "resource_providers_to_register ya existe con otros namespaces: sumar \"Microsoft.App\" sin tocarlos."
+  else
+    echo "resource_providers_to_register no existe: agregarlo dentro del bloque provider \"azurerm\"."
+  fi
+fi
+```
+
+- **(i) El argumento no existe.** Con Read localiza la linea `provider "azurerm" {` de `providers.tf` y, con Edit, agrega el argumento como primera linea dentro del bloque (antes del comentario de `subscription_id` y del bloque `features`, sin tocar ninguno de los dos):
+
+  ```hcl
+  provider "azurerm" {
+    # Microsoft.App no esta en ninguno de los cinco sets de auto-registro del provider
+    # azurerm v4 (core/extended/all/none/legacy) -- verificado contra
+    # internal/resourceproviders/required.go del propio provider. Sin este argumento el
+    # primer apply del worker de proyecciones falla con 409 MissingSubscriptionRegistration
+    # (MEF-ADR-0034 seccion 8). Subir resource_provider_registrations a extended/all NO
+    # lo arregla: Microsoft.App no esta en ninguno de los cinco sets.
+    resource_providers_to_register = [
+      "Microsoft.App",
+    ]
+
+    # subscription_id se omite: ...
+    features {
+      ...
+    }
+  }
+  ```
+
+- **(ii) El argumento ya existe con otros namespaces.** Con Edit, suma `"Microsoft.App"` como un elemento mas de la lista existente -- en el formato en que ya este escrita, una linea por elemento o todo en una linea -- sin tocar los namespaces que ya trae ni reordenarlos.
+
+- **(iii) La lista ya contiene `"Microsoft.App"`.** No toques el archivo: reportalo como omitido en el Paso 5.
+
+En los tres casos, no alinees comas ni indentacion a mano (CA-6): el Paso 3 (`terraform fmt -recursive`) normaliza la lista resultante.
+
+**Modo de falla si el SP de CI no tiene el permiso de registrar RPs.** El fix funciona por construccion en cualquier consumidor onboardeado por este harness: `scripts/setup-github-ci.sh` asigna `Contributor` a nivel de suscripcion al SP de CI, y `Contributor` incluye `*/register/action` (sus unicos `NotActions` son de `Microsoft.Authorization`). Si un consumidor recorto ese rol o usa un SP propio acotado, el `apply` falla con `AuthorizationFailed` en vez del `409`, y la salida es una operacion privilegiada de una sola vez: `az provider register --namespace Microsoft.App --wait`. Repórtalo en el Paso 5 junto al resultado del registro.
+
 ### 2.2 `infra/environments/<env>/variables.tf`
 
 Sustituye `<project>`, `<project_short>` y `<location>` por lo que derivaste en el Paso 0. Define los locals `prefix` y `prefix_func` (el `domain-scaffolder` lee `local.prefix_func` de este archivo). `postgresql_admin_login` por defecto `pgadmin` (el scaffolder usa `Username=pgadmin` en su `MartenConnectionString`; manten el acople o ajusta ambos a la vez). `alert_email` y `postgresql_admin_password` son requeridos (sin default): en CI los alimenta el `env` de `infra-cd.yml` via `TF_VAR_alert_email`/`TF_VAR_postgresql_admin_password` (Paso 2b), nunca un `terraform.tfvars` commiteado (MEF-ADR-0025). `subscription_id` **no** es una variable de este archivo: el provider `azurerm` (Paso 2.1) la resuelve nativamente de `ARM_SUBSCRIPTION_ID`.
@@ -2237,6 +2289,7 @@ Imprime un resumen claro:
 - **Workflow de CI** (`.github/workflows/infra-cd.yml`): creado u omitido (ya existia).
 - **Registro `harness.config.json > secrets[]`** (Paso 2b.0, issue #256): las entradas registradas o actualizadas (interno de ASB, `marten-connection`, `app-insights-connection`, una por alias de `serviceBus.external[]`). Corre siempre, incluso si el workflow ya existia.
 - **Worker de proyecciones (opt-in, MEF-ADR-0034, Paso 1.9/2.3b/2.4b)**: si `projections.enabled` es `true` en `harness.config.json`, reporta los 3 modulos (`container-registry`, `container-app-environment`, `container-app`) creados u omitidos, y si el wiring de `variables.tf`/`main.tf`/`outputs.tf` ya estaba presente o se acaba de agregar. Si el token no esta en `true`, reporta explicitamente que se omitio por diseno (CA-3), no como un error o una omision accidental.
+- **Registro del resource provider `Microsoft.App`** (opt-in, MEF-ADR-0034 seccion 8, Paso 2.1b): si `projections.enabled` es `true`, reporta cual de los tres casos de CA-2 aplico -- argumento agregado, `"Microsoft.App"` sumado a una lista existente, o ya presente (omitido) --. Advierte que si el SP de CI no tiene `Contributor` a nivel de suscripcion (`scripts/setup-github-ci.sh`), el primer `apply` puede fallar con `AuthorizationFailed` en vez del `409 MissingSubscriptionRegistration`, y que el fix en ese caso es `az provider register --namespace Microsoft.App --wait` (una sola vez, privilegiado).
 - **Placeholder de imagen del worker**: si generaste el wiring de proyecciones, recuerda que `projections_worker_image` apunta a `mcr.microsoft.com/k8se/quickstart:latest` hasta que un pipeline de CI de imagen (fuera de alcance de este agente) construya y empuje la imagen real de `<RootNamespace>.Projections` al registry (`terraform output container_registry_login_server`) y actualice esa variable. Advierte ademas, en el mismo punto, las dos condiciones que ese pipeline debera respetar (nota operativa 2 del Paso 1.9.3): debe desplegar la imagen real **despues** de que `infra-cd.yml` haya sembrado `marten-connection`/`app-insights-connection` al menos una vez, y ante una **rotacion** posterior de esos secretos debe crear una revision nueva (o `az containerapp revision restart`) -- una revision ya corriendo no re-lee el valor, y un `terraform apply` que no cambie el template del Container App no reinicia nada.
 - Resultado de `terraform validate`.
 - Variables requeridas por `variables.tf` sin default (`alert_email`, `postgresql_admin_password`) y como se alimentan en CI -- **nunca** por `terraform.tfvars` commiteado (MEF-ADR-0025): `infra-cd.yml` las inyecta como `TF_VAR_alert_email`/`TF_VAR_postgresql_admin_password` (Paso 2b). `subscription_id` no es una variable de este entorno: la resuelve nativamente `ARM_SUBSCRIPTION_ID`. Defaults derivados que conviene revisar: `project`, `project_short`, `postgresql_location`.
@@ -2264,5 +2317,6 @@ Imprime un resumen claro:
 12. **NUNCA** sobrescribas el `.gitignore` **raiz** del repo consumidor si ya existe (Paso 2c, idempotencia): omitelo y reportalo. Su contenido es byte-fijo -- transcribelo literal, sin normalizar espacios, orden ni comentarios (issue #241).
 13. El registro de `secrets[]` (Paso 2b.0) es la **unica** parte de este paso que corre **siempre**, incluso si `infra-cd.yml` ya existe (regla 10): usa `upsert_harness_secret` (idempotente por `name`), nunca escribas el array a mano con `jq` inline ni dupliques una entrada existente.
 14. **NUNCA** uses `az functionapp restart` para reciclar una Function App tras sembrar secretos (issue #343): no re-resuelve las Key Vault references versionless ni descarta el cache en memoria del worker. Esas dos caches exigen mecanismos distintos y el step "Reciclar las Function Apps" aplica **ambos** por cada app: (a) un POST al endpoint documentado `config/configreferences/appsettings/refresh` (via `az rest`) para forzar la re-resolucion de las KV references del plano de control -- un ciclo del proceso, sea `restart` o `stop`/`start`, NO la dispara porque no es un "configuration change"; y (b) `az functionapp stop` + `az functionapp start` (nunca `restart`, que es un ciclo "soft") para tumbar el cache en memoria del worker. No omitas el refresh ni degrades el stop/start a restart.
-15. **Los 3 modulos de Container App (`container-registry`, `container-app-environment`, `container-app`) y su wiring en el entorno (Paso 2.3b/2.4b) SOLO se generan si `projections.enabled` es `true` en `harness.config.json`** (CA-3, MEF-ADR-0034): son opt-in, no parte de los 8 modulos base incondicionales. Sin el token (o con el token en `false`/ausente), tu salida es identica a la de un greenfield sin proyecciones.
+15. **Los 3 modulos de Container App (`container-registry`, `container-app-environment`, `container-app`) y su wiring en el entorno (Paso 2.1b/2.3b/2.4b) SOLO se generan si `projections.enabled` es `true` en `harness.config.json`** (CA-3, MEF-ADR-0034): son opt-in, no parte de los 8 modulos base incondicionales. Sin el token (o con el token en `false`/ausente), tu salida es identica a la de un greenfield sin proyecciones.
 16. **NUNCA** uses `identity = "System"` en `azurerm_container_app`, ni en el bloque `registry` ni en el bloque `secret`: el `registry` exige el Resource ID de una identidad **UserAssigned** (el provider no acepta ahi el literal `"System"`), y un `secret` con `"System"` no puede resolverse en la creacion de la app porque la identidad SystemAssigned no existe hasta **despues** de crearla (Microsoft Learn, "Manage secrets in Azure Container Apps": *"System assigned identity can't be used with the create command because it's not available until after the container app is created"*). Los dos usan la **misma** identidad UserAssigned, creada en el wiring del entorno (Paso 2.3b) y autorizada ahi con `AcrPull` (sobre el registry) y `Key Vault Secrets User` (sobre el Key Vault del BC) **antes** de instanciar el modulo `container-app`, con `depends_on` a ambos role assignments. Nunca muevas esos role assignments a `module.container_app.principal_id`: eso los volveria posteriores a la app y el `apply` que la crea fallaria.
+17. **NUNCA** asumas que subir `resource_provider_registrations` a `extended` o `all` registra `Microsoft.App` (Paso 2.1b, MEF-ADR-0034 seccion 8): no esta en ninguno de los cinco sets de `required.go`, y la pagina del registry de `azurerm_resource_provider_registration` que sugiere que el provider auto-registra "todos" los RPs esta desactualizada. La unica via declarativa es `resource_providers_to_register`. **NUNCA** uses el recurso `azurerm_resource_provider_registration` para esto: su `destroy` falla si quedan recursos del namespace y su state queda compartido entre entornos de la misma suscripcion.
