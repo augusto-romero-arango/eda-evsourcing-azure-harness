@@ -867,7 +867,7 @@ if [ "$PROJECTIONS_ENABLED" != "true" ]; then
 fi
 ```
 
-Si `PROJECTIONS_ENABLED` no es `"true"`, **detente aqui**: no crees ningun archivo bajo `infra/modules/container-*`, y salta tambien el Paso 2.3b/2.4b mas adelante. El resto del greenfield (los 8 modulos base y el esqueleto del entorno) se genera exactamente igual que hoy.
+Si `PROJECTIONS_ENABLED` no es `"true"`, **detente aqui**: no crees ningun archivo bajo `infra/modules/container-*`, y salta tambien el Paso 2.1b/2.3b/2.4b mas adelante. El resto del greenfield (los 8 modulos base y el esqueleto del entorno) se genera exactamente igual que hoy.
 
 Si es `"true"`, crea cada archivo **solo si no existe** (mismo patron de idempotencia que el Paso 1):
 
@@ -1201,6 +1201,8 @@ provider "azurerm" {
 }
 ```
 
+**Si `projections.enabled` es `true`, este bloque `provider "azurerm"` lleva ademas el argumento `resource_providers_to_register = ["Microsoft.App"]`: no lo omitas.** No lo escribas desde aqui -- el Paso 2.1b lo agrega con Edit, con el mismo mecanismo tanto sobre el archivo que acabas de emitir como sobre un `providers.tf` que ya existia (el gate del token y los tres casos de idempotencia viven ahi, sin duplicar la doctrina en dos lugares).
+
 ### 2.1b - Registro opt-in del resource provider `Microsoft.App` (MEF-ADR-0034)
 
 **Corre solo si `projections.enabled` es `true`** (mismo gate del Paso 1.9/2.3b/2.4b). Si no, omite este paso completo -- el `providers.tf` que emitiste arriba queda identico al de hoy, sin el argumento ni un comentario (CA-3).
@@ -1224,7 +1226,7 @@ if [ "$PROJECTIONS_ENABLED" = "true" ]; then
 fi
 ```
 
-- **(i) El argumento no existe.** Con Read localiza la linea `provider "azurerm" {` de `providers.tf` y, con Edit, agrega el argumento como primera linea dentro del bloque (antes del comentario de `subscription_id` y del bloque `features`, sin tocar ninguno de los dos):
+- **(i) El argumento no existe.** Con Read localiza la linea `provider "azurerm" {` de `providers.tf` y, con Edit, agrega el argumento como primera linea dentro del bloque (antes del comentario de `subscription_id` y del bloque `features`, sin tocar ninguno de los dos). En el esquema de abajo los `...` marcan el contenido que **ya esta** en el archivo y que no debes transcribir ni alterar -- lo unico que escribes es el comentario nuevo y el argumento:
 
   ```hcl
   provider "azurerm" {
@@ -1251,7 +1253,9 @@ fi
 
 En los tres casos, no alinees comas ni indentacion a mano (CA-6): el Paso 3 (`terraform fmt -recursive`) normaliza la lista resultante.
 
-**Modo de falla si el SP de CI no tiene el permiso de registrar RPs.** El fix funciona por construccion en cualquier consumidor onboardeado por este harness: `scripts/setup-github-ci.sh` asigna `Contributor` a nivel de suscripcion al SP de CI, y `Contributor` incluye `*/register/action` (sus unicos `NotActions` son de `Microsoft.Authorization`). Si un consumidor recorto ese rol o usa un SP propio acotado, el `apply` falla con `AuthorizationFailed` en vez del `409`, y la salida es una operacion privilegiada de una sola vez: `az provider register --namespace Microsoft.App --wait`. Repórtalo en el Paso 5 junto al resultado del registro.
+**Transcribe el nombre del argumento literal** (`resource_providers_to_register`, plural en `providers`): es un `list(string)` opcional del schema del provider `azurerm` v4 (verificado con `terraform providers schema -json` sobre 4.81.0, MEF-ADR-0034 referencia [14]). Un typo lo caza el `terraform validate` del Paso 3 -- el entorno instancia modulos `azurerm`, asi que Terraform decodifica el bloque `provider` contra el schema y falla con `Unsupported argument ... Did you mean "resource_providers_to_register"?`. Si el Paso 3 emite ese error, corrige el nombre ahi mismo: **no** lo dejes pasar al PR.
+
+**Modo de falla si el SP de CI no tiene el permiso de registrar RPs.** El fix funciona por construccion en cualquier consumidor onboardeado por este harness: `scripts/setup-github-ci.sh` asigna `Contributor` a nivel de suscripcion al SP de CI, y `Contributor` incluye `*/register/action` (sus unicos `NotActions` son de `Microsoft.Authorization`). Si un consumidor recorto ese rol o usa un SP propio acotado, el `apply` falla con `AuthorizationFailed` en vez del `409`, y la salida es una operacion privilegiada de una sola vez: `az provider register --namespace Microsoft.App --wait`. Reportalo en el Paso 5 junto al resultado del registro.
 
 ### 2.2 `infra/environments/<env>/variables.tf`
 
