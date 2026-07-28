@@ -78,7 +78,12 @@ satisfechas y no cuentan como bloqueo (no importa si estaban o no en el batch).
   sugiere el reordenamiento concreto (ej. "mueve #44 antes de #43").
 
 Para clasificar, necesitas la **lista ordenada** de issues que sobrevivieron al paso 1
-(en el mismo orden de `$ARGUMENTS`). Ejecuta este bloque sustituyendo `BATCH` por esa lista:
+(en el mismo orden de `$ARGUMENTS`). Ejecuta el bloque de abajo pasando esa lista como
+**argumentos posicionales** despues de `--` en la linea `bash -s -- ...`, respetando el
+orden del batch. El heredoc esta citado (`<<'BASH'`): su cuerpo, entre `<<'BASH'` y el
+`BASH` de cierre, se copia y ejecuta **verbatim, sin editar una sola linea** -- ni siquiera
+la asignacion de `BATCH`, que ahora se arma sola a partir de esos argumentos. Lo unico que
+cambia entre invocaciones es la lista de numeros que va despues de `--`.
 
 Este bloque depende de word-splitting sin comillas (`for X in $VAR`) sobre listas separadas
 por espacio y newlines; en zsh (shell del invocador en macOS) eso no ocurre por defecto
@@ -86,11 +91,12 @@ por espacio y newlines; en zsh (shell del invocador en macOS) eso no ocurre por 
 asi que corre bajo `bash` explicito (mismo patron que `commands/onboard.md`):
 
 ```bash
-bash <<'BASH'
+bash -s -- 44 43 45 <<'BASH'
 set +e
 
-# BATCH = issues que sobrevivieron al paso 1, EN ORDEN (separados por espacio).
-BATCH="44 43 45"   # <-- sustituye por tu lista real, respetando el orden del batch
+# BATCH = issues que sobrevivieron al paso 1, EN ORDEN. Llegan como argumentos
+# posicionales de "bash -s -- <issues>"; el cuerpo de este heredoc no se edita nunca.
+BATCH="$*"
 
 # Posicion 1-based de un issue en el batch; status != 0 si no esta en el batch.
 pos_in_batch() {
