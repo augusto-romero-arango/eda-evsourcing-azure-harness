@@ -78,7 +78,14 @@ satisfechas y no cuentan como bloqueo (no importa si estaban o no en el batch).
   sugiere el reordenamiento concreto (ej. "mueve #44 antes de #43").
 
 Para clasificar, necesitas la **lista ordenada** de issues que sobrevivieron al paso 1
-(en el mismo orden de `$ARGUMENTS`). Ejecuta este bloque sustituyendo `BATCH` por esa lista:
+(en el mismo orden de `$ARGUMENTS`). Ejecuta el bloque de abajo pasando esa lista como
+**argumentos posicionales** despues de `--` en la linea `bash -s -- ...`, respetando el
+orden del batch. El heredoc esta citado (`<<'BASH'`): su cuerpo, entre `<<'BASH'` y el
+`BASH` de cierre, se copia y ejecuta **verbatim, sin editar una sola linea** -- ni siquiera
+la asignacion de `BATCH`, que ahora se arma sola a partir de esos argumentos. Lo unico que
+cambia entre invocaciones es la lista de numeros que va despues de `--`: el `44 43 45` del
+ejemplo es un placeholder y vive **fuera** del heredoc. Si olvidas los argumentos, el bloque
+aborta con exit 2 en vez de reportar un OK vacio.
 
 Este bloque depende de word-splitting sin comillas (`for X in $VAR`) sobre listas separadas
 por espacio y newlines; en zsh (shell del invocador en macOS) eso no ocurre por defecto
@@ -86,11 +93,21 @@ por espacio y newlines; en zsh (shell del invocador en macOS) eso no ocurre por 
 asi que corre bajo `bash` explicito (mismo patron que `commands/onboard.md`):
 
 ```bash
-bash <<'BASH'
+bash -s -- 44 43 45 <<'BASH'   # <-- 44 43 45 es un EJEMPLO: pon aqui tu batch real, en orden
 set +e
 
-# BATCH = issues que sobrevivieron al paso 1, EN ORDEN (separados por espacio).
-BATCH="44 43 45"   # <-- sustituye por tu lista real, respetando el orden del batch
+# Fail-loud si el bloque se invoco sin argumentos (p. ej. copiando 'bash <<BASH' sin el
+# '-s -- <issues>'): sin esta guarda, BATCH quedaria vacio, el bucle no revisaria ningun
+# issue y el bloque reportaria "Validacion 1.5 OK" sin haber validado nada.
+if [ "$#" -eq 0 ]; then
+    echo "ERROR: el bloque se invoco sin issues. No se valido NADA (no interpretes esto como OK)."
+    echo "Invocalo como: bash -s -- <issue1> <issue2> ... <<'BASH'"
+    exit 2
+fi
+
+# BATCH = issues que sobrevivieron al paso 1, EN ORDEN. Llegan como argumentos
+# posicionales de "bash -s -- <issues>"; el cuerpo de este heredoc no se edita nunca.
+BATCH="$*"
 
 # Posicion 1-based de un issue en el batch; status != 0 si no esta en el batch.
 pos_in_batch() {
