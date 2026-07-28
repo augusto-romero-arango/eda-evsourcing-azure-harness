@@ -40,9 +40,14 @@ TAIL_LOG_LINES=20
 # --- Tracking de estado ---
 AGENT_WR_DUR="" AGENT_WR_RES="pending"
 AGENT_RV_DUR="" AGENT_RV_RES="pending"
+# Metricas por stage (issue #426): JSON compacto de compute_stage_metrics,
+# cosechado en los mismos puntos donde ya se cosecha AGENT_*_DUR.
+AGENT_WR_METRICS_JSON=""
+AGENT_RV_METRICS_JSON=""
 PIPELINE_PR=""
 PIPELINE_ERROR=""
 LAST_AGENT_DURATION=0
+LAST_AGENT_METRICS_JSON=""
 CURRENT_STAGE="setup"
 
 _strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
@@ -92,7 +97,13 @@ abort() {
     fi
     if [ -n "${PIPELINE_DIR_ABS:-}" ]; then
         update_status "$CURRENT_STAGE" "failed"
-        echo "{\"issue\":\"${ISSUE_NUM:-}\",\"title\":\"$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')\",\"pipeline\":\"mefisto-tooling\",\"started\":\"${TIMESTAMP:-}\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"failed\",\"stage\":\"$CURRENT_STAGE\",\"error\":\"$PIPELINE_ERROR\"}" \
+        # CA-3 (issue #426): agents.<agente>.metrics de los stages ya
+        # cerrados en esta corrida -- los fallos son los casos mas caros de
+        # entender y hasta este issue quedaban sin ninguna cifra por agente.
+        local abort_agents_json
+        abort_agents_json=$(build_agents_history_json "${AGENT_WR_DUR:-}" "${AGENT_WR_METRICS_JSON:-}" "${AGENT_RV_DUR:-}" "${AGENT_RV_METRICS_JSON:-}" 2>/dev/null) \
+            || abort_agents_json="{\"writer\":{\"duration\":${AGENT_WR_DUR:-null}},\"reviewer\":{\"duration\":${AGENT_RV_DUR:-null}}}"
+        echo "{\"issue\":\"${ISSUE_NUM:-}\",\"title\":\"$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')\",\"pipeline\":\"mefisto-tooling\",\"started\":\"${TIMESTAMP:-}\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"failed\",\"stage\":\"$CURRENT_STAGE\",\"agents\":$abort_agents_json,\"error\":\"$PIPELINE_ERROR\"}" \
             >> "$PIPELINE_DIR_ABS/pipeline-history.jsonl" 2>/dev/null || true
     fi
     exit 1
@@ -187,6 +198,7 @@ done
 
 # --- Preparar directorio de pipeline ---
 mkdir -p "$LOG_DIR"
+mkdir -p "$PIPELINE_DIR/metrics"
 echo "Pipeline mefisto-tooling iniciado: $TIMESTAMP" > "$LOG_FILE"
 
 PIPELINE_DIR_ABS="$(realpath "$PIPELINE_DIR")"
@@ -326,6 +338,14 @@ run_agent() {
     # cambios.
     derive_stage_log_from_stream "$stream_file" "$stderr_file" "$log_stage"
 
+    # CA-1 (issue #426): metricas por stage derivadas de la misma traza cruda
+    # que ya deriva el log legible de arriba. Se escriben SIEMPRE (stage
+    # exitoso o fallido) -- un fallo de instrumentacion (jq ausente, stream
+    # vacio, sin evento result) degrada a "null" y nunca aborta el pipeline.
+    local metrics_json
+    metrics_json=$(compute_stage_metrics "$stream_file")
+    echo "$metrics_json" > "$PIPELINE_DIR_ABS/metrics/mefisto-tooling-${TIMESTAMP}-issue-${ISSUE_NUM}-stage-${stage}-${agent}.json" 2>/dev/null || true
+
     local TIMED_OUT=false
     [ -f "$TIMEOUT_SIGNAL_FILE" ] && TIMED_OUT=true
     rm -f "$TIMEOUT_SIGNAL_FILE"
@@ -369,6 +389,17 @@ run_agent() {
                 writer)   AGENT_WR_DUR=$elapsed; AGENT_WR_RES="failed" ;;
                 reviewer) AGENT_RV_DUR=$elapsed; AGENT_RV_RES="failed" ;;
             esac
+            # Las metricas se cosechan por STAGE, no por agente: el stage de
+            # resolucion de conflictos corre como `run_agent "merge" "writer"`,
+            # asi que un case por "$agent" haria que un merge fallido pisara
+            # las metricas del writer de stage 1 y el historial reportara,
+            # bajo agents.writer.metrics, los turnos y tokens de otro stage.
+            # Las del merge no se pierden: quedan en su propio archivo
+            # metrics/...-stage-merge-writer.json (CA-1).
+            case "$stage" in
+                1) AGENT_WR_METRICS_JSON="$metrics_json" ;;
+                2) AGENT_RV_METRICS_JSON="$metrics_json" ;;
+            esac
             update_status "$stage-$agent" "failed"
             echo -e "\n${RED}-- Ultimas lineas del log de $agent:${NC}"
             tail -20 "$log_stage"
@@ -377,6 +408,7 @@ run_agent() {
     fi
 
     LAST_AGENT_DURATION=$elapsed
+    LAST_AGENT_METRICS_JSON="$metrics_json"
     log "$agent completado en ${elapsed}s"
 }
 
@@ -477,6 +509,7 @@ Instrucciones:
     auto_commit_if_needed "writer" "mefisto-tooling(#${ISSUE_NUM}): implementacion"
 
     AGENT_WR_DUR=$LAST_AGENT_DURATION
+    AGENT_WR_METRICS_JSON=$LAST_AGENT_METRICS_JSON
     AGENT_WR_RES="passed"
     update_status "1-writer" "passed"
     success "Stage 1 completado"
@@ -532,6 +565,7 @@ Instrucciones:
     auto_commit_if_needed "reviewer" "mefisto-tooling(#${ISSUE_NUM}): revision y correcciones"
 
     AGENT_RV_DUR=$LAST_AGENT_DURATION
+    AGENT_RV_METRICS_JSON=$LAST_AGENT_METRICS_JSON
     AGENT_RV_RES="passed"
     update_status "2-reviewer" "passed"
     success "Stage 2 completado"
@@ -675,7 +709,12 @@ gh issue comment "$ISSUE_NUM" \
     >>"$LOG_FILE" 2>&1 || warn "No se pudo comentar en el issue #$ISSUE_NUM"
 
 # Historial
-echo "{\"issue\":\"$ISSUE_NUM\",\"title\":\"$(echo "$ISSUE_TITLE" | sed 's/"/\\"/g')\",\"pipeline\":\"mefisto-tooling\",\"started\":\"$TIMESTAMP\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"completed\",\"agents\":{\"writer\":{\"duration\":${AGENT_WR_DUR:-null}},\"reviewer\":{\"duration\":${AGENT_RV_DUR:-null}}},\"pr\":\"$PR_URL\"}" \
+# CA-2 (issue #426): agents.<agente>.metrics se agrega sin tocar "duration"
+# -- si build_agents_history_json fallara por cualquier motivo, el fallback
+# reproduce exactamente el formato plano que ya escribia esta linea (CA-5).
+COMPLETED_AGENTS_JSON=$(build_agents_history_json "${AGENT_WR_DUR:-}" "${AGENT_WR_METRICS_JSON:-}" "${AGENT_RV_DUR:-}" "${AGENT_RV_METRICS_JSON:-}" 2>/dev/null) \
+    || COMPLETED_AGENTS_JSON="{\"writer\":{\"duration\":${AGENT_WR_DUR:-null}},\"reviewer\":{\"duration\":${AGENT_RV_DUR:-null}}}"
+echo "{\"issue\":\"$ISSUE_NUM\",\"title\":\"$(echo "$ISSUE_TITLE" | sed 's/"/\\"/g')\",\"pipeline\":\"mefisto-tooling\",\"started\":\"$TIMESTAMP\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"completed\",\"agents\":$COMPLETED_AGENTS_JSON,\"pr\":\"$PR_URL\"}" \
     >> "$PIPELINE_DIR_ABS/pipeline-history.jsonl"
 
 rm -f "$PIPELINE_DIR_ABS/$STATUS_FILENAME"
