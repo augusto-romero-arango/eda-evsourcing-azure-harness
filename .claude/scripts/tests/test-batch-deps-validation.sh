@@ -20,14 +20,14 @@
 #       -- el caso exacto que el defecto original rompia.
 #   [B] Los tres ejemplos canonicos del issue #47: batch bien ordenado lanza,
 #       batch mal ordenado aborta sugiriendo el reordenamiento concreto, y
-#       dependencia real fuera del batch aborta.
+#       dependencia real fuera del batch aborta. En los dos casos de abort se
+#       verifica ademas que el stub de gh NO recibio ningun 'issue edit': si el
+#       batch aborta no se muta ningun label.
 #   [C] Dependencia CLOSED no bloquea (aunque este fuera del batch).
 #   [D] Dependencia que en realidad es un PR (issue view falla, pr view
 #       responde) se tolera igual que en el bloque original.
 #   [E] 'Bloquea #NNN' (referencia inversa, sin marcador forward) se ignora:
 #       no cuenta como dependencia de este issue.
-#   [F] En TODO caso de abort, el stub de gh no recibio ningun 'issue edit'
-#       (no se muta ningun label si el batch aborta).
 #   [G] Guard de regresion (CA-5): ningun bloque bash de .claude/commands/*.md
 #       contiene sintaxis posicional de shell ($1..$9, ${N}, $*, $@, $#), sin
 #       marcar $ARGUMENTS ni ${#ARRAY[@]} como falsos positivos -- y el guard
@@ -129,7 +129,7 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
 fi
 
 if [ "$1" = "issue" ] && [ "$2" = "edit" ]; then
-    echo "issue edit $*" >> "$DATA/gh_calls.log"
+    echo "$*" >> "$DATA/gh_calls.log"
     exit 0
 fi
 

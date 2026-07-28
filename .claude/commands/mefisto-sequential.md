@@ -89,8 +89,8 @@ El script interpreta el batch completo (no un issue a la vez) y termina con uno 
 exit codes:
 
 - **`0`**: el batch se puede lanzar. Ya quito el label `bloqueado` de los issues cuyas
-  dependencias abiertas resuelve el propio orden del batch (decision CA-5: mantener el
-  label seria mentir sobre el estado). Continua al paso 2.
+  dependencias abiertas resuelve el propio orden del batch (regla de decision de arriba).
+  Continua al paso 2.
 - **`1`**: hay al menos un bloqueo real -- aborta, no se muto ningun label. Muestra el
   mensaje del script (incluye el reordenamiento concreto si la causa es una dependencia
   intra-batch mal ordenada, ej. "Mueve #44 antes de #43") y detente.
