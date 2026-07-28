@@ -31,6 +31,32 @@ if ! command -v jq >/dev/null 2>&1; then
     exit 1
 fi
 
+# Prelude jq de los renderizadores: proyecta una fila a @tsv sin celdas
+# vacias -- null y "" salen como el literal "null", que los formateadores de
+# bash de mas abajo ya traducen a "-".
+#
+# No es cosmetico. Las filas se leen con `IFS=$'\t' read -r a b c ...`, y el
+# tabulador es un caracter IFS *whitespace*: bash colapsa tabuladores
+# consecutivos en un solo delimitador y descarta los iniciales. Una sola celda
+# vacia en medio de la fila corre TODAS las columnas siguientes una posicion a
+# la izquierda, en silencio y sin error -- p. ej. una herramienta con
+# `duration_ms_median: null` (estado de primera clase del esquema de #426:
+# tool_use sin tool_result emparejado, justo lo que pasa en los stages matados
+# que este reporte existe para analizar) imprimiria su "% tiempo" dentro de la
+# columna "Mediana/llamada". Con toda celda no vacia el colapso no puede
+# ocurrir.
+#
+# INVARIANTE: toda fila destinada a `IFS=$'\t' read` se proyecta con `| row`,
+# nunca con `| @tsv` a secas.
+JQ_ROW='def row: map(if . == null or . == "" then "null" else . end) | @tsv;'
+
+# Reglas horizontales. 90 columnas: es el ancho de la tabla mas ancha (la
+# deriva temporal, con los cuatro desgloses de tokens de CA-4) y cubre tambien
+# el ranking de herramientas y el detalle por corrida, que ya desbordaban una
+# regla de 66.
+RULE_MAJOR=$(printf '%090d' 0 | tr '0' '=')
+RULE_MINOR=$(printf '%090d' 0 | tr '0' '-')
+
 # compute_metrics_report_json <history_file> <desde>
 #
 # Agrega pipeline-history.jsonl en un unico objeto JSON compacto: ranking de
@@ -85,11 +111,17 @@ def period_summary(keyfn):
       | ($g_instr | map(run_tokens_cache_read) | add // 0) as $cr_total
       | ($g_instr | map(run_tokens_cache_creation) | add // 0) as $cc_total
       | {
-          period: $period,
+          period: ($period // "(s/fecha)"),
           n_total: ($group | length),
           n_instrumented: ($g_instr | length),
           wall_mean_s: ($group | map(._wall_s) | map(select(. != null)) | avgOrNull),
           wall_median_s: ($group | map(._wall_s) | map(select(. != null)) | median),
+          # Media del wall SOLO sobre las corridas instrumentadas. La seccion
+          # RESUMEN compara esta y no wall_mean_s: el resto de sus filas
+          # (turnos, tool calls, tokens, no-API) solo existe para las
+          # instrumentadas, y mezclar denominadores volveria incomparable
+          # justo la atribucion que el reporte existe para hacer.
+          wall_mean_instr_s: ($g_instr | map(._wall_s) | map(select(. != null)) | avgOrNull),
           turns_mean: ($g_instr | map(run_turns) | avgOrNull),
           tool_calls_mean: ($g_instr | map(run_tool_calls_count) | avgOrNull),
           tokens_input_mean: ($g_instr | map(run_tokens_input) | avgOrNull),
@@ -100,7 +132,7 @@ def period_summary(keyfn):
           non_api_ms_mean: ($g_instr | map(run_non_api_ms) | avgOrNull)
         }
     )
-  | sort_by(.period);
+  | sort_by([(.period == "(s/fecha)"), .period]);
 
 def summarize_agent:
   {
@@ -192,7 +224,7 @@ def delta_of(f; l):
         first: $f,
         last: $l,
         deltas: [
-          ({key: "wall_mean_s", label: "Wall medio (issue)", unit: "s"} + delta_of($f.wall_mean_s; $l.wall_mean_s)),
+          ({key: "wall_mean_s", label: "Wall medio (issue)", unit: "s"} + delta_of($f.wall_mean_instr_s; $l.wall_mean_instr_s)),
           ({key: "turns_mean", label: "Turnos medios", unit: "count1"} + delta_of($f.turns_mean; $l.turns_mean)),
           ({key: "tool_calls_mean", label: "Tool calls medios", unit: "count1"} + delta_of($f.tool_calls_mean; $l.tool_calls_mean)),
           ({key: "tokens_input_mean", label: "Tokens in medios", unit: "count0"} + delta_of($f.tokens_input_mean; $l.tokens_input_mean)),
@@ -282,9 +314,9 @@ render_header() {
     oldest=$(jq -r '.meta.oldest_started // "-"' <<<"$agg")
     newest=$(jq -r '.meta.newest_started // "-"' <<<"$agg")
 
-    echo "=================================================================="
+    echo "$RULE_MAJOR"
     echo "Mefisto - Reporte agregado de metricas del pipeline interno"
-    echo "=================================================================="
+    echo "$RULE_MAJOR"
     echo "Filtro --desde: $desde"
     echo "Corridas mefisto-tooling en la ventana: $total (instrumentadas: $instr, sin instrumentar: $legacy)"
     if [ "$total" -gt 0 ]; then
@@ -299,9 +331,9 @@ render_tool_ranking() {
     count=$(jq -r '.tool_ranking | length' <<<"$agg")
 
     echo ""
-    echo "------------------------------------------------------------------"
+    echo "$RULE_MINOR"
     echo "RANKING DE HERRAMIENTAS (n=$n corridas instrumentadas)"
-    echo "------------------------------------------------------------------"
+    echo "$RULE_MINOR"
 
     if [ "$count" -eq 0 ]; then
         echo "(sin tool calls en corridas instrumentadas dentro de la ventana)"
@@ -311,11 +343,16 @@ render_tool_ranking() {
     printf '%-18s %10s %14s %16s %10s\n' "Herramienta" "Llamadas" "Tiempo total" "Mediana/llamada" "% tiempo"
     while IFS=$'\t' read -r name calls time_s median_s pct; do
         local time_disp median_disp pct_disp
-        time_disp=$(printf '%.1fs' "$time_s")
-        if [ -z "$median_s" ]; then median_disp="-"; else median_disp=$(printf '%.1fs' "$median_s"); fi
+        time_disp=$(_secs "$time_s")
+        median_disp=$(_secs "$median_s")
         pct_disp=$(fmt_pct "$pct")
         printf '%-18s %10s %14s %16s %10s\n' "$name" "$calls" "$time_disp" "$median_disp" "$pct_disp"
-    done < <(jq -r '.tool_ranking[] | [.name, .calls, (.time_ms/1000), (if .median_ms == null then null else (.median_ms/1000) end), .pct] | @tsv' <<<"$agg")
+    done < <(jq -r "$JQ_ROW"'.tool_ranking[] | [.name, .calls, (.time_ms/1000), (if .median_ms == null then null else (.median_ms/1000) end), .pct] | row' <<<"$agg")
+
+    echo ""
+    echo "Nota: 'Mediana/llamada' es la mediana de las medianas por corrida (el"
+    echo "      historial guarda por stage solo suma+mediana, no cada llamada);"
+    echo "      leela como orden de magnitud, no como percentil exacto."
 }
 
 render_wallclock() {
@@ -324,9 +361,9 @@ render_wallclock() {
     n=$(jq -r '.wallclock.aggregate.n' <<<"$agg")
 
     echo ""
-    echo "------------------------------------------------------------------"
+    echo "$RULE_MINOR"
     echo "REPARTO DEL WALL-CLOCK (n=$n corridas instrumentadas)"
-    echo "------------------------------------------------------------------"
+    echo "$RULE_MINOR"
 
     if [ "$n" -eq 0 ]; then
         echo "(sin corridas instrumentadas en la ventana -- ver SIN INSTRUMENTAR)"
@@ -334,46 +371,47 @@ render_wallclock() {
     fi
 
     local api_s non_api_s tool_s pct_api pct_non_api pct_tool
-    IFS=$'\t' read -r api_s non_api_s tool_s pct_api pct_non_api pct_tool < <(jq -r '
+    IFS=$'\t' read -r api_s non_api_s tool_s pct_api pct_non_api pct_tool < <(jq -r "$JQ_ROW"'
         .wallclock.aggregate
         | [(.api_ms/1000), (.non_api_ms/1000), (.tool_ms/1000), .pct_api, .pct_non_api, .pct_tool_of_non_api]
-        | @tsv' <<<"$agg")
+        | row' <<<"$agg")
 
-    printf 'Agregado: API %ss (%s)  No-API %ss (%s)\n' \
-        "$(printf '%.1f' "$api_s")" "$(fmt_pct "$pct_api")" "$(printf '%.1f' "$non_api_s")" "$(fmt_pct "$pct_non_api")"
-    printf '  De lo no-API, atribuible a tool calls: %ss (%s del no-API)\n' \
-        "$(printf '%.1f' "$tool_s")" "$(fmt_pct "$pct_tool")"
+    printf 'Agregado: API %s (%s)  No-API %s (%s)\n' \
+        "$(_secs "$api_s")" "$(fmt_pct "$pct_api")" "$(_secs "$non_api_s")" "$(fmt_pct "$pct_non_api")"
+    printf '  De lo no-API, atribuible a tool calls: %s (%s del no-API)\n' \
+        "$(_secs "$tool_s")" "$(fmt_pct "$pct_tool")"
+    echo "  (las tool calls en paralelo se suman por separado, asi que ese % puede pasar de 100)"
 
     echo ""
     echo "Por corrida:"
     printf '%-8s %-17s %-11s %8s %8s %8s %8s %7s\n' "Issue" "Inicio" "Estado" "Wall" "API" "No-API" "Tools" "%API"
     while IFS=$'\t' read -r issue started state wall_s run_api run_non_api run_tool pct_a; do
-        printf '#%-7s %-17s %-11s %7ss %7ss %7ss %7ss %6s\n' \
-            "$issue" "$started" "$state" \
-            "$(printf '%.0f' "$wall_s")" "$(printf '%.1f' "$run_api")" "$(printf '%.1f' "$run_non_api")" \
-            "$(printf '%.1f' "$run_tool")" "$(fmt_pct "$pct_a")"
-    done < <(jq -r '.wallclock.per_run[] | [.issue, .started, .state, .wall_s, (.api_ms/1000), (.non_api_ms/1000), (.tool_ms/1000), .pct_api] | @tsv' <<<"$agg")
+        printf '#%-7s %-17s %-11s %8s %8s %8s %8s %7s\n' \
+            "$issue" "$(_txt "$started")" "$(_txt "$state")" \
+            "$(_secs0 "$wall_s")" "$(_secs "$run_api")" "$(_secs "$run_non_api")" \
+            "$(_secs "$run_tool")" "$(fmt_pct "$pct_a")"
+    done < <(jq -r "$JQ_ROW"'.wallclock.per_run[] | [.issue, .started, .state, .wall_s, (.api_ms/1000), (.non_api_ms/1000), (.tool_ms/1000), .pct_api] | row' <<<"$agg")
 
     echo ""
     echo "Writer vs Reviewer:"
     local w_n w_turns w_tin w_tout w_cread w_ccreate w_cost_mean w_cost_total w_dur w_api w_nonapi
-    IFS=$'\t' read -r w_n w_turns w_tin w_tout w_cread w_ccreate w_cost_mean w_cost_total w_dur w_api w_nonapi < <(jq -r '
+    IFS=$'\t' read -r w_n w_turns w_tin w_tout w_cread w_ccreate w_cost_mean w_cost_total w_dur w_api w_nonapi < <(jq -r "$JQ_ROW"'
         .wallclock.writer
         | [.n, .turns_mean, .tokens_input_mean, .tokens_output_mean, .tokens_cache_read_mean, .tokens_cache_creation_mean,
            .cost_usd_mean, .cost_usd_total,
            (if .duration_ms_mean == null then null else .duration_ms_mean/1000 end),
            (if .duration_api_ms_mean == null then null else .duration_api_ms_mean/1000 end),
            (if .non_api_ms_mean == null then null else .non_api_ms_mean/1000 end)]
-        | @tsv' <<<"$agg")
+        | row' <<<"$agg")
     local r_n r_turns r_tin r_tout r_cread r_ccreate r_cost_mean r_cost_total r_dur r_api r_nonapi
-    IFS=$'\t' read -r r_n r_turns r_tin r_tout r_cread r_ccreate r_cost_mean r_cost_total r_dur r_api r_nonapi < <(jq -r '
+    IFS=$'\t' read -r r_n r_turns r_tin r_tout r_cread r_ccreate r_cost_mean r_cost_total r_dur r_api r_nonapi < <(jq -r "$JQ_ROW"'
         .wallclock.reviewer
         | [.n, .turns_mean, .tokens_input_mean, .tokens_output_mean, .tokens_cache_read_mean, .tokens_cache_creation_mean,
            .cost_usd_mean, .cost_usd_total,
            (if .duration_ms_mean == null then null else .duration_ms_mean/1000 end),
            (if .duration_api_ms_mean == null then null else .duration_api_ms_mean/1000 end),
            (if .non_api_ms_mean == null then null else .non_api_ms_mean/1000 end)]
-        | @tsv' <<<"$agg")
+        | row' <<<"$agg")
 
     printf '%-24s %14s %14s\n' "" "Writer" "Reviewer"
     printf '%-24s %14s %14s\n' "Corridas (n)" "$w_n" "$r_n"
@@ -393,6 +431,29 @@ _num1() {
     if [ -z "$1" ] || [ "$1" = "null" ]; then echo "-"; else printf '%.1f' "$1"; fi
 }
 
+# _txt <texto|null|""> -- texto tal cual, "-" si falta. Evita que el literal
+# "null" con que `row` rellena las celdas vacias llegue crudo a la pantalla.
+_txt() {
+    if [ -z "$1" ] || [ "$1" = "null" ]; then echo "-"; else printf '%s' "$1"; fi
+}
+
+# _secs / _secs0 <segundos|null|""> -- segundos con y sin decimal, "-" si falta.
+_secs() {
+    if [ -z "$1" ] || [ "$1" = "null" ]; then echo "-"; else printf '%.1fs' "$1"; fi
+}
+
+_secs0() {
+    if [ -z "$1" ] || [ "$1" = "null" ]; then echo "-"; else printf '%.0fs' "$1"; fi
+}
+
+# _numk <numero|null|""> -- miles compactos (12345 -> 12.3k), "-" si falta.
+# Mantiene legible la tabla de deriva ahora que lleva los cuatro desgloses de
+# tokens que pide CA-4.
+_numk() {
+    if [ -z "$1" ] || [ "$1" = "null" ]; then echo "-"; return 0; fi
+    awk -v v="$1" 'BEGIN{ if (v >= 1000) printf "%.1fk", v/1000; else printf "%.0f", v }'
+}
+
 _num0() {
     if [ -z "$1" ] || [ "$1" = "null" ]; then echo "-"; else printf '%.0f' "$1"; fi
 }
@@ -404,35 +465,39 @@ _money() {
 render_period_table() {
     local agg="$1" path="$2" title="$3"
     echo ""
-    echo "------------------------------------------------------------------"
+    echo "$RULE_MINOR"
     echo "$title"
-    echo "------------------------------------------------------------------"
+    echo "$RULE_MINOR"
     local count
     count=$(jq -r "${path} | length" <<<"$agg")
     if [ "$count" -eq 0 ]; then
         echo "(sin datos en la ventana)"
         return 0
     fi
-    printf '%-10s %-9s %10s %10s %8s %8s %10s %8s\n' \
-        "Periodo" "n(t/i)" "Wall.med" "Wall.mna" "Turnos" "Tools" "Tok.in" "cache%"
-    while IFS=$'\t' read -r period n_total n_instr wall_mean wall_median turns tools tin cache_pct; do
-        local turns_disp tools_disp tin_disp cache_disp
-        turns_disp=$(_num1 "$turns")
-        tools_disp=$(_num1 "$tools")
-        tin_disp=$(_num0 "$tin")
-        if [ -z "$cache_pct" ] || [ "$cache_pct" = "null" ]; then cache_disp="-"; else cache_disp=$(printf '%.1f%%' "$cache_pct"); fi
-        printf '%-10s %-9s %10s %10s %8s %8s %10s %8s\n' \
+    echo "n(t/i) = corridas totales / de ellas instrumentadas. El wall usa las"
+    echo "totales; turnos, tools y tokens solo las instrumentadas."
+    echo ""
+    printf '%-10s %-8s %9s %9s %7s %7s %8s %8s %8s %8s %7s\n' \
+        "Periodo" "n(t/i)" "WallMedia" "WallP50" "Turnos" "Tools" "Tok.in" "Tok.out" "Cache.rd" "Cache.cr" "%rd"
+    while IFS=$'\t' read -r period n_total n_instr wall_mean wall_median turns tools tin tout crd ccr cache_pct; do
+        local cache_disp
+        if [ "$cache_pct" = "null" ]; then cache_disp="-"; else cache_disp=$(printf '%.1f%%' "$cache_pct"); fi
+        printf '%-10s %-8s %9s %9s %7s %7s %8s %8s %8s %8s %7s\n' \
             "$period" "${n_total}/${n_instr}" "$(fmt_dur_s "$wall_mean")" "$(fmt_dur_s "$wall_median")" \
-            "$turns_disp" "$tools_disp" "$tin_disp" "$cache_disp"
-    done < <(jq -r "${path}[] | [.period, .n_total, .n_instrumented, .wall_mean_s, .wall_median_s, .turns_mean, .tool_calls_mean, .tokens_input_mean, .cache_read_pct] | @tsv" <<<"$agg")
+            "$(_num1 "$turns")" "$(_num1 "$tools")" "$(_numk "$tin")" "$(_numk "$tout")" \
+            "$(_numk "$crd")" "$(_numk "$ccr")" "$cache_disp"
+    done < <(jq -r "$JQ_ROW ${path}[] | [.period, .n_total, .n_instrumented, .wall_mean_s, .wall_median_s, .turns_mean, .tool_calls_mean, .tokens_input_mean, .tokens_output_mean, .cache_read_mean, .cache_creation_mean, .cache_read_pct] | row" <<<"$agg")
+    echo ""
+    echo "%rd = cache_read / (cache_read + cache_creation): cae cuando el contexto"
+    echo "      deja de acertar en cache."
 }
 
 render_comparison() {
     local agg="$1"
     echo ""
-    echo "------------------------------------------------------------------"
+    echo "$RULE_MINOR"
     echo "RESUMEN: QUE CRECIO (primer vs ultimo mes con corridas instrumentadas)"
-    echo "------------------------------------------------------------------"
+    echo "$RULE_MINOR"
 
     local has_cmp
     has_cmp=$(jq -r 'if .comparison == null then "no" else "yes" end' <<<"$agg")
@@ -447,6 +512,8 @@ render_comparison() {
     lp=$(jq -r '.comparison.last.period' <<<"$agg")
     ln=$(jq -r '.comparison.last.n_instrumented' <<<"$agg")
     echo "Comparando $fp (n=$fn) vs $lp (n=$ln):"
+    echo "Todas las filas, el wall incluido, se calculan solo sobre esas corridas"
+    echo "instrumentadas -- si no compartieran denominador la atribucion no valdria."
     echo ""
     printf '%-22s %12s %12s %12s\n' "Metrica" "Primero" "Ultimo" "Variacion"
 
@@ -463,7 +530,7 @@ render_comparison() {
             last_disp=$(_num1 "$last")
         fi
         printf '%-22s %12s %12s %12s\n' "$label" "$first_disp" "$last_disp" "$(fmt_signed_pct "$pct")"
-    done < <(jq -r '.comparison.deltas[] | [.label, .unit, .first, .last, .pct] | @tsv' <<<"$agg")
+    done < <(jq -r "$JQ_ROW"'.comparison.deltas[] | [.label, .unit, .first, .last, .pct] | row' <<<"$agg")
 }
 
 render_legacy() {
@@ -471,16 +538,16 @@ render_legacy() {
     local count
     count=$(jq -r '.legacy.count' <<<"$agg")
     echo ""
-    echo "------------------------------------------------------------------"
+    echo "$RULE_MINOR"
     echo "SIN INSTRUMENTAR (n=$count -- corridas previas a #426, solo duracion total)"
-    echo "------------------------------------------------------------------"
+    echo "$RULE_MINOR"
     if [ "$count" -eq 0 ]; then
         echo "(ninguna en la ventana)"
         return 0
     fi
     while IFS=$'\t' read -r issue started state; do
-        printf '#%-8s %-17s %s\n' "$issue" "$started" "$state"
-    done < <(jq -r '.legacy.issues[] | [.issue, .started, .state] | @tsv' <<<"$agg")
+        printf '#%-8s %-17s %s\n' "$issue" "$(_txt "$started")" "$(_txt "$state")"
+    done < <(jq -r "$JQ_ROW"'.legacy.issues[] | [.issue, .started, .state] | row' <<<"$agg")
 }
 
 main() {
@@ -545,7 +612,7 @@ EOF
     render_legacy "$agg"
 
     echo ""
-    echo "=================================================================="
+    echo "$RULE_MAJOR"
 }
 
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then

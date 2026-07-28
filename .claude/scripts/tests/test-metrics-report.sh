@@ -42,6 +42,17 @@
 #   [F] --desde con formato invalido -> aborta con mensaje claro, exit 1.
 #   [G] Argumento desconocido -> aborta con mensaje claro, exit 1.
 #   [H] jq ausente en PATH -> aborta con mensaje claro, exit 1 (CA-1).
+#   [I] Regresion de corrimiento de columnas: una celda nula en medio de una
+#       fila @tsv corria en silencio todas las columnas siguientes, porque el
+#       tabulador es un caracter IFS *whitespace* y bash colapsa los
+#       consecutivos (ver `JQ_ROW` en el script). Cubre mediana de herramienta
+#       nula -- estado de primera clase del esquema de #426 -- y corridas sin
+#       `started`.
+#   [J] El RESUMEN calcula el delta de wall sobre las corridas instrumentadas,
+#       el mismo denominador que turnos/tools/tokens: mezclarlos inflaba justo
+#       la atribucion que el reporte existe para hacer.
+#   [K] La serie temporal desglosa los tokens medios (in/out/cache_read/
+#       cache_creation), no solo los de entrada (CA-4).
 #
 # Uso: .claude/scripts/tests/test-metrics-report.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -327,6 +338,90 @@ if [ "$RC" -ne 0 ] && echo "$OUT" | grep -qi "requiere jq"; then
     pass "jq ausente: aborta con mensaje claro (rc=$RC)"
 else
     fail "jq ausente: se esperaba abort mencionando jq, se obtuvo rc=$RC: $OUT"
+fi
+
+echo ""
+echo "[I] Celdas nulas no corren las columnas (regresion de corrimiento por @tsv)"
+
+# Las filas se leen con `IFS=$'\t' read`, y el tabulador es un caracter IFS
+# *whitespace*: bash colapsa tabuladores consecutivos y descarta los iniciales.
+# Una sola celda vacia en medio de la fila corria TODAS las columnas siguientes
+# una posicion a la izquierda, en silencio -- sin error y con numeros que
+# parecen validos. Cada caso de abajo tiene al menos una celda nula en el medio.
+
+# I-1: `duration_ms_median: null` es un estado de primera clase del esquema de
+# #426 (tool_use sin tool_result emparejado: justo lo que pasa en los stages
+# matados que este reporte existe para analizar). Antes del arreglo, el "%
+# tiempo" de Read se imprimia DENTRO de la columna "Mediana/llamada".
+cat > "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" <<'EOF'
+{"issue":"300","title":"Read sin mediana derivable","pipeline":"mefisto-tooling","started":"20260706-090000","state":"completed","agents":{"writer":{"duration":100,"metrics":{"turns":3,"duration_ms":100000,"duration_api_ms":80000,"non_api_ms":20000,"cost_usd":0.1,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"tool_calls":[{"name":"Read","count":10,"duration_ms_sum":8000,"duration_ms_median":null},{"name":"Bash","count":5,"duration_ms_sum":15000,"duration_ms_median":2500}]}},"reviewer":{"duration":null,"metrics":null}}}
+EOF
+OUT=$(run_report)
+# Bash 15000 / (15000+8000) = 65.2% ; Read 8000/23000 = 34.8%
+if echo "$OUT" | grep -qE '^Read +10 +8\.0s +- +34\.8%'; then
+    pass "I-1: mediana nula -> '-' en su columna y el % en la suya (sin corrimiento)"
+else
+    fail "I-1: fila de Read corrida o mal formada: $(echo "$OUT" | grep '^Read' || echo '(no hay fila Read)')"
+fi
+
+# I-2: entrada sin `started`. Antes del arreglo la fila del periodo salia como
+# "2  0/150" -- periodo, n_total y n_instrumented corridos desde el wall.
+cat > "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" <<'EOF'
+{"issue":"301","title":"Sin started","pipeline":"mefisto-tooling","state":"completed","agents":{"writer":{"duration":100},"reviewer":{"duration":50}}}
+EOF
+OUT=$(run_report)
+if echo "$OUT" | grep -qE '^\(s/fecha\) +1/0 +2m30s'; then
+    pass "I-2: corrida sin fecha -> periodo '(s/fecha)' con n(t/i) y wall en su columna"
+else
+    fail "I-2: fila de periodo sin fecha corrida: $(echo "$OUT" | grep 's/fecha' || echo '(no aparece)')"
+fi
+
+if echo "$OUT" | grep -qE '^#301 +- +completed'; then
+    pass "I-2b: SIN INSTRUMENTAR muestra '-' por la fecha ausente, no el literal 'null'"
+else
+    fail "I-2b: fila legado mal formada: $(echo "$OUT" | grep '^#301' || echo '(no aparece)')"
+fi
+
+echo ""
+echo "[J] El RESUMEN compara wall y turnos sobre el MISMO denominador"
+
+# Si el primer mes con corridas instrumentadas tiene ademas corridas legado, el
+# wall medio se calculaba sobre TODAS mientras turnos/tools/tokens se calculaban
+# solo sobre las instrumentadas -- bajo un encabezado que declara n=<instrumentadas>.
+# Eso inflaba justo la atribucion que el reporte existe para hacer.
+cat > "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" <<'EOF'
+{"issue":"400","title":"Legado rapido dentro de julio","pipeline":"mefisto-tooling","started":"20260705-080000","state":"completed","agents":{"writer":{"duration":40},"reviewer":{"duration":20}}}
+{"issue":"401","title":"Instrumentado julio","pipeline":"mefisto-tooling","started":"20260706-090000","state":"completed","agents":{"writer":{"duration":600,"metrics":{"turns":10,"duration_ms":600000,"duration_api_ms":500000,"non_api_ms":100000,"cost_usd":0.5,"tokens":{"input":10000,"output":1000,"cache_read":9000,"cache_creation":1000},"tool_calls":[{"name":"Read","count":5,"duration_ms_sum":5000,"duration_ms_median":1000}]}},"reviewer":{"duration":null,"metrics":null}}}
+{"issue":"402","title":"Instrumentado agosto","pipeline":"mefisto-tooling","started":"20260803-090000","state":"completed","agents":{"writer":{"duration":1200,"metrics":{"turns":20,"duration_ms":1200000,"duration_api_ms":900000,"non_api_ms":300000,"cost_usd":1.0,"tokens":{"input":20000,"output":2000,"cache_read":10000,"cache_creation":10000},"tool_calls":[{"name":"Read","count":10,"duration_ms_sum":10000,"duration_ms_median":1000}]}},"reviewer":{"duration":null,"metrics":null}}}
+EOF
+AGG=$(compute_metrics_report_json "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" "")
+
+# Julio: wall de TODAS = (60+600)/2 = 330s ; wall de las INSTRUMENTADAS = 600s.
+assert_field "J-1: wall_mean_s de julio cubre las 2 corridas (tabla de deriva)" \
+    "330" "$(echo "$AGG" | jq -r '.series.monthly[] | select(.period=="2026-07") | .wall_mean_s')"
+assert_field "J-2: wall_mean_instr_s de julio cubre solo la instrumentada" \
+    "600" "$(echo "$AGG" | jq -r '.series.monthly[] | select(.period=="2026-07") | .wall_mean_instr_s')"
+# El delta del RESUMEN debe usar el instrumentado: 600 -> 1200 = +100%, no 330 -> 1200 = +263.6%.
+assert_field "J-3: el delta de wall del RESUMEN usa el denominador instrumentado" \
+    "600" "$(echo "$AGG" | jq -r '.comparison.deltas[] | select(.key=="wall_mean_s") | .first')"
+assert_field "J-4: y por tanto la variacion es +100%, no la inflada por el legado" \
+    "100" "$(echo "$AGG" | jq -r '.comparison.deltas[] | select(.key=="wall_mean_s") | .pct')"
+
+echo ""
+echo "[K] La tabla de deriva desglosa los tokens medios (CA-4)"
+
+OUT=$(run_report)
+if echo "$OUT" | grep -q "Tok.in" && echo "$OUT" | grep -q "Tok.out" \
+   && echo "$OUT" | grep -q "Cache.rd" && echo "$OUT" | grep -q "Cache.cr"; then
+    pass "K-1: la serie temporal trae input, output y el desglose cache_read/cache_creation"
+else
+    fail "K-1: falta alguna columna del desglose de tokens en la serie temporal"
+fi
+
+if echo "$OUT" | grep -qE '^2026-08 +1/1 +20m00s +20m00s +20\.0 +10\.0 +20\.0k +2\.0k +10\.0k +10\.0k +50\.0%'; then
+    pass "K-2: fila mensual completa y alineada (agosto: 20k in / 2k out / 50% cache read)"
+else
+    fail "K-2: fila mensual de agosto corrida o mal formada: $(echo "$OUT" | grep '^2026-08' || echo '(no aparece)')"
 fi
 
 echo ""
