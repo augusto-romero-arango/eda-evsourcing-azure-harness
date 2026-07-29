@@ -34,7 +34,11 @@
 #       verificando ademas que no se llama 'gh issue edit'. Y, en sentido
 #       contrario (guarda de no-regresion), un issue SIN el label con una
 #       dependencia tipo (a) satisfactible por el batch lanza OK sin que se le
-#       intente quitar un label que nunca tuvo.
+#       intente quitar un label que nunca tuvo, reportando esa resolucion por
+#       orden (un exit 0 mudo no se distingue de no haber leido el body).
+#       Cierra con el guard de CA-1: el paso 1 del skill sigue excluyendo por
+#       'estado:listo' -- es un gate en prosa, y sin guard su desaparicion en una
+#       reescritura del markdown seria silenciosa.
 #   [G] Guard de regresion (CA-5): ningun bloque bash de .claude/commands/*.md
 #       contiene sintaxis posicional de shell ($1..$9, ${N}, $*, $@, $#), sin
 #       marcar $ARGUMENTS ni ${#ARRAY[@]} como falsos positivos -- y el guard
@@ -396,6 +400,28 @@ else
 fi
 assert_issue_edit_not_called "F-2" 72
 assert_issue_edit_not_called "F-2" 73
+
+# Y lo reporta: sin esta linea, un exit 0 sobre un batch sano es identico al del
+# comportamiento viejo, que ni leia el body de #72 -- el operador no puede saber
+# si el analisis ampliado corrio.
+if echo "$OUTPUT" | grep -q "#72: dependencias abiertas #73 satisfechas por el orden del batch"; then
+    pass "F-2: reporta la dependencia tipo (a) resuelta por orden del issue sin label"
+else
+    fail "F-2: no reporto la dependencia tipo (a) de #72 resuelta por el orden: $OUTPUT"
+fi
+
+# F-3 (guard de CA-1): el paso 1 del skill excluye por 'estado:listo'. Es un gate
+# en prosa que interpreta el modelo, no codigo con exit code, asi que su unica
+# defensa contra una reescritura del markdown que lo pierda es este guard.
+SEQ_SKILL="$REPO_ROOT/.claude/commands/mefisto-sequential.md"
+STEP1=$(awk '/^### 1\. /{f=1;next} /^### 1\.5\./{f=0} f' "$SEQ_SKILL")
+if [ -z "$STEP1" ]; then
+    fail "F-3: no se pudo extraer el paso 1 de $SEQ_SKILL"
+elif echo "$STEP1" | grep -q 'estado:listo'; then
+    pass "F-3: el paso 1 del skill sigue excluyendo issues sin 'estado:listo' (CA-1)"
+else
+    fail "F-3: el paso 1 del skill NO menciona 'estado:listo': el gate del DoR se perdio"
+fi
 
 # -------- Bloque G: guard de regresion CA-5 --------
 

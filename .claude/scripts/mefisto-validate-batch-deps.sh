@@ -45,7 +45,10 @@
 # corria el issue antes que su dependencia. El label 'bloqueado' ahora es
 # irrelevante como condicion de ENTRADA al analisis; conserva su rol solo como
 # SALIDA (se quita de los issues que lo llevaban puesto cuando el batch resuelve
-# sus dependencias, tipo (a) arriba).
+# sus dependencias, tipo (a) arriba). Como esos issues no tienen label que quitar,
+# sus dependencias tipo (a) se reportan en una linea informativa antes del OK
+# final: sin ella, un exit 0 sobre un batch sano seria indistinguible del viejo
+# comportamiento, que ni llegaba a leer esos bodies.
 #
 # No usa 'set -e': tolera que 'gh issue view' falle sobre una dependencia que
 # en realidad es un PR (cae a 'gh pr view') o que no existe -- la salida se
@@ -74,6 +77,7 @@ pos_in_batch() {
 
 ABORT_MSGS=""        # bloqueos reales (tipo b) acumulados de todo el batch
 LABELS_TO_CLEAR=""   # issues tipo (a) a los que se les quitara 'bloqueado'
+ORDER_MSGS=""        # informativo: deps tipo (a) de issues SIN label (issue #466)
 
 for ISSUE in $BATCH; do
     ISSUE_POS=$(pos_in_batch "$ISSUE")
@@ -95,6 +99,7 @@ for ISSUE in $BATCH; do
         | grep -oE '[0-9]+' | sort -u)
 
     ISSUE_REAL=""    # bloqueos reales de ESTE issue
+    ISSUE_ORDER=""   # deps tipo (a) de ESTE issue, resueltas por el orden del batch
     for DEP in $DEPS; do
         [ "$DEP" = "$ISSUE" ] && continue
         # Estado de la dependencia (puede ser issue o PR).
@@ -105,7 +110,8 @@ for ISSUE in $BATCH; do
         # Abierta (o desconocida) -> clasificar por posicion en el batch.
         if DEP_POS=$(pos_in_batch "$DEP"); then
             if [ "$DEP_POS" -lt "$ISSUE_POS" ]; then
-                : # (a) satisfactible: en el batch y ANTES en el orden -> no bloquea
+                # (a) satisfactible: en el batch y ANTES en el orden -> no bloquea
+                ISSUE_ORDER="$ISSUE_ORDER #$DEP"
             else
                 # (b) mal ordenada: en el batch pero DESPUES de este issue.
                 ISSUE_REAL="$ISSUE_REAL
@@ -126,6 +132,13 @@ for ISSUE in $BATCH; do
         # por el orden del batch (o por deps ya cerradas) y hay que quitarselo.
         # Si nunca lo tuvo, no hay nada que mutar.
         LABELS_TO_CLEAR="$LABELS_TO_CLEAR $ISSUE"
+    elif [ -n "$ISSUE_ORDER" ]; then
+        # No hay label que quitar, pero el analisis ampliado por #466 SI leyo este
+        # body y encontro dependencias forward que el orden del batch resuelve. Se
+        # reporta para que el operador vea que la validacion corrio sobre este
+        # issue: un exit 0 mudo no se distingue de no haber mirado nada.
+        ORDER_MSGS="$ORDER_MSGS
+#$ISSUE: dependencias abiertas$ISSUE_ORDER satisfechas por el orden del batch (no tenia label 'bloqueado' que quitar)."
     fi
 done
 
@@ -136,6 +149,11 @@ if [ -n "$ABORT_MSGS" ]; then
     echo "Reordena el batch (dependencias antes que sus dependientes) o cierra las"
     echo "dependencias externas antes de relanzar."
     exit 1
+fi
+
+if [ -n "$ORDER_MSGS" ]; then
+    echo "Dependencias resueltas por el orden del batch (issues sin label 'bloqueado'):"
+    echo "$ORDER_MSGS"
 fi
 
 # Solo si TODO el batch paso la validacion mutamos estado (no tocar labels si abortamos).

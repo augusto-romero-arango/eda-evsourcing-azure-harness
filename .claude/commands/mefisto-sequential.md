@@ -42,12 +42,14 @@ Reglas de exclusion/abortar:
 - Si el issue **no existe**: informalo y excluyelo de la lista.
 - Si el issue esta `CLOSED`: informalo y excluyelo de la lista.
 - Si el issue **no tiene** el label `estado:listo` (por ejemplo, esta en `estado:borrador`):
-  informalo y **excluyelo automaticamente**, sin preguntar `s/n`. A diferencia de
-  `tipo:tooling` (una señal blanda que un humano puede decidir ignorar a sabiendas),
-  `estado:listo` es el Definition of Ready de MEF-ADR-0011: un draft no lo cumple por
-  definicion, y el pipeline que arranca despues corre headless en tmux sin nadie
-  supervisando la ejecucion. Admitirlo tras una confirmacion en el momento de invocar
-  el skill no cubre ese riesgo, asi que el default es excluir siempre.
+  informalo y **excluyelo automaticamente**, sin preguntar `s/n` (decision de este skill,
+  issue #466). `estado:listo` es criterio **Obligatorio** del Definition of Ready para todo
+  `tipo:` en MEF-ADR-0011, y el primer criterio de la validacion programatica que el
+  `/implement` publicado ya aplica: un draft no lo cumple por definicion -- sus criterios de
+  aceptacion son todavia preguntas abiertas. A diferencia de `tipo:tooling` (una senal blanda
+  que un humano puede decidir ignorar a sabiendas), aqui el batch arranca **headless** en tmux
+  sin nadie supervisando la ejecucion, asi que una confirmacion `s/n` en el momento de invocar
+  el skill no cubre el riesgo: el default es excluir siempre.
 - Si el issue **no tiene** el label `tipo:tooling`: advierte y pregunta `s/n`. Si la respuesta es `n` (o no hay confirmacion), excluyelo de la lista.
 
 ### 1.5. Validar dependencias del batch (con resolucion intra-batch)
@@ -100,9 +102,11 @@ pasando esa lista como argumentos, respetando el orden del batch:
 El script interpreta el batch completo (no un issue a la vez) y termina con uno de tres
 exit codes:
 
-- **`0`**: el batch se puede lanzar. Ya quito el label `bloqueado` de los issues cuyas
-  dependencias abiertas resuelve el propio orden del batch (regla de decision de arriba).
-  Continua al paso 2.
+- **`0`**: el batch se puede lanzar. Ya quito el label `bloqueado` de los issues que lo
+  llevaban puesto y cuyas dependencias abiertas resuelve el propio orden del batch (regla de
+  decision de arriba), y reporta en una linea informativa las dependencias tipo (a) de los
+  issues que **no** llevaban el label -- no hay label que quitarles, pero conviene ver que la
+  validacion si leyo su body. Continua al paso 2.
 - **`1`**: hay al menos un bloqueo real -- aborta, no se muto ningun label. Muestra el
   mensaje del script (incluye el reordenamiento concreto si la causa es una dependencia
   intra-batch mal ordenada, ej. "Mueve #44 antes de #43") y detente.
