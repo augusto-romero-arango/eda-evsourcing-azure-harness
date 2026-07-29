@@ -22,7 +22,9 @@
 # mefisto-tooling-pipeline.sh) ya crece en vivo desde #431; este script la sigue
 # incrementalmente y renderiza una linea legible por accion: hora, delta
 # desde la accion anterior (el reloj es lo que revela los round-trips de
-# ~20s), herramienta y objetivo.
+# ~20s), herramienta y objetivo. Los turnos SIN tool call tambien se señalan
+# (texto y bloques de thinking): son los que no mueven ningun archivo y donde
+# se va el tiempo de razonamiento.
 #
 # Solo lectura y autonomo (CA-6): no modifica ningun pipeline ni archivo
 # existente, no escribe en .claude/pipeline/ (solo en un directorio temporal
@@ -84,12 +86,23 @@ CURRENT_STREAM=""
 # Escribe en <dest_file> el programa jq que traduce una linea cruda del
 # stream (un evento `assistant`/`result`, ya parseado por linea en
 # process_new_lines) a una fila TSV lista para render_row: "tool" (nombre +
-# objetivo aplanado a una sola linea via `flatten`, CA-3), "text" (turno de
-# solo texto sin tool call, CA-2) o "result" (cierre de stage, CA-5). El
-# guard `if (type != "object") then empty` tolera una linea que SI es JSON
-# valido pero no es un objeto (select(type=="object") en
+# objetivo aplanado a una sola linea via `flatten`, CA-3), "text" (turno sin
+# tool call -- texto o bloque de thinking, CA-2) o "result" (cierre de stage,
+# CA-5). El guard `if (type != "object") then empty` tolera una linea que SI
+# es JSON valido pero no es un objeto (select(type=="object") en
 # derive_stage_log_from_stream cubre el mismo caso) sin que jq aborte con un
 # error de indexado duro.
+#
+# `cell` sustituye por "-" todo campo nulo o vacio, y NO es cosmetico: la
+# fila se lee en el shell con `IFS=$'\t' read`, y el tab es un caracter de
+# espacio en blanco para IFS -- bash colapsa dos tabs seguidos en un solo
+# separador, asi que un campo vacio en el medio DESPLAZARIA todos los que
+# siguen. Con placeholder no hay campo vacio y la posicion se conserva; el
+# shell lo traduce de vuelta con is_missing. El caso real que lo exige: el
+# evento `result` del CLI NO trae `.timestamp` (verificado contra las trazas
+# de .claude/pipeline/logs/), asi que su segundo campo siempre estaria vacio
+# y el cierre de stage reportaria duration_ms como turnos y is_error como
+# costo.
 #
 # El objetivo por herramienta sigue el vocabulario de CA-2: ruta para
 # Read/Edit/Write/NotebookEdit, comando para Bash, patron (+ruta si la trae)
@@ -109,7 +122,17 @@ def epoch_ms:
       end
   end;
 
-def flatten: tostring | gsub("\\s+"; " ") | gsub("^ +| +$"; "");
+# Aplana a una sola linea (CA-3): los comandos Bash traen newlines embebidos,
+# y volcarlos crudos parte un comando en varias lineas del pane. Se barren
+# primero los caracteres de control ([[:cntrl:]] cubre newline/tab/CR y
+# tambien el ESC de una secuencia ANSI, que garabatearia el pane) y luego se
+# colapsa la corrida de espacios resultante.
+def flatten: tostring | gsub("[[:cntrl:]]"; " ") | gsub("\\s+"; " ") | gsub("^ +| +$"; "");
+
+# Campo vacio o nulo -> "-", para que la fila TSV nunca colapse en el
+# `IFS=$'\t' read` del shell (ver el comentario de write_jq_filter).
+def cell: if (. == null or . == "") then "-" else tostring end;
+def row: map(cell) | @tsv;
 
 def is_file_tool($name):
   ($name == "Read" or $name == "Edit" or $name == "Write"
@@ -144,17 +167,24 @@ if (type != "object") then empty else
           $tools[] as $t
           | ($t.input // {}) as $in
           | [ "tool", $ems, $t.name, (target_for($t.name; $in) | flatten),
-              (if is_file_tool($t.name) then ($in.file_path // $in.notebook_path // "") else "" end) ]
-          | @tsv
+              (if is_file_tool($t.name) then (($in.file_path // $in.notebook_path // "") | flatten) else "" end) ]
+          | row
         else
+          # Turno sin tool call: ahi se va el tiempo de razonamiento (CA-2). Se
+          # distinguen los dos sabores que produce el CLI, porque ambos son
+          # frecuentes en una traza real: bloques `text` (el agente escribe al
+          # humano) y bloques `thinking` (razonamiento; su texto viaja vacio y
+          # solo queda la firma, asi que se señala el turno, no su contenido).
           if ($content | map(select(.type == "text" and ((.text // "") | length > 0))) | length) > 0 then
-            [ "text", $ems, "", "", "" ] | @tsv
+            [ "text", $ems, "texto" ] | row
+          elif ($content | map(select(.type == "thinking")) | length) > 0 then
+            [ "text", $ems, "pensamiento" ] | row
           else empty end
         end
     elif $e.type == "result" then
-      [ "result", $ems, ($e.num_turns // ""), ($e.duration_ms // ""), ($e.duration_api_ms // ""),
-        ($e.total_cost_usd // ""), (if $e.is_error == null then "" else ($e.is_error | tostring) end) ]
-      | @tsv
+      [ "result", $ems, $e.num_turns, $e.duration_ms, $e.duration_api_ms,
+        $e.total_cost_usd, $e.is_error ]
+      | row
     else empty end
 end
 MEFISTO_STREAM_WATCH_JQ
@@ -203,10 +233,14 @@ parse_stream_header() {
 #
 # Ancho de columnas de la terminal actual (`tput cols`), o 80 si no se puede
 # determinar (headless, sin tty). Usado por render_row para truncar targets
-# largos al ancho real del pane (CA-3).
+# largos al ancho real del pane (CA-3). Un COLUMNS explicito en el entorno
+# gana: permite fijar el ancho a mano (`COLUMNS=60 mefisto-stream-watch.sh`)
+# y deja el truncado verificable en el test sin depender del tty que corra.
 pane_width() {
-    local w
-    w=$(tput cols 2>/dev/null)
+    local w="${COLUMNS:-}"
+    if [ -z "$w" ]; then
+        w=$(tput cols 2>/dev/null)
+    fi
     if [ -n "$w" ] && [ "$w" -gt 0 ] 2>/dev/null; then
         echo "$w"
     else
@@ -214,11 +248,26 @@ pane_width() {
     fi
 }
 
+# is_missing <valor>
+#
+# 0 si <valor> representa "campo ausente" en una fila del filtro jq: vacio,
+# el placeholder "-" que emite `cell` (ver write_jq_filter) o el literal
+# "null". Centraliza el contrato de la fila para que los formateadores no
+# repitan el triple guard.
+is_missing() {
+    case "$1" in
+        ""|"-"|"null") return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # truncate_target <texto> <maxlen>
 #
 # Trunca <texto> a <maxlen> caracteres con sufijo "..." si excede; lo
 # devuelve tal cual si ya entra. <maxlen> se sanea a un minimo de 4 (el
-# sufijo por si solo ya ocupa 3).
+# sufijo por si solo ya ocupa 3). Corta por el final: es lo correcto para un
+# comando Bash, donde lo que identifica la accion esta al principio
+# (`dotnet test ...`).
 truncate_target() {
     local s="$1" maxlen="$2"
     [ "$maxlen" -lt 4 ] 2>/dev/null && maxlen=4
@@ -230,19 +279,42 @@ truncate_target() {
     fi
 }
 
+# truncate_path <ruta> <maxlen>
+#
+# Como truncate_target pero conservando la COLA, con el prefijo "..." al
+# principio. El agente reporta rutas absolutas, y en este repo el prefijo
+# comun se come el ancho entero de un pane estrecho: truncar por el final
+# deja `/Users/augusto-romero-arango/Codigo/Sincosof...` en toda linea de
+# Read/Edit/Write -- sin el nombre del archivo, que es justo la unica parte
+# informativa y la que sostiene la señal de repeticion de CA-4.
+truncate_path() {
+    local s="$1" maxlen="$2"
+    [ "$maxlen" -lt 4 ] 2>/dev/null && maxlen=4
+    local len=${#s}
+    if [ "$len" -le "$maxlen" ]; then
+        printf '%s' "$s"
+    else
+        printf '...%s' "${s:$((len - maxlen + 3))}"
+    fi
+}
+
 # fmt_time_hhmmss <epoch_ms>
 #
 # Formatea un timestamp epoch-en-milisegundos (el que produce epoch_ms del
-# filtro jq) como hora local HH:MM:SS. "--:--:--" si <epoch_ms> falta o es
-# "null" (evento sin `.timestamp` parseable).
+# filtro jq) como hora local HH:MM:SS. "--:--:--" si <epoch_ms> falta
+# (is_missing: evento sin `.timestamp` parseable). `date -r` es la forma BSD
+# (macOS, el entorno del harness); el segundo intento cubre el `date` de GNU
+# por si el visor se corre en Linux.
 fmt_time_hhmmss() {
     local ems="$1"
-    if [ -z "$ems" ] || [ "$ems" = "null" ]; then
+    if is_missing "$ems"; then
         echo "--:--:--"
         return 0
     fi
     local secs=$((ems / 1000))
-    date -r "$secs" +%H:%M:%S 2>/dev/null || echo "--:--:--"
+    date -r "$secs" +%H:%M:%S 2>/dev/null \
+        || date -d "@$secs" +%H:%M:%S 2>/dev/null \
+        || echo "--:--:--"
 }
 
 # fmt_delta_s <prev_epoch_ms> <epoch_ms>
@@ -252,7 +324,7 @@ fmt_time_hhmmss() {
 # actual (primer render tras un cambio de stream) o si falta algun operando.
 fmt_delta_s() {
     local prev="$1" ems="$2"
-    if [ -z "$prev" ] || [ -z "$ems" ] || [ "$prev" = "null" ] || [ "$ems" = "null" ]; then
+    if is_missing "$prev" || is_missing "$ems"; then
         printf '%7s' "-"
         return 0
     fi
@@ -261,10 +333,10 @@ fmt_delta_s() {
 
 # ms_to_s <milisegundos>
 #
-# Milisegundos a segundos con un decimal ("?" si falta o es "null").
+# Milisegundos a segundos con un decimal ("?" si el campo viene ausente).
 ms_to_s() {
     local ms="$1"
-    if [ -z "$ms" ] || [ "$ms" = "null" ]; then
+    if is_missing "$ms"; then
         echo "?"
         return 0
     fi
@@ -302,7 +374,7 @@ render_result_summary() {
     local dur_s dur_api_s dur_nonapi_s
     dur_s=$(ms_to_s "$duration_ms")
     dur_api_s=$(ms_to_s "$duration_api_ms")
-    if [ -n "$duration_ms" ] && [ "$duration_ms" != "null" ] && [ -n "$duration_api_ms" ] && [ "$duration_api_ms" != "null" ]; then
+    if ! is_missing "$duration_ms" && ! is_missing "$duration_api_ms"; then
         dur_nonapi_s=$(awk -v a="$duration_ms" -v b="$duration_api_ms" 'BEGIN{printf "%.1f", (a-b)/1000}')
     else
         dur_nonapi_s="?"
@@ -311,8 +383,10 @@ render_result_summary() {
     local estado="${GREEN}OK${NC}"
     [ "$is_error" = "true" ] && estado="${RED}ERROR${NC}"
 
-    local turns_disp="${turns:-?}"
-    local cost_disp="${cost_usd:-?}"
+    local turns_disp="$turns"
+    is_missing "$turns_disp" && turns_disp="?"
+    local cost_disp="$cost_usd"
+    is_missing "$cost_disp" && cost_disp="?"
 
     echo ""
     printf '%b\n' "${GREEN}${BOLD}--- cierre de stage [${now_str}] (${estado}${GREEN}${BOLD}) ---${NC}"
@@ -325,9 +399,11 @@ render_result_summary() {
 # render_row <kind> <epoch_ms> <a> <b> <c> <d> <e>
 #
 # Renderiza una fila TSV ya producida por el filtro jq (write_jq_filter):
-#   kind=tool   -> a=nombre, b=objetivo aplanado, c=ruta (si es tool de archivo, "" si no)
-#   kind=text   -> (sin campos adicionales)
+#   kind=tool   -> a=nombre, b=objetivo aplanado, c=ruta (si es tool de archivo, "-" si no)
+#   kind=text   -> a=sabor del turno sin tool call ("texto" o "pensamiento")
 #   kind=result -> a=turnos, b=duration_ms, c=duration_api_ms, d=cost_usd, e=is_error
+#
+# Todo campo ausente llega como el placeholder "-" del filtro (is_missing).
 #
 # Actualiza PREV_EMS (delta de la proxima accion) y, para tools de archivo,
 # marca la repeticion via touch_count sobre TOUCHED_FILE (CA-4).
@@ -335,7 +411,14 @@ render_row() {
     local kind="$1" ems="$2" a="$3" b="$4" c="$5" d="$6" e="$7"
 
     if [ "$kind" = "result" ]; then
-        render_result_summary "$(fmt_time_hhmmss "$ems")" "$a" "$b" "$c" "$d" "$e"
+        # El evento `result` del CLI no trae `.timestamp` (verificado contra
+        # las trazas reales), asi que el reloj del cierre es el de la ultima
+        # accion vista. Es la hora honesta en los dos modos de uso: en vivo
+        # coincide con "ahora", y sobre un stream pasado no inventa el
+        # momento en que se corrio el visor.
+        local close_ems="$ems"
+        is_missing "$close_ems" && close_ems="$PREV_EMS"
+        render_result_summary "$(fmt_time_hhmmss "$close_ems")" "$a" "$b" "$c" "$d" "$e"
         PREV_EMS=""
         return 0
     fi
@@ -346,12 +429,14 @@ render_row() {
 
     case "$kind" in
         text)
-            printf '%b\n' "${BLUE}[${now_str}]${NC} ${delta_str}  ${YELLOW}(razonamiento, sin tool call)${NC}"
+            local etiqueta="(razonamiento, sin tool call)"
+            [ "$a" = "texto" ] && etiqueta="(mensaje de texto, sin tool call)"
+            printf '%b\n' "${BLUE}[${now_str}]${NC} ${delta_str}  ${YELLOW}${etiqueta}${NC}"
             ;;
         tool)
             local name="$a" target="$b" file_target="$c"
             local suffix=""
-            if [ -n "$file_target" ]; then
+            if ! is_missing "$file_target"; then
                 local count
                 count=$(touch_count "$TOUCHED_FILE" "$file_target")
                 [ "$count" -gt 1 ] && suffix="  ${YELLOW}(x${count})${NC}"
@@ -360,7 +445,11 @@ render_row() {
             local budget=$(( $(pane_width) - ${#prefix_plain} - 8 ))
             [ "$budget" -lt 10 ] && budget=10
             local shown
-            shown=$(truncate_target "$target" "$budget")
+            if is_missing "$file_target"; then
+                shown=$(truncate_target "$target" "$budget")
+            else
+                shown=$(truncate_path "$target" "$budget")
+            fi
             printf '%b\n' "${BLUE}[${now_str}]${NC} ${delta_str}  ${BOLD}${name}${NC} ${shown}${suffix}"
             ;;
     esac
@@ -457,6 +546,15 @@ main() {
         echo "Inspeccionando: $pinned_path"
     else
         echo "Descubriendo el stream mas reciente en $LOG_DIR ..."
+        # El pipeline escribe sus logs bajo la raiz desde la que se lanzo, no
+        # dentro del worktree del issue: si el directorio no existe, el visor
+        # se quedaria esperando en silencio para siempre -- exactamente el
+        # sintoma que este issue viene a eliminar. Se avisa y se sigue
+        # esperando (el directorio aparece en cuanto arranca un pipeline).
+        if [ ! -d "$LOG_DIR" ]; then
+            printf '%b\n' "${YELLOW}Aviso: $LOG_DIR todavia no existe. Se creara cuando arranque un pipeline;${NC}"
+            printf '%b\n' "${YELLOW}si esperabas una corrida en curso, lanza el visor desde la raiz del repo principal.${NC}"
+        fi
     fi
     echo ""
 

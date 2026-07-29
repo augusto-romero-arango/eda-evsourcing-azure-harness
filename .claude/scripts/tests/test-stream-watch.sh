@@ -23,10 +23,12 @@
 #   [B] Repeticion sobre el mismo archivo (Read, Edit, Read) -> sin sufijo la
 #       primera vez, "(x2)" la segunda, "(x3)" la tercera; un Bash repetido
 #       NO se cuenta (CA-4, exclusion explicita de comandos identicos).
-#   [C] Turno de solo texto (sin tool call) -> se señala distinto de una
-#       tool call (CA-2).
-#   [D] Evento `result` -> cierre de stage con turnos/costo/duracion (API vs
-#       no-API); no aborta ni termina el proceso que lo invoca (CA-5).
+#   [C] Turno sin tool call -> se señala distinto de una tool call, tanto el
+#       de solo texto como el de solo thinking (CA-2).
+#   [D] Evento `result` REAL (sin `.timestamp`, como lo emite el CLI) ->
+#       cierre de stage con turnos/costo/duracion (API vs no-API) sin
+#       desplazamiento de campos, con el reloj de la ultima accion; no aborta
+#       ni termina el proceso que lo invoca (CA-5).
 #   [E] Linea final truncada (pillada a mitad de escritura) -> no avanza el
 #       contador de lineas mas alla de ella ni la descarta; al completarse en
 #       el streaming real, el siguiente ciclo la procesa junto con lo que
@@ -39,6 +41,10 @@
 #   [H] fmt_delta_s -> "-" sin accion anterior, numerico con ella (CA-2).
 #   [I] Una linea JSON valida pero no-objeto no rompe el resto del lote
 #       (paridad con select(type=="object") de derive_stage_log_from_stream).
+#   [J] Truncado al ancho del pane: un comando corta por el final y una ruta
+#       conserva la cola, para que el nombre del archivo no se pierda (CA-3).
+#   [K] is_missing y el placeholder "-" del filtro jq: el contrato que evita
+#       que un campo vacio desplace la fila en el `IFS=$'\t' read`.
 #
 # Uso: .claude/scripts/tests/test-stream-watch.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -73,7 +79,7 @@ trap cleanup EXIT
 # con `set -u` (mismo motivo que test-abort-log-tail.sh).
 RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; BOLD=""; NC=""
 
-FNS="write_jq_filter discover_stream parse_stream_header pane_width truncate_target fmt_time_hhmmss fmt_delta_s ms_to_s touch_count render_result_summary render_row process_new_lines"
+FNS="write_jq_filter discover_stream parse_stream_header pane_width is_missing truncate_target truncate_path fmt_time_hhmmss fmt_delta_s ms_to_s touch_count render_result_summary render_row process_new_lines"
 
 echo "[pre] Las funciones bajo prueba se pueden extraer y cargar desde mefisto-stream-watch.sh"
 ALL_LOADED=1
@@ -234,14 +240,58 @@ else
     fail "C-2: la linea de texto se confundio con una tool call: $OUT_C"
 fi
 
+# Un turno de SOLO thinking es el otro sabor de turno sin tool call, y en una
+# traza real es el mas frecuente de los dos (11 bloques thinking contra 4 de
+# texto en el stream del reviewer de #437): si no se señalara, su tiempo de
+# razonamiento se le cargaria al delta de la accion siguiente, que es
+# justamente la lectura que CA-2 quiere habilitar. El texto del bloque viaja
+# vacio en el stream (solo queda la firma), asi que se señala el turno.
+reset_stage_state
+STREAM_C2="$TMP/c2-stream.jsonl"
+printf '%s\n' \
+  '{"type":"assistant","timestamp":"2026-07-29T10:00:00.000Z","message":{"content":[{"type":"thinking","thinking":"","signature":"CAIS"}]}}' \
+  '{"type":"assistant","timestamp":"2026-07-29T10:00:30.000Z","message":{"content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"z.txt"}}]}}' \
+  > "$STREAM_C2"
+
+run_process_new_lines "$STREAM_C2" "$TMP/c2-out.txt"
+OUT_C2=$(cat "$TMP/c2-out.txt")
+
+if [ "$(wc -l < "$TMP/c2-out.txt" | tr -d ' ')" = "2" ]; then
+    pass "C-3: un turno de solo thinking tambien produce su linea (2 lineas: razonamiento + Read)"
+else
+    fail "C-3: se esperaban 2 lineas (thinking + Read), se obtuvo: $OUT_C2"
+fi
+
+if printf '%s\n' "$OUT_C2" | sed -n '1p' | grep -q "razonamiento"; then
+    pass "C-4: el turno de solo thinking se señala como razonamiento"
+else
+    fail "C-4: el turno de thinking no se señalo: $OUT_C2"
+fi
+
+if printf '%s\n' "$OUT_C2" | sed -n '2p' | grep -q "30.0s"; then
+    pass "C-5: el delta de 30s queda entre el razonamiento y la accion, no oculto antes de ella"
+else
+    fail "C-5: no se encontro el delta de 30s en la accion posterior: $OUT_C2"
+fi
+
 # -------- Bloque D: evento result -> cierre de stage (CA-5) --------
 
 echo ""
 echo "[D] Evento result -> cierre de stage con turnos/costo/duracion API vs no-API (CA-5)"
 
+# El fixture reproduce el evento `result` REAL del CLI, que NO trae
+# `.timestamp` (verificado contra las trazas de .claude/pipeline/logs/). Es la
+# forma exacta que hacia fallar el render: con el campo de hora vacio, la fila
+# TSV se leia desplazada (`IFS=$'\t' read` colapsa dos tabs seguidos porque el
+# tab es espacio en blanco para IFS) y el cierre reportaba duration_ms como
+# turnos y is_error como costo. Va precedido de una accion con hora, porque el
+# reloj del cierre es el de la ultima accion vista.
 reset_stage_state
 STREAM_D="$TMP/d-stream.jsonl"
-printf '%s\n' '{"type":"result","timestamp":"2026-07-29T10:05:00.000Z","num_turns":7,"duration_ms":45000,"duration_api_ms":40000,"total_cost_usd":0.55,"is_error":false}' > "$STREAM_D"
+printf '%s\n' \
+  '{"type":"assistant","timestamp":"2026-07-29T10:04:55.000Z","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"git status"}}]}}' \
+  '{"type":"result","subtype":"success","is_error":false,"duration_ms":45000,"duration_api_ms":40000,"num_turns":7,"total_cost_usd":0.55,"session_id":"abc"}' \
+  > "$STREAM_D"
 
 process_new_lines "$STREAM_D" > "$TMP/d-out.txt"
 RC_D=$?
@@ -254,13 +304,13 @@ else
 fi
 
 if printf '%s' "$OUT_D" | grep -q "turnos=7"; then
-    pass "D-2: el cierre reporta los turnos del evento result"
+    pass "D-2: el cierre reporta los turnos del evento result (num_turns=7, no duration_ms)"
 else
     fail "D-2: no se encontraron los turnos esperados: $OUT_D"
 fi
 
-if printf '%s' "$OUT_D" | grep -q "0.55"; then
-    pass "D-3: el cierre reporta el costo del evento result"
+if printf '%s' "$OUT_D" | grep -q "costo_usd=0.55"; then
+    pass "D-3: el cierre reporta el costo del evento result (no is_error)"
 else
     fail "D-3: no se encontro el costo esperado: $OUT_D"
 fi
@@ -269,6 +319,24 @@ if printf '%s' "$OUT_D" | grep -q "api=40.0s" && printf '%s' "$OUT_D" | grep -q 
     pass "D-4: el cierre desglosa duracion API (40.0s) vs no-API (45-40=5.0s)"
 else
     fail "D-4: el desglose API/no-API no es el esperado: $OUT_D"
+fi
+
+if printf '%s' "$OUT_D" | grep -q "duracion=45.0s"; then
+    pass "D-5: sin timestamp en el result, los campos NO se desplazan (duracion=45.0s)"
+else
+    fail "D-5: los campos del result se desplazaron -- duracion incorrecta: $OUT_D"
+fi
+
+# El reloj del cierre debe ser el de la ultima accion, no la epoca ni la hora
+# en que se corre el visor (asi sirve igual sobre un stream pasado). Se compara
+# contra la hora que el propio render puso en la linea de la accion, para no
+# atarse a la zona horaria de la maquina que corre el test.
+HORA_ACCION_D=$(printf '%s\n' "$OUT_D" | sed -n 's/^\[\([0-9:]*\)\].*Bash.*/\1/p' | head -1)
+HORA_CIERRE_D=$(printf '%s\n' "$OUT_D" | sed -n 's/^--- cierre de stage \[\([0-9:-]*\)\].*/\1/p' | head -1)
+if [ -n "$HORA_ACCION_D" ] && [ "$HORA_CIERRE_D" = "$HORA_ACCION_D" ]; then
+    pass "D-6: el cierre usa el reloj de la ultima accion ($HORA_CIERRE_D), no la epoca ni 'ahora'"
+else
+    fail "D-6: hora del cierre '$HORA_CIERRE_D' != hora de la ultima accion '$HORA_ACCION_D': $OUT_D"
 fi
 
 # -------- Bloque E: linea final truncada -> se reintenta, no se descarta (CA-6) --------
@@ -294,10 +362,10 @@ else
     fail "E-1: se esperaba exit 0 con una linea truncada, se obtuvo $RC_E1"
 fi
 
-if printf '%s' "$OUT_E1" | grep -qF "primera accion completa" 2>/dev/null || printf '%s' "$OUT_E1" | grep -q "razonamiento"; then
-    pass "E-2: la accion completa anterior a la truncada SI se renderizo"
+if printf '%s' "$OUT_E1" | grep -q "sin tool call"; then
+    pass "E-2: el turno completo anterior a la linea truncada SI se renderizo"
 else
-    fail "E-2: no se renderizo la accion completa previa: $OUT_E1"
+    fail "E-2: no se renderizo el turno completo previo: $OUT_E1"
 fi
 
 if [ "$LAST_LINE_AFTER_1" -eq 1 ]; then
@@ -432,6 +500,75 @@ if printf '%s' "$OUT_I" | grep -q "Read"; then
     pass "I-2: la tool call posterior a la linea rara SI se renderizo"
 else
     fail "I-2: no se renderizo la tool call posterior a la linea rara: $OUT_I"
+fi
+
+# -------- Bloque J: truncado -- comando por el final, ruta por la cola (CA-3) --------
+
+echo ""
+echo "[J] Truncado al ancho del pane: el comando corta por el final, la ruta conserva la cola (CA-3)"
+
+CMD_J=$(truncate_target "dotnet test tests/Proyecto.Dominio.Tests/Proyecto.Dominio.Tests.csproj --no-build" 30)
+if [ "${#CMD_J}" -le 30 ] && printf '%s' "$CMD_J" | grep -q "^dotnet test" && printf '%s' "$CMD_J" | grep -q '\.\.\.$'; then
+    pass "J-1: un comando se trunca por el final -- lo que identifica la accion esta al principio"
+else
+    fail "J-1: truncado de comando inesperado: '$CMD_J'"
+fi
+
+# El agente reporta rutas absolutas y el prefijo comun del worktree se come el
+# ancho de un pane estrecho: truncar por el final dejaria solo
+# "/Users/augusto-romero-arango/Codigo/Sinco..." en cada Read/Edit/Write, sin
+# el nombre del archivo -- la unica parte informativa y la que sostiene la
+# señal de repeticion de CA-4.
+PATH_J="/Users/augusto-romero-arango/Codigo/Sincosoft/Cosmos/worktree-mefisto-issue-434-anadir/agents/infra-reviewer.md"
+CUT_J=$(truncate_path "$PATH_J" 40)
+if [ "${#CUT_J}" -le 40 ] && printf '%s' "$CUT_J" | grep -q "agents/infra-reviewer.md$" && printf '%s' "$CUT_J" | grep -q "^\.\.\."; then
+    pass "J-2: una ruta larga conserva la cola (el nombre del archivo) con '...' al principio"
+else
+    fail "J-2: truncado de ruta inesperado: '$CUT_J'"
+fi
+
+CORTO_J=$(truncate_path "agents/x.md" 40)
+if [ "$CORTO_J" = "agents/x.md" ]; then
+    pass "J-3: una ruta que ya entra en el ancho se devuelve intacta"
+else
+    fail "J-3: se esperaba la ruta intacta, se obtuvo: '$CORTO_J'"
+fi
+
+reset_stage_state
+STREAM_J="$TMP/j-stream.jsonl"
+printf '%s\n' '{"type":"assistant","timestamp":"2026-07-29T10:00:00.000Z","message":{"content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/Users/augusto-romero-arango/Codigo/Sincosoft/Cosmos/worktree-mefisto-issue-434-anadir/agents/infra-reviewer.md"}}]}}' > "$STREAM_J"
+
+export COLUMNS=80
+run_process_new_lines "$STREAM_J" "$TMP/j-out.txt"
+unset COLUMNS
+OUT_J=$(cat "$TMP/j-out.txt")
+if [ "${#OUT_J}" -le 80 ] && printf '%s' "$OUT_J" | grep -q "infra-reviewer.md"; then
+    pass "J-4: en un pane de 80 columnas el Read se trunca y el nombre del archivo sigue visible"
+else
+    fail "J-4: el nombre del archivo se perdio en el truncado (ancho ${#OUT_J}): $OUT_J"
+fi
+
+# -------- Bloque K: is_missing -- contrato del placeholder de la fila jq --------
+
+echo ""
+echo "[K] is_missing reconoce los tres sabores de campo ausente de una fila del filtro"
+
+MISSING_OK=1
+for v in "" "-" "null"; do
+    is_missing "$v" || { fail "K-1: is_missing deberia reconocer '$v' como ausente"; MISSING_OK=0; }
+done
+[ "$MISSING_OK" -eq 1 ] && pass "K-1: vacio, '-' (placeholder de cell) y 'null' cuentan como ausente"
+
+if ! is_missing "0" && ! is_missing "false" && ! is_missing "src/Foo.cs"; then
+    pass "K-2: un valor real no se confunde con ausente (0, false y una ruta son presentes)"
+else
+    fail "K-2: un valor real se clasifico como ausente"
+fi
+
+if [ "$(ms_to_s "-")" = "?" ] && [ "$(fmt_time_hhmmss "-")" = "--:--:--" ]; then
+    pass "K-3: los formateadores traducen el placeholder a su marca de dato ausente"
+else
+    fail "K-3: los formateadores no tradujeron el placeholder: ms_to_s='$(ms_to_s "-")' hora='$(fmt_time_hhmmss "-")'"
 fi
 
 echo ""
