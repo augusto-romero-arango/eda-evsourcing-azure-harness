@@ -41,16 +41,27 @@ Reglas de exclusion/abortar:
 
 - Si el issue **no existe**: informalo y excluyelo de la lista.
 - Si el issue esta `CLOSED`: informalo y excluyelo de la lista.
+- Si el issue **no tiene** el label `estado:listo` (por ejemplo, esta en `estado:borrador`):
+  informalo y **excluyelo automaticamente**, sin preguntar `s/n`. A diferencia de
+  `tipo:tooling` (una señal blanda que un humano puede decidir ignorar a sabiendas),
+  `estado:listo` es el Definition of Ready de MEF-ADR-0011: un draft no lo cumple por
+  definicion, y el pipeline que arranca despues corre headless en tmux sin nadie
+  supervisando la ejecucion. Admitirlo tras una confirmacion en el momento de invocar
+  el skill no cubre ese riesgo, asi que el default es excluir siempre.
 - Si el issue **no tiene** el label `tipo:tooling`: advierte y pregunta `s/n`. Si la respuesta es `n` (o no hay confirmacion), excluyelo de la lista.
 
-### 1.5. Verificar label `bloqueado` (con resolucion intra-batch)
+### 1.5. Validar dependencias del batch (con resolucion intra-batch)
 
-Para cada issue que sobreviva al paso 1 y tenga el label `bloqueado`, lee la seccion
-`## Dependencias` del body y extrae **solo** los numeros precedidos por un marcador forward
-canonico (`Depende de #NNN` / `Bloqueado por #NNN`, case-insensitive, en la misma linea).
-Ignora referencias inversas (`Consumido por #NNN`, `Bloquea #NNN` / `Bloquea a #NNN`), notas
-libres (`... se traslada a #NNN`, `Relacionado con #NNN`) y prosa: no son dependencias forward
-de este issue.
+Para **cada issue que sobreviva al paso 1** -- el label `bloqueado` ya **no** es condicion
+de entrada a este analisis (issue #466: una dependencia sin ese label no puede seguir
+ignorandose en silencio) -- lee la seccion `## Dependencias` del body y extrae **solo** los
+numeros precedidos por un marcador forward canonico (`Depende de #NNN` / `Bloqueado por
+#NNN`, case-insensitive, en la misma linea). Ignora referencias inversas (`Consumido por
+#NNN`, `Bloquea #NNN` / `Bloquea a #NNN`), notas libres (`... se traslada a #NNN`,
+`Relacionado con #NNN`) y prosa: no son dependencias forward de este issue. El label
+`bloqueado` conserva su rol, pero solo como **salida**: se quita de los issues que lo
+llevaban puesto cuando sus dependencias abiertas quedan resueltas por el orden del batch
+(ver regla de decision mas abajo); un issue que nunca lo tuvo no lo gana por este analisis.
 
 La idea clave (issue #47): una dependencia abierta **no siempre** es un bloqueo. Como la
 cadena hace `pipeline -> PR -> merge -> sync verificado -> siguiente` (ver paso 5 e issue
@@ -70,9 +81,10 @@ satisfechas y no cuentan como bloqueo (no importa si estaban o no en el batch).
 **Regla de decision**:
 
 - Si **todas** las dependencias abiertas de un issue son de tipo (a) (o ya estan cerradas):
-  el batch **se puede lanzar** y el issue se procesa en su posicion. Se le **quita** el label
-  `bloqueado` al validar (decision CA-5: el orden + el sync de #46 garantizan su resolucion,
-  asi que mantener el label seria mentir sobre el estado).
+  el batch **se puede lanzar** y el issue se procesa en su posicion. Si el issue **llevaba
+  puesto** el label `bloqueado`, se lo quita al validar (decision CA-5: el orden + el sync de
+  #46 garantizan su resolucion, asi que mantener el label seria mentir sobre el estado); si
+  nunca lo tuvo, no hay nada que mutar.
 - Si existe **al menos una** dependencia de tipo (b): **aborta** y no lances el batch,
   mostrando cual es y por que. Si la causa es una dependencia intra-batch mal ordenada,
   sugiere el reordenamiento concreto (ej. "mueve #44 antes de #43").
