@@ -3,9 +3,18 @@
 #
 # Uso:
 #   ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 42
+#   ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 42 --verbose
 #   ./.claude/scripts/mefisto-tmux-pipeline.sh --batch 42 43 44   # secuencial
+#   ./.claude/scripts/mefisto-tmux-pipeline.sh --batch 42 43 44 --verbose
 #   ./.claude/scripts/mefisto-tmux-pipeline.sh --attach            # reconectar
 #   ./.claude/scripts/mefisto-tmux-pipeline.sh --attach mefisto-tooling-42
+#
+# --verbose (issue #435, en cualquier posicion de los argumentos) suma un
+# tercer pane con el visor en vivo mefisto-stream-watch.sh (#434). Es opt-in:
+# sin el flag, la sesion queda byte por byte igual que siempre (dos panes).
+# El visor tambien se puede lanzar a mano en cualquier momento sobre una
+# corrida en curso -- con o sin este flag -- corriendo en otra terminal:
+#   ./.claude/scripts/mefisto-stream-watch.sh
 #
 # Solo se ejecuta dentro del repo de Mefisto (assert_in_mefisto en _mefisto-common.sh).
 
@@ -44,6 +53,26 @@ ensure_events_log() {
 safe_session_name() { echo "$1" | tr ' /:' '-' | tr -cd 'a-zA-Z0-9-'; }
 session_exists()    { tmux has-session -t "$1" 2>/dev/null; }
 
+# Extrae --verbose de "$@" (en cualquier posicion) y lo consume: nunca debe
+# propagarse al pipeline invocado por send-keys (CA-2) -- critico en
+# cmd_batch, que parsea issues_str posicionalmente. Deja el flag en la
+# global VERBOSE y el resto de argumentos, en orden, en el array global
+# REMAINING_ARGS.
+VERBOSE=false
+REMAINING_ARGS=()
+extract_verbose_flag() {
+    VERBOSE=false
+    REMAINING_ARGS=()
+    local arg
+    for arg in "$@"; do
+        if [ "$arg" = "--verbose" ]; then
+            VERBOSE=true
+        else
+            REMAINING_ARGS+=("$arg")
+        fi
+    done
+}
+
 print_connect_hint() {
     local session="$1"
     echo ""
@@ -74,6 +103,16 @@ cmd_attach() {
 }
 
 cmd_tooling() {
+    extract_verbose_flag "$@"
+    # Guarda de bash 3.2 (macOS): "${arr[@]}" con un array vacio revienta con
+    # "unbound variable" bajo `set -u` -- de ahi el chequeo de longitud previo
+    # en vez de expandir REMAINING_ARGS directo cuando podria estar vacio.
+    if [ ${#REMAINING_ARGS[@]} -gt 0 ]; then
+        set -- "${REMAINING_ARGS[@]}"
+    else
+        set --
+    fi
+    [ $# -lt 1 ] && abort "Falta el numero de issue. Uso: --tooling <issue> [--verbose]"
     local issue="$1"
     local session
     session=$(safe_session_name "mefisto-tooling-$issue")
@@ -93,26 +132,47 @@ cmd_tooling() {
     # Usar pane_id en vez de "$session:main.X" evita depender de pane-base-index,
     # que en muchas configuraciones (incluida la de macOS por defecto al usar
     # iTerm2) es 1 en vez de 0 y rompe la indexacion implicita.
-    local tail_pane script_pane
+    local tail_pane script_pane watch_pane
     tmux new-session -d -s "$session" -n "main" -c "$PROJECT_ROOT"
     tail_pane=$(tmux list-panes -t "$session:main" -F '#{pane_id}' | head -n1)
     tmux set-option -t "$session" remain-on-exit on
     tmux send-keys -t "$tail_pane" "tail -f '$EVENTS_LOG'" Enter
 
+    # El split -v (issue #435) se hace ANTES del -h, mientras tail_pane todavia
+    # ocupa toda la ventana: asi el visor queda a lo ancho completo (abajo),
+    # y tail_pane conserva el ancho completo para partirse en tail/script (arriba).
+    if $VERBOSE; then
+        watch_pane=$(tmux split-window -v -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
+        tmux send-keys -t "$watch_pane" "./.claude/scripts/mefisto-stream-watch.sh" Enter
+    fi
+
     script_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
     tmux send-keys -t "$script_pane" "./.claude/scripts/mefisto-tooling-pipeline.sh $issue" Enter
 
-    tmux select-layout -t "$session:main" even-horizontal
+    # even-horizontal deshace el split -v de arriba (lo aplana a 3 columnas):
+    # solo se aplica sin --verbose, donde nunca hubo split -v que preservar.
+    if ! $VERBOSE; then
+        tmux select-layout -t "$session:main" even-horizontal
+    fi
 
     success "Pipeline mefisto-tooling iniciado para issue #$issue"
     print_connect_hint "$session"
 }
 
 cmd_batch() {
-    local issues=("$@")
+    # --verbose se extrae ANTES de construir issues_str (CA-2): cmd_batch lo
+    # manda sin comillas por send-keys a mefisto-batch-pipeline.sh, que lo
+    # parsea posicionalmente -- un --verbose colado ahi rompe ese parseo.
+    extract_verbose_flag "$@"
+    # Misma guarda de bash 3.2 que en cmd_tooling: no expandir REMAINING_ARGS
+    # vacio directo, revienta con "unbound variable" bajo `set -u`.
+    local issues=()
+    if [ ${#REMAINING_ARGS[@]} -gt 0 ]; then
+        issues=("${REMAINING_ARGS[@]}")
+    fi
 
     if [ ${#issues[@]} -eq 0 ]; then
-        abort "Debes especificar al menos un issue. Uso: --batch 42 43 44"
+        abort "Debes especificar al menos un issue. Uso: --batch 42 43 44 [--verbose]"
     fi
 
     local session
@@ -132,16 +192,28 @@ cmd_batch() {
 
     # Patron pane_id (no indices implicitos) para evitar el bug de pane-base-index
     # que motivo el commit 6a6b978.
-    local tail_pane script_pane
+    local tail_pane script_pane watch_pane
     tmux new-session -d -s "$session" -n "main" -c "$PROJECT_ROOT"
     tail_pane=$(tmux list-panes -t "$session:main" -F '#{pane_id}' | head -n1)
     tmux set-option -t "$session" remain-on-exit on
     tmux send-keys -t "$tail_pane" "tail -f '$EVENTS_LOG'" Enter
 
+    # El split -v (issue #435) se hace ANTES del -h, mientras tail_pane todavia
+    # ocupa toda la ventana: asi el visor queda a lo ancho completo (abajo),
+    # y tail_pane conserva el ancho completo para partirse en tail/script (arriba).
+    if $VERBOSE; then
+        watch_pane=$(tmux split-window -v -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
+        tmux send-keys -t "$watch_pane" "./.claude/scripts/mefisto-stream-watch.sh" Enter
+    fi
+
     script_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
     tmux send-keys -t "$script_pane" "./.claude/scripts/mefisto-batch-pipeline.sh $issues_str" Enter
 
-    tmux select-layout -t "$session:main" even-horizontal
+    # even-horizontal deshace el split -v de arriba (lo aplana a 3 columnas):
+    # solo se aplica sin --verbose, donde nunca hubo split -v que preservar.
+    if ! $VERBOSE; then
+        tmux select-layout -t "$session:main" even-horizontal
+    fi
 
     success "Batch pipeline interno iniciado: issues $issues_str"
     print_connect_hint "$session"
@@ -149,19 +221,23 @@ cmd_batch() {
 
 # --- Dispatcher ---
 if [ $# -eq 0 ]; then
-    echo "Uso: $0 --tooling <issue> | --batch <issue1> <issue2> ... | --attach [sesion]"
+    echo "Uso: $0 --tooling <issue> [--verbose] | --batch <issue1> <issue2> ... [--verbose] | --attach [sesion]"
+    echo ""
+    echo "  --verbose   Suma un pane con el visor en vivo (mefisto-stream-watch.sh,"
+    echo "              issue #434). Opt-in: sin el flag la sesion no cambia."
+    echo "              Tambien se puede lanzar a mano, en cualquier momento y sin"
+    echo "              este flag, sobre una corrida ya en curso:"
+    echo "                ./.claude/scripts/mefisto-stream-watch.sh"
     exit 1
 fi
 
 case "$1" in
     --tooling)
         shift
-        [ $# -lt 1 ] && abort "Falta el numero de issue"
-        cmd_tooling "$1"
+        cmd_tooling "$@"
         ;;
     --batch)
         shift
-        [ $# -lt 1 ] && abort "Debes especificar al menos un issue. Uso: --batch 42 43 44"
         cmd_batch "$@"
         ;;
     --attach)
