@@ -2350,6 +2350,23 @@ on:
     paths:
       - 'src/<RootNamespace>.{PascalCase}/**'
       - 'src/<RootNamespace>.Contracts/**'
+      # global.json (issue #454): el job build-and-test/deploy fija el SDK con
+      # actions/setup-dotnet@v5 leyendo esta version. Un cambio aqui altera el
+      # SDK con el que se compila este dominio; sin esta ruta el filtro no lo
+      # detecta y el binario queda sirviendo stale, sin aviso -- a diferencia de
+      # una rotura de build, que el CI del PR ya atrapa antes del merge.
+      - 'global.json'
+      # Este propio workflow (issue #454): si deploy-{kebab}.yml no se vigila a
+      # si mismo, un cambio en como se construye/despliega este dominio (incluido
+      # el PR que crea el workflow por primera vez) nunca dispara solo -- hay que
+      # lanzarlo a mano con workflow_dispatch cada vez.
+      - '.github/workflows/deploy-{kebab}.yml'
+      # <SolutionFile> deliberadamente NO esta en esta lista, pese a que
+      # build-and-test corre 'dotnet restore/build <SolutionFile>' (mas abajo):
+      # un cambio al .slnx por ESTE dominio ya viene acompanado de cambios en
+      # src/<RootNamespace>.{PascalCase}/** (que disparan igual), y un cambio por
+      # OTRO dominio no altera el binario de este. Agregarlo solo compraria N
+      # deploys espurios por cada scaffold nuevo que toque el .slnx.
   workflow_run:
     workflows: ['Infra CD']
     types: [completed]
