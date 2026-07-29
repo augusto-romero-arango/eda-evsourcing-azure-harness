@@ -112,6 +112,19 @@ pero el **consumidor** cambia: en vez de un endpoint HTTP dedicado, es el atribu
 MEF-ADR-0034 seccion 10) agrega a cada traza exportada a Application Insights -- la unica via de
 atribucion posible para ese proceso, mismo rol que cumple `/api/version` para el write-side.
 
+**El valor es el SHA a secas, extraido con el mismo patron del punto 2.** El seam lee
+`AssemblyInformationalVersionAttribute` por reflexion y toma la subcadena posterior al `+` --
+identico a lo que hace `VersionCheck.cs` para responder `/api/version` --, no el
+`InformationalVersion` completo: asi `service.version` queda byte a byte igual al tag
+`projections:{sha}` con el que `deploy-projections.yml` publica la imagen, y correlacionar una traza
+con la imagen desplegada no necesita ninguna traduccion. Sin el separador `+` (build local sin
+`--build-arg`) degrada a la version desnuda (`1.0.0`) en vez de a `null` como devuelve el endpoint
+del punto 2 -- unica diferencia deliberada entre ambos: un `serviceVersion` null **omite** el
+atributo del recurso, y la telemetria no distinguiria "el seam no corrio" de "el SHA no se horneo".
+Ese valor desnudo es, por si mismo, el modo de falla a vigilar. En Application Insights el atributo
+aterriza en la propiedad **Application Version** (columna `application_Version` de las tablas de
+Logs) **[7]**: ahi se verifica el circuito, no en `customDimensions`.
+
 **Se hornea en `dotnet publish`, no en `dotnet build` (a diferencia del punto 1).** El worker
 publica dentro de un Dockerfile multi-stage (`projections-scaffolder`, Paso 2): la etapa `build`
 corre `dotnet build ... -o /app/build`, cuya salida **no** llega a la imagen final -- esta copia el
@@ -124,7 +137,18 @@ para no invalidar el cache de capas del `restore`/`build` de la etapa previa) y 
 (`docker build` local sin `--build-arg`), la propiedad `SourceRevisionId` queda vacia y el target de
 MSBuild `AddSourceRevisionToInformationalVersion` se salta por completo (`Condition="'$(SourceRevisionId)'
 != ''"`, verificado por lectura de fuente del mismo target que cita el punto 1) -- no deja un `+`
-colgante, `InformationalVersion` cae de vuelta a la version desnuda. `deploy-projections.yml` (issue
+colgante, `InformationalVersion` cae de vuelta a la version desnuda.
+
+Las dos mitades del parrafo anterior estan **verificadas empiricamente** contra el SDK `10.0.201`
+(linea `10.0`, la que sirve el tag flotante `mcr.microsoft.com/dotnet/sdk:10.0` del Dockerfile), no
+solo por lectura del target: con `-p:SourceRevisionId=` vacio, `InformationalVersion` queda en
+`1.0.0` sin `+`; y un `dotnet publish -p:SourceRevisionId=<sha>` ejecutado **despues** de un
+`dotnet build` sin la propiedad -- el orden exacto de las dos etapas del Dockerfile -- vuelve a
+compilar y hornea `1.0.0+<sha>` en el ensamblado publicado. Esto ultimo es lo que no era obvio: un
+build incremental podria haber reusado el ensamblado de la etapa anterior y dejado el SHA fuera en
+silencio. No lo hace, porque el `AssemblyInfo` generado cambia y arrastra la recompilacion.
+
+`deploy-projections.yml` (issue
 #453) pasa `--build-arg SOURCE_REVISION_ID=${{ github.sha }}` en su paso `docker build`, reutilizando
 el mismo valor con el que ese workflow ya taggea la imagen del ACR: por construccion, el tag de la
 imagen desplegada y el `service.version` que reporta la telemetria quedan identicos, sin tabla de
@@ -233,6 +257,15 @@ piso de SKU en el futuro.
 - **[6]** "Azure subscription limits and quotas" -- Microsoft Learn, tabla de limites de App Service:
   *Staging slots per app* -- Basic: sin soporte (celda vacia); Standard: 5; Premium/PremiumV2/V3:
   20. https://learn.microsoft.com/azure/azure-resource-manager/management/azure-subscription-service-limits#azure-app-service-limits
+- **[7]** "Create and configure Application Insights resources" -- Microsoft Learn, seccion "Version
+  and release tracking": la propiedad **Application Version** es la que separa la telemetria de
+  builds distintos, y para instrumentacion basada en OpenTelemetry se fija *"by using resource
+  attributes"* (es decir, `service.version` -- lo que hace la seccion 5 de este ADR).
+  https://learn.microsoft.com/azure/azure-monitor/app/create-workspace-resource#version-and-release-tracking
+  La columna destino en las tablas de Logs la nombra explicitamente la nota equivalente de la
+  configuracion del agente de Java: *"if you add a custom dimension named `service.version`, the
+  value is stored in the `application_Version` column in the Application Insights Logs table"*.
+  https://learn.microsoft.com/azure/azure-monitor/app/java-standalone-config#custom-dimensions
 - Bitakora.ControlAsistencia issue #224 (incidente real que origina este ADR: deploy fin `00:54:13Z`
   -> smoke inicio `00:54:18Z`, paquete nuevo vivo ~`00:55`) y field note
   `docs/bitacora/field-notes/2026-07-18-2027-bug-investigation.md` (repo consumidor).
@@ -259,6 +292,11 @@ piso de SKU en el futuro.
   proyecciones (sin ingress, MEF-ADR-0034) reutiliza el mismo mecanismo de horneado de
   `SourceRevisionId`, pero horneado en el `dotnet publish` del Dockerfile (no en `dotnet build`, a
   diferencia del punto 1) y consumido como `service.version` de OpenTelemetry en vez de un endpoint
-  HTTP -- el worker no tiene ninguno que exponer. `github.sha` a secas (no la expresion larga del
-  punto 1): `deploy-projections.yml` no se encadena por `workflow_run`. Sin poll ni timeout: no hay
-  smoke test que abra una compuerta contra este worker.
+  HTTP -- el worker no tiene ninguno que exponer. El valor expuesto es el SHA **extraido** con el
+  mismo patron del punto 2 (subcadena posterior al `+`), no el `InformationalVersion` completo: asi
+  coincide byte a byte con el tag de la imagen del ACR; sin `+` degrada a la version desnuda y no a
+  `null`, porque un `serviceVersion` null omite el atributo del recurso y borraria la senal de falla.
+  `github.sha` a secas (no la expresion larga del punto 1): `deploy-projections.yml` no se encadena
+  por `workflow_run`. Sin poll ni timeout: no hay smoke test que abra una compuerta contra este
+  worker. Suma la referencia [7] (propiedad **Application Version** / columna `application_Version`,
+  donde aterriza el atributo y donde se verifica el circuito).

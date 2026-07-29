@@ -439,18 +439,28 @@ public static class ConfiguracionObservabilidadProjections
         var ensamblado = Assembly.GetExecutingAssembly();
 
         // El SHA horneado en el Dockerfile (ARG SOURCE_REVISION_ID -> -p:SourceRevisionId= del
-        // 'dotnet publish', issue #462, MEF-ADR-0031 extendido al read-side) llega aqui via
+        // 'dotnet publish', issue #462, MEF-ADR-0031 seccion 5) llega aqui via
         // AssemblyInformationalVersionAttribute como "{Version}+{SourceRevisionId}" -- mismo
-        // mecanismo que hornea el write-side, mismo patron de lectura por reflexion que ya usa
-        // '/api/version' en domain-scaffolder.md. A diferencia de ese endpoint, aqui NO se extrae
-        // la subcadena posterior al '+': el worker no tiene ingress (no hay endpoint que devuelva
-        // el SHA aparte), asi que 'service.version' necesita el valor COMPLETO -- el sufijo '+SHA'
-        // ES la unica senal de que la imagen desplegada es la que reporta esta traza. Un build
-        // local sin '--build-arg' deja 'InformationalVersion' en la version desnuda, sin sufijo
-        // (el target de MSBuild se salta cuando SourceRevisionId esta vacio, sin dejar un '+'
-        // colgante) -- esa ausencia de sufijo es, en si misma, el modo de falla que documenta CA-4.
-        var serviceVersion = ensamblado.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+        // mecanismo de horneado que el write-side y mismo patron de extraccion que ya usa
+        // '/api/version' (VersionCheck.cs, domain-scaffolder). Se extrae la subcadena posterior
+        // al '+', NO el valor completo: asi 'service.version' queda byte a byte igual al tag con
+        // el que deploy-projections.yml publica la imagen en el ACR (projections:{github.sha},
+        // Paso 2b) y una traza se correlaciona con la imagen desplegada sin traducir nada.
+        var informationalVersion = ensamblado
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
             .InformationalVersion;
+
+        // Sin el separador '+' no hay SHA que extraer: es el build local sin '--build-arg' (el
+        // target de MSBuild que concatena el sufijo se salta por completo cuando SourceRevisionId
+        // esta vacio, sin dejar un '+' colgante). Unica diferencia deliberada frente a
+        // '/api/version', que en ese caso devuelve 'sha: null': aqui se degrada a la version
+        // desnuda ("1.0.0") y no a null, porque un serviceVersion null OMITE el atributo del
+        // recurso y la telemetria no distinguiria "el seam no corrio" de "el SHA no se horneo".
+        // Ese valor desnudo es el modo de falla a vigilar (verificacion del Paso 2b).
+        var indiceSeparador = informationalVersion?.IndexOf('+') ?? -1;
+        var serviceVersion = indiceSeparador >= 0
+            ? informationalVersion![(indiceSeparador + 1)..]
+            : informationalVersion;
 
         services.AddOpenTelemetry()
             // Assembly.GetExecutingAssembly() es correcto AQUI porque este seam vive en el
@@ -764,10 +774,19 @@ jobs:
 > **Verificacion de punta a punta del circuito del SHA (CA-4, issue #462).** Las tres piezas (Dockerfile `ARG SOURCE_REVISION_ID` del Paso 2, `--build-arg` de este paso, y `serviceVersion` del seam de observabilidad del Paso 1d) solo se confirman juntas -- ninguna prueba unitaria las cubre, porque el valor nace en CI y termina en Application Insights. Para verificar tras un deploy real:
 >
 > 1. Toma el SHA del commit que disparo el run de `publish` (`git rev-parse HEAD` en ese commit, o el mismo valor que ya aparece en el tag de la imagen publicada -- `az acr repository show-tags --name <registry> --repository projections --orderby time_desc --top 1`).
-> 2. En Application Insights (Transaction Search o una consulta KQL sobre `dependencies`/`traces` filtrando por `cloud_RoleName == "<RootNamespace>.Projections"`), abre una traza reciente y lee el atributo de recurso `service.version`.
-> 3. Compara: `service.version` debe ser `{Version}+{SHA}` con el **mismo** SHA del paso 1. Si coinciden, el circuito esta cerrado de punta a punta.
+> 2. Consulta ese valor en Application Insights. El atributo de recurso `service.version` **no** se lee como una dimension cualquiera: el exporter lo mapea a la propiedad **Application Version**, columna `application_Version` de las tablas de Logs (Microsoft Learn, "Create and configure Application Insights resources", seccion *Version and release tracking*: para instrumentacion basada en OpenTelemetry esa propiedad se fija *"by using resource attributes"*; la nota equivalente de la configuracion del agente de Java nombra la columna destino, `application_Version`). KQL:
 >
-> **Modo de falla a vigilar:** si `service.version` aparece como la version desnuda **sin** el sufijo `+{SHA}` (por ejemplo `1.0.0` a secas), el `--build-arg` no esta llegando al `dotnet publish` -- revisa, en este orden, que este paso pase `--build-arg SOURCE_REVISION_ID=${{ github.sha }}`, que el Dockerfile declare el `ARG` en la etapa `publish` (Paso 2) y que el seam (Paso 1d) siga leyendo `AssemblyInformationalVersionAttribute` sin haber sido editado a mano para ignorarlo. Ninguna de las tres piezas falla en silencio de otra forma: o el sufijo aparece completo, o no aparece en absoluto (el target de MSBuild no deja un `+` colgante con `SourceRevisionId` vacio, ver la nota del Paso 2).
+>    ```kusto
+>    dependencies
+>    | where timestamp > ago(30m)
+>    | where cloud_RoleName == "<RootNamespace>.Projections"
+>    | distinct application_Version
+>    ```
+>
+>    (`traces` sirve igual: la propiedad es del recurso, no del tipo de telemetria. `cloud_RoleName` es el `service.name` que fija el mismo seam, MEF-ADR-0034 seccion 10.)
+> 3. Compara: el valor debe ser **exactamente** el SHA del paso 1 -- la misma cadena que el tag de la imagen, sin prefijo de version, porque el seam extrae la subcadena posterior al `+` (Paso 1d). Si coinciden, el circuito esta cerrado de punta a punta.
+>
+> **Modo de falla a vigilar:** si `application_Version` trae la version desnuda (`1.0.0` -- con pinta de semver en vez de 40 digitos hex), el `--build-arg` no esta llegando al `dotnet publish`: `InformationalVersion` se quedo sin sufijo `+{SHA}` y el seam degrada a esa version por diseno. Revisa, en este orden, que este paso pase `--build-arg SOURCE_REVISION_ID=${{ github.sha }}`, que el Dockerfile declare el `ARG` en la etapa `publish` (Paso 2) y que el seam (Paso 1d) siga extrayendo el `AssemblyInformationalVersionAttribute` sin haber sido editado a mano. Es el unico modo de falla silencioso posible del circuito: o el SHA aparece completo, o aparece la version desnuda -- nunca un valor a medias (el target de MSBuild no deja un `+` colgante con `SourceRevisionId` vacio, ver la nota del Paso 2). Y si la columna viene **vacia o ausente** el sospechoso no es el `--build-arg` sino el seam: no corrio (`Program.cs` sin `ConfigurarObservabilidad()`, Paso 1d punto 3) o alguien le paso `serviceVersion: null`, que omite el atributo del recurso.
 
 ---
 
