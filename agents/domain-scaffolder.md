@@ -333,7 +333,15 @@ public static class ComposicionServicios{PascalCase}
             .WithTracing(tracing => tracing
                 .AddSource("Wolverine")
                 .AddSource("Marten")
-                .AddSource("<RootNamespace>.{PascalCase}.*"))
+                // Sin punto antes del "*": OpenTelemetry ancla el wildcard como ^X\..*$ cuando lleva
+                // punto, lo que EXCLUYE una ActivitySource nombrada exactamente "X" -- y lo idiomatico
+                // es nombrarla igual que el ensamblado (Assembly.GetName().Name), es decir "X" a secas.
+                // Sin el punto ancla como ^X.*$, que si captura "X" y "X.Hija". El modo de falla es
+                // silencioso: sin el punto, los spans de esa fuente no se descartan con error, solo no
+                // aparecen en Application Insights (verificado contra WildcardHelper.GetWildcardRegex
+                // en OpenTelemetry.Extensions.Hosting 1.13.1, issue #460). No "corregir" agregando el
+                // punto por simetria con los AddSource de arriba.
+                .AddSource("<RootNamespace>.{PascalCase}*"))
             .UseAzureMonitorExporter();
 
         // Serializacion JSON global: camelCase hacia el cliente, case-insensitive en lectura
