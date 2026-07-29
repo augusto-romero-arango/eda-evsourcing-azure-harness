@@ -2085,6 +2085,8 @@ dotnet sln <SolutionFile> add "tests/<RootNamespace>.{PascalCase}.SmokeTests/"
 
 Si el archivo ya existe con otras propiedades (ej: `sdk`), solo agrega la seccion `"test"` sin modificar lo existente.
 
+> **Para quien mantenga este agente -- no endurezcas el `rollForward` (issue #452)**: este bloque JSON esta **duplicado literal** en `projections-scaffolder` (su Paso 3); si cambias uno, cambia el otro en el mismo commit para no dejar drift. Y el `rollForward` no puede volver a `latestPatch`: el Dockerfile del worker de proyecciones que emite ese otro agente compila sobre el tag **flotante** `mcr.microsoft.com/dotnet/sdk:10.0`, que avanza de feature band solo, y `latestPatch` exige coincidencia de major, minor **y feature band** ([tabla de `rollForward`, Microsoft Learn](https://learn.microsoft.com/dotnet/core/tools/global-json#rollforward)) -- endurecerlo rompe la imagen del worker por construccion, y ademas deja sin compilar el repo entero a cualquier dev o CI cuyo unico SDK 10.x caiga fuera de la banda pineada. `version` es solo un **piso**: con `latestFeature`, un `10.0.302` instalado satisface el piso `10.0.300`.
+
 ---
 
 ## Paso 3b - Registrar el named store de proyecciones en el worker (si existe, issue #370, MEF-ADR-0034)
