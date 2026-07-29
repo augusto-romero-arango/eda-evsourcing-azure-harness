@@ -2,7 +2,7 @@
 
 - **Fecha**: 2026-07-26
 - **Estado**: aceptado
-- **Aplica a**: doctrina de materializacion de read models via el async daemon de Marten. Ancla del futuro skill `/scaffold-projections` y del agente `projections-scaffolder` (issue #367), de los agentes `projection-test-writer`/`projection-implementer` (issue #365), de la extension de `domain-scaffolder` para registrar el store de cada dominio en el worker (issue #370), del token `projections` en `harness.config.json` (issue #369), del ruteo de `tipo:projection` (issue #372) y de los modulos Terraform de Container App del `infra-base-scaffolder` (issue #368, gating opt-in). **Enmienda MEF-ADR-0021** (infraestructura base). Cross-referencia MEF-ADR-0003 (stack ES Marten+Wolverine), MEF-ADR-0014 (coverage gate, clasificacion de los proyectos nuevos), MEF-ADR-0015 (snapshots como excepcion, mismo patron de "default vs excepcion justificada"), MEF-ADR-0020 (hosting de Functions, contraste de unidad de despliegue), MEF-ADR-0023/MEF-ADR-0024 (Bounded Context y topologia de Service Bus), MEF-ADR-0025 (custodia de secretos) y MEF-ADR-0029 (test de composicion del host, hermano directo del config-test que fija este ADR).
+- **Aplica a**: doctrina de materializacion de read models via el async daemon de Marten. Ancla del futuro skill `/scaffold-projections` y del agente `projections-scaffolder` (issue #367), de los agentes `projection-test-writer`/`projection-implementer` (issue #365), de la extension de `domain-scaffolder` para registrar el store de cada dominio en el worker (issue #370), del token `projections` en `harness.config.json` (issue #369), del ruteo de `tipo:projection` (issue #372), de los modulos Terraform de Container App del `infra-base-scaffolder` (issue #368, gating opt-in) y del seam de observabilidad `ConfiguracionObservabilidadProjections` que genera `projections-scaffolder` (issue #457). **Enmienda MEF-ADR-0021** (infraestructura base). Cross-referencia MEF-ADR-0003 (stack ES Marten+Wolverine; sus dos filas read-side de la tabla de paquetes son el pin de version de la seccion 10), MEF-ADR-0014 (coverage gate, clasificacion de los proyectos nuevos), MEF-ADR-0015 (snapshots como excepcion, mismo patron de "default vs excepcion justificada"), MEF-ADR-0020 (hosting de Functions, contraste de unidad de despliegue), MEF-ADR-0023/MEF-ADR-0024 (Bounded Context y topologia de Service Bus), MEF-ADR-0025 (custodia de secretos) y MEF-ADR-0029 (test de composicion del host, hermano directo del config-test que fija este ADR).
 
 ## Contexto
 
@@ -143,6 +143,84 @@ De los tres proyectos que este ADR implica, dos viven bajo `src/` -- la superfic
 
 El carve-out del endpoint GET delgado del write-side -- distinto de estos dos proyectos y ajeno a este worker -- es alcance del issue #371, no de este ADR.
 
+### 10. Observabilidad del worker: `service.name` obligatorio, trazas como unica senal (issue #457)
+
+El worker corre **sin ingress** (seccion 8): las trazas que exporta a Application Insights son la
+**unica** observabilidad posible -- no hay ningun endpoint HTTP que golpear para diagnosticarlo.
+Razon de mas para que salgan bien etiquetadas.
+
+**El write-side no necesita configurar `service.name` explicitamente; este worker si.** El
+write-side (`domain-scaffolder`, MEF-ADR-0003 seccion "Observabilidad") encadena
+`.UseFunctionsWorkerDefaults()` (`Microsoft.Azure.Functions.Worker.OpenTelemetry`) sobre
+`AddOpenTelemetry()`; ese metodo, junto con el host de Azure Functions, fija el rol a partir del
+nombre del recurso desplegado -- de ahi que cada Function App aparezca correctamente etiquetada en
+Application Insights sin que ningun agente configure un `ResourceBuilder`. Este worker es
+`Microsoft.NET.Sdk.Worker` + `Host.CreateApplicationBuilder` (seccion 1): no hay host de Functions,
+asi que `UseFunctionsWorkerDefaults()` no aplica y nada fija el rol por convencion. Sin un
+`service.name` explicito, OpenTelemetry cae a su default `unknown_service:<proceso>` -- y el
+proceso es `dotnet`, porque el `ENTRYPOINT` del Dockerfile (seccion 8) es
+`dotnet <RootNamespace>.Projections.dll`. Generar el seam read-side copiando tal cual el del
+write-side reproduce exactamente ese defecto -- consecuencia ya medida en produccion por el
+consumidor Bitakora.ControlAsistencia (issues #250/#263): tras el primer despliegue de la imagen
+real, el worker aparecio en Application Insights como `unknown_service:dotnet`, indistinguible de
+cualquier otro proceso .NET generico que comparta el mismo componente.
+
+El seam `ConfiguracionObservabilidadProjections` (`Infraestructura/`, hermano directo del
+`ConfiguracionMartenProjections` de la seccion 2, mismo patron de MEF-ADR-0029) fija:
+
+```csharp
+services.AddOpenTelemetry()
+    .ConfigureResource(r => r.AddService(Assembly.GetExecutingAssembly().GetName().Name!))
+    .WithTracing(tracing => tracing
+        .AddSource("Marten")
+        .AddSource("Npgsql")
+        .AddSource("<RootNamespace>.Projections*"))
+    .UseAzureMonitorExporter();
+```
+
+1. **`service.name` derivado del nombre del ensamblado, nunca hardcodeado ni sustituido por token
+   del scaffolder**: `Assembly.GetExecutingAssembly().GetName().Name!` resuelve a
+   `<RootNamespace>.Projections` sin que el agente reemplace ningun placeholder en esa linea -- el
+   seam generado queda byte-identico en todo consumidor. Ata el `service.name` al nombre de la
+   `ActivitySource` propia **por construccion** (punto 2): ambos derivan del mismo
+   `Assembly.GetName().Name`, y no pueden divergir ni al renombrar el ensamblado. **Valido
+   unicamente porque el seam vive en el ensamblado del propio worker** -- moverlo a una biblioteca
+   compartida cambiaria el valor en silencio, porque `GetExecutingAssembly()` resolveria el
+   ensamblado que invoca, no el worker. **El ambiente no forma parte del nombre**, deliberadamente:
+   `azurerm_application_insights` ya es un recurso por ambiente (seccion 8, un Application Insights
+   component por `infra/environments/{env}/`), asi que el destino de la telemetria ya lo discrimina
+   el ambiente -- meter el ambiente en el `service.name` obligaria a un valor hardcodeado por
+   ambiente en codigo que se despliega a varios.
+2. **Fuentes a registrar**: `Marten`, `Npgsql` y la propia (`<RootNamespace>.Projections*`, con el
+   patron **sin punto** delante del `*` que valida el issue #460 -- mismo `WildcardHelper` del core
+   `OpenTelemetry`, mismo comentario gemelo que `domain-scaffolder.md` deja junto a su propio
+   `AddSource`). **`Npgsql` es una asimetria deliberada frente al write-side** (que solo registra
+   `Wolverine` y `Marten`, seccion 4 de este ADR): el daemon de proyecciones poolea Postgres de
+   forma sostenida, y esas dependencias son la senal principal de su salud -- no se "corrige" el
+   write-side para igualar esta lista. Nombre exacto de la fuente de Npgsql verificado por
+   lectura de fuente [16].
+3. **Exporter**: `.UseAzureMonitorExporter()` (`Azure.Monitor.OpenTelemetry.Exporter`, fila
+   read-side de la tabla de paquetes de MEF-ADR-0003). El propio SDK del exporter resuelve
+   `APPLICATIONINSIGHTS_CONNECTION_STRING` del entorno por convencion propia al inicializarse [17]
+   -- asi que el seam **no** la lee ni la recibe como parametro (MEF-ADR-0025): la Key Vault
+   reference que `infra-base-scaffolder` ya inyecta en el Container App (seccion 8) la deja en esa
+   misma variable.
+4. **Punto de extension del sampler, deliberadamente sin instalar ninguno.** Este worker corre
+   24/7 (`min_replicas >= 1`, seccion 8) -- a diferencia de las Function Apps del write-side, que
+   escalan a demanda -- asi que su volumen de telemetria es mayor y sostenido. Si un consumidor
+   necesita reducirlo, el punto de extension es un `ParentBasedSampler(new
+   TraceIdRatioBasedSampler(ratio))` encadenado en la construccion del `TracerProviderBuilder`
+   antes de `.UseAzureMonitorExporter()`; el **ratio es politica de costos del consumidor, nunca
+   doctrina del marco** -- este ADR fija el punto de extension, no un default, para no crear una
+   asimetria write/read-side nueva mientras el marco no tenga su propia doctrina de sampling
+   (issue #463, draft abierto).
+
+`service.version` con el SHA del build queda deliberadamente fuera de esta seccion (issue #462,
+depende de #453 y de este mismo issue #457): incluirlo aqui a medias -- el seam mas un `ARG` del
+Dockerfile, pero sin el `--build-arg` que `deploy-projections.yml` (seccion 8) todavia no pasa al
+`docker build` -- dejaria `InformationalVersion` fija en `1.0.0` -- trazabilidad falsa en silencio,
+el mismo defecto que esta seccion corrige para `service.name`.
+
 ## Alternativas consideradas
 
 ### Alt 1: proyecciones `Inline` para todo, sin worker ni daemon async
@@ -194,7 +272,9 @@ El carve-out del endpoint GET delgado del write-side -- distinto de estos dos pr
 - **[13]** "Use Key Vault references as app settings in Azure App Service, Azure Functions, and Azure Logic Apps (Standard)" -- Microsoft Learn, seccion *"Access vaults with a user-assigned identity"*: *"Some apps need to refer to secrets at creation time, when a system-assigned identity isn't available yet. In these cases, create a user-assigned identity, and give it access to the vault in advance"* -- mismo fenomeno de orden que este ADR resuelve en el `container-app`. https://learn.microsoft.com/azure/app-service/app-service-key-vault-references#grant-your-app-access-to-a-key-vault
 - **[14]** "Azure Provider: 4.0 Upgrade Guide" -- documentacion del provider `hashicorp/azurerm`: introduce `resource_provider_registrations` con sus cinco modos (`core`, `extended`, `all`, `none`, `legacy`) y el argumento complementario `resource_providers_to_register` -- *"A custom list of RPs to explicitly register for the subscription, in addition to those specified by the resource_provider_registrations property"*. `internal/resourceproviders/required.go` (verificado en la rama `main` del repositorio `hashicorp/terraform-provider-azurerm`) confirma que `Microsoft.App` no aparece en ninguno de los cinco sets -- solo `Microsoft.AppConfiguration` y `Microsoft.AppPlatform` estan en `extended`/`all`/`legacy`. El argumento `resource_providers_to_register` se verifico ademas contra el schema real del provider (`terraform providers schema -json` sobre `hashicorp/azurerm` 4.81.0, misma version de [11]): existe como atributo opcional de tipo `list(string)` del bloque `provider`, junto a `resource_provider_registrations` (`string`, el modo). Un typo en ese nombre lo caza `terraform validate` **siempre que la configuracion use el provider**: en un directorio sin ningun recurso ni data source `azurerm`, Terraform no decodifica el bloque `provider` y `validate` acepta cualquier nombre inventado sin error (comprobado). El entorno que fija MEF-ADR-0021 siempre instancia modulos `azurerm`, asi que ahi el `validate` del scaffolder si es red de seguridad. https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/guides/4.0-upgrade-guide y https://github.com/hashicorp/terraform-provider-azurerm/blob/main/internal/resourceproviders/required.go
 - **[15]** `azurerm_resource_provider_registration` -- documentacion del provider `hashicorp/azurerm`: *"The Azure Provider will automatically register all of the Resource Providers which it supports on launch (unless opted-out using the `skip_provider_registration` field within the provider block)"* -- afirmacion desactualizada frente a `required.go` [14]. `skip_provider_registration` es el argumento de v3 que la guia de upgrade a 4.0 [14] sustituye por `resource_provider_registrations` (*"equivalent to setting `skip_provider_registration = true`"*, sobre el modo `none`); no fue removido -- sigue presente en el schema de 4.81.0 marcado como `deprecated`, asi que un HCL que lo use no falla y tampoco sirve para registrar `Microsoft.App`. https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/resource_provider_registration
-- MEF-ADR-0003 (stack ES Marten+Wolverine): el schema de Marten por dominio que este ADR reutiliza para el named store del read-side; origen de `IPublicEventSender`/`IPrivateEventSender`, que este worker deliberadamente no usa (seccion 4).
+- **[16]** `NpgsqlActivitySource` -- codigo fuente de `npgsql/npgsql` (rama `main`, `src/Npgsql/NpgsqlActivitySource.cs`): `static readonly ActivitySource Source = new("Npgsql", GetLibraryVersion());` -- el nombre exacto que exige `AddSource("Npgsql")` (seccion 10) es literal `"Npgsql"`, sin prefijo de namespace ni necesidad de wildcard. https://github.com/npgsql/npgsql/blob/main/src/Npgsql/NpgsqlActivitySource.cs
+- **[17]** `EnvironmentVariableConstants`/`OpenTelemetryBuilderExtensions` -- codigo fuente de `Azure/azure-sdk-for-net` (`sdk/monitor/Azure.Monitor.OpenTelemetry.Exporter/src/`): `APPLICATIONINSIGHTS_CONNECTION_STRING` esta en el `HashSet` de variables de entorno que el SDK lee al inicializarse, y `UseAzureMonitorExporter(this IOpenTelemetryBuilder builder)` (sin `configureAzureMonitor`) no recibe ninguna connection string por parametro -- confirma que el seam de la seccion 10 no necesita leerla ni pasarla. https://github.com/Azure/azure-sdk-for-net/blob/main/sdk/monitor/Azure.Monitor.OpenTelemetry.Exporter/src/Internals/Platform/EnvironmentVariableConstants.cs y https://github.com/Azure/azure-sdk-for-net/blob/main/sdk/monitor/Azure.Monitor.OpenTelemetry.Exporter/src/OpenTelemetryBuilderExtensions.cs
+- MEF-ADR-0003 (stack ES Marten+Wolverine): el schema de Marten por dominio que este ADR reutiliza para el named store del read-side; origen de `IPublicEventSender`/`IPrivateEventSender`, que este worker deliberadamente no usa (seccion 4). Sus dos filas read-side de la tabla de paquetes (`OpenTelemetry.Extensions.Hosting` 1.17.0, `Azure.Monitor.OpenTelemetry.Exporter` 1.8.3) son el pin de version de la seccion 10 de este ADR.
 - MEF-ADR-0015 (snapshots de Marten como excepcion): mismo principio de "default vs excepcion justificada" que este ADR aplica a `Async` vs `Inline` (seccion 3).
 - MEF-ADR-0014 (coverage gate del pipeline TDD): la seccion 9 clasifica los dos proyectos nuevos contra su tabla -- el worker queda excluido salvo sus clases de proyeccion (medidas), `ReadModels` queda uniformemente excluido.
 - MEF-ADR-0020 (un App Service Plan por dominio): contraste de unidad de despliegue -- el write-side escala por dominio, el worker de proyecciones es una unica pieza por BC (seccion 1).
@@ -202,7 +282,7 @@ El carve-out del endpoint GET delgado del write-side -- distinto de estos dos pr
 - MEF-ADR-0023/MEF-ADR-0024 (Bounded Context, topologia de Service Bus): el worker vive en el resource group del BC (MEF-ADR-0023) pero no participa de ninguno de los namespaces de Service Bus que esos ADRs fijan (seccion 4).
 - MEF-ADR-0025 (custodia de secretos): el named store del worker reutiliza el secreto compuesto `marten-connection` ya custodiado en el Key Vault del BC; su identidad administrada recibe el mismo patron de acceso de lectura que las Function Apps, con la diferencia de orden que fija la seccion 8 (identidad `UserAssigned` autorizada **antes** de crear el Container App, no despues como en las Function Apps).
 - MEF-ADR-0029 (test de composicion del contenedor DI del host): patron hermano directo del config-test que fija la seccion 6 de este ADR -- misma filosofia (fuente unica compartida entre `Program.cs` y el test), aplicada a una superficie distinta (configuracion de Marten, no grafo generico de DI).
-- Issue #361 (este ADR) y sus issues consumidores directos: #362 (doctrina read-side de autoria y query APIs, explicitamente fuera de alcance aqui), #363 (enmienda de MEF-ADR-0006 con el naming de Functions de query y artefactos de proyeccion), #364 (Skill `projections`), #365 (agentes `projection-test-writer`/`projection-implementer`), #366 (receta del planner para `tipo:projection`), #367 (skill `/scaffold-projections` y agente `projections-scaffolder`), #368 (modulos Terraform de Container App en `infra-base-scaffolder`, gating opt-in), #369 (token `projections` en `harness.config.json`), #370 (registro del store de cada dominio en `domain-scaffolder`), #371 (rama read-side de `tdd-pipeline.sh` y carve-out de coverage, ver seccion 9), #372 (enrutamiento `tipo:projection`), #373 (label `tipo:projection` y su variante de DoR), #374 (skills en `reviewer`/`smoke-test-writer`), #375 (extension del scaffolder para `ReadModels`/`Projections.Tests`).
+- Issue #361 (este ADR) y sus issues consumidores directos: #362 (doctrina read-side de autoria y query APIs, explicitamente fuera de alcance aqui), #363 (enmienda de MEF-ADR-0006 con el naming de Functions de query y artefactos de proyeccion), #364 (Skill `projections`), #365 (agentes `projection-test-writer`/`projection-implementer`), #366 (receta del planner para `tipo:projection`), #367 (skill `/scaffold-projections` y agente `projections-scaffolder`), #368 (modulos Terraform de Container App en `infra-base-scaffolder`, gating opt-in), #369 (token `projections` en `harness.config.json`), #370 (registro del store de cada dominio en `domain-scaffolder`), #371 (rama read-side de `tdd-pipeline.sh` y carve-out de coverage, ver seccion 9), #372 (enrutamiento `tipo:projection`), #373 (label `tipo:projection` y su variante de DoR), #374 (skills en `reviewer`/`smoke-test-writer`), #375 (extension del scaffolder para `ReadModels`/`Projections.Tests`), #453 (workflow `deploy-projections.yml`, precondicion de #462), #457 (seam de observabilidad, seccion 10 de este ADR), #460 (patron de wildcard de `AddSource` sin punto, reusado por la seccion 10), #462 (`service.version` con el SHA, diferido por la seccion 10), #463 (draft de doctrina de sampling del marco, diferido por la seccion 10).
 - Cosmos.ControlPlane: `Cosmos.ControlPlane.Projections` (worker, seam `ConfiguracionMartenProjections`, PR 134) y `Cosmos.ControlPlane.ReadModels` -- consumidor de referencia que valido este patron en produccion, mismo rol que jugo para MEF-ADR-0032 (edge-auth). Ver nota de verificacion en "Contexto": los detalles citados provienen de la descripcion del issue #361, no de inspeccion directa del codigo. **Actualizacion (issue #412, PRs #136/#137 de ese repo):** el equipo del consumidor fijo como restriccion explicita que `ReadModels` no referencie Marten y diverge deliberadamente de la version anterior de este ADR y de MEF-ADR-0035 (estilo N1 auto-agregante); verificado en campo (`project.assets.json` sin ninguna entrada de Marten, ni transitiva) contra Marten `9.12.0` y SDK .NET 10. La seccion 5 se enmendo para alinear la doctrina del marco a esa restriccion.
 
 ## Control de cambios
@@ -212,3 +292,4 @@ El carve-out del endpoint GET delgado del write-side -- distinto de estos dos pr
 - 2026-07-26: precisado el mecanismo de deteccion de la seccion 8 (issue #369, al fijar el contrato del token). La version anterior lo describia como "a materializar por el issue #369"; ese contrato ya existe, asi que la seccion ahora enuncia su semantica vigente -- solo el booleano `true` habilita, y `load_harness_config` lo expone como `HARNESS_PROJECTIONS_ENABLED` sin abortar la carga por este campo. Sin cambios en ninguna decision: el ADR sigue sin fijar el contrato del token, solo referencia el que fija el issue.
 - 2026-07-27: enmendada la seccion 5 (issue #412, alineando Cosmos.ControlPlane PRs #136/#137). `<RootNamespace>.ReadModels` deja de alojar las clases de proyeccion -- pasan al worker (`src/<RootNamespace>.Projections/{Dominio}/{Concepto}Projection.cs`, una carpeta por dominio) -- y `ReadModels` queda sin `PackageReference` a Marten, ni transitivamente, como contrato compartido entre el worker y el Function App del dominio. Fija ademas la ubicacion de los unit tests de proyeccion (`tests/<RootNamespace>.Projections.Tests/{Dominio}/{Concepto}ProjectionTests.cs`, mismo proyecto que ya aloja el config-test, sin cambio de `.csproj`). La seccion 9 invierte su clasificacion frente al coverage gate: el worker pasa a medido por sus clases de proyeccion (su `Program.cs`/`Infraestructura/` siguen excluidos), `ReadModels` pasa a uniformemente excluido. La premisa que motivaba la ubicacion anterior -- que el analizador debia vivir en el ensamblado de `ReadModels` porque ahi vivian las clases `partial` -- quedo invalidada al reubicarlas: el analizador sigue a los metodos `Create`/`Apply`, no al tipo del documento (ver tambien MEF-ADR-0035 seccion 2, enmendada en el mismo issue).
 - 2026-07-28: enmendada la seccion 8 (issue #433, reportado como `Bitakora.ControlAsistencia#246` sobre el sintoma `Bitakora.ControlAsistencia#234`). Documenta la segunda trampa de este ADR, invisible leyendo el HCL y solo manifiesta al aplicar: el primer `apply` de un consumidor que adopta proyecciones falla con `409 MissingSubscriptionRegistration` porque `Microsoft.App` no esta en ninguno de los cinco sets de auto-registro del provider `azurerm` v4 (verificado contra `required.go`), con el `apply` quedando a medias (identidad, role assignments y `container-registry` creados; `container-app-environment` y `container-app` no). Fija el fix declarativo (`resource_providers_to_register = ["Microsoft.App"]` en el `provider "azurerm"` del entorno, Paso 2.1b del `infra-base-scaffolder`), descarta explicitamente `azurerm_resource_provider_registration` (su `destroy` desregistra el namespace y falla con recursos vivos; su state es a nivel de suscripcion, no de entorno) y documenta el modo de falla `AuthorizationFailed` para un SP de CI con rol acotado. Suma las referencias [14] y [15].
+- 2026-07-29: suma la seccion 10 (issue #457, al implementar el seam de observabilidad en `projections-scaffolder`). Fija `service.name` obligatorio (derivado de `Assembly.GetExecutingAssembly().GetName().Name!`, nunca hardcodeado) porque este worker, a diferencia del write-side, no tiene `UseFunctionsWorkerDefaults()` que lo fije por convencion -- sin el, OpenTelemetry cae a `unknown_service:dotnet`, defecto ya medido en produccion por Bitakora.ControlAsistencia (issues #250/#263). Fija las fuentes a registrar (`Marten`, `Npgsql` -- asimetria deliberada frente al write-side -- y la propia, con el patron sin punto del issue #460), que el exporter resuelve la connection string del entorno por convencion propia (el seam no la recibe, MEF-ADR-0025) y el punto de extension del sampler sin instalar ninguno (issue #463, doctrina de sampling diferida). Deja fuera `service.version` con el SHA (issue #462) para no introducir trazabilidad falsa a medias. Suma las referencias [16] y [17] y las dos filas read-side de paquetes que ancla en MEF-ADR-0003.

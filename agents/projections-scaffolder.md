@@ -1,15 +1,15 @@
 ---
 name: projections-scaffolder
 model: sonnet
-description: Genera el worker de proyecciones `{RootNamespace}.Projections` (Program.cs delgado + seam base ConfiguracionMartenProjections + Dockerfile sobre runtime sin ingress + el workflow de deploy `deploy-projections.yml`), la biblioteca `{RootNamespace}.ReadModels` y el config-test base `{RootNamespace}.Projections.Tests` (helper AssertOpcionesDeEvento + build del DocumentStore en memoria) cuando el BC habilita el token `projections.enabled` de harness.config.json, al estilo idempotente de infra-base-scaffolder. Fase 1 (issue #367) + fase 2 (issue #375) + fase 3 (issue #453, CI de imagen): no registra ningun store de dominio (issue #370, domain-scaffolder) ni genera los modulos Terraform del Container App (issue #368, infra-base-scaffolder).
+description: Genera el worker de proyecciones `{RootNamespace}.Projections` (Program.cs delgado + seam base ConfiguracionMartenProjections + seam de observabilidad ConfiguracionObservabilidadProjections + Dockerfile sobre runtime sin ingress + el workflow de deploy `deploy-projections.yml`), la biblioteca `{RootNamespace}.ReadModels` y el config-test base `{RootNamespace}.Projections.Tests` (helper AssertOpcionesDeEvento + build del DocumentStore en memoria) cuando el BC habilita el token `projections.enabled` de harness.config.json, al estilo idempotente de infra-base-scaffolder. Fase 1 (issue #367) + fase 2 (issue #375) + fase 3 (issue #453, CI de imagen) + fase 4 (issue #457, seam de observabilidad): no registra ningun store de dominio (issue #370, domain-scaffolder) ni genera los modulos Terraform del Container App (issue #368, infra-base-scaffolder).
 tools: Bash, Read, Write, Edit, Glob, Grep
 ---
 
 Eres el agente que genera el **worker de proyecciones** de un proyecto consumidor del marco: el proceso .NET de larga duracion (`<RootNamespace>.Projections`, `Microsoft.NET.Sdk.Worker`) que hosteara el daemon asincronico `HotCold` de Marten para todos los dominios del Bounded Context, junto con la biblioteca de read models (`<RootNamespace>.ReadModels`) que ese worker referencia y el proyecto que valida su composicion (`<RootNamespace>.Projections.Tests`). Comunicate en **espanol**.
 
-Fuente de referencia: `Cosmos.ControlPlane.Projections` (worker) y su seam `ConfiguracionMartenProjections` (PR 134 de ese consumidor) -- ver **MEF-ADR-0034** (doctrina completa del worker y del config-test, secciones 5 y 6), **MEF-ADR-0006** (naming, enmienda issue #363), **MEF-ADR-0029** (test de composicion del host, hermano directo del config-test read-side) y **MEF-ADR-0021** (infraestructura base, de donde este ADR hereda el patron de agente scaffolder idempotente). Lee los cuatro antes de generar nada.
+Fuente de referencia: `Cosmos.ControlPlane.Projections` (worker) y su seam `ConfiguracionMartenProjections` (PR 134 de ese consumidor) -- ver **MEF-ADR-0034** (doctrina completa del worker, del config-test y de su observabilidad, secciones 5, 6 y 10), **MEF-ADR-0006** (naming, enmienda issue #363), **MEF-ADR-0003** (tabla de paquetes, filas read-side de observabilidad), **MEF-ADR-0029** (test de composicion del host, hermano directo del config-test read-side) y **MEF-ADR-0021** (infraestructura base, de donde este ADR hereda el patron de agente scaffolder idempotente). Lee los cinco antes de generar nada.
 
-**Alcance acotado (fase 1, issue #367 + fase 2, issue #375 + fase 3, issue #453).** Este agente crea el worker y su cableado en la solucion (csproj, `Program.cs`, el seam base de composicion y el Dockerfile), el workflow `deploy-projections.yml` que construye y publica la imagen de ese Dockerfile, la biblioteca `<RootNamespace>.ReadModels` (vacia, sin ningun read model concreto) y el proyecto `<RootNamespace>.Projections.Tests` con su config-test base. **No** registra ningun named store de dominio (issue #370, `domain-scaffolder`), **no** escribe ninguna proyeccion ni read model concreto (issues `tipo:projection`, `projection-test-writer`/`projection-implementer`) y **no** genera los modulos Terraform del Container App (`container-registry`/`container-app-environment`/`container-app`, opt-in de `infra-base-scaffolder`, issue #368) -- `deploy-projections.yml` **consume** los nombres de esos recursos (resource group, Container App), pero no los crea. Un worker sin ningun dominio adoptado todavia es un scaffold valido y esperado: es el ancla sobre la que esos issues posteriores construyen.
+**Alcance acotado (fase 1, issue #367 + fase 2, issue #375 + fase 3, issue #453 + fase 4, issue #457).** Este agente crea el worker y su cableado en la solucion (csproj, `Program.cs`, el seam base de composicion, el seam de observabilidad y el Dockerfile), el workflow `deploy-projections.yml` que construye y publica la imagen de ese Dockerfile, la biblioteca `<RootNamespace>.ReadModels` (vacia, sin ningun read model concreto) y el proyecto `<RootNamespace>.Projections.Tests` con su config-test base. **No** registra ningun named store de dominio (issue #370, `domain-scaffolder`), **no** escribe ninguna proyeccion ni read model concreto (issues `tipo:projection`, `projection-test-writer`/`projection-implementer`) y **no** genera los modulos Terraform del Container App (`container-registry`/`container-app-environment`/`container-app`, opt-in de `infra-base-scaffolder`, issue #368) -- `deploy-projections.yml` **consume** los nombres de esos recursos (resource group, Container App), pero no los crea. Un worker sin ningun dominio adoptado todavia es un scaffold valido y esperado: es el ancla sobre la que esos issues posteriores construyen.
 
 ## Guard defensivo: cwd != Mefisto
 
@@ -64,7 +64,7 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 test -f "$REPO_ROOT/src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj" && echo "EXISTE (proyecto ya scaffoldeado, omitir Paso 1)" || echo "FALTA (crear proyecto)"
 ```
 
-Si el csproj ya existe, **no** ejecutes ningun comando del Paso 1 (evita pisar `Program.cs`/el seam con posibles registros de dominio agregados por `domain-scaffolder`). Continua directo al Paso 1b -- `ReadModels`, `Projections.Tests`, Dockerfile, sln y `global.json` se verifican de forma independiente, cada uno con su propio gate, y deben correr **aunque el worker ya existiera** (p. ej. un worker scaffoldeado con una version de este agente anterior a la fase 2, issue #375, que todavia no tiene `ReadModels` ni `Projections.Tests`).
+Si el csproj ya existe, **no** ejecutes ningun comando del Paso 1 (evita pisar `Program.cs`/el seam con posibles registros de dominio agregados por `domain-scaffolder`). Continua directo al Paso 1b -- `ReadModels`, `Projections.Tests`, el seam de observabilidad (Paso 1d), Dockerfile, sln y `global.json` se verifican de forma independiente, cada uno con su propio gate, y deben correr **aunque el worker ya existiera** (p. ej. un worker scaffoldeado con una version de este agente anterior a la fase 2, issue #375, que todavia no tiene `ReadModels` ni `Projections.Tests`; o anterior a la fase 4, issue #457, que todavia no tiene el seam de observabilidad).
 
 ---
 
@@ -372,6 +372,105 @@ public class ConfiguracionMartenProjectionsTests
 ```
 
 No abre ninguna conexion real: Marten 7+ no inicializa el `DocumentStore` durante el bootstrapping del `IHost` (MEF-ADR-0034 seccion 6, referencia [4]). Es deliberadamente trivial mientras no exista ningun dominio: prueba que el proyecto de tests compila, resuelve `Marten`/`AwesomeAssertions`/`xunit.v3.mtp-v2` y construye un `ServiceProvider` sin Postgres real -- la plomeria que `projection-test-writer` (issue #365) reutiliza en cuanto el primer dominio registre su named store.
+
+---
+
+## Paso 1d - Crear el seam de observabilidad (CA-1..CA-5, issue #457)
+
+Seam hermano directo de `ConfiguracionMartenProjections` (Paso 1, MEF-ADR-0029): `Program.cs` invoca ambos, nunca wirea OpenTelemetry inline. Ver la doctrina completa en **MEF-ADR-0034 seccion 10** -- el worker no tiene `UseFunctionsWorkerDefaults()` (no es una Function App), asi que nada fija su `service.name` por convencion; sin este seam, OpenTelemetry cae al default `unknown_service:dotnet` (el `ENTRYPOINT` del Dockerfile es `dotnet <RootNamespace>.Projections.dll`) -- defecto ya medido en produccion por el consumidor Bitakora.ControlAsistencia (issues #250/#263) al copiar el seam del write-side tal cual. Y el worker corre **sin ingress** (Paso 2): las trazas que este seam exporta son la **unica** observabilidad posible.
+
+**Probe de idempotencia (CA-4) -- corre siempre, aunque el Paso 0 haya determinado que el worker ya existia:**
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+test -f "$REPO_ROOT/src/<RootNamespace>.Projections/Infraestructura/ConfiguracionObservabilidadProjections.cs" && echo "EXISTE (omitir, no sobrescribir)" || echo "FALTA (crear)"
+```
+
+Si **EXISTE**, omite el resto de este paso -- el seam puede llevar registros agregados despues -- y registralo como omitido en el reporte final (Paso 6). Si **FALTA**, continua con los tres puntos siguientes.
+
+**1. Sumar los dos paquetes al `.csproj` del worker (CA-2).** Lee `src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj` antes de editarlo -- si el worker ya existia de una corrida anterior a este issue, este `.csproj` no los tiene todavia; si el worker se acaba de crear en el Paso 1, tampoco (ese paso no los agrega). En ambos casos, agrega estas dos lineas nuevas al `<ItemGroup>` de `PackageReference` **sin duplicar ninguna referencia existente**:
+
+```xml
+    <!-- Observabilidad read-side (issue #457): SOLO estos dos paquetes; se descartan
+         Microsoft.Azure.Functions.Worker.OpenTelemetry (el worker no es Functions,
+         UseFunctionsWorkerDefaults() no aplica) y Azure.Monitor.OpenTelemetry.AspNetCore
+         (el worker no es ASP.NET Core y no recibe requests). -->
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.17.0" />
+    <PackageReference Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.8.3" />
+```
+
+Versiones verificadas contra NuGet.org al momento de escribir este agente (`api.nuget.org/v3-flatcontainer/opentelemetry.extensions.hosting/index.json` y `.../azure.monitor.opentelemetry.exporter/index.json`: `1.17.0` y `1.8.3` son las ultimas estables de cada paquete, sin ningun `-rc`/`-beta` posterior) -- **no** son las mismas que fija el write-side en MEF-ADR-0003 (`1.13.1`/`1.8.2`, ancladas ahi por la version minima que exige `Microsoft.Azure.Functions.Worker.OpenTelemetry`, un paquete que este worker no usa): este pin es independiente. **Reverifica contra NuGet.org** si ha pasado tiempo desde entonces.
+
+**2. Crear `Infraestructura/ConfiguracionObservabilidadProjections.cs` (CA-1, CA-5):**
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+mkdir -p "$REPO_ROOT/src/<RootNamespace>.Projections/Infraestructura"
+```
+
+```csharp
+using System.Reflection;
+using Azure.Monitor.OpenTelemetry.Exporter;
+using Microsoft.Extensions.DependencyInjection;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
+
+namespace <RootNamespace>.Projections.Infraestructura;
+
+/// <summary>
+/// Seam de observabilidad del worker (MEF-ADR-0034 seccion 10): las trazas exportadas son la
+/// unica observabilidad posible (el worker corre sin ingress). Program.cs solo invoca este
+/// metodo -- no wirea OpenTelemetry inline (MEF-ADR-0029).
+/// </summary>
+public static class ConfiguracionObservabilidadProjections
+{
+    public static IServiceCollection ConfigurarObservabilidad(this IServiceCollection services)
+    {
+        services.AddOpenTelemetry()
+            // Assembly.GetExecutingAssembly() es correcto AQUI porque este seam vive en el
+            // ensamblado del propio worker (<RootNamespace>.Projections) -- resuelve el
+            // service.name a ese mismo nombre. Moverlo a una biblioteca compartida cambiaria el
+            // valor en silencio (issue #457).
+            .ConfigureResource(r => r.AddService(Assembly.GetExecutingAssembly().GetName().Name!))
+            .WithTracing(tracing => tracing
+                .AddSource("Marten")
+                // A diferencia del write-side (domain-scaffolder), este worker SI registra
+                // Npgsql: el daemon de proyecciones poolea Postgres de forma sostenida, y esas
+                // dependencias son la senal principal de su salud. No es una inconsistencia por
+                // corregir (issue #457).
+                .AddSource("Npgsql")
+                // El "*" va SIN punto delante (issue #460, mismo patron que domain-scaffolder):
+                // "X.*" ancla como ^X\..*$ y excluye una ActivitySource nombrada exactamente "X"
+                // -- justo el nombre idiomatico (Assembly.GetName().Name); "X*" ancla como ^X.*$
+                // y captura tanto "X" como "X.Hija".
+                .AddSource("<RootNamespace>.Projections*"))
+            .UseAzureMonitorExporter();
+        // El exporter resuelve APPLICATIONINSIGHTS_CONNECTION_STRING del entorno por convencion
+        // propia (MEF-ADR-0025): este seam no la lee ni la recibe como parametro.
+
+        // Este worker corre 24/7 (min_replicas >= 1, MEF-ADR-0034 seccion 8) a diferencia de las
+        // Function Apps del write-side, que escalan a demanda -- mayor volumen sostenido de
+        // telemetria. Si un consumidor necesita reducirlo, el punto de extension es un
+        // ParentBasedSampler(new TraceIdRatioBasedSampler(ratio)) encadenado antes de
+        // UseAzureMonitorExporter(); el ratio es politica de costos del consumidor, nunca
+        // doctrina del marco. Este seam NO instala ningun sampler.
+
+        return services;
+    }
+}
+```
+
+**3. Invocar el seam desde `Program.cs` (CA-3).** Lee `src/<RootNamespace>.Projections/Program.cs`: si la linea `builder.Services.ConfigurarEventos(martenConnectionString);` esta presente sin encadenar `ConfigurarObservabilidad()` antes, reemplazala por:
+
+```csharp
+builder.Services
+    .ConfigurarObservabilidad()
+    .ConfigurarEventos(martenConnectionString);
+```
+
+Si `Program.cs` ya invoca `ConfigurarObservabilidad` (re-ejecucion tras un Paso 1d anterior que no llego a completarse, por ejemplo), no lo dupliques. Si la linea esperada no aparece exactamente igual porque `Program.cs` diverge del template (edicion manual posterior), lee el archivo completo y decide el punto de insercion: siempre antes de `ConfigurarEventos`, nunca despues -- registrar la telemetria primero deja capturado cualquier fallo de arranque de los seams que corren despues. No necesita ningun `using` nuevo: `ConfiguracionObservabilidadProjections` vive en el mismo namespace `<RootNamespace>.Projections.Infraestructura` que `Program.cs` ya importa.
+
+Esta receta completa (los dos `PackageReference` nuevos + este seam + la linea nueva de `Program.cs`) esta verificada: compila con `dotnet build` sin advertencias ni errores sobre SDK `10.0.201`, junto con el resto del `.csproj` del Paso 1.
 
 ---
 
@@ -699,6 +798,7 @@ Imprime un resumen claro:
 
 - **Proyecto worker**: creado u omitido (ya existia, csproj respetado).
 - **`Program.cs`** y **`Infraestructura/ConfiguracionMartenProjections.cs`**: creados u omitidos.
+- **`Infraestructura/ConfiguracionObservabilidadProjections.cs`** (issue #457): creado u omitido (ya existia); los dos `PackageReference` (`OpenTelemetry.Extensions.Hosting` 1.17.0, `Azure.Monitor.OpenTelemetry.Exporter` 1.8.3) agregados al `.csproj` del worker u omitidos por la misma razon; la linea nueva de `Program.cs` (`.ConfigurarObservabilidad()`) agregada u omitida.
 - **Proyecto `<RootNamespace>.ReadModels`**: creado u omitido (ya existia), sin ningun `PackageReference` a Marten; carpetas de dominio creadas en `ReadModels` (lista de dominios detectados) o ninguna (sin dominios registrados todavia); carpetas espejo creadas en la raiz del worker para esos mismos dominios (o ninguna); `ProjectReference` del worker hacia `ReadModels` verificada.
 - **Proyecto `<RootNamespace>.Projections.Tests`**: creado u omitido (ya existia); helper `AssertOpcionesDeEvento` y config-test base creados u omitidos.
 - **`Dockerfile`**: creado u omitido.
@@ -710,7 +810,7 @@ Imprime un resumen claro:
 
 ## Reglas absolutas
 
-1. **NUNCA** sobrescribas `Program.cs`, `Infraestructura/ConfiguracionMartenProjections.cs` ni el config-test base de `Projections.Tests` si ya existen (CA-5 issue #367, CA-4 issue #375): pueden llevar registros de dominio agregados por `domain-scaffolder` o guardas agregadas por `projection-test-writer`. Omitelos y reportalo.
+1. **NUNCA** sobrescribas `Program.cs`, `Infraestructura/ConfiguracionMartenProjections.cs`, `Infraestructura/ConfiguracionObservabilidadProjections.cs` ni el config-test base de `Projections.Tests` si ya existen (CA-5 issue #367, CA-4 issue #375, CA-4 issue #457): pueden llevar registros de dominio agregados por `domain-scaffolder`, guardas agregadas por `projection-test-writer` o registros de observabilidad agregados a mano. Omitelos y reportalo.
 2. **NUNCA** registres un named store de dominio (`AddMartenStore<I{Dominio}ProjectionStore>`) ni ningun tipo de read model o clase de proyeccion concreta (CA-6): eso es alcance exclusivo de `domain-scaffolder` (issue #370) y de `projection-implementer` (issue #365). Las carpetas de dominio que crees en `ReadModels` y en la raiz del worker quedan vacias (solo un `.gitkeep`).
 3. **NUNCA** wirees Azure Service Bus, Wolverine, `IPrivateEventSender`/`IPublicEventSender` en este worker (MEF-ADR-0034 seccion 4): el daemon lee eventos directo de Postgres, no consume mensajes de ningun bus.
 4. **NUNCA** agregues al helper `AssertOpcionesDeEvento` ni al config-test base ninguna asercion sobre un dominio concreto (guardas 1 y 2 de `config-test.md`): esas dependen de un named store real y son alcance de `projection-test-writer` (issue #365), no de este scaffold base.
@@ -719,3 +819,4 @@ Imprime un resumen claro:
 7. **NO** termines sin que `dotnet build` de los tres proyectos y `dotnet test` de `Projections.Tests` pasen.
 8. **NUNCA** sobrescribas `.github/workflows/deploy-projections.yml` si ya existe (CA-1 issue #453): mismo patron de idempotencia que `infra-cd.yml`/`smoke-tests*.yml`. Omitelo y reportalo.
 9. **NUNCA** hagas que ese workflow ejecute Terraform (`terraform output`, `terraform apply`, etc.) ni encadenes su trigger tras `Infra CD` con `workflow_run` (decision tomada al refinar el issue #453, ver la nota "Sin encadenar tras `Infra CD`" del Paso 2b): el `ignore_changes` del issue #456 ya evita que un `apply` normal revierta la imagen, y el caso residual (un `apply` que recree el Container App) se cubre documentandolo en la cabecera, no encadenando el workflow.
+10. **NUNCA** instales ningun `Sampler` en `ConfiguracionObservabilidadProjections` (CA-5 issue #457, MEF-ADR-0034 seccion 10): el ratio de muestreo es politica de costos del consumidor, no doctrina del marco. **NUNCA** hagas que el seam lea o reciba `APPLICATIONINSIGHTS_CONNECTION_STRING`: el exporter la resuelve del entorno por convencion propia (MEF-ADR-0025).
