@@ -16,6 +16,13 @@
 # corrida en curso -- con o sin este flag -- corriendo en otra terminal:
 #   ./.claude/scripts/mefisto-stream-watch.sh
 #
+# Caveat del arranque con --verbose: el visor descubre el *.stream.jsonl mas
+# reciente de .claude/pipeline/logs/ y el pane se abre ANTES de que el pipeline
+# haya escrito el suyo (la traza del stage 1 nace recien cuando arranca el
+# agente, tras crear el worktree y validar el DoR). Hasta entonces el visor
+# muestra la traza de la corrida ANTERIOR -- su encabezado dice a que issue y
+# stage pertenece -- y salta sola a la nueva en cuanto empieza a crecer.
+#
 # Solo se ejecuta dentro del repo de Mefisto (assert_in_mefisto en _mefisto-common.sh).
 
 set -euo pipefail
@@ -56,7 +63,9 @@ session_exists()    { tmux has-session -t "$1" 2>/dev/null; }
 # Extrae --verbose de "$@" (en cualquier posicion) y lo consume: nunca debe
 # propagarse al pipeline invocado por send-keys (CA-2) -- critico en
 # cmd_batch, que parsea issues_str posicionalmente. Deja el flag en la
-# global VERBOSE y el resto de argumentos, en orden, en el array global
+# global VERBOSE (el literal true/false, que los call-sites comparan con
+# `[ "$VERBOSE" = true ]` -- la convencion de booleanos del resto de los
+# pipelines) y el resto de argumentos, en orden, en el array global
 # REMAINING_ARGS.
 VERBOSE=false
 REMAINING_ARGS=()
@@ -71,6 +80,26 @@ extract_verbose_flag() {
             REMAINING_ARGS+=("$arg")
         fi
     done
+}
+
+# Ayuda del wrapper (CA-6). Es la misma que ya se imprimia al invocar sin
+# argumentos, extraida a una funcion para que --help/-h la muestre en vez de
+# caer en "Argumento no reconocido" (mismo patron que cmd_help del wrapper
+# publicado, scripts/tmux-pipeline.sh).
+print_usage() {
+    echo "Uso: $0 --tooling <issue> [--verbose] | --batch <issue1> <issue2> ... [--verbose] | --attach [sesion]"
+    echo ""
+    echo "  --verbose   Suma un pane con el visor en vivo (mefisto-stream-watch.sh,"
+    echo "              issue #434). Opt-in: sin el flag la sesion no cambia."
+    echo "              Al abrirse muestra la traza de la corrida ANTERIOR (con su"
+    echo "              encabezado de issue/stage) hasta que la nueva empieza a"
+    echo "              escribirse, y salta sola a ella."
+    echo "              Es un flag de ESTE wrapper: /mefisto-tooling y"
+    echo "              /mefisto-sequential todavia no lo reenvian, asi que para"
+    echo "              usarlo hay que invocar el script a mano."
+    echo "              El visor tambien se puede lanzar suelto, en cualquier"
+    echo "              momento y sin este flag, sobre una corrida ya en curso:"
+    echo "                ./.claude/scripts/mefisto-stream-watch.sh"
 }
 
 print_connect_hint() {
@@ -141,7 +170,7 @@ cmd_tooling() {
     # El split -v (issue #435) se hace ANTES del -h, mientras tail_pane todavia
     # ocupa toda la ventana: asi el visor queda a lo ancho completo (abajo),
     # y tail_pane conserva el ancho completo para partirse en tail/script (arriba).
-    if $VERBOSE; then
+    if [ "$VERBOSE" = true ]; then
         watch_pane=$(tmux split-window -v -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
         tmux send-keys -t "$watch_pane" "./.claude/scripts/mefisto-stream-watch.sh" Enter
     fi
@@ -151,7 +180,7 @@ cmd_tooling() {
 
     # even-horizontal deshace el split -v de arriba (lo aplana a 3 columnas):
     # solo se aplica sin --verbose, donde nunca hubo split -v que preservar.
-    if ! $VERBOSE; then
+    if [ "$VERBOSE" != true ]; then
         tmux select-layout -t "$session:main" even-horizontal
     fi
 
@@ -201,7 +230,7 @@ cmd_batch() {
     # El split -v (issue #435) se hace ANTES del -h, mientras tail_pane todavia
     # ocupa toda la ventana: asi el visor queda a lo ancho completo (abajo),
     # y tail_pane conserva el ancho completo para partirse en tail/script (arriba).
-    if $VERBOSE; then
+    if [ "$VERBOSE" = true ]; then
         watch_pane=$(tmux split-window -v -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
         tmux send-keys -t "$watch_pane" "./.claude/scripts/mefisto-stream-watch.sh" Enter
     fi
@@ -211,7 +240,7 @@ cmd_batch() {
 
     # even-horizontal deshace el split -v de arriba (lo aplana a 3 columnas):
     # solo se aplica sin --verbose, donde nunca hubo split -v que preservar.
-    if ! $VERBOSE; then
+    if [ "$VERBOSE" != true ]; then
         tmux select-layout -t "$session:main" even-horizontal
     fi
 
@@ -221,17 +250,14 @@ cmd_batch() {
 
 # --- Dispatcher ---
 if [ $# -eq 0 ]; then
-    echo "Uso: $0 --tooling <issue> [--verbose] | --batch <issue1> <issue2> ... [--verbose] | --attach [sesion]"
-    echo ""
-    echo "  --verbose   Suma un pane con el visor en vivo (mefisto-stream-watch.sh,"
-    echo "              issue #434). Opt-in: sin el flag la sesion no cambia."
-    echo "              Tambien se puede lanzar a mano, en cualquier momento y sin"
-    echo "              este flag, sobre una corrida ya en curso:"
-    echo "                ./.claude/scripts/mefisto-stream-watch.sh"
+    print_usage
     exit 1
 fi
 
 case "$1" in
+    --help|-h)
+        print_usage
+        ;;
     --tooling)
         shift
         cmd_tooling "$@"
