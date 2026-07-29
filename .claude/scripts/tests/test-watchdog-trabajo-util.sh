@@ -72,7 +72,7 @@ trap cleanup EXIT
 # -------- Bloque pre: funciones existen --------
 
 echo "[pre] Las funciones nuevas estan definidas en _mefisto-common.sh"
-for fn in run_agent_with_watchdog agent_log_has_stream_cut agent_failure_is_unrecoverable agent_work_is_trustworthy; do
+for fn in run_agent_with_watchdog agent_log_has_stream_cut agent_failure_is_unrecoverable agent_work_is_trustworthy agent_stream_completed_successfully; do
     if declare -F "$fn" >/dev/null; then
         pass "$fn definida"
     else
@@ -339,6 +339,125 @@ if grep -q 'grep -qE "Connection closed mid-response' "$PIPE"; then
     fail "F-5: quedo una copia inline del grep de corte de stream en el pipeline"
 else
     pass "F-5: el criterio de corte de stream no quedo duplicado inline en el pipeline"
+fi
+
+# -------- Bloque G: issue #446, una senal DESPUES del exito no es un timeout --------
+
+echo ""
+echo "[G] #446: un evento 'result' de exito en la traza exime al stage de irrecuperable"
+
+# Traza minima pero fiel a la forma real: una linea JSON por evento, el
+# `result` al final. Es lo que emite `claude --output-format stream-json`.
+STREAM_OK="$TMP/g-ok.stream.jsonl"
+{
+    echo '{"type":"system","subtype":"init","model":"claude-sonnet-5"}'
+    echo '{"type":"assistant","message":{"model":"claude-sonnet-5"}}'
+    echo '{"type":"result","subtype":"success","is_error":false,"duration_ms":217358,"num_turns":34}'
+} > "$STREAM_OK"
+
+# Traza de una muerte a mitad de vuelo: nunca llega el evento `result`.
+STREAM_CORTADA="$TMP/g-cut.stream.jsonl"
+{
+    echo '{"type":"system","subtype":"init","model":"claude-sonnet-5"}'
+    echo '{"type":"assistant","message":{"model":"claude-sonnet-5"}}'
+} > "$STREAM_CORTADA"
+
+# Traza con `result` de error: el CLI llego al final pero declarando fallo.
+STREAM_ERROR="$TMP/g-err.stream.jsonl"
+{
+    echo '{"type":"system","subtype":"init","model":"claude-sonnet-5"}'
+    echo '{"type":"result","subtype":"error_during_execution","is_error":true}'
+} > "$STREAM_ERROR"
+
+# Traza truncada a media linea: el proceso murio escribiendo el JSON. El
+# parseo tolerante la descarta; afirmar exito aqui seria el peor falso
+# positivo posible.
+STREAM_TRUNCA="$TMP/g-trunc.stream.jsonl"
+{
+    echo '{"type":"system","subtype":"init","model":"claude-sonnet-5"}'
+    printf '{"type":"result","subtype":"suc'
+} > "$STREAM_TRUNCA"
+
+if agent_stream_completed_successfully "$STREAM_OK"; then
+    pass "G-1: traza con result success/is_error=false -> exito declarado"
+else
+    fail "G-1: no reconocio una traza con result de exito"
+fi
+
+if agent_stream_completed_successfully "$STREAM_CORTADA"; then
+    fail "G-2: afirmo exito sobre una traza SIN evento result"
+else
+    pass "G-2: traza sin evento result -> no se afirma exito"
+fi
+
+if agent_stream_completed_successfully "$STREAM_ERROR"; then
+    fail "G-3: afirmo exito sobre una traza con result is_error=true"
+else
+    pass "G-3: traza con result de error -> no se afirma exito"
+fi
+
+if agent_stream_completed_successfully "$STREAM_TRUNCA"; then
+    fail "G-4: afirmo exito sobre una traza truncada a media linea"
+else
+    pass "G-4: traza truncada -> no se afirma exito"
+fi
+
+if agent_stream_completed_successfully "$TMP/no-existe.jsonl"; then
+    fail "G-5: afirmo exito sobre una traza inexistente"
+else
+    pass "G-5: traza inexistente -> no se afirma exito"
+fi
+
+# El caso de los dos incidentes del 2026-07-28: exit code de senal, el
+# watchdog NO disparo, y la traza declara exito. Antes de #446 esto se
+# clasificaba TIMEOUT y se descartaba el trabajo.
+if agent_failure_is_unrecoverable "false" "137" "$LOG_LIMPIO" "$STREAM_OK"; then
+    fail "G-6: exit 137 con traza de exito sigue marcado irrecuperable (bug de #446)"
+else
+    pass "G-6: exit 137 con traza de exito -> recuperable (la muerte fue posterior)"
+fi
+
+# El incidente de #416 NO puede relajarse: sin evento result, sigue irrecuperable.
+if agent_failure_is_unrecoverable "false" "137" "$LOG_LIMPIO" "$STREAM_CORTADA"; then
+    pass "G-7: exit 137 sin evento result sigue irrecuperable (no se relaja #416)"
+else
+    fail "G-7: se relajo un corte a mitad de vuelo (regresion sobre #416)"
+fi
+
+# Un TIMEOUT real del watchdog sobre una traza cortada tampoco se relaja.
+if agent_failure_is_unrecoverable "true" "0" "$LOG_LIMPIO" "$STREAM_CORTADA"; then
+    pass "G-8: TIMEOUT del watchdog sin result sigue irrecuperable"
+else
+    fail "G-8: se relajo un TIMEOUT real del watchdog"
+fi
+
+# Retrocompatibilidad: llamada con 3 argumentos (sin traza) se comporta igual
+# que antes de #446 -- el bloque D entero depende de esto.
+if agent_failure_is_unrecoverable "false" "137" "$LOG_LIMPIO"; then
+    pass "G-9: sin cuarto argumento, exit 137 sigue irrecuperable (retrocompatible)"
+else
+    fail "G-9: la llamada de 3 argumentos cambio de comportamiento"
+fi
+
+# Paridad con el pipeline: tiene que pasar la traza y dejar de llamar TIMEOUT
+# a una senal. Si el cuarto argumento se pierde, G-6 pasaria en la funcion
+# pero el pipeline seguiria tirando trabajo.
+if grep -q 'agent_failure_is_unrecoverable "\$TIMED_OUT" "\$CLAUDE_EXIT" "\$log_stage" "\$stream_file"' "$PIPE"; then
+    pass "G-10: el pipeline pasa la traza como cuarto argumento"
+else
+    fail "G-10: el pipeline NO pasa la traza a agent_failure_is_unrecoverable"
+fi
+
+if grep -q 'failure_type="TIMEOUT (${elapsed}s)"' "$PIPE"; then
+    fail "G-11: quedo la etiqueta TIMEOUT sin exit code (no se puede diagnosticar post-mortem)"
+else
+    pass "G-11: la etiqueta TIMEOUT ya no se emite sin el exit code"
+fi
+
+if grep -q 'SIGNAL_POST_SUCCESS' "$PIPE"; then
+    pass "G-12: el pipeline distingue una senal posterior al exito de un TIMEOUT"
+else
+    fail "G-12: el pipeline no distingue SIGNAL_POST_SUCCESS"
 fi
 
 echo ""
