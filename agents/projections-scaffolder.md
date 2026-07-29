@@ -438,7 +438,7 @@ Si existe, omite el resto de este paso y registralo como omitido en el reporte f
 - `prefix` = `{project}-{environment}` -> resource group `rg-{prefix}`
 - `prefix_func` = `{project_short}-{environment}` -> Container App `ca-{prefix_func}`
 
-Si `infra/environments/dev/variables.tf` **no existe todavia** (este agente puede correr antes que `infra-base-scaffolder` con el token ya habilitado -- ver el "Siguiente paso" del Paso 6), detente sin crear el workflow: no hay como resolver los nombres reales del resource group ni del Container App. Informa que hace falta correr `/infra-base` primero (con `projections.enabled: true`) y registralo como pendiente en el reporte final -- **no** inventes un nombre ni dejes un placeholder sin resolver en un archivo que despues nadie vuelve a tocar (CA-1 solo permite generarlo una vez).
+Si `infra/environments/dev/variables.tf` **no existe todavia** (este agente puede correr antes que `infra-base-scaffolder` con el token ya habilitado -- ver el "Siguiente paso" del Paso 6), omite **solo este paso** y sigue con el Paso 3: no hay como resolver los nombres reales del resource group ni del Container App, pero el resto del scaffold (solucion, `global.json`, build, tests, commit) no depende de ellos y debe completarse igual. Informa que hace falta correr `/infra-base` primero (con `projections.enabled: true`) y registralo como **pendiente** en el reporte final -- **no** inventes un nombre ni dejes un placeholder sin resolver en un archivo que despues nadie vuelve a tocar (CA-1 solo permite generarlo una vez).
 
 Con `rg-{prefix}` y `ca-{prefix_func}` ya resueltos, crea `.github/workflows/deploy-projections.yml` con el siguiente contenido, sustituyendo tambien `<RootNamespace>` y `<SolutionFile>` (Paso 0):
 
@@ -512,7 +512,15 @@ jobs:
         run: dotnet build <SolutionFile> --no-restore --configuration Release
 
       - name: Test
-        run: dotnet test tests/<RootNamespace>.Projections.Tests/ --no-build --configuration Release
+        # 'dotnet test --project <ruta>', nunca una ruta posicional: con la seccion 'test' de
+        # global.json ("runner": "Microsoft.Testing.Platform") el CLI corre en modo MTP, cuya
+        # sinopsis solo admite --project/--solution/--test-modules -- una ruta posicional se
+        # reenvia a la app de test y aborta antes de correr un solo test ([dotnet test with
+        # MTP](https://learn.microsoft.com/dotnet/core/tools/dotnet-test-mtp), issue #253).
+        # Sin --ignore-exit-code 8 (a diferencia del loop de deploy-{kebab}.yml, que recorre
+        # proyectos que pueden estar vacios): este proyecto siempre trae al menos el config-test
+        # base, asi que un exit 8 ("cero tests") aqui es una senal real, no ruido a silenciar.
+        run: dotnet test --project tests/<RootNamespace>.Projections.Tests/ --no-build --configuration Release
 
   publish:
     needs: build-and-test
@@ -529,6 +537,14 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Instalar la extension containerapp del Azure CLI
+        # 'az containerapp' vive en una extension que el runner de GitHub NO trae preinstalada
+        # (Microsoft Learn, "Tutorial: Build and deploy your app to Azure Container Apps": "install
+        # or update the Azure Container Apps extension for the CLI"). Instalarla explicitamente
+        # evita depender del dynamic install del CLI, cuyo default es 'yes_prompt' -- un prompt
+        # que en un runner sin TTY no es un mecanismo sobre el que quieras apoyar el deploy.
+        run: az extension add --name containerapp --upgrade
 
       - name: Resolver el Container Registry
         id: acr
@@ -632,8 +648,10 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 cd "$REPO_ROOT"
 dotnet build "src/<RootNamespace>.ReadModels/<RootNamespace>.ReadModels.csproj"
 dotnet build "src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj"
-dotnet test "tests/<RootNamespace>.Projections.Tests/"
+dotnet test --project "tests/<RootNamespace>.Projections.Tests/"
 ```
+
+`--project` no es opcional: con la seccion `test` de `global.json` el CLI corre en modo MTP, que solo admite `--project`/`--solution`/`--test-modules` -- una ruta posicional se reenvia a la app de test y aborta sin correr nada (issue #253; `domain-scaffolder` invoca este mismo proyecto igual, en su Paso 3b punto 6). Es la forma que tambien debe llevar el step `Test` del workflow del Paso 2b.
 
 Si algun build falla, lee el error, corrige y vuelve a intentar. Si `dotnet test` falla, corrige el config-test base antes de continuar -- CA-5 exige que `Projections.Tests` pase en verde con el seam base, sin ninguna proyeccion de dominio todavia. **No hagas commit hasta que los tres pasen.**
 
