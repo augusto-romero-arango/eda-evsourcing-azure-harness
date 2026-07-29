@@ -414,6 +414,10 @@ COPY --from=publish /app/publish .
 ENTRYPOINT ["dotnet", "<RootNamespace>.Projections.dll"]
 ```
 
+**Acoplamiento entre este Dockerfile y el `rollForward` de `global.json` (issue #452):** `mcr.microsoft.com/dotnet/sdk:10.0` es un tag **flotante** -- sirve la ultima banda de feature (`feature band`) y patch que Microsoft publique para la linea `10.0`, y avanza de banda sin que nadie mueva un digest aqui. Por eso el `global.json` del Paso 3 fija `rollForward` en `latestFeature` (no `latestPatch`): `latestPatch` exige coincidencia exacta de banda ([tabla de `rollForward`, Microsoft Learn](https://learn.microsoft.com/dotnet/core/tools/global-json#rollforward)), y en cuanto el tag sirva una banda distinta a la de `version` el SDK se rechaza. Si alguna vez este Dockerfile pasa a pinear la imagen `build` a un tag de banda fija (p. ej. `sdk:10.0.2xx`), seria seguro volver a `latestPatch` en `global.json` -- pero mientras el tag sea flotante, `rollForward` no puede ser mas estricto que `latestFeature` sin quedar incompatible por construccion.
+
+Nota tambien donde se manifiesta el fallo si el pin queda mal calibrado: el `dotnet restore` (linea 403) corre **antes** de que `global.json` entre al build context (`COPY . .`, linea 404), asi que resuelve el SDK sin ver el pin y pasa sin problema; el `dotnet build` (linea 406) ya corre con `global.json` presente y es ahi donde revienta. Esa capa intermedia es deliberada -- preserva el cache cuando cambia un `.cs` sin invalidar el restore -- pero tiene el efecto colateral de enmascarar un pin roto hasta la capa de build.
+
 ---
 
 ## Paso 3 - Agregar a la solucion y verificar `global.json` (CA-3, CA-4)
@@ -433,8 +437,8 @@ dotnet sln <SolutionFile> add "tests/<RootNamespace>.Projections.Tests/"
 ```json
 {
     "sdk": {
-        "version": "10.0.201",
-        "rollForward": "latestPatch"
+        "version": "10.0.300",
+        "rollForward": "latestFeature"
     },
     "test": {
         "runner": "Microsoft.Testing.Platform"

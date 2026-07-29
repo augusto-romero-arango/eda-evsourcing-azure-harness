@@ -2074,8 +2074,8 @@ dotnet sln <SolutionFile> add "tests/<RootNamespace>.{PascalCase}.SmokeTests/"
 ```json
 {
     "sdk": {
-        "version": "10.0.201",
-        "rollForward": "latestPatch"
+        "version": "10.0.300",
+        "rollForward": "latestFeature"
     },
     "test": {
         "runner": "Microsoft.Testing.Platform"
