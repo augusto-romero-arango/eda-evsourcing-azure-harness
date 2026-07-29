@@ -57,7 +57,7 @@ Pregunta al usuario: **"Que necesitas hoy?"** y ofrece estas opciones:
 | **desglosar** | Tengo una mejora grande, quiero partirla en issues |
 | **backlog** | Quiero ver que hay pendiente y reorganizar |
 | **analizar** | Quiero entender una parte del repo antes de actuar |
-| **oleadas** | Quiero saber que puedo implementar en paralelo |
+| **orden-de-batch** | Quiero saber en que orden puedo meter varios issues en un batch |
 | **refinar** | Tengo un draft (creado desde el consumidor o aqui), quiero llevarlo a `estado:listo` |
 | **limpiar** | Quiero descartar o cerrar issues que ya no aplican |
 
@@ -121,16 +121,16 @@ Tu rol:
 - Identifica deuda tecnica, fragilidades, oportunidades de simplificacion.
 - Propon mejoras como issues si el usuario esta de acuerdo.
 
-### oleadas
-El usuario quiere saber que issues puede implementar en paralelo.
+### orden-de-batch
+El usuario quiere saber que issues puede meter en un batch y en que orden.
 
-Aplica la misma logica que el planner publicado: matriz de impacto (archivos que cada issue modifica/crea/lee) y agrupacion por compatibilidad. Reglas:
+**Por que este modo no es "oleadas paralelas"**: del lado interno de Mefisto solo existe `mefisto-sequential` (no hay `mefisto-parallel`). `mefisto-batch-pipeline.sh` procesa los issues uno detras de otro y, entre cada eslabon, mergea el PR y sincroniza main de forma verificada (fetch + fast-forward + confirmar que el merge commit llego a main local) antes de arrancar el siguiente -- explicitamente "para que cada issue se implemente sobre el merge del anterior" (ver cabecera de `mefisto-batch-pipeline.sh`). Como consecuencia, **dos issues que modifican el mismo archivo no son un conflicto aqui: son el caso normal para el que el motor esta disenado.** La matriz de impacto por archivo (que si aplica al planner publicado, porque alli `/parallel` corre worktrees concurrentes sobre el repo del consumidor) no tiene mecanismo equivalente en Mefisto -- no la repliques.
 
-| Situacion | Resultado |
-|---|---|
-| Ambos MODIFICAN el mismo archivo (skill, script, agente) | Secuencial |
-| Ambos CREAN archivos en la misma carpeta nueva | Secuencial |
-| Tocan componentes distintos sin solape | Paralelo |
+Tu rol:
+- El **unico** criterio de orden son las **dependencias declaradas** en la seccion `## Dependencias` de cada issue (`Depende de #N`). Compartir archivo (skill, script, agente) **no** impone restriccion alguna: el sync verificado entre eslabones ya lo cubre.
+- Propon el orden del batch respetando esas dependencias (cada issue despues de los que dice depender).
+- **No dupliques a mano la validacion**: `mefisto-validate-batch-deps.sh` (invocado por `/mefisto-sequential` en su paso 1.5) ya comprueba automaticamente, a partir de `## Dependencias`, si el orden propuesto es viable -- confia en ese script en vez de reconstruir el chequeo aqui.
+- **No escribas "Notas de oleadas" ni advertencias de paralelismo en el body de los issues.** Si el usuario quiere una nota de orden, limitala a las dependencias ya declaradas (ej. "Depende de #43, va despues en el batch"); nunca a que dos issues compartan archivo.
 
 ### refinar
 El usuario quiere convertir un draft en un issue listo.
