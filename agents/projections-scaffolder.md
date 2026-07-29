@@ -414,6 +414,10 @@ COPY --from=publish /app/publish .
 ENTRYPOINT ["dotnet", "<RootNamespace>.Projections.dll"]
 ```
 
+**Acoplamiento entre este Dockerfile y el `rollForward` de `global.json` (issue #452):** `mcr.microsoft.com/dotnet/sdk:10.0` es un tag **flotante** -- sirve la ultima feature band y patch que Microsoft publique para la linea `10.0`, y avanza de banda sin que nadie mueva un digest aqui (hoy resuelve a `10.0.302`, banda `3xx`). Por eso el `global.json` del Paso 3 fija `rollForward` en `latestFeature` y no en `latestPatch`: `latestPatch` solo acepta un SDK que coincida en major, minor **y feature band** ([tabla de `rollForward`, Microsoft Learn](https://learn.microsoft.com/dotnet/core/tools/global-json#rollforward)), asi que en cuanto el tag sirva una banda distinta a la de `version` el SDK queda rechazado y la imagen no se puede construir. **Mientras la etapa `build` use un tag flotante, `rollForward` no puede ser mas estricto que `latestFeature`** sin quedar incompatible por construccion. Volver a `latestPatch` solo tendria sentido si esta imagen pasara a pinear una version exacta -- `dotnet/sdk` publica `10.0` o versiones completas como `10.0.302`, no tags de banda tipo `10.0.2xx` (verificado contra `mcr.microsoft.com/v2/dotnet/sdk/tags/list`) -- y ese pin habria que subirlo a mano en cada parche.
+
+Nota tambien **donde** se manifiesta el fallo si el pin queda mal calibrado, porque no es donde uno lo buscaria: el `RUN dotnet restore` de la etapa `build` corre **antes** del `COPY . .`, asi que `global.json` todavia no esta en el build context y el restore resuelve el SDK sin ver el pin -- pasa sin problema. El `RUN dotnet build` posterior ya corre con `global.json` presente, y es ahi donde revienta (exit code 155, *"Install the [x.y.znn] .NET SDK or update [/src/global.json] to match an installed SDK"*). Ese orden de capas es deliberado -- preserva el cache del restore cuando solo cambia un `.cs` -- pero tiene el efecto colateral de enmascarar un pin roto hasta la capa del build.
+
 ---
 
 ## Paso 3 - Agregar a la solucion y verificar `global.json` (CA-3, CA-4)
@@ -433,8 +437,8 @@ dotnet sln <SolutionFile> add "tests/<RootNamespace>.Projections.Tests/"
 ```json
 {
     "sdk": {
-        "version": "10.0.201",
-        "rollForward": "latestPatch"
+        "version": "10.0.300",
+        "rollForward": "latestFeature"
     },
     "test": {
         "runner": "Microsoft.Testing.Platform"
