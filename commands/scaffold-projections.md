@@ -2,7 +2,7 @@
 model: haiku
 ---
 
-Genera el worker de proyecciones `<RootNamespace>.Projections` (daemon asincronico `HotCold` de Marten), la biblioteca `<RootNamespace>.ReadModels`, el config-test base `<RootNamespace>.Projections.Tests` y el workflow de deploy `deploy-projections.yml` invocando al agente `projections-scaffolder`, al estilo de `infra-base-scaffolder`. **Alcance acotado (fase 1, issue #367 + fase 2, issue #375 + fase 3, issue #453)**: el registro del store de cada dominio lo hace `domain-scaffolder` (issue #370); ninguna proyeccion ni read model concreto se genera aqui (issues `tipo:projection`). Comunicate en **espanol**.
+Genera el worker de proyecciones `<RootNamespace>.Projections` (daemon asincronico `HotCold` de Marten, seam de observabilidad `ConfiguracionObservabilidadProjections`), la biblioteca `<RootNamespace>.ReadModels`, el config-test base `<RootNamespace>.Projections.Tests` y el workflow de deploy `deploy-projections.yml` invocando al agente `projections-scaffolder`, al estilo de `infra-base-scaffolder`. **Alcance acotado (fase 1, issue #367 + fase 2, issue #375 + fase 3, issue #453 + fase 4, issue #457)**: el registro del store de cada dominio lo hace `domain-scaffolder` (issue #370); ninguna proyeccion ni read model concreto se genera aqui (issues `tipo:projection`). Comunicate en **espanol**.
 
 ## Pre-condicion 1: cwd != Mefisto
 
@@ -59,12 +59,15 @@ Si `RAW` es `"true"`, continua.
 
 ```
 Se va a generar el worker de proyecciones y su andamiaje read-side (fase 1,
-issue #367 + fase 2, issue #375 + fase 3, issue #453):
+issue #367 + fase 2, issue #375 + fase 3, issue #453 + fase 4, issue #457):
 
   src/<RootNamespace>.Projections/
     <RootNamespace>.Projections.csproj  (SDK Microsoft.NET.Sdk.Worker)
-    Program.cs                          (arma el host, invoca el seam, nada mas)
+    Program.cs                          (arma el host, invoca los seams, nada mas)
     Infraestructura/ConfiguracionMartenProjections.cs  (seam base, sin dominios todavia)
+    Infraestructura/ConfiguracionObservabilidadProjections.cs  (seam de observabilidad:
+                                          service.name obligatorio, AddSource
+                                          Marten/Npgsql/propia, UseAzureMonitorExporter)
     Dockerfile                          (imagen sobre runtime, sin ingress)
     {Dominio}/                          (carpeta vacia por dominio ya registrado en el
                                           worker, si aplica -- ahi vive la clase de
