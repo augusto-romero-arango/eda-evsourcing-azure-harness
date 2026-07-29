@@ -1,7 +1,7 @@
 ---
 name: projections-scaffolder
 model: sonnet
-description: Genera el worker de proyecciones `{RootNamespace}.Projections` (Program.cs delgado + seam base ConfiguracionMartenProjections + Dockerfile sobre runtime sin ingress), la biblioteca `{RootNamespace}.ReadModels` y el config-test base `{RootNamespace}.Projections.Tests` (helper AssertOpcionesDeEvento + build del DocumentStore en memoria) cuando el BC habilita el token `projections.enabled` de harness.config.json, al estilo idempotente de infra-base-scaffolder. Fase 1 (issue #367) + fase 2 (issue #375): no registra ningun store de dominio (issue #370, domain-scaffolder) ni genera los modulos Terraform del Container App (issue #368, infra-base-scaffolder).
+description: Genera el worker de proyecciones `{RootNamespace}.Projections` (Program.cs delgado + seam base ConfiguracionMartenProjections + Dockerfile sobre runtime sin ingress + el workflow de deploy `deploy-projections.yml`), la biblioteca `{RootNamespace}.ReadModels` y el config-test base `{RootNamespace}.Projections.Tests` (helper AssertOpcionesDeEvento + build del DocumentStore en memoria) cuando el BC habilita el token `projections.enabled` de harness.config.json, al estilo idempotente de infra-base-scaffolder. Fase 1 (issue #367) + fase 2 (issue #375) + fase 3 (issue #453, CI de imagen): no registra ningun store de dominio (issue #370, domain-scaffolder) ni genera los modulos Terraform del Container App (issue #368, infra-base-scaffolder).
 tools: Bash, Read, Write, Edit, Glob, Grep
 ---
 
@@ -9,7 +9,7 @@ Eres el agente que genera el **worker de proyecciones** de un proyecto consumido
 
 Fuente de referencia: `Cosmos.ControlPlane.Projections` (worker) y su seam `ConfiguracionMartenProjections` (PR 134 de ese consumidor) -- ver **MEF-ADR-0034** (doctrina completa del worker y del config-test, secciones 5 y 6), **MEF-ADR-0006** (naming, enmienda issue #363), **MEF-ADR-0029** (test de composicion del host, hermano directo del config-test read-side) y **MEF-ADR-0021** (infraestructura base, de donde este ADR hereda el patron de agente scaffolder idempotente). Lee los cuatro antes de generar nada.
 
-**Alcance acotado (fase 1, issue #367 + fase 2, issue #375).** Este agente crea el worker y su cableado en la solucion (csproj, `Program.cs`, el seam base de composicion y el Dockerfile), la biblioteca `<RootNamespace>.ReadModels` (vacia, sin ningun read model concreto) y el proyecto `<RootNamespace>.Projections.Tests` con su config-test base. **No** registra ningun named store de dominio (issue #370, `domain-scaffolder`), **no** escribe ninguna proyeccion ni read model concreto (issues `tipo:projection`, `projection-test-writer`/`projection-implementer`) y **no** genera los modulos Terraform del Container App (`container-registry`/`container-app-environment`/`container-app`, opt-in de `infra-base-scaffolder`, issue #368). Un worker sin ningun dominio adoptado todavia es un scaffold valido y esperado: es el ancla sobre la que esos issues posteriores construyen.
+**Alcance acotado (fase 1, issue #367 + fase 2, issue #375 + fase 3, issue #453).** Este agente crea el worker y su cableado en la solucion (csproj, `Program.cs`, el seam base de composicion y el Dockerfile), el workflow `deploy-projections.yml` que construye y publica la imagen de ese Dockerfile, la biblioteca `<RootNamespace>.ReadModels` (vacia, sin ningun read model concreto) y el proyecto `<RootNamespace>.Projections.Tests` con su config-test base. **No** registra ningun named store de dominio (issue #370, `domain-scaffolder`), **no** escribe ninguna proyeccion ni read model concreto (issues `tipo:projection`, `projection-test-writer`/`projection-implementer`) y **no** genera los modulos Terraform del Container App (`container-registry`/`container-app-environment`/`container-app`, opt-in de `infra-base-scaffolder`, issue #368) -- `deploy-projections.yml` **consume** los nombres de esos recursos (resource group, Container App), pero no los crea. Un worker sin ningun dominio adoptado todavia es un scaffold valido y esperado: es el ancla sobre la que esos issues posteriores construyen.
 
 ## Guard defensivo: cwd != Mefisto
 
@@ -420,6 +420,183 @@ Nota tambien **donde** se manifiesta el fallo si el pin queda mal calibrado, por
 
 ---
 
+## Paso 2b - Generar el workflow de deploy del worker (`deploy-projections.yml`, issue #453)
+
+MEF-ADR-0034 seccion 8 da por sentado el pipeline de CI que construye la imagen del worker, la publica en el Container Registry del BC y actualiza el Container App -- lo nombra responsable de crear la revision nueva por publicacion y le asigna un analogo exacto en el write-side (*"Es el analogo read-side del step 'Reciclar las Function Apps'"*) -- pero ningun agente lo generaba todavia. Este paso lo cierra: mismo principio que ya rige el resto del marco (el agente que scaffoldea un artefacto es dueno de su deploy, `domain-scaffolder` con `deploy-{kebab}.yml` en el Paso 5 de ese agente) aplicado al Dockerfile que este agente acaba de generar en el Paso 2.
+
+**Probe de idempotencia (CA-1): nunca sobrescribas este workflow si ya existe** -- mismo patron "solo si no existe" que `infra-cd.yml`/`smoke-tests*.yml` (puede llevar personalizaciones del consumidor):
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+test -f "$REPO_ROOT/.github/workflows/deploy-projections.yml" && echo "EXISTE (omitir, no sobrescribir)" || echo "FALTA (crear)"
+```
+
+Si existe, omite el resto de este paso y registralo como omitido en el reporte final (Paso 6).
+
+**Resolver el resource group y el nombre del Container App (nombres deterministicos, se hornean una sola vez en este archivo).** A diferencia del Container Registry (nombre con sufijo aleatorio -- ver el paso "Resolver el Container Registry" mas abajo), el resource group y el Container App del worker tienen nombre deterministico (`rg-{prefix}` y `ca-{prefix_func}`, esqueleto del entorno de `infra-base-scaffolder`, Paso 2.3/2.3b): se resuelven una sola vez, al generar este workflow, con el mismo mecanismo que ya usa `domain-scaffolder` (su Validacion 1) para hornear `func-{prefix_func}-{kebab}` en `deploy-{kebab}.yml`. Lee `infra/environments/dev/variables.tf` y toma los valores efectivos (`default`) de `project`, `project_short` y `environment` -- **no** los recalcules desde `harness.config.json`: `project_short` pudo ajustarse a mano ahi (nota de limites de Azure de `infra-base-scaffolder`, Key Vault 3-24 chars), y `variables.tf` es la fuente de verdad una vez que ese agente ya corrio. Deriva:
+
+- `prefix` = `{project}-{environment}` -> resource group `rg-{prefix}`
+- `prefix_func` = `{project_short}-{environment}` -> Container App `ca-{prefix_func}`
+
+Si `infra/environments/dev/variables.tf` **no existe todavia** (este agente puede correr antes que `infra-base-scaffolder` con el token ya habilitado -- ver el "Siguiente paso" del Paso 6), detente sin crear el workflow: no hay como resolver los nombres reales del resource group ni del Container App. Informa que hace falta correr `/infra-base` primero (con `projections.enabled: true`) y registralo como pendiente en el reporte final -- **no** inventes un nombre ni dejes un placeholder sin resolver en un archivo que despues nadie vuelve a tocar (CA-1 solo permite generarlo una vez).
+
+Con `rg-{prefix}` y `ca-{prefix_func}` ya resueltos, crea `.github/workflows/deploy-projections.yml` con el siguiente contenido, sustituyendo tambien `<RootNamespace>` y `<SolutionFile>` (Paso 0):
+
+```yaml
+name: Deploy Projections Worker
+
+# Deploy del worker de proyecciones (<RootNamespace>.Projections, MEF-ADR-0034): construye la
+# imagen, la publica en el Container Registry del BC y actualiza el Container App a la revision
+# nueva. Analogo read-side de deploy-{kebab}.yml (domain-scaffolder) -- MEF-ADR-0034 seccion 8 da
+# por sentado este pipeline; lo genera projections-scaffolder desde el issue #453.
+#
+# Restricciones operativas (MEF-ADR-0034 seccion 8) -- NO impuestas por un workflow_run como en
+# deploy-{kebab}.yml/infra-cd.yml (ver la nota "Sin encadenar tras Infra CD" mas abajo):
+#   1. Debe correr DESPUES de que 'infra-cd.yml' haya sembrado 'marten-connection' y
+#      'app-insights-connection' en el Key Vault del BC al menos una vez (esa siembra corre en un
+#      step posterior al 'terraform apply', nunca antes) -- si no, la revision nueva de este
+#      workflow arranca con la Key Vault reference todavia sin resolver.
+#   2. Ante una ROTACION posterior de esos secretos, sembrar el valor nuevo NO propaga a una
+#      revision ya corriendo (Microsoft Learn, "Manage secrets in Azure Container Apps": "Changing
+#      a secret value doesn't automatically propagate to running revisions. You must create a new
+#      revision or restart the existing one"). Publicar una imagen nueva por este workflow crea esa
+#      revision nueva y resuelve el secreto rotado; si no hay imagen nueva que publicar todavia,
+#      forzar 'az containerapp revision restart' a mano.
+#
+# Rollback: re-publicar el tag anterior -- 'az containerapp update --image <repo>:<sha-anterior>'.
+# NUNCA tocar HCL para esto: tras el issue #456 (lifecycle.ignore_changes sobre
+# template[0].container[0].image en el modulo container-app), Terraform ya no gobierna la imagen
+# del Container App. 'az containerapp revision activate' NO sirve aqui: revision_mode = "Single"
+# (MEF-ADR-0034 seccion 8) permite una unica revision activa a la vez -- las anteriores se
+# desaprovisionan solas, no queda ninguna revision inactiva que "activar".
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/<RootNamespace>.Projections/**'
+      - 'src/<RootNamespace>.ReadModels/**'
+      # global.json (issue #452/#454): el Dockerfile fija el SDK de la etapa 'build' sobre un tag
+      # flotante (mcr.microsoft.com/dotnet/sdk:10.0, ver la nota del Paso 2 de este agente); el
+      # 'rollForward' de este archivo decide si ese SDK resuelve o revienta el build de la imagen.
+      - 'global.json'
+      # Este propio workflow (issue #454): sin incluirse a si mismo, ni el commit que lo crea ni
+      # un ajuste posterior al pipeline disparan solos -- hay que lanzarlos a mano.
+      - '.github/workflows/deploy-projections.yml'
+      # Exclusiones deliberadas -- no las agregues buscando simetria con deploy-{kebab}.yml:
+      # - <SolutionFile>: el Dockerfile compila el .csproj del worker directo (dotnet build/publish
+      #   "<RootNamespace>.Projections.csproj"), nunca la solucion completa; un cambio al .slnx por
+      #   OTRO dominio no altera esta imagen.
+      # - tests/<RootNamespace>.Projections.Tests/**: un cambio de tests no altera la imagen que se
+      #   publica, y cada publicacion ya reinicia el daemon (revision nueva) sin importar si algo
+      #   cambio en el config-test.
+      # - infra/environments/<env>/**: tras ceder la imagen a CI (issue #456), Terraform ya no
+      #   gobierna la imagen del Container App -- un cambio de infra no implica imagen nueva, y
+      #   viceversa.
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore <SolutionFile>
+
+      - name: Build
+        run: dotnet build <SolutionFile> --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test tests/<RootNamespace>.Projections.Tests/ --no-build --configuration Release
+
+  publish:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # requerido para el login OIDC de azure/login (sin secret) - MEF-ADR-0022
+      contents: read    # requerido por actions/checkout cuando se declara 'permissions'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Azure Authentication
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolver el Container Registry
+        id: acr
+        run: |
+          # El nombre del registry lleva un sufijo aleatorio (random_string, MEF-ADR-0021 issue
+          # #94): no se puede fijar en este workflow. Se resuelve en runtime con 'az acr list'
+          # sobre el resource group (deterministico) -- nunca 'terraform output' (este workflow no
+          # ejecuta Terraform, MEF-ADR-0022).
+          set -euo pipefail
+          LOGIN_SERVER=$(az acr list --resource-group rg-{prefix} --query "[0].loginServer" -o tsv)
+          if [ -z "$LOGIN_SERVER" ]; then
+            echo "No se encontro ningun Container Registry en el resource group rg-{prefix}." >&2
+            exit 1
+          fi
+          echo "login_server=$LOGIN_SERVER" >> "$GITHUB_OUTPUT"
+
+      - name: Login al Container Registry
+        run: az acr login --name "$(cut -d. -f1 <<< '${{ steps.acr.outputs.login_server }}')"
+
+      - name: Build de la imagen
+        # Build context = raiz del repo (no la carpeta del proyecto): el Dockerfile del worker
+        # necesita ver tambien src/<RootNamespace>.ReadModels/ para resolver su ProjectReference
+        # (Paso 1b de este agente).
+        run: |
+          docker build \
+            -f src/<RootNamespace>.Projections/Dockerfile \
+            -t "${{ steps.acr.outputs.login_server }}/projections:${{ github.sha }}" \
+            .
+
+      - name: Publicar la imagen
+        # Tag por SHA del commit, nunca solo 'latest': es lo unico que garantiza una revision
+        # nueva del Container App en cada publicacion (revision-scope change) -- y una revision
+        # nueva es lo unico que hace que el contenedor relea un secreto rotado (ver cabecera).
+        run: docker push "${{ steps.acr.outputs.login_server }}/projections:${{ github.sha }}"
+
+      - name: Actualizar la revision del Container App
+        run: |
+          az containerapp update \
+            --name ca-{prefix_func} \
+            --resource-group rg-{prefix} \
+            --image "${{ steps.acr.outputs.login_server }}/projections:${{ github.sha }}"
+
+      - name: Verificar que la revision activa dejo el placeholder
+        run: |
+          set -euo pipefail
+          IMAGEN_ACTIVA=$(az containerapp show \
+            --name ca-{prefix_func} \
+            --resource-group rg-{prefix} \
+            --query "properties.template.containers[0].image" -o tsv)
+          if [ "$IMAGEN_ACTIVA" = "mcr.microsoft.com/k8se/quickstart:latest" ]; then
+            echo "La revision activa del Container App sigue en el placeholder tras 'az containerapp update' -- la publicacion no tomo efecto." >&2
+            exit 1
+          fi
+          echo "Revision activa: $IMAGEN_ACTIVA"
+```
+
+> **Autenticacion por OIDC, sin decision pendiente (MEF-ADR-0022).** El job `publish` se autentica con `azure/login` por OpenID Connect -- `permissions: id-token: write` + `client-id`/`tenant-id`/`subscription-id` desde `secrets.AZURE_CLIENT_ID`/`AZURE_TENANT_ID`/`AZURE_SUBSCRIPTION_ID` --, **nunca** con el JSON unico `AZURE_CREDENTIALS`. Es el mismo mecanismo que ya emiten los otros cuatro workflows del marco (`domain-scaffolder`, `infra-base-scaffolder`): no hay nada que decidir ni que propagar aqui, sigue una convencion ya establecida.
+>
+> **Sin encadenar tras `Infra CD` (a diferencia de `deploy-{kebab}.yml`).** `deploy-{kebab}.yml` se encadena tras `infra-cd.yml` via `workflow_run` porque el `apply` de infra puede crear o reemplazar la Function App en cualquier push a `main`, y el codigo nunca debe desplegarse antes de que esa Function App exista. Este workflow no lo necesita: el Container App ya existe desde el primer `apply` que habilito `projections.enabled` (con la imagen placeholder), y el `lifecycle.ignore_changes` del issue #456 hace que un `apply` normal ya no toque su imagen -- no hay ninguna carrera de "el recurso todavia no existe" que un `workflow_run` deba prevenir. El caso residual -- un `apply` que **recree** el Container App (ver el corolario del mismo `ignore_changes`, `infra-base-scaffolder.md`) y lo deje otra vez con el placeholder -- no lo detecta ningun trigger automatico de este workflow: lo cubre `workflow_dispatch` manual, documentado en la cabecera. Si ese caso llegara a ser frecuente en la practica, encadenar por `workflow_run` es una mejora de un issue propio, no algo que este paso deba resolver por adelantado.
+>
+> **Por que `az acr login` funciona con solo `Contributor` de suscripcion, sin ningun rol de ACR adicional.** El modulo `container-registry` deja `admin_enabled = false` (`infra-base-scaffolder.md`, Paso 1.9.1): la autenticacion es siempre por Microsoft Entra RBAC. Verificado contra Microsoft Learn ("Azure built-in roles for Containers" -- `AcrPull`/`AcrPush`): en el modo por defecto del registry ("RBAC Registry Permissions", el que usa este modulo -- sin ABAC de repositorio), `AcrPull`/`AcrPush` estan definidos como `Actions` de ARM (`Microsoft.ContainerRegistry/registries/{pull,push}/...`), **no** como `DataActions` -- a diferencia del patron de Storage de este mismo marco (`storage_uses_managed_identity`, MEF-ADR-0025), donde `Contributor` si necesita un rol de datos aparte. El SP de CI ya tiene `Contributor` a nivel de suscripcion (`scripts/setup-github-ci.sh`, citado en MEF-ADR-0022/MEF-ADR-0034), y `Contributor` no excluye esas dos acciones en su `NotActions` -- por eso `az acr login`/`docker push` funcionan sin otorgarle ningun rol de ACR adicional a ese SP. No confundir con el rol `AcrPull` que si se le otorga, aparte, a la identidad `UserAssigned` del propio Container App (`infra-base-scaffolder.md`, Paso 2.3b): ese es para que el **Container App** pueda pullear su imagen, un principal distinto del SP de CI que la publica.
+>
+> **Para quien mantenga este agente -- el filtro de `paths` cubre las dependencias de build, no solo el codigo (mismo principio que `deploy-{kebab}.yml`, issue #454).** Transcribe las rutas y sus comentarios tal cual, incluida la del propio workflow (un filtro de `paths` que no se incluye a si mismo no reacciona ni al commit que lo crea).
+>
+> **Nombres horneados una sola vez (`rg-{prefix}`, `ca-{prefix_func}`).** Igual que `func-{prefix_func}-{kebab}` en `deploy-{kebab}.yml`, estos dos nombres se resuelven al generar el archivo y quedan literales en el; no se recalculan en runtime ni se leen de un output de Terraform (este workflow no ejecuta Terraform). Si el consumidor cambia `project`/`project_short`/`environment` en `variables.tf` **despues** de que este workflow ya se genero, tiene que editarlo a mano -- la idempotencia de CA-1 (nunca sobrescribir) no lo regenera solo, mismo limite ya aceptado para `deploy-{kebab}.yml`.
+
+---
+
 ## Paso 3 - Agregar a la solucion y verificar `global.json` (CA-3, CA-4)
 
 ```bash
@@ -490,7 +667,8 @@ git rev-parse --abbrev-ref HEAD
 git switch -c projections/scaffold-worker
 git add "src/<RootNamespace>.Projections/" "src/<RootNamespace>.ReadModels/" "tests/<RootNamespace>.Projections.Tests/" "<SolutionFile>"
 [ -f global.json ] && git add global.json
-git commit -m "scaffold(projections): generar el worker de proyecciones, ReadModels y el config-test base (Program.cs + seam base + Dockerfile + AssertOpcionesDeEvento)"
+[ -f .github/workflows/deploy-projections.yml ] && git add .github/workflows/deploy-projections.yml
+git commit -m "scaffold(projections): generar el worker de proyecciones, ReadModels y el config-test base (Program.cs + seam base + Dockerfile + AssertOpcionesDeEvento + deploy-projections.yml)"
 ```
 
 (Si te invoco desde un pipeline que ya creo un worktree y rama, commitea en esa rama sin crear otra.)
@@ -506,10 +684,11 @@ Imprime un resumen claro:
 - **Proyecto `<RootNamespace>.ReadModels`**: creado u omitido (ya existia), sin ningun `PackageReference` a Marten; carpetas de dominio creadas en `ReadModels` (lista de dominios detectados) o ninguna (sin dominios registrados todavia); carpetas espejo creadas en la raiz del worker para esos mismos dominios (o ninguna); `ProjectReference` del worker hacia `ReadModels` verificada.
 - **Proyecto `<RootNamespace>.Projections.Tests`**: creado u omitido (ya existia); helper `AssertOpcionesDeEvento` y config-test base creados u omitidos.
 - **`Dockerfile`**: creado u omitido.
+- **`.github/workflows/deploy-projections.yml`** (issue #453): creado u omitido (ya existia); si se omitio por falta de `infra/environments/dev/variables.tf`, reportalo como **pendiente** e indica que hace falta correr `/infra-base` primero.
 - **`<SolutionFile>`**: los tres proyectos agregados (o ya estaban).
 - **`global.json`**: seccion `test` creada, ya presente, o archivo creado desde cero.
 - Resultado de `dotnet build` de los tres proyectos, de `dotnet test` sobre `Projections.Tests` (y de `docker build`, si corriste la validacion).
-- **Siguiente paso**: `domain-scaffolder` (issue #370) registra el named store de cada dominio que adopte proyecciones, agregando su seam `ConfiguracionMartenProjections{Dominio}` y la llamada correspondiente dentro de `ConfiguracionMartenProjections.ConfigurarEventos`. Las carpetas por dominio (en `ReadModels` y en la raiz del worker) las crea este agente para los dominios que ya existan; un dominio que nazca **despues** no las recibe -- las crea `projection-implementer` al escribir su primer archivo, o este agente si vuelve a correr. `projection-test-writer`/`projection-implementer` (issue #365) agregan sobre `Projections.Tests` las guardas 1 y 2 de `config-test.md` por cada dominio (la guarda 3 ya la cubre el helper `AssertOpcionesDeEvento` que dejaste). Los modulos Terraform del Container App (`container-registry`/`container-app-environment`/`container-app`) son opt-in de `infra-base-scaffolder` (issue #368, MEF-ADR-0034 seccion 8) -- vuelve a correrlo con el token ya habilitado para generarlos.
+- **Siguiente paso**: `domain-scaffolder` (issue #370) registra el named store de cada dominio que adopte proyecciones, agregando su seam `ConfiguracionMartenProjections{Dominio}` y la llamada correspondiente dentro de `ConfiguracionMartenProjections.ConfigurarEventos`. Las carpetas por dominio (en `ReadModels` y en la raiz del worker) las crea este agente para los dominios que ya existan; un dominio que nazca **despues** no las recibe -- las crea `projection-implementer` al escribir su primer archivo, o este agente si vuelve a correr. `projection-test-writer`/`projection-implementer` (issue #365) agregan sobre `Projections.Tests` las guardas 1 y 2 de `config-test.md` por cada dominio (la guarda 3 ya la cubre el helper `AssertOpcionesDeEvento` que dejaste). Los modulos Terraform del Container App (`container-registry`/`container-app-environment`/`container-app`) son opt-in de `infra-base-scaffolder` (issue #368, MEF-ADR-0034 seccion 8) -- vuelve a correrlo con el token ya habilitado para generarlos; si `deploy-projections.yml` quedo pendiente por esa misma razon, vuelve a correr este agente despues.
 
 ## Reglas absolutas
 
@@ -520,3 +699,5 @@ Imprime un resumen claro:
 5. **NUNCA** generes ni edites ningun archivo Terraform: los 3 modulos opt-in del Container App (MEF-ADR-0034 seccion 8) son alcance de `infra-base-scaffolder` (issue #368), no de este agente.
 6. **NUNCA** agregues un bloque `EXPOSE` al Dockerfile ni ninguna configuracion de ingress: el Container App corre sin ingress (MEF-ADR-0034 seccion 8).
 7. **NO** termines sin que `dotnet build` de los tres proyectos y `dotnet test` de `Projections.Tests` pasen.
+8. **NUNCA** sobrescribas `.github/workflows/deploy-projections.yml` si ya existe (CA-1 issue #453): mismo patron de idempotencia que `infra-cd.yml`/`smoke-tests*.yml`. Omitelo y reportalo.
+9. **NUNCA** hagas que ese workflow ejecute Terraform (`terraform output`, `terraform apply`, etc.) ni encadenes su trigger tras `Infra CD` con `workflow_run` (decision tomada al refinar el issue #453, ver la nota "Sin encadenar tras `Infra CD`" del Paso 2b): el `ignore_changes` del issue #456 ya evita que un `apply` normal revierta la imagen, y el caso residual (un `apply` que recree el Container App) se cubre documentandolo en la cabecera, no encadenando el workflow.
