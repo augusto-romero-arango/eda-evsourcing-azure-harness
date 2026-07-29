@@ -134,6 +134,23 @@ tmux ls
 tmux -CC attach -t tdd-42
 ```
 
+### Retomar un pipeline que se cayo (--from-stage)
+```bash
+./scripts/tmux-pipeline.sh 42 --from-stage 3
+```
+Si una corrida murio (caida de red, `Ctrl+C` sin querer, etc.) con trabajo ya
+commiteado, `--from-stage N` la retoma desde ese stage en vez de arrancar de
+cero -- mismo flag que ya aceptaban `tdd-pipeline.sh`/`tooling-pipeline.sh`/
+`iac-pipeline.sh` invocados a mano, ahora alcanzable desde el wrapper. Solo
+vale con un unico issue (no con `--batch`/`--parallel`, donde seria ambiguo);
+el rango valido de N lo valida el sub-script destino, no el wrapper.
+
+Si la sesion tmux de ese issue todavia existe (el pane murio pero
+`remain-on-exit` lo deja abierto para leer el error), el wrapper distingue una
+corrida en curso de una ya terminada y por default la reusa (attach) si sigue
+viva, o la reemplaza si ya termino. Para decidirlo vos mismo sin que pregunte
+(por ejemplo, en un script): `--if-exists reuse|replace|abort`.
+
 ---
 
 ## Recuperacion ante fallos
@@ -144,6 +161,7 @@ tmux -CC attach -t tdd-42
 | MacBook suspendido con pipeline activo | `tmux -CC attach` al volver - tmux persiste |
 | Quiero ver el log de un issue | `cat .claude/pipeline/logs/tdd-<timestamp>.log` |
 | Un agente se colgó en un pane | Ves el tab, usas `Ctrl+C` para interrumpir |
+| El pipeline murio a mitad de camino (red, `Ctrl+C`, etc.) | `./scripts/tmux-pipeline.sh <issue> --from-stage N` -- retoma sin rehacer lo ya commiteado |
 
 ---
 
