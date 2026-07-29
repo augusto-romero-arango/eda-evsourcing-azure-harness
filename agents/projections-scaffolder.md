@@ -117,6 +117,8 @@ No toques el `<UserSecretsId>` que el template ya escribio (GUID autogenerado): 
 
 Esta receta completa (csproj + `Program.cs` + seam de abajo) esta verificada: compila con `dotnet build` sin advertencias ni errores sobre SDK `10.0.201`.
 
+> Ese `.csproj` y ese `Program.cs` **no son la forma final**: el Paso 1d les suma, respectivamente, los dos `PackageReference` de OpenTelemetry y la llamada al seam de observabilidad (issue #457). No los "completes" por adelantado aqui -- el Paso 1d los edita con su propio gate de idempotencia, y adelantarlo romperia ese gate.
+
 **Crea `Infraestructura/ConfiguracionMartenProjections.cs`** -- el seam base de composicion (hermano read-side del `ComposicionServicios{Dominio}` del write-side, MEF-ADR-0029, pero a nivel de BC, no de dominio: no hay `{Dominio}` en su nombre porque en esta fase no hay ningun dominio adoptado todavia, MEF-ADR-0034 seccion 6):
 
 ```bash
@@ -379,16 +381,20 @@ No abre ninguna conexion real: Marten 7+ no inicializa el `DocumentStore` durant
 
 Seam hermano directo de `ConfiguracionMartenProjections` (Paso 1, MEF-ADR-0029): `Program.cs` invoca ambos, nunca wirea OpenTelemetry inline. Ver la doctrina completa en **MEF-ADR-0034 seccion 10** -- el worker no tiene `UseFunctionsWorkerDefaults()` (no es una Function App), asi que nada fija su `service.name` por convencion; sin este seam, OpenTelemetry cae al default `unknown_service:dotnet` (el `ENTRYPOINT` del Dockerfile es `dotnet <RootNamespace>.Projections.dll`) -- defecto ya medido en produccion por el consumidor Bitakora.ControlAsistencia (issues #250/#263) al copiar el seam del write-side tal cual. Y el worker corre **sin ingress** (Paso 2): las trazas que este seam exporta son la **unica** observabilidad posible.
 
-**Probe de idempotencia (CA-4) -- corre siempre, aunque el Paso 0 haya determinado que el worker ya existia:**
+**Probe de idempotencia (CA-4) -- un gate por artefacto, como en los Pasos 1b/1c; corre siempre, aunque el Paso 0 haya determinado que el worker ya existia:**
 
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel)
-test -f "$REPO_ROOT/src/<RootNamespace>.Projections/Infraestructura/ConfiguracionObservabilidadProjections.cs" && echo "EXISTE (omitir, no sobrescribir)" || echo "FALTA (crear)"
+PROJ="$REPO_ROOT/src/<RootNamespace>.Projections"
+test -f "$PROJ/Infraestructura/ConfiguracionObservabilidadProjections.cs" && echo "seam: EXISTE (omitir, NO sobrescribir)"      || echo "seam: FALTA (crear)"
+grep -q 'Include="OpenTelemetry.Extensions.Hosting"' "$PROJ/<RootNamespace>.Projections.csproj" 2>/dev/null     && echo "paquete hosting: EXISTE (omitir)"   || echo "paquete hosting: FALTA (agregar)"
+grep -q 'Include="Azure.Monitor.OpenTelemetry.Exporter"' "$PROJ/<RootNamespace>.Projections.csproj" 2>/dev/null && echo "paquete exporter: EXISTE (omitir)"  || echo "paquete exporter: FALTA (agregar)"
+grep -q 'ConfigurarObservabilidad' "$PROJ/Program.cs" 2>/dev/null                                              && echo "wiring Program.cs: EXISTE (omitir)" || echo "wiring Program.cs: FALTA (agregar)"
 ```
 
-Si **EXISTE**, omite el resto de este paso -- el seam puede llevar registros agregados despues -- y registralo como omitido en el reporte final (Paso 6). Si **FALTA**, continua con los tres puntos siguientes.
+Los cuatro se evaluan **por separado**, mismo criterio que el "Principio fundamental" y los Pasos 1b/1c: el seam es el unico artefacto que **nunca** se sobrescribe (puede llevar registros agregados despues), pero eso no debe impedir que cierres los otros tres si faltan. El caso no es hipotetico: un consumidor que escribio el seam **a mano** (Bitakora.ControlAsistencia, issues #250/#263) lo tiene presente con sus paquetes ya puestos -- omitir todo ahi es correcto --, mientras que una corrida anterior interrumpida a mitad de este paso puede dejar el seam escrito y el `.csproj` sin los paquetes: gatear los cuatro sobre la existencia del seam dejaria ese build roto sin forma de repararse volviendo a correr el agente. Los puntos 1 y 3 son aditivos por construccion (solo agregan lo que falta, nunca reescriben), igual que el `dotnet add reference`/`mkdir -p` que el Paso 1b invoca sin gate previo.
 
-**1. Sumar los dos paquetes al `.csproj` del worker (CA-2).** Lee `src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj` antes de editarlo -- si el worker ya existia de una corrida anterior a este issue, este `.csproj` no los tiene todavia; si el worker se acaba de crear en el Paso 1, tampoco (ese paso no los agrega). En ambos casos, agrega estas dos lineas nuevas al `<ItemGroup>` de `PackageReference` **sin duplicar ninguna referencia existente**:
+**1. Sumar los dos paquetes al `.csproj` del worker (CA-2)** -- solo los que el probe reporto como **FALTA**. Lee `src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj` antes de editarlo -- si el worker ya existia de una corrida anterior a este issue, este `.csproj` no los tiene todavia; si el worker se acaba de crear en el Paso 1, tampoco (ese paso no los agrega). En ambos casos, agrega estas dos lineas nuevas al `<ItemGroup>` de `PackageReference` **sin duplicar ninguna referencia existente** (un `PackageReference` duplicado resuelve a la version mas baja, mismo detalle que documenta el Paso 1 punto 2):
 
 ```xml
     <!-- Observabilidad read-side (issue #457): SOLO estos dos paquetes; se descartan
@@ -401,7 +407,7 @@ Si **EXISTE**, omite el resto de este paso -- el seam puede llevar registros agr
 
 Versiones verificadas contra NuGet.org al momento de escribir este agente (`api.nuget.org/v3-flatcontainer/opentelemetry.extensions.hosting/index.json` y `.../azure.monitor.opentelemetry.exporter/index.json`: `1.17.0` y `1.8.3` son las ultimas estables de cada paquete, sin ningun `-rc`/`-beta` posterior) -- **no** son las mismas que fija el write-side en MEF-ADR-0003 (`1.13.1`/`1.8.2`, ancladas ahi por la version minima que exige `Microsoft.Azure.Functions.Worker.OpenTelemetry`, un paquete que este worker no usa): este pin es independiente. **Reverifica contra NuGet.org** si ha pasado tiempo desde entonces.
 
-**2. Crear `Infraestructura/ConfiguracionObservabilidadProjections.cs` (CA-1, CA-5):**
+**2. Crear `Infraestructura/ConfiguracionObservabilidadProjections.cs` (CA-1, CA-5)** -- solo si el probe lo reporto como **FALTA**; si EXISTE, no lo toques (regla absoluta 1) y salta al punto 3:
 
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel)
@@ -412,6 +418,10 @@ mkdir -p "$REPO_ROOT/src/<RootNamespace>.Projections/Infraestructura"
 using System.Reflection;
 using Azure.Monitor.OpenTelemetry.Exporter;
 using Microsoft.Extensions.DependencyInjection;
+// 'using OpenTelemetry;' NO es opcional ni redundante con los dos de abajo: ConfigureResource y
+// WithTracing son extension methods de OpenTelemetryBuilderSdkExtensions, que vive en el namespace
+// raiz OpenTelemetry (no en OpenTelemetry.Trace). Sin esta linea, ambas llamadas fallan con CS1061.
+using OpenTelemetry;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
@@ -450,15 +460,19 @@ public static class ConfiguracionObservabilidadProjections
 
         // Este worker corre 24/7 (min_replicas >= 1, MEF-ADR-0034 seccion 8) a diferencia de las
         // Function Apps del write-side, que escalan a demanda -- mayor volumen sostenido de
-        // telemetria. Si un consumidor necesita reducirlo, el punto de extension es un
-        // ParentBasedSampler(new TraceIdRatioBasedSampler(ratio)) encadenado antes de
-        // UseAzureMonitorExporter(); el ratio es politica de costos del consumidor, nunca
-        // doctrina del marco. Este seam NO instala ningun sampler.
+        // telemetria. Si un consumidor necesita reducirlo, el punto de extension es
+        // .SetSampler(new ParentBasedSampler(new TraceIdRatioBasedSampler(ratio))) DENTRO del
+        // lambda de WithTracing de arriba: SetSampler extiende TracerProviderBuilder
+        // (OpenTelemetry.Trace), no el IOpenTelemetryBuilder -- encadenarlo fuera de ese lambda no
+        // compila. El ratio es politica de costos del consumidor, nunca doctrina del marco. Este
+        // seam NO instala ningun sampler.
 
         return services;
     }
 }
 ```
+
+Los seis `using` del bloque anterior son los que este seam necesita, y ninguno esta ahi por accidente -- resueltos por lectura de fuente contra el tag `core-1.17.0` de `open-telemetry/opentelemetry-dotnet`, la version del core que arrastra `OpenTelemetry.Extensions.Hosting` 1.17.0 (MEF-ADR-0034 referencia [18]): `Assembly` es de `System.Reflection` (**no** lo cubre `ImplicitUsings`), `AddOpenTelemetry()` es de `Microsoft.Extensions.DependencyInjection` (`OpenTelemetryServicesExtensions`), **`ConfigureResource`/`WithTracing` son de `OpenTelemetry`** (`OpenTelemetryBuilderSdkExtensions.cs`, `namespace OpenTelemetry;`), `AddService` es de `OpenTelemetry.Resources` (`ResourceBuilderExtensions`), `AddSource` es metodo de instancia de `TracerProviderBuilder` (`OpenTelemetry.Trace`) y `UseAzureMonitorExporter()` es de `Azure.Monitor.OpenTelemetry.Exporter`. `OpenTelemetry.Trace` se conserva -- igual que en el `ComposicionServicios{PascalCase}` del write-side -- porque es el namespace de `SetSampler`/`ParentBasedSampler`/`TraceIdRatioBasedSampler`, el punto de extension que documenta el comentario final. **No "limpies" `using OpenTelemetry;` por parecer redundante con los dos hijos**: sin el, `ConfigureResource` y `WithTracing` fallan con CS1061 y el seam no compila.
 
 **3. Invocar el seam desde `Program.cs` (CA-3).** Lee `src/<RootNamespace>.Projections/Program.cs`: si la linea `builder.Services.ConfigurarEventos(martenConnectionString);` esta presente sin encadenar `ConfigurarObservabilidad()` antes, reemplazala por:
 
@@ -470,7 +484,7 @@ builder.Services
 
 Si `Program.cs` ya invoca `ConfigurarObservabilidad` (re-ejecucion tras un Paso 1d anterior que no llego a completarse, por ejemplo), no lo dupliques. Si la linea esperada no aparece exactamente igual porque `Program.cs` diverge del template (edicion manual posterior), lee el archivo completo y decide el punto de insercion: siempre antes de `ConfigurarEventos`, nunca despues -- registrar la telemetria primero deja capturado cualquier fallo de arranque de los seams que corren despues. No necesita ningun `using` nuevo: `ConfiguracionObservabilidadProjections` vive en el mismo namespace `<RootNamespace>.Projections.Infraestructura` que `Program.cs` ya importa.
 
-Esta receta completa (los dos `PackageReference` nuevos + este seam + la linea nueva de `Program.cs`) esta verificada: compila con `dotnet build` sin advertencias ni errores sobre SDK `10.0.201`, junto con el resto del `.csproj` del Paso 1.
+Esta receta completa (los dos `PackageReference` nuevos + este seam + la linea nueva de `Program.cs`) tiene cada API resuelta contra su namespace por **lectura de fuente** del tag `core-1.17.0` de `open-telemetry/opentelemetry-dotnet` (ver la nota de los `using` arriba), y su gemela del write-side -- misma cadena `AddOpenTelemetry()...WithTracing(...).UseAzureMonitorExporter()` -- compila y exporta en produccion (MEF-ADR-0003, verificado por el consumidor Cosmos.ControlPlane). Aun asi, **el `dotnet build` del Paso 4 es el que lo confirma en el repo concreto**: si falla, el sospechoso numero uno es un `using` faltante o "limpiado" del bloque de arriba, no la version de los paquetes.
 
 ---
 
@@ -785,7 +799,7 @@ git switch -c projections/scaffold-worker
 git add "src/<RootNamespace>.Projections/" "src/<RootNamespace>.ReadModels/" "tests/<RootNamespace>.Projections.Tests/" "<SolutionFile>"
 [ -f global.json ] && git add global.json
 [ -f .github/workflows/deploy-projections.yml ] && git add .github/workflows/deploy-projections.yml
-git commit -m "scaffold(projections): generar el worker de proyecciones, ReadModels y el config-test base (Program.cs + seam base + Dockerfile + AssertOpcionesDeEvento + deploy-projections.yml)"
+git commit -m "scaffold(projections): generar el worker de proyecciones, ReadModels y el config-test base (Program.cs + seam base + seam de observabilidad + Dockerfile + AssertOpcionesDeEvento + deploy-projections.yml)"
 ```
 
 (Si te invoco desde un pipeline que ya creo un worktree y rama, commitea en esa rama sin crear otra.)
@@ -798,7 +812,7 @@ Imprime un resumen claro:
 
 - **Proyecto worker**: creado u omitido (ya existia, csproj respetado).
 - **`Program.cs`** y **`Infraestructura/ConfiguracionMartenProjections.cs`**: creados u omitidos.
-- **`Infraestructura/ConfiguracionObservabilidadProjections.cs`** (issue #457): creado u omitido (ya existia); los dos `PackageReference` (`OpenTelemetry.Extensions.Hosting` 1.17.0, `Azure.Monitor.OpenTelemetry.Exporter` 1.8.3) agregados al `.csproj` del worker u omitidos por la misma razon; la linea nueva de `Program.cs` (`.ConfigurarObservabilidad()`) agregada u omitida.
+- **`Infraestructura/ConfiguracionObservabilidadProjections.cs`** (issue #457): creado u omitido (ya existia -- nunca sobrescrito). Reporta los otros tres artefactos del Paso 1d **por separado**, con su propio gate cada uno: los dos `PackageReference` (`OpenTelemetry.Extensions.Hosting` 1.17.0, `Azure.Monitor.OpenTelemetry.Exporter` 1.8.3) agregados al `.csproj` del worker o ya presentes, y la linea de `Program.cs` (`.ConfigurarObservabilidad()`) agregada o ya presente. Si el seam existia pero tuviste que cerrar alguno de los otros tres, dilo explicitamente: es la senal de una corrida anterior interrumpida.
 - **Proyecto `<RootNamespace>.ReadModels`**: creado u omitido (ya existia), sin ningun `PackageReference` a Marten; carpetas de dominio creadas en `ReadModels` (lista de dominios detectados) o ninguna (sin dominios registrados todavia); carpetas espejo creadas en la raiz del worker para esos mismos dominios (o ninguna); `ProjectReference` del worker hacia `ReadModels` verificada.
 - **Proyecto `<RootNamespace>.Projections.Tests`**: creado u omitido (ya existia); helper `AssertOpcionesDeEvento` y config-test base creados u omitidos.
 - **`Dockerfile`**: creado u omitido.
