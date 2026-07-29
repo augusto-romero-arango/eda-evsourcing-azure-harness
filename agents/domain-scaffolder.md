@@ -2350,23 +2350,31 @@ on:
     paths:
       - 'src/<RootNamespace>.{PascalCase}/**'
       - 'src/<RootNamespace>.Contracts/**'
-      # global.json (issue #454): el job build-and-test/deploy fija el SDK con
-      # actions/setup-dotnet@v5 leyendo esta version. Un cambio aqui altera el
-      # SDK con el que se compila este dominio; sin esta ruta el filtro no lo
-      # detecta y el binario queda sirviendo stale, sin aviso -- a diferencia de
-      # una rotura de build, que el CI del PR ya atrapa antes del merge.
+      # global.json (issue #454): quien lo lee NO es actions/setup-dotnet -- los jobs
+      # de abajo le pasan 'dotnet-version' explicito, no 'global-json-file', asi que
+      # la action solo instala el SDK del canal pedido. Lo leen el muxer del CLI y el
+      # resolver de SDK de MSBuild al correr 'dotnet restore/build', y por eso su
+      # 'version' + 'rollForward' deciden con cual de los SDK instalados se compila
+      # este dominio. El modo de fallo no es rotura -- esa la atrapa el CI del PR
+      # antes del merge -- sino staleness silenciosa: sin esta ruta el push a main no
+      # dispara nada y la Function App sigue sirviendo el binario construido con el
+      # SDK anterior, sin aviso.
       - 'global.json'
       # Este propio workflow (issue #454): si deploy-{kebab}.yml no se vigila a
       # si mismo, un cambio en como se construye/despliega este dominio (incluido
       # el PR que crea el workflow por primera vez) nunca dispara solo -- hay que
       # lanzarlo a mano con workflow_dispatch cada vez.
       - '.github/workflows/deploy-{kebab}.yml'
-      # <SolutionFile> deliberadamente NO esta en esta lista, pese a que
-      # build-and-test corre 'dotnet restore/build <SolutionFile>' (mas abajo):
-      # un cambio al .slnx por ESTE dominio ya viene acompanado de cambios en
-      # src/<RootNamespace>.{PascalCase}/** (que disparan igual), y un cambio por
-      # OTRO dominio no altera el binario de este. Agregarlo solo compraria N
-      # deploys espurios por cada scaffold nuevo que toque el .slnx.
+      # Exclusiones deliberadas de esta lista -- no las agregues buscando simetria:
+      # - <SolutionFile>: build-and-test si corre 'dotnet restore/build <SolutionFile>'
+      #   (mas abajo), pero un cambio al .slnx por ESTE dominio ya viene acompanado de
+      #   cambios en src/<RootNamespace>.{PascalCase}/** (que disparan igual), y uno por
+      #   OTRO dominio no altera el binario de este. Agregarlo solo compraria N deploys
+      #   espurios por cada scaffold nuevo que toque el .slnx.
+      # - infra/**: su trigger vive en infra-cd.yml y este workflow se encadena detras
+      #   via el workflow_run de abajo, para que el codigo nunca se despliegue antes del
+      #   apply de infra (MEF-ADR-0022). Devolverlo aqui rompe ese orden; ver la nota del
+      #   job determinar-alcance.
   workflow_run:
     workflows: ['Infra CD']
     types: [completed]
@@ -2519,6 +2527,8 @@ jobs:
 > **Readiness gate por SHA (issue #325, MEF-ADR-0031)**: el paso `Build` del job `deploy` hornea `-p:SourceRevisionId=${{ github.event.workflow_run.head_sha || github.sha }}` -- la **misma** expresion que ya resuelve el `ref:` del checkout de este job, nunca `github.sha` a secas (en un run disparado por `workflow_run`, `github.sha` no es necesariamente el commit que este run esta construyendo -- ver el detalle en MEF-ADR-0031). El job `deploy` expone ese mismo valor como output (`outputs.sha`) para no duplicar la expresion, y el job `smoke-tests` lo pasa como `expected_sha` al reutilizable: el warmup del smoke test (Paso 2b, `ApiFixture`) hace poll contra `/api/version` hasta que el host reporte ese SHA, en vez de abrir la compuerta con el primer 200 (que puede ser el codigo viejo todavia sirviendo durante la ventana de swap de `WEBSITE_RUN_FROM_PACKAGE`).
 
 > **Autenticacion del deploy (OIDC, MEF-ADR-0022)**: el job `deploy` se autentica con `azure/login` por **OpenID Connect**, NO con un client secret. Por eso declara `permissions: id-token: write` y pasa `client-id` / `tenant-id` / `subscription-id` (los secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`), en vez del JSON unico `AZURE_CREDENTIALS`. Esos tres secrets, el Service Principal sin secret y el **federated credential** que confia en la rama `main` los emite `scripts/setup-github-ci.sh` (paso de bootstrap del README). No hay secret que expire. Si cambias el trigger del workflow para desplegar desde otra rama, tag o un GitHub Environment, debes anadir el federated credential correspondiente (el subject debe coincidir exacto con el claim del token de GitHub).
+
+> **Para quien mantenga este agente -- el filtro de `paths` cubre las dependencias de build, no solo el codigo (issue #454)**: transcribe las cuatro rutas y sus comentarios tal cual. `global.json` esta ahi porque el SDK con el que se compila este dominio **no** lo fija `actions/setup-dotnet`: al recibir `dotnet-version` explicito la action instala ese canal y no lee `global.json` (su input `global-json-file`, el unico que se lo hace leer, no se usa aqui -- [README de `actions/setup-dotnet`](https://github.com/actions/setup-dotnet#using-the-globaljson-file)); el archivo lo leen el **muxer del CLI** y el **resolver de SDK de MSBuild** al correr `dotnet restore`/`dotnet build`, que resuelven contra los SDK instalados usando su `version` como piso y su `rollForward` como politica ([global.json overview, Microsoft Learn](https://learn.microsoft.com/dotnet/core/tools/global-json)). Y el propio `deploy-{kebab}.yml` esta en su lista porque un filtro de `paths` que no se incluye a si mismo no reacciona ni al commit que crea el archivo. Los otros dos workflows del Paso 6 no necesitan el mismo arreglo: `smoke-tests-dominio.yml` es `workflow_call` y `smoke-tests.yml` es `workflow_dispatch` + `schedule`, ninguno declara `paths`. Si generas otro workflow de deploy copiando esta plantilla, copia tambien el filtro completo: fue exactamente asi -- espejando la plantilla vieja, sin las dos rutas -- como el defecto llego al consumidor `Bitakora.ControlAsistencia` (sus PRs #257 y #258, ambos disparados a mano con `workflow_dispatch`).
 
 > **Orden infra -> deploy (MEF-ADR-0022, issue #197)**: el `push` a `main` ya NO dispara este workflow para cambios bajo `infra/**` -- ese trigger vive ahora en `infra-cd.yml` (`infra-base-scaffolder`). En su lugar, `deploy-{kebab}.yml` se encadena tras `Infra CD` via `workflow_run`, de modo que el codigo nunca se despliega antes de que el `apply` de infra haya creado o actualizado la Function App. El job `determinar-alcance` evita el costo de redesplegar **todos** los dominios tras cada apply de infra: solo continua si el PR de infra que se acaba de mergear toco `src/<RootNamespace>.{PascalCase}/**`. **Caso limite**: si el `apply` de infra llega a `main` por un push directo sin PR asociado (fuera del flujo de `scripts/iac-pipeline.sh`), la API de PRs por commit no encuentra nada y el redeploy se omite por diseno (evita falsos despliegues); en ese caso, dispara el deploy manualmente con `workflow_dispatch`.
 
