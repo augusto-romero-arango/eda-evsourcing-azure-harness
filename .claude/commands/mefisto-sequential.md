@@ -78,117 +78,24 @@ satisfechas y no cuentan como bloqueo (no importa si estaban o no en el batch).
   sugiere el reordenamiento concreto (ej. "mueve #44 antes de #43").
 
 Para clasificar, necesitas la **lista ordenada** de issues que sobrevivieron al paso 1
-(en el mismo orden de `$ARGUMENTS`). Ejecuta el bloque de abajo pasando esa lista como
-**argumentos posicionales** despues de `--` en la linea `bash -s -- ...`, respetando el
-orden del batch. El heredoc esta citado (`<<'BASH'`): su cuerpo, entre `<<'BASH'` y el
-`BASH` de cierre, se copia y ejecuta **verbatim, sin editar una sola linea** -- ni siquiera
-la asignacion de `BATCH`, que ahora se arma sola a partir de esos argumentos. Lo unico que
-cambia entre invocaciones es la lista de numeros que va despues de `--`: el `44 43 45` del
-ejemplo es un placeholder y vive **fuera** del heredoc. Si olvidas los argumentos, el bloque
-aborta con exit 2 en vez de reportar un OK vacio.
-
-Este bloque depende de word-splitting sin comillas (`for X in $VAR`) sobre listas separadas
-por espacio y newlines; en zsh (shell del invocador en macOS) eso no ocurre por defecto
-(`SH_WORD_SPLIT` off -- https://zsh.sourceforge.io/Doc/Release/Options.html#Shell-Emulation),
-asi que corre bajo `bash` explicito (mismo patron que `commands/onboard.md`):
+(en el mismo orden de `$ARGUMENTS`). Invoca el script `mefisto-validate-batch-deps.sh`
+pasando esa lista como argumentos, respetando el orden del batch:
 
 ```bash
-bash -s -- 44 43 45 <<'BASH'   # <-- 44 43 45 es un EJEMPLO: pon aqui tu batch real, en orden
-set +e
-
-# Fail-loud si el bloque se invoco sin argumentos (p. ej. copiando 'bash <<BASH' sin el
-# '-s -- <issues>'): sin esta guarda, BATCH quedaria vacio, el bucle no revisaria ningun
-# issue y el bloque reportaria "Validacion 1.5 OK" sin haber validado nada.
-if [ "$#" -eq 0 ]; then
-    echo "ERROR: el bloque se invoco sin issues. No se valido NADA (no interpretes esto como OK)."
-    echo "Invocalo como: bash -s -- <issue1> <issue2> ... <<'BASH'"
-    exit 2
-fi
-
-# BATCH = issues que sobrevivieron al paso 1, EN ORDEN. Llegan como argumentos
-# posicionales de "bash -s -- <issues>"; el cuerpo de este heredoc no se edita nunca.
-BATCH="$*"
-
-# Posicion 1-based de un issue en el batch; status != 0 si no esta en el batch.
-pos_in_batch() {
-    local target="$1" i=0 n
-    for n in $BATCH; do
-        i=$((i + 1))
-        [ "$n" = "$target" ] && { echo "$i"; return 0; }
-    done
-    return 1
-}
-
-ABORT_MSGS=""        # bloqueos reales (tipo b) acumulados de todo el batch
-LABELS_TO_CLEAR=""   # issues tipo (a) a los que se les quitara 'bloqueado'
-
-for ISSUE in $BATCH; do
-    # Solo nos interesan los issues con label 'bloqueado'.
-    LABELS=$(gh issue view "$ISSUE" --json labels -q '[.labels[].name] | join(",")')
-    case ",$LABELS," in *",bloqueado,"*) ;; *) continue ;; esac
-
-    ISSUE_POS=$(pos_in_batch "$ISSUE")
-
-    # Extraer dependencias SOLO de la seccion '## Dependencias' y SOLO tras un marcador
-    # forward canonico ('Depende de' / 'Bloqueado por'), ignorando refs inversas/notas
-    # ('Consumido por', 'Bloquea'/'Bloquea a', 'se traslada a', 'Relacionado con', prosa).
-    DEPS=$(gh issue view "$ISSUE" --json body -q '.body' \
-        | awk '/^##[[:space:]]*[Dd]ependencias/{f=1;next} /^##[[:space:]]/{f=0} f' \
-        | grep -ioE '(Depende de|Bloqueado por)[[:space:]]+#[0-9]+' \
-        | grep -oE '[0-9]+' | sort -u)
-
-    ISSUE_REAL=""    # bloqueos reales de ESTE issue
-    for DEP in $DEPS; do
-        [ "$DEP" = "$ISSUE" ] && continue
-        # Estado de la dependencia (puede ser issue o PR).
-        DEP_STATE=$(gh issue view "$DEP" --json state -q '.state' 2>/dev/null \
-                 || gh pr view "$DEP" --json state -q '.state' 2>/dev/null || echo "")
-        # CLOSED/MERGED -> dependencia ya satisfecha (caso ortogonal previo).
-        case "$DEP_STATE" in CLOSED|MERGED) continue ;; esac
-        # Abierta (o desconocida) -> clasificar por posicion en el batch.
-        if DEP_POS=$(pos_in_batch "$DEP"); then
-            if [ "$DEP_POS" -lt "$ISSUE_POS" ]; then
-                : # (a) satisfactible: en el batch y ANTES en el orden -> no bloquea
-            else
-                # (b) mal ordenada: en el batch pero DESPUES de este issue.
-                ISSUE_REAL="$ISSUE_REAL
-  - #$DEP esta en el batch pero DESPUES de #$ISSUE (mal ordenada). Mueve #$DEP antes de #$ISSUE."
-            fi
-        else
-            # (b) fuera del batch y no esta cerrada/mergeada.
-            ISSUE_REAL="$ISSUE_REAL
-  - #$DEP esta fuera del batch y no esta CLOSED/MERGED (bloqueo real)."
-        fi
-    done
-
-    if [ -n "$ISSUE_REAL" ]; then
-        ABORT_MSGS="$ABORT_MSGS
-#$ISSUE no se puede lanzar:$ISSUE_REAL"
-    else
-        LABELS_TO_CLEAR="$LABELS_TO_CLEAR $ISSUE"
-    fi
-done
-
-if [ -n "$ABORT_MSGS" ]; then
-    echo "ABORTAR el batch. Bloqueos reales detectados:"
-    echo "$ABORT_MSGS"
-    echo
-    echo "Reordena el batch (dependencias antes que sus dependientes) o cierra las"
-    echo "dependencias externas antes de relanzar."
-else
-    # Solo si TODO el batch paso la validacion mutamos estado (no tocar labels si abortamos).
-    for ISSUE in $LABELS_TO_CLEAR; do
-        gh issue edit "$ISSUE" --remove-label "bloqueado"
-        echo "Quitado 'bloqueado' de #$ISSUE: sus dependencias abiertas se resuelven por el"
-        echo "orden del batch + sync verificado (#46); las cerradas ya estan satisfechas."
-    done
-    echo "Validacion 1.5 OK: el batch se puede lanzar."
-fi
-BASH
+./.claude/scripts/mefisto-validate-batch-deps.sh <issue1> <issue2> ...
 ```
 
-**Importante**: el bloque solo quita labels si **todo** el batch pasa. Si hay algun bloqueo
-de tipo (b) no se muta ningun estado (no se retira ningun `bloqueado`): se aborta y punto.
+El script interpreta el batch completo (no un issue a la vez) y termina con uno de tres
+exit codes:
+
+- **`0`**: el batch se puede lanzar. Ya quito el label `bloqueado` de los issues cuyas
+  dependencias abiertas resuelve el propio orden del batch (regla de decision de arriba).
+  Continua al paso 2.
+- **`1`**: hay al menos un bloqueo real -- aborta, no se muto ningun label. Muestra el
+  mensaje del script (incluye el reordenamiento concreto si la causa es una dependencia
+  intra-batch mal ordenada, ej. "Mueve #44 antes de #43") y detente.
+- **`2`**: se invoco sin argumentos -- no se valido nada. No interpretes esto como un OK
+  vacio; vuelve a invocar con la lista de issues.
 
 Ejemplos canonicos (issue #47):
 
