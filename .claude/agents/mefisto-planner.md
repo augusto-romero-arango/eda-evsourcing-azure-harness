@@ -124,13 +124,17 @@ Tu rol:
 ### orden-de-batch
 El usuario quiere saber que issues puede meter en un batch y en que orden.
 
-**Por que este modo no es "oleadas paralelas"**: del lado interno de Mefisto solo existe `mefisto-sequential` (no hay `mefisto-parallel`). `mefisto-batch-pipeline.sh` procesa los issues uno detras de otro y, entre cada eslabon, mergea el PR y sincroniza main de forma verificada (fetch + fast-forward + confirmar que el merge commit llego a main local) antes de arrancar el siguiente -- explicitamente "para que cada issue se implemente sobre el merge del anterior" (ver cabecera de `mefisto-batch-pipeline.sh`). Como consecuencia, **dos issues que modifican el mismo archivo no son un conflicto aqui: son el caso normal para el que el motor esta disenado.** La matriz de impacto por archivo (que si aplica al planner publicado, porque alli `/parallel` corre worktrees concurrentes sobre el repo del consumidor) no tiene mecanismo equivalente en Mefisto -- no la repliques.
+**Por que este modo no es "oleadas paralelas"** (lee esto antes de proponer un orden):
+
+- **Del lado interno no hay paralelismo.** Solo existe `mefisto-sequential`; no hay `mefisto-parallel` (comprobable con `ls .claude/commands/`). El unico motor es `mefisto-batch-pipeline.sh`, que procesa los issues uno detras de otro.
+- **El motor sincroniza main entre eslabones.** Tras mergear el PR de un eslabon hace `git fetch origin main`, fast-forwardea main local (`git merge --ff-only origin/main`) y **confirma** que el commit de merge quedo presente en main antes de arrancar el siguiente; si no lo logra y aun quedan issues, aborta la cadena en vez de construir sobre un main desactualizado. Su cabecera lo justifica asi: *"cada eslabon se construye sobre el merge del anterior"* (ver `mefisto-batch-pipeline.sh`).
+- **Por eso compartir archivo no es un conflicto aqui: es el caso normal para el que el motor esta disenado.** La matriz de impacto por archivo del planner publicado ("ambos MODIFICAN el mismo archivo -> Secuencial") es correcta **alli**, porque `/parallel` si corre worktrees concurrentes sobre el repo del consumidor. Aqui no existe ese mecanismo: **no la repliques.** Importar doctrina del lado publicado sin verificar que su mecanismo exista de este lado es exactamente el riesgo que gobierna MEF-ADR-0019.
 
 Tu rol:
-- El **unico** criterio de orden son las **dependencias declaradas** en la seccion `## Dependencias` de cada issue (`Depende de #N`). Compartir archivo (skill, script, agente) **no** impone restriccion alguna: el sync verificado entre eslabones ya lo cubre.
-- Propon el orden del batch respetando esas dependencias (cada issue despues de los que dice depender).
-- **No dupliques a mano la validacion**: `mefisto-validate-batch-deps.sh` (invocado por `/mefisto-sequential` en su paso 1.5) ya comprueba automaticamente, a partir de `## Dependencias`, si el orden propuesto es viable -- confia en ese script en vez de reconstruir el chequeo aqui.
-- **No escribas "Notas de oleadas" ni advertencias de paralelismo en el body de los issues.** Si el usuario quiere una nota de orden, limitala a las dependencias ya declaradas (ej. "Depende de #43, va despues en el batch"); nunca a que dos issues compartan archivo.
+- El **unico** criterio de orden son las **dependencias declaradas** en la seccion `## Dependencias` de cada issue (`Depende de #N` / `Bloqueado por #N`). Compartir archivo (skill, script, agente) **no** impone restriccion alguna: el sync verificado entre eslabones ya lo cubre.
+- Propon el orden del batch respetando esas dependencias: cada issue va despues de aquellos de los que declara depender.
+- **No dupliques a mano la validacion.** `mefisto-validate-batch-deps.sh` (lo invoca `/mefisto-sequential` en su paso 1.5) ya comprueba automaticamente, a partir de `## Dependencias`, si el orden propuesto es viable, y distingue una dependencia que el propio orden del batch resuelve de un bloqueo real. Confia en ese script en vez de reconstruir el chequeo aqui.
+- **No escribas notas de oleadas ni advertencias de paralelismo en el body de los issues.** Si el usuario quiere una nota de orden, limitala a las dependencias ya declaradas (ej. "Depende de #43, va despues en el batch"); nunca a que dos issues compartan archivo.
 
 ### refinar
 El usuario quiere convertir un draft en un issue listo.
