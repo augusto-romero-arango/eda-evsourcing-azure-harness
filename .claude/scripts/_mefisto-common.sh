@@ -668,7 +668,48 @@ agent_log_has_stream_cut() {
     grep -qE "Connection closed mid-response|API Error" "$log_file" 2>/dev/null
 }
 
-# agent_failure_is_unrecoverable <timed_out> <exit_code> <log_file>
+# agent_stream_completed_successfully <stream_file>
+#
+# Retorna 0 si la traza cruda de un stage contiene un evento `result` final que
+# declara exito (`is_error == false` y `subtype == "success"`), 1 en cualquier
+# otro caso -- incluido que falte el archivo, que no haya evento `result`, que
+# jq no este instalado o que la traza este corrupta. El default en 1 (no se
+# puede afirmar el exito) es deliberado: esta funcion solo sirve para RELAJAR
+# una clasificacion de fallo, asi que ante la duda tiene que dejarla como
+# estaba.
+#
+# El evento `result` es la ultima linea que emite el CLI bajo `--output-format
+# stream-json` y es su propia declaracion de haber cumplido el contrato del
+# stage: `subtype: success`, `is_error: false`, `stop_reason: end_turn`. La
+# traza ya se captura desde el issue #431 y compute_stage_metrics ya la parsea
+# (issue #432) -- esta funcion no la vuelve a derivar, solo lee el mismo hecho
+# para una decision distinta.
+#
+# Usa el mismo parseo tolerante que compute_stage_metrics (`try fromjson catch
+# empty` sobre las lineas) porque la traza puede traer lineas truncadas si el
+# proceso murio a media escritura -- y ese es justamente el caso que NO debe
+# reportar exito.
+agent_stream_completed_successfully() {
+    local stream_file="${1:-}"
+
+    [ -n "$stream_file" ] || return 1
+    [ -s "$stream_file" ] || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+
+    local verdict
+    verdict=$(jq -Rsr '
+        (split("\n") | map(select(length > 0)) | map(try fromjson catch empty)
+            | map(select(type == "object"))) as $events
+        | ($events | map(select(.type == "result")) | last) as $result
+        | if ($result != null and $result.is_error == false
+              and $result.subtype == "success")
+          then "yes" else "no" end
+    ' "$stream_file" 2>/dev/null) || return 1
+
+    [ "$verdict" = "yes" ]
+}
+
+# agent_failure_is_unrecoverable <timed_out> <exit_code> <log_file> [<stream_file>]
 #
 # Deriva el flag <unrecoverable> que consume agent_work_is_trustworthy (CA-4
 # del issue #424): retorna 0 si el fallo del CLI es de los que NUNCA admiten
@@ -685,8 +726,35 @@ agent_log_has_stream_cut() {
 #     incidente de #416 -- el reviewer murio con `API Error: Connection closed
 #     mid-response` a los 882s y el pipeline abrio igual el PR #421 con una
 #     revision truncada a mitad de frase.
+#
+# EXCEPCION (PR #446): si la traza del stage trae un evento `result` de
+# exito, el CLI ya habia cumplido su contrato y lo que vino despues -- una
+# senal al proceso, un exit code distinto de cero -- es una muerte POSTERIOR
+# al trabajo, no a mitad de vuelo. Ese caso si es recuperable, y sigue pasando
+# por los gates de agent_work_is_trustworthy (resumen de stage presente + diff
+# real), asi que la relajacion no abre la puerta a un PR con trabajo a medias.
+#
+# Motivacion, con dos incidentes medidos el 2026-07-28: el writer de #436
+# (219s, 34 turnos) y el de #437 (96s, 16 turnos) terminaron ambos con
+# `subtype: success` / `is_error: false` / `stop_reason: end_turn`, stderr
+# vacio y su commit ya hecho en el worktree; el watchdog NUNCA disparo (limite
+# nominal 1800s, sin linea TIMEOUT en events.log), pero el proceso volvio con
+# un exit code de senal y la clasificacion los llamo TIMEOUT y tiro el trabajo.
+# El de #437 ademas corto un batch a mitad de cadena. La causa de la senal no
+# esta identificada -- las tres corridas observadas que murieron asi corrian
+# bajo tmux y la que corrio fuera no, pero con n=3 eso es una hipotesis, no un
+# diagnostico. Esta funcion no intenta resolver esa causa: hace que el
+# pipeline deje de descartar trabajo que el propio CLI declaro completo.
+#
+# El caso de #416 sigue cubierto: un CLI que muere a mitad de respuesta nunca
+# llega a emitir su evento `result`, asi que agent_stream_completed_successfully
+# retorna 1 y la clasificacion no se relaja. Un TIMEOUT real del watchdog
+# tampoco: el kill llega a mitad de vuelo, sin `result` en la traza.
 agent_failure_is_unrecoverable() {
-    local timed_out="$1" exit_code="$2" log_file="$3"
+    local timed_out="$1" exit_code="$2" log_file="$3" stream_file="${4:-}"
+
+    # Antes que nada: si el CLI declaro exito, la muerte fue posterior.
+    agent_stream_completed_successfully "$stream_file" && return 1
 
     [ "$timed_out" = "true" ] && return 0
     [ "$exit_code" = "137" ] && return 0

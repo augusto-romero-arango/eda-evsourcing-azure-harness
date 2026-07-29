@@ -352,8 +352,24 @@ run_agent() {
 
     if [ "$CLAUDE_EXIT" -ne 0 ] || [ "$TIMED_OUT" = true ]; then
         local failure_type
-        if [ "$TIMED_OUT" = true ] || [ "$CLAUDE_EXIT" -eq 137 ] || [ "$CLAUDE_EXIT" -eq 143 ]; then
-            failure_type="TIMEOUT (${elapsed}s)"
+        # PR #446: la traza declara si el CLI llego a cumplir su contrato.
+        # Una senal DESPUES de un `result` de exito no es un timeout: llamarla
+        # asi era lo que mandaba el stage a irrecuperable y tiraba el trabajo.
+        local STREAM_OK=false
+        if agent_stream_completed_successfully "$stream_file"; then
+            STREAM_OK=true
+        fi
+        if [ "$TIMED_OUT" = true ]; then
+            # El watchdog disparo: es el unico TIMEOUT de verdad. El exit code
+            # va en el mensaje porque una senal de grupo no siempre se refleja
+            # como 137/143 y sin el no hay forma de saberlo post-mortem.
+            failure_type="TIMEOUT (${elapsed}s, exit $CLAUDE_EXIT)"
+        elif [ "$CLAUDE_EXIT" -eq 137 ] || [ "$CLAUDE_EXIT" -eq 143 ]; then
+            if [ "$STREAM_OK" = true ]; then
+                failure_type="SIGNAL_POST_SUCCESS (exit $CLAUDE_EXIT, ${elapsed}s)"
+            else
+                failure_type="SIGNAL_MID_FLIGHT (exit $CLAUDE_EXIT, ${elapsed}s)"
+            fi
         elif grep -q "API Error: 5" "$log_stage" 2>/dev/null; then
             failure_type="API_ERROR_SERVER (exit $CLAUDE_EXIT)"
         elif grep -q "API Error: 4" "$log_stage" 2>/dev/null; then
@@ -371,8 +387,11 @@ run_agent() {
         # recuperable via has_work -- el incidente de #416 fue justo esto (el
         # reviewer murio con "API Error: Connection closed mid-response" y el
         # pipeline abrio igual el PR con una revision truncada a mitad de frase).
+        # PR #446: la traza entra como cuarto argumento -- un `result` de
+        # exito en ella exime al stage de esa regla (la muerte fue posterior al
+        # trabajo), sin saltarse los gates de agent_work_is_trustworthy.
         local UNRECOVERABLE=false
-        if agent_failure_is_unrecoverable "$TIMED_OUT" "$CLAUDE_EXIT" "$log_stage"; then
+        if agent_failure_is_unrecoverable "$TIMED_OUT" "$CLAUDE_EXIT" "$log_stage" "$stream_file"; then
             UNRECOVERABLE=true
         fi
 
