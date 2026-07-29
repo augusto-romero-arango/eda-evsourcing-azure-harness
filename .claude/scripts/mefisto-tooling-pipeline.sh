@@ -352,7 +352,7 @@ run_agent() {
 
     if [ "$CLAUDE_EXIT" -ne 0 ] || [ "$TIMED_OUT" = true ]; then
         local failure_type
-        # Issue #446: la traza declara si el CLI llego a cumplir su contrato.
+        # PR #446: la traza declara si el CLI llego a cumplir su contrato.
         # Una senal DESPUES de un `result` de exito no es un timeout: llamarla
         # asi era lo que mandaba el stage a irrecuperable y tiraba el trabajo.
         local STREAM_OK=false
@@ -387,7 +387,7 @@ run_agent() {
         # recuperable via has_work -- el incidente de #416 fue justo esto (el
         # reviewer murio con "API Error: Connection closed mid-response" y el
         # pipeline abrio igual el PR con una revision truncada a mitad de frase).
-        # Issue #446: la traza entra como cuarto argumento -- un `result` de
+        # PR #446: la traza entra como cuarto argumento -- un `result` de
         # exito en ella exime al stage de esa regla (la muerte fue posterior al
         # trabajo), sin saltarse los gates de agent_work_is_trustworthy.
         local UNRECOVERABLE=false

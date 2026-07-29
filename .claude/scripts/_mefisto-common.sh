@@ -727,7 +727,7 @@ agent_stream_completed_successfully() {
 #     mid-response` a los 882s y el pipeline abrio igual el PR #421 con una
 #     revision truncada a mitad de frase.
 #
-# EXCEPCION (issue #446): si la traza del stage trae un evento `result` de
+# EXCEPCION (PR #446): si la traza del stage trae un evento `result` de
 # exito, el CLI ya habia cumplido su contrato y lo que vino despues -- una
 # senal al proceso, un exit code distinto de cero -- es una muerte POSTERIOR
 # al trabajo, no a mitad de vuelo. Ese caso si es recuperable, y sigue pasando
