@@ -41,16 +41,29 @@ Reglas de exclusion/abortar:
 
 - Si el issue **no existe**: informalo y excluyelo de la lista.
 - Si el issue esta `CLOSED`: informalo y excluyelo de la lista.
+- Si el issue **no tiene** el label `estado:listo` (por ejemplo, esta en `estado:borrador`):
+  informalo y **excluyelo automaticamente**, sin preguntar `s/n` (decision de este skill,
+  issue #466). `estado:listo` es criterio **Obligatorio** del Definition of Ready para todo
+  `tipo:` en MEF-ADR-0011, y el primer criterio de la validacion programatica que el
+  `/implement` publicado ya aplica: un draft no lo cumple por definicion -- sus criterios de
+  aceptacion son todavia preguntas abiertas. A diferencia de `tipo:tooling` (una senal blanda
+  que un humano puede decidir ignorar a sabiendas), aqui el batch arranca **headless** en tmux
+  sin nadie supervisando la ejecucion, asi que una confirmacion `s/n` en el momento de invocar
+  el skill no cubre el riesgo: el default es excluir siempre.
 - Si el issue **no tiene** el label `tipo:tooling`: advierte y pregunta `s/n`. Si la respuesta es `n` (o no hay confirmacion), excluyelo de la lista.
 
-### 1.5. Verificar label `bloqueado` (con resolucion intra-batch)
+### 1.5. Validar dependencias del batch (con resolucion intra-batch)
 
-Para cada issue que sobreviva al paso 1 y tenga el label `bloqueado`, lee la seccion
-`## Dependencias` del body y extrae **solo** los numeros precedidos por un marcador forward
-canonico (`Depende de #NNN` / `Bloqueado por #NNN`, case-insensitive, en la misma linea).
-Ignora referencias inversas (`Consumido por #NNN`, `Bloquea #NNN` / `Bloquea a #NNN`), notas
-libres (`... se traslada a #NNN`, `Relacionado con #NNN`) y prosa: no son dependencias forward
-de este issue.
+Para **cada issue que sobreviva al paso 1** -- el label `bloqueado` ya **no** es condicion
+de entrada a este analisis (issue #466: una dependencia sin ese label no puede seguir
+ignorandose en silencio) -- lee la seccion `## Dependencias` del body y extrae **solo** los
+numeros precedidos por un marcador forward canonico (`Depende de #NNN` / `Bloqueado por
+#NNN`, case-insensitive, en la misma linea). Ignora referencias inversas (`Consumido por
+#NNN`, `Bloquea #NNN` / `Bloquea a #NNN`), notas libres (`... se traslada a #NNN`,
+`Relacionado con #NNN`) y prosa: no son dependencias forward de este issue. El label
+`bloqueado` conserva su rol, pero solo como **salida**: se quita de los issues que lo
+llevaban puesto cuando sus dependencias abiertas quedan resueltas por el orden del batch
+(ver regla de decision mas abajo); un issue que nunca lo tuvo no lo gana por este analisis.
 
 La idea clave (issue #47): una dependencia abierta **no siempre** es un bloqueo. Como la
 cadena hace `pipeline -> PR -> merge -> sync verificado -> siguiente` (ver paso 5 e issue
@@ -70,9 +83,10 @@ satisfechas y no cuentan como bloqueo (no importa si estaban o no en el batch).
 **Regla de decision**:
 
 - Si **todas** las dependencias abiertas de un issue son de tipo (a) (o ya estan cerradas):
-  el batch **se puede lanzar** y el issue se procesa en su posicion. Se le **quita** el label
-  `bloqueado` al validar (decision CA-5: el orden + el sync de #46 garantizan su resolucion,
-  asi que mantener el label seria mentir sobre el estado).
+  el batch **se puede lanzar** y el issue se procesa en su posicion. Si el issue **llevaba
+  puesto** el label `bloqueado`, se lo quita al validar (decision CA-5: el orden + el sync de
+  #46 garantizan su resolucion, asi que mantener el label seria mentir sobre el estado); si
+  nunca lo tuvo, no hay nada que mutar.
 - Si existe **al menos una** dependencia de tipo (b): **aborta** y no lances el batch,
   mostrando cual es y por que. Si la causa es una dependencia intra-batch mal ordenada,
   sugiere el reordenamiento concreto (ej. "mueve #44 antes de #43").
@@ -88,9 +102,11 @@ pasando esa lista como argumentos, respetando el orden del batch:
 El script interpreta el batch completo (no un issue a la vez) y termina con uno de tres
 exit codes:
 
-- **`0`**: el batch se puede lanzar. Ya quito el label `bloqueado` de los issues cuyas
-  dependencias abiertas resuelve el propio orden del batch (regla de decision de arriba).
-  Continua al paso 2.
+- **`0`**: el batch se puede lanzar. Ya quito el label `bloqueado` de los issues que lo
+  llevaban puesto y cuyas dependencias abiertas resuelve el propio orden del batch (regla de
+  decision de arriba), y reporta en una linea informativa las dependencias tipo (a) de los
+  issues que **no** llevaban el label -- no hay label que quitarles, pero conviene ver que la
+  validacion si leyo su body. Continua al paso 2.
 - **`1`**: hay al menos un bloqueo real -- aborta, no se muto ningun label. Muestra el
   mensaje del script (incluye el reordenamiento concreto si la causa es una dependencia
   intra-batch mal ordenada, ej. "Mueve #44 antes de #43") y detente.

@@ -28,6 +28,17 @@
 #       responde) se tolera igual que en el bloque original.
 #   [E] 'Bloquea #NNN' (referencia inversa, sin marcador forward) se ignora:
 #       no cuenta como dependencia de este issue.
+#   [F] Hueco 2 (issue #466): el label 'bloqueado' ya no es condicion de entrada
+#       al analisis. Un issue SIN ese label que declara una dependencia forward
+#       abierta y fuera del batch aborta igual que uno etiquetado (CA-4) --
+#       verificando ademas que no se llama 'gh issue edit'. Y, en sentido
+#       contrario (guarda de no-regresion), un issue SIN el label con una
+#       dependencia tipo (a) satisfactible por el batch lanza OK sin que se le
+#       intente quitar un label que nunca tuvo, reportando esa resolucion por
+#       orden (un exit 0 mudo no se distingue de no haber leido el body).
+#       Cierra con el guard de CA-1: el paso 1 del skill sigue excluyendo por
+#       'estado:listo' -- es un gate en prosa, y sin guard su desaparicion en una
+#       reescritura del markdown seria silenciosa.
 #   [G] Guard de regresion (CA-5): ningun bloque bash de .claude/commands/*.md
 #       contiene sintaxis posicional de shell ($1..$9, ${N}, $*, $@, $#), sin
 #       marcar $ARGUMENTS ni ${#ARRAY[@]} como falsos positivos -- y el guard
@@ -339,6 +350,78 @@ else
     fail "E: se esperaba exit 0 (sin dependencias forward), se obtuvo exit $RC: $OUTPUT"
 fi
 assert_issue_edit_called "E" 60
+
+# -------- Bloque F: hueco 2 (issue #466) -- label 'bloqueado' ya no filtra la entrada --------
+
+echo ""
+echo "[F] Hueco 2 (issue #466): dependencia forward de un issue SIN label 'bloqueado'"
+
+# F-1 (CA-4): 70 SIN label 'bloqueado' declara 'Depende de #71', 71 abierta y
+# fuera del batch -> debe abortar igual que si 70 llevara el label, y no debe
+# llamar a 'gh issue edit' en absoluto.
+reset_fixtures
+set_labels 70 ""
+set_body 70 <<'EOF'
+## Dependencias
+
+Depende de #71
+EOF
+set_state 71 "OPEN"
+
+OUTPUT=$(run_script 70 2>&1)
+RC=$?
+if [ "$RC" -eq 1 ] && echo "$OUTPUT" | grep -q "fuera del batch"; then
+    pass "F-1: issue SIN label 'bloqueado' con dependencia forward abierta fuera del batch aborta igual (exit 1)"
+else
+    fail "F-1: se esperaba exit 1 mencionando 'fuera del batch', se obtuvo exit $RC: $OUTPUT"
+fi
+assert_gh_calls_empty "F-1"
+assert_issue_edit_not_called "F-1" 70
+
+# F-2 (guarda de no-regresion): 72 SIN label 'bloqueado' depende de #73, que va
+# ANTES en el orden (tipo a, satisfactible) -> el batch lanza OK, y como 72
+# nunca tuvo el label, no se le debe intentar quitar (ni a 73, que tampoco lo
+# tiene y no declara dependencias).
+reset_fixtures
+set_labels 73 ""
+set_labels 72 ""
+set_body 72 <<'EOF'
+## Dependencias
+
+Depende de #73
+EOF
+
+OUTPUT=$(run_script 73 72 2>&1)
+RC=$?
+if [ "$RC" -eq 0 ] && echo "$OUTPUT" | grep -q "Validacion 1.5 OK"; then
+    pass "F-2: dependencia tipo (a) de un issue SIN label 'bloqueado' no bloquea (exit 0)"
+else
+    fail "F-2: se esperaba exit 0 con 'Validacion 1.5 OK', se obtuvo exit $RC: $OUTPUT"
+fi
+assert_issue_edit_not_called "F-2" 72
+assert_issue_edit_not_called "F-2" 73
+
+# Y lo reporta: sin esta linea, un exit 0 sobre un batch sano es identico al del
+# comportamiento viejo, que ni leia el body de #72 -- el operador no puede saber
+# si el analisis ampliado corrio.
+if echo "$OUTPUT" | grep -q "#72: dependencias abiertas #73 satisfechas por el orden del batch"; then
+    pass "F-2: reporta la dependencia tipo (a) resuelta por orden del issue sin label"
+else
+    fail "F-2: no reporto la dependencia tipo (a) de #72 resuelta por el orden: $OUTPUT"
+fi
+
+# F-3 (guard de CA-1): el paso 1 del skill excluye por 'estado:listo'. Es un gate
+# en prosa que interpreta el modelo, no codigo con exit code, asi que su unica
+# defensa contra una reescritura del markdown que lo pierda es este guard.
+SEQ_SKILL="$REPO_ROOT/.claude/commands/mefisto-sequential.md"
+STEP1=$(awk '/^### 1\. /{f=1;next} /^### 1\.5\./{f=0} f' "$SEQ_SKILL")
+if [ -z "$STEP1" ]; then
+    fail "F-3: no se pudo extraer el paso 1 de $SEQ_SKILL"
+elif echo "$STEP1" | grep -q 'estado:listo'; then
+    pass "F-3: el paso 1 del skill sigue excluyendo issues sin 'estado:listo' (CA-1)"
+else
+    fail "F-3: el paso 1 del skill NO menciona 'estado:listo': el gate del DoR se perdio"
+fi
 
 # -------- Bloque G: guard de regresion CA-5 --------
 
