@@ -436,12 +436,28 @@ public static class ConfiguracionObservabilidadProjections
 {
     public static IServiceCollection ConfigurarObservabilidad(this IServiceCollection services)
     {
+        var ensamblado = Assembly.GetExecutingAssembly();
+
+        // El SHA horneado en el Dockerfile (ARG SOURCE_REVISION_ID -> -p:SourceRevisionId= del
+        // 'dotnet publish', issue #462, MEF-ADR-0031 extendido al read-side) llega aqui via
+        // AssemblyInformationalVersionAttribute como "{Version}+{SourceRevisionId}" -- mismo
+        // mecanismo que hornea el write-side, mismo patron de lectura por reflexion que ya usa
+        // '/api/version' en domain-scaffolder.md. A diferencia de ese endpoint, aqui NO se extrae
+        // la subcadena posterior al '+': el worker no tiene ingress (no hay endpoint que devuelva
+        // el SHA aparte), asi que 'service.version' necesita el valor COMPLETO -- el sufijo '+SHA'
+        // ES la unica senal de que la imagen desplegada es la que reporta esta traza. Un build
+        // local sin '--build-arg' deja 'InformationalVersion' en la version desnuda, sin sufijo
+        // (el target de MSBuild se salta cuando SourceRevisionId esta vacio, sin dejar un '+'
+        // colgante) -- esa ausencia de sufijo es, en si misma, el modo de falla que documenta CA-4.
+        var serviceVersion = ensamblado.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion;
+
         services.AddOpenTelemetry()
             // Assembly.GetExecutingAssembly() es correcto AQUI porque este seam vive en el
             // ensamblado del propio worker (<RootNamespace>.Projections) -- resuelve el
             // service.name a ese mismo nombre. Moverlo a una biblioteca compartida cambiaria el
             // valor en silencio (issue #457).
-            .ConfigureResource(r => r.AddService(Assembly.GetExecutingAssembly().GetName().Name!))
+            .ConfigureResource(r => r.AddService(ensamblado.GetName().Name!, serviceVersion: serviceVersion))
             .WithTracing(tracing => tracing
                 .AddSource("Marten")
                 // A diferencia del write-side (domain-scaffolder), este worker SI registra
@@ -472,7 +488,7 @@ public static class ConfiguracionObservabilidadProjections
 }
 ```
 
-Los seis `using` del bloque anterior son los que este seam necesita, y ninguno esta ahi por accidente -- resueltos por lectura de fuente contra el tag `core-1.17.0` de `open-telemetry/opentelemetry-dotnet`, la version del core que arrastra `OpenTelemetry.Extensions.Hosting` 1.17.0 (MEF-ADR-0034 referencia [18]): `Assembly` es de `System.Reflection` (**no** lo cubre `ImplicitUsings`), `AddOpenTelemetry()` es de `Microsoft.Extensions.DependencyInjection` (`OpenTelemetryServicesExtensions`), **`ConfigureResource`/`WithTracing` son de `OpenTelemetry`** (`OpenTelemetryBuilderSdkExtensions.cs`, `namespace OpenTelemetry;`), `AddService` es de `OpenTelemetry.Resources` (`ResourceBuilderExtensions`), `AddSource` es metodo de instancia de `TracerProviderBuilder` (`OpenTelemetry.Trace`) y `UseAzureMonitorExporter()` es de `Azure.Monitor.OpenTelemetry.Exporter`. `OpenTelemetry.Trace` se conserva -- igual que en el `ComposicionServicios{PascalCase}` del write-side -- porque es el namespace de `SetSampler`/`ParentBasedSampler`/`TraceIdRatioBasedSampler`, el punto de extension que documenta el comentario final. **No "limpies" `using OpenTelemetry;` por parecer redundante con los dos hijos**: sin el, `ConfigureResource` y `WithTracing` fallan con CS1061 y el seam no compila.
+Los seis `using` del bloque anterior son los que este seam necesita, y ninguno esta ahi por accidente -- resueltos por lectura de fuente contra el tag `core-1.17.0` de `open-telemetry/opentelemetry-dotnet`, la version del core que arrastra `OpenTelemetry.Extensions.Hosting` 1.17.0 (MEF-ADR-0034 referencia [18]): `Assembly` es de `System.Reflection` (**no** lo cubre `ImplicitUsings`), `AddOpenTelemetry()` es de `Microsoft.Extensions.DependencyInjection` (`OpenTelemetryServicesExtensions`), **`ConfigureResource`/`WithTracing` son de `OpenTelemetry`** (`OpenTelemetryBuilderSdkExtensions.cs`, `namespace OpenTelemetry;`), `AddService` es de `OpenTelemetry.Resources` (`ResourceBuilderExtensions`), `AddSource` es metodo de instancia de `TracerProviderBuilder` (`OpenTelemetry.Trace`) y `UseAzureMonitorExporter()` es de `Azure.Monitor.OpenTelemetry.Exporter`. `OpenTelemetry.Trace` se conserva -- igual que en el `ComposicionServicios{PascalCase}` del write-side -- porque es el namespace de `SetSampler`/`ParentBasedSampler`/`TraceIdRatioBasedSampler`, el punto de extension que documenta el comentario final. **No "limpies" `using OpenTelemetry;` por parecer redundante con los dos hijos**: sin el, `ConfigureResource` y `WithTracing` fallan con CS1061 y el seam no compila. `AssemblyInformationalVersionAttribute` (issue #462, lectura del `serviceVersion`) no agrega un `using` septimo: vive en el mismo `System.Reflection` que `Assembly`, igual que en `VersionCheck.cs` del write-side (`domain-scaffolder.md`).
 
 **3. Invocar el seam desde `Program.cs` (CA-3).** Lee `src/<RootNamespace>.Projections/Program.cs`: si la linea `builder.Services.ConfigurarEventos(martenConnectionString);` esta presente sin encadenar `ConfigurarObservabilidad()` antes, reemplazala por:
 
@@ -519,7 +535,15 @@ WORKDIR "/src/src/<RootNamespace>.Projections"
 RUN dotnet build "<RootNamespace>.Projections.csproj" -c Release -o /app/build
 
 FROM build AS publish
-RUN dotnet publish "<RootNamespace>.Projections.csproj" -c Release -o /app/publish
+# SHA horneado en el ensamblado (issue #462, MEF-ADR-0031 extendido al read-side): declarado en la
+# etapa 'publish', NO en 'build' (arriba) -- un ARG antes del 'dotnet restore'/'dotnet build'
+# invalidaria esa capa en cada commit (ver la nota de cache mas abajo); aqui, lo mas tarde posible,
+# solo afecta esta etapa. Default vacio: un 'docker build' local sin '--build-arg' no rompe -- el
+# target de MSBuild que concatena '+SourceRevisionId' se salta por completo cuando la propiedad
+# esta vacia (verificado por lectura de fuente del target 'AddSourceRevisionToInformationalVersion',
+# misma cita que MEF-ADR-0031), asi que no queda un '+' colgante en InformationalVersion.
+ARG SOURCE_REVISION_ID=
+RUN dotnet publish "<RootNamespace>.Projections.csproj" -c Release -o /app/publish -p:SourceRevisionId=$SOURCE_REVISION_ID
 
 FROM base AS final
 WORKDIR /app
@@ -530,6 +554,8 @@ ENTRYPOINT ["dotnet", "<RootNamespace>.Projections.dll"]
 **Acoplamiento entre este Dockerfile y el `rollForward` de `global.json` (issue #452):** `mcr.microsoft.com/dotnet/sdk:10.0` es un tag **flotante** -- sirve la ultima feature band y patch que Microsoft publique para la linea `10.0`, y avanza de banda sin que nadie mueva un digest aqui (hoy resuelve a `10.0.302`, banda `3xx`). Por eso el `global.json` del Paso 3 fija `rollForward` en `latestFeature` y no en `latestPatch`: `latestPatch` solo acepta un SDK que coincida en major, minor **y feature band** ([tabla de `rollForward`, Microsoft Learn](https://learn.microsoft.com/dotnet/core/tools/global-json#rollforward)), asi que en cuanto el tag sirva una banda distinta a la de `version` el SDK queda rechazado y la imagen no se puede construir. **Mientras la etapa `build` use un tag flotante, `rollForward` no puede ser mas estricto que `latestFeature`** sin quedar incompatible por construccion. Volver a `latestPatch` solo tendria sentido si esta imagen pasara a pinear una version exacta -- `dotnet/sdk` publica `10.0` o versiones completas como `10.0.302`, no tags de banda tipo `10.0.2xx` (verificado contra `mcr.microsoft.com/v2/dotnet/sdk/tags/list`) -- y ese pin habria que subirlo a mano en cada parche.
 
 Nota tambien **donde** se manifiesta el fallo si el pin queda mal calibrado, porque no es donde uno lo buscaria: el `RUN dotnet restore` de la etapa `build` corre **antes** del `COPY . .`, asi que `global.json` todavia no esta en el build context y el restore resuelve el SDK sin ver el pin -- pasa sin problema. El `RUN dotnet build` posterior ya corre con `global.json` presente, y es ahi donde revienta (exit code 155, *"Install the [x.y.znn] .NET SDK or update [/src/global.json] to match an installed SDK"*). Ese orden de capas es deliberado -- preserva el cache del restore cuando solo cambia un `.cs` -- pero tiene el efecto colateral de enmascarar un pin roto hasta la capa del build.
+
+**`ARG SOURCE_REVISION_ID` y el circuito del SHA (issue #462, MEF-ADR-0031 seccion read-side).** Este `ARG` es la pieza 1 de 3 del circuito completo: la pieza 2 (`--build-arg` en `docker build`) la genera el Paso 2b de este mismo agente; la pieza 3 (`serviceVersion` del `AddService(...)`) ya la crea el Paso 1d de arriba, leyendo el resultado de esta pieza por reflexion. Las tres deben coexistir para que `service.version` identifique una revision real -- ver la verificacion de punta a punta al final del Paso 2b.
 
 ---
 
@@ -681,10 +707,21 @@ jobs:
         # Build context = raiz del repo (no la carpeta del proyecto): el Dockerfile del worker
         # necesita ver tambien src/<RootNamespace>.ReadModels/ para resolver su ProjectReference
         # (Paso 1b de este agente).
+        #
+        # --build-arg SOURCE_REVISION_ID (issue #462, MEF-ADR-0031 seccion read-side): reutiliza el
+        # MISMO '${{ github.sha }}' con el que esta misma imagen ya se taggea abajo -- por
+        # construccion, el tag del ACR y el 'service.version' que reporta la telemetria (Paso 1d)
+        # quedan identicos, sin tabla de traduccion. Es 'github.sha' A SECAS, NO la expresion
+        # '${{ github.event.workflow_run.head_sha || github.sha }}' que hornea deploy-{kebab}.yml
+        # (domain-scaffolder, MEF-ADR-0031): este workflow no se encadena por 'workflow_run' (nota
+        # "Sin encadenar tras Infra CD" mas abajo) -- su trigger es 'push'/'workflow_dispatch' --,
+        # asi que 'github.event.workflow_run.head_sha' seria siempre nulo aqui y esa expresion mas
+        # larga solo sugeriria un encadenamiento que no existe.
         run: |
           docker build \
             -f src/<RootNamespace>.Projections/Dockerfile \
             -t "${{ steps.acr.outputs.login_server }}/projections:${{ github.sha }}" \
+            --build-arg SOURCE_REVISION_ID=${{ github.sha }} \
             .
 
       - name: Publicar la imagen
@@ -723,6 +760,14 @@ jobs:
 > **Para quien mantenga este agente -- el filtro de `paths` cubre las dependencias de build, no solo el codigo (mismo principio que `deploy-{kebab}.yml`, issue #454).** Transcribe las rutas y sus comentarios tal cual, incluida la del propio workflow (un filtro de `paths` que no se incluye a si mismo no reacciona ni al commit que lo crea).
 >
 > **Nombres horneados una sola vez (`rg-{prefix}`, `ca-{prefix_func}`).** Igual que `func-{prefix_func}-{kebab}` en `deploy-{kebab}.yml`, estos dos nombres se resuelven al generar el archivo y quedan literales en el; no se recalculan en runtime ni se leen de un output de Terraform (este workflow no ejecuta Terraform). Si el consumidor cambia `project`/`project_short`/`environment` en `variables.tf` **despues** de que este workflow ya se genero, tiene que editarlo a mano -- la idempotencia de CA-1 (nunca sobrescribir) no lo regenera solo, mismo limite ya aceptado para `deploy-{kebab}.yml`.
+
+> **Verificacion de punta a punta del circuito del SHA (CA-4, issue #462).** Las tres piezas (Dockerfile `ARG SOURCE_REVISION_ID` del Paso 2, `--build-arg` de este paso, y `serviceVersion` del seam de observabilidad del Paso 1d) solo se confirman juntas -- ninguna prueba unitaria las cubre, porque el valor nace en CI y termina en Application Insights. Para verificar tras un deploy real:
+>
+> 1. Toma el SHA del commit que disparo el run de `publish` (`git rev-parse HEAD` en ese commit, o el mismo valor que ya aparece en el tag de la imagen publicada -- `az acr repository show-tags --name <registry> --repository projections --orderby time_desc --top 1`).
+> 2. En Application Insights (Transaction Search o una consulta KQL sobre `dependencies`/`traces` filtrando por `cloud_RoleName == "<RootNamespace>.Projections"`), abre una traza reciente y lee el atributo de recurso `service.version`.
+> 3. Compara: `service.version` debe ser `{Version}+{SHA}` con el **mismo** SHA del paso 1. Si coinciden, el circuito esta cerrado de punta a punta.
+>
+> **Modo de falla a vigilar:** si `service.version` aparece como la version desnuda **sin** el sufijo `+{SHA}` (por ejemplo `1.0.0` a secas), el `--build-arg` no esta llegando al `dotnet publish` -- revisa, en este orden, que este paso pase `--build-arg SOURCE_REVISION_ID=${{ github.sha }}`, que el Dockerfile declare el `ARG` en la etapa `publish` (Paso 2) y que el seam (Paso 1d) siga leyendo `AssemblyInformationalVersionAttribute` sin haber sido editado a mano para ignorarlo. Ninguna de las tres piezas falla en silencio de otra forma: o el sufijo aparece completo, o no aparece en absoluto (el target de MSBuild no deja un `+` colgante con `SourceRevisionId` vacio, ver la nota del Paso 2).
 
 ---
 

@@ -2,7 +2,7 @@
 
 - **Fecha**: 2026-07-19
 - **Estado**: aceptado
-- **Aplica a**: `domain-scaffolder` (templates `deploy-*.yml`, `smoke-tests-dominio.yml`, endpoint `/api/version`, `Fixtures/ApiFixture.cs`). Cross-referencia MEF-ADR-0013 (smoke tests, contexto relacionado, no enmendado), MEF-ADR-0006 (naming del endpoint), MEF-ADR-0020 (hosting, ancla `WEBSITE_RUN_FROM_PACKAGE` y el piso de SKU) y MEF-ADR-0022 (autenticacion CI, orden infra -> deploy).
+- **Aplica a**: `domain-scaffolder` (templates `deploy-*.yml`, `smoke-tests-dominio.yml`, endpoint `/api/version`, `Fixtures/ApiFixture.cs`); y, desde la seccion 5 (issue #462), `projections-scaffolder` (Dockerfile del worker de proyecciones, seam `ConfiguracionObservabilidadProjections`, `deploy-projections.yml`). Cross-referencia MEF-ADR-0013 (smoke tests, contexto relacionado, no enmendado), MEF-ADR-0006 (naming del endpoint), MEF-ADR-0020 (hosting, ancla `WEBSITE_RUN_FROM_PACKAGE` y el piso de SKU), MEF-ADR-0022 (autenticacion CI, orden infra -> deploy) y MEF-ADR-0034 (worker de proyecciones sin ingress, seam de observabilidad que consume la seccion 5).
 
 ## Contexto
 
@@ -99,6 +99,52 @@ Quien pasa `expected_sha`, y cuando, separa los dos casos reales:
   -- es una verificacion periodica de salud de todos los dominios registrados -- asi que no hay un "SHA
   del deploy" real que darle. Degrada correctamente a "solo 200", exactamente el comportamiento previo
   a este ADR.
+
+### 5. Extension al read-side: el worker de proyecciones hornea el mismo SHA, pero lo consume `service.version` de OpenTelemetry, no un endpoint HTTP (issue #462)
+
+Los puntos 1-4 asumen una Function App con un endpoint HTTP que un smoke test puede consultar tras
+el deploy. El worker de proyecciones (`{RootNamespace}.Projections`, MEF-ADR-0034) no tiene esa
+opcion: corre **sin ingress** (MEF-ADR-0034 seccion 8), asi que ningun smoke test ni humano puede
+hacerle una peticion HTTP para preguntarle que SHA esta sirviendo. Se reutiliza el **mismo
+mecanismo de horneado** del punto 1 (`SourceRevisionId` -> `AssemblyInformationalVersionAttribute`),
+pero el **consumidor** cambia: en vez de un endpoint HTTP dedicado, es el atributo de recurso
+`service.version` que el seam de observabilidad del worker (`ConfiguracionObservabilidadProjections`,
+MEF-ADR-0034 seccion 10) agrega a cada traza exportada a Application Insights -- la unica via de
+atribucion posible para ese proceso, mismo rol que cumple `/api/version` para el write-side.
+
+**Se hornea en `dotnet publish`, no en `dotnet build` (a diferencia del punto 1).** El worker
+publica dentro de un Dockerfile multi-stage (`projections-scaffolder`, Paso 2): la etapa `build`
+corre `dotnet build ... -o /app/build`, cuya salida **no** llega a la imagen final -- esta copia el
+resultado de la etapa `publish`, que corre `dotnet publish` **sin** `--no-build` (recompila desde el
+codigo fuente copiado al build context). El comando que efectivamente produce el ensamblado
+embarcado en la imagen es entonces ese `dotnet publish`, no el `dotnet build` de la etapa anterior:
+por eso el Dockerfile declara `ARG SOURCE_REVISION_ID` en la etapa `publish` (lo mas tarde posible,
+para no invalidar el cache de capas del `restore`/`build` de la etapa previa) y lo pasa como
+`-p:SourceRevisionId=$SOURCE_REVISION_ID` a ese `dotnet publish`. Con el `ARG` en su default vacio
+(`docker build` local sin `--build-arg`), la propiedad `SourceRevisionId` queda vacia y el target de
+MSBuild `AddSourceRevisionToInformationalVersion` se salta por completo (`Condition="'$(SourceRevisionId)'
+!= ''"`, verificado por lectura de fuente del mismo target que cita el punto 1) -- no deja un `+`
+colgante, `InformationalVersion` cae de vuelta a la version desnuda. `deploy-projections.yml` (issue
+#453) pasa `--build-arg SOURCE_REVISION_ID=${{ github.sha }}` en su paso `docker build`, reutilizando
+el mismo valor con el que ese workflow ya taggea la imagen del ACR: por construccion, el tag de la
+imagen desplegada y el `service.version` que reporta la telemetria quedan identicos, sin tabla de
+traduccion.
+
+**`github.sha` a secas, no la expresion larga del punto 1.** El punto 1 usa
+`${{ github.event.workflow_run.head_sha || github.sha }}` porque `deploy-{kebab}.yml` se encadena
+tras `Infra CD` via `workflow_run` (MEF-ADR-0022), disparador en el que `github.sha` no es
+necesariamente el commit que ese run esta construyendo. `deploy-projections.yml` **no** se encadena
+asi -- su trigger es `push` a `main` mas `workflow_dispatch` (MEF-ADR-0034 seccion 8) --, asi que
+`github.event.workflow_run.head_sha` seria siempre nulo ahi: usar la expresion larga solo
+sugeriria un encadenamiento inexistente. `github.sha` a secas es correcto especificamente porque
+este workflow no tiene ese disparador, no porque el punto 1 estuviera sobre-especificado.
+
+**Sin poll ni timeout (a diferencia del punto 3).** El worker no tiene un smoke test que haga poll
+de un endpoint de version: no existe la misma "ventana de swap" que motiva el punto 3 (el Container
+App corre `revision_mode = "Single"`, MEF-ADR-0034 seccion 8 -- una revision nueva reemplaza a la
+anterior en su propio ciclo, sin el patron `WEBSITE_RUN_FROM_PACKAGE` del punto 3). La verificacion
+de que el circuito quedo bien cableado es manual, por inspeccion de Application Insights --
+documentada en `projections-scaffolder.md` junto al paso que genera `deploy-projections.yml`.
 
 ## Alternativas consideradas
 
@@ -199,6 +245,9 @@ piso de SKU en el futuro.
 - MEF-ADR-0022 (autenticacion CI por OIDC, orden infra -> deploy): el job `deploy` de
   `deploy-{kebab}.yml` que este ADR modifica, y el disparador `workflow_run` cuyo `github.sha` motiva
   la nota del punto 1 sobre `github.event.workflow_run.head_sha || github.sha`.
+- MEF-ADR-0034 (worker de proyecciones y read models): seccion 8 (Container App sin ingress, motivo
+  por el que la seccion 5 de este ADR no puede replicar el patron `/api/version`) y seccion 10 (seam
+  `ConfiguracionObservabilidadProjections`, el consumidor de `SourceRevisionId` en el read-side).
 
 ## Control de cambios
 
@@ -206,3 +255,10 @@ piso de SKU en el futuro.
   `SourceRevisionId` horneado en el paso `dotnet build`, endpoint `/api/version` dedicado y anonimo,
   warmup por poll en `ApiFixture` con timeout de 120s, e input opcional `expected_sha` que degrada a
   "solo 200" cuando no hay un deploy real al que atar el SHA esperado.
+- 2026-07-29: suma la seccion 5 (issue #462). Extiende el alcance al read-side: el worker de
+  proyecciones (sin ingress, MEF-ADR-0034) reutiliza el mismo mecanismo de horneado de
+  `SourceRevisionId`, pero horneado en el `dotnet publish` del Dockerfile (no en `dotnet build`, a
+  diferencia del punto 1) y consumido como `service.version` de OpenTelemetry en vez de un endpoint
+  HTTP -- el worker no tiene ninguno que exponer. `github.sha` a secas (no la expresion larga del
+  punto 1): `deploy-projections.yml` no se encadena por `workflow_run`. Sin poll ni timeout: no hay
+  smoke test que abra una compuerta contra este worker.
