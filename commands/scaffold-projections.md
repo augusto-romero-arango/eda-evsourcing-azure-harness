@@ -2,7 +2,7 @@
 model: haiku
 ---
 
-Genera el worker de proyecciones `<RootNamespace>.Projections` (daemon asincronico `HotCold` de Marten), la biblioteca `<RootNamespace>.ReadModels` y el config-test base `<RootNamespace>.Projections.Tests` invocando al agente `projections-scaffolder`, al estilo de `infra-base-scaffolder`. **Alcance acotado (fase 1, issue #367 + fase 2, issue #375)**: el registro del store de cada dominio lo hace `domain-scaffolder` (issue #370); ninguna proyeccion ni read model concreto se genera aqui (issues `tipo:projection`). Comunicate en **espanol**.
+Genera el worker de proyecciones `<RootNamespace>.Projections` (daemon asincronico `HotCold` de Marten), la biblioteca `<RootNamespace>.ReadModels`, el config-test base `<RootNamespace>.Projections.Tests` y el workflow de deploy `deploy-projections.yml` invocando al agente `projections-scaffolder`, al estilo de `infra-base-scaffolder`. **Alcance acotado (fase 1, issue #367 + fase 2, issue #375 + fase 3, issue #453)**: el registro del store de cada dominio lo hace `domain-scaffolder` (issue #370); ninguna proyeccion ni read model concreto se genera aqui (issues `tipo:projection`). Comunicate en **espanol**.
 
 ## Pre-condicion 1: cwd != Mefisto
 
@@ -59,7 +59,7 @@ Si `RAW` es `"true"`, continua.
 
 ```
 Se va a generar el worker de proyecciones y su andamiaje read-side (fase 1,
-issue #367 + fase 2, issue #375):
+issue #367 + fase 2, issue #375 + fase 3, issue #453):
 
   src/<RootNamespace>.Projections/
     <RootNamespace>.Projections.csproj  (SDK Microsoft.NET.Sdk.Worker)
@@ -77,6 +77,16 @@ issue #367 + fase 2, issue #375):
   tests/<RootNamespace>.Projections.Tests/
     Infraestructura/AssertsProyecciones.cs   (helper AssertOpcionesDeEvento)
     ConfiguracionMartenProjectionsTests.cs   (config-test base, sin dominios todavia)
+
+  .github/workflows/deploy-projections.yml
+                                        (build + test, imagen al ACR del BC y
+                                          az containerapp update; solo si el
+                                          archivo no existe todavia. Requiere que
+                                          infra/environments/dev/variables.tf ya
+                                          exista, de donde salen los nombres del
+                                          resource group y del Container App: si
+                                          falta, el agente lo reporta pendiente y
+                                          hay que correr /infra-base primero)
 
   <SolutionFile>: se agregan los tres proyectos nuevos
   global.json: se verifica/crea la seccion "test"
@@ -110,6 +120,11 @@ Worker de proyecciones, ReadModels y config-test base generados. Siguiente:
      container-app-environment, container-app) son opt-in y los genera
      infra-base-scaffolder cuando corra de nuevo con el token ya habilitado
      (issue #368, MEF-ADR-0034 seccion 8).
+  4. deploy-projections.yml solo publica la imagen despues de que infra-cd.yml
+     haya sembrado los secretos del Key Vault al menos una vez (MEF-ADR-0034
+     seccion 8, documentado en la cabecera del propio workflow). Si el agente lo
+     reporto pendiente por falta de infra/environments/dev/variables.tf, corre
+     /infra-base y vuelve a lanzar este skill: es idempotente.
 ```
 
 ## Reglas
