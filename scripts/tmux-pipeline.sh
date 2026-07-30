@@ -9,6 +9,8 @@
 #   ./scripts/tmux-pipeline.sh --parallel 42 43 --max-parallel 2
 #   ./scripts/tmux-pipeline.sh --attach                  # reconectar sesion existente
 #   ./scripts/tmux-pipeline.sh --attach tdd-42           # reconectar sesion especifica
+#   ./scripts/tmux-pipeline.sh 42 --from-stage 3         # retomar issue #42 desde Stage 3
+#   ./scripts/tmux-pipeline.sh 42 --if-exists replace    # matar la sesion existente y arrancar limpio
 #
 # Enrutamiento automatico: sin --pipeline, cada issue se enruta segun su label tipo:*
 #
@@ -43,6 +45,12 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
+
+# --if-exists (reuse|replace|abort), seteado en el pre-parseo de main() antes del
+# dispatch de modo (CA-3/CA-4). Vacio = sin flag explicito: la decision se
+# pregunta interactivamente si hay TTY, o se toma por un default seguro segun
+# la sesion este viva o muerta si no lo hay (ver handle_session_conflict).
+SESSION_IF_EXISTS=""
 
 # SCRIPT_DIR: ubicacion de ESTE script (el plugin). Sirve para invocar otros
 # sub-scripts del plugin (tdd/tooling/batch/parallel/iac/scaffold-pipeline.sh).
@@ -112,6 +120,121 @@ print_connect_hint() {
     echo ""
 }
 
+# session_is_alive <session>
+#
+# Retorna 0 (verdadero) si al menos un pane de la sesion sigue con su proceso
+# vivo. Retorna 1 (falso) si TODOS los panes estan "dead" -- remain-on-exit
+# (activado en los seis modos) los mantiene abiertos tras terminar, asi que un
+# pane muerto no es una corrida en curso (CA-4). Si no se puede consultar tmux
+# se asume viva (conservador: nunca se reemplaza por error de consulta).
+session_is_alive() {
+    local session="$1"
+    local dead_flags
+    dead_flags=$(tmux list-panes -s -t "$session" -F '#{pane_dead}' 2>/dev/null)
+    [ -n "$dead_flags" ] || return 0
+    echo "$dead_flags" | grep -q '^0$'
+}
+
+# prompt_session_conflict <session> <alive:true|false>
+#
+# Pregunta interactivamente que hacer ante una sesion existente. El default
+# (Enter sin escribir nada) depende de si la sesion esta viva o muerta (CA-4):
+# reusar (attach) si esta viva, reemplazar si esta muerta -- son las decisiones
+# opuestas correctas para cada caso. Solo se llama con stdin/stdout en TTY.
+prompt_session_conflict() {
+    local session="$1" alive="$2"
+    local default_action="replace" default_label="reemplazar"
+    local estado="terminada"
+    if [ "$alive" = true ]; then
+        default_action="reuse"
+        default_label="reusar (attach)"
+        estado="activa"
+    fi
+    echo "" >&2
+    warn "Ya existe una sesion '$session' ($estado)." >&2
+    echo -e "  ${BOLD}[r]${NC}eusar   -- attach a la sesion existente" >&2
+    echo -e "  ${BOLD}[e]${NC}liminar -- kill-session y arrancar limpio" >&2
+    echo -e "  ${BOLD}[a]${NC}bortar" >&2
+    # `|| true`: sin el, un EOF (Ctrl+D) hace fallar a read y, bajo `set -e`,
+    # mata el subshell de la sustitucion de comandos -- el script moriria sin
+    # mensaje. Con el, un EOF cae en el default igual que un Enter vacio.
+    local answer=""
+    read -r -p "Elegi una opcion [r/e/a] (Enter = $default_label): " answer || true
+    case "$answer" in
+        r|R) echo "reuse" ;;
+        e|E) echo "replace" ;;
+        a|A) echo "abort" ;;
+        *)   echo "$default_action" ;;
+    esac
+}
+
+# handle_session_conflict <session>
+#
+# Si la sesion NO existe, no hace nada (retorna 0: el llamador crea una nueva).
+# Si existe, resuelve la accion (reuse/replace/abort) por flag explicito
+# (--if-exists), por prompt interactivo (con default segun CA-4), o por el
+# default seguro sin TTY (CA-4: nunca destruir una corrida viva) -- y actua:
+#   reuse   -> se conecta a la sesion si hay terminal (exec, no retorna): con
+#              switch-client si ya estamos dentro de tmux, con attach si no. Sin
+#              terminal (headless: un stage corriendo bajo claude -p) imprime el
+#              hint de conexion y sale con exit 0, el mismo comportamiento que
+#              antes de este issue -- nunca secuestra la vista de otra corrida.
+#   replace -> mata la sesion existente y retorna 0 para que el llamador cree
+#              la nueva limpia.
+#   abort   -> termina con abort() (exit 1).
+# Solo retorna (0) cuando el llamador debe proceder a crear la sesion.
+handle_session_conflict() {
+    local session="$1"
+    session_exists "$session" || return 0
+
+    local alive=false
+    session_is_alive "$session" && alive=true
+
+    local action="$SESSION_IF_EXISTS"
+    if [ -z "$action" ]; then
+        if [ -t 0 ] && [ -t 1 ]; then
+            action=$(prompt_session_conflict "$session" "$alive")
+        elif [ "$alive" = true ]; then
+            action="reuse"
+        else
+            action="replace"
+        fi
+    fi
+
+    case "$action" in
+        reuse)
+            if [ -t 1 ]; then
+                # Ya dentro de tmux, `attach` falla ("sessions should be nested
+                # with care, unset $TMUX to force"): switch-client es el comando
+                # que mueve el cliente actual a otra sesion (man tmux,
+                # switch-client). Sin esta rama, reusar una sesion desde el
+                # propio tmux -CC de iTerm2 -- el flujo que recomienda
+                # docs/tmux-cheatsheet.md -- terminaria en error.
+                if inside_tmux; then
+                    log "Reusando la sesion '$session' (switch-client)..."
+                    exec tmux switch-client -t "$session"
+                fi
+                log "Reusando la sesion '$session' (attach)..."
+                exec tmux attach -t "$session"
+            fi
+            warn "Ya existe una sesion '$session'."
+            print_connect_hint "$session"
+            exit 0
+            ;;
+        replace)
+            log "Sesion '$session' se reemplaza ($([ "$alive" = true ] && echo "estaba activa" || echo "estaba terminada"))..."
+            tmux kill-session -t "$session" 2>/dev/null || true
+            return 0
+            ;;
+        abort)
+            abort "Sesion '$session' ya existe. Usa --if-exists reuse (attach), --if-exists replace (recrear), o gestionala a mano: tmux attach -t $session / tmux kill-session -t $session"
+            ;;
+        *)
+            abort "Valor invalido para --if-exists: '$action' (valores validos: reuse, replace, abort)"
+            ;;
+    esac
+}
+
 # --- Modo ATTACH ---
 cmd_attach() {
     local target="${1:-}"
@@ -158,11 +281,7 @@ cmd_single() {
     check_tmux
     ensure_events_log
 
-    if session_exists "$session"; then
-        warn "Ya existe una sesion '$session'."
-        print_connect_hint "$session"
-        exit 0
-    fi
+    handle_session_conflict "$session"
 
     log "Creando sesion tmux '$session' para issue #$issue ($pipeline_name)..."
 
@@ -221,6 +340,7 @@ cmd_batch() {
 
     check_tmux
     ensure_events_log
+    handle_session_conflict "$session"
 
     log "Creando sesion tmux '$session' para batch: issues ${issues_str}..."
 
@@ -284,6 +404,7 @@ cmd_parallel() {
 
     check_tmux
     ensure_events_log
+    handle_session_conflict "$session"
 
     log "Creando sesion tmux '$session' para issues paralelos: $issues_str..."
 
@@ -348,17 +469,18 @@ cmd_parallel() {
 # --- Modo TOOLING (un issue, pipeline sin TDD) ---
 cmd_tooling() {
     local issue="$1"
+    # extra_args: lo que se propaga al sub-script (hoy solo "--from-stage N").
+    # tooling-pipeline.sh acepta --from-stage (rango 1-2, que valida el propio
+    # sub-script): tragarselo aqui en silencio arrancaria de Stage 1 sobre un
+    # worktree que ya tiene commits, justo el dano que este issue evita.
+    local extra_args="${2:-}"
     local session
     session=$(safe_session_name "tooling-$issue")
 
     check_tmux
     ensure_events_log
 
-    if session_exists "$session"; then
-        warn "Ya existe una sesion '$session'."
-        print_connect_hint "$session"
-        exit 0
-    fi
+    handle_session_conflict "$session"
 
     log "Creando sesion tmux '$session' para tooling issue #$issue..."
 
@@ -371,7 +493,7 @@ cmd_tooling() {
     tmux send-keys -t "$tail_pane" "tail -f '$EVENTS_LOG'" Enter
 
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    tmux send-keys -t "$pipe_pane" "'$SCRIPT_DIR/tooling-pipeline.sh' $issue" Enter
+    tmux send-keys -t "$pipe_pane" "'$SCRIPT_DIR/tooling-pipeline.sh' $issue $extra_args" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -382,17 +504,16 @@ cmd_tooling() {
 # --- Modo INFRA (un issue, pipeline IaC) ---
 cmd_infra() {
     local issue="$1"
+    # extra_args: idem cmd_tooling -- iac-pipeline.sh tambien acepta
+    # --from-stage (rango 1-2 validado por el sub-script).
+    local extra_args="${2:-}"
     local session
     session=$(safe_session_name "infra-$issue")
 
     check_tmux
     ensure_events_log
 
-    if session_exists "$session"; then
-        warn "Ya existe una sesion '$session'."
-        print_connect_hint "$session"
-        exit 0
-    fi
+    handle_session_conflict "$session"
 
     log "Creando sesion tmux '$session' para infra issue #$issue..."
 
@@ -405,7 +526,7 @@ cmd_infra() {
     tmux send-keys -t "$tail_pane" "tail -f '$EVENTS_LOG'" Enter
 
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    tmux send-keys -t "$pipe_pane" "'$SCRIPT_DIR/iac-pipeline.sh' $issue" Enter
+    tmux send-keys -t "$pipe_pane" "'$SCRIPT_DIR/iac-pipeline.sh' $issue $extra_args" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -452,11 +573,7 @@ cmd_scaffold() {
     check_tmux
     ensure_events_log
 
-    if session_exists "$session"; then
-        warn "Ya existe una sesion '$session'."
-        print_connect_hint "$session"
-        exit 0
-    fi
+    handle_session_conflict "$session"
 
     local pipeline_args=""
     [ -n "$issue" ] && pipeline_args="$issue "
@@ -489,6 +606,7 @@ ${CYAN}${BOLD}tmux-pipeline.sh${NC} --- Wrapper para pipelines en sesiones tmux
 
 ${BOLD}Uso:${NC}
   ./scripts/tmux-pipeline.sh 42                                   Issue unico (enruta por label)
+  ./scripts/tmux-pipeline.sh 42 --from-stage 3                    Retomar issue #42 desde Stage 3
   ./scripts/tmux-pipeline.sh --pipeline tooling 42                Forzar pipeline tooling
   ./scripts/tmux-pipeline.sh --tooling 42                         Issue de tooling (override explicito)
   ./scripts/tmux-pipeline.sh --infra 42                           Issue de infraestructura (IaC)
@@ -500,6 +618,24 @@ ${BOLD}Uso:${NC}
   ./scripts/tmux-pipeline.sh --parallel --pipeline tdd 42 43      Paralelo forzando tdd
   ./scripts/tmux-pipeline.sh --attach                             Reconectar sesion tmux activa
   ./scripts/tmux-pipeline.sh --attach tdd-42                      Reconectar sesion especifica
+
+${BOLD}Retomar una corrida caida (--from-stage):${NC}
+  Valido en los modos de un unico issue: <issue> suelto, --tooling y --infra.
+  Se rechaza (mensaje explicito, nunca silencio) en --batch, --parallel, varios
+  issues sueltos --- un unico --from-stage sobre un lote seria ambiguo --- y en
+  --scaffold/--attach, que no tienen stages retomables. El wrapper NO valida el
+  rango: lo valida el sub-script destino (tdd-pipeline.sh acepta 1-4;
+  tooling-pipeline.sh e iac-pipeline.sh, 1-2), para no desincronizarse con el
+  la primera vez que un pipeline sume una fase.
+
+${BOLD}Sesion existente (--if-exists reuse|replace|abort):${NC}
+  Si ya existe una sesion con ese nombre, el wrapper distingue si sigue viva o
+  ya termino (remain-on-exit deja el pane abierto tras un crash, pero el
+  proceso ya no corre) y ofrece reusarla (attach), reemplazarla (kill-session y
+  arrancar limpio) o abortar. Con terminal interactiva se pregunta (default:
+  reusar si esta viva, reemplazar si esta muerta); sin terminal la decision se
+  toma por --if-exists, o por ese mismo default si no se paso el flag -- nunca
+  se destruye una sesion viva sin pedirlo explicitamente.
 
 ${BOLD}Enrutamiento automatico:${NC}
   Sin --pipeline ni --tooling/--infra, el pipeline se determina por el label tipo:* del issue:
@@ -532,9 +668,15 @@ main() {
         exit 0
     fi
 
-    # Pre-parsear --scaffold-domain y --pipeline antes del dispatch de modo
+    # Pre-parsear --scaffold-domain, --pipeline, --from-stage y --if-exists
+    # antes del dispatch de modo. --from-stage y --if-exists se sacan de
+    # filtered_args igual que los otros dos: si quedaran, "253 --from-stage 4"
+    # se veria como 3 argumentos posicionales y el caso [0-9]* (mas abajo)
+    # desviaria a cmd_parallel (issue #449, causa 2).
     local scaffold_extra=""
     local pipeline_override=""
+    local from_stage_extra=""
+    SESSION_IF_EXISTS=""
     local filtered_args=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -548,13 +690,35 @@ main() {
                 pipeline_override="$2"
                 shift 2
                 ;;
+            --from-stage)
+                [ $# -lt 2 ] && abort "Falta el valor de --from-stage"
+                [[ "$2" =~ ^[0-9]+$ ]] || abort "--from-stage debe ser un numero entero (recibido: '$2')"
+                from_stage_extra="--from-stage $2"
+                shift 2
+                ;;
+            --if-exists)
+                [ $# -lt 2 ] && abort "Falta el valor de --if-exists (reuse|replace|abort)"
+                case "$2" in
+                    reuse|replace|abort) SESSION_IF_EXISTS="$2" ;;
+                    *) abort "--if-exists debe ser reuse, replace o abort (recibido: '$2')" ;;
+                esac
+                shift 2
+                ;;
             *)
                 filtered_args+=("$1")
                 shift
                 ;;
         esac
     done
-    set -- "${filtered_args[@]}"
+    # Guarda de bash 3.2 (macOS): "${arr[@]}" con un array vacio revienta con
+    # "unbound variable" bajo `set -u`. Sin ella, invocar solo flags
+    # ("--from-stage 4" sin numero de issue) moria con un error interno de bash
+    # en vez de con el mensaje de uso.
+    if [ ${#filtered_args[@]} -gt 0 ]; then
+        set -- "${filtered_args[@]}"
+    else
+        abort "Faltan argumentos posicionales (numero de issue o modo). Corre '$0 --help' para ver el uso."
+    fi
 
     case "$1" in
         --help|-h)
@@ -562,6 +726,9 @@ main() {
             ;;
         --attach)
             shift
+            # --attach solo reconecta a una sesion ya creada: no lanza pipeline,
+            # asi que no hay a quien propagarle --from-stage.
+            [ -n "$from_stage_extra" ] && abort "--from-stage no aplica a --attach (no lanza un pipeline, solo reconecta). Para retomar: tmux-pipeline.sh <issue> --from-stage N"
             cmd_attach "${1:-}"
             ;;
         --tooling)
@@ -569,17 +736,20 @@ main() {
             if [ $# -eq 0 ]; then
                 abort "Debes especificar un issue. Uso: --tooling 42"
             fi
-            cmd_tooling "$1"
+            cmd_tooling "$1" "$from_stage_extra"
             ;;
         --infra)
             shift
             if [ $# -eq 0 ]; then
                 abort "Debes especificar un issue. Uso: --infra 42"
             fi
-            cmd_infra "$1"
+            cmd_infra "$1" "$from_stage_extra"
             ;;
         --scaffold)
             shift
+            # scaffold-pipeline.sh no acepta --from-stage (verificado): no tiene
+            # stages retomables. Rechazar en vez de tragarselo en silencio.
+            [ -n "$from_stage_extra" ] && abort "--from-stage no es valido con --scaffold (scaffold-pipeline.sh no tiene stages retomables)."
             cmd_scaffold "$@"
             ;;
         --batch)
@@ -587,6 +757,9 @@ main() {
             if [ $# -eq 0 ]; then
                 abort "Debes especificar al menos un issue. Uso: --batch 42 43 44"
             fi
+            # --from-stage sobre un lote de issues es ambiguo (Notas tecnicas del
+            # issue #449): rechazar es la opcion segura.
+            [ -n "$from_stage_extra" ] && abort "--from-stage no es valido con --batch (seria ambiguo sobre varios issues). Usalo con un unico issue: tmux-pipeline.sh <issue> --from-stage N"
             # Pasar --pipeline al cmd_batch si se proporciono
             if [ -n "$pipeline_override" ]; then
                 cmd_batch --pipeline "$pipeline_override" "$@"
@@ -599,6 +772,9 @@ main() {
             if [ $# -eq 0 ]; then
                 abort "Debes especificar al menos un issue. Uso: --parallel 42 43 44"
             fi
+            # Mismo rechazo que --batch: --from-stage no tiene sentido sobre
+            # varios issues a la vez.
+            [ -n "$from_stage_extra" ] && abort "--from-stage no es valido con --parallel (seria ambiguo sobre varios issues). Usalo con un unico issue: tmux-pipeline.sh <issue> --from-stage N"
             # Pasar --pipeline al cmd_parallel si se proporciono
             if [ -n "$pipeline_override" ]; then
                 cmd_parallel --pipeline "$pipeline_override" "$@"
@@ -609,6 +785,9 @@ main() {
         [0-9]*)
             # Modo single: argumento directo es un issue
             if [ $# -gt 1 ]; then
+                # Multiples issues sin modo especificado: idem --batch/--parallel,
+                # --from-stage seria ambiguo sobre el lote resultante.
+                [ -n "$from_stage_extra" ] && abort "--from-stage no es valido con multiples issues (se interpretaria como --parallel). Especifica un unico issue: tmux-pipeline.sh <issue> --from-stage N"
                 warn "Multiples issues sin modo especificado. Usando --parallel."
                 if [ -n "$pipeline_override" ]; then
                     cmd_parallel --pipeline "$pipeline_override" "$@"
@@ -616,7 +795,18 @@ main() {
                     cmd_parallel "$@"
                 fi
             else
-                cmd_single "$1" "$scaffold_extra" "$pipeline_override"
+                # Compone scaffold_extra + from_stage_extra sin arrays (bash 3.2
+                # de macOS revienta con "unbound variable" al expandir un array
+                # vacio incluso con "${arr[*]}" bajo `set -u`).
+                local combined_extra="$scaffold_extra"
+                if [ -n "$from_stage_extra" ]; then
+                    if [ -n "$combined_extra" ]; then
+                        combined_extra="$combined_extra $from_stage_extra"
+                    else
+                        combined_extra="$from_stage_extra"
+                    fi
+                fi
+                cmd_single "$1" "$combined_extra" "$pipeline_override"
             fi
             ;;
         *)
