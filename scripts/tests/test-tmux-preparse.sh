@@ -29,6 +29,14 @@
 #       default depende de si esta viva (reusar, no se toca) o muerta
 #       (reemplazar: kill-session + recrear). --if-exists abort aborta sin
 #       tocar la sesion.
+#   T-6 (CA-2, ningun modo se traga el flag en silencio): --tooling e --infra
+#       tambien lo propagan (sus sub-scripts aceptan --from-stage), y los modos
+#       que no pueden usarlo (--scaffold, --attach) lo rechazan con mensaje.
+#       Un flag aceptado y descartado sin aviso arrancaria de Stage 1 sobre un
+#       worktree con commits -- el dano exacto que este issue evita.
+#   T-7: invocar solo flags, sin argumento posicional, sale con el mensaje de
+#       uso y no con el "unbound variable" de bash 3.2 al expandir un array
+#       filtered_args vacio bajo `set -u`.
 #
 # Uso: scripts/tests/test-tmux-preparse.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -203,6 +211,35 @@ assert_not_contains "--if-exists abort: no crea sesion" "$(cat "$TMUX_STUB_LOG")
 assert_not_contains "--if-exists abort: no mata la sesion" "$(cat "$TMUX_STUB_LOG")" "kill-session"
 
 unset TMUX_STUB_HAS_SESSION TMUX_STUB_PANE_DEAD
+
+echo ""
+echo "[T-6] ningun modo se traga --from-stage en silencio (CA-2)"
+
+# --tooling e --infra son modos de un unico issue y sus sub-scripts aceptan
+# --from-stage (rango 1-2): deben propagarlo.
+run_wrapper --tooling 253 --from-stage 2
+assert_rc "--tooling + --from-stage corre sin abortar" 0 "$LAST_RC"
+assert_contains "--tooling propaga el flag al send-keys" "$(cat "$TMUX_STUB_LOG")" "tooling-pipeline.sh' 253 --from-stage 2"
+
+run_wrapper --infra 253 --from-stage 2
+assert_rc "--infra + --from-stage corre sin abortar" 0 "$LAST_RC"
+assert_contains "--infra propaga el flag al send-keys" "$(cat "$TMUX_STUB_LOG")" "iac-pipeline.sh' 253 --from-stage 2"
+
+# --scaffold y --attach no tienen stages retomables: rechazan en vez de callar.
+run_wrapper --scaffold 253 --domain miDominio --from-stage 2
+assert_rc "--scaffold + --from-stage aborta" 1 "$LAST_RC"
+assert_contains "mensaje: no valido con --scaffold" "$LAST_STDERR" "no es valido con --scaffold"
+
+run_wrapper --attach tooling-pipeline-253 --from-stage 2
+assert_rc "--attach + --from-stage aborta" 1 "$LAST_RC"
+assert_contains "mensaje: no aplica a --attach" "$LAST_STDERR" "no aplica a --attach"
+
+echo ""
+echo "[T-7] solo flags, sin argumento posicional: mensaje de uso, no error de bash"
+run_wrapper --from-stage 4
+assert_rc "aborta" 1 "$LAST_RC"
+assert_contains "mensaje: faltan argumentos posicionales" "$LAST_STDERR" "Faltan argumentos posicionales"
+assert_not_contains "sin 'unbound variable' de bash 3.2" "$LAST_STDERR" "unbound variable"
 
 echo ""
 echo "----------------------------------------"

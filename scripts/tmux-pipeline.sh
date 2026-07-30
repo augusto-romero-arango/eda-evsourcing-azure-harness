@@ -155,13 +155,15 @@ prompt_session_conflict() {
     echo -e "  ${BOLD}[r]${NC}eusar   -- attach a la sesion existente" >&2
     echo -e "  ${BOLD}[e]${NC}liminar -- kill-session y arrancar limpio" >&2
     echo -e "  ${BOLD}[a]${NC}bortar" >&2
-    local answer
-    read -r -p "Elegi una opcion [r/e/a] (Enter = $default_label): " answer
+    # `|| true`: sin el, un EOF (Ctrl+D) hace fallar a read y, bajo `set -e`,
+    # mata el subshell de la sustitucion de comandos -- el script moriria sin
+    # mensaje. Con el, un EOF cae en el default igual que un Enter vacio.
+    local answer=""
+    read -r -p "Elegi una opcion [r/e/a] (Enter = $default_label): " answer || true
     case "$answer" in
         r|R) echo "reuse" ;;
         e|E) echo "replace" ;;
         a|A) echo "abort" ;;
-        "")  echo "$default_action" ;;
         *)   echo "$default_action" ;;
     esac
 }
@@ -172,9 +174,11 @@ prompt_session_conflict() {
 # Si existe, resuelve la accion (reuse/replace/abort) por flag explicito
 # (--if-exists), por prompt interactivo (con default segun CA-4), o por el
 # default seguro sin TTY (CA-4: nunca destruir una corrida viva) -- y actua:
-#   reuse   -> attach si hay terminal disponible (exec, no retorna); si no,
-#              imprime el hint de conexion y sale con exit 0 (mismo
-#              comportamiento que antes de este issue para una sesion viva).
+#   reuse   -> se conecta a la sesion si hay terminal (exec, no retorna): con
+#              switch-client si ya estamos dentro de tmux, con attach si no. Sin
+#              terminal (headless: un stage corriendo bajo claude -p) imprime el
+#              hint de conexion y sale con exit 0, el mismo comportamiento que
+#              antes de este issue -- nunca secuestra la vista de otra corrida.
 #   replace -> mata la sesion existente y retorna 0 para que el llamador cree
 #              la nueva limpia.
 #   abort   -> termina con abort() (exit 1).
@@ -200,6 +204,16 @@ handle_session_conflict() {
     case "$action" in
         reuse)
             if [ -t 1 ]; then
+                # Ya dentro de tmux, `attach` falla ("sessions should be nested
+                # with care, unset $TMUX to force"): switch-client es el comando
+                # que mueve el cliente actual a otra sesion (man tmux,
+                # switch-client). Sin esta rama, reusar una sesion desde el
+                # propio tmux -CC de iTerm2 -- el flujo que recomienda
+                # docs/tmux-cheatsheet.md -- terminaria en error.
+                if inside_tmux; then
+                    log "Reusando la sesion '$session' (switch-client)..."
+                    exec tmux switch-client -t "$session"
+                fi
                 log "Reusando la sesion '$session' (attach)..."
                 exec tmux attach -t "$session"
             fi
@@ -208,7 +222,7 @@ handle_session_conflict() {
             exit 0
             ;;
         replace)
-            log "Sesion '$session' se reemplaza ($([ "$alive" = true ] && echo "activa, --if-exists replace forzado" || echo "estaba terminada"))..."
+            log "Sesion '$session' se reemplaza ($([ "$alive" = true ] && echo "estaba activa" || echo "estaba terminada"))..."
             tmux kill-session -t "$session" 2>/dev/null || true
             return 0
             ;;
@@ -455,6 +469,11 @@ cmd_parallel() {
 # --- Modo TOOLING (un issue, pipeline sin TDD) ---
 cmd_tooling() {
     local issue="$1"
+    # extra_args: lo que se propaga al sub-script (hoy solo "--from-stage N").
+    # tooling-pipeline.sh acepta --from-stage (rango 1-2, que valida el propio
+    # sub-script): tragarselo aqui en silencio arrancaria de Stage 1 sobre un
+    # worktree que ya tiene commits, justo el dano que este issue evita.
+    local extra_args="${2:-}"
     local session
     session=$(safe_session_name "tooling-$issue")
 
@@ -474,7 +493,7 @@ cmd_tooling() {
     tmux send-keys -t "$tail_pane" "tail -f '$EVENTS_LOG'" Enter
 
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    tmux send-keys -t "$pipe_pane" "'$SCRIPT_DIR/tooling-pipeline.sh' $issue" Enter
+    tmux send-keys -t "$pipe_pane" "'$SCRIPT_DIR/tooling-pipeline.sh' $issue $extra_args" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -485,6 +504,9 @@ cmd_tooling() {
 # --- Modo INFRA (un issue, pipeline IaC) ---
 cmd_infra() {
     local issue="$1"
+    # extra_args: idem cmd_tooling -- iac-pipeline.sh tambien acepta
+    # --from-stage (rango 1-2 validado por el sub-script).
+    local extra_args="${2:-}"
     local session
     session=$(safe_session_name "infra-$issue")
 
@@ -504,7 +526,7 @@ cmd_infra() {
     tmux send-keys -t "$tail_pane" "tail -f '$EVENTS_LOG'" Enter
 
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    tmux send-keys -t "$pipe_pane" "'$SCRIPT_DIR/iac-pipeline.sh' $issue" Enter
+    tmux send-keys -t "$pipe_pane" "'$SCRIPT_DIR/iac-pipeline.sh' $issue $extra_args" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -598,10 +620,13 @@ ${BOLD}Uso:${NC}
   ./scripts/tmux-pipeline.sh --attach tdd-42                      Reconectar sesion especifica
 
 ${BOLD}Retomar una corrida caida (--from-stage):${NC}
-  Solo valido con un unico issue (rechazado en --batch/--parallel/multiples
-  issues, donde seria ambiguo). El wrapper NO valida el rango -- lo valida el
-  sub-script destino (tdd-pipeline.sh acepta 1-4; tooling-pipeline.sh e
-  iac-pipeline.sh, 1-2) para no desincronizarse si un pipeline suma una fase.
+  Valido en los modos de un unico issue: <issue> suelto, --tooling y --infra.
+  Se rechaza (mensaje explicito, nunca silencio) en --batch, --parallel, varios
+  issues sueltos --- un unico --from-stage sobre un lote seria ambiguo --- y en
+  --scaffold/--attach, que no tienen stages retomables. El wrapper NO valida el
+  rango: lo valida el sub-script destino (tdd-pipeline.sh acepta 1-4;
+  tooling-pipeline.sh e iac-pipeline.sh, 1-2), para no desincronizarse con el
+  la primera vez que un pipeline sume una fase.
 
 ${BOLD}Sesion existente (--if-exists reuse|replace|abort):${NC}
   Si ya existe una sesion con ese nombre, el wrapper distingue si sigue viva o
@@ -685,7 +710,15 @@ main() {
                 ;;
         esac
     done
-    set -- "${filtered_args[@]}"
+    # Guarda de bash 3.2 (macOS): "${arr[@]}" con un array vacio revienta con
+    # "unbound variable" bajo `set -u`. Sin ella, invocar solo flags
+    # ("--from-stage 4" sin numero de issue) moria con un error interno de bash
+    # en vez de con el mensaje de uso.
+    if [ ${#filtered_args[@]} -gt 0 ]; then
+        set -- "${filtered_args[@]}"
+    else
+        abort "Faltan argumentos posicionales (numero de issue o modo). Corre '$0 --help' para ver el uso."
+    fi
 
     case "$1" in
         --help|-h)
@@ -693,6 +726,9 @@ main() {
             ;;
         --attach)
             shift
+            # --attach solo reconecta a una sesion ya creada: no lanza pipeline,
+            # asi que no hay a quien propagarle --from-stage.
+            [ -n "$from_stage_extra" ] && abort "--from-stage no aplica a --attach (no lanza un pipeline, solo reconecta). Para retomar: tmux-pipeline.sh <issue> --from-stage N"
             cmd_attach "${1:-}"
             ;;
         --tooling)
@@ -700,17 +736,20 @@ main() {
             if [ $# -eq 0 ]; then
                 abort "Debes especificar un issue. Uso: --tooling 42"
             fi
-            cmd_tooling "$1"
+            cmd_tooling "$1" "$from_stage_extra"
             ;;
         --infra)
             shift
             if [ $# -eq 0 ]; then
                 abort "Debes especificar un issue. Uso: --infra 42"
             fi
-            cmd_infra "$1"
+            cmd_infra "$1" "$from_stage_extra"
             ;;
         --scaffold)
             shift
+            # scaffold-pipeline.sh no acepta --from-stage (verificado): no tiene
+            # stages retomables. Rechazar en vez de tragarselo en silencio.
+            [ -n "$from_stage_extra" ] && abort "--from-stage no es valido con --scaffold (scaffold-pipeline.sh no tiene stages retomables)."
             cmd_scaffold "$@"
             ;;
         --batch)

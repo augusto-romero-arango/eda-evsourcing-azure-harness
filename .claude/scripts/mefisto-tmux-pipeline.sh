@@ -72,6 +72,7 @@ ensure_events_log() {
 
 safe_session_name() { echo "$1" | tr ' /:' '-' | tr -cd 'a-zA-Z0-9-'; }
 session_exists()    { tmux has-session -t "$1" 2>/dev/null; }
+inside_tmux()       { [ -n "${TMUX:-}" ]; }
 
 # Extrae --verbose, --from-stage N e --if-exists X de "$@" (en cualquier
 # posicion) y los consume: ninguno debe propagarse posicionalmente al
@@ -86,15 +87,17 @@ session_exists()    { tmux has-session -t "$1" 2>/dev/null; }
 # vacio), SESSION_IF_EXISTS (reuse|replace|abort, o vacio) y el resto de
 # argumentos, en orden, en el array global REMAINING_ARGS.
 #
-# --from-stage consume DOS posiciones (el flag y su valor), a diferencia de
-# --verbose/--if-exists (dos o una respectivamente pero sin la necesidad de
-# "mirar hacia adelante" con indices) -- por eso el for-in simple del helper
-# original se vuelve un while indexado.
+# --from-stage e --if-exists consumen DOS posiciones (el flag y su valor), a
+# diferencia de --verbose -- por eso el for-in simple del helper original se
+# vuelve un while indexado, que si puede "mirar hacia adelante".
+#
+# Se llamaba extract_verbose_flag cuando #435 lo introdujo; #449 lo renombro al
+# sumarle dos flags mas, para que el nombre no mienta sobre lo que consume.
 VERBOSE=false
 REMAINING_ARGS=()
 FROM_STAGE_EXTRA=""
 SESSION_IF_EXISTS=""
-extract_verbose_flag() {
+extract_wrapper_flags() {
     VERBOSE=false
     REMAINING_ARGS=()
     FROM_STAGE_EXTRA=""
@@ -116,6 +119,7 @@ extract_verbose_flag() {
             --if-exists)
                 i=$((i + 1))
                 local exists_value="${args[$i]:-}"
+                [ -n "$exists_value" ] || abort "Falta el valor de --if-exists (reuse|replace|abort)"
                 case "$exists_value" in
                     reuse|replace|abort) SESSION_IF_EXISTS="$exists_value" ;;
                     *) abort "--if-exists debe ser reuse, replace o abort (recibido: '$exists_value')" ;;
@@ -211,8 +215,11 @@ prompt_session_conflict() {
     echo -e "  ${BOLD}[r]${NC}eusar   -- attach a la sesion existente" >&2
     echo -e "  ${BOLD}[e]${NC}liminar -- kill-session y arrancar limpio" >&2
     echo -e "  ${BOLD}[a]${NC}bortar" >&2
-    local answer
-    read -r -p "Elegi una opcion [r/e/a] (Enter = $default_label): " answer
+    # `|| true`: sin el, un EOF (Ctrl+D) hace fallar a read y, bajo `set -e`,
+    # mata el subshell de la sustitucion de comandos -- el script moriria sin
+    # mensaje. Con el, un EOF cae en el default igual que un Enter vacio.
+    local answer=""
+    read -r -p "Elegi una opcion [r/e/a] (Enter = $default_label): " answer || true
     case "$answer" in
         r|R) echo "reuse" ;;
         e|E) echo "replace" ;;
@@ -250,6 +257,14 @@ handle_session_conflict() {
     case "$action" in
         reuse)
             if [ -t 1 ]; then
+                # Ya dentro de tmux, `attach` falla ("sessions should be nested
+                # with care, unset $TMUX to force"): switch-client es el comando
+                # que mueve el cliente actual a otra sesion (man tmux,
+                # switch-client).
+                if inside_tmux; then
+                    log "Reusando la sesion '$session' (switch-client)..."
+                    exec tmux switch-client -t "$session"
+                fi
                 log "Reusando la sesion '$session' (attach)..."
                 exec tmux attach -t "$session"
             fi
@@ -258,7 +273,7 @@ handle_session_conflict() {
             exit 0
             ;;
         replace)
-            log "Sesion '$session' se reemplaza ($([ "$alive" = true ] && echo "activa, --if-exists replace forzado" || echo "estaba terminada"))..."
+            log "Sesion '$session' se reemplaza ($([ "$alive" = true ] && echo "estaba activa" || echo "estaba terminada"))..."
             tmux kill-session -t "$session" 2>/dev/null || true
             return 0
             ;;
@@ -288,7 +303,7 @@ cmd_attach() {
 }
 
 cmd_tooling() {
-    extract_verbose_flag "$@"
+    extract_wrapper_flags "$@"
     # Guarda de bash 3.2 (macOS): "${arr[@]}" con un array vacio revienta con
     # "unbound variable" bajo `set -u` -- de ahi el chequeo de longitud previo
     # en vez de expandir REMAINING_ARGS directo cuando podria estar vacio.
@@ -345,7 +360,7 @@ cmd_batch() {
     # --verbose se extrae ANTES de construir issues_str (CA-2): cmd_batch lo
     # manda sin comillas por send-keys a mefisto-batch-pipeline.sh, que lo
     # parsea posicionalmente -- un --verbose colado ahi rompe ese parseo.
-    extract_verbose_flag "$@"
+    extract_wrapper_flags "$@"
     # Misma guarda de bash 3.2 que en cmd_tooling: no expandir REMAINING_ARGS
     # vacio directo, revienta con "unbound variable" bajo `set -u`.
     local issues=()
