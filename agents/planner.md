@@ -488,17 +488,27 @@ Preguntas que fuerzan la precisión:
 - ¿De qué aggregate(s) y qué eventos sale esa información?
 - ¿La vista se arma a partir de un único stream (siempre el mismo `AggregateId`), o correlaciona eventos de varios streams/aggregates distintos?
 - ¿Hay algo que **materializar**, o la lectura se resuelve hidratando el aggregate en vivo (vía (b1)) o devolviendo los eventos crudos (vía (b2))? El Skill fija (a) —proyección materializada— como default y las otras dos como excepción justificada (`read-apis.md`).
-- ¿A qué **dominio** pertenece? Todo artefacto read-side es por dominio (`I{Dominio}ProjectionStore`, `ConfiguracionMartenProjections{Dominio}`, la Function GET dentro del Function App de ese dominio), así que el label `dom:` nunca se omite en un issue `tipo:projection`.
+- ¿A qué **dominio** pertenece? Los artefactos read-side *de contenido* son por dominio (`I{Dominio}ProjectionStore`, `ConfiguracionMartenProjections{Dominio}`, la Function GET dentro del Function App de ese dominio), así que el label `dom:` nunca se omite en un issue `tipo:projection`. Si la vista correlaciona streams de más de un dominio, o el issue toca el **continente** (el worker que hospeda esos artefactos, ver "Segunda señal" abajo), el label no desaparece: se repite uno por cada dominio real involucrado (MEF-ADR-0011, razonamiento de `dom:X`).
 
 ### Segunda señal: configuración del read-side (el worker, no una vista)
 
 No toda necesidad `tipo:projection` es una vista nueva. El usuario también puede describir una necesidad de **configuración del continente** -- el worker `<RootNamespace>.Projections` en sí (crearlo, conectarle telemetría, ajustar su Dockerfile o `.csproj`, extender su config-test base) o el registro de un named store nuevo para un dominio que todavía no tiene su read-side conectado al worker -- en vez de una vista concreta que consultar. Reconoce esta señal cuando el usuario dice cosas como "conecta el dominio X al worker de proyecciones", "el worker necesita telemetría", "agrega el named store de Y" -- sin mencionar una colección o un reporte específico.
 
-Esta clase de issue sigue siendo **`tipo:projection`**, nunca `tipo:tooling`: toca `src/<RootNamespace>.Projections/`, que `tooling-pipeline.sh` tiene prohibido escribir (MEF-ADR-0011, nota sobre `projection`). No fuerces las secciones "Vista a materializar" o "Endpoints/rutas" del template si el issue no las tiene -- son críticas para el subtipo "vista nueva", pero un issue de pura configuración del worker puede necesitar solo el subconjunto que aplique (usa criterio, no el template al pie de la letra).
+Esta clase de issue sigue siendo **`tipo:projection`**, nunca `tipo:tooling`: toca `src/<RootNamespace>.Projections/`, que `tooling-pipeline.sh` tiene prohibido escribir (MEF-ADR-0011, nota sobre `projection`).
+
+El DoR **no se relaja** en este subtipo: usa el mismo template, con los mismos encabezados, y adapta el *contenido* de las secciones que asumen una vista concreta (MEF-ADR-0011, "La columna `projection` de la tabla aplica igual a las dos clases"):
+
+- `## Necesidad de lectura`: declara **qué read-side configura** -- qué dominios, qué named stores registra, qué proyecciones va a hospedar el worker -- en vez de una `{Concepto}View` y sus campos.
+- `## Endpoints / rutas`: si el issue no expone superficie de consulta, escribe explícitamente "No aplica -- este issue no expone Functions de query" en vez de omitir el encabezado.
+- `## Capas de test esperadas`: normalmente solo el config-test del worker (las otras dos categorías no aplican si no hay proyección nueva ni Function GET) -- decláralo así, no borres la sección.
+
+**Nunca omitas el encabezado `## Necesidad de lectura`**: la validación programática de `/implement` (criterio 5 de MEF-ADR-0011) verifica su presencia en todo `tipo:projection`, así que un issue del worker sin ella se bloquea en el gate del DoR aunque su etiquetado sea correcto. `## Endpoints / rutas` y `## Capas de test esperadas` no se verifican por grep, pero siguen siendo **Crítica** y **Obligatoria** en la tabla del DoR: eres tú quien las exige antes de marcar `estado:listo`.
 
 **Si el issue configura el read-side de más de un dominio a la vez** (ej: registra el named store de dos dominios en el mismo PR, o cablea telemetría que cubre a todos los dominios del worker), etiqueta con **todos los `dom:` reales** cuyo read-side toca -- nunca inventes un pseudo-dominio para el worker (`dom:read-side`, `dom:bc`, etc.). Es la misma distinción continente/contenido que MEF-ADR-0011 fija en su razonamiento de `dom:X`: los artefactos por dominio llevan su propio `dom:`; el worker que los hospeda pertenece al Bounded Context completo y se etiqueta con la unión de los dominios reales que toca. Precedente: issue `#253` del consumidor Bitakora.ControlAsistencia, etiquetado `dom:programacion` + `dom:control-horas`.
 
 ### Proponer la receta (N1 / N2; N3 como escape hatch)
+
+Este paso aplica al subtipo "vista nueva": un issue de pura configuración del worker no materializa ninguna vista, así que no hay receta que elegir (declara en `## Necesidad de lectura` qué read-side configura y sigue).
 
 Con las respuestas anteriores, propone uno de los tres niveles del Skill `projections` (ver `modelos-marten.md` del Skill para el árbol de decisión completo -- no lo repitas aquí):
 
@@ -529,7 +539,7 @@ Lee y aplica los criterios de `"$PLUGIN_ROOT/docs/adr/mef-adr-0011-definition-of
 
 **Regla clave**: un issue solo puede pasar a `estado:listo` si cumple todos los criterios obligatorios y criticos de su tipo segun el MEF-ADR-0011 **y** todas las casillas del checklist pre-listo de la Revisión de complejidad. El DoR y la Revisión de complejidad son capas complementarias: el DoR garantiza completitud de información; la Revisión de complejidad garantiza tamaño y claridad. Uno sin el otro no alcanza.
 
-**Caso `tipo:projection`**: MEF-ADR-0011 ya tiene su propia columna para este tipo (issue #373). La sección "Necesidades de lectura y proyecciones" de este agente y el "Template para issues de proyección" (bajo `## Crear issues`) implementan esa fila -- exigen los campos criticos del handoff (via de consulta, vista, eventos, receta, endpoints, lifecycle) mas las capas de test esperadas, y el label `dom:` como **obligatorio** (equivalente a la columna `feature` de la tabla, no a `infra`/`tooling`: todo artefacto read-side es por dominio). No marques `estado:listo` un issue `tipo:projection` sin esos campos. Esto cubre tanto issues de **vista nueva** como de **configuración del read-side** del worker (MEF-ADR-0011, nota sobre `projection`; issue #448): en el segundo subtipo los campos críticos de vista/endpoints pueden no aplicar en su totalidad -- usa criterio según "Segunda señal" arriba -- pero el label `dom:` sigue siendo obligatorio y cubre todos los dominios reales que el issue toca, nunca un pseudo-dominio para el worker.
+**Caso `tipo:projection`**: MEF-ADR-0011 ya tiene su propia columna para este tipo (issue #373). La sección "Necesidades de lectura y proyecciones" de este agente y el "Template para issues de proyección" (bajo `## Crear issues`) implementan esa fila -- exigen los campos criticos del handoff (via de consulta, vista, eventos, receta, endpoints, lifecycle) mas las capas de test esperadas, y el label `dom:` como **obligatorio** (equivalente a la columna `feature` de la tabla, no a `infra`/`tooling`: todo artefacto read-side pertenece a un dominio real o a la unión de varios, nunca a un pseudo-dominio). No marques `estado:listo` un issue `tipo:projection` sin esos campos. Esto cubre tanto issues de **vista nueva** como de **configuración del read-side** del worker (MEF-ADR-0011, nota sobre `projection`; issue #448): el segundo subtipo conserva los mismos encabezados con contenido adaptado (ver "Segunda señal" arriba), y su label `dom:` cubre todos los dominios reales cuyo read-side el issue configura.
 
 ---
 
@@ -697,7 +707,9 @@ Si el issue de infra está asociado a un dominio específico, agrega también `-
 
 ### Template para issues de proyección
 
-Cuando la sección "Necesidades de lectura y proyecciones" concluya en un `tipo:projection`, usa este template. No dupliques aquí la doctrina del Skill `projections` (arbol de decisión, estilo canónico, read APIs) -- solo el handoff concreto de esta idea.
+Cuando la sección "Necesidades de lectura y proyecciones" concluya en un `tipo:projection`, usa este template -- para las **dos** clases del tipo: vista nueva y configuración del read-side. No dupliques aquí la doctrina del Skill `projections` (arbol de decisión, estilo canónico, read APIs) -- solo el handoff concreto de esta idea.
+
+Si la idea es de **configuración del worker** (segunda señal), conserva todos los encabezados y adapta su contenido según esa sección: `## Necesidad de lectura` declara qué read-side configura (dominios, named stores, proyecciones a hospedar) en vez de una `{Concepto}View`; `## Endpoints / rutas` declara "No aplica -- este issue no expone Functions de query" si no hay superficie de consulta; `## Capas de test esperadas` deja solo el config-test del worker.
 
 El esquema base de labels del consumidor (`scripts/setup-github-labels.sh`) ya incluye `tipo:projection` (issue #373). Si el consumidor no ha vuelto a correr ese script desde que actualizó el plugin, `gh issue create` fallaría con "label not found" -- asegúralo antes de crear el issue (no destructivo: solo lo crea si falta, y respeta el azul del esquema de tipos):
 
@@ -761,7 +773,7 @@ ISSUEEOF
 )"
 ```
 
-El label `dom:` **no se omite** en este tipo: todo artefacto read-side (store nombrado, seam de composición, Function GET) vive dentro de un dominio concreto. Si el issue toca el read-side de varios dominios, repite el label `dom:` por cada uno -- nunca un pseudo-dominio para el worker (MEF-ADR-0011). Si el issue depende de otro no cerrado, agrega también `--label "bloqueado"`.
+El label `dom:` **no se omite** en este tipo: los artefactos de contenido (store nombrado, seam de composición, Function GET) viven dentro de un dominio concreto, y el worker que los hospeda pertenece al BC completo. Si el issue toca el read-side de varios dominios -- o configura el worker que cubre a varios -- repite el label `dom:` por cada dominio real, nunca un pseudo-dominio para el worker (MEF-ADR-0011, razonamiento de `dom:X`). Si el issue depende de otro no cerrado, agrega también `--label "bloqueado"`.
 
 ### Principios de cada issue
 

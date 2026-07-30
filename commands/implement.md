@@ -98,14 +98,15 @@ gh issue view $ARGUMENTS --json labels -q '[.labels[].name | select(startswith("
 - Si el resultado esta vacio (no hay ningun label `dom:*`): no hay dominios que verificar, salta al paso 4.
 - Si hay uno o mas dominios: convierte cada uno a PascalCase (ej: `liquidacion-nomina` → `LiquidacionNomina`).
 
-Para cada dominio, la necesidad de scaffold se deriva del **alcance declarado del issue**, nunca de la sola ausencia del directorio (un issue puede no tocar ese dominio en absoluto). Lee la seccion `## Impacto en archivos` del body:
+Para cada dominio, la necesidad de scaffold se deriva del **alcance declarado del issue**, nunca de la sola ausencia del directorio (un issue puede no tocar ese dominio en absoluto). Extrae la seccion de impacto en archivos del body — su titulo varia segun el template del planner (`## Impacto en archivos` en `infra`/`refactor`, `## Impacto esperado en archivos (sugerencia)` en `feature`/`projection`), asi que matchea por el prefijo `## Impacto`, nunca por el titulo exacto:
 
 ```bash
-gh issue view $ARGUMENTS --json body -q '.body'
+gh issue view $ARGUMENTS --json body -q '.body' \
+  | awk '/^## /{en_impacto = ($0 ~ /^## Impacto/)} en_impacto'
 ```
 
 Para cada dominio en PascalCase:
-- Si `## Impacto en archivos` **no menciona** `src/<RootNamespace>.{PascalCase}/`: ese dominio no necesita scaffold — no preguntes por el, sin importar si el directorio existe o no.
+- Si esa seccion **no existe** en el body, o existe pero **no menciona** `src/<RootNamespace>.{PascalCase}/`: ese dominio no necesita scaffold — no preguntes por el, exista o no el directorio. La ausencia de declaracion se resuelve como "continuar sin scaffold" porque es la salida segura: si el pipeline realmente necesita el proyecto y no esta, falla de forma ruidosa en Stage 1, preferible a provisionar infraestructura de Azure por una prediccion incierta (`## Impacto en archivos` es solo **Recomendado** en `feature`/`projection` segun MEF-ADR-0011, asi que su ausencia es un caso normal, no un error del issue).
 - Si **si la menciona**: verifica si el directorio ya existe (`test -d "src/<RootNamespace>.{PascalCase}/"`). Si existe, no necesita scaffold. Si NO existe, este dominio es **candidato a scaffold**.
 
 - Si ningun dominio resulto candidato: salta al paso 4 sin preguntar nada.
@@ -149,8 +150,10 @@ Muestra una linea con el issue (si hay varios dominios, listalos separados por c
 Dominio: Liquidacion | Tipo: feature | Estado: listo
 ```
 
+Con varios labels `dom:` (tipico en un issue `projection` que configura el read-side de mas de un dominio):
+
 ```
-#448: Corregir la doctrina de etiquetado del worker de proyecciones
+#87: Registrar el named store de programacion y control-horas en el worker
 Dominio: Programacion, ControlHoras | Tipo: projection | Estado: listo
 ```
 
