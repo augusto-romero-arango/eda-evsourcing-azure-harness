@@ -60,19 +60,137 @@ Las **clases de proyeccion** -- el tipo que hereda de `SingleStreamProjection<TV
 
 Los **unit tests de proyeccion** (`Create`/`Apply`/`ShouldDelete`) viven en `tests/<RootNamespace>.Projections.Tests/{Dominio}/{Concepto}ProjectionTests.cs` -- el mismo proyecto que ya aloja el config-test de la seccion 6, que ya lleva `ProjectReference` al worker y ve `ReadModels` transitivamente: ningun `.csproj` cambia por esto.
 
-### 6. Doctrina de config-test: guarda del `partial`, ciclo de vida `Async` y replica de metadata -- hermana de MEF-ADR-0029
+### 5b. Precondicion: una biblioteca de dominio visible desde ambos lados (issue #447, consumidor #237)
+
+Las clases de proyeccion del worker (`{Concepto}Projection.Create(TurnoCreado evento)`, seccion anterior) necesitan referenciar en tiempo de compilacion los **tipos de evento concretos** del dominio (`TurnoCreado`, y cualquier value object rico que esos eventos carguen). El seam compartido que fija la seccion 6 (`ContratoEventStore{Dominio}`) tiene la misma necesidad: su cuerpo invoca `{ValueObject}.ConfigurarSerializacion(resolver)` sobre tipos concretos del dominio (MEF-ADR-0012). Ninguno de los dos puede resolverse si esos tipos viven donde el marco los coloca hoy por defecto -- `src/<RootNamespace>.{Dominio}/Entities/`, dentro del **proyecto de la Function App** del write-side (`domain-scaffolder`, Paso 2).
+
+**Este ADR fija como requisito, no como nota al pie, que el dominio aporte una biblioteca de clases -- `src/<RootNamespace>.{Dominio}.Domain/` -- que aloje los AggregateRoots, eventos y value objects ricos del dominio, y que sea la unica referenciada tanto por el Function App del write-side (`<RootNamespace>.{Dominio}.csproj`) como por el worker (`<RootNamespace>.Projections.csproj`).** Es la precondicion que hace posible tanto las clases de proyeccion (seccion anterior) como el seam compartido (seccion 6): sin ella, ninguno de los dos compila.
+
+**Por que no alcanza con referenciar el `.csproj` del Function App directamente.** Dos razones, no una sola preferencia de estilo:
+
+1. **Direccion de dependencia invertida.** El Function App es la unidad de despliegue del write-side -- carga `Microsoft.Azure.Functions.Worker` (isolated worker SDK), los triggers HTTP/ServiceBus y todo el wiring de Wolverine (MEF-ADR-0003). Hacer que el worker de proyecciones (un `Microsoft.NET.Sdk.Worker` sin ingress, seccion 8) dependa de esa unidad de despliegue completa invierte la relacion: el "consumidor" de eventos terminaria arrastrando el runtime entero del "productor", solo para llegar a un puñado de tipos.
+2. **Viola la seccion 4 por transitividad.** La seccion 4 fija que el worker **no** wirea Azure Service Bus, Wolverine ni `IPrivateEventSender`/`IPublicEventSender`. Si referenciara el `.csproj` del Function App, heredaria esas dependencias transitivamente aunque nunca las invoque -- exactamente la superficie que la seccion 4 excluye a proposito.
+
+**Por que no alcanza con `<RootNamespace>.Contracts`.** `Contracts` existe para los tipos que **cruzan un bus** -- MEF-ADR-0012 ("Frontera de serializacion: event store vs bus") fija que todo tipo ahi debe ser plano y deserializable con el serializador por defecto, sin constructor privado ni `ConfigurarSerializacion`. Los AggregateRoots y eventos del dominio son exactamente lo opuesto: tipos ricos, con constructores privados y factories, que **nunca** deben cruzar un bus (misma referencia). Meterlos en `Contracts` contradice la razon de ser de ese proyecto; `<RootNamespace>.{Dominio}.Domain` es un proyecto distinto, sin ninguna de las dos restricciones de `Contracts`.
+
+**Costo advertido -- no es gratis para un consumidor existente.** Un dominio ya scaffoldeado con organizacion vertical (eventos y AggregateRoots dentro de la carpeta de feature del comando que los produce, en vez de la raiz `Entities/` que ya recomienda `domain-scaffolder`) necesita **mover esos tipos** a `<RootNamespace>.{Dominio}.Domain` antes de registrar su primera proyeccion -- un refactor cuya superficie puede ser amplia si el dominio tiene muchos comandos ya implementados (ultimo parrafo de la instancia que motivo este ADR, issue #423 del consumidor). Este ADR no automatiza esa migracion: `domain-scaffolder` (Paso 3b, MEF-ADR-0006/#370) crea el proyecto `.Domain` **vacio** la primera vez que un dominio adopta proyecciones -- mover los tipos existentes hacia el es responsabilidad del consumidor, documentada aqui para que no se descubra a mitad de una implementacion.
+
+Un dominio scaffoldeado *despues* de que su BC ya adopto proyecciones no paga este costo: `domain-scaffolder` crea `Entities/` (Paso 2) y `.Domain` (Paso 3b) en la misma corrida, y el consumidor puede optar por escribir el AggregateRoot directamente en `.Domain` desde el principio.
+
+### 6. Doctrina de config-test: guarda del `partial`, ciclo de vida `Async` y el seam compartido `ContratoEventStore{Dominio}` -- hermana de MEF-ADR-0029
 
 MEF-ADR-0029 fija, para el write-side, un test de composicion que construye el `IServiceCollection` real y valida con `BuildServiceProvider(ValidateOnBuild, ValidateScopes)` que el grafo de DI arranca. El worker de proyecciones necesita su propio config-test, hermano de ese patron pero **no identico**: no valida un grafo de DI generico, sino la configuracion especifica de Marten que cada named store arma.
 
 **La composicion es una fuente unica compartida entre `Program.cs` del worker y el test**, igual que MEF-ADR-0029 exige para el write-side: cada dominio contribuye su propio metodo de extension (`ConfiguracionMartenProjections{Dominio}.cs`, siguiendo el seam verificado en el consumidor de referencia) que registra su named store; `Program.cs` del worker invoca uno por dominio.
 
-El config-test (`<RootNamespace>.Projections.Tests`) construye el `IServiceCollection` invocando esos mismos metodos de extension con una cadena de conexion dummy -- **sin necesidad de Postgres real**: verificado contra la documentacion oficial de Marten [4], desde Marten 7 el `DocumentStore` ya no se inicializa forzadamente durante el bootstrapping del `IHost` (para evitar IO sincronico ahi); la conexion se abre recien en la primera operacion real contra la base. El test resuelve cada named store y verifica tres cosas:
+El config-test (`<RootNamespace>.Projections.Tests`) construye el `IServiceCollection` invocando esos mismos metodos de extension con una cadena de conexion dummy -- **sin necesidad de Postgres real**: verificado contra la documentacion oficial de Marten [4], desde Marten 7 el `DocumentStore` ya no se inicializa forzadamente durante el bootstrapping del `IHost` (para evitar IO sincronico ahi); la conexion se abre recien en la primera operacion real contra la base.
+
+#### El seam compartido `ContratoEventStore{Dominio}` (issue #447)
+
+Tres piezas de la configuracion de Marten del named store no son exclusivas del read-side: son el **mismo contrato de lectura de eventos** que el write-side de ese dominio ya fija, y que el named store del worker necesita replicar exactamente para leer lo que el writer persistio -- `Events.StreamIdentity` (que decide como se interpreta la columna `stream_id`), el resolver de serializacion custom que exige todo tipo con constructor privado (MEF-ADR-0012, `ConfigurarSerializacion`) y las tres columnas de metadata de evento (seccion 7). Antes de este ADR (enmienda issue #447), cada uno de los tres se declaraba **por separado** en el write-side y en el read-side -- una replica manual, mantenida por enumeracion, que ya produjo tres instancias del mismo defecto (issue #423, la instancia de `Events.StreamIdentity` del consumidor Bitakora.ControlAsistencia issue `#253`/PR `#254`, y la necesidad de mover tipos de evento hacia una biblioteca compartida, seccion 5b) y que estructuralmente seguiria produciendo una cuarta cada vez que Marten agregue un atributo nuevo a ese contrato.
+
+**La correccion no es agregar una cuarta guarda a la lista: es dejar de tener una lista.** Los tres puntos se declaran **una sola vez**, en un metodo estatico que vive en la biblioteca de dominio compartida que fija la seccion 5b (`<RootNamespace>.{Dominio}.Domain`), y que **invocan los dos lados** -- nunca los copian:
+
+```csharp
+namespace <RootNamespace>.{Dominio}.Domain;
+
+/// <summary>
+/// Contrato de lectura de eventos del dominio {Dominio}: unico punto donde write-side y read-side
+/// declaran stream identity, resolver de serializacion y metadata de evento (MEF-ADR-0034 seccion 6).
+/// Ejecutado por ambos lados -- nunca copiado. El contenido especifico del dominio (que value objects
+/// registran ConfigurarSerializacion, si el dominio necesita StreamIdentity.AsString) es responsabilidad
+/// del equipo que dueno de este dominio, no del harness (ver "Reparto marco/consumidor", issue #447).
+/// </summary>
+public static class ContratoEventStore{Dominio}
+{
+    public static void Configurar(IEventStoreOptions events, DefaultJsonTypeInfoResolver resolver)
+    {
+        // Metadata de evento (seccion 7) -- obligatoria para todo dominio, ver seccion 7.
+        events.MetadataConfig.CorrelationIdEnabled = true;
+        events.MetadataConfig.CausationIdEnabled = true;
+        events.MetadataConfig.HeadersEnabled = true;
+
+        // Stream identity -- default de Marten es AsGuid; descomentar solo si este dominio usa
+        // claves de stream no-Guid (verificado contra la documentacion oficial, ver "Contexto"):
+        // events.StreamIdentity = StreamIdentity.AsString;
+
+        // Resolver de serializacion (MEF-ADR-0012) -- registrar aqui ConfigurarSerializacion() de
+        // cada value object/evento con constructor privado que este dominio declare:
+        // {ValueObjectConCtorPrivado}.ConfigurarSerializacion(resolver);
+    }
+}
+```
+
+Invocado desde el write-side, dentro de `ComposicionServicios{Dominio}.cs` (MEF-ADR-0029), encadenado sobre el `IServiceCollection.ConfigureMarten(Action<StoreOptions>)` que Marten ya expone para post-configurar el mismo `StoreOptions` que arma `AgregarMartenEventStore()` (MEF-ADR-0012, seccion "Registro en infraestructura", ya documenta este hook):
+
+```csharp
+services.ConfigureMarten(options =>
+{
+    if (options.Serializer() is Marten.Services.SystemTextJsonSerializer stj)
+    {
+        stj.Configure(jsonOptions =>
+        {
+            var resolver = new DefaultJsonTypeInfoResolver();
+            ContratoEventStore{Dominio}.Configurar(options.Events, resolver);
+            jsonOptions.TypeInfoResolver = resolver;
+        });
+    }
+});
+```
+
+E invocado desde el read-side, dentro del `AddMartenStore<I{Dominio}ProjectionStore>` de `ConfiguracionMartenProjections{Dominio}.cs` (seccion 2), con la misma forma exacta:
+
+```csharp
+services.AddMartenStore<I{Dominio}ProjectionStore>(opts =>
+{
+    opts.Connection(martenConnectionString);
+    opts.DatabaseSchemaName = "{schema}"; // ver "Por que DatabaseSchemaName queda fuera" abajo
+
+    if (opts.Serializer() is Marten.Services.SystemTextJsonSerializer stj)
+    {
+        stj.Configure(jsonOptions =>
+        {
+            var resolver = new DefaultJsonTypeInfoResolver();
+            ContratoEventStore{Dominio}.Configurar(opts.Events, resolver);
+            jsonOptions.TypeInfoResolver = resolver;
+        });
+    }
+})
+.AddAsyncDaemon(DaemonMode.HotCold);
+```
+
+**Firma verificada contra el codigo fuente de `JasperFx/marten`** (rama `master`, `src/Marten/StoreOptions.cs`, `src/Marten/Events/EventGraph.cs`, `src/Marten/Events/IEventStoreOptions.cs`): `StoreOptions.Events` es de tipo `IEventStoreOptions` (`namespace Marten.Events`, implementado por `EventGraph`); esa interfaz declara `StreamIdentity` como propiedad mutable (`get; set;`) y `MetadataConfig` como propiedad get-only que retorna la clase mutable `MetadataConfig` (no la variante de solo lectura `IReadonlyMetadataConfig` que expone `IReadOnlyEventStoreOptions` -- la superficie que ya usa `AssertOpcionesDeEvento`, seccion previa a esta enmienda). Ninguna de las dos, `IEventStoreOptions` ni `DefaultJsonTypeInfoResolver` (`System.Text.Json.Serialization.Metadata`), expone `Connection` -- ese metodo vive directamente en `StoreOptions`, un nivel arriba, fuera de lo que cualquiera de los dos parametros del seam puede alcanzar.
+
+**Por que esta firma y no `StoreOptions` completo (punto de diseno del issue #447).** Pasar `StoreOptions` entero -- lo que ambos lados ya tienen a mano dentro de su respectivo lambda de configuracion -- permitiria que un consumidor metiera ahi, con el tiempo, configuracion que **no** debe ser compartida: `Connection` (dos procesos con dos ciclos de vida, seccion 8) es el caso concreto que motiva la decision, pero el mismo riesgo aplica a `DatabaseSchemaName` y a `AddAsyncDaemon` si viajaran dentro de un `Action<StoreOptions>` compartido. Restringir la firma a `IEventStoreOptions events` (el mismo tipo que ya devuelve `StoreOptions.Events`, sin acceso al objeto contenedor) mas `DefaultJsonTypeInfoResolver resolver` hace que ese error de diseno sea **imposible de cometer por el tipo del parametro**, no solo desaconsejado por convencion: no hay forma de escribir `events.Connection(...)` porque `Connection` no es miembro de `IEventStoreOptions`.
+
+**Que queda deliberadamente fuera del seam, y por que:**
+
+- **`Connection`**: vive en `StoreOptions` directamente, un proceso a la vez (write-side conecta desde la Function App, read-side desde el worker, seccion 2) -- estructuralmente inalcanzable desde `IEventStoreOptions` (punto anterior).
+- **`AddAsyncDaemon(DaemonMode.HotCold)`**: exclusivo del read-side (seccion 2) -- el write-side nunca corre un daemon. No es parte del "contrato de lectura de eventos", es infraestructura de proceso.
+- **Proyecciones `Inline`**: deben estar **ausentes** del worker (seccion 3) -- son responsabilidad exclusiva del write-side cuando un dominio las necesita, nunca del seam compartido ni del named store del worker.
+- **`DatabaseSchemaName` (decision explicita, issue #447)**: **queda fuera del seam**, igual que `Connection`. A diferencia del trio anterior (decisiones del dominio que un humano fija una vez y que pueden cambiar independientemente en cada lado si nadie las comparte), el schema es un **valor derivado en tiempo de scaffold** -- `domain-scaffolder` lo calcula una sola vez (Paso 0) y lo estampa literal en ambos lados (Paso 1 y Paso 3b) a partir de la misma fuente. No tiene el perfil de riesgo que motiva este ADR (un humano edita un lado y olvida el otro): los dos literales nacen identicos porque los escribe el mismo agente en la misma corrida, y cualquier consumidor que lo cambie a mano en un lado sin el otro esta editando codigo generado fuera del flujo que este ADR gobierna. Ademas, aunque Marten expone un `IEventStoreOptions.DatabaseSchemaName` propio (schema especifico de eventos, distinto del `StoreOptions.DatabaseSchemaName` general), el marco no lo usa -- un dominio usa un unico schema para documentos y eventos (MEF-ADR-0003) -- asi que meterlo en el seam agregaria una superficie que el marco no ejercita.
+
+El test resuelve cada named store y verifica:
 
 1. **Guarda del `partial`**: que el store de **cada** dominio conocido del BC efectivamente resuelve desde el contenedor. Un metodo `partial` **puede** quedar sin implementacion sin romper el build, y en ese caso desaparece en silencio: verificado contra la documentacion oficial de C# [10], eso ocurre exactamente cuando la declaracion no lleva modificadores de acceso, retorna `void`, no tiene parametros `out` y no es `virtual`/`override`/`sealed`/`new`/`extern` -- *"the method and all calls to the method are removed at compile time when there's no implementation"*. Cualquier otra forma (p. ej. `public static partial IServiceCollection ...`) **si** exige implementacion y el compilador la reclama (`CS8795`). El seam de composicion del worker cae en el primer grupo -- es la forma que hace util el hook de un dominio que aun no existe --, asi que un dominio nuevo que olvide su llamada de registro compila limpio y su daemon simplemente nunca corre. Este test es el primero en notarlo, resolviendo `I{Dominio}ProjectionStore` y fallando si no esta registrado, en vez de descubrirlo en produccion. El agente implementador (issue #365) debe mantener esa correspondencia: si elige declarar el seam con modificadores de acceso o retorno no-`void`, el compilador ya cubre esta guarda y el test conserva valor solo por los puntos 2 y 3.
 2. **Ciclo de vida `Async`**: que ninguna proyeccion registrada en el named store del worker haya quedado con lifecycle `Inline` -- si aparece una `Inline` ahi, es una proyeccion mal ubicada (deberia vivir en el write-side, seccion 3) o una regresion de copy-paste.
-3. **Replica exacta de la configuracion de metadata del write-side**: que `Events.MetadataConfig.CorrelationIdEnabled`/`CausationIdEnabled`/`HeadersEnabled` esten en `true` en el named store del worker, exactamente como en la configuracion Marten del write-side de ese mismo dominio (seccion 7) -- una divergencia entre ambos lados (p. ej. alguien habilita una columna nueva en el write-side y olvida replicarla aca) rompe la proyeccion en runtime con una excepcion de metadata ausente, no en el build.
+3. **Que el named store invoco el seam compartido** (reemplaza la vieja "replica exacta de metadata"): en vez de hardcodear los valores esperados (`CorrelationIdEnabled` debe ser `true`, etc. -- la lista que este ADR elimina), el test invoca `ContratoEventStore{Dominio}.Configurar(...)` directamente sobre un `StoreOptions` descartable, a modo de oraculo independiente, y compara ese resultado contra lo que el named store resuelto realmente expone:
+
+   ```csharp
+   var oraculo = new StoreOptions();
+   ContratoEventStoreVentas.Configurar(oraculo.Events, new DefaultJsonTypeInfoResolver());
+
+   var store = provider.GetRequiredService<IVentasProjectionStore>();
+
+   store.Options.Events.StreamIdentity.Should().Be(oraculo.Events.StreamIdentity);
+   store.Options.Events.MetadataConfig.Should().BeEquivalentTo(oraculo.Events.MetadataConfig);
+   ```
+
+   `BeEquivalentTo` (AwesomeAssertions) compara `MetadataConfig` propiedad por propiedad **sin que el test enumere cada una a mano** -- la comparacion cubre `CorrelationIdEnabled`/`CausationIdEnabled`/`HeadersEnabled` hoy y cualquier columna que Marten agregue mañana, sin que este test necesite una linea nueva. La guarda ya no puede quedar desactualizada frente al write-side porque no hay dos configuraciones independientes que comparar -- hay una sola, invocada dos veces; lo que el test verifica es que el read-side de verdad la invoco (si `Configurar{Dominio}` dejara de llamar a `ContratoEventStore{Dominio}.Configurar(...)` y volviera a hardcodear valores propios, esta comparacion lo detectaria en cuanto el contenido del seam cambiara y el read-side no se actualizara con el). El resolver de serializacion (tercer punto del contrato) no admite el mismo patron de comparacion estructural -- un `DefaultJsonTypeInfoResolver` es una lista de delegados, no un objeto de valor --, asi que su cobertura queda **no verificada** por este test generico; `projection-test-writer` (issue #365) debe agregar, por dominio, un round-trip de serializacion concreto cuando ese dominio registre su primer tipo con `ConfigurarSerializacion` (mismo principio de verificacion graduada que ya aplica MEF-ADR-0012 al guardrail de portabilidad de bus).
 
 El agente que implemente este test (issue #365, `projection-test-writer`) debe reverificar la superficie exacta de `StoreOptions.Projections` de la version vigente del paquete Marten contra la documentacion oficial antes de escribir el assert del punto 2 -- mismo principio de re-verificacion que MEF-ADR-0029 seccion 3 exige para tipos que puedan cambiar de forma entre versiones.
+
+**Las guardas que sobreviven son exclusivas de cada lado -- la clase de guarda que desaparece es la unica que comparaba ambos lados.** Los puntos 1 y 2 arriba (partial, lifecycle `Async`) no tienen equivalente en el write-side: son propios de como el worker registra sus named stores. La guarda de replica de atributos compartidos (vieja punto 3) desaparece **por construccion, no por omision** -- no es que el marco decidiera dejar de verificarla, es que la cosa que verificaba (dos configuraciones independientes que podian divergir) dejo de existir en cuanto ambos lados pasaron a invocar el mismo metodo. Este ADR absorbe con esta enmienda tanto el issue #423 (replica de `TypeInfoResolver`) como la instancia de `Events.StreamIdentity` (consumidor Bitakora.ControlAsistencia, issue `#253`/PR `#254`) -- ver "Control de cambios".
 
 Este config-test **no sustituye** el test de composicion de MEF-ADR-0029 (que sigue viviendo en cada dominio, sobre su propio `ComposicionServicios{Dominio}.cs` del write-side) ni el DSL Given/When/Then de MEF-ADR-0002 (que sigue validando comportamiento de negocio del aggregate, no del read-side). Son tres categorias de test complementarias, cada una sobre una capa distinta.
 
