@@ -261,6 +261,33 @@ await builder.Build().RunAsync();
 
 Si el Paso 0 no resolvio ningun alias `serviceBus.external` con `alcance == "compartido"`, omite la variable `serviceBusCosmos` y el argumento correspondiente (el metodo de extension del Paso 6b tampoco declara ese parametro en ese caso). Si hay mas de un alias, repite el par variable + argumento por cada uno. No wirees ningun alias con `alcance == "externo"` (integracion verdaderamente externa, diferida por MEF-ADR-0024 decision #5, default-off).
 
+**6a. Crear `Infraestructura/IdentidadEventos{PascalCase}.cs`** (MEF-ADR-0036): la fuente unica de los tipos de evento que este dominio persiste en el event store. El dominio nace sin eventos -- la lista se llena a medida que el flujo TDD (`implementer`) agrega aggregates con `Apply(TEvento)`, fuera del alcance de este agente (issue hermano #476). Va en `Infraestructura/`, no en `Entities/` (reservado a AggregateRoots y eventos): es configuracion que consume su vecino de carpeta, `ComposicionServicios{PascalCase}` (Paso 6b).
+
+```csharp
+namespace <RootNamespace>.{PascalCase}.Infraestructura;
+
+/// <summary>
+/// Identidad de los eventos que el dominio {PascalCase} persiste en el event store
+/// (MEF-ADR-0036): unica fuente de tipos que <c>ComposicionServicios{PascalCase}</c> registra via
+/// <c>Events.AddEventTypes</c>. Criterio de inclusion: SE PERSISTE -- un evento que solo cruza un
+/// bus (Azure Service Bus) no entra aqui, se deserializa a un tipo fijo por endpoint/subscription y
+/// nunca pasa por el <c>EventGraph</c> de ningun <c>IDocumentStore</c>. Registrar un tipo aqui NO
+/// declara su alias: lo sigue derivando <c>EventNamingStyle.SmarterTypeName</c>, el valor que fija
+/// <c>Cosmos.EventSourcing.CritterStack</c> (MEF-ADR-0036 seccion 1) -- no el default de Marten.
+/// Esta lista no duplica ni reemplaza la de serializacion de MEF-ADR-0012
+/// (<c>ConfigurarSerializacion</c>): son conjuntos que se solapan sin contenerse -- un evento con
+/// constructor publico entra aqui y no necesita <c>ConfigurarSerializacion</c>; un value object con
+/// constructor privado necesita <c>ConfigurarSerializacion</c> y no es un evento, nunca entra aqui.
+/// </summary>
+public static class IdentidadEventos{PascalCase}
+{
+    // El dominio nace sin eventos persistidos. Agrega un typeof(TEvento) por cada evento nuevo que
+    // un AggregateRoot aplique via Apply -- el guardrail derivado de ComposicionContenedorTests
+    // (MEF-ADR-0036 CA-4) exige que coincida con el EventGraph del contenedor compuesto.
+    public static IReadOnlyList<Type> TiposPersistidos { get; } = [];
+}
+```
+
 **6b. Crear `Infraestructura/ComposicionServicios{PascalCase}.cs`** con el metodo de extension que concentra toda la composicion de DI que antes vivia inline en `Program.cs` (issue #319, MEF-ADR-0029). La seccion de brokers nombrados es **dinamica**, con la misma regla del Paso 6: un parametro y una linea `AgregarAzureServiceBusNombradoServerless` **por cada alias del backbone compartido** resuelto en el Paso 0. El ejemplo siguiente ilustra un dominio con un unico alias `COSMOS`:
 
 ```csharp
@@ -273,6 +300,7 @@ using Cosmos.EventSourcing.CritterStack;
 using Cosmos.EventSourcing.CritterStack.Commands;
 using Cosmos.MultiTenancy;
 using FluentValidation;
+using Marten;
 using Microsoft.Azure.Functions.Worker.OpenTelemetry;
 using Microsoft.Extensions.DependencyInjection;
 using OpenTelemetry;
@@ -317,6 +345,19 @@ public static class ComposicionServicios{PascalCase}
             });
 
         services.AgregarMartenEventStore();
+
+        // Identidad del evento persistido (MEF-ADR-0036): registra los tipos de este dominio en
+        // el EventGraph antes de la primera lectura. AddEventTypes no redeclara el alias -- lo
+        // sigue derivando EventNamingStyle.SmarterTypeName (fijado por Cosmos.EventSourcing.CritterStack,
+        // no por el default de Marten). El cuerpo va con llaves aunque hoy tenga una sola linea:
+        // cuando un value object o evento con constructor privado necesite el resolver de
+        // serializacion de MEF-ADR-0012 (ConfigurarSerializacion), se suma DENTRO de este mismo
+        // bloque como una linea mas -- nunca como un segundo ConfigureMarten.
+        services.ConfigureMarten(options =>
+        {
+            options.Events.AddEventTypes(IdentidadEventos{PascalCase}.TiposPersistidos);
+        });
+
         services.AgregarWolverineCommandRouter();
         services.AgregarWolverineEventSender();
         // Enruta IPrivateEvent directo a IPrivateEventHandlerAsync<TEvent>, sin comando espejo (MEF-ADR-0024, issue #313).
@@ -1325,13 +1366,16 @@ extension que `Program.cs` (`AgregarServicios{PascalCase}`, Paso 6b) con cadenas
 y valida el resultado con `BuildServiceProvider(ValidateOnBuild: true, ValidateScopes: true)`. Es
 el guardrail que detecta en segundos, en CI, un registro faltante que de otro modo solo revienta
 en runtime (issue #221 del consumidor Bitakora.ControlAsistencia: `ITenantResolver` sin registrar
-paso "compila + unit tests verdes" y solo se detecto post-deploy en smoke tests).
+paso "compila + unit tests verdes" y solo se detecto post-deploy en smoke tests). Gana ademas una
+guarda derivada de identidad de eventos (MEF-ADR-0036 CA-3/CA-4, ultimo test de la clase abajo).
 
 ```csharp
 using AwesomeAssertions;
 using <RootNamespace>.{PascalCase}.Infraestructura;
 using Cosmos.EventDriven.Abstractions;
+using Cosmos.EventSourcing.Abstractions;
 using Cosmos.EventSourcing.Abstractions.Commands;
+using Marten;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace <RootNamespace>.{PascalCase}.Tests.Infraestructura;
@@ -1411,6 +1455,35 @@ public class ComposicionContenedorTests
         var router = scope.ServiceProvider.GetRequiredService<IPrivateEventRouter>();
 
         router.Should().NotBeNull();
+    }
+
+    // Guardrail derivado y auto-mantenido (MEF-ADR-0036 CA-3/CA-4): el oraculo de "que eventos
+    // deberian estar registrados" se deriva por reflexion de los Apply(TEvento) de los
+    // AggregateRoots del dominio -- no depende de que alguien recuerde actualizar
+    // IdentidadEventos{PascalCase} a mano. Compara contra el EventGraph del IDocumentStore que
+    // compone EL CONTENEDOR REAL (nunca un StoreOptions standalone): es la unica forma que
+    // detecta tanto el evento que nadie agrego a la lista como el ConfigureMarten que no aplica
+    // -- un test que solo mirara la lista de produccion dejaria esta segunda falla sin cubrir
+    // hasta el primer evento (verificado por mutacion real, consumidor PR #280). BeSubsetOf, no
+    // Contain: en un dominio recien scaffoldeado eventosEsperados esta vacio, y AwesomeAssertions
+    // lanza ArgumentException si el "expected" de Contain esta vacio.
+    [Fact]
+    public async Task AgregarServicios{PascalCase}_RegistraTodosLosEventosPersistidos()
+    {
+        var eventosEsperados = typeof(ComposicionServicios{PascalCase}).Assembly
+            .GetTypes()
+            .Where(t => typeof(AggregateRoot).IsAssignableFrom(t) && !t.IsAbstract)
+            .SelectMany(t => t.GetMethods())
+            .Where(m => m.Name == "Apply" && m.GetParameters().Length == 1)
+            .Select(m => m.GetParameters()[0].ParameterType)
+            .Distinct();
+
+        await using var proveedor = ConstruirProveedor();
+
+        var store = proveedor.GetRequiredService<IDocumentStore>();
+        var eventosRegistrados = store.Options.Events.AllKnownEventTypes().Select(e => e.EventType);
+
+        eventosEsperados.Should().BeSubsetOf(eventosRegistrados);
     }
 }
 ```
@@ -2805,6 +2878,7 @@ Scaffold completado para el dominio "{kebab}":
     Program.cs                             - Arma el host y delega toda la composicion de DI a ComposicionServicios{PascalCase} (issue #319, MEF-ADR-0029)
     HealthCheck.cs                         - Trigger HTTP de health check (raiz del proyecto)
     VersionCheck.cs                        - Trigger HTTP de /api/version (readiness gate por SHA, issue #325, MEF-ADR-0031)
+    Infraestructura/IdentidadEventos{PascalCase}.cs - Tipos de evento persistidos del dominio (lista vacia al nacer, AddEventTypes) - MEF-ADR-0036
     Infraestructura/ComposicionServicios{PascalCase}.cs - Unica fuente de verdad del wiring de DI (Wolverine, Marten, routers, tenancy, OpenTelemetry, validacion) - MEF-ADR-0029
     Infraestructura/RequestValidator.cs    - IRequestValidator + implementacion
     Infraestructura/TenantResolverMonoTenantPorDefecto.cs - ITenantResolver mono-tenant transitorio (MEF-ADR-0028)
@@ -2818,7 +2892,7 @@ Scaffold completado para el dominio "{kebab}":
     Infraestructura/ServiceBusEndpointBaseTests.cs - Tests de orquestacion (feliz, lock-lost, dead-letter, JSON invalido)
     Infraestructura/ServiceBusSessionEndpointBaseTests.cs - Tests de orquestacion de fan-in (feliz, lock-lost, dead-letter, Subject no reconocido)
     Infraestructura/PrivateEventEndpointBaseTests.cs - Tests de orquestacion del EventHandler directo (feliz, lock-lost, dead-letter, JSON invalido)
-    Infraestructura/ComposicionContenedorTests.cs - Test de composicion del contenedor DI: BuildServiceProvider(ValidateOnBuild + ValidateScopes) + resolucion explicita de los routers (issue #319, MEF-ADR-0029)
+    Infraestructura/ComposicionContenedorTests.cs - Test de composicion del contenedor DI: BuildServiceProvider(ValidateOnBuild + ValidateScopes) + resolucion explicita de los routers (issue #319, MEF-ADR-0029) + guarda derivada de eventos aplicados vs EventGraph del IDocumentStore compuesto (MEF-ADR-0036)
                                            - Proyecto de tests unitarios (xUnit v3 + AwesomeAssertions)
 
   tests/<RootNamespace>.{PascalCase}.SmokeTests/
