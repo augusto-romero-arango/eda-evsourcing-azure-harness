@@ -222,6 +222,56 @@ Cuando el issue es `tipo:projection` o el diff toca `<RootNamespace>.ReadModels`
 - **Naming** (MEF-ADR-0006): `Obtener{X}`/`Listar{X}s`, `{Concepto}View`, `{Concepto}Projection` (N1 y N2), `I{Dominio}ProjectionStore`, `ConfiguracionMartenProjections{Dominio}.Configurar{Dominio}()`. Una carpeta por query, sin sufijo `Function` (ese sufijo es solo para comandos).
 - **Carve-out del endpoint GET frente al coverage gate**: la clasificacion exacta de un `FunctionEndpoint.cs` de consulta frente a MEF-ADR-0014 es un punto delegado a un issue aparte (#371, fuera de tu alcance). No reportes como hallazgo la ausencia de tests unitarios adicionales sobre un `FunctionEndpoint` de consulta que solo delega a `LoadAsync`/`Query`: su cobertura real es el test de composicion (`projection-test-writer`) y el smoke test (`smoke-test-writer`).
 
+#### Compatibilidad de configuracion Marten: write-side vs read-side (issue #447)
+
+MEF-ADR-0034 seccion 6 fija un config-test barato para el worker de proyecciones, pero ese test solo compara tres flags de `Events.MetadataConfig` -- un subconjunto, no la doctrina completa. Tu, como reviewer, eres quien corre la verificacion completa, y solo bajo gate.
+
+**El gate**: corre esta verificacion solo si el diff (`git diff main...HEAD`) toca (a) la version de `Cosmos.EventSourcing.CritterStack` o `Cosmos.EventSourcing.Abstractions` en algun `.csproj`, o (b) configuracion de Marten -- los archivos `ComposicionServicios{Dominio}.cs`, `ConfiguracionMartenProjections{Dominio}.cs`, `ConfiguracionSerializacion*.cs`, `IdentidadEventos{Dominio}.cs`, o cualquier linea cambiada con `AddMartenStore`, `ConfigureMarten`, `AgregarConfiguracionMarten`, `opts.Events.`, `opts.Serializer`, `Policies.`, `DatabaseSchemaName`, `AddEventTypes` o `TypeInfoResolver`. Si ninguna condicion aplica: fila `n/a` en el checklist (paso 8), sin decompilar nada.
+
+**Por que hace falta decompilar.** El write-side **no** tiene su configuracion completa en el codigo del consumidor: `Commands.MartenEventStoreExtensions.AgregarConfiguracionMartenComandos`, el metodo del paquete `Cosmos.EventSourcing.CritterStack` que cada dominio invoca desde `ComposicionServicios{Dominio}.cs`, fija atributos que el consumidor nunca declara explicitamente. Mismo procedimiento y mismo gotcha de casing que ya documenta `agents/bug-investigator.md` para este mismo paquete (carpeta del cache de NuGet en minusculas, ensamblado en PascalCase, `TargetFramework net10.0`) -- no lo reinventes, solo cambia el objetivo:
+
+```bash
+ls ~/.nuget/packages/cosmos.eventsourcing.critterstack/
+ilspycmd ~/.nuget/packages/cosmos.eventsourcing.critterstack/<version-del-csproj>/lib/net10.0/Cosmos.EventSourcing.CritterStack.dll -o /tmp/decompiled-critterstack
+```
+
+Lee `Commands/MartenEventStoreExtensions.cs` (`AgregarConfiguracionMartenComandos`) en el output decompilado -- esa es la linea base real del write-side, no lo que asumas por memoria.
+
+**Los dos pares a verificar** (nombrados por MEF-ADR-0034 seccion 6):
+
+1. **Eventos**: write-side (`ComposicionServicios{Dominio}` + lo que fija el paquete) -> worker (`AddMartenStore<I{Dominio}ProjectionStore>`, MEF-ADR-0034 seccion 2).
+2. **Read models**: worker (materializa los documentos) -> query-side del Function App (`session.LoadAsync<TView>()`/`session.Query<TView>()`, MEF-ADR-0035 seccion 4).
+
+**El criterio de corte es una regla, no una lista cerrada**: debe coincidir lo que determina como se interpreta lo ya persistido; no debe coincidir lo que es propiedad del proceso (conexion, daemon, logging). Las dos tablas siguientes ilustran la regla con los atributos conocidos hoy -- ante un atributo que no aparezca en ninguna de las dos, **aplica la regla**, no busques la fila.
+
+**Debe coincidir** (determina como se interpreta lo ya persistido):
+
+| Atributo | Como falla si diverge |
+|---|---|
+| `DatabaseSchemaName` | el read-side apunta a un schema distinto del que el write-side ya usa para ese dominio; el named store no encuentra los eventos (MEF-ADR-0034 seccion 2) |
+| `Events.StreamIdentity` | el stream id se resuelve distinto en cada lado; el worker no encuentra el stream que el write-side ya escribio (instancia real: consumidor #253, PR #254) |
+| `Events.EventNamingStyle` | el nombre de tipo con que se guardo el evento no resuelve al leerlo del otro lado -- la proyeccion no recibe el evento |
+| `Events.TenancyStyle` | si el write-side particiona por tenant (`Conjoined`) y el read-side no, el worker consulta sin ese filtro -- lee o mezcla eventos de tenants distintos |
+| `Events.MetadataConfig.{CorrelationIdEnabled,CausationIdEnabled,HeadersEnabled}` | si el write-side habilita una columna que el read-side no replica, la proyeccion rompe en runtime con una excepcion de metadata ausente, no en el build (config-test de MEF-ADR-0034 seccion 6, punto 3) |
+| Serializador (`EnumStorage`, `Casing`, `TypeInfoResolver`) | el payload se escribio con una convencion (ej. enums como int) y se lee con otra (enums como string) -- deserializacion incorrecta o excepcion (instancia real: consumidor #238/#252) |
+| Tipos de evento registrados (`AddEventTypes`) | el read-side no reconoce el tipo de evento persistido por el write-side -- la proyeccion no lo aplica (instancia real: consumidor #277) |
+| `Policies.AllDocumentsAreMultiTenanted()` (par 2, read models) | el worker materializa documentos sin scope de tenant; el Function App consulta filtrando por tenant y no encuentra (o mezcla) datos |
+
+**No debe coincidir** (propiedad del proceso):
+
+| Atributo | Por que puede diferir |
+|---|---|
+| `Connection(...)` | cada proceso (Function App, worker) administra su propio ciclo de vida de conexion, aunque apunten al mismo Postgres |
+| `UseLightweightSessions()` | tipo de sesion, sin efecto sobre lo persistido |
+| `AddAsyncDaemon(DaemonMode)` | solo existe en el worker; el write-side no corre ningun daemon |
+| Proyecciones registradas (`Inline` write-side vs `Async` worker) | es la asimetria deliberada de MEF-ADR-0034 seccion 3, no una divergencia |
+| Logging / OpenTelemetry / `isDevelopment` | configuracion de observabilidad y entorno, no de interpretacion de datos |
+| `AutoCreateSchemaObjects` | politica de gestion de schema del proceso, no de lectura de lo ya persistido |
+
+**El par 2 (read models)**: "write-side vs read-side" nombra dos contratos, no uno. El par 1 (eventos) ya lo cubria parcialmente la guarda de metadata del config-test; el par 2 (worker -> query-side sobre read models) no tenia nombre en ningun ADR hasta la enmienda de MEF-ADR-0034 seccion 6. `Policies.AllDocumentsAreMultiTenanted()` es su instancia conocida: el Function App la trae del paquete, el worker no la replica por defecto y materializa vistas sin scope de tenant que el Function App despues consulta filtrando por tenant.
+
+**Mandato de corregir**: una divergencia de la columna "debe coincidir" se corrige en el read-side, en el mismo PR -- mismo criterio que el resto de este paso (corregir codigo, correr `dotnet test`, revertir si rompe). Solo se escala como hallazgo bloqueante si corregirla exige tocar el write-side.
+
 Este Skill viene **precargado** por el frontmatter, no se dispara por contenido: la inyeccion ocurre al arranque del agente (MEF-ADR-0033 seccion 3). En un diff puramente write-side (comandos, aggregates, eventos) su doctrina simplemente no aplica -- no produce ningun hallazgo nuevo y la revision se comporta como antes.
 
 ---
@@ -441,6 +491,7 @@ Si el implementer cito precedentes del codigo en su resumen de fase verde, verif
 | Feature folders (produccion y tests) | ok / falla | ... |
 | Smoke tests: SkipWhen, secrets, cobertura | ok / falla / n/a | ... |
 | Proyecciones read-side: partial, inmutabilidad, read APIs, naming | ok / falla / n/a | ... |
+| Compatibilidad Marten write-side/read-side (n/a si el diff no toca version del paquete ni config Marten) | ok / falla / n/a | ... |
 | Tests via ToString/comportamiento | ok / falla / n/a | ... |
 | Sin numeros magicos | ok / falla / n/a | ... |
 | Condiciones en positivo (guardas if/else afirmativas) | ok / falla / n/a | ... |
