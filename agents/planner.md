@@ -527,7 +527,7 @@ Cuando la idea esté clara, ofrece convertirla en un issue `tipo:projection` (ve
 - **Receta propuesta**: N1 o N2 (con justificación), o N3 explícitamente discutido.
 - **Endpoints/rutas**: qué Functions de query expone (`Obtener{Concepto}` por id y/o `Listar{Concepto}s` por filtro), con su ruta REST -- naming fijado por MEF-ADR-0006 y el recurso `naming.md` del Skill. **Verifica colisión de nombres antes de escribir el issue**: dos Functions no pueden compartir el mismo `[Function("...")]`, y las vías (a) y (b1) producen el mismo nombre cuando el read model y el aggregate comparten concepto (`TurnoView`/`TurnoAggregateRoot` -> ambas `ObtenerTurno`). Revisa `src/` del dominio: si ya existe esa Function, el issue debe desambiguar el nombre explícitamente -- `naming.md` delega esa decisión al issue que la pida, no al pipeline.
 - **Lifecycle**: `Async` (el default -- materializada en el worker de proyecciones, MEF-ADR-0034). Si el issue cree que necesita `Inline`, es una excepción opt-in del write-side que hay que justificar explícitamente, no asumir.
-- **Capas de test esperadas**: unit tests de la proyección (`Create`/`Apply`/`ShouldDelete`), el config-test del worker (guarda del `partial`, lifecycle `Async`, réplica de metadata -- MEF-ADR-0034 sección 6) y el test de composición de la Function GET (hermano de MEF-ADR-0029). Las tres son categorías complementarias, no intercambiables.
+- **Capas de test esperadas**: unit tests de la proyección (`Create`/`Apply`/`ShouldDelete`), el config-test del worker (guarda del `partial`, lifecycle `Async`, guarda barata de metadata -- MEF-ADR-0034 sección 6; la compatibilidad completa write-side/read-side la verifica el reviewer bajo gate, issue #447) y el test de composición de la Function GET (hermano de MEF-ADR-0029). Las tres son categorías complementarias, no intercambiables.
 
 **Si el usuario va a implementar varios `tipo:projection` a la vez**, avísale que se serializan siempre entre sí (comparten el worker de proyecciones del BC, MEF-ADR-0034) y que `/sequential` es su camino natural -- no los agrupes en una misma oleada paralela al proponer el plan (ver sección "oleadas", Paso 3, matriz de conflictos). Con un único `tipo:projection` pendiente, `/implement` o `/parallel` funcionan igual que con cualquier otro tipo.
 
@@ -762,7 +762,7 @@ Colision verificada: [ninguna Function del dominio declara ya estos nombres] | [
 
 ## Capas de test esperadas
 - [ ] Unit tests de la proyeccion (`Create`/`Apply`/`ShouldDelete`)
-- [ ] Config-test del worker (guarda del `partial`, lifecycle `Async`, replica de metadata -- MEF-ADR-0034 seccion 6)
+- [ ] Config-test del worker (guarda del `partial`, lifecycle `Async`, guarda barata de metadata -- MEF-ADR-0034 seccion 6; la compatibilidad completa la verifica el reviewer bajo gate, issue #447)
 - [ ] Test de composicion de la Function GET (hermano de MEF-ADR-0029)
 
 ## Impacto esperado en archivos (sugerencia)

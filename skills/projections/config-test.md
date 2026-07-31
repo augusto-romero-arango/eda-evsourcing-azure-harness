@@ -37,7 +37,7 @@ var provider = services.BuildServiceProvider();
 
 2. **Ciclo de vida `Async`**: que ninguna proyeccion registrada en el named store del worker haya quedado con lifecycle `Inline` -- si aparece una `Inline` ahi, es una proyeccion mal ubicada (deberia vivir en el write-side) o una regresion de copy-paste. Reverificar la superficie exacta de `StoreOptions.Projections` de la version vigente del paquete Marten antes de escribir este assert.
 
-3. **Replica exacta de la configuracion de metadata del write-side**: que `Events.MetadataConfig.CorrelationIdEnabled`/`CausationIdEnabled`/`HeadersEnabled` esten en `true` en el named store del worker, exactamente como en la configuracion Marten del write-side de ese mismo dominio:
+3. **Guarda barata de metadata (subconjunto de la compatibilidad, no toda ella)**: que `Events.MetadataConfig.CorrelationIdEnabled`/`CausationIdEnabled`/`HeadersEnabled` esten en `true` en el named store del worker, exactamente como en la configuracion Marten del write-side de ese mismo dominio:
 
    ```csharp
    opts.Events.MetadataConfig.CorrelationIdEnabled = true;
@@ -47,12 +47,15 @@ var provider = services.BuildServiceProvider();
 
    Una divergencia entre ambos lados (p. ej. alguien habilita una columna nueva en el write-side y olvida replicarla aca) rompe la proyeccion en runtime con una excepcion de metadata ausente, no en el build. Estas tres columnas estan deshabilitadas por defecto en Marten -- *"the database table columns for this data will not be created unless you opt-in"* -- y es requisito del **writer**, no de este worker: sin el flag, la columna ni siquiera existe en la tabla de eventos.
 
+   **Esta guarda no cubre toda la compatibilidad write-side/read-side** (MEF-ADR-0034 seccion 6, issue #447): el paquete `Cosmos.EventSourcing.CritterStack` fija diez atributos de Marten del lado write, no solo estos tres. La verificacion completa -- los otros siete atributos y el par read models/query-side -- es responsabilidad del **reviewer**, bajo el gate y las tablas de clasificacion que fija `agents/reviewer.md` ("Proyecciones y read-side").
+
 ## Que NO sustituye
 
 - El test de composicion de MEF-ADR-0029, que sigue viviendo en cada dominio sobre su propio `ComposicionServicios{Dominio}.cs` del write-side.
 - El DSL Given/When/Then de MEF-ADR-0002, que sigue validando comportamiento de negocio del aggregate, no del read-side.
+- La verificacion de compatibilidad Marten que corre el **reviewer** bajo gate (MEF-ADR-0034 seccion 6): cubre los diez atributos que el paquete fija del lado write y el par read models/query-side, alcance que ningun test automatizado puede tener sin decompilar el paquete.
 
-Son tres categorias de test complementarias, cada una sobre una capa distinta.
+Son tres categorias de test complementarias, cada una sobre una capa distinta -- mas la verificacion del reviewer, que no es un test y por eso no corre en cada `dotnet test`.
 
 ## Clasificacion frente al coverage gate (MEF-ADR-0014)
 

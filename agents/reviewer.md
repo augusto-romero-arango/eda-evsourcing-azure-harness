@@ -224,6 +224,71 @@ Cuando el issue es `tipo:projection` o el diff toca `<RootNamespace>.ReadModels`
 
 Este Skill viene **precargado** por el frontmatter, no se dispara por contenido: la inyeccion ocurre al arranque del agente (MEF-ADR-0033 seccion 3). En un diff puramente write-side (comandos, aggregates, eventos) su doctrina simplemente no aplica -- no produce ningun hallazgo nuevo y la revision se comporta como antes.
 
+#### Compatibilidad de configuracion Marten: write-side vs read-side (issue #447)
+
+MEF-ADR-0034 seccion 6 fija un config-test barato para el worker de proyecciones, pero ese test solo compara tres flags de `Events.MetadataConfig` -- un subconjunto, no la doctrina completa. Tu, como reviewer, eres quien corre la verificacion completa, y solo bajo gate.
+
+**El gate**: corre esta verificacion solo si el diff (`git diff main...HEAD`) toca (a) la version de `Cosmos.EventSourcing.CritterStack` o `Cosmos.EventSourcing.Abstractions` en algun `.csproj`, o (b) configuracion de Marten -- los archivos `ComposicionServicios{Dominio}.cs`, `ConfiguracionMartenProjections{Dominio}.cs`, `ConfiguracionSerializacion*.cs`, `IdentidadEventos{Dominio}.cs`, o cualquier linea cambiada con `AgregarWolverineParaComandosServerless`, `UsarWolverineParaComandos`, `UsarWolverineParaConsultas` (las fachadas del paquete que configuran Marten del lado write -- son las que el consumidor escribe, ver abajo), `AddMartenStore`, `ConfigureMarten`, `AgregarConfiguracionMarten`, `opts.Events.`, `opts.Serializer`, `Policies.`, `DatabaseSchemaName`, `AddEventTypes` o `TypeInfoResolver`. Si ninguna condicion aplica: fila `n/a` en el checklist (paso 8), sin decompilar nada.
+
+**Por que hace falta decompilar.** El write-side **no** tiene su configuracion completa en el codigo del consumidor: `ComposicionServicios{Dominio}.cs` solo invoca la fachada del paquete (`AgregarWolverineParaComandosServerless`; `UsarWolverineParaComandos` en un host que no sea Functions), y es esa fachada la que por debajo llama a `Commands.MartenEventStoreExtensions.AgregarConfiguracionMartenComandos` -- el metodo que realmente fija los atributos de Marten del write-side. **No busques `AgregarConfiguracionMartenComandos` en `src/`: no esta ahi**, y su ausencia no significa que el dominio no configure Marten. Mismo procedimiento y mismo gotcha de casing que ya documenta `agents/bug-investigator.md` para este mismo paquete (carpeta del cache de NuGet en minusculas, ensamblado en PascalCase, `TargetFramework net10.0`) -- no lo reinventes, solo cambia el objetivo:
+
+```bash
+ls ~/.nuget/packages/cosmos.eventsourcing.critterstack/
+ilspycmd ~/.nuget/packages/cosmos.eventsourcing.critterstack/<version-del-csproj>/lib/net10.0/Cosmos.EventSourcing.CritterStack.dll -o /tmp/decompiled-critterstack
+grep -n -A 30 "AgregarConfiguracionMartenComandos" /tmp/decompiled-critterstack/Cosmos.EventSourcing.CritterStack.decompiled.cs
+```
+
+Ese `grep` es el paso de lectura, no un atajo: `-o` **sin** `-p` deja un unico archivo `<Ensamblado>.decompiled.cs` en el directorio de salida, no un arbol de carpetas por namespace -- no existe ningun `Commands/MartenEventStoreExtensions.cs` que abrir (con `-p` si existe, pero bajo una carpeta por namespace **completo**: `Cosmos.EventSourcing.CritterStack.Commands/MartenEventStoreExtensions.cs`; para leer un metodo no hace falta el proyecto). Esa es la linea base real del write-side, no lo que asumas por memoria.
+
+Si `ilspycmd` no esta instalado, **no lo instales por cuenta propia** (misma regla que `bug-investigator`): reporta `dotnet tool install -g ilspycmd` y marca la fila del checklist como `falla`, declarando la verificacion como *no verificada* por falta de la herramienta. **Nunca `n/a`**: ese valor significa "el gate no aplica", y aqui el gate si aplico.
+
+**Los enums salen del decompilado como casts, no como nombres.** `ilspycmd` emite `(StreamIdentity)1`, no `StreamIdentity.AsString`, asi que comparar contra el codigo del worker exige mapear el ordinal. Mapeo verificado decompilando los ensamblados que los declaran (JasperFx.Events 2.18.1, JasperFx 2.18.1, Weasel.Core 9.3.0), no de memoria:
+
+| Cast en el decompilado | Nombre real | Namespace donde vive |
+|---|---|---|
+| `(StreamIdentity)0` / `(StreamIdentity)1` | `AsGuid` / `AsString` | `JasperFx.Events` |
+| `(TenancyStyle)0` / `(TenancyStyle)1` | `Single` / `Conjoined` | `JasperFx.MultiTenancy` (paquete `JasperFx`) |
+| `(EventNamingStyle)0` / `1` / `2` | `ClassicTypeName` / `SmarterTypeName` / `FullTypeName` | `JasperFx.Events` |
+| `(EnumStorage)0` / `(EnumStorage)1` | `AsInteger` / `AsString` | `Weasel.Core` |
+| `(Casing)0` / `1` / `2` | `Default` / `CamelCase` / `SnakeCase` | `Weasel.Core` |
+
+La tercera columna es tambien el gotcha de `using` al corregir el worker: **ninguno** de esos enums vive bajo `Marten.*` -- mismo patron que el marco ya documenta para `DaemonMode`, que vive en `JasperFx.Events.Daemon` y no en `Marten.Events.Daemon` (MEF-ADR-0034 seccion 6, "Gotcha de namespaces"). Y el modo de falla es traicionero: cuando el namespace equivocado **tambien existe**, el `using` malo no da error propio y el build muere despues con `CS0103` sobre el simbolo sin resolver. Resuelve el `using` verificandolo, nunca por analogia con el resto de `Events`/`Policies`.
+
+**Los dos pares a verificar** (nombrados por MEF-ADR-0034 seccion 6):
+
+1. **Eventos**: write-side (`ComposicionServicios{Dominio}` + lo que fija el paquete) -> worker (`AddMartenStore<I{Dominio}ProjectionStore>`, MEF-ADR-0034 seccion 2).
+2. **Read models**: worker (materializa los documentos) -> query-side del Function App (`session.LoadAsync<TView>()`/`session.Query<TView>()`, MEF-ADR-0035 seccion 4).
+
+**El criterio de corte es una regla, no una lista cerrada**: debe coincidir lo que determina como se interpreta lo ya persistido; no debe coincidir lo que es propiedad del proceso (conexion, daemon, logging). Las dos tablas siguientes ilustran la regla con los atributos conocidos hoy -- ante un atributo que no aparezca en ninguna de las dos, **aplica la regla**, no busques la fila.
+
+**Debe coincidir** (determina como se interpreta lo ya persistido):
+
+| Atributo | Como falla si diverge |
+|---|---|
+| `DatabaseSchemaName` | el read-side apunta a un schema distinto del que el write-side ya usa para ese dominio; el named store no encuentra los eventos (MEF-ADR-0034 seccion 2) |
+| `Events.StreamIdentity` | el stream id se resuelve distinto en cada lado; el worker no encuentra el stream que el write-side ya escribio (instancia real: consumidor #253, PR #254) |
+| `Events.EventNamingStyle` | el nombre de tipo con que se guardo el evento no resuelve al leerlo del otro lado -- la proyeccion no recibe el evento |
+| `Events.TenancyStyle` | si el write-side particiona por tenant (`Conjoined`) y el read-side no, el worker consulta sin ese filtro -- lee o mezcla eventos de tenants distintos |
+| `Events.MetadataConfig.{CorrelationIdEnabled,CausationIdEnabled,HeadersEnabled}` | si el write-side habilita una columna que el read-side no replica, la proyeccion rompe en runtime con una excepcion de metadata ausente, no en el build (config-test de MEF-ADR-0034 seccion 6, punto 3) |
+| Serializador (`EnumStorage`, `Casing`, `TypeInfoResolver`) | el payload se escribio con una convencion (ej. enums como int) y se lee con otra (enums como string) -- deserializacion incorrecta o excepcion (instancia real: consumidor #238/#252) |
+| Tipos de evento registrados (`AddEventTypes`) | el read-side no reconoce el tipo de evento persistido por el write-side -- la proyeccion no lo aplica (instancia real: consumidor #277) |
+| `Policies.AllDocumentsAreMultiTenanted()` (par 2, read models) | el worker materializa documentos sin scope de tenant; el Function App consulta filtrando por tenant y no encuentra (o mezcla) datos |
+
+**No debe coincidir** (propiedad del proceso):
+
+| Atributo | Por que puede diferir |
+|---|---|
+| `Connection(...)` | cada proceso (Function App, worker) administra su propio ciclo de vida de conexion, aunque apunten al mismo Postgres |
+| `UseLightweightSessions()` | tipo de sesion, sin efecto sobre lo persistido |
+| `AddAsyncDaemon(DaemonMode)` | solo existe en el worker; el write-side no corre ningun daemon |
+| Proyecciones registradas (`Inline` write-side vs `Async` worker) | es la asimetria deliberada de MEF-ADR-0034 seccion 3, no una divergencia |
+| Logging / OpenTelemetry / `isDevelopment` | configuracion de observabilidad y entorno, no de interpretacion de datos |
+| `AutoCreateSchemaObjects` | politica de gestion de schema del proceso, no de lectura de lo ya persistido |
+
+**El par 2 (read models)**: "write-side vs read-side" nombra dos contratos, no uno. El par 1 (eventos) ya lo cubria parcialmente la guarda barata de metadata del config-test; el par 2 (worker -> query-side sobre read models) no tenia nombre en ningun ADR hasta la enmienda de MEF-ADR-0034 seccion 6. `Policies.AllDocumentsAreMultiTenanted()` es su instancia conocida: el Function App la trae del paquete, el worker no la replica por defecto y materializa vistas sin scope de tenant que el Function App despues consulta filtrando por tenant.
+
+**Mandato de corregir**: una divergencia de la columna "debe coincidir" se corrige en el read-side, en el mismo PR -- mismo criterio que el resto de este paso (corregir codigo, correr `dotnet test`, revertir si rompe). Solo se escala como hallazgo bloqueante si corregirla exige tocar el write-side.
+
 ---
 
 ### 4. Revisar cobertura de la HU
@@ -441,6 +506,7 @@ Si el implementer cito precedentes del codigo en su resumen de fase verde, verif
 | Feature folders (produccion y tests) | ok / falla | ... |
 | Smoke tests: SkipWhen, secrets, cobertura | ok / falla / n/a | ... |
 | Proyecciones read-side: partial, inmutabilidad, read APIs, naming | ok / falla / n/a | ... |
+| Compatibilidad Marten write-side/read-side (n/a si el diff no toca version del paquete ni config Marten) | ok / falla / n/a | ... |
 | Tests via ToString/comportamiento | ok / falla / n/a | ... |
 | Sin numeros magicos | ok / falla / n/a | ... |
 | Condiciones en positivo (guardas if/else afirmativas) | ok / falla / n/a | ... |

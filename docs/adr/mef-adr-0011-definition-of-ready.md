@@ -64,7 +64,7 @@ Los issues con label `bug` aplican los criterios de la columna correspondiente a
 
 - **Endpoints / rutas**: fija que Functions GET expone la vista (`Obtener{Concepto}`/`Listar{Concepto}s`) y su ruta REST, con el naming de MEF-ADR-0006. Tambien es donde el issue debe declarar si verifico colision de nombres con Functions ya existentes en el dominio. Sin ella, el pipeline no sabe que Function componer ni si el nombre ya esta en uso.
 
-- **Capas de test esperadas** (Obligatorio en `projection`): un issue read-side se cubre con tres categorias complementarias, no intercambiables -- unit tests de la proyeccion (`Create`/`Apply`/`ShouldDelete`), config-test del worker (guarda del `partial`, lifecycle `Async`, replica de metadata -- MEF-ADR-0034 seccion 6) y test de composicion de la Function GET (hermano de MEF-ADR-0029). Declararlas en el issue evita que la fase roja cubra solo la proyeccion y deje el registro en el worker o la Function sin verificar.
+- **Capas de test esperadas** (Obligatorio en `projection`): un issue read-side se cubre con tres categorias complementarias, no intercambiables -- unit tests de la proyeccion (`Create`/`Apply`/`ShouldDelete`), config-test del worker (guarda del `partial`, lifecycle `Async`, guarda barata de metadata -- MEF-ADR-0034 seccion 6; la compatibilidad completa write-side/read-side la verifica el reviewer bajo gate, issue #447) y test de composicion de la Function GET (hermano de MEF-ADR-0029). Declararlas en el issue evita que la fase roja cubra solo la proyeccion y deje el registro en el worker o la Function sin verificar.
 
 ### Niveles de obligatoriedad
 
