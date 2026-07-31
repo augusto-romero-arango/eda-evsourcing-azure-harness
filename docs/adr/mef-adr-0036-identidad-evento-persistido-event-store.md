@@ -14,15 +14,21 @@ base** -- una purga que era criterio de aceptacion del mismo issue que movia los
 ejecutar mientras el codigo si se desplego**. Defecto armado en el entorno, esperando la primera
 rehidratacion de un aggregate preexistente (consumidor #237, #277, PR #280; vecino de codigo #268).
 
-**El vacio esta verificado.** `AddEventType`, `MapEventType`, `mt_dotnet_type` y `EventNamingStyle`
-tienen **cero** ocurrencias en `docs/adr/`, `agents/` y `skills/` antes de este ADR -- y el caso de
-`EventNamingStyle` es el mas revelador: el paquete del marco **si lo fija** (ver mas abajo), asi que
-el marco opera bajo un estilo de naming de eventos que ninguna sede declara. Las dos sedes que
-podrian haberlo cubierto no lo hacen: **MEF-ADR-0005** gobierna el contrato de **bus** (versionado
-aditivo, regla `V2`, naming del Published Language), y **MEF-ADR-0012** cubre como se **deserializa**
-un evento con constructor privado, no como se **identifica** el tipo al leerlo del store. Tampoco lo
-tapa `Cosmos.EventSourcing.CritterStack`: ninguno de sus metodos publicos registra tipos de evento en
-nombre del consumidor.
+**El vacio esta verificado, y es de doctrina, no de vocabulario.** `MapEventType` y `mt_dotnet_type`
+tienen **cero** ocurrencias en `docs/adr/`, `agents/` y `skills/` antes de este ADR. `AddEventTypes` y
+`EventNamingStyle` si aparecen, pero **solo como filas de una tabla de compatibilidad**: el gate del
+reviewer que compara write-side y read-side (`agents/reviewer.md`, issue #447/PR #477) los lista entre
+los atributos que "deben coincidir" en ambos lados, y MEF-ADR-0034 seccion 6 con su referencia [19]
+registra que el paquete fija `EventNamingStyle.SmarterTypeName` como uno de los diez atributos que
+decompilo. Ninguna de las dos sedes explica **que es** el alias, cual de las dos columnas de
+`mt_events` decide la lectura, ni que le pasa a un evento que cambia de namespace: nombran el atributo
+como algo que hay que vigilar, sin la mecanica que hace falta para razonar sobre el. Y las dos sedes
+que podrian haber cubierto esa mecanica no lo hacen: **MEF-ADR-0005** gobierna el contrato de **bus**
+(versionado aditivo, regla `V2`, naming del Published Language), y **MEF-ADR-0012** cubre como se
+**deserializa** un evento con constructor privado, no como se **identifica** el tipo al leerlo del
+store. Tampoco lo tapa `Cosmos.EventSourcing.CritterStack`: ninguno de sus metodos publicos registra
+tipos de evento en nombre del consumidor (verificado por decompilacion de 2.3.1 -- cero ocurrencias de
+`AddEventType`/`AddEventTypes` en todo el ensamblado).
 
 ### La mecanica que nadie documenta
 
@@ -59,7 +65,7 @@ versionado de Marten [2]:
   alcanza. Cita literal: *"If you change the event type class name, Marten cannot do mapping by
   convention. You need to define the custom one"* con `MapEventType`.
 
-Dos casos con distinta gravedad, indistinguibles desde el diff de un PR (ambos son "till edito la
+Dos casos con distinta gravedad, indistinguibles desde el diff de un PR (ambos se leen como "edite la
 declaracion de una clase"), y hoy el marco no separa ninguno.
 
 ### Por que el marco debe opinar
@@ -214,7 +220,10 @@ public static class IdentidadEventos{Dominio}
 `IDocumentStore` -- el del Function App del write-side (MEF-ADR-0029) y el named store del worker de
 proyecciones de ese mismo dominio (MEF-ADR-0034 seccion 2) -- es independiente y no hereda ningun
 registro del otro: `IdentidadEventos{Dominio}.Registrar(...)` se invoca desde
-`ComposicionServicios{Dominio}.cs` **y** desde `ConfiguracionMartenProjections{Dominio}.cs`. Es la
+`ComposicionServicios{Dominio}.cs` **y** desde `ConfiguracionMartenProjections{Dominio}.cs`. Esa
+segunda invocacion es **doctrina, no algo escribible hoy**: el worker no puede referenciar el
+ensamblado donde vive la lista, y no hay ensamblado compartido donde ponerla (seccion 6 (a)). El
+write-side -- el lado expuesto, punto 4 de "Contexto" -- si cumple la exigencia completa desde ya. Es la
 misma premisa de la que parte la doctrina de #447 en `agents/reviewer.md` (que dos procesos que leen
 el mismo Postgres pueden divergir en su configuracion de Marten sin que nada lo note), resuelta aqui
 por **registro explicito compartido** en vez de por vigilancia del reviewer -- las dos estrategias
@@ -258,7 +267,7 @@ recalcula del propio codigo del aggregate en cada corrida.
 StoreOptions()` standalone.** Verificado por mutacion en el campo (consumidor de referencia, PR
 #280): inyectar `MapEventType<T>("nombre.viejo")` en algun punto del wiring real deja **verdes** los
 tests que reconstruyen un `StoreOptions()` aislado e invocan solo `IdentidadEventos{Dominio}.Registrar(...)`
-sobre el -- ese test no ve el resto del wiring donde se coló el `MapEventType`. Solo se pone rojo el
+sobre el -- ese test no ve el resto del wiring donde se colo el `MapEventType`. Solo se pone rojo el
 test que resuelve el `IDocumentStore` **ya compuesto por el contenedor real** (el mismo que
 MEF-ADR-0029 resuelve para sus tres routers):
 
@@ -315,6 +324,46 @@ Antes de mover o renombrar un evento persistido:
    pueda quedar pendiente mientras el codigo que la necesita ya salio. Es exactamente la secuencia
    invertida que origino el incidente real: el PR que movia los tipos se desplego y la purga (criterio
    de aceptacion de ese mismo PR) no se ejecuto a la par.
+
+### 6. Fronteras declaradas: que NO cierra este ADR (CA-6)
+
+**(a) El registro read-side es defensa en profundidad, y hoy no es escribible.** La seccion 3 exige que
+todo proceso que lea un stream registre los tipos en su propio `EventGraph`; del lado del worker de
+proyecciones esa exigencia **no se puede cumplir hoy**. La lista vive junto al codigo de dominio -- es
+decir, en el assembly del Function App --, y el worker no puede referenciarlo: MEF-ADR-0034 seccion 5
+pone los read models en `<RootNamespace>.ReadModels` (una biblioteca deliberadamente sin Marten, ni
+transitivamente) y las clases de proyeccion en el worker mismo, asi que **no existe ningun ensamblado
+compartido donde la lista pueda vivir para que ambos lados la invoquen**. Y **ningun issue del backlog
+habilita esa ruta**: el marco no tiene decidido donde viven los eventos que una proyeccion declara. Este
+ADR **nombra el hueco** en vez de darlo por resuelto -- quien implemente el scaffold del write-side
+(#475) o el ciclo de vida en los agentes (#476) no debe asumir que "registrar tambien en el worker" sea
+una opcion disponible. Mientras el hueco siga abierto, la unica defensa del read-side es la vigilancia
+de (c), que compara configuracion sin exigir un ensamblado compartido.
+
+**(b) La lista de identidad no duplica ni reemplaza la de serializacion de MEF-ADR-0012.** Son dos
+listas con dos propositos, y sus conjuntos **se solapan sin contenerse**: un evento con constructor
+publico se persiste (entra en la lista de identidad) y no necesita `ConfigurarSerializacion`; un value
+object con constructor privado necesita `ConfigurarSerializacion` (entra en la lista de MEF-ADR-0012) y
+no es un evento, asi que nunca entra en la de identidad; un evento persistido con constructor privado
+entra en las dos. Registrar un tipo con `AddEventTypes` no lo hace deserializable, y hacerlo
+deserializable no lo hace identificable: **son dos preguntas distintas** -- que tipo resuelve este
+alias, y como se construye una instancia de ese tipo una vez resuelto.
+
+**(c) Frontera de autoridad frente a la doctrina de compatibilidad write-side/read-side (#447).** Este
+ADR es la **autoridad de la identidad**: que es el alias, de donde sale (`EventNamingStyle`), que tipos
+se registran y bajo que proscripciones. El gate condicional de `agents/reviewer.md` (issue #447/PR #477)
+es la **vigilancia**: corre cuando el diff toca la version del paquete o configuracion de Marten, y
+compara los atributos de los dos lados. Dos filas de su tabla caen bajo la autoridad de este ADR --
+`Events.EventNamingStyle` y "Tipos de evento registrados (`AddEventTypes`)" --: **deben remitir a este
+ADR en vez de re-explicar la mecanica**, y este ADR, simetricamente, no duplica el gate ni su
+disparador. Ese gate se escribio antes que este ADR (PR #477), asi que hoy todavia no lo cita; la
+anotacion concreta en `reviewer.md` la hace el issue #476, el que toca los agentes -- este ADR fija la
+frontera, no la edita por adelantado. Consecuencia
+que hay que decir en voz alta: **la segunda de esas dos filas no es satisfacible hoy**, por la razon de
+(a) -- el reviewer puede detectar que los tipos registrados divergen entre el write-side y el worker,
+pero el consumidor no tiene con que hacerlos converger hasta que ese hueco se cierre. Esa fila vale
+entonces como **deteccion** (y como recordatorio del hueco cada vez que el gate corre), no como algo que
+el consumidor pueda arreglar hoy.
 
 ## Alternativas consideradas
 

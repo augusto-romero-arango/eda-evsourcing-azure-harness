@@ -65,7 +65,9 @@ Este ADR gobierna el contrato de **bus** -- como se nombra, versiona y envuelve 
 consumidores que lo reciben por Azure Service Bus. El alias con el que Marten **identifica** ese mismo
 evento dentro de `mt_events` (la columna `type` que decide si una fila ya persistida se puede volver a
 leer) es un sujeto distinto, con otra audiencia -- interna al dominio que lo escribe, no a sus
-consumidores de bus -- y no se gobierna aqui: ver MEF-ADR-0036.
+consumidores de bus -- y no se gobierna aqui: ver MEF-ADR-0036. Ese alias **no es** el campo `Type` del
+envelope de arriba: el del envelope viaja en el mensaje de bus y lo lee un consumidor externo; el otro
+es una columna de Postgres que solo interpreta el `IDocumentStore` del propio dominio.
 
 ## Consecuencias
 
