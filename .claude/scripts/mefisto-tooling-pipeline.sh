@@ -489,6 +489,13 @@ CONTEXTO DE EJECUCION:
 - Tienes permisos completos (bypassPermissions activo).
 - PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya.
 
+ECONOMIA DE TURNOS:
+Cada turno tuyo cuesta ~13 s de reloj (el 96,6% del tiempo de una corrida es el modelo escribiendo tokens, no las herramientas ejecutandose). El trabajo que ese turno manda a hacer cuesta ~1 s: la suite de guards tarda 1,05 s y las 22 suites completas 25 s. Lo caro es el turno, no el trabajo. Con eso en mente:
+- Agrupa en un mismo turno las tool calls independientes entre si (varias busquedas, varias lecturas, varias escrituras a archivos distintos). No las encadenes de a una: hoy el 82% de los turnos del pipeline gasta una sola tool call, y cada una de esas cadenas paga 13 s por eslabon.
+- La suite de tests (scripts/tests/, .claude/scripts/tests/) correla UNA vez, al final, cuando ya no vayas a tocar mas archivos. No la corras despues de cada edicion. Correrla al cerrar es obligatorio -- lo que sobra es repetirla.
+- No re-inspecciones el arbol con 'git status' ni 'git diff' para confirmar algo que acabas de escribir: Write y Edit fallan con error si no aplican, asi que el exito de la herramienta ya es la confirmacion.
+Estas tres reglas no cubren todos los casos; ante cualquier otro, decide con el mismo criterio -- un turno extra cuesta ~13 s, y solo vale la pena si te ahorra un error que costaria mas.
+
 Instrucciones:
 1. Lee los archivos existentes relevantes antes de escribir nuevos.
 2. Reutiliza patrones y convenciones del repo (mira archivos similares).
@@ -562,6 +569,13 @@ CONTEXTO DE EJECUCION:
 - Responder con texto pidiendo aprobacion causa un fallo del pipeline.
 - Tienes permisos completos (bypassPermissions activo).
 - PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya.
+
+ECONOMIA DE TURNOS:
+Cada turno tuyo cuesta ~13 s de reloj (el 96,6% del tiempo de una corrida es el modelo escribiendo tokens, no las herramientas ejecutandose). El trabajo que ese turno manda a hacer cuesta ~1 s: la suite de guards tarda 1,05 s y las 22 suites completas 25 s. Lo caro es el turno, no el trabajo. Con eso en mente:
+- Agrupa en un mismo turno las tool calls independientes entre si (varias busquedas, varias lecturas, varias escrituras a archivos distintos). No las encadenes de a una: hoy el 82% de los turnos del pipeline gasta una sola tool call, y cada una de esas cadenas paga 13 s por eslabon.
+- La suite de tests (scripts/tests/, .claude/scripts/tests/) correla UNA vez, al final, cuando ya no vayas a tocar mas archivos. No la corras despues de cada correccion. Correrla al cerrar es obligatorio -- lo que sobra es repetirla.
+- Ya tienes el diff completo del writer aqui arriba: no lo vuelvas a pedir con 'git diff'. Y no re-inspecciones el arbol con 'git status' para confirmar algo que acabas de escribir -- Write y Edit fallan con error si no aplican, asi que el exito de la herramienta ya es la confirmacion.
+Estas tres reglas no cubren todos los casos; ante cualquier otro, decide con el mismo criterio -- un turno extra cuesta ~13 s, y solo vale la pena si te ahorra un error que costaria mas.
 
 Instrucciones:
 1. Verifica que los cambios cumplen con lo pedido en el issue.
