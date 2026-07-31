@@ -560,6 +560,8 @@ public static IReadOnlyList<Type> TiposPersistidos { get; } =
 ];
 ```
 
+Olvidarlo no pasa en silencio: `ComposicionContenedorTests` trae del scaffold la guarda `AgregarServicios{Dominio}_RegistraTodosLosEventosPersistidos`, que compara por reflexion los `Apply(TEvento)` del dominio contra el `EventGraph` del `IDocumentStore` que compone el contenedor, y se pone roja con el primer evento sin registrar.
+
 **Criterio de inclusion: se persiste.** Un evento que solo cruza un bus (Azure Service Bus) no entra en esta lista — se deserializa a un tipo fijo por endpoint/subscription y nunca pasa por el `EventGraph` de ningun `IDocumentStore`. Un evento que un `AggregateRoot` aplica via `Apply` entra siempre, tenga o no ademas marker de bus (`IPrivateEvent`/`IPublicEvent`).
 
 **Este registro no sustituye ni duplica la lista de serializacion de MEF-ADR-0012** (`ConfigurarSerializacion`): son conjuntos que se solapan sin contenerse — un evento con constructor publico entra aqui y no necesita `ConfigurarSerializacion`; un value object con constructor privado necesita `ConfigurarSerializacion` y no es un evento, nunca entra aqui.

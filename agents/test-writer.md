@@ -796,11 +796,13 @@ y portable".
 
 Las secciones 6d/6e verifican que el **payload** de un evento sobrevive el round-trip. Esta seccion verifica algo distinto y complementario: que Marten **identifica** el tipo correctamente al leerlo del event store. Son hermanas, no sustitutas — un evento puede reconstruirse perfecto (6d en verde) y aun asi resolver al tipo equivocado si su alias quedo mal registrado.
 
-Cuando el implementer agrega un evento persistido nuevo a `IdentidadEventos{Dominio}.TiposPersistidos` (ver `implementer.md`), agrega un test que **congela su alias** contra un literal, en `ComposicionContenedorTests.cs` (`tests/.../Infraestructura/`, la clase que `domain-scaffolder` ya crea — MEF-ADR-0029) usando el helper `ConstruirProveedor()` que ya existe ahi:
+Aplica cuando el issue introduce un **evento persistido** nuevo -- mismo criterio de inclusion que el implementer usa para `IdentidadEventos{Dominio}.TiposPersistidos` (ver `implementer.md`): lo consume un `AggregateRoot` via `Apply(TEvento)`. Un evento que solo cruza un bus no lleva este guardrail (le corresponde 6e). Agrega el test que **congela su alias** contra un literal en `ComposicionContenedorTests.cs` (`tests/{Dominio}.Tests/Infraestructura/`, la clase que `domain-scaffolder` ya crea — MEF-ADR-0029), usando el helper `ConstruirProveedor()` que ya existe ahi:
 
 ```csharp
+// Agrega el using del namespace donde vive el evento; Marten y DependencyInjection
+// ya estan importados en la clase que genero el scaffold.
 [Fact]
-public async Task AgregarServicios{Dominio}_CongelaElAliasDeTurnoCreado()
+public async Task AgregarServiciosControlHoras_CongelaElAliasDeTurnoCreado()
 {
     await using var proveedor = ConstruirProveedor();
 
@@ -811,6 +813,10 @@ public async Task AgregarServicios{Dominio}_CongelaElAliasDeTurnoCreado()
     alias.Should().Be("turno_creado");
 }
 ```
+
+**Este test es rojo en tu fase, y eso es exito** (principio fundamental de este agente): en la fase roja el tipo todavia no esta en `TiposPersistidos`, asi que `Single(...)` no lo encuentra en el `EventGraph` y el test revienta. Lo pone en verde el implementer al registrarlo -- tu no tocas esa lista.
+
+**No dupliques la guarda derivada que la clase ya trae.** `domain-scaffolder` genera en esa misma clase `AgregarServicios{Dominio}_RegistraTodosLosEventosPersistidos`, que deriva su oraculo por reflexion de los `Apply(TEvento)` del dominio y por tanto **no necesita una linea nueva por evento**. Es complementaria, no sustituta: aquella verifica que el tipo **este registrado**; esta, que su alias sea **exactamente** el esperado. Lo unico que agregas a mano es el literal de esta seccion.
 
 **El oraculo es el literal (`"turno_creado"`), nunca la lista de produccion** (MEF-ADR-0002: oraculo independiente de lo que se esta verificando). No calcules el alias esperado a partir de `typeof(TurnoCreado).Name` con una funcion de snake-case propia — eso solo reimplementaria `EventNamingStyle` y dejaria de detectar una divergencia si alguien la altera.
 
