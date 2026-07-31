@@ -73,7 +73,7 @@ Cubre cada metodo que la clase de proyeccion declara (`Create` para el evento fu
 
 ### 2. Config-test del worker (`<RootNamespace>.Projections.Tests`)
 
-Sigue la plantilla exacta de `config-test.md` (`ServiceCollection` + connection string dummy, sin Postgres real). Cubre las tres guardas que ese recurso fija: guarda del `partial` del seam (`Configurar{Dominio}` resuelve `I{Dominio}ProjectionStore` desde el contenedor), ningun lifecycle `Inline` sobreviviendo en el worker, y replica exacta de `MetadataConfig` (`CorrelationIdEnabled`/`CausationIdEnabled`/`HeadersEnabled`) contra el write-side de ese mismo dominio.
+Sigue la plantilla exacta de `config-test.md` (`ServiceCollection` + connection string dummy, sin Postgres real). Cubre las guardas que ese recurso fija: guarda del `partial` del seam (`Configurar{Dominio}` resuelve `I{Dominio}ProjectionStore` desde el contenedor), ningun lifecycle `Inline` sobreviviendo en el worker, y la guarda de `MetadataConfig` (`CorrelationIdEnabled`/`CausationIdEnabled`/`HeadersEnabled`) contra el write-side de ese mismo dominio -- subconjunto de la compatibilidad Marten completa, que verifica el reviewer bajo gate (MEF-ADR-0034 seccion 6).
 
 ### 3. Composicion de la Function GET
 

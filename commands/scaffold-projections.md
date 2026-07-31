@@ -118,7 +118,8 @@ Worker de proyecciones, ReadModels y config-test base generados. Siguiente:
      en ReadModels y en la raiz del worker).
   2. projection-test-writer/projection-implementer (issue #365) agregan sobre
      Projections.Tests las guardas por dominio (partial + ciclo de vida Async),
-     reutilizando el helper AssertOpcionesDeEvento para la guarda de metadata.
+     reutilizando el helper AssertOpcionesDeEvento para la guarda barata de metadata (subconjunto de la
+     compatibilidad; la completa la verifica el reviewer bajo gate, MEF-ADR-0034 seccion 6).
   3. Los modulos Terraform del Container App (container-registry,
      container-app-environment, container-app) son opt-in y los genera
      infra-base-scaffolder cuando corra de nuevo con el token ya habilitado
