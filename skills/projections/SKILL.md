@@ -57,7 +57,7 @@ Ver **[naming.md](naming.md)** para el patron completo (verbo + cardinalidad, ru
 
 ## 5. Config-test del worker
 
-Ver **[config-test.md](config-test.md)** para la plantilla completa (PR 134 del consumidor de referencia). El worker de proyecciones necesita un config-test hermano de MEF-ADR-0029 que, sin Postgres real, verifique: (1) la guarda del `partial` (cada `I{Dominio}ProjectionStore` resuelve del contenedor), (2) que ninguna proyeccion del worker quedo con lifecycle `Inline`, y (3) que la configuracion de metadata (`CorrelationIdEnabled`/`CausationIdEnabled`/`HeadersEnabled`) replica exactamente la del write-side de ese dominio.
+Ver **[config-test.md](config-test.md)** para la plantilla completa (PR 134 del consumidor de referencia). El worker de proyecciones necesita un config-test hermano de MEF-ADR-0029 que, sin Postgres real, verifique: (1) la guarda del `partial` (cada `I{Dominio}ProjectionStore` resuelve del contenedor), (2) que ninguna proyeccion del worker quedo con lifecycle `Inline`, y (3) una guarda barata de que la configuracion de metadata (`CorrelationIdEnabled`/`CausationIdEnabled`/`HeadersEnabled`) coincide con la del write-side de ese dominio -- subconjunto de la compatibilidad Marten completa (diez atributos del paquete, mas el par read models/query-side), que verifica el reviewer bajo gate (MEF-ADR-0034 seccion 6, issue #447).
 
 ## 6. Que NO fija este Skill
 
