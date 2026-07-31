@@ -53,8 +53,9 @@ var provider = services.BuildServiceProvider();
 
 - El test de composicion de MEF-ADR-0029, que sigue viviendo en cada dominio sobre su propio `ComposicionServicios{Dominio}.cs` del write-side.
 - El DSL Given/When/Then de MEF-ADR-0002, que sigue validando comportamiento de negocio del aggregate, no del read-side.
+- La verificacion de compatibilidad Marten que corre el **reviewer** bajo gate (MEF-ADR-0034 seccion 6): cubre los diez atributos que el paquete fija del lado write y el par read models/query-side, alcance que ningun test automatizado puede tener sin decompilar el paquete.
 
-Son tres categorias de test complementarias, cada una sobre una capa distinta.
+Son tres categorias de test complementarias, cada una sobre una capa distinta -- mas la verificacion del reviewer, que no es un test y por eso no corre en cada `dotnet test`.
 
 ## Clasificacion frente al coverage gate (MEF-ADR-0014)
 

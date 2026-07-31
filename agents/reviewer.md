@@ -222,20 +222,37 @@ Cuando el issue es `tipo:projection` o el diff toca `<RootNamespace>.ReadModels`
 - **Naming** (MEF-ADR-0006): `Obtener{X}`/`Listar{X}s`, `{Concepto}View`, `{Concepto}Projection` (N1 y N2), `I{Dominio}ProjectionStore`, `ConfiguracionMartenProjections{Dominio}.Configurar{Dominio}()`. Una carpeta por query, sin sufijo `Function` (ese sufijo es solo para comandos).
 - **Carve-out del endpoint GET frente al coverage gate**: la clasificacion exacta de un `FunctionEndpoint.cs` de consulta frente a MEF-ADR-0014 es un punto delegado a un issue aparte (#371, fuera de tu alcance). No reportes como hallazgo la ausencia de tests unitarios adicionales sobre un `FunctionEndpoint` de consulta que solo delega a `LoadAsync`/`Query`: su cobertura real es el test de composicion (`projection-test-writer`) y el smoke test (`smoke-test-writer`).
 
+Este Skill viene **precargado** por el frontmatter, no se dispara por contenido: la inyeccion ocurre al arranque del agente (MEF-ADR-0033 seccion 3). En un diff puramente write-side (comandos, aggregates, eventos) su doctrina simplemente no aplica -- no produce ningun hallazgo nuevo y la revision se comporta como antes.
+
 #### Compatibilidad de configuracion Marten: write-side vs read-side (issue #447)
 
 MEF-ADR-0034 seccion 6 fija un config-test barato para el worker de proyecciones, pero ese test solo compara tres flags de `Events.MetadataConfig` -- un subconjunto, no la doctrina completa. Tu, como reviewer, eres quien corre la verificacion completa, y solo bajo gate.
 
-**El gate**: corre esta verificacion solo si el diff (`git diff main...HEAD`) toca (a) la version de `Cosmos.EventSourcing.CritterStack` o `Cosmos.EventSourcing.Abstractions` en algun `.csproj`, o (b) configuracion de Marten -- los archivos `ComposicionServicios{Dominio}.cs`, `ConfiguracionMartenProjections{Dominio}.cs`, `ConfiguracionSerializacion*.cs`, `IdentidadEventos{Dominio}.cs`, o cualquier linea cambiada con `AddMartenStore`, `ConfigureMarten`, `AgregarConfiguracionMarten`, `opts.Events.`, `opts.Serializer`, `Policies.`, `DatabaseSchemaName`, `AddEventTypes` o `TypeInfoResolver`. Si ninguna condicion aplica: fila `n/a` en el checklist (paso 8), sin decompilar nada.
+**El gate**: corre esta verificacion solo si el diff (`git diff main...HEAD`) toca (a) la version de `Cosmos.EventSourcing.CritterStack` o `Cosmos.EventSourcing.Abstractions` en algun `.csproj`, o (b) configuracion de Marten -- los archivos `ComposicionServicios{Dominio}.cs`, `ConfiguracionMartenProjections{Dominio}.cs`, `ConfiguracionSerializacion*.cs`, `IdentidadEventos{Dominio}.cs`, o cualquier linea cambiada con `AgregarWolverineParaComandosServerless`, `UsarWolverineParaComandos`, `UsarWolverineParaConsultas` (las fachadas del paquete que configuran Marten del lado write -- son las que el consumidor escribe, ver abajo), `AddMartenStore`, `ConfigureMarten`, `AgregarConfiguracionMarten`, `opts.Events.`, `opts.Serializer`, `Policies.`, `DatabaseSchemaName`, `AddEventTypes` o `TypeInfoResolver`. Si ninguna condicion aplica: fila `n/a` en el checklist (paso 8), sin decompilar nada.
 
-**Por que hace falta decompilar.** El write-side **no** tiene su configuracion completa en el codigo del consumidor: `Commands.MartenEventStoreExtensions.AgregarConfiguracionMartenComandos`, el metodo del paquete `Cosmos.EventSourcing.CritterStack` que cada dominio invoca desde `ComposicionServicios{Dominio}.cs`, fija atributos que el consumidor nunca declara explicitamente. Mismo procedimiento y mismo gotcha de casing que ya documenta `agents/bug-investigator.md` para este mismo paquete (carpeta del cache de NuGet en minusculas, ensamblado en PascalCase, `TargetFramework net10.0`) -- no lo reinventes, solo cambia el objetivo:
+**Por que hace falta decompilar.** El write-side **no** tiene su configuracion completa en el codigo del consumidor: `ComposicionServicios{Dominio}.cs` solo invoca la fachada del paquete (`AgregarWolverineParaComandosServerless`; `UsarWolverineParaComandos` en un host que no sea Functions), y es esa fachada la que por debajo llama a `Commands.MartenEventStoreExtensions.AgregarConfiguracionMartenComandos` -- el metodo que realmente fija los atributos de Marten del write-side. **No busques `AgregarConfiguracionMartenComandos` en `src/`: no esta ahi**, y su ausencia no significa que el dominio no configure Marten. Mismo procedimiento y mismo gotcha de casing que ya documenta `agents/bug-investigator.md` para este mismo paquete (carpeta del cache de NuGet en minusculas, ensamblado en PascalCase, `TargetFramework net10.0`) -- no lo reinventes, solo cambia el objetivo:
 
 ```bash
 ls ~/.nuget/packages/cosmos.eventsourcing.critterstack/
 ilspycmd ~/.nuget/packages/cosmos.eventsourcing.critterstack/<version-del-csproj>/lib/net10.0/Cosmos.EventSourcing.CritterStack.dll -o /tmp/decompiled-critterstack
+grep -n -A 30 "AgregarConfiguracionMartenComandos" /tmp/decompiled-critterstack/Cosmos.EventSourcing.CritterStack.decompiled.cs
 ```
 
-Lee `Commands/MartenEventStoreExtensions.cs` (`AgregarConfiguracionMartenComandos`) en el output decompilado -- esa es la linea base real del write-side, no lo que asumas por memoria.
+Ese `grep` es el paso de lectura, no un atajo: `-o` **sin** `-p` deja un unico archivo `<Ensamblado>.decompiled.cs` en el directorio de salida, no un arbol de carpetas por namespace -- no existe ningun `Commands/MartenEventStoreExtensions.cs` que abrir (con `-p` si existe, pero bajo una carpeta por namespace **completo**: `Cosmos.EventSourcing.CritterStack.Commands/MartenEventStoreExtensions.cs`; para leer un metodo no hace falta el proyecto). Esa es la linea base real del write-side, no lo que asumas por memoria.
+
+Si `ilspycmd` no esta instalado, **no lo instales por cuenta propia** (misma regla que `bug-investigator`): reporta `dotnet tool install -g ilspycmd` y marca la fila del checklist como `falla`, declarando la verificacion como *no verificada* por falta de la herramienta. **Nunca `n/a`**: ese valor significa "el gate no aplica", y aqui el gate si aplico.
+
+**Los enums salen del decompilado como casts, no como nombres.** `ilspycmd` emite `(StreamIdentity)1`, no `StreamIdentity.AsString`, asi que comparar contra el codigo del worker exige mapear el ordinal. Mapeo verificado decompilando los ensamblados que los declaran (JasperFx.Events 2.18.1, JasperFx 2.18.1, Weasel.Core 9.3.0), no de memoria:
+
+| Cast en el decompilado | Nombre real | Namespace donde vive |
+|---|---|---|
+| `(StreamIdentity)0` / `(StreamIdentity)1` | `AsGuid` / `AsString` | `JasperFx.Events` |
+| `(TenancyStyle)0` / `(TenancyStyle)1` | `Single` / `Conjoined` | `JasperFx.MultiTenancy` (paquete `JasperFx`) |
+| `(EventNamingStyle)0` / `1` / `2` | `ClassicTypeName` / `SmarterTypeName` / `FullTypeName` | `JasperFx.Events` |
+| `(EnumStorage)0` / `(EnumStorage)1` | `AsInteger` / `AsString` | `Weasel.Core` |
+| `(Casing)0` / `1` / `2` | `Default` / `CamelCase` / `SnakeCase` | `Weasel.Core` |
+
+La tercera columna es tambien el gotcha de `using` al corregir el worker: **ninguno** de esos enums vive bajo `Marten.*` -- mismo patron que el marco ya documenta para `DaemonMode`, que vive en `JasperFx.Events.Daemon` y no en `Marten.Events.Daemon` (MEF-ADR-0034 seccion 6, "Gotcha de namespaces"). Y el modo de falla es traicionero: cuando el namespace equivocado **tambien existe**, el `using` malo no da error propio y el build muere despues con `CS0103` sobre el simbolo sin resolver. Resuelve el `using` verificandolo, nunca por analogia con el resto de `Events`/`Policies`.
 
 **Los dos pares a verificar** (nombrados por MEF-ADR-0034 seccion 6):
 
@@ -271,8 +288,6 @@ Lee `Commands/MartenEventStoreExtensions.cs` (`AgregarConfiguracionMartenComando
 **El par 2 (read models)**: "write-side vs read-side" nombra dos contratos, no uno. El par 1 (eventos) ya lo cubria parcialmente la guarda barata de metadata del config-test; el par 2 (worker -> query-side sobre read models) no tenia nombre en ningun ADR hasta la enmienda de MEF-ADR-0034 seccion 6. `Policies.AllDocumentsAreMultiTenanted()` es su instancia conocida: el Function App la trae del paquete, el worker no la replica por defecto y materializa vistas sin scope de tenant que el Function App despues consulta filtrando por tenant.
 
 **Mandato de corregir**: una divergencia de la columna "debe coincidir" se corrige en el read-side, en el mismo PR -- mismo criterio que el resto de este paso (corregir codigo, correr `dotnet test`, revertir si rompe). Solo se escala como hallazgo bloqueante si corregirla exige tocar el write-side.
-
-Este Skill viene **precargado** por el frontmatter, no se dispara por contenido: la inyeccion ocurre al arranque del agente (MEF-ADR-0033 seccion 3). En un diff puramente write-side (comandos, aggregates, eventos) su doctrina simplemente no aplica -- no produce ningun hallazgo nuevo y la revision se comporta como antes.
 
 ---
 

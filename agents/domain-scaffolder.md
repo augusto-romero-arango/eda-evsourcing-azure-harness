@@ -2227,7 +2227,7 @@ else
 fi
 ```
 
-Si el proyecto existe y el test falla, lee el error y corrige antes de continuar. El caso mas probable es que el config-test enumere los dominios del BC uno por uno (`config-test.md`, punto 1: un `Configurar{Dominio}` por dominio conocido) y todavia no incluya al recien nacido -- **ese archivo es un test y no lo tocas tu**: reportalo en tu resumen para que el issue `tipo:projection` del dominio lo cubra. Lo que si te corresponde ya esta hecho: las guardas que verifica ese test dependen del seam del punto 3, que se emite con la configuracion de metadata ya replicada (habilita el punto 3 de `config-test.md`, subconjunto de la compatibilidad Marten -- la completa la verifica el reviewer bajo gate, MEF-ADR-0034 seccion 6) y sin ninguna proyeccion `Inline`.
+Si el proyecto existe y el test falla, lee el error y corrige antes de continuar. El caso mas probable es que el config-test enumere los dominios del BC uno por uno (`config-test.md`, punto 1: un `Configurar{Dominio}` por dominio conocido) y todavia no incluya al recien nacido -- **ese archivo es un test y no lo tocas tu**: reportalo en tu resumen para que el issue `tipo:projection` del dominio lo cubra. Lo que si te corresponde ya esta hecho: las verificaciones de ese test dependen del seam que emitiste en el punto 3 **de este paso**, y ese seam sale sin ninguna proyeccion `Inline` (habilita la segunda verificacion de `config-test.md`) y con la configuracion de metadata ya replicada (habilita la tercera, que es un subconjunto de la compatibilidad Marten write-side/read-side -- la completa la verifica el reviewer bajo gate, MEF-ADR-0034 seccion 6).
 
 ---
 
