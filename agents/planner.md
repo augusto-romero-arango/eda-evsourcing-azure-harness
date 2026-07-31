@@ -457,6 +457,7 @@ Aplica este checklist mentalmente antes de cualquier `gh issue edit --add-label 
 - [ ] **Verificación de API existente**: si las "Notas técnicas" describen un algoritmo que accede a propiedades del VO (`obj.PropX`, `obj.Y.Z`), se verificó que esas propiedades existen y son públicas en el código actual. Si no existen, el plan decide explícitamente entre (a) ampliar la API del VO con justificación, o (b) mover el algoritmo al VO — no deja la decisión al implementer como "desviación".
 - [ ] **Sin artefactos huérfanos**: cada clase/archivo listado en "Impacto / Crea" tiene al menos un consumidor real (código de producción o test) en el mismo PR. La regla "VO o clase huérfana entre PRs" de la sección "Cuándo NO partir" se opera aquí: si un artefacto solo se "deja preparado para el siguiente PR", el corte está mal — refactorízalo o muévelo al issue del primer consumidor. Caso real (PR #155): `FronterasHorariasLegales` se creó "para que #134 / #136 lo usaran"; tras el refactor de Tell-don't-Ask quedó sin consumidores en el PR y se eliminó.
 - [ ] **Cobertura de smoke tests pensada por efecto**: si el issue introduce un evento publico nuevo, o agrega publicacion a un topic existente, el plan declara que la suscripcion `smoke-tests` del topic existe (verificar en `infra/environments/dev/main.tf`). Si no existe, el alta de la suscripcion va listada en `## Impacto en archivos` (modifica `infra/environments/dev/main.tf`) **dentro de este mismo issue** — no se difiere a un issue posterior con la excusa "el topic todavia no tiene consumidores". Sin la suscripcion, el smoke test no puede verificar la publicacion y queda gap de cobertura. Caso real (PR #157): el issue declaro "Hoy el topic no tiene subscriptions" como racional para no requerir smoke tests, lo que dejo el efecto sin cubrir y obligo a un fix-review posterior.
+- [ ] **Movimiento o renombrado de eventos persistidos (MEF-ADR-0036)**: si el issue mueve, renombra o extrae a otra biblioteca un tipo de evento persistido y el entorno destino ya tiene streams escritos, `## Dependencias` declara la secuencia de dos despliegues (ver "Identidad de eventos persistidos" abajo). Y si la salida elegida fue purgar el entorno, la purga **no** figura como criterio de aceptacion de ese issue: va en el mismo despliegue que mueve los tipos.
 - [ ] Sección "ADRs aplicables" enumera todos los ADRs que el issue toca (o "Ninguno" si no aplica)
 - [ ] Cada archivo de tests listado en "Impacto / Modifica" puede ser tocado por el test-writer dadas las dependencias de su proyecto (no exige APIs inaccesibles desde ese proyecto)
 - [ ] Las sugerencias de "Interfaz publica propuesta" e "Impacto en archivos" no imponen decisiones que correspondan al juicio tecnico del test-writer/implementer (o estan marcadas como propuesta revisable)
@@ -530,6 +531,26 @@ Cuando la idea esté clara, ofrece convertirla en un issue `tipo:projection` (ve
 - **Capas de test esperadas**: unit tests de la proyección (`Create`/`Apply`/`ShouldDelete`), el config-test del worker (guarda del `partial`, lifecycle `Async`, guarda barata de metadata -- MEF-ADR-0034 sección 6; la compatibilidad completa write-side/read-side la verifica el reviewer bajo gate, issue #447) y el test de composición de la Function GET (hermano de MEF-ADR-0029). Las tres son categorías complementarias, no intercambiables.
 
 **Si el usuario va a implementar varios `tipo:projection` a la vez**, avísale que se serializan siempre entre sí (comparten el worker de proyecciones del BC, MEF-ADR-0034) y que `/sequential` es su camino natural -- no los agrupes en una misma oleada paralela al proponer el plan (ver sección "oleadas", Paso 3, matriz de conflictos). Con un único `tipo:projection` pendiente, `/implement` o `/parallel` funcionan igual que con cualquier otro tipo.
+
+---
+
+## Identidad de eventos persistidos: mover o renombrar
+
+La doctrina completa (mecánica del alias, distinción mover-vs-renombrar, protocolo de dos despliegues) vive en **MEF-ADR-0036** -- esta sección no la duplica, solo enseña a **reconocer** la señal y a bloquear `estado:listo` hasta que el issue la resuelva, mismo espíritu que "Necesidades de lectura y proyecciones" arriba.
+
+### Reconocer la señal
+
+El usuario describe mover un tipo de evento persistido de namespace o de assembly, extraerlo a una biblioteca nueva, o renombrar la clase. A diferencia de un cambio de comportamiento del aggregate, esto es un cambio sobre la **identidad** de algo que el event store puede ya haber escrito.
+
+Ante esta señal, pregunta si el entorno destino **ya tiene streams escritos** con ese tipo de evento. Un entorno sin datos reales (greenfield, o un ambiente que aún no procesó ningún comando real) no necesita protocolo.
+
+Si ya hay streams escritos, el issue debe declarar en `## Dependencias` la secuencia de **dos despliegues, nunca uno solo**: el que registra el tipo (`AddEventTypes` para mover, `MapEventType` para renombrar) va **antes** del que mueve o renombra la clase. El issue no puede pasar a `estado:listo` sin esa declaración -- casilla propia en el checklist pre-listo, arriba.
+
+### La purga no es criterio de aceptación por defecto
+
+Purgar el entorno no es una salida aceptable por defecto (MEF-ADR-0036 sección 5): es perder todo el historial de eventos, con las consecuencias de negocio que eso implique. Si se elige deliberadamente -- por ejemplo, un ambiente de desarrollo temprano sin datos que importen --, **la purga pertenece al mismo despliegue que el movimiento**, ejecutada como parte de él -- nunca como un criterio de aceptación aparte, que pueda quedar pendiente mientras el código que la necesita ya salió.
+
+Razón, con la historia real que origina MEF-ADR-0036: el PR que movía los tipos se desplegó y la purga -- criterio de aceptación de ese mismo PR -- no se ejecutó a la par. El código con el defecto de identidad quedó armado en el entorno, esperando la primera rehidratación de un aggregate preexistente. Una purga como CA separado puede quedar pendiente exactamente así; forzarla al mismo despliegue elimina esa ventana.
 
 ---
 

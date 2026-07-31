@@ -792,6 +792,38 @@ y portable".
 | 6d "sin registro falla" (resolver vacio) | sin resolver | anti-regresion del registro Marten | **falla** (`NotSupportedException`) |
 | 6e portabilidad (`JsonSerializerOptions` por defecto) | sin resolver | bus / evento con marker (`IPrivateEvent` o `IPublicEvent`) | **sobrevive** |
 
+### 6f. Guardrail de alias para un evento persistido nuevo (`ComposicionContenedorTests`)
+
+Las secciones 6d/6e verifican que el **payload** de un evento sobrevive el round-trip. Esta seccion verifica algo distinto y complementario: que Marten **identifica** el tipo correctamente al leerlo del event store. Son hermanas, no sustitutas — un evento puede reconstruirse perfecto (6d en verde) y aun asi resolver al tipo equivocado si su alias quedo mal registrado.
+
+Aplica cuando el issue introduce un **evento persistido** nuevo -- mismo criterio de inclusion que el implementer usa para `IdentidadEventos{Dominio}.TiposPersistidos` (ver `implementer.md`): lo consume un `AggregateRoot` via `Apply(TEvento)`. Un evento que solo cruza un bus no lleva este guardrail (le corresponde 6e). Agrega el test que **congela su alias** contra un literal en `ComposicionContenedorTests.cs` (`tests/{Dominio}.Tests/Infraestructura/`, la clase que `domain-scaffolder` ya crea — MEF-ADR-0029), usando el helper `ConstruirProveedor()` que ya existe ahi:
+
+```csharp
+// Agrega el using del namespace donde vive el evento; Marten y DependencyInjection
+// ya estan importados en la clase que genero el scaffold.
+[Fact]
+public async Task AgregarServiciosControlHoras_CongelaElAliasDeTurnoCreado()
+{
+    await using var proveedor = ConstruirProveedor();
+
+    var store = proveedor.GetRequiredService<IDocumentStore>();
+    var alias = store.Options.Events.AllKnownEventTypes()
+        .Single(e => e.EventType == typeof(TurnoCreado)).Alias;
+
+    alias.Should().Be("turno_creado");
+}
+```
+
+**Este test es rojo en tu fase, y eso es exito** (principio fundamental de este agente): en la fase roja el tipo todavia no esta en `TiposPersistidos`, asi que `Single(...)` no lo encuentra en el `EventGraph` y el test revienta. Lo pone en verde el implementer al registrarlo -- tu no tocas esa lista.
+
+**No dupliques la guarda derivada que la clase ya trae.** `domain-scaffolder` genera en esa misma clase `AgregarServicios{Dominio}_RegistraTodosLosEventosPersistidos`, que deriva su oraculo por reflexion de los `Apply(TEvento)` del dominio y por tanto **no necesita una linea nueva por evento**. Es complementaria, no sustituta: aquella verifica que el tipo **este registrado**; esta, que su alias sea **exactamente** el esperado. Lo unico que agregas a mano es el literal de esta seccion.
+
+**El oraculo es el literal (`"turno_creado"`), nunca la lista de produccion** (MEF-ADR-0002: oraculo independiente de lo que se esta verificando). No calcules el alias esperado a partir de `typeof(TurnoCreado).Name` con una funcion de snake-case propia — eso solo reimplementaria `EventNamingStyle` y dejaria de detectar una divergencia si alguien la altera.
+
+**Por que sobre el `IDocumentStore` del contenedor real, nunca sobre un `new StoreOptions()` standalone**: verificado por mutacion en el campo (PR #280) — inyectar `MapEventType<T>("nombre.viejo")` en algun punto del wiring real deja **verdes** los tests que reconstruyen un `StoreOptions()` aislado e invocan solo el registro de identidad sobre el; ese test no ve el resto del wiring donde se colo el `MapEventType`. Solo se pone rojo el test que resuelve el `IDocumentStore` ya compuesto por el contenedor — el mismo que `ConstruirProveedor()` ya expone para los tres routers de `ComposicionContenedorTests`. Nunca escribas este guardrail contra un `StoreOptions` construido a mano: es decorativo.
+
+Autoridad completa (mecanica del alias, `EventNamingStyle`, las tres proscripciones de registro): **MEF-ADR-0036**. Esta seccion no la duplica — solo enseña donde y como se congela el guardrail.
+
 ---
 
 ### 7. Verificar que compila
