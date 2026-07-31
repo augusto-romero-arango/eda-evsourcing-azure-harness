@@ -349,11 +349,14 @@ public static class ComposicionServicios{PascalCase}
         // Identidad del evento persistido (MEF-ADR-0036): registra los tipos de este dominio en
         // el EventGraph antes de la primera lectura. AddEventTypes no redeclara el alias -- lo
         // sigue derivando EventNamingStyle.SmarterTypeName (fijado por Cosmos.EventSourcing.CritterStack,
-        // no por el default de Marten). Si un value object o evento con constructor privado necesita
-        // el resolver de serializacion de MEF-ADR-0012 (ConfigurarSerializacion), agregalo DENTRO de
-        // este mismo bloque ConfigureMarten -- nunca un segundo ConfigureMarten.
+        // no por el default de Marten). El cuerpo va con llaves aunque hoy tenga una sola linea:
+        // cuando un value object o evento con constructor privado necesite el resolver de
+        // serializacion de MEF-ADR-0012 (ConfigurarSerializacion), se suma DENTRO de este mismo
+        // bloque como una linea mas -- nunca como un segundo ConfigureMarten.
         services.ConfigureMarten(options =>
-            options.Events.AddEventTypes(IdentidadEventos{PascalCase}.TiposPersistidos));
+        {
+            options.Events.AddEventTypes(IdentidadEventos{PascalCase}.TiposPersistidos);
+        });
 
         services.AgregarWolverineCommandRouter();
         services.AgregarWolverineEventSender();
@@ -1367,7 +1370,6 @@ paso "compila + unit tests verdes" y solo se detecto post-deploy en smoke tests)
 guarda derivada de identidad de eventos (MEF-ADR-0036 CA-3/CA-4, ultimo test de la clase abajo).
 
 ```csharp
-using System.Linq;
 using AwesomeAssertions;
 using <RootNamespace>.{PascalCase}.Infraestructura;
 using Cosmos.EventDriven.Abstractions;
