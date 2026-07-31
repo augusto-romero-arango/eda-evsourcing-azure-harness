@@ -268,7 +268,7 @@ Lee `Commands/MartenEventStoreExtensions.cs` (`AgregarConfiguracionMartenComando
 | Logging / OpenTelemetry / `isDevelopment` | configuracion de observabilidad y entorno, no de interpretacion de datos |
 | `AutoCreateSchemaObjects` | politica de gestion de schema del proceso, no de lectura de lo ya persistido |
 
-**El par 2 (read models)**: "write-side vs read-side" nombra dos contratos, no uno. El par 1 (eventos) ya lo cubria parcialmente la guarda de metadata del config-test; el par 2 (worker -> query-side sobre read models) no tenia nombre en ningun ADR hasta la enmienda de MEF-ADR-0034 seccion 6. `Policies.AllDocumentsAreMultiTenanted()` es su instancia conocida: el Function App la trae del paquete, el worker no la replica por defecto y materializa vistas sin scope de tenant que el Function App despues consulta filtrando por tenant.
+**El par 2 (read models)**: "write-side vs read-side" nombra dos contratos, no uno. El par 1 (eventos) ya lo cubria parcialmente la guarda barata de metadata del config-test; el par 2 (worker -> query-side sobre read models) no tenia nombre en ningun ADR hasta la enmienda de MEF-ADR-0034 seccion 6. `Policies.AllDocumentsAreMultiTenanted()` es su instancia conocida: el Function App la trae del paquete, el worker no la replica por defecto y materializa vistas sin scope de tenant que el Function App despues consulta filtrando por tenant.
 
 **Mandato de corregir**: una divergencia de la columna "debe coincidir" se corrige en el read-side, en el mismo PR -- mismo criterio que el resto de este paso (corregir codigo, correr `dotnet test`, revertir si rompe). Solo se escala como hallazgo bloqueante si corregirla exige tocar el write-side.
 
