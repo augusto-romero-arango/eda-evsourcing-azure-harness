@@ -792,6 +792,32 @@ y portable".
 | 6d "sin registro falla" (resolver vacio) | sin resolver | anti-regresion del registro Marten | **falla** (`NotSupportedException`) |
 | 6e portabilidad (`JsonSerializerOptions` por defecto) | sin resolver | bus / evento con marker (`IPrivateEvent` o `IPublicEvent`) | **sobrevive** |
 
+### 6f. Guardrail de alias para un evento persistido nuevo (`ComposicionContenedorTests`)
+
+Las secciones 6d/6e verifican que el **payload** de un evento sobrevive el round-trip. Esta seccion verifica algo distinto y complementario: que Marten **identifica** el tipo correctamente al leerlo del event store. Son hermanas, no sustitutas — un evento puede reconstruirse perfecto (6d en verde) y aun asi resolver al tipo equivocado si su alias quedo mal registrado.
+
+Cuando el implementer agrega un evento persistido nuevo a `IdentidadEventos{Dominio}.TiposPersistidos` (ver `implementer.md`), agrega un test que **congela su alias** contra un literal, en `ComposicionContenedorTests.cs` (`tests/.../Infraestructura/`, la clase que `domain-scaffolder` ya crea — MEF-ADR-0029) usando el helper `ConstruirProveedor()` que ya existe ahi:
+
+```csharp
+[Fact]
+public async Task AgregarServicios{Dominio}_CongelaElAliasDeTurnoCreado()
+{
+    await using var proveedor = ConstruirProveedor();
+
+    var store = proveedor.GetRequiredService<IDocumentStore>();
+    var alias = store.Options.Events.AllKnownEventTypes()
+        .Single(e => e.EventType == typeof(TurnoCreado)).Alias;
+
+    alias.Should().Be("turno_creado");
+}
+```
+
+**El oraculo es el literal (`"turno_creado"`), nunca la lista de produccion** (MEF-ADR-0002: oraculo independiente de lo que se esta verificando). No calcules el alias esperado a partir de `typeof(TurnoCreado).Name` con una funcion de snake-case propia — eso solo reimplementaria `EventNamingStyle` y dejaria de detectar una divergencia si alguien la altera.
+
+**Por que sobre el `IDocumentStore` del contenedor real, nunca sobre un `new StoreOptions()` standalone**: verificado por mutacion en el campo (PR #280) — inyectar `MapEventType<T>("nombre.viejo")` en algun punto del wiring real deja **verdes** los tests que reconstruyen un `StoreOptions()` aislado e invocan solo el registro de identidad sobre el; ese test no ve el resto del wiring donde se colo el `MapEventType`. Solo se pone rojo el test que resuelve el `IDocumentStore` ya compuesto por el contenedor — el mismo que `ConstruirProveedor()` ya expone para los tres routers de `ComposicionContenedorTests`. Nunca escribas este guardrail contra un `StoreOptions` construido a mano: es decorativo.
+
+Autoridad completa (mecanica del alias, `EventNamingStyle`, las tres proscripciones de registro): **MEF-ADR-0036**. Esta seccion no la duplica — solo enseña donde y como se congela el guardrail.
+
 ---
 
 ### 7. Verificar que compila

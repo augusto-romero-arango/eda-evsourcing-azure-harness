@@ -547,6 +547,25 @@ Aviso de "precedente ≠ autoridad" (didactico, no reglas enumeradas): reviews p
 
 Referencias canonicas en el codigo (alineadas con MEF-ADR-0012): `SubFranja` (VO con `sealed class` + `ConfigurarSerializacion` + `IEquatable` manual); `TurnoDiarioAsignado` (evento con precondiciones + `ConfigurarSerializacion`). Antes de usarlas como plantilla, verifica que siguen alineadas — el ADR es la autoridad, no el archivo.
 
+### Identidad del evento persistido: registrar en `IdentidadEventos{Dominio}`
+
+Cuando el evento que estas creando se **persiste** en el event store — es decir, algun `AggregateRoot` lo consume via `public void Apply(TEvento)` — agregalo a `Infraestructura/IdentidadEventos{Dominio}.TiposPersistidos` (`domain-scaffolder` la crea vacia al nacer el dominio):
+
+```csharp
+public static IReadOnlyList<Type> TiposPersistidos { get; } =
+[
+    typeof(TurnoCreado),
+    typeof(TurnoCerrado),
+    typeof(MiEventoNuevo), // agregalo aqui
+];
+```
+
+**Criterio de inclusion: se persiste.** Un evento que solo cruza un bus (Azure Service Bus) no entra en esta lista — se deserializa a un tipo fijo por endpoint/subscription y nunca pasa por el `EventGraph` de ningun `IDocumentStore`. Un evento que un `AggregateRoot` aplica via `Apply` entra siempre, tenga o no ademas marker de bus (`IPrivateEvent`/`IPublicEvent`).
+
+**Este registro no sustituye ni duplica la lista de serializacion de MEF-ADR-0012** (`ConfigurarSerializacion`): son conjuntos que se solapan sin contenerse — un evento con constructor publico entra aqui y no necesita `ConfigurarSerializacion`; un value object con constructor privado necesita `ConfigurarSerializacion` y no es un evento, nunca entra aqui.
+
+Autoridad completa (que es el alias, de donde sale, las tres proscripciones de registro, el protocolo para mover o renombrar un evento persistido): **MEF-ADR-0036**. Este agente no la duplica — si necesitas mover o renombrar un evento ya persistido, leela completa antes de tocar la clase.
+
 ### Encapsulamiento: propiedades internas
 
 Las propiedades que existen para facilitar calculos internos del objeto (ej: `MinutosAbsolutoInicio`, `DiaOffsetFin`, `HoraInicio`) deben ser `protected` o `private`. **La interfaz publica son los metodos de comportamiento** (`DuracionEnMinutos()`, `ToString()`, etc.).

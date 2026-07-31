@@ -58,6 +58,8 @@ Usa las herramientas del MCP de JetBrains como **primera opcion** para buscar, l
 | Formatear codigo | `reformat_file` | `dotnet format` via Bash |
 | Ejecutar comandos (test, format) | Bash (directo) | - |
 
+**Aviso sobre `rename_refactoring` y eventos persistidos**: la garantia de `rename_refactoring` es de **compilacion** (actualiza referencias del proyecto, incluidos tests) — no de datos. Renombrar la clase de un evento que este en `IdentidadEventos{Dominio}.TiposPersistidos` cambia su alias en el event store, y ninguna referencia del proyecto lo delata. Ver seccion "6. Refactorizar" para el protocolo cuando esto aplica; autoridad completa: MEF-ADR-0036.
+
 ---
 
 ## Proceso
@@ -407,6 +409,13 @@ Luego revisa manualmente buscando:
 ### 6. Refactorizar (si aplica)
 
 Para renombrar variables, metodos, clases o parametros, usa `rename_refactoring` en lugar de buscar/reemplazar manual. El IDE actualiza todas las referencias del proyecto de forma segura, incluyendo tests.
+
+**Excepcion: rename de un tipo en `IdentidadEventos{Dominio}.TiposPersistidos`.** `rename_refactoring` sigue siendo la herramienta correcta para ejecutar el cambio — esto no retira su prescripcion, la acota. Si el diff renombra la clase de un evento que esta en esa lista:
+
+1. Verifica que el guardrail de alias del test-writer (`ComposicionContenedorTests`, seccion 6f de `test-writer.md`) exista para ese tipo y congele el alias correcto — si falta o quedo con el alias viejo, es hallazgo bloqueante.
+2. **No lo apruebes por verde.** Escalalo en tu resumen: un rename de este tipo cambia el contrato de datos ya escrito en `mt_events`, algo que ningun test de compilacion detecta. Remite al protocolo de dos despliegues de MEF-ADR-0036 seccion 5 (el registro del alias va en un despliegue separado, antes del que renombra, si el entorno destino ya tiene streams escritos).
+
+Un upgrade de version de `Cosmos.EventSourcing.CritterStack`/`Cosmos.EventSourcing.Abstractions` es un riesgo de la misma familia (puede cambiar el `EventNamingStyle` que fija el paquete) pero ya tiene su gate: la seccion "Compatibilidad de configuracion Marten" de este agente (issue #447), fila `Events.EventNamingStyle`. No abras aqui un segundo camino de verificacion. Autoridad completa de la mecanica de alias, la distincion mover-vs-renombrar y el protocolo: **MEF-ADR-0036** — no la dupliques.
 
 Por cada refactoring:
 1. Haz el cambio
