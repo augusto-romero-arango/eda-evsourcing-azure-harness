@@ -59,6 +59,14 @@ en el proyecto Contracts con los siguientes campos:
 - `CorrelationId`: identificador para rastrear una cadena de eventos relacionados
 - `Data`: el payload tipado del evento
 
+### Fuera de alcance: identidad del evento en el event store
+
+Este ADR gobierna el contrato de **bus** -- como se nombra, versiona y envuelve un evento para los
+consumidores que lo reciben por Azure Service Bus. El alias con el que Marten **identifica** ese mismo
+evento dentro de `mt_events` (la columna `type` que decide si una fila ya persistida se puede volver a
+leer) es un sujeto distinto, con otra audiencia -- interna al dominio que lo escribe, no a sus
+consumidores de bus -- y no se gobierna aqui: ver MEF-ADR-0036.
+
 ## Consecuencias
 
 **Positivas**
@@ -81,7 +89,9 @@ en el proyecto Contracts con los siguientes campos:
 - MEF-ADR-0001 (Service Bus, un topic por tipo de evento): las convenciones de naming de topics y subscriptions de MEF-ADR-0001 y este ADR aplican por igual dentro del namespace interno, del backbone compartido del producto y de cualquier namespace de integracion externo (MEF-ADR-0024).
 - MEF-ADR-0023: Bounded Context, namespace interno de Azure Service Bus y frontera publico/privado — define que los eventos publicos son el Published Language del BC; este ADR fija el naming y el versionado que blindan ese contrato externo.
 - MEF-ADR-0024: Modelo de eventos de bus (privado propio, publico via backbone compartido, integracion externa diferida) — define donde vive ese Published Language: el backbone compartido del producto (caso comun) o un namespace de integracion externo (caso diferido).
+- MEF-ADR-0036: Identidad del evento persistido en el event store — el alias que identifica al evento dentro de `mt_events` no se gobierna aqui; ese ADR fija la mecanica de identidad, sus proscripciones y el protocolo para mover o renombrar un evento persistido.
 
 ## Control de cambios
 
 - 2026-07-01: enmendado (issue #167, barrido de coherencia hacia MEF-ADR-0024) para reemplazar "namespace de integracion (MEF-ADR-0023)" como destino por defecto del Published Language por el modelo de MEF-ADR-0024: backbone compartido del producto (caso comun) o namespace de integracion externo (caso diferido). El naming, el versionado aditivo y la regla V2 no cambian.
+- 2026-07-31: enmendado (issue #474, creacion de MEF-ADR-0036) sumando la seccion "Fuera de alcance: identidad del evento en el event store" y la referencia cruzada correspondiente. Ninguna decision de este ADR cambia -- el naming del Published Language, el versionado aditivo y la regla V2 siguen igual; solo se declara explicitamente la frontera frente al ADR nuevo, que gobierna un sujeto distinto (la identidad del evento dentro del event store, no su contrato de bus).
