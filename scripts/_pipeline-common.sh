@@ -599,8 +599,11 @@ read_backend_storage_account_name() {
 #   agents/           Agentes publicados
 #   hooks/            Hooks del plugin
 #   .claude-plugin/   Metadata del plugin (plugin.json, marketplace.json)
-#   docs/adr/         ADRs del marco (los ADRs del proyecto consumidor deben vivir bajo
-#                     docs/adr-proyecto/ u otra ruta, NO bajo docs/adr/)
+#   docs/adr/mef-adr-*  ADRs del marco -- MEF-ADR-0030 decision #3 fija su filename
+#                     en minuscula (mef-adr-NNNN-slug.md). El resto de docs/adr/ es
+#                     del consumidor: MEF-ADR-0030 descarta reubicarlo bajo
+#                     docs/adr-proyecto/ u otra ruta (su Alt 2, descartada) y declara
+#                     valido que un consumidor conserve docs/adr/ sin migrar (decision #4).
 is_path_in_consumer_blocklist() {
     local path="$1"
     [ -z "$path" ] && return 1
@@ -608,7 +611,7 @@ is_path_in_consumer_blocklist() {
     case "$path" in
         commands/*|skills/*|agents/*|hooks/*) return 0 ;;
         .claude-plugin/*) return 0 ;;
-        docs/adr/*) return 0 ;;
+        docs/adr/mef-adr-*) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -643,11 +646,18 @@ validate_consumer_scope_changes() {
         repo_slug=$(jq -r '.repoSlug // empty' .claude/harness.config.json 2>/dev/null)
         [ -z "$repo_slug" ] && repo_slug="augusto-romero-arango/eda-evsourcing-azure-harness"
 
+        local branch
+        branch=$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)
+        [ -z "$branch" ] && branch="la rama del worktree $wt"
+
         echo "ERROR: el agente toco rutas reservadas al plugin Mefisto:" >&2
         printf '  - %s\n' "${violations[@]}" >&2
         echo "" >&2
-        echo "Las rutas commands/, agents/, hooks/, .claude-plugin/, docs/adr/" >&2
-        echo "pertenecen al plugin (repo $repo_slug)." >&2
+        echo "Las rutas commands/, skills/, agents/, hooks/, .claude-plugin/ y los archivos" >&2
+        echo "docs/adr/mef-adr-* pertenecen al plugin (repo $repo_slug)." >&2
+        echo "" >&2
+        echo "El resto del trabajo del agente NO se perdio: ya quedo commiteado en '$branch'." >&2
+        echo "Para recuperarlo, revierte ahi los archivos listados arriba y abre el PR a mano." >&2
         echo "Si necesitas modificar el plugin, abre un draft en su repo:" >&2
         echo "  gh issue create -R $repo_slug \\" >&2
         echo "    --label \"estado:borrador,tipo:tooling\" --title \"...\"" >&2

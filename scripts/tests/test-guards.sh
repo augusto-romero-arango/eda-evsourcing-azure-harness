@@ -215,7 +215,9 @@ echo "[E] is_path_in_consumer_blocklist clasifica correctamente"
     done
 
     # Rutas que NO deben estar en el blocklist (validas para el consumidor)
-    for allowed in "src/Foo.cs" "tests/Bar.cs" ".github/workflows/deploy.yml" ".claude/settings.json" "docs/bitacora/notes.md"; do
+    # docs/adr/0028-*.md y docs/adr/ca-adr-0009-*.md: ADR local del consumidor
+    # (MEF-ADR-0030 decision #4) -- solo docs/adr/mef-adr-* es del marco
+    for allowed in "src/Foo.cs" "tests/Bar.cs" ".github/workflows/deploy.yml" ".claude/settings.json" "docs/bitacora/notes.md" "docs/adr/0028-x.md" "docs/adr/ca-adr-0009-x.md"; do
         if is_path_in_consumer_blocklist "$allowed"; then
             echo "  FAIL: '$allowed' detectado como blocklist (deberia estar permitido)"
             exit 1

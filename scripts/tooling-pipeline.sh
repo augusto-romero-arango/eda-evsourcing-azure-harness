@@ -485,11 +485,13 @@ ALCANCE PERMITIDO de escritura:
 - pipeline-state/                            (senales del pipeline)
 - scripts/                                   (scripts ad-hoc del consumidor)
 - tests/                                     (SOLO fixtures, helpers, builders - NO logica de dominio)
-- docs/bitacora/, docs/eda/, docs/adr-proyecto/  (documentacion del consumidor)
+- docs/bitacora/, docs/eda/, docs/adr-proyecto/, docs/adr/  (documentacion del consumidor;
+  docs/adr/ son los ADRs locales de ESTE repo -- con el prefijo propio que haya elegido
+  o sin prefijo. MEF-ADR-0030: no hay que reubicarlos fuera de docs/adr/)
 
 PROHIBIDO MODIFICAR (pertenece al plugin Mefisto, no a este repo):
 - commands/, skills/, agents/, hooks/, .claude-plugin/
-- docs/adr/ (los ADRs del marco viven en el repo del plugin)
+- docs/adr/mef-adr-*  (ADRs del marco; si copias uno para editarlo local, renombralo con tu propio prefijo)
 - src/ (eso es para /implement, no para /tooling)
 
 Si la tarea requiere modificar el plugin Mefisto, NO la ejecutes. En su lugar, propon crear un draft con:
@@ -596,9 +598,9 @@ Tu tarea: revisa la calidad del codigo producido por el writer.
 ALCANCE PERMITIDO de escritura (igual al del writer):
 .github/workflows/, .claude/harness.config.json, .claude/settings.json,
 .claude/pipeline/, pipeline-state/, scripts/, tests/ (fixtures/helpers),
-docs/bitacora/, docs/eda/, docs/adr-proyecto/.
+docs/bitacora/, docs/eda/, docs/adr-proyecto/, docs/adr/.
 
-PROHIBIDO: commands/, skills/, agents/, hooks/, .claude-plugin/, docs/adr/, src/.
+PROHIBIDO: commands/, skills/, agents/, hooks/, .claude-plugin/, docs/adr/mef-adr-*, src/.
 
 Si el writer toco rutas prohibidas, reviertelas o reporta el problema en el resumen
 y NO hagas cambios extra al plugin.
