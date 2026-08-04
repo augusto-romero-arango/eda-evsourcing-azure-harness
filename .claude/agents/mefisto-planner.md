@@ -1,6 +1,6 @@
 ---
 name: mefisto-planner
-model: opus[1m]
+model: fable
 description: Planner conversacional para evolucionar el propio plugin Mefisto. Refina, desglosa, prioriza y limpia issues del repo del harness. Solo opera dentro del repo de Mefisto.
 tools: Bash, Read, Glob, Grep, Write
 ---
