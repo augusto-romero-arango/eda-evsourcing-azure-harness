@@ -374,6 +374,58 @@ if [ "$SKILLS_REFS_FOUND" -eq 0 ]; then
     pass "ningun agente declara 'skills:' todavia: nada que resolver (guard activo para cuando lo declaren)"
 fi
 
+# -------- Bloque G: guard de regresion, lado publicado (issue #443) --------
+#
+# Mismo guard que el Bloque G de .claude/scripts/tests/test-batch-deps-validation.sh
+# (issue #436), pero sobre commands/*.md (lado publicado): Claude Code expande la
+# sintaxis posicional de shell ($1..$9, ${N}, $*, $@, $#) que encuentra en el texto
+# de un slash command antes de entregarlo al modelo, sin importar que ese texto este
+# dentro de comillas simples de un heredoc o de un awk. commands/onboard.md incrustaba
+# un heredoc bash con 5 ocurrencias hasta que el issue #443 lo extrajo a
+# scripts/onboard-diagnose.sh.
+
+echo ""
+echo "[G] Guard de regresion: sin sintaxis posicional de shell en bloques bash de commands/*.md"
+
+scan_bash_positional_leaks_published() {
+    local f="$1"
+    awk -v F="$f" '
+        /^```bash/ {inb=1; next}
+        /^```/ {inb=0; next}
+        inb && (/\$[1-9]/ || /\$\{[0-9]+\}/ || /\$\*/ || /\$@/ || /\$#/) { printf "%s:%d: %s\n", F, NR, $0 }
+    ' "$f"
+}
+
+PUBLISHED_VIOLATIONS=""
+for f in "$REPO_ROOT"/commands/*.md; do
+    hits=$(scan_bash_positional_leaks_published "$f")
+    [ -n "$hits" ] && PUBLISHED_VIOLATIONS="$PUBLISHED_VIOLATIONS
+$hits"
+done
+if [ -z "$PUBLISHED_VIOLATIONS" ]; then
+    pass "cero hallazgos de sintaxis posicional en commands/*.md"
+else
+    fail "hallazgos de sintaxis posicional en commands/*.md:$PUBLISHED_VIOLATIONS"
+fi
+
+# El guard debe SI detectar un $1 introducido a mano -- si no, es un guard ciego
+# que nunca pondria nada en rojo (verificacion positiva, no solo "hoy no encuentra nada").
+SYNTH_DIR_PUB=$(mktemp -d)
+cat > "$SYNTH_DIR_PUB/synthetic-leak.md" <<'EOF'
+Prosa de un skill sintetico.
+
+```bash
+echo "$1"
+```
+EOF
+HITS_PUB=$(scan_bash_positional_leaks_published "$SYNTH_DIR_PUB/synthetic-leak.md")
+rm -rf "$SYNTH_DIR_PUB"
+if [ -n "$HITS_PUB" ]; then
+    pass "el guard detecta un \$1 introducido a mano en un archivo sintetico"
+else
+    fail "el guard NO detecto un \$1 introducido a mano (guard ciego)"
+fi
+
 # -------- Resumen --------
 
 echo ""
