@@ -9,7 +9,8 @@
 #      scripts/batch-pipeline.sh, scripts/pr-sync.sh, scripts/tdd-pipeline.sh,
 #      scripts/iac-pipeline.sh, scripts/scaffold-pipeline.sh, scripts/tmux-pipeline.sh)
 #      y los scripts auxiliares publicados (appinsights-query.sh, eda-lint.sh,
-#      setup-github-ci.sh, setup-github-labels.sh) abortan si se sourcean en un
+#      setup-github-ci.sh, setup-github-labels.sh, bootstrap-backend.sh,
+#      seed-secret.sh, onboard-diagnose.sh) abortan si se sourcean en un
 #      contexto donde .claude-plugin/plugin.json existe.
 #   D) Las funciones validate_*_scope_changes son sourceables sin errores.
 #   F) Integridad de los Agent Skills (MEF-ADR-0033 seccion 4): el `name` del
@@ -21,6 +22,14 @@
 #      visible ("Claude Code skips it and logs a warning to the debug log"), asi
 #      que en los pipelines headless (`claude -p`) el subagente correria sin su
 #      doctrina y produciria codigo plausible pero ciego a ella.
+#   G) Ningun bloque triple-backtick `bash` de commands/*.md contiene sintaxis
+#      posicional de shell ($1..$9, ${N}, $*, $@, $#): Claude Code la expande como
+#      placeholder de argumentos del slash command ANTES de entregar el texto al
+#      modelo, incluso dentro de comillas simples de un heredoc o de un awk, y sin
+#      argumentos la sustituye por cadena vacia -- un `awk '{print $1}'` llega al
+#      modelo como `awk '{print }'`. Replica en el lado publicado (issue #443) el
+#      guard que el bloque G de .claude/scripts/tests/test-batch-deps-validation.sh
+#      aplica a .claude/commands/*.md (issue #436).
 #
 # Uso: scripts/tests/test-guards.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -108,7 +117,7 @@ PUBLISHED_PIPELINES=(
     tooling-pipeline.sh parallel-pipeline.sh batch-pipeline.sh pr-sync.sh
     tdd-pipeline.sh iac-pipeline.sh scaffold-pipeline.sh tmux-pipeline.sh
     appinsights-query.sh eda-lint.sh setup-github-ci.sh setup-github-labels.sh
-    bootstrap-backend.sh seed-secret.sh
+    bootstrap-backend.sh seed-secret.sh onboard-diagnose.sh
 )
 
 for pipe in "${PUBLISHED_PIPELINES[@]}"; do
@@ -138,7 +147,7 @@ echo "[C2] Scripts auxiliares publicados: el guard aborta cuando se ejecutan en 
 
 AUX_SCRIPTS=(
     appinsights-query.sh eda-lint.sh setup-github-ci.sh setup-github-labels.sh
-    bootstrap-backend.sh seed-secret.sh
+    bootstrap-backend.sh seed-secret.sh onboard-diagnose.sh
 )
 
 for aux in "${AUX_SCRIPTS[@]}"; do
@@ -419,11 +428,30 @@ echo "$1"
 ```
 EOF
 HITS_PUB=$(scan_bash_positional_leaks_published "$SYNTH_DIR_PUB/synthetic-leak.md")
-rm -rf "$SYNTH_DIR_PUB"
 if [ -n "$HITS_PUB" ]; then
     pass "el guard detecta un \$1 introducido a mano en un archivo sintetico"
 else
     fail "el guard NO detecto un \$1 introducido a mano (guard ciego)"
+fi
+
+# Y NO debe marcar $ARGUMENTS ni ${#ARRAY[@]}: los dos son idiomas legitimos de un
+# skill publicado (commands/onboard.md documenta $ARGUMENTS en su ultima regla) y
+# Claude Code no los expande como posicionales. Sin este caso, ensanchar el regex
+# del guard hasta volverlo ruidoso pasaria inadvertido.
+cat > "$SYNTH_DIR_PUB/synthetic-clean.md" <<'EOF'
+Prosa de un skill sintetico.
+
+```bash
+echo "$ARGUMENTS"
+echo "${#SEC_NAMES[@]}"
+```
+EOF
+HITS_PUB2=$(scan_bash_positional_leaks_published "$SYNTH_DIR_PUB/synthetic-clean.md")
+rm -rf "$SYNTH_DIR_PUB"
+if [ -z "$HITS_PUB2" ]; then
+    pass "el guard no marca \$ARGUMENTS ni \${#ARRAY[@]} (sin falsos positivos)"
+else
+    fail "falso positivo del guard sobre \$ARGUMENTS/\${#ARRAY[@]}: $HITS_PUB2"
 fi
 
 # -------- Resumen --------

@@ -89,6 +89,13 @@ main() {
     }
     if [ -f "$REPO_ROOT/.claude-plugin/plugin.json" ]; then
         echo "ERROR: /onboard no aplica al repo de Mefisto."
+        # Segunda linea con el fraseo canonico del resto de los scripts publicados
+        # (setup-github-labels.sh, setup-github-ci.sh, seed-secret.sh, ...): es lo que
+        # verifica el bloque C2 de scripts/tests/test-guards.sh, que EJECUTA cada script
+        # publicado dentro de Mefisto y exige exit 1 mas ese mensaje. La primera linea se
+        # conserva verbatim porque es la que /onboard le pide al modelo reconocer
+        # ("si el bloque imprime ERROR, detente").
+        echo "       scripts/onboard-diagnose.sh es del plugin publicado y solo aplica al consumidor."
         return 1
     fi
 
