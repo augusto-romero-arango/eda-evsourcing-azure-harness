@@ -648,15 +648,16 @@ validate_consumer_scope_changes() {
 
         local branch
         branch=$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)
+        [ -z "$branch" ] && branch="la rama del worktree $wt"
 
         echo "ERROR: el agente toco rutas reservadas al plugin Mefisto:" >&2
         printf '  - %s\n' "${violations[@]}" >&2
         echo "" >&2
-        echo "Las rutas commands/, skills/, agents/, hooks/, .claude-plugin/, docs/adr/mef-adr-*" >&2
-        echo "pertenecen al plugin (repo $repo_slug)." >&2
+        echo "Las rutas commands/, skills/, agents/, hooks/, .claude-plugin/ y los archivos" >&2
+        echo "docs/adr/mef-adr-* pertenecen al plugin (repo $repo_slug)." >&2
         echo "" >&2
-        echo "El trabajo del agente ya quedo commiteado en la rama '$branch' -- es recuperable:" >&2
-        echo "revierte los archivos en falta y abre el PR a mano." >&2
+        echo "El resto del trabajo del agente NO se perdio: ya quedo commiteado en '$branch'." >&2
+        echo "Para recuperarlo, revierte ahi los archivos listados arriba y abre el PR a mano." >&2
         echo "Si necesitas modificar el plugin, abre un draft en su repo:" >&2
         echo "  gh issue create -R $repo_slug \\" >&2
         echo "    --label \"estado:borrador,tipo:tooling\" --title \"...\"" >&2

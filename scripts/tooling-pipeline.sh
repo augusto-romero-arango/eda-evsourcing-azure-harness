@@ -486,7 +486,8 @@ ALCANCE PERMITIDO de escritura:
 - scripts/                                   (scripts ad-hoc del consumidor)
 - tests/                                     (SOLO fixtures, helpers, builders - NO logica de dominio)
 - docs/bitacora/, docs/eda/, docs/adr-proyecto/, docs/adr/  (documentacion del consumidor;
-  docs/adr/ es el ADR local del consumidor si no usa docs/adr-proyecto/ -- MEF-ADR-0030)
+  docs/adr/ son los ADRs locales de ESTE repo -- con el prefijo propio que haya elegido
+  o sin prefijo. MEF-ADR-0030: no hay que reubicarlos fuera de docs/adr/)
 
 PROHIBIDO MODIFICAR (pertenece al plugin Mefisto, no a este repo):
 - commands/, skills/, agents/, hooks/, .claude-plugin/
