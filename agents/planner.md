@@ -1,6 +1,6 @@
 ---
 name: planner
-model: opus[1m]
+model: fable
 description: Agente de Knowledge Crunching y planificación. Descubre el lenguaje del dominio a través de eventos, y convierte ese conocimiento en issues accionables.
 tools: Bash, Read, Glob, Grep, Write
 skills:
