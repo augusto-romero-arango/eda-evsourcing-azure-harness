@@ -2,7 +2,7 @@
 model: haiku
 ---
 
-Genera el worker de proyecciones `<RootNamespace>.Projections` (daemon asincronico `HotCold` de Marten, seam de observabilidad `ConfiguracionObservabilidadProjections`), la biblioteca `<RootNamespace>.ReadModels`, el config-test base `<RootNamespace>.Projections.Tests` y el workflow de deploy `deploy-projections.yml` invocando al agente `projections-scaffolder`, al estilo de `infra-base-scaffolder`. **Alcance acotado (fase 1, issue #367 + fase 2, issue #375 + fase 3, issue #453 + fase 4, issue #457)**: el registro del store de cada dominio lo hace `domain-scaffolder` (issue #370); ninguna proyeccion ni read model concreto se genera aqui (issues `tipo:projection`). Comunicate en **espanol**.
+Genera el worker de proyecciones `<RootNamespace>.Projections` (daemon asincronico `HotCold` de Marten, seam de observabilidad `ConfiguracionObservabilidadProjections`), la biblioteca `<RootNamespace>.ReadModels`, el config-test base `<RootNamespace>.Projections.Tests`, el workflow de deploy `deploy-projections.yml` y el `.dockerignore` del build context invocando al agente `projections-scaffolder`, al estilo de `infra-base-scaffolder`. **Alcance acotado (fase 1, issue #367 + fase 2, issue #375 + fase 3, issue #453 + fase 4, issue #457 + fase 5, issue #458)**: el registro del store de cada dominio lo hace `domain-scaffolder` (issue #370); ninguna proyeccion ni read model concreto se genera aqui (issues `tipo:projection`). Comunicate en **espanol**.
 
 ## Pre-condicion 1: cwd != Mefisto
 
@@ -59,7 +59,8 @@ Si `RAW` es `"true"`, continua.
 
 ```
 Se va a generar el worker de proyecciones y su andamiaje read-side (fase 1,
-issue #367 + fase 2, issue #375 + fase 3, issue #453 + fase 4, issue #457):
+issue #367 + fase 2, issue #375 + fase 3, issue #453 + fase 4, issue #457 +
+fase 5, issue #458):
 
   src/<RootNamespace>.Projections/
     <RootNamespace>.Projections.csproj  (SDK Microsoft.NET.Sdk.Worker)
@@ -90,6 +91,14 @@ issue #367 + fase 2, issue #375 + fase 3, issue #453 + fase 4, issue #457):
                                           resource group y del Container App: si
                                           falta, el agente lo reporta pendiente y
                                           hay que correr /infra-base primero)
+
+  .dockerignore                         (en la RAIZ del repo, que es el build context del
+                                          Dockerfile: filtra bin/obj de todos los proyectos,
+                                          settings locales, tfstate/tfvars, .terraform y
+                                          node_modules -- Docker no lee .gitignore. Gate
+                                          propio, independiente del Dockerfile: un repo que
+                                          ya tenia Dockerfile tambien lo recibe. Solo si no
+                                          existe todavia)
 
   <SolutionFile>: se agregan los tres proyectos nuevos
   global.json: se verifica/crea la seccion "test"
@@ -135,4 +144,4 @@ Worker de proyecciones, ReadModels y config-test base generados. Siguiente:
 
 - **No generes nada tu mismo.** Solo valida las dos pre-condiciones, informa y lanza el agente.
 - El agente nunca registra un store de dominio, un read model concreto ni toca Azure Service Bus (MEF-ADR-0034 seccion 4): esa es responsabilidad de `domain-scaffolder`/`projection-implementer` de cada dominio, no de este skill.
-- El agente es idempotente: no sobrescribe `Program.cs`, el seam de composicion ni el config-test base si ya existen (pueden llevar registros o guardas de dominio agregados por `domain-scaffolder`/`projection-test-writer`).
+- El agente es idempotente: no sobrescribe `Program.cs`, el seam de composicion, el config-test base ni el `.dockerignore` de la raiz si ya existen (pueden llevar registros o guardas de dominio agregados por `domain-scaffolder`/`projection-test-writer`, o exclusiones que el consumidor sumo a mano).

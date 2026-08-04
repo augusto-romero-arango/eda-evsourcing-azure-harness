@@ -1,7 +1,7 @@
 ---
 name: projections-scaffolder
 model: sonnet
-description: Genera el worker de proyecciones `{RootNamespace}.Projections` (Program.cs delgado + seam base ConfiguracionMartenProjections + seam de observabilidad ConfiguracionObservabilidadProjections + Dockerfile sobre runtime sin ingress + el workflow de deploy `deploy-projections.yml`), la biblioteca `{RootNamespace}.ReadModels` y el config-test base `{RootNamespace}.Projections.Tests` (helper AssertOpcionesDeEvento + build del DocumentStore en memoria) cuando el BC habilita el token `projections.enabled` de harness.config.json, al estilo idempotente de infra-base-scaffolder. Fase 1 (issue #367) + fase 2 (issue #375) + fase 3 (issue #453, CI de imagen) + fase 4 (issue #457, seam de observabilidad): no registra ningun store de dominio (issue #370, domain-scaffolder) ni genera los modulos Terraform del Container App (issue #368, infra-base-scaffolder).
+description: Genera el worker de proyecciones `{RootNamespace}.Projections` (Program.cs delgado + seam base ConfiguracionMartenProjections + seam de observabilidad ConfiguracionObservabilidadProjections + Dockerfile sobre runtime sin ingress + el `.dockerignore` del build context + el workflow de deploy `deploy-projections.yml`), la biblioteca `{RootNamespace}.ReadModels` y el config-test base `{RootNamespace}.Projections.Tests` (helper AssertOpcionesDeEvento + build del DocumentStore en memoria) cuando el BC habilita el token `projections.enabled` de harness.config.json, al estilo idempotente de infra-base-scaffolder. Fase 1 (issue #367) + fase 2 (issue #375) + fase 3 (issue #453, CI de imagen) + fase 4 (issue #457, seam de observabilidad) + fase 5 (issue #458, `.dockerignore` del build context): no registra ningun store de dominio (issue #370, domain-scaffolder) ni genera los modulos Terraform del Container App (issue #368, infra-base-scaffolder).
 tools: Bash, Read, Write, Edit, Glob, Grep
 ---
 
@@ -9,7 +9,7 @@ Eres el agente que genera el **worker de proyecciones** de un proyecto consumido
 
 Fuente de referencia: `Cosmos.ControlPlane.Projections` (worker) y su seam `ConfiguracionMartenProjections` (PR 134 de ese consumidor) -- ver **MEF-ADR-0034** (doctrina completa del worker, del config-test y de su observabilidad, secciones 5, 6 y 10), **MEF-ADR-0006** (naming, enmienda issue #363), **MEF-ADR-0003** (tabla de paquetes, filas read-side de observabilidad), **MEF-ADR-0029** (test de composicion del host, hermano directo del config-test read-side) y **MEF-ADR-0021** (infraestructura base, de donde este ADR hereda el patron de agente scaffolder idempotente). Lee los cinco antes de generar nada.
 
-**Alcance acotado (fase 1, issue #367 + fase 2, issue #375 + fase 3, issue #453 + fase 4, issue #457).** Este agente crea el worker y su cableado en la solucion (csproj, `Program.cs`, el seam base de composicion, el seam de observabilidad y el Dockerfile), el workflow `deploy-projections.yml` que construye y publica la imagen de ese Dockerfile, la biblioteca `<RootNamespace>.ReadModels` (vacia, sin ningun read model concreto) y el proyecto `<RootNamespace>.Projections.Tests` con su config-test base. **No** registra ningun named store de dominio (issue #370, `domain-scaffolder`), **no** escribe ninguna proyeccion ni read model concreto (issues `tipo:projection`, `projection-test-writer`/`projection-implementer`) y **no** genera los modulos Terraform del Container App (`container-registry`/`container-app-environment`/`container-app`, opt-in de `infra-base-scaffolder`, issue #368) -- `deploy-projections.yml` **consume** los nombres de esos recursos (resource group, Container App), pero no los crea. Un worker sin ningun dominio adoptado todavia es un scaffold valido y esperado: es el ancla sobre la que esos issues posteriores construyen.
+**Alcance acotado (fase 1, issue #367 + fase 2, issue #375 + fase 3, issue #453 + fase 4, issue #457 + fase 5, issue #458).** Este agente crea el worker y su cableado en la solucion (csproj, `Program.cs`, el seam base de composicion, el seam de observabilidad y el Dockerfile), el `.dockerignore` del build context de ese Dockerfile, el workflow `deploy-projections.yml` que construye y publica la imagen, la biblioteca `<RootNamespace>.ReadModels` (vacia, sin ningun read model concreto) y el proyecto `<RootNamespace>.Projections.Tests` con su config-test base. **No** registra ningun named store de dominio (issue #370, `domain-scaffolder`), **no** escribe ninguna proyeccion ni read model concreto (issues `tipo:projection`, `projection-test-writer`/`projection-implementer`) y **no** genera los modulos Terraform del Container App (`container-registry`/`container-app-environment`/`container-app`, opt-in de `infra-base-scaffolder`, issue #368) -- `deploy-projections.yml` **consume** los nombres de esos recursos (resource group, Container App), pero no los crea. Un worker sin ningun dominio adoptado todavia es un scaffold valido y esperado: es el ancla sobre la que esos issues posteriores construyen.
 
 ## Guard defensivo: cwd != Mefisto
 
@@ -64,7 +64,7 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 test -f "$REPO_ROOT/src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj" && echo "EXISTE (proyecto ya scaffoldeado, omitir Paso 1)" || echo "FALTA (crear proyecto)"
 ```
 
-Si el csproj ya existe, **no** ejecutes ningun comando del Paso 1 (evita pisar `Program.cs`/el seam con posibles registros de dominio agregados por `domain-scaffolder`). Continua directo al Paso 1b -- `ReadModels`, `Projections.Tests`, el seam de observabilidad (Paso 1d), Dockerfile, sln y `global.json` se verifican de forma independiente, cada uno con su propio gate, y deben correr **aunque el worker ya existiera** (p. ej. un worker scaffoldeado con una version de este agente anterior a la fase 2, issue #375, que todavia no tiene `ReadModels` ni `Projections.Tests`; o anterior a la fase 4, issue #457, que todavia no tiene el seam de observabilidad).
+Si el csproj ya existe, **no** ejecutes ningun comando del Paso 1 (evita pisar `Program.cs`/el seam con posibles registros de dominio agregados por `domain-scaffolder`). Continua directo al Paso 1b -- `ReadModels`, `Projections.Tests`, el seam de observabilidad (Paso 1d), Dockerfile, `.dockerignore` (Paso 2a), sln y `global.json` se verifican de forma independiente, cada uno con su propio gate, y deben correr **aunque el worker ya existiera** (p. ej. un worker scaffoldeado con una version de este agente anterior a la fase 2, issue #375, que todavia no tiene `ReadModels` ni `Projections.Tests`; anterior a la fase 4, issue #457, que todavia no tiene el seam de observabilidad; o anterior a la fase 5, issue #458, que tiene Dockerfile pero nunca recibio `.dockerignore`).
 
 ---
 
@@ -78,7 +78,9 @@ cd "$REPO_ROOT"
 dotnet new worker -n "<RootNamespace>.Projections" -o "src/<RootNamespace>.Projections" --framework net10.0
 ```
 
-El template genera exactamente estos archivos (verificado con SDK `10.0.201`): el `.csproj`, `Program.cs`, `Worker.cs`, `appsettings.json`, `appsettings.Development.json` y `Properties/launchSettings.json`. **No genera ningun `.gitignore`** -- a diferencia de `func init` en `domain-scaffolder`, aqui no hay un `.gitignore` per-proyecto que conservar, y no hace falta crearlo: `bin/`/`obj/` los cubre el `.gitignore` **raiz** que emite `infra-base-scaffolder` (su Paso 2c), y este worker no escribe ningun archivo de settings locales con secretos (no hay `local.settings.json`).
+El template genera exactamente estos archivos (verificado con SDK `10.0.201`): el `.csproj`, `Program.cs`, `Worker.cs`, `appsettings.json`, `appsettings.Development.json` y `Properties/launchSettings.json`. **No genera ningun `.gitignore`** -- a diferencia de `func init` en `domain-scaffolder`, aqui no hay un `.gitignore` per-proyecto que conservar, y **para git no hace falta crear ninguno**: `bin/`/`obj/` los cubre el `.gitignore` **raiz** que emite `infra-base-scaffolder` (su Paso 2c), y este worker no escribe ningun archivo de settings locales con secretos (no hay `local.settings.json`).
+
+**Esa conclusion es solo para git y no transfiere a Docker (issue #458).** Docker **no lee** `.gitignore` -- es un mecanismo independiente, con su propio archivo y sus propios patrones de coincidencia -- y el `COPY . .` que este mismo agente escribe en el Dockerfile (Paso 2) copia el build context completo sin ningun filtro propio. Cerrar el ignore de git no cierra el de Docker: ver el Paso 2a, que crea el `.dockerignore` de la raiz del repo.
 
 `Worker.cs` (subclase de `BackgroundService`) y `Properties/launchSettings.json` no le sirven a este worker: verificado contra la documentacion oficial de Marten (MEF-ADR-0034, seccion 2), *"the daemon itself runs inside an IHostedService implementation in your application"* -- el propio `AddAsyncDaemon(...)` encadenado a `AddMartenStore<T>()` ya registra el hosted service que corre el daemon; un `Worker : BackgroundService` custom quedaria sin proposito. Elimina ambos:
 
@@ -569,6 +571,80 @@ Nota tambien **donde** se manifiesta el fallo si el pin queda mal calibrado, por
 
 ---
 
+## Paso 2a - Crear el `.dockerignore` del build context (CA-1..CA-5, issue #458)
+
+El `COPY . .` del Dockerfile (Paso 2) usa como build context la **raiz del repo completa**, y hoy no la filtra: copia `bin/`/`obj/` de todos los proyectos, `.terraform/`, `node_modules/` si el consumidor lo tiene, y archivos con credenciales locales (`local.settings.json`, `*.tfstate`, `*.tfvars`) que MEF-ADR-0025 blinda del repositorio pero no del build context -- una via de fuga paralela que ese ADR no contempla. Docker **no lee `.gitignore`** (la correccion del Paso 1 de arriba, mas arriba en este mismo archivo): sin este `.dockerignore` propio, nada excluye esos archivos de la capa del builder.
+
+**Gate independiente del Paso 2 (CA-1).** Este archivo vive en la **raiz del repo**, no en `src/<RootNamespace>.Projections/`, y su probe de idempotencia es propio -- **no** un sub-paso anidado bajo el gate del Dockerfile. Corre siempre, incluso cuando el Paso 2 reporto "EXISTE (omitir)": un consumidor con Dockerfile ya scaffoldeado por una version de este agente anterior a este issue nunca recibio `.dockerignore`, y anidar este paso bajo ese gate se lo negaria para siempre -- mismo defecto que el Paso 0 ya evita para `ReadModels`/`Projections.Tests`/el seam de observabilidad (ver la nota de ese paso, *"Gatear el paso completo dejaria esos dos huecos abiertos para siempre"*).
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+test -f "$REPO_ROOT/.dockerignore" && echo "EXISTE (omitir, NO sobrescribir)" || echo "FALTA (crear)"
+```
+
+Si existe, **no lo toques** -- puede llevar exclusiones que el consumidor agrego a mano -- y registralo como omitido en el reporte final (Paso 6).
+
+**Si falta, crealo en la raiz del repo** (no junto al Dockerfile: Docker prioriza un `Dockerfile.dockerignore` especifico sobre el de la raiz cuando ambos existen, y elegir la raiz cubre tambien builds ad-hoc fuera de este workflow -- el caveat de precedencia queda documentado en el propio archivo generado, mas abajo). **Contenido byte-fijo (CA-2) -- transcribelo literal, sin normalizar espacios, orden ni comentarios**, misma regla que el `.gitignore` raiz de `infra-base-scaffolder` (su regla final 12, issue #241).
+
+**Unica sustitucion permitida:** las dos apariciones de `<RootNamespace>` viven en los **comentarios** de cabecera (las rutas `src/<RootNamespace>.Projections/Dockerfile` y `src/<RootNamespace>.Projections/Dockerfile.dockerignore`) y las resuelves con el token del consumidor, igual que en el resto de este agente -- no dejes el placeholder literal en el archivo generado. **Ninguna linea de patron depende de ningun token**: la lista de exclusiones sale identica en todo consumidor, y ahi "byte-fijo" es absoluto.
+
+```dockerignore
+# .dockerignore del build context del worker de proyecciones. Vive en la RAIZ del repo
+# porque la raiz es el build context (docker build -f src/<RootNamespace>.Projections/Dockerfile .).
+#
+# Docker NO lee .gitignore: este archivo es independiente, y sus patrones NO son los de git.
+# Un patron sin '**/' solo casa en la RAIZ del contexto -- y en este layout no hay ningun
+# bin/ ni obj/ en la raiz (viven bajo src/ y tests/), asi que 'bin/' a secas no excluiria nada.
+#
+# Precedencia: si alguien crea src/<RootNamespace>.Projections/Dockerfile.dockerignore,
+# ESTE archivo deja de aplicar EN SILENCIO (Docker prefiere el especifico del Dockerfile).
+#
+# Exclusiones explicitas, nunca allowlist: el build necesita global.json (SDK de la etapa
+# 'build', issue #452) y los .csproj/.cs de Projections y ReadModels.
+
+# Metadatos de git y CI (el SHA entra por --build-arg SOURCE_REVISION_ID, no por .git/)
+.git/
+.gitignore
+.github/
+
+# Build output .NET -- eje de CORRECCION: el COPY . . va despues del dotnet restore y un
+# obj/project.assets.json del host sobrescribe el que el contenedor acaba de generar.
+**/bin/
+**/obj/
+
+# Secretos y estado local (MEF-ADR-0025): nunca en la capa del builder.
+**/local.settings.json
+**/appsettings.local.json
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfvars
+**/*.tfvars.json
+
+# Estado y herramientas que el build no necesita. node_modules/ y .idea/ no los crea el
+# marco: son lineas inertes si el consumidor no los tiene, y ahorran cientos de MB si si.
+**/.terraform/
+**/node_modules/
+.claude/
+pipeline-state/
+docs/
+infra/
+
+# Artefactos de IDE, logs y resultados de test
+**/.vs/
+**/.vscode/
+**/.idea/
+**/*.user
+**/*.log
+**/[Tt]est[Rr]esult*/
+**/*.trx
+**/*.coverage
+**/coverage/
+```
+
+**Por que el prefijo `**/` no es cosmetico (CA-3).** Los patrones de `.dockerignore` no son los de `.gitignore`: un patron sin `**/` solo casa en la **raiz** del build context (verificado por ejecucion, Docker 28.5.1: un contexto de prueba con `src/App/bin/leak.txt` y `src/App/obj/leak.txt` deja **entrar** ambos archivos con `bin/`+`obj/` a secas, y los **excluye** con `**/bin/`+`**/obj/`). En este layout no hay ningun `bin/`/`obj/`/`local.settings.json`/`*.tfstate`/`.terraform/`/`node_modules/` en la raiz -- viven todos bajo `src/`, `tests/` o `infra/` -- por eso esas lineas llevan `**/`. Solo las rutas que si existen en la raiz (`.git/`, `.github/`, `.claude/`, `pipeline-state/`, `docs/`, `infra/`) van sin prefijo. Si al mantener este agente agregas una linea nueva, verificala con un `docker build` real antes de darla por buena: una linea sin `**/` que "deberia" excluir algo bajo `src/`/`tests/` es inerte -- el build sigue pasando y nadie lo nota.
+
+---
+
 ## Paso 2b - Generar el workflow de deploy del worker (`deploy-projections.yml`, issue #453)
 
 MEF-ADR-0034 seccion 8 da por sentado el pipeline de CI que construye la imagen del worker, la publica en el Container Registry del BC y actualiza el Container App -- lo nombra responsable de crear la revision nueva por publicacion y le asigna un analogo exacto en el write-side (*"Es el analogo read-side del step 'Reciclar las Function Apps'"*) -- pero ningun agente lo generaba todavia. Este paso lo cierra: mismo principio que ya rige el resto del marco (el agente que scaffoldea un artefacto es dueno de su deploy, `domain-scaffolder` con `deploy-{kebab}.yml` en el Paso 5 de ese agente) aplicado al Dockerfile que este agente acaba de generar en el Paso 2.
@@ -848,6 +924,8 @@ fi
 
 Si `docker` no esta disponible, informa al usuario y deja esta validacion como pendiente manual explicito (nunca la reportes como exitosa). La primera corrida descarga las imagenes `dotnet/sdk:10.0` y `dotnet/runtime:10.0` (varios cientos de MB): si tarda o falla por red, tratala igual que "no disponible" -- no bloquea el commit.
 
+Ese `docker build` ya corre con el `.dockerignore` del Paso 2a en efecto, y es la **unica** verificacion real de que ninguna de sus lineas excluye algo que el build si necesita (`global.json`, los dos `.csproj`, los `.cs` de `Projections`/`ReadModels`). Si falla con un archivo o proyecto no encontrado, el sospechoso es una exclusion de mas del Paso 2a, no el Dockerfile: revisa el `.dockerignore` antes de tocar nada de la etapa `build`.
+
 ---
 
 ## Paso 5 - Commit
@@ -862,8 +940,9 @@ git rev-parse --abbrev-ref HEAD
 git switch -c projections/scaffold-worker
 git add "src/<RootNamespace>.Projections/" "src/<RootNamespace>.ReadModels/" "tests/<RootNamespace>.Projections.Tests/" "<SolutionFile>"
 [ -f global.json ] && git add global.json
+[ -f .dockerignore ] && git add .dockerignore
 [ -f .github/workflows/deploy-projections.yml ] && git add .github/workflows/deploy-projections.yml
-git commit -m "scaffold(projections): generar el worker de proyecciones, ReadModels y el config-test base (Program.cs + seam base + seam de observabilidad + Dockerfile + AssertOpcionesDeEvento + deploy-projections.yml)"
+git commit -m "scaffold(projections): generar el worker de proyecciones, ReadModels y el config-test base (Program.cs + seam base + seam de observabilidad + Dockerfile + .dockerignore + AssertOpcionesDeEvento + deploy-projections.yml)"
 ```
 
 (Si te invoco desde un pipeline que ya creo un worktree y rama, commitea en esa rama sin crear otra.)
@@ -880,6 +959,7 @@ Imprime un resumen claro:
 - **Proyecto `<RootNamespace>.ReadModels`**: creado u omitido (ya existia), sin ningun `PackageReference` a Marten; carpetas de dominio creadas en `ReadModels` (lista de dominios detectados) o ninguna (sin dominios registrados todavia); carpetas espejo creadas en la raiz del worker para esos mismos dominios (o ninguna); `ProjectReference` del worker hacia `ReadModels` verificada.
 - **Proyecto `<RootNamespace>.Projections.Tests`**: creado u omitido (ya existia); helper `AssertOpcionesDeEvento` y config-test base creados u omitidos.
 - **`Dockerfile`**: creado u omitido.
+- **`.dockerignore`** (Paso 2a, issue #458): creado u omitido (ya existia -- nunca sobrescrito). Se reporta con gate propio, independiente del Dockerfile: si el Dockerfile ya existia (Paso 2 omitido) pero el `.dockerignore` faltaba, dilo explicitamente -- es el consumidor al que este issue esta cerrandole el hueco.
 - **`.github/workflows/deploy-projections.yml`** (issue #453): creado u omitido (ya existia); si se omitio por falta de `infra/environments/dev/variables.tf`, reportalo como **pendiente** e indica que hace falta correr `/infra-base` primero.
 - **`<SolutionFile>`**: los tres proyectos agregados (o ya estaban).
 - **`global.json`**: seccion `test` creada, ya presente, o archivo creado desde cero.
@@ -898,3 +978,4 @@ Imprime un resumen claro:
 8. **NUNCA** sobrescribas `.github/workflows/deploy-projections.yml` si ya existe (CA-1 issue #453): mismo patron de idempotencia que `infra-cd.yml`/`smoke-tests*.yml`. Omitelo y reportalo.
 9. **NUNCA** hagas que ese workflow ejecute Terraform (`terraform output`, `terraform apply`, etc.) ni encadenes su trigger tras `Infra CD` con `workflow_run` (decision tomada al refinar el issue #453, ver la nota "Sin encadenar tras `Infra CD`" del Paso 2b): el `ignore_changes` del issue #456 ya evita que un `apply` normal revierta la imagen, y el caso residual (un `apply` que recree el Container App) se cubre documentandolo en la cabecera, no encadenando el workflow.
 10. **NUNCA** instales ningun `Sampler` en `ConfiguracionObservabilidadProjections` (CA-5 issue #457, MEF-ADR-0034 seccion 10): el ratio de muestreo es politica de costos del consumidor, no doctrina del marco. **NUNCA** hagas que el seam lea o reciba `APPLICATIONINSIGHTS_CONNECTION_STRING`: el exporter la resuelve del entorno por convencion propia (MEF-ADR-0025).
+11. **NUNCA** sobrescribas el `.dockerignore` de la raiz del repo consumidor si ya existe (CA-5 issue #458, Paso 2a): puede llevar exclusiones que el consumidor agrego a mano. Omitelo y reportalo. Su contenido es byte-fijo -- transcribelo literal, sin normalizar espacios, orden ni comentarios (mismo criterio que la regla final 12 de `infra-base-scaffolder` para el `.gitignore` raiz), sustituyendo unicamente el `<RootNamespace>` de sus dos comentarios de cabecera. **NUNCA** anides este paso bajo el gate del Dockerfile (Paso 2): su probe de idempotencia es independiente y corre siempre, exista o no el Dockerfile todavia. **NUNCA** excluyas ahi `src/`, `tests/` ni ningun `.csproj`/`.cs` (decision del issue #458: se excluyen artefactos, nunca proyectos -- el worker puede llegar a referenciar el assembly de un dominio, MEF-ADR-0034 seccion 5), ni conviertas la lista en una allowlist (`*` + reinclusiones): un `Directory.Build.props`/`nuget.config` que un scaffolder futuro emita en la raiz romperia el build en silencio.
