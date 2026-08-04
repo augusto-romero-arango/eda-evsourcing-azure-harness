@@ -456,9 +456,14 @@ auto_commit_if_needed() {
 
     git -C "$WORKTREE_PATH" checkout -- .claude/settings.json 2>/dev/null || true
 
+    # pipeline-state/ es ruta de escritura permitida (MEF-ADR-0019:37) pero su senal nunca
+    # se versiona (MEF-ADR-0017): por eso falta en el "git add" de abajo. Donde esta
+    # gitignored -- consumidor greenfield, bloque byte-fijo del .gitignore raiz que emite
+    # infra-base-scaffolder en su Paso 2c -- git status no la reporta, asi que su mencion en
+    # este filtro es inerte y solo queda como ancla de la advertencia (ver el gate de abajo).
     if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ scripts/ .github/ infra/ pipeline-state/)" ]; then
         log "Haciendo commit automatico (fase $phase)..."
-        for dir in tests/ src/ scripts/ .github/ infra/ pipeline-state/; do
+        for dir in tests/ src/ scripts/ .github/ infra/; do
             git -C "$WORKTREE_PATH" add "$dir" 2>/dev/null || true
         done
         git -C "$WORKTREE_PATH" commit -m "$msg" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 || true
@@ -523,6 +528,11 @@ Instrucciones:
     if ! git -C "$WORKTREE_PATH" diff --quiet "$SNAPSHOT_COMMIT" HEAD 2>/dev/null; then
         HAS_COMMITS=true
     fi
+    # pipeline-state/ es ruta de escritura permitida (MEF-ADR-0019:37) pero gitignored en el
+    # consumidor greenfield (MEF-ADR-0017; .gitignore raiz del Paso 2c de infra-base-scaffolder):
+    # alli git status no la ve, asi que un writer que produjera SOLO una senal en ese directorio
+    # caeria en el abort de abajo ("no genero ningun cambio"). Hoy es latente: ningun agente del
+    # carril de tooling escribe ahi (ver issue #485).
     if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ scripts/ .github/ infra/ pipeline-state/ 2>/dev/null)" ]; then
         HAS_UNSTAGED=true
     fi
@@ -545,6 +555,7 @@ $STAGE1_PROMPT"
             git -C "$WORKTREE_PATH" checkout -- .claude/settings.json 2>/dev/null || true
             HAS_COMMITS=false; HAS_UNSTAGED=false
             if ! git -C "$WORKTREE_PATH" diff --quiet "$SNAPSHOT_COMMIT" HEAD 2>/dev/null; then HAS_COMMITS=true; fi
+            # Mismo acoplamiento pipeline-state/ gitignored vs allowlist de escritura, ver arriba.
             if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ scripts/ .github/ infra/ pipeline-state/ 2>/dev/null)" ]; then HAS_UNSTAGED=true; fi
         fi
 

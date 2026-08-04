@@ -2260,6 +2260,9 @@ local.settings.json
 *.trx
 *.coverage
 coverage/
+
+# Senal transitoria del pipeline, fuera de .claude/ (MEF-ADR-0017)
+pipeline-state/
 ```
 
 ---
