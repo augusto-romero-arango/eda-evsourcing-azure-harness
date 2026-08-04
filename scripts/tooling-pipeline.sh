@@ -456,9 +456,13 @@ auto_commit_if_needed() {
 
     git -C "$WORKTREE_PATH" checkout -- .claude/settings.json 2>/dev/null || true
 
+    # pipeline-state/ es ruta de escritura permitida (MEF-ADR-0019:37) pero gitignored
+    # (MEF-ADR-0017): git status no reporta ignorados, asi que si el writer solo cambia
+    # algo ahi este check no lo detecta. Se mantiene en el filtro por si algun dia deja
+    # de estar gitignored; no se agrega al "git add" de abajo porque violaria el ADR.
     if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ scripts/ .github/ infra/ pipeline-state/)" ]; then
         log "Haciendo commit automatico (fase $phase)..."
-        for dir in tests/ src/ scripts/ .github/ infra/ pipeline-state/; do
+        for dir in tests/ src/ scripts/ .github/ infra/; do
             git -C "$WORKTREE_PATH" add "$dir" 2>/dev/null || true
         done
         git -C "$WORKTREE_PATH" commit -m "$msg" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 || true
@@ -523,6 +527,10 @@ Instrucciones:
     if ! git -C "$WORKTREE_PATH" diff --quiet "$SNAPSHOT_COMMIT" HEAD 2>/dev/null; then
         HAS_COMMITS=true
     fi
+    # pipeline-state/ esta gitignored (MEF-ADR-0017) aunque sea ruta de escritura permitida
+    # (MEF-ADR-0019:37): git status no la ve, asi que un writer que produjera SOLO una senal
+    # ahi haria caer en el abort de abajo ("no genero ningun cambio"). Hoy es latente: ningun
+    # agente del carril de tooling escribe ahi (ver issue #485).
     if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ scripts/ .github/ infra/ pipeline-state/ 2>/dev/null)" ]; then
         HAS_UNSTAGED=true
     fi
@@ -545,6 +553,7 @@ $STAGE1_PROMPT"
             git -C "$WORKTREE_PATH" checkout -- .claude/settings.json 2>/dev/null || true
             HAS_COMMITS=false; HAS_UNSTAGED=false
             if ! git -C "$WORKTREE_PATH" diff --quiet "$SNAPSHOT_COMMIT" HEAD 2>/dev/null; then HAS_COMMITS=true; fi
+            # Mismo acoplamiento pipeline-state/ gitignored vs allowlist de escritura, ver arriba.
             if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ scripts/ .github/ infra/ pipeline-state/ 2>/dev/null)" ]; then HAS_UNSTAGED=true; fi
         fi
 

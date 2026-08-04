@@ -1,6 +1,9 @@
 # Runtime de los pipelines internos de Mefisto (no se versiona):
 .claude/pipeline/
 
+# Senal transitoria del pipeline, fuera de .claude/ (MEF-ADR-0017):
+pipeline-state/
+
 # Claude Code local settings (no aplica al plugin como contenido distribuible):
 .claude/settings.local.json
 
