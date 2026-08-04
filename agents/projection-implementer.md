@@ -43,6 +43,8 @@ echo "Raiz del plugin: $PLUGIN_ROOT"
 
 El read model es un record plano, **sin** `partial`, en `<RootNamespace>.ReadModels` (no referencia Marten). El comportamiento (`Create`/`Apply`/`ShouldDelete` estaticos) vive en la clase de proyeccion companion, `partial`, en el **worker** (`src/<RootNamespace>.Projections/{Dominio}/{Concepto}Projection.cs`) -- mismo estilo en N1 y N2 (gotcha de dos condiciones documentado en `modelos-marten.md`, reverificalo con un build antes de asumir que compila). En **ambos** niveles la clase companion ya la dejo declarada `projection-test-writer` como stub (en N2, con el constructor de correlacion `Identity<TEvento>`/`Identities<TEvento>` ya escrito -- eso no es un stub, no tiene logica que fallar); tu implementas sus `Create`/`Apply`/`ShouldDelete`.
 
+**Elegir la firma de `Create` segun de donde sale la identidad** (lista cerrada de argumentos admitidos, `modelos-marten.md`): si la identidad del read model es el **stream key** -- `TId = string`, el caso normal de N1 en este marco (`StreamIdentity.AsString`, MEF-ADR-0034 ref. [19]) --, `Create` toma `IEvent<TEvento>` y la construye con `e.StreamKey!`; si en cambio el evento ya trae en su propio payload todo lo que la vista necesita -- la identidad la resuelve `Identity<TEvento>`/`Identities<TEvento>` en el constructor, no `Create`, el caso tipico de N2 --, `Create` toma `TEvento` a secas. **Prohibido**: `Create`/`Apply(TEvento, TId)` -- no es una firma que el source generator reconozca; el evento desaparece de `EventTypes` sin ningun error de build y el documento nunca se crea.
+
 ### 2. Registro en el named store del worker (`Configurar{Dominio}`)
 
 El seam `ConfiguracionMartenProjections{Dominio}.Configurar{Dominio}` registra el named store (`AddMartenStore<I{Dominio}ProjectionStore>`) y replica la configuracion de metadata (`CorrelationIdEnabled`/`CausationIdEnabled`/`HeadersEnabled`) del write-side de ese mismo dominio. La proyeccion en si se registra dentro de ese mismo `AddMartenStore`, en ambos niveles (N1 y N2), con `opts.Projections.Add<{Concepto}Projection>(ProjectionLifecycle.Async)` -- ciclo de vida `Async` por defecto, `Inline` solo si el issue lo justifica explicitamente como excepcion (MEF-ADR-0034). Nunca `Snapshot<T>()`: ese registro asume un tipo auto-agregante, y el estilo canonico del marco es siempre la clase companion.
@@ -85,6 +87,7 @@ Registra el `FunctionEndpoint` y sus dependencias en `ComposicionServicios{Domin
 - Registrar una proyeccion como `Inline` en el worker sin justificacion explicita del issue -- excepcion opt-in, MEF-ADR-0034.
 - Abrir una `QuerySession` con un tenant id que no venga de `ITenantResolver`.
 - Duplicar la doctrina del Skill `projections` en este archivo.
+- Emitir `Create`/`Apply(TEvento, TId)` -- firma no reconocida por el source generator; el evento se descarta de `EventTypes` en silencio (`modelos-marten.md`).
 
 ## Proceso
 
