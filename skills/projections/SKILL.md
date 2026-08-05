@@ -29,7 +29,7 @@ N1 y N2 comparten un unico estilo: record de read model plano (sin `partial`) en
 
 ## 3. Consultar el resultado: tres vias, todas sobre `QuerySession`
 
-Ver **[read-apis.md](read-apis.md)** para la tabla completa de read APIs, el patron de seguridad tenant-scoped (mitigacion BOLA/IDOR) y el caveat de `FetchLatest`. Resumen:
+Ver **[read-apis.md](read-apis.md)** para la tabla completa de read APIs, el patron de seguridad tenant-scoped (mitigacion BOLA/IDOR), la firma tipada del `id` de ruta (MEF-ADR-0037) y el caveat de `FetchLatest`. Resumen:
 
 - **(a) Proyeccion materializada**: `session.LoadAsync<TView>(id)` / `session.Query<TView>()` -- la via mas barata, por defecto.
 - **(b1) Aggregate en vivo** (`Live`, sin persistir nada): `session.Events.AggregateStreamAsync<T>(id)` -- mismo mecanismo que ya usa el write-side (MEF-ADR-0015).
@@ -37,6 +37,8 @@ Ver **[read-apis.md](read-apis.md)** para la tabla completa de read APIs, el pat
 - `FetchLatest<T>(id)` es **opt-in, no default** -- exige `IDocumentSession` (sesion de escritura), no `IQuerySession`.
 
 **Regla de seguridad no negociable**: toda `QuerySession` se abre acotada al tenant que resolvio `ITenantResolver` (MEF-ADR-0028) -- `store.QuerySession(tenantResolver.TenantId)` -- **nunca** a un tenant id que llegue en la ruta/query string/body. El id de recurso (`turnoId`) si viene de la ruta; el tenant, nunca.
+
+**Regla de identidad no negociable (MEF-ADR-0037)**: el `id` de ruta se parsea tipado una sola vez antes de tocar cualquier read API -- `Guid.TryParse` si la identidad nacio `Guid`, componentes tipados + `ComputarStreamId(...)` si es clave compuesta -- con `400` explicito (`BadRequestObjectResult` con mensaje) si el parseo falla. **Proscrito**: recibir la clave ya armada como `string` y pasarla cruda a `LoadAsync`/`AggregateStreamAsync`/`FetchStreamAsync`. El `ToString()` posterior al parseo aplica solo cuando el id **es** un stream key (N1, `TId = string`); un read model N2 con `TId` del slicer se parsea tipado igual, pero se pasa el valor tipado (frontera en [read-apis.md](read-apis.md)).
 
 Time-travel (`version`/`timestamp` en `AggregateStreamAsync`) queda diferido -- Rule of Three, MEF-ADR-0018.
 

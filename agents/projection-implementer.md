@@ -57,6 +57,8 @@ El seam `ConfiguracionMartenProjections{Dominio}.Configurar{Dominio}` registra e
 
 Sigue el naming y la organizacion vertical de `naming.md` (una carpeta por query, sin sufijo `Function`) y la via de consulta que corresponda de `read-apis.md` -- (a) proyeccion materializada es el default; (b1)/(b2) solo si el issue lo pide explicitamente. Abre la `QuerySession` **acotada al tenant que resolvio `ITenantResolver`** (MEF-ADR-0028), **nunca** a un tenant id que llegue en la ruta, el query string o el body -- mitigacion BOLA/IDOR no negociable.
 
+**El `id` de ruta se parsea tipado una sola vez antes de tocar `LoadAsync` (MEF-ADR-0037, doctrina completa en `read-apis.md` -- no la duplico aqui)**: nunca lo reenvies crudo. Caso comun -- identidad nacida `Guid` --: `Guid.TryParse` con `400` explicito si falla, y `ToString()` sin argumentos como unica salida a string:
+
 ```csharp
 // ObtenerTurno/FunctionEndpoint.cs
 public class FunctionEndpoint(IDocumentStore store, ITenantResolver tenantResolver)
@@ -65,15 +67,20 @@ public class FunctionEndpoint(IDocumentStore store, ITenantResolver tenantResolv
     public async Task<IActionResult> Run(
         [HttpTrigger(AuthorizationLevel.Function, "get", Route = "Programacion/Turnos/{id}")]
         HttpRequest req,
-        string id,   // la identidad del read model es el stream key (un string), no un Guid -- modelos-marten.md
+        string id,   // segmento crudo de la ruta -- el unico parseo tipado ocurre abajo
         CancellationToken ct)
     {
+        if (!Guid.TryParse(id, out var turnoId))
+            return new BadRequestObjectResult("El id del turno no es un Guid valido");
+
         await using var session = store.QuerySession(tenantResolver.TenantId);
-        var turno = await session.LoadAsync<TurnoView>(id, ct);
+        var turno = await session.LoadAsync<TurnoView>(turnoId.ToString(), ct);   // unico ToString(), sin argumentos
         return turno is null ? new NotFoundResult() : new OkObjectResult(turno);
     }
 }
 ```
+
+Si la identidad es una clave natural compuesta, la ruta recibe los componentes tipados por separado y la clave se reconstruye con el mismo `{Aggregate}.ComputarStreamId(...)` del write-side -- nunca una concatenacion propia del endpoint (ejemplo completo en `read-apis.md`). El `ToString()` del ejemplo de arriba aplica porque el id de un read model N1 **es** el stream key (`TId = string`); si consultas un read model N2 cuyo `TId` lo fija el slicer, parseas tipado igual pero pasas el valor tipado a `LoadAsync` (frontera en `read-apis.md`).
 
 El `IDocumentStore` que inyectas es el **ya configurado en ese Function App** (`ComposicionServicios{Dominio}`, MEF-ADR-0029), no el named store del worker -- que vive en otro proceso e inalcanzable desde aqui. **Verificado (MEF-ADR-0035 seccion 4, issue #497): no necesitas ningun registro adicional del tipo `TView`** -- Marten lo resuelve por convencion, aunque la proyeccion en si solo se registre en el named store del worker. La condicion que si aplica: tu dominio debe traer la misma politica de tenancy documental que el worker (`Policies.AllDocumentsAreMultiTenanted()`) -- si diverge, es el reviewer quien lo caza bajo gate (MEF-ADR-0034 seccion 6), no algo que debas reverificar aqui.
 
@@ -87,6 +94,7 @@ Registra el `FunctionEndpoint` y sus dependencias en `ComposicionServicios{Domin
 - Registrar una proyeccion como `Inline` en el worker sin justificacion explicita del issue -- excepcion opt-in, MEF-ADR-0034.
 - Abrir una `QuerySession` con un tenant id que no venga de `ITenantResolver`.
 - Duplicar la doctrina del Skill `projections` en este archivo.
+- Recibir la identidad ya armada como `string` en la ruta del GET y pasarla cruda a `LoadAsync`/`AggregateStreamAsync`/`FetchStreamAsync` sin el parseo tipado de MEF-ADR-0037.
 - Emitir `Create`/`Apply(TEvento, TId)` -- firma no reconocida por el source generator; el evento se descarta de `EventTypes` en silencio (`modelos-marten.md`).
 
 ## Proceso
