@@ -247,7 +247,7 @@ echo "[E2] is_path_in_mefisto_scope clasifica correctamente"
     # Rutas validas en Mefisto
     # skills/ y .claude/skills/: Agent Skills publicados e internos (MEF-ADR-0033)
     # changelog.d/: fragmentos de CHANGELOG/indice de ADRs (issue #380)
-    for valid in "commands/foo.md" "skills/projections/SKILL.md" "skills/projections/scripts/check.sh" "agents/bar.md" "scripts/baz.sh" "hooks/hooks.json" "docs/adr/mef-adr-0001-service-bus-topics-por-evento.md" ".claude-plugin/plugin.json" ".claude/commands/mefisto-foo.md" ".claude/skills/mefisto-doctrina/SKILL.md" "changelog.d/380.added.md" "changelog.d/README.md" "README.md"; do
+    for valid in "commands/foo.md" "skills/projections/SKILL.md" "skills/projections/scripts/check.sh" "agents/bar.md" "scripts/baz.sh" "hooks/hooks.json" "docs/adr/mef-adr-0001-service-bus-topics-por-evento.md" ".claude-plugin/plugin.json" ".claude/commands/mefisto-foo.md" ".claude/skills/mefisto-doctrina/SKILL.md" ".claude/settings.json" "changelog.d/380.added.md" "changelog.d/README.md" "README.md"; do
         if is_path_in_mefisto_scope "$valid"; then
             echo "  PASS: '$valid' en scope de Mefisto"
         else
@@ -257,7 +257,7 @@ echo "[E2] is_path_in_mefisto_scope clasifica correctamente"
     done
 
     # Rutas invalidas en Mefisto
-    for invalid in "src/Foo.cs" "tests/Bar.cs" ".github/workflows/deploy.yml" "infra/main.tf" ".claude/harness.config.json"; do
+    for invalid in "src/Foo.cs" "tests/Bar.cs" ".github/workflows/deploy.yml" "infra/main.tf" ".claude/harness.config.json" ".claude/pipeline/events.log"; do
         if is_path_in_mefisto_scope "$invalid"; then
             echo "  FAIL: '$invalid' esta en scope (NO deberia)"
             exit 1

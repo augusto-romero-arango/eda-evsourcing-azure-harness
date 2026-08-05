@@ -65,6 +65,10 @@ assert_in_mefisto() {
 #   .claude/skills/          Agent Skills internos (MEF-ADR-0033)
 #   .claude/agents/          Agentes internos
 #   .claude/scripts/         Pipelines internos
+#   .claude/settings.json    Hooks del pipeline interno. Entrada EXACTA, no .claude/*:
+#                            .claude/harness.config.json y .claude/pipeline/* siguen fuera.
+#                            Deliberadamente NO se replica en is_path_in_consumer_blocklist
+#                            (scripts/_pipeline-common.sh registra el porque).
 #   changelog.d/             Fragmentos de CHANGELOG/indice de ADRs (issue #380)
 #   README.md, CHANGELOG.md, CLAUDE.md, .gitignore   Gobierno del repo
 is_path_in_mefisto_scope() {
@@ -75,6 +79,7 @@ is_path_in_mefisto_scope() {
         commands/*|skills/*|agents/*|scripts/*|hooks/*|docs/*) return 0 ;;
         .claude-plugin/*) return 0 ;;
         .claude/commands/*|.claude/skills/*|.claude/agents/*|.claude/scripts/*) return 0 ;;
+        .claude/settings.json) return 0 ;;
         README.md|CHANGELOG.md|CLAUDE.md|.gitignore) return 0 ;;
         changelog.d/*) return 0 ;;
         *) return 1 ;;
@@ -111,7 +116,8 @@ validate_mefisto_scope_changes() {
         echo "" >&2
         echo "Mefisto solo permite cambios en: commands/, skills/, agents/, scripts/," >&2
         echo "hooks/, docs/, .claude-plugin/, .claude/{commands,skills,agents,scripts}/," >&2
-        echo "changelog.d/, README.md, CHANGELOG.md, CLAUDE.md, .gitignore" >&2
+        echo ".claude/settings.json, changelog.d/, README.md, CHANGELOG.md, CLAUDE.md," >&2
+        echo ".gitignore" >&2
         return 1
     fi
 }
