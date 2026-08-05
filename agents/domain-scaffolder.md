@@ -494,6 +494,8 @@ public interface I{PascalCase}AssemblyMarker;
 ```
 
 > **`telemetryMode: "OpenTelemetry"` inhabilita `logging.applicationInsights.samplingSettings` (opentelemetry-howto, "Considerations for OpenTelemetry", MEF-ADR-0038 seccion 7)**: la doc oficial es explicita -- "If you set telemetryMode to OpenTelemetry, the configuration in the logging.applicationInsights section of host.json doesn't apply." El sampler real de este dominio vive en `Program.cs`/`ComposicionServicios{PascalCase}` (Paso 6b), no en `host.json`. **Eliminalo**, aunque `func init` lo haya generado y "no rompa nada" dejarlo: JSON no admite un comentario que aclare "esto no hace nada", y un bloque muerto que se lee como vivo es deuda de diagnostico para quien despues intente reducir volumen ajustando esa clave sin ningun efecto.
+>
+> **Por que `enableLiveMetricsFilters` si se conserva**: la frase de la doc alcanza a **toda** la seccion `logging.applicationInsights`, no solo a `samplingSettings`, asi que esa clave queda igual de inerte bajo `telemetryMode: "OpenTelemetry"`. Se deja de todos modos porque MEF-ADR-0038 seccion 7 acota la eliminacion a `samplingSettings` -- el unico bloque que ademas *invita* a "bajar el volumen aqui" y no hace nada. No la borres por tu cuenta al scaffoldear: si el marco decide quitarla, primero se enmienda ese ADR.
 
 **9. Actualizar `local.settings.json`** para incluir las variables de entorno que `Program.cs` necesita para desarrollo local. Lee el archivo y agrega las siguientes claves dentro de `Values`:
 
@@ -1407,6 +1409,7 @@ del paquete exporter, asi que su vigencia en cada build la sostiene este test, n
 del codigo.
 
 ```csharp
+using System.Reflection;
 using AwesomeAssertions;
 using <RootNamespace>.{PascalCase}.Infraestructura;
 using Cosmos.EventDriven.Abstractions;
@@ -1415,7 +1418,6 @@ using Cosmos.EventSourcing.Abstractions.Commands;
 using Marten;
 using Microsoft.Extensions.DependencyInjection;
 using OpenTelemetry.Trace;
-using System.Reflection;
 
 namespace <RootNamespace>.{PascalCase}.Tests.Infraestructura;
 
@@ -1556,6 +1558,19 @@ public class ComposicionContenedorTests
         var tracerProvider = proveedor.GetRequiredService<TracerProvider>();
         var samplerEfectivo = ObtenerSamplerEfectivo(tracerProvider);
 
+        // La asercion POSITIVA va primero y es la que sostiene el guardrail: el nombre del sampler
+        // interno del exporter es un detalle de otro paquete, y si una version futura lo renombra,
+        // el NotBe de abajo pasaria en verde con la regresion de orden puesta (falso negativo justo
+        // en el test que existe para que nada quede en silencio). Lo que el marco exige es un tipo
+        // concreto, y eso no depende de ningun nombre interno ajeno.
+        samplerEfectivo.Should().BeOfType<ParentBasedSampler>(
+            "el write-side instala ParentBasedSampler(TraceIdRatioBasedSampler(ratio)) en un " +
+            "segundo .WithTracing(...) posterior a UseAzureMonitorExporter() (MEF-ADR-0038 " +
+            "seccion 6); cualquier otro tipo aqui significa que el sampler del dominio no llego " +
+            "al TracerProvider");
+
+        // Redundante con la de arriba mientras el nombre siga siendo este, y deliberada: nombra en
+        // el mensaje de falla la causa concreta que MEF-ADR-0038 seccion 3 documenta.
         samplerEfectivo.GetType().FullName.Should().NotBe(
             "Azure.Monitor.OpenTelemetry.Exporter.Internals.RateLimitedSampler",
             "UseAzureMonitorExporter() instala este sampler internamente si el SetSampler del " +
@@ -1567,11 +1582,13 @@ public class ComposicionContenedorTests
     // Guardrail (b) de MEF-ADR-0038 seccion 4 (CA-4): el borde critico es el DEFAULT -- este test
     // no declara TELEMETRY_SAMPLING_RATIO, el camino que corre para cualquier consumidor nuevo y el
     // mas propenso a una regresion silenciosa porque es el que menos se ejercita a mano. El literal
-    // esperado se reverifico por ejecucion contra Azure.Monitor.OpenTelemetry.Exporter 1.8.2 /
-    // OpenTelemetry (core) 1.13.1 (version pinneada por MEF-ADR-0003): ParentBasedSampler compone
-    // su Description envolviendo la del sampler raiz, y TraceIdRatioBasedSampler embebe el ratio en
-    // formato F6. Si subes esas versiones, reverifica este literal por ejecucion antes de asumir
-    // que sigue vigente (MEF-ADR-0038 seccion 4).
+    // esperado sale de componer dos Description del SDK, por lectura de fuente de
+    // opentelemetry-dotnet en el tag core-1.13.1 (la version del core que arrastra
+    // OpenTelemetry.Extensions.Hosting 1.13.1, MEF-ADR-0003): ParentBasedSampler compone
+    // "ParentBased{<Description del sampler raiz>}", y TraceIdRatioBasedSampler formatea el ratio
+    // con "F6" en InvariantCulture. Si no coincide en la primera corrida -- o tras subir esa
+    // version --, lee la Description real del mensaje de falla y CORRIGE el literal; nunca borres
+    // ni relajes la asercion, que es justo lo que MEF-ADR-0038 seccion 4 pide que quede fijo.
     [Fact]
     public async Task AgregarServicios{PascalCase}_ElRatioDefaultLlegaAlSamplerEfectivo()
     {
@@ -2916,6 +2933,12 @@ dotnet test --project "tests/<RootNamespace>.{PascalCase}.Tests/"
 ```
 
 Todos los tests generados por el Paso 2 (orquestacion de endpoints + composicion del contenedor DI, issue #319/MEF-ADR-0029) deben quedar en verde -- el dominio aun no tiene logica de negocio propia, pero el wiring que el scaffold genera ya es exigible. Si el test de composicion (`ComposicionContenedorTests`) falla, no hagas commit: revisa que el Paso 6b (`ComposicionServicios{PascalCase}`) registre todo lo que `Program.cs` invocaba antes de la extraccion, sin wiring duplicado ni faltante.
+
+Si el que falla es uno de los dos guardrails del sampler (MEF-ADR-0038 seccion 4), la accion **no** es la misma en los dos casos:
+
+- `...ElSamplerEfectivoNoEsElDelExporterDeAzureMonitor` en rojo: el `SetSampler` del Paso 6b quedo encadenado **antes** de `.UseAzureMonitorExporter()`, o los dos `.WithTracing(...)` terminaron fusionados en uno solo. Corrige el orden del codigo de produccion, nunca el test.
+- `...ElRatioDefaultLlegaAlSamplerEfectivo` en rojo mientras la `Description` real del mensaje de falla **sigue** conteniendo `ParentBased{TraceIdRatioBasedSampler{...}}`: es solo el literal esperado desactualizado frente a la version del SDK instalada. Copia la `Description` real al literal del test y deja anotada la version contra la que la verificaste. Si la `Description` real es de otro sampler, no es un literal desactualizado -- es el caso anterior.
+- Si `ObtenerSamplerEfectivo` falla porque la propiedad `Sampler` no existe, el SDK de OpenTelemetry la renombro o la elimino: reverifica contra la fuente de la version instalada antes de tocar nada, e informa al usuario -- no borres el guardrail para pasar al commit.
 
 **Validacion de Terraform:**
 
