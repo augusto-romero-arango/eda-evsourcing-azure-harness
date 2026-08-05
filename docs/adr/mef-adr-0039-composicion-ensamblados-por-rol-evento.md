@@ -1,0 +1,139 @@
+# MEF-ADR-0039: Composicion canonica de ensamblados por rol del evento
+
+- **Fecha**: 2026-08-05
+- **Estado**: aceptado
+- **Aplica a**: composicion de proyectos .NET que alojan tipos de evento en todo Bounded Context generado por el marco -- greenfield, incondicional desde el primer scaffold. Es la **raiz de adopcion** de la que dependen los issues de capa 2 (extension de `domain-scaffolder`/`infra-base-scaffolder`/`projections-scaffolder` para generar `PublicEvents`/`PrivateEvents`/`{Dominio}.DomainEvents` y retirar `Contracts` del scaffold) y de capa 3 (actualizacion de `agents/implementer.md`, `agents/test-writer.md`, `agents/reviewer.md`, `agents/projection-implementer.md` a la composicion nueva), todos todavia sin crear. Enmienda MEF-ADR-0034 (worker de proyecciones), MEF-ADR-0005 (naming/versionado de eventos) y MEF-ADR-0013 (smoke tests); actualiza menciones residuales en MEF-ADR-0010/0011/0012. Cross-referencia MEF-ADR-0012 (frontera de serializacion event store vs bus, intacta conceptualmente), MEF-ADR-0018 (Rule of Three, fundamenta la excepcion local de shared kernel), MEF-ADR-0023/MEF-ADR-0024 (Bounded Context y modelo de eventos de bus, premisas de la particion publico/privado), MEF-ADR-0030 (esquema de numeracion) y MEF-ADR-0036 (identidad del evento persistido -- `IdentidadEventos{Dominio}` cambia de ubicacion, no de mecanica).
+
+## Contexto
+
+El consumidor **Bitakora.ControlAsistencia** pago un refactor estructural fuerte -- `CA-ADR-0029` de ese repo, issues #237/#270/#277 -- para que su worker de proyecciones (MEF-ADR-0034) pudiera alcanzar los tipos de evento que sus dominios persisten en el event store. Antes de ese refactor, esos tipos vivian inline dentro de cada Function App -- junto con el resto del codigo de dominio: `AggregateRoot`s, `CommandHandler`s, wiring de Wolverine/ASP.NET Core --, exactamente la composicion que hoy scaffoldea el marco (tabla "Donde vive cada tipo de evento" de `agents/implementer.md`: eventos privados en `{Dominio}/{Feature}/Eventos/` del propio Function App, eventos publicos en un proyecto `Contracts` unico compartido por todo el BC). Un worker de proyecciones -- `Microsoft.NET.Sdk.Worker`, sin Functions SDK ni ASP.NET Core (MEF-ADR-0034 seccion 1) -- no puede referenciar el `.csproj` de un Function App sin arrastrar esas dependencias a un proceso que solo lee Postgres.
+
+MEF-ADR-0034 fija que el worker registra un named store por dominio (seccion 2) y que sus clases de proyeccion viven en el propio worker (seccion 5), pero **asume implicitamente** que ese worker alcanza los tipos CLR de los eventos persistidos de cada dominio -- sin decir como. MEF-ADR-0036 (identidad del evento persistido) nombra el hueco explicitamente en su seccion 6(a): *"la lista vive junto al codigo de dominio -- es decir, en el assembly del Function App --, y el worker no puede referenciarlo (...) no existe ningun ensamblado compartido donde la lista pueda vivir para que ambos lados la invoquen"*. Ese hueco es exactamente el sintoma que forzo el refactor real del consumidor de referencia: sin un ensamblado de eventos compartido entre el write-side y el worker, la unica salida disponible es mover los tipos de evento a un proyecto que ambos puedan referenciar.
+
+**Fuente de verdad**: `CA-ADR-0029` de Bitakora.ControlAsistencia (issues #237/#270/#277 de ese repo). Nota de verificacion, mismo patron que MEF-ADR-0034 aplico frente a Cosmos.ControlPlane: este ADR no tuvo acceso directo al repositorio de Bitakora.ControlAsistencia -- los detalles citados provienen de la descripcion tecnica del issue #543 y de la sesion de planning que lo precedio (2026-08-05). Cualquier divergencia frente al codigo real debe reconciliarse cuando el agente implementador de los issues de capa 2 (scaffolders) lo inspeccione.
+
+Sin doctrina que generalice esa particion como composicion canonica del marco, cada greenfield futuro que adopte el worker de proyecciones (MEF-ADR-0034) repetiria el mismo refactor reactivo -- pagando primero el costo de scaffoldear la composicion equivocada (`Contracts` + eventos inline) y despues el costo de deshacerla bajo presion, con datos ya persistidos en el entorno (el mismo riesgo de identidad de evento que gobierna MEF-ADR-0036).
+
+## Decision
+
+### 1. Particion por rol, incondicional desde el primer scaffold
+
+El marco particiona los tipos de evento de un Bounded Context en **tres roles**, cada uno en su propio proyecto .NET:
+
+| Ensamblado | Contiene | Criterio de pertenencia | Cardinalidad |
+|---|---|---|---|
+| `<RootNamespace>.PublicEvents` | Tipos que implementan `IPublicEvent` | El evento **sale del BC** -- lo consume un dominio de otro Bounded Context, via el backbone compartido del producto o, en el caso diferido, integracion externa (MEF-ADR-0023 decision #4, MEF-ADR-0024) | Uno por BC |
+| `<RootNamespace>.PrivateEvents` | Tipos que implementan `IPrivateEvent` | El evento **cruza el bus interno** -- lo consume un dominio del mismo BC, distinto del productor (MEF-ADR-0023 decision #2) | Uno por BC |
+| `<RootNamespace>.{Dominio}.DomainEvents` | Tipos sin marker de bus que un `AggregateRoot` consume via `Apply` | El evento **se persiste** en el event store de ese dominio (mismo criterio de inclusion que MEF-ADR-0036 seccion 2, "se persiste") | Uno por dominio |
+
+Esta particion es **incondicional**: el `domain-scaffolder` la genera desde el primer dominio del BC, sin gate de configuracion -- a diferencia de `<RootNamespace>.ReadModels`/`<RootNamespace>.Projections`, que MEF-ADR-0034 fija como opt-in bajo el token `projections.enabled` de `harness.config.json`. La asimetria es deliberada: un BC sin ningun read model todavia tiene write-side desde el dia uno, y el write-side necesita esta particion para publicar y persistir eventos incluso si nunca adopta proyecciones; el worker de proyecciones, en cambio, es infraestructura que un BC puede legitimamente no necesitar nunca.
+
+### 2. Grafo de dependencias: `PublicEvents` es la base; el worker referencia `{Dominio}.DomainEvents`, nunca el Function App
+
+```
+PublicEvents  <-  PrivateEvents  <-  {Dominio}.DomainEvents  <-  Function App (<RootNamespace>.{Dominio})
+```
+
+Cada flecha se lee "es referenciado por": `PrivateEvents` referencia `PublicEvents`; `{Dominio}.DomainEvents` referencia `PrivateEvents` (y transitivamente `PublicEvents`); el Function App de cada dominio referencia su propio `{Dominio}.DomainEvents` (y transitivamente los dos anteriores).
+
+`PublicEvents` **no tiene ninguna dependencia de proyecto** -- es la base de la cadena. Empaquetarlo como paquete NuGet propio (para compartirlo, por ejemplo, entre repos de distintos BCs del mismo producto sin que cada consumidor tenga que resolver el codigo fuente del productor) es una decision **local del producto**, no una prescripcion del marco: el `domain-scaffolder` genera `PublicEvents` como proyecto de biblioteca ordinario dentro del mismo repo, igual que los otros dos.
+
+El **worker de proyecciones** (`<RootNamespace>.Projections`, MEF-ADR-0034) referencia `{Dominio}.DomainEvents` de cada dominio que proyecta, mas `<RootNamespace>.ReadModels` -- nunca el `.csproj` de ningun Function App (decision 4). Esto es lo que cierra el hueco que MEF-ADR-0036 seccion 6(a) declaraba abierto: `{Dominio}.DomainEvents` es el ensamblado compartido que esa seccion decia que no existia.
+
+### 3. Subdivision por dominio dentro de `PublicEvents` y `PrivateEvents`
+
+`PublicEvents` y `PrivateEvents` viven a nivel de BC (un solo proyecto cada uno, no uno por dominio), pero su contenido se subdivide por dominio en una carpeta/namespace `{Dominio}`: `PublicEvents/{Dominio}/` (namespace `<RootNamespace>.PublicEvents.{Dominio}`), `PrivateEvents/{Dominio}/` (namespace `<RootNamespace>.PrivateEvents.{Dominio}`) -- sin subcarpeta `Eventos/` adicional, mismo layout plano que se fija para `{Dominio}.DomainEvents` (los eventos viven en la raiz de la carpeta de dominio). Precedente verificado, con la salvedad de verificacion de "Contexto": el consumidor de referencia organiza sus eventos privados bajo `PrivateEvents.Programacion`, un namespace por dominio dentro del ensamblado unico del BC.
+
+Esta subdivision preserva, dentro de un solo ensamblado por rol, la misma legibilidad ("de que dominio es este evento") que hoy da la ubicacion `{Dominio}/{Feature}/Eventos/` -- sin fragmentar el ensamblado en uno por dominio, que MEF-ADR-0023 reserva para piezas de infraestructura compartidas del BC (el namespace de Service Bus, el Key Vault) y que aplicaria igual aqui: un evento privado de `Programacion` puede necesitar ser consumido por `ControlHoras` sin que eso implique una referencia de proyecto cruzada entre dominios.
+
+### 4. Prohibicion mecanicamente verificable: el worker nunca referencia un Function App
+
+Ningun `.csproj` de `<RootNamespace>.Projections` contiene un `<ProjectReference>` hacia el `.csproj` de un Function App -- ni el del propio dominio que proyecta, ni el de ningun otro. Es una prohibicion **verificable mecanicamente**: un guard puede parsear el XML del `.csproj` del worker y afirmar que ninguna ruta de `<ProjectReference>` resuelve a `src/<RootNamespace>.{Dominio}/<RootNamespace>.{Dominio}.csproj` -- solo a `{Dominio}.DomainEvents.csproj` y `ReadModels.csproj`. La verificacion concreta (que guard, en que agente, bajo que gate) es alcance de los issues de capa 2/3, no de este ADR.
+
+La razon de fondo es la misma que motiva el propio worker como `Microsoft.NET.Sdk.Worker` (MEF-ADR-0034 seccion 1): un Function App trae Azure Functions Worker SDK, Wolverine y, si el dominio expone HTTP, ASP.NET Core -- ninguna de las cuales el worker necesita para leer Postgres y materializar proyecciones. Referenciar el `.csproj` completo del Function App, aunque solo fuera para llegar a sus tipos de evento, arrastraria esas dependencias transitivamente.
+
+### 5. `ConfiguracionSerializacion{Dominio}` e `IdentidadEventos{Dominio}.TiposPersistidos` viven en `{Dominio}.DomainEvents`
+
+Los dos artefactos que MEF-ADR-0012 (frontera de serializacion) y MEF-ADR-0036 (identidad del evento persistido) fijan como responsabilidad de cada dominio -- el resolver `ConfigurarSerializacion` que expone todo tipo con campos privados (MEF-ADR-0012, "Serializacion sin atributos en la clase de dominio") y la lista `IdentidadEventos{Dominio}.TiposPersistidos` que `AddEventTypes` registra (MEF-ADR-0036 seccion 3) -- se mueven de `Infraestructura/` del Function App a `{Dominio}.DomainEvents`. Es la **unica fuente** que el write-side (`ComposicionServicios{Dominio}.cs`, invocando `IdentidadEventos{Dominio}.Registrar(opts.Events)` y registrando el resolver de serializacion via `ConfigureMarten`) y el worker de proyecciones (`ConfiguracionMartenProjections{Dominio}.cs`, MEF-ADR-0034 seccion 2, invocando la misma funcion) comparten -- sin este movimiento, la segunda invocacion que MEF-ADR-0036 seccion 3 declara como "doctrina, no algo escribible hoy" seguiria sin poder escribirse: el worker no puede llegar a un tipo que vive en el assembly del Function App.
+
+Este ADR no cambia la **mecanica** de ninguno de los dos mecanismos (`ConfigurarSerializacion` sigue siendo Contract Model de STJ via reflexion sobre campos privados; `IdentidadEventos{Dominio}.Registrar` sigue siendo `Events.AddEventTypes(...)` por convencion) -- solo su **ubicacion**. MEF-ADR-0012 y MEF-ADR-0036 siguen siendo la autoridad de la mecanica; este ADR fija donde vive el codigo que la ejecuta.
+
+### 6. Los eventos no conocen los comandos; doble rol = dos tipos con nombres deliberadamente distintos
+
+El grafo de dependencias de la decision 2 hace que `{Dominio}.DomainEvents` sea referenciado *por* el Function App, nunca al reves. Consecuencia directa: **el factory de un evento persistido nunca puede recibir un comando como parametro** -- el tipo del comando vive en el Function App, y `{Dominio}.DomainEvents` no puede referenciarlo sin cerrar un ciclo (`Function App -> DomainEvents -> Function App`) que el compilador rechaza. Cuando un factory de evento persistido necesita datos de entrada mas ricos que primitivos sueltos, recibe un tipo propio del ensamblado de eventos -- por ejemplo, el `IPrivateEvent`/`IPublicEvent` que dispara su creacion (`{Dominio}.DomainEvents` si puede referenciar `PrivateEvents`/`PublicEvents`, decision 2) -- nunca el comando.
+
+**Evento con doble rol** (se persiste en el event store **y** cruza el bus, privado o publico) exige **dos tipos distintos**, uno por rol, con nombre simple **deliberadamente distinto**: el tipo persistido vive en `{Dominio}.DomainEvents` (puede ser modelo rico, MEF-ADR-0012); el tipo que cruza el bus vive en `PrivateEvents`/`PublicEvents` (debe ser plano y portable, misma regla). Forzar nombres distintos -- por ejemplo `TurnoCreado` (persistido) y `TurnoCreadoNotificacion` (bus), en vez de dos tipos homonimos en namespaces distintos -- es deliberado: un `using` equivocado sobre dos tipos homonimos compila igual y resuelve al tipo incorrecto en silencio; con nombres distintos, importar el tipo equivocado es un error de compilacion (tipo no encontrado), no una resolucion silenciosa a la clase equivocada.
+
+### 7. `PublicEvents.Tests` referencia unicamente `PublicEvents`
+
+El proyecto de tests de `PublicEvents` (`<RootNamespace>.PublicEvents.Tests`) declara una sola `ProjectReference`: a `PublicEvents` mismo. Ningun test de ese proyecto puede depender de `PrivateEvents`, de ningun `{Dominio}.DomainEvents` ni de ningun Function App. El propio grafo de dependencias (decision 2) ya hace dificil violar esto por accidente -- `PublicEvents` es la base de la cadena, nada por debajo de el existe para que un test lo referencie --, pero se fija explicitamente como guardrail de diseno: si un futuro test de `PublicEvents.Tests` *necesitara* otro ensamblado, eso delata que el tipo bajo prueba no es realmente distribuible como Published Language (MEF-ADR-0005) -- un consumidor externo de `PublicEvents` (si el producto decide empaquetarlo como NuGet, decision 2) tampoco tendria ese ensamblado disponible.
+
+### 8. `Contracts` muere del canon; el shared kernel es excepcion local
+
+El marco deja de scaffoldear un proyecto `Contracts` unico por BC. El vocabulario que hoy vive ahi -- value objects y tipos planos compartidos entre dominios -- se resuelve de dos formas, ninguna de las cuales es un proyecto nuevo por defecto:
+
+1. **El vocabulario compartido entre eventos viaja plano, dentro de cada evento que lo necesita** -- no como un tipo importado de un proyecto comun. Es el patron EDA que MEF-ADR-0023 ya fija para todo lo que cruza un bus ("todo lo que cruza un bus es plano y portable") y que el consumidor de referencia verifico en produccion: dos eventos de dominios distintos que comparten una nocion no importan un tipo de un proyecto `Contracts` -- cada uno declara sus propios campos primitivos, o, cuando el duplicado se repite identico en un tercer sitio, aplica MEF-ADR-0018 (Rule of Three) para decidir si vale la pena extraerlo.
+2. **Un shared kernel real** (Evans, *Domain-Driven Design*, 2003, cap. 14) **es una excepcion local, justificada caso por caso bajo Rule of Three (MEF-ADR-0018) -- nunca un proyecto que el scaffolder genera por defecto.** Si dos o mas dominios evolucionan un mismo tipo rico de forma sincronizada durante varias iteraciones sin diverger, la extraccion a un proyecto compartido es una decision de diseno que el implementer propone y el reviewer juzga (MEF-ADR-0018, "Autoridad de extraccion") -- con el mismo costo de acoplamiento que cualquier shared kernel: los dominios que lo comparten dejan de poder evolucionar ese tipo independientemente.
+
+La motivacion de fondo es la misma que cierra la decision 4: un `Contracts` unico por BC, referenciado tanto por Function Apps como potencialmente por el worker, es exactamente el tipo de dependencia ambigua que la particion por rol busca eliminar -- nadie puede saber, mirando solo el nombre `Contracts`, si un tipo ahi dentro es un evento publico, uno privado, o vocabulario neutral sin relacion con eventos de bus.
+
+### 9. Alcance greenfield-only; la migracion de consumidores legados es no-objetivo
+
+Este ADR fija la composicion canonica para **scaffolds nuevos** -- un BC que el `domain-scaffolder` crea desde cero, a partir de la adopcion de este ADR. **No** prescribe ni exige que ningun consumidor existente con la composicion vieja (`Contracts` + eventos inline) migre a la nueva. La migracion de un consumidor legado -- mover eventos ya persistidos y ya publicados a los ensamblados nuevos, sin romper la identidad de evento (MEF-ADR-0036) ni el contrato de bus ya desplegado (MEF-ADR-0005) -- es trabajo real, con su propio riesgo (el mismo protocolo de dos despliegues de MEF-ADR-0036 seccion 5 aplicaria a cada tipo movido), y queda **explicitamente fuera de alcance** del marco: la hara el humano responsable de cada consumidor concreto, bajo su propio criterio de cuando el costo se justifica.
+
+**Receta de referencia documentada, no prescrita por el marco**: `CA-ADR-0029` de Bitakora.ControlAsistencia (issues #237/#270/#277 de ese repo) es el precedente real de esa migracion -- el mismo consumidor que informa la composicion nueva ya la ejecuto sobre su propio codigo. Un consumidor que decida migrar puede consultarlo como receta, con la misma salvedad de verificacion de "Contexto".
+
+## Alternativas consideradas
+
+### Alt 1: mantener `Contracts` + eventos inline, y que el worker referencie el `.csproj` del Function App directamente
+
+**Descartada.** Es la composicion vigente hoy, y es la que forzo el refactor real del consumidor de referencia: un worker `Microsoft.NET.Sdk.Worker` que referencia el `.csproj` de un Function App arrastra Azure Functions Worker SDK, Wolverine y, si el dominio expone HTTP, ASP.NET Core -- infraestructura que un proceso que solo lee Postgres no necesita y que infla su imagen de contenedor sin beneficio. Ademas viola la intencion de MEF-ADR-0034 seccion 1 (el worker es una pieza de infraestructura separada del write-side, no una extension de el).
+
+### Alt 2: gatear la particion por rol bajo el mismo token `projections.enabled` que gatea `ReadModels`/`Projections`
+
+**Descartada** (decision estrategica de planning, 2026-08-05). Gatear la particion condicionaria la composicion del write-side a una decision que hoy es exclusivamente read-side: un BC que adopta proyecciones **despues** de su primer scaffold (el caso comun -- un greenfield rara vez nace con `projections.enabled = true` desde el primer commit) forzaria retroactivamente mover eventos ya escritos, publicados y persistidos de la composicion vieja a la nueva -- exactamente el refactor costoso que este ADR busca evitar para todo futuro greenfield. La particion por rol es valiosa por si misma (aislamiento publico/privado/persistido, MEF-ADR-0023) incluso en un BC que nunca adopta proyecciones.
+
+### Alt 3: un solo ensamblado de eventos por BC (sin distincion de rol), con namespaces internos por rol
+
+**Descartada.** Un solo `.csproj` con namespaces `Eventos.Publicos`/`Eventos.Privados`/`Eventos.{Dominio}` no impide que el worker termine con una referencia transitiva a tipos que no necesita (todo el ensamblado, incluidos los eventos privados/publicos de dominios que no proyecta), y no ofrece ninguna ventaja de aislamiento sobre la particion en tres proyectos -- la diferencia entre "un namespace" y "un ensamblado" es exactamente la granularidad de referencia de proyecto que la decision 2 necesita.
+
+### Alt 4: mantener el shared kernel `Contracts` como proyecto por defecto, pero vacio hasta que se necesite
+
+**Descartada.** Un proyecto vacio que el scaffolder crea "por si acaso" es exactamente el antipatron que MEF-ADR-0018 (Rule of Three) proscribe: la extraccion prematura de una abstraccion antes de que exista evidencia de reuso estable. Si aparece una necesidad real de shared kernel, crearlo entonces (decision 8, punto 2) cuesta lo mismo que crearlo de entrada, sin el riesgo de que quede vacio para siempre o que se llene de tipos que nunca debieron compartirse.
+
+## Consecuencias
+
+### Positivas
+
+- **Ningun greenfield futuro repite el refactor real** (`CA-ADR-0029`, issues #237/#270/#277 del consumidor de referencia): la particion por rol es la composicion de partida, no una migracion reactiva bajo presion de un worker que no puede alcanzar sus tipos.
+- **El hueco de MEF-ADR-0036 seccion 6(a) queda cerrable**: `{Dominio}.DomainEvents` es el ensamblado compartido que esa seccion declaraba inexistente -- la segunda invocacion de `IdentidadEventos{Dominio}.Registrar` (desde el worker) pasa de "doctrina, no escribible hoy" a implementable.
+- **Aislamiento estructural por rol**: un desarrollador que ve `<RootNamespace>.PrivateEvents.Programacion.TurnoCreado` sabe, por la ruta del namespace, que ese tipo cruza el bus interno -- sin tener que abrir el archivo para saber si implementa `IPrivateEvent`.
+- **La prohibicion de la decision 4 es verificable mecanicamente**: un guard puede afirmarla sin ambiguedad, a diferencia de una convencion que dependa de disciplina humana.
+- **`Contracts` deja de ser un cajon de sastre**: el vocabulario compartido explicito (cuando existe) pasa por el filtro de Rule of Three en vez de acumularse por defecto en un proyecto sin criterio de pertenencia claro.
+
+### Negativas
+
+- **Mas proyectos .NET por BC desde el primer scaffold**: tres ensamblados de eventos (`PublicEvents`, `PrivateEvents`, uno o mas `{Dominio}.DomainEvents`) donde antes habia uno (`Contracts`) mas eventos inline -- mas archivos `.csproj` que mantener, mas superficie de referencia cruzada para razonar al leer el codigo por primera vez.
+- **La migracion de consumidores legados queda sin resolver por el marco** (decision 9): un consumidor que ya scaffoldeo con la composicion vieja no obtiene ninguna herramienta automatizada de este ADR para migrar -- solo la receta de referencia documentada (`CA-ADR-0029`), que debe adaptar a mano.
+- **El layout plano sin carpeta `Eventos/` dentro de cada ensamblado (decision 3) es una convencion nueva** que un desarrollador acostumbrado a `{Feature}/Eventos/` debe aprender -- friccion de una sola vez, aceptada por consistencia con `{Dominio}.DomainEvents`.
+- **La implementacion concreta queda diferida**: este ADR fija doctrina, grafo y prohibiciones verificables, pero ningun scaffolder genera todavia estos tres ensamblados -- eso es alcance de los issues de capa 2, todavia sin crear.
+
+## Referencias
+
+- `CA-ADR-0029` -- Bitakora.ControlAsistencia (issues #237, #270, #277 de ese repo): refactor estructural real que particiono los ensamblados de evento por rol para que el worker de proyecciones alcanzara los tipos persistidos. Fuente de referencia de este ADR, mismo rol que Cosmos.ControlPlane jugo para MEF-ADR-0032/MEF-ADR-0034. Nota de verificacion (ver "Contexto"): sin acceso directo al repositorio, detalles derivados de la descripcion tecnica del issue #543 y de la sesion de planning que lo precedio.
+- Eric Evans, *Domain-Driven Design: Tackling Complexity in the Heart of Software* (Addison-Wesley, 2003), cap. 14 -- patron Shared Kernel: un modelo compartido entre equipos/subsistemas es una decision explicita con costo de coordinacion, no un default.
+- MEF-ADR-0005 (naming y versionado de eventos): enmendado por este ADR -- el envelope de eventos ya no cita "el proyecto Contracts" como destino.
+- MEF-ADR-0012 (heuristicas de modelado de objetos de dominio, frontera de serializacion event store vs bus): intacto conceptualmente -- la regla "todo lo que cruza un bus es plano y portable" sigue igual; solo su referencia a un "ADR de Contracts del proyecto consumidor" se actualiza a este ADR.
+- MEF-ADR-0013 (smoke tests contra entorno dev): enmendado por este ADR -- el csproj de smoke tests referencia `PublicEvents`/`PrivateEvents`, no Contracts.
+- MEF-ADR-0018 (heuristicas de evolucion y reuso del codigo): fundamenta que un shared kernel real sea una excepcion local bajo Rule of Three, nunca un proyecto que el scaffolder genera por defecto (decision 8).
+- MEF-ADR-0023 (Bounded Context, namespace interno de Azure Service Bus y frontera publico/privado): premisa estrategica de la particion publico/privado (decisiones #2 y #4 de ese ADR) que este ADR materializa como composicion de ensamblados.
+- MEF-ADR-0024 (modelo de eventos de bus: privado propio, publico via backbone compartido, integracion externa diferida): fija el transporte de `PublicEvents`/`PrivateEvents` que este ADR no reexplica.
+- MEF-ADR-0030 (esquema de identificacion de ADRs): fija el numero `MEF-ADR-0039` (numero verificado libre, `docs/adr/` llegaba a 0038 antes de este ADR).
+- MEF-ADR-0034 (worker de proyecciones y read models por Bounded Context): enmendado por este ADR -- el acceso del worker a los tipos de evento persistidos queda resuelto via `{Dominio}.DomainEvents` (secciones 2 y 5 de ese ADR).
+- MEF-ADR-0036 (identidad del evento persistido en el event store): cross-referencia -- `IdentidadEventos{Dominio}` cambia de ubicacion (de `Infraestructura/` del Function App a `{Dominio}.DomainEvents`), no de mecanica; este ADR cierra el hueco que su seccion 6(a) declaraba abierto.
+- `agents/implementer.md`, seccion "Donde vive cada tipo de evento": estado de partida de este ADR -- la tabla de ubicaciones que describe la composicion vieja (`Contracts` + eventos inline). Su actualizacion a la composicion nueva es alcance de un issue de capa 3, todavia sin crear.
+- Issue #543 (este ADR) y sus issues consumidores directos, todavia sin crear: extension de `domain-scaffolder`/`infra-base-scaffolder` para generar `PublicEvents`/`PrivateEvents`/`{Dominio}.DomainEvents` y retirar `Contracts` del scaffold (capa 2); actualizacion de `agents/implementer.md`/`agents/test-writer.md`/`agents/reviewer.md`/`agents/projection-implementer.md` a la composicion nueva (capa 3); adaptacion de `coverage_classify_file` al layout sin carpeta `Eventos/` de `{Dominio}.DomainEvents` (issue hermano de capa 2).
+
+## Control de cambios
+
+- 2026-08-05: creacion como `aceptado` (issue #543). Fija la particion incondicional de los ensamblados de evento por rol (`PublicEvents`/`PrivateEvents`/`{Dominio}.DomainEvents`), el grafo de dependencias `PublicEvents <- PrivateEvents <- {Dominio}.DomainEvents <- Function App`, la subdivision por dominio dentro de `PublicEvents`/`PrivateEvents`, la prohibicion mecanicamente verificable de que el worker de proyecciones referencie el `.csproj` de un Function App, la reubicacion de `ConfiguracionSerializacion{Dominio}`/`IdentidadEventos{Dominio}.TiposPersistidos` a `{Dominio}.DomainEvents`, la regla de que los eventos no conocen los comandos (con la excepcion de doble rol resuelta como dos tipos de nombre distinto), la restriccion de `PublicEvents.Tests` a referenciar unicamente `PublicEvents`, la muerte de `Contracts` como shared kernel por defecto (excepcion local bajo Rule of Three) y el alcance greenfield-only (la migracion de consumidores legados es no-objetivo explicito). Enmienda MEF-ADR-0034, MEF-ADR-0005 y MEF-ADR-0013; actualiza menciones residuales en MEF-ADR-0010/0011/0012. Fuente de referencia: `CA-ADR-0029` de Bitakora.ControlAsistencia (issues #237/#270/#277 de ese repo).

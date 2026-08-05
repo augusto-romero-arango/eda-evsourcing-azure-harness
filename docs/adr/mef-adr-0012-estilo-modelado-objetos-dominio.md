@@ -432,9 +432,10 @@ no tiene.
 - MEF-ADR-0005: Naming y versionado de eventos -- el contrato que la frontera de serializacion blinda (aplica por igual al namespace interno y al transporte de lo publico)
 - MEF-ADR-0023: Bounded Context, namespace interno de Azure Service Bus y frontera publico/privado -- raiz estrategica que establece "todo lo que cruza un bus es plano" y desacopla el eje de forma del eje de alcance; origen del cambio de doctrina de esta seccion (issue #121)
 - MEF-ADR-0024: Modelo de eventos de bus (privado propio, publico via backbone compartido, integracion externa diferida) -- define el transporte de lo publico (backbone compartido comun o namespace de integracion externo diferido) al que aplica por igual esta regla de forma plana
-- ADR de Contracts del proyecto consumidor: Contracts -- records de eventos y value objects compartidos
+- MEF-ADR-0039: Composicion canonica de ensamblados por rol del evento -- fija donde viven los records de eventos y value objects compartidos (`PublicEvents`/`PrivateEvents`/`{Dominio}.DomainEvents`), reemplazando la referencia previa a un ADR de Contracts del proyecto consumidor.
 - Vaughn Vernon -- "Implementing Domain-Driven Design", Value Objects
 
 ## Control de cambios
 
 - 2026-07-01: enmendado (issue #167, barrido de coherencia hacia MEF-ADR-0024) para reemplazar "namespace de integracion" como destino por defecto de `IPublicEventSender` en la seccion "Frontera de serializacion: event store vs bus" por el modelo de MEF-ADR-0024: backbone compartido del producto (caso comun) o namespace de integracion externo (caso diferido). La regla "todo lo que cruza un bus es plano y portable" y el guardrail de round-trip con serializador por defecto no cambian.
+- 2026-08-05: enmendada la seccion "Referencias" (issue #543, creacion de MEF-ADR-0039) para reemplazar la referencia a un "ADR de Contracts del proyecto consumidor" por MEF-ADR-0039, que fija la particion canonica de ensamblados de evento por rol y declara `Contracts` fuera del canon por defecto. La doctrina de este ADR (heuristicas de forma, encapsulamiento, serializacion, frontera event store vs bus) queda intacta conceptualmente -- solo cambia donde vive el codigo que la aplica.

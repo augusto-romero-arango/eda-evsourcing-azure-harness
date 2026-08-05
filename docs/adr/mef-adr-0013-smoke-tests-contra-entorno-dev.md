@@ -2,7 +2,7 @@
 
 ## Estado
 
-Aceptado (actualizado 2026-04-13: cobertura completa de efectos secundarios, una clase por comando, ejecucion secuencial, patron purge-before-act; actualizado 2026-07-19: asserts de dead-letter acotados a la corrida, prohibicion del assert cross-domain)
+Aceptado (actualizado 2026-04-13: cobertura completa de efectos secundarios, una clase por comando, ejecucion secuencial, patron purge-before-act; actualizado 2026-07-19: asserts de dead-letter acotados a la corrida, prohibicion del assert cross-domain; actualizado 2026-08-05: csproj referencia `PublicEvents`/`PrivateEvents` en vez de Contracts, MEF-ADR-0039)
 
 ## Contexto
 
@@ -231,7 +231,8 @@ La infraestructura del proyecto de smoke tests (csproj, fixtures, appsettings, w
 
 Responsabilidades separadas:
 - **domain-scaffolder**: crea `tests/*.SmokeTests/` con los 3 fixtures, Polling, appsettings.json
-  con placeholders, csproj con ProjectReference a Contracts (para igualdad de records), y el job
+  con placeholders, csproj con ProjectReference a `PublicEvents`/`PrivateEvents` (los ensamblados de
+  eventos de bus del BC, para igualdad de records; MEF-ADR-0039), y el job
   `smoke-tests` con secrets opcionales en el workflow de deploy, y registra el dominio en su propio
   archivo `.github/smoke-tests/{kebab}.json` (un objeto JSON por dominio, issue #234). La **primera
   vez** que corre en un repo genera tambien (idempotente, no sobreescribe si ya existen) el workflow
@@ -297,6 +298,12 @@ en el repo (idempotente; ver "Integracion en el proceso de desarrollo").
 
 ## Control de cambios
 
+- 2026-08-05: enmienda (issue #543, creacion de MEF-ADR-0039) para reemplazar, en la responsabilidad
+  de `domain-scaffolder` (seccion "Integracion en el proceso de desarrollo"), el csproj con
+  `ProjectReference` a Contracts por `PublicEvents`/`PrivateEvents` (los ensamblados de eventos de
+  bus del BC bajo la particion canonica de MEF-ADR-0039) -- `Contracts` muere del canon del marco.
+  Sin cambio en el resto de la doctrina de smoke tests (cobertura de efectos secundarios, estructura,
+  fixtures, CI/CD).
 - 2026-07-19: enmienda (issue #324) para acotar a la corrida los asserts de dead-letter: se agrega la
   seccion "Hermeticidad del assert de dead-letter: acotado a la corrida" (filtrar por identificador
   unico de la corrida en vez de exigir DLQ globalmente vacio; peek completo iterando el cursor sin tope
