@@ -474,6 +474,7 @@ ALCANCE DE ESCRITURA PERMITIDO:
 - docs/            (ADRs, testing, field-notes, cheatsheets)
 - .claude-plugin/  (plugin.json, marketplace.json)
 - .claude/commands/, .claude/agents/, .claude/scripts/  (skills/agentes/pipelines INTERNOS de Mefisto)
+- .claude/settings.json  (hooks del pipeline interno; entrada EXACTA, no toda .claude/)
 - changelog.d/  (fragmentos de CHANGELOG e indice de ADRs, ver instruccion 5 abajo)
 - README.md, CHANGELOG.md, CLAUDE.md, .gitignore  (gobierno del repo)
 
@@ -561,8 +562,8 @@ Tu tarea: revisa la calidad de los cambios producidos por el writer.
 
 ALCANCE DE ESCRITURA PERMITIDO (igual al del writer):
 commands/, agents/, scripts/, hooks/, docs/, .claude-plugin/,
-.claude/commands/, .claude/agents/, .claude/scripts/, changelog.d/,
-README.md, CHANGELOG.md, CLAUDE.md, .gitignore.
+.claude/commands/, .claude/agents/, .claude/scripts/, .claude/settings.json,
+changelog.d/, README.md, CHANGELOG.md, CLAUDE.md, .gitignore.
 
 CONTEXTO DE EJECUCION:
 - Modo no-interactivo (print mode). DEBES usar Write/Edit directamente.
