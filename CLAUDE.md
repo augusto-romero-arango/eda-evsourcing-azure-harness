@@ -270,3 +270,4 @@ Workflow típico:
 3. Implementa: `/mefisto-tooling <issue>`. El pipeline crea worktree, ejecuta writer+reviewer, valida scope y abre PR.
 4. Revisa: comentarios del PR → `/mefisto-fix-review <pr>`.
 5. Mergea: `/mefisto-merge <pr>` (squash + delete-branch, sin `pr-sync.sh`).
+6. Pon al dia la bitacora: `/mefisto-bitacora` (invoca al agente `mefisto-historiador` y encadena `/mefisto-merge` automaticamente sobre el PR resultante).
