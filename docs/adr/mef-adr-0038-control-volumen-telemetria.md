@@ -60,7 +60,7 @@ verificacion por decompilacion, reproduccion en runtime y mutation testing:
   Resuelto en el **PR #311** (mergeado 2026-08-04).
 - **Issue #309** (write-side, durability agent): el **56%** del polling write-side era
   `FetchCountsAsync()` de Wolverine -- 4 consultas cada 5 segundos por dominio (17.280 invocaciones/dia,
-  86.400s/dia ÷ 5s), es decir **69.120 spans/dia por dominio** sin ningun consumidor de esa metrica.
+  86.400s/dia / 5s), es decir **69.120 spans/dia por dominio** sin ningun consumidor de esa metrica.
   Verificado decompilando `Wolverine` 6.16.0 / `Cosmos.EventSourcing.CritterStack` 2.3.1 para
   confirmar que el callback de configuracion corre **antes** de que CritterStack fije `Mode = Solo`
   -- la bandera `DurabilityMetricsEnabled` sobrevive esa asignacion posterior, `Mode` no. Resuelto en
@@ -74,7 +74,7 @@ instancie el span hijo de Npgsql -- un `Sampler` plano sin ese envoltorio no log
 Npgsql se instancia igual).
 
 El `CA-ADR-0009` (control de costos) de ese consumidor es el precedente que motivo la investigacion;
-esta ADR generaliza sus hallazgos como doctrina del marco para que ningun otro consumidor tenga que
+este ADR generaliza sus hallazgos como doctrina del marco para que ningun otro consumidor tenga que
 redescubrirlos.
 
 ## Decision
@@ -97,7 +97,7 @@ reducir costo de ingesta declara `TELEMETRY_SAMPLING_RATIO` con el valor que dec
 
 ### 2. Wiring base de OpenTelemetry (mudado de MEF-ADR-0003)
 
-Esta seccion era, hasta esta enmienda, la seccion "Observabilidad" de MEF-ADR-0003; se muda aqui
+Esta seccion era, hasta este ADR, la seccion "Observabilidad" de MEF-ADR-0003; se muda aqui
 integra porque este ADR es ahora el punto unico de doctrina de observabilidad del marco (criterio
 fijado al abrir el draft de este issue durante el refinamiento de #457). MEF-ADR-0003 conserva solo
 una referencia, sin duplicar el contenido.
@@ -155,8 +155,16 @@ services.AddOpenTelemetry()
         .AddSource(nombreDelDominio))
     .UseAzureMonitorExporter()
     .WithTracing(tracing => tracing
-        .SetSampler(/* seccion 5 o 6, segun el lado */));
+        .SetSampler(/* seccion 5 (read-side) o seccion 6 (write-side) */));
 ```
+
+El snippet ilustra **unicamente el orden**: el contenido del primer `.WithTracing(...)` y del
+`ConfigureResource(...)` **no** es identico en los dos lados y no debe copiarse literal de aqui -- el
+write-side no configura `service.name` explicitamente y registra `Wolverine`/`Marten` (seccion 2),
+mientras el worker de proyecciones si lo configura y registra `Marten`/`Npgsql`/su propia fuente
+(MEF-ADR-0034 seccion 10, asimetria deliberada). Lo unico que este ADR fija para ambos lados es que
+el `.SetSampler(...)` viaje en un segundo `.WithTracing(...)` posterior a
+`.UseAzureMonitorExporter()`.
 
 Este orden **no es contrato publico del paquete**: `Azure.Monitor.OpenTelemetry.Exporter` no
 documenta ni promete que `UseAzureMonitorExporter()` fije un sampler propio -- es un detalle de
@@ -176,11 +184,18 @@ La tecnica, hermana del test de composicion de MEF-ADR-0029 (mismo principio: co
 real y verificarlo, no confiar en que "se ve bien" en el codigo): tras invocar el seam de composicion
 con `BuildServiceProvider`, resolver el `TracerProvider` y usar reflection para leer su propiedad
 interna `Sampler` (`TracerProviderSdk.Sampler`, tipo interno del SDK de OpenTelemetry -- no hay API
-publica que lo expuesta directamente) y comparar su `Sampler.Description` (propiedad **publica**)
+publica que lo exponga directamente) y comparar su `Sampler.Description` (propiedad **publica**)
 contra el valor esperado. `Description` de un `TraceIdRatioBasedSampler` embebe el ratio en el propio
 texto (p. ej. `"TraceIdRatioBasedSampler{1}"`); si el exporter pisara el sampler del marco con su
 `RateLimitedSampler`, la `Description` resuelta seria otra, y el guardrail lo detecta sin necesidad de
 desplegar nada ni de inspeccionar Application Insights.
+
+El **texto exacto** de `Description` depende de la composicion: un `ParentBasedSampler` que envuelve
+al de ratio compone su propia descripcion a partir de la del hijo, y el filtro de la seccion 5 suma
+otra capa. Asi que el guardrail debe fijar el valor esperado **reverificado por ejecucion contra la
+version pinneada del SDK**, no de memoria: el literal de arriba ilustra el principio (el ratio viaja
+en el texto, por eso `Description` alcanza para distinguir un sampler de otro), no es una cadena que
+este ADR haya verificado.
 
 **El borde critico a verificar es el default**, no un valor arbitrario: el guardrail debe correr
 exactamente en el camino que se ejecuta cuando `TELEMETRY_SAMPLING_RATIO` **no** esta declarada (el
@@ -190,9 +205,10 @@ manualmente.
 
 ### 5. Read-side: sampler que filtra el polling del daemon en origen
 
-Exclusivo del worker de proyecciones (MEF-ADR-0034): es, por diseño del marco, el **unico proceso
-con un daemon asincronico corriendo** (MEF-ADR-0018 -- ninguna Function App del write-side tiene un
-equivalente, asi que ningun otro proceso necesita este filtro).
+Exclusivo del worker de proyecciones (MEF-ADR-0034): es, por diseno del marco, el **unico proceso
+con un daemon asincronico corriendo** -- ninguna Function App del write-side tiene un equivalente,
+asi que ningun otro proceso necesita este filtro, y generalizarlo a los dos lados seria abstraer un
+mecanismo para un solo sitio de uso (heuristica de MEF-ADR-0018).
 
 El wiring de la seccion 3, para este lado, encadena:
 
@@ -216,12 +232,25 @@ solo `ParentBasedSampler` propaga la decision `Drop` del padre al hijo antes de 
 (cascada `PropagateOrIgnoreData` de OpenTelemetry). Sin `ParentBased`, el filtro por nombre elimina
 el span visible pero no el ruido real -- el hijo Npgsql sigue generandose y facturandose igual.
 
-### 6. Write-side: apagar el durability agent de Wolverine en origen
+### 6. Write-side: sampler de solo ratio, y durability agent de Wolverine apagado en origen
 
-El durability agent (`FetchCountsAsync()`, medido en el 56% del ruido write-side, ver "Evidencia de
-campo") no tiene ningun consumidor de sus metricas hoy -- ni dashboard, ni alerta. Se apaga en
-origen, no se muestrea despues: recortar en origen evita generar el span y facturar su ingesta,
-mientras que muestrear solo reduce cuantos de esos spans ya generados se exportan.
+**El sampler del write-side es unicamente la capa de ratio.** Cada Function App instala
+`ParentBasedSampler(new TraceIdRatioBasedSampler(ratio))` -- el mismo `ratio` leido de
+`TELEMETRY_SAMPLING_RATIO` con default `1.0` (seccion 1), encadenado con el orden de la seccion 3 --
+y **no** el filtro por nombre de la seccion 5: ninguna Function App corre un daemon, asi que no hay
+span de polling que descartar (de ahi que ese filtro sea exclusivo del worker). El envoltorio
+`ParentBasedSampler` se conserva en este lado por **simetria de doctrina** -- una sola forma de
+sampler en los dos lados, que difieren solo en el filtro exclusivo del worker -- y para no
+contradecir aguas abajo la decision de muestreo de un trace que el host de Functions ya inicio (el
+span de `request`) antes de que el worker aislado componga su propio `TracerProvider`. A diferencia
+del read-side, **aqui el envoltorio no lo sostiene ninguna medicion de campo**: es una decision de
+consistencia de este ADR, no un hallazgo verificado.
+
+**El durability agent se apaga en origen, no se muestrea despues.** El durability agent
+(`FetchCountsAsync()`, medido en el 56% del ruido write-side, ver "Evidencia de campo") no tiene
+ningun consumidor de sus metricas hoy -- ni dashboard, ni alerta. Recortar en origen evita generar el
+span y facturar su ingesta, mientras que muestrear solo reduce cuantos de esos spans ya generados se
+exportan.
 
 El punto de wiring es el callback de configuracion de `AgregarWolverineParaComandosServerless`
 (MEF-ADR-0003 seccion "Patron de configuracion en Program.cs"):
@@ -250,7 +279,7 @@ resultante y que este ADR no toca.
 
 ### 7. `host.json`: eliminar el bloque inerte de `samplingSettings`
 
-El `host.json` que `domain-scaffolder` genera conserva, antes de esta enmienda, un bloque
+El `host.json` que `domain-scaffolder` genera conserva, hasta este ADR, un bloque
 `logging.applicationInsights.samplingSettings`. Verificado contra la documentacion oficial de Azure
 Functions ("Monitor executions in Azure Functions", MEF-ADR-0003 seccion "Observabilidad"): *"If you
 set telemetryMode to OpenTelemetry, the configuration in the logging.applicationInsights section of
@@ -279,7 +308,7 @@ componible desde el codigo del marco, y por tanto tampoco componible con el filt
 seccion 5 (`FiltroPollingDaemonSampler` necesita envolver un `Sampler` que el marco pueda instanciar).
 Este ADR **acepta la subcuenta** como costo del control de volumen: es preferible un conteo
 subestimado y consistente a no tener ningun control de volumen porque la unica alternativa que
-extrapola no es componible con el resto de la doctrina de esta ADR.
+extrapola no es componible con el resto de la doctrina de este ADR.
 
 ## Alternativas consideradas
 
@@ -303,8 +332,10 @@ implementacion del exporter, garantizar que no se facture.
 **Descartada**: reducir la frecuencia de `FetchCountsAsync()` (en vez de apagar
 `DurabilityMetricsEnabled`, seccion 6) seguiria generando una metrica que, por la misma premisa del
 "Contexto" (nadie la consume), no justifica ningun costo de ingesta -- ni al ritmo original ni a uno
-mas lento. Es el mismo principio que MEF-ADR-0018 ya aplica a metricas sin consumidor: si nadie la
-mira, no se conserva "por si acaso" a un costo reducido, se apaga.
+mas lento. El criterio "si nadie mira una metrica, no se conserva por si acaso a un costo reducido:
+se apaga" lo fija **este** ADR; MEF-ADR-0018 no lo enuncia (su tabla de heuristicas cubre duplicacion
+y extraccion de codigo, no telemetria), pero es el mismo espiritu de no pagar hoy por un valor que
+todavia no se manifesto.
 
 ## Consecuencias
 
@@ -331,7 +362,7 @@ mira, no se conserva "por si acaso" a un costo reducido, se apaga.
   necesidad especifica.
 - **El filtro por nombre de span es fragil a un rename de la actividad en una version futura de
   Marten**: si `marten.daemon.highwatermark` cambia de nombre en una version posterior del paquete, el
-  filtro deja de coincidir y el ruido del daemon vuelve a fluir sin que nada lo señale -- exige
+  filtro deja de coincidir y el ruido del daemon vuelve a fluir sin que nada lo senale -- exige
   reverificar el nombre exacto al subir la version pinneada de Marten (mismo tipo de riesgo que
   MEF-ADR-0034 ya documenta para otras superficies de la libreria).
 - **Un segundo `.WithTracing(...)` es un patron menos obvio que uno solo**: alguien que "limpie" el
@@ -356,10 +387,11 @@ mira, no se conserva "por si acaso" a un costo reducido, se apaga.
 - MEF-ADR-0015 (snapshots de Marten como excepcion): precedente directo del principio de la seccion 1
   -- el marco fija el mecanismo por defecto, el consumidor decide el valor/la excepcion bajo
   criterios explicitos.
-- MEF-ADR-0018 (heuristicas de evolucion y reuso; tambien home de "una metrica sin consumidor no se
-  conserva a costo reducido, se apaga" -- Alt 3): fundamento de que el filtro de la seccion 5 sea
-  exclusivo del worker (unico proceso con daemon) y de que el durability agent se apague en vez de
-  desacelerarse.
+- MEF-ADR-0018 (heuristicas de evolucion y reuso): su criterio de no abstraer un mecanismo que hoy
+  tiene un solo sitio de uso es el fundamento de que el filtro de la seccion 5 sea exclusivo del
+  worker (unico proceso con daemon). El criterio de apagar una metrica sin consumidor en vez de
+  desacelerarla (Alt 3) **no** esta escrito en ese ADR -- su tabla de heuristicas cubre duplicacion y
+  extraccion de codigo, no telemetria --; lo fija este ADR, en el mismo espiritu.
 - MEF-ADR-0021 (infraestructura base): `site_config.application_insights_connection_string` del
   modulo `function-app`, que provee el valor que el exporter de la seccion 2 lee en runtime.
 - MEF-ADR-0025 (custodia de secretos): la connection string de Application Insights viaja como
@@ -380,8 +412,10 @@ mira, no se conserva "por si acaso" a un costo reducido, se apaga.
   de `UseAzureMonitorExporter()`, via un segundo `.WithTracing(...)`) con su guardrail de composicion
   determinista (reflection sobre `TracerProviderSdk.Sampler` + `Sampler.Description` publica), el
   filtro de ruido del daemon en el read-side (`ParentBasedSampler` envolviendo un filtro por nombre de
-  span mas `TraceIdRatioBasedSampler`, exclusivo del worker de proyecciones), el apagado del durability
-  agent de Wolverine en origen en el write-side (`Durability.DurabilityMetricsEnabled = false`) y la
+  span mas `TraceIdRatioBasedSampler`, exclusivo del worker de proyecciones), el sampler de solo ratio
+  del write-side (`ParentBasedSampler(TraceIdRatioBasedSampler(ratio))`, sin el filtro del daemon
+  porque ninguna Function App corre uno), el apagado del durability agent de Wolverine en origen en el
+  write-side (`Durability.DurabilityMetricsEnabled = false`) y la
   eliminacion del bloque inerte `samplingSettings` de `host.json`. Documenta la evidencia de campo del
   consumidor Bitakora.ControlAsistencia (issues #308/#309, PRs #311/#312) y descarta tres alternativas
   con razones tecnicas verificadas (apagar `DaemonSettings.ActivitySource`, `BaseProcessor<Activity>`,
