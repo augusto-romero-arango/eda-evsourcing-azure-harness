@@ -147,36 +147,14 @@ Wolverine en modo serverless distingue **dos senders** segun el marcador del eve
 
 ### Observabilidad
 
-Se configura OpenTelemetry con AddSource para "Wolverine", "Marten" y el namespace del
-dominio, en lugar del SDK propietario de ApplicationInsights. Para Azure Functions en modo
-worker aislado no existe una ingesta automatica del host: sin un exporter explicito, OpenTelemetry
-recolecta esos traces/metrics/logs y los descarta, y a Application Insights solo llegan los
-`requests` que emite el propio host. El camino oficial (Microsoft Learn, "Use OpenTelemetry with
-Azure Functions" -- el Azure Monitor OpenTelemetry Exporter es el metodo **recomendado** para apps
-nuevas y existentes, ver "Monitor executions in Azure Functions") exige tres piezas:
-
-1. El trio de paquetes `Microsoft.Azure.Functions.Worker.OpenTelemetry`, `OpenTelemetry.Extensions.Hosting`
-   y `Azure.Monitor.OpenTelemetry.Exporter` (tabla de paquetes arriba) -- no
-   `Azure.Monitor.OpenTelemetry.AspNetCore` (la distro de ASP.NET Core, no soportada para Functions
-   isolated worker: trae `AspNetCoreInstrumentation` y duplica la telemetria de requests que el host
-   de Functions ya emite).
-2. En `Program.cs`, encadenar `.UseFunctionsWorkerDefaults()` y `.UseAzureMonitorExporter()` sobre
-   `AddOpenTelemetry()`, junto al `.WithTracing(...).AddSource(...)` de siempre.
-3. En `host.json`, `"telemetryMode": "OpenTelemetry"` en la raiz, para que el host tambien emita
-   OpenTelemetry y se correlacione con el worker.
-
-El exporter lee `APPLICATIONINSIGHTS_CONNECTION_STRING` (no soporta instrumentation key); ese valor
-lo provee el `site_config.application_insights_connection_string` del modulo Terraform `function-app`
-(MEF-ADR-0021), como referencia `@Microsoft.KeyVault(...)` versionless (MEF-ADR-0025).
-
-**Nota de compatibilidad de versiones (issue #263):** `Microsoft.Azure.Functions.Worker.OpenTelemetry`
-1.2.0 exige `Microsoft.Azure.Functions.Worker.Core >= 2.52.0` (nuspec del paquete, api.nuget.org). Por
-eso el metapaquete `Microsoft.Azure.Functions.Worker` se fija explicitamente en `2.52.0` (tabla de
-paquetes arriba): si queda en una version menor -- por ejemplo la que trae por defecto una plantilla
-`func init` desactualizada --, `Worker.Core` sube a esa version minima por resolucion transitiva pero
-`Worker.Grpc` puede quedar rezagado, y el desalineamiento entre ambos dispara `MissingMethodException`
-en `DefaultTraceContext..ctor` al arrancar el host -- HTTP 500 en toda funcion del dominio (verificado
-por el consumidor Cosmos.ControlPlane, PR #46).
+Se configura OpenTelemetry via el camino oficial de Azure Functions isolated worker (paquetes,
+patron de composicion en `Program.cs`, `telemetryMode` en `host.json`). **La doctrina completa de
+esta seccion se mudo integra a MEF-ADR-0038** (control de volumen de telemetria) el 2026-08-04:
+wiring base de OpenTelemetry (AddSource, exporter, `host.json`), orden de composicion del sampler
+frente a `UseAzureMonitorExporter()`, filtros de ruido en origen (daemon del worker de proyecciones,
+durability agent de Wolverine) y la frontera entre lo que el marco garantiza por defecto y lo que
+queda como politica de costos del consumidor. Esta seccion queda solo como puntero -- ver ese ADR
+para el detalle completo, sin duplicarlo aqui.
 
 ## Consecuencias
 
@@ -206,7 +184,8 @@ por el consumidor Cosmos.ControlPlane, PR #46).
 - MEF-ADR-0021: infraestructura base — define el modulo Terraform `function-app` cuyo `site_config.application_insights_connection_string` provee el valor que el exporter de OpenTelemetry lee en runtime.
 - MEF-ADR-0025: custodia de secretos — la connection string de Application Insights viaja como referencia `@Microsoft.KeyVault(...)` versionless, nunca en claro.
 - Microsoft Learn: [Guide for running C# Azure Functions in the isolated worker model](https://learn.microsoft.com/azure/azure-functions/dotnet-isolated-process-guide#logging), [Use OpenTelemetry with Azure Functions](https://learn.microsoft.com/azure/azure-functions/opentelemetry-howto), [Monitor executions in Azure Functions](https://learn.microsoft.com/azure/azure-functions/functions-monitoring#telemetry-export-options).
-- MEF-ADR-0034 seccion 10: observabilidad del worker de proyecciones (read-side) -- `service.name` obligatorio, las fuentes `AddSource` (suma `Npgsql` frente al write-side) y el punto de extension del sampler; las dos filas read-side de la tabla de paquetes de arriba son su pin de version.
+- MEF-ADR-0034 seccion 10: observabilidad del worker de proyecciones (read-side) -- `service.name` obligatorio, las fuentes `AddSource` (suma `Npgsql` frente al write-side) y el sampler read-side instalado por defecto con el filtro del polling del daemon (cuya doctrina fija MEF-ADR-0038); las dos filas read-side de la tabla de paquetes de arriba son su pin de version.
+- MEF-ADR-0038: control de volumen de telemetria -- destino de la doctrina que hasta el 2026-08-04 vivia en la seccion "Observabilidad" de este ADR (wiring de OpenTelemetry, orden del sampler frente al exporter, filtros de ruido en origen, frontera mecanismo-del-marco/valor-del-consumidor).
 
 ## Control de cambios
 
@@ -215,3 +194,4 @@ por el consumidor Cosmos.ControlPlane, PR #46).
 - 2026-07-10: enmendado (issue #263) en dos frentes. **(a)** bump de los cinco paquetes `Cosmos.*` de pre-1.0 a `1.3.0` (sin breaking changes de API, verificado por el consumidor Cosmos.ControlPlane), que arrastra Marten `9.12.0` y resuelve [GHSA-vmw2-qwm8-x84c](https://github.com/advisories/GHSA-vmw2-qwm8-x84c)/CVE-2026-45288 (inyeccion SQL en Marten <= 8.36). **(b)** se completa el trio de OpenTelemetry del worker -- el bump de #259 solo habia agregado `Microsoft.Azure.Functions.Worker.OpenTelemetry` + `Azure.Monitor.OpenTelemetry.Exporter`, sin `OpenTelemetry.Extensions.Hosting` -- y se corrige `Microsoft.Azure.Functions.Worker.OpenTelemetry` de `1.4.0` (version que nunca existio en NuGet) a `1.2.0`; se fija ademas el metapaquete `Microsoft.Azure.Functions.Worker` en `2.52.0` en lockstep con el requisito `Worker.Core >= 2.52.0` de `Worker.OpenTelemetry` 1.2.0, para evitar el `MissingMethodException` en `DefaultTraceContext..ctor` (HTTP 500 en toda funcion) que dispara un desalineamiento Core/Grpc -- verificado por el consumidor Cosmos.ControlPlane (PR #46). Todas las versiones se verificaron contra el nuspec real de cada paquete en api.nuget.org al momento de este cambio.
 - 2026-07-18: enmendado (issue #312, prerrequisito de issue #313) para bumpear los cinco paquetes `Cosmos.*` de `1.3.0` a `2.1.0`. El delta `1.3.0 -> 2.0.0 -> 2.1.0` se verifico decompilando con `ilspycmd` las tres versiones de cada `.dll` (los paquetes no publican codigo fuente ni release notes): Marten se mantiene en `9.12.0` (sin reintroducir GHSA-vmw2-qwm8-x84c/CVE-2026-45288) y los simbolos `IEventStore`, `ICommandRouter`, `ICommandHandlerAsync<T>`, `AgregarWolverineParaComandosServerless`, `AgregarWolverineCommandRouter`, `AgregarWolverineEventSender`, `AgregarMartenEventStore`, `CommandHandlerAsyncTest<T>` no cambiaron. Se encontro un breaking change real en `Cosmos.EventDriven.Abstractions` 2.0.0 (se conserva en 2.1.0): `IPrivateEventSender.PublishAsync(string groupId, ...)`/`IPublicEventSender.PublishAsync(string groupId, ...)` se reemplaza por `PublishAsync(PublishOptions options, ...)`; el mismo cambio corrige, ademas de `agents/domain-scaffolder.md` y este ADR, `agents/implementer.md` (seccion "`groupId` en `PublishAsync`") y `agents/test-writer.md`/`docs/testing/harness-cheatsheet.md` (DSL `ThenIsPublishedPrivately`/`ThenIsPublishedPublicly`), que citaban la firma vieja. 2.1.0 ademas agrega (aditivo, sin romper nada) `IPrivateEventHandlerAsync<TEvent>`, `IPrivateEventRouter`, `AgregarWolverinePrivateEventRouter()` y `PrivateEventHandlerAsyncTest<TEvent>` -- el prerrequisito que issue #313 necesita para enseñar el patron `PrivateEventHandler`. Queda diferido a un issue de seguimiento verificar si `PublishOptions.Headers` (nuevo desde 2.0.0) resuelve el "LIMITE verificado" de MEF-ADR-0027 sobre estampado de application properties arbitrarias.
 - 2026-07-29: enmendado (issue #457) para sumar a la tabla de paquetes las dos filas read-side del worker de proyecciones (`OpenTelemetry.Extensions.Hosting` 1.17.0, `Azure.Monitor.OpenTelemetry.Exporter` 1.8.3) que genera `projections-scaffolder` (MEF-ADR-0034 seccion 10, nueva) -- pin independiente del trio write-side de arriba, verificado contra NuGet.org al momento del cambio. Sin cambios en la seccion "Observabilidad" (write-side): sigue describiendo unicamente el trio de Functions.
+- 2026-08-04: enmendado (issue #463) para mudar integra la seccion "Observabilidad" a MEF-ADR-0038 (control de volumen de telemetria), criterio fijado al abrir el draft de ese issue durante el refinamiento de #457: si el marco llegaba a tener una MEF-ADR de observabilidad, la doctrina de esta seccion naceria ahi en una sola mudanza, en vez de quedar fragmentada entre dos documentos. Esta seccion queda como referencia sin doctrina duplicada; ningun paquete ni version de la tabla de arriba cambia.
