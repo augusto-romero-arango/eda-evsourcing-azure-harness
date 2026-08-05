@@ -213,6 +213,21 @@ El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o
 | Adopción de Agent Skills (progressive disclosure) para doctrina pesada del marco | MEF-ADR-0033 |
 | Worker de proyecciones y read models por Bounded Context (Container App sin ingress, named store por dominio, config-test) | MEF-ADR-0034 |
 | Doctrina de proyección y query read-side (recetas en 3 niveles, estilo record inmutable, superficie de consulta sobre QuerySession tenant-scoped) | MEF-ADR-0035 |
+| Lista canonica de resource providers de Azure que el provider `azurerm` del entorno debe registrar | MEF-ADR-0021 |
+| Compatibilidad de configuracion Marten entre write-side y read-side (los dos pares, criterio de corte, verificacion bajo gate del reviewer) | MEF-ADR-0034 |
+| Doctrina de etiquetado del worker de proyecciones (`tipo:projection` para issues de configuracion del read-side, razonamiento continente/contenido de `dom:X`) | MEF-ADR-0011 |
+| Observabilidad del worker de proyecciones (`service.name` obligatorio, fuentes de traza read-side, punto de extension del sampler) | MEF-ADR-0034 |
+| Extension del readiness gate por SHA al read-side (`service.version` del worker de proyecciones, sin ingress) | MEF-ADR-0031 |
+| Control de volumen de telemetria (sampler efectivo, filtros de ruido en origen, ratio del consumidor) | MEF-ADR-0038 |
+| Wiring base de OpenTelemetry del write-side (paquetes, composicion en `Program.cs`, `telemetryMode` de `host.json`): doctrina mudada a MEF-ADR-0038 | MEF-ADR-0003 |
+| Costo de ingesta de telemetria del daemon 24/7 y sampler read-side instalado por defecto con filtro del polling (doctrina en MEF-ADR-0038) | MEF-ADR-0034 |
+| Identidad del evento persistido en el event store (alias vs `mt_dotnet_type`, proscripciones de registro, guardrails, protocolo de refactor) | MEF-ADR-0036 |
+| Firmas admitidas de Create/Apply, tipo de identidad de N1 (StreamIdentity.AsString) y límite de fan-out en N2 | MEF-ADR-0035 |
+| Origen del analizador de Marten (paquete, no `PackageReference` adicional) y namespaces de las clases base de proyección | MEF-ADR-0035 |
+| Doble cobertura de la guarda 1 del config-test del worker (metodo `partial` del seam y clase de proyeccion sin `partial`) y superficie verificada de la guarda 2 | MEF-ADR-0034 |
+| Resolución de `TView` en el `DocumentStore` del write-side sin registro adicional, y condición de política de tenancy documental compartida con el worker | MEF-ADR-0035 |
+| Auto-creacion de tablas de read model por el worker de proyecciones (`AutoCreateSchemaObjects`, sin migracion de despliegue) | MEF-ADR-0034 |
+| Identidad del stream y su representacion string canonica (Guid/clave compuesta, borde HTTP, store/bus/read-side) | MEF-ADR-0037 |
 
 ## Convenciones del marco
 
