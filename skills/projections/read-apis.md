@@ -42,9 +42,11 @@ await using var sesionInsegura = store.QuerySession(request.Query["tenantId"]); 
 
 Esto no es un detalle de conveniencia: es la mitigacion estructural del marco contra **BOLA/IDOR** (Broken Object Level Authorization / Insecure Direct Object Reference). Marten filtra por una columna `tenant_id` a nivel de sesion, pero **no lo garantiza a nivel de acceso a base de datos** -- *"Marten does not guarantee or enforce data isolation via database access privileges"*. La responsabilidad de abrir la sesion con el tenant **correcto** es enteramente del codigo de la aplicacion.
 
-## Punto abierto para el implementador
+## Resolucion de `TView` en el write-side: sin registro adicional, bajo condicion de tenancy
 
-La sesion de query del Function App del write-side y el schema del worker comparten el mismo Postgres/schema (MEF-ADR-0034 seccion 2), pero si el `DocumentStore` del write-side necesita algun registro adicional del tipo de documento (`TView`) para resolverlo via `Query<TView>()`/`LoadAsync<TView>()` -- dado que la proyeccion en si solo se registra en el named store del worker, nunca en el write-side --, es un detalle de la superficie exacta de `StoreOptions` que el agente implementador debe reverificar empiricamente antes de generar el primer read model real.
+La sesion de query del Function App del write-side y el schema del worker comparten el mismo Postgres/schema (MEF-ADR-0034 seccion 2). El `DocumentStore` del write-side resuelve `Query<TView>()`/`LoadAsync<TView>()` **sin** `Schema.For<TView>()` y **sin** registrar la proyeccion: Marten resuelve el mapping del documento por convencion, aunque la proyeccion en si solo se registre en el named store del worker.
+
+La condicion que sostiene esa convergencia: ambos lados deben aplicar la misma politica de tenancy documental (`Policies.AllDocumentsAreMultiTenanted()`) -- es el **par de compatibilidad 2** de MEF-ADR-0034 seccion 6, y si diverge ninguna excepcion avisa: el worker materializa vistas sin scope de tenant que el Function App despues consulta filtrando por tenant. No es algo que reverifiques al implementar -- la verificacion completa de esa compatibilidad corre bajo gate del reviewer (MEF-ADR-0034 seccion 6). Las mediciones que respaldan ambos hechos viven en MEF-ADR-0035 seccion 4.
 
 ## Time-travel: diferido
 
