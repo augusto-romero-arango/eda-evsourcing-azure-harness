@@ -40,16 +40,29 @@ var provider = services.BuildServiceProvider();
    ```
    InvalidProjectionException: No source-generated dispatcher found for {Proyeccion}.
    Conventional Apply/Create/ShouldDelete methods are dispatched by the compile-time
-   JasperFx.Events.SourceGenerator; there is no runtime fallback. [...]
+   JasperFx.Events.SourceGenerator; there is no runtime fallback. [...] the projection
+   class must be declared `partial` in an assembly that references the
+   JasperFx.Events.SourceGenerator analyzer, or alternatively override Evolve /
+   EvolveAsync / DetermineAction / DetermineActionAsync directly [...] for Marten
+   consumers the generator ships inside the Marten NuGet package, so verify the
+   project reference does not exclude the 'analyzers' asset.
    ```
 
-   La excepcion llega **envuelta en `TargetInvocationException`** al resolver desde el contenedor -- el assert debe desenvolver `InnerException` (o afirmar sobre la excepcion raiz), no esperar `InvalidProjectionException` directo:
+   Los `[...]` marcan el pegamento elidido entre fragmentos verbatim, no texto inventado. **La ultima frase es la que cierra el gotcha del analizador**: el generador viaja **dentro** del paquete `Marten` -- no hay ningun `PackageReference` que agregar --, y el modo de falla accionable no es "falta el paquete" sino un `ExcludeAssets="analyzers"` (o `="all"`) en el `PackageReference` de Marten **del ensamblado que declara la clase `partial`**, que es el worker (MEF-ADR-0035 seccion 2 e issue #495; ver tambien `modelos-marten.md`). Si esta guarda se pone roja, ese es el segundo lugar donde mirar despues del `partial` faltante.
+
+   **El assert de la guarda 1 no cambia: sigue siendo el `Assert.NotNull(store)` de arriba.** El config-test **no** escribe un test que espere la excepcion -- un assert asi solo pasaria con el defecto presente. Lo que gobierna el envoltorio es otra cosa: (a) **como se lee el rojo** -- xUnit reporta un `TargetInvocationException` y la causa real vive en su `InnerException`, no en el mensaje de primer nivel, asi que quien diagnostique el fallo tiene que desenvolver; y (b) cualquier test que si afirme sobre el **tipo** de la excepcion (un diagnostico deliberado, fuera de estas tres guardas), que debe desenvolver antes de comparar:
 
    ```csharp
+   // Diagnostico deliberado -- NO es la guarda 1, que sigue siendo el Assert.NotNull de arriba.
+   using System.Reflection;            // TargetInvocationException
+   using JasperFx.Events.Projections;  // InvalidProjectionException -- no vive bajo Marten.*
+
    var ex = Record.Exception(() => provider.GetRequiredService<IVentasProjectionStore>());
    var raiz = ex is TargetInvocationException { InnerException: { } inner } ? inner : ex;
    Assert.IsType<InvalidProjectionException>(raiz);
    ```
+
+   **Gotcha de namespace del propio assert**: `InvalidProjectionException` vive en `JasperFx.Events.Projections` (ensamblado `JasperFx.Events`), **no** bajo `Marten.*` -- verificado por decompilacion del ensamblado (`ilspycmd -l c` sobre `JasperFx.Events` 2.18.1, la version que arrastra Marten `9.12.0`). Es el mismo patron que la regla generica de MEF-ADR-0034 seccion 6 fija para los enums de la superficie de configuracion, con su modo de falla caracteristico: `Marten.Events.Projections` **tambien existe** (ahi vive `MultiStreamProjection<,>`), asi que el `using` equivocado no da error propio y el build muere despues con `CS0103` sobre el simbolo sin resolver.
 
    **Esta segunda cobertura solo aplica cuando el dominio ya tiene al menos una proyeccion registrada** -- un dominio sin proyecciones no ejercita este camino, y la guarda sigue cubriendo unicamente el metodo `partial` del seam. Por el mismo camino, esta guarda tambien caza el `Id type mismatch` de MEF-ADR-0035 seccion 2 (un `TId` que no coincide con `Events.StreamIdentity`): cualquier `InvalidProjectionException` que Marten lance al ensamblar el named store sale a la luz aqui, sin Postgres y sin escribir un assert nuevo.
 
@@ -58,6 +71,8 @@ var provider = services.BuildServiceProvider();
 2. **Ciclo de vida `Async`**: que ninguna proyeccion registrada en el named store del worker haya quedado con lifecycle `Inline` -- si aparece una `Inline` ahi, es una proyeccion mal ubicada (deberia vivir en el write-side) o una regresion de copy-paste. Superficie verificada por ejecucion propia (Marten `9.12.0`): `store.Options.Events.Projections()` devuelve los elementos registrados, cada uno con `.Name` y `.Lifecycle`:
 
    ```csharp
+   using JasperFx.Events.Projections;  // ProjectionLifecycle -- tampoco vive bajo Marten.*
+
    var lifecycles = store.Options.Events.Projections().Select(p => p.Lifecycle);
    Assert.All(lifecycles, l => Assert.Equal(ProjectionLifecycle.Async, l));
    ```
