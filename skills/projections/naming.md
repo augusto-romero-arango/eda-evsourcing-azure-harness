@@ -42,7 +42,7 @@ public async Task<IActionResult> Run(
     CancellationToken ct)
 ```
 
-**El `{id}` de la ruta se recibe como `string`, no como `Guid`**: la identidad del read model -- y la del stream -- es un `string` en este marco (`StreamIdentity.AsString`, `modelos-marten.md`), el mismo tipo que espera `LoadAsync<TView>(id)` de la via (a) y `AggregateStreamAsync<T>(id)` de la (b1).
+**El `{id}` de la ruta se declara `string` en la firma y se parsea dentro del metodo** -- no se tipa el parametro ni la plantilla. La razon no es que el segmento no pueda enlazarse tipado (eso queda **no verificado** para el worker aislado, y no cambia la regla: un fallo de enlace no es un `400` bajo control del endpoint), sino que el `400` con mensaje que la documentacion oficial de ASP.NET Core pide para entrada invalida lo produce el parseo explicito, y un route constraint (`{id:guid}`) daria `404` sin normalizar el casing -- MEF-ADR-0037 seccion 2 y Alt 4. Asi que **recibirlo como `string` no autoriza a pasarlo sin parsear a `LoadAsync`/`AggregateStreamAsync`**: MEF-ADR-0037 exige un unico parseo tipado dentro del metodo antes de tocar cualquier read API -- `Guid.TryParse` si la identidad nacio `Guid` (el caso comun), o cada componente de una clave compuesta parseado por separado y reconstruido con `ComputarStreamId(...)` -- con `400` explicito si el parseo falla. Ver [read-apis.md](read-apis.md) para el patron completo, la frontera de los read models N2 (cuyo `TId` no es un stream key) y la proscripcion de recibir la clave ya armada.
 
 El tipo de la request es `HttpRequest` y el retorno `IActionResult` -- la integracion ASP.NET Core del worker aislado --, no `HttpRequestData`/`HttpResponseData` (modelo alterno, mantenido solo por compatibilidad hacia atras).
 

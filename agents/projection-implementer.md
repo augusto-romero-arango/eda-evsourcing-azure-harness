@@ -71,7 +71,7 @@ public class FunctionEndpoint(IDocumentStore store, ITenantResolver tenantResolv
         CancellationToken ct)
     {
         if (!Guid.TryParse(id, out var turnoId))
-            return new BadRequestResult();
+            return new BadRequestObjectResult("El id del turno no es un Guid valido");
 
         await using var session = store.QuerySession(tenantResolver.TenantId);
         var turno = await session.LoadAsync<TurnoView>(turnoId.ToString(), ct);   // unico ToString(), sin argumentos
@@ -80,7 +80,7 @@ public class FunctionEndpoint(IDocumentStore store, ITenantResolver tenantResolv
 }
 ```
 
-Si la identidad es una clave natural compuesta, la ruta recibe los componentes tipados por separado y la clave se reconstruye con el mismo `{Aggregate}.ComputarStreamId(...)` del write-side -- nunca una concatenacion propia del endpoint (ejemplo completo en `read-apis.md`).
+Si la identidad es una clave natural compuesta, la ruta recibe los componentes tipados por separado y la clave se reconstruye con el mismo `{Aggregate}.ComputarStreamId(...)` del write-side -- nunca una concatenacion propia del endpoint (ejemplo completo en `read-apis.md`). El `ToString()` del ejemplo de arriba aplica porque el id de un read model N1 **es** el stream key (`TId = string`); si consultas un read model N2 cuyo `TId` lo fija el slicer, parseas tipado igual pero pasas el valor tipado a `LoadAsync` (frontera en `read-apis.md`).
 
 El `IDocumentStore` que inyectas es el **ya configurado en ese Function App** (`ComposicionServicios{Dominio}`, MEF-ADR-0029), no el named store del worker -- que vive en otro proceso e inalcanzable desde aqui. **Verificado (MEF-ADR-0035 seccion 4, issue #497): no necesitas ningun registro adicional del tipo `TView`** -- Marten lo resuelve por convencion, aunque la proyeccion en si solo se registre en el named store del worker. La condicion que si aplica: tu dominio debe traer la misma politica de tenancy documental que el worker (`Policies.AllDocumentsAreMultiTenanted()`) -- si diverge, es el reviewer quien lo caza bajo gate (MEF-ADR-0034 seccion 6), no algo que debas reverificar aqui.
 
