@@ -143,7 +143,7 @@ tu propuesta en vez de darlo por cierto.
 | `/parallel` | Corre varios issues en worktrees aislados |
 | `/sequential` | Cadena de issues con merge automático |
 | `/scaffold` | Crea el scaffold de un nuevo dominio |
-| `/scaffold-projections` | Genera el worker de proyecciones (`{RootNamespace}.Projections`), `{RootNamespace}.ReadModels`, el config-test base `{RootNamespace}.Projections.Tests`, el seam de observabilidad `ConfiguracionObservabilidadProjections`, el workflow de deploy `deploy-projections.yml` y el `.dockerignore` del build context cuando el BC habilita el token `projections.enabled` (fase 1+2+3+4+5, agente `projections-scaffolder`) |
+| `/scaffold-projections` | Genera el worker de proyecciones (`{RootNamespace}.Projections`), `{RootNamespace}.ReadModels`, el config-test base `{RootNamespace}.Projections.Tests`, el seam de observabilidad `ConfiguracionObservabilidadProjections` (con el sampler que descarta el polling del daemon, MEF-ADR-0038), el workflow de deploy `deploy-projections.yml` y el `.dockerignore` del build context cuando el BC habilita el token `projections.enabled` (fase 1+2+3+4+5+6, agente `projections-scaffolder`) |
 | `/bug` | Investiga un síntoma (bug-investigator o tooling-investigator) |
 | `/fix-review` | Resuelve comentarios pendientes de un PR |
 | `/health-check` | Dashboard del entorno desplegado |
