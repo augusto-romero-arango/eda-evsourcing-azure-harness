@@ -273,7 +273,17 @@ else
 
     mkdir -p "$WORKTREE_PATH/.claude/pipeline/summaries"
 
-    # En Mefisto NO existe .claude/settings.json versionado; saltarlo si no esta presente
+    # .claude/settings.json (issue #523) ya viaja versionado con el worktree
+    # (checked out desde origin/main); esta sustitucion solo reescribe una
+    # eventual ruta relativa de events.log a la absoluta de ESTA corrida, para
+    # que un hook que lo referencie escriba siempre al events.log centralizado
+    # del pipeline y no a uno nuevo dentro del worktree. El hook de scope
+    # (mefisto-scope-hook.sh) no toca events.log, asi que hoy el sed no
+    # cambia nada -- este bloque solo importa el dia que un hook futuro lo
+    # necesite. Los `git checkout -- .claude/settings.json` de mas abajo
+    # (auto_commit_if_needed y tras cada run_agent) revierten esta copia
+    # sustituida antes de cualquier commit, para que el archivo que termina
+    # en el PR sea siempre el versionado, nunca la copia con rutas absolutas.
     if [ -f "$REPO_ROOT/.claude/settings.json" ]; then
         sed "s|\.claude/pipeline/events\.log|${EVENTS_LOG_ABS}|g" \
             "$REPO_ROOT/.claude/settings.json" > "$WORKTREE_PATH/.claude/settings.json"
@@ -443,7 +453,15 @@ auto_commit_if_needed() {
     # bueno viendolo tambien en el working tree. Si el auto-commit no lo stagea,
     # el gate pasa pero el fragmento no entra al PR y /mefisto-release no tiene
     # nada que consolidar: la anotacion se perderia en silencio.
-    local paths="commands/ agents/ scripts/ hooks/ docs/ .claude-plugin/ .claude/commands/ .claude/agents/ .claude/scripts/ changelog.d/ README.md CHANGELOG.md CLAUDE.md .gitignore"
+    #
+    # .claude/settings.json va en la lista (issue #523): sin ella, un writer
+    # que cree o edite el archivo de hooks confiando en el auto-commit (en vez
+    # de comitearlo el mismo) lo dejaria sin stagear -- `git push` solo manda
+    # commits, asi que el archivo nunca llegaria al PR. El checkout de la
+    # linea de arriba ya paso antes que este calculo de status, asi que lo
+    # unico que puede llegar aqui es una adicion/edicion legitima (nunca la
+    # copia con la ruta de events.log sustituida).
+    local paths="commands/ agents/ scripts/ hooks/ docs/ .claude-plugin/ .claude/commands/ .claude/agents/ .claude/scripts/ .claude/settings.json changelog.d/ README.md CHANGELOG.md CLAUDE.md .gitignore"
 
     if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- $paths 2>/dev/null)" ]; then
         log "Haciendo commit automatico (fase $phase)..."
@@ -495,7 +513,8 @@ Cada turno tuyo cuesta ~13 s de reloj (el 96,6% del tiempo de una corrida es el 
 - Agrupa en un mismo turno las tool calls independientes entre si (varias busquedas, varias lecturas, varias escrituras a archivos distintos). No las encadenes de a una: hoy el 82% de los turnos del pipeline gasta una sola tool call, y cada una de esas cadenas paga 13 s por eslabon.
 - La suite de tests (scripts/tests/, .claude/scripts/tests/) correla UNA vez, al final, cuando ya no vayas a tocar mas archivos. No la corras despues de cada edicion. Correrla al cerrar es obligatorio -- lo que sobra es repetirla.
 - No re-inspecciones el arbol con 'git status' ni 'git diff' para confirmar algo que acabas de escribir: Write y Edit fallan con error si no aplican, asi que el exito de la herramienta ya es la confirmacion.
-Estas tres reglas no cubren todos los casos; ante cualquier otro, decide con el mismo criterio -- un turno extra cuesta ~13 s, y solo vale la pena si te ahorra un error que costaria mas.
+- No verifiques el scope de un archivo antes de escribirlo (ni con 'git status' ni releyendo is_path_in_mefisto_scope): un hook PostToolUse te avisa EN EL INSTANTE, gratis, si un Edit/Write cae fuera de la allowlist -- no hay motivo para inspeccionar preventivamente algo que el hook ya te va a decir si sale mal. Eso no reemplaza el gate final (validate_mefisto_scope_changes sigue corriendo al cierre del stage): el hook es aviso temprano, no el juez.
+Estas reglas no cubren todos los casos; ante cualquier otro, decide con el mismo criterio -- un turno extra cuesta ~13 s, y solo vale la pena si te ahorra un error que costaria mas.
 
 Instrucciones:
 1. Lee los archivos existentes relevantes antes de escribir nuevos.
@@ -521,7 +540,7 @@ Instrucciones:
     if ! git -C "$WORKTREE_PATH" diff --quiet "$SNAPSHOT_COMMIT" HEAD 2>/dev/null; then
         HAS_COMMITS=true
     fi
-    if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- commands/ agents/ scripts/ hooks/ docs/ .claude-plugin/ .claude/commands/ .claude/agents/ .claude/scripts/ changelog.d/ README.md CHANGELOG.md CLAUDE.md .gitignore 2>/dev/null)" ]; then
+    if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- commands/ agents/ scripts/ hooks/ docs/ .claude-plugin/ .claude/commands/ .claude/agents/ .claude/scripts/ .claude/settings.json changelog.d/ README.md CHANGELOG.md CLAUDE.md .gitignore 2>/dev/null)" ]; then
         HAS_UNSTAGED=true
     fi
     if [ "$HAS_COMMITS" = false ] && [ "$HAS_UNSTAGED" = false ]; then
@@ -576,7 +595,8 @@ Cada turno tuyo cuesta ~13 s de reloj (el 96,6% del tiempo de una corrida es el 
 - Agrupa en un mismo turno las tool calls independientes entre si (varias busquedas, varias lecturas, varias escrituras a archivos distintos). No las encadenes de a una: hoy el 82% de los turnos del pipeline gasta una sola tool call, y cada una de esas cadenas paga 13 s por eslabon.
 - La suite de tests (scripts/tests/, .claude/scripts/tests/) correla UNA vez, al final, cuando ya no vayas a tocar mas archivos. No la corras despues de cada correccion. Correrla al cerrar es obligatorio -- lo que sobra es repetirla.
 - Ya tienes el diff completo del writer aqui arriba: no lo vuelvas a pedir con 'git diff'. Y no re-inspecciones el arbol con 'git status' para confirmar algo que acabas de escribir -- Write y Edit fallan con error si no aplican, asi que el exito de la herramienta ya es la confirmacion.
-Estas tres reglas no cubren todos los casos; ante cualquier otro, decide con el mismo criterio -- un turno extra cuesta ~13 s, y solo vale la pena si te ahorra un error que costaria mas.
+- No verifiques el scope de un archivo antes de escribirlo: un hook PostToolUse te avisa EN EL INSTANTE, gratis, si un Edit/Write cae fuera de la allowlist -- no hay motivo para inspeccionar preventivamente algo que el hook ya te va a decir si sale mal. Eso no reemplaza el gate final (validate_mefisto_scope_changes sigue corriendo al cierre del stage): el hook es aviso temprano, no el juez.
+Estas reglas no cubren todos los casos; ante cualquier otro, decide con el mismo criterio -- un turno extra cuesta ~13 s, y solo vale la pena si te ahorra un error que costaria mas.
 
 Instrucciones:
 1. Verifica que los cambios cumplen con lo pedido en el issue.
