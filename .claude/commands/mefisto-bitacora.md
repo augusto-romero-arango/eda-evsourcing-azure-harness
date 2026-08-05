@@ -60,10 +60,10 @@ El contrato del historiador (seccion "Al terminar" de `.claude/agents/mefisto-hi
 
 ### 3. Encadenar `/mefisto-merge <PR>` (CA-3)
 
-Con el numero de PR verificado, lee integramente el `Proceso` de `/mefisto-merge` y ejecutalo para ese PR:
+Con el numero de PR verificado, lee integramente el `Proceso` de `/mefisto-merge` y ejecutalo para ese PR. El skill interno vive en el repo activo, asi que se lee desde la raiz del propio repo — resuelta **en este mismo bloque**, porque cada bloque `bash` corre en su propio proceso y el `REPO_ROOT` de la pre-condicion no sobrevive hasta aca:
 
 ```bash
-cat "$REPO_ROOT/.claude/commands/mefisto-merge.md"
+cat "$(git rev-parse --show-toplevel)/.claude/commands/mefisto-merge.md"
 ```
 
 Ejecuta su `Proceso` completo (validar el PR, mostrar resumen, mergear con `gh pr merge --squash --delete-branch`, reportar) tal cual, con el numero de PR del paso 2 como su `$ARGUMENTS` -- su `## Entrada` queda cubierta por ese numero, y su pre-condicion "estas en el repo de Mefisto" por la de este skill (misma verificacion). No pidas ninguna confirmacion adicional antes de mergear -- el usuario ya la dio al escribir `/mefisto-bitacora` explicitamente, y el historiador ya paso por su propio gate humano antes de crear el PR.
