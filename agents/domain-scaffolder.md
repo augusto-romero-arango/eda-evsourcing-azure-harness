@@ -332,6 +332,24 @@ public static class ComposicionServicios{PascalCase}
             isDev,
             options =>
             {
+                // Metricas de profundidad de cola del durability agent, apagadas EN ORIGEN
+                // (MEF-ADR-0038 seccion 6): FetchCountsAsync() poolea Postgres cada 5s sin ningun
+                // consumidor (ni dashboard ni alerta) -- 56% del polling write-side medido en el
+                // consumidor de referencia. CheckHealthAsync llama FetchCountsAsync por su cuenta,
+                // asi que el health check no depende de este polling. Se CONSERVA la durabilidad
+                // real -- recovery, scheduled jobs y dead letters, que corren en el mismo
+                // DurabilityAgent: DurabilityAgentEnabled y Mode no se tocan.
+                //
+                // Va en ESTE callback, y no despues de la llamada, porque es el hook que el
+                // paquete expone sobre WolverineOptions: Cosmos.EventSourcing.CritterStack 2.3.1
+                // lo corre PRIMERO y despues fija Durability.Mode = Solo incondicionalmente -- esa
+                // reasignacion pisaria en silencio cualquier intento de tocar Mode desde aqui,
+                // pero nunca reasigna DurabilityMetricsEnabled (verificado por decompilacion). Que
+                // la bandera sobreviva no es contrato del paquete: lo sostiene el guardrail de
+                // ComposicionContenedorTests (Paso 2 punto 9) sobre el contenedor real, no este
+                // comentario.
+                options.Durability.DurabilityMetricsEnabled = false;
+
                 // Broker default: namespace interno del BC (MEF-ADR-0024 decision #3, #7).
                 options.HabilitarAzureServiceBusParaServerLess(serviceBusInterno);
                 // Broker(s) nombrado(s): uno por alias del backbone compartido (MEF-ADR-0024 decision #4, #7).
@@ -441,6 +459,8 @@ public static class ComposicionServicios{PascalCase}
 ```
 
 **Sampler del write-side (MEF-ADR-0038 seccion 6):** la supervivencia de `SetSampler` frente a `UseAzureMonitorExporter()` NO es contrato del paquete exporter -- lo sostiene el orden fijado arriba mas el guardrail de `ComposicionContenedorTests` (Paso 2 punto 9), nunca la sola lectura del codigo. El write-side instala unicamente la capa de ratio (`ParentBasedSampler(TraceIdRatioBasedSampler(ratio))`), sin el filtro por nombre del daemon `HotCold` -- ese filtro es exclusivo del worker de proyecciones (ninguna Function App corre un daemon, MEF-ADR-0018), y es alcance de `projections-scaffolder` (issue #513), no de este agente.
+
+**Durability agent del write-side (MEF-ADR-0038 seccion 6, MEF-ADR-0018):** se apaga en origen la recoleccion de metricas de profundidad de cola (`options.Durability.DurabilityMetricsEnabled = false;`), nunca la durabilidad real -- `Durability.Mode` y `Durability.DurabilityAgentEnabled` no se tocan en ningun punto de la receta. No subas `UpdateMetricsPeriod` en vez de apagar la bandera: seguiria generando una metrica sin consumidor (MEF-ADR-0018, Rule of Three no aplica a favor de una metrica hipotetica). Igual que con el sampler, la supervivencia de `DurabilityMetricsEnabled` frente a la reasignacion posterior de `Mode` NO es contrato del paquete -- lo sostiene el guardrail de `ComposicionContenedorTests` (Paso 2 punto 9), no la sola lectura del codigo.
 
 Si el Paso 0 no resolvio ningun alias `serviceBus.external` con `alcance == "compartido"`, omite el parametro `serviceBusCosmos` y la linea `AgregarAzureServiceBusNombradoServerless`; deja solo el broker default y un comentario: `// Backbone compartido: sin alias "compartido" declarado en serviceBus.external todavia (MEF-ADR-0024 decision #4). Agrega su broker nombrado cuando el BC publique/consuma su primer evento publico.` Si hay mas de un alias, repite el par parametro + linea de registro por cada uno (y su argumento correspondiente en la llamada de `Program.cs` y en el test de composicion, Paso 2 punto 9). No wirees ningun alias con `alcance == "externo"` (integracion verdaderamente externa, diferida por MEF-ADR-0024 decision #5, default-off).
 
@@ -1402,10 +1422,12 @@ y valida el resultado con `BuildServiceProvider(ValidateOnBuild: true, ValidateS
 el guardrail que detecta en segundos, en CI, un registro faltante que de otro modo solo revienta
 en runtime (issue #221 del consumidor Bitakora.ControlAsistencia: `ITenantResolver` sin registrar
 paso "compila + unit tests verdes" y solo se detecto post-deploy en smoke tests). Gana ademas una
-guarda derivada de identidad de eventos (MEF-ADR-0036 CA-3/CA-4, ultimo test de la clase abajo) y
-los dos guardrails deterministas del sampler de observabilidad (MEF-ADR-0038 seccion 4, ultimos dos
-tests de la clase): el orden `SetSampler` vs. `UseAzureMonitorExporter()` del Paso 6b no es contrato
-del paquete exporter, asi que su vigencia en cada build la sostiene este test, no la lectura visual
+guarda derivada de identidad de eventos (MEF-ADR-0036 CA-3/CA-4, ultimo test de la clase abajo),
+los dos guardrails deterministas del sampler de observabilidad (MEF-ADR-0038 seccion 4) y los dos
+guardrails del durability agent apagado en origen (MEF-ADR-0038 seccion 6, ultimos dos tests de la
+clase): tanto el orden `SetSampler` vs. `UseAzureMonitorExporter()` como la supervivencia de
+`DurabilityMetricsEnabled` frente a la reasignacion posterior de `Mode` no son contrato de sus
+paquetes respectivos, asi que su vigencia en cada build la sostiene este test, no la lectura visual
 del codigo.
 
 ```csharp
@@ -1418,6 +1440,7 @@ using Cosmos.EventSourcing.Abstractions.Commands;
 using Marten;
 using Microsoft.Extensions.DependencyInjection;
 using OpenTelemetry.Trace;
+using Wolverine;
 
 namespace <RootNamespace>.{PascalCase}.Tests.Infraestructura;
 
@@ -1598,6 +1621,50 @@ public class ComposicionContenedorTests
         var samplerEfectivo = ObtenerSamplerEfectivo(tracerProvider);
 
         samplerEfectivo.Description.Should().Be("ParentBased{TraceIdRatioBasedSampler{1.000000}}");
+    }
+
+    // Guardrail (MEF-ADR-0038 seccion 6, CA-3): PersistenceMetrics.StartPolling
+    // (Wolverine.RDBMS.DurabilityAgent.StartAsync) es un PeriodicTimer(UpdateMetricsPeriod,
+    // default 5s) que llama store.Admin.FetchCountsAsync() -- sin ningun consumidor hoy (sin
+    // dashboard ni alerta). CheckHealthAsync llama FetchCountsAsync por su cuenta, asi que el
+    // health check no depende de este polling. Se resuelve WolverineOptions del CONTENEDOR REAL
+    // (nunca un DurabilitySettings construido a mano) porque el gotcha verificado es de ORDEN:
+    // dentro de AgregarWolverineParaComandosServerless (Cosmos.EventSourcing.CritterStack 2.3.1)
+    // el callback del consumidor (Paso 6b) corre PRIMERO y options.Durability.Mode = Solo se
+    // asigna DESPUES incondicionalmente, pisando cualquier intento de tocar Mode desde el
+    // callback -- pero nunca pisa DurabilityMetricsEnabled. Un test contra un DurabilitySettings
+    // standalone nunca detectaria si un upgrade futuro del paquete empieza a pisar tambien esa
+    // bandera; resolver el WolverineOptions efectivo del grafo de DI si lo detecta.
+    //
+    // await using (sin scope): WolverineOptions se registra Singleton via factory-lambda -- el
+    // provider raiz lo trackea para disposal -- y solo implementa IAsyncDisposable. Un using
+    // sincrono lanza InvalidOperationException en ServiceProviderEngineScope.Dispose() al
+    // encontrarlo entre los disposables del provider.
+    [Fact]
+    public async Task AgregarServicios{PascalCase}_ApagaLaRecoleccionDeMetricasDeDurabilidad()
+    {
+        await using var proveedor = ConstruirProveedor();
+
+        var opciones = proveedor.GetRequiredService<WolverineOptions>();
+
+        opciones.Durability.DurabilityMetricsEnabled.Should().BeFalse();
+    }
+
+    // CA-2/CA-3: este issue apaga la recoleccion de METRICAS de cola, no la durabilidad real --
+    // recovery, scheduled jobs y dead letters (procesados por el mismo DurabilityAgent) siguen
+    // activos. Fijar Mode en el mismo test que DurabilityMetricsEnabled evita que una futura
+    // "correccion" resuelva CA-1 apagando la durabilidad completa (p.ej. cambiando Mode) en vez
+    // de solo la bandera de metricas -- Mode sigue siendo Solo, el valor que
+    // AgregarWolverineParaComandosServerless fija incondicionalmente despues del callback.
+    [Fact]
+    public async Task AgregarServicios{PascalCase}_ConservaLaDurabilidadReal()
+    {
+        await using var proveedor = ConstruirProveedor();
+
+        var opciones = proveedor.GetRequiredService<WolverineOptions>();
+
+        opciones.Durability.DurabilityAgentEnabled.Should().BeTrue();
+        opciones.Durability.Mode.Should().Be(DurabilityMode.Solo);
     }
 }
 ```
@@ -3012,7 +3079,7 @@ Scaffold completado para el dominio "{kebab}":
     Infraestructura/ServiceBusEndpointBaseTests.cs - Tests de orquestacion (feliz, lock-lost, dead-letter, JSON invalido)
     Infraestructura/ServiceBusSessionEndpointBaseTests.cs - Tests de orquestacion de fan-in (feliz, lock-lost, dead-letter, Subject no reconocido)
     Infraestructura/PrivateEventEndpointBaseTests.cs - Tests de orquestacion del EventHandler directo (feliz, lock-lost, dead-letter, JSON invalido)
-    Infraestructura/ComposicionContenedorTests.cs - Test de composicion del contenedor DI: BuildServiceProvider(ValidateOnBuild + ValidateScopes) + resolucion explicita de los routers (issue #319, MEF-ADR-0029) + guarda derivada de eventos aplicados vs EventGraph del IDocumentStore compuesto (MEF-ADR-0036) + guardrails del sampler efectivo post-exporter y su ratio default (MEF-ADR-0038)
+    Infraestructura/ComposicionContenedorTests.cs - Test de composicion del contenedor DI: BuildServiceProvider(ValidateOnBuild + ValidateScopes) + resolucion explicita de los routers (issue #319, MEF-ADR-0029) + guarda derivada de eventos aplicados vs EventGraph del IDocumentStore compuesto (MEF-ADR-0036) + guardrails del sampler efectivo post-exporter y su ratio default + del durability agent apagado en origen (MEF-ADR-0038)
                                            - Proyecto de tests unitarios (xUnit v3 + AwesomeAssertions)
 
   tests/<RootNamespace>.{PascalCase}.SmokeTests/
