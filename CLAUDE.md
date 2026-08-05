@@ -151,6 +151,7 @@ tu propuesta en vez de darlo por cierto.
 | `/show-flow` | Renderiza un flujo de `docs/eda/flows/` |
 | `/eraser-diagram` | Genera diagrama para Eraser |
 | `/merge` | Mergea uno o varios PRs a main |
+| `/bitacora` | Invoca al agente `historiador` y, si crea PR, encadena `/merge` automaticamente |
 
 ## Agent Skills disponibles
 
