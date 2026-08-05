@@ -477,8 +477,10 @@ Cambios **incompatibles** al schema de `harness.config.json` (quitar o renombrar
 ## Actualizar a una versión nueva
 
 ```
-/plugin update mefisto
+/mefisto:upgrade
 ```
+
+Reemplaza el flujo manual de 4 pasos (UI de `/plugin` → buscar mefisto → actualizar, pedirle a Claude que reescriba `.claude/pipeline/.plugin-root`, podar a mano el cache de versiones viejas, `/reload-plugins`) por 1 comando + el reload final: detecta el marketplace por glob sobre el cache (sin asumir su nombre, para que funcione igual en un fork instalado via `repoSlug`), actualiza el catálogo y el plugin (`claude plugin marketplace update` + `claude plugin update mefisto --scope user`, ambos sin interacción), reescribe `.claude/pipeline/.plugin-root` a la versión más reciente e imprime el delta de `CHANGELOG.md` entre la versión que tenías cargada y la nueva. Bajo tu confirmación explícita, además poda del cache las versiones que se van acumulando —nunca la que esta sesión tiene cargada ni la nueva—. Termina siempre pidiéndote correr `/reload-plugins` (o reiniciar la sesión): ese último paso no es automatizable desde dentro de la sesión, lo declara el propio CLI (`claude plugin update` documenta *"restart required to apply"*).
 
 Revisa el `CHANGELOG.md` para notas de migración antes de actualizar entre majors.
 

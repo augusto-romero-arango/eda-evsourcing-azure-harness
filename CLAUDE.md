@@ -131,6 +131,7 @@ tu propuesta en vez de darlo por cierto.
 | Skill | Propósito |
 |---|---|
 | `/onboard` | Diagnostica el onboarding del consumidor (config, labels, CI) y reporta un checklist; provisión opt-in bajo confirmación |
+| `/upgrade` | Actualiza el plugin (marketplace + `mefisto`) sin interacción, reescribe `.plugin-root` a la última versión, muestra el delta de `CHANGELOG.md` y poda el cache de versiones viejas bajo confirmación (nunca borra la versión cargada en la sesión activa) |
 | `/draft` | Captura una idea como issue `estado:borrador` |
 | `/implement` | Pipeline TDD para un issue `estado:listo` |
 | `/tooling` | Pipeline de tooling (scripts, fixtures, config, agentes) |
