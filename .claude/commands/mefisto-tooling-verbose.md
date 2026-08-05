@@ -2,7 +2,7 @@
 model: haiku
 ---
 
-Lanza el pipeline INTERNO de tooling para un issue del repo de Mefisto igual que `/mefisto-tooling`, pero con el visor en vivo abierto en un tercer pane (`--verbose`, issue #435 sobre el visor `mefisto-stream-watch.sh` de #434). Delega integramente en `/mefisto-tooling` para toda la validacion; la unica desviacion es el flag que se pasa al wrapper tmux en el lanzamiento. Comunicate en **espanol**.
+Lanza el pipeline INTERNO de tooling para un issue del repo de Mefisto igual que `/mefisto-tooling`, pero con el visor en vivo abierto en un tercer pane (`--verbose`, issue #435 sobre el visor `mefisto-stream-watch.sh` de #434). Delega integramente en `/mefisto-tooling` para toda la validacion; la unica desviacion del procedimiento es el flag que se pasa al wrapper tmux en el lanzamiento (y, en consecuencia, las instrucciones de conexion, que describen 3 panes en vez de 2). Comunicate en **espanol**.
 
 **Alcance**: igual que `/mefisto-tooling` -- este skill solo opera dentro del repo del propio plugin Mefisto. Modifica archivos del harness (skills, agentes, scripts, hooks, ADRs, metadata del plugin). NO toca codigo de aplicacion ni archivos del consumidor.
 
@@ -49,6 +49,8 @@ cat "$(git rev-parse --show-toplevel)/.claude/commands/mefisto-tooling.md"
 
 Ejecuta su `Proceso` completo para el issue en `$ARGUMENTS` tal cual, sin reproducir esa logica aca: Paso 1 (validar que el issue existe y esta abierto), Paso 2 (validar `tipo:tooling`), Paso 2.5 (label `bloqueado` y sus dependencias) y la primera mitad de su Paso 3 (mostrar la linea con info del issue). Si cualquiera de esas validaciones detiene el flujo (issue cerrado/inexistente, sin `tipo:tooling` y el usuario no confirma continuar, o dependencias abiertas), detente exactamente igual que `/mefisto-tooling` lo haria -- no llegues al Paso 2 de este skill.
 
+Los dos ultimos tramos del skill delegado los **reemplazan** los pasos de aca y no se ejecutan: la segunda mitad de su Paso 3 (el lanzamiento sin flag) la reemplaza el Paso 2, y su Paso 4 (instrucciones de conexion de dos panes) la reemplaza el Paso 3. No lances el pipeline dos veces ni emitas los dos mensajes de conexion.
+
 ### 2. Lanzar con `--verbose` (unica desviacion, CA-3)
 
 Donde la segunda mitad del Paso 3 de `/mefisto-tooling` lanzaria `./.claude/scripts/mefisto-tmux-pipeline.sh --tooling $ARGUMENTS`, esta skill suma el flag:
@@ -84,7 +86,7 @@ Si alguna validacion delegada del Paso 1 detuvo el flujo antes del lanzamiento, 
 
 ## Reglas
 
-- **Nunca reimplementes la logica de `/mefisto-tooling`.** Este skill delega leyendo integramente su `Proceso`; la unica linea que le agrega es el flag `--verbose` en el lanzamiento (Paso 2).
+- **Nunca reimplementes la logica de `/mefisto-tooling`.** Este skill delega leyendo integramente su `Proceso`; lo unico que le cambia es el flag `--verbose` en el lanzamiento (Paso 2) y el mensaje de conexion, que describe 3 panes (Paso 3).
 - **No esperes a que termine.** El script corre en background dentro de tmux. Devuelve el control inmediatamente.
 - **No implementes nada tu mismo.** Solo valida (delegado) y lanza el script.
 - Si tmux no esta instalado, el script lo detecta y muestra el error.
