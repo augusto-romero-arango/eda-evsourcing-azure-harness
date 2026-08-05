@@ -103,6 +103,12 @@ public partial class TurnoAggregateRoot : AggregateRoot
 - `Apply(TEvent)` solo asigna estado — nunca contiene lógica condicional ni lanza excepciones
 - Usar LINQ sobre for/foreach para transformaciones y filtros en propiedades calculadas
 
+### Identidad del stream: punto unico de conversion (MEF-ADR-0037)
+
+Toda identidad de stream que el marco maneja como clave de Marten (`StartStream`/`ExistsAsync`/`GetAggregateRootAsync`) se convierte a string en un **unico punto por aggregate** — nunca la reconstruye por su cuenta un CommandHandler, un EventHandler o un endpoint. Cuando la identidad nace `Guid` (el caso comun — `TurnoId`, `EmpleadoId`), ese punto unico es `guid.ToString()` **sin argumentos**: el canonico "D", siempre en minusculas (MEF-ADR-0037 seccion 1, verificado contra la documentacion oficial de .NET). Los ejemplos de este agente ya siguen esa forma — `Id = e.TurnoId.ToString();` al aplicar el evento (arriba), `comando.TurnoId.ToString()` al consultar el store (mas abajo) y al fijar `PublishOptions.GroupId` (seccion "`groupId` en `PublishAsync`" mas abajo) — y desde MEF-ADR-0037 es **regla**, no costumbre: cualquier **formato explicito** (`ToString("N")`, `ToString("B")`, etc.) o transformacion adicional (`.ToUpper()`) queda **proscrito**. Para la clave compuesta, el punto unico es `ComputarStreamId(...)` (ver "Stream con ID compuesto" mas abajo).
+
+Doctrina completa (las tres superficies afectadas — store, bus, read-side —, el borde HTTP, deslinde con MEF-ADR-0036/MEF-ADR-0012): **MEF-ADR-0037**. Este agente no la duplica.
+
 ### CommandHandler — orquestador puro
 
 El CommandHandler no contiene logica de negocio. Solo orquesta: verificar precondiciones, cargar/crear el aggregate, delegar, publicar.
@@ -143,6 +149,7 @@ Algunos aggregates tienen stream ID calculado desde el payload (ej. `EmpleadoId:
 - Computa el stream ID con el metodo estatico del aggregate: `MiAggregate.ComputarStreamId(...)`
 - Usa `ExistsAsync` y `GetAggregateRootAsync` con ese stream ID calculado
 - En `StartStream`, el aggregate ya tiene su `Id` asignado via `Apply()`
+- Dentro de `ComputarStreamId`, todo componente `Guid` se formatea con `ToString()` sin argumentos (mismo canonico "D") y todo componente fecha/hora usa un formato fijo que el propio metodo elige explicitamente (MEF-ADR-0037 seccion 1) — ej. `$"{empleadoId}:{fecha:yyyy-MM-dd}"` (ver `test-writer.md`). Es el **unico** punto de conversion de esa clave: ningun otro codigo del dominio — CommandHandler, EventHandler, endpoint — la concatena ni la interpola por su cuenta; todo consumidor usa el retorno de este metodo.
 
 ```csharp
 public async Task HandleAsync(MiEvento evento, CancellationToken ct)
@@ -251,6 +258,8 @@ Doctrina completa (asimetria privado/publico, precedente real `Cosmos.ControlPla
 Los ejemplos de arriba publican con `eventSender.PublishAsync(turno.GetPrivateEvents())`, sin `groupId` -- es el caso normal: un topic con subscriptions simples (fan-out, MEF-ADR-0001) no necesita sesion. `IPrivateEventSender.PublishAsync` tiene tambien una sobrecarga con un parametro `PublishOptions` (`Cosmos.EventDriven.Abstractions` >= 2.0.0; hasta 1.3.0 era un `string groupId` posicional -- signature bump verificado en issue #312, ver MEF-ADR-0003 "Control de cambios"): `PublishAsync(PublishOptions options, params IPrivateEvent[] events)`, donde `PublishOptions.GroupId` fija el `SessionId` del mensaje -- a nivel de protocolo AMQP viaja como la propiedad `group-id` [Microsoft Learn, "Message sessions"]. La firma completa vive en el paquete externo `Cosmos.EventDriven.Abstractions`; este agente no la agrega, solo ensena el CUANDO/COMO de usarla.
 
 **Invariante dura (MEF-ADR-0026).** Si el topic al que publicas alimenta, via `forward_to`, un queue con `requires_session = true` (fan-in -- ver "Endpoint de fan-in" mas abajo y "Infraestructura (topics y subscriptions)" mas abajo), el productor **debe** publicar con `PublishOptions.GroupId` = la clave del aggregate destino (el mismo valor usado en `StartStream`/`GetAggregateRootAsync`). `requires_session` en el destino y `GroupId` en el productor se despliegan **juntos** -- nunca uno sin el otro.
+
+**Ese "mismo valor" es textual, no solo semantico (MEF-ADR-0037).** `GroupId` sale del mismo punto unico de conversion que `StartStream`/`GetAggregateRootAsync` (ver "Identidad del stream: punto unico de conversion" mas arriba) -- nunca de una reconstruccion propia del handler. Una divergencia de formato aqui (por ejemplo, un `GroupId` con otro casing o con `ToString("N")`) produce un `SessionId` valido pero distinto: no dead-lettera nada, pero pierde en silencio la serializacion por clave que esta seccion existe para garantizar (MEF-ADR-0037 seccion 3).
 
 **Consecuencia de omitirlo.** Un mensaje **sin** `SessionId` que llega, via auto-forward, a un destino con sesion habilitada se dead-lettera en la entidad **fuente** (la subscription que hace el forward) -- no en el queue destino ni en la Function que lo consume: la entidad session-enabled solo acepta mensajes con `SessionId` [Microsoft Learn, "Chaining Service Bus entities with autoforwarding"]. El mensaje se pierde en silencio si nadie monitorea esa dead-letter.
 
