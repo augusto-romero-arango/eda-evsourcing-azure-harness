@@ -106,7 +106,7 @@ Descartado: requiere un equipo multidisciplinario para sacarle valor. Para un so
 ## Referencias
 
 - ADR del proyecto consumidor sobre Function App por dominio (define los bounded contexts base)
-- ADR del proyecto consumidor sobre Contracts compartidos (el shared kernel)
+- MEF-ADR-0039: Composicion canonica de ensamblados por rol del evento (`PublicEvents`/`PrivateEvents`/`{Dominio}.DomainEvents`) -- reemplaza la referencia previa a un ADR de Contracts como shared kernel; el shared kernel real queda como excepcion local bajo Rule of Three (MEF-ADR-0018), no como proyecto por defecto.
 - MEF-ADR-0001: Topics de Service Bus por evento
 - MEF-ADR-0005: Naming y versionado de eventos
 - MEF-ADR-0003: Event Sourcing con Marten y Wolverine
@@ -114,3 +114,7 @@ Descartado: requiere un equipo multidisciplinario para sacarle valor. Para un so
 - ddd-crew/aggregate-design-canvas: https://github.com/ddd-crew/aggregate-design-canvas
 - ddd-crew/eventstorming-glossary-cheat-sheet: https://github.com/ddd-crew/eventstorming-glossary-cheat-sheet
 - Oskar Dudycz - Projections and Read Models: https://event-driven.io/en/projections_and_read_models_in_event_driven_architecture/
+
+## Control de cambios
+
+- 2026-08-05: enmendada la seccion "Referencias" (issue #543, creacion de MEF-ADR-0039) para reemplazar la referencia generica a "ADR del proyecto consumidor sobre Contracts compartidos (el shared kernel)" por MEF-ADR-0039, que fija la particion canonica de ensamblados de evento por rol y declara `Contracts` fuera del canon por defecto. Sin cambio en la doctrina de este ADR (pipeline de tres fases, artefactos del knowledge hub, roles de investigacion).

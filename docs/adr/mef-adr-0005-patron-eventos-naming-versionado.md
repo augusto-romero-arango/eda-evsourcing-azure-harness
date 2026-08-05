@@ -49,7 +49,8 @@ cambio breaking, se crea `HorasCalculadasV2` y ambos coexisten durante la transi
 ### Envelope de eventos
 
 Cuando el sistema lo requiera por primera vez, se define un tipo generico `EventoEnvelope<T>`
-en el proyecto Contracts con los siguientes campos:
+en el ensamblado de eventos de bus que corresponda (`PublicEvents` o `PrivateEvents`, MEF-ADR-0039)
+con los siguientes campos:
 
 - `EventId`: GUID unico por evento
 - `Type`: nombre del tipo de evento (string)
@@ -83,8 +84,9 @@ es una columna de Postgres que solo interpreta el `IDocumentStore` del propio do
 
 - Cuando un cambio si es breaking, hay que mantener dos versiones del evento en paralelo
   (e.g. `HorasCalculadas` y `HorasCalculadasV2`) mientras todos los consumidores migran.
-  Esta deuda tecnica temporal debe gestionarse activamente para evitar que el proyecto
-  Contracts acumule versiones obsoletas indefinidamente.
+  Esta deuda tecnica temporal debe gestionarse activamente para evitar que el ensamblado
+  de eventos de bus correspondiente (`PublicEvents`/`PrivateEvents`, MEF-ADR-0039) acumule
+  versiones obsoletas indefinidamente.
 
 ## Referencias
 
@@ -92,8 +94,10 @@ es una columna de Postgres que solo interpreta el `IDocumentStore` del propio do
 - MEF-ADR-0023: Bounded Context, namespace interno de Azure Service Bus y frontera publico/privado — define que los eventos publicos son el Published Language del BC; este ADR fija el naming y el versionado que blindan ese contrato externo.
 - MEF-ADR-0024: Modelo de eventos de bus (privado propio, publico via backbone compartido, integracion externa diferida) — define donde vive ese Published Language: el backbone compartido del producto (caso comun) o un namespace de integracion externo (caso diferido).
 - MEF-ADR-0036: Identidad del evento persistido en el event store — el alias que identifica al evento dentro de `mt_events` no se gobierna aqui; ese ADR fija la mecanica de identidad, sus proscripciones y el protocolo para mover o renombrar un evento persistido.
+- MEF-ADR-0039: Composicion canonica de ensamblados por rol del evento — fija donde vive el envelope y todo tipo que cruza un bus (`PublicEvents`/`PrivateEvents`), reemplazando al proyecto `Contracts` que este ADR citaba antes como destino.
 
 ## Control de cambios
 
 - 2026-07-01: enmendado (issue #167, barrido de coherencia hacia MEF-ADR-0024) para reemplazar "namespace de integracion (MEF-ADR-0023)" como destino por defecto del Published Language por el modelo de MEF-ADR-0024: backbone compartido del producto (caso comun) o namespace de integracion externo (caso diferido). El naming, el versionado aditivo y la regla V2 no cambian.
 - 2026-07-31: enmendado (issue #474, creacion de MEF-ADR-0036) sumando la seccion "Fuera de alcance: identidad del evento en el event store" y la referencia cruzada correspondiente. Ninguna decision de este ADR cambia -- el naming del Published Language, el versionado aditivo y la regla V2 siguen igual; solo se declara explicitamente la frontera frente al ADR nuevo, que gobierna un sujeto distinto (la identidad del evento dentro del event store, no su contrato de bus).
+- 2026-08-05: enmendado (issue #543, creacion de MEF-ADR-0039) para reemplazar "el proyecto Contracts" como destino del envelope de eventos (seccion "Envelope de eventos") y de la deuda tecnica de versiones V2 (seccion "Consecuencias", "Negativas") por el ensamblado de eventos de bus que corresponda (`PublicEvents`/`PrivateEvents`, MEF-ADR-0039) -- `Contracts` muere del canon del marco. Ninguna decision de naming ni de versionado cambia.
