@@ -131,6 +131,7 @@ App Service Plan: asp-{prefix_func}-{kebab} (dedicado por dominio, MEF-ADR-0020)
   Always On:      {always_on} (default false en dev)
   worker_count:   1 (fijo, Solo exige un unico nodo)
 Proyecto src:     src/<RootNamespace>.{PascalCase}/
+Proyecto eventos: src/<RootNamespace>.{PascalCase}.DomainEvents/ (MEF-ADR-0039)
 Proyecto tests:   tests/<RootNamespace>.{PascalCase}.Tests/
 Smoke tests:      tests/<RootNamespace>.{PascalCase}.SmokeTests/
 Workflow deploy:  .github/workflows/deploy-{kebab}.yml
@@ -210,6 +211,22 @@ Elimina estas lineas del `.csproj`:
 <ProjectReference Include="..\<RootNamespace>.Contracts\<RootNamespace>.Contracts.csproj" />
 ```
 
+**3b. Crear el proyecto `<RootNamespace>.{PascalCase}.DomainEvents`** (MEF-ADR-0039 decision 1 y 2): el ensamblado propio donde vive `IdentidadEventos{PascalCase}` (punto 6a). Es aditivo -- no reemplaza a `Contracts`, que este agente sigue referenciando sin cambios hasta el issue hermano de retiro.
+
+```bash
+cd "$REPO_ROOT"
+dotnet new classlib -n "<RootNamespace>.{PascalCase}.DomainEvents" -o "src/<RootNamespace>.{PascalCase}.DomainEvents" -f net10.0
+rm -f "src/<RootNamespace>.{PascalCase}.DomainEvents/Class1.cs"
+```
+
+**Sin ningun `PackageReference`**: `IdentidadEventos{PascalCase}` es BCL puro (`System.Type`, `System.Collections.Generic`), verificado contra el layout del consumidor de referencia (Bitakora.ControlAsistencia, post CA-ADR-0029) -- no agregues ningun paquete a este `.csproj` durante el scaffold. `ConfiguracionSerializacion{Dominio}` (System.Text.Json puro, sin Marten) tampoco necesitara ninguno cuando aparezca -- eso es alcance de `implementer`/`test-writer`, no de este agente.
+
+Agrega el `ProjectReference` del Function App hacia el, en el mismo `<ItemGroup>` donde quedo el `ProjectReference` a Contracts (punto 3):
+
+```xml
+<ProjectReference Include="..\<RootNamespace>.{PascalCase}.DomainEvents\<RootNamespace>.{PascalCase}.DomainEvents.csproj" />
+```
+
 **4. Verificar que el `<RootNamespace>` sea correcto:**
 
 El `<RootNamespace>` debe ser `<RootNamespace>.{PascalCase}`. Si no existe el elemento, agregalo dentro del primer `<PropertyGroup>`. Si ya existe con otro valor, corrígelo.
@@ -223,7 +240,7 @@ touch "$REPO_ROOT/src/<RootNamespace>.{PascalCase}/Entities/.gitkeep"
 ```
 
 La estructura de carpetas sigue el estilo de vertical slicing:
-- `Entities/` — AggregateRoots y eventos del dominio (siempre a nivel raiz del proyecto)
+- `Entities/` — AggregateRoots del dominio (siempre a nivel raiz del proyecto)
 - `Infraestructura/` — RequestValidator, assembly marker y otros servicios transversales
 - Cada feature crea su propio folder con sufijo `Function` (HTTP triggers) o sin sufijo (ServiceBus triggers)
 - No se crean carpetas horizontales (`Functions/`, `Dominio/`) a nivel raiz
@@ -261,10 +278,10 @@ await builder.Build().RunAsync();
 
 Si el Paso 0 no resolvio ningun alias `serviceBus.external` con `alcance == "compartido"`, omite la variable `serviceBusCosmos` y el argumento correspondiente (el metodo de extension del Paso 6b tampoco declara ese parametro en ese caso). Si hay mas de un alias, repite el par variable + argumento por cada uno. No wirees ningun alias con `alcance == "externo"` (integracion verdaderamente externa, diferida por MEF-ADR-0024 decision #5, default-off).
 
-**6a. Crear `Infraestructura/IdentidadEventos{PascalCase}.cs`** (MEF-ADR-0036): la fuente unica de los tipos de evento que este dominio persiste en el event store. El dominio nace sin eventos -- la lista se llena a medida que el flujo TDD (`implementer`) agrega aggregates con `Apply(TEvento)`, fuera del alcance de este agente (issue hermano #476). Va en `Infraestructura/`, no en `Entities/` (reservado a AggregateRoots y eventos): es configuracion que consume su vecino de carpeta, `ComposicionServicios{PascalCase}` (Paso 6b).
+**6a. Crear `IdentidadEventos{PascalCase}.cs`** en la raiz de `src/<RootNamespace>.{PascalCase}.DomainEvents/` (el proyecto que crea el punto 3b **de este mismo Paso 1** -- no el `## Paso 3b`, que es el del worker de proyecciones; MEF-ADR-0036, MEF-ADR-0039 decision 5): la fuente unica de los tipos de evento que este dominio persiste en el event store. El dominio nace sin eventos -- la lista se llena a medida que el flujo TDD (`implementer`) agrega aggregates con `Apply(TEvento)`, fuera del alcance de este agente (issue hermano #476).
 
 ```csharp
-namespace <RootNamespace>.{PascalCase}.Infraestructura;
+namespace <RootNamespace>.{PascalCase}.DomainEvents;
 
 /// <summary>
 /// Identidad de los eventos que el dominio {PascalCase} persiste en el event store
@@ -294,6 +311,7 @@ public static class IdentidadEventos{PascalCase}
 using System.Globalization;
 using System.Text.Json;
 using <RootNamespace>.{PascalCase};
+using <RootNamespace>.{PascalCase}.DomainEvents;
 using Azure.Monitor.OpenTelemetry.Exporter;
 using Cosmos.EventDriven.CritterStack;
 using Cosmos.EventDriven.CritterStack.AzureServiceBus;
@@ -2328,6 +2346,7 @@ public class HealthSmokeTests(ApiFixture api)
 ```bash
 cd "$REPO_ROOT"
 dotnet sln <SolutionFile> add "src/<RootNamespace>.{PascalCase}/"
+dotnet sln <SolutionFile> add "src/<RootNamespace>.{PascalCase}.DomainEvents/"
 dotnet sln <SolutionFile> add "tests/<RootNamespace>.{PascalCase}.Tests/"
 dotnet sln <SolutionFile> add "tests/<RootNamespace>.{PascalCase}.SmokeTests/"
 ```
@@ -2614,6 +2633,7 @@ on:
     branches: [main]
     paths:
       - 'src/<RootNamespace>.{PascalCase}/**'
+      - 'src/<RootNamespace>.{PascalCase}.DomainEvents/**'
       - 'src/<RootNamespace>.Contracts/**'
       # global.json (issue #454): quien lo lee NO es actions/setup-dotnet -- los jobs
       # de abajo le pasan 'dotnet-version' explicito, no 'global-json-file', asi que
@@ -2651,8 +2671,9 @@ jobs:
   # ambos) garantiza el orden infra -> deploy (MEF-ADR-0022, "Orden: infra antes que deploy
   # de codigo"). Pero workflow_run por si solo redesplegaria TODOS los dominios tras
   # CADA apply de infra (seguro por idempotencia, pero costoso); este job filtra por si
-  # el PR que se acaba de mergear toco este dominio (src/<RootNamespace>.{PascalCase}/**)
-  # y salta el redeploy si no. Se resuelve via la API de PRs asociados al commit (no
+  # el PR que se acaba de mergear toco este dominio (src/<RootNamespace>.{PascalCase}/**
+  # o su ensamblado de eventos src/<RootNamespace>.{PascalCase}.DomainEvents/**, que se
+  # compila dentro del mismo artefacto -- MEF-ADR-0039) y salta el redeploy si no. Se resuelve via la API de PRs asociados al commit (no
   # depende de la estrategia de merge: squash, merge o rebase).
   determinar-alcance:
     runs-on: ubuntu-latest
@@ -2687,7 +2708,10 @@ jobs:
             echo "debe_desplegar=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if gh api "repos/${{ github.repository }}/pulls/${PR_NUM}/files" --paginate --jq '.[].filename' | grep -q '^src/<RootNamespace>.{PascalCase}/'; then
+          # El ensamblado de eventos del dominio (MEF-ADR-0039) cuenta como "toco este
+          # dominio": su binario entra en el publish del Function App, asi que el filtro
+          # de alcance debe aceptarlo igual que el filtro de 'paths' de arriba.
+          if gh api "repos/${{ github.repository }}/pulls/${PR_NUM}/files" --paginate --jq '.[].filename' | grep -qE '^src/<RootNamespace>.{PascalCase}(\.DomainEvents)?/'; then
             echo "debe_desplegar=true" >> "$GITHUB_OUTPUT"
           else
             echo "debe_desplegar=false" >> "$GITHUB_OUTPUT"
@@ -2793,9 +2817,9 @@ jobs:
 
 > **Autenticacion del deploy (OIDC, MEF-ADR-0022)**: el job `deploy` se autentica con `azure/login` por **OpenID Connect**, NO con un client secret. Por eso declara `permissions: id-token: write` y pasa `client-id` / `tenant-id` / `subscription-id` (los secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`), en vez del JSON unico `AZURE_CREDENTIALS`. Esos tres secrets, el Service Principal sin secret y el **federated credential** que confia en la rama `main` los emite `scripts/setup-github-ci.sh` (paso de bootstrap del README). No hay secret que expire. Si cambias el trigger del workflow para desplegar desde otra rama, tag o un GitHub Environment, debes anadir el federated credential correspondiente (el subject debe coincidir exacto con el claim del token de GitHub).
 
-> **Para quien mantenga este agente -- el filtro de `paths` cubre las dependencias de build, no solo el codigo (issue #454)**: transcribe las cuatro rutas y sus comentarios tal cual. `global.json` esta ahi porque el SDK con el que se compila este dominio **no** lo fija `actions/setup-dotnet`: al recibir `dotnet-version` explicito la action instala ese canal y no lee `global.json` (su input `global-json-file`, el unico que se lo hace leer, no se usa aqui -- [README de `actions/setup-dotnet`](https://github.com/actions/setup-dotnet#using-the-globaljson-file)); el archivo lo leen el **muxer del CLI** y el **resolver de SDK de MSBuild** al correr `dotnet restore`/`dotnet build`, que resuelven contra los SDK instalados usando su `version` como piso y su `rollForward` como politica ([global.json overview, Microsoft Learn](https://learn.microsoft.com/dotnet/core/tools/global-json)). Y el propio `deploy-{kebab}.yml` esta en su lista porque un filtro de `paths` que no se incluye a si mismo no reacciona ni al commit que crea el archivo. Los otros dos workflows del Paso 6 no necesitan el mismo arreglo: `smoke-tests-dominio.yml` es `workflow_call` y `smoke-tests.yml` es `workflow_dispatch` + `schedule`, ninguno declara `paths`. Si generas otro workflow de deploy copiando esta plantilla, copia tambien el filtro completo: fue exactamente asi -- espejando la plantilla vieja, sin las dos rutas -- como el defecto llego al consumidor `Bitakora.ControlAsistencia` (sus PRs #257 y #258, ambos disparados a mano con `workflow_dispatch`).
+> **Para quien mantenga este agente -- el filtro de `paths` cubre las dependencias de build, no solo el codigo (issue #454)**: transcribe las cinco rutas y sus comentarios tal cual. `src/<RootNamespace>.{PascalCase}.DomainEvents/**` esta ahi (issue #544, MEF-ADR-0039) porque el ensamblado de eventos persistidos del dominio se compila **dentro** del artefacto que este workflow publica: sin esa ruta, agregar o cambiar un evento no dispara nada en el push a main y la Function App sigue sirviendo el binario anterior -- la misma staleness silenciosa que describe el parrafo siguiente, no una rotura que CI atrape. El filtro de alcance del job `determinar-alcance` (rama `workflow_run`) acepta esa ruta por el mismo motivo: los dos filtros deben moverse juntos. `global.json` esta ahi porque el SDK con el que se compila este dominio **no** lo fija `actions/setup-dotnet`: al recibir `dotnet-version` explicito la action instala ese canal y no lee `global.json` (su input `global-json-file`, el unico que se lo hace leer, no se usa aqui -- [README de `actions/setup-dotnet`](https://github.com/actions/setup-dotnet#using-the-globaljson-file)); el archivo lo leen el **muxer del CLI** y el **resolver de SDK de MSBuild** al correr `dotnet restore`/`dotnet build`, que resuelven contra los SDK instalados usando su `version` como piso y su `rollForward` como politica ([global.json overview, Microsoft Learn](https://learn.microsoft.com/dotnet/core/tools/global-json)). Y el propio `deploy-{kebab}.yml` esta en su lista porque un filtro de `paths` que no se incluye a si mismo no reacciona ni al commit que crea el archivo. Los otros dos workflows del Paso 6 no necesitan el mismo arreglo: `smoke-tests-dominio.yml` es `workflow_call` y `smoke-tests.yml` es `workflow_dispatch` + `schedule`, ninguno declara `paths`. Si generas otro workflow de deploy copiando esta plantilla, copia tambien el filtro completo: fue exactamente asi -- espejando la plantilla vieja, sin las dos rutas -- como el defecto llego al consumidor `Bitakora.ControlAsistencia` (sus PRs #257 y #258, ambos disparados a mano con `workflow_dispatch`).
 
-> **Orden infra -> deploy (MEF-ADR-0022, issue #197)**: el `push` a `main` ya NO dispara este workflow para cambios bajo `infra/**` -- ese trigger vive ahora en `infra-cd.yml` (`infra-base-scaffolder`). En su lugar, `deploy-{kebab}.yml` se encadena tras `Infra CD` via `workflow_run`, de modo que el codigo nunca se despliega antes de que el `apply` de infra haya creado o actualizado la Function App. El job `determinar-alcance` evita el costo de redesplegar **todos** los dominios tras cada apply de infra: solo continua si el PR de infra que se acaba de mergear toco `src/<RootNamespace>.{PascalCase}/**`. **Caso limite**: si el `apply` de infra llega a `main` por un push directo sin PR asociado (fuera del flujo de `scripts/iac-pipeline.sh`), la API de PRs por commit no encuentra nada y el redeploy se omite por diseno (evita falsos despliegues); en ese caso, dispara el deploy manualmente con `workflow_dispatch`.
+> **Orden infra -> deploy (MEF-ADR-0022, issue #197)**: el `push` a `main` ya NO dispara este workflow para cambios bajo `infra/**` -- ese trigger vive ahora en `infra-cd.yml` (`infra-base-scaffolder`). En su lugar, `deploy-{kebab}.yml` se encadena tras `Infra CD` via `workflow_run`, de modo que el codigo nunca se despliega antes de que el `apply` de infra haya creado o actualizado la Function App. El job `determinar-alcance` evita el costo de redesplegar **todos** los dominios tras cada apply de infra: solo continua si el PR de infra que se acaba de mergear toco `src/<RootNamespace>.{PascalCase}/**` o `src/<RootNamespace>.{PascalCase}.DomainEvents/**` (MEF-ADR-0039: el ensamblado de eventos del dominio se publica dentro del mismo artefacto). **Caso limite**: si el `apply` de infra llega a `main` por un push directo sin PR asociado (fuera del flujo de `scripts/iac-pipeline.sh`), la API de PRs por commit no encuentra nada y el redeploy se omite por diseno (evita falsos despliegues); en ese caso, dispara el deploy manualmente con `workflow_dispatch`.
 
 ---
 
@@ -3032,6 +3056,7 @@ Si `terraform` no esta instalado, informa al usuario y omite este paso sin falla
 cd "$REPO_ROOT"
 git add \
   "src/<RootNamespace>.{PascalCase}/" \
+  "src/<RootNamespace>.{PascalCase}.DomainEvents/" \
   "tests/<RootNamespace>.{PascalCase}.Tests/" \
   "tests/<RootNamespace>.{PascalCase}.SmokeTests/" \
   "<SolutionFile>" \
@@ -3072,7 +3097,6 @@ Scaffold completado para el dominio "{kebab}":
     Program.cs                             - Arma el host y delega toda la composicion de DI a ComposicionServicios{PascalCase} (issue #319, MEF-ADR-0029)
     HealthCheck.cs                         - Trigger HTTP de health check (raiz del proyecto)
     VersionCheck.cs                        - Trigger HTTP de /api/version (readiness gate por SHA, issue #325, MEF-ADR-0031)
-    Infraestructura/IdentidadEventos{PascalCase}.cs - Tipos de evento persistidos del dominio (lista vacia al nacer, AddEventTypes) - MEF-ADR-0036
     Infraestructura/ComposicionServicios{PascalCase}.cs - Unica fuente de verdad del wiring de DI (Wolverine con las metricas del durability agent apagadas en origen, Marten, routers, tenancy, OpenTelemetry con sampler post-exporter, validacion) - MEF-ADR-0029/MEF-ADR-0038
     Infraestructura/RequestValidator.cs    - IRequestValidator + implementacion
     Infraestructura/TenantResolverMonoTenantPorDefecto.cs - ITenantResolver mono-tenant transitorio (MEF-ADR-0028)
@@ -3080,7 +3104,10 @@ Scaffold completado para el dominio "{kebab}":
     Infraestructura/ServiceBusEndpointBase.cs   - Clase base para endpoints de ServiceBus (topic+subscription)
     Infraestructura/ServiceBusSessionEndpointBase.cs - Clase base para endpoints de fan-in (queue en modo sesion, MEF-ADR-0026)
     Infraestructura/PrivateEventEndpointBase.cs - Clase base para EventHandler directo, sin comando espejo (issue #313)
-    Entities/                              - AggregateRoots y eventos del dominio (siempre raiz)
+    Entities/                              - AggregateRoots del dominio (siempre raiz)
+
+  src/<RootNamespace>.{PascalCase}.DomainEvents/ - Ensamblado propio de eventos persistidos del dominio (MEF-ADR-0039), sin ningun PackageReference
+    IdentidadEventos{PascalCase}.cs        - Tipos de evento persistidos del dominio (lista vacia al nacer, AddEventTypes) - MEF-ADR-0036
 
   tests/<RootNamespace>.{PascalCase}.Tests/
     Infraestructura/ServiceBusEndpointBaseTests.cs - Tests de orquestacion (feliz, lock-lost, dead-letter, JSON invalido)
