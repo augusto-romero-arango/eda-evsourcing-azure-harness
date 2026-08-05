@@ -17,22 +17,21 @@ Ejecuta **toda la recopilacion sin pedir confirmacion al usuario**. Las fuentes 
 
 ```bash
 # Field notes pendientes: TODAS las que quedan en field-notes/, sin filtrar por
-# fecha del dia actual (el glob no baja a procesadas/, asi que ya quedan excluidas)
+# fecha del dia actual (el glob no baja a procesadas/, asi que las ya procesadas
+# quedan excluidas)
 ls docs/bitacora/field-notes/*.md 2>/dev/null
 
-# Filtro opcional: si se pasa una fecha como argumento, acota el escaneo a ese
-# dia puntual (por ejemplo, para reprocesar un solo dia sin tocar el resto del backlog)
-FECHA_FILTRO="$1"
-if [ -n "$FECHA_FILTRO" ]; then
-    ls docs/bitacora/field-notes/${FECHA_FILTRO}-*.md 2>/dev/null
-fi
+# Dias distintos presentes en el backlog, agrupando por el prefijo YYYY-MM-DD del
+# nombre de archivo. El sed ancla en el prefijo (`<fecha>-`), asi que un slug que
+# contenga otra fecha no inventa un dia que no existe.
+DIAS_PENDIENTES=$(ls docs/bitacora/field-notes/*.md 2>/dev/null \
+    | sed -nE 's#.*/([0-9]{4}-[0-9]{2}-[0-9]{2})-.*#\1#p' | sort -u)
+echo "$DIAS_PENDIENTES"
 
-# Dias distintos presentes en el backlog, agrupando por el prefijo YYYY-MM-DD
-# del nombre de archivo de cada field note
-ls docs/bitacora/field-notes/*.md 2>/dev/null | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' | sort -u
-
-# Issues creados/cerrados (una sola consulta; se filtra por dia en memoria mas abajo)
-gh issue list --state all --limit 50 --json number,title,state,closedAt,createdAt,labels
+# Issues creados/cerrados (una sola consulta; la acotas por dia en memoria con
+# createdAt/closedAt al escribir cada entrada). Sube el --limit si el backlog
+# abarca muchos dias y la lista te queda truncada.
+gh issue list --state all --limit 100 --json number,title,state,closedAt,createdAt,labels
 
 # Pipeline history (si existe)
 tail -20 .claude/pipeline/history.jsonl 2>/dev/null
@@ -41,14 +40,20 @@ tail -20 .claude/pipeline/history.jsonl 2>/dev/null
 ls docs/bitacora/*.md 2>/dev/null | grep -v README | sort | tail -2
 ```
 
-Por cada dia distinto que salio del backlog, acota el git log y el diff de ADRs a ese dia (repite el bloque sustituyendo `FECHA`):
+**Filtro opcional por dia.** Por defecto procesas *todo* el backlog. Si el usuario pide acotar a un dia puntual — por ejemplo, para reprocesar solo ese dia sin tocar el resto del backlog —, reduce `DIAS_PENDIENTES` a esa unica fecha y trabaja solo con `docs/bitacora/field-notes/<fecha>-*.md`.
+
+Por cada dia del backlog, acota el git log y los ADRs tocados a ese dia (un solo bloque, iterando sobre las fechas que ya obtuviste):
 
 ```bash
-git log --since="${FECHA}T00:00:00" --until="${FECHA}T23:59:59" --format="%h %s" --all
-git log --since="${FECHA}T00:00:00" --until="${FECHA}T23:59:59" --name-only --pretty=format: -- docs/adr/ | grep -v '^$'
+for FECHA in $DIAS_PENDIENTES; do
+    echo "=== ${FECHA} ==="
+    git log --since="${FECHA}T00:00:00" --until="${FECHA}T23:59:59" --format="%h %s" --all
+    echo "--- ADRs tocados ---"
+    git log --since="${FECHA}T00:00:00" --until="${FECHA}T23:59:59" --name-only --pretty=format: -- docs/adr/ | grep -v '^$' || true
+done
 ```
 
-Lee las field notes completas de todos los dias del backlog. Lee la ultima entrada de bitacora existente para entender el estilo y continuar la narrativa desde ahi.
+Lee las field notes completas de todos los dias del backlog. Lee las ultimas 2 entradas de bitacora existentes para entender el estilo y continuar la narrativa desde ahi.
 
 Presenta al usuario un resumen: "Encontre field notes pendientes de N dias (YYYY-MM-DD a YYYY-MM-DD): X notas en total — [dia 1]: Y notas, [dia 2]: Z notas, ... El tema principal de cada dia parece ser [...]."
 
@@ -117,7 +122,9 @@ Despues de que el usuario aprueba **todos** los borradores pendientes (uno por c
 
 > "Voy a crear la rama `docs/bitacora-hasta-YYYY-MM-DD` (si estoy en main, usando la fecha de la entrada mas reciente), escribir N entradas de bitacora, mover M field notes efectivamente integradas a `procesadas/` (dejando K excluidas en `field-notes/`), commitear todo junto y abrir un solo PR. Listo?"
 
-Espera la confirmacion del usuario. Una vez confirmado, ejecuta toda la secuencia **sin interrupciones adicionales**:
+Espera la confirmacion del usuario. Una vez confirmado, ejecuta toda la secuencia **sin interrupciones adicionales**.
+
+Ojo con el estado del shell: cada bloque `bash` corre en su propio proceso, asi que ni `FECHA_MAS_RECIENTE` ni los arrays sobreviven de un bloque al siguiente. Redefinelos en cada bloque donde los uses (o sustituye los valores literales al ejecutar).
 
 ### 1. Crear rama de trabajo si estas en main
 
@@ -162,14 +169,15 @@ FIELD_NOTES_INTEGRADAS=(
 git mv "${FIELD_NOTES_INTEGRADAS[@]}" docs/bitacora/field-notes/procesadas/
 ```
 
-Si `git mv` falla, usa la alternativa: `mv` archivo por archivo seguido de `git add` de **ambas rutas** (origen y destino):
+Si `git mv` falla, usa la alternativa: `mv` archivo por archivo seguido de `git add` de **ambas rutas** (origen y destino) de *ese* archivo. No hagas `git add` del directorio completo: arrastraria al commit las notas que el usuario excluyo.
 
 ```bash
 mkdir -p docs/bitacora/field-notes/procesadas
+FIELD_NOTES_INTEGRADAS=( ... )  # la misma lista explicita del bloque anterior
 for f in "${FIELD_NOTES_INTEGRADAS[@]}"; do
     mv "$f" docs/bitacora/field-notes/procesadas/
+    git add "$f" "docs/bitacora/field-notes/procesadas/$(basename "$f")"
 done
-git add docs/bitacora/field-notes/ docs/bitacora/field-notes/procesadas/
 ```
 
 Las field notes excluidas por el usuario **no se tocan**: quedan en `field-notes/` para una sesion futura.
@@ -179,6 +187,7 @@ Las field notes excluidas por el usuario **no se tocan**: quedan en `field-notes
 Un solo commit que incluya todas las entradas de bitacora nuevas y todos los movimientos de field notes:
 
 ```bash
+FECHA_MAS_RECIENTE="..."  # la mayor entre las fechas de las entradas nuevas
 ENTRADAS_NUEVAS=(
     "docs/bitacora/2026-07-27.md"
     "docs/bitacora/2026-07-28.md"
@@ -187,8 +196,13 @@ ENTRADAS_NUEVAS=(
 git add "${ENTRADAS_NUEVAS[@]}"
 git commit -m "docs(bitacora): entradas hasta el ${FECHA_MAS_RECIENTE}
 
+- 2026-07-27 — [titulo evocador de esa entrada]
+- 2026-07-28 — [titulo evocador de esa entrada]
+
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ```
+
+El cuerpo del commit enumera una linea por entrada con su titulo evocador: el asunto es uniforme para el orquestador, pero el titulo de cada dia no se pierde.
 
 ### 5. Push de la rama y apertura de PR
 
