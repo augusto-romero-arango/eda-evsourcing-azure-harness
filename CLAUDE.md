@@ -268,7 +268,7 @@ Workflow típico:
 
 1. Captura una idea: `/mefisto-plan` (modo draft) o `gh issue create --label "estado:borrador,tipo:tooling" --title "..."`.
 2. Refina: `/mefisto-plan` (modo refinar) hasta `estado:listo`.
-3. Implementa: `/mefisto-tooling <issue>`. El pipeline crea worktree, ejecuta writer+reviewer, valida scope y abre PR.
+3. Implementa: `/mefisto-tooling <issue>`. El pipeline crea worktree, ejecuta writer+reviewer, valida scope y abre PR. Para seguir la corrida en vivo con el visor abierto en un tercer pane, usa `/mefisto-tooling-verbose <issue>` en su lugar (delega integramente en `/mefisto-tooling`, solo lanza con `--verbose`).
 4. Revisa: comentarios del PR → `/mefisto-fix-review <pr>`.
 5. Mergea: `/mefisto-merge <pr>` (squash + delete-branch, sin `pr-sync.sh`).
 6. Pon al dia la bitacora: `/mefisto-bitacora` (invoca al agente `mefisto-historiador` y encadena `/mefisto-merge` automaticamente sobre el PR resultante).
