@@ -91,7 +91,8 @@ echo "[B] Skills internos (.claude/commands/mefisto-*.md): guard inverso present
 
 INTERNAL_SKILLS=(
     mefisto-tooling.md mefisto-plan.md mefisto-bug.md mefisto-fix-review.md
-    mefisto-merge.md mefisto-work-status.md
+    mefisto-merge.md mefisto-work-status.md mefisto-sequential.md
+    mefisto-release.md mefisto-bitacora.md
 )
 
 for skill in "${INTERNAL_SKILLS[@]}"; do
@@ -105,6 +106,22 @@ for skill in "${INTERNAL_SKILLS[@]}"; do
         pass "$skill: menciona .claude-plugin/plugin.json (guard inverso)"
     else
         fail "$skill: no menciona .claude-plugin/plugin.json"
+    fi
+done
+
+# Cobertura del listado, simetrica a la del Bloque A: un skill interno nuevo que nadie
+# agregue a INTERNAL_SKILLS quedaria sin verificar su guard inverso, en silencio (fue el
+# caso de mefisto-sequential/mefisto-release/mefisto-bitacora hasta el issue #530).
+for path in "$REPO_ROOT"/.claude/commands/mefisto-*.md; do
+    skill="$(basename "$path")"
+    listed=0
+    for known in "${INTERNAL_SKILLS[@]}"; do
+        [ "$known" = "$skill" ] && listed=1 && break
+    done
+    if [ "$listed" -eq 1 ]; then
+        pass "$skill: enumerado en INTERNAL_SKILLS"
+    else
+        fail "$skill: existe en .claude/commands/ pero no esta en INTERNAL_SKILLS (agregalo a este test)"
     fi
 done
 
