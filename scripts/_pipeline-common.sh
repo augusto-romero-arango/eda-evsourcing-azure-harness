@@ -604,6 +604,10 @@ read_backend_storage_account_name() {
 #                     del consumidor: MEF-ADR-0030 descarta reubicarlo bajo
 #                     docs/adr-proyecto/ u otra ruta (su Alt 2, descartada) y declara
 #                     valido que un consumidor conserve docs/adr/ sin migrar (decision #4).
+#
+# NO incluye .claude/settings.json (issue #522): en el repo del consumidor esa
+# ruta es de sus propios hooks/config, no una ruta reservada del plugin. Ese
+# registro solo existe en is_path_in_mefisto_scope de .claude/scripts/_mefisto-common.sh.
 is_path_in_consumer_blocklist() {
     local path="$1"
     [ -z "$path" ] && return 1

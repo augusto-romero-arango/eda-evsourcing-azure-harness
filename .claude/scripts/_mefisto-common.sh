@@ -65,6 +65,13 @@ assert_in_mefisto() {
 #   .claude/skills/          Agent Skills internos (MEF-ADR-0033)
 #   .claude/agents/          Agentes internos
 #   .claude/scripts/         Pipelines internos
+#   .claude/settings.json    Hooks del pipeline interno (entrada exacta, no
+#                            .claude/*: .claude/harness.config.json y
+#                            .claude/pipeline/* siguen fuera de scope). NO se
+#                            replica en is_path_in_consumer_blocklist de
+#                            scripts/_pipeline-common.sh: en el repo del
+#                            consumidor esa ruta es de sus propios hooks/config,
+#                            no una ruta reservada del plugin.
 #   changelog.d/             Fragmentos de CHANGELOG/indice de ADRs (issue #380)
 #   README.md, CHANGELOG.md, CLAUDE.md, .gitignore   Gobierno del repo
 is_path_in_mefisto_scope() {
@@ -75,6 +82,7 @@ is_path_in_mefisto_scope() {
         commands/*|skills/*|agents/*|scripts/*|hooks/*|docs/*) return 0 ;;
         .claude-plugin/*) return 0 ;;
         .claude/commands/*|.claude/skills/*|.claude/agents/*|.claude/scripts/*) return 0 ;;
+        .claude/settings.json) return 0 ;;
         README.md|CHANGELOG.md|CLAUDE.md|.gitignore) return 0 ;;
         changelog.d/*) return 0 ;;
         *) return 1 ;;
