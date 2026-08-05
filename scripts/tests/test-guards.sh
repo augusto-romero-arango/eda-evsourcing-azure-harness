@@ -10,8 +10,8 @@
 #      scripts/iac-pipeline.sh, scripts/scaffold-pipeline.sh, scripts/tmux-pipeline.sh)
 #      y los scripts auxiliares publicados (appinsights-query.sh, eda-lint.sh,
 #      setup-github-ci.sh, setup-github-labels.sh, bootstrap-backend.sh,
-#      seed-secret.sh, onboard-diagnose.sh) abortan si se sourcean en un
-#      contexto donde .claude-plugin/plugin.json existe.
+#      seed-secret.sh, onboard-diagnose.sh, update-plugin.sh) abortan si se
+#      sourcean en un contexto donde .claude-plugin/plugin.json existe.
 #   D) Las funciones validate_*_scope_changes son sourceables sin errores.
 #   F) Integridad de los Agent Skills (MEF-ADR-0033 seccion 4): el `name` del
 #      frontmatter de cada SKILL.md coincide con su directorio, tiene
@@ -53,7 +53,7 @@ PUBLISHED_SKILLS=(
     bitacora.md bug.md draft.md eraser-diagram.md fix-review.md health-check.md
     implement.md infra.md infra-base.md install-apim.md install-auth.md install-workos.md
     merge.md onboard.md parallel.md scaffold.md scaffold-projections.md
-    seed-secret.md sequential.md show-flow.md tooling.md work-status.md
+    seed-secret.md sequential.md show-flow.md tooling.md upgrade.md work-status.md
 )
 
 for skill in "${PUBLISHED_SKILLS[@]}"; do
@@ -164,7 +164,7 @@ echo "[C2] Scripts auxiliares publicados: el guard aborta cuando se ejecutan en 
 
 AUX_SCRIPTS=(
     appinsights-query.sh eda-lint.sh setup-github-ci.sh setup-github-labels.sh
-    bootstrap-backend.sh seed-secret.sh onboard-diagnose.sh
+    bootstrap-backend.sh seed-secret.sh onboard-diagnose.sh update-plugin.sh
 )
 
 for aux in "${AUX_SCRIPTS[@]}"; do

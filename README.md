@@ -19,7 +19,7 @@ Plugin de [Claude Code](https://code.claude.com/docs/en/plugins) que provee un h
 
 ## Qué incluye
 
-- **Skills** (slash commands): `/onboard`, `/implement`, `/tooling`, `/infra`, `/infra-base`, `/scaffold`, `/scaffold-projections`, `/seed-secret`, `/install-workos`, `/install-apim`, `/install-auth`, `/parallel`, `/sequential`, `/bug`, `/draft`, `/fix-review`, `/health-check`, `/work-status`, `/show-flow`, `/eraser-diagram`, `/merge`, `/bitacora`.
+- **Skills** (slash commands): `/onboard`, `/upgrade`, `/implement`, `/tooling`, `/infra`, `/infra-base`, `/scaffold`, `/scaffold-projections`, `/seed-secret`, `/install-workos`, `/install-apim`, `/install-auth`, `/parallel`, `/sequential`, `/bug`, `/draft`, `/fix-review`, `/health-check`, `/work-status`, `/show-flow`, `/eraser-diagram`, `/merge`, `/bitacora`.
 - **Agentes** especializados: `planner`, `test-writer`, `implementer`, `projection-test-writer`, `projection-implementer`, `projections-scaffolder`, `reviewer`, `smoke-test-writer`, `domain-scaffolder`, `infra-base-scaffolder`, `apim-gateway-scaffolder`, `workos-identity-scaffolder`, `eda-modeler`, `event-stormer`, `historiador`, `infra-writer`, `infra-reviewer`, `infra-bootstrap`, `pr-sync`, `bug-investigator`, `tooling-investigator`.
 - **Pipelines bash** que orquestan el ciclo TDD, IaC y tooling sobre `tmux` y `git worktree`.
 - **ADRs** del marco arquitectónico (prefijo `MEF-ADR-`, ver índice temático en `CLAUDE.md`).
@@ -405,7 +405,7 @@ Flujo típico:
 commands/              # skills publicados (los que ve el consumidor)
 agents/                # agentes publicados
 scripts/               # pipelines + utilidades bash publicadas
-hooks/hooks.json       # SessionStart (.plugin-root, sessions.jsonl) + PostToolUse para logging
+hooks/hooks.json       # SessionStart (.plugin-root, limpieza del marker de /upgrade, sessions.jsonl) + PostToolUse para logging
 .claude/               # skills/agentes/pipelines INTERNOS (no se publican)
   commands/            # /mefisto-tooling, /mefisto-plan, /mefisto-bug, ...
   agents/              # mefisto-investigator, mefisto-planner, mefisto-historiador
@@ -477,8 +477,12 @@ Cambios **incompatibles** al schema de `harness.config.json` (quitar o renombrar
 ## Actualizar a una versión nueva
 
 ```
-/plugin update mefisto
+/mefisto:upgrade
 ```
+
+Reemplaza el flujo manual de 4 pasos (UI de `/plugin` → buscar mefisto → actualizar, pedirle a Claude que reescriba `.claude/pipeline/.plugin-root`, podar a mano el cache de versiones viejas, `/reload-plugins`) por 1 comando + el reload final: detecta el marketplace sin asumir su nombre —lo deriva del `.plugin-root` cargado y, si eso no alcanza, por glob sobre el cache, para que funcione igual en un fork instalado vía `repoSlug`—, actualiza el catálogo y el plugin (`claude plugin marketplace update` + `claude plugin update mefisto --scope user`, ambos sin interacción), reescribe `.claude/pipeline/.plugin-root` a la versión más reciente e imprime el delta de `CHANGELOG.md` entre la versión que tenías cargada y la nueva. Bajo tu confirmación explícita, además poda del cache las versiones que se van acumulando —nunca la que esta sesión tiene cargada ni la nueva—. Termina siempre pidiéndote correr `/reload-plugins` (o reiniciar la sesión): ese último paso no es automatizable desde dentro de la sesión, lo declara el propio CLI (`claude plugin update` documenta *"restart required to apply"*).
+
+Por qué la poda necesita cuidado: si borrara la versión que la sesión activa tiene cargada, el propio skill en ejecución desaparecería del disco y la sesión rompería a mitad de camino. Como el paso de actualización ya reescribió `.plugin-root` a la versión nueva, ese archivo deja de describir lo que la sesión cargó, así que el skill le pasa la versión cargada al script de forma explícita (`--prune --loaded <versión>`) y el script la respalda en `.claude/pipeline/.plugin-root.previous` —un marker por sesión que escribe una sola vez y que limpia el hook `SessionStart`, no el script—. Correr `/mefisto:upgrade` dos veces en la misma sesión (el camino natural si declinas podar y lo reconsideras después) es por eso seguro. Si ninguna de las dos fuentes resuelve la versión cargada, el script conserva la N-1 por precaución en vez de arriesgarse.
 
 Revisa el `CHANGELOG.md` para notas de migración antes de actualizar entre majors.
 
