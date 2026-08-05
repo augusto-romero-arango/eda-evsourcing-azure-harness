@@ -35,7 +35,34 @@ var provider = services.BuildServiceProvider();
 
    Si el seam se declara con modificadores de acceso o retorno no-`void`, el compilador ya cubre esta guarda y el test conserva valor solo por los puntos 2 y 3.
 
-2. **Ciclo de vida `Async`**: que ninguna proyeccion registrada en el named store del worker haya quedado con lifecycle `Inline` -- si aparece una `Inline` ahi, es una proyeccion mal ubicada (deberia vivir en el write-side) o una regresion de copy-paste. Reverificar la superficie exacta de `StoreOptions.Projections` de la version vigente del paquete Marten antes de escribir este assert.
+   **Esta misma resolucion caza gratis un segundo modo de falla independiente: la clase de proyeccion sin `partial`** (el `partial` de la clase companion, MEF-ADR-0035 seccion 2 -- no el metodo del seam de arriba; son dos requisitos distintos y ambos aplican). Verificado por ejecucion propia (Marten `9.12.0`, SDK .NET 10.0.201, sin Postgres): una clase de proyeccion sin `partial` compila con 0 errores y 0 advertencias, y estalla exactamente al resolver el named store del contenedor -- la misma llamada `GetRequiredService<I{Dominio}ProjectionStore>()` de arriba -- con:
+
+   ```
+   InvalidProjectionException: No source-generated dispatcher found for {Proyeccion}.
+   Conventional Apply/Create/ShouldDelete methods are dispatched by the compile-time
+   JasperFx.Events.SourceGenerator; there is no runtime fallback. [...]
+   ```
+
+   La excepcion llega **envuelta en `TargetInvocationException`** al resolver desde el contenedor -- el assert debe desenvolver `InnerException` (o afirmar sobre la excepcion raiz), no esperar `InvalidProjectionException` directo:
+
+   ```csharp
+   var ex = Record.Exception(() => provider.GetRequiredService<IVentasProjectionStore>());
+   var raiz = ex is TargetInvocationException { InnerException: { } inner } ? inner : ex;
+   Assert.IsType<InvalidProjectionException>(raiz);
+   ```
+
+   **Esta segunda cobertura solo aplica cuando el dominio ya tiene al menos una proyeccion registrada** -- un dominio sin proyecciones no ejercita este camino, y la guarda sigue cubriendo unicamente el metodo `partial` del seam. Por el mismo camino, esta guarda tambien caza el `Id type mismatch` de MEF-ADR-0035 seccion 2 (un `TId` que no coincide con `Events.StreamIdentity`): cualquier `InvalidProjectionException` que Marten lance al ensamblar el named store sale a la luz aqui, sin Postgres y sin escribir un assert nuevo.
+
+   **Dato negativo verificado: `ValidateConfiguration` no es la via.** `ProjectionOptions` **no expone ningun `ValidateConfiguration` publico** en la version pinneada (`error CS1061`) -- no es que devuelva una coleccion vacia con o sin `partial`, es que esa API no existe. La unica via verificada para cazar el gotcha del `partial` (de metodo o de clase) sigue siendo resolver el named store del contenedor, como hace esta guarda.
+
+2. **Ciclo de vida `Async`**: que ninguna proyeccion registrada en el named store del worker haya quedado con lifecycle `Inline` -- si aparece una `Inline` ahi, es una proyeccion mal ubicada (deberia vivir en el write-side) o una regresion de copy-paste. Superficie verificada por ejecucion propia (Marten `9.12.0`): `store.Options.Events.Projections()` devuelve los elementos registrados, cada uno con `.Name` y `.Lifecycle`:
+
+   ```csharp
+   var lifecycles = store.Options.Events.Projections().Select(p => p.Lifecycle);
+   Assert.All(lifecycles, l => Assert.Equal(ProjectionLifecycle.Async, l));
+   ```
+
+   **Trampa medida: `.Name` es el nombre del read model (la vista), no el de la clase de proyeccion.** Ejemplo medido: para la clase de proyeccion `ProyeccionOk` (companion de la vista `TurnoView`), `.Name` vale `'TurnoView'`, nunca `'ProyeccionOk'` -- una guarda que afirme por nombre de clase de proyeccion falla siempre.
 
 3. **Guarda barata de metadata (subconjunto de la compatibilidad, no toda ella)**: que `Events.MetadataConfig.CorrelationIdEnabled`/`CausationIdEnabled`/`HeadersEnabled` esten en `true` en el named store del worker, exactamente como en la configuracion Marten del write-side de ese mismo dominio:
 
