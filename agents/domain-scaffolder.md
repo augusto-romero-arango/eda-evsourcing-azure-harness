@@ -115,8 +115,8 @@ jq -r '.tenancy.strategy // "mono-tenant-transitorio"' /ruta-del-proyecto/.claud
 
 El token `tenancy.strategy` (opcional en `harness.config.json`; ausente equivale a `"mono-tenant-transitorio"`) declara en cual de las dos etapas de MEF-ADR-0028 esta el proyecto. **No lo sondees en codigo** -- no hay señal fiable (el harness no referencia ningun tipo `Cosmos.MultiTenancy.*`/autenticacion); es un token declarado por el humano, el mismo que escribe `/onboard` bajo confirmacion. Dos valores:
 
-- **`mono-tenant-transitorio`** (etapa a, default): genera el `ITenantResolver` mono-tenant transitorio de #318, **sin ningun cambio**. Ver el detalle en el punto 11f del Paso 1.
-- **`multi-tenant-header`** (etapa b): en vez del default transitorio, auto-cablea el resolver hibrido generico de `Cosmos.MultiTenancy.CritterStack` -- con verificacion de fuente obligatoria y fallback a "proponer" si no resulta generico. Ver el detalle completo (incluida la verificacion CA-6 y el fallback CA-7) en el punto 11f del Paso 1.
+- **`mono-tenant-transitorio`** (etapa a, default): genera el `ITenantResolver` mono-tenant transitorio de #318, **sin ningun cambio**. Ver el detalle en el punto 10f del Paso 1.
+- **`multi-tenant-header`** (etapa b): en vez del default transitorio, auto-cablea el resolver hibrido generico de `Cosmos.MultiTenancy.CritterStack` -- con verificacion de fuente obligatoria y fallback a "proponer" si no resulta generico. Ver el detalle completo (incluida la verificacion CA-6 y el fallback CA-7) en el punto 10f del Paso 1.
 
 Un valor no reconocido en `tenancy.strategy` (ni `mono-tenant-transitorio` ni `multi-tenant-header`) es un error de config: informa al usuario y trata el caso como si el campo estuviera ausente (etapa a, el default seguro) hasta que lo corrija.
 
@@ -132,7 +132,9 @@ App Service Plan: asp-{prefix_func}-{kebab} (dedicado por dominio, MEF-ADR-0020)
   worker_count:   1 (fijo, Solo exige un unico nodo)
 Proyecto src:     src/<RootNamespace>.{PascalCase}/
 Proyecto eventos: src/<RootNamespace>.{PascalCase}.DomainEvents/ (MEF-ADR-0039)
+Eventos de bus:   src/<RootNamespace>.PublicEvents/{PascalCase}/, src/<RootNamespace>.PrivateEvents/{PascalCase}/ (BC, MEF-ADR-0039; los ensamblados se crean solo si no existen ya)
 Proyecto tests:   tests/<RootNamespace>.{PascalCase}.Tests/
+Tests de bus:     tests/<RootNamespace>.PublicEvents.Tests/, tests/<RootNamespace>.PrivateEvents.Tests/ (BC; se crean solo si no existen ya)
 Smoke tests:      tests/<RootNamespace>.{PascalCase}.SmokeTests/
 Workflow deploy:  .github/workflows/deploy-{kebab}.yml
 
@@ -205,13 +207,77 @@ Elimina estas lineas del `.csproj`:
 
 > **Lockstep del metapaquete `Microsoft.Azure.Functions.Worker` y versiones del trio OpenTelemetry (issue #263)**: `Microsoft.Azure.Functions.Worker` se fija explicitamente en `2.52.0` porque `Microsoft.Azure.Functions.Worker.OpenTelemetry` 1.2.0 exige `Microsoft.Azure.Functions.Worker.Core >= 2.52.0` (nuspec del paquete, api.nuget.org). Si el metapaquete queda en una version menor -- por ejemplo la que trae por defecto una plantilla `func init` desactualizada --, `Worker.Core` sube a 2.52.0 por resolucion transitiva pero `Worker.Grpc` puede quedar rezagado en una version anterior; ese desalineamiento Core/Grpc dispara `MissingMethodException` en `DefaultTraceContext..ctor` al arrancar el host, tumbando con HTTP 500 **toda** funcion del dominio (verificado por el consumidor Cosmos.ControlPlane, PR #46). Fijar el metapaquete completo a `2.52.0` mantiene Core y Grpc siempre en la misma version. Las versiones de `Microsoft.Azure.Functions.Worker.OpenTelemetry` (1.2.0 -- `1.4.0` nunca existio en NuGet, era un dato erroneo), `OpenTelemetry.Extensions.Hosting` (1.13.1, el minimo que exige el paquete anterior) y `Azure.Monitor.OpenTelemetry.Exporter` (1.8.2) son las vigentes en NuGet.org al momento de este cambio; revalidalas contra la fuente si ha pasado tiempo desde entonces.
 
-**3. Agregar la referencia al proyecto Contracts:**
+**3. Crear (si no existen) los ensamblados de bus del BC `PublicEvents`/`PrivateEvents`** (MEF-ADR-0039 decisiones 1, 2 y 8): particion incondicional por rol de los eventos que cruzan el bus del BC -- `<RootNamespace>.PublicEvents` (sale del BC) y `<RootNamespace>.PrivateEvents` (bus interno). A diferencia de `{PascalCase}.DomainEvents` (uno por dominio), estos dos viven a nivel de **Bounded Context**: el primer dominio del BC los crea, y los siguientes solo agregan su subcarpeta (mas abajo). Verifica primero si ya existen:
 
-```xml
-<ProjectReference Include="..\<RootNamespace>.Contracts\<RootNamespace>.Contracts.csproj" />
+```bash
+REPO_ROOT=$(git -C /ruta-conocida rev-parse --show-toplevel)
+test -d "$REPO_ROOT/src/<RootNamespace>.PublicEvents" && echo "PublicEvents YA EXISTE" || echo "PublicEvents FALTA"
+test -d "$REPO_ROOT/src/<RootNamespace>.PrivateEvents" && echo "PrivateEvents YA EXISTE" || echo "PrivateEvents FALTA"
 ```
 
-**3b. Crear el proyecto `<RootNamespace>.{PascalCase}.DomainEvents`** (MEF-ADR-0039 decision 1 y 2): el ensamblado propio donde vive `IdentidadEventos{PascalCase}` (punto 6a). Es aditivo -- no reemplaza a `Contracts`, que este agente sigue referenciando sin cambios hasta el issue hermano de retiro.
+Si `PublicEvents` **falta**, creelo -- es la base del grafo de la decision 2
+(`PublicEvents <- PrivateEvents <- {Dominio}.DomainEvents <- Function App`), **sin ningun
+`ProjectReference`**:
+
+```bash
+cd "$REPO_ROOT"
+dotnet new classlib -n "<RootNamespace>.PublicEvents" -o "src/<RootNamespace>.PublicEvents" -f net10.0
+rm -f "src/<RootNamespace>.PublicEvents/Class1.cs"
+```
+
+```xml
+<ItemGroup>
+  <!-- Cero ProjectReference (MEF-ADR-0039 decision 2): PublicEvents es la base del grafo de
+       ensamblados de eventos de bus -- la condicion que permite empaquetarlo como NuGet propio si
+       el producto decide compartirlo entre repos de distintos BCs (decision local del producto,
+       no una prescripcion del marco). El marker IPublicEvent viene de este paquete. -->
+  <PackageReference Include="Cosmos.EventDriven.Abstractions" Version="2.1.0" />
+</ItemGroup>
+```
+
+Si `PrivateEvents` **falta**, creelo -- referencia `PublicEvents` (grafo de la decision 2):
+
+```bash
+cd "$REPO_ROOT"
+dotnet new classlib -n "<RootNamespace>.PrivateEvents" -o "src/<RootNamespace>.PrivateEvents" -f net10.0
+rm -f "src/<RootNamespace>.PrivateEvents/Class1.cs"
+```
+
+```xml
+<ItemGroup>
+  <!-- El marker IPrivateEvent viene del mismo paquete que PublicEvents. -->
+  <PackageReference Include="Cosmos.EventDriven.Abstractions" Version="2.1.0" />
+</ItemGroup>
+
+<ItemGroup>
+  <ProjectReference Include="..\<RootNamespace>.PublicEvents\<RootNamespace>.PublicEvents.csproj" />
+</ItemGroup>
+```
+
+**En cada scaffold de dominio** -- tanto si `PublicEvents`/`PrivateEvents` se acaban de crear como si ya existian de un dominio anterior de este BC --, crea la subcarpeta de este dominio en ambos ensamblados (subdivision por dominio de la decision 3, mismo patron .gitkeep-mientras-vacia de `projections-scaffolder`):
+
+```bash
+mkdir -p "$REPO_ROOT/src/<RootNamespace>.PublicEvents/{PascalCase}"
+mkdir -p "$REPO_ROOT/src/<RootNamespace>.PrivateEvents/{PascalCase}"
+# El .gitkeep va solo mientras la carpeta este vacia -- mismo guard que projections-scaffolder, no
+# un 'touch' incondicional: git no versiona directorios vacios, pero una carpeta que ya declaro
+# eventos de bus (los escribio 'implementer' en una corrida posterior al scaffold) no lo necesita,
+# y una re-corrida de este agente sobre ese dominio no debe resucitarlo.
+for destino in "$REPO_ROOT/src/<RootNamespace>.PublicEvents/{PascalCase}" \
+               "$REPO_ROOT/src/<RootNamespace>.PrivateEvents/{PascalCase}"; do
+    if [ -z "$(ls -A "$destino")" ]; then
+        touch "$destino/.gitkeep"
+    fi
+done
+```
+
+> **Conflicto add/add benigno en scaffolds paralelos**: si dos dominios del mismo BC se
+> scaffoldean en ramas distintas antes de mergear, ambas ramas crean `PublicEvents`/`PrivateEvents`
+> -- un merge entre ellas ve un conflicto add/add de contenido identico (mismo `.csproj`, mismo
+> paquete). Es benigno, misma familia que el residual de `<SolutionFile>` que documenta la nota de
+> issue #234 en el Paso 3: se resuelve quedandose con cualquiera de las dos copias identicas.
+
+**3b. Crear el proyecto `<RootNamespace>.{PascalCase}.DomainEvents`** (MEF-ADR-0039 decision 1 y 2): el ensamblado propio donde vive `IdentidadEventos{PascalCase}` (punto 6a).
 
 ```bash
 cd "$REPO_ROOT"
@@ -221,10 +287,29 @@ rm -f "src/<RootNamespace>.{PascalCase}.DomainEvents/Class1.cs"
 
 **Sin ningun `PackageReference`**: `IdentidadEventos{PascalCase}` es BCL puro (`System.Type`, `System.Collections.Generic`), verificado contra el layout del consumidor de referencia (Bitakora.ControlAsistencia, post CA-ADR-0029) -- no agregues ningun paquete a este `.csproj` durante el scaffold. `ConfiguracionSerializacion{Dominio}` (System.Text.Json puro, sin Marten) tampoco necesitara ninguno cuando aparezca -- eso es alcance de `implementer`/`test-writer`, no de este agente.
 
-Agrega el `ProjectReference` del Function App hacia el, en el mismo `<ItemGroup>` donde quedo el `ProjectReference` a Contracts (punto 3):
+Agrega los dos `ProjectReference` de abajo **al `.csproj` que acabas de crear**
+(`<RootNamespace>.{PascalCase}.DomainEvents.csproj`) -- no al del Function App, que es el punto 3c.
+El grafo de la decision 2 (`PublicEvents <- PrivateEvents <- {Dominio}.DomainEvents`) ya haria
+visible `PublicEvents` por transitividad a traves de `PrivateEvents`; se declara explicitamente de
+todos modos, porque un evento persistido de este dominio puede proyectarse hacia cualquiera de los
+dos roles y una dependencia declarada sobrevive a que `PrivateEvents` deje de referenciar
+`PublicEvents`:
 
 ```xml
-<ProjectReference Include="..\<RootNamespace>.{PascalCase}.DomainEvents\<RootNamespace>.{PascalCase}.DomainEvents.csproj" />
+<ItemGroup>
+  <ProjectReference Include="..\<RootNamespace>.PublicEvents\<RootNamespace>.PublicEvents.csproj" />
+  <ProjectReference Include="..\<RootNamespace>.PrivateEvents\<RootNamespace>.PrivateEvents.csproj" />
+</ItemGroup>
+```
+
+**3c. Referenciar `PublicEvents`, `PrivateEvents` y `{PascalCase}.DomainEvents` desde el Function App** (CA-3). Agrega los tres `ProjectReference` en el `<ItemGroup>` de ProjectReferences del `.csproj` del Function App. Este agente ya **no** genera ni referencia el proyecto de vocabulario compartido de antes de este ADR -- muere del canon (MEF-ADR-0039 decision 8); si el repo tiene uno heredado de un scaffold anterior a este ADR, no lo toques (alcance greenfield-only, decision 9):
+
+```xml
+<ItemGroup>
+  <ProjectReference Include="..\<RootNamespace>.PublicEvents\<RootNamespace>.PublicEvents.csproj" />
+  <ProjectReference Include="..\<RootNamespace>.PrivateEvents\<RootNamespace>.PrivateEvents.csproj" />
+  <ProjectReference Include="..\<RootNamespace>.{PascalCase}.DomainEvents\<RootNamespace>.{PascalCase}.DomainEvents.csproj" />
+</ItemGroup>
 ```
 
 **4. Verificar que el `<RootNamespace>` sea correcto:**
@@ -482,7 +567,7 @@ public static class ComposicionServicios{PascalCase}
 
 Si el Paso 0 no resolvio ningun alias `serviceBus.external` con `alcance == "compartido"`, omite el parametro `serviceBusCosmos` y la linea `AgregarAzureServiceBusNombradoServerless`; deja solo el broker default y un comentario: `// Backbone compartido: sin alias "compartido" declarado en serviceBus.external todavia (MEF-ADR-0024 decision #4). Agrega su broker nombrado cuando el BC publique/consuma su primer evento publico.` Si hay mas de un alias, repite el par parametro + linea de registro por cada uno (y su argumento correspondiente en la llamada de `Program.cs` y en el test de composicion, Paso 2 punto 9). No wirees ningun alias con `alcance == "externo"` (integracion verdaderamente externa, diferida por MEF-ADR-0024 decision #5, default-off).
 
-Si el Paso 0 resolvio `tenancy.strategy = "multi-tenant-header"` (etapa b, MEF-ADR-0028), **reemplaza** la linea `services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>();` (y el `using Cosmos.MultiTenancy;` de arriba) por el registro del resolver hibrido -- ver el detalle completo (verificacion de fuente obligatoria, CA-6, y el fallback a "proponer", CA-7) en el punto 11f del Paso 1.
+Si el Paso 0 resolvio `tenancy.strategy = "multi-tenant-header"` (etapa b, MEF-ADR-0028), **reemplaza** la linea `services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>();` (y el `using Cosmos.MultiTenancy;` de arriba) por el registro del resolver hibrido -- ver el detalle completo (verificacion de fuente obligatoria, CA-6, y el fallback a "proponer", CA-7) en el punto 10f del Paso 1.
 
 > **CA-9 — Aviso sobre el helper bulk `PublicarEventosServerless`**: No uses `PublicarEventosServerless(nombreConexion, topicName, Assembly contratos)` con el assembly completo de contratos para registrar eventos. Ese helper filtra por `IsAssignableTo(typeof(IEvent))` y captura tanto `IPrivateEvent` como `IPublicEvent` juntos, enrutando todo al mismo broker y rompiendo la separacion privado/publico (MEF-ADR-0024 decision #2, #4). El registro debe hacerse **por tipo**, separando explicitamente privados de publicos:
 > - `IPrivateEvent`: `options.PublicarEventoServerless<TEvento>(topic)` → broker default → namespace interno
@@ -545,19 +630,7 @@ public interface I{PascalCase}AssemblyMarker;
 
 Agrega una clave `SERVICE_BUS_CONNECTION_<ALIAS>` por cada alias del backbone compartido resuelto en el Paso 0 (el ejemplo usa `COSMOS`); si no hay ninguno todavia, omite esa clave y deja solo `SERVICE_BUS_CONNECTION_INTERNO`. En Azure, ambas claves se resuelven via referencia `@Microsoft.KeyVault(...)` (MEF-ADR-0024 decision #6, Paso 4); aqui solo necesitas un placeholder de desarrollo local. No queda ninguna referencia a un namespace de integracion propio del BC.
 
-**10. Verificar que Contracts tenga `Cosmos.EventDriven.Abstractions`:**
-
-Lee `src/<RootNamespace>.Contracts/<RootNamespace>.Contracts.csproj`. Si no tiene el paquete, agregalo:
-
-```xml
-<ItemGroup>
-  <PackageReference Include="Cosmos.EventDriven.Abstractions" Version="2.1.0" />
-</ItemGroup>
-```
-
-Si ya lo tiene, no hagas nada.
-
-**11. Crear el RequestValidator en `Infraestructura/RequestValidator.cs`:**
+**10. Crear el RequestValidator en `Infraestructura/RequestValidator.cs`:**
 
 ```csharp
 using System.Text.Json;
@@ -607,7 +680,7 @@ public class RequestValidator(IServiceProvider serviceProvider) : IRequestValida
 }
 ```
 
-**11b. Crear el `ServiceBusDeserializador.cs` en `Infraestructura/`:**
+**10b. Crear el `ServiceBusDeserializador.cs` en `Infraestructura/`:**
 
 ```csharp
 using System.Text.Json;
@@ -633,7 +706,7 @@ public static class ServiceBusDeserializador
 }
 ```
 
-**11c. Crear el `ServiceBusEndpointBase.cs` en `Infraestructura/`:**
+**10c. Crear el `ServiceBusEndpointBase.cs` en `Infraestructura/`:**
 
 ```csharp
 using Azure.Messaging.ServiceBus;
@@ -681,7 +754,7 @@ public abstract class ServiceBusEndpointBase<TEvento>(ICommandRouter commandRout
 }
 ```
 
-**11d. Crear el `ServiceBusSessionEndpointBase.cs` en `Infraestructura/`:**
+**10d. Crear el `ServiceBusSessionEndpointBase.cs` en `Infraestructura/`:**
 
 Contraparte de `ServiceBusEndpointBase<TEvento>` para el caso de fan-in de MEF-ADR-0026 (issue #271): un queue en modo sesion donde convergen N tipos de evento no tiene un unico `TEvento` que deserializar, asi que el despacho no puede vivir en la clase base. Esta clase encapsula solo lo que es identico entre ambos casos (complete/lock-lost/dead-letter) y delega la deserializacion + invocacion del comando al endpoint concreto via el metodo abstracto `DespacharPorSubject`.
 
@@ -739,7 +812,7 @@ public abstract class ServiceBusSessionEndpointBase(ILogger logger)
 }
 ```
 
-**11e. Crear el `PrivateEventEndpointBase.cs` en `Infraestructura/`:**
+**10e. Crear el `PrivateEventEndpointBase.cs` en `Infraestructura/`:**
 
 Contraparte de `ServiceBusEndpointBase<TEvento>` para el patron EventHandler directo (issue #313, `Cosmos.EventDriven` 2.1.0): cuando un dominio reacciona a un evento privado y el comando equivalente seria un espejo del evento, el endpoint no traduce a comando -- rutea el evento **directamente** via `IPrivateEventRouter` a su `IPrivateEventHandlerAsync<TEvent>`. Mismo manejo de fallos (complete/lock-lost/dead-letter) que `ServiceBusEndpointBase`; solo cambia el router inyectado y el tipo restringido a `IPrivateEvent`.
 
@@ -787,7 +860,7 @@ public abstract class PrivateEventEndpointBase<TPrivateEvent>(IPrivateEventRoute
 }
 ```
 
-**11f. Resolver el `ITenantResolver` segun la etapa de tenancy (MEF-ADR-0028, issue #323):**
+**10f. Resolver el `ITenantResolver` segun la etapa de tenancy (MEF-ADR-0028, issue #323):**
 
 El Paso 0 ya resolvio `tenancy.strategy`. Aplica **una sola** de las dos ramas siguientes -- nunca ambas.
 
@@ -903,7 +976,7 @@ actualizar `tenancy.strategy` y volver a correr `/scaffold` no re-scaffoldea dom
 `// TODO(tenancy etapa b)` que deja `TenantResolverMonoTenantPorDefecto.cs` (etapa a, arriba) es el
 recordatorio en el codigo generado para ese caso.
 
-**12. Crear el HealthCheck en `HealthCheck.cs` (raiz del proyecto):**
+**11. Crear el HealthCheck en `HealthCheck.cs` (raiz del proyecto):**
 
 ```csharp
 using Microsoft.AspNetCore.Http;
@@ -923,9 +996,9 @@ public class HealthCheck
 
 Este archivo garantiza que la Function App siempre tenga al menos un trigger y que el deploy no falle con "malformed content".
 
-**13. Crear el `VersionCheck.cs` (raiz del proyecto) -- endpoint del readiness gate por SHA (issue #325, MEF-ADR-0031):**
+**12. Crear el `VersionCheck.cs` (raiz del proyecto) -- endpoint del readiness gate por SHA (issue #325, MEF-ADR-0031):**
 
-Expone el SHA del commit horneado en el ensamblado (Paso 5, `-p:SourceRevisionId=...` del paso `dotnet build`) para que el warmup del smoke test (Paso 2b, `ApiFixture`) pueda distinguir "el host ya responde 200" de "el host ya sirve el codigo nuevo". Endpoint anonimo y dedicado -- `/api/health` (punto 12) queda intacto, sin enriquecer.
+Expone el SHA del commit horneado en el ensamblado (Paso 5, `-p:SourceRevisionId=...` del paso `dotnet build`) para que el warmup del smoke test (Paso 2b, `ApiFixture`) pueda distinguir "el host ya responde 200" de "el host ya sirve el codigo nuevo". Endpoint anonimo y dedicado -- `/api/health` (punto 11) queda intacto, sin enriquecer.
 
 ```csharp
 using System.Reflection;
@@ -1693,6 +1766,70 @@ compartido resueltos en el Paso 0), pasa el mismo numero de argumentos dummy en 
 
 ---
 
+## Paso 2a - Crear (si no existen) los proyectos de tests de `PublicEvents`/`PrivateEvents`
+
+Igual que los ensamblados de bus del BC (Paso 1, punto 3), estos dos proyectos de tests viven a
+nivel de BC, no de dominio: **verifica primero si ya existen** -- un dominio anterior de este mismo
+BC ya pudo haberlos creado.
+
+```bash
+REPO_ROOT=$(git -C /ruta-conocida rev-parse --show-toplevel)
+test -d "$REPO_ROOT/tests/<RootNamespace>.PublicEvents.Tests" && echo "PublicEvents.Tests YA EXISTE" || echo "PublicEvents.Tests FALTA"
+test -d "$REPO_ROOT/tests/<RootNamespace>.PrivateEvents.Tests" && echo "PrivateEvents.Tests YA EXISTE" || echo "PrivateEvents.Tests FALTA"
+```
+
+Si `PublicEvents.Tests` **falta**, creelo con el mismo setup xunit v3 del Paso 2 -- sus puntos 1, 2,
+3, 3b y 5: eliminar el test de ejemplo, leer el csproj, reemplazar los paquetes del template por
+`Cosmos.EventSourcing.Testing.Utilities` + `xunit.v3.mtp-v2`, agregar `<OutputType>Exe</OutputType>`
+y el global using de Xunit. **El punto 4 del Paso 2 no aplica aqui**: la referencia de este proyecto
+no es la del Function App del dominio, sino la unica que declara el bloque de mas abajo.
+
+```bash
+cd "$REPO_ROOT"
+dotnet new xunit \
+  -n "<RootNamespace>.PublicEvents.Tests" \
+  --framework net10.0 \
+  -o "tests/<RootNamespace>.PublicEvents.Tests"
+rm -f "$REPO_ROOT/tests/<RootNamespace>.PublicEvents.Tests/UnitTest1.cs"
+```
+
+Unica diferencia de referencia frente al Paso 2 -- la regla de MEF-ADR-0039 decision 7 (enmendada
+por este issue, CA-7): `PublicEvents.Tests` referencia **unicamente** `PublicEvents`:
+
+```xml
+<ItemGroup>
+  <ProjectReference Include="..\..\src\<RootNamespace>.PublicEvents\<RootNamespace>.PublicEvents.csproj" />
+</ItemGroup>
+```
+
+Si `PrivateEvents.Tests` **falta**, mismo procedimiento, referenciando **unicamente**
+`PrivateEvents` (que ve `PublicEvents` transitivamente -- MEF-ADR-0039 decision 7 enmendada):
+
+```bash
+cd "$REPO_ROOT"
+dotnet new xunit \
+  -n "<RootNamespace>.PrivateEvents.Tests" \
+  --framework net10.0 \
+  -o "tests/<RootNamespace>.PrivateEvents.Tests"
+rm -f "$REPO_ROOT/tests/<RootNamespace>.PrivateEvents.Tests/UnitTest1.cs"
+```
+
+```xml
+<ItemGroup>
+  <ProjectReference Include="..\..\src\<RootNamespace>.PrivateEvents\<RootNamespace>.PrivateEvents.csproj" />
+</ItemGroup>
+```
+
+**El contenido de los tests no lo emite este agente**: ambos proyectos nacen como csproj-shell, sin
+ningun archivo `.cs` propio -- `test-writer` (capa 3) los llena cuando el dominio agregue su primer
+evento de bus. Esto deja ambos ensamblados temporalmente sin ningun test; **no siembres ningun test
+placeholder**: el workflow de deploy (Paso 5) ya corre `dotnet test --ignore-exit-code 8` sobre cada
+proyecto que matchea `tests/<RootNamespace>.*.Tests/`, precisamente para tolerar el exit code 8 de
+Microsoft Testing Platform ("the test session ran zero tests") sin tratarlo como fallo (verificado
+contra la doc oficial, [MTP troubleshooting -- Exit codes](https://learn.microsoft.com/dotnet/core/testing/microsoft-testing-platform-troubleshooting#exit-codes)).
+
+---
+
 ## Paso 2b - Crear el proyecto de Smoke Tests
 
 Crea el directorio y los archivos del proyecto de smoke tests. Este proyecto es independiente del codigo de produccion (sin ProjectReference).
@@ -1728,7 +1865,8 @@ Crea el archivo `tests/<RootNamespace>.{PascalCase}.SmokeTests/<RootNamespace>.{
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\<RootNamespace>.Contracts\<RootNamespace>.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\<RootNamespace>.PublicEvents\<RootNamespace>.PublicEvents.csproj" />
+    <ProjectReference Include="..\..\src\<RootNamespace>.PrivateEvents\<RootNamespace>.PrivateEvents.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -1743,7 +1881,7 @@ Crea el archivo `tests/<RootNamespace>.{PascalCase}.SmokeTests/<RootNamespace>.{
 </Project>
 ```
 
-**Nota:** Incluye `<ProjectReference>` a Contracts para usar la igualdad natural de records en aserciones de eventos.
+**Nota:** Incluye `<ProjectReference>` a `PublicEvents` y `PrivateEvents` (layout verificado en el consumidor de referencia, MEF-ADR-0039) para usar la igualdad natural de records de los eventos de bus en aserciones -- ya no al proyecto de vocabulario compartido, retirado del canon (MEF-ADR-0039 decision 8).
 
 **2. Crear `appsettings.json`:**
 
@@ -2349,6 +2487,14 @@ dotnet sln <SolutionFile> add "src/<RootNamespace>.{PascalCase}/"
 dotnet sln <SolutionFile> add "src/<RootNamespace>.{PascalCase}.DomainEvents/"
 dotnet sln <SolutionFile> add "tests/<RootNamespace>.{PascalCase}.Tests/"
 dotnet sln <SolutionFile> add "tests/<RootNamespace>.{PascalCase}.SmokeTests/"
+# BC (MEF-ADR-0039): no-op si un dominio anterior de este mismo BC ya los agrego --
+# 'dotnet sln add' sobre un proyecto ya listado imprime "La solucion ... ya contiene el
+# proyecto X", sale con codigo 0 y deja el .slnx sin una segunda entrada (verificado
+# con SDK 10.0.201; misma idempotencia que ya explota 'projections-scaffolder').
+dotnet sln <SolutionFile> add "src/<RootNamespace>.PublicEvents/"
+dotnet sln <SolutionFile> add "src/<RootNamespace>.PrivateEvents/"
+dotnet sln <SolutionFile> add "tests/<RootNamespace>.PublicEvents.Tests/"
+dotnet sln <SolutionFile> add "tests/<RootNamespace>.PrivateEvents.Tests/"
 ```
 
 > **`.slnx` como residual benigno (issue #234, frente 3)**: a diferencia de `infra/environments/dev/main.tf` y `.github/smoke-tests-dominios.json`, `<SolutionFile>` **sigue siendo compartido** entre dominios scaffoldeados en paralelo — no se cambia codigo, `dotnet sln add` se mantiene igual. Si dos dominios se dan de alta en ramas separadas desde el mismo `origin/main`, el merge de `<SolutionFile>` puede requerir resolucion manual, pero es un conflicto **add/add aditivo trivial** (cada rama agrega lineas de proyecto distintas, sin cuerpo compartido que reconstruir a mano) — no comparable al conflicto no trivial que este issue elimina en `main.tf`.
@@ -2634,7 +2780,8 @@ on:
     paths:
       - 'src/<RootNamespace>.{PascalCase}/**'
       - 'src/<RootNamespace>.{PascalCase}.DomainEvents/**'
-      - 'src/<RootNamespace>.Contracts/**'
+      - 'src/<RootNamespace>.PublicEvents/**'
+      - 'src/<RootNamespace>.PrivateEvents/**'
       # global.json (issue #454): quien lo lee NO es actions/setup-dotnet -- los jobs
       # de abajo le pasan 'dotnet-version' explicito, no 'global-json-file', asi que
       # la action solo instala el SDK del canal pedido. Lo leen el muxer del CLI y el
@@ -2708,10 +2855,17 @@ jobs:
             echo "debe_desplegar=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # El ensamblado de eventos del dominio (MEF-ADR-0039) cuenta como "toco este
-          # dominio": su binario entra en el publish del Function App, asi que el filtro
-          # de alcance debe aceptarlo igual que el filtro de 'paths' de arriba.
-          if gh api "repos/${{ github.repository }}/pulls/${PR_NUM}/files" --paginate --jq '.[].filename' | grep -qE '^src/<RootNamespace>.{PascalCase}(\.DomainEvents)?/'; then
+          # Los ensamblados de evento (MEF-ADR-0039) cuentan como "toco este dominio":
+          # su binario entra en el publish del Function App, asi que el filtro de alcance
+          # debe aceptarlos igual que el filtro de 'paths' de arriba -- los tres, no solo
+          # el propio del dominio ({PascalCase}.DomainEvents): PublicEvents y PrivateEvents
+          # son de nivel BC y TODA Function App del BC los referencia (Paso 1, punto 3c).
+          # Que un cambio en un ensamblado de BC marque alcance en los N dominios es
+          # correcto, no ruido: cambia el binario de todos, y es exactamente lo que ya
+          # hace su entrada en 'paths'. Si esta lista y la de 'paths' se desincronizan, el
+          # modo de fallo es silencioso: el push despliega, pero la corrida encadenada
+          # detras del apply de infra no, y se pierde el orden infra->codigo.
+          if gh api "repos/${{ github.repository }}/pulls/${PR_NUM}/files" --paginate --jq '.[].filename' | grep -qE '^src/<RootNamespace>\.({PascalCase}(\.DomainEvents)?|PublicEvents|PrivateEvents)/'; then
             echo "debe_desplegar=true" >> "$GITHUB_OUTPUT"
           else
             echo "debe_desplegar=false" >> "$GITHUB_OUTPUT"
@@ -3057,13 +3211,21 @@ cd "$REPO_ROOT"
 git add \
   "src/<RootNamespace>.{PascalCase}/" \
   "src/<RootNamespace>.{PascalCase}.DomainEvents/" \
+  "src/<RootNamespace>.PublicEvents/" \
+  "src/<RootNamespace>.PrivateEvents/" \
   "tests/<RootNamespace>.{PascalCase}.Tests/" \
   "tests/<RootNamespace>.{PascalCase}.SmokeTests/" \
+  "tests/<RootNamespace>.PublicEvents.Tests/" \
+  "tests/<RootNamespace>.PrivateEvents.Tests/" \
   "<SolutionFile>" \
   "global.json" \
   "infra/environments/dev/dominio-{kebab}.tf" \
   ".github/workflows/deploy-{kebab}.yml" \
   ".github/smoke-tests/{kebab}.json"
+
+# PublicEvents/PrivateEvents (src y tests) son de BC (Paso 1 punto 3, Paso 2a): 'git add' sobre un
+# directorio ya versionado por un dominio anterior de este mismo BC solo agrega la subcarpeta nueva
+# de este dominio -- no falla ni duplica nada.
 
 # Los workflows de smoke tests solo existen como cambio la primera vez (Paso 6);
 # en corridas posteriores ya estan versionados y 'git add' no los toca. Inclúyelos
@@ -3109,6 +3271,14 @@ Scaffold completado para el dominio "{kebab}":
   src/<RootNamespace>.{PascalCase}.DomainEvents/ - Ensamblado propio de eventos persistidos del dominio (MEF-ADR-0039), sin ningun PackageReference
     IdentidadEventos{PascalCase}.cs        - Tipos de evento persistidos del dominio (lista vacia al nacer, AddEventTypes) - MEF-ADR-0036
 
+  src/<RootNamespace>.PublicEvents/       - Ensamblado de BC de los eventos que SALEN del BC (MEF-ADR-0039): solo el
+                                           paquete de markers, cero ProjectReference. Se crea la primera vez en el BC;
+                                           en dominios posteriores ya existe y solo se le agrega la subcarpeta.
+    {PascalCase}/.gitkeep                - Subcarpeta de este dominio, vacia al nacer (la llena implementer)
+  src/<RootNamespace>.PrivateEvents/      - Ensamblado de BC de los eventos del bus interno (MEF-ADR-0039): mismo
+                                           paquete + ProjectReference a PublicEvents. Misma creacion unica por BC.
+    {PascalCase}/.gitkeep                - Subcarpeta de este dominio, vacia al nacer (la llena implementer)
+
   tests/<RootNamespace>.{PascalCase}.Tests/
     Infraestructura/ServiceBusEndpointBaseTests.cs - Tests de orquestacion (feliz, lock-lost, dead-letter, JSON invalido)
     Infraestructura/ServiceBusSessionEndpointBaseTests.cs - Tests de orquestacion de fan-in (feliz, lock-lost, dead-letter, Subject no reconocido)
@@ -3124,6 +3294,12 @@ Scaffold completado para el dominio "{kebab}":
     Fixtures/AssemblyFixture.cs            - Registra ApiFixture, ServiceBusFixture, PostgresFixture
     Health/HealthSmokeTests.cs             - Smoke test del health check
     appsettings.json                       - URL + placeholders vacios para ServiceBus y Postgres
+
+  (solo la primera vez en el BC; en dominios posteriores ya existen y no se tocan)
+  tests/<RootNamespace>.PublicEvents.Tests/  - csproj-shell de BC, sin ningun test todavia (lo llena test-writer);
+                                               referencia unicamente PublicEvents (MEF-ADR-0039 decision 7)
+  tests/<RootNamespace>.PrivateEvents.Tests/ - csproj-shell de BC, sin ningun test todavia; referencia unicamente
+                                               PrivateEvents, que ve PublicEvents transitivamente (MEF-ADR-0039 decision 7)
 
   infra/environments/dev/dominio-{kebab}.tf - Archivo plano y propio del dominio (issue #234, no toca main.tf):
                                              module storage + module service_plan (dedicado) + module function_app
