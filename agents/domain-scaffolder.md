@@ -291,6 +291,7 @@ public static class IdentidadEventos{PascalCase}
 **6b. Crear `Infraestructura/ComposicionServicios{PascalCase}.cs`** con el metodo de extension que concentra toda la composicion de DI que antes vivia inline en `Program.cs` (issue #319, MEF-ADR-0029). La seccion de brokers nombrados es **dinamica**, con la misma regla del Paso 6: un parametro y una linea `AgregarAzureServiceBusNombradoServerless` **por cada alias del backbone compartido** resuelto en el Paso 0. El ejemplo siguiente ilustra un dominio con un unico alias `COSMOS`:
 
 ```csharp
+using System.Globalization;
 using System.Text.Json;
 using <RootNamespace>.{PascalCase};
 using Azure.Monitor.OpenTelemetry.Exporter;
@@ -369,6 +370,20 @@ public static class ComposicionServicios{PascalCase}
         // en Infraestructura/TenantResolverMonoTenantPorDefecto.cs.
         services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>();
 
+        // Ratio de sampling (MEF-ADR-0038 seccion 1): politica de costos del CONSUMIDOR, nunca del
+        // marco -- el marco solo garantiza que el wiring de abajo lo respete. Default 1.0 (sin
+        // descarte por ratio) cuando TELEMETRY_SAMPLING_RATIO no esta declarada: un default
+        // fraccionario fue deliberadamente descartado para greenfield porque vuelve ambiguo "el
+        // wiring esta roto" frente a "mala suerte de muestreo" justo en la primera integracion, el
+        // momento en que mas se necesita diagnosticar.
+        var samplingRatio = double.TryParse(
+            Environment.GetEnvironmentVariable("TELEMETRY_SAMPLING_RATIO"),
+            NumberStyles.Float,
+            CultureInfo.InvariantCulture,
+            out var ratioConfigurado)
+            ? ratioConfigurado
+            : 1.0;
+
         services.AddOpenTelemetry()
             .UseFunctionsWorkerDefaults()
             .WithTracing(tracing => tracing
@@ -386,7 +401,28 @@ public static class ComposicionServicios{PascalCase}
                 // src/OpenTelemetry/Internal/WildcardHelper.cs (tag core-1.13.1) y por experimento
                 // local. NO agregar el punto por simetria con los AddSource de arriba.
                 .AddSource("<RootNamespace>.{PascalCase}*"))
-            .UseAzureMonitorExporter();
+            .UseAzureMonitorExporter()
+            // MEF-ADR-0038 seccion 3/6 -- SEGUNDO .WithTracing(...), SIEMPRE despues de
+            // UseAzureMonitorExporter(): ese exporter (Azure.Monitor.OpenTelemetry.Exporter 1.8.x)
+            // llama internamente SetSampler(new RateLimitedSampler(5.0)) sobre el mismo builder, y
+            // SetSampler no acumula -- la ultima llamada gana. Un SetSampler encadenado ANTES del
+            // exporter (el orden que parece natural leyendo de arriba a abajo) queda pisado sin
+            // ningun aviso: ni en build, ni en tests, ni en logs de arranque (verificado por
+            // decompilacion, issue #308 del consumidor Bitakora.ControlAsistencia -- sobrevivio dos
+            // meses en produccion antes de detectarse). NO fusiones este bloque con el
+            // .WithTracing(...) de arriba: "limpiar" juntando ambos en una sola llamada reintroduce
+            // el defecto sin ningun error de compilacion. Requiere `using OpenTelemetry;` (arriba):
+            // WithTracing sobre IOpenTelemetryBuilder vive en OpenTelemetryBuilderSdkExtensions,
+            // namespace raiz -- sin el, CS1061.
+            //
+            // Este orden NO es contrato publico del paquete exporter -- es un detalle de
+            // implementacion no documentado, observado por decompilacion en la version pinneada
+            // (1.8.x, MEF-ADR-0003), que una version futura podria cambiar sin que eso sea breaking
+            // change segun su propio versionado semantico. La garantia de que sigue vigente en cada
+            // build NO es este comentario -- es el guardrail de composicion
+            // (ComposicionContenedorTests, Paso 2 punto 9 de este agente, MEF-ADR-0038 seccion 4).
+            .WithTracing(tracing => tracing
+                .SetSampler(new ParentBasedSampler(new TraceIdRatioBasedSampler(samplingRatio))));
 
         // Serializacion JSON global: camelCase hacia el cliente, case-insensitive en lectura
         services.Configure<JsonSerializerOptions>(options =>
@@ -403,6 +439,8 @@ public static class ComposicionServicios{PascalCase}
     }
 }
 ```
+
+**Sampler del write-side (MEF-ADR-0038 seccion 6):** la supervivencia de `SetSampler` frente a `UseAzureMonitorExporter()` NO es contrato del paquete exporter -- lo sostiene el orden fijado arriba mas el guardrail de `ComposicionContenedorTests` (Paso 2 punto 9), nunca la sola lectura del codigo. El write-side instala unicamente la capa de ratio (`ParentBasedSampler(TraceIdRatioBasedSampler(ratio))`), sin el filtro por nombre del daemon `HotCold` -- ese filtro es exclusivo del worker de proyecciones (ninguna Function App corre un daemon, MEF-ADR-0018), y es alcance de `projections-scaffolder` (issue #513), no de este agente.
 
 Si el Paso 0 no resolvio ningun alias `serviceBus.external` con `alcance == "compartido"`, omite el parametro `serviceBusCosmos` y la linea `AgregarAzureServiceBusNombradoServerless`; deja solo el broker default y un comentario: `// Backbone compartido: sin alias "compartido" declarado en serviceBus.external todavia (MEF-ADR-0024 decision #4). Agrega su broker nombrado cuando el BC publique/consuma su primer evento publico.` Si hay mas de un alias, repite el par parametro + linea de registro por cada uno (y su argumento correspondiente en la llamada de `Program.cs` y en el test de composicion, Paso 2 punto 9). No wirees ningun alias con `alcance == "externo"` (integracion verdaderamente externa, diferida por MEF-ADR-0024 decision #5, default-off).
 
@@ -423,7 +461,7 @@ namespace <RootNamespace>.{PascalCase};
 public interface I{PascalCase}AssemblyMarker;
 ```
 
-**8. Actualizar `host.json`** para agregar `telemetryMode` y la configuracion de Service Bus. Lee el archivo generado por `func init` y agrega ambas claves al JSON:
+**8. Actualizar `host.json`** para agregar `telemetryMode` y la configuracion de Service Bus. Lee el archivo generado por `func init` y agrega ambas claves al JSON. Si `func init` genero un bloque `logging.applicationInsights.samplingSettings`, **eliminalo** (MEF-ADR-0038 seccion 7) -- no lo dejes, ni siquiera con la idea de que "no rompe nada dejarlo inerte":
 
 ```json
 {
@@ -439,11 +477,6 @@ public interface I{PascalCase}AssemblyMarker;
             "Wolverine": "Warning"
         },
         "applicationInsights": {
-            "samplingSettings": {
-                "isEnabled": true,
-                "maxTelemetryItemsPerSecond": 5,
-                "excludedTypes": "Request;Event"
-            },
             "enableLiveMetricsFilters": true
         }
     },
@@ -460,7 +493,9 @@ public interface I{PascalCase}AssemblyMarker;
 }
 ```
 
-> **`telemetryMode: "OpenTelemetry"` inhabilita `logging.applicationInsights` (opentelemetry-howto, "Considerations for OpenTelemetry")**: la doc oficial es explicita -- "If you set telemetryMode to OpenTelemetry, the configuration in the logging.applicationInsights section of host.json doesn't apply." Ese bloque queda en el JSON generado sin efecto; no lo elimines (`func init` lo genera y no rompe nada dejarlo inerte), pero no esperes que `samplingSettings` filtre nada mientras `telemetryMode` sea `OpenTelemetry`.
+> **`telemetryMode: "OpenTelemetry"` inhabilita `logging.applicationInsights.samplingSettings` (opentelemetry-howto, "Considerations for OpenTelemetry", MEF-ADR-0038 seccion 7)**: la doc oficial es explicita -- "If you set telemetryMode to OpenTelemetry, the configuration in the logging.applicationInsights section of host.json doesn't apply." El sampler real de este dominio vive en `Program.cs`/`ComposicionServicios{PascalCase}` (Paso 6b), no en `host.json`. **Eliminalo**, aunque `func init` lo haya generado y "no rompa nada" dejarlo: JSON no admite un comentario que aclare "esto no hace nada", y un bloque muerto que se lee como vivo es deuda de diagnostico para quien despues intente reducir volumen ajustando esa clave sin ningun efecto.
+>
+> **Por que `enableLiveMetricsFilters` si se conserva**: la frase de la doc alcanza a **toda** la seccion `logging.applicationInsights`, no solo a `samplingSettings`, asi que esa clave queda igual de inerte bajo `telemetryMode: "OpenTelemetry"`. Se deja de todos modos porque MEF-ADR-0038 seccion 7 acota la eliminacion a `samplingSettings` -- el unico bloque que ademas *invita* a "bajar el volumen aqui" y no hace nada. No la borres por tu cuenta al scaffoldear: si el marco decide quitarla, primero se enmienda ese ADR.
 
 **9. Actualizar `local.settings.json`** para incluir las variables de entorno que `Program.cs` necesita para desarrollo local. Lee el archivo y agrega las siguientes claves dentro de `Values`:
 
@@ -1367,9 +1402,14 @@ y valida el resultado con `BuildServiceProvider(ValidateOnBuild: true, ValidateS
 el guardrail que detecta en segundos, en CI, un registro faltante que de otro modo solo revienta
 en runtime (issue #221 del consumidor Bitakora.ControlAsistencia: `ITenantResolver` sin registrar
 paso "compila + unit tests verdes" y solo se detecto post-deploy en smoke tests). Gana ademas una
-guarda derivada de identidad de eventos (MEF-ADR-0036 CA-3/CA-4, ultimo test de la clase abajo).
+guarda derivada de identidad de eventos (MEF-ADR-0036 CA-3/CA-4, ultimo test de la clase abajo) y
+los dos guardrails deterministas del sampler de observabilidad (MEF-ADR-0038 seccion 4, ultimos dos
+tests de la clase): el orden `SetSampler` vs. `UseAzureMonitorExporter()` del Paso 6b no es contrato
+del paquete exporter, asi que su vigencia en cada build la sostiene este test, no la lectura visual
+del codigo.
 
 ```csharp
+using System.Reflection;
 using AwesomeAssertions;
 using <RootNamespace>.{PascalCase}.Infraestructura;
 using Cosmos.EventDriven.Abstractions;
@@ -1377,6 +1417,7 @@ using Cosmos.EventSourcing.Abstractions;
 using Cosmos.EventSourcing.Abstractions.Commands;
 using Marten;
 using Microsoft.Extensions.DependencyInjection;
+using OpenTelemetry.Trace;
 
 namespace <RootNamespace>.{PascalCase}.Tests.Infraestructura;
 
@@ -1484,6 +1525,79 @@ public class ComposicionContenedorTests
         var eventosRegistrados = store.Options.Events.AllKnownEventTypes().Select(e => e.EventType);
 
         eventosEsperados.Should().BeSubsetOf(eventosRegistrados);
+    }
+
+    // Helper de reflection (MEF-ADR-0038 seccion 4): TracerProviderSdk.Sampler es una propiedad
+    // INTERNA del SDK de OpenTelemetry -- no hay API publica que la exponga directamente. Mensaje
+    // accionable si la propiedad desaparece o cambia de nombre en un upgrade de paquete: la falla
+    // debe senalar la causa, no un NullReferenceException opaco.
+    private static Sampler ObtenerSamplerEfectivo(TracerProvider tracerProvider)
+    {
+        var propiedadSampler = tracerProvider.GetType()
+            .GetProperty("Sampler", BindingFlags.Instance | BindingFlags.NonPublic);
+
+        propiedadSampler.Should().NotBeNull(
+            "TracerProviderSdk.Sampler deberia existir como propiedad interna del SDK de " +
+            "OpenTelemetry (MEF-ADR-0038 seccion 4, verificado contra la version pinneada por " +
+            "MEF-ADR-0003); si un upgrade de paquete la renombro o la elimino, reverifica contra " +
+            "la nueva version antes de asumir que el sampler configurado sigue vigente");
+
+        return (Sampler)propiedadSampler!.GetValue(tracerProvider)!;
+    }
+
+    // Guardrail (a) de MEF-ADR-0038 seccion 4 (CA-4): el orden de la seccion 3 (SetSampler SIEMPRE
+    // despues de UseAzureMonitorExporter(), Paso 6b) es un detalle de implementacion NO documentado
+    // del paquete exporter, no un contrato -- este test detecta en el mismo build una regresion de
+    // orden (de un desarrollador o de un upgrade de paquete) que deje instalado el sampler interno
+    // del exporter en vez del que compone el dominio.
+    [Fact]
+    public async Task AgregarServicios{PascalCase}_ElSamplerEfectivoNoEsElDelExporterDeAzureMonitor()
+    {
+        await using var proveedor = ConstruirProveedor();
+
+        var tracerProvider = proveedor.GetRequiredService<TracerProvider>();
+        var samplerEfectivo = ObtenerSamplerEfectivo(tracerProvider);
+
+        // La asercion POSITIVA va primero y es la que sostiene el guardrail: el nombre del sampler
+        // interno del exporter es un detalle de otro paquete, y si una version futura lo renombra,
+        // el NotBe de abajo pasaria en verde con la regresion de orden puesta (falso negativo justo
+        // en el test que existe para que nada quede en silencio). Lo que el marco exige es un tipo
+        // concreto, y eso no depende de ningun nombre interno ajeno.
+        samplerEfectivo.Should().BeOfType<ParentBasedSampler>(
+            "el write-side instala ParentBasedSampler(TraceIdRatioBasedSampler(ratio)) en un " +
+            "segundo .WithTracing(...) posterior a UseAzureMonitorExporter() (MEF-ADR-0038 " +
+            "seccion 6); cualquier otro tipo aqui significa que el sampler del dominio no llego " +
+            "al TracerProvider");
+
+        // Redundante con la de arriba mientras el nombre siga siendo este, y deliberada: nombra en
+        // el mensaje de falla la causa concreta que MEF-ADR-0038 seccion 3 documenta.
+        samplerEfectivo.GetType().FullName.Should().NotBe(
+            "Azure.Monitor.OpenTelemetry.Exporter.Internals.RateLimitedSampler",
+            "UseAzureMonitorExporter() instala este sampler internamente si el SetSampler del " +
+            "dominio quedo encadenado ANTES del exporter (MEF-ADR-0038 seccion 3) -- verlo aqui " +
+            "significa que la regresion de orden ya ocurrio, en silencio para build, tests y logs " +
+            "de arranque");
+    }
+
+    // Guardrail (b) de MEF-ADR-0038 seccion 4 (CA-4): el borde critico es el DEFAULT -- este test
+    // no declara TELEMETRY_SAMPLING_RATIO, el camino que corre para cualquier consumidor nuevo y el
+    // mas propenso a una regresion silenciosa porque es el que menos se ejercita a mano. El literal
+    // esperado sale de componer dos Description del SDK, por lectura de fuente de
+    // opentelemetry-dotnet en el tag core-1.13.1 (la version del core que arrastra
+    // OpenTelemetry.Extensions.Hosting 1.13.1, MEF-ADR-0003): ParentBasedSampler compone
+    // "ParentBased{<Description del sampler raiz>}", y TraceIdRatioBasedSampler formatea el ratio
+    // con "F6" en InvariantCulture. Si no coincide en la primera corrida -- o tras subir esa
+    // version --, lee la Description real del mensaje de falla y CORRIGE el literal; nunca borres
+    // ni relajes la asercion, que es justo lo que MEF-ADR-0038 seccion 4 pide que quede fijo.
+    [Fact]
+    public async Task AgregarServicios{PascalCase}_ElRatioDefaultLlegaAlSamplerEfectivo()
+    {
+        await using var proveedor = ConstruirProveedor();
+
+        var tracerProvider = proveedor.GetRequiredService<TracerProvider>();
+        var samplerEfectivo = ObtenerSamplerEfectivo(tracerProvider);
+
+        samplerEfectivo.Description.Should().Be("ParentBased{TraceIdRatioBasedSampler{1.000000}}");
     }
 }
 ```
@@ -2820,6 +2934,12 @@ dotnet test --project "tests/<RootNamespace>.{PascalCase}.Tests/"
 
 Todos los tests generados por el Paso 2 (orquestacion de endpoints + composicion del contenedor DI, issue #319/MEF-ADR-0029) deben quedar en verde -- el dominio aun no tiene logica de negocio propia, pero el wiring que el scaffold genera ya es exigible. Si el test de composicion (`ComposicionContenedorTests`) falla, no hagas commit: revisa que el Paso 6b (`ComposicionServicios{PascalCase}`) registre todo lo que `Program.cs` invocaba antes de la extraccion, sin wiring duplicado ni faltante.
 
+Si el que falla es uno de los dos guardrails del sampler (MEF-ADR-0038 seccion 4), la accion **no** es la misma en los dos casos:
+
+- `...ElSamplerEfectivoNoEsElDelExporterDeAzureMonitor` en rojo: el `SetSampler` del Paso 6b quedo encadenado **antes** de `.UseAzureMonitorExporter()`, o los dos `.WithTracing(...)` terminaron fusionados en uno solo. Corrige el orden del codigo de produccion, nunca el test.
+- `...ElRatioDefaultLlegaAlSamplerEfectivo` en rojo mientras la `Description` real del mensaje de falla **sigue** conteniendo `ParentBased{TraceIdRatioBasedSampler{...}}`: es solo el literal esperado desactualizado frente a la version del SDK instalada. Copia la `Description` real al literal del test y deja anotada la version contra la que la verificaste. Si la `Description` real es de otro sampler, no es un literal desactualizado -- es el caso anterior.
+- Si `ObtenerSamplerEfectivo` falla porque la propiedad `Sampler` no existe, el SDK de OpenTelemetry la renombro o la elimino: reverifica contra la fuente de la version instalada antes de tocar nada, e informa al usuario -- no borres el guardrail para pasar al commit.
+
 **Validacion de Terraform:**
 
 ```bash
@@ -2879,7 +2999,7 @@ Scaffold completado para el dominio "{kebab}":
     HealthCheck.cs                         - Trigger HTTP de health check (raiz del proyecto)
     VersionCheck.cs                        - Trigger HTTP de /api/version (readiness gate por SHA, issue #325, MEF-ADR-0031)
     Infraestructura/IdentidadEventos{PascalCase}.cs - Tipos de evento persistidos del dominio (lista vacia al nacer, AddEventTypes) - MEF-ADR-0036
-    Infraestructura/ComposicionServicios{PascalCase}.cs - Unica fuente de verdad del wiring de DI (Wolverine, Marten, routers, tenancy, OpenTelemetry, validacion) - MEF-ADR-0029
+    Infraestructura/ComposicionServicios{PascalCase}.cs - Unica fuente de verdad del wiring de DI (Wolverine, Marten, routers, tenancy, OpenTelemetry con sampler post-exporter, validacion) - MEF-ADR-0029/MEF-ADR-0038
     Infraestructura/RequestValidator.cs    - IRequestValidator + implementacion
     Infraestructura/TenantResolverMonoTenantPorDefecto.cs - ITenantResolver mono-tenant transitorio (MEF-ADR-0028)
     Infraestructura/ServiceBusDeserializador.cs - Helper de deserializacion case-insensitive
@@ -2892,7 +3012,7 @@ Scaffold completado para el dominio "{kebab}":
     Infraestructura/ServiceBusEndpointBaseTests.cs - Tests de orquestacion (feliz, lock-lost, dead-letter, JSON invalido)
     Infraestructura/ServiceBusSessionEndpointBaseTests.cs - Tests de orquestacion de fan-in (feliz, lock-lost, dead-letter, Subject no reconocido)
     Infraestructura/PrivateEventEndpointBaseTests.cs - Tests de orquestacion del EventHandler directo (feliz, lock-lost, dead-letter, JSON invalido)
-    Infraestructura/ComposicionContenedorTests.cs - Test de composicion del contenedor DI: BuildServiceProvider(ValidateOnBuild + ValidateScopes) + resolucion explicita de los routers (issue #319, MEF-ADR-0029) + guarda derivada de eventos aplicados vs EventGraph del IDocumentStore compuesto (MEF-ADR-0036)
+    Infraestructura/ComposicionContenedorTests.cs - Test de composicion del contenedor DI: BuildServiceProvider(ValidateOnBuild + ValidateScopes) + resolucion explicita de los routers (issue #319, MEF-ADR-0029) + guarda derivada de eventos aplicados vs EventGraph del IDocumentStore compuesto (MEF-ADR-0036) + guardrails del sampler efectivo post-exporter y su ratio default (MEF-ADR-0038)
                                            - Proyecto de tests unitarios (xUnit v3 + AwesomeAssertions)
 
   tests/<RootNamespace>.{PascalCase}.SmokeTests/
