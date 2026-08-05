@@ -771,6 +771,76 @@ agent_failure_is_unrecoverable() {
     return 1
 }
 
+# classify_agent_failure <timed_out> <exit_code> <elapsed_s> <log_file> [<stream_file>]
+#
+# Traduce el desenlace de una invocacion fallida del CLI a la etiqueta
+# <failure_type> que run_agent registra en events.log. Era logica inline de
+# run_agent; se extrae aqui (issue #534) por el mismo motivo que
+# agent_failure_is_unrecoverable: pasa a gobernar si un stage se REINTENTA,
+# y inline no habia forma de ejercerla sin invocar el CLI real.
+#
+# El orden de los casos es significativo y se conserva verbatim del original:
+# el TIMEOUT del watchdog gana sobre cualquier otro sintoma (es el unico
+# TIMEOUT de verdad), y el match de `API Error: 5` precede al de `API Error:
+# 4` y al corte de stream generico -- que es mas amplio y se los tragaria.
+classify_agent_failure() {
+    local timed_out="$1" exit_code="$2" elapsed="$3" log_file="$4" stream_file="${5:-}"
+
+    if [ "$timed_out" = "true" ]; then
+        echo "TIMEOUT (${elapsed}s, exit $exit_code)"
+        return 0
+    fi
+
+    if [ "$exit_code" = "137" ] || [ "$exit_code" = "143" ]; then
+        if agent_stream_completed_successfully "$stream_file"; then
+            echo "SIGNAL_POST_SUCCESS (exit $exit_code, ${elapsed}s)"
+        else
+            echo "SIGNAL_MID_FLIGHT (exit $exit_code, ${elapsed}s)"
+        fi
+        return 0
+    fi
+
+    if grep -q "API Error: 5" "$log_file" 2>/dev/null; then
+        echo "API_ERROR_SERVER (exit $exit_code)"
+    elif grep -q "API Error: 4" "$log_file" 2>/dev/null; then
+        echo "API_ERROR_CLIENT (exit $exit_code)"
+    elif agent_log_has_stream_cut "$log_file"; then
+        echo "STREAM_CUT (exit $exit_code)"
+    else
+        echo "CLI_ERROR (exit $exit_code)"
+    fi
+}
+
+# agent_failure_is_retryable <failure_type>
+#
+# Retorna 0 si <failure_type> describe un fallo TRANSITORIO del lado del
+# servidor -- el unico que vale la pena reintentar tal cual (issue #534);
+# 1 en cualquier otro caso.
+#
+# Solo califica API_ERROR_SERVER. La evidencia que motiva el reintento: el
+# 2026-08-05, 6 de 10 intentos de stage murieron con 522/529 de
+# api.anthropic.com, y el payload del 522 declara literalmente
+# `"retryable": true, "retry_after": 120`.
+#
+# Los demas tipos quedan fuera a proposito, y el default es NO reintentar:
+#   - TIMEOUT: el agente estuvo media hora colgado. Reintentar paga otra media
+#     hora por el mismo desenlace.
+#   - API_ERROR_CLIENT (4xx): un 400/401/413 no se arregla repitiendo la misma
+#     peticion; hace falta cambiar la peticion.
+#   - SIGNAL_*, STREAM_CUT, CLI_ERROR: causa local o no identificada. Un
+#     reintento a ciegas duplica el gasto sin evidencia de que ayude.
+#
+# La comparacion es por prefijo porque classify_agent_failure adjunta el exit
+# code a la etiqueta ("API_ERROR_SERVER (exit 1)").
+agent_failure_is_retryable() {
+    local failure_type="${1:-}"
+
+    case "$failure_type" in
+        API_ERROR_SERVER*) return 0 ;;
+        *)                 return 1 ;;
+    esac
+}
+
 # agent_work_is_trustworthy <worktree_path> <base_commit> <unrecoverable> <summary_file>
 #
 # Decide si el trabajo que dejo un agente fallido en <worktree_path> es
