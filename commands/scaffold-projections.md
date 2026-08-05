@@ -2,7 +2,7 @@
 model: haiku
 ---
 
-Genera el worker de proyecciones `<RootNamespace>.Projections` (daemon asincronico `HotCold` de Marten, seam de observabilidad `ConfiguracionObservabilidadProjections`), la biblioteca `<RootNamespace>.ReadModels`, el config-test base `<RootNamespace>.Projections.Tests`, el workflow de deploy `deploy-projections.yml` y el `.dockerignore` del build context invocando al agente `projections-scaffolder`, al estilo de `infra-base-scaffolder`. **Alcance acotado (fase 1, issue #367 + fase 2, issue #375 + fase 3, issue #453 + fase 4, issue #457 + fase 5, issue #458)**: el registro del store de cada dominio lo hace `domain-scaffolder` (issue #370); ninguna proyeccion ni read model concreto se genera aqui (issues `tipo:projection`). Comunicate en **espanol**.
+Genera el worker de proyecciones `<RootNamespace>.Projections` (daemon asincronico `HotCold` de Marten, seam de observabilidad `ConfiguracionObservabilidadProjections` con el sampler que descarta el polling del daemon, MEF-ADR-0038), la biblioteca `<RootNamespace>.ReadModels`, el config-test base `<RootNamespace>.Projections.Tests`, el workflow de deploy `deploy-projections.yml` y el `.dockerignore` del build context invocando al agente `projections-scaffolder`, al estilo de `infra-base-scaffolder`. **Alcance acotado (fase 1, issue #367 + fase 2, issue #375 + fase 3, issue #453 + fase 4, issue #457 + fase 5, issue #458 + fase 6, issue #513)**: el registro del store de cada dominio lo hace `domain-scaffolder` (issue #370); ninguna proyeccion ni read model concreto se genera aqui (issues `tipo:projection`). Comunicate en **espanol**.
 
 ## Pre-condicion 1: cwd != Mefisto
 
@@ -60,7 +60,7 @@ Si `RAW` es `"true"`, continua.
 ```
 Se va a generar el worker de proyecciones y su andamiaje read-side (fase 1,
 issue #367 + fase 2, issue #375 + fase 3, issue #453 + fase 4, issue #457 +
-fase 5, issue #458):
+fase 5, issue #458 + fase 6, issue #513):
 
   src/<RootNamespace>.Projections/
     <RootNamespace>.Projections.csproj  (SDK Microsoft.NET.Sdk.Worker)
@@ -68,7 +68,12 @@ fase 5, issue #458):
     Infraestructura/ConfiguracionMartenProjections.cs  (seam base, sin dominios todavia)
     Infraestructura/ConfiguracionObservabilidadProjections.cs  (seam de observabilidad:
                                           service.name obligatorio, AddSource
-                                          Marten/Npgsql/propia, UseAzureMonitorExporter)
+                                          Marten/Npgsql/propia, UseAzureMonitorExporter
+                                          y el SetSampler posterior a ese exporter)
+    Infraestructura/SamplerQueDescartaPollingDelDaemon.cs  (filtro del span de polling
+                                          del daemon HotCold, MEF-ADR-0038: envuelve
+                                          ParentBasedSampler(TraceIdRatioBasedSampler(
+                                          TELEMETRY_SAMPLING_RATIO, default 1.0)))
     Dockerfile                          (imagen sobre runtime, sin ingress)
     {Dominio}/                          (carpeta vacia por dominio ya registrado en el
                                           worker, si aplica -- ahi vive la clase de
@@ -81,6 +86,10 @@ fase 5, issue #458):
   tests/<RootNamespace>.Projections.Tests/
     Infraestructura/AssertsProyecciones.cs   (helper AssertOpcionesDeEvento)
     ConfiguracionMartenProjectionsTests.cs   (config-test base, sin dominios todavia)
+    ConfiguracionObservabilidadProjectionsTests.cs  (guardrails del sampler efectivo:
+                                          tipo y Description del sampler que llega al
+                                          TracerProvider, cascada daemon -> hijo Npgsql
+                                          y nombre del span contra el OtelPrefix de Marten)
 
   .github/workflows/deploy-projections.yml
                                         (build + test, imagen al ACR del BC y

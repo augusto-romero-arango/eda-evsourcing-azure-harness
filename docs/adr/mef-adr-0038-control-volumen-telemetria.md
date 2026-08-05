@@ -214,23 +214,25 @@ El wiring de la seccion 3, para este lado, encadena:
 
 ```csharp
 .WithTracing(tracing => tracing
-    .SetSampler(new ParentBasedSampler(
-        new FiltroPollingDaemonSampler(
-            spanADescartar: "marten.daemon.highwatermark",
-            interno: new TraceIdRatioBasedSampler(ratio)))));
+    .SetSampler(new FiltroPollingDaemonSampler(
+        interno: new ParentBasedSampler(new TraceIdRatioBasedSampler(ratio)))));
 ```
 
-`FiltroPollingDaemonSampler` (nombre ilustrativo -- la clase real es alcance de #513) descarta por
-nombre el span de polling del daemon (`marten.daemon.highwatermark`, la actividad medida en el 95%
-del volumen read-side, ver "Evidencia de campo") y delega el resto al `TraceIdRatioBasedSampler`
-interno.
+`FiltroPollingDaemonSampler` (nombre ilustrativo -- la clase real es alcance de #513) es el sampler
+**mas externo**: descarta por nombre el span de polling del daemon (`marten.daemon.highwatermark`, la
+actividad medida en el 95% del volumen read-side, ver "Evidencia de campo") y delega todo lo demas al
+`ParentBasedSampler(TraceIdRatioBasedSampler(ratio))` interno. El filtro va afuera y no como
+`rootSampler` de un `ParentBasedSampler` externo: `ParentBasedSampler` consulta su `rootSampler`
+**solo para spans sin padre**, asi que invertir el anidamiento dejaria fuera del filtro cualquier span
+de polling que llegara colgado de otro span.
 
 **`ParentBased` es esencial, no un envoltorio decorativo**: verificado empiricamente por el
-consumidor (issue #308) -- sin el, un `Sampler` plano que devuelve `Drop` para el span raiz del
-daemon no evita que Marten instancie de todas formas el span hijo de la consulta Npgsql subyacente;
-solo `ParentBasedSampler` propaga la decision `Drop` del padre al hijo antes de que este se cree
-(cascada `PropagateOrIgnoreData` de OpenTelemetry). Sin `ParentBased`, el filtro por nombre elimina
-el span visible pero no el ruido real -- el hijo Npgsql sigue generandose y facturandose igual.
+consumidor (issue #308) -- sin el como delegado interno, un `Sampler` plano que devuelve `Drop` para
+el span raiz del daemon no evita que Marten instancie de todas formas el span hijo de la consulta
+Npgsql subyacente; solo `ParentBasedSampler` propaga la decision `Drop` del padre al hijo antes de que
+este se cree (cascada `PropagateOrIgnoreData` de OpenTelemetry). Sin `ParentBased`, el filtro por
+nombre elimina el span visible pero no el ruido real -- el hijo Npgsql sigue generandose y
+facturandose igual.
 
 ### 6. Write-side: sampler de solo ratio, y durability agent de Wolverine apagado en origen
 
@@ -422,3 +424,15 @@ todavia no se manifesto.
   subir `UpdateMetricsPeriod`). Muda integra la seccion "Observabilidad" de MEF-ADR-0003 a la seccion
   2 de este documento, dejando en 0003 solo una referencia. Enmienda MEF-ADR-0034 seccion 10 punto 4 y
   su aceptacion del costo del Container App 24/7 (ver control de cambios de ese ADR).
+- 2026-08-04: corregido el anidamiento del snippet de la seccion 5 (issue #513, al propagar esta
+  doctrina a `projections-scaffolder`). El snippet de la creacion mostraba el filtro por nombre como
+  `rootSampler` de un `ParentBasedSampler` externo; el anidamiento correcto -- y el unico que la
+  seccion 5 fija ahora -- es el inverso: el filtro es el sampler **mas externo** y
+  `ParentBasedSampler(TraceIdRatioBasedSampler(ratio))` su delegado interno. Es la forma que ya
+  enunciaba MEF-ADR-0034 seccion 10 punto 4 (*"un sampler que envuelve
+  `ParentBasedSampler(TraceIdRatioBasedSampler(ratio))`, descartando antes por nombre el span de
+  polling del daemon"*) y la que corre verificada en produccion en el consumidor de referencia (PR
+  #311); la forma invertida deja el filtro fuera de juego para cualquier span con padre, porque
+  `ParentBasedSampler` consulta su `rootSampler` solo cuando no hay padre. Sin cambio de decision: la
+  frontera mecanismo/valor, el orden frente al exporter, el guardrail de composicion y el default
+  `1.0` quedan como estaban.
