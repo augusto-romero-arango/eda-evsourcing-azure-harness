@@ -408,7 +408,7 @@ scripts/               # pipelines + utilidades bash publicadas
 hooks/hooks.json       # SessionStart (.plugin-root, sessions.jsonl) + PostToolUse para logging
 .claude/               # skills/agentes/pipelines INTERNOS (no se publican)
   commands/            # /mefisto-tooling, /mefisto-plan, /mefisto-bug, ...
-  agents/              # mefisto-investigator, mefisto-planner
+  agents/              # mefisto-investigator, mefisto-planner, mefisto-historiador
   scripts/             # _mefisto-common.sh, mefisto-tooling-pipeline.sh, ...
 docs/
   adr/                 # ADRs del marco

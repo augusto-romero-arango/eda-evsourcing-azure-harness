@@ -1,7 +1,7 @@
 ---
 name: mefisto-historiador
 model: sonnet
-description: Pone al dia la bitacora del propio plugin Mefisto procesando todas las field notes pendientes, agrupadas por dia. Lee field notes de sesiones mefisto-planner/mefisto-investigation, git log e issues del repo de Mefisto; escribe en docs/bitacora/ una entrada por cada dia con notas pendientes.
+description: Pone al dia la bitacora del propio plugin Mefisto procesando todas las field notes pendientes, agrupadas por dia. Lee field notes de sesiones mefisto-planner/mefisto-investigation, git log e issues del repo de Mefisto; escribe en docs/bitacora/ una entrada por cada dia con notas pendientes. Solo opera dentro del repo de Mefisto.
 tools: Bash, Read, Write, Edit, Glob, Grep
 ---
 
@@ -22,8 +22,11 @@ Ejecuta **toda la recopilacion sin pedir confirmacion al usuario**. Las fuentes 
 ```bash
 # Field notes pendientes: TODAS las que quedan en field-notes/, sin filtrar por
 # fecha del dia actual (el glob no baja a procesadas/, asi que las ya procesadas
-# quedan excluidas). Las sesiones que las producen son mefisto-planner y
-# mefisto-investigation (frontmatter `sesion:` de cada archivo).
+# quedan excluidas). El sufijo del nombre de archivo dice que sesion la produjo
+# (`YYYY-MM-DD-HHMM-<sesion>.md`): en este repo son mefisto-planner,
+# mefisto-investigation y, ocasionalmente, mefisto-design. El frontmatter
+# `sesion:` de cada nota es texto libre y puede no coincidir literalmente con el
+# sufijo, asi que no lo uses para filtrar: procesa TODAS las notas del glob.
 ls docs/bitacora/field-notes/*.md 2>/dev/null
 
 # Dias distintos presentes en el backlog, agrupando por el prefijo YYYY-MM-DD del
@@ -33,10 +36,11 @@ DIAS_PENDIENTES=$(ls docs/bitacora/field-notes/*.md 2>/dev/null \
     | sed -nE 's#.*/([0-9]{4}-[0-9]{2}-[0-9]{2})-.*#\1#p' | sort -u)
 echo "$DIAS_PENDIENTES"
 
-# Issues y PRs creados/cerrados en el repo de Mefisto (una sola consulta; la
-# acotas por dia en memoria con createdAt/closedAt al escribir cada entrada).
-# Nunca uses -R: el repo activo ES el repo de Mefisto. Sube el --limit si el
-# backlog abarca muchos dias y la lista te queda truncada.
+# Issues creados/cerrados en el repo de Mefisto (una sola consulta; la acotas
+# por dia en memoria con createdAt/closedAt al escribir cada entrada). Nunca
+# uses -R: el repo activo ES el repo de Mefisto. Sube el --limit si el backlog
+# abarca muchos dias y la lista te queda truncada. Ojo: `gh issue list` NO
+# devuelve PRs — los PRs mergeados salen del git log del bloque siguiente.
 gh issue list --state all --limit 100 --json number,title,state,closedAt,createdAt,labels
 
 # Pipeline history interno (si existe)
@@ -48,7 +52,7 @@ ls docs/bitacora/*.md 2>/dev/null | grep -v README | sort | tail -2
 
 **Filtro opcional por dia.** Por defecto procesas *todo* el backlog. Si el usuario pide acotar a un dia puntual — por ejemplo, para reprocesar solo ese dia sin tocar el resto del backlog —, reduce `DIAS_PENDIENTES` a esa unica fecha y trabaja solo con `docs/bitacora/field-notes/<fecha>-*.md`.
 
-Por cada dia del backlog, acota el git log y los ADRs `MEF-ADR-` tocados a ese dia (un solo bloque, iterando sobre las fechas que ya obtuviste). Los commits de PR mergeados via squash traen el numero al final del asunto (`... (#536)`), asi que el propio git log ya te da la correlacion commit <-> PR sin una consulta aparte:
+Por cada dia del backlog, acota el git log y los ADRs `MEF-ADR-` tocados a ese dia (un solo bloque, iterando sobre las fechas que ya obtuviste). Los commits de PR mergeados via squash traen el numero al final del asunto (`... (#536)`) — `/mefisto-merge` siempre mergea con squash —, asi que el propio git log ya te da la correlacion commit <-> PR y el conteo de "PRs mergeados" sin una consulta aparte. Como el `git log` corre con `--all`, cuenta como PR mergeado solo los asuntos con `(#N)`: los commits de ramas de trabajo todavia abiertas tambien aparecen en el listado:
 
 ```bash
 for FECHA in $DIAS_PENDIENTES; do
