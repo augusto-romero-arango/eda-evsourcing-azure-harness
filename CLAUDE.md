@@ -120,8 +120,13 @@ tu propuesta en vez de darlo por cierto.
 ### 3. Estructura de carpetas esperada
 
 - `src/<RootNamespace>.{Dominio}/` — Function App por dominio
+- `src/<RootNamespace>.{Dominio}.DomainEvents/` — eventos persistidos del dominio en el event store, uno por dominio (MEF-ADR-0039)
+- `src/<RootNamespace>.PublicEvents/` — eventos que salen del BC, uno por Bounded Context, sin dependencias de proyecto (MEF-ADR-0039)
+- `src/<RootNamespace>.PrivateEvents/` — eventos del bus interno del BC, uno por Bounded Context (MEF-ADR-0039)
 - `tests/<RootNamespace>.{Dominio}.Tests/` — tests unitarios ES por dominio
 - `tests/<RootNamespace>.{Dominio}.SmokeTests/` — smoke tests black-box (opcional)
+- `tests/<RootNamespace>.PublicEvents.Tests/` — tests del ensamblado `PublicEvents`, uno por BC (MEF-ADR-0039)
+- `tests/<RootNamespace>.PrivateEvents.Tests/` — tests del ensamblado `PrivateEvents`, uno por BC (MEF-ADR-0039)
 - `infra/environments/{env}/` — Terraform por ambiente
 - `.claude/pipeline/` — estado runtime de los pipelines (lo crea el harness en primer arranque, y nunca viaja en un commit del consumidor); incluye `sessions.jsonl`, un log append-only que el hook `SessionStart` del plugin anota con `session_id`/`transcript_path`/`cwd`/`source`/`timestamp` en **cada** arranque de sesion de Claude Code sobre el repo — las headless de `claude -p` que corren los stages y tambien las interactivas, con `source` distinguiendo `startup`/`resume`/`clear`/`compact` —, para correlacionar un stage con su transcript completo en `~/.claude/projects/`; e incluye tambien `.plugin-root.previous`, el marker por sesion que `/upgrade` escribe con la version del plugin que la sesion cargo (y que el mismo hook `SessionStart` limpia en cada arranque) para no borrarla al podar el cache
 - `docs/bitacora/field-notes/` — output de los agentes investigadores y de event-storming
