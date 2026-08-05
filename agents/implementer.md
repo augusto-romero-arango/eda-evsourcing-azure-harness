@@ -181,7 +181,7 @@ public partial class AsignarEmpleadoATurnoCommandHandler(IEventStore eventStore,
     public async Task HandleAsync(AsignarEmpleadoATurno comando, CancellationToken ct)
     {
         var turno = await eventStore.GetAggregateRootAsync<TurnoAggregateRoot>(
-            comando.TurnoId, ct);
+            comando.TurnoId.ToString(), ct);
         if (turno is null)
             throw new InvalidOperationException(Mensajes.TurnoNoEncontrado);
 
