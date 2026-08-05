@@ -44,30 +44,45 @@ Antes de explorar codigo, lee `CLAUDE.md` raiz para resolver `<RootNamespace>` y
 Viven en `tests/<RootNamespace>.Projections.Tests/{Dominio}/{Concepto}ProjectionTests.cs` -- el mismo proyecto que aloja el config-test del worker (`config-test.md`), en una subcarpeta por dominio. Invocacion **directa** de los metodos estaticos de la clase de proyeccion companion (`{Concepto}Projection`, N1/N2 -- arbol de decision completo en `modelos-marten.md`; el read model es un record plano sin comportamiento propio). No uses el DSL `Given`/`When`/`Then` de `CommandHandlerTestBase` (ese harness testea command handlers contra el event store, MEF-ADR-0002); aqui testeas funciones puras evento -> vista.
 
 ```csharp
+using JasperFx.Events;   // Event<T> vive en JasperFx.Events, NO en Marten.Events -- mismo gotcha de
+                         // namespace que MEF-ADR-0034 seccion 6 ya documenta para DaemonMode. Si se
+                         // importa Marten.Events por costumbre, el tipo no se resuelve y el build
+                         // muere con CS0246 (tipo no encontrado), no con el CS0103 de aquel
+                         // precedente -- ahi el simbolo sin resolver estaba en una expresion.
+
 public class TurnoProjectionTests
 {
     [Fact]
     public void Create_ProyectaTurnoAbierto_DesdeTurnoCreado()
     {
-        var evento = new TurnoCreado(Guid.NewGuid(), "Turno Manana", new TimeOnly(6, 0), new TimeOnly(14, 0));
+        // El Create de N1 toma IEvent<TEvento> (identidad = stream key, modelos-marten.md):
+        // el test fabrica un Event<T> concreto, sin Postgres.
+        var evento = new Event<TurnoCreado>(new TurnoCreado(Guid.NewGuid(), "Turno Manana", new TimeOnly(6, 0), new TimeOnly(14, 0)))
+        {
+            StreamKey = "turno-123",
+            Version = 1,
+            Timestamp = DateTimeOffset.UtcNow,
+        };
 
         var view = TurnoProjection.Create(evento);
 
         // Oraculo independiente: el esperado se arma a mano, nunca reusando la logica del SUT (MEF-ADR-0002)
-        view.Should().Be(new TurnoView(evento.TurnoId, "Abierto", evento.HoraInicio));
+        view.Should().Be(new TurnoView(evento.StreamKey!, "Abierto", evento.Data.HoraInicio));
     }
 
     [Fact]
     public void Apply_CierraTurno_CuandoTurnoCerrado()
     {
-        var previa = new TurnoView(Guid.NewGuid(), "Abierto", new TimeOnly(6, 0));
+        var previa = new TurnoView("turno-123", "Abierto", new TimeOnly(6, 0));
 
-        var view = TurnoProjection.Apply(new TurnoCerrado(previa.Id), previa);
+        var view = TurnoProjection.Apply(new TurnoCerrado(Guid.NewGuid()), previa);
 
         view.Should().Be(previa with { Estado = "Cerrado" });
     }
 }
 ```
+
+**Nunca pases el `Id` de la vista como argumento del evento** (`Apply(new TurnoCerrado(previa.Id), previa)` ni compila -- `CS1503` --, y sugiere que ambos son el mismo dato): `TurnoView.Id` es el stream key (`string`), mientras el evento lleva su propio campo de dominio en `Guid` (mismo patron que `MarcacionRegistrada(Guid EmpleadoId, ...)` de `test-writer.md`). Son dos identidades de naturaleza distinta -- arma cada una por separado en el arrange.
 
 Cubre cada metodo que la clase de proyeccion declara (`Create` para el evento fundacional, un `Apply` por cada evento que muta la vista, `ShouldDelete` si el issue lo requiere). Para N2 (`MultiStreamProjection`), agrega ademas un test de correlacion que verifique que dos streams distintos (`Identity<TEvento>`/`Identities<TEvento>`) producen o actualizan el mismo documento.
 
@@ -86,7 +101,7 @@ Un test de composicion, hermano del `ComposicionContenedorTests` de MEF-ADR-0029
 Si los tests referencian tipos que no existen, crealos con `throw new NotImplementedException()` -- mismo principio que `test-writer.md`:
 
 - **Read model** (record plano, estilo canonico de `modelos-marten.md`): `public sealed record TurnoView(...)` -- **sin** `partial`, sin `Create`/`Apply`/`ShouldDelete` propios; vive en `<RootNamespace>.ReadModels`.
-- **Clase de proyeccion companion** (N1 y N2, mismo estilo en ambos niveles): `public sealed partial class {Concepto}Projection : SingleStreamProjection<{Concepto}View, Guid>` (N1) o `: MultiStreamProjection<{Concepto}View, Guid>` (N2, con el constructor de correlacion `Identity<T>(...)`/`Identities<T>(...)` -- no es un stub, no tiene logica que fallar); vive en el worker (`src/<RootNamespace>.Projections/{Dominio}/{Concepto}Projection.cs`). Los `Create`/`Apply`/`ShouldDelete` de esta clase si son stub (`throw new NotImplementedException()`), en ambos niveles.
+- **Clase de proyeccion companion** (N1 y N2, mismo estilo en ambos niveles): `public sealed partial class {Concepto}Projection : SingleStreamProjection<{Concepto}View, string>` (N1 -- `TId` siempre `string`: el store del dominio fija `StreamIdentity.AsString`, MEF-ADR-0034 ref. [19], y en N1 la identidad del documento es la del stream de origen) o `: MultiStreamProjection<{Concepto}View, {TId}>` (N2, con el constructor de correlacion `Identity<T>(...)`/`Identities<T>(...)` ya escrito -- no es un stub, no tiene logica que fallar; a diferencia de N1, el `TId` de N2 es independiente de `StreamIdentity` y lo determina el tipo que retorna esa correlacion -- `Guid` si el campo de dominio correlacionado es `Guid`, `modelos-marten.md`; `{TId}` es un placeholder, sustituyelo por ese tipo concreto y nunca lo emitas literal); vive en el worker (`src/<RootNamespace>.Projections/{Dominio}/{Concepto}Projection.cs`). Los `Create`/`Apply`/`ShouldDelete` de esta clase si son stub (`throw new NotImplementedException()`), en ambos niveles.
 - **Seam de composicion** (`ConfiguracionMartenProjections{Dominio}.Configurar{Dominio}`): **antes de declarar nada, verifica si ya existe** `src/<RootNamespace>.Projections/Infraestructura/ConfiguracionMartenProjections{Dominio}.cs`. `domain-scaffolder` (Paso 3b, issue #370) lo emite al nacer el dominio cuando el BC ya tiene worker de proyecciones, con el marker y el seam **ya implementado y sin `partial`**: `public static IServiceCollection Configurar{Dominio}(this IServiceCollection services, string martenConnectionString)`. Si esta ahi, esa es la firma que invoca tu config-test y **no declaras ni re-declaras nada** (seria `CS0101`/`CS0111`/`CS0260`); tu rojo viene de los `Create`/`Apply` de la clase de proyeccion, no del seam. El ejemplo de `config-test.md` usa el argumento nombrado `dummyConnectionString:` de forma ilustrativa -- invoca el seam **posicionalmente** o con el nombre real del parametro, o el test no compila (`CS1739`). Solo si el archivo **no** existe (dominio scaffoldeado antes de que el BC adoptara proyecciones) creas el stub, y entonces si aplica todo lo que sigue: el config-test lo invoca **desde otro ensamblado** (`<RootNamespace>.Projections.Tests`), asi que el seam necesita modificadores de acceso para ser alcanzable (`public`, o `internal` + `InternalsVisibleTo`) -- y con ellos el compilador **exige** la parte implementadora (`CS8795`: *"Partial member must have an implementation part because it has accessibility modifiers"*). Deja por tanto la declaracion **y** una parte implementadora con `throw new NotImplementedException()`, el stub normal de la fase roja: el config-test queda rojo por esa excepcion, que es exactamente el rojo que buscas. **No** uses la forma que puede desaparecer en silencio (sin modificadores, `void`, sin `out` -- MEF-ADR-0034 punto 1): es implicitamente `private` y el config-test no podria llamarla desde su ensamblado. Documenta la forma elegida en tu resumen: con modificadores, el compilador ya cubre la guarda 1 de `config-test.md` y el test conserva valor por las guardas 2 y 3.
 - **Marker del named store**: `public interface I{Dominio}ProjectionStore : IDocumentStore;` -- **solo si no existe ya**: vive en el mismo archivo del punto anterior y `domain-scaffolder` lo emite junto al seam.
 - **`FunctionEndpoint`** de cada query: clase con el metodo `Run` que lanza `NotImplementedException`.

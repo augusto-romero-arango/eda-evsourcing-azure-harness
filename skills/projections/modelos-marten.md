@@ -19,14 +19,18 @@ El read model es un **record inmutable plano** (mismo criterio de MEF-ADR-0012: 
 
 ```csharp
 // Read model: record plano, sin comportamiento ni partial. Vive en <RootNamespace>.ReadModels.
-public sealed record TurnoView(Guid Id, string Estado, DateOnly FechaInicio);
+// Id es string, no Guid: el store del dominio fija StreamIdentity.AsString (MEF-ADR-0034 ref. [19]),
+// y en N1 la identidad del documento ES la del stream de origen -- ambas deben coincidir.
+public sealed record TurnoView(string Id, string Estado, DateOnly FechaInicio);
 
 // Clase de proyeccion: vive en el worker (<RootNamespace>.Projections) -- el ensamblado
 // que si referencia Marten y el analizador JasperFx.Events.SourceGenerator.
-public sealed partial class TurnoProjection : SingleStreamProjection<TurnoView, Guid>
+public sealed partial class TurnoProjection : SingleStreamProjection<TurnoView, string>
 {
-    public static TurnoView Create(TurnoCreado e) =>
-        new(e.TurnoId, "Abierto", e.FechaInicio);
+    // Create toma IEvent<TurnoCreado>, no TurnoCreado a secas: la identidad (un string) no viaja
+    // en el payload del evento -- IEvent<T>.StreamKey es quien la expone.
+    public static TurnoView Create(IEvent<TurnoCreado> e) =>
+        new(e.StreamKey!, "Abierto", e.Data.FechaInicio);
 
     public static TurnoView Apply(TurnoCerrado e, TurnoView view) =>
         view with { Estado = "Cerrado" };
@@ -40,9 +44,23 @@ public sealed partial class TurnoProjection : SingleStreamProjection<TurnoView, 
 opts.Projections.Add<TurnoProjection>(ProjectionLifecycle.Async);
 ```
 
+**Si el `TId` no coincide con el `StreamIdentity` del store la falla es ruidosa, pero tardia**: declarar `SingleStreamProjection<TurnoView, Guid>` sobre un store `AsString` lanza `InvalidProjectionException: Id type mismatch...` al **resolver el named store** del contenedor, nunca en build (MEF-ADR-0035 seccion 2) -- la guarda 1 del config-test ([config-test.md](config-test.md)) es lo unico que la caza antes del primer despliegue.
+
 **Por que N1 deja de ser auto-agregante.** El estilo anterior fijaba, para N1, un record self-hosting que declaraba sus propios `Create`/`Apply` y se registraba con `Snapshot<T>()`. Es la consecuencia forzosa de que `<RootNamespace>.ReadModels` no lleve Marten, ni transitivamente (MEF-ADR-0034 seccion 5): mover el record al worker no es opcion -- el Function App del dominio lo necesita para el GET (`session.LoadAsync<TView>()`) --, asi que el comportamiento de proyeccion se traslada a la clase companion y el record se queda como dato puro. Beneficio colateral: **un solo estilo** de N1 y N2 en el marco, en vez de dos.
 
+## Firmas admitidas en un metodo convencional -- y la proscrita
+
+Un `Create`/`Apply`/`ShouldDelete` solo admite estos parametros: el tipo del evento (`TEvento`), `IEvent<TEvento>`, `IEvent`, `IQuerySession`, `CancellationToken` y `TView` (solo en `Apply`/`ShouldDelete`, ya con el estado previo). **Ningun tipo de identidad esta en esa lista**: `Create`/`Apply(TEvento, TId)` -- la firma intuitiva para pasarle el id a mano -- no es una firma que Marten reconozca.
+
+**Namespace**: `IEvent`/`IEvent<TEvento>` viven en `JasperFx.Events`, no en `Marten.Events` -- ese es el `using` que necesita el archivo de la clase de proyeccion (MEF-ADR-0035 ref. [16]). Misma regla generica de resolver el `using` contra el ensamblado, nunca por analogia con `Marten.*`, que MEF-ADR-0034 seccion 6 ya fija para `StreamIdentity`/`DaemonMode`.
+
+**Modo de falla, no un error de build**: el dispatcher se genera igual, con 0 errores y 0 advertencias, pero el evento creador desaparece de `EventTypes` -- el documento nunca se crea, sin ninguna senal en el build ni en el arranque.
+
+**Regla de procedencia (forma corta)**: un metodo de proyeccion solo puede leer lo que sale del evento persistido (`StreamKey`/`StreamId`/`Version`/`Timestamp`/`TenantId`/`CorrelationId`/`CausationId` o el payload) -- nunca de estado externo (una consulta, el reloj, configuracion). `IQuerySession` es sintacticamente valido pero rompe esa regla; adoptarlo exige justificacion explicita en el issue.
+
 ## N2 -- correlacion entre streams
+
+**El `TId` de N2 no hereda la restriccion de N1**: es independiente de `StreamIdentity` -- lo determina el tipo que retorna `Identity<TEvento>(...)`/`Identities<TEvento>(...)`, no el store. `EquipoId` sigue siendo `Guid` en el ejemplo de abajo porque es un campo de dominio del payload, no el stream key de Marten. No generalizar el fix de N1 (arriba) a N2.
 
 Marten no soporta auto-agregacion para `MultiStreamProjection`: la correlacion entre streams necesita un constructor, asi que la clase companion tambien declara la correlacion. Mismo estilo que N1 -- el read model sigue siendo un record inmutable plano, solo los datos, sin comportamiento de correlacion:
 
