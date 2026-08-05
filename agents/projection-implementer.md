@@ -75,7 +75,7 @@ public class FunctionEndpoint(IDocumentStore store, ITenantResolver tenantResolv
 }
 ```
 
-El `IDocumentStore` que inyectas es el **ya configurado en ese Function App** (`ComposicionServicios{Dominio}`, MEF-ADR-0029), no el named store del worker -- que vive en otro proceso e inalcanzable desde aqui. **Punto abierto que MEF-ADR-0035 seccion 4 te delega explicitamente** (issue #375): la proyeccion solo se registra en el named store del worker, nunca en el write-side, asi que si ese `IDocumentStore` necesita algun registro adicional del tipo de documento (`TView`) para resolverlo via `LoadAsync<TView>()`/`Query<TView>()`, es un detalle de la superficie de `StoreOptions` que **debes reverificar empiricamente** (build + consulta real) antes de dar por bueno el primer read model -- y documentar en tu resumen lo que encontraste. No lo asumas resuelto porque el ejemplo de arriba compile.
+El `IDocumentStore` que inyectas es el **ya configurado en ese Function App** (`ComposicionServicios{Dominio}`, MEF-ADR-0029), no el named store del worker -- que vive en otro proceso e inalcanzable desde aqui. **Verificado (MEF-ADR-0035 seccion 4, issue #497): no necesitas ningun registro adicional del tipo `TView`** -- Marten lo resuelve por convencion, aunque la proyeccion en si solo se registre en el named store del worker. La condicion que si aplica: tu dominio debe traer la misma politica de tenancy documental que el worker (`Policies.AllDocumentsAreMultiTenanted()`) -- si diverge, es el reviewer quien lo caza bajo gate (MEF-ADR-0034 seccion 6), no algo que debas reverificar aqui.
 
 Registra el `FunctionEndpoint` y sus dependencias en `ComposicionServicios{Dominio}` (MEF-ADR-0029) si aun no estan expuestas -- mismo seam que ya usan los comandos.
 
