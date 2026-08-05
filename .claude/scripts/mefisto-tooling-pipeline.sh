@@ -273,21 +273,30 @@ else
 
     mkdir -p "$WORKTREE_PATH/.claude/pipeline/summaries"
 
-    # .claude/settings.json (issue #523) ya viaja versionado con el worktree
-    # (checked out desde origin/main); esta sustitucion solo reescribe una
-    # eventual ruta relativa de events.log a la absoluta de ESTA corrida, para
-    # que un hook que lo referencie escriba siempre al events.log centralizado
-    # del pipeline y no a uno nuevo dentro del worktree. El hook de scope
-    # (mefisto-scope-hook.sh) no toca events.log, asi que hoy el sed no
-    # cambia nada -- este bloque solo importa el dia que un hook futuro lo
-    # necesite. Los `git checkout -- .claude/settings.json` de mas abajo
-    # (auto_commit_if_needed y tras cada run_agent) revierten esta copia
-    # sustituida antes de cualquier commit, para que el archivo que termina
-    # en el PR sea siempre el versionado, nunca la copia con rutas absolutas.
-    if [ -f "$REPO_ROOT/.claude/settings.json" ]; then
-        sed "s|\.claude/pipeline/events\.log|${EVENTS_LOG_ABS}|g" \
-            "$REPO_ROOT/.claude/settings.json" > "$WORKTREE_PATH/.claude/settings.json"
-    fi
+    # .claude/settings.json (issue #523) ya viaja VERSIONADO con el worktree,
+    # checked out desde origin/main: el pipeline no lo inyecta ni lo revierte.
+    #
+    # El pipeline del consumidor (scripts/tooling-pipeline.sh) si lo hace --
+    # copia el settings.json del repo base sustituyendo la ruta relativa de
+    # events.log por la absoluta de la corrida, y lo revierte con
+    # `git checkout --` antes de cada commit para no ensuciar el PR. Ese par
+    # inyeccion/reversion aqui seria activamente daniino:
+    #
+    #   1. La copia vendria de $REPO_ROOT (el arbol de trabajo del clon
+    #      principal, que puede estar sucio o en otra rama), pisando con el
+    #      un archivo que el worktree ya tiene correcto desde origin/main.
+    #   2. `git checkout -- .claude/settings.json` revierte cualquier edicion
+    #      NO comiteada del archivo. Ahora que esta versionado, un issue que
+    #      anada un hook nuevo perderia el trabajo del writer en silencio --
+    #      y el bloque ECONOMIA DE TURNOS le pide justamente no re-inspeccionar
+    #      el arbol, asi que nadie se enteraria hasta ver el PR vacio.
+    #   3. La sustitucion no cambia nada: el unico hook de Mefisto
+    #      (mefisto-scope-hook.sh) no escribe a events.log.
+    #
+    # Si algun dia un hook interno necesita la ruta absoluta del events.log
+    # centralizado, hay que resolverlo sin `git checkout --` sobre un archivo
+    # que el writer puede estar editando legitimamente (p. ej. leyendo
+    # $CLAUDE_PROJECT_DIR desde el propio hook).
 
     update_status "setup" "running"
 
@@ -446,8 +455,6 @@ auto_commit_if_needed() {
     local phase="$1"
     local msg="$2"
 
-    git -C "$WORKTREE_PATH" checkout -- .claude/settings.json 2>/dev/null || true
-
     # changelog.d/ va en la lista (issue #380): desde el gate de fragmentos, el
     # fragmento es lo UNICO que acredita el cambio notable, y el gate lo da por
     # bueno viendolo tambien en el working tree. Si el auto-commit no lo stagea,
@@ -457,10 +464,10 @@ auto_commit_if_needed() {
     # .claude/settings.json va en la lista (issue #523): sin ella, un writer
     # que cree o edite el archivo de hooks confiando en el auto-commit (en vez
     # de comitearlo el mismo) lo dejaria sin stagear -- `git push` solo manda
-    # commits, asi que el archivo nunca llegaria al PR. El checkout de la
-    # linea de arriba ya paso antes que este calculo de status, asi que lo
-    # unico que puede llegar aqui es una adicion/edicion legitima (nunca la
-    # copia con la ruta de events.log sustituida).
+    # commits, asi que el archivo nunca llegaria al PR. El pipeline ya no
+    # inyecta ni revierte este archivo (ver el bloque de creacion del
+    # worktree), asi que lo unico que puede aparecer aqui es una edicion
+    # legitima del agente.
     local paths="commands/ agents/ scripts/ hooks/ docs/ .claude-plugin/ .claude/commands/ .claude/agents/ .claude/scripts/ .claude/settings.json changelog.d/ README.md CHANGELOG.md CLAUDE.md .gitignore"
 
     if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- $paths 2>/dev/null)" ]; then
@@ -534,7 +541,6 @@ Instrucciones:
     run_agent "1" "writer" "$STAGE1_PROMPT"
 
     # Validar que genero cambios reales
-    git -C "$WORKTREE_PATH" checkout -- .claude/settings.json 2>/dev/null || true
     HAS_COMMITS=false
     HAS_UNSTAGED=false
     if ! git -C "$WORKTREE_PATH" diff --quiet "$SNAPSHOT_COMMIT" HEAD 2>/dev/null; then
