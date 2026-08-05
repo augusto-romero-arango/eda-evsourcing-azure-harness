@@ -291,6 +291,26 @@ La tercera columna es tambien el gotcha de `using` al corregir el worker: **ning
 
 **Mandato de corregir**: una divergencia de la columna "debe coincidir" se corrige en el read-side, en el mismo PR -- mismo criterio que el resto de este paso (corregir codigo, correr `dotnet test`, revertir si rompe). Solo se escala como hallazgo bloqueante si corregirla exige tocar el write-side.
 
+#### Identidad de stream: punto unico de conversion y borde HTTP tipado (MEF-ADR-0037, issue #503)
+
+**El gate**: corre esta verificacion si el diff toca cualquier lectura o escritura de una identidad de stream -- `StartStream`, `ExistsAsync`, `GetAggregateRootAsync`, `PublishOptions.GroupId`, `ComputarStreamId`, o un GET de consulta que recibe un id de ruta y lo pasa a `LoadAsync`/`AggregateStreamAsync`/`FetchStreamAsync`. Si el diff no toca ninguno de esos sitios: fila `n/a` en el checklist (paso 8).
+
+MEF-ADR-0037 seccion 5 es explicito en que **no existe test que cace esta doctrina** -- a diferencia de MEF-ADR-0036, el formato de una clave de stream no tiene oraculo en memoria que un config-test pueda interrogar. El guardrail completo es esta revision por lectura directa del diff, contra los tres puntos siguientes:
+
+1. **Formato explicito de `ToString()` sobre una identidad de stream (CA-1).** Autoridad: MEF-ADR-0037 seccion 1. El unico formato permitido para convertir un `Guid` a su representacion de stream es `ToString()` **sin argumentos** (canonico "D", siempre en minusculas). Busca en el diff cualquier `ToString("N")`, `ToString("B")`, `ToString("P")`, `ToString("X")` (o cualquier otro especificador explicito) o transformacion adicional (`.ToUpper()`, `.ToLower()`) aplicada a una identidad usada como:
+   - argumento de `StartStream`/`ExistsAsync`/`GetAggregateRootAsync`,
+   - `PublishOptions.GroupId`,
+   - id pasado a `LoadAsync`/`AggregateStreamAsync`/`FetchStreamAsync`,
+   - **o dentro del propio cuerpo de `ComputarStreamId`** -- el punto unico de conversion no esta exento de este chequeo: si el metodo mismo formatea un componente `Guid` con un especificador explicito, el defecto se propaga por igual a todo llamador.
+
+   Si encuentras el patron, es hallazgo bloqueante: corrige a `ToString()` sin argumentos y corre `dotnet test`.
+
+2. **Construccion manual de una clave de stream fuera de `ComputarStreamId` (CA-2).** Autoridad: MEF-ADR-0037 seccion 1. Para un aggregate con clave compuesta, `ComputarStreamId(...)` es el **unico** punto de conversion. Busca en el diff toda concatenacion o interpolacion de string (`$"{...}:{...}"`, `string.Concat`, `string.Join`, `+`) que arme una clave luego usada como stream id (en un CommandHandler, EventHandler o endpoint) **fuera** de ese metodo estatico del aggregate. Si encuentras una reconstruccion paralela -- aunque hoy produzca el mismo texto que `ComputarStreamId` -- es hallazgo bloqueante: reemplazala por la llamada al metodo existente.
+
+3. **GET de read-side que recibe la clave ya armada como `string` de ruta (CA-3).** Autoridad: MEF-ADR-0037 seccion 2. En todo endpoint HTTP GET de consulta que resuelve un stream/documento por id, verifica que el parametro de ruta este **tipado**: `Guid` (parseado con `Guid.TryParse` + `400` explicito si falla) para identidad simple, o componentes tipados por separado + `ComputarStreamId(...)` para clave compuesta. Si el binding declara `string id` (o equivalente) y ese valor viaja sin parseo hasta `LoadAsync`/`AggregateStreamAsync`/`FetchStreamAsync`/`ExistsAsync`, es hallazgo bloqueante. El route constraint `{id:guid}` **no** sustituye este chequeo -- produce `404` en vez de `400` y no normaliza el casing (MEF-ADR-0037 seccion 2). Corrige agregando el parseo tipado (ejemplo canonico en `agents/projection-implementer.md` y en la skill `projections` -> `read-apis.md`).
+
+Para cada uno de los tres puntos: si el hallazgo no esta declarado como desviacion por el implementer con razon tecnica legitima, corrigelo siguiendo el protocolo estandar (`dotnet test` despues del cambio, revertir si rompe). Si no es trivial corregir, documentalo como hallazgo bloqueante en el reporte.
+
 ---
 
 ### 4. Revisar cobertura de la HU
@@ -516,6 +536,7 @@ Si el implementer cito precedentes del codigo en su resumen de fase verde, verif
 | Smoke tests: SkipWhen, secrets, cobertura | ok / falla / n/a | ... |
 | Proyecciones read-side: partial, inmutabilidad, read APIs, naming | ok / falla / n/a | ... |
 | Compatibilidad Marten write-side/read-side (n/a si el diff no toca version del paquete ni config Marten) | ok / falla / n/a | ... |
+| Identidad de stream (MEF-ADR-0037): `ToString()` sin formato explicito, punto unico via `ComputarStreamId`, borde HTTP tipado (n/a si el diff no toca una identidad de stream) | ok / falla / n/a | ... |
 | Tests via ToString/comportamiento | ok / falla / n/a | ... |
 | Sin numeros magicos | ok / falla / n/a | ... |
 | Condiciones en positivo (guardas if/else afirmativas) | ok / falla / n/a | ... |
