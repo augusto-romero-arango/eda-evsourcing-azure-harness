@@ -221,7 +221,7 @@ rm -f "src/<RootNamespace>.{PascalCase}.DomainEvents/Class1.cs"
 
 **Sin ningun `PackageReference`**: `IdentidadEventos{PascalCase}` es BCL puro (`System.Type`, `System.Collections.Generic`), verificado contra el layout del consumidor de referencia (Bitakora.ControlAsistencia, post CA-ADR-0029) -- no agregues ningun paquete a este `.csproj` durante el scaffold. `ConfiguracionSerializacion{Dominio}` (System.Text.Json puro, sin Marten) tampoco necesitara ninguno cuando aparezca -- eso es alcance de `implementer`/`test-writer`, no de este agente.
 
-Agrega el `ProjectReference` del Function App hacia el, dentro del mismo `<ItemGroup>` de paquetes del `.csproj` (punto 2):
+Agrega el `ProjectReference` del Function App hacia el, en el mismo `<ItemGroup>` donde quedo el `ProjectReference` a Contracts (punto 3):
 
 ```xml
 <ProjectReference Include="..\<RootNamespace>.{PascalCase}.DomainEvents\<RootNamespace>.{PascalCase}.DomainEvents.csproj" />
@@ -278,7 +278,7 @@ await builder.Build().RunAsync();
 
 Si el Paso 0 no resolvio ningun alias `serviceBus.external` con `alcance == "compartido"`, omite la variable `serviceBusCosmos` y el argumento correspondiente (el metodo de extension del Paso 6b tampoco declara ese parametro en ese caso). Si hay mas de un alias, repite el par variable + argumento por cada uno. No wirees ningun alias con `alcance == "externo"` (integracion verdaderamente externa, diferida por MEF-ADR-0024 decision #5, default-off).
 
-**6a. Crear `IdentidadEventos{PascalCase}.cs`** en la raiz de `src/<RootNamespace>.{PascalCase}.DomainEvents/` (creado en el punto 3b; MEF-ADR-0036, MEF-ADR-0039 decision 5): la fuente unica de los tipos de evento que este dominio persiste en el event store. El dominio nace sin eventos -- la lista se llena a medida que el flujo TDD (`implementer`) agrega aggregates con `Apply(TEvento)`, fuera del alcance de este agente (issue hermano #476).
+**6a. Crear `IdentidadEventos{PascalCase}.cs`** en la raiz de `src/<RootNamespace>.{PascalCase}.DomainEvents/` (el proyecto que crea el punto 3b **de este mismo Paso 1** -- no el `## Paso 3b`, que es el del worker de proyecciones; MEF-ADR-0036, MEF-ADR-0039 decision 5): la fuente unica de los tipos de evento que este dominio persiste en el event store. El dominio nace sin eventos -- la lista se llena a medida que el flujo TDD (`implementer`) agrega aggregates con `Apply(TEvento)`, fuera del alcance de este agente (issue hermano #476).
 
 ```csharp
 namespace <RootNamespace>.{PascalCase}.DomainEvents;
@@ -2671,8 +2671,9 @@ jobs:
   # ambos) garantiza el orden infra -> deploy (MEF-ADR-0022, "Orden: infra antes que deploy
   # de codigo"). Pero workflow_run por si solo redesplegaria TODOS los dominios tras
   # CADA apply de infra (seguro por idempotencia, pero costoso); este job filtra por si
-  # el PR que se acaba de mergear toco este dominio (src/<RootNamespace>.{PascalCase}/**)
-  # y salta el redeploy si no. Se resuelve via la API de PRs asociados al commit (no
+  # el PR que se acaba de mergear toco este dominio (src/<RootNamespace>.{PascalCase}/**
+  # o su ensamblado de eventos src/<RootNamespace>.{PascalCase}.DomainEvents/**, que se
+  # compila dentro del mismo artefacto -- MEF-ADR-0039) y salta el redeploy si no. Se resuelve via la API de PRs asociados al commit (no
   # depende de la estrategia de merge: squash, merge o rebase).
   determinar-alcance:
     runs-on: ubuntu-latest
@@ -2707,7 +2708,10 @@ jobs:
             echo "debe_desplegar=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if gh api "repos/${{ github.repository }}/pulls/${PR_NUM}/files" --paginate --jq '.[].filename' | grep -q '^src/<RootNamespace>.{PascalCase}/'; then
+          # El ensamblado de eventos del dominio (MEF-ADR-0039) cuenta como "toco este
+          # dominio": su binario entra en el publish del Function App, asi que el filtro
+          # de alcance debe aceptarlo igual que el filtro de 'paths' de arriba.
+          if gh api "repos/${{ github.repository }}/pulls/${PR_NUM}/files" --paginate --jq '.[].filename' | grep -qE '^src/<RootNamespace>.{PascalCase}(\.DomainEvents)?/'; then
             echo "debe_desplegar=true" >> "$GITHUB_OUTPUT"
           else
             echo "debe_desplegar=false" >> "$GITHUB_OUTPUT"
@@ -2813,9 +2817,9 @@ jobs:
 
 > **Autenticacion del deploy (OIDC, MEF-ADR-0022)**: el job `deploy` se autentica con `azure/login` por **OpenID Connect**, NO con un client secret. Por eso declara `permissions: id-token: write` y pasa `client-id` / `tenant-id` / `subscription-id` (los secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`), en vez del JSON unico `AZURE_CREDENTIALS`. Esos tres secrets, el Service Principal sin secret y el **federated credential** que confia en la rama `main` los emite `scripts/setup-github-ci.sh` (paso de bootstrap del README). No hay secret que expire. Si cambias el trigger del workflow para desplegar desde otra rama, tag o un GitHub Environment, debes anadir el federated credential correspondiente (el subject debe coincidir exacto con el claim del token de GitHub).
 
-> **Para quien mantenga este agente -- el filtro de `paths` cubre las dependencias de build, no solo el codigo (issue #454)**: transcribe las cuatro rutas y sus comentarios tal cual. `global.json` esta ahi porque el SDK con el que se compila este dominio **no** lo fija `actions/setup-dotnet`: al recibir `dotnet-version` explicito la action instala ese canal y no lee `global.json` (su input `global-json-file`, el unico que se lo hace leer, no se usa aqui -- [README de `actions/setup-dotnet`](https://github.com/actions/setup-dotnet#using-the-globaljson-file)); el archivo lo leen el **muxer del CLI** y el **resolver de SDK de MSBuild** al correr `dotnet restore`/`dotnet build`, que resuelven contra los SDK instalados usando su `version` como piso y su `rollForward` como politica ([global.json overview, Microsoft Learn](https://learn.microsoft.com/dotnet/core/tools/global-json)). Y el propio `deploy-{kebab}.yml` esta en su lista porque un filtro de `paths` que no se incluye a si mismo no reacciona ni al commit que crea el archivo. Los otros dos workflows del Paso 6 no necesitan el mismo arreglo: `smoke-tests-dominio.yml` es `workflow_call` y `smoke-tests.yml` es `workflow_dispatch` + `schedule`, ninguno declara `paths`. Si generas otro workflow de deploy copiando esta plantilla, copia tambien el filtro completo: fue exactamente asi -- espejando la plantilla vieja, sin las dos rutas -- como el defecto llego al consumidor `Bitakora.ControlAsistencia` (sus PRs #257 y #258, ambos disparados a mano con `workflow_dispatch`).
+> **Para quien mantenga este agente -- el filtro de `paths` cubre las dependencias de build, no solo el codigo (issue #454)**: transcribe las cinco rutas y sus comentarios tal cual. `src/<RootNamespace>.{PascalCase}.DomainEvents/**` esta ahi (issue #544, MEF-ADR-0039) porque el ensamblado de eventos persistidos del dominio se compila **dentro** del artefacto que este workflow publica: sin esa ruta, agregar o cambiar un evento no dispara nada en el push a main y la Function App sigue sirviendo el binario anterior -- la misma staleness silenciosa que describe el parrafo siguiente, no una rotura que CI atrape. El filtro de alcance del job `determinar-alcance` (rama `workflow_run`) acepta esa ruta por el mismo motivo: los dos filtros deben moverse juntos. `global.json` esta ahi porque el SDK con el que se compila este dominio **no** lo fija `actions/setup-dotnet`: al recibir `dotnet-version` explicito la action instala ese canal y no lee `global.json` (su input `global-json-file`, el unico que se lo hace leer, no se usa aqui -- [README de `actions/setup-dotnet`](https://github.com/actions/setup-dotnet#using-the-globaljson-file)); el archivo lo leen el **muxer del CLI** y el **resolver de SDK de MSBuild** al correr `dotnet restore`/`dotnet build`, que resuelven contra los SDK instalados usando su `version` como piso y su `rollForward` como politica ([global.json overview, Microsoft Learn](https://learn.microsoft.com/dotnet/core/tools/global-json)). Y el propio `deploy-{kebab}.yml` esta en su lista porque un filtro de `paths` que no se incluye a si mismo no reacciona ni al commit que crea el archivo. Los otros dos workflows del Paso 6 no necesitan el mismo arreglo: `smoke-tests-dominio.yml` es `workflow_call` y `smoke-tests.yml` es `workflow_dispatch` + `schedule`, ninguno declara `paths`. Si generas otro workflow de deploy copiando esta plantilla, copia tambien el filtro completo: fue exactamente asi -- espejando la plantilla vieja, sin las dos rutas -- como el defecto llego al consumidor `Bitakora.ControlAsistencia` (sus PRs #257 y #258, ambos disparados a mano con `workflow_dispatch`).
 
-> **Orden infra -> deploy (MEF-ADR-0022, issue #197)**: el `push` a `main` ya NO dispara este workflow para cambios bajo `infra/**` -- ese trigger vive ahora en `infra-cd.yml` (`infra-base-scaffolder`). En su lugar, `deploy-{kebab}.yml` se encadena tras `Infra CD` via `workflow_run`, de modo que el codigo nunca se despliega antes de que el `apply` de infra haya creado o actualizado la Function App. El job `determinar-alcance` evita el costo de redesplegar **todos** los dominios tras cada apply de infra: solo continua si el PR de infra que se acaba de mergear toco `src/<RootNamespace>.{PascalCase}/**`. **Caso limite**: si el `apply` de infra llega a `main` por un push directo sin PR asociado (fuera del flujo de `scripts/iac-pipeline.sh`), la API de PRs por commit no encuentra nada y el redeploy se omite por diseno (evita falsos despliegues); en ese caso, dispara el deploy manualmente con `workflow_dispatch`.
+> **Orden infra -> deploy (MEF-ADR-0022, issue #197)**: el `push` a `main` ya NO dispara este workflow para cambios bajo `infra/**` -- ese trigger vive ahora en `infra-cd.yml` (`infra-base-scaffolder`). En su lugar, `deploy-{kebab}.yml` se encadena tras `Infra CD` via `workflow_run`, de modo que el codigo nunca se despliega antes de que el `apply` de infra haya creado o actualizado la Function App. El job `determinar-alcance` evita el costo de redesplegar **todos** los dominios tras cada apply de infra: solo continua si el PR de infra que se acaba de mergear toco `src/<RootNamespace>.{PascalCase}/**` o `src/<RootNamespace>.{PascalCase}.DomainEvents/**` (MEF-ADR-0039: el ensamblado de eventos del dominio se publica dentro del mismo artefacto). **Caso limite**: si el `apply` de infra llega a `main` por un push directo sin PR asociado (fuera del flujo de `scripts/iac-pipeline.sh`), la API de PRs por commit no encuentra nada y el redeploy se omite por diseno (evita falsos despliegues); en ese caso, dispara el deploy manualmente con `workflow_dispatch`.
 
 ---
 
