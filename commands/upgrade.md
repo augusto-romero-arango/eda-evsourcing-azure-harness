@@ -43,35 +43,38 @@ Si el script termina con `ERROR` (CLI `claude` ausente, marketplace/plugin no en
 
 ### 2. Presentar el resultado
 
-Muestra al usuario la salida del bloque tal como la imprimio (version detectada, delta de CHANGELOG, lista de versiones podables). No la reinterpretes ni la reformules -- el script ya hizo el diagnostico completo.
+Muestra al usuario la salida del bloque tal como la imprimio (version detectada, delta de CHANGELOG, versiones conservadas y podables). No la reinterpretes ni la reformules -- el script ya hizo el diagnostico completo.
+
+**Retén dos datos de esa salida** para los pasos siguientes: la linea `Version cargada en esta sesion: <version>` y la linea `Version destino: <version>`.
 
 ### 3. Poda opt-in del cache (CA-4)
 
 Este es el **unico** paso que puede borrar algo, y solo bajo confirmacion explicita del usuario. El paso 1 nunca borra nada (solo reporta).
 
-Aplica este paso **solo si** la salida del paso 1 imprimio una lista de "Versiones podables en el cache". Si en cambio imprimio "Cache limpio: solo quedan la version cargada y la nueva", no hay nada que podar -- omite este paso.
+Aplica este paso **solo si** la salida del paso 1 imprimio una lista de "Versiones podables en el cache". Si en cambio imprimio "Cache limpio: no hay versiones podables", no hay nada que podar -- omite este paso.
 
 1. **Pide confirmacion explicita**, mostrando la lista exacta de versiones que se borrarian (la que ya imprimio el paso 1), p. ej.: "Quedaron estas versiones viejas en el cache: `<lista>`. ¿Las borro? Nunca se toca la version cargada en esta sesion ni la nueva. [si/no]".
 2. **No ejecutes nada sin un "si" explicito.** Si el usuario no confirma, no corras el script con `--prune`: informa que puede volver a correr `/mefisto:upgrade` mas adelante para podarlas, y termina el paso.
-3. **Solo si el usuario confirma**, resuelve `$PLUGIN_SCRIPTS` de nuevo (cada bloque bash es un proceso nuevo, sin el estado del paso 1) e invoca el mismo script con `--prune`:
+3. **Solo si el usuario confirma**, resuelve `$PLUGIN_SCRIPTS` de nuevo (cada bloque bash es un proceso nuevo, sin el estado del paso 1) e invoca el mismo script con `--prune`, **pasandole con `--loaded` la version cargada que retuviste del paso 2**. Ese argumento es el que garantiza CA-4: en el paso 1 el script ya reescribio `.plugin-root` a la version nueva, asi que ese archivo ya no describe lo que esta sesion tiene cargado en memoria. Sustituye `<version-cargada>` por el valor literal (p. ej. `0.19.0`); si el paso 1 imprimio la `ADVERTENCIA` de que no pudo determinarla, omite el flag `--loaded` por completo y deja que el script proteja la N-1 por precaucion. El modo `--prune` **no** vuelve a llamar al CLI: solo borra.
 
 ```bash
 PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
 [ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
 PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
 
-bash "${PLUGIN_SCRIPTS}/update-plugin.sh" --prune
+bash "${PLUGIN_SCRIPTS}/update-plugin.sh" --prune --loaded <version-cargada>
 ```
 
-4. **Reporta el resultado** (que versiones se borraron) tal como lo imprimio el bloque.
+4. **Reporta el resultado** (que versiones se borraron y cuales se conservaron) tal como lo imprimio el bloque.
 
 ### 4. Cerrar con el reload (CA-5)
 
-Independientemente de si hubo poda o no, termina **siempre** con la instruccion explicita de recargar, citando la version destino que ya imprimio el paso 1 (linea "Version destino: `<version>`"): "Corre `/reload-plugins` (o reinicia la sesion) para activar la version `<version>`". Esta instruccion no es opcional ni cosmetica: sin el reload, esta sesion sigue ejecutando el codigo de la version vieja aunque el cache y `.plugin-root` ya apunten a la nueva.
+Independientemente de si hubo poda o no, termina **siempre** con la instruccion explicita de recargar, citando la version destino que retuviste del paso 2: "Corre `/reload-plugins` (o reinicia la sesion) para activar la version `<version>`". Esta instruccion no es opcional ni cosmetica: sin el reload, esta sesion sigue ejecutando el codigo de la version vieja aunque el cache y `.plugin-root` ya apunten a la nueva.
 
 ## Reglas
 
 - **El paso 1 nunca borra nada.** Solo actualiza el marketplace/plugin (operaciones aditivas: agregan una version nueva al cache, nunca quitan las viejas) y reescribe `.claude/pipeline/.plugin-root`. La unica operacion destructiva es la poda del paso 3, y exige un "si" explicito.
-- **La poda nunca toca la version cargada en esta sesion ni la nueva.** Si el skill que esta corriendo ahora mismo se borrara a si mismo, la sesion activa romperia a mitad de ejecucion -- `scripts/update-plugin.sh` lo garantiza internamente (nunca confies en volver a implementar ese calculo aqui).
-- **Nunca hardcodees el nombre del marketplace** (`augusto-romero-arango-harness` es el de referencia, pero un fork puede publicarse bajo otro nombre vía `repoSlug`): el script lo detecta por glob sobre el cache.
+- **La poda nunca toca la version cargada en esta sesion ni la nueva.** Si el skill que esta corriendo ahora mismo se borrara a si mismo, la sesion activa romperia a mitad de ejecucion. El calculo de que se conserva vive dentro de `scripts/update-plugin.sh` (y esta cubierto por `scripts/tests/test-update-plugin.sh`): nunca lo reimplementes aqui. Lo unico que este skill aporta es el dato que el script no puede recuperar solo -- `--loaded <version-cargada>`, copiado de la salida del paso 1.
+- **Nunca hardcodees el nombre del marketplace** (`augusto-romero-arango-harness` es el de referencia, pero un fork puede publicarse bajo otro nombre via `repoSlug`): el script lo deriva del `.plugin-root` cargado y, si eso no alcanza, por glob sobre el cache.
+- **Correr `/mefisto:upgrade` dos veces en la misma sesion es seguro.** El script marca la version cargada en `.claude/pipeline/.plugin-root.previous` la primera vez de cada sesion y no la sobreescribe despues; ese marker lo limpia el hook `SessionStart` del plugin, no el script.
 - Si `$ARGUMENTS` trae algo, ignoralo: `/mefisto:upgrade` no toma argumentos.

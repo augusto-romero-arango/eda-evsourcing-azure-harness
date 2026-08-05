@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"${CLAUDE_PLUGIN_ROOT}\" ] && mkdir -p .claude/pipeline 2>/dev/null && printf '%s' \"${CLAUDE_PLUGIN_ROOT}\" > .claude/pipeline/.plugin-root 2>/dev/null || true"
+            "command": "[ -n \"${CLAUDE_PLUGIN_ROOT}\" ] && mkdir -p .claude/pipeline 2>/dev/null && printf '%s' \"${CLAUDE_PLUGIN_ROOT}\" > .claude/pipeline/.plugin-root 2>/dev/null && rm -f .claude/pipeline/.plugin-root.previous 2>/dev/null || true"
           },
           {
             "type": "command",
