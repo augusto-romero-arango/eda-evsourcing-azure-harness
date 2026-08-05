@@ -65,7 +65,7 @@ public class FunctionEndpoint(IDocumentStore store, ITenantResolver tenantResolv
     public async Task<IActionResult> Run(
         [HttpTrigger(AuthorizationLevel.Function, "get", Route = "Programacion/Turnos/{id}")]
         HttpRequest req,
-        Guid id,
+        string id,   // la identidad del read model es el stream key (un string), no un Guid -- modelos-marten.md
         CancellationToken ct)
     {
         await using var session = store.QuerySession(tenantResolver.TenantId);

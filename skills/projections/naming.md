@@ -31,7 +31,7 @@ Toda Function HTTP -- comando y query -- declara su `Route` explicitamente; el d
 public async Task<IActionResult> Run(
     [HttpTrigger(AuthorizationLevel.Function, "get", Route = "Programacion/Turnos/{id}")]
     HttpRequest req,
-    Guid id,
+    string id,
     CancellationToken ct)
 
 // ListarTurnos/FunctionEndpoint.cs  <- clase y namespace distintos: una carpeta por query
@@ -41,6 +41,8 @@ public async Task<IActionResult> Run(
     HttpRequest req,
     CancellationToken ct)
 ```
+
+**El `{id}` de la ruta se recibe como `string`, no como `Guid`**: la identidad del read model -- y la del stream -- es un `string` en este marco (`StreamIdentity.AsString`, `modelos-marten.md`), el mismo tipo que espera `LoadAsync<TView>(id)` de la via (a) y `AggregateStreamAsync<T>(id)` de la (b1).
 
 El tipo de la request es `HttpRequest` y el retorno `IActionResult` -- la integracion ASP.NET Core del worker aislado --, no `HttpRequestData`/`HttpResponseData` (modelo alterno, mantenido solo por compatibilidad hacia atras).
 
