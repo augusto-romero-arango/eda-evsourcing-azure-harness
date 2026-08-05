@@ -454,10 +454,22 @@ else
     pass "G-11: la etiqueta TIMEOUT ya no se emite sin el exit code"
 fi
 
-if grep -q 'SIGNAL_POST_SUCCESS' "$PIPE"; then
-    pass "G-12: el pipeline distingue una senal posterior al exito de un TIMEOUT"
+# La clasificacion de fallos se extrajo de run_agent a classify_agent_failure
+# en _mefisto-common.sh (issue #534): al pasar a gobernar tambien si un stage
+# se REINTENTA, inline no habia forma de ejercerla sin invocar el CLI real. La
+# distincion de #446 sigue siendo obligatoria; solo cambio de archivo.
+if grep -q 'SIGNAL_POST_SUCCESS' "$REPO_ROOT/.claude/scripts/_mefisto-common.sh"; then
+    pass "G-12: la clasificacion distingue una senal posterior al exito de un TIMEOUT"
 else
-    fail "G-12: el pipeline no distingue SIGNAL_POST_SUCCESS"
+    fail "G-12: la clasificacion no distingue SIGNAL_POST_SUCCESS"
+fi
+
+# Y el pipeline tiene que seguir delegando en ella: si run_agent se quedara
+# con una copia inline propia, G-12 pasaria mientras el pipeline usa otra.
+if grep -q 'failure_type=$(classify_agent_failure' "$PIPE"; then
+    pass "G-13: el pipeline delega la clasificacion en classify_agent_failure"
+else
+    fail "G-13: el pipeline NO usa classify_agent_failure"
 fi
 
 echo ""

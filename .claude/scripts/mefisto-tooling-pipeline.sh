@@ -339,66 +339,104 @@ run_agent() {
 
     local AGENT_TIMEOUT_SECONDS=1800
     local NONINTERACTIVE_SYSTEM="You are running in non-interactive print mode. There is no human to approve anything. You MUST use Write and Edit tools directly to create and modify files at any path including .claude/. Never output text asking for permissions or confirmations -- doing so causes pipeline failure."
-    local TIMEOUT_SIGNAL_FILE="$PIPELINE_DIR_ABS/watchdog-timeout-${stage}-${agent}-${TIMESTAMP}"
 
-    local CLAUDE_EXIT
-    CLAUDE_EXIT=$(run_agent_with_watchdog "$WORKTREE_PATH" "$AGENT_TIMEOUT_SECONDS" "$stream_file" "$stderr_file" "$EVENTS_LOG_ABS" "$agent" "$TIMEOUT_SIGNAL_FILE" \
-        claude -p "$prompt" --model "$AGENT_MODEL" \
-        --permission-mode bypassPermissions \
-        --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
-        --output-format stream-json --verbose)
-    local elapsed=$(( $(date +%s) - start_ts ))
+    # --- Reintento ante fallo transitorio del servidor (issue #534) ---
+    # Ambos parametros son overridables por entorno para que los tests puedan
+    # ejercer el bucle sin esperar 120s reales.
+    local MAX_ATTEMPTS="${MEFISTO_AGENT_MAX_ATTEMPTS:-3}"
+    local RETRY_BACKOFF_SECONDS="${MEFISTO_AGENT_RETRY_BACKOFF_SECONDS:-120}"
 
-    # CA-1/CA-3: el stream crudo (una linea JSON por evento) queda en
-    # $stream_file para analisis posterior; $log_stage se deriva de el (texto
-    # del asistente + una linea por tool call) mas el contenido de
-    # $stderr_file, con el mismo nombre de archivo de siempre -- la
-    # clasificacion de fallos de mas abajo sigue leyendo $log_stage sin
-    # cambios.
-    derive_stage_log_from_stream "$stream_file" "$stderr_file" "$log_stage"
+    # CA-4: estado del worktree AL ENTRAR al stage, para poder restaurarlo
+    # entre reintentos. No sirve $SNAPSHOT_COMMIT: ese es el commit de entrada
+    # al PIPELINE, y en stage 2 resetear ahi borraria el commit del writer.
+    #
+    # Solo se restaura si el worktree entraba LIMPIO. El pipeline tolera que
+    # el writer deje trabajo sin commitear (ver HAS_UNSTAGED tras stage 1), y
+    # en ese caso un reset --hard destruiria trabajo legitimo: ante la duda no
+    # se toca nada y se reintenta sobre el estado actual.
+    local ENTRY_COMMIT="" ENTRY_CLEAN=false
+    ENTRY_COMMIT=$(git -C "$WORKTREE_PATH" rev-parse HEAD 2>/dev/null || echo "")
+    if [ -z "$(git -C "$WORKTREE_PATH" status --porcelain 2>/dev/null)" ]; then
+        ENTRY_CLEAN=true
+    fi
 
-    # CA-1 (issue #426): metricas por stage derivadas de la misma traza cruda
-    # que ya deriva el log legible de arriba. Se escriben SIEMPRE (stage
-    # exitoso o fallido) -- un fallo de instrumentacion (jq ausente, stream
-    # vacio, sin evento result) degrada a "null" y nunca aborta el pipeline.
-    local metrics_json
-    metrics_json=$(compute_stage_metrics "$stream_file")
-    echo "$metrics_json" > "$PIPELINE_DIR_ABS/metrics/mefisto-tooling-${TIMESTAMP}-issue-${ISSUE_NUM}-stage-${stage}-${agent}.json" 2>/dev/null || true
+    local CLAUDE_EXIT=0 TIMED_OUT=false failure_type="" metrics_json="" elapsed=0
+    local attempt=1
+    while :; do
+        local attempt_start_ts
+        attempt_start_ts=$(date +%s)
 
-    local TIMED_OUT=false
-    [ -f "$TIMEOUT_SIGNAL_FILE" ] && TIMED_OUT=true
-    rm -f "$TIMEOUT_SIGNAL_FILE"
+        # La senal del watchdog lleva el numero de intento: si el watchdog de
+        # un intento anterior sobrevivio a su kill, no puede marcar como
+        # TIMEOUT al intento siguiente (el nombre ya no colisiona).
+        local TIMEOUT_SIGNAL_FILE="$PIPELINE_DIR_ABS/watchdog-timeout-${stage}-${agent}-${TIMESTAMP}-${attempt}"
 
-    if [ "$CLAUDE_EXIT" -ne 0 ] || [ "$TIMED_OUT" = true ]; then
-        local failure_type
-        # PR #446: la traza declara si el CLI llego a cumplir su contrato.
-        # Una senal DESPUES de un `result` de exito no es un timeout: llamarla
-        # asi era lo que mandaba el stage a irrecuperable y tiraba el trabajo.
-        local STREAM_OK=false
-        if agent_stream_completed_successfully "$stream_file"; then
-            STREAM_OK=true
+        CLAUDE_EXIT=$(run_agent_with_watchdog "$WORKTREE_PATH" "$AGENT_TIMEOUT_SECONDS" "$stream_file" "$stderr_file" "$EVENTS_LOG_ABS" "$agent" "$TIMEOUT_SIGNAL_FILE" \
+            claude -p "$prompt" --model "$AGENT_MODEL" \
+            --permission-mode bypassPermissions \
+            --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
+            --output-format stream-json --verbose)
+        elapsed=$(( $(date +%s) - attempt_start_ts ))
+
+        # CA-1/CA-3: el stream crudo (una linea JSON por evento) queda en
+        # $stream_file para analisis posterior; $log_stage se deriva de el (texto
+        # del asistente + una linea por tool call) mas el contenido de
+        # $stderr_file, con el mismo nombre de archivo de siempre -- la
+        # clasificacion de fallos de mas abajo sigue leyendo $log_stage sin
+        # cambios.
+        derive_stage_log_from_stream "$stream_file" "$stderr_file" "$log_stage"
+
+        # CA-1 (issue #426): metricas por stage derivadas de la misma traza cruda
+        # que ya deriva el log legible de arriba. Se escriben SIEMPRE (stage
+        # exitoso o fallido) -- un fallo de instrumentacion (jq ausente, stream
+        # vacio, sin evento result) degrada a "null" y nunca aborta el pipeline.
+        metrics_json=$(compute_stage_metrics "$stream_file")
+        echo "$metrics_json" > "$PIPELINE_DIR_ABS/metrics/mefisto-tooling-${TIMESTAMP}-issue-${ISSUE_NUM}-stage-${stage}-${agent}.json" 2>/dev/null || true
+
+        TIMED_OUT=false
+        [ -f "$TIMEOUT_SIGNAL_FILE" ] && TIMED_OUT=true
+        rm -f "$TIMEOUT_SIGNAL_FILE"
+
+        failure_type=""
+        if [ "$CLAUDE_EXIT" -ne 0 ] || [ "$TIMED_OUT" = true ]; then
+            failure_type=$(classify_agent_failure "$TIMED_OUT" "$CLAUDE_EXIT" "$elapsed" "$log_stage" "$stream_file")
         fi
-        if [ "$TIMED_OUT" = true ]; then
-            # El watchdog disparo: es el unico TIMEOUT de verdad. El exit code
-            # va en el mensaje porque una senal de grupo no siempre se refleja
-            # como 137/143 y sin el no hay forma de saberlo post-mortem.
-            failure_type="TIMEOUT (${elapsed}s, exit $CLAUDE_EXIT)"
-        elif [ "$CLAUDE_EXIT" -eq 137 ] || [ "$CLAUDE_EXIT" -eq 143 ]; then
-            if [ "$STREAM_OK" = true ]; then
-                failure_type="SIGNAL_POST_SUCCESS (exit $CLAUDE_EXIT, ${elapsed}s)"
-            else
-                failure_type="SIGNAL_MID_FLIGHT (exit $CLAUDE_EXIT, ${elapsed}s)"
-            fi
-        elif grep -q "API Error: 5" "$log_stage" 2>/dev/null; then
-            failure_type="API_ERROR_SERVER (exit $CLAUDE_EXIT)"
-        elif grep -q "API Error: 4" "$log_stage" 2>/dev/null; then
-            failure_type="API_ERROR_CLIENT (exit $CLAUDE_EXIT)"
-        elif agent_log_has_stream_cut "$log_stage"; then
-            failure_type="STREAM_CUT (exit $CLAUDE_EXIT)"
+
+        # Salida normal: exito, fallo no reintentable, o reintentos agotados.
+        [ -z "$failure_type" ] && break
+        agent_failure_is_retryable "$failure_type" || break
+        [ "$attempt" -ge "$MAX_ATTEMPTS" ] && break
+
+        # CA-6: el reintento deja rastro. Sin esta linea un post-mortem no
+        # puede distinguir "salio a la primera" de "salio al tercer intento".
+        warn "$agent: $failure_type -- reintentando ($((attempt + 1))/$MAX_ATTEMPTS) tras ${RETRY_BACKOFF_SECONDS}s"
+        echo "[$(date +%H:%M:%S)] REINTENTO $agent: $failure_type (intento $attempt/$MAX_ATTEMPTS, espera ${RETRY_BACKOFF_SECONDS}s)" >> "$EVENTS_LOG_ABS"
+
+        # El log y la traza del intento fallido se preservan aparte: el
+        # siguiente intento sobrescribe los nombres canonicos, y sin esta
+        # copia la evidencia del fallo que motivo el reintento se perderia.
+        cp -f "$log_stage" "${log_base}.attempt-${attempt}.log" 2>/dev/null || true
+        cp -f "$stream_file" "${log_base}.attempt-${attempt}.stream.jsonl" 2>/dev/null || true
+
+        if [ "$ENTRY_CLEAN" = true ] && [ -n "$ENTRY_COMMIT" ]; then
+            # CA-5: `clean -fd` va sin -x a proposito -- .claude/pipeline/ esta
+            # gitignored y sus summaries deben sobrevivir al reintento.
+            git -C "$WORKTREE_PATH" reset --hard "$ENTRY_COMMIT" >/dev/null 2>&1 || true
+            git -C "$WORKTREE_PATH" clean -fd >/dev/null 2>&1 || true
+            log "Worktree restaurado a ${ENTRY_COMMIT:0:8} para el reintento"
         else
-            failure_type="CLI_ERROR (exit $CLAUDE_EXIT)"
+            log "El worktree ya tenia cambios al entrar al stage: NO se restaura (se reintenta sobre el estado actual)"
         fi
 
+        sleep "$RETRY_BACKOFF_SECONDS"
+        attempt=$((attempt + 1))
+    done
+
+    # El wall-clock del stage incluye todos los intentos y sus esperas: es lo
+    # que de verdad costo, y es lo que se reporta al historial.
+    local total_elapsed=$(( $(date +%s) - start_ts ))
+
+    if [ -n "$failure_type" ]; then
         log "$agent fallo despues de ${elapsed}s -- tipo: $failure_type"
         echo "[$(date +%H:%M:%S)] FALLO $agent: $failure_type" >> "$EVENTS_LOG_ABS"
 
@@ -424,8 +462,8 @@ run_agent() {
             echo "[$(date +%H:%M:%S)] RECUPERADO $agent: trabajo util detectado" >> "$EVENTS_LOG_ABS"
         else
             case "$agent" in
-                writer)   AGENT_WR_DUR=$elapsed; AGENT_WR_RES="failed" ;;
-                reviewer) AGENT_RV_DUR=$elapsed; AGENT_RV_RES="failed" ;;
+                writer)   AGENT_WR_DUR=$total_elapsed; AGENT_WR_RES="failed" ;;
+                reviewer) AGENT_RV_DUR=$total_elapsed; AGENT_RV_RES="failed" ;;
             esac
             # Las metricas se cosechan por STAGE, no por agente: el stage de
             # resolucion de conflictos corre como `run_agent "merge" "writer"`,
@@ -445,9 +483,13 @@ run_agent() {
         fi
     fi
 
-    LAST_AGENT_DURATION=$elapsed
+    LAST_AGENT_DURATION=$total_elapsed
     LAST_AGENT_METRICS_JSON="$metrics_json"
-    log "$agent completado en ${elapsed}s"
+    if [ "$attempt" -gt 1 ]; then
+        log "$agent completado en ${total_elapsed}s (intento $attempt/$MAX_ATTEMPTS; ${elapsed}s el ultimo)"
+    else
+        log "$agent completado en ${total_elapsed}s"
+    fi
 }
 
 # --- Funcion auxiliar: auto-commit de seguridad (solo paths del scope de Mefisto) ---
