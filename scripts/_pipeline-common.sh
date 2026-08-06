@@ -939,9 +939,11 @@ coverage_classify_file() {
     dirname=$(dirname "$filepath")
 
     # Excluidos por nombre. IdentidadEventos*.cs es el hermano exacto de
-    # ConfiguracionSerializacion*.cs -- lista de configuracion sin logica cuya
-    # guarda real es el guardrail de ComposicionContenedorTests, no cobertura
-    # de lineas (MEF-ADR-0036 seccion 4/6).
+    # ConfiguracionSerializacion*.cs -- lista declarativa de tipos persistidos,
+    # sin logica de negocio (MEF-ADR-0036 seccion 3) --, y su guarda real son
+    # los dos guardrails de ComposicionContenedorTests sobre el store que
+    # compone el contenedor real (MEF-ADR-0036 seccion 4 + MEF-ADR-0029), no
+    # cobertura de lineas.
     case "$basename" in
         HealthCheck.cs|Program.cs|*Mensajes.cs|*AssemblyMarker.cs|ConfiguracionSerializacion*.cs|IdentidadEventos*.cs|*.resx)
             echo "excluded"; return ;;
