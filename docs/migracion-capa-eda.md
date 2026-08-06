@@ -13,17 +13,18 @@ Del harness en sí desaparecen, con ese mismo `/upgrade`:
 - El skill `/show-flow`
 - El script `scripts/eda-lint.sh`
 
-Ninguno de los cuatro tiene reemplazo directo, y no lo necesita: el `planner` ya cubría el knowledge crunching por issue (MEF-ADR-0008), y las demás fuentes de conocimiento del dominio se producen como efecto colateral del trabajo normal — escribir código, investigar un bug, documentar un ADR — no como un artefacto que alguien tiene que recordar sincronizar (MEF-ADR-0040, decisión 2).
+Que buscarlos después del `/upgrade` no encuentre nada en el plugin es lo esperado, no un error de instalación. Ninguno de los cuatro tiene reemplazo directo, y no lo necesita: ningún skill del pipeline de entrega (`/scaffold`, `/draft`, `/implement`, `/tooling`, `/infra`, `/infra-base`, `/parallel`, `/sequential`) los invoca ni depende de ellos. El `planner` ya cubría el knowledge crunching por issue (MEF-ADR-0008), y el conocimiento del dominio se sostiene ahora en las cuatro fuentes vigentes (MEF-ADR-0040, decisión 2): código por rol, glosario custodiado por el planner, field notes/bitácora y tus propios ADRs. Las tres últimas no necesitan un agente dedicado — se producen como efecto colateral del trabajo normal (escribir código, investigar un bug, documentar un ADR), no como un artefacto que alguien tiene que recordar sincronizar.
 
 ## El único paso con efecto activo: mover el glosario
 
 Si tu `docs/eda/ubiquitous-language.yaml` tiene contenido real (términos, actores, preguntas abiertas), este es el único movimiento que vale la pena hacer pronto:
 
 ```bash
+mkdir -p docs/ddd   # git mv aborta si el directorio destino todavia no existe
 git mv docs/eda/ubiquitous-language.yaml docs/ddd/ubiquitous-language.yaml
 ```
 
-**No es urgente.** El `planner` intenta primero la ruta nueva (`docs/ddd/ubiquitous-language.yaml`) y, si no la encuentra, hace *fallback* de lectura a la ruta vieja (`docs/eda/ubiquitous-language.yaml`) — el mismo comportamiento que ves documentado en `agents/planner.md`, sección "Tu stack de conocimiento". Mientras no ejecutes el `git mv`, el glosario sigue funcionando: el planner lo lee, lo usa como guardrail anti-sinónimos y te avisa con un `AVISO` de que entró por la ruta vieja.
+**No es urgente.** El `planner` intenta primero la ruta nueva (`docs/ddd/ubiquitous-language.yaml`) y, si no la encuentra, hace *fallback* de lectura a la ruta vieja (`docs/eda/ubiquitous-language.yaml`) — el comportamiento documentado en el body del agente dentro del plugin (`agents/planner.md`, sección "Tu stack de conocimiento"). Mientras no ejecutes el `git mv`, el glosario sigue funcionando: el planner lo lee, lo usa como guardrail anti-sinónimos y, al detectar que entró por la ruta vieja, te sugiere ese mismo `git mv`.
 
 Lo que sí importa mientras no lo muevas: **el glosario que se actualiza sigue siendo el de `docs/eda/`**, no uno nuevo en `docs/ddd/`. El planner nunca escribe una copia nueva en la ruta canónica mientras la vieja siga existiendo — hacerlo reintroduciría el riesgo de divergencia entre dos copias del mismo glosario que MEF-ADR-0040 elimina (decisión 4). Es la única operación que esta guía marca como **incorrecta**: mantener manualmente dos copias del glosario, una en cada ruta. Todo lo demás en esta guía es opcional.
 
@@ -45,7 +46,3 @@ El resto de `docs/eda/` (`catalog.yaml`, `flows/`, `messaging/topics.yaml`, `pro
 ## Limpiar referencias propias, si las tienes
 
 Si tu `CLAUDE.md` o tus ADRs de consumidor (`docs/adr-proyecto/` o equivalente) mencionan `docs/eda/`, `/show-flow`, `eda-modeler` o `event-stormer` — por ejemplo, en instrucciones de onboarding o en un ADR que documentó cómo tu equipo adoptó el pipeline de conocimiento original (MEF-ADR-0010) — actualízalas para que reflejen el estado vigente. Esto es limpieza de tu propia documentación, no algo que Mefisto pueda hacer por ti: el marco solo controla sus propios archivos.
-
-## Qué desapareció del harness (y qué no depende de ello)
-
-Después de `/upgrade`, buscar cualquiera de estos ya no encuentra nada en el plugin: el skill `/show-flow`, los agentes `eda-modeler` y `event-stormer`, el script `scripts/eda-lint.sh`. Es esperado — no es un error de instalación. Ningún skill del pipeline de entrega (`/scaffold`, `/draft`, `/implement`, `/tooling`, `/infra`, `/infra-base`, `/parallel`, `/sequential`) invoca ni depende de ninguno de los cuatro: el conocimiento del dominio que antes producían ahora se sostiene en las cuatro fuentes vigentes (MEF-ADR-0040, decisión 2): código por rol, glosario custodiado por el planner, field notes/bitácora, y tus propios ADRs.
