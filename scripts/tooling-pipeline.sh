@@ -419,7 +419,10 @@ run_agent() {
             if ! git -C "$WORKTREE_PATH" diff --quiet "${SNAPSHOT_COMMIT:-HEAD}..HEAD" 2>/dev/null; then
                 has_commits=true
             fi
-            if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ scripts/ .claude/ 2>/dev/null)" ]; then
+            # Patron de exclusion (scaffold-pipeline.sh:301, issue #568): cualquier
+            # cambio fuera de .claude/pipeline/ (estado runtime del plugin) cuenta
+            # como trabajo util, en vez de listar a mano las rutas de escritura.
+            if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- . ':!.claude/pipeline' 2>/dev/null)" ]; then
                 has_commits=true
             fi
 
@@ -456,16 +459,14 @@ auto_commit_if_needed() {
 
     git -C "$WORKTREE_PATH" checkout -- .claude/settings.json 2>/dev/null || true
 
-    # pipeline-state/ es ruta de escritura permitida (MEF-ADR-0019:37) pero su senal nunca
-    # se versiona (MEF-ADR-0017): por eso falta en el "git add" de abajo. Donde esta
-    # gitignored -- consumidor greenfield, bloque byte-fijo del .gitignore raiz que emite
-    # infra-base-scaffolder en su Paso 2c -- git status no la reporta, asi que su mencion en
-    # este filtro es inerte y solo queda como ancla de la advertencia (ver el gate de abajo).
-    if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ scripts/ .github/ infra/ pipeline-state/)" ]; then
+    # Patron de exclusion (scaffold-pipeline.sh:301, issue #568): commitea todo
+    # menos lo que el propio pipeline escribe. .claude/pipeline/ es estado runtime
+    # del plugin (nunca se versiona); pipeline-state/ es la senal de MEF-ADR-0017 --
+    # normalmente gitignored en el consumidor greenfield, pero se excluye igual por
+    # si el consumidor no la ignoro, para que ningun commit automatico la incluya.
+    if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- . ':!.claude/pipeline' ':!pipeline-state')" ]; then
         log "Haciendo commit automatico (fase $phase)..."
-        for dir in tests/ src/ scripts/ .github/ infra/; do
-            git -C "$WORKTREE_PATH" add "$dir" 2>/dev/null || true
-        done
+        git -C "$WORKTREE_PATH" add -A -- . ':!.claude/pipeline' ':!pipeline-state' 2>/dev/null || true
         git -C "$WORKTREE_PATH" commit -m "$msg" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 || true
     fi
 }
@@ -520,20 +521,22 @@ Instrucciones:
 
     run_agent "1" "writer" "$STAGE1_PROMPT"
 
-    # Validar que genero cambios reales (excluir .claude/settings.json y .claude/pipeline/
-    # que el pipeline modifica antes de invocar al agente)
+    # Validar que genero cambios reales con el patron de exclusion de
+    # scaffold-pipeline.sh:301 (issue #568): cualquier cambio fuera de
+    # .claude/pipeline/ (estado runtime del plugin, que ademas se restaura via
+    # checkout arriba en el caso de .claude/settings.json) cuenta como trabajo.
+    # Reemplaza la allowlist a mano (tests/ src/ scripts/ .github/ infra/), que se
+    # habia desincronizado de la allowlist real del skill (commands/tooling.md) --
+    # el caso original de este issue fue un cambio docs-only que esa lista no veia.
+    # El caso latente de #485 (senal SOLO en pipeline-state/ gitignored) sigue
+    # latente: git status no ve rutas ignoradas, con o sin esta lista.
     git -C "$WORKTREE_PATH" checkout -- .claude/settings.json 2>/dev/null || true
     HAS_COMMITS=false
     HAS_UNSTAGED=false
     if ! git -C "$WORKTREE_PATH" diff --quiet "$SNAPSHOT_COMMIT" HEAD 2>/dev/null; then
         HAS_COMMITS=true
     fi
-    # pipeline-state/ es ruta de escritura permitida (MEF-ADR-0019:37) pero gitignored en el
-    # consumidor greenfield (MEF-ADR-0017; .gitignore raiz del Paso 2c de infra-base-scaffolder):
-    # alli git status no la ve, asi que un writer que produjera SOLO una senal en ese directorio
-    # caeria en el abort de abajo ("no genero ningun cambio"). Hoy es latente: ningun agente del
-    # carril de tooling escribe ahi (ver issue #485).
-    if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ scripts/ .github/ infra/ pipeline-state/ 2>/dev/null)" ]; then
+    if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- . ':!.claude/pipeline' 2>/dev/null)" ]; then
         HAS_UNSTAGED=true
     fi
     if [ "$HAS_COMMITS" = false ] && [ "$HAS_UNSTAGED" = false ]; then
@@ -555,8 +558,8 @@ $STAGE1_PROMPT"
             git -C "$WORKTREE_PATH" checkout -- .claude/settings.json 2>/dev/null || true
             HAS_COMMITS=false; HAS_UNSTAGED=false
             if ! git -C "$WORKTREE_PATH" diff --quiet "$SNAPSHOT_COMMIT" HEAD 2>/dev/null; then HAS_COMMITS=true; fi
-            # Mismo acoplamiento pipeline-state/ gitignored vs allowlist de escritura, ver arriba.
-            if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ scripts/ .github/ infra/ pipeline-state/ 2>/dev/null)" ]; then HAS_UNSTAGED=true; fi
+            # Mismo patron de exclusion que el chequeo original, ver comentario arriba.
+            if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- . ':!.claude/pipeline' 2>/dev/null)" ]; then HAS_UNSTAGED=true; fi
         fi
 
         if [ "$HAS_COMMITS" = false ] && [ "$HAS_UNSTAGED" = false ]; then
