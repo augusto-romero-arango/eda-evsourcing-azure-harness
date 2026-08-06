@@ -877,13 +877,15 @@ WORKDIR /src
 # store: el 'dotnet restore' de abajo no puede resolver un ProjectReference cuyo .csproj todavia
 # no llego a esta capa.
 #
-# COPY --parents (sintaxis docker/dockerfile:1, flag estabilizado en la version 1.20 -- verificado
-# contra docs.docker.com/reference/dockerfile/#copy---parents) preserva la carpeta de CADA .csproj
-# que matchea el patron. Sin --parents, un COPY con wildcard APLANA el destino en cuanto hay mas de
-# un archivo matcheado: la propia documentacion oficial lo advierte -- "without the --parents flag
-# specified, any filename collision will (...) [Buildkit] will silently overwrite the target file
-# at the destination" -- exactamente el riesgo de copiar N .csproj (uno por dominio) a una sola
-# carpeta plana en vez de preservar cada uno bajo la suya.
+# COPY --parents (sintaxis docker/dockerfile:1, "Minimum Dockerfile version: 1.20" segun
+# docs.docker.com/reference/dockerfile/#copy---parents) preserva la carpeta de CADA .csproj que
+# matchea el patron, que es justo lo que el restore necesita: los <ProjectReference> del worker son
+# rutas RELATIVAS (..\<RootNamespace>.{Dominio}.DomainEvents\...), asi que cada .csproj tiene que
+# aterrizar bajo su propia carpeta. Un COPY con wildcard SIN --parents APLANA el destino -- la doc
+# oficial lo ilustra: "COPY ./x/a.txt ./y/a.txt /no_parents/" deja "/no_parents/a.txt" -- y ademas
+# advierte que ante una colision de nombres "[Buildkit] will silently overwrite the target file at
+# the destination". Con el destino aplanado, ni la ruta del propio Projections.csproj del restore
+# de abajo ni las rutas relativas de sus referencias existirian: el build muere aqui.
 #
 # El patron "src/<RootNamespace>.*/*.csproj" matchea TODO proyecto de primer nivel bajo src/
 # (Projections, ReadModels, cada {Dominio}.DomainEvents, y tambien PublicEvents/PrivateEvents/cada
@@ -922,6 +924,8 @@ WORKDIR /app
 COPY --from=publish /app/publish .
 ENTRYPOINT ["dotnet", "<RootNamespace>.Projections.dll"]
 ```
+
+**Prerequisito del `COPY --parents`: BuildKit + frontend `docker/dockerfile:1` (issue #552).** La directiva `# syntax=docker/dockerfile:1` de la **primera linea** no es decorativa y no es opcional: `--parents` exige la version 1.20 o superior del frontend de Dockerfile (*"Minimum Dockerfile version: 1.20"*, [referencia oficial de `COPY --parents`](https://docs.docker.com/reference/dockerfile/#copy---parents)), y el tag flotante `1` resuelve siempre la ultima 1.x estable, asi que la satisface. Dos consecuencias que hay que respetar al transcribir el archivo: la directiva debe ir **antes de cualquier comentario, linea en blanco o instruccion** -- una directiva de parser que aparece despues de un comentario se degrada a comentario ordinario, en silencio, y el `--parents` deja de existir; y solo **BuildKit** la lee (el builder por defecto desde Docker Engine 23.0 y el que usa `docker/build-push-action`), de modo que un build forzado al builder clasico con `DOCKER_BUILDKIT=0` muere con `Unknown flag: parents`. Si la validacion opcional del Paso 4 falla asi en la maquina del consumidor, el sospechoso es el builder, no el Dockerfile.
 
 **Acoplamiento entre este Dockerfile y el `rollForward` de `global.json` (issue #452):** `mcr.microsoft.com/dotnet/sdk:10.0` es un tag **flotante** -- sirve la ultima feature band y patch que Microsoft publique para la linea `10.0`, y avanza de banda sin que nadie mueva un digest aqui (hoy resuelve a `10.0.302`, banda `3xx`). Por eso el `global.json` del Paso 3 fija `rollForward` en `latestFeature` y no en `latestPatch`: `latestPatch` solo acepta un SDK que coincida en major, minor **y feature band** ([tabla de `rollForward`, Microsoft Learn](https://learn.microsoft.com/dotnet/core/tools/global-json#rollforward)), asi que en cuanto el tag sirva una banda distinta a la de `version` el SDK queda rechazado y la imagen no se puede construir. **Mientras la etapa `build` use un tag flotante, `rollForward` no puede ser mas estricto que `latestFeature`** sin quedar incompatible por construccion. Volver a `latestPatch` solo tendria sentido si esta imagen pasara a pinear una version exacta -- `dotnet/sdk` publica `10.0` o versiones completas como `10.0.302`, no tags de banda tipo `10.0.2xx` (verificado contra `mcr.microsoft.com/v2/dotnet/sdk/tags/list`) -- y ese pin habria que subirlo a mano en cada parche.
 
@@ -1284,31 +1288,29 @@ dotnet test --project "tests/<RootNamespace>.Projections.Tests/"
 
 Si algun build falla, lee el error, corrige y vuelve a intentar. Si `dotnet test` falla, corrige el config-test base antes de continuar -- CA-5 exige que `Projections.Tests` pase en verde con el seam base, sin ninguna proyeccion de dominio todavia. **No hagas commit hasta que los tres pasen.**
 
-**Verificacion mecanica de MEF-ADR-0039 decision 4 (CA-4, issue #552) -- obligatoria, no opcional (a diferencia de la validacion de Docker de abajo).** Recorre cada `<ProjectReference>` del `.csproj` del worker y detente si alguna no es `*.DomainEvents` ni `<RootNamespace>.ReadModels`:
+**Verificacion mecanica de MEF-ADR-0039 decision 4 (CA-4, issue #552) -- obligatoria, no opcional (a diferencia de la validacion de Docker de abajo).** Tras el Paso 1b, **toda** `ProjectReference` del `.csproj` del worker debe resolver a un `*.DomainEvents.csproj` o a `ReadModels.csproj` (decision 2) -- ninguna al `.csproj` de un Function App (`src/<RootNamespace>.{Dominio}/<RootNamespace>.{Dominio}.csproj`). Es **el mismo comando** que corre `domain-scaffolder` en su Paso 3b punto 4 (issue #548): transcribelo igual, no lo reescribas -- las dos verificaciones de la misma regla del ADR deben tener una sola forma, y esta ya trae resueltos los tres detalles que se listan debajo.
 
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel)
 CSPROJ="$REPO_ROOT/src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj"
-FALLO=0
-for ref in $(grep -oE '<ProjectReference Include="[^"]+"' "$CSPROJ" | sed -E 's/.*Include="(.*)"/\1/'); do
-    nombre=$(basename "$ref" .csproj)
-    case "$nombre" in
-        *.DomainEvents|<RootNamespace>.ReadModels)
-            ;;
-        *)
-            echo "ERROR MEF-ADR-0039 decision 4: ProjectReference prohibida -- '$nombre' no es *.DomainEvents ni <RootNamespace>.ReadModels."
-            FALLO=1
-            ;;
-    esac
-done
-if [ "$FALLO" -eq 1 ]; then
-    echo "Detente sin commit: revisa como se agrego esa ProjectReference -- este agente nunca escribe una hacia un Function App."
-    exit 1
+if [ ! -f "$CSPROJ" ]; then
+  echo "ERROR: no existe $CSPROJ -- detente aqui, no hagas commit, informa al usuario"
+else
+  INTRUSOS=$(grep -o '<ProjectReference[^>]*Include="[^"]*"' "$CSPROJ" \
+    | grep -v -e '\.DomainEvents\.csproj"$' -e 'ReadModels\.csproj"$')
+  if [ -n "$INTRUSOS" ]; then
+    echo "VIOLACION MEF-ADR-0039 decision 4 -- referencias no permitidas en el worker:"
+    echo "$INTRUSOS"
+    echo "detente aqui, no hagas commit, informa al usuario"
+  else
+    echo "OK: el worker solo referencia *.DomainEvents.csproj y ReadModels.csproj"
+  fi
 fi
-echo "Verificacion MEF-ADR-0039 decision 4: OK -- ninguna ProjectReference del worker resuelve a un Function App."
 ```
 
-Es la materializacion, del lado de este agente, de la prohibicion mecanicamente verificable que fija MEF-ADR-0039 seccion 10 punto 2 ("ningun `.csproj` de `<RootNamespace>.Projections` contiene una `<ProjectReference>` hacia el `.csproj` de ningun `<RootNamespace>.{Dominio}`"). Si esto dispara, la causa mas probable es una edicion manual posterior o un agente distinto de este que agrego la referencia por error: **nunca** la "arregles" quitando el assert -- el objetivo es que la referencia prohibida no exista, no que la verificacion pase.
+Es la materializacion, del lado de este agente, de la prohibicion mecanicamente verificable que fija MEF-ADR-0039 seccion 10 punto 2 ("ningun `.csproj` de `<RootNamespace>.Projections` contiene una `<ProjectReference>` hacia el `.csproj` de ningun `<RootNamespace>.{Dominio}`"). **Se afirma como allowlist, no como blacklist**: prohibir por nombre los Function Apps conocidos dejaria pasar en silencio una referencia a `PublicEvents`/`PrivateEvents`, que la decision 2 tambien prohibe en el read-side (tres islas). Si esto dispara, la causa mas probable es una edicion manual posterior o un agente distinto de este que agrego la referencia por error: **nunca** la "arregles" quitando el assert -- el objetivo es que la referencia prohibida no exista, no que la verificacion pase.
+
+Tres detalles del comando que no debes simplificar al transcribirlo (los mismos que documenta `domain-scaffolder`): el `test -f` previo esta porque un `grep` sobre un archivo inexistente sale con codigo 2, y la forma corta `grep ... && echo VIOLACION || echo OK` imprimiria "OK" en ese caso -- un falso verde justo antes del commit; el filtro **ancla en el sufijo `.csproj"$`** y nunca compara el nombre del proyecto de forma exacta, porque el valor de `Include` es una ruta **relativa** cuyo separador depende de quien la escribio (las plantillas de este marco usan `\`, p. ej. `..\<RootNamespace>.ReadModels\<RootNamespace>.ReadModels.csproj`) -- un `basename` o un `case` contra el nombre pelado no recorta un separador `\`, marcaria como intrusa la referencia legitima a `ReadModels` y detendria al agente sin commit por un falso positivo; y el comando es line-based: si algun `ProjectReference` quedo partido en varias lineas (`dotnet add reference` nunca lo hace, pero una edicion a mano si), reformatealo a una sola linea antes de correrlo.
 
 Si `docker` esta instalado **y su daemon responde**, valida tambien el Dockerfile (opcional, no bloqueante). El `| tail` se queda con el exit code de `tail`, no del build, asi que captura el del build explicitamente antes de concluir que paso:
 
@@ -1326,7 +1328,7 @@ fi
 
 Si `docker` no esta disponible, informa al usuario y deja esta validacion como pendiente manual explicito (nunca la reportes como exitosa). La primera corrida descarga las imagenes `dotnet/sdk:10.0` y `dotnet/runtime:10.0` (varios cientos de MB): si tarda o falla por red, tratala igual que "no disponible" -- no bloquea el commit.
 
-Ese `docker build` ya corre con el `.dockerignore` del Paso 2a en efecto, y es la **unica** verificacion real de que ninguna de sus lineas excluye algo que el build si necesita (`global.json`, los dos `.csproj`, los `.cs` de `Projections`/`ReadModels`). Si falla con un archivo o proyecto no encontrado, el sospechoso es una exclusion de mas del Paso 2a, no el Dockerfile: revisa el `.dockerignore` antes de tocar nada de la etapa `build`.
+Ese `docker build` ya corre con el `.dockerignore` del Paso 2a en efecto, y es la **unica** verificacion real de que ninguna de sus lineas excluye algo que el build si necesita (`global.json`, los `.csproj` que la capa de restore resuelve -- `Projections`, `ReadModels` y cada `{Dominio}.DomainEvents` adoptado, issue #552 -- y los `.cs` de esos proyectos). Si falla con un archivo o proyecto no encontrado, el sospechoso es una exclusion de mas del Paso 2a, no el Dockerfile: revisa el `.dockerignore` antes de tocar nada de la etapa `build`.
 
 ---
 
@@ -1383,5 +1385,5 @@ Imprime un resumen claro:
 9. **NUNCA** hagas que ese workflow ejecute Terraform (`terraform output`, `terraform apply`, etc.) ni encadenes su trigger tras `Infra CD` con `workflow_run` (decision tomada al refinar el issue #453, ver la nota "Sin encadenar tras `Infra CD`" del Paso 2b): el `ignore_changes` del issue #456 ya evita que un `apply` normal revierta la imagen, y el caso residual (un `apply` que recree el Container App) se cubre documentandolo en la cabecera, no encadenando el workflow.
 10. El sampler de `ConfiguracionObservabilidadProjections` es **MECANISMO del marco, no opt-in** (MEF-ADR-0038 secciones 1 y 5 y MEF-ADR-0034 seccion 10 punto 4 -- invierten parcialmente la regla anterior de este agente, que prohibia instalar cualquier sampler, CA-5 issue #457): `SetSampler(new SamplerQueDescartaPollingDelDaemon(new ParentBasedSampler(new TraceIdRatioBasedSampler(ratio))))`, siempre en el segundo `.WithTracing(...)` posterior a `UseAzureMonitorExporter()` (Paso 1d puntos 2/2b). **NUNCA** quites el filtro del daemon (`SamplerQueDescartaPollingDelDaemon`) ni inviertas su anidamiento: el filtro por nombre debe ser el sampler MAS EXTERNO, con `ParentBasedSampler(TraceIdRatioBasedSampler(ratio))` como su interno -- invertirlo no rompe el build, pero si rompe el guardrail (a) del config-test de observabilidad (Paso 1d punto 4), que fija tanto el tipo del sampler efectivo como el literal exacto de su `Description`. Lo unico que es **VALOR del consumidor** es el ratio (`TELEMETRY_SAMPLING_RATIO`, default `1.0`). **NUNCA** hagas que el seam lea o reciba `APPLICATIONINSIGHTS_CONNECTION_STRING`: el exporter la resuelve del entorno por convencion propia (MEF-ADR-0025).
 11. **NUNCA** sobrescribas el `.dockerignore` de la raiz del repo consumidor si ya existe (CA-5 issue #458, Paso 2a): puede llevar exclusiones que el consumidor agrego a mano. Omitelo y reportalo. Su contenido es byte-fijo -- transcribelo literal, sin normalizar espacios, orden ni comentarios (mismo criterio que la regla final 12 de `infra-base-scaffolder` para el `.gitignore` raiz), sustituyendo unicamente el `<RootNamespace>` de sus dos comentarios de cabecera. **NUNCA** anides este paso bajo el gate del Dockerfile (Paso 2): su probe de idempotencia es independiente y corre siempre, exista o no el Dockerfile todavia. **NUNCA** excluyas ahi `src/`, `tests/` ni ningun `.csproj`/`.cs` (decision del issue #458: se excluyen artefactos, nunca proyectos -- el worker puede llegar a referenciar el assembly de un dominio, MEF-ADR-0034 seccion 5), ni conviertas la lista en una allowlist (`*` + reinclusiones): un `Directory.Build.props`/`nuget.config` que un scaffolder futuro emita en la raiz romperia el build en silencio.
-12. **NUNCA** enumeres un dominio por nombre en la capa de restore del Dockerfile (`COPY --parents`, Paso 2, CA-1 issue #552): el patron `src/<RootNamespace>.*/*.csproj` debe seguir siendo generico -- nunca edites el Dockerfile cuando nace o se agrega un dominio nuevo. Esa evolucion la cierran los bucles idempotentes del Paso 1b (CA-3), nunca este archivo.
+12. **NUNCA** enumeres un dominio por nombre en la capa de restore del Dockerfile (`COPY --parents`, Paso 2, CA-1 issue #552): el patron `src/<RootNamespace>.*/*.csproj` debe seguir siendo generico -- nunca edites el Dockerfile cuando nace o se agrega un dominio nuevo. Esa evolucion la cierran los bucles idempotentes del Paso 1b (CA-3), nunca este archivo. **NUNCA** quites la directiva `# syntax=docker/dockerfile:1` de la primera linea ni la muevas debajo de un comentario o de una linea en blanco: sin ella el frontend no expone `--parents`, y degradada a comentario el fallo no se ve hasta el `docker build`.
 13. **NUNCA** dejes pasar sin commit una `ProjectReference` del worker hacia un Function App (Paso 4, CA-4, issue #552, MEF-ADR-0039 decision 4 / seccion 10): si la verificacion mecanica falla, detente e informa -- no la "arregles" quitando el assert ni edites el `.csproj` para silenciarla.
