@@ -2526,7 +2526,7 @@ Si el archivo ya existe con otras propiedades (ej: `sdk`), solo agrega la seccio
 
 Con un unico worker de proyecciones por Bounded Context (MEF-ADR-0034 seccion 1), al nacer un dominio nuevo **no se crea otro worker**: se registra su named store en el worker existente. Este paso es el andamiaje de esa registracion -- ninguna proyeccion concreta todavia (eso lo hace `projection-implementer` en un issue `tipo:projection` posterior).
 
-**CA-1 -- paso condicional.** Verifica si el worker de proyecciones ya existe en este repo:
+**Paso condicional (issue #370 CA-1).** Verifica si el worker de proyecciones ya existe en este repo:
 
 ```bash
 REPO_ROOT=$(git -C /ruta-conocida rev-parse --show-toplevel)
@@ -2537,14 +2537,16 @@ Si el archivo **falta** -- el BC no habilito `projections.enabled` o todavia no 
 
 Si el archivo existe, continua con los puntos 1-8.
 
-**1. Idempotencia (CA-4):**
+**1. Idempotencia (issue #370 CA-4):**
+
+> **Las citas de criterio de aceptacion de este paso llevan el numero de issue a proposito.** El Paso 3b acumula dos issues (#370, que lo creo, y #548, que le agrego los puntos 3 y 4) y sus numeraciones de CA se solapan: "CA-1" y "CA-4" significan cosas distintas segun el issue. No quites el `issue #NNN` al transcribir ni al enmendar este paso.
 
 ```bash
 REPO_ROOT=$(git -C /ruta-conocida rev-parse --show-toplevel)
 test -f "$REPO_ROOT/src/<RootNamespace>.Projections/Infraestructura/ConfiguracionMartenProjections{PascalCase}.cs" && echo "YA REGISTRADO (omitir Paso 3b, continuar al Paso 4)" || echo "FALTA (registrar)"
 ```
 
-`REPO_ROOT` se re-deriva en **cada** bloque `bash` de este paso a proposito: cada bloque corre en un shell nuevo y no hereda variables del anterior. Con `REPO_ROOT` vacia, el `test -f` de arriba resuelve a `/src/...`, siempre falla, y la idempotencia de CA-4 quedaria inoperante en silencio -- volviendo a escribir el seam de un dominio ya registrado.
+`REPO_ROOT` se re-deriva en **cada** bloque `bash` de este paso a proposito: cada bloque corre en un shell nuevo y no hereda variables del anterior. Con `REPO_ROOT` vacia, el `test -f` de arriba resuelve a `/src/...`, siempre falla, y la idempotencia del issue #370 CA-4 quedaria inoperante en silencio -- volviendo a escribir el seam de un dominio ya registrado.
 
 Si ese archivo ya existe -- re-corrida del mismo scaffold --, el registro ya esta hecho: omite los puntos 2-8 y continua directo al Paso 4.
 
@@ -2554,7 +2556,7 @@ Si ese archivo ya existe -- re-corrida del mismo scaffold --, el registro ya est
 <PackageReference Include="Marten" Version="9.12.0" />
 ```
 
-**3. Agregar la `ProjectReference` del worker hacia `{PascalCase}.DomainEvents` (CA-1).** El worker necesita ver en compilacion los tipos de evento persistidos de este dominio para que las clases de proyeccion (`projection-implementer`, issue `tipo:projection` posterior) puedan declarar `Create`/`Apply` sobre ellos -- sin esta referencia, el `EventGraph` del named store dependeria del fallback por `mt_dotnet_type` al leer streams preexistentes (el defecto que el consumidor de referencia pago en su issue #277, documentado en MEF-ADR-0036). `dotnet add reference` es idempotente -- verificado con SDK 10.0.201: sobre una referencia ya declarada imprime `El proyecto ya tiene una referencia a "..."` y sale con codigo 0, sin duplicar el `<ProjectReference>` en el `.csproj`:
+**3. Agregar la `ProjectReference` del worker hacia `{PascalCase}.DomainEvents` (issue #548 CA-1).** El worker necesita ver en compilacion los tipos de evento persistidos de este dominio para que las clases de proyeccion (`projection-implementer`, issue `tipo:projection` posterior) puedan declarar `Create`/`Apply` sobre ellos -- sin esta referencia, el `EventGraph` del named store dependeria del fallback por `mt_dotnet_type` al leer streams preexistentes (el defecto que el consumidor de referencia pago en su issue #277, documentado en MEF-ADR-0036). `dotnet add reference` es idempotente -- verificado con SDK 10.0.201: sobre una referencia ya declarada imprime `El proyecto ya tiene una referencia a "..."` y sale con codigo 0, sin duplicar el `<ProjectReference>` en el `.csproj`:
 
 ```bash
 REPO_ROOT=$(git -C /ruta-conocida rev-parse --show-toplevel)
@@ -2562,19 +2564,31 @@ dotnet add "$REPO_ROOT/src/<RootNamespace>.Projections/<RootNamespace>.Projectio
   "$REPO_ROOT/src/<RootNamespace>.{PascalCase}.DomainEvents/<RootNamespace>.{PascalCase}.DomainEvents.csproj"
 ```
 
-**4. Verificar mecanicamente que el worker no referencia el Function App del dominio (CA-4, MEF-ADR-0039 decision 4).** Tras el punto 3, el `.csproj` del worker debe seguir sin ninguna `ProjectReference` hacia el Function App del dominio -- el worker solo referencia ensamblados `*.DomainEvents.csproj` y `ReadModels.csproj` (decision 2):
+**4. Verificar mecanicamente que el worker solo referencia ensamblados de eventos y read models (issue #548 CA-4, MEF-ADR-0039 decision 4 y seccion 10 punto 2).** Tras el punto 3, **toda** `ProjectReference` del `.csproj` del worker debe resolver a un `*.DomainEvents.csproj` o a `ReadModels.csproj` (decision 2) -- ninguna al `.csproj` de un Function App (`src/<RootNamespace>.{Dominio}/<RootNamespace>.{Dominio}.csproj`):
 
 ```bash
 REPO_ROOT=$(git -C /ruta-conocida rev-parse --show-toplevel)
-grep -F "<RootNamespace>.{PascalCase}.csproj" \
-  "$REPO_ROOT/src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj" && \
-  echo "VIOLACION MEF-ADR-0039 decision 4: detente aqui, no hagas commit, informa al usuario" || \
-  echo "OK: el worker no referencia el Function App"
+CSPROJ="$REPO_ROOT/src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj"
+if [ ! -f "$CSPROJ" ]; then
+  echo "ERROR: no existe $CSPROJ -- detente aqui, no hagas commit, informa al usuario"
+else
+  INTRUSOS=$(grep -o '<ProjectReference[^>]*Include="[^"]*"' "$CSPROJ" \
+    | grep -v -e '\.DomainEvents\.csproj"$' -e 'ReadModels\.csproj"$')
+  if [ -n "$INTRUSOS" ]; then
+    echo "VIOLACION MEF-ADR-0039 decision 4 -- referencias no permitidas en el worker:"
+    echo "$INTRUSOS"
+    echo "detente aqui, no hagas commit, informa al usuario"
+  else
+    echo "OK: el worker solo referencia *.DomainEvents.csproj y ReadModels.csproj"
+  fi
+fi
 ```
 
-El patron busca el nombre exacto del `.csproj` del Function App (`<RootNamespace>.{PascalCase}.csproj`), no un prefijo: `<RootNamespace>.{PascalCase}.DomainEvents.csproj` (el que agrego el punto 3) tiene `.DomainEvents` intercalado antes de `.csproj` y no calza con la busqueda de arriba, asi que no produce un falso positivo. Si el `grep` encuentra una coincidencia, no la corrijas en silencio -- es la misma politica que ya aplica el `grep` de aislamiento del Paso 7: detente e informa.
+**La verificacion se afirma como allowlist, no como blacklist del dominio que estas scaffoldeando** -- es la forma que pide MEF-ADR-0039 seccion 10 punto 2 ("ningun `.csproj` de `Projections` contiene una `<ProjectReference>` hacia el `.csproj` de ningun `<RootNamespace>.{Dominio}`", sin acotar a un dominio): buscar solo el nombre del Function App de **este** dominio dejaria pasar en silencio la referencia al Function App de un dominio anterior, o una a `PublicEvents`/`PrivateEvents` -- que la decision 2 tambien prohibe en el worker (esos dos ensamblados no entran al read-side). La allowlist las atrapa todas sin enumerar prohibiciones.
 
-**5. Crear `Infraestructura/ConfiguracionMartenProjections{PascalCase}.cs`** en `src/<RootNamespace>.Projections/` (CA-2, CA-3) -- el marker del named store y el seam de composicion de proyecciones del dominio, hermano read-side de `ComposicionServicios{PascalCase}` (MEF-ADR-0029, Paso 6b) y con el naming que fija MEF-ADR-0006 (enmienda issue #363):
+Dos detalles del comando que no debes simplificar al transcribirlo: el `test -f` previo esta porque un `grep` sobre un archivo inexistente sale con codigo 2, y la forma corta `grep ... && echo VIOLACION || echo OK` imprimiria "OK" en ese caso -- un falso verde justo antes del commit; y el filtro ancla en `"$` porque `grep -o` recorta cada `Include="..."` terminando en la comilla, de modo que `<RootNamespace>.{PascalCase}.DomainEvents.csproj` calza el patron permitido y no produce un falso positivo. El comando es line-based: si algun `ProjectReference` quedo partido en varias lineas (`dotnet add reference` del punto 3 nunca lo hace, pero una edicion a mano si), reformatealo a una sola linea antes de correrlo. Si el `grep` encuentra intrusos, no los corrijas en silencio -- es la misma politica que ya aplica el `grep` de aislamiento del Paso 7: detente e informa.
+
+**5. Crear `Infraestructura/ConfiguracionMartenProjections{PascalCase}.cs`** en `src/<RootNamespace>.Projections/` (issue #370 CA-2/CA-3 -- el archivo y su registro; issue #548 CA-2/CA-3 -- la linea `AddEventTypes` y el comentario-guia de serializacion) -- el marker del named store y el seam de composicion de proyecciones del dominio, hermano read-side de `ComposicionServicios{PascalCase}` (MEF-ADR-0029, Paso 6b) y con el naming que fija MEF-ADR-0006 (enmienda issue #363):
 
 ```csharp
 using <RootNamespace>.{PascalCase}.DomainEvents;
@@ -2672,7 +2686,7 @@ dotnet build "src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj
 
 Si falla, lee el error y corrigelo antes de continuar -- no hagas commit del resto del scaffold hasta que este build quede verde. Este build es el unico gate que detecta un `using` equivocado (punto 2): el compilador acepta un `using` de un namespace que existe aunque el tipo que buscas no viva ahi.
 
-**8. Correr `Projections.Tests` si ya existe (CA-5).** El config-test del worker (`<RootNamespace>.Projections.Tests`) es alcance de la fase 2 (issues #365/#375) y puede no existir todavia en este BC -- en ese caso, omite este punto sin fallar:
+**8. Correr `Projections.Tests` si ya existe (issue #370 CA-5).** El config-test del worker (`<RootNamespace>.Projections.Tests`) es alcance de la fase 2 (issues #365/#375) y puede no existir todavia en este BC -- en ese caso, omite este punto sin fallar:
 
 ```bash
 REPO_ROOT=$(git -C /ruta-conocida rev-parse --show-toplevel)
@@ -3396,6 +3410,10 @@ Scaffold completado para el dominio "{kebab}":
                                              - Editado: ConfigurarEventos ahora encadena Configurar{PascalCase}
   src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj
                                              - PackageReference Marten 9.12.0 agregado si faltaba (MEF-ADR-0003)
+                                               + ProjectReference hacia <RootNamespace>.{PascalCase}.DomainEvents:
+                                               el unico camino del worker a los tipos de evento persistidos del
+                                               dominio, verificado contra el Function App (MEF-ADR-0039 decisiones
+                                               2 y 4, Paso 3b puntos 3 y 4)
 
 Proximos pasos:
   1. Asegurate de que los secrets esten configurados en GitHub (los emite setup-github-ci.sh):
