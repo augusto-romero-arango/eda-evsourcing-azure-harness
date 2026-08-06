@@ -274,7 +274,8 @@ public class SolicitarProgramacionTurnoSmokeTests(ApiFixture api, ServiceBusFixt
         evento.Should().NotBeNull(
             "la Function App deberia publicar ProgramacionTurnoDiarioSolicitada al topic");
 
-        // Verificar contenido usando records de Contracts (igualdad natural)
+        // Verificar contenido usando records de PrivateEvents (igualdad natural; el evento privado
+        // vive en PrivateEvents/Programacion/, MEF-ADR-0039)
         var empleadoEsperado = new InformacionEmpleado(
             empleadoId, "CC", "555666777", "[TEST] Smoke", "[TEST] SB");
         evento!.Empleado.Should().Be(empleadoEsperado);
@@ -294,7 +295,7 @@ public class SolicitarProgramacionTurnoSmokeTests(ApiFixture api, ServiceBusFixt
 - El predicate `match` filtra por un campo identificador unico (ej: `SolicitudId`), **nunca por posicion**
 - **Consumo de multiples eventos**: cuando el handler publica mas de un evento (ej: un evento por fecha), usar un predicado amplio que matchee por un campo compartido (ej: `SolicitudId`) en lugar de campos especificos (ej: `Fecha`). Esto evita fallos por orden de llegada -- si el primer mensaje que llega no matchea el predicado especifico, el fail-on-mismatch del fixture lanzara excepcion
 - Timeout estandar: `TimeSpan.FromSeconds(30)`
-- El tipo `T` del mensaje es el evento publico de `Contracts` (igualdad natural de records)
+- El tipo `T` del mensaje es el evento de bus del BC (`PublicEvents`/`PrivateEvents`, segun el marker; igualdad natural de records)
 - **Sin assert de dead letter del consumidor**: este patron no verifica el DLQ de `SuscripcionConsumidor` -- esa suscripcion es del dominio consumidor. Verificarla desde aqui seria un assert cross-domain (MEF-ADR-0013, issue #324)
 
 ### Patron 2: Dominio consumidor (Service Bus -> Postgres)
@@ -350,7 +351,10 @@ public class AsignarTurnoSmokeTests(ServiceBusFixture serviceBus, PostgresFixtur
         existe.Should().BeTrue(
             $"el evento {tipoEvento} con SolicitudId {solicitudId} deberia existir");
 
-        // Assert detallado: obtener evento y comparar value objects de Contracts
+        // Assert detallado: obtener evento y comparar value objects de PrivateEvents. El persistido
+        // en Marten es su propio record en {Dominio}.DomainEvents (payload por rol, MEF-ADR-0039
+        // decision 6), pero el JSON no lleva $type -- deserializa igual en el tipo de PrivateEvents
+        // porque ambos tienen paridad de campos.
         var eventoPersistido = await postgres.ObtenerEventoAsync<JsonElement>(
             SchemaControlHoras, streamId, tipoEvento,
             "SolicitudId", solicitudId.ToString(), TimeSpan.FromSeconds(5));
@@ -398,9 +402,9 @@ public class AsignarTurnoSmokeTests(ServiceBusFixture serviceBus, PostgresFixtur
 - **Suscripcion de produccion**: `{consumidor}-escucha-{productor}` (usarla solo para verificar dead letters **desde el smoke test del propio dominio consumidor**, nunca desde el smoke test de otro dominio -- ver "Sin assert de dead letter del consumidor" en el Patron 1; no para consumir mensajes)
 - **Timeout estandar**: `TimeSpan.FromSeconds(30)` para esperar mensajes o persistencia
 
-### Aserciones con Contracts
+### Aserciones con PublicEvents/PrivateEvents
 
-Los smoke tests de Service Bus **si** referencian `<RootNamespace>.Contracts` para usar la igualdad natural de records:
+Los smoke tests de Service Bus **si** referencian `<RootNamespace>.PublicEvents`/`<RootNamespace>.PrivateEvents` (segun el marker del evento) para usar la igualdad natural de records:
 
 ```csharp
 // Comparar value objects simples con Be() (igualdad de record)
@@ -447,7 +451,7 @@ Esto permite que:
 ## Que NO hacer
 
 - **NO crear proyectos** - el proyecto ya existe, solo escribes tests
-- **NO referenciar proyectos de dominio** - los smoke tests no dependen de implementaciones internas. Los Contracts (value objects compartidos) SI se pueden referenciar para aserciones de igualdad
+- **NO referenciar proyectos de dominio** - los smoke tests no dependen de implementaciones internas. `PublicEvents`/`PrivateEvents` (los ensamblados de eventos de bus del BC) SI se pueden referenciar para aserciones de igualdad -- el `domain-scaffolder` ya cablea esa `ProjectReference` en el csproj (MEF-ADR-0013, MEF-ADR-0039)
 - **NO usar mocks ni fakes** - son tests contra el entorno real
 - **NO verificar el body de la respuesta en detalle** - verifica status codes y estructura basica
 - **NO duplicar logica de unit tests** - no verificar reglas de negocio, solo que el endpoint responde correctamente
