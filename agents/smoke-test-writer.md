@@ -274,7 +274,8 @@ public class SolicitarProgramacionTurnoSmokeTests(ApiFixture api, ServiceBusFixt
         evento.Should().NotBeNull(
             "la Function App deberia publicar ProgramacionTurnoDiarioSolicitada al topic");
 
-        // Verificar contenido usando records de Contracts (igualdad natural)
+        // Verificar contenido usando records de PrivateEvents (igualdad natural; el evento privado
+        // vive en PrivateEvents/Programacion/, MEF-ADR-0039)
         var empleadoEsperado = new InformacionEmpleado(
             empleadoId, "CC", "555666777", "[TEST] Smoke", "[TEST] SB");
         evento!.Empleado.Should().Be(empleadoEsperado);
@@ -294,7 +295,7 @@ public class SolicitarProgramacionTurnoSmokeTests(ApiFixture api, ServiceBusFixt
 - El predicate `match` filtra por un campo identificador unico (ej: `SolicitudId`), **nunca por posicion**
 - **Consumo de multiples eventos**: cuando el handler publica mas de un evento (ej: un evento por fecha), usar un predicado amplio que matchee por un campo compartido (ej: `SolicitudId`) en lugar de campos especificos (ej: `Fecha`). Esto evita fallos por orden de llegada -- si el primer mensaje que llega no matchea el predicado especifico, el fail-on-mismatch del fixture lanzara excepcion
 - Timeout estandar: `TimeSpan.FromSeconds(30)`
-- El tipo `T` del mensaje es el evento publico de `Contracts` (igualdad natural de records)
+- El tipo `T` del mensaje es el evento de bus del BC (`PublicEvents`/`PrivateEvents`, segun el marker; igualdad natural de records)
 - **Sin assert de dead letter del consumidor**: este patron no verifica el DLQ de `SuscripcionConsumidor` -- esa suscripcion es del dominio consumidor. Verificarla desde aqui seria un assert cross-domain (MEF-ADR-0013, issue #324)
 
 ### Patron 2: Dominio consumidor (Service Bus -> Postgres)
@@ -314,6 +315,16 @@ public class AsignarTurnoSmokeTests(ServiceBusFixture serviceBus, PostgresFixtur
     // Forma minima para acotar el assert de dead-letter a la corrida: solo el identificador,
     // sin depender de la deserializacion de value objects ricos (MEF-ADR-0013, issue #324).
     private record IdentificadorDeadLetter(Guid SolicitudId);
+
+    // Forma minima del payload PERSISTIDO, solo con los campos que el assert necesita. Aqui NO
+    // se usa el record de PrivateEvents/PublicEvents: el tipo persistido es su propio record de
+    // {Dominio}.DomainEvents (payload por rol, MEF-ADR-0039 decision 6) y puede ser modelo rico,
+    // mientras el de bus debe ser plano y portable (MEF-ADR-0012). Deserializar el JSON de
+    // mt_events en el tipo de bus se apoyaria en una paridad de campos que nadie garantiza
+    // -- es trabajo humano continuo, no una propiedad del grafo -- y cuando no calza,
+    // System.Text.Json no lanza: deja los campos en su valor default y el assert pasa en
+    // falso verde (modo de fallo documentado en MEF-ADR-0039 decision 6).
+    private record EmpleadoPersistido(string EmpleadoId, string NumeroDocumento, string Nombres);
 
     [Fact]
     [Trait("Category", "Smoke")]
@@ -350,16 +361,16 @@ public class AsignarTurnoSmokeTests(ServiceBusFixture serviceBus, PostgresFixtur
         existe.Should().BeTrue(
             $"el evento {tipoEvento} con SolicitudId {solicitudId} deberia existir");
 
-        // Assert detallado: obtener evento y comparar value objects de Contracts
+        // Assert detallado: leer el payload persistido con la forma minima local declarada arriba,
+        // nunca con el record de bus (ver el comentario de EmpleadoPersistido).
         var eventoPersistido = await postgres.ObtenerEventoAsync<JsonElement>(
             SchemaControlHoras, streamId, tipoEvento,
             "SolicitudId", solicitudId.ToString(), TimeSpan.FromSeconds(5));
 
-        var empleadoEsperado = new InformacionEmpleado(
-            empleadoId, "CC", "999888777", "[TEST] Smoke", "[TEST] Verificacion");
         var empleadoPersistido = eventoPersistido
-            .GetProperty("InformacionEmpleado").Deserialize<InformacionEmpleado>();
-        empleadoPersistido.Should().Be(empleadoEsperado);
+            .GetProperty("InformacionEmpleado").Deserialize<EmpleadoPersistido>();
+        empleadoPersistido.Should().Be(
+            new EmpleadoPersistido(empleadoId, "999888777", "[TEST] Smoke"));
 
         // Assert: verificar que no haya un dead-letter DE ESTA CORRIDA en la suscripcion propia.
         // Acotado por SolicitudId -- no exige el DLQ globalmente vacio, asi que un residual de
@@ -398,22 +409,25 @@ public class AsignarTurnoSmokeTests(ServiceBusFixture serviceBus, PostgresFixtur
 - **Suscripcion de produccion**: `{consumidor}-escucha-{productor}` (usarla solo para verificar dead letters **desde el smoke test del propio dominio consumidor**, nunca desde el smoke test de otro dominio -- ver "Sin assert de dead letter del consumidor" en el Patron 1; no para consumir mensajes)
 - **Timeout estandar**: `TimeSpan.FromSeconds(30)` para esperar mensajes o persistencia
 
-### Aserciones con Contracts
+### Aserciones con PublicEvents/PrivateEvents
 
-Los smoke tests de Service Bus **si** referencian `<RootNamespace>.Contracts` para usar la igualdad natural de records:
+Los smoke tests de Service Bus **si** referencian `<RootNamespace>.PublicEvents`/`<RootNamespace>.PrivateEvents` (segun el marker del evento) para usar la igualdad natural de records **sobre el mensaje que viene del bus** -- el tipo con el que se deserializo `WaitForMessageAsync<T>`:
 
 ```csharp
+// evento: el mensaje consumido del topic, del tipo de PublicEvents/PrivateEvents
+
 // Comparar value objects simples con Be() (igualdad de record)
 var empleadoEsperado = new InformacionEmpleado(id, "CC", "123", "Nombre", "Apellido");
-empleadoPersistido.Should().Be(empleadoEsperado);
+evento!.Empleado.Should().Be(empleadoEsperado);
 
 // Comparar value objects con colecciones (IReadOnlyList) con BeEquivalentTo()
 var detalleTurnoEsperado = new DetalleTurno("Turno", [franjaOrdinaria]);
-detalleTurnoPersistido.Should().BeEquivalentTo(detalleTurnoEsperado);
+evento!.DetalleTurno.Should().BeEquivalentTo(detalleTurnoEsperado);
 ```
 
 - `Be()` para records simples (sin colecciones)
 - `BeEquivalentTo()` para records con `IReadOnlyList` (la igualdad de referencia de listas no funciona con `Be`)
+- **Solo para el mensaje del bus, nunca para el JSON persistido en Marten**: el evento persistido es su propio record de `{Dominio}.DomainEvents` (payload por rol, MEF-ADR-0039 decision 6), no el de bus. Para assertar sobre lo persistido usa una forma minima local al test (ver `EmpleadoPersistido` en el Patron 2)
 
 ### Assert.SkipWhen - patron obligatorio
 
@@ -447,7 +461,8 @@ Esto permite que:
 ## Que NO hacer
 
 - **NO crear proyectos** - el proyecto ya existe, solo escribes tests
-- **NO referenciar proyectos de dominio** - los smoke tests no dependen de implementaciones internas. Los Contracts (value objects compartidos) SI se pueden referenciar para aserciones de igualdad
+- **NO referenciar proyectos de dominio** - los smoke tests no dependen de implementaciones internas. `PublicEvents`/`PrivateEvents` (los ensamblados de eventos de bus del BC) SI se pueden referenciar para aserciones de igualdad **sobre el mensaje que llega del bus** -- el `domain-scaffolder` ya cablea esa `ProjectReference` en el csproj (MEF-ADR-0013, MEF-ADR-0039)
+- **NO deserializar el JSON persistido en Marten en un tipo de `PublicEvents`/`PrivateEvents`** - el tipo persistido es su propio record de `{Dominio}.DomainEvents` (payload por rol, MEF-ADR-0039 decision 6) y puede ser modelo rico; el de bus es plano. Apoyarse en su paridad de campos es un falso verde en potencia: cuando no calza, System.Text.Json no lanza, deja los campos en su valor default. Usa una forma minima local al test (ver `EmpleadoPersistido` en el Patron 2)
 - **NO usar mocks ni fakes** - son tests contra el entorno real
 - **NO verificar el body de la respuesta en detalle** - verifica status codes y estructura basica
 - **NO duplicar logica de unit tests** - no verificar reglas de negocio, solo que el endpoint responde correctamente
