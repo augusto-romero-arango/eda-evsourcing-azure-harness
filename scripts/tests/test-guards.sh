@@ -8,7 +8,7 @@
 #   C) Los pipelines publicados (scripts/tooling-pipeline.sh, scripts/parallel-pipeline.sh,
 #      scripts/batch-pipeline.sh, scripts/pr-sync.sh, scripts/tdd-pipeline.sh,
 #      scripts/iac-pipeline.sh, scripts/scaffold-pipeline.sh, scripts/tmux-pipeline.sh)
-#      y los scripts auxiliares publicados (appinsights-query.sh, eda-lint.sh,
+#      y los scripts auxiliares publicados (appinsights-query.sh,
 #      setup-github-ci.sh, setup-github-labels.sh, bootstrap-backend.sh,
 #      seed-secret.sh, onboard-diagnose.sh, update-plugin.sh) abortan si se
 #      sourcean en un contexto donde .claude-plugin/plugin.json existe.
@@ -53,7 +53,7 @@ PUBLISHED_SKILLS=(
     bitacora.md bug.md draft.md eraser-diagram.md fix-review.md health-check.md
     implement.md infra.md infra-base.md install-apim.md install-auth.md install-workos.md
     merge.md onboard.md parallel.md scaffold.md scaffold-projections.md
-    seed-secret.md sequential.md show-flow.md tooling.md upgrade.md work-status.md
+    seed-secret.md sequential.md tooling.md upgrade.md work-status.md
 )
 
 for skill in "${PUBLISHED_SKILLS[@]}"; do
@@ -133,7 +133,7 @@ echo "[C] Pipelines publicados: contienen guard contra repo de Mefisto"
 PUBLISHED_PIPELINES=(
     tooling-pipeline.sh parallel-pipeline.sh batch-pipeline.sh pr-sync.sh
     tdd-pipeline.sh iac-pipeline.sh scaffold-pipeline.sh tmux-pipeline.sh
-    appinsights-query.sh eda-lint.sh setup-github-ci.sh setup-github-labels.sh
+    appinsights-query.sh setup-github-ci.sh setup-github-labels.sh
     bootstrap-backend.sh seed-secret.sh onboard-diagnose.sh
 )
 
@@ -163,7 +163,7 @@ echo ""
 echo "[C2] Scripts auxiliares publicados: el guard aborta cuando se ejecutan en Mefisto"
 
 AUX_SCRIPTS=(
-    appinsights-query.sh eda-lint.sh setup-github-ci.sh setup-github-labels.sh
+    appinsights-query.sh setup-github-ci.sh setup-github-labels.sh
     bootstrap-backend.sh seed-secret.sh onboard-diagnose.sh update-plugin.sh
 )
 
