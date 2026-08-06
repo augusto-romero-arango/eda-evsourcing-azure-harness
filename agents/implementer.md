@@ -570,8 +570,9 @@ Ejemplo sintetico -- no corresponde a ningun consumidor real -- que recorre el h
 **1. Evento persistido, en la raiz de `src/<RootNamespace>.Programacion.DomainEvents/`:**
 
 ```csharp
-// TurnoConfirmado.cs
-public sealed class TurnoConfirmado
+// TurnoConfirmado.cs -- partial porque su clase anidada Mensajes vive en
+// TurnoConfirmado.Mensajes.cs, junto al .resx del propio evento (MEF-ADR-0009)
+public sealed partial class TurnoConfirmado
 {
     public Guid TurnoId { get; }
     public Guid ConfirmadoPor { get; }
@@ -596,28 +597,22 @@ public sealed class TurnoConfirmado
         return new TurnoConfirmado(datos.TurnoId, datos.ConfirmadoPor, datos.FechaConfirmacion);
     }
 
-    public static void ConfigurarSerializacion(DefaultJsonTypeInfoResolver resolver)
-    {
-        var ctor = typeof(TurnoConfirmado).GetConstructor(
-            BindingFlags.NonPublic | BindingFlags.Instance, Type.EmptyTypes)!;
-
-        resolver.Modifiers.Add(typeInfo =>
-        {
-            if (typeInfo.Type != typeof(TurnoConfirmado)) return;
-            if (typeInfo.Kind != JsonTypeInfoKind.Object) return;
-
-            // Propiedades publicas get-only: STJ las lee sin ayuda. Lo unico que el
-            // ctor privado le impide es construir la instancia (MEF-ADR-0012).
-            typeInfo.CreateObject = () => (TurnoConfirmado)ctor.Invoke(null);
-        });
-    }
+    // Obligatorio por tener ctor privado, y no solo para construir la instancia: STJ
+    // tampoco puede ASIGNAR propiedades get-only al deserializar, asi que sin cablear
+    // tambien el Set de cada campo el evento vuelve de mt_events con todo en su valor
+    // default, en silencio (MEF-ADR-0012, "Nota sobre eventos con propiedades publicas
+    // get-only"). La mecanica completa -- CreateObject via el ctor vacio mas Get/Set por
+    // reflexion campo por campo -- es autoridad de MEF-ADR-0012, "Serializacion sin
+    // atributos en la clase de dominio"; este agente no la duplica. Leela antes de
+    // escribir el cuerpo, y registra el resolver como muestra el paso 2.
+    public static void ConfigurarSerializacion(DefaultJsonTypeInfoResolver resolver) { /* ver MEF-ADR-0012 */ }
 }
 
 // ConfirmacionTurno.cs -- tipo de entrada propio del ensamblado, sin relacion con ningun comando
 public sealed record ConfirmacionTurno(Guid TurnoId, Guid ConfirmadoPor, DateOnly FechaConfirmacion);
 ```
 
-**2. Registro de identidad (misma raiz del proyecto):**
+**2. Registro de identidad y de serializacion (misma raiz del proyecto, MEF-ADR-0039 decision 5):**
 
 ```csharp
 // IdentidadEventosProgramacion.cs
@@ -628,7 +623,20 @@ public static class IdentidadEventosProgramacion
         typeof(TurnoConfirmado),
     ];
 }
+
+// ConfiguracionSerializacionProgramacion.cs -- resolver STJ puro, sin Marten
+public static class ConfiguracionSerializacionProgramacion
+{
+    public static DefaultJsonTypeInfoResolver CrearResolver()
+    {
+        var resolver = new DefaultJsonTypeInfoResolver();
+        TurnoConfirmado.ConfigurarSerializacion(resolver);   // una linea por tipo
+        return resolver;
+    }
+}
 ```
+
+Las dos listas son la **unica fuente** que comparten el write-side (`ComposicionServicios{Dominio}`) y el worker de proyecciones (`ConfiguracionMartenProjections{Dominio}`, MEF-ADR-0034), y por eso viven aqui y no en el Function App. Omitir el registro del resolver no rompe el build: deja `ConfigurarSerializacion` como **codigo muerto** que solo funciona en tests con opciones propias, nunca en produccion a traves de Marten (MEF-ADR-0012) -- es una de las violaciones de precedente que advierte el aviso de arriba.
 
 **3. Gemelo de bus, en `PrivateEvents/Programacion/` del ensamblado `<RootNamespace>.PrivateEvents`:**
 
