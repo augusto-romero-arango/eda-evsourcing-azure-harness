@@ -12,7 +12,7 @@ cuando usar records vs clases, cuando aplicar factory statics, y como honrar el 
 
 Estas heuristicas no son principios absolutos. En desarrollo de software nada es blanco o negro.
 El diseno especifico de cada caso puede ajustarse durante la fase de descubrimiento con
-event-stormer o planner. Lo que aqui se define es el punto de partida -- la decision por defecto
+el planner. Lo que aqui se define es el punto de partida -- la decision por defecto
 en ausencia de un diseno especifico.
 
 ## Decision
@@ -439,3 +439,4 @@ no tiene.
 
 - 2026-07-01: enmendado (issue #167, barrido de coherencia hacia MEF-ADR-0024) para reemplazar "namespace de integracion" como destino por defecto de `IPublicEventSender` en la seccion "Frontera de serializacion: event store vs bus" por el modelo de MEF-ADR-0024: backbone compartido del producto (caso comun) o namespace de integracion externo (caso diferido). La regla "todo lo que cruza un bus es plano y portable" y el guardrail de round-trip con serializador por defecto no cambian.
 - 2026-08-05: enmendada la seccion "Referencias" (issue #543, creacion de MEF-ADR-0039) para reemplazar la referencia a un "ADR de Contracts del proyecto consumidor" por MEF-ADR-0039, que fija la particion canonica de ensamblados de evento por rol y declara `Contracts` fuera del canon por defecto. La doctrina de este ADR (heuristicas de forma, encapsulamiento, serializacion, frontera event store vs bus) queda intacta conceptualmente -- solo cambia donde vive el codigo que la aplica.
+- 2026-08-05: enmendada la seccion "Contexto" (issue #561, MEF-ADR-0040) para reemplazar "event-stormer o planner" por "planner" -- el agente `event-stormer` se retira junto con la capa de modelado EDA (MEF-ADR-0040). Sin cambio en la doctrina de este ADR.

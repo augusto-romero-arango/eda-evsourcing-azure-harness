@@ -1,8 +1,14 @@
 # MEF-ADR-0010: Pipeline de conocimiento del dominio
 
-**Estado**: Aceptado
+**Estado**: Superseded por MEF-ADR-0040 (2026-08-05)
 **Fecha**: 2026-04-04
 **Autores**: augusto-romero-arango
+
+> Este documento queda como registro historico. MEF-ADR-0040 elimina la capa de modelado EDA
+> (agentes `event-stormer`/`eda-modeler`, pipeline de tres fases, artefactos `docs/eda/` en su
+> ruta actual) y fija las fuentes de conocimiento del dominio vigentes. El cuerpo original de
+> este ADR se conserva integro debajo, sin editar, como registro de la decision que estuvo
+> vigente entre 2026-04-04 y 2026-08-05.
 
 ---
 
@@ -118,3 +124,4 @@ Descartado: requiere un equipo multidisciplinario para sacarle valor. Para un so
 ## Control de cambios
 
 - 2026-08-05: enmendada la seccion "Referencias" (issue #543, creacion de MEF-ADR-0039) para reemplazar la referencia generica a "ADR del proyecto consumidor sobre Contracts compartidos (el shared kernel)" por MEF-ADR-0039, que fija la particion canonica de ensamblados de evento por rol y declara `Contracts` fuera del canon por defecto. Sin cambio en la doctrina de este ADR (pipeline de tres fases, artefactos del knowledge hub, roles de investigacion).
+- 2026-08-05: **superseded por MEF-ADR-0040** (issue #561, decision de planning del mismo dia). El pipeline de tres fases y el knowledge hub en `docs/eda/` que este ADR establecia se retiran: cada artefacto YAML tenia (o adquirio con MEF-ADR-0039) una fuente de verdad ejecutable que puede consultarse directamente sin el riesgo de divergencia que este mismo ADR ya reconocia en su seccion "Consecuencias / Negativas". La unica excepcion (el glosario de lenguaje ubicuo) sobrevive bajo custodia del planner en `docs/ddd/ubiquitous-language.yaml` -- ver MEF-ADR-0040 para la doctrina vigente.

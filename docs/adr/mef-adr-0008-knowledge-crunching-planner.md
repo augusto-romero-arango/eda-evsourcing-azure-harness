@@ -56,13 +56,15 @@ Esta seccion es el input directo para:
 
 No se espera que el usuario llegue con el modelo completo. El modo `explorar` del planner esta disenado para guiar la conversacion gradualmente: empieza con una idea vaga, hace preguntas, lee codigo existente, y termina con un modelo de eventos que el usuario valida antes de crear el issue.
 
+### El planner custodia el glosario de lenguaje ubicuo
+
+Desde MEF-ADR-0040, el planner tambien custodia el glosario de lenguaje ubicuo (`docs/ddd/ubiquitous-language.yaml`): lo lee al arrancar cada sesion y lo actualiza, acotado al vocabulario que la sesion produce, antes de cerrar. Antes de MEF-ADR-0040 esa custodia era del agente `event-stormer` (retirado); el planner ya era el chokepoint natural de todo evento o comando nuevo, asi que la custodia es consecuencia directa de su proposito, no una responsabilidad añadida.
+
 ---
 
 ## Alternativas consideradas
 
 **Dejar la traduccion a los agentes de codificacion**: descartado. Los agentes ES pueden inferir nombres del texto libre, pero el resultado es menos predecible. Un nombre mal inferido (`RegistroDeEntrada` vs `MarcacionRegistrada`) se propaga a tests, handlers y eventos, creando inconsistencia con el lenguaje ubicuo.
-
-**Modelo de eventos en archivo YAML separado (eda-modeler)**: complementario, no alternativo. El `eda-modeler` crea flujos cross-domain completos en `docs/eda/flows/`. El modelo de eventos del issue es mas compacto y especifico a una tarea. Ambos se alimentan mutuamente.
 
 ---
 
@@ -72,3 +74,7 @@ No se espera que el usuario llegue con el modelo completo. El modo `explorar` de
 - El vocabulario del dominio se estabiliza mas rapido. Cada sesion de Knowledge Crunching fija nombres de comandos, eventos y aggregates que se reusan en issues posteriores.
 - La seccion "Modelo de eventos" puede omitirse para issues que no tocan comportamiento de dominio (refactor, tooling, infra pura). No es obligatoria universalmente.
 - Los agentes de codificacion se benefician sin modificaciones. El modelo de eventos llega como parte del body que ya reciben. Solo es texto mas estructurado y preciso.
+
+## Control de cambios
+
+- 2026-08-05: enmendado (issue #561, MEF-ADR-0040) para retirar la mencion de complementariedad con el agente `eda-modeler` (retirado junto con la capa de modelado EDA) y anotar la custodia del glosario de lenguaje ubicuo como responsabilidad nueva del planner, heredada del agente `event-stormer` (tambien retirado). Sin cambio en la doctrina central de este ADR (el planner como agente de Knowledge Crunching, la seccion "Modelo de eventos" del issue).
