@@ -19,8 +19,8 @@ Plugin de [Claude Code](https://code.claude.com/docs/en/plugins) que provee un h
 
 ## Qué incluye
 
-- **Skills** (slash commands): `/onboard`, `/upgrade`, `/implement`, `/tooling`, `/infra`, `/infra-base`, `/scaffold`, `/scaffold-projections`, `/seed-secret`, `/install-workos`, `/install-apim`, `/install-auth`, `/parallel`, `/sequential`, `/bug`, `/draft`, `/fix-review`, `/health-check`, `/work-status`, `/show-flow`, `/eraser-diagram`, `/merge`, `/bitacora`.
-- **Agentes** especializados: `planner`, `test-writer`, `implementer`, `projection-test-writer`, `projection-implementer`, `projections-scaffolder`, `reviewer`, `smoke-test-writer`, `domain-scaffolder`, `infra-base-scaffolder`, `apim-gateway-scaffolder`, `workos-identity-scaffolder`, `eda-modeler`, `event-stormer`, `historiador`, `infra-writer`, `infra-reviewer`, `infra-bootstrap`, `pr-sync`, `bug-investigator`, `tooling-investigator`.
+- **Skills** (slash commands): `/onboard`, `/upgrade`, `/implement`, `/tooling`, `/infra`, `/infra-base`, `/scaffold`, `/scaffold-projections`, `/seed-secret`, `/install-workos`, `/install-apim`, `/install-auth`, `/parallel`, `/sequential`, `/bug`, `/draft`, `/fix-review`, `/health-check`, `/work-status`, `/eraser-diagram`, `/merge`, `/bitacora`.
+- **Agentes** especializados: `planner`, `test-writer`, `implementer`, `projection-test-writer`, `projection-implementer`, `projections-scaffolder`, `reviewer`, `smoke-test-writer`, `domain-scaffolder`, `infra-base-scaffolder`, `apim-gateway-scaffolder`, `workos-identity-scaffolder`, `historiador`, `infra-writer`, `infra-reviewer`, `infra-bootstrap`, `pr-sync`, `bug-investigator`, `tooling-investigator`.
 - **Pipelines bash** que orquestan el ciclo TDD, IaC y tooling sobre `tmux` y `git worktree`.
 - **ADRs** del marco arquitectónico (prefijo `MEF-ADR-`, ver índice temático en `CLAUDE.md`).
 - **Hooks** para logging del pipeline.
@@ -192,7 +192,7 @@ tu propuesta en vez de darlo por cierto.
 
 ### 4. Verificar instalación
 
-El objetivo es confirmar que el plugin quedó **instalado y habilitado**, no que existan flujos o pipelines (que en un proyecto recién creado todavía no hay). Dos checks que funcionan en greenfield, sin depender de artefactos de runtime (`docs/eda/flows/`, `.claude/pipeline/`):
+El objetivo es confirmar que el plugin quedó **instalado y habilitado**, no que existan pipelines corridos (que en un proyecto recién creado todavía no hay). Dos checks que funcionan en greenfield, sin depender de artefactos de runtime (`.claude/pipeline/`):
 
 1. **El plugin aparece instalado.** Lista los plugins instalados sin abrir el gestor:
 
@@ -212,7 +212,7 @@ El objetivo es confirmar que el plugin quedó **instalado y habilitado**, no que
 
 El criterio de éxito es **"los comandos `/mefisto:*` aparecen disponibles"**, no "responden sin datos".
 
-> **En un proyecto greenfield es esperable que los skills de runtime no muestren nada — y eso NO indica un fallo de instalación.** `/mefisto:show-flow` lee `docs/eda/flows/` (carpeta que aún no existe) y responde "No hay flujos en docs/eda/flows/"; `/mefisto:work-status` lee `.claude/pipeline/pipeline-status-*.json` (aún sin pipelines corridos) y muestra un dashboard vacío. Esa salida vacía solo significa que todavía no has modelado flujos ni corrido pipelines: la instalación se verifica con los dos checks de arriba, no con que esos skills devuelvan datos.
+> **En un proyecto greenfield es esperable que los skills de runtime no muestren nada — y eso NO indica un fallo de instalación.** `/mefisto:work-status` lee `.claude/pipeline/pipeline-status-*.json` (aún sin pipelines corridos) y muestra un dashboard vacío. Esa salida vacía solo significa que todavía no has corrido pipelines: la instalación se verifica con los dos checks de arriba, no con que ese skill devuelva datos.
 
 Para un diagnóstico del onboarding (¿está bien formado el `harness.config.json`?, ¿existen los labels?, ¿está configurado el CI?), corre el doctor de onboarding (por defecto solo diagnostica):
 
