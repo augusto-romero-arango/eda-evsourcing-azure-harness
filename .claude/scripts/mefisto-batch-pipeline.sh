@@ -130,6 +130,13 @@ get_pr() {
 # --- Fallo no fatal de un issue (continua el loop) ---
 HAVE_ERRORS=false
 
+# Condiciones que NO son un fallo del batch pero que el humano debe conocer al
+# terminar (issue #566): hoy la unica es "el merge llego a origin/main pero main
+# LOCAL quedo sin sincronizar". Se reporta aparte de HAVE_ERRORS para no
+# contradecir la propia degradacion a warning con un exit 1 y un resumen que
+# afirme que "algunos issues tuvieron errores" cuando ninguno lo tuvo.
+HAVE_WARNINGS=false
+
 fail_issue() {
     local issue="$1" msg="$2"
     echo -e "\n${RED}${BOLD}x Issue #$issue: $msg${NC}" | tee -a "$LOG_FILE_ABS"
@@ -157,7 +164,10 @@ fail_issue() {
 #
 # Args:   $1 = numero de PR ya mergeado
 # Lee:    MAIN_BRANCH (rama activa del repo AL ARRANQUE, validada como main/master)
-# Set:    MERGE_SHA_SYNCED = SHA del commit de merge confirmado en origin/main
+# Set:    MERGE_SHA_SYNCED = SHA del commit de merge, fijado en cuanto queda
+#         confirmado en origin/main (paso 3). Queda vacio SOLO en el caso fatal
+#         (return 2), de modo que el llamador pueda nombrar el commit tambien
+#         cuando degrada a warning por el fallo de los pasos 4-5.
 # Return: 0 si el sync (origin + main local) se completo.
 #         1 si solo fallo dejar main LOCAL sincronizado (origin/main SI tiene
 #           el merge -- no fatal para la cadena, issue #566 CA-3).
@@ -205,6 +215,12 @@ sync_main_after_merge() {
         return 2
     fi
 
+    # Desde aqui la correccion de la cadena ya esta garantizada: el siguiente
+    # worktree nace de origin/main, que ya incluye este commit. Lo publicamos
+    # ahora (no al final) para que el llamador pueda nombrarlo tambien en el
+    # camino degradado (return 1), donde lo unico pendiente es main LOCAL.
+    MERGE_SHA_SYNCED="$merge_sha"
+
     # 4. Fast-forward de $MAIN_BRANCH (por NOMBRE -- CA-1) a origin/main. Si la
     #    rama activa del repo ya no es $MAIN_BRANCH, lo detectamos y lo
     #    nombramos (CA-2) en vez de operar a ciegas sobre el HEAD del momento
@@ -232,7 +248,6 @@ sync_main_after_merge() {
         return 1
     fi
 
-    MERGE_SHA_SYNCED="$merge_sha"
     return 0
 }
 
@@ -414,8 +429,9 @@ for ISSUE_NUM in "${ISSUE_NUMS[@]}"; do
         # sincronizado. No fatal (CA-3): degrada a warning y continua.
         set_status "$ISSUE_NUM" "completado (PR #$PR_NUM mergeado; sync de $MAIN_BRANCH LOCAL fallido, no fatal)"
         COMPLETED=$((COMPLETED + 1))
-        HAVE_ERRORS=true
-        warn "El commit de merge del PR #$PR_NUM ya esta confirmado en origin/main; solo fallo dejar $MAIN_BRANCH LOCAL sincronizado. No bloquea la cadena: el siguiente worktree nace de origin/main."
+        HAVE_WARNINGS=true
+        success "Issue #$ISSUE_NUM completado y mergeado"
+        warn "El commit de merge ${MERGE_SHA_SYNCED:0:12} del PR #$PR_NUM ya esta confirmado en origin/main; solo fallo dejar $MAIN_BRANCH LOCAL sincronizado. No bloquea la cadena: el siguiente worktree nace de origin/main. Para ponerte al dia: 'git switch $MAIN_BRANCH && git pull --ff-only'."
     else
         # SYNC_RC = 2: el merge commit no llego a origin/main. El PR ya quedo
         # mergeado (el issue en si esta resuelto), pero el siguiente worktree
@@ -458,5 +474,11 @@ echo ""
 if [ "$HAVE_ERRORS" = true ]; then
     warn "Algunos issues tuvieron errores. Revisa el log: $LOG_FILE_ABS"
     exit 1
+fi
+if [ "$HAVE_WARNINGS" = true ]; then
+    # Todos los eslabones se completaron y mergearon: no es un fallo del batch
+    # (issue #566), asi que el exit es 0. Pero main LOCAL quedo atrasado y el
+    # humano tiene que saberlo antes de seguir trabajando sobre este repo.
+    warn "Todos los issues se completaron, pero $MAIN_BRANCH LOCAL quedo sin sincronizar en algun eslabon (ver el detalle arriba). Ponte al dia con 'git switch $MAIN_BRANCH && git pull --ff-only'. Log: $LOG_FILE_ABS"
 fi
 success "mefisto-batch-pipeline completado. Log: $LOG_FILE_ABS"

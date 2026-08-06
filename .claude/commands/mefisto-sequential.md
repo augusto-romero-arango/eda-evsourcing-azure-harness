@@ -168,22 +168,34 @@ El motor (`.claude/scripts/mefisto-batch-pipeline.sh`) procesa los issues en ord
 funcione (ej. #44 depende de #43), cada eslabon debe construirse sobre el merge del
 anterior. El batch lo garantiza asi:
 
-- **Arranca solo en main/master.** Cada worktree del tooling-pipeline se crea desde la
-  rama activa del repo principal; si no estas en main/master, el motor aborta antes de
-  empezar con un mensaje claro (haz `git switch main` primero).
+- **La base real de cada eslabon es `origin/main`.** El worktree del tooling-pipeline se
+  crea **siempre** desde `origin/main` actualizado, sea cual sea la rama activa del repo
+  principal (issue #66, `mefisto-tooling-pipeline.sh:269`). Ese invariante no depende de
+  en que rama estes.
+- **Arranca solo en main/master.** Si no estas en main/master, el motor aborta antes de
+  empezar (haz `git switch main` primero). La razon es higienica, no de correccion: el
+  batch tambien mantiene main **local** al dia entre eslabones, y arrancar fuera de
+  main/master genera sorpresas ahi.
 - **Sync verificado tras cada merge.** Despues de mergear el PR de un eslabon, el motor
-  hace `git fetch origin main`, fast-forwardea (`--ff-only`) main local a `origin/main`
-  y **confirma** que el commit de merge del PR quedo presente en main local antes de
-  arrancar el siguiente issue.
-- **Fail-loud, no best-effort.** Si el sync no se concreta (no se pudo confirmar el
-  merge commit, hay divergencia local, el fetch fallo, etc.) y aun quedan issues por
-  procesar, el motor **aborta la cadena** con un mensaje claro en lugar de continuar en
-  silencio sobre un main desactualizado. Solo en el ultimo eslabon (sin un siguiente que
-  dependa de el) degrada a warning.
+  hace `git fetch origin main` y **confirma** que el commit de merge del PR llego a
+  `origin/main`; aparte, fast-forwardea main **local** a `origin/main` operando sobre esa
+  rama **por nombre**, nunca sobre el `HEAD` del momento (issue #566).
+- **Fail-loud donde importa.** Si el commit de merge no se confirma en `origin/main` y aun
+  quedan issues por procesar, el motor **aborta la cadena**: el siguiente worktree naceria
+  de una base desactualizada. Solo en el ultimo eslabon (sin un siguiente que dependa de
+  el) degrada a warning.
+- **Un main local atrasado ya no mata la cadena.** Si el merge si esta en `origin/main` y
+  lo unico que fallo fue dejar main **local** sincronizado -- tipicamente porque otra
+  sesion cambio la rama activa del repo principal mientras el batch corria, una carrera
+  real que `/mefisto-plan` y `/mefisto-bitacora` disparan de rutina --, el motor degrada a
+  warning, nombra la rama que encontro y **continua**: el siguiente worktree nace igual de
+  `origin/main`, que ya esta al dia. El batch termina en exito y te recuerda al cierre
+  ponerte al dia con `git switch main && git pull --ff-only` (issue #566).
 
 Esto reemplaza el viejo `git pull origin main` best-effort, que silenciaba el fallo con
 un warning `(continuando)` y dejaba que la cadena siguiera sobre un main potencialmente
-atrasado.
+atrasado; a diferencia de aquel, el esquema actual distingue cual paso del sync es critico
+para la cadena y cual solo es comodidad para el humano.
 
 ## Reglas
 

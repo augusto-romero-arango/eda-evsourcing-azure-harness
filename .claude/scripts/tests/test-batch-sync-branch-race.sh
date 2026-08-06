@@ -38,6 +38,10 @@
 #   [D] Guard de regresion (CA-5): el mensaje del gate de arranque ya no
 #       afirma que el batch crea cada worktree desde la rama activa del repo,
 #       y si menciona origin/main + issue #66 como la base real.
+#   [E] El DESPACHO del Stage 4 (donde vive el abort que mato la cadena real)
+#       honra la severidad: RC=1 continua, RC=2 aborta si quedan eslabones y
+#       degrada a warning en el ultimo. Se ejecuta el bloque real extraido del
+#       script, con abort/warn/success/set_status instrumentados.
 #
 # Uso: .claude/scripts/tests/test-batch-sync-branch-race.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -303,6 +307,111 @@ if echo "$GATE_BLOCK" | grep -q "origin/main" && echo "$GATE_BLOCK" | grep -q "#
     pass "D: el gate cita origin/main + issue #66 como la base real del worktree"
 else
     fail "D: el gate no cita origin/main ni el issue #66 como justificacion real"
+fi
+
+# -------- Bloque E: el DESPACHO del Stage 4 honra la severidad (CA-3/CA-6) --------
+#
+# Los bloques A-C prueban los codigos de retorno de sync_main_after_merge(), pero
+# el abort que mato la cadena real NO vive en la funcion: vive en el despacho del
+# Stage 4 que la llama. Sin este bloque, revertir ese despacho al viejo
+# `if sync_main_after_merge; then ... else abort ... fi` dejaria toda la suite en
+# verde y reintroduciria exactamente el defecto del issue #566. Aqui se extrae el
+# bloque de despacho REAL del script y se ejecuta con abort/warn/success/set_status
+# instrumentados, para probar la conducta (continuar vs abortar), no el texto.
+
+echo ""
+echo "[E] El despacho del Stage 4 aborta solo con RC=2 y continua con RC=1 (CA-3/CA-6)"
+
+DISPATCH_SRC=$(awk '/^    if \[ "\$SYNC_RC" -eq 0 \]; then$/{p=1} p{print} p && /^    fi$/{exit}' "$SCRIPT")
+
+ABORT_LOG="$TMP/abort.log"
+FLAGS_LOG="$TMP/flags.log"
+
+# Ejecuta el despacho con un SYNC_RC dado. $1 = SYNC_RC, $2 = IS_LAST_ISSUE.
+# Sale con 77 si el despacho invoco abort (el abort real hace exit 1).
+run_dispatch() {
+    local rc="$1" is_last="$2"
+    : > "$WARN_LOG"
+    : > "$ABORT_LOG"
+    : > "$FLAGS_LOG"
+    (
+        SYNC_RC="$rc"
+        IS_LAST_ISSUE="$is_last"
+        MAIN_BRANCH="main"
+        PR_NUM=565
+        ISSUE_NUM=552
+        MERGE_SHA_SYNCED="abcdef0123456789"
+        COMPLETED=0
+        HAVE_ERRORS=false
+        HAVE_WARNINGS=false
+        LOG_FILE_ABS="$TMP/dispatch.log"
+        success()    { :; }
+        set_status() { :; }
+        warn()       { echo "$1" >> "$WARN_LOG"; }
+        abort()      { echo "$1" >> "$ABORT_LOG"; exit 77; }
+        eval "$DISPATCH_SRC"
+        echo "HAVE_ERRORS=$HAVE_ERRORS HAVE_WARNINGS=$HAVE_WARNINGS COMPLETED=$COMPLETED" > "$FLAGS_LOG"
+    )
+}
+
+if [ -z "$DISPATCH_SRC" ]; then
+    fail "E: no se pudo extraer el bloque de despacho del Stage 4 de $SCRIPT"
+else
+    pass "E: bloque de despacho del Stage 4 extraido del script real"
+
+    # E1: RC=1 (origin/main al dia, main LOCAL no) NO aborta aunque queden eslabones.
+    run_dispatch 1 false
+    RC=$?
+    if [ "$RC" -ne 77 ] && [ ! -s "$ABORT_LOG" ]; then
+        pass "E1: RC=1 no aborta la cadena aunque queden eslabones por procesar (CA-3)"
+    else
+        fail "E1: RC=1 aborto la cadena (exit $RC). abort: $(cat "$ABORT_LOG")"
+    fi
+
+    if grep -qF "No bloquea la cadena" "$WARN_LOG" && grep -qF "origin/main" "$WARN_LOG"; then
+        pass "E1: el warn de RC=1 explica que origin/main ya tiene el merge y que no bloquea"
+    else
+        fail "E1: el warn de RC=1 no explico la degradacion. Contenido: $(cat "$WARN_LOG")"
+    fi
+
+    if grep -qF "HAVE_ERRORS=false HAVE_WARNINGS=true" "$FLAGS_LOG"; then
+        pass "E1: RC=1 se contabiliza como warning del batch, no como error (el batch cierra en exito)"
+    else
+        fail "E1: flags inesperadas tras RC=1: $(cat "$FLAGS_LOG")"
+    fi
+
+    # E2: RC=2 con eslabones pendientes SI aborta -- unico caso fatal.
+    run_dispatch 2 false
+    RC=$?
+    if [ "$RC" -eq 77 ] && grep -qF "origin/main" "$ABORT_LOG"; then
+        pass "E2: RC=2 (el merge no llego a origin/main) aborta la cadena y lo dice"
+    else
+        fail "E2: se esperaba abort con RC=2 (exit 77), se obtuvo exit $RC. abort: $(cat "$ABORT_LOG")"
+    fi
+
+    # E3: RC=2 en el ultimo eslabon degrada a warning (nadie depende de ese merge).
+    run_dispatch 2 true
+    RC=$?
+    if [ "$RC" -ne 77 ] && [ ! -s "$ABORT_LOG" ]; then
+        pass "E3: RC=2 en el ultimo eslabon degrada a warning en vez de abortar"
+    else
+        fail "E3: RC=2 en el ultimo eslabon no deberia abortar (exit $RC). abort: $(cat "$ABORT_LOG")"
+    fi
+
+    if grep -qF "HAVE_ERRORS=true" "$FLAGS_LOG"; then
+        pass "E3: RC=2 en el ultimo eslabon si marca el batch como fallido"
+    else
+        fail "E3: RC=2 en el ultimo eslabon deberia marcar HAVE_ERRORS. Flags: $(cat "$FLAGS_LOG")"
+    fi
+
+    # E4: RC=0 (sync completo) no aborta ni deja error/warning pendiente.
+    run_dispatch 0 false
+    RC=$?
+    if [ "$RC" -ne 77 ] && grep -qF "HAVE_ERRORS=false HAVE_WARNINGS=false" "$FLAGS_LOG"; then
+        pass "E4: RC=0 completa el eslabon sin error ni warning pendiente"
+    else
+        fail "E4: RC=0 no deberia dejar flags encendidas (exit $RC). Flags: $(cat "$FLAGS_LOG")"
+    fi
 fi
 
 # -------- Resumen --------
