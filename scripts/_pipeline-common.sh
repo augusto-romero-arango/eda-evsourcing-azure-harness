@@ -911,9 +911,9 @@ find_open_pr_for_branch() {
 # poder testearla con fixtures reales en vez de con una reimplementacion que
 # puede divergir del script (issue #416) -- mismo motivo que can_launch_now.
 #
-# NO es pura: en tres ramas (eventos/Entities y ValueObjects con factory
-# Crear(), y la exclusion de records DTO) lee <worktree_path>/<filepath> del
-# disco. Por eso recibe worktree_path/is_projection como parametros explicitos
+# NO es pura: en tres ramas (eventos/Entities/DomainEvents y ValueObjects con
+# factory Crear(), y la exclusion de records DTO) lee <worktree_path>/<filepath>
+# del disco. Por eso recibe worktree_path/is_projection como parametros explicitos
 # en vez de leer $WORKTREE_PATH/$IS_PROJECTION del entorno del caller: el
 # motivo es eliminar acoplamiento oculto en un archivo que sourcean todos los
 # pipelines publicados, no solo habilitar la testabilidad (un test que sourcea
@@ -938,9 +938,12 @@ coverage_classify_file() {
     local dirname
     dirname=$(dirname "$filepath")
 
-    # Excluidos por nombre
+    # Excluidos por nombre. IdentidadEventos*.cs es el hermano exacto de
+    # ConfiguracionSerializacion*.cs -- lista de configuracion sin logica cuya
+    # guarda real es el guardrail de ComposicionContenedorTests, no cobertura
+    # de lineas (MEF-ADR-0036 seccion 4/6).
     case "$basename" in
-        HealthCheck.cs|Program.cs|*Mensajes.cs|*AssemblyMarker.cs|ConfiguracionSerializacion*.cs|*.resx)
+        HealthCheck.cs|Program.cs|*Mensajes.cs|*AssemblyMarker.cs|ConfiguracionSerializacion*.cs|IdentidadEventos*.cs|*.resx)
             echo "excluded"; return ;;
     esac
 
@@ -985,7 +988,13 @@ coverage_classify_file() {
     esac
 
     # Logica: Eventos con factory Crear()
-    if echo "$dirname" | grep -q '/Eventos/\|/Entities/'; then
+    # Dos layouts conviven (MEF-ADR-0039): el historico bajo una subcarpeta
+    # /Eventos/ o /Entities/ del Function App, y el vigente en la raiz -- o
+    # cualquier subcarpeta -- de un proyecto *.DomainEvents, sin subcarpeta
+    # Eventos/ (decision 1). El patron sobre el segmento de ruta
+    # (\.DomainEvents al final de dirname, o \.DomainEvents/ seguido de mas
+    # ruta) cubre ambos casos sin exigir subcarpeta.
+    if echo "$dirname" | grep -qE '/Eventos/|/Entities/|\.DomainEvents$|\.DomainEvents/'; then
         if [ -f "$worktree_path/$filepath" ] && grep -q 'static.*Crear(' "$worktree_path/$filepath" 2>/dev/null; then
             echo "logic"; return
         fi
