@@ -48,3 +48,8 @@ El usuario adopto en Bitakora.ControlAsistencia (CA-ADR-0029) una particion de e
 
 Issues creados: #543 (MEF-ADR-0039, cerrado), #544 (DomainEvents en scaffold, cerrado), #546 (PublicEvents/PrivateEvents + retiro Contracts, cerrado), #548 (Paso 3b acceso del worker), #549 (enmienda tres islas, cerrado), #550 (delta tres islas en scaffolder), #552 (projections-scaffolder: Dockerfile/workflow/refs), #553 (coverage_classify_file), #554 (implementer), #555 (test-writer + smoke-test-writer), #557 (reviewer), #559 (agentes de proyecciones + Skill), #561 (MEF-ADR-0040 demolicion), #562 (retiro fisico eda-modeler/event-stormer/show-flow/eda-lint), #563 (planner: re-anclaje + glosario).
 Batch sugerido para lo abierto: `/mefisto-sequential 548 550 553 554 555 557 561 552 559 562 563`.
+
+## Addendum (misma sesion, 20:15)
+
+- **Drafts creados en el consumidor Bitakora.ControlAsistencia** (bajo instruccion explicita del usuario, excepcion al scope del mefisto-planner): #317 (enmendar CA-ADR-0029 a tres islas con regla de precedencia "gana el marco"), #318 (PrivateEvents sin ref a PublicEvents), #319 (DomainEvents sin refs a bus + inversion de ToDetalle + nota de seguridad de datos: el JSON de payloads anidados no persiste nombres CLR), #320 (tests de arquitectura -- piloto del enforcement de MEF-ADR-0039 seccion 10, referencia futura para generalizarlo en Mefisto).
+- **Hallazgo doctrinal nuevo**: la guia de `ToDetalle()` en el VO (implementer l.825, MEF-ADR-0012) es incompatible con tres islas cuando el tipo destino es de bus -- comentario dejado en #554 para que su writer lo resuelva (el VO expone datos; la traduccion entre contratos vive en el Function App).
