@@ -15,6 +15,8 @@ Fuente: MEF-ADR-0035 secciones 1-2. Version pinneada: Marten `9.12.0` (MEF-ADR-0
 
 El read model es un **record inmutable plano** (mismo criterio de MEF-ADR-0012: sin invariantes de construccion -> `record`), **sin** `partial` ni metodos propios -- vive en `<RootNamespace>.ReadModels` (MEF-ADR-0034 seccion 5), biblioteca que no referencia Marten ni transitivamente. El comportamiento de proyeccion vive en una **clase companion separada**, `partial`, que declara los metodos estaticos `Create`/`Apply`/`ShouldDelete`, descubiertos por nombre por el source generator (estilo **convencional**, canonico del marco frente al estilo explicito por `Evolve`/`switch`) -- y que vive en el **worker** (`<RootNamespace>.Projections`, MEF-ADR-0034 seccion 5), el ensamblado que si referencia Marten y el analizador `JasperFx.Events.SourceGenerator`.
 
+**Procedencia de los tipos de evento que esos `Create`/`Apply` tipan** (`TurnoCreado`, `TurnoCerrado`, ...): viven en `<RootNamespace>.{Dominio}.DomainEvents`, y el worker los alcanza via su `ProjectReference` a ese ensamblado -- **nunca** al `.csproj` de un Function App (MEF-ADR-0039 decisiones 2 y 4). Es el mismo ensamblado que ya declara el write-side del dominio; ni el read model ni la clase de proyeccion redeclaran esos tipos.
+
 ## Namespaces verificados de las clases base -- gotcha de `using`
 
 | Tipo | Namespace | Assembly |
@@ -36,6 +38,9 @@ Los tres primeros, verificados por reflexion propia (Marten `9.12.0`, SDK .NET 1
 using JasperFx.Events;             // IEvent<T>
 using JasperFx.Events.Projections; // ProjectionLifecycle
 using Marten.Events.Aggregation;   // SingleStreamProjection<,>
+using <RootNamespace>.{Dominio}.DomainEvents; // TurnoCreado, TurnoCerrado, TurnoAnulado -- MEF-ADR-0039
+                                              // decision 2; el worker los alcanza via su ProjectReference
+                                              // a este ensamblado, nunca al .csproj de un Function App.
 
 // Read model: record plano, sin comportamiento ni partial. Vive en <RootNamespace>.ReadModels.
 // Id es string, no Guid: el store del dominio fija StreamIdentity.AsString (MEF-ADR-0034 ref. [19]),
@@ -86,6 +91,8 @@ Marten no soporta auto-agregacion para `MultiStreamProjection`: la correlacion e
 ```csharp
 using JasperFx.Events.Projections; // ProjectionLifecycle
 using Marten.Events.Projections;   // MultiStreamProjection<,>
+using <RootNamespace>.{Dominio}.DomainEvents; // TurnoCreado, TurnoCerrado -- MEF-ADR-0039 decision 2,
+                                              // mismo criterio de procedencia que N1 (arriba).
 
 public sealed record ResumenEquipoView(Guid EquipoId, int TurnosCerrados);
 

@@ -8,6 +8,8 @@ Fuente: MEF-ADR-0034 seccion 6 (plantilla del PR 134 de Cosmos.ControlPlane, con
 
 `Program.cs` del worker (`<RootNamespace>.Projections`) y el config-test comparten la misma fuente de composicion: cada dominio contribuye su propio metodo de extension `ConfiguracionMartenProjections{Dominio}.Configurar{Dominio}()` (ver [naming.md](naming.md)) que registra su named store; `Program.cs` invoca uno por dominio, y el test invoca los mismos metodos.
 
+Ese mismo metodo tambien registra, dentro del mismo `AddMartenStore`, los tipos de evento persistidos del dominio (`opts.Events.AddEventTypes(IdentidadEventos{Dominio}.TiposPersistidos)`, procedentes de `<RootNamespace>.{Dominio}.DomainEvents` -- MEF-ADR-0039 decision 5) antes de la primera lectura. El config-test no necesita un assert nuevo por esto: si el registro faltara o algun tipo no resolviera, la guarda 1 de abajo (resolver el store del contenedor) ya lo detecta como una `InvalidProjectionException` mas.
+
 ## Construccion sin Postgres real
 
 El config-test (`<RootNamespace>.Projections.Tests`) construye el `IServiceCollection` invocando esos metodos de extension con una **cadena de conexion dummy** -- sin necesidad de Postgres real. Verificado contra la documentacion oficial de Marten: desde Marten 7, el `DocumentStore` ya no se inicializa forzadamente durante el bootstrapping del `IHost` (para evitar IO sincronico ahi); la conexion se abre recien en la primera operacion real contra la base.
