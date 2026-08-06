@@ -3170,7 +3170,7 @@ Ejecuta las verificaciones en orden. Detente e informa al usuario si alguna fall
 
 ```bash
 cd "$REPO_ROOT"
-grep -l "ProjectReference" \
+grep -l "<ProjectReference" \
   "src/<RootNamespace>.PublicEvents/<RootNamespace>.PublicEvents.csproj" \
   "src/<RootNamespace>.PrivateEvents/<RootNamespace>.PrivateEvents.csproj" \
   "src/<RootNamespace>.{PascalCase}.DomainEvents/<RootNamespace>.{PascalCase}.DomainEvents.csproj"
@@ -3181,6 +3181,14 @@ grep -l "ProjectReference" \
 Si el comando imprime la ruta de alguno de los tres, detente e informa al usuario sin hacer commit
 -- no corrijas el csproj en silencio; el hallazgo puede delatar un problema mas amplio (por ejemplo
 un residual de un scaffold anterior a la enmienda del issue #549).
+
+**El patron lleva el `<` de apertura a proposito** -- no lo quites al transcribir el comando: los
+dos csproj de bus llevan por diseno un comentario que empieza con las palabras `Cero
+ProjectReference ...` (Paso 1 punto 3), asi que un `grep "ProjectReference"` sin el angulo los
+marcaria a los dos como falso positivo y detendria **todo** scaffold sano justo antes del commit.
+Con el `<`, la busqueda afirma exactamente lo que dice la regla: la presencia del **elemento**
+`<ProjectReference ... />`, no la mencion de la palabra (MEF-ADR-0039 seccion 10, punto 1: "la
+regla se afirma sobre la presencia del elemento").
 
 **Build de la solucion:**
 
