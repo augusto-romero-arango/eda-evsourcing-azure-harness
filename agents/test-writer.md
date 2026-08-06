@@ -669,44 +669,60 @@ Todo evento o value object persistido en Marten **DEBE** tener tests de round-tr
 **Patron preferido (usa las opciones reales del dominio):**
 
 ```csharp
-// El test vive en ControlHoras.Tests/Infraestructura/ (mismo anfitrion de siempre);
-// ConfiguracionSerializacionControlHoras vive en la raiz de ControlHoras.DomainEvents
+// El test vive en Programacion.Tests/Infraestructura/ (mismo anfitrion de siempre);
+// ConfiguracionSerializacionProgramacion vive en la raiz de Programacion.DomainEvents
 // (MEF-ADR-0039 decision 5), no en Infraestructura/ del Function App.
-using Bitakora.ControlAsistencia.ControlHoras.DomainEvents;
+// Mismo dominio sintetico que agents/implementer.md, seccion "Ejemplo completo,
+// autocontenido: TurnoConfirmado y su gemelo de bus": los tipos de abajo son
+// exactamente los que ese agente escribe, sin referencia a codigo de ningun consumidor.
+using <RootNamespace>.Programacion.DomainEvents;
 
-public class MiEventoSerializacionTests
+public class TurnoConfirmadoSerializacionTests
 {
+    // CrearOpcionesMarten() son las opciones reales de produccion: el resolver del seam
+    // (CrearResolver(), implementer.md paso 2) mas PropertyNamingPolicy = null. Si el dominio
+    // todavia no la expone, crea el stub y delega el cuerpo al implementer (ver reglas abajo).
     private static JsonSerializerOptions CrearOpciones() =>
-        ConfiguracionSerializacionControlHoras.CrearOpcionesMarten();
+        ConfiguracionSerializacionProgramacion.CrearOpcionesMarten();
 
     [Fact]
     public void RoundTrip_ReconstruyeEvento_ConDatosCompletos()
     {
-        var evento = MiEvento.Crear(...);  // datos reales, VOs anidados, no listas vacias
+        // Datos reales y completos. El factory recibe ConfirmacionTurno -- tipo de entrada
+        // propio de DomainEvents --, nunca el comando (MEF-ADR-0039 decision 6).
+        var evento = TurnoConfirmado.Crear(
+            new ConfirmacionTurno(TurnoId, ConfirmadoPor, new DateOnly(2026, 4, 15)));
         var opciones = CrearOpciones();
 
         var json = JsonSerializer.Serialize(evento, opciones);
-        var restaurado = JsonSerializer.Deserialize<MiEvento>(json, opciones);
+        var restaurado = JsonSerializer.Deserialize<TurnoConfirmado>(json, opciones);
 
+        // TurnoConfirmado es una clase rica (MEF-ADR-0012), no un record: NO tiene igualdad
+        // por valor, asi que Should().Be(evento) compararia referencias y fallaria siempre.
+        // Verifica campo por campo. Should().Be() solo aplica a records y VOs con igualdad
+        // por valor -- p. ej. los records de bus de 6e.
         restaurado.Should().NotBeNull();
-        restaurado.Should().Be(evento);
+        restaurado!.TurnoId.Should().Be(evento.TurnoId);
+        restaurado.ConfirmadoPor.Should().Be(evento.ConfirmadoPor);
+        restaurado.FechaConfirmacion.Should().Be(evento.FechaConfirmacion);
     }
 
-    // CA-regresion: si alguien borra la linea de registro en ConfigurarResolver, este test falla.
+    // CA-regresion: si alguien borra la linea de registro en CrearResolver, este test falla.
     [Fact]
-    public void Deserializar_Falla_CuandoResolverNoTieneRegistroDeMiEvento()
+    public void Deserializar_Falla_CuandoResolverNoTieneRegistroDeTurnoConfirmado()
     {
         var opciones = new JsonSerializerOptions { TypeInfoResolver = new DefaultJsonTypeInfoResolver() };
-        var json = JsonSerializer.Serialize(MiEvento.Crear(...), opciones);
+        var json = JsonSerializer.Serialize(
+            TurnoConfirmado.Crear(new ConfirmacionTurno(TurnoId, ConfirmadoPor, Fecha)), opciones);
 
-        var act = () => JsonSerializer.Deserialize<MiEvento>(json, opciones);
+        var act = () => JsonSerializer.Deserialize<TurnoConfirmado>(json, opciones);
 
         act.Should().Throw<NotSupportedException>();
     }
 }
 ```
 
-**Cuando usar helper inline en vez de `CrearOpcionesMarten()`** (solo aplica a 6d — event store de Marten): bajo las tres islas (MEF-ADR-0039 decision 2), el unico proyecto que hospeda un test de round-trip de Marten es `{Dominio}.Tests/Infraestructura/`, y ese proyecto siempre tiene acceso a su propio dominio (y, transitivamente vía el Function App, a `{Dominio}.DomainEvents`) -- ya no existe un proyecto BC-level sin acceso al dominio que deba caer a este fallback (el rol que jugaba el shared kernel muerto del canon anterior, MEF-ADR-0039 decision 8). Los unicos proyectos que no pueden referenciar el dominio son `PublicEvents.Tests`/`PrivateEvents.Tests` (decision 7), y esos nunca hospedan un test de round-trip de Marten -- hospedan el test de portabilidad de 6e, que usa `JsonSerializerOptions` por defecto desde el origen, sin necesitar ningun fallback. Si te encuentras queriendo escribir un round-trip de Marten en un proyecto que no puede referenciar el dominio, esa es la señal de que el tipo es en realidad un caso de 6e, no de 6d.
+**El helper inline ya no tiene caso de uso valido** (aplica a 6d — event store de Marten). Bajo las tres islas (MEF-ADR-0039 decision 2) el unico proyecto que hospeda un round-trip de Marten es `{Dominio}.Tests/Infraestructura/`, que siempre alcanza su propio dominio y, transitivamente via el Function App, `{Dominio}.DomainEvents` — nunca necesita el fallback. El proyecto BC-level sin acceso al dominio que lo justificaba era el shared kernel que la decision 8 mato. Los unicos proyectos que hoy no pueden referenciar el dominio son `PublicEvents.Tests`/`PrivateEvents.Tests` (decision 7), y esos no hospedan round-trips de Marten sino el test de portabilidad de 6e, que usa `JsonSerializerOptions` por defecto desde el origen. **Si te encuentras queriendo un round-trip de Marten en un proyecto que no puede referenciar el dominio, esa es la señal de que el tipo es un caso de 6e, no de 6d** — reubica el test, no armes un resolver inline.
 
 **Reglas criticas:**
 
@@ -723,8 +739,6 @@ public class MiEventoSerializacionTests
 - Tests de invariantes y de igualdad de records **de bus** (`IPublicEvent`/`IPrivateEvent`) -> `tests/PublicEvents.Tests/{Dominio}/{Tipo}Tests.cs` o `tests/PrivateEvents.Tests/{Dominio}/{Tipo}Tests.cs`, segun el marker.
 
 **`IgualdadTestBase<T>` en los proyectos de tests de bus**: `PublicEvents.Tests` y `PrivateEvents.Tests` referencian unicamente su propio ensamblado (MEF-ADR-0039 decision 7) -- ninguno puede importar la copia del otro. El `domain-scaffolder` no emite `IgualdadTestBase.cs` en ninguno de los dos csproj-shell; tu lo creas la primera vez que un proyecto lo necesita. La duplicacion (una copia por proyecto) es deliberada, misma deuda documentada en `CA-ADR-0029` del consumidor de referencia.
-
-**Ejemplo autocontenido** (mismo dominio sintetico que `agents/implementer.md`, seccion "Ejemplo completo, autocontenido: `TurnoConfirmado` y su gemelo de bus"): para el evento persistido `TurnoConfirmado` (`Programacion.DomainEvents`), el patron nuevo de arriba se instancia como `TurnoConfirmadoSerializacionTests.cs` en `tests/Programacion.Tests/Infraestructura/`, usando `ConfiguracionSerializacionProgramacion.CrearOpcionesMarten()` en el round-trip y el CA-regresion (deserializar con resolver vacio debe lanzar `NotSupportedException`) de la seccion anterior.
 
 ### 6e. Tests de portabilidad por el bus para eventos con marker de bus (`IPrivateEvent` e `IPublicEvent`)
 
