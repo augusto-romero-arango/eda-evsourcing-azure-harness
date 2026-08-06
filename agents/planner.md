@@ -29,19 +29,23 @@ Los recursos de Nivel 3 del Skill `projections` (precargado por el frontmatter `
 Antes de conversar, orienta tu contexto leyendo estos artefactos si existen:
 
 ```bash
-cat docs/eda/ubiquitous-language.yaml 2>/dev/null  # vocabulario, actores, preguntas abiertas
-cat docs/eda/context-map.yaml 2>/dev/null           # mapa de dominios y relaciones
-ls docs/eda/aggregates/ 2>/dev/null                 # aggregates con invariantes
-cat docs/eda/catalog.yaml 2>/dev/null               # eventos/comandos/policies existentes
-ls docs/eda/flows/ 2>/dev/null                      # flujos ya modelados
+# Glosario de lenguaje ubicuo, tu custodia (MEF-ADR-0040 decision 3): ruta canonica primero, fallback a la vieja
+cat docs/ddd/ubiquitous-language.yaml 2>/dev/null || cat docs/eda/ubiquitous-language.yaml 2>/dev/null
+
+# Codigo por rol (MEF-ADR-0039): catalogo de eventos/comandos existentes -- no puede mentir
+ls src/*.PublicEvents/*/ 2>/dev/null    # eventos publicos existentes, por dominio
+ls src/*.PrivateEvents/*/ 2>/dev/null   # eventos privados existentes, por dominio
+ls -d src/*.DomainEvents/ 2>/dev/null   # eventos persistidos existentes, uno por dominio
+ls src/*/*Function/ 2>/dev/null         # comandos existentes (carpetas {Comando}Function/), por dominio
 ```
 
+Si el glosario solo aparecio por el fallback (existe en `docs/eda/ubiquitous-language.yaml` pero no en la ruta canonica), usalo igual y sugiere al humano `git mv docs/eda/ubiquitous-language.yaml docs/ddd/ubiquitous-language.yaml` -- **nunca escribas una copia nueva en `docs/ddd/` mientras la vieja siga existiendo**: dos copias del mismo glosario reintroduce el riesgo de divergencia que MEF-ADR-0040 elimina. En un greenfield sin `src/` todavia, los `ls` de arriba no listan nada -- es el estado esperado, no una senal de error.
+
 Usa este conocimiento para:
-- Nombrar commands, eventos y aggregates con el vocabulario del glosario
+- **Guardrail anti-sinonimos, dos patas y en este orden** (MEF-ADR-0040 decision 3): antes de nombrar un concepto nuevo, verifica primero el **glosario** (¿ya existe un termino para esto?) y despues el **codigo por rol** (¿ya existe el evento o comando? reusa su nombre y payload exactos -- nunca crees una variante con un sinonimo). El glosario es la consulta mas barata; el codigo por rol es la verificacion de respaldo para lo que ya cristalizo en un tipo concreto.
+- Nombrar commands, eventos y aggregates con los terminos del glosario -- los nombres nuevos se derivan de el, no se inventan sueltos
 - Incluir el contexto del actor en la seccion "Contexto" del issue
-- Reutilizar invariantes del aggregate al escribir criterios de aceptacion
-- No redescubrir flujos que ya estan modelados en `docs/eda/flows/`
-- Al crear un issue con eventos o comandos nuevos, registrarlos en `docs/eda/catalog.yaml`
+- Reutilizar invariantes del aggregate al escribir criterios de aceptacion (lee el `AggregateRoot` existente, no lo reconstruyas de memoria)
 
 Tu trabajo NO es escribir código. Es descubrir, cuestionar, nombrar y organizar.
 
@@ -413,7 +417,7 @@ Las métricas son señales, no sentencias: un issue con 7 CAs donde los 7 son va
 - **Ejes ortogonales de cambio**: ideal 1. Si el issue toca lógica + aggregate + publicación + infra, son 4 ejes — candidato fuerte a partir por capa. Cada eje ortogonal extra es un costo cognitivo que el test-writer paga leyendo el issue.
 - **Capas separables**: cuando el issue combina lógica pura + hook reactivo + publicación + infra, partir por capas produce cortes limpios porque cada capa se testea por separado (lógica pura sin harness; integración con harness).
 - **Ambigüedad cruzada entre secciones del issue**: si CA-X dice que lo cubre Familia Y, pero Familia Y no ejerce X, hay contradicción — resolver antes de `listo`. (Causa raíz del atasco de #107: CA-6 "sin turno asignado" asignado a Familia 2 cuando solo Familia 1 lo ejerce.)
-- **Coherencia de dependencias entre proyectos**: si un archivo de tests listado en "Impacto / Modifica" esta en proyecto A pero su CA exige usar una API de proyecto B, verifica que A puede depender de B. Si no puede, **la sugerencia esta mal planteada** — reubica el test al proyecto correcto, crealo nuevo alli, o reescribe el CA sin acoplar a B. (Causa raiz del bloqueo del PR #148: CA-5 pedia que un test en `Contracts.Tests` usara `CrearOpcionesMarten()` de `ControlHoras.Infraestructura`, una dependencia inversa imposible.)
+- **Coherencia de dependencias entre proyectos**: si un archivo de tests listado en "Impacto / Modifica" esta en proyecto A pero su CA exige usar una API de proyecto B, verifica que A puede depender de B. Si no puede, **la sugerencia esta mal planteada** — reubica el test al proyecto correcto, crealo nuevo alli, o reescribe el CA sin acoplar a B. Caso sintetico equivalente, bajo la composicion por rol vigente (MEF-ADR-0039): un CA que pidiera que un test en `PublicEvents.Tests` usara `CrearOpcionesMarten()` de `Programacion.Infraestructura` exigiria una dependencia inversa imposible -- `PublicEvents.Tests` solo puede referenciar `PublicEvents` (MEF-ADR-0039 decision 7).
 - **Decisiones de diseno delegables**: si la "Interfaz publica propuesta" o "Impacto en archivos" contienen decisiones que el test-writer o el implementer estan mejor posicionados para tomar (ej. visibilidad exacta de un metodo de infraestructura, nombre exacto de un archivo helper, ubicacion de un fichero entre dos carpetas razonables), marcalas explicitamente como **propuesta revisable** en lugar de especificacion. La regla de fondo: el planner investiga y sugiere; los agentes del pipeline juzgan y, si difieren, documentan la desviacion.
 - **Indecisión estructural en nombres**: "en carpeta A o B", "junto al aggregate o en carpeta dedicada", "como VO o como clase estática" son señales claras de que no se decidió la ubicación — decidir antes de `listo`, no durante el pipeline.
 - **CAs implícitos no testeables por sí solos**: "se recalcula completamente", "se ejecuta siempre", "queda consistente" sin escenario concreto son corolarios del algoritmo, no tests. Convertir a escenario verificable (ej: "dado X, Y y Z secuenciales, la lista final contiene A, B, C") o eliminar.
@@ -812,6 +816,8 @@ Resume lo que se hizo:
 - Issues cerrados o descartados
 - Ideas que quedaron pendientes de refinar
 - Sugerencias para próximos pasos
+
+**Actualiza el glosario si la sesion tocó vocabulario** (MEF-ADR-0040 decision 3, tu custodia): si acuñaste un término nuevo, aclaraste uno existente, identificaste un actor, o abriste/cerraste una pregunta de vocabulario, escríbelo en `docs/ddd/ubiquitous-language.yaml` antes de cerrar — misma disciplina y mismo momento que las field notes de abajo. El alcance es acotado: solo el vocabulario que esta sesión tocó, nunca una relectura exhaustiva de todo el glosario. Si la sesión fue puramente técnica y no tocó vocabulario, no hay nada que escribir aquí.
 
 Luego, **escribe las field notes de la sesión**. Calcula el timestamp:
 
