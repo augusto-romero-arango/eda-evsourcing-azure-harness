@@ -215,9 +215,9 @@ test -d "$REPO_ROOT/src/<RootNamespace>.PublicEvents" && echo "PublicEvents YA E
 test -d "$REPO_ROOT/src/<RootNamespace>.PrivateEvents" && echo "PrivateEvents YA EXISTE" || echo "PrivateEvents FALTA"
 ```
 
-Si `PublicEvents` **falta**, creelo -- es la base del grafo de la decision 2
-(`PublicEvents <- PrivateEvents <- {Dominio}.DomainEvents <- Function App`), **sin ningun
-`ProjectReference`**:
+Si `PublicEvents` **falta**, creelo -- una de las tres islas de la decision 2 (MEF-ADR-0039
+enmendado por #549: cero `ProjectReference`, ni hacia `PrivateEvents`/`{Dominio}.DomainEvents` ni
+hacia ningun otro proyecto del repo):
 
 ```bash
 cd "$REPO_ROOT"
@@ -227,15 +227,18 @@ rm -f "src/<RootNamespace>.PublicEvents/Class1.cs"
 
 ```xml
 <ItemGroup>
-  <!-- Cero ProjectReference (MEF-ADR-0039 decision 2): PublicEvents es la base del grafo de
-       ensamblados de eventos de bus -- la condicion que permite empaquetarlo como NuGet propio si
-       el producto decide compartirlo entre repos de distintos BCs (decision local del producto,
-       no una prescripcion del marco). El marker IPublicEvent viene de este paquete. -->
+  <!-- Cero ProjectReference (MEF-ADR-0039 decision 2, tres islas): PublicEvents no referencia
+       PrivateEvents ni ningun {Dominio}.DomainEvents -- cada ensamblado de eventos evoluciona a su
+       propia velocidad (bus publico versionado hacia afuera, bus interno libre, event store eterno)
+       y todo el mapeo entre roles vive en el Function App (decision 6). El cero absoluto es tambien
+       la condicion que permite empaquetarlo como NuGet propio si el producto decide compartirlo
+       entre repos de distintos BCs (decision local del producto, no una prescripcion del marco).
+       El marker IPublicEvent viene de este paquete. -->
   <PackageReference Include="Cosmos.EventDriven.Abstractions" Version="2.1.0" />
 </ItemGroup>
 ```
 
-Si `PrivateEvents` **falta**, creelo -- referencia `PublicEvents` (grafo de la decision 2):
+Si `PrivateEvents` **falta**, creelo -- la otra isla de bus, con el mismo cero `ProjectReference`:
 
 ```bash
 cd "$REPO_ROOT"
@@ -245,12 +248,10 @@ rm -f "src/<RootNamespace>.PrivateEvents/Class1.cs"
 
 ```xml
 <ItemGroup>
-  <!-- El marker IPrivateEvent viene del mismo paquete que PublicEvents. -->
+  <!-- Cero ProjectReference (MEF-ADR-0039 decision 2, tres islas): PrivateEvents no referencia
+       PublicEvents ni ningun {Dominio}.DomainEvents -- mismo motivo que el comentario en el .csproj
+       de PublicEvents. El marker IPrivateEvent viene del mismo paquete que PublicEvents. -->
   <PackageReference Include="Cosmos.EventDriven.Abstractions" Version="2.1.0" />
-</ItemGroup>
-
-<ItemGroup>
-  <ProjectReference Include="..\<RootNamespace>.PublicEvents\<RootNamespace>.PublicEvents.csproj" />
 </ItemGroup>
 ```
 
@@ -285,22 +286,23 @@ dotnet new classlib -n "<RootNamespace>.{PascalCase}.DomainEvents" -o "src/<Root
 rm -f "src/<RootNamespace>.{PascalCase}.DomainEvents/Class1.cs"
 ```
 
-**Sin ningun `PackageReference`**: `IdentidadEventos{PascalCase}` es BCL puro (`System.Type`, `System.Collections.Generic`), verificado contra el layout del consumidor de referencia (Bitakora.ControlAsistencia, post CA-ADR-0029) -- no agregues ningun paquete a este `.csproj` durante el scaffold. `ConfiguracionSerializacion{Dominio}` (System.Text.Json puro, sin Marten) tampoco necesitara ninguno cuando aparezca -- eso es alcance de `implementer`/`test-writer`, no de este agente.
+**Sin ningun `PackageReference` ni `ProjectReference`** (MEF-ADR-0039 decision 2, tres islas):
+`IdentidadEventos{PascalCase}` es BCL puro (`System.Type`, `System.Collections.Generic`),
+verificado contra el layout del consumidor de referencia (Bitakora.ControlAsistencia, post
+CA-ADR-0029) -- no agregues ningun paquete a este `.csproj` durante el scaffold. Tampoco agregues
+ninguna referencia a `PublicEvents`/`PrivateEvents`: bajo el payload por rol de la decision 6, un
+evento persistido que necesite el mismo dato que un evento de bus declara su propio record plano
+en `{Dominio}.DomainEvents` -- nunca importa el tipo del otro ensamblado. `ConfiguracionSerializacion{Dominio}`
+(System.Text.Json puro, sin Marten) tampoco necesitara ningun paquete cuando aparezca -- eso es
+alcance de `implementer`/`test-writer`, no de este agente.
 
-Agrega los dos `ProjectReference` de abajo **al `.csproj` que acabas de crear**
-(`<RootNamespace>.{PascalCase}.DomainEvents.csproj`) -- no al del Function App, que es el punto 3c.
-El grafo de la decision 2 (`PublicEvents <- PrivateEvents <- {Dominio}.DomainEvents`) ya haria
-visible `PublicEvents` por transitividad a traves de `PrivateEvents`; se declara explicitamente de
-todos modos, porque un evento persistido de este dominio puede proyectarse hacia cualquiera de los
-dos roles y una dependencia declarada sobrevive a que `PrivateEvents` deje de referenciar
-`PublicEvents`:
-
-```xml
-<ItemGroup>
-  <ProjectReference Include="..\<RootNamespace>.PublicEvents\<RootNamespace>.PublicEvents.csproj" />
-  <ProjectReference Include="..\<RootNamespace>.PrivateEvents\<RootNamespace>.PrivateEvents.csproj" />
-</ItemGroup>
-```
+> **Divergencia deliberada frente al consumidor de referencia (MEF-ADR-0039 enmendado por #549)**:
+> el layout real de Bitakora.ControlAsistencia (`CA-ADR-0029`) tiene `PrivateEvents -> PublicEvents`
+> y `{Dominio}.DomainEvents -> PrivateEvents/PublicEvents` -- el grafo encadenado que la version
+> original de este ADR prescribia. El marco lo prohibe desde esta enmienda: cero `ProjectReference`
+> en los tres. No copies el grafo de referencias de los `.csproj` de ese consumidor -- solo su
+> layout de carpetas/namespaces (subdivision por dominio dentro de `PublicEvents`/`PrivateEvents`,
+> decision 3) sigue siendo el precedente valido.
 
 **3c. Referenciar `PublicEvents`, `PrivateEvents` y `{PascalCase}.DomainEvents` desde el Function App** (CA-3). Agrega los tres `ProjectReference` en el `<ItemGroup>` de ProjectReferences del `.csproj` del Function App. Este agente ya **no** genera ni referencia el proyecto de vocabulario compartido de antes de este ADR -- muere del canon (MEF-ADR-0039 decision 8); si el repo tiene uno heredado de un scaffold anterior a este ADR, no lo toques (alcance greenfield-only, decision 9):
 
@@ -1803,7 +1805,8 @@ por este issue, CA-7): `PublicEvents.Tests` referencia **unicamente** `PublicEve
 ```
 
 Si `PrivateEvents.Tests` **falta**, mismo procedimiento, referenciando **unicamente**
-`PrivateEvents` (que ve `PublicEvents` transitivamente -- MEF-ADR-0039 decision 7 enmendada):
+`PrivateEvents` (tres islas: ya no ve `PublicEvents` ni siquiera transitivamente -- MEF-ADR-0039
+decision 7, enmendada por #549):
 
 ```bash
 cd "$REPO_ROOT"
@@ -3163,6 +3166,30 @@ cat .github/smoke-tests/{kebab}.json | python3 -m json.tool > /dev/null
 
 Ejecuta las verificaciones en orden. Detente e informa al usuario si alguna falla.
 
+**Aislamiento de los tres ensamblados de eventos (tres islas, MEF-ADR-0039 decision 2, CA-4):**
+
+```bash
+cd "$REPO_ROOT"
+grep -l "<ProjectReference" \
+  "src/<RootNamespace>.PublicEvents/<RootNamespace>.PublicEvents.csproj" \
+  "src/<RootNamespace>.PrivateEvents/<RootNamespace>.PrivateEvents.csproj" \
+  "src/<RootNamespace>.{PascalCase}.DomainEvents/<RootNamespace>.{PascalCase}.DomainEvents.csproj"
+```
+
+`grep -l` debe salir sin imprimir nada (exit code 1, ninguna coincidencia): los tres csproj de
+`PublicEvents`, `PrivateEvents` y `{PascalCase}.DomainEvents` deben quedar en cero `ProjectReference`.
+Si el comando imprime la ruta de alguno de los tres, detente e informa al usuario sin hacer commit
+-- no corrijas el csproj en silencio; el hallazgo puede delatar un problema mas amplio (por ejemplo
+un residual de un scaffold anterior a la enmienda del issue #549).
+
+**El patron lleva el `<` de apertura a proposito** -- no lo quites al transcribir el comando: los
+dos csproj de bus llevan por diseno un comentario que empieza con las palabras `Cero
+ProjectReference ...` (Paso 1 punto 3), asi que un `grep "ProjectReference"` sin el angulo los
+marcaria a los dos como falso positivo y detendria **todo** scaffold sano justo antes del commit.
+Con el `<`, la busqueda afirma exactamente lo que dice la regla: la presencia del **elemento**
+`<ProjectReference ... />`, no la mencion de la palabra (MEF-ADR-0039 seccion 10, punto 1: "la
+regla se afirma sobre la presencia del elemento").
+
 **Build de la solucion:**
 
 ```bash
@@ -3268,15 +3295,15 @@ Scaffold completado para el dominio "{kebab}":
     Infraestructura/PrivateEventEndpointBase.cs - Clase base para EventHandler directo, sin comando espejo (issue #313)
     Entities/                              - AggregateRoots del dominio (siempre raiz)
 
-  src/<RootNamespace>.{PascalCase}.DomainEvents/ - Ensamblado propio de eventos persistidos del dominio (MEF-ADR-0039), sin ningun PackageReference
+  src/<RootNamespace>.{PascalCase}.DomainEvents/ - Ensamblado propio de eventos persistidos del dominio (MEF-ADR-0039), isla sin ningun PackageReference ni ProjectReference
     IdentidadEventos{PascalCase}.cs        - Tipos de evento persistidos del dominio (lista vacia al nacer, AddEventTypes) - MEF-ADR-0036
 
-  src/<RootNamespace>.PublicEvents/       - Ensamblado de BC de los eventos que SALEN del BC (MEF-ADR-0039): solo el
+  src/<RootNamespace>.PublicEvents/       - Ensamblado de BC de los eventos que SALEN del BC (MEF-ADR-0039, tres islas): solo el
                                            paquete de markers, cero ProjectReference. Se crea la primera vez en el BC;
                                            en dominios posteriores ya existe y solo se le agrega la subcarpeta.
     {PascalCase}/.gitkeep                - Subcarpeta de este dominio, vacia al nacer (la llena implementer)
-  src/<RootNamespace>.PrivateEvents/      - Ensamblado de BC de los eventos del bus interno (MEF-ADR-0039): mismo
-                                           paquete + ProjectReference a PublicEvents. Misma creacion unica por BC.
+  src/<RootNamespace>.PrivateEvents/      - Ensamblado de BC de los eventos del bus interno (MEF-ADR-0039, tres islas): mismo
+                                           paquete de markers, cero ProjectReference (tambien hacia PublicEvents). Misma creacion unica por BC.
     {PascalCase}/.gitkeep                - Subcarpeta de este dominio, vacia al nacer (la llena implementer)
 
   tests/<RootNamespace>.{PascalCase}.Tests/
@@ -3299,7 +3326,7 @@ Scaffold completado para el dominio "{kebab}":
   tests/<RootNamespace>.PublicEvents.Tests/  - csproj-shell de BC, sin ningun test todavia (lo llena test-writer);
                                                referencia unicamente PublicEvents (MEF-ADR-0039 decision 7)
   tests/<RootNamespace>.PrivateEvents.Tests/ - csproj-shell de BC, sin ningun test todavia; referencia unicamente
-                                               PrivateEvents, que ve PublicEvents transitivamente (MEF-ADR-0039 decision 7)
+                                               PrivateEvents -- ya no ve PublicEvents ni siquiera transitivamente (tres islas, MEF-ADR-0039 decision 7)
 
   infra/environments/dev/dominio-{kebab}.tf - Archivo plano y propio del dominio (issue #234, no toca main.tf):
                                              module storage + module service_plan (dedicado) + module function_app
