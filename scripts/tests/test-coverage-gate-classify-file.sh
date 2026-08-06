@@ -30,6 +30,12 @@
 #      multilinea, sin depender del conteo de lineas, sin excluir un record
 #      CON metodos ni un DTO que convive con una clase con metodos
 #   G) not_evaluated por defecto cuando nada matchea
+#   H) Layout de ensamblados de eventos por rol (MEF-ADR-0039, issue #553):
+#      evento con Crear() en la raiz de un proyecto *.DomainEvents -> logic, y
+#      lo mismo en una subcarpeta suya (las dos alternativas del patron de
+#      ruta); sin Crear() ahi mismo -> not_evaluated; record plano de bus con
+#      marker en PublicEvents/PrivateEvents -> excluded (no-regresion de la
+#      regla DTO de F, sin cambio de codigo); IdentidadEventos*.cs -> excluded
 #
 # Uso: scripts/tests/test-coverage-gate-classify-file.sh
 # Exit code: 0 si todos los escenarios pasan, 1 si alguno falla.
@@ -369,6 +375,60 @@ assert_eq "G1: clase auxiliar sin ningun patron -> not_evaluated" "not_evaluated
 
 assert_eq "G2: archivo inexistente en el worktree -> not_evaluated (no aborta)" "not_evaluated" \
     "$(coverage_classify_file "src/Foo.Bar/NoExiste.cs" "$TMP_DIR" false)"
+
+# ─── Escenario H: layout de ensamblados de eventos por rol (MEF-ADR-0039) ──
+echo "Escenario H: layout de ensamblados de eventos por rol (issue #553)"
+write_fixture "src/Foo.Bar.Ventas.DomainEvents/VentaCreada.cs" 'namespace Foo.Bar.Ventas.DomainEvents;
+
+public sealed record VentaCreada(Guid Id)
+{
+    public static VentaCreada Crear(Guid id) => new(id);
+}
+'
+assert_eq "H1: evento con Crear() en raiz de *.DomainEvents/ -> logic" "logic" \
+    "$(coverage_classify_file "src/Foo.Bar.Ventas.DomainEvents/VentaCreada.cs" "$TMP_DIR" false)"
+
+# La otra alternativa del patron de ruta: el proyecto no exige subcarpeta
+# (MEF-ADR-0039 decision 1), pero tampoco la prohibe -- un evento en una
+# subcarpeta de *.DomainEvents/ debe clasificar igual que en la raiz. H1 cubre
+# '\.DomainEvents$' (raiz) y H2 cubre '\.DomainEvents/' (segmento no-hoja).
+write_fixture "src/Foo.Bar.Ventas.DomainEvents/V2/VentaCreada.cs" 'namespace Foo.Bar.Ventas.DomainEvents.V2;
+
+public sealed record VentaCreada(Guid Id, string Motivo)
+{
+    public static VentaCreada Crear(Guid id, string motivo) => new(id, motivo);
+}
+'
+assert_eq "H2: evento con Crear() en subcarpeta de *.DomainEvents/ -> logic" "logic" \
+    "$(coverage_classify_file "src/Foo.Bar.Ventas.DomainEvents/V2/VentaCreada.cs" "$TMP_DIR" false)"
+
+# El fixture lleva un metodo de instancia a proposito: lo que se verifica es que
+# la rama de *.DomainEvents exige la factory (no clasifica logic por ubicacion
+# sola). Un record plano sin cuerpo caeria antes en la exclusion de DTOs de F
+# (-> excluded, como H4), y entonces el fixture no probaria nada de esta rama.
+write_fixture "src/Foo.Bar.Ventas.DomainEvents/VentaCancelada.cs" 'namespace Foo.Bar.Ventas.DomainEvents;
+
+public sealed record VentaCancelada(Guid Id)
+{
+    public bool EsValida() => Id != Guid.Empty;
+}
+'
+assert_eq "H3: evento sin Crear() en raiz de *.DomainEvents/ -> not_evaluated" "not_evaluated" \
+    "$(coverage_classify_file "src/Foo.Bar.Ventas.DomainEvents/VentaCancelada.cs" "$TMP_DIR" false)"
+
+write_fixture "src/Foo.Bar.PublicEvents/Ventas/VentaPublicada.cs" 'namespace Foo.Bar.PublicEvents.Ventas;
+
+public sealed record VentaPublicada(Guid Id) : IPublicEvent;
+'
+assert_eq "H4: record plano de bus con marker en PublicEvents/ -> excluded (regla DTO de F, sin cambio de codigo)" "excluded" \
+    "$(coverage_classify_file "src/Foo.Bar.PublicEvents/Ventas/VentaPublicada.cs" "$TMP_DIR" false)"
+
+write_fixture "src/Foo.Bar.Ventas.DomainEvents/IdentidadEventosVentas.cs" 'namespace Foo.Bar.Ventas.DomainEvents;
+
+public static class IdentidadEventosVentas { }
+'
+assert_eq "H5: IdentidadEventosVentas.cs -> excluded" "excluded" \
+    "$(coverage_classify_file "src/Foo.Bar.Ventas.DomainEvents/IdentidadEventosVentas.cs" "$TMP_DIR" false)"
 
 echo
 echo "─── Resumen ───"
