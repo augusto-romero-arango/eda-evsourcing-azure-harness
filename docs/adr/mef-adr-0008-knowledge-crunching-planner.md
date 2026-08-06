@@ -58,7 +58,7 @@ No se espera que el usuario llegue con el modelo completo. El modo `explorar` de
 
 ### El planner custodia el glosario de lenguaje ubicuo
 
-Desde MEF-ADR-0040, el planner tambien custodia el glosario de lenguaje ubicuo (`docs/ddd/ubiquitous-language.yaml`): lo lee al arrancar cada sesion y lo actualiza, acotado al vocabulario que la sesion produce, antes de cerrar. Antes de MEF-ADR-0040 esa custodia era del agente `event-stormer` (retirado); el planner ya era el chokepoint natural de todo evento o comando nuevo, asi que la custodia es consecuencia directa de su proposito, no una responsabilidad añadida.
+El planner custodia el glosario de lenguaje ubicuo (`docs/ddd/ubiquitous-language.yaml`, MEF-ADR-0040): lo lee al arrancar cada sesion y lo actualiza, acotado al vocabulario que la sesion produce, antes de cerrar. No es una responsabilidad encima del Knowledge Crunching sino una consecuencia directa de el -- el planner es el chokepoint por el que pasa todo evento o comando nuevo antes de convertirse en issue, y por tanto el unico agente que ve completo el vocabulario que el dominio va fijando.
 
 ---
 

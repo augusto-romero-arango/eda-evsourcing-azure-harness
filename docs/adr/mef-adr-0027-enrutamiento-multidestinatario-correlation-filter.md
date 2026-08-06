@@ -102,8 +102,9 @@ compartir la misma propiedad.
 
 Alineado con MEF-ADR-0025: la clave de enrutamiento es un dato de **negocio** (identificador de
 destinatario, tenant, etc.), no una credencial ni una key. No se custodia en Key Vault; se
-documenta en claro en el flujo (YAML de `docs/eda/flows/`, comentarios de Terraform) como
-cualquier otro dato de negocio del evento. Se deja explicito para evitar que un agente la trate por
+documenta en claro donde vive la topologia -- comentarios de Terraform en la subscription y su
+filtro, y el issue o ADR del consumidor que fija el flujo -- como cualquier otro dato de negocio
+del evento. Se deja explicito para evitar que un agente la trate por
 error como secreto, dado el vocabulario compartido ("clave") con las claves de cifrado.
 
 ## Alternativas consideradas
@@ -211,3 +212,9 @@ destinatarios sin tocar al productor, igual que ya vale para el caso simple de M
   `Cosmos-SincoERP/Cosmos.ControlPlane`). Fija la doctrina fundacional de enrutamiento
   multi-destinatario de un evento unico por correlation filter de igualdad. Es el issue fundacional
   de un epico de 3: bloquea a los issues (b) infraestructura y (c) guia del productor.
+- 2026-08-05: enmendada la decision 6 (issue #561, MEF-ADR-0040) para retirar el YAML de
+  `docs/eda/flows/` como lugar donde se documenta en claro la clave de enrutamiento -- ese
+  artefacto se elimina junto con la capa de modelado EDA (MEF-ADR-0040); la documentacion queda
+  en los comentarios de Terraform de la subscription y en el issue o ADR del consumidor. Sin
+  cambio en la doctrina de este ADR (la clave de enrutamiento sigue siendo un dato de negocio,
+  no un secreto).

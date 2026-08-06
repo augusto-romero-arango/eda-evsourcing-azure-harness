@@ -2,7 +2,7 @@
 
 - **Fecha**: 2026-08-05
 - **Estado**: aceptado
-- **Aplica a**: el harness completo -- retira la capa de modelado/documentacion EDA (agentes `eda-modeler`/`event-stormer`, skill `/show-flow`, script `scripts/eda-lint.sh`, artefactos `docs/eda/` en su ruta actual) y fija las fuentes de conocimiento del dominio que quedan vigentes. Supersede MEF-ADR-0010 (pipeline de conocimiento del dominio); enmienda MEF-ADR-0008 (knowledge crunching del planner) y MEF-ADR-0012 (heuristicas de modelado); actualiza una mencion residual en MEF-ADR-0039 (composicion de ensamblados por rol del evento).
+- **Aplica a**: el harness completo -- retira la capa de modelado/documentacion EDA (agentes `eda-modeler`/`event-stormer`, skill `/show-flow`, script `scripts/eda-lint.sh`, artefactos `docs/eda/` en su ruta actual) y fija las fuentes de conocimiento del dominio que quedan vigentes. Supersede MEF-ADR-0010 (pipeline de conocimiento del dominio); enmienda MEF-ADR-0008 (knowledge crunching del planner), MEF-ADR-0012 (heuristicas de modelado) y MEF-ADR-0027 (donde se documenta en claro la clave de enrutamiento); actualiza una mencion residual en MEF-ADR-0039 (composicion de ensamblados por rol del evento).
 
 ## Contexto
 
@@ -51,7 +51,7 @@ Ningun agente nuevo reemplaza a `event-stormer`/`eda-modeler`: el `planner` ya c
 
 ### 3. Custodia del glosario por el planner
 
-El agente `planner` hereda la custodia del glosario de lenguaje ubicuo, que antes era responsabilidad del `event-stormer` (MEF-ADR-0010, Fase 1). No es una tarea añadida artificialmente: el planner ya es el **chokepoint** natural por el que pasa todo evento o comando nuevo antes de convertirse en issue (MEF-ADR-0008) -- mantener el glosario es una consecuencia directa de ese rol, no una responsabilidad nueva encima de el.
+El agente `planner` hereda la custodia del glosario de lenguaje ubicuo, que antes era responsabilidad del `event-stormer` (MEF-ADR-0010, Fase 1). No es una tarea agregada artificialmente: el planner ya es el **chokepoint** natural por el que pasa todo evento o comando nuevo antes de convertirse en issue (MEF-ADR-0008) -- mantener el glosario es una consecuencia directa de ese rol, no una responsabilidad nueva encima de el.
 
 Deberes concretos:
 
@@ -83,7 +83,7 @@ Alcance **greenfield-only**, mismo patron que MEF-ADR-0039 decision 9 (migracion
 
 ### Alt 3: conservar `context-map.yaml` como segunda excepcion (junto al glosario)
 
-**Descartada**: a diferencia del glosario, el mapa de contextos no tiene un chokepoint natural equivalente al planner -- ningun agente que sobreviva a esta poda pasa por *todas* las relaciones cross-BC del sistema. Sin dueño claro, el artefacto se degradaria exactamente igual que las otras piezas del knowledge hub que este ADR retira. La perdida se documenta como aceptada (ver "Consecuencias") en vez de mantener un artefacto sin custodio real.
+**Descartada**: a diferencia del glosario, el mapa de contextos no tiene un chokepoint natural equivalente al planner -- ningun agente que sobreviva a esta poda pasa por *todas* las relaciones cross-BC del sistema. Sin un custodio claro, el artefacto se degradaria exactamente igual que las otras piezas del knowledge hub que este ADR retira. La perdida se documenta como aceptada (ver "Consecuencias") en vez de mantener un artefacto sin custodio real.
 
 ### Alt 4: mover el glosario a `docs/adr/` en vez de una carpeta `docs/ddd/` nueva
 
@@ -94,9 +94,9 @@ Alcance **greenfield-only**, mismo patron que MEF-ADR-0039 decision 9 (migracion
 ### Positivas
 
 - **Ningun artefacto derivado puede volver a mentir**: cada YAML retirado tenia (o adquirio con MEF-ADR-0039) una fuente ejecutable que describe el sistema real sin necesitar sincronizacion manual.
-- **El glosario sobrevive con dueño claro**: el planner ya pasaba por todo vocabulario nuevo; formalizar su custodia no añade un proceso nuevo, documenta uno que ya existia implicitamente.
+- **El glosario sobrevive con un custodio claro**: el planner ya pasaba por todo vocabulario nuevo; formalizar su custodia no agrega un proceso nuevo, documenta uno que ya existia implicitamente.
 - **Menos superficie de mantenimiento del harness**: dos agentes, un skill y un script menos que mantener alineados con cada cambio de convencion (p. ej. MEF-ADR-0039 ya habia dejado a `eda-modeler` en una lista de agentes por realinear -- esa deuda desaparece con el agente).
-- **La perdida se documenta explicitamente en vez de quedar implicita**: un lector futuro que se pregunte "¿donde quedo el mapa de contextos?" encuentra la respuesta aqui, no un silencio.
+- **La perdida se documenta explicitamente en vez de quedar implicita**: un lector futuro que se pregunte donde quedo el mapa de contextos encuentra la respuesta aqui, no un silencio.
 
 ### Negativas
 
@@ -109,14 +109,15 @@ Alcance **greenfield-only**, mismo patron que MEF-ADR-0039 decision 9 (migracion
 - MEF-ADR-0010 (pipeline de conocimiento del dominio): supersedido por este ADR -- su cuerpo historico se conserva integro bajo el estado nuevo (ver ese documento, "Control de cambios").
 - MEF-ADR-0008 (knowledge crunching como proposito del planner): enmendado por este ADR -- retira la complementariedad con `eda-modeler` y anota la custodia del glosario.
 - MEF-ADR-0012 (heuristicas de modelado de objetos de dominio): enmendado por este ADR -- "event-stormer o planner" pasa a "planner" en la fase de descubrimiento.
+- MEF-ADR-0027 (enrutamiento multi-destinatario por correlation filter): enmendado por este ADR -- su decision 6 prescribia documentar en claro la clave de enrutamiento en el YAML de `docs/eda/flows/`; retirado ese artefacto, la documentacion queda en los comentarios de Terraform de la subscription y en el issue o ADR del consumidor.
 - MEF-ADR-0039 (composicion canonica de ensamblados por rol del evento): actualizado por este ADR -- retira `agents/eda-modeler.md` de su seccion "Aplica a" y de la lista de issues consumidores de capa 3; es ademas la fuente de verdad ejecutable que reemplaza `docs/eda/catalog.yaml` (decision 1).
 - MEF-ADR-0001, MEF-ADR-0024, MEF-ADR-0026, MEF-ADR-0027: fuente de verdad de la topologia de Service Bus que reemplaza `docs/eda/messaging/topics.yaml`.
 - MEF-ADR-0006 (convenciones de nombramiento de funciones Azure): fija `{Accion}Cuando{Evento}`, la convencion que hace semi-legible la coreografia que antes documentaba `docs/eda/flows/`.
 - MEF-ADR-0034 (worker de proyecciones y read models): fuente de verdad ejecutable que reemplaza `docs/eda/projections/`.
 - MEF-ADR-0030 (esquema de identificacion de ADRs): fija el numero `MEF-ADR-0040` (numero verificado libre, `docs/adr/` llegaba a 0039 antes de este ADR).
 - Eric Evans, *Domain-Driven Design: Tackling Complexity in the Heart of Software* (Addison-Wesley, 2003), cap. 3 -- lenguaje ubicuo: fundamenta que el glosario es un artefacto de DDD, no de EDA, y por tanto su ruta canonica (`docs/ddd/`) en vez de `docs/eda/`.
-- Issue #561 (este ADR) y sus issues hermanos de demolicion (retiro fisico de agentes/skill/script/artefactos, re-anclaje del `planner` a la custodia del glosario en su body), todavia sin crear: dependen de este ADR como su fuente de doctrina.
+- Issue #561 (este ADR) y sus issues hermanos de demolicion (retiro fisico de agentes/skill/script/artefactos, re-anclaje del `planner` a la custodia del glosario en su body), todavia sin crear: dependen de este ADR como su fuente de doctrina. Al borrar los archivos quedan por limpiar, en el mismo issue de demolicion, las menciones descriptivas que hoy son ciertas y dejan de serlo cuando el archivo desaparezca: la fila de `/show-flow` en el catalogo de skills de `CLAUDE.md`, los listados de skills y agentes de `README.md`, la linea `` `/show-flow`, `/eraser-diagram` `` de MEF-ADR-0019 ("Skills sin equivalente interno") y los inventarios de `scripts/tests/test-guards.sh` que enumeran `show-flow.md` y `eda-lint.sh`. Este ADR fija la doctrina; no ejecuta el retiro ni edita esos inventarios.
 
 ## Control de cambios
 
-- 2026-08-05: creacion como `aceptado` (issue #561). Fija la eliminacion de la capa de modelado EDA (agentes `eda-modeler`/`event-stormer`, skill `/show-flow`, script `eda-lint.sh`, artefactos `docs/eda/` en su ruta actual) con la tabla artefacto -> fuente de verdad ejecutable; las cuatro fuentes de conocimiento del dominio vigentes; la custodia del glosario de lenguaje ubicuo por el `planner` (lectura al arrancar, actualizacion acotada al cierre de sesion, guardrail anti-sinonimos de dos patas); la ruta canonica `docs/ddd/ubiquitous-language.yaml` con fallback de lectura a `docs/eda/ubiquitous-language.yaml`; y el alcance greenfield-only para consumidores con `docs/eda/` ya poblado. Supersede MEF-ADR-0010; enmienda MEF-ADR-0008 y MEF-ADR-0012; actualiza MEF-ADR-0039.
+- 2026-08-05: creacion como `aceptado` (issue #561). Fija la eliminacion de la capa de modelado EDA (agentes `eda-modeler`/`event-stormer`, skill `/show-flow`, script `eda-lint.sh`, artefactos `docs/eda/` en su ruta actual) con la tabla artefacto -> fuente de verdad ejecutable; las cuatro fuentes de conocimiento del dominio vigentes; la custodia del glosario de lenguaje ubicuo por el `planner` (lectura al arrancar, actualizacion acotada al cierre de sesion, guardrail anti-sinonimos de dos patas); la ruta canonica `docs/ddd/ubiquitous-language.yaml` con fallback de lectura a `docs/eda/ubiquitous-language.yaml`; y el alcance greenfield-only para consumidores con `docs/eda/` ya poblado. Supersede MEF-ADR-0010; enmienda MEF-ADR-0008, MEF-ADR-0012 y MEF-ADR-0027; actualiza MEF-ADR-0039.
