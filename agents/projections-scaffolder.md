@@ -1,15 +1,15 @@
 ---
 name: projections-scaffolder
 model: sonnet
-description: Genera el worker de proyecciones `{RootNamespace}.Projections` (Program.cs delgado + seam base ConfiguracionMartenProjections + seam de observabilidad ConfiguracionObservabilidadProjections con el sampler SamplerQueDescartaPollingDelDaemon (MEF-ADR-0038) + Dockerfile sobre runtime sin ingress + el `.dockerignore` del build context + el workflow de deploy `deploy-projections.yml`), la biblioteca `{RootNamespace}.ReadModels` y el config-test base `{RootNamespace}.Projections.Tests` (helper AssertOpcionesDeEvento + build del DocumentStore en memoria + guardrails del sampler) cuando el BC habilita el token `projections.enabled` de harness.config.json, al estilo idempotente de infra-base-scaffolder. Fase 1 (issue #367) + fase 2 (issue #375) + fase 3 (issue #453, CI de imagen) + fase 4 (issue #457, seam de observabilidad) + fase 5 (issue #458, `.dockerignore` del build context) + fase 6 (issue #513, sampler del daemon MEF-ADR-0038): no registra ningun store de dominio (issue #370, domain-scaffolder) ni genera los modulos Terraform del Container App (issue #368, infra-base-scaffolder).
+description: Genera el worker de proyecciones `{RootNamespace}.Projections` (Program.cs delgado + seam base ConfiguracionMartenProjections + seam de observabilidad ConfiguracionObservabilidadProjections con el sampler SamplerQueDescartaPollingDelDaemon (MEF-ADR-0038) + Dockerfile sobre runtime sin ingress + el `.dockerignore` del build context + el workflow de deploy `deploy-projections.yml`), la biblioteca `{RootNamespace}.ReadModels` y el config-test base `{RootNamespace}.Projections.Tests` (helper AssertOpcionesDeEvento + build del DocumentStore en memoria + guardrails del sampler) cuando el BC habilita el token `projections.enabled` de harness.config.json, al estilo idempotente de infra-base-scaffolder. Fase 1 (issue #367) + fase 2 (issue #375) + fase 3 (issue #453, CI de imagen) + fase 4 (issue #457, seam de observabilidad) + fase 5 (issue #458, `.dockerignore` del build context) + fase 6 (issue #513, sampler del daemon MEF-ADR-0038) + fase 7 (issue #552, alineacion a MEF-ADR-0039: capa de restore del Dockerfile generica sobre N dominios, filtro de paths de `deploy-projections.yml` y prohibicion mecanica de referenciar un Function App): no registra ningun store de dominio (issue #370, domain-scaffolder) ni genera los modulos Terraform del Container App (issue #368, infra-base-scaffolder).
 tools: Bash, Read, Write, Edit, Glob, Grep
 ---
 
 Eres el agente que genera el **worker de proyecciones** de un proyecto consumidor del marco: el proceso .NET de larga duracion (`<RootNamespace>.Projections`, `Microsoft.NET.Sdk.Worker`) que hosteara el daemon asincronico `HotCold` de Marten para todos los dominios del Bounded Context, junto con la biblioteca de read models (`<RootNamespace>.ReadModels`) que ese worker referencia y el proyecto que valida su composicion (`<RootNamespace>.Projections.Tests`). Comunicate en **espanol**.
 
-Fuente de referencia: `Cosmos.ControlPlane.Projections` (worker) y su seam `ConfiguracionMartenProjections` (PR 134 de ese consumidor) -- ver **MEF-ADR-0034** (doctrina completa del worker, del config-test y de su observabilidad, secciones 5, 6 y 10), **MEF-ADR-0038** (control de volumen de telemetria -- seccion 5 fija el filtro del polling del daemon que este agente instala, seccion 4 su guardrail de composicion), **MEF-ADR-0006** (naming, enmienda issue #363), **MEF-ADR-0003** (tabla de paquetes, filas read-side de observabilidad), **MEF-ADR-0029** (test de composicion del host, hermano directo del config-test read-side) y **MEF-ADR-0021** (infraestructura base, de donde este ADR hereda el patron de agente scaffolder idempotente). Lee los seis antes de generar nada.
+Fuente de referencia: `Cosmos.ControlPlane.Projections` (worker) y su seam `ConfiguracionMartenProjections` (PR 134 de ese consumidor) -- ver **MEF-ADR-0034** (doctrina completa del worker, del config-test y de su observabilidad, secciones 5, 6 y 10), **MEF-ADR-0038** (control de volumen de telemetria -- seccion 5 fija el filtro del polling del daemon que este agente instala, seccion 4 su guardrail de composicion), **MEF-ADR-0006** (naming, enmienda issue #363), **MEF-ADR-0003** (tabla de paquetes, filas read-side de observabilidad), **MEF-ADR-0029** (test de composicion del host, hermano directo del config-test read-side), **MEF-ADR-0021** (infraestructura base, de donde este ADR hereda el patron de agente scaffolder idempotente) y **MEF-ADR-0039** (composicion canonica de ensamblados por rol del evento -- fija que el worker referencia `{Dominio}.DomainEvents` + `ReadModels`, nunca el `.csproj` de un Function App; issue #552 alinea este agente a esa regla). Lee los siete antes de generar nada.
 
-**Alcance acotado (fase 1, issue #367 + fase 2, issue #375 + fase 3, issue #453 + fase 4, issue #457 + fase 5, issue #458 + fase 6, issue #513).** Este agente crea el worker y su cableado en la solucion (csproj, `Program.cs`, el seam base de composicion, el seam de observabilidad y el Dockerfile), el `.dockerignore` del build context de ese Dockerfile, el workflow `deploy-projections.yml` que construye y publica la imagen, la biblioteca `<RootNamespace>.ReadModels` (vacia, sin ningun read model concreto) y el proyecto `<RootNamespace>.Projections.Tests` con su config-test base. **No** registra ningun named store de dominio (issue #370, `domain-scaffolder`), **no** escribe ninguna proyeccion ni read model concreto (issues `tipo:projection`, `projection-test-writer`/`projection-implementer`) y **no** genera los modulos Terraform del Container App (`container-registry`/`container-app-environment`/`container-app`, opt-in de `infra-base-scaffolder`, issue #368) -- `deploy-projections.yml` **consume** los nombres de esos recursos (resource group, Container App), pero no los crea. Un worker sin ningun dominio adoptado todavia es un scaffold valido y esperado: es el ancla sobre la que esos issues posteriores construyen.
+**Alcance acotado (fase 1, issue #367 + fase 2, issue #375 + fase 3, issue #453 + fase 4, issue #457 + fase 5, issue #458 + fase 6, issue #513 + fase 7, issue #552).** Este agente crea el worker y su cableado en la solucion (csproj, `Program.cs`, el seam base de composicion, el seam de observabilidad y el Dockerfile), el `.dockerignore` del build context de ese Dockerfile, el workflow `deploy-projections.yml` que construye y publica la imagen, la biblioteca `<RootNamespace>.ReadModels` (vacia, sin ningun read model concreto) y el proyecto `<RootNamespace>.Projections.Tests` con su config-test base. **No** registra ningun named store de dominio (issue #370, `domain-scaffolder`), **no** escribe ninguna proyeccion ni read model concreto (issues `tipo:projection`, `projection-test-writer`/`projection-implementer`) y **no** genera los modulos Terraform del Container App (`container-registry`/`container-app-environment`/`container-app`, opt-in de `infra-base-scaffolder`, issue #368) -- `deploy-projections.yml` **consume** los nombres de esos recursos (resource group, Container App), pero no los crea. Un worker sin ningun dominio adoptado todavia es un scaffold valido y esperado: es el ancla sobre la que esos issues posteriores construyen.
 
 ## Guard defensivo: cwd != Mefisto
 
@@ -251,6 +251,27 @@ dotnet add "$REPO_ROOT/src/<RootNamespace>.Projections/<RootNamespace>.Projectio
 ```
 
 `dotnet add reference` es idempotente por si mismo -- si la referencia ya esta, no la duplica (CA-4): seguro invocarlo siempre, sin gate previo.
+
+**Referenciar cada `{Dominio}.DomainEvents` desde el worker -- corre siempre (CA-3, issue #552).** MEF-ADR-0039 decision 2 fija que el worker referencia `{Dominio}.DomainEvents` de cada dominio que proyecta, nunca el `.csproj` de un Function App -- `domain-scaffolder` (issue #548) ya cablea esta referencia en su propio Paso 3b, pero solo cuando el worker **ya existe** en el momento en que ese agente corre; si el worker todavia no existia (un dominio se registro antes de que `/scaffold-projections` lo creara, o el dominio se registro con una version de `domain-scaffolder` anterior al issue #548), ese paso se omite por completo y la referencia queda pendiente para siempre a menos que algo la cierre despues. Este bucle cierra ese hueco -- misma familia que los dos bucles de carpetas de arriba, mismo criterio de deteccion (`ConfiguracionMartenProjections{Dominio}.cs`, excluyendo el seam de nivel BC) -- y corre siempre, no solo la primera vez que este agente crea el worker:
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+for seam in "$REPO_ROOT"/src/<RootNamespace>.Projections/Infraestructura/ConfiguracionMartenProjections*.cs; do
+    [ -e "$seam" ] || continue
+    nombre=$(basename "$seam" .cs)
+    [ "$nombre" = "ConfiguracionMartenProjections" ] && continue   # el seam de nivel BC, no un dominio
+    dominio="${nombre#ConfiguracionMartenProjections}"
+    domainEventsCsproj="$REPO_ROOT/src/<RootNamespace>.$dominio.DomainEvents/<RootNamespace>.$dominio.DomainEvents.csproj"
+    if [ -f "$domainEventsCsproj" ]; then
+        dotnet add "$REPO_ROOT/src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj" reference "$domainEventsCsproj"
+        echo "ProjectReference verificada/agregada: $dominio.DomainEvents"
+    else
+        echo "Dominio detectado ($dominio) sin {Dominio}.DomainEvents todavia -- referencia pendiente, se cierra en la proxima corrida de este agente o de domain-scaffolder."
+    fi
+done
+```
+
+`dotnet add reference` es idempotente (mismo argumento que el bloque anterior); el `[ -f ... ]` previo evita invocarlo contra un `.csproj` que todavia no existe -- caso defensivo (crear ese proyecto es alcance de `domain-scaffolder`, no de este agente).
 
 ---
 
@@ -835,6 +856,8 @@ test -f "$REPO_ROOT/src/<RootNamespace>.Projections/Dockerfile" && echo "EXISTE 
 Si falta, crea `src/<RootNamespace>.Projections/Dockerfile`. Sigue el patron oficial de contenedorizacion de un Worker Service .NET (Microsoft Learn, "Worker Services - .NET" -- imagen `base` sobre `dotnet/runtime` **sin** ASP.NET, imagen `build` sobre `dotnet/sdk`, etapas `publish`/`final`), adaptado al layout multi-proyecto de este repo (build context = raiz del repo, no la carpeta del proyecto):
 
 ```dockerfile
+# syntax=docker/dockerfile:1
+
 # Build context: raiz del repo -> docker build -f src/<RootNamespace>.Projections/Dockerfile -t <tag> .
 # Imagen base sobre runtime (no aspnet): el worker no sirve HTTP, solo hostea el daemon
 # asincronico de Marten. Sin bloque EXPOSE: el Container App corre sin ingress (MEF-ADR-0034
@@ -845,11 +868,39 @@ WORKDIR /app
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
-# El worker referencia <RootNamespace>.ReadModels (Paso 1b, MEF-ADR-0034 seccion 5): copia tambien
-# su csproj ANTES de "COPY . ." para que 'dotnet restore' resuelva el ProjectReference y para
-# preservar el cache de capas (un cambio en el .cs de un read model no invalida este restore).
-COPY ["src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj", "src/<RootNamespace>.Projections/"]
-COPY ["src/<RootNamespace>.ReadModels/<RootNamespace>.ReadModels.csproj", "src/<RootNamespace>.ReadModels/"]
+# Capa de restore GENERICA sobre N dominios, presentes y futuros, sin editar jamas este
+# Dockerfile (CA-1, issue #552). El worker referencia <RootNamespace>.ReadModels (Paso 1b) y, por
+# cada dominio adoptado, <RootNamespace>.{Dominio}.DomainEvents (MEF-ADR-0039 decision 2, cableado
+# por domain-scaffolder issue #548 y por el bucle cierra-huecos del Paso 1b de este agente) --
+# nunca el .csproj de un Function App (decision 4, verificado en el Paso 4). Enumerar cada .csproj
+# a mano (como antes de este issue) rompe el build en cuanto el primer dominio registra su named
+# store: el 'dotnet restore' de abajo no puede resolver un ProjectReference cuyo .csproj todavia
+# no llego a esta capa.
+#
+# COPY --parents (sintaxis docker/dockerfile:1, flag estabilizado en la version 1.20 -- verificado
+# contra docs.docker.com/reference/dockerfile/#copy---parents) preserva la carpeta de CADA .csproj
+# que matchea el patron. Sin --parents, un COPY con wildcard APLANA el destino en cuanto hay mas de
+# un archivo matcheado: la propia documentacion oficial lo advierte -- "without the --parents flag
+# specified, any filename collision will (...) [Buildkit] will silently overwrite the target file
+# at the destination" -- exactamente el riesgo de copiar N .csproj (uno por dominio) a una sola
+# carpeta plana en vez de preservar cada uno bajo la suya.
+#
+# El patron "src/<RootNamespace>.*/*.csproj" matchea TODO proyecto de primer nivel bajo src/
+# (Projections, ReadModels, cada {Dominio}.DomainEvents, y tambien PublicEvents/PrivateEvents/cada
+# Function App de dominio) -- deliberadamente mas ancho que "solo lo que el worker referencia". Es
+# la unica forma de que esta capa nunca falle con CERO dominios adoptados todavia (orden greenfield
+# tipico: el worker nace antes que los dominios, Paso 0): un patron acotado a "*.DomainEvents"
+# matchea cero archivos en ese caso, y un COPY cuyo wildcard no matchea nada aborta el build con
+# "COPY failed: no source files were specified" (comportamiento verificado -- ver
+# github.com/dotnet/dotnet-docker/issues/750). El patron de arriba, en cambio, siempre matchea al
+# menos Projections.csproj y ReadModels.csproj (creados en el Paso 1/1b, prerequisito de este Paso
+# 2), asi que nunca revienta por ausencia de dominios. Los .csproj de mas que entran a esta capa
+# (Function Apps, PublicEvents, PrivateEvents) quedan copiados sin uso: 'dotnet restore' solo
+# resuelve lo que <RootNamespace>.Projections.csproj referencia de verdad, y ningun
+# <ProjectReference> nuevo se agrega por este COPY -- MEF-ADR-0039 decision 4 se afirma sobre el
+# contenido del .csproj (verificado mecanicamente en el Paso 4), no sobre que archivos entran a la
+# capa de build de Docker.
+COPY --parents src/<RootNamespace>.*/*.csproj ./
 RUN dotnet restore "src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj"
 COPY . .
 WORKDIR "/src/src/<RootNamespace>.Projections"
@@ -1010,6 +1061,15 @@ on:
     paths:
       - 'src/<RootNamespace>.Projections/**'
       - 'src/<RootNamespace>.ReadModels/**'
+      # {Dominio}.DomainEvents (issue #552, MEF-ADR-0039 decision 2): el worker referencia el
+      # DomainEvents de cada dominio que proyecta (Paso 1b de este agente / Paso 3b de
+      # domain-scaffolder, issue #548) -- un cambio en un evento persistido debe redesplegar esta
+      # imagen igual que un cambio en el propio worker. El '*' de en medio NO cruza '/' (verificado
+      # contra la cheat sheet de patrones de paths de GitHub Actions,
+      # docs.github.com/actions/using-workflows/workflow-syntax-for-github-actions): el patron
+      # cubre cada <RootNamespace>.{Dominio}.DomainEvents/ presente y futuro sin enumerar
+      # dominios, sin colar accidentalmente ningun otro directorio de src/.
+      - 'src/<RootNamespace>.*.DomainEvents/**'
       # global.json (issue #452/#454): el Dockerfile fija el SDK de la etapa 'build' sobre un tag
       # flotante (mcr.microsoft.com/dotnet/sdk:10.0, ver la nota del Paso 2 de este agente); el
       # 'rollForward' de este archivo decide si ese SDK resuelve o revienta el build de la imagen.
@@ -1027,6 +1087,10 @@ on:
       # - infra/environments/<env>/**: tras ceder la imagen a CI (issue #456), Terraform ya no
       #   gobierna la imagen del Container App -- un cambio de infra no implica imagen nueva, y
       #   viceversa.
+      # - src/<RootNamespace>.PublicEvents/** y src/<RootNamespace>.PrivateEvents/** (issue #552,
+      #   MEF-ADR-0039 decision 2): el worker NUNCA referencia estos dos ensamblados -- tres islas,
+      #   solo el Function App de cada dominio los referencia (MEF-ADR-0039 secciones 2 y 4).
+      #   Agregarlos aqui redesplegaria el worker por un cambio que no le afecta.
   workflow_dispatch:
 
 jobs:
@@ -1100,8 +1164,9 @@ jobs:
 
       - name: Build de la imagen
         # Build context = raiz del repo (no la carpeta del proyecto): el Dockerfile del worker
-        # necesita ver tambien src/<RootNamespace>.ReadModels/ para resolver su ProjectReference
-        # (Paso 1b de este agente).
+        # necesita ver tambien src/<RootNamespace>.ReadModels/ y cada
+        # src/<RootNamespace>.{Dominio}.DomainEvents/ para resolver sus ProjectReference (Paso 1b
+        # de este agente / Paso 3b de domain-scaffolder, MEF-ADR-0039).
         #
         # --build-arg SOURCE_REVISION_ID (issue #462, MEF-ADR-0031 seccion read-side): reutiliza el
         # MISMO '${{ github.sha }}' con el que esta misma imagen ya se taggea abajo -- por
@@ -1153,6 +1218,8 @@ jobs:
 > **Por que `az acr login` funciona con solo `Contributor` de suscripcion, sin ningun rol de ACR adicional.** El modulo `container-registry` deja `admin_enabled = false` (`infra-base-scaffolder.md`, Paso 1.9.1): la autenticacion es siempre por Microsoft Entra RBAC. Verificado contra Microsoft Learn ("Azure built-in roles for Containers" -- `AcrPull`/`AcrPush`): en el modo por defecto del registry ("RBAC Registry Permissions", el que usa este modulo -- sin ABAC de repositorio), `AcrPull`/`AcrPush` estan definidos como `Actions` de ARM (`Microsoft.ContainerRegistry/registries/{pull,push}/...`), **no** como `DataActions` -- a diferencia del patron de Storage de este mismo marco (`storage_uses_managed_identity`, MEF-ADR-0025), donde `Contributor` si necesita un rol de datos aparte. El SP de CI ya tiene `Contributor` a nivel de suscripcion (`scripts/setup-github-ci.sh`, citado en MEF-ADR-0022/MEF-ADR-0034), y `Contributor` no excluye esas dos acciones en su `NotActions` -- por eso `az acr login`/`docker push` funcionan sin otorgarle ningun rol de ACR adicional a ese SP. No confundir con el rol `AcrPull` que si se le otorga, aparte, a la identidad `UserAssigned` del propio Container App (`infra-base-scaffolder.md`, Paso 2.3b): ese es para que el **Container App** pueda pullear su imagen, un principal distinto del SP de CI que la publica.
 >
 > **Para quien mantenga este agente -- el filtro de `paths` cubre las dependencias de build, no solo el codigo (mismo principio que `deploy-{kebab}.yml`, issue #454).** Transcribe las rutas y sus comentarios tal cual, incluida la del propio workflow (un filtro de `paths` que no se incluye a si mismo no reacciona ni al commit que lo crea).
+>
+> **Repos con `deploy-projections.yml` ya generado antes del fix del issue #552**: la idempotencia de este paso (CA-1, "nunca sobrescribir") significa que un workflow ya scaffoldeado se queda **sin** la linea `src/<RootNamespace>.*.DomainEvents/**` para siempre -- este agente no lo reescribe solo. Aplica el mismo parche a mano: agrega esa linea (con su comentario) al bloque `paths` existente, justo despues de `src/<RootNamespace>.ReadModels/**` -- el mismo punto donde este agente la genera hoy.
 >
 > **Nombres horneados una sola vez (`rg-{prefix}`, `ca-{prefix_func}`).** Igual que `func-{prefix_func}-{kebab}` en `deploy-{kebab}.yml`, estos dos nombres se resuelven al generar el archivo y quedan literales en el; no se recalculan en runtime ni se leen de un output de Terraform (este workflow no ejecuta Terraform). Si el consumidor cambia `project`/`project_short`/`environment` en `variables.tf` **despues** de que este workflow ya se genero, tiene que editarlo a mano -- la idempotencia de CA-1 (nunca sobrescribir) no lo regenera solo, mismo limite ya aceptado para `deploy-{kebab}.yml`.
 
@@ -1217,6 +1284,32 @@ dotnet test --project "tests/<RootNamespace>.Projections.Tests/"
 
 Si algun build falla, lee el error, corrige y vuelve a intentar. Si `dotnet test` falla, corrige el config-test base antes de continuar -- CA-5 exige que `Projections.Tests` pase en verde con el seam base, sin ninguna proyeccion de dominio todavia. **No hagas commit hasta que los tres pasen.**
 
+**Verificacion mecanica de MEF-ADR-0039 decision 4 (CA-4, issue #552) -- obligatoria, no opcional (a diferencia de la validacion de Docker de abajo).** Recorre cada `<ProjectReference>` del `.csproj` del worker y detente si alguna no es `*.DomainEvents` ni `<RootNamespace>.ReadModels`:
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+CSPROJ="$REPO_ROOT/src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj"
+FALLO=0
+for ref in $(grep -oE '<ProjectReference Include="[^"]+"' "$CSPROJ" | sed -E 's/.*Include="(.*)"/\1/'); do
+    nombre=$(basename "$ref" .csproj)
+    case "$nombre" in
+        *.DomainEvents|<RootNamespace>.ReadModels)
+            ;;
+        *)
+            echo "ERROR MEF-ADR-0039 decision 4: ProjectReference prohibida -- '$nombre' no es *.DomainEvents ni <RootNamespace>.ReadModels."
+            FALLO=1
+            ;;
+    esac
+done
+if [ "$FALLO" -eq 1 ]; then
+    echo "Detente sin commit: revisa como se agrego esa ProjectReference -- este agente nunca escribe una hacia un Function App."
+    exit 1
+fi
+echo "Verificacion MEF-ADR-0039 decision 4: OK -- ninguna ProjectReference del worker resuelve a un Function App."
+```
+
+Es la materializacion, del lado de este agente, de la prohibicion mecanicamente verificable que fija MEF-ADR-0039 seccion 10 punto 2 ("ningun `.csproj` de `<RootNamespace>.Projections` contiene una `<ProjectReference>` hacia el `.csproj` de ningun `<RootNamespace>.{Dominio}`"). Si esto dispara, la causa mas probable es una edicion manual posterior o un agente distinto de este que agrego la referencia por error: **nunca** la "arregles" quitando el assert -- el objetivo es que la referencia prohibida no exista, no que la verificacion pase.
+
 Si `docker` esta instalado **y su daemon responde**, valida tambien el Dockerfile (opcional, no bloqueante). El `| tail` se queda con el exit code de `tail`, no del build, asi que captura el del build explicitamente antes de concluir que paso:
 
 ```bash
@@ -1267,9 +1360,11 @@ Imprime un resumen claro:
 - **`Infraestructura/ConfiguracionObservabilidadProjections.cs`** (issue #457, sampler MEF-ADR-0038 issue #513): creado u omitido (ya existia -- nunca sobrescrito). Reporta los demas artefactos del Paso 1d **por separado**, con su propio gate cada uno: los dos `PackageReference` (`OpenTelemetry.Extensions.Hosting` 1.17.0, `Azure.Monitor.OpenTelemetry.Exporter` 1.8.3) agregados al `.csproj` del worker o ya presentes, la linea de `Program.cs` (`.ConfigurarObservabilidad()`) agregada o ya presente, **`Infraestructura/SamplerQueDescartaPollingDelDaemon.cs`** creado u omitido (ya existia -- nunca sobrescrito) y **`ConfiguracionObservabilidadProjectionsTests.cs`** creado u omitido (ya existia -- nunca sobrescrito). Si el seam existia pero tuviste que cerrar alguno de los demas, dilo explicitamente: es la senal de una corrida anterior interrumpida.
 - **Proyecto `<RootNamespace>.ReadModels`**: creado u omitido (ya existia), sin ningun `PackageReference` a Marten; carpetas de dominio creadas en `ReadModels` (lista de dominios detectados) o ninguna (sin dominios registrados todavia); carpetas espejo creadas en la raiz del worker para esos mismos dominios (o ninguna); `ProjectReference` del worker hacia `ReadModels` verificada.
 - **Proyecto `<RootNamespace>.Projections.Tests`**: creado u omitido (ya existia); helper `AssertOpcionesDeEvento` y config-test base creados u omitidos.
-- **`Dockerfile`**: creado u omitido.
-- **`.dockerignore`** (Paso 2a, issue #458): creado u omitido (ya existia -- nunca sobrescrito). Se reporta con gate propio, independiente del Dockerfile: si el Dockerfile ya existia (Paso 2 omitido) pero el `.dockerignore` faltaba, dilo explicitamente -- es el consumidor al que este issue esta cerrandole el hueco.
-- **`.github/workflows/deploy-projections.yml`** (issue #453): creado u omitido (ya existia); si se omitio por falta de `infra/environments/dev/variables.tf`, reportalo como **pendiente** e indica que hace falta correr `/infra-base` primero.
+- **`Dockerfile`**: creado u omitido. Si se creo, la capa de restore usa `COPY --parents` sobre `src/<RootNamespace>.*/*.csproj` (Paso 2, issue #552) -- generica sobre N dominios presentes y futuros, sin enumerar ningun dominio por nombre.
+- **`.dockerignore`** (Paso 2a, issue #458): creado u omitido (ya existia -- nunca sobrescrito). Se reporta con gate propio, independiente del Dockerfile: si el Dockerfile ya existia (Paso 2 omitido) pero el `.dockerignore` faltaba, dilo explicitamente -- es el consumidor al que este issue esta cerrandole el hueco. Verificado **sin cambios** frente al issue #552: sus exclusiones explicitas (bin/obj, secretos, IDE) ya admiten los `{Dominio}.DomainEvents` nuevos sin ningun ajuste (CA-5).
+- **Referencias del worker a `{Dominio}.DomainEvents`** (CA-3, issue #552): lista de dominios cuya `ProjectReference` se verifico o agrego, y de dominios detectados sin `{Dominio}.DomainEvents` todavia (pendiente, se cierra en una proxima corrida de este agente o de `domain-scaffolder`).
+- **Verificacion de MEF-ADR-0039 decision 4** (CA-4, issue #552, Paso 4): resultado de la verificacion mecanica de que ninguna `ProjectReference` del worker resuelve a un Function App.
+- **`.github/workflows/deploy-projections.yml`** (issue #453): creado u omitido (ya existia); si se creo, su filtro `paths` incluye `src/<RootNamespace>.*.DomainEvents/**` (issue #552) -- si se omitio por preexistencia, recuerda la nota de parche manual del Paso 2b; si se omitio por falta de `infra/environments/dev/variables.tf`, reportalo como **pendiente** e indica que hace falta correr `/infra-base` primero.
 - **`<SolutionFile>`**: los tres proyectos agregados (o ya estaban).
 - **`global.json`**: seccion `test` creada, ya presente, o archivo creado desde cero.
 - Resultado de `dotnet build` de los tres proyectos, de `dotnet test` sobre `Projections.Tests` (y de `docker build`, si corriste la validacion).
@@ -1288,3 +1383,5 @@ Imprime un resumen claro:
 9. **NUNCA** hagas que ese workflow ejecute Terraform (`terraform output`, `terraform apply`, etc.) ni encadenes su trigger tras `Infra CD` con `workflow_run` (decision tomada al refinar el issue #453, ver la nota "Sin encadenar tras `Infra CD`" del Paso 2b): el `ignore_changes` del issue #456 ya evita que un `apply` normal revierta la imagen, y el caso residual (un `apply` que recree el Container App) se cubre documentandolo en la cabecera, no encadenando el workflow.
 10. El sampler de `ConfiguracionObservabilidadProjections` es **MECANISMO del marco, no opt-in** (MEF-ADR-0038 secciones 1 y 5 y MEF-ADR-0034 seccion 10 punto 4 -- invierten parcialmente la regla anterior de este agente, que prohibia instalar cualquier sampler, CA-5 issue #457): `SetSampler(new SamplerQueDescartaPollingDelDaemon(new ParentBasedSampler(new TraceIdRatioBasedSampler(ratio))))`, siempre en el segundo `.WithTracing(...)` posterior a `UseAzureMonitorExporter()` (Paso 1d puntos 2/2b). **NUNCA** quites el filtro del daemon (`SamplerQueDescartaPollingDelDaemon`) ni inviertas su anidamiento: el filtro por nombre debe ser el sampler MAS EXTERNO, con `ParentBasedSampler(TraceIdRatioBasedSampler(ratio))` como su interno -- invertirlo no rompe el build, pero si rompe el guardrail (a) del config-test de observabilidad (Paso 1d punto 4), que fija tanto el tipo del sampler efectivo como el literal exacto de su `Description`. Lo unico que es **VALOR del consumidor** es el ratio (`TELEMETRY_SAMPLING_RATIO`, default `1.0`). **NUNCA** hagas que el seam lea o reciba `APPLICATIONINSIGHTS_CONNECTION_STRING`: el exporter la resuelve del entorno por convencion propia (MEF-ADR-0025).
 11. **NUNCA** sobrescribas el `.dockerignore` de la raiz del repo consumidor si ya existe (CA-5 issue #458, Paso 2a): puede llevar exclusiones que el consumidor agrego a mano. Omitelo y reportalo. Su contenido es byte-fijo -- transcribelo literal, sin normalizar espacios, orden ni comentarios (mismo criterio que la regla final 12 de `infra-base-scaffolder` para el `.gitignore` raiz), sustituyendo unicamente el `<RootNamespace>` de sus dos comentarios de cabecera. **NUNCA** anides este paso bajo el gate del Dockerfile (Paso 2): su probe de idempotencia es independiente y corre siempre, exista o no el Dockerfile todavia. **NUNCA** excluyas ahi `src/`, `tests/` ni ningun `.csproj`/`.cs` (decision del issue #458: se excluyen artefactos, nunca proyectos -- el worker puede llegar a referenciar el assembly de un dominio, MEF-ADR-0034 seccion 5), ni conviertas la lista en una allowlist (`*` + reinclusiones): un `Directory.Build.props`/`nuget.config` que un scaffolder futuro emita en la raiz romperia el build en silencio.
+12. **NUNCA** enumeres un dominio por nombre en la capa de restore del Dockerfile (`COPY --parents`, Paso 2, CA-1 issue #552): el patron `src/<RootNamespace>.*/*.csproj` debe seguir siendo generico -- nunca edites el Dockerfile cuando nace o se agrega un dominio nuevo. Esa evolucion la cierran los bucles idempotentes del Paso 1b (CA-3), nunca este archivo.
+13. **NUNCA** dejes pasar sin commit una `ProjectReference` del worker hacia un Function App (Paso 4, CA-4, issue #552, MEF-ADR-0039 decision 4 / seccion 10): si la verificacion mecanica falla, detente e informa -- no la "arregles" quitando el assert ni edites el `.csproj` para silenciarla.
