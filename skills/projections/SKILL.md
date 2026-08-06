@@ -14,6 +14,7 @@ Fuente unica de la doctrina read-side del marco -- MEF-ADR-0035 (estilo de codig
 - El **worker de proyecciones** (`<RootNamespace>.Projections`, un unico proceso por Bounded Context) hostea el daemon asincronico de Marten que materializa proyecciones `Async`. Fija **donde** corre esto MEF-ADR-0034; este Skill no repite esa doctrina de infraestructura.
 - Los **read models** (records planos, sin Marten ni transitivamente) viven en `<RootNamespace>.ReadModels`, biblioteca separada referenciada por el worker. Las **clases de proyeccion** (companion `partial`) viven en el **worker** (`<RootNamespace>.Projections`), el ensamblado que si referencia Marten (MEF-ADR-0034 seccion 5).
 - El **endpoint HTTP GET** de lectura vive en el Function App del **write-side** del dominio (el worker no tiene ingress) y abre su `QuerySession` desde el `IDocumentStore` ya configurado ahi (MEF-ADR-0035 seccion 4).
+- Los **tipos de evento** que tipan `Create`/`Apply` de esas clases de proyeccion viven en `<RootNamespace>.{Dominio}.DomainEvents` -- el worker los alcanza via su `ProjectReference` a ese ensamblado, el mismo que ya referencia el write-side del dominio, **nunca** via una referencia al `.csproj` de un Function App (MEF-ADR-0039 decisiones 2 y 4).
 
 ## 2. Elegir la receta: arbol de 3 niveles
 
