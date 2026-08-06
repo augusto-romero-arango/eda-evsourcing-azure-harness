@@ -2,7 +2,7 @@
 model: haiku
 ---
 
-Genera el worker de proyecciones `<RootNamespace>.Projections` (daemon asincronico `HotCold` de Marten, seam de observabilidad `ConfiguracionObservabilidadProjections` con el sampler que descarta el polling del daemon, MEF-ADR-0038), la biblioteca `<RootNamespace>.ReadModels`, el config-test base `<RootNamespace>.Projections.Tests`, el workflow de deploy `deploy-projections.yml` y el `.dockerignore` del build context invocando al agente `projections-scaffolder`, al estilo de `infra-base-scaffolder`. **Alcance acotado (fase 1, issue #367 + fase 2, issue #375 + fase 3, issue #453 + fase 4, issue #457 + fase 5, issue #458 + fase 6, issue #513)**: el registro del store de cada dominio lo hace `domain-scaffolder` (issue #370); ninguna proyeccion ni read model concreto se genera aqui (issues `tipo:projection`). Comunicate en **espanol**.
+Genera el worker de proyecciones `<RootNamespace>.Projections` (daemon asincronico `HotCold` de Marten, seam de observabilidad `ConfiguracionObservabilidadProjections` con el sampler que descarta el polling del daemon, MEF-ADR-0038), la biblioteca `<RootNamespace>.ReadModels`, el config-test base `<RootNamespace>.Projections.Tests`, el workflow de deploy `deploy-projections.yml` y el `.dockerignore` del build context invocando al agente `projections-scaffolder`, al estilo de `infra-base-scaffolder`. **Alcance acotado (fase 1, issue #367 + fase 2, issue #375 + fase 3, issue #453 + fase 4, issue #457 + fase 5, issue #458 + fase 6, issue #513 + fase 7, issue #552)**: el registro del store de cada dominio lo hace `domain-scaffolder` (issue #370); ninguna proyeccion ni read model concreto se genera aqui (issues `tipo:projection`). Comunicate en **espanol**.
 
 ## Pre-condicion 1: cwd != Mefisto
 
