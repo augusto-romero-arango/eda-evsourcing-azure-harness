@@ -554,11 +554,138 @@ Las reglas de forma (`record` vs `sealed class`), constructor, serializacion (`C
 
 Aviso de "precedente ≠ autoridad" (didactico, no reglas enumeradas): reviews pasados (PR 142, PR 144) replicaron violaciones de MEF-ADR-0012 (`[JsonConstructor]` en ctor privado, `record` con `IReadOnlyList<T>`, `ConfigurarSerializacion` sin registro) porque el implementer uso el precedente como justificacion. Si tu patron parece resolverlo pero el ADR dice otra cosa, **gana el ADR**. Reportalo como bug del precedente en tu resumen.
 
-Referencias canonicas en el codigo (alineadas con MEF-ADR-0012): `SubFranja` (VO con `sealed class` + `ConfigurarSerializacion` + `IEquatable` manual); `TurnoDiarioAsignado` (evento con precondiciones + `ConfigurarSerializacion`). Antes de usarlas como plantilla, verifica que siguen alineadas — el ADR es la autoridad, no el archivo.
+### Los eventos no conocen los comandos; doble rol con nombre distinto (MEF-ADR-0039 decision 6)
+
+El Function App es el unico ensamblado que referencia los tres ensamblados de eventos (`PublicEvents`, `PrivateEvents`, `{Dominio}.DomainEvents` -- tabla "Donde vive cada tipo de evento" mas abajo); ninguno de los tres se referencia entre si (cero `ProjectReference`, MEF-ADR-0039 decision 2). Dos consecuencias:
+
+1. **El factory de un evento persistido nunca recibe un comando como parametro.** El comando vive en el Function App; `{Dominio}.DomainEvents` no puede referenciarlo sin cerrar un ciclo (`Function App -> DomainEvents -> Function App`) que el compilador rechaza. El factory recibe en cambio un tipo de entrada **propio de `{Dominio}.DomainEvents`** -- el comando expone su propio metodo de traduccion (`ToX()`) hacia ese tipo, nunca al reves.
+2. **Doble rol = dos tipos, nombre simple deliberadamente distinto.** Un evento que se persiste **y ademas** cruza el bus (privado o publico) no se resuelve con un unico tipo compartido -- no existe ninguna referencia por la que un ensamblado alcance el tipo del otro. Nombrarlos igual (dos tipos homonimos en namespaces distintos) compilaria igual, pero un `using` equivocado resolveria en silencio al tipo incorrecto; con nombres simples distintos, importar el equivocado es un tipo no encontrado -- error de compilacion, no resolucion silenciosa.
+
+Doctrina completa (por que la referencia directa era un riesgo, el modo de fallo silencioso de STJ ante un payload anidado que no calza): **MEF-ADR-0039 decision 6**. Este agente no la duplica; la seccion "Payload por rol" (mas abajo, en "Ubicacion de eventos y boundaries entre proyectos") cubre la prohibicion de reusar un tipo de payload entre ensamblados.
+
+### Ejemplo completo, autocontenido: `TurnoConfirmado` y su gemelo de bus
+
+Ejemplo sintetico -- no corresponde a ningun consumidor real -- que recorre el hilo completo: evento persistido rico, su registro de identidad, su gemelo de bus y el mapeo en el Function App.
+
+**1. Evento persistido, en la raiz de `src/<RootNamespace>.Programacion.DomainEvents/`:**
+
+```csharp
+// TurnoConfirmado.cs -- partial porque su clase anidada Mensajes vive en
+// TurnoConfirmado.Mensajes.cs, junto al .resx del propio evento (MEF-ADR-0009)
+public sealed partial class TurnoConfirmado
+{
+    public Guid TurnoId { get; }
+    public Guid ConfirmadoPor { get; }
+    public DateOnly FechaConfirmacion { get; }
+
+    private TurnoConfirmado(Guid turnoId, Guid confirmadoPor, DateOnly fechaConfirmacion)
+    {
+        TurnoId = turnoId;
+        ConfirmadoPor = confirmadoPor;
+        FechaConfirmacion = fechaConfirmacion;
+    }
+
+    private TurnoConfirmado() { } // ctor vacio para STJ/Marten (MEF-ADR-0012)
+
+    // Recibe ConfirmacionTurno -- tipo propio de este ensamblado -- nunca el comando
+    // ConfirmarTurno del Function App: esa referencia cerraria el ciclo
+    // Function App -> DomainEvents -> Function App.
+    public static TurnoConfirmado Crear(ConfirmacionTurno datos)
+    {
+        if (datos.TurnoId == Guid.Empty)
+            throw new ArgumentException(Mensajes.TurnoIdRequerido);
+        return new TurnoConfirmado(datos.TurnoId, datos.ConfirmadoPor, datos.FechaConfirmacion);
+    }
+
+    // Obligatorio por tener ctor privado, y no solo para construir la instancia: STJ
+    // tampoco puede ASIGNAR propiedades get-only al deserializar, asi que sin cablear
+    // tambien el Set de cada campo el evento vuelve de mt_events con todo en su valor
+    // default, en silencio (MEF-ADR-0012, "Nota sobre eventos con propiedades publicas
+    // get-only"). La mecanica completa -- CreateObject via el ctor vacio mas Get/Set por
+    // reflexion campo por campo -- es autoridad de MEF-ADR-0012, "Serializacion sin
+    // atributos en la clase de dominio"; este agente no la duplica. Leela antes de
+    // escribir el cuerpo, y registra el resolver como muestra el paso 2.
+    public static void ConfigurarSerializacion(DefaultJsonTypeInfoResolver resolver) { /* ver MEF-ADR-0012 */ }
+}
+
+// ConfirmacionTurno.cs -- tipo de entrada propio del ensamblado, sin relacion con ningun comando
+public sealed record ConfirmacionTurno(Guid TurnoId, Guid ConfirmadoPor, DateOnly FechaConfirmacion);
+```
+
+**2. Registro de identidad y de serializacion (misma raiz del proyecto, MEF-ADR-0039 decision 5):**
+
+```csharp
+// IdentidadEventosProgramacion.cs
+public static class IdentidadEventosProgramacion
+{
+    public static IReadOnlyList<Type> TiposPersistidos { get; } =
+    [
+        typeof(TurnoConfirmado),
+    ];
+}
+
+// ConfiguracionSerializacionProgramacion.cs -- resolver STJ puro, sin Marten
+public static class ConfiguracionSerializacionProgramacion
+{
+    public static DefaultJsonTypeInfoResolver CrearResolver()
+    {
+        var resolver = new DefaultJsonTypeInfoResolver();
+        TurnoConfirmado.ConfigurarSerializacion(resolver);   // una linea por tipo
+        return resolver;
+    }
+}
+```
+
+Las dos listas son la **unica fuente** que comparten el write-side (`ComposicionServicios{Dominio}`) y el worker de proyecciones (`ConfiguracionMartenProjections{Dominio}`, MEF-ADR-0034), y por eso viven aqui y no en el Function App. Omitir el registro del resolver no rompe el build: deja `ConfigurarSerializacion` como **codigo muerto** que solo funciona en tests con opciones propias, nunca en produccion a traves de Marten (MEF-ADR-0012) -- es una de las violaciones de precedente que advierte el aviso de arriba.
+
+**3. Gemelo de bus, en `PrivateEvents/Programacion/` del ensamblado `<RootNamespace>.PrivateEvents`:**
+
+```csharp
+// TurnoConfirmadoNotificacion.cs -- plano y portable (MEF-ADR-0012); nombre simple
+// deliberadamente distinto del persistido (MEF-ADR-0039 decision 6), con paridad de campos.
+public record TurnoConfirmadoNotificacion(
+    Guid TurnoId, Guid ConfirmadoPor, DateOnly FechaConfirmacion) : IPrivateEvent;
+```
+
+**4. Mapeo en el Function App** -- el unico ensamblado que ve los tres:
+
+```csharp
+// ConfirmarTurno.cs -- el comando expone su propia traduccion al tipo de entrada del evento
+public record ConfirmarTurno(Guid TurnoId, Guid ConfirmadoPor, DateOnly FechaConfirmacion)
+{
+    public ConfirmacionTurno ToConfirmacionTurno() => new(TurnoId, ConfirmadoPor, FechaConfirmacion);
+}
+
+// ConfirmarTurnoCommandHandler.cs
+public partial class ConfirmarTurnoCommandHandler(IEventStore eventStore, IPrivateEventSender eventSender)
+    : ICommandHandlerAsync<ConfirmarTurno>
+{
+    public async Task HandleAsync(ConfirmarTurno comando, CancellationToken ct)
+    {
+        var turno = await eventStore.GetAggregateRootAsync<TurnoAggregateRoot>(
+            comando.TurnoId.ToString(), ct);
+        if (turno is null)
+            throw new InvalidOperationException(Mensajes.TurnoNoEncontrado);
+
+        // El AggregateRoot invoca TurnoConfirmado.Crear(datos) y aplica el evento --
+        // mismo patron de "AggregateRoot" (arriba), ahora con ConfirmacionTurno como entrada.
+        turno.Confirmar(comando.ToConfirmacionTurno());
+
+        // TurnoConfirmado no implementa IPrivateEvent -- DomainEvents no referencia el
+        // paquete de markers (seccion "Identidad del evento persistido" mas abajo). El
+        // doble rol se resuelve construyendo aqui el gemelo de bus explicitamente, no via
+        // turno.GetPrivateEvents() (que solo cosecha tipos que implementan IPrivateEvent).
+        await eventSender.PublishAsync(new TurnoConfirmadoNotificacion(
+            comando.TurnoId, comando.ConfirmadoPor, comando.FechaConfirmacion));
+    }
+}
+```
+
+Un `using` equivocado entre `TurnoConfirmado` (DomainEvents) y `TurnoConfirmadoNotificacion` (PrivateEvents) -- ambos visibles desde el Function App -- no compila: son nombres simples distintos, no dos clases homonimas en namespaces distintos.
 
 ### Identidad del evento persistido: registrar en `IdentidadEventos{Dominio}`
 
-Cuando el evento que estas creando se **persiste** en el event store — es decir, algun `AggregateRoot` lo consume via `public void Apply(TEvento)` — agregalo a `Infraestructura/IdentidadEventos{Dominio}.TiposPersistidos` (`domain-scaffolder` la crea vacia al nacer el dominio):
+Cuando el evento que estas creando se **persiste** en el event store — es decir, algun `AggregateRoot` lo consume via `public void Apply(TEvento)` — agregalo a `IdentidadEventos{Dominio}.TiposPersistidos`, en la **raiz** de `src/<RootNamespace>.{Dominio}.DomainEvents/` (MEF-ADR-0039 decision 5 -- ya no en `Infraestructura/` del Function App; `domain-scaffolder` la crea vacia al nacer el dominio):
 
 ```csharp
 public static IReadOnlyList<Type> TiposPersistidos { get; } =
@@ -571,9 +698,9 @@ public static IReadOnlyList<Type> TiposPersistidos { get; } =
 
 Olvidarlo no pasa en silencio: `ComposicionContenedorTests` trae del scaffold la guarda `AgregarServicios{Dominio}_RegistraTodosLosEventosPersistidos`, que compara por reflexion los `Apply(TEvento)` del dominio contra el `EventGraph` del `IDocumentStore` que compone el contenedor, y se pone roja con el primer evento sin registrar.
 
-**Criterio de inclusion: se persiste.** Un evento que solo cruza un bus (Azure Service Bus) no entra en esta lista — se deserializa a un tipo fijo por endpoint/subscription y nunca pasa por el `EventGraph` de ningun `IDocumentStore`. Un evento que un `AggregateRoot` aplica via `Apply` entra siempre, tenga o no ademas marker de bus (`IPrivateEvent`/`IPublicEvent`).
+**Criterio de inclusion: se persiste.** Un evento que solo cruza un bus (Azure Service Bus) no entra en esta lista — se deserializa a un tipo fijo por endpoint/subscription y nunca pasa por el `EventGraph` de ningun `IDocumentStore`. Un evento que un `AggregateRoot` aplica via `Apply` entra siempre. En la composicion de tres islas, un evento persistido **no puede** ademas llevar marker de bus (`IPrivateEvent`/`IPublicEvent`): `{Dominio}.DomainEvents` no referencia el paquete de markers, asi que el compilador impone un tipo por rol -- ver "Los eventos no conocen los comandos" mas arriba para como se resuelve el doble rol (persistido + bus) con dos tipos distintos.
 
-**Este registro no sustituye ni duplica la lista de serializacion de MEF-ADR-0012** (`ConfigurarSerializacion`): son conjuntos que se solapan sin contenerse — un evento con constructor publico entra aqui y no necesita `ConfigurarSerializacion`; un value object con constructor privado necesita `ConfigurarSerializacion` y no es un evento, nunca entra aqui.
+**Este registro no sustituye ni duplica la lista de serializacion de MEF-ADR-0012** (`ConfigurarSerializacion`): son conjuntos que se solapan sin contenerse — un evento con constructor publico entra aqui y no necesita `ConfigurarSerializacion`; un value object con constructor privado necesita `ConfigurarSerializacion` y no es un evento, nunca entra aqui. Ambos, `ConfiguracionSerializacion{Dominio}` e `IdentidadEventos{Dominio}`, viven en la raiz del mismo proyecto `{Dominio}.DomainEvents` (MEF-ADR-0039 decision 5).
 
 Autoridad completa (que es el alias, de donde sale, las tres proscripciones de registro, el protocolo para mover o renombrar un evento persistido): **MEF-ADR-0036**. Este agente no la duplica — si necesitas mover o renombrar un evento ya persistido, leela completa antes de tocar la clase.
 
@@ -791,11 +918,13 @@ public override string ToString()
 
 ### Donde vive cada tipo de evento
 
-| Tipo | Interfaz | Ubicacion | Namespace | Forma del payload |
-|------|----------|-----------|-----------|-------------------|
-| Publico (inter-BC) | `IPublicEvent` | `Contracts/Eventos/` | `<RootNamespace>.Contracts.Eventos` | **plano y portable** |
-| Privado (intra-BC) | `IPrivateEvent` | `{Dominio}/{Feature}/Eventos/` | `...{Dominio}.{Feature}.Eventos` | **plano y portable** |
-| Event sourcing (aggregate) | ninguna | `{Dominio}/Entities/` o `{Feature}/Eventos/` | segun organizacion vertical | modelo rico permitido |
+Tres ensamblados por rol (MEF-ADR-0039 decision 1) -- **tres islas** con cero `ProjectReference` entre ellos ni hacia ningun otro proyecto del repo (decision 2): el Function App de cada dominio es el unico que referencia los tres; el worker de proyecciones referencia unicamente `{Dominio}.DomainEvents` (mas `ReadModels`), nunca `PublicEvents`/`PrivateEvents` ni el `.csproj` de ningun Function App.
+
+| Tipo | Interfaz | Ensamblado | Ubicacion | Namespace | Forma del payload |
+|------|----------|-----------|-----------|-----------|-------------------|
+| Publico (inter-BC) | `IPublicEvent` | `<RootNamespace>.PublicEvents` (uno por BC) | `PublicEvents/{Dominio}/` | `<RootNamespace>.PublicEvents.{Dominio}` | **plano y portable** |
+| Privado (intra-BC) | `IPrivateEvent` | `<RootNamespace>.PrivateEvents` (uno por BC) | `PrivateEvents/{Dominio}/` | `<RootNamespace>.PrivateEvents.{Dominio}` | **plano y portable** |
+| Event sourcing (aggregate) | ninguna | `<RootNamespace>.{Dominio}.DomainEvents` (uno por dominio) | raiz del proyecto (sin subcarpeta `Eventos/`) | `<RootNamespace>.{Dominio}.DomainEvents` | modelo rico permitido |
 
 **Criterio BC-aware (MEF-ADR-0023, decision #4):** un evento es **publico (inter-BC)** si lo
 consume un dominio de **otro Bounded Context**; es **privado (intra-BC)** si lo consume un dominio
@@ -822,11 +951,15 @@ o emitir un evento con marker); este agente no la duplica. Doctrina raiz: **MEF-
 
 ### No exponer internals entre proyectos
 
-**NUNCA agregues `InternalsVisibleTo` de Contracts a un proyecto de dominio.** Si necesitas acceder a estado interno de un VO para construir un DTO, agrega un metodo publico de conversion en el propio VO (ej. `ToDetalle()`). La logica de conversion pertenece al objeto que tiene los datos (Tell Don't Ask).
+**NUNCA agregues `InternalsVisibleTo` desde ningun ensamblado de eventos (`PublicEvents`, `PrivateEvents`, `{Dominio}.DomainEvents`) hacia un proyecto de dominio.** Si necesitas acceder a estado interno de un VO para construir un DTO, agrega un metodo publico de conversion en el propio VO (ej. `ToDetalle()`). La logica de conversion pertenece al objeto que tiene los datos (Tell Don't Ask).
 
-### Reusar tipos de Contracts
+### Payload por rol (MEF-ADR-0039 decision 6, enmendada por #549)
 
-Antes de crear un record en el dominio, busca en `Contracts/ValueObjects/` y `Contracts/Eventos/`. Si existe un tipo con la misma estructura semantica, usarlo directamente en el command o evento. Duplicar tipos genera mapeos manuales innecesarios.
+**Nunca reuses un tipo definido en otro ensamblado de eventos.** Bajo las tres islas (MEF-ADR-0039 decision 2) ningun ensamblado de eventos referencia a los otros dos, asi que un tipo de `PublicEvents` no puede aparecer como payload de un evento de `PrivateEvents` ni de `{Dominio}.DomainEvents`, y lo mismo en cualquier otra combinacion entre los tres. Cada ensamblado posee sus payloads **completos** -- cuando el mismo dato viaja por el bus y ademas se persiste, la duplicacion con paridad de campos es **deliberada**, no un descuido a corregir. Todo el mapeo entre el tipo de bus y su equivalente persistido (y viceversa) vive en el **Function App**, el unico ensamblado que ve los tres (ver "Los eventos no conocen los comandos" mas arriba).
+
+El reuso **si** aplica dentro del mismo ensamblado: dos eventos de `PrivateEvents/{Dominio}/` pueden compartir un value object plano declarado en ese mismo proyecto sin duplicarlo -- la regla nueva restringe el reuso *entre* ensamblados, no *dentro* de uno.
+
+Doctrina completa (por que la referencia directa entre ensamblados era un riesgo, el modo de fallo silencioso de STJ ante un payload anidado que no calza): **MEF-ADR-0039 decision 6**. Este agente no la duplica.
 
 ### Cast inline sobre .Cast<>() en LINQ
 
@@ -875,36 +1008,43 @@ Cuando necesites convertir el tipo de una secuencia LINQ (ej. `IEnumerable<Deriv
 
 **Organizacion vertical de directorios:**
 ```
-src/<RootNamespace>.{Dominio}/
-  HealthCheck.cs                         <- raiz del proyecto
-  Infraestructura/                       <- servicios transversales (RequestValidator, etc.)
-  Entities/                              <- AggregateRoots y eventos del dominio (siempre raiz)
+src/<RootNamespace>.{Dominio}/                    <- Function App
+  HealthCheck.cs                                   <- raiz del proyecto
+  Infraestructura/                                 <- servicios transversales (RequestValidator, etc.)
+  Entities/                                        <- solo AggregateRoots (siempre raiz)
     CatalogoTurnos.cs
-    TurnoCreado.cs
-    TurnoCreado.Mensajes.cs
-    TurnoCreadoMensajes.resx
-  CrearTurnoFunction/                    <- HTTP trigger (sufijo Function para evitar colision con el record)
-    CrearTurno.cs                        <- record del comando
-    FunctionEndpoint.cs                  <- [Function("CrearTurno")] — nombre del comando
-    CommandHandler/                      <- subcarpeta para handler + validator
+  CrearTurnoFunction/                              <- HTTP trigger (sufijo Function para evitar colision con el record)
+    CrearTurno.cs                                  <- record del comando
+    FunctionEndpoint.cs                            <- [Function("CrearTurno")] — nombre del comando
+    CommandHandler/                                <- subcarpeta para handler + validator
       CrearTurnoCommandHandler.cs
       CrearTurnoCommandHandler.Mensajes.cs
       CrearTurnoCommandHandlerMensajes.resx
       CrearTurnoValidator.cs
-  DepurarMarcacionesCuandoTurnoCreado/   <- ServiceBus trigger (sin sufijo Function)
+  DepurarMarcacionesCuandoTurnoCreado/              <- ServiceBus trigger (sin sufijo Function)
     FunctionEndpoint.cs
-  NotificarSupervisorCuandoTurnoCreado/  <- ServiceBus trigger, EventHandler directo (comando seria espejo de TurnoCreado)
-    FunctionEndpoint.cs                  <- hereda PrivateEventEndpointBase<TurnoCreado>
-    EventHandler/                        <- subcarpeta para el EventHandler y sus mensajes (espejo de CommandHandler/)
-      TurnoCreadoEventHandler.cs         <- IPrivateEventHandlerAsync<TurnoCreado>
+  NotificarSupervisorCuandoTurnoCreado/             <- ServiceBus trigger, EventHandler directo (comando seria espejo de TurnoCreado)
+    FunctionEndpoint.cs                            <- hereda PrivateEventEndpointBase<TurnoCreado>
+    EventHandler/                                   <- subcarpeta para el EventHandler y sus mensajes (espejo de CommandHandler/)
+      TurnoCreadoEventHandler.cs                    <- IPrivateEventHandlerAsync<TurnoCreado>
+
+src/<RootNamespace>.{Dominio}.DomainEvents/        <- proyecto hermano (MEF-ADR-0039), cero ProjectReference
+  ConfiguracionSerializacion{Dominio}.cs            <- resolver STJ puro, sin Marten (decision 5)
+  IdentidadEventos{Dominio}.cs                      <- TiposPersistidos (antes en Infraestructura/ del Function App)
+  TurnoConfirmado.cs                                <- evento persistido, raiz del proyecto (sin subcarpeta Eventos/)
+  TurnoConfirmado.Mensajes.cs
+  TurnoConfirmadoMensajes.resx
 ```
+
+`PublicEvents/{Dominio}/` y `PrivateEvents/{Dominio}/` son subcarpetas dentro de los ensamblados de BC `<RootNamespace>.PublicEvents`/`<RootNamespace>.PrivateEvents` (ver tabla "Donde vive cada tipo de evento" mas arriba) -- no proyectos por dominio.
 
 - `FunctionEndpoint.cs` como nombre de clase del endpoint en cada feature folder
 - Sufijo `Function` solo para HTTP triggers (evita colision namespace vs record del comando). ServiceBus triggers sin sufijo
-- `Entities/` siempre a nivel raiz del dominio — las entities son de dominio, no de funcion
+- `Entities/` solo aloja AggregateRoots, siempre a nivel raiz del Function App — los eventos persistidos ya no viven aqui: viven en la raiz de `{Dominio}.DomainEvents` (MEF-ADR-0039)
+- `ConfiguracionSerializacion{Dominio}` e `IdentidadEventos{Dominio}` viven en la raiz de `{Dominio}.DomainEvents`, no en `Infraestructura/` del Function App (MEF-ADR-0039 decision 5)
 - `CommandHandler/` como subcarpeta dentro del feature folder para handler, validator y mensajes
 - `EventHandler/` como subcarpeta dentro del feature folder para el EventHandler directo (`IPrivateEventHandlerAsync<TEvent>`, sin comando espejo) y sus mensajes, cuando el endpoint reacciona a un evento privado
-- El directorio es el namespace
+- El directorio es el namespace, dentro de cada proyecto
 - Clases en espanol, sufijos de patrones en ingles (CommandHandler, EventHandler, Validator, AggregateRoot)
 
 ---
