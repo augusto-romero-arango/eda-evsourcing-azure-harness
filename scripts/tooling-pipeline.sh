@@ -519,7 +519,7 @@ ALCANCE PERMITIDO de escritura:
 - pipeline-state/                            (senales del pipeline)
 - scripts/                                   (scripts ad-hoc del consumidor)
 - tests/                                     (SOLO fixtures, helpers, builders - NO logica de dominio)
-- docs/bitacora/, docs/eda/, docs/adr-proyecto/, docs/adr/  (documentacion del consumidor;
+- docs/bitacora/, docs/ddd/, docs/adr-proyecto/, docs/adr/  (documentacion del consumidor;
   docs/adr/ son los ADRs locales de ESTE repo -- con el prefijo propio que haya elegido
   o sin prefijo. MEF-ADR-0030: no hay que reubicarlos fuera de docs/adr/)
 
@@ -639,7 +639,7 @@ Tu tarea: revisa la calidad del codigo producido por el writer.
 ALCANCE PERMITIDO de escritura (igual al del writer):
 .github/workflows/, .claude/harness.config.json, .claude/settings.json,
 .claude/pipeline/, pipeline-state/, scripts/, tests/ (fixtures/helpers),
-docs/bitacora/, docs/eda/, docs/adr-proyecto/, docs/adr/.
+docs/bitacora/, docs/ddd/, docs/adr-proyecto/, docs/adr/.
 
 PROHIBIDO: commands/, skills/, agents/, hooks/, .claude-plugin/, docs/adr/mef-adr-*, src/.
 
