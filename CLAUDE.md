@@ -121,8 +121,9 @@ tu propuesta en vez de darlo por cierto.
 
 - `src/<RootNamespace>.{Dominio}/` — Function App por dominio
 - `src/<RootNamespace>.{Dominio}.DomainEvents/` — eventos persistidos del dominio en el event store, uno por dominio (MEF-ADR-0039)
-- `src/<RootNamespace>.PublicEvents/` — eventos que salen del BC, uno por Bounded Context, sin dependencias de proyecto (MEF-ADR-0039)
+- `src/<RootNamespace>.PublicEvents/` — eventos que salen del BC, uno por Bounded Context (MEF-ADR-0039)
 - `src/<RootNamespace>.PrivateEvents/` — eventos del bus interno del BC, uno por Bounded Context (MEF-ADR-0039)
+- Los tres ensamblados de eventos de arriba son **tres islas**: cada uno con cero `ProjectReference` (MEF-ADR-0039 decision 2); el Function App del dominio referencia los tres, el worker de proyecciones solo `{Dominio}.DomainEvents` + `ReadModels`
 - `tests/<RootNamespace>.{Dominio}.Tests/` — tests unitarios ES por dominio
 - `tests/<RootNamespace>.{Dominio}.SmokeTests/` — smoke tests black-box (opcional)
 - `tests/<RootNamespace>.PublicEvents.Tests/` — tests del ensamblado `PublicEvents`, uno por BC (MEF-ADR-0039)
