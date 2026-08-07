@@ -38,7 +38,8 @@ elif [ -f docs/eda/ubiquitous-language.yaml ]; then
   cat docs/eda/ubiquitous-language.yaml
 fi
 
-# Codigo por rol (MEF-ADR-0039): el catalogo de eventos y comandos que existen de verdad -- no puede mentir.
+# Codigo por rol (MEF-ADR-0039, extendido a `ReadModels` por MEF-ADR-0041): el catalogo de eventos,
+# comandos y vistas que existen de verdad -- no puede mentir.
 # Se usa `find` y no `ls` con glob a proposito: en zsh un glob sin coincidencias imprime "no matches found"
 # y el `2>/dev/null` no lo silencia (la expansion falla antes de aplicarse la redireccion), asi que en un
 # greenfield sin `src/` ensuciaria el arranque. El prune de bin/obj deja fuera los `.cs` generados por el build.
@@ -46,14 +47,15 @@ find src -type d \( -name bin -o -name obj \) -prune -o -path '*.PublicEvents/*/
 find src -type d \( -name bin -o -name obj \) -prune -o -path '*.PrivateEvents/*/*.cs' -print 2>/dev/null  # eventos privados del BC, por dominio
 find src -type d \( -name bin -o -name obj \) -prune -o -path '*.DomainEvents/*.cs'    -print 2>/dev/null  # eventos persistidos, uno por dominio (layout plano)
 find src -type d \( -name bin -o -name obj \) -prune -o -type d -name '*Function'      -print 2>/dev/null  # comandos: una carpeta {Comando}Function/ por comando
+find src -type d \( -name bin -o -name obj \) -prune -o -path '*.ReadModels/*/*.cs'    -print 2>/dev/null  # vistas read-side, la cuarta isla (MEF-ADR-0041): carpeta por dominio
 ```
 
 Si el glosario entro por el fallback (salio el `AVISO`: existe en `docs/eda/ubiquitous-language.yaml` pero no en la ruta canonica), usalo igual y sugiere al humano `git mv docs/eda/ubiquitous-language.yaml docs/ddd/ubiquitous-language.yaml` -- **nunca escribas una copia nueva en `docs/ddd/` mientras la vieja siga existiendo**: dos copias del mismo glosario reintroducen el riesgo de divergencia que MEF-ADR-0040 elimina. Mientras no se haga ese `git mv`, el archivo que actualizas al cerrar la sesion sigue siendo el de la ruta vieja, el mismo que leiste.
 
-En un greenfield sin `src/` todavia, los cuatro `find` no listan nada y no imprimen error -- es el estado esperado, no una senal de que algo falta. El sufijo `Function` solo lo llevan las carpetas de **comando** (MEF-ADR-0006): las reacciones a evento (`{Accion}Cuando{Evento}/`) y las queries GET (`Obtener{X}/`, `Listar{X}s/`) no aparecen en ese ultimo listado, y no deberian -- no son comandos.
+En un greenfield sin `src/` todavia, los cinco `find` no listan nada y no imprimen error -- es el estado esperado, no una senal de que algo falta. El sufijo `Function` solo lo llevan las carpetas de **comando** (MEF-ADR-0006): las reacciones a evento (`{Accion}Cuando{Evento}/`) y las queries GET (`Obtener{X}/`, `Listar{X}s/`) no aparecen en ese ultimo listado, y no deberian -- no son comandos.
 
 Usa este conocimiento para:
-- **Guardrail anti-sinonimos, dos patas y en este orden** (MEF-ADR-0040 decision 3): antes de nombrar un concepto nuevo, verifica primero el **glosario** (¿ya existe un termino para esto?) y despues el **codigo por rol** (¿ya existe el evento o comando? reusa su nombre y payload exactos -- nunca crees una variante con un sinonimo). El glosario es la consulta mas barata; el codigo por rol es la verificacion de respaldo para lo que ya cristalizo en un tipo concreto.
+- **Guardrail anti-sinonimos, dos patas y en este orden** (MEF-ADR-0040 decision 3): antes de nombrar un concepto nuevo, verifica primero el **glosario** (¿ya existe un termino para esto?) y despues el **codigo por rol** (¿ya existe el evento o comando? reusa su nombre y payload exactos -- nunca crees una variante con un sinonimo). El glosario es la consulta mas barata; el codigo por rol es la verificacion de respaldo para lo que ya cristalizo en un tipo concreto. Al nombrar una **vista** read-side ese mismo guardrail gana una tercera pata -- las vistas ya existentes en `<RootNamespace>.ReadModels` (enmienda de MEF-ADR-0041 a esa misma decision 3): ver "Derivar la vista de la necesidad", en "Necesidades de lectura y proyecciones".
 - Nombrar commands, eventos y aggregates con los terminos del glosario -- los nombres nuevos se derivan de el, no se inventan sueltos
 - Incluir el contexto del actor en la seccion "Contexto" del issue
 - Reutilizar invariantes del aggregate al escribir criterios de aceptacion (lee el `AggregateRoot` existente, no lo reconstruyas de memoria)
@@ -514,13 +516,38 @@ Esta clase de issue sigue siendo **`tipo:projection`**, nunca `tipo:tooling`: to
 
 El DoR **no se relaja** en este subtipo: usa el mismo template, con los mismos encabezados, y adapta el *contenido* de las secciones que asumen una vista concreta (MEF-ADR-0011, "La columna `projection` de la tabla aplica igual a las dos clases"):
 
-- `## Necesidad de lectura`: declara **qué read-side configura** -- qué dominios, qué named stores registra, qué proyecciones va a hospedar el worker -- en vez de una `{Concepto}View` y sus campos.
+- `## Necesidad de lectura`: declara **qué read-side configura** -- qué dominios, qué named stores registra, qué proyecciones va a hospedar el worker -- en vez de un término de vista (`{TerminoVista}`) y sus campos.
 - `## Endpoints / rutas`: si el issue no expone superficie de consulta, escribe explícitamente "No aplica -- este issue no expone Functions de query" en vez de omitir el encabezado.
 - `## Capas de test esperadas`: normalmente solo el config-test del worker (las otras dos categorías no aplican si no hay proyección nueva ni Function GET) -- decláralo así, no borres la sección.
 
 **Nunca omitas el encabezado `## Necesidad de lectura`**: la validación programática de `/implement` (criterio 5 de MEF-ADR-0011) verifica su presencia en todo `tipo:projection`, así que un issue del worker sin ella se bloquea en el gate del DoR aunque su etiquetado sea correcto. `## Endpoints / rutas` y `## Capas de test esperadas` no se verifican por grep, pero siguen siendo **Crítica** y **Obligatoria** en la tabla del DoR: eres tú quien las exige antes de marcar `estado:listo`.
 
 **Si el issue configura el read-side de más de un dominio a la vez** (ej: registra el named store de dos dominios en el mismo PR, o cablea telemetría que cubre a todos los dominios del worker), etiqueta con **todos los `dom:` reales** cuyo read-side toca -- nunca inventes un pseudo-dominio para el worker (`dom:read-side`, `dom:bc`, etc.). Es la misma distinción continente/contenido que MEF-ADR-0011 fija en su razonamiento de `dom:X`: los artefactos por dominio llevan su propio `dom:`; el worker que los hospeda pertenece al Bounded Context completo y se etiqueta con la unión de los dominios reales que toca. Precedente: issue `#253` del consumidor Bitakora.ControlAsistencia, etiquetado `dom:programacion` + `dom:control-horas`.
+
+### Derivar la vista de la necesidad
+
+Antes de proponer la receta técnica (N1/N2), haz el mismo ejercicio de knowledge crunching que MEF-ADR-0041 exige para toda vista nueva: la forma del read model se deriva de la necesidad de lectura, nunca del evento ni del aggregate que la alimentan (MEF-ADR-0041 decisión 1). Este paso solo aplica al subtipo "vista nueva" -- la "Segunda señal" de arriba (configuración del continente) no lo atraviesa: no hay vista que derivar.
+
+Las cuatro preguntas siguientes son **generativas, no de captura**: con cada respuesta, tú **imaginas y propones** -- nunca esperas a que el usuario dicte la respuesta completa (MEF-ADR-0008: el planner propone, el experto corrige).
+
+1. **¿Quién consume la vista?** (actor/persona, pantalla, reporte, u otro sistema). No archives la respuesta tal cual: úsala para imaginar y proponer necesidades típicas de esa persona -- "un supervisor que aprueba turnos probablemente necesita ver X pendientes ordenados por Y, ¿es así?" -- y deriva de ahí el resto de la conversación. Ancla el término de la vista en el lenguaje de quien la consume, nunca en el del aggregate.
+2. **¿Qué decisión o acción habilita?** Separa una vista con propósito de un volcado de datos: si nadie sabe qué se decide con ella, la vista todavía no está descubierta. Propón decisiones plausibles de esa persona; el usuario corrige.
+3. **¿Qué campos necesita la vista para cumplir su cometido?** Explóralo en dos direcciones: desde la **demanda** (la decisión de la pregunta 2 -- ¿qué dato hace falta para tomarla?) y desde la **oferta** (los campos disponibles en los eventos de `{Dominio}.DomainEvents`, la materia prima de la proyección -- MEF-ADR-0041): de esa paleta, cuáles sirven, cuáles sobran, cuáles hay que derivar o agregar porque no existen crudos. El recorte de lo innecesario emerge de esta misma entrevista, no de una pregunta aparte. **Cada campo se nombra en el vocabulario del consumidor de la vista** -- muchos tendrán nombres distintos a los del evento que los origina, y eso es correcto: el mapeo de forma y nombre vive en `Create`/`Apply` de la clase de proyección del worker, nunca en la vista. La homonimia campo a campo tampoco es meta ni default.
+4. **¿Filtros, ordenamientos, cadencia y paginación?** Qué se busca, cómo se ordena, con qué frecuencia se consulta, volumen esperado y modo de navegación (páginas vs cursor), combinaciones de filtros. Captura estos requisitos en el handoff (`## Endpoints / rutas`) -- la mecánica con la que se materializan (estrategia de paginación, convención de filtros múltiples, eventual método HTTP QUERY) es alcance de un issue aparte, no de esta receta.
+
+**Nombre de la vista, sin sufijo de implementación.** Con las respuestas, el nombre de la vista se deriva de la conversación (vocabulario del actor) -- `ResumenAsistenciaDiaria`, nunca `ResumenAsistenciaDiariaView` (MEF-ADR-0041 decisión 3, MEF-ADR-0006 enmendado por #581). Nunca copies la forma ni los nombres del evento o del aggregate que alimentan la vista: una vista cuyos campos y nombres son un calco 1:1 del evento o del aggregate -- sin ningún campo derivado, renombrado o agregado desde la necesidad de lectura -- es la señal de que el crunching no se hizo (MEF-ADR-0041 decisión 1). Si tras un crunching genuino la vista resulta 1:1 con el dominio, esa coincidencia es una conclusión legítima -- pero debe ser la conclusión de haber preguntado, nunca el default por ausencia de la pregunta.
+
+**Guardrail anti-homonimia, tres fuentes y en este orden** (extiende el guardrail anti-sinónimos de dos patas de "Tu stack de conocimiento" arriba, MEF-ADR-0040 decisión 3 enmendada por MEF-ADR-0041): antes de fijar el nombre de la vista, verifica en orden --
+
+- **(a) el glosario** (`docs/ddd/ubiquitous-language.yaml`): ¿ya existe un término para este concepto?
+- **(b) los tipos existentes en `{Dominio}.DomainEvents`** del dominio involucrado: un nombre de vista homónimo de un evento persistido se rechaza y se re-deriva.
+- **(c) las vistas ya existentes en `<RootNamespace>.ReadModels`**: evita bautizar dos veces el mismo concepto de lectura con nombres distintos.
+
+Las tres salen del listado que ya cargaste al orientar tu contexto ("Tu stack de conocimiento" arriba: el glosario, y los `find` de eventos persistidos y de vistas read-side).
+
+Si el nombre propuesto colisiona con cualquiera de las tres fuentes, vuelve a la pregunta 1 y deriva un nombre distinto -- nunca fuerces el nombre colisionado con un calificador ad hoc.
+
+El término acordado se registra en el glosario al cierre de sesión, mismo deber que cualquier otro vocabulario del dominio (ver "Al finalizar la sesión" más abajo).
 
 ### Proponer la receta (N1 / N2; N3 como escape hatch)
 
@@ -537,11 +564,12 @@ Con las respuestas anteriores, propone uno de los tres niveles del Skill `projec
 Cuando la idea esté clara, ofrece convertirla en un issue `tipo:projection` (ver "Template para issues de proyección" en `## Crear issues`). El handoff mínimo que `projection-test-writer`/`projection-implementer` necesitan, sin ambigüedad:
 
 - **Dominio(s)**: el label `dom:` es **obligatorio** en `tipo:projection` (no opcional): sin él, `/implement` no resuelve en qué Function App vive la Function GET ni qué `I{Dominio}ProjectionStore` registra el worker. Si el issue toca el read-side de **varios** dominios a la vez (vista que correlaciona streams de más de uno, o issue de configuración del worker que cubre a varios -- ver "Segunda señal" arriba), etiqueta con **todos** los `dom:` reales: uno por cada dominio cuyo read-side el issue configura, nunca un pseudo-dominio para el worker.
+- **Consumidor y decisión**: quién consulta la vista y qué decisión o acción habilita -- el par que produjeron las preguntas 1 y 2 de "Derivar la vista de la necesidad". Va en el `## Contexto` del issue (no en un encabezado nuevo): sin él, el pipeline no puede juzgar si los campos de la vista sirven a su cometido.
 - **Vía de consulta**: (a) proyección materializada -- el default. Si la lectura necesita (b1) aggregate en vivo o (b2) eventos crudos, decláralo y justifícalo: en esos casos no hay read model, ni clase de proyección, ni lifecycle que materializar -- solo la Function GET (`read-apis.md` del Skill).
-- **Vista a materializar**: el nombre del read model (`{Concepto}View`) y qué campos expone. (Solo aplica en la vía (a).)
+- **Vista a materializar**: el término acuñado en "Derivar la vista de la necesidad" arriba (sin sufijo de implementación, MEF-ADR-0041) y los campos que expone, nombrados en el vocabulario del consumidor de la vista -- nunca los del evento o aggregate de origen. (Solo aplica en la vía (a).)
 - **Eventos que la alimentan**: los eventos concretos (y su aggregate de origen) que la proyección consume.
 - **Receta propuesta**: N1 o N2 (con justificación), o N3 explícitamente discutido.
-- **Endpoints/rutas**: qué Functions de query expone (`Obtener{Concepto}` por id y/o `Listar{Concepto}s` por filtro), con su ruta REST -- naming fijado por MEF-ADR-0006 y el recurso `naming.md` del Skill. **Verifica colisión de nombres antes de escribir el issue**: dos Functions no pueden compartir el mismo `[Function("...")]`, y las vías (a) y (b1) producen el mismo nombre cuando el read model y el aggregate comparten concepto (`TurnoView`/`TurnoAggregateRoot` -> ambas `ObtenerTurno`). Revisa `src/` del dominio: si ya existe esa Function, el issue debe desambiguar el nombre explícitamente -- `naming.md` delega esa decisión al issue que la pida, no al pipeline.
+- **Endpoints/rutas**: qué Functions de query expone (`Obtener{TerminoVista}` por id y/o `Listar{TerminoVista}s` por filtro), con su ruta REST -- naming fijado por MEF-ADR-0006 y el recurso `naming.md` del Skill. Incluye también los requisitos de filtros/ordenamientos/cadencia/paginación capturados en la pregunta 4 de "Derivar la vista de la necesidad" (la mecánica de implementación es alcance de un issue aparte). **Verifica colisión de nombres antes de escribir el issue**: dos Functions no pueden compartir el mismo `[Function("...")]`, y las vías (a) y (b1) producen el mismo nombre cuando el read model y el aggregate comparten concepto -- caso infrecuente bajo un término propio derivado del crunching (MEF-ADR-0041 decisión 3), pero todavía posible si la vista resulta genuinamente 1:1 con el aggregate. Revisa `src/` del dominio: si ya existe esa Function, el issue debe desambiguar el nombre explícitamente -- `naming.md` delega esa decisión al issue que la pida, no al pipeline.
 - **Lifecycle**: `Async` (el default -- materializada en el worker de proyecciones, MEF-ADR-0034). Si el issue cree que necesita `Inline`, es una excepción opt-in del write-side que hay que justificar explícitamente, no asumir.
 - **Capas de test esperadas**: unit tests de la proyección (`Create`/`Apply`/`ShouldDelete`), el config-test del worker (guarda del `partial`, lifecycle `Async`, guarda barata de metadata -- MEF-ADR-0034 sección 6; la compatibilidad completa write-side/read-side la verifica el reviewer bajo gate, issue #447) y el test de composición de la Function GET (hermano de MEF-ADR-0029). Las tres son categorías complementarias, no intercambiables.
 
@@ -745,7 +773,7 @@ Si el issue de infra está asociado a un dominio específico, agrega también `-
 
 Cuando la sección "Necesidades de lectura y proyecciones" concluya en un `tipo:projection`, usa este template -- para las **dos** clases del tipo: vista nueva y configuración del read-side. No dupliques aquí la doctrina del Skill `projections` (arbol de decisión, estilo canónico, read APIs) -- solo el handoff concreto de esta idea.
 
-Si la idea es de **configuración del worker** (segunda señal), conserva todos los encabezados y adapta su contenido según esa sección: `## Necesidad de lectura` declara qué read-side configura (dominios, named stores, proyecciones a hospedar) en vez de una `{Concepto}View`; `## Endpoints / rutas` declara "No aplica -- este issue no expone Functions de query" si no hay superficie de consulta; `## Capas de test esperadas` deja solo el config-test del worker.
+Si la idea es de **configuración del worker** (segunda señal), conserva todos los encabezados y adapta su contenido según esa sección: `## Necesidad de lectura` declara qué read-side configura (dominios, named stores, proyecciones a hospedar) en vez de un término de vista (`{TerminoVista}`); `## Endpoints / rutas` declara "No aplica -- este issue no expone Functions de query" si no hay superficie de consulta; `## Capas de test esperadas` deja solo el config-test del worker.
 
 El esquema base de labels del consumidor (`scripts/setup-github-labels.sh`) ya incluye `tipo:projection` (issue #373). Si el consumidor no ha vuelto a correr ese script desde que actualizó el plugin, `gh issue create` fallaría con "label not found" -- asegúralo antes de crear el issue (no destructivo: solo lo crea si falta, y respeta el azul del esquema de tipos):
 
@@ -764,7 +792,7 @@ gh issue create \
   --label "estado:listo" \
   --body "$(cat <<'ISSUEEOF'
 ## Contexto
-[que necesidad de lectura resuelve esta vista - quien la consulta y para que]
+[quien consulta esta vista y que decision o accion habilita -- resultado de "Derivar la vista de la necesidad": persona/pantalla/sistema consumidor + decision que la vista soporta]
 
 ## Dependencias
 - Depende de #XX (razon)
@@ -772,18 +800,20 @@ gh issue create \
 
 ## Necesidad de lectura
 - **Via de consulta**: (a) proyeccion materializada [default] | (b1) aggregate en vivo | (b2) eventos crudos -- justifica si no es (a). Con (b1)/(b2) no hay read model, clase de proyeccion ni lifecycle: solo la Function GET, y las tres vinetas siguientes no aplican.
-- **Vista a materializar**: `{Concepto}View` -- [campos que expone]
+- **Vista a materializar**: `{TerminoVista}` (termino acunado del crunching, sin sufijo de implementacion -- MEF-ADR-0041) -- [campos que expone, nombrados en el vocabulario del consumidor de la vista, no en el del evento/aggregate de origen]
 - **Eventos que la alimentan**: `EventoA`, `EventoB` (del aggregate `{Aggregate}`)
 - **Receta propuesta**: N1 (`SingleStreamProjection`, un solo stream por `{Aggregate}Id`) | N2 (`MultiStreamProjection`, correlaciona streams de X e Y) -- justifica la eleccion. N3 (`EventProjection`/`IProjection` custom) es un escape hatch: solo si N1/N2 no alcanzan, documenta por que y que se discutio con el usuario (Rule of Three, MEF-ADR-0018).
 - **Lifecycle**: `Async` (materializada en el worker de proyecciones, MEF-ADR-0034). Si crees que necesita `Inline`, justifica la excepcion explicitamente -- no la asumas.
 
 ## Endpoints / rutas
-- `Obtener{Concepto}` -- GET `{RutaRecurso}/{id}` (por id)
-- `Listar{Concepto}s` -- GET `{RutaRecurso}` (por filtro/lista)
+- `Obtener{TerminoVista}` -- GET `{RutaRecurso}/{id}` (por id)
+- `Listar{TerminoVista}s` -- GET `{RutaRecurso}` (por filtro/lista)
 (Omite el que no aplique. Naming y ruta REST: MEF-ADR-0006 y el recurso `naming.md` del Skill `projections`.)
-Colision verificada: [ninguna Function del dominio declara ya estos nombres] | [desambiguacion acordada, con el motivo].
+- **Filtros/ordenamientos/cadencia/paginacion**: [que se busca, como se ordena, frecuencia de consulta, volumen esperado, paginas vs cursor -- resultado de la pregunta 4 de "Derivar la vista de la necesidad"; la mecanica de implementacion es alcance de un issue aparte]
+Colision verificada: [ninguna Function del dominio declara ya estos nombres] | [desambiguacion acordada -- infrecuente bajo un termino propio, MEF-ADR-0041 decision 3].
 
 ## ADRs aplicables
+- MEF-ADR-0041: forma propia de la vista -- campos derivados de la necesidad de lectura, nombre del lenguaje ubicuo sin sufijo de implementacion. **Citalo siempre en un issue de vista nueva**: esta doctrina todavia no llego a todos los agentes read-side (ver "Consecuencias negativas" de ese ADR), asi que el issue es el canal por el que la reciben.
 - MEF-ADR-0035: doctrina read-side (receta, estilo canonico, superficie de consulta sobre `QuerySession`).
 - MEF-ADR-0034: worker de proyecciones, config-test, lifecycle `Async`.
 - MEF-ADR-0006: naming de Functions de query y organizacion vertical.
@@ -803,7 +833,7 @@ Colision verificada: [ninguna Function del dominio declara ya estos nombres] | [
 
 ## Impacto esperado en archivos (sugerencia)
 - **Modifica**: [ej: `ConfiguracionMartenProjections{Dominio}.cs`, si el dominio ya tiene worker registrado]
-- **Crea**: [ej: `<RootNamespace>.ReadModels/{Dominio}/{Concepto}View.cs`, `<RootNamespace>.Projections/{Dominio}/{Concepto}Projection.cs`, `<RootNamespace>.Projections.Tests/{Dominio}/{Concepto}ProjectionTests.cs`, `<RootNamespace>.{Dominio}/Obtener{Concepto}/FunctionEndpoint.cs`]
+- **Crea**: [ej: `<RootNamespace>.ReadModels/{Dominio}/{TerminoVista}.cs`, `<RootNamespace>.Projections/{Dominio}/{TerminoVista}Projection.cs`, `<RootNamespace>.Projections.Tests/{Dominio}/{TerminoVista}ProjectionTests.cs`, `<RootNamespace>.{Dominio}/Obtener{TerminoVista}/FunctionEndpoint.cs`]
 - **Lee**: [aggregate fuente, eventos existentes]
 ISSUEEOF
 )"
@@ -828,7 +858,7 @@ Resume lo que se hizo:
 - Ideas que quedaron pendientes de refinar
 - Sugerencias para próximos pasos
 
-**Actualiza el glosario si la sesion tocó vocabulario** (MEF-ADR-0040 decision 3, tu custodia): si acuñaste un término nuevo, aclaraste uno existente, identificaste un actor, o abriste/cerraste una pregunta de vocabulario, escríbelo en `docs/ddd/ubiquitous-language.yaml` antes de cerrar — misma disciplina y mismo momento que las field notes de abajo. El alcance es acotado: solo el vocabulario que esta sesión tocó, nunca una relectura exhaustiva de todo el glosario. Si la sesión fue puramente técnica y no tocó vocabulario, no hay nada que escribir aquí.
+**Actualiza el glosario si la sesion tocó vocabulario** (MEF-ADR-0040 decision 3, tu custodia): si acuñaste un término nuevo, aclaraste uno existente, identificaste un actor, o abriste/cerraste una pregunta de vocabulario, escríbelo en `docs/ddd/ubiquitous-language.yaml` antes de cerrar — misma disciplina y mismo momento que las field notes de abajo. El alcance es acotado: solo el vocabulario que esta sesión tocó, nunca una relectura exhaustiva de todo el glosario. Si la sesión fue puramente técnica y no tocó vocabulario, no hay nada que escribir aquí. **El término de una vista acuñado en "Derivar la vista de la necesidad" entra en igualdad de condiciones** (MEF-ADR-0040 decision 3 enmendada por MEF-ADR-0041): se registra igual que cualquier otro término del dominio.
 
 Luego, **escribe las field notes de la sesión**. Calcula el timestamp:
 
