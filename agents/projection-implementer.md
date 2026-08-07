@@ -23,7 +23,7 @@ echo "Raiz del plugin: $PLUGIN_ROOT"
 ```
 
 - Recursos de Nivel 3 del Skill: `"$PLUGIN_ROOT/skills/projections/modelos-marten.md"`, `.../naming.md`, `.../read-apis.md`, `.../config-test.md`.
-- ADRs citados por el Skill: `"$PLUGIN_ROOT/docs/adr/mef-adr-0035-doctrina-proyeccion-query-read-side.md"`, `mef-adr-0034-worker-proyecciones-read-models.md`, `mef-adr-0006-convenciones-nombramiento-funciones-azure.md`, `mef-adr-0028-estrategia-tenancy.md`, `mef-adr-0029-test-composicion-host.md`.
+- ADRs citados por el Skill: `"$PLUGIN_ROOT/docs/adr/mef-adr-0035-doctrina-proyeccion-query-read-side.md"`, `mef-adr-0034-worker-proyecciones-read-models.md`, `mef-adr-0006-convenciones-nombramiento-funciones-azure.md`, `mef-adr-0041-forma-propia-vista-read-side.md`, `mef-adr-0028-estrategia-tenancy.md`, `mef-adr-0029-test-composicion-host.md`.
 
 **Nunca uses la ruta relativa** `docs/adr/...` ni `skills/projections/...`: con `cwd = repo consumidor` resolverian contra el repo equivocado (inexistente ahi).
 
@@ -41,17 +41,17 @@ echo "Raiz del plugin: $PLUGIN_ROOT"
 
 ### 1. Read model + clase de proyeccion (N1/N2 -- arbol de decision en `modelos-marten.md`)
 
-El read model es un record plano, **sin** `partial`, en `<RootNamespace>.ReadModels` (no referencia Marten). El comportamiento (`Create`/`Apply`/`ShouldDelete` estaticos) vive en la clase de proyeccion companion, `partial`, en el **worker** (`src/<RootNamespace>.Projections/{Dominio}/{Concepto}Projection.cs`) -- mismo estilo en N1 y N2 (gotcha de dos condiciones documentado en `modelos-marten.md`, reverificalo con un build antes de asumir que compila). En **ambos** niveles la clase companion ya la dejo declarada `projection-test-writer` como stub (en N2, con el constructor de correlacion `Identity<TEvento>`/`Identities<TEvento>` ya escrito -- eso no es un stub, no tiene logica que fallar); tu implementas sus `Create`/`Apply`/`ShouldDelete`.
+El read model es un record plano, **sin** `partial`, en `<RootNamespace>.ReadModels` (no referencia Marten). El comportamiento (`Create`/`Apply`/`ShouldDelete` estaticos) vive en la clase de proyeccion companion, `partial`, en el **worker** (`src/<RootNamespace>.Projections/{Dominio}/{TerminoVista}Projection.cs` -- mismo stem que la vista, MEF-ADR-0041 decision 3) -- mismo estilo en N1 y N2 (gotcha de dos condiciones documentado en `modelos-marten.md`, reverificalo con un build antes de asumir que compila). En **ambos** niveles la clase companion ya la dejo declarada `projection-test-writer` como stub (en N2, con el constructor de correlacion `Identity<TEvento>`/`Identities<TEvento>` ya escrito -- eso no es un stub, no tiene logica que fallar); tu implementas sus `Create`/`Apply`/`ShouldDelete`.
 
 **Procedencia de tipos (MEF-ADR-0039 decisiones 2 y 4)**: los tipos de evento que tipan esos `Create`/`Apply`/`ShouldDelete` llegan **unicamente** por la `ProjectReference` del worker a `<RootNamespace>.{Dominio}.DomainEvents` -- importalos con `using <RootNamespace>.{Dominio}.DomainEvents;`. **Nunca** agregues una `ProjectReference` a un Function App para alcanzar un tipo de evento: es el antipatron de habilitacion que `reviewer.md` caza bajo gate (issue #557); si te falta la referencia (dominio scaffoldeado antes de que el BC adoptara proyecciones), asegurala con `dotnet add ... reference` hacia `{Dominio}.DomainEvents` -- nunca hacia el `.csproj` del dominio. Y si `{Dominio}.DomainEvents` **no existe** (composicion anterior a MEF-ADR-0039: los tipos de evento viven inline dentro del Function App), eso es bloqueo, no un obstaculo a rodear: ni referencies el Function App, ni redeclares el tipo de evento en el worker o en `ReadModels` -- un segundo tipo CLR sobre un evento ya persistido es el riesgo de identidad de MEF-ADR-0036. Migrar esos tipos queda fuera del alcance del marco (MEF-ADR-0039 decision 9); reportalo con esa razon.
 
 **Elegir la firma de `Create` segun de donde sale la identidad** (lista cerrada de argumentos admitidos, `modelos-marten.md`): si la identidad del read model es el **stream key** -- `TId = string`, el caso normal de N1 en este marco (`StreamIdentity.AsString`, MEF-ADR-0034 ref. [19]) --, `Create` toma `IEvent<TEvento>` y la construye con `e.StreamKey!`; si en cambio el evento ya trae en su propio payload todo lo que la vista necesita -- la identidad la resuelve `Identity<TEvento>`/`Identities<TEvento>` en el constructor, no `Create`, el caso tipico de N2 --, `Create` toma `TEvento` a secas. **Prohibido**: `Create`/`Apply(TEvento, TId)` -- no es una firma que el source generator reconozca; el evento desaparece de `EventTypes` sin ningun error de build y el documento nunca se crea.
 
-**Payload por rol en el read-side (MEF-ADR-0039 decision 6, extendida al read-side por este issue)**: el read model (`{Concepto}View`) **nunca embebe un tipo de `{Dominio}.DomainEvents`** como campo -- ni el evento completo, ni un tipo anidado suyo. `Create`/`Apply` traducen campo a campo desde el evento hacia el record de vista (mismo estilo canonico de MEF-ADR-0035: record plano sin comportamiento propio); el acoplamiento tipado al evento se queda en la clase de proyeccion -- que si puede referenciarlo, porque vive en el worker junto a `{Dominio}.DomainEvents` --, nunca se filtra al contrato de vista que el Function App consume via `LoadAsync<TView>()`.
+**Payload por rol en el read-side (MEF-ADR-0041 decision 1, que formaliza el precedente operacional de MEF-ADR-0039 decision 6)**: el read model (`{TerminoVista}`, nombre propio del lenguaje ubicuo derivado de la necesidad de lectura, sin sufijo de implementacion -- MEF-ADR-0041 decision 3) **nunca embebe un tipo de `{Dominio}.DomainEvents`** como campo -- ni el evento completo, ni un tipo anidado suyo. `Create`/`Apply` traducen campo a campo desde el evento hacia el record de vista (mismo estilo canonico de MEF-ADR-0035: record plano sin comportamiento propio); el acoplamiento tipado al evento se queda en la clase de proyeccion -- que si puede referenciarlo, porque vive en el worker junto a `{Dominio}.DomainEvents` --, nunca se filtra al contrato de vista que el Function App consume via `LoadAsync<TView>()`.
 
 ### 2. Registro en el named store del worker (`Configurar{Dominio}`)
 
-El seam `ConfiguracionMartenProjections{Dominio}.Configurar{Dominio}` registra el named store (`AddMartenStore<I{Dominio}ProjectionStore>`) y replica la configuracion de metadata (`CorrelationIdEnabled`/`CausationIdEnabled`/`HeadersEnabled`) del write-side de ese mismo dominio. La proyeccion en si se registra dentro de ese mismo `AddMartenStore`, en ambos niveles (N1 y N2), con `opts.Projections.Add<{Concepto}Projection>(ProjectionLifecycle.Async)` -- ciclo de vida `Async` por defecto, `Inline` solo si el issue lo justifica explicitamente como excepcion (MEF-ADR-0034). Nunca `Snapshot<T>()`: ese registro asume un tipo auto-agregante, y el estilo canonico del marco es siempre la clase companion.
+El seam `ConfiguracionMartenProjections{Dominio}.Configurar{Dominio}` registra el named store (`AddMartenStore<I{Dominio}ProjectionStore>`) y replica la configuracion de metadata (`CorrelationIdEnabled`/`CausationIdEnabled`/`HeadersEnabled`) del write-side de ese mismo dominio. La proyeccion en si se registra dentro de ese mismo `AddMartenStore`, en ambos niveles (N1 y N2), con `opts.Projections.Add<{TerminoVista}Projection>(ProjectionLifecycle.Async)` -- ciclo de vida `Async` por defecto, `Inline` solo si el issue lo justifica explicitamente como excepcion (MEF-ADR-0034). Nunca `Snapshot<T>()`: ese registro asume un tipo auto-agregante, y el estilo canonico del marco es siempre la clase companion.
 
 **Caso normal: el seam ya existe y ya esta implementado.** `domain-scaffolder` (Paso 3b, issue #370) lo emite al nacer el dominio -- `AddMartenStore` con conexion, schema y la configuracion de metadata (`MetadataConfig`), mas `AddAsyncDaemon(DaemonMode.HotCold)`, sin ninguna proyeccion --, asi que tu trabajo aqui es **agregar** los `opts.Projections.Add<...>(ProjectionLifecycle.Async)` de este issue dentro de ese `AddMartenStore` que ya esta. No reescribas el metodo, no lo conviertas en `partial` y no dupliques el marker ni el registro del store. Si el archivo lleva una proyeccion de un issue anterior, sumas la tuya sin remover las previas -- misma disciplina aditiva del seam de nivel BC.
 
@@ -64,10 +64,10 @@ Sigue el naming y la organizacion vertical de `naming.md` (una carpeta por query
 **El `id` de ruta se parsea tipado una sola vez antes de tocar `LoadAsync` (MEF-ADR-0037, doctrina completa en `read-apis.md` -- no la duplico aqui)**: nunca lo reenvies crudo. Caso comun -- identidad nacida `Guid` --: `Guid.TryParse` con `400` explicito si falla, y `ToString()` sin argumentos como unica salida a string:
 
 ```csharp
-// ObtenerTurno/FunctionEndpoint.cs
+// ObtenerSeguimientoTurno/FunctionEndpoint.cs
 public class FunctionEndpoint(IDocumentStore store, ITenantResolver tenantResolver)
 {
-    [Function("ObtenerTurno")]
+    [Function("ObtenerSeguimientoTurno")]
     public async Task<IActionResult> Run(
         [HttpTrigger(AuthorizationLevel.Function, "get", Route = "Programacion/Turnos/{id}")]
         HttpRequest req,
@@ -78,8 +78,8 @@ public class FunctionEndpoint(IDocumentStore store, ITenantResolver tenantResolv
             return new BadRequestObjectResult("El id del turno no es un Guid valido");
 
         await using var session = store.QuerySession(tenantResolver.TenantId);
-        var turno = await session.LoadAsync<TurnoView>(turnoId.ToString(), ct);   // unico ToString(), sin argumentos
-        return turno is null ? new NotFoundResult() : new OkObjectResult(turno);
+        var seguimiento = await session.LoadAsync<SeguimientoTurno>(turnoId.ToString(), ct);   // unico ToString(), sin argumentos
+        return seguimiento is null ? new NotFoundResult() : new OkObjectResult(seguimiento);
     }
 }
 ```
@@ -101,7 +101,7 @@ Registra el `FunctionEndpoint` y sus dependencias en `ComposicionServicios{Domin
 - Recibir la identidad ya armada como `string` en la ruta del GET y pasarla cruda a `LoadAsync`/`AggregateStreamAsync`/`FetchStreamAsync` sin el parseo tipado de MEF-ADR-0037.
 - Emitir `Create`/`Apply(TEvento, TId)` -- firma no reconocida por el source generator; el evento se descarta de `EventTypes` en silencio (`modelos-marten.md`).
 - Agregar una `ProjectReference` del worker hacia el `.csproj` de un Function App para alcanzar un tipo de evento -- los tipos persistidos llegan unicamente via la `ProjectReference` a `{Dominio}.DomainEvents` (MEF-ADR-0039 decision 4); es el antipatron de habilitacion que `reviewer.md` caza bajo gate (issue #557).
-- Embeber un tipo de `{Dominio}.DomainEvents` como campo del read model (`{Concepto}View`) -- el record de vista traduce el evento campo a campo; el acoplamiento al tipo de evento se queda en la clase de proyeccion (MEF-ADR-0039 decision 6, extendida al read-side).
+- Embeber un tipo de `{Dominio}.DomainEvents` como campo del read model (`{TerminoVista}`) -- el record de vista traduce el evento campo a campo; el acoplamiento al tipo de evento se queda en la clase de proyeccion (MEF-ADR-0041 decision 1, que formaliza MEF-ADR-0039 decision 6).
 
 ## Proceso
 
