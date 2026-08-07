@@ -21,8 +21,10 @@
 #      (issue #371, MEF-ADR-0014 + MEF-ADR-0035 seccion 6)
 #   D) Patrones de logica por basename (*CommandHandler.cs, *AggregateRoot.cs,
 #      *Validator.cs, FunctionEndpoint.cs, *Projection.cs -- MEF-ADR-0034
-#      seccion 9), sin gatear por is_projection y sin falso positivo en el
-#      plural ConfiguracionMartenProjections{Dominio}.cs (MEF-ADR-0006)
+#      seccion 9 --, *EventHandler.cs -- issue #590), sin gatear por
+#      is_projection y sin falso positivo en el plural
+#      ConfiguracionMartenProjections{Dominio}.cs (MEF-ADR-0006) ni en el
+#      companion de mensajes {Handler}.Mensajes.cs (MEF-ADR-0009)
 #   E) Eventos/Entities y ValueObjects con factory Crear() -> logic, antes de
 #      llegar a la exclusion de DTOs
 #   F) Exclusion de records DTO del estilo canonico (MEF-ADR-0035 seccion 2):
@@ -227,6 +229,30 @@ public static class ConfiguracionMartenProjectionsVentas { }
 '
 assert_eq "D7: ConfiguracionMartenProjections{Dominio}.cs (plural+sufijo) tampoco" "not_evaluated" \
     "$(coverage_classify_file "src/Foo.Bar/ConfiguracionMartenProjectionsVentas.cs" "$TMP_DIR" false)"
+
+write_fixture "src/Foo.Bar/TurnoCreadoEventHandler.cs" 'namespace Foo.Bar;
+
+public partial class TurnoCreadoEventHandler(IEventStore eventStore)
+    : IPrivateEventHandlerAsync<TurnoCreado>
+{
+}
+'
+assert_eq "D8: *EventHandler.cs -> logic (issue #590)" "logic" \
+    "$(coverage_classify_file "src/Foo.Bar/TurnoCreadoEventHandler.cs" "$TMP_DIR" false)"
+
+# El patron esta anclado al final del basename: el companion de mensajes que
+# acompana al handler ({Clase}.Mensajes.cs, MEF-ADR-0009) sigue siendo la
+# exclusion de boilerplate del Escenario A, no logica. Guarda contra ampliar el
+# glob a *EventHandler*.cs, que arrastraria ese .resx-companion al 95%.
+write_fixture "src/Foo.Bar/TurnoCreadoEventHandler.Mensajes.cs" 'namespace Foo.Bar;
+
+public partial class TurnoCreadoEventHandler
+{
+    public static class Mensajes { }
+}
+'
+assert_eq "D9: {EventHandler}.Mensajes.cs sigue excluido (patron anclado al final)" "excluded" \
+    "$(coverage_classify_file "src/Foo.Bar/TurnoCreadoEventHandler.Mensajes.cs" "$TMP_DIR" false)"
 
 # ─── Escenario E: eventos/ValueObjects con factory Crear() -> logic ────────
 echo "Escenario E: evento/ValueObject con factory Crear() resuelve logic antes de la exclusion de DTOs"
