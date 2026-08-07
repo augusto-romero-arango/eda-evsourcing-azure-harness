@@ -23,7 +23,7 @@ echo "Raiz del plugin: $PLUGIN_ROOT"
 ```
 
 - Recursos de Nivel 3 del Skill: `"$PLUGIN_ROOT/skills/projections/modelos-marten.md"`, `.../naming.md`, `.../read-apis.md`, `.../config-test.md`.
-- ADRs citados por el Skill: `"$PLUGIN_ROOT/docs/adr/mef-adr-0035-doctrina-proyeccion-query-read-side.md"`, `mef-adr-0034-worker-proyecciones-read-models.md`, `mef-adr-0006-convenciones-nombramiento-funciones-azure.md`, `mef-adr-0028-estrategia-tenancy.md`, `mef-adr-0029-test-composicion-host.md`.
+- ADRs citados por el Skill: `"$PLUGIN_ROOT/docs/adr/mef-adr-0035-doctrina-proyeccion-query-read-side.md"`, `mef-adr-0034-worker-proyecciones-read-models.md`, `mef-adr-0006-convenciones-nombramiento-funciones-azure.md`, `mef-adr-0041-forma-propia-vista-read-side.md`, `mef-adr-0028-estrategia-tenancy.md`, `mef-adr-0029-test-composicion-host.md`.
 
 **Nunca uses la ruta relativa** `docs/adr/...` ni `skills/projections/...`: con `cwd = repo consumidor` resolverian contra el repo equivocado (inexistente ahi).
 
@@ -47,7 +47,7 @@ El read model es un record plano, **sin** `partial`, en `<RootNamespace>.ReadMod
 
 **Elegir la firma de `Create` segun de donde sale la identidad** (lista cerrada de argumentos admitidos, `modelos-marten.md`): si la identidad del read model es el **stream key** -- `TId = string`, el caso normal de N1 en este marco (`StreamIdentity.AsString`, MEF-ADR-0034 ref. [19]) --, `Create` toma `IEvent<TEvento>` y la construye con `e.StreamKey!`; si en cambio el evento ya trae en su propio payload todo lo que la vista necesita -- la identidad la resuelve `Identity<TEvento>`/`Identities<TEvento>` en el constructor, no `Create`, el caso tipico de N2 --, `Create` toma `TEvento` a secas. **Prohibido**: `Create`/`Apply(TEvento, TId)` -- no es una firma que el source generator reconozca; el evento desaparece de `EventTypes` sin ningun error de build y el documento nunca se crea.
 
-**Payload por rol en el read-side (MEF-ADR-0039 decision 6, extendida al read-side por este issue)**: el read model (`{Concepto}View`) **nunca embebe un tipo de `{Dominio}.DomainEvents`** como campo -- ni el evento completo, ni un tipo anidado suyo. `Create`/`Apply` traducen campo a campo desde el evento hacia el record de vista (mismo estilo canonico de MEF-ADR-0035: record plano sin comportamiento propio); el acoplamiento tipado al evento se queda en la clase de proyeccion -- que si puede referenciarlo, porque vive en el worker junto a `{Dominio}.DomainEvents` --, nunca se filtra al contrato de vista que el Function App consume via `LoadAsync<TView>()`.
+**Payload por rol en el read-side (MEF-ADR-0041 decision 1, que formaliza el precedente operacional de MEF-ADR-0039 decision 6)**: el read model (`{TerminoVista}`, nombre propio del lenguaje ubicuo derivado de la necesidad de lectura, sin sufijo de implementacion -- MEF-ADR-0041 decision 3) **nunca embebe un tipo de `{Dominio}.DomainEvents`** como campo -- ni el evento completo, ni un tipo anidado suyo. `Create`/`Apply` traducen campo a campo desde el evento hacia el record de vista (mismo estilo canonico de MEF-ADR-0035: record plano sin comportamiento propio); el acoplamiento tipado al evento se queda en la clase de proyeccion -- que si puede referenciarlo, porque vive en el worker junto a `{Dominio}.DomainEvents` --, nunca se filtra al contrato de vista que el Function App consume via `LoadAsync<TView>()`.
 
 ### 2. Registro en el named store del worker (`Configurar{Dominio}`)
 
@@ -64,10 +64,10 @@ Sigue el naming y la organizacion vertical de `naming.md` (una carpeta por query
 **El `id` de ruta se parsea tipado una sola vez antes de tocar `LoadAsync` (MEF-ADR-0037, doctrina completa en `read-apis.md` -- no la duplico aqui)**: nunca lo reenvies crudo. Caso comun -- identidad nacida `Guid` --: `Guid.TryParse` con `400` explicito si falla, y `ToString()` sin argumentos como unica salida a string:
 
 ```csharp
-// ObtenerTurno/FunctionEndpoint.cs
+// ObtenerSeguimientoTurno/FunctionEndpoint.cs
 public class FunctionEndpoint(IDocumentStore store, ITenantResolver tenantResolver)
 {
-    [Function("ObtenerTurno")]
+    [Function("ObtenerSeguimientoTurno")]
     public async Task<IActionResult> Run(
         [HttpTrigger(AuthorizationLevel.Function, "get", Route = "Programacion/Turnos/{id}")]
         HttpRequest req,
@@ -78,8 +78,8 @@ public class FunctionEndpoint(IDocumentStore store, ITenantResolver tenantResolv
             return new BadRequestObjectResult("El id del turno no es un Guid valido");
 
         await using var session = store.QuerySession(tenantResolver.TenantId);
-        var turno = await session.LoadAsync<TurnoView>(turnoId.ToString(), ct);   // unico ToString(), sin argumentos
-        return turno is null ? new NotFoundResult() : new OkObjectResult(turno);
+        var seguimiento = await session.LoadAsync<SeguimientoTurno>(turnoId.ToString(), ct);   // unico ToString(), sin argumentos
+        return seguimiento is null ? new NotFoundResult() : new OkObjectResult(seguimiento);
     }
 }
 ```
@@ -101,7 +101,7 @@ Registra el `FunctionEndpoint` y sus dependencias en `ComposicionServicios{Domin
 - Recibir la identidad ya armada como `string` en la ruta del GET y pasarla cruda a `LoadAsync`/`AggregateStreamAsync`/`FetchStreamAsync` sin el parseo tipado de MEF-ADR-0037.
 - Emitir `Create`/`Apply(TEvento, TId)` -- firma no reconocida por el source generator; el evento se descarta de `EventTypes` en silencio (`modelos-marten.md`).
 - Agregar una `ProjectReference` del worker hacia el `.csproj` de un Function App para alcanzar un tipo de evento -- los tipos persistidos llegan unicamente via la `ProjectReference` a `{Dominio}.DomainEvents` (MEF-ADR-0039 decision 4); es el antipatron de habilitacion que `reviewer.md` caza bajo gate (issue #557).
-- Embeber un tipo de `{Dominio}.DomainEvents` como campo del read model (`{Concepto}View`) -- el record de vista traduce el evento campo a campo; el acoplamiento al tipo de evento se queda en la clase de proyeccion (MEF-ADR-0039 decision 6, extendida al read-side).
+- Embeber un tipo de `{Dominio}.DomainEvents` como campo del read model (`{TerminoVista}`) -- el record de vista traduce el evento campo a campo; el acoplamiento al tipo de evento se queda en la clase de proyeccion (MEF-ADR-0041 decision 1, que formaliza MEF-ADR-0039 decision 6).
 
 ## Proceso
 

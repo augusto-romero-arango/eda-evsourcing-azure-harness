@@ -23,7 +23,7 @@ echo "Raiz del plugin: $PLUGIN_ROOT"
 ```
 
 - Recursos de Nivel 3 del Skill: `"$PLUGIN_ROOT/skills/projections/modelos-marten.md"`, `.../naming.md`, `.../read-apis.md`, `.../config-test.md`.
-- ADRs citados por el Skill: `"$PLUGIN_ROOT/docs/adr/mef-adr-0035-doctrina-proyeccion-query-read-side.md"`, `mef-adr-0034-worker-proyecciones-read-models.md`, `mef-adr-0006-convenciones-nombramiento-funciones-azure.md`. Para naming de tests y oraculo independiente, `mef-adr-0016-convencion-naming-tests.md` y `mef-adr-0002-estrategia-testing-event-sourcing.md`.
+- ADRs citados por el Skill: `"$PLUGIN_ROOT/docs/adr/mef-adr-0035-doctrina-proyeccion-query-read-side.md"`, `mef-adr-0034-worker-proyecciones-read-models.md`, `mef-adr-0006-convenciones-nombramiento-funciones-azure.md`, `mef-adr-0041-forma-propia-vista-read-side.md`. Para naming de tests y oraculo independiente, `mef-adr-0016-convencion-naming-tests.md` y `mef-adr-0002-estrategia-testing-event-sourcing.md`.
 
 **Nunca uses la ruta relativa** `docs/adr/...` ni `skills/projections/...`: con `cwd = repo consumidor` resolverian contra el repo equivocado (inexistente ahi).
 
@@ -55,7 +55,7 @@ using <RootNamespace>.{Dominio}.DomainEvents;   // TurnoCreado, TurnoCerrado -- 
                                                 // llegan a este proyecto transitivo via la ProjectReference
                                                 // de Projections.Tests al worker, sin tocar este .csproj.
 
-public class TurnoProjectionTests
+public class SeguimientoTurnoProjectionTests
 {
     [Fact]
     public void Create_ProyectaTurnoAbierto_DesdeTurnoCreado()
@@ -69,25 +69,25 @@ public class TurnoProjectionTests
             Timestamp = DateTimeOffset.UtcNow,
         };
 
-        var view = TurnoProjection.Create(evento);
+        var view = SeguimientoTurnoProjection.Create(evento);
 
         // Oraculo independiente: el esperado se arma a mano, nunca reusando la logica del SUT (MEF-ADR-0002)
-        view.Should().Be(new TurnoView(evento.StreamKey!, "Abierto", evento.Data.HoraInicio));
+        view.Should().Be(new SeguimientoTurno(evento.StreamKey!, "Abierto", evento.Data.HoraInicio));
     }
 
     [Fact]
     public void Apply_CierraTurno_CuandoTurnoCerrado()
     {
-        var previa = new TurnoView("turno-123", "Abierto", new TimeOnly(6, 0));
+        var previa = new SeguimientoTurno("turno-123", "Abierto", new TimeOnly(6, 0));
 
-        var view = TurnoProjection.Apply(new TurnoCerrado(Guid.NewGuid()), previa);
+        var view = SeguimientoTurnoProjection.Apply(new TurnoCerrado(Guid.NewGuid()), previa);
 
         view.Should().Be(previa with { Estado = "Cerrado" });
     }
 }
 ```
 
-**Nunca pases el `Id` de la vista como argumento del evento** (`Apply(new TurnoCerrado(previa.Id), previa)` ni compila -- `CS1503` --, y sugiere que ambos son el mismo dato): `TurnoView.Id` es el stream key (`string`), mientras el evento lleva su propio campo de dominio en `Guid` (mismo patron que `MarcacionRegistrada(Guid EmpleadoId, ...)` de `test-writer.md`). Son dos identidades de naturaleza distinta -- arma cada una por separado en el arrange.
+**Nunca pases el `Id` de la vista como argumento del evento** (`Apply(new TurnoCerrado(previa.Id), previa)` ni compila -- `CS1503` --, y sugiere que ambos son el mismo dato): `SeguimientoTurno.Id` es el stream key (`string`), mientras el evento lleva su propio campo de dominio en `Guid` (mismo patron que `MarcacionRegistrada(Guid EmpleadoId, ...)` de `test-writer.md`). Son dos identidades de naturaleza distinta -- arma cada una por separado en el arrange.
 
 Cubre cada metodo que la clase de proyeccion declara (`Create` para el evento fundacional, un `Apply` por cada evento que muta la vista, `ShouldDelete` si el issue lo requiere). Para N2 (`MultiStreamProjection`), agrega ademas un test de correlacion que verifique que dos streams distintos (`Identity<TEvento>`/`Identities<TEvento>`) producen o actualizan el mismo documento.
 
@@ -132,8 +132,8 @@ Esta señal solo la honra el gate 1b del pipeline en la ruta read-side (`STAGE1_
 
 Si los tests referencian tipos que no existen, crealos con `throw new NotImplementedException()` -- mismo principio que `test-writer.md`:
 
-- **Read model** (record plano, estilo canonico de `modelos-marten.md`): `public sealed record TurnoView(...)` -- **sin** `partial`, sin `Create`/`Apply`/`ShouldDelete` propios; vive en `<RootNamespace>.ReadModels`.
-- **Clase de proyeccion companion** (N1 y N2, mismo estilo en ambos niveles): `public sealed partial class {Concepto}Projection : SingleStreamProjection<{Concepto}View, string>` (N1 -- `TId` siempre `string`: el store del dominio fija `StreamIdentity.AsString`, MEF-ADR-0034 ref. [19], y en N1 la identidad del documento es la del stream de origen) o `: MultiStreamProjection<{Concepto}View, {TId}>` (N2, con el constructor de correlacion `Identity<T>(...)`/`Identities<T>(...)` ya escrito -- no es un stub, no tiene logica que fallar; a diferencia de N1, el `TId` de N2 es independiente de `StreamIdentity` y lo determina el tipo que retorna esa correlacion -- `Guid` si el campo de dominio correlacionado es `Guid`, `modelos-marten.md`; `{TId}` es un placeholder, sustituyelo por ese tipo concreto y nunca lo emitas literal); vive en el worker (`src/<RootNamespace>.Projections/{Dominio}/{Concepto}Projection.cs`). Los `Create`/`Apply`/`ShouldDelete` de esta clase si son stub (`throw new NotImplementedException()`), en ambos niveles.
+- **Read model** (record plano, estilo canonico de `modelos-marten.md`): `public sealed record {TerminoVista}(...)` -- nombre propio del lenguaje ubicuo derivado de la necesidad de lectura, sin sufijo de implementacion (MEF-ADR-0041 decision 3; ejemplo: `SeguimientoTurno`) -- **sin** `partial`, sin `Create`/`Apply`/`ShouldDelete` propios; vive en `<RootNamespace>.ReadModels`.
+- **Clase de proyeccion companion** (N1 y N2, mismo estilo en ambos niveles): `public sealed partial class {TerminoVista}Projection : SingleStreamProjection<{TerminoVista}, string>` (N1 -- `TId` siempre `string`: el store del dominio fija `StreamIdentity.AsString`, MEF-ADR-0034 ref. [19], y en N1 la identidad del documento es la del stream de origen) o `: MultiStreamProjection<{TerminoVista}, {TId}>` (N2, con el constructor de correlacion `Identity<T>(...)`/`Identities<T>(...)` ya escrito -- no es un stub, no tiene logica que fallar; a diferencia de N1, el `TId` de N2 es independiente de `StreamIdentity` y lo determina el tipo que retorna esa correlacion -- `Guid` si el campo de dominio correlacionado es `Guid`, `modelos-marten.md`; `{TId}` es un placeholder, sustituyelo por ese tipo concreto y nunca lo emitas literal); vive en el worker (`src/<RootNamespace>.Projections/{Dominio}/{TerminoVista}Projection.cs`). Los `Create`/`Apply`/`ShouldDelete` de esta clase si son stub (`throw new NotImplementedException()`), en ambos niveles.
 - **Seam de composicion** (`ConfiguracionMartenProjections{Dominio}.Configurar{Dominio}`): **antes de declarar nada, verifica si ya existe** `src/<RootNamespace>.Projections/Infraestructura/ConfiguracionMartenProjections{Dominio}.cs`. `domain-scaffolder` (Paso 3b, issue #370) lo emite al nacer el dominio cuando el BC ya tiene worker de proyecciones, con el marker y el seam **ya implementado y sin `partial`**: `public static IServiceCollection Configurar{Dominio}(this IServiceCollection services, string martenConnectionString)`. Si esta ahi, esa es la firma que invoca tu config-test y **no declaras ni re-declaras nada** (seria `CS0101`/`CS0111`/`CS0260`); tu rojo viene de los `Create`/`Apply` de la clase de proyeccion, no del seam. El ejemplo de `config-test.md` usa el argumento nombrado `dummyConnectionString:` de forma ilustrativa -- invoca el seam **posicionalmente** o con el nombre real del parametro, o el test no compila (`CS1739`). Solo si el archivo **no** existe (dominio scaffoldeado antes de que el BC adoptara proyecciones), **primero asegura la `ProjectReference` del worker hacia `src/<RootNamespace>.{Dominio}.DomainEvents`** (MEF-ADR-0039 decision 2 -- gemelo per-issue de lo que `domain-scaffolder` Paso 3b hace al nacer el dominio, issue #548, y del cierra-huecos de `projections-scaffolder`, issue #552): sin esa referencia, ni el stub que sigue ni tu config-test compilan -- ambos necesitan ver los tipos de evento persistidos del dominio.
 
   ```bash
