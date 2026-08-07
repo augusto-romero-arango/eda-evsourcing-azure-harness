@@ -60,6 +60,11 @@ AGENT_CG_DUR="" AGENT_CG_RES="pending"   # coverage-gate
 COV_PATCH_APPLIED=false
 COV_GAPS_REMAINING=0
 COV_TABLE=""
+# Se inicializa aqui ademas de en el Stage 4 porque la construccion del cuerpo
+# del PR la lee para decidir si emite la nota de "sin clasificar" (issue #586),
+# y ese bloque corre tambien en las rutas donde el Stage 4 no se ejecuto
+# (refactor puro, --from-stage 5): sin este default, `set -u` la volaria.
+NOT_EVALUATED_FILES=""
 PIPELINE_TESTS=""
 PIPELINE_PR=""
 HAS_BLOCKAGE=false
@@ -1126,15 +1131,17 @@ if [ "$IS_REFACTOR" != true ] && [ "$FROM_STAGE" -le 4 ]; then
         echo "$EXCLUDED_FILES" | while read -r f; do log "  - $f"; done
     fi
     if [ -n "$NOT_EVALUATED_FILES" ]; then
-        log "Archivos no evaluados:"
+        log "Archivos sin clasificar:"
         echo "$NOT_EVALUATED_FILES" | while read -r f; do log "  ? $f"; done
     fi
 
-    if [ -z "$LOGIC_FILES" ]; then
-        log "No hay archivos de logica para evaluar — coverage gate pasa trivialmente"
-        # Construir tabla solo con excluidos/no-evaluados
-        COV_TABLE="| Archivo | Cobertura | Umbral | Estado |
-|---|---|---|---|"
+    # Agrega a COV_TABLE (global) las filas de EXCLUDED_FILES y
+    # NOT_EVALUATED_FILES (ambas globales, newline-separated). Comparten esta
+    # construccion los tres sitios del Stage 4 que arman la tabla (sin logica,
+    # medicion inicial, re-medicion post-remediacion) -- issue #586: la fila de
+    # "sin clasificar" lleva marcador de atencion propio en Estado en vez del
+    # "-" neutro, para no leerse igual que una exclusion deliberada.
+    coverage_append_classification_rows() {
         while IFS= read -r f; do
             [ -z "$f" ] && continue
             COV_TABLE="$COV_TABLE
@@ -1143,8 +1150,16 @@ if [ "$IS_REFACTOR" != true ] && [ "$FROM_STAGE" -le 4 ]; then
         while IFS= read -r f; do
             [ -z "$f" ] && continue
             COV_TABLE="$COV_TABLE
-| $(basename "$f") | - | no evaluado | - |"
+| $(basename "$f") | - | sin clasificar | ⚠ revisar |"
         done <<< "$NOT_EVALUATED_FILES"
+    }
+
+    if [ -z "$LOGIC_FILES" ]; then
+        log "No hay archivos de logica para evaluar — coverage gate pasa trivialmente"
+        # Construir tabla solo con excluidos/sin-clasificar
+        COV_TABLE="| Archivo | Cobertura | Umbral | Estado |
+|---|---|---|---|"
+        coverage_append_classification_rows
 
         AGENT_CG_RES="passed"
         AGENT_CG_DUR=$(( $(date +%s) - CG_START ))
@@ -1316,17 +1331,8 @@ for bn, fullpath in logic_basenames.items():
         fi
     done <<< "$COVERAGE_DATA"
 
-    # Agregar excluidos y no evaluados a la tabla
-    while IFS= read -r f; do
-        [ -z "$f" ] && continue
-        COV_TABLE="$COV_TABLE
-| $(basename "$f") | - | excluido | - |"
-    done <<< "$EXCLUDED_FILES"
-    while IFS= read -r f; do
-        [ -z "$f" ] && continue
-        COV_TABLE="$COV_TABLE
-| $(basename "$f") | - | no evaluado | - |"
-    done <<< "$NOT_EVALUATED_FILES"
+    # Agregar excluidos y sin-clasificar a la tabla
+    coverage_append_classification_rows
 
     log "Tabla de cobertura:"
     echo "$COV_TABLE" | while read -r line; do log "  $line"; done
@@ -1544,17 +1550,8 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
                         fi
                     done <<< "$COVERAGE_DATA_POST"
 
-                    # Agregar excluidos y no evaluados
-                    while IFS= read -r f; do
-                        [ -z "$f" ] && continue
-                        COV_TABLE="$COV_TABLE
-| $(basename "$f") | - | excluido | - |"
-                    done <<< "$EXCLUDED_FILES"
-                    while IFS= read -r f; do
-                        [ -z "$f" ] && continue
-                        COV_TABLE="$COV_TABLE
-| $(basename "$f") | - | no evaluado | - |"
-                    done <<< "$NOT_EVALUATED_FILES"
+                    # Agregar excluidos y sin-clasificar
+                    coverage_append_classification_rows
 
                     if [ "$GAPS_COUNT" -gt 0 ]; then
                         COV_REMEDIATION_SUMMARY="Se agregaron tests de remediacion. Gaps restantes: $REMAINING_GAPS"
@@ -1688,6 +1685,14 @@ ${ST_SUMMARY}
 
 $COV_TABLE
 "
+        # La nota va pegada a la tabla, antes de "### Remediacion": explica un
+        # marcador de la tabla, y bajo ese encabezado se leeria como parte de
+        # la remediacion en vez de como una advertencia sobre la medicion.
+        if [ -n "$NOT_EVALUATED_FILES" ]; then
+            COVERAGE_SECTION="${COVERAGE_SECTION}
+> **Archivos sin clasificar** (\`⚠ revisar\`): ninguna regla de clasificacion los reconocio — el gate **no los midio**. No es una exclusion deliberada (a diferencia de \`excluido\`, donde si se decidio que no requieren cobertura): requieren revision humana para confirmar si necesitan tests.
+"
+        fi
         if [ "$COV_PATCH_APPLIED" = true ] && [ -n "$COV_REMEDIATION_SUMMARY" ]; then
             COVERAGE_SECTION="${COVERAGE_SECTION}
 ### Remediacion

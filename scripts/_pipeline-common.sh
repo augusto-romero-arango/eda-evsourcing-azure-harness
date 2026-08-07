@@ -926,9 +926,11 @@ find_open_pr_for_branch() {
 #                     read-side de FunctionEndpoint.cs (issue #371)
 #
 # Imprime a stdout una de: "logic" (exige 95% de cobertura de lineas),
-# "excluded" (no se mide) o "not_evaluated" (no matchea ningun patron vigente;
-# se loguea en la tabla de cobertura pero nunca bloquea el gate). Retorna
-# siempre 0.
+# "excluded" (no se mide) o "not_evaluated" (no matchea ningun patron vigente).
+# El gate nunca bloquea por "not_evaluated", pero tampoco lo presenta como una
+# exclusion deliberada: la tabla del PR lo reporta como "sin clasificar" con
+# marcador de atencion propio, para revision humana (issue #586,
+# MEF-ADR-0014). Retorna siempre 0.
 coverage_classify_file() {
     local filepath="$1"
     local worktree_path="$2"
@@ -1024,7 +1026,7 @@ coverage_classify_file() {
     # rechazaba el estilo canonico multilinea): sin ella, un archivo con un
     # record DTO junto a -- o dentro de -- una clase con metodos se etiquetaria
     # "excluido" por su primer match, escondiendo de la revision humana un
-    # archivo que en realidad nadie midio (hoy sale como "no evaluado").
+    # archivo que en realidad nadie midio (sale como "sin clasificar").
     if [ -f "$worktree_path/$filepath" ]; then
         local content
         content=$(grep -v '^\s*//' "$worktree_path/$filepath" | grep -v '^\s*$' | grep -v '^using ' | grep -v '^namespace ' || true)
