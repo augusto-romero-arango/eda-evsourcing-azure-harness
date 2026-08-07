@@ -99,6 +99,33 @@ Sigue la plantilla exacta de `config-test.md` (`ServiceCollection` + connection 
 
 Un test de composicion, hermano del `ComposicionContenedorTests` de MEF-ADR-0029, que verifique que el `FunctionEndpoint` de cada query (`Obtener{X}`/`Listar{X}s`) resuelve sus dependencias (`IDocumentStore`, `ITenantResolver`) desde el contenedor DI del write-side sin excepcion.
 
+### 4. Evaluar si la fase roja es alcanzable (señal no-red)
+
+Antes de cerrar el stage, revisa que capas de arriba (1/2/3) escribiste realmente. Si el issue **no** crea ni modifica una clase de proyeccion -- no hay `Create`/`Apply`/`ShouldDelete` nuevos que testear porque la vista ya existe -- y los unicos tests que produjiste son composicion (punto 3) y/o config-test (punto 2), la fase roja es **estructuralmente inalcanzable**: ambos son guardrails de wiring (MEF-ADR-0029/0034), no de comportamiento -- pasan en cuanto el stub compila con la forma correcta, que es exactamente lo que necesitas para que el proyecto compile. No es un descuido tuyo: es el patron de cualquier consulta adicional sobre un read model existente (ej. un segundo endpoint GET sobre una vista ya materializada por otro issue).
+
+En ese caso:
+
+1. **Nunca** fuerces un assert artificial sin relacion con el comportamiento solo para conseguir un rojo -- esconderia la inalcanzabilidad real detras de un rojo falso, que es peor que declararla.
+2. Crea el archivo señal en `pipeline-state/` (NO en `.claude/`):
+   ```bash
+   mkdir -p pipeline-state
+   cat > pipeline-state/no-red-signal.md << 'EOF'
+   JUSTIFICATION=<razon concreta: que capas de test escribiste y por que ninguna puede fallar contra los stubs>
+   EOF
+   ```
+3. Continua el resto del proceso normalmente (stubs, build, commit). A diferencia del refactor puro de `test-writer.md`, aqui **si** hay implementacion por escribir en el Stage 2 -- la señal solo exime al gate de exigir un rojo, no salta ninguna fase.
+4. Documenta la señal en tu resumen de stage bajo un encabezado explicito, ej. "Señal no-red: <justificacion>".
+
+> **Importante**: el archivo señal vive en `pipeline-state/no-red-signal.md` en la
+> raiz del worktree, **no** en `.claude/pipeline/` -- mismo motivo que
+> MEF-ADR-0017 documenta para `refactor-signal.md` (seccion "Evaluar tipo de
+> tarea" de `test-writer.md`): el runtime de Claude Code intercepta escrituras a
+> `.claude/**` en worktrees aun con `bypassPermissions`. A diferencia de
+> `refactor-signal.md`, esta señal **no** tiene ubicacion legacy que aceptar:
+> nace directo en `pipeline-state/`.
+
+Esta señal solo la honra el gate 1b del pipeline en la ruta read-side (`STAGE1_AGENT = projection-test-writer`) -- nunca en la ruta write-side. Si el issue mezcla ambos lados (no deberia: tu responsabilidad es solo read-side), la parte write-side siempre necesita un rojo alcanzable.
+
 ---
 
 ## Stubs minimos de compilacion
@@ -133,14 +160,14 @@ Si los tests referencian tipos que no existen, crealos con `throw new NotImpleme
 1. Lee el issue (`tipo:projection`) e identifica el read model, el nivel de receta (N1/N2/N3) y las queries GET que expone.
 2. Consulta el Skill `projections` (ya precargado) y abre el recurso de Nivel 3 que resuelva tu duda concreta -- naming exacto, arbol de decision, plantilla del config-test, o las read APIs.
 3. Explora convenciones existentes del dominio (`ls src/<RootNamespace>.ReadModels/`, `ls src/<RootNamespace>.Projections/`, `ls tests/<RootNamespace>.Projections.Tests/`), igual que `test-writer.md` -- los tres proyectos que toca un issue read-side: el record en `ReadModels`, la clase de proyeccion en el worker y tus tests.
-4. Escribe los tests de "Que escribes" y los stubs minimos que compilen.
-5. Verifica que compila (`dotnet build`). **No** corras `dotnet test` -- ya sabes que fallara.
+4. Escribe los tests de "Que escribes" y los stubs minimos que compilen. Si el punto 4 de esa seccion aplica (fase roja estructuralmente inalcanzable), crea la señal no-red antes de continuar.
+5. Verifica que compila (`dotnet build`). **No** corras `dotnet test` -- si no hay señal no-red, ya sabes que fallara.
 6. Commitea:
    ```bash
    git add tests/ src/
    git commit -m "test(hu-XX): tests read-side para [descripcion breve] (fase roja)"
    ```
-7. Escribe el resumen en `.claude/pipeline/summaries/stage-1-projection-test-writer.md` -- el pipeline lo recolecta como `stage-<etapa>-<nombre del agente>.md`, asi que el nombre lleva **tu** nombre de agente, no el del generalista (mismo formato que `test-writer.md`: tests creados, estructura elegida, stubs creados, cobertura de criterios, desviaciones del plan del planner). No lo incluyas en el commit.
+7. Escribe el resumen en `.claude/pipeline/summaries/stage-1-projection-test-writer.md` -- el pipeline lo recolecta como `stage-<etapa>-<nombre del agente>.md`, asi que el nombre lleva **tu** nombre de agente, no el del generalista (mismo formato que `test-writer.md`: tests creados, estructura elegida, stubs creados, cobertura de criterios, señal no-red si aplica, desviaciones del plan del planner). No lo incluyas en el commit.
 
 ## Reglas absolutas
 
