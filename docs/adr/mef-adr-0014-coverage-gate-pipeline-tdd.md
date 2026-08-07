@@ -62,7 +62,7 @@ Razon del 95%: la logica de dominio ya esta consistentemente al 100% cuando los 
 
 Razon de excluir boilerplate: estas clases no contienen decisiones de negocio. Testearlas unitariamente no aporta confianza real — su correctitud se verifica via smoke tests contra el entorno desplegado (MEF-ADR-0013). Incluirlas en la medicion genera ruido que oculta los gaps verdaderos.
 
-Archivos que no matchean ningun patron se clasifican como "no evaluados" — se reportan sin bloquear.
+Archivos que no matchean ningun patron se clasifican como "sin clasificar": no es una exclusion deliberada (nadie decidio que no necesitan cobertura), es lo que quedo fuera de toda regla vigente. Se reportan con un marcador de atencion propio en la tabla del PR -- no un guion neutro identico al de "excluido" -- y sin bloquear el gate.
 
 ### Loop de remediacion acotado
 
@@ -107,4 +107,4 @@ Si la instrumentacion falla por cualquier razon, el pipeline emite warning y con
 ### Limitaciones conocidas
 
 - **Branch coverage no disponible**: `dotnet-coverage` con instrumentacion estatica en .NET 10 no reporta datos de branches (`branch-rate="1"` siempre). Se usa line coverage como proxy. Cuando la herramienta lo soporte, se puede ajustar el gate para usar branch coverage con umbrales apropiados
-- **Clasificacion por nombre de archivo**: la heuristica de clasificacion usa patrones de nombre, no analisis semantico del codigo. Un archivo mal nombrado podria clasificarse incorrectamente. Mitigation: los archivos "no evaluados" se reportan para revision humana
+- **Clasificacion por nombre de archivo**: la heuristica de clasificacion usa patrones de nombre, no analisis semantico del codigo. Un archivo mal nombrado podria clasificarse incorrectamente. Mitigation: los archivos "sin clasificar" se reportan con marcador de atencion propio, distinto del de una exclusion deliberada, para revision humana
