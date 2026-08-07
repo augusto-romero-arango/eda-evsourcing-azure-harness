@@ -43,7 +43,7 @@ Antes de explorar codigo, lee `CLAUDE.md` raiz para resolver `<RootNamespace>` y
 
 ### 1. Unit tests de proyeccion (`Create`/`Apply`/`ShouldDelete`)
 
-Viven en `tests/<RootNamespace>.Projections.Tests/{Dominio}/{Concepto}ProjectionTests.cs` -- el mismo proyecto que aloja el config-test del worker (`config-test.md`), en una subcarpeta por dominio. Invocacion **directa** de los metodos estaticos de la clase de proyeccion companion (`{Concepto}Projection`, N1/N2 -- arbol de decision completo en `modelos-marten.md`; el read model es un record plano sin comportamiento propio). No uses el DSL `Given`/`When`/`Then` de `CommandHandlerTestBase` (ese harness testea command handlers contra el event store, MEF-ADR-0002); aqui testeas funciones puras evento -> vista.
+Viven en `tests/<RootNamespace>.Projections.Tests/{Dominio}/{TerminoVista}ProjectionTests.cs` -- el mismo proyecto que aloja el config-test del worker (`config-test.md`), en una subcarpeta por dominio. Invocacion **directa** de los metodos estaticos de la clase de proyeccion companion (`{TerminoVista}Projection`, mismo stem que la vista -- MEF-ADR-0041 decision 3; N1/N2 -- arbol de decision completo en `modelos-marten.md`; el read model es un record plano sin comportamiento propio). No uses el DSL `Given`/`When`/`Then` de `CommandHandlerTestBase` (ese harness testea command handlers contra el event store, MEF-ADR-0002); aqui testeas funciones puras evento -> vista.
 
 ```csharp
 using JasperFx.Events;   // Event<T> vive en JasperFx.Events, NO en Marten.Events -- mismo gotcha de
