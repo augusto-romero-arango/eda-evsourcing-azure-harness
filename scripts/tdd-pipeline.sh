@@ -70,6 +70,10 @@ IS_REFACTOR=false
 REFACTOR_JUSTIFICATION=""
 BASELINE_TEST_COUNT="?"
 REMOVED_TESTS=0
+# Señal de fase roja no aplicable (issue #585): gemela de refactor-signal.md,
+# pero solo honrada en la ruta read-side (STAGE1_AGENT=projection-test-writer).
+IS_NO_RED_SIGNAL=false
+NO_RED_JUSTIFICATION=""
 # Rama read-side (issue #371): tipo:projection despacha projection-test-writer/
 # projection-implementer en vez de test-writer/implementer. reviewer y
 # smoke-test-writer se mantienen (ya son read-side-aware via skills: projections).
@@ -451,8 +455,22 @@ if [ -f "$REFACTOR_SIGNAL_PATH" ]; then
     log "Señal de refactoring detectada (pre-existente): $REFACTOR_JUSTIFICATION"
 fi
 
-# Asegurar que el directorio pipeline-state/ existe en el worktree para que el
-# test-writer pueda escribir refactor-signal.md sin restricciones.
+# Detectar señal de fase roja no aplicable pre-existente (worktree previo con
+# --from-stage). Gemela de la deteccion de refactor-signal.md de arriba (issue
+# #585), pero solo se honra en la ruta read-side (STAGE1_AGENT=projection-test-writer)
+# — en la ruta write-side el rojo siempre es alcanzable, asi que la señal se
+# ignora aunque el archivo exista. Sin ubicacion legacy: nace directo en
+# pipeline-state/ (MEF-ADR-0017).
+NO_RED_SIGNAL_PATH="$WORKTREE_PATH/pipeline-state/no-red-signal.md"
+if [ "$STAGE1_AGENT" = "projection-test-writer" ] && [ -f "$NO_RED_SIGNAL_PATH" ]; then
+    IS_NO_RED_SIGNAL=true
+    NO_RED_JUSTIFICATION=$(grep "^JUSTIFICATION=" "$NO_RED_SIGNAL_PATH" | cut -d= -f2- || echo "no especificada")
+    log "Señal de fase roja no aplicable detectada (pre-existente): $NO_RED_JUSTIFICATION"
+fi
+
+# Asegurar que el directorio pipeline-state/ existe en el worktree para que
+# test-writer/projection-test-writer puedan escribir refactor-signal.md /
+# no-red-signal.md sin restricciones.
 mkdir -p "$WORKTREE_PATH/pipeline-state"
 
 # ─── Función auxiliar para recolectar resumen de agente ─────────────────────
@@ -651,6 +669,16 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
         log "Señal de refactoring detectada: $REFACTOR_JUSTIFICATION (REMOVED_TESTS=$REMOVED_TESTS)"
     fi
 
+    # Detectar señal de fase roja no aplicable recien creada por esta invocacion
+    # (issue #585) — mismo motivo que el re-chequeo de refactor-signal de arriba:
+    # en una corrida nueva (no --from-stage) la señal nace durante este run_agent,
+    # no antes. Nunca se honra en la ruta write-side (test-writer).
+    if [ "$STAGE1_AGENT" = "projection-test-writer" ] && [ -f "$NO_RED_SIGNAL_PATH" ] && [ "$IS_NO_RED_SIGNAL" = false ]; then
+        IS_NO_RED_SIGNAL=true
+        NO_RED_JUSTIFICATION=$(grep "^JUSTIFICATION=" "$NO_RED_SIGNAL_PATH" | cut -d= -f2- || echo "no especificada")
+        log "Señal de fase roja no aplicable detectada: $NO_RED_JUSTIFICATION"
+    fi
+
     # Validar que el agente produjo trabajo: cambios en tests/src O senal de refactor.
     # Si no hay nada, distinguir entre "agente realmente fallo" y "razono refactor pero
     # no pudo escribir la senal" (Bug 1: runtime intercepta escrituras a .claude/**).
@@ -678,12 +706,16 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
         TEST_OUTPUT_G1=$(run_tests_projects "$WORKTREE_PATH" --no-build 2>&1) || g1_rc=$?
         echo "$TEST_OUTPUT_G1" | tee -a "${LOG_FILE_ABS:-$LOG_FILE}" >/dev/null
         if [ "$g1_rc" -eq 0 ]; then
-            abort "Stage 1 fallido: todos los tests pasan (exit code: 0) — el $STAGE1_AGENT pudo haber escrito implementacion real en lugar de stubs"
-        fi
-        if [ "$g1_rc" -eq 8 ]; then
+            if [ "$IS_NO_RED_SIGNAL" = true ]; then
+                log "fase roja no aplicable: $NO_RED_JUSTIFICATION"
+            else
+                abort "Stage 1 fallido: todos los tests pasan (exit code: 0). Dos hipotesis: (1) el $STAGE1_AGENT escribio implementacion real en lugar de stubs; o (2) la fase roja es estructuralmente inalcanzable (ej. la unica capa de test posible es composicion/config-test sobre un stub que debe existir para compilar). Si es el caso (2) y este es un issue tipo:projection, el $STAGE1_AGENT debe señalizarlo creando pipeline-state/no-red-signal.md con JUSTIFICATION=<razon> — esa señal solo se honra en la ruta read-side (STAGE1_AGENT=projection-test-writer)."
+            fi
+        elif [ "$g1_rc" -eq 8 ]; then
             abort "Stage 1 fallido: no se encontraron tests para ejecutar (exit code: 8) — el $STAGE1_AGENT no genero tests validos"
+        else
+            log "Fase roja confirmada (exit code: $g1_rc)"
         fi
-        log "Fase roja confirmada (exit code: $g1_rc)"
     fi
 
     # Auto-commit de seguridad (solo si hay cambios uncommitted en tests/ o src/)
@@ -906,6 +938,12 @@ Si el diff incluye smoke tests (archivos en *SmokeTests/), revísalos también: 
 Sigue todas las instrucciones de tu rol de reviewer.
 
 PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
+
+        if [ "$IS_NO_RED_SIGNAL" = true ]; then
+            STAGE3_PROMPT="$STAGE3_PROMPT
+
+Nota: el $STAGE1_AGENT señalizo que la fase roja del Stage 1 era estructuralmente inalcanzable (unica capa de test posible: composicion/config-test). Justificación: $NO_RED_JUSTIFICATION"
+        fi
     fi
 
     # Agregar contexto de bloqueo al prompt si el implementer reporto tests bloqueados
@@ -1614,6 +1652,10 @@ else
 - Fase roja: tests escritos con stubs
 - Fase verde: implementación completa
 - Fase refactor: revisión de calidad"
+        fi
+        if [ "$IS_NO_RED_SIGNAL" = true ]; then
+            PR_BODY_SUMMARY="$PR_BODY_SUMMARY
+- Fase roja no aplicable: $NO_RED_JUSTIFICATION"
         fi
         IMPLEMENTER_SECTION="<details>
 <summary>${STAGE2_LABEL} (fase verde) — ${IM_DUR_FMT}</summary>
