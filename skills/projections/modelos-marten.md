@@ -1,6 +1,6 @@
 # Modelos de proyeccion Marten: arbol N1/N2/N3
 
-Fuente: MEF-ADR-0035 secciones 1-2. Version pinneada: Marten `9.12.0` (MEF-ADR-0003).
+Fuente: MEF-ADR-0035 secciones 1-2 (estilo de codigo); MEF-ADR-0041 (forma y naming del record de read model, enmienda issue #581). Version pinneada: Marten `9.12.0` (MEF-ADR-0003).
 
 ## Arbol de decision
 
@@ -16,6 +16,8 @@ Fuente: MEF-ADR-0035 secciones 1-2. Version pinneada: Marten `9.12.0` (MEF-ADR-0
 El read model es un **record inmutable plano** (mismo criterio de MEF-ADR-0012: sin invariantes de construccion -> `record`), **sin** `partial` ni metodos propios -- vive en `<RootNamespace>.ReadModels` (MEF-ADR-0034 seccion 5), biblioteca que no referencia Marten ni transitivamente. El comportamiento de proyeccion vive en una **clase companion separada**, `partial`, que declara los metodos estaticos `Create`/`Apply`/`ShouldDelete`, descubiertos por nombre por el source generator (estilo **convencional**, canonico del marco frente al estilo explicito por `Evolve`/`switch`) -- y que vive en el **worker** (`<RootNamespace>.Projections`, MEF-ADR-0034 seccion 5), el ensamblado que si referencia Marten y el analizador `JasperFx.Events.SourceGenerator`.
 
 **Procedencia de los tipos de evento que esos `Create`/`Apply` tipan** (`TurnoCreado`, `TurnoCerrado`, ...): viven en `<RootNamespace>.{Dominio}.DomainEvents`, y el worker los alcanza via su `ProjectReference` a ese ensamblado -- **nunca** al `.csproj` de un Function App (MEF-ADR-0039 decisiones 2 y 4). Es el mismo ensamblado que ya declara el write-side del dominio; ni el read model ni la clase de proyeccion redeclaran esos tipos.
+
+**La forma del record nunca sale del evento ni del aggregate (MEF-ADR-0041 decision 1).** El record de `ReadModels` **nunca** importa un tipo de `{Dominio}.DomainEvents` como campo -- ni el evento completo, ni un tipo anidado suyo; es la cuarta isla de cero `ProjectReference` de MEF-ADR-0039 decision 2 (enmendada por MEF-ADR-0041). Que campos declara, con que nombres y con que cardinalidad no lo decide el shape de `TurnoCreado`/`TurnoCerrado` ni el del `AggregateRoot` que el dominio ya mantiene: lo decide el *handoff* del issue `tipo:projection` -- el knowledge crunching del `planner` sobre la necesidad de lectura concreta y el vocabulario de quien consume la vista (MEF-ADR-0008). Un read model cuyos campos y nombres son un calco 1:1 del evento o del aggregate, sin nada derivado de esa necesidad, es la senal de que el crunching no se hizo (MEF-ADR-0041 decision 1). `Create`/`Apply` son el unico lugar donde el tipo del evento y el del read model conviven en la misma firma: traducen, campo a campo, la forma del evento hacia la forma de la vista -- nunca copian el tipo ni replican el nombramiento del write-side.
 
 ## Namespaces verificados de las clases base -- gotcha de `using`
 
@@ -43,20 +45,24 @@ using <RootNamespace>.{Dominio}.DomainEvents; // TurnoCreado, TurnoCerrado, Turn
                                               // a este ensamblado, nunca al .csproj de un Function App.
 
 // Read model: record plano, sin comportamiento ni partial. Vive en <RootNamespace>.ReadModels.
+// Nunca importa un tipo de {Dominio}.DomainEvents (MEF-ADR-0041 decision 1) -- sus campos y su
+// nombre salen de la necesidad de lectura del issue, no de TurnoCreado/TurnoCerrado ni del aggregate.
 // Id es string, no Guid: el store del dominio fija StreamIdentity.AsString (MEF-ADR-0034 ref. [19]),
 // y en N1 la identidad del documento ES la del stream de origen -- ambas deben coincidir.
-public sealed record TurnoView(string Id, string Estado, DateOnly FechaInicio);
+public sealed record SeguimientoTurno(string Id, string Estado, DateOnly FechaInicio);
 
 // Clase de proyeccion: vive en el worker (<RootNamespace>.Projections) -- el ensamblado
-// que si referencia Marten y el analizador JasperFx.Events.SourceGenerator.
-public sealed partial class TurnoProjection : SingleStreamProjection<TurnoView, string>
+// que si referencia Marten y el analizador JasperFx.Events.SourceGenerator. Es el unico punto
+// de mapeo evento -> vista (MEF-ADR-0041 decision 2): traduce forma y nombres, no reenvia el
+// tipo del evento ni replica el nombramiento del write-side.
+public sealed partial class SeguimientoTurnoProjection : SingleStreamProjection<SeguimientoTurno, string>
 {
     // Create toma IEvent<TurnoCreado>, no TurnoCreado a secas: la identidad (un string) no viaja
     // en el payload del evento -- IEvent<T>.StreamKey es quien la expone.
-    public static TurnoView Create(IEvent<TurnoCreado> e) =>
+    public static SeguimientoTurno Create(IEvent<TurnoCreado> e) =>
         new(e.StreamKey!, "Abierto", e.Data.FechaInicio);
 
-    public static TurnoView Apply(TurnoCerrado e, TurnoView view) =>
+    public static SeguimientoTurno Apply(TurnoCerrado e, SeguimientoTurno view) =>
         view with { Estado = "Cerrado" };
 
     // ShouldDelete es opcional -- solo si el read model debe desaparecer ante algun evento
@@ -65,10 +71,10 @@ public sealed partial class TurnoProjection : SingleStreamProjection<TurnoView, 
 
 // Registro en el named store del worker de proyecciones (MEF-ADR-0034 seccion 2),
 // nunca en el write-side -- Async es el ciclo de vida canonico (MEF-ADR-0034 seccion 3):
-opts.Projections.Add<TurnoProjection>(ProjectionLifecycle.Async);
+opts.Projections.Add<SeguimientoTurnoProjection>(ProjectionLifecycle.Async);
 ```
 
-**Si el `TId` no coincide con el `StreamIdentity` del store la falla es ruidosa, pero tardia**: declarar `SingleStreamProjection<TurnoView, Guid>` sobre un store `AsString` lanza `InvalidProjectionException: Id type mismatch...` al **resolver el named store** del contenedor, nunca en build (MEF-ADR-0035 seccion 2) -- la guarda 1 del config-test ([config-test.md](config-test.md)) es lo unico que la caza antes del primer despliegue.
+**Si el `TId` no coincide con el `StreamIdentity` del store la falla es ruidosa, pero tardia**: declarar `SingleStreamProjection<SeguimientoTurno, Guid>` sobre un store `AsString` lanza `InvalidProjectionException: Id type mismatch...` al **resolver el named store** del contenedor, nunca en build (MEF-ADR-0035 seccion 2) -- la guarda 1 del config-test ([config-test.md](config-test.md)) es lo unico que la caza antes del primer despliegue.
 
 **Por que N1 deja de ser auto-agregante.** El estilo anterior fijaba, para N1, un record self-hosting que declaraba sus propios `Create`/`Apply` y se registraba con `Snapshot<T>()`. Es la consecuencia forzosa de que `<RootNamespace>.ReadModels` no lleve Marten, ni transitivamente (MEF-ADR-0034 seccion 5): mover el record al worker no es opcion -- el Function App del dominio lo necesita para el GET (`session.LoadAsync<TView>()`) --, asi que el comportamiento de proyeccion se traslada a la clase companion y el record se queda como dato puro. Beneficio colateral: **un solo estilo** de N1 y N2 en el marco, en vez de dos.
 
@@ -94,9 +100,9 @@ using Marten.Events.Projections;   // MultiStreamProjection<,>
 using <RootNamespace>.{Dominio}.DomainEvents; // TurnoCreado, TurnoCerrado -- MEF-ADR-0039 decision 2,
                                               // mismo criterio de procedencia que N1 (arriba).
 
-public sealed record ResumenEquipoView(Guid EquipoId, int TurnosCerrados);
+public sealed record ResumenEquipo(Guid EquipoId, int TurnosCerrados);
 
-public sealed partial class ResumenEquipoProjection : MultiStreamProjection<ResumenEquipoView, Guid>
+public sealed partial class ResumenEquipoProjection : MultiStreamProjection<ResumenEquipo, Guid>
 {
     public ResumenEquipoProjection()
     {
@@ -104,9 +110,9 @@ public sealed partial class ResumenEquipoProjection : MultiStreamProjection<Resu
         Identity<TurnoCerrado>(e => e.EquipoId);
     }
 
-    public static ResumenEquipoView Create(TurnoCreado e) => new(e.EquipoId, 0);
+    public static ResumenEquipo Create(TurnoCreado e) => new(e.EquipoId, 0);
 
-    public static ResumenEquipoView Apply(TurnoCerrado e, ResumenEquipoView view) =>
+    public static ResumenEquipo Apply(TurnoCerrado e, ResumenEquipo view) =>
         view with { TurnosCerrados = view.TurnosCerrados + 1 };
 }
 
@@ -117,7 +123,7 @@ opts.Projections.Add<ResumenEquipoProjection>(ProjectionLifecycle.Async);
 
 ## El `partial` es obligatorio -- gotcha real, poco documentado
 
-Verificado contra la documentacion oficial de convenciones de Marten: *"To make changes to an existing aggregate, declare `Apply()` methods on a `partial` projection class. The `JasperFx.Events.SourceGenerator` discovers them at compile time and emits a `[GeneratedEvolver]` dispatcher with no runtime reflection."* El requisito aplica a la **subclase de proyeccion** con metodos convencionales (`{Concepto}Projection`, arriba) -- **no** al record de read model, que ahora es siempre un dato plano sin `partial` en ambos niveles. Confirmado empiricamente por el issue `JasperFx/marten` #4557: una subclase sin `partial` produce en runtime *"No source-generated dispatcher found for Marten.Events.Aggregation.SingleStreamProjection<MyType, System.Guid>"*.
+Verificado contra la documentacion oficial de convenciones de Marten: *"To make changes to an existing aggregate, declare `Apply()` methods on a `partial` projection class. The `JasperFx.Events.SourceGenerator` discovers them at compile time and emits a `[GeneratedEvolver]` dispatcher with no runtime reflection."* El requisito aplica a la **subclase de proyeccion** con metodos convencionales (`{TerminoVista}Projection`, arriba) -- **no** al record de read model, que ahora es siempre un dato plano sin `partial` en ambos niveles. Confirmado empiricamente por el issue `JasperFx/marten` #4557: una subclase sin `partial` produce en runtime *"No source-generated dispatcher found for Marten.Events.Aggregation.SingleStreamProjection<MyType, System.Guid>"*.
 
 **El `partial` no alcanza solo**: el mensaje de error completo fija **dos** condiciones -- *"the projection class must be declared `partial` in an assembly that references the JasperFx.Events.SourceGenerator analyzer, or alternatively override Evolve / EvolveAsync / DetermineAction / DetermineActionAsync directly"*. El ensamblado que debe arrastrar ese analizador es el **worker** (`<RootNamespace>.Projections`, MEF-ADR-0034 seccion 5) -- donde vive la clase de proyeccion `partial` --, no `<RootNamespace>.ReadModels`, que no aloja ningun tipo `partial` y por eso no necesita el analizador. Un `partial` correcto en un ensamblado sin analizador falla en **runtime**, no en build.
 
