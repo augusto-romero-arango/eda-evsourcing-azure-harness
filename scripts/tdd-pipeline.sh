@@ -60,6 +60,11 @@ AGENT_CG_DUR="" AGENT_CG_RES="pending"   # coverage-gate
 COV_PATCH_APPLIED=false
 COV_GAPS_REMAINING=0
 COV_TABLE=""
+# Se inicializa aqui ademas de en el Stage 4 porque la construccion del cuerpo
+# del PR la lee para decidir si emite la nota de "sin clasificar" (issue #586),
+# y ese bloque corre tambien en las rutas donde el Stage 4 no se ejecuto
+# (refactor puro, --from-stage 5): sin este default, `set -u` la volaria.
+NOT_EVALUATED_FILES=""
 PIPELINE_TESTS=""
 PIPELINE_PR=""
 HAS_BLOCKAGE=false
@@ -1680,16 +1685,19 @@ ${ST_SUMMARY}
 
 $COV_TABLE
 "
+        # La nota va pegada a la tabla, antes de "### Remediacion": explica un
+        # marcador de la tabla, y bajo ese encabezado se leeria como parte de
+        # la remediacion en vez de como una advertencia sobre la medicion.
+        if [ -n "$NOT_EVALUATED_FILES" ]; then
+            COVERAGE_SECTION="${COVERAGE_SECTION}
+> **Archivos sin clasificar** (\`⚠ revisar\`): ninguna regla de clasificacion los reconocio — el gate **no los midio**. No es una exclusion deliberada (a diferencia de \`excluido\`, donde si se decidio que no requieren cobertura): requieren revision humana para confirmar si necesitan tests.
+"
+        fi
         if [ "$COV_PATCH_APPLIED" = true ] && [ -n "$COV_REMEDIATION_SUMMARY" ]; then
             COVERAGE_SECTION="${COVERAGE_SECTION}
 ### Remediacion
 
 $COV_REMEDIATION_SUMMARY
-"
-        fi
-        if [ -n "$NOT_EVALUATED_FILES" ]; then
-            COVERAGE_SECTION="${COVERAGE_SECTION}
-> **Archivos sin clasificar**: ninguna regla de clasificacion los reconocio — el gate no los midio. No es una exclusion deliberada (a diferencia de \`excluido\`): requieren revision humana para confirmar si necesitan cobertura.
 "
         fi
         if [ "$COV_GAPS_REMAINING" -gt 0 ]; then

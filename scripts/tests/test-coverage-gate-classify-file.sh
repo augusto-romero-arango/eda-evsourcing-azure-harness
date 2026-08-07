@@ -306,7 +306,7 @@ assert_eq "F4: modificadores sealed+partial combinados -> excluded" "excluded" \
 # La cota de "un unico tipo declarado" evita que el primer match de la busqueda
 # excluya un archivo que declara un DTO junto a -- o dentro de -- una clase con
 # metodos: se etiquetaria "excluido" (deliberado) cuando en realidad nadie lo
-# midio ("no evaluado"), escondiendolo de la revision humana.
+# midio ("sin clasificar"), escondiendolo de la revision humana.
 write_fixture "src/Foo.Bar/AyudanteConDto.cs" 'namespace Foo.Bar;
 
 public sealed record DatosAuxiliares(Guid Id);
@@ -340,7 +340,7 @@ write_fixture "src/Foo.ReadModels/DosViews.cs" 'namespace Foo.ReadModels;
 public sealed record UnaView(Guid Id);
 public sealed record OtraMasView(Guid Id);
 '
-assert_eq "F7: dos records en el mismo archivo -> no evaluado (cota conservadora)" "not_evaluated" \
+assert_eq "F7: dos records en el mismo archivo -> sin clasificar (cota conservadora)" "not_evaluated" \
     "$(coverage_classify_file "src/Foo.ReadModels/DosViews.cs" "$TMP_DIR" false)"
 
 # Forma realista del read model canonico (skills/projections/modelos-marten.md):
