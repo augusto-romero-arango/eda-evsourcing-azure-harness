@@ -1,6 +1,6 @@
 # Naming: Functions de query y artefactos de proyeccion
 
-Fuente: MEF-ADR-0006 (enmienda issue #363, hermano de MEF-ADR-0035). Aqui solo se fija el **naming**; el estilo de codigo y la superficie de consulta los fija MEF-ADR-0035 (ver [modelos-marten.md](modelos-marten.md) y [read-apis.md](read-apis.md)).
+Fuente: MEF-ADR-0006 (enmienda issue #363, hermano de MEF-ADR-0035; naming del read model reenmendado por MEF-ADR-0041, issue #581). Aqui solo se fija el **naming**; el estilo de codigo y la superficie de consulta los fija MEF-ADR-0035 (ver [modelos-marten.md](modelos-marten.md) y [read-apis.md](read-apis.md)); la forma de la vista (que campos, que nombres) la fija MEF-ADR-0041, no este documento.
 
 ## Functions HTTP de query (GET)
 
@@ -15,11 +15,11 @@ El `s` de `Listar{X}s` es el **plural correcto del espanol**, no un sufijo liter
 
 `{X}` es el **concepto** que la Function devuelve, segun la via de MEF-ADR-0035 (ver [read-apis.md](read-apis.md)):
 
-- **(a) Proyeccion materializada**: `Obtener{Concepto}` por id, `Listar{Concepto}s` por filtro/lista -- `{Concepto}` es el nombre base del read model (`TurnoView` -> `ObtenerTurno`).
+- **(a) Proyeccion materializada**: `Obtener{X}` por id, `Listar{X}s` por filtro/lista -- aqui `{X}` es el nombre del read model: un termino del lenguaje ubicuo sin sufijo de implementacion (MEF-ADR-0041 decision 3), derivado de la necesidad de lectura y no del evento ni del aggregate (`ResumenAsistenciaDiaria` -> `ObtenerResumenAsistenciaDiaria`).
 - **(b1) Aggregate en vivo**: `Obtener{Aggregate}` -- `{Aggregate}` es el nombre del aggregate sin el sufijo `AggregateRoot` (`TurnoAggregateRoot` -> `ObtenerTurno`).
 - **(b2) Eventos crudos del stream**: `ListarEventosDe{Aggregate}` (`ListarEventosDeTurno`).
 
-**Colision deliberada entre (a) y (b1)**: cuando el read model y el aggregate comparten concepto, ambas vias producen el **mismo** nombre de Function -- y dos Functions con identico `[Function("...")]` no pueden coexistir. Un dominio expone **una sola** via de lectura por id a la vez ((a) es la default; (b1) la excepcion cuando no existe proyeccion materializada). Un dominio que de verdad necesite ambas vias sobre el mismo concepto debe desambiguar el nombre explicitamente en el issue que lo pida (Rule of Three, MEF-ADR-0018).
+**Colision entre (a) y (b1), ahora infrecuente por construccion (MEF-ADR-0041 decision 3)**: antes de que el read model tuviera nombre propio, cuando compartia concepto con el aggregate ambas vias producian el **mismo** nombre de Function -- y dos Functions con identico `[Function("...")]` no pueden coexistir. Con un read model nombrado por su necesidad de lectura (`ResumenAsistenciaDiaria`, no `Asistencia`), `Obtener{X}` deja de coincidir con `Obtener{Aggregate}` en el caso comun. La colision sigue siendo posible en el caso residual de una vista genuinamente 1:1 cuyo termino coincide con el del aggregate -- ahi un dominio expone **una sola** via de lectura por id a la vez ((a) es la default; (b1) la excepcion cuando no existe proyeccion materializada), y debe desambiguar el nombre explicitamente en el issue que lo pida (Rule of Three, MEF-ADR-0018).
 
 ## Ruta HTTP: REST por recurso, nunca el nombre de la Function
 
@@ -75,11 +75,11 @@ src/<RootNamespace>.{Dominio}/
 | Concepto | Convencion | Ejemplo |
 |---|---|---|
 | Query (Function/metodo GET) | `Obtener{X}` (item por id) / `Listar{X}s` (coleccion) | `ObtenerTurno`, `ListarTurnos` |
-| Read model (view) | `{Concepto}View` | `TurnoView` |
-| Clase de proyeccion (companion, N1/N2) | `{Concepto}Projection` (`partial`, en el worker, mismo stem que su View) | `ResumenEquipoProjection` -> `ResumenEquipoView` |
+| Read model (vista de lectura) | Termino del lenguaje ubicuo, sin sufijo de implementacion (MEF-ADR-0041 decision 3) | `ResumenAsistenciaDiaria` |
+| Clase de proyeccion (companion, N1/N2) | `{TerminoVista}Projection` (`partial`, en el worker, mismo stem que la vista) | `ResumenAsistenciaDiariaProjection` -> `ResumenAsistenciaDiaria` |
 | Marker del named store de proyecciones | `I{Dominio}ProjectionStore` | `IVentasProjectionStore` |
 | Seam de composicion de proyecciones (por dominio) | `ConfiguracionMartenProjections{Dominio}`, metodo `Configurar{Dominio}` | `ConfiguracionMartenProjectionsVentas.ConfigurarVentas()` |
 
 El seam de proyecciones es el hermano read-side del seam de composicion del write-side (MEF-ADR-0029: `ComposicionServicios{Dominio}`/`AgregarServicios{Dominio}`) -- misma idea de fuente unica de wiring por dominio, distinto proceso y distinto nombre para no confundirlos al leer un `Program.cs`.
 
-Las clases son en espanol. Los sufijos de patrones reconocidos (Endpoint, View, Projection, ProjectionStore) son en ingles.
+Las clases son en espanol. Los sufijos de patrones reconocidos (Endpoint, Projection, ProjectionStore) son en ingles. El read model es la **excepcion deliberada**: no lleva sufijo tecnico -- su nombre es un termino del lenguaje ubicuo, derivado de la necesidad de lectura y nunca del evento ni del aggregate (MEF-ADR-0041).

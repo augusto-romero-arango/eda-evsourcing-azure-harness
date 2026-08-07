@@ -5,14 +5,14 @@ description: Doctrina de proyecciones Marten y de Functions de query read-only d
 
 # Proyecciones y query read-side
 
-Fuente unica de la doctrina read-side del marco -- MEF-ADR-0035 (estilo de codigo y superficie de consulta), MEF-ADR-0034 (worker de proyecciones y config-test) y MEF-ADR-0006 (naming). El `planner` la usa para proponer un issue `tipo:projection`; los subagentes read-side `projection-test-writer`/`projection-implementer` (issue #365) la precargan via `skills:` para generar codigo -- el par adversarial delgado que escribe tests (roja) e implementa (verde) sin duplicar esta doctrina en su cuerpo. `reviewer` y `smoke-test-writer` (issue #374) tambien la precargan via `skills:` para reconocer los patrones read-side al revisar un PR `tipo:projection` y para generar smoke tests de Functions GET de consulta, sin que un PR puramente write-side pague ningun hallazgo nuevo. El `projections-scaffolder` que crea el scaffold inicial del worker, de `.ReadModels` y de `.Projections.Tests` (issues #367/#375) ya existe, pero **no** escribe ninguna proyeccion ni read model concreto: eso es alcance de los dos subagentes read-side. **No duplicar este contenido en los agentes generalistas write-side** (`implementer`/`test-writer`): si el issue no toca proyecciones, este Skill no se dispara y su costo es cero (MEF-ADR-0033).
+Fuente unica de la doctrina read-side del marco -- MEF-ADR-0035 (estilo de codigo y superficie de consulta), MEF-ADR-0034 (worker de proyecciones y config-test), MEF-ADR-0006 (naming) y MEF-ADR-0041 (forma propia de la vista, `ReadModels` como cuarta isla). El `planner` la usa para proponer un issue `tipo:projection`; los subagentes read-side `projection-test-writer`/`projection-implementer` (issue #365) la precargan via `skills:` para generar codigo -- el par adversarial delgado que escribe tests (roja) e implementa (verde) sin duplicar esta doctrina en su cuerpo. `reviewer` y `smoke-test-writer` (issue #374) tambien la precargan via `skills:` para reconocer los patrones read-side al revisar un PR `tipo:projection` y para generar smoke tests de Functions GET de consulta, sin que un PR puramente write-side pague ningun hallazgo nuevo. El `projections-scaffolder` que crea el scaffold inicial del worker, de `.ReadModels` y de `.Projections.Tests` (issues #367/#375) ya existe, pero **no** escribe ninguna proyeccion ni read model concreto: eso es alcance de los dos subagentes read-side. **No duplicar este contenido en los agentes generalistas write-side** (`implementer`/`test-writer`): si el issue no toca proyecciones, este Skill no se dispara y su costo es cero (MEF-ADR-0033).
 
 **Stack verificado**: Marten `9.12.0` pinneado (MEF-ADR-0003). Toda receta de este Skill debe re-verificarse por compilacion antes de asumir que el ejemplo compila tal cual -- varios detalles de abajo (el `partial`, la superficie de `StoreOptions`) tienen caveats de verificacion documentados en las fuentes citadas.
 
 ## 1. Donde corre cada cosa
 
 - El **worker de proyecciones** (`<RootNamespace>.Projections`, un unico proceso por Bounded Context) hostea el daemon asincronico de Marten que materializa proyecciones `Async`. Fija **donde** corre esto MEF-ADR-0034; este Skill no repite esa doctrina de infraestructura.
-- Los **read models** (records planos, sin Marten ni transitivamente) viven en `<RootNamespace>.ReadModels`, biblioteca separada referenciada por el worker. Las **clases de proyeccion** (companion `partial`) viven en el **worker** (`<RootNamespace>.Projections`), el ensamblado que si referencia Marten (MEF-ADR-0034 seccion 5).
+- Los **read models** (records planos, sin Marten ni transitivamente) viven en `<RootNamespace>.ReadModels`, biblioteca separada referenciada por el worker. `ReadModels` es la **cuarta isla** del criterio de cero `ProjectReference` que MEF-ADR-0039 decision 2 (enmendada por MEF-ADR-0041) fija para los ensamblados de evento: no referencia ningun `{Dominio}.DomainEvents`, ni `PublicEvents`/`PrivateEvents`, ni ningun otro proyecto del repo -- sus records solo declaran campos primitivos. Las **clases de proyeccion** (companion `partial`) viven en el **worker** (`<RootNamespace>.Projections`), el ensamblado que si referencia Marten (MEF-ADR-0034 seccion 5).
 - El **endpoint HTTP GET** de lectura vive en el Function App del **write-side** del dominio (el worker no tiene ingress) y abre su `QuerySession` desde el `IDocumentStore` ya configurado ahi (MEF-ADR-0035 seccion 4).
 - Los **tipos de evento** que tipan `Create`/`Apply` de esas clases de proyeccion viven en `<RootNamespace>.{Dominio}.DomainEvents` -- el worker los alcanza via su `ProjectReference` a ese ensamblado, el mismo que ya referencia el write-side del dominio, **nunca** via una referencia al `.csproj` de un Function App (MEF-ADR-0039 decisiones 2 y 4).
 
@@ -27,6 +27,8 @@ De las recetas de proyeccion de Marten, el marco adopta 3 niveles -- ver **[mode
 | N3 | `EventProjection`/`IProjection` custom | Ninguna de las anteriores alcanza | No -- exige justificacion (Rule of Three, MEF-ADR-0018) |
 
 N1 y N2 comparten un unico estilo: record de read model plano (sin `partial`) en `ReadModels` + clase de proyeccion companion `partial` en el worker. Ambos niveles registran su ciclo de vida en el named store del **worker** (`opts.Projections.Add<T>(ProjectionLifecycle.Async)`) -- nunca en el write-side. `Inline` es una excepcion opt-in que vive en el write-side (MEF-ADR-0034 seccion 3), no en este worker.
+
+El record de `ReadModels` **nunca** importa un tipo de `{Dominio}.DomainEvents` -- ni el evento completo ni un tipo anidado suyo. Su forma -- que campos, que nombres, que cardinalidad -- no se copia del evento que la alimenta ni del aggregate que el dominio ya mantiene: se deriva del *handoff* del issue `tipo:projection`, producto del knowledge crunching del planner sobre la necesidad de lectura concreta y el vocabulario de quien consume la vista (MEF-ADR-0041 decision 1, MEF-ADR-0008). La clase de proyeccion companion (`{TerminoVista}Projection`) es el unico punto de mapeo `evento -> vista`: sus `Create`/`Apply` **traducen** forma y nombres desde el evento hacia el record -- nunca copian el tipo del evento ni replican el nombramiento del write-side (MEF-ADR-0041 decision 2).
 
 ## 3. Consultar el resultado: tres vias, todas sobre `QuerySession`
 
@@ -51,10 +53,12 @@ Ver **[naming.md](naming.md)** para el patron completo (verbo + cardinalidad, ru
 |---|---|---|
 | Query por id | `Obtener{X}` | `ObtenerTurno` |
 | Query por filtro/lista | `Listar{X}s` (plural real del espanol) | `ListarTurnos` |
-| Read model | `{Concepto}View` | `TurnoView` |
-| Clase de proyeccion (N1/N2) | `{Concepto}Projection` (`partial`) | `ResumenEquipoProjection` |
+| Read model | Termino del glosario, sin sufijo de implementacion (MEF-ADR-0041) | `ResumenAsistenciaDiaria` |
+| Clase de proyeccion (N1/N2) | `{TerminoVista}Projection` (`partial`, mismo stem que la vista) | `ResumenAsistenciaDiariaProjection` |
 | Marker del named store | `I{Dominio}ProjectionStore` | `IVentasProjectionStore` |
 | Seam de composicion | `ConfiguracionMartenProjections{Dominio}.Configurar{Dominio}()` | `ConfiguracionMartenProjectionsVentas.ConfigurarVentas()` |
+
+El read model **pierde el sufijo `View`**: su nombre es un termino del lenguaje ubicuo derivado de la necesidad de lectura, nunca un calco del evento o del aggregate (MEF-ADR-0041 decision 3, detalle en [naming.md](naming.md)).
 
 **Nunca** `XQueriesEndpoint` agrupando todas las queries de un dominio -- una carpeta por query, sin sufijo `Function` (ese sufijo es solo para comandos, por la colision con el record).
 

@@ -1,6 +1,6 @@
 # Read APIs: como consultar una proyeccion o un aggregate
 
-Fuente: MEF-ADR-0035 secciones 3-5. Toda API de esta pagina esta disponible sobre `IQuerySession` salvo donde se indique lo contrario.
+Fuente: MEF-ADR-0035 secciones 3-5 (superficie de consulta); MEF-ADR-0041 decision 4 (frontera HTTP del GET, DTO de respuesta bajo Rule of Three). Toda API de esta pagina esta disponible sobre `IQuerySession` salvo donde se indique lo contrario.
 
 ## Tabla de read APIs canonicas
 
@@ -20,7 +20,7 @@ Fuente: MEF-ADR-0035 secciones 3-5. Toda API de esta pagina esta disponible sobr
 - **(b1)**: cuando no existe -- todavia, o nunca -- una proyeccion materializada para ese concepto. Reconstruye el estado actual reaplicando todos los eventos del stream. Es el **mismo mecanismo** `Live` que MEF-ADR-0015 ya fija como default de rehidratacion del `AggregateRoot` de escritura -- no se introduce un segundo modelo de reconstruccion.
 - **(b2)**: para un consumidor que necesita el historial de eventos en si (auditoria, debugging, un cliente que reconstruye su propia vista), sin que el marco le imponga ninguna forma agregada.
 
-**Colision deliberada entre (a) y (b1)**: cuando el read model y el aggregate comparten concepto (`TurnoView` proyecta `TurnoAggregateRoot`), ambas vias producirian el mismo nombre de Function (`ObtenerTurno`) -- un dominio expone **una sola** via de lectura por id a la vez (la materializada (a) es la default; (b1) es la excepcion). Ver [naming.md](naming.md).
+**Colision entre (a) y (b1), ahora infrecuente por construccion**: cuando el read model y el aggregate comparten concepto, ambas vias producirian el mismo nombre de Function -- un dominio expone **una sola** via de lectura por id a la vez (la materializada (a) es la default; (b1) es la excepcion). Con un read model nombrado por su necesidad de lectura en vez de calcado del aggregate (`ResumenAsistenciaDiaria`, no `Asistencia`), esa colision deja de ocurrir en el caso comun (MEF-ADR-0041 decision 3). Ver [naming.md](naming.md).
 
 ## `FetchLatest`: opt-in, no default
 
@@ -34,7 +34,7 @@ Toda `QuerySession` de un endpoint de lectura se abre **acotada al tenant que re
 // CORRECTO: el tenant viene del resolver, no de la request.
 // ITenantResolver expone TenantId/UserId como PROPIEDADES, no metodos (MEF-ADR-0028 seccion 1).
 await using var session = store.QuerySession(tenantResolver.TenantId);
-var turno = await session.LoadAsync<TurnoView>(turnoId); // turnoId SI viene de la ruta -- es el recurso, no el tenant
+var seguimiento = await session.LoadAsync<SeguimientoTurno>(turnoId.ToString()); // turnoId SI viene de la ruta -- es el recurso, no el tenant
                                                         // (ya parseado tipado -- MEF-ADR-0037, seccion de abajo)
 
 // INCORRECTO: confiar en un tenant id que el cliente puede falsificar
@@ -50,8 +50,8 @@ El `id` de un item por la via (a)/(b1)/(b2) llega del segmento de ruta como text
 **Identidad nacida `Guid`** (el caso comun -- `TurnoId`, `EmpleadoId`): el endpoint parsea el segmento de ruta una sola vez (`Guid.TryParse`) y responde `400` explicito si falla; si resuelve, pasa `idTipado.ToString()` a la read API que corresponda:
 
 ```csharp
-// ObtenerTurno/FunctionEndpoint.cs
-[Function("ObtenerTurno")]
+// ObtenerSeguimientoTurno/FunctionEndpoint.cs
+[Function("ObtenerSeguimientoTurno")]
 public async Task<IActionResult> Run(
     [HttpTrigger(AuthorizationLevel.Function, "get", Route = "Programacion/Turnos/{id}")]
     HttpRequest req,
@@ -62,8 +62,8 @@ public async Task<IActionResult> Run(
         return new BadRequestObjectResult("El id del turno no es un Guid valido");
 
     await using var session = store.QuerySession(tenantResolver.TenantId);
-    var turno = await session.LoadAsync<TurnoView>(turnoId.ToString(), ct);   // unico ToString(), sin argumentos
-    return turno is null ? new NotFoundResult() : new OkObjectResult(turno);
+    var seguimiento = await session.LoadAsync<SeguimientoTurno>(turnoId.ToString(), ct);   // unico ToString(), sin argumentos
+    return seguimiento is null ? new NotFoundResult() : new OkObjectResult(seguimiento);
 }
 ```
 
@@ -72,8 +72,8 @@ El `400` se emite con `BadRequestObjectResult` **y un mensaje** -- misma forma q
 **Clave natural compuesta**: la ruta recibe cada componente tipado por separado, y la clave se reconstruye con el mismo `{Aggregate}.ComputarStreamId(...)` que ya usa el write-side (`agents/implementer.md`) -- nunca una concatenacion propia del endpoint. El GET vive en el Function App del dominio, el mismo ensamblado donde vive el aggregate, asi que ese metodo estatico le es alcanzable sin ceremonia (MEF-ADR-0037 seccion 2):
 
 ```csharp
-// ObtenerAsistencia/FunctionEndpoint.cs -- clave compuesta EmpleadoId:Fecha
-[Function("ObtenerAsistencia")]
+// ObtenerResumenAsistenciaDiaria/FunctionEndpoint.cs -- clave compuesta EmpleadoId:Fecha
+[Function("ObtenerResumenAsistenciaDiaria")]
 public async Task<IActionResult> Run(
     [HttpTrigger(AuthorizationLevel.Function, "get", Route = "RRHH/Asistencias/{empleadoId}/{fecha}")]
     HttpRequest req,
@@ -86,12 +86,12 @@ public async Task<IActionResult> Run(
 
     var streamId = AsistenciaAggregateRoot.ComputarStreamId(empleadoIdTipado, fechaTipada);
     await using var session = store.QuerySession(tenantResolver.TenantId);
-    var asistencia = await session.LoadAsync<AsistenciaView>(streamId, ct);
-    return asistencia is null ? new NotFoundResult() : new OkObjectResult(asistencia);
+    var resumen = await session.LoadAsync<ResumenAsistenciaDiaria>(streamId, ct);
+    return resumen is null ? new NotFoundResult() : new OkObjectResult(resumen);
 }
 ```
 
-**Frontera -- solo cae bajo esta regla el id que ES una identidad de stream** (MEF-ADR-0037 seccion 3). Es el caso de N1, donde el id del read model es el `StreamKey` que Marten resolvio (`TId = string`). Un read model N2 cuyo `TId` lo fija el slicer `Identity<TEvento>(...)` -- un `ResumenEquipoView` con `Guid EquipoId`, campo de dominio del payload y no clave de stream ([modelos-marten.md](modelos-marten.md)) -- queda **fuera** del sujeto del ADR: el parseo tipado del borde y su `400` siguen siendo obligatorios, pero lo que recibe `LoadAsync<ResumenEquipoView>(equipoId, ct)` es el valor **tipado**, sin `ToString()`. El tipo del argumento lo fija el `TId` de la proyeccion, no esta regla: agregarle un `ToString()` ahi no es una precaucion extra, es pasarle a Marten un id del tipo equivocado.
+**Frontera -- solo cae bajo esta regla el id que ES una identidad de stream** (MEF-ADR-0037 seccion 3). Es el caso de N1, donde el id del read model es el `StreamKey` que Marten resolvio (`TId = string`). Un read model N2 cuyo `TId` lo fija el slicer `Identity<TEvento>(...)` -- un `ResumenEquipo` con `Guid EquipoId`, campo de dominio del payload y no clave de stream ([modelos-marten.md](modelos-marten.md)) -- queda **fuera** del sujeto del ADR: el parseo tipado del borde y su `400` siguen siendo obligatorios, pero lo que recibe `LoadAsync<ResumenEquipo>(equipoId, ct)` es el valor **tipado**, sin `ToString()`. El tipo del argumento lo fija el `TId` de la proyeccion, no esta regla: agregarle un `ToString()` ahi no es una precaucion extra, es pasarle a Marten un id del tipo equivocado.
 
 **Proscrito**: un parametro de ruta `string` cuyo valor -- simple o ya concatenado -- viaje sin parsear hasta el store, el bus o `LoadAsync`/`AggregateStreamAsync`/`FetchStreamAsync`. Un route constraint (`{id:guid}`) no sustituye este parseo: produce `404` en vez de `400` y no normaliza el casing -- advertencia literal de la documentacion oficial de ASP.NET Core sobre route constraints (MEF-ADR-0037 seccion 2). Declararlo por su proposito real -- desambiguar rutas parecidas -- sigue siendo legitimo, pero entonces el parseo con `400` va igual (MEF-ADR-0037 Alt 4).
 
@@ -100,6 +100,12 @@ public async Task<IActionResult> Run(
 La sesion de query del Function App del write-side y el schema del worker comparten el mismo Postgres/schema (MEF-ADR-0034 seccion 2). El `DocumentStore` del write-side resuelve `Query<TView>()`/`LoadAsync<TView>()` **sin** `Schema.For<TView>()` y **sin** registrar la proyeccion: Marten resuelve el mapping del documento por convencion, aunque la proyeccion en si solo se registre en el named store del worker.
 
 La condicion que sostiene esa convergencia: ambos lados deben aplicar la misma politica de tenancy documental (`Policies.AllDocumentsAreMultiTenanted()`) -- es el **par de compatibilidad 2** de MEF-ADR-0034 seccion 6, y si diverge ninguna excepcion avisa: el worker materializa vistas sin scope de tenant que el Function App despues consulta filtrando por tenant. No es algo que reverifiques al implementar -- la verificacion completa de esa compatibilidad corre bajo gate del reviewer (MEF-ADR-0034 seccion 6). Las mediciones que respaldan ambos hechos viven en MEF-ADR-0035 seccion 4.
+
+## El GET serializa la vista; el DTO de respuesta es excepcion (MEF-ADR-0041 decision 4)
+
+El endpoint HTTP GET retorna el record de `ReadModels` directamente como cuerpo de la respuesta -- `new OkObjectResult(vista)`, como en los dos ejemplos de arriba -- sin un tipo de DTO de respuesta intermedio por defecto. Es la consecuencia directa de que la forma del read model ya salio de la necesidad de lectura (MEF-ADR-0041 decision 1): envolverla en un segundo tipo con el mismo shape es una capa sin proposito.
+
+Un DTO de respuesta HTTP separado es una **excepcion**, sujeta a la misma Rule of Three de MEF-ADR-0018 que gobierna cualquier abstraccion del marco: se introduce solo con evidencia real de que el contrato HTTP debe divergir del shape del read model -- ocultar un campo interno que la vista necesita para su propia logica de proyeccion pero que no debe salir por HTTP, componer varias vistas en una sola respuesta, o adaptar el shape a un contrato publico versionado que el read model interno no debe atarse a mantener. Sin esa evidencia, el GET no introduce el DTO "por si acaso".
 
 ## Time-travel: diferido
 
