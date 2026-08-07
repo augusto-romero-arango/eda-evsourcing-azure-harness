@@ -212,8 +212,8 @@ src/Bitakora.ControlAsistencia.{Dominio}/
 | Validator | `{Comando}Validator` | `CrearTurnoValidator` |
 | AggregateRoot | `{Entidad}AggregateRoot` | `TurnoAggregateRoot` |
 | Query (Function/metodo GET) | Verbo infinitivo + sustantivo: `Obtener{X}` (item por id) / `Listar{X}s` (coleccion) | `ObtenerTurno`, `ListarTurnos` |
-| Read model (view) | `{Concepto}View` | `TurnoView` |
-| Clase de proyeccion (companion, N1/N2 de MEF-ADR-0035) | `{Concepto}Projection` (`partial`, mismo stem que su View) | `ResumenEquipoProjection` -> `ResumenEquipoView` |
+| Read model (vista de lectura) | Nombre valioso del lenguaje ubicuo, sin sufijo de implementacion (MEF-ADR-0041) | `ResumenAsistenciaDiaria` |
+| Clase de proyeccion (companion, N1/N2 de MEF-ADR-0035) | `{TerminoVista}Projection` (`partial`, mismo stem que la vista) | `ResumenAsistenciaDiariaProjection` -> `ResumenAsistenciaDiaria` |
 | Marker del named store de proyecciones | `I{Dominio}ProjectionStore` | `IVentasProjectionStore` |
 | Seam de composicion de proyecciones (por dominio) | `ConfiguracionMartenProjections{Dominio}`, metodo `Configurar{Dominio}` | `ConfiguracionMartenProjectionsVentas.ConfigurarVentas()` |
 
@@ -223,7 +223,9 @@ fuente unica de wiring por dominio compartida entre el host y su test, distinto 
 nombre para que nunca se confundan al leer un `Program.cs`.
 
 Las clases son en espanol. Los sufijos de patrones reconocidos (CommandHandler, Validator,
-AggregateRoot, Endpoint, View, Projection, ProjectionStore) son en ingles. El estilo de codigo y
+AggregateRoot, Endpoint, Projection, ProjectionStore) son en ingles. El read model es la
+excepcion deliberada: no lleva sufijo tecnico -- su nombre es un termino del lenguaje ubicuo
+(MEF-ADR-0041). El estilo de codigo y
 la superficie de consulta de estos artefactos de proyeccion (record de read model plano sin
 `partial`, clase de proyeccion companion `partial` con metodos convencionales
 `Create`/`Apply`/`ShouldDelete` -- misma forma en N1 y N2 --, y la `QuerySession` acotada al
@@ -262,7 +264,12 @@ Se descarta explicitamente el patron `XQueriesEndpoint` (una unica clase agrupan
 
 Cross-referencias: MEF-ADR-0035 (superficie de consulta y estilo de codigo de las proyecciones que estas Functions exponen -- su seccion 6 delega en este ADR el naming exacto de las Functions de query), MEF-ADR-0034 (worker de proyecciones, que fija el named store y el seam de composicion cuyos nombres registra la tabla de arriba) y MEF-ADR-0029 (el endpoint GET vive en el Function App del write-side, mismo host cuyo grafo de DI valida el test de composicion).
 
+## Nota (issue #581, MEF-ADR-0041): el read model pierde el sufijo `View`
+
+La tabla de "Convenciones de nombramiento en codigo C#" fijaba el read model como `{Concepto}View`. MEF-ADR-0041 retira ese sufijo: el nombre del record es un termino valioso del lenguaje ubicuo (`ResumenAsistenciaDiaria`, no `ResumenAsistenciaDiariaView`) -- el rol del tipo ya lo declara su ubicacion (`<RootNamespace>.ReadModels`, MEF-ADR-0034 seccion 5), no su sufijo. La clase de proyeccion companion conserva su sufijo tecnico (`{TerminoVista}Projection`, mismo stem que la vista) porque es artefacto de infraestructura del worker, no objeto del dominio. La colision (a)/(b1) que documenta la seccion "Funciones HTTP de query (GET)" arriba (`TurnoView` proyecta `TurnoAggregateRoot`, ambas vias resuelven a `ObtenerTurno`) queda resuelta mejor por la politica misma de MEF-ADR-0041: con nombre propio, `Obtener{TerminoVista}` no colisiona con `Obtener{Aggregate}` por construccion, salvo el caso residual de una vista genuinamente 1:1 con el aggregate (MEF-ADR-0041, "Consecuencias negativas").
+
 ## Control de cambios
 
 - 2026-07-26: enmendado (issue #363, hermano de MEF-ADR-0035) para fijar el naming de las Functions HTTP de query (GET) -- `Obtener{X}`/`Listar{X}s` con plural real del espanol, y los casos especificos `Obtener{Aggregate}` (via (b1) `Live`) y `ListarEventosDe{Aggregate}` (via (b2) eventos crudos) que fija MEF-ADR-0035 seccion 3 --, su ruta HTTP (REST por recurso, reutilizando el segmento del comando de ese recurso, con verbo HTTP declarado explicitamente en ambos lados y nunca `Route = ""`), la organizacion vertical (una carpeta por query sin sufijo `Function`, descartando el patron agrupado `XQueriesEndpoint` de ControlPlane) y el naming de los artefactos de proyeccion (`{Concepto}View`, `{Concepto}Projection`, `I{Dominio}ProjectionStore`, seam `ConfiguracionMartenProjections{Dominio}`/`Configurar{Dominio}`, hermano del seam write-side de MEF-ADR-0029).
 - 2026-07-27: enmendada la fila `{Concepto}Projection` de la tabla de naming y su nota (issue #412, hermano de la enmienda de MEF-ADR-0034/0035). La clase de proyeccion companion deja de ser exclusiva de N2: con el estilo canonico unificado que fija MEF-ADR-0035 seccion 2, N1 tambien la usa (el read model auto-agregante con `partial` deja de ser el canonico del marco). La nota sobre el `partial` se ajusta: aplica a la clase de proyeccion companion en ambos niveles, nunca al record de read model.
+- 2026-08-06: enmendadas la tabla de "Convenciones de nombramiento en codigo C#" y la lista de sufijos tecnicos (issue #581, creacion de MEF-ADR-0041). El read model pierde el sufijo `View` -- su nombre pasa a ser un termino valioso del lenguaje ubicuo, sin sufijo de implementacion; `View` sale de la lista de sufijos tecnicos en ingles. La clase de proyeccion companion conserva su sufijo (`{TerminoVista}Projection`, mismo stem que la vista). Suma la nota "issue #581, MEF-ADR-0041" documentando el cambio y su efecto sobre la colision (a)/(b1) ya documentada en este ADR.
