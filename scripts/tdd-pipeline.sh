@@ -738,7 +738,11 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
     AGENT_TW_DUR=$LAST_AGENT_DURATION
     AGENT_TW_RES="passed"
     update_status "1-${STAGE1_AGENT}" "passed"
-    success "Stage 1 completado — fase roja confirmada"
+    if [ "$IS_NO_RED_SIGNAL" = true ]; then
+        success "Stage 1 completado — fase roja no aplicable (señalizada por el $STAGE1_AGENT)"
+    else
+        success "Stage 1 completado — fase roja confirmada"
+    fi
 else
     log "Saltando Stage 1 (--from-stage $FROM_STAGE)"
 fi
