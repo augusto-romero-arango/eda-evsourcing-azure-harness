@@ -986,8 +986,14 @@ coverage_classify_file() {
     # ConfiguracionMartenProjections{Dominio}.cs (plural + sufijo dominio)
     # ni ConfiguracionMartenProjections.cs (plural) -- MEF-ADR-0006 no
     # registra otro artefacto del marco con el sufijo "Projection".
+    # *EventHandler.cs (issue #590): el EventHandler directo del patron
+    # 2.1.0 (`IPrivateEventHandlerAsync<TEvent>`, sin comando espejo --
+    # implementer.md seccion "EventHandler — reaccionar a un evento
+    # privado") es el punto de entrada de un evento del bus, con el mismo
+    # peso que un CommandHandler; tampoco va gateado por is_projection ni por
+    # label, mismo razonamiento que *Projection.cs arriba.
     case "$basename" in
-        *CommandHandler.cs|*AggregateRoot.cs|*Validator.cs|FunctionEndpoint.cs|*Projection.cs)
+        *CommandHandler.cs|*AggregateRoot.cs|*Validator.cs|FunctionEndpoint.cs|*Projection.cs|*EventHandler.cs)
             echo "logic"; return ;;
     esac
 

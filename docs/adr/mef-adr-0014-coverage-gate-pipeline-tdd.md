@@ -55,7 +55,7 @@ Los archivos se clasifican en dos categorias con umbrales diferenciados:
 
 | Categoria | Umbral | Archivos |
 |---|---|---|
-| **Logica** | 95%+ | `*CommandHandler.cs`, `*AggregateRoot.cs`, `*Validator.cs`, `Eventos/*.cs` con factory `Crear()`, value objects con factory `Crear()`, `FunctionEndpoint.cs` |
+| **Logica** | 95%+ | `*CommandHandler.cs`, `*AggregateRoot.cs`, `*Validator.cs`, `Eventos/*.cs` con factory `Crear()`, value objects con factory `Crear()`, `FunctionEndpoint.cs`, `*EventHandler.cs` |
 | **Excluido** | No se mide | `HealthCheck.cs`, `Program.cs`, `*Mensajes.cs`, `*.resx`, `*AssemblyMarker.cs`, `ConfiguracionSerializacion*.cs`, `Infraestructura/` wiring puro, records DTO sin metodos |
 
 Razon del 95%: la logica de dominio ya esta consistentemente al 100% cuando los agentes trabajan bien. Un 95% deja margen para lineas inalcanzables (constructores privados de serializacion, fallbacks defensivos) sin esconder gaps reales. Un umbral mas bajo (80-90%) no detectaria los atajos que queremos atrapar.
