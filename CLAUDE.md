@@ -234,6 +234,20 @@ El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o
 | Resolución de `TView` en el `DocumentStore` del write-side sin registro adicional, y condición de política de tenancy documental compartida con el worker | MEF-ADR-0035 |
 | Auto-creacion de tablas de read model por el worker de proyecciones (`AutoCreateSchemaObjects`, sin migracion de despliegue) | MEF-ADR-0034 |
 | Identidad del stream y su representacion string canonica (Guid/clave compuesta, borde HTTP, store/bus/read-side) | MEF-ADR-0037 |
+| Composicion canonica de ensamblados por rol del evento (particion PublicEvents/PrivateEvents/{Dominio}.DomainEvents; Contracts fuera del canon) | MEF-ADR-0039 |
+| Acceso del worker de proyecciones a los tipos de evento persistidos via `{Dominio}.DomainEvents`, sin referenciar el `.csproj` de ningun Function App | MEF-ADR-0034 |
+| Envelope de eventos referencia el ensamblado de eventos de bus que corresponda, no "el proyecto Contracts" | MEF-ADR-0005 |
+| Csproj de smoke tests referencia PublicEvents/PrivateEvents en vez de Contracts | MEF-ADR-0013 |
+| Referencia al shared kernel de Contracts reemplazada por la particion canonica de ensamblados de evento por rol | MEF-ADR-0010 |
+| Mencion de Contracts en la fila `dom:X` del DoR actualizada a la particion de ensamblados de evento por rol | MEF-ADR-0011 |
+| Referencia a un ADR de Contracts del consumidor reemplazada por la particion canonica de ensamblados de evento por rol | MEF-ADR-0012 |
+| Regla simetrica de referencia unica en los proyectos de tests de eventos de bus (`PublicEvents.Tests`/`PrivateEvents.Tests`, cada uno referencia solo su propio ensamblado) | MEF-ADR-0039 |
+| Cero referencias entre ensamblados de eventos (tres islas), payload por rol y enforcement por tests de arquitectura | MEF-ADR-0039 |
+| Fuentes de conocimiento del dominio vigentes tras el retiro de la capa de modelado EDA (codigo por rol, glosario custodiado por el planner, field notes/bitacora, ADRs del consumidor) | MEF-ADR-0040 |
+| Pipeline de conocimiento del dominio en tres fases (event-stormer/eda-modeler/planner): superseded por MEF-ADR-0040 | MEF-ADR-0010 |
+| Forma propia de la vista read-side derivada de la necesidad de lectura; `ReadModels` como cuarta isla (cero `ProjectReference`) y naming sin sufijo `View` | MEF-ADR-0041 |
+| Presentacion de los archivos "sin clasificar" del coverage gate (marcador de atencion y nota propios, distintos de una exclusion deliberada) | MEF-ADR-0014 |
+| Patron de logica del coverage gate cubre el EventHandler directo (`*EventHandler.cs`, patron 2.1.0) | MEF-ADR-0014 |
 
 ## Convenciones del marco
 
