@@ -100,6 +100,57 @@ fi
 rmdir "$VACIO"
 
 echo ""
+echo "[S-4] modo ACTUALIZAR: 'claude plugin update' recibe el nombre calificado (issue #601)"
+
+STUB_DIR="$(mktemp -d)"
+CONSUMER_DIR="$(mktemp -d)"
+FAKE_CACHE_S4="$(mktemp -d)"
+CLAUDE_LOG="$(mktemp)"
+trap 'rm -rf "$FAKE_CACHE" "$STUB_DIR" "$CONSUMER_DIR" "$FAKE_CACHE_S4" "$CLAUDE_LOG"' EXIT
+
+# Marketplace de mentira (no hardcodeado en los asserts de abajo): clava que el fix
+# tambien funciona en un fork publicado bajo otro nombre de marketplace (CA-4).
+MARKETPLACE_FIXTURE="un-fork-de-mentira"
+mkdir -p "$FAKE_CACHE_S4/$MARKETPLACE_FIXTURE/mefisto/0.20.0" \
+         "$FAKE_CACHE_S4/$MARKETPLACE_FIXTURE/mefisto/0.21.0"
+printf '## [0.21.0]\n- nada relevante\n\n## [0.20.0]\n- nada relevante\n' \
+    > "$FAKE_CACHE_S4/$MARKETPLACE_FIXTURE/mefisto/0.21.0/CHANGELOG.md"
+
+# Stub de 'claude' en PATH: registra los argumentos recibidos y simula exito, sin tocar
+# ningun cache real ni invocar el CLI de verdad.
+cat > "$STUB_DIR/claude" <<'EOF'
+#!/usr/bin/env bash
+echo "$@" >> "$CLAUDE_LOG"
+exit 0
+EOF
+chmod +x "$STUB_DIR/claude"
+
+# Cwd de mentira (git repo sin .claude-plugin/plugin.json) con la version 0.20.0 cargada,
+# para que main() corra el modo ACTUALIZAR completo (pasos 3-5) contra el cache fixture.
+mkdir -p "$CONSUMER_DIR/.claude/pipeline"
+printf '%s' "$FAKE_CACHE_S4/$MARKETPLACE_FIXTURE/mefisto/0.20.0" \
+    > "$CONSUMER_DIR/.claude/pipeline/.plugin-root"
+
+(
+    cd "$CONSUMER_DIR" || exit 1
+    git init -q .
+    export PATH="$STUB_DIR:$PATH"
+    export MEFISTO_CACHE_ROOT="$FAKE_CACHE_S4"
+    export CLAUDE_LOG
+    main
+) >/dev/null 2>&1
+resultado_main=$?
+
+assert_igual "0" "$resultado_main" "el modo actualizar corre completo (exit 0) con el stub de claude"
+assert_igual "plugin marketplace update $MARKETPLACE_FIXTURE" "$(sed -n '1p' "$CLAUDE_LOG")" \
+    "actualiza el catalogo del marketplace derivado del fixture"
+assert_igual "plugin update mefisto@$MARKETPLACE_FIXTURE --scope user" "$(sed -n '2p' "$CLAUDE_LOG")" \
+    "el update del plugin recibe el nombre calificado mefisto@<marketplace-del-fixture>"
+assert_igual "$FAKE_CACHE_S4/$MARKETPLACE_FIXTURE/mefisto/0.21.0" \
+    "$(cat "$CONSUMER_DIR/.claude/pipeline/.plugin-root" 2>/dev/null)" \
+    "de paso, reescribe .plugin-root a la version mas nueva del cache"
+
+echo ""
 echo "===================================================================="
 echo "  test-update-plugin.sh: $PASS pasaron, $FAIL fallaron"
 echo "===================================================================="
