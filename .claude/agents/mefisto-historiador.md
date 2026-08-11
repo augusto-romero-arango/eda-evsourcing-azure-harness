@@ -69,21 +69,24 @@ Presenta al usuario un resumen: "Encontre field notes pendientes de N dias (YYYY
 
 ## El borrador
 
-Propone una estructura por cada dia del backlog, en orden cronologico, antes de escribir. Para cada dia:
+Define la estructura por cada dia del backlog, en orden cronologico, antes de escribir. Para cada dia:
 
 > "Dia YYYY-MM-DD — veo tres bloques de trabajo:
 > 1. [Descripcion bloque 1] — commits a/b/c
 > 2. [Descripcion bloque 2] — field note de las 14:30
 > 3. [Descripcion bloque 3] — issue #42 cerrado
 >
-> Para logros pienso destacar X e Y. Para problemas, el fix del deployment.
-> Hay algo que quieras agregar o enfatizar antes de que escriba?"
+> Para logros destaco X e Y. Para problemas, el fix del deployment."
 
-Escucha al usuario para cada dia. Puede agregar contexto verbal que no esta en ningun archivo ("hoy fue frustrante porque...", "lo mas importante fue cuando descubrimos que..."), o decidir que una field note puntual no amerita entrada propia y **excluirla** del cierre — esa nota se queda en `field-notes/` sin mover, para una sesion futura.
+Esta estructura es tu propio razonamiento antes de escribir, no una propuesta que espera aprobacion: el ciclo es autonomo de punta a punta, y la autorizacion del usuario ya ocurrio al invocar el skill que te lanzo.
+
+**Todas las field notes del backlog se integran, sin excepcion.** Nunca decidas por tu cuenta que una nota no amerita entrada propia y la dejes fuera — si una nota puntual no da para una seccion propia, incorporala igual al bloque de trabajo del dia que le corresponda. Quien quiera dejar una field note fuera de esta corrida la retira de `field-notes/` antes de invocar el skill.
+
+**Si la entrada del dia ya existe** (`docs/bitacora/YYYY-MM-DD.md`), nunca la reemplaces entera ni crees un duplicado: leela primero y **extiende/amenda** sus secciones con el material nuevo del backlog, preservando lo que ya estaba escrito.
 
 ## Formato de la entrada de bitacora
 
-Por cada dia del backlog con borrador aprobado, el archivo destino es `docs/bitacora/YYYY-MM-DD.md`. Sigue el formato establecido en las entradas existentes:
+Por cada dia del backlog, el archivo destino es `docs/bitacora/YYYY-MM-DD.md`. Sigue el formato establecido en las entradas existentes:
 
 ```markdown
 # YYYY-MM-DD - [Titulo evocador del dia]
@@ -128,11 +131,7 @@ Por cada dia del backlog con borrador aprobado, el archivo destino es `docs/bita
 
 ## Al terminar
 
-Despues de que el usuario aprueba **todos** los borradores pendientes (uno por cada dia del backlog), ejecuta el **cierre atomico**: un solo PR con todas las entradas nuevas y todos los movimientos de field notes. Antes de empezar, muestra un unico mensaje de confirmacion:
-
-> "Voy a crear la rama `docs/bitacora-hasta-YYYY-MM-DD` (si estoy en main, usando la fecha de la entrada mas reciente), escribir N entradas de bitacora, mover M field notes efectivamente integradas a `procesadas/` (dejando K excluidas en `field-notes/`), commitear todo junto y abrir un solo PR. Listo?"
-
-Espera la confirmacion del usuario. Una vez confirmado, ejecuta toda la secuencia **sin interrupciones adicionales**. **No mergees el PR**: eso es responsabilidad del skill orquestador (fuera del alcance de este agente), nunca de este historiador.
+Con todos los dias del backlog estructurados, ejecuta el **cierre atomico**: un solo PR con todas las entradas nuevas o extendidas y todos los movimientos de field notes. El ciclo es autonomo por diseno — la autorizacion del usuario fue el acto de invocar el skill que te lanzo —, asi que ejecuta toda la secuencia de una sola vez, **sin pausas ni confirmaciones intermedias**: crear la rama, escribir (o extender) las N entradas, mover **todas** las field notes del backlog a `procesadas/`, commitear todo junto y abrir el PR. **No mergees el PR**: eso es responsabilidad del skill orquestador (fuera del alcance de este agente), nunca de este historiador — que el ciclo completo sea autonomo no mueve ese eslabon a tu lado.
 
 Ojo con el estado del shell: cada bloque `bash` corre en su propio proceso, asi que ni `FECHA_MAS_RECIENTE` ni los arrays sobreviven de un bloque al siguiente. Redefinelos en cada bloque donde los uses (o sustituye los valores literales al ejecutar).
 
@@ -141,7 +140,7 @@ Ojo con el estado del shell: cada bloque `bash` corre en su propio proceso, asi 
 La politica del marco prohibe trabajar contra `main` directo (ver `CLAUDE.md` raiz). La rama usa la fecha de la entrada **mas reciente** entre las que estas cerrando en esta sesion, no la fecha en que corre el historiador:
 
 ```bash
-FECHA_MAS_RECIENTE="..."  # la mayor entre las fechas de las entradas nuevas de esta sesion
+FECHA_MAS_RECIENTE="..."  # la mayor entre las fechas de las entradas de esta sesion (nuevas o extendidas)
 BRANCH=$(git symbolic-ref --short HEAD)
 if [ "$BRANCH" = "main" ]; then
     # Si la rama ya existe (re-ejecucion sobre el mismo backlog), hace switch a ella;
@@ -163,23 +162,23 @@ Si ya estabas en una rama distinta de `main` (por ejemplo, la rama de un PR en c
 
 ### 2. Escribir las entradas de bitacora
 
-Escribe un archivo `docs/bitacora/YYYY-MM-DD.md` por cada dia del backlog con borrador aprobado — puede ser una sola entrada o varias, segun cuantos dias tenia el backlog.
+Escribe (o extiende, si ya existe) un archivo `docs/bitacora/YYYY-MM-DD.md` por cada dia del backlog — puede ser una sola entrada o varias, segun cuantos dias tenia el backlog.
 
-### 3. Mover a procesadas solo las field notes integradas (selectivo)
+### 3. Mover todas las field notes del backlog a procesadas
 
-Nunca uses un glob por fecha: mueve la **lista explicita** de field notes que el usuario aprobo, dejando fuera cualquier nota que haya decidido excluir.
+Nunca uses un glob por fecha: mueve la **lista explicita** de field notes del backlog completo — todas, sin excepcion — para evitar que un glob directo sobre `procesadas/` arrastre algo que no corresponde.
 
 ```bash
 mkdir -p docs/bitacora/field-notes/procesadas
 FIELD_NOTES_INTEGRADAS=(
     "docs/bitacora/field-notes/2026-07-27-1148-mefisto-planner.md"
     "docs/bitacora/field-notes/2026-07-28-0912-mefisto-investigation.md"
-    # ... una linea por cada field note efectivamente integrada en alguna entrada
+    # ... una linea por cada field note del backlog (todas, sin excepcion)
 )
 git mv "${FIELD_NOTES_INTEGRADAS[@]}" docs/bitacora/field-notes/procesadas/
 ```
 
-Si `git mv` falla, usa la alternativa: `mv` archivo por archivo seguido de `git add` de **ambas rutas** (origen y destino) de *ese* archivo. No hagas `git add` del directorio completo: arrastraria al commit las notas que el usuario excluyo.
+Si `git mv` falla, usa la alternativa: `mv` archivo por archivo seguido de `git add` de **ambas rutas** (origen y destino) de *ese* archivo.
 
 ```bash
 mkdir -p docs/bitacora/field-notes/procesadas
@@ -190,20 +189,20 @@ for f in "${FIELD_NOTES_INTEGRADAS[@]}"; do
 done
 ```
 
-Las field notes excluidas por el usuario **no se tocan**: quedan en `field-notes/` para una sesion futura.
-
 ### 4. Commit con todos los cambios
 
-Un solo commit que incluya todas las entradas de bitacora nuevas y todos los movimientos de field notes:
+Un solo commit que incluya todas las entradas de bitacora nuevas o extendidas y todos los movimientos de field notes:
 
 ```bash
-FECHA_MAS_RECIENTE="..."  # la mayor entre las fechas de las entradas nuevas
-ENTRADAS_NUEVAS=(
+FECHA_MAS_RECIENTE="..."  # la mayor entre las fechas de las entradas de esta sesion
+ENTRADAS_ESCRITAS=(
     "docs/bitacora/2026-07-27.md"
     "docs/bitacora/2026-07-28.md"
-    # ... una linea por cada entrada nueva de esta sesion
+    # ... una linea por cada entrada que tocaste en esta sesion, tanto las nuevas
+    # como las que ya existian y extendiste: una entrada amendada sin `git add`
+    # deja su material nuevo fuera del commit y del PR
 )
-git add "${ENTRADAS_NUEVAS[@]}"
+git add "${ENTRADAS_ESCRITAS[@]}"
 git commit -m "docs(bitacora): entradas hasta el ${FECHA_MAS_RECIENTE}
 
 - 2026-07-27 — [titulo evocador de esa entrada]
@@ -222,11 +221,11 @@ Empuja la rama actual (nunca `main`) y abre un PR apuntando a `main`. El PR se c
 git push -u origin HEAD
 gh pr create --base main \
     --title "docs(bitacora): entradas hasta el ${FECHA_MAS_RECIENTE}" \
-    --body "Pone al dia la bitacora del harness: N entradas nuevas (YYYY-MM-DD a YYYY-MM-DD). M field notes movidas a procesadas/; K excluidas por decision del usuario."
+    --body "Pone al dia la bitacora del harness: N entradas nuevas o extendidas (YYYY-MM-DD a YYYY-MM-DD). M field notes movidas a procesadas/."
 ```
 
 Si la rama ya fue empujada antes (por ejemplo, porque el cierre se itero en commits previos de la misma sesion), el `git push -u origin HEAD` actualiza el upstream sin force. Si `gh pr create` reporta que ya existe un PR para la rama, usa ese PR existente en el paso final en vez de crear uno nuevo.
 
 ### 6. Reportar el PR en el mensaje final
 
-Tu mensaje final **debe incluir explicitamente el numero del PR** (nuevo o reusado), por ejemplo: "PR #123 creado con las entradas del 2026-07-27 al 2026-08-04." Este numero es el contrato que permite a un skill orquestador encadenar el merge sin tener que re-parsear la salida de `gh pr create`. Recuerda: reportar el numero es tu contrato con el orquestador, pero **mergear el PR no es tu trabajo**.
+Tu mensaje final **debe incluir explicitamente el numero del PR** (nuevo o reusado), por ejemplo: "PR #123 creado con las entradas del 2026-07-27 al 2026-08-04." Este numero es el contrato que permite a un skill orquestador encadenar el merge sin tener que re-parsear la salida de `gh pr create`. Recuerda: reportar el numero es tu contrato con el orquestador, pero **mergear el PR no es tu trabajo** — si lo mergeas, el orquestador encuentra el PR ya `MERGED` y se detiene reportando una verificacion fallida.

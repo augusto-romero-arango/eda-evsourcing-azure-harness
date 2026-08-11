@@ -2,7 +2,7 @@
 model: haiku
 ---
 
-Orquesta el ciclo completo de la bitacora: invoca al agente `historiador` (multi-dia, issue #527) para procesar las field notes pendientes y, si termina con un PR creado, encadena `/merge` automaticamente sobre ese PR -- sin pedir confirmacion adicional, porque el gate humano ya ocurrio dentro del historiador (aprobacion del borrador de cada dia + confirmacion del cierre atomico). Un subagente no puede invocar slash commands, asi que este encadenamiento vive en el hilo principal (mismo patron que `/install-auth` encadenando `/install-workos` -> `/install-apim`). Comunicate en **espanol**.
+Orquesta el ciclo completo de la bitacora: invoca al agente `historiador` (multi-dia, issue #527) para procesar de forma autonoma las field notes pendientes y, si termina con un PR creado, encadena `/merge` automaticamente sobre ese PR -- sin pedir confirmacion adicional, porque el usuario ya autorizo el ciclo completo (recopilacion, escritura, cierre atomico y merge) al invocar este skill. Un subagente no puede invocar slash commands, asi que este encadenamiento vive en el hilo principal (mismo patron que `/install-auth` encadenando `/install-workos` -> `/install-apim`). Comunicate en **espanol**.
 
 ## Pre-condicion: cwd != Mefisto
 
@@ -38,13 +38,13 @@ Si `$ARGUMENTS` trae una fecha `YYYY-MM-DD`, invocalo acotado a ese dia:
 claude --agent historiador "Pon al dia la bitacora procesando unicamente las field notes del dia $ARGUMENTS."
 ```
 
-El agente es **conversacional** y trae sus propios dos gates humanos: presenta el backlog, propone un borrador por cada dia pendiente y espera aprobacion antes de escribir, y al final pide una confirmacion explicita para el cierre atomico (rama + entradas + movimiento de field notes + PR). Por eso la invocacion corre en **primer plano** -- espera a que la sesion del agente termine, nunca uses `run_in_background` -- y **nunca respondas por el usuario** a ninguno de esos dos gates: aprobar el contenido de la bitacora es del humano, no tuyo. El encadenamiento del merge (pasos 2-4) ocurre despues, ya de vuelta en este hilo: un subagente no puede invocar slash commands, y por eso ese eslabon vive en el skill y no dentro del historiador.
+El agente corre de forma autonoma de punta a punta: recopila el backlog, escribe (o extiende) una entrada por cada dia pendiente, mueve todas las field notes del backlog a `procesadas/` y ejecuta el cierre atomico (rama + entradas + PR), todo sin pausas ni confirmaciones intermedias. Por eso la invocacion corre en **primer plano** -- espera a que la sesion del agente termine, nunca uses `run_in_background` --: el encadenamiento del merge (pasos 2-4) necesita el numero de PR que el historiador reporta en su mensaje final. Ese encadenamiento ocurre despues, ya de vuelta en este hilo: un subagente no puede invocar slash commands, y por eso ese eslabon vive en el skill y no dentro del historiador.
 
 ### 2. Extraer y verificar el numero de PR (CA-2, CA-4)
 
 El contrato del historiador (CA-6 de #527) es reportar explicitamente el PR en su mensaje final con el patron `PR #<numero>` (ej: "PR #123 creado con las entradas del 2026-07-27 al 2026-08-04."). Toma el numero de su **mensaje final**, no de cualquier `#N` que aparezca en el medio de la conversacion: el historiador cita issues y PRs ajenos al armar cada entrada, y confundirlos aca mergearia el PR equivocado.
 
-- **Si NO aparece ningun PR** -- el historiador reporto que no habia field notes pendientes, o el usuario cancelo el borrador o el cierre atomico en algun punto de la conversacion -- reporta el resultado tal cual lo dijo el historiador y **detente sin invocar `/merge`** (CA-4).
+- **Si NO aparece ningun PR** -- el historiador reporto que no habia field notes pendientes, o fallo en algun punto antes de crear el PR -- reporta el resultado tal cual lo dijo el historiador y **detente sin invocar `/merge`** (CA-4).
 - **Si aparece un numero**, confirmalo antes de encadenar un merge automatico (a diferencia de `/merge` invocado a mano, aca el numero no lo tipeo el usuario: lo leiste de una conversacion):
 
   ```bash
@@ -65,20 +65,19 @@ PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
 cat "${PLUGIN_ROOT%/}/commands/merge.md"
 ```
 
-Ejecuta su `Proceso` completo (validar el PR, mostrar resumen, invocar `pr-sync.sh --merge`, reportar) tal cual, con el numero de PR del paso 2 como su `$ARGUMENTS` -- su `## Entrada` queda cubierta por ese numero, y su pre-condicion `cwd != Mefisto` por la de este skill (misma verificacion). No pidas ninguna confirmacion adicional antes de mergear -- el usuario ya la dio al escribir `/bitacora` explicitamente, y el historiador ya paso por su propio gate humano antes de crear el PR.
+Ejecuta su `Proceso` completo (validar el PR, mostrar resumen, invocar `pr-sync.sh --merge`, reportar) tal cual, con el numero de PR del paso 2 como su `$ARGUMENTS` -- su `## Entrada` queda cubierta por ese numero, y su pre-condicion `cwd != Mefisto` por la de este skill (misma verificacion). No pidas ninguna confirmacion adicional antes de mergear -- el usuario ya autorizo el ciclo completo al escribir `/bitacora` explicitamente.
 
 ### 4. Reportar
 
 Consolida en un solo resumen:
-- Lo que reporto el historiador (dias procesados, field notes integradas/excluidas, o el motivo de no haber creado PR).
+- Lo que reporto el historiador (dias procesados, field notes integradas, o el motivo de no haber creado PR).
 - El PR verificado en el paso 2, o el motivo por el que no se mergeo nada (sin PR, o verificacion fallida).
 - El resultado de `/merge` (PR mergeado, o el error tal cual lo imprimio `pr-sync.sh`).
 
 ## Reglas
 
-- **Nunca reimplementes la logica del historiador ni de `/merge`.** Este skill delega leyendo integramente el `Proceso` de `/merge`; el historiador corre como agente conversacional completo, con su propio gate humano.
-- **Nunca respondas por el usuario los gates del historiador** (aprobacion de cada borrador, confirmacion del cierre atomico). Ese contenido lo aprueba el humano; tu trabajo empieza cuando la sesion del agente termina.
+- **Nunca reimplementes la logica del historiador ni de `/merge`.** Este skill delega leyendo integramente el `Proceso` de `/merge`; el historiador corre de punta a punta de forma autonoma.
 - **Nunca invoques `/merge` sin un numero de PR leido del mensaje final del historiador y verificado con `gh pr view`** (abierto y tocando `docs/bitacora/`). Si no hay PR, o la verificacion falla, repórtalo y detente (CA-4).
-- **Nunca pidas una confirmacion adicional antes de mergear** un PR ya verificado. El gate humano ya ocurrio dentro del historiador.
+- **Nunca pidas una confirmacion adicional antes de mergear** un PR ya verificado. El usuario autorizo el ciclo completo al invocar el skill.
 - **Nunca hagas merges manuales** (`gh pr merge`, `git merge` + push). Todo pasa por `/merge` -> `pr-sync.sh`.
 - **No diagnostiques errores de `pr-sync.sh`.** Propalos tal cual, igual que hace `/merge`.
