@@ -115,10 +115,14 @@ este ADR solo nombraba dos:
   el workflow en si no dispare ningun deploy.
 - **Un workflow de deploy que prueba un Function App ajeno** (tercera clase; issue #604): un workflow
   que despliega un componente propio pero ejerce la suite de smoke de **otro** dominio, porque el
-  componente que despliega no tiene el endpoint HTTP que un smoke test pueda probar. El caso real es
-  `deploy-projections.yml` (`projections-scaffolder`): despliega el worker de proyecciones, que corre
-  sin ingress (MEF-ADR-0034 seccion 8), y por eso ejerce la suite de un Function App concreto que si
-  tiene proyecciones activas. No tiene un SHA propio del FA bajo prueba que pasar -- igual que
+  componente que despliega no tiene el endpoint HTTP que un smoke test pueda probar. El caso real
+  observado es el `deploy-projections.yml` del consumidor `Bitakora.ControlAsistencia`: despliega el
+  worker de proyecciones, que corre sin ingress (MEF-ADR-0034 seccion 8), y por eso ejerce la suite de
+  un Function App concreto que si tiene proyecciones activas. **La plantilla que emite
+  `projections-scaffolder` hoy no tiene job de smoke** (sus jobs son `build-and-test` y `publish`): esa
+  tercera clase existe en el marco como forma legitima que un consumidor puede adoptar a mano, y como
+  la clase que la guarda de abajo debe cubrir, no como algo que el scaffolder genere. No tiene un SHA
+  propio del FA bajo prueba que pasar -- igual que
   `smoke-tests.yml` -- pero, a diferencia de ese global, **si** corre disparado por el mismo push a
   `main` que puede estar desplegando ese FA en paralelo: la carrera no es una posibilidad remota de un
   cron desatendido, es estructural en cada push que toca ambos componentes a la vez.
@@ -133,14 +137,27 @@ tocando el FA, o ya termino -- la invariante que este ADR no nombraba queda rest
 construccion en vez de asumida.
 
 **Por que el job, nunca el run completo.** El run ajeno (p. ej. el propio `deploy-{kebab}.yml` del FA
-bajo prueba) incluye su propio job de smoke tests, que pide el mismo grupo `concurrency` que el job
-que esta esperando ya tiene tomado -- esperar el run entero es un deadlock garantizado, no una carrera
-que a veces se pierde. Un job `deploy` con conclusion `skipped` (el caso de `determinar-alcance`
-cuando el PR no toco ese dominio) ya reporta `status: completed`, asi que no bloquea, sin codigo
-extra. Si un run ajeno no expone ningun job llamado `deploy`, la guarda falla explicitamente
-(`::error::` + exit distinto de cero) en vez de asumir que ya termino: degradar en silencio ante una
-consulta que no devuelve lo esperado reintroduce la carrera sin dejar ninguna senal de que la guarda
-dejo de ver a ese invocador.
+bajo prueba) corre su propio job de smoke tests **despues** de su `deploy`: esperar el run entero es
+esperar una suite que no gatea nada del lado que espera. Y en cualquier repo que serialice los smoke
+con un grupo `concurrency` -- lo hace el consumidor de origen con `smoke-tests-dev`; las plantillas
+del marco no declaran ninguno -- es directamente un **deadlock**, no una carrera que a veces se
+pierde: el job de smoke del run ajeno no puede arrancar hasta que el job que espera libere el grupo, y
+ese job no termina hasta que el run ajeno complete. Un job `deploy` con conclusion `skipped` (el caso
+de `determinar-alcance` cuando el PR no toco ese dominio) ya reporta `status: completed`, asi que no
+bloquea, sin codigo extra. Si un run ajeno no expone ningun job llamado `deploy`, la guarda falla
+explicitamente (`::error::` + exit distinto de cero) en vez de asumir que ya termino: degradar en
+silencio ante una consulta que no devuelve lo esperado reintroduce la carrera sin dejar ninguna senal
+de que la guarda dejo de ver a ese invocador.
+
+**El precio de fallar en vez de adivinar: el filtro de runs tiene que ser exacto.** Como un run
+`Deploy *` sin job `deploy` aborta la guarda, todo workflow del marco que comparta ese prefijo de
+nombre **sin** desplegar una Function App debe quedar fuera del filtro. Hoy hay exactamente uno:
+`Deploy Projections Worker` (`.github/workflows/deploy-projections.yml`, `projections-scaffolder`),
+que publica la imagen del Container App del worker (jobs `build-and-test`/`publish`) y no toca ningun
+FA -- no hay nada que esperar de el. La guarda lo excluye por su `path` exacto, no por su nombre: el
+path lo genera el scaffolder, el `name:` es texto libre que el consumidor puede editar. Sin esa
+exclusion, cada corrida de smoke con `expected_sha` vacio que coincidiera con una publicacion del
+worker del mismo commit moriria en `exit 1` por un run que nunca tuvo nada que esperar.
 
 **Permisos del token (`actions: read`).** La guarda consulta la API de Actions
 (`GET /repos/{owner}/{repo}/actions/runs` y `.../jobs`), que requiere el scope `actions: read` en el
@@ -291,11 +308,20 @@ piso de SKU en el futuro.
   intentos x 5s, issue #604) cuando algun run ajeno nunca termina su job `deploy` -- mismo timeout
   defensivo que ya acepta el punto 3 para el poll de `/api/version`, aplicado ahora tambien a runs
   ajenos concurrentes.
-- **Depende de dos convenciones de nombres verificadas empiricamente pero no mecanicamente (issue
-  #604)**: el prefijo `Deploy ` del nombre del workflow y el nombre exacto `deploy` del job. Un cambio
-  a esas convenciones en algun `deploy-*.yml` futuro sin actualizar la guarda de `smoke-tests-dominio.yml`
-  la deja sin ver a ese invocador -- mitigado por la guarda misma, que falla explicitamente en vez de
-  degradar en silencio cuando un run que matchea el nombre del workflow no expone el job esperado.
+- **Depende de tres convenciones de nombres acopladas entre dos agentes (issue #604)**: el prefijo
+  `Deploy ` del nombre del workflow de deploy, el nombre exacto `deploy` de su job, y el path del
+  workflow del worker de proyecciones que la guarda excluye. Un cambio a cualquiera de las tres sin
+  actualizar la guarda de `smoke-tests-dominio.yml` la deja sin ver a un invocador, o la hace abortar
+  contra un run que no tenia nada que esperar. Mitigacion doble: la guarda falla explicitamente en vez
+  de degradar en silencio, y el bloque `[H]` de `scripts/tests/test-guards.sh` afirma la
+  correspondencia entre las plantillas de `domain-scaffolder` y `projections-scaffolder` y los
+  literales de la guarda, de modo que la deriva rompe la suite del marco en vez de aparecer como un
+  rojo intermitente en el consumidor.
+- **La guarda se ancla al `head_sha` del run que la ejecuta**, asi que solo ve deploys **de ese mismo
+  commit**: en la corrida global por `schedule`, un deploy disparado por un push posterior al arranque
+  del cron queda fuera del filtro y su carrera sigue abierta. Es un residuo estrecho (la ventana es el
+  intervalo entre el disparo del cron y el push siguiente) y cerrarlo pediria esperar deploys de
+  cualquier commit, que es otra decision -- se documenta, no se resuelve aqui.
 
 ## Referencias
 
@@ -378,7 +404,10 @@ piso de SKU en el futuro.
   `smoke-tests-dominio.yml`, condicionado a `expected_sha == ''`, que espera el **job** `deploy`
   (nunca el run completo -- esperar el run es un deadlock, ese run ajeno pide el mismo `concurrency`
   que el job que espera ya tiene tomado) de cualquier run del mismo commit cuyo workflow empiece con
-  `Deploy `. Requiere `actions: read` en el job que hace `uses:` de los tres invocadores
-  (`deploy-{kebab}.yml`, `smoke-tests.yml`, `deploy-projections.yml` si invoca el reutilizable) y en
-  el propio reutilizable -- sin esa concesion el run muere en `startup_failure` sin annotation
-  visible.
+  `Deploy ` -- excluyendo `.github/workflows/deploy-projections.yml`, que comparte ese prefijo pero
+  publica el Container App del worker (jobs `build-and-test`/`publish`, ningun FA que esperar) y
+  abortaria la guarda por no exponer un job `deploy`. Requiere `actions: read` en el job que hace
+  `uses:` de los invocadores (`deploy-{kebab}.yml`, `smoke-tests.yml`, y cualquier deploy de otro
+  componente que invoque el reutilizable a mano) y en el propio reutilizable -- sin esa concesion el
+  run muere en `startup_failure` sin annotation visible. El acoplamiento de los tres literales de
+  nombres queda afirmado por el bloque `[H]` de `scripts/tests/test-guards.sh`.

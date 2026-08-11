@@ -3111,8 +3111,8 @@ jobs:
         # Cierra la carrera entre el smoke de un Function App ajeno y su deploy concurrente
         # (issue #604, MEF-ADR-0031 seccion 4 enmendada). Solo el invocador que despliega el
         # propio FA bajo prueba conoce un expected_sha real -- deploy-{kebab}.yml (Paso 5). Todo
-        # invocador que llega con expected_sha vacio (smoke-tests.yml global, o un deploy que
-        # ejerce la suite de un FA ajeno, ej. deploy-projections.yml) va a degradar el warmup de
+        # invocador que llega con expected_sha vacio (smoke-tests.yml global, o un deploy de otro
+        # componente que ejerce la suite de un FA ajeno) va a degradar el warmup de
         # abajo a "solo 200" contra /api/health, que responde 200 con el binario viejo mientras
         # cualquier deploy de este mismo commit sigue en vuelo sobre ese FA. Esta guarda espera a
         # que termine el job 'deploy' de cada run ajeno antes de dejar correr ese warmup.
@@ -3125,14 +3125,25 @@ jobs:
         run: |
           set -euo pipefail
           # github.run_id dentro de este reutilizable es el del invocador (un workflow_call
-          # comparte el run de quien lo llama) -- excluirlo es obligatorio: sin el, este paso se
-          # esperaria a si mismo (el propio run ya tiene tomado el grupo concurrency de smoke que
-          # su job 'deploy' antecede), un deadlock, no una carrera.
+          # comparte el run de quien lo llama) -- excluirlo es obligatorio: sin el, la guarda
+          # inspeccionaria su propio run, donde el job que la ejecuta esta por definicion en
+          # vuelo; se esperaria a si misma hasta el timeout (o fallaria por no encontrar en el un
+          # job 'deploy'), no es una carrera que a veces se pierda.
           INTENTOS=120
           ESPERA=5
           for i in $(seq 1 "$INTENTOS"); do
+            # Solo los deploys de Function App: 'Deploy {PascalCase}' de deploy-{kebab}.yml (Paso 5
+            # de domain-scaffolder.md), el unico workflow del marco que toca el FA bajo prueba y
+            # el unico que expone un job 'deploy'. 'Deploy Projections Worker'
+            # (.github/workflows/deploy-projections.yml, projections-scaffolder) comparte el
+            # prefijo del nombre pero despliega el Container App del worker de proyecciones -- no
+            # toca ninguna Function App (nada que esperar) y sus jobs son 'build-and-test' y
+            # 'publish' (ningun 'deploy'), asi que sin esta exclusion la guarda de abajo moriria
+            # en 'exit 1' cada vez que una corrida global de smoke coincidiera con una publicacion
+            # del worker del mismo commit. Se excluye por 'path' y no por nombre:
+            # el path lo genera el scaffolder, el 'name:' es texto libre editable por el consumidor.
             AJENOS=$(gh api "repos/$REPO/actions/runs?head_sha=$SHA" --paginate --jq \
-              '.workflow_runs[] | select(.name | startswith("Deploy ")) | select(.id != '"$RUN_ID"') | select(.status != "completed") | .id')
+              '.workflow_runs[] | select(.name | startswith("Deploy ")) | select(.path != ".github/workflows/deploy-projections.yml") | select(.id != '"$RUN_ID"') | select(.status != "completed") | .id')
             PENDIENTES=""
             for RUN in $AJENOS; do
               # Un job 'deploy' con conclusion 'skipped' (ej. determinar-alcance sin cambios para
@@ -3140,7 +3151,7 @@ jobs:
               JOB_STATUS=$(gh api "repos/$REPO/actions/runs/$RUN/jobs" --paginate --jq \
                 '.jobs[] | select(.name == "deploy") | .status')
               if [ -z "$JOB_STATUS" ]; then
-                echo "::error::El run $RUN (workflow 'Deploy *') no expone ningun job llamado 'deploy' -- no se puede confirmar si termino. Revisa la convencion de nombres del job 'deploy' (deploy-{kebab}.yml, Paso 5 de domain-scaffolder.md) en ese workflow."
+                echo "::error::El run $RUN (workflow 'Deploy *') no expone ningun job llamado 'deploy' -- no se puede confirmar si termino. Si es un deploy de Function App, revisa la convencion de nombres del job 'deploy' (deploy-{kebab}.yml, Paso 5 de domain-scaffolder.md); si es un workflow 'Deploy *' que NO despliega ninguna Function App (como deploy-projections.yml), excluyelo por 'path' en el filtro de arriba."
                 exit 1
               fi
               if [ "$JOB_STATUS" != "completed" ]; then
@@ -3174,9 +3185,15 @@ jobs:
 
 > El reutilizable NO se autentica contra Azure: los smoke tests son black-box (HTTP contra `base_url`) y acceden a ServiceBus/Postgres por connection string, no por OIDC. Por eso declara `permissions: contents: read` (lo que necesita `actions/checkout`) + `actions: read` (issue #604, lo que necesita la guarda de arriba) y no `id-token: write`.
 >
-> **`expected_sha` es opcional a proposito (MEF-ADR-0031)**: solo lo pasa `deploy-{kebab}.yml` (Paso 5), que siempre conoce el SHA que acaba de desplegar -- es el unico invocador que despliega el mismo FA que va a probar. El workflow global `smoke-tests.yml` (Paso 6.2) y cualquier deploy que ejerza la suite de un FA ajeno (ej. `deploy-projections.yml`, `projections-scaffolder`) invocan este mismo reutilizable **sin** pasar `expected_sha` -- no hay un SHA propio del FA bajo prueba al que atarse -- y el `ApiFixture` degrada a "solo 200" cuando el valor llega vacio.
+> **`expected_sha` es opcional a proposito (MEF-ADR-0031)**: solo lo pasa `deploy-{kebab}.yml` (Paso 5), que siempre conoce el SHA que acaba de desplegar -- es el unico invocador que despliega el mismo FA que va a probar. El workflow global `smoke-tests.yml` (Paso 6.2) invoca este mismo reutilizable **sin** pasar `expected_sha` -- no hay un SHA propio del FA bajo prueba al que atarse -- y el `ApiFixture` degrada a "solo 200" cuando el valor llega vacio. Cae en la misma clase cualquier workflow que despliegue **otro** componente y ejerza la suite de un FA ajeno (el caso real del consumidor de origen: su `deploy-projections.yml` invoca este reutilizable para la suite del unico dominio con proyecciones; la plantilla que emite `projections-scaffolder` hoy no tiene job de smoke, ver la nota de acoplamiento en ese agente).
 >
-> **La guarda "Esperar deploys ajenos" (issue #604, MEF-ADR-0031 seccion 4 enmendada) es lo que hace seguro ese fallback.** Sin ella, "solo 200" abre la compuerta contra `/api/health`, que responde 200 con el binario viejo mientras cualquier `deploy-{kebab}.yml` de este mismo commit sigue en vuelo sobre el FA bajo prueba -- 4 de 4 solapamientos observados en el diagnostico de origen (`Bitakora.ControlAsistencia`, ventanas de 7 a 31 segundos). La condicion es `inputs.expected_sha == ''` -- identifica la clase "no despliego el FA que pruebo" sin enumerar dominios ni workflows, asi que no crece al scaffoldear un dominio nuevo -- y solo espera el **job** `deploy` de cada run ajeno, nunca el run completo: ese run ajeno incluye su propio job de smoke, que pide el mismo `concurrency` que este job ya tiene tomado -- esperar el run entero seria un deadlock, no una carrera. Si un run ajeno no expone ningun job llamado `deploy`, la guarda **falla** en vez de asumir que ya termino (`::error::` + `exit 1`): degradar en silencio reintroduciria la carrera sin ninguna senal. Quien renombre el job `deploy` de `deploy-{kebab}.yml` (Paso 5) o el de `deploy-projections.yml` (`projections-scaffolder`) debe mover ese literal aqui tambien -- son la misma convencion, verificada empiricamente contra 4 deploys reales del consumidor de origen.
+> **La guarda "Esperar deploys ajenos" (issue #604, MEF-ADR-0031 seccion 4 enmendada) es lo que hace seguro ese fallback.** Sin ella, "solo 200" abre la compuerta contra `/api/health`, que responde 200 con el binario viejo mientras cualquier `deploy-{kebab}.yml` de este mismo commit sigue en vuelo sobre el FA bajo prueba -- 4 de 4 solapamientos observados en el diagnostico de origen (`Bitakora.ControlAsistencia`, ventanas de 7 a 31 segundos). La condicion es `inputs.expected_sha == ''` -- identifica la clase "no despliego el FA que pruebo" sin enumerar dominios ni workflows, asi que no crece al scaffoldear un dominio nuevo.
+>
+> Espera el **job** `deploy` de cada run ajeno, nunca el run completo, por dos razones: ese run ajeno corre su propio job de smoke **despues** del `deploy`, asi que esperar el run entero es esperar una suite que no gatea nada de este lado; y en cualquier repo que serialice los smoke con un grupo `concurrency` (lo hace el consumidor de origen con `smoke-tests-dev`; las plantillas de este agente no declaran ninguno) es directamente un **deadlock**: el job de smoke del ajeno no puede arrancar hasta que este job libere el grupo, y este job no termina hasta que ese run complete.
+>
+> Si un run ajeno no expone ningun job llamado `deploy`, la guarda **falla** en vez de asumir que ya termino (`::error::` + `exit 1`): degradar en silencio reintroduciria la carrera sin ninguna senal. El precio de esa decision es que el filtro de runs debe ser exacto, y por eso excluye `.github/workflows/deploy-projections.yml` (`projections-scaffolder`): su `name:` es `Deploy Projections Worker` -- matchea el prefijo -- pero despliega el Container App del worker de proyecciones, no toca ninguna Function App y sus jobs son `build-and-test`/`publish`; sin la exclusion, cada corrida global de smoke que coincidiera con una publicacion del worker del mismo commit moriria en `exit 1` por un run que nunca tuvo nada que esperar.
+>
+> **Dos convenciones acopladas, y el test del marco que las sostiene (CA-6).** El literal `deploy` del job y el prefijo `Deploy ` del nombre son convenciones de `deploy-{kebab}.yml` (Paso 5), verificadas empiricamente contra 4 deploys reales del consumidor de origen; el path excluido es el que genera `projections-scaffolder`. Quien renombre cualquiera de las tres cosas debe mover el literal aqui tambien -- y el bloque `[H]` de `scripts/tests/test-guards.sh` falla si esa correspondencia se rompe, para que la deriva no deje a la guarda ciega en silencio.
 
 **6.2 - Global `smoke-tests.yml`**
 
