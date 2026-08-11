@@ -17,7 +17,9 @@
 #          cache -- asi funciona igual en un fork publicado bajo otro marketplace
 #          (repoSlug).
 #       2. Actualiza catalogo y plugin sin interaccion ('claude plugin marketplace
-#          update <detectado>' + 'claude plugin update mefisto --scope user').
+#          update <detectado>' + 'claude plugin update mefisto@<detectado> --scope user' --
+#          el nombre calificado con su marketplace: el CLI rechaza el nombre a secas
+#          aunque 'claude plugin list' si lo muestre instalado, issue #601).
 #       3. Reescribe .claude/pipeline/.plugin-root a la version mas reciente del cache,
 #          para que un pipeline headless que arranque antes del /reload-plugins ya
 #          resuelva la version nueva (mismo archivo que escribe el hook SessionStart;
@@ -282,10 +284,11 @@ main() {
         fi
 
         echo ""
-        echo "Actualizando el plugin mefisto (scope user)..."
-        if ! claude plugin update mefisto --scope user; then
-            echo "ERROR: 'claude plugin update mefisto --scope user' fallo." >&2
+        echo "Actualizando el plugin mefisto@$marketplace_name (scope user)..."
+        if ! claude plugin update "mefisto@$marketplace_name" --scope user; then
+            echo "ERROR: 'claude plugin update mefisto@$marketplace_name --scope user' fallo." >&2
             echo "       No se toco .plugin-root ni el cache; reintenta tras resolver la causa." >&2
+            echo "       Verifica que el plugin este instalado a scope user (claude plugin install mefisto@$marketplace_name --scope user)." >&2
             return 1
         fi
         echo ""
