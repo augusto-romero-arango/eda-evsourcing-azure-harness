@@ -191,7 +191,7 @@ Elimina estas lineas del `.csproj`:
 ```xml
 <!-- func init YA genera este metapaquete: ACTUALIZA su version a 2.52.0. NO lo agregues como segunda referencia (ver nota "Actualizar, no duplicar" tras el bloque). -->
 <PackageReference Include="Microsoft.Azure.Functions.Worker" Version="2.52.0" />
-<PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.ServiceBus" Version="5.*" />
+<PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.ServiceBus" Version="5.24.0" />
 <PackageReference Include="Cosmos.EventDriven.Abstractions" Version="2.1.0" />
 <PackageReference Include="Cosmos.EventDriven.CritterStack" Version="2.1.0" />
 <PackageReference Include="Cosmos.EventDriven.CritterStack.AzureServiceBus" Version="2.1.0" />
@@ -200,12 +200,14 @@ Elimina estas lineas del `.csproj`:
 <PackageReference Include="Microsoft.Azure.Functions.Worker.OpenTelemetry" Version="1.2.0" />
 <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.13.1" />
 <PackageReference Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.8.2" />
-<PackageReference Include="FluentValidation.DependencyInjectionExtensions" Version="11.*" />
+<PackageReference Include="FluentValidation.DependencyInjectionExtensions" Version="11.12.0" />
 ```
 
 > **Actualizar, no duplicar, `Microsoft.Azure.Functions.Worker` (issue #263)**: `func init` **ya genera** este metapaquete en el `.csproj` que acabas de leer, en una version que puede quedar por debajo de `2.52.0` (`2.51.0` con Azure Functions Core Tools 4.6.0 al verificar este cambio). **Sube la version de esa referencia existente a `2.52.0`; no agregues una segunda linea** (a diferencia del resto de la lista, que si son paquetes nuevos que `func init` no genera). Un `PackageReference` duplicado al mismo paquete **no** rompe el build -- solo dispara la advertencia `NU1504` -- pero NuGet resuelve entonces a la version **mas baja** (verificado con `dotnet restore`: la resolucion se queda en `2.51.0`), lo que deja `Worker.Grpc` en `2.51.0` mientras `Worker.OpenTelemetry` sube `Worker.Core` a `2.52.0` -- exactamente el desalineamiento Core/Grpc que este pin debe evitar, reintroducido en silencio (detalle del fallo en la nota siguiente).
 
 > **Lockstep del metapaquete `Microsoft.Azure.Functions.Worker` y versiones del trio OpenTelemetry (issue #263)**: `Microsoft.Azure.Functions.Worker` se fija explicitamente en `2.52.0` porque `Microsoft.Azure.Functions.Worker.OpenTelemetry` 1.2.0 exige `Microsoft.Azure.Functions.Worker.Core >= 2.52.0` (nuspec del paquete, api.nuget.org). Si el metapaquete queda en una version menor -- por ejemplo la que trae por defecto una plantilla `func init` desactualizada --, `Worker.Core` sube a 2.52.0 por resolucion transitiva pero `Worker.Grpc` puede quedar rezagado en una version anterior; ese desalineamiento Core/Grpc dispara `MissingMethodException` en `DefaultTraceContext..ctor` al arrancar el host, tumbando con HTTP 500 **toda** funcion del dominio (verificado por el consumidor Cosmos.ControlPlane, PR #46). Fijar el metapaquete completo a `2.52.0` mantiene Core y Grpc siempre en la misma version. Las versiones de `Microsoft.Azure.Functions.Worker.OpenTelemetry` (1.2.0 -- `1.4.0` nunca existio en NuGet, era un dato erroneo), `OpenTelemetry.Extensions.Hosting` (1.13.1, el minimo que exige el paquete anterior) y `Azure.Monitor.OpenTelemetry.Exporter` (1.8.2) son las vigentes en NuGet.org al momento de este cambio; revalidalas contra la fuente si ha pasado tiempo desde entonces.
+
+> **Pines exactos sin comodin, `Worker.Extensions.ServiceBus` y `FluentValidation.DependencyInjectionExtensions` (issue #605)**: un comodin de major (`5.*`, `11.*`) resuelve "la ultima version que matchea al momento del restore", asi que el resultado del build depende del dia y la hora en que corre, no del commit -- el mismo riesgo que evidencio el incidente de `10.*` documentado en la nota del bloque de `SmokeTests` (Paso 2b). `Microsoft.Azure.Functions.Worker.Extensions.ServiceBus` queda en `5.24.0` y `FluentValidation.DependencyInjectionExtensions` en `11.12.0` -- versiones vigentes en NuGet.org al momento de este cambio; revalidalas contra la fuente. **Repos ya scaffoldeados con el comodin**: la idempotencia de este agente no reescribe un `.csproj` existente -- edita a mano esas dos lineas en el `.csproj` del Function App de cada dominio ya scaffoldeado.
 
 **3. Crear (si no existen) los ensamblados de bus del BC `PublicEvents`/`PrivateEvents`** (MEF-ADR-0039 decisiones 1, 2 y 8): particion incondicional por rol de los eventos que cruzan el bus del BC -- `<RootNamespace>.PublicEvents` (sale del BC) y `<RootNamespace>.PrivateEvents` (bus interno). A diferencia de `{PascalCase}.DomainEvents` (uno por dominio), estos dos viven a nivel de **Bounded Context**: el primer dominio del BC los crea, y los siguientes solo agregan su subcarpeta (mas abajo). Verifica primero si ya existen:
 
@@ -1070,10 +1072,12 @@ Y agregar en su lugar (en el mismo `<ItemGroup>` o en uno nuevo):
 
 ```xml
 <PackageReference Include="Cosmos.EventSourcing.Testing.Utilities" Version="2.1.0" />
-<PackageReference Include="xunit.v3.mtp-v2" Version="3.*" />
+<PackageReference Include="xunit.v3.mtp-v2" Version="3.2.2" />
 ```
 
 `Cosmos.EventSourcing.Testing.Utilities` trae transitivamente `AwesomeAssertions`, `JetBrains.Annotations` y `xunit.v3.extensibility.core` (nuspec del paquete, api.nuget.org) — no hace falta declararlos. **No** trae transitivamente `Cosmos.EventSourcing.Abstractions` ni `Cosmos.EventDriven.Abstractions` (reverificado en 2.1.0 contra el nuspec real, issue #312 -- la afirmacion ya era valida en 1.3.0 y se mantiene): esos dos llegan al proyecto de tests via el `ProjectReference` al proyecto de dominio (paso 4 mas abajo), que ya los referencia directamente.
+
+> **Pin exacto de `xunit.v3.mtp-v2`, sin comodin (issue #605)**: `3.*` resuelve distinto segun el dia del restore, mismo riesgo que documenta la nota del bloque de `SmokeTests` (Paso 2b) mas abajo. Queda en `3.2.2`, la misma version que fijan los bloques de `SmokeTests` y `Projections.Tests` (`projections-scaffolder`) para que los tres proyectos de test del repo resuelvan la misma version (CA-3). Vigente en NuGet.org al momento de este cambio; revalidala contra la fuente. Este pin se propaga automaticamente a `PublicEvents.Tests`/`PrivateEvents.Tests` (Paso 2c, reusan este mismo setup) y no requiere una nota separada. **Repos ya scaffoldeados con el comodin**: la idempotencia de este agente no reescribe un `.csproj` de tests existente -- edita a mano esta linea en cada `{Dominio}.Tests.csproj`/`PublicEvents.Tests.csproj`/`PrivateEvents.Tests.csproj` ya generado.
 
 **3b. Agregar `<OutputType>Exe</OutputType>` al `<PropertyGroup>`** del csproj de tests. xunit v3 con mtp-v2 requiere que el proyecto compile como ejecutable:
 
@@ -1859,12 +1863,12 @@ Crea el archivo `tests/<RootNamespace>.{PascalCase}.SmokeTests/<RootNamespace>.{
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AwesomeAssertions" Version="*" />
-    <PackageReference Include="Azure.Messaging.ServiceBus" Version="7.*" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.*" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.*" />
-    <PackageReference Include="Npgsql" Version="9.*" />
-    <PackageReference Include="xunit.v3.mtp-v2" Version="3.*" />
+    <PackageReference Include="AwesomeAssertions" Version="9.5.0" />
+    <PackageReference Include="Azure.Messaging.ServiceBus" Version="7.20.2" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.11" />
+    <PackageReference Include="Npgsql" Version="9.0.5" />
+    <PackageReference Include="xunit.v3.mtp-v2" Version="3.2.2" />
   </ItemGroup>
 
   <ItemGroup>
@@ -1885,6 +1889,8 @@ Crea el archivo `tests/<RootNamespace>.{PascalCase}.SmokeTests/<RootNamespace>.{
 ```
 
 **Nota:** Incluye `<ProjectReference>` a `PublicEvents` y `PrivateEvents` (layout verificado en el consumidor de referencia, MEF-ADR-0039) para usar la igualdad natural de records de los eventos de bus en aserciones -- ya no al proyecto de vocabulario compartido, retirado del canon (MEF-ADR-0039 decision 8).
+
+> **Pines exactos sin comodin, los 6 paquetes de este bloque (issue #605)**: el incidente que lo evidencio -- Microsoft publico la ola `10.0.11` de `Microsoft.Extensions.*` con un eslabon todavia no publicado (`Microsoft.Extensions.FileProviders.Physical 10.0.11`); estos `*.SmokeTests.csproj` pedian `Configuration.Json` como `10.*`, el restore salto a `10.0.11` a las 17:26 (2026-08-11, consumidor `Bitakora.ControlAsistencia`) y los cuatro workflows de deploy murieron con `NU1103` a la vez (runs 31517965823/31517965831/31517965877/31517965860, commit `b967066`); un rerun no lo arreglaba, se resolvio solo (~1h despues) cuando Microsoft publico el paquete faltante. Un comodin resuelve "la ultima version que matchea al momento del restore": el resultado del build depende del dia y la hora, no del commit. Versiones fijadas -- vigentes en NuGet.org y con grafo de dependencias completo verificado al momento de este cambio (revalidalas contra la fuente si ha pasado tiempo): `AwesomeAssertions` `9.5.0`, `Azure.Messaging.ServiceBus` `7.20.2`, `Microsoft.Extensions.Configuration.Json` `10.0.11`, `Microsoft.Extensions.Configuration.EnvironmentVariables` `10.0.11`, `Npgsql` `9.0.5`, `xunit.v3.mtp-v2` `3.2.2` (misma version que fija el bloque de `Tests`, Paso 2, y `Projections.Tests` de `projections-scaffolder`, CA-3). **Repos ya scaffoldeados con comodines**: la idempotencia de este agente no reescribe un `SmokeTests.csproj` existente -- edita a mano las 6 lineas de `PackageReference` de cada dominio ya scaffoldeado a las versiones de arriba.
 
 **2. Crear `appsettings.json`:**
 
