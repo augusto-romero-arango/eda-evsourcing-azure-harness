@@ -3007,6 +3007,9 @@ jobs:
 
   smoke-tests:
     needs: deploy
+    permissions:
+      contents: read   # requerido por actions/checkout dentro del reutilizable
+      actions: read    # requerido por la guarda de deploys ajenos (issue #604, MEF-ADR-0031 seccion 4)
     uses: ./.github/workflows/smoke-tests-dominio.yml
     with:
       base_url: https://func-{prefix_func}-{kebab}.azurewebsites.net
@@ -3019,7 +3022,9 @@ jobs:
 
 > `smoke-tests-dominio.yml` acepta estos secrets como opcionales (`required: false`). Si no estan configurados en el repo, los smoke tests que dependen de ServiceBus o Postgres se skipean gracefully via `Assert.SkipWhen`.
 
-> **Readiness gate por SHA (issue #325, MEF-ADR-0031)**: el paso `Build` del job `deploy` hornea `-p:SourceRevisionId=${{ github.event.workflow_run.head_sha || github.sha }}` -- la **misma** expresion que ya resuelve el `ref:` del checkout de este job, nunca `github.sha` a secas (en un run disparado por `workflow_run`, `github.sha` no es necesariamente el commit que este run esta construyendo -- ver el detalle en MEF-ADR-0031). El job `deploy` expone ese mismo valor como output (`outputs.sha`) para no duplicar la expresion, y el job `smoke-tests` lo pasa como `expected_sha` al reutilizable: el warmup del smoke test (Paso 2b, `ApiFixture`) hace poll contra `/api/version` hasta que el host reporte ese SHA, en vez de abrir la compuerta con el primer 200 (que puede ser el codigo viejo todavia sirviendo durante la ventana de swap de `WEBSITE_RUN_FROM_PACKAGE`).
+> **Readiness gate por SHA (issue #325, MEF-ADR-0031)**: el paso `Build` del job `deploy` hornea `-p:SourceRevisionId=${{ github.event.workflow_run.head_sha || github.sha }}` -- la **misma** expresion que ya resuelve el `ref:` del checkout de este job, nunca `github.sha` a secas (en un run disparado por `workflow_run`, `github.sha` no es necesariamente el commit que este run esta construyendo -- ver el detalle en MEF-ADR-0031). El job `deploy` expone ese mismo valor como output (`outputs.sha`) para no duplicar la expresion, y el job `smoke-tests` lo pasa como `expected_sha` al reutilizable: el warmup del smoke test (Paso 2b, `ApiFixture`) hace poll contra `/api/version` hasta que el host reporte ese SHA, en vez de abrir la compuerta con el primer 200 (que puede ser el codigo viejo todavia sirviendo durante la ventana de swap de `WEBSITE_RUN_FROM_PACKAGE`). Este job **si** conoce su propio SHA desplegado -- pertenece a la primera clase de invocador de MEF-ADR-0031 seccion 4 -- asi que nunca activa la guarda de deploys ajenos del punto siguiente (su condicion es `expected_sha == ''`).
+
+> **`permissions` del job `smoke-tests` (issue #604, MEF-ADR-0031 seccion 4 enmendada)**: `actions: read` es obligatorio para que el paso "Esperar deploys ajenos del mismo commit" (`smoke-tests-dominio.yml`, Paso 6.1) pueda consultar `gh api .../actions/runs` y `.../actions/runs/{id}/jobs` -- un workflow llamado (`uses:`) no puede pedir mas permisos que los que su invocador concede en el job que hace el `uses:`, y el default de permisos del repo no incluye ese scope (`startup_failure` sin ninguna annotation visible si falta). La concesion va **a nivel de este job**, no del workflow completo: los jobs `determinar-alcance` (`pull-requests: read`) y `deploy` (`id-token: write`) declaran los permisos que necesitan por separado y no deben ganar `actions: read` de rebote.
 
 > **Autenticacion del deploy (OIDC, MEF-ADR-0022)**: el job `deploy` se autentica con `azure/login` por **OpenID Connect**, NO con un client secret. Por eso declara `permissions: id-token: write` y pasa `client-id` / `tenant-id` / `subscription-id` (los secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`), en vez del JSON unico `AZURE_CREDENTIALS`. Esos tres secrets, el Service Principal sin secret y el **federated credential** que confia en la rama `main` los emite `scripts/setup-github-ci.sh` (paso de bootstrap del README). No hay secret que expire. Si cambias el trigger del workflow para desplegar desde otra rama, tag o un GitHub Environment, debes anadir el federated credential correspondiente (el subject debe coincidir exacto con el claim del token de GitHub).
 
@@ -3036,6 +3041,13 @@ El workflow de deploy del Paso 5 referencia el reutilizable `./.github/workflows
 Ambos archivos son **idempotentes** (misma logica de "si existe / si no existe" que el Paso 6b aplica al JSON): se generan solo si faltan y **nunca se sobrescriben** (a partir del segundo dominio ya existen y se respetan, incluidas personalizaciones del consumidor).
 
 > **Repos ya scaffoldeados antes del fix del issue #253**: la misma idempotencia que preserva personalizaciones del consumidor implica que el scaffolder **no reescribe** un `smoke-tests-dominio.yml` existente aunque el fix de este agente haya cambiado su contenido de referencia. Si el repo consumidor ya tiene ese archivo con `dotnet test "${{ inputs.test_project }}" --configuration Release` (forma vieja, rota en .NET 10 con Microsoft Testing Platform), hay que aplicar el mismo parche a mano: cambiar el `run:` del job `smoke-tests` a `dotnet test --project "${{ inputs.test_project }}" --configuration Release`.
+
+> **Repos ya scaffoldeados antes del fix del issue #604**: mismo limite de idempotencia -- ninguno de los tres archivos que este ADR/agente tocan se reescribe solo. Aplica estos tres parches a mano:
+> 1. **`.github/workflows/smoke-tests-dominio.yml`** (reutilizable, compartido): agrega `actions: read` al bloque `permissions:` de nivel workflow, e inserta el step `Esperar deploys ajenos del mismo commit` (contenido completo en el Paso 6.1 de arriba) entre `actions/setup-dotnet` y `Smoke tests`.
+> 2. **`.github/workflows/smoke-tests.yml`** (global, compartido): agrega `permissions: {contents: read, actions: read}` al job `smoke-tests` (no al workflow completo -- no debe alterar los permisos de `cargar-dominios`).
+> 3. **Cada `.github/workflows/deploy-{kebab}.yml` ya existente** (uno por dominio, nunca regenerado despues del scaffold inicial de ese dominio): agrega el mismo `permissions: {contents: read, actions: read}` a su job `smoke-tests`.
+>
+> Sin los tres parches el sintoma es doble: sin el paso nuevo, la carrera documentada en MEF-ADR-0031 seccion 4 sigue abierta; y si solo se agrega el paso sin los permisos, el run muere en `startup_failure` apenas ese job arranca, sin ninguna annotation que lo explique (CA-4).
 
 **Transcripcion byte-a-byte (issue #241).** Dos dominios pueden scaffoldearse en paralelo desde el mismo `origin/main`, cada uno viendo estos archivos ausentes y generandolos a la vez. Si ambas ramas los transcriben literal, el merge es un add/add de archivos identicos (benigno, sin conflicto); si alguna normaliza espacios, reordena claves o resume comentarios, el add/add se vuelve un conflicto real. Copia los bloques YAML de 6.1 y 6.2 **tal cual aparecen abajo**: sin normalizar indentacion, sin reordenar, sin resumir ni omitir comentarios.
 
@@ -3083,6 +3095,7 @@ on:
 
 permissions:
   contents: read
+  actions: read   # requerido por la guarda "Esperar deploys ajenos" (issue #604, MEF-ADR-0031 seccion 4)
 
 jobs:
   smoke-tests:
@@ -3093,6 +3106,56 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
+
+      - name: Esperar deploys ajenos del mismo commit
+        # Cierra la carrera entre el smoke de un Function App ajeno y su deploy concurrente
+        # (issue #604, MEF-ADR-0031 seccion 4 enmendada). Solo el invocador que despliega el
+        # propio FA bajo prueba conoce un expected_sha real -- deploy-{kebab}.yml (Paso 5). Todo
+        # invocador que llega con expected_sha vacio (smoke-tests.yml global, o un deploy que
+        # ejerce la suite de un FA ajeno, ej. deploy-projections.yml) va a degradar el warmup de
+        # abajo a "solo 200" contra /api/health, que responde 200 con el binario viejo mientras
+        # cualquier deploy de este mismo commit sigue en vuelo sobre ese FA. Esta guarda espera a
+        # que termine el job 'deploy' de cada run ajeno antes de dejar correr ese warmup.
+        if: inputs.expected_sha == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # github.run_id dentro de este reutilizable es el del invocador (un workflow_call
+          # comparte el run de quien lo llama) -- excluirlo es obligatorio: sin el, este paso se
+          # esperaria a si mismo (el propio run ya tiene tomado el grupo concurrency de smoke que
+          # su job 'deploy' antecede), un deadlock, no una carrera.
+          INTENTOS=120
+          ESPERA=5
+          for i in $(seq 1 "$INTENTOS"); do
+            AJENOS=$(gh api "repos/$REPO/actions/runs?head_sha=$SHA" --paginate --jq \
+              '.workflow_runs[] | select(.name | startswith("Deploy ")) | select(.id != '"$RUN_ID"') | select(.status != "completed") | .id')
+            PENDIENTES=""
+            for RUN in $AJENOS; do
+              # Un job 'deploy' con conclusion 'skipped' (ej. determinar-alcance sin cambios para
+              # ese dominio) ya reporta status 'completed' -- no bloquea, sin codigo extra.
+              JOB_STATUS=$(gh api "repos/$REPO/actions/runs/$RUN/jobs" --paginate --jq \
+                '.jobs[] | select(.name == "deploy") | .status')
+              if [ -z "$JOB_STATUS" ]; then
+                echo "::error::El run $RUN (workflow 'Deploy *') no expone ningun job llamado 'deploy' -- no se puede confirmar si termino. Revisa la convencion de nombres del job 'deploy' (deploy-{kebab}.yml, Paso 5 de domain-scaffolder.md) en ese workflow."
+                exit 1
+              fi
+              if [ "$JOB_STATUS" != "completed" ]; then
+                PENDIENTES="$PENDIENTES $RUN"
+              fi
+            done
+            if [ -z "$PENDIENTES" ]; then
+              echo "Ningun deploy ajeno del commit $SHA sigue en vuelo."
+              exit 0
+            fi
+            echo "Esperando el job 'deploy' de los runs ajenos:$PENDIENTES (intento $i/$INTENTOS)..."
+            sleep "$ESPERA"
+          done
+          echo "::error::Timeout esperando el job 'deploy' de runs ajenos del commit $SHA."
+          exit 1
 
       - name: Smoke tests
         env:
@@ -3109,9 +3172,11 @@ jobs:
         run: dotnet test --project "${{ inputs.test_project }}" --configuration Release
 ```
 
-> El reutilizable NO se autentica contra Azure: los smoke tests son black-box (HTTP contra `base_url`) y acceden a ServiceBus/Postgres por connection string, no por OIDC. Por eso solo declara `permissions: contents: read` (lo que necesita `actions/checkout`) y no `id-token: write`.
+> El reutilizable NO se autentica contra Azure: los smoke tests son black-box (HTTP contra `base_url`) y acceden a ServiceBus/Postgres por connection string, no por OIDC. Por eso declara `permissions: contents: read` (lo que necesita `actions/checkout`) + `actions: read` (issue #604, lo que necesita la guarda de arriba) y no `id-token: write`.
 >
-> **`expected_sha` es opcional a proposito (MEF-ADR-0031)**: solo lo pasa `deploy-{kebab}.yml` (Paso 5), que siempre conoce el SHA que acaba de desplegar. El workflow global `smoke-tests.yml` (Paso 6.2) invoca este mismo reutilizable **sin** pasar `expected_sha` -- no esta atado a ningun deploy que acabe de ocurrir -- y el `ApiFixture` degrada a "solo 200" cuando el valor llega vacio.
+> **`expected_sha` es opcional a proposito (MEF-ADR-0031)**: solo lo pasa `deploy-{kebab}.yml` (Paso 5), que siempre conoce el SHA que acaba de desplegar -- es el unico invocador que despliega el mismo FA que va a probar. El workflow global `smoke-tests.yml` (Paso 6.2) y cualquier deploy que ejerza la suite de un FA ajeno (ej. `deploy-projections.yml`, `projections-scaffolder`) invocan este mismo reutilizable **sin** pasar `expected_sha` -- no hay un SHA propio del FA bajo prueba al que atarse -- y el `ApiFixture` degrada a "solo 200" cuando el valor llega vacio.
+>
+> **La guarda "Esperar deploys ajenos" (issue #604, MEF-ADR-0031 seccion 4 enmendada) es lo que hace seguro ese fallback.** Sin ella, "solo 200" abre la compuerta contra `/api/health`, que responde 200 con el binario viejo mientras cualquier `deploy-{kebab}.yml` de este mismo commit sigue en vuelo sobre el FA bajo prueba -- 4 de 4 solapamientos observados en el diagnostico de origen (`Bitakora.ControlAsistencia`, ventanas de 7 a 31 segundos). La condicion es `inputs.expected_sha == ''` -- identifica la clase "no despliego el FA que pruebo" sin enumerar dominios ni workflows, asi que no crece al scaffoldear un dominio nuevo -- y solo espera el **job** `deploy` de cada run ajeno, nunca el run completo: ese run ajeno incluye su propio job de smoke, que pide el mismo `concurrency` que este job ya tiene tomado -- esperar el run entero seria un deadlock, no una carrera. Si un run ajeno no expone ningun job llamado `deploy`, la guarda **falla** en vez de asumir que ya termino (`::error::` + `exit 1`): degradar en silencio reintroduciria la carrera sin ninguna senal. Quien renombre el job `deploy` de `deploy-{kebab}.yml` (Paso 5) o el de `deploy-projections.yml` (`projections-scaffolder`) debe mover ese literal aqui tambien -- son la misma convencion, verificada empiricamente contra 4 deploys reales del consumidor de origen.
 
 **6.2 - Global `smoke-tests.yml`**
 
@@ -3164,6 +3229,9 @@ jobs:
   smoke-tests:
     needs: cargar-dominios
     if: needs.cargar-dominios.outputs.matrix != '[]'
+    permissions:
+      contents: read   # requerido por actions/checkout dentro del reutilizable
+      actions: read    # requerido por la guarda de deploys ajenos (issue #604, MEF-ADR-0031 seccion 4)
     strategy:
       fail-fast: false
       matrix:
@@ -3181,7 +3249,9 @@ jobs:
 >
 > **Ojo con la idempotencia del Paso 6**: en un consumidor que ya tenia el `smoke-tests.yml` global de versiones anteriores (el que hacia `jq -c . .github/smoke-tests-dominios.json`), este scaffolder **no lo regenera** (el Paso 6 nunca sobrescribe un workflow existente). Ese workflow viejo sigue leyendo el array monolitico e **ignora** los archivos por dominio de `.github/smoke-tests/*.json` -- un dominio nuevo nunca apareceria en la matrix aunque su JSON exista. La migracion en un consumidor existente es, por tanto, de **dos partes**: (a) reemplazar a mano el step `Leer dominios registrados` del `smoke-tests.yml` existente por la version de glob de arriba (`shopt -s nullglob` + `jq -sc`), y (b) migrar los datos entrada-por-entrada como se describe arriba. En greenfield esto no aplica: el scaffolder emite ya la version de glob.
 >
-> **Este workflow no pasa `expected_sha` (issue #325, MEF-ADR-0031)**: a diferencia del job `smoke-tests` de `deploy-{kebab}.yml` (Paso 5), esta corrida global (`workflow_dispatch` manual o el `schedule` diario) no esta atada a ningun deploy que acabe de ocurrir -- no hay un "SHA recien desplegado" que pasarle. El `with:` de la celda de la matrix deliberadamente omite `expected_sha`; el reutilizable usa su default `''` y el `ApiFixture` del dominio degrada a "solo 200" contra `/api/health`, el mismo comportamiento que tenia antes de este ADR.
+> **Este workflow no pasa `expected_sha` (issue #325, MEF-ADR-0031)**: a diferencia del job `smoke-tests` de `deploy-{kebab}.yml` (Paso 5), esta corrida global (`workflow_dispatch` manual o el `schedule` diario) no esta atada a ningun deploy que acabe de ocurrir -- no hay un "SHA recien desplegado" que pasarle. El `with:` de la celda de la matrix deliberadamente omite `expected_sha`; el reutilizable usa su default `''` y el `ApiFixture` del dominio degrada a "solo 200" contra `/api/health`.
+>
+> **`permissions` del job `smoke-tests` (issue #604, MEF-ADR-0031 seccion 4 enmendada)**: el `schedule` diario de este workflow corre desatendido y puede caer sobre un deploy real en vuelo sin que nadie lo mire -- el degradado a "solo 200" del parrafo anterior por si solo no es seguro en ese caso. `actions: read` es lo que habilita la guarda "Esperar deploys ajenos" del reutilizable (Paso 6.1) a nivel de este job especifico, sin alterar los permisos de `cargar-dominios` (que solo necesita `contents: read` para su propio `actions/checkout`).
 
 ---
 

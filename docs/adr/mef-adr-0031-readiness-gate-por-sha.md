@@ -78,27 +78,78 @@ ajustable por el implementer si un dominio concreto necesita mas margen). Tolera
 transitorias durante el reinicio del host (el swap puede dejar el endpoint momentaneamente
 inalcanzable) y reintenta hasta el timeout.
 
-### 4. Fallback a "solo 200" cuando no hay un deploy al que atar el SHA esperado
+### 4. Fallback a "solo 200" -- correcto solo si ningun deploy concurrente toca el FA bajo prueba
 
 El input `expected_sha` (opcional, `type: string`, `default: ''` -- sintaxis valida de
 `on.workflow_call.inputs` **[5]**) se agrega al workflow reutilizable `smoke-tests-dominio.yml` y se
 propaga como variable de entorno `Api__ExpectedSha` al proceso de smoke tests (mismo mecanismo de
 `Api__BaseUrl` ya existente). `ApiFixture` interpreta un `Api:ExpectedSha` vacio o ausente como
-"degradar a solo 200 contra `/api/health`" -- el comportamiento previo a este ADR, sin cambios.
+"degradar a solo 200 contra `/api/health`".
 
-Quien pasa `expected_sha`, y cuando, separa los dos casos reales:
+**La invariante que sostiene ese fallback, no nombrada en la version original de este ADR**: solo
+puede gatear por version quien despliega el Function App que prueba, porque solo ese invocador tiene
+un SHA propio que esperar en `/api/version`. Que `expected_sha` llegue vacio dice unicamente "este
+invocador no tiene un SHA al que atarse" -- no dice nada sobre si **otro** deploy, de otro workflow,
+esta tocando el mismo FA en ese instante. "Solo 200" es benigno unicamente cuando **ningun** deploy
+concurrente toca el FA bajo prueba; cuando si lo hay, degradar a "solo 200" reintroduce exactamente el
+falso verde que motiva este ADR -- `/api/health` responde 200 con el binario viejo mientras el deploy
+ajeno todavia esta en vuelo (issue #604, diagnosticado en el consumidor `Bitakora.ControlAsistencia`:
+4 de 4 corridas de `Deploy Projections` se solaparon con el `Deploy ControlHoras` concurrente que
+desplegaba el FA bajo prueba, con ventanas de 7 a 31 segundos entre el fin del deploy ajeno y el
+arranque del smoke).
+
+Quien pasa `expected_sha`, y cuando, distingue **tres** clases de invocador -- la version original de
+este ADR solo nombraba dos:
 
 - **`deploy-{kebab}.yml` (job `smoke-tests`, encadenado tras un deploy real)**: pasa
   `expected_sha: ${{ needs.deploy.outputs.sha }}`, el mismo SHA horneado en el punto 1 (job output del
   `deploy`, para no duplicar la expresion). Esto cubre los tres disparadores de este workflow (`push`,
   `workflow_run` tras `Infra CD`, y `workflow_dispatch` manual del propio deploy): los tres saben con
   certeza que SHA acaban de construir y desplegar en ese mismo run, asi que el gate es siempre
-  significativo, nunca degradado.
+  significativo, nunca degradado -- esta clase cumple la invariante por construccion.
 - **`smoke-tests.yml` (global, Paso 6.2 -- `workflow_dispatch` manual o `schedule` diario, MEF-ADR-0013)**:
   no pasa `expected_sha` en absoluto. Este workflow no esta atado a ningun deploy que acabe de ocurrir
   -- es una verificacion periodica de salud de todos los dominios registrados -- asi que no hay un "SHA
-  del deploy" real que darle. Degrada correctamente a "solo 200", exactamente el comportamiento previo
-  a este ADR.
+  del deploy" real que darle. Pero su `schedule` cron corre desatendido: una corrida puede caer sobre
+  un deploy real en vuelo sin que nadie la este mirando, rompiendo la invariante en la practica aunque
+  el workflow en si no dispare ningun deploy.
+- **Un workflow de deploy que prueba un Function App ajeno** (tercera clase; issue #604): un workflow
+  que despliega un componente propio pero ejerce la suite de smoke de **otro** dominio, porque el
+  componente que despliega no tiene el endpoint HTTP que un smoke test pueda probar. El caso real es
+  `deploy-projections.yml` (`projections-scaffolder`): despliega el worker de proyecciones, que corre
+  sin ingress (MEF-ADR-0034 seccion 8), y por eso ejerce la suite de un Function App concreto que si
+  tiene proyecciones activas. No tiene un SHA propio del FA bajo prueba que pasar -- igual que
+  `smoke-tests.yml` -- pero, a diferencia de ese global, **si** corre disparado por el mismo push a
+  `main` que puede estar desplegando ese FA en paralelo: la carrera no es una posibilidad remota de un
+  cron desatendido, es estructural en cada push que toca ambos componentes a la vez.
+
+Las clases 2 y 3 comparten la misma condicion (`expected_sha == ''`) y la misma correccion: un paso
+previo al warmup, en `smoke-tests-dominio.yml`, que espera a que termine el **job** `deploy` (nunca el
+run completo -- ver la nota de deadlock mas abajo) de cualquier otro run de este mismo commit cuyo
+nombre de workflow empiece con `Deploy `. La condicion identifica la clase "no despliego el FA que
+pruebo" sin enumerar dominios ni workflows, asi que no crece al scaffoldear un dominio nuevo. Con esa
+guarda, "solo 200" vuelve a ser seguro: para cuando el warmup corre, o no hay ningun deploy ajeno
+tocando el FA, o ya termino -- la invariante que este ADR no nombraba queda restaurada por
+construccion en vez de asumida.
+
+**Por que el job, nunca el run completo.** El run ajeno (p. ej. el propio `deploy-{kebab}.yml` del FA
+bajo prueba) incluye su propio job de smoke tests, que pide el mismo grupo `concurrency` que el job
+que esta esperando ya tiene tomado -- esperar el run entero es un deadlock garantizado, no una carrera
+que a veces se pierde. Un job `deploy` con conclusion `skipped` (el caso de `determinar-alcance`
+cuando el PR no toco ese dominio) ya reporta `status: completed`, asi que no bloquea, sin codigo
+extra. Si un run ajeno no expone ningun job llamado `deploy`, la guarda falla explicitamente
+(`::error::` + exit distinto de cero) en vez de asumir que ya termino: degradar en silencio ante una
+consulta que no devuelve lo esperado reintroduce la carrera sin dejar ninguna senal de que la guarda
+dejo de ver a ese invocador.
+
+**Permisos del token (`actions: read`).** La guarda consulta la API de Actions
+(`GET /repos/{owner}/{repo}/actions/runs` y `.../jobs`), que requiere el scope `actions: read` en el
+`GITHUB_TOKEN` del job que la ejecuta. Un workflow llamado (`uses:`) no puede pedir mas permisos que
+los que su invocador concede en el job que hace esa llamada -- sin esa concesion explicita, el run
+muere en `startup_failure` antes de crear un solo job, sin ninguna annotation que lo explique
+(verificado en un run real del consumidor de origen). La concesion va a nivel de **job**, no de
+workflow completo, para no alterar los permisos de otros jobs del mismo workflow que ya declaran los
+suyos (`pull-requests: read` de `determinar-alcance`, `id-token: write` de `deploy`).
 
 ### 5. Extension al read-side: el worker de proyecciones hornea el mismo SHA, pero lo consume `service.version` de OpenTelemetry, no un endpoint HTTP (issue #462)
 
@@ -219,6 +270,10 @@ piso de SKU en el futuro.
   que no tiene.
 - **No modifica `/api/health`**: cero riesgo de romper un consumidor externo del liveness check
   existente.
+- **El fallback a "solo 200" ya no es una degradacion silenciosa (issue #604)**: cuando `expected_sha`
+  llega vacio, la guarda de deploys ajenos garantiza que ningun `deploy-{kebab}.yml` concurrente del
+  mismo commit siga tocando el FA bajo prueba antes de dejar correr el warmup -- la invariante que la
+  version original de este ADR no nombraba queda restaurada por construccion, no por suerte de timing.
 
 ### Negativas
 
@@ -228,9 +283,19 @@ piso de SKU en el futuro.
 - **Depende de que el SDK de .NET siga soportando `SourceRevisionId`/`AssemblyInformationalVersion`**
   como hoy (comportamiento estable desde .NET 8, sin señales de deprecacion, pero es una dependencia de
   la toolchain que este ADR no controla).
-- **El workflow global de smoke tests no se beneficia del gate**: sigue en modo "solo 200" heredado,
-  porque no hay un deploy al que atar el SHA esperado en ese contexto (decision #4, deliberada, no un
-  descuido).
+- **El workflow global de smoke tests y cualquier deploy que prueba un FA ajeno siguen sin gate por
+  SHA propio**: no hay un SHA al que atarse en ese contexto (decision original de este punto,
+  deliberada, no un descuido) -- lo que la enmienda del issue #604 agrega es la guarda de deploys
+  ajenos, no un SHA sustituto.
+- **La guarda de deploys ajenos puede añadir hasta ~10 minutos al job de smoke** en el peor caso (120
+  intentos x 5s, issue #604) cuando algun run ajeno nunca termina su job `deploy` -- mismo timeout
+  defensivo que ya acepta el punto 3 para el poll de `/api/version`, aplicado ahora tambien a runs
+  ajenos concurrentes.
+- **Depende de dos convenciones de nombres verificadas empiricamente pero no mecanicamente (issue
+  #604)**: el prefijo `Deploy ` del nombre del workflow y el nombre exacto `deploy` del job. Un cambio
+  a esas convenciones en algun `deploy-*.yml` futuro sin actualizar la guarda de `smoke-tests-dominio.yml`
+  la deja sin ver a ese invocador -- mitigado por la guarda misma, que falla explicitamente en vez de
+  degradar en silencio cuando un run que matchea el nombre del workflow no expone el job esperado.
 
 ## Referencias
 
@@ -269,6 +334,10 @@ piso de SKU en el futuro.
 - Bitakora.ControlAsistencia issue #224 (incidente real que origina este ADR: deploy fin `00:54:13Z`
   -> smoke inicio `00:54:18Z`, paquete nuevo vivo ~`00:55`) y field note
   `docs/bitacora/field-notes/2026-07-18-2027-bug-investigation.md` (repo consumidor).
+- Bitakora.ControlAsistencia issue #362 (incidente que origina la enmienda de la seccion 4, issue #604
+  de este repo: `Deploy Projections` en rojo desde 2026-08-07 porque su job de smoke -- la suite de
+  ControlHoras -- corria concurrente con `Deploy ControlHoras`; 4 de 4 corridas solapadas, ventanas de
+  7 a 31 segundos). PR de referencia verificado en runner real: `augusto-romero-arango/Bitakora.ControlAsistencia#362`.
 - MEF-ADR-0013 (smoke tests contra entorno dev): contexto relacionado; este ADR no lo enmienda.
 - MEF-ADR-0006 (convenciones de naming de funciones Azure): ancla `[Function("version")]`, mismo
   patron que `[Function("health")]`.
@@ -300,3 +369,16 @@ piso de SKU en el futuro.
   por `workflow_run`. Sin poll ni timeout: no hay smoke test que abra una compuerta contra este
   worker. Suma la referencia [7] (propiedad **Application Version** / columna `application_Version`,
   donde aterriza el atributo y donde se verifica el circuito).
+- 2026-08-11: enmienda de la seccion 4 y de "Consecuencias" (issue #604). El fallback a "solo 200" no
+  es benigno cuando un deploy concurrente del mismo commit toca el FA bajo prueba: nombra la
+  invariante que la version original no nombraba ("solo puede gatear por version quien despliega el
+  FA que prueba") y la tercera clase de invocador que la viola sin saberlo -- un workflow de deploy
+  que ejerce la suite de un FA ajeno porque el componente que despliega no tiene endpoint HTTP propio
+  (`deploy-projections.yml`). Agrega la correccion: un paso previo al warmup en
+  `smoke-tests-dominio.yml`, condicionado a `expected_sha == ''`, que espera el **job** `deploy`
+  (nunca el run completo -- esperar el run es un deadlock, ese run ajeno pide el mismo `concurrency`
+  que el job que espera ya tiene tomado) de cualquier run del mismo commit cuyo workflow empiece con
+  `Deploy `. Requiere `actions: read` en el job que hace `uses:` de los tres invocadores
+  (`deploy-{kebab}.yml`, `smoke-tests.yml`, `deploy-projections.yml` si invoca el reutilizable) y en
+  el propio reutilizable -- sin esa concesion el run muere en `startup_failure` sin annotation
+  visible.
