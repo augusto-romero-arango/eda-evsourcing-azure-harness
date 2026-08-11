@@ -471,6 +471,72 @@ else
     fail "falso positivo del guard sobre \$ARGUMENTS/\${#ARRAY[@]}: $HITS_PUB2"
 fi
 
+# -------- Bloque H: convenciones acopladas de la guarda "Esperar deploys ajenos" --------
+
+echo "[H] Guarda de deploys ajenos (issue #604, MEF-ADR-0031 seccion 4): convenciones acopladas"
+
+DS="$REPO_ROOT/agents/domain-scaffolder.md"
+GUARDA=$(grep -F 'startswith("Deploy ")' "$DS" | grep -F 'workflow_runs' || true)
+
+if [ -n "$GUARDA" ]; then
+    pass "la plantilla del reutilizable conserva el filtro de runs de la guarda"
+else
+    fail "no se encontro el filtro de runs de la guarda ('workflow_runs' + startswith(\"Deploy \")) en agents/domain-scaffolder.md"
+fi
+
+# La guarda solo se activa para la clase "no despliego el FA que pruebo" (CA-3): la condicion es el
+# input vacio, nunca una lista de dominios o de workflows.
+if grep -qF "if: inputs.expected_sha == ''" "$DS"; then
+    pass "la guarda se condiciona a inputs.expected_sha == '' (sin enumerar dominios)"
+else
+    fail "la guarda perdio su condicion 'if: inputs.expected_sha == \\'\\''' en agents/domain-scaffolder.md"
+fi
+
+# El literal que la guarda busca en los runs ajenos ('deploy') tiene que seguir siendo el nombre del
+# job de la plantilla deploy-{kebab}.yml, y su nombre de workflow tiene que seguir empezando con
+# 'Deploy ': si alguno se renombra sin mover el literal, la guarda deja de ver a ese invocador EN
+# SILENCIO y la carrera del issue #604 vuelve sin senal.
+if grep -qE '^name: Deploy \{PascalCase\}' "$DS"; then
+    pass "la plantilla deploy-{kebab}.yml conserva un nombre de workflow con prefijo 'Deploy '"
+else
+    fail "la plantilla deploy-{kebab}.yml ya no se llama 'Deploy {PascalCase}': mueve el prefijo en el filtro de la guarda (Paso 6.1)"
+fi
+
+if grep -qE '^  deploy:$' "$DS" && grep -qF 'select(.name == "deploy")' "$DS"; then
+    pass "el job 'deploy' de la plantilla y el literal que la guarda busca coinciden"
+else
+    fail "desalineacion entre el job 'deploy' de deploy-{kebab}.yml y el literal 'select(.name == \"deploy\")' de la guarda"
+fi
+
+# Porque la guarda FALLA (no degrada) cuando un run 'Deploy *' no expone un job 'deploy', todo
+# workflow del marco que comparta ese prefijo sin desplegar una Function App debe estar excluido por
+# path. Hoy es solo deploy-projections.yml (projections-scaffolder: jobs build-and-test/publish).
+for agente in "$REPO_ROOT"/agents/*.md; do
+    [ "$agente" = "$DS" ] && continue
+    grep -qE '^name: Deploy ' "$agente" || continue
+    generados=$(grep -oE '\.github/workflows/deploy-[a-z0-9-]+\.yml' "$agente" | sort -u)
+    if [ -z "$generados" ]; then
+        fail "$(basename "$agente") emite un workflow 'Deploy *' sin un path .github/workflows/deploy-*.yml identificable: no se puede verificar su exclusion en la guarda"
+        continue
+    fi
+    for wf in $generados; do
+        if echo "$GUARDA" | grep -qF "select(.path != \"$wf\")"; then
+            pass "la guarda excluye $wf ($(basename "$agente"): 'Deploy *' que no despliega ninguna Function App)"
+        else
+            fail "$wf ($(basename "$agente")) matchea el prefijo 'Deploy ' de la guarda pero no esta excluido por path: la guarda abortaria con exit 1 al no encontrarle un job 'deploy'"
+        fi
+    done
+done
+
+# actions: read en el reutilizable y en los dos jobs invocadores que hacen el 'uses:' (CA-4/CA-5).
+# Sin la concesion el run muere en startup_failure SIN annotation: nada mas lo atraparia.
+ACTIONS_READ=$(grep -cE '^[[:space:]]+actions: read' "$DS" || true)
+if [ "$ACTIONS_READ" -eq 3 ]; then
+    pass "las 3 plantillas conceden 'actions: read' (reutilizable + job smoke-tests de deploy-{kebab}.yml + job smoke-tests del global)"
+else
+    fail "se esperaban 3 concesiones de 'actions: read' en agents/domain-scaffolder.md (reutilizable + 2 invocadores), se encontraron $ACTIONS_READ"
+fi
+
 # -------- Resumen --------
 
 echo ""
