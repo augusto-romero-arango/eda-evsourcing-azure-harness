@@ -40,9 +40,10 @@ El nombre de la funcion Azure es el nombre del comando, como string literal:
 El string literal evita la necesidad de `using` aliases por colision de namespaces
 en la organizacion vertical (el record del comando y la clase del endpoint comparten namespace).
 
-### Funciones HTTP de query (GET)
+### Funciones HTTP de query (GET/QUERY)
 
-Una Function de query (lectura, GET) se nombra igual que un comando -- **verbo infinitivo espanol
+Una Function de query (lectura, GET o QUERY -- MEF-ADR-0042 fija el criterio decidible de cuando
+usar cada metodo HTTP, RFC 10008) se nombra igual que un comando -- **verbo infinitivo espanol
 + sustantivo** -- pero con dos verbos fijos segun la cardinalidad del resultado:
 
 | Cardinalidad | Patron | Ejemplo |
@@ -79,6 +80,18 @@ todavia, o nunca -- una proyeccion materializada para ese concepto). Un dominio 
 necesite ambas vias sobre el mismo concepto debe desambiguar el nombre explicitamente en el
 issue que lo pida; este ADR no fija un calificador generico para ese caso porque MEF-ADR-0035 no
 registra ningun caso real que lo necesite hoy (Rule of Three, MEF-ADR-0018).
+
+**El metodo QUERY (RFC 10008) no cambia nombre ni ruta -- solo el verbo declarado (issue #587,
+MEF-ADR-0042).** Cuando `Listar{X}s` expone filtros estructurados (combinaciones AND/OR, rangos,
+listas de valores) o paginacion por cursor, MEF-ADR-0042 fija que el metodo HTTP pasa de GET a
+QUERY -- pero el nombre de la Function (`[Function("Listar{X}s")]`) y su `Route` (el mismo
+segmento de recurso REST que ya fija esta seccion) **no cambian**: el verbo HTTP es lo unico que
+distingue GET de QUERY para el mismo recurso, igual que ya distingue GET de POST en el mismo
+segmento (ver "Cada Function declara su verbo, siempre" mas abajo). Un dominio que empiece con
+`Listar{X}s` sobre GET y despues necesite filtros estructurados no renombra la Function ni cambia
+su ruta al migrar a QUERY -- solo cambia el segundo argumento del `HttpTriggerAttribute` (`"get"`
+-> `"query"`). El criterio de cuando cruzar esa frontera, la doctrina de paginacion y la de
+filtros multiples viven en MEF-ADR-0042, no en este ADR.
 
 **Ruta HTTP: REST por recurso, nunca el nombre de la Function.** Toda Function HTTP del marco --
 comando y query -- declara su `Route` explicitamente; el default del atributo nunca se usa. Una
@@ -211,7 +224,7 @@ src/Bitakora.ControlAsistencia.{Dominio}/
 | CommandHandler | `{Comando}CommandHandler` | `CrearTurnoCommandHandler` |
 | Validator | `{Comando}Validator` | `CrearTurnoValidator` |
 | AggregateRoot | `{Entidad}AggregateRoot` | `TurnoAggregateRoot` |
-| Query (Function/metodo GET) | Verbo infinitivo + sustantivo: `Obtener{X}` (item por id) / `Listar{X}s` (coleccion) | `ObtenerTurno`, `ListarTurnos` |
+| Query (Function/metodo GET o QUERY) | Verbo infinitivo + sustantivo: `Obtener{X}` (item por id) / `Listar{X}s` (coleccion, GET o QUERY segun MEF-ADR-0042) | `ObtenerTurno`, `ListarTurnos` |
 | Read model (vista de lectura) | Nombre valioso del lenguaje ubicuo, sin sufijo de implementacion (MEF-ADR-0041) | `ResumenAsistenciaDiaria` |
 | Clase de proyeccion (companion, N1/N2 de MEF-ADR-0035) | `{TerminoVista}Projection` (`partial`, mismo stem que la vista) | `ResumenAsistenciaDiariaProjection` -> `ResumenAsistenciaDiaria` |
 | Marker del named store de proyecciones | `I{Dominio}ProjectionStore` | `IVentasProjectionStore` |
@@ -268,8 +281,19 @@ Cross-referencias: MEF-ADR-0035 (superficie de consulta y estilo de codigo de la
 
 La tabla de "Convenciones de nombramiento en codigo C#" fijaba el read model como `{Concepto}View`. MEF-ADR-0041 retira ese sufijo: el nombre del record es un termino valioso del lenguaje ubicuo (`ResumenAsistenciaDiaria`, no `ResumenAsistenciaDiariaView`) -- el rol del tipo ya lo declara su ubicacion (`<RootNamespace>.ReadModels`, MEF-ADR-0034 seccion 5), no su sufijo. La clase de proyeccion companion conserva su sufijo tecnico (`{TerminoVista}Projection`, mismo stem que la vista) porque es artefacto de infraestructura del worker, no objeto del dominio. La colision (a)/(b1) que documenta la seccion "Funciones HTTP de query (GET)" arriba (`TurnoView` proyecta `TurnoAggregateRoot`, ambas vias resuelven a `ObtenerTurno`) queda resuelta mejor por la politica misma de MEF-ADR-0041: con nombre propio, `Obtener{TerminoVista}` no colisiona con `Obtener{Aggregate}` por construccion, salvo el caso residual de una vista genuinamente 1:1 con el aggregate (MEF-ADR-0041, "Consecuencias negativas").
 
+## Nota (issue #587, MEF-ADR-0042): `Listar{X}s` conserva nombre y ruta cuando su verbo es QUERY
+
+MEF-ADR-0042 fija la frontera decidible entre GET y QUERY (RFC 10008) para `Listar{X}s`: GET para
+filtros planos de igualdad en query string, QUERY para filtros estructurados (AND/OR, rangos,
+listas de valores) y paginacion por cursor. Esta seccion no gana un tercer verbo ni una tercera
+fila de naming -- el patron `Listar{X}s` (seccion "Funciones HTTP de query (GET/QUERY)" arriba)
+sigue siendo el mismo nombre y la misma ruta para ambos metodos; solo el argumento de verbo del
+`HttpTriggerAttribute` distingue uno de otro. La doctrina de paginacion y de filtros multiples que
+motiva la eleccion vive integramente en MEF-ADR-0042.
+
 ## Control de cambios
 
 - 2026-07-26: enmendado (issue #363, hermano de MEF-ADR-0035) para fijar el naming de las Functions HTTP de query (GET) -- `Obtener{X}`/`Listar{X}s` con plural real del espanol, y los casos especificos `Obtener{Aggregate}` (via (b1) `Live`) y `ListarEventosDe{Aggregate}` (via (b2) eventos crudos) que fija MEF-ADR-0035 seccion 3 --, su ruta HTTP (REST por recurso, reutilizando el segmento del comando de ese recurso, con verbo HTTP declarado explicitamente en ambos lados y nunca `Route = ""`), la organizacion vertical (una carpeta por query sin sufijo `Function`, descartando el patron agrupado `XQueriesEndpoint` de ControlPlane) y el naming de los artefactos de proyeccion (`{Concepto}View`, `{Concepto}Projection`, `I{Dominio}ProjectionStore`, seam `ConfiguracionMartenProjections{Dominio}`/`Configurar{Dominio}`, hermano del seam write-side de MEF-ADR-0029).
 - 2026-07-27: enmendada la fila `{Concepto}Projection` de la tabla de naming y su nota (issue #412, hermano de la enmienda de MEF-ADR-0034/0035). La clase de proyeccion companion deja de ser exclusiva de N2: con el estilo canonico unificado que fija MEF-ADR-0035 seccion 2, N1 tambien la usa (el read model auto-agregante con `partial` deja de ser el canonico del marco). La nota sobre el `partial` se ajusta: aplica a la clase de proyeccion companion en ambos niveles, nunca al record de read model.
 - 2026-08-07: enmendadas la tabla de "Convenciones de nombramiento en codigo C#" y la lista de sufijos tecnicos (issue #581, creacion de MEF-ADR-0041). El read model pierde el sufijo `View` -- su nombre pasa a ser un termino valioso del lenguaje ubicuo, sin sufijo de implementacion; `View` sale de la lista de sufijos tecnicos en ingles. La clase de proyeccion companion conserva su sufijo (`{TerminoVista}Projection`, mismo stem que la vista). Suma la nota "issue #581, MEF-ADR-0041" documentando el cambio y su efecto sobre la colision (a)/(b1) ya documentada en este ADR.
+- 2026-08-11: enmendada la seccion "Funciones HTTP de query" (issue #587, creacion de MEF-ADR-0042). El titulo pasa a "Funciones HTTP de query (GET/QUERY)": una Function de query ya no es exclusivamente GET -- MEF-ADR-0042 fija el criterio decidible para elegir GET o el metodo QUERY (RFC 10008) segun la forma del filtro (plano de igualdad vs estructurado) o si expone paginacion por cursor. Fija que cruzar esa frontera no cambia el nombre de la Function ni su `Route`: solo el verbo declarado en el `HttpTriggerAttribute`. La tabla de "Convenciones de nombramiento en codigo C#" ajusta su fila de Query a "GET o QUERY". Suma la nota "issue #587, MEF-ADR-0042" documentando el cambio.
