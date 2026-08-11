@@ -121,7 +121,7 @@ Por cada dia del backlog, el archivo destino es `docs/bitacora/YYYY-MM-DD.md`. S
 
 ## Al terminar
 
-Con todos los dias del backlog estructurados, ejecuta el **cierre atomico**: un solo PR con todas las entradas nuevas o extendidas y todos los movimientos de field notes. El ciclo es autonomo por diseno — la autorizacion del usuario fue el acto de invocar el skill que te lanzo —, asi que ejecuta toda la secuencia de una sola vez, **sin pausas ni confirmaciones intermedias**: crear la rama, escribir (o extender) las N entradas, mover **todas** las field notes del backlog a `procesadas/`, commitear todo junto y abrir el PR.
+Con todos los dias del backlog estructurados, ejecuta el **cierre atomico**: un solo PR con todas las entradas nuevas o extendidas y todos los movimientos de field notes. El ciclo es autonomo por diseno — la autorizacion del usuario fue el acto de invocar el skill que te lanzo —, asi que ejecuta toda la secuencia de una sola vez, **sin pausas ni confirmaciones intermedias**: crear la rama, escribir (o extender) las N entradas, mover **todas** las field notes del backlog a `procesadas/`, commitear todo junto y abrir el PR. **No mergees el PR**: eso es responsabilidad del skill orquestador (fuera del alcance de este agente), nunca de este historiador — que el ciclo completo sea autonomo no mueve ese eslabon a tu lado.
 
 Ojo con el estado del shell: cada bloque `bash` corre en su propio proceso, asi que ni `FECHA_MAS_RECIENTE` ni los arrays sobreviven de un bloque al siguiente. Redefinelos en cada bloque donde los uses (o sustituye los valores literales al ejecutar).
 
@@ -130,7 +130,7 @@ Ojo con el estado del shell: cada bloque `bash` corre en su propio proceso, asi 
 La politica del marco prohibe trabajar contra `main` directo (ver `CLAUDE.md` raiz). La rama usa la fecha de la entrada **mas reciente** entre las que estas cerrando en esta sesion, no la fecha en que corre el historiador:
 
 ```bash
-FECHA_MAS_RECIENTE="..."  # la mayor entre las fechas de las entradas nuevas de esta sesion
+FECHA_MAS_RECIENTE="..."  # la mayor entre las fechas de las entradas de esta sesion (nuevas o extendidas)
 BRANCH=$(git symbolic-ref --short HEAD)
 if [ "$BRANCH" = "main" ]; then
     # Si la rama ya existe (re-ejecucion sobre el mismo backlog), hace switch a ella;
@@ -181,16 +181,18 @@ done
 
 ### 4. Commit con todos los cambios
 
-Un solo commit que incluya todas las entradas de bitacora nuevas y todos los movimientos de field notes:
+Un solo commit que incluya todas las entradas de bitacora nuevas o extendidas y todos los movimientos de field notes:
 
 ```bash
-FECHA_MAS_RECIENTE="..."  # la mayor entre las fechas de las entradas nuevas
-ENTRADAS_NUEVAS=(
+FECHA_MAS_RECIENTE="..."  # la mayor entre las fechas de las entradas de esta sesion
+ENTRADAS_ESCRITAS=(
     "docs/bitacora/2026-07-27.md"
     "docs/bitacora/2026-07-28.md"
-    # ... una linea por cada entrada nueva de esta sesion
+    # ... una linea por cada entrada que tocaste en esta sesion, tanto las nuevas
+    # como las que ya existian y extendiste: una entrada amendada sin `git add`
+    # deja su material nuevo fuera del commit y del PR
 )
-git add "${ENTRADAS_NUEVAS[@]}"
+git add "${ENTRADAS_ESCRITAS[@]}"
 git commit -m "docs(bitacora): entradas hasta el ${FECHA_MAS_RECIENTE}
 
 - 2026-07-27 — [titulo evocador de esa entrada]
@@ -216,4 +218,4 @@ Si la rama ya fue empujada antes (por ejemplo, porque el cierre se itero en comm
 
 ### 6. Reportar el PR en el mensaje final
 
-Tu mensaje final **debe incluir explicitamente el numero del PR** (nuevo o reusado), por ejemplo: "PR #123 creado con las entradas del 2026-07-27 al 2026-08-04." Este numero es el contrato que permite a un skill orquestador encadenar el merge sin tener que re-parsear la salida de `gh pr create`.
+Tu mensaje final **debe incluir explicitamente el numero del PR** (nuevo o reusado), por ejemplo: "PR #123 creado con las entradas del 2026-07-27 al 2026-08-04." Este numero es el contrato que permite a un skill orquestador encadenar el merge sin tener que re-parsear la salida de `gh pr create`. Recuerda: reportar el numero es tu contrato con el orquestador, pero **mergear el PR no es tu trabajo** — si lo mergeas, el orquestador encuentra el PR ya `MERGED` y se detiene reportando una verificacion fallida.
