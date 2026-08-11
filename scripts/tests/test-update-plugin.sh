@@ -16,10 +16,17 @@
 #   S-3: _marketplace_dir() detecta el marketplace sin hardcodear su nombre (CA-2):
 #        derivandolo del .plugin-root cargado, o por glob sobre el cache, y falla cuando
 #        no hay ningun 'mefisto'.
+#   S-4: el modo ACTUALIZAR califica el nombre del plugin con su marketplace al invocar
+#        el CLI (issue #601): 'claude plugin update mefisto@<marketplace> --scope user',
+#        no 'mefisto' a secas -- el CLI rechaza el nombre sin calificar. Es el unico
+#        bloque que corre main() end-to-end.
 #
 # El script se sourcea (no se ejecuta): scripts/update-plugin.sh solo corre su main()
 # cuando BASH_SOURCE[0] == $0, asi que sourcearlo aqui carga las funciones sin disparar el
-# guard cwd != Mefisto ni el update real.
+# guard cwd != Mefisto ni el update real. S-4 llama a main() a proposito, pero en un
+# subshell con las tres fronteras peligrosas neutralizadas: cwd de mentira (git repo
+# temporal sin .claude-plugin/plugin.json), cache de mentira (MEFISTO_CACHE_ROOT) y un
+# stub de 'claude' antepuesto al PATH -- nunca se toca el cache real ni se invoca el CLI.
 #
 # Uso: scripts/tests/test-update-plugin.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -108,8 +115,9 @@ FAKE_CACHE_S4="$(mktemp -d)"
 CLAUDE_LOG="$(mktemp)"
 trap 'rm -rf "$FAKE_CACHE" "$STUB_DIR" "$CONSUMER_DIR" "$FAKE_CACHE_S4" "$CLAUDE_LOG"' EXIT
 
-# Marketplace de mentira (no hardcodeado en los asserts de abajo): clava que el fix
-# tambien funciona en un fork publicado bajo otro nombre de marketplace (CA-4).
+# Marketplace de mentira (los asserts de abajo lo derivan de esta variable, no lo
+# hardcodean): clava que el fix tambien funciona en un fork publicado bajo otro nombre de
+# marketplace, la misma regla que protege S-3.
 MARKETPLACE_FIXTURE="un-fork-de-mentira"
 mkdir -p "$FAKE_CACHE_S4/$MARKETPLACE_FIXTURE/mefisto/0.20.0" \
          "$FAKE_CACHE_S4/$MARKETPLACE_FIXTURE/mefisto/0.21.0"
