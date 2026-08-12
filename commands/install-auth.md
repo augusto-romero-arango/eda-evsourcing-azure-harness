@@ -199,6 +199,8 @@ Checklist post-deploy (correr una vez que el apply de CI termine, contra el gate
   3. POST con token WorkOS valido -> 202 Accepted, y el request llega a la Function App backend
      (confirmar en App Insights que el request aparece, no solo que APIM respondio).
   4. En el backend, X-User-Id y X-Tenant-Id llegan no vacios.
+  5. Si un request con token valido responde 404 (ni 401 ni 400), la causa no es CORS (B3) ni el
+     <backend> vacio (B2): es la operacion APIM faltante (B11 de MEF-ADR-0032).
 ```
 
 ### 10. Reportar
