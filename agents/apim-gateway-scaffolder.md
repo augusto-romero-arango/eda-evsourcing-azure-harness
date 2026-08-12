@@ -348,7 +348,7 @@ variable "function_app_hostname_suffix" {
 }
 
 variable "operation_methods" {
-  description = "Verbos HTTP wildcard a exponer en esta API (B11/CA-1, issue #610: opcion (b) -- operaciones wildcard por verbo, no una operacion explicita por endpoint del dominio). Default = los dos verbos clasicos del marco (MEF-ADR-0006: comandos POST, queries GET). El metodo QUERY (RFC 10008, issue #608) se suma a esta lista cuando ese issue lo requiera -- el REST API reference de ApiOperation confirma que 'method' es 'A Valid HTTP Operation Method... but not limited by only [GET, PUT, POST]', asi que no hay gate de esquema que lo bloquee."
+  description = "Verbos HTTP wildcard a exponer en esta API (B11/CA-1, issue #610: opcion (b) -- operaciones wildcard por verbo, no una operacion explicita por endpoint del dominio). Default = los dos verbos clasicos del marco (MEF-ADR-0006: comandos POST, queries GET). El metodo QUERY (RFC 10008, issue #608) se suma a esta lista cuando ese issue lo requiera -- el REST API reference de ApiOperation confirma que 'method' es 'A Valid HTTP Operation Method... but not limited by only [GET, PUT, POST]', asi que no hay gate de esquema que lo bloquee. NUNCA agregues OPTIONS a esta lista: la referencia de la politica cors es explicita en que 'if a request matches an operation with an OPTIONS method defined in the API, preflight request processing logic associated with the cors policy will not be executed' -- declarar OPTIONS aqui desactiva el manejo automatico del preflight y reintroduce B3 (el navegador vuelve a quedarse sin respuesta de CORS)."
   type        = list(string)
   default     = ["GET", "POST"]
 }
@@ -428,14 +428,21 @@ resource "azurerm_api_management_api" "this" {
 #
 # Trade-off aceptado y documentado, no una omision: la guia de mitigacion OWASP API5:2023 de
 # Microsoft recomienda EXPLICITAMENTE no usar operaciones wildcard ("Don't define wildcard API
-# operations... Ensure that API Management only serves requests for explicitly defined endpoints,
-# and requests to undefined endpoints are rejected", mitigate-owasp-api-threats#improper-function-
-# level-authorization). Este marco se aparta de esa recomendacion a proposito: el limite de
-# seguridad real del patron no es el catalogo de operaciones de APIM, es la politica validate-jwt
-# GLOBAL (B1-B10 de este mismo ADR), que se evalua para TODO match de ruta sea la operacion
-# wildcard o explicita -- una operacion wildcard no abre ninguna superficie que el JWT no cierre.
-# Un consumidor que priorice gobernanza per-endpoint sobre aditividad puede reemplazar este
-# recurso por una operacion explicita por endpoint (opcion (a), descartada aqui como default).
+# operations (that is, 'catch-all' APIs with * as the path). Ensure that API Management only
+# serves requests for explicitly defined endpoints, and requests to undefined endpoints are
+# rejected", mitigate-owasp-api-threats#broken-function-level-authorization). Este marco se
+# aparta de esa recomendacion a proposito: el limite de seguridad real del patron no es el
+# catalogo de operaciones de APIM, es la politica validate-jwt GLOBAL (B1-B6/B10 de este mismo
+# ADR), que se evalua para TODO match de ruta sea la operacion wildcard o explicita -- una
+# operacion wildcard no abre ninguna superficie que el JWT no cierre. Un consumidor que priorice
+# gobernanza per-endpoint sobre aditividad puede reemplazar este recurso por una operacion
+# explicita por endpoint (opcion (a), descartada aqui como default).
+#
+# OPTIONS queda FUERA de var.operation_methods a proposito, y no es un olvido: la referencia de
+# la politica cors dice que "if a request matches an operation with an OPTIONS method defined in
+# the API, preflight request processing logic associated with the cors policy will not be
+# executed". Declarar una operacion OPTIONS aqui desactivaria el manejo automatico del preflight
+# que la politica global hace por B3 -- el gateway dejaria de responder el preflight del SPA.
 resource "azurerm_api_management_api_operation" "wildcard" {
   for_each = toset(var.operation_methods)
 
@@ -697,7 +704,7 @@ Imprime un resumen claro:
 9. **NUNCA** los `set-header` de identidad sin `exists-action="override"` -- B10, mecanismo anti-spoofing obligatorio.
 10. **NUNCA** materialices la host key de una Function App como valor literal en HCL ni como output legible en claro -- B8. Siempre `azurerm_api_management_named_value` con `secret = true`, referenciada con `{{...}}` en `credentials.header`.
 11. **SIEMPRE** `subscription_required = false` en cada `azurerm_api_management_api` (el default del recurso es `true`) -- B9: la puerta es el JWT, no una subscription key.
-12. **SIEMPRE** genera al menos una `azurerm_api_management_api_operation` por cada `azurerm_api_management_api` (wildcard por verbo, CA-1/B11) -- sin ninguna operacion, APIM responde `404` a todo el trafico del dominio, incluso con JWT ya validado.
+12. **SIEMPRE** genera al menos una `azurerm_api_management_api_operation` por cada `azurerm_api_management_api` (wildcard por verbo, CA-1/B11) -- sin ninguna operacion, APIM responde `404` a todo el trafico del dominio, incluso con JWT ya validado. **NUNCA** incluyas `OPTIONS` entre esos verbos: una operacion `OPTIONS` declarada desactiva el procesamiento automatico del preflight de la politica `cors` y reintroduce B3.
 13. **NUNCA** sobrescribas `infra-cd.yml` completo (Paso 3b): solo insertale, de forma idempotente y guardada por `grep`, las dos lineas `TF_VAR_workos_client_id`/`TF_VAR_cors_allowed_origins` si faltan.
 14. **NO** termines sin que `terraform validate` pase (salvo que `terraform` no este instalado, en cuyo caso lo dejas como pendiente manual explicito).
 15. **NUNCA** trabajes contra `main` directo; crea una rama o reusa la del pipeline que te invoco.

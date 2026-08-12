@@ -288,6 +288,10 @@ Checklist post-deploy (correr una vez que el apply de CI termine, contra el gate
   4. En el backend, X-User-Id y X-Tenant-Id llegan no vacios (confirma que el mapping de claims
      esta resolviendo valores reales, no cadenas vacias por un claim mal nombrado -- B10 de
      MEF-ADR-0032).
+  5. Si un request con token valido responde 404 (ni 401 ni 400), la causa no es CORS (B3) ni el
+     <backend> vacio (B2): es la operacion faltante -- B11 de MEF-ADR-0032. Confirmar que la
+     azurerm_api_management_api del dominio tiene al menos una azurerm_api_management_api_operation
+     que matchee el metodo del request (el modulo genera la wildcard por verbo automaticamente).
 ```
 
 ### 13. Reportar
