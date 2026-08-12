@@ -1,11 +1,11 @@
 ---
 name: projections
-description: Doctrina de proyecciones Marten y de Functions de query read-only del marco (naming, recetas, read APIs, config-test). Usar cuando se proponga o implemente una proyeccion (SingleStreamProjection/MultiStreamProjection/EventProjection), un read model, o un endpoint HTTP GET de lectura (Obtener{X}/Listar{X}s) sobre QuerySession.
+description: Doctrina de proyecciones Marten y de Functions de query read-only del marco (naming, recetas, read APIs, paginacion y filtros, config-test). Usar cuando se proponga o implemente una proyeccion (SingleStreamProjection/MultiStreamProjection/EventProjection), un read model, o un endpoint HTTP de lectura sobre QuerySession -- GET o QUERY/RFC 10008 (Obtener{X}/Listar{X}s), incluyendo su paginacion (keyset/cursor u offset) y sus filtros combinados.
 ---
 
 # Proyecciones y query read-side
 
-Fuente unica de la doctrina read-side del marco -- MEF-ADR-0035 (estilo de codigo y superficie de consulta), MEF-ADR-0034 (worker de proyecciones y config-test), MEF-ADR-0006 (naming) y MEF-ADR-0041 (forma propia de la vista, `ReadModels` como cuarta isla). El `planner` la usa para proponer un issue `tipo:projection`; los subagentes read-side `projection-test-writer`/`projection-implementer` (issue #365) la precargan via `skills:` para generar codigo -- el par adversarial delgado que escribe tests (roja) e implementa (verde) sin duplicar esta doctrina en su cuerpo. `reviewer` y `smoke-test-writer` (issue #374) tambien la precargan via `skills:` para reconocer los patrones read-side al revisar un PR `tipo:projection` y para generar smoke tests de Functions GET de consulta, sin que un PR puramente write-side pague ningun hallazgo nuevo. El `projections-scaffolder` que crea el scaffold inicial del worker, de `.ReadModels` y de `.Projections.Tests` (issues #367/#375) ya existe, pero **no** escribe ninguna proyeccion ni read model concreto: eso es alcance de los dos subagentes read-side. **No duplicar este contenido en los agentes generalistas write-side** (`implementer`/`test-writer`): si el issue no toca proyecciones, este Skill no se dispara y su costo es cero (MEF-ADR-0033).
+Fuente unica de la doctrina read-side del marco -- MEF-ADR-0035 (estilo de codigo y superficie de consulta), MEF-ADR-0034 (worker de proyecciones y config-test), MEF-ADR-0006 (naming), MEF-ADR-0041 (forma propia de la vista, `ReadModels` como cuarta isla) y MEF-ADR-0042 (frontera GET vs QUERY, paginacion y filtros multiples). El `planner` la usa para proponer un issue `tipo:projection`; los subagentes read-side `projection-test-writer`/`projection-implementer` (issue #365) la precargan via `skills:` para generar codigo -- el par adversarial delgado que escribe tests (roja) e implementa (verde) sin duplicar esta doctrina en su cuerpo. `reviewer` y `smoke-test-writer` (issue #374) tambien la precargan via `skills:` para reconocer los patrones read-side al revisar un PR `tipo:projection` y para generar smoke tests de Functions GET de consulta, sin que un PR puramente write-side pague ningun hallazgo nuevo. El `projections-scaffolder` que crea el scaffold inicial del worker, de `.ReadModels` y de `.Projections.Tests` (issues #367/#375) ya existe, pero **no** escribe ninguna proyeccion ni read model concreto: eso es alcance de los dos subagentes read-side. **No duplicar este contenido en los agentes generalistas write-side** (`implementer`/`test-writer`): si el issue no toca proyecciones, este Skill no se dispara y su costo es cero (MEF-ADR-0033).
 
 **Stack verificado**: Marten `9.12.0` pinneado (MEF-ADR-0003). Toda receta de este Skill debe re-verificarse por compilacion antes de asumir que el ejemplo compila tal cual -- varios detalles de abajo (el `partial`, la superficie de `StoreOptions`) tienen caveats de verificacion documentados en las fuentes citadas.
 
@@ -13,7 +13,7 @@ Fuente unica de la doctrina read-side del marco -- MEF-ADR-0035 (estilo de codig
 
 - El **worker de proyecciones** (`<RootNamespace>.Projections`, un unico proceso por Bounded Context) hostea el daemon asincronico de Marten que materializa proyecciones `Async`. Fija **donde** corre esto MEF-ADR-0034; este Skill no repite esa doctrina de infraestructura.
 - Los **read models** (records planos, sin Marten ni transitivamente) viven en `<RootNamespace>.ReadModels`, biblioteca separada referenciada por el worker. `ReadModels` es la **cuarta isla** del criterio de cero `ProjectReference` que MEF-ADR-0039 decision 2 (enmendada por MEF-ADR-0041) fija para los ensamblados de evento: no referencia ningun `{Dominio}.DomainEvents`, ni `PublicEvents`/`PrivateEvents`, ni ningun otro proyecto del repo -- sus records solo declaran campos primitivos. Las **clases de proyeccion** (companion `partial`) viven en el **worker** (`<RootNamespace>.Projections`), el ensamblado que si referencia Marten (MEF-ADR-0034 seccion 5).
-- El **endpoint HTTP GET** de lectura vive en el Function App del **write-side** del dominio (el worker no tiene ingress) y abre su `QuerySession` desde el `IDocumentStore` ya configurado ahi (MEF-ADR-0035 seccion 4).
+- El **endpoint HTTP de lectura** (GET o QUERY, MEF-ADR-0042) vive en el Function App del **write-side** del dominio (el worker no tiene ingress) y abre su `QuerySession` desde el `IDocumentStore` ya configurado ahi (MEF-ADR-0035 seccion 4).
 - Los **tipos de evento** que tipan `Create`/`Apply` de esas clases de proyeccion viven en `<RootNamespace>.{Dominio}.DomainEvents` -- el worker los alcanza via su `ProjectReference` a ese ensamblado, el mismo que ya referencia el write-side del dominio, **nunca** via una referencia al `.csproj` de un Function App (MEF-ADR-0039 decisiones 2 y 4).
 
 ## 2. Elegir la receta: arbol de 3 niveles
@@ -43,6 +43,8 @@ Ver **[read-apis.md](read-apis.md)** para la tabla completa de read APIs, el pat
 
 **Regla de identidad no negociable (MEF-ADR-0037)**: el `id` de ruta se parsea tipado una sola vez antes de tocar cualquier read API -- `Guid.TryParse` si la identidad nacio `Guid`, componentes tipados + `ComputarStreamId(...)` si es clave compuesta -- con `400` explicito (`BadRequestObjectResult` con mensaje) si el parseo falla. **Proscrito**: recibir la clave ya armada como `string` y pasarla cruda a `LoadAsync`/`AggregateStreamAsync`/`FetchStreamAsync`. El `ToString()` posterior al parseo aplica solo cuando el id **es** un stream key (N1, `TId = string`); un read model N2 con `TId` del slicer se parsea tipado igual, pero se pasa el valor tipado (frontera en [read-apis.md](read-apis.md)).
 
+**GET o QUERY (MEF-ADR-0042)**: `Obtener{X}` por id es siempre GET; `Listar{X}s` va sobre **GET** cuando sus filtros son pares planos de igualdad en query string, y sobre **QUERY** (RFC 10008) cuando lleva filtros estructurados (AND/OR, rangos, listas de valores) o paginacion por cursor. Cruzar esa frontera no cambia el nombre de la Function ni su `Route` -- solo el verbo. Paginacion: **keyset/cursor por default**, offset como excepcion documentada (Rule of Three). Filtro: **DTO tipado** del body, `Content-Type: application/json` obligatorio, AND por defecto, codigos `400`/`415`/`422` siempre con mensaje. Mecanica y ejemplo canonico en [read-apis.md](read-apis.md).
+
 Time-travel (`version`/`timestamp` en `AggregateStreamAsync`) queda diferido -- Rule of Three, MEF-ADR-0018.
 
 ## 4. Naming: Functions de query y artefactos de proyeccion
@@ -52,7 +54,7 @@ Ver **[naming.md](naming.md)** para el patron completo (verbo + cardinalidad, ru
 | Concepto | Patron | Ejemplo |
 |---|---|---|
 | Query por id | `Obtener{X}` | `ObtenerTurno` |
-| Query por filtro/lista | `Listar{X}s` (plural real del espanol) | `ListarTurnos` |
+| Query por filtro/lista | `Listar{X}s` (plural real del espanol; GET o QUERY segun MEF-ADR-0042, mismo nombre y ruta) | `ListarTurnos` |
 | Read model | Termino del glosario, sin sufijo de implementacion (MEF-ADR-0041) | `ResumenAsistenciaDiaria` |
 | Clase de proyeccion (N1/N2) | `{TerminoVista}Projection` (`partial`, mismo stem que la vista) | `ResumenAsistenciaDiariaProjection` |
 | Marker del named store | `I{Dominio}ProjectionStore` | `IVentasProjectionStore` |

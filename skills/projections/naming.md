@@ -1,8 +1,8 @@
 # Naming: Functions de query y artefactos de proyeccion
 
-Fuente: MEF-ADR-0006 (enmienda issue #363, hermano de MEF-ADR-0035; naming del read model reenmendado por MEF-ADR-0041, issue #581). Aqui solo se fija el **naming**; el estilo de codigo y la superficie de consulta los fija MEF-ADR-0035 (ver [modelos-marten.md](modelos-marten.md) y [read-apis.md](read-apis.md)); la forma de la vista (que campos, que nombres) la fija MEF-ADR-0041, no este documento.
+Fuente: MEF-ADR-0006 (enmienda issue #363, hermano de MEF-ADR-0035; naming del read model reenmendado por MEF-ADR-0041, issue #581; verbo GET/QUERY reenmendado por MEF-ADR-0042, issue #587). Aqui solo se fija el **naming**; el estilo de codigo y la superficie de consulta los fija MEF-ADR-0035 (ver [modelos-marten.md](modelos-marten.md) y [read-apis.md](read-apis.md)); la forma de la vista (que campos, que nombres) la fija MEF-ADR-0041, no este documento.
 
-## Functions HTTP de query (GET)
+## Functions HTTP de query (GET/QUERY)
 
 Una Function de query se nombra igual que un comando -- **verbo infinitivo espanol + sustantivo** -- pero con dos verbos fijos segun la cardinalidad del resultado:
 
@@ -20,6 +20,10 @@ El `s` de `Listar{X}s` es el **plural correcto del espanol**, no un sufijo liter
 - **(b2) Eventos crudos del stream**: `ListarEventosDe{Aggregate}` (`ListarEventosDeTurno`).
 
 **Colision entre (a) y (b1), ahora infrecuente por construccion (MEF-ADR-0041 decision 3)**: antes de que el read model tuviera nombre propio, cuando compartia concepto con el aggregate ambas vias producian el **mismo** nombre de Function -- y dos Functions con identico `[Function("...")]` no pueden coexistir. Con un read model nombrado por su necesidad de lectura (`ResumenAsistenciaDiaria`, no `Asistencia`), `Obtener{X}` deja de coincidir con `Obtener{Aggregate}` en el caso comun. La colision sigue siendo posible en el caso residual de una vista genuinamente 1:1 cuyo termino coincide con el del aggregate -- ahi un dominio expone **una sola** via de lectura por id a la vez ((a) es la default; (b1) la excepcion cuando no existe proyeccion materializada), y debe desambiguar el nombre explicitamente en el issue que lo pida (Rule of Three, MEF-ADR-0018).
+
+## GET o QUERY: el verbo distingue, el nombre nunca cambia (MEF-ADR-0042)
+
+`Listar{X}s` se expone sobre **GET** cuando sus filtros son pares planos de igualdad en query string, o sobre **QUERY** (RFC 10008) cuando expone filtros estructurados (combinaciones AND/OR, rangos, listas de valores) o paginacion por cursor -- MEF-ADR-0042 fija el criterio decidible completo. Cruzar esa frontera **no** cambia el nombre de la Function (`[Function("Listar{X}s")]`) ni su `Route`: el unico elemento que distingue un metodo del otro es el segundo argumento del `HttpTriggerAttribute` (`"get"` -> `"query"`), igual que ya distingue GET de POST sobre el mismo segmento de recurso. Ver [read-apis.md](read-apis.md) para el ejemplo canonico de un endpoint QUERY (filtro tipado, paginacion por cursor, mapeo de codigos 400/415/422).
 
 ## Ruta HTTP: REST por recurso, nunca el nombre de la Function
 
@@ -74,7 +78,7 @@ src/<RootNamespace>.{Dominio}/
 
 | Concepto | Convencion | Ejemplo |
 |---|---|---|
-| Query (Function/metodo GET) | `Obtener{X}` (item por id) / `Listar{X}s` (coleccion) | `ObtenerTurno`, `ListarTurnos` |
+| Query (Function/metodo GET o QUERY) | `Obtener{X}` (item por id) / `Listar{X}s` (coleccion, GET o QUERY segun MEF-ADR-0042) | `ObtenerTurno`, `ListarTurnos` |
 | Read model (vista de lectura) | Termino del lenguaje ubicuo, sin sufijo de implementacion (MEF-ADR-0041 decision 3) | `ResumenAsistenciaDiaria` |
 | Clase de proyeccion (companion, N1/N2) | `{TerminoVista}Projection` (`partial`, en el worker, mismo stem que la vista) | `ResumenAsistenciaDiariaProjection` -> `ResumenAsistenciaDiaria` |
 | Marker del named store de proyecciones | `I{Dominio}ProjectionStore` | `IVentasProjectionStore` |

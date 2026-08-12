@@ -1,6 +1,6 @@
 # Read APIs: como consultar una proyeccion o un aggregate
 
-Fuente: MEF-ADR-0035 secciones 3-5 (superficie de consulta); MEF-ADR-0041 decision 4 (frontera HTTP del GET, DTO de respuesta bajo Rule of Three). Toda API de esta pagina esta disponible sobre `IQuerySession` salvo donde se indique lo contrario.
+Fuente: MEF-ADR-0035 secciones 3-5 (superficie de consulta); MEF-ADR-0041 decision 4 (frontera HTTP del GET, DTO de respuesta bajo Rule of Three); MEF-ADR-0042 (frontera GET vs QUERY, paginacion y filtros multiples). Toda API de esta pagina esta disponible sobre `IQuerySession` salvo donde se indique lo contrario.
 
 ## Tabla de read APIs canonicas
 
@@ -94,6 +94,75 @@ public async Task<IActionResult> Run(
 **Frontera -- solo cae bajo esta regla el id que ES una identidad de stream** (MEF-ADR-0037 seccion 3). Es el caso de N1, donde el id del read model es el `StreamKey` que Marten resolvio (`TId = string`). Un read model N2 cuyo `TId` lo fija el slicer `Identity<TEvento>(...)` -- un `ResumenEquipo` con `Guid EquipoId`, campo de dominio del payload y no clave de stream ([modelos-marten.md](modelos-marten.md)) -- queda **fuera** del sujeto del ADR: el parseo tipado del borde y su `400` siguen siendo obligatorios, pero lo que recibe `LoadAsync<ResumenEquipo>(equipoId, ct)` es el valor **tipado**, sin `ToString()`. El tipo del argumento lo fija el `TId` de la proyeccion, no esta regla: agregarle un `ToString()` ahi no es una precaucion extra, es pasarle a Marten un id del tipo equivocado.
 
 **Proscrito**: un parametro de ruta `string` cuyo valor -- simple o ya concatenado -- viaje sin parsear hasta el store, el bus o `LoadAsync`/`AggregateStreamAsync`/`FetchStreamAsync`. Un route constraint (`{id:guid}`) no sustituye este parseo: produce `404` en vez de `400` y no normaliza el casing -- advertencia literal de la documentacion oficial de ASP.NET Core sobre route constraints (MEF-ADR-0037 seccion 2). Declararlo por su proposito real -- desambiguar rutas parecidas -- sigue siendo legitimo, pero entonces el parseo con `400` va igual (MEF-ADR-0037 Alt 4).
+
+## Metodo QUERY (RFC 10008): filtros estructurados y paginacion por cursor
+
+MEF-ADR-0042 fija cuando `Listar{Concepto}s` (via (a')) se expone sobre GET y cuando sobre **QUERY** (RFC 10008): GET para filtros planos de igualdad en query string; QUERY para filtros estructurados (combinaciones AND/OR, rangos, listas de valores) y paginacion por cursor. El nombre de la Function y su `Route` no cambian entre uno y otro (MEF-ADR-0006) -- solo el verbo del `HttpTriggerAttribute`.
+
+**Ejemplo canonico** (el trigger `"query"` esta verificado por POC contra .NET 10 + Azure Functions Core Tools 4.6.0 -- el host registra el trigger `[QUERY]`, enruta el verbo y entrega el body intacto):
+
+```csharp
+// ListarSeguimientosTurno/FunctionEndpoint.cs -- filtros estructurados + paginacion por cursor via QUERY
+public sealed record FiltroListarSeguimientosTurno(
+    string? Estado,
+    IReadOnlyList<string>? Estados,
+    DateOnly? DesdeFecha,
+    DateOnly? HastaFecha,
+    string? Cursor,
+    int Take = 50);
+
+private const int TakeMaximo = 200;   // cota del servidor -- el Take del cliente nunca llega crudo a Marten
+
+[Function("ListarSeguimientosTurno")]
+public async Task<IActionResult> Run(
+    [HttpTrigger(AuthorizationLevel.Function, "query", Route = "Programacion/Turnos")]
+    HttpRequest req,
+    CancellationToken ct)
+{
+    // 415 ANTES de leer el body: ReadFromJsonAsync lanza si el Content-Type no es un tipo JSON conocido,
+    // y esa excepcion NO es JsonException -- sin este guard se escaparia como 500 (RFC 10008 seccion 2.1: 415).
+    if (!req.HasJsonContentType())
+        return new ObjectResult("La query exige Content-Type: application/json")
+            { StatusCode = StatusCodes.Status415UnsupportedMediaType };
+
+    FiltroListarSeguimientosTurno? filtro;
+    try
+    {
+        filtro = await req.ReadFromJsonAsync<FiltroListarSeguimientosTurno>(ct);
+    }
+    catch (JsonException)
+    {
+        return new BadRequestObjectResult("El body de la query no es un JSON valido"); // RFC 10008 seccion 2.1: 400
+    }
+
+    if (filtro is null)
+        return new BadRequestObjectResult("El body de la query es obligatorio");
+
+    if (filtro.DesdeFecha is not null && filtro.HastaFecha is not null && filtro.DesdeFecha > filtro.HastaFecha)
+        return new ObjectResult("DesdeFecha no puede ser posterior a HastaFecha")
+            { StatusCode = StatusCodes.Status422UnprocessableEntity };   // RFC 10008 seccion 2.1: 422
+
+    // Sesion acotada al tenant del resolver -- identico al GET (MEF-ADR-0028), nunca a un tenant del body.
+    await using var session = store.QuerySession(tenantResolver.TenantId);
+    IQueryable<SeguimientoTurno> query = session.Query<SeguimientoTurno>();
+    if (filtro.Estado is not null) query = query.Where(t => t.Estado == filtro.Estado);          // AND por defecto -- MEF-ADR-0042
+    if (filtro.Estados is { Count: > 0 }) query = query.Where(t => filtro.Estados.Contains(t.Estado)); // OR explicito: campo propio
+    if (filtro.DesdeFecha is not null) query = query.Where(t => t.FechaInicio >= filtro.DesdeFecha);
+    if (filtro.HastaFecha is not null) query = query.Where(t => t.FechaInicio <= filtro.HastaFecha);
+    if (filtro.Cursor is not null) query = query.Where(t => t.Id.CompareTo(filtro.Cursor) > 0);  // keyset -- ver caveat abajo
+
+    var pagina = await query.OrderBy(t => t.Id).Take(Math.Clamp(filtro.Take, 1, TakeMaximo)).ToListAsync(ct);
+    return new OkObjectResult(pagina);
+}
+```
+
+- **`Content-Type: application/json` obligatorio** (RFC 10008 seccion 2), y el guard va **antes** del parseo: la doc oficial de `HttpRequestJsonExtensions.ReadFromJsonAsync` dice *"If the request's content-type is not a known JSON type then an error will be thrown"* -- ese error **no** es un `JsonException`, asi que envolver solo el parseo en `try/catch` deja escapar un `500` donde el RFC pide `415`. `req.HasJsonContentType()` es el chequeo que la propia doc de ASP.NET Core ofrece para eso. El `400` posterior sigue el mismo patron `BadRequestObjectResult` **con mensaje** que MEF-ADR-0037 ya fija para el parseo del id de ruta.
+- **AND por defecto** entre los campos no nulos del filtro: un `OR` explicito exige su propio campo tipado en el DTO (`Estados` como lista, en vez de repetir `Estado` con semantica ambigua), nunca una convencion implicita de nombres de query param.
+- **Paginacion keyset/cursor es el default** (MEF-ADR-0042 seccion 2): una coleccion event-sourced crece sin cota, y offset (`Skip(n)`) sobre ella produce lecturas inconsistentes entre paginas. El cursor viaja **dentro del formato de query** (el campo `Cursor` del DTO), respaldado por RFC 10008 seccion 2.8. Offset (`ToPagedListAsync`/`Stats(out QueryStatistics)`) es la excepcion documentada bajo Rule of Three (MEF-ADR-0018), no una segunda via por defecto.
+- **El `Take` del cliente se acota en el servidor** (`Math.Clamp(filtro.Take, 1, TakeMaximo)`): un `Take` que viaja en el body es entrada del cliente como cualquier otra -- pasarlo crudo a Marten deja pedir una pagina sin cota.
+- **404, no 405, ante un verbo no coincidente**: un cliente que intente `GET` sobre una ruta que solo declara `"query"` recibe `404` -- el host no distingue "recurso existe, verbo no soportado" de "recurso no existe".
+- **415/422 se mapean a la misma forma que el `400`**: `new ObjectResult(mensaje) { StatusCode = StatusCodes.Status415UnsupportedMediaType }` / `...Status422UnprocessableEntity` -- nunca un codigo pelado sin cuerpo. El `406` del RFC queda fuera del camino feliz del marco (toda respuesta es JSON).
+- **NO VERIFICADO -- traduccion LINQ del predicado de cursor y de la lista de valores**: la doc de Marten para campos string lista `StartsWith`/`EndsWith`/`Contains`/`Equals`/`Regex.IsMatch`/`EqualsIgnoreCase`; ni `CompareTo` ni el `>` de orden sobre string figuran en esa superficie. El primer dominio que pagine por keyset sobre un `Id` string debe **verificar por ejecucion** que la comparacion traduce a SQL -- o mover el cursor a un campo naturalmente comparable (fecha/numero) con desempate por `Id`. Mismo caveat para el `Contains` de la lista de valores (`IsOneOf` es la alternativa de Marten si no traduce). Registrado como gate en MEF-ADR-0042 seccion 6.
 
 ## Resolucion de `TView` en el write-side: sin registro adicional, bajo condicion de tenancy
 
