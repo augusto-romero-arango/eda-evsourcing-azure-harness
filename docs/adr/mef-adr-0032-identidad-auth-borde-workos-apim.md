@@ -30,7 +30,7 @@ Las Function Apps del BC permanecen en `AuthorizationLevel.Function`: nunca impl
 
 **Por que centralizar la validacion en el borde y no en cada Function App** (en vez de repetir un middleware de validacion de JWT en cada dominio del BC): una sola superficie de configuracion (una politica, un `openid-config`), un solo lugar donde auditar el catalogo de trampas de la seccion 3, y el backend queda desacoplado del IdP concreto -- cambiar de WorkOS a otro IdP OIDC-compliant es, en principio, un cambio de politica APIM, no un redeploy de N Function Apps.
 
-### 3. Catalogo de trampas verificadas de APIM/Terraform (B1-B10)
+### 3. Catalogo de trampas verificadas de APIM/Terraform (B1-B11)
 
 Cada punto de este catalogo es una decision verificable con sintoma/causa/fix, extraida del incidente real en ControlPlane (issue #335). Un agente o desarrollador que reproduzca el patron debe tratar cada item como un gate, no como una nota informativa.
 
@@ -53,6 +53,8 @@ Cada punto de este catalogo es una decision verificable con sintoma/causa/fix, e
 **B9. Limites del tier Consumption y otras notas operativas.** Sin `rate-limit-by-key`, sin VNet, sin IP estatica ni Log Analytics de requests (si App Insights) -- confirmado en la guia oficial de APIM + Azure AD B2C para SPAs, que instruye retirar `rate-limit-by-key` explicitamente cuando el tier es Consumption [4]. Runs de Terraform solapados (plan de PR + apply de main) pueden chocar con `Error acquiring the state lock` -- no es un bug del HCL, es reintentable. Propiedad obsoleta a evitar en HCL nuevo: `enable_rbac_authorization` -> `rbac_authorization_enabled` (se elimina en v5 del provider `azurerm`).
 
 **B10. Claims a headers: el nombre del claim no se adivina, y exige anti-spoofing.** Ver seccion 4 (decision dedicada, por ser ademas el insight que conecta con MEF-ADR-0028).
+
+**B11. Sin operaciones declaradas, APIM responde 404 a todo el trafico -- incluso con JWT valido (issue #610).** Al conectar un backend a una API de APIM, por defecto **no se expone ninguna operacion** hasta declararla explicitamente: *"By default, when you add an API, even if it's connected to a backend service, API Management won't expose any operations until you allow them"*, y *"If you call an operation that's exposed through the backend but not through API Management, you get a 404 error"* [14]. El sintoma se confunde facilmente con otras trampas del catalogo: un `POST` con token valido que responde `404` (no `401`/`400`) no es CORS (B3) ni el `<backend>` vacio de B2 -- es que la `API` (`azurerm_api_management_api`) no tiene ningun `azurerm_api_management_api_operation` asociado. El modulo `apim-function-api` (issue #335) declaraba API + backend + named value + politica pero **cero** operaciones, defecto detectado al planificar el verbo QUERY (issue #587/#608). **Fix**: el modulo genera una **operacion wildcard por verbo clasico del marco** (`GET /*`, `POST /*` -- "Add and test a wildcard operation" [14]) en vez de una operacion explicita por endpoint del dominio (el patron original de Cosmos.ControlPlane, `gateway.tf`): preserva la aditividad CA-6 del scaffolder (una Function nueva del dominio consumidor nunca exige tocar APIM) a costa de gobernanza per-operacion. **Trade-off documentado, no una omision**: la guia de mitigacion OWASP API5:2023 de Microsoft recomienda explicitamente **no** usar operaciones wildcard -- *"Don't define wildcard API operations... Ensure that API Management only serves requests for explicitly defined endpoints, and requests to undefined endpoints are rejected"* [15]. Este marco se aparta de esa recomendacion a proposito: el limite de seguridad real del patron no es el catalogo de operaciones de APIM, es la politica `validate-jwt` **global** (B1-B10 de este mismo catalogo), evaluada para todo match de ruta sea la operacion wildcard o explicita -- la wildcard no abre ninguna superficie que el JWT no cierre. Un consumidor que priorice gobernanza per-endpoint sobre aditividad puede reemplazar la wildcard por operaciones explicitas por endpoint.
 
 ### 4. Propagacion de identidad: claim -> header canonico, con anti-spoofing
 
@@ -156,7 +158,10 @@ El editor de politicas del portal de APIM incluye `<base/>` por defecto en cada 
 - **[11]** "Policies in Azure API Management" -- Microsoft Learn, seccion "Use policy expressions to modify requests": ejemplo oficial de `set-header` con `exists-action="override"` para propagar datos de contexto al backend. https://learn.microsoft.com/azure/api-management/api-management-howto-policies
 - **[12]** "Secure an Azure API Management API with Azure AD B2C" -- Microsoft Learn. Referencia de integracion nativa APIM + IdP de Microsoft, citada en Alt 2. https://learn.microsoft.com/azure/active-directory-b2c/secure-api-management
 - **[13]** "Policies in Azure API Management" -- Microsoft Learn, seccion "Scopes": recomienda incluir `<base/>` al inicio de cada seccion de politica como best practice para heredar politicas del scope padre. https://learn.microsoft.com/azure/api-management/api-management-howto-policies
+- **[14]** "Manually add an API" -- Microsoft Learn. Confirma que APIM no expone ninguna operacion de un API conectado a un backend hasta que se declara explicitamente (404 en caso contrario) y documenta el patron de operacion wildcard (`url_template = "/*"`). https://learn.microsoft.com/azure/api-management/add-api-manually#create-an-api y https://learn.microsoft.com/azure/api-management/add-api-manually#add-and-test-a-wildcard-operation
+- **[15]** "Recommendations to mitigate OWASP API Security Top 10 threats using API Management" -- Microsoft Learn, seccion "Broken function level authorization" (API5:2023): recomienda no definir operaciones wildcard y que APIM solo sirva endpoints explicitamente definidos. https://learn.microsoft.com/azure/api-management/mitigate-owasp-api-threats#broken-function-level-authorization
 - issue #335 ("Crear agente generador del modulo APIM..."): origen del catalogo de trampas B1-B10, el HCL de referencia C1-C4 y la seccion D (separacion de credenciales del IdP); refinado por el planner para acotarse al agente que consume la doctrina de este ADR.
+- issue #610 ("Provisionar las operaciones APIM del modulo apim-function-api que hoy omite el apim-gateway-scaffolder"): origen de la trampa B11 -- descubierta como hallazgo colateral al planificar el verbo QUERY (issue #587/#608) sobre este mismo gateway.
 - `Cosmos-SincoERP/Cosmos.ControlPlane`, `ADR-0027` (consumidor, sin prefijo del esquema del marco -- ver MEF-ADR-0030) y PRs `#96`-`#100`/`#103`/`#104`: origen real del patron, codigo funcionando que es la fuente de verdad de este ADR.
 - MEF-ADR-0025 (custodia de secretos): la API key de WorkOS y la host key de cada Function App se custodian por su doctrina general (seccion 7).
 - MEF-ADR-0028 (estrategia de tenancy): este ADR materializa la etapa (b) (resolver real basado en `TenantContext`) y aporta el insight de normalizacion de claims en el borde (seccion 5); la enmienda formal de MEF-ADR-0028 queda en un issue de seguimiento cruzado.
@@ -181,3 +186,14 @@ El editor de politicas del portal de APIM incluye `<base/>` por defecto en cada 
   delega integramente en la idempotencia de ambos sub-skills, sin reimplementar su logica. Se actualiza en
   el cuerpo ("Aplica a") la mencion a `/install-auth` de "aun no implementado" a implementado. Ninguna
   decision de este ADR cambia.
+- 2026-08-11: enmendada (issue #610). Registra la trampa **B11** (la seccion 3 pasa a "B1-B11"): sin
+  ningun `azurerm_api_management_api_operation` declarado, APIM responde `404` a todo el trafico -- incluso
+  con JWT ya validado -- porque por defecto ninguna operacion queda expuesta hasta declararla explicitamente
+  (Microsoft Learn, "Manually add an API"). El modulo `apim-function-api` del agente `apim-gateway-scaffolder`
+  declaraba API + backend + named value + politica pero cero operaciones; cierra el gap generando una
+  operacion wildcard por verbo clasico del marco (`GET /*`, `POST /*`) en vez de una operacion explicita por
+  endpoint, preservando la aditividad CA-6 a costa de gobernanza per-operacion. Documenta el trade-off frente
+  a la recomendacion OWASP API5:2023 de Microsoft de evitar operaciones wildcard, aceptado porque el limite
+  de seguridad real del patron es la politica `validate-jwt` global (B1-B10), no el catalogo de operaciones.
+  Actualiza el reporte final del agente (checklist post-deploy) para distinguir el sintoma "request valida
+  responde 404" (operacion faltante, B11) de los sintomas de B2/B3. Ninguna decision previa de este ADR cambia.

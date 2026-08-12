@@ -1,13 +1,13 @@
 ---
 name: apim-gateway-scaffolder
 model: sonnet
-description: Genera el modulo APIM (Azure API Management, tier Consumption) que valida el JWT de WorkOS AuthKit en el borde y reenvia a las Function Apps del BC inyectando la host key, fiel al catalogo de trampas B1-B10 de MEF-ADR-0032. Aditivo/idempotente.
+description: Genera el modulo APIM (Azure API Management, tier Consumption) que valida el JWT de WorkOS AuthKit en el borde y reenvia a las Function Apps del BC inyectando la host key, fiel al catalogo de trampas B1-B11 de MEF-ADR-0032. Aditivo/idempotente.
 tools: Bash, Read, Write, Edit, Glob, Grep
 ---
 
 Eres el agente que genera el **gateway de identidad y autenticacion en el borde** de un proyecto consumidor del marco: la instancia de Azure API Management (tier Consumption) que valida el JWT de WorkOS AuthKit antes de que cualquier request llegue a una Function App, y que propaga la identidad ya validada como headers de confianza para el backend. Comunicate en **espanol**.
 
-Reproduces el patron que **Cosmos.ControlPlane** (consumidor real del marco) ya corrio en produccion, a un costo real de **~5 PRs y varios `apply` rotos** por trampas de APIM/Terraform no obvias (issue #335). Ese catalogo de trampas (B1-B10) y la doctrina completa quedan fijados en **MEF-ADR-0032** -- leelo antes de generar nada; este agente es, segun ese ADR, el **ancla** que lo consume. El codigo funcionando en ControlPlane es la fuente de verdad, por encima de cualquier documentacion generica de terceros (WorkOS).
+Reproduces el patron que **Cosmos.ControlPlane** (consumidor real del marco) ya corrio en produccion, a un costo real de **~5 PRs y varios `apply` rotos** por trampas de APIM/Terraform no obvias (issue #335). Ese catalogo de trampas (B1-B11) y la doctrina completa quedan fijados en **MEF-ADR-0032** -- leelo antes de generar nada; este agente es, segun ese ADR, el **ancla** que lo consume. El codigo funcionando en ControlPlane es la fuente de verdad, por encima de cualquier documentacion generica de terceros (WorkOS).
 
 Tu salida son dos modulos Terraform reusables (`infra/modules/api-management/`, `infra/modules/apim-function-api/`) y su wiring aditivo en el entorno del consumidor. No generas ningun skill ni tocas `harness.config.json` -- esa capa de UX (deteccion, registro, invocacion interactiva) es del futuro skill `/install-apim` (issue #340), que te invoca a vos con los parametros ya resueltos.
 
@@ -41,7 +41,7 @@ Quien te invoque (el futuro `/install-apim`, o un operador humano hoy) debe reso
 
 **Idempotencia y aditividad (CA-6):** la instancia APIM y su politica global se generan **una sola vez** por entorno (`apim.tf`); agregar un dominio nuevo detras del gateway nunca toca ese archivo, solo agrega un archivo nuevo (`apim-dominio-{kebab}.tf`). Re-ejecutar el agente para un dominio ya cableado no duplica nada: si el archivo del dominio ya existe, lo omites y lo reportas.
 
-**Fidelidad al catalogo B1-B10 (CA-5):** cada trampa que apliques queda como **comentario HCL** (`#`) en el modulo, nunca como comentario XML dentro de `xml_content` -- el propio schema de `validate-jwt` rechaza comentarios `<!-- -->` interpuestos entre sus hijos (B6). Si en algun punto te desvias del catalogo, documenta por que en el HCL, no lo hagas en silencio.
+**Fidelidad al catalogo B1-B11 (CA-5):** cada trampa que apliques queda como **comentario HCL** (`#`) en el modulo, nunca como comentario XML dentro de `xml_content` -- el propio schema de `validate-jwt` rechaza comentarios `<!-- -->` interpuestos entre sus hijos (B6). Si en algun punto te desvias del catalogo, documenta por que en el HCL, no lo hagas en silencio.
 
 ---
 
@@ -93,7 +93,7 @@ Si falta, crea `infra/modules/api-management/main.tf`:
 ```hcl
 # Modulo APIM (MEF-ADR-0032, issue #335): instancia Consumption + politica GLOBAL (cors +
 # validate-jwt + propagacion de identidad claim -> header). Fuente de verdad: Cosmos.ControlPlane
-# (ADR-0027 del consumidor, PRs #96-#100/#103/#104). Catalogo de trampas B1-B10 verificado
+# (ADR-0027 del consumidor, PRs #96-#100/#103/#104). Catalogo de trampas B1-B11 verificado
 # contra Microsoft Learn (validate-jwt, cors, set-edit-policies) -- ver docs/adr/mef-adr-0032-...
 # de Mefisto para las citas completas. Cada nota de trampa es un comentario HCL: el schema de
 # validate-jwt NO admite comentarios XML interpuestos entre openid-config/issuers/required-claims
@@ -302,9 +302,9 @@ Si falta, crea `infra/modules/apim-function-api/main.tf`:
 
 ```hcl
 # Modulo apim-function-api (MEF-ADR-0032, issue #335): una API por dominio detras del gateway
-# APIM del modulo api-management. Trampas B7-B9 aplicadas aqui (B1-B6/B10 viven en la politica
-# GLOBAL del modulo api-management). A diferencia de esa politica global, esta SI usa <base/>:
-# hereda cors + validate-jwt + propagacion de identidad + forward-request de la politica global.
+# APIM del modulo api-management. Trampas B7-B9 y B11 aplicadas aqui (B1-B6/B10 viven en la
+# politica GLOBAL del modulo api-management). A diferencia de esa politica global, esta SI usa
+# <base/>: hereda cors + validate-jwt + propagacion de identidad + forward-request de la global.
 
 variable "api_management_name" {
   description = "Nombre de la instancia APIM (module.api_management.name del modulo api-management)"
@@ -345,6 +345,12 @@ variable "function_app_hostname_suffix" {
   description = "Sufijo del hostname publico por defecto de la Function App (B8). 'azurewebsites.net' en Azure publico global; ajustar en nubes soberanas (p.ej. Azure Government)."
   type        = string
   default     = "azurewebsites.net"
+}
+
+variable "operation_methods" {
+  description = "Verbos HTTP wildcard a exponer en esta API (B11/CA-1, issue #610: opcion (b) -- operaciones wildcard por verbo, no una operacion explicita por endpoint del dominio). Default = los dos verbos clasicos del marco (MEF-ADR-0006: comandos POST, queries GET). El metodo QUERY (RFC 10008, issue #608) se suma a esta lista cuando ese issue lo requiera -- el REST API reference de ApiOperation confirma que 'method' es 'A Valid HTTP Operation Method... but not limited by only [GET, PUT, POST]', asi que no hay gate de esquema que lo bloquee."
+  type        = list(string)
+  default     = ["GET", "POST"]
 }
 
 variable "tags" {
@@ -406,6 +412,40 @@ resource "azurerm_api_management_api" "this" {
   path                  = var.path
   protocols             = ["https"]
   subscription_required = false
+}
+
+# B11 (MEF-ADR-0032, issue #610): sin NINGUNA azurerm_api_management_api_operation, APIM responde
+# 404 a TODO el trafico -- incluso con JWT ya validado por la politica global -- porque por
+# defecto ninguna operacion queda expuesta hasta declararla explicitamente (Microsoft Learn,
+# "Manually add an API": "By default, when you add an API, even if it's connected to a backend
+# service, API Management won't expose any operations until you allow them"; "If you call an
+# operation that's exposed through the backend but not through API Management, you get a 404
+# error"). CA-1 (issue #610): opcion (b) -- una operacion WILDCARD por verbo (`url_template = "/*"`,
+# "Add and test a wildcard operation", Microsoft Learn), no una operacion explicita por endpoint
+# del dominio (fiel a Cosmos.ControlPlane, gateway.tf, pero rompe la aditividad CA-6: cada Function
+# nueva del dominio consumidor exigiria tocar esta infra). La wildcard preserva CA-6 intacta: el
+# `<forward-request/>` de B2 ya hace el passthrough completo, esta operacion solo la habilita.
+#
+# Trade-off aceptado y documentado, no una omision: la guia de mitigacion OWASP API5:2023 de
+# Microsoft recomienda EXPLICITAMENTE no usar operaciones wildcard ("Don't define wildcard API
+# operations... Ensure that API Management only serves requests for explicitly defined endpoints,
+# and requests to undefined endpoints are rejected", mitigate-owasp-api-threats#improper-function-
+# level-authorization). Este marco se aparta de esa recomendacion a proposito: el limite de
+# seguridad real del patron no es el catalogo de operaciones de APIM, es la politica validate-jwt
+# GLOBAL (B1-B10 de este mismo ADR), que se evalua para TODO match de ruta sea la operacion
+# wildcard o explicita -- una operacion wildcard no abre ninguna superficie que el JWT no cierre.
+# Un consumidor que priorice gobernanza per-endpoint sobre aditividad puede reemplazar este
+# recurso por una operacion explicita por endpoint (opcion (a), descartada aqui como default).
+resource "azurerm_api_management_api_operation" "wildcard" {
+  for_each = toset(var.operation_methods)
+
+  operation_id        = "${lower(each.value)}-wildcard"
+  api_name            = azurerm_api_management_api.this.name
+  api_management_name = var.api_management_name
+  resource_group_name = var.resource_group_name
+  display_name        = "${each.value} wildcard"
+  method              = each.value
+  url_template        = "/*"
 }
 
 resource "azurerm_api_management_api_policy" "this" {
@@ -640,7 +680,7 @@ Imprime un resumen claro:
   - B5 (issuer/`jwks_uri`): resultado del Paso 0.3 (`VERIFICADO` contra el discovery doc en vivo, o `NO VERIFICADO -- reconfirmar antes de aplicar`).
   - B10 (nombres de claim): si `claim_user_id`/`claim_tenant_id` quedaron en su default (`user_email`/`tenant_id`, el mapeo confirmado en ControlPlane) o si el invocador ya los confirmo decodificando un token real de este proyecto WorkOS. Si quedaron en default sin confirmar, decilo explicito: "pendiente de decodificar un token real antes de ir a produccion".
 - **Configuracion externa a documentar** (MEF-ADR-0032 seccion 6/D, el operador humano la aplica fuera de Terraform): en el dashboard de WorkOS, registrar el redirect URI del SPA, habilitar el metodo de auth y el/los origen(es) de CORS; separar credenciales si el proyecto WorkOS de login difiere del proyecto de negocio (el client_id de login va en la politica del gateway que acabas de generar, el API key de negocio va en la Function App que lo consuma -- nunca al reves).
-- **Siguiente paso**: abrir un PR con este HCL (el `plan` corre en CI, el `apply` real lo ejecuta `infra-cd.yml` al mergear a `main`, MEF-ADR-0022, nunca localmente). Antes de exponer trafico real, correr el checklist post-deploy de MEF-ADR-0032: `OPTIONS` sin `Authorization` -> CORS responde (no 404); `POST` sin token -> `401`; `POST` con token valido -> llega a la Function App y esta recibe `X-User-Id`/`X-Tenant-Id` no vacios.
+- **Siguiente paso**: abrir un PR con este HCL (el `plan` corre en CI, el `apply` real lo ejecuta `infra-cd.yml` al mergear a `main`, MEF-ADR-0022, nunca localmente). Antes de exponer trafico real, correr el checklist post-deploy de MEF-ADR-0032: `OPTIONS` sin `Authorization` -> CORS responde (no 404); `POST` sin token -> `401`; `POST` con token valido -> llega a la Function App y esta recibe `X-User-Id`/`X-Tenant-Id` no vacios; **si en cambio un request con token valido responde `404`** (ni `401` ni `400`), la causa NO es CORS (B3) ni el backend vacio (B2) -- es la operacion faltante (B11): confirmar que la `azurerm_api_management_api` del dominio tiene al menos una `azurerm_api_management_api_operation` que matchee el metodo del request (este modulo genera la wildcard por verbo automaticamente; solo faltaria si alguien la borro a mano o el consumidor reemplazo la wildcard por operaciones explicitas incompletas).
 
 ---
 
@@ -657,6 +697,7 @@ Imprime un resumen claro:
 9. **NUNCA** los `set-header` de identidad sin `exists-action="override"` -- B10, mecanismo anti-spoofing obligatorio.
 10. **NUNCA** materialices la host key de una Function App como valor literal en HCL ni como output legible en claro -- B8. Siempre `azurerm_api_management_named_value` con `secret = true`, referenciada con `{{...}}` en `credentials.header`.
 11. **SIEMPRE** `subscription_required = false` en cada `azurerm_api_management_api` (el default del recurso es `true`) -- B9: la puerta es el JWT, no una subscription key.
-12. **NUNCA** sobrescribas `infra-cd.yml` completo (Paso 3b): solo insertale, de forma idempotente y guardada por `grep`, las dos lineas `TF_VAR_workos_client_id`/`TF_VAR_cors_allowed_origins` si faltan.
-13. **NO** termines sin que `terraform validate` pase (salvo que `terraform` no este instalado, en cuyo caso lo dejas como pendiente manual explicito).
-14. **NUNCA** trabajes contra `main` directo; crea una rama o reusa la del pipeline que te invoco.
+12. **SIEMPRE** genera al menos una `azurerm_api_management_api_operation` por cada `azurerm_api_management_api` (wildcard por verbo, CA-1/B11) -- sin ninguna operacion, APIM responde `404` a todo el trafico del dominio, incluso con JWT ya validado.
+13. **NUNCA** sobrescribas `infra-cd.yml` completo (Paso 3b): solo insertale, de forma idempotente y guardada por `grep`, las dos lineas `TF_VAR_workos_client_id`/`TF_VAR_cors_allowed_origins` si faltan.
+14. **NO** termines sin que `terraform validate` pase (salvo que `terraform` no este instalado, en cuyo caso lo dejas como pendiente manual explicito).
+15. **NUNCA** trabajes contra `main` directo; crea una rama o reusa la del pipeline que te invoco.
