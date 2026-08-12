@@ -81,7 +81,7 @@ Se va a instalar/actualizar el gateway APIM en el entorno "<env>" para: <lista d
 
 El apply real (el que provisiona APIM en Azure) corre en CI al mergear el PR (MEF-ADR-0022); este
 skill nunca ejecuta terraform plan/apply. El checklist post-deploy (CORS, 401, 202, headers de
-identidad) queda pendiente para despues de ese apply.
+identidad, verbo QUERY) queda pendiente para despues de ese apply.
 
 ¿Continuar? (s/n)
 ```
@@ -288,10 +288,15 @@ Checklist post-deploy (correr una vez que el apply de CI termine, contra el gate
   4. En el backend, X-User-Id y X-Tenant-Id llegan no vacios (confirma que el mapping de claims
      esta resolviendo valores reales, no cadenas vacias por un claim mal nombrado -- B10 de
      MEF-ADR-0032).
-  5. Si un request con token valido responde 404 (ni 401 ni 400), la causa no es CORS (B3) ni el
+  5. QUERY con token valido y Content-Type: application/json -> llega a la Function App (ni 404 ni
+     405 en el borde). Gate empirico del verbo QUERY (issue #608): cierra el punto NO VERIFICADO
+     "APIM Consumption reenviando QUERY end-to-end" de MEF-ADR-0042 seccion 6 -- correrlo antes de
+     exponer el primer endpoint QUERY real detras del gateway.
+  6. Si un request con token valido responde 404 (ni 401 ni 400), la causa no es CORS (B3) ni el
      <backend> vacio (B2): es la operacion faltante -- B11 de MEF-ADR-0032. Confirmar que la
      azurerm_api_management_api del dominio tiene al menos una azurerm_api_management_api_operation
-     que matchee el metodo del request (el modulo genera la wildcard por verbo automaticamente).
+     que matchee el metodo del request (el modulo genera la wildcard por verbo automaticamente,
+     incluido QUERY).
 ```
 
 ### 13. Reportar
@@ -300,7 +305,7 @@ Resumen claro y en orden:
 
 - **Prerequisitos** (paso 2): verificados.
 - **`WORKOS_CLIENT_ID`/`CORS_ALLOWED_ORIGINS`** (pasos 6-7): resueltos, registrados, o `NO VERIFICADO`.
-- **Agente `apim-gateway-scaffolder`** (paso 8): modulos creados/omitidos, dominios agregados/omitidos (con el motivo si alguno fallo el guard de scaffold), resultado de `terraform validate`, gates B5/B10 pendientes que el agente haya reportado.
+- **Agente `apim-gateway-scaffolder`** (paso 8): modulos creados/omitidos, dominios agregados/omitidos (con el motivo si alguno fallo el guard de scaffold), resultado de `terraform validate`, gates B5/B10 pendientes que el agente haya reportado, y el delta manual de CORS (`<method>QUERY</method>` ausente en un modulo `api-management` preexistente, issue #608) si el agente lo reporto.
 - **Migracion de tenancy** (paso 9): token flip (hecho / ya estaba en etapa b), lista de dominios migrados, lista de dominios ya migrados (omitidos), lista de dominios degradados (con el motivo) o con resolver custom (revision manual pendiente).
 - **Siguiente paso**: push + PR (si todo quedo verde) o la lista de reconciliacion pendiente.
 - **Checklist post-deploy** (paso 12): recordatorio de correrlo tras el `apply` de CI.

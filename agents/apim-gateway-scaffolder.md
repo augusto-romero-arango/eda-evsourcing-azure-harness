@@ -85,8 +85,21 @@ Si el fetch tiene exito, compara el campo `issuer` contra el patron que vas a ho
 ## Paso 1 - Generar el modulo `api-management` (solo si no existe)
 
 ```bash
-test -f infra/modules/api-management/main.tf && echo "EXISTE (omitir)" || echo "FALTA (crear)"
+if test -f infra/modules/api-management/main.tf; then
+  echo "EXISTE (omitir)"
+  # Issue #608: un gateway ya provisionado no se edita (aditividad CA-6), pero el delta de
+  # <allowed-methods> se detecta y se reporta en el Paso 7 -- nunca se aplica en silencio.
+  if grep -q "<method>QUERY</method>" infra/modules/api-management/main.tf; then
+    echo "CORS ya incluye QUERY en <allowed-methods> -- nada pendiente"
+  else
+    echo "DELTA MANUAL PENDIENTE (CORS/QUERY, issue #608): <allowed-methods> todavia no incluye QUERY -- fragmento exacto en el Paso 7"
+  fi
+else
+  echo "FALTA (crear)"
+fi
 ```
+
+Si el modulo ya existe, no lo sobrescribas: el chequeo de arriba es toda la accion de este paso, y su resultado va al reporte final (Paso 7).
 
 Si falta, crea `infra/modules/api-management/main.tf`:
 
@@ -201,6 +214,12 @@ resource "azurerm_api_management" "this" {
 #       "acepta y no hace nada", confirmado por ausencia total de requests en App Insights).
 #   B3: <cors> es el PRIMER hijo de <inbound>, ANTES de <validate-jwt> -- el preflight OPTIONS no
 #       trae header Authorization; si validate-jwt lo intercepta primero lo tumba con 401.
+#   B3 (continuacion, issue #608): <allowed-methods> incluye QUERY -- RFC 10008 seccion 4 es
+#       explicito en que QUERY no es CORS-safelisted, asi que un SPA que lo use siempre dispara
+#       preflight. Se lista por enumeracion EXPLICITA, nunca "*": la doc oficial de la politica
+#       cors confirma que '* indicates all methods', pero este marco descarta ese wildcard a
+#       proposito (postura deny-by-default; doctrina en MEF-ADR-0032 seccion 3 B3, verbo en
+#       MEF-ADR-0042).
 #   B4: WorkOS AuthKit no emite el claim `aud` -> nada de <audiences>; la "audiencia" se valida
 #       con <required-claims> sobre client_id.
 #   B6: orden estricto openid-config -> issuers -> required-claims dentro de <validate-jwt>.
@@ -232,6 +251,7 @@ resource "azurerm_api_management_policy" "global" {
         <method>PUT</method>
         <method>DELETE</method>
         <method>OPTIONS</method>
+        <method>QUERY</method>
       </allowed-methods>
       <allowed-headers>
         <header>Authorization</header>
@@ -288,7 +308,7 @@ output "principal_id" {
 
 **Notas de fidelidad al catalogo, para vos (no van en el HCL de arriba, ya estan como comentarios donde correspondia):**
 
-- **B1** -- sin `<base/>` en ninguna seccion de esta politica global. **B2** -- `<backend>` lleva `<forward-request />`, nunca vacio: sin eso, APIM responde `200`/`Content-Length: 0` y **no llama al backend** (el bug mas traicionero del catalogo, confirmado por ausencia total de requests en App Insights). **B3** -- `<cors>` es el primer hijo de `<inbound>`, antes de `<validate-jwt>`. **B4** -- ningun `<audiences>`; la "audiencia" se valida con `<required-claims>` sobre `client_id`. **B6** -- orden estricto `openid-config -> issuers -> required-claims` dentro de `<validate-jwt>`, sin `<!-- -->` interpuestos. **B10** -- los dos `<set-header>` van despues de `</validate-jwt>` (necesitan `context.Variables["jwt"]`, capturado por `output-token-variable-name="jwt"`), con `exists-action="override"` obligatorio (anti-spoofing: sin esto, un cliente que manda su propio `X-User-Id`/`X-Tenant-Id` lo hace pasar intacto hasta el backend).
+- **B1** -- sin `<base/>` en ninguna seccion de esta politica global. **B2** -- `<backend>` lleva `<forward-request />`, nunca vacio: sin eso, APIM responde `200`/`Content-Length: 0` y **no llama al backend** (el bug mas traicionero del catalogo, confirmado por ausencia total de requests en App Insights). **B3** -- `<cors>` es el primer hijo de `<inbound>`, antes de `<validate-jwt>`, y su `<allowed-methods>` enumera explicitamente `GET`/`POST`/`PUT`/`DELETE`/`OPTIONS`/`QUERY`, nunca `*` (issue #608): QUERY (RFC 10008) no es CORS-safelisted y sin ese metodo un SPA que lo use se cae en el preflight. **B4** -- ningun `<audiences>`; la "audiencia" se valida con `<required-claims>` sobre `client_id`. **B6** -- orden estricto `openid-config -> issuers -> required-claims` dentro de `<validate-jwt>`, sin `<!-- -->` interpuestos. **B10** -- los dos `<set-header>` van despues de `</validate-jwt>` (necesitan `context.Variables["jwt"]`, capturado por `output-token-variable-name="jwt"`), con `exists-action="override"` obligatorio (anti-spoofing: sin esto, un cliente que manda su propio `X-User-Id`/`X-Tenant-Id` lo hace pasar intacto hasta el backend).
 
 ---
 
@@ -348,9 +368,9 @@ variable "function_app_hostname_suffix" {
 }
 
 variable "operation_methods" {
-  description = "Verbos HTTP wildcard a exponer en esta API (B11/CA-1, issue #610: opcion (b) -- operaciones wildcard por verbo, no una operacion explicita por endpoint del dominio). Default = los dos verbos clasicos del marco (MEF-ADR-0006: comandos POST, queries GET). El metodo QUERY (RFC 10008, issue #608) se suma a esta lista cuando ese issue lo requiera -- el REST API reference de ApiOperation confirma que 'method' es 'A Valid HTTP Operation Method... but not limited by only [GET, PUT, POST]', asi que no hay gate de esquema que lo bloquee. NUNCA agregues OPTIONS a esta lista: la referencia de la politica cors es explicita en que 'if a request matches an operation with an OPTIONS method defined in the API, preflight request processing logic associated with the cors policy will not be executed' -- declarar OPTIONS aqui desactiva el manejo automatico del preflight y reintroduce B3 (el navegador vuelve a quedarse sin respuesta de CORS)."
+  description = "Verbos HTTP wildcard a exponer en esta API (B11 de MEF-ADR-0032, issue #610: opcion (b) -- operaciones wildcard por verbo, no una operacion explicita por endpoint del dominio). Default = los tres verbos vigentes del marco: comandos POST y queries GET (MEF-ADR-0006), mas queries estructuradas QUERY (RFC 10008/MEF-ADR-0042, issue #608) -- el REST API reference de ApiOperation confirma que 'method' es 'A Valid HTTP Operation Method... but not limited by only [GET, PUT, POST]', y el schema del provider azurerm repite lo mismo para este recurso ('The HTTP Method used for this API Management Operation, like GET, DELETE, PUT or POST - but not limited to these values', registry azurerm 5.0.1): no hay enum que `terraform validate` pueda rechazar. NUNCA agregues OPTIONS a esta lista: la referencia de la politica cors es explicita en que 'if a request matches an operation with an OPTIONS method defined in the API, preflight request processing logic associated with the cors policy will not be executed' -- declarar OPTIONS aqui desactiva el manejo automatico del preflight y reintroduce B3 (el navegador vuelve a quedarse sin respuesta de CORS)."
   type        = list(string)
-  default     = ["GET", "POST"]
+  default     = ["GET", "POST", "QUERY"]
 }
 
 variable "tags" {
@@ -420,7 +440,7 @@ resource "azurerm_api_management_api" "this" {
 # "Manually add an API": "By default, when you add an API, even if it's connected to a backend
 # service, API Management won't expose any operations until you allow them"; "If you call an
 # operation that's exposed through the backend but not through API Management, you get a 404
-# error"). CA-1 (issue #610): opcion (b) -- una operacion WILDCARD por verbo (`url_template = "/*"`,
+# error"). Opcion (b) (issue #610): una operacion WILDCARD por verbo (`url_template = "/*"`,
 # "Add and test a wildcard operation", Microsoft Learn), no una operacion explicita por endpoint
 # del dominio (fiel a Cosmos.ControlPlane, gateway.tf, pero rompe la aditividad CA-6: cada Function
 # nueva del dominio consumidor exigiria tocar esta infra). La wildcard preserva CA-6 intacta: el
@@ -678,6 +698,18 @@ git commit -m "infra(apim): instalar gateway APIM con validacion de JWT WorkOS A
 Imprime un resumen claro:
 
 - **Modulos** creados vs omitidos bajo `infra/modules/` (`api-management`, `apim-function-api`).
+- **Delta CORS pendiente (issue #608)**: si `infra/modules/api-management/main.tf` ya existia (Paso 1) y su `<allowed-methods>` todavia no listaba `QUERY`, reporta el fragmento XML exacto a aplicar a mano dentro del `xml_content` de `azurerm_api_management_policy.global` -- se muestra el bloque completo, no solo la linea nueva, para que no quede duda del atributo ni del orden, y el delta recien toma efecto cuando CI aplique el PR que lo lleve:
+  ```xml
+  <allowed-methods preflight-result-max-age="300">
+    <method>GET</method>
+    <method>POST</method>
+    <method>PUT</method>
+    <method>DELETE</method>
+    <method>OPTIONS</method>
+    <method>QUERY</method>
+  </allowed-methods>
+  ```
+  Si el chequeo del Paso 1 confirmo que `QUERY` ya estaba, dilo explicito ("nada pendiente") en vez de omitir la linea.
 - **`apim.tf`**: creado (primera instalacion del gateway en este entorno) u omitido (ya existia -- CA-6).
 - **Por dominio**: `apim-dominio-{kebab}.tf` creado vs omitido, por cada dominio de la lista de entrada; cualquier dominio que fallo el guard del Paso 0.2 (no scaffoldeado todavia).
 - **Wiring de CI** (Paso 3b): si `infra-cd.yml` gano las dos lineas `TF_VAR_workos_client_id`/`TF_VAR_cors_allowed_origins`, o si ya las tenia.
@@ -687,14 +719,14 @@ Imprime un resumen claro:
   - B5 (issuer/`jwks_uri`): resultado del Paso 0.3 (`VERIFICADO` contra el discovery doc en vivo, o `NO VERIFICADO -- reconfirmar antes de aplicar`).
   - B10 (nombres de claim): si `claim_user_id`/`claim_tenant_id` quedaron en su default (`user_email`/`tenant_id`, el mapeo confirmado en ControlPlane) o si el invocador ya los confirmo decodificando un token real de este proyecto WorkOS. Si quedaron en default sin confirmar, decilo explicito: "pendiente de decodificar un token real antes de ir a produccion".
 - **Configuracion externa a documentar** (MEF-ADR-0032 seccion 6/D, el operador humano la aplica fuera de Terraform): en el dashboard de WorkOS, registrar el redirect URI del SPA, habilitar el metodo de auth y el/los origen(es) de CORS; separar credenciales si el proyecto WorkOS de login difiere del proyecto de negocio (el client_id de login va en la politica del gateway que acabas de generar, el API key de negocio va en la Function App que lo consuma -- nunca al reves).
-- **Siguiente paso**: abrir un PR con este HCL (el `plan` corre en CI, el `apply` real lo ejecuta `infra-cd.yml` al mergear a `main`, MEF-ADR-0022, nunca localmente). Antes de exponer trafico real, correr el checklist post-deploy de MEF-ADR-0032: `OPTIONS` sin `Authorization` -> CORS responde (no 404); `POST` sin token -> `401`; `POST` con token valido -> llega a la Function App y esta recibe `X-User-Id`/`X-Tenant-Id` no vacios; **si en cambio un request con token valido responde `404`** (ni `401` ni `400`), la causa NO es CORS (B3) ni el backend vacio (B2) -- es la operacion faltante (B11): confirmar que la `azurerm_api_management_api` del dominio tiene al menos una `azurerm_api_management_api_operation` que matchee el metodo del request (este modulo genera la wildcard por verbo automaticamente; solo faltaria si alguien la borro a mano o el consumidor reemplazo la wildcard por operaciones explicitas incompletas).
+- **Siguiente paso**: abrir un PR con este HCL (el `plan` corre en CI, el `apply` real lo ejecuta `infra-cd.yml` al mergear a `main`, MEF-ADR-0022, nunca localmente). Antes de exponer trafico real, correr el checklist post-deploy de MEF-ADR-0032: `OPTIONS` sin `Authorization` -> CORS responde (no 404); `POST` sin token -> `401`; `POST` con token valido -> llega a la Function App y esta recibe `X-User-Id`/`X-Tenant-Id` no vacios; `QUERY` con token valido y `Content-Type: application/json` -> llega a la Function App (no `404`/`405` en el borde) -- **gate empirico del verbo (issue #608)**, cierra contra un gateway real el punto NO VERIFICADO "APIM Consumption reenviando QUERY end-to-end via `forward-request` de la politica global" registrado en MEF-ADR-0042 seccion 6; **si en cambio un request con token valido responde `404`** (ni `401` ni `400`), la causa NO es CORS (B3) ni el backend vacio (B2) -- es la operacion faltante (B11): confirmar que la `azurerm_api_management_api` del dominio tiene al menos una `azurerm_api_management_api_operation` que matchee el metodo del request (este modulo genera la wildcard por verbo automaticamente, incluido `QUERY` desde el issue #608; solo faltaria si alguien la borro a mano o el consumidor reemplazo la wildcard por operaciones explicitas incompletas).
 
 ---
 
 ## Reglas absolutas
 
 1. **NUNCA** ejecutes `terraform plan`, `terraform apply` ni `terraform destroy`. Solo `fmt`, `init -backend=false` y `validate`.
-2. **NUNCA** sobrescribas un `.tf` existente: ni los modulos (Pasos 1-2), ni `apim.tf` (Paso 3, CA-6), ni un `apim-dominio-{kebab}.tf` ya presente (Paso 4). Omitelo y reportalo.
+2. **NUNCA** sobrescribas un `.tf` existente: ni los modulos (Pasos 1-2), ni `apim.tf` (Paso 3, CA-6), ni un `apim-dominio-{kebab}.tf` ya presente (Paso 4). Omitelo y reportalo -- si es el modulo `api-management`, reporta ademas el delta de `<allowed-methods>` sin `QUERY` si corresponde (issue #608).
 3. **NUNCA** pongas `<base/>` en la politica GLOBAL (`azurerm_api_management_policy.global`, modulo `api-management`) -- B1. `<base/>` SI va en la politica por-API (modulo `apim-function-api`).
 4. **NUNCA** dejes `<backend>` vacio en la politica global: siempre `<forward-request />` -- B2. Sin eso, APIM responde `200` sin reenviar nada al backend.
 5. **NUNCA** pongas `<validate-jwt>` antes que `<cors>` en la politica global -- B3. El preflight `OPTIONS` no trae `Authorization`; si `validate-jwt` lo intercepta primero, lo tumba.
@@ -704,7 +736,7 @@ Imprime un resumen claro:
 9. **NUNCA** los `set-header` de identidad sin `exists-action="override"` -- B10, mecanismo anti-spoofing obligatorio.
 10. **NUNCA** materialices la host key de una Function App como valor literal en HCL ni como output legible en claro -- B8. Siempre `azurerm_api_management_named_value` con `secret = true`, referenciada con `{{...}}` en `credentials.header`.
 11. **SIEMPRE** `subscription_required = false` en cada `azurerm_api_management_api` (el default del recurso es `true`) -- B9: la puerta es el JWT, no una subscription key.
-12. **SIEMPRE** genera al menos una `azurerm_api_management_api_operation` por cada `azurerm_api_management_api` (wildcard por verbo, CA-1/B11) -- sin ninguna operacion, APIM responde `404` a todo el trafico del dominio, incluso con JWT ya validado. **NUNCA** incluyas `OPTIONS` entre esos verbos: una operacion `OPTIONS` declarada desactiva el procesamiento automatico del preflight de la politica `cors` y reintroduce B3.
+12. **SIEMPRE** genera al menos una `azurerm_api_management_api_operation` por cada `azurerm_api_management_api` (wildcard por verbo, B11) -- sin ninguna operacion, APIM responde `404` a todo el trafico del dominio, incluso con JWT ya validado. **NUNCA** incluyas `OPTIONS` entre esos verbos: una operacion `OPTIONS` declarada desactiva el procesamiento automatico del preflight de la politica `cors` y reintroduce B3.
 13. **NUNCA** sobrescribas `infra-cd.yml` completo (Paso 3b): solo insertale, de forma idempotente y guardada por `grep`, las dos lineas `TF_VAR_workos_client_id`/`TF_VAR_cors_allowed_origins` si faltan.
 14. **NO** termines sin que `terraform validate` pase (salvo que `terraform` no este instalado, en cuyo caso lo dejas como pendiente manual explicito).
 15. **NUNCA** trabajes contra `main` directo; crea una rama o reusa la del pipeline que te invoco.
