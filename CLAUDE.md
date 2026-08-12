@@ -248,6 +248,11 @@ El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o
 | Forma propia de la vista read-side derivada de la necesidad de lectura; `ReadModels` como cuarta isla (cero `ProjectReference`) y naming sin sufijo `View` | MEF-ADR-0041 |
 | Presentacion de los archivos "sin clasificar" del coverage gate (marcador de atencion y nota propios, distintos de una exclusion deliberada) | MEF-ADR-0014 |
 | Patron de logica del coverage gate cubre el EventHandler directo (`*EventHandler.cs`, patron 2.1.0) | MEF-ADR-0014 |
+| Frontera GET vs QUERY, paginacion y filtros multiples de las read APIs (RFC 10008) | MEF-ADR-0042 |
+| `Listar{X}s` conserva nombre y ruta cuando su verbo es QUERY (solo cambia el verbo del `HttpTriggerAttribute`) | MEF-ADR-0006 |
+| Enmienda a MEF-ADR-0031: el fallback a "solo 200" no es seguro con un deploy concurrente tocando el FA bajo prueba; tercera clase de invocador (deploy de un componente que prueba un FA ajeno) | MEF-ADR-0031 |
+| Consecuencias del verbo QUERY en el borde APIM: `<allowed-methods>` por enumeracion explicita con `QUERY` (B3), operacion wildcard del verbo (B11) y gate empirico end-to-end | MEF-ADR-0032 |
+| Trampa B11 de APIM: sin operaciones declaradas el gateway responde 404 a todo el trafico; fix con operacion wildcard por verbo, trade-off documentado frente a OWASP API5:2023 | MEF-ADR-0032 |
 
 ## Convenciones del marco
 
