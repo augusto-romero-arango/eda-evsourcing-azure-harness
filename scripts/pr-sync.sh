@@ -400,36 +400,45 @@ desbloquear_issues_dependientes() {
                 | grep -ioE '(Depende de|Bloqueado por)[[:space:]]+#[0-9]+' \
                 | grep -oE '[0-9]+' | sort -u)
 
-            # Verificar si TODAS las dependencias estan cerradas/mergeadas
-            local todas_cerradas=true
-            local dep_abierta=""
-            for dep_num in "${all_deps[@]}"; do
-                local dep_state
-                # Intentar como issue primero
-                dep_state=$(gh issue view "$dep_num" --json state -q '.state' 2>/dev/null || echo "")
-                if [ "$dep_state" = "CLOSED" ]; then
-                    continue
-                fi
-                # Intentar como PR
-                dep_state=$(gh pr view "$dep_num" --json state -q '.state' 2>/dev/null || echo "")
-                if [ "$dep_state" = "MERGED" ] || [ "$dep_state" = "CLOSED" ]; then
-                    continue
-                fi
-                # Si llegamos aqui, la dependencia sigue abierta
-                todas_cerradas=false
-                dep_abierta="$dep_num"
-                break
-            done
-
-            if [ "$todas_cerradas" = true ]; then
-                log "Desbloqueando issue #$bloqueado_num: $bloqueado_title"
-                if gh issue edit "$bloqueado_num" --remove-label "bloqueado" >>"$LOG_FILE_ABS" 2>&1; then
-                    success "Issue #$bloqueado_num desbloqueado: $bloqueado_title"
-                else
-                    warn "No se pudo quitar el label 'bloqueado' del issue #$bloqueado_num"
-                fi
+            # Guardia de longitud (CA-1): bajo bash 3.2 + set -u, expandir
+            # "${all_deps[@]}" de un array vacio es 'unbound variable' fatal.
+            # Esto ocurre cuando la seccion referencia el issue cerrado con
+            # redaccion no canonica (p.ej. "Depende del write-side: #N") — pasa
+            # el filtro de referencia_cerrado pero no matchea el regex forward.
+            if [ ${#all_deps[@]} -eq 0 ]; then
+                warn "Issue #$bloqueado_num referencia un issue recien cerrado en su sección '## Dependencias' pero sin redacción canónica parseable ('Depende de #N' / 'Bloqueado por #N'); no se pudo evaluar su desbloqueo automático."
             else
-                log "Issue #$bloqueado_num sigue bloqueado (dependencia #$dep_abierta aun abierta)"
+                # Verificar si TODAS las dependencias estan cerradas/mergeadas
+                local todas_cerradas=true
+                local dep_abierta=""
+                for dep_num in "${all_deps[@]}"; do
+                    local dep_state
+                    # Intentar como issue primero
+                    dep_state=$(gh issue view "$dep_num" --json state -q '.state' 2>/dev/null || echo "")
+                    if [ "$dep_state" = "CLOSED" ]; then
+                        continue
+                    fi
+                    # Intentar como PR
+                    dep_state=$(gh pr view "$dep_num" --json state -q '.state' 2>/dev/null || echo "")
+                    if [ "$dep_state" = "MERGED" ] || [ "$dep_state" = "CLOSED" ]; then
+                        continue
+                    fi
+                    # Si llegamos aqui, la dependencia sigue abierta
+                    todas_cerradas=false
+                    dep_abierta="$dep_num"
+                    break
+                done
+
+                if [ "$todas_cerradas" = true ]; then
+                    log "Desbloqueando issue #$bloqueado_num: $bloqueado_title"
+                    if gh issue edit "$bloqueado_num" --remove-label "bloqueado" >>"$LOG_FILE_ABS" 2>&1; then
+                        success "Issue #$bloqueado_num desbloqueado: $bloqueado_title"
+                    else
+                        warn "No se pudo quitar el label 'bloqueado' del issue #$bloqueado_num"
+                    fi
+                else
+                    log "Issue #$bloqueado_num sigue bloqueado (dependencia #$dep_abierta aun abierta)"
+                fi
             fi
         fi
 
@@ -479,7 +488,7 @@ for PR_NUM in "${PR_NUMS[@]}"; do
             if merge_pr_with_retry "$PR_NUM"; then
                 success "PR #$PR_NUM mergeado a main"
                 set_status "$PR_NUM" "mergeado"
-                desbloquear_issues_dependientes "$PR_NUM"
+                desbloquear_issues_dependientes "$PR_NUM" || warn "Post-merge: fallo al desbloquear issues dependientes del PR #$PR_NUM (el merge sí se completó; revisar labels 'bloqueado' manualmente)"
                 git fetch origin main >>"$LOG_FILE_ABS" 2>&1 || true
             else
                 fail_pr "$PR_NUM" "No se pudo mergear después de reintentos"
@@ -610,7 +619,7 @@ Cuando termines, haz commit de los cambios."
         if merge_pr_with_retry "$PR_NUM"; then
             success "PR #$PR_NUM mergeado a main"
             set_status "$PR_NUM" "mergeado"
-            desbloquear_issues_dependientes "$PR_NUM"
+            desbloquear_issues_dependientes "$PR_NUM" || warn "Post-merge: fallo al desbloquear issues dependientes del PR #$PR_NUM (el merge sí se completó; revisar labels 'bloqueado' manualmente)"
             git fetch origin main >>"$LOG_FILE_ABS" 2>&1 || true
         else
             fail_pr "$PR_NUM" "No se pudo mergear después de reintentos"
