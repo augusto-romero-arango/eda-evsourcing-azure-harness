@@ -54,7 +54,7 @@ Extrae labels y body del issue:
 gh issue view $ARGUMENTS --json labels,body
 ```
 
-Determina el tipo del issue buscando el label `tipo:X`. Luego verifica los 5 criterios del MEF-ADR-0011 y acumula todos los fallos antes de reportar.
+Determina el tipo del issue buscando el label `tipo:X`. Luego verifica **todos** los criterios que enumera esa seccion del MEF-ADR-0011 -- son los que esten escritos ahi al momento de correr, nunca una cantidad fija memorizada aqui -- y acumula todos los fallos antes de reportar.
 
 Si **uno o mas criterios fallan**: muestra la lista completa de lo que falta, sugiere `claude --agent planner` en modo `refinar` para completarlos, y **detente**.
 
