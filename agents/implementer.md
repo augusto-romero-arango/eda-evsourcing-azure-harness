@@ -325,12 +325,16 @@ custodia de la clave): **MEF-ADR-0027**. Este agente no la duplica.
 
 ### Endpoint HTTP
 
+**El verbo HTTP y la ruta vienen decididos en el issue -- nunca los derivas por creatividad propia.** El campo "Contrato HTTP del comando" del Definition of Ready (MEF-ADR-0011, enmendado por MEF-ADR-0043) es **Critico** para todo issue que introduzca o modifique un endpoint HTTP de comando: declara el verbo (`POST`/`PUT`/`DELETE`), la ruta REST completa en kebab-case minusculo, y el paso del test de precedencia de MEF-ADR-0043 seccion 2 que lo justifica. Usa ese contrato tal como esta escrito.
+
+**Fallback -- issue legado sin contrato declarado:** si el issue no trae ese campo (trabajo iniciado antes de MEF-ADR-0043), aplica tu mismo el test de precedencia de MEF-ADR-0043 seccion 2 (crea algo que el dominio modela como entidad -> `POST` a la coleccion; reemplaza completo un value object atomico direccionable -> `PUT`; remueve veraz y sin payload un sub-recurso -> `DELETE`; todo lo demas -> `POST {recurso}:{verbo}`; `PATCH` proscrito de forma transversal) y **anota en el PR** que paso aplicaste y por que -- mismo criterio de reportar-sin-decidir-en-silencio que ya rige otros gaps del issue (ver "Precedente ≠ autoridad" mas abajo). Todo segmento de la ruta va en kebab-case minusculo (MEF-ADR-0043 seccion 3) -- el ejemplo de abajo (`programacion/turnos`) usa el paso 1 del test (create canonico).
+
 ```csharp
 public class FunctionEndpoint(IRequestValidator requestValidator, ICommandRouter commandRouter)
 {
     [Function("CrearTurno")]
     public async Task<IActionResult> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "Programacion/Turnos")]
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "programacion/turnos")]
         HttpRequest req,
         CancellationToken ct)
     {

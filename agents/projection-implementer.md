@@ -69,7 +69,7 @@ public class FunctionEndpoint(IDocumentStore store, ITenantResolver tenantResolv
 {
     [Function("ObtenerSeguimientoTurno")]
     public async Task<IActionResult> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "Programacion/Turnos/{id}")]
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "programacion/turnos/{id}")]
         HttpRequest req,
         string id,   // segmento crudo de la ruta -- el unico parseo tipado ocurre abajo
         CancellationToken ct)
