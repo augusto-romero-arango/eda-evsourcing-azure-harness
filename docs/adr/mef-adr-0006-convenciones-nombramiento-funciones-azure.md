@@ -96,14 +96,18 @@ filtros multiples viven en MEF-ADR-0042, no en este ADR.
 **Ruta HTTP: REST por recurso, nunca el nombre de la Function.** Toda Function HTTP del marco --
 comando y query -- declara su `Route` explicitamente; el default del atributo nunca se usa. Una
 query reutiliza **el mismo segmento de recurso que ya usa el comando de ese recurso** (el ejemplo
-canonico del marco es `Route = "Programacion/Turnos"` del endpoint de comando en
-`agents/implementer.md`), sumando `{id}` para el caso de un item:
+canonico del marco es `Route = "programacion/turnos"` del endpoint de comando en
+`agents/implementer.md`), sumando `{id}` para el caso de un item. **El verbo HTTP y la forma de
+ruta de un comando** (POST a la coleccion, PUT, DELETE o `POST {recurso}:{verbo}`, segun el test
+de precedencia por comando) **los fija MEF-ADR-0043, no esta seccion** -- aqui solo se fija que
+toda query comparte el segmento de recurso de su comando, y el casing (kebab-case minusculo en
+todo segmento, comando o query, MEF-ADR-0043 seccion 3):
 
 ```csharp
 // ObtenerTurno/FunctionEndpoint.cs
 [Function("ObtenerTurno")]
 public async Task<IActionResult> Run(
-    [HttpTrigger(AuthorizationLevel.Function, "get", Route = "Programacion/Turnos/{id}")]
+    [HttpTrigger(AuthorizationLevel.Function, "get", Route = "programacion/turnos/{id}")]
     HttpRequest req,
     Guid id,
     CancellationToken ct)
@@ -111,7 +115,7 @@ public async Task<IActionResult> Run(
 // ListarTurnos/FunctionEndpoint.cs  <- clase y namespace distintos: una carpeta por query
 [Function("ListarTurnos")]
 public async Task<IActionResult> Run(
-    [HttpTrigger(AuthorizationLevel.Function, "get", Route = "Programacion/Turnos")]
+    [HttpTrigger(AuthorizationLevel.Function, "get", Route = "programacion/turnos")]
     HttpRequest req,
     CancellationToken ct)
 ```
@@ -198,9 +202,9 @@ src/Bitakora.ControlAsistencia.{Dominio}/
   DepurarMarcacionesCuandoTurnoCreado/   <- feature folder por reaccion a evento (sin sufijo Function)
     FunctionEndpoint.cs                  <- [Function("DepurarMarcacionesCuandoTurnoCreado")]
   ObtenerTurno/                          <- feature folder por query GET (sin sufijo Function)
-    FunctionEndpoint.cs                  <- [Function("ObtenerTurno")], Route = "Programacion/Turnos/{id}"
+    FunctionEndpoint.cs                  <- [Function("ObtenerTurno")], Route = "programacion/turnos/{id}"
   ListarTurnos/
-    FunctionEndpoint.cs                  <- [Function("ListarTurnos")], Route = "Programacion/Turnos"
+    FunctionEndpoint.cs                  <- [Function("ListarTurnos")], Route = "programacion/turnos"
 ```
 
 - `FunctionEndpoint.cs` como nombre de clase en cada directorio. No colisiona porque cada
@@ -297,3 +301,4 @@ motiva la eleccion vive integramente en MEF-ADR-0042.
 - 2026-07-27: enmendada la fila `{Concepto}Projection` de la tabla de naming y su nota (issue #412, hermano de la enmienda de MEF-ADR-0034/0035). La clase de proyeccion companion deja de ser exclusiva de N2: con el estilo canonico unificado que fija MEF-ADR-0035 seccion 2, N1 tambien la usa (el read model auto-agregante con `partial` deja de ser el canonico del marco). La nota sobre el `partial` se ajusta: aplica a la clase de proyeccion companion en ambos niveles, nunca al record de read model.
 - 2026-08-07: enmendadas la tabla de "Convenciones de nombramiento en codigo C#" y la lista de sufijos tecnicos (issue #581, creacion de MEF-ADR-0041). El read model pierde el sufijo `View` -- su nombre pasa a ser un termino valioso del lenguaje ubicuo, sin sufijo de implementacion; `View` sale de la lista de sufijos tecnicos en ingles. La clase de proyeccion companion conserva su sufijo (`{TerminoVista}Projection`, mismo stem que la vista). Suma la nota "issue #581, MEF-ADR-0041" documentando el cambio y su efecto sobre la colision (a)/(b1) ya documentada en este ADR.
 - 2026-08-11: enmendada la seccion "Funciones HTTP de query" (issue #587, creacion de MEF-ADR-0042). El titulo pasa a "Funciones HTTP de query (GET/QUERY)": una Function de query ya no es exclusivamente GET -- MEF-ADR-0042 fija el criterio decidible para elegir GET o el metodo QUERY (RFC 10008) segun la forma del filtro (plano de igualdad vs estructurado) o si expone paginacion por cursor. Fija que cruzar esa frontera no cambia el nombre de la Function ni su `Route`: solo el verbo declarado en el `HttpTriggerAttribute`. La tabla de "Convenciones de nombramiento en codigo C#" ajusta su fila de Query a "GET o QUERY". Suma la nota "issue #587, MEF-ADR-0042" documentando el cambio.
+- 2026-08-14: enmendada la seccion "Ruta HTTP" (issue #621, creacion de MEF-ADR-0043). El ejemplo canonico de `Route` pasa de PascalCase (`Programacion/Turnos`) a kebab-case minusculo (`programacion/turnos`) -- casing que MEF-ADR-0043 seccion 3 fija como regla explicita para todo segmento de ruta, comando o query. La seccion deja de ser la fuente del verbo HTTP y la forma de ruta de un comando (POST a la coleccion, PUT, DELETE o `POST {recurso}:{verbo}`): esa doctrina, con su test de precedencia de cinco pasos, vive ahora en MEF-ADR-0043; esta seccion conserva solo que la query comparte el segmento de recurso de su comando y el casing.
