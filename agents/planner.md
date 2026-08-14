@@ -195,6 +195,24 @@ Tu rol:
 
 No necesitas responder todas en una sola iteración. La conversación puede tomar varias vueltas. El objetivo es que al final puedas llenar la sección "Modelo de eventos" del issue.
 
+**Sugerir el contrato HTTP del comando (MEF-ADR-0043).** Cuando el paso 6 fija el disparo en HTTP, no te detengas en el nombre del comando: **propón el verbo HTTP y la forma de la ruta** -- mismo estilo generativo que el resto de esta sección (MEF-ADR-0008). MEF-ADR-0043 es la fuente de verdad de la mecánica completa (códigos HTTP, forma del `HttpTrigger`, el punto NO VERIFICADO del complex segment `{parametro}:verbo`); esta receta replica solo el test de precedencia decidible para aplicarlo en la conversación, sin re-preguntar nada que el implementer ya resuelve con la doctrina del ADR.
+
+*Precondición* (sección 1): todo id de ruta es URL-safe; el carácter `:` queda reservado al verbo de una acción (paso 4 abajo) y nunca aparece dentro de un id.
+
+*Test de precedencia* -- evalúa en orden, la primera respuesta afirmativa fija el contrato y detiene la evaluación:
+
+1. **¿Crea algo que el dominio modela como entidad, aunque el nombre lo disimule?** Verifica contra los eventos que el comando emite de verdad, no contra su nombre -- si emite el mismo evento que otro comando de "crear", es el mismo create disfrazado. → `POST {colección}`.
+2. **¿Reemplaza completo un value object atómico direccionable?** La granularidad la fija el VO del dominio, nunca la imaginación de quien escribe la ruta. → `PUT {recurso}/{sub-recurso}`.
+3. **¿Remueve verazmente un sub-recurso direccionable, sin payload?** Dos condiciones, ambas necesarias: el sub-recurso deja de ser legible en el estado vigente, y el comando no necesita datos además del id de ruta. → `DELETE {recurso}/{sub-recurso}`.
+4. **Todo lo demás** -- el caso general, no la excepción: acción de negocio con verbo propio. → `POST {recurso}:{verbo}`, verbo derivado mecánicamente del infinitivo del comando en kebab-case (`TerminarVinculacion` → `:terminar`).
+5. **PATCH queda proscrito**, transversal a los 4 pasos: mientras el comando module sobre VOs atómicos, PATCH no aporta nada que PUT no cubra, y abre la trampa de null-borra-campo (RFC 7386) y el embudo de intenciones que colapsa varios comandos en un solo endpoint.
+
+Todo segmento de la ruta va en **kebab-case minúsculo** (`colaboradores`, `:corregir-fecha-inicio`) -- nunca PascalCase ni camelCase (sección 3).
+
+Propón el contrato con el propio test como evidencia, nunca sin verbo sugerido -- "emite el mismo evento que RegistrarColaborador -> create disfrazado, POST colaboradores/{id}/vinculaciones" o "no crea, no reemplaza, no remueve -> POST colaboradores/{id}/vinculaciones/{codigo}:terminar". El experto corrige si la intuición inicial no calza. Registra el resultado en el issue con los campos "Contrato HTTP" + "Precedencia aplicada" del template de "Modelo de eventos" (ver `## Crear issues` abajo).
+
+**Endpoints preexistentes no conformes**: si la conversación revela un endpoint ya desplegado que no sigue este test (casing PascalCase, un create disfrazado, una acción sin `:verbo`), puedes **sugerir** el rename hacia la forma conforme -- nunca imponerlo ni colarlo como criterio de aceptación de un issue que no lo pidió. Advierte explícitamente que puede haber consumidores externos integrados contra la URL vieja: la migración es decisión y calendario del humano, no del planner (sección 7).
+
 Cuando la idea tome forma y antes de proponer "convertir a issue(s)", aplica la **Revisión de complejidad** (ver sección dedicada más abajo). Si la idea claramente pertenece a múltiples issues, sugiere el desglose desde la conversación, no después: es más barato discutir el corte antes de redactar un issue grande que partirlo cuando ya fue escrito.
 
 Cuando la idea esté clara y dimensionada, ofrece convertirla en issue(s). Al crear el issue, aplica primero el **checklist pre-listo** de la Revisión de complejidad y luego el Definition of Ready de la sección correspondiente: si cumple ambos, crea como `estado:listo` usando el template completo; si falta informacion (ej: no se llego a definir el modelo de eventos) o alguna casilla de complejidad falla, crea como `estado:borrador` y sugiere pasar por el modo `refinar`.
@@ -629,6 +647,8 @@ Lee y aplica los criterios de `"$PLUGIN_ROOT/docs/adr/mef-adr-0011-definition-of
 
 **Caso `tipo:projection`**: MEF-ADR-0011 ya tiene su propia columna para este tipo (issue #373). La sección "Necesidades de lectura y proyecciones" de este agente y el "Template para issues de proyección" (bajo `## Crear issues`) implementan esa fila -- exigen los campos criticos del handoff (via de consulta, vista, eventos, receta, endpoints, lifecycle) mas las capas de test esperadas, y el label `dom:` como **obligatorio** (equivalente a la columna `feature` de la tabla, no a `infra`/`tooling`: todo artefacto read-side pertenece a un dominio real o a la unión de varios, nunca a un pseudo-dominio). No marques `estado:listo` un issue `tipo:projection` sin esos campos. Esto cubre tanto issues de **vista nueva** como de **configuración del read-side** del worker (MEF-ADR-0011, nota sobre `projection`; issue #448): el segundo subtipo conserva los mismos encabezados con contenido adaptado (ver "Segunda señal" arriba), y su label `dom:` cubre todos los dominios reales cuyo read-side el issue configura.
 
+**Caso comando HTTP (MEF-ADR-0043)**: la fila "Contrato HTTP del comando" de MEF-ADR-0011 es *Condicional* en `feature`/`refactor` -- pasa a **Critico** en cuanto el issue introduce o modifica un endpoint HTTP de comando. No marques `estado:listo` un issue con un comando de trigger HTTP sin ese contrato declarado (verbo, ruta y el paso del test de precedencia aplicado -- bloque "Sugerir el contrato HTTP del comando" arriba). La informacion no abre un encabezado nuevo: vive dentro de la propia descripcion del comando en `## Modelo de eventos` (`feature`) o en `## Contexto`/`## Impacto en archivos` (`refactor`, que no declara modelo de eventos).
+
 ---
 
 ## Crear issues
@@ -666,6 +686,8 @@ gh issue create \
 ## Modelo de eventos
 - **Comando**: `NombreComando` (trigger: HTTP | ServiceBus)
   - Payload: `Campo1 (tipo)`, `Campo2 (tipo)`
+  - **Contrato HTTP** (solo si trigger: HTTP -- MEF-ADR-0043): `[POST|PUT|DELETE] {ruta-kebab-case}` -- ej. `POST colaboradores/{id}/vinculaciones/{codigo}:terminar`
+  - **Precedencia aplicada** (solo si trigger: HTTP): [paso 1-4 del test de precedencia + razonamiento en una linea, ej. "paso 4 -- no crea, no reemplaza, no remueve: accion de negocio propia"]
 - **Aggregate**: `NombreAggregateRoot`
   - Estado que cambia: `Propiedad1`, `Propiedad2`
 - **Eventos de exito**: `EventoExitoso` → campos del evento
@@ -682,6 +704,7 @@ Enumera los ADRs que rigen este issue (nombre + descripcion breve, sin copiar su
 - MEF-ADR-0004: manejo de errores en event sourcing (si hay eventos de fallo o Apply() del aggregate).
 - MEF-ADR-0001: topics por evento (si se publica a Service Bus).
 - MEF-ADR-0009: mensajes en .resx (si se lanzan excepciones o hay labels de `ToString()`).
+- MEF-ADR-0043: contrato HTTP de comandos (si el issue introduce o modifica un endpoint HTTP de comando -- verbo, ruta kebab-case y el paso del test de precedencia aplicado).
 
 Esta seccion es el contrato arquitectonico del issue. El implementer debe leer cada ADR listado antes de escribir codigo; el reviewer verifica cumplimiento contra ellos. Si el implementer se desvia de algun ADR, debe documentarlo en el reporte del pipeline.
 
@@ -737,6 +760,7 @@ La sección **Modelo de eventos** es la más importante para issues de dominio. 
 - Escribir los `Given/When/Then` de los tests
 - Saber qué propiedades verificar con `And<>()`
 - Decidir si necesitan infraestructura Service Bus (topics/subscriptions)
+- Fijar el verbo HTTP y la ruta del comando sin adivinar (bloque "Sugerir el contrato HTTP del comando" arriba, MEF-ADR-0043) -- cuando el trigger es HTTP, el campo "Contrato HTTP" + "Precedencia aplicada" es **Critico** en el Definition of Ready (MEF-ADR-0011), nunca queda como decision del implementer
 - Saber, cuando hay un evento que cruza un bus (`IPrivateEvent` o `IPublicEvent`), que su payload debe ser **plano y portable por el bus** (la línea "Construcción del evento que cruza un bus"): así el test-writer escribe el round-trip con serializador por defecto y el implementer traduce el modelo rico a forma plana antes de publicar/enviar. Sin esta consideración en el handoff, el evento puede emitirse cargando un VO rico que se rompe al cruzar el namespace interno o de integracion (MEF-ADR-0012, "Frontera de serialización: event store vs bus"; MEF-ADR-0023, criterio "¿cruza un bus?").
 
 La sección **Interfaz pública** es obligatoria para issues que crean value objects complejos o aggregates con comportamiento rico. Define el contrato que el test-writer usa como superficie de testing y que el implementer debe respetar. Sin ella, los agentes adivinan qué exponer y tienden a romper el encapsulamiento.
