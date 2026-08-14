@@ -195,7 +195,7 @@ Tu rol:
 
 No necesitas responder todas en una sola iteración. La conversación puede tomar varias vueltas. El objetivo es que al final puedas llenar la sección "Modelo de eventos" del issue.
 
-**Sugerir el contrato HTTP del comando (MEF-ADR-0043).** Cuando el paso 6 fija el disparo en HTTP, no te detengas en el nombre del comando: **propón el verbo HTTP y la forma de la ruta** -- mismo estilo generativo que el resto de esta sección (MEF-ADR-0008). MEF-ADR-0043 es la fuente de verdad de la mecánica completa (códigos HTTP, forma del `HttpTrigger`, el punto NO VERIFICADO del complex segment `{parametro}:verbo`); esta receta replica solo el test de precedencia decidible para aplicarlo en la conversación, sin re-preguntar nada que el implementer ya resuelve con la doctrina del ADR.
+**Sugerir el contrato HTTP del comando (MEF-ADR-0043).** Cuando el paso 6 fija el disparo en HTTP, no te detengas en el nombre del comando: **propón el verbo HTTP y la forma de la ruta** -- mismo estilo generativo que el resto de esta sección (MEF-ADR-0008). MEF-ADR-0043 es la fuente de verdad de la mecánica completa (códigos HTTP, forma del `HttpTrigger`, protocolo del gate empírico del complex segment `{parametro}:verbo`); esta receta replica solo el test de precedencia decidible para aplicarlo en la conversación, sin re-preguntar nada que el implementer ya resuelve con la doctrina del ADR.
 
 *Precondición* (sección 1): todo id de ruta es URL-safe; el carácter `:` queda reservado al verbo de una acción (paso 4 abajo) y nunca aparece dentro de un id.
 
@@ -205,9 +205,11 @@ No necesitas responder todas en una sola iteración. La conversación puede toma
 2. **¿Reemplaza completo un value object atómico direccionable?** La granularidad la fija el VO del dominio, nunca la imaginación de quien escribe la ruta. → `PUT {recurso}/{sub-recurso}`.
 3. **¿Remueve verazmente un sub-recurso direccionable, sin payload?** Dos condiciones, ambas necesarias: el sub-recurso deja de ser legible en el estado vigente, y el comando no necesita datos además del id de ruta. → `DELETE {recurso}/{sub-recurso}`.
 4. **Todo lo demás** -- el caso general, no la excepción: acción de negocio con verbo propio. → `POST {recurso}:{verbo}`, verbo derivado mecánicamente del infinitivo del comando en kebab-case (`TerminarVinculacion` → `:terminar`).
-5. **PATCH queda proscrito**, transversal a los 4 pasos: mientras el comando module sobre VOs atómicos, PATCH no aporta nada que PUT no cubra, y abre la trampa de null-borra-campo (RFC 7386) y el embudo de intenciones que colapsa varios comandos en un solo endpoint.
+5. **PATCH queda proscrito**, transversal a los 4 pasos (no es una quinta rama del test): mientras los comandos operen sobre VOs atómicos, PATCH no aporta nada que PUT no cubra, y abre la trampa de null-borra-campo (RFC 7386) y el embudo de intenciones que colapsa varios comandos en un solo endpoint.
 
 Todo segmento de la ruta va en **kebab-case minúsculo** (`colaboradores`, `:corregir-fecha-inicio`) -- nunca PascalCase ni camelCase (sección 3).
+
+*Gate empírico del `:verbo`* (sección 8): que el host de Azure Functions (worker aislado) enrute el complex segment `{parametro}:verbo` **no está verificado**. No cambia la propuesta -- el paso 4 sigue siendo el paso 4 --, pero si el contrato propuesto es el primer `{parametro}:verbo` del repo, anótalo en `## Notas tecnicas` del issue: el implementer debe confirmarlo contra el host local (Core Tools) antes del primer despliegue, y la alternativa sin gate es mover el verbo a un segmento propio (`.../{codigo}/terminar`, sin `:`). Mismo trato que el gate del cursor sobre `Id` en el bloque de lectura (MEF-ADR-0042 sección 6).
 
 Propón el contrato con el propio test como evidencia, nunca sin verbo sugerido -- "emite el mismo evento que RegistrarColaborador -> create disfrazado, POST colaboradores/{id}/vinculaciones" o "no crea, no reemplaza, no remueve -> POST colaboradores/{id}/vinculaciones/{codigo}:terminar". El experto corrige si la intuición inicial no calza. Registra el resultado en el issue con los campos "Contrato HTTP" + "Precedencia aplicada" del template de "Modelo de eventos" (ver `## Crear issues` abajo).
 
