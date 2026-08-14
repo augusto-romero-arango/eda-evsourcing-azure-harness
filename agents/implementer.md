@@ -329,6 +329,8 @@ custodia de la clave): **MEF-ADR-0027**. Este agente no la duplica.
 
 **Fallback -- issue legado sin contrato declarado:** si el issue no trae ese campo (trabajo iniciado antes de MEF-ADR-0043), aplica tu mismo el test de precedencia de MEF-ADR-0043 seccion 2 (crea algo que el dominio modela como entidad -> `POST` a la coleccion; reemplaza completo un value object atomico direccionable -> `PUT`; remueve veraz y sin payload un sub-recurso -> `DELETE`; todo lo demas -> `POST {recurso}:{verbo}`; `PATCH` proscrito de forma transversal) y **anota en el PR** que paso aplicaste y por que -- mismo criterio de reportar-sin-decidir-en-silencio que ya rige otros gaps del issue (ver "Precedente ≠ autoridad" mas abajo). Todo segmento de la ruta va en kebab-case minusculo (MEF-ADR-0043 seccion 3) -- el ejemplo de abajo (`programacion/turnos`) usa el paso 1 del test (create canonico).
 
+**Endpoints preexistentes: no los migras (MEF-ADR-0043 seccion 7).** Esta doctrina rige todo endpoint de comando **nuevo**. Una ruta vieja no conforme (PascalCase heredado, un `POST` que en realidad reemplaza o remueve) **no es hallazgo bloqueante ni la corriges de oficio**: puede tener consumidores externos ya integrados contra la URL vieja, y renombrarla es un breaking change cuyo calendario decide el humano, no tu. Si el issue no pide tocarla, la dejas como esta y, si acaso, anotas la no conformidad en tu resumen de decisiones. Esto **acota, solo para este caso**, la regla "Precedente ≠ autoridad" de mas abajo: no replicas el casing viejo en el endpoint nuevo que escribes, pero tampoco reescribes el viejo.
+
 ```csharp
 public class FunctionEndpoint(IRequestValidator requestValidator, ICommandRouter commandRouter)
 {
