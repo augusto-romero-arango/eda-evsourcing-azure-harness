@@ -4,6 +4,24 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-08-14
+
+### Added
+
+- Se agrega MEF-ADR-0043 (doctrina HTTP de comandos): test de precedencia de cinco pasos para elegir verbo y forma de ruta (POST a la coleccion, PUT, DELETE o `POST {recurso}:{verbo}`, con PATCH proscrito), precondicion de ids URL-safe con `:` reservado a acciones, casing kebab-case minusculo en todos los segmentos y simetria CQRS deliberada entre la API (imperativo) y el event store (pasado).
+
+### Changed
+
+- Se enmienda MEF-ADR-0006: el ejemplo canonico de `Route` pasa de PascalCase a kebab-case minusculo y la seccion "Ruta HTTP" remite a MEF-ADR-0043 para el verbo y la forma de ruta de un comando.
+- Se enmienda MEF-ADR-0011: el contrato HTTP (verbo + ruta + paso del test de precedencia aplicado) entra al Definition of Ready como campo Critico para todo issue que introduzca o modifique un endpoint HTTP de comando, con su criterio programatico en el gate de `/implement`.
+- Se propaga la doctrina HTTP de comandos de MEF-ADR-0043 a los generadores: `agents/implementer.md` fija que el verbo y la ruta de un endpoint de comando vienen decididos en el issue (contrato HTTP del DoR, MEF-ADR-0011 enmendado), con fallback al test de precedencia de MEF-ADR-0043 y anotacion en el PR para issues legados sin ese campo, y con la regla de aplicabilidad de MEF-ADR-0043 seccion 7 (la doctrina rige solo endpoints nuevos: una ruta preexistente no conforme no es hallazgo bloqueante ni se corrige de oficio, lo que acota "Precedente != autoridad" para este caso). Se corrige el casing PascalCase heredado (`Programacion/Turnos` -> `programacion/turnos`) en los ejemplos de `Route` de `agents/implementer.md`, `agents/projection-implementer.md`, `skills/projections/naming.md` y `skills/projections/read-apis.md`, y `naming.md` cita a MEF-ADR-0043 como techo doctrinal del lado comando sin duplicar su test de precedencia.
+- El `planner` propone el contrato HTTP de comandos (verbo, ruta kebab-case y precedencia aplicada) durante el knowledge crunching, replicando el test de precedencia de MEF-ADR-0043 como checklist decidible, anota en el issue el gate empirico del complex segment `{parametro}:verbo` cuando es el primero del repo (MEF-ADR-0043 seccion 8), y no marca `estado:listo` un issue con comando de trigger HTTP sin ese contrato declarado.
+- El `reviewer` incorpora el checklist verificable de MEF-ADR-0043 (contrato HTTP de comandos): activado cuando el diff crea una Function HTTP de comando nueva, verifica verbo segun el test de precedencia de cinco pasos, ruta kebab-case minuscula, ids URL-safe (`:` reservado a acciones), ausencia de PATCH, `Route` explicito, verbo declarado en ambos lados cuando dos Functions comparten segmento de ruta (MEF-ADR-0006), y coincidencia con el contrato HTTP pactado en el issue (MEF-ADR-0011 enmendado). Los endpoints preexistentes que el diff solo toca nunca son hallazgo bloqueante -- a lo sumo una sugerencia no bloqueante con advertencia de breaking change, remitida al humano via el planner; la unica salvedad es la migracion que el propio issue ya pacto (MEF-ADR-0011 exige el contrato tanto al introducir como al modificar un endpoint, y ese contrato declarado es el registro de que el humano la discutio), que si se contrasta contra la forma pactada. El checklist no reabre el carve-out de queries frente al coverage gate (MEF-ADR-0014/#371): aplica exclusivamente al lado comando.
+
+### Fixed
+
+- Se corrige el conteo fijo de criterios del Definition of Ready en `/implement`: el skill enumeraba "los 5 criterios del MEF-ADR-0011" en vez de delegar en la lista que ese ADR mantiene, asi que todo criterio nuevo (el 6, contrato HTTP de comandos) quedaba fuera del gate en silencio pese a que la validacion se define en el ADR. Ahora verifica todos los criterios que la seccion "Validacion en `/implement`" enumere al momento de correr.
+
 ## [0.22.0] - 2026-08-12
 
 ### Added
@@ -1092,7 +1110,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.19.0...v0.20.0

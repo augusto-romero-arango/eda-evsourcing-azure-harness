@@ -253,6 +253,9 @@ El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o
 | Enmienda a MEF-ADR-0031: el fallback a "solo 200" no es seguro con un deploy concurrente tocando el FA bajo prueba; tercera clase de invocador (deploy de un componente que prueba un FA ajeno) | MEF-ADR-0031 |
 | Consecuencias del verbo QUERY en el borde APIM: `<allowed-methods>` por enumeracion explicita con `QUERY` (B3), operacion wildcard del verbo (B11) y gate empirico end-to-end | MEF-ADR-0032 |
 | Trampa B11 de APIM: sin operaciones declaradas el gateway responde 404 a todo el trafico; fix con operacion wildcard por verbo, trade-off documentado frente a OWASP API5:2023 | MEF-ADR-0032 |
+| Doctrina HTTP de comandos: test de precedencia (POST coleccion/PUT/DELETE/`POST {recurso}:{verbo}`), ids URL-safe, casing kebab-case y simetria CQRS | MEF-ADR-0043 |
+| Casing kebab-case minusculo de las rutas HTTP y remision a MEF-ADR-0043 para el verbo y forma de ruta de comandos | MEF-ADR-0006 |
+| Contrato HTTP de comandos (verbo + ruta + precedencia aplicada) como campo Critico del Definition of Ready | MEF-ADR-0011 |
 
 ## Convenciones del marco
 
