@@ -1,6 +1,6 @@
 # Naming: Functions de query y artefactos de proyeccion
 
-Fuente: MEF-ADR-0006 (enmienda issue #363, hermano de MEF-ADR-0035; naming del read model reenmendado por MEF-ADR-0041, issue #581; verbo GET/QUERY reenmendado por MEF-ADR-0042, issue #587). Aqui solo se fija el **naming**; el estilo de codigo y la superficie de consulta los fija MEF-ADR-0035 (ver [modelos-marten.md](modelos-marten.md) y [read-apis.md](read-apis.md)); la forma de la vista (que campos, que nombres) la fija MEF-ADR-0041, no este documento.
+Fuente: MEF-ADR-0006 (enmienda issue #363, hermano de MEF-ADR-0035; naming del read model reenmendado por MEF-ADR-0041, issue #581; verbo GET/QUERY reenmendado por MEF-ADR-0042, issue #587; casing kebab-case minusculo de toda ruta reenmendado por MEF-ADR-0043, issue #621). Aqui solo se fija el **naming**; el estilo de codigo y la superficie de consulta los fija MEF-ADR-0035 (ver [modelos-marten.md](modelos-marten.md) y [read-apis.md](read-apis.md)); la forma de la vista (que campos, que nombres) la fija MEF-ADR-0041, no este documento.
 
 ## Functions HTTP de query (GET/QUERY)
 
@@ -27,13 +27,13 @@ El `s` de `Listar{X}s` es el **plural correcto del espanol**, no un sufijo liter
 
 ## Ruta HTTP: REST por recurso, nunca el nombre de la Function
 
-Toda Function HTTP -- comando y query -- declara su `Route` explicitamente; el default del atributo nunca se usa. Una query reutiliza **el mismo segmento de recurso que ya usa el comando de ese recurso**, sumando `{id}` para el caso de un item:
+Toda Function HTTP -- comando y query -- declara su `Route` explicitamente; el default del atributo nunca se usa. Una query reutiliza **el mismo segmento de recurso que ya usa el comando de ese recurso**, sumando `{id}` para el caso de un item. **El verbo HTTP y la forma de ruta de un comando** (POST a la coleccion, PUT, DELETE o `POST {recurso}:{verbo}`, segun el test de precedencia por comando) los fija **MEF-ADR-0043** -- techo doctrinal del lado comando, igual que MEF-ADR-0042 lo es del lado query -- y este documento no lo duplica. Lo que si comparten comando y query es el **casing**: kebab-case minusculo en todo segmento de la ruta (MEF-ADR-0043 seccion 3):
 
 ```csharp
 // ObtenerTurno/FunctionEndpoint.cs
 [Function("ObtenerTurno")]
 public async Task<IActionResult> Run(
-    [HttpTrigger(AuthorizationLevel.Function, "get", Route = "Programacion/Turnos/{id}")]
+    [HttpTrigger(AuthorizationLevel.Function, "get", Route = "programacion/turnos/{id}")]
     HttpRequest req,
     string id,
     CancellationToken ct)
@@ -41,7 +41,7 @@ public async Task<IActionResult> Run(
 // ListarTurnos/FunctionEndpoint.cs  <- clase y namespace distintos: una carpeta por query
 [Function("ListarTurnos")]
 public async Task<IActionResult> Run(
-    [HttpTrigger(AuthorizationLevel.Function, "get", Route = "Programacion/Turnos")]
+    [HttpTrigger(AuthorizationLevel.Function, "get", Route = "programacion/turnos")]
     HttpRequest req,
     CancellationToken ct)
 ```
@@ -63,9 +63,9 @@ El tipo de la request es `HttpRequest` y el retorno `IActionResult` -- la integr
 ```
 src/<RootNamespace>.{Dominio}/
   ObtenerTurno/                          <- feature folder por query GET (sin sufijo Function)
-    FunctionEndpoint.cs                  <- [Function("ObtenerTurno")], Route = "Programacion/Turnos/{id}"
+    FunctionEndpoint.cs                  <- [Function("ObtenerTurno")], Route = "programacion/turnos/{id}"
   ListarTurnos/
-    FunctionEndpoint.cs                  <- [Function("ListarTurnos")], Route = "Programacion/Turnos"
+    FunctionEndpoint.cs                  <- [Function("ListarTurnos")], Route = "programacion/turnos"
 ```
 
 (`<RootNamespace>` se resuelve leyendo el `CLAUDE.md` raiz del consumidor, seccion "Tokens del harness".)

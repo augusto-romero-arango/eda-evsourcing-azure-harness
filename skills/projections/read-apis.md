@@ -53,7 +53,7 @@ El `id` de un item por la via (a)/(b1)/(b2) llega del segmento de ruta como text
 // ObtenerSeguimientoTurno/FunctionEndpoint.cs
 [Function("ObtenerSeguimientoTurno")]
 public async Task<IActionResult> Run(
-    [HttpTrigger(AuthorizationLevel.Function, "get", Route = "Programacion/Turnos/{id}")]
+    [HttpTrigger(AuthorizationLevel.Function, "get", Route = "programacion/turnos/{id}")]
     HttpRequest req,
     string id,   // segmento crudo de la ruta -- el unico parseo tipado ocurre abajo
     CancellationToken ct)
@@ -75,7 +75,7 @@ El `400` se emite con `BadRequestObjectResult` **y un mensaje** -- misma forma q
 // ObtenerResumenAsistenciaDiaria/FunctionEndpoint.cs -- clave compuesta EmpleadoId:Fecha
 [Function("ObtenerResumenAsistenciaDiaria")]
 public async Task<IActionResult> Run(
-    [HttpTrigger(AuthorizationLevel.Function, "get", Route = "RRHH/Asistencias/{empleadoId}/{fecha}")]
+    [HttpTrigger(AuthorizationLevel.Function, "get", Route = "rrhh/asistencias/{empleadoId}/{fecha}")]
     HttpRequest req,
     string empleadoId,
     string fecha,
@@ -115,7 +115,7 @@ private const int TakeMaximo = 200;   // cota del servidor -- el Take del client
 
 [Function("ListarSeguimientosTurno")]
 public async Task<IActionResult> Run(
-    [HttpTrigger(AuthorizationLevel.Function, "query", Route = "Programacion/Turnos")]
+    [HttpTrigger(AuthorizationLevel.Function, "query", Route = "programacion/turnos")]
     HttpRequest req,
     CancellationToken ct)
 {
