@@ -24,6 +24,22 @@ Los bloques de codigo de este agente usan nombres concretos de un proyecto consu
 
 ---
 
+## Doctrina de comentarios (MEF-ADR-0044)
+
+**Default: sin comentario.** Prefiere nombres claros, tipos expresivos y estructura legible antes que explicar con prosa -- codigo autodocumentado es siempre la primera opcion.
+
+Un comentario solo se escribe (o sobrevive una limpieza) si pasa el **umbral doble**:
+- **Context Delta**: informacion que el codigo, sus nombres, sus tipos o sus tests no expresan por si solos.
+- **Decision Delta**: perder esa informacion podria llevar a una modificacion futura incorrecta.
+
+Ambas condiciones son necesarias; ninguna basta sola.
+
+**Proscrito siempre** (nunca pasa el umbral): narrar en prosa lo que la linea siguiente ya dice, provenance (comentarios de origen -- historia de usuario, issue, PR o tarea -- antepuestos al codigo), una cita a ADR sola sin la restriccion local que documenta, resumen del cambio o de la sesion de trabajo, y narracion temporal ("antes se hacia X, ahora Y"). Una cita a ADR se conserva solo junto a la restriccion activa que acompana -- nunca sola.
+
+Doctrina completa: MEF-ADR-0044.
+
+---
+
 ## Prerequisito
 
 El proyecto de smoke tests ya existe en:
@@ -257,25 +273,23 @@ public class SolicitarProgramacionTurnoSmokeTests(ApiFixture api, ServiceBusFixt
 
         var ct = TestContext.Current.CancellationToken;
 
-        // Arrange: limpiar mensajes de ejecuciones anteriores de la suscripcion smoke-tests.
-        // PurgeAsync elimina mensajes residuales que podrian causar falsos positivos.
+        // Sin este purge, un mensaje residual de una corrida anterior satisface el predicado
+        // de WaitForMessageAsync y el test pasa en falso verde.
         await serviceBus.PurgeAsync(TopicSalida, Suscripcion);
 
-        // Arrange: preparar y enviar comando HTTP
         var solicitudId = Guid.CreateVersion7();
         var payload = new { id = solicitudId, /* ... campos del comando ... */ };
         var response = await _client.PostAsJsonAsync("/api/programacion/solicitudes", payload, ct);
         response.StatusCode.Should().Be(HttpStatusCode.Accepted);
 
-        // Assert: consumir el evento de la suscripcion smoke-tests
         var evento = await serviceBus.WaitForMessageAsync<ProgramacionTurnoDiarioSolicitada>(
             TopicSalida, Suscripcion, e => e.SolicitudId == solicitudId, Timeout);
 
         evento.Should().NotBeNull(
             "la Function App deberia publicar ProgramacionTurnoDiarioSolicitada al topic");
 
-        // Verificar contenido usando records de PrivateEvents (igualdad natural; el evento privado
-        // vive en PrivateEvents/Programacion/, MEF-ADR-0039)
+        // Igualdad natural del record de bus, nunca del persistido: el evento privado vive en
+        // PrivateEvents/Programacion/ (MEF-ADR-0039).
         var empleadoEsperado = new InformacionEmpleado(
             empleadoId, "CC", "555666777", "[TEST] Smoke", "[TEST] SB");
         evento!.Empleado.Should().Be(empleadoEsperado);
@@ -335,7 +349,6 @@ public class AsignarTurnoSmokeTests(ServiceBusFixture serviceBus, PostgresFixtur
         Assert.SkipWhen(!postgres.IsConfigured,
             postgres.SkipReason ?? "Postgres no disponible.");
 
-        // Arrange: construir el evento como objeto anonimo
         var correlationId = Guid.CreateVersion7().ToString();
         var solicitudId = Guid.CreateVersion7();
         var empleadoId = Guid.CreateVersion7().ToString();
@@ -347,10 +360,8 @@ public class AsignarTurnoSmokeTests(ServiceBusFixture serviceBus, PostgresFixtur
             DetalleTurno = new { Nombre = "[TEST] Turno Smoke SB", /* ... */ }
         };
 
-        // Act: publicar al topic de Service Bus
         await serviceBus.PublishAsync(TopicEntrada, evento, correlationId);
 
-        // Assert: verificar persistencia en PostgreSQL
         var streamId = $"{empleadoId}:2026-04-15";
         var tipoEvento = "turno_diario_asignado";
 
@@ -361,8 +372,8 @@ public class AsignarTurnoSmokeTests(ServiceBusFixture serviceBus, PostgresFixtur
         existe.Should().BeTrue(
             $"el evento {tipoEvento} con SolicitudId {solicitudId} deberia existir");
 
-        // Assert detallado: leer el payload persistido con la forma minima local declarada arriba,
-        // nunca con el record de bus (ver el comentario de EmpleadoPersistido).
+        // Forma minima local para el payload persistido, nunca el record de bus (ver el
+        // comentario de EmpleadoPersistido).
         var eventoPersistido = await postgres.ObtenerEventoAsync<JsonElement>(
             SchemaControlHoras, streamId, tipoEvento,
             "SolicitudId", solicitudId.ToString(), TimeSpan.FromSeconds(5));
