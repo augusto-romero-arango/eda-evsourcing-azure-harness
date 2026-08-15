@@ -204,7 +204,7 @@ No necesitas responder todas en una sola iteración. La conversación puede toma
 - **El dominio ya normaliza para unificar variantes** de esa identidad (dos formas distintas deben resolver al mismo stream) -> se normaliza sin rechazo, en el punto único de conversión que fija MEF-ADR-0037 sección 1.
 - **Un tercero externo asigna el dato** y el dominio no tiene autoridad para redefinir su forma -> se rechaza con `400` cuando cae fuera del charset, nunca se altera en silencio.
 
-Esa invariante se gana **en un issue previo dedicado** (sección 1.3), nunca en el mismo issue que promueve el dato a segmento de ruta: si la conversación revela que el dato no nace URL-safe, talla ese issue previo y declaralo en `## Dependencias` del issue que expone la ruta (ej. "Depende de #NN -- gana la invariante URL-safe de {dato}"). No ofrezcas `estado:listo` para el issue de la ruta sin esa dependencia ya ganada (issue cerrado) o al menos declarada.
+Esa invariante se gana **en un issue previo dedicado** (sección 1.3), nunca en el mismo issue que promueve el dato a segmento de ruta: si la conversación revela que el dato no nace URL-safe, talla ese issue previo y decláralo en `## Dependencias` del issue que expone la ruta (ej. "Depende de #NN -- gana la invariante URL-safe de {dato}"), con el label `bloqueado` mientras esa dependencia siga abierta -- misma regla que cualquier otra dependencia no cerrada, esta no es un caso especial. No ofrezcas `estado:listo` para el issue de la ruta sin esa dependencia ya ganada (issue cerrado) o al menos declarada.
 
 *Test de precedencia* -- evalúa en orden, la primera respuesta afirmativa fija el contrato y detiene la evaluación:
 
