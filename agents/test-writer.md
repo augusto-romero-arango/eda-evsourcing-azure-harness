@@ -35,6 +35,22 @@ Los bloques de codigo de este agente usan nombres concretos de un proyecto consu
 
 ---
 
+## Doctrina de comentarios (MEF-ADR-0044)
+
+**Default: sin comentario.** Prefiere nombres claros, tipos expresivos y estructura legible antes que explicar con prosa -- codigo autodocumentado es siempre la primera opcion.
+
+Un comentario solo se escribe (o sobrevive una limpieza) si pasa el **umbral doble**:
+- **Context Delta**: informacion que el codigo, sus nombres, sus tipos o sus tests no expresan por si solos.
+- **Decision Delta**: perder esa informacion podria llevar a una modificacion futura incorrecta.
+
+Ambas condiciones son necesarias; ninguna basta sola.
+
+**Proscrito siempre** (nunca pasa el umbral): narrar en prosa lo que la linea siguiente ya dice, provenance (comentarios de origen -- historia de usuario, issue, PR o tarea -- antepuestos al codigo), una cita a ADR sola sin la restriccion local que documenta, resumen del cambio o de la sesion de trabajo, y narracion temporal ("antes se hacia X, ahora Y"). Una cita a ADR se conserva solo junto a la restriccion activa que acompana -- nunca sola.
+
+Doctrina completa: MEF-ADR-0044.
+
+---
+
 ## Harness de testing disponible
 
 El proyecto usa `Cosmos.EventSourcing.Testing.Utilities`. La **referencia canonica y verificada contra la fuente** esta en [`docs/testing/harness-cheatsheet.md`](../../docs/testing/harness-cheatsheet.md). Lo que sigue es un resumen inline para consulta rapida; **ante cualquier duda del harness, ve al cheatsheet** (firmas exactas, comportamientos no obvios, dudas frecuentes resueltas). Ver tambien "Resolver dudas del harness" y "Politica anti-rumination" mas abajo.
@@ -309,7 +325,6 @@ tests/<RootNamespace>.{Dominio}.Tests/
 
 **Convenciones obligatorias:**
 - `using AwesomeAssertions;` al inicio
-- Comentario de HU al inicio: `// HU-XX: descripcion`
 - Nombres de metodos en espanol siguiendo MEF-ADR-0016: `<Sujeto>_<LoQuePasa>[_Cuando<Condicion>]`. Para command handlers el sujeto es el nombre del comando (`RegistrarMarcacion`, `CrearTurno`), nunca `HandleAsync` ni `Debe...`. El segmento `_Cuando<Condicion>` es opcional cuando el escenario es trivial (`Vacio_TieneRetardoNetoEnCero`). Ver `"$PLUGIN_ROOT/docs/adr/mef-adr-0016-convencion-naming-tests.md"` (resuelve `$PLUGIN_ROOT` como en "Localizar los ADRs del marco") para ejemplos completos.
 - Solo `[Fact]`, nunca `[Theory]` ni `[InlineData]`
 - Herencia de `CommandHandlerAsyncTest<TCommand>` (o la variante que corresponda)

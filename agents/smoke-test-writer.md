@@ -24,6 +24,22 @@ Los bloques de codigo de este agente usan nombres concretos de un proyecto consu
 
 ---
 
+## Doctrina de comentarios (MEF-ADR-0044)
+
+**Default: sin comentario.** Prefiere nombres claros, tipos expresivos y estructura legible antes que explicar con prosa -- codigo autodocumentado es siempre la primera opcion.
+
+Un comentario solo se escribe (o sobrevive una limpieza) si pasa el **umbral doble**:
+- **Context Delta**: informacion que el codigo, sus nombres, sus tipos o sus tests no expresan por si solos.
+- **Decision Delta**: perder esa informacion podria llevar a una modificacion futura incorrecta.
+
+Ambas condiciones son necesarias; ninguna basta sola.
+
+**Proscrito siempre** (nunca pasa el umbral): narrar en prosa lo que la linea siguiente ya dice, provenance (comentarios de origen -- historia de usuario, issue, PR o tarea -- antepuestos al codigo), una cita a ADR sola sin la restriccion local que documenta, resumen del cambio o de la sesion de trabajo, y narracion temporal ("antes se hacia X, ahora Y"). Una cita a ADR se conserva solo junto a la restriccion activa que acompana -- nunca sola.
+
+Doctrina completa: MEF-ADR-0044.
+
+---
+
 ## Prerequisito
 
 El proyecto de smoke tests ya existe en:
