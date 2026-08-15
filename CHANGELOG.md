@@ -4,6 +4,31 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-08-15
+
+### Added
+
+- Se crea MEF-ADR-0044, doctrina de comentarios de código mínimos: jerarquía código-autodocumentado > comentario > documentación externa, umbral doble Context Delta + Decision Delta (con test operativo), lista de patrones proscritos (incluida la proscripción explícita de `// HU-XX` como provenance), regla de precedencia para citas a ADR en comentarios, alcance por lenguaje (`.cs` pleno, HCL solo escritura sin modo limpieza) y responsabilidad de limpieza acotada al reviewer sobre el diff del propio PR.
+- Se crea el Agent Skill publicado `comment-cleanup` (`skills/comment-cleanup/`) con la mecanica
+  operativa de limpieza de comentarios de codigo (clasificar, aplicar el umbral doble Context
+  Delta/Decision Delta, codificar en el codigo, comprimir y releer) que opera la doctrina de
+  MEF-ADR-0044, mas su recurso de ejemplos `ejemplos.md`.
+
+### Changed
+
+- MEF-ADR-0043 seccion 1 se enmienda con la politica de aceptacion de ids/codigos de negocio destinados a segmentos de URI: charset canonico explicito (conjunto *unreserved* de RFC 3986 §2.3, `:` excluido por partida doble), el criterio rechazar-vs-normalizar segun quien es dueno de la forma canonica del dato (identidad que el dominio unifica vs. identificador de un tercero), y el momento de la invariante (issue previo dedicado, nunca el mismo PR que promueve el campo a segmento de ruta).
+- El `reviewer` precarga el Agent Skill `comment-cleanup` y gana un paso de limpieza de
+  comentarios (MEF-ADR-0044) en su fase de refactor: aplica el umbral doble Context
+  Delta/Decision Delta exclusivamente sobre archivos `.cs` que el propio PR del issue ya
+  interviene, nunca sobre archivos ajenos al diff, y reporta cada poda en su resumen. El Skill
+  `comment-cleanup` deja de anunciar la precarga como pendiente y apunta al paso del `reviewer`
+  que lo dispara.
+- Se propaga la doctrina compacta de comentarios de MEF-ADR-0044 (umbral doble Context Delta + Decision Delta, proscritos, cita a ADR solo junto a restriccion local activa) a los agentes `test-writer`, `implementer` y `smoke-test-writer`.
+- Se elimina la convencion `// HU-XX: descripcion` de `test-writer` (proscrita por MEF-ADR-0044 al carecer de todo consumidor mecanico).
+- Se alinean con esa doctrina las plantillas de codigo embebidas en los tres agentes: se podan las etiquetas narrativas `// Arrange`/`// Act`/`// Assert` de los dos patrones canonicos de `smoke-test-writer`, se comprimen los comentarios sobrevivientes a la restriccion que documentan, y se sacan del bloque `csharp` de `test-writer` las notas dirigidas al agente (referencias a `agents/implementer.md` y al paso del implementer) que un copiado literal habria dejado como ruido en el repo del consumidor.
+- `agents/planner.md` propaga la enmienda de MEF-ADR-0043 seccion 1: el bloque "Sugerir el contrato HTTP del comando" ahora pregunta, para todo dato de negocio (no un stream id ya canonico) que se proponga como segmento de ruta, si nace URL-safe y quien es dueno de su forma canonica (normalizacion del dominio vs. rechazo `400` de un tercero), y exige tallar el issue previo dedicado que gana esa invariante, declarado en `## Dependencias` -- nunca en el mismo issue que expone la ruta.
+- `agents/reviewer.md` amplia el punto 3 del checklist de contrato HTTP (MEF-ADR-0043): de verificar solo la ausencia de `:` en ids a verificar el charset *unreserved* completo de RFC 3986, y suma la verificacion de que exista una politica de aceptacion (normalizacion o rechazo `400`) cuando el diff pone un codigo de negocio en ruta -- bloqueante solo en endpoints nuevos, y nunca corregible de oficio por el reviewer: esa invariante se gana en un issue previo dedicado (seccion 1.3), no dentro del PR que ya usa el dato como segmento.
+
 ## [0.23.0] - 2026-08-14
 
 ### Added
@@ -1110,7 +1135,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.20.0...v0.21.0

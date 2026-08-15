@@ -257,6 +257,8 @@ El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o
 | Doctrina HTTP de comandos: test de precedencia (POST coleccion/PUT/DELETE/`POST {recurso}:{verbo}`), ids URL-safe, casing kebab-case y simetria CQRS | MEF-ADR-0043 |
 | Casing kebab-case minusculo de las rutas HTTP y remision a MEF-ADR-0043 para el verbo y forma de ruta de comandos | MEF-ADR-0006 |
 | Contrato HTTP de comandos (verbo + ruta + precedencia aplicada) como campo Critico del Definition of Ready | MEF-ADR-0011 |
+| Politica de aceptacion de ids/codigos de negocio en segmentos de URI (charset RFC 3986 unreserved, criterio rechazar-vs-normalizar por propiedad del dato, momento de la invariante en issue previo dedicado) | MEF-ADR-0043 |
+| Doctrina de comentarios de código mínimos (jerarquía código/comentario/documentación, umbral doble Context Delta + Decision Delta, proscripción de provenance `// HU-XX`, regla de precedencia de citas a ADR, alcance por lenguaje y frontera de limpieza del reviewer) | MEF-ADR-0044 |
 
 ## Convenciones del marco
 
