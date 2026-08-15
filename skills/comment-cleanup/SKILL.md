@@ -124,7 +124,8 @@ diff de tus propios cambios) para confirmar:
   MEF-ADR-0044 y en los bodies compactos de los agentes escritores.
 - Limpieza de HCL, JSON/YAML de workflows o Markdown/bash del propio plugin: fuera de alcance
   (MEF-ADR-0044 seccion 5).
-- La precarga de este Skill en `reviewer` via frontmatter `skills:`: issue de seguimiento.
+- Cuando el pipeline dispara esta limpieza: lo fija `agents/reviewer.md` (seccion 6b, el paso de
+  su fase de refactor que precarga este Skill via frontmatter `skills:`).
 
 ## Recursos
 
