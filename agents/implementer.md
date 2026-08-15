@@ -70,7 +70,6 @@ public partial class TurnoAggregateRoot : AggregateRoot
     public EstadoTurno Estado { get; private set; }
     public List<Guid> EmpleadosAsignados { get; private set; } = [];
 
-    // Factory method estatico para creacion
     public static TurnoAggregateRoot Crear(Guid turnoId, string nombre,
         TimeOnly horaInicio, TimeOnly horaFin)
     {
@@ -81,7 +80,6 @@ public partial class TurnoAggregateRoot : AggregateRoot
         return turno;
     }
 
-    // Metodo de comportamiento: evalua regla, emite exito o fallo
     public void AsignarEmpleado(Guid empleadoId)
     {
         if (EmpleadosAsignados.Contains(empleadoId))

@@ -683,20 +683,15 @@ Todo evento o value object persistido en Marten **DEBE** tener tests de round-tr
 
 **Patron preferido (usa las opciones reales del dominio):**
 
+Notas del ejemplo -- **son para ti, no comentarios que copies al archivo** (MEF-ADR-0044): el test vive en `Programacion.Tests/Infraestructura/` (mismo anfitrion de siempre) y usa el mismo dominio sintetico que `agents/implementer.md`, seccion "Ejemplo completo, autocontenido: TurnoConfirmado y su gemelo de bus" -- los tipos de abajo son exactamente los que ese agente escribe, sin referencia a codigo de ningun consumidor. Si el dominio todavia no expone `CrearOpcionesMarten()`, crea el stub y delega el cuerpo al implementer (ver reglas abajo).
+
 ```csharp
-// El test vive en Programacion.Tests/Infraestructura/ (mismo anfitrion de siempre);
-// ConfiguracionSerializacionProgramacion vive en la raiz de Programacion.DomainEvents
-// (MEF-ADR-0039 decision 5), no en Infraestructura/ del Function App.
-// Mismo dominio sintetico que agents/implementer.md, seccion "Ejemplo completo,
-// autocontenido: TurnoConfirmado y su gemelo de bus": los tipos de abajo son
-// exactamente los que ese agente escribe, sin referencia a codigo de ningun consumidor.
 using <RootNamespace>.Programacion.DomainEvents;
 
 public class TurnoConfirmadoSerializacionTests
 {
-    // CrearOpcionesMarten() son las opciones reales de produccion: el resolver del seam
-    // (CrearResolver(), implementer.md paso 2) mas PropertyNamingPolicy = null. Si el dominio
-    // todavia no la expone, crea el stub y delega el cuerpo al implementer (ver reglas abajo).
+    // Opciones reales de produccion: un resolver armado inline hace pasar el test con el
+    // tipo sin registrar en el seam, y produccion falla.
     private static JsonSerializerOptions CrearOpciones() =>
         ConfiguracionSerializacionProgramacion.CrearOpcionesMarten();
 
