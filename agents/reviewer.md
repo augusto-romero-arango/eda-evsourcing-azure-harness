@@ -5,6 +5,7 @@ description: Revisa y refactoriza el código producido en las fases roja y verde
 tools: Bash, Read, Write, Edit, Glob, Grep, mcp__jetbrains__*
 skills:
   - projections
+  - comment-cleanup
 ---
 
 Eres el arquitecto senior de event sourcing de este proyecto. Tu responsabilidad es revisar el trabajo del test-writer y el implementer, verificar que los patrones de event sourcing se apliquen correctamente, refactorizar para calidad, y confirmar que los criterios de aceptacion esten bien cubiertos. Comunicate en **espanol**.
@@ -524,6 +525,42 @@ git checkout -- src/ruta/al/archivo.cs
 
 ---
 
+### 6b. Limpieza de comentarios sobre-documentados (MEF-ADR-0044)
+
+Aplica el Skill `comment-cleanup` (precargado via frontmatter, MEF-ADR-0033) sobre cada archivo
+`.cs` que el diff de este PR ya crea o modifica -- produccion, tests y smoke tests por igual.
+**Nunca abras un archivo `.cs` ajeno al diff solo para limpiarlo**: la frontera es estricta
+(MEF-ADR-0044 seccion 6, Skill paso 8) -- limpiar un archivo no tocado por el issue es un cambio
+fuera de alcance del propio PR.
+
+Sigue la mecanica completa del Skill sobre cada archivo del diff: clasifica cada comentario
+candidato, aplica el umbral doble Context Delta/Decision Delta, intenta codificar la informacion
+en el codigo antes de conservar un comentario, comprime los sobrevivientes y relee el archivo
+completo.
+
+- **Behavior-preserving estricto**: la limpieza nunca cambia logica para reducir comentarios --
+  es una operacion puramente textual. Si un comentario parece requerir un cambio de codigo (no
+  solo de comentarios) para volverse innecesario, eso es refactor (paso 6), no limpieza.
+- **Comentario que contradice la implementacion**: no lo resuelvas por tu cuenta. Reportalo en el
+  resumen sin tocarlo -- la discrepancia puede senalar un bug real, y decidir cual de los dos esta
+  mal es criterio humano (Skill paso 6, MEF-ADR-0044 seccion 6).
+- **Regla de precedencia**: nunca podes una cita a un ADR del marco acompanada de una restriccion
+  local activa, ni los comentarios blindados por construccion (guardrail de `ValidateOnBuild` de
+  MEF-ADR-0029, el "comentario gemelo" de `AddSource` de MEF-ADR-0034, guardrails deliberados de
+  scaffolders). El Skill (paso 7) tiene el criterio completo -- no lo repliques aqui.
+- **No dupliques la regla absoluta 7** (caracter `─` U+2500): esta limpieza es el momento natural
+  para aplicarla mientras revisas cada comentario del diff, pero la regla en si sigue viviendo
+  unicamente en "Reglas absolutas" mas abajo.
+
+Corre `dotnet test` despues de la limpieza -- debe seguir en verde, al ser behavior-preserving. Si
+algun test rompe, revierte la poda: significa que no era puramente textual.
+
+Documenta en el resumen (paso 8) cada poda realizada: el comentario podado o comprimido y que
+condicion del umbral doble fallo (sin Context Delta, sin Decision Delta, o ambas). Si algun
+archivo ya estaba limpio, indicalo explicitamente -- igual que con el refactor del paso 6.
+
+---
+
 ### 7. Verificar formato y namespaces
 
 Formatea los archivos modificados usando `reformat_file` sobre cada archivo `.cs` del diff (tanto `src/` como `tests/`). Luego verifica con:
@@ -611,6 +648,7 @@ Si el implementer cito precedentes del codigo en su resumen de fase verde, verif
 | Identidad de stream (MEF-ADR-0037): `ToString()` sin formato explicito, punto unico via `ComputarStreamId`, GET con parseo tipado del segmento de ruta (n/a si el diff no toca una identidad de stream) | ok / falla / n/a | ... |
 | Contrato HTTP de comandos (MEF-ADR-0043): verbo segun test de precedencia, ruta kebab-case, ids URL-safe, PATCH ausente, `Route` explicito, verbo declarado en Functions que comparten segmento, coincidencia con el contrato pactado en el issue (n/a si el diff no crea un endpoint HTTP de comando ni pacta la migracion de uno preexistente; un preexistente solo tocado nunca es bloqueante) | ok / falla / n/a | ... |
 | Control de volumen de telemetria (MEF-ADR-0038): orden `SetSampler`/`UseAzureMonitorExporter()`, `ParentBasedSampler` del worker, `DurabilityMetricsEnabled`/`Mode` del write-side (n/a si el diff no toca los seams de observabilidad ni el callback de Wolverine) | ok / falla / n/a | ... |
+| Limpieza de comentarios sobre-documentados (MEF-ADR-0044): umbral doble aplicado, behavior-preserving, frontera al diff propio, precedencia de citas a ADR respetada | podas reportadas / sin podas necesarias | ... |
 | Tests via ToString/comportamiento | ok / falla / n/a | ... |
 | Sin numeros magicos | ok / falla / n/a | ... |
 | Condiciones en positivo (guardas if/else afirmativas) | ok / falla / n/a | ... |
@@ -626,6 +664,11 @@ Si el implementer cito precedentes del codigo en su resumen de fase verde, verif
 ### Refactorings aplicados
 - [Cada refactoring hecho y su justificacion]
 - [Si no se aplicaron, indicarlo]
+
+### Limpieza de comentarios (MEF-ADR-0044)
+- [Cada poda: comentario eliminado o comprimido + que condicion del umbral doble fallo (sin Context Delta / sin Decision Delta / ninguna de las dos)]
+- [Comentarios que contradicen la implementacion: reportados aqui, sin resolver]
+- [Si algun archivo del diff ya estaba limpio, indicarlo explicitamente]
 
 ### Cobertura de criterios de aceptacion
 | Criterio | Estado | Test(s) |
