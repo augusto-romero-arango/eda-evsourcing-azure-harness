@@ -167,6 +167,7 @@ Doctrina pesada empaquetada con *progressive disclosure* (MEF-ADR-0033); no son 
 | Agent Skill | Doctrina que empaqueta |
 |---|---|
 | `projections` (`skills/projections/`) | Read-side: recetas de proyección Marten (N1/N2/N3), estilo canónico de read model, read APIs sobre `QuerySession` tenant-scoped, naming de Functions de query y config-test del worker (MEF-ADR-0035/0034/0006) |
+| `comment-cleanup` (`skills/comment-cleanup/`) | Mecánica de limpieza de comentarios en `.cs`: clasificar, aplicar el umbral doble Context Delta/Decision Delta, codificar en el código, comprimir los sobrevivientes y releer (MEF-ADR-0044) |
 
 ## Agentes
 
