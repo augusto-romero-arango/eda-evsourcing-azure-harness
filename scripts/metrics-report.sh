@@ -39,12 +39,18 @@
 #      asi es como coverage-gate (que tiene su propia forma duration/result/
 #      gaps/patch_applied, sin "metrics") queda fuera del agregado de turnos/
 #      tokens/tool-calls sin un caso especial.
-#   3. Deriva de turnos por (stage, modelo): CA-2 exige declarar el modelo y
-#      nunca promediar turnos de un mismo stage corrido bajo modelos
+#   3. Deriva de turnos por (stage, agente, modelo): CA-2 exige declarar el
+#      modelo y nunca promediar turnos de un mismo stage corrido bajo modelos
 #      distintos en una sola cifra (Fase 0: sonnet ~4.5-6.0 s/turno vs opus
-#      ~8.0 s/turno). La tabla "Por stage" agrupa por (stage, model), no solo
-#      por stage: si algun dia el mismo stage corre bajo dos modelos, salen
-#      dos filas, cada una con su propio n y su propio promedio.
+#      ~8.0 s/turno). El agente entra en la misma clave por la razon por la
+#      que #646 lo persiste dentro de metrics: la ruta read-side despacha
+#      projection-test-writer/projection-implementer BAJO LAS MISMAS CLAVES
+#      test-writer/implementer, y la Fase 0 los midio como poblaciones
+#      distintas (test-writer 118 turnos medianos vs projection-test-writer
+#      96). Agrupar solo por clave los promediaria en una sola cifra, que es
+#      exactamente lo que CA-2 proscribe para el modelo. Corridas viejas o
+#      degradadas sin metrics.agent salen con "-" en esa columna y forman su
+#      propio grupo, sin contaminar los de agente conocido.
 #
 # Dos lecciones NO obvias portadas literalmente del interno (#427):
 #
@@ -74,6 +80,20 @@ if [ -f "$_REPO_TOP/.claude-plugin/plugin.json" ]; then
     exit 1
 fi
 
+# El historial vive SIEMPRE en el .claude/pipeline/ del repo principal: los
+# pipelines resuelven PIPELINE_DIR_ABS antes de hacer cd al worktree del issue.
+# Como los worktrees son justo donde uno esta parado mientras corre un pipeline,
+# quedarse con --show-toplevel haria que el reporte dijera "0 corridas" en
+# silencio. --git-common-dir devuelve el .git compartido: absoluto desde un
+# worktree, relativo (".git") desde el repo principal.
+_GIT_COMMON=$(git -C "$_REPO_TOP" rev-parse --git-common-dir 2>/dev/null || true)
+case "$_GIT_COMMON" in
+    "")  _MAIN_REPO_TOP="$_REPO_TOP" ;;
+    /*)  _MAIN_REPO_TOP=$(dirname "$_GIT_COMMON") ;;
+    *)   _MAIN_REPO_TOP=$(cd "$_REPO_TOP/$(dirname "$_GIT_COMMON")" 2>/dev/null && pwd) || _MAIN_REPO_TOP="" ;;
+esac
+[ -n "$_MAIN_REPO_TOP" ] || _MAIN_REPO_TOP="$_REPO_TOP"
+
 if ! command -v jq >/dev/null 2>&1; then
     echo "ERROR: este reporte requiere jq (no encontrado en PATH). Instalalo (p.ej. 'brew install jq') y reintenta." >&2
     exit 1
@@ -81,11 +101,12 @@ fi
 
 JQ_ROW='def row: map(if . == null or . == "" then "null" else . end) | @tsv;'
 
-# Reglas horizontales. 90 columnas: ancho de la tabla mas ancha (deriva
-# temporal, con los cuatro desgloses de tokens) y cubre tambien el ranking de
-# herramientas, el detalle por corrida y la tabla "Por stage".
-RULE_MAJOR=$(printf '%090d' 0 | tr '0' '=')
-RULE_MINOR=$(printf '%090d' 0 | tr '0' '-')
+# Reglas horizontales. 102 columnas: ancho exacto de la tabla mas ancha (la de
+# "Por stage", que lleva stage + agente + modelo antes de las cifras) y cubre
+# de sobra al ranking de herramientas, el detalle por corrida y la deriva
+# temporal con sus cuatro desgloses de tokens.
+RULE_MAJOR=$(printf '%0102d' 0 | tr '0' '=')
+RULE_MINOR=$(printf '%0102d' 0 | tr '0' '-')
 
 # compute_metrics_report_json <history_file> <desde> <hasta>
 #
@@ -260,7 +281,7 @@ def pipeline_report:
       pct_api: (if (run_api_ms + run_non_api_ms) > 0 then (run_api_ms / (run_api_ms + run_non_api_ms) * 100) else null end)
     })) as $per_run
   | ([$all[] | . as $e | ($e | run_stage_pairs)[] | {
-      stage: .stage, model: (.metrics.model // "(desconocido)"),
+      stage: .stage, agent: .metrics.agent, model: (.metrics.model // "(desconocido)"),
       turns: .metrics.turns, cost_usd: .metrics.cost_usd,
       duration_ms: .metrics.duration_ms, duration_api_ms: .metrics.duration_api_ms,
       non_api_ms: .metrics.non_api_ms,
@@ -268,9 +289,9 @@ def pipeline_report:
       tokens_cache_read: .metrics.tokens.cache_read, tokens_cache_creation: .metrics.tokens.cache_creation
     }]) as $stage_rows
   | ($stage_rows
-      | group_by([.stage, .model])
-      | map(summarize_stage_group + {stage: .[0].stage, model: .[0].model})
-      | sort_by([.stage, .model])
+      | group_by([.stage, .agent, .model])
+      | map(summarize_stage_group + {stage: .[0].stage, agent: .[0].agent, model: .[0].model})
+      | sort_by([.stage, (.agent // ""), .model])
     ) as $by_stage
   | ($all | period_summary(week_key)) as $weekly
   | ($all | period_summary(month_key)) as $monthly
@@ -313,14 +334,19 @@ def pipeline_report:
 | ($windowed | map(. + {
     _wall_s: run_wall_s,
     _has_metrics: run_has_metrics,
-    _ts: (.started | parse_started)
+    _ts: (.started | parse_started),
+    # Una linea sin "pipeline" (o con un valor no-string) cae a su propio
+    # cajon en vez de desaparecer: sin esto quedaria contada en el total
+    # global y en ninguna seccion, la unica forma de que el reporte pierda
+    # corridas en silencio.
+    _pipeline: (if (.pipeline | type) == "string" then .pipeline else "(sin-pipeline)" end)
   })) as $entries
 
-| ($entries | map(.pipeline) | map(select(. != null)) | unique) as $present_pipelines
+| ($entries | map(._pipeline) | unique) as $present_pipelines
 | (["tdd", "tooling", "infra"] + $present_pipelines | unique) as $pipeline_names
 
 | ($pipeline_names
-    | map(. as $name | {key: $name, value: (($entries | map(select(.pipeline == $name))) | pipeline_report)})
+    | map(. as $name | {key: $name, value: (($entries | map(select(._pipeline == $name))) | pipeline_report)})
     | from_entries
   ) as $pipelines
 
@@ -517,29 +543,31 @@ render_wallclock() {
 }
 
 # render_by_stage -- CA-2: deriva de turnos por stage, agrupada tambien por
-# modelo (metrics.model): cada fila declara el suyo, nunca se promedian
-# turnos de un mismo stage corrido bajo modelos distintos en una sola cifra.
+# agente (metrics.agent) y modelo (metrics.model): cada fila declara los suyos,
+# nunca se promedian turnos de un mismo stage corrido bajo modelos distintos
+# -- ni bajo agentes distintos, que en la ruta read-side comparten clave.
 render_by_stage() {
     local agg="$1"
     local count
     count=$(jq -r '.wallclock.by_stage | length' <<<"$agg")
 
     echo ""
-    echo "Por stage (n = corridas instrumentadas de ESE stage; modelo declarado, CA-2):"
+    echo "Por stage (n = corridas instrumentadas de ESE stage; agente y modelo declarados, CA-2):"
 
     if [ "$count" -eq 0 ]; then
         echo "(sin corridas instrumentadas de ningun stage en la ventana)"
         return 0
     fi
 
-    printf '%-22s %-16s %5s %9s %9s %9s %9s %8s\n' "Stage" "Modelo" "n" "Turnos" "Duracion" "API" "No-API" "Costo"
-    while IFS=$'\t' read -r stage model n turns dur api nonapi cost; do
-        printf '%-22s %-16s %5s %9s %9s %9s %9s %8s\n' \
-            "$(_txt "$stage")" "$(_txt "$model")" "$n" "$(_num1 "$turns")" \
+    printf '%-18s %-22s %-16s %4s %6s %8s %7s %7s %6s\n' \
+        "Stage" "Agente" "Modelo" "n" "Turnos" "Duracion" "API" "No-API" "Costo"
+    while IFS=$'\t' read -r stage agent model n turns dur api nonapi cost; do
+        printf '%-18s %-22s %-16s %4s %6s %8s %7s %7s %6s\n' \
+            "$(_txt "$stage")" "$(_txt "$agent")" "$(_txt "$model")" "$n" "$(_num1 "$turns")" \
             "$(fmt_dur_s "$dur")" "$(fmt_dur_s "$api")" "$(fmt_dur_s "$nonapi")" "$(_money "$cost")"
     done < <(jq -r "$JQ_ROW"'
         .wallclock.by_stage[]
-        | [.stage, .model, .n, .turns_mean,
+        | [.stage, .agent, .model, .n, .turns_mean,
            (if .duration_ms_mean == null then null else .duration_ms_mean/1000 end),
            (if .duration_api_ms_mean == null then null else .duration_api_ms_mean/1000 end),
            (if .non_api_ms_mean == null then null else .non_api_ms_mean/1000 end),
@@ -691,7 +719,7 @@ EOF
         exit 1
     fi
 
-    local history_file="$_REPO_TOP/.claude/pipeline/pipeline-history.jsonl"
+    local history_file="$_MAIN_REPO_TOP/.claude/pipeline/pipeline-history.jsonl"
 
     local agg
     agg=$(compute_metrics_report_json "$history_file" "$desde" "$hasta") || true
@@ -701,6 +729,11 @@ EOF
     fi
 
     render_overall_header "$agg"
+    if [ "$_MAIN_REPO_TOP" != "$_REPO_TOP" ]; then
+        echo ""
+        echo "Nota: estas parado en un worktree; el historial se leyo del repo principal"
+        echo "      ($history_file), que es donde lo escriben los pipelines."
+    fi
 
     local total
     total=$(jq -r '.meta.total' <<<"$agg")
@@ -713,19 +746,19 @@ EOF
     # Orden de presentacion fijo tdd/tooling/infra (aparecen aunque su conteo
     # sea 0), seguido de cualquier otro valor de "pipeline" que aparezca en el
     # historial y no este en esa lista (forward-compat, ver cabecera).
-    local fixed="tdd tooling infra"
-    local ordered="$fixed"
-    local extra
+    local -a ordered=(tdd tooling infra)
+    local extra known name
     while IFS= read -r extra; do
         [ -z "$extra" ] && continue
-        case " $fixed " in
-            *" $extra "*) ;;
-            *) ordered="$ordered $extra" ;;
-        esac
+        known=false
+        for name in "${ordered[@]}"; do
+            [ "$name" = "$extra" ] && { known=true; break; }
+        done
+        [ "$known" = true ] || ordered+=("$extra")
     done < <(jq -r '.pipelines | keys[]' <<<"$agg")
 
-    local name pipe_agg pipe_total
-    for name in $ordered; do
+    local pipe_agg pipe_total
+    for name in "${ordered[@]}"; do
         pipe_agg=$(jq -c --arg n "$name" '.pipelines[$n]' <<<"$agg")
         [ "$pipe_agg" = "null" ] && continue
         render_pipeline_header "$pipe_agg" "$name"

@@ -49,6 +49,14 @@
 #       (CA-4) -- y "no hay suficientes periodos" cuando solo hay uno.
 #   [J] Celdas nulas no corren las columnas (regresion de corrimiento @tsv,
 #       misma clase de bug que el interno).
+#   [K] Ruta read-side: projection-test-writer bajo la clave "test-writer" (y
+#       en el mismo modelo) sale en su propia fila, sin promediarse con el
+#       write-side -- para eso #646 persiste metrics.agent (CA-2).
+#   [L] Linea sin campo "pipeline": cae al cajon "(sin-pipeline)" en vez de
+#       contar en el total global y en ninguna seccion (CA-3).
+#   [M] Corriendo desde un worktree: lee el historial del repo principal (que
+#       es donde lo escriben los pipelines) y lo declara, en vez de reportar
+#       0 corridas en silencio.
 #
 # Uso: scripts/tests/test-metrics-report.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -162,9 +170,9 @@ fi
 cat > "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" <<'EOF'
 {"issue":"100","title":"Tooling legado","pipeline":"tooling","started":"20260505-090000","finished":"2026-05-05T09:07:00","state":"completed","agents":{"writer":{"duration":250},"reviewer":{"duration":170}},"pr":"https://github.com/x/x/pull/100"}
 {"issue":"300","title":"Infra legado","pipeline":"infra","started":"20260701-100000","finished":"2026-07-01T10:05:00","state":"completed","agents":{"infra-writer":{"duration":60},"infra-reviewer":{"duration":40}},"pr":"https://github.com/x/x/pull/300"}
-{"issue":"200","title":"TDD instrumentado semana1","pipeline":"tdd","started":"20260806-090000","finished":"2026-08-06T09:20:00","state":"completed","agents":{"test-writer":{"duration":320,"metrics":{"turns":8,"duration_ms":320000,"duration_api_ms":250000,"non_api_ms":70000,"cost_usd":0.45,"tokens":{"input":12000,"output":1800,"cache_read":40000,"cache_creation":6000},"model":"claude-sonnet-5","tool_calls":[{"name":"Read","count":10,"duration_ms_sum":8000,"duration_ms_median":700},{"name":"Bash","count":5,"duration_ms_sum":15000,"duration_ms_median":2500}]}},"implementer":{"duration":400,"metrics":{"turns":12,"duration_ms":400000,"duration_api_ms":300000,"non_api_ms":100000,"cost_usd":0.6,"tokens":{"input":15000,"output":2000,"cache_read":30000,"cache_creation":8000},"model":"claude-opus-5","tool_calls":[{"name":"Edit","count":6,"duration_ms_sum":6000,"duration_ms_median":900}]}},"reviewer":{"duration":220,"metrics":{"turns":5,"duration_ms":220000,"duration_api_ms":180000,"non_api_ms":40000,"cost_usd":0.30,"tokens":{"input":9000,"output":1200,"cache_read":30000,"cache_creation":4000},"model":"claude-opus-5","tool_calls":[{"name":"Read","count":6,"duration_ms_sum":4000,"duration_ms_median":650}]}},"coverage-gate":{"duration":30,"result":"clean","gaps":0,"patch_applied":false}},"pr":"https://github.com/x/x/pull/200"}
-{"issue":"210","title":"TDD instrumentado semana2","pipeline":"tdd","started":"20260813-090000","finished":"2026-08-13T09:20:00","state":"completed","agents":{"test-writer":{"duration":620,"metrics":{"turns":18,"duration_ms":620000,"duration_api_ms":450000,"non_api_ms":170000,"cost_usd":0.85,"tokens":{"input":22000,"output":2800,"cache_read":50000,"cache_creation":9000},"model":"claude-sonnet-5","tool_calls":[{"name":"Read","count":14,"duration_ms_sum":11000,"duration_ms_median":700}]}},"implementer":{"duration":700,"metrics":{"turns":20,"duration_ms":700000,"duration_api_ms":500000,"non_api_ms":200000,"cost_usd":1.1,"tokens":{"input":25000,"output":3200,"cache_read":40000,"cache_creation":12000},"model":"claude-opus-5","tool_calls":[{"name":"Edit","count":10,"duration_ms_sum":9000,"duration_ms_median":800}]}},"reviewer":{"duration":260,"metrics":{"turns":7,"duration_ms":260000,"duration_api_ms":210000,"non_api_ms":50000,"cost_usd":0.35,"tokens":{"input":9500,"output":1300,"cache_read":31000,"cache_creation":4200},"model":"claude-opus-5","tool_calls":[{"name":"Read","count":7,"duration_ms_sum":4500,"duration_ms_median":600}]}},"coverage-gate":{"duration":20,"result":"clean","gaps":0,"patch_applied":false}},"pr":"https://github.com/x/x/pull/210"}
-{"issue":"220","title":"TDD fallido en reviewer","pipeline":"tdd","started":"20260814-110000","finished":"2026-08-14T11:20:00","state":"failed","stage":"reviewer","agents":{"test-writer":{"duration":300,"metrics":{"turns":9,"duration_ms":300000,"duration_api_ms":230000,"non_api_ms":70000,"cost_usd":0.4,"tokens":{"input":11000,"output":1600,"cache_read":38000,"cache_creation":5000},"model":"claude-sonnet-5","tool_calls":[{"name":"Bash","count":4,"duration_ms_sum":11000,"duration_ms_median":2200}]}},"implementer":{"duration":null,"metrics":null},"reviewer":{"duration":null,"metrics":null},"coverage-gate":{"duration":null,"result":"n/a","gaps":0,"patch_applied":false}},"error":"timeout"}
+{"issue":"200","title":"TDD instrumentado semana1","pipeline":"tdd","started":"20260806-090000","finished":"2026-08-06T09:20:00","state":"completed","agents":{"test-writer":{"duration":320,"metrics":{"turns":8,"duration_ms":320000,"duration_api_ms":250000,"non_api_ms":70000,"cost_usd":0.45,"tokens":{"input":12000,"output":1800,"cache_read":40000,"cache_creation":6000},"model":"claude-sonnet-5","agent":"test-writer","tool_calls":[{"name":"Read","count":10,"duration_ms_sum":8000,"duration_ms_median":700},{"name":"Bash","count":5,"duration_ms_sum":15000,"duration_ms_median":2500}]}},"implementer":{"duration":400,"metrics":{"turns":12,"duration_ms":400000,"duration_api_ms":300000,"non_api_ms":100000,"cost_usd":0.6,"tokens":{"input":15000,"output":2000,"cache_read":30000,"cache_creation":8000},"model":"claude-opus-5","agent":"implementer","tool_calls":[{"name":"Edit","count":6,"duration_ms_sum":6000,"duration_ms_median":900}]}},"reviewer":{"duration":220,"metrics":{"turns":5,"duration_ms":220000,"duration_api_ms":180000,"non_api_ms":40000,"cost_usd":0.30,"tokens":{"input":9000,"output":1200,"cache_read":30000,"cache_creation":4000},"model":"claude-opus-5","agent":"reviewer","tool_calls":[{"name":"Read","count":6,"duration_ms_sum":4000,"duration_ms_median":650}]}},"coverage-gate":{"duration":30,"result":"clean","gaps":0,"patch_applied":false}},"pr":"https://github.com/x/x/pull/200"}
+{"issue":"210","title":"TDD instrumentado semana2","pipeline":"tdd","started":"20260813-090000","finished":"2026-08-13T09:20:00","state":"completed","agents":{"test-writer":{"duration":620,"metrics":{"turns":18,"duration_ms":620000,"duration_api_ms":450000,"non_api_ms":170000,"cost_usd":0.85,"tokens":{"input":22000,"output":2800,"cache_read":50000,"cache_creation":9000},"model":"claude-sonnet-5","agent":"test-writer","tool_calls":[{"name":"Read","count":14,"duration_ms_sum":11000,"duration_ms_median":700}]}},"implementer":{"duration":700,"metrics":{"turns":20,"duration_ms":700000,"duration_api_ms":500000,"non_api_ms":200000,"cost_usd":1.1,"tokens":{"input":25000,"output":3200,"cache_read":40000,"cache_creation":12000},"model":"claude-opus-5","agent":"implementer","tool_calls":[{"name":"Edit","count":10,"duration_ms_sum":9000,"duration_ms_median":800}]}},"reviewer":{"duration":260,"metrics":{"turns":7,"duration_ms":260000,"duration_api_ms":210000,"non_api_ms":50000,"cost_usd":0.35,"tokens":{"input":9500,"output":1300,"cache_read":31000,"cache_creation":4200},"model":"claude-opus-5","agent":"reviewer","tool_calls":[{"name":"Read","count":7,"duration_ms_sum":4500,"duration_ms_median":600}]}},"coverage-gate":{"duration":20,"result":"clean","gaps":0,"patch_applied":false}},"pr":"https://github.com/x/x/pull/210"}
+{"issue":"220","title":"TDD fallido en reviewer","pipeline":"tdd","started":"20260814-110000","finished":"2026-08-14T11:20:00","state":"failed","stage":"reviewer","agents":{"test-writer":{"duration":300,"metrics":{"turns":9,"duration_ms":300000,"duration_api_ms":230000,"non_api_ms":70000,"cost_usd":0.4,"tokens":{"input":11000,"output":1600,"cache_read":38000,"cache_creation":5000},"model":"claude-sonnet-5","agent":"test-writer","tool_calls":[{"name":"Bash","count":4,"duration_ms_sum":11000,"duration_ms_median":2200}]}},"implementer":{"duration":null,"metrics":null},"reviewer":{"duration":null,"metrics":null},"coverage-gate":{"duration":null,"result":"n/a","gaps":0,"patch_applied":false}},"error":"timeout"}
 EOF
 
 echo ""
@@ -211,7 +219,8 @@ fi
 assert_field "C-14: reviewer corre en opus" "claude-opus-5" "$(echo "$AGG" | jq -r '.pipelines.tdd.wallclock.by_stage[] | select(.stage=="reviewer") | .model')"
 assert_field "C-15: reviewer.n (2 -- 220 murio antes del reviewer)" "2" "$(echo "$AGG" | jq -r '.pipelines.tdd.wallclock.by_stage[] | select(.stage=="reviewer") | .n')"
 # Solo debe existir UNA fila para test-writer (un solo modelo observado) y UNA para reviewer.
-assert_field "C-16: una sola fila de test-writer (un unico modelo, sin split espurio)" "1" "$(echo "$AGG" | jq -r '[.pipelines.tdd.wallclock.by_stage[] | select(.stage=="test-writer")] | length')"
+assert_field "C-16: una sola fila de test-writer (un unico agente y modelo, sin split espurio)" "1" "$(echo "$AGG" | jq -r '[.pipelines.tdd.wallclock.by_stage[] | select(.stage=="test-writer")] | length')"
+assert_field "C-16b: la fila declara tambien el agente real (metrics.agent de #646)" "test-writer" "$(echo "$AGG" | jq -r '.pipelines.tdd.wallclock.by_stage[] | select(.stage=="test-writer") | .agent')"
 
 echo "  -- sin instrumentar (CA-3/CA-5): tooling/infra legados completos --"
 assert_field "C-17: tooling.legacy.count" "1" "$(echo "$AGG" | jq -r '.pipelines.tooling.legacy.count')"
@@ -243,11 +252,11 @@ else
     fail "D-3: no se encontro SIN INSTRUMENTAR (n=1) dentro de la seccion tooling"
 fi
 
-if echo "$OUT" | awk '/PIPELINE: tdd/,/PIPELINE: tooling/' | grep -qE 'test-writer +claude-sonnet-5' \
-   && echo "$OUT" | awk '/PIPELINE: tdd/,/PIPELINE: tooling/' | grep -qE 'reviewer +claude-opus-5'; then
-    pass "D-4: la tabla 'Por stage' de tdd declara sonnet y opus en filas separadas"
+if echo "$OUT" | awk '/PIPELINE: tdd/,/PIPELINE: tooling/' | grep -qE 'test-writer +test-writer +claude-sonnet-5' \
+   && echo "$OUT" | awk '/PIPELINE: tdd/,/PIPELINE: tooling/' | grep -qE 'reviewer +reviewer +claude-opus-5'; then
+    pass "D-4: la tabla 'Por stage' de tdd declara agente y modelo (sonnet/opus en filas separadas)"
 else
-    fail "D-4: no se encontraron las filas esperadas de test-writer/reviewer con su modelo"
+    fail "D-4: no se encontraron las filas esperadas de test-writer/reviewer con su agente y modelo"
 fi
 
 echo ""
@@ -347,6 +356,79 @@ if echo "$OUT" | grep -qE '^Read +10 +8\.0s +- +34\.8%'; then
     pass "J-1: mediana nula -> '-' en su columna y el % en la suya (sin corrimiento)"
 else
     fail "J-1: fila de Read corrida o mal formada: $(echo "$OUT" | grep '^Read' || echo '(no hay fila Read)')"
+fi
+
+echo ""
+echo "[K] Ruta read-side: misma clave de stage, agente distinto -> filas separadas (CA-2)"
+
+# tdd-pipeline.sh despacha projection-test-writer BAJO la clave "test-writer"
+# (por eso #646 persiste metrics.agent). Ambos corren en sonnet, asi que
+# agrupar solo por (stage, modelo) los fundiria en una sola cifra -- y la Fase
+# 0 los midio como poblaciones distintas (118 vs 96 turnos medianos).
+cat > "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" <<'EOF'
+{"issue":"500","title":"TDD write-side","pipeline":"tdd","started":"20260806-090000","state":"completed","agents":{"test-writer":{"duration":300,"metrics":{"turns":20,"duration_ms":300000,"duration_api_ms":240000,"non_api_ms":60000,"cost_usd":0.4,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"model":"claude-sonnet-5","agent":"test-writer","tool_calls":[]}}}}
+{"issue":"510","title":"TDD read-side","pipeline":"tdd","started":"20260807-090000","state":"completed","agents":{"test-writer":{"duration":200,"metrics":{"turns":10,"duration_ms":200000,"duration_api_ms":160000,"non_api_ms":40000,"cost_usd":0.3,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"model":"claude-sonnet-5","agent":"projection-test-writer","tool_calls":[]}}}}
+EOF
+
+AGG_K=$(compute_metrics_report_json "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" "" "")
+assert_field "K-1: dos filas para la clave test-writer (una por agente)" "2" "$(echo "$AGG_K" | jq -r '[.pipelines.tdd.wallclock.by_stage[] | select(.stage=="test-writer")] | length')"
+assert_field "K-2: la fila de test-writer conserva sus 20 turnos, sin promediar con la read-side" "20" "$(echo "$AGG_K" | jq -r '.pipelines.tdd.wallclock.by_stage[] | select(.agent=="test-writer") | .turns_mean')"
+assert_field "K-3: la fila de projection-test-writer conserva sus 10 turnos" "10" "$(echo "$AGG_K" | jq -r '.pipelines.tdd.wallclock.by_stage[] | select(.agent=="projection-test-writer") | .turns_mean')"
+
+OUT=$(run_report)
+if echo "$OUT" | grep -qE 'test-writer +projection-test-writer +claude-sonnet-5'; then
+    pass "K-4: la fila read-side se renderiza con su agente propio"
+else
+    fail "K-4: no se encontro la fila de projection-test-writer en la tabla por stage"
+fi
+
+echo ""
+echo "[L] Linea sin 'pipeline' -> cajon propio, nunca se pierde en silencio (CA-3)"
+
+cat > "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" <<'EOF'
+{"issue":"600","title":"Corrida sin campo pipeline","started":"20260806-090000","state":"completed","agents":{"writer":{"duration":120}}}
+EOF
+
+AGG_L=$(compute_metrics_report_json "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" "" "")
+assert_field "L-1: sigue contada en el total global" "1" "$(echo "$AGG_L" | jq -r '.meta.total')"
+assert_field "L-2: aterriza en el cajon (sin-pipeline), no desaparece" "1" "$(echo "$AGG_L" | jq -r '.pipelines["(sin-pipeline)"].meta.total')"
+assert_field "L-3: y ahi se lista como sin instrumentar" "600" "$(echo "$AGG_L" | jq -r '.pipelines["(sin-pipeline)"].legacy.issues[0].issue')"
+
+OUT=$(run_report)
+if echo "$OUT" | grep -q "PIPELINE: (sin-pipeline)"; then
+    pass "L-4: el cajon se renderiza como una seccion mas"
+else
+    fail "L-4: no aparecio la seccion (sin-pipeline): $(echo "$OUT" | grep '^PIPELINE:')"
+fi
+
+echo ""
+echo "[M] Desde un worktree: lee el historial del repo principal, no reporta 0 en silencio"
+
+# Los pipelines resuelven PIPELINE_DIR_ABS antes del cd al worktree, asi que el
+# historial SIEMPRE vive en el repo principal -- y el worktree del issue es
+# justo donde uno esta parado mientras una corrida avanza.
+cat > "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" <<'EOF'
+{"issue":"700","title":"Corrida en el repo principal","pipeline":"tdd","started":"20260806-090000","state":"completed","agents":{"test-writer":{"duration":120}}}
+EOF
+: > "$FAKE_REPO/semilla.txt"
+git -C "$FAKE_REPO" add semilla.txt >/dev/null 2>&1
+git -C "$FAKE_REPO" -c user.email=t@t -c user.name=t commit -qm "semilla" >/dev/null 2>&1
+if git -C "$FAKE_REPO" worktree add -q "$TMP/fake-wt" -b wt-test >/dev/null 2>&1; then
+    OUT=$(cd "$TMP/fake-wt" && "$FAKE_REPO/metrics-report.sh" 2>&1)
+    RC=$?
+    if [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "Corridas totales en la ventana: 1"; then
+        pass "M-1: desde el worktree ve la corrida del repo principal"
+    else
+        fail "M-1: se esperaba 1 corrida desde el worktree, rc=$RC: $(echo "$OUT" | grep 'Corridas totales')"
+    fi
+    if echo "$OUT" | grep -q "estas parado en un worktree"; then
+        pass "M-2: declara que el historial salio del repo principal"
+    else
+        fail "M-2: no se declaro la lectura desde el repo principal"
+    fi
+    git -C "$FAKE_REPO" worktree remove --force "$TMP/fake-wt" >/dev/null 2>&1 || true
+else
+    echo "  SKIP: no se pudo crear el worktree de prueba en este entorno"
 fi
 
 echo ""
