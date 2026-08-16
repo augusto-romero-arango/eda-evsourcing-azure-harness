@@ -57,6 +57,22 @@ AGENT_IM_DUR="" AGENT_IM_RES="pending"
 AGENT_ST_DUR="" AGENT_ST_RES="pending"   # smoke-test-writer
 AGENT_RV_DUR="" AGENT_RV_RES="pending"
 AGENT_CG_DUR="" AGENT_CG_RES="pending"   # coverage-gate
+# Metricas por stage (issue #646): JSON compacto de compute_stage_metrics,
+# cosechado POR STAGE (no por nombre de agente) al cierre de cada run_agent --
+# el stage "merge" reusa el nombre de agente "implementer" y con un case por
+# agente pisaria las metricas del implementer de Stage 2 (mismo motivo que el
+# interno #426 en mefisto-tooling-pipeline.sh).
+AGENT_TW_METRICS_JSON=""
+AGENT_IM_METRICS_JSON=""
+AGENT_ST_METRICS_JSON=""
+AGENT_RV_METRICS_JSON=""
+LAST_AGENT_METRICS_JSON=""
+# Stage 0 (scaffold) y los dos sub-stages de remediacion del coverage gate
+# (Stage 4) no pasan por run_agent -- son bloques a medida que invocan
+# `claude` directo -- asi que llevan su propia duracion+metricas.
+AGENT_SCAFFOLD_DUR="" AGENT_SCAFFOLD_METRICS_JSON=""
+AGENT_PATCH_TW_DUR="" AGENT_PATCH_TW_METRICS_JSON=""
+AGENT_PATCH_IM_DUR="" AGENT_PATCH_IM_METRICS_JSON=""
 COV_PATCH_APPLIED=false
 COV_GAPS_REMAINING=0
 COV_TABLE=""
@@ -135,8 +151,29 @@ abort() {
     fi
     if [ -n "${PIPELINE_DIR_ABS:-}" ]; then
         update_status "$CURRENT_STAGE" "failed"
+        # CA-3 (issue #646): agents.<clave>.metrics de los stages que ya
+        # cerraron en esta corrida -- un fallo a mitad de pipeline es el caso
+        # mas caro de diagnosticar, y hasta este issue la linea de fallo no
+        # llevaba ni "agents". Sin jq (PIPELINE_CAPTURE_STREAM=false) se omite
+        # por completo: la linea queda con la forma exacta de antes (CA-4).
+        local abort_agents_field=""
+        if [ "${PIPELINE_CAPTURE_STREAM:-false}" = true ]; then
+            local abort_agent_args=(
+                "test-writer" "$STAGE1_AGENT" "${AGENT_TW_DUR:-}" "${AGENT_TW_METRICS_JSON:-}"
+                "implementer" "$STAGE2_AGENT" "${AGENT_IM_DUR:-}" "${AGENT_IM_METRICS_JSON:-}"
+                "reviewer" "reviewer" "${AGENT_RV_DUR:-}" "${AGENT_RV_METRICS_JSON:-}"
+            )
+            [ -n "${AGENT_SCAFFOLD_METRICS_JSON:-}" ] && abort_agent_args+=("scaffolder" "domain-scaffolder" "${AGENT_SCAFFOLD_DUR:-}" "$AGENT_SCAFFOLD_METRICS_JSON")
+            [ -n "${AGENT_ST_METRICS_JSON:-}" ] && abort_agent_args+=("smoke-test-writer" "smoke-test-writer" "${AGENT_ST_DUR:-}" "$AGENT_ST_METRICS_JSON")
+            [ -n "${AGENT_PATCH_TW_METRICS_JSON:-}" ] && abort_agent_args+=("patch-test-writer" "$STAGE1_AGENT" "${AGENT_PATCH_TW_DUR:-}" "$AGENT_PATCH_TW_METRICS_JSON")
+            [ -n "${AGENT_PATCH_IM_METRICS_JSON:-}" ] && abort_agent_args+=("patch-implementer" "$STAGE2_AGENT" "${AGENT_PATCH_IM_DUR:-}" "$AGENT_PATCH_IM_METRICS_JSON")
+
+            local abort_agents_json
+            abort_agents_json=$(build_agents_history_json "${abort_agent_args[@]}" 2>/dev/null) || abort_agents_json=""
+            [ -n "$abort_agents_json" ] && abort_agents_field=",\"agents\":$abort_agents_json"
+        fi
         # M4: Registrar falla en historial para analisis de patrones
-        echo "{\"issue\":\"${ISSUE_NUM:-}\",\"title\":\"$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')\",\"pipeline\":\"tdd\",\"started\":\"${TIMESTAMP:-}\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"failed\",\"stage\":\"$CURRENT_STAGE\",\"error\":\"$PIPELINE_ERROR\"}" \
+        echo "{\"issue\":\"${ISSUE_NUM:-}\",\"title\":\"$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')\",\"pipeline\":\"tdd\",\"started\":\"${TIMESTAMP:-}\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"failed\",\"stage\":\"$CURRENT_STAGE\"${abort_agents_field},\"error\":\"$PIPELINE_ERROR\"}" \
             >> "$PIPELINE_DIR_ABS/pipeline-history.jsonl" 2>/dev/null || true
     fi
     exit 1
@@ -259,6 +296,7 @@ done
 
 # ─── Preparar directorio de pipeline ─────────────────────────────────────────
 mkdir -p "$LOG_DIR"
+mkdir -p "$PIPELINE_DIR/metrics"
 echo "Pipeline iniciado: $TIMESTAMP" > "$LOG_FILE"
 
 # Resolver rutas absolutas para uso dentro de subshells (cd al worktree)
@@ -446,9 +484,16 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
         wait $SCAFFOLD_WATCHDOG 2>/dev/null || true
         SCAFFOLD_ELAPSED=$(( $(date +%s) - SCAFFOLD_START_TS ))
 
+        AGENT_SCAFFOLD_DUR=$SCAFFOLD_ELAPSED
         if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
             derive_stage_log_from_stream "$STREAM_SCAFFOLD" "$STDERR_SCAFFOLD" "$LOG_SCAFFOLD"
+            AGENT_SCAFFOLD_METRICS_JSON=$(compute_stage_metrics "$STREAM_SCAFFOLD")
+        else
+            AGENT_SCAFFOLD_METRICS_JSON="null"
         fi
+        # CA-3/CA-5 (issue #646): metricas del scaffold, cosechadas al cierre
+        # del stage y respaldadas en disco ANTES de decidir si se aborta.
+        echo "$AGENT_SCAFFOLD_METRICS_JSON" > "$PIPELINE_DIR_ABS/metrics/tdd-${TIMESTAMP}-issue-${ISSUE_NUM}-stage-0-domain-scaffolder.json" 2>/dev/null || true
 
         if [ "$SCAFFOLD_EXIT" -ne 0 ]; then
             echo "[$(date +%H:%M:%S)] FALLO domain-scaffolder (${SCAFFOLD_ELAPSED}s, exit $SCAFFOLD_EXIT)" >> "$EVENTS_LOG_ABS"
@@ -566,9 +611,14 @@ run_agent() {
     # ruta, exito/fallo/SIGKILL por igual -- el stream truncado del watchdog
     # queda en disco (nunca se borra) y la clasificacion de abajo sigue
     # leyendo $log_stage sin cambios.
+    local metrics_json="null"
     if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
         derive_stage_log_from_stream "$stream_file" "$stderr_file" "$log_stage"
+        metrics_json=$(compute_stage_metrics "$stream_file")
     fi
+    # CA-5: respaldo en disco de las metricas de ESTE stage, independiente de
+    # si el pipeline llega a escribir la linea de pipeline-history.jsonl.
+    echo "$metrics_json" > "$PIPELINE_DIR_ABS/metrics/tdd-${TIMESTAMP}-issue-${ISSUE_NUM}-stage-${stage}-${agent}.json" 2>/dev/null || true
 
     if [ "$CLAUDE_EXIT" -ne 0 ]; then
         # M1: Clasificar tipo de fallo por exit code y contenido del log
@@ -610,6 +660,12 @@ run_agent() {
                     # CA-3: el retry escribe su propio stream/stderr y deriva su
                     # propio -retry.log, sin pisar los archivos del primer intento.
                     derive_stage_log_from_stream "$stream_file_retry" "$stderr_file_retry" "$log_stage_retry"
+                    # El reintento reemplaza al primer intento para efectos de
+                    # metricas (igual que ya reemplaza a $log_stage abajo):
+                    # metrics_json se recalcula sobre su propio stream y se
+                    # respalda en su propio archivo -retry.json (issue #646).
+                    metrics_json=$(compute_stage_metrics "$stream_file_retry")
+                    echo "$metrics_json" > "$PIPELINE_DIR_ABS/metrics/tdd-${TIMESTAMP}-issue-${ISSUE_NUM}-stage-${stage}-${agent}-retry.json" 2>/dev/null || true
                 else
                     (cd "$WORKTREE_PATH" && claude -p "$prompt" \
                         --agent "$agent" \
@@ -668,7 +724,18 @@ run_agent() {
                 case "$agent" in
                     test-writer|projection-test-writer) AGENT_TW_DUR=$elapsed; AGENT_TW_RES="failed" ;;
                     implementer|projection-implementer) AGENT_IM_DUR=$elapsed; AGENT_IM_RES="failed" ;;
+                    smoke-test-writer)                  AGENT_ST_DUR=$elapsed; AGENT_ST_RES="failed" ;;
                     reviewer)                           AGENT_RV_DUR=$elapsed; AGENT_RV_RES="failed" ;;
+                esac
+                # CA-3 (issue #646): cosechar por STAGE, no por nombre de
+                # agente -- el stage "merge" reusa el agente "implementer" y
+                # con un case por agente pisaria las metricas del implementer
+                # de Stage 2 (mismo motivo del interno #426).
+                case "$stage" in
+                    1)  AGENT_TW_METRICS_JSON="$metrics_json" ;;
+                    2)  AGENT_IM_METRICS_JSON="$metrics_json" ;;
+                    2b) AGENT_ST_METRICS_JSON="$metrics_json" ;;
+                    3)  AGENT_RV_METRICS_JSON="$metrics_json" ;;
                 esac
                 update_status "$stage-$agent" "failed"
                 echo -e "\n${RED}── Ultimas lineas del log de $agent:${NC}"
@@ -679,6 +746,7 @@ run_agent() {
     fi
 
     LAST_AGENT_DURATION=$elapsed
+    LAST_AGENT_METRICS_JSON="$metrics_json"
     log "$agent completado en ${elapsed}s"
 }
 
@@ -802,6 +870,7 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
     fi
 
     AGENT_TW_DUR=$LAST_AGENT_DURATION
+    AGENT_TW_METRICS_JSON=$LAST_AGENT_METRICS_JSON
     AGENT_TW_RES="passed"
     update_status "1-${STAGE1_AGENT}" "passed"
     if [ "$IS_NO_RED_SIGNAL" = true ]; then
@@ -874,6 +943,7 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
     auto_commit_if_needed "verde" "feat(hu-${ISSUE_NUM:-?}): implementación fase verde"
 
     AGENT_IM_DUR=$LAST_AGENT_DURATION
+    AGENT_IM_METRICS_JSON=$LAST_AGENT_METRICS_JSON
     if [ "$HAS_BLOCKAGE" = true ]; then
         AGENT_IM_RES="blocked"
         update_status "2-${STAGE2_AGENT}" "blocked"
@@ -941,6 +1011,7 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
             auto_commit_if_needed "smoke" "test(hu-${ISSUE_NUM:-?}): smoke tests para endpoints"
 
             AGENT_ST_DUR=$LAST_AGENT_DURATION
+            AGENT_ST_METRICS_JSON=$LAST_AGENT_METRICS_JSON
             AGENT_ST_RES="passed"
             update_status "2b-smoke-test-writer" "passed"
             success "Stage 2b completado — smoke tests escritos"
@@ -1061,6 +1132,7 @@ ATENCION: El implementer reporto tests bloqueados. Lee el reporte en .claude/pip
     auto_commit_if_needed "refactor" "refactor(hu-${ISSUE_NUM:-?}): revisión y refactor"
 
     AGENT_RV_DUR=$LAST_AGENT_DURATION
+    AGENT_RV_METRICS_JSON=$LAST_AGENT_METRICS_JSON
     AGENT_RV_RES="passed"
     update_status "3-reviewer" "passed"
     success "Stage 3 completado — fase refactor confirmada"
@@ -1482,6 +1554,7 @@ IMPORTANTE:
 - PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
         CG_REMEDIATION_TIMEOUT=1800  # 30 minutos para remediacion
+        PATCH_TW_START=$(date +%s)
 
         log "Relanzando $STAGE1_AGENT para remediacion..."
         LOG_CG_TW="$LOG_DIR_ABS/stage-4-${STAGE1_AGENT}-patch-${TIMESTAMP}.log"
@@ -1514,9 +1587,16 @@ IMPORTANTE:
         kill $CG_TW_WATCHDOG 2>/dev/null || true
         wait $CG_TW_WATCHDOG 2>/dev/null || true
 
+        AGENT_PATCH_TW_DUR=$(( $(date +%s) - PATCH_TW_START ))
         if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
             derive_stage_log_from_stream "$STREAM_CG_TW" "$STDERR_CG_TW" "$LOG_CG_TW"
+            AGENT_PATCH_TW_METRICS_JSON=$(compute_stage_metrics "$STREAM_CG_TW")
+        else
+            AGENT_PATCH_TW_METRICS_JSON="null"
         fi
+        # CA-3/CA-5 (issue #646): metricas de este patch loop, cosechadas al
+        # cierre del stage y respaldadas en disco antes de decidir el resultado.
+        echo "$AGENT_PATCH_TW_METRICS_JSON" > "$PIPELINE_DIR_ABS/metrics/tdd-${TIMESTAMP}-issue-${ISSUE_NUM}-stage-4b-${STAGE1_AGENT}.json" 2>/dev/null || true
 
         if [ "$CG_TW_EXIT" -ne 0 ]; then
             warn "$STAGE1_AGENT de remediacion fallo (exit $CG_TW_EXIT) — continuando con gaps pendientes"
@@ -1547,6 +1627,7 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
                 LOG_CG_IM="$LOG_DIR_ABS/stage-4-${STAGE2_AGENT}-patch-${TIMESTAMP}.log"
                 STREAM_CG_IM="${LOG_CG_IM%.log}.stream.jsonl"
                 STDERR_CG_IM="${LOG_CG_IM%.log}.stderr.log"
+                PATCH_IM_START=$(date +%s)
                 echo "[$(date +%H:%M:%S)] REMEDIATION: relanzando $STAGE2_AGENT" >> "$EVENTS_LOG_ABS"
 
                 if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
@@ -1574,9 +1655,16 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
                 kill $CG_IM_WATCHDOG 2>/dev/null || true
                 wait $CG_IM_WATCHDOG 2>/dev/null || true
 
+                AGENT_PATCH_IM_DUR=$(( $(date +%s) - PATCH_IM_START ))
                 if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
                     derive_stage_log_from_stream "$STREAM_CG_IM" "$STDERR_CG_IM" "$LOG_CG_IM"
+                    AGENT_PATCH_IM_METRICS_JSON=$(compute_stage_metrics "$STREAM_CG_IM")
+                else
+                    AGENT_PATCH_IM_METRICS_JSON="null"
                 fi
+                # CA-3/CA-5 (issue #646): metricas de este patch loop, cosechadas
+                # al cierre del stage y respaldadas en disco.
+                echo "$AGENT_PATCH_IM_METRICS_JSON" > "$PIPELINE_DIR_ABS/metrics/tdd-${TIMESTAMP}-issue-${ISSUE_NUM}-stage-4c-${STAGE2_AGENT}.json" 2>/dev/null || true
 
                 if [ "$CG_IM_EXIT" -ne 0 ]; then
                     warn "$STAGE2_AGENT de remediacion fallo (exit $CG_IM_EXIT)"
@@ -1872,7 +1960,41 @@ if [ -n "$ISSUE_NUM" ]; then
 fi
 
 # Append al historial
-echo "{\"issue\":\"${ISSUE_NUM:-}\",\"title\":\"$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')\",\"pipeline\":\"tdd\",\"started\":\"$TIMESTAMP\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"completed\",\"agents\":{\"test-writer\":{\"duration\":${AGENT_TW_DUR:-null}},\"implementer\":{\"duration\":${AGENT_IM_DUR:-null}},\"reviewer\":{\"duration\":${AGENT_RV_DUR:-null}},\"coverage-gate\":{\"duration\":${AGENT_CG_DUR:-null},\"result\":\"$AGENT_CG_RES\",\"gaps\":$COV_GAPS_REMAINING,\"patch_applied\":$COV_PATCH_APPLIED}},\"tests\":${PIPELINE_TESTS:-null},\"pr\":\"$PR_URL\"}" \
+#
+# CA-1/CA-2 (issue #646): agents.<clave>.metrics se agrega via
+# build_agents_history_json SIN tocar "duration" (test-writer/implementer/
+# reviewer siguen presentes aunque no hayan corrido en esta corrida) y solo
+# suma scaffolder/smoke-test-writer/patch-test-writer/patch-implementer
+# cuando ese stage de verdad corrio (metrics no vacio). "coverage-gate" no
+# pasa por el builder -- su forma (duration/result/gaps/patch_applied) no
+# cambia (ver notas tecnicas del issue): se compone aparte y se mezcla al
+# objeto que arma el builder.
+#
+# CA-4: sin jq, PIPELINE_CAPTURE_STREAM es false y este bloque no corre --
+# AGENTS_JSON conserva la forma exacta de siempre (sin "metrics", sin las
+# claves nuevas).
+AGENTS_JSON="{\"test-writer\":{\"duration\":${AGENT_TW_DUR:-null}},\"implementer\":{\"duration\":${AGENT_IM_DUR:-null}},\"reviewer\":{\"duration\":${AGENT_RV_DUR:-null}},\"coverage-gate\":{\"duration\":${AGENT_CG_DUR:-null},\"result\":\"$AGENT_CG_RES\",\"gaps\":$COV_GAPS_REMAINING,\"patch_applied\":$COV_PATCH_APPLIED}}"
+
+if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
+    HISTORY_AGENT_ARGS=(
+        "test-writer" "$STAGE1_AGENT" "${AGENT_TW_DUR:-}" "${AGENT_TW_METRICS_JSON:-}"
+        "implementer" "$STAGE2_AGENT" "${AGENT_IM_DUR:-}" "${AGENT_IM_METRICS_JSON:-}"
+        "reviewer" "reviewer" "${AGENT_RV_DUR:-}" "${AGENT_RV_METRICS_JSON:-}"
+    )
+    [ -n "$AGENT_SCAFFOLD_METRICS_JSON" ] && HISTORY_AGENT_ARGS+=("scaffolder" "domain-scaffolder" "${AGENT_SCAFFOLD_DUR:-}" "$AGENT_SCAFFOLD_METRICS_JSON")
+    [ -n "$AGENT_ST_METRICS_JSON" ] && HISTORY_AGENT_ARGS+=("smoke-test-writer" "smoke-test-writer" "${AGENT_ST_DUR:-}" "$AGENT_ST_METRICS_JSON")
+    [ -n "$AGENT_PATCH_TW_METRICS_JSON" ] && HISTORY_AGENT_ARGS+=("patch-test-writer" "$STAGE1_AGENT" "${AGENT_PATCH_TW_DUR:-}" "$AGENT_PATCH_TW_METRICS_JSON")
+    [ -n "$AGENT_PATCH_IM_METRICS_JSON" ] && HISTORY_AGENT_ARGS+=("patch-implementer" "$STAGE2_AGENT" "${AGENT_PATCH_IM_DUR:-}" "$AGENT_PATCH_IM_METRICS_JSON")
+
+    CORE_AGENTS_JSON=$(build_agents_history_json "${HISTORY_AGENT_ARGS[@]}" 2>/dev/null) || CORE_AGENTS_JSON=""
+    if [ -n "$CORE_AGENTS_JSON" ]; then
+        COVERAGE_GATE_JSON="{\"coverage-gate\":{\"duration\":${AGENT_CG_DUR:-null},\"result\":\"$AGENT_CG_RES\",\"gaps\":$COV_GAPS_REMAINING,\"patch_applied\":$COV_PATCH_APPLIED}}"
+        MERGED_AGENTS_JSON=$(jq -n -c --argjson a "$CORE_AGENTS_JSON" --argjson b "$COVERAGE_GATE_JSON" '$a + $b' 2>/dev/null) || MERGED_AGENTS_JSON=""
+        [ -n "$MERGED_AGENTS_JSON" ] && AGENTS_JSON="$MERGED_AGENTS_JSON"
+    fi
+fi
+
+echo "{\"issue\":\"${ISSUE_NUM:-}\",\"title\":\"$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')\",\"pipeline\":\"tdd\",\"started\":\"$TIMESTAMP\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"completed\",\"agents\":$AGENTS_JSON,\"tests\":${PIPELINE_TESTS:-null},\"pr\":\"$PR_URL\"}" \
     >> "$PIPELINE_DIR_ABS/pipeline-history.jsonl"
 
 # Eliminar archivo de estado individual (ya esta en el historial)
