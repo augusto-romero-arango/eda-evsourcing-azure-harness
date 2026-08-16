@@ -152,19 +152,26 @@ Si no hay historial: `  (sin pipelines completados aun)`.
 
 El comando debe saber que logs leer segun el tipo de pipeline. El campo `log` del JSON de status contiene la ruta al log principal. Para logs de agentes individuales, el patron de nombre depende del tipo:
 
-- TDD: `.claude/pipeline/logs/stage-{N}-{agent}-{TIMESTAMP}.log`
+- TDD: `.claude/pipeline/logs/stage-{N}-{agent}-{TIMESTAMP}-issue-{N}.log`
 - Tooling: `.claude/pipeline/logs/tooling-stage-{N}-{agent}-{TIMESTAMP}.log`
 - Infra: `.claude/pipeline/logs/iac-stage-{N}-{agent}-{TIMESTAMP}.log`
 
 El TIMESTAMP se extrae del campo `started` del JSON de status.
 
+En TDD el `.log` se **deriva al terminar** el stage a partir de la traza cruda
+que el pipeline captura (issue #645), asi que un stage todavia en vuelo aun no
+tiene `.log`. Si el Read falla sobre un stage cuyo status es `running`, lee en
+su lugar la traza viva del mismo nombre base: `...-issue-{N}.stream.jsonl` (un
+evento JSON por linea) o `...-issue-{N}.stderr.log`. No es un fallo del
+pipeline: el `.log` aparece cuando el agente termina.
+
 Para responder preguntas, usa Read sobre el archivo necesario (NO uses Bash):
 
 - **Por que fallo**: `last_error` del JSON de status. Para detalle: `Read <log_path>` usando el campo `log` (lee las ultimas 30 lineas con offset)
-- **Tests escritos**: `Read .claude/pipeline/logs/stage-1-test-writer-{{TIMESTAMP}}.log` (solo TDD)
+- **Tests escritos**: `Read .claude/pipeline/logs/stage-1-test-writer-{{TIMESTAMP}}-issue-{{N}}.log` (solo TDD)
 - **Resumen del writer**: `Read .claude/pipeline/logs/tooling-stage-1-writer-{{TIMESTAMP}}.log` (solo Tooling)
 - **Resumen del reviewer**:
-  - TDD: `Read .claude/pipeline/logs/stage-3-reviewer-{{TIMESTAMP}}.log`
+  - TDD: `Read .claude/pipeline/logs/stage-3-reviewer-{{TIMESTAMP}}-issue-{{N}}.log`
   - Tooling: `Read .claude/pipeline/logs/tooling-stage-2-reviewer-{{TIMESTAMP}}.log`
   - Infra: `Read .claude/pipeline/logs/iac-stage-2-infra-reviewer-{{TIMESTAMP}}.log`
 - **Revision estatica de infra (fmt/validate) / hallazgos de seguridad-calidad**: `Read .claude/pipeline/logs/iac-stage-2-infra-reviewer-{{TIMESTAMP}}.log`. El plan real (recursos a crear/modificar/destruir) no corre en este pipeline local: se publica como comentario del PR por el workflow de CI `infra-cd.yml` (MEF-ADR-0022).

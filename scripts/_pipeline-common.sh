@@ -507,6 +507,67 @@ run_tests_projects() {
     return $combined_rc
 }
 
+# --- Captura de traza stream-json de las invocaciones `claude -p` (issue #645) -
+
+# derive_stage_log_from_stream <stream_file> <stderr_file> <out_file>
+#
+# Deriva el log legible de un stage (patron portado de
+# .claude/scripts/_mefisto-common.sh, issue #431) a partir del stream JSON
+# crudo que `claude -p --output-format stream-json --verbose` escribe en
+# <stream_file>: una linea por bloque de texto del asistente y una linea
+# "[tool] <nombre>" por cada tool_use, en el orden del stream. Anexa
+# <stderr_file> tal cual al final. Sobreescribe <out_file> si ya existia.
+#
+# El evento `result` con `is_error == true` tambien se deriva, prefijado con
+# "API Error: <status>" cuando el CLI reporta api_error_status: en una
+# corrida fallida ese texto no siempre llega por stderr, y run_agent() de
+# tdd-pipeline.sh clasifica fallos con `grep "API Error: 5"`/`"API Error: 4"`
+# sobre <out_file> -- sin esta linea esos greps nunca matchean y un 5xx se
+# clasificaria como CLI_ERROR generico en vez de API_ERROR_SERVER.
+#
+# El nombre y la ruta de <out_file> NO cambian (sigue siendo el mismo .log de
+# siempre): los greps de clasificacion de tdd-pipeline.sh lo siguen leyendo
+# sin saberlo.
+#
+# Tolera un stream truncado (proceso muerto a mitad de escritura, p. ej. por
+# el watchdog de timeout) o vacio via `fromjson?`. Sin jq en el PATH, deja una
+# nota explicita y de todos modos anexa <stderr_file>. Nunca aborta: retorna
+# siempre 0.
+derive_stage_log_from_stream() {
+    local stream_file="$1" stderr_file="$2" out_file="$3"
+
+    : > "$out_file" 2>/dev/null || return 0
+
+    if [ -s "$stream_file" ]; then
+        if command -v jq >/dev/null 2>&1; then
+            jq -R -r '
+                fromjson?
+                | select(type == "object")
+                | if .type == "assistant" then
+                      (.message.content // [])[]?
+                      | if .type == "text" then (.text // "")
+                        elif .type == "tool_use" then "[tool] " + (.name // "?")
+                        else empty end
+                  elif .type == "result" and .is_error == true then
+                      (if (.api_error_status // null) != null
+                         then "API Error: " + (.api_error_status | tostring) + " "
+                         else "" end)
+                      + ((.result // .error // .terminal_reason // .subtype // "error") | tostring)
+                  else empty end
+            ' "$stream_file" >> "$out_file" 2>/dev/null || true
+        else
+            echo "(jq no disponible: no se pudo derivar texto legible del stream crudo -- ver $stream_file)" >> "$out_file"
+        fi
+    fi
+
+    if [ -s "$stderr_file" ]; then
+        [ -s "$out_file" ] && echo "" >> "$out_file"
+        cat "$stderr_file" >> "$out_file" 2>/dev/null || true
+    fi
+
+    return 0
+}
+
 # --- Helpers de naming de Azure Storage Account (tfstate backend) -------------
 #
 # El nombre de una Storage Account es un endpoint DNS publico

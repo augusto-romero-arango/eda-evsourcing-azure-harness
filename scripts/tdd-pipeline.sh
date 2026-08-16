@@ -273,6 +273,19 @@ EVENTS_LOG_ABS="$PIPELINE_DIR_ABS/events.log"
 # Separador de sesión en events.log
 echo "─── SESSION $TIMESTAMP issue:${ISSUE_NUM:-file} from-stage:$FROM_STAGE ───" >> "$EVENTS_LOG_ABS"
 
+# ─── Captura stream-json de las invocaciones claude -p (issue #645) ─────────
+# jq ya es dependencia de facto del lado publicado (harness.config.json se
+# consume con jq via load_harness_config), pero un consumidor sin jq en el
+# PATH no debe perder la corrida por esto (CA-4): los 5 stages de este
+# pipeline caen a --output-format text, idéntico al comportamiento previo.
+if command -v jq &>/dev/null; then
+    PIPELINE_CAPTURE_STREAM=true
+else
+    PIPELINE_CAPTURE_STREAM=false
+    warn "jq no disponible: los stages corren con --output-format text (sin traza stream-json)"
+    echo "[$(date +%H:%M:%S)] WARN: jq no disponible, captura stream-json deshabilitada -- --output-format text" >> "$EVENTS_LOG_ABS"
+fi
+
 # ─── Obtener contexto del issue/HU ───────────────────────────────────────────
 header "Preparando contexto"
 
@@ -396,6 +409,8 @@ else
         update_status "scaffold" "running"
 
         LOG_SCAFFOLD="$LOG_DIR_ABS/stage-0-scaffold-${TIMESTAMP}.log"
+        STREAM_SCAFFOLD="${LOG_SCAFFOLD%.log}.stream.jsonl"
+        STDERR_SCAFFOLD="${LOG_SCAFFOLD%.log}.stderr.log"
         SCAFFOLD_START_TS=$(date +%s)
         echo "[$(date +%H:%M:%S)] === STAGE 0: domain-scaffolder ===" >> "$EVENTS_LOG_ABS"
 
@@ -405,12 +420,21 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
 
         SCAFFOLD_TIMEOUT=1800
         NONINTERACTIVE_SYSTEM="You are running in non-interactive print mode. There is no human to approve anything. You MUST use Write and Edit tools directly to create and modify files at any path including .claude/. Never output text asking for permissions or confirmations -- doing so causes pipeline failure."
-        (cd "$WORKTREE_PATH" && claude -p "$SCAFFOLD_PROMPT" \
-            --agent domain-scaffolder \
-            --permission-mode bypassPermissions \
-            --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
-            --output-format text \
-            >"$LOG_SCAFFOLD" 2>&1) &
+        if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
+            (cd "$WORKTREE_PATH" && claude -p "$SCAFFOLD_PROMPT" \
+                --agent domain-scaffolder \
+                --permission-mode bypassPermissions \
+                --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
+                --output-format stream-json --verbose \
+                >"$STREAM_SCAFFOLD" 2>"$STDERR_SCAFFOLD") &
+        else
+            (cd "$WORKTREE_PATH" && claude -p "$SCAFFOLD_PROMPT" \
+                --agent domain-scaffolder \
+                --permission-mode bypassPermissions \
+                --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
+                --output-format text \
+                >"$LOG_SCAFFOLD" 2>&1) &
+        fi
         SCAFFOLD_PID=$!
         (sleep $SCAFFOLD_TIMEOUT && kill -9 -$SCAFFOLD_PID 2>/dev/null && \
             echo "[$(date +%H:%M:%S)] TIMEOUT: domain-scaffolder supero ${SCAFFOLD_TIMEOUT}s" >> "$EVENTS_LOG_ABS") </dev/null >/dev/null 2>&1 &
@@ -421,6 +445,10 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
         kill $SCAFFOLD_WATCHDOG 2>/dev/null || true
         wait $SCAFFOLD_WATCHDOG 2>/dev/null || true
         SCAFFOLD_ELAPSED=$(( $(date +%s) - SCAFFOLD_START_TS ))
+
+        if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
+            derive_stage_log_from_stream "$STREAM_SCAFFOLD" "$STDERR_SCAFFOLD" "$LOG_SCAFFOLD"
+        fi
 
         if [ "$SCAFFOLD_EXIT" -ne 0 ]; then
             echo "[$(date +%H:%M:%S)] FALLO domain-scaffolder (${SCAFFOLD_ELAPSED}s, exit $SCAFFOLD_EXIT)" >> "$EVENTS_LOG_ABS"
@@ -491,6 +519,8 @@ run_agent() {
     local agent="$2"
     local prompt="$3"
     local log_stage="$LOG_DIR_ABS/stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_NUM}.log"
+    local stream_file="${log_stage%.log}.stream.jsonl"
+    local stderr_file="${log_stage%.log}.stderr.log"
     local start_ts
     start_ts=$(date +%s)
 
@@ -505,12 +535,21 @@ run_agent() {
 
     local AGENT_TIMEOUT_SECONDS=1800  # 30 minutos por agente
     local NONINTERACTIVE_SYSTEM="You are running in non-interactive print mode. There is no human to approve anything. You MUST use Write and Edit tools directly to create and modify files at any path including .claude/. Never output text asking for permissions or confirmations -- doing so causes pipeline failure."
-    (cd "$WORKTREE_PATH" && claude -p "$prompt" \
-        --agent "$agent" \
-        --permission-mode bypassPermissions \
-        --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
-        --output-format text \
-        >"$log_stage" 2>&1) &
+    if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
+        (cd "$WORKTREE_PATH" && claude -p "$prompt" \
+            --agent "$agent" \
+            --permission-mode bypassPermissions \
+            --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
+            --output-format stream-json --verbose \
+            >"$stream_file" 2>"$stderr_file") &
+    else
+        (cd "$WORKTREE_PATH" && claude -p "$prompt" \
+            --agent "$agent" \
+            --permission-mode bypassPermissions \
+            --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
+            --output-format text \
+            >"$log_stage" 2>&1) &
+    fi
     local CLAUDE_PID=$!
     # M3: usar SIGKILL para garantizar que el proceso muere al timeout
     (sleep $AGENT_TIMEOUT_SECONDS && kill -9 -$CLAUDE_PID 2>/dev/null && echo "[$(date +%H:%M:%S)] TIMEOUT: $agent superó ${AGENT_TIMEOUT_SECONDS}s — eliminado con SIGKILL" >> "$EVENTS_LOG_ABS") </dev/null >/dev/null 2>&1 &
@@ -522,6 +561,14 @@ run_agent() {
     kill $WATCHDOG_PID 2>/dev/null || true
     wait $WATCHDOG_PID 2>/dev/null || true
     local elapsed=$(( $(date +%s) - start_ts ))
+
+    # CA-2/CA-5: el .log de siempre se deriva del stream+stderr en la MISMA
+    # ruta, exito/fallo/SIGKILL por igual -- el stream truncado del watchdog
+    # queda en disco (nunca se borra) y la clasificacion de abajo sigue
+    # leyendo $log_stage sin cambios.
+    if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
+        derive_stage_log_from_stream "$stream_file" "$stderr_file" "$log_stage"
+    fi
 
     if [ "$CLAUDE_EXIT" -ne 0 ]; then
         # M1: Clasificar tipo de fallo por exit code y contenido del log
@@ -548,15 +595,29 @@ run_agent() {
                 warn "$agent: API error 5xx — reintentando una vez..."
                 echo "[$(date +%H:%M:%S)] RETRY $agent: API error 5xx, reintentando" >> "$EVENTS_LOG_ABS"
                 local log_stage_retry="$LOG_DIR_ABS/stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_NUM}-retry.log"
+                local stream_file_retry="${log_stage_retry%.log}.stream.jsonl"
+                local stderr_file_retry="${log_stage_retry%.log}.stderr.log"
                 local retry_start
                 retry_start=$(date +%s)
                 CLAUDE_EXIT=0
-                (cd "$WORKTREE_PATH" && claude -p "$prompt" \
-                    --agent "$agent" \
-                    --permission-mode bypassPermissions \
-                    --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
-                    --output-format text \
-                    >"$log_stage_retry" 2>&1) || CLAUDE_EXIT=$?
+                if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
+                    (cd "$WORKTREE_PATH" && claude -p "$prompt" \
+                        --agent "$agent" \
+                        --permission-mode bypassPermissions \
+                        --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
+                        --output-format stream-json --verbose \
+                        >"$stream_file_retry" 2>"$stderr_file_retry") || CLAUDE_EXIT=$?
+                    # CA-3: el retry escribe su propio stream/stderr y deriva su
+                    # propio -retry.log, sin pisar los archivos del primer intento.
+                    derive_stage_log_from_stream "$stream_file_retry" "$stderr_file_retry" "$log_stage_retry"
+                else
+                    (cd "$WORKTREE_PATH" && claude -p "$prompt" \
+                        --agent "$agent" \
+                        --permission-mode bypassPermissions \
+                        --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
+                        --output-format text \
+                        >"$log_stage_retry" 2>&1) || CLAUDE_EXIT=$?
+                fi
                 elapsed=$(( $(date +%s) - start_ts ))
                 log_stage="$log_stage_retry"
                 if [ "$CLAUDE_EXIT" -ne 0 ]; then
@@ -1424,14 +1485,25 @@ IMPORTANTE:
 
         log "Relanzando $STAGE1_AGENT para remediacion..."
         LOG_CG_TW="$LOG_DIR_ABS/stage-4-${STAGE1_AGENT}-patch-${TIMESTAMP}.log"
+        STREAM_CG_TW="${LOG_CG_TW%.log}.stream.jsonl"
+        STDERR_CG_TW="${LOG_CG_TW%.log}.stderr.log"
         echo "[$(date +%H:%M:%S)] REMEDIATION: relanzando $STAGE1_AGENT" >> "$EVENTS_LOG_ABS"
 
-        (cd "$WORKTREE_PATH" && claude -p "$PATCH_TW_PROMPT" \
-            --agent "$STAGE1_AGENT" \
-            --permission-mode bypassPermissions \
-            --append-system-prompt "You are running in non-interactive print mode. No human is present. Use Write and Edit tools directly. Never ask for permissions." \
-            --output-format text \
-            >"$LOG_CG_TW" 2>&1) &
+        if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
+            (cd "$WORKTREE_PATH" && claude -p "$PATCH_TW_PROMPT" \
+                --agent "$STAGE1_AGENT" \
+                --permission-mode bypassPermissions \
+                --append-system-prompt "You are running in non-interactive print mode. No human is present. Use Write and Edit tools directly. Never ask for permissions." \
+                --output-format stream-json --verbose \
+                >"$STREAM_CG_TW" 2>"$STDERR_CG_TW") &
+        else
+            (cd "$WORKTREE_PATH" && claude -p "$PATCH_TW_PROMPT" \
+                --agent "$STAGE1_AGENT" \
+                --permission-mode bypassPermissions \
+                --append-system-prompt "You are running in non-interactive print mode. No human is present. Use Write and Edit tools directly. Never ask for permissions." \
+                --output-format text \
+                >"$LOG_CG_TW" 2>&1) &
+        fi
         CG_TW_PID=$!
         (sleep $CG_REMEDIATION_TIMEOUT && kill -9 $CG_TW_PID 2>/dev/null && \
             echo "[$(date +%H:%M:%S)] TIMEOUT: coverage $STAGE1_AGENT supero ${CG_REMEDIATION_TIMEOUT}s" >> "$EVENTS_LOG_ABS") </dev/null >/dev/null 2>&1 &
@@ -1441,6 +1513,10 @@ IMPORTANTE:
         wait $CG_TW_PID || CG_TW_EXIT=$?
         kill $CG_TW_WATCHDOG 2>/dev/null || true
         wait $CG_TW_WATCHDOG 2>/dev/null || true
+
+        if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
+            derive_stage_log_from_stream "$STREAM_CG_TW" "$STDERR_CG_TW" "$LOG_CG_TW"
+        fi
 
         if [ "$CG_TW_EXIT" -ne 0 ]; then
             warn "$STAGE1_AGENT de remediacion fallo (exit $CG_TW_EXIT) — continuando con gaps pendientes"
@@ -1469,14 +1545,25 @@ Pista: revisa los ultimos archivos de test creados/modificados y corrige errores
 PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
                 LOG_CG_IM="$LOG_DIR_ABS/stage-4-${STAGE2_AGENT}-patch-${TIMESTAMP}.log"
+                STREAM_CG_IM="${LOG_CG_IM%.log}.stream.jsonl"
+                STDERR_CG_IM="${LOG_CG_IM%.log}.stderr.log"
                 echo "[$(date +%H:%M:%S)] REMEDIATION: relanzando $STAGE2_AGENT" >> "$EVENTS_LOG_ABS"
 
-                (cd "$WORKTREE_PATH" && claude -p "$PATCH_IM_PROMPT" \
-                    --agent "$STAGE2_AGENT" \
-                    --permission-mode bypassPermissions \
-                    --append-system-prompt "You are running in non-interactive print mode. No human is present. Use Write and Edit tools directly. Never ask for permissions." \
-                    --output-format text \
-                    >"$LOG_CG_IM" 2>&1) &
+                if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
+                    (cd "$WORKTREE_PATH" && claude -p "$PATCH_IM_PROMPT" \
+                        --agent "$STAGE2_AGENT" \
+                        --permission-mode bypassPermissions \
+                        --append-system-prompt "You are running in non-interactive print mode. No human is present. Use Write and Edit tools directly. Never ask for permissions." \
+                        --output-format stream-json --verbose \
+                        >"$STREAM_CG_IM" 2>"$STDERR_CG_IM") &
+                else
+                    (cd "$WORKTREE_PATH" && claude -p "$PATCH_IM_PROMPT" \
+                        --agent "$STAGE2_AGENT" \
+                        --permission-mode bypassPermissions \
+                        --append-system-prompt "You are running in non-interactive print mode. No human is present. Use Write and Edit tools directly. Never ask for permissions." \
+                        --output-format text \
+                        >"$LOG_CG_IM" 2>&1) &
+                fi
                 CG_IM_PID=$!
                 (sleep $CG_REMEDIATION_TIMEOUT && kill -9 $CG_IM_PID 2>/dev/null && \
                     echo "[$(date +%H:%M:%S)] TIMEOUT: coverage $STAGE2_AGENT supero ${CG_REMEDIATION_TIMEOUT}s" >> "$EVENTS_LOG_ABS") </dev/null >/dev/null 2>&1 &
@@ -1486,6 +1573,10 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
                 wait $CG_IM_PID || CG_IM_EXIT=$?
                 kill $CG_IM_WATCHDOG 2>/dev/null || true
                 wait $CG_IM_WATCHDOG 2>/dev/null || true
+
+                if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
+                    derive_stage_log_from_stream "$STREAM_CG_IM" "$STDERR_CG_IM" "$LOG_CG_IM"
+                fi
 
                 if [ "$CG_IM_EXIT" -ne 0 ]; then
                     warn "$STAGE2_AGENT de remediacion fallo (exit $CG_IM_EXIT)"
