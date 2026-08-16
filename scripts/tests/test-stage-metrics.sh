@@ -226,6 +226,18 @@ assert_field "F-1: las 7 claves estan presentes" "7" "$F_KEY_COUNT"
 assert_field "F-2: scaffolder.duration" "300" "$(echo "$F_OUT" | jq -r '.scaffolder.duration')"
 assert_field "F-3: patch-implementer.duration" "20" "$(echo "$F_OUT" | jq -r '.["patch-implementer"].duration')"
 
+# Guarda del paso de argumentos a jq: si el separador de fin de opciones se
+# colara como un posicional literal, TODOS los grupos correrian un lugar y la
+# primera clave del objeto seria "--" en vez de "test-writer". Es un modo de
+# fallo silencioso (el objeto sigue siendo JSON valido y se escribe igual al
+# historial), asi que se afirma explicitamente.
+if ! echo "$F_OUT" | jq -e 'has("--")' >/dev/null 2>&1 \
+   && echo "$F_OUT" | jq -e 'has("test-writer")' >/dev/null 2>&1; then
+    pass "F-4: los grupos no se desplazan (sin clave espuria '--')"
+else
+    fail "F-4: los grupos se desplazaron -- el objeto tiene una clave espuria: $F_OUT"
+fi
+
 # -------- Bloque G: sin jq degrada a plano (CA-4/CA-5) --------
 
 echo ""

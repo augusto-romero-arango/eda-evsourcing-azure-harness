@@ -732,6 +732,15 @@ compute_stage_metrics() {
 # invocacion fallara por cualquier motivo -- degrada a un objeto plano con
 # SOLO "duration" por clave (sin "metrics" ni "agent"), construido con
 # bash/printf. Nunca aborta y siempre imprime un objeto JSON valido.
+#
+# Los argumentos van pegados a `--args` SIN el separador `--`: verificado en
+# jq 1.7.1, tras `--args` todo lo que sigue entra a $ARGS.positional aunque
+# empiece con guion, asi que el separador no aporta nada aqui. En cambio su
+# manejo cambio entre versiones de jq (en 1.7 se consume como fin de
+# opciones); un jq que lo tratara como un posicional literal "--" correria un
+# lugar TODOS los grupos y produciria un objeto "agents" corrupto -- que es
+# peor que no tener metricas, porque igual se escribe al historial. Sin el
+# separador el resultado es el mismo en toda version que soporte `--args`.
 build_agents_history_json() {
     if command -v jq >/dev/null 2>&1; then
         local built
@@ -754,7 +763,7 @@ build_agents_history_json() {
                    }
                  }
                 )
-        ' --args -- "$@" 2>/dev/null) || built=""
+        ' --args "$@" 2>/dev/null) || built=""
         if [ -n "$built" ]; then
             echo "$built"
             return 0
