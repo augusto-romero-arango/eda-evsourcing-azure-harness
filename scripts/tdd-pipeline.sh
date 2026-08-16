@@ -780,6 +780,13 @@ $ISSUE_CONTEXT
 
 Tu tarea: escribe los tests unitarios para esta HU y crea los stubs mínimos de compilación. Sigue todas las instrucciones de tu rol de $STAGE1_AGENT.
 
+ECONOMIA DE TURNOS:
+Cada turno tuyo cuesta ~5-6 s de reloj (turno sonnet) -- el trabajo que ese turno manda a hacer es barato en comparacion: en el diagnostico Fase 0, dotnet (build/test) ocupo solo ~11% del wall total de una corrida, frente a ~86% de tiempo de API (turnos). Lo caro es el turno, no la herramienta. Con eso en mente:
+- Agrupa en un mismo turno las tool calls independientes entre si (varias busquedas, varias lecturas, varias escrituras a archivos distintos). No las encadenes de a una.
+- Tu verificacion propia es 'dotnet build', UNA vez, cuando creas que terminaste -- no la repitas despues de cada archivo que escribas. No corras 'dotnet test' salvo donde tu rol lo pida explicitamente (el carril de señal de refactor puro, para confirmar el baseline verde): en el carril normal tus tests fallan por definicion, y confirmar esa fase roja no es trabajo tuyo -- apenas termines este stage, el pipeline compila (Gate 1a) y corre toda la suite para confirmarla (Gate 1b).
+- No re-inspecciones el arbol con 'git status' ni 'git diff' para confirmar algo que acabas de escribir: Write y Edit fallan con error si no aplican, asi que el exito de la herramienta ya es la confirmacion.
+Estas reglas no cubren todos los casos; ante cualquier otro, decide con el mismo criterio -- un turno extra cuesta ~5-6 s, y solo vale la pena si te ahorra un error que costaria mas.
+
 PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
     run_agent "1" "$STAGE1_AGENT" "$STAGE1_PROMPT"
@@ -914,6 +921,13 @@ $STAGE1_FILES
 
 Tu tarea: implementa la lógica de negocio para hacer pasar todos los tests. Sigue todas las instrucciones de tu rol de $STAGE2_AGENT.
 
+ECONOMIA DE TURNOS:
+Cada turno tuyo cuesta ~5-6 s de reloj (turno sonnet) -- el trabajo que ese turno manda a hacer es barato en comparacion: en el diagnostico Fase 0, dotnet (build/test) ocupo solo ~11% del wall total de una corrida, frente a ~86% de tiempo de API (turnos). Lo caro es el turno, no la herramienta. Con eso en mente:
+- Agrupa en un mismo turno las tool calls independientes entre si (varias busquedas, varias lecturas, varias escrituras a archivos distintos). No las encadenes de a una.
+- Corre la suite para confirmar la fase verde (la esencia de tu stage: implementar y verlos pasar) cuando creas que terminaste -- no la repitas despues de cada metodo o clase que implementes. Apenas termines este stage, el pipeline vuelve a correr toda la suite para confirmarlo (Gate 2): tu corrida es para saber que tu implementacion esta en verde, no la ultima palabra antes de cerrar.
+- No re-inspecciones el arbol con 'git status' ni 'git diff' para confirmar algo que acabas de escribir: Write y Edit fallan con error si no aplican, asi que el exito de la herramienta ya es la confirmacion.
+Estas reglas no cubren todos los casos; ante cualquier otro, decide con el mismo criterio -- un turno extra cuesta ~5-6 s, y solo vale la pena si te ahorra un error que costaria mas.
+
 PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
     run_agent "2" "$STAGE2_AGENT" "$STAGE2_PROMPT"
@@ -994,6 +1008,13 @@ Usa 'dotnet build' para verificar compilación, pero NO uses 'dotnet test'.
 
 Sigue todas las instrucciones de tu rol de smoke-test-writer.
 
+ECONOMIA DE TURNOS:
+Cada turno tuyo cuesta ~5-6 s de reloj (turno sonnet) -- el trabajo que ese turno manda a hacer es barato en comparacion: en el diagnostico Fase 0, dotnet (build/test) ocupo solo ~11% del wall total de una corrida, frente a ~86% de tiempo de API (turnos). Lo caro es el turno, no la herramienta. Con eso en mente:
+- Agrupa en un mismo turno las tool calls independientes entre si (varias busquedas, varias lecturas, varias escrituras a archivos distintos). No las encadenes de a una.
+- Corre 'dotnet build' del proyecto de smoke tests UNA vez, cuando creas que terminaste de escribirlos -- no lo repitas despues de cada test que agregues. Apenas termines este stage, el pipeline vuelve a compilar ese mismo proyecto para confirmarlo: tu build es para saber que tu trabajo compila, no la ultima palabra antes de cerrar.
+- No re-inspecciones el arbol con 'git status' ni 'git diff' para confirmar algo que acabas de escribir: Write y Edit fallan con error si no aplican, asi que el exito de la herramienta ya es la confirmacion.
+Estas reglas no cubren todos los casos; ante cualquier otro, decide con el mismo criterio -- un turno extra cuesta ~5-6 s, y solo vale la pena si te ahorra un error que costaria mas.
+
 PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
             run_agent "2b" "smoke-test-writer" "$STAGE2B_PROMPT"
@@ -1060,6 +1081,13 @@ Reglas:
 
 Sigue todas las instrucciones de tu rol de reviewer.
 
+ECONOMIA DE TURNOS:
+Cada turno tuyo cuesta ~8 s de reloj (turno opus) -- el trabajo que ese turno manda a hacer es barato en comparacion: en el diagnostico Fase 0, dotnet (build/test) ocupo solo ~11% del wall total de una corrida, frente a ~86% de tiempo de API (turnos). Lo caro es el turno, no la herramienta. Con eso en mente:
+- Agrupa en un mismo turno las tool calls independientes entre si (varias busquedas, varias lecturas, varias escrituras a archivos distintos). No las encadenes de a una.
+- La Regla 3 sigue en pie: la corrida despues de cada cambio significativo es la que te dice CUAL cambio rompio un test, y es lo que hace posible el revert puntual de la Regla 4. Lo que sobra es la ronda extra 'por las dudas': la corrida de cierre de la Regla 5 se hace UNA vez, y si desde ella no volviste a tocar codigo no la repitas -- apenas termines este stage, el pipeline vuelve a correr toda la suite para confirmarlo igual (Gate 3).
+- No re-inspecciones el arbol con 'git status' ni 'git diff' para confirmar algo que acabas de escribir: Write y Edit fallan con error si no aplican, asi que el exito de la herramienta ya es la confirmacion.
+Estas reglas no cubren todos los casos; ante cualquier otro, decide con el mismo criterio -- un turno extra cuesta ~8 s, y solo vale la pena si te ahorra un error que costaria mas.
+
 PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
     else
         FULL_DIFF=$(git -C "$WORKTREE_PATH" diff "$SNAPSHOT_COMMIT"..HEAD)
@@ -1077,6 +1105,14 @@ $FULL_DIFF
 Tu tarea: revisa la calidad del código, refactoriza si es necesario, y verifica que los criterios de aceptación estén bien cubiertos.
 Si el diff incluye smoke tests (archivos en *SmokeTests/), revísalos también: verifica que cubran los escenarios principales del endpoint (camino feliz, validación, duplicados) y que sigan las convenciones del proyecto.
 Sigue todas las instrucciones de tu rol de reviewer.
+
+ECONOMIA DE TURNOS:
+Cada turno tuyo cuesta ~8 s de reloj (turno opus) -- el trabajo que ese turno manda a hacer es barato en comparacion: en el diagnostico Fase 0, dotnet (build/test) ocupo solo ~11% del wall total de una corrida, frente a ~86% de tiempo de API (turnos). Lo caro es el turno, no la herramienta. Con eso en mente:
+- Agrupa en un mismo turno las tool calls independientes entre si (varias busquedas, varias lecturas, varias escrituras a archivos distintos). No las encadenes de a una.
+- Ya tienes arriba el diff completo de las fases roja y verde: no lo vuelvas a pedir con 'git diff'. Esto NO alcanza a las consultas acotadas que tu rol usa como disparador de gate ('git diff main...HEAD -- <ruta>'): esas corren contra main y filtran por ruta, y el diff de arriba no las reemplaza.
+- Manten el protocolo de correccion de tu rol -- 'dotnet test' despues de cada cambio, revertir con 'git checkout -- <archivo>' si rompe: esa corrida es la que te dice CUAL cambio rompio, y agrupar varias correcciones te obliga a bisecar despues, que sale mas caro que los turnos que ahorra. Lo que sobra es la ronda extra 'por las dudas': si desde tu ultima corrida verde no tocaste codigo, no la repitas antes de cerrar -- apenas termines este stage, el pipeline vuelve a correr toda la suite igual (Gate 3).
+- No re-inspecciones el arbol con 'git status' para confirmar algo que acabas de escribir: Write y Edit fallan con error si no aplican, asi que el exito de la herramienta ya es la confirmacion.
+Estas reglas no cubren todos los casos; ante cualquier otro, decide con el mismo criterio -- un turno extra cuesta ~8 s, y solo vale la pena si te ahorra un error que costaria mas.
 
 PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
