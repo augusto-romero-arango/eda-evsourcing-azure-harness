@@ -208,8 +208,12 @@ echo "[E] jq ausente -> degrada con gracia, no aborta, igual anexa el stderr (CA
 
 E_PATH_SIN_JQ="$TMP/bin-sin-jq"
 mkdir -p "$E_PATH_SIN_JQ"
-# PATH minimo que NO incluye ningun directorio con jq -- un directorio senuelo
-# sin binarios basta para que `command -v jq` falle dentro de la funcion.
+# PATH de un solo directorio, poblado a mano con los binarios que la funcion SI
+# necesita (`cat`) y sin jq. Apuntar a un directorio real del sistema (/bin,
+# /usr/bin) haria que el caso dependiera de donde esta instalado jq en la
+# maquina que corre el test: con jq en /usr/bin aqui y en /bin alla, el bloque
+# pasaria sin ejercer la rama sin-jq y nadie se enteraria.
+ln -sf "$(command -v cat)" "$E_PATH_SIN_JQ/cat"
 echo "API Error: 500 sin jq" > "$TMP/e-stderr.log"
 cat > "$TMP/e-stream.jsonl" <<'EOF'
 {"type":"assistant","message":{"content":[{"type":"text","text":"esto no se deberia parsear sin jq"}]}}
@@ -217,9 +221,8 @@ EOF
 
 (
     set -euo pipefail
-    # /bin (no /usr/bin, donde vive jq en esta maquina) para que `cat` siga
-    # resolviendo -- solo `jq` debe faltar.
-    PATH="$E_PATH_SIN_JQ:/bin"
+    PATH="$E_PATH_SIN_JQ"
+    command -v jq >/dev/null 2>&1 && { echo "PRECONDICION ROTA: jq sigue en PATH" >&2; exit 99; }
     derive_stage_log_from_stream "$TMP/e-stream.jsonl" "$TMP/e-stderr.log" "$TMP/e-out.log"
 )
 RC=$?
