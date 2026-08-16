@@ -4,6 +4,19 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-08-16
+
+### Added
+
+- `tdd-pipeline.sh` captura la traza `stream-json` de sus 5 invocaciones a `claude -p` (scaffold, wrapper de stages, retry 5xx, patch test-writer, patch implementer): stdout va a `<base>.stream.jsonl` y stderr a `<base>.stderr.log`, y el `.log` de texto de siempre se deriva de ambos al terminar el stage (exito, fallo o SIGKILL del watchdog) con la nueva funcion `derive_stage_log_from_stream` de `scripts/_pipeline-common.sh`. Sin `jq` en el PATH, el stage cae a `--output-format text` identico al comportamiento previo.
+- `/work-status` documenta el patron real del log de stage TDD (`stage-{N}-{agent}-{TIMESTAMP}-issue-{N}.log`, antes sin el sufijo `-issue-{N}`) y que en TDD ese `.log` se deriva al terminar el stage: mientras el agente sigue en vuelo la traza viva esta en el `.stream.jsonl` / `.stderr.log` del mismo nombre base.
+- `tdd-pipeline.sh` deriva metricas por stage (turnos, tool calls por herramienta, tokens, costo, modelo, `duration_ms`/`non_api_ms`, etc.) de la traza `stream-json` capturada en el #645, via las nuevas `compute_stage_metrics`/`build_agents_history_json` de `scripts/_pipeline-common.sh` (porte publicado de `compute_stage_metrics`/`build_agents_history_json` del interno #426, con el builder generalizado a N claves variables). Las claves existentes del history (`test-writer`, `implementer`, `reviewer`) ganan `metrics` junto a su `duration`, mas un campo `metrics.agent` con el nombre real despachado (distingue `projection-test-writer` de `test-writer` bajo la misma clave). Cuatro claves nuevas (`scaffolder`, `smoke-test-writer`, `patch-test-writer`, `patch-implementer`) aparecen solo cuando ese stage corrio -- antes ese costo era invisible en `pipeline-history.jsonl`. La linea de fallo del trap de error tambien lleva las metricas de los stages ya completados. Cada invocacion ademas respalda su JSON individual en `.claude/pipeline/metrics/` del consumidor. Sin `jq` en el PATH, ambas lineas del historial conservan la forma exacta de siempre (sin `metrics`), y el pipeline nunca aborta por este computo.
+- Se agrega `scripts/metrics-report.sh`, el reporte agregado de metricas de los pipelines del consumidor (tdd/tooling/infra), porte publicado de `.claude/scripts/mefisto-metrics-report.sh`: ranking de herramientas, reparto API/no-API del wall-clock, deriva de turnos por stage con su agente y su modelo declarados (nunca mezcla sonnet/opus, ni el write-side con el read-side que comparte clave de stage, en una sola cifra) y deriva temporal semanal/mensual con comparacion `--desde`/`--hasta` operativa desde el primer mes instrumentado. Lee el historial del repo principal aunque se lo invoque desde un worktree, y ninguna corrida del historial queda fuera del reporte: las que no declaran `pipeline` caen a su propio cajon. Solo lectura.
+
+### Changed
+
+- Se anade un bloque `ECONOMIA DE TURNOS` a los prompts de los 4 stages de agente de `scripts/tdd-pipeline.sh` (test-writer/projection-test-writer, implementer/projection-implementer, smoke-test-writer y los dos prompts del reviewer): cada bloque enumera el gate concreto que el pipeline corre justo despues de ese stage (Gate 1a/1b, Gate 2, build del proyecto de smoke tests, Gate 3) para que el agente no repita esa verificacion, sin eximirlo de la esencia TDD (escribir tests y verlos fallar en rojo, implementar y verlos pasar en verde). Cada bloque respeta el protocolo de verificacion propio del rol que lo recibe: el de stage 1 dirige a `dotnet build` y no a `dotnet test` (Regla absoluta 3 de `test-writer`, paso 5 de `projection-test-writer`), y los del reviewer preservan la corrida por-cambio que hace posible el revert puntual de su protocolo de correccion. El bloque del reviewer en carril normal agrega ademas que el diff completo de las fases roja y verde ya viene inyectado en el prompt, sin alcanzar a las consultas acotadas contra `main` que sus gates usan como disparador.
+
 ## [0.24.0] - 2026-08-15
 
 ### Added
@@ -1135,7 +1148,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.21.0...v0.22.0
