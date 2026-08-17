@@ -35,6 +35,12 @@
 #       cada pipeline, no dentro de la funcion abort() (CA-3).
 #   [G] cableado: el campo "harness_version" aparece en las 6 escrituras de
 #       pipeline-history.jsonl (feliz + aborto x tdd/tooling/iac, CA-2).
+#   [H] un caller con 'set -euo pipefail' (como los tres pipelines) sobrevive
+#       a plugin.json ausente: HARNESS_VERSION queda vacia y el script sigue
+#       corriendo, en vez de morir en el prologo (CA-1).
+#   [I] retrocompatibilidad: metrics-report.sh agrega sin cambios un historial
+#       mixto de lineas legadas (sin el campo) y nuevas (con el campo) --
+#       nada se migra ni se reescribe (CA-4).
 #
 # Uso: scripts/tests/test-harness-version.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -226,6 +232,91 @@ for pipe in tdd-pipeline.sh tooling-pipeline.sh iac-pipeline.sh; do
         fail "G-1 ($pipe): se esperaban 2 apariciones de harness_version, se encontraron $field_count"
     fi
 done
+
+# -------- Bloque H: un caller con 'set -euo pipefail' no muere (CA-1) --------
+#
+# Los tres pipelines corren con 'set -euo pipefail' y toman el valor por
+# sustitucion de comando en su prologo. "Nunca aborta" no es una propiedad de
+# la funcion aislada sino de esa combinacion: basta que un paso interno se
+# escape con estado != 0 para que errexit mate la corrida antes del primer
+# stage. Reproducimos el prologo real (asignacion + derivacion del literal
+# JSON) sobre el fixture SIN plugin.json, que es el peor caso.
+
+echo ""
+echo "[H] caller con 'set -euo pipefail' sobrevive a plugin.json ausente (CA-1)"
+
+H_OUT=$(bash -c "
+set -euo pipefail
+source '$FIXTURE/scripts/_pipeline-common.sh'
+HARNESS_VERSION=\"\$(get_harness_version)\"
+HARNESS_VERSION_JSON=null
+[ -n \"\$HARNESS_VERSION\" ] && HARNESS_VERSION_JSON=\"\\\"\$HARNESS_VERSION\\\"\"
+echo \"SIGUE-VIVO:\$HARNESS_VERSION_JSON\"
+" 2>/dev/null)
+H_RC=$?
+if [ "$H_RC" -eq 0 ] && [ "$H_OUT" = "SIGUE-VIVO:null" ]; then
+    pass "H-1: el prologo sobrevive y deriva harness_version=null"
+else
+    fail "H-1: se esperaba rc=0 y 'SIGUE-VIVO:null', se obtuvo rc=$H_RC salida='$H_OUT'"
+fi
+
+# Y el simetrico: con plugin.json presente, el literal JSON queda entrecomillado.
+cat > "$FIXTURE/.claude-plugin/plugin.json" <<'EOF'
+{
+  "name": "mefisto",
+  "version": "7.8.9"
+}
+EOF
+H2_OUT=$(bash -c "
+set -euo pipefail
+source '$FIXTURE/scripts/_pipeline-common.sh'
+HARNESS_VERSION=\"\$(get_harness_version)\"
+HARNESS_VERSION_JSON=null
+[ -n \"\$HARNESS_VERSION\" ] && HARNESS_VERSION_JSON=\"\\\"\$HARNESS_VERSION\\\"\"
+echo \"SIGUE-VIVO:\$HARNESS_VERSION_JSON\"
+" 2>/dev/null)
+H2_RC=$?
+if [ "$H2_RC" -eq 0 ] && [ "$H2_OUT" = 'SIGUE-VIVO:"7.8.9"' ]; then
+    pass "H-2: con plugin.json, el literal JSON queda como string entrecomillado"
+else
+    fail "H-2: se esperaba rc=0 y 'SIGUE-VIVO:\"7.8.9\"', se obtuvo rc=$H2_RC salida='$H2_OUT'"
+fi
+
+# -------- Bloque I: metrics-report.sh tolera el historial mixto (CA-4) --------
+#
+# El campo es aditivo y no se migra nada: las lineas historicas escritas antes
+# de este issue conviven con las nuevas en el mismo pipeline-history.jsonl.
+# Se corre el reporte real end-to-end dentro de un repo consumidor de mentira
+# (git init, SIN .claude-plugin/plugin.json -- si lo tuviera, el guard
+# defensivo de metrics-report.sh abortaria) para no tocar nunca el historial
+# del repo real.
+
+echo ""
+echo "[I] metrics-report.sh agrega historial mixto legado + con harness_version (CA-4)"
+
+if command -v jq >/dev/null 2>&1; then
+    FAKE_REPO="$TMP/fake-consumer"
+    mkdir -p "$FAKE_REPO/.claude/pipeline"
+    git -C "$FAKE_REPO" init -q
+    cp "$REPO_ROOT/scripts/metrics-report.sh" "$FAKE_REPO/metrics-report.sh"
+    chmod +x "$FAKE_REPO/metrics-report.sh"
+
+    cat > "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" <<'EOF'
+{"issue":"1","title":"linea legada sin el campo","pipeline":"tooling","started":"20260101-100000","finished":"2026-01-01T10:10:00","state":"completed","agents":{"writer":{"duration":600},"reviewer":{"duration":300}},"tests":null,"pr":"http://x/1"}
+{"issue":"2","title":"linea nueva con el campo","pipeline":"tooling","harness_version":"0.25.0","started":"20260102-100000","finished":"2026-01-02T10:10:00","state":"completed","agents":{"writer":{"duration":600},"reviewer":{"duration":300}},"tests":null,"pr":"http://x/2"}
+{"issue":"3","title":"aborto con el campo en null","pipeline":"tdd","harness_version":null,"started":"20260103-100000","finished":"2026-01-03T10:10:00","state":"failed","stage":"test-writer","error":"algo"}
+EOF
+
+    I_OUT=$( (cd "$FAKE_REPO" && ./metrics-report.sh) 2>&1 )
+    I_RC=$?
+    if [ "$I_RC" -eq 0 ] && echo "$I_OUT" | grep -q "Corridas totales en la ventana: 3"; then
+        pass "I-1: las 3 lineas (legada, con version, con null) se agregan sin cambios"
+    else
+        fail "I-1: se esperaba rc=0 y 3 corridas, se obtuvo rc=$I_RC: $I_OUT"
+    fi
+else
+    echo "  SKIP: metrics-report.sh requiere jq, no disponible en este entorno"
+fi
 
 echo ""
 echo "----------------------------------------"

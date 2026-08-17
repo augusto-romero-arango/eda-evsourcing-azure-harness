@@ -978,8 +978,13 @@ _pc_script_dir() {
 # compute_stage_metrics). Si plugin.json no existe, o ninguna extraccion
 # produce un valor, imprime cadena vacia -- nunca aborta y siempre retorna 0.
 get_harness_version() {
-    local plugin_json
-    plugin_json="$(_pc_script_dir)/../.claude-plugin/plugin.json"
+    # Los tres pipelines corren con `set -euo pipefail` y toman el valor por
+    # sustitucion de comando en su prologo, asi que un estado != 0 que se
+    # escape de aqui mataria la corrida entera antes del primer stage: ningun
+    # paso de abajo puede propagarlo.
+    local script_dir plugin_json
+    script_dir="$(_pc_script_dir 2>/dev/null)" || script_dir=""
+    plugin_json="$script_dir/../.claude-plugin/plugin.json"
 
     if [ ! -f "$plugin_json" ]; then
         echo ""
@@ -988,10 +993,14 @@ get_harness_version() {
 
     local version=""
     if command -v jq >/dev/null 2>&1; then
-        version=$(jq -r '.version // ""' "$plugin_json" 2>/dev/null) || version=""
+        version=$(jq -r '.version // ""' "$plugin_json" 2>/dev/null) || true
         [ "$version" = "null" ] && version=""
     else
-        version=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$plugin_json" 2>/dev/null | head -n1) || version=""
+        # '|| true' y no '|| version=""': con pipefail heredado del caller,
+        # head -n1 cierra el pipe apenas lee la linea y sed puede morir de
+        # SIGPIPE DESPUES de haber emitido la version -- reasignar ahi
+        # borraria un valor ya capturado.
+        version=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$plugin_json" 2>/dev/null | head -n1) || true
     fi
 
     echo "$version"
