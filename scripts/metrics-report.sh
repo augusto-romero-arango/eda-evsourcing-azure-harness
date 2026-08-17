@@ -51,6 +51,18 @@
 #      exactamente lo que CA-2 proscribe para el modelo. Corridas viejas o
 #      degradadas sin metrics.agent salen con "-" en esa columna y forman su
 #      propio grupo, sin contaminar los de agente conocido.
+#   4. Segmentacion por harness_version (issue #663): cada linea trae el
+#      "harness_version" con que corrio (#660), asi que el reporte agrega
+#      tambien una tabla "POR VERSION DE HARNESS" por pipeline -- misma media
+#      de wallclock/turnos/costo que el resto del reporte, restringida a las
+#      corridas instrumentadas de esa version (mismo denominador compartido
+#      entre columnas que exige build_comparison) -- para responder si una
+#      version nueva del plugin mejoro o empeoro las corridas. El historial
+#      previo a #660 (o cualquier linea futura sin el campo, que #660 escribe
+#      como null cuando no puede resolver la version) cae bajo la clave
+#      "(sin version)", mismo patron que "(sin-pipeline)". Las filas se
+#      ordenan por semver NUMERICO, no lexicografico: con el plugin ya en
+#      0.25.0, comparar cadenas pondria 0.9.0 despues de 0.25.0.
 #
 # Dos lecciones NO obvias portadas literalmente del interno (#427):
 #
@@ -164,6 +176,7 @@ def run_tokens_input: ([run_stage_pairs[] | (.metrics.tokens.input // 0)] | add 
 def run_tokens_output: ([run_stage_pairs[] | (.metrics.tokens.output // 0)] | add // 0);
 def run_tokens_cache_read: ([run_stage_pairs[] | (.metrics.tokens.cache_read // 0)] | add // 0);
 def run_tokens_cache_creation: ([run_stage_pairs[] | (.metrics.tokens.cache_creation // 0)] | add // 0);
+def run_cost_usd: ([run_stage_pairs[] | (.metrics.cost_usd // 0)] | add // 0);
 
 def week_key: if ._ts == null then null else (._ts | gmtime | strftime("%G-W%V")) end;
 def month_key: if ._ts == null then null else (._ts | gmtime | strftime("%Y-%m")) end;
@@ -213,6 +226,44 @@ def summarize_stage_group:
     tokens_cache_read_mean: (map(.tokens_cache_read) | map(select(. != null)) | avgOrNull),
     tokens_cache_creation_mean: (map(.tokens_cache_creation) | map(select(. != null)) | avgOrNull)
   };
+
+# version_summary -- CA-1: mismos agregados de wallclock/turnos/costo que el
+# resto del reporte (medias por corrida, no totales que solo reflejarian el
+# volumen de cada version), restringidos al grupo de corridas de una sola
+# harness_version. Opera sobre $all (corridas totales de esa version, igual
+# que pipeline_report), no sobre $instr -- asi n_total/n_instrumented
+# reutilizan el mismo par instrumented/legacy del resto del reporte.
+#
+# El wall se llama wall_mean_instr_s, y no wall_mean_s como en period_summary,
+# porque su denominador es otro: ahi el wall usa TODAS las corridas del periodo
+# y aqui solo las instrumentadas de la version, como en build_comparison. La
+# razon es la misma que alli -- turnos y costo solo existen para las
+# instrumentadas, y comparar dos versiones con denominadores distintos entre
+# columnas invalida justo la atribucion que esta tabla existe para hacer. Los
+# dos nombres conviven en el mismo JSON: reusar wall_mean_s con otro
+# denominador seria la trampa.
+def version_summary:
+  . as $group
+  | ($group | map(select(._has_metrics))) as $g_instr
+  | ($g_instr | map(run_api_ms) | add // 0) as $api_total
+  | ($g_instr | map(run_non_api_ms) | add // 0) as $non_api_total
+  | {
+      n_total: ($group | length),
+      n_instrumented: ($g_instr | length),
+      wall_mean_instr_s: ($g_instr | map(._wall_s) | map(select(. != null)) | avgOrNull),
+      pct_api: (if ($api_total + $non_api_total) > 0 then ($api_total / ($api_total + $non_api_total) * 100) else null end),
+      turns_mean: ($g_instr | map(run_turns) | avgOrNull),
+      cost_usd_mean: ($g_instr | map(run_cost_usd) | avgOrNull)
+    };
+
+# version_sort_key -- orden semver NUMERICO por componente, no lexicografico:
+# el plugin ya va en 0.25.0, asi que un historial que cruce 0.9.0 -> 0.25.0
+# saldria invertido comparando cadenas ("0.9" > "0.25"), y la tabla que existe
+# para leer la deriva entre versiones consecutivas las mostraria al reves. Los
+# componentes que no son numeros (un pre-release, o un valor que no sea semver)
+# caen a -1 y desempatan por la cadena cruda, sin que jq falle.
+def version_sort_key:
+  [(split(".") | map(try tonumber catch -1)), .];
 
 def delta_of(f; l):
   {
@@ -296,6 +347,11 @@ def pipeline_report:
   | ($all | period_summary(week_key)) as $weekly
   | ($all | period_summary(month_key)) as $monthly
   | ($legacy | sort_by(.started) | map({issue: .issue, started: .started, state: .state})) as $legacy_list
+  | ($all
+      | group_by(._version)
+      | map(. as $group | ($group | version_summary) + {version: $group[0]._version})
+      | sort_by([(.version == "(sin version)"), (.version | version_sort_key)])
+    ) as $by_version
   | {
       meta: {
         total: $total_n,
@@ -319,6 +375,7 @@ def pipeline_report:
         by_stage: $by_stage
       },
       series: { weekly: $weekly, monthly: $monthly },
+      by_version: $by_version,
       legacy: { count: $legacy_n, issues: $legacy_list },
       comparison: build_comparison($weekly; $monthly)
     };
@@ -339,7 +396,11 @@ def pipeline_report:
     # cajon en vez de desaparecer: sin esto quedaria contada en el total
     # global y en ninguna seccion, la unica forma de que el reporte pierda
     # corridas en silencio.
-    _pipeline: (if (.pipeline | type) == "string" then .pipeline else "(sin-pipeline)" end)
+    _pipeline: (if (.pipeline | type) == "string" then .pipeline else "(sin-pipeline)" end),
+    # Igual patron que _pipeline: harness_version llego con #660, asi que todo
+    # historial previo (o cualquier linea futura que no lo traiga) cae en su
+    # propio cajon "(sin version)" en vez de romper la segmentacion por_version.
+    _version: (if (.harness_version | type) == "string" then .harness_version else "(sin version)" end)
   })) as $entries
 
 | ($entries | map(._pipeline) | unique) as $present_pipelines
@@ -648,6 +709,37 @@ render_comparison() {
     done < <(jq -r "$JQ_ROW"'.comparison.deltas[] | [.label, .unit, .first, .last, .pct] | row' <<<"$agg")
 }
 
+# render_by_version -- CA-1/CA-3: una fila por harness_version presente en el
+# pipeline (mas "(sin version)" para el historial previo a #660, CA-2),
+# restringiendo a esa version los mismos agregados de wallclock/turnos/costo
+# que el resto del reporte.
+render_by_version() {
+    local agg="$1"
+    local count
+    count=$(jq -r '.by_version | length' <<<"$agg")
+
+    echo ""
+    echo "$RULE_MINOR"
+    echo "POR VERSION DE HARNESS (n = corridas totales/instrumentadas de esa version)"
+    echo "$RULE_MINOR"
+
+    if [ "$count" -eq 0 ]; then
+        echo "(sin corridas en la ventana)"
+        return 0
+    fi
+
+    echo "n(t/i) = corridas totales / de ellas instrumentadas. A diferencia de la"
+    echo "deriva temporal, aqui TODAS las cifras -- el wall incluido -- salen solo"
+    echo "de las instrumentadas: comparar dos versiones exige el mismo denominador."
+    echo ""
+    printf '%-20s %-8s %10s %7s %7s %10s\n' "Version" "n(t/i)" "WallMedia" "Turnos" "%API" "Costo"
+    while IFS=$'\t' read -r version n_total n_instr wall_mean turns pct_api cost_mean; do
+        printf '%-20s %-8s %10s %7s %7s %10s\n' \
+            "$(_txt "$version")" "${n_total}/${n_instr}" \
+            "$(fmt_dur_s "$wall_mean")" "$(_num1 "$turns")" "$(fmt_pct "$pct_api")" "$(_money "$cost_mean")"
+    done < <(jq -r "$JQ_ROW"'.by_version[] | [.version, .n_total, .n_instrumented, .wall_mean_instr_s, .turns_mean, .pct_api, .cost_usd_mean] | row' <<<"$agg")
+}
+
 render_legacy() {
     local agg="$1"
     local count
@@ -694,8 +786,9 @@ Uso: metrics-report.sh [--desde YYYY-MM-DD] [--hasta YYYY-MM-DD]
 Reporte agregado de las corridas de los pipelines del consumidor (tdd/tooling/
 infra), segmentado por pipeline: ranking de herramientas, reparto del
 wall-clock (API vs no-API), deriva de turnos por stage (con su modelo
-declarado) y deriva temporal semanal/mensual. --desde/--hasta acotan la
-ventana analizada (por defecto, todo el historico). Solo lectura.
+declarado), deriva temporal semanal/mensual y agregados por harness_version
+(que version corrio cada corrida). --desde/--hasta acotan la ventana
+analizada (por defecto, todo el historico). Solo lectura.
 EOF
                 exit 0
                 ;;
@@ -772,6 +865,7 @@ EOF
         render_period_table "$pipe_agg" ".series.weekly" "DERIVA TEMPORAL - SEMANAL"
         render_period_table "$pipe_agg" ".series.monthly" "DERIVA TEMPORAL - MENSUAL"
         render_comparison "$pipe_agg"
+        render_by_version "$pipe_agg"
         render_legacy "$pipe_agg"
     done
 
