@@ -2,7 +2,7 @@
 
 - **Fecha**: 2026-07-19
 - **Estado**: aceptado
-- **Aplica a**: `domain-scaffolder` (templates `deploy-*.yml`, `smoke-tests-dominio.yml`, endpoint `/api/version`, `Fixtures/ApiFixture.cs`); y, desde la seccion 5 (issue #462), `projections-scaffolder` (Dockerfile del worker de proyecciones, seam `ConfiguracionObservabilidadProjections`, `deploy-projections.yml`). Cross-referencia MEF-ADR-0013 (smoke tests, contexto relacionado, no enmendado), MEF-ADR-0006 (naming del endpoint), MEF-ADR-0020 (hosting, ancla `WEBSITE_RUN_FROM_PACKAGE` y el piso de SKU), MEF-ADR-0022 (autenticacion CI, orden infra -> deploy) y MEF-ADR-0034 (worker de proyecciones sin ingress, seam de observabilidad que consume la seccion 5).
+- **Aplica a**: `domain-scaffolder` (templates `deploy-*.yml`, `smoke-tests-dominio.yml`, endpoint `/api/version`, `Fixtures/ApiFixture.cs`); y, desde la seccion 5 (issue #462), `projections-scaffolder` (Dockerfile del worker de proyecciones, seam `ConfiguracionObservabilidadProjections`, `deploy-projections.yml`). Desde la seccion 6 (issue #671) suma el endpoint dedicado `/api/ready` (cobertura de la capa de datos) y el paso de poll correspondiente en `smoke-tests-dominio.yml`; la materializacion de ese alcance en `domain-scaffolder` es el issue #675 (bloqueado por este). Cross-referencia MEF-ADR-0013 (smoke tests, contexto relacionado, no enmendado), MEF-ADR-0006 (naming del endpoint), MEF-ADR-0009 (mensajes `.resx` por handler, ancla el cuerpo diagnosticable de `/api/ready`), MEF-ADR-0018 (heuristicas de evolucion, ancla el no-cache sin parametro), MEF-ADR-0020 (hosting, ancla `WEBSITE_RUN_FROM_PACKAGE`, el piso de SKU y el default `always_on = true`) y MEF-ADR-0034 (worker de proyecciones sin ingress, seam de observabilidad que consume la seccion 5, y doctrina de compatibilidad de configuracion Marten que motiva diferir la Alt 5).
 
 ## Contexto
 
@@ -238,6 +238,89 @@ anterior en su propio ciclo, sin el patron `WEBSITE_RUN_FROM_PACKAGE` del punto 
 de que el circuito quedo bien cableado es manual, por inspeccion de Application Insights --
 documentada en `projections-scaffolder.md` junto al paso que genera `deploy-projections.yml`.
 
+### 6. Extension a la capa de datos: endpoint dedicado `/api/ready` (issue #671)
+
+Los puntos 1-4 fijan que el binario correcto sirve HTTP, pero ninguna de sus compuertas abre una
+conexion contra Postgres: `/api/health` es estatico (siempre 200) y `/api/version` lee un atributo de
+su propio ensamblado por reflexion, sin tocar el event store. **Verificado contra el cuerpo de este
+ADR en `main` antes de esta enmienda**: ni la decision (secciones 1-5) ni "Consecuencias" mencionan la
+capa de datos en ninguna parte -- es un hueco, no un tradeoff ya documentado. La primera peticion que
+si abria una conexion real contra Marten era, hasta esta enmienda, el arrange de un test -- exactamente
+lo que produjo el incidente de origen del consumidor `Bitakora.ControlAsistencia` (`TimeoutException`
+de Npgsql a los 35.3s, ventana de indisponibilidad del write-path de ~74s, 2026-08-15, su issue #399).
+
+**Tercer endpoint dedicado, nunca `/api/health` enriquecido.** `domain-scaffolder` genera
+`ReadyCheck.cs` (`[Function("ready")]`, mismo nivel que `HealthCheck.cs`/`VersionCheck.cs`, convencion
+de naming de MEF-ADR-0006) como endpoint HTTP anonimo nuevo, no como un enriquecimiento de
+`/api/health`: la Alt 2 de este mismo ADR ya descarto mezclar liveness con otra semantica en un mismo
+endpoint, y esta enmienda extiende ese precedente a la capa de datos en vez de reabrirlo. `/api/health`
+y `/api/version` quedan intactos; `/api/ready` es exclusivamente el mecanismo de readiness de la capa
+de datos.
+
+**El fundamento no es el incidente de 74s -- ese ya lo cerro `always_on`.** MEF-ADR-0020, enmendado por
+el issue #652 (PR #673, en `main` desde 2026-08-17 13:11 UTC), fija `always_on = true` como default
+unico del marco con el wiring completo hasta `site_config.always_on`; ese cambio entro en vigor en el
+consumidor 13.5 horas **antes** de que `/api/ready` llegara a produccion (deploy del gate: 2026-08-17
+12:35 UTC). En el primer deploy real posterior al merge, los tres dominios de dev respondieron
+`/api/ready` en ~0-1s, con 183 smoke tests en verde: la ventana de ~74s que origino el issue #399 ya no
+existe en un host con `always_on`, y citarla como motivacion de esta enmienda seria una narrativa que
+los propios hechos posteriores refutan.
+
+El fundamento que si sostiene la enmienda es **defensa en profundidad de bajo costo**, apoyado en dos
+hechos verificados independientes de esa narrativa:
+
+- Aun con `always_on`, **un deploy crea una instancia nueva que arranca en frio**: evidencia del
+  dominio Programacion del consumidor, 18 intentos de poll (~36s) esperando que el SHA nuevo
+  respondiera, y aun asi `/api/ready` respondio en ~1s una vez arrancada la instancia -- el endpoint no
+  le agrega costo al arranque frio, solo lo hace visible.
+- El escenario donde el patron efectivamente se paga es el **primer deploy de un dominio nuevo contra
+  una base sin esquema materializado** (Marten creando los objetos de schema del event store por
+  primera vez) -- exactamente lo que produce `domain-scaffolder` por definicion cada vez que un
+  consumidor scaffoldea un dominio.
+
+El costo medido con esquema ya materializado es ~1s, y no es un cache escondiendo el trabajo:
+`EventStoreReadinessProbe` no cachea el resultado positivo (ver mas abajo), cada llamada ejecuta
+`FetchStreamStateAsync` de verdad. Y `always_on` **no es una garantia universal que vuelva el patron
+redundante**: el tier Consumption (Y1) no lo soporta, y aunque MEF-ADR-0020 proscribe Y1 para el marco,
+un consumidor puede desviarse de esa proscripcion documentandola -- el endpoint sigue siendo la unica
+compuerta que cubre ese desvio.
+
+**Semantica del endpoint fijada por esta enmienda:**
+
+- **Probe**: `IEventStoreReadinessProbe`/`EventStoreReadinessProbe` abre una `IQuerySession` y llama
+  `Events.FetchStreamStateAsync(<id centinela inexistente>)`. Un stream que no existe no es un error
+  para ese metodo -- retorna `null` --, pero Marten evalua/crea el schema del tipo de evento en su
+  primer uso [8], asi que la llamada fuerza esa verificacion sin necesidad de que el stream centinela
+  exista ni de leer datos reales de ningun dominio.
+- **Sin cache del positivo, por doctrina fija del marco (sin parametro)**: cada invocacion de
+  `/api/ready` ejecuta el probe de nuevo. Cachear el resultado positivo degradaria la semantica a "el
+  store llego a estar listo alguna vez" y esconderia un 503 real si el store cae despues del arranque;
+  el unico consumidor de este endpoint es el gate de CI (nunca un humano navegando), y un parametro de
+  cache sin un caso de uso que lo necesite contradice la heuristica de MEF-ADR-0018 contra la
+  complejidad anticipada. No se agrega ningun `enableCache`/`ttl` -- si algun consumidor mide un costo
+  que lo justifique, es una decision para su propio issue.
+- **503, no 500, con cuerpo diagnosticable**: `/api/ready` devuelve `503 Service Unavailable` cuando el
+  probe falla -- la semantica correcta para "el servidor sabe que no puede atender esta clase de
+  peticion ahora, probablemente temporal" [9], distinta de un `500` que implica una falla no anticipada
+  del handler. El cuerpo de la respuesta incluye el mensaje de la excepcion capturada (via
+  `ReadyCheckMensajes.resx`, mismo patron de mensajes por handler que fija MEF-ADR-0009) para que quien
+  lea el log del gate no tenga que correlacionar con Application Insights para saber que fallo.
+- **Timeout del poll: 120s, mismo criterio que el punto 3.** El paso de poll que #675 materializa en
+  `smoke-tests-dominio.yml` espera `/api/ready` con el mismo timeout de 120s que el punto 3 ya fija para
+  `/api/version` -- el mismo margen de seguridad, ahora tambien cubriendo el escenario que si paga el
+  costo (primer deploy de un dominio nuevo).
+
+**Alternativa considerada y diferida, no descartada de raiz: `ApplyAllDatabaseChangesOnStartup`.** Ver
+Alt 5.
+
+**Prueba de comprobacion pendiente, anotada para que no se lea como tradeoff medido.** Ningun deploy
+del consumidor de origen todavia disparo el escenario que motiva esta enmienda -- el primer deploy de
+un dominio **nuevo** contra una base sin esquema materializado; los tres dominios medidos (incluido
+Programacion) ya tenian esquema. El log del gate, `Ready OK tras N intento(s) (~Ns)` (que #675 emite en
+el paso de poll sin trabajo adicional), es la captura que cierra esa medicion la primera vez que un
+consumidor scaffoldee un dominio nuevo con esta enmienda vigente. Hasta entonces, este punto es teorico
+-- coherente con el mecanismo de schema de Marten [8], no con una medicion propia -- y se declara asi.
+
 ## Alternativas consideradas
 
 ### Alt 1: `sleep` fijo antes del smoke
@@ -272,6 +355,21 @@ dominios del marco, un cambio de costo e infraestructura que excede el alcance d
 timing del gate CI). Se anota como alternativa valida a evaluar aparte si el marco decide subir el
 piso de SKU en el futuro.
 
+### Alt 5: `ApplyAllDatabaseChangesOnStartup` en vez de un endpoint de readiness (issue #671)
+
+Marten expone un mecanismo para materializar el schema completo del store al arrancar el host, en vez
+de dejar que cada tipo de documento/evento dispare su propia verificacion en el primer uso [8]. Ataca
+la causa (el schema sin materializar) en vez de exponer una compuerta que la detecte.
+
+**Descartada por ahora, diferida, no descartada de raiz.** Es un cambio doctrinal mayor que toca la
+compatibilidad de configuracion Marten write-side/read-side que fija MEF-ADR-0034 (los pares que deben
+coincidir entre el Function App y el worker de proyecciones), y el consumidor de origen tiene historial
+de desajustes de `mt_version` que dejaron GETs en 500 permanente (sus issues #294 y #357) -- exactamente
+el tipo de falla que un cambio de arranque de schema puede reintroducir o esconder si no se disena con
+cuidado. Evaluarla merece su propio issue, con su propia verificacion contra ese historial; no es
+alcance de esta enmienda, que se limita a registrar una compuerta que detecta el sintoma, no a remover
+la causa.
+
 ## Consecuencias
 
 ### Positivas
@@ -291,6 +389,12 @@ piso de SKU en el futuro.
   llega vacio, la guarda de deploys ajenos garantiza que ningun `deploy-{kebab}.yml` concurrente del
   mismo commit siga tocando el FA bajo prueba antes de dejar correr el warmup -- la invariante que la
   version original de este ADR no nombraba queda restaurada por construccion, no por suerte de timing.
+- **Cierra el hueco de cobertura de la capa de datos (issue #671)**: el gate por SHA gana una tercera
+  compuerta dedicada que ejercita el event store, ademas de las dos que ya ejercitaban el binario HTTP
+  -- ninguna peticion de un test vuelve a ser la primera en tocar Postgres.
+- **Defensa en profundidad de costo marginal**: con esquema ya materializado el probe cuesta ~1s por
+  llamada (verificado, no cacheado); el costo real solo lo paga el escenario que de verdad lo necesita,
+  el primer deploy de un dominio nuevo.
 
 ### Negativas
 
@@ -322,6 +426,14 @@ piso de SKU en el futuro.
   del cron queda fuera del filtro y su carrera sigue abierta. Es un residuo estrecho (la ventana es el
   intervalo entre el disparo del cron y el push siguiente) y cerrarlo pediria esperar deploys de
   cualquier commit, que es otra decision -- se documenta, no se resuelve aqui.
+- **El costo real del primer deploy de un dominio nuevo (Marten materializando el schema del event
+  store) sigue sin medirse empiricamente (issue #671)** -- ver la nota de comprobacion pendiente de la
+  seccion 6; el fundamento de esa seccion es coherente con la documentacion de Marten [8], no todavia
+  con una medicion propia.
+- **`ApplyAllDatabaseChangesOnStartup` queda diferido, no descartado de raiz (issue #671)**: si el marco
+  lo adopta en el futuro, alguien tiene que reconciliarlo con la doctrina de compatibilidad de
+  configuracion Marten de MEF-ADR-0034 y con el historial de `mt_version` del consumidor de origen --
+  este ADR no resuelve esa tension (Alt 5), solo la nombra.
 
 ## Referencias
 
@@ -357,6 +469,15 @@ piso de SKU en el futuro.
   configuracion del agente de Java: *"if you add a custom dimension named `service.version`, the
   value is stored in the `application_Version` column in the Application Insights Logs table"*.
   https://learn.microsoft.com/azure/azure-monitor/app/java-standalone-config#custom-dimensions
+- **[8]** "Schema Migration and Patches" -- martendb.io (documentacion oficial de Marten): la
+  verificacion/creacion automatica de los objetos de schema ocurre en el primer uso de un tipo de
+  documento/evento (compara la tabla actual contra lo configurado y crea lo que falte segun
+  `AutoCreateSchemaObjects`), no en un paso de arranque separado -- el mecanismo que hace que
+  `FetchStreamStateAsync` sobre un stream centinela dispare la materializacion del schema del event
+  store sin necesidad de datos reales (seccion 6, Alt 5). https://martendb.io/schema/
+- **[9]** RFC 9110 ("HTTP Semantics"), seccion 15.6.4 -- "503 (Service Unavailable)": el servidor esta
+  temporalmente incapaz de atender la peticion, distinto de un `500` que senala una falla no
+  anticipada del handler (seccion 6). https://www.rfc-editor.org/rfc/rfc9110#section-15.6.4
 - Bitakora.ControlAsistencia issue #224 (incidente real que origina este ADR: deploy fin `00:54:13Z`
   -> smoke inicio `00:54:18Z`, paquete nuevo vivo ~`00:55`) y field note
   `docs/bitacora/field-notes/2026-07-18-2027-bug-investigation.md` (repo consumidor).
@@ -364,18 +485,29 @@ piso de SKU en el futuro.
   de este repo: `Deploy Projections` en rojo desde 2026-08-07 porque su job de smoke -- la suite de
   ControlHoras -- corria concurrente con `Deploy ControlHoras`; 4 de 4 corridas solapadas, ventanas de
   7 a 31 segundos). PR de referencia verificado en runner real: `augusto-romero-arango/Bitakora.ControlAsistencia#362`.
+- Bitakora.ControlAsistencia issue #399/PR #406 (implementacion de referencia de `/api/ready` que
+  origina la seccion 6 de este ADR, mergeada 2026-08-17) y el comentario con la cronologia completa de
+  `always_on` y las mediciones del dominio Programacion:
+  https://github.com/augusto-romero-arango/Bitakora.ControlAsistencia/pull/406#issuecomment-5316291661
 - MEF-ADR-0013 (smoke tests contra entorno dev): contexto relacionado; este ADR no lo enmienda.
 - MEF-ADR-0006 (convenciones de naming de funciones Azure): ancla `[Function("version")]`, mismo
-  patron que `[Function("health")]`.
+  patron que `[Function("health")]`; y, desde la seccion 6, `[Function("ready")]`.
+- MEF-ADR-0009 (mensajes en `.resx` por aggregate/handler): ancla `ReadyCheckMensajes.resx` (seccion 6),
+  el cuerpo diagnosticable del 503 de `/api/ready`.
+- MEF-ADR-0018 (heuristicas de evolucion y reuso del codigo): ancla la decision de la seccion 6 de no
+  agregar un parametro de cache al probe sin un caso de uso que lo necesite.
 - MEF-ADR-0020 (hosting, un App Service Plan dedicado por dominio): ancla `WEBSITE_RUN_FROM_PACKAGE=1`
   (`agents/infra-base-scaffolder.md`) y el piso de SKU `B1` que descarta, por ahora, la Alt 4
-  (deployment slots).
+  (deployment slots); y, ya enmendado por el issue #652, el default `always_on = true` que la seccion 6
+  cita para reencuadrar su fundamento sin la narrativa del incidente de 74s.
 - MEF-ADR-0022 (autenticacion CI por OIDC, orden infra -> deploy): el job `deploy` de
   `deploy-{kebab}.yml` que este ADR modifica, y el disparador `workflow_run` cuyo `github.sha` motiva
   la nota del punto 1 sobre `github.event.workflow_run.head_sha || github.sha`.
 - MEF-ADR-0034 (worker de proyecciones y read models): seccion 8 (Container App sin ingress, motivo
   por el que la seccion 5 de este ADR no puede replicar el patron `/api/version`) y seccion 10 (seam
-  `ConfiguracionObservabilidadProjections`, el consumidor de `SourceRevisionId` en el read-side).
+  `ConfiguracionObservabilidadProjections`, el consumidor de `SourceRevisionId` en el read-side); y la
+  doctrina de compatibilidad de configuracion Marten write-side/read-side (los pares que deben
+  coincidir) que la Alt 5 de la seccion 6 cita como motivo para diferir `ApplyAllDatabaseChangesOnStartup`.
 
 ## Control de cambios
 
@@ -411,3 +543,20 @@ piso de SKU en el futuro.
   componente que invoque el reutilizable a mano) y en el propio reutilizable -- sin esa concesion el
   run muere en `startup_failure` sin annotation visible. El acoplamiento de los tres literales de
   nombres queda afirmado por el bloque `[H]` de `scripts/tests/test-guards.sh`.
+- 2026-08-17: suma la seccion 6 (issue #671). Cubre el hueco de la capa de datos que este ADR no
+  mencionaba en ninguna parte: endpoint dedicado `/api/ready` (`ReadyCheck.cs`, `[Function("ready")]`,
+  tercer endpoint, nunca enriqueciendo `/api/health` -- mismo precedente que la Alt 2 del punto 2),
+  probe via `FetchStreamStateAsync` sobre un stream centinela inexistente (fuerza la
+  verificacion/creacion de schema de Marten sin leer datos reales), sin cache del positivo (doctrina
+  fija del marco, sin parametro, MEF-ADR-0018), 503 en vez de 500 con cuerpo diagnosticable
+  (`ReadyCheckMensajes.resx`, MEF-ADR-0009), y el mismo timeout de poll de 120s que ya fija el punto 3.
+  El fundamento es defensa en profundidad de bajo costo (instancia nueva en cada deploy aun con
+  `always_on`, MEF-ADR-0020 ya enmendado por #652; y materializacion de esquema en el primer deploy de
+  un dominio nuevo) -- explicitamente no la narrativa del incidente de 74s que origino el par de
+  issues, cerrada por `always_on` 13.5 horas antes de que el gate llegara a produccion. Registra
+  `ApplyAllDatabaseChangesOnStartup` (Alt 5) como alternativa considerada y diferida por su interaccion
+  con la doctrina de compatibilidad de configuracion Marten de MEF-ADR-0034 y el historial de
+  `mt_version` del consumidor de origen (sus issues #294/#357), y anota explicitamente que la prueba
+  de comprobacion del patron (primer deploy de un dominio nuevo sin esquema materializado) sigue
+  pendiente, capturable sin trabajo adicional por el log `Ready OK tras N intento(s) (~Ns)` del poll.
+  Bloquea la propagacion al `domain-scaffolder` (issue #675). Suma las referencias [8] y [9].
