@@ -141,6 +141,15 @@ run_query() {
         exit 1
     fi
 
+    local _dep
+    for _dep in jq column; do
+        if ! command -v "$_dep" >/dev/null 2>&1; then
+            error "Falta '$_dep', requerido para leer y formatear el resultado de la consulta"
+            echo "  Instalalo y reintenta (macOS: brew install jq; Debian/Ubuntu: apt-get install jq bsdextrautils)" >&2
+            exit 1
+        fi
+    done
+
     log "$description (ultimas ${HOURS}h)"
 
     local result
@@ -159,8 +168,8 @@ run_query() {
         exit 1
     fi
 
-    if ! echo "$result" | jq -e '(.tables[0].rows | type) == "array"' >/dev/null 2>&1; then
-        error "La respuesta de az no tiene la forma esperada (.tables[0].rows)"
+    if ! echo "$result" | jq -e '(.tables[0].rows | type) == "array" and (.tables[0].columns | type) == "array"' >/dev/null 2>&1; then
+        error "La respuesta de az no tiene la forma esperada (.tables[0].columns / .tables[0].rows)"
         echo "$result" >&2
         exit 1
     fi
@@ -173,9 +182,19 @@ run_query() {
         return 0
     fi
 
+    # Cada celda pasa por 'celda' antes de @tsv por dos motivos: las columnas
+    # 'dynamic' de App Insights (details, customDimensions) traen objetos y
+    # arrays que @tsv rechaza de plano -- abortaria la fila entera, justo la que
+    # lleva el stack trace --, y una celda vacia produce dos tabs seguidos que
+    # el column de BSD (macOS) colapsa, corriendo las columnas siguientes una
+    # posicion a la izquierda y desalineando la tabla.
     echo "$result" | jq -r '
+        def celda:
+            if . == null or . == "" then "-"
+            elif type == "object" or type == "array" then tojson
+            else tostring end;
         [.tables[0].columns[].name] as $cols
-        | ($cols | @tsv), (.tables[0].rows[] | @tsv)
+        | ($cols | @tsv), (.tables[0].rows[] | map(celda) | @tsv)
     ' | column -t -s $'\t'
     success "Consulta completada ($row_count filas)"
 }
