@@ -58,11 +58,14 @@
 #       es donde lo escriben los pipelines) y lo declara, en vez de reportar
 #       0 corridas en silencio.
 #   [N] Segmentacion por harness_version (issue #663): mezcla de lineas con
-#       "1.4.0"/"1.5.0" y sin el campo (historial previo a #660) -> agrupa por
+#       "0.9.0"/"0.25.0" y sin el campo (historial previo a #660) -> agrupa por
 #       version con wall/turnos/costo restringidos a cada grupo (CA-1) y cae
 #       a "(sin version)" sin romper el resto del reporte (CA-2); verificado
 #       contra compute_metrics_report_json y contra la seccion renderizada
-#       "POR VERSION DE HARNESS" end-to-end (CA-3).
+#       "POR VERSION DE HARNESS" end-to-end (CA-3). Las versiones del fixture
+#       son justo el par que un orden lexicografico invertiria (0.9.0 vs
+#       0.25.0, ambos alcanzables con el plugin ya en 0.25.0): N-11 fija el
+#       orden semver numerico.
 #
 # Uso: scripts/tests/test-metrics-report.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -438,43 +441,63 @@ else
 fi
 
 echo ""
-echo "[N] Segmentacion por harness_version (CA-1/CA-2/CA-4, issue #663)"
+echo "[N] Segmentacion por harness_version (CA-1..CA-4, issue #663)"
 
-# Mezcla: 2 corridas en "1.4.0", 1 en "1.5.0", 1 sin el campo (historial previo
+# Mezcla: 2 corridas en "0.9.0", 1 en "0.25.0", 1 sin el campo (historial previo
 # a #660) -- todas tdd e instrumentadas, para poder derivar a mano wall/turnos/
 # costo por grupo. Los numeros esperados abajo se calcularon sumando estos
-# mismos campos (ver CA-1: agregados restringidos a cada version).
+# mismos campos (ver CA-1: agregados restringidos a cada version). Las dos
+# versiones no son decorativas: 0.9.0 y 0.25.0 son el par que un sort_by de
+# cadenas invertiria, y ambas son alcanzables con el plugin ya en 0.25.0.
 cat > "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" <<'EOF'
-{"issue":"800","title":"TDD version 1.4.0 (a)","pipeline":"tdd","harness_version":"1.4.0","started":"20260806-090000","state":"completed","agents":{"test-writer":{"duration":100,"metrics":{"turns":10,"duration_ms":100000,"duration_api_ms":80000,"non_api_ms":20000,"cost_usd":0.5,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"model":"claude-sonnet-5","agent":"test-writer","tool_calls":[]}}}}
-{"issue":"810","title":"TDD version 1.4.0 (b)","pipeline":"tdd","harness_version":"1.4.0","started":"20260807-090000","state":"completed","agents":{"test-writer":{"duration":200,"metrics":{"turns":20,"duration_ms":200000,"duration_api_ms":150000,"non_api_ms":50000,"cost_usd":0.7,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"model":"claude-sonnet-5","agent":"test-writer","tool_calls":[]}}}}
-{"issue":"820","title":"TDD version 1.5.0","pipeline":"tdd","harness_version":"1.5.0","started":"20260808-090000","state":"completed","agents":{"test-writer":{"duration":50,"metrics":{"turns":5,"duration_ms":50000,"duration_api_ms":30000,"non_api_ms":20000,"cost_usd":0.2,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"model":"claude-sonnet-5","agent":"test-writer","tool_calls":[]}}}}
+{"issue":"800","title":"TDD version 0.9.0 (a)","pipeline":"tdd","harness_version":"0.9.0","started":"20260806-090000","state":"completed","agents":{"test-writer":{"duration":100,"metrics":{"turns":10,"duration_ms":100000,"duration_api_ms":80000,"non_api_ms":20000,"cost_usd":0.5,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"model":"claude-sonnet-5","agent":"test-writer","tool_calls":[]}}}}
+{"issue":"810","title":"TDD version 0.9.0 (b)","pipeline":"tdd","harness_version":"0.9.0","started":"20260807-090000","state":"completed","agents":{"test-writer":{"duration":200,"metrics":{"turns":20,"duration_ms":200000,"duration_api_ms":150000,"non_api_ms":50000,"cost_usd":0.7,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"model":"claude-sonnet-5","agent":"test-writer","tool_calls":[]}}}}
+{"issue":"820","title":"TDD version 0.25.0","pipeline":"tdd","harness_version":"0.25.0","started":"20260808-090000","state":"completed","agents":{"test-writer":{"duration":50,"metrics":{"turns":5,"duration_ms":50000,"duration_api_ms":30000,"non_api_ms":20000,"cost_usd":0.2,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"model":"claude-sonnet-5","agent":"test-writer","tool_calls":[]}}}}
 {"issue":"830","title":"TDD sin harness_version (historial previo a #660)","pipeline":"tdd","started":"20260809-090000","state":"completed","agents":{"test-writer":{"duration":150,"metrics":{"turns":12,"duration_ms":150000,"duration_api_ms":100000,"non_api_ms":50000,"cost_usd":0.3,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"model":"claude-sonnet-5","agent":"test-writer","tool_calls":[]}}}}
 EOF
 
 AGG_N=$(compute_metrics_report_json "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" "" "")
 
-assert_field "N-1: tres grupos en by_version (1.4.0, 1.5.0, sin version)" "3" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version | length')"
-assert_field "N-2: 1.4.0.n_total (2 corridas)" "2" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="1.4.0") | .n_total')"
-assert_field "N-3: 1.4.0.n_instrumented" "2" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="1.4.0") | .n_instrumented')"
-assert_field "N-4: 1.4.0.turns_mean (10+20)/2" "15" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="1.4.0") | .turns_mean')"
-assert_field "N-5: 1.4.0.cost_usd_mean (0.5+0.7)/2" "0.6" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="1.4.0") | .cost_usd_mean')"
-assert_field "N-6: 1.4.0.wall_mean_s (100+200)/2" "150" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="1.4.0") | .wall_mean_s')"
-assert_field "N-7: 1.5.0.n_total (1 corrida)" "1" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="1.5.0") | .n_total')"
-assert_field "N-8: 1.5.0.turns_mean" "5" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="1.5.0") | .turns_mean')"
+assert_field "N-1: tres grupos en by_version (0.9.0, 0.25.0, sin version)" "3" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version | length')"
+assert_field "N-2: 0.9.0.n_total (2 corridas)" "2" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="0.9.0") | .n_total')"
+assert_field "N-3: 0.9.0.n_instrumented" "2" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="0.9.0") | .n_instrumented')"
+assert_field "N-4: 0.9.0.turns_mean (10+20)/2" "15" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="0.9.0") | .turns_mean')"
+assert_field "N-5: 0.9.0.cost_usd_mean (0.5+0.7)/2" "0.6" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="0.9.0") | .cost_usd_mean')"
+assert_field "N-6: 0.9.0.wall_mean_instr_s (100+200)/2" "150" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="0.9.0") | .wall_mean_instr_s')"
+assert_field "N-7: 0.25.0.n_total (1 corrida)" "1" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="0.25.0") | .n_total')"
+assert_field "N-8: 0.25.0.turns_mean" "5" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="0.25.0") | .turns_mean')"
 assert_field "N-9: (sin version).n_total (830, previo a #660)" "1" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="(sin version)") | .n_total')"
 assert_field "N-10: (sin version).turns_mean" "12" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="(sin version)") | .turns_mean')"
 
+# Orden semver numerico, no lexicografico: comparando cadenas, "0.25.0" saldria
+# ANTES que "0.9.0" y la tabla leeria la deriva entre versiones al reves.
+assert_field "N-11: orden semver (0.9.0 antes que 0.25.0, sin version al final)" "0.9.0,0.25.0,(sin version)" "$(echo "$AGG_N" | jq -r '[.pipelines.tdd.by_version[].version] | join(",")')"
+
+# CA-2: la linea sin el campo no debe alterar el resto del reporte -- las 4
+# corridas siguen contadas e instrumentadas en la seccion del pipeline.
+assert_field "N-12: el resto del reporte queda intacto (tdd.meta.total)" "4" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.meta.total')"
+assert_field "N-13: y las 4 siguen instrumentadas" "4" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.meta.instrumented')"
+
 echo "  -- render end-to-end: seccion POR VERSION DE HARNESS con las tres filas --"
 OUT=$(run_report)
-if echo "$OUT" | grep -q "POR VERSION DE HARNESS"; then
-    pass "N-11: la seccion POR VERSION DE HARNESS aparece en el render"
+RC=$?
+if [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "POR VERSION DE HARNESS"; then
+    pass "N-14: la seccion POR VERSION DE HARNESS aparece en el render (exit 0)"
 else
-    fail "N-11: no aparecio la seccion POR VERSION DE HARNESS"
+    fail "N-14: no aparecio la seccion POR VERSION DE HARNESS (rc=$RC)"
 fi
-if echo "$OUT" | grep -qE '^1\.4\.0 +2/2' && echo "$OUT" | grep -qE '^1\.5\.0 +1/1' && echo "$OUT" | grep -qE '^\(sin version\) +1/1'; then
-    pass "N-12: las tres filas (1.4.0, 1.5.0, (sin version)) se renderizan con su n(t/i)"
+if echo "$OUT" | grep -qE '^0\.9\.0 +2/2' && echo "$OUT" | grep -qE '^0\.25\.0 +1/1' && echo "$OUT" | grep -qE '^\(sin version\) +1/1'; then
+    pass "N-15: las tres filas (0.9.0, 0.25.0, (sin version)) se renderizan con su n(t/i)"
 else
-    fail "N-12: no se encontraron las tres filas esperadas: $(echo "$OUT" | grep -E '^(1\.4\.0|1\.5\.0|\(sin version\))')"
+    fail "N-15: no se encontraron las tres filas esperadas: $(echo "$OUT" | grep -E '^(0\.9\.0|0\.25\.0|\(sin version\))')"
+fi
+# La media de wall de 0.9.0 es (100+200)/2 = 150s -> "2m30s" en fmt_dur_s: si el
+# render leyera una clave inexistente (p.ej. el viejo wall_mean_s) la columna
+# caeria a "-" sin que nada mas se rompa, justo el fallo silencioso a cubrir.
+if echo "$OUT" | grep -qE '^0\.9\.0 +2/2 +2m30s'; then
+    pass "N-16: la fila trae su wall medio real (2m30s), no un '-' por clave mal leida"
+else
+    fail "N-16: la columna WallMedia de 0.9.0 no muestra 2m30s: $(echo "$OUT" | grep -E '^0\.9\.0')"
 fi
 
 echo ""

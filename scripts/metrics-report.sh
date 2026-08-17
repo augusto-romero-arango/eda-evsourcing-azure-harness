@@ -55,10 +55,14 @@
 #      "harness_version" con que corrio (#660), asi que el reporte agrega
 #      tambien una tabla "POR VERSION DE HARNESS" por pipeline -- misma media
 #      de wallclock/turnos/costo que el resto del reporte, restringida a las
-#      corridas de esa version -- para responder si una version nueva del
-#      plugin mejoro o empeoro las corridas. El historial previo a #660 (o
-#      cualquier linea futura sin el campo) cae bajo la clave "(sin version)",
-#      mismo patron que "(sin-pipeline)".
+#      corridas instrumentadas de esa version (mismo denominador compartido
+#      entre columnas que exige build_comparison) -- para responder si una
+#      version nueva del plugin mejoro o empeoro las corridas. El historial
+#      previo a #660 (o cualquier linea futura sin el campo, que #660 escribe
+#      como null cuando no puede resolver la version) cae bajo la clave
+#      "(sin version)", mismo patron que "(sin-pipeline)". Las filas se
+#      ordenan por semver NUMERICO, no lexicografico: con el plugin ya en
+#      0.25.0, comparar cadenas pondria 0.9.0 despues de 0.25.0.
 #
 # Dos lecciones NO obvias portadas literalmente del interno (#427):
 #
@@ -229,6 +233,15 @@ def summarize_stage_group:
 # harness_version. Opera sobre $all (corridas totales de esa version, igual
 # que pipeline_report), no sobre $instr -- asi n_total/n_instrumented
 # reutilizan el mismo par instrumented/legacy del resto del reporte.
+#
+# El wall se llama wall_mean_instr_s, y no wall_mean_s como en period_summary,
+# porque su denominador es otro: ahi el wall usa TODAS las corridas del periodo
+# y aqui solo las instrumentadas de la version, como en build_comparison. La
+# razon es la misma que alli -- turnos y costo solo existen para las
+# instrumentadas, y comparar dos versiones con denominadores distintos entre
+# columnas invalida justo la atribucion que esta tabla existe para hacer. Los
+# dos nombres conviven en el mismo JSON: reusar wall_mean_s con otro
+# denominador seria la trampa.
 def version_summary:
   . as $group
   | ($group | map(select(._has_metrics))) as $g_instr
@@ -237,11 +250,20 @@ def version_summary:
   | {
       n_total: ($group | length),
       n_instrumented: ($g_instr | length),
-      wall_mean_s: ($g_instr | map(._wall_s) | map(select(. != null)) | avgOrNull),
+      wall_mean_instr_s: ($g_instr | map(._wall_s) | map(select(. != null)) | avgOrNull),
       pct_api: (if ($api_total + $non_api_total) > 0 then ($api_total / ($api_total + $non_api_total) * 100) else null end),
       turns_mean: ($g_instr | map(run_turns) | avgOrNull),
       cost_usd_mean: ($g_instr | map(run_cost_usd) | avgOrNull)
     };
+
+# version_sort_key -- orden semver NUMERICO por componente, no lexicografico:
+# el plugin ya va en 0.25.0, asi que un historial que cruce 0.9.0 -> 0.25.0
+# saldria invertido comparando cadenas ("0.9" > "0.25"), y la tabla que existe
+# para leer la deriva entre versiones consecutivas las mostraria al reves. Los
+# componentes que no son numeros (un pre-release, o un valor que no sea semver)
+# caen a -1 y desempatan por la cadena cruda, sin que jq falle.
+def version_sort_key:
+  [(split(".") | map(try tonumber catch -1)), .];
 
 def delta_of(f; l):
   {
@@ -328,7 +350,7 @@ def pipeline_report:
   | ($all
       | group_by(._version)
       | map(. as $group | ($group | version_summary) + {version: $group[0]._version})
-      | sort_by([(.version == "(sin version)"), .version])
+      | sort_by([(.version == "(sin version)"), (.version | version_sort_key)])
     ) as $by_version
   | {
       meta: {
@@ -706,12 +728,16 @@ render_by_version() {
         return 0
     fi
 
+    echo "n(t/i) = corridas totales / de ellas instrumentadas. A diferencia de la"
+    echo "deriva temporal, aqui TODAS las cifras -- el wall incluido -- salen solo"
+    echo "de las instrumentadas: comparar dos versiones exige el mismo denominador."
+    echo ""
     printf '%-20s %-8s %10s %7s %7s %10s\n' "Version" "n(t/i)" "WallMedia" "Turnos" "%API" "Costo"
     while IFS=$'\t' read -r version n_total n_instr wall_mean turns pct_api cost_mean; do
         printf '%-20s %-8s %10s %7s %7s %10s\n' \
             "$(_txt "$version")" "${n_total}/${n_instr}" \
             "$(fmt_dur_s "$wall_mean")" "$(_num1 "$turns")" "$(fmt_pct "$pct_api")" "$(_money "$cost_mean")"
-    done < <(jq -r "$JQ_ROW"'.by_version[] | [.version, .n_total, .n_instrumented, .wall_mean_s, .turns_mean, .pct_api, .cost_usd_mean] | row' <<<"$agg")
+    done < <(jq -r "$JQ_ROW"'.by_version[] | [.version, .n_total, .n_instrumented, .wall_mean_instr_s, .turns_mean, .pct_api, .cost_usd_mean] | row' <<<"$agg")
 }
 
 render_legacy() {
