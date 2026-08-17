@@ -4,6 +4,84 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-08-17
+
+### Added
+
+- Las entradas de `pipeline-history.jsonl` de los tres pipelines publicados
+  (`tdd-pipeline.sh`, `tooling-pipeline.sh`, `iac-pipeline.sh`) estampan ahora
+  el campo `harness_version` (string semver o `null`) con la version del
+  plugin que corrio ese pipeline, via el nuevo helper `get_harness_version` de
+  `_pipeline-common.sh` — permite atribuir metricas de turnos/costo/duracion a
+  una version concreta del harness, algo que antes solo podia inferirse del
+  snapshot mutable `.claude/pipeline/.plugin-root`.
+- Las entradas de `sessions.jsonl` que el hook `SessionStart` anota en cada
+  arranque de sesion (headless e interactivas) estampan ahora el campo
+  `harness_version` (basename de `${CLAUDE_PLUGIN_ROOT}`, o `null` si esa
+  variable llega vacia o no definida) — mismo nombre de campo que
+  `pipeline-history.jsonl` (issue #660), para poder cruzar ambos artefactos
+  sin mapeos.
+- `scripts/tests/test-sessions-jsonl-hook.sh` cubre ese hook ejecutandolo de
+  verdad: extrae el comando de `hooks/hooks.json` con `jq` y lo corre en un
+  directorio temporal (el one-liner vive embebido en un string JSON, no lo ve
+  ningun linter y falla en silencio por diseno). Verifica el basename del
+  cache, el `null` con la variable vacia o ausente, la degradacion sin `jq`
+  (exit 0 y ninguna linea escrita), que los 5 campos previos conserven nombre
+  y forma, que una linea legada sobreviva al append, que un `CLAUDE_PLUGIN_ROOT`
+  fuera de la estructura del cache se acepte tal cual y que el comando se
+  comporte igual bajo `bash` y bajo `/bin/sh`.
+- El pipeline interno (`mefisto-tooling-pipeline.sh`) ahora estampa `harness_version` y `harness_sha` en cada entrada de `pipeline-history.jsonl` (feliz y aborto), calculados una sola vez en el prologo sobre el repo principal. `_mefisto-common.sh` expone los helpers `get_harness_version` (version de `.claude-plugin/plugin.json`) y `get_harness_sha` (SHA corto de HEAD), ambos degradando a vacio sin abortar. `harness_version` lleva el mismo nombre que en el lado publicado (issue #660) para que la segmentacion del reporte interno pueda reusar ese patron; `harness_sha` es exclusivo del interno, porque en este repo la version solo cambia en `/mefisto-release` y entre release y release entran decenas de PRs.
+- `.claude/scripts/tests/test-harness-version.sh` cubre ambos helpers y su cableado: la version con `jq` y por el fallback con `sed` (con un PATH hermetico que de verdad oculta `jq`), el SHA dentro y fuera de un repo git y sin `git` en el PATH, que ambos valores se computen una sola vez antes de `abort()`, que un caller con `set -euo pipefail` sobreviva al peor caso (sin `plugin.json` y sin `git`), que las 2 lineas de historial ejecutadas de verdad produzcan JSON valido con los campos como string o como `null` JSON, y que un historial mixto legado + nuevo siga agregando sin cambios en `mefisto-metrics-report.sh`.
+- `scripts/metrics-report.sh` agrega ahora una dimension `by_version` por
+  pipeline: cada `harness_version` presente en `pipeline-history.jsonl` (issue
+  #660) reporta su total de corridas, cuantas de ellas instrumentadas, y los
+  mismos agregados de wallclock/turnos/costo (medias por corrida) que el resto
+  del reporte, restringidos a las corridas instrumentadas de esa version —
+  mismo denominador compartido entre columnas que ya exigia la comparacion
+  primer-vs-ultimo periodo, sin el cual comparar dos versiones no significaria
+  nada. Responde si una version nueva del plugin mejoro o empeoro las corridas.
+  El historial previo a #660 (o cualquier linea sin el campo) cae bajo la clave
+  `(sin version)`, mismo patron que `(sin-pipeline)`. Las filas se ordenan por
+  semver numerico y no lexicografico: con el plugin ya en 0.25.0, comparar
+  cadenas pondria 0.9.0 despues de 0.25.0. El render textual agrega la seccion
+  "POR VERSION DE HARNESS" con el mismo estilo de tabla que el resto del
+  reporte.
+- `.claude/scripts/mefisto-metrics-report.sh` agrega ahora la seccion "POR
+  VERSION DE HARNESS": cada `harness_version` presente en
+  `pipeline-history.jsonl` (issue #662) reporta su total de corridas, cuantas
+  de ellas instrumentadas, y los mismos agregados de wallclock/turnos/costo
+  (medias por corrida) que el resto del reporte, restringidos a las corridas
+  instrumentadas de esa version — mismo shape que el porte publicado
+  (`scripts/metrics-report.sh`, issue #663). El historial previo a #662 (o
+  cualquier linea sin el campo) cae bajo la clave `(sin version)`, y las filas
+  se ordenan por semver numerico, no lexicografico. `harness_sha` NO es eje de
+  agrupacion — casi cada corrida tendria su propio grupo —, sino una columna
+  nueva en la tabla "Por corrida", nula cuando la linea no lo trae.
+
+### Fixed
+
+- `scripts/appinsights-query.sh`: `run_query` consulta con `--output json` en vez
+  de `--output table` (que con azure-cli 2.82.0 + extension application-insights
+  1.2.3 no renderiza nada y sale con exit 0, indistinguible de un resultado
+  vacio legitimo). Ahora un resultado de 0 filas se reporta explicitamente como
+  vacio (exit 0) y una respuesta que no tiene la forma `.tables[0].columns` /
+  `.tables[0].rows` se reporta como averia (exit distinto de 0); con filas
+  presentes, la salida sigue siendo tabular y legible. El formateador serializa
+  las columnas `dynamic` de App Insights (`details`, `customDimensions`) en vez
+  de abortar la fila que las contiene, sustituye la celda vacia por `-` para que
+  el `column` de BSD no colapse la tabla, y `run_query` verifica `jq` y `column`
+  por adelantado para no atribuir a la respuesta de Azure una dependencia local
+  que falta.
+- Se corrige el default de `always_on` de `false` a `true` en MEF-ADR-0020, sin distincion dev/prod: el fundamento de "ahorro en dev" era factualmente falso en los tiers de computo dedicado que el propio ADR exige (Basic o superior, Y1 proscrito), donde se cobra cada instancia de VM del plan sin importar la actividad de las apps y Always On no esta entre las tres features que generan cargo adicional; la doc de Azure Functions indica habilitarlo en un App Service plan para que la function app funcione correctamente.
+- Se cierra el wiring de `always_on` que dejaba el output del modulo `service-plan` huerfano: el modulo `function-app` (`infra-base-scaffolder`) gana el input `always_on` (default `true`) y lo aplica en `site_config.always_on`, y `domain-scaffolder` lo conecta pasando `always_on = module.service_plan_{dominio}.always_on` al `module.function_app_{dominio}`. Antes, aunque el usuario pidiera `always_on = true`, el valor moria en el output del `service-plan` y prevalecia el default `false` del provider `azurerm`.
+- Consumidores con un `infra/modules/function-app/main.tf` **ya escrito**: re-correr `/infra-base` no les anade el input nuevo (el agente nunca sobrescribe un `.tf` existente, MEF-ADR-0021/CA-7). El Paso 4 de `domain-scaffolder` documenta la remediacion -- anadir a mano el `variable "always_on"` y la linea de `site_config`, o borrar el archivo del modulo y regenerarlo -- para que el `terraform validate` del scaffold de un dominio nuevo no falle con `An argument named "always_on" is not expected here`.
+- El PATH sandbox "sin jq" de `scripts/tests/test-harness-version.sh` (issue
+  #660) no ocultaba `jq`: era `"$BIN_SIN_JQ:/bin:/usr/bin"` y en macOS `jq`
+  vive en `/usr/bin/jq`, asi que los bloques C-1 y E-2 ejercitaban la rama de
+  `jq` de `get_harness_version` creyendo ejercitar el fallback con `sed`.
+  Ahora el sandbox enlaza uno a uno solo los binarios que el fallback
+  necesita, y un chequeo previo falla el test si `jq` sigue resolviendo.
+
 ## [0.25.0] - 2026-08-16
 
 ### Added
@@ -1148,7 +1226,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.22.0...v0.23.0

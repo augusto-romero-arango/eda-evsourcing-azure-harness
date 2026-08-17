@@ -259,6 +259,8 @@ El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o
 | Contrato HTTP de comandos (verbo + ruta + precedencia aplicada) como campo Critico del Definition of Ready | MEF-ADR-0011 |
 | Politica de aceptacion de ids/codigos de negocio en segmentos de URI (charset RFC 3986 unreserved, criterio rechazar-vs-normalizar por propiedad del dato, momento de la invariante en issue previo dedicado) | MEF-ADR-0043 |
 | Doctrina de comentarios de código mínimos (jerarquía código/comentario/documentación, umbral doble Context Delta + Decision Delta, proscripción de provenance `// HU-XX`, regla de precedencia de citas a ADR, alcance por lenguaje y frontera de limpieza del reviewer) | MEF-ADR-0044 |
+| Default `always_on = true` unico del marco (sin distincion dev/prod) y su fundamento de costo real en tiers dedicados | MEF-ADR-0020 |
+| Wiring de `always_on` desde el output del modulo `service-plan` hasta `site_config.always_on`, via el input nuevo del modulo `function-app` | MEF-ADR-0021 |
 
 ## Convenciones del marco
 
