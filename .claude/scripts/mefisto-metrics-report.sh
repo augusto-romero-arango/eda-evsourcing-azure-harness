@@ -9,8 +9,9 @@
 # agregando .claude/pipeline/pipeline-history.jsonl (una linea por corrida del
 # pipeline mefisto-tooling, con agents.<agente>.metrics derivado de la traza
 # por #426): ranking de herramientas, reparto API vs no-API del wall-clock
-# (agregado, por corrida y writer vs reviewer) y deriva temporal semanal/
-# mensual. Solo lectura: nunca escribe en .claude/pipeline/.
+# (agregado, por corrida y writer vs reviewer), deriva temporal semanal/
+# mensual y agregado por harness_version (issue #664). Solo lectura: nunca
+# escribe en .claude/pipeline/.
 #
 # El historico es MIXTO por diseno (CA-5): las corridas previas a #426 no
 # traen "metrics" (solo la duracion plana de siempre) y se reportan aparte
@@ -20,6 +21,15 @@
 # Solo requiere pipeline-history.jsonl: el detalle por tool call ya viaja en
 # agents.<agente>.metrics (#426), asi que no hace falta bajar a los archivos
 # .claude/pipeline/metrics/*.json por stage (ver notas tecnicas del issue).
+#
+# Segmentacion por harness_version (issue #664, mismo shape que el porte
+# publicado #663): cada linea trae "harness_version"/"harness_sha" desde #662.
+# El reporte agrega una tabla "POR VERSION DE HARNESS" (por-version, mismos
+# agregados de wall/turnos/costo que el resto, restringidos a las corridas
+# instrumentadas de esa version) y cae a "(sin version)" para el historial
+# previo a #662. harness_sha NO es eje de agrupacion (casi cada corrida
+# tendria su propio grupo): viaja como columna en "Por corrida", ausente/null
+# cuando la linea no lo trae.
 
 set -euo pipefail
 
@@ -98,6 +108,7 @@ def run_tokens_input: ((.agents.writer.metrics.tokens.input // 0) + (.agents.rev
 def run_tokens_output: ((.agents.writer.metrics.tokens.output // 0) + (.agents.reviewer.metrics.tokens.output // 0));
 def run_tokens_cache_read: ((.agents.writer.metrics.tokens.cache_read // 0) + (.agents.reviewer.metrics.tokens.cache_read // 0));
 def run_tokens_cache_creation: ((.agents.writer.metrics.tokens.cache_creation // 0) + (.agents.reviewer.metrics.tokens.cache_creation // 0));
+def run_cost_usd: ((.agents.writer.metrics.cost_usd // 0) + (.agents.reviewer.metrics.cost_usd // 0));
 
 def week_key: if ._ts == null then null else (._ts | gmtime | strftime("%G-W%V")) end;
 def month_key: if ._ts == null then null else (._ts | gmtime | strftime("%Y-%m")) end;
@@ -150,6 +161,31 @@ def summarize_agent:
     tool_calls_mean: (map([(.tool_calls // [])[] | .count] | add // 0) | avgOrNull)
   };
 
+# version_summary -- issue #664, mismo shape que el porte publicado (#663):
+# agregados de wallclock/turnos/costo restringidos al grupo de corridas de una
+# sola harness_version. Opera sobre $group (corridas totales de esa version),
+# no solo sobre las instrumentadas, para que n_total/n_instrumented reutilicen
+# el mismo par instrumented/legacy del resto del reporte.
+def version_summary:
+  . as $group
+  | ($group | map(select(._has_metrics))) as $g_instr
+  | ($g_instr | map(run_api_ms) | add // 0) as $api_total
+  | ($g_instr | map(run_non_api_ms) | add // 0) as $non_api_total
+  | {
+      n_total: ($group | length),
+      n_instrumented: ($g_instr | length),
+      wall_mean_instr_s: ($g_instr | map(._wall_s) | map(select(. != null)) | avgOrNull),
+      pct_api: (if ($api_total + $non_api_total) > 0 then ($api_total / ($api_total + $non_api_total) * 100) else null end),
+      turns_mean: ($g_instr | map(run_turns) | avgOrNull),
+      cost_usd_mean: ($g_instr | map(run_cost_usd) | avgOrNull)
+    };
+
+# version_sort_key -- orden semver NUMERICO por componente, no lexicografico
+# (mismo motivo que el porte publicado: comparar cadenas invertiria 0.9.0 y
+# 0.25.0). Componentes no numericos caen a -1 y desempatan por la cadena cruda.
+def version_sort_key:
+  [(split(".") | map(try tonumber catch -1)), .];
+
 def delta_of(f; l):
   {
     first: f,
@@ -170,7 +206,11 @@ def delta_of(f; l):
     _wall_s: (if (.agents.writer.duration == null and .agents.reviewer.duration == null) then null
               else ((.agents.writer.duration // 0) + (.agents.reviewer.duration // 0)) end),
     _has_metrics: (((.agents.writer.metrics? // null) != null) or ((.agents.reviewer.metrics? // null) != null)),
-    _ts: (.started | parse_started)
+    _ts: (.started | parse_started),
+    # harness_version llego con #662: el historial previo (o cualquier linea
+    # futura que no lo traiga) cae en su propio cajon "(sin version)" en vez
+    # de romper la segmentacion by_version (issue #664).
+    _version: (if (.harness_version | type) == "string" then .harness_version else "(sin version)" end)
   })) as $entries
 
 | ($entries | length) as $total_n
@@ -210,7 +250,11 @@ def delta_of(f; l):
     api_ms: run_api_ms,
     non_api_ms: run_non_api_ms,
     tool_ms: run_tool_ms,
-    pct_api: (if (run_api_ms + run_non_api_ms) > 0 then (run_api_ms / (run_api_ms + run_non_api_ms) * 100) else null end)
+    pct_api: (if (run_api_ms + run_non_api_ms) > 0 then (run_api_ms / (run_api_ms + run_non_api_ms) * 100) else null end),
+    # harness_sha (issue #664) NO es eje de agrupacion -- casi cada corrida
+    # tendria su propio grupo -- solo columna por-corrida, null si la linea no
+    # lo trae (historial previo a #662).
+    harness_sha: (if (.harness_sha | type) == "string" then .harness_sha else null end)
   })) as $per_run
 
 | ($entries | period_summary(week_key)) as $weekly
@@ -234,6 +278,12 @@ def delta_of(f; l):
   else null end) as $comparison
 
 | ($legacy | sort_by(.started) | map({issue: .issue, started: .started, state: .state})) as $legacy_list
+
+| ($entries
+    | group_by(._version)
+    | map(. as $group | ($group | version_summary) + {version: $group[0]._version})
+    | sort_by([(.version == "(sin version)"), (.version | version_sort_key)])
+  ) as $by_version
 
 | {
     meta: {
@@ -263,6 +313,7 @@ def delta_of(f; l):
       weekly: $weekly,
       monthly: $monthly
     },
+    by_version: $by_version,
     legacy: {
       count: $legacy_n,
       issues: $legacy_list
@@ -384,13 +435,13 @@ render_wallclock() {
 
     echo ""
     echo "Por corrida:"
-    printf '%-8s %-17s %-11s %8s %8s %8s %8s %7s\n' "Issue" "Inicio" "Estado" "Wall" "API" "No-API" "Tools" "%API"
-    while IFS=$'\t' read -r issue started state wall_s run_api run_non_api run_tool pct_a; do
-        printf '#%-7s %-17s %-11s %8s %8s %8s %8s %7s\n' \
+    printf '%-8s %-17s %-11s %8s %8s %8s %8s %7s %9s\n' "Issue" "Inicio" "Estado" "Wall" "API" "No-API" "Tools" "%API" "SHA"
+    while IFS=$'\t' read -r issue started state wall_s run_api run_non_api run_tool pct_a sha; do
+        printf '#%-7s %-17s %-11s %8s %8s %8s %8s %7s %9s\n' \
             "$issue" "$(_txt "$started")" "$(_txt "$state")" \
             "$(_secs0 "$wall_s")" "$(_secs "$run_api")" "$(_secs "$run_non_api")" \
-            "$(_secs "$run_tool")" "$(fmt_pct "$pct_a")"
-    done < <(jq -r "$JQ_ROW"'.wallclock.per_run[] | [.issue, .started, .state, .wall_s, (.api_ms/1000), (.non_api_ms/1000), (.tool_ms/1000), .pct_api] | row' <<<"$agg")
+            "$(_secs "$run_tool")" "$(fmt_pct "$pct_a")" "$(_txt "$sha")"
+    done < <(jq -r "$JQ_ROW"'.wallclock.per_run[] | [.issue, .started, .state, .wall_s, (.api_ms/1000), (.non_api_ms/1000), (.tool_ms/1000), .pct_api, .harness_sha] | row' <<<"$agg")
 
     echo ""
     echo "Writer vs Reviewer:"
@@ -533,6 +584,37 @@ render_comparison() {
     done < <(jq -r "$JQ_ROW"'.comparison.deltas[] | [.label, .unit, .first, .last, .pct] | row' <<<"$agg")
 }
 
+# render_by_version -- issue #664: una fila por harness_version presente en el
+# historial (mas "(sin version)" para el historial previo a #662), restringiendo
+# a esa version los mismos agregados de wallclock/turnos/costo que el resto
+# del reporte. Mismo shape que la seccion homologa del reporte publicado (#663).
+render_by_version() {
+    local agg="$1"
+    local count
+    count=$(jq -r '.by_version | length' <<<"$agg")
+
+    echo ""
+    echo "$RULE_MINOR"
+    echo "POR VERSION DE HARNESS (n = corridas totales/instrumentadas de esa version)"
+    echo "$RULE_MINOR"
+
+    if [ "$count" -eq 0 ]; then
+        echo "(sin corridas en la ventana)"
+        return 0
+    fi
+
+    echo "n(t/i) = corridas totales / de ellas instrumentadas. A diferencia de la"
+    echo "deriva temporal, aqui TODAS las cifras -- el wall incluido -- salen solo"
+    echo "de las instrumentadas: comparar dos versiones exige el mismo denominador."
+    echo ""
+    printf '%-20s %-8s %10s %7s %7s %10s\n' "Version" "n(t/i)" "WallMedia" "Turnos" "%API" "Costo"
+    while IFS=$'\t' read -r version n_total n_instr wall_mean turns pct_api cost_mean; do
+        printf '%-20s %-8s %10s %7s %7s %10s\n' \
+            "$(_txt "$version")" "${n_total}/${n_instr}" \
+            "$(fmt_dur_s "$wall_mean")" "$(_num1 "$turns")" "$(fmt_pct "$pct_api")" "$(_money "$cost_mean")"
+    done < <(jq -r "$JQ_ROW"'.by_version[] | [.version, .n_total, .n_instrumented, .wall_mean_instr_s, .turns_mean, .pct_api, .cost_usd_mean] | row' <<<"$agg")
+}
+
 render_legacy() {
     local agg="$1"
     local count
@@ -568,8 +650,10 @@ main() {
 Uso: mefisto-metrics-report.sh [--desde YYYY-MM-DD]
 
 Reporte agregado de las corridas del pipeline mefisto-tooling: ranking de
-herramientas, reparto del wall-clock (API vs no-API, writer vs reviewer) y
-deriva temporal semanal/mensual. Solo lectura.
+herramientas, reparto del wall-clock (API vs no-API, writer vs reviewer),
+deriva temporal semanal/mensual y agregados por harness_version (que version
+corrio cada corrida, con harness_sha por-corrida en "Por corrida"). Solo
+lectura.
 EOF
                 exit 0
                 ;;
@@ -609,6 +693,7 @@ EOF
     render_period_table "$agg" ".series.weekly" "DERIVA TEMPORAL - SEMANAL"
     render_period_table "$agg" ".series.monthly" "DERIVA TEMPORAL - MENSUAL"
     render_comparison "$agg"
+    render_by_version "$agg"
     render_legacy "$agg"
 
     echo ""

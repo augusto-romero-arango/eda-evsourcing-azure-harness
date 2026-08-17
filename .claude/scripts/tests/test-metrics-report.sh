@@ -53,6 +53,15 @@
 #       la atribucion que el reporte existe para hacer.
 #   [K] La serie temporal desglosa los tokens medios (in/out/cache_read/
 #       cache_creation), no solo los de entrada (CA-4).
+#   [L] Segmentacion por harness_version con harness_sha por-corrida (issue
+#       #664): fixture con lineas que traen ambos campos, solo uno o ninguno.
+#       by_version agrupa por harness_version (CA-1) restringiendo wall/turnos/
+#       costo a cada grupo, cae a "(sin version)" para las lineas sin el campo
+#       (CA-1), y harness_sha NUNCA agrupa -- viaja como columna nula/presente
+#       en cada fila de per_run (CA-2). Verificado contra
+#       compute_metrics_report_json y contra el render end-to-end de la
+#       seccion "POR VERSION DE HARNESS" y la columna SHA de "Por corrida"
+#       (CA-3), sin alterar las secciones existentes.
 #
 # Uso: .claude/scripts/tests/test-metrics-report.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -422,6 +431,61 @@ if echo "$OUT" | grep -qE '^2026-08 +1/1 +20m00s +20m00s +20\.0 +10\.0 +20\.0k +
     pass "K-2: fila mensual completa y alineada (agosto: 20k in / 2k out / 50% cache read)"
 else
     fail "K-2: fila mensual de agosto corrida o mal formada: $(echo "$OUT" | grep '^2026-08' || echo '(no aparece)')"
+fi
+
+echo ""
+echo "[L] Segmentacion por harness_version con harness_sha por-corrida (issue #664)"
+
+# Mezcla: 900/910 en "0.9.0" (900 trae ademas harness_sha, 910 no) + 920 sin
+# harness_version pero con harness_sha (cae a "(sin version)") + 930 sin
+# ninguno de los dos campos (historial previo a #662). Los numeros esperados
+# se derivaron a mano sumando estos mismos campos (mismo criterio que [C]/[J]).
+cat > "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" <<'EOF'
+{"issue":"900","title":"Con version y sha","pipeline":"mefisto-tooling","harness_version":"0.9.0","harness_sha":"aaa1111","started":"20260810-090000","state":"completed","agents":{"writer":{"duration":100,"metrics":{"turns":10,"duration_ms":100000,"duration_api_ms":80000,"non_api_ms":20000,"cost_usd":0.5,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"tool_calls":[]}},"reviewer":{"duration":null,"metrics":null}}}
+{"issue":"910","title":"Con version, sin sha","pipeline":"mefisto-tooling","harness_version":"0.9.0","started":"20260811-090000","state":"completed","agents":{"writer":{"duration":200,"metrics":{"turns":20,"duration_ms":200000,"duration_api_ms":150000,"non_api_ms":50000,"cost_usd":0.7,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"tool_calls":[]}},"reviewer":{"duration":null,"metrics":null}}}
+{"issue":"920","title":"Sin version, con sha","pipeline":"mefisto-tooling","harness_sha":"ccc3333","started":"20260812-090000","state":"completed","agents":{"writer":{"duration":50,"metrics":{"turns":5,"duration_ms":50000,"duration_api_ms":30000,"non_api_ms":20000,"cost_usd":0.2,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"tool_calls":[]}},"reviewer":{"duration":null,"metrics":null}}}
+{"issue":"930","title":"Sin version ni sha (historial previo a #662)","pipeline":"mefisto-tooling","started":"20260813-090000","state":"completed","agents":{"writer":{"duration":150,"metrics":{"turns":12,"duration_ms":150000,"duration_api_ms":100000,"non_api_ms":50000,"cost_usd":0.3,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"tool_calls":[]}},"reviewer":{"duration":null,"metrics":null}}}
+EOF
+
+AGG_L=$(compute_metrics_report_json "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" "")
+
+echo "  -- by_version (CA-1): 900/910 agrupan bajo 0.9.0, 920/930 caen a (sin version) --"
+assert_field "L-1: dos grupos en by_version (0.9.0, sin version)" "2" "$(echo "$AGG_L" | jq -r '.by_version | length')"
+assert_field "L-2: 0.9.0.n_total (900+910)" "2" "$(echo "$AGG_L" | jq -r '.by_version[] | select(.version=="0.9.0") | .n_total')"
+assert_field "L-3: 0.9.0.turns_mean (10+20)/2" "15" "$(echo "$AGG_L" | jq -r '.by_version[] | select(.version=="0.9.0") | .turns_mean')"
+assert_field "L-4: 0.9.0.cost_usd_mean (0.5+0.7)/2" "0.6" "$(echo "$AGG_L" | jq -r '.by_version[] | select(.version=="0.9.0") | .cost_usd_mean')"
+assert_field "L-5: 0.9.0.wall_mean_instr_s (100+200)/2" "150" "$(echo "$AGG_L" | jq -r '.by_version[] | select(.version=="0.9.0") | .wall_mean_instr_s')"
+assert_field "L-6: (sin version).n_total (920+930, con o sin sha)" "2" "$(echo "$AGG_L" | jq -r '.by_version[] | select(.version=="(sin version)") | .n_total')"
+assert_field "L-7: (sin version).turns_mean (5+12)/2" "8.5" "$(echo "$AGG_L" | jq -r '.by_version[] | select(.version=="(sin version)") | .turns_mean')"
+
+echo "  -- harness_sha NUNCA agrupa, solo columna en per_run (CA-2) --"
+assert_field "L-8: per_run de 900 trae su harness_sha" "aaa1111" "$(echo "$AGG_L" | jq -r '.wallclock.per_run[] | select(.issue=="900") | .harness_sha')"
+assert_field "L-9: per_run de 910 (sin sha) trae null" "null" "$(echo "$AGG_L" | jq -r '.wallclock.per_run[] | select(.issue=="910") | .harness_sha')"
+assert_field "L-10: per_run de 920 (sin version, con sha) trae su sha" "ccc3333" "$(echo "$AGG_L" | jq -r '.wallclock.per_run[] | select(.issue=="920") | .harness_sha')"
+assert_field "L-11: per_run de 930 (sin ninguno) trae null" "null" "$(echo "$AGG_L" | jq -r '.wallclock.per_run[] | select(.issue=="930") | .harness_sha')"
+
+echo "  -- render end-to-end: seccion POR VERSION DE HARNESS y columna SHA en Por corrida (CA-3) --"
+OUT=$(run_report)
+RC=$?
+if [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "POR VERSION DE HARNESS"; then
+    pass "L-12: la seccion POR VERSION DE HARNESS aparece en el render (exit 0)"
+else
+    fail "L-12: no aparecio la seccion POR VERSION DE HARNESS (rc=$RC)"
+fi
+if echo "$OUT" | grep -qE '^0\.9\.0 +2/2' && echo "$OUT" | grep -qE '^\(sin version\) +2/2'; then
+    pass "L-13: las dos filas (0.9.0, (sin version)) se renderizan con su n(t/i)"
+else
+    fail "L-13: no se encontraron las filas esperadas: $(echo "$OUT" | grep -E '^(0\.9\.0|\(sin version\))')"
+fi
+if echo "$OUT" | grep -qE '^#900 .*aaa1111$'; then
+    pass "L-14: la fila de la corrida 900 en 'Por corrida' muestra su SHA"
+else
+    fail "L-14: no se encontro la fila #900 con su SHA: $(echo "$OUT" | grep '^#900' || echo '(no aparece)')"
+fi
+if echo "$OUT" | grep -qE '^#910 .* -$'; then
+    pass "L-15: la fila de la corrida 910 (sin sha) muestra '-' en su columna, sin corrimiento"
+else
+    fail "L-15: no se encontro la fila #910 con '-' en SHA: $(echo "$OUT" | grep '^#910' || echo '(no aparece)')"
 fi
 
 echo ""
