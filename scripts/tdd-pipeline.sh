@@ -31,6 +31,12 @@ unset _REPO_TOP
 
 load_harness_config || exit 1
 
+# Version del plugin que corre este pipeline (issue #660), calculada UNA vez
+# aqui -- no en el trap de aborto, que solo interpola la variable ya resuelta.
+HARNESS_VERSION="$(get_harness_version)"
+HARNESS_VERSION_JSON="null"
+[ -n "$HARNESS_VERSION" ] && HARNESS_VERSION_JSON="\"$HARNESS_VERSION\""
+
 # ─── Colores ────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -173,7 +179,7 @@ abort() {
             [ -n "$abort_agents_json" ] && abort_agents_field=",\"agents\":$abort_agents_json"
         fi
         # M4: Registrar falla en historial para analisis de patrones
-        echo "{\"issue\":\"${ISSUE_NUM:-}\",\"title\":\"$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')\",\"pipeline\":\"tdd\",\"started\":\"${TIMESTAMP:-}\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"failed\",\"stage\":\"$CURRENT_STAGE\"${abort_agents_field},\"error\":\"$PIPELINE_ERROR\"}" \
+        echo "{\"issue\":\"${ISSUE_NUM:-}\",\"title\":\"$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')\",\"pipeline\":\"tdd\",\"harness_version\":${HARNESS_VERSION_JSON:-null},\"started\":\"${TIMESTAMP:-}\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"failed\",\"stage\":\"$CURRENT_STAGE\"${abort_agents_field},\"error\":\"$PIPELINE_ERROR\"}" \
             >> "$PIPELINE_DIR_ABS/pipeline-history.jsonl" 2>/dev/null || true
     fi
     exit 1
@@ -2030,7 +2036,7 @@ if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
     fi
 fi
 
-echo "{\"issue\":\"${ISSUE_NUM:-}\",\"title\":\"$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')\",\"pipeline\":\"tdd\",\"started\":\"$TIMESTAMP\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"completed\",\"agents\":$AGENTS_JSON,\"tests\":${PIPELINE_TESTS:-null},\"pr\":\"$PR_URL\"}" \
+echo "{\"issue\":\"${ISSUE_NUM:-}\",\"title\":\"$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')\",\"pipeline\":\"tdd\",\"harness_version\":${HARNESS_VERSION_JSON:-null},\"started\":\"$TIMESTAMP\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"completed\",\"agents\":$AGENTS_JSON,\"tests\":${PIPELINE_TESTS:-null},\"pr\":\"$PR_URL\"}" \
     >> "$PIPELINE_DIR_ABS/pipeline-history.jsonl"
 
 # Eliminar archivo de estado individual (ya esta en el historial)
