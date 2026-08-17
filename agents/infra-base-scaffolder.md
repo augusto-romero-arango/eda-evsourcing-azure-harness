@@ -543,7 +543,7 @@ output "queue_ids" {
 
 ### 1.5 `infra/modules/service-plan/main.tf`
 
-**Cumple el contrato de MEF-ADR-0020 (CA-2):** acepta `os_type`, `sku_name`, `worker_count` y `always_on`. `os_type`/`sku_name`/`worker_count` se aplican al `azurerm_service_plan`; `always_on` se acepta por contrato (centraliza los parametros de hosting por dominio) y se **expone como output** para que la Function App lo aplique en su `site_config` (el recurso `azurerm_service_plan` no tiene argumento `always_on`).
+**Cumple el contrato de MEF-ADR-0020 (CA-2):** acepta `os_type`, `sku_name`, `worker_count` y `always_on`. `os_type`/`sku_name`/`worker_count` se aplican al `azurerm_service_plan`; `always_on` se acepta por contrato (centraliza los parametros de hosting por dominio) y se **expone como output** para que la Function App lo aplique en su `site_config` (el recurso `azurerm_service_plan` no tiene argumento `always_on`). Este output es el tramo intermedio del wiring: quien lo **aplica** es el modulo `function-app` (§1.7), que declara su propio input `always_on` y lo pone en `site_config.always_on`; el `domain-scaffolder` conecta ambos extremos en su Paso 4 (MEF-ADR-0020).
 
 ```hcl
 variable "name" {
@@ -580,9 +580,9 @@ variable "worker_count" {
 }
 
 variable "always_on" {
-  description = "Hint de hosting consumido por la Function App (site_config). false en dev (MEF-ADR-0020)."
+  description = "Hint de hosting consumido por la Function App (site_config). Default true: en tiers dedicados (Basic o superior) Always On no genera cargo adicional y evita que el host descargue el agente de durabilidad de Wolverine (MEF-ADR-0020)."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "tags" {
@@ -674,7 +674,7 @@ output "primary_access_key" {
 
 ### 1.7 `infra/modules/function-app/main.tf`
 
-Function App .NET 10 isolated con managed identity `SystemAssigned`. La instancia el `domain-scaffolder` por dominio (Paso 4). **Storage por identidad** (MEF-ADR-0025 decision #3): `storage_uses_managed_identity = true` sustituye la access key nativa -- el runtime resuelve `AzureWebJobsStorage` via la managed identity, no via secreto, porque lo necesita al arrancar, antes de que se resuelvan las referencias `@Microsoft.KeyVault(...)`. El `domain-scaffolder` debe otorgar los tres roles de datos de Storage a esa identidad (ver "Convencion anclada" tras el Paso 1.8) para que el arranque no falle por permisos.
+Function App .NET 10 isolated con managed identity `SystemAssigned`. La instancia el `domain-scaffolder` por dominio (Paso 4). **Storage por identidad** (MEF-ADR-0025 decision #3): `storage_uses_managed_identity = true` sustituye la access key nativa -- el runtime resuelve `AzureWebJobsStorage` via la managed identity, no via secreto, porque lo necesita al arrancar, antes de que se resuelvan las referencias `@Microsoft.KeyVault(...)`. El `domain-scaffolder` debe otorgar los tres roles de datos de Storage a esa identidad (ver "Convencion anclada" tras el Paso 1.8) para que el arranque no falle por permisos. Acepta ademas `always_on` (bool, default `true`, MEF-ADR-0020) y lo aplica en `site_config.always_on` -- cierra el wiring que el modulo `service-plan` reexpone como output, para que el valor no quede huerfano (MEF-ADR-0021).
 
 ```hcl
 variable "name" {
@@ -714,6 +714,12 @@ variable "app_settings" {
   default     = {}
 }
 
+variable "always_on" {
+  description = "Site Config Always On (MEF-ADR-0020). Default true: en tiers dedicados no genera cargo adicional y evita que el host descargue el agente de durabilidad de Wolverine."
+  type        = bool
+  default     = true
+}
+
 variable "tags" {
   description = "Tags comunes del proyecto"
   type        = map(string)
@@ -730,6 +736,7 @@ resource "azurerm_linux_function_app" "this" {
   storage_uses_managed_identity = true
 
   site_config {
+    always_on                              = var.always_on
     application_insights_connection_string = var.app_insights_connection_string
 
     application_stack {
