@@ -9,7 +9,7 @@
           },
           {
             "type": "command",
-            "command": "mkdir -p .claude/pipeline 2>/dev/null && jq -c '{session_id, transcript_path, cwd, source, timestamp: (now | strftime(\"%Y-%m-%dT%H:%M:%SZ\"))}' 2>/dev/null >> .claude/pipeline/sessions.jsonl || true"
+            "command": "hv=\"\"; [ -n \"${CLAUDE_PLUGIN_ROOT}\" ] && hv=\"$(basename \"${CLAUDE_PLUGIN_ROOT}\" 2>/dev/null)\"; mkdir -p .claude/pipeline 2>/dev/null && jq -c --arg harness_version \"$hv\" '{session_id, transcript_path, cwd, source, timestamp: (now | strftime(\"%Y-%m-%dT%H:%M:%SZ\")), harness_version: ($harness_version | if . == \"\" then null else . end)}' 2>/dev/null >> .claude/pipeline/sessions.jsonl || true"
           }
         ]
       }
