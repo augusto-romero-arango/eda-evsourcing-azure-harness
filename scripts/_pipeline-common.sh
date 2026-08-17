@@ -960,6 +960,53 @@ _pc_script_dir() {
     cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
 }
 
+# get_harness_version
+#
+# Imprime por stdout el '.version' de .claude-plugin/plugin.json del propio
+# plugin Mefisto (issue #660), para estampar con que version corrio cada
+# pipeline en pipeline-history.jsonl -- a diferencia de
+# .claude/pipeline/.plugin-root (que el hook SessionStart sobreescribe en
+# cada arranque de sesion), este valor se calcula una vez y viaja pegado a la
+# entrada, permitiendo reconstruir la version de corridas historicas.
+#
+# Ubica plugin.json relativo a este mismo archivo via _pc_script_dir (el
+# directorio scripts/ del plugin, sea cual sea la version del cache donde
+# este instalado), no al cwd del pipeline (la raiz del consumidor).
+#
+# Con jq disponible, lee '.version' via jq -r. Sin jq en PATH, degrada a una
+# extraccion con sed sobre la linea '"version": "X.Y.Z"' (mismo espiritu que
+# compute_stage_metrics). Si plugin.json no existe, o ninguna extraccion
+# produce un valor, imprime cadena vacia -- nunca aborta y siempre retorna 0.
+get_harness_version() {
+    # Los tres pipelines corren con `set -euo pipefail` y toman el valor por
+    # sustitucion de comando en su prologo, asi que un estado != 0 que se
+    # escape de aqui mataria la corrida entera antes del primer stage: ningun
+    # paso de abajo puede propagarlo.
+    local script_dir plugin_json
+    script_dir="$(_pc_script_dir 2>/dev/null)" || script_dir=""
+    plugin_json="$script_dir/../.claude-plugin/plugin.json"
+
+    if [ ! -f "$plugin_json" ]; then
+        echo ""
+        return 0
+    fi
+
+    local version=""
+    if command -v jq >/dev/null 2>&1; then
+        version=$(jq -r '.version // ""' "$plugin_json" 2>/dev/null) || true
+        [ "$version" = "null" ] && version=""
+    else
+        # '|| true' y no '|| version=""': con pipefail heredado del caller,
+        # head -n1 cierra el pipe apenas lee la linea y sed puede morir de
+        # SIGPIPE DESPUES de haber emitido la version -- reasignar ahi
+        # borraria un valor ya capturado.
+        version=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$plugin_json" 2>/dev/null | head -n1) || true
+    fi
+
+    echo "$version"
+    return 0
+}
+
 # resolve_pipeline <issue_num> [override]
 #
 # Retorna la ruta ABSOLUTA (al plugin) del script de pipeline a usar para un
