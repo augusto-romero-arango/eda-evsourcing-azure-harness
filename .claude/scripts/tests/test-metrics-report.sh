@@ -438,13 +438,13 @@ echo "[L] Segmentacion por harness_version con harness_sha por-corrida (issue #6
 
 # Mezcla: 900/910 en "0.9.0" (900 trae ademas harness_sha, 910 no) + 920 sin
 # harness_version pero con harness_sha (cae a "(sin version)") + 930 sin
-# ninguno de los dos campos (historial previo a #668). Los numeros esperados
+# ninguno de los dos campos (historial previo a #662). Los numeros esperados
 # se derivaron a mano sumando estos mismos campos (mismo criterio que [C]/[J]).
 cat > "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" <<'EOF'
 {"issue":"900","title":"Con version y sha","pipeline":"mefisto-tooling","harness_version":"0.9.0","harness_sha":"aaa1111","started":"20260810-090000","state":"completed","agents":{"writer":{"duration":100,"metrics":{"turns":10,"duration_ms":100000,"duration_api_ms":80000,"non_api_ms":20000,"cost_usd":0.5,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"tool_calls":[]}},"reviewer":{"duration":null,"metrics":null}}}
 {"issue":"910","title":"Con version, sin sha","pipeline":"mefisto-tooling","harness_version":"0.9.0","started":"20260811-090000","state":"completed","agents":{"writer":{"duration":200,"metrics":{"turns":20,"duration_ms":200000,"duration_api_ms":150000,"non_api_ms":50000,"cost_usd":0.7,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"tool_calls":[]}},"reviewer":{"duration":null,"metrics":null}}}
 {"issue":"920","title":"Sin version, con sha","pipeline":"mefisto-tooling","harness_sha":"ccc3333","started":"20260812-090000","state":"completed","agents":{"writer":{"duration":50,"metrics":{"turns":5,"duration_ms":50000,"duration_api_ms":30000,"non_api_ms":20000,"cost_usd":0.2,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"tool_calls":[]}},"reviewer":{"duration":null,"metrics":null}}}
-{"issue":"930","title":"Sin version ni sha (historial previo a #668)","pipeline":"mefisto-tooling","started":"20260813-090000","state":"completed","agents":{"writer":{"duration":150,"metrics":{"turns":12,"duration_ms":150000,"duration_api_ms":100000,"non_api_ms":50000,"cost_usd":0.3,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"tool_calls":[]}},"reviewer":{"duration":null,"metrics":null}}}
+{"issue":"930","title":"Sin version ni sha (historial previo a #662)","pipeline":"mefisto-tooling","started":"20260813-090000","state":"completed","agents":{"writer":{"duration":150,"metrics":{"turns":12,"duration_ms":150000,"duration_api_ms":100000,"non_api_ms":50000,"cost_usd":0.3,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"tool_calls":[]}},"reviewer":{"duration":null,"metrics":null}}}
 EOF
 
 AGG_L=$(compute_metrics_report_json "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" "")

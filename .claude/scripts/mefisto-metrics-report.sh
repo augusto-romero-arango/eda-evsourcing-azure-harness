@@ -23,11 +23,11 @@
 # .claude/pipeline/metrics/*.json por stage (ver notas tecnicas del issue).
 #
 # Segmentacion por harness_version (issue #664, mismo shape que el porte
-# publicado #669): cada linea trae "harness_version"/"harness_sha" desde #668.
+# publicado #663): cada linea trae "harness_version"/"harness_sha" desde #662.
 # El reporte agrega una tabla "POR VERSION DE HARNESS" (por-version, mismos
 # agregados de wall/turnos/costo que el resto, restringidos a las corridas
 # instrumentadas de esa version) y cae a "(sin version)" para el historial
-# previo a #668. harness_sha NO es eje de agrupacion (casi cada corrida
+# previo a #662. harness_sha NO es eje de agrupacion (casi cada corrida
 # tendria su propio grupo): viaja como columna en "Por corrida", ausente/null
 # cuando la linea no lo trae.
 
@@ -161,7 +161,7 @@ def summarize_agent:
     tool_calls_mean: (map([(.tool_calls // [])[] | .count] | add // 0) | avgOrNull)
   };
 
-# version_summary -- issue #664, mismo shape que el porte publicado (#669):
+# version_summary -- issue #664, mismo shape que el porte publicado (#663):
 # agregados de wallclock/turnos/costo restringidos al grupo de corridas de una
 # sola harness_version. Opera sobre $group (corridas totales de esa version),
 # no solo sobre las instrumentadas, para que n_total/n_instrumented reutilicen
@@ -207,7 +207,7 @@ def delta_of(f; l):
               else ((.agents.writer.duration // 0) + (.agents.reviewer.duration // 0)) end),
     _has_metrics: (((.agents.writer.metrics? // null) != null) or ((.agents.reviewer.metrics? // null) != null)),
     _ts: (.started | parse_started),
-    # harness_version llego con #668: el historial previo (o cualquier linea
+    # harness_version llego con #662: el historial previo (o cualquier linea
     # futura que no lo traiga) cae en su propio cajon "(sin version)" en vez
     # de romper la segmentacion by_version (issue #664).
     _version: (if (.harness_version | type) == "string" then .harness_version else "(sin version)" end)
@@ -253,7 +253,7 @@ def delta_of(f; l):
     pct_api: (if (run_api_ms + run_non_api_ms) > 0 then (run_api_ms / (run_api_ms + run_non_api_ms) * 100) else null end),
     # harness_sha (issue #664) NO es eje de agrupacion -- casi cada corrida
     # tendria su propio grupo -- solo columna por-corrida, null si la linea no
-    # lo trae (historial previo a #668).
+    # lo trae (historial previo a #662).
     harness_sha: (if (.harness_sha | type) == "string" then .harness_sha else null end)
   })) as $per_run
 
@@ -585,9 +585,9 @@ render_comparison() {
 }
 
 # render_by_version -- issue #664: una fila por harness_version presente en el
-# historial (mas "(sin version)" para el historial previo a #668), restringiendo
+# historial (mas "(sin version)" para el historial previo a #662), restringiendo
 # a esa version los mismos agregados de wallclock/turnos/costo que el resto
-# del reporte. Mismo shape que la seccion homologa del reporte publicado (#669).
+# del reporte. Mismo shape que la seccion homologa del reporte publicado (#663).
 render_by_version() {
     local agg="$1"
     local count
