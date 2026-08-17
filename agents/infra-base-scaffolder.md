@@ -543,7 +543,7 @@ output "queue_ids" {
 
 ### 1.5 `infra/modules/service-plan/main.tf`
 
-**Cumple el contrato de MEF-ADR-0020 (CA-2):** acepta `os_type`, `sku_name`, `worker_count` y `always_on`. `os_type`/`sku_name`/`worker_count` se aplican al `azurerm_service_plan`; `always_on` se acepta por contrato (centraliza los parametros de hosting por dominio) y se **expone como output** para que la Function App lo aplique en su `site_config` (el recurso `azurerm_service_plan` no tiene argumento `always_on`).
+**Cumple el contrato de MEF-ADR-0020 (CA-2):** acepta `os_type`, `sku_name`, `worker_count` y `always_on`. `os_type`/`sku_name`/`worker_count` se aplican al `azurerm_service_plan`; `always_on` se acepta por contrato (centraliza los parametros de hosting por dominio) y se **expone como output** para que la Function App lo aplique en su `site_config` (el recurso `azurerm_service_plan` no tiene argumento `always_on`). Este output es el tramo intermedio del wiring: quien lo **aplica** es el modulo `function-app` (§1.7), que declara su propio input `always_on` y lo pone en `site_config.always_on`; el `domain-scaffolder` conecta ambos extremos en su Paso 4 (MEF-ADR-0020).
 
 ```hcl
 variable "name" {
