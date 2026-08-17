@@ -17,6 +17,17 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/_mefisto-common.sh"
 assert_in_mefisto || exit 1
 
+# Version y SHA del propio plugin que corre esta corrida (issue #662),
+# calculados UNA sola vez aqui -- ANTES de crear el worktree del issue, sobre
+# el repo principal (get_harness_sha opera sobre el cwd). El trap de aborto
+# solo interpola las variables ya resueltas, nunca recalcula.
+HARNESS_VERSION="$(get_harness_version)"
+HARNESS_VERSION_JSON="null"
+[ -n "$HARNESS_VERSION" ] && HARNESS_VERSION_JSON="\"$HARNESS_VERSION\""
+HARNESS_SHA="$(get_harness_sha)"
+HARNESS_SHA_JSON="null"
+[ -n "$HARNESS_SHA" ] && HARNESS_SHA_JSON="\"$HARNESS_SHA\""
+
 # --- Colores ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -103,7 +114,7 @@ abort() {
         local abort_agents_json
         abort_agents_json=$(build_agents_history_json "${AGENT_WR_DUR:-}" "${AGENT_WR_METRICS_JSON:-}" "${AGENT_RV_DUR:-}" "${AGENT_RV_METRICS_JSON:-}" 2>/dev/null) \
             || abort_agents_json="{\"writer\":{\"duration\":${AGENT_WR_DUR:-null}},\"reviewer\":{\"duration\":${AGENT_RV_DUR:-null}}}"
-        echo "{\"issue\":\"${ISSUE_NUM:-}\",\"title\":\"$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')\",\"pipeline\":\"mefisto-tooling\",\"started\":\"${TIMESTAMP:-}\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"failed\",\"stage\":\"$CURRENT_STAGE\",\"agents\":$abort_agents_json,\"error\":\"$PIPELINE_ERROR\"}" \
+        echo "{\"issue\":\"${ISSUE_NUM:-}\",\"title\":\"$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')\",\"pipeline\":\"mefisto-tooling\",\"harness_version\":${HARNESS_VERSION_JSON:-null},\"harness_sha\":${HARNESS_SHA_JSON:-null},\"started\":\"${TIMESTAMP:-}\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"failed\",\"stage\":\"$CURRENT_STAGE\",\"agents\":$abort_agents_json,\"error\":\"$PIPELINE_ERROR\"}" \
             >> "$PIPELINE_DIR_ABS/pipeline-history.jsonl" 2>/dev/null || true
     fi
     exit 1
@@ -816,7 +827,7 @@ gh issue comment "$ISSUE_NUM" \
 # reproduce exactamente el formato plano que ya escribia esta linea (CA-5).
 COMPLETED_AGENTS_JSON=$(build_agents_history_json "${AGENT_WR_DUR:-}" "${AGENT_WR_METRICS_JSON:-}" "${AGENT_RV_DUR:-}" "${AGENT_RV_METRICS_JSON:-}" 2>/dev/null) \
     || COMPLETED_AGENTS_JSON="{\"writer\":{\"duration\":${AGENT_WR_DUR:-null}},\"reviewer\":{\"duration\":${AGENT_RV_DUR:-null}}}"
-echo "{\"issue\":\"$ISSUE_NUM\",\"title\":\"$(echo "$ISSUE_TITLE" | sed 's/"/\\"/g')\",\"pipeline\":\"mefisto-tooling\",\"started\":\"$TIMESTAMP\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"completed\",\"agents\":$COMPLETED_AGENTS_JSON,\"pr\":\"$PR_URL\"}" \
+echo "{\"issue\":\"$ISSUE_NUM\",\"title\":\"$(echo "$ISSUE_TITLE" | sed 's/"/\\"/g')\",\"pipeline\":\"mefisto-tooling\",\"harness_version\":${HARNESS_VERSION_JSON:-null},\"harness_sha\":${HARNESS_SHA_JSON:-null},\"started\":\"$TIMESTAMP\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"completed\",\"agents\":$COMPLETED_AGENTS_JSON,\"pr\":\"$PR_URL\"}" \
     >> "$PIPELINE_DIR_ABS/pipeline-history.jsonl"
 
 rm -f "$PIPELINE_DIR_ABS/$STATUS_FILENAME"
