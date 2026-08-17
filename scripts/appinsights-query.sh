@@ -9,7 +9,7 @@
 #   ./scripts/appinsights-query.sh health-summary
 #   ./scripts/appinsights-query.sh exceptions --hours 48
 #
-# Requiere: az cli con sesion activa (az login)
+# Requiere: az cli con sesion activa (az login), jq y column (util-linux/bsdmainutils)
 # Configuracion: scripts/.env (ver scripts/.env.template)
 
 set -euo pipefail
@@ -144,18 +144,40 @@ run_query() {
     log "$description (ultimas ${HOURS}h)"
 
     local result
+    # --output json, nunca table: con azure-cli 2.82.0 + extension
+    # application-insights 1.2.3 el renderer de table no imprime nada y az sale
+    # con exit 0 igual -- una averia de render indistinguible de un resultado
+    # vacio legitimo (issue #649). --output json si distingue ambos casos:
+    # .tables[0].rows da el conteo real de filas.
     if ! result=$(az monitor app-insights query \
         --app "$APPINSIGHTS_APP" \
         --resource-group "$APPINSIGHTS_RG" \
         --analytics-query "$query" \
-        --output table 2>&1); then
+        --output json 2>&1); then
         error "Fallo la consulta KQL"
         echo "$result" >&2
         exit 1
     fi
 
-    echo "$result"
-    success "Consulta completada"
+    if ! echo "$result" | jq -e '(.tables[0].rows | type) == "array"' >/dev/null 2>&1; then
+        error "La respuesta de az no tiene la forma esperada (.tables[0].rows)"
+        echo "$result" >&2
+        exit 1
+    fi
+
+    local row_count
+    row_count=$(echo "$result" | jq '.tables[0].rows | length')
+
+    if [ "$row_count" -eq 0 ]; then
+        warn "Resultado vacio: 0 filas en la ventana consultada (no hay evidencia, no es una averia)"
+        return 0
+    fi
+
+    echo "$result" | jq -r '
+        [.tables[0].columns[].name] as $cols
+        | ($cols | @tsv), (.tables[0].rows[] | @tsv)
+    ' | column -t -s $'\t'
+    success "Consulta completada ($row_count filas)"
 }
 
 # --- Queries KQL predefinidas ------------------------------------------------
