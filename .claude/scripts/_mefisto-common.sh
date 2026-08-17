@@ -48,6 +48,78 @@ assert_in_mefisto() {
     fi
 }
 
+# get_harness_version
+#
+# Imprime por stdout el '.version' de .claude-plugin/plugin.json del repo de
+# Mefisto (issue #662), mismo criterio que su homologo publicado
+# (get_harness_version en scripts/_pipeline-common.sh): en el repo de Mefisto
+# ese campo solo cambia en /mefisto-release, y sirve como campo de paridad
+# para poder portar/reusar el mismo criterio de segmentacion del reporte
+# interno (issue #664) que ya usa el lado publicado.
+#
+# Ubica plugin.json relativo a este mismo archivo (dos niveles arriba de
+# .claude/scripts/), no al cwd del pipeline -- mismo motivo que el lado
+# publicado: la ruta tiene que resolver sea cual sea el cwd desde el que se
+# invoque el pipeline.
+#
+# Con jq disponible, lee '.version' via jq -r. Sin jq en PATH, degrada a una
+# extraccion con sed sobre la linea '"version": "X.Y.Z"'. Si plugin.json no
+# existe, o ninguna extraccion produce un valor, imprime cadena vacia -- nunca
+# aborta y siempre retorna 0.
+get_harness_version() {
+    local script_dir plugin_json
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)" || script_dir=""
+    plugin_json="$script_dir/../../.claude-plugin/plugin.json"
+
+    if [ ! -f "$plugin_json" ]; then
+        echo ""
+        return 0
+    fi
+
+    local version=""
+    if command -v jq >/dev/null 2>&1; then
+        version=$(jq -r '.version // ""' "$plugin_json" 2>/dev/null) || true
+        [ "$version" = "null" ] && version=""
+    else
+        # '|| true' y no '|| version=""': con pipefail heredado del caller,
+        # head -n1 cierra el pipe apenas lee la linea y sed puede morir de
+        # SIGPIPE DESPUES de haber emitido la version -- reasignar ahi
+        # borraria un valor ya capturado (mismo motivo que el homologo
+        # publicado).
+        version=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$plugin_json" 2>/dev/null | head -n1) || true
+    fi
+
+    echo "$version"
+    return 0
+}
+
+# get_harness_sha
+#
+# Imprime por stdout el SHA corto (`git rev-parse --short HEAD`) del repo
+# PRINCIPAL de Mefisto (issue #662) -- exclusivo del lado interno, sin
+# homologo publicado. Complementa a get_harness_version: en el repo de
+# Mefisto '.version' solo cambia en /mefisto-release, y entre release y
+# release entran decenas de PRs -- justo lo que el plan de velocidad interno
+# (#645-#648) necesita comparar entre si. El SHA es lo que distingue esas
+# corridas entre si cuando la version no cambio.
+#
+# Opera sobre el cwd del proceso que la invoca: el caller (el prologo de
+# mefisto-tooling-pipeline.sh) debe llamarla ANTES de crear el worktree del
+# issue, cuando el cwd todavia es el checkout principal -- los
+# .claude/scripts/ que ejecutan la corrida son los del checkout principal, no
+# los del worktree (que arranca desde origin/main y puede estar en otro SHA).
+#
+# Degrada a cadena vacia -- sin abortar, exit 0 siempre -- si 'git' no esta
+# en PATH o si el cwd no es un repositorio git.
+get_harness_sha() {
+    command -v git >/dev/null 2>&1 || { echo ""; return 0; }
+
+    local sha=""
+    sha=$(git rev-parse --short HEAD 2>/dev/null) || sha=""
+    echo "$sha"
+    return 0
+}
+
 # is_path_in_mefisto_scope <path>
 #
 # Retorna 0 si el path cae en el scope permitido para cambios en Mefisto,
