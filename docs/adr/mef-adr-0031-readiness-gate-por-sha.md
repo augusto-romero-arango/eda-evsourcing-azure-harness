@@ -242,29 +242,32 @@ documentada en `projections-scaffolder.md` junto al paso que genera `deploy-proj
 
 Los puntos 1-4 fijan que el binario correcto sirve HTTP, pero ninguna de sus compuertas abre una
 conexion contra Postgres: `/api/health` es estatico (siempre 200) y `/api/version` lee un atributo de
-su propio ensamblado por reflexion, sin tocar el event store. **Verificado contra el cuerpo de este
-ADR en `main` antes de esta enmienda**: ni la decision (secciones 1-5) ni "Consecuencias" mencionan la
-capa de datos en ninguna parte -- es un hueco, no un tradeoff ya documentado. La primera peticion que
-si abria una conexion real contra Marten era, hasta esta enmienda, el arrange de un test -- exactamente
-lo que produjo el incidente de origen del consumidor `Bitakora.ControlAsistencia` (`TimeoutException`
-de Npgsql a los 35.3s, ventana de indisponibilidad del write-path de ~74s, 2026-08-15, su issue #399).
+su propio ensamblado por reflexion, sin tocar el event store. Hasta esta enmienda la capa de datos no
+figuraba en ninguna parte de este ADR -- ni en la decision ni en sus consecuencias --: era un **hueco de
+cobertura**, no un tradeoff evaluado y aceptado. Sin una compuerta que la anticipe, la primera peticion
+que abre una conexion real contra Marten es el arrange de un smoke test -- exactamente lo que produjo el
+incidente de origen del consumidor `Bitakora.ControlAsistencia` (`TimeoutException` de Npgsql a los
+35.3s, ventana de indisponibilidad del write-path de ~74s, 2026-08-15, su issue #399).
 
 **Tercer endpoint dedicado, nunca `/api/health` enriquecido.** `domain-scaffolder` genera
 `ReadyCheck.cs` (`[Function("ready")]`, mismo nivel que `HealthCheck.cs`/`VersionCheck.cs`, convencion
-de naming de MEF-ADR-0006) como endpoint HTTP anonimo nuevo, no como un enriquecimiento de
+de naming de MEF-ADR-0006) como endpoint HTTP anonimo nuevo -- la propagacion de este alcance a sus
+templates es el issue #675, bloqueado por esta enmienda --, no como un enriquecimiento de
 `/api/health`: la Alt 2 de este mismo ADR ya descarto mezclar liveness con otra semantica en un mismo
 endpoint, y esta enmienda extiende ese precedente a la capa de datos en vez de reabrirlo. `/api/health`
 y `/api/version` quedan intactos; `/api/ready` es exclusivamente el mecanismo de readiness de la capa
 de datos.
 
-**El fundamento no es el incidente de 74s -- ese ya lo cerro `always_on`.** MEF-ADR-0020, enmendado por
-el issue #652 (PR #673, en `main` desde 2026-08-17 13:11 UTC), fija `always_on = true` como default
-unico del marco con el wiring completo hasta `site_config.always_on`; ese cambio entro en vigor en el
-consumidor 13.5 horas **antes** de que `/api/ready` llegara a produccion (deploy del gate: 2026-08-17
-12:35 UTC). En el primer deploy real posterior al merge, los tres dominios de dev respondieron
-`/api/ready` en ~0-1s, con 183 smoke tests en verde: la ventana de ~74s que origino el issue #399 ya no
-existe en un host con `always_on`, y citarla como motivacion de esta enmienda seria una narrativa que
-los propios hechos posteriores refutan.
+**El fundamento no es el incidente de 74s -- esa ventana ya la cerro `always_on`.** El consumidor de
+origen habilito `always_on` en sus tres Function Apps de dev el 2026-08-16 23:07 UTC (su issue #400),
+**13.5 horas antes** de que el deploy de `/api/ready` llegara a produccion (2026-08-17 12:35 UTC): el
+gate entro en servicio cuando la condicion que lo motivo ya no existia en ese entorno. MEF-ADR-0020,
+enmendado por el issue #652 (en `main` desde 2026-08-17), generaliza ese `always_on = true` como default
+unico del marco -- sin distincion dev/prod -- y lo cablea hasta `site_config.always_on`, asi que todo
+dominio que el marco scaffoldee nace sin esa ventana. En el primer deploy real posterior al merge del
+gate, los tres dominios de dev respondieron `/api/ready` en ~0-1s, con 183 smoke tests en verde. Citar
+el incidente de ~74s como motivacion de esta enmienda seria una narrativa que los propios hechos
+posteriores refutan.
 
 El fundamento que si sostiene la enmienda es **defensa en profundidad de bajo costo**, apoyado en dos
 hechos verificados independientes de esa narrativa:
@@ -289,9 +292,12 @@ compuerta que cubre ese desvio.
 
 - **Probe**: `IEventStoreReadinessProbe`/`EventStoreReadinessProbe` abre una `IQuerySession` y llama
   `Events.FetchStreamStateAsync(<id centinela inexistente>)`. Un stream que no existe no es un error
-  para ese metodo -- retorna `null` --, pero Marten evalua/crea el schema del tipo de evento en su
-  primer uso [8], asi que la llamada fuerza esa verificacion sin necesidad de que el stream centinela
-  exista ni de leer datos reales de ningun dominio.
+  para ese metodo -- retorna `null` --, pero la ruta de esa llamada pasa por la verificacion **perezosa**
+  de storage de Marten (`IMartenDatabase.EnsureStorageExistsAsync`: *"Ensures that the IDocumentStorage
+  object for a document type is ready and also attempts to update the database schema for any detected
+  changes"*), que ocurre en el primer uso del tipo y no en un paso de arranque **[8]**. La llamada fuerza
+  esa materializacion sin necesidad de que el stream centinela exista ni de leer un solo dato real de
+  ningun dominio.
 - **Sin cache del positivo, por doctrina fija del marco (sin parametro)**: cada invocacion de
   `/api/ready` ejecuta el probe de nuevo. Cachear el resultado positivo degradaria la semantica a "el
   store llego a estar listo alguna vez" y esconderia un 503 real si el store cae despues del arranque;
@@ -300,9 +306,9 @@ compuerta que cubre ese desvio.
   complejidad anticipada. No se agrega ningun `enableCache`/`ttl` -- si algun consumidor mide un costo
   que lo justifique, es una decision para su propio issue.
 - **503, no 500, con cuerpo diagnosticable**: `/api/ready` devuelve `503 Service Unavailable` cuando el
-  probe falla -- la semantica correcta para "el servidor sabe que no puede atender esta clase de
-  peticion ahora, probablemente temporal" [9], distinta de un `500` que implica una falla no anticipada
-  del handler. El cuerpo de la respuesta incluye el mensaje de la excepcion capturada (via
+  probe falla -- la semantica correcta para "el servidor esta temporalmente incapaz de atender la
+  peticion" **[9]**, distinta de un `500`, que senala una condicion inesperada del handler. El cuerpo de
+  la respuesta incluye el mensaje de la excepcion capturada (via
   `ReadyCheckMensajes.resx`, mismo patron de mensajes por handler que fija MEF-ADR-0009) para que quien
   lea el log del gate no tenga que correlacionar con Application Insights para saber que fallo.
 - **Timeout del poll: 120s, mismo criterio que el punto 3.** El paso de poll que #675 materializa en
@@ -319,7 +325,8 @@ un dominio **nuevo** contra una base sin esquema materializado; los tres dominio
 Programacion) ya tenian esquema. El log del gate, `Ready OK tras N intento(s) (~Ns)` (que #675 emite en
 el paso de poll sin trabajo adicional), es la captura que cierra esa medicion la primera vez que un
 consumidor scaffoldee un dominio nuevo con esta enmienda vigente. Hasta entonces, este punto es teorico
--- coherente con el mecanismo de schema de Marten [8], no con una medicion propia -- y se declara asi.
+-- coherente con el mecanismo de schema de Marten **[8]**, no con una medicion propia -- y se declara
+asi.
 
 ## Alternativas consideradas
 
@@ -357,11 +364,12 @@ piso de SKU en el futuro.
 
 ### Alt 5: `ApplyAllDatabaseChangesOnStartup` en vez de un endpoint de readiness (issue #671)
 
-Marten expone un mecanismo para materializar el schema completo del store al arrancar el host, en vez
-de dejar que cada tipo de documento/evento dispare su propia verificacion en el primer uso [8]. Ataca
-la causa (el schema sin materializar) en vez de exponer una compuerta que la detecte.
+Marten expone un mecanismo para materializar el schema completo del store al arrancar el host
+(`AddMarten().ApplyAllDatabaseChangesOnStartup()`), en vez de dejar que cada tipo de documento/evento
+dispare su propia verificacion en el primer uso **[8]**. Ataca la causa (el schema sin materializar) en
+vez de exponer una compuerta que la detecte.
 
-**Descartada por ahora, diferida, no descartada de raiz.** Es un cambio doctrinal mayor que toca la
+**Diferida, no descartada de raiz.** Es un cambio doctrinal mayor que toca la
 compatibilidad de configuracion Marten write-side/read-side que fija MEF-ADR-0034 (los pares que deben
 coincidir entre el Function App y el worker de proyecciones), y el consumidor de origen tiene historial
 de desajustes de `mt_version` que dejaron GETs en 500 permanente (sus issues #294 y #357) -- exactamente
@@ -392,9 +400,9 @@ la causa.
 - **Cierra el hueco de cobertura de la capa de datos (issue #671)**: el gate por SHA gana una tercera
   compuerta dedicada que ejercita el event store, ademas de las dos que ya ejercitaban el binario HTTP
   -- ninguna peticion de un test vuelve a ser la primera en tocar Postgres.
-- **Defensa en profundidad de costo marginal**: con esquema ya materializado el probe cuesta ~1s por
-  llamada (verificado, no cacheado); el costo real solo lo paga el escenario que de verdad lo necesita,
-  el primer deploy de un dominio nuevo.
+- **Defensa en profundidad de costo marginal (issue #671)**: con esquema ya materializado el probe
+  cuesta ~1s por llamada (verificado, no cacheado); el costo real solo lo paga el escenario que de
+  verdad lo necesita, el primer deploy de un dominio nuevo.
 
 ### Negativas
 
@@ -428,8 +436,8 @@ la causa.
   cualquier commit, que es otra decision -- se documenta, no se resuelve aqui.
 - **El costo real del primer deploy de un dominio nuevo (Marten materializando el schema del event
   store) sigue sin medirse empiricamente (issue #671)** -- ver la nota de comprobacion pendiente de la
-  seccion 6; el fundamento de esa seccion es coherente con la documentacion de Marten [8], no todavia
-  con una medicion propia.
+  seccion 6; el fundamento de esa seccion es coherente con la documentacion de Marten **[8]**, no
+  todavia con una medicion propia.
 - **`ApplyAllDatabaseChangesOnStartup` queda diferido, no descartado de raiz (issue #671)**: si el marco
   lo adopta en el futuro, alguien tiene que reconciliarlo con la doctrina de compatibilidad de
   configuracion Marten de MEF-ADR-0034 y con el historial de `mt_version` del consumidor de origen --
@@ -469,15 +477,26 @@ la causa.
   configuracion del agente de Java: *"if you add a custom dimension named `service.version`, the
   value is stored in the `application_Version` column in the Application Insights Logs table"*.
   https://learn.microsoft.com/azure/azure-monitor/app/java-standalone-config#custom-dimensions
-- **[8]** "Schema Migration and Patches" -- martendb.io (documentacion oficial de Marten): la
-  verificacion/creacion automatica de los objetos de schema ocurre en el primer uso de un tipo de
-  documento/evento (compara la tabla actual contra lo configurado y crea lo que falte segun
-  `AutoCreateSchemaObjects`), no en un paso de arranque separado -- el mecanismo que hace que
-  `FetchStreamStateAsync` sobre un stream centinela dispare la materializacion del schema del event
-  store sin necesidad de datos reales (seccion 6, Alt 5). https://martendb.io/schema/
-- **[9]** RFC 9110 ("HTTP Semantics"), seccion 15.6.4 -- "503 (Service Unavailable)": el servidor esta
-  temporalmente incapaz de atender la peticion, distinto de un `500` que senala una falla no
-  anticipada del handler (seccion 6). https://www.rfc-editor.org/rfc/rfc9110#section-15.6.4
+- **[8]** "Marten and the PostgreSQL Schema" -- martendb.io (documentacion oficial de Marten): la
+  verificacion/creacion automatica de los objetos de schema es **perezosa**, en el primer uso del tipo
+  -- *"To prevent unnecessary loss of data, even in development, on the first usage of a document type,
+  Marten will: 1. Compare the current schema table to what's configured for that document type"* --,
+  gobernada por `StoreOptions.AutoCreateSchemaObjects` y no por un paso de arranque; la misma pagina
+  nombra `AddMarten().ApplyAllDatabaseChangesOnStartup()` como la opcion explicita que fuerza esa
+  verificacion al arrancar el host (la Alt 5). Es el mecanismo que hace que un `FetchStreamStateAsync`
+  sobre un stream centinela dispare la materializacion del schema del event store sin necesidad de datos
+  reales (seccion 6). https://martendb.io/schema/
+  El punto de entrada de esa verificacion perezosa queda anclado al XML doc del paquete pinneado (mismo
+  procedimiento de inspeccion version-anclada que usa la referencia [21] de MEF-ADR-0034):
+  `~/.nuget/packages/marten/9.12.0/lib/net10.0/Marten.xml`, miembro
+  `M:Marten.Storage.IMartenDatabase.EnsureStorageExistsAsync` -- *"Ensures that the IDocumentStorage
+  object for a document type is ready and also attempts to update the database schema for any detected
+  changes"*.
+- **[9]** RFC 9110 ("HTTP Semantics"), seccion 15.6.4 -- "503 Service Unavailable": el codigo indica que
+  el servidor esta **temporalmente** incapaz de atender la peticion (sobrecarga transitoria o
+  mantenimiento), a diferencia del `500` de la seccion 15.6.1, que senala una condicion inesperada que
+  impidio cumplirla -- el motivo por el que la seccion 6 fija `503` y no `500` para un event store que
+  todavia no esta listo. https://www.rfc-editor.org/rfc/rfc9110#section-15.6.4
 - Bitakora.ControlAsistencia issue #224 (incidente real que origina este ADR: deploy fin `00:54:13Z`
   -> smoke inicio `00:54:18Z`, paquete nuevo vivo ~`00:55`) y field note
   `docs/bitacora/field-notes/2026-07-18-2027-bug-investigation.md` (repo consumidor).
@@ -545,7 +564,7 @@ la causa.
   nombres queda afirmado por el bloque `[H]` de `scripts/tests/test-guards.sh`.
 - 2026-08-17: suma la seccion 6 (issue #671). Cubre el hueco de la capa de datos que este ADR no
   mencionaba en ninguna parte: endpoint dedicado `/api/ready` (`ReadyCheck.cs`, `[Function("ready")]`,
-  tercer endpoint, nunca enriqueciendo `/api/health` -- mismo precedente que la Alt 2 del punto 2),
+  tercer endpoint, nunca enriqueciendo `/api/health` -- mismo precedente que la Alt 2 de este ADR),
   probe via `FetchStreamStateAsync` sobre un stream centinela inexistente (fuerza la
   verificacion/creacion de schema de Marten sin leer datos reales), sin cache del positivo (doctrina
   fija del marco, sin parametro, MEF-ADR-0018), 503 en vez de 500 con cuerpo diagnosticable
