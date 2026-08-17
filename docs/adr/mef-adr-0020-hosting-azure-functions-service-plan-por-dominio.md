@@ -51,7 +51,7 @@ Esto alinea el harness con la guia oficial de Azure:
 | `sku_name` | `B1` | Basic, 1 core dedicado por dominio. Piso valido del marco. |
 | `worker_count` | `1` | **No escalar out.** `Solo` exige un unico nodo (ver restriccion dura arriba). |
 | `os_type` | `Linux` | Coherente con el publish `-r linux-x64 --self-contained false` del marco. |
-| `always_on` | `false` en dev / **evaluar `true` en prod** | En dev se acepta OFF para ahorrar; en prod evaluar ON para evitar que el host descargue el worker e interrumpa el poll del outbox. |
+| `always_on` | `true` | Default unico del marco, sin distincion dev/prod. En los tiers dedicados que exige este ADR (Basic o superior; Y1 proscrito), la VM del plan se factura por hora este la app despierta o dormida y Always On no esta entre los mecanismos que generan cargo adicional [7]; la doc oficial de Azure Functions recomienda explicitamente ON en planes dedicados [8]. Con `false` el host puede descargar el worker por inactividad e interrumpir el poll del outbox de Wolverine (`DurabilityMode.Solo`, ver Contexto). |
 
 **Trade-off de costo**: dos planes B1 cuestan aproximadamente lo mismo que un B2 (`2x B1 ~= 1x B2`). A igualdad de gasto, dos B1 separados dan a cada dominio un **core dedicado** y **aislamiento de fallos** (un dominio saturado no tumba al otro), mientras que un B2 compartido vuelve a poner a los dos agentes de durabilidad a competir por los mismos dos cores. El aislamiento se prioriza sobre la densidad.
 
@@ -64,9 +64,11 @@ El proyecto consumidor expone un modulo Terraform `modules/service-plan` que el 
 | `sku_name` | `string` | `"B1"` |
 | `worker_count` | `number` | `1` |
 | `os_type` | `string` | `"Linux"` |
-| `always_on` | `bool` | `false` (dev) |
+| `always_on` | `bool` | `true` |
 
 El `id` del plan se inyecta en el `module.function_app_<dominio>` correspondiente (campo `service_plan_id`). Cada `module.service_plan_<dominio>` es independiente; no hay un plan compartido `module.service_plan` global.
+
+**Mecanismo de wiring de `always_on` hasta la Function App.** El recurso `azurerm_service_plan` no declara el argumento `always_on` -- esa propiedad vive en `site_config` del recurso de la Function App (`azurerm_linux_function_app`), no del plan. Por eso el modulo `service-plan` **acepta** `always_on` como input (centraliza los cuatro parametros de hosting del dominio en un solo lugar, contrato intacto) y lo **reexpone como output**; el modulo `function-app` (MEF-ADR-0021) declara a su vez un input `always_on` (`bool`, default `true`) que aplica literalmente en `site_config.always_on` de su `azurerm_linux_function_app`. El `domain-scaffolder` conecta ambos extremos pasando `always_on = module.service_plan_<dominio>.always_on` al `module.function_app_<dominio>` correspondiente (Paso 4 de `domain-scaffolder.md`) -- sin ese ultimo paso el valor declarado en el `service-plan` no llega al `site_config` real.
 
 ### Alcance de la decision
 
@@ -107,7 +109,7 @@ Usar el modo balanceado de Wolverine (con eleccion de lider y reparto de agentes
 ### Negativas
 
 - **Mas planes que gestionar**: N dominios -> N planes en Terraform. Mitigado por el modulo `modules/service-plan` reutilizable y la generacion automatica del scaffolder.
-- **Costo nominal mayor en numero de planes** (aunque neutral en computo: `2x B1 ~= 1x B2`). En dev se mitiga con `always_on = false`.
+- **Costo nominal mayor en numero de planes** (aunque neutral en computo: `2x B1 ~= 1x B2`).
 - **Techo de escalado por `Solo`**: ningun dominio puede escalar horizontal mientras use `DurabilityMode.Solo`. Si un dominio rebasa la capacidad vertical de su plan, requerira el cambio de runtime de la Alt 3 (futuro).
 - **Deuda en dev existente**: el dev compartido de `Bitakora.ControlAsistencia` queda fuera de la nueva directiva hasta su proxima reprovision; convive temporalmente con el patron viejo.
 
@@ -119,7 +121,10 @@ Usar el modo balanceado de Wolverine (con eleccion de lider y reparto de agentes
 - **[4]** "What are Azure App Service plans? - Considerations for running and scaling an app" -- las apps de un mismo plan comparten las mismas VM/recursos de computo. https://learn.microsoft.com/azure/app-service/overview-hosting-plans#considerations-for-running-and-scaling-an-app
 - **[5]** "Best practices for reliable Azure Functions - Choose the correct hosting plan" -- planes de hosting disponibles (Flex Consumption, Premium, Dedicated, Consumption). https://learn.microsoft.com/azure/azure-functions/functions-best-practices
 - **[6]** Wolverine, "Wolverine and Serverless" (Jeremy D. Miller) -- `DurabilityMode.Serverless` desactiva toda la persistencia de mensajes (inbox/outbox transaccional y procesos de durabilidad en background) para entornos serverless; `Solo` optimiza la durabilidad para un unico nodo. https://jeremydmiller.com/2023/10/30/wolverine-and-serverless/ y https://wolverinefx.net/guide/durability/
+- **[7]** "What are Azure App Service plans? - Cost of App Service plans" -- en los tiers Basic/Standard/Premium el plan se factura por hora de las instancias de computo asignadas, esten las apps activas o inactivas; Always On no esta entre las excepciones que generan cargo. https://learn.microsoft.com/azure/app-service/overview-hosting-plans#cost-of-app-service-plans
+- **[8]** "Azure Functions Premium and Dedicated plan - Always On" -- en planes dedicados (no Consumption), Azure recomienda habilitar Always On para que el host no descargue la app por inactividad. https://learn.microsoft.com/azure/azure-functions/dedicated-plan#always-on
 - Origen: issue #43, investigacion de fallos intermitentes de smoke en `Bitakora.ControlAsistencia` (CPU del plan B1 compartido saturada en reposo).
+- Origen: issue #652, correccion del default y fundamento de costo de `always_on` (bug de wiring huerfano detectado en el refinamiento; descubierto desde el consumidor Bitakora.ControlAsistencia, issue #400 de ese repo).
 - MEF-ADR-0001 (Service Bus, topic por evento): el outbox durable de Wolverine publica a estos topics; por eso no se admite `DurabilityMode.Serverless`.
 - MEF-ADR-0003 (stack ES: Marten + Wolverine + Postgres): define el modo serverless de Wolverine y el outbox transaccional.
 - MEF-ADR-0006 (convenciones de nombramiento de funciones Azure): una Function App por dominio, base de "un plan por dominio".
@@ -129,3 +134,4 @@ Usar el modo balanceado de Wolverine (con eleccion de lider y reparto de agentes
 ## Control de cambios
 
 - 2026-07-01: enmendado (issue #167, barrido de coherencia hacia MEF-ADR-0024) para actualizar la referencia a MEF-ADR-0023, cuyo titulo y topologia (un namespace interno por BC; lo publico via MEF-ADR-0024) ya no era "topologia de dos namespaces ASB y Open Host Service". No hay cambio de doctrina de hosting.
+- 2026-08-17: enmendado (issue #652) para corregir el default de `always_on` a `true` unico en todo el marco (sin distincion dev/prod): el fundamento de "ahorro en dev" era factualmente falso en los tiers dedicados que este mismo ADR exige (Basic o superior; Y1 proscrito), donde la VM se factura por hora este la app despierta o dormida y Always On no genera cargo adicional [7], y la doc oficial de Azure Functions recomienda ON en planes dedicados [8]. Se elimina del cuerpo toda afirmacion de que `false` ahorra costo. Se fija ademas el mecanismo de wiring que cierra el output huerfano documentado en MEF-ADR-0021: el modulo `function-app` gana un input `always_on` aplicado en `site_config.always_on`, y el `domain-scaffolder` lo conecta pasando el output del `service-plan`.

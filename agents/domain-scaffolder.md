@@ -27,7 +27,7 @@ El usuario debe darte:
 Ademas puede pasarte (opcional) los **parametros de hosting** del App Service Plan dedicado del dominio. Cada Function App corre en su **propio** plan dedicado (ver MEF-ADR-0020); estos parametros configuran ese plan. Si el usuario no los especifica, usa los defaults del MEF-ADR-0020:
 
 - **SKU del plan** (`sku_name`) -- default `B1` (Basic, 1 core dedicado por dominio; piso valido del marco, ver MEF-ADR-0020). No usar el plan Consumption `Y1` (incompatible con el agente de durabilidad always-on de Wolverine).
-- **Always On** (`always_on`) -- default `false` en dev. En prod evaluar `true` para que el host no descargue el worker e interrumpa el poll del outbox de Wolverine.
+- **Always On** (`always_on`) -- default `true` (MEF-ADR-0020, sin distincion dev/prod): en los tiers dedicados que exige este ADR no genera cargo adicional y evita que el host descargue el worker e interrumpa el poll del outbox de Wolverine.
 - `worker_count` es siempre `1` y **no es configurable**: `DurabilityMode.Solo` exige un unico nodo (no escalar out; ver MEF-ADR-0020).
 
 Respeta el override del usuario; a falta de override, manda el default del MEF-ADR-0020.
@@ -94,7 +94,7 @@ Y detente sin hacer nada mas.
 Cada dominio recibe su propio App Service Plan dedicado (`asp-{prefix_func}-{kebab}`). Resuelve sus parametros tomando lo que dio el usuario y, a falta de override, los defaults del MEF-ADR-0020:
 
 - `sku_name` = el valor que dio el usuario, o `B1` por defecto.
-- `always_on` = el valor que dio el usuario, o `false` por defecto (dev).
+- `always_on` = el valor que dio el usuario, o `true` por defecto (MEF-ADR-0020, sin distincion dev/prod).
 - `worker_count` = `1` siempre (no configurable; `Solo` exige un unico nodo).
 
 Estos valores alimentan el `module service_plan_{snake_case}` que emitiras en el Paso 4.
@@ -128,7 +128,7 @@ PascalCase:       {PascalCase}
 Function App:     func-{prefix_func}-{kebab} (N chars)
 App Service Plan: asp-{prefix_func}-{kebab} (dedicado por dominio, MEF-ADR-0020)
   SKU:            {sku_name} (default B1)
-  Always On:      {always_on} (default false en dev)
+  Always On:      {always_on} (default true, MEF-ADR-0020)
   worker_count:   1 (fijo, Solo exige un unico nodo)
 Proyecto src:     src/<RootNamespace>.{PascalCase}/
 Proyecto eventos: src/<RootNamespace>.{PascalCase}.DomainEvents/ (MEF-ADR-0039)
@@ -2726,7 +2726,7 @@ No "avises al usuario" ni preguntes nada: el agente corre no interactivo (`claud
 
 **Archivo plano por dominio (issue #234, decision D1/D2)**: estos bloques van completos en un archivo **nuevo y propio** del dominio, `infra/environments/dev/dominio-{kebab}.tf`, **NO al final de `main.tf`**. No leas ni modifiques `main.tf`: el root module del entorno lo genera y mantiene `infra-base-scaffolder` (MEF-ADR-0021) y queda intacto al dar de alta un dominio. Terraform evalua todos los `.tf` del directorio del entorno como un unico root module y **no recorre subdirectorios** (fuente: HashiCorp, Terraform Language — "Files and Directories"), por lo que un archivo plano preserva sin cambios las referencias a `local.*`, `module.*` y `var.environment` del root module. La Validacion 3 del Paso 0 ya confirmo que este archivo no existe todavia; si en este punto existiera, detente sin pisarlo.
 
-Crea el archivo `infra/environments/dev/dominio-{kebab}.tf` con el siguiente contenido completo (los cuatro bloques de abajo son el archivo entero, no un agregado a otro archivo existente). Sustituye `{sku_name}` y `{always_on}` por los parametros de hosting que resolviste en el Paso 0 (defaults `B1` / `false`):
+Crea el archivo `infra/environments/dev/dominio-{kebab}.tf` con el siguiente contenido completo (los cuatro bloques de abajo son el archivo entero, no un agregado a otro archivo existente). Sustituye `{sku_name}` y `{always_on}` por los parametros de hosting que resolviste en el Paso 0 (defaults `B1` / `true`):
 
 ```hcl
 resource "random_string" "storage_suffix_{snake_case}" {
@@ -2769,7 +2769,8 @@ module "function_app_{snake_case}" {
     DOMINIO                        = "{kebab}"
     MartenConnectionString         = local.marten_connection_kv_ref
   }
-  tags = local.tags
+  always_on = module.service_plan_{snake_case}.always_on
+  tags      = local.tags
 }
 
 # Lectura de secretos del Key Vault (MEF-ADR-0025 decision #2): la managed identity de la
@@ -2822,6 +2823,8 @@ Donde `{kebab-sin-guiones}` es el nombre del dominio con los guiones eliminados 
 > Si falta (`FALTA la infraestructura base`), no emitas una advertencia pasiva: indica al usuario que genere la base primero con `/infra-base` (o el agente `infra-base-scaffolder`) y luego reintente el scaffold del dominio.
 
 > **Nota (modulo service-plan)**: el bloque `module service_plan_{snake_case}` pasa los inputs `os_type`, `sku_name`, `worker_count` y `always_on`. El modulo `modules/service-plan` que genera `infra-base-scaffolder` **ya acepta** esos cuatro inputs (contrato de **MEF-ADR-0020**, garantizado por MEF-ADR-0021/CA-2), de modo que `terraform validate` pasa. Si el consumidor tiene un `modules/service-plan` heredado que **no** los declara, regeneralo con `/infra-base` (idempotente: no pisa lo demas) o ajusta el `module service_plan_{snake_case}` emitido a los inputs que ese modulo si exponga.
+
+> **Nota (modulo function-app, wiring de `always_on`, MEF-ADR-0020/MEF-ADR-0021, issue #652)**: el bloque `module function_app_{snake_case}` pasa `always_on = module.service_plan_{snake_case}.always_on`, el output que el modulo `service-plan` reexpone. El modulo `../../modules/function-app` que genera `infra-base-scaffolder` **acepta** ese input (`bool`, default `true`) y lo aplica en `site_config.always_on` de su `azurerm_linux_function_app` -- sin este paso el valor pedido por el usuario quedaba huerfano en el output del `service-plan` y prevalecia el default `false` del provider `azurerm`. Si el consumidor tiene un `modules/function-app` heredado que no declara `always_on`, regeneralo con `/infra-base` (idempotente).
 
 ---
 
