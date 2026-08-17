@@ -560,6 +560,10 @@ public static class ComposicionServicios{PascalCase}
         services.AddScoped<IRequestValidator, RequestValidator>();
         services.AddValidatorsFromAssemblyContaining<I{PascalCase}AssemblyMarker>();
 
+        // Readiness gate de la capa de datos (MEF-ADR-0031 seccion 6, issue #675): el probe que
+        // consume /api/ready. Scoped porque depende de IQuerySession, que Marten registra scoped.
+        services.AddScoped<IEventStoreReadinessProbe, EventStoreReadinessProbe>();
+
         return services;
     }
 }
@@ -1033,6 +1037,132 @@ public class VersionCheck
     }
 }
 ```
+
+**12b. Crear el probe `Infraestructura/EventStoreReadinessProbe.cs`** -- endpoint del readiness gate de la capa de datos (MEF-ADR-0031 seccion 6, issue #671/#675):
+
+```csharp
+using Marten;
+
+namespace <RootNamespace>.{PascalCase}.Infraestructura;
+
+public interface IEventStoreReadinessProbe
+{
+    Task VerificarAsync(CancellationToken ct);
+}
+
+public class EventStoreReadinessProbe(IQuerySession querySession) : IEventStoreReadinessProbe
+{
+    // Stream id centinela: no existe ningun aggregate con este id, y no necesita existir. Un stream
+    // inexistente no es un error para FetchStreamStateAsync (retorna null), pero la llamada pasa por
+    // la verificacion perezosa de storage de Marten (EnsureStorageExistsAsync) antes de resolver eso
+    // -- fuerza la materializacion del schema del event store sin leer un solo dato real de ningun
+    // dominio (MEF-ADR-0031 seccion 6).
+    private const string StreamCentinela = "mefisto-ready-check-centinela";
+
+    public async Task VerificarAsync(CancellationToken ct)
+    {
+        // Sin cache del positivo (doctrina fija del marco, sin parametro -- MEF-ADR-0018): cada
+        // llamada ejecuta el fetch de nuevo.
+        await querySession.Events.FetchStreamStateAsync(StreamCentinela, ct);
+    }
+}
+```
+
+**12c. Crear `ReadyCheck.cs` + `ReadyCheck.Mensajes.cs` + `ReadyCheckMensajes.resx`** (raiz del proyecto, junto a `HealthCheck.cs`/`VersionCheck.cs`) -- endpoint dedicado del readiness gate de la capa de datos (MEF-ADR-0031 seccion 6, issue #671/#675). Nunca enriquece `/api/health` ni `/api/version`: los tres endpoints coexisten con responsabilidades distintas.
+
+```csharp
+// ReadyCheck.cs
+using <RootNamespace>.{PascalCase}.Infraestructura;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Azure.Functions.Worker;
+
+namespace <RootNamespace>.{PascalCase};
+
+public partial class ReadyCheck(IEventStoreReadinessProbe probe)
+{
+    [Function("ready")]
+    public async Task<IActionResult> Run(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "ready")]
+        HttpRequest req,
+        CancellationToken ct)
+    {
+        try
+        {
+            await probe.VerificarAsync(ct);
+            return new OkObjectResult("OK");
+        }
+        catch (Exception ex)
+        {
+            // 503, no 500 (RFC 9110 seccion 15.6.4): el event store esta temporalmente incapaz de
+            // atender la peticion, no una condicion inesperada del handler. Cuerpo diagnosticable
+            // para que quien lea el log del gate no tenga que correlacionar con Application
+            // Insights (MEF-ADR-0031 seccion 6).
+            return new ObjectResult($"{Mensajes.EventStoreNoDisponible}: {ex.Message}")
+            {
+                StatusCode = StatusCodes.Status503ServiceUnavailable
+            };
+        }
+    }
+}
+```
+
+```csharp
+// ReadyCheck.Mensajes.cs (MEF-ADR-0009)
+using System.Resources;
+
+namespace <RootNamespace>.{PascalCase};
+
+public partial class ReadyCheck
+{
+    private static readonly ResourceManager ResourceManager = new(
+        "<RootNamespace>.{PascalCase}.ReadyCheckMensajes",
+        typeof(ReadyCheck).Assembly);
+
+    public static class Mensajes
+    {
+        public static string EventStoreNoDisponible => ResourceManager.GetString(nameof(EventStoreNoDisponible))!;
+    }
+}
+```
+
+```xml
+<!-- ReadyCheckMensajes.resx -->
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" msdata:Ordinal="0" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter</value></resheader>
+  <data name="EventStoreNoDisponible" xml:space="preserve">
+    <value>El event store no esta disponible</value>
+  </data>
+</root>
+```
+
+> **Repos con dominios ya scaffoldeados (issue #675)**: la idempotencia de este agente no reescribe el `.csproj` ni ningun `.cs` de un dominio que ya existe (Paso 0, Validacion 2). Para sumarle el readiness gate de la capa de datos a un dominio existente, agrega a mano en `src/<RootNamespace>.{PascalCase}/`:
+> - `Infraestructura/EventStoreReadinessProbe.cs` (punto 12b de arriba).
+> - `ReadyCheck.cs` + `ReadyCheck.Mensajes.cs` + `ReadyCheckMensajes.resx`, junto a `HealthCheck.cs`/`VersionCheck.cs` (punto 12c de arriba).
+> - el registro `services.AddScoped<IEventStoreReadinessProbe, EventStoreReadinessProbe>();` en `Infraestructura/ComposicionServicios{PascalCase}.cs` (Paso 1 punto 6b).
+> - `ReadyCheckTests.cs` en `tests/<RootNamespace>.{PascalCase}.Tests/` (Paso 2, punto 10).
+>
+> Y, una sola vez por repo y **despues** de haber parchado asi todos los dominios existentes, el parche a `.github/workflows/smoke-tests-dominio.yml` que describe la nota de idempotencia del Paso 6: ese workflow es compartido, y su poll tumba la suite de cualquier dominio que todavia responda 404 en `/api/ready`.
 
 ---
 
@@ -1769,6 +1899,59 @@ public class ComposicionContenedorTests
 Si el Paso 6b agrego o quito parametros `serviceBus<Alias>` (segun los alias del backbone
 compartido resueltos en el Paso 0), pasa el mismo numero de argumentos dummy en la llamada a
 `AgregarServicios{PascalCase}` de este test -- misma regla dinamica que en `Program.cs`.
+
+**10. Crear `ReadyCheckTests.cs`** (raiz del proyecto de tests) -- cubre `ReadyCheck` (Paso 1 punto
+12c, MEF-ADR-0031 seccion 6): el mapeo probe-exitoso -> 200 y probe-fallido -> 503 con cuerpo
+diagnosticable. No cubre `EventStoreReadinessProbe` en si -- ese probe abre una conexion real
+contra Marten, y verificarlo de verdad es alcance del smoke test (Paso 6.1), no de este test
+unitario. Fake manual del probe, NO NSubstitute (mismo criterio que el resto de este agente):
+
+```csharp
+using AwesomeAssertions;
+using <RootNamespace>.{PascalCase}.Infraestructura;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+
+namespace <RootNamespace>.{PascalCase}.Tests;
+
+public class ReadyCheckTests
+{
+    [Fact]
+    public async Task ReadyCheck_Retorna200_CuandoElProbeNoLanzaExcepcion()
+    {
+        var readyCheck = new ReadyCheck(new FakeEventStoreReadinessProbe());
+
+        // null! deliberado: el HttpTrigger exige el parametro req, pero Run no lo lee.
+        var resultado = await readyCheck.Run(null!, CancellationToken.None);
+
+        resultado.Should().BeOfType<OkObjectResult>();
+    }
+
+    [Fact]
+    public async Task ReadyCheck_Retorna503ConMensajeDiagnosticable_CuandoElProbeFalla()
+    {
+        var excepcion = new InvalidOperationException("Npgsql timeout");
+        var readyCheck = new ReadyCheck(new FakeEventStoreReadinessProbe(excepcion));
+
+        var resultado = await readyCheck.Run(null!, CancellationToken.None);
+
+        resultado.Should().BeOfType<ObjectResult>();
+        var objectResult = (ObjectResult)resultado;
+        objectResult.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
+        objectResult.Value.Should().Be($"{ReadyCheck.Mensajes.EventStoreNoDisponible}: {excepcion.Message}");
+    }
+}
+
+// ---- Fake manual - NO NSubstitute ----
+internal class FakeEventStoreReadinessProbe(Exception? excepcion = null) : IEventStoreReadinessProbe
+{
+    public Task VerificarAsync(CancellationToken ct)
+    {
+        if (excepcion is not null) throw excepcion;
+        return Task.CompletedTask;
+    }
+}
+```
 
 ---
 
@@ -3062,6 +3245,10 @@ Ambos archivos son **idempotentes** (misma logica de "si existe / si no existe" 
 >
 > Sin los tres parches el sintoma es doble: sin el paso nuevo, la carrera documentada en MEF-ADR-0031 seccion 4 sigue abierta; y si solo se agrega el paso sin los permisos, el run muere en `startup_failure` apenas ese job arranca, sin ninguna annotation que lo explique (CA-4).
 
+> **Repos ya scaffoldeados antes del fix del issue #675**: mismo limite de idempotencia -- el scaffolder no reescribe un `smoke-tests-dominio.yml` existente. Inserta a mano el step `Esperar /api/ready` (contenido completo en el Paso 6.1 de arriba) entre `Esperar deploys ajenos del mismo commit` y `Smoke tests` (o, si el repo tampoco tiene ese step del issue #604 todavia, entre `actions/setup-dotnet` y `Smoke tests`). A diferencia de esa guarda, este paso no requiere ningun cambio de `permissions`: solo hace `curl` contra `base_url`, sin tocar la API de Actions.
+>
+> **Orden obligatorio de los dos parches: primero el endpoint en todos los dominios, despues el workflow.** Este reutilizable es **uno por repo** y lo invocan los smoke tests de **todos** los dominios, asi que el step nuevo polea `/api/ready` tambien en los que se scaffoldearon antes de esta enmienda. Un dominio sin `ReadyCheck.cs` responde 404 a esa ruta, y `curl --fail` no distingue "todavia no arranco" de "este dominio no tiene el endpoint": la compuerta agota sus 120s y **tumba la suite** de ese dominio. Aplica primero el parche del Paso 1 (`ReadyCheck.cs` + `.Mensajes.cs` + `.resx` + probe + registro de DI) a **cada** dominio ya scaffoldeado, y solo entonces inserta el step aqui.
+
 **Transcripcion byte-a-byte (issue #241).** Dos dominios pueden scaffoldearse en paralelo desde el mismo `origin/main`, cada uno viendo estos archivos ausentes y generandolos a la vez. Si ambas ramas los transcriben literal, el merge es un add/add de archivos identicos (benigno, sin conflicto); si alguna normaliza espacios, reordena claves o resume comentarios, el add/add se vuelve un conflicto real. Copia los bloques YAML de 6.1 y 6.2 **tal cual aparecen abajo**: sin normalizar indentacion, sin reordenar, sin resumir ni omitir comentarios.
 
 **6.1 - Reutilizable `smoke-tests-dominio.yml`**
@@ -3181,6 +3368,34 @@ jobs:
           echo "::error::Timeout esperando el job 'deploy' de runs ajenos del commit $SHA."
           exit 1
 
+      - name: Esperar /api/ready
+        # Compuerta de la capa de datos (MEF-ADR-0031 seccion 6, issue #671/#675): sin ella, la
+        # primera peticion que abre una conexion real contra Marten seria el arrange de la suite de
+        # abajo. El escenario que paga esta compuerta es el primer deploy de un dominio nuevo contra
+        # un event store sin esquema materializado -- defensa en profundidad de bajo costo, no la
+        # ventana de arranque frio que el always_on de MEF-ADR-0020 ya cerro. Corre siempre, sin
+        # condicion sobre expected_sha: a diferencia del warmup por SHA (que necesita saber que
+        # version espera), esta solo verifica que el event store este listo para recibir trafico.
+        # Mismo timeout de 120s que fija el punto 3 de ese ADR para /api/version.
+        run: |
+          set -euo pipefail
+          TIMEOUT=120
+          ESPERA=5
+          INICIO=$SECONDS
+          INTENTOS=0
+          while true; do
+            INTENTOS=$((INTENTOS + 1))
+            if curl --fail --silent --show-error --max-time 5 "${{ inputs.base_url }}/api/ready" > /dev/null; then
+              echo "Ready OK tras $INTENTOS intento(s) (~$((SECONDS - INICIO))s)"
+              break
+            fi
+            if [ $((SECONDS - INICIO)) -ge "$TIMEOUT" ]; then
+              echo "::error::Timeout (${TIMEOUT}s) esperando /api/ready en ${{ inputs.base_url }} tras $INTENTOS intento(s)."
+              exit 1
+            fi
+            sleep "$ESPERA"
+          done
+
       - name: Smoke tests
         env:
           # appsettings.json del proyecto SmokeTests lee Api:BaseUrl, ServiceBus:ConnectionString
@@ -3207,6 +3422,8 @@ jobs:
 > Si un run ajeno no expone ningun job llamado `deploy`, la guarda **falla** en vez de asumir que ya termino (`::error::` + `exit 1`): degradar en silencio reintroduciria la carrera sin ninguna senal. El precio de esa decision es que el filtro de runs debe ser exacto, y por eso excluye `.github/workflows/deploy-projections.yml` (`projections-scaffolder`): su `name:` es `Deploy Projections Worker` -- matchea el prefijo -- pero despliega el Container App del worker de proyecciones, no toca ninguna Function App y sus jobs son `build-and-test`/`publish`; sin la exclusion, cada corrida global de smoke que coincidiera con una publicacion del worker del mismo commit moriria en `exit 1` por un run que nunca tuvo nada que esperar.
 >
 > **Dos convenciones acopladas, y el test del marco que las sostiene (CA-6).** El literal `deploy` del job y el prefijo `Deploy ` del nombre son convenciones de `deploy-{kebab}.yml` (Paso 5), verificadas empiricamente contra 4 deploys reales del consumidor de origen; el path excluido es el que genera `projections-scaffolder`. Quien renombre cualquiera de las tres cosas debe mover el literal aqui tambien -- y el bloque `[H]` de `scripts/tests/test-guards.sh` falla si esa correspondencia se rompe, para que la deriva no deje a la guarda ciega en silencio.
+>
+> **"Esperar /api/ready" es independiente de la guarda de deploys ajenos (MEF-ADR-0031 seccion 6, issue #671/#675).** No introduce ningun literal de nombre de workflow o de job -- solo hace `curl` contra `${{ inputs.base_url }}/api/ready` --, asi que no necesita ningun cambio en el bloque `[H]` de `scripts/tests/test-guards.sh` ni en sus `permissions`. Cubre un riesgo distinto al de esa guarda: no una carrera contra un deploy ajeno, sino el primer deploy de un dominio nuevo contra un event store sin esquema materializado (el escenario que produce `domain-scaffolder` por definicion). El log `Ready OK tras N intento(s) (~Ns)` es la evidencia que MEF-ADR-0031 seccion 6 anota como pendiente de captura la primera vez que un consumidor scaffoldee asi un dominio con esta enmienda vigente.
 
 **6.2 - Global `smoke-tests.yml`**
 
@@ -3435,8 +3652,10 @@ Scaffold completado para el dominio "{kebab}":
     Program.cs                             - Arma el host y delega toda la composicion de DI a ComposicionServicios{PascalCase} (issue #319, MEF-ADR-0029)
     HealthCheck.cs                         - Trigger HTTP de health check (raiz del proyecto)
     VersionCheck.cs                        - Trigger HTTP de /api/version (readiness gate por SHA, issue #325, MEF-ADR-0031)
-    Infraestructura/ComposicionServicios{PascalCase}.cs - Unica fuente de verdad del wiring de DI (Wolverine con las metricas del durability agent apagadas en origen, Marten, routers, tenancy, OpenTelemetry con sampler post-exporter, validacion) - MEF-ADR-0029/MEF-ADR-0038
+    ReadyCheck.cs / ReadyCheck.Mensajes.cs / ReadyCheckMensajes.resx - Trigger HTTP de /api/ready: readiness gate de la capa de datos, 503 con cuerpo diagnosticable si el probe falla (MEF-ADR-0031 seccion 6, issue #671/#675)
+    Infraestructura/ComposicionServicios{PascalCase}.cs - Unica fuente de verdad del wiring de DI (Wolverine con las metricas del durability agent apagadas en origen, Marten, routers, tenancy, OpenTelemetry con sampler post-exporter, validacion, probe de readiness) - MEF-ADR-0029/MEF-ADR-0038/MEF-ADR-0031
     Infraestructura/RequestValidator.cs    - IRequestValidator + implementacion
+    Infraestructura/EventStoreReadinessProbe.cs - IEventStoreReadinessProbe + implementacion: fuerza la materializacion de storage de Marten via FetchStreamStateAsync sobre un stream centinela, sin cache del positivo (MEF-ADR-0031 seccion 6)
     Infraestructura/TenantResolverMonoTenantPorDefecto.cs - ITenantResolver mono-tenant transitorio (MEF-ADR-0028)
     Infraestructura/ServiceBusDeserializador.cs - Helper de deserializacion case-insensitive
     Infraestructura/ServiceBusEndpointBase.cs   - Clase base para endpoints de ServiceBus (topic+subscription)
@@ -3460,6 +3679,7 @@ Scaffold completado para el dominio "{kebab}":
     Infraestructura/ServiceBusSessionEndpointBaseTests.cs - Tests de orquestacion de fan-in (feliz, lock-lost, dead-letter, Subject no reconocido)
     Infraestructura/PrivateEventEndpointBaseTests.cs - Tests de orquestacion del EventHandler directo (feliz, lock-lost, dead-letter, JSON invalido)
     Infraestructura/ComposicionContenedorTests.cs - Test de composicion del contenedor DI: BuildServiceProvider(ValidateOnBuild + ValidateScopes) + resolucion explicita de los routers (issue #319, MEF-ADR-0029) + guarda derivada de eventos aplicados vs EventGraph del IDocumentStore compuesto (MEF-ADR-0036) + guardrails del sampler efectivo post-exporter y su ratio default + del durability agent apagado en origen (MEF-ADR-0038)
+    ReadyCheckTests.cs                     - Mapeo probe-exitoso -> 200 / probe-fallido -> 503 con cuerpo diagnosticable, fake manual del probe (MEF-ADR-0031 seccion 6, issue #671/#675)
                                            - Proyecto de tests unitarios (xUnit v3 + AwesomeAssertions)
 
   tests/<RootNamespace>.{PascalCase}.SmokeTests/
@@ -3496,7 +3716,8 @@ Scaffold completado para el dominio "{kebab}":
                                              no un array compartido) para el workflow global de smoke tests
 
   (solo la primera vez en el repo; en dominios posteriores ya existen y no se tocan)
-  .github/workflows/smoke-tests-dominio.yml - Workflow reutilizable de smoke tests (workflow_call)
+  .github/workflows/smoke-tests-dominio.yml - Workflow reutilizable de smoke tests (workflow_call); incluye el poll a
+                                             /api/ready previo a la suite (timeout 120s, MEF-ADR-0031 seccion 6, issue #671/#675)
   .github/workflows/smoke-tests.yml         - Workflow global: corre los smoke tests de todos los dominios en matrix
 
   (solo si el worker de proyecciones existe -- Paso 3b, issue #370, MEF-ADR-0034; omitido sin advertencia si no)
