@@ -57,6 +57,12 @@
 #   [M] Corriendo desde un worktree: lee el historial del repo principal (que
 #       es donde lo escriben los pipelines) y lo declara, en vez de reportar
 #       0 corridas en silencio.
+#   [N] Segmentacion por harness_version (issue #663): mezcla de lineas con
+#       "1.4.0"/"1.5.0" y sin el campo (historial previo a #660) -> agrupa por
+#       version con wall/turnos/costo restringidos a cada grupo (CA-1) y cae
+#       a "(sin version)" sin romper el resto del reporte (CA-2); verificado
+#       contra compute_metrics_report_json y contra la seccion renderizada
+#       "POR VERSION DE HARNESS" end-to-end (CA-3).
 #
 # Uso: scripts/tests/test-metrics-report.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -429,6 +435,46 @@ if git -C "$FAKE_REPO" worktree add -q "$TMP/fake-wt" -b wt-test >/dev/null 2>&1
     git -C "$FAKE_REPO" worktree remove --force "$TMP/fake-wt" >/dev/null 2>&1 || true
 else
     echo "  SKIP: no se pudo crear el worktree de prueba en este entorno"
+fi
+
+echo ""
+echo "[N] Segmentacion por harness_version (CA-1/CA-2/CA-4, issue #663)"
+
+# Mezcla: 2 corridas en "1.4.0", 1 en "1.5.0", 1 sin el campo (historial previo
+# a #660) -- todas tdd e instrumentadas, para poder derivar a mano wall/turnos/
+# costo por grupo. Los numeros esperados abajo se calcularon sumando estos
+# mismos campos (ver CA-1: agregados restringidos a cada version).
+cat > "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" <<'EOF'
+{"issue":"800","title":"TDD version 1.4.0 (a)","pipeline":"tdd","harness_version":"1.4.0","started":"20260806-090000","state":"completed","agents":{"test-writer":{"duration":100,"metrics":{"turns":10,"duration_ms":100000,"duration_api_ms":80000,"non_api_ms":20000,"cost_usd":0.5,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"model":"claude-sonnet-5","agent":"test-writer","tool_calls":[]}}}}
+{"issue":"810","title":"TDD version 1.4.0 (b)","pipeline":"tdd","harness_version":"1.4.0","started":"20260807-090000","state":"completed","agents":{"test-writer":{"duration":200,"metrics":{"turns":20,"duration_ms":200000,"duration_api_ms":150000,"non_api_ms":50000,"cost_usd":0.7,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"model":"claude-sonnet-5","agent":"test-writer","tool_calls":[]}}}}
+{"issue":"820","title":"TDD version 1.5.0","pipeline":"tdd","harness_version":"1.5.0","started":"20260808-090000","state":"completed","agents":{"test-writer":{"duration":50,"metrics":{"turns":5,"duration_ms":50000,"duration_api_ms":30000,"non_api_ms":20000,"cost_usd":0.2,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"model":"claude-sonnet-5","agent":"test-writer","tool_calls":[]}}}}
+{"issue":"830","title":"TDD sin harness_version (historial previo a #660)","pipeline":"tdd","started":"20260809-090000","state":"completed","agents":{"test-writer":{"duration":150,"metrics":{"turns":12,"duration_ms":150000,"duration_api_ms":100000,"non_api_ms":50000,"cost_usd":0.3,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"model":"claude-sonnet-5","agent":"test-writer","tool_calls":[]}}}}
+EOF
+
+AGG_N=$(compute_metrics_report_json "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" "" "")
+
+assert_field "N-1: tres grupos en by_version (1.4.0, 1.5.0, sin version)" "3" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version | length')"
+assert_field "N-2: 1.4.0.n_total (2 corridas)" "2" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="1.4.0") | .n_total')"
+assert_field "N-3: 1.4.0.n_instrumented" "2" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="1.4.0") | .n_instrumented')"
+assert_field "N-4: 1.4.0.turns_mean (10+20)/2" "15" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="1.4.0") | .turns_mean')"
+assert_field "N-5: 1.4.0.cost_usd_mean (0.5+0.7)/2" "0.6" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="1.4.0") | .cost_usd_mean')"
+assert_field "N-6: 1.4.0.wall_mean_s (100+200)/2" "150" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="1.4.0") | .wall_mean_s')"
+assert_field "N-7: 1.5.0.n_total (1 corrida)" "1" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="1.5.0") | .n_total')"
+assert_field "N-8: 1.5.0.turns_mean" "5" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="1.5.0") | .turns_mean')"
+assert_field "N-9: (sin version).n_total (830, previo a #660)" "1" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="(sin version)") | .n_total')"
+assert_field "N-10: (sin version).turns_mean" "12" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="(sin version)") | .turns_mean')"
+
+echo "  -- render end-to-end: seccion POR VERSION DE HARNESS con las tres filas --"
+OUT=$(run_report)
+if echo "$OUT" | grep -q "POR VERSION DE HARNESS"; then
+    pass "N-11: la seccion POR VERSION DE HARNESS aparece en el render"
+else
+    fail "N-11: no aparecio la seccion POR VERSION DE HARNESS"
+fi
+if echo "$OUT" | grep -qE '^1\.4\.0 +2/2' && echo "$OUT" | grep -qE '^1\.5\.0 +1/1' && echo "$OUT" | grep -qE '^\(sin version\) +1/1'; then
+    pass "N-12: las tres filas (1.4.0, 1.5.0, (sin version)) se renderizan con su n(t/i)"
+else
+    fail "N-12: no se encontraron las tres filas esperadas: $(echo "$OUT" | grep -E '^(1\.4\.0|1\.5\.0|\(sin version\))')"
 fi
 
 echo ""
