@@ -44,6 +44,14 @@
 #   [K] retrocompatibilidad: mefisto-metrics-report.sh agrega sin cambios un
 #       historial mixto de lineas legadas (sin los campos) y nuevas (con los
 #       campos) -- nada se migra ni se reescribe.
+#   [L] un caller con 'set -euo pipefail' (como el pipeline) sobrevive al peor
+#       caso -- plugin.json ausente Y 'git' fuera del PATH --: ambas variables
+#       quedan vacias, ambos literales JSON en null, y el prologo sigue vivo
+#       en vez de morir antes del primer stage.
+#   [M] las 2 lineas de historial que emite el pipeline, ejecutadas de verdad,
+#       producen JSON valido con harness_version/harness_sha como string
+#       cuando el helper resolvio, y como null JSON (no la cadena "null")
+#       cuando degrado.
 #
 # Uso: .claude/scripts/tests/test-harness-version.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -347,6 +355,129 @@ EOF
     fi
 else
     echo "  SKIP: mefisto-metrics-report.sh requiere jq, no disponible en este entorno"
+fi
+
+# -------- Bloque L: un caller con 'set -euo pipefail' no muere --------
+#
+# El pipeline corre con 'set -euo pipefail' y toma ambos valores por
+# sustitucion de comando en su prologo. "Nunca aborta" no es una propiedad de
+# cada funcion aislada sino de esa combinacion, y aqui hay dos piezas que
+# pueden romperla: un paso interno del helper que se escape con estado != 0, y
+# el idioma '[ -n "$X" ] && VAR=...' que deriva el literal JSON (una lista &&
+# cuyo lado izquierdo falla justo en el caso degradado). Cualquiera de las dos
+# mataria la corrida ANTES del primer stage, y ningun otro bloque lo caza:
+# [D]/[G]/[H] prueban las funciones sueltas, sin errexit y sin el idioma.
+# Se reproduce el prologo real sobre el peor caso: fixture SIN plugin.json
+# (lo borro el bloque D) y PATH sin 'git'.
+
+echo ""
+echo "[L] caller con 'set -euo pipefail' sobrevive a plugin.json ausente y sin git"
+
+L_OUT=$(env PATH="$BIN_SIN_GIT" bash -c "
+set -euo pipefail
+source '$FIXTURE/.claude/scripts/_mefisto-common.sh'
+HARNESS_VERSION=\"\$(get_harness_version)\"
+HARNESS_VERSION_JSON=null
+[ -n \"\$HARNESS_VERSION\" ] && HARNESS_VERSION_JSON=\"\\\"\$HARNESS_VERSION\\\"\"
+HARNESS_SHA=\"\$(get_harness_sha)\"
+HARNESS_SHA_JSON=null
+[ -n \"\$HARNESS_SHA\" ] && HARNESS_SHA_JSON=\"\\\"\$HARNESS_SHA\\\"\"
+echo \"SIGUE-VIVO:\$HARNESS_VERSION_JSON:\$HARNESS_SHA_JSON\"
+" 2>/dev/null)
+L_RC=$?
+if [ "$L_RC" -eq 0 ] && [ "$L_OUT" = "SIGUE-VIVO:null:null" ]; then
+    pass "L-1: el prologo bajo errexit sobrevive y deja ambos literales en null"
+else
+    fail "L-1: se esperaba rc=0 y 'SIGUE-VIVO:null:null', se obtuvo rc=$L_RC salida='$L_OUT'"
+fi
+
+# -------- Bloque M: las 2 lineas de historial emiten JSON valido --------
+#
+# [J] es textual: verifica que el nombre del campo aparece en las 2
+# escrituras, no que la linea resultante parsee. Una coma de menos o una
+# comilla desbalanceada en la interpolacion pasaria [J] y rompería TODAS las
+# entradas del historial -- y el fallo solo se veria en la siguiente corrida
+# real. Aqui se extraen las 2 lineas 'echo' del pipeline, se ejecutan de
+# verdad con las variables que el pipeline tendria en ese punto, y se valida
+# la salida con jq. Ademas se cubre lo que ningun grep puede distinguir: que
+# el caso degradado produzca null JSON y no la cadena "null".
+
+echo ""
+echo "[M] las 2 lineas de historial del pipeline emiten JSON valido con ambos campos"
+
+if command -v jq >/dev/null 2>&1; then
+    # Las 2 unicas lineas que abren una entrada de historial; en orden de
+    # aparicion: primero la del trap de aborto, despues la del camino feliz.
+    # Se les quita la barra de continuacion final para poder ejecutarlas
+    # sueltas (en el pipeline siguen con el '>> ...' de la linea siguiente).
+    ABORT_ECHO=$(grep -F 'echo "{\"issue\"' "$PIPE_PATH" | sed -n '1p' | sed 's/[[:space:]]*\\$//')
+    HAPPY_ECHO=$(grep -F 'echo "{\"issue\"' "$PIPE_PATH" | sed -n '2p' | sed 's/[[:space:]]*\\$//')
+
+    # emitir_linea <linea_echo> <harness_version_json> <harness_sha_json>
+    #
+    # Arma un script con el prologo de variables que el pipeline tendria vivas
+    # en ese punto y le anexa la linea 'echo' extraida, para ejecutarla sin
+    # reescribirla (si se transcribiera a mano, el test verificaria una copia
+    # y no el codigo que corre en produccion).
+    emitir_linea() {
+        local echo_line="$1" hv_json="$2" hs_json="$3"
+        local runner="$TMP/history-line.sh"
+        {
+            echo 'set -euo pipefail'
+            echo 'ISSUE_NUM=662'
+            echo 'ISSUE_TITLE='"'"'titulo con "comillas" adentro'"'"''
+            echo 'TIMESTAMP=20260816-101010'
+            echo 'CURRENT_STAGE=writer'
+            echo 'PIPELINE_ERROR='"'"'fallo de prueba'"'"''
+            echo 'PR_URL=https://example.test/pr/1'
+            echo 'abort_agents_json='"'"'{"writer":{"duration":600}}'"'"''
+            echo 'COMPLETED_AGENTS_JSON='"'"'{"writer":{"duration":600}}'"'"''
+            # Entrecomillado simple a proposito: el valor de estas variables
+            # ES el literal JSON, comillas incluidas ("0.25.0" con comillas
+            # para un string, null pelado para el degradado) -- tal como las
+            # deja el prologo del pipeline. Sin las comillas simples el shell
+            # del runner se las comeria al asignar y el campo saldria como el
+            # numero invalido 0.25.0 en vez de un string.
+            echo "HARNESS_VERSION_JSON='$hv_json'"
+            echo "HARNESS_SHA_JSON='$hs_json'"
+            echo "$echo_line"
+        } > "$runner"
+        bash "$runner"
+    }
+
+    for caso in aborto feliz; do
+        if [ "$caso" = "aborto" ]; then
+            ECHO_LINE="$ABORT_ECHO"; ESTADO="failed"
+        else
+            ECHO_LINE="$HAPPY_ECHO"; ESTADO="completed"
+        fi
+
+        if [ -z "$ECHO_LINE" ]; then
+            fail "M-0 ($caso): no se pudo extraer la linea 'echo' del historial del pipeline"
+            continue
+        fi
+
+        M_SET=$(emitir_linea "$ECHO_LINE" '"0.25.0"' '"abc1234"')
+        if echo "$M_SET" | jq -e --arg estado "$ESTADO" \
+            '.harness_version == "0.25.0" and .harness_sha == "abc1234"
+             and .issue == "662" and .state == $estado
+             and (.title | test("comillas"))' >/dev/null 2>&1; then
+            pass "M-1 ($caso): JSON valido con ambos campos como string, sin romper los previos"
+        else
+            fail "M-1 ($caso): la linea emitida no parsea o pierde campos: $M_SET"
+        fi
+
+        M_NULL=$(emitir_linea "$ECHO_LINE" 'null' 'null')
+        if echo "$M_NULL" | jq -e \
+            '.harness_version == null and .harness_sha == null
+             and (has("harness_version") and has("harness_sha"))' >/dev/null 2>&1; then
+            pass "M-2 ($caso): helper degradado -> null JSON (no la cadena \"null\")"
+        else
+            fail "M-2 ($caso): se esperaba null JSON en ambos campos: $M_NULL"
+        fi
+    done
+else
+    echo "  SKIP: el bloque M valida la salida con jq, no disponible en este entorno"
 fi
 
 echo ""
