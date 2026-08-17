@@ -140,9 +140,19 @@ cat > "$FIXTURE/.claude-plugin/plugin.json" <<'EOF'
 }
 EOF
 
+# PATH hermetico: solo los binarios que el fallback con sed necesita,
+# enlazados uno a uno. Un PATH del estilo "$BIN_SIN_JQ:/bin:/usr/bin" NO
+# oculta jq -- en macOS vive en /usr/bin/jq --, y con jq resolviendo estos dos
+# bloques verificaban la rama de jq creyendo verificar la de sed.
 BIN_SIN_JQ="$TMP/bin-sin-jq"
 mkdir -p "$BIN_SIN_JQ"
-C_OUT=$(env PATH="$BIN_SIN_JQ:/bin:/usr/bin" bash -c "source '$FIXTURE/scripts/_pipeline-common.sh'; get_harness_version")
+for bin in bash sh sed head cat dirname basename grep tr wc date mkdir rm; do
+    origen=$(command -v "$bin" 2>/dev/null) && ln -sf "$origen" "$BIN_SIN_JQ/$bin"
+done
+if env PATH="$BIN_SIN_JQ" sh -c 'command -v jq' >/dev/null 2>&1; then
+    fail "C-0: el PATH sandbox no logro ocultar jq; C-1 y E-2 no probarian el fallback"
+fi
+C_OUT=$(env PATH="$BIN_SIN_JQ" bash -c "source '$FIXTURE/scripts/_pipeline-common.sh'; get_harness_version")
 C_RC=$?
 if [ "$C_RC" -eq 0 ] && [ "$C_OUT" = "1.2.3" ]; then
     pass "C-1: fallback con sed sin jq -> '1.2.3'"
@@ -182,7 +192,7 @@ if [ -n "$REAL_VERSION" ]; then
         fail "E-1: se esperaba '$REAL_VERSION', se obtuvo '$E1_OUT'"
     fi
 
-    E2_OUT=$(env PATH="$BIN_SIN_JQ:/bin:/usr/bin" bash -c "source '$REPO_ROOT/scripts/_pipeline-common.sh'; get_harness_version")
+    E2_OUT=$(env PATH="$BIN_SIN_JQ" bash -c "source '$REPO_ROOT/scripts/_pipeline-common.sh'; get_harness_version")
     if [ "$E2_OUT" = "$REAL_VERSION" ]; then
         pass "E-2: sin jq, el fallback con sed tambien coincide ($REAL_VERSION)"
     else
