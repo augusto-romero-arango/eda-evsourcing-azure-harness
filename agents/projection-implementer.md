@@ -98,7 +98,7 @@ Registra el `FunctionEndpoint` y sus dependencias en `ComposicionServicios{Domin
 - Registrar una proyeccion como `Inline` en el worker sin justificacion explicita del issue -- excepcion opt-in, MEF-ADR-0034.
 - Abrir una `QuerySession` con un tenant id que no venga de `ITenantResolver`.
 - Duplicar la doctrina del Skill `projections` en este archivo.
-- Recibir el segmento de la ruta del GET como `string` y pasarlo sin el parseo tipado de MEF-ADR-0037 a `LoadAsync`/`AggregateStreamAsync`/`FetchStreamAsync` -- para identidad de uno o de varios componentes; en esta ultima, ademas, aceptar la clave ya concatenada en un unico segmento.
+- Recibir el segmento de la ruta del GET como `string` y pasarlo sin el parseo tipado de MEF-ADR-0037 a `LoadAsync`/`AggregateStreamAsync`/`FetchStreamAsync` -- sea la identidad de uno o de varios componentes. Y, cuando son varios, aceptar la clave **ya concatenada** en un unico segmento en vez de un segmento por componente.
 - Emitir `Create`/`Apply(TEvento, TId)` -- firma no reconocida por el source generator; el evento se descarta de `EventTypes` en silencio (`modelos-marten.md`).
 - Agregar una `ProjectReference` del worker hacia el `.csproj` de un Function App para alcanzar un tipo de evento -- los tipos persistidos llegan unicamente via la `ProjectReference` a `{Dominio}.DomainEvents` (MEF-ADR-0039 decision 4); es el antipatron de habilitacion que `reviewer.md` caza bajo gate (issue #557).
 - Embeber un tipo de `{Dominio}.DomainEvents` como campo del read model (`{TerminoVista}`) -- el record de vista traduce el evento campo a campo; el acoplamiento al tipo de evento se queda en la clase de proyeccion (MEF-ADR-0041 decision 1, que formaliza MEF-ADR-0039 decision 6).

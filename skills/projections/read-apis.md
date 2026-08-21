@@ -69,6 +69,28 @@ public async Task<IActionResult> Run(
 
 El `400` se emite con `BadRequestObjectResult` **y un mensaje** -- misma forma que el `IRequestValidator` de los comandos (`agents/implementer.md`), y lo que pide la documentacion oficial citada por el ADR (*"Invalid input should produce a 400 Bad Request with an appropriate error message"*). Un `BadRequestResult` pelado deja al cliente sin saber que componente de la ruta rechazo el endpoint.
 
+**Identidad de UN componente tipado no-`Guid` (un VO unico)**: mismo mecanismo que el caso `Guid` de arriba -- un unico parseo tipado del segmento de ruta con el parser del propio tipo, `400` explicito si lo rechaza, y la unica salida a string es el `ToString()` de ese mismo tipo (punto unico de conversion simetrico a `guid.ToString()`, MEF-ADR-0037 secciones 1 y 2). Que el segmento de ruta y la clave de stream coincidan es consecuencia de que solo hay un componente que convertir, no una excepcion a la regla:
+
+```csharp
+// ObtenerFichaColaborador/FunctionEndpoint.cs -- identidad VO unico Identificacion
+[Function("ObtenerFichaColaborador")]
+public async Task<IActionResult> Run(
+    [HttpTrigger(AuthorizationLevel.Function, "get", Route = "rrhh/colaboradores/{identificacion}")]
+    HttpRequest req,
+    string identificacion,   // segmento crudo de la ruta -- el unico parseo tipado ocurre abajo
+    CancellationToken ct)
+{
+    if (!Identificacion.TryParse(identificacion, out var identificacionTipada))
+        return new BadRequestObjectResult("La identificacion no es valida");
+
+    await using var session = store.QuerySession(tenantResolver.TenantId);
+    var ficha = await session.LoadAsync<FichaColaborador>(identificacionTipada.ToString(), ct);   // unico ToString(), del propio tipo
+    return ficha is null ? new NotFoundResult() : new OkObjectResult(ficha);
+}
+```
+
+Lo que **si** trae de nuevo esta forma frente al `Guid`: su URL-safety no es automatica -- la fija el `ToString()` del propio tipo, no un formato fijo del runtime --, asi que el componente queda sujeto, por viajar en la URL, al charset *unreserved* de RFC 3986 y al criterio de aceptacion de MEF-ADR-0043 secciones 1.1/1.2 (remision explicita de MEF-ADR-0037 seccion 2; este archivo no reabre esas secciones). Si el VO admite algun caracter fuera de ese conjunto, la invariante se gana en un issue previo dedicado (MEF-ADR-0043 seccion 1.3), nunca en el PR que expone la ruta.
+
 **Clave natural compuesta**: la ruta recibe cada componente tipado por separado, y la clave se reconstruye con el mismo `{Aggregate}.ComputarStreamId(...)` que ya usa el write-side (`agents/implementer.md`) -- nunca una concatenacion propia del endpoint. El GET vive en el Function App del dominio, el mismo ensamblado donde vive el aggregate, asi que ese metodo estatico le es alcanzable sin ceremonia (MEF-ADR-0037 seccion 2):
 
 ```csharp
@@ -93,7 +115,7 @@ public async Task<IActionResult> Run(
 
 **Frontera -- solo cae bajo esta regla el id que ES una identidad de stream** (MEF-ADR-0037 seccion 3). Es el caso de N1, donde el id del read model es el `StreamKey` que Marten resolvio (`TId = string`). Un read model N2 cuyo `TId` lo fija el slicer `Identity<TEvento>(...)` -- un `ResumenEquipo` con `Guid EquipoId`, campo de dominio del payload y no clave de stream ([modelos-marten.md](modelos-marten.md)) -- queda **fuera** del sujeto del ADR: el parseo tipado del borde y su `400` siguen siendo obligatorios, pero lo que recibe `LoadAsync<ResumenEquipo>(equipoId, ct)` es el valor **tipado**, sin `ToString()`. El tipo del argumento lo fija el `TId` de la proyeccion, no esta regla: agregarle un `ToString()` ahi no es una precaucion extra, es pasarle a Marten un id del tipo equivocado.
 
-**Proscrito**: un parametro de ruta `string` cuyo valor -- simple o ya concatenado -- viaje sin parsear hasta el store, el bus o `LoadAsync`/`AggregateStreamAsync`/`FetchStreamAsync`. Un route constraint (`{id:guid}`) no sustituye este parseo: produce `404` en vez de `400` y no normaliza el casing -- advertencia literal de la documentacion oficial de ASP.NET Core sobre route constraints (MEF-ADR-0037 seccion 2). Declararlo por su proposito real -- desambiguar rutas parecidas -- sigue siendo legitimo, pero entonces el parseo con `400` va igual (MEF-ADR-0037 Alt 4).
+**Proscrito**: un parametro de ruta `string` cuyo valor viaje sin parsear hasta el store, el bus o `LoadAsync`/`AggregateStreamAsync`/`FetchStreamAsync` -- sea la identidad de uno o de varios componentes. Proscrito ademas, con la misma severidad, que una clave de **varios** componentes viaje ya concatenada en un unico segmento: ahi el llamador pasa a ser dueno del separador y del orden de los componentes, exactamente lo que el punto unico de conversion existe para evitar -- esta segunda proscripcion nunca alcanza a una identidad de **un solo** componente, donde no hay separador ni orden que el llamador pueda torcer. Un route constraint (`{id:guid}`) no sustituye este parseo: produce `404` en vez de `400` y no normaliza el casing -- advertencia literal de la documentacion oficial de ASP.NET Core sobre route constraints (MEF-ADR-0037 seccion 2). Declararlo por su proposito real -- desambiguar rutas parecidas -- sigue siendo legitimo, pero entonces el parseo con `400` va igual (MEF-ADR-0037 Alt 4).
 
 ## Metodo QUERY (RFC 10008): filtros estructurados y paginacion por cursor
 
