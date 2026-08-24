@@ -240,6 +240,18 @@ EVENTS_LOG_ABS="$PIPELINE_DIR_ABS/events.log"
 
 echo "=== SESSION TOOLING $TIMESTAMP issue:$ISSUE_NUM from-stage:$FROM_STAGE ===" >> "$EVENTS_LOG_ABS"
 
+# --- Captura stream-json de las invocaciones claude -p (issue #689) ---
+# Mismo gate que tdd-pipeline.sh (#645): jq ya es dependencia de facto del lado
+# publicado, pero un consumidor sin jq no debe perder la corrida por esto: los
+# stages caen a --output-format text, identico al comportamiento previo.
+if command -v jq &>/dev/null; then
+    PIPELINE_CAPTURE_STREAM=true
+else
+    PIPELINE_CAPTURE_STREAM=false
+    warn "jq no disponible: los stages corren con --output-format text (sin traza stream-json)"
+    echo "[$(date +%H:%M:%S)] WARN: jq no disponible, captura stream-json deshabilitada -- --output-format text" >> "$EVENTS_LOG_ABS"
+fi
+
 # --- Obtener issue ---
 header "Preparando contexto"
 
@@ -329,6 +341,8 @@ run_agent() {
     local agent="$2"
     local prompt="$3"
     local log_stage="$LOG_DIR_ABS/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_NUM}.log"
+    local stream_file="${log_stage%.log}.stream.jsonl"
+    local stderr_file="${log_stage%.log}.stderr.log"
     local start_ts
     start_ts=$(date +%s)
 
@@ -348,11 +362,19 @@ run_agent() {
 
     local AGENT_TIMEOUT_SECONDS=1800
     local NONINTERACTIVE_SYSTEM="You are running in non-interactive print mode. There is no human to approve anything. You MUST use Write and Edit tools directly to create and modify files at any path including .claude/. Never output text asking for permissions or confirmations -- doing so causes pipeline failure."
-    (cd "$WORKTREE_PATH" && claude -p "$prompt" --model "$AGENT_MODEL" \
-        --permission-mode bypassPermissions \
-        --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
-        --output-format text \
-        >"$log_stage" 2>&1) &
+    if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
+        (cd "$WORKTREE_PATH" && claude -p "$prompt" --model "$AGENT_MODEL" \
+            --permission-mode bypassPermissions \
+            --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
+            --output-format stream-json --verbose \
+            >"$stream_file" 2>"$stderr_file") &
+    else
+        (cd "$WORKTREE_PATH" && claude -p "$prompt" --model "$AGENT_MODEL" \
+            --permission-mode bypassPermissions \
+            --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
+            --output-format text \
+            >"$log_stage" 2>&1) &
+    fi
     local CLAUDE_PID=$!
     (sleep $AGENT_TIMEOUT_SECONDS && kill -9 -$CLAUDE_PID 2>/dev/null && echo "[$(date +%H:%M:%S)] TIMEOUT: $agent supero ${AGENT_TIMEOUT_SECONDS}s" >> "$EVENTS_LOG_ABS") </dev/null >/dev/null 2>&1 &
     local WATCHDOG_PID=$!
@@ -363,6 +385,13 @@ run_agent() {
     kill $WATCHDOG_PID 2>/dev/null || true
     wait $WATCHDOG_PID 2>/dev/null || true
     local elapsed=$(( $(date +%s) - start_ts ))
+
+    # El .log de siempre se deriva del stream+stderr en la MISMA ruta,
+    # exito/fallo/SIGKILL por igual (patron de #645): los greps de
+    # clasificacion de abajo siguen leyendo $log_stage sin cambios.
+    if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
+        derive_stage_log_from_stream "$stream_file" "$stderr_file" "$log_stage"
+    fi
 
     if [ "$CLAUDE_EXIT" -ne 0 ]; then
         local failure_type
@@ -388,12 +417,25 @@ run_agent() {
                 warn "$agent: API error 5xx -- reintentando una vez..."
                 echo "[$(date +%H:%M:%S)] RETRY $agent: API error 5xx" >> "$EVENTS_LOG_ABS"
                 local log_stage_retry="$LOG_DIR_ABS/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_NUM}-retry.log"
+                local stream_file_retry="${log_stage_retry%.log}.stream.jsonl"
+                local stderr_file_retry="${log_stage_retry%.log}.stderr.log"
                 CLAUDE_EXIT=0
-                (cd "$WORKTREE_PATH" && claude -p "$prompt" --model "$AGENT_MODEL" \
-                    --permission-mode bypassPermissions \
-                    --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
-                    --output-format text \
-                    >"$log_stage_retry" 2>&1) || CLAUDE_EXIT=$?
+                if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
+                    (cd "$WORKTREE_PATH" && claude -p "$prompt" --model "$AGENT_MODEL" \
+                        --permission-mode bypassPermissions \
+                        --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
+                        --output-format stream-json --verbose \
+                        >"$stream_file_retry" 2>"$stderr_file_retry") || CLAUDE_EXIT=$?
+                    # El retry escribe su propio stream/stderr y deriva su propio
+                    # -retry.log, sin pisar los archivos del primer intento.
+                    derive_stage_log_from_stream "$stream_file_retry" "$stderr_file_retry" "$log_stage_retry"
+                else
+                    (cd "$WORKTREE_PATH" && claude -p "$prompt" --model "$AGENT_MODEL" \
+                        --permission-mode bypassPermissions \
+                        --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
+                        --output-format text \
+                        >"$log_stage_retry" 2>&1) || CLAUDE_EXIT=$?
+                fi
                 elapsed=$(( $(date +%s) - start_ts ))
                 log_stage="$log_stage_retry"
                 if [ "$CLAUDE_EXIT" -ne 0 ]; then
@@ -416,12 +458,23 @@ run_agent() {
                 warn "$agent: bloqueo por permisos detectado -- reintentando una vez..."
                 echo "[$(date +%H:%M:%S)] RETRY $agent: bloqueo por permisos" >> "$EVENTS_LOG_ABS"
                 local log_stage_perm_retry="$LOG_DIR_ABS/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_NUM}-perm-retry.log"
+                local stream_file_perm_retry="${log_stage_perm_retry%.log}.stream.jsonl"
+                local stderr_file_perm_retry="${log_stage_perm_retry%.log}.stderr.log"
                 CLAUDE_EXIT=0
-                (cd "$WORKTREE_PATH" && claude -p "$prompt" --model "$AGENT_MODEL" \
-                    --permission-mode bypassPermissions \
-                    --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
-                    --output-format text \
-                    >"$log_stage_perm_retry" 2>&1) || CLAUDE_EXIT=$?
+                if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
+                    (cd "$WORKTREE_PATH" && claude -p "$prompt" --model "$AGENT_MODEL" \
+                        --permission-mode bypassPermissions \
+                        --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
+                        --output-format stream-json --verbose \
+                        >"$stream_file_perm_retry" 2>"$stderr_file_perm_retry") || CLAUDE_EXIT=$?
+                    derive_stage_log_from_stream "$stream_file_perm_retry" "$stderr_file_perm_retry" "$log_stage_perm_retry"
+                else
+                    (cd "$WORKTREE_PATH" && claude -p "$prompt" --model "$AGENT_MODEL" \
+                        --permission-mode bypassPermissions \
+                        --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
+                        --output-format text \
+                        >"$log_stage_perm_retry" 2>&1) || CLAUDE_EXIT=$?
+                fi
                 elapsed=$(( $(date +%s) - start_ts ))
                 log_stage="$log_stage_perm_retry"
                 if [ "$CLAUDE_EXIT" -ne 0 ]; then
