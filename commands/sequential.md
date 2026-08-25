@@ -63,7 +63,15 @@ PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
 
 ### 3. Instrucciones de conexion
 
-Responde con:
+Dentro de herdr (`HERDR_ENV=1` en el entorno), el script delega en la interfaz herdr y no hay nada que adjuntar: el batch queda corriendo en un pane de este mismo workspace con el visor en vivo, que salta solo de issue en issue. En ese caso responde con:
+
+```
+Secuencial corriendo en un pane de este workspace (visor en vivo del agente).
+Los issues se procesaran en orden: pipeline -> PR -> merge -> siguiente.
+Usa /work-status para ver el progreso sin salir de aqui.
+```
+
+Fuera de herdr responde con:
 
 ```
 Secuencial lanzado en tmux. Para monitorear:

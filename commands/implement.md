@@ -179,7 +179,14 @@ PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
 
 ### 5. Instrucciones de conexion
 
-Responde con:
+Dentro de herdr (`HERDR_ENV=1` en el entorno), el script delega en la interfaz herdr y no hay nada que adjuntar: el pipeline queda corriendo en un pane de este mismo workspace con el visor en vivo del agente. En ese caso responde con:
+
+```
+Pipeline corriendo en un pane de este workspace (visor en vivo del agente).
+Usa /work-status para ver el progreso sin salir de aqui.
+```
+
+Fuera de herdr responde con:
 
 ```
 Pipeline lanzado en tmux. Para monitorear:
@@ -190,8 +197,8 @@ Usa /work-status para ver el progreso sin salir de aqui.
 
 ## Reglas
 
-- **No esperes a que termine.** El script corre en background dentro de tmux. Devuelve el control inmediatamente.
+- **No esperes a que termine.** El script corre en background (en un pane herdr o una sesion tmux). Devuelve el control inmediatamente.
 - **No implementes nada tu mismo.** Solo lanza el script.
 - **Nunca crees un dominio sin confirmacion explicita del usuario.** La creacion implica Terraform e infraestructura en Azure.
 - El scaffold se ejecuta dentro del worktree del issue (Stage 0), no en main. Todo va en un solo PR.
-- Si tmux no esta instalado, el script lo detecta y muestra el error. No intentes instalarlo.
+- Si tmux no esta instalado (y no estas dentro de herdr), el script lo detecta y muestra el error. No intentes instalarlo.
