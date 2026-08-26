@@ -431,8 +431,20 @@ cmd_single() {
 cmd_tooling() {
     local issue="$1"
     local extra_args="${2:-}"
-    # shellcheck disable=SC2086
-    dispatch_to_pane "tooling #$issue" "$issue" "$SCRIPT_DIR/tooling-pipeline.sh" "$issue" $extra_args
+    # models: el valor crudo de --models (issue #708), como argumento propio y
+    # entrecomillado -- NO concatenado a extra_args. extra_args se expande sin
+    # comillas (lista de flags simples, p. ej. "--from-stage 2") y ahi un id de
+    # modelo completo como 'claude-opus-5[1m]' es un patron glob valido que la
+    # pathname expansion podria alterar. Como argumento propio llega intacto a
+    # build_pane_runner_cmdline, que lo quotea con printf %q hacia el pane.
+    local models="${3:-}"
+    if [ -n "$models" ]; then
+        # shellcheck disable=SC2086
+        dispatch_to_pane "tooling #$issue" "$issue" "$SCRIPT_DIR/tooling-pipeline.sh" "$issue" $extra_args --models "$models"
+    else
+        # shellcheck disable=SC2086
+        dispatch_to_pane "tooling #$issue" "$issue" "$SCRIPT_DIR/tooling-pipeline.sh" "$issue" $extra_args
+    fi
 }
 
 cmd_infra() {
@@ -627,6 +639,7 @@ ${BOLD}Uso (misma superficie que tmux-pipeline.sh):${NC}
   herdr-pipeline.sh 42 --from-stage 3                    Retomar issue #42 desde Stage 3
   herdr-pipeline.sh --pipeline tooling 42                Forzar pipeline tooling
   herdr-pipeline.sh --tooling 42                         Issue de tooling
+  herdr-pipeline.sh --tooling 42 --models 'reviewer=opus'  Modelo por stage (experimentos)
   herdr-pipeline.sh --infra 42                           Issue de infraestructura (IaC)
   herdr-pipeline.sh --scaffold 42 --domain nombre        Scaffold de dominio
   herdr-pipeline.sh --batch 42 43 44                     Secuencial
@@ -667,14 +680,15 @@ main() {
         exit $?
     fi
 
-    # Pre-parseo identico a tmux-pipeline.sh: --scaffold-domain, --pipeline y
-    # --from-stage se extraen de cualquier posicion; --if-exists (que en tmux
-    # decide sobre la sesion existente) no tiene equivalente aqui -- el
+    # Pre-parseo identico a tmux-pipeline.sh: --scaffold-domain, --pipeline,
+    # --from-stage y --models se extraen de cualquier posicion; --if-exists (que
+    # en tmux decide sobre la sesion existente) no tiene equivalente aqui -- el
     # conflicto de "ya hay una corrida" se resuelve con un pane adicional --
     # asi que se consume con un aviso en vez de romper la invocacion.
     local scaffold_extra=""
     local pipeline_override=""
     local from_stage_extra=""
+    local models_spec=""
     local filtered_args=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -692,6 +706,18 @@ main() {
                 [ $# -lt 2 ] && abort "Falta el valor de --from-stage"
                 [[ "$2" =~ ^[0-9]+$ ]] || abort "--from-stage debe ser un numero entero (recibido: '$2')"
                 from_stage_extra="--from-stage $2"
+                shift 2
+                ;;
+            --models)
+                # Sin este caso, --models caeria en filtered_args y el dispatch
+                # de --tooling (que solo reenvia "$1") lo descartaria EN
+                # SILENCIO: la corrida usaria los modelos default mientras el
+                # operador cree que el override del experimento se aplico
+                # (issue #708). A diferencia de tmux-pipeline.sh, aqui el valor
+                # se guarda crudo: el pane no lo re-parsea con un shell, viaja
+                # como argv quoteado con printf %q.
+                [ $# -lt 2 ] && abort "Falta el valor de --models"
+                models_spec="$2"
                 shift 2
                 ;;
             --if-exists)
@@ -722,6 +748,7 @@ main() {
             shift
             [ $# -eq 0 ] && abort "Debes especificar al menos un issue. Uso: --parallel 42 43 44"
             [ -n "$from_stage_extra" ] && abort "--from-stage no es valido con --parallel (seria ambiguo sobre varios issues). Usalo con un unico issue."
+            [ -n "$models_spec" ] && abort "--models no es valido con --parallel (seria ambiguo sobre varios issues). Usalo con un unico issue: herdr-pipeline.sh --tooling <issue> --models 'agente=modelo'"
             require_herdr_context
             if [ -n "$pipeline_override" ]; then
                 cmd_parallel --pipeline "$pipeline_override" "$@"
@@ -733,10 +760,11 @@ main() {
             shift
             require_herdr_context
             [ $# -eq 0 ] && abort "Debes especificar un issue. Uso: --tooling 42"
-            cmd_tooling "$1" "$from_stage_extra"
+            cmd_tooling "$1" "$from_stage_extra" "$models_spec"
             ;;
         --infra)
             shift
+            [ -n "$models_spec" ] && abort "--models todavia no es valido con --infra (iac-pipeline.sh no implementa el flag). Usalo con --tooling: herdr-pipeline.sh --tooling <issue> --models 'agente=modelo'"
             require_herdr_context
             [ $# -eq 0 ] && abort "Debes especificar un issue. Uso: --infra 42"
             cmd_infra "$1" "$from_stage_extra"
@@ -744,6 +772,7 @@ main() {
         --scaffold)
             shift
             [ -n "$from_stage_extra" ] && abort "--from-stage no es valido con --scaffold (scaffold-pipeline.sh no tiene stages retomables)."
+            [ -n "$models_spec" ] && abort "--models no es valido con --scaffold (scaffold-pipeline.sh no implementa el flag)."
             require_herdr_context
             cmd_scaffold "$@"
             ;;
@@ -751,6 +780,7 @@ main() {
             shift
             [ $# -eq 0 ] && abort "Debes especificar al menos un issue. Uso: --batch 42 43 44"
             [ -n "$from_stage_extra" ] && abort "--from-stage no es valido con --batch (seria ambiguo sobre varios issues). Usalo con un unico issue."
+            [ -n "$models_spec" ] && abort "--models no es valido con --batch (seria ambiguo sobre varios issues). Usalo con un unico issue: herdr-pipeline.sh --tooling <issue> --models 'agente=modelo'"
             require_herdr_context
             if [ -n "$pipeline_override" ]; then
                 cmd_batch --pipeline "$pipeline_override" "$@"
@@ -761,6 +791,7 @@ main() {
         [0-9]*)
             if [ $# -gt 1 ]; then
                 [ -n "$from_stage_extra" ] && abort "--from-stage no es valido con multiples issues (se interpretaria como --parallel). Especifica un unico issue."
+                [ -n "$models_spec" ] && abort "--models no es valido con multiples issues (se interpretaria como --parallel). Usa: herdr-pipeline.sh --tooling <issue> --models 'agente=modelo'"
                 warn "Multiples issues sin modo especificado. Usando --parallel."
                 require_herdr_context
                 if [ -n "$pipeline_override" ]; then
@@ -769,6 +800,10 @@ main() {
                     cmd_parallel "$@"
                 fi
             else
+                # El enrutamiento automatico (sin --tooling explicito) puede caer
+                # en tdd-pipeline.sh, que todavia no implementa --models: mismo
+                # rechazo explicito que en tmux-pipeline.sh.
+                [ -n "$models_spec" ] && abort "--models solo esta soportado hoy via --tooling (el enrutamiento automatico puede caer en tdd-pipeline.sh, que no implementa el flag). Usa: herdr-pipeline.sh --tooling <issue> --models 'agente=modelo'"
                 require_herdr_context
                 local combined_extra="$scaffold_extra"
                 if [ -n "$from_stage_extra" ]; then

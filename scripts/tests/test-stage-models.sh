@@ -1,0 +1,367 @@
+#!/usr/bin/env bash
+# test-stage-models.sh -- Tests del mecanismo de asignacion de modelo por stage
+# (--models, issue #708) en scripts/_pipeline-common.sh y scripts/tmux-pipeline.sh.
+#
+# Cubre:
+#   parse_stage_models    - spec vacio (no --models: comportamiento actual
+#                            intacto), spec valido de 1 y N entradas, y las tres
+#                            formas de entrada malformada (CA-1: sin '=', clave o
+#                            valor vacio, agente repetido) -- todas abortan con un
+#                            mensaje en PIPELINE_STAGE_MODELS_ERROR, sin imprimir
+#                            nada por si misma.
+#   resolve_stage_model    - override por clave exacta, sin match cae al default,
+#                            y sin --models (mapa vacio) siempre el default (CA-2:
+#                            byte a byte el comportamiento previo al flag).
+#   format_stage_models_for_log - formato de auditoria (CA-4), vacio sin mapa.
+#   tmux-pipeline.sh        - --tooling reenvia --models intacto al send-keys
+#                            (CA-3); el resto de los modos lo rechazan con
+#                            mensaje explicito en vez de tragarselo en silencio.
+#   herdr-pipeline.sh       - la otra mitad de CA-3: dentro de un pane herdr,
+#                            tmux-pipeline.sh delega con `exec herdr-pipeline.sh
+#                            "$@"`, asi que el flag tiene que sobrevivir tambien
+#                            ahi -- reenvio al pane run (con el valor intacto,
+#                            sin las comillas que solo sirven al send-keys de
+#                            tmux) y el mismo rechazo explicito por modo.
+#
+# Uso: scripts/tests/test-stage-models.sh
+# Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+PASS=0
+FAIL=0
+
+pass() { echo "  PASS: $1"; PASS=$((PASS+1)); }
+fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
+
+# Las funciones viven en _pipeline-common.sh; sourcearlo solo las define (es una
+# libreria, no ejecuta nada), asi que es seguro incluso dentro del repo de Mefisto.
+set +u
+source "$REPO_ROOT/scripts/_pipeline-common.sh" 2>/dev/null
+set -u
+
+echo "[1] parse_stage_models: spec vacio deja el mapa vacio y no aborta (CA-2: sin --models, nada cambia)"
+if parse_stage_models ""; then pass "spec vacio retorna 0"; else fail "spec vacio no deberia abortar"; fi
+if [ -z "$PIPELINE_STAGE_MODELS" ]; then pass "mapa vacio"; else fail "mapa deberia quedar vacio (obtenido '$PIPELINE_STAGE_MODELS')"; fi
+
+echo ""
+echo "[2] parse_stage_models: spec valido de una entrada"
+if parse_stage_models "reviewer=opus"; then pass "una entrada retorna 0"; else fail "una entrada valida no deberia abortar"; fi
+if [ "$PIPELINE_STAGE_MODELS" = "reviewer=opus" ]; then pass "mapa contiene la entrada"; else fail "mapa incorrecto: '$PIPELINE_STAGE_MODELS'"; fi
+
+echo ""
+echo "[3] parse_stage_models: spec valido de N entradas, separadas por coma"
+if parse_stage_models "writer=sonnet,reviewer=opus"; then pass "dos entradas retorna 0"; else fail "dos entradas validas no deberia abortar"; fi
+R=$(resolve_stage_model "writer" "default-no-usado")
+if [ "$R" = "sonnet" ]; then pass "writer resuelve a sonnet"; else fail "writer deberia resolver a sonnet (obtenido '$R')"; fi
+R=$(resolve_stage_model "reviewer" "default-no-usado")
+if [ "$R" = "opus" ]; then pass "reviewer resuelve a opus"; else fail "reviewer deberia resolver a opus (obtenido '$R')"; fi
+
+echo ""
+echo "[4] parse_stage_models: id de modelo completo con caracteres especiales (sin allowlist de nombres)"
+if parse_stage_models 'writer=claude-opus-5[1m]'; then pass "id completo con [] retorna 0"; else fail "un id de modelo completo no deberia abortar (sin allowlist propia)"; fi
+R=$(resolve_stage_model "writer" "default-no-usado")
+if [ "$R" = "claude-opus-5[1m]" ]; then pass "resuelve el id completo tal cual"; else fail "deberia resolver 'claude-opus-5[1m]' (obtenido '$R')"; fi
+
+echo ""
+echo "[5] parse_stage_models: entrada sin '=' aborta con mensaje claro (CA-1)"
+if parse_stage_models "reviewer-opus"; then fail "entrada sin '=' no deberia retornar 0"; else pass "entrada sin '=' aborta"; fi
+if printf '%s' "$PIPELINE_STAGE_MODELS_ERROR" | grep -q "reviewer-opus"; then pass "el error nombra la entrada malformada"; else fail "PIPELINE_STAGE_MODELS_ERROR no menciona la entrada: '$PIPELINE_STAGE_MODELS_ERROR'"; fi
+
+echo ""
+echo "[6] parse_stage_models: clave o valor vacio aborta (CA-1)"
+if parse_stage_models "=opus"; then fail "clave vacia no deberia retornar 0"; else pass "clave vacia aborta"; fi
+if parse_stage_models "reviewer="; then fail "valor vacio no deberia retornar 0"; else pass "valor vacio aborta"; fi
+
+echo ""
+echo "[7] parse_stage_models: agente repetido aborta (CA-1)"
+if parse_stage_models "writer=sonnet,writer=opus"; then fail "agente repetido no deberia retornar 0"; else pass "agente repetido aborta"; fi
+if printf '%s' "$PIPELINE_STAGE_MODELS_ERROR" | grep -q "writer"; then pass "el error nombra el agente repetido"; else fail "PIPELINE_STAGE_MODELS_ERROR no menciona 'writer': '$PIPELINE_STAGE_MODELS_ERROR'"; fi
+
+echo ""
+echo "[8] resolve_stage_model: sin match en el mapa, cae al default"
+parse_stage_models "reviewer=opus" >/dev/null
+R=$(resolve_stage_model "writer" "sonnet")
+if [ "$R" = "sonnet" ]; then pass "writer sin override resuelve al default"; else fail "deberia caer al default 'sonnet' (obtenido '$R')"; fi
+
+echo ""
+echo "[9] resolve_stage_model: sin --models (mapa vacio), siempre el default -- byte a byte el comportamiento previo (CA-2)"
+parse_stage_models "" >/dev/null
+R=$(resolve_stage_model "reviewer" "opus")
+if [ "$R" = "opus" ]; then pass "reviewer sin mapa resuelve al default 'opus'"; else fail "deberia resolver al default (obtenido '$R')"; fi
+R=$(resolve_stage_model "writer" "sonnet")
+if [ "$R" = "sonnet" ]; then pass "writer sin mapa resuelve al default 'sonnet'"; else fail "deberia resolver al default (obtenido '$R')"; fi
+R=$(resolve_stage_model "merge-writer" "sonnet")
+if [ "$R" = "sonnet" ]; then pass "la etapa de merge (default '*' del case) tambien resuelve al default"; else fail "deberia resolver al default (obtenido '$R')"; fi
+
+echo ""
+echo "[10] format_stage_models_for_log: vacio sin mapa, formateado con mapa (CA-4)"
+parse_stage_models "" >/dev/null
+R=$(format_stage_models_for_log)
+if [ -z "$R" ]; then pass "sin mapa, formato vacio"; else fail "deberia ser vacio sin --models (obtenido '$R')"; fi
+parse_stage_models "writer=sonnet,reviewer=opus" >/dev/null
+R=$(format_stage_models_for_log)
+if [ "$R" = "writer=sonnet, reviewer=opus" ]; then pass "formato de auditoria: 'writer=sonnet, reviewer=opus'"; else fail "formato incorrecto: '$R'"; fi
+
+echo ""
+echo "----------------------------------------"
+echo "  _pipeline-common.sh: $PASS pass, $FAIL fail (hasta aqui)"
+echo "----------------------------------------"
+
+# --- tmux-pipeline.sh: reenvio/rechazo de --models por modo (CA-3) -----------
+#
+# Mismo arnes que test-tmux-preparse.sh: consumidor falso (git init sin
+# .claude-plugin/plugin.json) para pasar el guard defensivo, stub de tmux en
+# PATH que nunca toca un servidor real, y MEFISTO_UI=tmux para no delegar a la
+# interfaz herdr si el test corre dentro de un pane herdr.
+export MEFISTO_UI=tmux
+TMUX_SCRIPT="$REPO_ROOT/scripts/tmux-pipeline.sh"
+
+FAKE_CONSUMER="$(mktemp -d)"
+TMP_DIR="$(mktemp -d)"
+FAKE_BIN="$TMP_DIR/bin"
+mkdir -p "$FAKE_BIN"
+trap 'rm -rf "$FAKE_CONSUMER" "$TMP_DIR"' EXIT
+
+(cd "$FAKE_CONSUMER" && git init -q)
+
+cat > "$FAKE_BIN/tmux" <<'STUB'
+#!/usr/bin/env bash
+set -u
+echo "tmux $*" >> "$TMUX_STUB_LOG"
+case "${1:-}" in
+    has-session)
+        exit 1
+        ;;
+    list-panes)
+        for a in "$@"; do
+            if [ "$a" = "#{pane_dead}" ]; then
+                echo "0"
+                exit 0
+            fi
+        done
+        echo "%0"
+        ;;
+    split-window)
+        echo "%1"
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+STUB
+chmod +x "$FAKE_BIN/tmux"
+
+export TMUX_STUB_LOG="$TMP_DIR/tmux.log"
+
+LAST_STDOUT=""
+LAST_STDERR=""
+LAST_RC=0
+
+run_wrapper() {
+    : > "$TMUX_STUB_LOG"
+    local out="$TMP_DIR/stdout" err="$TMP_DIR/stderr"
+    (
+        cd "$FAKE_CONSUMER" || exit 99
+        PATH="$FAKE_BIN:$PATH" "$TMUX_SCRIPT" "$@"
+    ) </dev/null >"$out" 2>"$err"
+    LAST_RC=$?
+    LAST_STDOUT=$(cat "$out")
+    LAST_STDERR=$(cat "$err")
+}
+
+echo ""
+echo "[11] --tooling reenvia --models intacto al send-keys (CA-3)"
+run_wrapper --tooling 253 --models "writer=sonnet,reviewer=opus"
+if [ "$LAST_RC" -eq 0 ]; then pass "--tooling + --models corre sin abortar (rc=$LAST_RC)"; else fail "--tooling + --models no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
+if grep -qF "253 --models 'writer=sonnet,reviewer=opus'" "$TMUX_STUB_LOG"; then
+    pass "send-keys incluye el issue y --models con comillas simples intacto"
+else
+    fail "send-keys no compuso '253 --models ...' -- log: $(cat "$TMUX_STUB_LOG")"
+fi
+
+echo ""
+echo "[12] --tooling combina --from-stage y --models en orden"
+run_wrapper --tooling 253 --from-stage 2 --models "reviewer=opus"
+if [ "$LAST_RC" -eq 0 ]; then pass "combinado corre sin abortar"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
+if grep -qF "253 --from-stage 2 --models 'reviewer=opus'" "$TMUX_STUB_LOG"; then
+    pass "send-keys combina --from-stage y --models en orden"
+else
+    fail "orden incorrecto -- log: $(cat "$TMUX_STUB_LOG")"
+fi
+
+echo ""
+echo "[13] --models sin valor aborta con mensaje claro"
+run_wrapper --tooling 253 --models
+if [ "$LAST_RC" -eq 1 ]; then pass "--models sin valor aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+if printf '%s' "$LAST_STDERR" | grep -q "Falta el valor de --models"; then pass "mensaje: falta el valor"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+
+echo ""
+echo "[14] --models se rechaza (nunca se traga en silencio) en modos sin soporte todavia"
+
+run_wrapper --infra 253 --models "writer=sonnet"
+if [ "$LAST_RC" -eq 1 ]; then pass "--infra + --models aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+if printf '%s' "$LAST_STDERR" | grep -q "no es valido con --infra"; then pass "mensaje: no valido con --infra"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+
+run_wrapper --scaffold 253 --domain miDominio --models "writer=sonnet"
+if [ "$LAST_RC" -eq 1 ]; then pass "--scaffold + --models aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+if printf '%s' "$LAST_STDERR" | grep -q "no es valido con --scaffold"; then pass "mensaje: no valido con --scaffold"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+
+run_wrapper --batch 253 254 --models "writer=sonnet" --pipeline tooling
+if [ "$LAST_RC" -eq 1 ]; then pass "--batch + --models aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+if printf '%s' "$LAST_STDERR" | grep -q "no es valido con --batch"; then pass "mensaje: no valido con --batch"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+
+run_wrapper --parallel 253 254 --models "writer=sonnet" --pipeline tooling
+if [ "$LAST_RC" -eq 1 ]; then pass "--parallel + --models aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+if printf '%s' "$LAST_STDERR" | grep -q "no es valido con --parallel"; then pass "mensaje: no valido con --parallel"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+
+run_wrapper --attach tooling-pipeline-253 --models "writer=sonnet"
+if [ "$LAST_RC" -eq 1 ]; then pass "--attach + --models aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+if printf '%s' "$LAST_STDERR" | grep -q "no aplica a --attach"; then pass "mensaje: no aplica a --attach"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+
+run_wrapper 253 --models "writer=sonnet" --pipeline tooling
+if [ "$LAST_RC" -eq 1 ]; then pass "issue suelto (sin --tooling) + --models aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+if printf '%s' "$LAST_STDERR" | grep -q "solo esta soportado hoy via --tooling"; then pass "mensaje: solo soportado via --tooling"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+
+# --- herdr-pipeline.sh: la otra mitad de CA-3 --------------------------------
+#
+# Dentro de un pane herdr, tmux-pipeline.sh hace `exec herdr-pipeline.sh "$@"`
+# ANTES de su propio pre-parseo: si herdr-pipeline.sh no conoce --models, el
+# flag cae en filtered_args y el dispatch de --tooling (que solo reenvia "$1")
+# lo descarta en silencio -- la corrida usaria los modelos default mientras el
+# reporte del experimento le atribuye el resultado al override.
+#
+# Arnes de test-herdr-parallel.sh: stub de `herdr` que registra cada invocacion
+# y responde JSON determinista, stub de `gh`, y contexto HERDR_* falso.
+
+export HERDR_STUB_LOG="$TMP_DIR/herdr-invocations.log"
+export HERDR_STUB_COUNTER="$TMP_DIR/herdr-pane-counter"
+HERDR_SCRIPT="$REPO_ROOT/scripts/herdr-pipeline.sh"
+
+cat > "$FAKE_BIN/herdr" <<'STUB'
+#!/usr/bin/env bash
+set -u
+echo "herdr $*" >> "$HERDR_STUB_LOG"
+case "${1:-} ${2:-}" in
+    "pane split")
+        n=$(cat "$HERDR_STUB_COUNTER" 2>/dev/null || echo 0)
+        n=$((n + 1))
+        echo "$n" > "$HERDR_STUB_COUNTER"
+        echo "{\"result\":{\"pane\":{\"pane_id\":\"w1:p$n\"}}}"
+        ;;
+    "pane get")
+        echo '{"result":{"pane":{"pane_id":"stub"}}}'
+        ;;
+    "pane process-info")
+        echo '{"result":{"process_info":{"shell_pid":100,"foreground_process_group_id":100}}}'
+        ;;
+    *)
+        echo '{"result":{"type":"ok"}}'
+        ;;
+esac
+STUB
+chmod +x "$FAKE_BIN/herdr"
+
+cat > "$FAKE_BIN/gh" <<'STUB'
+#!/usr/bin/env bash
+set -u
+case "${3:-}" in
+    253|254) printf 'OPEN|tipo:tooling\n' ;;
+    *)       exit 1 ;;
+esac
+STUB
+chmod +x "$FAKE_BIN/gh"
+
+run_herdr() {
+    : > "$HERDR_STUB_LOG"
+    echo 0 > "$HERDR_STUB_COUNTER"
+    local out="$TMP_DIR/stdout" err="$TMP_DIR/stderr"
+    (
+        cd "$FAKE_CONSUMER" || exit 99
+        env -u MEFISTO_UI \
+            PATH="$FAKE_BIN:$PATH" \
+            HERDR_ENV=1 HERDR_PANE_ID="w1:p0" HERDR_WORKSPACE_ID="w1" \
+            HERDR_STUB_LOG="$HERDR_STUB_LOG" HERDR_STUB_COUNTER="$HERDR_STUB_COUNTER" \
+            "$HERDR_SCRIPT" "$@"
+    ) </dev/null >"$out" 2>"$err"
+    LAST_RC=$?
+    LAST_STDOUT=$(cat "$out")
+    LAST_STDERR=$(cat "$err")
+}
+
+echo ""
+echo "[15] herdr: --tooling reenvia --models al pane run (CA-3 dentro de herdr)"
+run_herdr --tooling 253 --models "writer=sonnet,reviewer=opus"
+HERDR_CALLS=$(cat "$HERDR_STUB_LOG")
+if [ "$LAST_RC" -eq 0 ]; then pass "--tooling + --models corre sin abortar (rc=$LAST_RC)"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
+# build_pane_runner_cmdline quotea cada argv con printf %q, que escapa la coma
+# como '\,' -- el shell del pane la deshace al ejecutar. Se compara contra la
+# linea con los backslashes removidos: lo que importa es que el argumento
+# --models este y su valor sea el que se paso, no la forma del escape.
+HERDR_CALLS_UNQ=$(printf '%s' "$HERDR_CALLS" | tr -d '\\')
+if printf '%s' "$HERDR_CALLS_UNQ" | grep -qF -- "--models writer=sonnet,reviewer=opus"; then
+    pass "el pane run lleva --models con el valor intacto y SIN comillas literales"
+else
+    fail "el pane run no lleva --models (se perdio en el dispatch) -- log: $HERDR_CALLS"
+fi
+if printf '%s' "$HERDR_CALLS" | grep -qF -- "--models 'writer=sonnet,reviewer=opus'"; then
+    fail "el valor viaja con comillas simples literales (herdr no re-parsea con un shell, printf %q ya lo quotea)"
+else
+    pass "sin comillas simples literales en el argv del pane"
+fi
+
+echo ""
+echo "[16] herdr: --tooling combina --from-stage y --models"
+run_herdr --tooling 253 --from-stage 2 --models "reviewer=opus"
+HERDR_CALLS=$(cat "$HERDR_STUB_LOG")
+if [ "$LAST_RC" -eq 0 ]; then pass "combinado corre sin abortar"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
+if printf '%s' "$HERDR_CALLS" | grep -qF -- "--from-stage 2" && printf '%s' "$HERDR_CALLS" | grep -qF -- "--models reviewer=opus"; then
+    pass "el pane run lleva los dos flags"
+else
+    fail "falta alguno de los dos flags -- log: $HERDR_CALLS"
+fi
+
+echo ""
+echo "[17] herdr: un id de modelo con caracteres de glob llega intacto"
+run_herdr --tooling 253 --models 'writer=claude-opus-5[1m]'
+HERDR_CALLS=$(cat "$HERDR_STUB_LOG")
+HERDR_CALLS_UNQ=$(printf '%s' "$HERDR_CALLS" | tr -d '\\')
+if printf '%s' "$HERDR_CALLS_UNQ" | grep -qF -- "--models writer=claude-opus-5[1m]"; then
+    pass "'claude-opus-5[1m]' sobrevive (no lo toca la pathname expansion)"
+else
+    fail "el id de modelo se altero -- log: $HERDR_CALLS"
+fi
+
+echo ""
+echo "[18] herdr: --models sin valor y rechazo por modo (nunca silencio)"
+run_herdr --tooling 253 --models
+if [ "$LAST_RC" -eq 1 ]; then pass "--models sin valor aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+if printf '%s' "$LAST_STDERR" | grep -q "Falta el valor de --models"; then pass "mensaje: falta el valor"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+
+run_herdr --infra 253 --models "writer=sonnet"
+if [ "$LAST_RC" -eq 1 ]; then pass "--infra + --models aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+if printf '%s' "$LAST_STDERR" | grep -q -- "--infra"; then pass "mensaje: nombra --infra"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+
+run_herdr --parallel 253 254 --models "writer=sonnet" --pipeline tooling
+if [ "$LAST_RC" -eq 1 ]; then pass "--parallel + --models aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+if printf '%s' "$(cat "$HERDR_STUB_LOG")" | grep -q "pane run"; then fail "no deberia despachar ningun pane"; else pass "ningun pane despachado"; fi
+
+run_herdr --batch 253 254 --models "writer=sonnet" --pipeline tooling
+if [ "$LAST_RC" -eq 1 ]; then pass "--batch + --models aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+
+run_herdr 253 --models "writer=sonnet" --pipeline tooling
+if [ "$LAST_RC" -eq 1 ]; then pass "issue suelto (sin --tooling) + --models aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+if printf '%s' "$LAST_STDERR" | grep -q -- "--tooling"; then pass "mensaje: apunta a --tooling"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+
+echo ""
+echo "----------------------------------------"
+echo "  Resumen: $PASS pass, $FAIL fail"
+echo "----------------------------------------"
+
+if [ "$FAIL" -gt 0 ]; then
+    exit 1
+fi
+exit 0
