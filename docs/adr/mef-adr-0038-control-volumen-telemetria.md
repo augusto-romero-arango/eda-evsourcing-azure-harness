@@ -11,7 +11,9 @@
   (chequeos del reviewer) -- en su version original este ADR no tocaba ningun agente. La enmienda
   del issue #680 (seccion 9, flip `EnableTraceBasedLogsSampler` del seam read-side) es la unica que
   se aparta de ese patron: propaga en el mismo cambio a `projections-scaffolder` y a los chequeos
-  del `reviewer`. Muda integramente la seccion
+  del `reviewer`. La enmienda del issue #700 extiende la seccion 9 al write-side (mecanica
+  ratio-dependiente, no estructural, sin el filtro de la seccion 5) y propaga en el mismo cambio a
+  `domain-scaffolder`. Muda integramente la seccion
   "Observabilidad" de MEF-ADR-0003 (que queda como referencia, sin doctrina duplicada) y enmienda
   MEF-ADR-0034 (seccion 10 puntos 3 y 4, y la aceptacion del costo del Container App 24/7). Cross-referencia
   MEF-ADR-0015 (precedente de delegacion mecanismo-del-marco/valor-del-consumidor), MEF-ADR-0018
@@ -284,6 +286,14 @@ independiente de `Mode`: se fija dentro del callback y sobrevive la asignacion p
 que hace el paquete -- a diferencia de otras opciones de `Durability` que si dependen del `Mode`
 resultante y que este ADR no toca.
 
+**El flip de logs (seccion 9) tambien aplica en este lado (issue #700).** Sin el filtro estructural
+de la seccion 5 (exclusivo del worker), la supresion de `LogRecord` por la decision de muestreo de
+trazas depende enteramente del `ratio` de arriba: con el default `1.0` el flip no mueve volumen, con
+un ratio fraccionario los `LogError` emitidos dentro de un span no muestreado se pierden en
+proporcion al ratio hasta que el flip los desacopla ("Extension al write-side", seccion 9).
+`domain-scaffolder` instala el mismo `o.EnableTraceBasedLogsSampler = false` que
+`projections-scaffolder`, con su propio guardrail en `ComposicionContenedorTests` (MEF-ADR-0029).
+
 ### 7. `host.json`: eliminar el bloque inerte de `samplingSettings`
 
 El `host.json` que `domain-scaffolder` genera conserva, hasta este ADR, un bloque
@@ -317,12 +327,15 @@ Este ADR **acepta la subcuenta** como costo del control de volumen: es preferibl
 subestimado y consistente a no tener ningun control de volumen porque la unica alternativa que
 extrapola no es componible con el resto de la doctrina de este ADR.
 
-### 9. Read-side: logs de error desacoplados del sampler de trazas (`EnableTraceBasedLogsSampler`)
+### 9. Logs de error desacoplados del sampler de trazas (`EnableTraceBasedLogsSampler`)
 
-Exclusivo del worker de proyecciones, mismo alcance que la seccion 5: el filtro de esa seccion
-resuelve el volumen de **trazas** del polling del daemon, pero deja un efecto colateral no evaluado
-hasta ahora sobre los **logs** -- llamadas a `ILogger` emitidas mientras un span descartado esta
-activo.
+Nacio acotado al worker de proyecciones (issue #680), mismo alcance que la seccion 5: el filtro de
+esa seccion resuelve el volumen de **trazas** del polling del daemon, pero deja un efecto colateral
+no evaluado hasta ese issue sobre los **logs** -- llamadas a `ILogger` emitidas mientras un span
+descartado esta activo. El issue #700 extiende esta seccion al write-side ("Extension al write-side"
+mas abajo): a diferencia del read-side, ese lado no tiene ningun filtro estructural de spans (la
+seccion 5 es exclusiva del worker), asi que el mismo acoplamiento logs-trazas ahi depende
+enteramente del `ratio` de muestreo, no de un span filtrado por nombre.
 
 `Azure.Monitor.OpenTelemetry.Exporter` (`UseAzureMonitorExporter()`) expone
 `AzureMonitorExporterOptions.EnableTraceBasedLogsSampler`, con default `true` -- verificado por
@@ -371,7 +384,7 @@ services.AddOpenTelemetry()
     .ConfigureResource(...)
     .WithTracing(...)
     .UseAzureMonitorExporter(o => o.EnableTraceBasedLogsSampler = false)
-    .WithTracing(tracing => tracing.SetSampler(/* seccion 5 */));
+    .WithTracing(tracing => tracing.SetSampler(/* seccion 5 (read-side) o seccion 6 (write-side) */));
 ```
 
 Con el flip en `false`, `ExporterRegistrationHostedService` instala un `BatchLogRecordExportProcessor`
@@ -405,14 +418,29 @@ importancia:
    irrelevante aqui, porque el segundo `.WithTracing(...)` de la seccion 3 pisa igual cualquier
    sampler que el exporter instale.
 
+El write-side (`domain-scaffolder`, issue #700) comparte la primera consecuencia sin cambio: el
+`Program.cs` que ese agente genera arma el host con `FunctionsApplication.CreateBuilder(args)`, que
+igual que `Host.CreateApplicationBuilder(args)` del worker construye sobre el Generic Host de .NET e
+incluye variables de entorno como fuente de `IConfiguration` -- **no verificado por lectura de
+fuente en este cambio** (a diferencia del read-side, reverificado contra el tag 1.8.3 arriba);
+reverificar si una version futura de `Microsoft.Azure.Functions.Worker` deja de construir el host
+por ese camino. Las consecuencias 2 y 3 aplican igual en ambos lados.
+
 **Extension de la frontera mecanismo/valor (seccion 1).** Este flip es **mecanismo del marco**, no
-opt-in -- misma clase que el filtro de la seccion 5, y por la misma razon (MEF-ADR-0018: unico
-proceso con daemon, el unico donde este acoplamiento logs-trazas produce perdida real): ningun
-consumidor deberia tener que pedirlo, y ninguno deberia poder revertirlo declarando una opcion. Lo
-que **si** sigue siendo valor del consumidor son dos ejes ahora independientes entre si: el ratio de
-trazas (`TELEMETRY_SAMPLING_RATIO`, seccion 1, sin cambios -- el flip no toca la decision de muestreo
-de trazas, solo si los logs la heredan) y el nivel de `ILogger` (filtering estandar de .NET), que a
-partir de este flip es el **unico** control de volumen de logs que le queda al consumidor.
+opt-in, en los dos lados (read-side y write-side, issue #700): ningun consumidor deberia tener que
+pedirlo, y ninguno deberia poder revertirlo declarando una opcion. La razon difiere por lado. En el
+read-side es misma clase que el filtro de la seccion 5, y por la misma razon (MEF-ADR-0018: unico
+proceso con daemon, el unico donde ese filtro estructural deja el acoplamiento logs-trazas
+produciendo la perdida medida arriba). En el write-side no hay ningun filtro estructural que motive
+la exclusividad -- el acoplamiento logs-trazas ahi es directamente proporcional al
+`TELEMETRY_SAMPLING_RATIO` que cada consumidor declara (seccion 6): dejar el flip como opt-in
+trasladaria al consumidor una decision que no puede tomar de forma informada, porque nadie declara
+un ratio fraccionario esperando perder tambien logs de error en esa misma proporcion. Lo que **si**
+sigue siendo valor del consumidor, en ambos lados, son dos ejes ahora independientes entre si: el
+ratio de trazas (`TELEMETRY_SAMPLING_RATIO`, seccion 1, sin cambios -- el flip no toca la decision de
+muestreo de trazas, solo si los logs la heredan) y el nivel de `ILogger` (filtering estandar de
+.NET), que a partir de este flip es el **unico** control de volumen de logs que le queda al
+consumidor.
 
 **Por que el volumen no se dispara con los defaults del canon.** Con `TELEMETRY_SAMPLING_RATIO=1.0`
 (default, seccion 1) y `ILogger` en `Information` (default de la plantilla `dotnet new worker`), el
@@ -424,6 +452,25 @@ consumidor con `TELEMETRY_SAMPLING_RATIO` fraccionario: antes de este flip, un r
 recortaba logs (por herencia de la decision de trazas); despues, los logs quedan desacoplados del
 ratio por completo, y acotarlos pasa a ser exclusivamente valor del consumidor via el filtering de
 niveles de `ILogger` -- coherente con la frontera de la seccion 1, no una excepcion a ella.
+
+**Extension al write-side (issue #700).** La seccion 5 (filtro estructural del span de polling) es
+exclusiva del worker de proyecciones -- ninguna Function App corre un daemon (seccion 6), asi que el
+mecanismo de esta seccion actua distinto ahi: la supresion de `LogRecord` no depende de ningun span
+filtrado por nombre, depende directamente del `ratio` de `TELEMETRY_SAMPLING_RATIO` (seccion 1/6) --
+cualquier span que `TraceIdRatioBasedSampler` decida no muestrear deja sus `LogRecord` sin
+`Recorded`, y `LogFilteringProcessor` los descarta igual que en el read-side, sin que exista ningun
+filtro previo que los proteja. Con el default `1.0` (seccion 1) el delta es cero -- todo span ya
+queda `Recorded` --, pero un consumidor con `TELEMETRY_SAMPLING_RATIO` fraccionario (valor soportado,
+seccion 1) pierde en silencio los `LogError` que caen dentro de un span no muestreado: handlers de
+comando, el propio Wolverine, Marten.
+
+Dato parcial de campo (Bitakora.ControlAsistencia, motivo original del draft de este issue): las 810
+excepciones del `DurabilityAgent` de Wolverine **si** llegaron a `exceptions` -- consistente con que
+esos logs se emitieron fuera de un span muestreado, o con el ratio en `1.0` en ese momento; sin el
+flip, esa garantia dependia de esa circunstancia, no de una propiedad del wiring. `domain-scaffolder`
+instala el mismo flip que `projections-scaffolder` -- mismo punto de wiring, mismo overload de
+opciones (`Decision` arriba) -- con su propio guardrail en `ComposicionContenedorTests`
+(MEF-ADR-0029).
 
 **Guardrail.** Mismo principio que la seccion 4 -- la garantia no es el comentario del seam, es un
 test que falla si el flip desaparece: el config-test del worker
@@ -439,6 +486,16 @@ exactamente cuando el flip desaparece, que es la unica garantia que esta seccion
 `ServiceProvider` no necesita registrar `IConfiguration` a mano: el SDK de OpenTelemetry hace
 `TryAddSingleton<IConfiguration>` con un builder de variables de entorno cuando no hay host detras
 (por eso el mismo camino resuelve tambien el `IOptionsMonitor` que el exporter consulta por dentro).
+
+**Guardrail del write-side (issue #700).** Mismo principio, aplicado por `domain-scaffolder`: el
+test de composicion del dominio (`ComposicionContenedorTests`, MEF-ADR-0029) resuelve
+`IOptions<AzureMonitorExporterOptions>` desde el `ServiceProvider` real que construye
+`AgregarServicios{PascalCase}` y afirma `EnableTraceBasedLogsSampler == false` -- mismo oraculo,
+mismo paquete (`Azure.Monitor.OpenTelemetry.Exporter`, pin propio `1.8.2` de MEF-ADR-0003 para el
+write-side). No se repitio la ejecucion propia por separado para este pin: el default de
+`EnableTraceBasedLogsSampler` y el comportamiento de `LogFilteringProcessor` son el mismo codigo
+fuente en toda la linea `1.8.x` (ver "Evidencia de campo" arriba, mismo default confirmado desde
+`1.8.1`).
 
 ## Alternativas consideradas
 
@@ -508,9 +565,10 @@ todavia no se manifesto.
   overload sin argumentos** (seccion 9): la seccion `AzureMonitorExporter` de la configuracion deja de
   bindearse y la connection string queda resolviendose unicamente via
   `IConfiguration[APPLICATIONINSIGHTS_CONNECTION_STRING]` -- suficiente con el host que genera
-  `projections-scaffolder` (`Host.CreateApplicationBuilder`), pero un camino unico: un worker cuyo host
-  no exponga las variables de entorno en `IConfiguration` perderia la exportacion entera sin ningun
-  error visible.
+  `projections-scaffolder` (`Host.CreateApplicationBuilder`) y con el que genera `domain-scaffolder`
+  (`FunctionsApplication.CreateBuilder`, issue #700), pero un camino unico en ambos lados: un host
+  que no exponga las variables de entorno en `IConfiguration` perderia la exportacion entera sin
+  ningun error visible.
 
 ## Referencias
 
@@ -601,3 +659,17 @@ todavia no se manifesto.
   overload (el de callback no registra `DefaultAzureMonitorExporterOptions`), y por eso el mismo
   cambio enmienda el punto 3 de la seccion 10 de MEF-ADR-0034 y su referencia [17], donde la custodia
   de la connection string se apoyaba en el overload sin argumentos.
+- 2026-08-26: extendida la seccion 9 (issue #700, propagada a `domain-scaffolder`) al write-side: a
+  diferencia del worker, ese lado no instala ningun filtro estructural de spans (la seccion 5 es
+  exclusiva del worker), asi que sin el flip la supresion de `LogRecord` dependia enteramente de
+  `TELEMETRY_SAMPLING_RATIO` -- con el default `1.0` sin efecto, con un ratio fraccionario (valor
+  soportado del consumidor) los `LogError` emitidos dentro de spans no muestreados (handlers,
+  Wolverine, Marten) se perdian en proporcion al ratio. `domain-scaffolder` instala el mismo flip que
+  `projections-scaffolder`, mismo punto de wiring y mismo overload de opciones, con guardrail propio
+  en `ComposicionContenedorTests` (MEF-ADR-0029) sobre el valor resuelto de
+  `AzureMonitorExporterOptions`. Extiende ademas la seccion 6 (referencia cruzada al flip junto al
+  sampler de solo-ratio y el durability agent apagado en origen) y la seccion "Extension de la
+  frontera mecanismo/valor" de la seccion 9 (la razon de "mecanismo, no opt-in" ya no depende
+  unicamente de la heuristica de unico-proceso-con-daemon de MEF-ADR-0018 -- en el write-side se
+  sostiene en que el consumidor no puede decidir informadamente perder logs de error en proporcion a
+  su ratio de trazas). Sin cambio de decision en el read-side.
