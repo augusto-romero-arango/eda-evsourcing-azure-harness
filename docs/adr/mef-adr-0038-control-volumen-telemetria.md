@@ -8,12 +8,12 @@
   MEF-ADR-0034 seccion 10). Fija la doctrina; la propagacion al codigo generado por esos agentes es
   alcance de los issues #511 (orden del sampler en `domain-scaffolder`), #512 (durability metrics
   off en `domain-scaffolder`), #513 (sampler del worker en `projections-scaffolder`) y #514
-  (chequeos del reviewer) -- en su version original este ADR no tocaba ningun agente. La enmienda
-  del issue #680 (seccion 9, flip `EnableTraceBasedLogsSampler` del seam read-side) es la unica que
-  se aparta de ese patron: propaga en el mismo cambio a `projections-scaffolder` y a los chequeos
-  del `reviewer`. La enmienda del issue #700 extiende la seccion 9 al write-side (mecanica
-  ratio-dependiente, no estructural, sin el filtro de la seccion 5) y propaga en el mismo cambio a
-  `domain-scaffolder`. Muda integramente la seccion
+  (chequeos del reviewer) -- en su version original este ADR no tocaba ningun agente. Las dos
+  enmiendas de la seccion 9 (flip `EnableTraceBasedLogsSampler`) son las unicas que se apartan de
+  ese patron, y propagan en el mismo cambio tanto al agente que genera el seam como a los chequeos
+  del `reviewer`: el issue #680 al seam read-side (`projections-scaffolder`) y el issue #700 al
+  write-side (`domain-scaffolder`), donde la mecanica es ratio-dependiente, no estructural, porque
+  no existe el filtro de la seccion 5. Muda integramente la seccion
   "Observabilidad" de MEF-ADR-0003 (que queda como referencia, sin doctrina duplicada) y enmienda
   MEF-ADR-0034 (seccion 10 puntos 3 y 4, y la aceptacion del costo del Container App 24/7). Cross-referencia
   MEF-ADR-0015 (precedente de delegacion mecanismo-del-marco/valor-del-consumidor), MEF-ADR-0018
@@ -420,11 +420,12 @@ importancia:
 
 El write-side (`domain-scaffolder`, issue #700) comparte la primera consecuencia sin cambio: el
 `Program.cs` que ese agente genera arma el host con `FunctionsApplication.CreateBuilder(args)`, que
-igual que `Host.CreateApplicationBuilder(args)` del worker construye sobre el Generic Host de .NET e
-incluye variables de entorno como fuente de `IConfiguration` -- **no verificado por lectura de
-fuente en este cambio** (a diferencia del read-side, reverificado contra el tag 1.8.3 arriba);
-reverificar si una version futura de `Microsoft.Azure.Functions.Worker` deja de construir el host
-por ese camino. Las consecuencias 2 y 3 aplican igual en ambos lados.
+segun la guia oficial del isolated worker model "aplica los demas defaults de
+`Host.CreateDefaultBuilder()`" y carga configuracion automaticamente -- entre esos defaults, el
+proveedor de variables de entorno de `IConfiguration`. Verificado contra **documentacion oficial**,
+no por lectura de fuente del paquete (a diferencia del exporter, reverificado contra el tag 1.8.3
+arriba): reverificar si una version futura de `Microsoft.Azure.Functions.Worker` deja de construir
+el host por ese camino. Las consecuencias 2 y 3 aplican igual en ambos lados.
 
 **Extension de la frontera mecanismo/valor (seccion 1).** Este flip es **mecanismo del marco**, no
 opt-in, en los dos lados (read-side y write-side, issue #700): ningun consumidor deberia tener que
@@ -494,8 +495,10 @@ test de composicion del dominio (`ComposicionContenedorTests`, MEF-ADR-0029) res
 mismo paquete (`Azure.Monitor.OpenTelemetry.Exporter`, pin propio `1.8.2` de MEF-ADR-0003 para el
 write-side). No se repitio la ejecucion propia por separado para este pin: el default de
 `EnableTraceBasedLogsSampler` y el comportamiento de `LogFilteringProcessor` son el mismo codigo
-fuente en toda la linea `1.8.x` (ver "Evidencia de campo" arriba, mismo default confirmado desde
-`1.8.1`).
+fuente en toda la linea `1.8.x` -- confirmado en los dos extremos de esa linea, la `1.8.1` que
+decompilo el consumidor (issue #414, primer parrafo de esta seccion) y el tag `1.8.3` leido arriba.
+Ese `ServiceProvider` tampoco registra `IConfiguration` a mano, por la misma razon del parrafo
+anterior.
 
 ## Alternativas consideradas
 
@@ -613,6 +616,11 @@ todavia no se manifesto.
   `AddOptions<AzureMonitorExporterOptions>().Configure<IConfiguration>(...)` para la connection
   string) -- fundamento de la seccion 9.
   https://github.com/Azure/azure-sdk-for-net/tree/Azure.Monitor.OpenTelemetry.Exporter_1.8.3/sdk/monitor/Azure.Monitor.OpenTelemetry.Exporter/src
+- Microsoft Learn, "Guide for running C# Azure Functions in the isolated worker model", seccion
+  *Start-up and configuration* (pestana `IHostApplicationBuilder`): `FunctionsApplication.CreateBuilder()`
+  aplica "otros defaults de `Host.CreateDefaultBuilder()`" y carga la configuracion de la app -- fuente
+  de la consecuencia 1 de la seccion 9 en el write-side (issue #700).
+  https://learn.microsoft.com/azure/azure-functions/dotnet-isolated-process-guide#start-up-and-configuration
 
 ## Control de cambios
 
@@ -659,7 +667,8 @@ todavia no se manifesto.
   overload (el de callback no registra `DefaultAzureMonitorExporterOptions`), y por eso el mismo
   cambio enmienda el punto 3 de la seccion 10 de MEF-ADR-0034 y su referencia [17], donde la custodia
   de la connection string se apoyaba en el overload sin argumentos.
-- 2026-08-26: extendida la seccion 9 (issue #700, propagada a `domain-scaffolder`) al write-side: a
+- 2026-08-26: extendida la seccion 9 (issue #700, propagada a `domain-scaffolder` y a los chequeos
+  de observabilidad del `reviewer`) al write-side: a
   diferencia del worker, ese lado no instala ningun filtro estructural de spans (la seccion 5 es
   exclusiva del worker), asi que sin el flip la supresion de `LogRecord` dependia enteramente de
   `TELEMETRY_SAMPLING_RATIO` -- con el default `1.0` sin efecto, con un ratio fraccionario (valor

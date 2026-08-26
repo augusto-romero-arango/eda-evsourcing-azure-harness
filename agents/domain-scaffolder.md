@@ -526,17 +526,15 @@ public static class ComposicionServicios{PascalCase}
                 // src/OpenTelemetry/Internal/WildcardHelper.cs (tag core-1.13.1) y por experimento
                 // local. NO agregar el punto por simetria con los AddSource de arriba.
                 .AddSource("<RootNamespace>.{PascalCase}*"))
-            .UseAzureMonitorExporter(o => o.EnableTraceBasedLogsSampler = false)
             // MEF-ADR-0038 seccion 9 (issue #700): default true del exporter instala
             // LogFilteringProcessor, que descarta todo LogRecord salvo que SpanId == default ||
-            // TraceFlags == Recorded. A diferencia del worker de proyecciones (MEF-ADR-0038 seccion
-            // 5), este lado no instala ningun filtro estructural de spans -- la supresion aqui
-            // depende del RATIO (TELEMETRY_SAMPLING_RATIO): con el default 1.0 todo span queda
-            // Recorded y el flip no mueve nada; con un ratio fraccionario, los LogError emitidos
-            // dentro de un span no muestreado (handlers, Wolverine, Marten) se perdian en
-            // proporcion al ratio, degradando en silencio la alerta exception_spike (modulo
-            // monitoring). Mecanismo del marco, no opt-in -- NUNCA quites este flip ni lo
-            // conviertas en opcion del consumidor.
+            // TraceFlags == Recorded. Aqui no hay ningun filtro estructural de spans (a diferencia
+            // del worker de proyecciones, seccion 5): la supresion depende del RATIO -- con un
+            // TELEMETRY_SAMPLING_RATIO fraccionario, los LogError emitidos dentro de un span no
+            // muestreado (handlers, Wolverine, Marten) se perdian en esa misma proporcion,
+            // degradando en silencio la alerta exception_spike (modulo monitoring). Mecanismo del
+            // marco, no opt-in -- NUNCA quites este flip.
+            .UseAzureMonitorExporter(o => o.EnableTraceBasedLogsSampler = false)
             // MEF-ADR-0038 seccion 3/6 -- SEGUNDO .WithTracing(...), SIEMPRE despues de
             // UseAzureMonitorExporter(): ese exporter (Azure.Monitor.OpenTelemetry.Exporter 1.8.x)
             // llama internamente SetSampler(new RateLimitedSampler(5.0)) sobre el mismo builder, y
@@ -1866,15 +1864,15 @@ public class ComposicionContenedorTests
     }
 
     // Guardrail del flip de logs (MEF-ADR-0038 seccion 9, issue #700): el borde critico es
-    // EnableTraceBasedLogsSampler, no el Sampler de trazas -- verificado por lectura de fuente
-    // contra Azure.Monitor.OpenTelemetry.Exporter 1.8.2 (la version pinneada por MEF-ADR-0003 para
-    // el write-side; el worker de proyecciones pinnea 1.8.3, ambas comparten el mismo default). El
-    // default true del exporter instala LogFilteringProcessor, que descarta todo LogRecord salvo
-    // que SpanId == default || TraceFlags == Recorded -- a diferencia del worker, aqui la supresion
-    // depende del ratio de trazas (TELEMETRY_SAMPLING_RATIO), no de ningun filtro estructural de
-    // spans (MEF-ADR-0038 seccion 9). Se verifica el valor RESUELTO de AzureMonitorExporterOptions
-    // -- lo que el exporter realmente usa -- nunca el texto del seam: si el flip del Paso 6b
-    // desaparece, este guardrail cae en rojo aunque el archivo compile.
+    // EnableTraceBasedLogsSampler, no el Sampler de trazas. El default true del exporter instala
+    // LogFilteringProcessor, que descarta todo LogRecord salvo que SpanId == default ||
+    // TraceFlags == Recorded -- a diferencia del worker, aqui la supresion depende del ratio de
+    // trazas (TELEMETRY_SAMPLING_RATIO), no de ningun filtro estructural de spans. Ese default se
+    // verifico por lectura de fuente del tag Azure.Monitor.OpenTelemetry.Exporter_1.8.3 (MEF-ADR-0038
+    // seccion 9) y por decompilacion de la 1.8.1 en el consumidor: es el mismo codigo en toda la
+    // linea 1.8.x, incluida la 1.8.2 que pinnea este agente. Se verifica el valor RESUELTO de
+    // AzureMonitorExporterOptions -- lo que el exporter realmente usa -- nunca el texto del seam:
+    // si el flip del Paso 6b desaparece, este guardrail cae en rojo aunque el archivo compile.
     [Fact]
     public async Task AgregarServicios{PascalCase}_DeshabilitaElSamplerDeLogsBasadoEnTrazas()
     {
@@ -1937,6 +1935,16 @@ public class ComposicionContenedorTests
 Si el Paso 6b agrego o quito parametros `serviceBus<Alias>` (segun los alias del backbone
 compartido resueltos en el Paso 0), pasa el mismo numero de argumentos dummy en la llamada a
 `AgregarServicios{PascalCase}` de este test -- misma regla dinamica que en `Program.cs`.
+
+Los dos `using` del guardrail del flip de logs (issue #700) **no** agregan ningun paquete al
+`.csproj` de tests: `AzureMonitorExporterOptions` viene de `Azure.Monitor.OpenTelemetry.Exporter` y
+`IOptions<T>` de `Microsoft.Extensions.Options`, y ambos llegan por el `ProjectReference` al
+proyecto del dominio (punto 4 de este mismo paso), que ya declara el primero (Paso 1 punto 2) y
+arrastra el segundo con `Microsoft.Extensions.DependencyInjection`. **No los "limpies"**: sin ellos
+el archivo no compila (`CS0246`/`CS0305`), mismo modo de falla que el `using OpenTelemetry.Trace;`
+de los guardrails del sampler. Ese `ServiceProvider` tampoco necesita registrar `IConfiguration` a
+mano -- el SDK de OpenTelemetry hace `TryAddSingleton<IConfiguration>` con un builder de variables
+de entorno cuando no hay host detras (MEF-ADR-0038 seccion 9, parrafo *Guardrail*).
 
 **10. Crear `ReadyCheckTests.cs`** (raiz del proyecto de tests) -- cubre `ReadyCheck` (Paso 1 punto
 12c, MEF-ADR-0031 seccion 6): el mapeo probe-exitoso -> 200 y probe-fallido -> 503 con cuerpo
