@@ -87,6 +87,28 @@ inside_tmux() {
     [ -n "${TMUX:-}" ]
 }
 
+# should_delegate_to_herdr <args...>
+#
+# 0 si esta invocacion debe correr por la interfaz herdr (issue #690):
+# estamos dentro de un pane herdr (HERDR_ENV=1 + HERDR_PANE_ID inyectado),
+# el binario esta en PATH, y el modo pedido tiene equivalente herdr --
+# --parallel sigue en tmux (fase 2) y --attach/--help son tmux-especificos.
+# MEFISTO_UI=tmux es el escape hatch para forzar tmux desde dentro de herdr
+# (y lo exporta herdr-pipeline.sh al delegar de vuelta, cortando el ciclo).
+should_delegate_to_herdr() {
+    [ "${MEFISTO_UI:-}" = "tmux" ] && return 1
+    [ "${HERDR_ENV:-}" = "1" ] || return 1
+    [ -n "${HERDR_PANE_ID:-}" ] || return 1
+    command -v herdr &>/dev/null || return 1
+    local a
+    for a in "$@"; do
+        case "$a" in
+            --parallel|--attach|--help|-h) return 1 ;;
+        esac
+    done
+    return 0
+}
+
 # Asegurar que events.log existe para que tail no falle
 ensure_events_log() {
     mkdir -p "$(dirname "$EVENTS_LOG")"
@@ -666,6 +688,14 @@ main() {
     if [ $# -eq 0 ]; then
         cmd_help
         exit 0
+    fi
+
+    # Autodeteccion herdr (issue #690): dentro de un pane herdr, los modos
+    # con equivalente se despachan a la interfaz herdr (pane de ejecucion en
+    # el workspace actual, sin sesion tmux); fuera de herdr, o para
+    # --parallel/--attach, todo sigue igual que siempre.
+    if should_delegate_to_herdr "$@"; then
+        exec "$SCRIPT_DIR/herdr-pipeline.sh" "$@"
     fi
 
     # Pre-parsear --scaffold-domain, --pipeline, --from-stage y --if-exists
