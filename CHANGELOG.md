@@ -4,6 +4,116 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-08-26
+
+### Added
+
+- El `domain-scaffolder` propaga a sus templates el endpoint de readiness `/api/ready` que enmienda
+  MEF-ADR-0031 (issue #671): genera `ReadyCheck.cs` + `ReadyCheck.Mensajes.cs` + `ReadyCheckMensajes.resx`
+  junto a `HealthCheck.cs`/`VersionCheck.cs`, y el probe `IEventStoreReadinessProbe`/`EventStoreReadinessProbe`
+  en `Infraestructura/` (fuerza la materializacion de storage de Marten via `FetchStreamStateAsync` sobre
+  un stream centinela, sin cache del positivo, 503 con cuerpo diagnosticable ante fallo del store).
+- Suma `ReadyCheckTests.cs` al proyecto de tests del dominio (fake manual del probe, sin NSubstitute).
+- El workflow reutilizable `smoke-tests-dominio.yml` gana un paso de poll a `/api/ready` previo a la
+  suite (timeout 120s, `--max-time` por intento, log `Ready OK tras N intento(s) (~Ns)`, fallo explicito
+  al agotarse), con instrucciones de parche manual para repos ya scaffoldeados.
+- Se agrega la alerta dedicada de spike de excepciones del worker de proyecciones (`projections_exception_spike`, umbral >5 en `PT5M`, filtrada por `cloud_RoleName`) al paquete opt-in de `infra-base-scaffolder`, junto con los outputs incondicionales `application_insights_id`/`action_group_id` del modulo `monitoring` de los que depende.
+- Interfaz herdr de los pipelines publicados: `herdr-pipeline.sh` (misma
+  superficie de modos que `tmux-pipeline.sh`) corre cada issue en un pane
+  reutilizable del workspace herdr actual -- sin sesion tmux ni pane de
+  `tail -f events.log` -- con el pipeline en background (reporte a un log) y
+  el visor en vivo `stream-watch.sh` (porte publicado del visor interno de
+  #434, con filtros `--issues` y `--newer-than`) siguiendo al agente en curso
+  a lo largo de toda la secuencia de agentes del issue. Si el pane sigue
+  ocupado con otra corrida se abre uno adicional; los libres se reutilizan.
+  `tmux-pipeline.sh` autodetecta herdr (`HERDR_ENV=1`) y delega; fuera de
+  herdr, o con `MEFISTO_UI=tmux`, todo sigue en tmux igual que antes.
+  `--parallel` queda explicitamente en tmux (fase 2).
+- `herdr-workspace.sh`: apertura de un proyecto Mefisto en herdr con los dos
+  panes principales del flujo -- planner (`claude --agent mefisto:planner` en
+  consumidores, `mefisto-planner` en el propio repo del plugin) y ejecucion
+  (sesion claude para despachar /implement, /tooling, /infra, /sequential).
+  Los agentes se lanzan con `herdr agent start` bajo nombres unicos por
+  workspace para que el sidebar muestre su estado. Idempotente: si el
+  workspace del repo ya existe, solo lo enfoca.
+- Interfaz herdr de los pipelines INTERNOS (porte del publicado, issue #690):
+  `mefisto-herdr-pipeline.sh` corre `--tooling`/`--batch` en un pane
+  reutilizable del workspace herdr actual con el visor en vivo del agente;
+  `mefisto-tmux-pipeline.sh` autodetecta herdr (`HERDR_ENV=1`) y delega
+  (escape hatch `MEFISTO_UI=tmux`); `mefisto-stream-watch.sh` suma los
+  filtros `--issues` (corridas concurrentes no se cruzan, incluidas las
+  copias `.attempt-<k>` de los reintentos) y `--newer-than` (no mostrar la
+  traza de la corrida anterior). `--verbose` se consume sin efecto dentro de
+  herdr: el visor es siempre visible.
+
+### Changed
+
+- Se enmienda MEF-ADR-0031 (issue #671) para cubrir la capa de datos con el endpoint dedicado
+  `/api/ready`: fundamento de defensa en profundidad (instancia nueva en cada deploy aun con
+  `always_on`, esquema sin materializar en el primer deploy de un dominio nuevo), semantica del probe
+  (`FetchStreamStateAsync` sobre un stream centinela, sin cache del positivo, 503 en vez de 500 con
+  cuerpo diagnosticable, timeout de poll 120s) y `ApplyAllDatabaseChangesOnStartup` registrada como
+  alternativa considerada y diferida.
+- Se enmienda MEF-ADR-0037 seccion 2 (issue #682) para precisar que la unidad del borde HTTP
+  es el **componente tipado**, no la clave: una identidad de un solo componente
+  (`Guid` o VO unico no-`Guid`) viaja como segmento unico legitimamente -- que
+  su clave coincida con ese string es consecuencia, no violacion --, mientras
+  que la proscripcion de la clave ya concatenada aplica solo a identidades de
+  varios componentes. Corrige una lectura taxativa que ya produjo un falso
+  bloqueante en un consumidor real.
+- Los dos gates del `reviewer` que citan MEF-ADR-0037 (identidad de stream en el borde HTTP y ids URL-safe de MEF-ADR-0043) distinguen ahora tres formas de identidad -- nacida `Guid`, un unico componente tipado no-`Guid` (VO), y clave compuesta -- en vez de dos, evitando el falso hallazgo bloqueante que la formulacion anterior producia sobre un endpoint con identidad VO de un solo componente. Para clave compuesta, el segmento unico con la clave ya concatenada sigue siendo hallazgo bloqueante sin cambios, y la forma de un componente unico conserva su sujecion al charset *unreserved* y al criterio de aceptacion de MEF-ADR-0043 secciones 1.1/1.2/1.3 en los dos gates.
+- Se propaga la tercera forma de identidad de stream (MEF-ADR-0037 seccion 2: UN componente tipado no-Guid, ej. un VO unico) a la doctrina de skills y agentes de implementacion -- `skills/projections/read-apis.md` (nuevo ejemplo canonico), `skills/projections/SKILL.md`, `skills/projections/naming.md`, `agents/projection-implementer.md`, `agents/implementer.md` y `agents/planner.md` -- y se recentra en todos ellos la proscripcion de "clave ya armada" para que solo alcance a la clave multi-componente concatenada, nunca a una identidad de un solo componente.
+- `tooling-pipeline.sh` e `iac-pipeline.sh` capturan la traza stream-json de sus
+  invocaciones `claude -p` (porte del patron de `tdd-pipeline.sh`, issue #645):
+  cada stage deja `<log_base>.stream.jsonl` + `.stderr.log` y el `.log` de
+  siempre se deriva con `derive_stage_log_from_stream`, sin cambios para los
+  greps de clasificacion de fallo ni los retries. Sin `jq` en el PATH caen a
+  `--output-format text`, identico al comportamiento previo.
+- La interfaz herdr colapsa el layout de vuelta a UN solo pane de
+  seguimiento: al despachar, ademas de reutilizar el primer pane libre
+  (reemplazando la corrida terminada, ahora con pantalla y scrollback
+  limpios), se cierran los panes libres sobrantes que dejo una concurrencia
+  pasada. Los reportes de las corridas pasadas siguen en sus .report.log.
+  Aplica a ambos runners (publicado e interno).
+
+### Fixed
+
+- Se deshabilita `EnableTraceBasedLogsSampler` en el seam de observabilidad del worker de
+  proyecciones (`ConfiguracionObservabilidadProjections`, `projections-scaffolder`, Paso 1d): el
+  default `true` del exporter de Azure Monitor descartaba los logs de error del daemon de Marten
+  emitidos bajo el span de polling que el sampler de trazas del marco ya descarta, perdiendo su
+  stack trace por completo (medido: 35/35 errores de "high water statistics" nunca llegaron a
+  `exceptions`). El config-test del worker suma un guardrail que falla si el flip desaparece
+  (MEF-ADR-0038 seccion 9).
+- MEF-ADR-0034 (seccion 10 punto 3 y referencia [17]) queda alineado con ese flip: el seam del worker
+  pasa al overload de opciones de `UseAzureMonitorExporter`, que -- verificado contra el paquete
+  pinneado 1.8.3 -- no registra `DefaultAzureMonitorExporterOptions`, asi que la connection string se
+  resuelve via `IConfiguration` (poblada por `Host.CreateApplicationBuilder` desde las variables de
+  entorno) sin que el seam la lea ni la reciba (MEF-ADR-0025 intacto).
+- El gate de control de volumen de telemetria de `agents/reviewer.md` (MEF-ADR-0038) cubre tambien la
+  ausencia del flip en un diff que toque `ConfiguracionObservabilidadProjections`, y exige el
+  guardrail nuevo del config-test del worker.
+- Se corrige en MEF-ADR-0043 seccion 1.1 la afirmacion falsa de que la clave
+  compuesta de MEF-ADR-0037 no usa `:` -- contradecia MEF-ADR-0037 seccion 1
+  (`$"{empleadoId}:{fecha:yyyy-MM-dd}"`) -- y se reemplaza por la lectura por
+  alcances: el Guid canonico cumple el charset por construccion, la identidad
+  de un componente tipado no-Guid viaja como segmento sujeta al criterio de
+  1.2/1.3, y la clave compuesta queda fuera del sujeto del charset porque
+  nunca viaja entera en un segmento (MEF-ADR-0037 seccion 2 enmendada).
+- `herdr-workspace.sh` ya no declara fallido un agente que solo tardo en
+  levantar: `herdr agent start` puede retornar error apenas creado el pane
+  aunque claude siga arrancando (carrera vista en vivo), asi que un fallo se
+  reconfirma con `herdr agent get` tras una pausa y se reintenta una vez.
+  Ademas el aviso de fallo ahora incluye el detalle del error del CLI (antes
+  se tragaba el stderr y el fallo real era indiagnosticable).
+- Los runners de la interfaz herdr (publicado e interno) lanzan el pipeline
+  con las variables `HERDR_*` removidas del entorno: con `HERDR_ENV=1`
+  heredado del pane, cualquier invocacion de los wrappers a lo largo de la
+  corrida (p. ej. las fixtures de `test-tmux-preparse.sh` corridas por un
+  gate) autodetectaba herdr y creaba panes reales en el workspace del humano.
+  `test-tmux-preparse.sh` ademas fuerza `MEFISTO_UI=tmux` (defensa propia
+  para quien lo corra a mano desde un pane herdr).
+
 ## [0.26.0] - 2026-08-17
 
 ### Added
@@ -1226,7 +1336,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.26.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.27.0...HEAD
+[0.27.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.23.0...v0.24.0
