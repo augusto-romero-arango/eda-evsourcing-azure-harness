@@ -8,9 +8,12 @@
   MEF-ADR-0034 seccion 10). Fija la doctrina; la propagacion al codigo generado por esos agentes es
   alcance de los issues #511 (orden del sampler en `domain-scaffolder`), #512 (durability metrics
   off en `domain-scaffolder`), #513 (sampler del worker en `projections-scaffolder`) y #514
-  (chequeos del reviewer) -- este ADR no toca ningun agente. Muda integramente la seccion
+  (chequeos del reviewer) -- en su version original este ADR no tocaba ningun agente. La enmienda
+  del issue #680 (seccion 9, flip `EnableTraceBasedLogsSampler` del seam read-side) es la unica que
+  se aparta de ese patron: propaga en el mismo cambio a `projections-scaffolder` y a los chequeos
+  del `reviewer`. Muda integramente la seccion
   "Observabilidad" de MEF-ADR-0003 (que queda como referencia, sin doctrina duplicada) y enmienda
-  MEF-ADR-0034 (seccion 10 punto 4, y la aceptacion del costo del Container App 24/7). Cross-referencia
+  MEF-ADR-0034 (seccion 10 puntos 3 y 4, y la aceptacion del costo del Container App 24/7). Cross-referencia
   MEF-ADR-0015 (precedente de delegacion mecanismo-del-marco/valor-del-consumidor), MEF-ADR-0018
   (heuristica de "unico proceso con daemon", que hace exclusivo del worker el filtro de la seccion 5),
   MEF-ADR-0029 (guardrails de composicion, tecnica que sostiene la seccion 4) y MEF-ADR-0030 (esquema
@@ -375,6 +378,33 @@ Con el flip en `false`, `ExporterRegistrationHostedService` instala un `BatchLog
 plano: ningun `LogRecord` se descarta por la decision de muestreo de su span padre -- los logs quedan
 gobernados unicamente por el nivel de `ILogger` antes de que este seam los vea.
 
+**Los dos overloads no son intercambiables** (verificado por lectura de fuente del mismo tag 1.8.3, y
+por ejecucion propia como se describe en el parrafo *Guardrail* al final de esta seccion):
+`UseAzureMonitorExporter()` -- sin argumentos, la forma
+que el seam usaba hasta esta seccion -- hace
+`TryAddSingleton<IConfigureOptions<AzureMonitorExporterOptions>, DefaultAzureMonitorExporterOptions>()`
+y recien despues delega en el overload con callback; el overload con callback **no** registra ese
+`IConfigureOptions`. `DefaultAzureMonitorExporterOptions` es quien bindea la seccion
+`AzureMonitorExporter` de la configuracion y quien lee `APPLICATIONINSIGHTS_CONNECTION_STRING`,
+`OTEL_TRACES_SAMPLER` y `OTEL_TRACES_SAMPLER_ARG` directo del entorno. Consecuencias, en orden de
+importancia:
+
+1. **La connection string sigue resolviendose sin que el seam la lea ni la reciba** (MEF-ADR-0025
+   intacto, mismo contrato que MEF-ADR-0034 seccion 10 punto 3): el overload con callback conserva
+   `AddOptions<AzureMonitorExporterOptions>().Configure<IConfiguration>(...)`, que la toma de
+   `IConfiguration[APPLICATIONINSIGHTS_CONNECTION_STRING]` cuando la opcion viene vacia, y el worker
+   arma su host con `Host.CreateApplicationBuilder(args)` -- que incluye el proveedor de variables de
+   entorno --, asi que la Key Vault reference que el Container App inyecta en esa variable llega
+   igual. Lo que **si** cambia es que ese camino pasa a ser el unico: sustituir el host del worker por
+   uno sin proveedor de variables de entorno apagaria la exportacion completa en silencio.
+2. **La seccion `AzureMonitorExporter` de la configuracion deja de bindearse**: no es superficie que
+   este marco documente ni use, y su perdida tiene un efecto colateral coherente con la decision de
+   arriba -- ningun consumidor puede re-habilitar `EnableTraceBasedLogsSampler` desde
+   `appsettings.json`, que es exactamente lo que "mecanismo, no opt-in" pide.
+3. **`OTEL_TRACES_SAMPLER`/`OTEL_TRACES_SAMPLER_ARG` dejan de configurar el sampler del exporter**:
+   irrelevante aqui, porque el segundo `.WithTracing(...)` de la seccion 3 pisa igual cualquier
+   sampler que el exporter instale.
+
 **Extension de la frontera mecanismo/valor (seccion 1).** Este flip es **mecanismo del marco**, no
 opt-in -- misma clase que el filtro de la seccion 5, y por la misma razon (MEF-ADR-0018: unico
 proceso con daemon, el unico donde este acoplamiento logs-trazas produce perdida real): ningun
@@ -400,7 +430,15 @@ test que falla si el flip desaparece: el config-test del worker
 (`ConfiguracionObservabilidadProjectionsTests`, `projections-scaffolder`) resuelve
 `IOptions<AzureMonitorExporterOptions>` desde el `ServiceProvider` real (construido invocando el
 seam, no un objeto armado a mano) y afirma `EnableTraceBasedLogsSampler == false` -- el valor
-RESUELTO que el exporter usa, no el texto del `.cs`.
+RESUELTO que el exporter usa, no el texto del `.cs`. La mecanica se verifico por **ejecucion propia**
+contra los paquetes pinneados por el agente (`Azure.Monitor.OpenTelemetry.Exporter` 1.8.3 +
+`OpenTelemetry.Extensions.Hosting` 1.17.0, SDK .NET 10.0.201) al redactar esta seccion: sobre un
+`ServiceCollection` pelado que solo invoca el seam, `IOptions<AzureMonitorExporterOptions>.Value`
+resuelve `EnableTraceBasedLogsSampler = false` con el flip y `true` sin el -- el guardrail es rojo
+exactamente cuando el flip desaparece, que es la unica garantia que esta seccion pide. Ese
+`ServiceProvider` no necesita registrar `IConfiguration` a mano: el SDK de OpenTelemetry hace
+`TryAddSingleton<IConfiguration>` con un builder de variables de entorno cuando no hay host detras
+(por eso el mismo camino resuelve tambien el `IOptionsMonitor` que el exporter consulta por dentro).
 
 ## Alternativas consideradas
 
@@ -466,6 +504,13 @@ todavia no se manifesto.
   decision de muestreo; despues, el ratio solo gobierna trazas, y acotar logs es exclusivamente
   responsabilidad del filtering de niveles de `ILogger` del consumidor -- un consumidor que bajaba
   su ratio esperando bajar tambien su volumen de logs debe ahora ajustar `ILogger` por separado.
+- **El seam pasa al overload con callback de `UseAzureMonitorExporter`, que registra menos que el
+  overload sin argumentos** (seccion 9): la seccion `AzureMonitorExporter` de la configuracion deja de
+  bindearse y la connection string queda resolviendose unicamente via
+  `IConfiguration[APPLICATIONINSIGHTS_CONNECTION_STRING]` -- suficiente con el host que genera
+  `projections-scaffolder` (`Host.CreateApplicationBuilder`), pero un camino unico: un worker cuyo host
+  no exponga las variables de entorno en `IConfiguration` perderia la exportacion entera sin ningun
+  error visible.
 
 ## Referencias
 
@@ -503,8 +548,13 @@ todavia no se manifesto.
 - Lectura de fuente publica de `Azure.Monitor.OpenTelemetry.Exporter` (github.com/Azure/azure-sdk-for-net,
   tag `Azure.Monitor.OpenTelemetry.Exporter_1.8.3`): `AzureMonitorExporterOptions.EnableTraceBasedLogsSampler`
   (default `true`), `ExporterRegistrationHostedService.Initialize` (selecciona `LogFilteringProcessor`
-  vs `BatchLogRecordExportProcessor` segun ese flag) e `Internals/LogFilteringProcessor.cs`
-  (`SpanId == default || TraceFlags == ActivityTraceFlags.Recorded`) -- fundamento de la seccion 9.
+  vs `BatchLogRecordExportProcessor` segun ese flag), `Internals/LogFilteringProcessor.cs`
+  (`SpanId == default || TraceFlags == ActivityTraceFlags.Recorded`) y los dos overloads de
+  `OpenTelemetryBuilderExtensions.UseAzureMonitorExporter` (solo el sin argumentos registra
+  `DefaultAzureMonitorExporterOptions`; el de callback conserva
+  `AddOptions<AzureMonitorExporterOptions>().Configure<IConfiguration>(...)` para la connection
+  string) -- fundamento de la seccion 9.
+  https://github.com/Azure/azure-sdk-for-net/tree/Azure.Monitor.OpenTelemetry.Exporter_1.8.3/sdk/monitor/Azure.Monitor.OpenTelemetry.Exporter/src
 
 ## Control de cambios
 
@@ -545,5 +595,9 @@ todavia no se manifesto.
   Bitakora.ControlAsistencia: 35/35 errores de "high water statistics" perdidos, 0% en `exceptions`,
   frente a 87/87 de una familia de error emitida fuera de ese span). El flip es mecanismo del marco,
   no opt-in -- mismo criterio que el filtro de la seccion 5 -- con guardrail propio sobre el valor
-  resuelto de `AzureMonitorExporterOptions`; el ratio de trazas y el filtering de niveles de
-  `ILogger` siguen siendo valor del consumidor, ahora como ejes independientes entre si.
+  resuelto de `AzureMonitorExporterOptions` (mecanica verificada por ejecucion propia contra 1.8.3);
+  el ratio de trazas y el filtering de niveles de `ILogger` siguen siendo valor del consumidor, ahora
+  como ejes independientes entre si. La seccion registra tambien la consecuencia del cambio de
+  overload (el de callback no registra `DefaultAzureMonitorExporterOptions`), y por eso el mismo
+  cambio enmienda el punto 3 de la seccion 10 de MEF-ADR-0034 y su referencia [17], donde la custodia
+  de la connection string se apoyaba en el overload sin argumentos.
