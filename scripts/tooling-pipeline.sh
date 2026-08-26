@@ -373,12 +373,19 @@ run_agent() {
     # resolve_stage_model (issue #708) aplica el override de --models por clave
     # exacta de agente; sin entrada en el mapa (o sin --models), cae en este
     # default -- byte a byte el comportamiento previo al flag.
-    local AGENT_MODEL
+    local AGENT_MODEL AGENT_MODEL_DEFAULT
     case "$agent" in
-        reviewer) AGENT_MODEL="opus" ;;
-        *)        AGENT_MODEL="sonnet" ;;
+        reviewer) AGENT_MODEL_DEFAULT="opus" ;;
+        *)        AGENT_MODEL_DEFAULT="sonnet" ;;
     esac
-    AGENT_MODEL="$(resolve_stage_model "$agent" "$AGENT_MODEL")"
+    AGENT_MODEL="$(resolve_stage_model "$agent" "$AGENT_MODEL_DEFAULT")"
+    # Constancia por stage del override que SI hizo match (CA-4): el mapa que se
+    # loguea al arrancar no dice cuales claves aplicaron, y una clave con typo
+    # ('revieweer=opus') no sobreescribe nada -- sin esta linea el experimento
+    # correria con los defaults y el reporte lo atribuiria al override.
+    if [ "$AGENT_MODEL" != "$AGENT_MODEL_DEFAULT" ]; then
+        echo "[$(date +%H:%M:%S)] MODELS: stage $stage/$agent -> $AGENT_MODEL (default: $AGENT_MODEL_DEFAULT)" >> "$EVENTS_LOG_ABS"
+    fi
     update_status "$stage-$agent" "running"
     log "Invocando $agent..."
 

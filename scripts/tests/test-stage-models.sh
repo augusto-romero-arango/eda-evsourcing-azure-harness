@@ -16,6 +16,12 @@
 #   tmux-pipeline.sh        - --tooling reenvia --models intacto al send-keys
 #                            (CA-3); el resto de los modos lo rechazan con
 #                            mensaje explicito en vez de tragarselo en silencio.
+#   herdr-pipeline.sh       - la otra mitad de CA-3: dentro de un pane herdr,
+#                            tmux-pipeline.sh delega con `exec herdr-pipeline.sh
+#                            "$@"`, asi que el flag tiene que sobrevivir tambien
+#                            ahi -- reenvio al pane run (con el valor intacto,
+#                            sin las comillas que solo sirven al send-keys de
+#                            tmux) y el mismo rechazo explicito por modo.
 #
 # Uso: scripts/tests/test-stage-models.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -219,6 +225,136 @@ if printf '%s' "$LAST_STDERR" | grep -q "no aplica a --attach"; then pass "mensa
 run_wrapper 253 --models "writer=sonnet" --pipeline tooling
 if [ "$LAST_RC" -eq 1 ]; then pass "issue suelto (sin --tooling) + --models aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
 if printf '%s' "$LAST_STDERR" | grep -q "solo esta soportado hoy via --tooling"; then pass "mensaje: solo soportado via --tooling"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+
+# --- herdr-pipeline.sh: la otra mitad de CA-3 --------------------------------
+#
+# Dentro de un pane herdr, tmux-pipeline.sh hace `exec herdr-pipeline.sh "$@"`
+# ANTES de su propio pre-parseo: si herdr-pipeline.sh no conoce --models, el
+# flag cae en filtered_args y el dispatch de --tooling (que solo reenvia "$1")
+# lo descarta en silencio -- la corrida usaria los modelos default mientras el
+# reporte del experimento le atribuye el resultado al override.
+#
+# Arnes de test-herdr-parallel.sh: stub de `herdr` que registra cada invocacion
+# y responde JSON determinista, stub de `gh`, y contexto HERDR_* falso.
+
+export HERDR_STUB_LOG="$TMP_DIR/herdr-invocations.log"
+export HERDR_STUB_COUNTER="$TMP_DIR/herdr-pane-counter"
+HERDR_SCRIPT="$REPO_ROOT/scripts/herdr-pipeline.sh"
+
+cat > "$FAKE_BIN/herdr" <<'STUB'
+#!/usr/bin/env bash
+set -u
+echo "herdr $*" >> "$HERDR_STUB_LOG"
+case "${1:-} ${2:-}" in
+    "pane split")
+        n=$(cat "$HERDR_STUB_COUNTER" 2>/dev/null || echo 0)
+        n=$((n + 1))
+        echo "$n" > "$HERDR_STUB_COUNTER"
+        echo "{\"result\":{\"pane\":{\"pane_id\":\"w1:p$n\"}}}"
+        ;;
+    "pane get")
+        echo '{"result":{"pane":{"pane_id":"stub"}}}'
+        ;;
+    "pane process-info")
+        echo '{"result":{"process_info":{"shell_pid":100,"foreground_process_group_id":100}}}'
+        ;;
+    *)
+        echo '{"result":{"type":"ok"}}'
+        ;;
+esac
+STUB
+chmod +x "$FAKE_BIN/herdr"
+
+cat > "$FAKE_BIN/gh" <<'STUB'
+#!/usr/bin/env bash
+set -u
+case "${3:-}" in
+    253|254) printf 'OPEN|tipo:tooling\n' ;;
+    *)       exit 1 ;;
+esac
+STUB
+chmod +x "$FAKE_BIN/gh"
+
+run_herdr() {
+    : > "$HERDR_STUB_LOG"
+    echo 0 > "$HERDR_STUB_COUNTER"
+    local out="$TMP_DIR/stdout" err="$TMP_DIR/stderr"
+    (
+        cd "$FAKE_CONSUMER" || exit 99
+        env -u MEFISTO_UI \
+            PATH="$FAKE_BIN:$PATH" \
+            HERDR_ENV=1 HERDR_PANE_ID="w1:p0" HERDR_WORKSPACE_ID="w1" \
+            HERDR_STUB_LOG="$HERDR_STUB_LOG" HERDR_STUB_COUNTER="$HERDR_STUB_COUNTER" \
+            "$HERDR_SCRIPT" "$@"
+    ) </dev/null >"$out" 2>"$err"
+    LAST_RC=$?
+    LAST_STDOUT=$(cat "$out")
+    LAST_STDERR=$(cat "$err")
+}
+
+echo ""
+echo "[15] herdr: --tooling reenvia --models al pane run (CA-3 dentro de herdr)"
+run_herdr --tooling 253 --models "writer=sonnet,reviewer=opus"
+HERDR_CALLS=$(cat "$HERDR_STUB_LOG")
+if [ "$LAST_RC" -eq 0 ]; then pass "--tooling + --models corre sin abortar (rc=$LAST_RC)"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
+# build_pane_runner_cmdline quotea cada argv con printf %q, que escapa la coma
+# como '\,' -- el shell del pane la deshace al ejecutar. Se compara contra la
+# linea con los backslashes removidos: lo que importa es que el argumento
+# --models este y su valor sea el que se paso, no la forma del escape.
+HERDR_CALLS_UNQ=$(printf '%s' "$HERDR_CALLS" | tr -d '\\')
+if printf '%s' "$HERDR_CALLS_UNQ" | grep -qF -- "--models writer=sonnet,reviewer=opus"; then
+    pass "el pane run lleva --models con el valor intacto y SIN comillas literales"
+else
+    fail "el pane run no lleva --models (se perdio en el dispatch) -- log: $HERDR_CALLS"
+fi
+if printf '%s' "$HERDR_CALLS" | grep -qF -- "--models 'writer=sonnet,reviewer=opus'"; then
+    fail "el valor viaja con comillas simples literales (herdr no re-parsea con un shell, printf %q ya lo quotea)"
+else
+    pass "sin comillas simples literales en el argv del pane"
+fi
+
+echo ""
+echo "[16] herdr: --tooling combina --from-stage y --models"
+run_herdr --tooling 253 --from-stage 2 --models "reviewer=opus"
+HERDR_CALLS=$(cat "$HERDR_STUB_LOG")
+if [ "$LAST_RC" -eq 0 ]; then pass "combinado corre sin abortar"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
+if printf '%s' "$HERDR_CALLS" | grep -qF -- "--from-stage 2" && printf '%s' "$HERDR_CALLS" | grep -qF -- "--models reviewer=opus"; then
+    pass "el pane run lleva los dos flags"
+else
+    fail "falta alguno de los dos flags -- log: $HERDR_CALLS"
+fi
+
+echo ""
+echo "[17] herdr: un id de modelo con caracteres de glob llega intacto"
+run_herdr --tooling 253 --models 'writer=claude-opus-5[1m]'
+HERDR_CALLS=$(cat "$HERDR_STUB_LOG")
+HERDR_CALLS_UNQ=$(printf '%s' "$HERDR_CALLS" | tr -d '\\')
+if printf '%s' "$HERDR_CALLS_UNQ" | grep -qF -- "--models writer=claude-opus-5[1m]"; then
+    pass "'claude-opus-5[1m]' sobrevive (no lo toca la pathname expansion)"
+else
+    fail "el id de modelo se altero -- log: $HERDR_CALLS"
+fi
+
+echo ""
+echo "[18] herdr: --models sin valor y rechazo por modo (nunca silencio)"
+run_herdr --tooling 253 --models
+if [ "$LAST_RC" -eq 1 ]; then pass "--models sin valor aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+if printf '%s' "$LAST_STDERR" | grep -q "Falta el valor de --models"; then pass "mensaje: falta el valor"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+
+run_herdr --infra 253 --models "writer=sonnet"
+if [ "$LAST_RC" -eq 1 ]; then pass "--infra + --models aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+if printf '%s' "$LAST_STDERR" | grep -q -- "--infra"; then pass "mensaje: nombra --infra"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+
+run_herdr --parallel 253 254 --models "writer=sonnet" --pipeline tooling
+if [ "$LAST_RC" -eq 1 ]; then pass "--parallel + --models aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+if printf '%s' "$(cat "$HERDR_STUB_LOG")" | grep -q "pane run"; then fail "no deberia despachar ningun pane"; else pass "ningun pane despachado"; fi
+
+run_herdr --batch 253 254 --models "writer=sonnet" --pipeline tooling
+if [ "$LAST_RC" -eq 1 ]; then pass "--batch + --models aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+
+run_herdr 253 --models "writer=sonnet" --pipeline tooling
+if [ "$LAST_RC" -eq 1 ]; then pass "issue suelto (sin --tooling) + --models aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+if printf '%s' "$LAST_STDERR" | grep -q -- "--tooling"; then pass "mensaje: apunta a --tooling"; else fail "mensaje inesperado: $LAST_STDERR"; fi
 
 echo ""
 echo "----------------------------------------"

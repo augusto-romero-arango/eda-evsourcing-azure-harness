@@ -657,13 +657,16 @@ ${BOLD}Retomar una corrida caida (--from-stage):${NC}
 
 ${BOLD}Modelo por stage (--models, experimentos A/B de desempeno):${NC}
   Valido hoy SOLO con --tooling: --models 'agente=modelo[,agente=modelo...]'
-  sobreescribe el modelo de un stage puntual (la clave es el nombre de agente
-  que recibe run_agent(), p. ej. 'writer' o 'reviewer'); sin entrada en el mapa,
-  el stage usa su default de siempre. Se rechaza (mensaje explicito, nunca
-  silencio) en el resto de los modos -- --infra, --scaffold, --batch, --parallel,
-  --attach y el enrutamiento automatico sin --tooling --, porque sus sub-scripts
-  todavia no implementan el flag (issue #708 es la primera pieza de una serie).
-  Un --models malformado aborta ANTES de crear el worktree.
+  sobreescribe el modelo de un stage puntual. La clave es el nombre de agente
+  que recibe run_agent(): 'reviewer' (Stage 2) y 'writer', que cubre DOS stages
+  -- el Stage 1 y la etapa de merge, ambos invocados con ese mismo nombre. Sin
+  entrada en el mapa, el stage usa su default de siempre. Se rechaza (mensaje
+  explicito, nunca silencio) en el resto de los modos -- --infra, --scaffold,
+  --batch, --parallel, --attach y el enrutamiento automatico sin --tooling --,
+  porque sus sub-scripts todavia no implementan el flag (issue #708 es la
+  primera pieza de una serie). Un --models malformado aborta ANTES de crear el
+  worktree. Dentro de un pane herdr, esta invocacion delega en
+  herdr-pipeline.sh, que reenvia --models con la misma superficie.
 
 ${BOLD}Sesion existente (--if-exists reuse|replace|abort):${NC}
   Si ya existe una sesion con ese nombre, el wrapper distingue si sigue viva o

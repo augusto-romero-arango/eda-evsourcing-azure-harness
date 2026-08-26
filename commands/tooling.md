@@ -12,7 +12,7 @@ El numero de issue esta en: $ARGUMENTS
 
 Si `$ARGUMENTS` esta vacio, responde: `Uso: /tooling <numero-de-issue> [--models 'agente=modelo[,agente=modelo...]']`
 
-`$ARGUMENTS` puede incluir opcionalmente el flag `--models 'agente=modelo[,agente=modelo...]'` (experimentos A/B de desempeno del harness): asigna el modelo de un stage puntual del pipeline tooling -- la clave es el nombre de agente que recibe `run_agent()` en `tooling-pipeline.sh` (`writer` o `reviewer`); un stage sin entrada en el mapa usa su default de siempre. Ejemplo: `/tooling 42 --models reviewer=opus,writer=sonnet`.
+`$ARGUMENTS` puede incluir opcionalmente el flag `--models 'agente=modelo[,agente=modelo...]'` (experimentos A/B de desempeno del harness): asigna el modelo de un stage puntual del pipeline tooling. La clave es el nombre de agente que recibe `run_agent()` en `tooling-pipeline.sh`: hoy `reviewer` (Stage 2) y `writer` -- que cubre **dos** stages, el Stage 1 y la etapa de merge, porque ambos invocan `run_agent` con ese mismo nombre. Un stage sin entrada en el mapa usa su default de siempre. Escribe el mapa **sin espacios** alrededor de las comas ni de los `=`: `$ARGUMENTS` se reenvia sin comillas en el paso 3, y un espacio lo partiria en dos argumentos. Ejemplo: `/tooling 42 --models reviewer=opus,writer=sonnet`.
 
 Extrae `ISSUE_NUM` como el primer token numerico de `$ARGUMENTS` y usalo en los pasos 1, 2 y 2.5 de abajo (esos `gh issue view`/`gh issue edit` no entienden `--models`; sin `--models`, `ISSUE_NUM` es simplemente `$ARGUMENTS` completo). `$ARGUMENTS` completo, con `--models` incluido si vino, se reenvia intacto a `tmux-pipeline.sh --tooling` en el paso 3.
 
