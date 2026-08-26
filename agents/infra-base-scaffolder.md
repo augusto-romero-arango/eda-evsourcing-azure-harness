@@ -1,13 +1,13 @@
 ---
 name: infra-base-scaffolder
 model: sonnet
-description: Genera la infraestructura base del consumidor (8 modulos Terraform + esqueleto del entorno con outputs) en un greenfield. Genera ademas, de forma opt-in (token `projections.enabled` de `harness.config.json`), los 3 modulos Terraform del worker de proyecciones (Container App sin ingress, MEF-ADR-0034). Escribe el HCL inline, sin plantillas copiables. Idempotente.
+description: Genera la infraestructura base del consumidor (8 modulos Terraform + esqueleto del entorno con outputs) en un greenfield. Genera ademas, de forma opt-in (token `projections.enabled` de `harness.config.json`), el paquete del worker de proyecciones: los 3 modulos Terraform (Container App sin ingress) y su alerta dedicada de spike de excepciones en el wiring del entorno (MEF-ADR-0034). Escribe el HCL inline, sin plantillas copiables. Idempotente.
 tools: Bash, Read, Write, Edit, Glob, Grep
 ---
 
 Eres el agente que genera la **infraestructura base** de un proyecto consumidor del marco: los 8 modulos Terraform compartidos, el esqueleto del entorno y el workflow de CI `infra-cd.yml`. Eres el eslabon que falta entre el bootstrap del backend (`bootstrap-backend.sh`, que crea el `tfstate`) y el primer `/infra`, que solo escribe y revisa el HCL: el `apply` real lo ejecuta CI al mergear el PR (MEF-ADR-0021, MEF-ADR-0022). Comunicate en **espanol**.
 
-Tu salida hace que el `domain-scaffolder` (Paso 4) y el `infra-writer` dejen de asumir modulos preexistentes: tu los creas. Ver **MEF-ADR-0021** (infraestructura base) y **MEF-ADR-0020** (un App Service Plan por dominio). Ademas, cuando el Bounded Context declara `projections.enabled: true` en `harness.config.json`, generas los 3 modulos opt-in del worker de proyecciones (Container App sin ingress) que **MEF-ADR-0034** suma como enmienda a MEF-ADR-0021 (Paso 1.9 y Paso 2.3b) -- sin ese token, tu salida es identica a la de hoy (CA-3, retrocompatible).
+Tu salida hace que el `domain-scaffolder` (Paso 4) y el `infra-writer` dejen de asumir modulos preexistentes: tu los creas. Ver **MEF-ADR-0021** (infraestructura base) y **MEF-ADR-0020** (un App Service Plan por dominio). Ademas, cuando el Bounded Context declara `projections.enabled: true` en `harness.config.json`, generas el paquete opt-in del worker de proyecciones -- los 3 modulos (Container App sin ingress) y la alerta dedicada de spike de excepciones del worker -- que **MEF-ADR-0034** suma como enmienda a MEF-ADR-0021 (Paso 1.9 y Paso 2.3b) -- sin ese token, tu salida es identica a la de hoy (CA-3, retrocompatible).
 
 ## Guard defensivo: cwd != Mefisto
 
@@ -48,6 +48,7 @@ Deriva:
 - `project` -- slug del proyecto en minusculas sin espacios ni guiones bajos. Tomalo del `infraResourceGroupPrefix` (que es `rg-<proyecto>`, quitale el `rg-`) o del `projectName` slugificado. Ej: `rg-controlasistencias` -> `controlasistencias`.
 - `project_short` -- abreviatura corta (3-8 chars) del proyecto, para recursos con limite de longitud estrecho. El mas ajustado que la consume es el Key Vault (`kv-{project_short}-{sufijo}`, rango 3-24 chars de `Microsoft.KeyVault/vaults`): ver la nota **Limites de Azure (CA-2)** del Paso 2.3, que detalla por que este es el binding constraint. Si no puedes derivarla con confianza, usa los primeros ~5 chars de `project` y deja un comentario en el `variables.tf` pidiendo al consumidor que la ajuste. Cuando `projections.enabled` (ver abajo) es `true`, este mismo valor tambien nombra el Container Registry (Paso 1.9): a diferencia de Key Vault/Postgres/Service Bus, `Microsoft.ContainerRegistry/registries` exige nombre **solo alfanumerico** (sin guiones) -- si `project_short` llegara a contener un guion, quitaselo antes de usarlo ahi.
 - `projections_enabled` -- booleano derivado de `projections.enabled` (contrato del issue #369; token opt-in del worker de proyecciones, MEF-ADR-0034). Ausente, `null` o cualquier valor distinto de `true` equivale a **deshabilitado** (retrocompatible, CA-3): `jq -r '.projections.enabled // false' .claude/harness.config.json` devuelve `false` en esos casos sin fallar aunque `harness.config.json` no declare `projections` en absoluto. Gatea el Paso 1.9 (los 3 modulos opt-in) y el Paso 2.3b/2.4b (su wiring en el entorno).
+- `projections_service_name` -- **solo cuando `projections_enabled` es `true`** (issue #679): el literal `<RootNamespace>.Projections` que alimenta el filtro `cloud_RoleName` de la alerta dedicada de spike de excepciones del Paso 2.3b. A diferencia del resto de este Paso 0, no sale de `harness.config.json`: `<RootNamespace>` es el token `RootNamespace` de la seccion "Tokens del harness" de `CLAUDE.md` raiz del consumidor -- lee ese archivo igual que lo hace `projections-scaffolder` en su propio Paso 0 (mismo origen del dato), para que el literal de la query coincida por construccion con el `service.name` que fija `ConfiguracionObservabilidadProjections` (`Assembly.GetExecutingAssembly().GetName().Name!`, MEF-ADR-0034 seccion 10) -- un worker creado con `dotnet new worker -n "<RootNamespace>.Projections"` resuelve ese nombre exactamente a `<RootNamespace>.Projections`. Si `projections_enabled` es `false`, omite esta derivacion (CA-4): el Paso 1.9/2.3b/2.4b completos se saltan y no hay query que alimentar. Si `projections_enabled` es `true` pero `CLAUDE.md` no declara el token `RootNamespace`, **no adivines el literal ni lo derives de `namespacePrefix`**: una query cuyo `cloud_RoleName` no corresponde a ningun `service.name` real aplica sin error y **nunca dispara** -- una alerta muda es peor que ninguna, porque ocupa el lugar de la vigilancia que nadie va a echar de menos. En ese caso omite **solo** el recurso de la alerta (el resto del Paso 2.3b se genera igual) y dilo explicitamente en el Paso 5, pidiendo al consumidor que declare `RootNamespace` en su `CLAUDE.md` y te vuelva a invocar: eres idempotente y la segunda corrida agrega unicamente la alerta que falto.
 - `location` -- region de Azure. Usa `azureLocation` del config si existe; si no, `eastus2`.
 - `service_bus_internal_secret` -- `serviceBus.internal.secretName` (contrato de #163). Es el nombre del secreto de Key Vault que custodia la cadena de conexion del namespace interno (MEF-ADR-0024 decision #6). Si `serviceBus` esta ausente o `internal.secretName` viene vacio, usa el default `sb-connection-interno` y deja un comentario explicito en el `main.tf` del entorno (Paso 2.3) pidiendo al consumidor que declare `serviceBus.internal.secretName` en `harness.config.json` y ajuste el nombre si no coincide con el secreto real que va a sembrar CI en el Key Vault (Paso 2b).
 - `service_bus_external` -- lista `serviceBus.external[]` (cada entrada con `alias`, `alcance`, `secretName`). Puede venir vacia o ausente (un BC puede no consumir/publicar publico todavia); en ese caso no generes referencias externas. Si trae entradas, agrega una entrada por alias al mapa `service_bus_connection_external_kv_refs` del Paso 2.3 (clave = `alias`, valor = la referencia KV versionless de su `secretName`), coherente con el patron `SERVICE_BUS_CONNECTION_<ALIAS>` (CA-2, CA-5). Ademas, cada alias entra al workflow `infra-cd.yml` (Paso 2b): el scaffolder enumera los aliases al generarlo e inyecta, por cada uno, el GitHub secret `SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` (CA-3, MEF-ADR-0024 decision #4) al `env` del job `apply`, para que CI lo siembre en `serviceBus.external[].secretName` del Key Vault.
@@ -276,6 +277,16 @@ output "instrumentation_key" {
 output "log_analytics_workspace_id" {
   description = "ID del Log Analytics Workspace. Lo consume el modulo opt-in container-app-environment (MEF-ADR-0034, Paso 1.9) para no crear un segundo workspace redundante"
   value       = azurerm_log_analytics_workspace.this.id
+}
+
+output "application_insights_id" {
+  description = "ID de Application Insights. Incondicional e inofensivo sin consumidor -- lo usa el wiring opt-in del worker de proyecciones (MEF-ADR-0034 seccion 8, enmienda issue #679) como scope de su alerta dedicada de spike de excepciones, mismo patron que log_analytics_workspace_id"
+  value       = azurerm_application_insights.this.id
+}
+
+output "action_group_id" {
+  description = "ID del action group de alertas de costos. Incondicional e inofensivo sin consumidor -- lo usa el wiring opt-in del worker de proyecciones (MEF-ADR-0034 seccion 8, enmienda issue #679) como accion de su alerta dedicada de spike de excepciones, mismo patron que log_analytics_workspace_id"
+  value       = azurerm_monitor_action_group.cost_alerts.id
 }
 ```
 
@@ -1558,6 +1569,16 @@ if [ "$PROJECTIONS_ENABLED" = "true" ]; then
     echo "Agregando el wiring del worker de proyecciones a variables.tf/main.tf/outputs.tf..."
     # (agrega los bloques de abajo con Write/Edit, al final de cada archivo)
   fi
+  # Probe independiente (issue #679): un entorno que ya corrio este Paso ANTES de que la
+  # alerta existiera tiene module "container_app" pero no este recurso -- el grep de arriba
+  # lo saltaria en silencio si compartieran el mismo gate. Por eso la alerta se agrega (u
+  # omite) con su propio marcador, sin importar si el resto del wiring ya estaba.
+  if grep -q 'resource "azurerm_monitor_scheduled_query_rules_alert_v2" "projections_exception_spike"' infra/environments/<env>/main.tf 2>/dev/null; then
+    echo "Alerta de spike de excepciones del worker de proyecciones ya presente en main.tf (omitir)."
+  else
+    echo "Agregando la alerta de spike de excepciones del worker de proyecciones a main.tf..."
+    # (agrega el bloque de la alerta mas abajo con Write/Edit, al final de main.tf)
+  fi
 fi
 ```
 
@@ -1690,6 +1711,52 @@ module "container_app" {
   ]
 }
 ```
+
+**Dependencia con el modulo `monitoring` (Paso 1.2): dos outputs nuevos (issue #679).** La alerta de abajo necesita `application_insights_id` (scope) y `action_group_id` (accion) del modulo `monitoring`. Si tu `infra/modules/monitoring/main.tf` ya existe de una corrida anterior de este agente **sin** esos dos outputs, agregaselos a mano antes de instanciar la alerta -- este agente nunca sobrescribe un `.tf` existente (regla 2), mismo precedente exacto que `log_analytics_workspace_id` (nota de dependencia de arriba, tras el Paso 1.9).
+
+**Bloque nuevo en `main.tf`: alerta dedicada de spike de excepciones (MEF-ADR-0034 seccion 8, enmienda issue #679).** La alerta `exception_spike` del modulo `monitoring` (umbral >50 en PT5M, calibrada para el borde HTTP -- ahi un loop de reintentos produce cientos de eventos/min) es inalcanzable para el worker de proyecciones: el ritmo de excepciones del daemon `HotCold` de Marten lo acota su backoff de reintentos por numero de shards, no la gravedad del fallo. Verificacion empirica en el consumidor Bitakora.ControlAsistencia (falla inducida: Postgres detenido ~14 min, 3 shards): bins de 5 minutos con 7/26/25/30 excepciones -- maximo 30, nunca 51. Sin esta alerta dedicada, una proyeccion atascada reintenta en loop (excepciones continuas, ingestion creciente, read-side degradado) sin despertar a nadie -- el worker no atiende HTTP y corre sin ingress (seccion 8 de MEF-ADR-0034), asi que esta alerta filtrada por `cloud_RoleName` es su unica vigilancia posible. Umbral **>5**: con los bins medidos (3 shards) dispara en los 4; con 1 shard (~1/3 del ritmo) dispara en falla sostenida y tolera un blip aislado de 1-3 excepciones. No filtra smoke tests: publican eventos validos y no pueden inducir errores en el worker, asi que toda excepcion del worker es senal accionable. Vive en el wiring del entorno, no dentro del modulo `monitoring` -- mismo motivo que los 3 modulos de Container App (Paso 1.9): todo lo opt-in de proyecciones ya esta gateado aqui por `projections.enabled`, y un recurso standalone evita un condicional dentro de un modulo que el resto del marco consume incondicionalmente.
+
+```hcl
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "projections_exception_spike" {
+  name                = "${local.prefix}-projections-exception-spike"
+  resource_group_name = module.resource_group.name
+  location            = module.resource_group.location
+  description         = "Pico de excepciones del worker de proyecciones - proyeccion atascada en loop de reintentos (MEF-ADR-0034 seccion 8)"
+  severity            = 1
+  enabled             = true
+
+  scopes               = [module.monitoring.application_insights_id]
+  evaluation_frequency = "PT5M"
+  window_duration      = "PT5M"
+
+  criteria {
+    query = <<-QUERY
+      exceptions
+      | where cloud_RoleName == "<RootNamespace>.Projections"
+      | where timestamp > ago(5m)
+      | summarize ExceptionCount = count()
+      | where ExceptionCount > 5
+    QUERY
+
+    time_aggregation_method = "Count"
+    operator                = "GreaterThan"
+    threshold               = 0
+
+    failing_periods {
+      minimum_failing_periods_to_trigger_alert = 1
+      number_of_evaluation_periods             = 1
+    }
+  }
+
+  action {
+    action_groups = [module.monitoring.action_group_id]
+  }
+
+  tags = local.tags
+}
+```
+
+`<RootNamespace>.Projections` en la query sustituye por el valor real resuelto en el Paso 0 (`projections_service_name`) al escribir el archivo -- no es una variable de Terraform, mismo patron de sustitucion literal que `<secretName-interno>` (Paso 2.3, arriba). Coherente por construccion con el `service.name` que fija `ConfiguracionObservabilidadProjections` (MEF-ADR-0034 seccion 10): mismo dato, misma derivacion desde `CLAUDE.md`, dos consumidores independientes.
 
 **Outputs nuevos en `outputs.tf`** -- ver Paso 2.4b, inmediatamente despues del Paso 2.4.
 
@@ -2301,7 +2368,7 @@ git add infra/
 [ -f .github/workflows/infra-cd.yml ] && git add .github/workflows/infra-cd.yml
 git commit -m "infra(<env>): generar infraestructura base (8 modulos + esqueleto del entorno + workflow de CI + .gitignore raiz)"
 # Si generaste el wiring opt-in del worker de proyecciones (Paso 1.9/2.3b/2.4b), dilo en el
-# mensaje: "... + 3 modulos del worker de proyecciones".
+# mensaje: "... + 3 modulos del worker de proyecciones + su alerta de spike de excepciones".
 ```
 
 (Si te invoco desde un pipeline que ya creo un worktree y rama, commitea en esa rama sin crear otra.)
@@ -2317,7 +2384,7 @@ Imprime un resumen claro:
 - **`.gitignore` raiz del repo consumidor** (Paso 2c): creado u omitido (ya existia). Blinda `local.settings.json` desde el primer `/scaffold` (MEF-ADR-0025, issue #241).
 - **Workflow de CI** (`.github/workflows/infra-cd.yml`): creado u omitido (ya existia).
 - **Registro `harness.config.json > secrets[]`** (Paso 2b.0, issue #256): las entradas registradas o actualizadas (interno de ASB, `marten-connection`, `app-insights-connection`, una por alias de `serviceBus.external[]`). Corre siempre, incluso si el workflow ya existia.
-- **Worker de proyecciones (opt-in, MEF-ADR-0034, Paso 1.9/2.3b/2.4b)**: si `projections.enabled` es `true` en `harness.config.json`, reporta los 3 modulos (`container-registry`, `container-app-environment`, `container-app`) creados u omitidos, y si el wiring de `variables.tf`/`main.tf`/`outputs.tf` ya estaba presente o se acaba de agregar. Si el token no esta en `true`, reporta explicitamente que se omitio por diseno (CA-3), no como un error o una omision accidental.
+- **Worker de proyecciones (opt-in, MEF-ADR-0034, Paso 1.9/2.3b/2.4b)**: si `projections.enabled` es `true` en `harness.config.json`, reporta los 3 modulos (`container-registry`, `container-app-environment`, `container-app`) creados u omitidos, y si el wiring de `variables.tf`/`main.tf`/`outputs.tf` ya estaba presente o se acaba de agregar. Si el token no esta en `true`, reporta explicitamente que se omitio por diseno (CA-3), no como un error o una omision accidental. Reporta ademas, por separado (probe propio, issue #679), si la alerta dedicada de spike de excepciones (`projections_exception_spike`, umbral >5) ya estaba presente en `main.tf`, se acaba de agregar, o se **omitio** porque `CLAUDE.md` no declara el token `RootNamespace` (Paso 0) -- un entorno que ya tenia el resto del wiring de una corrida anterior a este issue puede tener los 3 modulos sin la alerta, y una alerta omitida por falta del token es lo unico que queda pendiente de una corrida por lo demas completa: dilo como accion para el consumidor (declarar el token y volver a invocarte), no como una nota al pie.
 - **Lista canonica de resource providers** (Paso 2.1, MEF-ADR-0021): reporta cual de los tres casos de CA-2 aplico sobre `providers.tf` -- archivo creado con los trece namespaces, namespaces faltantes sumados a una lista parcial existente, o los trece ya presentes (sin cambios) --, y si `resource_provider_registrations` ya existia con un valor distinto de `"none"` (en cuyo caso no se piso, solo se reporta). Advierte que si el SP de CI no tiene `Contributor` a nivel de suscripcion (`scripts/setup-github-ci.sh`), el primer `apply` puede fallar con `AuthorizationFailed` en vez de `409 MissingSubscriptionRegistration`, y que el fix en ese caso es `az provider register --namespace <namespace> --wait` (una sola vez, privilegiado) por cada namespace que la suscripcion aun no tenga registrado.
 - **Placeholder de imagen del worker (issue #456)**: si generaste el wiring de proyecciones, recuerda que `projections_worker_image` apunta a `mcr.microsoft.com/k8se/quickstart:latest` y se queda asi para siempre -- el modulo `container-app` declara `lifecycle.ignore_changes` sobre `template[0].container[0].image` (Paso 1.9.3), asi que **no** hay que actualizar esa variable ni correr un `terraform apply` para desplegar la imagen real. El dueno de la imagen real es el pipeline de CI de imagen (fuera de alcance de este agente): construye y empuja `<RootNamespace>.Projections` al registry (`terraform output container_registry_login_server`) y la asigna directamente en Azure con `az containerapp update --image`, por fuera de Terraform. Advierte ademas, en el mismo punto, las dos condiciones que ese pipeline debera respetar (nota operativa 2 del Paso 1.9.3): debe desplegar la imagen real **despues** de que `infra-cd.yml` haya sembrado `marten-connection`/`app-insights-connection` al menos una vez, y ante una **rotacion** posterior de esos secretos debe crear una revision nueva (o `az containerapp revision restart`) -- una revision ya corriendo no re-lee el valor, y un `terraform apply` que no cambie el template del Container App no reinicia nada. Advierte tambien la contrapartida de este reparto: si el Container App llega a **recrearse**, nace de nuevo con el placeholder y hay que re-publicar la imagen -- el tag real no vive en el HCL, asi que Terraform no lo restituye (analogo a una Function App recreada, que queda sin codigo hasta el siguiente deploy).
 - Resultado de `terraform validate`.
