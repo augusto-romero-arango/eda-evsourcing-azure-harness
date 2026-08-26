@@ -5,6 +5,7 @@
 #   ./scripts/tooling-pipeline.sh 42
 #   ./scripts/tooling-pipeline.sh --issue 42
 #   ./scripts/tooling-pipeline.sh 42 --from-stage 2   # Retomar desde Stage 2
+#   ./scripts/tooling-pipeline.sh 42 --models 'reviewer=opus,writer=sonnet'  # Modelo por stage (experimentos)
 #
 # Ciclo: Issue -> Worktree -> Writer -> Reviewer -> Sync main -> PR -> Cleanup
 #
@@ -175,9 +176,10 @@ EOJSON
 ISSUE_NUM=""
 FROM_STAGE=1
 STATUS_FILENAME="pipeline-status-tooling.json"  # Nombre del archivo de status (parametrizable para paralelismo)
+MODELS_SPEC=""  # --models 'agente=modelo[,agente=modelo...]' (issue #708)
 
 if [ $# -eq 0 ]; then
-    echo "Uso: $0 [--issue NUM | NUM] [--from-stage N]"
+    echo "Uso: $0 [--issue NUM | NUM] [--from-stage N] [--models 'agente=modelo[,agente=modelo...]']"
     exit 1
 fi
 
@@ -197,6 +199,11 @@ while [[ $# -gt 0 ]]; do
         --status-file)
             [ $# -lt 2 ] && abort "Falta el nombre del archivo de status"
             STATUS_FILENAME="$2"
+            shift 2
+            ;;
+        --models)
+            [ $# -lt 2 ] && abort "Falta el valor de --models"
+            MODELS_SPEC="$2"
             shift 2
             ;;
         [0-9]*)
@@ -239,6 +246,17 @@ LOG_FILE_ABS="$(realpath "$LOG_FILE")"
 EVENTS_LOG_ABS="$PIPELINE_DIR_ABS/events.log"
 
 echo "=== SESSION TOOLING $TIMESTAMP issue:$ISSUE_NUM from-stage:$FROM_STAGE ===" >> "$EVENTS_LOG_ABS"
+
+# --- Resolver --models (issue #708) --------------------------------------
+# Se valida ANTES de crear el worktree (CA-1): un --models malformado debe
+# abortar temprano, no a mitad de Stage 1 con un worktree ya en disco.
+parse_stage_models "$MODELS_SPEC" \
+    || abort "--models mal formado: ${PIPELINE_STAGE_MODELS_ERROR:-formato invalido}"
+if [ -n "$PIPELINE_STAGE_MODELS" ]; then
+    STAGE_MODELS_LOG="$(format_stage_models_for_log)"
+    log "Modelos por stage (--models): $STAGE_MODELS_LOG"
+    echo "[$(date +%H:%M:%S)] MODELS: $STAGE_MODELS_LOG" >> "$EVENTS_LOG_ABS"
+fi
 
 # --- Captura stream-json de las invocaciones claude -p (issue #689) ---
 # Mismo gate que tdd-pipeline.sh (#645): jq ya es dependencia de facto del lado
@@ -352,11 +370,15 @@ run_agent() {
         reviewer) AGENT_RV_RES="running" ;;
     esac
     # Modelo por etapa: escritura (writer y merge) en sonnet, revision en opus.
+    # resolve_stage_model (issue #708) aplica el override de --models por clave
+    # exacta de agente; sin entrada en el mapa (o sin --models), cae en este
+    # default -- byte a byte el comportamiento previo al flag.
     local AGENT_MODEL
     case "$agent" in
         reviewer) AGENT_MODEL="opus" ;;
         *)        AGENT_MODEL="sonnet" ;;
     esac
+    AGENT_MODEL="$(resolve_stage_model "$agent" "$AGENT_MODEL")"
     update_status "$stage-$agent" "running"
     log "Invocando $agent..."
 

@@ -492,10 +492,13 @@ cmd_parallel() {
 # --- Modo TOOLING (un issue, pipeline sin TDD) ---
 cmd_tooling() {
     local issue="$1"
-    # extra_args: lo que se propaga al sub-script (hoy solo "--from-stage N").
-    # tooling-pipeline.sh acepta --from-stage (rango 1-2, que valida el propio
-    # sub-script): tragarselo aqui en silencio arrancaria de Stage 1 sobre un
-    # worktree que ya tiene commits, justo el dano que este issue evita.
+    # extra_args: lo que se propaga al sub-script ("--from-stage N" y/o
+    # "--models 'agente=modelo[,...]'", compuestos por el dispatch de --tooling
+    # en main()). tooling-pipeline.sh acepta --from-stage (rango 1-2, que valida
+    # el propio sub-script) y --models (issue #708, validado por
+    # parse_stage_models antes de crear el worktree): tragarselos aqui en
+    # silencio arrancaria de Stage 1 sobre un worktree que ya tiene commits, o
+    # correria con el modelo default sin avisar que el override se perdio.
     local extra_args="${2:-}"
     local session
     session=$(safe_session_name "tooling-$issue")
@@ -632,6 +635,7 @@ ${BOLD}Uso:${NC}
   ./scripts/tmux-pipeline.sh 42 --from-stage 3                    Retomar issue #42 desde Stage 3
   ./scripts/tmux-pipeline.sh --pipeline tooling 42                Forzar pipeline tooling
   ./scripts/tmux-pipeline.sh --tooling 42                         Issue de tooling (override explicito)
+  ./scripts/tmux-pipeline.sh --tooling 42 --models 'reviewer=opus,writer=sonnet'  Modelo por stage (experimentos)
   ./scripts/tmux-pipeline.sh --infra 42                           Issue de infraestructura (IaC)
   ./scripts/tmux-pipeline.sh --scaffold 42 --domain nombre        Scaffold de dominio
   ./scripts/tmux-pipeline.sh --scaffold --domain nombre           Scaffold sin issue
@@ -650,6 +654,16 @@ ${BOLD}Retomar una corrida caida (--from-stage):${NC}
   rango: lo valida el sub-script destino (tdd-pipeline.sh acepta 1-4;
   tooling-pipeline.sh e iac-pipeline.sh, 1-2), para no desincronizarse con el
   la primera vez que un pipeline sume una fase.
+
+${BOLD}Modelo por stage (--models, experimentos A/B de desempeno):${NC}
+  Valido hoy SOLO con --tooling: --models 'agente=modelo[,agente=modelo...]'
+  sobreescribe el modelo de un stage puntual (la clave es el nombre de agente
+  que recibe run_agent(), p. ej. 'writer' o 'reviewer'); sin entrada en el mapa,
+  el stage usa su default de siempre. Se rechaza (mensaje explicito, nunca
+  silencio) en el resto de los modos -- --infra, --scaffold, --batch, --parallel,
+  --attach y el enrutamiento automatico sin --tooling --, porque sus sub-scripts
+  todavia no implementan el flag (issue #708 es la primera pieza de una serie).
+  Un --models malformado aborta ANTES de crear el worktree.
 
 ${BOLD}Sesion existente (--if-exists reuse|replace|abort):${NC}
   Si ya existe una sesion con ese nombre, el wrapper distingue si sigue viva o
@@ -707,6 +721,7 @@ main() {
     local scaffold_extra=""
     local pipeline_override=""
     local from_stage_extra=""
+    local models_extra=""
     SESSION_IF_EXISTS=""
     local filtered_args=()
     while [[ $# -gt 0 ]]; do
@@ -725,6 +740,17 @@ main() {
                 [ $# -lt 2 ] && abort "Falta el valor de --from-stage"
                 [[ "$2" =~ ^[0-9]+$ ]] || abort "--from-stage debe ser un numero entero (recibido: '$2')"
                 from_stage_extra="--from-stage $2"
+                shift 2
+                ;;
+            --models)
+                # Sin pre-parsear aqui, --models caeria en filtered_args y el
+                # dispatch de --tooling (que solo reenvia "$1" + from_stage_extra
+                # a cmd_tooling) lo descartaria en silencio (issue #708). Las
+                # comillas simples protegen el valor (puede traer '[' / ']' de un
+                # id de modelo completo, p. ej. claude-opus-5[1m]) de que el shell
+                # que interpreta el send-keys de tmux lo tome como un glob.
+                [ $# -lt 2 ] && abort "Falta el valor de --models"
+                models_extra="--models '$2'"
                 shift 2
                 ;;
             --if-exists)
@@ -758,8 +784,9 @@ main() {
         --attach)
             shift
             # --attach solo reconecta a una sesion ya creada: no lanza pipeline,
-            # asi que no hay a quien propagarle --from-stage.
+            # asi que no hay a quien propagarle --from-stage/--models.
             [ -n "$from_stage_extra" ] && abort "--from-stage no aplica a --attach (no lanza un pipeline, solo reconecta). Para retomar: tmux-pipeline.sh <issue> --from-stage N"
+            [ -n "$models_extra" ] && abort "--models no aplica a --attach (no lanza un pipeline, solo reconecta). Para usarlo: tmux-pipeline.sh --tooling <issue> --models 'agente=modelo'"
             cmd_attach "${1:-}"
             ;;
         --tooling)
@@ -767,20 +794,35 @@ main() {
             if [ $# -eq 0 ]; then
                 abort "Debes especificar un issue. Uso: --tooling 42"
             fi
-            cmd_tooling "$1" "$from_stage_extra"
+            # Compone from_stage_extra + models_extra sin arrays (bash 3.2 de
+            # macOS revienta con "unbound variable" al expandir un array vacio
+            # bajo `set -u`) -- mismo patron que combined_extra mas abajo.
+            local tooling_extra="$from_stage_extra"
+            if [ -n "$models_extra" ]; then
+                if [ -n "$tooling_extra" ]; then
+                    tooling_extra="$tooling_extra $models_extra"
+                else
+                    tooling_extra="$models_extra"
+                fi
+            fi
+            cmd_tooling "$1" "$tooling_extra"
             ;;
         --infra)
             shift
             if [ $# -eq 0 ]; then
                 abort "Debes especificar un issue. Uso: --infra 42"
             fi
+            # iac-pipeline.sh todavia no implementa --models (issue #708 solo
+            # cubre tooling-pipeline.sh): rechazar en vez de tragarselo en silencio.
+            [ -n "$models_extra" ] && abort "--models todavia no es valido con --infra (iac-pipeline.sh no implementa el flag). Usalo con --tooling: tmux-pipeline.sh --tooling <issue> --models 'agente=modelo'"
             cmd_infra "$1" "$from_stage_extra"
             ;;
         --scaffold)
             shift
-            # scaffold-pipeline.sh no acepta --from-stage (verificado): no tiene
-            # stages retomables. Rechazar en vez de tragarselo en silencio.
+            # scaffold-pipeline.sh no acepta --from-stage ni --models (verificado):
+            # no tiene stages retomables. Rechazar en vez de tragarselo en silencio.
             [ -n "$from_stage_extra" ] && abort "--from-stage no es valido con --scaffold (scaffold-pipeline.sh no tiene stages retomables)."
+            [ -n "$models_extra" ] && abort "--models no es valido con --scaffold (scaffold-pipeline.sh no implementa el flag)."
             cmd_scaffold "$@"
             ;;
         --batch)
@@ -791,6 +833,9 @@ main() {
             # --from-stage sobre un lote de issues es ambiguo (Notas tecnicas del
             # issue #449): rechazar es la opcion segura.
             [ -n "$from_stage_extra" ] && abort "--from-stage no es valido con --batch (seria ambiguo sobre varios issues). Usalo con un unico issue: tmux-pipeline.sh <issue> --from-stage N"
+            # Mismo criterio: --models por issue sobre un lote tambien seria
+            # ambiguo, y hoy solo lo implementa tooling-pipeline.sh (issue #708).
+            [ -n "$models_extra" ] && abort "--models no es valido con --batch (seria ambiguo sobre varios issues). Usalo con un unico issue: tmux-pipeline.sh --tooling <issue> --models 'agente=modelo'"
             # Pasar --pipeline al cmd_batch si se proporciono
             if [ -n "$pipeline_override" ]; then
                 cmd_batch --pipeline "$pipeline_override" "$@"
@@ -806,6 +851,7 @@ main() {
             # Mismo rechazo que --batch: --from-stage no tiene sentido sobre
             # varios issues a la vez.
             [ -n "$from_stage_extra" ] && abort "--from-stage no es valido con --parallel (seria ambiguo sobre varios issues). Usalo con un unico issue: tmux-pipeline.sh <issue> --from-stage N"
+            [ -n "$models_extra" ] && abort "--models no es valido con --parallel (seria ambiguo sobre varios issues). Usalo con un unico issue: tmux-pipeline.sh --tooling <issue> --models 'agente=modelo'"
             # Pasar --pipeline al cmd_parallel si se proporciono
             if [ -n "$pipeline_override" ]; then
                 cmd_parallel --pipeline "$pipeline_override" "$@"
@@ -817,8 +863,9 @@ main() {
             # Modo single: argumento directo es un issue
             if [ $# -gt 1 ]; then
                 # Multiples issues sin modo especificado: idem --batch/--parallel,
-                # --from-stage seria ambiguo sobre el lote resultante.
+                # --from-stage/--models seria ambiguo sobre el lote resultante.
                 [ -n "$from_stage_extra" ] && abort "--from-stage no es valido con multiples issues (se interpretaria como --parallel). Especifica un unico issue: tmux-pipeline.sh <issue> --from-stage N"
+                [ -n "$models_extra" ] && abort "--models no es valido con multiples issues (se interpretaria como --parallel). Usa: tmux-pipeline.sh --tooling <issue> --models 'agente=modelo'"
                 warn "Multiples issues sin modo especificado. Usando --parallel."
                 if [ -n "$pipeline_override" ]; then
                     cmd_parallel --pipeline "$pipeline_override" "$@"
@@ -826,6 +873,11 @@ main() {
                     cmd_parallel "$@"
                 fi
             else
+                # El enrutamiento automatico (sin --tooling explicito) puede caer
+                # en tdd-pipeline.sh, que todavia no implementa --models (issue
+                # #708 solo cubre tooling-pipeline.sh): rechazar en vez de
+                # tragarselo en silencio o reenviarlo a un pipeline que no lo lee.
+                [ -n "$models_extra" ] && abort "--models solo esta soportado hoy via --tooling (el enrutamiento automatico puede caer en tdd-pipeline.sh, que no implementa el flag). Usa: tmux-pipeline.sh --tooling <issue> --models 'agente=modelo'"
                 # Compone scaffold_extra + from_stage_extra sin arrays (bash 3.2
                 # de macOS revienta con "unbound variable" al expandir un array
                 # vacio incluso con "${arr[*]}" bajo `set -u`).

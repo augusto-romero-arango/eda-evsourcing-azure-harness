@@ -10,7 +10,11 @@ Lanza el pipeline de tooling para un issue de GitHub dentro de una sesion tmux. 
 
 El numero de issue esta en: $ARGUMENTS
 
-Si `$ARGUMENTS` esta vacio, responde: `Uso: /tooling <numero-de-issue>`
+Si `$ARGUMENTS` esta vacio, responde: `Uso: /tooling <numero-de-issue> [--models 'agente=modelo[,agente=modelo...]']`
+
+`$ARGUMENTS` puede incluir opcionalmente el flag `--models 'agente=modelo[,agente=modelo...]'` (experimentos A/B de desempeno del harness): asigna el modelo de un stage puntual del pipeline tooling -- la clave es el nombre de agente que recibe `run_agent()` en `tooling-pipeline.sh` (`writer` o `reviewer`); un stage sin entrada en el mapa usa su default de siempre. Ejemplo: `/tooling 42 --models reviewer=opus,writer=sonnet`.
+
+Extrae `ISSUE_NUM` como el primer token numerico de `$ARGUMENTS` y usalo en los pasos 1, 2 y 2.5 de abajo (esos `gh issue view`/`gh issue edit` no entienden `--models`; sin `--models`, `ISSUE_NUM` es simplemente `$ARGUMENTS` completo). `$ARGUMENTS` completo, con `--models` incluido si vino, se reenvia intacto a `tmux-pipeline.sh --tooling` en el paso 3.
 
 ## Proceso
 
@@ -30,7 +34,7 @@ fi
 ### 1. Validar el issue
 
 ```bash
-gh issue view $ARGUMENTS --json number,title,state,labels -q '"#\(.number): \(.title) [\(.state)] labels: \([.labels[].name] | join(", "))"'
+gh issue view $ISSUE_NUM --json number,title,state,labels -q '"#\(.number): \(.title) [\(.state)] labels: \([.labels[].name] | join(", "))"'
 ```
 
 Si el issue no existe o esta cerrado (`CLOSED`), informa y detente.
@@ -40,7 +44,7 @@ Si el issue no existe o esta cerrado (`CLOSED`), informa y detente.
 Extrae labels del issue:
 
 ```bash
-gh issue view $ARGUMENTS --json labels -q '[.labels[].name] | join(",")'
+gh issue view $ISSUE_NUM --json labels -q '[.labels[].name] | join(",")'
 ```
 
 Verifica que tenga el label `tipo:tooling`. Si no lo tiene, advierte al usuario:
@@ -65,13 +69,13 @@ gh pr view <num> --json state -q '.state'
 - Si **todas** las dependencias estan cerradas (`CLOSED`) o mergeadas (`MERGED`): quita el label y continua:
 
 ```bash
-gh issue edit $ARGUMENTS --remove-label "bloqueado"
+gh issue edit $ISSUE_NUM --remove-label "bloqueado"
 ```
 
 - Si **alguna** dependencia sigue abierta: muestra cuales y **detente**:
 
 ```
-El issue #$ARGUMENTS esta bloqueado. Dependencias abiertas:
+El issue #$ISSUE_NUM esta bloqueado. Dependencias abiertas:
   - #42: [titulo] (OPEN)
   - #55: [titulo] (OPEN)
 
