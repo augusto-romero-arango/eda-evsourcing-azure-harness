@@ -74,6 +74,27 @@ safe_session_name() { echo "$1" | tr ' /:' '-' | tr -cd 'a-zA-Z0-9-'; }
 session_exists()    { tmux has-session -t "$1" 2>/dev/null; }
 inside_tmux()       { [ -n "${TMUX:-}" ]; }
 
+# should_delegate_to_herdr <args...>
+#
+# 0 si esta invocacion debe correr por la interfaz herdr (porte interno del
+# issue #690): estamos dentro de un pane herdr (HERDR_ENV=1 + HERDR_PANE_ID
+# inyectado), el binario esta en PATH, y el modo pedido tiene equivalente
+# herdr -- --attach y --help son tmux-especificos. MEFISTO_UI=tmux es el
+# escape hatch para forzar tmux desde dentro de herdr.
+should_delegate_to_herdr() {
+    [ "${MEFISTO_UI:-}" = "tmux" ] && return 1
+    [ "${HERDR_ENV:-}" = "1" ] || return 1
+    [ -n "${HERDR_PANE_ID:-}" ] || return 1
+    command -v herdr &>/dev/null || return 1
+    local a
+    for a in "$@"; do
+        case "$a" in
+            --attach|--help|-h) return 1 ;;
+        esac
+    done
+    return 0
+}
+
 # Extrae --verbose, --from-stage N e --if-exists X de "$@" (en cualquier
 # posicion) y los consume: ninguno debe propagarse posicionalmente al
 # pipeline invocado por send-keys (CA-2 de #435, extendido por #449) --
@@ -423,6 +444,14 @@ cmd_batch() {
 if [ $# -eq 0 ]; then
     print_usage
     exit 1
+fi
+
+# Autodeteccion herdr (porte interno del issue #690): dentro de un pane
+# herdr, los modos con equivalente se despachan a la interfaz herdr (pane de
+# ejecucion en el workspace actual, sin sesion tmux); fuera de herdr, o para
+# --attach, todo sigue igual que siempre.
+if should_delegate_to_herdr "$@"; then
+    exec "$SCRIPT_DIR/mefisto-herdr-pipeline.sh" "$@"
 fi
 
 case "$1" in

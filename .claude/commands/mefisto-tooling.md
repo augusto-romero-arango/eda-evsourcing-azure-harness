@@ -94,7 +94,14 @@ Luego lanza el pipeline interno en tmux:
 
 ### 4. Instrucciones de conexion
 
-Responde con:
+Dentro de herdr (`HERDR_ENV=1` en el entorno), el script delega en la interfaz herdr (`mefisto-herdr-pipeline.sh`) y no hay nada que adjuntar: el pipeline queda corriendo en un pane de este mismo workspace con el visor en vivo del agente. En ese caso responde con:
+
+```
+Pipeline mefisto-tooling corriendo en un pane de este workspace (visor en vivo del agente).
+Usa /mefisto-work-status para ver el progreso sin salir de aqui.
+```
+
+Fuera de herdr responde con:
 
 ```
 Pipeline mefisto-tooling lanzado en tmux. Para monitorear:
@@ -105,7 +112,7 @@ Usa /mefisto-work-status para ver el progreso sin salir de aqui.
 
 ## Reglas
 
-- **No esperes a que termine.** El script corre en background dentro de tmux. Devuelve el control inmediatamente.
+- **No esperes a que termine.** El script corre en background (en un pane herdr o una sesion tmux). Devuelve el control inmediatamente.
 - **No implementes nada tu mismo.** Solo lanza el script.
-- Si tmux no esta instalado, el script lo detecta y muestra el error.
+- Si tmux no esta instalado (y no estas dentro de herdr), el script lo detecta y muestra el error.
 - **Si el cwd no es Mefisto, aborta**. Los skills publicados (`/tooling`) son para el consumidor.
