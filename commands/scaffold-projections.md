@@ -69,6 +69,7 @@ fase 5, issue #458 + fase 6, issue #513):
     Infraestructura/ConfiguracionObservabilidadProjections.cs  (seam de observabilidad:
                                           service.name obligatorio, AddSource
                                           Marten/Npgsql/propia, UseAzureMonitorExporter
+                                          con EnableTraceBasedLogsSampler = false
                                           y el SetSampler posterior a ese exporter)
     Infraestructura/SamplerQueDescartaPollingDelDaemon.cs  (filtro del span de polling
                                           del daemon HotCold, MEF-ADR-0038: envuelve

@@ -524,7 +524,13 @@ public static class ConfiguracionObservabilidadProjections
                 // -- justo el nombre idiomatico (Assembly.GetName().Name); "X*" ancla como ^X.*$
                 // y captura tanto "X" como "X.Hija".
                 .AddSource("<RootNamespace>.Projections*"))
-            .UseAzureMonitorExporter()
+            // MEF-ADR-0038 seccion 9 (issue #680): default true del exporter instala
+            // LogFilteringProcessor, que descarta todo LogRecord salvo que SpanId == default ||
+            // TraceFlags == Recorded -- el HighWaterAgent emite sus LogError DENTRO del span de
+            // polling que el sampler de abajo ya descarta, asi que esos logs de error nunca
+            // llegaban a exceptions (medido: 35/35 perdidos, Bitakora.ControlAsistencia). Mecanismo
+            // del marco, no opt-in (regla absoluta 10) -- NUNCA quites este flip.
+            .UseAzureMonitorExporter(o => o.EnableTraceBasedLogsSampler = false)
             // MEF-ADR-0038 seccion 3/5 -- SEGUNDO .WithTracing(...), SIEMPRE despues de
             // UseAzureMonitorExporter(): ese exporter (Azure.Monitor.OpenTelemetry.Exporter 1.8.x)
             // llama internamente SetSampler(new RateLimitedSampler(5.0)) sobre el mismo builder, y
@@ -554,13 +560,18 @@ public static class ConfiguracionObservabilidadProjections
             .WithTracing(tracing => tracing
                 .SetSampler(new SamplerQueDescartaPollingDelDaemon(
                     new ParentBasedSampler(new TraceIdRatioBasedSampler(samplingRatio)))));
-        // El exporter resuelve APPLICATIONINSIGHTS_CONNECTION_STRING del entorno por convencion
-        // propia (MEF-ADR-0025): este seam no la lee ni la recibe como parametro.
+        // El exporter resuelve APPLICATIONINSIGHTS_CONNECTION_STRING sin que este seam la lea ni
+        // la reciba como parametro (MEF-ADR-0025). Bajo el overload de opciones de arriba llega por
+        // IConfiguration -- que Host.CreateApplicationBuilder (Paso 1a) puebla desde las variables
+        // de entorno --, y ese es el UNICO camino: un host sin ese proveedor apaga la exportacion
+        // entera en silencio (MEF-ADR-0038 seccion 9).
 
         // Frontera mecanismo/valor de MEF-ADR-0038 seccion 1: el marco ya garantiza arriba el
-        // MECANISMO completo (orden frente al exporter + filtro del polling del daemon, sin que
-        // ningun consumidor tenga que pedirlo). Lo unico que queda como VALOR del consumidor es el
-        // ratio (TELEMETRY_SAMPLING_RATIO). Este worker corre 24/7 (min_replicas >= 1, MEF-ADR-0034
+        // MECANISMO completo (orden frente al exporter + filtro del polling del daemon + flip del
+        // sampler de logs, sin que ningun consumidor tenga que pedirlo). Lo que queda como VALOR
+        // del consumidor son dos ejes ya independientes entre si: el ratio de trazas
+        // (TELEMETRY_SAMPLING_RATIO) y el nivel de ILogger, unico control de volumen de logs desde
+        // que ese flip los desacoplo del muestreo (seccion 9). Este worker corre 24/7 (min_replicas >= 1, MEF-ADR-0034
         // seccion 8) a diferencia de las Function Apps del write-side, que escalan a demanda --
         // mayor volumen sostenido de telemetria, de ahi que el filtro estructural de arriba no sea
         // opcional aqui.
@@ -571,6 +582,8 @@ public static class ConfiguracionObservabilidadProjections
 ```
 
 Los siete `using` del bloque anterior son los que este seam necesita, y ninguno esta ahi por accidente -- resueltos por lectura de fuente contra el tag `core-1.17.0` de `open-telemetry/opentelemetry-dotnet`, la version del core que arrastra `OpenTelemetry.Extensions.Hosting` 1.17.0 (MEF-ADR-0034 referencia [18]): `System.Globalization` es de `NumberStyles`/`CultureInfo` (**no** lo cubre `ImplicitUsings`; issue #513, lectura de `TELEMETRY_SAMPLING_RATIO`, mismo `using` que ya agrega `domain-scaffolder` para el mismo parseo en el write-side), `Assembly` es de `System.Reflection` (tampoco cubierto), `AddOpenTelemetry()` es de `Microsoft.Extensions.DependencyInjection` (`OpenTelemetryServicesExtensions`), **`ConfigureResource`/`WithTracing` son de `OpenTelemetry`** (`OpenTelemetryBuilderSdkExtensions.cs`, `namespace OpenTelemetry;`), `AddService` es de `OpenTelemetry.Resources` (`ResourceBuilderExtensions`), `AddSource` es metodo de instancia de `TracerProviderBuilder` (`OpenTelemetry.Trace`) y `UseAzureMonitorExporter()` es de `Azure.Monitor.OpenTelemetry.Exporter`. `OpenTelemetry.Trace` se conserva -- igual que en el `ComposicionServicios{PascalCase}` del write-side -- porque es el namespace de `SetSampler`/`ParentBasedSampler`/`TraceIdRatioBasedSampler`, el sampler que este seam instala de verdad ahora (MEF-ADR-0038 seccion 5) y ya no solo un punto de extension documentado en un comentario. **No "limpies" `using OpenTelemetry;` por parecer redundante con los dos hijos**: sin el, `ConfigureResource` y `WithTracing` fallan con CS1061 y el seam no compila. `AssemblyInformationalVersionAttribute` (issue #462, lectura del `serviceVersion`) no agrega un `using` octavo: vive en el mismo `System.Reflection` que `Assembly`, igual que en `VersionCheck.cs` del write-side (`domain-scaffolder.md`). `SamplerQueDescartaPollingDelDaemon` (Paso 1d punto 2b) tampoco agrega ningun `using` nuevo: vive en el mismo namespace `<RootNamespace>.Projections.Infraestructura` que este seam.
+
+**El overload con callback de `UseAzureMonitorExporter` no es intercambiable con el sin argumentos** (MEF-ADR-0038 seccion 9, verificado por lectura de fuente y ejecucion propia contra la version pinneada 1.8.3): el overload **sin** argumentos registra por dentro `DefaultAzureMonitorExporterOptions`; el overload con callback -- el que este seam usa para el flip -- **no**. Dos consecuencias que hay que respetar al tocar este seam o el `Program.cs` del Paso 1a: (1) bajo este overload la connection string llega unicamente por `IConfiguration[APPLICATIONINSIGHTS_CONNECTION_STRING]` (el exporter conserva `AddOptions<AzureMonitorExporterOptions>().Configure<IConfiguration>(...)`), y el `Program.cs` del Paso 1a la provee porque arma el host con `Host.CreateApplicationBuilder(args)`, que incluye el proveedor de variables de entorno -- **NUNCA** cambies ese host por uno que no lo incluya, ni "arregles" la telemetria pasandole la connection string al seam (MEF-ADR-0025, regla absoluta 10); (2) la seccion `AzureMonitorExporter` de `appsettings.json` deja de bindearse, lo que ademas impide que un consumidor re-habilite el flip por configuracion -- efecto deseado aqui, no defecto (el flip es mecanismo del marco).
 
 **2b. Crear `Infraestructura/SamplerQueDescartaPollingDelDaemon.cs` (issue #513, MEF-ADR-0038 seccion 5)** -- solo si el probe lo reporto como **FALTA**; si EXISTE, no lo toques (regla absoluta 1, mismo trato que el seam) y salta al punto 3:
 
@@ -664,16 +677,18 @@ Si `Program.cs` ya invoca `ConfigurarObservabilidad` (re-ejecucion tras un Paso 
 using System.Diagnostics;
 using System.Reflection;
 using AwesomeAssertions;
+using Azure.Monitor.OpenTelemetry.Exporter;
 using <RootNamespace>.Projections.Infraestructura;
 using Marten;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using OpenTelemetry;
 using OpenTelemetry.Trace;
 
 namespace <RootNamespace>.Projections.Tests;
 
 /// <summary>
-/// Guardrails deterministas del sampler de observabilidad (MEF-ADR-0038 seccion 4/5): construir el
+/// Guardrails deterministas del sampler de observabilidad (MEF-ADR-0038 seccion 4/5/9): construir el
 /// grafo real y verificarlo, no confiar en revision visual del codigo -- mismo principio que
 /// ComposicionContenedorTests del write-side (MEF-ADR-0029/domain-scaffolder).
 /// </summary>
@@ -752,6 +767,29 @@ public class ConfiguracionObservabilidadProjectionsTests
 
         samplerEfectivo.Description.Should().Be(
             "SamplerQueDescartaPollingDelDaemon{ParentBased{TraceIdRatioBasedSampler{1.000000}}}");
+    }
+
+    // Guardrail (d) (CA-2, issue #680): el borde critico es EnableTraceBasedLogsSampler, no el
+    // Sampler de trazas -- MEF-ADR-0038 seccion 9 (verificado por lectura de fuente contra
+    // Azure.Monitor.OpenTelemetry.Exporter 1.8.3, la version pinneada en el punto 1 de este mismo
+    // paso): el default true del exporter instala LogFilteringProcessor, que descarta todo
+    // LogRecord salvo que SpanId == default || TraceFlags == Recorded -- justo lo que suprime los
+    // LogError del daemon emitidos bajo el span de polling que SamplerQueDescartaPollingDelDaemon
+    // ya descarta (0% de los 35 errores de "high water statistics" llegaron a exceptions en la
+    // medicion de campo, Bitakora.ControlAsistencia). Se verifica el valor RESUELTO de
+    // AzureMonitorExporterOptions -- lo que el exporter realmente usa -- nunca el texto del seam:
+    // si el flip del punto 2 desaparece, este guardrail cae en rojo aunque el archivo compile.
+    [Fact]
+    public async Task ConfigurarObservabilidad_DeshabilitaElSamplerDeLogsBasadoEnTrazas()
+    {
+        await using var proveedor = ConstruirProveedor();
+
+        var opciones = proveedor.GetRequiredService<IOptions<AzureMonitorExporterOptions>>().Value;
+
+        opciones.EnableTraceBasedLogsSampler.Should().BeFalse(
+            "MEF-ADR-0038 seccion 9: el default true de Azure.Monitor.OpenTelemetry.Exporter " +
+            "instala LogFilteringProcessor, que descarta los LogError del daemon emitidos bajo " +
+            "el span de polling que SamplerQueDescartaPollingDelDaemon ya descarta");
     }
 
     // Guardrail (c) (CA-5): el nombre del span filtrado se compara EN VIVO contra
@@ -840,11 +878,11 @@ public class ConfiguracionObservabilidadProjectionsTests
 }
 ```
 
-`StoreOptions` (guardrail c) resuelve desde el `PackageReference` a `Marten` que el `.csproj` de `Projections.Tests` ya declara (Paso 1c); ningun `using` de este archivo requiere un paquete nuevo -- `Sdk`/`BaseProcessor<Activity>` viven en el namespace raiz `OpenTelemetry`, `TracerProvider`/`Sampler`/`ParentBasedSampler`/`TraceIdRatioBasedSampler`/`SamplingResult`/`SamplingParameters`/`SamplingDecision` en `OpenTelemetry.Trace` (verificado por lectura de fuente del mismo tag `core-1.17.0` que ya cita este agente), y ambos paquetes llegan transitivamente via el `ProjectReference` de `Projections.Tests` al worker (Paso 1c).
+`StoreOptions` (guardrail c) resuelve desde el `PackageReference` a `Marten` que el `.csproj` de `Projections.Tests` ya declara (Paso 1c); ningun `using` de este archivo requiere un paquete nuevo -- `Sdk`/`BaseProcessor<Activity>` viven en el namespace raiz `OpenTelemetry`, `TracerProvider`/`Sampler`/`ParentBasedSampler`/`TraceIdRatioBasedSampler`/`SamplingResult`/`SamplingParameters`/`SamplingDecision` en `OpenTelemetry.Trace` (verificado por lectura de fuente del mismo tag `core-1.17.0` que ya cita este agente), y ambos paquetes llegan transitivamente via el `ProjectReference` de `Projections.Tests` al worker (Paso 1c). Los dos `using` del guardrail (d) tampoco agregan paquete: `AzureMonitorExporterOptions` viene de `Azure.Monitor.OpenTelemetry.Exporter` (el `PackageReference` del punto 1, transitivo por el mismo `ProjectReference`) e `IOptions<T>` de `Microsoft.Extensions.Options`, que ya llega con `Microsoft.Extensions.DependencyInjection`. **No los "limpies"**: sin ellos el archivo no compila (`CS0246`/`CS0305`), mismo modo de falla que el `using OpenTelemetry;` del seam.
 
 ---
 
-Esta receta completa (los dos `PackageReference` nuevos + el seam + el sampler wrapper + la linea nueva de `Program.cs` + el config-test de observabilidad) tiene cada API resuelta contra su namespace por **lectura de fuente** del tag `core-1.17.0` de `open-telemetry/opentelemetry-dotnet` (ver la nota de los `using` arriba), y su gemela del write-side -- misma cadena `AddOpenTelemetry()...WithTracing(...).UseAzureMonitorExporter()` -- compila y exporta en produccion (MEF-ADR-0003, verificado por el consumidor Cosmos.ControlPlane). Aun asi, **el `dotnet build`/`dotnet test` del Paso 4 es el que lo confirma en el repo concreto**: si el build falla, el sospechoso numero uno es un `using` faltante o "limpiado" del bloque de arriba, no la version de los paquetes; si el que falla es alguno de los cuatro guardrails de este punto, aplica el mismo runbook que ya fijo la propagacion al write-side (issue #511/PR #519, `domain-scaffolder.md`): un guardrail de tipo/orden en rojo (parte 1 de guardrail a) senala una regresion real de codigo, nunca del test; un guardrail de `Description` en rojo (parte 2 de guardrail a) con un ratio distinto de `1.000000` en la `Description` real no es un literal desactualizado: es que el entorno del build **si** declara `TELEMETRY_SAMPLING_RATIO`, y ese guardrail verifica justo el camino default (MEF-ADR-0038 seccion 4) -- corre `dotnet test` con la variable sin declarar, nunca ajustes el literal a un ratio de entorno; el mismo en rojo mientras la `Description` real siga con la forma esperada y el ratio en `1.000000` es un literal desactualizado frente a la version del SDK instalada -- copia el valor real al literal; y un guardrail (b)/(c) en rojo con el mensaje de falla senalando un span o prefijo distinto al esperado es un cambio real de Marten o de OpenTelemetry que hay que reverificar, nunca silenciar relajando la asercion.
+Esta receta completa (los dos `PackageReference` nuevos + el seam + el sampler wrapper + la linea nueva de `Program.cs` + el config-test de observabilidad) tiene cada API resuelta contra su namespace por **lectura de fuente** del tag `core-1.17.0` de `open-telemetry/opentelemetry-dotnet` (ver la nota de los `using` arriba), y su gemela del write-side -- misma cadena `AddOpenTelemetry()...WithTracing(...).UseAzureMonitorExporter()` -- compila y exporta en produccion (MEF-ADR-0003, verificado por el consumidor Cosmos.ControlPlane). Aun asi, **el `dotnet build`/`dotnet test` del Paso 4 es el que lo confirma en el repo concreto**: si el build falla, el sospechoso numero uno es un `using` faltante o "limpiado" del bloque de arriba, no la version de los paquetes; si el que falla es alguno de los cinco guardrails de este punto, aplica el mismo runbook que ya fijo la propagacion al write-side (issue #511/PR #519, `domain-scaffolder.md`): un guardrail de tipo/orden en rojo (parte 1 de guardrail a) senala una regresion real de codigo, nunca del test; un guardrail de `Description` en rojo (parte 2 de guardrail a) con un ratio distinto de `1.000000` en la `Description` real no es un literal desactualizado: es que el entorno del build **si** declara `TELEMETRY_SAMPLING_RATIO`, y ese guardrail verifica justo el camino default (MEF-ADR-0038 seccion 4) -- corre `dotnet test` con la variable sin declarar, nunca ajustes el literal a un ratio de entorno; el mismo en rojo mientras la `Description` real siga con la forma esperada y el ratio en `1.000000` es un literal desactualizado frente a la version del SDK instalada -- copia el valor real al literal; un guardrail (b)/(c) en rojo con el mensaje de falla senalando un span o prefijo distinto al esperado es un cambio real de Marten o de OpenTelemetry que hay que reverificar, nunca silenciar relajando la asercion; y un guardrail (d) en rojo (`EnableTraceBasedLogsSampler` distinto de `false`, issue #680, MEF-ADR-0038 seccion 9) senala que el flip del punto 2 desaparecio o se reescribio -- repon `o.EnableTraceBasedLogsSampler = false` en `UseAzureMonitorExporter(...)`, nunca relajes la asercion ni lo conviertas en condicional.
 
 ---
 
@@ -1387,7 +1425,7 @@ Imprime un resumen claro:
 7. **NO** termines sin que `dotnet build` de los tres proyectos y `dotnet test` de `Projections.Tests` pasen.
 8. **NUNCA** sobrescribas `.github/workflows/deploy-projections.yml` si ya existe (CA-1 issue #453): mismo patron de idempotencia que `infra-cd.yml`/`smoke-tests*.yml`. Omitelo y reportalo.
 9. **NUNCA** hagas que ese workflow ejecute Terraform (`terraform output`, `terraform apply`, etc.) ni encadenes su trigger tras `Infra CD` con `workflow_run` (decision tomada al refinar el issue #453, ver la nota "Sin encadenar tras `Infra CD`" del Paso 2b): el `ignore_changes` del issue #456 ya evita que un `apply` normal revierta la imagen, y el caso residual (un `apply` que recree el Container App) se cubre documentandolo en la cabecera, no encadenando el workflow.
-10. El sampler de `ConfiguracionObservabilidadProjections` es **MECANISMO del marco, no opt-in** (MEF-ADR-0038 secciones 1 y 5 y MEF-ADR-0034 seccion 10 punto 4 -- invierten parcialmente la regla anterior de este agente, que prohibia instalar cualquier sampler, CA-5 issue #457): `SetSampler(new SamplerQueDescartaPollingDelDaemon(new ParentBasedSampler(new TraceIdRatioBasedSampler(ratio))))`, siempre en el segundo `.WithTracing(...)` posterior a `UseAzureMonitorExporter()` (Paso 1d puntos 2/2b). **NUNCA** quites el filtro del daemon (`SamplerQueDescartaPollingDelDaemon`) ni inviertas su anidamiento: el filtro por nombre debe ser el sampler MAS EXTERNO, con `ParentBasedSampler(TraceIdRatioBasedSampler(ratio))` como su interno -- invertirlo no rompe el build, pero si rompe el guardrail (a) del config-test de observabilidad (Paso 1d punto 4), que fija tanto el tipo del sampler efectivo como el literal exacto de su `Description`. Lo unico que es **VALOR del consumidor** es el ratio (`TELEMETRY_SAMPLING_RATIO`, default `1.0`). **NUNCA** hagas que el seam lea o reciba `APPLICATIONINSIGHTS_CONNECTION_STRING`: el exporter la resuelve del entorno por convencion propia (MEF-ADR-0025).
+10. El sampler de `ConfiguracionObservabilidadProjections` es **MECANISMO del marco, no opt-in** (MEF-ADR-0038 secciones 1 y 5 y MEF-ADR-0034 seccion 10 punto 4 -- invierten parcialmente la regla anterior de este agente, que prohibia instalar cualquier sampler, CA-5 issue #457): `SetSampler(new SamplerQueDescartaPollingDelDaemon(new ParentBasedSampler(new TraceIdRatioBasedSampler(ratio))))`, siempre en el segundo `.WithTracing(...)` posterior a `UseAzureMonitorExporter()` (Paso 1d puntos 2/2b). **NUNCA** quites el filtro del daemon (`SamplerQueDescartaPollingDelDaemon`) ni inviertas su anidamiento: el filtro por nombre debe ser el sampler MAS EXTERNO, con `ParentBasedSampler(TraceIdRatioBasedSampler(ratio))` como su interno -- invertirlo no rompe el build, pero si rompe el guardrail (a) del config-test de observabilidad (Paso 1d punto 4), que fija tanto el tipo del sampler efectivo como el literal exacto de su `Description`. **NUNCA** quites el flip `EnableTraceBasedLogsSampler = false` de `UseAzureMonitorExporter(...)` (Paso 1d punto 2, MEF-ADR-0038 seccion 9, issue #680) ni lo conviertas en opcion del consumidor (variable de entorno, parametro del seam, etc.): es mecanismo del marco exactamente igual que el filtro del daemon de arriba -- sin el, `LogFilteringProcessor` descarta los `LogError` que el daemon emite dentro del span de polling que el sampler de trazas ya descarta (medido: 35/35 perdidos, Bitakora.ControlAsistencia). Quitarlo no rompe el build, pero si rompe el guardrail (d) del config-test de observabilidad (Paso 1d punto 4). Lo unico que sigue siendo **VALOR del consumidor** son dos ejes ahora independientes: el ratio de trazas (`TELEMETRY_SAMPLING_RATIO`, default `1.0`) y el nivel de `ILogger` (filtering estandar de .NET, `appsettings.json`), que a partir de este flip es el unico control de volumen de logs que le queda al consumidor. **NUNCA** hagas que el seam lea o reciba `APPLICATIONINSIGHTS_CONNECTION_STRING`: la resuelve el propio exporter -- bajo el overload de opciones, via la `IConfiguration` que el `Host.CreateApplicationBuilder` del Paso 1a puebla desde las variables de entorno (MEF-ADR-0025, MEF-ADR-0038 seccion 9).
 11. **NUNCA** sobrescribas el `.dockerignore` de la raiz del repo consumidor si ya existe (CA-5 issue #458, Paso 2a): puede llevar exclusiones que el consumidor agrego a mano. Omitelo y reportalo. Su contenido es byte-fijo -- transcribelo literal, sin normalizar espacios, orden ni comentarios (mismo criterio que la regla final 12 de `infra-base-scaffolder` para el `.gitignore` raiz), sustituyendo unicamente el `<RootNamespace>` de sus dos comentarios de cabecera. **NUNCA** anides este paso bajo el gate del Dockerfile (Paso 2): su probe de idempotencia es independiente y corre siempre, exista o no el Dockerfile todavia. **NUNCA** excluyas ahi `src/`, `tests/` ni ningun `.csproj`/`.cs` (decision del issue #458: se excluyen artefactos, nunca proyectos -- el worker puede llegar a referenciar el assembly de un dominio, MEF-ADR-0034 seccion 5), ni conviertas la lista en una allowlist (`*` + reinclusiones): un `Directory.Build.props`/`nuget.config` que un scaffolder futuro emita en la raiz romperia el build en silencio.
 12. **NUNCA** enumeres un dominio por nombre en la capa de restore del Dockerfile (`COPY --parents`, Paso 2, CA-1 issue #552): el patron `src/<RootNamespace>.*/*.csproj` debe seguir siendo generico -- nunca edites el Dockerfile cuando nace o se agrega un dominio nuevo. Esa evolucion la cierran los bucles idempotentes del Paso 1b (CA-3), nunca este archivo. **NUNCA** quites la directiva `# syntax=docker/dockerfile:1` de la primera linea ni la muevas debajo de un comentario o de una linea en blanco: sin ella el frontend no expone `--parents`, y degradada a comentario el fallo no se ve hasta el `docker build`.
 13. **NUNCA** dejes pasar sin commit una `ProjectReference` del worker hacia un Function App (Paso 4, CA-4, issue #552, MEF-ADR-0039 decision 4 / seccion 10): si la verificacion mecanica falla, detente e informa -- no la "arregles" quitando el assert ni edites el `.csproj` para silenciarla.
