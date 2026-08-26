@@ -526,7 +526,15 @@ public static class ComposicionServicios{PascalCase}
                 // src/OpenTelemetry/Internal/WildcardHelper.cs (tag core-1.13.1) y por experimento
                 // local. NO agregar el punto por simetria con los AddSource de arriba.
                 .AddSource("<RootNamespace>.{PascalCase}*"))
-            .UseAzureMonitorExporter()
+            // MEF-ADR-0038 seccion 9 (issue #700): default true del exporter instala
+            // LogFilteringProcessor, que descarta todo LogRecord salvo que SpanId == default ||
+            // TraceFlags == Recorded. Aqui no hay ningun filtro estructural de spans (a diferencia
+            // del worker de proyecciones, seccion 5): la supresion depende del RATIO -- con un
+            // TELEMETRY_SAMPLING_RATIO fraccionario, los LogError emitidos dentro de un span no
+            // muestreado (handlers, Wolverine, Marten) se perdian en esa misma proporcion,
+            // degradando en silencio la alerta exception_spike (modulo monitoring). Mecanismo del
+            // marco, no opt-in -- NUNCA quites este flip.
+            .UseAzureMonitorExporter(o => o.EnableTraceBasedLogsSampler = false)
             // MEF-ADR-0038 seccion 3/6 -- SEGUNDO .WithTracing(...), SIEMPRE despues de
             // UseAzureMonitorExporter(): ese exporter (Azure.Monitor.OpenTelemetry.Exporter 1.8.x)
             // llama internamente SetSampler(new RateLimitedSampler(5.0)) sobre el mismo builder, y
@@ -572,6 +580,8 @@ public static class ComposicionServicios{PascalCase}
 **Sampler del write-side (MEF-ADR-0038 seccion 6):** la supervivencia de `SetSampler` frente a `UseAzureMonitorExporter()` NO es contrato del paquete exporter -- lo sostiene el orden fijado arriba mas el guardrail de `ComposicionContenedorTests` (Paso 2 punto 9), nunca la sola lectura del codigo. El write-side instala unicamente la capa de ratio (`ParentBasedSampler(TraceIdRatioBasedSampler(ratio))`), sin el filtro por nombre del daemon `HotCold` -- ese filtro es exclusivo del worker de proyecciones (ninguna Function App corre un daemon, MEF-ADR-0018), y es alcance de `projections-scaffolder` (issue #513), no de este agente.
 
 **Durability agent del write-side (MEF-ADR-0038 seccion 6):** se apaga en origen la recoleccion de metricas de profundidad de cola (`options.Durability.DurabilityMetricsEnabled = false;`), nunca la durabilidad real -- `Durability.Mode` y `Durability.DurabilityAgentEnabled` no se tocan en ningun punto de la receta. No subas `UpdateMetricsPeriod` (default 5 s) en vez de apagar la bandera: es la **Alt 3** que MEF-ADR-0038 ya evaluo y descarto -- espaciar el polling seguiria generando y facturando una metrica que hoy no tiene ningun consumidor, ni dashboard ni alerta. Igual que con el sampler, la supervivencia de `DurabilityMetricsEnabled` frente a la reasignacion posterior de `Mode` NO es contrato del paquete -- lo sostiene el guardrail de `ComposicionContenedorTests` (Paso 2 punto 9), no la sola lectura del codigo.
+
+**Flip de logs del write-side (MEF-ADR-0038 seccion 9, issue #700):** `o.EnableTraceBasedLogsSampler = false` desacopla los `LogRecord` de la decision de muestreo de trazas -- mecanismo del marco, igual que el filtro del daemon del worker de proyecciones (MEF-ADR-0034/#513), pero por una mecanica distinta: aqui no hay ningun filtro estructural de spans (el write-side instala solo la capa de ratio, arriba), asi que sin el flip la supresion de logs de error depende enteramente de `TELEMETRY_SAMPLING_RATIO` -- con el default `1.0` el delta es cero, con un ratio fraccionario (valor soportado del consumidor) los `LogError` emitidos dentro de spans no muestreados se pierden en proporcion al ratio. **NUNCA** quites este flip ni lo conviertas en opcion del consumidor (variable de entorno, parametro del seam, etc.): el ratio de trazas y el filtering de niveles de `ILogger` siguen siendo valor del consumidor -- el flip solo garantiza que ningun log de error se descarte por una decision de muestreo de trazas. Su supervivencia frente a `UseAzureMonitorExporter()` NO es contrato del paquete exporter -- la sostiene el guardrail de `ComposicionContenedorTests` (Paso 2 punto 9), no la sola lectura del codigo.
 
 Si el Paso 0 no resolvio ningun alias `serviceBus.external` con `alcance == "compartido"`, omite el parametro `serviceBusCosmos` y la linea `AgregarAzureServiceBusNombradoServerless`; deja solo el broker default y un comentario: `// Backbone compartido: sin alias "compartido" declarado en serviceBus.external todavia (MEF-ADR-0024 decision #4). Agrega su broker nombrado cuando el BC publique/consuma su primer evento publico.` Si hay mas de un alias, repite el par parametro + linea de registro por cada uno (y su argumento correspondiente en la llamada de `Program.cs` y en el test de composicion, Paso 2 punto 9). No wirees ningun alias con `alcance == "externo"` (integracion verdaderamente externa, diferida por MEF-ADR-0024 decision #5, default-off).
 
@@ -1650,22 +1660,25 @@ el guardrail que detecta en segundos, en CI, un registro faltante que de otro mo
 en runtime (issue #221 del consumidor Bitakora.ControlAsistencia: `ITenantResolver` sin registrar
 paso "compila + unit tests verdes" y solo se detecto post-deploy en smoke tests). Gana ademas una
 guarda derivada de identidad de eventos (MEF-ADR-0036 CA-3/CA-4, ultimo test de la clase abajo),
-los dos guardrails deterministas del sampler de observabilidad (MEF-ADR-0038 seccion 4) y los dos
-guardrails del durability agent apagado en origen (MEF-ADR-0038 seccion 6, ultimos dos tests de la
-clase): tanto el orden `SetSampler` vs. `UseAzureMonitorExporter()` como la supervivencia de
-`DurabilityMetricsEnabled` frente a la reasignacion posterior de `Mode` no son contrato de sus
-paquetes respectivos, asi que su vigencia en cada build la sostiene este test, no la lectura visual
-del codigo.
+los dos guardrails deterministas del sampler de observabilidad (MEF-ADR-0038 seccion 4), el
+guardrail del flip de logs desacoplado del muestreo de trazas (MEF-ADR-0038 seccion 9, issue #700)
+y los dos guardrails del durability agent apagado en origen (MEF-ADR-0038 seccion 6, ultimos dos
+tests de la clase): tanto el orden `SetSampler` vs. `UseAzureMonitorExporter()`, la supervivencia
+de `EnableTraceBasedLogsSampler` frente al mismo exporter, como la de `DurabilityMetricsEnabled`
+frente a la reasignacion posterior de `Mode`, no son contrato de sus paquetes respectivos, asi que
+su vigencia en cada build la sostiene este test, no la lectura visual del codigo.
 
 ```csharp
 using System.Reflection;
 using AwesomeAssertions;
 using <RootNamespace>.{PascalCase}.Infraestructura;
+using Azure.Monitor.OpenTelemetry.Exporter;
 using Cosmos.EventDriven.Abstractions;
 using Cosmos.EventSourcing.Abstractions;
 using Cosmos.EventSourcing.Abstractions.Commands;
 using Marten;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using OpenTelemetry.Trace;
 using Wolverine;
 
@@ -1850,6 +1863,29 @@ public class ComposicionContenedorTests
         samplerEfectivo.Description.Should().Be("ParentBased{TraceIdRatioBasedSampler{1.000000}}");
     }
 
+    // Guardrail del flip de logs (MEF-ADR-0038 seccion 9, issue #700): el borde critico es
+    // EnableTraceBasedLogsSampler, no el Sampler de trazas. El default true del exporter instala
+    // LogFilteringProcessor, que descarta todo LogRecord salvo que SpanId == default ||
+    // TraceFlags == Recorded -- a diferencia del worker, aqui la supresion depende del ratio de
+    // trazas (TELEMETRY_SAMPLING_RATIO), no de ningun filtro estructural de spans. Ese default se
+    // verifico por lectura de fuente del tag Azure.Monitor.OpenTelemetry.Exporter_1.8.3 (MEF-ADR-0038
+    // seccion 9) y por decompilacion de la 1.8.1 en el consumidor: es el mismo codigo en toda la
+    // linea 1.8.x, incluida la 1.8.2 que pinnea este agente. Se verifica el valor RESUELTO de
+    // AzureMonitorExporterOptions -- lo que el exporter realmente usa -- nunca el texto del seam:
+    // si el flip del Paso 6b desaparece, este guardrail cae en rojo aunque el archivo compile.
+    [Fact]
+    public async Task AgregarServicios{PascalCase}_DeshabilitaElSamplerDeLogsBasadoEnTrazas()
+    {
+        await using var proveedor = ConstruirProveedor();
+
+        var opciones = proveedor.GetRequiredService<IOptions<AzureMonitorExporterOptions>>().Value;
+
+        opciones.EnableTraceBasedLogsSampler.Should().BeFalse(
+            "MEF-ADR-0038 seccion 9: el default true de Azure.Monitor.OpenTelemetry.Exporter " +
+            "instala LogFilteringProcessor, que en el write-side descarta LogError emitidos " +
+            "dentro de spans no muestreados por TELEMETRY_SAMPLING_RATIO");
+    }
+
     // Guardrail (MEF-ADR-0038 seccion 6, CA-3): PersistenceMetrics.StartPolling
     // (Wolverine.RDBMS.DurabilityAgent.StartAsync) es un PeriodicTimer(UpdateMetricsPeriod,
     // default 5s) que llama store.Admin.FetchCountsAsync() -- sin ningun consumidor hoy (sin
@@ -1899,6 +1935,16 @@ public class ComposicionContenedorTests
 Si el Paso 6b agrego o quito parametros `serviceBus<Alias>` (segun los alias del backbone
 compartido resueltos en el Paso 0), pasa el mismo numero de argumentos dummy en la llamada a
 `AgregarServicios{PascalCase}` de este test -- misma regla dinamica que en `Program.cs`.
+
+Los dos `using` del guardrail del flip de logs (issue #700) **no** agregan ningun paquete al
+`.csproj` de tests: `AzureMonitorExporterOptions` viene de `Azure.Monitor.OpenTelemetry.Exporter` y
+`IOptions<T>` de `Microsoft.Extensions.Options`, y ambos llegan por el `ProjectReference` al
+proyecto del dominio (punto 4 de este mismo paso), que ya declara el primero (Paso 1 punto 2) y
+arrastra el segundo con `Microsoft.Extensions.DependencyInjection`. **No los "limpies"**: sin ellos
+el archivo no compila (`CS0246`/`CS0305`), mismo modo de falla que el `using OpenTelemetry.Trace;`
+de los guardrails del sampler. Ese `ServiceProvider` tampoco necesita registrar `IConfiguration` a
+mano -- el SDK de OpenTelemetry hace `TryAddSingleton<IConfiguration>` con un builder de variables
+de entorno cuando no hay host detras (MEF-ADR-0038 seccion 9, parrafo *Guardrail*).
 
 **10. Crear `ReadyCheckTests.cs`** (raiz del proyecto de tests) -- cubre `ReadyCheck` (Paso 1 punto
 12c, MEF-ADR-0031 seccion 6): el mapeo probe-exitoso -> 200 y probe-fallido -> 503 con cuerpo
@@ -3578,6 +3624,12 @@ Si el que falla es uno de los dos guardrails del sampler (MEF-ADR-0038 seccion 4
 - `...ElRatioDefaultLlegaAlSamplerEfectivo` en rojo mientras la `Description` real del mensaje de falla **sigue** conteniendo `ParentBased{TraceIdRatioBasedSampler{...}}`: es solo el literal esperado desactualizado frente a la version del SDK instalada. Copia la `Description` real al literal del test y deja anotada la version contra la que la verificaste. Si la `Description` real es de otro sampler, no es un literal desactualizado -- es el caso anterior.
 - Si `ObtenerSamplerEfectivo` falla porque la propiedad `Sampler` no existe, el SDK de OpenTelemetry la renombro o la elimino: reverifica contra la fuente de la version instalada antes de tocar nada, e informa al usuario -- no borres el guardrail para pasar al commit.
 
+Si el que falla es el guardrail del flip de logs (MEF-ADR-0038 seccion 9,
+`...DeshabilitaElSamplerDeLogsBasadoEnTrazas`): el flip `o.EnableTraceBasedLogsSampler = false`
+desaparecio de `UseAzureMonitorExporter(...)` en el Paso 6b, o se convirtio en una opcion del
+consumidor (variable de entorno, parametro del seam). Repon el flip en el codigo de produccion --
+nunca relajes la asercion ni la conviertas en condicional.
+
 Si el que falla es uno de los dos guardrails del durability agent (MEF-ADR-0038 seccion 6), la accion tampoco es la misma en cada caso:
 
 - `...ApagaLaRecoleccionDeMetricasDeDurabilidad` en rojo: o la linea `options.Durability.DurabilityMetricsEnabled = false;` no quedo dentro del callback del Paso 6b, o un upgrade de `Cosmos.EventSourcing.CritterStack` empezo a reasignar tambien esa bandera despues del callback (hasta 2.3.1 solo reasigna `Mode`). Lo primero se corrige en el codigo de produccion; lo segundo es exactamente el hallazgo que este guardrail existe para producir -- reverifica por decompilacion cual es el nuevo punto de wiring valido e informa al usuario. En ninguno de los dos casos se borra el test.
@@ -3678,7 +3730,7 @@ Scaffold completado para el dominio "{kebab}":
     Infraestructura/ServiceBusEndpointBaseTests.cs - Tests de orquestacion (feliz, lock-lost, dead-letter, JSON invalido)
     Infraestructura/ServiceBusSessionEndpointBaseTests.cs - Tests de orquestacion de fan-in (feliz, lock-lost, dead-letter, Subject no reconocido)
     Infraestructura/PrivateEventEndpointBaseTests.cs - Tests de orquestacion del EventHandler directo (feliz, lock-lost, dead-letter, JSON invalido)
-    Infraestructura/ComposicionContenedorTests.cs - Test de composicion del contenedor DI: BuildServiceProvider(ValidateOnBuild + ValidateScopes) + resolucion explicita de los routers (issue #319, MEF-ADR-0029) + guarda derivada de eventos aplicados vs EventGraph del IDocumentStore compuesto (MEF-ADR-0036) + guardrails del sampler efectivo post-exporter y su ratio default + del durability agent apagado en origen (MEF-ADR-0038)
+    Infraestructura/ComposicionContenedorTests.cs - Test de composicion del contenedor DI: BuildServiceProvider(ValidateOnBuild + ValidateScopes) + resolucion explicita de los routers (issue #319, MEF-ADR-0029) + guarda derivada de eventos aplicados vs EventGraph del IDocumentStore compuesto (MEF-ADR-0036) + guardrails del sampler efectivo post-exporter y su ratio default + del flip de logs desacoplado del muestreo de trazas (issue #700) + del durability agent apagado en origen (MEF-ADR-0038)
     ReadyCheckTests.cs                     - Mapeo probe-exitoso -> 200 / probe-fallido -> 503 con cuerpo diagnosticable, fake manual del probe (MEF-ADR-0031 seccion 6, issue #671/#675)
                                            - Proyecto de tests unitarios (xUnit v3 + AwesomeAssertions)
 
