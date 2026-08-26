@@ -110,26 +110,48 @@ wait_for_free_shell() {
 # start_agent_in_pane <nombre> <pane_id> <arg-de---agent (vacio = claude pelado)>
 #
 # Lanza una sesion de Claude Code en el pane via `herdr agent start` (asi el
-# sidebar muestra su estado de vida). Degrada a un aviso si falla: el pane
-# queda con su shell y el humano puede lanzar `claude` a mano.
+# sidebar muestra su estado de vida). El arranque tiene una carrera conocida:
+# recien creado el pane, el primer intento puede fallar aunque el shell ya
+# reporte su prompt (visto en vivo: el mismo comando reintentado a mano
+# funciona) -- por eso un fallo se reintenta UNA vez tras una pausa, pasando
+# antes por `herdr agent get`: un primer intento que fallo con
+# agent_not_ready puede haber dejado a claude levantando con el nombre ya
+# reservado, y ahi el get lo confirma sin un segundo start que chocaria con
+# el nombre. Los errores del CLI (JSON por stderr) se muestran en el aviso
+# en vez de tragarse: sin eso el fallo real es indiagnosticable. Si ambos
+# intentos fallan, degrada a un aviso: el pane queda con su shell y el
+# humano puede lanzar `claude` a mano.
 start_agent_in_pane() {
     local name="$1" pane="$2" agent_arg="$3"
     if ! wait_for_free_shell "$pane"; then
         warn "El shell del pane $pane no llego a su prompt; lanza el agente a mano ahi."
         return 0
     fi
-    local rc=0
-    if [ -n "$agent_arg" ]; then
-        herdr agent start "$name" --kind claude --pane "$pane" --timeout 90000 -- --agent "$agent_arg" >/dev/null 2>&1 || rc=$?
-    else
-        herdr agent start "$name" --kind claude --pane "$pane" --timeout 90000 >/dev/null 2>&1 || rc=$?
-    fi
-    if [ "$rc" -eq 0 ]; then
-        success "Agente '$name' corriendo en el pane $pane${agent_arg:+ (claude --agent $agent_arg)}"
-    else
-        warn "No se pudo lanzar '$name' en el pane $pane (herdr agent start fallo, rc=$rc)."
-        warn "El pane quedo con su shell: lanza ahi 'claude${agent_arg:+ --agent $agent_arg}' a mano."
-    fi
+
+    local intento err="" rc=0
+    for intento in 1 2; do
+        rc=0
+        if [ -n "$agent_arg" ]; then
+            err=$(herdr agent start "$name" --kind claude --pane "$pane" --timeout 90000 -- --agent "$agent_arg" 2>&1 >/dev/null) || rc=$?
+        else
+            err=$(herdr agent start "$name" --kind claude --pane "$pane" --timeout 90000 2>&1 >/dev/null) || rc=$?
+        fi
+        if [ "$rc" -eq 0 ]; then
+            success "Agente '$name' corriendo en el pane $pane${agent_arg:+ (claude --agent $agent_arg)}"
+            return 0
+        fi
+        sleep 3
+        if herdr agent get "$name" >/dev/null 2>&1; then
+            success "Agente '$name' corriendo en el pane $pane (levanto tras el primer intento)${agent_arg:+ (claude --agent $agent_arg)}"
+            return 0
+        fi
+        if [ "$intento" -eq 1 ]; then
+            warn "herdr agent start fallo para '$name' (rc=$rc); reintentando una vez...${err:+ Detalle: $(echo "$err" | head -c 200)}"
+        fi
+    done
+
+    warn "No se pudo lanzar '$name' en el pane $pane tras 2 intentos (rc=$rc).${err:+ Detalle: $(echo "$err" | head -c 200)}"
+    warn "El pane quedo con su shell: lanza ahi 'claude${agent_arg:+ --agent $agent_arg}' a mano."
     return 0
 }
 
