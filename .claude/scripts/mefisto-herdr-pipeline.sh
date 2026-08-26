@@ -94,7 +94,11 @@ pane_is_free() {
 # Imprime por stdout el pane_id donde correr el proximo pipeline: el primer
 # pane registrado que siga vivo, pertenezca a ESTE workspace y este libre; o
 # uno nuevo (split a la derecha del pane que despacha, sin robar el foco).
-# De paso poda del registro los panes que ya no existen.
+# De paso poda del registro los panes que ya no existen y CIERRA los panes
+# libres sobrantes de corridas concurrentes ya terminadas: el layout colapsa
+# naturalmente de vuelta a UN solo pane de seguimiento, y despachar un issue
+# nuevo "reemplaza" al pane del que termino en vez de acumular ventanas (el
+# reporte de cada corrida pasada sigue en su .report.log).
 acquire_report_pane() {
     mkdir -p "$(dirname "$PANES_STATE")"
     touch "$PANES_STATE"
@@ -103,15 +107,27 @@ acquire_report_pane() {
     while IFS= read -r id; do
         [ -n "$id" ] || continue
         pane_exists "$id" || continue
-        kept="${kept}${id}
-"
-        [ -n "$chosen" ] && continue
         case "$id" in
             "$HERDR_WORKSPACE_ID:"*) ;;
-            *) continue ;;
+            *)
+                kept="${kept}${id}
+"
+                continue ;;
         esac
         if pane_is_free "$id"; then
-            chosen="$id"
+            if [ -z "$chosen" ]; then
+                chosen="$id"
+                kept="${kept}${id}
+"
+            elif herdr pane close "$id" >/dev/null 2>&1; then
+                log "Pane sobrante de una corrida terminada cerrado: $id"
+            else
+                kept="${kept}${id}
+"
+            fi
+        else
+            kept="${kept}${id}
+"
         fi
     done < "$PANES_STATE"
     printf '%s' "$kept" > "$PANES_STATE"
@@ -197,6 +213,11 @@ cmd_pane_runner() {
     if [ -n "${HERDR_PANE_ID:-}" ]; then
         herdr pane rename "$HERDR_PANE_ID" "$title" >/dev/null 2>&1 || true
     fi
+
+    # Reemplazo natural del pane reutilizado: limpia pantalla y scrollback de
+    # la corrida anterior antes del banner (2J pantalla, 3J scrollback, H
+    # cursor a origen). El reporte de la corrida vieja sigue en su .report.log.
+    printf '\033[2J\033[3J\033[H'
 
     echo -e "${CYAN}${BOLD}=== $title ===${NC}"
     echo -e "${CYAN}Comando: $*${NC}"
