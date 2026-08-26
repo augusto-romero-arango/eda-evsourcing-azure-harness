@@ -81,10 +81,12 @@ redescubrirlos.
 
 ### 1. Frontera: el marco garantiza el mecanismo; el consumidor decide el valor
 
-El marco genera, por defecto, **el wiring correcto** (orden de composicion, seccion 3) y **los
-filtros de ruido en origen** (secciones 5 y 6) sin que ningun consumidor tenga que pedirlos. Lo que
-el marco **no** fija es el **valor del ratio de sampling**: eso es politica de costos propia de cada
-consumidor, leida de la variable de entorno `TELEMETRY_SAMPLING_RATIO`.
+El marco genera, por defecto, **el wiring correcto** (orden de composicion, seccion 3), **los
+filtros de ruido en origen** (secciones 5 y 6) y **el desacople de los logs de la decision de
+muestreo de trazas** (seccion 9) sin que ningun consumidor tenga que pedirlos. Lo que el marco
+**no** fija es el **valor del ratio de sampling** (`TELEMETRY_SAMPLING_RATIO`) ni **el nivel de
+`ILogger`** que decide que logs existen antes de que este seam los vea (seccion 9): son politica de
+costos propia de cada consumidor.
 
 El **default del marco es `1.0`** (sin descartar ningun span por ratio, solo los filtros
 estructurales de las secciones 5/6 siguen activos) cuando esa variable no esta declarada. La
@@ -312,6 +314,94 @@ Este ADR **acepta la subcuenta** como costo del control de volumen: es preferibl
 subestimado y consistente a no tener ningun control de volumen porque la unica alternativa que
 extrapola no es componible con el resto de la doctrina de este ADR.
 
+### 9. Read-side: logs de error desacoplados del sampler de trazas (`EnableTraceBasedLogsSampler`)
+
+Exclusivo del worker de proyecciones, mismo alcance que la seccion 5: el filtro de esa seccion
+resuelve el volumen de **trazas** del polling del daemon, pero deja un efecto colateral no evaluado
+hasta ahora sobre los **logs** -- llamadas a `ILogger` emitidas mientras un span descartado esta
+activo.
+
+`Azure.Monitor.OpenTelemetry.Exporter` (`UseAzureMonitorExporter()`) expone
+`AzureMonitorExporterOptions.EnableTraceBasedLogsSampler`, con default `true` -- verificado por
+lectura de fuente publica de la version pinneada por este agente (`AzureMonitorExporterOptions.cs`,
+tag `Azure.Monitor.OpenTelemetry.Exporter_1.8.3`, github.com/Azure/azure-sdk-for-net; mismo default
+confirmado en la 1.8.1 que decompilo originalmente el consumidor, issue #414 de
+Bitakora.ControlAsistencia -- el defecto no se corrigio entre versiones). Con ese default,
+`ExporterRegistrationHostedService.Initialize` instala `LogFilteringProcessor` -- una subclase de
+`BatchLogRecordExportProcessor` -- en vez de un `BatchLogRecordExportProcessor` plano:
+
+```csharp
+BaseProcessor<LogRecord> baseProcessor = exporterOptions.EnableTraceBasedLogsSampler
+    ? new LogFilteringProcessor(exporter)
+    : new BatchLogRecordExportProcessor(exporter);
+```
+
+Y `LogFilteringProcessor.OnEnd` solo reenvia el `LogRecord` al exporter si `logRecord.SpanId ==
+default || logRecord.TraceFlags == ActivityTraceFlags.Recorded` -- descarta en silencio cualquier
+log emitido mientras el span activo tiene padre y no quedo `Recorded`. Ese es exactamente el caso
+del span de polling del daemon que la seccion 5 descarta (`SamplerQueDescartaPollingDelDaemon` ->
+`Drop`): `HighWaterAgent` (JasperFx) emite sus `LogError` **dentro** de ese span, asi que esos
+`LogRecord` heredan su `SpanId`/`TraceFlags` no grabados y `LogFilteringProcessor` los descarta antes
+de que lleguen a `exceptions` -- se pierden enteros, no truncados.
+
+**Evidencia de campo (Bitakora.ControlAsistencia, falla inducida, Postgres detenido ~14 min, issue
+#680):**
+
+| Familia de error | Consola | `exceptions` | Tasa |
+|---|---|---|---|
+| `Error trying to attain a lock...` | 87 | 87 | 100% (1:1) |
+| `Failed while trying to detect high water statistics...` | 35 | 0 | **0%** |
+
+Ambas familias las emite el mismo `HighWaterAgent`, con el mismo nivel de log -- la unica diferencia
+es que la segunda ocurre con el span de polling del daemon activo (y descartado) como padre; la
+primera no. El sampler de trazas de la seccion 5 se escribio para recortar costo de **trazas** y
+termina, como efecto colateral no evaluado hasta este issue, suprimiendo **logs de error** -- justo
+la senal de fondo que la alerta `exception_spike` (modulo `monitoring` de `infra-base-scaffolder`)
+existe para ver.
+
+**Decision: el seam desactiva el flip.** El punto de wiring es el mismo `UseAzureMonitorExporter()`
+de la seccion 3, con su overload de opciones -- ya publico en el paquete, sin mecanismo ni paquete
+nuevo:
+
+```csharp
+services.AddOpenTelemetry()
+    .ConfigureResource(...)
+    .WithTracing(...)
+    .UseAzureMonitorExporter(o => o.EnableTraceBasedLogsSampler = false)
+    .WithTracing(tracing => tracing.SetSampler(/* seccion 5 */));
+```
+
+Con el flip en `false`, `ExporterRegistrationHostedService` instala un `BatchLogRecordExportProcessor`
+plano: ningun `LogRecord` se descarta por la decision de muestreo de su span padre -- los logs quedan
+gobernados unicamente por el nivel de `ILogger` antes de que este seam los vea.
+
+**Extension de la frontera mecanismo/valor (seccion 1).** Este flip es **mecanismo del marco**, no
+opt-in -- misma clase que el filtro de la seccion 5, y por la misma razon (MEF-ADR-0018: unico
+proceso con daemon, el unico donde este acoplamiento logs-trazas produce perdida real): ningun
+consumidor deberia tener que pedirlo, y ninguno deberia poder revertirlo declarando una opcion. Lo
+que **si** sigue siendo valor del consumidor son dos ejes ahora independientes entre si: el ratio de
+trazas (`TELEMETRY_SAMPLING_RATIO`, seccion 1, sin cambios -- el flip no toca la decision de muestreo
+de trazas, solo si los logs la heredan) y el nivel de `ILogger` (filtering estandar de .NET), que a
+partir de este flip es el **unico** control de volumen de logs que le queda al consumidor.
+
+**Por que el volumen no se dispara con los defaults del canon.** Con `TELEMETRY_SAMPLING_RATIO=1.0`
+(default, seccion 1) y `ILogger` en `Information` (default de la plantilla `dotnet new worker`), el
+flip apenas mueve volumen: todo span salvo el de polling del daemon ya queda `Recorded` con ratio
+`1.0` (sus logs ya pasaban el filtro viejo igual), y el chatter del daemon bajo ese nivel de
+`ILogger` es mayormente `Debug` -- `ILogger` lo descarta antes de que exista un `LogRecord` que
+filtrar, sin llegar nunca a `LogFilteringProcessor`. El escenario donde el volumen si importa es un
+consumidor con `TELEMETRY_SAMPLING_RATIO` fraccionario: antes de este flip, un ratio bajo tambien
+recortaba logs (por herencia de la decision de trazas); despues, los logs quedan desacoplados del
+ratio por completo, y acotarlos pasa a ser exclusivamente valor del consumidor via el filtering de
+niveles de `ILogger` -- coherente con la frontera de la seccion 1, no una excepcion a ella.
+
+**Guardrail.** Mismo principio que la seccion 4 -- la garantia no es el comentario del seam, es un
+test que falla si el flip desaparece: el config-test del worker
+(`ConfiguracionObservabilidadProjectionsTests`, `projections-scaffolder`) resuelve
+`IOptions<AzureMonitorExporterOptions>` desde el `ServiceProvider` real (construido invocando el
+seam, no un objeto armado a mano) y afirma `EnableTraceBasedLogsSampler == false` -- el valor
+RESUELTO que el exporter usa, no el texto del `.cs`.
+
 ## Alternativas consideradas
 
 ### Alt 1: apagar `DaemonSettings.ActivitySource` en vez de filtrar por nombre
@@ -371,6 +461,11 @@ todavia no se manifesto.
   codigo fusionando ambos bloques en una sola llamada reintroduce el defecto de la seccion 3 sin
   ningun error de compilacion -- el codigo generado debe documentar por que estan separados (mismo
   tipo de nota que MEF-ADR-0034 deja junto a su propio `using OpenTelemetry;`).
+- **Los logs quedan desacoplados del ratio de trazas** (seccion 9): antes del flip, un
+  `TELEMETRY_SAMPLING_RATIO` fraccionario tambien recortaba volumen de logs por herencia de la
+  decision de muestreo; despues, el ratio solo gobierna trazas, y acotar logs es exclusivamente
+  responsabilidad del filtering de niveles de `ILogger` del consumidor -- un consumidor que bajaba
+  su ratio esperando bajar tambien su volumen de logs debe ahora ajustar `ILogger` por separado.
 
 ## Referencias
 
@@ -405,6 +500,11 @@ todavia no se manifesto.
   es el punto de aplicacion de la seccion 5 de este ADR; enmendada por este mismo cambio.
 - `CA-ADR-0009` (control de costos de Application Insights, Bitakora.ControlAsistencia): precedente
   consumidor de esta doctrina; motivo original de la investigacion que produjo la evidencia de campo.
+- Lectura de fuente publica de `Azure.Monitor.OpenTelemetry.Exporter` (github.com/Azure/azure-sdk-for-net,
+  tag `Azure.Monitor.OpenTelemetry.Exporter_1.8.3`): `AzureMonitorExporterOptions.EnableTraceBasedLogsSampler`
+  (default `true`), `ExporterRegistrationHostedService.Initialize` (selecciona `LogFilteringProcessor`
+  vs `BatchLogRecordExportProcessor` segun ese flag) e `Internals/LogFilteringProcessor.cs`
+  (`SpanId == default || TraceFlags == ActivityTraceFlags.Recorded`) -- fundamento de la seccion 9.
 
 ## Control de cambios
 
@@ -436,3 +536,14 @@ todavia no se manifesto.
   `ParentBasedSampler` consulta su `rootSampler` solo cuando no hay padre. Sin cambio de decision: la
   frontera mecanismo/valor, el orden frente al exporter, el guardrail de composicion y el default
   `1.0` quedan como estaban.
+- 2026-08-26: enmendada la seccion 1 (frontera) y sumada la seccion 9 (issue #680, propagada a
+  `projections-scaffolder` en el mismo issue): `EnableTraceBasedLogsSampler` de
+  `Azure.Monitor.OpenTelemetry.Exporter` -- default `true`, reverificado contra la version pinneada
+  `1.8.3` -- se desactiva en el seam del worker para desacoplar los logs de la decision de muestreo
+  de trazas. Sin el flip, `LogFilteringProcessor` descartaba los `LogError` que `HighWaterAgent`
+  emite dentro del span de polling del daemon que la seccion 5 ya descarta (medido en
+  Bitakora.ControlAsistencia: 35/35 errores de "high water statistics" perdidos, 0% en `exceptions`,
+  frente a 87/87 de una familia de error emitida fuera de ese span). El flip es mecanismo del marco,
+  no opt-in -- mismo criterio que el filtro de la seccion 5 -- con guardrail propio sobre el valor
+  resuelto de `AzureMonitorExporterOptions`; el ratio de trazas y el filtering de niveles de
+  `ILogger` siguen siendo valor del consumidor, ahora como ejes independientes entre si.
