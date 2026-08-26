@@ -326,7 +326,7 @@ activo.
 
 `Azure.Monitor.OpenTelemetry.Exporter` (`UseAzureMonitorExporter()`) expone
 `AzureMonitorExporterOptions.EnableTraceBasedLogsSampler`, con default `true` -- verificado por
-lectura de fuente publica de la version pinneada por este agente (`AzureMonitorExporterOptions.cs`,
+lectura de fuente publica de la version que pinnea `projections-scaffolder` (`AzureMonitorExporterOptions.cs`,
 tag `Azure.Monitor.OpenTelemetry.Exporter_1.8.3`, github.com/Azure/azure-sdk-for-net; mismo default
 confirmado en la 1.8.1 que decompilo originalmente el consumidor, issue #414 de
 Bitakora.ControlAsistencia -- el defecto no se corrigio entre versiones). Con ese default,
@@ -431,7 +431,7 @@ test que falla si el flip desaparece: el config-test del worker
 `IOptions<AzureMonitorExporterOptions>` desde el `ServiceProvider` real (construido invocando el
 seam, no un objeto armado a mano) y afirma `EnableTraceBasedLogsSampler == false` -- el valor
 RESUELTO que el exporter usa, no el texto del `.cs`. La mecanica se verifico por **ejecucion propia**
-contra los paquetes pinneados por el agente (`Azure.Monitor.OpenTelemetry.Exporter` 1.8.3 +
+contra los paquetes que pinnea `projections-scaffolder` (`Azure.Monitor.OpenTelemetry.Exporter` 1.8.3 +
 `OpenTelemetry.Extensions.Hosting` 1.17.0, SDK .NET 10.0.201) al redactar esta seccion: sobre un
 `ServiceCollection` pelado que solo invoca el seam, `IOptions<AzureMonitorExporterOptions>.Value`
 resuelve `EnableTraceBasedLogsSampler = false` con el flip y `true` sin el -- el guardrail es rojo
