@@ -43,6 +43,14 @@
 
 set -uo pipefail
 
+# Este test invoca tmux-pipeline.sh de verdad (contra un stub de tmux). Si el
+# test corre dentro de un pane herdr -- p. ej. lanzado por un gate de pipeline
+# despachado con la interfaz herdr (issue #690) -- la autodeteccion delegaria
+# cada invocacion a herdr-pipeline.sh y crearia PANES REALES en el workspace
+# del humano (visto en vivo: una explosion de panes "[fallo] tooling #253").
+# El escape hatch fuerza el camino tmux, que es el que este test verifica.
+export MEFISTO_UI=tmux
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TMUX_SCRIPT="$REPO_ROOT/scripts/tmux-pipeline.sh"

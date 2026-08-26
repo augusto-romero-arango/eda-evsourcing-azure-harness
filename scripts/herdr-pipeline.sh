@@ -243,7 +243,25 @@ cmd_pane_runner() {
     local start_epoch
     start_epoch=$(date +%s)
 
-    "$@" >"$report_log" 2>&1 &
+    # El pipeline y TODOS sus descendientes (agentes claude -p, gates que
+    # corren los tests del repo) arrancan con las variables HERDR_* removidas:
+    # con HERDR_ENV=1 heredado del pane, cualquier invocacion de
+    # tmux-pipeline.sh a lo largo de la corrida (p. ej. las fixtures de
+    # test-tmux-preparse.sh) autodetectaria herdr y crearia panes REALES en
+    # el workspace del humano (visto en vivo: explosion de panes "[fallo]").
+    # El runner conserva su propio entorno -- el rename final usa
+    # HERDR_PANE_ID -- solo el hijo corre aislado. El array arranca con un
+    # -u fijo para nunca expandirse vacio (bash 3.2 revienta con "unbound
+    # variable" al expandir un array vacio bajo `set -u`).
+    local env_unset=(-u HERDR_ENV)
+    local v
+    while IFS='=' read -r v _; do
+        case "$v" in
+            HERDR_*) env_unset+=(-u "$v") ;;
+        esac
+    done < <(env)
+
+    env "${env_unset[@]}" "$@" >"$report_log" 2>&1 &
     local pipe_pid=$!
 
     local viewer_pid=""
