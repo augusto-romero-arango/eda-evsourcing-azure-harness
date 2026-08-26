@@ -61,7 +61,14 @@ Donde la segunda mitad del Paso 3 de `/mefisto-tooling` lanzaria `./.claude/scri
 
 ### 3. Instrucciones de conexion -- layout de 3 panes (CA-4)
 
-`--verbose` suma un tercer pane a la sesion tmux de siempre: **events.log arriba-izquierda** (`tail -f` del log de eventos del pipeline), **pipeline arriba-derecha** (el stage corriendo), y **visor en vivo abajo, a lo ancho completo** (`mefisto-stream-watch.sh`).
+Dentro de herdr (`HERDR_ENV=1` en el entorno), el wrapper delega en la interfaz herdr, donde el visor en vivo es siempre visible (el flag `--verbose` se consume sin efecto) y no hay nada que adjuntar. En ese caso responde con:
+
+```
+Pipeline mefisto-tooling corriendo en un pane de este workspace (visor en vivo del agente).
+Usa /mefisto-work-status para ver el progreso sin salir de aqui.
+```
+
+Fuera de herdr, `--verbose` suma un tercer pane a la sesion tmux de siempre: **events.log arriba-izquierda** (`tail -f` del log de eventos del pipeline), **pipeline arriba-derecha** (el stage corriendo), y **visor en vivo abajo, a lo ancho completo** (`mefisto-stream-watch.sh`).
 
 Responde con:
 

@@ -13,6 +13,18 @@
 #       Sigue/inspecciona un stream concreto (p. ej. para revisar una corrida
 #       pasada) en vez de descubrir el mas reciente.
 #
+#   .claude/scripts/mefisto-stream-watch.sh --issues 42,43
+#       Restringe el descubrimiento a los streams de esos issues (por el
+#       `-issue-<N>` del nombre de archivo, incluidas las copias
+#       .attempt-<k> de los reintentos). Evita que dos corridas concurrentes
+#       en panes distintos se crucen los visores (interfaz herdr).
+#
+#   .claude/scripts/mefisto-stream-watch.sh --newer-than <epoch-segundos>
+#       Ignora streams con mtime anterior a <epoch>: el visor arranca
+#       esperando la corrida nueva en vez de mostrar la traza de la corrida
+#       ANTERIOR hasta que la nueva empiece a escribirse (el caveat que
+#       documenta el encabezado de mefisto-tmux-pipeline.sh).
+#
 # Contexto: durante una corrida de /mefisto-tooling el pane de tmux que hace
 # `tail -f` de events.log solo ve DOS lineas por corrida completa ("STAGE 1:
 # writer" / "STAGE 2: reviewer") -- 20+ minutos de silencio en el medio, sin
@@ -70,6 +82,12 @@ NC='\033[0m'
 
 LOG_DIR="$MEFISTO_REPO_ROOT/.claude/pipeline/logs"
 POLL_INTERVAL=1
+
+# Filtros de descubrimiento (ver Uso arriba). Vacios = sin filtro, el
+# comportamiento original del visor. Mismo contrato que el porte publicado
+# (scripts/stream-watch.sh, issue #690).
+ISSUES_CSV=""
+NEWER_THAN=""
 
 # Estado runtime (mutado por process_new_lines/render_row a lo largo del
 # bucle principal). Sin `declare -A` disponible en bash 3.2, la repeticion de
@@ -190,18 +208,65 @@ end
 MEFISTO_STREAM_WATCH_JQ
 }
 
+# stream_matches_issues <basename> <issues_csv>
+#
+# 0 si el nombre de archivo corresponde a uno de los issues de la lista
+# (separada por comas). El match es sobre el segmento `-issue-<N>` seguido de
+# `.stream.jsonl` o de una copia de reintento (`.attempt-<k>.stream.jsonl`,
+# ver run_agent en mefisto-tooling-pipeline.sh): un substring simple
+# confundiria el issue 4 con el 42. Con lista vacia matchea todo (sin filtro).
+stream_matches_issues() {
+    local base="$1" csv="$2"
+    [ -n "$csv" ] || return 0
+    local issue
+    for issue in ${csv//,/ }; do
+        [ -n "$issue" ] || continue
+        case "$base" in
+            *"-issue-${issue}.stream.jsonl") return 0 ;;
+            *"-issue-${issue}.attempt-"*".stream.jsonl") return 0 ;;
+        esac
+    done
+    return 1
+}
+
+# stream_is_newer_than <ruta> <epoch-segundos>
+#
+# 0 si el mtime del archivo es >= <epoch> (el mismo segundo cuenta: el
+# runner de la interfaz herdr toma su epoch justo antes de lanzar el
+# pipeline). Con <epoch> vacio, o si stat no puede leer el archivo, matchea:
+# nunca se descarta un stream por no poder juzgarlo. `stat -f %m` es la forma
+# BSD (macOS); el segundo intento cubre el stat de GNU.
+stream_is_newer_than() {
+    local path="$1" epoch="$2"
+    [ -n "$epoch" ] || return 0
+    local mtime
+    mtime=$(stat -f %m "$path" 2>/dev/null || stat -c %Y "$path" 2>/dev/null)
+    [ -n "$mtime" ] || return 0
+    [ "$mtime" -ge "$epoch" ]
+}
+
 # discover_stream <log_dir>
 #
 # Imprime por stdout la ruta absoluta del *.stream.jsonl mas reciente (por
-# mtime) de <log_dir>, o nada si el directorio no existe o esta vacio (CA-1).
-# El mtime es el criterio correcto para detectar el cambio de stage/issue: en
-# cualquier momento solo un agente esta corriendo, asi que su stream es el
-# unico que sigue recibiendo escrituras -- el de un stage ya terminado deja
-# de actualizar su mtime en el instante en que el nuevo empieza a escribir.
+# mtime) de <log_dir> que pase los filtros ISSUES_CSV/NEWER_THAN, o nada si
+# el directorio no existe o ningun candidato pasa (CA-1). El mtime es el
+# criterio correcto para detectar el cambio de stage/issue: dentro de una
+# corrida solo un agente esta corriendo, asi que su stream es el unico que
+# sigue recibiendo escrituras -- y el filtro por issue evita que la corrida
+# concurrente de OTRO pane (que si escribe a la vez) se cuele como "mas
+# reciente".
 discover_stream() {
     local dir="$1"
     [ -d "$dir" ] || return 0
-    ls -t "$dir"/*.stream.jsonl 2>/dev/null | head -1
+    local candidate
+    while IFS= read -r candidate; do
+        [ -n "$candidate" ] || continue
+        stream_matches_issues "$(basename "$candidate")" "$ISSUES_CSV" || continue
+        stream_is_newer_than "$candidate" "$NEWER_THAN" || continue
+        echo "$candidate"
+        return 0
+    done < <(ls -t "$dir"/*.stream.jsonl 2>/dev/null)
+    return 0
 }
 
 # parse_stream_header <stream_path>
@@ -515,12 +580,29 @@ process_new_lines() {
 # que borra el directorio temporal propio -- CA-6, "solo lectura y aislado").
 main() {
     local pinned_path=""
-    if [ $# -gt 0 ]; then
-        pinned_path="$1"
-        if [ ! -f "$pinned_path" ]; then
-            echo "ERROR: no existe el stream indicado: $pinned_path" >&2
-            return 1
-        fi
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --issues)
+                if [ $# -lt 2 ]; then echo "ERROR: falta el valor de --issues" >&2; return 2; fi
+                ISSUES_CSV="$2"
+                shift 2
+                ;;
+            --newer-than)
+                if [ $# -lt 2 ]; then echo "ERROR: falta el valor de --newer-than" >&2; return 2; fi
+                if ! [[ "$2" =~ ^[0-9]+$ ]]; then echo "ERROR: --newer-than debe ser un epoch en segundos (recibido: '$2')" >&2; return 2; fi
+                NEWER_THAN="$2"
+                shift 2
+                ;;
+            *)
+                pinned_path="$1"
+                shift
+                ;;
+        esac
+    done
+
+    if [ -n "$pinned_path" ] && [ ! -f "$pinned_path" ]; then
+        echo "ERROR: no existe el stream indicado: $pinned_path" >&2
+        return 1
     fi
 
     if ! command -v jq >/dev/null 2>&1; then
@@ -546,6 +628,11 @@ main() {
         echo "Inspeccionando: $pinned_path"
     else
         echo "Descubriendo el stream mas reciente en $LOG_DIR ..."
+        [ -n "$ISSUES_CSV" ] && echo "Filtro de issues: $ISSUES_CSV"
+        if [ -n "$NEWER_THAN" ]; then
+            printf '%b\n' "${YELLOW}Esperando la traza de esta corrida (el stream del stage 1 nace cuando arranca${NC}"
+            printf '%b\n' "${YELLOW}el primer agente, tras crear el worktree y validar el DoR)...${NC}"
+        fi
         # El pipeline escribe sus logs bajo la raiz desde la que se lanzo, no
         # dentro del worktree del issue: si el directorio no existe, el visor
         # se quedaria esperando en silencio para siempre -- exactamente el

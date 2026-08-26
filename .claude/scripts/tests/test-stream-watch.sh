@@ -79,7 +79,7 @@ trap cleanup EXIT
 # con `set -u` (mismo motivo que test-abort-log-tail.sh).
 RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; BOLD=""; NC=""
 
-FNS="write_jq_filter discover_stream parse_stream_header pane_width is_missing truncate_target truncate_path fmt_time_hhmmss fmt_delta_s ms_to_s touch_count render_result_summary render_row process_new_lines"
+FNS="write_jq_filter stream_matches_issues stream_is_newer_than discover_stream parse_stream_header pane_width is_missing truncate_target truncate_path fmt_time_hhmmss fmt_delta_s ms_to_s touch_count render_result_summary render_row process_new_lines"
 
 echo "[pre] Las funciones bajo prueba se pueden extraer y cargar desde mefisto-stream-watch.sh"
 ALL_LOADED=1
@@ -107,6 +107,12 @@ fi
 # Filtro jq materializado una sola vez para todos los bloques.
 JQ_FILTER_PATH="$TMP/filter.jq"
 write_jq_filter "$JQ_FILTER_PATH"
+
+# Filtros de descubrimiento en su default (sin filtro): discover_stream los
+# referencia bajo `set -u`, y los bloques que los prueban ([L]/[M]) los
+# setean y los devuelven a vacio.
+ISSUES_CSV=""
+NEWER_THAN=""
 
 # reset_stage_state -- vuelve al estado "recien cambiado de stream" (lo que
 # hace el bucle principal en cada switch): contador de lineas en cero, sin
@@ -570,6 +576,83 @@ if [ "$(ms_to_s "-")" = "?" ] && [ "$(fmt_time_hhmmss "-")" = "--:--:--" ]; then
 else
     fail "K-3: los formateadores no tradujeron el placeholder: ms_to_s='$(ms_to_s "-")' hora='$(fmt_time_hhmmss "-")'"
 fi
+
+# -------- Bloque L: stream_matches_issues -- filtro exacto por issue --------
+
+echo ""
+echo "[L] stream_matches_issues: match exacto por issue, copias .attempt-, lista y sin filtro"
+
+if stream_matches_issues "mefisto-tooling-stage-1-writer-20260826-100000-issue-42.stream.jsonl" "42"; then
+    pass "L-1: el stream del issue 42 matchea el filtro '42'"
+else
+    fail "L-1: el stream del issue 42 no matcheo el filtro '42'"
+fi
+
+if ! stream_matches_issues "mefisto-tooling-stage-1-writer-20260826-100000-issue-42.stream.jsonl" "4"; then
+    pass "L-2: el filtro '4' NO matchea el issue 42 (el match es exacto, no substring)"
+else
+    fail "L-2: el filtro '4' matcheo el issue 42 -- cruzaria visores de corridas concurrentes"
+fi
+
+if stream_matches_issues "mefisto-tooling-stage-2-reviewer-20260826-100000-issue-42.attempt-2.stream.jsonl" "42"; then
+    pass "L-3: la copia de reintento (.attempt-2) sigue matcheando su issue"
+else
+    fail "L-3: la copia .attempt-2 no matcheo su issue"
+fi
+
+if stream_matches_issues "mefisto-tooling-stage-1-writer-20260826-100000-issue-43.stream.jsonl" "42,43,44" \
+    && ! stream_matches_issues "mefisto-tooling-stage-1-writer-20260826-100000-issue-99.stream.jsonl" "42,43,44"; then
+    pass "L-4: una lista de issues (batch) matchea sus miembros y rechaza los ajenos"
+else
+    fail "L-4: la lista '42,43,44' no filtro como se esperaba"
+fi
+
+if stream_matches_issues "cualquier-cosa.stream.jsonl" ""; then
+    pass "L-5: sin filtro (lista vacia) todo stream matchea -- el comportamiento original"
+else
+    fail "L-5: la lista vacia deberia matchear todo"
+fi
+
+# -------- Bloque M: stream_is_newer_than + discover_stream con filtros --------
+
+echo ""
+echo "[M] stream_is_newer_than y discover_stream con filtros activos"
+
+DIR_M="$TMP/logs-m"
+mkdir -p "$DIR_M"
+echo '{}' > "$DIR_M/mefisto-tooling-stage-1-writer-20260826-090000-issue-10.stream.jsonl"
+touch -t 202608260900 "$DIR_M/mefisto-tooling-stage-1-writer-20260826-090000-issue-10.stream.jsonl"
+echo '{}' > "$DIR_M/mefisto-tooling-stage-1-writer-20260826-100000-issue-20.stream.jsonl"
+touch -t 202608261000 "$DIR_M/mefisto-tooling-stage-1-writer-20260826-100000-issue-20.stream.jsonl"
+
+if ! stream_is_newer_than "$DIR_M/mefisto-tooling-stage-1-writer-20260826-090000-issue-10.stream.jsonl" "9999999999" \
+    && stream_is_newer_than "$DIR_M/mefisto-tooling-stage-1-writer-20260826-100000-issue-20.stream.jsonl" "1" \
+    && stream_is_newer_than "$DIR_M/mefisto-tooling-stage-1-writer-20260826-090000-issue-10.stream.jsonl" ""; then
+    pass "M-1: el corte por mtime rechaza lo anterior, deja pasar lo posterior y sin corte pasa todo"
+else
+    fail "M-1: stream_is_newer_than no filtro como se esperaba"
+fi
+
+ISSUES_CSV="10"
+NEWER_THAN=""
+FOUND_M1=$(discover_stream "$DIR_M")
+if [ "$(basename "$FOUND_M1")" = "mefisto-tooling-stage-1-writer-20260826-090000-issue-10.stream.jsonl" ]; then
+    pass "M-2: con ISSUES_CSV=10, discover_stream ignora el stream mas reciente de OTRO issue"
+else
+    fail "M-2: se esperaba el stream del issue 10, se obtuvo: $FOUND_M1"
+fi
+
+ISSUES_CSV="10"
+NEWER_THAN="9999999999"
+FOUND_M2=$(discover_stream "$DIR_M")
+if [ -z "$FOUND_M2" ]; then
+    pass "M-3: con un corte posterior al mtime, discover_stream espera (devuelve vacio)"
+else
+    fail "M-3: se esperaba vacio con corte futuro, se obtuvo: $FOUND_M2"
+fi
+
+ISSUES_CSV=""
+NEWER_THAN=""
 
 echo ""
 echo "----------------------------------------"

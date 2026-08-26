@@ -151,7 +151,15 @@ Luego lanza el motor secuencial dentro de tmux:
 
 ### 4. Instrucciones de conexion
 
-Responde con:
+Dentro de herdr (`HERDR_ENV=1` en el entorno), el script delega en la interfaz herdr (`mefisto-herdr-pipeline.sh`) y no hay nada que adjuntar: el batch queda corriendo en un pane de este mismo workspace con el visor en vivo, que salta solo de issue en issue. En ese caso responde con:
+
+```
+Batch secuencial mefisto corriendo en un pane de este workspace (visor en vivo del agente).
+Los issues se procesaran en orden: pipeline -> PR -> merge -> sync verificado -> siguiente.
+Usa /mefisto-work-status para ver el progreso sin salir de aqui.
+```
+
+Fuera de herdr responde con:
 
 ```
 Batch secuencial mefisto lanzado en tmux. Para monitorear:
