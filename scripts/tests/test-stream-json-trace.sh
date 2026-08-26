@@ -318,6 +318,23 @@ else
     fail "G-6: jq dejo ruido por stderr: $(cat "$TMP/g-raro.stderr")"
 fi
 
+# --- [H] Los pipelines publicados invocan la captura (issue #689) ---
+# Guard estatico: tooling-pipeline.sh e iac-pipeline.sh deben capturar la
+# traza stream-json y derivar el .log de siempre, igual que tdd-pipeline.sh.
+# Un revert accidental a solo --output-format text (sin rama de captura)
+# dejaria al visor en vivo sin traza que seguir en esos pipelines.
+echo ""
+echo "[H] tooling-pipeline.sh e iac-pipeline.sh capturan stream-json (#689)"
+for p in tooling-pipeline.sh iac-pipeline.sh tdd-pipeline.sh; do
+    if grep -q -- "--output-format stream-json --verbose" "$REPO_ROOT/scripts/$p" \
+        && grep -q "derive_stage_log_from_stream" "$REPO_ROOT/scripts/$p" \
+        && grep -q "PIPELINE_CAPTURE_STREAM=true" "$REPO_ROOT/scripts/$p"; then
+        pass "H: $p captura stream-json y deriva el .log (con gate de jq)"
+    else
+        fail "H: $p perdio la captura stream-json o la derivacion del .log"
+    fi
+done
+
 echo ""
 echo "----------------------------------------"
 echo "  Resumen: $PASS pass, $FAIL fail"
