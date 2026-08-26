@@ -261,6 +261,12 @@ El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o
 | Doctrina de comentarios de código mínimos (jerarquía código/comentario/documentación, umbral doble Context Delta + Decision Delta, proscripción de provenance `// HU-XX`, regla de precedencia de citas a ADR, alcance por lenguaje y frontera de limpieza del reviewer) | MEF-ADR-0044 |
 | Default `always_on = true` unico del marco (sin distincion dev/prod) y su fundamento de costo real en tiers dedicados | MEF-ADR-0020 |
 | Wiring de `always_on` desde el output del modulo `service-plan` hasta `site_config.always_on`, via el input nuevo del modulo `function-app` | MEF-ADR-0021 |
+| Enmienda a MEF-ADR-0031: cobertura de la capa de datos con el endpoint dedicado `/api/ready` (defensa en profundidad, probe sin cache del positivo, `ApplyAllDatabaseChangesOnStartup` diferida) | MEF-ADR-0031 |
+| Alerta dedicada de spike de excepciones del worker de proyecciones (umbral calibrado empiricamente, gate de deteccion parcial) | MEF-ADR-0034 |
+| Desacople de logs de error del sampler de trazas en el read-side (EnableTraceBasedLogsSampler, LogFilteringProcessor) | MEF-ADR-0038 |
+| Camino de resolucion de la connection string del worker bajo el overload de opciones del exporter (IConfiguration poblada por el host) | MEF-ADR-0034 |
+| Correccion en MEF-ADR-0043 seccion 1.1: lectura por alcances del charset de segmentos de ruta frente a la identidad de stream de MEF-ADR-0037 (Guid por construccion, componente tipado no-Guid sujeto a 1.2/1.3, clave compuesta fuera del sujeto porque nunca viaja entera en un segmento) | MEF-ADR-0043 |
+| Precision de MEF-ADR-0037 seccion 2: la unidad del borde HTTP es el componente tipado, no la clave (identidad de un componente vs. de varios) | MEF-ADR-0037 |
 
 ## Convenciones del marco
 
