@@ -9,7 +9,7 @@
 #   herdr-pipeline.sh --infra 42                  # IaC explicito
 #   herdr-pipeline.sh --scaffold 42 --domain x    # scaffold de dominio
 #   herdr-pipeline.sh --batch 42 43 44            # secuencial
-#   herdr-pipeline.sh --parallel 42 43            # delega a tmux (fase 2)
+#   herdr-pipeline.sh --parallel 42 43            # paralelo: un pane apilado por issue
 #
 # En vez de crear una sesion tmux nueva con un pane de `tail -f events.log`
 # (que resulto innecesario), esta interfaz trabaja DENTRO del workspace herdr
@@ -28,6 +28,17 @@
 # en foreground (`herdr pane process-info`: foreground_process_group_id ==
 # shell_pid). Cada visor filtra por sus issues (--issues de stream-watch.sh)
 # para que dos corridas concurrentes no se crucen.
+#
+# Modo paralelo (issue #705): un pane por issue, apilados en la columna del
+# pane de ejecucion -- el primer issue reutiliza/crea el pane de la derecha
+# (acquire_report_pane, que ademas colapsa los libres sobrantes) y los demas
+# son splits hacia abajo con alturas parejas (stack_split_ratio). Cada pane
+# corre el runner con el visor de SU issue y un arranque escalonado
+# (PARALLEL_STAGGER) que espera DENTRO del pane, no en quien despacha. Un
+# lote con dos o mas issues tipo:projection se rechaza: comparten los
+# archivos del worker de proyecciones (MEF-ADR-0034) y en modo pane no hay
+# scheduler que los serialice (usa /sequential o parallel-pipeline.sh, cuyo
+# scheduler si serializa).
 #
 # Este script requiere correr dentro de un pane herdr (HERDR_ENV=1): la
 # autodeteccion vive en tmux-pipeline.sh, que delega aqui cuando aplica y
@@ -68,6 +79,11 @@ LOG_DIR_ABS="$PROJECT_ROOT/.claude/pipeline/logs"
 # por linea, ids publicos de herdr como "w1:p3"). Vive en .claude/pipeline/
 # como el resto del estado runtime: nunca viaja en un commit del consumidor.
 PANES_STATE="$PROJECT_ROOT/.claude/pipeline/herdr-report-panes.txt"
+# Segundos entre arranques de los issues de un lote --parallel: varios
+# `claude -p` arrancando a la vez compiten por la API (mismo motivo que el
+# sleep del modo tmux). La espera corre DENTRO de cada pane (--delay del
+# runner), asi el despacho devuelve el control de inmediato.
+PARALLEL_STAGGER=30
 
 # Los mensajes de progreso van a stderr: varios helpers de este script
 # devuelven su resultado por stdout (acquire_report_pane) y un log colado ahi
@@ -178,13 +194,52 @@ acquire_report_pane() {
     echo "$chosen"
 }
 
+# stack_split_ratio <total> <k>
+#
+# Ratio del k-esimo split (1-indexado) al apilar <total> panes de alturas
+# parejas en una columna partiendo siempre el pane inferior: 1/(total-k+1).
+# En herdr el ratio de un split es la fraccion que conserva el pane ORIGINAL
+# (el nodo `first` del arbol BSP, el de arriba en un split down; verificado
+# en split_at/split_rect de src/layout.rs de herdr 0.8.2), asi que el pane
+# que queda arriba conserva 1/total y el resto se sigue partiendo parejo.
+# herdr acota el ratio a [0.1, 0.9] (valid_split_ratio): con 10+ issues los
+# primeros panes quedan algo mas altos que 1/total -- cosmetico, sin manejo
+# especial. Pura (sin herdr, sin estado) para poder testearla sola.
+stack_split_ratio() {
+    local total="$1" k="$2"
+    awk -v t="$total" -v k="$k" 'BEGIN { printf "%.4f", 1 / (t - k + 1) }'
+}
+
+# build_pane_runner_cmdline <titulo> <issues_csv> <delay_s> <cmd> [args...]
+#
+# Imprime por stdout la linea que un pane debe ejecutar para correr el runner
+# interno (--_pane-runner) con <cmd args...>. Todo argumento va quoteado con
+# printf %q: el pane run literalmente escribe la linea en el shell del pane.
+build_pane_runner_cmdline() {
+    local title="$1" issues_csv="$2" delay="$3"
+    shift 3
+
+    local cmdline
+    cmdline="cd $(printf '%q' "$PROJECT_ROOT") && $(printf '%q' "$SCRIPT_DIR/herdr-pipeline.sh") --_pane-runner --title $(printf '%q' "$title")"
+    if [ -n "$issues_csv" ]; then
+        cmdline="$cmdline --issues $(printf '%q' "$issues_csv")"
+    fi
+    if [ "$delay" -gt 0 ]; then
+        cmdline="$cmdline --delay $delay"
+    fi
+    cmdline="$cmdline --"
+    local a
+    for a in "$@"; do
+        cmdline="$cmdline $(printf '%q' "$a")"
+    done
+    echo "$cmdline"
+}
+
 # dispatch_to_pane <titulo> <issues_csv> <cmd> [args...]
 #
 # Consigue un pane libre y le teclea (herdr pane run) la invocacion del
 # runner interno (--_pane-runner), que corre <cmd args...> en background con
-# su reporte a un log y muestra el visor en primer plano. Todo argumento va
-# quoteado con printf %q: el pane run literalmente escribe la linea en el
-# shell del pane.
+# su reporte a un log y muestra el visor en primer plano.
 dispatch_to_pane() {
     local title="$1" issues_csv="$2"
     shift 2
@@ -193,15 +248,7 @@ dispatch_to_pane() {
     pane=$(acquire_report_pane)
 
     local cmdline
-    cmdline="cd $(printf '%q' "$PROJECT_ROOT") && $(printf '%q' "$SCRIPT_DIR/herdr-pipeline.sh") --_pane-runner --title $(printf '%q' "$title")"
-    if [ -n "$issues_csv" ]; then
-        cmdline="$cmdline --issues $(printf '%q' "$issues_csv")"
-    fi
-    cmdline="$cmdline --"
-    local a
-    for a in "$@"; do
-        cmdline="$cmdline $(printf '%q' "$a")"
-    done
+    cmdline=$(build_pane_runner_cmdline "$title" "$issues_csv" 0 "$@")
 
     herdr pane run "$pane" "$cmdline" >/dev/null 2>&1 \
         || abort "No se pudo lanzar el pipeline en el pane $pane (herdr pane run fallo)."
@@ -213,9 +260,11 @@ dispatch_to_pane() {
 
 # --- Runner interno (corre DENTRO del pane de ejecucion) ---
 #
-# herdr-pipeline.sh --_pane-runner --title <t> [--issues <csv>] -- <cmd> [args...]
+# herdr-pipeline.sh --_pane-runner --title <t> [--issues <csv>] [--delay <s>] -- <cmd> [args...]
 #
 # 1. Renombra el pane con el titulo de la corrida (visible en el borde/sidebar).
+#    Con --delay (lotes --parallel) espera esos segundos, visible en el pane,
+#    antes de lanzar: el escalonado no bloquea a quien despacha.
 # 2. Lanza <cmd> en background con stdout+stderr al reporte (.report.log).
 # 3. Muestra el visor en vivo filtrado a los issues de ESTA corrida y a
 #    streams nacidos despues de ahora (--newer-than): sin traza previa ajena.
@@ -225,7 +274,7 @@ dispatch_to_pane() {
 # 5. Renombra el pane a "[ok] ..."/"[fallo] ..." y devuelve el exit code del
 #    pipeline; el shell del pane queda en su prompt, listo para reutilizarse.
 cmd_pane_runner() {
-    local title="" issues_csv=""
+    local title="" issues_csv="" delay=0
     while [ $# -gt 0 ]; do
         case "$1" in
             --title)
@@ -234,6 +283,10 @@ cmd_pane_runner() {
             --issues)
                 [ $# -lt 2 ] && abort "Falta el valor de --issues"
                 issues_csv="$2"; shift 2 ;;
+            --delay)
+                [ $# -lt 2 ] && abort "Falta el valor de --delay"
+                [[ "$2" =~ ^[0-9]+$ ]] || abort "--delay debe ser un entero de segundos (recibido: '$2')"
+                delay="$2"; shift 2 ;;
             --)
                 shift; break ;;
             *)
@@ -261,6 +314,13 @@ cmd_pane_runner() {
     echo -e "${CYAN}Comando: $*${NC}"
     echo -e "${CYAN}Reporte: $report_log${NC}"
     echo ""
+
+    # Arranque escalonado de los lotes --parallel. Espera ANTES de start_epoch
+    # para que el visor (--newer-than) siga viendo el stream propio.
+    if [ "$delay" -gt 0 ]; then
+        echo -e "${YELLOW}Arranque escalonado: esperando ${delay}s antes de lanzar...${NC}"
+        sleep "$delay"
+    fi
 
     local start_epoch
     start_epoch=$(date +%s)
@@ -441,6 +501,122 @@ cmd_batch() {
     dispatch_to_pane "batch ${issues_csv}" "$issues_csv" "$SCRIPT_DIR/batch-pipeline.sh" "${args[@]}"
 }
 
+# --- Modo PARALELO (issue #705): un pane apilado por issue ---
+#
+# El primer issue reutiliza/crea el pane de ejecucion de la derecha; los demas
+# se apilan con splits hacia abajo de alturas parejas. Cada pane corre el
+# runner con el visor de SU issue; el escalonado (PARALLEL_STAGGER) espera
+# dentro del pane via --delay, asi este despacho retorna de inmediato.
+cmd_parallel() {
+    local pipeline_override=""
+    local issues=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --pipeline)
+                pipeline_override="$2"; shift 2 ;;
+            --max-parallel)
+                warn "--max-parallel no aplica en modo herdr (cada issue corre en su propio pane). Para limitar concurrencia usa parallel-pipeline.sh directo."
+                shift 2 ;;
+            --max-parallel=*)
+                warn "--max-parallel no aplica en modo herdr (cada issue corre en su propio pane). Para limitar concurrencia usa parallel-pipeline.sh directo."
+                shift ;;
+            *)
+                issues+=("$1"); shift ;;
+        esac
+    done
+
+    if [ ${#issues[@]} -eq 0 ]; then
+        abort "Debes especificar al menos un issue. Uso: --parallel 42 43 44"
+    fi
+
+    # Pre-resolver cada issue: estado + tipo:projection + pipeline en UNA sola
+    # llamada gh (resolve_issue_facts). Los no OPEN o sin pipeline se saltan
+    # con aviso, igual que el modo tmux y parallel-pipeline.sh.
+    local resolved_issues=()
+    local resolved_pipelines=()
+    local projection_count=0
+    local issue facts state rest is_projection resolved
+    for issue in "${issues[@]}"; do
+        if ! facts=$(resolve_issue_facts "$issue" "$pipeline_override"); then
+            abort "Override de pipeline invalido: '$pipeline_override' (usa tdd|tooling)."
+        fi
+        state="${facts%%|*}"
+        rest="${facts#*|}"
+        is_projection="${rest%%|*}"
+        resolved="${rest#*|}"
+
+        if [ "$state" != "OPEN" ]; then
+            warn "Issue #$issue esta $state --- saltando."
+            continue
+        fi
+        if [[ "$resolved" == SKIP:* ]]; then
+            warn "Issue #$issue saltado (${resolved#SKIP:}) --- no se abre pane."
+            continue
+        fi
+
+        resolved_issues+=("$issue")
+        resolved_pipelines+=("$(plugin_script "$resolved")")
+        if [ "$is_projection" = "true" ]; then
+            projection_count=$((projection_count + 1))
+        fi
+    done
+
+    if [ ${#resolved_issues[@]} -eq 0 ]; then
+        abort "No hay issues validos para procesar en paralelo."
+    fi
+
+    # Gate de projections: en modo pane no hay scheduler que las serialice y
+    # todas comparten los archivos del worker de proyecciones del BC
+    # (MEF-ADR-0034) -- dos a la vez producirian PRs pisandose entre si.
+    if [ "$projection_count" -gt 1 ]; then
+        abort "$projection_count issues tipo:projection en el lote: comparten el worker de proyecciones (MEF-ADR-0034) y en modo pane no se serializan entre si. Usa /sequential, o parallel-pipeline.sh directo (su scheduler si los serializa)."
+    fi
+
+    # Pane 1: el pane de ejecucion de la derecha (reutilizado o creado; los
+    # libres sobrantes se colapsan ahi mismo, asi el apilado arranca de UNO).
+    local panes=() prev
+    prev=$(acquire_report_pane)
+    panes+=("$prev")
+
+    # Panes 2..N: apilados hacia abajo bajo el pane anterior, registrados en
+    # PANES_STATE para heredar la reutilizacion/colapso post-corrida.
+    local total=${#resolved_issues[@]}
+    local k ratio resp pane
+    for ((k = 1; k < total; k++)); do
+        ratio=$(stack_split_ratio "$total" "$k")
+        resp=$(herdr pane split --pane "$prev" --direction down --ratio "$ratio" --cwd "$PROJECT_ROOT" --no-focus 2>&1) \
+            || abort "No se pudo crear el pane apilado $((k + 1))/$total (herdr pane split): $resp"
+        pane=$(echo "$resp" | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
+        [ -n "$pane" ] || abort "herdr pane split no devolvio pane_id. Respuesta: $resp"
+        echo "$pane" >> "$PANES_STATE"
+        panes+=("$pane")
+        prev="$pane"
+    done
+
+    local i pipeline_name title delay cmdline
+    for i in "${!resolved_issues[@]}"; do
+        issue="${resolved_issues[$i]}"
+        pipeline_name=$(basename "${resolved_pipelines[$i]}" .sh)
+        title="${pipeline_name%-pipeline} #$issue"
+        delay=$((i * PARALLEL_STAGGER))
+
+        cmdline=$(build_pane_runner_cmdline "$title" "$issue" "$delay" "${resolved_pipelines[$i]}" "$issue")
+        herdr pane run "${panes[$i]}" "$cmdline" >/dev/null 2>&1 \
+            || abort "No se pudo lanzar el issue #$issue en el pane ${panes[$i]} (herdr pane run fallo)."
+
+        if [ "$delay" -gt 0 ]; then
+            log "Issue #$issue -> pane ${panes[$i]} ($title, arranca en ${delay}s)"
+        else
+            log "Issue #$issue -> pane ${panes[$i]} ($title)"
+        fi
+    done
+
+    success "Pipeline paralelo corriendo: $total pane(s) apilados en este workspace, uno por issue."
+    log "Cada pane muestra el visor en vivo de su issue; los reportes quedan en $LOG_DIR_ABS/."
+    log "Los PRs NO se mergean automaticamente: usa /merge <PR_NUM> al terminar."
+}
+
 cmd_help() {
     cat <<EOF
 
@@ -454,7 +630,7 @@ ${BOLD}Uso (misma superficie que tmux-pipeline.sh):${NC}
   herdr-pipeline.sh --infra 42                           Issue de infraestructura (IaC)
   herdr-pipeline.sh --scaffold 42 --domain nombre        Scaffold de dominio
   herdr-pipeline.sh --batch 42 43 44                     Secuencial
-  herdr-pipeline.sh --parallel 42 43                     Delegado a tmux (fase 2)
+  herdr-pipeline.sh --parallel 42 43                     Paralelo: un pane apilado por issue
 
 ${BOLD}Que hace distinto de tmux-pipeline.sh:${NC}
   No crea sesiones tmux ni el pane de 'tail -f events.log'. Reutiliza (o
@@ -463,6 +639,11 @@ ${BOLD}Que hace distinto de tmux-pipeline.sh:${NC}
   (stream-watch.sh) del agente en curso, un solo pane para toda la secuencia
   de agentes del issue. Si el pane sigue ocupado con otra corrida, se abre
   un pane adicional; los libres se reutilizan.
+
+  Con --parallel, cada issue corre en su propio pane apilado bajo el pane de
+  ejecucion (alturas parejas, visor por issue, arranques escalonados de 30s
+  dentro de cada pane). Un lote con dos o mas issues tipo:projection se
+  rechaza: usa /sequential o parallel-pipeline.sh, que si los serializa.
 
 ${BOLD}Requisitos:${NC} correr dentro de un pane herdr (HERDR_ENV=1) y jq.
   Fuera de herdr usa tmux-pipeline.sh, que ademas autodetecta herdr y delega
@@ -538,11 +719,15 @@ main() {
             abort "En herdr no hay attach: los panes de ejecucion viven en el workspace del proyecto. Abrilo desde la barra lateral de herdr (o corre 'herdr' para adjuntar al servidor)."
             ;;
         --parallel)
-            # Fase 2 (issue #690 la difiere explicitamente): el modo paralelo
-            # sigue en tmux. MEFISTO_UI=tmux evita que la autodeteccion de
-            # tmux-pipeline.sh delegue de vuelta aqui.
-            warn "--parallel sigue en tmux por ahora (fase 2): delegando a tmux-pipeline.sh..."
-            MEFISTO_UI=tmux exec "$SCRIPT_DIR/tmux-pipeline.sh" "$@"
+            shift
+            [ $# -eq 0 ] && abort "Debes especificar al menos un issue. Uso: --parallel 42 43 44"
+            [ -n "$from_stage_extra" ] && abort "--from-stage no es valido con --parallel (seria ambiguo sobre varios issues). Usalo con un unico issue."
+            require_herdr_context
+            if [ -n "$pipeline_override" ]; then
+                cmd_parallel --pipeline "$pipeline_override" "$@"
+            else
+                cmd_parallel "$@"
+            fi
             ;;
         --tooling)
             shift
@@ -576,11 +761,12 @@ main() {
         [0-9]*)
             if [ $# -gt 1 ]; then
                 [ -n "$from_stage_extra" ] && abort "--from-stage no es valido con multiples issues (se interpretaria como --parallel). Especifica un unico issue."
-                warn "Multiples issues sin modo especificado: eso es --parallel, que sigue en tmux (fase 2)."
+                warn "Multiples issues sin modo especificado. Usando --parallel."
+                require_herdr_context
                 if [ -n "$pipeline_override" ]; then
-                    MEFISTO_UI=tmux exec "$SCRIPT_DIR/tmux-pipeline.sh" --parallel --pipeline "$pipeline_override" "$@"
+                    cmd_parallel --pipeline "$pipeline_override" "$@"
                 else
-                    MEFISTO_UI=tmux exec "$SCRIPT_DIR/tmux-pipeline.sh" --parallel "$@"
+                    cmd_parallel "$@"
                 fi
             else
                 require_herdr_context

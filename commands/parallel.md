@@ -2,7 +2,7 @@
 model: haiku
 ---
 
-Lanza el pipeline TDD en paralelo para multiples issues dentro de una sesion tmux. Cada issue corre en su propio tab. Los PRs se crean pero NO se mergean automaticamente. Comunicate en **espanol**.
+Lanza pipelines en paralelo para multiples issues. Dentro de herdr cada issue corre en su propio pane apilado en el workspace actual; fuera de herdr, en una sesion tmux con un tab por issue. Los PRs se crean pero NO se mergean automaticamente. Comunicate en **espanol**.
 
 ## Pre-condicion: cwd != Mefisto, grupos homogeneos
 
@@ -41,7 +41,7 @@ Si algun issue no existe o esta cerrado, informalo y excluyelo de la lista. Si n
 Muestra la lista de issues que se procesaran:
 
 ```
-Paralelo — 3 issues (cada uno en su propio tab):
+Paralelo — 3 issues (cada uno en su propio pane/tab):
   #42: Implementar calculo de horas extras nocturnas
   #43: Agregar validacion de jornada maxima
   #44: Calcular recargos dominicales
@@ -58,7 +58,15 @@ PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
 
 ### 3. Instrucciones de conexion
 
-Responde con:
+Dentro de herdr (`HERDR_ENV=1` en el entorno), el script delega en la interfaz herdr y no hay nada que adjuntar: cada issue queda corriendo en su propio pane apilado de este workspace, con el visor en vivo de su agente y arranques escalonados de 30s. En ese caso responde con:
+
+```
+Pipeline paralelo corriendo: un pane apilado por issue en este workspace.
+Los PRs NO se mergean automaticamente.
+Usa /work-status para ver el progreso sin salir de aqui.
+```
+
+Fuera de herdr responde con:
 
 ```
 Pipeline paralelo lanzado en tmux. Para monitorear:
@@ -73,4 +81,4 @@ Usa /work-status para ver el progreso sin salir de aqui.
 - **No esperes a que termine.** Devuelve el control inmediatamente.
 - **No implementes nada tu mismo.** Solo lanza el script.
 - Los PRs creados no se mergean. Recuerdale al usuario que puede usar `/merge <PR_NUM>` despues.
-- **Issues `tipo:projection`: nunca corren dos a la vez.** Todas las proyecciones del BC comparten los archivos del worker de proyecciones (MEF-ADR-0034), asi que `parallel-pipeline.sh` los serializa entre si dentro del lote (el resto de issues sigue paralelizando con normalidad). Si el grupo trae mas de uno, avisale al usuario en el resumen del paso 2 que esos dos correran en fila y que `/sequential` es el camino natural para un lote de puras proyecciones.
+- **Issues `tipo:projection`: nunca deben correr dos a la vez.** Todas las proyecciones del BC comparten los archivos del worker de proyecciones (MEF-ADR-0034). Dentro de herdr, un lote con dos o mas aborta con mensaje: el camino es `/sequential`, o `parallel-pipeline.sh` directo (su scheduler si los serializa dentro del lote sin frenar al resto). Si el grupo trae mas de uno, avisale al usuario desde el resumen del paso 2 que `/sequential` es el camino natural para un lote de puras proyecciones.
