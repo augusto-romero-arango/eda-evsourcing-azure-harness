@@ -45,6 +45,13 @@
 #                                 true; "false" en cualquier otro caso (ausente, null, false,
 #                                 o un tipo/valor invalido -- issue #369, MEF-ADR-0034). Nunca
 #                                 aborta la carga: es un token opt-in, retrocompatible.
+#   HARNESS_AZURE_REGION_SHORT - Valor de azureRegionShort (ej. "eus2"), componente {region}
+#                                 del estandar de nombramiento de recursos (MEF-ADR-0045,
+#                                 issue #729). Vacio si el campo esta ausente -- nunca aborta
+#                                 la carga (token opt-in, retrocompatible).
+#   HARNESS_RESOURCE_SEQUENCE  - Valor de resourceSequence (ej. "001"), componente {seq} del
+#                                 mismo estandar (MEF-ADR-0045). "001" si el campo esta
+#                                 ausente o vacio -- nunca aborta la carga.
 #
 # Campos opcionales del config (no se exportan via load_harness_config; se leen
 # inline donde se necesitan, mismo patron que agents/planner.md):
@@ -372,6 +379,20 @@ load_harness_config() {
     else
         export HARNESS_PROJECTIONS_ENABLED="false"
     fi
+
+    # azureRegionShort/resourceSequence son opcionales (issue #729, MEF-ADR-0045): componentes
+    # {region}/{seq} del estandar de nombramiento de recursos. Mismo patron exacto que
+    # projections.enabled -- declarar la local aparte y asignar con `|| true` -- para que un
+    # config malformado en estos campos no aborte TODO el pipeline bajo `set -euo pipefail`.
+    # Un `export VAR=$(...)` de una sola linea NO sirve como proteccion: el builtin enmascara
+    # el exit code de la sustitucion (SC2155), asi que el `|| true` de esa forma es codigo
+    # muerto. Ausencia o valor invalido degradan a los defaults retrocompatibles ("" y "001"),
+    # nunca a un error de carga.
+    local region_raw seq_raw
+    region_raw=$(jq -r '.azureRegionShort // ""' "$config" 2>/dev/null) || true
+    seq_raw=$(jq -r '.resourceSequence // ""' "$config" 2>/dev/null) || true
+    export HARNESS_AZURE_REGION_SHORT="${region_raw:-}"
+    export HARNESS_RESOURCE_SEQUENCE="${seq_raw:-001}"
 }
 
 # upsert_harness_secret <name> <source_type> <source_value> [config_path]

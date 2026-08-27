@@ -108,6 +108,8 @@ Crea `.claude/harness.config.json` en la raíz del proyecto consumidor:
   },
   "tenancy": { "strategy": "mono-tenant-transitorio" },
   "projections": { "enabled": true },
+  "azureRegionShort": "eus2",
+  "resourceSequence": "001",
   "secrets": [
     {
       "name": "stripe-api-key",
@@ -153,6 +155,8 @@ El resource group del BC se forma como `infraResourceGroupPrefix`+`-`+`name` (ej
 - **`true`**: el BC adopta proyecciones. Habilita, de forma opt-in: los 3 módulos Terraform del Container App sin ingress que suma `infra-base-scaffolder` (`container-registry`, `container-app-environment`, `container-app`, ver "Bootstrap de infraestructura" paso 3 y MEF-ADR-0034 sección 8) y el worker en sí, que genera `/scaffold-projections` (agente `projections-scaffolder`).
 
 `load_harness_config` expone la variable derivada `HARNESS_PROJECTIONS_ENABLED` (nunca aborta la carga por este campo, issue #369); `infra-base-scaffolder` y `/scaffold-projections`/`projections-scaffolder` hoy lo consumen inline con `jq` (mismo patrón minimalista que `tenancy.strategy`). `domain-scaffolder` no lee el token: detecta el worker ya generado y, si está, registra en él el named store del dominio nuevo (issue #370, MEF-ADR-0034 sección 2) — un dominio scaffoldeado en un BC sin worker sale exactamente igual que antes. `/onboard` reporta el estado -- habilitado y si el worker ya existe -- de forma informativa (nunca `FALTA` si está deshabilitado) y, cuando el token está en `true` pero el worker todavía no existe, ofrece encadenar `/scaffold-projections` bajo confirmación explícita. Es **opcional** (añadirlo no es MAJOR). Ver MEF-ADR-0034 para la doctrina completa del worker.
+
+**Campos opcionales `azureRegionShort`/`resourceSequence`** (MEF-ADR-0045, issue #729): componentes `{region}`/`{seq}` del estándar de nombramiento de recursos Azure que los scaffolders del harness aplican al generar Terraform **nuevo** — patrón CAF `{abrev-tipo}-[{uso}-]{app}-{env}-{region}-{seq}` (ej. `kv-miproyecto-dev-eus2-001`), con la tabla completa de abreviaturas adoptadas y la política de unicidad (sin sufijos random; ante colisión real se incrementa `{seq}`) en MEF-ADR-0045. `azureRegionShort` es un string libre (ej. `"eus2"` para East US 2 — el CAF no publica una tabla oficial de abreviaturas de región) que declaras vos, no derivado de `azureLocation`. `resourceSequence` es la secuencia zero-padded (default `"001"`). Ambos son **opcionales y retrocompatibles**: ausentes, los scaffolders conservan el comportamiento actual (sin `{region}`/`{seq}` en el nombre) y `load_harness_config` los expone igual, con sus defaults (`""` y `"001"`), sin abortar nunca la carga — `HARNESS_AZURE_REGION_SHORT`/`HARNESS_RESOURCE_SEQUENCE`. Cuando `/onboard` incorpore el reporte de estos tokens (issue dependiente), debe tratarlos de forma informativa, nunca como `FALTA`, igual que `tenancy`/`projections`. La corrección aplica **solo hacia adelante**: ningún recurso ya desplegado se renombra (MEF-ADR-0045 sección 3).
 
 **Campo opcional `secrets`** (issue #256): registro **declarativo** de todo secreto del BC que el step de siembra de `infra-cd.yml` itera en runtime, sin ninguna línea hardcodeada por secreto. Cada entrada declara:
 
