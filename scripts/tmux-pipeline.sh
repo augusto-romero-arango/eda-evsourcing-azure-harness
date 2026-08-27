@@ -661,17 +661,21 @@ ${BOLD}Modelo por stage (--models, experimentos A/B de desempeno):${NC}
   (sea por label o por '--pipeline tdd|tooling <issue>' -- ambos overrides de
   resolve_pipeline() resuelven siempre a tdd-pipeline.sh o tooling-pipeline.sh):
   --models 'agente=modelo[,agente=modelo...]' sobreescribe el modelo de un
-  stage puntual. La clave es el nombre de agente
-  que recibe run_agent() en el sub-script destino:
+  stage puntual. La clave es el nombre de agente que recibe run_agent() en el
+  sub-script destino:
     tooling-pipeline.sh: 'writer' (cubre Stage 1 y la etapa de merge, ambos
       invocados con ese mismo nombre) y 'reviewer' (Stage 2).
     tdd-pipeline.sh: 'test-writer'/'projection-test-writer' (Stage 1),
       'implementer'/'projection-implementer' (Stage 2, y la etapa de merge que
-      SIEMPRE usa la clave 'implementer'), 'smoke-test-writer' (Stage 2b),
-      'reviewer' (Stage 3), y 'patch-test-writer'/'patch-implementer' (los dos
-      sub-stages de remediacion del coverage gate en Stage 4, que no pasan por
-      run_agent pero honran el mismo mapa). El scaffold de dominio (Stage 0,
-      domain-scaffolder) queda fuera del mapa -- no es un stage TDD.
+      SIEMPRE usa la clave 'implementer'), 'smoke-test-writer' (Stage 2b) y
+      'reviewer' (Stage 3). Los dos sub-stages de remediacion del coverage gate
+      (Stage 4) no pasan por run_agent, pero honran el mismo mapa con una clave
+      fina propia -- 'patch-test-writer'/'patch-implementer' -- que, si no esta
+      en el mapa, cae a la del agente que realmente relanzan (el del Stage 1 y
+      el del Stage 2): asi '--models test-writer=X' cubre tambien su
+      remediacion, y la clave fina existe solo para diferenciarla a proposito.
+      El scaffold de dominio (Stage 0, domain-scaffolder) queda fuera del mapa
+      -- no es un stage TDD.
   Sin entrada en el mapa, el stage usa su default de siempre (el frontmatter
   `model:` del agente en tdd-pipeline.sh; sonnet/opus hardcodeado en
   tooling-pipeline.sh). Se rechaza (mensaje explicito, nunca silencio) en

@@ -11,7 +11,10 @@
 #                            nada por si misma.
 #   resolve_stage_model    - override por clave exacta, sin match cae al default,
 #                            y sin --models (mapa vacio) siempre el default (CA-2:
-#                            byte a byte el comportamiento previo al flag).
+#                            byte a byte el comportamiento previo al flag), y
+#                            la cadena clave-fina -> agente-relanzado que
+#                            tdd-pipeline.sh usa en los sub-stages de patch
+#                            (issue #712).
 #   format_stage_models_for_log - formato de auditoria (CA-4), vacio sin mapa.
 #   tmux-pipeline.sh        - --tooling reenvia --models intacto al send-keys
 #                            (CA-3); el enrutamiento automatico de un unico
@@ -115,6 +118,29 @@ R=$(resolve_stage_model "test-writer" "")
 if [ "$R" = "opus" ]; then pass "con override y default vacio, resuelve al override (run_agent agrega --model opus)"; else fail "deberia resolver a 'opus' (obtenido '$R')"; fi
 R=$(resolve_stage_model "implementer" "")
 if [ -z "$R" ]; then pass "sin match en el mapa y default vacio, resuelve a cadena vacia"; else fail "deberia resolver a vacio (obtenido '$R')"; fi
+
+echo ""
+echo "[9c] cadena de resolucion de los sub-stages de patch (issue #712): clave fina -> agente relanzado -> vacio"
+# tdd-pipeline.sh compone las dos llamadas asi:
+#   resolve_stage_model "patch-test-writer" "$(resolve_stage_model "$STAGE1_AGENT" "")"
+# La clave fina gana si esta; si no, hereda la del agente que el stage relanza
+# (sin esa caida, '--models test-writer=X' correria Stage 1 con X y la
+# remediacion con el frontmatter -- dos modelos para el mismo rol en una corrida).
+parse_stage_models "test-writer=opus" >/dev/null
+R=$(resolve_stage_model "patch-test-writer" "$(resolve_stage_model "test-writer" "")")
+if [ "$R" = "opus" ]; then pass "sin clave fina, el patch hereda el modelo de 'test-writer'"; else fail "deberia heredar 'opus' (obtenido '$R')"; fi
+
+parse_stage_models "test-writer=opus,patch-test-writer=haiku" >/dev/null
+R=$(resolve_stage_model "patch-test-writer" "$(resolve_stage_model "test-writer" "")")
+if [ "$R" = "haiku" ]; then pass "la clave fina 'patch-test-writer' gana sobre la heredada"; else fail "deberia ganar 'haiku' (obtenido '$R')"; fi
+
+parse_stage_models "reviewer=opus" >/dev/null
+R=$(resolve_stage_model "patch-implementer" "$(resolve_stage_model "implementer" "")")
+if [ -z "$R" ]; then pass "sin ninguna de las dos claves, la cadena resuelve a vacio (no se agrega --model)"; else fail "deberia resolver a vacio (obtenido '$R')"; fi
+
+parse_stage_models "projection-test-writer=sonnet" >/dev/null
+R=$(resolve_stage_model "patch-test-writer" "$(resolve_stage_model "projection-test-writer" "")")
+if [ "$R" = "sonnet" ]; then pass "la herencia sigue al STAGE1_AGENT read-side (projection-test-writer)"; else fail "deberia heredar 'sonnet' (obtenido '$R')"; fi
 
 echo ""
 echo "[10] format_stage_models_for_log: vacio sin mapa, formateado con mapa (CA-4)"

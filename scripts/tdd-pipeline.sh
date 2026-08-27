@@ -583,6 +583,10 @@ collect_summary() {
 }
 
 # ─── Función auxiliar para invocar agentes ───────────────────────────────────
+# $MODEL_ARGS se expande SIN comillas a proposito: vacio debe desaparecer del argv
+# (sin --model manda el frontmatter del agente), y un array vacio revienta con
+# "unbound variable" bajo `set -u` en el bash 3.2 de macOS. De ahi el disable.
+# shellcheck disable=SC2086
 run_agent() {
     local stage="$1"
     local agent="$2"
@@ -1630,14 +1634,19 @@ IMPORTANTE:
         CG_REMEDIATION_TIMEOUT=1800  # 30 minutos para remediacion
         PATCH_TW_START=$(date +%s)
 
-        # Modelo por stage (issue #712): la clave de --models para este stage es
-        # "patch-test-writer" (no pasa por run_agent, mismo criterio de naming que
-        # ya usan build_agents_history_json/las metricas de este stage).
-        PATCH_TW_MODEL_OVERRIDE="$(resolve_stage_model "patch-test-writer" "")"
+        # Modelo por stage (issue #712). Este relanzamiento no pasa por run_agent,
+        # pero SI invoca al mismo agente del Stage 1, asi que resuelve por cadena:
+        # primero la clave fina "patch-test-writer" (el stage key que ya usan
+        # build_agents_history_json y las metricas de este bloque), y si no esta
+        # en el mapa cae a la clave del agente realmente invocado ($STAGE1_AGENT).
+        # Sin esa caida, un experimento '--models test-writer=X' correria el Stage 1
+        # con X y la remediacion con el frontmatter: dos modelos para el mismo rol
+        # dentro de la misma corrida, que es justo lo que el A/B quiere medir.
+        PATCH_TW_MODEL_OVERRIDE="$(resolve_stage_model "patch-test-writer" "$(resolve_stage_model "$STAGE1_AGENT" "")")"
         PATCH_TW_MODEL_ARGS=""
         if [ -n "$PATCH_TW_MODEL_OVERRIDE" ]; then
             PATCH_TW_MODEL_ARGS="--model $PATCH_TW_MODEL_OVERRIDE"
-            echo "[$(date +%H:%M:%S)] MODELS: stage 4b/patch-test-writer -> $PATCH_TW_MODEL_OVERRIDE (override; default: frontmatter del agente)" >> "$EVENTS_LOG_ABS"
+            echo "[$(date +%H:%M:%S)] MODELS: stage 4b/patch-test-writer ($STAGE1_AGENT) -> $PATCH_TW_MODEL_OVERRIDE (override; default: frontmatter del agente)" >> "$EVENTS_LOG_ABS"
         fi
 
         log "Relanzando $STAGE1_AGENT para remediacion..."
@@ -1646,6 +1655,8 @@ IMPORTANTE:
         STDERR_CG_TW="${LOG_CG_TW%.log}.stderr.log"
         echo "[$(date +%H:%M:%S)] REMEDIATION: relanzando $STAGE1_AGENT" >> "$EVENTS_LOG_ABS"
 
+        # $PATCH_TW_MODEL_ARGS sin comillas por el mismo motivo que $MODEL_ARGS en run_agent().
+        # shellcheck disable=SC2086
         if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
             (cd "$WORKTREE_PATH" && claude -p "$PATCH_TW_PROMPT" \
                 --agent "$STAGE1_AGENT" $PATCH_TW_MODEL_ARGS \
@@ -1714,15 +1725,18 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
                 PATCH_IM_START=$(date +%s)
                 echo "[$(date +%H:%M:%S)] REMEDIATION: relanzando $STAGE2_AGENT" >> "$EVENTS_LOG_ABS"
 
-                # Modelo por stage (issue #712): clave "patch-implementer", mismo
-                # criterio que "patch-test-writer" arriba (stage 4b).
-                PATCH_IM_MODEL_OVERRIDE="$(resolve_stage_model "patch-implementer" "")"
+                # Modelo por stage (issue #712): misma cadena que "patch-test-writer"
+                # arriba -- clave fina "patch-implementer", y si no esta en el mapa,
+                # la del agente realmente invocado ($STAGE2_AGENT).
+                PATCH_IM_MODEL_OVERRIDE="$(resolve_stage_model "patch-implementer" "$(resolve_stage_model "$STAGE2_AGENT" "")")"
                 PATCH_IM_MODEL_ARGS=""
                 if [ -n "$PATCH_IM_MODEL_OVERRIDE" ]; then
                     PATCH_IM_MODEL_ARGS="--model $PATCH_IM_MODEL_OVERRIDE"
-                    echo "[$(date +%H:%M:%S)] MODELS: stage 4c/patch-implementer -> $PATCH_IM_MODEL_OVERRIDE (override; default: frontmatter del agente)" >> "$EVENTS_LOG_ABS"
+                    echo "[$(date +%H:%M:%S)] MODELS: stage 4c/patch-implementer ($STAGE2_AGENT) -> $PATCH_IM_MODEL_OVERRIDE (override; default: frontmatter del agente)" >> "$EVENTS_LOG_ABS"
                 fi
 
+                # $PATCH_IM_MODEL_ARGS sin comillas por el mismo motivo que arriba.
+                # shellcheck disable=SC2086
                 if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
                     (cd "$WORKTREE_PATH" && claude -p "$PATCH_IM_PROMPT" \
                         --agent "$STAGE2_AGENT" $PATCH_IM_MODEL_ARGS \
