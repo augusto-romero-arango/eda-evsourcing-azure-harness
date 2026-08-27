@@ -293,7 +293,7 @@ fi
 echo ""
 echo "[D] Guard de regresion (CA-5): el gate de arranque ya no atribuye el worktree a la rama activa"
 
-GATE_BLOCK=$(awk '/Verificar que el repo principal arranca en main\/master/,/^fi$/' "$SCRIPT")
+GATE_BLOCK=$(extract_fn "ensure_repo_on_base_branch" "$SCRIPT")
 
 if [ -z "$GATE_BLOCK" ]; then
     fail "D: no se pudo extraer el bloque del gate de arranque"
