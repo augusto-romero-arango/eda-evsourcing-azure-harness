@@ -49,7 +49,7 @@ Con el nombre en kebab-case recibido, deriva las siguientes variantes:
 
 **Validacion 1 - longitud del nombre de la Function App:**
 
-El nombre resultante sera `func-{prefix_func}-{kebab}` donde `prefix_func` es el valor de `local.prefix_func` definido en `infra/environments/dev/variables.tf`. Lee ese archivo para obtener el valor actual.
+El nombre resultante sera `func-{prefix_func}-{kebab}` donde `prefix_func` es el valor de `local.prefix_func` definido en `infra/environments/dev/variables.tf`. Lee ese archivo para obtener el valor actual: **resuelve la interpolacion completa**, no solo `{project_short}-{environment}`. Desde el issue #730 ese local puede componer tambien `{region}-{seq}` (`"${var.project_short}-${var.environment}${local.region_seq_suffix}"`, patron CAF de MEF-ADR-0045), asi que su valor efectivo depende de si el mismo archivo declara `azure_region_short` con valor. Un `prefix_func` mal resuelto aqui se hornea en `deploy-{kebab}.yml` y el deploy falla contra una Function App que existe con otro nombre.
 
 ```bash
 nombre="func-{prefix_func}-{kebab}"

@@ -1062,14 +1062,17 @@ test -f "$REPO_ROOT/.github/workflows/deploy-projections.yml" && echo "EXISTE (o
 
 Si existe, omite el resto de este paso y registralo como omitido en el reporte final (Paso 6).
 
-**Resolver el resource group y el nombre del Container App (nombres deterministicos, se hornean una sola vez en este archivo).** A diferencia del Container Registry (nombre con sufijo aleatorio -- ver el paso "Resolver el Container Registry" mas abajo), el resource group y el Container App del worker tienen nombre deterministico (`rg-{prefix}` y `ca-{prefix_func}`, esqueleto del entorno de `infra-base-scaffolder`, Paso 2.3/2.3b): se resuelven una sola vez, al generar este workflow, con el mismo mecanismo que ya usa `domain-scaffolder` (su Validacion 1) para hornear `func-{prefix_func}-{kebab}` en `deploy-{kebab}.yml`. Lee `infra/environments/dev/variables.tf` y toma los valores efectivos (`default`) de `project`, `project_short` y `environment` -- **no** los recalcules desde `harness.config.json`: `project_short` pudo ajustarse a mano ahi (nota de limites de Azure de `infra-base-scaffolder`, Key Vault 3-24 chars), y `variables.tf` es la fuente de verdad una vez que ese agente ya corrio. Deriva:
+**Resolver el resource group y el nombre del Container App (nombres deterministicos, se hornean una sola vez en este archivo).** El resource group y el Container App del worker tienen nombre deterministico (`rg-{prefix}` y `ca-projections-{prefix_func}`, esqueleto del entorno de `infra-base-scaffolder`, Paso 2.3/2.3b): se resuelven una sola vez, al generar este workflow, con el mismo mecanismo que ya usa `domain-scaffolder` (su Validacion 1) para hornear `func-{prefix_func}-{kebab}` en `deploy-{kebab}.yml`. Lee `infra/environments/dev/variables.tf` y toma los valores efectivos (`default`) de `project`, `project_short`, `environment` y -- si ese archivo las declara -- `azure_region_short`/`resource_sequence` -- **no** los recalcules desde `harness.config.json`: `project_short` pudo ajustarse a mano ahi (nota de limites de Azure de `infra-base-scaffolder`, Key Vault 3-24 chars), y `variables.tf` es la fuente de verdad una vez que ese agente ya corrio. Deriva **replicando los locals de ese mismo archivo** (patron CAF de MEF-ADR-0045, issue #730):
 
-- `prefix` = `{project}-{environment}` -> resource group `rg-{prefix}`
-- `prefix_func` = `{project_short}-{environment}` -> Container App `ca-{prefix_func}`
+- `region_seq` = `-{azure_region_short}-{resource_sequence}` si `azure_region_short` tiene valor; **cadena vacia** si esta vacio o si el `variables.tf` es anterior al issue #730 y no declara esas dos variables (entonces las formas de abajo colapsan a `{project}-{environment}`/`{project_short}-{environment}`, como antes de ese issue)
+- `prefix` = `{project}-{environment}{region_seq}` -> resource group `rg-{prefix}`
+- `prefix_func` = `{project_short}-{environment}{region_seq}` -> Container App `ca-projections-{prefix_func}`
+
+**Nunca** compongas estos dos nombres ignorando los locals reales del archivo. El nombre que hornees tiene que coincidir **literalmente** con el que el `main.tf` del entorno le pasa a cada modulo; si no, el `az containerapp update` del deploy falla con un error de recurso inexistente sobre un Container App que si existe, con otro nombre -- y el fallo aparece recien en el primer deploy del worker, no al generar este archivo.
 
 Si `infra/environments/dev/variables.tf` **no existe todavia** (este agente puede correr antes que `infra-base-scaffolder` con el token ya habilitado -- ver el "Siguiente paso" del Paso 6), omite **solo este paso** y sigue con el Paso 3: no hay como resolver los nombres reales del resource group ni del Container App, pero el resto del scaffold (solucion, `global.json`, build, tests, commit) no depende de ellos y debe completarse igual. Informa que hace falta correr `/infra-base` primero (con `projections.enabled: true`) y registralo como **pendiente** en el reporte final -- **no** inventes un nombre ni dejes un placeholder sin resolver en un archivo que despues nadie vuelve a tocar (CA-1 solo permite generarlo una vez).
 
-Con `rg-{prefix}` y `ca-{prefix_func}` ya resueltos, crea `.github/workflows/deploy-projections.yml` con el siguiente contenido, sustituyendo tambien `<RootNamespace>` y `<SolutionFile>` (Paso 0):
+Con `rg-{prefix}` y `ca-projections-{prefix_func}` ya resueltos, crea `.github/workflows/deploy-projections.yml` con el siguiente contenido, sustituyendo tambien `<RootNamespace>` y `<SolutionFile>` (Paso 0):
 
 ```yaml
 name: Deploy Projections Worker
@@ -1191,10 +1194,11 @@ jobs:
       - name: Resolver el Container Registry
         id: acr
         run: |
-          # El nombre del registry lleva un sufijo aleatorio (random_string, MEF-ADR-0021 issue
-          # #94): no se puede fijar en este workflow. Se resuelve en runtime con 'az acr list'
-          # sobre el resource group (deterministico) -- nunca 'terraform output' (este workflow no
-          # ejecuta Terraform, MEF-ADR-0022).
+          # El nombre del registry se resuelve en runtime con 'az acr list' sobre el resource
+          # group (deterministico), no se hornea aqui: los entornos anteriores al issue #730 lo
+          # tienen con sufijo aleatorio y los nuevos con el patron CAF de MEF-ADR-0045, y este
+          # paso funciona igual en los dos -- nunca 'terraform output' (este workflow no ejecuta
+          # Terraform, MEF-ADR-0022).
           set -euo pipefail
           LOGIN_SERVER=$(az acr list --resource-group rg-{prefix} --query "[0].loginServer" -o tsv)
           if [ -z "$LOGIN_SERVER" ]; then
@@ -1237,7 +1241,7 @@ jobs:
       - name: Actualizar la revision del Container App
         run: |
           az containerapp update \
-            --name ca-{prefix_func} \
+            --name ca-projections-{prefix_func} \
             --resource-group rg-{prefix} \
             --image "${{ steps.acr.outputs.login_server }}/projections:${{ github.sha }}"
 
@@ -1245,7 +1249,7 @@ jobs:
         run: |
           set -euo pipefail
           IMAGEN_ACTIVA=$(az containerapp show \
-            --name ca-{prefix_func} \
+            --name ca-projections-{prefix_func} \
             --resource-group rg-{prefix} \
             --query "properties.template.containers[0].image" -o tsv)
           if [ "$IMAGEN_ACTIVA" = "mcr.microsoft.com/k8se/quickstart:latest" ]; then
@@ -1267,7 +1271,7 @@ jobs:
 >
 > **Acoplamiento con la guarda "Esperar deploys ajenos" del smoke (issue #604, MEF-ADR-0031 seccion 4).** Este workflow se llama `Deploy Projections Worker`, asi que matchea el prefijo `Deploy ` con el que la guarda de `smoke-tests-dominio.yml` (`domain-scaffolder`, Paso 6.1) busca los deploys de Function App en vuelo del mismo commit -- pero no despliega ninguna Function App (Container App sin ingress, MEF-ADR-0034) y sus jobs son `build-and-test`/`publish`, ninguno llamado `deploy`. Porque esa guarda **falla** en vez de degradar en silencio cuando un run `Deploy *` no expone un job `deploy`, excluye este workflow por su `path` exacto (`.github/workflows/deploy-projections.yml`). Dos consecuencias para quien mantenga este agente: (a) si renombras el archivo generado, mueve tambien ese literal en el Paso 6.1 de `domain-scaffolder.md` -- el bloque `[H]` de `scripts/tests/test-guards.sh` falla si la correspondencia se rompe; (b) si algun issue futuro le agrega a este workflow un job de smoke que invoque `./.github/workflows/smoke-tests-dominio.yml` (la tercera clase de invocador de MEF-ADR-0031 seccion 4, hoy solo presente como personalizacion del consumidor de origen), ese job debe conceder `permissions: {contents: read, actions: read}` **a nivel de job** -- sin `actions: read` el run muere en `startup_failure` sin annotation visible, y a nivel de workflow alteraria los permisos de `publish` (`id-token: write`).
 >
-> **Nombres horneados una sola vez (`rg-{prefix}`, `ca-{prefix_func}`).** Igual que `func-{prefix_func}-{kebab}` en `deploy-{kebab}.yml`, estos dos nombres se resuelven al generar el archivo y quedan literales en el; no se recalculan en runtime ni se leen de un output de Terraform (este workflow no ejecuta Terraform). Si el consumidor cambia `project`/`project_short`/`environment` en `variables.tf` **despues** de que este workflow ya se genero, tiene que editarlo a mano -- la idempotencia de CA-1 (nunca sobrescribir) no lo regenera solo, mismo limite ya aceptado para `deploy-{kebab}.yml`.
+> **Nombres horneados una sola vez (`rg-{prefix}`, `ca-projections-{prefix_func}`).** Igual que `func-{prefix_func}-{kebab}` en `deploy-{kebab}.yml`, estos dos nombres se resuelven al generar el archivo y quedan literales en el; no se recalculan en runtime ni se leen de un output de Terraform (este workflow no ejecuta Terraform). Si el consumidor cambia `project`/`project_short`/`environment`/`azure_region_short`/`resource_sequence` en `variables.tf` **despues** de que este workflow ya se genero, tiene que editarlo a mano -- la idempotencia de CA-1 (nunca sobrescribir) no lo regenera solo, mismo limite ya aceptado para `deploy-{kebab}.yml`.
 
 > **Verificacion de punta a punta del circuito del SHA (CA-4, issue #462).** Las tres piezas (Dockerfile `ARG SOURCE_REVISION_ID` del Paso 2, `--build-arg` de este paso, y `serviceVersion` del seam de observabilidad del Paso 1d) solo se confirman juntas -- ninguna prueba unitaria las cubre, porque el valor nace en CI y termina en Application Insights. Para verificar tras un deploy real:
 >

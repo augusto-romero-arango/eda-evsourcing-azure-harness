@@ -18,7 +18,7 @@
 #   HARNESS_RG_PREFIX          - Prefijo del Resource Group de Azure (ej: rg-controlasistencias)
 #   HARNESS_TFSTATE_STORAGE    - Storage account para tfstate (ej: stcatfstatedev)
 #   HARNESS_SP_NAME            - Service Principal de GitHub Actions (ej: github-controlasistencias-ci)
-#   HARNESS_APP_INSIGHTS_APP   - Application Insights component (ej: controlasistencias-dev-ai)
+#   HARNESS_APP_INSIGHTS_APP   - Application Insights component (ej: appi-cplane-dev-eus2-001)
 #   HARNESS_DOMAIN_LABELS      - Lista separada por espacios de labels dom:*
 #   HARNESS_BC_NAME            - Nombre del Bounded Context (ej: Principal)
 #   HARNESS_BC_DOMAINS         - Lista separada por espacios de dominios del BC (ej: "dominio1 dominio2")

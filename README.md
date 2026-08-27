@@ -99,7 +99,7 @@ Crea `.claude/harness.config.json` en la raíz del proyecto consumidor:
   "infraResourceGroupPrefix": "rg-miproyecto",
   "terraformStateStorage": "stmiproyectotfstatedev",
   "githubServicePrincipalName": "github-miproyecto-ci",
-  "appInsightsApp": "miproyecto-dev-ai",
+  "appInsightsApp": "appi-miproyecto-dev-eus2-001",
   "azureLocation": "eastus2",
   "domainLabels": ["dominio1", "dominio2"],
   "boundedContext": {

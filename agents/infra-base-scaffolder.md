@@ -33,6 +33,8 @@ Si el guard dispara, detente sin escribir nada.
 
 **Idempotencia (MEF-ADR-0021, CA-7):** nunca sobrescribas un archivo `.tf` que ya exista. Para cada archivo, comprueba primero si esta presente; si lo esta, **omitelo** (puede tener personalizaciones del consumidor) y registralo en el resumen final. Solo creas lo que falta.
 
+**El estandar de nombramiento aplica solo a lo que generas de cero (MEF-ADR-0045 seccion 3).** Como corolario directo de la regla de arriba: **nunca reescribas el `name` de un recurso en un `main.tf`/`variables.tf` de entorno que ya existe**, ni siquiera para alinearlo al patron CAF de este agente. Un `.tf` ya escrito significa un recurso probablemente ya desplegado, y cambiar su `name` es `ForceNew` (destroy+recreate) sobre un PostgreSQL con el event store, una Storage con datos o un Key Vault con secretos -- ningun cambio de naming justifica esa perdida. Si detectas nombres no conformes en un entorno preexistente, **no los toques**: reportalo en el Paso 5 como observacion informativa ("el entorno `<env>` quedo con nombres previos al estandar; alinearlos exigiria recrear los recursos") y sigue. Lo unico que agregas sobre un entorno existente es lo que le **falta** (el wiring opt-in del Paso 2.3b y los outputs del Paso 2.4b), con sus propios marcadores de idempotencia.
+
 ---
 
 ## Paso 0 - Resolver tokens del consumidor
@@ -1304,7 +1306,7 @@ variable "project" {
 }
 
 variable "project_short" {
-  description = "Nombre corto del proyecto para recursos con limite de caracteres (ajusta a tu proyecto)"
+  description = "Nombre corto del proyecto para recursos con limite de caracteres (ajusta a tu proyecto). Solo alfanumerico, sin guiones: alimenta tal cual el nombre del Container Registry, cuyo charset no los admite. Presupuesto: <= 8 chars mantiene el Key Vault en 24 (MEF-ADR-0045 seccion 4)"
   type        = string
   default     = "<project_short>"
 }
@@ -1554,6 +1556,14 @@ locals {
 **Re-deriva `PROJECTIONS_ENABLED` en este bloque.** Cada bloque `bash` que ejecutas corre en un **shell nuevo**: la variable que exportaste en el Paso 1.9 **no** sobrevive hasta aqui. Si la usas sin re-derivarla, `[ "$PROJECTIONS_ENABLED" = "true" ]` compara contra la cadena vacia, el `else` nunca corre y el wiring se omite **en silencio incluso con el token habilitado** (CA-2/CA-3 inoperantes, sin ningun error visible en un pipeline headless).
 
 A diferencia de los 8 modulos base (que solo se generan la **primera vez**, cuando el entorno no existe todavia), este wiring puede necesitar aplicarse sobre un `infra/environments/<env>/main.tf` que **ya existe** de una corrida anterior de este agente sin proyecciones (el caso tipico: greenfield primero, adopcion de proyecciones despues). Por eso usa un marcador de idempotencia (`grep`) en vez del patron "solo si el archivo entero no existe": si `main.tf` ya contiene el modulo `container_app`, el wiring ya esta hecho y no se toca; si no, se **agrega al final** del archivo (nunca se sobrescribe lo existente, regla 2).
+
+> **Antes de agregar el HCL, comprueba que los locals de `{region}-{seq}` existan en el `variables.tf` de ese entorno (issue #730).** El bloque de abajo referencia `local.region_seq_suffix_plain`, que solo existe en un `variables.tf` generado por este agente **desde** el issue #730 -- y ese archivo **no se sobrescribe** (CA-7), asi que un entorno anterior no lo tiene. Verificalo con `grep -q 'region_seq_suffix_plain' infra/environments/<env>/variables.tf`; si **no** esta:
+>
+> - **No** agregues los locals ni las variables al `variables.tf` existente. Los locals `prefix`/`prefix_func` de ese archivo alimentan el nombre de recursos **ya desplegados** (resource group, PostgreSQL, Service Bus, Key Vault, y las Function Apps del `domain-scaffolder`): inyectarles `{region}-{seq}` renombraria todo eso de golpe, exactamente el destroy+recreate que MEF-ADR-0045 seccion 3 proscribe.
+> - Emite los tres nombres del wiring **sin** el sufijo -- `cr${var.project_short}${var.environment}`, `cae-${local.prefix_func}`, `ca-projections-${local.prefix_func}`, `id-projections-${local.prefix_func}` -- de modo que el paquete de proyecciones quede coherente con el entorno que lo hospeda en vez de mezclar dos convenciones.
+> - Dilo en el Paso 5: el entorno es anterior al estandar y sus nombres nuevos siguen su convencion previa.
+>
+> Sin esta comprobacion, el `terraform plan` del consumidor falla con `Reference to undeclared local value` -- un error que aparece recien en CI, despues del PR, y no en la corrida de este agente.
 
 ```bash
 PROJECTIONS_ENABLED=$(jq -r '.projections.enabled // false' .claude/harness.config.json 2>/dev/null)
