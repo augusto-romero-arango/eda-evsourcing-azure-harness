@@ -6,6 +6,7 @@
 #   ./.claude/scripts/mefisto-tooling-pipeline.sh --issue 42
 #   ./.claude/scripts/mefisto-tooling-pipeline.sh 42 --from-stage 2
 #   ./.claude/scripts/mefisto-tooling-pipeline.sh 42 --models 'reviewer=opus,writer=sonnet'  # Modelo por stage (experimentos)
+#   ./.claude/scripts/mefisto-tooling-pipeline.sh 42 --variant experimento-a  # Corrida paralela del mismo issue (sin PR, rama local)
 #
 # Ciclo: Issue (en repo Mefisto) -> Worktree -> Writer -> Reviewer -> Sync main -> PR -> Cleanup
 #
@@ -100,7 +101,14 @@ abort() {
     local log_tail
     log_tail="$(_tail_log_for_abort "${LOG_FILE_ABS:-$LOG_FILE}" "$TAIL_LOG_LINES")" || log_tail=""
     PIPELINE_ERROR="$(echo "$1" | sed 's/"/\\"/g' | tr '\n' ' ')"
-    echo -e "\n${RED}${BOLD}x ERROR: $1${NC}" | tee -a "${LOG_FILE_ABS:-$LOG_FILE}" >/dev/null
+    # '|| true': abort() corre tambien ANTES de que exista $LOG_DIR -- los
+    # abortos de parseo de argumentos (--variant mal formado, issue #711;
+    # "Argumento no reconocido"; "Falta el numero de issue") caen todos ahi.
+    # Sin esta guarda, el tee falla, errexit mata el proceso en esta linea
+    # (abort() es el comando final de un '||', asi que NO hereda la exencion
+    # de errexit) y el humano solo ve "tee: ... No such file or directory":
+    # el motivo real del aborto nunca llega a stderr.
+    echo -e "\n${RED}${BOLD}x ERROR: $1${NC}" | tee -a "${LOG_FILE_ABS:-$LOG_FILE}" >/dev/null || true
     echo -e "${RED}${BOLD}x ERROR: $1${NC}" >&2
     echo -e "${YELLOW}Revisa el log: ${LOG_FILE_ABS:-$LOG_FILE}${NC}" >&2
     if [ -n "$log_tail" ]; then echo "$log_tail" >&2; fi
@@ -115,7 +123,7 @@ abort() {
         local abort_agents_json
         abort_agents_json=$(build_agents_history_json "${AGENT_WR_DUR:-}" "${AGENT_WR_METRICS_JSON:-}" "${AGENT_RV_DUR:-}" "${AGENT_RV_METRICS_JSON:-}" 2>/dev/null) \
             || abort_agents_json="{\"writer\":{\"duration\":${AGENT_WR_DUR:-null}},\"reviewer\":{\"duration\":${AGENT_RV_DUR:-null}}}"
-        echo "{\"issue\":\"${ISSUE_NUM:-}\",\"title\":\"$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')\",\"pipeline\":\"mefisto-tooling\",\"harness_version\":${HARNESS_VERSION_JSON:-null},\"harness_sha\":${HARNESS_SHA_JSON:-null},\"started\":\"${TIMESTAMP:-}\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"failed\",\"stage\":\"$CURRENT_STAGE\",\"agents\":$abort_agents_json,\"error\":\"$PIPELINE_ERROR\"}" \
+        echo "{\"issue\":\"${ISSUE_NUM:-}\",\"title\":\"$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')\",\"pipeline\":\"mefisto-tooling\",\"variant\":${VARIANT_LABEL_JSON:-null},\"harness_version\":${HARNESS_VERSION_JSON:-null},\"harness_sha\":${HARNESS_SHA_JSON:-null},\"started\":\"${TIMESTAMP:-}\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"failed\",\"stage\":\"$CURRENT_STAGE\",\"agents\":$abort_agents_json,\"error\":\"$PIPELINE_ERROR\"}" \
             >> "$PIPELINE_DIR_ABS/pipeline-history.jsonl" 2>/dev/null || true
     fi
     exit 1
@@ -135,6 +143,7 @@ update_status() {
   "issue": "${ISSUE_NUM:-null}",
   "title": "$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')",
   "pipeline": "mefisto-tooling",
+  "variant": ${VARIANT_LABEL_JSON:-null},
   "started": "$TIMESTAMP",
   "stage": "$stage",
   "state": "$state",
@@ -156,9 +165,10 @@ ISSUE_NUM=""
 FROM_STAGE=1
 STATUS_FILENAME="pipeline-status-mefisto-tooling.json"
 MODELS_SPEC=""  # --models 'agente=modelo[,agente=modelo...]' (issue #709)
+VARIANT_LABEL=""  # --variant <label>: corrida paralela del mismo issue, sin PR (issue #711)
 
 if [ $# -eq 0 ]; then
-    echo "Uso: $0 [--issue NUM | NUM] [--from-stage N] [--models 'agente=modelo[,agente=modelo...]']"
+    echo "Uso: $0 [--issue NUM | NUM] [--from-stage N] [--models 'agente=modelo[,agente=modelo...]'] [--variant <label>]"
     exit 1
 fi
 
@@ -185,6 +195,11 @@ while [[ $# -gt 0 ]]; do
             MODELS_SPEC="$2"
             shift 2
             ;;
+        --variant)
+            [ $# -lt 2 ] && abort "Falta el valor de --variant"
+            VARIANT_LABEL="$2"
+            shift 2
+            ;;
         [0-9]*)
             POSITIONAL_ARGS+=("$1")
             shift
@@ -201,8 +216,29 @@ fi
 
 [ -z "$ISSUE_NUM" ] && abort "Falta el numero de issue"
 
+# --- Resolver --variant (issue #711) --------------------------------------
+# Se valida ANTES de crear el worktree (CA-1) y antes de derivar cualquier
+# nombre de archivo de la corrida (CA-2), mismo criterio que --models: un
+# label malformado debe abortar temprano, y el sufijo tiene que estar puesto
+# ya en el primer archivo que se escribe. Mas abajo, en modo variante se
+# suprimen push, creacion de PR y comentario al issue (CA-3).
+VARIANT_LABEL_JSON="null"
+ISSUE_LOG_TAG="$ISSUE_NUM"
+if [ -n "$VARIANT_LABEL" ]; then
+    validate_variant_label "$VARIANT_LABEL" \
+        || abort "--variant mal formado: ${MEFISTO_VARIANT_LABEL_ERROR:-label invalido}"
+    VARIANT_LABEL_JSON="\"$VARIANT_LABEL\""
+    ISSUE_LOG_TAG="${ISSUE_NUM}-${VARIANT_LABEL}"
+    # El log del pipeline tambien lleva el sufijo, no solo los de stage: dos
+    # variantes lanzadas en el MISMO segundo comparten $TIMESTAMP y, sin el
+    # label, escribirian las dos al mismo archivo -- log entrelazado, y el
+    # tail de abort() mostrando lineas de la otra corrida.
+    LOG_FILE="$LOG_DIR/mefisto-tooling-pipeline-${TIMESTAMP}-${VARIANT_LABEL}.log"
+fi
+
 if [ "$STATUS_FILENAME" = "pipeline-status-mefisto-tooling.json" ]; then
     STATUS_FILENAME="pipeline-status-mefisto-tooling-${ISSUE_NUM}.json"
+    [ -n "$VARIANT_LABEL" ] && STATUS_FILENAME="pipeline-status-mefisto-tooling-${ISSUE_NUM}-${VARIANT_LABEL}.json"
 fi
 
 if ! [[ "$FROM_STAGE" =~ ^[1-2]$ ]]; then
@@ -238,6 +274,15 @@ if [ -n "$MEFISTO_STAGE_MODELS" ]; then
     echo "[$(date +%H:%M:%S)] MODELS: $STAGE_MODELS_LOG" >> "$EVENTS_LOG_ABS"
 fi
 
+# --- Anunciar el modo variante (issue #711) -------------------------------
+# El label ya se valido y ya derivo los nombres de archivo arriba, junto al
+# parseo de argumentos; aqui solo se anuncia, que es lo primero que se puede
+# hacer una vez existen el log del pipeline y events.log.
+if [ -n "$VARIANT_LABEL" ]; then
+    log "Modo variante: '$VARIANT_LABEL' -- sin push, sin PR, sin comentario al issue (CA-3); rama queda local"
+    echo "[$(date +%H:%M:%S)] VARIANT: $VARIANT_LABEL" >> "$EVENTS_LOG_ABS"
+fi
+
 # --- Obtener issue ---
 header "Preparando contexto"
 
@@ -267,6 +312,9 @@ CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
 SLUG=$(echo "$ISSUE_TITLE" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | sed 's/[^a-z0-9-]//g' | tr -s '-' | cut -c1-40 | sed 's/-$//')
 BRANCH_NAME="worktree-mefisto-issue-${ISSUE_NUM}-${SLUG}"
+# Modo variante (CA-2): worktree y rama llevan el sufijo -<label>, para que N
+# corridas simultaneas del mismo issue coexistan sin colision de paths ni ramas.
+[ -n "$VARIANT_LABEL" ] && BRANCH_NAME="${BRANCH_NAME}-${VARIANT_LABEL}"
 WORKTREE_PATH="${REPO_ROOT}/../${BRANCH_NAME}"
 
 if [ "$FROM_STAGE" -gt 1 ]; then
@@ -345,7 +393,7 @@ run_agent() {
     local stage="$1"
     local agent="$2"
     local prompt="$3"
-    local log_base="$LOG_DIR_ABS/mefisto-tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_NUM}"
+    local log_base="$LOG_DIR_ABS/mefisto-tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}"
     local log_stage="${log_base}.log"
     local stream_file="${log_base}.stream.jsonl"
     local stderr_file="${log_base}.stderr.log"
@@ -431,7 +479,7 @@ run_agent() {
         # exitoso o fallido) -- un fallo de instrumentacion (jq ausente, stream
         # vacio, sin evento result) degrada a "null" y nunca aborta el pipeline.
         metrics_json=$(compute_stage_metrics "$stream_file")
-        echo "$metrics_json" > "$PIPELINE_DIR_ABS/metrics/mefisto-tooling-${TIMESTAMP}-issue-${ISSUE_NUM}-stage-${stage}-${agent}.json" 2>/dev/null || true
+        echo "$metrics_json" > "$PIPELINE_DIR_ABS/metrics/mefisto-tooling-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-${stage}-${agent}.json" 2>/dev/null || true
 
         TIMED_OUT=false
         [ -f "$TIMEOUT_SIGNAL_FILE" ] && TIMED_OUT=true
@@ -632,7 +680,7 @@ Instrucciones:
         HAS_UNSTAGED=true
     fi
     if [ "$HAS_COMMITS" = false ] && [ "$HAS_UNSTAGED" = false ]; then
-        abort "El writer no genero ningun cambio. Revisa el log: $LOG_DIR_ABS/mefisto-tooling-stage-1-writer-${TIMESTAMP}-issue-${ISSUE_NUM}.log"
+        abort "El writer no genero ningun cambio. Revisa el log: $LOG_DIR_ABS/mefisto-tooling-stage-1-writer-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}.log"
     fi
 
     # Gate de scope: rechazar cambios fuera del alcance del repo de Mefisto
@@ -740,7 +788,7 @@ else
 El writer debio crear 'changelog.d/${ISSUE_NUM}.<categoria>.md' (added/changed/fixed/removed)
 -- ver changelog.d/README.md para el formato. NUNCA se edita CHANGELOG.md directamente.
 Crea el fragmento en el worktree ($WORKTREE_PATH) y retoma con:
-  ./.claude/scripts/mefisto-tooling-pipeline.sh $ISSUE_NUM --from-stage 2"
+  ./.claude/scripts/mefisto-tooling-pipeline.sh $ISSUE_NUM --from-stage 2${VARIANT_LABEL:+ --variant $VARIANT_LABEL}"
 fi
 
 # --- Sincronizar con main ---
@@ -780,32 +828,38 @@ PROHIBIDO hacer 'git push' o 'gh pr create': eso es responsabilidad exclusiva de
     fi
 fi
 
-# --- Crear PR ---
-header "Creando PR"
-
-log "Haciendo push de la rama..."
-git -C "$WORKTREE_PATH" push -u origin "$BRANCH_NAME" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 \
-    || abort "No se pudo hacer push de la rama $BRANCH_NAME"
-
-log "Verificando si ya existe un PR abierto para la rama..."
-EXISTING_PR_URL=$(find_open_pr_for_branch "$BRANCH_NAME")
-
-if [ -n "$EXISTING_PR_URL" ]; then
-    PR_URL="$EXISTING_PR_URL"
-    success "PR existente reutilizado: $PR_URL"
+# --- Crear PR (en modo variante: NO -- CA-3) ---
+if [ -n "$VARIANT_LABEL" ]; then
+    header "Modo variante: sin PR"
+    warn "Variante '$VARIANT_LABEL': se omiten push, creacion de PR y comentario al issue (CA-3)."
+    log "La rama '$BRANCH_NAME' queda LOCAL -- no se publica a origin."
+    PR_URL=""
 else
-    log "Creando PR..."
+    header "Creando PR"
 
-    WR_SUMMARY=$(collect_summary "1" "writer")
-    RV_SUMMARY=$(collect_summary "2" "reviewer")
+    log "Haciendo push de la rama..."
+    git -C "$WORKTREE_PATH" push -u origin "$BRANCH_NAME" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 \
+        || abort "No se pudo hacer push de la rama $BRANCH_NAME"
 
-    _fmt_dur() { local s="${1:-0}"; echo "$((s/60))m $((s%60))s"; }
-    WR_DUR_FMT=$(_fmt_dur "${AGENT_WR_DUR:-0}")
-    RV_DUR_FMT=$(_fmt_dur "${AGENT_RV_DUR:-0}")
+    log "Verificando si ya existe un PR abierto para la rama..."
+    EXISTING_PR_URL=$(find_open_pr_for_branch "$BRANCH_NAME")
 
-    PR_URL=$(gh pr create \
-        --title "$ISSUE_TITLE" \
-        --body "$(cat <<EOF
+    if [ -n "$EXISTING_PR_URL" ]; then
+        PR_URL="$EXISTING_PR_URL"
+        success "PR existente reutilizado: $PR_URL"
+    else
+        log "Creando PR..."
+
+        WR_SUMMARY=$(collect_summary "1" "writer")
+        RV_SUMMARY=$(collect_summary "2" "reviewer")
+
+        _fmt_dur() { local s="${1:-0}"; echo "$((s/60))m $((s%60))s"; }
+        WR_DUR_FMT=$(_fmt_dur "${AGENT_WR_DUR:-0}")
+        RV_DUR_FMT=$(_fmt_dur "${AGENT_RV_DUR:-0}")
+
+        PR_URL=$(gh pr create \
+            --title "$ISSUE_TITLE" \
+            --body "$(cat <<EOF
 ## Resumen
 
 Pipeline mefisto-tooling completado:
@@ -835,20 +889,21 @@ $COMMITS_LIST
 Closes #$ISSUE_NUM
 EOF
 )" \
-        --base main \
-        --head "$BRANCH_NAME" \
-        2>>"${LOG_FILE_ABS:-$LOG_FILE}") \
-        || abort "No se pudo crear el PR"
+            --base main \
+            --head "$BRANCH_NAME" \
+            2>>"${LOG_FILE_ABS:-$LOG_FILE}") \
+            || abort "No se pudo crear el PR"
 
-    success "PR creado: $PR_URL"
+        success "PR creado: $PR_URL"
+    fi
+
+    gh issue comment "$ISSUE_NUM" \
+        --body "Pipeline mefisto-tooling completado. PR: $PR_URL" \
+        >>"$LOG_FILE" 2>&1 || warn "No se pudo comentar en el issue #$ISSUE_NUM"
 fi
 
 PIPELINE_PR="$PR_URL"
 update_status "done" "completed"
-
-gh issue comment "$ISSUE_NUM" \
-    --body "Pipeline mefisto-tooling completado. PR: $PR_URL" \
-    >>"$LOG_FILE" 2>&1 || warn "No se pudo comentar en el issue #$ISSUE_NUM"
 
 # Historial
 # CA-2 (issue #426): agents.<agente>.metrics se agrega sin tocar "duration"
@@ -856,7 +911,9 @@ gh issue comment "$ISSUE_NUM" \
 # reproduce exactamente el formato plano que ya escribia esta linea (CA-5).
 COMPLETED_AGENTS_JSON=$(build_agents_history_json "${AGENT_WR_DUR:-}" "${AGENT_WR_METRICS_JSON:-}" "${AGENT_RV_DUR:-}" "${AGENT_RV_METRICS_JSON:-}" 2>/dev/null) \
     || COMPLETED_AGENTS_JSON="{\"writer\":{\"duration\":${AGENT_WR_DUR:-null}},\"reviewer\":{\"duration\":${AGENT_RV_DUR:-null}}}"
-echo "{\"issue\":\"$ISSUE_NUM\",\"title\":\"$(echo "$ISSUE_TITLE" | sed 's/"/\\"/g')\",\"pipeline\":\"mefisto-tooling\",\"harness_version\":${HARNESS_VERSION_JSON:-null},\"harness_sha\":${HARNESS_SHA_JSON:-null},\"started\":\"$TIMESTAMP\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"completed\",\"agents\":$COMPLETED_AGENTS_JSON,\"pr\":\"$PR_URL\"}" \
+PR_JSON="null"
+[ -n "$PR_URL" ] && PR_JSON="\"$PR_URL\""
+echo "{\"issue\":\"$ISSUE_NUM\",\"title\":\"$(echo "$ISSUE_TITLE" | sed 's/"/\\"/g')\",\"pipeline\":\"mefisto-tooling\",\"variant\":${VARIANT_LABEL_JSON:-null},\"harness_version\":${HARNESS_VERSION_JSON:-null},\"harness_sha\":${HARNESS_SHA_JSON:-null},\"started\":\"$TIMESTAMP\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"completed\",\"agents\":$COMPLETED_AGENTS_JSON,\"pr\":$PR_JSON}" \
     >> "$PIPELINE_DIR_ABS/pipeline-history.jsonl"
 
 rm -f "$PIPELINE_DIR_ABS/$STATUS_FILENAME"
@@ -875,11 +932,25 @@ WORKTREE_PATH=""
 success "Worktree eliminado"
 
 echo ""
-echo -e "${CYAN}${BOLD}=== Pipeline mefisto-tooling completado ===${NC}"
-echo ""
 TOTAL_COMMITS=$(echo "$COMMITS_LIST" | wc -l | tr -d ' ')
-echo -e "  Commits: $TOTAL_COMMITS"
-echo -e "  Rama:    $BRANCH_NAME"
-echo -e "  PR:      $PR_URL"
-echo -e "  Log:     $LOG_FILE"
+if [ -n "$VARIANT_LABEL" ]; then
+    echo -e "${CYAN}${BOLD}=== Pipeline mefisto-tooling (variante '$VARIANT_LABEL') completado ===${NC}"
+    echo ""
+    echo -e "  Commits: $TOTAL_COMMITS"
+    echo -e "  Rama:    $BRANCH_NAME"
+    echo -e "  Estado:  LOCAL -- sin push, sin PR, sin comentario al issue (modo variante)"
+    echo -e "  Log:     $LOG_FILE"
+    echo ""
+    echo -e "${YELLOW}Si esta variante gana la comparacion, promuevela a mano:${NC}"
+    echo -e "${YELLOW}  git -C $REPO_ROOT push -u origin $BRANCH_NAME${NC}"
+    echo -e "${YELLOW}  gh pr create --base main --head $BRANCH_NAME --title \"$ISSUE_TITLE\" --body \"Closes #$ISSUE_NUM\"${NC}"
+    echo -e "${YELLOW}O relanza el pipeline sin --variant para que una corrida normal abra el PR.${NC}"
+else
+    echo -e "${CYAN}${BOLD}=== Pipeline mefisto-tooling completado ===${NC}"
+    echo ""
+    echo -e "  Commits: $TOTAL_COMMITS"
+    echo -e "  Rama:    $BRANCH_NAME"
+    echo -e "  PR:      $PR_URL"
+    echo -e "  Log:     $LOG_FILE"
+fi
 echo ""

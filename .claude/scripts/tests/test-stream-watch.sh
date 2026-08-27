@@ -580,7 +580,7 @@ fi
 # -------- Bloque L: stream_matches_issues -- filtro exacto por issue --------
 
 echo ""
-echo "[L] stream_matches_issues: match exacto por issue, copias .attempt-, lista y sin filtro"
+echo "[L] stream_matches_issues: match exacto por issue, copias .attempt-, variantes, lista y sin filtro"
 
 if stream_matches_issues "mefisto-tooling-stage-1-writer-20260826-100000-issue-42.stream.jsonl" "42"; then
     pass "L-1: el stream del issue 42 matchea el filtro '42'"
@@ -605,6 +605,24 @@ if stream_matches_issues "mefisto-tooling-stage-1-writer-20260826-100000-issue-4
     pass "L-4: una lista de issues (batch) matchea sus miembros y rechaza los ajenos"
 else
     fail "L-4: la lista '42,43,44' no filtro como se esperaba"
+fi
+
+if stream_matches_issues "mefisto-tooling-stage-1-writer-20260826-100000-issue-42-experimento-a.stream.jsonl" "42"; then
+    pass "L-6: el stream de una corrida de variante (--variant, issue #711) matchea su issue"
+else
+    fail "L-6: el stream de variante no matcheo su issue -- el pane del visor quedaria en blanco toda la corrida"
+fi
+
+if ! stream_matches_issues "mefisto-tooling-stage-1-writer-20260826-100000-issue-42-experimento-a.stream.jsonl" "4"; then
+    pass "L-7: el filtro '4' NO matchea el stream de variante del issue 42 (el sufijo no relaja el match exacto)"
+else
+    fail "L-7: el filtro '4' matcheo el stream de variante del issue 42 -- cruzaria visores"
+fi
+
+if stream_matches_issues "mefisto-tooling-stage-2-reviewer-20260826-100000-issue-42-b.attempt-2.stream.jsonl" "42"; then
+    pass "L-8: el reintento DE una corrida de variante sigue matcheando su issue"
+else
+    fail "L-8: el reintento de una corrida de variante no matcheo su issue"
 fi
 
 if stream_matches_issues "cualquier-cosa.stream.jsonl" ""; then

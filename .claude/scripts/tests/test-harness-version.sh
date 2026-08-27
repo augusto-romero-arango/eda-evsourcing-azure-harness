@@ -430,6 +430,12 @@ if command -v jq >/dev/null 2>&1; then
             echo 'CURRENT_STAGE=writer'
             echo 'PIPELINE_ERROR='"'"'fallo de prueba'"'"''
             echo 'PR_URL=https://example.test/pr/1'
+            # PR_JSON (issue #711): la linea 'feliz' ya no interpola PR_URL
+            # directo -- lo hace via PR_JSON (null si el modo variante omitio
+            # el PR). Sin declararla aqui, la linea extraida referencia una
+            # variable sin `set` bajo `set -euo pipefail` y el runner aborta
+            # antes de llegar al echo.
+            echo 'PR_JSON="\"https://example.test/pr/1\""'
             echo 'abort_agents_json='"'"'{"writer":{"duration":600}}'"'"''
             echo 'COMPLETED_AGENTS_JSON='"'"'{"writer":{"duration":600}}'"'"''
             # Entrecomillado simple a proposito: el valor de estas variables

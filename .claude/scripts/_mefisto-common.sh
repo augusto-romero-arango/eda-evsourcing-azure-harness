@@ -648,6 +648,51 @@ format_stage_models_for_log() {
     return 0
 }
 
+# --- Modo --variant: corridas paralelas del mismo issue (issue #711) --------
+#
+# Contraparte interna de validate_variant_label en scripts/_pipeline-common.sh
+# (issue #710, lado publicado): mismo contrato de UX para el flag --variant,
+# sin compartir codigo (MEF-ADR-0019 separa fisicamente publicado/interno).
+# Permite correr el MISMO issue de Mefisto N veces en paralelo -- cada corrida
+# en su propio worktree/rama/log, sin PR ni mutacion del issue -- para
+# comparar modelos sobre el propio harness (contraparte de --models, issue
+# #709). El resto del mecanismo (sufijar worktree/rama/logs con el label,
+# suprimir push/PR/comentario al issue) es codigo lineal propio de
+# mefisto-tooling-pipeline.sh, sin logica compartida que valga la pena
+# extraer.
+
+# validate_variant_label <label>
+#
+# Valida el label de --variant (CA-1): slug de minusculas, digitos y guiones
+# ([a-z0-9-]), longitud 1-40 -- mismo tope que el slug del titulo del issue en
+# mefisto-tooling-pipeline.sh (`cut -c1-40`), para que
+# "worktree-mefisto-issue-<N>-<slug>-<label>" no dispare el nombre de
+# rama/carpeta mas alla de lo practico. El caller debe invocarla ANTES de
+# crear el worktree: un label malformado debe abortar temprano, igual que
+# parse_stage_models con --models.
+#
+# Retorna 0 si valido. Retorna 1 y deja el motivo en
+# MEFISTO_VARIANT_LABEL_ERROR (una linea, lista para abort()) si no -- mismo
+# contrato que MEFISTO_STAGE_MODELS_ERROR.
+validate_variant_label() {
+    local label="$1"
+    MEFISTO_VARIANT_LABEL_ERROR=""
+
+    if [ -z "$label" ]; then
+        MEFISTO_VARIANT_LABEL_ERROR="el label de --variant no puede estar vacio"
+        return 1
+    fi
+    if [ "${#label}" -gt 40 ]; then
+        MEFISTO_VARIANT_LABEL_ERROR="el label de --variant '$label' supera 40 caracteres"
+        return 1
+    fi
+    if ! printf '%s' "$label" | grep -Eq '^[a-z0-9-]+$'; then
+        MEFISTO_VARIANT_LABEL_ERROR="el label de --variant '$label' es invalido: solo minusculas, digitos y guiones ([a-z0-9-])"
+        return 1
+    fi
+    return 0
+}
+
 # run_agent_with_watchdog <workdir> <timeout_seconds> <stdout_file> <stderr_file> <events_log> <label> <signal_file> <cmd...>
 #
 # Ejecuta <cmd...> (sin `eval` -- se preserva "$@" tal cual, asi que las
