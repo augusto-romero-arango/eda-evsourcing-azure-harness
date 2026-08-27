@@ -5,6 +5,7 @@
 #   ./.claude/scripts/mefisto-tooling-pipeline.sh 42
 #   ./.claude/scripts/mefisto-tooling-pipeline.sh --issue 42
 #   ./.claude/scripts/mefisto-tooling-pipeline.sh 42 --from-stage 2
+#   ./.claude/scripts/mefisto-tooling-pipeline.sh 42 --models 'reviewer=opus,writer=sonnet'  # Modelo por stage (experimentos)
 #
 # Ciclo: Issue (en repo Mefisto) -> Worktree -> Writer -> Reviewer -> Sync main -> PR -> Cleanup
 #
@@ -154,9 +155,10 @@ EOJSON
 ISSUE_NUM=""
 FROM_STAGE=1
 STATUS_FILENAME="pipeline-status-mefisto-tooling.json"
+MODELS_SPEC=""  # --models 'agente=modelo[,agente=modelo...]' (issue #709)
 
 if [ $# -eq 0 ]; then
-    echo "Uso: $0 [--issue NUM | NUM] [--from-stage N]"
+    echo "Uso: $0 [--issue NUM | NUM] [--from-stage N] [--models 'agente=modelo[,agente=modelo...]']"
     exit 1
 fi
 
@@ -176,6 +178,11 @@ while [[ $# -gt 0 ]]; do
         --status-file)
             [ $# -lt 2 ] && abort "Falta el nombre del archivo de status"
             STATUS_FILENAME="$2"
+            shift 2
+            ;;
+        --models)
+            [ $# -lt 2 ] && abort "Falta el valor de --models"
+            MODELS_SPEC="$2"
             shift 2
             ;;
         [0-9]*)
@@ -219,6 +226,17 @@ EVENTS_LOG_ABS="$PIPELINE_DIR_ABS/events.log"
 touch "$EVENTS_LOG_ABS"
 
 echo "=== SESSION MEFISTO-TOOLING $TIMESTAMP issue:$ISSUE_NUM from-stage:$FROM_STAGE ===" >> "$EVENTS_LOG_ABS"
+
+# --- Resolver --models (issue #709) --------------------------------------
+# Se valida ANTES de crear el worktree: un --models malformado debe abortar
+# temprano, no a mitad de Stage 1 con un worktree ya en disco.
+parse_stage_models "$MODELS_SPEC" \
+    || abort "--models mal formado: ${MEFISTO_STAGE_MODELS_ERROR:-formato invalido}"
+if [ -n "$MEFISTO_STAGE_MODELS" ]; then
+    STAGE_MODELS_LOG="$(format_stage_models_for_log)"
+    log "Modelos por stage (--models): $STAGE_MODELS_LOG"
+    echo "[$(date +%H:%M:%S)] MODELS: $STAGE_MODELS_LOG" >> "$EVENTS_LOG_ABS"
+fi
 
 # --- Obtener issue ---
 header "Preparando contexto"
@@ -340,11 +358,22 @@ run_agent() {
         reviewer) AGENT_RV_RES="running" ;;
     esac
     # Modelo por etapa: escritura (writer y merge) en sonnet, revision en opus.
-    local AGENT_MODEL
+    # resolve_stage_model (issue #709) aplica el override de --models por clave
+    # exacta de agente; sin entrada en el mapa (o sin --models), cae en este
+    # default -- byte a byte el comportamiento previo al flag.
+    local AGENT_MODEL AGENT_MODEL_DEFAULT
     case "$agent" in
-        reviewer) AGENT_MODEL="opus" ;;
-        *)        AGENT_MODEL="sonnet" ;;
+        reviewer) AGENT_MODEL_DEFAULT="opus" ;;
+        *)        AGENT_MODEL_DEFAULT="sonnet" ;;
     esac
+    AGENT_MODEL="$(resolve_stage_model "$agent" "$AGENT_MODEL_DEFAULT")"
+    # Constancia por stage del override que SI hizo match: el mapa que se
+    # loguea al arrancar no dice cuales claves aplicaron, y una clave con typo
+    # ('revieweer=opus') no sobreescribe nada -- sin esta linea el experimento
+    # correria con los defaults y el reporte lo atribuiria al override.
+    if [ "$AGENT_MODEL" != "$AGENT_MODEL_DEFAULT" ]; then
+        echo "[$(date +%H:%M:%S)] MODELS: stage $stage/$agent -> $AGENT_MODEL (default: $AGENT_MODEL_DEFAULT)" >> "$EVENTS_LOG_ABS"
+    fi
     update_status "$stage-$agent" "running"
     log "Invocando $agent..."
 

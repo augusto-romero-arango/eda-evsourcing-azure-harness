@@ -4,6 +4,7 @@
 #
 # Uso (misma superficie de modos que mefisto-tmux-pipeline.sh):
 #   ./.claude/scripts/mefisto-herdr-pipeline.sh --tooling 42 [--from-stage N]
+#   ./.claude/scripts/mefisto-herdr-pipeline.sh --tooling 42 --models 'reviewer=opus'
 #   ./.claude/scripts/mefisto-herdr-pipeline.sh --batch 42 43 44
 #
 # En vez de crear una sesion tmux nueva con un pane de `tail -f events.log`,
@@ -313,8 +314,20 @@ cmd_pane_runner() {
 cmd_tooling() {
     local issue="$1"
     local extra_args="${2:-}"
-    # shellcheck disable=SC2086 -- extra_args es una lista de flags simples
-    dispatch_to_pane "mefisto-tooling #$issue" "$issue" "$SCRIPT_DIR/mefisto-tooling-pipeline.sh" "$issue" $extra_args
+    # models: el valor crudo de --models (issue #709), como argumento propio y
+    # entrecomillado -- NO concatenado a extra_args. extra_args se expande sin
+    # comillas (lista de flags simples, p. ej. "--from-stage 2") y ahi un id de
+    # modelo completo como 'claude-opus-5[1m]' es un patron glob valido que la
+    # pathname expansion podria alterar. Como argumento propio llega intacto a
+    # dispatch_to_pane, que lo quotea con printf %q hacia el pane.
+    local models="${3:-}"
+    if [ -n "$models" ]; then
+        # shellcheck disable=SC2086 -- extra_args es una lista de flags simples
+        dispatch_to_pane "mefisto-tooling #$issue" "$issue" "$SCRIPT_DIR/mefisto-tooling-pipeline.sh" "$issue" $extra_args --models "$models"
+    else
+        # shellcheck disable=SC2086 -- extra_args es una lista de flags simples
+        dispatch_to_pane "mefisto-tooling #$issue" "$issue" "$SCRIPT_DIR/mefisto-tooling-pipeline.sh" "$issue" $extra_args
+    fi
 }
 
 cmd_batch() {
@@ -325,7 +338,7 @@ cmd_batch() {
 }
 
 print_usage() {
-    echo "Uso: $0 --tooling <issue> [--from-stage N]"
+    echo "Uso: $0 --tooling <issue> [--from-stage N] [--models 'agente=modelo[,...]']"
     echo "     $0 --batch <issue1> <issue2> ..."
     echo ""
     echo "Interfaz herdr de los pipelines internos: en vez de una sesion tmux,"
@@ -352,8 +365,10 @@ if [ "$1" = "--_pane-runner" ]; then
 fi
 
 # Pre-parseo con el mismo contrato que extract_wrapper_flags del wrapper tmux:
-# --verbose, --from-stage e --if-exists se consumen de cualquier posicion.
+# --verbose, --from-stage, --models e --if-exists se consumen de cualquier
+# posicion.
 FROM_STAGE_EXTRA=""
+MODELS_SPEC=""
 REMAINING_ARGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -367,6 +382,17 @@ while [ $# -gt 0 ]; do
             [ $# -lt 2 ] && abort "Falta el valor de --from-stage"
             [[ "$2" =~ ^[0-9]+$ ]] || abort "--from-stage debe ser un numero entero (recibido: '$2')"
             FROM_STAGE_EXTRA="--from-stage $2"
+            shift 2
+            ;;
+        --models)
+            # Sin este caso, --models caeria en REMAINING_ARGS y cmd_tooling
+            # (que solo reenvia "$1") lo descartaria en silencio (issue #709,
+            # mismo defecto que la revision del issue #708 corrigio en el lado
+            # publicado). A diferencia de tmux-pipeline.sh, aqui el valor se
+            # guarda crudo: el pane no lo re-parsea con un shell, viaja como
+            # argv quoteado con printf %q (dispatch_to_pane).
+            [ $# -lt 2 ] && abort "Falta el valor de --models"
+            MODELS_SPEC="$2"
             shift 2
             ;;
         --if-exists)
@@ -396,13 +422,14 @@ case "${1:-}" in
     --tooling)
         shift
         require_herdr_context
-        [ $# -lt 1 ] && abort "Falta el numero de issue. Uso: --tooling <issue> [--from-stage N]"
-        cmd_tooling "$1" "$FROM_STAGE_EXTRA"
+        [ $# -lt 1 ] && abort "Falta el numero de issue. Uso: --tooling <issue> [--from-stage N] [--models 'agente=modelo[,...]']"
+        cmd_tooling "$1" "$FROM_STAGE_EXTRA" "$MODELS_SPEC"
         ;;
     --batch)
         shift
         [ $# -lt 1 ] && abort "Debes especificar al menos un issue. Uso: --batch 42 43 44"
         [ -n "$FROM_STAGE_EXTRA" ] && abort "--from-stage no es valido con --batch (seria ambiguo sobre varios issues). Usa --tooling <issue> --from-stage N para un unico issue."
+        [ -n "$MODELS_SPEC" ] && abort "--models no es valido con --batch (seria ambiguo sobre varios issues). Usa --tooling <issue> --models 'agente=modelo' para un unico issue."
         require_herdr_context
         cmd_batch "$@"
         ;;

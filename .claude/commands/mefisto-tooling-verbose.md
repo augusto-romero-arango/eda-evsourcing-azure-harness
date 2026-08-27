@@ -8,7 +8,7 @@ Lanza el pipeline INTERNO de tooling para un issue del repo de Mefisto igual que
 
 ## Por que una skill aparte, y no un flag en /mefisto-tooling
 
-`/mefisto-tooling` interpola `$ARGUMENTS` crudo en sus validaciones (`gh issue view $ARGUMENTS --json ...`), asi que `/mefisto-tooling 528 --verbose` reventaria antes de llegar al lanzamiento. Ensenarle a reenviar el flag obligaria a separar el numero de issue de los flags **dentro de un prompt** -- un parser blando que se desincroniza de `extract_wrapper_flags` (`.claude/scripts/mefisto-tmux-pipeline.sh`) sin que nadie lo note en una corrida headless. Esta skill evita el problema de raiz: `$ARGUMENTS` sigue siendo un numero de issue pelado en las dos.
+`/mefisto-tooling` solo extrae de `$ARGUMENTS` el `ISSUE_NUM` (primer token numerico, para sus validaciones con `gh`) y el flag `--models` (issue #709, con contrato explicito). Sumarle `--verbose` ahi obligaria a separar un tercer flag de los mismos argumentos **dentro de un prompt** -- un parser blando que se desincroniza de `extract_wrapper_flags` (`.claude/scripts/mefisto-tmux-pipeline.sh`, la fuente de verdad del parseo real) sin que nadie lo note en una corrida headless. Esta skill evita el problema de raiz: `--verbose` nunca viaja dentro de `$ARGUMENTS` de `/mefisto-tooling` -- lo agrega esta skill aparte, en el propio lanzamiento (Paso 2), despues de delegar toda la validacion.
 
 ## Por que no hay variante para /mefisto-sequential ni para lotes
 
@@ -18,9 +18,9 @@ El visor renderiza una linea por accion del agente y solo aporta si hay alguien 
 
 El numero de issue esta en: $ARGUMENTS
 
-Si `$ARGUMENTS` esta vacio, responde: `Uso: /mefisto-tooling-verbose <numero-de-issue>`
+Si `$ARGUMENTS` esta vacio, responde: `Uso: /mefisto-tooling-verbose <numero-de-issue> [--models 'agente=modelo[,agente=modelo...]']`
 
-`$ARGUMENTS` es un numero de issue pelado -- esta skill no parsea flags. `--verbose` lo agrega el Paso 2 al lanzar, no algo que el usuario escriba.
+`$ARGUMENTS` puede incluir opcionalmente el flag `--models` (issue #709), con el mismo contrato que en `/mefisto-tooling` -- esta skill no lo parsea ella misma: lo reenvia intacto porque delega integramente en `/mefisto-tooling` para toda la validacion (Paso 1) y en el lanzamiento solo le suma `--verbose` (Paso 2). `--verbose` en si mismo si lo agrega este Paso 2, no algo que el usuario escriba.
 
 ## Proceso
 

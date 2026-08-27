@@ -5,6 +5,7 @@
 #   ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 42
 #   ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 42 --verbose
 #   ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 42 --from-stage 2   # retomar
+#   ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 42 --models 'reviewer=opus,writer=sonnet'  # experimentos
 #   ./.claude/scripts/mefisto-tmux-pipeline.sh --batch 42 43 44   # secuencial
 #   ./.claude/scripts/mefisto-tmux-pipeline.sh --batch 42 43 44 --verbose
 #   ./.claude/scripts/mefisto-tmux-pipeline.sh --attach            # reconectar
@@ -30,6 +31,13 @@
 # --from-stage sobre varios issues seria ambiguo. El wrapper NO valida el
 # rango -- eso lo hace mefisto-tooling-pipeline.sh (1-2), que aborta con
 # mensaje claro si esta fuera de rango.
+#
+# --models 'agente=modelo[,...]' (issue #709, en cualquier posicion) se
+# propaga igual que --from-stage, solo valido con --tooling: experimentos A/B
+# de desempeno del harness, contraparte interna de tmux-pipeline.sh --tooling
+# --models (issue #708, lado publicado). El wrapper NO valida el formato --eso
+# lo hace parse_stage_models en mefisto-tooling-pipeline.sh, ANTES de crear el
+# worktree.
 #
 # Ante una sesion tmux existente (viva por una corrida en curso, o "muerta" --
 # remain-on-exit deja el pane abierto tras un crash aunque el proceso ya
@@ -105,23 +113,26 @@ should_delegate_to_herdr() {
 #
 # Deja: VERBOSE (booleano `true`/`false`, la convencion del resto de los
 # pipelines), FROM_STAGE_EXTRA ("--from-stage N" listo para el send-keys, o
-# vacio), SESSION_IF_EXISTS (reuse|replace|abort, o vacio) y el resto de
-# argumentos, en orden, en el array global REMAINING_ARGS.
+# vacio), MODELS_EXTRA ("--models 'agente=modelo[,...]'" listo para el
+# send-keys, o vacio -- issue #709), SESSION_IF_EXISTS (reuse|replace|abort, o
+# vacio) y el resto de argumentos, en orden, en el array global REMAINING_ARGS.
 #
-# --from-stage e --if-exists consumen DOS posiciones (el flag y su valor), a
-# diferencia de --verbose -- por eso el for-in simple del helper original se
-# vuelve un while indexado, que si puede "mirar hacia adelante".
+# --from-stage, --models e --if-exists consumen DOS posiciones (el flag y su
+# valor), a diferencia de --verbose -- por eso el for-in simple del helper
+# original se vuelve un while indexado, que si puede "mirar hacia adelante".
 #
 # Se llamaba extract_verbose_flag cuando #435 lo introdujo; #449 lo renombro al
 # sumarle dos flags mas, para que el nombre no mienta sobre lo que consume.
 VERBOSE=false
 REMAINING_ARGS=()
 FROM_STAGE_EXTRA=""
+MODELS_EXTRA=""
 SESSION_IF_EXISTS=""
 extract_wrapper_flags() {
     VERBOSE=false
     REMAINING_ARGS=()
     FROM_STAGE_EXTRA=""
+    MODELS_EXTRA=""
     SESSION_IF_EXISTS=""
     local -a args=("$@")
     local i=0
@@ -136,6 +147,18 @@ extract_wrapper_flags() {
                 [ -n "$value" ] || abort "Falta el valor de --from-stage"
                 [[ "$value" =~ ^[0-9]+$ ]] || abort "--from-stage debe ser un numero entero (recibido: '$value')"
                 FROM_STAGE_EXTRA="--from-stage $value"
+                ;;
+            --models)
+                # Sin pre-parsear aqui, --models caeria en REMAINING_ARGS y
+                # cmd_tooling/cmd_batch lo interpretarian posicionalmente (issue
+                # #709, mismo defecto que motivo el pre-parseo de --from-stage).
+                # Comillas simples: el valor puede traer '[' / ']' de un id de
+                # modelo completo (p. ej. claude-opus-5[1m]) que el shell del
+                # send-keys de tmux tomaria como glob sin ellas.
+                i=$((i + 1))
+                local models_value="${args[$i]:-}"
+                [ -n "$models_value" ] || abort "Falta el valor de --models"
+                MODELS_EXTRA="--models '$models_value'"
                 ;;
             --if-exists)
                 i=$((i + 1))
@@ -159,7 +182,7 @@ extract_wrapper_flags() {
 # caer en "Argumento no reconocido" (mismo patron que cmd_help del wrapper
 # publicado, scripts/tmux-pipeline.sh).
 print_usage() {
-    echo "Uso: $0 --tooling <issue> [--verbose] [--from-stage N] [--if-exists reuse|replace|abort]"
+    echo "Uso: $0 --tooling <issue> [--verbose] [--from-stage N] [--models 'agente=modelo[,...]'] [--if-exists reuse|replace|abort]"
     echo "     $0 --batch <issue1> <issue2> ... [--verbose] [--if-exists reuse|replace|abort]"
     echo "     $0 --attach [sesion]"
     echo ""
@@ -183,6 +206,16 @@ print_usage() {
     echo "                  rechaza porque seria ambiguo sobre varios issues. El"
     echo "                  rango (1-2) lo valida mefisto-tooling-pipeline.sh, no"
     echo "                  este wrapper."
+    echo ""
+    echo "  --models 'agente=modelo[,...]'  (issue #709, experimentos A/B de"
+    echo "                  desempeno del harness) Sobreescribe el modelo de un"
+    echo "                  stage puntual de mefisto-tooling-pipeline.sh. La clave"
+    echo "                  es el nombre de agente que recibe run_agent(): hoy"
+    echo "                  'reviewer' (Stage 2) y 'writer' -- que cubre DOS stages,"
+    echo "                  el Stage 1 y la etapa de merge, ambos invocados con ese"
+    echo "                  mismo nombre. Solo valido con --tooling; --batch lo"
+    echo "                  rechaza por la misma ambiguedad que --from-stage. Un"
+    echo "                  --models malformado aborta ANTES de crear el worktree."
     echo ""
     echo "  --if-exists reuse|replace|abort  (issue #449) Decide que hacer si ya"
     echo "                  existe una sesion con ese nombre, sin preguntar (util"
@@ -368,6 +401,7 @@ cmd_tooling() {
     script_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
     local pipeline_cmd="./.claude/scripts/mefisto-tooling-pipeline.sh $issue"
     [ -n "$FROM_STAGE_EXTRA" ] && pipeline_cmd="$pipeline_cmd $FROM_STAGE_EXTRA"
+    [ -n "$MODELS_EXTRA" ] && pipeline_cmd="$pipeline_cmd $MODELS_EXTRA"
     tmux send-keys -t "$script_pane" "$pipeline_cmd" Enter
 
     # even-horizontal deshace el split -v de arriba (lo aplana a 3 columnas):
@@ -400,6 +434,9 @@ cmd_batch() {
     # scripts/tmux-pipeline.sh --batch/--parallel, issue #449): rechazar es la
     # opcion segura. mefisto-batch-pipeline.sh solo acepta --stop-on-error.
     [ -n "$FROM_STAGE_EXTRA" ] && abort "--from-stage no es valido con --batch (seria ambiguo sobre varios issues). Usa --tooling <issue> --from-stage N para un unico issue."
+    # Mismo criterio: --models por issue sobre un lote tambien seria ambiguo
+    # (issue #709).
+    [ -n "$MODELS_EXTRA" ] && abort "--models no es valido con --batch (seria ambiguo sobre varios issues). Usa --tooling <issue> --models 'agente=modelo' para un unico issue."
 
     local session
     session=$(safe_session_name "mefisto-batch-$(date +%H%M%S)")
