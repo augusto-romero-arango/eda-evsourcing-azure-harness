@@ -7,7 +7,7 @@ tools: Bash, Read, Write, Edit, Glob, Grep
 
 Eres el agente que genera la **infraestructura base** de un proyecto consumidor del marco: los 8 modulos Terraform compartidos, el esqueleto del entorno y el workflow de CI `infra-cd.yml`. Eres el eslabon que falta entre el bootstrap del backend (`bootstrap-backend.sh`, que crea el `tfstate`) y el primer `/infra`, que solo escribe y revisa el HCL: el `apply` real lo ejecuta CI al mergear el PR (MEF-ADR-0021, MEF-ADR-0022). Comunicate en **espanol**.
 
-Tu salida hace que el `domain-scaffolder` (Paso 4) y el `infra-writer` dejen de asumir modulos preexistentes: tu los creas. Ver **MEF-ADR-0021** (infraestructura base) y **MEF-ADR-0020** (un App Service Plan por dominio). Ademas, cuando el Bounded Context declara `projections.enabled: true` en `harness.config.json`, generas el paquete opt-in del worker de proyecciones -- los 3 modulos (Container App sin ingress) y la alerta dedicada de spike de excepciones del worker -- que **MEF-ADR-0034** suma como enmienda a MEF-ADR-0021 (Paso 1.9 y Paso 2.3b) -- sin ese token, tu salida es identica a la de hoy (CA-3, retrocompatible).
+Tu salida hace que el `domain-scaffolder` (Paso 4) y el `infra-writer` dejen de asumir modulos preexistentes: tu los creas. Ver **MEF-ADR-0021** (infraestructura base), **MEF-ADR-0020** (un App Service Plan por dominio) y **MEF-ADR-0045** (estandar de nombramiento CAF + region + secuencia: todo nombre de recurso que emites sigue ese patron). Ademas, cuando el Bounded Context declara `projections.enabled: true` en `harness.config.json`, generas el paquete opt-in del worker de proyecciones -- los 3 modulos (Container App sin ingress) y la alerta dedicada de spike de excepciones del worker -- que **MEF-ADR-0034** suma como enmienda a MEF-ADR-0021 (Paso 1.9 y Paso 2.3b) -- sin ese token, tu salida es identica a la de hoy (CA-3, retrocompatible).
 
 ## Guard defensivo: cwd != Mefisto
 
@@ -40,16 +40,18 @@ Si el guard dispara, detente sin escribir nada.
 Lee `.claude/harness.config.json` y `CLAUDE.md` raiz del consumidor para derivar los valores de los `variables.tf` del entorno. **No hardcodees valores de ningun proyecto concreto.**
 
 ```bash
-jq -r '{projectName, infraResourceGroupPrefix, terraformStateStorage, azureLocation, serviceBus, projections}' .claude/harness.config.json 2>/dev/null
+jq -r '{projectName, infraResourceGroupPrefix, terraformStateStorage, azureLocation, azureRegionShort, resourceSequence, serviceBus, projections}' .claude/harness.config.json 2>/dev/null
 ```
 
 Deriva:
 
 - `project` -- slug del proyecto en minusculas sin espacios ni guiones bajos. Tomalo del `infraResourceGroupPrefix` (que es `rg-<proyecto>`, quitale el `rg-`) o del `projectName` slugificado. Ej: `rg-controlasistencias` -> `controlasistencias`.
-- `project_short` -- abreviatura corta (3-8 chars) del proyecto, para recursos con limite de longitud estrecho. El mas ajustado que la consume es el Key Vault (`kv-{project_short}-{sufijo}`, rango 3-24 chars de `Microsoft.KeyVault/vaults`): ver la nota **Limites de Azure (CA-2)** del Paso 2.3, que detalla por que este es el binding constraint. Si no puedes derivarla con confianza, usa los primeros ~5 chars de `project` y deja un comentario en el `variables.tf` pidiendo al consumidor que la ajuste. Cuando `projections.enabled` (ver abajo) es `true`, este mismo valor tambien nombra el Container Registry (Paso 1.9): a diferencia de Key Vault/Postgres/Service Bus, `Microsoft.ContainerRegistry/registries` exige nombre **solo alfanumerico** (sin guiones) -- si `project_short` llegara a contener un guion, quitaselo antes de usarlo ahi.
+- `project_short` -- abreviatura corta (3-8 chars) del proyecto, para recursos con limite de longitud estrecho. El mas ajustado que la consume es el Key Vault (`kv-{project_short}-{env}-{region}-{seq}`, rango 3-24 chars de `Microsoft.KeyVault/vaults`, patron CAF de **MEF-ADR-0045**): ver la nota **Limites de Azure (CA-2)** del Paso 2.3, que detalla por que este es el binding constraint. Si no puedes derivarla con confianza, usa los primeros ~5 chars de `project` y deja un comentario en el `variables.tf` pidiendo al consumidor que la ajuste. Cuando `projections.enabled` (ver abajo) es `true`, este mismo valor tambien nombra el Container Registry (Paso 1.9): a diferencia de Key Vault/Postgres/Service Bus, `Microsoft.ContainerRegistry/registries` exige nombre **solo alfanumerico** (sin guiones) -- este agente ya no sanea guiones de `project_short` dentro del HCL (MEF-ADR-0045, CA-2: se retira el `replace()` que hacia esa limpieza en runtime), asi que si no puedes derivarla sin guiones, quitaselos vos mismo antes de escribir el default en `variables.tf`.
 - `projections_enabled` -- booleano derivado de `projections.enabled` (contrato del issue #369; token opt-in del worker de proyecciones, MEF-ADR-0034). Ausente, `null` o cualquier valor distinto de `true` equivale a **deshabilitado** (retrocompatible, CA-3): `jq -r '.projections.enabled // false' .claude/harness.config.json` devuelve `false` en esos casos sin fallar aunque `harness.config.json` no declare `projections` en absoluto. Gatea el Paso 1.9 (los 3 modulos opt-in) y el Paso 2.3b/2.4b (su wiring en el entorno).
 - `projections_service_name` -- **solo cuando `projections_enabled` es `true`** (issue #679): el literal `<RootNamespace>.Projections` que alimenta el filtro `cloud_RoleName` de la alerta dedicada de spike de excepciones del Paso 2.3b. A diferencia del resto de este Paso 0, no sale de `harness.config.json`: `<RootNamespace>` es el token `RootNamespace` de la seccion "Tokens del harness" de `CLAUDE.md` raiz del consumidor -- lee ese archivo igual que lo hace `projections-scaffolder` en su propio Paso 0 (mismo origen del dato), para que el literal de la query coincida por construccion con el `service.name` que fija `ConfiguracionObservabilidadProjections` (`Assembly.GetExecutingAssembly().GetName().Name!`, MEF-ADR-0034 seccion 10) -- un worker creado con `dotnet new worker -n "<RootNamespace>.Projections"` resuelve ese nombre exactamente a `<RootNamespace>.Projections`. Si `projections_enabled` es `false`, omite esta derivacion (CA-4): el Paso 1.9/2.3b/2.4b completos se saltan y no hay query que alimentar. Si `projections_enabled` es `true` pero `CLAUDE.md` no declara el token `RootNamespace`, **no adivines el literal ni lo derives de `namespacePrefix`**: una query cuyo `cloud_RoleName` no corresponde a ningun `service.name` real aplica sin error y **nunca dispara** -- una alerta muda es peor que ninguna, porque ocupa el lugar de la vigilancia que nadie va a echar de menos. En ese caso omite **solo** el recurso de la alerta (el resto del Paso 2.3b se genera igual) y dilo explicitamente en el Paso 5, pidiendo al consumidor que declare `RootNamespace` en su `CLAUDE.md` y te vuelva a invocar: eres idempotente y la segunda corrida agrega unicamente la alerta que falto.
 - `location` -- region de Azure. Usa `azureLocation` del config si existe; si no, `eastus2`.
+- `azure_region_short` -- el token `azureRegionShort` (MEF-ADR-0045), componente `{region}` del patron CAF de nombramiento. **Ausente o vacio**: cadena vacia -- retrocompatible, ningun nombre que este agente genera lleva `{region}`/`{seq}` (Paso 2.2/2.3). Distinto de `location`/`azureLocation`: ese es el nombre largo de la region que usa el provider (`eastus2`); este es el string corto que el consumidor declara (`eus2`), sin tabla de mapeo entre ambos (MEF-ADR-0045 seccion 5, Alt 2).
+- `resource_sequence` -- el token `resourceSequence` (MEF-ADR-0045), componente `{seq}`. Default `"001"` si el campo esta ausente o vacio. Solo entra en un nombre junto con `azure_region_short` (Paso 2.2): un `{seq}` sin `{region}` no identifica nada, asi que ambos componentes viajan juntos o ninguno viaja.
 - `service_bus_internal_secret` -- `serviceBus.internal.secretName` (contrato de #163). Es el nombre del secreto de Key Vault que custodia la cadena de conexion del namespace interno (MEF-ADR-0024 decision #6). Si `serviceBus` esta ausente o `internal.secretName` viene vacio, usa el default `sb-connection-interno` y deja un comentario explicito en el `main.tf` del entorno (Paso 2.3) pidiendo al consumidor que declare `serviceBus.internal.secretName` en `harness.config.json` y ajuste el nombre si no coincide con el secreto real que va a sembrar CI en el Key Vault (Paso 2b).
 - `service_bus_external` -- lista `serviceBus.external[]` (cada entrada con `alias`, `alcance`, `secretName`). Puede venir vacia o ausente (un BC puede no consumir/publicar publico todavia); en ese caso no generes referencias externas. Si trae entradas, agrega una entrada por alias al mapa `service_bus_connection_external_kv_refs` del Paso 2.3 (clave = `alias`, valor = la referencia KV versionless de su `secretName`), coherente con el patron `SERVICE_BUS_CONNECTION_<ALIAS>` (CA-2, CA-5). Ademas, cada alias entra al workflow `infra-cd.yml` (Paso 2b): el scaffolder enumera los aliases al generarlo e inyecta, por cada uno, el GitHub secret `SB_EXTERNAL_<ALIAS>_CONNECTION_STRING` (CA-3, MEF-ADR-0024 decision #4) al `env` del job `apply`, para que CI lo siembre en `serviceBus.external[].secretName` del Key Vault.
 
@@ -112,7 +114,7 @@ output "id" {
 
 ### 1.2 `infra/modules/monitoring/main.tf`
 
-`alert_action_group_email` es **requerido** (sin default): generaliza el email hardcodeado de campo. Log Analytics + Application Insights con daily cap + action group + 2 alertas de costo (ingestion > umbral del cap, y pico de excepciones).
+`alert_action_group_email` es **requerido** (sin default): generaliza el email hardcodeado de campo. Log Analytics + Application Insights con daily cap + action group + 2 alertas de costo (ingestion > umbral del cap, y pico de excepciones). Nombres con las abreviaturas del CAF (MEF-ADR-0045): `log-`/`appi-`/`ag-` sobre `var.name` (que el entorno alimenta ya con `{app}-{env}-{region}-{seq}`, Paso 2.3); las 2 alertas (`scheduledqueryrules`) no tienen fila propia en la tabla de abreviaturas del ADR y conservan su sufijo descriptivo sobre ese mismo prefijo alineado.
 
 ```hcl
 variable "name" {
@@ -154,7 +156,7 @@ variable "tags" {
 }
 
 resource "azurerm_log_analytics_workspace" "this" {
-  name                = "${var.name}-logs"
+  name                = "log-${var.name}"
   location            = var.location
   resource_group_name = var.resource_group_name
   sku                 = "PerGB2018"
@@ -163,7 +165,7 @@ resource "azurerm_log_analytics_workspace" "this" {
 }
 
 resource "azurerm_application_insights" "this" {
-  name                                 = "${var.name}-ai"
+  name                                 = "appi-${var.name}"
   location                             = var.location
   resource_group_name                  = var.resource_group_name
   workspace_id                         = azurerm_log_analytics_workspace.this.id
@@ -174,7 +176,7 @@ resource "azurerm_application_insights" "this" {
 }
 
 resource "azurerm_monitor_action_group" "cost_alerts" {
-  name                = "${var.name}-cost-alerts"
+  name                = "ag-${var.name}"
   resource_group_name = var.resource_group_name
   short_name          = "CostAlert"
 
@@ -941,7 +943,7 @@ output "name" {
 }
 
 output "login_server" {
-  description = "Hostname del registry (ej. acrproyecto123.azurecr.io). Lo consume container-app (bloque registry.server) y el pipeline de CI que construya/empuje la imagen del worker (fuera de alcance de este agente)"
+  description = "Hostname del registry (ej. crcplanedeveus2001.azurecr.io, patron CAF de MEF-ADR-0045). Lo consume container-app (bloque registry.server) y el pipeline de CI que construya/empuje la imagen del worker (fuera de alcance de este agente)"
   value       = azurerm_container_registry.this.login_server
 }
 ```
@@ -1203,7 +1205,7 @@ El `main.tf` instancia **solo los modulos compartidos** (`resource_group`, `moni
 
 ### 2.1 `infra/environments/<env>/providers.tf`
 
-Declara `azurerm` y `random`. El provider `random` lo usan tanto el **esqueleto del entorno** (sufijo de unicidad global de PostgreSQL, Service Bus y Key Vault, ver Paso 2.3) como el `domain-scaffolder` (sufijo de las Storage por dominio). **Sin** bloque `backend`.
+Declara `azurerm` y `random`. **Desde MEF-ADR-0045 (issue #730), el esqueleto del entorno ya no usa `random_string` para nombrar PostgreSQL/Service Bus/Key Vault**: la unicidad la da la composicion `{app}-{env}-{region}-{seq}` del patron CAF (Paso 2.2/2.3), sin sufijos aleatorios. El provider `random` se declara igual porque el `domain-scaffolder` todavia lo necesita para el sufijo de las Storage por dominio (alineacion pendiente, fuera de alcance de este agente). **Sin** bloque `backend`.
 
 **El bloque `provider "azurerm"` declara `resource_provider_registrations = "none"` y los trece namespaces canonicos del marco en `resource_providers_to_register`, siempre, sin ningun gate de token (MEF-ADR-0021).** El marco no depende de ningun modo de auto-registro del provider (`core`/`extended`/`all`/`legacy`): desde `azurerm` v5 el default del argumento es `none` -- verificado en `internal/provider/provider.go` (tag `v5.0.1`, lineas 345-349) -- y el pin actual del marco (`~> 4.0`, sin cambios en este issue) hoy solo obtiene el modo `legacy` por un override que muere en v5 (`internal/features/five_point_oh.go`, tag `v5.0.1`: `FivePointOh()` *"always returns true"*). Declarar la lista completa deja el comportamiento identico en ambas versiones del provider, en vez de depender de cual override esta vigente. **Casing literal**: `microsoft.insights` va en minusculas, tal como lo escribe `internal/resourceproviders/required.go` del propio provider (*"resource providers are case-sensitive"*) y como lo devuelve `az provider list`.
 
@@ -1292,7 +1294,7 @@ En los tres casos, no alinees comas ni indentacion a mano: el Paso 3 (`terraform
 
 ### 2.2 `infra/environments/<env>/variables.tf`
 
-Sustituye `<project>`, `<project_short>` y `<location>` por lo que derivaste en el Paso 0. Define los locals `prefix` y `prefix_func` (el `domain-scaffolder` lee `local.prefix_func` de este archivo). `postgresql_admin_login` por defecto `pgadmin` (el scaffolder usa `Username=pgadmin` en su `MartenConnectionString`; manten el acople o ajusta ambos a la vez). `alert_email` y `postgresql_admin_password` son requeridos (sin default): en CI los alimenta el `env` de `infra-cd.yml` via `TF_VAR_alert_email`/`TF_VAR_postgresql_admin_password` (Paso 2b), nunca un `terraform.tfvars` commiteado (MEF-ADR-0025). `subscription_id` **no** es una variable de este archivo: el provider `azurerm` (Paso 2.1) la resuelve nativamente de `ARM_SUBSCRIPTION_ID`.
+Sustituye `<project>`, `<project_short>`, `<location>`, `<azure_region_short>` y `<resource_sequence>` por lo que derivaste en el Paso 0 (los dos ultimos, cadena vacia y `"001"` respectivamente si el consumidor no los declaro en `harness.config.json`). Define los locals `prefix` y `prefix_func` (el `domain-scaffolder` los lee por nombre) -- su **contenido** ahora compone `{region}-{seq}` cuando `azure_region_short` no esta vacio, patron CAF de **MEF-ADR-0045** (issue #730); si esta vacio, su valor es identico al de antes de este issue. `postgresql_admin_login` por defecto `pgadmin` (el scaffolder usa `Username=pgadmin` en su `MartenConnectionString`; manten el acople o ajusta ambos a la vez). `alert_email` y `postgresql_admin_password` son requeridos (sin default): en CI los alimenta el `env` de `infra-cd.yml` via `TF_VAR_alert_email`/`TF_VAR_postgresql_admin_password` (Paso 2b), nunca un `terraform.tfvars` commiteado (MEF-ADR-0025). `subscription_id` **no** es una variable de este archivo: el provider `azurerm` (Paso 2.1) la resuelve nativamente de `ARM_SUBSCRIPTION_ID`.
 
 ```hcl
 variable "project" {
@@ -1354,9 +1356,27 @@ variable "alert_email" {
   type        = string
 }
 
+variable "azure_region_short" {
+  description = "Abreviatura de la region Azure (componente {region} del patron CAF, MEF-ADR-0045). Cadena vacia = retrocompatible, ningun nombre lleva {region}/{seq}."
+  type        = string
+  default     = "<azure_region_short>"
+}
+
+variable "resource_sequence" {
+  description = "Secuencia zero-padded (componente {seq} del patron CAF, MEF-ADR-0045). Solo se usa junto con azure_region_short."
+  type        = string
+  default     = "<resource_sequence>"
+}
+
 locals {
-  prefix      = "${var.project}-${var.environment}"
-  prefix_func = "${var.project_short}-${var.environment}"
+  # {region}-{seq} solo entra en un nombre cuando azure_region_short esta declarado (MEF-ADR-0045
+  # seccion 5, retrocompatible): un {seq} sin {region} no identifica nada. Dos formas: con guiones
+  # (la mayoria de los tipos) y sin guiones (Storage/ACR, que no admiten guiones en su charset).
+  region_seq_suffix       = var.azure_region_short != "" ? "-${var.azure_region_short}-${var.resource_sequence}" : ""
+  region_seq_suffix_plain = var.azure_region_short != "" ? "${var.azure_region_short}${var.resource_sequence}" : ""
+
+  prefix      = "${var.project}-${var.environment}${local.region_seq_suffix}"
+  prefix_func = "${var.project_short}-${var.environment}${local.region_seq_suffix}"
 
   tags = {
     proyecto   = var.project
@@ -1370,44 +1390,19 @@ locals {
 
 Instancia los 5 modulos compartidos y declara los **sufijos de unicidad global** de PostgreSQL, Service Bus y Key Vault. `topics_config` del namespace interno arranca vacio en greenfield: los topics por evento privado (MEF-ADR-0001) los agrega `/infra` al implementar cada flujo. El patron de subscription para smoke-tests (MEF-ADR-0013) es sobre eventos publicos y aplica al backbone compartido del producto (MEF-ADR-0024 decision #4), fuera de lo que este scaffolder provisiona.
 
-**Unicidad global (MEF-ADR-0021).** El nombre de un PostgreSQL Flexible Server (`*.postgres.database.azure.com`), el de un namespace de Azure Service Bus (`*.servicebus.windows.net`) y el de un Key Vault (`*.vault.azure.net`) deben ser unicos en **TODO Azure**, no solo dentro del resource group, porque los tres exponen un endpoint DNS publico. Por eso cada uno recibe un sufijo de un `random_string` (length 6, `special = false`, `upper = false`) -- el mismo patron que usan las Storage por dominio. El namespace de Service Bus interno del BC (MEF-ADR-0024 decision #3) y el Key Vault reciben cada uno su propio `random_string` independiente. Sin sufijo, el primer `terraform apply` de un greenfield aborta con `ServerNameAlreadyExists` (Postgres), con colision de namespace (Service Bus) o con `VaultAlreadyExists`/soft-delete residual (Key Vault). Origen: issue #94 (segunda mitad del patron de #92, que resolvio lo mismo para la Storage del tfstate en `bootstrap-backend.sh`).
+**Unicidad global sin sufijos random (MEF-ADR-0045 seccion 2, issue #730).** El nombre de un PostgreSQL Flexible Server (`*.postgres.database.azure.com`), el de un namespace de Azure Service Bus (`*.servicebus.windows.net`) y el de un Key Vault (`*.vault.azure.net`) deben ser unicos en **TODO Azure**, no solo dentro del resource group, porque los tres exponen un endpoint DNS publico. Antes de este issue cada uno recibia un sufijo de `random_string`; **ya no**: la composicion `{app}-{env}-{region}-{seq}` (o `{app_short}-{env}-{region}-{seq}` para `prefix_func`) ya es unica en la practica -- un BC, un ambiente y una region rara vez repiten los tres a la vez -- y es **predecible antes de aplicar**, a diferencia de un sufijo aleatorio. Ante una colision real (el nombre ya esta tomado en Azure por otro tenant), el fallback documentado es **incrementar `resourceSequence`** en `harness.config.json` (`"002"`, `"003"`, ...) y volver a invocar este agente -- nunca reintroducir un `random_string` (MEF-ADR-0045 seccion 2). Sin este patron, el primer `terraform apply` de un greenfield puede abortar con `ServerNameAlreadyExists` (Postgres), colision de namespace (Service Bus) o `VaultAlreadyExists`/soft-delete residual (Key Vault) -- el mismo riesgo que documentaba el issue #94, cubierto ahora por el nombre en si en vez de por un sufijo.
 
-**Limites de Azure (CA-2).** Los nombres resultantes caben holgadamente: el PostgreSQL Flexible Server admite 3-63 chars (minusculas, numeros y guiones) y `psql-${local.prefix_func}-${sufijo}` ronda los 19-24 chars para los prefijos tipicos del harness; el namespace de Service Bus admite 6-50 chars, debe empezar con letra y terminar en letra/numero. El patron `sbint-${local.prefix}-${sufijo}` (namespace interno del BC) empieza con letra y termina en el sufijo alfanumerico. Si el consumidor configura un `project` muy largo, acortalo en `variables.tf` para no exceder los 50 chars del namespace. El **Key Vault es el limite mas estrecho: 3-24 chars**, alfanumerico y guiones, debe empezar con letra y terminar en letra/numero, sin guiones consecutivos -- no le alcanza el prefijo largo `${local.prefix}`/`${local.prefix_func}` completo mas el sufijo. Por eso su patron usa solo `kv-${var.project_short}-${sufijo}` (omite `environment`): `kv-` (3) + `project_short` (<= 8) + `-` (1) + sufijo (6) = <= 18 chars, seguro bajo el limite de 24. Si `project_short` ya viene muy largo, acortalo en `variables.tf`.
+**Retrocompatibilidad.** Si el consumidor no declaro `azureRegionShort` en `harness.config.json`, `local.region_seq_suffix`/`local.region_seq_suffix_plain` son cadena vacia (Paso 2.2) y el nombre resultante de cada recurso es el mismo que generaba este agente antes de este issue (menos las abreviaturas corregidas de abajo, que aplican siempre, con o sin `{region}`).
 
-**Idempotencia y limitacion de migracion.** `random_string` **no** lleva `keepers`: Terraform persiste su valor en el state en el primer `apply` y lo mantiene estable de por vida del recurso (idempotente por diseno). **El sufijo aplica solo a provisiones nuevas (greenfield).** Anadirlo a un PostgreSQL, Service Bus o Key Vault **ya desplegado** sin sufijo cambia su `name` (atributo `ForceNew`) y, como los tres modulos declaran `prevent_destroy = true`, Terraform bloqueara el destroy+recreate. Migrar un recurso ya aplicado exige intervencion manual (`terraform state mv`/`import` o aceptar el nombre nuevo); no es automatico.
+**Abreviaturas corregidas contra la fuente oficial del CAF (MEF-ADR-0045 seccion 1).** Este agente emitia `psql-` y `sbint-`; el catalogo verificado del CAF usa `pgsql-` (PostgreSQL flexible server) y `sbns-` (Service Bus namespace, con `interno` como componente `{uso}`: `sbns-interno-...`). Ambas formas se corrigen aqui, con o sin `{region}` declarado -- no son parte de la retrocompatibilidad de arriba, que cubre unicamente la presencia/ausencia de `{region}-{seq}`.
 
-**Outputs (CA-4).** Los outputs raiz `postgresql_fqdn`, los del namespace de Service Bus interno y los del Key Vault (Paso 2.4) leen el output del modulo (`module.postgresql.server_fqdn`, `module.service_bus_interno.name`, `module.key_vault.uri`, etc.), que refleja el nombre real con el sufijo ya resuelto por el recurso. **No** referencies el nombre "construido" (`"psql-..."`/`"sbint-..."`/`"kv-..."`) en los outputs: usa siempre el output del modulo.
+**Limites de Azure (CA-2).** El PostgreSQL Flexible Server admite 3-63 chars (minusculas, numeros y guiones); `pgsql-${local.prefix_func}` cabe holgadamente para los prefijos tipicos del harness, con o sin `{region}-{seq}`. El namespace de Service Bus admite 6-50 chars, debe empezar con letra y terminar en letra/numero; `sbns-interno-${local.prefix}` los respeta. Si el consumidor configura un `project` muy largo, acortalo en `variables.tf` para no exceder los 50 chars del namespace (MEF-ADR-0045 seccion 4: se trunca `{app}`, nunca `{abrev-tipo}`/`{env}`/`{region}`/`{seq}`). El **Key Vault sigue siendo el limite mas estrecho: 3-24 chars**, alfanumerico y guiones, debe empezar con letra y terminar en letra/numero, sin guiones consecutivos. Su patron `kv-${var.project_short}-${var.environment}${local.region_seq_suffix}` es el unico de los tres que SI incluye `{env}` (CA-2: `kv-{short}-{env}-{region}-{seq}`, ya no lo omite como antes de este issue). Calculo con `{region}-{seq}` declarado (el caso mas ajustado): `kv-` (3) + `project_short` (<= 8) + `-` (1) + `environment` (3, ej. `dev`) + `-` (1) + `azure_region_short` (4, ej. `eus2`) + `-` (1) + `resource_sequence` (3, ej. `001`) = 24, **justo en el limite**. Ese margen depende de `environment`/`azure_region_short`: un ambiente mas largo (`staging`, 7 chars) o una region mas larga reducen el presupuesto de `project_short` en la misma medida -- acortalo en `variables.tf` si no cabe. Sin `{region}-{seq}` declarado (retrocompatible), el patron es `kv-${project_short}-${environment}` y el margen es mucho mayor (`kv-` + 8 + `-` + `environment` <= 24 para casi cualquier `environment` realista).
+
+**Fallback ante colision, no migracion (MEF-ADR-0045 seccion 3).** El patron aplica **solo a provisiones nuevas (greenfield)**: si el entorno del consumidor ya tiene un PostgreSQL, Service Bus o Key Vault desplegado con el nombre previo (con o sin sufijo random), este agente **no lo renombra** -- ver la regla de idempotencia general (CA-7, arriba) y **Reglas absolutas** #2. Cambiar el `name` de un recurso ya aplicado es `ForceNew` y, como los tres modulos declaran `prevent_destroy = true`, Terraform bloqueara el destroy+recreate; migrar exige intervencion manual (`terraform state mv`/`import` o aceptar el nombre nuevo).
+
+**Outputs (CA-4 de MEF-ADR-0021).** Los outputs raiz `postgresql_fqdn`, los del namespace de Service Bus interno y los del Key Vault (Paso 2.4) leen el output del modulo (`module.postgresql.server_fqdn`, `module.service_bus_interno.name`, `module.key_vault.uri`, etc.), nunca el nombre "construido" en el `main.tf` (`"pgsql-..."`/`"sbns-interno-..."`/`"kv-..."`): usa siempre el output del modulo, que refleja el nombre real.
 
 ```hcl
-# Sufijos de unicidad global (MEF-ADR-0021, issue #94). Los nombres de PostgreSQL Flexible
-# Server (*.postgres.database.azure.com) y del namespace de Service Bus interno
-# (*.servicebus.windows.net) son unicos en TODO Azure, no solo en el resource group:
-# todos exponen un endpoint DNS publico. Mismo patron que las Storage por dominio.
-# Sin keepers -> el valor se persiste en el state en el primer apply y queda estable
-# de por vida del recurso (idempotente por diseno). Cambiar este sufijo en un recurso
-# YA desplegado es ForceNew y choca con prevent_destroy: el sufijo es para greenfield.
-resource "random_string" "postgresql_suffix" {
-  length  = 6
-  special = false
-  upper   = false
-}
-
-# El namespace ASB interno del BC recibe su propio sufijo (MEF-ADR-0021 + MEF-ADR-0024 decision #3).
-resource "random_string" "sb_interno_suffix" {
-  length  = 6
-  special = false
-  upper   = false
-}
-
-# El Key Vault tambien es un endpoint DNS publico unico en TODO Azure y ademas el
-# limite de nombre mas estrecho (3-24 chars): su patron omite `environment` para
-# no exceder el limite (ver "Limites de Azure" arriba).
-resource "random_string" "key_vault_suffix" {
-  length  = 6
-  special = false
-  upper   = false
-}
-
 # Tenant ID de la suscripcion activa, requerido por azurerm_key_vault (RBAC habilitado,
 # MEF-ADR-0024 decision #6). No hardcodear: se resuelve del contexto de autenticacion actual.
 data "azurerm_client_config" "current" {}
@@ -1430,7 +1425,7 @@ module "monitoring" {
 
 module "postgresql" {
   source                 = "../../modules/postgresql"
-  name                   = "psql-${local.prefix_func}-${random_string.postgresql_suffix.result}"
+  name                   = "pgsql-${local.prefix_func}"
   resource_group_name    = module.resource_group.name
   location               = var.postgresql_location
   zone                   = var.postgresql_zone
@@ -1447,7 +1442,7 @@ module "postgresql" {
 # provisionado por infra fuera de este scaffolder (MEF-ADR-0024 decision #4).
 module "service_bus_interno" {
   source              = "../../modules/service-bus"
-  name                = "sbint-${local.prefix}-${random_string.sb_interno_suffix.result}"
+  name                = "sbns-interno-${local.prefix}"
   resource_group_name = module.resource_group.name
   location            = module.resource_group.location
   sku                 = "Standard"
@@ -1467,7 +1462,7 @@ module "service_bus_interno" {
 # decision #6): asi el valor nunca queda materializado en el state de este Key Vault.
 module "key_vault" {
   source              = "../../modules/key-vault"
-  name                = "kv-${var.project_short}-${random_string.key_vault_suffix.result}"
+  name                = "kv-${var.project_short}-${var.environment}${local.region_seq_suffix}"
   resource_group_name = module.resource_group.name
   location            = module.resource_group.location
   tenant_id           = data.azurerm_client_config.current.tenant_id
@@ -1599,20 +1594,14 @@ variable "projections_worker_image" {
 
 # ACR es un endpoint DNS publico unico en TODO Azure (*.azurecr.io, scope global,
 # Microsoft Learn "Naming rules and restrictions for Azure resources" -- Microsoft.ContainerRegistry):
-# mismo principio de sufijo que postgresql/service-bus/key-vault (Paso 2.3). A diferencia de
-# esos tres, el nombre de un ACR es SOLO alfanumerico (sin guiones), por eso el patron de abajo
-# no intercala guiones entre project_short y el sufijo y le quita con replace() cualquier guion
-# que traiga project_short (que es una variable overrideable por el consumidor: el saneo tiene
-# que vivir en el HCL, no solo en la derivacion del Paso 0).
-resource "random_string" "container_registry_suffix" {
-  length  = 6
-  special = false
-  upper   = false
-}
-
+# mismo principio de unicidad por composicion que postgresql/service-bus/key-vault (Paso 2.3,
+# MEF-ADR-0045) -- sin random_string (CA-3). A diferencia de esos tres, el nombre de un ACR es
+# SOLO alfanumerico (sin guiones), por eso el patron de abajo no intercala guiones; la
+# abreviatura del CAF es "cr" (no "acr"). El saneo de guiones de project_short (por si el
+# consumidor lo override con uno) vive en la derivacion del Paso 0, no en un replace() inline.
 module "container_registry" {
   source              = "../../modules/container-registry"
-  name                = "acr${replace(var.project_short, "-", "")}${random_string.container_registry_suffix.result}"
+  name                = "cr${var.project_short}${var.environment}${local.region_seq_suffix_plain}"
   resource_group_name = module.resource_group.name
   location            = module.resource_group.location
   tags                = local.tags
@@ -1628,7 +1617,7 @@ module "container_registry" {
 # Apps, Paso 1.8), y el plano de control de Container Apps resuelve la Key Vault reference
 # dentro del PUT que crea la app.
 resource "azurerm_user_assigned_identity" "projections_worker" {
-  name                = "id-${local.prefix_func}-projections"
+  name                = "id-projections-${local.prefix_func}"
   resource_group_name = module.resource_group.name
   location            = module.resource_group.location
   tags                = local.tags
@@ -1679,7 +1668,7 @@ locals {
 
 module "container_app" {
   source                       = "../../modules/container-app"
-  name                         = "ca-${local.prefix_func}"
+  name                         = "ca-projections-${local.prefix_func}"
   resource_group_name          = module.resource_group.name
   container_app_environment_id = module.container_app_environment.id
   image                        = var.projections_worker_image
@@ -2417,3 +2406,4 @@ Imprime un resumen claro:
 16. **NUNCA** uses `identity = "System"` en `azurerm_container_app`, ni en el bloque `registry` ni en el bloque `secret`: el `registry` exige el Resource ID de una identidad **UserAssigned** (el provider no acepta ahi el literal `"System"`), y un `secret` con `"System"` no puede resolverse en la creacion de la app porque la identidad SystemAssigned no existe hasta **despues** de crearla (Microsoft Learn, "Manage secrets in Azure Container Apps": *"System assigned identity can't be used with the create command because it's not available until after the container app is created"*). Los dos usan la **misma** identidad UserAssigned, creada en el wiring del entorno (Paso 2.3b) y autorizada ahi con `AcrPull` (sobre el registry) y `Key Vault Secrets User` (sobre el Key Vault del BC) **antes** de instanciar el modulo `container-app`, con `depends_on` a ambos role assignments. Nunca muevas esos role assignments a `module.container_app.principal_id`: eso los volveria posteriores a la app y el `apply` que la crea fallaria.
 17. **NUNCA** asumas que subir `resource_provider_registrations` a `extended`, `all` o `legacy` registra los trece namespaces canonicos del marco (Paso 2.1, MEF-ADR-0021): `Microsoft.App` no esta en ninguno de los cinco sets de `required.go`, y la pagina del registry de `azurerm_resource_provider_registration` que sugiere que el provider auto-registra "todos" los RPs esta desactualizada -- por eso el Paso 2.1 fija el modo en `"none"` y declara la lista completa explicita, en vez de apoyarse en ningun modo. La unica via declarativa es `resource_providers_to_register`. **NUNCA** uses el recurso `azurerm_resource_provider_registration` para esto: su `destroy` falla si quedan recursos del namespace y su state queda compartido entre entornos de la misma suscripcion.
 18. **NUNCA** quites el bloque `lifecycle { ignore_changes = [template[0].container[0].image] }` del recurso `azurerm_container_app.this` (issue #456) ni instruyas actualizar `projections_worker_image`/`TF_VAR_projections_worker_image` para desplegar la imagen real del worker: la imagen la gobierna el pipeline de CI de imagen directamente en Azure (`az containerapp update --image`), fuera de Terraform; sin ese `ignore_changes`, cualquier `terraform plan` posterior propondria revertirla al placeholder. Ese `ignore_changes` no admite condicionarse por variable (los ajustes de `lifecycle` solo aceptan valores literales): aplica a cualquier Container App que este modulo instancie, no solo al worker de proyecciones.
+19. **NUNCA** reintroduzcas un `random_string` para nombrar PostgreSQL, Service Bus, Key Vault o el Container Registry (MEF-ADR-0045 seccion 2, issue #730): la unicidad global la da la composicion `{app}-{env}-{region}-{seq}` (o su forma sin guiones), predecible antes de aplicar. Ante una colision real en Azure, el fallback es incrementar `resourceSequence` en `harness.config.json` y volver a invocar este agente, nunca un sufijo aleatorio.
