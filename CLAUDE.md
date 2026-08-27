@@ -267,6 +267,8 @@ El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o
 | Camino de resolucion de la connection string del worker bajo el overload de opciones del exporter (IConfiguration poblada por el host) | MEF-ADR-0034 |
 | Correccion en MEF-ADR-0043 seccion 1.1: lectura por alcances del charset de segmentos de ruta frente a la identidad de stream de MEF-ADR-0037 (Guid por construccion, componente tipado no-Guid sujeto a 1.2/1.3, clave compuesta fuera del sujeto porque nunca viaja entera en un segmento) | MEF-ADR-0043 |
 | Precision de MEF-ADR-0037 seccion 2: la unidad del borde HTTP es el componente tipado, no la clave (identidad de un componente vs. de varios) | MEF-ADR-0037 |
+| Extension del desacople de logs de error del sampler de trazas al write-side (supresion ratio-dependiente, sin el filtro estructural del worker) | MEF-ADR-0038 |
+| Cierre del gap de `mt_version` en la doctrina read-side (receta `UseNumericRevisions` + par de config-tests espejo write-side/read-side, segunda instancia del par de compatibilidad 2) | MEF-ADR-0034 |
 
 ## Convenciones del marco
 

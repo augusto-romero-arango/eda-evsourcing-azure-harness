@@ -4,6 +4,178 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-08-27
+
+### Added
+
+- El modo `--parallel` de los pipelines publicados llega a la interfaz herdr
+  (fase 2 diferida por #690): dentro de herdr cada issue del lote corre en su
+  propio pane apilado bajo el pane de ejecucion (alturas parejas via
+  `stack_split_ratio`, visor en vivo filtrado por issue, arranque escalonado
+  de 30s dentro de cada pane via `--delay` del runner), sin sesion tmux ni
+  pane de logs; un lote con dos o mas issues `tipo:projection` se rechaza con
+  mensaje (comparten el worker de proyecciones, MEF-ADR-0034) apuntando a
+  `/sequential` o `parallel-pipeline.sh`. La autodeteccion de
+  `tmux-pipeline.sh` ahora delega tambien `--parallel` cuando corre dentro de
+  herdr (escape hatch `MEFISTO_UI=tmux` intacto).
+- El pipeline `tooling-pipeline.sh` (lado publicado) acepta el flag
+  `--models 'agente=modelo[,agente=modelo...]'` para experimentos A/B de
+  desempeno del harness: sobreescribe el modelo de un stage puntual
+  (`reviewer` cubre el Stage 2; `writer`, el Stage 1 y la etapa de merge) sin
+  tocar el default del resto, y deja constancia en `events.log` tanto del mapa
+  recibido como de cada override que hizo match. Sin el flag, el comportamiento
+  es byte a byte el actual. `_pipeline-common.sh` gana el parser compartido
+  (`parse_stage_models`/`resolve_stage_model`), validado ANTES de crear el
+  worktree; `tmux-pipeline.sh` y `herdr-pipeline.sh` lo reenvian intacto en el
+  camino `--tooling` y lo rechazan con mensaje explicito en el resto de los
+  modos, que todavia no lo implementan.
+- El pipeline `mefisto-tooling-pipeline.sh` (lado interno) acepta el flag
+  `--models 'agente=modelo[,agente=modelo...]'` para experimentos A/B de
+  desempeno del harness: sobreescribe el modelo de un stage puntual
+  (`reviewer` cubre el Stage 2; `writer`, el Stage 1 y la etapa de merge) sin
+  tocar el default del resto, y deja constancia en `events.log` tanto del mapa
+  recibido como de cada override que hizo match. Sin el flag, el comportamiento
+  es byte a byte el actual. `_mefisto-common.sh` gana el parser propio del
+  lado interno (`parse_stage_models`/`resolve_stage_model`/
+  `format_stage_models_for_log`, sin compartir codigo con el homologo publicado
+  de `_pipeline-common.sh`, MEF-ADR-0019), validado ANTES de crear el
+  worktree; `mefisto-tmux-pipeline.sh` y `mefisto-herdr-pipeline.sh` lo
+  reenvian intacto en el camino `--tooling` y lo rechazan con mensaje
+  explicito en `--batch` (ambiguo sobre varios issues). `/mefisto-tooling`
+  y `/mefisto-tooling-verbose` reenvian el flag intacto hasta el pipeline.
+- El pipeline `tooling-pipeline.sh` (lado publicado) acepta el flag
+  `--variant <label>` (segunda pieza del mecanismo de experimentos por modelo,
+  junto a `--models`): corre el MISMO issue N veces en paralelo, cada corrida
+  en su propio worktree/rama/logs con el sufijo `-<label>` (slug
+  `[a-z0-9-]`, hasta 40 caracteres, validado por `validate_variant_label` en
+  `_pipeline-common.sh` ANTES de crear el worktree). En modo variante el
+  pipeline no hace push, no abre PR y no muta el issue -- ni comentarios ni
+  labels: el skill `/tooling` tampoco quita el label `bloqueado` en modo
+  variante --, la rama queda local, y el resumen final explica como
+  promoverla a mano si esa variante gana la comparacion. Se combina con `--models` (una variante sin `--models`
+  es la corrida de control). Sin el flag, el comportamiento es byte a byte el
+  actual. `tmux-pipeline.sh` lo reenvia intacto en el camino `--tooling`
+  (sufijando tambien el nombre de la sesion tmux) y lo rechaza con mensaje
+  explicito en el resto de los modos; `herdr-pipeline.sh` recibe la misma
+  extension para no tragarselo en silencio al delegar desde dentro de un pane
+  herdr. `commands/tooling.md` documenta el modo con un ejemplo de dos
+  variantes paralelas.
+- El pipeline `mefisto-tooling-pipeline.sh` (lado interno) acepta el flag
+  `--variant <label>` (segunda pieza del mecanismo de experimentos por modelo,
+  junto a `--models`): corre el MISMO issue de Mefisto N veces en paralelo,
+  cada corrida en su propio worktree/rama/logs con el sufijo `-<label>` (slug
+  `[a-z0-9-]`, hasta 40 caracteres, validado por `validate_variant_label` en
+  `_mefisto-common.sh` ANTES de crear el worktree). En modo variante el
+  pipeline no hace push, no abre PR y no muta el issue -- ni comentarios ni
+  labels: `/mefisto-tooling` tampoco quita el label `bloqueado` en modo
+  variante --, la rama queda local, y el resumen final explica como
+  promoverla a mano si esa variante gana la comparacion. Se combina con
+  `--models` (una variante sin `--models` es la corrida de control). Sin el
+  flag, el comportamiento es byte a byte el actual -- no toca la doctrina
+  secuencial de `mefisto-batch-pipeline.sh`. `mefisto-tmux-pipeline.sh` lo
+  reenvia intacto en el camino `--tooling` (sufijando tambien el nombre de la
+  sesion tmux) y lo rechaza con mensaje explicito en `--batch`;
+  `mefisto-herdr-pipeline.sh` recibe la misma extension para no tragarselo en
+  silencio al delegar desde dentro de un pane herdr. `/mefisto-tooling` y
+  `/mefisto-tooling-verbose` documentan y reenvian el flag intacto hasta el
+  pipeline.
+- El visor interno `mefisto-stream-watch.sh` reconoce los streams de una
+  corrida de variante en su filtro por issue (`stream_matches_issues`): sin
+  eso, el pane del visor que abre `mefisto-herdr-pipeline.sh --tooling
+  --variant` quedaba en blanco toda la corrida, porque los nombres de stream
+  llevan el sufijo `-issue-<N>-<label>` y el filtro solo aceptaba
+  `-issue-<N>.stream.jsonl` y las copias `.attempt-<k>`. El encabezado
+  formateado de esos streams sigue degradando al nombre de archivo crudo
+  (igual que ya ocurria con los reintentos): queda anotado en el propio
+  `parse_stream_header` como issue aparte, no como alcance de este.
+- `abort()` de `mefisto-tooling-pipeline.sh` ya no pierde el motivo del fallo
+  cuando aborta antes de que exista `.claude/pipeline/logs/` -- el caso de un
+  `--variant` mal formado sobre un clon fresco, y tambien el de los abortos de
+  parseo de argumentos que ya existian. Antes el `tee` fallaba, `errexit`
+  mataba el proceso en esa linea y lo unico que veia el humano era
+  `tee: ... No such file or directory`.
+- `/mefisto-work-status` distingue las corridas de variante en el dashboard
+  (campo `variant` del status y del historial) en vez de renderizar dos filas
+  identicas para dos variantes simultaneas del mismo issue.
+- El pipeline `tdd-pipeline.sh` (lado publicado) acepta el flag
+  `--models 'agente=modelo[,agente=modelo...]'` para experimentos A/B de
+  desempeno del harness, reusando el parser compartido de `_pipeline-common.sh`
+  (`parse_stage_models`/`resolve_stage_model`, issue #708). A diferencia de
+  `tooling-pipeline.sh`, `tdd-pipeline.sh` no pasaba `--model` en absoluto --
+  el modelo lo fijaba el frontmatter `model:` de cada agente -- asi que sin
+  override `run_agent()` (y los dos sub-stages de remediacion de cobertura,
+  `patch-test-writer`/`patch-implementer`, que no pasan por esa funcion pero
+  honran el mismo mapa: su clave fina cae a la del agente que realmente
+  relanzan si no aparece en el mapa, de modo que `--models test-writer=X`
+  cubre tambien la remediacion de ese mismo rol) sigue sin agregar `--model`:
+  comportamiento byte a byte el actual. Con override, se verifico
+  empiricamente -- evento `init` del stream-json de una corrida real de
+  `claude -p --agent <agente con frontmatter model:> --model haiku`, cuyo
+  campo `model` reporto el del override -- que `--model` del CLI precede al
+  frontmatter `model:` del agente. El scaffold
+  de dominio (Stage 0, `domain-scaffolder`) queda fuera del mapa: no es un
+  stage TDD. `tmux-pipeline.sh` y `herdr-pipeline.sh` ya no rechazan `--models`
+  en el enrutamiento automatico de un unico issue (antes solo lo aceptaban via
+  `--tooling`): ahora lo reenvian tambien cuando el label del issue resuelve a
+  `tdd-pipeline.sh`, y dejan constancia del mapa aplicado en `events.log` al
+  arrancar. `commands/implement.md` documenta el flag con un ejemplo y aclara
+  que gobierna solo los stages que pasan por `run_agent()` mas los dos
+  sub-stages de remediacion del coverage gate.
+- El pipeline `tdd-pipeline.sh` (lado publicado) acepta el flag `--variant
+  <label>` (segunda pieza del mecanismo de experimentos por modelo, junto a
+  `--models` del issue #712), reusando `validate_variant_label` de
+  `_pipeline-common.sh` (issue #710): corre el MISMO issue N veces en
+  paralelo, cada corrida en su propio worktree/rama/logs/status con el
+  sufijo `-<label>` (slug `[a-z0-9-]`, hasta 40 caracteres, validado ANTES de
+  crear el worktree). En modo variante el pipeline suprime los cuatro
+  efectos externos del TDD (mas que tooling-pipeline.sh): no hace push, no
+  abre PR, no agrega el label `bloqueado` ni comenta en el PR ante tests
+  bloqueados, y no comenta en el issue -- el coverage gate y los stages de
+  patch corren normal (el modo solo suprime efectos externos, no etapas). La
+  rama queda local, y el resumen final explica como promoverla a mano (push +
+  `gh pr create`) o relanzando el pipeline sin `--variant` si esa variante
+  gana la comparacion. Como en modo variante no hay PR donde publicarlos, los
+  dos artefactos que el TDD normalmente deja ahi se preservan de otra forma:
+  el reporte de tests bloqueados se copia a
+  `.claude/pipeline/blockage-report-tdd-<issue>-<label>.md` del repo principal
+  antes de que el cleanup borre el worktree, y el resumen final reporta los
+  gaps de cobertura (el numero que decide cual variante gana) en vez de la
+  tabla completa. Sin el flag, el comportamiento es byte a byte el
+  actual. `tmux-pipeline.sh` y `herdr-pipeline.sh` ya no rechazan `--variant`
+  en el enrutamiento automatico de un unico issue (antes solo lo aceptaban
+  via `--tooling`): ahora lo reenvian tambien cuando el label del issue
+  resuelve a `tdd-pipeline.sh`, sufijando ademas el nombre de la sesion tmux
+  (o el titulo del pane en herdr). `commands/implement.md` documenta el modo
+  con un ejemplo de dos variantes paralelas y anota la misma excepcion que
+  `/tooling`: en modo variante, el paso 1.6 tampoco quita el label
+  `bloqueado` del issue antes de lanzar el pipeline.
+
+  Hallazgo anotado sin cambios (`commands/work-status.md`, mismo alcance que
+  el issue #710 en `tooling-pipeline.sh`): con dos variantes del mismo issue
+  corriendo a la vez, el dashboard lista ambas como `TDD #<issue> <titulo>
+  <stage> <tiempo>` -- lineas identicas, indistinguibles entre si porque el
+  panel no muestra el campo `variant` del JSON de status/historial. El
+  drill-down por preguntas ("por que fallo", "tests escritos", etc.) tampoco
+  ajusta sus patrones de nombre de log documentados
+  (`...-issue-{N}.log`/`.stream.jsonl`) al sufijo `-{label}` real de los
+  archivos en modo variante, asi que apuntaria al log equivocado o a uno
+  inexistente. No se amplia el alcance de este issue para resolverlo.
+
+### Changed
+
+- Se cierra el gap de `mt_version` en la doctrina read-side: `skills/projections/read-apis.md` fija la receta canonica `Schema.For<TView>().UseNumericRevisions(true)` como condicion hermana de tenancy (citando la doc oficial de Marten para la premisa del default), y `skills/projections/config-test.md` fija el par de config-tests espejo (write-side <-> read-side) que la guarda siempre-activa en cada `dotnet test`. MEF-ADR-0034 seccion 6 registra `mt_version` como segunda instancia del par de compatibilidad 2, y `agents/reviewer.md` gana la fila y el mandato de correccion correspondientes en su tabla de verificacion. La premisa y los tres oraculos del par espejo quedan anclados a medicion propia sobre Marten `9.12.0` (referencia [25] del ADR: `Revision.Type` vale `bigint` en los tres escenarios y por si solo no discrimina; `Revision.Enabled`/`Version.Enabled` si), y `skills/projections/SKILL.md` nombra la condicion y el par espejo en su nivel 2 para que se descubran sin abrir los recursos de nivel 3.
+
+### Fixed
+
+- El template `ComposicionServicios{PascalCase}` de `domain-scaffolder` deshabilita
+  `EnableTraceBasedLogsSampler` al invocar `UseAzureMonitorExporter(...)` (MEF-ADR-0038 seccion 9),
+  para que un `TELEMETRY_SAMPLING_RATIO` fraccionario del write-side ya no descarte en silencio los
+  `LogError` emitidos dentro de spans no muestreados y degrade la alerta `exception_spike`. Suma su
+  propio guardrail en `ComposicionContenedorTests` (MEF-ADR-0029). El chequeo de observabilidad del
+  `reviewer` (punto 3, write-side) exige ese flip y ese guardrail con el mismo criterio que ya
+  aplicaba al seam read-side desde #680.
+- `tmux-pipeline.sh --parallel` rechaza (mensaje explicito, antes de crear la sesion tmux) un lote con dos o mas issues `tipo:projection`: el modo pane no tiene scheduler que los serialice, y todos comparten los archivos del worker de proyecciones del BC (MEF-ADR-0034). El help del script y la doctrina de `/parallel` ya no prometen una serializacion que ese camino nunca implemento.
+
 ## [0.27.0] - 2026-08-26
 
 ### Added
@@ -1336,7 +1508,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.28.0...HEAD
+[0.28.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.24.0...v0.25.0
