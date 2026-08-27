@@ -11,6 +11,8 @@ Reproduces el patron que **Cosmos.ControlPlane** (consumidor real del marco) ya 
 
 Tu salida son dos modulos Terraform reusables (`infra/modules/api-management/`, `infra/modules/apim-function-api/`) y su wiring aditivo en el entorno del consumidor. No generas ningun skill ni tocas `harness.config.json` -- esa capa de UX (deteccion, registro, invocacion interactiva) es del futuro skill `/install-apim` (issue #340), que te invoca a vos con los parametros ya resueltos.
 
+El nombre de la instancia APIM que instancias (Paso 3) sigue el patron CAF de **MEF-ADR-0045** (estandar de nombramiento de recursos Azure): `apim-{app}-{env}-{region}-{seq}`, compuesto por `local.prefix` (ya definido en el `variables.tf` que genera `infra-base-scaffolder`, alineado a este mismo ADR). Sin sufijo `random_string` -- la unicidad global la da esa composicion, con el fallback de incrementar `resourceSequence` ante una colision real. Solo aplica a una instancia que se crea de cero: una ya desplegada con el nombre previo no se renombra (seccion 3 del ADR).
+
 ## Guard defensivo: cwd != Mefisto
 
 Eres un agente del **lado publicado** (MEF-ADR-0019): operas **solo** sobre el repo consumidor, nunca sobre Mefisto. Mefisto no tiene `infra/`. Antes de cualquier accion:
@@ -113,7 +115,7 @@ Si falta, crea `infra/modules/api-management/main.tf`:
 # (B6), asi que ninguna nota va dentro de xml_content.
 
 variable "name" {
-  description = "Nombre de la instancia APIM, YA con sufijo de unicidad global resuelto por el caller (B9: '<name>.azure-api.net' es unico en TODO Azure -- mismo patron que postgresql/service-bus/key-vault en infra-base-scaffolder)"
+  description = "Nombre de la instancia APIM, YA compuesto por el caller con el patron CAF {app}-{env}-{region}-{seq} (MEF-ADR-0045, B9: '<name>.azure-api.net' es unico en TODO Azure -- mismo patron que postgresql/service-bus/key-vault en infra-base-scaffolder, sin sufijo random)"
   type        = string
 }
 
@@ -520,6 +522,8 @@ output "backend_name" {
 test -f "infra/environments/${ENV}/apim.tf" && echo "EXISTE (omitir -- CA-6, no re-crea la instancia)" || echo "FALTA (crear)"
 ```
 
+Si `apim.tf` **ya existe** -- incluido el caso de una instancia provisionada antes del issue #731, con el nombre viejo (`apim-{prefix}-{sufijo random}`) -- este chequeo es toda la accion: se omite entero, sin tocar el `name` ya aplicado (MEF-ADR-0045 seccion 3, "solo greenfield" -- renombrar una instancia APIM ya desplegada es destroy+recreate). Repórtalo como observacion informativa en el Paso 7 ("la instancia de este entorno quedo con el nombre previo al estandar; alinearla exigiria recrearla").
+
 Si falta, crea `infra/environments/<env>/apim.tf` -- este archivo se genera **una sola vez** por entorno; agregar dominios despues (Paso 4) nunca lo modifica:
 
 ```hcl
@@ -537,6 +541,12 @@ Si falta, crea `infra/environments/<env>/apim.tf` -- este archivo se genera **un
 # variables nuevas -- ver agents/apim-gateway-scaffolder.md Paso 3b para su wiring en
 # infra-cd.yml (TF_VAR_workos_client_id / TF_VAR_cors_allowed_origins, ambas GitHub "variables"
 # no sensibles: workos_client_id es un identificador publico, no un secreto, MEF-ADR-0032 seccion 6).
+#
+# El nombre de la instancia APIM sigue el patron CAF de MEF-ADR-0045 (issue #731):
+# apim-{app}-{env}-{region}-{seq} via local.prefix, sin sufijo random_string. Solo greenfield --
+# si este archivo ya existe con el nombre previo (con sufijo random), CA-6 ya lo protege: este
+# paso lo omite entero y nunca lo regenera (MEF-ADR-0045 seccion 3, ningun recurso desplegado
+# se renombra).
 
 variable "workos_client_id" {
   description = "Client ID del proyecto WorkOS AuthKit de LOGIN (MEF-ADR-0032 seccion 6 -- NO el API key del proyecto de negocio, que vive en la Function App consumidora). Publico, no secreto."
@@ -560,19 +570,18 @@ variable "apim_claim_tenant_id" {
   default     = "tenant_id"
 }
 
-# B9: '<name>.azure-api.net' es unico en TODO Azure -- sufijo random_string, mismo patron que
-# postgresql/service-bus/key-vault (infra-base-scaffolder.md Paso 2.3). Sin keepers: se
-# persiste en el state en el primer apply y queda estable de por vida (idempotente por
-# diseno); el sufijo aplica solo a la provision inicial de ESTE gateway.
-resource "random_string" "apim_suffix" {
-  length  = 6
-  special = false
-  upper   = false
-}
-
+# B9: '<name>.azure-api.net' es unico en TODO Azure -- MEF-ADR-0045 seccion 2 (issue #731): sin
+# sufijo random, la unicidad la da la composicion {app}-{env}-{region}-{seq} de local.prefix
+# (infra-base-scaffolder.md Paso 2.2/2.3, mismo patron ya aplicado a postgresql/service-bus/
+# key-vault). Nombre predecible antes de aplicar; ante una colision real en Azure el fallback
+# documentado es incrementar resourceSequence en harness.config.json y volver a invocar este
+# agente -- nunca reintroducir un random_string (MEF-ADR-0045 seccion 2). Retrocompatible: si
+# el consumidor no declaro azureRegionShort/resourceSequence, local.prefix no lleva {region}-{seq}
+# y el nombre resultante es el mismo que emitia este agente antes del issue #731, menos el
+# sufijo random (que desaparece siempre, con o sin {region} declarado).
 module "api_management" {
   source              = "../../modules/api-management"
-  name                = "apim-${local.prefix}-${random_string.apim_suffix.result}"
+  name                = "apim-${local.prefix}"
   resource_group_name = module.resource_group.name
   location            = module.resource_group.location
   publisher_name      = var.project
@@ -710,7 +719,7 @@ Imprime un resumen claro:
   </allowed-methods>
   ```
   Si el chequeo del Paso 1 confirmo que `QUERY` ya estaba, dilo explicito ("nada pendiente") en vez de omitir la linea.
-- **`apim.tf`**: creado (primera instalacion del gateway en este entorno) u omitido (ya existia -- CA-6).
+- **`apim.tf`**: creado (primera instalacion del gateway en este entorno, con nombre `apim-{app}-{env}-{region}-{seq}` segun MEF-ADR-0045) u omitido (ya existia -- CA-6; si el nombre existente es previo al estandar, aclaralo como observacion informativa, nunca lo renombres).
 - **Por dominio**: `apim-dominio-{kebab}.tf` creado vs omitido, por cada dominio de la lista de entrada; cualquier dominio que fallo el guard del Paso 0.2 (no scaffoldeado todavia).
 - **Wiring de CI** (Paso 3b): si `infra-cd.yml` gano las dos lineas `TF_VAR_workos_client_id`/`TF_VAR_cors_allowed_origins`, o si ya las tenia.
 - **Resultado de `terraform validate`**.
@@ -740,3 +749,4 @@ Imprime un resumen claro:
 13. **NUNCA** sobrescribas `infra-cd.yml` completo (Paso 3b): solo insertale, de forma idempotente y guardada por `grep`, las dos lineas `TF_VAR_workos_client_id`/`TF_VAR_cors_allowed_origins` si faltan.
 14. **NO** termines sin que `terraform validate` pase (salvo que `terraform` no este instalado, en cuyo caso lo dejas como pendiente manual explicito).
 15. **NUNCA** trabajes contra `main` directo; crea una rama o reusa la del pipeline que te invoco.
+16. **NUNCA** reintroduzcas un `random_string` para nombrar la instancia APIM (MEF-ADR-0045 seccion 2, issue #731): la unicidad global la da la composicion `apim-{app}-{env}-{region}-{seq}` de `local.prefix`, predecible antes de aplicar. Ante una colision real en Azure, el fallback es incrementar `resourceSequence` en `harness.config.json` y volver a invocar este agente. **NUNCA** renombres una instancia APIM ya desplegada para alinearla al patron -- MEF-ADR-0045 seccion 3, "solo greenfield" (ya cubierto por la regla 2, CA-6).
