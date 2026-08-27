@@ -451,12 +451,25 @@ cmd_tooling() {
     # pathname expansion podria alterar. Como argumento propio llega intacto a
     # build_pane_runner_cmdline, que lo quotea con printf %q hacia el pane.
     local models="${3:-}"
-    if [ -n "$models" ]; then
+    # variant: label crudo de --variant (issue #710), mismo criterio que
+    # 'models' -- argumento propio, no concatenado a extra_args. Ademas
+    # distingue el titulo del pane cuando hay variante (dos corridas del mismo
+    # issue en panes separados, cada una identificable en la barra lateral).
+    local variant="${4:-}"
+    local title="tooling #$issue"
+    [ -n "$variant" ] && title="tooling #$issue ($variant)"
+    if [ -n "$models" ] && [ -n "$variant" ]; then
         # shellcheck disable=SC2086
-        dispatch_to_pane "tooling #$issue" "$issue" "$SCRIPT_DIR/tooling-pipeline.sh" "$issue" $extra_args --models "$models"
+        dispatch_to_pane "$title" "$issue" "$SCRIPT_DIR/tooling-pipeline.sh" "$issue" $extra_args --models "$models" --variant "$variant"
+    elif [ -n "$models" ]; then
+        # shellcheck disable=SC2086
+        dispatch_to_pane "$title" "$issue" "$SCRIPT_DIR/tooling-pipeline.sh" "$issue" $extra_args --models "$models"
+    elif [ -n "$variant" ]; then
+        # shellcheck disable=SC2086
+        dispatch_to_pane "$title" "$issue" "$SCRIPT_DIR/tooling-pipeline.sh" "$issue" $extra_args --variant "$variant"
     else
         # shellcheck disable=SC2086
-        dispatch_to_pane "tooling #$issue" "$issue" "$SCRIPT_DIR/tooling-pipeline.sh" "$issue" $extra_args
+        dispatch_to_pane "$title" "$issue" "$SCRIPT_DIR/tooling-pipeline.sh" "$issue" $extra_args
     fi
 }
 
@@ -654,6 +667,7 @@ ${BOLD}Uso (misma superficie que tmux-pipeline.sh):${NC}
   herdr-pipeline.sh --tooling 42                         Issue de tooling
   herdr-pipeline.sh --tooling 42 --models 'reviewer=opus'  Modelo por stage (experimentos)
   herdr-pipeline.sh 42 --models 'reviewer=opus,test-writer=sonnet'  Idem, enrutando por label a tdd-pipeline.sh
+  herdr-pipeline.sh --tooling 42 --variant experimento-a Corrida paralela del mismo issue (sin PR, rama local)
   herdr-pipeline.sh --infra 42                           Issue de infraestructura (IaC)
   herdr-pipeline.sh --scaffold 42 --domain nombre        Scaffold de dominio
   herdr-pipeline.sh --batch 42 43 44                     Secuencial
@@ -703,6 +717,7 @@ main() {
     local pipeline_override=""
     local from_stage_extra=""
     local models_spec=""
+    local variant_spec=""
     local filtered_args=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -734,6 +749,15 @@ main() {
                 models_spec="$2"
                 shift 2
                 ;;
+            --variant)
+                # Mismo criterio que --models arriba: sin este caso, --variant
+                # caeria en filtered_args y el dispatch de --tooling (que solo
+                # reenvia "$1" + los extras conocidos) lo descartaria EN
+                # SILENCIO (issue #710).
+                [ $# -lt 2 ] && abort "Falta el valor de --variant"
+                variant_spec="$2"
+                shift 2
+                ;;
             --if-exists)
                 [ $# -lt 2 ] && abort "Falta el valor de --if-exists"
                 warn "--if-exists es de las sesiones tmux y no aplica en herdr (una corrida concurrente abre un pane adicional); se ignora."
@@ -763,6 +787,7 @@ main() {
             [ $# -eq 0 ] && abort "Debes especificar al menos un issue. Uso: --parallel 42 43 44"
             [ -n "$from_stage_extra" ] && abort "--from-stage no es valido con --parallel (seria ambiguo sobre varios issues). Usalo con un unico issue."
             [ -n "$models_spec" ] && abort "--models no es valido con --parallel (seria ambiguo sobre varios issues). Usalo con un unico issue: herdr-pipeline.sh --tooling <issue> --models 'agente=modelo'"
+            [ -n "$variant_spec" ] && abort "--variant no es valido con --parallel (seria ambiguo sobre varios issues). Usalo con un unico issue: herdr-pipeline.sh --tooling <issue> --variant <label>"
             require_herdr_context
             if [ -n "$pipeline_override" ]; then
                 cmd_parallel --pipeline "$pipeline_override" "$@"
@@ -774,11 +799,12 @@ main() {
             shift
             require_herdr_context
             [ $# -eq 0 ] && abort "Debes especificar un issue. Uso: --tooling 42"
-            cmd_tooling "$1" "$from_stage_extra" "$models_spec"
+            cmd_tooling "$1" "$from_stage_extra" "$models_spec" "$variant_spec"
             ;;
         --infra)
             shift
             [ -n "$models_spec" ] && abort "--models todavia no es valido con --infra (iac-pipeline.sh no implementa el flag). Usalo con --tooling: herdr-pipeline.sh --tooling <issue> --models 'agente=modelo'"
+            [ -n "$variant_spec" ] && abort "--variant todavia no es valido con --infra (iac-pipeline.sh no implementa el flag). Usalo con --tooling: herdr-pipeline.sh --tooling <issue> --variant <label>"
             require_herdr_context
             [ $# -eq 0 ] && abort "Debes especificar un issue. Uso: --infra 42"
             cmd_infra "$1" "$from_stage_extra"
@@ -787,6 +813,7 @@ main() {
             shift
             [ -n "$from_stage_extra" ] && abort "--from-stage no es valido con --scaffold (scaffold-pipeline.sh no tiene stages retomables)."
             [ -n "$models_spec" ] && abort "--models no es valido con --scaffold (scaffold-pipeline.sh no implementa el flag)."
+            [ -n "$variant_spec" ] && abort "--variant no es valido con --scaffold (scaffold-pipeline.sh no implementa el flag)."
             require_herdr_context
             cmd_scaffold "$@"
             ;;
@@ -795,6 +822,7 @@ main() {
             [ $# -eq 0 ] && abort "Debes especificar al menos un issue. Uso: --batch 42 43 44"
             [ -n "$from_stage_extra" ] && abort "--from-stage no es valido con --batch (seria ambiguo sobre varios issues). Usalo con un unico issue."
             [ -n "$models_spec" ] && abort "--models no es valido con --batch (seria ambiguo sobre varios issues). Usalo con un unico issue: herdr-pipeline.sh --tooling <issue> --models 'agente=modelo'"
+            [ -n "$variant_spec" ] && abort "--variant no es valido con --batch (seria ambiguo sobre varios issues). Usalo con un unico issue: herdr-pipeline.sh --tooling <issue> --variant <label>"
             require_herdr_context
             if [ -n "$pipeline_override" ]; then
                 cmd_batch --pipeline "$pipeline_override" "$@"
@@ -806,6 +834,7 @@ main() {
             if [ $# -gt 1 ]; then
                 [ -n "$from_stage_extra" ] && abort "--from-stage no es valido con multiples issues (se interpretaria como --parallel). Especifica un unico issue."
                 [ -n "$models_spec" ] && abort "--models no es valido con multiples issues (se interpretaria como --parallel). Usa: herdr-pipeline.sh --tooling <issue> --models 'agente=modelo'"
+                [ -n "$variant_spec" ] && abort "--variant no es valido con multiples issues (se interpretaria como --parallel). Usa: herdr-pipeline.sh --tooling <issue> --variant <label>"
                 warn "Multiples issues sin modo especificado. Usando --parallel."
                 require_herdr_context
                 if [ -n "$pipeline_override" ]; then
@@ -826,6 +855,12 @@ main() {
                         combined_extra="$from_stage_extra"
                     fi
                 fi
+                # --variant (issue #710) solo lo implementa tooling-pipeline.sh
+                # (a diferencia de --models, que ya cubren ambos sub-scripts
+                # desde el #712): el enrutamiento automatico podria resolver a
+                # tdd-pipeline.sh, que no lo soporta. Rechazar en vez de
+                # arriesgar que se trague en silencio ahi.
+                [ -n "$variant_spec" ] && abort "--variant solo es valido con --tooling explicito (tooling-pipeline.sh implementa el flag; el enrutamiento automatico podria resolver a tdd-pipeline.sh, que no). Usa: herdr-pipeline.sh --tooling <issue> --variant <label>"
                 cmd_single "$1" "$combined_extra" "$pipeline_override" "$models_spec"
             fi
             ;;
