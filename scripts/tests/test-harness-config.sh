@@ -48,6 +48,16 @@
 #   PROJ-5: 'projections' no-objeto (ej. "projections": true) NO mata la carga bajo el
 #           'set -euo pipefail' que usan los 9 callers reales, y normaliza a "false".
 #
+# Cubre los tokens de nombramiento de recursos (issue #729, MEF-ADR-0045):
+#   NAM-1: azureRegionShort/resourceSequence ausentes NO abortan (opcionales) y dejan
+#          HARNESS_AZURE_REGION_SHORT="" / HARNESS_RESOURCE_SEQUENCE="001".
+#   NAM-2: ambos declarados se exportan tal cual.
+#   NAM-3: azureRegionShort declarado con resourceSequence ausente -> seq cae al default "001".
+#   NAM-4: resourceSequence vacio ("") -> default "001" (mismo trato que ausente).
+#   NAM-5: la carga sobrevive el 'set -euo pipefail' de los callers reales con los dos tokens
+#          ausentes, y ambas variables quedan exportadas (nunca unset: los consumidores las
+#          leen bajo 'set -u').
+#
 # Uso: scripts/tests/test-harness-config.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
 
@@ -309,6 +319,60 @@ run_load_strict() {
         source "$REPO_ROOT/scripts/_pipeline-common.sh"
         load_harness_config "$cfg" >/dev/null 2>&1
         echo "SOBREVIVE:${HARNESS_PROJECTIONS_ENABLED:-unset}"
+    ) 2>/dev/null
+}
+
+# write_naming_config <config_path> <azureRegionShort|__OMIT__> <resourceSequence|__OMIT__>
+#
+# Config minimo valido mas los tokens de nombramiento (issue #729, MEF-ADR-0045). Los dos
+# valores se pasan como JSON crudo ('"eus2"', '""', ...) o "__OMIT__" para no escribir el campo.
+write_naming_config() {
+    local path="$1" region="$2" seq="$3"
+    local extra=""
+    if [ "$region" != "__OMIT__" ]; then extra="$extra,
+  \"azureRegionShort\": $region"; fi
+    if [ "$seq" != "__OMIT__" ]; then extra="$extra,
+  \"resourceSequence\": $seq"; fi
+    cat > "$path" <<JSON
+{
+  "projectName": "MiControlPlane",
+  "namespacePrefix": "MiControlPlane.Dominio",
+  "solutionFile": "MiControlPlane.slnx",
+  "domainLabels": ["dominio1", "dominio2"],
+  "boundedContext": { "name": "Principal", "domains": ["dominio1"] }$extra
+}
+JSON
+}
+
+# naming_exports <config_path> -> imprime "<region>|<seq>" tras cargar el config
+# (independiente del exit code).
+#
+# Los defaults van con '${VAR-...}' (sin dos puntos) a proposito: el valor legitimo de
+# HARNESS_AZURE_REGION_SHORT cuando el token falta es la cadena VACIA, y '${VAR:-<unset>}'
+# la confundiria con una variable no exportada.
+naming_exports() {
+    local cfg="$1"
+    (
+        set +u
+        source "$REPO_ROOT/scripts/_pipeline-common.sh" 2>/dev/null
+        load_harness_config "$cfg" >/dev/null 2>&1 || true
+        echo "${HARNESS_AZURE_REGION_SHORT-<unset>}|${HARNESS_RESOURCE_SEQUENCE-<unset>}"
+    )
+}
+
+# naming_exports_strict <config_path> -> "SOBREVIVE:<region>|<seq>" solo si load_harness_config
+# llego hasta el final bajo el mismo 'set -euo pipefail' de los callers reales; nada si murio.
+#
+# Las dos variables se leen SIN default: bajo 'set -u', una variable no exportada tambien mata
+# el subshell -- exactamente el fallo que este helper debe detectar (el contrato es que la carga
+# las exporta siempre, tambien cuando los campos faltan).
+naming_exports_strict() {
+    local cfg="$1"
+    (
+        set -euo pipefail
+        source "$REPO_ROOT/scripts/_pipeline-common.sh"
+        load_harness_config "$cfg" >/dev/null 2>&1
+        echo "SOBREVIVE:${HARNESS_AZURE_REGION_SHORT}|${HARNESS_RESOURCE_SEQUENCE}"
     ) 2>/dev/null
 }
 
@@ -710,6 +774,62 @@ if [ "$OUT" = "SOBREVIVE:true" ]; then
     pass "contraprueba: un config valido sobrevive el mismo modo estricto (enabled='true')"
 else
     fail "contraprueba fallida: run_load_strict no sobrevive ni con un config valido (salida: '${OUT:-<vacia>}')"
+fi
+
+echo ""
+echo "[NAM-1] azureRegionShort/resourceSequence ausentes NO abortan y caen a los defaults"
+
+CFG="$TMP_DIR/nam-omit.json"
+write_naming_config "$CFG" "__OMIT__" "__OMIT__"
+RC=0; run_load "$CFG" >/dev/null 2>&1 || RC=$?
+if [ "$RC" -eq 0 ]; then pass "ambos tokens ausentes -> return 0"; else fail "los tokens ausentes NO deberian abortar (rc=$RC)"; fi
+if [ "$(naming_exports "$CFG")" = "|001" ]; then pass "region='' y seq='001' (defaults)"; else fail "exports incorrectos: $(naming_exports "$CFG")"; fi
+
+echo ""
+echo "[NAM-2] ambos tokens declarados se exportan tal cual"
+
+CFG="$TMP_DIR/nam-ambos.json"
+write_naming_config "$CFG" '"eus2"' '"002"'
+RC=0; run_load "$CFG" >/dev/null 2>&1 || RC=$?
+if [ "$RC" -eq 0 ]; then pass "ambos tokens declarados -> return 0"; else fail "no deberia abortar (rc=$RC)"; fi
+if [ "$(naming_exports "$CFG")" = "eus2|002" ]; then pass "region='eus2' y seq='002'"; else fail "exports incorrectos: $(naming_exports "$CFG")"; fi
+
+echo ""
+echo "[NAM-3] resourceSequence ausente cae al default \"001\" con azureRegionShort declarado"
+
+CFG="$TMP_DIR/nam-solo-region.json"
+write_naming_config "$CFG" '"eus2"' "__OMIT__"
+if [ "$(naming_exports "$CFG")" = "eus2|001" ]; then pass "region='eus2' y seq='001'"; else fail "exports incorrectos: $(naming_exports "$CFG")"; fi
+
+echo ""
+echo "[NAM-4] resourceSequence vacio recibe el mismo trato que ausente (default \"001\")"
+
+CFG="$TMP_DIR/nam-seq-vacio.json"
+write_naming_config "$CFG" "__OMIT__" '""'
+if [ "$(naming_exports "$CFG")" = "|001" ]; then pass "seq vacio -> '001'"; else fail "exports incorrectos: $(naming_exports "$CFG")"; fi
+
+echo ""
+echo "[NAM-5] la carga sobrevive 'set -euo pipefail' y exporta ambas variables aun sin los tokens"
+
+# Mismo motivo que PROJ-5: los callers reales corren bajo 'set -euo pipefail', asi que una
+# asignacion desprotegida en este bloque mataria el pipeline entero, y una variable sin exportar
+# mataria al consumidor que la lea bajo 'set -u'.
+CFG="$TMP_DIR/nam-strict-omit.json"
+write_naming_config "$CFG" "__OMIT__" "__OMIT__"
+OUT=$(naming_exports_strict "$CFG")
+if [ "$OUT" = "SOBREVIVE:|001" ]; then
+    pass "sobrevive con los dos tokens ausentes y exporta ambas variables"
+else
+    fail "la carga murio o no exporto las variables sin los tokens (salida: '${OUT:-<vacia: aborto>}')"
+fi
+
+CFG="$TMP_DIR/nam-strict-ok.json"
+write_naming_config "$CFG" '"eus2"' '"003"'
+OUT=$(naming_exports_strict "$CFG")
+if [ "$OUT" = "SOBREVIVE:eus2|003" ]; then
+    pass "contraprueba: con los tokens declarados sobrevive el mismo modo estricto"
+else
+    fail "contraprueba fallida (salida: '${OUT:-<vacia>}')"
 fi
 
 echo ""

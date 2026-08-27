@@ -12,7 +12,7 @@ Mefisto no lo sigue. Evidencia relevada el 2026-08-27 sobre los recursos que `in
 
 - **Resource Groups sin region ni secuencia**: `rg-cosmos-cplane-dev`, `rg-cosmos-cplane-tfstate` (vs. el patron `rg-cplane-dev-eus2-001` que exige la suscripcion).
 - **Sufijos random en vez de secuencia**: el Key Vault sale como `kv-cplane-8iiups` -- ni siquiera lleva `env`, y el sufijo es un `random_string` de Terraform, no una secuencia determinista.
-- **Prefijos inventados**: el namespace de Service Bus interno del BC usa `sbint-`, que no existe en el catalogo de abreviaturas del CAF.
+- **Prefijos inventados**: el namespace de Service Bus interno del BC usa `sbint-`, que no existe en el catalogo de abreviaturas del CAF; el Container Registry (opt-in del worker de proyecciones) usa `acr`, cuando la abreviatura del CAF es `cr`.
 - **Abreviaturas de tipo ausentes**: el Log Analytics workspace sale como `cosmos-cplane-dev-logs` (falta `log-`), Application Insights como `...-ai` (falta `appi-`), el Action Group de costos como `...-cost-alerts` (falta `ag-`).
 
 (`rg-mcperp-dev` tambien rompe el estandar de la suscripcion, pero no es un recurso de Mefisto -- fuera de alcance de este ADR.)
@@ -61,7 +61,7 @@ Tabla de abreviaturas adoptadas -- fuente: CAF, "Abbreviation recommendations fo
 | Container Apps environment | `cae-` | `cae-cplane-dev-eus2-001` |
 | Managed identity | `id-` | `id-cplane-dev-eus2-001` |
 
-**Dos correcciones respecto al borrador del issue #729**: la tabla oficial del CAF [1] usa `pgsql` para "PostgreSQL flexible server" y `sbns` para "Service Bus namespace" -- no `psql`/`sb`. Este ADR adopta las formas oficiales verificadas contra la fuente, no las del borrador del issue (que coinciden, no por casualidad, con lo que el scaffolder actual ya emite hoy de forma no conforme: `psql-`/`sbint-`). La alineacion de `infra-base-scaffolder` (issue dependiente) corrige ambos nombres junto con el resto de la superficie listada en "Consecuencias".
+**Dos correcciones respecto al borrador del issue #729**: la tabla oficial del CAF [1] usa `pgsql` para "PostgreSQL flexible server" y `sbns` para "Service Bus namespace" -- no `psql`/`sb`. Este ADR adopta las formas oficiales verificadas contra la fuente, no las del borrador del issue. Insumo para el issue dependiente que alinea `infra-base-scaffolder`: hoy ese agente emite `psql-` (coincide con el borrador, no con el CAF), `sbint-` (no coincide con ninguno de los dos) y `acr` para el Container Registry (el CAF dice `cr`); la alineacion corrige las tres formas junto con el resto de la superficie listada en "Consecuencias".
 
 ### 2. Unicidad global sin sufijos random
 
@@ -91,7 +91,7 @@ Key Vault sigue siendo, como ya documenta `agents/infra-base-scaffolder.md`, el 
 
 **`azureRegionShort`** (nuevo, opcional): la abreviatura de region que el patron usa como `{region}`. El CAF no publica una tabla oficial de abreviaturas de region -- a diferencia de la de tipos de recurso [1], "Define your naming convention" [5] solo recomienda incluir la region como componente del nombre, sin fijar su forma corta. Por eso este token es un **string libre que el consumidor declara** (ej. `"eus2"` para East US 2), igual a la convencion ya vigente en la suscripcion Cosmos, en vez de derivarse por lookup de `azureLocation` (ver "Alt 2" abajo).
 
-**Ausente**: retrocompatible -- los scaffolders conservan el comportamiento actual (sin `{region}` en el nombre) y lo reportan. Mismo patron ya establecido por `tenancy` (MEF-ADR-0028) y `projections` (MEF-ADR-0034): un campo opcional ausente nunca aborta, y `/onboard` lo reporta de forma informativa, nunca como `FALTA`.
+**Ausente**: retrocompatible -- los scaffolders conservan el comportamiento actual (sin `{region}` en el nombre). Mismo patron ya establecido por `tenancy` (MEF-ADR-0028) y `projections` (MEF-ADR-0034): un campo opcional ausente nunca aborta la carga del config. Cuando `/onboard` incorpore el reporte de estos dos tokens -- todavia no lo hace, queda para el issue dependiente que alinea los scaffolders --, debe tratarlos de forma **informativa**: `OK` si estan declarados, `NO VERIFICADO` si faltan, nunca `FALTA`, igual que las secciones de `tenancy.strategy` y `projections.enabled`.
 
 **`resourceSequence`** (nuevo, opcional): la secuencia `{seq}`, un string zero-padded (ej. `"001"`). **Ausente**: default `"001"`.
 
@@ -146,7 +146,8 @@ Renombrar `rg-cosmos-cplane-dev`, `kv-cplane-8iiups` y el resto de la superficie
 
 - **Heterogeneidad temporal**: hasta que cierren los issues de alineacion (`infra-base-scaffolder`, `domain-scaffolder`, `apim-gateway-scaffolder`, `scripts/bootstrap-backend.sh`, todos bloqueados por este ADR), el marco sigue generando nombres no conformes -- este ADR fija el estandar, no lo aplica todavia.
 - **Consumidores sin `azureRegionShort` declarado siguen sin `{region}`** en los nombres que generen mientras tanto, hasta que lo agreguen a su config.
-- **Divergencia deliberada del borrador del issue en dos abreviaturas** (`pgsql`/`sbns` en vez de `psql`/`sb`, seccion 1): correcta contra la fuente oficial, pero exige que la alineacion de `infra-base-scaffolder` corrija tambien las formas que el scaffolder actual ya emite (`psql-`, `sbint-`), no solo agregar `{env}`/`{region}`/`{seq}`.
+- **Divergencia deliberada del borrador del issue en dos abreviaturas** (`pgsql`/`sbns` en vez de `psql`/`sb`, seccion 1): correcta contra la fuente oficial, pero exige que la alineacion de `infra-base-scaffolder` corrija tambien las formas que el scaffolder actual ya emite (`psql-`, `sbint-`, `acr`), no solo agregar `{env}`/`{region}`/`{seq}`.
+- **El reporte de los dos tokens en `/onboard` queda pendiente** (seccion 5): este ADR fija que debe ser informativo (nunca `FALTA`), pero no lo implementa -- `scripts/onboard-diagnose.sh` no conoce todavia `azureRegionShort`/`resourceSequence`, asi que hasta el issue dependiente el diagnostico simplemente no los menciona.
 - **Recursos ya desplegados quedan permanentemente fuera del estandar** (seccion 3): `rg-cosmos-cplane-dev`/`rg-cosmos-cplane-tfstate` y su contenido no se alinean nunca por este ADR; una futura migracion de suscripcion o un proyecto nuevo greenfield son los unicos caminos donde el estandar aplica de punta a punta.
 
 ## Referencias

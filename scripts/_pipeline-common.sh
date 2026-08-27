@@ -381,13 +381,17 @@ load_harness_config() {
     fi
 
     # azureRegionShort/resourceSequence son opcionales (issue #729, MEF-ADR-0045): componentes
-    # {region}/{seq} del estandar de nombramiento de recursos. Igual que projections.enabled,
-    # la asignacion lleva `|| true` para que un config malformado en este campo puntual no
-    # aborte TODO el pipeline bajo `set -euo pipefail` -- ausencia o valor invalido degradan
-    # a los defaults retrocompatibles ("" y "001"), nunca a un error de carga.
-    export HARNESS_AZURE_REGION_SHORT=$(jq -r '.azureRegionShort // ""' "$config" 2>/dev/null) || true
-    local seq_raw
+    # {region}/{seq} del estandar de nombramiento de recursos. Mismo patron exacto que
+    # projections.enabled -- declarar la local aparte y asignar con `|| true` -- para que un
+    # config malformado en estos campos no aborte TODO el pipeline bajo `set -euo pipefail`.
+    # Un `export VAR=$(...)` de una sola linea NO sirve como proteccion: el builtin enmascara
+    # el exit code de la sustitucion (SC2155), asi que el `|| true` de esa forma es codigo
+    # muerto. Ausencia o valor invalido degradan a los defaults retrocompatibles ("" y "001"),
+    # nunca a un error de carga.
+    local region_raw seq_raw
+    region_raw=$(jq -r '.azureRegionShort // ""' "$config" 2>/dev/null) || true
     seq_raw=$(jq -r '.resourceSequence // ""' "$config" 2>/dev/null) || true
+    export HARNESS_AZURE_REGION_SHORT="${region_raw:-}"
     export HARNESS_RESOURCE_SEQUENCE="${seq_raw:-001}"
 }
 
