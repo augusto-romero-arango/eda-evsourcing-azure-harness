@@ -8,6 +8,7 @@
 #   ./scripts/tdd-pipeline.sh 42 --from-stage 2   # Retomar desde Stage 2
 #   ./scripts/tdd-pipeline.sh 42 --from-stage 3   # Retomar desde Stage 3
 #   ./scripts/tdd-pipeline.sh 42 --from-stage 4   # Retomar desde Stage 4 (coverage gate)
+#   ./scripts/tdd-pipeline.sh 42 --models 'reviewer=opus,test-writer=sonnet'  # Modelo por stage (experimentos)
 #
 # Ciclo completo: Issue → Worktree → Test Writer → Implementer → Reviewer → Sync main → Coverage Gate → PR → Cleanup
 
@@ -233,9 +234,10 @@ INPUT_FILE=""
 FROM_STAGE=1        # Por defecto, empezar desde Stage 1
 STATUS_FILENAME=""  # Se asigna despues del parseo (necesita ISSUE_NUM); override con --status-file
 SCAFFOLD_DOMAIN=""  # Nombre del dominio a scaffoldear antes de Stage 1 (kebab-case)
+MODELS_SPEC=""  # --models 'agente=modelo[,agente=modelo...]' (issue #712, reusa el parser de #708)
 
 if [ $# -eq 0 ]; then
-    echo "Uso: $0 [--issue NUM | --file PATH | NUM] [--from-stage N] [--status-file NOMBRE] [--scaffold-domain KEBAB]"
+    echo "Uso: $0 [--issue NUM | --file PATH | NUM] [--from-stage N] [--status-file NOMBRE] [--scaffold-domain KEBAB] [--models 'agente=modelo[,agente=modelo...]']"
     exit 1
 fi
 
@@ -266,6 +268,11 @@ while [[ $# -gt 0 ]]; do
         --scaffold-domain)
             [ $# -lt 2 ] && abort "Falta el nombre del dominio para --scaffold-domain"
             SCAFFOLD_DOMAIN="$2"
+            shift 2
+            ;;
+        --models)
+            [ $# -lt 2 ] && abort "Falta el valor de --models"
+            MODELS_SPEC="$2"
             shift 2
             ;;
         [0-9]*)
@@ -316,6 +323,17 @@ EVENTS_LOG_ABS="$PIPELINE_DIR_ABS/events.log"
 
 # Separador de sesión en events.log
 echo "─── SESSION $TIMESTAMP issue:${ISSUE_NUM:-file} from-stage:$FROM_STAGE ───" >> "$EVENTS_LOG_ABS"
+
+# ─── Resolver --models (issue #712, parser de #708) ─────────────────────────
+# Se valida ANTES de crear el worktree (CA-1): un --models malformado debe
+# abortar temprano, no a mitad de Stage 1 con un worktree ya en disco.
+parse_stage_models "$MODELS_SPEC" \
+    || abort "--models mal formado: ${PIPELINE_STAGE_MODELS_ERROR:-formato invalido}"
+if [ -n "$PIPELINE_STAGE_MODELS" ]; then
+    STAGE_MODELS_LOG="$(format_stage_models_for_log)"
+    log "Modelos por stage (--models): $STAGE_MODELS_LOG"
+    echo "[$(date +%H:%M:%S)] MODELS: $STAGE_MODELS_LOG" >> "$EVENTS_LOG_ABS"
+fi
 
 # ─── Captura stream-json de las invocaciones claude -p (issue #645) ─────────
 # jq ya es dependencia de facto del lado publicado (harness.config.json se
@@ -565,6 +583,10 @@ collect_summary() {
 }
 
 # ─── Función auxiliar para invocar agentes ───────────────────────────────────
+# $MODEL_ARGS se expande SIN comillas a proposito: vacio debe desaparecer del argv
+# (sin --model manda el frontmatter del agente), y un array vacio revienta con
+# "unbound variable" bajo `set -u` en el bash 3.2 de macOS. De ahi el disable.
+# shellcheck disable=SC2086
 run_agent() {
     local stage="$1"
     local agent="$2"
@@ -584,18 +606,32 @@ run_agent() {
     update_status "$stage-$agent" "running"
     log "Invocando $agent..."
 
+    # Modelo por stage (issue #712): sin --models, el agente NO recibe --model
+    # y manda el frontmatter `model:` del propio agente -- requisito invariante
+    # del issue (byte a byte el comportamiento previo al flag). resolve_stage_model
+    # (helper de #708) solo devuelve un valor no vacio si '$agent' tiene match
+    # EXACTO en el mapa de --models; MODEL_ARGS queda "" (una palabra vacia que
+    # el word-splitting sin comillas de abajo hace desaparecer del argv, sin el
+    # riesgo de "unbound variable" de un array vacio bajo `set -u` en bash 3.2).
+    local AGENT_MODEL_OVERRIDE MODEL_ARGS=""
+    AGENT_MODEL_OVERRIDE="$(resolve_stage_model "$agent" "")"
+    if [ -n "$AGENT_MODEL_OVERRIDE" ]; then
+        MODEL_ARGS="--model $AGENT_MODEL_OVERRIDE"
+        echo "[$(date +%H:%M:%S)] MODELS: stage $stage/$agent -> $AGENT_MODEL_OVERRIDE (override; default: frontmatter del agente)" >> "$EVENTS_LOG_ABS"
+    fi
+
     local AGENT_TIMEOUT_SECONDS=1800  # 30 minutos por agente
     local NONINTERACTIVE_SYSTEM="You are running in non-interactive print mode. There is no human to approve anything. You MUST use Write and Edit tools directly to create and modify files at any path including .claude/. Never output text asking for permissions or confirmations -- doing so causes pipeline failure."
     if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
         (cd "$WORKTREE_PATH" && claude -p "$prompt" \
-            --agent "$agent" \
+            --agent "$agent" $MODEL_ARGS \
             --permission-mode bypassPermissions \
             --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
             --output-format stream-json --verbose \
             >"$stream_file" 2>"$stderr_file") &
     else
         (cd "$WORKTREE_PATH" && claude -p "$prompt" \
-            --agent "$agent" \
+            --agent "$agent" $MODEL_ARGS \
             --permission-mode bypassPermissions \
             --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
             --output-format text \
@@ -658,7 +694,7 @@ run_agent() {
                 CLAUDE_EXIT=0
                 if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
                     (cd "$WORKTREE_PATH" && claude -p "$prompt" \
-                        --agent "$agent" \
+                        --agent "$agent" $MODEL_ARGS \
                         --permission-mode bypassPermissions \
                         --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
                         --output-format stream-json --verbose \
@@ -674,7 +710,7 @@ run_agent() {
                     echo "$metrics_json" > "$PIPELINE_DIR_ABS/metrics/tdd-${TIMESTAMP}-issue-${ISSUE_NUM}-stage-${stage}-${agent}-retry.json" 2>/dev/null || true
                 else
                     (cd "$WORKTREE_PATH" && claude -p "$prompt" \
-                        --agent "$agent" \
+                        --agent "$agent" $MODEL_ARGS \
                         --permission-mode bypassPermissions \
                         --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
                         --output-format text \
@@ -1598,22 +1634,39 @@ IMPORTANTE:
         CG_REMEDIATION_TIMEOUT=1800  # 30 minutos para remediacion
         PATCH_TW_START=$(date +%s)
 
+        # Modelo por stage (issue #712). Este relanzamiento no pasa por run_agent,
+        # pero SI invoca al mismo agente del Stage 1, asi que resuelve por cadena:
+        # primero la clave fina "patch-test-writer" (el stage key que ya usan
+        # build_agents_history_json y las metricas de este bloque), y si no esta
+        # en el mapa cae a la clave del agente realmente invocado ($STAGE1_AGENT).
+        # Sin esa caida, un experimento '--models test-writer=X' correria el Stage 1
+        # con X y la remediacion con el frontmatter: dos modelos para el mismo rol
+        # dentro de la misma corrida, que es justo lo que el A/B quiere medir.
+        PATCH_TW_MODEL_OVERRIDE="$(resolve_stage_model "patch-test-writer" "$(resolve_stage_model "$STAGE1_AGENT" "")")"
+        PATCH_TW_MODEL_ARGS=""
+        if [ -n "$PATCH_TW_MODEL_OVERRIDE" ]; then
+            PATCH_TW_MODEL_ARGS="--model $PATCH_TW_MODEL_OVERRIDE"
+            echo "[$(date +%H:%M:%S)] MODELS: stage 4b/patch-test-writer ($STAGE1_AGENT) -> $PATCH_TW_MODEL_OVERRIDE (override; default: frontmatter del agente)" >> "$EVENTS_LOG_ABS"
+        fi
+
         log "Relanzando $STAGE1_AGENT para remediacion..."
         LOG_CG_TW="$LOG_DIR_ABS/stage-4-${STAGE1_AGENT}-patch-${TIMESTAMP}.log"
         STREAM_CG_TW="${LOG_CG_TW%.log}.stream.jsonl"
         STDERR_CG_TW="${LOG_CG_TW%.log}.stderr.log"
         echo "[$(date +%H:%M:%S)] REMEDIATION: relanzando $STAGE1_AGENT" >> "$EVENTS_LOG_ABS"
 
+        # $PATCH_TW_MODEL_ARGS sin comillas por el mismo motivo que $MODEL_ARGS en run_agent().
+        # shellcheck disable=SC2086
         if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
             (cd "$WORKTREE_PATH" && claude -p "$PATCH_TW_PROMPT" \
-                --agent "$STAGE1_AGENT" \
+                --agent "$STAGE1_AGENT" $PATCH_TW_MODEL_ARGS \
                 --permission-mode bypassPermissions \
                 --append-system-prompt "You are running in non-interactive print mode. No human is present. Use Write and Edit tools directly. Never ask for permissions." \
                 --output-format stream-json --verbose \
                 >"$STREAM_CG_TW" 2>"$STDERR_CG_TW") &
         else
             (cd "$WORKTREE_PATH" && claude -p "$PATCH_TW_PROMPT" \
-                --agent "$STAGE1_AGENT" \
+                --agent "$STAGE1_AGENT" $PATCH_TW_MODEL_ARGS \
                 --permission-mode bypassPermissions \
                 --append-system-prompt "You are running in non-interactive print mode. No human is present. Use Write and Edit tools directly. Never ask for permissions." \
                 --output-format text \
@@ -1672,16 +1725,28 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
                 PATCH_IM_START=$(date +%s)
                 echo "[$(date +%H:%M:%S)] REMEDIATION: relanzando $STAGE2_AGENT" >> "$EVENTS_LOG_ABS"
 
+                # Modelo por stage (issue #712): misma cadena que "patch-test-writer"
+                # arriba -- clave fina "patch-implementer", y si no esta en el mapa,
+                # la del agente realmente invocado ($STAGE2_AGENT).
+                PATCH_IM_MODEL_OVERRIDE="$(resolve_stage_model "patch-implementer" "$(resolve_stage_model "$STAGE2_AGENT" "")")"
+                PATCH_IM_MODEL_ARGS=""
+                if [ -n "$PATCH_IM_MODEL_OVERRIDE" ]; then
+                    PATCH_IM_MODEL_ARGS="--model $PATCH_IM_MODEL_OVERRIDE"
+                    echo "[$(date +%H:%M:%S)] MODELS: stage 4c/patch-implementer ($STAGE2_AGENT) -> $PATCH_IM_MODEL_OVERRIDE (override; default: frontmatter del agente)" >> "$EVENTS_LOG_ABS"
+                fi
+
+                # $PATCH_IM_MODEL_ARGS sin comillas por el mismo motivo que arriba.
+                # shellcheck disable=SC2086
                 if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
                     (cd "$WORKTREE_PATH" && claude -p "$PATCH_IM_PROMPT" \
-                        --agent "$STAGE2_AGENT" \
+                        --agent "$STAGE2_AGENT" $PATCH_IM_MODEL_ARGS \
                         --permission-mode bypassPermissions \
                         --append-system-prompt "You are running in non-interactive print mode. No human is present. Use Write and Edit tools directly. Never ask for permissions." \
                         --output-format stream-json --verbose \
                         >"$STREAM_CG_IM" 2>"$STDERR_CG_IM") &
                 else
                     (cd "$WORKTREE_PATH" && claude -p "$PATCH_IM_PROMPT" \
-                        --agent "$STAGE2_AGENT" \
+                        --agent "$STAGE2_AGENT" $PATCH_IM_MODEL_ARGS \
                         --permission-mode bypassPermissions \
                         --append-system-prompt "You are running in non-interactive print mode. No human is present. Use Write and Edit tools directly. Never ask for permissions." \
                         --output-format text \

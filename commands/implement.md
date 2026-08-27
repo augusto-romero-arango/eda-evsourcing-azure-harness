@@ -21,14 +21,22 @@ fi
 
 El numero de issue esta en: $ARGUMENTS
 
-Si `$ARGUMENTS` esta vacio, responde: `Uso: /implement <numero-de-issue>`
+Si `$ARGUMENTS` esta vacio, responde: `Uso: /implement <numero-de-issue> [--models 'agente=modelo[,agente=modelo...]']`
+
+`$ARGUMENTS` puede incluir opcionalmente el flag `--models 'agente=modelo[,agente=modelo...]'` (experimentos A/B de desempeno del harness, issue #712): sobreescribe el modelo de un stage puntual del pipeline lanzado en el paso 4. La clave es el nombre de agente que recibe `run_agent()` (o, en los dos sub-stages de remediacion del coverage gate, el stage key que ya usan sus metricas, aunque no pasen por esa funcion) en el sub-script destino -- que puede ser `tdd-pipeline.sh` o `tooling-pipeline.sh` segun el label `tipo:X` del issue (`/implement` nunca fuerza uno explicitamente):
+- `tdd-pipeline.sh`: `test-writer`/`projection-test-writer` (Stage 1), `implementer`/`projection-implementer` (Stage 2, y la etapa de merge que SIEMPRE usa la clave `implementer`), `smoke-test-writer` (Stage 2b) y `reviewer` (Stage 3). Los dos sub-stages de remediacion de cobertura (Stage 4) tienen clave fina propia -- `patch-test-writer`/`patch-implementer` -- que **cae a la del agente que realmente relanzan** (el del Stage 1 y el del Stage 2) si no aparece en el mapa: por eso `--models test-writer=opus` cubre tambien la remediacion, y la clave fina solo hace falta para darle a la remediacion un modelo distinto del de su stage de origen.
+- `tooling-pipeline.sh`: `writer` (Stage 1 y la etapa de merge, ambos invocados con ese mismo nombre) y `reviewer` (Stage 2).
+
+**Fuera del mapa**: el scaffold de dominio (Stage 0 de `tdd-pipeline.sh`, agente `domain-scaffolder`, disparado por la opcion 1 del paso 3 de abajo) no es un stage TDD y `--models` no lo alcanza -- siempre corre con el modelo de su frontmatter, sin excepcion. Un stage sin entrada en el mapa usa su default de siempre (el frontmatter `model:` del agente en `tdd-pipeline.sh`; sonnet/opus hardcodeado en `tooling-pipeline.sh`) -- **sin el flag, el comportamiento es byte a byte el actual**. Escribe el mapa **sin espacios** alrededor de las comas ni de los `=`: `$ARGUMENTS` se reenvia sin comillas en el paso 4, y un espacio lo partiria en dos argumentos. Ejemplo: `/implement 42 --models reviewer=opus,test-writer=sonnet`.
+
+Extrae `ISSUE_NUM` como el primer token numerico de `$ARGUMENTS` y usalo en todo el resto de este proceso (pasos 1 a 3) en vez de `$ARGUMENTS` completo -- los `gh issue view`/`gh issue edit` de esos pasos no entienden `--models`; sin `--models`, `ISSUE_NUM` es simplemente `$ARGUMENTS` completo. `$ARGUMENTS` completo, con `--models` incluido si vino, se reenvia intacto a `tmux-pipeline.sh` en el paso 4.
 
 ## Proceso
 
 ### 1. Validar el issue
 
 ```bash
-gh issue view $ARGUMENTS --json number,title,state,labels -q '"#\(.number): \(.title) [\(.state)] labels: \([.labels[].name] | join(", "))"'
+gh issue view $ISSUE_NUM --json number,title,state,labels -q '"#\(.number): \(.title) [\(.state)] labels: \([.labels[].name] | join(", "))"'
 ```
 
 Si el issue no existe o esta cerrado (`CLOSED`), informa y detente.
@@ -51,7 +59,7 @@ Aplica la validacion programatica definida en la seccion "Validacion en `/implem
 Extrae labels y body del issue:
 
 ```bash
-gh issue view $ARGUMENTS --json labels,body
+gh issue view $ISSUE_NUM --json labels,body
 ```
 
 Determina el tipo del issue buscando el label `tipo:X`. Luego verifica **todos** los criterios que enumera esa seccion del MEF-ADR-0011 -- son los que esten escritos ahi al momento de correr, nunca una cantidad fija memorizada aqui -- y acumula todos los fallos antes de reportar.
@@ -74,13 +82,13 @@ gh pr view <num> --json state -q '.state'
 - Si **todas** las dependencias estan cerradas (`CLOSED`) o mergeadas (`MERGED`): quita el label y continua:
 
 ```bash
-gh issue edit $ARGUMENTS --remove-label "bloqueado"
+gh issue edit $ISSUE_NUM --remove-label "bloqueado"
 ```
 
 - Si **alguna** dependencia sigue abierta: muestra cuales y **detente**:
 
 ```
-El issue #$ARGUMENTS esta bloqueado. Dependencias abiertas:
+El issue #$ISSUE_NUM esta bloqueado. Dependencias abiertas:
   - #42: [titulo] (OPEN)
   - #55: [titulo] (OPEN)
 
@@ -92,7 +100,7 @@ Resuelve estas dependencias antes de lanzar el pipeline.
 Extrae **todos** los labels `dom:X` del issue — nunca solo el primero: un issue `tipo:projection` puede declarar varios dominios reales cuyo read-side configura (MEF-ADR-0011, razonamiento de `dom:X`), y con mas de un label la respuesta no puede depender del orden en que la API de GitHub los devuelva.
 
 ```bash
-gh issue view $ARGUMENTS --json labels -q '[.labels[].name | select(startswith("dom:")) | sub("^dom:";"")] | join("\n")'
+gh issue view $ISSUE_NUM --json labels -q '[.labels[].name | select(startswith("dom:")) | sub("^dom:";"")] | join("\n")'
 ```
 
 - Si el resultado esta vacio (no hay ningun label `dom:*`): no hay dominios que verificar, salta al paso 4.
@@ -101,7 +109,7 @@ gh issue view $ARGUMENTS --json labels -q '[.labels[].name | select(startswith("
 Para cada dominio, la necesidad de scaffold se deriva del **alcance declarado del issue**, nunca de la sola ausencia del directorio (un issue puede no tocar ese dominio en absoluto). Extrae la seccion de impacto en archivos del body — su titulo varia segun el template del planner (`## Impacto en archivos` en `infra`/`refactor`, `## Impacto esperado en archivos (sugerencia)` en `feature`/`projection`), asi que matchea por el prefijo `## Impacto`, nunca por el titulo exacto:
 
 ```bash
-gh issue view $ARGUMENTS --json body -q '.body' \
+gh issue view $ISSUE_NUM --json body -q '.body' \
   | awk '/^## /{en_impacto = ($0 ~ /^## Impacto/)} en_impacto'
 ```
 

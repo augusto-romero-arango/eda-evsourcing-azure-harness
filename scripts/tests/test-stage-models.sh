@@ -11,17 +11,28 @@
 #                            nada por si misma.
 #   resolve_stage_model    - override por clave exacta, sin match cae al default,
 #                            y sin --models (mapa vacio) siempre el default (CA-2:
-#                            byte a byte el comportamiento previo al flag).
+#                            byte a byte el comportamiento previo al flag), y
+#                            la cadena clave-fina -> agente-relanzado que
+#                            tdd-pipeline.sh usa en los sub-stages de patch
+#                            (issue #712).
 #   format_stage_models_for_log - formato de auditoria (CA-4), vacio sin mapa.
 #   tmux-pipeline.sh        - --tooling reenvia --models intacto al send-keys
-#                            (CA-3); el resto de los modos lo rechazan con
-#                            mensaje explicito en vez de tragarselo en silencio.
+#                            (CA-3); el enrutamiento automatico de un unico
+#                            issue (sin --tooling explicito) tambien lo reenvia
+#                            desde que tdd-pipeline.sh lo implementa (issue
+#                            #712) -- los unicos overrides validos de
+#                            resolve_pipeline() son "tdd"/"tooling", asi que
+#                            ese camino siempre resuelve a un sub-script que
+#                            soporta el flag. El resto de los modos (--infra,
+#                            --scaffold, --batch, --parallel, --attach, y varios
+#                            issues sueltos) lo siguen rechazando con mensaje
+#                            explicito en vez de tragarselo en silencio.
 #   herdr-pipeline.sh       - la otra mitad de CA-3: dentro de un pane herdr,
 #                            tmux-pipeline.sh delega con `exec herdr-pipeline.sh
 #                            "$@"`, asi que el flag tiene que sobrevivir tambien
-#                            ahi -- reenvio al pane run (con el valor intacto,
-#                            sin las comillas que solo sirven al send-keys de
-#                            tmux) y el mismo rechazo explicito por modo.
+#                            ahi -- mismo reenvio (con el valor intacto, sin las
+#                            comillas que solo sirven al send-keys de tmux) y el
+#                            mismo rechazo explicito por modo sin soporte.
 #
 # Uso: scripts/tests/test-stage-models.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -96,6 +107,40 @@ R=$(resolve_stage_model "writer" "sonnet")
 if [ "$R" = "sonnet" ]; then pass "writer sin mapa resuelve al default 'sonnet'"; else fail "deberia resolver al default (obtenido '$R')"; fi
 R=$(resolve_stage_model "merge-writer" "sonnet")
 if [ "$R" = "sonnet" ]; then pass "la etapa de merge (default '*' del case) tambien resuelve al default"; else fail "deberia resolver al default (obtenido '$R')"; fi
+
+echo ""
+echo "[9b] resolve_stage_model: default vacio -- el mecanismo que usa tdd-pipeline.sh (issue #712) para NO agregar --model sin override"
+parse_stage_models "" >/dev/null
+R=$(resolve_stage_model "test-writer" "")
+if [ -z "$R" ]; then pass "sin --models y default vacio, resuelve a cadena vacia (run_agent no agrega --model)"; else fail "deberia resolver a vacio (obtenido '$R')"; fi
+parse_stage_models "test-writer=opus" >/dev/null
+R=$(resolve_stage_model "test-writer" "")
+if [ "$R" = "opus" ]; then pass "con override y default vacio, resuelve al override (run_agent agrega --model opus)"; else fail "deberia resolver a 'opus' (obtenido '$R')"; fi
+R=$(resolve_stage_model "implementer" "")
+if [ -z "$R" ]; then pass "sin match en el mapa y default vacio, resuelve a cadena vacia"; else fail "deberia resolver a vacio (obtenido '$R')"; fi
+
+echo ""
+echo "[9c] cadena de resolucion de los sub-stages de patch (issue #712): clave fina -> agente relanzado -> vacio"
+# tdd-pipeline.sh compone las dos llamadas asi:
+#   resolve_stage_model "patch-test-writer" "$(resolve_stage_model "$STAGE1_AGENT" "")"
+# La clave fina gana si esta; si no, hereda la del agente que el stage relanza
+# (sin esa caida, '--models test-writer=X' correria Stage 1 con X y la
+# remediacion con el frontmatter -- dos modelos para el mismo rol en una corrida).
+parse_stage_models "test-writer=opus" >/dev/null
+R=$(resolve_stage_model "patch-test-writer" "$(resolve_stage_model "test-writer" "")")
+if [ "$R" = "opus" ]; then pass "sin clave fina, el patch hereda el modelo de 'test-writer'"; else fail "deberia heredar 'opus' (obtenido '$R')"; fi
+
+parse_stage_models "test-writer=opus,patch-test-writer=haiku" >/dev/null
+R=$(resolve_stage_model "patch-test-writer" "$(resolve_stage_model "test-writer" "")")
+if [ "$R" = "haiku" ]; then pass "la clave fina 'patch-test-writer' gana sobre la heredada"; else fail "deberia ganar 'haiku' (obtenido '$R')"; fi
+
+parse_stage_models "reviewer=opus" >/dev/null
+R=$(resolve_stage_model "patch-implementer" "$(resolve_stage_model "implementer" "")")
+if [ -z "$R" ]; then pass "sin ninguna de las dos claves, la cadena resuelve a vacio (no se agrega --model)"; else fail "deberia resolver a vacio (obtenido '$R')"; fi
+
+parse_stage_models "projection-test-writer=sonnet" >/dev/null
+R=$(resolve_stage_model "patch-test-writer" "$(resolve_stage_model "projection-test-writer" "")")
+if [ "$R" = "sonnet" ]; then pass "la herencia sigue al STAGE1_AGENT read-side (projection-test-writer)"; else fail "deberia heredar 'sonnet' (obtenido '$R')"; fi
 
 echo ""
 echo "[10] format_stage_models_for_log: vacio sin mapa, formateado con mapa (CA-4)"
@@ -222,9 +267,24 @@ run_wrapper --attach tooling-pipeline-253 --models "writer=sonnet"
 if [ "$LAST_RC" -eq 1 ]; then pass "--attach + --models aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
 if printf '%s' "$LAST_STDERR" | grep -q "no aplica a --attach"; then pass "mensaje: no aplica a --attach"; else fail "mensaje inesperado: $LAST_STDERR"; fi
 
+echo ""
+echo "[14b] issue suelto (sin --tooling), enrutado por --pipeline, reenvia --models (issue #712)"
+
 run_wrapper 253 --models "writer=sonnet" --pipeline tooling
-if [ "$LAST_RC" -eq 1 ]; then pass "issue suelto (sin --tooling) + --models aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
-if printf '%s' "$LAST_STDERR" | grep -q "solo esta soportado hoy via --tooling"; then pass "mensaje: solo soportado via --tooling"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+if [ "$LAST_RC" -eq 0 ]; then pass "issue suelto + --pipeline tooling + --models corre sin abortar"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
+if grep -qF "tooling-pipeline.sh' 253 --models 'writer=sonnet'" "$TMUX_STUB_LOG"; then
+    pass "send-keys reenvia --models a tooling-pipeline.sh"
+else
+    fail "send-keys no reenvio --models a tooling-pipeline.sh -- log: $(cat "$TMUX_STUB_LOG")"
+fi
+
+run_wrapper 253 --models "test-writer=sonnet,reviewer=opus" --pipeline tdd
+if [ "$LAST_RC" -eq 0 ]; then pass "issue suelto + --pipeline tdd + --models corre sin abortar"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
+if grep -qF "tdd-pipeline.sh' 253 --models 'test-writer=sonnet,reviewer=opus'" "$TMUX_STUB_LOG"; then
+    pass "send-keys reenvia --models a tdd-pipeline.sh"
+else
+    fail "send-keys no reenvio --models a tdd-pipeline.sh -- log: $(cat "$TMUX_STUB_LOG")"
+fi
 
 # --- herdr-pipeline.sh: la otra mitad de CA-3 --------------------------------
 #
@@ -352,9 +412,17 @@ if printf '%s' "$(cat "$HERDR_STUB_LOG")" | grep -q "pane run"; then fail "no de
 run_herdr --batch 253 254 --models "writer=sonnet" --pipeline tooling
 if [ "$LAST_RC" -eq 1 ]; then pass "--batch + --models aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
 
+echo ""
+echo "[18b] herdr: issue suelto (sin --tooling), enrutado por --pipeline, reenvia --models (issue #712)"
 run_herdr 253 --models "writer=sonnet" --pipeline tooling
-if [ "$LAST_RC" -eq 1 ]; then pass "issue suelto (sin --tooling) + --models aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
-if printf '%s' "$LAST_STDERR" | grep -q -- "--tooling"; then pass "mensaje: apunta a --tooling"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+HERDR_CALLS=$(cat "$HERDR_STUB_LOG")
+HERDR_CALLS_UNQ=$(printf '%s' "$HERDR_CALLS" | tr -d '\\')
+if [ "$LAST_RC" -eq 0 ]; then pass "issue suelto + --pipeline tooling + --models corre sin abortar"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
+if printf '%s' "$HERDR_CALLS_UNQ" | grep -qF -- "--models writer=sonnet"; then
+    pass "el pane run lleva --models"
+else
+    fail "el pane run no lleva --models -- log: $HERDR_CALLS"
+fi
 
 echo ""
 echo "----------------------------------------"
