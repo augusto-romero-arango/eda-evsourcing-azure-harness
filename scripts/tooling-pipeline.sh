@@ -6,6 +6,7 @@
 #   ./scripts/tooling-pipeline.sh --issue 42
 #   ./scripts/tooling-pipeline.sh 42 --from-stage 2   # Retomar desde Stage 2
 #   ./scripts/tooling-pipeline.sh 42 --models 'reviewer=opus,writer=sonnet'  # Modelo por stage (experimentos)
+#   ./scripts/tooling-pipeline.sh 42 --variant experimento-a  # Corrida paralela del mismo issue (sin PR, rama local)
 #
 # Ciclo: Issue -> Worktree -> Writer -> Reviewer -> Sync main -> PR -> Cleanup
 #
@@ -130,7 +131,7 @@ abort() {
     fi
     if [ -n "${PIPELINE_DIR_ABS:-}" ]; then
         update_status "$CURRENT_STAGE" "failed"
-        echo "{\"issue\":\"${ISSUE_NUM:-}\",\"title\":\"$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')\",\"pipeline\":\"tooling\",\"harness_version\":${HARNESS_VERSION_JSON:-null},\"started\":\"${TIMESTAMP:-}\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"failed\",\"stage\":\"$CURRENT_STAGE\",\"error\":\"$PIPELINE_ERROR\"}" \
+        echo "{\"issue\":\"${ISSUE_NUM:-}\",\"title\":\"$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')\",\"pipeline\":\"tooling\",\"variant\":${VARIANT_LABEL_JSON:-null},\"harness_version\":${HARNESS_VERSION_JSON:-null},\"started\":\"${TIMESTAMP:-}\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"failed\",\"stage\":\"$CURRENT_STAGE\",\"error\":\"$PIPELINE_ERROR\"}" \
             >> "$PIPELINE_DIR_ABS/pipeline-history.jsonl" 2>/dev/null || true
     fi
     exit 1
@@ -151,6 +152,7 @@ update_status() {
   "issue": "${ISSUE_NUM:-null}",
   "title": "$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')",
   "pipeline": "tooling",
+  "variant": ${VARIANT_LABEL_JSON:-null},
   "started": "$TIMESTAMP",
   "stage": "$stage",
   "state": "$state",
@@ -177,9 +179,10 @@ ISSUE_NUM=""
 FROM_STAGE=1
 STATUS_FILENAME="pipeline-status-tooling.json"  # Nombre del archivo de status (parametrizable para paralelismo)
 MODELS_SPEC=""  # --models 'agente=modelo[,agente=modelo...]' (issue #708)
+VARIANT_LABEL=""  # --variant <label>: corrida paralela del mismo issue, sin PR (issue #710)
 
 if [ $# -eq 0 ]; then
-    echo "Uso: $0 [--issue NUM | NUM] [--from-stage N] [--models 'agente=modelo[,agente=modelo...]']"
+    echo "Uso: $0 [--issue NUM | NUM] [--from-stage N] [--models 'agente=modelo[,agente=modelo...]'] [--variant <label>]"
     exit 1
 fi
 
@@ -206,6 +209,11 @@ while [[ $# -gt 0 ]]; do
             MODELS_SPEC="$2"
             shift 2
             ;;
+        --variant)
+            [ $# -lt 2 ] && abort "Falta el valor de --variant"
+            VARIANT_LABEL="$2"
+            shift 2
+            ;;
         [0-9]*)
             POSITIONAL_ARGS+=("$1")
             shift
@@ -222,9 +230,32 @@ fi
 
 [ -z "$ISSUE_NUM" ] && abort "Falta el numero de issue"
 
+# --- Resolver --variant (issue #710) --------------------------------------
+# Se valida ANTES de crear el worktree (CA-1) y antes de derivar cualquier
+# nombre de archivo de la corrida (CA-2), mismo criterio que --models: un label
+# malformado debe abortar temprano, y el sufijo tiene que estar puesto ya en el
+# primer archivo que se escribe. Mas abajo, en modo variante se suprimen push,
+# creacion de PR y comentario al issue (CA-3).
+VARIANT_LABEL_JSON="null"
+ISSUE_LOG_TAG="$ISSUE_NUM"
+if [ -n "$VARIANT_LABEL" ]; then
+    validate_variant_label "$VARIANT_LABEL" \
+        || abort "--variant mal formado: ${PIPELINE_VARIANT_LABEL_ERROR:-label invalido}"
+    VARIANT_LABEL_JSON="\"$VARIANT_LABEL\""
+    ISSUE_LOG_TAG="${ISSUE_NUM}-${VARIANT_LABEL}"
+    # El log del pipeline tambien lleva el sufijo, no solo los de stage: dos
+    # variantes lanzadas en el MISMO segundo comparten $TIMESTAMP y, sin el
+    # label, escribirian las dos al mismo archivo -- log entrelazado, y el tail
+    # de abort() mostrando lineas de la otra corrida.
+    LOG_FILE="$LOG_DIR/tooling-pipeline-${TIMESTAMP}-${VARIANT_LABEL}.log"
+fi
+
 # Si no se paso --status-file, usar pipeline-status-tooling-{issue}.json para soportar paralelismo
+# (o pipeline-status-tooling-{issue}-{variant}.json en modo --variant, CA-2: dos
+# variantes del mismo issue corriendo a la vez no deben pisarse el status).
 if [ "$STATUS_FILENAME" = "pipeline-status-tooling.json" ]; then
     STATUS_FILENAME="pipeline-status-tooling-${ISSUE_NUM}.json"
+    [ -n "$VARIANT_LABEL" ] && STATUS_FILENAME="pipeline-status-tooling-${ISSUE_NUM}-${VARIANT_LABEL}.json"
 fi
 
 if ! [[ "$FROM_STAGE" =~ ^[1-2]$ ]]; then
@@ -256,6 +287,15 @@ if [ -n "$PIPELINE_STAGE_MODELS" ]; then
     STAGE_MODELS_LOG="$(format_stage_models_for_log)"
     log "Modelos por stage (--models): $STAGE_MODELS_LOG"
     echo "[$(date +%H:%M:%S)] MODELS: $STAGE_MODELS_LOG" >> "$EVENTS_LOG_ABS"
+fi
+
+# --- Anunciar el modo variante (issue #710) -------------------------------
+# El label ya se valido y ya derivo los nombres de archivo arriba, junto al
+# parseo de argumentos; aqui solo se anuncia, que es lo primero que se puede
+# hacer una vez existen el log del pipeline y events.log.
+if [ -n "$VARIANT_LABEL" ]; then
+    log "Modo variante: '$VARIANT_LABEL' -- sin push, sin PR, sin comentario al issue (CA-3); rama queda local"
+    echo "[$(date +%H:%M:%S)] VARIANT: $VARIANT_LABEL" >> "$EVENTS_LOG_ABS"
 fi
 
 # --- Captura stream-json de las invocaciones claude -p (issue #689) ---
@@ -298,6 +338,9 @@ CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
 SLUG=$(echo "$ISSUE_TITLE" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | sed 's/[^a-z0-9-]//g' | tr -s '-' | cut -c1-40 | sed 's/-$//')
 BRANCH_NAME="worktree-issue-${ISSUE_NUM}-${SLUG}"
+# Modo variante (CA-2): worktree y rama llevan el sufijo -<label>, para que N
+# corridas simultaneas del mismo issue coexistan sin colision de paths ni ramas.
+[ -n "$VARIANT_LABEL" ] && BRANCH_NAME="${BRANCH_NAME}-${VARIANT_LABEL}"
 WORKTREE_PATH="${REPO_ROOT}/../${BRANCH_NAME}"
 
 if [ "$FROM_STAGE" -gt 1 ]; then
@@ -358,7 +401,7 @@ run_agent() {
     local stage="$1"
     local agent="$2"
     local prompt="$3"
-    local log_stage="$LOG_DIR_ABS/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_NUM}.log"
+    local log_stage="$LOG_DIR_ABS/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}.log"
     local stream_file="${log_stage%.log}.stream.jsonl"
     local stderr_file="${log_stage%.log}.stderr.log"
     local start_ts
@@ -445,7 +488,7 @@ run_agent() {
             if [ "$has_work" = false ]; then
                 warn "$agent: API error 5xx -- reintentando una vez..."
                 echo "[$(date +%H:%M:%S)] RETRY $agent: API error 5xx" >> "$EVENTS_LOG_ABS"
-                local log_stage_retry="$LOG_DIR_ABS/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_NUM}-retry.log"
+                local log_stage_retry="$LOG_DIR_ABS/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-retry.log"
                 local stream_file_retry="${log_stage_retry%.log}.stream.jsonl"
                 local stderr_file_retry="${log_stage_retry%.log}.stderr.log"
                 CLAUDE_EXIT=0
@@ -486,7 +529,7 @@ run_agent() {
             if [ "$has_work_perm" = false ]; then
                 warn "$agent: bloqueo por permisos detectado -- reintentando una vez..."
                 echo "[$(date +%H:%M:%S)] RETRY $agent: bloqueo por permisos" >> "$EVENTS_LOG_ABS"
-                local log_stage_perm_retry="$LOG_DIR_ABS/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_NUM}-perm-retry.log"
+                local log_stage_perm_retry="$LOG_DIR_ABS/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-perm-retry.log"
                 local stream_file_perm_retry="${log_stage_perm_retry%.log}.stream.jsonl"
                 local stderr_file_perm_retry="${log_stage_perm_retry%.log}.stderr.log"
                 CLAUDE_EXIT=0
@@ -656,7 +699,7 @@ Instrucciones:
     fi
     if [ "$HAS_COMMITS" = false ] && [ "$HAS_UNSTAGED" = false ]; then
         # Detectar si el writer pidio permisos en vez de usar herramientas
-        writer_log="$LOG_DIR_ABS/tooling-stage-1-writer-${TIMESTAMP}-issue-${ISSUE_NUM}.log"
+        writer_log="$LOG_DIR_ABS/tooling-stage-1-writer-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}.log"
         if grep -qiE "necesito.*permiso|aprobar.*permiso|confirma.*escritura|approve.*permission|permiso.*escritura" "$writer_log" 2>/dev/null; then
             warn "Writer pidio permisos en modo no-interactivo -- reintentando con prompt reforzado..."
             echo "[$(date +%H:%M:%S)] RETRY writer: solicitud de permisos detectada en output" >> "$EVENTS_LOG_ABS"
@@ -678,7 +721,7 @@ $STAGE1_PROMPT"
         fi
 
         if [ "$HAS_COMMITS" = false ] && [ "$HAS_UNSTAGED" = false ]; then
-            abort "El writer no genero ningun cambio. Revisa el log: $LOG_DIR_ABS/tooling-stage-1-writer-${TIMESTAMP}-issue-${ISSUE_NUM}.log"
+            abort "El writer no genero ningun cambio. Revisa el log: $LOG_DIR_ABS/tooling-stage-1-writer-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}.log"
         fi
     fi
 
@@ -838,34 +881,40 @@ PROHIBIDO hacer 'git push' o 'gh pr create': eso es responsabilidad exclusiva de
     fi
 fi
 
-# --- Crear PR ---
-header "Creando PR"
-
-log "Haciendo push de la rama..."
-git -C "$WORKTREE_PATH" push -u origin "$BRANCH_NAME" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 \
-    || abort "No se pudo hacer push de la rama $BRANCH_NAME"
-
+# --- Crear PR (en modo variante: NO -- CA-3) ---
 REPO_SLUG_PR="$(git -C "$WORKTREE_PATH" remote get-url origin | sed 's/.*github.com[:/]\(.*\)\.git/\1/')"
 
-log "Verificando si ya existe un PR abierto para la rama..."
-EXISTING_PR_URL=$(find_open_pr_for_branch "$BRANCH_NAME" "$REPO_SLUG_PR")
-
-if [ -n "$EXISTING_PR_URL" ]; then
-    PR_URL="$EXISTING_PR_URL"
-    success "PR existente reutilizado: $PR_URL"
+if [ -n "$VARIANT_LABEL" ]; then
+    header "Modo variante: sin PR"
+    warn "Variante '$VARIANT_LABEL': se omiten push, creacion de PR y comentario al issue (CA-3)."
+    log "La rama '$BRANCH_NAME' queda LOCAL -- no se publica a origin."
+    PR_URL=""
 else
-    log "Creando PR..."
+    header "Creando PR"
 
-    WR_SUMMARY=$(collect_summary "1" "writer")
-    RV_SUMMARY=$(collect_summary "2" "reviewer")
+    log "Haciendo push de la rama..."
+    git -C "$WORKTREE_PATH" push -u origin "$BRANCH_NAME" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 \
+        || abort "No se pudo hacer push de la rama $BRANCH_NAME"
 
-    _fmt_dur() { local s="${1:-0}"; echo "$((s/60))m $((s%60))s"; }
-    WR_DUR_FMT=$(_fmt_dur "${AGENT_WR_DUR:-0}")
-    RV_DUR_FMT=$(_fmt_dur "${AGENT_RV_DUR:-0}")
+    log "Verificando si ya existe un PR abierto para la rama..."
+    EXISTING_PR_URL=$(find_open_pr_for_branch "$BRANCH_NAME" "$REPO_SLUG_PR")
 
-    PR_URL=$(gh pr create \
-        --title "$ISSUE_TITLE" \
-        --body "$(cat <<EOF
+    if [ -n "$EXISTING_PR_URL" ]; then
+        PR_URL="$EXISTING_PR_URL"
+        success "PR existente reutilizado: $PR_URL"
+    else
+        log "Creando PR..."
+
+        WR_SUMMARY=$(collect_summary "1" "writer")
+        RV_SUMMARY=$(collect_summary "2" "reviewer")
+
+        _fmt_dur() { local s="${1:-0}"; echo "$((s/60))m $((s%60))s"; }
+        WR_DUR_FMT=$(_fmt_dur "${AGENT_WR_DUR:-0}")
+        RV_DUR_FMT=$(_fmt_dur "${AGENT_RV_DUR:-0}")
+
+        PR_URL=$(gh pr create \
+            --title "$ISSUE_TITLE" \
+            --body "$(cat <<EOF
 ## Resumen
 
 Pipeline tooling completado:
@@ -895,25 +944,28 @@ $COMMITS_LIST
 Closes #$ISSUE_NUM
 EOF
 )" \
-        --base main \
-        --head "$BRANCH_NAME" \
-        --repo "$REPO_SLUG_PR" \
-        2>>"${LOG_FILE_ABS:-$LOG_FILE}") \
-        || abort "No se pudo crear el PR"
+            --base main \
+            --head "$BRANCH_NAME" \
+            --repo "$REPO_SLUG_PR" \
+            2>>"${LOG_FILE_ABS:-$LOG_FILE}") \
+            || abort "No se pudo crear el PR"
 
-    success "PR creado: $PR_URL"
+        success "PR creado: $PR_URL"
+    fi
+
+    gh issue comment "$ISSUE_NUM" \
+        --body "Pipeline tooling completado. PR: $PR_URL" \
+        --repo "$REPO_SLUG_PR" \
+        >>"$LOG_FILE" 2>&1 || warn "No se pudo comentar en el issue #$ISSUE_NUM"
 fi
 
 PIPELINE_PR="$PR_URL"
 update_status "done" "completed"
 
-gh issue comment "$ISSUE_NUM" \
-    --body "Pipeline tooling completado. PR: $PR_URL" \
-    --repo "$REPO_SLUG_PR" \
-    >>"$LOG_FILE" 2>&1 || warn "No se pudo comentar en el issue #$ISSUE_NUM"
-
 # Historial
-echo "{\"issue\":\"$ISSUE_NUM\",\"title\":\"$(echo "$ISSUE_TITLE" | sed 's/"/\\"/g')\",\"pipeline\":\"tooling\",\"harness_version\":${HARNESS_VERSION_JSON:-null},\"started\":\"$TIMESTAMP\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"completed\",\"agents\":{\"writer\":{\"duration\":${AGENT_WR_DUR:-null}},\"reviewer\":{\"duration\":${AGENT_RV_DUR:-null}}},\"tests\":${PIPELINE_TESTS:-null},\"pr\":\"$PR_URL\"}" \
+PR_JSON="null"
+[ -n "$PR_URL" ] && PR_JSON="\"$PR_URL\""
+echo "{\"issue\":\"$ISSUE_NUM\",\"title\":\"$(echo "$ISSUE_TITLE" | sed 's/"/\\"/g')\",\"pipeline\":\"tooling\",\"variant\":${VARIANT_LABEL_JSON:-null},\"harness_version\":${HARNESS_VERSION_JSON:-null},\"started\":\"$TIMESTAMP\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"completed\",\"agents\":{\"writer\":{\"duration\":${AGENT_WR_DUR:-null}},\"reviewer\":{\"duration\":${AGENT_RV_DUR:-null}}},\"tests\":${PIPELINE_TESTS:-null},\"pr\":$PR_JSON}" \
     >> "$PIPELINE_DIR_ABS/pipeline-history.jsonl"
 
 # Eliminar archivo de estado individual (ya esta en el historial)
@@ -933,11 +985,25 @@ WORKTREE_PATH=""
 success "Worktree eliminado"
 
 echo ""
-echo -e "${CYAN}${BOLD}=== Pipeline tooling completado ===${NC}"
-echo ""
 TOTAL_COMMITS=$(echo "$COMMITS_LIST" | wc -l | tr -d ' ')
-echo -e "  Commits: $TOTAL_COMMITS"
-echo -e "  Rama:    $BRANCH_NAME"
-echo -e "  PR:      $PR_URL"
-echo -e "  Log:     $LOG_FILE"
+if [ -n "$VARIANT_LABEL" ]; then
+    echo -e "${CYAN}${BOLD}=== Pipeline tooling (variante '$VARIANT_LABEL') completado ===${NC}"
+    echo ""
+    echo -e "  Commits: $TOTAL_COMMITS"
+    echo -e "  Rama:    $BRANCH_NAME"
+    echo -e "  Estado:  LOCAL -- sin push, sin PR, sin comentario al issue (modo variante)"
+    echo -e "  Log:     $LOG_FILE"
+    echo ""
+    echo -e "${YELLOW}Si esta variante gana la comparacion, promuevela a mano:${NC}"
+    echo -e "${YELLOW}  git -C $REPO_ROOT push -u origin $BRANCH_NAME${NC}"
+    echo -e "${YELLOW}  gh pr create --base main --head $BRANCH_NAME --title \"$ISSUE_TITLE\" --body \"Closes #$ISSUE_NUM\"${NC}"
+    echo -e "${YELLOW}O relanza el pipeline sin --variant para que una corrida normal abra el PR.${NC}"
+else
+    echo -e "${CYAN}${BOLD}=== Pipeline tooling completado ===${NC}"
+    echo ""
+    echo -e "  Commits: $TOTAL_COMMITS"
+    echo -e "  Rama:    $BRANCH_NAME"
+    echo -e "  PR:      $PR_URL"
+    echo -e "  Log:     $LOG_FILE"
+fi
 echo ""

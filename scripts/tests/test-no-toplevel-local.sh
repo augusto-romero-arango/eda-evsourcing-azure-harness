@@ -96,6 +96,7 @@ set -e
 LOG_DIR_ABS="$TMP_DIR"
 TIMESTAMP="test"
 ISSUE_NUM="999"
+ISSUE_LOG_TAG="999"
 EVENTS_LOG_ABS="$TMP_DIR/events.log"
 STAGE1_PROMPT="prompt original"
 WORKTREE_PATH="$worktree"

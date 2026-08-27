@@ -537,6 +537,51 @@ format_stage_models_for_log() {
     return 0
 }
 
+# --- Modo --variant: corridas paralelas del mismo issue (issue #710) --------
+#
+# Segunda pieza del mecanismo de experimentos por modelo (la primera es
+# --models, issue #708): correr el MISMO issue N veces en paralelo, cada
+# corrida en su propio worktree/rama, para comparar calidad/velocidad/costo
+# entre variantes. Sin este modo, dos corridas simultaneas del mismo issue
+# colisionan porque worktree y rama derivan solo del numero de issue.
+#
+# validate_variant_label() es la unica pieza de este mecanismo que vive aqui:
+# el resto (sufijar worktree/rama/logs con el label, suprimir push/PR/
+# comentario al issue) es codigo lineal propio de tooling-pipeline.sh, sin
+# logica compartida que valga la pena extraer.
+
+# validate_variant_label <label>
+#
+# Valida el label de --variant (CA-1): slug de minusculas, digitos y guiones
+# ([a-z0-9-]), longitud 1-40 -- el mismo tope que ya usa el slug del titulo
+# del issue en tooling-pipeline.sh (`cut -c1-40`), para que
+# "worktree-issue-<N>-<slug>-<label>" no dispare el nombre de rama/carpeta
+# mas alla de lo practico. El caller debe invocarla ANTES de crear el
+# worktree: un label malformado debe abortar temprano, igual que
+# parse_stage_models con --models.
+#
+# Retorna 0 si valido. Retorna 1 y deja el motivo en
+# PIPELINE_VARIANT_LABEL_ERROR (una linea, lista para abort()) si no --
+# mismo contrato que PIPELINE_STAGE_MODELS_ERROR.
+validate_variant_label() {
+    local label="$1"
+    PIPELINE_VARIANT_LABEL_ERROR=""
+
+    if [ -z "$label" ]; then
+        PIPELINE_VARIANT_LABEL_ERROR="el label de --variant no puede estar vacio"
+        return 1
+    fi
+    if [ "${#label}" -gt 40 ]; then
+        PIPELINE_VARIANT_LABEL_ERROR="el label de --variant '$label' supera 40 caracteres"
+        return 1
+    fi
+    if ! printf '%s' "$label" | grep -Eq '^[a-z0-9-]+$'; then
+        PIPELINE_VARIANT_LABEL_ERROR="el label de --variant '$label' es invalido: solo minusculas, digitos y guiones ([a-z0-9-])"
+        return 1
+    fi
+    return 0
+}
+
 # --- Helpers de tests, compartidos por los gates de tdd-pipeline.sh, ---------
 # --- tooling-pipeline.sh y pr-sync.sh (issue #305) ----------------------------
 #
