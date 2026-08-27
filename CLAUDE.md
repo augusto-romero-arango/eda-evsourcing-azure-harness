@@ -273,6 +273,9 @@ El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o
 | Precision de MEF-ADR-0037 seccion 2: la unidad del borde HTTP es el componente tipado, no la clave (identidad de un componente vs. de varios) | MEF-ADR-0037 |
 | Extension del desacople de logs de error del sampler de trazas al write-side (supresion ratio-dependiente, sin el filtro estructural del worker) | MEF-ADR-0038 |
 | Cierre del gap de `mt_version` en la doctrina read-side (receta `UseNumericRevisions` + par de config-tests espejo write-side/read-side, segunda instancia del par de compatibilidad 2) | MEF-ADR-0034 |
+| Estándar de nombramiento de recursos Azure (patrón CAF + región + secuencia) | MEF-ADR-0045 |
+| Remision del naming de infraestructura base al estandar CAF + region + secuencia (MEF-ADR-0045) | MEF-ADR-0021 |
+| Correccion en la nota del issue #245 de MEF-ADR-0006: el nombre del recurso Azure citado pasa a `func-{kebab}-{prefix_func}` (el dominio es el `{uso}` del patron CAF) | MEF-ADR-0006 |
 
 ## Convenciones del marco
 

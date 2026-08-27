@@ -4,6 +4,29 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-08-27
+
+### Added
+
+- Se crea MEF-ADR-0045, el estándar de nombramiento de recursos Azure del marco (patrón CAF `{abrev-tipo}-[{uso}-]{app}-{env}-{region}-{seq}`, tabla de abreviaturas verificada contra la fuente oficial, política de unicidad sin sufijos random, alcance "solo greenfield" y límites de naming por tipo).
+- `harness.config.json` gana los tokens opcionales `azureRegionShort` y `resourceSequence` (componentes `{region}`/`{seq}` del estándar de MEF-ADR-0045), retrocompatibles y expuestos por `load_harness_config` como `HARNESS_AZURE_REGION_SHORT`/`HARNESS_RESOURCE_SEQUENCE`.
+
+### Changed
+
+- `infra-base-scaffolder` alinea el nombramiento de los 8 modulos base y de los 3 modulos opt-in del worker de proyecciones al estandar CAF + region + secuencia de MEF-ADR-0045: corrige las abreviaturas `psql-`/`sbint-`/`acr` a las oficiales del CAF (`pgsql-`, `sbns-interno-`, `cr`), agrega prefijos de tipo faltantes (`log-`, `appi-`, `ag-`), retira todos los `random_string` de naming (PostgreSQL, Service Bus, Key Vault, Container Registry) y compone `{region}-{seq}` a partir de los tokens `azureRegionShort`/`resourceSequence` cuando el consumidor los declara. Sin esos tokens, la salida es identica a la de antes de este issue (retrocompatible).
+- El Key Vault del BC pasa a incluir `{env}` en su nombre (`kv-{project_short}-{env}[-{region}-{seq}]`), documentando en el propio agente el margen de 24 caracteres.
+- El fallback ante una colision de nombre globalmente unico pasa a ser incrementar `resourceSequence` (MEF-ADR-0045), nunca un sufijo aleatorio.
+- `projections-scaffolder` deja de componer a mano `prefix`/`prefix_func` para hornear los nombres en `deploy-projections.yml`: ahora replica los locals reales de `variables.tf` (incluido `{region}-{seq}`) y usa `ca-projections-{prefix_func}`, el nombre que el entorno le da al Container App tras la alineacion. Sin esto, el `az containerapp update` del deploy apuntaba a un nombre inexistente. `domain-scaffolder` gana la instruccion equivalente al resolver `local.prefix_func` para `func-{prefix_func}-{kebab}`.
+- El wiring opt-in del worker de proyecciones comprueba que el `variables.tf` del entorno declare los locals de `{region}-{seq}` antes de referenciarlos: sobre un entorno anterior al estandar emite los nombres sin sufijo en vez de romper el `terraform plan` con `Reference to undeclared local value` (y nunca inyecta los locals a un `variables.tf` existente, que renombraria recursos ya desplegados).
+- Se alinea `apim-gateway-scaffolder` al estandar de nombramiento CAF (MEF-ADR-0045): el nombre de la instancia APIM pasa de `apim-{prefix}-{sufijo random}` a `apim-{app}-{env}-{region}-{seq}` via `local.prefix`, sin `random_string`; ante una colision real el fallback es incrementar `resourceSequence`. Solo greenfield -- una instancia ya desplegada con el nombre previo no se renombra.
+- Se alinea `bootstrap-backend.sh` al estandar de nombramiento CAF (MEF-ADR-0045): con `azureRegionShort` declarado, el Resource Group del tfstate pasa de `rg-{proyecto}-tfstate` a `rg-tfstate-{proyecto}-{env}-{region}-{seq}` y la Storage Account de `{terraformStateStorage}` + sufijo aleatorio a `sttfstate{proyecto}{env}{region}{seq}` sin sufijo random (unicidad estructural via app+env+region+seq); ante una colision real el fallback es incrementar `resourceSequence`, nunca volver al sufijo aleatorio. Sin el token declarado, el naming es identico al de antes de este issue (retrocompatible).
+- `_pipeline-common.sh` gana las funciones puras `compose_tfstate_resource_group_name`, `compose_tfstate_storage_account_base` y `read_backend_resource_group_name` (gemela de `read_backend_storage_account_name`, cierra el gap de idempotencia del Resource Group cuando un consumidor con backend legado declara `azureRegionShort` despues de crearlo).
+- Solo greenfield: un backend ya escrito en `infra/environments/<env>/backend.tf` (RG y Storage Account) se sigue reusando tal cual, sin recalcularlo con la formula CAF, aunque el config gane el token despues (MEF-ADR-0045 seccion 3, ningun recurso desplegado se renombra).
+- `truncate_storage_base` satura en 0 el espacio disponible cuando los componentes fijos del patron no dejan margen para `{app}` (antes caia en el substring negativo de bash, que recorta por la derecha y devolvia una base mas larga que el limite, invalida y silenciosa), y `bootstrap-backend.sh` valida el nombre CAF compuesto contra `^[a-z0-9]{3,24}$` abortando con el diagnostico en vez de dejar que falle `az storage account create`.
+- `domain-scaffolder` alinea el App Service Plan, la Function App y la Storage Account de cada dominio al patron de nombramiento CAF (MEF-ADR-0045): `asp-{dominio}-{app}-{env}-{region}-{seq}`, `func-{dominio}-{app}-{env}-{region}-{seq}` y `st{dominio}{app}{env}{region}{seq}` (sin `random_string`, con la regla de truncado del ADR generalizada a cualquier `{env}` -- ya no asume `env=dev`). El dominio pasa a ocupar el componente `{uso}` del patron, es decir va inmediatamente despues de la abreviatura de tipo y antes de `local.prefix_func`, no al final. Solo aplica a dominios scaffoldeados desde ahora: la Validacion 3 del Paso 0 documenta que un `dominio-{kebab}.tf` existente nunca se reescribe para realinearlo (renombrar Function App o Storage desplegadas es destroy+recreate, MEF-ADR-0045 seccion 3).
+- La Validacion 1b nueva del Paso 0 de `domain-scaffolder` calcula el presupuesto de truncado de la Storage Account (`24 - 2 - len(project_short) - len(environment) - len(region_seq_suffix_plain)`), detiene el scaffold si queda en cero o negativo, y comprueba que `project_short` respete el charset de `Microsoft.Storage/storageAccounts` (solo minusculas y digitos) antes de interpolarlo en el nombre -- un guion o una mayuscula ahi, posibles en un `variables.tf` ajustado a mano, harian fallar el `apply` con un error de naming ahora que ese valor entra en el nombre de la Storage.
+- Se ponen al dia las referencias cruzadas al nombre del recurso que quedaban con el orden viejo: `agents/projections-scaffolder.md` (las dos citas al mecanismo de horneado de `deploy-{kebab}.yml`), `commands/onboard.md` (nota del presupuesto de nombres), `commands/scaffold.md` (preview del scaffold) y la nota del issue #245 en MEF-ADR-0006.
+
 ## [0.28.0] - 2026-08-27
 
 ### Added
@@ -1508,7 +1531,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.28.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.29.0...HEAD
+[0.29.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.25.0...v0.26.0
