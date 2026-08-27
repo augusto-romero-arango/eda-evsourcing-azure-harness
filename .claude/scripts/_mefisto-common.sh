@@ -539,6 +539,115 @@ find_open_pr_for_branch() {
     return 0
 }
 
+# --- Asignacion de modelo por stage (--models, issue #709) -------------------
+#
+# Contraparte interna de scripts/_pipeline-common.sh (issue #708, lado
+# publicado): mismo contrato de UX para el flag --models, pero sin compartir
+# codigo (MEF-ADR-0019 separa fisicamente publicado/interno). Permite
+# sobreescribir, por invocacion de mefisto-tooling-pipeline.sh, el modelo que
+# corre cada stage sin tocar el default hardcodeado en el `case` de run_agent().
+# Requisito invariante del issue: sin el flag --models, el comportamiento es
+# byte a byte el actual -- resolve_stage_model() cae siempre al default del
+# caller cuando no hay override, y parse_stage_models() con spec vacio deja
+# MEFISTO_STAGE_MODELS vacio (ninguna resolucion encuentra match).
+#
+# Formato interno de MEFISTO_STAGE_MODELS: pares "agente=modelo" separados por
+# salto de linea -- no un array asociativo, porque bash 3.2 (macOS) no lo
+# soporta.
+
+# parse_stage_models <spec>
+#
+# Parsea el valor crudo del flag --models ('agente=modelo[,agente=modelo...]')
+# y lo deja en la variable global MEFISTO_STAGE_MODELS para que
+# resolve_stage_model() lo consulte. El caller debe invocarla ANTES de crear el
+# worktree del issue: una entrada malformada debe abortar temprano, no a mitad
+# de Stage 1 con un worktree ya creado.
+#
+# No valida el NOMBRE del modelo (alias como 'sonnet'/'opus' o un id completo
+# como 'claude-opus-5[1m]' son ambos pass-through, sin allowlist propia -- los
+# alias evolucionan con el CLI): solo la forma 'clave=valor' de cada entrada y
+# que ninguna clave de agente se repita. Un modelo invalido lo delata el
+# patron de error existente del stream (result.is_error, ya clasificado por
+# classify_agent_failure/run_agent).
+#
+# En caso de entrada malformada, retorna 1 y deja el motivo en
+# MEFISTO_STAGE_MODELS_ERROR (un mensaje de una linea, listo para pasarle a
+# abort()) -- no imprime nada por si misma, para que el pipeline que la invoca
+# controle el formato exacto del error.
+#
+# Con spec vacio (flag no pasado), deja MEFISTO_STAGE_MODELS vacio y retorna 0
+# sin error: es el camino "sin --models", el que preserva el comportamiento
+# byte a byte actual.
+parse_stage_models() {
+    local spec="$1"
+    MEFISTO_STAGE_MODELS=""
+    MEFISTO_STAGE_MODELS_ERROR=""
+    [ -z "$spec" ] && return 0
+
+    local entries=() entry agent model seen=$'\n'
+    IFS=',' read -ra entries <<< "$spec"
+    for entry in "${entries[@]}"; do
+        [ -z "$entry" ] && continue
+        case "$entry" in
+            *=*) ;;
+            *)
+                MEFISTO_STAGE_MODELS_ERROR="entrada '$entry' no tiene la forma agente=modelo"
+                return 1
+                ;;
+        esac
+        agent="${entry%%=*}"
+        model="${entry#*=}"
+        if [ -z "$agent" ] || [ -z "$model" ]; then
+            MEFISTO_STAGE_MODELS_ERROR="entrada '$entry': agente y modelo no pueden estar vacios"
+            return 1
+        fi
+        case "$seen" in
+            *$'\n'"$agent"$'\n'*)
+                MEFISTO_STAGE_MODELS_ERROR="el agente '$agent' esta repetido"
+                return 1
+                ;;
+        esac
+        seen="${seen}${agent}"$'\n'
+        MEFISTO_STAGE_MODELS="${MEFISTO_STAGE_MODELS}${MEFISTO_STAGE_MODELS:+$'\n'}${agent}=${model}"
+    done
+    return 0
+}
+
+# resolve_stage_model <agente> <default>
+#
+# Imprime por stdout el modelo a usar para <agente>: el override de
+# MEFISTO_STAGE_MODELS (poblado por parse_stage_models) si <agente> tiene una
+# entrada de clave EXACTA en el mapa, o <default> si no hay mapa cargado o
+# <agente> no aparece en el. Pura -- no valida ni aborta, ese trabajo ya lo hizo
+# parse_stage_models(). Siempre retorna 0.
+resolve_stage_model() {
+    local agent="$1" default="$2"
+    local line
+    if [ -n "${MEFISTO_STAGE_MODELS:-}" ]; then
+        while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            if [ "${line%%=*}" = "$agent" ]; then
+                echo "${line#*=}"
+                return 0
+            fi
+        done <<< "$MEFISTO_STAGE_MODELS"
+    fi
+    echo "$default"
+    return 0
+}
+
+# format_stage_models_for_log
+#
+# Imprime por stdout una representacion de una linea de MEFISTO_STAGE_MODELS
+# ("agente=modelo, agente=modelo") lista para log()/eventos (auditabilidad del
+# mapa de overrides aplicado). Cadena vacia si no hay mapa cargado (sin
+# --models). Siempre retorna 0.
+format_stage_models_for_log() {
+    [ -z "${MEFISTO_STAGE_MODELS:-}" ] && return 0
+    echo "$MEFISTO_STAGE_MODELS" | tr '\n' ',' | sed 's/,/, /g; s/, $//'
+    return 0
+}
+
 # run_agent_with_watchdog <workdir> <timeout_seconds> <stdout_file> <stderr_file> <events_log> <label> <signal_file> <cmd...>
 #
 # Ejecuta <cmd...> (sin `eval` -- se preserva "$@" tal cual, asi que las
