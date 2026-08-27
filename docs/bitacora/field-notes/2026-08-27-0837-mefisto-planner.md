@@ -18,14 +18,16 @@ Draft #718 creado desde el consumidor Bitakora.ControlAsistencia (planner del co
 ## Decisiones
 - #718 refinado a `estado:listo` con 5 CAs: receta canonica en `read-apis.md` (por documento, no por policy), doctrina del par espejo en `config-test.md`, enmienda a MEF-ADR-0034 seccion 6 (segunda instancia del par 2) + fila en la tabla del reviewer, fragmentos `changelog.d/`.
 - Premisa del default de Marten pendiente de cita a doc oficial: queda como requisito del writer en CA-1 (validada empiricamente en el consumidor, no verificada aun contra la doc).
-- Alcance de la segunda dimension del patron (tabla/tenancy/id) separado a issue propio.
+- Alcance de la segunda dimension del patron (tabla/tenancy/id) separado a issue propio (#722), refinado en la misma sesion.
+- #722: la plantilla general del par espejo vive en `config-test.md` (seccion propia, `read-apis.md` solo referencia); tabla/tenancy/id se documenta con el patron regla + instancia enumerada (coherente con "regla, no lista cerrada" de MEF-ADR-0034 seccion 6); el reviewer gana una nota (verificar que el par de tests exista y sus literales coincidan) sin reestructurar sus tablas.
+- Hallazgo en #722: la instancia tabla/tenancy/id convierte la tenancy documental (instancia 1 del par 2) en guarda siempre-activa, hoy solo verificada por el reviewer bajo gate.
 
 ## Descartado
 - Sugerencia 3 del draft original (ampliar el trigger del gate del reviewer a diffs que agregan `Query<`/`LoadAsync<`): la guarda siempre-activa del par espejo corre en cada `dotnet test` y cubre el hueco sin depender del diff.
 
 ## Preguntas abiertas
-- Las tres preguntas de refinamiento de #722: donde vive la plantilla general del par 2, si tabla/tenancy/id se enumera o solo ejemplifica, y si la tabla del reviewer referencia la plantilla en vez de filas por dimension.
+- Ninguna: las tres preguntas de refinamiento de #722 (ubicacion de la plantilla, enumerar vs ejemplificar, forma del cambio en el reviewer) se resolvieron en la misma sesion.
 
 ## Referencias
-Issues creados: #722 (borrador, bloqueado por #718)
-Issues refinados: #718 (`estado:borrador` -> `estado:listo`)
+Issues creados: #722 (refinado a `estado:listo` en la misma sesion; conserva `bloqueado` por #718)
+Issues refinados: #718 y #722 (`estado:borrador` -> `estado:listo`)
