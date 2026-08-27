@@ -13,16 +13,21 @@
 #   tmux-pipeline.sh        - --tooling reenvia --variant intacto al send-keys,
 #                            combinado con --from-stage/--models en orden, y el
 #                            nombre de sesion tmux lleva el sufijo -<label>
-#                            (CA-2). --variant sin valor aborta. El resto de
-#                            los modos (--infra, --scaffold, --batch,
-#                            --parallel, --attach, multiples issues, y el
-#                            enrutamiento automatico de un unico issue) lo
-#                            rechaza con mensaje explicito -- el ultimo porque
-#                            podria resolver a tdd-pipeline.sh, que no
+#                            (CA-2). --variant sin valor aborta. El enrutamiento
+#                            automatico de un unico issue (sin --tooling
+#                            explicito) TAMBIEN lo acepta y lo reenvia (issue
+#                            #713: tdd-pipeline.sh suma el flag, ya no es
+#                            exclusivo de --tooling/tooling-pipeline.sh) --
+#                            cubierto en detalle por test-tdd-variant.sh. El
+#                            resto de los modos (--infra, --scaffold, --batch,
+#                            --parallel, --attach, multiples issues) lo sigue
+#                            rechazando con mensaje explicito: serian ambiguos
+#                            sobre un lote, o el sub-script destino no
 #                            implementa el flag.
 #   herdr-pipeline.sh       - misma superficie que tmux-pipeline.sh: --tooling
-#                            reenvia --variant al pane run (con --models
-#                            combinado), y el resto de los modos lo rechaza.
+#                            y el enrutamiento automatico reenvian --variant al
+#                            pane run (con --models combinado), y el resto de
+#                            los modos lo rechaza.
 #
 # Uso: scripts/tests/test-tooling-variant.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -216,13 +221,18 @@ if [ "$LAST_RC" -eq 1 ]; then pass "multiples issues + --variant aborta"; else f
 if printf '%s' "$LAST_STDERR" | grep -q "no es valido con multiples issues"; then pass "mensaje: no valido con multiples issues"; else fail "mensaje inesperado: $LAST_STDERR"; fi
 
 echo ""
-echo "[11] issue suelto (sin --tooling explicito), enrutado por --pipeline, rechaza --variant"
+echo "[11] issue suelto (sin --tooling explicito), enrutado por --pipeline tooling, acepta --variant (issue #713: tdd-pipeline.sh tambien lo implementa, ya no es exclusivo de --tooling)"
 run_wrapper 253 --variant a --pipeline tooling
-if [ "$LAST_RC" -eq 1 ]; then pass "issue suelto + --pipeline tooling + --variant aborta"; else fail "deberia abortar (rc=$LAST_RC, stdout: $LAST_STDOUT)"; fi
-if printf '%s' "$LAST_STDERR" | grep -q "solo es valido con --tooling explicito"; then
-    pass "mensaje: solo valido con --tooling explicito"
+if [ "$LAST_RC" -eq 0 ]; then pass "issue suelto + --pipeline tooling + --variant corre sin abortar (rc=$LAST_RC)"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
+if grep -qF "253 --variant 'a'" "$TMUX_STUB_LOG"; then
+    pass "send-keys incluye --variant con el valor intacto"
 else
-    fail "mensaje inesperado: $LAST_STDERR"
+    fail "send-keys no compuso '253 --variant ...' -- log: $(cat "$TMUX_STUB_LOG")"
+fi
+if grep -qF "new-session -d -s tooling-pipeline-253-a" "$TMUX_STUB_LOG"; then
+    pass "la sesion tmux lleva el sufijo -a"
+else
+    fail "la sesion no lleva el sufijo -- log: $(cat "$TMUX_STUB_LOG")"
 fi
 
 echo ""
@@ -329,11 +339,13 @@ run_herdr --batch 253 254 --variant a --pipeline tooling
 if [ "$LAST_RC" -eq 1 ]; then pass "--batch + --variant aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
 
 run_herdr 253 --variant a --pipeline tooling
-if [ "$LAST_RC" -eq 1 ]; then pass "issue suelto + --pipeline tooling + --variant aborta"; else fail "deberia abortar (rc=$LAST_RC, stdout: $LAST_STDOUT)"; fi
-if printf '%s' "$LAST_STDERR" | grep -q "solo es valido con --tooling explicito"; then
-    pass "mensaje: solo valido con --tooling explicito"
+if [ "$LAST_RC" -eq 0 ]; then pass "issue suelto + --pipeline tooling + --variant corre sin abortar (rc=$LAST_RC)"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
+HERDR_CALLS=$(cat "$HERDR_STUB_LOG")
+HERDR_CALLS_UNQ=$(printf '%s' "$HERDR_CALLS" | tr -d '\\')
+if printf '%s' "$HERDR_CALLS_UNQ" | grep -qF -- "--variant a"; then
+    pass "el pane run lleva --variant (issue #713: ya no exclusivo de --tooling)"
 else
-    fail "mensaje inesperado: $LAST_STDERR"
+    fail "el pane run no lleva --variant -- log: $HERDR_CALLS"
 fi
 
 # --- tooling-pipeline.sh: wiring del modo variante (CA-2/CA-3/CA-4) ---------

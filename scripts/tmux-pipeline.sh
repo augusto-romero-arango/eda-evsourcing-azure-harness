@@ -285,6 +285,11 @@ cmd_single() {
     local issue="$1"
     local extra_args="${2:-}"
     local pipeline_override="${3:-}"
+    # variant_label: label crudo de --variant (issue #713, cuarto argumento,
+    # SEPARADO de extra_args, mismo criterio que cmd_tooling): resolve_pipeline()
+    # solo devuelve "tdd-pipeline.sh"/"tooling-pipeline.sh" aqui (tipo:infra ya
+    # aborto como SKIP arriba), y desde este issue ambos implementan --variant.
+    local variant_label="${4:-}"
 
     # Resolver pipeline por label o override
     local resolved
@@ -300,6 +305,7 @@ cmd_single() {
     pipeline_name=$(basename "$resolved" .sh)
     local session
     session=$(safe_session_name "$pipeline_name-$issue")
+    [ -n "$variant_label" ] && session=$(safe_session_name "$pipeline_name-$issue-$variant_label")
 
     check_tmux
     ensure_events_log
@@ -646,8 +652,9 @@ ${BOLD}Uso:${NC}
   ./scripts/tmux-pipeline.sh --tooling 42 --models 'reviewer=opus,writer=sonnet'  Modelo por stage (experimentos)
   ./scripts/tmux-pipeline.sh 42 --models 'reviewer=opus,test-writer=sonnet'      Idem, enrutando por label a tdd-pipeline.sh
   ./scripts/tmux-pipeline.sh --tooling 42 --variant experimento-a                Corrida paralela del mismo issue (sin PR, rama local)
-  ./scripts/tmux-pipeline.sh --tooling 42 --variant a                           Dos variantes del mismo issue, cada una en su sesion tmux
-  ./scripts/tmux-pipeline.sh --tooling 42 --variant b                           (lanzar ambos comandos, cada uno arranca en background)
+  ./scripts/tmux-pipeline.sh 42 --variant a --models 'test-writer=sonnet'       Idem, enrutando por label a tdd-pipeline.sh
+  ./scripts/tmux-pipeline.sh 42 --variant a                                     Dos variantes del mismo issue, cada una en su sesion tmux
+  ./scripts/tmux-pipeline.sh 42 --variant b                                     (lanzar ambos comandos, cada uno arranca en background)
   ./scripts/tmux-pipeline.sh --infra 42                           Issue de infraestructura (IaC)
   ./scripts/tmux-pipeline.sh --scaffold 42 --domain nombre        Scaffold de dominio
   ./scripts/tmux-pipeline.sh --scaffold --domain nombre           Scaffold sin issue
@@ -697,18 +704,22 @@ ${BOLD}Modelo por stage (--models, experimentos A/B de desempeno):${NC}
   superficie.
 
 ${BOLD}Corridas paralelas del mismo issue (--variant <label>):${NC}
-  Solo valido con --tooling (tooling-pipeline.sh implementa el flag; --infra,
-  --scaffold, --batch, --parallel, --attach y el enrutamiento automatico de un
-  unico issue lo rechazan con mensaje explicito -- el ultimo porque podria
-  resolver a tdd-pipeline.sh, que no lo implementa). Corre el MISMO issue N
-  veces en paralelo, cada corrida en su propio worktree/rama/sesion tmux con el
-  sufijo -<label> (slug [a-z0-9-], hasta 40 caracteres): dos corridas
+  Valido con --tooling y con el enrutamiento automatico de un unico issue (sea
+  por label o por '--pipeline tdd|tooling <issue>' -- issue #713: tdd-pipeline.sh
+  y tooling-pipeline.sh ya implementan el flag). Se rechaza (mensaje explicito,
+  nunca silencio) en --infra, --scaffold, --batch, --parallel, --attach y varios
+  issues sueltos -- serian ambiguos sobre un lote, o el sub-script destino
+  (iac-pipeline.sh/scaffold-pipeline.sh) no implementa el flag. Corre el MISMO
+  issue N veces en paralelo, cada corrida en su propio worktree/rama/sesion tmux
+  con el sufijo -<label> (slug [a-z0-9-], hasta 40 caracteres): dos corridas
   simultaneas del mismo issue sin --variant colisionarian worktree y rama.
   En modo variante el pipeline NO hace push, NO abre PR y NO comenta el issue
   -- la rama queda LOCAL. Se combina con --models para comparar modelo por
   variante (una variante sin --models es la corrida de control):
     tmux-pipeline.sh --tooling 42 --variant a --models 'writer=sonnet'
     tmux-pipeline.sh --tooling 42 --variant b --models 'writer=opus'
+    tmux-pipeline.sh 42 --variant a --models 'test-writer=sonnet'    (issue TDD)
+    tmux-pipeline.sh 42 --variant b --models 'test-writer=opus'
   Si una variante gana la comparacion, se promueve a mano (push + gh pr create
   sobre esa rama) o relanzando el pipeline sin --variant.
 
@@ -956,11 +967,12 @@ main() {
                 # El enrutamiento automatico (sin --tooling explicito) resuelve
                 # a tdd-pipeline.sh o tooling-pipeline.sh (los unicos overrides
                 # validos de resolve_pipeline son "tdd"/"tooling"; tipo:infra
-                # retorna SKIP antes de llegar a un sub-script) -- issue #712:
-                # ambos ya implementan --models, asi que se reenvia sin rechazar.
-                # Compone scaffold_extra + from_stage_extra + models_extra sin
-                # arrays (bash 3.2 de macOS revienta con "unbound variable" al
-                # expandir un array vacio incluso con "${arr[*]}" bajo `set -u`).
+                # retorna SKIP antes de llegar a un sub-script) -- issues #712/
+                # #713: ambos ya implementan --models y --variant, asi que se
+                # reenvian sin rechazar. Compone scaffold_extra + from_stage_extra
+                # + models_extra sin arrays (bash 3.2 de macOS revienta con
+                # "unbound variable" al expandir un array vacio incluso con
+                # "${arr[*]}" bajo `set -u`).
                 local combined_extra="$scaffold_extra"
                 if [ -n "$from_stage_extra" ]; then
                     if [ -n "$combined_extra" ]; then
@@ -976,13 +988,14 @@ main() {
                         combined_extra="$models_extra"
                     fi
                 fi
-                # --variant (issue #710) solo lo implementa tooling-pipeline.sh,
-                # a diferencia de --models (que ya cubren ambos sub-scripts
-                # desde el #712): el enrutamiento automatico podria resolver a
-                # tdd-pipeline.sh, que no lo soporta. Rechazar en vez de
-                # reenviarlo con el riesgo de que ahi se trague en silencio.
-                [ -n "$variant_extra" ] && abort "--variant solo es valido con --tooling explicito (tooling-pipeline.sh implementa el flag; el enrutamiento automatico podria resolver a tdd-pipeline.sh, que no). Usa: tmux-pipeline.sh --tooling <issue> --variant <label>"
-                cmd_single "$1" "$combined_extra" "$pipeline_override"
+                if [ -n "$variant_extra" ]; then
+                    if [ -n "$combined_extra" ]; then
+                        combined_extra="$combined_extra $variant_extra"
+                    else
+                        combined_extra="$variant_extra"
+                    fi
+                fi
+                cmd_single "$1" "$combined_extra" "$pipeline_override" "$variant_label_raw"
             fi
             ;;
         *)
