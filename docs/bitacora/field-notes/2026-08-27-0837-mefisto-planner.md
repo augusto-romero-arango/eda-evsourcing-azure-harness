@@ -2,7 +2,7 @@
 fecha: 2026-08-27
 hora: 08:37
 sesion: mefisto-planner
-tema: refinamiento de #718 (gap de mt_version), #722 (plantilla par espejo) y #726 (gate de arranque del batch interno)
+tema: refinamiento de #718/#722/#726 y desglose del estandar de nombramiento de recursos Azure (#729-#733)
 ---
 
 ## Contexto
@@ -35,6 +35,13 @@ Draft #718 creado desde el consumidor Bitakora.ControlAsistencia (planner del co
 - Descartado: (b) degradar a warning sin switch - dejaria incumplida toda la corrida la premisa de higiene que justifica el gate.
 - Verificado: el motor publicado `scripts/batch-pipeline.sh` no tiene gate de arranque de rama - sin simetria que aplicar (cerro el CA-4 abierto del draft). Precedente #711 confirma que los cambios internos tambien llevan fragmento en `changelog.d/`.
 
+## Desglose del estandar de nombramiento de recursos Azure (misma sesion)
+- Comparacion contra la suscripcion Azure Cosmos (2026-08-27): el estandar canonico de la organizacion es el patron CAF `{abrev-tipo}-[{uso}-]{app}-{env}-{region}-{seq}` (ej. `kv-asis-dev-eus2-001`, `pip-vm-appl-dev-eus2-001`; sin guiones para storage/ACR). Mefisto lo rompio en controlplane: sin region/secuencia, sufijos random (`kv-cplane-8iiups` ademas sin env), prefijo inventado `sbint-`, y sin abreviatura de tipo en observabilidad (`-logs`/`-ai`/`-cost-alerts` en vez de `log-`/`appi-`/`ag-`).
+- `rg-mcperp-dev` tambien rompe el estandar pero no es de Mefisto: fuera de alcance.
+- Decisiones: patron objetivo confirmado con region+seq desde `harness.config.json` (token nuevo `azureRegionShort`); los sufijos random desaparecen (fallback ante colision global: incrementar `{seq}`); la correccion es solo hacia el futuro - nada desplegado se renombra (destroy/create en Terraform); el "uso" va entre tipo y app (el dominio es el uso: `func-billing-cplane-dev-eus2-001`).
+- Desglose en 5 issues: #729 (ADR nuevo + token, sin dependencias) -> #730 (infra-base-scaffolder) -> #733 (domain-scaffolder, depende tambien de #730 por los locals) ; #731 (apim-gateway-scaffolder) y #732 (bootstrap-backend.sh) solo dependen de #729. Batcheables en orden 729, 730, 733, 731, 732.
+- Deuda M2 enlazada en #733: el truncado de storage no debe perpetuar la asuncion env=dev.
+
 ## Referencias
-Issues creados: #722 (refinado a `estado:listo` en la misma sesion; conserva `bloqueado` por #718)
+Issues creados: #722 (refinado a `estado:listo` en la misma sesion; conserva `bloqueado` por #718); #729 (`estado:listo`), #730/#731/#732/#733 (`estado:listo` + `bloqueado`)
 Issues refinados: #718, #722 y #726 (`estado:borrador` -> `estado:listo`)
