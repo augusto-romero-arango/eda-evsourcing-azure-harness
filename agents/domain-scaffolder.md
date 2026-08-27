@@ -49,7 +49,7 @@ Con el nombre en kebab-case recibido, deriva las siguientes variantes:
 
 **Validacion 1 - longitud del nombre de la Function App:**
 
-El nombre resultante sera `func-{kebab}-{prefix_func}` -- el dominio cumple el rol `{uso}` del patron CAF (`{abrev-tipo}-[{uso}-]{app}-{env}-{region}-{seq}`, MEF-ADR-0020 seccion 1, MEF-ADR-0045 seccion 1), por eso va inmediatamente despues de `func-`, antes de `{prefix_func}` -- donde `prefix_func` es el valor de `local.prefix_func` definido en `infra/environments/dev/variables.tf`. Lee ese archivo para obtener el valor actual: **resuelve la interpolacion completa**, no solo `{project_short}-{environment}`. Desde el issue #730 ese local puede componer tambien `{region}-{seq}` (`"${var.project_short}-${var.environment}${local.region_seq_suffix}"`, patron CAF de MEF-ADR-0045), asi que su valor efectivo depende de si el mismo archivo declara `azure_region_short` con valor. Un `prefix_func` mal resuelto aqui se hornea en `deploy-{kebab}.yml` y el deploy falla contra una Function App que existe con otro nombre.
+El nombre resultante sera `func-{kebab}-{prefix_func}` -- el dominio cumple el rol `{uso}` del patron CAF (`{abrev-tipo}-[{uso}-]{app}-{env}-{region}-{seq}`, MEF-ADR-0045 seccion 1, que apoya ese `{uso}` = dominio en MEF-ADR-0020 -- un App Service Plan por dominio), por eso va inmediatamente despues de `func-`, antes de `{prefix_func}` -- donde `prefix_func` es el valor de `local.prefix_func` definido en `infra/environments/dev/variables.tf`. Lee ese archivo para obtener el valor actual: **resuelve la interpolacion completa**, no solo `{project_short}-{environment}`. Desde el issue #730 ese local puede componer tambien `{region}-{seq}` (`"${var.project_short}-${var.environment}${local.region_seq_suffix}"`, patron CAF de MEF-ADR-0045), asi que su valor efectivo depende de si el mismo archivo declara `azure_region_short` con valor. Un `prefix_func` mal resuelto aqui se hornea en `deploy-{kebab}.yml` y el deploy falla contra una Function App que existe con otro nombre.
 
 ```bash
 nombre="func-{kebab}-{prefix_func}"
@@ -73,7 +73,18 @@ Storage Account es el tipo mas ajustado que este agente emite: 3-24 chars, sin g
 grep -q 'region_seq_suffix_plain' infra/environments/dev/variables.tf && echo "tiene region_seq_suffix_plain" || echo "entorno anterior a #730 -- sin region/seq"
 ```
 
-Si el grep encuentra el local, `region_seq_suffix_plain` vale `{azure_region_short}{resource_sequence}` (lee ambas variables del mismo `variables.tf`, cadena vacia si `azure_region_short` esta vacio); si no lo encuentra, `region_seq_suffix_plain` es cadena vacia (entorno scaffoldeado antes de #730 -- ver la nota del Paso 4 sobre por que **no** se agrega el local a un `variables.tf` existente). Con ese valor, el presupuesto para el componente `{dominio}` es:
+Si el grep encuentra el local, `region_seq_suffix_plain` vale `{azure_region_short}{resource_sequence}` (lee ambas variables del mismo `variables.tf`, cadena vacia si `azure_region_short` esta vacio); si no lo encuentra, `region_seq_suffix_plain` es cadena vacia (entorno scaffoldeado antes de #730 -- ver la nota del Paso 4 sobre por que **no** se agrega el local a un `variables.tf` existente). **Charset de `project_short` (riesgo nuevo que introduce este patron):** `Microsoft.Storage/storageAccounts` solo admite **minusculas y digitos** -- ni guiones ni mayusculas (MEF-ADR-0045 seccion 4). Desde el issue #733 el nombre de la Storage del dominio interpola `${var.project_short}`, que antes no entraba ahi, asi que un `project_short` con guion o mayuscula -- posible en un `variables.tf` que el consumidor ajusto a mano, o generado antes del saneo que documenta `infra-base-scaffolder` en su Paso 0 -- produce un nombre invalido y el `apply` falla con un error de naming. Comprueba el valor efectivo antes de seguir:
+
+```bash
+sed -n '/variable "project_short"/,/^}/p' infra/environments/dev/variables.tf | grep 'default' \
+  | grep -Eq 'default[[:space:]]*=[[:space:]]*"[a-z0-9]+"' \
+  && echo "project_short apto para Storage" || echo "project_short NO apto para Storage"
+```
+
+Si no es apto, detente sin hacer nada mas e informa al usuario -- no lo corrijas vos:
+> "`project_short` en `infra/environments/dev/variables.tf` tiene caracteres que `Microsoft.Storage/storageAccounts` no admite (solo minusculas y digitos), y desde el patron CAF ese valor entra en el nombre de la Storage Account del dominio. Corregirlo renombra ademas todo lo que ya lo consume via `local.prefix_func` (Function Apps y App Service Plans ya desplegados): es el destroy+recreate que MEF-ADR-0045 seccion 3 proscribe, asi que la decision es tuya. No scaffoldeo este dominio hasta que lo resuelvas."
+
+Con ese valor, el presupuesto para el componente `{dominio}` es:
 
 ```bash
 presupuesto=$((24 - 2 - ${#project_short} - ${#environment} - ${#region_seq_suffix_plain}))
