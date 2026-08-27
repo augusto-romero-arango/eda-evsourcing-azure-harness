@@ -975,11 +975,21 @@ build_agents_history_json() {
 # Echo de <base> truncada para que <base>+<sufijo de suffix_len> quepa en
 # max_total caracteres (Azure: 24). Mismo calculo que el scaffolder
 # (st + dominio + env + 6 chars de suffix <= 24). Pura (no consulta Azure).
+#
+# Si <suffix_len> supera <max_total> (posible desde el issue #732: el "sufijo"
+# pasa a ser el largo de los componentes fijos del patron CAF, que crecen con
+# env/region/seq) el espacio disponible se satura en 0 y el echo es vacio, en vez
+# de caer en el substring negativo de bash (${base:0:-N} recorta por la derecha y
+# devolveria una base MAS larga que el limite, silenciosamente invalida). Queda a
+# cargo del caller validar el nombre final contra ^[a-z0-9]{3,24}$.
 truncate_storage_base() {
     local base="$1"
     local max_total="${2:-24}"
     local suffix_len="${3:-6}"
     local max_base=$((max_total - suffix_len))
+    if [ "$max_base" -lt 0 ]; then
+        max_base=0
+    fi
     if [ "${#base}" -gt "$max_base" ]; then
         printf '%s' "${base:0:$max_base}"
     else
@@ -1037,6 +1047,94 @@ read_backend_storage_account_name() {
         fi
     done
     return 0
+}
+
+# read_backend_resource_group_name <dir>
+#
+# Gemelo de read_backend_storage_account_name: busca en <dir>/*.tf un bloque
+# backend "azurerm" y, si existe, echo del resource_group_name declarado (sin
+# validar charset -- el de un Resource Group es mucho mas laxo que el de Storage).
+# Permite que bootstrap-backend.sh reuse el RG ya escrito en backend.tf (registro
+# versionado) en vez de recomputarlo con la formula CAF vigente (MEF-ADR-0045,
+# issue #732): sin este helper, un consumidor con backend viejo que despues
+# declara azureRegionShort veria el script calcular un RG nuevo que no coincide
+# con el ya escrito en backend.tf, rompiendo la idempotencia (CA-3). Echo vacio
+# si no hay backend o el valor no es literal. Pura (no consulta Azure). Siempre
+# retorna 0.
+read_backend_resource_group_name() {
+    local dir="$1"
+    local f name
+    [ -d "$dir" ] || return 0
+    for f in "$dir"/*.tf; do
+        [ -f "$f" ] || continue
+        grep -Eq 'backend[[:space:]]*"azurerm"' "$f" || continue
+        name=$(grep -E '^[[:space:]]*resource_group_name[[:space:]]*=' "$f" \
+            | head -n1 \
+            | sed -E 's/.*=[[:space:]]*"([^"]+)".*/\1/') || name=""
+        if printf '%s' "$name" | grep -Eq '^[a-zA-Z0-9._()-]{1,90}$'; then
+            printf '%s' "$name"
+            return 0
+        fi
+    done
+    return 0
+}
+
+# compose_tfstate_resource_group_name <rg_prefix> <env> <region_short> <seq>
+#
+# Compone el nombre del Resource Group del backend de Terraform. Si
+# <region_short> esta vacio, devuelve el nombre legacy "<rg_prefix>-tfstate"
+# (retrocompatible -- MEF-ADR-0045 seccion 5, CA-4). Si esta declarado, devuelve
+# la forma canonica CAF "rg-tfstate-{app}-{env}-{region}-{seq}" (MEF-ADR-0045
+# seccion 1: abrev-tipo "rg", uso fijo "tfstate", {app} = <rg_prefix> sin el
+# prefijo "rg-" que infraResourceGroupPrefix ya lleva). Pura (no consulta Azure).
+compose_tfstate_resource_group_name() {
+    local rg_prefix="$1" env="$2" region_short="$3" seq="$4"
+    if [ -z "$region_short" ]; then
+        printf '%s' "${rg_prefix}-tfstate"
+    else
+        printf '%s' "rg-tfstate-${rg_prefix#rg-}-${env}-${region_short}-${seq}"
+    fi
+}
+
+# tfstate_storage_app_slug <rg_prefix>
+#
+# Echo del componente {app} del nombre sin guiones de la Storage Account del
+# tfstate: <rg_prefix> sin el prefijo "rg-" que infraResourceGroupPrefix ya lleva
+# y sin guiones/guiones-bajos (charset de Storage: solo minusculas y digitos,
+# MEF-ADR-0045 seccion 4). Fuente unica del slug para compose_tfstate_storage_
+# account_base y para el aviso de truncado de bootstrap-backend.sh -- ninguno de
+# los dos lo re-deriva por su cuenta. Pura (no consulta Azure).
+tfstate_storage_app_slug() {
+    printf '%s' "${1#rg-}" | tr -d -- '-_'
+}
+
+# compose_tfstate_storage_account_base <rg_prefix> <env> <region_short> <seq> <legacy_base> [max_total]
+#
+# Compone el nombre BASE de la Storage Account del backend de Terraform. Si
+# <region_short> esta vacio, devuelve <legacy_base> tal cual (retrocompatible:
+# bootstrap-backend.sh sigue anexandole el sufijo aleatorio de unicidad global,
+# MEF-ADR-0045 CA-4). Si esta declarado, compone la forma canonica CAF sin
+# guiones "sttfstate{app}{env}{region}{seq}" (seccion 1: abrev-tipo "st", uso fijo
+# "tfstate") -- este nombre YA es el candidato final, sin sufijo aleatorio
+# (seccion 2: unicidad estructural via app+env+region+seq). {app} sale de
+# <rg_prefix> sin el prefijo "rg-" y sin guiones/guiones-bajos (charset de Storage:
+# solo minusculas y digitos), truncado con truncate_storage_base si hace falta
+# para respetar <max_total> (default 24) -- regla de truncado de la seccion 4:
+# se trunca {app}, nunca el resto de componentes. Pura (no consulta Azure).
+compose_tfstate_storage_account_base() {
+    local rg_prefix="$1" env="$2" region_short="$3" seq="$4" legacy_base="$5"
+    local max_total="${6:-24}"
+    if [ -z "$region_short" ]; then
+        printf '%s' "$legacy_base"
+        return 0
+    fi
+    local app fixed_prefix fixed_suffix fixed_len app_truncated
+    app=$(tfstate_storage_app_slug "$rg_prefix")
+    fixed_prefix="sttfstate"
+    fixed_suffix="${env}${region_short}${seq}"
+    fixed_len=$((${#fixed_prefix} + ${#fixed_suffix}))
+    app_truncated=$(truncate_storage_base "$app" "$max_total" "$fixed_len")
+    printf '%s' "${fixed_prefix}${app_truncated}${fixed_suffix}"
 }
 
 # is_path_in_consumer_blocklist <path>
