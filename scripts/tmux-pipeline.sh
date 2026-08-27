@@ -438,13 +438,13 @@ cmd_parallel() {
     local resolved_pipelines=()
     local projection_count=0
     for issue in "${issues[@]}"; do
-        local facts is_projection resolved
+        local facts rest is_projection resolved
         if ! facts=$(resolve_issue_facts "$issue" "$pipeline_override"); then
             abort "Override de pipeline invalido: '$pipeline_override' (usa tdd|tooling)."
         fi
-        is_projection="${facts#*|}"
-        is_projection="${is_projection%%|*}"
-        resolved="${facts##*|}"
+        rest="${facts#*|}"
+        is_projection="${rest%%|*}"
+        resolved="${rest#*|}"
         if [[ "$resolved" == SKIP:* ]]; then
             local reason="${resolved#SKIP:}"
             warn "Issue #$issue saltado ($reason) --- no se abre tab."
