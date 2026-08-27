@@ -6,6 +6,7 @@
 #   ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 42 --verbose
 #   ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 42 --from-stage 2   # retomar
 #   ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 42 --models 'reviewer=opus,writer=sonnet'  # experimentos
+#   ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 42 --variant experimento-a  # corrida paralela del mismo issue (sin PR, rama local)
 #   ./.claude/scripts/mefisto-tmux-pipeline.sh --batch 42 43 44   # secuencial
 #   ./.claude/scripts/mefisto-tmux-pipeline.sh --batch 42 43 44 --verbose
 #   ./.claude/scripts/mefisto-tmux-pipeline.sh --attach            # reconectar
@@ -38,6 +39,15 @@
 # --models (issue #708, lado publicado). El wrapper NO valida el formato --eso
 # lo hace parse_stage_models en mefisto-tooling-pipeline.sh, ANTES de crear el
 # worktree.
+#
+# --variant <label> (issue #711, en cualquier posicion) se propaga igual que
+# --models, solo valido con --tooling: corridas paralelas del MISMO issue
+# (contraparte interna de tmux-pipeline.sh --tooling --variant, issue #710,
+# lado publicado). Ademas del reenvio, suma el sufijo -<label> al nombre de la
+# sesion tmux -- sin el, dos variantes del mismo issue colisionarian de
+# sesion. El wrapper NO valida el formato del label -- eso lo hace
+# validate_variant_label en mefisto-tooling-pipeline.sh, ANTES de crear el
+# worktree. --batch lo rechaza (seria ambiguo sobre varios issues).
 #
 # Ante una sesion tmux existente (viva por una corrida en curso, o "muerta" --
 # remain-on-exit deja el pane abierto tras un crash aunque el proceso ya
@@ -127,12 +137,16 @@ VERBOSE=false
 REMAINING_ARGS=()
 FROM_STAGE_EXTRA=""
 MODELS_EXTRA=""
+VARIANT_EXTRA=""
+VARIANT_LABEL_RAW=""
 SESSION_IF_EXISTS=""
 extract_wrapper_flags() {
     VERBOSE=false
     REMAINING_ARGS=()
     FROM_STAGE_EXTRA=""
     MODELS_EXTRA=""
+    VARIANT_EXTRA=""
+    VARIANT_LABEL_RAW=""
     SESSION_IF_EXISTS=""
     local -a args=("$@")
     local i=0
@@ -160,6 +174,17 @@ extract_wrapper_flags() {
                 [ -n "$models_value" ] || abort "Falta el valor de --models"
                 MODELS_EXTRA="--models '$models_value'"
                 ;;
+            --variant)
+                # Mismo criterio que --models: sin pre-parsear aqui, --variant
+                # caeria en REMAINING_ARGS y cmd_tooling lo interpretaria
+                # posicionalmente (issue #711). Comillas simples por el mismo
+                # motivo que --models -- send-keys re-parsea con un shell.
+                i=$((i + 1))
+                local variant_value="${args[$i]:-}"
+                [ -n "$variant_value" ] || abort "Falta el valor de --variant"
+                VARIANT_EXTRA="--variant '$variant_value'"
+                VARIANT_LABEL_RAW="$variant_value"
+                ;;
             --if-exists)
                 i=$((i + 1))
                 local exists_value="${args[$i]:-}"
@@ -182,7 +207,7 @@ extract_wrapper_flags() {
 # caer en "Argumento no reconocido" (mismo patron que cmd_help del wrapper
 # publicado, scripts/tmux-pipeline.sh).
 print_usage() {
-    echo "Uso: $0 --tooling <issue> [--verbose] [--from-stage N] [--models 'agente=modelo[,...]'] [--if-exists reuse|replace|abort]"
+    echo "Uso: $0 --tooling <issue> [--verbose] [--from-stage N] [--models 'agente=modelo[,...]'] [--variant <label>] [--if-exists reuse|replace|abort]"
     echo "     $0 --batch <issue1> <issue2> ... [--verbose] [--if-exists reuse|replace|abort]"
     echo "     $0 --attach [sesion]"
     echo ""
@@ -216,6 +241,16 @@ print_usage() {
     echo "                  mismo nombre. Solo valido con --tooling; --batch lo"
     echo "                  rechaza por la misma ambiguedad que --from-stage. Un"
     echo "                  --models malformado aborta ANTES de crear el worktree."
+    echo ""
+    echo "  --variant <label>  (issue #711, corridas paralelas del mismo issue)"
+    echo "                  Corre el MISMO issue en un worktree/rama/sesion propios"
+    echo "                  (sufijo -<label>), sin push, sin PR y sin mutar el"
+    echo "                  issue -- la rama queda local, para comparar contra otra"
+    echo "                  variante. Se combina con --models para comparar modelo"
+    echo "                  por variante (una variante sin --models es la corrida"
+    echo "                  de control). Solo valido con --tooling; --batch lo"
+    echo "                  rechaza (seria ambiguo sobre varios issues). Un label"
+    echo "                  invalido aborta ANTES de crear el worktree."
     echo ""
     echo "  --if-exists reuse|replace|abort  (issue #449) Decide que hacer si ya"
     echo "                  existe una sesion con ese nombre, sin preguntar (util"
@@ -373,6 +408,9 @@ cmd_tooling() {
     local issue="$1"
     local session
     session=$(safe_session_name "mefisto-tooling-$issue")
+    # Modo variante (CA-2): la sesion tmux tambien lleva el sufijo -<label>,
+    # para que dos variantes del mismo issue no colisionen de sesion.
+    [ -n "$VARIANT_LABEL_RAW" ] && session=$(safe_session_name "mefisto-tooling-$issue-$VARIANT_LABEL_RAW")
 
     check_tmux
     ensure_events_log
@@ -402,6 +440,7 @@ cmd_tooling() {
     local pipeline_cmd="./.claude/scripts/mefisto-tooling-pipeline.sh $issue"
     [ -n "$FROM_STAGE_EXTRA" ] && pipeline_cmd="$pipeline_cmd $FROM_STAGE_EXTRA"
     [ -n "$MODELS_EXTRA" ] && pipeline_cmd="$pipeline_cmd $MODELS_EXTRA"
+    [ -n "$VARIANT_EXTRA" ] && pipeline_cmd="$pipeline_cmd $VARIANT_EXTRA"
     tmux send-keys -t "$script_pane" "$pipeline_cmd" Enter
 
     # even-horizontal deshace el split -v de arriba (lo aplana a 3 columnas):
@@ -437,6 +476,9 @@ cmd_batch() {
     # Mismo criterio: --models por issue sobre un lote tambien seria ambiguo
     # (issue #709).
     [ -n "$MODELS_EXTRA" ] && abort "--models no es valido con --batch (seria ambiguo sobre varios issues). Usa --tooling <issue> --models 'agente=modelo' para un unico issue."
+    # --variant es una corrida DE UN issue, N veces: tambien seria ambiguo
+    # sobre un lote de issues distintos (issue #711).
+    [ -n "$VARIANT_EXTRA" ] && abort "--variant no es valido con --batch (seria ambiguo sobre varios issues). Usa --tooling <issue> --variant <label> para un unico issue."
 
     local session
     session=$(safe_session_name "mefisto-batch-$(date +%H%M%S)")

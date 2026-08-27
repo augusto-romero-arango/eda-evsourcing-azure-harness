@@ -5,6 +5,7 @@
 # Uso (misma superficie de modos que mefisto-tmux-pipeline.sh):
 #   ./.claude/scripts/mefisto-herdr-pipeline.sh --tooling 42 [--from-stage N]
 #   ./.claude/scripts/mefisto-herdr-pipeline.sh --tooling 42 --models 'reviewer=opus'
+#   ./.claude/scripts/mefisto-herdr-pipeline.sh --tooling 42 --variant experimento-a
 #   ./.claude/scripts/mefisto-herdr-pipeline.sh --batch 42 43 44
 #
 # En vez de crear una sesion tmux nueva con un pane de `tail -f events.log`,
@@ -321,16 +322,29 @@ cmd_tooling() {
     # pathname expansion podria alterar. Como argumento propio llega intacto a
     # dispatch_to_pane, que lo quotea con printf %q hacia el pane.
     local models="${3:-}"
+    # variant: label crudo de --variant (issue #711), mismo criterio que
+    # 'models' -- argumento propio, no concatenado a extra_args. Ademas
+    # distingue el titulo del pane cuando hay variante (dos corridas del mismo
+    # issue en panes separados, cada una identificable en la barra lateral).
+    local variant="${4:-}"
+    local title="mefisto-tooling #$issue"
+    [ -n "$variant" ] && title="mefisto-tooling #$issue ($variant)"
     # extra_args se expande sin comillas a proposito (lista de flags simples).
     # La directiva va sola en su linea: shellcheck no admite texto libre tras
     # el codigo (SC1072/SC1073 -- y ese error le corta el parseo del resto del
     # archivo, dejando sin analizar todo lo que sigue).
-    if [ -n "$models" ]; then
+    if [ -n "$models" ] && [ -n "$variant" ]; then
         # shellcheck disable=SC2086
-        dispatch_to_pane "mefisto-tooling #$issue" "$issue" "$SCRIPT_DIR/mefisto-tooling-pipeline.sh" "$issue" $extra_args --models "$models"
+        dispatch_to_pane "$title" "$issue" "$SCRIPT_DIR/mefisto-tooling-pipeline.sh" "$issue" $extra_args --models "$models" --variant "$variant"
+    elif [ -n "$models" ]; then
+        # shellcheck disable=SC2086
+        dispatch_to_pane "$title" "$issue" "$SCRIPT_DIR/mefisto-tooling-pipeline.sh" "$issue" $extra_args --models "$models"
+    elif [ -n "$variant" ]; then
+        # shellcheck disable=SC2086
+        dispatch_to_pane "$title" "$issue" "$SCRIPT_DIR/mefisto-tooling-pipeline.sh" "$issue" $extra_args --variant "$variant"
     else
         # shellcheck disable=SC2086
-        dispatch_to_pane "mefisto-tooling #$issue" "$issue" "$SCRIPT_DIR/mefisto-tooling-pipeline.sh" "$issue" $extra_args
+        dispatch_to_pane "$title" "$issue" "$SCRIPT_DIR/mefisto-tooling-pipeline.sh" "$issue" $extra_args
     fi
 }
 
@@ -342,7 +356,7 @@ cmd_batch() {
 }
 
 print_usage() {
-    echo "Uso: $0 --tooling <issue> [--from-stage N] [--models 'agente=modelo[,...]']"
+    echo "Uso: $0 --tooling <issue> [--from-stage N] [--models 'agente=modelo[,...]'] [--variant <label>]"
     echo "     $0 --batch <issue1> <issue2> ..."
     echo ""
     echo "Interfaz herdr de los pipelines internos: en vez de una sesion tmux,"
@@ -350,6 +364,9 @@ print_usage() {
     echo "con el visor en vivo (mefisto-stream-watch.sh) del agente en curso."
     echo "--verbose se acepta sin efecto (el visor es siempre visible aqui);"
     echo "--if-exists no aplica (una corrida concurrente abre un pane adicional)."
+    echo "--variant <label> (issue #711) corre el mismo issue en un pane propio,"
+    echo "sin push/PR/comentario al issue -- solo valido con --tooling; --batch"
+    echo "lo rechaza (seria ambiguo sobre varios issues)."
     echo "Fuera de herdr usa mefisto-tmux-pipeline.sh, que autodetecta y delega"
     echo "aqui solo cuando aplica (escape hatch: MEFISTO_UI=tmux)."
 }
@@ -373,6 +390,7 @@ fi
 # posicion.
 FROM_STAGE_EXTRA=""
 MODELS_SPEC=""
+VARIANT_SPEC=""
 REMAINING_ARGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -397,6 +415,16 @@ while [ $# -gt 0 ]; do
             # argv quoteado con printf %q (dispatch_to_pane).
             [ $# -lt 2 ] && abort "Falta el valor de --models"
             MODELS_SPEC="$2"
+            shift 2
+            ;;
+        --variant)
+            # Mismo criterio que --models arriba: sin este caso, --variant
+            # caeria en REMAINING_ARGS y cmd_tooling (que solo reenvia "$1")
+            # lo descartaria en silencio (issue #711). El valor se guarda
+            # crudo: el pane no lo re-parsea con un shell, viaja como argv
+            # quoteado con printf %q (dispatch_to_pane).
+            [ $# -lt 2 ] && abort "Falta el valor de --variant"
+            VARIANT_SPEC="$2"
             shift 2
             ;;
         --if-exists)
@@ -426,14 +454,15 @@ case "${1:-}" in
     --tooling)
         shift
         require_herdr_context
-        [ $# -lt 1 ] && abort "Falta el numero de issue. Uso: --tooling <issue> [--from-stage N] [--models 'agente=modelo[,...]']"
-        cmd_tooling "$1" "$FROM_STAGE_EXTRA" "$MODELS_SPEC"
+        [ $# -lt 1 ] && abort "Falta el numero de issue. Uso: --tooling <issue> [--from-stage N] [--models 'agente=modelo[,...]'] [--variant <label>]"
+        cmd_tooling "$1" "$FROM_STAGE_EXTRA" "$MODELS_SPEC" "$VARIANT_SPEC"
         ;;
     --batch)
         shift
         [ $# -lt 1 ] && abort "Debes especificar al menos un issue. Uso: --batch 42 43 44"
         [ -n "$FROM_STAGE_EXTRA" ] && abort "--from-stage no es valido con --batch (seria ambiguo sobre varios issues). Usa --tooling <issue> --from-stage N para un unico issue."
         [ -n "$MODELS_SPEC" ] && abort "--models no es valido con --batch (seria ambiguo sobre varios issues). Usa --tooling <issue> --models 'agente=modelo' para un unico issue."
+        [ -n "$VARIANT_SPEC" ] && abort "--variant no es valido con --batch (seria ambiguo sobre varios issues). Usa --tooling <issue> --variant <label> para un unico issue."
         require_herdr_context
         cmd_batch "$@"
         ;;

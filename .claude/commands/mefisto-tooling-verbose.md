@@ -18,9 +18,9 @@ El visor renderiza una linea por accion del agente y solo aporta si hay alguien 
 
 El numero de issue esta en: $ARGUMENTS
 
-Si `$ARGUMENTS` esta vacio, responde: `Uso: /mefisto-tooling-verbose <numero-de-issue> [--models 'agente=modelo[,agente=modelo...]']`
+Si `$ARGUMENTS` esta vacio, responde: `Uso: /mefisto-tooling-verbose <numero-de-issue> [--models 'agente=modelo[,agente=modelo...]'] [--variant <label>]`
 
-`$ARGUMENTS` puede incluir opcionalmente el flag `--models` (issue #709), con el mismo contrato que en `/mefisto-tooling` -- esta skill no lo parsea ella misma: lo reenvia intacto porque delega integramente en `/mefisto-tooling` para toda la validacion (Paso 1) y en el lanzamiento solo le suma `--verbose` (Paso 2). `--verbose` en si mismo si lo agrega este Paso 2, no algo que el usuario escriba.
+`$ARGUMENTS` puede incluir opcionalmente los flags `--models` (issue #709) y `--variant <label>` (issue #711), con el mismo contrato que en `/mefisto-tooling` -- esta skill no los parsea ella misma: los reenvia intactos porque delega integramente en `/mefisto-tooling` para toda la validacion (Paso 1, incluida la excepcion de modo variante sobre el label `bloqueado`) y en el lanzamiento solo le suma `--verbose` (Paso 2). `--verbose` en si mismo si lo agrega este Paso 2, no algo que el usuario escriba.
 
 ## Proceso
 
@@ -86,6 +86,8 @@ el DoR). No hace falta reconectar.
 
 Usa /mefisto-work-status para ver el progreso sin salir de aqui.
 ```
+
+Si vino `--variant <label>`, la sesion tmux lleva el sufijo `-<label>` (p. ej. `mefisto-tooling-<numero>-<label>`): ajusta el nombre de sesion del hint de conexion en consecuencia.
 
 ### 4. Reportar
 

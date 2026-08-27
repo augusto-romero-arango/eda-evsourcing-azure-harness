@@ -131,6 +131,13 @@ setup_run_agent_env() {
     mkdir -p "$LOG_DIR_ABS" "$PIPELINE_DIR_ABS/metrics"
     EVENTS_LOG_ABS="$TMP/events.log"; : > "$EVENTS_LOG_ABS"
     TIMESTAMP="testts"; ISSUE_NUM="999"
+    # ISSUE_LOG_TAG (issue #711): run_agent() ya no nombra los logs de stage
+    # con ISSUE_NUM directo, sino con este tag (ISSUE_NUM, o ISSUE_NUM-<label>
+    # en modo variante). Sin definirlo aqui, la asignacion de log_base dentro
+    # de run_agent referencia una variable sin `set` bajo `set -u` y el
+    # proceso entero termina en silencio (nounset sale del shell no
+    # interactivo, no solo del comando).
+    ISSUE_LOG_TAG="$ISSUE_NUM"
     WORKTREE_PATH="$wt"; SNAPSHOT_COMMIT="HEAD"
     RED=""; NC=""
     AGENT_WR_RES=""; AGENT_RV_RES=""; AGENT_WR_DUR=0; AGENT_RV_DUR=0
