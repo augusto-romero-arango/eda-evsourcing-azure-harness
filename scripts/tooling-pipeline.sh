@@ -230,6 +230,26 @@ fi
 
 [ -z "$ISSUE_NUM" ] && abort "Falta el numero de issue"
 
+# --- Resolver --variant (issue #710) --------------------------------------
+# Se valida ANTES de crear el worktree (CA-1) y antes de derivar cualquier
+# nombre de archivo de la corrida (CA-2), mismo criterio que --models: un label
+# malformado debe abortar temprano, y el sufijo tiene que estar puesto ya en el
+# primer archivo que se escribe. Mas abajo, en modo variante se suprimen push,
+# creacion de PR y comentario al issue (CA-3).
+VARIANT_LABEL_JSON="null"
+ISSUE_LOG_TAG="$ISSUE_NUM"
+if [ -n "$VARIANT_LABEL" ]; then
+    validate_variant_label "$VARIANT_LABEL" \
+        || abort "--variant mal formado: ${PIPELINE_VARIANT_LABEL_ERROR:-label invalido}"
+    VARIANT_LABEL_JSON="\"$VARIANT_LABEL\""
+    ISSUE_LOG_TAG="${ISSUE_NUM}-${VARIANT_LABEL}"
+    # El log del pipeline tambien lleva el sufijo, no solo los de stage: dos
+    # variantes lanzadas en el MISMO segundo comparten $TIMESTAMP y, sin el
+    # label, escribirian las dos al mismo archivo -- log entrelazado, y el tail
+    # de abort() mostrando lineas de la otra corrida.
+    LOG_FILE="$LOG_DIR/tooling-pipeline-${TIMESTAMP}-${VARIANT_LABEL}.log"
+fi
+
 # Si no se paso --status-file, usar pipeline-status-tooling-{issue}.json para soportar paralelismo
 # (o pipeline-status-tooling-{issue}-{variant}.json en modo --variant, CA-2: dos
 # variantes del mismo issue corriendo a la vez no deben pisarse el status).
@@ -269,17 +289,11 @@ if [ -n "$PIPELINE_STAGE_MODELS" ]; then
     echo "[$(date +%H:%M:%S)] MODELS: $STAGE_MODELS_LOG" >> "$EVENTS_LOG_ABS"
 fi
 
-# --- Resolver --variant (issue #710) --------------------------------------
-# Se valida ANTES de crear el worktree (CA-1), mismo criterio que --models.
-# En modo variante: worktree/rama/logs llevan el sufijo -<label> (CA-2), y mas
-# abajo se suprimen push, creacion de PR y comentario al issue (CA-3).
-VARIANT_LABEL_JSON="null"
-ISSUE_LOG_TAG="$ISSUE_NUM"
+# --- Anunciar el modo variante (issue #710) -------------------------------
+# El label ya se valido y ya derivo los nombres de archivo arriba, junto al
+# parseo de argumentos; aqui solo se anuncia, que es lo primero que se puede
+# hacer una vez existen el log del pipeline y events.log.
 if [ -n "$VARIANT_LABEL" ]; then
-    validate_variant_label "$VARIANT_LABEL" \
-        || abort "--variant mal formado: ${PIPELINE_VARIANT_LABEL_ERROR:-label invalido}"
-    VARIANT_LABEL_JSON="\"$VARIANT_LABEL\""
-    ISSUE_LOG_TAG="${ISSUE_NUM}-${VARIANT_LABEL}"
     log "Modo variante: '$VARIANT_LABEL' -- sin push, sin PR, sin comentario al issue (CA-3); rama queda local"
     echo "[$(date +%H:%M:%S)] VARIANT: $VARIANT_LABEL" >> "$EVENTS_LOG_ABS"
 fi

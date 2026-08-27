@@ -14,7 +14,7 @@ Si `$ARGUMENTS` esta vacio, responde: `Uso: /tooling <numero-de-issue> [--models
 
 `$ARGUMENTS` puede incluir opcionalmente el flag `--models 'agente=modelo[,agente=modelo...]'` (experimentos A/B de desempeno del harness): asigna el modelo de un stage puntual del pipeline tooling. La clave es el nombre de agente que recibe `run_agent()` en `tooling-pipeline.sh`: hoy `reviewer` (Stage 2) y `writer` -- que cubre **dos** stages, el Stage 1 y la etapa de merge, porque ambos invocan `run_agent` con ese mismo nombre. Un stage sin entrada en el mapa usa su default de siempre. Escribe el mapa **sin espacios** alrededor de las comas ni de los `=`: `$ARGUMENTS` se reenvia sin comillas en el paso 3, y un espacio lo partiria en dos argumentos. Ejemplo: `/tooling 42 --models reviewer=opus,writer=sonnet`.
 
-`$ARGUMENTS` tambien puede incluir opcionalmente el flag `--variant <label>` (segunda pieza del mecanismo de experimentos: correr el MISMO issue N veces en paralelo para comparar calidad/velocidad/costo). `<label>` es un slug de minusculas, digitos y guiones ([a-z0-9-], hasta 40 caracteres); un label invalido aborta el pipeline antes de crear el worktree. En modo variante, worktree/rama/nombres de log llevan el sufijo `-<label>` (dos corridas simultaneas del mismo issue sin este sufijo colisionarian), y el pipeline **no hace push, no abre PR y no comenta el issue** -- la rama queda local, y el resumen final explica como promoverla a mano si esa variante gana la comparacion. Se combina con `--models` para comparar modelo por variante (una variante sin `--models` es la corrida de control). Ejemplo de dos variantes paralelas:
+`$ARGUMENTS` tambien puede incluir opcionalmente el flag `--variant <label>` (segunda pieza del mecanismo de experimentos: correr el MISMO issue N veces en paralelo para comparar calidad/velocidad/costo). `<label>` es un slug de minusculas, digitos y guiones ([a-z0-9-], hasta 40 caracteres); un label invalido aborta el pipeline antes de crear el worktree. En modo variante, worktree/rama/nombres de log llevan el sufijo `-<label>` (dos corridas simultaneas del mismo issue sin este sufijo colisionarian), y el pipeline **no hace push, no abre PR y no muta el issue** (ni comentarios, ni labels, ni transiciones) -- la rama queda local, y el resumen final explica como promoverla a mano si esa variante gana la comparacion. Ese mismo criterio aplica a este skill: en modo variante, el paso 2.5 de abajo tampoco quita el label `bloqueado`. Se combina con `--models` para comparar modelo por variante (una variante sin `--models` es la corrida de control). Ejemplo de dos variantes paralelas:
 
 ```
 /tooling 42 --variant a --models writer=sonnet
@@ -78,6 +78,8 @@ gh pr view <num> --json state -q '.state'
 ```bash
 gh issue edit $ISSUE_NUM --remove-label "bloqueado"
 ```
+
+**Excepcion en modo variante**: si `$ARGUMENTS` trae `--variant`, **NO** ejecutes ese `gh issue edit`. Una corrida de variante no muta el issue -- ni comentarios, ni labels, ni transiciones: solo produce una rama local para comparar. Informa que el label `bloqueado` queda puesto (lo quitara la corrida normal que abra el PR) y sigue al paso 3.
 
 - Si **alguna** dependencia sigue abierta: muestra cuales y **detente**:
 

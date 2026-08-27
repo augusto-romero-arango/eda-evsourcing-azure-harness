@@ -336,6 +336,81 @@ else
     fail "mensaje inesperado: $LAST_STDERR"
 fi
 
+# --- tooling-pipeline.sh: wiring del modo variante (CA-2/CA-3/CA-4) ---------
+#
+# Chequeos estaticos sobre el fuente, al estilo de los gates de test-guards.sh:
+# correr el pipeline completo pediria stubs de claude/gh/dotnet, una config de
+# consumidor y un worktree real, y lo que aqui importa no es la corrida sino
+# DONDE quedan cableados el sufijo y las supresiones -- justamente lo que una
+# refactorizacion futura puede mover de lugar sin que ningun test se queje.
+PIPE="$REPO_ROOT/scripts/tooling-pipeline.sh"
+
+echo ""
+echo "[15] tooling-pipeline.sh: el sufijo -<label> llega a rama, worktree, status y logs (CA-2)"
+if grep -qF 'BRANCH_NAME="${BRANCH_NAME}-${VARIANT_LABEL}"' "$PIPE"; then
+    pass "la rama -- y con ella el path del worktree, derivado de BRANCH_NAME -- lleva el sufijo"
+else
+    fail "la rama no lleva el sufijo: dos variantes del mismo issue colisionarian"
+fi
+if grep -qF 'pipeline-status-tooling-${ISSUE_NUM}-${VARIANT_LABEL}.json' "$PIPE"; then
+    pass "el archivo de status lleva el sufijo"
+else
+    fail "el status no lleva el sufijo: una variante pisaria el status de la otra"
+fi
+if grep -qF 'tooling-pipeline-${TIMESTAMP}-${VARIANT_LABEL}.log' "$PIPE"; then
+    pass "el log del pipeline lleva el sufijo (dos variantes del mismo segundo comparten TIMESTAMP)"
+else
+    fail "el log del pipeline NO lleva el sufijo: dos variantes lanzadas en el mismo segundo escribirian al mismo archivo"
+fi
+if grep -qF 'issue-${ISSUE_NUM}.log' "$PIPE"; then
+    fail "quedan nombres de log de stage derivados de ISSUE_NUM directo (colisionan entre variantes)"
+else
+    pass "ningun nombre de log de stage deriva de ISSUE_NUM directo"
+fi
+LOG_TAG_HITS=$(grep -cF 'ISSUE_LOG_TAG' "$PIPE")
+if [ "$LOG_TAG_HITS" -ge 6 ]; then
+    pass "ISSUE_LOG_TAG cablea los nombres de log de stage y sus reintentos ($LOG_TAG_HITS usos)"
+else
+    fail "solo $LOG_TAG_HITS usos de ISSUE_LOG_TAG: falta cablear algun nombre de log (base, retry, perm-retry, writer_log)"
+fi
+
+echo ""
+echo "[16] tooling-pipeline.sh: en modo variante no hay push, ni PR, ni comentario al issue (CA-3)"
+if grep -qF 'if [ -n "$VARIANT_LABEL" ]' "$PIPE"; then pass "existe el gate por VARIANT_LABEL"; else fail "no hay gate por VARIANT_LABEL"; fi
+# Los tres efectos externos deben estar ANIDADOS (con sangria) bajo el gate: en
+# el nivel superior (columna 0) correrian tambien en modo variante.
+if grep -qE '^git -C "\$WORKTREE_PATH" push' "$PIPE"; then
+    fail "el push de la rama esta en el nivel superior: correria tambien en modo variante"
+else
+    pass "el push no esta en el nivel superior"
+fi
+if grep -qE '^gh issue comment' "$PIPE"; then
+    fail "el comentario al issue esta en el nivel superior: correria tambien en modo variante"
+else
+    pass "el comentario al issue no esta en el nivel superior"
+fi
+if grep -qE '^ +git -C "\$WORKTREE_PATH" push -u origin' "$PIPE" \
+    && grep -qE '^ +PR_URL=\$\(gh pr create' "$PIPE" \
+    && grep -qE '^ +gh issue comment' "$PIPE"; then
+    pass "push, gh pr create y gh issue comment quedan anidados bajo el gate"
+else
+    fail "no se encontraron los tres efectos externos anidados bajo el gate (push / gh pr create / gh issue comment)"
+fi
+
+echo ""
+echo "[17] tooling-pipeline.sh: el label viaja en el status y en el historial (CA-4)"
+if grep -qF '"variant": ${VARIANT_LABEL_JSON:-null},' "$PIPE"; then
+    pass "el JSON de status declara el campo variant"
+else
+    fail "el JSON de status no declara el campo variant"
+fi
+HISTORY_VARIANT_HITS=$(grep -cF '\"variant\":${VARIANT_LABEL_JSON:-null}' "$PIPE")
+if [ "$HISTORY_VARIANT_HITS" -ge 2 ]; then
+    pass "las dos lineas de pipeline-history.jsonl (completed y failed) llevan variant ($HISTORY_VARIANT_HITS)"
+else
+    fail "solo $HISTORY_VARIANT_HITS linea(s) de historial llevan variant: se esperan 2 (completed y failed)"
+fi
+
 echo ""
 echo "----------------------------------------"
 echo "  Resumen: $PASS pass, $FAIL fail"
