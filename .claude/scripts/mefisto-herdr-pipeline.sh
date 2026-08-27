@@ -321,11 +321,15 @@ cmd_tooling() {
     # pathname expansion podria alterar. Como argumento propio llega intacto a
     # dispatch_to_pane, que lo quotea con printf %q hacia el pane.
     local models="${3:-}"
+    # extra_args se expande sin comillas a proposito (lista de flags simples).
+    # La directiva va sola en su linea: shellcheck no admite texto libre tras
+    # el codigo (SC1072/SC1073 -- y ese error le corta el parseo del resto del
+    # archivo, dejando sin analizar todo lo que sigue).
     if [ -n "$models" ]; then
-        # shellcheck disable=SC2086 -- extra_args es una lista de flags simples
+        # shellcheck disable=SC2086
         dispatch_to_pane "mefisto-tooling #$issue" "$issue" "$SCRIPT_DIR/mefisto-tooling-pipeline.sh" "$issue" $extra_args --models "$models"
     else
-        # shellcheck disable=SC2086 -- extra_args es una lista de flags simples
+        # shellcheck disable=SC2086
         dispatch_to_pane "mefisto-tooling #$issue" "$issue" "$SCRIPT_DIR/mefisto-tooling-pipeline.sh" "$issue" $extra_args
     fi
 }
