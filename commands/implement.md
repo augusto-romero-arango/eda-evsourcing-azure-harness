@@ -21,7 +21,7 @@ fi
 
 El numero de issue esta en: $ARGUMENTS
 
-Si `$ARGUMENTS` esta vacio, responde: `Uso: /implement <numero-de-issue> [--models 'agente=modelo[,agente=modelo...]']`
+Si `$ARGUMENTS` esta vacio, responde: `Uso: /implement <numero-de-issue> [--models 'agente=modelo[,agente=modelo...]'] [--variant <label>]`
 
 `$ARGUMENTS` puede incluir opcionalmente el flag `--models 'agente=modelo[,agente=modelo...]'` (experimentos A/B de desempeno del harness, issue #712): sobreescribe el modelo de un stage puntual del pipeline lanzado en el paso 4. La clave es el nombre de agente que recibe `run_agent()` (o, en los dos sub-stages de remediacion del coverage gate, el stage key que ya usan sus metricas, aunque no pasen por esa funcion) en el sub-script destino -- que puede ser `tdd-pipeline.sh` o `tooling-pipeline.sh` segun el label `tipo:X` del issue (`/implement` nunca fuerza uno explicitamente):
 - `tdd-pipeline.sh`: `test-writer`/`projection-test-writer` (Stage 1), `implementer`/`projection-implementer` (Stage 2, y la etapa de merge que SIEMPRE usa la clave `implementer`), `smoke-test-writer` (Stage 2b) y `reviewer` (Stage 3). Los dos sub-stages de remediacion de cobertura (Stage 4) tienen clave fina propia -- `patch-test-writer`/`patch-implementer` -- que **cae a la del agente que realmente relanzan** (el del Stage 1 y el del Stage 2) si no aparece en el mapa: por eso `--models test-writer=opus` cubre tambien la remediacion, y la clave fina solo hace falta para darle a la remediacion un modelo distinto del de su stage de origen.
@@ -29,7 +29,14 @@ Si `$ARGUMENTS` esta vacio, responde: `Uso: /implement <numero-de-issue> [--mode
 
 **Fuera del mapa**: el scaffold de dominio (Stage 0 de `tdd-pipeline.sh`, agente `domain-scaffolder`, disparado por la opcion 1 del paso 3 de abajo) no es un stage TDD y `--models` no lo alcanza -- siempre corre con el modelo de su frontmatter, sin excepcion. Un stage sin entrada en el mapa usa su default de siempre (el frontmatter `model:` del agente en `tdd-pipeline.sh`; sonnet/opus hardcodeado en `tooling-pipeline.sh`) -- **sin el flag, el comportamiento es byte a byte el actual**. Escribe el mapa **sin espacios** alrededor de las comas ni de los `=`: `$ARGUMENTS` se reenvia sin comillas en el paso 4, y un espacio lo partiria en dos argumentos. Ejemplo: `/implement 42 --models reviewer=opus,test-writer=sonnet`.
 
-Extrae `ISSUE_NUM` como el primer token numerico de `$ARGUMENTS` y usalo en todo el resto de este proceso (pasos 1 a 3) en vez de `$ARGUMENTS` completo -- los `gh issue view`/`gh issue edit` de esos pasos no entienden `--models`; sin `--models`, `ISSUE_NUM` es simplemente `$ARGUMENTS` completo. `$ARGUMENTS` completo, con `--models` incluido si vino, se reenvia intacto a `tmux-pipeline.sh` en el paso 4.
+`$ARGUMENTS` tambien puede incluir opcionalmente el flag `--variant <label>` (segunda pieza del mecanismo de experimentos: correr el MISMO issue N veces en paralelo para comparar calidad/velocidad/costo, issue #713). `<label>` es un slug de minusculas, digitos y guiones ([a-z0-9-], hasta 40 caracteres); un label invalido aborta el pipeline antes de crear el worktree. En modo variante, worktree/rama/nombres de log llevan el sufijo `-<label>` (dos corridas simultaneas del mismo issue sin este sufijo colisionarian), y el pipeline **no hace push, no abre PR y no muta el issue** (ni comentarios, ni labels, ni transiciones) -- la rama queda local, y el resumen final explica como promoverla a mano si esa variante gana la comparacion. Ese mismo criterio aplica a este skill: en modo variante, el paso 1.6 de abajo tampoco quita el label `bloqueado`. Se combina con `--models` para comparar modelo por variante (una variante sin `--models` es la corrida de control). Ejemplo de dos variantes paralelas:
+
+```
+/implement 42 --variant a --models test-writer=sonnet
+/implement 42 --variant b --models test-writer=opus
+```
+
+Extrae `ISSUE_NUM` como el primer token numerico de `$ARGUMENTS` y usalo en todo el resto de este proceso (pasos 1 a 3) en vez de `$ARGUMENTS` completo -- los `gh issue view`/`gh issue edit` de esos pasos no entienden `--models` ni `--variant`; sin ninguno de los dos, `ISSUE_NUM` es simplemente `$ARGUMENTS` completo. `$ARGUMENTS` completo, con `--models`/`--variant` incluidos si vinieron, se reenvia intacto a `tmux-pipeline.sh` en el paso 4.
 
 ## Proceso
 
@@ -84,6 +91,8 @@ gh pr view <num> --json state -q '.state'
 ```bash
 gh issue edit $ISSUE_NUM --remove-label "bloqueado"
 ```
+
+**Excepcion en modo variante**: si `$ARGUMENTS` trae `--variant`, **NO** ejecutes ese `gh issue edit`. Una corrida de variante no muta el issue -- ni comentarios, ni labels, ni transiciones: solo produce una rama local para comparar. Informa que el label `bloqueado` queda puesto (lo quitara la corrida normal que abra el PR) y sigue al paso 2.
 
 - Si **alguna** dependencia sigue abierta: muestra cuales y **detente**:
 
@@ -202,6 +211,8 @@ Pipeline lanzado en tmux. Para monitorear:
 
 Usa /work-status para ver el progreso sin salir de aqui.
 ```
+
+Si vino `--variant <label>`, la sesion tmux (o el titulo del pane en herdr) lleva el sufijo `-<label>` (p. ej. `tdd-<numero>-<label>`): ajusta el nombre de sesion del hint de conexion en consecuencia.
 
 ## Reglas
 

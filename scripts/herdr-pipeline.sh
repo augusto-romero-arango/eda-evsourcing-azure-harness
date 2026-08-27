@@ -419,6 +419,11 @@ cmd_single() {
     # tooling-pipeline.sh aqui (los unicos overrides validos son "tdd"/"tooling";
     # tipo:infra ya aborto como SKIP arriba), y ambos implementan --models.
     local models="${4:-}"
+    # variant: label crudo de --variant (issue #713), mismo criterio que
+    # 'models' -- argumento propio, no concatenado a extra_args. resolve_pipeline()
+    # solo devuelve tdd-pipeline.sh o tooling-pipeline.sh aqui, y desde este issue
+    # ambos implementan --variant.
+    local variant="${5:-}"
 
     local resolved
     resolved=$(resolve_pipeline "$issue" "$pipeline_override")
@@ -431,10 +436,17 @@ cmd_single() {
     local pipeline_name
     pipeline_name=$(basename "$resolved" .sh)
     local title="${pipeline_name%-pipeline} #$issue"
+    [ -n "$variant" ] && title="${pipeline_name%-pipeline} #$issue ($variant)"
 
-    if [ -n "$models" ]; then
+    if [ -n "$models" ] && [ -n "$variant" ]; then
+        # shellcheck disable=SC2086
+        dispatch_to_pane "$title" "$issue" "$resolved" "$issue" $extra_args --models "$models" --variant "$variant"
+    elif [ -n "$models" ]; then
         # shellcheck disable=SC2086
         dispatch_to_pane "$title" "$issue" "$resolved" "$issue" $extra_args --models "$models"
+    elif [ -n "$variant" ]; then
+        # shellcheck disable=SC2086
+        dispatch_to_pane "$title" "$issue" "$resolved" "$issue" $extra_args --variant "$variant"
     else
         # shellcheck disable=SC2086 -- extra_args es una lista de flags simples
         dispatch_to_pane "$title" "$issue" "$resolved" "$issue" $extra_args
@@ -668,6 +680,7 @@ ${BOLD}Uso (misma superficie que tmux-pipeline.sh):${NC}
   herdr-pipeline.sh --tooling 42 --models 'reviewer=opus'  Modelo por stage (experimentos)
   herdr-pipeline.sh 42 --models 'reviewer=opus,test-writer=sonnet'  Idem, enrutando por label a tdd-pipeline.sh
   herdr-pipeline.sh --tooling 42 --variant experimento-a Corrida paralela del mismo issue (sin PR, rama local)
+  herdr-pipeline.sh 42 --variant a --models 'test-writer=sonnet'  Idem, enrutando por label a tdd-pipeline.sh
   herdr-pipeline.sh --infra 42                           Issue de infraestructura (IaC)
   herdr-pipeline.sh --scaffold 42 --domain nombre        Scaffold de dominio
   herdr-pipeline.sh --batch 42 43 44                     Secuencial
@@ -844,8 +857,9 @@ main() {
                 fi
             else
                 # El enrutamiento automatico (sin --tooling explicito) resuelve
-                # a tdd-pipeline.sh o tooling-pipeline.sh (issue #712: ambos ya
-                # implementan --models) -- mismo criterio que tmux-pipeline.sh.
+                # a tdd-pipeline.sh o tooling-pipeline.sh (issues #712/#713:
+                # ambos ya implementan --models y --variant) -- mismo criterio
+                # que tmux-pipeline.sh.
                 require_herdr_context
                 local combined_extra="$scaffold_extra"
                 if [ -n "$from_stage_extra" ]; then
@@ -855,13 +869,7 @@ main() {
                         combined_extra="$from_stage_extra"
                     fi
                 fi
-                # --variant (issue #710) solo lo implementa tooling-pipeline.sh
-                # (a diferencia de --models, que ya cubren ambos sub-scripts
-                # desde el #712): el enrutamiento automatico podria resolver a
-                # tdd-pipeline.sh, que no lo soporta. Rechazar en vez de
-                # arriesgar que se trague en silencio ahi.
-                [ -n "$variant_spec" ] && abort "--variant solo es valido con --tooling explicito (tooling-pipeline.sh implementa el flag; el enrutamiento automatico podria resolver a tdd-pipeline.sh, que no). Usa: herdr-pipeline.sh --tooling <issue> --variant <label>"
-                cmd_single "$1" "$combined_extra" "$pipeline_override" "$models_spec"
+                cmd_single "$1" "$combined_extra" "$pipeline_override" "$models_spec" "$variant_spec"
             fi
             ;;
         *)
