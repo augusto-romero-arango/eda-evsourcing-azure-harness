@@ -20,8 +20,11 @@
 #   merge confirmado en origin/main (paso 3 de sync_main_after_merge) MAS que
 #   cada worktree del tooling-pipeline nace SIEMPRE de origin/main (issue #66,
 #   mefisto-tooling-pipeline.sh:269) -- no de la rama activa del repo. El motor
-#   exige arrancar en main/master solo para mantener main LOCAL comodo para el
-#   humano entre eslabones, no porque el worktree parta de ahi.
+#   arranca en main/master solo para mantener main LOCAL comodo para el humano
+#   entre eslabones, no porque el worktree parta de ahi; por eso el gate de
+#   arranque, en vez de exigirlo, se auto-recupera cuando el arbol de trabajo
+#   esta limpio y solo aborta cuando no puede (issue #726, ver
+#   ensure_repo_on_base_branch).
 #
 #   Si el commit de merge NO llega a origin/main (paso 3), la cadena ABORTA:
 #   el siguiente worktree naceria de un origin/main desactualizado. Si en
@@ -163,7 +166,8 @@ fail_issue() {
 # reemplazo universal del merge, solo como alternativa para este caso).
 #
 # Args:   $1 = numero de PR ya mergeado
-# Lee:    MAIN_BRANCH (rama activa del repo AL ARRANQUE, validada como main/master)
+# Lee:    MAIN_BRANCH (rama base fijada por ensure_repo_on_base_branch AL ARRANQUE:
+#         la activa si ya era main/master, o la auto-recuperada -- issue #726)
 # Set:    MERGE_SHA_SYNCED = SHA del commit de merge, fijado en cuanto queda
 #         confirmado en origin/main (paso 3). Queda vacio SOLO en el caso fatal
 #         (return 2), de modo que el llamador pueda nombrar el commit tambien
@@ -342,13 +346,13 @@ ensure_repo_on_base_branch() {
     fi
 
     if [ -n "$(git status --porcelain)" ]; then
-        abort "El repo principal esta en la rama '$current_branch', no en main/master, y tiene cambios sin commitear/staged. Cada worktree del tooling-pipeline nace de origin/main sin importar la rama activa (issue #66), pero el batch tambien mantiene main LOCAL sincronizado entre eslabones para el humano que sigue la corrida -- arrancar fuera de main/master genera sorpresas ahi. La auto-recuperacion del gate (issue #726) solo aplica con el arbol de trabajo LIMPIO; con cambios pendientes, resuelvelos o descartalos y haz 'git switch main' a mano antes de lanzar el batch."
+        abort "El repo principal esta en la rama '$current_branch', no en main/master, y el arbol de trabajo no esta limpio (cambios sin commitear, staged o archivos sin trackear). Cada worktree del tooling-pipeline nace de origin/main sin importar la rama activa (issue #66), pero el batch tambien mantiene main LOCAL sincronizado entre eslabones para el humano que sigue la corrida -- arrancar fuera de main/master genera sorpresas ahi. La auto-recuperacion del gate (issue #726) solo aplica con el arbol de trabajo LIMPIO; con cambios pendientes, resuelvelos o descartalos y haz 'git switch main' a mano antes de lanzar el batch."
     fi
 
     local base_branch
-    if git rev-parse --verify -q main >/dev/null 2>&1; then
+    if git rev-parse --verify -q refs/heads/main >/dev/null 2>&1; then
         base_branch="main"
-    elif git rev-parse --verify -q master >/dev/null 2>&1; then
+    elif git rev-parse --verify -q refs/heads/master >/dev/null 2>&1; then
         base_branch="master"
     else
         abort "El repo principal esta en la rama '$current_branch' y no existe ni 'main' ni 'master' local para auto-recuperar el gate. Crea o rescata una de las dos antes de lanzar el batch."
@@ -356,8 +360,9 @@ ensure_repo_on_base_branch() {
 
     git switch -q "$base_branch" || abort "El repo principal esta en la rama '$current_branch' (arbol limpio), pero 'git switch $base_branch' fallo. Resuelve a mano antes de lanzar el batch."
 
-    if ! git pull --ff-only -q; then
-        abort "El repo principal estaba en la rama '$current_branch' (arbol limpio); el gate lo auto-recupero a '$base_branch' (issue #726), pero 'git pull --ff-only' fallo ahi -- '$base_branch' LOCAL diverge de origin/$base_branch. La premisa de higiene de este gate no se puede cumplir asi: resuelve la divergencia a mano (el repo quedo en '$base_branch') antes de relanzar el batch."
+    local pull_output
+    if ! pull_output=$(git pull --ff-only 2>&1); then
+        abort "El repo principal estaba en la rama '$current_branch' (arbol limpio); el gate lo auto-recupero a '$base_branch' (issue #726), pero 'git pull --ff-only' fallo ahi -- tipicamente porque '$base_branch' LOCAL divergio de origin/$base_branch (tambien cae aqui una base sin upstream configurado). La premisa de higiene de este gate no se puede cumplir asi: resuelve la divergencia a mano (el repo quedo en '$base_branch') antes de relanzar el batch. Salida de git: $(printf '%s' "$pull_output" | tr '\n' ' ')"
     fi
 
     warn "El repo principal estaba en la rama '$current_branch' (arbol limpio) al arrancar el batch; el gate se auto-recupero a '$base_branch' y lo sincronizo con origin/$base_branch (issue #726). Los commits de '$current_branch' siguen intactos en su rama."

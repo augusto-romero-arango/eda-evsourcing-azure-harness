@@ -98,6 +98,10 @@ run_gate() {
 
 BARE="$TMP/origin.git"
 git init -q --bare "$BARE"
+# No dependemos de la init.defaultBranch de la maquina: con 'master' por
+# default el clone del bare no aterrizaria en 'main' y los bloques D/E/F
+# medirian otra cosa.
+git -C "$BARE" symbolic-ref HEAD refs/heads/main
 
 PUBLISHER="$TMP/publisher"
 git clone -q "$BARE" "$PUBLISHER"
