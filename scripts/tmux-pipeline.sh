@@ -636,6 +636,7 @@ ${BOLD}Uso:${NC}
   ./scripts/tmux-pipeline.sh --pipeline tooling 42                Forzar pipeline tooling
   ./scripts/tmux-pipeline.sh --tooling 42                         Issue de tooling (override explicito)
   ./scripts/tmux-pipeline.sh --tooling 42 --models 'reviewer=opus,writer=sonnet'  Modelo por stage (experimentos)
+  ./scripts/tmux-pipeline.sh 42 --models 'reviewer=opus,test-writer=sonnet'      Idem, enrutando por label a tdd-pipeline.sh
   ./scripts/tmux-pipeline.sh --infra 42                           Issue de infraestructura (IaC)
   ./scripts/tmux-pipeline.sh --scaffold 42 --domain nombre        Scaffold de dominio
   ./scripts/tmux-pipeline.sh --scaffold --domain nombre           Scaffold sin issue
@@ -656,17 +657,29 @@ ${BOLD}Retomar una corrida caida (--from-stage):${NC}
   la primera vez que un pipeline sume una fase.
 
 ${BOLD}Modelo por stage (--models, experimentos A/B de desempeno):${NC}
-  Valido hoy SOLO con --tooling: --models 'agente=modelo[,agente=modelo...]'
-  sobreescribe el modelo de un stage puntual. La clave es el nombre de agente
-  que recibe run_agent(): 'reviewer' (Stage 2) y 'writer', que cubre DOS stages
-  -- el Stage 1 y la etapa de merge, ambos invocados con ese mismo nombre. Sin
-  entrada en el mapa, el stage usa su default de siempre. Se rechaza (mensaje
-  explicito, nunca silencio) en el resto de los modos -- --infra, --scaffold,
-  --batch, --parallel, --attach y el enrutamiento automatico sin --tooling --,
-  porque sus sub-scripts todavia no implementan el flag (issue #708 es la
-  primera pieza de una serie). Un --models malformado aborta ANTES de crear el
-  worktree. Dentro de un pane herdr, esta invocacion delega en
-  herdr-pipeline.sh, que reenvia --models con la misma superficie.
+  Valido con --tooling y con el enrutamiento automatico de un unico issue
+  (sea por label o por '--pipeline tdd|tooling <issue>' -- ambos overrides de
+  resolve_pipeline() resuelven siempre a tdd-pipeline.sh o tooling-pipeline.sh):
+  --models 'agente=modelo[,agente=modelo...]' sobreescribe el modelo de un
+  stage puntual. La clave es el nombre de agente
+  que recibe run_agent() en el sub-script destino:
+    tooling-pipeline.sh: 'writer' (cubre Stage 1 y la etapa de merge, ambos
+      invocados con ese mismo nombre) y 'reviewer' (Stage 2).
+    tdd-pipeline.sh: 'test-writer'/'projection-test-writer' (Stage 1),
+      'implementer'/'projection-implementer' (Stage 2, y la etapa de merge que
+      SIEMPRE usa la clave 'implementer'), 'smoke-test-writer' (Stage 2b),
+      'reviewer' (Stage 3), y 'patch-test-writer'/'patch-implementer' (los dos
+      sub-stages de remediacion del coverage gate en Stage 4, que no pasan por
+      run_agent pero honran el mismo mapa). El scaffold de dominio (Stage 0,
+      domain-scaffolder) queda fuera del mapa -- no es un stage TDD.
+  Sin entrada en el mapa, el stage usa su default de siempre (el frontmatter
+  `model:` del agente en tdd-pipeline.sh; sonnet/opus hardcodeado en
+  tooling-pipeline.sh). Se rechaza (mensaje explicito, nunca silencio) en
+  --infra, --scaffold, --batch, --parallel y --attach, porque sus sub-scripts
+  no implementan el flag o serian ambiguos sobre varios issues. Un --models
+  malformado aborta ANTES de crear el worktree. Dentro de un pane herdr, esta
+  invocacion delega en herdr-pipeline.sh, que reenvia --models con la misma
+  superficie.
 
 ${BOLD}Sesion existente (--if-exists reuse|replace|abort):${NC}
   Si ya existe una sesion con ese nombre, el wrapper distingue si sigue viva o
@@ -815,9 +828,10 @@ main() {
             if [ $# -eq 0 ]; then
                 abort "Debes especificar un issue. Uso: --infra 42"
             fi
-            # iac-pipeline.sh todavia no implementa --models (issue #708 solo
-            # cubre tooling-pipeline.sh): rechazar en vez de tragarselo en silencio.
-            [ -n "$models_extra" ] && abort "--models todavia no es valido con --infra (iac-pipeline.sh no implementa el flag). Usalo con --tooling: tmux-pipeline.sh --tooling <issue> --models 'agente=modelo'"
+            # iac-pipeline.sh todavia no implementa --models (issues #708/#712
+            # cubren tooling-pipeline.sh y tdd-pipeline.sh, no iac-pipeline.sh):
+            # rechazar en vez de tragarselo en silencio.
+            [ -n "$models_extra" ] && abort "--models todavia no es valido con --infra (iac-pipeline.sh no implementa el flag). Usalo con --tooling o un issue TDD: tmux-pipeline.sh --tooling <issue> --models 'agente=modelo'"
             cmd_infra "$1" "$from_stage_extra"
             ;;
         --scaffold)
@@ -876,20 +890,27 @@ main() {
                     cmd_parallel "$@"
                 fi
             else
-                # El enrutamiento automatico (sin --tooling explicito) puede caer
-                # en tdd-pipeline.sh, que todavia no implementa --models (issue
-                # #708 solo cubre tooling-pipeline.sh): rechazar en vez de
-                # tragarselo en silencio o reenviarlo a un pipeline que no lo lee.
-                [ -n "$models_extra" ] && abort "--models solo esta soportado hoy via --tooling (el enrutamiento automatico puede caer en tdd-pipeline.sh, que no implementa el flag). Usa: tmux-pipeline.sh --tooling <issue> --models 'agente=modelo'"
-                # Compone scaffold_extra + from_stage_extra sin arrays (bash 3.2
-                # de macOS revienta con "unbound variable" al expandir un array
-                # vacio incluso con "${arr[*]}" bajo `set -u`).
+                # El enrutamiento automatico (sin --tooling explicito) resuelve
+                # a tdd-pipeline.sh o tooling-pipeline.sh (los unicos overrides
+                # validos de resolve_pipeline son "tdd"/"tooling"; tipo:infra
+                # retorna SKIP antes de llegar a un sub-script) -- issue #712:
+                # ambos ya implementan --models, asi que se reenvia sin rechazar.
+                # Compone scaffold_extra + from_stage_extra + models_extra sin
+                # arrays (bash 3.2 de macOS revienta con "unbound variable" al
+                # expandir un array vacio incluso con "${arr[*]}" bajo `set -u`).
                 local combined_extra="$scaffold_extra"
                 if [ -n "$from_stage_extra" ]; then
                     if [ -n "$combined_extra" ]; then
                         combined_extra="$combined_extra $from_stage_extra"
                     else
                         combined_extra="$from_stage_extra"
+                    fi
+                fi
+                if [ -n "$models_extra" ]; then
+                    if [ -n "$combined_extra" ]; then
+                        combined_extra="$combined_extra $models_extra"
+                    else
+                        combined_extra="$models_extra"
                     fi
                 fi
                 cmd_single "$1" "$combined_extra" "$pipeline_override"

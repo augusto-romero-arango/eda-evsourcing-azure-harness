@@ -411,6 +411,14 @@ cmd_single() {
     local issue="$1"
     local extra_args="${2:-}"
     local pipeline_override="${3:-}"
+    # models: idem al parametro homonimo de cmd_tooling (issue #712) -- argumento
+    # propio y entrecomillado, NO concatenado a extra_args, porque extra_args se
+    # expande sin comillas mas abajo y un id de modelo completo como
+    # 'claude-opus-5[1m]' es un patron glob valido que la pathname expansion
+    # podria alterar. resolve_pipeline() solo devuelve tdd-pipeline.sh o
+    # tooling-pipeline.sh aqui (los unicos overrides validos son "tdd"/"tooling";
+    # tipo:infra ya aborto como SKIP arriba), y ambos implementan --models.
+    local models="${4:-}"
 
     local resolved
     resolved=$(resolve_pipeline "$issue" "$pipeline_override")
@@ -424,8 +432,13 @@ cmd_single() {
     pipeline_name=$(basename "$resolved" .sh)
     local title="${pipeline_name%-pipeline} #$issue"
 
-    # shellcheck disable=SC2086 -- extra_args es una lista de flags simples
-    dispatch_to_pane "$title" "$issue" "$resolved" "$issue" $extra_args
+    if [ -n "$models" ]; then
+        # shellcheck disable=SC2086
+        dispatch_to_pane "$title" "$issue" "$resolved" "$issue" $extra_args --models "$models"
+    else
+        # shellcheck disable=SC2086 -- extra_args es una lista de flags simples
+        dispatch_to_pane "$title" "$issue" "$resolved" "$issue" $extra_args
+    fi
 }
 
 cmd_tooling() {
@@ -640,6 +653,7 @@ ${BOLD}Uso (misma superficie que tmux-pipeline.sh):${NC}
   herdr-pipeline.sh --pipeline tooling 42                Forzar pipeline tooling
   herdr-pipeline.sh --tooling 42                         Issue de tooling
   herdr-pipeline.sh --tooling 42 --models 'reviewer=opus'  Modelo por stage (experimentos)
+  herdr-pipeline.sh 42 --models 'reviewer=opus,test-writer=sonnet'  Idem, enrutando por label a tdd-pipeline.sh
   herdr-pipeline.sh --infra 42                           Issue de infraestructura (IaC)
   herdr-pipeline.sh --scaffold 42 --domain nombre        Scaffold de dominio
   herdr-pipeline.sh --batch 42 43 44                     Secuencial
@@ -800,10 +814,9 @@ main() {
                     cmd_parallel "$@"
                 fi
             else
-                # El enrutamiento automatico (sin --tooling explicito) puede caer
-                # en tdd-pipeline.sh, que todavia no implementa --models: mismo
-                # rechazo explicito que en tmux-pipeline.sh.
-                [ -n "$models_spec" ] && abort "--models solo esta soportado hoy via --tooling (el enrutamiento automatico puede caer en tdd-pipeline.sh, que no implementa el flag). Usa: herdr-pipeline.sh --tooling <issue> --models 'agente=modelo'"
+                # El enrutamiento automatico (sin --tooling explicito) resuelve
+                # a tdd-pipeline.sh o tooling-pipeline.sh (issue #712: ambos ya
+                # implementan --models) -- mismo criterio que tmux-pipeline.sh.
                 require_herdr_context
                 local combined_extra="$scaffold_extra"
                 if [ -n "$from_stage_extra" ]; then
@@ -813,7 +826,7 @@ main() {
                         combined_extra="$from_stage_extra"
                     fi
                 fi
-                cmd_single "$1" "$combined_extra" "$pipeline_override"
+                cmd_single "$1" "$combined_extra" "$pipeline_override" "$models_spec"
             fi
             ;;
         *)
