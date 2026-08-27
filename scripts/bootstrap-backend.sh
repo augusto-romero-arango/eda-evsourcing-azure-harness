@@ -8,18 +8,32 @@
 # por dominio (MEF-ADR-0020). Este script NO crea planes ni Function Apps: solo el
 # backend del tfstate.
 #
-# Nombre de la Storage Account: el nombre de una Storage Account es un endpoint
-# DNS publico (*.blob.core.windows.net) y por tanto UNICO en todo Azure, no solo
-# en la suscripcion. Por eso el campo 'terraformStateStorage' del config se trata
-# como un nombre BASE: este script le anexa un sufijo aleatorio de unicidad global
-# (mismo patron 'random_string' que agents/domain-scaffolder.md aplica a las
-# Storage de dominio) y valida la disponibilidad con 'az storage account
-# check-name' antes de crear. El nombre FINAL resuelto es el que se escribe en
-# backend.tf y se imprime, asi que 'terraform init' usa exactamente la cuenta
-# creada. La idempotencia se ancla en dos fuentes durables -no en un archivo de
-# estado local-: el storage_account_name ya escrito en backend.tf (versionado) y
-# la cuenta ya creada en el RG dedicado del tfstate; una segunda corrida reusa esa
-# cuenta en vez de crear otra con un sufijo distinto.
+# Naming del RG y la Storage Account (MEF-ADR-0045, issue #732): sigue dos formas
+# segun si el consumidor declaro 'azureRegionShort' en harness.config.json.
+#
+# - Declarado: forma canonica CAF, sin sufijo aleatorio -- "rg-tfstate-{app}-{env}-
+#   {region}-{seq}" para el Resource Group y "sttfstate{app}{env}{region}{seq}"
+#   (sin guiones) para la Storage Account. La unicidad global de la Storage
+#   Account (nombre = endpoint DNS publico, *.blob.core.windows.net) es
+#   ESTRUCTURAL: app+env+region+seq. Se sigue validando con 'az storage account
+#   check-name'; ante colision, el fallback es incrementar 'resourceSequence' en
+#   el config (MEF-ADR-0045 seccion 2), nunca un sufijo random.
+# - Ausente (retrocompatible): comportamiento previo a este issue. El RG es
+#   "{infraResourceGroupPrefix}-tfstate" y el campo 'terraformStateStorage' se
+#   trata como nombre BASE de la Storage Account, al que este script le anexa un
+#   sufijo aleatorio de unicidad global (mismo patron 'random_string' que
+#   agents/domain-scaffolder.md aplica a las Storage de dominio), validado con
+#   'az storage account check-name'.
+#
+# En ambos casos el nombre FINAL resuelto es el que se escribe en backend.tf y se
+# imprime, asi que 'terraform init' usa exactamente la cuenta creada. La
+# idempotencia se ancla en dos fuentes durables -no en un archivo de estado
+# local-: el resource_group_name/storage_account_name ya escritos en backend.tf
+# (versionado, manda siempre sobre cualquiera de las dos formas de arriba) y la
+# cuenta ya creada en el RG del tfstate; una segunda corrida reusa esos nombres en
+# vez de recalcularlos -- asi un backend viejo (forma legacy) sigue funcionando
+# sin cambios aunque el config gane 'azureRegionShort' despues (MEF-ADR-0045
+# seccion 3: solo greenfield, ningun recurso desplegado se renombra).
 #
 # Uso:
 #   ./scripts/bootstrap-backend.sh --subscription <id>
@@ -142,26 +156,51 @@ if [ -z "$HARNESS_TFSTATE_STORAGE" ]; then
 fi
 
 # --- Nombres resueltos desde el config (sin hardcodear) ---
-RG="${HARNESS_RG_PREFIX}-tfstate"
 CONTAINER="tfstate"
 INFRA_ENV_DIR="infra/environments/${ENVIRONMENT}"
 BACKEND_KEY="${ENVIRONMENT}.tfstate"
-
-# Nombre BASE de la Storage Account (del config). El nombre FINAL puede llevar un
-# sufijo de unicidad global (ver resolucion mas abajo). Azure exige <= 24 chars;
-# reservamos SUFFIX_LEN para el sufijo y truncamos la base si no cabe (mismo
-# calculo que agents/domain-scaffolder.md Paso 4: base + 6 chars <= 24).
 STORAGE_SUFFIX_LEN=6
 STORAGE_MAX_LEN=24
-STORAGE_BASE=$(truncate_storage_base "$HARNESS_TFSTATE_STORAGE" "$STORAGE_MAX_LEN" "$STORAGE_SUFFIX_LEN")
-if [ "$STORAGE_BASE" != "$HARNESS_TFSTATE_STORAGE" ]; then
-    echo "AVISO: 'terraformStateStorage' ('${HARNESS_TFSTATE_STORAGE}', ${#HARNESS_TFSTATE_STORAGE} chars) no deja espacio para el sufijo de ${STORAGE_SUFFIX_LEN} chars dentro del limite de ${STORAGE_MAX_LEN}; se trunca la base a '${STORAGE_BASE}'." >&2
+
+# El backend.tf ya versionado manda sobre cualquier formula de naming (precedencia
+# #1, ver 'resolve_storage_account_name' mas abajo): si ya declara un RG, se reusa
+# tal cual en vez de recalcularlo.
+RG_FROM_BACKEND=$(read_backend_resource_group_name "$INFRA_ENV_DIR")
+if [ -n "$RG_FROM_BACKEND" ]; then
+    RG="$RG_FROM_BACKEND"
+else
+    RG=$(compose_tfstate_resource_group_name "$HARNESS_RG_PREFIX" "$ENVIRONMENT" "$HARNESS_AZURE_REGION_SHORT" "$HARNESS_RESOURCE_SEQUENCE")
+fi
+
+# Nombre BASE de la Storage Account. Forma legacy (retrocompatible) truncada al
+# limite de Azure reservando espacio para el sufijo aleatorio -- se usa tal cual
+# si 'azureRegionShort' esta ausente, o como insumo si esta declarado (ver
+# 'compose_tfstate_storage_account_base').
+LEGACY_STORAGE_BASE=$(truncate_storage_base "$HARNESS_TFSTATE_STORAGE" "$STORAGE_MAX_LEN" "$STORAGE_SUFFIX_LEN")
+if [ -z "$HARNESS_AZURE_REGION_SHORT" ] && [ "$LEGACY_STORAGE_BASE" != "$HARNESS_TFSTATE_STORAGE" ]; then
+    echo "AVISO: 'terraformStateStorage' ('${HARNESS_TFSTATE_STORAGE}', ${#HARNESS_TFSTATE_STORAGE} chars) no deja espacio para el sufijo de ${STORAGE_SUFFIX_LEN} chars dentro del limite de ${STORAGE_MAX_LEN}; se trunca la base a '${LEGACY_STORAGE_BASE}'." >&2
+fi
+
+STORAGE_BASE=$(compose_tfstate_storage_account_base "$HARNESS_RG_PREFIX" "$ENVIRONMENT" "$HARNESS_AZURE_REGION_SHORT" "$HARNESS_RESOURCE_SEQUENCE" "$LEGACY_STORAGE_BASE" "$STORAGE_MAX_LEN")
+if [ -n "$HARNESS_AZURE_REGION_SHORT" ]; then
+    STORAGE_CAF_FIXED_PREFIX="sttfstate"
+    APP_SLUG_PLAIN=$(printf '%s' "${HARNESS_RG_PREFIX#rg-}" | tr -d -- '-_')
+    FIXED_LEN_NEW=$((${#STORAGE_CAF_FIXED_PREFIX} + ${#ENVIRONMENT} + ${#HARNESS_AZURE_REGION_SHORT} + ${#HARNESS_RESOURCE_SEQUENCE}))
+    APP_SLUG_TRUNCATED=$(truncate_storage_base "$APP_SLUG_PLAIN" "$STORAGE_MAX_LEN" "$FIXED_LEN_NEW")
+    if [ "$APP_SLUG_TRUNCATED" != "$APP_SLUG_PLAIN" ]; then
+        echo "AVISO: 'infraResourceGroupPrefix' ('${HARNESS_RG_PREFIX}') no deja espacio para el patron CAF del tfstate ('${STORAGE_CAF_FIXED_PREFIX}{app}${ENVIRONMENT}${HARNESS_AZURE_REGION_SHORT}${HARNESS_RESOURCE_SEQUENCE}') dentro del limite de ${STORAGE_MAX_LEN} chars; se trunca la porcion de proyecto (resultado: '${STORAGE_BASE}')." >&2
+    fi
 fi
 
 echo "=== Bootstrap del backend de Terraform para ${HARNESS_PROJECT_NAME} ==="
 echo "  Ambiente:        ${ENVIRONMENT}"
 echo "  Suscripcion:     ${SUBSCRIPTION_ID}"
 echo "  Region:          ${LOCATION}"
+if [ -n "$HARNESS_AZURE_REGION_SHORT" ]; then
+    echo "  Naming CAF:      activo (azureRegionShort='${HARNESS_AZURE_REGION_SHORT}', resourceSequence='${HARNESS_RESOURCE_SEQUENCE}', MEF-ADR-0045)"
+else
+    echo "  Naming CAF:      inactivo (falta 'azureRegionShort' en .claude/harness.config.json; naming legacy retrocompatible, MEF-ADR-0045)"
+fi
 echo "  Resource Group:  ${RG}"
 echo "  Storage (base):  ${STORAGE_BASE}"
 echo "  Container:       ${CONTAINER}"
@@ -181,10 +220,12 @@ az account set --subscription "$SUBSCRIPTION_ID" || {
 #      (registro versionado y canonico: es lo que usara 'terraform init').
 #   2. Cuenta ya creada en el RG dedicado del tfstate cuyo nombre arranca con la
 #      base (cubre una corrida previa interrumpida antes de escribir backend.tf).
-#   3. Nombre nuevo: base + sufijo aleatorio, validando unicidad GLOBAL con
-#      'az storage account check-name' y reintentando si el nombre esta tomado.
+#   3. Nombre nuevo: con 'azureRegionShort' declarado, STORAGE_BASE ya es el
+#      candidato final (unicidad estructural, MEF-ADR-0045 seccion 2); sin
+#      declarar, base + sufijo aleatorio reintentando si esta tomado (legacy).
+#      En ambos casos se valida con 'az storage account check-name'.
 resolve_storage_account_name() {
-    local from_backend existing candidate suffix attempt available
+    local from_backend existing
 
     from_backend=$(read_backend_storage_account_name "$INFRA_ENV_DIR")
     if [ -n "$from_backend" ]; then
@@ -201,6 +242,39 @@ resolve_storage_account_name() {
         return 0
     fi
 
+    if [ -n "$HARNESS_AZURE_REGION_SHORT" ]; then
+        resolve_storage_account_name_caf
+    else
+        resolve_storage_account_name_legacy
+    fi
+}
+
+# Modo CAF (MEF-ADR-0045 seccion 2): STORAGE_BASE ya es el nombre final candidato
+# (unicidad estructural via app+env+region+seq, sin sufijo aleatorio). Ante
+# colision, el fallback documentado es incrementar 'resourceSequence' en el
+# config -- nunca reintroducir un sufijo random.
+resolve_storage_account_name_caf() {
+    local available
+    available=$(az storage account check-name --name "$STORAGE_BASE" \
+        --query nameAvailable -o tsv 2>/dev/null) || available=""
+    case "$available" in
+        [Tt]rue)
+            printf '%s' "$STORAGE_BASE"; return 0 ;;
+        [Ff]alse)
+            echo "ERROR: el nombre '${STORAGE_BASE}' de Storage Account ya esta tomado en Azure (colision global)." >&2
+            echo "  Incrementa 'resourceSequence' en .claude/harness.config.json (actual: '${HARNESS_RESOURCE_SEQUENCE}') y reintenta -- MEF-ADR-0045 seccion 2 prohibe volver a un sufijo aleatorio." >&2
+            return 1 ;;
+        *)
+            echo "AVISO: 'az storage account check-name' no fue concluyente para '${STORAGE_BASE}'; se usara de todas formas (si colisiona, el create fallara de forma explicita)." >&2
+            printf '%s' "$STORAGE_BASE"; return 0 ;;
+    esac
+}
+
+# Modo legacy (retrocompatible, CA-4): base + sufijo aleatorio de unicidad global,
+# validado con 'az storage account check-name', reintentando si el nombre esta
+# tomado.
+resolve_storage_account_name_legacy() {
+    local suffix candidate attempt available
     for attempt in {1..10}; do
         suffix=$(gen_storage_suffix "$STORAGE_SUFFIX_LEN")
         candidate="${STORAGE_BASE}${suffix}"

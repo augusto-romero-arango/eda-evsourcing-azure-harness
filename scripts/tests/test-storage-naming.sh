@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
 # test-storage-naming.sh -- Tests de los helpers de naming de Storage Account
-# (scripts/_pipeline-common.sh) que usa scripts/bootstrap-backend.sh (issue #92).
+# (scripts/_pipeline-common.sh) que usa scripts/bootstrap-backend.sh (issue #92,
+# alineado al estandar CAF de MEF-ADR-0045 en el issue #732).
 #
 # El nombre de una Storage Account es un endpoint DNS publico y por tanto unico en
 # todo Azure; bootstrap-backend.sh anexa un sufijo de unicidad global al nombre
-# base del config. Estos tests cubren las tres funciones PURAS (sin 'az') que
-# componen esa resolucion:
-#   truncate_storage_base            - respeta el limite de 24 chars (CA-4).
-#   gen_storage_suffix               - sufijo aleatorio [a-z0-9] del largo pedido.
-#   read_backend_storage_account_name - reusa el nombre ya escrito en backend.tf,
-#                                       ancla de idempotencia (CA-3).
+# base del config (forma legacy) o compone el nombre CAF con {region}/{seq}
+# (forma nueva). Estos tests cubren las funciones PURAS (sin 'az') que componen
+# esa resolucion:
+#   truncate_storage_base                 - respeta el limite de 24 chars (CA-4).
+#   gen_storage_suffix                    - sufijo aleatorio [a-z0-9] del largo pedido.
+#   read_backend_storage_account_name     - reusa el nombre ya escrito en backend.tf,
+#                                            ancla de idempotencia (CA-3).
+#   read_backend_resource_group_name      - gemelo de arriba para resource_group_name.
+#   compose_tfstate_resource_group_name   - RG legacy vs. forma CAF (issue #732 CA-1/CA-4).
+#   compose_tfstate_storage_account_base  - Storage legacy vs. forma CAF, con
+#                                            truncado de {app} (issue #732 CA-2/CA-4).
 #
 # Uso: scripts/tests/test-storage-naming.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -144,6 +150,78 @@ terraform {
 EOF
 R=$(read_backend_storage_account_name "$TMP_DIR/otrotf")
 if [ "$R" = "stotrotfstatedevxyz789" ]; then pass "backend en otro .tf (providers.tf) -> lo encuentra"; else fail "deberia encontrar el backend en providers.tf (obtenido '$R')"; fi
+
+# -------- read_backend_resource_group_name (idempotencia via backend.tf, issue #732) --------
+
+echo ""
+echo "[4] read_backend_resource_group_name reusa el RG escrito en backend.tf"
+
+mkdir -p "$TMP_DIR/rg-conbackend"
+cat > "$TMP_DIR/rg-conbackend/backend.tf" <<'EOF'
+terraform {
+  backend "azurerm" {
+    resource_group_name  = "rg-cosmos-cplane-tfstate"
+    storage_account_name = "stcplanetfstatedev18ecba"
+    container_name       = "tfstate"
+    key                  = "dev.tfstate"
+  }
+}
+EOF
+R=$(read_backend_resource_group_name "$TMP_DIR/rg-conbackend")
+if [ "$R" = "rg-cosmos-cplane-tfstate" ]; then pass "backend.tf valido -> 'rg-cosmos-cplane-tfstate'"; else fail "deberia leer el RG del backend.tf (obtenido '$R')"; fi
+
+mkdir -p "$TMP_DIR/rg-vacio"
+R=$(read_backend_resource_group_name "$TMP_DIR/rg-vacio")
+if [ -z "$R" ]; then pass "directorio sin .tf -> vacio"; else fail "directorio sin .tf deberia dar vacio (obtenido '$R')"; fi
+
+R=$(read_backend_resource_group_name "$TMP_DIR/rg-no-existe")
+if [ -z "$R" ]; then pass "directorio inexistente -> vacio"; else fail "directorio inexistente deberia dar vacio (obtenido '$R')"; fi
+
+mkdir -p "$TMP_DIR/rg-novar"
+cat > "$TMP_DIR/rg-novar/backend.tf" <<'EOF'
+terraform {
+  backend "azurerm" {
+    resource_group_name = var.tfstate_rg
+  }
+}
+EOF
+R=$(read_backend_resource_group_name "$TMP_DIR/rg-novar")
+if [ -z "$R" ]; then pass "resource_group_name no literal -> vacio"; else fail "valor no literal deberia dar vacio (obtenido '$R')"; fi
+
+# -------- compose_tfstate_resource_group_name (issue #732 CA-1/CA-4) --------
+
+echo ""
+echo "[5] compose_tfstate_resource_group_name: forma CAF vs. legacy retrocompatible"
+
+R=$(compose_tfstate_resource_group_name "rg-cosmos-cplane" "dev" "eus2" "001")
+if [ "$R" = "rg-tfstate-cosmos-cplane-dev-eus2-001" ]; then pass "con region -> forma CAF 'rg-tfstate-{app}-{env}-{region}-{seq}'"; else fail "forma CAF incorrecta (obtenido '$R')"; fi
+
+R=$(compose_tfstate_resource_group_name "rg-cosmos-cplane" "dev" "" "001")
+if [ "$R" = "rg-cosmos-cplane-tfstate" ]; then pass "sin region (CA-4) -> forma legacy '{infraResourceGroupPrefix}-tfstate'"; else fail "forma legacy incorrecta (obtenido '$R')"; fi
+
+# -------- compose_tfstate_storage_account_base (issue #732 CA-2/CA-4) --------
+
+echo ""
+echo "[6] compose_tfstate_storage_account_base: forma CAF vs. legacy retrocompatible"
+
+# Sin region (CA-4): devuelve la base legacy literal, sin tocarla.
+R=$(compose_tfstate_storage_account_base "rg-cosmos-cplane" "dev" "" "001" "stmcptfstatedev" 24)
+if [ "$R" = "stmcptfstatedev" ]; then pass "sin region -> base legacy sin cambios"; else fail "deberia devolver la base legacy tal cual (obtenido '$R')"; fi
+
+# Con region, app corto: cabe sin truncar.
+R=$(compose_tfstate_storage_account_base "rg-mcp" "dev" "eus2" "001" "irrelevante" 24)
+if [ "$R" = "sttfstatemcpdeveus2001" ]; then pass "con region, app corto -> 'sttfstate{app}{env}{region}{seq}' sin truncar"; else fail "composicion CAF incorrecta (obtenido '$R', ${#R} chars)"; fi
+if [ "${#R}" -le 24 ]; then pass "nombre CAF <= 24 chars"; else fail "nombre CAF supera 24 chars (${#R})"; fi
+
+# Con region, app largo: se trunca {app} (nunca abrev-tipo/uso/env/region/seq),
+# preservando el prefijo -- misma regla que truncate_storage_base (seccion 4).
+R=$(compose_tfstate_storage_account_base "rg-cosmos-cplane" "dev" "eus2" "001" "irrelevante" 24)
+if [ "$R" = "sttfstatecosmodeveus2001" ]; then pass "con region, app largo -> {app} truncado preservando prefijo"; else fail "truncado CAF incorrecto (obtenido '$R', ${#R} chars)"; fi
+if [ "${#R}" -eq 24 ]; then pass "nombre CAF truncado cae exacto en 24 chars"; else fail "nombre CAF truncado deberia dar 24 chars (obtenido ${#R})"; fi
+
+# {app} sin guiones/guiones-bajos en el resultado (charset de Storage).
+R=$(compose_tfstate_storage_account_base "rg-mi_proyecto-x" "dev" "eus2" "001" "irrelevante" 24)
+if printf '%s' "$R" | grep -Eq '^[a-z0-9]+$'; then pass "resultado sin guiones/guiones-bajos (charset valido de Storage)"; else fail "resultado con caracteres invalidos: '$R'"; fi
 
 # -------- Resumen --------
 
