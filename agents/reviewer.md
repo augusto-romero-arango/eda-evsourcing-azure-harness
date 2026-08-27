@@ -299,6 +299,7 @@ La tercera columna es tambien el gotcha de `using` al corregir el worker: **ning
 | Serializador (`EnumStorage`, `Casing`, `TypeInfoResolver`) | el payload se escribio con una convencion (ej. enums como int) y se lee con otra (enums como string) -- deserializacion incorrecta o excepcion (instancia real: consumidor #238/#252) |
 | Tipos de evento registrados (`AddEventTypes`) | el read-side no reconoce el tipo de evento persistido por el write-side -- la proyeccion no lo aplica (instancia real: consumidor #277) |
 | `Policies.AllDocumentsAreMultiTenanted()` (par 2, read models) | el worker materializa documentos sin scope de tenant; el Function App consulta filtrando por tenant y no encuentra (o mezcla) datos |
+| `Schema.For<TView>().UseNumericRevisions(true)` (par 2, read models -- segunda instancia, issue #718) | el worker materializa el documento con `mt_version bigint` (Marten lo impone via `ProjectionDocumentPolicy`, no configurable); si el write-side no replica `UseNumericRevisions(true)` para ese `TView`, su mapping por convencion espera `mt_version uuid` y la primera query dispara un `ALTER COLUMN` que Postgres rechaza (`42804: cannot be cast automatically`), tumbando toda la sesion del store del Function App -- instancia real: consumidor Bitakora.ControlAsistencia issues #294 y #448 |
 
 **No debe coincidir** (propiedad del proceso):
 
@@ -313,7 +314,9 @@ La tercera columna es tambien el gotcha de `using` al corregir el worker: **ning
 
 **El par 2 (read models)**: "write-side vs read-side" nombra dos contratos, no uno. El par 1 (eventos) ya lo cubria parcialmente la guarda barata de metadata del config-test; el par 2 (worker -> query-side sobre read models) no tenia nombre en ningun ADR hasta la enmienda de MEF-ADR-0034 seccion 6. `Policies.AllDocumentsAreMultiTenanted()` es su instancia conocida: el Function App la trae del paquete, el worker no la replica por defecto y materializa vistas sin scope de tenant que el Function App despues consulta filtrando por tenant.
 
-**Mandato de corregir**: una divergencia de la columna "debe coincidir" se corrige en el read-side, en el mismo PR -- mismo criterio que el resto de este paso (corregir codigo, correr `dotnet test`, revertir si rompe). Solo se escala como hallazgo bloqueante si corregirla exige tocar el write-side.
+**Segunda instancia del par 2, `mt_version` (issue #718)**: Marten impone `mt_version bigint` al documento target de toda proyeccion registrada en el worker (`ProjectionDocumentPolicy`, no configurable ahi); el mapping por convencion del write-side no lo hereda y espera `mt_version uuid` salvo que el Function App declare `Schema.For<TView>().UseNumericRevisions(true)` por cada documento consultado (receta completa, con cita a la doc oficial de Marten, en `skills/projections/read-apis.md`). Esta guarda esta cubierta por el **par de config-tests espejo** que fija `skills/projections/config-test.md` -- corre en cada `dotnet test`, siempre-activa, sin depender de este gate condicional; verificalo aqui solo si el diff no trae ese par de tests para el `TView` nuevo.
+
+**Mandato de corregir**: una divergencia de la columna "debe coincidir" se corrige en el read-side, en el mismo PR -- mismo criterio que el resto de este paso (corregir codigo, correr `dotnet test`, revertir si rompe). Solo se escala como hallazgo bloqueante si corregirla exige tocar el write-side. **Excepcion: la fila `mt_version`** (segunda instancia del par 2, arriba) se corrige siempre en el **write-side** -- el worker no admite otra forma, Marten se la impone al registrar la proyeccion.
 
 #### Identidad de stream: punto unico de conversion y borde HTTP con parseo tipado (MEF-ADR-0037, issue #503)
 
