@@ -45,6 +45,13 @@
 #                                 true; "false" en cualquier otro caso (ausente, null, false,
 #                                 o un tipo/valor invalido -- issue #369, MEF-ADR-0034). Nunca
 #                                 aborta la carga: es un token opt-in, retrocompatible.
+#   HARNESS_AZURE_REGION_SHORT - Valor de azureRegionShort (ej. "eus2"), componente {region}
+#                                 del estandar de nombramiento de recursos (MEF-ADR-0045,
+#                                 issue #729). Vacio si el campo esta ausente -- nunca aborta
+#                                 la carga (token opt-in, retrocompatible).
+#   HARNESS_RESOURCE_SEQUENCE  - Valor de resourceSequence (ej. "001"), componente {seq} del
+#                                 mismo estandar (MEF-ADR-0045). "001" si el campo esta
+#                                 ausente o vacio -- nunca aborta la carga.
 #
 # Campos opcionales del config (no se exportan via load_harness_config; se leen
 # inline donde se necesitan, mismo patron que agents/planner.md):
@@ -372,6 +379,16 @@ load_harness_config() {
     else
         export HARNESS_PROJECTIONS_ENABLED="false"
     fi
+
+    # azureRegionShort/resourceSequence son opcionales (issue #729, MEF-ADR-0045): componentes
+    # {region}/{seq} del estandar de nombramiento de recursos. Igual que projections.enabled,
+    # la asignacion lleva `|| true` para que un config malformado en este campo puntual no
+    # aborte TODO el pipeline bajo `set -euo pipefail` -- ausencia o valor invalido degradan
+    # a los defaults retrocompatibles ("" y "001"), nunca a un error de carga.
+    export HARNESS_AZURE_REGION_SHORT=$(jq -r '.azureRegionShort // ""' "$config" 2>/dev/null) || true
+    local seq_raw
+    seq_raw=$(jq -r '.resourceSequence // ""' "$config" 2>/dev/null) || true
+    export HARNESS_RESOURCE_SEQUENCE="${seq_raw:-001}"
 }
 
 # upsert_harness_secret <name> <source_type> <source_value> [config_path]
