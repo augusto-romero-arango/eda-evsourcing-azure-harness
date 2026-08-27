@@ -2,7 +2,7 @@
 fecha: 2026-08-27
 hora: 08:37
 sesion: mefisto-planner
-tema: refinamiento de #718 (gap de mt_version en la doctrina read-side)
+tema: refinamiento de #718 (gap de mt_version), #722 (plantilla par espejo) y #726 (gate de arranque del batch interno)
 ---
 
 ## Contexto
@@ -28,6 +28,13 @@ Draft #718 creado desde el consumidor Bitakora.ControlAsistencia (planner del co
 ## Preguntas abiertas
 - Ninguna: las tres preguntas de refinamiento de #722 (ubicacion de la plantilla, enumerar vs ejemplificar, forma del cambio en el reviewer) se resolvieron en la misma sesion.
 
+## Refinamiento de #726 (misma sesion)
+- Sintoma real: `/mefisto-sequential 718` aborto porque la rama activa era `docs/field-notes-refinamiento-718` (residuo de esta misma sesion de planner) - el gate de arranque de `mefisto-batch-pipeline.sh:306-318` trata como fatal un caso salvable.
+- Hallazgo: el sync entre eslabones (#566) ya tolera rama activa != main a mitad de corrida (actualiza main por nombre, warning); el gate de arranque era mas estricto que el propio invariante del motor.
+- Decision: opcion (a) auto-switch con arbol limpio (`git switch` + `pull --ff-only` + warning con la rama original); arbol sucio o ff-only fallido conservan el abort fail-loud. Test de fixture nuevo siguiendo el patron de `test-batch-sync-branch-race.sh`.
+- Descartado: (b) degradar a warning sin switch - dejaria incumplida toda la corrida la premisa de higiene que justifica el gate.
+- Verificado: el motor publicado `scripts/batch-pipeline.sh` no tiene gate de arranque de rama - sin simetria que aplicar (cerro el CA-4 abierto del draft). Precedente #711 confirma que los cambios internos tambien llevan fragmento en `changelog.d/`.
+
 ## Referencias
 Issues creados: #722 (refinado a `estado:listo` en la misma sesion; conserva `bloqueado` por #718)
-Issues refinados: #718 y #722 (`estado:borrador` -> `estado:listo`)
+Issues refinados: #718, #722 y #726 (`estado:borrador` -> `estado:listo`)
