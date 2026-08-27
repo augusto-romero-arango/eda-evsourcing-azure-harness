@@ -26,6 +26,9 @@
 #       -<label> llega a rama/worktree/status/logs (CA-2), en modo variante no
 #       hay push/PR/comentario al issue (CA-3), y el label viaja en el status
 #       y en el historial (CA-4).
+#   mefisto-tooling-pipeline.sh (bloque 18) -- corrida real: un label invalido
+#       aborta con el motivo visible en stderr aun sin .claude/pipeline/logs
+#       preexistente, y sin dejar worktree (CA-1).
 #
 # Uso: .claude/scripts/tests/test-mefisto-tooling-variant.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -377,6 +380,39 @@ if [ "$HISTORY_VARIANT_HITS" -ge 2 ]; then
     pass "las dos lineas de pipeline-history.jsonl (completed y failed) llevan variant ($HISTORY_VARIANT_HITS)"
 else
     fail "solo $HISTORY_VARIANT_HITS linea(s) de historial llevan variant: se esperan 2 (completed y failed)"
+fi
+
+echo ""
+echo "[18] mefisto-tooling-pipeline.sh: un --variant invalido aborta con el motivo VISIBLE, aunque .claude/pipeline/logs no exista (CA-1)"
+# El caso real: primera corrida sobre un clon fresco. La validacion de
+# --variant ocurre ANTES de 'mkdir -p "$LOG_DIR"', asi que abort() escribe a un
+# log cuyo directorio todavia no existe. Si el tee de abort() no tolera ese
+# fallo, errexit mata el proceso en esa linea -- abort() es el comando final de
+# un '||' y por tanto NO hereda la exencion de errexit -- y el humano solo ve
+# "tee: ... No such file or directory": el motivo real nunca llega a stderr.
+cp "$REPO_ROOT/.claude/scripts/mefisto-tooling-pipeline.sh" "$FAKE_MEFISTO/.claude/scripts/mefisto-tooling-pipeline.sh"
+rm -rf "$FAKE_MEFISTO/.claude/pipeline"
+ABORT_OUT="$TMP_DIR/abort-stdout"; ABORT_ERR="$TMP_DIR/abort-stderr"
+(
+    cd "$FAKE_MEFISTO" || exit 99
+    PATH="$FAKE_BIN:$PATH" ./.claude/scripts/mefisto-tooling-pipeline.sh 711 --variant "MALO_X"
+) </dev/null >"$ABORT_OUT" 2>"$ABORT_ERR"
+ABORT_RC=$?
+if [ "$ABORT_RC" -ne 0 ]; then pass "el pipeline aborta (rc=$ABORT_RC)"; else fail "un label invalido deberia abortar"; fi
+if grep -q -- "--variant mal formado" "$ABORT_ERR"; then
+    pass "el motivo del aborto llega a stderr sin log dir preexistente"
+else
+    fail "el motivo del aborto NO llega a stderr: $(cat "$ABORT_ERR")"
+fi
+if grep -q "solo minusculas, digitos y guiones" "$ABORT_ERR"; then
+    pass "el mensaje explica el formato esperado del label"
+else
+    fail "el mensaje no explica el formato esperado: $(cat "$ABORT_ERR")"
+fi
+if compgen -G "$FAKE_MEFISTO/../worktree-mefisto-issue-711-*" >/dev/null 2>&1; then
+    fail "se creo un worktree pese al label invalido"
+else
+    pass "no se creo ningun worktree (aborta antes)"
 fi
 
 echo ""

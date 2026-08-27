@@ -212,9 +212,11 @@ MEFISTO_STREAM_WATCH_JQ
 #
 # 0 si el nombre de archivo corresponde a uno de los issues de la lista
 # (separada por comas). El match es sobre el segmento `-issue-<N>` seguido de
-# `.stream.jsonl` o de una copia de reintento (`.attempt-<k>.stream.jsonl`,
-# ver run_agent en mefisto-tooling-pipeline.sh): un substring simple
-# confundiria el issue 4 con el 42. Con lista vacia matchea todo (sin filtro).
+# `.stream.jsonl`, de una copia de reintento (`.attempt-<k>.stream.jsonl`, ver
+# run_agent en mefisto-tooling-pipeline.sh) o del sufijo de una corrida de
+# variante (`-<label>.stream.jsonl`, --variant del issue #711): un substring
+# simple confundiria el issue 4 con el 42. Con lista vacia matchea todo (sin
+# filtro).
 stream_matches_issues() {
     local base="$1" csv="$2"
     [ -n "$csv" ] || return 0
@@ -224,6 +226,7 @@ stream_matches_issues() {
         case "$base" in
             *"-issue-${issue}.stream.jsonl") return 0 ;;
             *"-issue-${issue}.attempt-"*".stream.jsonl") return 0 ;;
+            *"-issue-${issue}-"*".stream.jsonl") return 0 ;;
         esac
     done
     return 1
@@ -277,6 +280,15 @@ discover_stream() {
 # sin leer el contenido del archivo. Si la ruta no matchea ese patron (una
 # ruta manual con otro nombre, o una convencion futura), degrada a mostrar
 # el nombre tal cual en vez de fallar.
+#
+# Los streams de reintento (`.attempt-<k>`) y los de una corrida de variante
+# (`-issue-<N>-<label>`, --variant del issue #711) caen hoy en esa
+# degradacion: se ven, pero con el nombre de archivo crudo en vez del
+# encabezado formateado. El fix no es de una linea -- un grupo opcional
+# codicioso al final de la regex se tragaria tambien el sufijo de reintento en
+# TODOS los pipelines -- y amerita issue propio, no ampliar el alcance de
+# #711. El filtro por issue (stream_matches_issues) si los matchea, que es lo
+# que decide si el visor los muestra.
 parse_stream_header() {
     local path="$1"
     local base

@@ -101,7 +101,14 @@ abort() {
     local log_tail
     log_tail="$(_tail_log_for_abort "${LOG_FILE_ABS:-$LOG_FILE}" "$TAIL_LOG_LINES")" || log_tail=""
     PIPELINE_ERROR="$(echo "$1" | sed 's/"/\\"/g' | tr '\n' ' ')"
-    echo -e "\n${RED}${BOLD}x ERROR: $1${NC}" | tee -a "${LOG_FILE_ABS:-$LOG_FILE}" >/dev/null
+    # '|| true': abort() corre tambien ANTES de que exista $LOG_DIR -- los
+    # abortos de parseo de argumentos (--variant mal formado, issue #711;
+    # "Argumento no reconocido"; "Falta el numero de issue") caen todos ahi.
+    # Sin esta guarda, el tee falla, errexit mata el proceso en esta linea
+    # (abort() es el comando final de un '||', asi que NO hereda la exencion
+    # de errexit) y el humano solo ve "tee: ... No such file or directory":
+    # el motivo real del aborto nunca llega a stderr.
+    echo -e "\n${RED}${BOLD}x ERROR: $1${NC}" | tee -a "${LOG_FILE_ABS:-$LOG_FILE}" >/dev/null || true
     echo -e "${RED}${BOLD}x ERROR: $1${NC}" >&2
     echo -e "${YELLOW}Revisa el log: ${LOG_FILE_ABS:-$LOG_FILE}${NC}" >&2
     if [ -n "$log_tail" ]; then echo "$log_tail" >&2; fi

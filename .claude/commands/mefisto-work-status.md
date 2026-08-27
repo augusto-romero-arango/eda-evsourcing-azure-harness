@@ -37,6 +37,13 @@ Mefisto Work Status - {{fecha hora}}
 
 ### Panel principal -- pipelines internos activos
 
+Cada JSON de status trae un campo `variant` (`null` en una corrida normal;
+el label de `--variant` en una corrida de comparacion, issue #711). Cuando no
+es `null`, sufija el numero de issue con `/{{variant}}` en toda fila donde
+aparezca (`#711/exp-a`): sin eso, dos variantes simultaneas del mismo issue se
+renderizan como dos filas identicas e indistinguibles. Aplica igual al
+historial, que tambien lleva el campo.
+
 **Si hay uno o mas pipelines con `state == "running"`:**
 
 ```
@@ -92,7 +99,8 @@ Filtra `pipeline-history.jsonl` por `"pipeline": "mefisto-tooling"` y muestra la
 ## Paso 3: Drill-down
 
 Para responder preguntas como "por que fallo?":
-- Logs viven en `.claude/pipeline/logs/mefisto-tooling-stage-{N}-{agent}-{TIMESTAMP}-issue-{N}.log`.
+- Logs viven en `.claude/pipeline/logs/mefisto-tooling-stage-{N}-{agent}-{TIMESTAMP}-issue-{N}.log`
+  -- en una corrida de variante, el segmento final es `issue-{N}-{variant}`.
 - TIMESTAMP se extrae del campo `started` del JSON de status.
 - Para errores: `Read <log_path>` con offset al final.
 
