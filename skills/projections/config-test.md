@@ -93,11 +93,29 @@ var provider = services.BuildServiceProvider();
 
    **Esta guarda no cubre toda la compatibilidad write-side/read-side** (MEF-ADR-0034 seccion 6, issue #447): el paquete `Cosmos.EventSourcing.CritterStack` fija diez atributos de Marten del lado write, no solo estos tres. La verificacion completa -- los otros siete atributos y el par read models/query-side -- es responsabilidad del **reviewer**, bajo el gate y las tablas de clasificacion que fija `agents/reviewer.md` ("Proyecciones y read-side").
 
-## Par de config-tests espejo: `mt_version` write-side <-> read-side (issue #718)
+## Plantilla del par espejo (issue #722)
 
-Los tres puntos de arriba verifican la configuracion **interna** del worker; ninguno la compara contra la del write-side. La receta de [read-apis.md](read-apis.md) (seccion "Resolucion de `TView` en el write-side") exige `opts.Schema.For<TView>().UseNumericRevisions(true)` en el Function App por cada documento consultado -- y esa receta necesita su propia guarda siempre-activa, porque el gate del reviewer no se dispara con un PR que solo agrega una Function GET nueva (exactamente el PR que introduce el defecto: Bitakora.ControlAsistencia issues #294 y #448).
+Los tres puntos de arriba verifican la configuracion **interna** del worker; ninguno la compara contra la del write-side. Esa comparacion es el **par 2** de compatibilidad Marten (MEF-ADR-0034 seccion 6: worker que materializa los documentos -> query-side del Function App), y necesita su propia guarda siempre-activa porque el gate del reviewer no se dispara con un PR que solo agrega una Function GET nueva (exactamente el PR que introduce el defecto tipico: Bitakora.ControlAsistencia issues #294 y #448). Con la tercera instancia conocida del par 2 verificada en el consumidor de referencia -- `mt_version` y tabla/tenancy/id, las dos que traen par espejo propio, sobre la de tenancy documental que el par 2 ya tenia enumerada --, el patron "oraculo literal espejo" que introdujo el issue #718 deja de ser una receta puntual y se generaliza a **plantilla**.
 
-**Un test por lado, cada uno sobre su propio store**, afirmando los mismos tres oraculos literales via `Options.FindOrResolveDocumentType(typeof(TView))` (`IReadOnlyStoreOptions`, alcanzable sin downcast -- misma superficie que ya usa MEF-ADR-0034 seccion 6 para `Events.MetadataConfig`):
+**Por que se extrae con dos aplicaciones y no con tres.** MEF-ADR-0018 fija la Rule of Three -- *"con dos sitios, la duplicacion se mantiene; recien al tercer caso vale la pena evaluar si la abstraccion es estable y aporta"* -- y esta plantilla se extrae en la **segunda** aplicacion del mecanismo. La justificacion no es esa fila sino las dos vecinas del mismo ADR: "costo de la duplicacion estable" (*"si los sitios cambian en sincronia un par de veces sin diverger, la duplicacion deja de ser estable y entra en el camino de la extraccion"*) y la excepcion que fija "autoridad de extraccion" (*"cuando un cambio reciente toco simultaneamente los dos sitios y los dejo identicos -- ese es el momento natural para proponer la extraccion en el mismo PR"*). Las dos aplicaciones no divergen en nada estructural: mismo `FindOrResolveDocumentType`, misma asimetria de autoridad, los mismos dos proyectos de test, el mismo modo de falla silencioso -- solo cambia el trio de literales. Si una tercera aplicacion divergiera de esa forma, la plantilla se revisa; el propio MEF-ADR-0018 advierte que la regla *"no es mecanica"*.
+
+### Mecanica comun a toda instancia
+
+**Un test por lado, cada uno en su propio proyecto sobre su propio store** -- `ComposicionServicios{Dominio}Tests` del dominio (write-side) <-> `ConfiguracionMartenProjectionsTests` de `<RootNamespace>.Projections.Tests` (read-side) --, afirmando los mismos oraculos literales via `Options.FindOrResolveDocumentType(typeof(TView))` (`IReadOnlyStoreOptions`, alcanzable sin downcast -- misma superficie que ya usa MEF-ADR-0034 seccion 6 para `Events.MetadataConfig`) contra su **propio** store, nunca contra el resultado del otro.
+
+**Sin comparacion cruzada, y no por eleccion de estilo.** `<RootNamespace>.Projections.Tests` y `<RootNamespace>.{Dominio}.Tests` no pueden referenciarse entre si sin abrir la misma brecha que el reviewer ya vigila en el `.csproj` del worker (MEF-ADR-0039 decision 4: las unicas `<ProjectReference>` validas del worker son `*.DomainEvents` y `ReadModels`, nunca un Function App ni su proyecto de tests) -- un test que comparara ambos lados exigiria exactamente esa referencia prohibida.
+
+**Asimetria de autoridad.** El worker no declara nada por su cuenta: Marten impone la forma fisica (columna de version, nombre de tabla, particion por tenant) al registrar la proyeccion en el named store (ver `read-apis.md` y MEF-ADR-0034 seccion 2). El Function App, en cambio, **replica** esa forma a mano, porque su mapping por convencion no hereda ninguna politica del worker. Por eso los dos tests no se comparan entre si: cada uno afirma el mismo literal **contra su propio store**.
+
+**Simetria en el mismo issue.** El issue que agrega la superficie de consulta o la condicion de compatibilidad que motiva una instancia nueva de esta plantilla escribe **las dos mitades** del par -- nunca solo la del worker. Bitakora #448 es la evidencia de lo que pasa si no: la mitad del worker ya existia, la mitad del Function App nunca se escribio, y el gap quedo invisible hasta el primer GET en produccion.
+
+### Criterio de seleccion de atributos
+
+Que atributos entran en el oraculo literal de una instancia lo fija una **regla, no una lista cerrada** -- la misma regla de corte que MEF-ADR-0034 seccion 6 fija para todo el par 2: entran los que determinan **como se interpreta lo ya persistido** (forma fisica de columna, nombre de tabla, politica de particion por tenant, identidad del documento); nunca una propiedad del **proceso** (conexion, modo del daemon, logging, `AutoCreateSchemaObjects`). Ante un atributo nuevo del paquete que ninguna instancia de abajo enumere, aplica la regla, no busques la fila.
+
+### Instancia conocida: `mt_version` (segunda del par 2, issue #718)
+
+La receta de [read-apis.md](read-apis.md) (seccion "Resolucion de `TView` en el write-side") exige `opts.Schema.For<TView>().UseNumericRevisions(true)` en el Function App por cada documento consultado. El oraculo que este par espejo afirma:
 
 ```csharp
 var documento = store.Options.FindOrResolveDocumentType(typeof(ResumenAsistenciaDiaria));
@@ -122,9 +140,40 @@ Assert.False(documento.Metadata.Version.Enabled);
 
 Nombres de referencia y receta validados en produccion por el consumidor (Bitakora.ControlAsistencia, issue #328, PR #441).
 
-**Asimetria de autoridad, no comparacion cruzada.** El worker no declara nada por su cuenta: Marten impone la forma fisica (`mt_version bigint`, `ProjectionDocumentPolicy`) al registrar la proyeccion en el named store (ver `read-apis.md`). El Function App, en cambio, **replica** esa forma a mano -- el `UseNumericRevisions(true)` de la receta -- porque su mapping por convencion no hereda ninguna politica del worker. Por eso los dos tests no se comparan entre si: cada uno afirma el mismo trio de literales **contra su propio store**, no uno contra el resultado del otro. Ademas de reflejar esa asimetria, es la unica forma posible: `<RootNamespace>.Projections.Tests` y `<RootNamespace>.{Dominio}.Tests` no pueden referenciarse entre si sin abrir la misma brecha que el reviewer ya vigila en el `.csproj` del worker (MEF-ADR-0039 decision 4: las unicas `<ProjectReference>` validas del worker son `*.DomainEvents` y `ReadModels`, nunca un Function App ni su proyecto de tests) -- un test que comparara ambos lados exigiria exactamente esa referencia prohibida.
+### Instancia conocida: tabla/tenancy/id (tercera del par 2, issue #722)
 
-**Simetria en el mismo issue.** El issue que agrega una superficie de consulta nueva (`Query<TView>()`/`LoadAsync<TView>()`) escribe **las dos mitades** del par -- nunca solo la del worker. Bitakora #448 es la evidencia de lo que pasa si no: la mitad del worker ya existia, la mitad del Function App nunca se escribio, y el gap quedo invisible hasta el primer GET en produccion.
+Tercera instancia conocida del par 2 -- y **segunda aplicacion de esta plantilla** --, verificada en produccion por el consumidor de referencia (Bitakora.ControlAsistencia): un trio distinto que tambien determina como se interpreta lo ya persistido -- la tabla fisica (schema incluido) donde vive el documento, si esa tabla esta particionada por tenant, y que miembro hace de identidad:
+
+```csharp
+var documento = store.Options.FindOrResolveDocumentType(typeof(TurnoVigente));
+
+Assert.Equal("asistencia.mt_doc_turnovigente", documento.TableName.QualifiedName);
+Assert.Equal(TenancyStyle.Conjoined, documento.TenancyStyle);
+Assert.Equal(nameof(TurnoVigente.Id), documento.IdMember.Name);
+```
+
+**`QualifiedName` incluye el schema** -- medido: `"asistencia.mt_doc_turnovigente"`, no `"mt_doc_turnovigente"` (ese es `.Name`). Es el accesor correcto justamente por eso: arrastra al oraculo el `DatabaseSchemaName` del dominio, la primera fila de la tabla "Debe coincidir" del reviewer. Un literal sin schema hace fallar las dos mitades del par.
+
+**Cual de los tres discrimina, medido** (ejecucion propia al revisar este issue: SDK .NET 10.0.201, Marten `9.12.0`, sin Postgres, sobre `DocumentStore.For(...)` con `DatabaseSchemaName = "asistencia"`):
+
+| Store medido | `TableName.QualifiedName` | `TenancyStyle` | `IdMember.Name` |
+|---|---|---|---|
+| Worker (proyeccion `Async` + `AllDocumentsAreMultiTenanted()`) | `asistencia.mt_doc_turnovigente` | `Conjoined` | `Id` |
+| Write-side por convencion, con la policy que trae el paquete | `asistencia.mt_doc_turnovigente` | `Conjoined` | `Id` |
+| Write-side **sin** `AllDocumentsAreMultiTenanted()` (**la divergencia**) | `asistencia.mt_doc_turnovigente` | `Single` | `Id` |
+
+El discriminador del trio es `TenancyStyle`: `Conjoined` cuando la policy esta, `Single` cuando falta. `QualifiedName` e `IdMember.Name` no se mueven con **esta** divergencia -- se conservan por la misma razon que `Revision.Type` en la instancia de arriba: fijan la forma fisica que la compatibilidad pone en juego, y cazan una divergencia distinta (un `DatabaseSchemaName` que se separe entre lados, o un `IdMember` que cambie al renombrar el miembro de identidad del read model).
+
+**Superficie y namespaces, verificados en la misma ejecucion**: `TableName` se declara como `Weasel.Core.DbObjectName` (en runtime, `Weasel.Postgresql.PostgresqlObjectName`) -- de ahi `.QualifiedName`; `TenancyStyle` es del tipo `JasperFx.MultiTenancy.TenancyStyle` -- mismo gotcha de namespace que ya fija MEF-ADR-0034 seccion 6 como regla generica, no vive bajo `Marten.*` y sin su `using` el assert falla con `CS0103`; `IdMember` se declara como `System.Reflection.MemberInfo` (runtime `PropertyInfo`) -- de ahi el `.Name` del assert.
+
+- **Mitad write-side** (`tests/<RootNamespace>.{Dominio}.Tests/ComposicionServicios{Dominio}Tests.cs`): `...ResuelveTurnoVigenteSobreLaTablaQueMaterializaElWorker...`.
+- **Mitad read-side** (`tests/<RootNamespace>.Projections.Tests/ConfiguracionMartenProjectionsTests.cs`): `...MaterializaTurnoVigenteSobreLaTablaQueConsultaElWriteSide...`.
+
+Nombres de referencia validados en produccion por el consumidor (Bitakora.ControlAsistencia, par de tests espejo de tabla/tenancy/id).
+
+**Convierte la primera instancia del par 2 en guarda siempre-activa.** `TenancyStyle.Conjoined` de este trio **es** la condicion que `Policies.AllDocumentsAreMultiTenanted()` fija (tenancy documental, la primera instancia conocida del par 2, MEF-ADR-0034 seccion 6), hasta ahora verificada **solo** por el reviewer bajo el gate condicional de compatibilidad Marten -- y "si diverge ninguna excepcion avisa" ([read-apis.md](read-apis.md), seccion "Resolucion de `TView`"). Con esta instancia instalada, esa condicion queda cubierta ademas por un test que corre en cada `dotnet test`, sin depender de que un diff dispare ese gate -- mismo argumento que ya justifica la instancia de `mt_version` de arriba, y ahora con el oraculo que efectivamente la discrimina identificado (`TenancyStyle`, tabla de arriba).
+
+**Que parte de la divergencia es silenciosa, medido.** Marten no calla siempre. Si el worker conserva `Events.TenancyStyle = Conjoined` -- lo que el **par 1** ya le exige -- pero pierde la policy documental, registrar una proyeccion de agregacion falla al construir el store: `InvalidProjectionException: Tenancy storage style mismatch between the events (Conjoined) and the aggregate type <TView> (Single) but the TenancyGrouping is RespectTenant`. Esa divergencia se cae sola. La **silenciosa** -- la que este par espejo caza -- es la simetrica: un worker que diverge en bloque (eventos *y* documentos en `Single`) construye su store sin una queja, y el Function App, `Conjoined` en ambos porque el paquete se lo fija, termina consultando con filtro de tenant una tabla que el worker materializo sin esa particion. Ningun lado lanza nada; los dos literales del par espejo si difieren.
 
 ## Que NO sustituye
 
