@@ -425,13 +425,56 @@ cmd_parallel() {
         abort "Debes especificar al menos un issue. Uso: --parallel 42 43 44"
     fi
 
+    check_tmux
+
+    # Pre-resolver pipelines y detectar tipo:projection ANTES de crear la sesion
+    # tmux (issue #706): resolve_issue_facts hace UNA sola llamada gh por issue
+    # que ya trae labels (igual que resolve_pipeline), sumando el flag de
+    # projection sin una segunda consulta. Se descarta a proposito el campo
+    # STATE que tambien retorna: el modo tmux nunca filtro por estado del issue
+    # (a diferencia del modo herdr, issue #705), y sumarlo aqui cambiaria ese
+    # comportamiento para lotes con 0 o 1 projection.
+    local resolved_issues=()
+    local resolved_pipelines=()
+    local projection_count=0
+    for issue in "${issues[@]}"; do
+        local facts is_projection resolved
+        if ! facts=$(resolve_issue_facts "$issue" "$pipeline_override"); then
+            abort "Override de pipeline invalido: '$pipeline_override' (usa tdd|tooling)."
+        fi
+        is_projection="${facts#*|}"
+        is_projection="${is_projection%%|*}"
+        resolved="${facts##*|}"
+        if [[ "$resolved" == SKIP:* ]]; then
+            local reason="${resolved#SKIP:}"
+            warn "Issue #$issue saltado ($reason) --- no se abre tab."
+            continue
+        fi
+        resolved_issues+=("$issue")
+        # Ruta absoluta al sub-script del plugin (el pane corre con cwd=consumidor).
+        resolved_pipelines+=("$(plugin_script "$resolved")")
+        [ "$is_projection" = "true" ] && projection_count=$((projection_count + 1))
+    done
+
+    if [ ${#resolved_issues[@]} -eq 0 ]; then
+        abort "No hay issues validos para abrir en paralelo."
+    fi
+
+    # Gate de projections (issue #706, mismo criterio y redaccion que el gate
+    # de herdr-pipeline.sh #705): en modo tmux no hay scheduler que serialice
+    # tipo:projection entre panes -- todas comparten los archivos del worker de
+    # proyecciones del BC (MEF-ADR-0034), y dos a la vez producirian PRs
+    # pisandose entre si.
+    if [ "$projection_count" -gt 1 ]; then
+        abort "$projection_count issues tipo:projection en el lote: comparten el worker de proyecciones (MEF-ADR-0034) y en modo pane no se serializan entre si. Usa /sequential, o parallel-pipeline.sh directo (su scheduler si los serializa)."
+    fi
+
     local session
     session=$(safe_session_name "parallel-$(date +%H%M%S)")
     local issues_str="${issues[*]}"
     local max_flag=""
     [ -n "$max_parallel" ] && max_flag="--max-parallel $max_parallel"
 
-    check_tmux
     ensure_events_log
     handle_session_conflict "$session"
 
@@ -445,27 +488,6 @@ cmd_parallel() {
     tail_pane=$(tmux list-panes -t "$session:main" -F '#{pane_id}' | head -n1)
     tmux set-option -t "$session" remain-on-exit on
     tmux send-keys -t "$tail_pane" "tail -f '$EVENTS_LOG'" Enter
-
-    # Pre-resolver pipelines y filtrar issues no enrutables
-    local resolved_issues=()
-    local resolved_pipelines=()
-    for issue in "${issues[@]}"; do
-        local resolved
-        resolved=$(resolve_pipeline "$issue" "$pipeline_override")
-        if [[ "$resolved" == SKIP:* ]]; then
-            local reason="${resolved#SKIP:}"
-            warn "Issue #$issue saltado ($reason) --- no se abre tab."
-            continue
-        fi
-        resolved_issues+=("$issue")
-        # Ruta absoluta al sub-script del plugin (el pane corre con cwd=consumidor).
-        resolved_pipelines+=("$(plugin_script "$resolved")")
-    done
-
-    if [ ${#resolved_issues[@]} -eq 0 ]; then
-        tmux kill-session -t "$session" 2>/dev/null
-        abort "No hay issues validos para abrir en paralelo."
-    fi
 
     # Un pane por issue (escalonado para evitar contencion de API).
     # Cada split-window devuelve su propio pane_id (-P -F '#{pane_id}') y el
@@ -738,8 +760,11 @@ ${BOLD}Enrutamiento automatico:${NC}
     tipo:tooling                     -> tooling-pipeline.sh
     tipo:infra                       -> SKIP (usar --infra explicitamente)
 
-  Con --parallel, dos issues tipo:projection nunca corren a la vez: comparten los
-  archivos del worker de proyecciones del BC, asi que se serializan entre si.
+  Con --parallel, un lote con dos o mas issues tipo:projection se rechaza
+  (mensaje explicito, antes de crear la sesion tmux): comparten los archivos
+  del worker de proyecciones del BC (MEF-ADR-0034) y en modo pane no hay
+  scheduler que los serialice entre si. Para correrlos igual, usa /sequential
+  o parallel-pipeline.sh directo (su scheduler si los serializa).
 
 ${BOLD}En iTerm2 (recomendado):${NC}
   1. Corre el comando anterior desde tu terminal normal
