@@ -183,12 +183,26 @@ fi
 
 STORAGE_BASE=$(compose_tfstate_storage_account_base "$HARNESS_RG_PREFIX" "$ENVIRONMENT" "$HARNESS_AZURE_REGION_SHORT" "$HARNESS_RESOURCE_SEQUENCE" "$LEGACY_STORAGE_BASE" "$STORAGE_MAX_LEN")
 if [ -n "$HARNESS_AZURE_REGION_SHORT" ]; then
-    STORAGE_CAF_FIXED_PREFIX="sttfstate"
-    APP_SLUG_PLAIN=$(printf '%s' "${HARNESS_RG_PREFIX#rg-}" | tr -d -- '-_')
-    FIXED_LEN_NEW=$((${#STORAGE_CAF_FIXED_PREFIX} + ${#ENVIRONMENT} + ${#HARNESS_AZURE_REGION_SHORT} + ${#HARNESS_RESOURCE_SEQUENCE}))
-    APP_SLUG_TRUNCATED=$(truncate_storage_base "$APP_SLUG_PLAIN" "$STORAGE_MAX_LEN" "$FIXED_LEN_NEW")
-    if [ "$APP_SLUG_TRUNCATED" != "$APP_SLUG_PLAIN" ]; then
-        echo "AVISO: 'infraResourceGroupPrefix' ('${HARNESS_RG_PREFIX}') no deja espacio para el patron CAF del tfstate ('${STORAGE_CAF_FIXED_PREFIX}{app}${ENVIRONMENT}${HARNESS_AZURE_REGION_SHORT}${HARNESS_RESOURCE_SEQUENCE}') dentro del limite de ${STORAGE_MAX_LEN} chars; se trunca la porcion de proyecto (resultado: '${STORAGE_BASE}')." >&2
+    # El aviso de truncado se deriva del nombre YA compuesto (el slug completo no
+    # sobrevivio en el), no re-derivando aqui la formula CAF: la longitud de los
+    # componentes fijos vive solo en compose_tfstate_storage_account_base.
+    APP_SLUG_PLAIN=$(tfstate_storage_app_slug "$HARNESS_RG_PREFIX")
+    case "$STORAGE_BASE" in
+        *"${APP_SLUG_PLAIN}"*) : ;;
+        *)
+            echo "AVISO: 'infraResourceGroupPrefix' ('${HARNESS_RG_PREFIX}') no deja espacio para el patron CAF del tfstate ('sttfstate{app}${ENVIRONMENT}${HARNESS_AZURE_REGION_SHORT}${HARNESS_RESOURCE_SEQUENCE}') dentro del limite de ${STORAGE_MAX_LEN} chars; se trunca la porcion de proyecto (resultado: '${STORAGE_BASE}')." >&2
+            ;;
+    esac
+    # Los componentes fijos del patron (abrev-tipo + uso + env + region + seq) no
+    # se truncan nunca (MEF-ADR-0045 seccion 4), asi que un env/region/seq largos
+    # pueden por si solos desbordar el limite de 24 chars aun con {app} vacio. Se
+    # aborta con el diagnostico en vez de dejar que 'az storage account create'
+    # falle mas tarde con un mensaje generico de nombre invalido.
+    if ! printf '%s' "$STORAGE_BASE" | grep -Eq '^[a-z0-9]{3,24}$'; then
+        echo "ERROR: el nombre CAF de la Storage Account del tfstate ('${STORAGE_BASE}', ${#STORAGE_BASE} chars) no cumple el naming de Azure Storage (3-24 chars, solo minusculas y digitos)." >&2
+        echo "  Los componentes fijos del patron ('sttfstate' + env '${ENVIRONMENT}' + azureRegionShort '${HARNESS_AZURE_REGION_SHORT}' + resourceSequence '${HARNESS_RESOURCE_SEQUENCE}') ya no dejan espacio para {app}." >&2
+        echo "  Acorta 'azureRegionShort' o 'resourceSequence' en .claude/harness.config.json, o usa un nombre de ambiente mas corto (MEF-ADR-0045 seccion 4)." >&2
+        exit 1
     fi
 fi
 
@@ -202,7 +216,12 @@ else
     echo "  Naming CAF:      inactivo (falta 'azureRegionShort' en .claude/harness.config.json; naming legacy retrocompatible, MEF-ADR-0045)"
 fi
 echo "  Resource Group:  ${RG}"
-echo "  Storage (base):  ${STORAGE_BASE}"
+if [ -n "$HARNESS_AZURE_REGION_SHORT" ]; then
+    # En modo CAF no hay sufijo aleatorio: la base YA es el nombre final candidato.
+    echo "  Storage:         ${STORAGE_BASE}"
+else
+    echo "  Storage (base):  ${STORAGE_BASE}"
+fi
 echo "  Container:       ${CONTAINER}"
 echo ""
 

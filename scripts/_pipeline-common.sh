@@ -975,11 +975,21 @@ build_agents_history_json() {
 # Echo de <base> truncada para que <base>+<sufijo de suffix_len> quepa en
 # max_total caracteres (Azure: 24). Mismo calculo que el scaffolder
 # (st + dominio + env + 6 chars de suffix <= 24). Pura (no consulta Azure).
+#
+# Si <suffix_len> supera <max_total> (posible desde el issue #732: el "sufijo"
+# pasa a ser el largo de los componentes fijos del patron CAF, que crecen con
+# env/region/seq) el espacio disponible se satura en 0 y el echo es vacio, en vez
+# de caer en el substring negativo de bash (${base:0:-N} recorta por la derecha y
+# devolveria una base MAS larga que el limite, silenciosamente invalida). Queda a
+# cargo del caller validar el nombre final contra ^[a-z0-9]{3,24}$.
 truncate_storage_base() {
     local base="$1"
     local max_total="${2:-24}"
     local suffix_len="${3:-6}"
     local max_base=$((max_total - suffix_len))
+    if [ "$max_base" -lt 0 ]; then
+        max_base=0
+    fi
     if [ "${#base}" -gt "$max_base" ]; then
         printf '%s' "${base:0:$max_base}"
     else
@@ -1086,6 +1096,18 @@ compose_tfstate_resource_group_name() {
     fi
 }
 
+# tfstate_storage_app_slug <rg_prefix>
+#
+# Echo del componente {app} del nombre sin guiones de la Storage Account del
+# tfstate: <rg_prefix> sin el prefijo "rg-" que infraResourceGroupPrefix ya lleva
+# y sin guiones/guiones-bajos (charset de Storage: solo minusculas y digitos,
+# MEF-ADR-0045 seccion 4). Fuente unica del slug para compose_tfstate_storage_
+# account_base y para el aviso de truncado de bootstrap-backend.sh -- ninguno de
+# los dos lo re-deriva por su cuenta. Pura (no consulta Azure).
+tfstate_storage_app_slug() {
+    printf '%s' "${1#rg-}" | tr -d -- '-_'
+}
+
 # compose_tfstate_storage_account_base <rg_prefix> <env> <region_short> <seq> <legacy_base> [max_total]
 #
 # Compone el nombre BASE de la Storage Account del backend de Terraform. Si
@@ -1107,7 +1129,7 @@ compose_tfstate_storage_account_base() {
         return 0
     fi
     local app fixed_prefix fixed_suffix fixed_len app_truncated
-    app=$(printf '%s' "${rg_prefix#rg-}" | tr -d -- '-_')
+    app=$(tfstate_storage_app_slug "$rg_prefix")
     fixed_prefix="sttfstate"
     fixed_suffix="${env}${region_short}${seq}"
     fixed_len=$((${#fixed_prefix} + ${#fixed_suffix}))

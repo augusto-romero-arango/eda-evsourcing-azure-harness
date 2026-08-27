@@ -67,6 +67,14 @@ if [ "${#R}" -eq 18 ]; then pass "19 chars -> truncado a 18"; else fail "19 char
 R=$(truncate_storage_base "abcdefghij0123456789abcd")
 if [ "${#R}" -eq 18 ]; then pass "defaults (24/6) truncan a 18"; else fail "defaults deberian truncar a 18 (obtenido ${#R})"; fi
 
+# suffix_len > max_total (posible desde el issue #732: el "sufijo" es el largo de
+# los componentes fijos del patron CAF): el espacio disponible satura en 0 y la
+# base sale vacia. Sin el clamp, bash interpretaria ${base:0:-N} como "recorta N
+# por la derecha" y devolveria una base MAS larga que el limite, invalida y
+# silenciosa.
+R=$(truncate_storage_base "abcdefgh" 24 30)
+if [ -z "$R" ]; then pass "suffix_len > max_total -> base vacia (sin substring negativo)"; else fail "suffix_len > max_total deberia dar base vacia (obtenido '$R')"; fi
+
 # -------- gen_storage_suffix (sufijo aleatorio valido) --------
 
 echo ""
@@ -222,6 +230,43 @@ if [ "${#R}" -eq 24 ]; then pass "nombre CAF truncado cae exacto en 24 chars"; e
 # {app} sin guiones/guiones-bajos en el resultado (charset de Storage).
 R=$(compose_tfstate_storage_account_base "rg-mi_proyecto-x" "dev" "eus2" "001" "irrelevante" 24)
 if printf '%s' "$R" | grep -Eq '^[a-z0-9]+$'; then pass "resultado sin guiones/guiones-bajos (charset valido de Storage)"; else fail "resultado con caracteres invalidos: '$R'"; fi
+
+# -------- tfstate_storage_app_slug (fuente unica del {app}, issue #732) --------
+
+echo ""
+echo "[7] tfstate_storage_app_slug normaliza {app} al charset de Storage"
+
+R=$(tfstate_storage_app_slug "rg-cosmos-cplane")
+if [ "$R" = "cosmoscplane" ]; then pass "quita el prefijo 'rg-' y los guiones"; else fail "slug incorrecto (obtenido '$R')"; fi
+
+R=$(tfstate_storage_app_slug "rg-mi_proyecto-x")
+if [ "$R" = "miproyectox" ]; then pass "quita tambien los guiones bajos"; else fail "slug incorrecto (obtenido '$R')"; fi
+
+# El slug es el que compose_* incrusta: si cabe entero, el nombre lo contiene tal
+# cual -- invariante de la que depende el aviso de truncado de bootstrap-backend.sh.
+APP=$(tfstate_storage_app_slug "rg-mcp")
+R=$(compose_tfstate_storage_account_base "rg-mcp" "dev" "eus2" "001" "irrelevante" 24)
+case "$R" in
+    *"$APP"*) pass "el slug completo sobrevive en el nombre cuando cabe (invariante del aviso)" ;;
+    *) fail "el nombre '$R' deberia contener el slug '$APP'" ;;
+esac
+
+# -------- Componentes fijos que desbordan el limite (issue #732) --------
+
+echo ""
+echo "[8] componentes fijos largos: {app} se sacrifica primero, el resultado queda detectable"
+
+# env/region largos: 'sttfstate'(9)+'production'(10)+'westeurope'(10)+'001'(3) = 32
+# ya supera 24 sin ningun {app}. La funcion NO trunca los componentes fijos
+# (MEF-ADR-0045 seccion 4): deja caer {app} y devuelve un nombre que el caller
+# (bootstrap-backend.sh) debe rechazar contra ^[a-z0-9]{3,24}$.
+R=$(compose_tfstate_storage_account_base "rg-cplane" "production" "westeurope" "001" "irrelevante" 24)
+if [ "$R" = "sttfstateproductionwesteurope001" ]; then pass "componentes fijos intactos, {app} vacio"; else fail "composicion inesperada (obtenido '$R')"; fi
+if ! printf '%s' "$R" | grep -Eq '^[a-z0-9]{3,24}$'; then pass "el resultado es detectable como invalido por el caller"; else fail "el resultado deberia fallar la validacion de 24 chars"; fi
+case "$R" in
+    *cplane*) fail "no deberia quedar rastro de {app} truncado a la fuerza" ;;
+    *) pass "sin residuo mutilado de {app}" ;;
+esac
 
 # -------- Resumen --------
 
