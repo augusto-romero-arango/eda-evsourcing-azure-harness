@@ -13,8 +13,10 @@
 #                       efectos externos (push, gh pr create, label+comentario
 #                       de bloqueo, gh issue comment) quedan anidados bajo el
 #                       gate de VARIANT_LABEL, ninguno en el nivel superior
-#                       (CA-3); el campo "variant" viaja en el status, en la
-#                       linea de historial de abort() y en la de exito (CA-4).
+#                       (CA-3); el reporte de bloqueo se preserva fuera del
+#                       worktree que el cleanup borra; el campo "variant" viaja
+#                       en el status, en la linea de historial de abort() y en
+#                       la de exito (CA-4).
 #   tmux-pipeline.sh  - el enrutamiento automatico de un unico issue (sin
 #                       --tooling explicito) ya NO rechaza --variant (antes
 #                       solo lo aceptaba --tooling, porque tdd-pipeline.sh no
@@ -66,7 +68,13 @@ fi
 
 echo ""
 echo "[2] tdd-pipeline.sh: los nombres de log/metricas de stage usan ISSUE_LOG_TAG, no ISSUE_NUM directo"
-if grep -qE '\-issue-\$\{ISSUE_NUM\}\.(log|json)' "$PIPE"; then
+# El patron a cazar es el prefijo comun de TODOS los nombres de log/metrics
+# (`${TIMESTAMP}-issue-<tag>`), no solo los que terminan en .log/.json: asi el
+# chequeo cubre tambien las variantes -retry.log y -stage-N-<agente>.json de una
+# sola vez. Anclarlo a TIMESTAMP es lo que evita el falso positivo sobre
+# BRANCH_NAME="worktree-issue-${ISSUE_NUM}-${SLUG}", donde ISSUE_NUM directo es
+# correcto (el sufijo de variante se agrega aparte, sobre BRANCH_NAME ya armado).
+if grep -qE '\$\{TIMESTAMP\}-issue-\$\{ISSUE_NUM\}' "$PIPE"; then
     fail "quedan nombres de log/metrics derivados de ISSUE_NUM directo (colisionan entre variantes)"
 else
     pass "ningun nombre de log/metrics de stage deriva de ISSUE_NUM directo"
@@ -104,6 +112,18 @@ if grep -qE '^ +git -C "\$WORKTREE_PATH" push -u origin' "$PIPE" \
     pass "push, gh pr create, gh pr edit (label bloqueado) y gh issue comment quedan anidados bajo el gate"
 else
     fail "no se encontraron los cuatro efectos externos anidados bajo el gate (push / gh pr create / gh pr edit bloqueado / gh issue comment)"
+fi
+
+echo ""
+echo "[3b] tdd-pipeline.sh: el reporte de bloqueo se preserva fuera del worktree en modo variante"
+# Sin PR donde publicar su contenido, el reporte solo existe dentro del worktree
+# -- que el cleanup elimina con --force al cierre. Si el aviso apunta al path
+# del worktree en vez de a una copia en el repo principal, senala un archivo ya
+# borrado en el momento en que el usuario lo lee.
+if grep -qF 'VARIANT_BLOCKAGE_COPY="$PIPELINE_DIR_ABS/blockage-report-tdd-${ISSUE_LOG_TAG}.md"' "$PIPE"; then
+    pass "el reporte se copia al .claude/pipeline del repo principal, con el sufijo de variante"
+else
+    fail "el reporte de bloqueo no se preserva fuera del worktree: el cleanup lo borra antes de que se pueda leer"
 fi
 
 echo ""

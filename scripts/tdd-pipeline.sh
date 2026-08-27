@@ -1932,8 +1932,19 @@ if [ -n "$VARIANT_LABEL" ]; then
     header "Modo variante: sin PR"
     warn "Variante '$VARIANT_LABEL': se omiten push, creacion de PR, nota de bloqueo y comentario al issue (CA-3)."
     log "La rama '$BRANCH_NAME' queda LOCAL -- no se publica a origin."
+    # El reporte de bloqueo vive DENTRO del worktree, que el cleanup de mas
+    # abajo elimina con --force: en la ruta normal sobrevive porque su contenido
+    # viaja al comentario del PR, y sin PR se perderia entero. Se copia al
+    # .claude/pipeline del repo principal, con el sufijo de variante para no
+    # pisar el de otra corrida, antes de que el cleanup lo borre.
     if [ "${HAS_BLOCKAGE:-false}" = true ]; then
-        warn "Hay tests bloqueados que ni $STAGE2_AGENT ni el reviewer resolvieron -- revisa $WORKTREE_PATH/.claude/pipeline/blockage-report.md antes de promover esta variante."
+        BLOCKAGE_REPORT="$WORKTREE_PATH/.claude/pipeline/blockage-report.md"
+        VARIANT_BLOCKAGE_COPY="$PIPELINE_DIR_ABS/blockage-report-tdd-${ISSUE_LOG_TAG}.md"
+        if [ -f "$BLOCKAGE_REPORT" ] && cp "$BLOCKAGE_REPORT" "$VARIANT_BLOCKAGE_COPY" 2>/dev/null; then
+            warn "Hay tests bloqueados que ni $STAGE2_AGENT ni el reviewer resolvieron -- revisa $VARIANT_BLOCKAGE_COPY antes de promover esta variante."
+        else
+            warn "Hay tests bloqueados que ni $STAGE2_AGENT ni el reviewer resolvieron, y no se pudo preservar el reporte fuera del worktree -- revisa el log del reviewer antes de promover esta variante."
+        fi
     fi
     PR_URL=""
 else
@@ -2186,6 +2197,11 @@ if [ -n "$VARIANT_LABEL" ]; then
     echo -e "  Rama:    $BRANCH_NAME"
     echo -e "  Estado:  LOCAL -- sin push, sin PR, sin comentario al issue (modo variante)"
     echo -e "  Log:     $LOG_FILE"
+    # Senal de calidad comparable entre variantes: sin PR, la tabla de cobertura
+    # no tiene donde publicarse, y los gaps son el numero que decide cual gana.
+    if [ "$AGENT_CG_RES" != "skipped" ] && [ "$AGENT_CG_RES" != "pending" ]; then
+        echo -e "  Gaps:    $COV_GAPS_REMAINING (remediacion aplicada: $COV_PATCH_APPLIED) -- tabla completa en el log del coverage gate"
+    fi
     echo ""
     echo -e "${YELLOW}Si esta variante gana la comparacion, promuevela a mano:${NC}"
     echo -e "${YELLOW}  git -C $REPO_ROOT push -u origin $BRANCH_NAME${NC}"
