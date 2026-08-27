@@ -93,6 +93,39 @@ var provider = services.BuildServiceProvider();
 
    **Esta guarda no cubre toda la compatibilidad write-side/read-side** (MEF-ADR-0034 seccion 6, issue #447): el paquete `Cosmos.EventSourcing.CritterStack` fija diez atributos de Marten del lado write, no solo estos tres. La verificacion completa -- los otros siete atributos y el par read models/query-side -- es responsabilidad del **reviewer**, bajo el gate y las tablas de clasificacion que fija `agents/reviewer.md` ("Proyecciones y read-side").
 
+## Par de config-tests espejo: `mt_version` write-side <-> read-side (issue #718)
+
+Los tres puntos de arriba verifican la configuracion **interna** del worker; ninguno la compara contra la del write-side. La receta de [read-apis.md](read-apis.md) (seccion "Resolucion de `TView` en el write-side") exige `opts.Schema.For<TView>().UseNumericRevisions(true)` en el Function App por cada documento consultado -- y esa receta necesita su propia guarda siempre-activa, porque el gate del reviewer no se dispara con un PR que solo agrega una Function GET nueva (exactamente el PR que introduce el defecto: Bitakora.ControlAsistencia issues #294 y #448).
+
+**Un test por lado, cada uno sobre su propio store**, afirmando los mismos tres oraculos literales via `Options.FindOrResolveDocumentType(typeof(TView))` (`IReadOnlyStoreOptions`, alcanzable sin downcast -- misma superficie que ya usa MEF-ADR-0034 seccion 6 para `Events.MetadataConfig`):
+
+```csharp
+var documento = store.Options.FindOrResolveDocumentType(typeof(ResumenAsistenciaDiaria));
+
+Assert.True(documento.Metadata.Revision.Enabled);
+Assert.Equal("bigint", documento.Metadata.Revision.Type);
+Assert.False(documento.Metadata.Version.Enabled);
+```
+
+**Cual de los tres discrimina, medido** (ejecucion propia al revisar el issue #718: SDK .NET 10.0.201, Marten `9.12.0`, sin Postgres, sobre `DocumentStore.For(...)` en las tres configuraciones). El trio se afirma completo, pero sus miembros no pesan igual:
+
+| Store medido | `Revision.Enabled` | `Revision.Type` | `Version.Enabled` |
+|---|---|---|---|
+| Worker (proyeccion registrada `Async`) | `true` | `bigint` | `false` |
+| Write-side desnudo (**el defecto**) | `false` | `bigint` | `true` |
+| Write-side con `UseNumericRevisions(true)` | `true` | `bigint` | `false` |
+
+`Revision.Type` vale `"bigint"` en las tres -- es el tipo fijo de la columna `mt_version` **cuando la revision numerica esta habilitada**, no un discriminador: quien lo afirme solo, cree tener guarda y no la tiene. Los que separan el defecto de la receta son `Revision.Enabled` y `Version.Enabled`, que se mueven en bloque (Marten cambia de optimistic concurrency Guid-based a revision numerica, no habilita las dos a la vez). `Revision.Type` se conserva en el trio porque fija la **forma fisica** que el `ALTER COLUMN` fallido pone en juego -- si una version futura de Marten la moviera a `integer`, el par seguiria alineado entre lados pero el diagnostico de esta doctrina dejaria de aplicar, y esta linea es la que lo caza.
+
+- **Mitad write-side** (`tests/<RootNamespace>.{Dominio}.Tests/ComposicionServicios{Dominio}Tests.cs`), sobre el `IDocumentStore` que arma `ComposicionServicios{Dominio}.Agregar{Dominio}(...)`: `AgregarServicios{Dominio}_EsperaLaMismaColumnaDeVersionQueMaterializaraElWorker_Para{Vista}`.
+- **Mitad read-side** (`tests/<RootNamespace>.Projections.Tests/ConfiguracionMartenProjectionsTests.cs`), sobre el `I{Dominio}ProjectionStore` que ya resuelve la guarda 1 de este documento: `Configurar{Dominio}_Materializa{Vista}ConRevisionNumerica`.
+
+Nombres de referencia y receta validados en produccion por el consumidor (Bitakora.ControlAsistencia, issue #328, PR #441).
+
+**Asimetria de autoridad, no comparacion cruzada.** El worker no declara nada por su cuenta: Marten impone la forma fisica (`mt_version bigint`, `ProjectionDocumentPolicy`) al registrar la proyeccion en el named store (ver `read-apis.md`). El Function App, en cambio, **replica** esa forma a mano -- el `UseNumericRevisions(true)` de la receta -- porque su mapping por convencion no hereda ninguna politica del worker. Por eso los dos tests no se comparan entre si: cada uno afirma el mismo trio de literales **contra su propio store**, no uno contra el resultado del otro. Ademas de reflejar esa asimetria, es la unica forma posible: `<RootNamespace>.Projections.Tests` y `<RootNamespace>.{Dominio}.Tests` no pueden referenciarse entre si sin abrir la misma brecha que el reviewer ya vigila en el `.csproj` del worker (MEF-ADR-0039 decision 4: las unicas `<ProjectReference>` validas del worker son `*.DomainEvents` y `ReadModels`, nunca un Function App ni su proyecto de tests) -- un test que comparara ambos lados exigiria exactamente esa referencia prohibida.
+
+**Simetria en el mismo issue.** El issue que agrega una superficie de consulta nueva (`Query<TView>()`/`LoadAsync<TView>()`) escribe **las dos mitades** del par -- nunca solo la del worker. Bitakora #448 es la evidencia de lo que pasa si no: la mitad del worker ya existia, la mitad del Function App nunca se escribio, y el gap quedo invisible hasta el primer GET en produccion.
+
 ## Que NO sustituye
 
 - El test de composicion de MEF-ADR-0029, que sigue viviendo en cada dominio sobre su propio `ComposicionServicios{Dominio}.cs` del write-side.
