@@ -49,21 +49,52 @@ Con el nombre en kebab-case recibido, deriva las siguientes variantes:
 
 **Validacion 1 - longitud del nombre de la Function App:**
 
-El nombre resultante sera `func-{prefix_func}-{kebab}` donde `prefix_func` es el valor de `local.prefix_func` definido en `infra/environments/dev/variables.tf`. Lee ese archivo para obtener el valor actual: **resuelve la interpolacion completa**, no solo `{project_short}-{environment}`. Desde el issue #730 ese local puede componer tambien `{region}-{seq}` (`"${var.project_short}-${var.environment}${local.region_seq_suffix}"`, patron CAF de MEF-ADR-0045), asi que su valor efectivo depende de si el mismo archivo declara `azure_region_short` con valor. Un `prefix_func` mal resuelto aqui se hornea en `deploy-{kebab}.yml` y el deploy falla contra una Function App que existe con otro nombre.
+El nombre resultante sera `func-{kebab}-{prefix_func}` -- el dominio cumple el rol `{uso}` del patron CAF (`{abrev-tipo}-[{uso}-]{app}-{env}-{region}-{seq}`, MEF-ADR-0045 seccion 1, que apoya ese `{uso}` = dominio en MEF-ADR-0020 -- un App Service Plan por dominio), por eso va inmediatamente despues de `func-`, antes de `{prefix_func}` -- donde `prefix_func` es el valor de `local.prefix_func` definido en `infra/environments/dev/variables.tf`. Lee ese archivo para obtener el valor actual: **resuelve la interpolacion completa**, no solo `{project_short}-{environment}`. Desde el issue #730 ese local puede componer tambien `{region}-{seq}` (`"${var.project_short}-${var.environment}${local.region_seq_suffix}"`, patron CAF de MEF-ADR-0045), asi que su valor efectivo depende de si el mismo archivo declara `azure_region_short` con valor. Un `prefix_func` mal resuelto aqui se hornea en `deploy-{kebab}.yml` y el deploy falla contra una Function App que existe con otro nombre.
 
 ```bash
-nombre="func-{prefix_func}-{kebab}"
+nombre="func-{kebab}-{prefix_func}"
 echo ${#nombre}
 ```
 
 El limite real es **60 caracteres**: es el rango del nombre de recurso `Microsoft.Web/sites` (Function App), 2-60, segun las naming rules de Azure (https://learn.microsoft.com/azure/azure-resource-manager/management/resource-name-rules#microsoftweb). El "32" que aparecia aqui antes corresponde al truncado del host ID de Azure Functions, cuya colision **solo ocurre si dos Function Apps comparten la misma storage account** (https://learn.microsoft.com/azure/azure-functions/storage-considerations#host-id-considerations; ver tambien el evento de diagnostico AZFD0004: https://learn.microsoft.com/azure/azure-functions/errors-diagnostics/diagnostic-events/azfd0004). En este marco cada Function App tiene su **propia** Storage Account (Paso 4) y su propio plan dedicado sin deployment slots (MEF-ADR-0020), asi que esa colision no puede darse: el limite de 32 no aplica.
 
-Como `func-` (5 chars) es el prefijo mas largo entre los dos recursos que usan `{prefix_func}-{kebab}` (el App Service Plan usa `asp-`, 4 chars), validar el nombre de la Function App a 60 cubre tambien al App Service Plan (`Microsoft.Web/serverfarms`, rango 1-60 en la misma tabla de naming rules).
+Como `func-` (5 chars) es el prefijo mas largo entre los dos recursos que usan `{kebab}-{prefix_func}` (el App Service Plan usa `asp-`, 4 chars), validar el nombre de la Function App a 60 cubre tambien al App Service Plan (`Microsoft.Web/serverfarms`, rango 1-60 en la misma tabla de naming rules).
 
 Si supera 60 caracteres, informa al usuario el presupuesto real disponible para el kebab (`60 - 5 ("func-") - 1 ("-") - len(prefix_func)` caracteres):
-> "El nombre `func-{prefix_func}-{kebab}` tiene N caracteres y supera el limite de 60 que impone Azure para `Microsoft.Web/sites`. Con `prefix_func = {prefix_func}` el presupuesto para el nombre del dominio es de M caracteres. Por favor elige un nombre mas corto."
+> "El nombre `func-{kebab}-{prefix_func}` tiene N caracteres y supera el limite de 60 que impone Azure para `Microsoft.Web/sites`. Con `prefix_func = {prefix_func}` el presupuesto para el nombre del dominio es de M caracteres. Por favor elige un nombre mas corto."
 
 Y detente sin hacer nada mas.
+
+**Validacion 1b - longitud de la Storage Account (MEF-ADR-0045 seccion 4, issue #733):**
+
+Storage Account es el tipo mas ajustado que este agente emite: 3-24 chars, sin guiones (`Microsoft.Storage/storageAccounts`). Antes de calcular el truncado del Paso 4, resuelve si el entorno ya declara los locals de `{region}-{seq}` (issue #730):
+
+```bash
+grep -q 'region_seq_suffix_plain' infra/environments/dev/variables.tf && echo "tiene region_seq_suffix_plain" || echo "entorno anterior a #730 -- sin region/seq"
+```
+
+Si el grep encuentra el local, `region_seq_suffix_plain` vale `{azure_region_short}{resource_sequence}` (lee ambas variables del mismo `variables.tf`, cadena vacia si `azure_region_short` esta vacio); si no lo encuentra, `region_seq_suffix_plain` es cadena vacia (entorno scaffoldeado antes de #730 -- ver la nota del Paso 4 sobre por que **no** se agrega el local a un `variables.tf` existente). **Charset de `project_short` (riesgo nuevo que introduce este patron):** `Microsoft.Storage/storageAccounts` solo admite **minusculas y digitos** -- ni guiones ni mayusculas (MEF-ADR-0045 seccion 4). Desde el issue #733 el nombre de la Storage del dominio interpola `${var.project_short}`, que antes no entraba ahi, asi que un `project_short` con guion o mayuscula -- posible en un `variables.tf` que el consumidor ajusto a mano, o generado antes del saneo que documenta `infra-base-scaffolder` en su Paso 0 -- produce un nombre invalido y el `apply` falla con un error de naming. Comprueba el valor efectivo antes de seguir:
+
+```bash
+sed -n '/variable "project_short"/,/^}/p' infra/environments/dev/variables.tf | grep 'default' \
+  | grep -Eq 'default[[:space:]]*=[[:space:]]*"[a-z0-9]+"' \
+  && echo "project_short apto para Storage" || echo "project_short NO apto para Storage"
+```
+
+Si no es apto, detente sin hacer nada mas e informa al usuario -- no lo corrijas vos:
+> "`project_short` en `infra/environments/dev/variables.tf` tiene caracteres que `Microsoft.Storage/storageAccounts` no admite (solo minusculas y digitos), y desde el patron CAF ese valor entra en el nombre de la Storage Account del dominio. Corregirlo renombra ademas todo lo que ya lo consume via `local.prefix_func` (Function Apps y App Service Plans ya desplegados): es el destroy+recreate que MEF-ADR-0045 seccion 3 proscribe, asi que la decision es tuya. No scaffoldeo este dominio hasta que lo resuelvas."
+
+Con ese valor, el presupuesto para el componente `{dominio}` es:
+
+```bash
+presupuesto=$((24 - 2 - ${#project_short} - ${#environment} - ${#region_seq_suffix_plain}))
+echo $presupuesto
+```
+
+Si `presupuesto` es 0 o negativo, ningun truncado de `{dominio}` alcanza (MEF-ADR-0045 seccion 4: `{abrev-tipo}`/`{env}`/`{region}`/`{seq}` nunca se truncan, y `project_short` ya es responsabilidad del consumidor -- ver la nota de `project_short` en "Contrato con el consumidor"). Informa al usuario:
+> "El presupuesto para el nombre del dominio en la Storage Account quedo en M (<= 0) con `project_short = {project_short}`, `environment = {environment}` y `region_seq_suffix_plain = {region_seq_suffix_plain}`. Acorta `project_short` en `variables.tf` del entorno antes de continuar."
+
+Y detente sin hacer nada mas. Si `presupuesto` es positivo, sigue con la regla de truncado del Paso 4 ("Truncado determinista").
 
 **Validacion 2 - existencia previa:**
 
@@ -87,11 +118,11 @@ Si `infra/environments/dev/dominio-{kebab}.tf` ya existe, informa al usuario:
 
 > "El archivo `infra/environments/dev/dominio-{kebab}.tf` ya existe. Si quieres recrearlo, eliminalo primero."
 
-Y detente sin hacer nada mas.
+Y detente sin hacer nada mas. Esta validacion es tambien el mecanismo de alcance "solo greenfield" del patron de nombramiento CAF (MEF-ADR-0045 seccion 3, issue #733): un dominio ya scaffoldeado (con el patron previo `asp-{prefix_func}-{kebab}`/`func-{prefix_func}-{kebab}`/storage con `random_string`) nunca se reescribe por este agente para alinearlo al patron nuevo -- renombrar Function App o Storage ya desplegados es destroy+recreate. El patron nuevo (`{kebab}-{prefix_func}` y storage sin `random_string`) solo nace en un `dominio-{kebab}.tf` que no existia todavia.
 
 **Resolver parametros de hosting (MEF-ADR-0020):**
 
-Cada dominio recibe su propio App Service Plan dedicado (`asp-{prefix_func}-{kebab}`). Resuelve sus parametros tomando lo que dio el usuario y, a falta de override, los defaults del MEF-ADR-0020:
+Cada dominio recibe su propio App Service Plan dedicado (`asp-{kebab}-{prefix_func}`). Resuelve sus parametros tomando lo que dio el usuario y, a falta de override, los defaults del MEF-ADR-0020:
 
 - `sku_name` = el valor que dio el usuario, o `B1` por defecto.
 - `always_on` = el valor que dio el usuario, o `true` por defecto (MEF-ADR-0020, sin distincion dev/prod).
@@ -125,8 +156,8 @@ Antes de continuar muestra al usuario el resumen de lo que vas a crear y pide co
 ```
 Dominio:          {kebab}
 PascalCase:       {PascalCase}
-Function App:     func-{prefix_func}-{kebab} (N chars)
-App Service Plan: asp-{prefix_func}-{kebab} (dedicado por dominio, MEF-ADR-0020)
+Function App:     func-{kebab}-{prefix_func} (N chars)
+App Service Plan: asp-{kebab}-{prefix_func} (dedicado por dominio, MEF-ADR-0020)
   SKU:            {sku_name} (default B1)
   Always On:      {always_on} (default true, MEF-ADR-0020)
   worker_count:   1 (fijo, Solo exige un unico nodo)
@@ -2126,7 +2157,7 @@ Crea el archivo `tests/<RootNamespace>.{PascalCase}.SmokeTests/<RootNamespace>.{
 ```json
 {
   "Api": {
-    "BaseUrl": "https://func-{prefix_func}-{kebab}.azurewebsites.net",
+    "BaseUrl": "https://func-{kebab}-{prefix_func}.azurewebsites.net",
     "ExpectedSha": ""
   },
   "ServiceBus": {
@@ -2941,32 +2972,27 @@ Si el proyecto existe y el test falla, lee el error y corrige antes de continuar
 
 Cada Function App tiene su propio **App Service Plan dedicado** y su propia Storage Account, para aislamiento de performance y escalado independiente. El plan dedicado es una directiva del marco: dos dominios nunca comparten plan, porque cada uno corre un agente de durabilidad de Wolverine *always-on* que poll-ea Postgres en background y satura el core aun en reposo (noisy neighbor). Ver **MEF-ADR-0020** (hosting: un App Service Plan por Function App) y, para la Storage, Best Practices (Beginning Azure Functions Cap. 8).
 
-**Nombre de la Storage Account**: `st` + dominio sin guiones (truncado a 13 chars, ver "Truncado determinista" abajo) + environment + sufijo aleatorio.
-Ejemplo para `marcaciones` en dev: `stmarcacionesdev{suffix}`.
+**Nombre de la Storage Account (MEF-ADR-0045 seccion 1/2, issue #733)**: patron sin guiones (Storage no admite `-` en su charset) `st{dominio}{app}{env}{region}{seq}`, sin `random_string` -- la composicion `{dominio}{project_short}{environment}{region_seq_suffix_plain}` ya es unica en la practica (dos dominios homonimos del mismo BC y ambiente no pueden coexistir, Validacion 3 del Paso 0), mismo principio de unicidad determinista que el resto del patron CAF. Ejemplo para `billing` en el BC `cplane`, `dev`, `eus2`, secuencia `001`: `stbillingcplanedeveus2001`. Ejemplo retrocompatible (entorno sin `region_seq_suffix_plain`, ver Validacion 1b): `stbillingcplanedev`.
 
-**Truncado determinista (issue #245)**: el nombre es `st` + `{kebab-storage}` + `{environment}` + 6 chars de sufijo aleatorio, y no puede superar 24 caracteres (`Microsoft.Storage/storageAccounts`). Para el entorno `dev` (3 chars) el presupuesto del dominio es `24 - 2 ("st") - 3 ("dev") - 6 (sufijo) = 13` caracteres. Calcula `{kebab-storage}` con una regla **mecanica y fija** (no la dejes a tu criterio: dos corridas del scaffolder para el mismo dominio deben producir el mismo archivo byte a byte -- misma clase de no-determinismo que investigamos en #238):
+**Truncado determinista, valido para cualquier `{env}` (issue #245, corregido por #733 -- ya no asume `env=dev`)**: el nombre es `st` + `{kebab-storage}` + `{project_short}` + `{environment}` + `{region_seq_suffix_plain}`, y no puede superar 24 caracteres (`Microsoft.Storage/storageAccounts`). El presupuesto para `{kebab-storage}` es el `presupuesto` que ya calculaste en la Validacion 1b del Paso 0 (`24 - 2 ("st") - len(project_short) - len(environment) - len(region_seq_suffix_plain)`). Calcula `{kebab-storage}` con una regla **mecanica y fija** (no la dejes a tu criterio: dos corridas del scaffolder para el mismo dominio deben producir el mismo archivo byte a byte -- misma clase de no-determinismo que investigamos en #238), preservando el prefijo sobre el sufijo (MEF-ADR-0045 seccion 4):
 
 - Parte de `{kebab-sin-guiones}` (el dominio en kebab con los guiones eliminados).
-- Si tiene mas de 13 caracteres, `{kebab-storage}` son sus **primeros 13 caracteres**; si tiene 13 o menos, `{kebab-storage}` es `{kebab-sin-guiones}` completo.
+- Si tiene mas caracteres que `presupuesto`, `{kebab-storage}` son sus **primeros `presupuesto` caracteres**; si tiene `presupuesto` o menos, `{kebab-storage}` es `{kebab-sin-guiones}` completo.
 
-No "avises al usuario" ni preguntes nada: el agente corre no interactivo (`claude -p`, ver issue #245), asi que la regla tiene que ser determinista, no un dialogo. La unicidad global del nombre la garantiza el sufijo aleatorio de 6 chars (`random_string`), aun si dos dominios largos comparten los primeros 13 caracteres.
+Ejemplo del propio ADR: `billing` (7) + `cplane` (6) + `dev` (3) + `eus2001` (7) = 25 supera el limite de 24 en 1 caracter -- `{kebab-storage}` se trunca a los primeros 6 caracteres de `billing` (`billin`), dando `stbillincplanedeveus2001` (24 chars). No "avises al usuario" ni preguntes nada: el agente corre no interactivo (`claude -p`, ver issue #245), asi que la regla tiene que ser determinista, no un dialogo -- la Validacion 1b ya cubrio el caso en que ni truncando a cero alcanza.
 
-> **Por que la Storage Account es el unico recurso que se trunca (issue #245)**: su limite real es 24 caracteres (`Microsoft.Storage/storageAccounts`, naming rules de Azure), muy por debajo de los 60 de la Function App y el App Service Plan (Validacion 1 del Paso 0). No es una compuerta interna del harness: es el limite que impone Azure sobre este tipo de recurso especifico.
+> **Por que la Storage Account es el unico recurso que se trunca (issue #245, MEF-ADR-0045 seccion 4)**: su limite real es 24 caracteres (`Microsoft.Storage/storageAccounts`, naming rules de Azure), muy por debajo de los 60 de la Function App y el App Service Plan (Validacion 1 del Paso 0). Nunca se trunca `{abrev-tipo}` (`st`), `{env}`, `{region}` o `{seq}` -- solo `{dominio}`/`{app}`, y `{app}` (`project_short`) ya es responsabilidad del consumidor (nota de `project_short` en "Contrato con el consumidor"), asi que este agente trunca unicamente el componente `{dominio}` que controla.
 
 **Archivo plano por dominio (issue #234, decision D1/D2)**: estos bloques van completos en un archivo **nuevo y propio** del dominio, `infra/environments/dev/dominio-{kebab}.tf`, **NO al final de `main.tf`**. No leas ni modifiques `main.tf`: el root module del entorno lo genera y mantiene `infra-base-scaffolder` (MEF-ADR-0021) y queda intacto al dar de alta un dominio. Terraform evalua todos los `.tf` del directorio del entorno como un unico root module y **no recorre subdirectorios** (fuente: HashiCorp, Terraform Language — "Files and Directories"), por lo que un archivo plano preserva sin cambios las referencias a `local.*`, `module.*` y `var.environment` del root module. La Validacion 3 del Paso 0 ya confirmo que este archivo no existe todavia; si en este punto existiera, detente sin pisarlo.
 
-Crea el archivo `infra/environments/dev/dominio-{kebab}.tf` con el siguiente contenido completo (los cuatro bloques de abajo son el archivo entero, no un agregado a otro archivo existente). Sustituye `{sku_name}` y `{always_on}` por los parametros de hosting que resolviste en el Paso 0 (defaults `B1` / `true`):
+> **Si la Validacion 1b no encontro `region_seq_suffix_plain` en el `variables.tf` del entorno (entorno anterior a #730)**: no escribas `${local.region_seq_suffix_plain}` en el nombre de la Storage Account de abajo -- ese local no existe ahi y `terraform plan` fallaria con `Reference to undeclared local value`. Omite esa interpolacion; la linea `name` queda `"st{kebab-storage}${var.project_short}${var.environment}"`. No agregues el local al `variables.tf` existente para "arreglarlo": ese archivo alimenta nombres de recursos ya desplegados (mismo motivo que documenta `infra-base-scaffolder.md`, Paso 2.3b) y agregarle `{region}-{seq}` los renombraria de golpe.
+
+Crea el archivo `infra/environments/dev/dominio-{kebab}.tf` con el siguiente contenido completo (los tres modulos + los `azurerm_role_assignment` de abajo son el archivo entero, no un agregado a otro archivo existente). Sustituye `{sku_name}` y `{always_on}` por los parametros de hosting que resolviste en el Paso 0 (defaults `B1` / `true`):
 
 ```hcl
-resource "random_string" "storage_suffix_{snake_case}" {
-  length  = 6
-  special = false
-  upper   = false
-}
-
 module "storage_{snake_case}" {
   source              = "../../modules/storage"
-  name                = "st{kebab-storage}${var.environment}${random_string.storage_suffix_{snake_case}.result}"
+  name                = "st{kebab-storage}${var.project_short}${var.environment}${local.region_seq_suffix_plain}"
   resource_group_name = module.resource_group.name
   location            = module.resource_group.location
   tags                = local.tags
@@ -2974,7 +3000,7 @@ module "storage_{snake_case}" {
 
 module "service_plan_{snake_case}" {
   source              = "../../modules/service-plan"
-  name                = "asp-${local.prefix_func}-{kebab}"
+  name                = "asp-{kebab}-${local.prefix_func}"
   resource_group_name = module.resource_group.name
   location            = module.resource_group.location
   os_type             = "Linux"
@@ -2986,7 +3012,7 @@ module "service_plan_{snake_case}" {
 
 module "function_app_{snake_case}" {
   source                         = "../../modules/function-app"
-  name                           = "func-${local.prefix_func}-{kebab}"
+  name                           = "func-{kebab}-${local.prefix_func}"
   resource_group_name            = module.resource_group.name
   location                       = module.resource_group.location
   service_plan_id                = module.service_plan_{snake_case}.id
@@ -3037,7 +3063,9 @@ resource "azurerm_role_assignment" "function_app_{snake_case}_storage_table_data
 }
 ```
 
-Donde `{kebab-sin-guiones}` es el nombre del dominio con los guiones eliminados (ej: `calculo-horas` -> `calculohoras`), y `{kebab-storage}` es ese mismo valor truncado de forma determinista a 13 caracteres cuando excede el presupuesto de la Storage Account (ver "Truncado determinista" arriba; ej: `tenantprovisioning` (18) -> `tenantprovisi` (13), `calculohoras` (12) -> sin cambios).
+Donde `{kebab-sin-guiones}` es el nombre del dominio con los guiones eliminados (ej: `calculo-horas` -> `calculohoras`), y `{kebab-storage}` es ese mismo valor truncado de forma determinista al `presupuesto` calculado en la Validacion 1b cuando lo excede (ver "Truncado determinista" arriba; ej. con `presupuesto = 6`: `billing` (7) -> `billin` (6); con `presupuesto = 13` -- retrocompatible, sin `{region}-{seq}`, `project_short` corto -- `tenantprovisioning` (18) -> `tenantprovisi` (13), `calculohoras` (12) -> sin cambios).
+
+**Colision de nombre globalmente unico (MEF-ADR-0045 seccion 2)**: tanto la Function App (`*.azurewebsites.net`) como la Storage Account exponen un endpoint DNS publico y deben ser unicos en **TODO Azure**, no solo en el resource group. La composicion `{dominio}-{app}-{env}-{region}-{seq}` (o su forma sin guiones para Storage) ya es unica en la practica -- la Validacion 3 del Paso 0 impide dos dominios homonimos dentro del mismo BC/ambiente, asi que solo colisiona contra un tenant de Azure ajeno, un caso excepcional. A diferencia de `infra-base-scaffolder` (que puede incrementar `resourceSequence` porque corre **antes** de que exista ningun recurso desplegado), `domain-scaffolder` **no** puede recurrir a ese fallback: `resourceSequence` alimenta `local.prefix`/`local.prefix_func` para **todo** el entorno, y bumpearlo renombraria de golpe el Key Vault, Postgres, Service Bus y cada dominio ya desplegado -- el mismo destroy+recreate que la seccion 3 del ADR proscribe. Ante una colision real, detente e informa al usuario: el nombre requiere una decision manual (otro `project_short`/ambiente para este BC), no una reinvocacion automatica de este agente.
 
 **Cada dominio recibe su propio `module service_plan_{snake_case}`**: el `service_plan_id` de la Function App apunta a `module.service_plan_{snake_case}.id`, nunca a un plan compartido. No referencies un `module.service_plan` global; ese patron (todas las Function Apps en un solo plan) es justo el que MEF-ADR-0020 proscribe.
 
@@ -3244,7 +3272,7 @@ jobs:
       - name: Deploy to Azure Functions
         uses: Azure/functions-action@v1  # v1 es la version mayor vigente
         with:
-          app-name: func-{prefix_func}-{kebab}
+          app-name: func-{kebab}-{prefix_func}
           package: ./publish
 
   smoke-tests:
@@ -3254,7 +3282,7 @@ jobs:
       actions: read    # requerido por la guarda de deploys ajenos (issue #604, MEF-ADR-0031 seccion 4)
     uses: ./.github/workflows/smoke-tests-dominio.yml
     with:
-      base_url: https://func-{prefix_func}-{kebab}.azurewebsites.net
+      base_url: https://func-{kebab}-{prefix_func}.azurewebsites.net
       test_project: tests/<RootNamespace>.{PascalCase}.SmokeTests/
       expected_sha: ${{ needs.deploy.outputs.sha }}
     secrets:
@@ -3561,7 +3589,7 @@ Crea `.github/smoke-tests/{kebab}.json` con un unico objeto JSON (no un array):
 ```json
 {
   "dominio": "{PascalCase}",
-  "base_url": "https://func-{prefix_func}-{kebab}.azurewebsites.net",
+  "base_url": "https://func-{kebab}-{prefix_func}.azurewebsites.net",
   "test_project": "tests/<RootNamespace>.{PascalCase}.SmokeTests/"
 }
 ```
@@ -3756,7 +3784,7 @@ Scaffold completado para el dominio "{kebab}":
                                              app settings SERVICE_BUS_CONNECTION_INTERNO / _<ALIAS> y MartenConnectionString por
                                              referencia @Microsoft.KeyVault(...) (MEF-ADR-0025); APPLICATIONINSIGHTS_CONNECTION_STRING
                                              via site_config.application_insights_connection_string del modulo function-app (issue #259)
-                                             App Service Plan asp-{prefix_func}-{kebab} (SKU {sku_name}, always_on {always_on}), MEF-ADR-0020
+                                             App Service Plan asp-{kebab}-{prefix_func} (SKU {sku_name}, always_on {always_on}), MEF-ADR-0020
                                              (topics privados se crean bajo demanda con implementer; el backbone compartido lo administra infra)
 
   .github/workflows/deploy-{kebab}.yml     - Workflow de deploy automatico + smoke tests post-deploy
