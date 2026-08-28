@@ -52,7 +52,7 @@ echo "[A] Skills publicados (commands/*.md): guard 'cwd != Mefisto' presente"
 PUBLISHED_SKILLS=(
     bitacora.md bug.md draft.md eraser-diagram.md fix-review.md health-check.md
     implement.md infra.md infra-base.md install-apim.md install-auth.md install-workos.md
-    merge.md onboard.md parallel.md scaffold.md scaffold-projections.md
+    merge.md onboard.md parallel.md purge-store.md scaffold.md scaffold-projections.md
     seed-secret.md sequential.md tooling.md upgrade.md work-status.md
 )
 
