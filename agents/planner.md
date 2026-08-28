@@ -648,6 +648,36 @@ Razón, con la historia real que origina MEF-ADR-0036: el PR que movía los tipo
 
 ---
 
+## Enriquecimiento coreografiado por el dueño del dato
+
+La doctrina completa -- costos honestos de cada opción, el criterio decidible de cuándo la réplica local se justifica, y la mecánica canónica de cuatro pasos -- vive en **MEF-ADR-0046**; esta sección no la duplica, solo enseña a **reconocer** la señal y a producir el handoff de dos issues que `test-writer`/`implementer` consumen, mismo espíritu que "Necesidades de lectura y proyecciones" e "Identidad de eventos persistidos" arriba.
+
+### Reconocer la señal
+
+La señal: un dominio necesita un dato cuya verdad de negocio pertenece a **otro** dominio del mismo Bounded Context, y ningún front resuelve ese dato antes de que el hecho crudo se registre. Reconócela cuando el usuario describe algo como "necesito que el back enriquezca X con un dato que solo conoce el dominio Y", "el evento no trae [dato], pero [otro dominio] sí lo tiene" o "hay que completar esto con información que vive en otro módulo" -- sin mencionar que un front o un sistema externo ya adjunta ese dato antes de que llegue (si ya lo adjunta, no hay nada que enriquecer: MEF-ADR-0046 Alt 3).
+
+Ante esta señal, propone -- en estilo generativo (MEF-ADR-0008: el planner propone, el experto corrige), nunca solo preguntando -- el **enriquecimiento coreografiado por el dueño del dato** como opción **preferida**, y la **réplica local del dato ajeno** como **último recurso**, con su costo de sincronización declarado explícitamente si se elige.
+
+### Contraste de costos, como material de conversación
+
+Lleva este contraste a la charla con el usuario para que la elección quede registrada en el issue (tabla completa en MEF-ADR-0046 sección 1 -- no la repitas ahí, solo úsala como guion):
+
+- **Coreografía (preferida)**: el dueño sigue siendo la única fuente de verdad, sin réplica ni duplicación de datos, pero paga una ventana eventual -- dos saltos de bus (hecho crudo → reacción del dueño → resultado enriquecido) -- y su modo de fallo es visible (retries/DLQ del bus, MEF-ADR-0046 sección 4).
+- **Réplica local (último recurso)**: sin ventana eventual en el camino caliente, pero con maquinaria de sincronización oculta -- reconciliación, backfill del histórico, tombstones de borrados, monitoreo de drift -- que hay que operar y cuyo modo de fallo por defecto es silencioso (MEF-ADR-0046 sección 1).
+
+El criterio decidible que resuelve cuál aplica (MEF-ADR-0046 sección 2) es una sola pregunta, sin zona gris: **¿algún caso de uso necesita el dato enriquecido dentro de la misma transacción o el mismo request HTTP que produce el hecho crudo?** Si no -- el caso común, el consumo real ocurre después --, la coreografía alcanza. Si sí, la réplica local se justifica, pero el issue que la elige debe declarar explícitamente quién dispara la sincronización, con qué frecuencia reconcilia, cómo resuelve los borrados del lado dueño y qué señal detecta drift entre la copia y la fuente -- nunca queda implícito ni se difiere a un issue distinto.
+
+### Partir en dos issues, con `dom:` correctos
+
+Cuando la conversación resuelve a favor de la coreografía, el trabajo se parte siempre en **dos issues**, uno por dominio, cada uno con su propio label `dom:` (MEF-ADR-0011):
+
+- **Issue del dominio dueño**: reacciona al evento privado que publica el hecho crudo del consumidor (`{Accion}Cuando{Evento}`, MEF-ADR-0006), resuelve la clave que trae ese evento contra su **propia** proyección materializada -- nunca contra el aggregate de otro dominio (MEF-ADR-0034/0035) --, y publica un evento privado nuevo, autocontenido, con el resultado (MEF-ADR-0046 sección 3, pasos 2-3). Etiqueta `dom:` del dueño.
+- **Issue del dominio consumidor**: reacciona al evento autocontenido que publica el dueño y estampa el resultado como un hecho más en el stream del aggregate original -- vía `CommandHandler` explícito o `IPrivateEventHandlerAsync`, según el criterio ya fijado por MEF-ADR-0024 decisión 8 (MEF-ADR-0046 sección 3, paso 4). Etiqueta `dom:` del consumidor.
+
+El issue del consumidor (estampar) **depende** del issue del dueño (resolver y publicar): sin el evento autocontenido no hay nada que reaccionar. Declara esa dependencia en `## Dependencias` de ambos issues -- misma disciplina que "Identidad de eventos persistidos" arriba exige para los dos despliegues secuenciales. El hecho crudo en sí (el consumidor persistiendo su propio evento y publicándolo como privado, paso 1) normalmente ya existe: es el hecho de dominio que motivó la necesidad de enriquecerlo. Si todavía no existe, es un tercer issue previo, propio del dominio consumidor, fuera de este patrón de dos issues.
+
+---
+
 ## Definition of Ready
 
 Lee y aplica los criterios de `"$PLUGIN_ROOT/docs/adr/mef-adr-0011-definition-of-ready.md"` (resuelve `$PLUGIN_ROOT` como en "Localizar los ADRs del marco"). Ese documento define la tabla DoR por tipo de issue y es la fuente unica de verdad compartida con el skill `/implement`.
