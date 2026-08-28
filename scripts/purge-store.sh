@@ -72,6 +72,10 @@ while [ $# -gt 0 ]; do
             DRY_RUN=true
             shift
             ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
         *)
             echo "ERROR: argumento desconocido '$1'" >&2
             usage
@@ -179,27 +183,51 @@ PG_SERVER=$(az resource list --resource-group "$RG_NAME" \
 KV_NAME=$(az resource list --resource-group "$RG_NAME" \
     --resource-type "Microsoft.KeyVault/vaults" \
     --query "[0].name" -o tsv 2>/dev/null) || KV_NAME=""
-FUNC_NAME=$(az resource list --resource-group "$RG_NAME" \
+FUNC_ALL=$(az resource list --resource-group "$RG_NAME" \
     --resource-type "Microsoft.Web/sites" \
-    --query "[?kind && contains(kind, 'functionapp')].name" -o tsv 2>/dev/null \
-    | grep -E "(^|-)${DOMAIN_KEBAB}(-|$)" | head -1) || FUNC_NAME=""
+    --query "[?kind && contains(kind, 'functionapp')].name" -o tsv 2>/dev/null) || FUNC_ALL=""
+
+# El prefijo exacto 'func-{dominio}-' (el dominio es el {uso} del patron CAF,
+# MEF-ADR-0045) desambigua; el patron laxo queda como fallback del naming legacy.
+# Un dominio que es sufijo de otro ('horas' dentro de 'calculo-horas') matchea el
+# laxo, y este script reinicia lo que matchea: ante mas de un candidato aborta en
+# vez de elegir el primero en silencio.
+FUNC_MATCHES=$(printf '%s\n' "$FUNC_ALL" | grep -E "^func-${DOMAIN_KEBAB}-" || true)
+if [ -z "$FUNC_MATCHES" ]; then
+    FUNC_MATCHES=$(printf '%s\n' "$FUNC_ALL" | grep -E "(^|-)${DOMAIN_KEBAB}(-|$)" || true)
+fi
+FUNC_NAME=$(printf '%s\n' "$FUNC_MATCHES" | head -1)
 
 # El worker de proyecciones (Container App) solo es exigible si el BC lo adopto
 # (token opt-in projections.enabled, MEF-ADR-0034) -- ausente/false no es un
 # recurso faltante, es un worker que este BC nunca desplego.
+#
+# La revision activa se resuelve aqui, no en el paso de reinicio: 'az containerapp'
+# vive en una extension de la CLI, y descubrir su ausencia (o la falta de permisos)
+# despues del DROP dejaria el store purgado y el worker sin reiniciar, con el
+# schema recreandose bajo un daemon que sigue en la revision vieja.
 CA_NAME=""
+ACTIVE_REVISION=""
 if [ "$HARNESS_PROJECTIONS_ENABLED" = "true" ]; then
     CA_NAME=$(az resource list --resource-group "$RG_NAME" \
         --resource-type "Microsoft.App/containerApps" \
         --query "[?contains(name, 'projections')].name | [0]" -o tsv 2>/dev/null) || CA_NAME=""
+    if [ -n "$CA_NAME" ]; then
+        ACTIVE_REVISION=$(az containerapp revision list --name "$CA_NAME" --resource-group "$RG_NAME" \
+            --query "[?properties.active] | [0].name" -o tsv 2>/dev/null) || ACTIVE_REVISION=""
+    fi
 fi
 
 MISSING=()
 [ -z "$PG_SERVER" ] && MISSING+=("servidor PostgreSQL (Microsoft.DBforPostgreSQL/flexibleServers)")
 [ -z "$KV_NAME" ] && MISSING+=("Key Vault (Microsoft.KeyVault/vaults)")
 [ -z "$FUNC_NAME" ] && MISSING+=("Function App del dominio '$DOMAIN_KEBAB' (Microsoft.Web/sites)")
-if [ "$HARNESS_PROJECTIONS_ENABLED" = "true" ] && [ -z "$CA_NAME" ]; then
-    MISSING+=("Container App del worker de proyecciones (Microsoft.App/containerApps, projections.enabled=true)")
+if [ "$HARNESS_PROJECTIONS_ENABLED" = "true" ]; then
+    if [ -z "$CA_NAME" ]; then
+        MISSING+=("Container App del worker de proyecciones (Microsoft.App/containerApps, projections.enabled=true)")
+    elif [ -z "$ACTIVE_REVISION" ]; then
+        MISSING+=("revision activa de '$CA_NAME' (revisa 'az extension add --name containerapp' y tus permisos sobre el Container App)")
+    fi
 fi
 
 if [ ${#MISSING[@]} -gt 0 ]; then
@@ -208,17 +236,37 @@ if [ ${#MISSING[@]} -gt 0 ]; then
     exit 1
 fi
 
+FUNC_MATCH_COUNT=$(printf '%s\n' "$FUNC_MATCHES" | wc -l | tr -d ' ')
+if [ "$FUNC_MATCH_COUNT" -gt 1 ]; then
+    echo "ERROR: el dominio '$DOMAIN_KEBAB' matchea mas de una Function App en '$RG_NAME':" >&2
+    printf '  - %s\n' $FUNC_MATCHES >&2
+    echo "  Ambiguo: este script reiniciaria la equivocada. Renombra o desambigua antes de purgar." >&2
+    exit 1
+fi
+
 echo "Postgres: $PG_SERVER | Key Vault: $KV_NAME | Function App: $FUNC_NAME${CA_NAME:+ | Worker: $CA_NAME}"
 
 # --- Firewall temporal (CA-4) --------------------------------------------------
-OPERATOR_IP=$(curl -s https://ifconfig.me 2>/dev/null || true)
-if [ -z "$OPERATOR_IP" ]; then
-    OPERATOR_IP=$(curl -s https://api.ipify.org 2>/dev/null || true)
-fi
-if [ -z "$OPERATOR_IP" ]; then
-    echo "ERROR: no se pudo determinar la IP publica del operador (necesaria para la regla de firewall temporal)." >&2
+#
+# La regla de firewall de Azure PostgreSQL solo acepta IPv4: un cuerpo HTML de
+# error o una respuesta IPv6 se descarta aqui en vez de llegar a 'az' como un
+# --start-ip-address invalido.
+detect_operator_ip() {
+    local endpoint ip
+    for endpoint in https://ifconfig.me/ip https://api.ipify.org; do
+        ip=$(curl -fsS --max-time 10 "$endpoint" 2>/dev/null | tr -d '[:space:]') || ip=""
+        if printf '%s' "$ip" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+            printf '%s' "$ip"
+            return 0
+        fi
+    done
+    return 1
+}
+
+OPERATOR_IP=$(detect_operator_ip) || {
+    echo "ERROR: no se pudo determinar la IPv4 publica del operador (necesaria para la regla de firewall temporal)." >&2
     exit 1
-fi
+}
 
 FW_RULE_NAME="purge-store-temp-$$"
 FIREWALL_OPENED=false
@@ -230,7 +278,12 @@ cleanup_firewall() {
             --rule-name "$FW_RULE_NAME" --yes >/dev/null 2>&1 || true
     fi
 }
+# EXIT no corre cuando la shell muere por una senal no atrapada, y un Ctrl-C a
+# mitad de la purga es justo el caso que CA-4 cubre: INT/TERM se enrutan al mismo
+# trap via exit.
 trap cleanup_firewall EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo "Abriendo regla de firewall temporal para $OPERATOR_IP..."
 az postgres flexible-server firewall-rule create \
@@ -247,25 +300,36 @@ MARTEN_CONNECTION=$(az keyvault secret show --vault-name "$KV_NAME" --name marte
 # variables PG* de libpq -- PGPASSWORD nunca se interpola en un comando ni se
 # imprime, psql la toma del entorno.
 PGHOST=""
+PGPORT=""
 PGDATABASE=""
 PGUSER=""
 PGPASSWORD=""
 PGSSLMODE_VALUE="require"
 
-IFS=';' read -ra CONN_PARTS <<< "$MARTEN_CONNECTION"
-for part in "${CONN_PARTS[@]}"; do
+# El troceo es puro expansion de parametros: un here-string ('<<<') materializaria
+# el secreto en un archivo temporal de $TMPDIR, que CA-3 proscribe.
+CONN_REST="$MARTEN_CONNECTION"
+while [ -n "$CONN_REST" ]; do
+    part="${CONN_REST%%;*}"
+    if [ "$part" = "$CONN_REST" ]; then
+        CONN_REST=""
+    else
+        CONN_REST="${CONN_REST#*;}"
+    fi
+    [ -n "$part" ] || continue
     key="${part%%=*}"
     value="${part#*=}"
     key_lower=$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]')
     case "$key_lower" in
         host) PGHOST="$value" ;;
+        port) PGPORT="$value" ;;
         database) PGDATABASE="$value" ;;
         username) PGUSER="$value" ;;
         password) PGPASSWORD="$value" ;;
         "ssl mode") PGSSLMODE_VALUE=$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]') ;;
     esac
 done
-unset MARTEN_CONNECTION CONN_PARTS
+unset MARTEN_CONNECTION CONN_REST part key value key_lower
 
 if [ -z "$PGHOST" ] || [ -z "$PGDATABASE" ] || [ -z "$PGUSER" ] || [ -z "$PGPASSWORD" ]; then
     echo "ERROR: no se pudo parsear el secreto 'marten-connection' (formato esperado:" >&2
@@ -275,6 +339,21 @@ fi
 
 export PGPASSWORD
 CONNINFO="host=$PGHOST dbname=$PGDATABASE user=$PGUSER sslmode=$PGSSLMODE_VALUE"
+[ -n "$PGPORT" ] && CONNINFO="$CONNINFO port=$PGPORT"
+
+# Postgres resuelve las relaciones en el parseo, asi que un 'count(*)' sobre una
+# tabla ausente aborta la consulta entera: el dry-run comprueba existencia primero
+# para reportar un schema a medias (worker que nunca corrio, apply parcial) en vez
+# de morir con un error crudo de psql antes de mostrar nada.
+count_rows() {
+    local table="$1" exists
+    exists=$(psql "$CONNINFO" -tAc "SELECT to_regclass('\"$SCHEMA\".\"$table\"') IS NOT NULL")
+    if [ "$exists" = "t" ]; then
+        psql "$CONNINFO" -tAc "SELECT count(*) FROM \"$SCHEMA\".\"$table\""
+    else
+        printf '%s' "n/a (tabla ausente)"
+    fi
+}
 
 SCHEMA_EXISTS=$(psql "$CONNINFO" -tAc "SELECT 1 FROM information_schema.schemata WHERE schema_name = '$SCHEMA'")
 if [ "$SCHEMA_EXISTS" != "1" ]; then
@@ -284,14 +363,14 @@ fi
 
 if [ "$DRY_RUN" = true ]; then
     # CA-6: solo reporta, cero pasos destructivos.
-    STREAMS=$(psql "$CONNINFO" -tAc "SELECT count(*) FROM \"$SCHEMA\".mt_streams")
+    STREAMS=$(count_rows mt_streams)
+    CHECKPOINTS=$(count_rows mt_event_progression)
     READMODEL_TABLES=$(psql "$CONNINFO" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema = '$SCHEMA' AND table_name LIKE 'mt_doc_%'")
-    CHECKPOINTS=$(psql "$CONNINFO" -tAc "SELECT count(*) FROM \"$SCHEMA\".mt_event_progression")
 
     echo ""
     echo "=== DRY RUN: dominio '$DOMAIN_KEBAB' (schema \"$SCHEMA\") en $RG_NAME ==="
-    echo "  streams (mt_streams):                       $STREAMS"
-    echo "  tablas de read model (mt_doc_%):             $READMODEL_TABLES"
+    echo "  streams (mt_streams):                          $STREAMS"
+    echo "  tablas de read model (mt_doc_%):               $READMODEL_TABLES"
     echo "  checkpoints del daemon (mt_event_progression): $CHECKPOINTS"
     echo ""
     echo "Nada se purgo. Sin --dry-run, este comando ejecuta 'DROP SCHEMA \"$SCHEMA\" CASCADE'"
@@ -304,13 +383,9 @@ echo "Purgando schema \"$SCHEMA\" (DROP SCHEMA ... CASCADE)..."
 psql "$CONNINFO" -v ON_ERROR_STOP=1 -c "DROP SCHEMA \"$SCHEMA\" CASCADE;"
 
 if [ -n "$CA_NAME" ]; then
-    ACTIVE_REVISION=$(az containerapp revision list --name "$CA_NAME" --resource-group "$RG_NAME" \
-        --query "[?properties.active] | [0].name" -o tsv 2>/dev/null) || ACTIVE_REVISION=""
-    if [ -n "$ACTIVE_REVISION" ]; then
-        echo "Reiniciando worker de proyecciones ($CA_NAME, revision $ACTIVE_REVISION)..."
-        az containerapp revision restart --name "$CA_NAME" --resource-group "$RG_NAME" \
-            --revision "$ACTIVE_REVISION" >/dev/null
-    fi
+    echo "Reiniciando worker de proyecciones ($CA_NAME, revision $ACTIVE_REVISION)..."
+    az containerapp revision restart --name "$CA_NAME" --resource-group "$RG_NAME" \
+        --revision "$ACTIVE_REVISION" >/dev/null
 fi
 
 echo "Reiniciando Function App del dominio ($FUNC_NAME)..."
