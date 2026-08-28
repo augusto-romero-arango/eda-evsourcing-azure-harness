@@ -325,6 +325,16 @@ Antes de mover o renombrar un evento persistido:
    invertida que origino el incidente real: el PR que movia los tipos se desplego y la purga (criterio
    de aceptacion de ese mismo PR) no se ejecuto a la par.
 
+**Mecanismo canonico de ejecucion (issue #743).** Cuando la purga se elige deliberadamente segun el
+punto 4, el mecanismo canonico para ejecutarla es el skill `/purge-store` (`commands/purge-store.md`),
+nunca `psql`/`DROP` a mano ni otro script ad-hoc. El skill diagnostica con evidencia (App Insights,
+smoke tests del ultimo deploy) antes de siquiera ofrecer la purga, confirma con el humano mostrando el
+`--dry-run` de `scripts/purge-store.sh` (issue #725 -- la mitad determinista que ejecuta el
+`DROP SCHEMA ... CASCADE` y reinicia los procesos afectados) y valida el resultado relanzando los smoke
+tests que estaban en rojo. Esta doctrina **no cambia** la regla del punto 4: la purga sigue
+perteneciendo al mismo despliegue que el movimiento de tipos; `/purge-store` es el **como** se ejecuta
+esa purga cuando corresponde, no una excepcion a **cuando** corresponde ejecutarla.
+
 ### 6. Fronteras declaradas: que NO cierra este ADR (CA-6)
 
 **(a) El registro read-side es defensa en profundidad, y hoy no es escribible.** La seccion 3 exige que
@@ -541,3 +551,9 @@ para este caso.
   en este refinamiento por decompilacion propia con `ilspycmd` contra los ensamblados publicados
   (Marten 9.12.0, JasperFx.Events 2.18.1, Cosmos.EventSourcing.CritterStack 2.1.0/2.3.1), no solo contra
   lo ya registrado en MEF-ADR-0034 referencia [19].
+- 2026-08-27: enmienda (issue #743). Nombra el skill `/purge-store` (`commands/purge-store.md`) como
+  mecanismo canonico de ejecucion de la purga deliberada en dev que la seccion 5 punto 4 permite:
+  diagnostico con evidencia (App Insights, smoke tests del ultimo deploy) antes de ofrecer la purga,
+  confirmacion humana sobre el `--dry-run` real de `scripts/purge-store.sh` (issue #725) y validacion
+  final relanzando los smoke tests fallidos. La regla de que la purga pertenece al mismo despliegue que
+  el movimiento de tipos queda intacta -- este skill fija el **como**, no el **cuando**.

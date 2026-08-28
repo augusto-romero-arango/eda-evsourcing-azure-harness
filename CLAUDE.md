@@ -163,6 +163,7 @@ tu propuesta en vez de darlo por cierto.
 | `/eraser-diagram` | Genera diagrama para Eraser |
 | `/merge` | Mergea uno o varios PRs a main |
 | `/bitacora` | Invoca al agente `historiador` y, si crea PR, encadena `/merge` automaticamente |
+| `/purge-store` | Diagnostica con evidencia (App Insights, smoke tests), confirma y valida la purga del store de un dominio en dev (mecanismo canonico de MEF-ADR-0036 seccion 5; los pasos destructivos los ejecuta `scripts/purge-store.sh`) |
 
 ## Agent Skills disponibles
 
