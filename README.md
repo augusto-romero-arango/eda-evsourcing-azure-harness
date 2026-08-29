@@ -24,6 +24,7 @@ Plugin de [Claude Code](https://code.claude.com/docs/en/plugins) que provee un h
 - **Pipelines bash** que orquestan el ciclo TDD, IaC y tooling sobre `tmux` y `git worktree`.
 - **ADRs** del marco arquitectónico (prefijo `MEF-ADR-`, ver índice temático en `CLAUDE.md`).
 - **Hooks** para logging del pipeline.
+- Un **servidor MCP bundleado**: `microsoft-learn` (endpoint remoto oficial `https://learn.microsoft.com/api/mcp`, HTTP sin autenticación). Queda disponible en toda sesión de Claude Code con el plugin instalado, sin pasos extra de instalación; hoy solo el agente `planner` lo tiene habilitado en su allowlist `tools:`, para verificar documentación oficial de Microsoft (Azure, .NET, C#) al redactar issues.
 
 ## Stack supuesto en el consumidor
 
@@ -406,7 +407,7 @@ Flujo típico:
 
 ```
 .claude-plugin/
-  plugin.json          # metadata (name, version, author)
+  plugin.json          # metadata (name, version, author) + mcpServers bundleados
   marketplace.json     # catálogo
 commands/              # skills publicados (los que ve el consumidor)
 agents/                # agentes publicados
