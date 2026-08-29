@@ -16,6 +16,7 @@ Es un **Claude Code Plugin** (ver `.claude-plugin/plugin.json`) que empaqueta:
 - Pipelines bash en `scripts/` (TDD, IaC, tooling, scaffolding, pr-sync, etc.)
 - **ADRs** del marco arquitectónico en `docs/adr/`
 - Hooks en `hooks/hooks.json`
+- Un **servidor MCP bundleado** en `.claude-plugin/plugin.json` (`mcpServers.microsoft-learn`, endpoint HTTP remoto de Microsoft Learn, sin autenticación — ningún secreto viaja en la configuración, MEF-ADR-0025): lo usa el `planner` para verificar documentación oficial de Azure/.NET/C# al redactar issues
 
 Está pensado para instalarse vía marketplace en cualquier proyecto que adopte el marco (EDA + Event Sourcing + Azure Functions + Marten + Wolverine + Postgres).
 
@@ -310,6 +311,7 @@ El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o
 ## Notas para definir agentes y skills
 
 - Las herramientas MCP requieren declaración explícita cuando un agente usa allowlist `tools:`. Usa wildcard: `mcp__<servidor>__*`.
+- Cuando el servidor MCP lo provee un **plugin** (declarado en `mcpServers` de `.claude-plugin/plugin.json`, propio o de terceros), el nombre real de sus tools va scoped con el prefijo del plugin, así que la allowlist se escribe `mcp__plugin_<plugin>_<servidor>__*`, no `mcp__<servidor>__*`. Fuente: [code.claude.com/docs/en/plugins-reference](https://code.claude.com/docs/en/plugins-reference) — *"Tool matchers and `if` fields take the scoped tool name `mcp__plugin_<plugin-name>_<server-name>__<tool>` … A matcher written against the bare server key never fires"*. Ejemplo: el servidor `microsoft-learn` bundleado por este plugin (`mefisto`) se declara en `tools:` como `mcp__plugin_mefisto_microsoft-learn__*`.
 - Si el agente **no** define `tools:`, hereda todas incluyendo MCP.
 - Para **doctrina extensa** que solo aplica a algunas tareas, usa un **Agent Skill** (`skills/<nombre>/SKILL.md` publicado, `.claude/skills/<nombre>/SKILL.md` interno) en vez de otra sección en el body del agente: el Skill se carga por niveles y no se paga cuando la tarea no lo necesita. Un agente lo precarga con el campo frontmatter `skills:` (no requiere la tool `Skill` en `tools:`). Doctrina completa y caveats de versión en MEF-ADR-0033.
 

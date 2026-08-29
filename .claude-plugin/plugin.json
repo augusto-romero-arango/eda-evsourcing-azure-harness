@@ -6,5 +6,11 @@
     "name": "Augusto Romero Arango"
   },
   "homepage": "https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness",
-  "license": "PROPRIETARY"
+  "license": "PROPRIETARY",
+  "mcpServers": {
+    "microsoft-learn": {
+      "type": "http",
+      "url": "https://learn.microsoft.com/api/mcp"
+    }
+  }
 }

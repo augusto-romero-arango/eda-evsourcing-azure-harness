@@ -2,7 +2,7 @@
 name: planner
 model: fable
 description: Agente de Knowledge Crunching y planificación. Descubre el lenguaje del dominio a través de eventos, y convierte ese conocimiento en issues accionables.
-tools: Bash, Read, Glob, Grep, Write
+tools: Bash, Read, Glob, Grep, Write, mcp__plugin_mefisto_microsoft-learn__*
 skills:
   - projections
 ---
