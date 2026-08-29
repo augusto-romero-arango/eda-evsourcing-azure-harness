@@ -277,6 +277,9 @@ El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o
 | Estándar de nombramiento de recursos Azure (patrón CAF + región + secuencia) | MEF-ADR-0045 |
 | Remision del naming de infraestructura base al estandar CAF + region + secuencia (MEF-ADR-0045) | MEF-ADR-0021 |
 | Correccion en la nota del issue #245 de MEF-ADR-0006: el nombre del recurso Azure citado pasa a `func-{kebab}-{prefix_func}` (el dominio es el `{uso}` del patron CAF) | MEF-ADR-0006 |
+| Generalizacion del par de config-tests espejo a plantilla del par 2 (tabla/tenancy/id como tercera instancia; guarda siempre-activa de la tenancy documental) | MEF-ADR-0034 |
+| Enmienda a MEF-ADR-0036: el skill `/purge-store` como mecanismo canonico de ejecucion de la purga deliberada en dev (regla del mismo despliegue intacta) | MEF-ADR-0036 |
+| Enriquecimiento coreografiado por el dueño del dato (Content Enricher preferido sobre réplica local) | MEF-ADR-0046 |
 
 ## Convenciones del marco
 
