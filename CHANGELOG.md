@@ -4,6 +4,22 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-08-29
+
+### Added
+
+- Se agrega `scripts/purge-store.sh`, la mitad determinista de la purga de store de dominio en dev (MEF-ADR-0036 seccion 5): guarda anti-prod codificada, descubre server Postgres/Key Vault/Container App del worker/Function App del dominio via `az resource list` sin tokens nuevos en `harness.config.json`, abre una regla de firewall temporal, lee `marten-connection` de Key Vault sin exponerlo, ejecuta `DROP SCHEMA <dominio> CASCADE` y reinicia el worker de proyecciones y la Function App del dominio. Incluye flag `--dry-run` para reportar el impacto (streams, tablas de read model, checkpoints del daemon) sin purgar.
+- Se agrega el skill `/purge-store`, mitad agentica del mecanismo de purga de store en dev (MEF-ADR-0036 seccion 5): diagnostica con evidencia en App Insights y en los smoke tests del ultimo deploy antes de ofrecer la purga (se detiene sin evidencia), identifica el dominio/schema afectado y, si es rastreable, el issue/PR de origen, confirma con el humano mostrando el `--dry-run` real de `scripts/purge-store.sh`, delega todo paso destructivo unicamente en ese script, y valida el resultado relanzando los smoke tests fallidos con un veredicto explicito.
+- Se crea MEF-ADR-0046, que fija el enriquecimiento coreografiado por el dueño del dato (patrón Content Enricher) como opción preferida frente a la réplica local de estado ajeno (Event-Carried State Transfer), con doctrina de decisión y mecánica canónica de cuatro pasos.
+
+### Changed
+
+- El par de config-tests espejo de `mt_version` (issue #718) se generaliza a **plantilla del par de compatibilidad 2** en `skills/projections/config-test.md` (seccion "Plantilla del par espejo"): mecanica comun (un test por lado, cada uno sobre su propio store, mismos oraculos literales via `Options.FindOrResolveDocumentType`, sin comparacion cruzada), criterio de seleccion de atributos como regla -- no lista cerrada -- e instancias conocidas. La instancia nueva es **tabla/tenancy/id** (`TableName.QualifiedName`, `TenancyStyle`, `IdMember`), tercera del par 2 y segunda con par espejo propio, verificada en el consumidor de referencia y medida contra los paquetes pinneados (Marten `9.12.0`).
+- Con esa instancia, la **tenancy documental** (`Policies.AllDocumentsAreMultiTenanted()`, primera instancia del par 2) pasa de verificarse solo bajo el gate condicional del reviewer a tener guarda siempre-activa: `TenancyStyle` mide `Conjoined` con la policy y `Single` sin ella.
+- `agents/reviewer.md` gana la regla: para atributos del par 2 con par espejo instalado, la verificacion es constatar que el par de tests exista y sus literales coincidan, en vez de re-derivar la compatibilidad a mano; las tablas "Debe coincidir"/"No debe coincidir" no se reestructuran.
+- El gate de arranque de `mefisto-batch-pipeline.sh` ya no aborta cuando el repo principal no esta en `main`/`master` si el arbol de trabajo esta limpio: se auto-recupera (`git switch` a la rama base + `git pull --ff-only`), loguea un warning nombrando la rama original y arranca. Con arbol sucio, o si el `pull --ff-only` posterior falla por divergencia, sigue abortando fail-loud como antes.
+- El `planner` reconoce la señal de dato ajeno entre dominios (un dominio necesita un dato cuya verdad pertenece a otro y ningún front lo resuelve) y propone el enriquecimiento coreografiado por el dueño del dato (MEF-ADR-0046) como opción preferida frente a la réplica local, con el contraste de costos como material de conversación; parte el trabajo en dos issues `tipo:feature` (dueño y consumidor) con sus `dom:` correctos, su dependencia declarada y el efecto de negocio del fallo "el dueño no conoce el dato" como criterio de aceptación. Casilla propia en el checklist pre-listo.
+
 ## [0.29.0] - 2026-08-27
 
 ### Added
@@ -1531,7 +1547,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.29.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.30.0...HEAD
+[0.30.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.26.0...v0.27.0
