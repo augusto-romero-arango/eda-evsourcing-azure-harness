@@ -310,6 +310,7 @@ El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o
 ## Notas para definir agentes y skills
 
 - Las herramientas MCP requieren declaración explícita cuando un agente usa allowlist `tools:`. Usa wildcard: `mcp__<servidor>__*`.
+- Cuando el servidor MCP lo provee un **plugin** (declarado en `mcpServers` de `.claude-plugin/plugin.json`, propio o de terceros), el nombre scoped de sus tools lleva el prefijo del plugin: `mcp__plugin_<plugin>_<servidor>__*` (formato oficial, [code.claude.com/docs/en/plugins-reference](https://code.claude.com/docs/en/plugins-reference), sección "MCP servers"). Ejemplo: el servidor `microsoft-learn` bundleado por este plugin (`mefisto`) se declara en `tools:` como `mcp__plugin_mefisto_microsoft-learn__*`.
 - Si el agente **no** define `tools:`, hereda todas incluyendo MCP.
 - Para **doctrina extensa** que solo aplica a algunas tareas, usa un **Agent Skill** (`skills/<nombre>/SKILL.md` publicado, `.claude/skills/<nombre>/SKILL.md` interno) en vez de otra sección en el body del agente: el Skill se carga por niveles y no se paga cuando la tarea no lo necesita. Un agente lo precarga con el campo frontmatter `skills:` (no requiere la tool `Skill` en `tools:`). Doctrina completa y caveats de versión en MEF-ADR-0033.
 
