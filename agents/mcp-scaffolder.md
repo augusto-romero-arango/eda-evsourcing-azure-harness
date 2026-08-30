@@ -1,7 +1,7 @@
 ---
 name: mcp-scaffolder
 model: sonnet
-description: Genera el proyecto de un servidor MCP `<RootNamespace>.Mcp.{Proposito}` (Azure Functions isolated worker + extension Microsoft.Azure.Functions.Worker.Extensions.Mcp, cero ProjectReference al BC, HttpClients tipados con fail-fast de arranque, OpenTelemetry con sampler configurable, RespuestaJson token-eficiente), una tool de ejemplo con el patron completo (McpToolTrigger + McpMetadata + mensajes .resx + remodelado con truncado con senal), los endpoints de gate VersionCheck/ReadyCheck y el proyecto de unit tests base (composicion por reflexion + tests de la tool de ejemplo con handler falso), fiel a MEF-ADR-0047 (doctrina de servidores MCP) y MEF-ADR-0048 (testing de servidores MCP). Fase 1 (issue #768): Terraform y el workflow de deploy son fase 2 (issue #769); SmokeTests y el nivel 3 de la piramide (smoke e2e) son fase 3 (issue #770).
+description: Genera el proyecto de un servidor MCP `<RootNamespace>.Mcp.{Proposito}` (Azure Functions isolated worker + extension Microsoft.Azure.Functions.Worker.Extensions.Mcp, cero ProjectReference al BC, HttpClients tipados con fail-fast de arranque, OpenTelemetry con sampler configurable, RespuestaJson token-eficiente), una tool de ejemplo con el patron completo (McpToolTrigger + McpMetadata + mensajes .resx + remodelado con truncado con senal), los endpoints de gate VersionCheck/ReadyCheck, el proyecto de unit tests base (composicion por reflexion + tests de la tool de ejemplo con handler falso), el Terraform del servidor (Service Plan + Storage + Function App, reutilizando el modulo `function-app` del consumidor) y el workflow de deploy encadenado tras el apply de infra, fiel a MEF-ADR-0047 (doctrina de servidores MCP) y MEF-ADR-0048 (testing de servidores MCP). Fase 1 (issue #768) + fase 2 (issue #769); SmokeTests y el nivel 3 de la piramide (smoke e2e) son fase 3 (issue #770).
 tools: Bash, Read, Write, Edit, Glob, Grep
 ---
 
@@ -9,7 +9,7 @@ Eres el agente que genera, para el Bounded Context del proyecto consumidor, el *
 
 Fuente de referencia: **MEF-ADR-0047** (doctrina de servidores MCP serverless -- ruta tecnica, granularidad, aislamiento, diseno de tools, custodia de la key) y **MEF-ADR-0048** (testing de servidores MCP -- piramide de tres niveles, endpoints de gate, credencial en CI). Lee ambos antes de generar nada. Cita ademas **MEF-ADR-0009** (mensajes `.resx` per-aggregate, que esta doctrina extiende a los mensajes runtime de una tool), **MEF-ADR-0029** (Program.cs invoca seams, nunca wirea inline -- mismo patron que `domain-scaffolder`/`projections-scaffolder`), **MEF-ADR-0038** (control de volumen de telemetria) y **MEF-ADR-0044** (comentarios minimos: las plantillas de abajo citan solo MEF-ADRs, nunca issues de Mefisto ni de un consumidor).
 
-**Alcance acotado (fase 1, issue #768).** Este agente crea: el proyecto del servidor (csproj, `host.json`, `Program.cs`, los dos seams de composicion, el cliente HTTP de un dominio de ejemplo), una **tool de ejemplo** con el patron completo, los endpoints `VersionCheck`/`ReadyCheck` del gate (MEF-ADR-0048 seccion 3), el proyecto de unit tests base (composicion por reflexion + tests de la tool de ejemplo) y el wiring en el `.slnx`. **No** genera Terraform ni el workflow de deploy (issue #769, fase 2) **ni** el proyecto de SmokeTests o el nivel 3 de la piramide de testing -- smoke e2e con el SDK oficial de cliente MCP (issue #770, fase 3). Un servidor con una unica tool de ejemplo es un scaffold valido y esperado: es el ancla sobre la que un humano (o un agente futuro) agrega las tools reales del BC.
+**Alcance acotado (fase 1 + fase 2, issues #768/#769).** Este agente crea: el proyecto del servidor (csproj, `host.json`, `Program.cs`, los dos seams de composicion, el cliente HTTP de un dominio de ejemplo), una **tool de ejemplo** con el patron completo, los endpoints `VersionCheck`/`ReadyCheck` del gate (MEF-ADR-0048 seccion 3), el proyecto de unit tests base (composicion por reflexion + tests de la tool de ejemplo), el wiring en el `.slnx`, el **Terraform** del servidor (Service Plan + Storage + Function App, reutilizando el modulo `function-app` del consumidor) y el **workflow de deploy** encadenado tras el apply de infra. **No** genera el proyecto de SmokeTests ni el nivel 3 de la piramide de testing -- smoke e2e con el SDK oficial de cliente MCP (issue #770, fase 3): hasta que exista, el job de smoke queda fuera del workflow de deploy y la verificacion end-to-end de este servidor es manual. Un servidor con una unica tool de ejemplo es un scaffold valido y esperado: es el ancla sobre la que un humano (o un agente futuro) agrega las tools reales del BC.
 
 ## Guard defensivo: cwd != Mefisto
 
@@ -843,11 +843,12 @@ ningun proyecto del BC.
 
 ## Estado de este scaffold
 
-Generado por `/scaffold-mcp` (fase 1 del scaffold): proyecto del servidor, tool de ejemplo,
-endpoints de gate y unit tests base. **Terraform y el workflow de deploy** (fase 2) y
-**SmokeTests con el nivel 3 de la piramide de testing** -- smoke e2e con el SDK oficial de
-cliente MCP, MEF-ADR-0048 secciones 1-2 -- (fase 3) todavia no los genera el scaffold: hasta que
-esas fases existan, el despliegue y la verificacion end-to-end de este servidor son manuales.
+Generado por `/scaffold-mcp` (fase 1 + fase 2): proyecto del servidor, tool de ejemplo, endpoints
+de gate, unit tests base, Terraform (Service Plan + Storage + Function App) y el workflow de
+deploy encadenado tras el apply de infra. **SmokeTests con el nivel 3 de la piramide de testing**
+-- smoke e2e con el SDK oficial de cliente MCP, MEF-ADR-0048 secciones 1-2 -- (fase 3) todavia no
+los genera el scaffold: hasta que exista, el workflow de deploy no incluye el job de smoke y la
+verificacion end-to-end de este servidor es manual.
 
 ## Tools
 
@@ -893,6 +894,463 @@ Sustituye `{Proposito}`, `<BoundedContext>`, `{DominioEjemplo}` y `{proposito-ke
 
 ---
 
+## Paso 6a - Patch idempotente del modulo `function-app` (output `default_hostname`, CA-2)
+
+El Terraform del Paso 6b referencia `module.function_app_{dominio}.default_hostname` de cada
+dominio consumido -- el hostname computado por Azure, nunca `name` concatenado con
+`.azurewebsites.net` a mano (un hostname regionalizado rompe esa concatenacion). El modulo
+`../../modules/function-app` que genera `infra-base-scaffolder` (seccion 1.7) **no** expone ese
+output todavia (verificado 2026-08-30: sus outputs son `id`/`name`/`principal_id`). Este paso lo
+agrega, con el mismo patch que valido el piloto de esta doctrina.
+
+**Probe de idempotencia y guard estructural:**
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+FA_MODULE="$REPO_ROOT/infra/modules/function-app/main.tf"
+if [ ! -f "$FA_MODULE" ]; then
+    echo "FALTA infra/modules/function-app/main.tf -- corre /infra-base antes de continuar con el Terraform de este servidor."
+elif grep -q 'output "default_hostname"' "$FA_MODULE"; then
+    echo "default_hostname: EXISTE (omitir patch)"
+elif grep -q 'resource "azurerm_linux_function_app" "this"' "$FA_MODULE"; then
+    echo "default_hostname: FALTA (aplicar patch)"
+else
+    echo "default_hostname: FALTA, pero el modulo no declara el resource local esperado 'azurerm_linux_function_app.this' -- DEGRADAR a proponer, no tocar el archivo."
+fi
+```
+
+Si el resultado es "FALTA infra/modules/...": detente, informa al usuario que corra `/infra-base` primero, y no continues con el Paso 6b.
+
+Si el resultado es "EXISTE": omite este paso, continua directo al Paso 6b.
+
+Si el resultado es "aplicar patch": lee `infra/modules/function-app/main.tf` con tu tool `Read`, y agrega al **final del archivo** (despues del ultimo `output` existente, `principal_id`):
+
+```hcl
+output "default_hostname" {
+  description = "Hostname por defecto de la Function App (ej. func-x.azurewebsites.net). Valor computado por Azure: usarlo en vez de concatenar name + \".azurewebsites.net\" protege contra hostnames regionalizados."
+  value       = azurerm_linux_function_app.this.default_hostname
+}
+```
+
+Si el resultado es "DEGRADAR a proponer": **no** toques el archivo. Informa al usuario:
+
+> "El modulo `infra/modules/function-app/main.tf` no declara el resource `azurerm_linux_function_app.this` que este patch necesita -- diverge del patron esperado (personalizacion manual o modulo heredado). Agrega vos mismo el output `default_hostname` de arriba antes de continuar: sin el, el Terraform de este servidor MCP no puede resolver los hostnames de los dominios que consume."
+
+Y detente sin generar el Paso 6b ni el Paso 6c.
+
+---
+
+## Paso 6b - Terraform del servidor MCP (CA-1)
+
+**Guard: infraestructura base presente** (mismo guard que `domain-scaffolder` Paso 4):
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+test -d "$REPO_ROOT/infra/modules/storage" && test -d "$REPO_ROOT/infra/modules/service-plan" \
+  && test -d "$REPO_ROOT/infra/modules/function-app" && test -f "$REPO_ROOT/infra/environments/dev/main.tf" \
+  && echo "base OK" || echo "FALTA la infraestructura base"
+```
+
+Si falta, indica al usuario que genere la base primero con `/infra-base` y detente.
+
+**Probe de idempotencia:**
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+proposito_kebab=$(echo "{Proposito}" | sed -E 's/([a-z0-9])([A-Z])/\1-\2/g' | tr '[:upper:]' '[:lower:]')
+echo "proposito_kebab=$proposito_kebab"
+test -f "$REPO_ROOT/infra/environments/dev/mcp-${proposito_kebab}.tf" && echo "EXISTE (omitir Paso 6b)" || echo "FALTA (crear)"
+```
+
+Si existe, omite el resto de este paso -- puede llevar app settings agregados a mano para tools nuevas -- y continua al Paso 6c.
+
+**Dominios a wirear (solo los que ya tienen Terraform propio):** un dominio declarado en
+`boundedContext.domains` pero sin `infra/environments/dev/dominio-{kebab}.tf` todavia no tiene
+Function App que consumir -- referenciar su modulo inexistente rompe `terraform validate` (misma
+razon que la Validacion 3 de `domain-scaffolder` Paso 0). Filtra por existencia:
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+CONFIG="$REPO_ROOT/.claude/harness.config.json"
+for dominio_kebab in $(jq -r '.boundedContext.domains[]' "$CONFIG"); do
+    if [ -f "$REPO_ROOT/infra/environments/dev/dominio-${dominio_kebab}.tf" ]; then
+        dominio_pascal=$(echo "$dominio_kebab" | awk -F'-' '{for(i=1;i<=NF;i++) printf "%s", toupper(substr($i,1,1)) substr($i,2); print ""}')
+        dominio_snake=$(echo "$dominio_kebab" | tr '-' '_')
+        echo "WIRE: kebab=$dominio_kebab pascal=$dominio_pascal snake=$dominio_snake"
+    else
+        echo "OMITIR (sin Terraform todavia): $dominio_kebab"
+    fi
+done
+```
+
+Cada linea `WIRE` produce una entrada `Api__{pascal}__BaseUrl = "https://${module.function_app_{snake}.default_hostname}"`
+del `app_settings` de abajo. Si ningun dominio tiene Terraform todavia (BC recien creado), **omite
+el bloque `app_settings` completo** -- el modulo `function-app` declara esa variable con
+`default = {}` (`infra-base-scaffolder` seccion 1.7), asi que no pasarla es equivalente y evita un
+mapa vacio decorativo. Deja entonces una nota en el resumen final avisando que ningun dominio
+quedo wireado y que agregar uno despues requiere editar este archivo a mano (la idempotencia del
+Paso 6b no lo va a regenerar).
+
+**Resolucion de `local.prefix_func` y validacion del nombre de la Function App (MEF-ADR-0045
+seccion 1, Validacion 1a de `domain-scaffolder` Paso 0):** el `app-name` del workflow del Paso 6c
+se hornea como **literal** (no hay interpolacion de Terraform en un YAML de Actions), asi que un
+`prefix_func` mal resuelto aqui despliega contra una Function App que existe con otro nombre.
+Resuelvelo leyendo `infra/environments/dev/variables.tf` y **resuelve la interpolacion completa**,
+no solo `{project_short}-{environment}`: desde el issue #730 ese local puede componer tambien
+`{region}-{seq}` (`"${var.project_short}-${var.environment}${local.region_seq_suffix}"`, patron CAF
+de MEF-ADR-0045), asi que su valor efectivo depende de si el mismo archivo declara
+`azure_region_short` con valor.
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+sed -n '/prefix_func/,+2p' "$REPO_ROOT/infra/environments/dev/variables.tf"
+```
+
+Con el `prefix_func` efectivo resuelto, valida el largo del nombre. `Microsoft.Web/sites` admite
+1-60 caracteres; como `func-mcp-` (9 chars) es el prefijo mas largo entre los dos recursos que
+comparten el sufijo (el App Service Plan usa `asp-mcp-`, 8 chars), validar la Function App cubre
+tambien al `Microsoft.Web/serverfarms`:
+
+```bash
+nombre="func-mcp-{proposito-kebab}-{prefix_func}"
+echo "$nombre (${#nombre} chars)"
+```
+
+(`{proposito-kebab}` y `{prefix_func}` son sustituciones tuyas antes de correr el bloque, no
+variables de shell: cada bloque bash de este agente corre en un proceso nuevo y no hereda las
+asignaciones de los anteriores.)
+
+Si supera 60, **detente** e informa al usuario el presupuesto real para el proposito
+(`60 - 9 ("func-mcp-") - 1 ("-") - len(prefix_func)` caracteres) y pide uno mas corto: renombrar
+la Function App despues de desplegada es el destroy+recreate que MEF-ADR-0045 seccion 3 proscribe.
+
+**Nombre de la Storage Account (24 chars, MEF-ADR-0045 seccion 4) -- mismo truncado determinista
+que `domain-scaffolder` Paso 4, aplicado a `mcp{proposito-sin-guiones}` en vez de `{dominio}`:**
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+VARS="$REPO_ROOT/infra/environments/dev/variables.tf"
+grep -q 'region_seq_suffix_plain' "$VARS" && tiene_region_seq=1 || tiene_region_seq=0
+
+project_short=$(sed -n '/variable "project_short"/,/^}/p' "$VARS" | grep 'default' | sed -E 's/.*default[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/')
+environment="dev"
+if [ "$tiene_region_seq" = "1" ]; then
+    azure_region_short=$(sed -n '/variable "azure_region_short"/,/^}/p' "$VARS" | grep 'default' | sed -E 's/.*default[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/')
+    resource_sequence=$(sed -n '/variable "resource_sequence"/,/^}/p' "$VARS" | grep 'default' | sed -E 's/.*default[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/')
+    region_seq_suffix_plain="${azure_region_short}${resource_sequence}"
+else
+    region_seq_suffix_plain=""
+fi
+
+presupuesto=$((24 - 2 - ${#project_short} - ${#environment} - ${#region_seq_suffix_plain}))
+# {Proposito} es sustitucion tuya, no una variable heredada del bloque anterior (cada bloque bash
+# corre en un proceso nuevo).
+proposito_kebab=$(echo "{Proposito}" | sed -E 's/([a-z0-9])([A-Z])/\1-\2/g' | tr '[:upper:]' '[:lower:]')
+mcp_id="mcp$(echo "$proposito_kebab" | tr -d '-')"
+echo "presupuesto=$presupuesto mcp_id=$mcp_id len=${#mcp_id}"
+```
+
+Si `presupuesto` es 0 o negativo, detente e informa al usuario (mismo mensaje que la Validacion 1b
+de `domain-scaffolder`, sustituyendo "el dominio" por "el servidor MCP"). Si `mcp_id` supera
+`presupuesto`, `{mcp-storage}` son sus primeros `presupuesto` caracteres; si no, `mcp_id` completo.
+Si `tiene_region_seq` es `0` (entorno anterior a #730), omite `${local.region_seq_suffix_plain}`
+de la interpolacion del `name` de abajo (ese local no existe en ese `variables.tf`).
+
+**Charset de `project_short` (Validacion 1c de `domain-scaffolder` Paso 0):** el `name` de la
+Storage de abajo interpola `${var.project_short}`, y `Microsoft.Storage/storageAccounts` solo
+admite **minusculas y digitos** -- ni guiones ni mayusculas (MEF-ADR-0045 seccion 4). Si el valor
+efectivo trae alguno, detente con el mismo mensaje que fija `domain-scaffolder`: corregirlo
+renombra ademas todo lo que ya consume `local.prefix_func`, y esa decision es del usuario.
+
+**Archivo plano y propio** (mismo principio que `dominio-{kebab}.tf`: Terraform evalua todos los
+`.tf` de un entorno como un unico root module, y un archivo aparte evita que dos scaffolds
+concurrentes choquen). Crea `infra/environments/dev/mcp-${proposito_kebab}.tf`:
+
+```hcl
+# Terraform del servidor MCP de {Proposito} (MEF-ADR-0047, MEF-ADR-0048): Service Plan, Storage
+# Account y Function App dedicados, mismo patron que un dominio (dominio-{kebab}.tf) pero sin rol
+# sobre Key Vault -- este servidor es cliente HTTP puro de los Function Apps del BC (MEF-ADR-0047
+# decision 3), sin SERVICE_BUS_CONNECTION ni MartenConnectionString, y sus app settings
+# Api__*__BaseUrl no llevan ninguna referencia @Microsoft.KeyVault.
+#
+# Comparte los locals/modules ya declarados en main.tf (module.resource_group, local.prefix_func,
+# local.tags). La system key mcp_extension la genera y custodia el host de Functions en runtime
+# (MEF-ADR-0047 decision 5); no se provisiona por Terraform.
+
+module "storage_mcp_{proposito_snake}" {
+  source              = "../../modules/storage"
+  name                = "st{mcp-storage}${var.project_short}${var.environment}${local.region_seq_suffix_plain}"
+  resource_group_name = module.resource_group.name
+  location            = module.resource_group.location
+  tags                = local.tags
+}
+
+module "service_plan_mcp_{proposito_snake}" {
+  source              = "../../modules/service-plan"
+  name                = "asp-mcp-{proposito-kebab}-${local.prefix_func}"
+  resource_group_name = module.resource_group.name
+  location            = module.resource_group.location
+  os_type             = "Linux"
+  sku_name            = "B1"
+  worker_count        = 1
+  always_on           = true
+  tags                = local.tags
+}
+
+module "function_app_mcp_{proposito_snake}" {
+  source                         = "../../modules/function-app"
+  name                           = "func-mcp-{proposito-kebab}-${local.prefix_func}"
+  resource_group_name            = module.resource_group.name
+  location                       = module.resource_group.location
+  service_plan_id                = module.service_plan_mcp_{proposito_snake}.id
+  storage_account_name           = module.storage_mcp_{proposito_snake}.name
+  app_insights_connection_string = local.app_insights_connection_kv_ref
+  # Convencion Api:BaseUrl (el codigo del servidor la lee en ConfiguracionClientesHttp, Paso 1
+  # punto 6): una linea por dominio ya scaffoldeado que este servidor consume. Agregar una tool
+  # nueva que consuma otro dominio exige agregar aqui su linea a mano, igual que en el codigo.
+  app_settings = {
+    Api__{DominioPascal}__BaseUrl = "https://${module.function_app_{dominio_snake}.default_hostname}"
+  }
+  always_on = module.service_plan_mcp_{proposito_snake}.always_on
+  tags      = local.tags
+}
+
+# Storage por identidad administrada (MEF-ADR-0025 decision #3): AzureWebJobsStorage se resuelve
+# por identidad, no por connection string -- mismo mecanismo que cada Function App de dominio.
+resource "azurerm_role_assignment" "function_app_mcp_{proposito_snake}_storage_blob_data_owner" {
+  scope                = module.storage_mcp_{proposito_snake}.id
+  role_definition_name = "Storage Blob Data Owner"
+  principal_id         = module.function_app_mcp_{proposito_snake}.principal_id
+}
+
+resource "azurerm_role_assignment" "function_app_mcp_{proposito_snake}_storage_queue_data_contributor" {
+  scope                = module.storage_mcp_{proposito_snake}.id
+  role_definition_name = "Storage Queue Data Contributor"
+  principal_id         = module.function_app_mcp_{proposito_snake}.principal_id
+}
+
+resource "azurerm_role_assignment" "function_app_mcp_{proposito_snake}_storage_table_data_contributor" {
+  scope                = module.storage_mcp_{proposito_snake}.id
+  role_definition_name = "Storage Table Data Contributor"
+  principal_id         = module.function_app_mcp_{proposito_snake}.principal_id
+}
+```
+
+Sustituye `{proposito-kebab}` por el kebab del proposito, `{proposito_snake}` por ese mismo kebab
+con `_` en vez de `-`, `{mcp-storage}` por el `mcp_id` (truncado si aplico) resuelto arriba, y
+repite la linea `Api__{DominioPascal}__BaseUrl` una vez por cada linea `WIRE` (omitiendo el bloque
+`app_settings` entero si no hubo ninguna).
+
+---
+
+## Paso 6c - Workflow de deploy (CA-3, CA-4, CA-5)
+
+**Probe de idempotencia:**
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+proposito_kebab=$(echo "{Proposito}" | sed -E 's/([a-z0-9])([A-Z])/\1-\2/g' | tr '[:upper:]' '[:lower:]')
+test -f "$REPO_ROOT/.github/workflows/deploy-mcp-${proposito_kebab}.yml" && echo "EXISTE (omitir)" || echo "FALTA (crear)"
+```
+
+Si existe, omite este paso.
+
+Crea `.github/workflows/deploy-mcp-{proposito-kebab}.yml`:
+
+```yaml
+name: Deploy MCP {Proposito}
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/<RootNamespace>.Mcp.{Proposito}/**'
+      # Exclusion deliberada frente a deploy-{kebab}.yml de un dominio: aqui NO van los
+      # ensamblados de eventos (DomainEvents/PrivateEvents/PublicEvents). Este servidor es
+      # cliente HTTP puro de los Function Apps del BC -- su .csproj no referencia ninguno
+      # (MEF-ADR-0047 decision 3) -- asi que un cambio en esos ensamblados no altera este binario.
+      #
+      # global.json: quien lo lee NO es actions/setup-dotnet -- los jobs de abajo le pasan
+      # 'dotnet-version' explicito, no 'global-json-file', asi que la action solo instala el SDK
+      # del canal pedido. Lo leen el muxer del CLI y el resolver de SDK de MSBuild al correr
+      # 'dotnet restore/build', y por eso su 'version' + 'rollForward' deciden con cual SDK
+      # instalado se compila este proyecto. El modo de fallo no es rotura -- eso lo atrapa el CI
+      # del PR antes del merge -- sino staleness silenciosa: sin esta ruta, un push a main que
+      # solo toque global.json no dispara nada y la Function App sigue sirviendo el binario
+      # construido con el SDK anterior, sin aviso.
+      - 'global.json'
+      # Este propio workflow: sin esta ruta, un cambio en como se construye/despliega este
+      # servidor nunca dispara solo -- hay que lanzarlo a mano con workflow_dispatch cada vez.
+      - '.github/workflows/deploy-mcp-{proposito-kebab}.yml'
+      # Exclusiones deliberadas de esta lista -- no las agregues buscando simetria con un dominio:
+      # - <SolutionFile>: lo usa build-and-test (el gate de test), no el job deploy, que compila
+      #   el .csproj de este proyecto directo.
+      # - infra/**: su trigger vive en infra-cd.yml y este workflow se encadena detras via el
+      #   workflow_run de abajo, para que el codigo nunca se despliegue antes del apply de infra
+      #   (MEF-ADR-0022). Devolverlo aqui rompe ese orden.
+      # - tests/**: un cambio de tests no altera el binario publicado.
+  workflow_run:
+    # 'Infra CD' es el nombre real del workflow que emite infra-base-scaffolder
+    # (.github/workflows/infra-cd.yml) -- mismo encadenado que un dominio: el orden
+    # infra -> deploy de codigo lo garantiza workflow_run, no un trigger de push compartido
+    # (MEF-ADR-0022).
+    workflows: ['Infra CD']
+    types: [completed]
+  workflow_dispatch:
+
+jobs:
+  # El apply de infra (infra-cd.yml, MEF-ADR-0022) y el deploy de codigo pueden correr en el
+  # mismo push a main. Encadenar por workflow_run (en vez de un 'push' que dispare ambos)
+  # garantiza el orden infra -> deploy. Pero workflow_run por si solo redesplegaria este servidor
+  # tras CADA apply de infra (seguro por idempotencia, pero costoso); este job filtra por si el
+  # PR que se acabo de mergear toco src/<RootNamespace>.Mcp.{Proposito}/** y salta el redeploy si
+  # no. Se resuelve via la API de PRs asociados al commit (no depende de la estrategia de merge).
+  determinar-alcance:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      debe_desplegar: ${{ steps.check.outputs.debe_desplegar }}
+    steps:
+      - id: check
+        name: Decidir si corresponde desplegar el servidor MCP
+        # Los datos del evento entran por 'env' y NO interpolados como ${{ }} dentro del 'run':
+        # un ${{ }} en el cuerpo del script se sustituye como TEXTO antes de que bash lo parsee,
+        # asi que un dato controlable por quien dispara la corrida se vuelve codigo. 'head_branch'
+        # es justamente eso: git acepta ", $, ;, & y ` en un nombre de rama (solo prohibe espacio,
+        # ~, ^, :, ?, * y \), asi que una rama valida pero adversaria ejecutaria codigo con el
+        # token de escritura y los secrets que este disparador expone. Pasarlo por 'env' lo
+        # mantiene siempre como valor, nunca como sintaxis -- mitigacion prescrita por el
+        # hardening de GitHub Actions para datos del evento.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENTO: ${{ github.event_name }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_RAMA: ${{ github.event.workflow_run.head_branch }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          # push directo (src/**) o workflow_dispatch: siempre despliega.
+          if [ "$EVENTO" != "workflow_run" ]; then
+            echo "debe_desplegar=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # ...y la corrida de 'Infra CD' fue un apply exitoso sobre main.
+          if [ "$RUN_CONCLUSION" != "success" ] || [ "$RUN_RAMA" != "main" ]; then
+            echo "debe_desplegar=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # ...y el PR mergeado toco este servidor.
+          PR_NUM=$(gh api "repos/${REPO}/commits/${RUN_SHA}/pulls" --jq '.[0].number // empty')
+          if [ -z "$PR_NUM" ]; then
+            echo "debe_desplegar=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if gh api "repos/${REPO}/pulls/${PR_NUM}/files" --paginate --jq '.[].filename' | grep -qE '^src/<RootNamespace>\.Mcp\.{Proposito}/'; then
+            echo "debe_desplegar=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "debe_desplegar=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-and-test:
+    needs: determinar-alcance
+    if: needs.determinar-alcance.outputs.debe_desplegar == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore <SolutionFile>
+
+      - name: Build
+        run: dotnet build <SolutionFile> --no-restore --configuration Release
+
+      - name: Test
+        run: |
+          for proj in tests/<RootNamespace>.*.Tests/; do
+            dotnet test --project "$proj" --no-build --configuration Release --ignore-exit-code 8
+          done
+
+  deploy:
+    needs: [determinar-alcance, build-and-test]
+    if: needs.determinar-alcance.outputs.debe_desplegar == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # requerido para el login OIDC de azure/login (sin secret) - MEF-ADR-0022
+    outputs:
+      sha: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore src/<RootNamespace>.Mcp.{Proposito}/ -r linux-x64
+
+      - name: Build
+        run: |
+          dotnet build src/<RootNamespace>.Mcp.{Proposito}/ \
+            --configuration Release \
+            --no-restore \
+            -r linux-x64 \
+            -p:SourceRevisionId=${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Publish
+        run: |
+          dotnet publish src/<RootNamespace>.Mcp.{Proposito}/ \
+            --configuration Release \
+            --no-build \
+            -r linux-x64 \
+            --self-contained false \
+            --output ./publish
+
+      - name: Validar artefacto de publicacion
+        run: |
+          test -f ./publish/host.json
+          test -f ./publish/functions.metadata
+          test -f ./publish/<RootNamespace>.Mcp.{Proposito}.dll
+
+      - name: Azure Authentication
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy to Azure Functions
+        uses: Azure/functions-action@v1
+        with:
+          app-name: func-mcp-{proposito-kebab}-{prefix_func}
+          package: ./publish
+
+  # El nivel 3 de la piramide de testing (smoke e2e con el SDK oficial de cliente MCP contra
+  # /api/version, /api/ready y el catalogo vivo de tools/list -- MEF-ADR-0048 secciones 1-2) se
+  # agrega en una fase posterior de este scaffold, junto con el proyecto SmokeTests. Hasta
+  # entonces este workflow no tiene job de smoke y la verificacion end-to-end es manual.
+```
+
+Sustituye `{Proposito}`, `{proposito-kebab}` y `{prefix_func}` (el valor de `local.prefix_func`
+resuelto en el Paso 6b) por sus valores. `<RootNamespace>`/`<SolutionFile>` vienen del `CLAUDE.md`
+raiz (Paso 0).
+
+**Autenticacion del deploy (OIDC, MEF-ADR-0022):** mismos tres secrets (`AZURE_CLIENT_ID`,
+`AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`) y federated credential que `domain-scaffolder`
+documenta en su Paso 5 -- los emite `scripts/setup-github-ci.sh`, no este agente.
+
+---
+
 ## Paso 7 - Verificar
 
 Corre siempre, aunque todos los gates anteriores hayan reportado "EXISTE": es el criterio de exito de la seccion "Principio fundamental", y una corrida que solo agrego el proyecto de tests a un servidor preexistente tambien tiene que quedar en verde.
@@ -906,6 +1364,16 @@ dotnet test --project "tests/<RootNamespace>.Mcp.{Proposito}.Tests/"
 
 `--project` no es opcional: con la seccion `test` de `global.json` (Paso 5) el CLI corre en modo MTP, que solo admite `--project`/`--solution`/`--test-modules` -- una ruta posicional se reenvia a la app de test y aborta sin correr un solo test (mismo detalle que fijan `domain-scaffolder` y `projections-scaffolder`).
 
+**Validacion de Terraform (Paso 6b/6a):**
+
+```bash
+cd "$REPO_ROOT/infra/environments/dev"
+terraform init -backend=false
+terraform validate
+```
+
+Si `terraform` no esta instalado, informa al usuario y omite este paso sin fallar el resto (mismo criterio que `domain-scaffolder` Paso 7).
+
 Si el build falla, el sospechoso numero uno es un `using` faltante o "limpiado" de alguna plantilla de arriba, no la version de los paquetes. Si `dotnet test` falla, corrige antes de continuar: CA-5 exige que los unit tests base pasen en verde con la tool de ejemplo recien generada. **No hagas commit hasta que los dos pasen.**
 
 Excepcion unica: si el Paso 3 omitio la tool de ejemplo porque un humano ya la reemplazo por tools reales, los tests de `Ejemplo/` pueden no aplicar al codigo vigente. En ese caso **no** los reescribas ni los borres -- reporta el rojo tal cual y deja la decision al humano.
@@ -915,3 +1383,17 @@ Excepcion unica: si el Paso 3 omitio la tool de ejemplo porque un humano ya la r
 ## Resumen final
 
 Reporta, por artefacto, si lo creaste o lo omitiste por ya existir (CA-6). Si `dotnet build`/`dotnet test` no pasaron en verde, reportalo explicitamente en vez de dar el scaffold por terminado -- no es un exito parcial aceptable, es el criterio minimo de la seccion "Principio fundamental".
+
+Cierra el reporte con lo que queda **fuera** de tu alcance y el usuario tiene que hacer:
+
+1. **Aplicar el Terraform del Paso 6b** (`/infra`): este agente escribe el HCL, nunca corre
+   `plan` ni `apply`. Hasta ese apply la Function App del servidor no existe y el workflow del
+   Paso 6c fallara en su paso de deploy.
+2. Si el Paso 6b no wireo ningun dominio (ninguno tenia `dominio-{kebab}.tf` todavia), dilo
+   explicitamente: el servidor arrancara sin ningun `Api__*__BaseUrl` y su fail-fast de arranque
+   lo rechazara en cuanto tenga una tool real.
+3. Si el Paso 6a degrado a "proponer", repite ahi el output `default_hostname` que el usuario
+   debe agregar a mano.
+4. **Smoke e2e (fase 3)**: el workflow del Paso 6c no tiene job de smoke todavia, asi que la
+   verificacion end-to-end del servidor desplegado es manual (conectar un cliente MCP contra
+   `/runtime/webhooks/mcp` con la key `mcp_extension`, ver el README del Paso 6).

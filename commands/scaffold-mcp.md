@@ -2,7 +2,7 @@
 model: haiku
 ---
 
-Lanza el agente `mcp-scaffolder`, que genera el proyecto de un servidor MCP (Model Context Protocol) `<RootNamespace>.Mcp.{Proposito}` para el Bounded Context del consumidor -- fase 1 (issue #768): proyecto del servidor, tool de ejemplo, endpoints de gate y unit tests base (MEF-ADR-0047/MEF-ADR-0048). Comunicate en **espanol**.
+Lanza el agente `mcp-scaffolder`, que genera el proyecto de un servidor MCP (Model Context Protocol) `<RootNamespace>.Mcp.{Proposito}` para el Bounded Context del consumidor -- fases 1 y 2 (issues #768/#769): proyecto del servidor, tool de ejemplo, endpoints de gate, unit tests base, el Terraform del servidor y el workflow de deploy (MEF-ADR-0047/MEF-ADR-0048). Comunicate en **espanol**.
 
 ## Pre-condicion 1: cwd != Mefisto
 
@@ -60,7 +60,7 @@ Si falta cualquiera de los dos, detente con el mensaje de arriba. Con `ROOT_NAME
 ### 1. Informar que se va a generar
 
 ```
-Se va a generar el servidor MCP <RootNamespace>.Mcp.{Proposito} (fase 1, issue #768):
+Se va a generar el servidor MCP <RootNamespace>.Mcp.{Proposito} (fases 1 y 2, issues #768/#769):
 
   src/<RootNamespace>.Mcp.{Proposito}/
     <RootNamespace>.Mcp.{Proposito}.csproj  (cero ProjectReference, cliente HTTP puro)
@@ -75,12 +75,20 @@ Se va a generar el servidor MCP <RootNamespace>.Mcp.{Proposito} (fase 1, issue #
     ComposicionDelServidorTests.cs           (nivel 2 de la piramide, MEF-ADR-0048 seccion 1)
     Ejemplo/EjemploListarToolTests.cs         (nivel 1: remodelado con handler falso)
 
+  infra/environments/dev/mcp-{proposito-kebab}.tf
+    Storage + App Service Plan + Function App dedicados (modulos base del consumidor),
+    con las app settings Api__{Dominio}__BaseUrl de los dominios ya scaffoldeados
+  infra/modules/function-app/main.tf: se agrega el output default_hostname si falta
+
+  .github/workflows/deploy-mcp-{proposito-kebab}.yml
+    encadenado por workflow_run tras el apply de infra (MEF-ADR-0022), sin job de smoke
+
   <SolutionFile>: se agregan los dos proyectos nuevos
   global.json: se verifica/crea la seccion "test" (xunit v3 mtp-v2)
 
-Terraform y el workflow de deploy son fase 2 (issue #769, todavia no implementado); SmokeTests y
-el nivel 3 de la piramide (smoke e2e) son fase 3 (issue #770, todavia no implementado). Es
-idempotente: re-ejecutar no duplica ni pisa contenido existente.
+SmokeTests y el nivel 3 de la piramide (smoke e2e) son fase 3 (issue #770, todavia no
+implementado): hasta entonces el workflow de deploy no incluye job de smoke y la verificacion
+end-to-end es manual. Es idempotente: re-ejecutar no duplica ni pisa contenido existente.
 ```
 
 ### 2. Lanzar el agente
@@ -96,7 +104,7 @@ Responde con:
 ```
 Servidor MCP <RootNamespace>.Mcp.{Proposito} generado. Siguiente:
   1. Reemplaza la tool 'Ejemplo/' por las tools reales de tu BC (lenguaje ubicuo, MEF-ADR-0040).
-  2. Terraform + workflow de deploy: fase 2 (issue #769, todavia no implementado).
+  2. Revisa y aplica el Terraform generado con /infra (el deploy del codigo se encadena solo).
   3. SmokeTests + nivel 3 de la piramide de testing: fase 3 (issue #770, todavia no implementado).
   4. Onboarding de un cliente MCP: ver el README.md generado en el proyecto del servidor.
 ```
