@@ -791,7 +791,7 @@ output "principal_id" {
 }
 
 output "default_hostname" {
-  description = "Hostname computado por Azure para la Function App -- usar este valor en vez de concatenar name + \".azurewebsites.net\", que se rompe con hostnames regionalizados"
+  description = "Hostname por defecto de la Function App (ej. func-x.azurewebsites.net). Valor computado por Azure: usarlo en vez de concatenar name + \".azurewebsites.net\" protege contra hostnames regionalizados."
   value       = azurerm_linux_function_app.this.default_hostname
 }
 ```
