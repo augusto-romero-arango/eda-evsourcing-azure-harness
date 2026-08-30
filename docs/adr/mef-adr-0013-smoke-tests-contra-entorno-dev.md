@@ -298,6 +298,9 @@ en el repo (idempotente; ver "Integracion en el proceso de desarrollo").
 
 ## Control de cambios
 
+- 2026-08-30: enmienda (issue #767, creacion de MEF-ADR-0048) -- MEF-ADR-0048 extiende esta doctrina
+  a servidores MCP (piramide de tres niveles, verificaciones canonicas del nivel e2e, endpoints de
+  gate propios y credencial de CI). Sin cambio en el cuerpo de este ADR.
 - 2026-08-05: enmienda (issue #543, creacion de MEF-ADR-0039) para reemplazar, en la responsabilidad
   de `domain-scaffolder` (seccion "Integracion en el proceso de desarrollo"), el csproj con
   `ProjectReference` a Contracts por `PublicEvents`/`PrivateEvents` (los ensamblados de eventos de
