@@ -1,7 +1,7 @@
 ---
 name: mcp-scaffolder
 model: sonnet
-description: Genera el proyecto de un servidor MCP `<RootNamespace>.Mcp.{Proposito}` (Azure Functions isolated worker + extension Microsoft.Azure.Functions.Worker.Extensions.Mcp, cero ProjectReference al BC, HttpClients tipados con fail-fast de arranque, OpenTelemetry con sampler configurable, RespuestaJson token-eficiente), una tool de ejemplo con el patron completo (McpToolTrigger + McpMetadata + mensajes .resx + remodelado con truncado con senal), los endpoints de gate VersionCheck/ReadyCheck, el proyecto de unit tests base (composicion por reflexion + tests de la tool de ejemplo con handler falso), el Terraform del servidor (Service Plan + Storage + Function App, reutilizando el modulo `function-app` del consumidor) y el workflow de deploy encadenado tras el apply de infra, fiel a MEF-ADR-0047 (doctrina de servidores MCP) y MEF-ADR-0048 (testing de servidores MCP). Fase 1 (issue #768) + fase 2 (issue #769); SmokeTests y el nivel 3 de la piramide (smoke e2e) son fase 3 (issue #770).
+description: Genera el proyecto de un servidor MCP `<RootNamespace>.Mcp.{Proposito}` (Azure Functions isolated worker + extension Microsoft.Azure.Functions.Worker.Extensions.Mcp, cero ProjectReference al BC, HttpClients tipados con fail-fast de arranque, OpenTelemetry con sampler configurable, RespuestaJson token-eficiente), una tool de ejemplo con el patron completo (McpToolTrigger + McpMetadata + mensajes .resx + remodelado con truncado con senal + validacion con error .resx), los endpoints de gate VersionCheck/ReadyCheck, el proyecto de unit tests base (composicion por reflexion + tests de la tool de ejemplo con handler falso), el Terraform del servidor (Service Plan + Storage + Function App, reutilizando el modulo `function-app` del consumidor), el workflow de deploy encadenado tras el apply de infra, la suite SmokeTests e2e (McpFixture con el SDK ModelContextProtocol.Core + las cinco verificaciones canonicas -- handshake, tools/list vivo, tool call de lectura, error path del .resx, 401 sin key) y el reusable `smoke-tests-mcp.yml` con su job encadenado tras el deploy, fiel a MEF-ADR-0047 (doctrina de servidores MCP) y MEF-ADR-0048 (testing de servidores MCP). Fase 1 (issue #768) + fase 2 (issue #769) + fase 3 (issue #770).
 tools: Bash, Read, Write, Edit, Glob, Grep
 ---
 
@@ -9,7 +9,7 @@ Eres el agente que genera, para el Bounded Context del proyecto consumidor, el *
 
 Fuente de referencia: **MEF-ADR-0047** (doctrina de servidores MCP serverless -- ruta tecnica, granularidad, aislamiento, diseno de tools, custodia de la key) y **MEF-ADR-0048** (testing de servidores MCP -- piramide de tres niveles, endpoints de gate, credencial en CI). Lee ambos antes de generar nada. Cita ademas **MEF-ADR-0009** (mensajes `.resx` per-aggregate, que esta doctrina extiende a los mensajes runtime de una tool), **MEF-ADR-0029** (Program.cs invoca seams, nunca wirea inline -- mismo patron que `domain-scaffolder`/`projections-scaffolder`), **MEF-ADR-0038** (control de volumen de telemetria) y **MEF-ADR-0044** (comentarios minimos: las plantillas de abajo citan solo MEF-ADRs, nunca issues de Mefisto ni de un consumidor).
 
-**Alcance acotado (fase 1 + fase 2, issues #768/#769).** Este agente crea: el proyecto del servidor (csproj, `host.json`, `Program.cs`, los dos seams de composicion, el cliente HTTP de un dominio de ejemplo), una **tool de ejemplo** con el patron completo, los endpoints `VersionCheck`/`ReadyCheck` del gate (MEF-ADR-0048 seccion 3), el proyecto de unit tests base (composicion por reflexion + tests de la tool de ejemplo), el wiring en el `.slnx`, el **Terraform** del servidor (Service Plan + Storage + Function App, reutilizando el modulo `function-app` del consumidor) y el **workflow de deploy** encadenado tras el apply de infra. **No** genera el proyecto de SmokeTests ni el nivel 3 de la piramide de testing -- smoke e2e con el SDK oficial de cliente MCP (issue #770, fase 3): hasta que exista, el job de smoke queda fuera del workflow de deploy y la verificacion end-to-end de este servidor es manual. Un servidor con una unica tool de ejemplo es un scaffold valido y esperado: es el ancla sobre la que un humano (o un agente futuro) agrega las tools reales del BC.
+**Alcance (fase 1 + fase 2 + fase 3, issues #768/#769/#770).** Este agente crea: el proyecto del servidor (csproj, `host.json`, `Program.cs`, los dos seams de composicion, el cliente HTTP de un dominio de ejemplo), una **tool de ejemplo** con el patron completo (incluida una validacion con mensaje `.resx`), los endpoints `VersionCheck`/`ReadyCheck` del gate (MEF-ADR-0048 seccion 3), el proyecto de unit tests base (composicion por reflexion + tests de la tool de ejemplo), el wiring en el `.slnx`, el **Terraform** del servidor (Service Plan + Storage + Function App, reutilizando el modulo `function-app` del consumidor), el **workflow de deploy** encadenado tras el apply de infra, el **proyecto SmokeTests** con las cinco verificaciones canonicas del nivel 3 de la piramide (MEF-ADR-0048 seccion 2) y el **reusable `smoke-tests-mcp.yml`** con su job `smoke-tests` encadenado tras el deploy. Un servidor con una unica tool de ejemplo es un scaffold valido y esperado: es el ancla sobre la que un humano (o un agente futuro) agrega las tools reales del BC.
 
 ## Guard defensivo: cwd != Mefisto
 
@@ -428,6 +428,7 @@ public partial class EjemploListarTool({DominioEjemplo}Api api)
 {
     internal const string NombreTool = "ejemplo_listar";
     internal const int MaximoElementos = 50;
+    internal const int MaximoLargoFiltro = 100;
 
     [Function("EjemploListar")]
     public async Task<string> Run(
@@ -444,6 +445,12 @@ public partial class EjemploListarTool({DominioEjemplo}Api api)
         string? filtroNombre,
         CancellationToken ct)
     {
+        // Validacion con mensaje .resx (MEF-ADR-0047 "mensajes runtime en .resx", MEF-ADR-0048
+        // seccion 2 -- nivel 3 exige un error path verificable sin tocar ningun dominio): corta
+        // antes de llamar al API cuando el filtro es un abuso obvio del parametro.
+        if (!string.IsNullOrWhiteSpace(filtroNombre) && filtroNombre.Length > MaximoLargoFiltro)
+            return string.Format(Mensajes.ErrorFiltroDemasiadoLargo, MaximoLargoFiltro);
+
         var respuesta = await api.ListarElementos(ct);
         respuesta.EnsureSuccessStatusCode();
 
@@ -490,6 +497,9 @@ public partial class EjemploListarTool
     {
         /// <summary>{0}: elementos mostrados, {1}: total tras el filtro.</summary>
         public static string NotaTruncado => ResourceManager.GetString(nameof(NotaTruncado))!;
+
+        /// <summary>{0}: largo maximo permitido.</summary>
+        public static string ErrorFiltroDemasiadoLargo => ResourceManager.GetString(nameof(ErrorFiltroDemasiadoLargo))!;
     }
 }
 ```
@@ -521,6 +531,9 @@ public partial class EjemploListarTool
   <resheader name="writer"><value>System.Resources.ResXResourceWriter</value></resheader>
   <data name="NotaTruncado" xml:space="preserve">
     <value>Mostrando {0} de {1} elementos; usa filtro_nombre para refinar.</value>
+  </data>
+  <data name="ErrorFiltroDemasiadoLargo" xml:space="preserve">
+    <value>El filtro no puede superar {0} caracteres.</value>
   </data>
 </root>
 ```
@@ -781,6 +794,18 @@ public class EjemploListarToolTests
         json["total"]!.GetValue<int>().Should().Be(1, "'nandu' debe encontrar 'Ñandú'");
         json["elementos"]![0]!["nombre"]!.GetValue<string>().Should().Contain("Ñandú");
     }
+
+    [Fact]
+    public async Task EjemploListar_RespondeElMensajeDeValidacion_CuandoElFiltroExcedeElLargoMaximo()
+    {
+        var cliente = ClienteFalso.Con(Fixtures.Leer("catalogo.json"));
+        var tool = new EjemploListarTool(new {DominioEjemplo}Api(cliente));
+        var filtroDemasiadoLargo = new string('a', EjemploListarTool.MaximoLargoFiltro + 1);
+
+        var resultado = await tool.Run(null!, filtroDemasiadoLargo, TestContext.Current.CancellationToken);
+
+        resultado.Should().Be("El filtro no puede superar 100 caracteres.");
+    }
 }
 ```
 
@@ -795,7 +820,10 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 cd "$REPO_ROOT"
 dotnet sln <SolutionFile> add "src/<RootNamespace>.Mcp.{Proposito}/"
 dotnet sln <SolutionFile> add "tests/<RootNamespace>.Mcp.{Proposito}.Tests/"
+dotnet sln <SolutionFile> add "tests/<RootNamespace>.Mcp.{Proposito}.SmokeTests/"
 ```
+
+**CA-5 (el sufijo `.SmokeTests` no corre en el CI de PRs):** el proyecto se agrega al `.slnx` para que `ci.yml` lo **compile** dentro del `dotnet build <SolutionFile>` del pipeline de PR (gate de compilacion), pero su **ejecucion** queda fuera: `ci.yml` corre `dotnet test` iterando el glob `tests/<RootNamespace>.*.Tests/` (ver el `build-and-test` del Paso 6c de este mismo agente), y `*.Tests/` no matchea un directorio que termina en `.SmokeTests/`. Esta suite solo corre contra un servidor ya desplegado (via el job `smoke-tests` del Paso 6f o manualmente); no se toca `ci.yml` para lograrlo, la exclusion es un efecto del propio naming.
 
 **Verificar `global.json`:** mismo requisito que `domain-scaffolder` y `projections-scaffolder` (.NET 10 + xunit v3 mtp-v2 exige la seccion `test` para que `dotnet test` funcione en todo el repo, incluido `<RootNamespace>.Mcp.{Proposito}.Tests`). Lee `global.json` en `$REPO_ROOT`. Si ya trae la seccion `test`, dejalo intacto. Si existe sin ella, agregala **sin tocar el resto de sus propiedades**. Si no existe, crealo:
 
@@ -843,12 +871,23 @@ ningun proyecto del BC.
 
 ## Estado de este scaffold
 
-Generado por `/scaffold-mcp` (fase 1 + fase 2): proyecto del servidor, tool de ejemplo, endpoints
-de gate, unit tests base, Terraform (Service Plan + Storage + Function App) y el workflow de
-deploy encadenado tras el apply de infra. **SmokeTests con el nivel 3 de la piramide de testing**
--- smoke e2e con el SDK oficial de cliente MCP, MEF-ADR-0048 secciones 1-2 -- (fase 3) todavia no
-los genera el scaffold: hasta que exista, el workflow de deploy no incluye el job de smoke y la
-verificacion end-to-end de este servidor es manual.
+Generado por `/scaffold-mcp` (fase 1 + fase 2 + fase 3): proyecto del servidor, tool de ejemplo,
+endpoints de gate, unit tests base, Terraform (Service Plan + Storage + Function App), el workflow
+de deploy encadenado tras el apply de infra, la suite **SmokeTests** con las cinco verificaciones
+canonicas del nivel 3 de la piramide de testing (handshake, tools/list vivo, tool call de lectura,
+error path del `.resx`, 401 sin key -- MEF-ADR-0048 secciones 1-2) y el reusable
+`smoke-tests-mcp.yml` con su job `smoke-tests` encadenado tras el deploy.
+
+### SmokeTests
+
+- Proyecto: `tests/<RootNamespace>.Mcp.{Proposito}.SmokeTests/`. Cliente MCP real
+  (`ModelContextProtocol.Core`) contra el endpoint desplegado -- cero `ProjectReference` al BC.
+- **No corre en el CI de PRs**: `ci.yml` solo ejecuta `tests/<RootNamespace>.*.Tests/`, y el sufijo
+  `.SmokeTests` queda fuera de ese glob -- el proyecto SI se compila ahi (esta en el `.slnx`), solo
+  no se ejecuta. Corre contra el entorno desplegado en el job `smoke-tests` del workflow de deploy.
+- Configuracion: `Mcp:BaseUrl`/`Mcp:FunctionsKey` por `appsettings.json` (BaseUrl real, key vacia),
+  `appsettings.local.json` opcional (gitignored) o las variables de entorno
+  `Mcp__BaseUrl`/`Mcp__FunctionsKey`. La key nunca vive en un archivo versionado.
 
 ## Tools
 
@@ -1335,19 +1374,602 @@ jobs:
           app-name: func-mcp-{proposito-kebab}-{prefix_func}
           package: ./publish
 
-  # El nivel 3 de la piramide de testing (smoke e2e con el SDK oficial de cliente MCP contra
-  # /api/version, /api/ready y el catalogo vivo de tools/list -- MEF-ADR-0048 secciones 1-2) se
-  # agrega en una fase posterior de este scaffold, junto con el proyecto SmokeTests. Hasta
-  # entonces este workflow no tiene job de smoke y la verificacion end-to-end es manual.
+  # Salda, desde el dia uno del scaffold, la excepcion a MEF-ADR-0013 que el piloto de esta
+  # doctrina tuvo que registrar (deploy sin smoke tests por falta de endpoints): el app ya expone
+  # /api/version y /api/ready propios (Paso 2) y la suite SmokeTests (Paso 6d) ejercita el catalogo
+  # vivo de tools/list via el SDK oficial de cliente MCP. Usa el reusable propio
+  # smoke-tests-mcp.yml (Paso 6e) y no smoke-tests-dominio.yml: este necesita OIDC para listar la
+  # key mcp_extension en runtime, y una suite MCP de solo lectura no entra al grupo de concurrencia
+  # compartido de smoke tests (MEF-ADR-0048 seccion 5).
+  smoke-tests:
+    needs: [determinar-alcance, deploy]
+    if: needs.determinar-alcance.outputs.debe_desplegar == 'true'
+    permissions:
+      contents: read
+      # El reusable declara 'id-token: write' para el azure/login del listkeys, pero un workflow
+      # llamado no puede exceder los permisos del invocador: hay que concederlo tambien aqui.
+      id-token: write
+    uses: ./.github/workflows/smoke-tests-mcp.yml
+    with:
+      base_url: 'https://func-mcp-{proposito-kebab}-{prefix_func}.azurewebsites.net'
+      test_project: 'tests/<RootNamespace>.Mcp.{Proposito}.SmokeTests/'
+      app_name: 'func-mcp-{proposito-kebab}-{prefix_func}'
+      resource_group: '{resource-group}'
+      expected_sha: ${{ github.event.workflow_run.head_sha || github.sha }}
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 ```
 
 Sustituye `{Proposito}`, `{proposito-kebab}` y `{prefix_func}` (el valor de `local.prefix_func`
 resuelto en el Paso 6b) por sus valores. `<RootNamespace>`/`<SolutionFile>` vienen del `CLAUDE.md`
 raiz (Paso 0).
 
+**Resolver `{resource-group}` (`local.prefix` de `main.tf`, distinto de `local.prefix_func` -- este
+no abrevia `project`):**
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+VARS="$REPO_ROOT/infra/environments/dev/variables.tf"
+project=$(sed -n '/variable "project"/,/^}/p' "$VARS" | grep 'default' | sed -E 's/.*default[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/')
+region_seq_suffix=""
+if grep -q 'region_seq_suffix_plain' "$VARS"; then
+    azure_region_short=$(sed -n '/variable "azure_region_short"/,/^}/p' "$VARS" | grep 'default' | sed -E 's/.*default[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/')
+    resource_sequence=$(sed -n '/variable "resource_sequence"/,/^}/p' "$VARS" | grep 'default' | sed -E 's/.*default[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/')
+    [ -n "$azure_region_short" ] && region_seq_suffix="-${azure_region_short}-${resource_sequence}"
+fi
+echo "{resource-group}=rg-${project}-dev${region_seq_suffix}"
+```
+
+El resultado (`rg-${project}-dev` o `rg-${project}-dev-{region}-{seq}`) es el mismo
+`module.resource_group.name` que ya consumen los `resource_group_name` del Paso 6b -- equivalente
+a `rg-${local.prefix}` de `main.tf` (MEF-ADR-0045).
+
 **Autenticacion del deploy (OIDC, MEF-ADR-0022):** mismos tres secrets (`AZURE_CLIENT_ID`,
 `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`) y federated credential que `domain-scaffolder`
 documenta en su Paso 5 -- los emite `scripts/setup-github-ci.sh`, no este agente.
+
+---
+
+## Paso 6d - Proyecto SmokeTests (CA-1, CA-2, MEF-ADR-0048 secciones 1-2)
+
+**Probe de idempotencia:**
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+test -f "$REPO_ROOT/tests/<RootNamespace>.Mcp.{Proposito}.SmokeTests/<RootNamespace>.Mcp.{Proposito}.SmokeTests.csproj" && echo "EXISTE (omitir Paso 6d)" || echo "FALTA (crear)"
+```
+
+Si existe, omite todo este paso -- puede llevar tests adicionales que un humano agrego para tools
+reales.
+
+Si falta:
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+mkdir -p "$REPO_ROOT/tests/<RootNamespace>.Mcp.{Proposito}.SmokeTests/Fixtures"
+mkdir -p "$REPO_ROOT/tests/<RootNamespace>.Mcp.{Proposito}.SmokeTests/Handshake"
+mkdir -p "$REPO_ROOT/tests/<RootNamespace>.Mcp.{Proposito}.SmokeTests/ComposicionDelHost"
+mkdir -p "$REPO_ROOT/tests/<RootNamespace>.Mcp.{Proposito}.SmokeTests/Ejemplo"
+mkdir -p "$REPO_ROOT/tests/<RootNamespace>.Mcp.{Proposito}.SmokeTests/Seguridad"
+```
+
+**1. `<RootNamespace>.Mcp.{Proposito}.SmokeTests.csproj`** -- cero `ProjectReference` (CA-2,
+MEF-ADR-0047 decision 3, MEF-ADR-0048 seccion 1): esta suite ejercita el contrato **desplegado**
+con el SDK oficial de cliente MCP, nunca los tipos del worker. Pines exactos sin comodin (issue
+#605, misma disciplina que el resto del scaffold): `AwesomeAssertions`/`xunit.v3.mtp-v2` en las
+mismas versiones que el Paso 4 (`9.5.0`/`3.2.2`). Se referencia `ModelContextProtocol.Core` (no el
+paquete sombrilla `ModelContextProtocol`, que solo agrega servidor + DI). Versiones verificadas
+contra `api.nuget.org` el 2026-08-30; revalidalas si ha pasado tiempo.
+
+```xml
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AwesomeAssertions" Version="9.5.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.0" />
+    <PackageReference Include="ModelContextProtocol.Core" Version="2.2.0" />
+    <PackageReference Include="xunit.v3.mtp-v2" Version="3.2.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="appsettings.local.json" CopyToOutputDirectory="PreserveNewest" Condition="Exists('appsettings.local.json')" />
+  </ItemGroup>
+
+</Project>
+```
+
+**2. `appsettings.json`** -- `BaseUrl` real (mismo hostname que el Paso 6c despliega), key siempre
+vacia (nunca se versiona, CA-2):
+
+```json
+{
+  "Mcp": {
+    "BaseUrl": "https://func-mcp-{proposito-kebab}-{prefix_func}.azurewebsites.net",
+    "FunctionsKey": ""
+  }
+}
+```
+
+**3. `Fixtures/AssemblyFixture.cs`**:
+
+```csharp
+using <RootNamespace>.Mcp.{Proposito}.SmokeTests.Fixtures;
+
+[assembly: CollectionBehavior(DisableTestParallelization = true)]
+[assembly: AssemblyFixture(typeof(McpFixture))]
+```
+
+**4. `Fixtures/McpFixture.cs`** -- abre una unica sesion MCP con el SDK oficial de cliente:
+
+```csharp
+using Microsoft.Extensions.Configuration;
+using ModelContextProtocol.Client;
+
+namespace <RootNamespace>.Mcp.{Proposito}.SmokeTests.Fixtures;
+
+// Abre UNA sesion MCP contra el entorno desplegado via el SDK oficial de cliente (MEF-ADR-0048
+// seccion 1): el handshake initialize ocurre dentro de McpClient.CreateAsync, asi que si la
+// fixture construye, el host ya cargo la extension MCP y respondio con su identidad. La key
+// mcp_extension viaja por header en cada request del transporte (AdditionalHeaders); no se
+// versiona -- llega por env (Mcp__FunctionsKey) o por appsettings.local.json, nunca por
+// appsettings.json.
+public class McpFixture : IAsyncLifetime
+{
+    public McpClient Cliente { get; private set; } = null!;
+    public Uri BaseUrl { get; private set; } = null!;
+
+    public async ValueTask InitializeAsync()
+    {
+        var configuration = new ConfigurationBuilder()
+            .SetBasePath(AppContext.BaseDirectory)
+            .AddJsonFile("appsettings.json", optional: false)
+            .AddJsonFile("appsettings.local.json", optional: true)
+            .AddEnvironmentVariables()
+            .Build();
+
+        var baseUrl = configuration["Mcp:BaseUrl"]
+            ?? throw new InvalidOperationException(
+                "Mcp:BaseUrl no esta configurado. Usa appsettings.json, appsettings.local.json o la variable de entorno Mcp__BaseUrl.");
+
+        var functionsKey = configuration["Mcp:FunctionsKey"];
+        if (string.IsNullOrWhiteSpace(functionsKey))
+            throw new InvalidOperationException(
+                "Mcp:FunctionsKey no esta configurada. Obtenla con 'az functionapp keys list' (system key mcp_extension) y pasala por la variable de entorno Mcp__FunctionsKey o por appsettings.local.json.");
+
+        BaseUrl = new Uri(baseUrl);
+
+        Cliente = await McpClient.CreateAsync(new HttpClientTransport(new HttpClientTransportOptions
+        {
+            Endpoint = new Uri(BaseUrl, "/runtime/webhooks/mcp"),
+            TransportMode = HttpTransportMode.StreamableHttp,
+            AdditionalHeaders = new Dictionary<string, string> { ["x-functions-key"] = functionsKey }
+        }));
+    }
+
+    public async ValueTask DisposeAsync() => await Cliente.DisposeAsync();
+}
+```
+
+**5. `Handshake/HandshakeSmokeTests.cs`** -- verificacion canonica 1 (handshake):
+
+```csharp
+using AwesomeAssertions;
+using <RootNamespace>.Mcp.{Proposito}.SmokeTests.Fixtures;
+
+namespace <RootNamespace>.Mcp.{Proposito}.SmokeTests.Handshake;
+
+public class HandshakeSmokeTests(McpFixture mcp)
+{
+    // El initialize ya ocurrio dentro de McpClient.CreateAsync (fixture); que el nombre coincida
+    // con el serverName de host.json prueba que el host cargo la extension MCP y NUESTRO
+    // host.json, no un default.
+    [Fact]
+    [Trait("Category", "Smoke")]
+    public async Task ServidorMcp_ReportaSuIdentidad_CuandoCompletaElHandshake()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await mcp.Cliente.PingAsync(cancellationToken: ct);
+
+        mcp.Cliente.ServerInfo.Name.Should().Be("<ProjectDisplayName> {Proposito}");
+    }
+}
+```
+
+Sustituye `<ProjectDisplayName>` por el token resuelto en el Paso 0 -- debe ser texto identico al
+`extensions.mcp.serverName` de `host.json` (Paso 1 punto 2).
+
+**6. `ComposicionDelHost/ComposicionDelHostSmokeTests.cs`** -- verificacion canonica 2 (tools/list
+vivo). Cierra el limite estructural de MEF-ADR-0048 seccion 1: el registro que sirve `tools/list`
+(`DefaultToolRegistry`) vive en el paquete del **host**, inalcanzable desde un unit test del
+worker -- `ComposicionDelServidorTests` (Paso 4) solo pinnea la metadata declarada por reflexion.
+Este test interroga el catalogo **vivo** que el host materializo en el entorno desplegado:
+
+```csharp
+using AwesomeAssertions;
+using <RootNamespace>.Mcp.{Proposito}.SmokeTests.Fixtures;
+
+namespace <RootNamespace>.Mcp.{Proposito}.SmokeTests.ComposicionDelHost;
+
+public class ComposicionDelHostSmokeTests(McpFixture mcp)
+{
+    [Fact]
+    [Trait("Category", "Smoke")]
+    public async Task ServidorMcp_MaterializaLaToolDeEjemplo_CuandoSeListanLasTools()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var tools = await mcp.Cliente.ListToolsAsync(cancellationToken: ct);
+
+        tools.Select(t => t.Name).Should().ContainSingle().Which.Should().Be("ejemplo_listar");
+    }
+
+    [Fact]
+    [Trait("Category", "Smoke")]
+    public async Task EjemploListar_DeclaraFiltroNombreComoOpcional_CuandoSeLeeSuInputSchema()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var tools = await mcp.Cliente.ListToolsAsync(cancellationToken: ct);
+        var tool = tools.Single(t => t.Name == "ejemplo_listar");
+
+        var requeridas = tool.JsonSchema.TryGetProperty("required", out var required)
+            ? required.EnumerateArray().Select(e => e.GetString())
+            : [];
+
+        requeridas.Should().NotContain("filtro_nombre");
+    }
+
+    // El hint viaja en _meta (McpMetadata) porque la extension 1.6.0 no soporta ToolAnnotations
+    // del spec; cuando la extension exponga annotations.readOnlyHint, este test migra alli.
+    [Fact]
+    [Trait("Category", "Smoke")]
+    public async Task ServidorMcp_PublicaElHintDeSoloLecturaEnLaTool_CuandoSeListanLasTools()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var tools = await mcp.Cliente.ListToolsAsync(cancellationToken: ct);
+        var tool = tools.Single(t => t.Name == "ejemplo_listar");
+
+        var meta = tool.ProtocolTool.Meta;
+        meta.Should().NotBeNull("la tool debe publicar su _meta con el hint de solo lectura");
+        meta!["readOnlyHint"]?.GetValue<bool>().Should().BeTrue("ejemplo_listar es de solo lectura");
+    }
+}
+```
+
+**7. `Ejemplo/EjemploListarSmokeTests.cs`** -- verificaciones canonicas 3 y 4 (tool call de lectura
++ error path del `.resx`), una sola clase con ambos tests del comando (mismo criterio de
+`smoke-test-writer`: todos los tests de una misma tool viven en un solo archivo). La forma se
+afirma sin asumir datos reales en el entorno -- un dominio de ejemplo recien scaffoldeado puede
+estar vacio:
+
+```csharp
+using System.Text.Json;
+using AwesomeAssertions;
+using <RootNamespace>.Mcp.{Proposito}.SmokeTests.Fixtures;
+using ModelContextProtocol.Protocol;
+
+namespace <RootNamespace>.Mcp.{Proposito}.SmokeTests.Ejemplo;
+
+public class EjemploListarSmokeTests(McpFixture mcp)
+{
+    // Recorre la cadena completa: host MCP -> worker -> HttpClient tipado -> Function App de
+    // {DominioEjemplo}. Afirma la FORMA del contrato remodelado (Paso 3), no datos puntuales: un
+    // entorno recien scaffoldeado puede no tener elementos cargados todavia.
+    [Fact]
+    [Trait("Category", "Smoke")]
+    public async Task EjemploListar_DevuelveElCatalogoConLaFormaEsperada_CuandoSeInvocaSinFiltro()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var resultado = await mcp.Cliente.CallToolAsync(
+            "ejemplo_listar", new Dictionary<string, object?>(), cancellationToken: ct);
+
+        resultado.IsError.Should().NotBeTrue();
+        var texto = resultado.Content.OfType<TextContentBlock>().Single().Text;
+
+        using var json = JsonDocument.Parse(texto);
+        var raiz = json.RootElement;
+
+        var mostrando = raiz.GetProperty("mostrando").GetInt32();
+        var elementos = raiz.GetProperty("elementos").EnumerateArray().ToList();
+
+        elementos.Should().HaveCount(mostrando);
+        foreach (var elemento in elementos)
+        {
+            elemento.GetProperty("id").GetString().Should().NotBeNullOrWhiteSpace();
+            elemento.GetProperty("nombre").GetString().Should().NotBeNullOrWhiteSpace();
+        }
+    }
+
+    // Error path que no toca ningun dominio: la validacion de largo corta en el worker (Paso 3) y
+    // responde el mensaje del .resx en produccion. Afirmar el texto exacto prueba que los recursos
+    // embebidos viajaron en el publish (un GetString nulo o un .resx ausente daria otro texto).
+    [Fact]
+    [Trait("Category", "Smoke")]
+    public async Task EjemploListar_RespondeElMensajeDeValidacion_CuandoElFiltroExcedeElLargoMaximo()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var filtroDemasiadoLargo = new string('a', 101);
+
+        var resultado = await mcp.Cliente.CallToolAsync(
+            "ejemplo_listar",
+            new Dictionary<string, object?> { ["filtro_nombre"] = filtroDemasiadoLargo },
+            cancellationToken: ct);
+
+        resultado.Content.OfType<TextContentBlock>().Single().Text
+            .Should().Be("El filtro no puede superar 100 caracteres.");
+    }
+}
+```
+
+**8. `Seguridad/SeguridadSmokeTests.cs`** -- verificacion canonica 5 (401 sin key):
+
+```csharp
+using System.Net;
+using System.Text;
+using AwesomeAssertions;
+using <RootNamespace>.Mcp.{Proposito}.SmokeTests.Fixtures;
+
+namespace <RootNamespace>.Mcp.{Proposito}.SmokeTests.Seguridad;
+
+public class SeguridadSmokeTests(McpFixture mcp)
+{
+    // La frontera real de solo-lectura vive en el server + key mcp_extension: los ToolAnnotations
+    // y el _meta readOnlyHint son hints NO confiables segun el spec MCP. Este negativo usa
+    // HttpClient crudo a proposito -- el SDK de cliente no sabe "olvidar" la key.
+    [Fact]
+    [Trait("Category", "Smoke")]
+    public async Task ServidorMcp_Responde401_CuandoElPostNoTraeLaKey()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var clienteSinKey = new HttpClient { BaseAddress = mcp.BaseUrl };
+
+        using var initialize = new StringContent(
+            """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1.0"}}}""",
+            Encoding.UTF8,
+            "application/json");
+
+        var respuesta = await clienteSinKey.PostAsync("/runtime/webhooks/mcp", initialize, ct);
+
+        respuesta.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+}
+```
+
+---
+
+## Paso 6e - Reusable de CI `smoke-tests-mcp.yml` (CA-3)
+
+Este reusable es **generico y compartido**: no lleva nada especifico de `{Proposito}` (todo lo
+variable entra por `inputs`), asi que un segundo servidor MCP del mismo BC lo reutiliza tal cual.
+**Probe de idempotencia (a nivel de repo, no de servidor):**
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+test -f "$REPO_ROOT/.github/workflows/smoke-tests-mcp.yml" && echo "EXISTE (omitir Paso 6e -- ya lo comparte otro servidor MCP)" || echo "FALTA (crear)"
+```
+
+Si existe, omite este paso.
+
+Si falta, crea `.github/workflows/smoke-tests-mcp.yml`:
+
+```yaml
+name: Smoke Tests (MCP)
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'URL base de la Function App MCP'
+        required: true
+      test_project:
+        description: 'Ruta al proyecto de smoke tests'
+        required: true
+      app_name:
+        description: 'Nombre de la Function App (para listar la key mcp_extension)'
+        required: true
+      resource_group:
+        description: 'Resource group de la Function App'
+        required: true
+      expected_sha:
+        description: 'SHA de commit esperado en /api/version (vacio = solo esperar /api/ready 200)'
+        required: false
+        default: ''
+  workflow_call:
+    inputs:
+      base_url:
+        type: string
+        required: true
+      test_project:
+        type: string
+        required: true
+      app_name:
+        type: string
+        required: true
+      resource_group:
+        type: string
+        required: true
+      expected_sha:
+        type: string
+        required: false
+        default: ''
+    secrets:
+      # Los tres del OIDC de MEF-ADR-0022 -- los mismos que usa el job deploy del caller, cero
+      # secrets nuevos. Se necesitan aqui porque la key mcp_extension NO se versiona: se obtiene en
+      # runtime con 'az functionapp keys list' (MEF-ADR-0047 decision 5).
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+
+# Exclusion deliberada frente a smoke-tests-dominio.yml: SIN grupo de concurrencia
+# 'smoke-tests-dev' (MEF-ADR-0048 seccion 5). La razon de ser de ese grupo es que dos suites
+# consumiendo la unica suscripcion 'smoke-tests' del Service Bus de dev se roban mutuamente los
+# mensajes (cada CompleteMessageAsync de una destruye el que la otra esperaba). Un servidor MCP de
+# solo lectura no publica ni consume del bus, asi que no compite por esa suscripcion con ninguna
+# otra suite -- si algun dia un servidor MCP gana una tool de escritura, ESE issue reevalua si debe
+# entrar al grupo (MEF-ADR-0048 seccion 5).
+jobs:
+  smoke-tests:
+    runs-on: ubuntu-latest
+    permissions:
+      # Declarar 'permissions' pone en 'none' todo scope no listado; 'contents: read' es
+      # obligatorio para que actions/checkout siga clonando.
+      contents: read
+      # Emite el token federado que azure/login canjea por OIDC (MEF-ADR-0022). Un workflow
+      # llamado no puede exceder los permisos del invocador -- el job del caller que hace 'uses'
+      # de este reusable tambien debe conceder 'id-token: write'.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      # Duplica a proposito el warmup version+ready de smoke-tests-dominio.yml (MEF-ADR-0018, Rule
+      # of Three: esta es la segunda aparicion documentada). Extender el reusable de dominios
+      # contaminaria con permisos OIDC y ramas MCP a un workflow que otros invocadores usan sin
+      # eso. Diferencia deliberada con el de dominios: el fallback con expected_sha vacio espera
+      # /api/ready y no /api/health -- una app MCP no expone /api/health, y su ready es trivial
+      # "worker arriba" (no abre event store: es cliente HTTP puro, ver ReadyCheck.cs del Paso 2).
+      - name: Warmup Function App
+        run: |
+          expected_sha="${{ inputs.expected_sha }}"
+          if [ -n "$expected_sha" ]; then
+            echo "Esperando que ${{ inputs.base_url }}/api/version reporte el SHA ${expected_sha}..."
+            version_ok=0
+            for i in $(seq 1 60); do
+              body=$(curl -s "${{ inputs.base_url }}/api/version" || echo "")
+              if [[ "$body" == *"$expected_sha"* ]]; then
+                echo "Version OK tras ${i} intento(s) (~$((i*2))s): ${body}"
+                version_ok=1
+                break
+              fi
+              echo "Intento ${i}: version desplegada '${body}' no coincide con '${expected_sha}'. Reintentando en 2s..."
+              sleep 2
+            done
+            if [ "$version_ok" -eq 0 ]; then
+              echo "Timeout: /api/version no reporto el SHA esperado (${expected_sha}) en 120s"
+              exit 1
+            fi
+          fi
+
+          echo "Esperando que ${{ inputs.base_url }}/api/ready responda 200..."
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "${{ inputs.base_url }}/api/ready" || echo "000")
+            if [ "$code" = "200" ]; then
+              echo "Ready OK tras ${i} intento(s) (~$((i*2))s)."
+              exit 0
+            fi
+            echo "Intento ${i}: /api/ready respondio HTTP ${code}. Reintentando en 2s..."
+            sleep 2
+          done
+          echo "Timeout: /api/ready no respondio 200 en 120s"
+          exit 1
+
+      - name: Azure Authentication
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # La key mcp_extension no se versiona ni vive como GitHub secret (rotacion manual y copia
+      # persistida contradicen MEF-ADR-0025): se lista en runtime con el mismo SP del deploy
+      # (Contributor incluye Microsoft.Web/sites/host/listkeys/action) y se enmascara ANTES de
+      # exportarla para que ningun log posterior la muestre.
+      - name: Obtener la key mcp_extension
+        env:
+          APP_NAME: ${{ inputs.app_name }}
+          RESOURCE_GROUP: ${{ inputs.resource_group }}
+        run: |
+          key=$(az functionapp keys list \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$APP_NAME" \
+            --query systemKeys.mcp_extension -o tsv)
+          if [ -z "$key" ]; then
+            echo "::error::La app ${APP_NAME} no expone la system key mcp_extension."
+            exit 1
+          fi
+          echo "::add-mask::$key"
+          echo "MCP_FUNCTIONS_KEY=$key" >> "$GITHUB_ENV"
+
+      - name: Smoke tests
+        env:
+          Mcp__BaseUrl: ${{ inputs.base_url }}
+          Mcp__FunctionsKey: ${{ env.MCP_FUNCTIONS_KEY }}
+        run: dotnet test --project ${{ inputs.test_project }} --configuration Release
+```
+
+**Requisito para todo caller (documentado aqui porque el reusable no puede exigirlo por si
+solo):** el job que invoca este reusable via `uses: ./.github/workflows/smoke-tests-mcp.yml` debe
+declarar `permissions: { contents: read, id-token: write }` -- un workflow llamado nunca excede los
+permisos del invocador, asi que sin ese `id-token: write` en el caller el `azure/login` de este
+reusable falla aunque el reusable mismo lo declare.
+
+---
+
+## Paso 6f - Patch de compatibilidad: encadenar `smoke-tests` en un `deploy-mcp-{proposito}.yml` preexistente (CA-4)
+
+El Paso 6c ya genera el job `smoke-tests` **de una** cuando crea `deploy-mcp-{proposito}.yml` por
+primera vez. Este paso solo aplica a un servidor MCP scaffoldeado por una version de este agente
+**anterior** a la fase 3 (issue #770): su `deploy-mcp-{proposito}.yml` ya existe (Paso 6c lo omite
+por su propio gate de idempotencia) y todavia trae el comentario-anuncio de la fase 2 en vez del
+job.
+
+**Probe de idempotencia y guard estructural:**
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+proposito_kebab=$(echo "{Proposito}" | sed -E 's/([a-z0-9])([A-Z])/\1-\2/g' | tr '[:upper:]' '[:lower:]')
+WORKFLOW="$REPO_ROOT/.github/workflows/deploy-mcp-${proposito_kebab}.yml"
+if [ ! -f "$WORKFLOW" ]; then
+    echo "ERROR: $WORKFLOW no existe -- el Paso 6c deberia haberlo creado antes de llegar aqui."
+elif grep -q '^  smoke-tests:' "$WORKFLOW"; then
+    echo "smoke-tests: EXISTE (omitir patch -- ya lo trae el Paso 6c o una corrida anterior de este Paso 6f)"
+elif grep -q 'nivel 3 de la piramide de testing' "$WORKFLOW"; then
+    echo "smoke-tests: FALTA, comentario-anuncio de fase 2 presente (aplicar patch)"
+else
+    echo "smoke-tests: FALTA, pero no se encontro el comentario-anuncio esperado -- DEGRADAR a proponer, no tocar el archivo."
+fi
+```
+
+Si el resultado es "ERROR": detente, algo raro paso -- el Paso 6c deberia correr antes.
+
+Si es "EXISTE": omite el resto de este paso.
+
+Si es "aplicar patch": lee el archivo con tu tool `Read` y reemplaza el bloque de comentario que
+la fase 2 dejo anunciando la fase 3 como pendiente (las lineas que empiezan con `# El nivel 3 de
+la piramide de testing ...` hasta `... la verificacion end-to-end es manual.`) por el mismo bloque
+`smoke-tests:` que el Paso 6c define arriba (desde el comentario "Salda, desde el dia uno del
+scaffold..." hasta el `secrets:` final), sustituyendo los mismos tokens (`{Proposito}`,
+`{proposito-kebab}`, `{prefix_func}`, `{resource-group}`, `<RootNamespace>`) con los valores ya
+resueltos para este servidor.
+
+Si es "DEGRADAR a proponer": **no** toques el archivo. Informa al usuario:
+
+> "`deploy-mcp-{proposito-kebab}.yml` no trae el comentario-anuncio esperado de la fase 2 -- diverge
+> del patron esperado (personalizacion manual). Agrega vos mismo el job `smoke-tests:` de la
+> seccion Paso 6c de este agente antes de continuar: sin el, el deploy de este servidor no
+> encadena la suite SmokeTests del Paso 6d."
+
+Y detente.
 
 ---
 
@@ -1360,9 +1982,12 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 cd "$REPO_ROOT"
 dotnet build "src/<RootNamespace>.Mcp.{Proposito}/<RootNamespace>.Mcp.{Proposito}.csproj"
 dotnet test --project "tests/<RootNamespace>.Mcp.{Proposito}.Tests/"
+dotnet build "tests/<RootNamespace>.Mcp.{Proposito}.SmokeTests/<RootNamespace>.Mcp.{Proposito}.SmokeTests.csproj"
 ```
 
 `--project` no es opcional: con la seccion `test` de `global.json` (Paso 5) el CLI corre en modo MTP, que solo admite `--project`/`--solution`/`--test-modules` -- una ruta posicional se reenvia a la app de test y aborta sin correr un solo test (mismo detalle que fijan `domain-scaffolder` y `projections-scaffolder`).
+
+**El proyecto SmokeTests solo se compila aqui, nunca se ejecuta en esta verificacion** (CA-5): en el momento del scaffold el servidor todavia no esta desplegado (el Terraform del Paso 6b esta escrito pero sin `apply`), asi que `McpFixture` no tiene contra que conectar -- correr `dotnet test` fallaria por una razon ajena al codigo generado. La suite corre por primera vez en el job `smoke-tests` (Paso 6c/6e), despues del primer deploy real.
 
 **Validacion de Terraform (Paso 6b/6a):**
 
@@ -1394,6 +2019,10 @@ Cierra el reporte con lo que queda **fuera** de tu alcance y el usuario tiene qu
    lo rechazara en cuanto tenga una tool real.
 3. Si el Paso 6a degrado a "proponer", repite ahi el output `default_hostname` que el usuario
    debe agregar a mano.
-4. **Smoke e2e (fase 3)**: el workflow del Paso 6c no tiene job de smoke todavia, asi que la
-   verificacion end-to-end del servidor desplegado es manual (conectar un cliente MCP contra
-   `/runtime/webhooks/mcp` con la key `mcp_extension`, ver el README del Paso 6).
+4. Si el Paso 6f degrado a "proponer" (un `deploy-mcp-{proposito}.yml` preexistente no traia el
+   comentario-anuncio esperado), repite ahi el aviso: el job `smoke-tests` no quedo encadenado y el
+   usuario debe agregarlo a mano.
+5. **Primera corrida de la suite SmokeTests**: corre recien en el job `smoke-tests` del primer
+   deploy real (tras el `apply` del punto 1) -- no la ejecutaste vos mismo (Paso 7 solo la
+   compila). Si falla ahi, lo mas probable es un `Api__*__BaseUrl` faltante (punto 2) o que la app
+   no exponga todavia la system key `mcp_extension` (se genera con el primer deploy exitoso).
