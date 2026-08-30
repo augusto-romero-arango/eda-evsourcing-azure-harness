@@ -16,7 +16,7 @@ Es un **Claude Code Plugin** (ver `.claude-plugin/plugin.json`) que empaqueta:
 - Pipelines bash en `scripts/` (TDD, IaC, tooling, scaffolding, pr-sync, etc.)
 - **ADRs** del marco arquitectónico en `docs/adr/`
 - Hooks en `hooks/hooks.json`
-- Un **servidor MCP bundleado** en `.claude-plugin/plugin.json` (`mcpServers.microsoft-learn`, endpoint HTTP remoto de Microsoft Learn, sin autenticación — ningún secreto viaja en la configuración, MEF-ADR-0025): lo usa el `planner` para verificar documentación oficial de Azure/.NET/C# al redactar issues
+- Un **servidor MCP bundleado** en `.mcp.json` en la raíz del plugin (`mcpServers.microsoft-learn`, endpoint HTTP remoto de Microsoft Learn, sin autenticación — ningún secreto viaja en la configuración, MEF-ADR-0025): lo usa el `planner` para verificar documentación oficial de Azure/.NET/C# al redactar issues
 
 Está pensado para instalarse vía marketplace en cualquier proyecto que adopte el marco (EDA + Event Sourcing + Azure Functions + Marten + Wolverine + Postgres).
 
