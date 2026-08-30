@@ -306,21 +306,32 @@ fi
 if [ "$PHASE" = "prepare" ]; then
     echo -e "\n${CYAN}${BOLD}=== Fase prepare ===${NC}"
 
-    BUMP_PART="${1:-}"
+    BUMP_PART=""
+    PREPARE_ONLY=false
+    for arg in "$@"; do
+        case "$arg" in
+            patch|minor|major)
+                [ -z "$BUMP_PART" ] || abort "Solo se admite una magnitud de bump (patch|minor|major); recibido tambien '$arg'."
+                BUMP_PART="$arg"
+                ;;
+            --prepare-only)
+                PREPARE_ONLY=true
+                ;;
+            *)
+                abort "Argumento invalido: '$arg'. Esperado patch|minor|major [--prepare-only]."
+                ;;
+        esac
+    done
+
     if [ -z "$BUMP_PART" ]; then
         cat >&2 <<EOF
-Uso: $(basename "$0") {patch|minor|major}
+Uso: $(basename "$0") {patch|minor|major} [--prepare-only]
 
 plugin.json.version (${CURRENT_VERSION}) ya coincide con el ultimo tag (v${LAST_TAG_VERSION}).
 Necesitas indicar la magnitud del bump para preparar el PR de release.
 EOF
         exit 1
     fi
-
-    case "$BUMP_PART" in patch|minor|major) ;; *)
-        abort "Argumento invalido: '$BUMP_PART'. Esperado patch|minor|major."
-        ;;
-    esac
 
     NEW_VERSION=$(bump_version "$CURRENT_VERSION" "$BUMP_PART")
     NEW_TAG="v${NEW_VERSION}"
@@ -456,17 +467,80 @@ EOF
     rm -f "$PR_BODY_FILE"
 
     log_success "PR de release creado: ${PR_URL}"
+    PR_NUM="${PR_URL##*/}"
 
     echo ""
     echo -e "${CYAN}${BOLD}=== Resumen prepare ===${NC}"
     echo "  Version:  ${PREV_VERSION} -> ${NEW_VERSION} (${BUMP_PART})"
     echo "  Rama:     ${RELEASE_BRANCH}"
     echo "  PR:       ${PR_URL}"
+
+    if [ "$PREPARE_ONLY" = true ]; then
+        echo ""
+        echo "Siguiente paso (--prepare-only):"
+        echo "  /mefisto-merge ${PR_NUM}"
+        echo "  git switch main && git pull --ff-only"
+        echo "  /mefisto-release   # (sin argumentos) para publicar el tag y el release"
+        exit 0
+    fi
+
+    # ------------------------------------------------------------------------
+    # Encadenamiento (default): merge -> sync verificado -> fase publish.
+    # Cada eslabon es fail-loud (issue #759): si falla, aborta reportando que
+    # quedo hecho y el paso manual restante -- los mismos tres pasos de
+    # --prepare-only siguen siendo el camino de recuperacion.
+    # ------------------------------------------------------------------------
     echo ""
-    echo "Siguiente paso:"
-    echo "  /mefisto-merge ${PR_URL##*/}"
-    echo "  git switch main && git pull --ff-only"
-    echo "  /mefisto-release   # (sin argumentos) para publicar el tag y el release"
+    echo -e "${CYAN}${BOLD}=== Encadenando merge + sync + publish ===${NC}"
+
+    log_info "Mergeando PR #${PR_NUM} (squash + delete-branch)..."
+    gh pr merge "$PR_NUM" --squash --delete-branch \
+        || abort "Fallo el merge del PR #${PR_NUM}. Hecho: PR ${PR_URL} creado (sigue abierto). Paso manual: /mefisto-merge ${PR_NUM}; luego git switch main && git pull --ff-only; luego /mefisto-release (sin argumentos)."
+
+    log_info "Confirmando estado MERGED y commit de merge del PR #${PR_NUM}..."
+    MERGE_SHA="" PR_STATE=""
+    for attempt in 1 2 3; do
+        PR_JSON=$(gh pr view "$PR_NUM" --json state,mergeCommit 2>/dev/null || echo "")
+        PR_STATE=$(echo "$PR_JSON" | jq -r '.state // empty')
+        MERGE_SHA=$(echo "$PR_JSON" | jq -r '.mergeCommit.oid // empty')
+        [ "$PR_STATE" = "MERGED" ] && [ -n "$MERGE_SHA" ] && break
+        sleep 2
+    done
+    if [ "$PR_STATE" != "MERGED" ] || [ -z "$MERGE_SHA" ]; then
+        abort "No se pudo confirmar el estado MERGED del PR #${PR_NUM} tras reintentos. Hecho: merge disparado contra GitHub. Paso manual: verifica 'gh pr view ${PR_NUM}'; luego git switch main && git pull --ff-only; luego /mefisto-release (sin argumentos)."
+    fi
+    log_success "PR #${PR_NUM} MERGED (commit ${MERGE_SHA})."
+
+    log_info "Sincronizando origin/main..."
+    git fetch origin main --quiet \
+        || abort "git fetch origin main fallo. Hecho: PR #${PR_NUM} mergeado (commit ${MERGE_SHA}). Paso manual: git switch main && git pull --ff-only; luego /mefisto-release (sin argumentos)."
+
+    PRESENT=false
+    for attempt in 1 2 3; do
+        if git merge-base --is-ancestor "$MERGE_SHA" origin/main 2>/dev/null; then
+            PRESENT=true
+            break
+        fi
+        sleep 2
+        git fetch origin main --quiet || true
+    done
+    if [ "$PRESENT" != true ]; then
+        abort "El commit de merge ${MERGE_SHA} no aparece como ancestro de origin/main tras reintentos. Hecho: PR #${PR_NUM} mergeado. Paso manual: git switch main && git pull --ff-only; luego /mefisto-release (sin argumentos)."
+    fi
+
+    log_info "Sincronizando main local (switch + merge --ff-only)..."
+    git switch main >/dev/null 2>&1 \
+        || abort "No se pudo hacer 'git switch main'. Hecho: merge #${PR_NUM} confirmado en origin/main (${MERGE_SHA}). Paso manual: git switch main && git pull --ff-only; luego /mefisto-release (sin argumentos)."
+    git merge --ff-only origin/main >/dev/null 2>&1 \
+        || abort "'git merge --ff-only origin/main' fallo. Hecho: merge #${PR_NUM} confirmado en origin/main (${MERGE_SHA}), ya en rama main. Paso manual: git merge --ff-only origin/main; luego /mefisto-release (sin argumentos)."
+
+    log_success "main sincronizado con origin/main (${MERGE_SHA})."
+
+    echo ""
+    log_info "Encadenando fase publish (re-invocando $(basename "$0") sin argumentos)..."
+    "$0" \
+        || abort "La fase publish fallo. Hecho: PR #${PR_NUM} mergeado y main sincronizado (commit ${MERGE_SHA}). Paso manual: resuelve la precondicion reportada arriba y reintenta con '/mefisto-release' (sin argumentos)."
+
     exit 0
 fi
 
