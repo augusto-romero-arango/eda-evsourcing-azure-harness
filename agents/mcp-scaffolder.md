@@ -595,7 +595,7 @@ mkdir -p "$REPO_ROOT/tests/<RootNamespace>.Mcp.{Proposito}.Tests/Ejemplo/Fixture
 </Project>
 ```
 
-**2. `ComposicionDelServidorTests.cs`** -- nivel 2 de la piramide (MEF-ADR-0048 seccion 1): refleja el ensamblado del worker y pinnea la **declaracion** (nombres, `Function`, `required`, `readOnlyHint`, descripciones no vacias). El registro que sirve `tools/list` en runtime vive en el paquete del **host**, no en este ensamblado -- verificarlo es alcance del nivel 3 (smoke e2e, fase 3 de este scaffold, todavia sin implementar).
+**2. `ComposicionDelServidorTests.cs`** -- nivel 2 de la piramide (MEF-ADR-0048 seccion 1): refleja el ensamblado del worker y pinnea la **declaracion** (nombres, `Function`, `required`, `readOnlyHint`, descripciones no vacias). El registro que sirve `tools/list` en runtime vive en el paquete del **host**, no en este ensamblado -- verificarlo es alcance del nivel 3 (smoke e2e contra el desplegado, Paso 6d).
 
 ```csharp
 using System.Reflection;
@@ -820,10 +820,11 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 cd "$REPO_ROOT"
 dotnet sln <SolutionFile> add "src/<RootNamespace>.Mcp.{Proposito}/"
 dotnet sln <SolutionFile> add "tests/<RootNamespace>.Mcp.{Proposito}.Tests/"
-dotnet sln <SolutionFile> add "tests/<RootNamespace>.Mcp.{Proposito}.SmokeTests/"
 ```
 
-**CA-5 (el sufijo `.SmokeTests` no corre en el CI de PRs):** el proyecto se agrega al `.slnx` para que `ci.yml` lo **compile** dentro del `dotnet build <SolutionFile>` del pipeline de PR (gate de compilacion), pero su **ejecucion** queda fuera: `ci.yml` corre `dotnet test` iterando el glob `tests/<RootNamespace>.*.Tests/` (ver el `build-and-test` del Paso 6c de este mismo agente), y `*.Tests/` no matchea un directorio que termina en `.SmokeTests/`. Esta suite solo corre contra un servidor ya desplegado (via el job `smoke-tests` del Paso 6f o manualmente); no se toca `ci.yml` para lograrlo, la exclusion es un efecto del propio naming.
+**El proyecto SmokeTests NO se agrega aqui**: lo crea el Paso 6d, mas abajo en este mismo agente, asi que en este punto todavia no existe y `dotnet sln add` fallaria con `Could not find any project in ...`. Su registro en el `.slnx` es el ultimo item de ese paso.
+
+**CA-5 (el sufijo `.SmokeTests` compila, pero no se ejecuta en el CI de PRs):** el proyecto entra al `.slnx` (Paso 6d) para que cualquier `dotnet build <SolutionFile>` -- el del CI de PRs del consumidor, el del job `build-and-test` del Paso 6c -- lo **compile**: el gate de compilacion si lo cubre. Su **ejecucion** queda fuera sin excluirlo en ningun workflow: los jobs de test del marco iteran el glob `tests/<RootNamespace>.*.Tests/` (Paso 6c de este agente, mismo patron que `domain-scaffolder`) y `*.Tests/` no matchea un directorio que termina en `.SmokeTests/` -- la exclusion es un efecto del propio naming, igual que para las suites `SmokeTests` de dominio, no un filtro que alguien deba mantener. **Limite conocido**: el workflow de CI de PRs es del consumidor -- ningun agente del marco lo genera --, asi que esta garantia vale mientras ese workflow itere el mismo glob; uno que corriera `dotnet test <SolutionFile>` ejecutaria esta suite (y las de dominio) contra un entorno que el PR no desplego, y tendria que excluirla explicitamente.
 
 **Verificar `global.json`:** mismo requisito que `domain-scaffolder` y `projections-scaffolder` (.NET 10 + xunit v3 mtp-v2 exige la seccion `test` para que `dotnet test` funcione en todo el repo, incluido `<RootNamespace>.Mcp.{Proposito}.Tests`). Lee `global.json` en `$REPO_ROOT`. Si ya trae la seccion `test`, dejalo intacto. Si existe sin ella, agregala **sin tocar el resto de sus propiedades**. Si no existe, crealo:
 
@@ -882,12 +883,18 @@ error path del `.resx`, 401 sin key -- MEF-ADR-0048 secciones 1-2) y el reusable
 
 - Proyecto: `tests/<RootNamespace>.Mcp.{Proposito}.SmokeTests/`. Cliente MCP real
   (`ModelContextProtocol.Core`) contra el endpoint desplegado -- cero `ProjectReference` al BC.
-- **No corre en el CI de PRs**: `ci.yml` solo ejecuta `tests/<RootNamespace>.*.Tests/`, y el sufijo
-  `.SmokeTests` queda fuera de ese glob -- el proyecto SI se compila ahi (esta en el `.slnx`), solo
-  no se ejecuta. Corre contra el entorno desplegado en el job `smoke-tests` del workflow de deploy.
+- **Compila en el CI de PRs, pero no se ejecuta ahi**: esta en el `.slnx`, asi que cualquier
+  `dotnet build` de la solucion la compila; los jobs de test iteran el glob
+  `tests/<RootNamespace>.*.Tests/` y el sufijo `.SmokeTests` queda fuera -- igual que las suites
+  `SmokeTests` de dominio. Corre contra el entorno desplegado en el job `smoke-tests` del workflow
+  de deploy (o a mano, exportando las dos variables de abajo).
 - Configuracion: `Mcp:BaseUrl`/`Mcp:FunctionsKey` por `appsettings.json` (BaseUrl real, key vacia),
-  `appsettings.local.json` opcional (gitignored) o las variables de entorno
-  `Mcp__BaseUrl`/`Mcp__FunctionsKey`. La key nunca vive en un archivo versionado.
+  `appsettings.local.json` (ignorado por git) o las variables de entorno
+  `Mcp__BaseUrl`/`Mcp__FunctionsKey`. La key nunca vive en un archivo versionado: en CI se lista en
+  runtime con `az functionapp keys list` (MEF-ADR-0047 decision 5, MEF-ADR-0048 seccion 4).
+- Al reemplazar `ejemplo_listar` por las tools reales del BC, actualiza los asserts **pinneados**
+  de `ComposicionDelHost/` y `Ejemplo/`: el catalogo exacto de `tools/list` y el error path del
+  `.resx` son contrato, no muestreo (MEF-ADR-0048 seccion 2, verificaciones 2 y 4).
 
 ## Tools
 
@@ -1459,9 +1466,12 @@ mkdir -p "$REPO_ROOT/tests/<RootNamespace>.Mcp.{Proposito}.SmokeTests/Seguridad"
 MEF-ADR-0047 decision 3, MEF-ADR-0048 seccion 1): esta suite ejercita el contrato **desplegado**
 con el SDK oficial de cliente MCP, nunca los tipos del worker. Pines exactos sin comodin (issue
 #605, misma disciplina que el resto del scaffold): `AwesomeAssertions`/`xunit.v3.mtp-v2` en las
-mismas versiones que el Paso 4 (`9.5.0`/`3.2.2`). Se referencia `ModelContextProtocol.Core` (no el
-paquete sombrilla `ModelContextProtocol`, que solo agrega servidor + DI). Versiones verificadas
-contra `api.nuget.org` el 2026-08-30; revalidalas si ha pasado tiempo.
+mismas versiones que el Paso 4 (`9.5.0`/`3.2.2`), y los dos `Microsoft.Extensions.Configuration.*`
+en la misma (`10.0.11`) que fija `domain-scaffolder` para los `SmokeTests.csproj` de dominio --
+ningun `.csproj` del repo consumidor debe declarar dos versiones distintas del mismo paquete. Se
+referencia `ModelContextProtocol.Core` (no el paquete sombrilla `ModelContextProtocol`, que solo
+agrega servidor + DI). Versiones verificadas contra `api.nuget.org` el 2026-08-30; revalidalas si
+ha pasado tiempo.
 
 ```xml
 <Project Sdk="Microsoft.NET.Sdk">
@@ -1476,8 +1486,8 @@ contra `api.nuget.org` el 2026-08-30; revalidalas si ha pasado tiempo.
 
   <ItemGroup>
     <PackageReference Include="AwesomeAssertions" Version="9.5.0" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.11" />
     <PackageReference Include="ModelContextProtocol.Core" Version="2.2.0" />
     <PackageReference Include="xunit.v3.mtp-v2" Version="3.2.2" />
   </ItemGroup>
@@ -1626,8 +1636,9 @@ public class ComposicionDelHostSmokeTests(McpFixture mcp)
         var tools = await mcp.Cliente.ListToolsAsync(cancellationToken: ct);
         var tool = tools.Single(t => t.Name == "ejemplo_listar");
 
-        var requeridas = tool.JsonSchema.TryGetProperty("required", out var required)
-            ? required.EnumerateArray().Select(e => e.GetString())
+        // Tipo explicito y no 'var': la rama '[]' necesita un tipo destino para compilar.
+        List<string?> requeridas = tool.JsonSchema.TryGetProperty("required", out var required)
+            ? [.. required.EnumerateArray().Select(e => e.GetString())]
             : [];
 
         requeridas.Should().NotContain("filtro_nombre");
@@ -1749,6 +1760,37 @@ public class SeguridadSmokeTests(McpFixture mcp)
 }
 ```
 
+**9. Blindar `appsettings.local.json` (CA-2: la key jamas en un archivo versionado).** El
+`appsettings.json` de arriba deja la key vacia a proposito y el `.csproj` copia
+`appsettings.local.json` solo si existe -- pero ese archivo local es justamente donde un humano
+pega la key `mcp_extension` para correr la suite desde su maquina. El `.gitignore` raiz que emite
+`infra-base-scaffolder` (su Paso 2c) **no** lo cubre, asi que verificalo y agregalo si falta
+(aditivo e idempotente; `git check-ignore` es la unica fuente de verdad -- el patron puede venir
+de cualquier `.gitignore` del repo):
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+cd "$REPO_ROOT"
+if git check-ignore -q "tests/<RootNamespace>.Mcp.{Proposito}.SmokeTests/appsettings.local.json"; then
+    echo "appsettings.local.json ya esta ignorado (omitir)"
+else
+    printf '\n# Config local de los proyectos SmokeTests: nunca versionar la key (MEF-ADR-0025)\nappsettings.local.json\n' >> .gitignore
+    echo "patron agregado al .gitignore raiz"
+fi
+```
+
+**10. Registrar el proyecto en la solucion** (el Paso 5 no pudo: en ese momento el directorio
+todavia no existia). `dotnet sln add` es idempotente, asi que es seguro correrlo aunque el proyecto
+ya estuviera registrado por una corrida anterior:
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+cd "$REPO_ROOT"
+dotnet sln <SolutionFile> add "tests/<RootNamespace>.Mcp.{Proposito}.SmokeTests/"
+```
+
+Por que entra al `.slnx` una suite que el CI de PRs no ejecuta: ver la nota **CA-5** del Paso 5.
+
 ---
 
 ## Paso 6e - Reusable de CI `smoke-tests-mcp.yml` (CA-3)
@@ -1842,10 +1884,11 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      # Duplica a proposito el warmup version+ready de smoke-tests-dominio.yml (MEF-ADR-0018, Rule
-      # of Three: esta es la segunda aparicion documentada). Extender el reusable de dominios
-      # contaminaria con permisos OIDC y ramas MCP a un workflow que otros invocadores usan sin
-      # eso. Diferencia deliberada con el de dominios: el fallback con expected_sha vacio espera
+      # Warmup propio, deliberadamente separado del camino de dominios (MEF-ADR-0018, Rule of
+      # Three: segunda aparicion documentada del par version+ready). Extender
+      # smoke-tests-dominio.yml contaminaria con permisos OIDC y ramas MCP a un workflow que sus
+      # otros invocadores usan sin eso. Dos diferencias con ese camino: el gate por SHA vive aqui
+      # y no en la fixture de la suite (MEF-ADR-0031), y el fallback con expected_sha vacio espera
       # /api/ready y no /api/health -- una app MCP no expone /api/health, y su ready es trivial
       # "worker arriba" (no abre event store: es cliente HTTP puro, ver ReadyCheck.cs del Paso 2).
       - name: Warmup Function App
@@ -1914,7 +1957,11 @@ jobs:
         env:
           Mcp__BaseUrl: ${{ inputs.base_url }}
           Mcp__FunctionsKey: ${{ env.MCP_FUNCTIONS_KEY }}
-        run: dotnet test --project ${{ inputs.test_project }} --configuration Release
+        # --project no es opcional: con la seccion 'test' de global.json el CLI corre en modo
+        # Microsoft Testing Platform, que solo admite --project/--solution/--test-modules; una ruta
+        # posicional se reenvia a la app de test y aborta sin correr un solo test (mismo detalle
+        # que fija smoke-tests-dominio.yml).
+        run: dotnet test --project "${{ inputs.test_project }}" --configuration Release
 ```
 
 **Requisito para todo caller (documentado aqui porque el reusable no puede exigirlo por si

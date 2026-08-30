@@ -2,7 +2,7 @@
 model: haiku
 ---
 
-Lanza el agente `mcp-scaffolder`, que genera el proyecto de un servidor MCP (Model Context Protocol) `<RootNamespace>.Mcp.{Proposito}` para el Bounded Context del consumidor -- fases 1 y 2 (issues #768/#769): proyecto del servidor, tool de ejemplo, endpoints de gate, unit tests base, el Terraform del servidor y el workflow de deploy (MEF-ADR-0047/MEF-ADR-0048). Comunicate en **espanol**.
+Lanza el agente `mcp-scaffolder`, que genera el proyecto de un servidor MCP (Model Context Protocol) `<RootNamespace>.Mcp.{Proposito}` para el Bounded Context del consumidor -- fases 1, 2 y 3 (issues #768/#769/#770): proyecto del servidor, tool de ejemplo, endpoints de gate, unit tests base, el Terraform del servidor, el workflow de deploy y la suite SmokeTests e2e con su reusable de CI (MEF-ADR-0047/MEF-ADR-0048). Comunicate en **espanol**.
 
 ## Pre-condicion 1: cwd != Mefisto
 
@@ -60,7 +60,7 @@ Si falta cualquiera de los dos, detente con el mensaje de arriba. Con `ROOT_NAME
 ### 1. Informar que se va a generar
 
 ```
-Se va a generar el servidor MCP <RootNamespace>.Mcp.{Proposito} (fases 1 y 2, issues #768/#769):
+Se va a generar el servidor MCP <RootNamespace>.Mcp.{Proposito} (fases 1, 2 y 3, issues #768/#769/#770):
 
   src/<RootNamespace>.Mcp.{Proposito}/
     <RootNamespace>.Mcp.{Proposito}.csproj  (cero ProjectReference, cliente HTTP puro)
@@ -75,20 +75,31 @@ Se va a generar el servidor MCP <RootNamespace>.Mcp.{Proposito} (fases 1 y 2, is
     ComposicionDelServidorTests.cs           (nivel 2 de la piramide, MEF-ADR-0048 seccion 1)
     Ejemplo/EjemploListarToolTests.cs         (nivel 1: remodelado con handler falso)
 
+  tests/<RootNamespace>.Mcp.{Proposito}.SmokeTests/
+    Fixtures/McpFixture.cs                   (sesion MCP real con ModelContextProtocol.Core)
+    Handshake/ ComposicionDelHost/ Ejemplo/ Seguridad/
+                                             (nivel 3: las cinco verificaciones canonicas de
+                                              MEF-ADR-0048 seccion 2 -- handshake, tools/list
+                                              vivo, tool call, error path del .resx, 401 sin key)
+
   infra/environments/dev/mcp-{proposito-kebab}.tf
     Storage + App Service Plan + Function App dedicados (modulos base del consumidor),
     con las app settings Api__{Dominio}__BaseUrl de los dominios ya scaffoldeados
   infra/modules/function-app/main.tf: se agrega el output default_hostname si falta
 
   .github/workflows/deploy-mcp-{proposito-kebab}.yml
-    encadenado por workflow_run tras el apply de infra (MEF-ADR-0022), sin job de smoke
+    encadenado por workflow_run tras el apply de infra (MEF-ADR-0022), con el job
+    smoke-tests encadenado tras el deploy
+  .github/workflows/smoke-tests-mcp.yml
+    reusable compartido por los servidores MCP del BC: warmup version+ready, OIDC y la
+    key mcp_extension listada en runtime (MEF-ADR-0048 seccion 4)
 
-  <SolutionFile>: se agregan los dos proyectos nuevos
+  <SolutionFile>: se agregan los tres proyectos nuevos
   global.json: se verifica/crea la seccion "test" (xunit v3 mtp-v2)
 
-SmokeTests y el nivel 3 de la piramide (smoke e2e) son fase 3 (issue #770, todavia no
-implementado): hasta entonces el workflow de deploy no incluye job de smoke y la verificacion
-end-to-end es manual. Es idempotente: re-ejecutar no duplica ni pisa contenido existente.
+La suite SmokeTests compila en el CI de PRs pero solo se ejecuta contra el entorno desplegado
+(el sufijo .SmokeTests queda fuera del glob tests/*.Tests/). Es idempotente: re-ejecutar no
+duplica ni pisa contenido existente.
 ```
 
 ### 2. Lanzar el agente
@@ -103,9 +114,11 @@ Responde con:
 
 ```
 Servidor MCP <RootNamespace>.Mcp.{Proposito} generado. Siguiente:
-  1. Reemplaza la tool 'Ejemplo/' por las tools reales de tu BC (lenguaje ubicuo, MEF-ADR-0040).
+  1. Reemplaza la tool 'Ejemplo/' por las tools reales de tu BC (lenguaje ubicuo, MEF-ADR-0040)
+     y actualiza con ellas los asserts pinneados de la suite SmokeTests.
   2. Revisa y aplica el Terraform generado con /infra (el deploy del codigo se encadena solo).
-  3. SmokeTests + nivel 3 de la piramide de testing: fase 3 (issue #770, todavia no implementado).
+  3. La suite SmokeTests corre por primera vez en el job 'smoke-tests' de ese primer deploy:
+     el scaffold solo la compila (todavia no hay servidor desplegado contra el cual correrla).
   4. Onboarding de un cliente MCP: ver el README.md generado en el proyecto del servidor.
 ```
 
