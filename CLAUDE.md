@@ -282,6 +282,9 @@ El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o
 | Generalizacion del par de config-tests espejo a plantilla del par 2 (tabla/tenancy/id como tercera instancia; guarda siempre-activa de la tenancy documental) | MEF-ADR-0034 |
 | Enmienda a MEF-ADR-0036: el skill `/purge-store` como mecanismo canonico de ejecucion de la purga deliberada en dev (regla del mismo despliegue intacta) | MEF-ADR-0036 |
 | Enriquecimiento coreografiado por el dueño del dato (Content Enricher preferido sobre réplica local) | MEF-ADR-0046 |
+| Doctrina de servidores MCP serverless (ruta tecnica, granularidad por BC/proposito, aislamiento, diseno de tools, custodia de la key) | MEF-ADR-0047 |
+| Testing de servidores MCP (piramide de tres niveles, verificaciones canonicas del smoke e2e, endpoints de gate propios y credencial de CI en runtime) | MEF-ADR-0048 |
+| Enmienda a MEF-ADR-0013: MEF-ADR-0048 extiende la doctrina de smoke tests a servidores MCP | MEF-ADR-0013 |
 
 ## Convenciones del marco
 
