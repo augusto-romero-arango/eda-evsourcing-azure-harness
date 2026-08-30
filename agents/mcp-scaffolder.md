@@ -944,10 +944,12 @@ Sustituye `{Proposito}`, `<BoundedContext>`, `{DominioEjemplo}` y `{proposito-ke
 
 El Terraform del Paso 6b referencia `module.function_app_{dominio}.default_hostname` de cada
 dominio consumido -- el hostname computado por Azure, nunca `name` concatenado con
-`.azurewebsites.net` a mano (un hostname regionalizado rompe esa concatenacion). El modulo
-`../../modules/function-app` que genera `infra-base-scaffolder` (seccion 1.7) **no** expone ese
-output todavia (verificado 2026-08-30: sus outputs son `id`/`name`/`principal_id`). Este paso lo
-agrega, con el mismo patch que valido el piloto de esta doctrina.
+`.azurewebsites.net` a mano (un hostname regionalizado rompe esa concatenacion). La plantilla del
+modulo `../../modules/function-app` de `infra-base-scaffolder` (seccion 1.7) ya expone ese output
+(issue #772), pero solo lo tiene el consumidor cuyo modulo se genero despues de ese cambio -- y
+`infra-base-scaffolder` nunca sobrescribe un `.tf` existente, asi que un consumidor scaffoldeado
+antes se queda sin el (sus outputs son `id`/`name`/`principal_id`). Este paso cubre ese caso, con
+el mismo patch que valido el piloto de esta doctrina.
 
 **Probe de idempotencia y guard estructural:**
 

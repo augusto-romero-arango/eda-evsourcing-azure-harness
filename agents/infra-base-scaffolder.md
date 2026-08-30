@@ -789,6 +789,11 @@ output "principal_id" {
   description = "Principal ID de la managed identity"
   value       = azurerm_linux_function_app.this.identity[0].principal_id
 }
+
+output "default_hostname" {
+  description = "Hostname por defecto de la Function App (ej. func-x.azurewebsites.net). Valor computado por Azure: usarlo en vez de concatenar name + \".azurewebsites.net\" protege contra hostnames regionalizados."
+  value       = azurerm_linux_function_app.this.default_hostname
+}
 ```
 
 ### 1.8 `infra/modules/key-vault/main.tf`
