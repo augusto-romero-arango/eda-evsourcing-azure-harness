@@ -4,6 +4,44 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-08-30
+
+### Added
+
+- Se anade MEF-ADR-0047 (doctrina de servidores MCP serverless): ruta tecnica (Azure Functions isolated worker + extension MCP, Streamable HTTP, auth por system key `mcp_extension`), granularidad por Bounded Context y proposito con particion Consultas/Comandos, aislamiento del servidor MCP frente al codigo del BC (cliente HTTP puro, contratos propios, tools stateless), diseno de tools token-eficientes en lenguaje ubicuo, y custodia de la key sin Terraform ni GitHub secret.
+- `is_path_in_mefisto_scope` (`.claude/scripts/_mefisto-common.sh`) acepta ahora la entrada exacta `.mcp.json` de la raiz del repo, registrando de antemano la ruta que #762 necesita para mover ahi la declaracion del servidor MCP `microsoft-learn` (MEF-ADR-0019 seccion E: registro y uso son dos PRs distintos, el de registro va primero). Se actualizan tambien los dos mensajes que enumeran la allowlist (gate final y hook de aviso temprano) y la cobertura del bloque `[E2]` de `scripts/tests/test-guards.sh`, que fija la entrada como EXACTA (ni `foo.mcp.json` ni `sub/.mcp.json` entran en scope). No se replica en `is_path_in_consumer_blocklist` (`scripts/_pipeline-common.sh`): en el repo consumidor `.mcp.json` es su propia configuracion MCP de proyecto, mismo precedente que `.claude/settings.json` (issue #522).
+- Se agrega MEF-ADR-0048 (testing de servidores MCP), que extiende MEF-ADR-0013 y MEF-ADR-0022 con
+  la piramide de tres niveles de test (unit del remodelado, composicion por reflexion, smoke e2e con
+  el SDK oficial de cliente), las cinco verificaciones canonicas del nivel e2e, los endpoints de gate
+  `/api/version`/`/api/ready` propios de una app MCP y la obtencion en runtime de la credencial
+  `mcp_extension` en CI, sin secrets nuevos.
+- Se anade el skill `/scaffold-mcp` y el agente `mcp-scaffolder`, que generan el proyecto de
+  un servidor MCP (Model Context Protocol) `<RootNamespace>.Mcp.{Proposito}` para el Bounded
+  Context del consumidor -- fase 1 (issue #768): proyecto del servidor (Azure Functions
+  isolated worker + extension `Microsoft.Azure.Functions.Worker.Extensions.Mcp`, cliente HTTP
+  puro sin `ProjectReference` al BC, seams de HttpClients tipados y observabilidad), una tool
+  de ejemplo con el patron completo, los endpoints de gate `VersionCheck`/`ReadyCheck` y el
+  proyecto de unit tests base, siguiendo MEF-ADR-0047 (doctrina de servidores MCP serverless) y
+  MEF-ADR-0048 (testing de servidores MCP). Terraform y el workflow de deploy quedan para la
+  fase 2 (issue #769); SmokeTests y el nivel 3 de la piramide de testing quedan para la fase 3
+  (issue #770).
+- `mcp-scaffolder` genera ahora el Terraform del servidor MCP (Service Plan + Storage + Function App, reutilizando el modulo `function-app` del consumidor) y el workflow de deploy encadenado tras el apply de infra (fase 2, issue #769).
+- `mcp-scaffolder` agrega idempotentemente el output `default_hostname` al modulo `function-app` del consumidor cuando falta, degradando a "proponer" si el modulo diverge del patron esperado.
+- `/scaffold-mcp` y el catalogo de skills reportan la fase 2 como implementada (Terraform + workflow de deploy en la lista de artefactos generados).
+- `mcp-scaffolder` (fase 3, cierre del desglose de #761) genera ahora tambien la suite `SmokeTests` del servidor MCP con las cinco verificaciones canonicas de MEF-ADR-0048 (handshake, tools/list vivo, tool call de lectura, error path del `.resx`, 401 sin key), el reusable `smoke-tests-mcp.yml` y su job `smoke-tests` encadenado tras el deploy -- la excepcion a MEF-ADR-0013 que el piloto tuvo que registrar (deploy sin smoke tests) ya no se repite en ningun consumidor nuevo.
+- La tool de ejemplo generada por `/scaffold-mcp` valida ahora el largo de `filtro_nombre` y responde un mensaje `.resx` cuando lo excede, para que la suite SmokeTests tenga un error path real que verificar.
+- Se enseña al `planner` publicado a reconocer necesidades de composición asistida vía servidores MCP: nueva sección "Composición asistida vía servidores MCP" (reconocer la señal -> derivar el catálogo de tools -> handoff), anclada a MEF-ADR-0047, que distingue Consultas de Comandos (CQS, el servidor es la credencial) y fija la granularidad por Bounded Context y propósito, nunca por dominio.
+- Nuevo "Template para issues MCP" (`tipo:feature` + `dom:` de la unión de dominios reales) con el catálogo de tools en lenguaje ubicuo, los CAs de token-eficiencia (truncado con señal, filtro de relevancia), las capas de test de MEF-ADR-0048 y la referencia a `/scaffold-mcp` como punto de partida del primer servidor de un propósito. El template conserva el encabezado `## Modelo de eventos` con contenido adaptado, porque `/implement` verifica su presencia en todo `tipo:feature` (criterio 5 de MEF-ADR-0011).
+- El modulo `function-app` de `infra-base-scaffolder` (agents/infra-base-scaffolder.md, seccion 1.7) gana el output `default_hostname`, valor computado por Azure a usar en vez de concatenar `name + ".azurewebsites.net"` (se rompe con hostnames regionalizados). Todo greenfield nace ya con el; el patch idempotente de `mcp-scaffolder` (Paso 6a) queda reservado a los consumidores scaffoldeados antes de este cambio.
+
+### Changed
+
+- `/mefisto-release <patch|minor|major>` encadena por defecto merge + sync verificado + fase publish tras crear el PR de release, en vez de imprimir los tres pasos manuales; `--prepare-only` conserva el comportamiento previo (se detiene tras crear el PR) para quien quiera revisar el diff antes de mergear.
+
+### Fixed
+
+- Movida la declaración del server MCP `microsoft-learn` de `mcpServers` en `.claude-plugin/plugin.json` (nunca registrado por Claude Code) a `.mcp.json` en la raíz del plugin, replicando la forma verificada del plugin oficial `microsoft-docs` (#762).
+
 ## [0.31.0] - 2026-08-30
 
 ### Added
@@ -1557,7 +1595,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.31.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.32.0...HEAD
+[0.32.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.28.0...v0.29.0
