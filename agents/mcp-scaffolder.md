@@ -984,10 +984,45 @@ done
 ```
 
 Cada linea `WIRE` produce una entrada `Api__{pascal}__BaseUrl = "https://${module.function_app_{snake}.default_hostname}"`
-del `app_settings` de abajo. Si ningun dominio tiene Terraform todavia (BC recien creado), el
-`app_settings` queda `{}` -- HCL valido; deja una nota en el resumen final avisando que ningun
-dominio quedo wireado y que agregar uno despues requiere editar este archivo a mano (la
-idempotencia del Paso 6b no lo va a regenerar).
+del `app_settings` de abajo. Si ningun dominio tiene Terraform todavia (BC recien creado), **omite
+el bloque `app_settings` completo** -- el modulo `function-app` declara esa variable con
+`default = {}` (`infra-base-scaffolder` seccion 1.7), asi que no pasarla es equivalente y evita un
+mapa vacio decorativo. Deja entonces una nota en el resumen final avisando que ningun dominio
+quedo wireado y que agregar uno despues requiere editar este archivo a mano (la idempotencia del
+Paso 6b no lo va a regenerar).
+
+**Resolucion de `local.prefix_func` y validacion del nombre de la Function App (MEF-ADR-0045
+seccion 1, Validacion 1a de `domain-scaffolder` Paso 0):** el `app-name` del workflow del Paso 6c
+se hornea como **literal** (no hay interpolacion de Terraform en un YAML de Actions), asi que un
+`prefix_func` mal resuelto aqui despliega contra una Function App que existe con otro nombre.
+Resuelvelo leyendo `infra/environments/dev/variables.tf` y **resuelve la interpolacion completa**,
+no solo `{project_short}-{environment}`: desde el issue #730 ese local puede componer tambien
+`{region}-{seq}` (`"${var.project_short}-${var.environment}${local.region_seq_suffix}"`, patron CAF
+de MEF-ADR-0045), asi que su valor efectivo depende de si el mismo archivo declara
+`azure_region_short` con valor.
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+sed -n '/prefix_func/,+2p' "$REPO_ROOT/infra/environments/dev/variables.tf"
+```
+
+Con el `prefix_func` efectivo resuelto, valida el largo del nombre. `Microsoft.Web/sites` admite
+1-60 caracteres; como `func-mcp-` (9 chars) es el prefijo mas largo entre los dos recursos que
+comparten el sufijo (el App Service Plan usa `asp-mcp-`, 8 chars), validar la Function App cubre
+tambien al `Microsoft.Web/serverfarms`:
+
+```bash
+nombre="func-mcp-{proposito-kebab}-{prefix_func}"
+echo "$nombre (${#nombre} chars)"
+```
+
+(`{proposito-kebab}` y `{prefix_func}` son sustituciones tuyas antes de correr el bloque, no
+variables de shell: cada bloque bash de este agente corre en un proceso nuevo y no hereda las
+asignaciones de los anteriores.)
+
+Si supera 60, **detente** e informa al usuario el presupuesto real para el proposito
+(`60 - 9 ("func-mcp-") - 1 ("-") - len(prefix_func)` caracteres) y pide uno mas corto: renombrar
+la Function App despues de desplegada es el destroy+recreate que MEF-ADR-0045 seccion 3 proscribe.
 
 **Nombre de la Storage Account (24 chars, MEF-ADR-0045 seccion 4) -- mismo truncado determinista
 que `domain-scaffolder` Paso 4, aplicado a `mcp{proposito-sin-guiones}` en vez de `{dominio}`:**
@@ -1008,6 +1043,9 @@ else
 fi
 
 presupuesto=$((24 - 2 - ${#project_short} - ${#environment} - ${#region_seq_suffix_plain}))
+# {Proposito} es sustitucion tuya, no una variable heredada del bloque anterior (cada bloque bash
+# corre en un proceso nuevo).
+proposito_kebab=$(echo "{Proposito}" | sed -E 's/([a-z0-9])([A-Z])/\1-\2/g' | tr '[:upper:]' '[:lower:]')
 mcp_id="mcp$(echo "$proposito_kebab" | tr -d '-')"
 echo "presupuesto=$presupuesto mcp_id=$mcp_id len=${#mcp_id}"
 ```
@@ -1017,6 +1055,12 @@ de `domain-scaffolder`, sustituyendo "el dominio" por "el servidor MCP"). Si `mc
 `presupuesto`, `{mcp-storage}` son sus primeros `presupuesto` caracteres; si no, `mcp_id` completo.
 Si `tiene_region_seq` es `0` (entorno anterior a #730), omite `${local.region_seq_suffix_plain}`
 de la interpolacion del `name` de abajo (ese local no existe en ese `variables.tf`).
+
+**Charset de `project_short` (Validacion 1c de `domain-scaffolder` Paso 0):** el `name` de la
+Storage de abajo interpola `${var.project_short}`, y `Microsoft.Storage/storageAccounts` solo
+admite **minusculas y digitos** -- ni guiones ni mayusculas (MEF-ADR-0045 seccion 4). Si el valor
+efectivo trae alguno, detente con el mismo mensaje que fija `domain-scaffolder`: corregirlo
+renombra ademas todo lo que ya consume `local.prefix_func`, y esa decision es del usuario.
 
 **Archivo plano y propio** (mismo principio que `dominio-{kebab}.tf`: Terraform evalua todos los
 `.tf` de un entorno como un unico root module, y un archivo aparte evita que dos scaffolds
@@ -1092,10 +1136,10 @@ resource "azurerm_role_assignment" "function_app_mcp_{proposito_snake}_storage_t
 }
 ```
 
-Sustituye `{proposito_snake}` por `${proposito_kebab//-/_}`, `{proposito-kebab}` por
-`$proposito_kebab`, `{mcp-storage}` por el `mcp_id` (truncado si aplico) resuelto arriba, y repite
-el bloque `Api__{DominioPascal}__BaseUrl` una vez por cada linea `WIRE` (omitiendo el bloque
-`app_settings` a `{}` si no hubo ninguna).
+Sustituye `{proposito-kebab}` por el kebab del proposito, `{proposito_snake}` por ese mismo kebab
+con `_` en vez de `-`, `{mcp-storage}` por el `mcp_id` (truncado si aplico) resuelto arriba, y
+repite la linea `Api__{DominioPascal}__BaseUrl` una vez por cada linea `WIRE` (omitiendo el bloque
+`app_settings` entero si no hubo ninguna).
 
 ---
 
@@ -1339,3 +1383,17 @@ Excepcion unica: si el Paso 3 omitio la tool de ejemplo porque un humano ya la r
 ## Resumen final
 
 Reporta, por artefacto, si lo creaste o lo omitiste por ya existir (CA-6). Si `dotnet build`/`dotnet test` no pasaron en verde, reportalo explicitamente en vez de dar el scaffold por terminado -- no es un exito parcial aceptable, es el criterio minimo de la seccion "Principio fundamental".
+
+Cierra el reporte con lo que queda **fuera** de tu alcance y el usuario tiene que hacer:
+
+1. **Aplicar el Terraform del Paso 6b** (`/infra`): este agente escribe el HCL, nunca corre
+   `plan` ni `apply`. Hasta ese apply la Function App del servidor no existe y el workflow del
+   Paso 6c fallara en su paso de deploy.
+2. Si el Paso 6b no wireo ningun dominio (ninguno tenia `dominio-{kebab}.tf` todavia), dilo
+   explicitamente: el servidor arrancara sin ningun `Api__*__BaseUrl` y su fail-fast de arranque
+   lo rechazara en cuanto tenga una tool real.
+3. Si el Paso 6a degrado a "proponer", repite ahi el output `default_hostname` que el usuario
+   debe agregar a mano.
+4. **Smoke e2e (fase 3)**: el workflow del Paso 6c no tiene job de smoke todavia, asi que la
+   verificacion end-to-end del servidor desplegado es manual (conectar un cliente MCP contra
+   `/runtime/webhooks/mcp` con la key `mcp_extension`, ver el README del Paso 6).

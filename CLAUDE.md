@@ -156,7 +156,7 @@ tu propuesta en vez de darlo por cierto.
 | `/parallel` | Corre varios issues en worktrees aislados |
 | `/sequential` | Cadena de issues con merge automático |
 | `/scaffold` | Crea el scaffold de un nuevo dominio |
-| `/scaffold-mcp` | Genera el proyecto de un servidor MCP (`{RootNamespace}.Mcp.{Proposito}`): Azure Functions isolated worker sin `ProjectReference` al BC, seams de HttpClients tipados y observabilidad, tool de ejemplo con el patron completo, endpoints de gate `VersionCheck`/`ReadyCheck` y unit tests base (fase 1, agente `mcp-scaffolder`, MEF-ADR-0047/MEF-ADR-0048) |
+| `/scaffold-mcp` | Genera el proyecto de un servidor MCP (`{RootNamespace}.Mcp.{Proposito}`): Azure Functions isolated worker sin `ProjectReference` al BC, seams de HttpClients tipados y observabilidad, tool de ejemplo con el patron completo, endpoints de gate `VersionCheck`/`ReadyCheck`, unit tests base, el Terraform del servidor (Service Plan + Storage + Function App) y el workflow de deploy encadenado tras el apply de infra (fases 1+2, agente `mcp-scaffolder`, MEF-ADR-0047/MEF-ADR-0048) |
 | `/scaffold-projections` | Genera el worker de proyecciones (`{RootNamespace}.Projections`), `{RootNamespace}.ReadModels`, el config-test base `{RootNamespace}.Projections.Tests`, el seam de observabilidad `ConfiguracionObservabilidadProjections` (con el sampler que descarta el polling del daemon, MEF-ADR-0038), el workflow de deploy `deploy-projections.yml` y el `.dockerignore` del build context cuando el BC habilita el token `projections.enabled` (fase 1+2+3+4+5+6, agente `projections-scaffolder`) |
 | `/bug` | Investiga un síntoma (bug-investigator o tooling-investigator) |
 | `/fix-review` | Resuelve comentarios pendientes de un PR |
