@@ -76,6 +76,7 @@ Se va a generar el servidor MCP <RootNamespace>.Mcp.{Proposito} (fase 1, issue #
     Ejemplo/EjemploListarToolTests.cs         (nivel 1: remodelado con handler falso)
 
   <SolutionFile>: se agregan los dos proyectos nuevos
+  global.json: se verifica/crea la seccion "test" (xunit v3 mtp-v2)
 
 Terraform y el workflow de deploy son fase 2 (issue #769, todavia no implementado); SmokeTests y
 el nivel 3 de la piramide (smoke e2e) son fase 3 (issue #770, todavia no implementado). Es

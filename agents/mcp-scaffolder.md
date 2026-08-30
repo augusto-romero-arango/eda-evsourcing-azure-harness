@@ -88,6 +88,8 @@ mkdir -p "$REPO_ROOT/src/<RootNamespace>.Mcp.{Proposito}/Ejemplo"
 
 **1. `<RootNamespace>.Mcp.{Proposito}.csproj`** -- cero `ProjectReference` (MEF-ADR-0047 decision 3): cliente HTTP puro de las Function Apps del BC. Versiones verificadas contra `api.nuget.org/v3-flatcontainer/<paquete>/index.json` el 2026-08-30 (ultimas estables absolutas de cada paquete); revalidalas contra la fuente si ha pasado tiempo desde entonces.
 
+> **Aviso de sustitucion**: el elemento `<RootNamespace>` de MSBuild y el token `<RootNamespace>` de este agente coinciden en texto por casualidad. En la linea `<RootNamespace><RootNamespace>.Mcp.{Proposito}</RootNamespace>` sustituye **solo** el token interior; el elemento exterior y su cierre quedan tal cual. No traslades esta nota al archivo generado.
+
 ```xml
 <Project Sdk="Microsoft.NET.Sdk">
 
@@ -95,9 +97,6 @@ mkdir -p "$REPO_ROOT/src/<RootNamespace>.Mcp.{Proposito}/Ejemplo"
     <TargetFramework>net10.0</TargetFramework>
     <AzureFunctionsVersion>v4</AzureFunctionsVersion>
     <OutputType>Exe</OutputType>
-    <!-- El <RootNamespace> de MSBuild (elemento de afuera) y el token <RootNamespace> de este
-         agente (adentro) coinciden en texto por casualidad -- sustituye solo el de adentro por
-         el namespace real del proyecto. -->
     <RootNamespace><RootNamespace>.Mcp.{Proposito}</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -247,17 +246,20 @@ namespace <RootNamespace>.Mcp.{Proposito}.Infraestructura;
 
 /// <summary>
 /// Seam de composicion de los HttpClients tipados del servidor (MEF-ADR-0029, MEF-ADR-0047
-/// decision 3). Cada HttpClient falla en el ARRANQUE -- no en la primera tool call -- si falta su
-/// app setting Api__{Dominio}__BaseUrl.
+/// decision 3). Cada base URL se lee aqui, durante la composicion del host, y no dentro del
+/// delegate de AddHttpClient: ese delegate no corre hasta que alguien resuelve el cliente
+/// tipado, asi que un app setting Api__{Dominio}__BaseUrl ausente fallaria recien en la primera
+/// tool call. Leerla afuera mueve el fallo al ARRANQUE, que es lo que este seam promete.
 /// </summary>
 public static class ConfiguracionClientesHttp
 {
     public static IServiceCollection ConfigurarClientesHttp(this IServiceCollection services, IConfiguration configuration)
     {
-        services.AddHttpClient<{DominioEjemplo}Api>(c => c.BaseAddress = LeerBaseUrl(configuration, "{DominioEjemplo}"));
+        var baseUrl{DominioEjemplo} = LeerBaseUrl(configuration, "{DominioEjemplo}");
+        services.AddHttpClient<{DominioEjemplo}Api>(c => c.BaseAddress = baseUrl{DominioEjemplo});
 
         // Extension point: cada tool nueva que consuma otro dominio del BC agrega aqui su propio
-        // AddHttpClient<{Dominio}Api>(...), siguiendo el mismo patron.
+        // par LeerBaseUrl(...) + AddHttpClient<{Dominio}Api>(...), siguiendo el mismo patron.
 
         return services;
     }
@@ -609,7 +611,7 @@ public class ComposicionDelServidorTests
         var nombres = MetodosDeTool
             .Select(m => ParametroTrigger(m)!.GetCustomAttribute<McpToolTriggerAttribute>()!.ToolName);
 
-        nombres.Should().BeEquivalentTo([EjemploListarTool.NombreTool]);
+        nombres.Should().ContainSingle().Which.Should().Be(EjemploListarTool.NombreTool);
     }
 
     [Fact]
@@ -659,10 +661,12 @@ public class ComposicionDelServidorTests
             .Where(a => a is not null)
             .Select(a => (a!.PropertyName, a.IsRequired));
 
-        propiedades.Should().BeEquivalentTo([("filtro_nombre", false)]);
+        propiedades.Should().ContainSingle().Which.Should().Be(("filtro_nombre", false));
     }
 }
 ```
+
+> **`ContainSingle().Which` en vez de `BeEquivalentTo([...])` para el caso de un solo elemento**: `BeEquivalentTo` tiene una sobrecarga `params` y otra `IEnumerable<TExpectation>`, y una expresion de coleccion de un elemento es convertible a las dos -- resolucion ambigua en tiempo de compilacion. `ContainSingle().Which` afirma exactamente lo mismo ("uno y solo uno, e igual a") sin esa ambiguedad. Cuando la tool de ejemplo se reemplace por varias tools reales, la forma con lista si es la adecuada, pero exige la sobrecarga de dos argumentos (`BeEquivalentTo([...], opciones => opciones.WithoutStrictOrdering())`), que desambigua por si sola.
 
 **3. `Ejemplo/Soporte/ClienteFalso.cs`** -- `HttpMessageHandler` falso: responde el JSON enlatado, sin red real.
 
@@ -782,7 +786,7 @@ public class EjemploListarToolTests
 
 ---
 
-## Paso 5 - Wiring en la solucion (CA-6)
+## Paso 5 - Wiring en la solucion y `global.json` (CA-6)
 
 Corre siempre, exista o no el proyecto de antes (`dotnet sln add` es idempotente por si mismo -- si el proyecto ya esta referenciado, no duplica la entrada, seguro invocarlo siempre sin gate previo):
 
@@ -791,6 +795,20 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 cd "$REPO_ROOT"
 dotnet sln <SolutionFile> add "src/<RootNamespace>.Mcp.{Proposito}/"
 dotnet sln <SolutionFile> add "tests/<RootNamespace>.Mcp.{Proposito}.Tests/"
+```
+
+**Verificar `global.json`:** mismo requisito que `domain-scaffolder` y `projections-scaffolder` (.NET 10 + xunit v3 mtp-v2 exige la seccion `test` para que `dotnet test` funcione en todo el repo, incluido `<RootNamespace>.Mcp.{Proposito}.Tests`). Lee `global.json` en `$REPO_ROOT`. Si ya trae la seccion `test`, dejalo intacto. Si existe sin ella, agregala **sin tocar el resto de sus propiedades**. Si no existe, crealo:
+
+```json
+{
+    "sdk": {
+        "version": "10.0.300",
+        "rollForward": "latestFeature"
+    },
+    "test": {
+        "runner": "Microsoft.Testing.Platform"
+    }
+}
 ```
 
 ---
@@ -825,11 +843,11 @@ ningun proyecto del BC.
 
 ## Estado de este scaffold
 
-Generado por `/scaffold-mcp` fase 1 (issue #768): proyecto del servidor, tool de ejemplo,
-endpoints de gate y unit tests base. **Terraform y el workflow de deploy** son fase 2 (issue
-#769, pendiente); **SmokeTests y el nivel 3 de la piramide de testing** (smoke e2e con el SDK
-oficial de cliente MCP, MEF-ADR-0048 seccion 1-2) son fase 3 (issue #770, pendiente). Hasta que
-esas fases se implementen, el despliegue y la verificacion end-to-end son manuales.
+Generado por `/scaffold-mcp` (fase 1 del scaffold): proyecto del servidor, tool de ejemplo,
+endpoints de gate y unit tests base. **Terraform y el workflow de deploy** (fase 2) y
+**SmokeTests con el nivel 3 de la piramide de testing** -- smoke e2e con el SDK oficial de
+cliente MCP, MEF-ADR-0048 secciones 1-2 -- (fase 3) todavia no los genera el scaffold: hasta que
+esas fases existan, el despliegue y la verificacion end-to-end de este servidor son manuales.
 
 ## Tools
 
@@ -872,6 +890,25 @@ de arriba; una consulta real debe invocar `ejemplo_listar` y devolver datos del 
 ```
 
 Sustituye `{Proposito}`, `<BoundedContext>`, `{DominioEjemplo}` y `{proposito-kebab}` por los valores resueltos en el Paso 0.
+
+---
+
+## Paso 7 - Verificar
+
+Corre siempre, aunque todos los gates anteriores hayan reportado "EXISTE": es el criterio de exito de la seccion "Principio fundamental", y una corrida que solo agrego el proyecto de tests a un servidor preexistente tambien tiene que quedar en verde.
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+cd "$REPO_ROOT"
+dotnet build "src/<RootNamespace>.Mcp.{Proposito}/<RootNamespace>.Mcp.{Proposito}.csproj"
+dotnet test --project "tests/<RootNamespace>.Mcp.{Proposito}.Tests/"
+```
+
+`--project` no es opcional: con la seccion `test` de `global.json` (Paso 5) el CLI corre en modo MTP, que solo admite `--project`/`--solution`/`--test-modules` -- una ruta posicional se reenvia a la app de test y aborta sin correr un solo test (mismo detalle que fijan `domain-scaffolder` y `projections-scaffolder`).
+
+Si el build falla, el sospechoso numero uno es un `using` faltante o "limpiado" de alguna plantilla de arriba, no la version de los paquetes. Si `dotnet test` falla, corrige antes de continuar: CA-5 exige que los unit tests base pasen en verde con la tool de ejemplo recien generada. **No hagas commit hasta que los dos pasen.**
+
+Excepcion unica: si el Paso 3 omitio la tool de ejemplo porque un humano ya la reemplazo por tools reales, los tests de `Ejemplo/` pueden no aplicar al codigo vigente. En ese caso **no** los reescribas ni los borres -- reporta el rojo tal cual y deja la decision al humano.
 
 ---
 
