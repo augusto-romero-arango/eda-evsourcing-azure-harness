@@ -142,8 +142,11 @@ get_harness_sha() {
 #                            Deliberadamente NO se replica en is_path_in_consumer_blocklist
 #                            (scripts/_pipeline-common.sh registra el porque).
 #   .mcp.json                Declaracion del servidor MCP bundleado del plugin (server
-#                            microsoft-learn, issue #762), unica ubicacion que Claude Code
-#                            registra de verdad. Entrada EXACTA (raiz del repo), no un glob
+#                            microsoft-learn, que puebla el issue #762), unica ubicacion
+#                            que Claude Code registra de verdad. Registrada aqui de
+#                            antemano por el issue #763 -- MEF-ADR-0019 seccion E: registro
+#                            y primer uso son dos PRs distintos, el de registro va primero.
+#                            Entrada EXACTA (raiz del repo), no un glob
 #                            *.mcp.json ni subdirectorios. Deliberadamente NO se replica en
 #                            is_path_in_consumer_blocklist (scripts/_pipeline-common.sh
 #                            registra el porque) -- mismo precedente que .claude/settings.json
