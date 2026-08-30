@@ -4,6 +4,16 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-08-30
+
+### Added
+
+- Se bundlea el servidor MCP oficial de Microsoft Learn (`MicrosoftDocs/mcp`, endpoint remoto HTTP sin autenticacion) directo en `.claude-plugin/plugin.json` (`mcpServers.microsoft-learn`), y se habilita en el `planner` publicado (`mcp__plugin_mefisto_microsoft-learn__*`) para que pueda verificar documentacion oficial de Microsoft (Azure, .NET, C#) al redactar issues.
+
+### Fixed
+
+- Se corrige el wildcard MCP de terraform en `agents/infra-writer.md`: se agrega `mcp__plugin_terraform_terraform__*` junto al `mcp__terraform__*` existente, cubriendo el nombre scoped que usa el servidor MCP de terraform cuando llega via plugin (marketplace `claude-plugins-official`).
+
 ## [0.30.0] - 2026-08-29
 
 ### Added
@@ -1547,7 +1557,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.30.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.31.0...HEAD
+[0.31.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.27.0...v0.28.0
