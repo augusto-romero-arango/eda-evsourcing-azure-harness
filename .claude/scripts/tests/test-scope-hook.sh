@@ -78,6 +78,7 @@ for p in \
     "docs/bitacora/prueba.md" \
     ".claude/scripts/mefisto-tooling-pipeline.sh" \
     ".claude/settings.json" \
+    ".mcp.json" \
     "changelog.d/523.added.md" \
     "commands/implement.md" \
     "skills/projections/SKILL.md" \

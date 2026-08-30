@@ -141,6 +141,18 @@ get_harness_sha() {
 #                            .claude/harness.config.json y .claude/pipeline/* siguen fuera.
 #                            Deliberadamente NO se replica en is_path_in_consumer_blocklist
 #                            (scripts/_pipeline-common.sh registra el porque).
+#   .mcp.json                Declaracion del servidor MCP bundleado del plugin (server
+#                            microsoft-learn, que puebla el issue #762), unica ubicacion
+#                            que Claude Code registra de verdad. Registrada aqui de
+#                            antemano por el issue #763 -- MEF-ADR-0019 seccion E: registro
+#                            y primer uso son dos PRs distintos, el de registro va primero.
+#                            Entrada EXACTA (raiz del repo), no un glob
+#                            *.mcp.json ni subdirectorios. Deliberadamente NO se replica en
+#                            is_path_in_consumer_blocklist (scripts/_pipeline-common.sh
+#                            registra el porque) -- mismo precedente que .claude/settings.json
+#                            (issue #522): en el repo consumidor, .mcp.json en la raiz es su
+#                            propia configuracion MCP de proyecto, ruta legitima suya, no
+#                            reservada del plugin.
 #   changelog.d/             Fragmentos de CHANGELOG/indice de ADRs (issue #380)
 #   README.md, CHANGELOG.md, CLAUDE.md, .gitignore   Gobierno del repo
 is_path_in_mefisto_scope() {
@@ -152,6 +164,7 @@ is_path_in_mefisto_scope() {
         .claude-plugin/*) return 0 ;;
         .claude/commands/*|.claude/skills/*|.claude/agents/*|.claude/scripts/*) return 0 ;;
         .claude/settings.json) return 0 ;;
+        .mcp.json) return 0 ;;
         README.md|CHANGELOG.md|CLAUDE.md|.gitignore) return 0 ;;
         changelog.d/*) return 0 ;;
         *) return 1 ;;
@@ -188,8 +201,8 @@ validate_mefisto_scope_changes() {
         echo "" >&2
         echo "Mefisto solo permite cambios en: commands/, skills/, agents/, scripts/," >&2
         echo "hooks/, docs/, .claude-plugin/, .claude/{commands,skills,agents,scripts}/," >&2
-        echo ".claude/settings.json, changelog.d/, README.md, CHANGELOG.md, CLAUDE.md," >&2
-        echo ".gitignore" >&2
+        echo ".claude/settings.json, .mcp.json, changelog.d/, README.md, CHANGELOG.md," >&2
+        echo "CLAUDE.md, .gitignore" >&2
         return 1
     fi
 }

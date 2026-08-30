@@ -1158,6 +1158,11 @@ compose_tfstate_storage_account_base() {
 # NO incluye .claude/settings.json (issue #522): en el repo del consumidor esa
 # ruta es de sus propios hooks/config, no una ruta reservada del plugin. Ese
 # registro solo existe en is_path_in_mefisto_scope de .claude/scripts/_mefisto-common.sh.
+#
+# Mismo criterio, y por el mismo motivo, aplica a .mcp.json (issue #763): en el
+# repo del consumidor esa ruta es su propia configuracion MCP de proyecto, no
+# una ruta reservada del plugin. Tampoco se agrega aqui; solo esta registrada
+# en is_path_in_mefisto_scope.
 is_path_in_consumer_blocklist() {
     local path="$1"
     [ -z "$path" ] && return 1
