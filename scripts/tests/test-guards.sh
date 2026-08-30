@@ -512,21 +512,28 @@ else
 fi
 
 # Porque la guarda FALLA (no degrada) cuando un run 'Deploy *' no expone un job 'deploy', todo
-# workflow del marco que comparta ese prefijo sin desplegar una Function App debe estar excluido por
-# path. Hoy es solo deploy-projections.yml (projections-scaffolder: jobs build-and-test/publish).
+# workflow del marco que comparta ese prefijo SIN desplegar una Function App (sin job 'deploy')
+# debe estar excluido por path (hoy, deploy-projections.yml: jobs build-and-test/publish). Un
+# workflow 'Deploy *' que SI declara su propio job 'deploy' (deploy-mcp-{proposito}.yml,
+# mcp-scaffolder) conforma la convencion sin necesitar exclusion -- la guarda lo encuentra por el
+# nombre del job, no por su path. El patron tolera placeholders ({...}) en el path generado: un
+# servidor MCP es parametrico por {Proposito}, asi que no hay un unico literal que excluir.
 for agente in "$REPO_ROOT"/agents/*.md; do
     [ "$agente" = "$DS" ] && continue
     grep -qE '^name: Deploy ' "$agente" || continue
-    generados=$(grep -oE '\.github/workflows/deploy-[a-z0-9-]+\.yml' "$agente" | sort -u)
+    generados=$(grep -oE '\.github/workflows/deploy-[A-Za-z0-9{}.-]+\.yml' "$agente" | sort -u)
     if [ -z "$generados" ]; then
         fail "$(basename "$agente") emite un workflow 'Deploy *' sin un path .github/workflows/deploy-*.yml identificable: no se puede verificar su exclusion en la guarda"
         continue
     fi
+    tiene_job_deploy=$(grep -qE '^  deploy:$' "$agente" && echo 1 || echo 0)
     for wf in $generados; do
         if echo "$GUARDA" | grep -qF "select(.path != \"$wf\")"; then
             pass "la guarda excluye $wf ($(basename "$agente"): 'Deploy *' que no despliega ninguna Function App)"
+        elif [ "$tiene_job_deploy" = "1" ]; then
+            pass "$wf ($(basename "$agente")) declara su propio job 'deploy' -- conforma la convencion de la guarda sin necesitar exclusion por path"
         else
-            fail "$wf ($(basename "$agente")) matchea el prefijo 'Deploy ' de la guarda pero no esta excluido por path: la guarda abortaria con exit 1 al no encontrarle un job 'deploy'"
+            fail "$wf ($(basename "$agente")) matchea el prefijo 'Deploy ' de la guarda pero no esta excluido por path ni declara un job 'deploy': la guarda abortaria con exit 1 al no encontrarle uno"
         fi
     done
 done
