@@ -687,7 +687,7 @@ El issue del consumidor (estampar) **depende** del issue del dueño (resolver y 
 
 ## Composición asistida vía servidores MCP
 
-Aplica esta sección en `explorar` (cuando la idea resulta ser que un asistente externo consulte u opere el BC, no un front tradicional) y en `refinar` (cuando un borrador describe esa necesidad). La doctrina completa de servidores MCP -- ruta técnica, granularidad, aislamiento frente al código del BC, diseño de tools y custodia de la key -- vive en **MEF-ADR-0047**; esta sección no la duplica, solo enseña a **reconocer** la señal y a producir el handoff que el catálogo de tools necesita, mismo espíritu que "Necesidades de lectura y proyecciones" arriba.
+Aplica esta sección en `explorar` (cuando la idea resulta ser que un asistente externo consulte u opere el BC, no un front tradicional), en `desglosar` (cuando una feature grande incluye exponer algo a un asistente además del comportamiento de dominio) y en `refinar` (cuando un borrador describe esa necesidad). La doctrina completa de servidores MCP -- ruta técnica, granularidad, aislamiento frente al código del BC, diseño de tools y custodia de la key -- vive en **MEF-ADR-0047**; esta sección no la duplica, solo enseña a **reconocer** la señal y a producir el handoff que el catálogo de tools necesita, mismo espíritu que "Necesidades de lectura y proyecciones" arriba.
 
 ### Reconocer la señal
 
@@ -720,8 +720,10 @@ Cuando el catálogo esté claro, ofrece convertirlo en issue(s) `tipo:feature` (
 
 - **Catálogo de tools propuesto**: por cada tool, nombre + descripción en lenguaje ubicuo (resultado de "Derivar el catálogo de tools" arriba), qué Function(s) HTTP del BC consume, y si es de Consulta o de Comando.
 - **CAs de token-eficiencia del remodelado** (MEF-ADR-0047 decisión 4): la tool declara truncado con señal explícita cuando aplique -- nunca un corte silencioso: cuántos elementos hay en total, cuántos se omitieron, cómo pedir el resto -- y filtra elementos que el agente no podría usar en un paso siguiente (prioriza relevancia contextual sobre exhaustividad). Estos son criterios de aceptación propios del issue, nunca notas técnicas opcionales.
-- **ADRs aplicables**: MEF-ADR-0047 siempre. Suma los ADRs de dominio que las Functions consumidas ya cargan (MEF-ADR-0042 si alguna tool envuelve un endpoint QUERY, MEF-ADR-0043 si envuelve un comando HTTP, etc.).
+- **ADRs aplicables**: MEF-ADR-0047 (doctrina del servidor) y MEF-ADR-0048 (pirámide de testing del servidor MCP) siempre. Suma los ADRs de dominio que las Functions consumidas ya cargan (MEF-ADR-0042 si alguna tool envuelve un endpoint QUERY, MEF-ADR-0043 si envuelve un comando HTTP, etc.).
+- **Capas de test esperadas** (MEF-ADR-0048 decisión 1): unit tests del remodelado de cada tool (nivel 1, handler falso + fixtures JSON reales del BC) y el pinneo por reflexión de la tool declarada -- nombre, parámetros `required`, hints (nivel 2). El nivel 3 (smoke e2e con las cinco verificaciones canónicas) lo genera `/scaffold-mcp` con el servidor: un issue de tool nueva extiende esa suite, no la crea.
 - **Etiquetado**: `tipo:feature` + `dom:` de **todos los dominios reales** cuyas Function(s) la(s) tool(s) del issue consume(n) -- unión de dominios, nunca un pseudo-dominio para el servidor MCP (mismo razonamiento continente/contenido de MEF-ADR-0011 que ya aplica al worker de proyecciones). Validado empíricamente por el piloto: `tipo:feature` pasó el pipeline TDD sin fricción.
+- **Encabezado `## Modelo de eventos`, conservado con contenido adaptado**: el issue es `tipo:feature`, así que la validación programática de `/implement` (criterio 5 de MEF-ADR-0011) exige la **presencia** de ese encabezado -- un issue de tool MCP que lo omita se bloquea en el gate del DoR aunque su etiquetado sea correcto. Es la misma regla que MEF-ADR-0011 ya fija para el issue de configuración del worker de proyecciones: conserva el encabezado y adapta el *contenido*. Una tool nunca introduce comportamiento de dominio (consume Functions que ya existen -- "Reconocer la señal" arriba), así que ahí se declara qué comando(s)/consulta(s) ya existentes invoca, o explícitamente que no aplica.
 - **Punto de partida si es el primer servidor del propósito**: si el BC todavía no tiene un servidor MCP para el propósito que este issue necesita (Consultas o Comandos), referencia `/scaffold-mcp` en `## Notas tecnicas` como primer paso -- sus tres fases generan el proyecto + unit tests + endpoints de gate, el Terraform + workflow de deploy, y la suite de smoke tests. Este issue se centra en las tools de dominio, no en el andamiaje del servidor.
 
 ---
@@ -737,6 +739,8 @@ Lee y aplica los criterios de `"$PLUGIN_ROOT/docs/adr/mef-adr-0011-definition-of
 **Caso comando HTTP (MEF-ADR-0043)**: la fila "Contrato HTTP del comando" de MEF-ADR-0011 es *Condicional* en `feature`/`refactor` -- pasa a **Critico** en cuanto el issue introduce o modifica un endpoint HTTP de comando. No marques `estado:listo` un issue con un comando de trigger HTTP sin ese contrato declarado (verbo, ruta y el paso del test de precedencia aplicado -- bloque "Sugerir el contrato HTTP del comando" arriba). La informacion no abre un encabezado nuevo: vive dentro de la propia descripcion del comando en `## Modelo de eventos` (`feature`) o en `## Contexto`/`## Impacto en archivos` (`refactor`, que no declara modelo de eventos). Si el contrato expone en la ruta un dato de negocio que no nace URL-safe (MEF-ADR-0043 seccion 1.2), el mismo gate exige la dependencia que gana esa invariante (seccion 1.3): no marques `estado:listo` el issue de la ruta sin esa dependencia ya ganada (issue cerrado) o declarada en `## Dependencias`.
 
 **Caso servidor MCP (MEF-ADR-0047)**: un issue que expone una tool MCP es `tipo:feature` -- MEF-ADR-0011 no gana una columna nueva --, pero la sección "Composición asistida vía servidores MCP" de este agente y el "Template para issues MCP" (bajo `## Crear issues`) fijan campos criticos adicionales sobre la fila `feature`: el catalogo de tools con su descripcion en lenguaje ubicuo (guardrail anti-sinonimos contra glosario/codigo por rol/`ReadModels`), los CAs de token-eficiencia del remodelado (truncado con señal, filtro de relevancia) y el ADR MEF-ADR-0047 siempre citado en `## ADRs aplicables`. El label `dom:` sigue la misma regla de union que ya aplica a `tipo:projection`: se repite por **cada** dominio real cuyas Functions la(s) tool(s) consuma(n), nunca un pseudo-dominio para el servidor MCP (razonamiento continente/contenido de MEF-ADR-0011). No marques `estado:listo` un issue de tool MCP sin el catalogo completo y sin MEF-ADR-0047 citado.
+
+**Ser `tipo:feature` arrastra el criterio 5 completo**: la validacion programatica de `/implement` verifica la **presencia** del encabezado `## Modelo de eventos` en todo issue `tipo:feature`, y un issue de tool MCP no describe comportamiento de dominio nuevo. Conserva el encabezado y adapta su contenido -- misma mecanica que MEF-ADR-0011 ya fija para el issue de configuracion del worker de proyecciones (`## Necesidad de lectura` en un issue sin vista): ahi declara que comando(s)/consulta(s) **ya existentes** invoca la tool, o "No aplica" con la razon. Un issue de tool MCP que borre el encabezado se bloquea en el gate del DoR, no en el pipeline. El criterio 6 (contrato HTTP del comando) **no se dispara** por envolver un endpoint que ya existe: si la tool necesita un endpoint que todavia no existe, ese endpoint es un issue de dominio previo con su propio contrato declarado, nunca parte del issue de la tool.
 
 ---
 
@@ -1009,14 +1013,24 @@ gh issue create \
 - **Nombre**: `<RootNamespace>.Mcp.{Proposito}` (ej. `Consultas`, `Comandos` -- MEF-ADR-0047 decision 2)
 - **Primer servidor de este proposito**: [si -- este issue referencia `/scaffold-mcp` en Notas tecnicas como punto de partida | no -- el servidor ya existe, este issue solo agrega tools]
 
+## Modelo de eventos
+No aplica -- este issue no introduce comportamiento de dominio: la(s) tool(s) consume(n) Functions HTTP que ya existen (ver `## Catalogo de tools propuesto`). [Si alguna tool envuelve un comando, lista aqui el/los comando(s) ya existentes que invoca con su verbo y ruta actuales -- no es un contrato nuevo, es el contrato vigente que la tool llama.]
+(Encabezado obligatorio, contenido adaptado: `/implement` verifica su presencia en todo `tipo:feature` -- criterio 5 de MEF-ADR-0011. No lo borres.)
+
 ## ADRs aplicables
 - MEF-ADR-0047: doctrina de servidores MCP serverless (ruta tecnica, granularidad BC+proposito, aislamiento frente al codigo del BC, diseno de tools, custodia de la key). Citalo siempre.
+- MEF-ADR-0048: piramide de testing del servidor MCP (nivel 1 unit del remodelado con fixtures reales, nivel 2 composicion por reflexion, nivel 3 smoke e2e). Citalo siempre.
 [agrega los ADRs de las Functions que cada tool consume: MEF-ADR-0042 si envuelve un endpoint QUERY, MEF-ADR-0043 si envuelve un comando HTTP, etc.]
 
 ## Criterios de aceptacion
 - [ ] CA-1: [criterio de negocio de la tool -- que consulta u operacion resuelve]
 - [ ] CA-2: **Truncado con señal** (MEF-ADR-0047 decision 4): [la tool declara total/omitidos/como pedir el resto si la respuesta se trunca -- nunca un corte silencioso. Omite este CA si la tool nunca devuelve una coleccion truncable.]
 - [ ] CA-3: **Filtro de relevancia** (MEF-ADR-0047 decision 4): [la tool no devuelve, por defecto, elementos que el agente no podria usar en un paso siguiente]
+
+## Capas de test esperadas
+- [ ] Unit tests del remodelado de la tool (nivel 1 -- handler falso del `HttpClient` tipado + fixtures JSON reales del BC, MEF-ADR-0048 decision 1)
+- [ ] Pinneo por reflexion de la tool declarada: nombre, parametros `required`, hints (nivel 2)
+- [ ] Extension de la suite de smoke e2e del servidor con esta tool (nivel 3 -- la suite base y sus cinco verificaciones canonicas las genera `/scaffold-mcp`)
 
 ## Notas tecnicas
 [HttpClient tipado contra la(s) Function(s) consumida(s); contratos propios redeclarados como isla, nunca el tipo del BC (MEF-ADR-0047 decision 3); mensajes runtime en .resx (MEF-ADR-0009). Si "Primer servidor de este proposito" fue "si", referencia `/scaffold-mcp` aqui como el paso previo que genera el proyecto, los unit tests, el Terraform, los workflows de deploy y la suite de smoke tests.]
