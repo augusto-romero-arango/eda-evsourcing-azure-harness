@@ -407,7 +407,7 @@ Flujo típico:
 
 ```
 .claude-plugin/
-  plugin.json          # metadata (name, version, author) + mcpServers bundleados
+  plugin.json          # metadata (name, version, author)
   marketplace.json     # catálogo
 commands/              # skills publicados (los que ve el consumidor)
 agents/                # agentes publicados
@@ -421,6 +421,7 @@ docs/
   adr/                 # ADRs del marco
   tmux-cheatsheet.md
   testing/harness-cheatsheet.md
+.mcp.json              # servidor MCP bundleado (microsoft-learn)
 CLAUDE.md              # documentación viva para Claude Code
 CHANGELOG.md
 ```
