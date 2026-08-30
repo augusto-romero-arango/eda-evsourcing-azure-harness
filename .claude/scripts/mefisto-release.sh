@@ -2,9 +2,10 @@
 # mefisto-release.sh -- Versionado y publicacion del plugin Mefisto.
 #
 # Uso:
-#   ./.claude/scripts/mefisto-release.sh patch     # fase prepare (PR de release)
-#   ./.claude/scripts/mefisto-release.sh minor     # fase prepare
-#   ./.claude/scripts/mefisto-release.sh major     # fase prepare
+#   ./.claude/scripts/mefisto-release.sh patch     # prepare + merge + sync + publish
+#   ./.claude/scripts/mefisto-release.sh minor     # idem, bumpeando Y
+#   ./.claude/scripts/mefisto-release.sh major     # idem, bumpeando X
+#   ./.claude/scripts/mefisto-release.sh patch --prepare-only   # solo el PR de release
 #   ./.claude/scripts/mefisto-release.sh           # fase publish (tag + GH release)
 #
 # Dos fases en una invocacion logica:
@@ -14,6 +15,10 @@
 #     - actualiza links de comparacion al pie
 #     - bumpea .claude-plugin/plugin.json con jq
 #     - commitea, pushea, abre PR contra main
+#     - encadena el remate (issue #759, default): mergea el PR (squash +
+#       delete-branch), sincroniza main de forma verificada y se re-invoca sin
+#       argumentos para aterrizar en publish. Con --prepare-only se detiene
+#       tras crear el PR e imprime los tres pasos manuales.
 #   publish (plugin.json.version > ultimo tag)
 #     - exige main + working tree limpio + al dia con origin/main + gh auth
 #     - extrae notas de la seccion [X.Y.Z] del CHANGELOG
@@ -26,6 +31,11 @@ set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/_mefisto-common.sh"
 assert_in_mefisto || exit 1
+
+# Ruta absoluta del propio script, resuelta ANTES del cd: la fase prepare se
+# re-invoca para encadenar la publish (issue #759) y "$0" relativo dejaria de
+# resolver una vez cambiado el directorio de trabajo.
+SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 
 cd "$MEFISTO_REPO_ROOT"
 
@@ -452,8 +462,12 @@ Notas completas: [\`CHANGELOG.md\`](${CHANGELOG_LINK}) en esta rama (\`${RELEASE
 
 ## Siguiente paso
 
+Por defecto (issue #759) el propio \`/mefisto-release ${BUMP_PART}\` remata solo: mergea este PR (squash + delete-branch), sincroniza \`main\` y publica el tag ${NEW_TAG} con su GitHub Release.
+
+Si se invoco con \`--prepare-only\`, el remate es manual:
+
 1. \`/mefisto-merge <pr>\` para mergear este PR a \`main\`.
-2. \`git pull --ff-only\` en \`main\` para sincronizar local.
+2. \`git switch main && git pull --ff-only\` para sincronizar local.
 3. \`/mefisto-release\` (sin argumentos) para crear el tag ${NEW_TAG} y el GitHub Release.
 EOF
 
@@ -467,7 +481,8 @@ EOF
     rm -f "$PR_BODY_FILE"
 
     log_success "PR de release creado: ${PR_URL}"
-    PR_NUM="${PR_URL##*/}"
+    PR_NUM=$(echo "$PR_URL" | grep -oE '[0-9]+$' || true)
+    [ -n "$PR_NUM" ] || abort "No se pudo extraer el numero del PR de la salida de gh: '${PR_URL}'. El PR quedo creado; retoma con /mefisto-merge <pr>, luego git switch main && git pull --ff-only, luego /mefisto-release (sin argumentos)."
 
     echo ""
     echo -e "${CYAN}${BOLD}=== Resumen prepare ===${NC}"
@@ -537,8 +552,8 @@ EOF
     log_success "main sincronizado con origin/main (${MERGE_SHA})."
 
     echo ""
-    log_info "Encadenando fase publish (re-invocando $(basename "$0") sin argumentos)..."
-    "$0" \
+    log_info "Encadenando fase publish (re-invocando $(basename "$SCRIPT_PATH") sin argumentos)..."
+    "$SCRIPT_PATH" \
         || abort "La fase publish fallo. Hecho: PR #${PR_NUM} mergeado y main sincronizado (commit ${MERGE_SHA}). Paso manual: resuelve la precondicion reportada arriba y reintenta con '/mefisto-release' (sin argumentos)."
 
     exit 0
