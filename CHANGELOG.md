@@ -4,6 +4,17 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-08-31
+
+### Changed
+
+- Se enmienda MEF-ADR-0048 (seccion 6 nueva) y se actualizan los agentes `planner`, `smoke-test-writer` y `reviewer` para exigir, ante toda tool nueva o modificada del catalogo de un servidor MCP, la extension de la suite smoke como criterio de aceptacion explicito: pin del catalogo `tools/list`, pin del `inputSchema.required` y una tool call real de la tool. El reviewer bloquea el PR si falta alguna de las tres piezas, y descarta explicitamente "falta la key de dev" como razon valida para omitirla (la credencial se resuelve en CI por OIDC en runtime).
+
+### Fixed
+
+- Se suman los patrones de un servidor MCP (`*Tool.cs` como logica, `*Api.cs` bajo `Infraestructura/` como wiring excluido, y contratos con varios records DTO puros como excluidos) a `coverage_classify_file` (MEF-ADR-0014), que hasta ahora los reportaba "sin clasificar" en cada PR que los tocaba.
+- El Stage 2b (`smoke-test-writer`) de `scripts/tdd-pipeline.sh` ahora se dispara cuando el issue agrega o modifica una tool de un servidor MCP (`src/<RootNamespace>.Mcp.{Proposito}/**/*Tool.cs`), que hasta ahora no matcheaba ningun patron de `SMOKE_FILES` (`Function/`, ni el carve-out read-side `Obtener|Listar`) y dejaba la doctrina de extension de la suite MCP (#789, MEF-ADR-0048) como letra muerta en toda corrida del pipeline. El patron MCP se suma en las dos ramas (write-side y `tipo:projection`) porque una tool es ortogonal al tipo del issue; `SMOKE_TEST_PROJECT` resuelve al proyecto del servidor (`tests/<RootNamespace>.Mcp.{Proposito}.SmokeTests`) sin rama de resolucion aparte -- el mismo `sed` que extrae `{Dominio}` extrae `Mcp.{Proposito}` completo, porque el punto interno no es separador de ruta (MEF-ADR-0047); y el prompt del stage identifica el caso MCP para que el agente aplique las tres piezas de la extension (pin del catalogo, pin del `inputSchema.required`, tool call real) en vez de la receta de Functions HTTP. Si el proyecto de smoke no existe el stage se omite sin abortar, igual que hoy, citando `/scaffold-mcp` como generador. Test nuevo `scripts/tests/test-mcp-smoke-trigger.sh` cubre la deteccion en ambas ramas, el negativo (`*Tool.cs` fuera de `src/*.Mcp.*/`), la resolucion del proyecto y la coherencia con el script real; los patrones vigentes quedan intactos (`scripts/tests/test-projection-branch.sh` sigue verde).
+
 ## [0.33.0] - 2026-08-31
 
 ### Changed
@@ -1636,7 +1647,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.33.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.34.0...HEAD
+[0.34.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.30.0...v0.31.0
