@@ -487,6 +487,37 @@ Esto permite que:
 
 ---
 
+## Smoke tests de servidores MCP (extension de catalogo)
+
+Cuando el issue agrega o modifica una tool del catalogo de un servidor MCP (`<RootNamespace>.Mcp.{Proposito}`), extiendes el proyecto `tests/<RootNamespace>.Mcp.{Proposito}.SmokeTests` en vez del proyecto `.SmokeTests` de dominio -- el mismo prerequisito de la seccion "Prerequisito" arriba aplica, con un solo cambio: el creador de este proyecto es `/scaffold-mcp`, no el `domain-scaffolder`, asi que si el proyecto no existe informalo citando `/scaffold-mcp` y detente. Tu solo agregas o actualizas tests. Doctrina completa de la piramide de tres niveles y las cinco verificaciones canonicas del nivel 3: MEF-ADR-0048.
+
+**Lee la suite existente antes de escribir.** El layout que genera `/scaffold-mcp` reparte las verificaciones canonicas en una carpeta por proposito: los dos pins del catalogo viven juntos en `ComposicionDelHost/ComposicionDelHostSmokeTests.cs`, y cada tool tiene su propia carpeta con una sola clase `{NombreTool}SmokeTests.cs` que aloja **todos** sus tests -- tool call y error path (mismo criterio de un archivo por unidad que la seccion "Estructura de archivos" arriba fija para los comandos de dominio). Ubica tus tests donde la suite ya los tiene; no infieras el layout de este texto.
+
+### Las tres piezas de la extension (MEF-ADR-0048 seccion 6, las tres obligatorias)
+
+1. **Pin del catalogo.** Actualiza el assert que fija el catalogo exacto de `tools/list` para incluir, excluir o renombrar la tool que cambio.
+2. **Pin del `inputSchema.required`.** Actualiza el assert sobre el `required` del `inputSchema` de la tool que cambio.
+3. **Tool call real.** Agrega una invocacion real de la tool nueva contra el entorno dev desplegado -- que aparezca en el catalogo pinneado no basta, prueba el contrato pero no el comportamiento. Si la tool modificada cambia de `inputSchema` o de comportamiento, actualiza su tool call existente en vez de duplicarla.
+
+**Trampa de compilacion al pasar de una tool a varias.** Una suite recien scaffoldeada pinnea el catalogo de su unica tool con `ContainSingle().Which.Should().Be("...")`, no con una lista. Al sumar la segunda tool, la forma con lista es la adecuada, pero `BeEquivalentTo([...])` de un solo argumento **no compila** (`CS0121`): la sobrecarga `params` y la `IEnumerable<TExpectation>` son ambas aplicables a una expresion de coleccion. Usa la sobrecarga de dos argumentos, que desambigua por si sola:
+
+```csharp
+tools.Select(t => t.Name).Should()
+    .BeEquivalentTo(["ejemplo_listar", "listar_colaboradores"], opciones => opciones.WithoutStrictOrdering());
+```
+
+Esto importa mas aqui que en otras suites: el gate de este stage es exactamente un `dotnet build`, y un fallo de compilacion aborta el pipeline.
+
+### Error path por `.resx`, si la tool valida
+
+Si la tool nueva o modificada rechaza algun input en su propia logica (no en la Function App del BC que consume), agrega un test que afirme el texto exacto del mensaje `.resx` co-localizado (MEF-ADR-0047 decision 4, MEF-ADR-0009) -- mismo patron que la verificacion 4 de MEF-ADR-0048 seccion 2. Si la tool no valida nada por su cuenta (delega toda validacion a la Function App que consume), este caso no aplica: declaralo en tu resumen.
+
+### Gate local: solo compilar, nunca ejecutar
+
+**A diferencia del flujo generico de este agente** (seccion "Gate de salida" arriba), la suite de un servidor MCP nunca corre localmente contra dev: la credencial `mcp_extension` no es un requisito local -- el gate local del Stage 2b del pipeline **solo compila** (`dotnet build`), nunca `dotnet test`. CI resuelve la key en runtime por OIDC (`az functionapp keys list`, MEF-ADR-0048 seccion 4) cuando el smoke corre post-deploy. No intentes obtener la key para correr la suite localmente ni reportes su ausencia como bloqueo: compila, commitea, e informa.
+
+---
+
 ## Output
 
 Al finalizar, genera el summary en `.claude/pipeline/summaries/smoke-test-writer.md` (sin commitear):
