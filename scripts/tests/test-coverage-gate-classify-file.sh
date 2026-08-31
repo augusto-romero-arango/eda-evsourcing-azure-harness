@@ -39,8 +39,9 @@
 #      marker en PublicEvents/PrivateEvents -> excluded (no-regresion de la
 #      regla DTO de F, sin cambio de codigo); IdentidadEventos*.cs -> excluded
 #   I) Patrones del servidor MCP (issue #788, MEF-ADR-0047/MEF-ADR-0048):
-#      *Tool.cs -> logic; *Api.cs bajo Infraestructura/ (leaf, sin subcarpeta)
-#      -> excluded, *Api.cs fuera de Infraestructura/ -> not_evaluated;
+#      *Tool.cs -> logic; *Api.cs bajo Infraestructura/ -> excluded tanto con
+#      Infraestructura como segmento hoja (el layout de mcp-scaffolder) como
+#      con subcarpeta, *Api.cs fuera de Infraestructura/ -> not_evaluated;
 #      archivo con N records DTO puros (contrato upstream redeclarado,
 #      MEF-ADR-0047 decision 3) -> excluded, relajando la cota "un solo tipo"
 #      del Escenario F a "todos los tipos son records puros"
@@ -477,6 +478,16 @@ internal sealed class ColaboradoresApi { }
 '
 assert_eq "I2: Infraestructura/{X}Api.cs (leaf, sin subcarpeta) -> excluded" "excluded" \
     "$(coverage_classify_file "src/Foo.Mcp.Colaboradores/Infraestructura/ColaboradoresApi.cs" "$TMP_DIR" false)"
+
+# El mismo cliente bajo una subcarpeta de Infraestructura/: el check nuevo
+# ancla "Infraestructura" como segmento completo de ruta, hoja o no, a
+# diferencia del de RequestValidator.cs/ServiceBusDeserializador.cs (B1-B3).
+write_fixture "src/Foo.Mcp.Colaboradores/Infraestructura/Clientes/NominaApi.cs" 'namespace Foo.Mcp.Colaboradores.Infraestructura.Clientes;
+
+internal sealed class NominaApi { }
+'
+assert_eq "I2b: Infraestructura/{subcarpeta}/{X}Api.cs -> excluded" "excluded" \
+    "$(coverage_classify_file "src/Foo.Mcp.Colaboradores/Infraestructura/Clientes/NominaApi.cs" "$TMP_DIR" false)"
 
 write_fixture "src/Foo.Mcp.Colaboradores/ColaboradoresApi.cs" 'namespace Foo.Mcp.Colaboradores;
 

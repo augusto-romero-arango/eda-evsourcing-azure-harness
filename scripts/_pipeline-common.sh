@@ -1671,12 +1671,18 @@ coverage_classify_file() {
         local content_flat
         content_flat=$(echo "$content" | tr '\n' ' ')
         local record_decls
-        record_decls=$(echo "$content_flat" | grep -oE 'public\s+(sealed\s+|partial\s+)*record\s+\w+\([^()]*\)[^;{]*[;{]' 2>/dev/null)
+        record_decls=$(echo "$content_flat" | grep -oE 'public\s+(sealed\s+|partial\s+)*record\s+\w+\([^()]*\)[^;{]*[;{]' 2>/dev/null || true)
         local type_decls
         type_decls=$(echo "$content_flat" | grep -oE '(class|record|struct|interface|enum)\s+\w+' 2>/dev/null | wc -l | tr -d ' ')
         if [ -n "$record_decls" ]; then
+            # '|| true' en los dos grep de arriba y de aqui: los pipelines
+            # publicados corren bajo `set -euo pipefail` y un grep sin match
+            # sale con status 1 (grep -c imprime "0" pero tambien sale 1),
+            # asi que sin la guarda un archivo sin records -- o con records
+            # todos con cuerpo -- podria abortar a un caller que invoque la
+            # funcion directamente, no dentro de una sustitucion de comando.
             local pure_record_count
-            pure_record_count=$(echo "$record_decls" | grep -cE ';$')
+            pure_record_count=$(echo "$record_decls" | grep -cE ';$' || true)
             if [ "$pure_record_count" -eq "$type_decls" ]; then
                 echo "excluded"; return
             fi
