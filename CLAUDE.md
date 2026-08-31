@@ -286,6 +286,8 @@ El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o
 | Testing de servidores MCP (piramide de tres niveles, verificaciones canonicas del smoke e2e, endpoints de gate propios y credencial de CI en runtime) | MEF-ADR-0048 |
 | Enmienda a MEF-ADR-0013: MEF-ADR-0048 extiende la doctrina de smoke tests a servidores MCP | MEF-ADR-0013 |
 | Doctrina de exportacion de metricas OTel (descarte total en Function Apps por wildcard, solo familia GC en el worker de proyecciones via vista func-based, fallback de connection string y guardrail de composicion) | MEF-ADR-0038 |
+| Clasificacion de los archivos de un servidor MCP en el coverage gate (`*Tool.cs` logica, `*Api.cs` de `Infraestructura/` excluido, records DTO multi-tipo excluidos) | MEF-ADR-0014 |
+| Extension obligatoria de la suite smoke MCP ante tool nueva o modificada (pin catalogo, pin `inputSchema.required`, tool call real) | MEF-ADR-0048 |
 
 ## Convenciones del marco
 
