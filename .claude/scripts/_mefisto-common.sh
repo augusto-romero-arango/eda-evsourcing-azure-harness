@@ -446,9 +446,10 @@ PYEOF
 # Consolida los fragmentos del indice de ADRs bajo <repo_root>/changelog.d/
 # (issue #380): cada uno tiene forma <issue>.adr-index.md y contiene una o mas
 # filas "| Tema | MEF-ADR-XXXX |". Las anexa, en orden de nombre de archivo, al
-# final de la tabla del "Indice tematico" de CLAUDE.md, y borra del disco los
-# fragmentos consumidos (el caller los stagea con git add junto al resto).
-# Usada por la fase prepare de mefisto-release.sh, en la propia rama de release.
+# final de la tabla del "Indice tematico" de docs/adr/INDICE-TEMATICO.md, y
+# borra del disco los fragmentos consumidos (el caller los stagea con git add
+# junto al resto). Usada por la fase prepare de mefisto-release.sh, en la
+# propia rama de release.
 #
 # Sin changelog.d/ o sin fragmentos *.adr-index.md dentro, es un no-op.
 consolidate_adr_index_fragments() {
@@ -456,10 +457,10 @@ consolidate_adr_index_fragments() {
     local dir="$repo_root/changelog.d"
     [ -d "$dir" ] || return 0
 
-    CLAUDE_MD_PATH="$repo_root/CLAUDE.md" CHANGELOG_FRAGMENTS_DIR="$dir" python3 <<'PYEOF'
+    ADR_INDEX_PATH="$repo_root/docs/adr/INDICE-TEMATICO.md" CHANGELOG_FRAGMENTS_DIR="$dir" python3 <<'PYEOF'
 import glob, os, re, sys
 
-claude_md_path = os.environ['CLAUDE_MD_PATH']
+adr_index_path = os.environ['ADR_INDEX_PATH']
 frag_dir = os.environ['CHANGELOG_FRAGMENTS_DIR']
 
 fragments = sorted(glob.glob(os.path.join(frag_dir, '*.adr-index.md')))
@@ -477,13 +478,13 @@ for path in fragments:
 if not rows:
     sys.exit(0)
 
-with open(claude_md_path, encoding='utf-8') as f:
+with open(adr_index_path, encoding='utf-8') as f:
     text = f.read()
 
 marker = '| Tema | ADR |\n|---|---|\n'
 idx = text.find(marker)
 if idx == -1:
-    print("ERROR: no se encontro la tabla de indice de ADRs en CLAUDE.md", file=sys.stderr)
+    print("ERROR: no se encontro la tabla de indice de ADRs en docs/adr/INDICE-TEMATICO.md", file=sys.stderr)
     sys.exit(1)
 insert_at = idx + len(marker)
 
@@ -494,7 +495,7 @@ table_body_end = insert_at + (end_match.start() if end_match else len(rest))
 new_rows_text = ''.join(row + '\n' for row in rows)
 text = text[:table_body_end] + new_rows_text + text[table_body_end:]
 
-with open(claude_md_path, 'w', encoding='utf-8') as f:
+with open(adr_index_path, 'w', encoding='utf-8') as f:
     f.write(text)
 
 for path in consumed:

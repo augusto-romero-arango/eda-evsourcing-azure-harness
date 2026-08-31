@@ -380,8 +380,8 @@ EOF
         || abort "No se pudo crear la rama ${RELEASE_BRANCH} (verifica que origin/main existe)"
 
     # Consolidar fragmentos de changelog.d/ (issue #380): cada PR anoto su
-    # cambio como fragmento propio en vez de editar CHANGELOG.md/CLAUDE.md
-    # directo. Se consolida AQUI -- ya en la rama de release, ramificada de
+    # cambio como fragmento propio en vez de editar CHANGELOG.md/docs/adr/
+    # INDICE-TEMATICO.md directo. Se consolida AQUI -- ya en la rama de release, ramificada de
     # origin/main -- para leer el estado real y completo de los fragmentos
     # mergeados, no el working tree previo (potencialmente desactualizado).
     log_info "Consolidando fragmentos de changelog.d/..."
@@ -403,12 +403,12 @@ EOF
     log_info "Bumpeando .claude-plugin/plugin.json a ${NEW_VERSION}..."
     bump_plugin_json "$NEW_VERSION"
 
-    # Verificar que tenemos cambios stage-ables (incluye CLAUDE.md y el borrado
-    # de fragmentos consumidos en changelog.d/, ademas del CHANGELOG y plugin.json).
+    # Verificar que tenemos cambios stage-ables (incluye docs/adr/INDICE-TEMATICO.md
+    # y el borrado de fragmentos consumidos en changelog.d/, ademas del CHANGELOG y plugin.json).
     # changelog.d/ se stagea aparte y bajo guarda: git no versiona directorios, asi
     # que la carpeta no existe en un checkout donde no quede ningun archivo dentro,
     # y con 'set -e' un pathspec sin match abortaria el release entero.
-    git add CHANGELOG.md CLAUDE.md .claude-plugin/plugin.json
+    git add CHANGELOG.md docs/adr/INDICE-TEMATICO.md .claude-plugin/plugin.json
     if [ -d changelog.d ]; then
         git add -A changelog.d/
     fi
@@ -449,7 +449,7 @@ EOF
 
 PR de release ${NEW_TAG} (${BUMP_PART}: ${PREV_VERSION} -> ${NEW_VERSION}).
 
-- Consolida los fragmentos de \`changelog.d/\` (CHANGELOG e indice de ADRs de \`CLAUDE.md\`) y los borra.
+- Consolida los fragmentos de \`changelog.d/\` (CHANGELOG e indice de ADRs de \`docs/adr/INDICE-TEMATICO.md\`) y los borra.
 - Mueve \`[Unreleased]\` a \`[${NEW_VERSION}] - ${RELEASE_DATE}\` en \`CHANGELOG.md\`.
 - Bumpea \`.claude-plugin/plugin.json\` a ${NEW_VERSION}.
 - Actualiza links de comparacion al pie del CHANGELOG.

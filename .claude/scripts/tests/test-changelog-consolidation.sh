@@ -10,8 +10,8 @@
 #       [Unreleased], borra los fragmentos consumidos, ignora README.md y
 #       *.adr-index.md, y aborta ante un nombre de fragmento invalido.
 #   [B] consolidate_adr_index_fragments anexa filas *.adr-index.md a la tabla
-#       "Indice tematico" de CLAUDE.md, en orden de nombre de archivo, y borra
-#       los fragmentos consumidos.
+#       "Indice tematico" de docs/adr/INDICE-TEMATICO.md, en orden de nombre de
+#       archivo, y borra los fragmentos consumidos.
 #   [C] Ausencia de contencion (la razon de ser de #380): dos fragmentos de
 #       issues distintos en ramas independientes que parten del mismo commit
 #       base mergean SIN conflicto de git. C-1 es un control que reproduce el
@@ -192,11 +192,11 @@ fi
 # -------- Bloque B: consolidate_adr_index_fragments --------
 
 echo ""
-echo "[B] consolidate_adr_index_fragments anexa filas a la tabla de CLAUDE.md"
+echo "[B] consolidate_adr_index_fragments anexa filas a la tabla de docs/adr/INDICE-TEMATICO.md"
 
 TMP=$(new_tmp_repo)
-mkdir -p "$TMP/changelog.d"
-cat > "$TMP/CLAUDE.md" <<'EOF'
+mkdir -p "$TMP/changelog.d" "$TMP/docs/adr"
+cat > "$TMP/docs/adr/INDICE-TEMATICO.md" <<'EOF'
 ### Índice temático
 
 | Tema | ADR |
@@ -217,15 +217,15 @@ else
     fail "B-1: consolidate_adr_index_fragments deberia retornar 0"
 fi
 
-if grep -q 'MEF-ADR-0036' "$TMP/CLAUDE.md" && grep -q 'MEF-ADR-0037' "$TMP/CLAUDE.md"; then
-    pass "B-1: ambas filas (MEF-ADR-0036 y MEF-ADR-0037) aparecen en CLAUDE.md"
+if grep -q 'MEF-ADR-0036' "$TMP/docs/adr/INDICE-TEMATICO.md" && grep -q 'MEF-ADR-0037' "$TMP/docs/adr/INDICE-TEMATICO.md"; then
+    pass "B-1: ambas filas (MEF-ADR-0036 y MEF-ADR-0037) aparecen en docs/adr/INDICE-TEMATICO.md"
 else
-    fail "B-1: faltan filas en la tabla de CLAUDE.md"
+    fail "B-1: faltan filas en la tabla de docs/adr/INDICE-TEMATICO.md"
 fi
 
-LINE_36=$(grep -n 'MEF-ADR-0036' "$TMP/CLAUDE.md" | head -1 | cut -d: -f1)
-LINE_37=$(grep -n 'MEF-ADR-0037' "$TMP/CLAUDE.md" | head -1 | cut -d: -f1)
-LINE_CONV=$(grep -n '^## Convenciones del marco' "$TMP/CLAUDE.md" | head -1 | cut -d: -f1)
+LINE_36=$(grep -n 'MEF-ADR-0036' "$TMP/docs/adr/INDICE-TEMATICO.md" | head -1 | cut -d: -f1)
+LINE_37=$(grep -n 'MEF-ADR-0037' "$TMP/docs/adr/INDICE-TEMATICO.md" | head -1 | cut -d: -f1)
+LINE_CONV=$(grep -n '^## Convenciones del marco' "$TMP/docs/adr/INDICE-TEMATICO.md" | head -1 | cut -d: -f1)
 if [ "$LINE_36" -lt "$LINE_37" ] && [ "$LINE_37" -lt "$LINE_CONV" ]; then
     pass "B-1: las filas se insertaron en orden de nombre de archivo (376 antes que 377), antes de la siguiente seccion"
 else
@@ -238,10 +238,10 @@ else
     fail "B-1: los fragmentos *.adr-index.md consumidos deberian haberse borrado"
 fi
 
-# B-2: sin fragmentos *.adr-index.md -> no-op, CLAUDE.md intacto.
+# B-2: sin fragmentos *.adr-index.md -> no-op, docs/adr/INDICE-TEMATICO.md intacto.
 TMP=$(new_tmp_repo)
-mkdir -p "$TMP/changelog.d"
-cat > "$TMP/CLAUDE.md" <<'EOF'
+mkdir -p "$TMP/changelog.d" "$TMP/docs/adr"
+cat > "$TMP/docs/adr/INDICE-TEMATICO.md" <<'EOF'
 ### Índice temático
 
 | Tema | ADR |
@@ -250,17 +250,17 @@ cat > "$TMP/CLAUDE.md" <<'EOF'
 
 ## Convenciones del marco
 EOF
-BEFORE=$(cat "$TMP/CLAUDE.md")
+BEFORE=$(cat "$TMP/docs/adr/INDICE-TEMATICO.md")
 if consolidate_adr_index_fragments "$TMP"; then
     pass "B-2: sin fragmentos *.adr-index.md, retorna 0 (no-op)"
 else
     fail "B-2: sin fragmentos no deberia abortar"
 fi
-AFTER=$(cat "$TMP/CLAUDE.md")
+AFTER=$(cat "$TMP/docs/adr/INDICE-TEMATICO.md")
 if [ "$BEFORE" = "$AFTER" ]; then
-    pass "B-2: CLAUDE.md queda intacto sin fragmentos que consolidar"
+    pass "B-2: docs/adr/INDICE-TEMATICO.md queda intacto sin fragmentos que consolidar"
 else
-    fail "B-2: CLAUDE.md no deberia modificarse sin fragmentos"
+    fail "B-2: docs/adr/INDICE-TEMATICO.md no deberia modificarse sin fragmentos"
 fi
 
 # -------- Bloque C: ausencia de contencion --------

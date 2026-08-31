@@ -1,6 +1,6 @@
 ---
 name: comment-cleanup
-description: Mecanica de limpieza de comentarios de codigo en archivos .cs -- clasificar cada comentario, aplicar el umbral doble Context Delta/Decision Delta (MEF-ADR-0044), intentar codificar la informacion en el codigo, comprimir los sobrevivientes y releer el archivo. Usar cuando se revise o refactorice un archivo .cs sobre-comentado: narracion que repite el codigo, provenance (`// HU-XX`, citas de issue/PR/HU), citas de ADR sueltas sin restriccion activa, o comentarios que duplican lo que un nombre, un tipo o un test ya dicen.
+description: "Mecanica de limpieza de comentarios de codigo en archivos .cs -- clasificar cada comentario, aplicar el umbral doble Context Delta/Decision Delta (MEF-ADR-0044), intentar codificar la informacion en el codigo, comprimir los sobrevivientes y releer el archivo. Usar cuando se revise o refactorice un archivo .cs sobre-comentado: narracion que repite el codigo, provenance (`// HU-XX`, citas de issue/PR/HU), citas de ADR sueltas sin restriccion activa, o comentarios que duplican lo que un nombre, un tipo o un test ya dicen."
 ---
 
 # Limpieza de comentarios de codigo
