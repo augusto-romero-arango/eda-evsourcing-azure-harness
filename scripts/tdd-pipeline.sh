@@ -1092,9 +1092,11 @@ if [ "$IS_REFACTOR" != true ] && [ "$FROM_STAGE" -le 2 ]; then
             if [ "$IS_MCP_SMOKE" = true ]; then
                 SMOKE_FILES_DESC="las siguientes tools de un servidor MCP"
                 SMOKE_TASK_LINE="Tu tarea: extiende la suite SmokeTests del servidor MCP (pin de catálogo, pin de schema, tool call real) para las tools nuevas o modificadas -- sigue la doctrina de extensión de servidores MCP de tu rol (MEF-ADR-0048), no la de Functions HTTP."
+                SMOKE_COMMIT_SUBJECT="test(hu-${ISSUE_NUM:-?}): smoke tests para tools MCP"
             else
                 SMOKE_FILES_DESC="los siguientes endpoints"
                 SMOKE_TASK_LINE="Tu tarea: escribe smoke tests para los endpoints nuevos o modificados."
+                SMOKE_COMMIT_SUBJECT="test(hu-${ISSUE_NUM:-?}): smoke tests para endpoints"
             fi
 
             STAGE2B_PROMPT="Estás en el directorio raíz del proyecto ${HARNESS_PROJECT_NAME}.
@@ -1133,7 +1135,7 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
                 abort "Stage 2b fallido: smoke tests no compilan (exit code: $st_build_rc). Revisa el log."
             fi
 
-            auto_commit_if_needed "smoke" "test(hu-${ISSUE_NUM:-?}): smoke tests para endpoints"
+            auto_commit_if_needed "smoke" "$SMOKE_COMMIT_SUBJECT"
 
             AGENT_ST_DUR=$LAST_AGENT_DURATION
             AGENT_ST_METRICS_JSON=$LAST_AGENT_METRICS_JSON
@@ -1141,12 +1143,16 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
             update_status "2b-smoke-test-writer" "passed"
             success "Stage 2b completado — smoke tests escritos"
         else
-            log "Proyecto SmokeTests no existe para $SMOKE_DOMAIN — saltando smoke tests"
+            if [ "$IS_MCP_SMOKE" = true ]; then
+                log "Proyecto $SMOKE_TEST_PROJECT no existe — genéralo con /scaffold-mcp; saltando smoke tests"
+            else
+                log "Proyecto SmokeTests no existe para $SMOKE_DOMAIN — saltando smoke tests"
+            fi
             AGENT_ST_RES="skipped"
             update_status "2b-smoke-test-writer" "skipped"
         fi
     else
-        log "No se detectaron Function Apps modificadas — saltando smoke tests"
+        log "No se detectaron Function Apps ni tools MCP modificadas — saltando smoke tests"
         AGENT_ST_RES="skipped"
         update_status "2b-smoke-test-writer" "skipped"
     fi
