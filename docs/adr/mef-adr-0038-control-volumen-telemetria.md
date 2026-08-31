@@ -19,7 +19,10 @@
   MEF-ADR-0015 (precedente de delegacion mecanismo-del-marco/valor-del-consumidor), MEF-ADR-0018
   (heuristica de "unico proceso con daemon", que hace exclusivo del worker el filtro de la seccion 5),
   MEF-ADR-0029 (guardrails de composicion, tecnica que sostiene la seccion 4) y MEF-ADR-0030 (esquema
-  de numeracion con prefijo).
+  de numeracion con prefijo). La seccion 10 (metricas, issue #764) sigue el patron original de este
+  ADR -- fija doctrina unicamente --, no el patron de propagacion directa de las dos enmiendas de la
+  seccion 9: la propagacion al codigo generado es alcance de los issues #777 (`domain-scaffolder`,
+  lado Function Apps) y #778 (`projections-scaffolder`, worker de proyecciones).
 
 ## Contexto
 
@@ -500,6 +503,145 @@ decompilo el consumidor (issue #414, primer parrafo de esta seccion) y el tag `1
 Ese `ServiceProvider` tampoco registra `IConfiguration` a mano, por la misma razon del parrafo
 anterior.
 
+### 10. Metricas: sin exportar en Function Apps, solo la familia GC en el worker de proyecciones
+
+`UseAzureMonitorExporter()` (seccion 2) es cross-cutting: ademas de trazas (secciones 3/5/6) y logs
+(seccion 9), cablea tambien el pipeline de **metricas** sin ningun mecanismo de exclusion --
+verificado contra el README oficial del exporter: *"Starting with the 1.4.0-beta.3 version you can
+use the cross-cutting UseAzureMonitorExporter extension to simplify registration of the OTLP
+exporter for all signals (traces, metrics, and logs)"*. La instrumentacion automatica que trae ese
+pipeline (runtime .NET, ASP.NET Core/Kestrel del host de Functions) exporta por defecto familias de
+**telemetria de capacidad** -- `dotnet.gc.*`, `kestrel.*`, `http.server.active_requests`,
+`azure.functions.health_check.reports`, `*.cpu.time`, entre otras -- que ninguna alerta ni skill de
+este marco lee: las unicas senales que el marco consume hoy son `exceptions` (alertas de spike,
+MEF-ADR-0034 seccion 8) y `requests`/`dependencies` (smoke tests, MEF-ADR-0013; readiness gate,
+MEF-ADR-0031). Medido en la investigacion que origino este cambio, esa telemetria de capacidad
+represento la mayoria del volumen de `customMetrics` ingerido por app y una fraccion no trivial del
+limite diario de Application Insights -- mismo patron que las secciones 5/6 ya resolvieron para
+trazas: volumen que nadie consume, pagado igual.
+
+**Frontera con la seccion 1: aqui no hay valor del consumidor, es mecanismo puro en los dos lados.**
+A diferencia del ratio de sampling de trazas (`TELEMETRY_SAMPLING_RATIO`), ningun consumidor tiene
+un caso de uso legitimo para declarar "quiero las metricas de capacidad de mi Function App en
+Application Insights" mientras ninguna alerta ni skill del marco las lea -- mismo criterio ya fijado
+en la seccion 6 para el durability agent: *"si nadie mira una metrica, no se conserva por si acaso a
+un costo reducido: se apaga"*.
+
+**Function Apps (write-side): descarte total, por wildcard.** Cada Function App (MEF-ADR-0020: plan
+dedicado `Basic` o superior, `always_on = true`, instancia unica sin escalado horizontal -- corre
+continuamente, no es un proceso que se reinicia por invocacion) solo tiene dos fuentes de carga: el
+trafico real de invocacion (HTTP/ServiceBus), ya visible en `requests`/`dependencies`, y el poll del
+agente de durabilidad de Wolverine, cuya propia telemetria esta apagada desde la seccion 6
+(`DurabilityMetricsEnabled = false`). Ninguna metrica de capacidad adicional aporta una senal que
+esas dos fuentes no cubran ya. El mecanismo:
+
+```csharp
+services.AddOpenTelemetry()
+    .WithMetrics(metrics => metrics
+        .AddView(instrumentName: "*", MetricStreamConfiguration.Drop));
+```
+
+Descarte por **wildcard total**, no por lista de familias con nombre: una familia nueva que el
+runtime agregue en una version futura (o un rename de una existente) no se cuela por omision -- a
+diferencia del filtro por nombre de span de la seccion 5, que la propia seccion "Consecuencias" ya
+documenta como fragil a un rename.
+
+**Alternativa descartada: no registrar ningun `.WithMetrics(...)`.** Dejar el `AddOpenTelemetry()`
+del seam sin ninguna configuracion de metricas **no** evita el pipeline: por ser cross-cutting
+(parrafo de apertura), `UseAzureMonitorExporter()` cablea metricas de todas formas, con todas las
+instrumentaciones automaticas activas y sin ningun filtro. "No registrar" no es una opcion
+disponible en este exporter -- hay que declarar el `Drop` explicitamente.
+
+**Worker de proyecciones (read-side, MEF-ADR-0034): conservar unicamente la familia GC.** El worker
+corre **sin `ingress`** (MEF-ADR-0034: bloque `azurerm_container_app` sin `ingress`,
+`min_replicas >= 1`) -- nunca recibe ni emite `requests`, y su unica carga es el daemon interno de
+Marten (`HotCold`), el mismo que la seccion 5 de este ADR ya identifica como el **unico proceso del
+marco con un daemon asincronico propio corriendo 24/7 independientemente de cualquier trafico
+externo**. Sin `requests` que correlacionar y sin ningun invocador externo que module su carga, un
+memory leak en ese proceso no tiene ninguna otra senal del marco que lo revele -- ni `exceptions`
+(un leak lento agota memoria antes de producir una excepcion visible) ni la alerta de spike de
+MEF-ADR-0034 seccion 8 (mide conteo de excepciones, no presion de memoria). La familia GC
+(`dotnet.gc.collections`, `dotnet.gc.last_collection.heap.size`,
+`dotnet.gc.last_collection.heap.fragmentation.size`) es, para este proceso especifico, el unico
+proxy de ese riesgo -- y su costo de ingesta medido es marginal frente al resto de la telemetria de
+capacidad que igual se descarta.
+
+Mecanismo -- **una unica vista func-based**, no un par de vistas por patron:
+
+```csharp
+services.AddOpenTelemetry()
+    .WithMetrics(metrics => metrics
+        .AddView(instrument => EsMetricaDeGC(instrument.Name)
+            ? null
+            : MetricStreamConfiguration.Drop));
+```
+
+(`EsMetricaDeGC` es ilustrativo -- su nombre real y su implementacion son alcance de #778.) `null` conserva el instrumento con su configuracion por defecto; `MetricStreamConfiguration.Drop`
+lo descarta. **El par de dos `AddView` por patron queda proscrito**: un
+`AddView(instrumentName: "*", Drop)` mas un `AddView(instrumentName: "dotnet.gc.*", null)` no
+resuelve por "el mas especifico gana" -- la documentacion oficial de OpenTelemetry .NET es explicita
+en que las vistas hacen **fan-out**, no *first-match-wins*: *"When an instrument matches multiple
+views, it can generate multiple metrics"*; un instrumento GC que matchea ambas vistas produciria dos
+metric streams (una dropeada, otra conservada), no una sola resuelta a "conservar". Solo una vista
+func-based, que decide `null`/`Drop` por instrumento antes de que exista mas de un match posible,
+evita el fan-out.
+
+**Fallback de connection string, obligatorio en ambos lados.** A diferencia del pipeline de
+trazas/logs (seccion 9, resuelto lazily via `IConfiguration` cuando el `TracerProvider`/
+`LoggerProvider` se usan), el metric reader de `Azure.Monitor.OpenTelemetry.Exporter` construye su
+exporter de forma **sincronica al resolver el `MeterProvider`** -- y lanza si no hay connection
+string disponible en ese momento, incluso con todo el trafico de metricas en `Drop` (la vista filtra
+que se exporta, no si el exporter se construye). Asimetria trace/metric verificada por decompilacion
+y reproduccion aislada en la investigacion que origino este cambio. El seam necesita, en ambos
+lados, un fallback que solo actua si la connection string real todavia no esta disponible:
+
+```csharp
+services.PostConfigure<AzureMonitorExporterOptions>(o =>
+{
+    if (string.IsNullOrEmpty(o.ConnectionString))
+        o.ConnectionString = "InstrumentationKey=00000000-0000-0000-0000-000000000000";
+});
+```
+
+`PostConfigure` corre despues de cualquier `Configure`/binding real (incluida la resolucion via
+`IConfiguration` de la seccion 9), asi que nunca pisa una connection string real ya resuelta -- solo
+cubre el hueco cuando, al momento de construir el `MeterProvider`, esa resolucion todavia no ocurrio
+o la variable de entorno no esta declarada (por ejemplo, dentro del guardrail de composicion de mas
+abajo, que construye el contenedor sin un host real detras).
+
+**Guardrail de composicion, mismo principio de las secciones 4 y 9.** La garantia no es "la vista
+esta en el codigo", es un test que falla si la supresion desaparece. Se construye el contenedor real
+invocando el seam (no un objeto armado a mano) y se agrega un **segundo** `MetricReader` de
+solo-test **sobre esa misma composicion** -- `services.ConfigureOpenTelemetryMeterProvider(b =>
+b.AddInMemoryExporter(...))`, que se engancha al `MeterProviderBuilder` que el seam ya compuso en vez
+de armar uno paralelo que no probaria nada. Las vistas de un `MeterProviderBuilder` son globales al
+provider y aplican a todos sus readers por igual, asi que el `InMemoryExporter` observa exactamente
+el mismo resultado de filtrado que veria el reader real de Azure Monitor. El test emite las medidas
+sobre un `Meter` propio y **fuerza la recoleccion** (`ForceFlush()` sobre el `MeterProvider`
+resuelto) antes de afirmar: el reader exporta por intervalo, no en cada medida, y sin ese flush la
+asercion positiva del worker fallaria por temporizacion en vez de por la doctrina.
+
+- **Function App (write-side)**: se emite una medida en un instrumento de nombre arbitrario (no uno
+  de los ya conocidos por el marco) y se afirma que el `InMemoryExporter` no capturo nada -- un
+  instrumento arbitrario es una prueba mas fuerte que verificar una lista cerrada de familias,
+  porque tambien cubre cualquier instrumento que el runtime/SDK todavia no nombro.
+- **Worker de proyecciones (read-side)**: se emiten medidas en los 3 nombres GC literales mas un
+  instrumento arbitrario adicional; se afirma que las 3 primeras SI llegan al `InMemoryExporter` y
+  la cuarta no -- aqui el guardrail ancla a los 3 nombres literales porque son, a diferencia del
+  lado write-side, el **contrato exacto** que esta seccion fija (una lista cerrada, no una
+  wildcard).
+
+**Residuo declarado, no asumido: `_APPRESOURCEPREVIEW_`.** El propio exporter emite, via su registro
+interno de estadisticas del SDK (`CustomerSdkStatsRegistration`), un latido propio que puede viajar
+**fuera** del pipeline de vistas configurado arriba: las vistas de `MeterProviderBuilder` gobiernan
+los instrumentos que el codigo del marco y del dominio registran explicitamente, no necesariamente
+la telemetria interna que el exporter genera sobre si mismo. Este ADR **no da por resuelta** su
+suprimibilidad -- ninguna de las dos vistas de arriba se verifico contra ese instrumento especifico
+por ejecucion propia. Queda como **gate abierto de medicion**: confirmarlo o descartarlo exige
+telemetria real post-deploy (KQL contra Application Insights), no lectura de codigo ni un test
+unitario contra un `ServiceProvider` en memoria. Hasta que se cierre, ningun agente debe asumir en
+su documentacion que `_APPRESOURCEPREVIEW_` quedo suprimido.
+
 ## Alternativas consideradas
 
 ### Alt 1: apagar `DaemonSettings.ActivitySource` en vez de filtrar por nombre
@@ -543,6 +685,10 @@ todavia no se manifesto.
 - **Frontera mecanismo/valor reusable**: establece, para futura doctrina de observabilidad del marco,
   el mismo patron que MEF-ADR-0015 ya fijo para snapshots -- el marco resuelve el mecanismo por
   defecto, el consumidor decide el valor cuando aplica.
+- **El descarte de metricas de capacidad cierra otro eje de volumen sin perder senal accionable**
+  (seccion 10): igual que las secciones 5/6 con trazas, se elimina la telemetria de capacidad que
+  ninguna alerta ni skill del marco consume -- descarte total en Function Apps, solo la familia GC
+  en el worker -- sin depender del ratio de sampling ni de que el consumidor configure nada.
 
 ### Negativas
 
@@ -572,6 +718,15 @@ todavia no se manifesto.
   (`FunctionsApplication.CreateBuilder`, issue #700), pero un camino unico en ambos lados: un host
   que no exponga las variables de entorno en `IConfiguration` perderia la exportacion entera sin
   ningun error visible.
+- **El descarte total en Function Apps acepta quedarse ciego a un memory leak ahi tambien** (seccion
+  10), pese a que MEF-ADR-0020 las mantiene corriendo continuamente (`always_on = true`, instancia
+  unica sin escalado) -- no son procesos que se reinician por invocacion. Se acepta ese riesgo por el
+  mismo criterio de la frontera (seccion 1: nadie consume esa telemetria hoy) y porque el trafico de
+  invocacion ya se ve en `requests`/`dependencies`; un leak lento sin correlato de trafico no queda
+  cubierto por esta doctrina hasta que produzca una falla visible.
+- **La suprimibilidad de `_APPRESOURCEPREVIEW_` queda como gate abierto de medicion** (seccion 10):
+  esta enmienda no garantiza que el latido propio del exporter deje de contar contra el limite diario
+  de Application Insights.
 
 ## Referencias
 
@@ -595,6 +750,10 @@ todavia no se manifesto.
   worker (unico proceso con daemon). El criterio de apagar una metrica sin consumidor en vez de
   desacelerarla (Alt 3) **no** esta escrito en ese ADR -- su tabla de heuristicas cubre duplicacion y
   extraccion de codigo, no telemetria --; lo fija este ADR, en el mismo espiritu.
+- MEF-ADR-0020 (hosting de Azure Functions): `always_on = true`, plan dedicado `Basic` o superior sin
+  escalado horizontal -- fundamento de que las Function Apps corren continuamente (seccion 10), no de
+  que "escalen a cero"; el descarte de metricas ahi se justifica por ausencia de consumidor y
+  cobertura de `requests`/`dependencies`, no por brevedad del proceso.
 - MEF-ADR-0021 (infraestructura base): `site_config.application_insights_connection_string` del
   modulo `function-app`, que provee el valor que el exporter de la seccion 2 lee en runtime.
 - MEF-ADR-0025 (custodia de secretos): la connection string de Application Insights viaja como
@@ -621,6 +780,17 @@ todavia no se manifesto.
   aplica "otros defaults de `Host.CreateDefaultBuilder()`" y carga la configuracion de la app -- fuente
   de la consecuencia 1 de la seccion 9 en el write-side (issue #700).
   https://learn.microsoft.com/azure/azure-functions/dotnet-isolated-process-guide#start-up-and-configuration
+- Azure/azure-sdk-for-net, README de `Azure.Monitor.OpenTelemetry.Exporter` (rama `main`): *"Starting
+  with the 1.4.0-beta.3 version you can use the cross-cutting UseAzureMonitorExporter extension to
+  simplify registration of the OTLP exporter for all signals (traces, metrics, and logs)"* --
+  fundamento de la naturaleza cross-cutting de `UseAzureMonitorExporter()` en la seccion 10.
+  https://github.com/Azure/azure-sdk-for-net/blob/main/sdk/monitor/Azure.Monitor.OpenTelemetry.Exporter/README.md
+- open-telemetry/opentelemetry-dotnet, doc de customizacion del SDK de metricas (rama `main`,
+  `docs/metrics/customizing-the-sdk/README.md`): *"When an instrument matches multiple views, it can
+  generate multiple metrics"* -- fundamento de que las vistas de `MeterProviderBuilder` hacen
+  fan-out y no *first-match-wins*, y por tanto de que la seccion 10 proscriba el par de dos `AddView`
+  por patron en favor de una unica vista func-based.
+  https://github.com/open-telemetry/opentelemetry-dotnet/blob/main/docs/metrics/customizing-the-sdk/README.md
 
 ## Control de cambios
 
@@ -682,3 +852,25 @@ todavia no se manifesto.
   unicamente de la heuristica de unico-proceso-con-daemon de MEF-ADR-0018 -- en el write-side se
   sostiene en que el consumidor no puede decidir informadamente perder logs de error en proporcion a
   su ratio de trazas). Sin cambio de decision en el read-side.
+- 2026-08-30: sumada la seccion 10 (issue #764; gate de evidencia de un piloto externo cerrado --
+  doctrina generalizada aqui sin referencias al consumidor, evidencia queda en el issue).
+  `UseAzureMonitorExporter()` cablea tambien el pipeline de **metricas** (cross-cutting desde
+  1.4.0-beta.3, README oficial del exporter), y su instrumentacion automatica exporta por defecto
+  telemetria de capacidad (`dotnet.gc.*`, `kestrel.*`, `http.server.active_requests`,
+  `azure.functions.health_check.reports`, `*.cpu.time`) que ninguna alerta ni skill del marco lee. Se
+  descarta por completo en Function Apps (`AddView(instrumentName: "*", MetricStreamConfiguration.Drop)`)
+  y se reduce a la sola familia GC en el worker de proyecciones -- una **unica** vista func-based
+  (`null` para los 3 instrumentos GC, `Drop` para el resto), nunca un par de dos `AddView` por patron:
+  la documentacion oficial de customizacion del SDK de OpenTelemetry .NET confirma que las vistas
+  hacen fan-out sobre un mismo instrumento, no *first-match-wins*. Fija ademas el fallback
+  obligatorio de connection string via `PostConfigure<AzureMonitorExporterOptions>` (el metric reader
+  construye su exporter sincronicamente al resolver `MeterProvider` y lanza sin connection string aun
+  con todo en `Drop`, asimetria frente al pipeline de trazas/logs) y el guardrail de composicion
+  sobre el contenedor efectivo (segundo `MetricReader` de test via `AddInMemoryExporter`, mismo
+  principio de las secciones 4/9). Declara `_APPRESOURCEPREVIEW_` (latido propio del exporter) como
+  gate abierto de medicion, no resuelto por esta enmienda. El criterio serverless-vs-larga-vida se
+  ancla en MEF-ADR-0020 (Function Apps: `always_on = true`, sin escalado -- corren continuamente, la
+  doctrina no asume que "escalen a cero") y MEF-ADR-0034 (worker sin `ingress`, `min_replicas >= 1`,
+  unico proceso con daemon propio ya identificado en la seccion 5). Propagacion al codigo generado,
+  alcance de los issues #777 (`domain-scaffolder`) y #778 (`projections-scaffolder`) -- mismo patron
+  de delegacion que las secciones 3/5/6/7, no el de propagacion directa de la seccion 9.
