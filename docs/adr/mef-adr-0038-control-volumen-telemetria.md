@@ -576,8 +576,7 @@ services.AddOpenTelemetry()
             : MetricStreamConfiguration.Drop));
 ```
 
-(`EsMetricaDeGC` y el nombre real del metodo son ilustrativos -- la implementacion es alcance de
-#778.) `null` conserva el instrumento con su configuracion por defecto; `MetricStreamConfiguration.Drop`
+(`EsMetricaDeGC` es ilustrativo -- su nombre real y su implementacion son alcance de #778.) `null` conserva el instrumento con su configuracion por defecto; `MetricStreamConfiguration.Drop`
 lo descarta. **El par de dos `AddView` por patron queda proscrito**: un
 `AddView(instrumentName: "*", Drop)` mas un `AddView(instrumentName: "dotnet.gc.*", null)` no
 resuelve por "el mas especifico gana" -- la documentacion oficial de OpenTelemetry .NET es explicita
@@ -613,19 +612,24 @@ abajo, que construye el contenedor sin un host real detras).
 **Guardrail de composicion, mismo principio de las secciones 4 y 9.** La garantia no es "la vista
 esta en el codigo", es un test que falla si la supresion desaparece. Se construye el contenedor real
 invocando el seam (no un objeto armado a mano) y se agrega un **segundo** `MetricReader` de
-solo-test (`AddInMemoryExporter`) al mismo `MeterProviderBuilder` -- las vistas de un
-`MeterProviderBuilder` son globales al provider, aplican a todos sus readers por igual, asi que el
-`InMemoryExporter` observa exactamente el mismo resultado de filtrado que veria el reader real de
-Azure Monitor. Sobre un `Meter` arbitrario de test:
+solo-test **sobre esa misma composicion** -- `services.ConfigureOpenTelemetryMeterProvider(b =>
+b.AddInMemoryExporter(...))`, que se engancha al `MeterProviderBuilder` que el seam ya compuso en vez
+de armar uno paralelo que no probaria nada. Las vistas de un `MeterProviderBuilder` son globales al
+provider y aplican a todos sus readers por igual, asi que el `InMemoryExporter` observa exactamente
+el mismo resultado de filtrado que veria el reader real de Azure Monitor. El test emite las medidas
+sobre un `Meter` propio y **fuerza la recoleccion** (`ForceFlush()` sobre el `MeterProvider`
+resuelto) antes de afirmar: el reader exporta por intervalo, no en cada medida, y sin ese flush la
+asercion positiva del worker fallaria por temporizacion en vez de por la doctrina.
 
-- **Serverless**: se emite una medida en un instrumento de nombre arbitrario (no uno de los ya
-  conocidos por el marco) y se afirma que el `InMemoryExporter` no capturo nada -- un instrumento
-  arbitrario es una prueba mas fuerte que verificar una lista cerrada de familias, porque tambien
-  cubre cualquier instrumento que el runtime/SDK todavia no nombro.
-- **Worker**: se emiten medidas en los 3 nombres GC literales mas un instrumento arbitrario
-  adicional; se afirma que las 3 primeras SI llegan al `InMemoryExporter` y la cuarta no -- aqui el
-  guardrail ancla a los 3 nombres literales porque son, a diferencia del lado serverless, el
-  **contrato exacto** que esta seccion fija (una lista cerrada, no una wildcard).
+- **Function App (write-side)**: se emite una medida en un instrumento de nombre arbitrario (no uno
+  de los ya conocidos por el marco) y se afirma que el `InMemoryExporter` no capturo nada -- un
+  instrumento arbitrario es una prueba mas fuerte que verificar una lista cerrada de familias,
+  porque tambien cubre cualquier instrumento que el runtime/SDK todavia no nombro.
+- **Worker de proyecciones (read-side)**: se emiten medidas en los 3 nombres GC literales mas un
+  instrumento arbitrario adicional; se afirma que las 3 primeras SI llegan al `InMemoryExporter` y
+  la cuarta no -- aqui el guardrail ancla a los 3 nombres literales porque son, a diferencia del
+  lado write-side, el **contrato exacto** que esta seccion fija (una lista cerrada, no una
+  wildcard).
 
 **Residuo declarado, no asumido: `_APPRESOURCEPREVIEW_`.** El propio exporter emite, via su registro
 interno de estadisticas del SDK (`CustomerSdkStatsRegistration`), un latido propio que puede viajar
@@ -746,6 +750,10 @@ todavia no se manifesto.
   worker (unico proceso con daemon). El criterio de apagar una metrica sin consumidor en vez de
   desacelerarla (Alt 3) **no** esta escrito en ese ADR -- su tabla de heuristicas cubre duplicacion y
   extraccion de codigo, no telemetria --; lo fija este ADR, en el mismo espiritu.
+- MEF-ADR-0020 (hosting de Azure Functions): `always_on = true`, plan dedicado `Basic` o superior sin
+  escalado horizontal -- fundamento de que las Function Apps corren continuamente (seccion 10), no de
+  que "escalen a cero"; el descarte de metricas ahi se justifica por ausencia de consumidor y
+  cobertura de `requests`/`dependencies`, no por brevedad del proceso.
 - MEF-ADR-0021 (infraestructura base): `site_config.application_insights_connection_string` del
   modulo `function-app`, que provee el valor que el exporter de la seccion 2 lee en runtime.
 - MEF-ADR-0025 (custodia de secretos): la connection string de Application Insights viaja como
@@ -783,10 +791,6 @@ todavia no se manifesto.
   fan-out y no *first-match-wins*, y por tanto de que la seccion 10 proscriba el par de dos `AddView`
   por patron en favor de una unica vista func-based.
   https://github.com/open-telemetry/opentelemetry-dotnet/blob/main/docs/metrics/customizing-the-sdk/README.md
-- MEF-ADR-0020 (hosting de Azure Functions): `always_on = true`, plan dedicado `Basic` o superior sin
-  escalado horizontal -- fundamento de que las Function Apps corren continuamente (seccion 10), no de
-  que "escalen a cero"; el descarte de metricas ahi se justifica por ausencia de consumidor y
-  cobertura de `requests`/`dependencies`, no por brevedad del proceso.
 
 ## Control de cambios
 
