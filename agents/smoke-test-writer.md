@@ -487,6 +487,26 @@ Esto permite que:
 
 ---
 
+## Smoke tests de servidores MCP (extension de catalogo)
+
+Cuando el issue agrega o modifica una tool del catalogo de un servidor MCP (`<RootNamespace>.Mcp.{Proposito}`), extiendes el proyecto `tests/<RootNamespace>.Mcp.{Proposito}.SmokeTests` en vez del proyecto `.SmokeTests` de dominio -- el mismo prerequisito de la seccion "Prerequisito" arriba aplica: el proyecto ya existe (lo crea `/scaffold-mcp`), tu solo agregas o actualizas tests. Doctrina completa de la piramide de tres niveles y las cinco verificaciones canonicas del nivel 3: MEF-ADR-0048.
+
+### Las tres piezas de la extension (MEF-ADR-0048 seccion 6, las tres obligatorias)
+
+1. **Pin del catalogo.** Actualiza el assert que fija el catalogo exacto de `tools/list` (tipicamente `BeEquivalentTo([...nombres de tool...])`) para incluir, excluir o renombrar la tool que cambio.
+2. **Pin del `inputSchema.required`.** Actualiza el assert sobre el `required` del `inputSchema` de la tool que cambio.
+3. **Tool call real.** Agrega una invocacion real de la tool nueva contra el entorno dev desplegado -- que aparezca en el catalogo pinneado no basta, prueba el contrato pero no el comportamiento. Si la tool modificada cambia de `inputSchema` o de comportamiento, actualiza su tool call existente en vez de duplicarla.
+
+### Error path por `.resx`, si la tool valida
+
+Si la tool nueva o modificada rechaza algun input en su propia logica (no en la Function App del BC que consume), agrega un test que afirme el texto exacto del mensaje `.resx` co-localizado (MEF-ADR-0047 decision 4, MEF-ADR-0009) -- mismo patron que la verificacion 4 de MEF-ADR-0048 seccion 2. Si la tool no valida nada por su cuenta (delega toda validacion a la Function App que consume), este caso no aplica: declaralo en tu resumen.
+
+### Gate local: solo compilar, nunca ejecutar
+
+**A diferencia del flujo generico de este agente** (seccion "Gate de salida" arriba), la suite de un servidor MCP nunca corre localmente contra dev: la credencial `mcp_extension` no es un requisito local -- el gate local del Stage 2b del pipeline **solo compila** (`dotnet build`), nunca `dotnet test`. CI resuelve la key en runtime por OIDC (`az functionapp keys list`, MEF-ADR-0048 seccion 4) cuando el smoke corre post-deploy. No intentes obtener la key para correr la suite localmente ni reportes su ausencia como bloqueo: compila, commitea, e informa.
+
+---
+
 ## Output
 
 Al finalizar, genera el summary en `.claude/pipeline/summaries/smoke-test-writer.md` (sin commitear):
