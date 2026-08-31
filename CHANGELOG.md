@@ -4,6 +4,47 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-08-31
+
+### Changed
+
+- Se enmienda MEF-ADR-0038 (control de volumen de telemetria) con la doctrina de exportacion de
+  metricas OTel: descarte total por wildcard (`AddView(instrumentName: "*", MetricStreamConfiguration.Drop)`)
+  en Function Apps y conservacion exclusiva de la familia GC (`dotnet.gc.*`) en el worker de
+  proyecciones via una unica vista func-based, mas el fallback obligatorio de connection string
+  (`PostConfigure<AzureMonitorExporterOptions>`) y el guardrail de composicion sobre el contenedor
+  efectivo. Declara `_APPRESOURCEPREVIEW_` como gate abierto de medicion, no resuelto.
+- La receta de `domain-scaffolder` (Paso 6b) aterriza la doctrina de MEF-ADR-0038 seccion 10
+  (enmienda #764) en las Function Apps nuevas: `AddView(instrumentName: "*", MetricStreamConfiguration.Drop)`
+  para el descarte total de metricas OTel, el fallback `PostConfigure<AzureMonitorExporterOptions>`
+  con connection string dummy (evita el `InvalidOperationException` sincronico al resolver
+  `MeterProvider` sin connection string real todavia) y los dos guardrails de composicion sobre el
+  contenedor efectivo (`ComposicionContenedorTests`, Paso 2 punto 9): un instrumento arbitrario no
+  llega al `InMemoryExporter` y el `TracerProvider` se sigue resolviendo. El `.csproj` de tests suma
+  `OpenTelemetry.Exporter.InMemory` 1.13.1 (alineado con el core que ya resuelve la receta), que
+  **no** se propaga a `PublicEvents.Tests`/`PrivateEvents.Tests`.
+- La receta de `projections-scaffolder` (Paso 1d) aterriza la doctrina de MEF-ADR-0038 seccion 10
+  (enmienda #764) en el seam de observabilidad `ConfiguracionObservabilidadProjections` del worker
+  de proyecciones: a diferencia del descarte total de las Function Apps (#777), aqui una UNICA
+  vista func-based (`AddView(instrument => EsMetricaDeGC(instrument.Name) ? null :
+  MetricStreamConfiguration.Drop)`) conserva solo la familia GC (`dotnet.gc.collections`,
+  `dotnet.gc.last_collection.heap.size`, `dotnet.gc.last_collection.heap.fragmentation.size`) --
+  el unico proxy de memory leak de este proceso 24/7 sin ingress. Suma el mismo fallback
+  `PostConfigure<AzureMonitorExporterOptions>` con connection string dummy (evita el
+  `InvalidOperationException` sincronico al resolver `MeterProvider`) y dos guardrails nuevos en
+  `ConfiguracionObservabilidadProjectionsTests`: un instrumento arbitrario no llega al
+  `InMemoryExporter` sin tumbar el `TracerProvider`, y la familia GC sobrevive intacta aunque
+  conviva con un instrumento arbitrario en la misma composicion ([Theory] con los 3 nombres GC
+  literales). El `.csproj` de `Projections.Tests` suma `OpenTelemetry.Exporter.InMemory` 1.17.0
+  (alineado con el core `OpenTelemetry.Extensions.Hosting` que ya pinnea esta receta).
+- El mismo Paso 1d cierra el hueco del seam preexistente: un worker cuyo
+  `ConfiguracionObservabilidadProjections` se escribio antes de este cambio reporta `seam: EXISTE`
+  y nunca recibiria la supresion de metricas, dejando en rojo los guardrails nuevos. La receta lo
+  detecta con un probe propio y repone los dos bloques de forma **aditiva** (excepcion explicita en
+  la regla absoluta 1, hermana de la linea `.ConfigurarObservabilidad()` de `Program.cs`), y prohibe
+  afirmar que "nada mas se exporta" mientras `_APPRESOURCEPREVIEW_` siga como gate abierto de
+  medicion en MEF-ADR-0038 seccion 10.
+
 ## [0.32.0] - 2026-08-30
 
 ### Added
@@ -1595,7 +1636,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.32.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.33.0...HEAD
+[0.33.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.29.0...v0.30.0

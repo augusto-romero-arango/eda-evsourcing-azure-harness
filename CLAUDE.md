@@ -285,6 +285,7 @@ El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o
 | Doctrina de servidores MCP serverless (ruta tecnica, granularidad por BC/proposito, aislamiento, diseno de tools, custodia de la key) | MEF-ADR-0047 |
 | Testing de servidores MCP (piramide de tres niveles, verificaciones canonicas del smoke e2e, endpoints de gate propios y credencial de CI en runtime) | MEF-ADR-0048 |
 | Enmienda a MEF-ADR-0013: MEF-ADR-0048 extiende la doctrina de smoke tests a servidores MCP | MEF-ADR-0013 |
+| Doctrina de exportacion de metricas OTel (descarte total en Function Apps por wildcard, solo familia GC en el worker de proyecciones via vista func-based, fallback de connection string y guardrail de composicion) | MEF-ADR-0038 |
 
 ## Convenciones del marco
 
