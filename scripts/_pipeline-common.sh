@@ -1561,6 +1561,22 @@ coverage_classify_file() {
         esac
     fi
 
+    # *Api.cs bajo Infraestructura/ de un servidor MCP (issue #788, MEF-ADR-0047
+    # decision 3, agents/mcp-scaffolder.md artefacto 5): cliente HTTP tipado que
+    # arma el request y devuelve el HttpResponseMessage crudo -- wiring puro,
+    # mismo rol que RequestValidator.cs/ServiceBusDeserializador.cs arriba. El
+    # check de esos dos exige un '/' DESPUES de "Infraestructura" en $dirname
+    # (solo dispara con subcarpeta, ver comentario del Escenario B del test), pero
+    # el layout real de mcp-scaffolder coloca *Api.cs directo en Infraestructura/
+    # sin subcarpeta -- por eso este check ancla "Infraestructura" como segmento
+    # completo de ruta, hoja o no, en vez de reusar el de arriba.
+    if echo "$dirname" | grep -qE '(^|/)Infraestructura(/|$)'; then
+        case "$basename" in
+            *Api.cs)
+                echo "excluded"; return ;;
+        esac
+    fi
+
     # Carve-out read-side (issue #371, MEF-ADR-0014 + MEF-ADR-0035 seccion 6):
     # el FunctionEndpoint.cs de una query GET delgada (Obtener{X}/Listar{X}s,
     # naming.md del Skill projections) no exige cobertura unitaria -- se cubre
@@ -1598,8 +1614,14 @@ coverage_classify_file() {
     # *Projection.cs arriba. Patron anclado al final del basename: el
     # companion {Clase}.Mensajes.cs del handler (MEF-ADR-0009) cae antes en la
     # exclusion de boilerplate de arriba y sigue sin medirse.
+    # *Tool.cs (issue #788, MEF-ADR-0047 decision 4): el McpToolTrigger es el
+    # punto de entrada de un servidor MCP con logica de negocio real (routing
+    # de parametros, filtros de relevancia, truncado con senal), y MEF-ADR-0048
+    # nivel 1 exige unit tests de esa logica -- mismo peso que un
+    # CommandHandler. Tampoco va gateado por is_projection ni por label, mismo
+    # razonamiento que *Projection.cs/*EventHandler.cs arriba.
     case "$basename" in
-        *CommandHandler.cs|*AggregateRoot.cs|*Validator.cs|FunctionEndpoint.cs|*Projection.cs|*EventHandler.cs)
+        *CommandHandler.cs|*AggregateRoot.cs|*Validator.cs|FunctionEndpoint.cs|*Projection.cs|*EventHandler.cs|*Tool.cs)
             echo "logic"; return ;;
     esac
 
@@ -1628,30 +1650,42 @@ coverage_classify_file() {
     # Sin depender del conteo de lineas -- el estilo canonico es
     # multilinea -- ni de 'public record' adyacente -- el estilo canonico
     # es 'public sealed record'. Se aplana el contenido (una sola linea) y
-    # se ubica la declaracion del record con sus modificadores opcionales
+    # se ubica cada declaracion de record con sus modificadores opcionales
     # (sealed/partial, en cualquier combinacion); si tras cerrar la lista
-    # de parametros el archivo termina en ';' es un DTO sin cuerpo -> se
-    # excluye. Si en cambio abre un cuerpo '{' (metodos u otros miembros)
-    # no se excluye por esta regla.
-    # Segunda condicion: el archivo declara UN solo tipo. Es lo que sustituye
-    # el rol acotador del viejo 'line_count -le 3' (que ademas de acotar
-    # rechazaba el estilo canonico multilinea): sin ella, un archivo con un
-    # record DTO junto a -- o dentro de -- una clase con metodos se etiquetaria
-    # "excluido" por su primer match, escondiendo de la revision humana un
-    # archivo que en realidad nadie midio (sale como "sin clasificar").
+    # de parametros el record termina en ';' es un DTO sin cuerpo. Si en
+    # cambio abre un cuerpo '{' (metodos u otros miembros) no cuenta como
+    # record puro.
+    # Segunda condicion (issue #788, relaja la original "el archivo declara
+    # UN solo tipo" del issue #416): TODOS los tipos declarados en el
+    # archivo son records puros -- conteo de record-decls puros == total de
+    # type_decls. El layout natural de un contrato upstream redeclarado
+    # (MEF-ADR-0047 decision 3) es un archivo con N records puros (ej.
+    # FichaColaborador + EtiquetaFicha), y todos deberian excluirse igual.
+    # La proteccion que motivo la cota original se preserva: un record puro
+    # junto a -- o dentro de -- una clase (o cualquier tipo) con metodos deja
+    # pure_record_count < type_decls y sigue sin excluirse, evitando que se
+    # etiquete "excluido" un archivo que en realidad nadie midio.
     if [ -f "$worktree_path/$filepath" ]; then
         local content
         content=$(grep -v '^\s*//' "$worktree_path/$filepath" | grep -v '^\s*$' | grep -v '^using ' | grep -v '^namespace ' || true)
         local content_flat
         content_flat=$(echo "$content" | tr '\n' ' ')
-        local record_decl
-        record_decl=$(echo "$content_flat" | grep -oE 'public\s+(sealed\s+|partial\s+)*record\s+\w+\([^()]*\)[^;{]*[;{]' 2>/dev/null | head -1)
+        local record_decls
+        record_decls=$(echo "$content_flat" | grep -oE 'public\s+(sealed\s+|partial\s+)*record\s+\w+\([^()]*\)[^;{]*[;{]' 2>/dev/null || true)
         local type_decls
         type_decls=$(echo "$content_flat" | grep -oE '(class|record|struct|interface|enum)\s+\w+' 2>/dev/null | wc -l | tr -d ' ')
-        if [ -n "$record_decl" ] && [ "$type_decls" -eq 1 ]; then
-            case "$record_decl" in
-                *\;) echo "excluded"; return ;;
-            esac
+        if [ -n "$record_decls" ]; then
+            # '|| true' en los dos grep de arriba y de aqui: los pipelines
+            # publicados corren bajo `set -euo pipefail` y un grep sin match
+            # sale con status 1 (grep -c imprime "0" pero tambien sale 1),
+            # asi que sin la guarda un archivo sin records -- o con records
+            # todos con cuerpo -- podria abortar a un caller que invoque la
+            # funcion directamente, no dentro de una sustitucion de comando.
+            local pure_record_count
+            pure_record_count=$(echo "$record_decls" | grep -cE ';$' || true)
+            if [ "$pure_record_count" -eq "$type_decls" ]; then
+                echo "excluded"; return
+            fi
         fi
     fi
 
