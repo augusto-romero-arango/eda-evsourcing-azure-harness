@@ -1062,21 +1062,40 @@ fi
 # MEF-ADR-0006) viven en una carpeta SIN sufijo "Function" -- el patron 'Function/'
 # no las detecta, asi que el issue tipo:projection suma el patron de esas carpetas
 # para que Stage 2b siga corriendo (CA-1: smoke-test-writer se mantiene).
+# Rama MCP (issue #791, MEF-ADR-0047/MEF-ADR-0048): una tool nueva o modificada
+# de un servidor MCP (src/{NS}.Mcp.{Proposito}/.../{X}Tool.cs) tampoco cae bajo
+# 'Function/', asi que SMOKE_FILES suma tambien ese patron -- sin condicionar a
+# IS_PROJECTION, porque una tool MCP es ortogonal al tipo write-side/read-side
+# del issue. La resolucion de SMOKE_TEST_PROJECT no necesita una rama aparte:
+# el mismo sed que extrae "{Dominio}" de src/{NS}.{Dominio}/... extrae
+# "Mcp.{Proposito}" completo de src/{NS}.Mcp.{Proposito}/... (el punto interno
+# no es separador de ruta), asi que ya cae en tests/{NS}.Mcp.{Proposito}.SmokeTests.
 if [ "$IS_REFACTOR" != true ] && [ "$FROM_STAGE" -le 2 ]; then
+    MCP_TOOL_PATTERN="src/${HARNESS_NAMESPACE_PREFIX}\.Mcp\.[^/]+/.*Tool\.cs$"
     if [ "$IS_PROJECTION" = true ]; then
         SMOKE_FILES=$(git -C "$WORKTREE_PATH" diff --name-only "$SNAPSHOT_COMMIT"..HEAD \
-            | grep -E 'Function/|/(Obtener|Listar)[A-Za-z0-9]*/FunctionEndpoint\.cs$' || true)
+            | grep -E "Function/|/(Obtener|Listar)[A-Za-z0-9]*/FunctionEndpoint\.cs$|${MCP_TOOL_PATTERN}" || true)
     else
-        SMOKE_FILES=$(git -C "$WORKTREE_PATH" diff --name-only "$SNAPSHOT_COMMIT"..HEAD | grep -E 'Function/' || true)
+        SMOKE_FILES=$(git -C "$WORKTREE_PATH" diff --name-only "$SNAPSHOT_COMMIT"..HEAD | grep -E "Function/|${MCP_TOOL_PATTERN}" || true)
     fi
 
     if [ -n "$SMOKE_FILES" ]; then
-        # Detectar dominio desde los archivos modificados
+        # Detectar dominio (o servidor MCP) desde los archivos modificados
         SMOKE_DOMAIN=$(echo "$SMOKE_FILES" | head -1 | sed "s|src/${HARNESS_NAMESPACE_PREFIX}\.\([^/]*\)/.*|\1|")
         SMOKE_TEST_PROJECT="tests/${HARNESS_NAMESPACE_PREFIX}.${SMOKE_DOMAIN}.SmokeTests"
+        IS_MCP_SMOKE=false
+        echo "$SMOKE_FILES" | head -1 | grep -qE "$MCP_TOOL_PATTERN" && IS_MCP_SMOKE=true
 
         if [ -d "$WORKTREE_PATH/$SMOKE_TEST_PROJECT" ]; then
             header "Stage 2b: Smoke Test Writer"
+
+            if [ "$IS_MCP_SMOKE" = true ]; then
+                SMOKE_FILES_DESC="las siguientes tools de un servidor MCP"
+                SMOKE_TASK_LINE="Tu tarea: extiende la suite SmokeTests del servidor MCP (pin de catálogo, pin de schema, tool call real) para las tools nuevas o modificadas -- sigue la doctrina de extensión de servidores MCP de tu rol (MEF-ADR-0048), no la de Functions HTTP."
+            else
+                SMOKE_FILES_DESC="los siguientes endpoints"
+                SMOKE_TASK_LINE="Tu tarea: escribe smoke tests para los endpoints nuevos o modificados."
+            fi
 
             STAGE2B_PROMPT="Estás en el directorio raíz del proyecto ${HARNESS_PROJECT_NAME}.
 
@@ -1084,10 +1103,10 @@ Contexto de la historia de usuario:
 
 $ISSUE_CONTEXT
 
-El $STAGE2_AGENT creó/modificó los siguientes endpoints:
+El $STAGE2_AGENT creó/modificó $SMOKE_FILES_DESC:
 $SMOKE_FILES
 
-Tu tarea: escribe smoke tests para los endpoints nuevos o modificados.
+$SMOKE_TASK_LINE
 IMPORTANTE: Solo escribe y compila. NO ejecutes los tests (el entorno dev puede no tener este código desplegado aún).
 Usa 'dotnet build' para verificar compilación, pero NO uses 'dotnet test'.
 
