@@ -38,6 +38,12 @@
 #      ruta); sin Crear() ahi mismo -> not_evaluated; record plano de bus con
 #      marker en PublicEvents/PrivateEvents -> excluded (no-regresion de la
 #      regla DTO de F, sin cambio de codigo); IdentidadEventos*.cs -> excluded
+#   I) Patrones del servidor MCP (issue #788, MEF-ADR-0047/MEF-ADR-0048):
+#      *Tool.cs -> logic; *Api.cs bajo Infraestructura/ (leaf, sin subcarpeta)
+#      -> excluded, *Api.cs fuera de Infraestructura/ -> not_evaluated;
+#      archivo con N records DTO puros (contrato upstream redeclarado,
+#      MEF-ADR-0047 decision 3) -> excluded, relajando la cota "un solo tipo"
+#      del Escenario F a "todos los tipos son records puros"
 #
 # Uso: scripts/tests/test-coverage-gate-classify-file.sh
 # Exit code: 0 si todos los escenarios pasan, 1 si alguno falla.
@@ -357,16 +363,16 @@ public sealed class ClaseConRecordAnidado
 assert_eq "F6: record anidado dentro de una clase con metodos no se excluye" "not_evaluated" \
     "$(coverage_classify_file "src/Foo.Bar/ClaseConRecordAnidado.cs" "$TMP_DIR" false)"
 
-# Varios DTOs sin cuerpo en el mismo archivo (dos records de contrato) tampoco
-# se excluyen: la cota es "un solo tipo declarado", deliberadamente
-# conservadora -- de mas a menos exclusion solo se pierde precision del
-# reporte, nunca medicion.
+# Varios DTOs sin cuerpo en el mismo archivo (dos records de contrato): desde
+# el issue #788 la cota ya no es "un solo tipo declarado" sino "todos los
+# tipos declarados son records puros" -- ver Escenario I para el caso real
+# (contrato upstream redeclarado con MEF-ADR-0047 decision 3).
 write_fixture "src/Foo.ReadModels/DosViews.cs" 'namespace Foo.ReadModels;
 
 public sealed record UnaView(Guid Id);
 public sealed record OtraMasView(Guid Id);
 '
-assert_eq "F7: dos records en el mismo archivo -> sin clasificar (cota conservadora)" "not_evaluated" \
+assert_eq "F7: dos records puros en el mismo archivo -> excluded (cota relajada, issue #788)" "excluded" \
     "$(coverage_classify_file "src/Foo.ReadModels/DosViews.cs" "$TMP_DIR" false)"
 
 # Forma realista del read model canonico (skills/projections/modelos-marten.md):
@@ -455,6 +461,55 @@ public static class IdentidadEventosVentas { }
 '
 assert_eq "H5: IdentidadEventosVentas.cs -> excluded" "excluded" \
     "$(coverage_classify_file "src/Foo.Bar.Ventas.DomainEvents/IdentidadEventosVentas.cs" "$TMP_DIR" false)"
+
+# ─── Escenario I: patrones del servidor MCP (issue #788) ───────────────────
+echo "Escenario I: patrones del servidor MCP (MEF-ADR-0047/MEF-ADR-0048)"
+write_fixture "src/Foo.Mcp.Colaboradores/ListarColaboradoresTool.cs" 'namespace Foo.Mcp.Colaboradores;
+
+public sealed class ListarColaboradoresTool { }
+'
+assert_eq "I1: *Tool.cs -> logic" "logic" \
+    "$(coverage_classify_file "src/Foo.Mcp.Colaboradores/ListarColaboradoresTool.cs" "$TMP_DIR" false)"
+
+write_fixture "src/Foo.Mcp.Colaboradores/Infraestructura/ColaboradoresApi.cs" 'namespace Foo.Mcp.Colaboradores.Infraestructura;
+
+internal sealed class ColaboradoresApi { }
+'
+assert_eq "I2: Infraestructura/{X}Api.cs (leaf, sin subcarpeta) -> excluded" "excluded" \
+    "$(coverage_classify_file "src/Foo.Mcp.Colaboradores/Infraestructura/ColaboradoresApi.cs" "$TMP_DIR" false)"
+
+write_fixture "src/Foo.Mcp.Colaboradores/ColaboradoresApi.cs" 'namespace Foo.Mcp.Colaboradores;
+
+internal sealed class ColaboradoresApi { }
+'
+assert_eq "I3: *Api.cs fuera de Infraestructura/ -> not_evaluated" "not_evaluated" \
+    "$(coverage_classify_file "src/Foo.Mcp.Colaboradores/ColaboradoresApi.cs" "$TMP_DIR" false)"
+
+write_fixture "src/Foo.Mcp.Colaboradores/Infraestructura/FichaColaborador.cs" 'namespace Foo.Mcp.Colaboradores.Infraestructura;
+
+public sealed record FichaColaborador(
+    Guid Id,
+    string Nombre,
+    EtiquetaFicha Etiqueta);
+
+public sealed record EtiquetaFicha(
+    string Codigo,
+    string Descripcion);
+'
+assert_eq "I4: contrato upstream con N records puros -> excluded (cota relajada)" "excluded" \
+    "$(coverage_classify_file "src/Foo.Mcp.Colaboradores/Infraestructura/FichaColaborador.cs" "$TMP_DIR" false)"
+
+write_fixture "src/Foo.Mcp.Colaboradores/Infraestructura/FichaConFiltro.cs" 'namespace Foo.Mcp.Colaboradores.Infraestructura;
+
+public sealed record FichaConFiltro(Guid Id, string Nombre);
+
+public static class FiltroDeFicha
+{
+    public static bool EsValida(FichaConFiltro f) => f.Id != Guid.Empty;
+}
+'
+assert_eq "I5: record puro junto a una clase con metodos -> not_evaluated (proteccion preservada)" "not_evaluated" \
+    "$(coverage_classify_file "src/Foo.Mcp.Colaboradores/Infraestructura/FichaConFiltro.cs" "$TMP_DIR" false)"
 
 echo
 echo "─── Resumen ───"

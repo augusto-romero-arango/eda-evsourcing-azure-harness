@@ -55,8 +55,8 @@ Los archivos se clasifican en dos categorias con umbrales diferenciados:
 
 | Categoria | Umbral | Archivos |
 |---|---|---|
-| **Logica** | 95%+ | `*CommandHandler.cs`, `*AggregateRoot.cs`, `*Validator.cs`, `Eventos/*.cs` con factory `Crear()`, value objects con factory `Crear()`, `FunctionEndpoint.cs`, `*EventHandler.cs` |
-| **Excluido** | No se mide | `HealthCheck.cs`, `Program.cs`, `*Mensajes.cs`, `*.resx`, `*AssemblyMarker.cs`, `ConfiguracionSerializacion*.cs`, `Infraestructura/` wiring puro, records DTO sin metodos |
+| **Logica** | 95%+ | `*CommandHandler.cs`, `*AggregateRoot.cs`, `*Validator.cs`, `Eventos/*.cs` con factory `Crear()`, value objects con factory `Crear()`, `FunctionEndpoint.cs`, `*EventHandler.cs`, `*Tool.cs` de un servidor MCP |
+| **Excluido** | No se mide | `HealthCheck.cs`, `Program.cs`, `*Mensajes.cs`, `*.resx`, `*AssemblyMarker.cs`, `ConfiguracionSerializacion*.cs`, `Infraestructura/` wiring puro (incluye `*Api.cs` de un servidor MCP), records DTO puros sin metodos (uno o varios por archivo) |
 
 Razon del 95%: la logica de dominio ya esta consistentemente al 100% cuando los agentes trabajan bien. Un 95% deja margen para lineas inalcanzables (constructores privados de serializacion, fallbacks defensivos) sin esconder gaps reales. Un umbral mas bajo (80-90%) no detectaria los atajos que queremos atrapar.
 
@@ -108,3 +108,9 @@ Si la instrumentacion falla por cualquier razon, el pipeline emite warning y con
 
 - **Branch coverage no disponible**: `dotnet-coverage` con instrumentacion estatica en .NET 10 no reporta datos de branches (`branch-rate="1"` siempre). Se usa line coverage como proxy. Cuando la herramienta lo soporte, se puede ajustar el gate para usar branch coverage con umbrales apropiados
 - **Clasificacion por nombre de archivo**: la heuristica de clasificacion usa patrones de nombre, no analisis semantico del codigo. Un archivo mal nombrado podria clasificarse incorrectamente. Mitigation: los archivos "sin clasificar" se reportan con marcador de atencion propio y nota al pie, tipograficamente distintos de una exclusion deliberada, para revision humana
+
+---
+
+## Control de cambios
+
+- 2026-08-31: enmendado (issue #788) para sumar los patrones de un servidor MCP (MEF-ADR-0047/MEF-ADR-0048) a la clasificacion: `*Tool.cs` pasa a logica (routing de parametros, filtros de relevancia, truncado con senal -- MEF-ADR-0047 decision 4 --, y MEF-ADR-0048 nivel 1 exige unit tests de esa logica); `*Api.cs` bajo `Infraestructura/` pasa a excluido (cliente HTTP tipado que devuelve el `HttpResponseMessage` crudo, MEF-ADR-0047 decision 3); y la exclusion de records DTO se relaja de "un solo tipo declarado por archivo" a "todos los tipos declarados son records puros", para no dejar "sin clasificar" un contrato upstream redeclarado con varios records (MEF-ADR-0047 decision 3).
