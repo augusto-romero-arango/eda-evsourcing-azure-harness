@@ -442,7 +442,9 @@ using FluentValidation;
 using Marten;
 using Microsoft.Azure.Functions.Worker.OpenTelemetry;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using OpenTelemetry;
+using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 
 namespace <RootNamespace>.{PascalCase}.Infraestructura;
@@ -542,6 +544,24 @@ public static class ComposicionServicios{PascalCase}
 
         services.AddOpenTelemetry()
             .UseFunctionsWorkerDefaults()
+            // Metricas: descarte total por wildcard (MEF-ADR-0038 seccion 10, issue #764/#777).
+            // UseAzureMonitorExporter() (mas abajo) es cross-cutting -- cablea metricas ademas de
+            // trazas y logs sin ningun mecanismo de exclusion propio -- y la instrumentacion
+            // automatica del runtime/host de Functions exporta por defecto telemetria de CAPACIDAD
+            // (dotnet.gc.*, kestrel.*, http.server.active_requests,
+            // azure.functions.health_check.reports, *.cpu.time, entre otras) que ninguna alerta ni
+            // skill de este marco lee -- las unicas senales que el marco consume son exceptions
+            // (MEF-ADR-0034 seccion 8) y requests/dependencies (MEF-ADR-0013, MEF-ADR-0031). En una
+            // Function App (MEF-ADR-0020: plan dedicado, always_on, instancia unica sin escalado
+            // horizontal) esa telemetria de capacidad no aporta ninguna senal que el trafico real de
+            // invocacion y el poll del durability agent (ya apagado en origen, arriba) no cubran ya.
+            // Wildcard TOTAL, no lista de familias con nombre: una familia nueva que el runtime
+            // agregue en una version futura -- o un rename de una existente -- no se cuela por
+            // omision. "No registrar ningun .WithMetrics(...)" no es una alternativa disponible: por
+            // ser cross-cutting, el exporter cablea metricas de todas formas con todas las
+            // instrumentaciones automaticas activas si el Drop no se declara explicitamente.
+            .WithMetrics(metrics => metrics
+                .AddView(instrumentName: "*", MetricStreamConfiguration.Drop))
             .WithTracing(tracing => tracing
                 .AddSource("Wolverine")
                 .AddSource("Marten")
@@ -588,6 +608,27 @@ public static class ComposicionServicios{PascalCase}
             .WithTracing(tracing => tracing
                 .SetSampler(new ParentBasedSampler(new TraceIdRatioBasedSampler(samplingRatio))));
 
+        // Fallback de connection string del exporter de metricas (MEF-ADR-0038 seccion 10): a
+        // diferencia del pipeline de trazas/logs (seccion 9, resuelto lazily via IConfiguration
+        // cuando el TracerProvider/LoggerProvider se usan), el metric reader de
+        // Azure.Monitor.OpenTelemetry.Exporter construye su exporter de forma SINCRONICA al resolver
+        // el MeterProvider -- y lanza InvalidOperationException si no hay connection string
+        // disponible en ese momento, incluso con TODO el trafico de metricas en Drop (la vista de
+        // arriba filtra que se exporta, no si el exporter se construye; asimetria trace/metric
+        // verificada por decompilacion, evidencia (d) de #764). PostConfigure corre despues de
+        // cualquier Configure/binding real -- incluida la resolucion via IConfiguration que ya trae
+        // APPLICATIONINSIGHTS_CONNECTION_STRING (app setting por referencia @Microsoft.KeyVault(...),
+        // Paso 4) -- asi que nunca pisa una connection string real ya resuelta: solo cubre el hueco
+        // cuando esa resolucion todavia no ocurrio (greenfield sin App Insights desplegado todavia, o
+        // arranque en frio con la referencia de Key Vault sin resolver) o dentro del guardrail de
+        // composicion de ComposicionContenedorTests (Paso 2 punto 9), que construye el contenedor sin
+        // un host real detras.
+        services.PostConfigure<AzureMonitorExporterOptions>(opciones =>
+        {
+            if (string.IsNullOrEmpty(opciones.ConnectionString))
+                opciones.ConnectionString = "InstrumentationKey=00000000-0000-0000-0000-000000000000";
+        });
+
         // Serializacion JSON global: camelCase hacia el cliente, case-insensitive en lectura
         services.Configure<JsonSerializerOptions>(options =>
         {
@@ -613,6 +654,10 @@ public static class ComposicionServicios{PascalCase}
 **Durability agent del write-side (MEF-ADR-0038 seccion 6):** se apaga en origen la recoleccion de metricas de profundidad de cola (`options.Durability.DurabilityMetricsEnabled = false;`), nunca la durabilidad real -- `Durability.Mode` y `Durability.DurabilityAgentEnabled` no se tocan en ningun punto de la receta. No subas `UpdateMetricsPeriod` (default 5 s) en vez de apagar la bandera: es la **Alt 3** que MEF-ADR-0038 ya evaluo y descarto -- espaciar el polling seguiria generando y facturando una metrica que hoy no tiene ningun consumidor, ni dashboard ni alerta. Igual que con el sampler, la supervivencia de `DurabilityMetricsEnabled` frente a la reasignacion posterior de `Mode` NO es contrato del paquete -- lo sostiene el guardrail de `ComposicionContenedorTests` (Paso 2 punto 9), no la sola lectura del codigo.
 
 **Flip de logs del write-side (MEF-ADR-0038 seccion 9, issue #700):** `o.EnableTraceBasedLogsSampler = false` desacopla los `LogRecord` de la decision de muestreo de trazas -- mecanismo del marco, igual que el filtro del daemon del worker de proyecciones (MEF-ADR-0034/#513), pero por una mecanica distinta: aqui no hay ningun filtro estructural de spans (el write-side instala solo la capa de ratio, arriba), asi que sin el flip la supresion de logs de error depende enteramente de `TELEMETRY_SAMPLING_RATIO` -- con el default `1.0` el delta es cero, con un ratio fraccionario (valor soportado del consumidor) los `LogError` emitidos dentro de spans no muestreados se pierden en proporcion al ratio. **NUNCA** quites este flip ni lo conviertas en opcion del consumidor (variable de entorno, parametro del seam, etc.): el ratio de trazas y el filtering de niveles de `ILogger` siguen siendo valor del consumidor -- el flip solo garantiza que ningun log de error se descarte por una decision de muestreo de trazas. Su supervivencia frente a `UseAzureMonitorExporter()` NO es contrato del paquete exporter -- la sostiene el guardrail de `ComposicionContenedorTests` (Paso 2 punto 9), no la sola lectura del codigo.
+
+**Metricas del write-side (MEF-ADR-0038 seccion 10, issue #764/#777):** el `AddView(instrumentName: "*", MetricStreamConfiguration.Drop)` es el mismo mecanismo que documenta la seccion 10 del ADR, verificado ademas contra la fuente del SDK (paquete `OpenTelemetry.Extensions.Hosting` 1.13.1, MEF-ADR-0003): `MeterProviderBuilderExtensions.AddView(string, MetricStreamConfiguration)` (tag `core-1.13.1`, `src/OpenTelemetry/Metrics/Builder/MeterProviderBuilderExtensions.cs`) compila el wildcard `"*"` a la regex `^.*$` -- coincide con cualquier instrumento de cualquier `Meter`, sin acoplarse a nombres de familias que un upgrade de paquete puede renombrar en silencio. El propio comentario de `MeterProviderSdk.cs` en esa misma version documenta este view como la forma de anular el default "sin vistas coincidentes -> aplicar agregacion por defecto". **Nunca** reemplaces el wildcard por `AddMeter(...)` + una lista de nombres: la seccion 1 de este ADR ya fija que el marco no decide "que metrica sirve" via un catalogo mantenido a mano, y una lista de familias es exactamente el modo de falla que la seccion 10 descarta explicitamente (una familia nueva del runtime se cuela por omision). Tampoco agregues un segundo `AddView` con un patron mas especifico para "salvar" alguna familia: la documentacion oficial de OpenTelemetry .NET es explicita en que las vistas hacen fan-out, no *first-match-wins* -- un instrumento que matchee ambas vistas produciria dos metric streams (uno dropeado, otro conservado), reintroduciendo justo la fuga que este mecanismo cierra. La supervivencia de este view frente a `UseAzureMonitorExporter()` (que tambien cablea su propio `MetricReader` sobre el mismo `MeterProviderBuilder`) NO es contrato del paquete exporter -- la sostiene el guardrail de `ComposicionContenedorTests` (Paso 2 punto 9), no la sola lectura del codigo.
+
+**Fallback de connection string del exporter de metricas (MEF-ADR-0038 seccion 10):** el `PostConfigure<AzureMonitorExporterOptions>` de arriba no es un ajuste cosmetico -- sin el, un dominio nuevo sin `APPLICATIONINSIGHTS_CONNECTION_STRING` resuelta (greenfield antes de desplegar App Insights, o el arranque en frio en que la referencia `@Microsoft.KeyVault(...)` del Paso 4 todavia no resolvio) revienta al arrancar el host con `InvalidOperationException` al resolver el `MeterProvider` -- **incluso** con el drop total de arriba activo, porque el fallo ocurre al **construir** el exporter, antes de que exista ninguna medida que filtrar (asimetria frente al `TracerProvider`, que si se resuelve sin connection string). El valor dummy nunca abre una conexion real: el drop total garantiza que no hay nada que exportar, y `PostConfigure` solo actua si ninguna fuente real (env var o Key Vault) ya la resolvio.
 
 Si el Paso 0 no resolvio ningun alias `serviceBus.external` con `alcance == "compartido"`, omite el parametro `serviceBusCosmos` y la linea `AgregarAzureServiceBusNombradoServerless`; deja solo el broker default y un comentario: `// Backbone compartido: sin alias "compartido" declarado en serviceBus.external todavia (MEF-ADR-0024 decision #4). Agrega su broker nombrado cuando el BC publique/consuma su primer evento publico.` Si hay mas de un alias, repite el par parametro + linea de registro por cada uno (y su argumento correspondiente en la llamada de `Program.cs` y en el test de composicion, Paso 2 punto 9). No wirees ningun alias con `alcance == "externo"` (integracion verdaderamente externa, diferida por MEF-ADR-0024 decision #5, default-off).
 
@@ -1244,11 +1289,14 @@ Y agregar en su lugar (en el mismo `<ItemGroup>` o en uno nuevo):
 ```xml
 <PackageReference Include="Cosmos.EventSourcing.Testing.Utilities" Version="2.1.0" />
 <PackageReference Include="xunit.v3.mtp-v2" Version="3.2.2" />
+<PackageReference Include="OpenTelemetry.Exporter.InMemory" Version="1.13.1" />
 ```
 
 `Cosmos.EventSourcing.Testing.Utilities` trae transitivamente `AwesomeAssertions`, `JetBrains.Annotations` y `xunit.v3.extensibility.core` (nuspec del paquete, api.nuget.org) — no hace falta declararlos. **No** trae transitivamente `Cosmos.EventSourcing.Abstractions` ni `Cosmos.EventDriven.Abstractions` (reverificado en 2.1.0 contra el nuspec real, issue #312 -- la afirmacion ya era valida en 1.3.0 y se mantiene): esos dos llegan al proyecto de tests via el `ProjectReference` al proyecto de dominio (paso 4 mas abajo), que ya los referencia directamente.
 
 > **Pin exacto de `xunit.v3.mtp-v2`, sin comodin (issue #605)**: `3.*` resuelve distinto segun el dia del restore, mismo riesgo que documenta la nota del bloque de `SmokeTests` (Paso 2b) mas abajo. Queda en `3.2.2`, la misma version que fijan los bloques de `SmokeTests` y `Projections.Tests` (`projections-scaffolder`) para que los tres proyectos de test del repo resuelvan la misma version (CA-3). Vigente en NuGet.org al momento de este cambio; revalidala contra la fuente. Este pin se propaga automaticamente a `PublicEvents.Tests`/`PrivateEvents.Tests` (Paso 2a, que reusa este mismo bloque de paquetes) y no requiere una nota separada. **Repos ya scaffoldeados con el comodin**: la idempotencia de este agente no reescribe un `.csproj` de tests existente -- edita a mano esta linea en cada `{Dominio}.Tests.csproj`/`PublicEvents.Tests.csproj`/`PrivateEvents.Tests.csproj` ya generado.
+
+> **`OpenTelemetry.Exporter.InMemory` en `1.13.1` (MEF-ADR-0038 seccion 10, issue #764/#777)**: exclusivo del `.csproj` de este dominio -- **no** se propaga a `PublicEvents.Tests`/`PrivateEvents.Tests`, que no tienen ningun guardrail de composicion de OpenTelemetry. Habilita `AddInMemoryExporter`/`ConfigureOpenTelemetryMeterProvider`/`MeterProvider` (namespace `OpenTelemetry.Metrics`) que usa el guardrail del drop total de metricas en `ComposicionContenedorTests` (punto 9 de este mismo paso). **Criterio de version: alinear con el core que ya resuelve la receta, no la ultima absoluta del paquete** -- mismo criterio que ancla `Microsoft.Azure.Functions.Worker` a `Worker.OpenTelemetry` (Paso 1 punto 2): `OpenTelemetry.Extensions.Hosting` esta pinneado en `1.13.1` (MEF-ADR-0003), y `1.13.1` es tambien una version publicada de `OpenTelemetry.Exporter.InMemory` (verificado contra `api.nuget.org/v3-flatcontainer/opentelemetry.exporter.inmemory/index.json` al momento de este cambio: existe `1.13.0`, `1.13.1` y versiones posteriores hasta `1.18.0`). Un mismatch de linea entre el exporter de test y el core de produccion es la misma familia de riesgo que ya documenta la nota de lockstep del Paso 1 -- revalida ambos valores contra NuGet si ha pasado tiempo desde este cambio.
 
 **3b. Agregar `<OutputType>Exe</OutputType>` al `<PropertyGroup>`** del csproj de tests. xunit v3 con mtp-v2 requiere que el proyecto compile como ejecutable:
 
@@ -1692,14 +1740,17 @@ en runtime (issue #221 del consumidor Bitakora.ControlAsistencia: `ITenantResolv
 paso "compila + unit tests verdes" y solo se detecto post-deploy en smoke tests). Gana ademas una
 guarda derivada de identidad de eventos (MEF-ADR-0036 CA-3/CA-4, ultimo test de la clase abajo),
 los dos guardrails deterministas del sampler de observabilidad (MEF-ADR-0038 seccion 4), el
-guardrail del flip de logs desacoplado del muestreo de trazas (MEF-ADR-0038 seccion 9, issue #700)
-y los dos guardrails del durability agent apagado en origen (MEF-ADR-0038 seccion 6, ultimos dos
-tests de la clase): tanto el orden `SetSampler` vs. `UseAzureMonitorExporter()`, la supervivencia
-de `EnableTraceBasedLogsSampler` frente al mismo exporter, como la de `DurabilityMetricsEnabled`
+guardrail del flip de logs desacoplado del muestreo de trazas (MEF-ADR-0038 seccion 9, issue #700),
+el guardrail del drop total de metricas (MEF-ADR-0038 seccion 10, issue #764/#777) y los dos
+guardrails del durability agent apagado en origen (MEF-ADR-0038 seccion 6, ultimos dos tests de la
+clase): tanto el orden `SetSampler` vs. `UseAzureMonitorExporter()`, la supervivencia de
+`EnableTraceBasedLogsSampler` frente al mismo exporter, la del `AddView("*", Drop)` de metricas
+frente al `MetricReader` que ese mismo exporter agrega, como la de `DurabilityMetricsEnabled`
 frente a la reasignacion posterior de `Mode`, no son contrato de sus paquetes respectivos, asi que
 su vigencia en cada build la sostiene este test, no la lectura visual del codigo.
 
 ```csharp
+using System.Diagnostics.Metrics;
 using System.Reflection;
 using AwesomeAssertions;
 using <RootNamespace>.{PascalCase}.Infraestructura;
@@ -1710,6 +1761,7 @@ using Cosmos.EventSourcing.Abstractions.Commands;
 using Marten;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 using Wolverine;
 
@@ -1915,6 +1967,60 @@ public class ComposicionContenedorTests
             "MEF-ADR-0038 seccion 9: el default true de Azure.Monitor.OpenTelemetry.Exporter " +
             "instala LogFilteringProcessor, que en el write-side descarta LogError emitidos " +
             "dentro de spans no muestreados por TELEMETRY_SAMPLING_RATIO");
+    }
+
+    // Guardrail del drop total de metricas (MEF-ADR-0038 seccion 10, issue #764/#777): verifica el
+    // CONTENEDOR EFECTIVO, no la sola lectura del Paso 6b -- mismo principio que los guardrails de
+    // arriba. No reusa ConstruirProveedor(): necesita enganchar un segundo MetricReader de
+    // solo-test ANTES de construir el ServiceProvider, via ConfigureOpenTelemetryMeterProvider (se
+    // engancha al MeterProviderBuilder que el seam ya compuso -- las vistas de un
+    // MeterProviderBuilder son globales al provider y aplican a todos sus readers por igual, asi
+    // que el InMemoryExporter observa exactamente el mismo resultado de filtrado que veria el
+    // reader real de Azure Monitor). El instrumento es ARBITRARIO y nunca una familia real con
+    // nombre (Wolverine, Marten, dotnet.gc.*, etc.): el wildcard "*" del Paso 6b no distingue por
+    // Meter, asi que cualquier instrumento sirve de sonda -- nombrar una familia real acoplaria
+    // este test a un detalle interno de un paquete de terceros que puede renombrarla sin aviso. El
+    // reader exporta por intervalo, no en cada medida: sin ForceFlush() sobre el MeterProvider
+    // resuelto, la asercion fallaria por temporizacion, no por la doctrina.
+    [Fact]
+    public async Task AgregarServicios{PascalCase}_DropeaMetricasSinTumbarElTracing()
+    {
+        var services = new ServiceCollection();
+        services.AgregarServicios{PascalCase}(
+            martenConnectionString: ConnectionStringDummy,
+            serviceBusInterno: ServiceBusDummy,
+            serviceBusCosmos: ServiceBusDummy,
+            isDev: true);
+
+        using var meterArbitrario = new Meter($"{nameof(ComposicionContenedorTests)}.MeterArbitrarioDeGuardrail");
+        var metricasExportadas = new List<Metric>();
+        services.ConfigureOpenTelemetryMeterProvider(builder => builder
+            .AddMeter(meterArbitrario.Name)
+            .AddInMemoryExporter(metricasExportadas));
+
+        await using var proveedor = services.BuildServiceProvider(new ServiceProviderOptions
+        {
+            ValidateOnBuild = true,
+            ValidateScopes = true
+        });
+
+        meterArbitrario.CreateCounter<long>("contador-arbitrario-de-guardrail").Add(1);
+        proveedor.GetRequiredService<MeterProvider>().ForceFlush();
+
+        // (a) MEF-ADR-0038 seccion 10, evidencia (e) de #764: el drop total debe alcanzar CUALQUIER
+        // instrumento de CUALQUIER Meter, incluido uno que el dominio nunca declaro -- una prueba
+        // mas fuerte que verificar una lista cerrada de familias conocidas, porque tambien cubre
+        // cualquier instrumento que el runtime/SDK todavia no nombro.
+        metricasExportadas.Should().BeEmpty(
+            "el drop total de metricas (MEF-ADR-0038 seccion 10) debe alcanzar cualquier " +
+            "instrumento, incluido uno que el dominio nunca declaro");
+
+        // (b) la supresion de metricas es un MeterProvider independiente del TracerProvider en la
+        // misma composicion de OpenTelemetry: dropear TODO el trafico de metricas no debe tumbar,
+        // de paso, la resolucion del tracing.
+        proveedor.GetRequiredService<TracerProvider>().Should().NotBeNull(
+            "el drop total de metricas no debe afectar la resolucion del TracerProvider -- son " +
+            "providers independientes en la misma composicion de OpenTelemetry");
     }
 
     // Guardrail (MEF-ADR-0038 seccion 6, CA-3): PersistenceMetrics.StartPolling
@@ -3658,6 +3764,13 @@ desaparecio de `UseAzureMonitorExporter(...)` en el Paso 6b, o se convirtio en u
 consumidor (variable de entorno, parametro del seam). Repon el flip en el codigo de produccion --
 nunca relajes la asercion ni la conviertas en condicional.
 
+Si el que falla es el guardrail del drop total de metricas (MEF-ADR-0038 seccion 10,
+`...DropeaMetricasSinTumbarElTracing`), la accion tampoco es la misma en cada assert:
+
+- La asercion `metricasExportadas.Should().BeEmpty(...)` en rojo: el `AddView(instrumentName: "*", MetricStreamConfiguration.Drop)` desaparecio del Paso 6b, quedo detras de un `AddMeter(...)` que restringe el alcance del wildcard, o se le sumo un segundo `AddView` mas especifico (fan-out, seccion 10 del ADR: las vistas no son *first-match-wins*). Repon el wildcard unico en el codigo de produccion -- nunca reduzcas el guardrail a una lista de familias conocidas ni le agregues un `Timeout`/reintento para "esperar" a que la metrica no llegue.
+- `proveedor.GetRequiredService<TracerProvider>()` lanza o el assert `NotBeNull` falla: el drop de metricas rompio la resolucion del tracing -- revisa que el `.WithMetrics(...)` nuevo no haya reemplazado (en vez de sumarse a) la cadena `.WithTracing(...)`/`UseAzureMonitorExporter()` existente del mismo `AddOpenTelemetry()`.
+- Error de compilacion (`CS0246`) en `MetricStreamConfiguration`, `ConfigureOpenTelemetryMeterProvider`, `AddInMemoryExporter` o `MeterProvider`: falta el `using OpenTelemetry.Metrics;` (produccion o test) o el `PackageReference OpenTelemetry.Exporter.InMemory` en el `.csproj` de tests (Paso 2 punto 3).
+
 Si el que falla es uno de los dos guardrails del durability agent (MEF-ADR-0038 seccion 6), la accion tampoco es la misma en cada caso:
 
 - `...ApagaLaRecoleccionDeMetricasDeDurabilidad` en rojo: o la linea `options.Durability.DurabilityMetricsEnabled = false;` no quedo dentro del callback del Paso 6b, o un upgrade de `Cosmos.EventSourcing.CritterStack` empezo a reasignar tambien esa bandera despues del callback (hasta 2.3.1 solo reasigna `Mode`). Lo primero se corrige en el codigo de produccion; lo segundo es exactamente el hallazgo que este guardrail existe para producir -- reverifica por decompilacion cual es el nuevo punto de wiring valido e informa al usuario. En ninguno de los dos casos se borra el test.
@@ -3733,7 +3846,7 @@ Scaffold completado para el dominio "{kebab}":
     HealthCheck.cs                         - Trigger HTTP de health check (raiz del proyecto)
     VersionCheck.cs                        - Trigger HTTP de /api/version (readiness gate por SHA, issue #325, MEF-ADR-0031)
     ReadyCheck.cs / ReadyCheck.Mensajes.cs / ReadyCheckMensajes.resx - Trigger HTTP de /api/ready: readiness gate de la capa de datos, 503 con cuerpo diagnosticable si el probe falla (MEF-ADR-0031 seccion 6, issue #671/#675)
-    Infraestructura/ComposicionServicios{PascalCase}.cs - Unica fuente de verdad del wiring de DI (Wolverine con las metricas del durability agent apagadas en origen, Marten, routers, tenancy, OpenTelemetry con sampler post-exporter, validacion, probe de readiness) - MEF-ADR-0029/MEF-ADR-0038/MEF-ADR-0031
+    Infraestructura/ComposicionServicios{PascalCase}.cs - Unica fuente de verdad del wiring de DI (Wolverine con las metricas del durability agent apagadas en origen, Marten, routers, tenancy, OpenTelemetry con sampler post-exporter y drop total de metricas + fallback de connection string, validacion, probe de readiness) - MEF-ADR-0029/MEF-ADR-0038/MEF-ADR-0031
     Infraestructura/RequestValidator.cs    - IRequestValidator + implementacion
     Infraestructura/EventStoreReadinessProbe.cs - IEventStoreReadinessProbe + implementacion: fuerza la materializacion de storage de Marten via FetchStreamStateAsync sobre un stream centinela, sin cache del positivo (MEF-ADR-0031 seccion 6)
     Infraestructura/TenantResolverMonoTenantPorDefecto.cs - ITenantResolver mono-tenant transitorio (MEF-ADR-0028)
@@ -3758,7 +3871,7 @@ Scaffold completado para el dominio "{kebab}":
     Infraestructura/ServiceBusEndpointBaseTests.cs - Tests de orquestacion (feliz, lock-lost, dead-letter, JSON invalido)
     Infraestructura/ServiceBusSessionEndpointBaseTests.cs - Tests de orquestacion de fan-in (feliz, lock-lost, dead-letter, Subject no reconocido)
     Infraestructura/PrivateEventEndpointBaseTests.cs - Tests de orquestacion del EventHandler directo (feliz, lock-lost, dead-letter, JSON invalido)
-    Infraestructura/ComposicionContenedorTests.cs - Test de composicion del contenedor DI: BuildServiceProvider(ValidateOnBuild + ValidateScopes) + resolucion explicita de los routers (issue #319, MEF-ADR-0029) + guarda derivada de eventos aplicados vs EventGraph del IDocumentStore compuesto (MEF-ADR-0036) + guardrails del sampler efectivo post-exporter y su ratio default + del flip de logs desacoplado del muestreo de trazas (issue #700) + del durability agent apagado en origen (MEF-ADR-0038)
+    Infraestructura/ComposicionContenedorTests.cs - Test de composicion del contenedor DI: BuildServiceProvider(ValidateOnBuild + ValidateScopes) + resolucion explicita de los routers (issue #319, MEF-ADR-0029) + guarda derivada de eventos aplicados vs EventGraph del IDocumentStore compuesto (MEF-ADR-0036) + guardrails del sampler efectivo post-exporter y su ratio default + del flip de logs desacoplado del muestreo de trazas (issue #700) + del drop total de metricas via InMemoryExporter sin tumbar el TracerProvider (issue #764/#777) + del durability agent apagado en origen (MEF-ADR-0038)
     ReadyCheckTests.cs                     - Mapeo probe-exitoso -> 200 / probe-fallido -> 503 con cuerpo diagnosticable, fake manual del probe (MEF-ADR-0031 seccion 6, issue #671/#675)
                                            - Proyecto de tests unitarios (xUnit v3 + AwesomeAssertions)
 
