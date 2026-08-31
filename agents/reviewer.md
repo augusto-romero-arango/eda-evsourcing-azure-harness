@@ -204,7 +204,7 @@ Para cada problema encontrado: corrigelo, corre `dotnet test`, y si pasa continu
 
 #### Smoke tests (post-#23)
 
-Cuando el diff incluye smoke tests o cuando el dominio publica/consume eventos, verificar (estas son convenciones del pipeline de smoke testing — ver tambien MEF-ADR-0013):
+Cuando el diff incluye smoke tests, cuando el dominio publica/consume eventos, o cuando el diff toca el catalogo de tools de un servidor MCP (aunque **no** traiga ningun archivo de smoke test — ese es justamente el caso que la ultima verificacion de esta lista existe para cazar), verificar (estas son convenciones del pipeline de smoke testing — ver tambien MEF-ADR-0013):
 
 - **Suscripcion `smoke-tests` en infra**: para cada topic de un dominio publicador, debe existir la suscripcion `smoke-tests` en `infra/environments/dev/main.tf`. Si falta, agregarla al `topics_config`.
 - **`appsettings.json` sin secrets reales**: el archivo `appsettings.json` del proyecto de smoke tests debe tener connection strings vacios (`""`), nunca secrets reales. Los secrets se pasan via `appsettings.local.json` (local) o variables de entorno (CI).

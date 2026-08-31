@@ -2,7 +2,7 @@
 
 - **Fecha**: 2026-08-30
 - **Estado**: aceptado
-- **Aplica a**: doctrina general del marco para probar todo servidor MCP (Model Context Protocol) que un Bounded Context expone bajo MEF-ADR-0047 -- la piramide de niveles de test, las verificaciones canonicas del nivel e2e, los endpoints de gate propios de una app MCP y la obtencion de su credencial en CI. Aplicable a cualquier Bounded Context de cualquier consumidor del marco; el cuerpo normativo no referencia ningun proyecto, archivo ni issue de un consumidor concreto (ver seccion "Alcance"). Extiende MEF-ADR-0013 (smoke tests contra dev), MEF-ADR-0022 (autenticacion de CI por OIDC) y MEF-ADR-0031 (readiness gate por SHA) al dominio de servidores MCP; cita MEF-ADR-0016 (naming de metodos de test) y MEF-ADR-0018 (Rule of Three) como doctrina ya vigente que este ADR no reabre.
+- **Aplica a**: doctrina general del marco para probar todo servidor MCP (Model Context Protocol) que un Bounded Context expone bajo MEF-ADR-0047 -- la piramide de niveles de test, las verificaciones canonicas del nivel e2e, la obligacion de extender esa suite ante toda tool nueva o modificada, los endpoints de gate propios de una app MCP y la obtencion de su credencial en CI. Aplicable a cualquier Bounded Context de cualquier consumidor del marco; el cuerpo normativo no referencia ningun proyecto, archivo ni issue de un consumidor concreto (ver seccion "Alcance"). Extiende MEF-ADR-0013 (smoke tests contra dev), MEF-ADR-0022 (autenticacion de CI por OIDC) y MEF-ADR-0031 (readiness gate por SHA) al dominio de servidores MCP; cita MEF-ADR-0016 (naming de metodos de test) y MEF-ADR-0018 (Rule of Three) como doctrina ya vigente que este ADR no reabre.
 
 ## Contexto
 
@@ -84,9 +84,11 @@ MEF-ADR-0013 corre los smoke tests de cada dominio secuencialmente **dentro del 
 
 Cuando un cambio agrega una tool al catalogo del servidor, la quita, la renombra, o modifica su `inputSchema` (agrega/quita un parametro, cambia su `required`), la suite de nivel 3 (seccion 2) se extiende **en el mismo cambio** -- nunca en un PR posterior. Tres piezas, las tres obligatorias sin excepcion:
 
-1. **Pin del catalogo (verificacion 2, primera mitad).** El assert que fija el catalogo exacto de `tools/list` (tipicamente `BeEquivalentTo([...])` sobre los nombres de tool) se actualiza para incluir, excluir o renombrar la tool que cambio. Sin este pin, la suite sigue verde con un catalogo desalineado -- el pin existe precisamente para que ese desalineamiento la tumbe.
-2. **Pin del `inputSchema.required` (verificacion 2, segunda mitad).** El assert sobre el `required` del `inputSchema` de la tool que cambio se actualiza para reflejar sus parametros obligatorios vigentes.
+1. **Pin del catalogo (componente 1 de la verificacion 2).** El assert que fija el catalogo exacto de `tools/list` (tipicamente `BeEquivalentTo([...])` sobre los nombres de tool) se actualiza para incluir, excluir o renombrar la tool que cambio. Sin este pin, la suite sigue verde con un catalogo desalineado -- el pin existe precisamente para que ese desalineamiento la tumbe.
+2. **Pin del `inputSchema.required` (componente 2 de la verificacion 2).** El assert sobre el `required` del `inputSchema` de la tool que cambio se actualiza para reflejar sus parametros obligatorios vigentes.
 3. **Tool call real (verificacion 3).** Toda tool nueva gana su propia invocacion real contra el entorno dev desplegado -- que aparezca en el catalogo pinneado prueba el contrato, no el comportamiento; una tool sin su propia tool call queda con cobertura de contrato pero sin cobertura de que funciona. Una tool modificada (cambio de `inputSchema` o de comportamiento) actualiza su tool call existente en vez de crear una duplicada.
+
+El tercer componente de la verificacion 2 -- el pin del `readOnlyHint` (u otro `ToolAnnotations`) en `_meta` -- no se repite aqui como cuarta pieza porque la seccion 2 ya lo exige para **toda** tool del catalogo: una tool nueva lo hereda por esa via, sin que esta seccion tenga que volver a fijarlo.
 
 Omitir cualquiera de las tres deja la suite en el estado que la seccion 2 ya declaro indeseable: un catalogo pinneado que no refleja el catalogo real, detectable recien cuando el smoke post-deploy falla en rojo -- el mismo riesgo que motivo pinnear el catalogo en primer lugar. La credencial `mcp_extension` nunca es motivo valido para diferir esta extension: se resuelve en CI por OIDC en runtime (seccion 4), nunca es un requisito local para escribir o revisar estos tres asserts.
 
