@@ -390,27 +390,27 @@ tests/<RootNamespace>.{Dominio}.Tests/
        And<TurnoAggregateRoot, int>(t => t.EmpleadosAsignados.Count, 1); // estado NO cambio
    }
    ```
-4. **Aggregate no encontrado** (obligatorio cuando el comando opera sobre stream existente): el handler lanza excepcion cuando no encuentra el aggregate. Este SI usa `ThrowExactlyAsync` porque es una precondicion de orquestacion del handler, no una regla del aggregate.
+4. **Aggregate no encontrado** (obligatorio cuando el comando opera sobre stream existente): el handler lanza excepcion cuando no encuentra el aggregate. Este SI usa `ThrowExactlyAsync` porque es una precondicion de orquestacion del handler, no una regla del aggregate. La excepcion tipada es `RecursoNoEncontradoException` (MEF-ADR-0004 seccion 2), nunca `InvalidOperationException` — esa queda reservada a fallos de infraestructura.
    ```csharp
    [Fact]
-   public async Task AsignarEmpleadoATurno_LanzaInvalidOperationException_CuandoTurnoNoExiste()
+   public async Task AsignarEmpleadoATurno_LanzaRecursoNoEncontradoException_CuandoTurnoNoExiste()
    {
        // Sin Given() - el stream no existe
        var act = async () => await WhenAsync(
            new AsignarEmpleadoATurno(GuidAggregateId, EmpleadoId));
-       await act.Should().ThrowExactlyAsync<InvalidOperationException>()
+       await act.Should().ThrowExactlyAsync<RecursoNoEncontradoException>()
            .WithMessage($"*{AsignarEmpleadoATurnoCommandHandler.Mensajes.TurnoNoEncontrado}*");
    }
    ```
-5. **Aggregate ya existente** (obligatorio cuando el comando crea un stream nuevo): el handler lanza excepcion si el stream ya existe.
+5. **Aggregate ya existente** (obligatorio cuando el comando crea un stream nuevo): el handler lanza excepcion si el stream ya existe. La excepcion tipada es `RecursoYaExisteException` (MEF-ADR-0004 seccion 2).
    ```csharp
    [Fact]
-   public async Task CrearTurno_LanzaInvalidOperationException_CuandoTurnoYaExiste()
+   public async Task CrearTurno_LanzaRecursoYaExisteException_CuandoTurnoYaExiste()
    {
        Given(CrearTurnoIniciado(AggregateId));
        var act = async () => await WhenAsync(
            new CrearTurno(GuidAggregateId, "Turno Manana", ...));
-       await act.Should().ThrowExactlyAsync<InvalidOperationException>()
+       await act.Should().ThrowExactlyAsync<RecursoYaExisteException>()
            .WithMessage($"*{CrearTurnoCommandHandler.Mensajes.TurnoYaExiste}*");
    }
    ```
@@ -632,11 +632,13 @@ Then(new AsignacionEmpleadoFallida(GuidAggregateId, EmpleadoId,
     TurnoAggregateRoot.Mensajes.EmpleadoYaAsignado));
 
 // Para excepciones del handler - wildcards para absorber variaciones de formato
-await act.Should().ThrowExactlyAsync<InvalidOperationException>()
+await act.Should().ThrowExactlyAsync<RecursoYaExisteException>()
     .WithMessage($"*{CrearTurnoCommandHandler.Mensajes.TurnoYaExiste}*");
 ```
 
 **Nota**: el SDK de .NET incluye automaticamente los archivos .resx como EmbeddedResource. No se necesita configuracion adicional en el .csproj.
+
+**Regimen de coexistencia (MEF-ADR-0004, "Regimen de migracion")**: esta doctrina rige tests **nuevos**. Las suites preexistentes que ya asertan `ThrowExactlyAsync<InvalidOperationException>()` para precondiciones de orquestacion no se migran de oficio — siguen en verde porque el handler que prueban sigue lanzando el tipo generico. No reescribas un test existente a `RecursoYaExisteException`/`RecursoNoEncontradoException` salvo que el handler bajo prueba ya haya migrado a esos tipos; sugerir esa migracion es legitimo pero se discute con el humano, nunca automatico.
 
 **Verificacion de mensajes en excepciones de value objects:**
 ```csharp
