@@ -1700,8 +1700,14 @@ coverage_classify_file() {
 # evita que el Mac entre en suspension idle mientras corre en un pane de
 # tmux/Herdr (`-i`: solo suspension idle; sin `-d` la pantalla si puede
 # apagarse; `-s` se descarta porque solo aplica con AC conectado). El
-# prefijo muere junto con el comando envuelto -- caffeinate es el proceso
-# padre, sin huerfano que limpiar manualmente.
+# prefijo no envuelve al pipeline como proceso padre: `caffeinate <utility>`
+# hace fork de un helper que sostiene la assertion y exec del utility EN SU
+# LUGAR (verificado en macOS 25.4 -- `caffeinate -i /bin/sleep 25 &` deja $!
+# apuntando a /bin/sleep, con un hijo 'caffeinate'). De ahi las dos
+# propiedades que hacen barato el prefijo: el helper muere con el utility (sin
+# huerfano ni assertion colgada) y el PID y el exit code del comando envuelto
+# se conservan, asi que $!, wait, kill y el rc de los runners no cambian de
+# semantica.
 #
 # Alcance: se calcula UNA vez por corrida y se aplica en los RUNNERS
 # (tmux-pipeline.sh, herdr-pipeline.sh) sobre el lanzamiento del sub-pipeline,

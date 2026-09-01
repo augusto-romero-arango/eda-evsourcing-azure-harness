@@ -365,8 +365,10 @@ cmd_pane_runner() {
     done < <(env)
 
     # $CAFF se expande sin comillas a proposito (0 o 2 palabras, "caffeinate -i"):
-    # antepone caffeinate como proceso padre del pipeline sin agregar una rama
-    # if/else duplicada por cada valor posible del prefijo (issue #800).
+    # aplica el prefijo sin duplicar el lanzamiento en una rama if/else por cada
+    # valor posible (issue #800). caffeinate exec-a el comando en su lugar (ver
+    # caffeinate_prefix), asi que $! sigue siendo el PID del pipeline: el trap,
+    # el wait y el rc de abajo conservan su semantica.
     # shellcheck disable=SC2086
     $CAFF env "${env_unset[@]}" "$@" >"$report_log" 2>&1 &
     local pipe_pid=$!
@@ -473,7 +475,7 @@ cmd_single() {
         # shellcheck disable=SC2086
         dispatch_to_pane "$title" "$issue" "$resolved" "$issue" $extra_args --variant "$variant"
     else
-        # shellcheck disable=SC2086 -- extra_args es una lista de flags simples
+        # shellcheck disable=SC2086 # extra_args es una lista de flags simples
         dispatch_to_pane "$title" "$issue" "$resolved" "$issue" $extra_args
     fi
 }
