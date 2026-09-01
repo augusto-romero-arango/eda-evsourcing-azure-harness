@@ -147,7 +147,7 @@ jq -r '.tenancy.strategy // "mono-tenant-transitorio"' /ruta-del-proyecto/.claud
 El token `tenancy.strategy` (opcional en `harness.config.json`; ausente equivale a `"mono-tenant-transitorio"`) declara en cual de las dos etapas de MEF-ADR-0028 esta el proyecto. **No lo sondees en codigo** -- no hay señal fiable (el harness no referencia ningun tipo `Cosmos.MultiTenancy.*`/autenticacion); es un token declarado por el humano, el mismo que escribe `/onboard` bajo confirmacion. Dos valores:
 
 - **`mono-tenant-transitorio`** (etapa a, default): genera el `ITenantResolver` mono-tenant transitorio de #318, **sin ningun cambio**. Ver el detalle en el punto 10f del Paso 1.
-- **`multi-tenant-header`** (etapa b): en vez del default transitorio, referencia la biblioteca scaffoldeada `src/{RootNamespace}.TenantResolver/` (patron `AsyncLocal` + middleware, MEF-ADR-0028 seccion 4) si ya existe -- con fallback a "proponer" si `/install-apim` todavia no la creo. Ver el detalle completo (incluida la verificacion CA-6 y el fallback CA-7) en el punto 10f del Paso 1.
+- **`multi-tenant-header`** (etapa b): en vez del default transitorio, referencia la biblioteca scaffoldeada `src/<RootNamespace>.TenantResolver/` (patron `AsyncLocal` + middleware, MEF-ADR-0028 seccion 4) si ya existe -- con fallback a "proponer" si `/install-apim` todavia no la creo. Ver el detalle completo (incluida la verificacion CA-6 y el fallback CA-7) en el punto 10f del Paso 1.
 
 Un valor no reconocido en `tenancy.strategy` (ni `mono-tenant-transitorio` ni `multi-tenant-header`) es un error de config: informa al usuario y trata el caso como si el campo estuviera ausente (etapa a, el default seguro) hasta que lo corrija.
 
@@ -652,7 +652,7 @@ public static class ComposicionServicios{PascalCase}
 
 Si el Paso 0 no resolvio ningun alias `serviceBus.external` con `alcance == "compartido"`, omite el parametro `serviceBusCosmos` y la linea `AgregarAzureServiceBusNombradoServerless`; deja solo el broker default y un comentario: `// Backbone compartido: sin alias "compartido" declarado en serviceBus.external todavia (MEF-ADR-0024 decision #4). Agrega su broker nombrado cuando el BC publique/consuma su primer evento publico.` Si hay mas de un alias, repite el par parametro + linea de registro por cada uno (y su argumento correspondiente en la llamada de `Program.cs` y en el test de composicion, Paso 2 punto 9). No wirees ningun alias con `alcance == "externo"` (integracion verdaderamente externa, diferida por MEF-ADR-0024 decision #5, default-off).
 
-Si el Paso 0 resolvio `tenancy.strategy = "multi-tenant-header"` (etapa b, MEF-ADR-0028), **reemplaza** la linea `services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>();` (y el `using Cosmos.MultiTenancy;` de arriba) por el registro del resolver de la biblioteca `src/{RootNamespace}.TenantResolver/` -- ver el detalle completo (verificacion de existencia, CA-6, y el fallback a "proponer", CA-7) en el punto 10f del Paso 1.
+Si el Paso 0 resolvio `tenancy.strategy = "multi-tenant-header"` (etapa b, MEF-ADR-0028), **reemplaza** la linea `services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>();` (y el `using Cosmos.MultiTenancy;` de arriba) por el registro del resolver de la biblioteca `src/<RootNamespace>.TenantResolver/` -- ver el detalle completo (verificacion de existencia, CA-6, y el fallback a "proponer", CA-7) en el punto 10f del Paso 1.
 
 > **CA-9 — Aviso sobre el helper bulk `PublicarEventosServerless`**: No uses `PublicarEventosServerless(nombreConexion, topicName, Assembly contratos)` con el assembly completo de contratos para registrar eventos. Ese helper filtra por `IsAssignableTo(typeof(IEvent))` y captura tanto `IPrivateEvent` como `IPublicEvent` juntos, enrutando todo al mismo broker y rompiendo la separacion privado/publico (MEF-ADR-0024 decision #2, #4). El registro debe hacerse **por tipo**, separando explicitamente privados de publicos:
 > - `IPrivateEvent`: `options.PublicarEventoServerless<TEvento>(topic)` → broker default → namespace interno
@@ -983,7 +983,7 @@ El registro en `Infraestructura/ComposicionServicios{PascalCase}.cs` (Paso 6b) e
 ### Etapa (b) -- `tenancy.strategy = "multi-tenant-header"`
 
 En el auto-cableo (happy path) **no** generes `TenantResolverMonoTenantPorDefecto.cs`: la etapa (b) no
-lo necesita. En su lugar, referencia la biblioteca scaffoldeada `src/{RootNamespace}.TenantResolver/`
+lo necesita. En su lugar, referencia la biblioteca scaffoldeada `src/<RootNamespace>.TenantResolver/`
 -- patron `TenantExecutionContext` (`ITenantResolver` respaldado por `AsyncLocal<string>` estatico) +
 `TenantContextMiddleware` (`IFunctionsWorkerMiddleware`), fijado por MEF-ADR-0028 seccion 4 y
 scaffoldeado por `/install-apim` -- sujeto a la verificacion de existencia (CA-6) y al fallback a
@@ -995,7 +995,7 @@ antes de que el `HttpContext` quede adjunto al scope de DI de la request, y prod
 
 **CA-6 — verificacion de existencia antes de referenciar.** A diferencia del hibrido anterior -- que
 exigia reverificar por decompilacion la firma de un paquete NuGet de terceros version a version --, la
-biblioteca `src/{RootNamespace}.TenantResolver/` es codigo propio del consumidor, generado por el
+biblioteca `src/<RootNamespace>.TenantResolver/` es codigo propio del consumidor, generado por el
 harness: la unica verificacion que corresponde aqui es que el directorio exista.
 
 ```bash
@@ -1026,13 +1026,22 @@ referencia), cablea:
    -- sobre el `FunctionsApplicationBuilder`, nunca sobre ningun `app`: en el modelo isolated worker el
    middleware se registra en el `IFunctionsWorkerApplicationBuilder`, y el `Program.cs` que genera este
    agente no expone ninguna otra variable (MEF-ADR-0028 seccion 4).
+4. **En `.github/workflows/deploy-{kebab}.yml`** (Paso 5), agrega `src/<RootNamespace>.TenantResolver/**`
+   al filtro `on.push.paths` **y** `TenantResolver` a la alternancia de la regex de alcance del job
+   `determinar-alcance`, junto a las rutas de `PublicEvents`/`PrivateEvents`. El `ProjectReference` del
+   punto 1 mete esa biblioteca **dentro** del artefacto que ese workflow publica: sin la ruta, un cambio
+   posterior a `TenantContextMiddleware`/`TenantExecutionContext` no dispara nada en el push a main y la
+   Function App sigue sirviendo el binario anterior -- la misma staleness silenciosa (no una rotura que
+   CI atrape) que ya documenta la nota de mantenimiento del Paso 5 para los ensamblados de bus del BC
+   (issues #454/#544). Los dos filtros se mueven juntos. Es lo mismo que hace `/install-apim` (paso 9.4d)
+   al migrar un dominio ya scaffoldeado.
 
 No queda ningun `// TODO(tenancy claims)` de mapping por dominio en este camino: `TenantContextMiddleware`
 ya sabe leer los headers canonicos `X-Tenant-Id`/`X-User-Id` (HTTP) y las `ApplicationProperties`
 `tenant-id`/`user_id` (Service Bus) sin parsing adicional -- MEF-ADR-0032 seccion 4 fija ese mapping una
 sola vez, en la politica global de APIM, compartida por todos los dominios del BC.
 
-**CA-7 — fallback a "proponer" si la biblioteca no existe todavia.** Si `src/{RootNamespace}.TenantResolver/`
+**CA-7 — fallback a "proponer" si la biblioteca no existe todavia.** Si `src/<RootNamespace>.TenantResolver/`
 no existe (BC en etapa (b) sin `/install-apim` corrido todavia), **no** dejes `ITenantResolver` sin
 registrar: seria exactamente el incidente #318 que MEF-ADR-0029 existe para atrapar -- el test de
 composicion quedaria en rojo y el dominio naceria roto. Degrada: genera el
@@ -3388,6 +3397,8 @@ jobs:
       POSTGRES_CONNECTION_STRING: ${{ secrets.POSTGRES_CONNECTION_STRING }}
 ```
 
+> **Etapa (b) de tenancy -- la biblioteca `TenantResolver` entra en los dos filtros (MEF-ADR-0028 seccion 4, issue #804)**: si el Paso 1 punto 10f referencio `src/<RootNamespace>.TenantResolver/` (rama CA-6, la biblioteca ya existia en el BC), agrega tambien `- 'src/<RootNamespace>.TenantResolver/**'` a la lista de `paths` de arriba y `TenantResolver` a la alternancia de la regex del job `determinar-alcance` (`^src/<RootNamespace>\.({PascalCase}(\.DomainEvents)?|PublicEvents|PrivateEvents|TenantResolver)/`): esa biblioteca se compila dentro del artefacto que este workflow publica, exactamente como los ensamblados de bus del BC -- mismo modo de fallo silencioso que describe la nota de mantenimiento de mas abajo. Si el punto 10f degrado al fallback CA-7 (biblioteca ausente todavia), **no** agregues ninguna de las dos: el dominio no la referencia.
+
 > `smoke-tests-dominio.yml` acepta estos secrets como opcionales (`required: false`). Si no estan configurados en el repo, los smoke tests que dependen de ServiceBus o Postgres se skipean gracefully via `Assert.SkipWhen`.
 
 > **Readiness gate por SHA (issue #325, MEF-ADR-0031)**: el paso `Build` del job `deploy` hornea `-p:SourceRevisionId=${{ github.event.workflow_run.head_sha || github.sha }}` -- la **misma** expresion que ya resuelve el `ref:` del checkout de este job, nunca `github.sha` a secas (en un run disparado por `workflow_run`, `github.sha` no es necesariamente el commit que este run esta construyendo -- ver el detalle en MEF-ADR-0031). El job `deploy` expone ese mismo valor como output (`outputs.sha`) para no duplicar la expresion, y el job `smoke-tests` lo pasa como `expected_sha` al reutilizable: el warmup del smoke test (Paso 2b, `ApiFixture`) hace poll contra `/api/version` hasta que el host reporte ese SHA, en vez de abrir la compuerta con el primer 200 (que puede ser el codigo viejo todavia sirviendo durante la ventana de swap de `WEBSITE_RUN_FROM_PACKAGE`). Este job **si** conoce su propio SHA desplegado -- pertenece a la primera clase de invocador de MEF-ADR-0031 seccion 4 -- asi que nunca activa la guarda de deploys ajenos del punto siguiente (su condicion es `expected_sha == ''`).
@@ -3841,7 +3852,7 @@ Scaffold completado para el dominio "{kebab}":
     Infraestructura/ComposicionServicios{PascalCase}.cs - Unica fuente de verdad del wiring de DI (Wolverine con las metricas del durability agent apagadas en origen, Marten, routers, tenancy, OpenTelemetry con sampler post-exporter y drop total de metricas + fallback de connection string, validacion, probe de readiness) - MEF-ADR-0029/MEF-ADR-0038/MEF-ADR-0031
     Infraestructura/RequestValidator.cs    - IRequestValidator + implementacion
     Infraestructura/EventStoreReadinessProbe.cs - IEventStoreReadinessProbe + implementacion: fuerza la materializacion de storage de Marten via FetchStreamStateAsync sobre un stream centinela, sin cache del positivo (MEF-ADR-0031 seccion 6)
-    Infraestructura/TenantResolverMonoTenantPorDefecto.cs - ITenantResolver mono-tenant transitorio (MEF-ADR-0028)
+    Infraestructura/TenantResolverMonoTenantPorDefecto.cs - ITenantResolver mono-tenant transitorio (MEF-ADR-0028); solo en etapa (a) o en el fallback CA-7 de la etapa (b) -- en etapa (b) con la biblioteca src/<RootNamespace>.TenantResolver/ presente no se genera (Paso 1 punto 10f)
     Infraestructura/ServiceBusDeserializador.cs - Helper de deserializacion case-insensitive
     Infraestructura/ServiceBusEndpointBase.cs   - Clase base para endpoints de ServiceBus (topic+subscription)
     Infraestructura/ServiceBusSessionEndpointBase.cs - Clase base para endpoints de fan-in (queue en modo sesion, MEF-ADR-0026)
