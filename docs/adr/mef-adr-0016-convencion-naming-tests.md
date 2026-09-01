@@ -65,7 +65,7 @@ Adoptamos un patron unico: `<Sujeto>_<LoQuePasa>_Cuando<Condicion>`.
 | Value object — caso trivial | `Vacio_TieneRetardoNetoEnCero` |
 | Command handler — emision | `RegistrarMarcacion_EmiteMarcacionRegistrada_CuandoMarcacionEsNueva` |
 | Command handler — fallo | `RegistrarMarcacion_EmiteMarcacionFallida_CuandoMarcacionDuplicada` |
-| Command handler — orquestacion | `AsignarTurno_LanzaInvalidOperationException_CuandoTurnoNoExiste` |
+| Command handler — orquestacion | `AsignarTurno_LanzaRecursoNoEncontradoException_CuandoTurnoNoExiste` |
 | Endpoint HTTP | `CrearTurno_Retorna202_CuandoPayloadEsValido` |
 | Validator | `Validar_RechazaConErrores_CuandoNombreEstaVacio` |
 | Round-trip de serializacion | `RoundTrip_PreservaIgualdad_CuandoOrdinariaSinHijos` |
@@ -105,3 +105,11 @@ especiales — alineado con el resto del codigo del proyecto.
 ya prefijan el comportamiento). Pero requiere prefijar 178 tests con `Debe...` y rompe la
 lectura natural de tests de propiedades (`Debe[QueAlgo]_Cuando[X]` se vuelve forzado para
 una propiedad como `DuracionEnMinutos`). El patron sujeto-centrico encaja en ambos casos.
+
+## Control de cambios
+
+- 2026-09-01: ripple de MEF-ADR-0004 (issue #805). El ejemplo "Command handler —
+  orquestacion" pasa de `AsignarTurno_LanzaInvalidOperationException_CuandoTurnoNoExiste` a
+  `AsignarTurno_LanzaRecursoNoEncontradoException_CuandoTurnoNoExiste`, reflejando la
+  jerarquia de excepciones tipadas que esa enmienda introduce para la capa 2. Sin cambio de
+  doctrina propia de este ADR.
