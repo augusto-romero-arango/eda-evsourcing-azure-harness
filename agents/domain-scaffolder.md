@@ -1019,9 +1019,10 @@ Si procede el auto-cableo (biblioteca presente, CA-6 satisfecho):
 1. **Agrega el `ProjectReference`** en el `<ItemGroup>` de ProjectReferences del `.csproj` del dominio
    (Paso 1, punto 3c, el mismo `<ItemGroup>` que ya suma `PublicEvents`/`PrivateEvents`/
    `{PascalCase}.DomainEvents`): `<ProjectReference Include="..\<RootNamespace>.TenantResolver\<RootNamespace>.TenantResolver.csproj" />`.
-   **No** agregues ningun `PackageReference` de `Cosmos.MultiTenancy.*`: la biblioteca ya trae el
-   contrato `ITenantResolver` (transitivo via `Cosmos.EventSourcing.CritterStack`, igual que en la
-   etapa a).
+   **No** agregues ningun `PackageReference` de `Cosmos.MultiTenancy.*` al `.csproj` del dominio: el
+   contrato `ITenantResolver` sigue llegando transitivo via `Cosmos.EventSourcing.CritterStack` (igual
+   que en la etapa a), y la biblioteca lo declara explicito por su cuenta porque ella no referencia ese
+   paquete (ver su `.csproj` en `commands/install-apim.md`, paso 9.3b).
 2. **En `Infraestructura/ComposicionServicios{PascalCase}.cs`** (Paso 6b), reemplaza el `using
    Cosmos.MultiTenancy;` por `using <RootNamespace>.TenantResolver;` (el tipo `ITenantResolver` ya no
    se referencia por nombre en el archivo) y sustituye la linea
@@ -1040,6 +1041,18 @@ Si procede el auto-cableo (biblioteca presente, CA-6 satisfecho):
    inmediatamente antes de `await builder.Build().RunAsync();` (sobre el `FunctionsApplicationBuilder`,
    nunca sobre ningun `app` -- MEF-ADR-0028 seccion 4, referencia [3]) y `using
    <RootNamespace>.TenantResolver;` si no lo tiene ya.
+4. **En `.github/workflows/deploy-{kebab}.yml`** (Paso 5), agrega la ruta de la biblioteca a los **dos**
+   filtros que se mueven juntos: `- 'src/<RootNamespace>.TenantResolver/**'` en `on.push.paths`, y
+   `TenantResolver` en la alternancia del `grep -qE` del job `determinar-alcance`
+   (`^src/<RootNamespace>\.({PascalCase}(\.DomainEvents)?|PublicEvents|PrivateEvents|TenantResolver)/`).
+   El `ProjectReference` del punto 1 metio esa biblioteca **dentro** del artefacto que este workflow
+   publica: sin la ruta, un cambio posterior a `TenantContextMiddleware`/`TenantExecutionContext` no
+   dispara nada en el push a main y la Function App sigue sirviendo el binario anterior -- la misma
+   staleness silenciosa (no una rotura que CI atrape) que motivo las rutas de los ensamblados de bus
+   (issues #454/#544). Es la misma ruta que agrega `/install-apim` al migrar un dominio ya scaffoldeado
+   (`commands/install-apim.md`, paso 9.4d). **Solo en esta rama**: en etapa (a) y en el fallback CA-7 no
+   hay `ProjectReference` a la biblioteca, y agregar la ruta ahi vigilaria codigo que este artefacto no
+   compila.
 
 **Coherencia con el test de composicion del contenedor (MEF-ADR-0029, issue #319/#328).** El test
 `ComposicionContenedorTests` que generas en el Paso 2 (punto 9) es un **gate duro** (si falla, no haces
@@ -3407,6 +3420,8 @@ jobs:
 
 > **Para quien mantenga este agente -- el filtro de `paths` cubre las dependencias de build, no solo el codigo (issue #454)**: transcribe las cinco rutas y sus comentarios tal cual. `src/<RootNamespace>.{PascalCase}.DomainEvents/**` esta ahi (issue #544, MEF-ADR-0039) porque el ensamblado de eventos persistidos del dominio se compila **dentro** del artefacto que este workflow publica: sin esa ruta, agregar o cambiar un evento no dispara nada en el push a main y la Function App sigue sirviendo el binario anterior -- la misma staleness silenciosa que describe el parrafo siguiente, no una rotura que CI atrape. El filtro de alcance del job `determinar-alcance` (rama `workflow_run`) acepta esa ruta por el mismo motivo: los dos filtros deben moverse juntos. `global.json` esta ahi porque el SDK con el que se compila este dominio **no** lo fija `actions/setup-dotnet`: al recibir `dotnet-version` explicito la action instala ese canal y no lee `global.json` (su input `global-json-file`, el unico que se lo hace leer, no se usa aqui -- [README de `actions/setup-dotnet`](https://github.com/actions/setup-dotnet#using-the-globaljson-file)); el archivo lo leen el **muxer del CLI** y el **resolver de SDK de MSBuild** al correr `dotnet restore`/`dotnet build`, que resuelven contra los SDK instalados usando su `version` como piso y su `rollForward` como politica ([global.json overview, Microsoft Learn](https://learn.microsoft.com/dotnet/core/tools/global-json)). Y el propio `deploy-{kebab}.yml` esta en su lista porque un filtro de `paths` que no se incluye a si mismo no reacciona ni al commit que crea el archivo. Los otros dos workflows del Paso 6 no necesitan el mismo arreglo: `smoke-tests-dominio.yml` es `workflow_call` y `smoke-tests.yml` es `workflow_dispatch` + `schedule`, ninguno declara `paths`. Si generas otro workflow de deploy copiando esta plantilla, copia tambien el filtro completo: fue exactamente asi -- espejando la plantilla vieja, sin las dos rutas -- como el defecto llego al consumidor `Bitakora.ControlAsistencia` (sus PRs #257 y #258, ambos disparados a mano con `workflow_dispatch`).
 
+> **Sexta ruta solo en etapa (b) de tenancy (MEF-ADR-0028 seccion 4, issue #804)**: si el punto 10f del Paso 1 resolvio la rama de etapa (b) **con auto-cableo** (el `.csproj` del dominio gano el `ProjectReference` a `src/<RootNamespace>.TenantResolver/`), esa biblioteca se compila dentro de este mismo artefacto: agrega `- 'src/<RootNamespace>.TenantResolver/**'` a `paths` y `TenantResolver` a la alternancia del `grep -qE` de `determinar-alcance`, por el mismo motivo de staleness silenciosa que las cinco rutas de arriba. En etapa (a) y en el fallback CA-7 no la agregues: no hay tal `ProjectReference`.
+
 > **Orden infra -> deploy (MEF-ADR-0022, issue #197)**: el `push` a `main` ya NO dispara este workflow para cambios bajo `infra/**` -- ese trigger vive ahora en `infra-cd.yml` (`infra-base-scaffolder`). En su lugar, `deploy-{kebab}.yml` se encadena tras `Infra CD` via `workflow_run`, de modo que el codigo nunca se despliega antes de que el `apply` de infra haya creado o actualizado la Function App. El job `determinar-alcance` evita el costo de redesplegar **todos** los dominios tras cada apply de infra: solo continua si el PR de infra que se acaba de mergear toco `src/<RootNamespace>.{PascalCase}/**` o `src/<RootNamespace>.{PascalCase}.DomainEvents/**` (MEF-ADR-0039: el ensamblado de eventos del dominio se publica dentro del mismo artefacto). **Caso limite**: si el `apply` de infra llega a `main` por un push directo sin PR asociado (fuera del flujo de `scripts/iac-pipeline.sh`), la API de PRs por commit no encuentra nada y el redeploy se omite por diseno (evita falsos despliegues); en ese caso, dispara el deploy manualmente con `workflow_dispatch`.
 
 ---
@@ -3850,7 +3865,7 @@ Scaffold completado para el dominio "{kebab}":
     Infraestructura/ComposicionServicios{PascalCase}.cs - Unica fuente de verdad del wiring de DI (Wolverine con las metricas del durability agent apagadas en origen, Marten, routers, tenancy, OpenTelemetry con sampler post-exporter y drop total de metricas + fallback de connection string, validacion, probe de readiness) - MEF-ADR-0029/MEF-ADR-0038/MEF-ADR-0031
     Infraestructura/RequestValidator.cs    - IRequestValidator + implementacion
     Infraestructura/EventStoreReadinessProbe.cs - IEventStoreReadinessProbe + implementacion: fuerza la materializacion de storage de Marten via FetchStreamStateAsync sobre un stream centinela, sin cache del positivo (MEF-ADR-0031 seccion 6)
-    Infraestructura/TenantResolverMonoTenantPorDefecto.cs - ITenantResolver mono-tenant transitorio (MEF-ADR-0028)
+    Infraestructura/TenantResolverMonoTenantPorDefecto.cs - ITenantResolver mono-tenant transitorio (MEF-ADR-0028). Solo en etapa (a) y en el fallback CA-7 de etapa (b); el auto-cableo de etapa (b) no lo genera (referencia src/<RootNamespace>.TenantResolver/ en su lugar)
     Infraestructura/ServiceBusDeserializador.cs - Helper de deserializacion case-insensitive
     Infraestructura/ServiceBusEndpointBase.cs   - Clase base para endpoints de ServiceBus (topic+subscription)
     Infraestructura/ServiceBusSessionEndpointBase.cs - Clase base para endpoints de fan-in (queue en modo sesion, MEF-ADR-0026)
