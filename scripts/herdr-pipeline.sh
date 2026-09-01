@@ -76,6 +76,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # PROJECT_ROOT: repo objetivo del consumidor (git toplevel del cwd del usuario).
 PROJECT_ROOT="$_REPO_TOP"
 LOG_DIR_ABS="$PROJECT_ROOT/.claude/pipeline/logs"
+# CAFF: prefijo "caffeinate -i" (o vacio fuera de macOS), calculado UNA vez
+# por corrida y antepuesto al lanzamiento en background del sub-pipeline
+# dentro de cmd_pane_runner -- issue #800. Evita que el Mac entre en
+# suspension idle mientras el pane de ejecucion corre.
+CAFF="$(caffeinate_prefix)"
 # Registro de panes de ejecucion creados por esta interfaz en este repo (uno
 # por linea, ids publicos de herdr como "w1:p3"). Vive en .claude/pipeline/
 # como el resto del estado runtime: nunca viaja en un commit del consumidor.
@@ -359,7 +364,13 @@ cmd_pane_runner() {
         esac
     done < <(env)
 
-    env "${env_unset[@]}" "$@" >"$report_log" 2>&1 &
+    # $CAFF se expande sin comillas a proposito (0 o 2 palabras, "caffeinate -i"):
+    # aplica el prefijo sin duplicar el lanzamiento en una rama if/else por cada
+    # valor posible (issue #800). caffeinate exec-a el comando en su lugar (ver
+    # caffeinate_prefix), asi que $! sigue siendo el PID del pipeline: el trap,
+    # el wait y el rc de abajo conservan su semantica.
+    # shellcheck disable=SC2086
+    $CAFF env "${env_unset[@]}" "$@" >"$report_log" 2>&1 &
     local pipe_pid=$!
 
     local viewer_pid=""
@@ -464,7 +475,7 @@ cmd_single() {
         # shellcheck disable=SC2086
         dispatch_to_pane "$title" "$issue" "$resolved" "$issue" $extra_args --variant "$variant"
     else
-        # shellcheck disable=SC2086 -- extra_args es una lista de flags simples
+        # shellcheck disable=SC2086 # extra_args es una lista de flags simples
         dispatch_to_pane "$title" "$issue" "$resolved" "$issue" $extra_args
     fi
 }

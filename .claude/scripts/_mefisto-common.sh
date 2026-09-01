@@ -1311,3 +1311,31 @@ build_agents_history_json() {
     printf '{"writer":{"duration":%s},"reviewer":{"duration":%s}}' "$wr_dur_json" "$rv_dur_json"
     return 0
 }
+
+# caffeinate_prefix
+#
+# Espejo interno de caffeinate_prefix de scripts/_pipeline-common.sh (issue
+# #800). Imprime por stdout "caffeinate -i" si el binario 'caffeinate' esta
+# disponible en PATH (macOS), o cadena vacia en cualquier otro sistema
+# (Linux/CI). Antepuesto al lanzamiento de un pipeline interno largo evita
+# que el Mac entre en suspension idle mientras corre en un pane de
+# tmux/Herdr (`-i`: solo suspension idle; sin `-d` la pantalla si puede
+# apagarse; `-s` se descarta porque solo aplica con AC conectado). El
+# prefijo no envuelve al pipeline como proceso padre: `caffeinate <utility>`
+# hace fork de un helper que sostiene la assertion y exec del utility EN SU
+# LUGAR (verificado en macOS 25.4 -- `caffeinate -i /bin/sleep 25 &` deja $!
+# apuntando a /bin/sleep, con un hijo 'caffeinate'). De ahi las dos
+# propiedades que hacen barato el prefijo: el helper muere con el utility (sin
+# huerfano ni assertion colgada) y el PID y el exit code del comando envuelto
+# se conservan, asi que $!, wait, kill y el rc de los runners no cambian de
+# semantica.
+#
+# Alcance: se calcula UNA vez por corrida y se aplica en los RUNNERS
+# (mefisto-tmux-pipeline.sh, mefisto-herdr-pipeline.sh) sobre el lanzamiento
+# del sub-pipeline interno, no en cada `claude -p` individual. Un pipeline
+# invocado directo, sin pasar por un runner, queda sin envolver.
+caffeinate_prefix() {
+    if command -v caffeinate >/dev/null 2>&1; then
+        printf '%s' "caffeinate -i"
+    fi
+}
