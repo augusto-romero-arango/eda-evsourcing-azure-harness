@@ -131,8 +131,8 @@ El CommandHandler no contiene logica de negocio. Solo orquesta: verificar precon
 
 | Intencion | Trigger HTTP | Trigger ServiceBus |
 |---|---|---|
-| **Crear** (stream nuevo) | `ExistsAsync` → si existe: throw (409) | `ExistsAsync` → si existe: retornar silenciosamente |
-| **Modificar** (stream existente) | `GetAggregateRootAsync` → si no existe: throw (404) | `GetAggregateRootAsync` → si no existe: emitir evento de fallo |
+| **Crear** (stream nuevo) | `ExistsAsync` → si existe: throw `RecursoYaExisteException` (409) | `ExistsAsync` → si existe: retornar silenciosamente |
+| **Modificar** (stream existente) | `GetAggregateRootAsync` → si no existe: throw `RecursoNoEncontradoException` (404) | `GetAggregateRootAsync` → si no existe: emitir evento de fallo |
 | **Upsert** | `ExistsAsync` → maneja ambos casos sin error | Igual — idempotencia natural |
 
 **Stream nuevo (Crear):**
@@ -145,7 +145,7 @@ public partial class CrearTurnoCommandHandler(IEventStore eventStore, IPrivateEv
         var existe = await eventStore.ExistsAsync<TurnoAggregateRoot>(
             comando.TurnoId.ToString(), ct);
         if (existe)
-            throw new InvalidOperationException(Mensajes.TurnoYaExiste);
+            throw new RecursoYaExisteException(Mensajes.TurnoYaExiste);
 
         var turno = TurnoAggregateRoot.Crear(
             comando.TurnoId, comando.Nombre, comando.HoraInicio, comando.HoraFin);
@@ -197,7 +197,7 @@ public partial class AsignarEmpleadoATurnoCommandHandler(IEventStore eventStore,
         var turno = await eventStore.GetAggregateRootAsync<TurnoAggregateRoot>(
             comando.TurnoId.ToString(), ct);
         if (turno is null)
-            throw new InvalidOperationException(Mensajes.TurnoNoEncontrado);
+            throw new RecursoNoEncontradoException(Mensajes.TurnoNoEncontrado);
 
         turno.AsignarEmpleado(comando.EmpleadoId);
 
@@ -211,6 +211,7 @@ public partial class AsignarEmpleadoATurnoCommandHandler(IEventStore eventStore,
 - NUNCA llames `eventStore.AppendEvents()` ni `SaveChangesAsync()` manualmente en streams existentes — el middleware lo hace
 - NUNCA hagas try-catch de excepciones de dominio
 - Para triggers ServiceBus: si el aggregate no existe o falla, el aggregate emite evento de fallo — no throw
+- Para triggers HTTP, la precondicion de orquestacion lanza la excepcion tipada correspondiente (`RecursoYaExisteException`/`RecursoNoEncontradoException`, ver "Excepciones tipadas de precondicion" mas abajo) — nunca `InvalidOperationException` generica, reservada a fallos de infraestructura (MEF-ADR-0004 enmendado, incidente #802)
 
 ### EventHandler — reaccionar a un evento privado (sin comando espejo)
 
@@ -362,9 +363,17 @@ public class FunctionEndpoint(IRequestValidator requestValidator, ICommandRouter
         {
             await commandRouter.InvokeAsync(comando!, ct);
         }
-        catch (InvalidOperationException ex)
+        catch (PrecondicionComandoException ex)
         {
-            return new ConflictObjectResult(ex.Message);
+            switch (ex)
+            {
+                case RecursoYaExisteException:
+                    return new ConflictObjectResult(ex.Message);
+                case RecursoNoEncontradoException:
+                    return new NotFoundObjectResult(ex.Message);
+                default:
+                    throw;
+            }
         }
         catch (AggregateException ex)
         {
@@ -377,11 +386,31 @@ public class FunctionEndpoint(IRequestValidator requestValidator, ICommandRouter
 }
 ```
 
+El `default` relanza con `throw;` (bare rethrow, preserva el stack trace) en vez de adivinar un codigo: el mapeo es **exhaustivo solo sobre las derivadas declaradas**, y una derivada que no reconoce sube como `500`. Si el consumidor agrega una tercera, extiende el mapeo con un `case` nuevo — nunca con un `default` que le asigne un codigo (MEF-ADR-0004 enmendado, incidente #802).
+
 **Respuestas HTTP posibles:**
 - `202 Accepted` — comando aceptado, los efectos downstream son asincronos
-- `400 BadRequest` — body nulo, malformado o campos invalidos (FluentValidation)
-- `404 NotFound` — aggregate no encontrado (throw del handler traducido por middleware o manejo explicito)
-- `409 Conflict` — aggregate ya existe (solo para creacion)
+- `400 BadRequest` — body nulo, malformado o campos invalidos (FluentValidation), o una `AggregateException` cuyos `InnerExceptions` se devuelven agregados
+- `404 NotFound` — el handler lanzo `RecursoNoEncontradoException` (aggregate no encontrado)
+- `409 Conflict` — el handler lanzo `RecursoYaExisteException` (aggregate ya existe, solo para creacion)
+
+Toda otra excepcion no capturada sube tal cual y el runtime la traduce a `500 Internal Server Error` — incluida una `InvalidOperationException` de infraestructura, que desde MEF-ADR-0004 enmendado ya no es un tipo que este catch reconozca.
+
+**Excepciones tipadas de precondicion (MEF-ADR-0004)** — si no existen en el proyecto, crearlas en `Infraestructura/PrecondicionComandoException.cs` (mismo criterio "si no existe, crearlo" que `IRequestValidator` mas abajo; una sola vez por proyecto, nunca una copia por comando):
+
+```csharp
+public abstract class PrecondicionComandoException(string message) : Exception(message);
+
+public sealed class RecursoYaExisteException(string message) : PrecondicionComandoException(message);
+
+public sealed class RecursoNoEncontradoException(string message) : PrecondicionComandoException(message);
+```
+
+Sin registro en DI: el `FunctionEndpoint` las referencia directamente en el `catch` de arriba, no via `IServiceProvider`. La ubicacion exacta -- proyecto compartido del BC o `Infraestructura/` de cada dominio -- sigue el mismo layout que el proyecto ya adopto para `IRequestValidator`; este agente no fuerza una topologia unica.
+
+**Regimen de coexistencia (MEF-ADR-0004 enmendado, precedente MEF-ADR-0043 seccion 7).** Esta jerarquia tipada rige el CommandHandler y el FunctionEndpoint que el issue pide escribir o tocar. Un BC con handlers legados que aun lanzan `InvalidOperationException` para precondiciones de orquestacion no se migra de oficio: sus tests siguen en verde con el tipo generico, y migrarlos es una decision del consumidor, discutida con el humano, nunca automatica ni bloqueante de un issue no relacionado (mismo criterio que "Endpoints preexistentes: no los migras" mas arriba).
+
+El corolario operativo: si un test **existente** del handler que si vas a tocar assertea `InvalidOperationException`, ese test es la especificacion (regla absoluta #1) — conserva el tipo generico en ese handler y anota la no conformidad en tu resumen de decisiones. Cambiar el throw a la derivada tipada romperia un test que no te corresponde modificar; alinear la suite es trabajo del test-writer o del reviewer.
 
 **IRequestValidator** — si no existe en el proyecto, crearlo:
 ```csharp
@@ -685,7 +714,7 @@ public partial class ConfirmarTurnoCommandHandler(IEventStore eventStore, IPriva
         var turno = await eventStore.GetAggregateRootAsync<TurnoAggregateRoot>(
             comando.TurnoId.ToString(), ct);
         if (turno is null)
-            throw new InvalidOperationException(Mensajes.TurnoNoEncontrado);
+            throw new RecursoNoEncontradoException(Mensajes.TurnoNoEncontrado);
 
         // El AggregateRoot invoca TurnoConfirmado.Crear(datos) y aplica el evento --
         // mismo patron de "AggregateRoot" (arriba), ahora con ConfirmacionTurno como entrada.
@@ -829,7 +858,7 @@ if (!resultado.IsValid)
     return new BadRequestObjectResult(...);
 
 if (turno is null)
-    throw new InvalidOperationException(Mensajes.TurnoNoEncontrado);
+    throw new RecursoNoEncontradoException(Mensajes.TurnoNoEncontrado);
 ```
 
 Invertir una guard clause obligaria a envolver todo el cuerpo restante en un `if`, anadiendo un nivel de anidamiento y reduciendo la legibilidad. La regla aplica a las bifurcaciones `if`/`else`, no a los early-return.
