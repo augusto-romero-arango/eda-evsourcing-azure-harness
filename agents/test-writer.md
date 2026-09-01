@@ -419,6 +419,10 @@ tests/<RootNamespace>.{Dominio}.Tests/
 - `ThrowExactlyAsync` — precondiciones del **handler**: aggregate no encontrado, aggregate ya existente. Son errores de orquestacion que el handler detecta antes de invocar al aggregate.
 - `Then(evento de fallo)` + `And<>()` — reglas de negocio del **aggregate**: validaciones que el aggregate evalua y que resultan en un evento de fallo. El aggregate nunca lanza excepciones para logica de dominio.
 
+**Regimen de coexistencia (MEF-ADR-0004, "Regimen de migracion"):** los tipos derivados rigen tests **nuevos sobre handlers nuevos o ya migrados**. Las suites preexistentes que asertan `ThrowExactlyAsync<InvalidOperationException>()` para precondiciones de orquestacion no se migran de oficio — siguen en verde porque el handler que prueban sigue lanzando el tipo generico. Sugerir esa migracion es legitimo, pero se discute con el humano; nunca la ejecutas de oficio.
+
+El corolario que te toca: antes de escribir un test de precondicion sobre un handler **que ya existe**, mira que asertan los tests que ya tiene. Si asertan `InvalidOperationException`, tu test nuevo aserta lo mismo y lo anotas como no conformidad en tu resumen — el implementer conserva el tipo generico en ese handler porque el test existente es su especificacion (`agents/implementer.md`, "Regimen de coexistencia"), asi que un test nuevo con la derivada tipada quedaria rojo sin implementacion posible. Handler nuevo, o suite que ya aserta las derivadas: usas `RecursoYaExisteException`/`RecursoNoEncontradoException`.
+
 **Verificacion del estado del agregado:**
 
 Verifica las propiedades relevantes que cambio el evento:
@@ -542,6 +546,16 @@ public partial class RegistrarMarcacionCommandHandler : ICommandHandlerAsync<Reg
 }
 ```
 
+**Excepciones tipadas de precondicion** (solo si el proyecto aun no las tiene): los escenarios 4 y 5 las referencian, asi que sin ellas la fase roja no compila — falla el build, no el assert. Crea los tres tipos de MEF-ADR-0004 seccion 2 en `Infraestructura/PrecondicionComandoException.cs`, una sola vez por proyecto (mismo criterio "si no existe, crearlo" de `IRequestValidator`), nunca una copia por comando:
+```csharp
+public abstract class PrecondicionComandoException(string message) : Exception(message);
+
+public sealed class RecursoYaExisteException(string message) : PrecondicionComandoException(message);
+
+public sealed class RecursoNoEncontradoException(string message) : PrecondicionComandoException(message);
+```
+Son la excepcion a la regla "solo `throw new NotImplementedException()`" de abajo: no son un stub que el implementer complete despues, son el tipo final que el tambien escribiria si llegara primero (`agents/implementer.md`, "Excepciones tipadas de precondicion"). Si ya existen, no las dupliques.
+
 **Reglas para stubs:**
 - Solo `throw new NotImplementedException()`, sin logica real
 - El aggregate root debe tener las propiedades que los tests verifican con `And<>()`, aunque sean stub
@@ -637,8 +651,6 @@ await act.Should().ThrowExactlyAsync<RecursoYaExisteException>()
 ```
 
 **Nota**: el SDK de .NET incluye automaticamente los archivos .resx como EmbeddedResource. No se necesita configuracion adicional en el .csproj.
-
-**Regimen de coexistencia (MEF-ADR-0004, "Regimen de migracion")**: esta doctrina rige tests **nuevos**. Las suites preexistentes que ya asertan `ThrowExactlyAsync<InvalidOperationException>()` para precondiciones de orquestacion no se migran de oficio — siguen en verde porque el handler que prueban sigue lanzando el tipo generico. No reescribas un test existente a `RecursoYaExisteException`/`RecursoNoEncontradoException` salvo que el handler bajo prueba ya haya migrado a esos tipos; sugerir esa migracion es legitimo pero se discute con el humano, nunca automatico.
 
 **Verificacion de mensajes en excepciones de value objects:**
 ```csharp
