@@ -87,7 +87,23 @@ PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
 
 El script imprime progreso en tiempo real. Espera a que termine (no uses `run_in_background`).
 
-### 4. Reportar resultado
+### 4. Colapsar paneles Herdr sobrantes (issue #799)
+
+Si estas corriendo dentro de Herdr (`HERDR_ENV=1`) y la tabla de resumen del paso anterior muestra al menos un PR en estado `mergeado`, cierra los paneles Herdr ociosos que dejo el lote (cada issue de `/parallel` termina en su propio pane apilado, y sin esto quedan abiertos hasta el proximo despacho). Es best-effort: nunca debe hacer fallar el skill ni bloquear el reporte final.
+
+```bash
+if [ "${HERDR_ENV:-}" = "1" ]; then
+    PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+    [ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+    PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
+    CLOSED=$("$PLUGIN_SCRIPTS/herdr-pipeline.sh" --collapse-panes 2>/dev/null || true)
+    echo "paneles_herdr_cerrados=${CLOSED:-0}"
+fi
+```
+
+`--collapse-panes` imprime por stdout la cantidad de paneles cerrados (o "0"; nunca falla, incluso sin `PANES_STATE` previo). El `echo` final es lo unico que llega al output del bloque: lee de ahi el numero para el paso 5. Fuera de Herdr, no ejecutes el bloque.
+
+### 5. Reportar resultado
 
 El script ya imprime un resumen final con tabla `PR | Rama | Estado` y la ruta del log. Tu solo debes:
 
@@ -97,6 +113,7 @@ El script ya imprime un resumen final con tabla `PR | Rama | Estado` y la ruta d
   ```
   Reintentar el PR fallido: /merge <num>
   ```
+- Si el paso 4 imprimio `paneles_herdr_cerrados=<n>` con `<n>` mayor que 0, mencionalo brevemente: "Paneles Herdr sobrantes cerrados: <n>". Si fue 0 (o no corriste el paso 4 por estar fuera de Herdr), no lo menciones.
 
 ---
 

@@ -10,6 +10,7 @@
 #   herdr-pipeline.sh --scaffold 42 --domain x    # scaffold de dominio
 #   herdr-pipeline.sh --batch 42 43 44            # secuencial
 #   herdr-pipeline.sh --parallel 42 43            # paralelo: un pane apilado por issue
+#   herdr-pipeline.sh --collapse-panes            # poda paneles libres sobrantes sin despachar
 #
 # En vez de crear una sesion tmux nueva con un pane de `tail -f events.log`
 # (que resulto innecesario), esta interfaz trabaja DENTRO del workspace herdr
@@ -133,27 +134,24 @@ pane_is_free() {
     [ -n "$fg" ] && [ -n "$sh" ] && [ "$fg" = "$sh" ]
 }
 
-# acquire_report_pane
+# prune_report_panes
 #
-# Imprime por stdout el pane_id donde correr el proximo pipeline: el primer
-# pane registrado que siga vivo, pertenezca a ESTE workspace y este libre; o
-# uno nuevo (split a la derecha del pane que despacha, sin robar el foco). De
-# paso poda del registro los panes que ya no existen (cerrados a mano) y
-# CIERRA los panes libres sobrantes de corridas concurrentes ya terminadas:
-# el layout colapsa naturalmente de vuelta a UN solo pane de seguimiento, y
-# despachar un issue nuevo "reemplaza" al pane del que termino en vez de
-# acumular ventanas (el reporte de cada corrida pasada sigue en su
-# .report.log).
-acquire_report_pane() {
+# Poda compartida por acquire_report_pane y --collapse-panes (issue #799):
+# recorre PANES_STATE, quita los panes que ya no existen (cerrados a mano) y
+# CIERRA los panes libres sobrantes de corridas concurrentes ya terminadas
+# del PROPIO workspace, dejando vivo el primero que encuentra libre (no lo
+# cierra: queda disponible para reutilizar). Nunca toca panes ocupados ni de
+# otro workspace (el mismo repo abierto dos veces). Imprime por stdout dos
+# lineas: el pane_id libre que quedo vivo (vacio si no habia ninguno) y la
+# cantidad de panes cerrados.
+prune_report_panes() {
     mkdir -p "$(dirname "$PANES_STATE")"
     touch "$PANES_STATE"
 
-    local kept="" chosen="" id
+    local kept="" chosen="" id closed=0
     while IFS= read -r id; do
         [ -n "$id" ] || continue
         pane_exists "$id" || continue
-        # Un pane de otro workspace (el mismo repo abierto dos veces) no se
-        # reutiliza ni se cierra desde aqui: su workspace lo usa.
         case "$id" in
             "$HERDR_WORKSPACE_ID:"*) ;;
             *)
@@ -168,6 +166,7 @@ acquire_report_pane() {
 "
             elif herdr pane close "$id" >/dev/null 2>&1; then
                 log "Pane sobrante de una corrida terminada cerrado: $id"
+                closed=$((closed + 1))
             else
                 kept="${kept}${id}
 "
@@ -178,6 +177,23 @@ acquire_report_pane() {
         fi
     done < "$PANES_STATE"
     printf '%s' "$kept" > "$PANES_STATE"
+
+    printf '%s\n%s\n' "$chosen" "$closed"
+}
+
+# acquire_report_pane
+#
+# Imprime por stdout el pane_id donde correr el proximo pipeline: el primer
+# pane registrado que siga vivo, pertenezca a ESTE workspace y este libre (via
+# prune_report_panes, que de paso cierra los libres sobrantes); o uno nuevo
+# (split a la derecha del pane que despacha, sin robar el foco). El layout
+# colapsa naturalmente de vuelta a UN solo pane de seguimiento, y despachar un
+# issue nuevo "reemplaza" al pane del que termino en vez de acumular ventanas
+# (el reporte de cada corrida pasada sigue en su .report.log).
+acquire_report_pane() {
+    local result chosen
+    result=$(prune_report_panes)
+    chosen=$(printf '%s' "$result" | sed -n '1p')
 
     if [ -z "$chosen" ]; then
         local resp
@@ -667,6 +683,34 @@ cmd_parallel() {
     log "Los PRs NO se mergean automaticamente: usa /merge <PR_NUM> al terminar."
 }
 
+# cmd_collapse_panes (issue #799)
+#
+# Poda del registro los paneles muertos y CIERRA los libres sobrantes del
+# propio workspace (dejando uno vivo) sin despachar ni crear ningun pane --
+# la mitad de acquire_report_pane que no crea pane nuevo, compartida via
+# prune_report_panes (CA-4). Pensado para que /merge lo invoque al terminar
+# un lote --parallel: deja los paneles del lote mergeado colapsados de vuelta
+# a uno, igual que ocurriria al despachar el proximo issue.
+#
+# Imprime por stdout SOLO la cantidad de paneles cerrados (entero, "0" si no
+# hubo ninguno). Seguro fuera de contexto (CA-2): sin herdr/jq instalados, sin
+# HERDR_ENV=1, sin HERDR_PANE_ID/HERDR_WORKSPACE_ID o sin PANES_STATE previo,
+# es un no-op que imprime "0" y sale 0 -- nunca aborta.
+cmd_collapse_panes() {
+    if [ "${HERDR_ENV:-}" != "1" ] \
+        || [ -z "${HERDR_PANE_ID:-}" ] || [ -z "${HERDR_WORKSPACE_ID:-}" ] \
+        || ! command -v herdr &>/dev/null || ! command -v jq &>/dev/null \
+        || [ ! -f "$PANES_STATE" ]; then
+        echo "0"
+        return 0
+    fi
+
+    local result closed
+    result=$(prune_report_panes)
+    closed=$(printf '%s' "$result" | sed -n '2p')
+    echo "${closed:-0}"
+}
+
 cmd_help() {
     cat <<EOF
 
@@ -685,6 +729,7 @@ ${BOLD}Uso (misma superficie que tmux-pipeline.sh):${NC}
   herdr-pipeline.sh --scaffold 42 --domain nombre        Scaffold de dominio
   herdr-pipeline.sh --batch 42 43 44                     Secuencial
   herdr-pipeline.sh --parallel 42 43                     Paralelo: un pane apilado por issue
+  herdr-pipeline.sh --collapse-panes                     Poda paneles libres sobrantes sin despachar (usado por /merge)
 
 ${BOLD}Que hace distinto de tmux-pipeline.sh:${NC}
   No crea sesiones tmux ni el pane de 'tail -f events.log'. Reutiliza (o
@@ -718,6 +763,14 @@ main() {
     if [ "$1" = "--_pane-runner" ]; then
         shift
         cmd_pane_runner "$@"
+        exit $?
+    fi
+
+    # --collapse-panes (issue #799) tampoco pasa por el pre-parseo: no toma
+    # argumentos posicionales y el pre-parseo aborta si no queda ninguno.
+    if [ "$1" = "--collapse-panes" ]; then
+        shift
+        cmd_collapse_panes
         exit $?
     fi
 
