@@ -180,7 +180,7 @@ Esta biblioteca es la que consumen todos los dominios migrados en el paso 9.4 --
 test -d "src/<RootNamespace>.TenantResolver" && echo "TENANTRESOLVER_LIB=EXISTE" || echo "TENANTRESOLVER_LIB=FALTA"
 ```
 
-Si `TENANTRESOLVER_LIB=EXISTE` (instalada por una corrida previa de este skill, o por un dominio previo del mismo BC), omite el resto de este paso y repórtalo -- no la reescribas.
+Si `TENANTRESOLVER_LIB=EXISTE` (instalada por una corrida previa de este skill, o portada a mano en un hotfix del consumidor -- precedente: Bitakora.ControlAsistencia PR #546, que porto la biblioteca de Cosmos.ControlPlane con sus tests), omite el resto de este paso y repórtalo -- no la reescribas: una biblioteca ya portada puede tener ajustes propios del BC que este skill no conoce.
 
 Si falta, créala:
 
@@ -297,29 +297,35 @@ public sealed class TenantContextMiddleware : IFunctionsWorkerMiddleware
         var trigger = context.FunctionDefinition.InputBindings.Values
             .FirstOrDefault(binding => binding.Type.EndsWith("Trigger", StringComparison.Ordinal));
 
-        switch (trigger?.Type)
+        // El if (en vez de un switch sobre trigger?.Type) es lo que le da al compilador el estado
+        // no-nulo de trigger dentro del bloque: BindInputAsync exige un BindingMetadata no anulable
+        // y un switch sobre el ?. no propaga ese narrowing.
+        if (trigger is not null)
         {
-            case "httpTrigger":
-                // ConfigureFunctionsWebApplication() (MEF-ADR-0021) habilita el HttpContext real de
-                // ASP.NET Core; el mapping claim -> header ya lo hizo la politica global de APIM
-                // (MEF-ADR-0032 seccion 4), asi que aca solo se lee, nunca se parsea un JWT.
-                var httpContext = context.GetHttpContext();
-                TenantExecutionContext.SetDerivedIdentity(
-                    httpContext?.Request.Headers[HeaderTenantId].FirstOrDefault(),
-                    httpContext?.Request.Headers[HeaderUserId].FirstOrDefault());
-                break;
+            switch (trigger.Type)
+            {
+                case "httpTrigger":
+                    // ConfigureFunctionsWebApplication() (MEF-ADR-0021) habilita el HttpContext real
+                    // de ASP.NET Core; el mapping claim -> header ya lo hizo la politica global de
+                    // APIM (MEF-ADR-0032 seccion 4), asi que aca solo se lee, nunca se parsea un JWT.
+                    var httpContext = context.GetHttpContext();
+                    TenantExecutionContext.SetDerivedIdentity(
+                        httpContext?.Request.Headers[HeaderTenantId].FirstOrDefault(),
+                        httpContext?.Request.Headers[HeaderUserId].FirstOrDefault());
+                    break;
 
-            case "serviceBusTrigger":
-                var mensaje = await context.BindInputAsync<ServiceBusReceivedMessage>(trigger);
-                var propiedades = mensaje.Value?.ApplicationProperties;
-                TenantExecutionContext.SetDerivedIdentity(
-                    LeerPropiedad(propiedades, PropiedadTenantId),
-                    LeerPropiedad(propiedades, PropiedadUserId));
-                break;
+                case "serviceBusTrigger":
+                    var mensaje = await context.BindInputAsync<ServiceBusReceivedMessage>(trigger);
+                    var propiedades = mensaje.Value?.ApplicationProperties;
+                    TenantExecutionContext.SetDerivedIdentity(
+                        LeerPropiedad(propiedades, PropiedadTenantId),
+                        LeerPropiedad(propiedades, PropiedadUserId));
+                    break;
 
-            // Cualquier otro trigger (timer, etc.) no trae identidad del gateway: queda sin poblar
-            // a proposito -- el handler que la necesite llama TenantExecutionContext.SetDerivedIdentity()
-            // el mismo antes de leerla (MEF-ADR-0028 seccion 4).
+                // Cualquier otro trigger (timer, etc.) no trae identidad del gateway: queda sin poblar
+                // a proposito -- el handler que la necesite llama TenantExecutionContext.SetDerivedIdentity()
+                // el mismo antes de leerla (MEF-ADR-0028 seccion 4).
+            }
         }
 
         await next(context);
@@ -339,7 +345,6 @@ using Cosmos.MultiTenancy;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.Hosting;
 
 namespace <RootNamespace>.TenantResolver;
 
@@ -451,7 +456,18 @@ public class TenantExecutionContextTests
 }
 ```
 
-**g. Verificar `global.json`** (mismo requisito que el resto del repo para xUnit v3 mtp-v2, ver `agents/domain-scaffolder.md`): si `global.json` en la raiz no tiene la seccion `test`, este proyecto nuevo no corre con `dotnet test`. No lo toques si ya existe (otro scaffold ya lo dejo listo) -- solo repórtalo si falta.
+**g. Agregar los dos proyectos a la solucion y verificar `global.json`.**
+
+Todo proyecto del consumidor se registra en el archivo de solucion (`domain-scaffolder` Paso 3, `projections-scaffolder` Paso 3): sin esto el `build-and-test` del CI -- que restaura/compila la solucion -- nunca corre los tests de la biblioteca, aunque el `.csproj` del dominio la arrastre por `ProjectReference`. Resuelve `<SolutionFile>` con `ls *.slnx *.sln 2>/dev/null` en la raiz del repo:
+
+```bash
+dotnet sln <SolutionFile> add "src/<RootNamespace>.TenantResolver/"
+dotnet sln <SolutionFile> add "tests/<RootNamespace>.TenantResolver.Tests/"
+```
+
+(`dotnet sln add` sobre un proyecto ya listado es no-op: imprime "La solucion ... ya contiene el proyecto X", sale con codigo 0 y no duplica la entrada -- misma idempotencia que ya explotan `domain-scaffolder` y `projections-scaffolder`. Si el repo no tiene archivo de solucion, omitilo y repórtalo.)
+
+**Verificar `global.json`** (mismo requisito que el resto del repo para xUnit v3 mtp-v2, ver `agents/domain-scaffolder.md`): si `global.json` en la raiz no tiene la seccion `test`, este proyecto nuevo no corre con `dotnet test`. No lo toques si ya existe (otro scaffold ya lo dejo listo) -- solo repórtalo si falta.
 
 **h. Compilar y correr los tests (gate antes de dar la biblioteca por lista):**
 
@@ -480,23 +496,11 @@ Por cada archivo encontrado (dominio `{PascalCase}`, proyecto `src/<RootNamespac
 
 Para cada dominio a migrar:
 
-**a. `.csproj`** (`src/<RootNamespace>.{PascalCase}/<RootNamespace>.{PascalCase}.csproj`):
+**a. `.csproj`** (`src/<RootNamespace>.{PascalCase}/<RootNamespace>.{PascalCase}.csproj`): si no tiene ya una referencia a la biblioteca del paso 9.3, agrega en el `<ItemGroup>` de `ProjectReference`:
 
-- Si no tiene ya una referencia a la biblioteca del paso 9.3, agrega en el `<ItemGroup>` de `ProjectReference`:
-
-  ```xml
-  <ProjectReference Include="..\<RootNamespace>.TenantResolver\<RootNamespace>.TenantResolver.csproj" />
-  ```
-
-- **Solo si el dominio viene del hibrido roto** (tenia `services.AgregarTenantResolverHibrido();`): tiene tambien un `PackageReference Include="Cosmos.MultiTenancy.CritterStack"` que la migracion anterior le agrego. Antes de quitarlo, confirma que queda huerfano -- que ningun otro simbolo de `Cosmos.MultiTenancy.CritterStack` sigue en uso en el proyecto (corre este grep **despues** de aplicar el paso b, que ya reemplazo el `using`):
-
-  ```bash
-  grep -rq "Cosmos\.MultiTenancy\.CritterStack" "src/<RootNamespace>.{PascalCase}" --include="*.cs" \
-    && echo "using: SIGUE EN USO (no quites el PackageReference)" \
-    || echo "using: HUERFANO (quitalo)"
-  ```
-
-  Si sigue en cero matches, quita la linea `PackageReference` de `Cosmos.MultiTenancy.CritterStack` del `.csproj` (CA-3: "limpiar... el PackageReference si queda huerfano"). Si un dominio custom llegara a referenciar ese namespace en otro archivo, deja el paquete -- no es huerfano.
+```xml
+<ProjectReference Include="..\<RootNamespace>.TenantResolver\<RootNamespace>.TenantResolver.csproj" />
+```
 
 **b. `Infraestructura/ComposicionServicios{PascalCase}.cs`**:
 
@@ -520,24 +524,37 @@ Para cada dominio a migrar:
 
   El invariante que debe quedar, sea cual sea el estado de origen del dominio: el `using` en `<RootNamespace>.TenantResolver` y la linea de registro en `services.AgregarTenantResolverAsyncLocal();` -- no que el comentario previo matchee textualmente (mismo criterio que ya aplicaba la version anterior de este skill al fallback CA-7 de `domain-scaffolder`).
 
-**c. `Program.cs`**: agrega `builder.UsarTenantContextMiddleware();` inmediatamente antes de `await builder.Build().RunAsync();` (sobre el `FunctionsApplicationBuilder`, nunca sobre ningun `app` -- MEF-ADR-0028 seccion 4, referencia [3]). En ambos estados de origen (etapa a o hibrido roto) esta linea falta por completo -- ninguna version anterior de este skill la agregaba -- asi que es siempre una insercion nueva, no un reemplazo. Agrega tambien `using <RootNamespace>.TenantResolver;` en `Program.cs` si no lo tiene ya (verifica con el build del paso e si hace falta).
+- **Solo si el dominio venia del hibrido roto** (tenia `services.AgregarTenantResolverHibrido();`): su `.csproj` tiene ademas un `PackageReference Include="Cosmos.MultiTenancy.CritterStack"` que le agrego la migracion anterior. Ahora que el `using` ya se reemplazo, confirma que el paquete quedo huerfano -- que ningun otro simbolo de `Cosmos.MultiTenancy.CritterStack` sigue en uso en el proyecto:
 
-**d. Elimina** `Infraestructura/TenantResolverMonoTenantPorDefecto.cs` de ese dominio, **si existe** (un dominio que venia del hibrido roto ya no lo tiene -- la migracion anterior ya lo habia borrado; esto es normal, no un error).
+  ```bash
+  grep -rq "Cosmos\.MultiTenancy\.CritterStack" "src/<RootNamespace>.{PascalCase}" --include="*.cs" \
+    && echo "SIGUE EN USO (no quites el PackageReference)" \
+    || echo "HUERFANO (quitalo)"
+  ```
 
-**e. Gate MEF-ADR-0029 (obligatorio -- "el gate no se relaja"):** corre el test de composicion de ese dominio:
+  Si sale `HUERFANO`, quita esa linea `PackageReference` del `.csproj` del dominio (CA-3: "limpiar... el `PackageReference` si queda huerfano"). Si un dominio custom llegara a referenciar ese namespace en otro archivo, deja el paquete -- no es huerfano.
+
+**c. `Program.cs`**: agrega `builder.UsarTenantContextMiddleware();` inmediatamente antes de `await builder.Build().RunAsync();` (sobre el `FunctionsApplicationBuilder`, nunca sobre ningun `app` -- MEF-ADR-0028 seccion 4, referencia [3]). En ambos estados de origen (etapa a o hibrido roto) esta linea falta por completo -- ninguna version anterior de este skill la agregaba -- asi que es siempre una insercion nueva, no un reemplazo. Agrega tambien `using <RootNamespace>.TenantResolver;` en `Program.cs` si no lo tiene ya (verifica con el build del paso f si hace falta).
+
+**d. `.github/workflows/deploy-{kebab}.yml`**: agrega `src/<RootNamespace>.TenantResolver/**` al filtro `on.push.paths`, junto a las rutas de `src/<RootNamespace>.{PascalCase}.DomainEvents/**` y `src/<RootNamespace>.PublicEvents/**` que ya estan ahi (si ya figura, no la dupliques). El paso a acaba de meter esa biblioteca **dentro** del artefacto que este workflow publica: sin la ruta, un cambio posterior a `TenantContextMiddleware`/`TenantExecutionContext` no dispara nada en el push a main y la Function App sigue sirviendo el binario anterior -- exactamente la staleness silenciosa (no una rotura que CI atrape) que documenta `agents/domain-scaffolder.md` para las mismas rutas compartidas del BC (issues #454/#544). El filtro de alcance del job `determinar-alcance` (rama `workflow_run`) del mismo archivo acepta la misma lista: los dos filtros se mueven juntos.
+
+**e. Elimina** `Infraestructura/TenantResolverMonoTenantPorDefecto.cs` de ese dominio, **si existe** (un dominio que venia del hibrido roto ya no lo tiene -- la migracion anterior ya lo habia borrado; esto es normal, no un error).
+
+**f. Gate MEF-ADR-0029 (obligatorio -- "el gate no se relaja"):** corre el test de composicion de ese dominio:
 
 ```bash
 dotnet test "tests/<RootNamespace>.{PascalCase}.Tests" --filter "FullyQualifiedName~ComposicionContenedorTests"
 ```
 
 - Si pasa, el dominio queda migrado y construible -- segui con el siguiente.
-- Si falla, o `dotnet`/el SDK no estan disponibles para correr el test: **revierte las ediciones a-d de este dominio**. `TenantExecutionContext` no depende de `IHttpContextAccessor` ni de ningun otro servicio registrado -- a diferencia de `ProxyTenantResolver`/`TrustedHeadersTenantResolver`, no hay ningun wiring adicional que probar antes de revertir (el fallback `AddHttpContextAccessor()` de la version anterior de este skill ya no aplica). Los archivos tocados estan tracked en `HEAD` (la eliminacion del paso d, si ocurrio, es solo del working tree, todavia sin commitear -- el commit es el paso 10), asi que `git restore` los devuelve a su estado original sin reconstruir nada a mano:
+- Si falla, o `dotnet`/el SDK no estan disponibles para correr el test: **revierte las ediciones a-e de este dominio**. `TenantExecutionContext` no depende de `IHttpContextAccessor` ni de ningun otro servicio registrado -- a diferencia de `ProxyTenantResolver`/`TrustedHeadersTenantResolver`, no hay ningun wiring adicional que probar antes de revertir (el fallback `AddHttpContextAccessor()` de la version anterior de este skill ya no aplica). Los archivos tocados estan tracked en `HEAD` (la eliminacion del paso e, si ocurrio, es solo del working tree, todavia sin commitear -- el commit es el paso 10), asi que `git restore` los devuelve a su estado original sin reconstruir nada a mano:
 
   ```bash
   git restore "src/<RootNamespace>.{PascalCase}/<RootNamespace>.{PascalCase}.csproj" \
               "src/<RootNamespace>.{PascalCase}/Infraestructura/ComposicionServicios{PascalCase}.cs" \
-              "src/<RootNamespace>.{PascalCase}/Program.cs"
-  # Solo si el paso d borro el archivo (dominio que venia de la etapa a):
+              "src/<RootNamespace>.{PascalCase}/Program.cs" \
+              ".github/workflows/deploy-{kebab}.yml"
+  # Solo si el paso e borro el archivo (dominio que venia de la etapa a):
   git restore "src/<RootNamespace>.{PascalCase}/Infraestructura/TenantResolverMonoTenantPorDefecto.cs"
   ```
 
@@ -549,12 +566,13 @@ Solo si el paso 9 tuvo al menos un cambio (token flip, scaffold de la biblioteca
 
 ```bash
 git add .claude/harness.config.json
-# solo si el paso 9.3 la creo en esta corrida:
-git add "src/<RootNamespace>.TenantResolver" "tests/<RootNamespace>.TenantResolver.Tests"
+# solo si el paso 9.3 la creo en esta corrida (incluido el <SolutionFile>, que el paso 9.3.g toco):
+git add "src/<RootNamespace>.TenantResolver" "tests/<RootNamespace>.TenantResolver.Tests" <SolutionFile>
 # por cada dominio migrado con exito (paso 9.4):
 git add "src/<RootNamespace>.<PascalCase>/<RootNamespace>.<PascalCase>.csproj" \
         "src/<RootNamespace>.<PascalCase>/Infraestructura/ComposicionServicios<PascalCase>.cs" \
-        "src/<RootNamespace>.<PascalCase>/Program.cs"
+        "src/<RootNamespace>.<PascalCase>/Program.cs" \
+        ".github/workflows/deploy-<kebab>.yml"
 # si el dominio tenia TenantResolverMonoTenantPorDefecto.cs (etapa a):
 git rm "src/<RootNamespace>.<PascalCase>/Infraestructura/TenantResolverMonoTenantPorDefecto.cs"
 git commit -m "tenancy(a->b): migrar a TenantExecutionContext (AsyncLocal + middleware) en <lista de dominios migrados> (MEF-ADR-0028 seccion 4, enmendada por el issue #802)"
