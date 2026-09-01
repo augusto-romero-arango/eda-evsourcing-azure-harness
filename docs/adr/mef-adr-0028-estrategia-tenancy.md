@@ -175,9 +175,15 @@ config, solo tras confirmacion explicita: `/onboard` no sondea codigo ni infiere
 - **Etapa (b)** (`"multi-tenant-header"`): en vez del default transitorio, referencia la biblioteca
   scaffoldeada `src/{RootNamespace}.TenantResolver/` (seccion 4: `TenantExecutionContext` +
   `TenantContextMiddleware` + las dos extensiones). **Si ya existe** en el repo consumidor (instalada por
-  `/install-apim` sobre el BC, o por un dominio previo del mismo BC), el scaffold invoca
-  `services.AgregarTenantResolver...()` en `ComposicionServicios{Dominio}.cs` y agrega
-  `app.UsarTenantContextMiddleware()` en `Program.cs`, exactamente como fija la seccion 4. **Si la
+  `/install-apim` sobre el BC, o por un dominio previo del mismo BC), el scaffold agrega el
+  `ProjectReference` a `src/{RootNamespace}.TenantResolver/{RootNamespace}.TenantResolver.csproj` en el
+  `.csproj` del dominio, invoca `services.AgregarTenantResolver...()` en
+  `ComposicionServicios{Dominio}.cs` y agrega `builder.UsarTenantContextMiddleware()` en `Program.cs`
+  -- sobre el `FunctionsApplicationBuilder` que devuelve `FunctionsApplication.CreateBuilder(args)` y
+  antes de `builder.Build()`, no sobre ningun `app`: en el modelo isolated worker el middleware se
+  registra en el `IFunctionsWorkerApplicationBuilder` [3], y el `Program.cs` que genera
+  `domain-scaffolder` (MEF-ADR-0021) no expone ninguna otra variable --, exactamente como fija la
+  seccion 4. **Si la
   biblioteca todavia no existe** (dominio scaffoldeado antes de instalar auth, o BC sin WorkOS+APIM
   todavia), el scaffold **degrada a "proponer"**: mantiene intacto el registro de
   `TenantResolverMonoTenantPorDefecto` de la etapa (a) (el contrato sigue registrado, el test de
@@ -242,7 +248,9 @@ biblioteca propia scaffoldeada por dominio consumidor.
     interno sin claim de usuario): el propio handler deriva y fija la identidad antes de que el codigo
     de negocio la lea.
   - **`TenantContextMiddleware : IFunctionsWorkerMiddleware`**: puebla el `AsyncLocal` al inicio de
-    **cada** invocacion, antes de que el pipeline de Functions resuelva ningun binding de la funcion --
+    **cada** invocacion, antes de que se ejecute la funcion -- y por tanto antes de que se construya
+    ninguna de las dependencias que el codigo de la funcion resuelve, porque el activador de la funcion
+    corre en el ultimo middleware del pipeline del worker (`FunctionExecutionMiddleware` [3]) --
     exactamente lo que resuelve el catch-22 documentado en "Contexto": para requests HTTP, lee los
     headers `X-Tenant-Id`/`X-User-Id` de `FunctionContext.GetHttpContext()`; para triggers de Service
     Bus, lee las `ApplicationProperties` `tenant-id`/`user_id` del mensaje via
@@ -252,8 +260,9 @@ biblioteca propia scaffoldeada por dominio consumidor.
     router lo lee, incluido dentro de `TenancyDelivery.Build(tenantResolver)`.
   - **Dos extensiones**: `AgregarTenantResolver...()` (seam de composicion, registra
     `TenantExecutionContext` como `ITenantResolver` -- singleton, no scoped: el estado real vive en el
-    `AsyncLocal`, no en el ciclo de vida de DI) y `UsarTenantContextMiddleware()` (registra el
-    middleware en el pipeline del worker, invocada desde `Program.cs`).
+    `AsyncLocal`, no en el ciclo de vida de DI) y `UsarTenantContextMiddleware()` (extension sobre
+    `IFunctionsWorkerApplicationBuilder`, azucar sobre `UseMiddleware<TenantContextMiddleware>()` [3],
+    invocada desde `Program.cs` sobre el `FunctionsApplicationBuilder` antes de `builder.Build()`).
   - **Tests**: cruce de scope async (verifica que el valor puesto por el middleware sigue visible tras
     cruzar `await`s reales del pipeline de Wolverine/Functions, incluido dentro del `IServiceScope` hijo
     que crea Wolverine) y fallo ruidoso (verifica que los getters lanzan si se leen sin que el middleware
@@ -266,8 +275,10 @@ biblioteca propia scaffoldeada por dominio consumidor.
   3. **Migracion del resolver en todos los dominios ya scaffoldeados** del BC: cada
      `Infraestructura/ComposicionServicios{Dominio}.cs` que registraba
      `services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>()` (seccion 2)
-     pasa a invocar `services.AgregarTenantResolver...()` (bullet anterior) y cada `Program.cs` agrega
-     `app.UsarTenantContextMiddleware()`; se elimina el archivo `TenantResolverMonoTenantPorDefecto.cs`
+     pasa a invocar `services.AgregarTenantResolver...()` (bullet anterior), cada `.csproj` de dominio
+     suma el `ProjectReference` a la biblioteca y cada `Program.cs` agrega
+     `builder.UsarTenantContextMiddleware()` antes de `builder.Build()`; se elimina el archivo
+     `TenantResolverMonoTenantPorDefecto.cs`
      junto con su `// TODO(tenancy etapa b)` de cada dominio migrado -- no uno a la vez via `/scaffold`,
      sino en un solo paso sobre todos los dominios existentes del BC.
 - **Sin mapping por dominio**: a diferencia del auto-cableo generico que describe la seccion 3 (donde
@@ -373,6 +384,15 @@ proyecto matura de (a) a (b), que es precisamente lo que el token declarativo `t
   `src/JasperFx/StorageConstants.cs`): `public const string DefaultTenantId = "*DEFAULT*";`. Verificado
   ademas decompilando con `ilspycmd` el ensamblado `JasperFx.dll` 2.18.1 (version resuelta
   transitivamente por `Marten` 9.12.0, dependencia de `Cosmos.EventSourcing.CritterStack` 2.1.0).
+- **[3]** `MiddlewareWorkerApplicationBuilderExtensions.UseMiddleware<T>` e `IFunctionsWorkerMiddleware`
+  -- Microsoft Learn (.NET API docs, `Microsoft.Azure.Functions.Worker.Core`):
+  `public static IFunctionsWorkerApplicationBuilder UseMiddleware<T>(this IFunctionsWorkerApplicationBuilder builder) where T : class, IFunctionsWorkerMiddleware`.
+  El middleware del worker se registra sobre el builder (el `FunctionsApplicationBuilder` que devuelve
+  `FunctionsApplication.CreateBuilder(args)` lo implementa), antes de `Build()`; el activador de la
+  funcion corre en el ultimo middleware del pipeline (`FunctionExecutionMiddleware`), de modo que todo
+  middleware registrado antes se ejecuta antes de que se construyan las dependencias de la funcion.
+  https://learn.microsoft.com/dotnet/api/microsoft.extensions.hosting.middlewareworkerapplicationbuilderextensions.usemiddleware
+  y https://learn.microsoft.com/azure/azure-functions/dotnet-isolated-process-guide#middleware
 - `Cosmos.MultiTenancy` / `Cosmos.MultiTenancy.AspNetCore` / `Cosmos.MultiTenancy.CritterStack` 2.1.0:
   paquetes privados del marco sin documentacion publica; el contrato `ITenantResolver` y las
   implementaciones `TrustedHeadersTenantResolver`/`ProxyTenantResolver`/
@@ -465,9 +485,16 @@ proyecto matura de (a) a (b), que es precisamente lo que el token declarativo `t
   alineada: referencia la biblioteca si ya existe en el repo consumidor, degrada a "proponer" con un
   placeholder construible si no; la re-confirmacion por decompilacion del paquete que fijaba la version
   anterior de esta seccion deja de aplicar (la biblioteca es codigo propio del harness, no un paquete
-  NuGet de terceros). Alt 2 pasa de alternativa descartada por diseno (greenfield sin headers) a ademas
+  NuGet de terceros); el cableado concreto queda fijado como `ProjectReference` a la biblioteca +
+  `services.AgregarTenantResolver...()` en `ComposicionServicios{Dominio}.cs` +
+  `builder.UsarTenantContextMiddleware()` en `Program.cs`, sobre el `FunctionsApplicationBuilder` y antes
+  de `builder.Build()` (referencia [3]: en el modelo isolated worker el middleware se registra en el
+  `IFunctionsWorkerApplicationBuilder`, no en un `app` de ASP.NET Core). Alt 2 pasa de alternativa
+  descartada por diseno (greenfield sin headers) a ademas
   descartada por evidencia (rota incluso con autenticacion instalada y headers presentes). Elimina del
   cuerpo la prescripcion de `AgregarTenantResolverHibrido()` en las secciones 3 y 4 (no la marca
   obsoleta; el rastro queda en este control de cambios). Bloquea al issue #803 (reescritura del paso 9 de
   `/install-apim`, que hasta que ese issue se implemente sigue ejecutando el mecanismo anterior) y al
   issue #804 (rama etapa (b) y fallback CA-7 de `domain-scaffolder`).
+  Se alinea ademas la seccion 5 de MEF-ADR-0032, que describia la etapa (b) de este ADR como cableada con
+  el hibrido -- descripcion que la enmienda vuelve falsa --, sin cambiar ninguna decision de ese ADR.
