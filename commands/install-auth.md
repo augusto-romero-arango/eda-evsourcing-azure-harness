@@ -97,9 +97,10 @@ Se va a instalar el camino completo de auth (WorkOS + APIM, MEF-ADR-0032) para e
     5. Modulos Terraform api-management/apim-function-api (agente apim-gateway-scaffolder), aditivo
        por dominio.
     6. Cableado de TF_VAR_workos_client_id (y TF_VAR_cors_allowed_origins la primera vez) en infra-cd.yml.
-    7. TRANSICION DE TENANCY (a)->(b) (MEF-ADR-0028 seccion 4): flip de tenancy.strategy +
-       migracion del ITenantResolver de TODOS los dominios ya scaffoldeados del BC a
-       AgregarTenantResolverHibrido().
+    7. TRANSICION DE TENANCY (a)->(b) (MEF-ADR-0028 seccion 4, enmendada por el issue #802): flip de
+       tenancy.strategy + scaffold de la biblioteca src/<RootNamespace>.TenantResolver/ (patron
+       AsyncLocal + middleware) + migracion del ITenantResolver de TODOS los dominios ya
+       scaffoldeados del BC a esa biblioteca.
 
 El apply real (el que provisiona recursos en Azure y siembra el Key Vault) corre en CI al mergear
 el PR (MEF-ADR-0022); este skill nunca ejecuta terraform plan/apply. El checklist post-deploy queda
@@ -170,7 +171,7 @@ cat "${PLUGIN_ROOT%/}/commands/install-apim.md"
 
 Ejecuta integramente su `Proceso` desde su **Paso 5 en adelante** con `--domain <lista de --domain> --env <env> [--cors-origin <origin> ...]` -- sus Pasos 1 (parseo), 2 (prerequisitos) y 4 (rama) ya quedan cubiertos por los Pasos 1, 2 y 4 de este orquestador, y su Paso 3 (confirmacion) ya la diste en el Paso 3 de este orquestador. **Omite su Paso 11** (push + PR): este orquestador hace el unico push + PR al final (Paso 8).
 
-Corre el resto tal cual (resolucion de primera instalacion, `WORKOS_CLIENT_ID`, `CORS_ALLOWED_ORIGINS`, agente `apim-gateway-scaffolder`, transicion de tenancy (a)->(b) con el gate de MEF-ADR-0029 por dominio, commit de la migracion) -- incluida su propia idempotencia interna (CA-4): si el gateway ya existia, algun dominio ya estaba migrado a `AgregarTenantResolverHibrido()`, o el token de tenancy ya estaba en etapa (b), `/install-apim` lo reporta el mismo sin duplicar nada.
+Corre el resto tal cual (resolucion de primera instalacion, `WORKOS_CLIENT_ID`, `CORS_ALLOWED_ORIGINS`, agente `apim-gateway-scaffolder`, transicion de tenancy (a)->(b) con el gate de MEF-ADR-0029 por dominio, commit de la migracion) -- incluida su propia idempotencia interna (CA-4): si el gateway ya existia, la biblioteca `src/<RootNamespace>.TenantResolver/` ya estaba scaffoldeada, algun dominio ya estaba migrado a `services.AgregarTenantResolverAsyncLocal()`, o el token de tenancy ya estaba en etapa (b), `/install-apim` lo reporta el mismo sin duplicar nada.
 
 Guarda su reporte final (Paso 13 de `/install-apim`, incluido el checklist post-deploy de su Paso 12) para consolidarlo en el reporte de este skill (Paso 9/10).
 
