@@ -97,16 +97,21 @@ procesamiento de dominio, salvo cuando el handler declina la precondicion de orq
 El endpoint captura `PrecondicionComandoException` (la base) y mapea por tipo concreto al
 codigo HTTP correspondiente. **Toda otra excepcion no capturada sube** y el runtime la
 traduce a `500 Internal Server Error` — incluida `InvalidOperationException`, que ya no es
-un tipo que el endpoint reconozca.
+un tipo que el endpoint reconozca. El mapeo es **exhaustivo sobre las derivadas que el
+consumidor declara**: si agrega una derivada nueva, extiende el mapeo explicitamente en vez
+de apoyarse en un codigo por defecto — una derivada que el endpoint no reconoce se relanza y
+termina en `500`, nunca en un `409`/`404` adivinado.
 
-Esta distincion es la leccion del incidente #802: el `ProxyTenantResolver` roto de un
-consumidor lanzaba `InvalidOperationException` desde `WolverineMessageContextTenantResolver`
-— un fallo de **infraestructura** (resolver de tenant roto), no un dato de negocio. Como el
-catch anterior atrapaba `InvalidOperationException` a secas, ese fallo de infraestructura se
-traducia al mismo `409 Conflict` que una colision real de datos, indistinguible para quien
-diagnostica. El mismo catch amplio agravaba un segundo defecto: `Mensajes.TurnoNoEncontrado`
-lanzaba tambien `InvalidOperationException`, asi que el caso "no encontrado" respondia `409`
-en vez del `404` que esta misma seccion ya prescribia. Separar la jerarquia por tipo — y
+Esta distincion es la leccion del incidente #802 (documentado en MEF-ADR-0028): el
+`ProxyTenantResolver` de `Cosmos.MultiTenancy.CritterStack`, cableado en un consumidor,
+resultaba inservible para HTTP en Azure Functions isolated worker y lanzaba
+`InvalidOperationException` desde `WolverineMessageContextTenantResolver` — un fallo de
+**infraestructura** (el resolver de tenant no podia resolver el tenant), no un dato de
+negocio. Como el catch anterior atrapaba `InvalidOperationException` a secas, ese fallo de
+infraestructura se traducia al mismo `409 Conflict` que una colision real de datos,
+indistinguible para quien diagnostica. El mismo catch amplio agravaba un segundo defecto:
+`Mensajes.TurnoNoEncontrado` lanzaba tambien `InvalidOperationException`, asi que el caso
+"no encontrado" respondia `409` en vez del `404` que esta misma seccion ya prescribia. Separar la jerarquia por tipo — y
 dejar que cualquier excepcion fuera de ella suba como `500` — hace que un fallo de
 infraestructura nunca se disfrace de conflicto de negocio.
 
@@ -153,7 +158,7 @@ humano, nunca automatico ni bloqueante de un PR no relacionado.
 - Los tests son mas complejos: deben cubrir eventos de fallo, aggregate no encontrado, y
   aggregate ya existente, ademas del camino feliz.
 - La capa 2 requiere que el consumidor scaffoldee y mantenga la jerarquia de tres tipos
-  (`PrecondicionComandoException` + 2 derivadas): boilerplate pequeño pero adicional al
+  (`PrecondicionComandoException` + 2 derivadas): boilerplate pequeno pero adicional al
   patron `.resx` de MEF-ADR-0009.
 
 ## Referencias
@@ -162,8 +167,9 @@ humano, nunca automatico ni bloqueante de un PR no relacionado.
 - Szymon Kulec — "Event sourcing and failure handling"
 - Andrzej Sliwa — "Event Sourced Aggregates and Error/Exception flows"
 - Oskar Dudycz — "Saga and Process Manager - distributed processes in practice"
-- Issue #802 (incidente Bitakora.ControlAsistencia, 2026-09-01): el `ProxyTenantResolver`
-  roto motivo la enmienda de la capa 2 hacia excepciones tipadas.
+- Issue #802 / MEF-ADR-0028 (incidente Bitakora.ControlAsistencia, 2026-09-01): el
+  `ProxyTenantResolver` inservible para HTTP en el worker aislado motivo la enmienda de la
+  capa 2 hacia excepciones tipadas; MEF-ADR-0028 es la fuente de verdad del incidente.
 - MEF-ADR-0043 seccion 7 ("Aplicabilidad: solo endpoints nuevos"): precedente del regimen de
   migracion que adopta la seccion "Regimen de migracion" de esta enmienda.
 - MEF-ADR-0009 (patron de mensajes `.resx` per-aggregate): el mensaje de las excepciones
@@ -178,8 +184,9 @@ humano, nunca automatico ni bloqueante de un PR no relacionado.
   seccion "Respuestas HTTP" fija que el endpoint captura solo la base y mapea por tipo
   concreto, y que toda otra excepcion — incluida `InvalidOperationException` de
   infraestructura — sube como 500. Motivado por el incidente de Bitakora.ControlAsistencia
-  (#802, 2026-09-01): un `ProxyTenantResolver` roto lanzaba `InvalidOperationException` desde
-  la infraestructura de tenancy, y el catch amplio anterior la traducia al mismo 409 que una
+  (#802, 2026-09-01, documentado en MEF-ADR-0028): el `ProxyTenantResolver` del paquete
+  `Cosmos.MultiTenancy.CritterStack` lanzaba `InvalidOperationException` desde la
+  infraestructura de tenancy, y el catch amplio anterior la traducia al mismo 409 que una
   colision real de datos, alargando el diagnostico; el mismo catch respondia 409 tambien al
   caso "no encontrado" porque `Mensajes.TurnoNoEncontrado` usaba el mismo tipo generico,
   contradiciendo el 404 que esta seccion ya prescribia. Fija el regimen de migracion
