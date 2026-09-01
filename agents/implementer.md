@@ -386,17 +386,17 @@ public class FunctionEndpoint(IRequestValidator requestValidator, ICommandRouter
 }
 ```
 
-El `default` del `switch` relanza con `throw;` (bare rethrow, preserva el stack trace original) en vez de adivinar un codigo HTTP: una derivada de `PrecondicionComandoException` que el mapeo no reconoce debe subir como `500`, nunca un `409`/`404` adivinado (MEF-ADR-0004 enmendado, incidente #802). Si el consumidor agrega una tercera derivada, el mapeo se extiende explicitamente con un nuevo `case` — nunca con un `default` que le asigne un codigo por adivinanza.
+El `default` relanza con `throw;` (bare rethrow, preserva el stack trace) en vez de adivinar un codigo: el mapeo es **exhaustivo solo sobre las derivadas declaradas**, y una derivada que no reconoce sube como `500`. Si el consumidor agrega una tercera, extiende el mapeo con un `case` nuevo — nunca con un `default` que le asigne un codigo (MEF-ADR-0004 enmendado, incidente #802).
 
 **Respuestas HTTP posibles:**
 - `202 Accepted` — comando aceptado, los efectos downstream son asincronos
-- `400 BadRequest` — body nulo, malformado o campos invalidos (FluentValidation); o `AggregateException` con validaciones de negocio agregadas
+- `400 BadRequest` — body nulo, malformado o campos invalidos (FluentValidation), o una `AggregateException` cuyos `InnerExceptions` se devuelven agregados
 - `404 NotFound` — el handler lanzo `RecursoNoEncontradoException` (aggregate no encontrado)
 - `409 Conflict` — el handler lanzo `RecursoYaExisteException` (aggregate ya existe, solo para creacion)
 
 Toda otra excepcion no capturada sube tal cual y el runtime la traduce a `500 Internal Server Error` — incluida una `InvalidOperationException` de infraestructura, que desde MEF-ADR-0004 enmendado ya no es un tipo que este catch reconozca.
 
-**Excepciones tipadas de precondicion (MEF-ADR-0004)** — si no existen en el proyecto, crearlas en `Infraestructura/PrecondicionComandoException.cs` (mismo criterio "si no existe, crearlo" que `IRequestValidator` mas abajo; una vez por BC, no por comando):
+**Excepciones tipadas de precondicion (MEF-ADR-0004)** — si no existen en el proyecto, crearlas en `Infraestructura/PrecondicionComandoException.cs` (mismo criterio "si no existe, crearlo" que `IRequestValidator` mas abajo; una sola vez por proyecto, nunca una copia por comando):
 
 ```csharp
 public abstract class PrecondicionComandoException(string message) : Exception(message);
@@ -409,6 +409,8 @@ public sealed class RecursoNoEncontradoException(string message) : PrecondicionC
 Sin registro en DI: el `FunctionEndpoint` las referencia directamente en el `catch` de arriba, no via `IServiceProvider`. La ubicacion exacta -- proyecto compartido del BC o `Infraestructura/` de cada dominio -- sigue el mismo layout que el proyecto ya adopto para `IRequestValidator`; este agente no fuerza una topologia unica.
 
 **Regimen de coexistencia (MEF-ADR-0004 enmendado, precedente MEF-ADR-0043 seccion 7).** Esta jerarquia tipada rige el CommandHandler y el FunctionEndpoint que el issue pide escribir o tocar. Un BC con handlers legados que aun lanzan `InvalidOperationException` para precondiciones de orquestacion no se migra de oficio: sus tests siguen en verde con el tipo generico, y migrarlos es una decision del consumidor, discutida con el humano, nunca automatica ni bloqueante de un issue no relacionado (mismo criterio que "Endpoints preexistentes: no los migras" mas arriba).
+
+El corolario operativo: si un test **existente** del handler que si vas a tocar assertea `InvalidOperationException`, ese test es la especificacion (regla absoluta #1) — conserva el tipo generico en ese handler y anota la no conformidad en tu resumen de decisiones. Cambiar el throw a la derivada tipada romperia un test que no te corresponde modificar; alinear la suite es trabajo del test-writer o del reviewer.
 
 **IRequestValidator** — si no existe en el proyecto, crearlo:
 ```csharp
