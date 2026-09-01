@@ -91,8 +91,8 @@ public void AsignarEmpleado(Guid empleadoId)
 Then(new AsignacionEmpleadoFallida(GuidAggregateId, EmpleadoId,
     TurnoAggregateRoot.Mensajes.EmpleadoYaAsignado));
 
-// Excepcion del handler - wildcards para absorber variaciones de formato
-await act.Should().ThrowExactlyAsync<InvalidOperationException>()
+// Excepcion tipada del handler - wildcards para absorber variaciones de formato
+await act.Should().ThrowExactlyAsync<RecursoYaExisteException>()
     .WithMessage($"*{CrearTurnoCommandHandler.Mensajes.TurnoYaExiste}*");
 ```
 
@@ -137,3 +137,13 @@ Un solo archivo `ProgramacionMensajes.resx` para todo el dominio. Descartado: es
 - **Mas archivos por aggregate**: cada aggregate o handler con mensajes requiere 2 archivos adicionales (.resx + .Mensajes.cs). Es boilerplate predecible, pero boilerplate al fin.
 - **La clase Mensajes es boilerplate manual**: cada propiedad en la clase Mensajes duplica el nombre de la clave del .resx. No hay code generation automatico. Un error de typo en el `nameof()` no se detecta en tiempo de compilacion (solo en runtime si el string no existe en el .resx). Los agentes deben ser cuidadosos con la consistencia.
 - **`partial class` obligatorio**: todos los aggregates y handlers deben ser `partial class`. Esto es una restriccion menor pero no es el default en los ejemplos del lenguaje.
+
+---
+
+## Control de cambios
+
+- 2026-09-01: ripple de MEF-ADR-0004 (issue #805). El ejemplo "Uso en tests" de excepcion
+  del handler pasa de `InvalidOperationException` a `RecursoYaExisteException`, reflejando la
+  jerarquia de excepciones tipadas que esa enmienda introduce para la capa 2 (precondiciones
+  de orquestacion). Sin cambio de doctrina propia de este ADR: el patron `.resx` per-aggregate
+  y la clase `Mensajes` anidada siguen igual.
