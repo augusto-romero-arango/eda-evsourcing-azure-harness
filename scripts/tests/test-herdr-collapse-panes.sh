@@ -17,6 +17,8 @@
 #       bucle).
 #   [B] (CA-2) No-op seguro fuera de contexto: sin HERDR_ENV=1, o sin
 #       PANES_STATE previo, sale 0 imprimiendo "0" sin invocar herdr.
+#   [C] (CA-4) Chequeo estatico de la extraccion: prune_report_panes se
+#       define una sola vez y la llaman los dos consumidores.
 #
 # Uso: scripts/tests/test-herdr-collapse-panes.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.

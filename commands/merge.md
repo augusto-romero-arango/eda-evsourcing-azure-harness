@@ -95,11 +95,13 @@ Si estas corriendo dentro de Herdr (`HERDR_ENV=1`) y la tabla de resumen del pas
 if [ "${HERDR_ENV:-}" = "1" ]; then
     PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
     [ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
-    CLOSED=$("${PLUGIN_ROOT%/}/scripts/herdr-pipeline.sh" --collapse-panes 2>/dev/null || true)
+    PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
+    CLOSED=$("$PLUGIN_SCRIPTS/herdr-pipeline.sh" --collapse-panes 2>/dev/null || true)
+    echo "paneles_herdr_cerrados=${CLOSED:-0}"
 fi
 ```
 
-`--collapse-panes` imprime por stdout la cantidad de paneles cerrados (o "0"; nunca falla, incluso sin `PANES_STATE` previo). Fuera de Herdr, no hagas nada.
+`--collapse-panes` imprime por stdout la cantidad de paneles cerrados (o "0"; nunca falla, incluso sin `PANES_STATE` previo). El `echo` final es lo unico que llega al output del bloque: lee de ahi el numero para el paso 5. Fuera de Herdr, no ejecutes el bloque.
 
 ### 5. Reportar resultado
 
@@ -111,7 +113,7 @@ El script ya imprime un resumen final con tabla `PR | Rama | Estado` y la ruta d
   ```
   Reintentar el PR fallido: /merge <num>
   ```
-- Si el paso 4 cerro paneles (`$CLOSED` distinto de vacio y de "0"), mencionalo brevemente: "Paneles Herdr sobrantes cerrados: $CLOSED".
+- Si el paso 4 imprimio `paneles_herdr_cerrados=<n>` con `<n>` mayor que 0, mencionalo brevemente: "Paneles Herdr sobrantes cerrados: <n>". Si fue 0 (o no corriste el paso 4 por estar fuera de Herdr), no lo menciones.
 
 ---
 
