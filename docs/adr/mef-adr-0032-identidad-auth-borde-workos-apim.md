@@ -75,11 +75,11 @@ En la **misma politica global**, dentro de `<inbound>` y **despues** de `<valida
 
 ### 5. Por que centralizar el mapping en el borde habilita la migracion generica de tenancy (etapa b, MEF-ADR-0028)
 
-MEF-ADR-0028 fija dos etapas de `ITenantResolver`: (a) mono-tenant transitorio (greenfield, sin autenticacion) y (b) un resolver real basado en `TenantContext`, cableado con `Cosmos.MultiTenancy.AspNetCore.AgregarTenantResolverConHeadersConfiables()` o el hibrido de `Cosmos.MultiTenancy.CritterStack`. Esos resolvers **ya esperan** exactamente los headers `X-Tenant-Id`/`X-User-Id` que la seccion 4 de este ADR produce -- `TrustedHeadersTenantResolver` los lee de `IHttpContextAccessor` y lanza si faltan.
+MEF-ADR-0028 fija dos etapas de `ITenantResolver`: (a) mono-tenant transitorio (greenfield, sin autenticacion) y (b) un resolver real basado en `TenantContext`, cableado con `Cosmos.MultiTenancy.AspNetCore.AgregarTenantResolverConHeadersConfiables()` o -- en el camino de referencia WorkOS+APIM que fija este ADR -- con la biblioteca scaffoldeada `src/{RootNamespace}.TenantResolver/` (identidad en `AsyncLocal` poblada por un middleware del worker) que fija su seccion 4. Esos resolvers **ya esperan** exactamente los headers `X-Tenant-Id`/`X-User-Id` que la seccion 4 de este ADR produce -- `TrustedHeadersTenantResolver` los lee de `IHttpContextAccessor`, `TenantContextMiddleware` los lee de `FunctionContext.GetHttpContext()`, y ambos lanzan si faltan.
 
-El insight que este ADR aporta a esa transicion: **el mapping claim -> header vive una sola vez, en la politica global del gateway -- no en cada dominio**. Sin este patron, pasar un BC de la etapa (a) a la (b) dejaba un `// TODO(tenancy claims)` explicitamente marcado como "siempre project-specific" en el `Program.cs` de cada dominio (MEF-ADR-0028, seccion 3): cada Function App tendria que saber decodificar el JWT y extraer sus propios claims. Con APIM como front door unico normalizando la identidad **antes** de que el request llegue a cualquier Function App, esa logica deja de ser project-specific por dominio y pasa a ser una **unica** politica de gateway, compartida por todos los dominios del BC: cualquier Function App detras de APIM recibe directamente los headers canonicos que `AgregarTenantResolverConHeadersConfiables()` ya sabe leer, sin que el `domain-scaffolder` tenga que generar codigo de parsing de claims por dominio.
+El insight que este ADR aporta a esa transicion: **el mapping claim -> header vive una sola vez, en la politica global del gateway -- no en cada dominio**. Sin este patron, pasar un BC de la etapa (a) a la (b) dejaba un `// TODO(tenancy claims)` explicitamente marcado como "siempre project-specific" en el `Program.cs` de cada dominio (MEF-ADR-0028, seccion 3): cada Function App tendria que saber decodificar el JWT y extraer sus propios claims. Con APIM como front door unico normalizando la identidad **antes** de que el request llegue a cualquier Function App, esa logica deja de ser project-specific por dominio y pasa a ser una **unica** politica de gateway, compartida por todos los dominios del BC: cualquier Function App detras de APIM recibe directamente los headers canonicos que `AgregarTenantResolverConHeadersConfiables()`/`TenantContextMiddleware` (MEF-ADR-0028 seccion 4) ya saben leer, sin que el `domain-scaffolder` tenga que generar codigo de parsing de claims por dominio.
 
-**Este ADR no enmienda MEF-ADR-0028 directamente** -- esa enmienda (el `ITenantResolver` que se cablea cuando el BC adopta WorkOS+APIM) es alcance de un issue de seguimiento cruzado, ya identificado en la planificacion. Este ADR deja fijado el insight (la normalizacion en el borde) del que esa enmienda depende.
+**Este ADR no enmienda MEF-ADR-0028 directamente** -- esa enmienda (el `ITenantResolver` que se cablea cuando el BC adopta WorkOS+APIM) se hizo en el propio MEF-ADR-0028: su seccion 4, introducida por el issue #337 y enmendada por el issue #802 al patron `AsyncLocal` + middleware. Este ADR deja fijado el insight (la normalizacion en el borde) del que esa enmienda depende, y que el cambio de mecanismo del issue #802 no altera.
 
 ### 6. Separacion de credenciales/proyectos del IdP
 
@@ -213,3 +213,12 @@ El editor de politicas del portal de APIM incluye `<base/>` por defecto en cada 
   con token valido y `Content-Type: application/json` no debe responder `404`/`405` en el borde), que cierra
   el punto NO VERIFICADO "APIM Consumption reenviando QUERY end-to-end" de MEF-ADR-0042 seccion 6. Ninguna
   decision previa de este ADR cambia.
+- 2026-09-01: alineacion (issue #802). La seccion 5 describia la etapa (b) de MEF-ADR-0028 como cableada
+  con el hibrido de `Cosmos.MultiTenancy.CritterStack` (`ProxyTenantResolver`); la enmienda del issue #802
+  a ese ADR la reemplazo por la biblioteca scaffoldeada `src/{RootNamespace}.TenantResolver/` (identidad en
+  `AsyncLocal` poblada por un `IFunctionsWorkerMiddleware`), porque `ProxyTenantResolver` decide la rama
+  HTTP/Wolverine en su constructor y queda inservible para HTTP en Azure Functions isolated worker. Se
+  corrige esa descripcion y se registra que la enmienda cruzada que esta seccion anunciaba como pendiente
+  ya ocurrio (issues #337 y #802). **Ninguna decision de este ADR cambia**: la normalizacion de claims a
+  headers canonicos en la politica global del gateway (seccion 4) es exactamente el insight que el patron
+  nuevo sigue consumiendo, sin mapping de claims por dominio.
