@@ -1691,3 +1691,24 @@ coverage_classify_file() {
 
     echo "not_evaluated"
 }
+
+# caffeinate_prefix
+#
+# Imprime por stdout "caffeinate -i" si el binario 'caffeinate' esta
+# disponible en PATH (macOS), o cadena vacia en cualquier otro sistema
+# (Linux/CI) -- issue #800. Antepuesto al lanzamiento de un pipeline largo
+# evita que el Mac entre en suspension idle mientras corre en un pane de
+# tmux/Herdr (`-i`: solo suspension idle; sin `-d` la pantalla si puede
+# apagarse; `-s` se descarta porque solo aplica con AC conectado). El
+# prefijo muere junto con el comando envuelto -- caffeinate es el proceso
+# padre, sin huerfano que limpiar manualmente.
+#
+# Alcance: se calcula UNA vez por corrida y se aplica en los RUNNERS
+# (tmux-pipeline.sh, herdr-pipeline.sh) sobre el lanzamiento del sub-pipeline,
+# no en cada `claude -p` individual dentro de tdd/tooling/iac-pipeline.sh. Un
+# pipeline invocado directo, sin pasar por un runner, queda sin envolver.
+caffeinate_prefix() {
+    if command -v caffeinate >/dev/null 2>&1; then
+        printf '%s' "caffeinate -i"
+    fi
+}

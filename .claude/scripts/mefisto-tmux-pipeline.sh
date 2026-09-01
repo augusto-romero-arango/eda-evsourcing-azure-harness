@@ -73,6 +73,10 @@ NC='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$MEFISTO_REPO_ROOT"
 EVENTS_LOG="$PROJECT_ROOT/.claude/pipeline/events.log"
+# CAFF: prefijo "caffeinate -i" (o vacio fuera de macOS), calculado UNA vez
+# por corrida y antepuesto al send-keys que lanza cada sub-pipeline interno --
+# issue #800. Evita que el Mac entre en suspension idle durante la corrida.
+CAFF="$(caffeinate_prefix)"
 
 log()     { echo -e "${BLUE}[$(date +%H:%M:%S)]${NC} $1"; }
 success() { echo -e "${GREEN}${BOLD}v${NC} $1"; }
@@ -441,7 +445,7 @@ cmd_tooling() {
     [ -n "$FROM_STAGE_EXTRA" ] && pipeline_cmd="$pipeline_cmd $FROM_STAGE_EXTRA"
     [ -n "$MODELS_EXTRA" ] && pipeline_cmd="$pipeline_cmd $MODELS_EXTRA"
     [ -n "$VARIANT_EXTRA" ] && pipeline_cmd="$pipeline_cmd $VARIANT_EXTRA"
-    tmux send-keys -t "$script_pane" "$pipeline_cmd" Enter
+    tmux send-keys -t "$script_pane" "$CAFF $pipeline_cmd" Enter
 
     # even-horizontal deshace el split -v de arriba (lo aplana a 3 columnas):
     # solo se aplica sin --verbose, donde nunca hubo split -v que preservar.
@@ -507,7 +511,7 @@ cmd_batch() {
     fi
 
     script_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    tmux send-keys -t "$script_pane" "./.claude/scripts/mefisto-batch-pipeline.sh $issues_str" Enter
+    tmux send-keys -t "$script_pane" "$CAFF ./.claude/scripts/mefisto-batch-pipeline.sh $issues_str" Enter
 
     # even-horizontal deshace el split -v de arriba (lo aplana a 3 columnas):
     # solo se aplica sin --verbose, donde nunca hubo split -v que preservar.

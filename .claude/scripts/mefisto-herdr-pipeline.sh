@@ -47,6 +47,11 @@ NC='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$MEFISTO_REPO_ROOT"
 LOG_DIR_ABS="$PROJECT_ROOT/.claude/pipeline/logs"
+# CAFF: prefijo "caffeinate -i" (o vacio fuera de macOS), calculado UNA vez
+# por corrida y antepuesto al lanzamiento en background del sub-pipeline
+# interno dentro de cmd_pane_runner -- issue #800. Evita que el Mac entre en
+# suspension idle mientras el pane de ejecucion corre.
+CAFF="$(caffeinate_prefix)"
 # Registro de panes de ejecucion creados por esta interfaz (uno por linea,
 # ids publicos de herdr como "w1:p3"). Vive en .claude/pipeline/ como el
 # resto del estado runtime.
@@ -248,7 +253,11 @@ cmd_pane_runner() {
         esac
     done < <(env)
 
-    env "${env_unset[@]}" "$@" >"$report_log" 2>&1 &
+    # $CAFF se expande sin comillas a proposito (0 o 2 palabras, "caffeinate -i"):
+    # antepone caffeinate como proceso padre del pipeline sin agregar una rama
+    # if/else duplicada por cada valor posible del prefijo (issue #800).
+    # shellcheck disable=SC2086
+    $CAFF env "${env_unset[@]}" "$@" >"$report_log" 2>&1 &
     local pipe_pid=$!
 
     local viewer_pid=""
