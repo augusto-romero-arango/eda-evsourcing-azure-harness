@@ -542,7 +542,21 @@ output "backend_name" {
 Omite este paso entero si el Paso 0.4 no recibio ningun servidor MCP (CA-5).
 
 ```bash
-test -f infra/modules/apim-mcp-api/main.tf && echo "EXISTE (omitir)" || echo "FALTA (crear)"
+if test -f infra/modules/apim-mcp-api/main.tf; then
+  echo "EXISTE (omitir)"
+  # Issue #831: un modulo generado ANTES de ese issue no declara variable "mcp_prm_api_path" y
+  # compone local.prm_url con el literal del segmento well-known CON punto inicial. El wiring del
+  # Paso 4b si pasa ese argumento, asi que el delta no es cosmetico: `terraform validate` corta con
+  # "An argument named mcp_prm_api_path is not expected here". Se detecta aca y se reporta en el
+  # Paso 7 -- nunca se aplica en silencio (mismo criterio que el delta CORS del Paso 1).
+  if grep -q "mcp_prm_api_path" infra/modules/apim-mcp-api/main.tf; then
+    echo "modulo ya alineado al PRM sin punto inicial -- nada pendiente"
+  else
+    echo "DELTA MANUAL PENDIENTE (PRM, issue #831): el modulo existente no declara mcp_prm_api_path -- fragmentos exactos en el Paso 7"
+  fi
+else
+  echo "FALTA (crear)"
+fi
 ```
 
 Si falta, crea `infra/modules/apim-mcp-api/main.tf`:
@@ -1062,7 +1076,19 @@ provider "azapi" {
 ### 3c.2 - Archivo `apim-mcp-prm.tf` (una sola vez por entorno)
 
 ```bash
-test -f "infra/environments/${ENV}/apim-mcp-prm.tf" && echo "EXISTE (omitir -- no se re-crea, mismo criterio CA-6 que apim.tf)" || echo "FALTA (crear)"
+if test -f "infra/environments/${ENV}/apim-mcp-prm.tf"; then
+  echo "EXISTE (omitir -- no se re-crea, mismo criterio CA-6 que apim.tf)"
+  # Issue #831: una instancia generada ANTES de ese issue declara el path de la API mcp_prm con el
+  # punto inicial, que APIM rechaza en el apply con un 400 ValidationError (evidencia en el
+  # comentario de cabecera de abajo). Delta manual, al Paso 7.
+  if grep -qE 'path[[:space:]]*=[[:space:]]*"\.well-known' "infra/environments/${ENV}/apim-mcp-prm.tf"; then
+    echo "DELTA MANUAL PENDIENTE (PRM, issue #831): el path de la API mcp_prm todavia empieza con punto -- fragmentos exactos en el Paso 7"
+  else
+    echo "path de la API mcp_prm ya sin punto inicial -- nada pendiente"
+  fi
+else
+  echo "FALTA (crear)"
+fi
 ```
 
 Si falta, crea `infra/environments/<env>/apim-mcp-prm.tf`:
@@ -1086,8 +1112,8 @@ Si falta, crea `infra/environments/<env>/apim-mcp-prm.tf`:
 # convergio a esta forma en rojo (issue #575 del consumidor, run 33662634923 de Infra CD,
 # 2026-09-02): `Error: creating/updating Api (... "mcp-prm;rev=1"): unexpected status 400 ...
 # ValidationError: One or more fields contain incorrect values`, sin nombrar el campo. La regla es
-# "no punto INICIAL", no "no punto": el path de la API PRM anterior del pionero (#558) --que
-# empezaba con el segmento "api" antes de anidar el well-known-- aplico siempre sin problema. La doc
+# "no punto INICIAL", no "no punto": el path de la API PRM anterior del pionero (#558) -- que
+# empezaba con el segmento "api" antes de anidar el well-known -- aplico siempre sin problema. La doc
 # REST de "Api - Create Or Update" (Microsoft Learn) solo declara minLength 0 / maxLength 400 para
 # `properties.path` -- la regla es server-side y no esta documentada, invisible para
 # `validate`/`plan`. Fix verificado (hotfix a54ac6b del consumidor, re-apply verde run 33663796193,
@@ -1248,6 +1274,8 @@ module "apim_mcp_{proposito_snake}" {
 
 Donde `{proposito_snake}` es el mismo identificador que usa `mcp-scaffolder` para `module.function_app_mcp_{proposito_snake}` en `mcp-{proposito-kebab}.tf` (mismo servidor, mismo sufijo -- grep ese archivo para confirmarlo antes de referenciarlo). `{DisplayNameProposito}` sigue el mismo criterio que `{DisplayName}` del Paso 4 (proposito kebab -> palabras capitalizadas). Antes de referenciar `.id`/`.default_hostname`, confirma con `grep` que el modulo `function-app` del consumidor los expone (mismo criterio que `{proposito_snake}`): `output "id"` lo genera `infra-base-scaffolder` y `output "default_hostname"` lo garantiza `mcp-scaffolder` Paso 6a.
 
+Si el chequeo del Paso 2b marco el **delta manual del issue #831** (modulo `apim-mcp-api` preexistente, sin `variable "mcp_prm_api_path"`), ese delta hay que aplicarlo antes de que corra el `plan`: el argumento `mcp_prm_api_path` de arriba no compila contra el modulo viejo (`An argument named mcp_prm_api_path is not expected here`). **NUNCA** lo omitas del wiring para esquivar el error de `validate` -- el `local.prm_url` del modulo viejo apunta al segmento well-known con punto inicial, una URL que APIM no puede servir (Paso 3c). Reportalo en el Paso 7 con sus fragmentos y deja `terraform validate` fallando explicito, nunca "arreglado" quitando el argumento.
+
 **Patch idempotente de `mcp-{proposito-kebab}.tf` (CA-4): resolver `Mcp__ResourceUri`/`Mcp__AuthorizationServer`.** `mcp-scaffolder` siembra esas dos claves de `app_settings` con placeholders `PENDIENTE-...` (su Paso 6b) porque en el momento del scaffold del servidor este modulo todavia no existia. Ahora que existe, reemplazalas por referencias reales -- nunca por valores literales, para que un `authorization_server_url` que cambie en el futuro se propague sin volver a tocar este archivo a mano:
 
 ```bash
@@ -1340,6 +1368,20 @@ Imprime un resumen claro:
   - Modulo `apim-mcp-api` creado u omitido (ya existia); enrutador compartido `apim-mcp-prm.tf` creado (primera vez) u omitido (CA-6); provider `azapi` agregado a `providers.tf` o ya presente.
   - Por servidor: `apim-mcp-{proposito-kebab}.tf` creado vs omitido; cualquier servidor MCP que fallo el guard del Paso 0.4 (no scaffoldeado todavia -- indicar `/scaffold-mcp {Proposito}`); si el patch de `mcp-{proposito-kebab}.tf` (Paso 4b, CA-4) resolvio los placeholders `Mcp__ResourceUri`/`Mcp__AuthorizationServer` o si ya estaban resueltos de una corrida previa.
   - `WORKOS_AUTHORIZATION_SERVER_URL` (GitHub variable, no secreta) a crear manualmente por un admin si la instancia de `apim-mcp-prm.tf` se genero por primera vez, con el mismo valor que `var.mcp_authorization_server_url` resuelto en el Paso 0.
+  - **Delta PRM pendiente (issue #831)**: si los chequeos de los Pasos 2b/3c.2 encontraron artefactos generados **antes** de este issue (modulo `apim-mcp-api` sin `variable "mcp_prm_api_path"`, o `apim-mcp-prm.tf` con el `path` de `azurerm_api_management_api.mcp_prm` todavia empezando con punto), reporta los dos fragmentos exactos a aplicar a mano -- ninguno de esos dos archivos se sobrescribe (regla 2), y sin el delta el `apply` de este entorno falla con `400 ValidationError` (el `path` con punto) o el `validate` ni siquiera compila (el argumento nuevo del wiring, Paso 4b):
+    ```hcl
+    # infra/environments/<env>/apim-mcp-prm.tf, resource "azurerm_api_management_api" "mcp_prm"
+    path = "well-known/oauth-protected-resource"
+
+    # infra/modules/apim-mcp-api/main.tf: variable nueva + local.prm_url compuesto con ella
+    variable "mcp_prm_api_path" {
+      description = "path de la API compartida del PRM (azurerm_api_management_api.mcp_prm.path de apim-mcp-prm.tf, Paso 3c); nunca un literal, para que prm_url coincida byte a byte con la API por construccion"
+      type        = string
+    }
+
+    prm_url = "${trimsuffix(var.gateway_url, "/")}/${var.mcp_prm_api_path}/${var.path}"
+    ```
+    Advierte ademas que aplicar este delta **recrea** la API del PRM: vale la advertencia operativa del "Siguiente paso" (las reconexiones OAuth fallan mientras el `apply` no complete). Si ambos chequeos dieron "nada pendiente", dilo explicito en vez de omitir la linea.
   - **VERIFICADO**: el `path` de la API compartida del PRM (`well-known/oauth-protected-resource`, sin punto inicial) y la operacion del PRM de cada servidor resuelven `200` con el `<rewrite-uri>` generado -- confirmado por el pionero Bitakora.ControlAsistencia (issue #575 del consumidor): rojo con punto inicial (run 33662634923 de Infra CD, 400 ValidationError), verde tras el hotfix `a54ac6b` sin punto inicial (run 33663796193, 2026-09-02).
   - **Gate B12 (MEF-ADR-0032 seccion 3): reverificar `authorization_server_url` contra el discovery doc en vivo del proyecto WorkOS del entorno** (`GET {authorization_server_url}/.well-known/openid-configuration` y `GET {authorization_server_url}/.well-known/oauth-authorization-server`) antes de un `apply` real -- este agente no lo verifica por su cuenta (a diferencia del Paso 0.3 para el issuer de login), porque quien te invoca todavia no tiene un mecanismo automatico para resolver este dominio (ver "Parametros de entrada"). Marca este punto `NO VERIFICADO -- reconfirmar antes de aplicar` en el reporte si no te confirmaron que ya se hizo.
   - **Checklist operativo CA-4 (byte a byte, MEF-ADR-0032 seccion 9 "Consistencia byte a byte")**: por cada servidor, reporta el `resource_uri` resuelto (`module.apim_mcp_{proposito_snake}.resource_uri`) y pide al operador confirmar en el dashboard de WorkOS que el **Resource Indicator** configurado para el cliente MCP (Claude u otro) es ese mismo string, caracter por caracter -- incluido el trailing slash (o su ausencia). Una discrepancia de un solo caracter rompe la validacion de audiencia sin sintoma mas especifico que "401 con un token que deberia ser valido". Recuerda ademas que cualquier cliente MCP ya conectado a este servidor necesita **reconectarse** despues del `apply` (Resource Indicator/PRM nuevos invalidan la sesion OAuth previa).
@@ -1350,7 +1392,7 @@ Imprime un resumen claro:
 ## Reglas absolutas
 
 1. **NUNCA** ejecutes `terraform plan`, `terraform apply` ni `terraform destroy`. Solo `fmt`, `init -backend=false` y `validate`.
-2. **NUNCA** sobrescribas un `.tf` existente: ni los modulos (Pasos 1-2), ni `apim.tf` (Paso 3, CA-6), ni un `apim-dominio-{kebab}.tf` ya presente (Paso 4). Omitelo y reportalo -- si es el modulo `api-management`, reporta ademas el delta de `<allowed-methods>` sin `QUERY` si corresponde (issue #608).
+2. **NUNCA** sobrescribas un `.tf` existente: ni los modulos (Pasos 1-2), ni `apim.tf` (Paso 3, CA-6), ni un `apim-dominio-{kebab}.tf` ya presente (Paso 4). Omitelo y reportalo -- si es el modulo `api-management`, reporta ademas el delta de `<allowed-methods>` sin `QUERY` si corresponde (issue #608); si es el modulo `apim-mcp-api` sin `mcp_prm_api_path` o un `apim-mcp-prm.tf` con el `path` del PRM empezando con punto, el delta del issue #831 (Pasos 2b/3c.2, fragmentos en el Paso 7).
 3. **NUNCA** pongas `<base/>` en la politica GLOBAL (`azurerm_api_management_policy.global`, modulo `api-management`) -- B1. `<base/>` SI va en la politica por-API (modulo `apim-function-api`).
 4. **NUNCA** dejes `<backend>` vacio en la politica global: siempre `<forward-request />` -- B2. Sin eso, APIM responde `200` sin reenviar nada al backend.
 5. **NUNCA** pongas `<validate-jwt>` antes que `<cors>` en la politica global -- B3. El preflight `OPTIONS` no trae `Authorization`; si `validate-jwt` lo intercepta primero, lo tumba.
@@ -1369,7 +1411,7 @@ Imprime un resumen claro:
 18. **NUNCA** uses `<required-claims>`/omitas `<audiences>` en la politica de un servidor MCP -- a diferencia de B4 (login humano, sin `aud`), el flujo MCP/Connect si exige verificar audiencia: `<audiences>` debe llevar el `resource_uri` del propio servidor (MEF-ADR-0032 seccion 9), nunca un `<required-claims>` sobre `client_id`. Y **NUNCA** interpoles `var.authorization_server_url` crudo en el `<issuer>`: pasalo siempre por `trimsuffix` (`local.authorization_server_issuer`) -- una barra final rompe la coincidencia byte a byte con el `issuer` del discovery doc y rechaza con `401` todo token legitimo, sin sintoma en `validate`/`plan`.
 19. **NUNCA** agregues `<cors>` a la politica de un servidor MCP ni a la del enrutador del PRM -- un cliente MCP no es un SPA navegador y la doctrina del issue #820 fija estas APIs sin CORS.
 20. **NUNCA** resuelvas la system key `mcp_extension` con `azurerm_function_app_host_keys` (B8) para un servidor MCP: ese data source no expone esa key (verificado 2026-09-01, sin mapa generico de system keys ni atributo dedicado). Usa siempre `azapi_resource_action` como **`resource`** (nunca `data`: la key no existe hasta el primer deploy del codigo, MEF-ADR-0047 decision 5 -- un `data` se evalua en `plan` y fallaria antes de ese deploy) con `type = "Microsoft.Web/sites/host@2023-12-01"`, `resource_id = "${var.function_app_id}/host/default"`, `action = "listkeys"`, `method = "POST"` y `sensitive_response_export_values` (nunca `response_export_values` para este valor). **NUNCA** cambies esta forma verificada contra el HCL aplicado del pionero (issue #827) por otra api-version o resource_id reconstruido a mano.
-21. **NUNCA** ubiques la operacion PRM de un servidor MCP dentro de la API dedicada de ese mismo servidor: RFC 9728 exige que el well-known quede al nivel del host, antes del path del recurso (seccion 3.1) -- va siempre en la API compartida `mcp-prm` (`apim-mcp-prm.tf`), como una operacion mas por servidor. Esa API comparte el path `well-known/oauth-protected-resource` SIN punto inicial (desviacion de RFC 9728 impuesta por APIM, issue #831 -- ver el comentario de cabecera de `apim-mcp-prm.tf`, Paso 3c), nunca el segmento completo con punto que fija la RFC.
+21. **NUNCA** ubiques la operacion PRM de un servidor MCP dentro de la API dedicada de ese mismo servidor: RFC 9728 exige que el well-known quede al nivel del host, antes del path del recurso (seccion 3.1) -- va siempre en la API compartida `mcp-prm` (`apim-mcp-prm.tf`), como una operacion mas por servidor. Esa API lleva el path `well-known/oauth-protected-resource` SIN punto inicial (desviacion de RFC 9728 impuesta por APIM, issue #831 -- ver el comentario de cabecera de `apim-mcp-prm.tf`, Paso 3c), nunca el segmento completo con punto que fija la RFC.
 22. **NUNCA** sobrescribas los placeholders `PENDIENTE-...` de `Mcp__ResourceUri`/`Mcp__AuthorizationServer` en `mcp-{proposito-kebab}.tf` con un valor **literal**: siempre una referencia Terraform (`module.apim_mcp_{proposito_snake}.resource_uri`, `var.mcp_authorization_server_url`) -- un literal se desincroniza en silencio si el entorno cambia de dominio AuthKit o de nombre de gateway.
 23. **NUNCA** dejes una API de APIM sin backend efectivo: toda politica que este agente genera con `<forward-request />` necesita un `<set-backend-service backend-id="..." />` en su `<inbound>` (ninguna `azurerm_api_management_api` de estos modulos declara `service_url`), y toda operacion cuyo sufijo publico no coincida con la ruta real del backend necesita ademas un `<rewrite-uri>` -- APIM concatena al base-url del backend el sufijo que sobra del path publico. Sintoma de olvidarlo: `200` vacio / `404` con un JWT perfectamente valido, indistinguible a simple vista de B2/B11.
 24. **NUNCA** generes `infra/modules/apim-mcp-api/`, `apim-mcp-prm.tf`, el provider `azapi` en `providers.tf`, ni ningun `apim-mcp-{proposito-kebab}.tf` si el Paso 0.4 no recibio ningun servidor MCP -- CA-5: un BC sin servidores MCP corre este agente exactamente igual que antes del issue #820.
