@@ -61,6 +61,8 @@ Si falta cualquiera de los dos, detente con el mensaje de arriba. Con `ROOT_NAME
 
 ```bash
 PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+PLUGIN_ROOT="${PLUGIN_ROOT%/}"   # normaliza: sin barra final
 VERSION=$(jq -r '.version' "$PLUGIN_ROOT/.claude-plugin/plugin.json" 2>/dev/null)
 if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
     VERSION_LABEL="version desconocida"
@@ -69,8 +71,14 @@ else
 fi
 ```
 
-Este paso es informativo: si `.plugin-root` no existe o `jq` falla, `VERSION_LABEL` queda en
+Este paso es informativo: si `.plugin-root` no existe, el fallback localiza el plugin por glob
+sobre el cache del marketplace tomando la version mas reciente (mismo patron que
+`commands/implement.md`); si tampoco resuelve o `jq` falla, `VERSION_LABEL` queda en
 "version desconocida" y el skill **continua** -- nunca aborta por esto.
+
+El `plugin.json` que se lee aqui es el del plugin instalado (`$PLUGIN_ROOT/.claude-plugin/`), no
+el `$REPO_ROOT/.claude-plugin/plugin.json` cuya **ausencia** valida la Pre-condicion 1: son rutas
+distintas y no se contradicen.
 
 ```
 Se va a generar el servidor MCP <RootNamespace>.Mcp.{Proposito} con mefisto <VERSION_LABEL> (fases 1, 2, 3 e identidad/OAuth app-side, issues #768/#769/#770/#819):
