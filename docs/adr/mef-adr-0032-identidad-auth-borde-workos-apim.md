@@ -160,7 +160,7 @@ El editor de politicas del portal de APIM incluye `<base/>` por defecto en cada 
 
 - **Dependencia dura de un IdP de terceros cuya documentacion publica generica no siempre coincide con el comportamiento observado** (seccion 8): el issuer client-specific, la ausencia de `aud` y los nombres exactos de claim exigen verificacion empirica por consumidor, no solo lectura de docs -- un costo recurrente que este ADR no elimina, solo lo hace explicito.
 - **Azure API Management es un front door unico (single point of failure) delante de todas las Function Apps del BC**, y el tier `Consumption` elegido (Alt 3) no soporta VNet, `rate-limit-by-key` ni Log Analytics de requests -- limites aceptados por costo/velocidad de aprovisionamiento, no por ausencia de alternativa.
-- **Parte del catalogo B1-B11 es especifica de WorkOS (B4/B5/B10) y parte es generica de APIM/Terraform (B1-B3/B6-B9/B11)**: un consumidor que adopte otro IdP (Alt 2) reutiliza integramente la mitad generica, pero debe re-verificar la mitad especifica de IdP desde cero contra su propio discovery doc y sus propios tokens.
+- **Parte del catalogo B1-B12 es especifica de WorkOS (B4/B5/B10/B12) y parte es generica de APIM/Terraform (B1-B3/B6-B9/B11)**: un consumidor que adopte otro IdP (Alt 2) reutiliza integramente la mitad generica, pero debe re-verificar la mitad especifica de IdP desde cero contra su propio discovery doc y sus propios tokens.
 - **El comportamiento documentado de `<base/>` en scope global ("sin efecto", `set-edit-policies` [7]) no coincide exactamente con el `400 ValidationError` observado empiricamente en el `apply` de ControlPlane** (B1): este ADR documenta ambos hechos en vez de resolver la discrepancia, y deja como riesgo conocido que el comportamiento pueda variar entre editor de portal, API version de gestion y el provider `azurerm` de Terraform.
 - **La variante MCP/Connect (seccion 9) suma una segunda politica por-API y un segundo issuer (B12) que un consumidor debe re-verificar contra su propio proyecto WorkOS**, ademas del issuer de login (B5) que ya exigia esa verificacion -- dos superficies de discovery doc en vivo a confirmar en vez de una, para un consumidor que adopte ambos flujos.
 
@@ -199,7 +199,7 @@ El editor de politicas del portal de APIM incluye `<base/>` por defecto en cada 
 - MEF-ADR-0030 (esquema de identificacion de ADRs): este documento nace ya con el prefijo `MEF-ADR-`, numero `0032`.
 - MEF-ADR-0047 (doctrina de servidores MCP serverless): la variante MCP/Connect de la seccion 9 y la trampa B12 son la doctrina que la decision 7 de ese ADR consume para fijar el gate OAuth en el borde de un servidor MCP.
 - MEF-ADR-0048 (testing de servidores MCP): no requiere enmienda -- sus smoke tests (nivel 3) autentican con la system key `mcp_extension` directo contra la Function App, sin pasar por el gate OAuth de la seccion 9.
-- Bitakora.ControlAsistencia issues #554/#558/#560/#561 (gate OAuth en el borde, mergeados) y #540 (abierto, evolucion de identidad derivada del token -- fuera de alcance de esta enmienda): origen empirico de la seccion 9 y de B12, registrado en el issue #797 de este repo.
+- Bitakora.ControlAsistencia issues #554/#556/#558/#560/#561 (gate OAuth en el borde, mergeados) y #540 (abierto, evolucion de identidad derivada del token -- fuera de alcance de esta enmienda): origen empirico de la seccion 9 y de B12, registrado en el issue #797 de este repo.
 
 ## Control de cambios
 
