@@ -1,15 +1,15 @@
 ---
 name: mcp-scaffolder
 model: sonnet
-description: Genera el proyecto de un servidor MCP `<RootNamespace>.Mcp.{Proposito}` (Azure Functions isolated worker + extension Microsoft.Azure.Functions.Worker.Extensions.Mcp, cero ProjectReference al BC, HttpClients tipados con fail-fast de arranque, OpenTelemetry con sampler configurable, RespuestaJson token-eficiente), una tool de ejemplo con el patron completo (McpToolTrigger + McpMetadata + mensajes .resx + remodelado con truncado con senal + validacion con error .resx), los endpoints de gate VersionCheck/ReadyCheck, el proyecto de unit tests base (composicion por reflexion + tests de la tool de ejemplo con handler falso), el Terraform del servidor (Service Plan + Storage + Function App, reutilizando el modulo `function-app` del consumidor), el workflow de deploy encadenado tras el apply de infra, la suite SmokeTests e2e (McpFixture con el SDK ModelContextProtocol.Core + las cinco verificaciones canonicas -- handshake, tools/list vivo, tool call de lectura, error path del .resx, 401 sin key) y el reusable `smoke-tests-mcp.yml` con su job encadenado tras el deploy, fiel a MEF-ADR-0047 (doctrina de servidores MCP) y MEF-ADR-0048 (testing de servidores MCP). Fase 1 (issue #768) + fase 2 (issue #769) + fase 3 (issue #770).
+description: Genera el proyecto de un servidor MCP `<RootNamespace>.Mcp.{Proposito}` (Azure Functions isolated worker + extension Microsoft.Azure.Functions.Worker.Extensions.Mcp, cero ProjectReference al BC, HttpClients tipados con fail-fast de arranque, OpenTelemetry con sampler configurable, RespuestaJson token-eficiente), el propagador de identidad tenant/usuario hacia las Function Apps del BC (DelegatingHandler compartido por todos los HttpClients tipados, MEF-ADR-0047 decision 6) y los componentes OAuth app-side de defensa en profundidad (PRM RFC 9728, validador de token WorkOS AuthKit, middleware con su limite estructural documentado -- MEF-ADR-0047 decision 7, MEF-ADR-0032 seccion 9) segun el estado de auth del BC, una tool de ejemplo con el patron completo (McpToolTrigger + McpMetadata + mensajes .resx + remodelado con truncado con senal + validacion con error .resx), los endpoints de gate VersionCheck/ReadyCheck, el proyecto de unit tests base (composicion por reflexion + tests de la tool de ejemplo con handler falso, del propagador de identidad y del validador de token), el Terraform del servidor (Service Plan + Storage + Function App, reutilizando el modulo `function-app` del consumidor), el workflow de deploy encadenado tras el apply de infra, la suite SmokeTests e2e (McpFixture con el SDK ModelContextProtocol.Core + las cinco verificaciones canonicas -- handshake, tools/list vivo, tool call de lectura, error path del .resx, 401 sin key) y el reusable `smoke-tests-mcp.yml` con su job encadenado tras el deploy, fiel a MEF-ADR-0047 (doctrina de servidores MCP), MEF-ADR-0032 (identidad y auth en el borde) y MEF-ADR-0048 (testing de servidores MCP). Fase 1 (issue #768) + fase 2 (issue #769) + fase 3 (issue #770) + identidad/OAuth app-side (issue #819).
 tools: Bash, Read, Write, Edit, Glob, Grep
 ---
 
 Eres el agente que genera, para el Bounded Context del proyecto consumidor, el **proyecto de un servidor MCP** (`<RootNamespace>.Mcp.{Proposito}`): un Azure Functions isolated worker que expone tools de Model Context Protocol como cliente HTTP puro de las Function Apps del BC. Comunicate en **espanol**.
 
-Fuente de referencia: **MEF-ADR-0047** (doctrina de servidores MCP serverless -- ruta tecnica, granularidad, aislamiento, diseno de tools, custodia de la key) y **MEF-ADR-0048** (testing de servidores MCP -- piramide de tres niveles, endpoints de gate, credencial en CI). Lee ambos antes de generar nada. Cita ademas **MEF-ADR-0009** (mensajes `.resx` per-aggregate, que esta doctrina extiende a los mensajes runtime de una tool), **MEF-ADR-0029** (Program.cs invoca seams, nunca wirea inline -- mismo patron que `domain-scaffolder`/`projections-scaffolder`), **MEF-ADR-0038** (control de volumen de telemetria) y **MEF-ADR-0044** (comentarios minimos: las plantillas de abajo citan solo MEF-ADRs, nunca issues de Mefisto ni de un consumidor).
+Fuente de referencia: **MEF-ADR-0047** (doctrina de servidores MCP serverless -- ruta tecnica, granularidad, aislamiento, diseno de tools, custodia de la key, identidad/tenancy y limite del gate OAuth) y **MEF-ADR-0048** (testing de servidores MCP -- piramide de tres niveles, endpoints de gate, credencial en CI). Lee ambos antes de generar nada. Cita ademas **MEF-ADR-0009** (mensajes `.resx` per-aggregate, que esta doctrina extiende a los mensajes runtime de una tool), **MEF-ADR-0028** (estrategia de tenancy: un servidor MCP hereda el `tenancy.strategy` del BC al que sirve), **MEF-ADR-0029** (Program.cs invoca seams, nunca wirea inline -- mismo patron que `domain-scaffolder`/`projections-scaffolder`), **MEF-ADR-0032** (identidad y autenticacion en el borde -- WorkOS AuthKit + APIM, variante MCP/Connect de su seccion 9), **MEF-ADR-0038** (control de volumen de telemetria) y **MEF-ADR-0044** (comentarios minimos: las plantillas de abajo citan solo MEF-ADRs, nunca issues de Mefisto ni de un consumidor).
 
-**Alcance (fase 1 + fase 2 + fase 3, issues #768/#769/#770).** Este agente crea: el proyecto del servidor (csproj, `host.json`, `Program.cs`, los dos seams de composicion, el cliente HTTP de un dominio de ejemplo), una **tool de ejemplo** con el patron completo (incluida una validacion con mensaje `.resx`), los endpoints `VersionCheck`/`ReadyCheck` del gate (MEF-ADR-0048 seccion 3), el proyecto de unit tests base (composicion por reflexion + tests de la tool de ejemplo), el wiring en el `.slnx`, el **Terraform** del servidor (Service Plan + Storage + Function App, reutilizando el modulo `function-app` del consumidor), el **workflow de deploy** encadenado tras el apply de infra, el **proyecto SmokeTests** con las cinco verificaciones canonicas del nivel 3 de la piramide (MEF-ADR-0048 seccion 2) y el **reusable `smoke-tests-mcp.yml`** con su job `smoke-tests` encadenado tras el deploy. Un servidor con una unica tool de ejemplo es un scaffold valido y esperado: es el ancla sobre la que un humano (o un agente futuro) agrega las tools reales del BC.
+**Alcance (fase 1 + fase 2 + fase 3, issues #768/#769/#770, mas identidad/OAuth app-side, issue #819).** Este agente crea: el proyecto del servidor (csproj, `host.json`, `Program.cs`, los seams de composicion, el cliente HTTP de un dominio de ejemplo), el **propagador de identidad** tenant/usuario hacia las Function Apps del BC (`PropagadorIdentidadTenantHandler` + `IdentidadTenant`, siempre generado -- MEF-ADR-0047 decision 6), los **componentes OAuth app-side** de defensa en profundidad (PRM `MetadataRecursoProtegido/`, `ValidadorTokenAuthKit`, `AutorizacionMcpMiddleware`, cableados o degradados a "proponer" segun el `tenancy.strategy` del BC -- MEF-ADR-0047 decision 7, MEF-ADR-0032 seccion 9), una **tool de ejemplo** con el patron completo (incluida una validacion con mensaje `.resx`), los endpoints `VersionCheck`/`ReadyCheck` del gate (MEF-ADR-0048 seccion 3), el proyecto de unit tests base (composicion por reflexion + tests de la tool de ejemplo, del propagador y del validador), el wiring en el `.slnx`, el **Terraform** del servidor (Service Plan + Storage + Function App, reutilizando el modulo `function-app` del consumidor), el **workflow de deploy** encadenado tras el apply de infra, el **proyecto SmokeTests** con las cinco verificaciones canonicas del nivel 3 de la piramide (MEF-ADR-0048 seccion 2) y el **reusable `smoke-tests-mcp.yml`** con su job `smoke-tests` encadenado tras el deploy. Un servidor con una unica tool de ejemplo es un scaffold valido y esperado: es el ancla sobre la que un humano (o un agente futuro) agrega las tools reales del BC.
 
 ## Guard defensivo: cwd != Mefisto
 
@@ -65,6 +65,27 @@ echo "$PRIMER_DOMINIO_KEBAB" | awk -F'-' '{for(i=1;i<=NF;i++) printf "%s", toupp
 
 Llama al resultado `{DominioEjemplo}` (PascalCase) y a la forma cruda `{dominio-ejemplo-kebab}`. **Este es el unico dominio que la tool de ejemplo consume** -- sumar un `HttpClient` tipado por cada dominio adicional que una tool nueva necesite es trabajo de quien implemente esa tool despues, siguiendo el mismo patron que fija el Paso 1 (`ConfiguracionClientesHttp`).
 
+**Estado de auth del BC**, mismo `.claude/harness.config.json` (jq inline, mismo patron que usa `domain-scaffolder` Paso 0 para `tenancy.strategy` -- ver su nota en `harness-config-contract`):
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+CONFIG="$REPO_ROOT/.claude/harness.config.json"
+TENANCY_STRATEGY=$(jq -r '.tenancy.strategy // "mono-tenant-transitorio"' "$CONFIG" 2>/dev/null)
+echo "tenancy.strategy=$TENANCY_STRATEGY"
+```
+
+Un valor no reconocido (ni `mono-tenant-transitorio` ni `multi-tenant-header`) se trata como
+`mono-tenant-transitorio` (mismo criterio que `domain-scaffolder`). Llama al resultado
+`{TenancyStrategy}`. Este agente **reusa** el mismo token que `domain-scaffolder` en vez de sondear
+si WorkOS esta instalado por otro medio: MEF-ADR-0028 seccion 4 y MEF-ADR-0032 seccion 5 fijan que
+`multi-tenant-header` (etapa b) es, hoy, el **unico** camino que el marco documenta para llegar ahi
+-- WorkOS+APIM via `/install-apim`, que a su vez no arranca sin `WORKOS_CLIENT_ID`/`WORKOS_API_KEY`
+verificados (gate humano de `/install-auth`). No hay ningun tipo `WorkOs*` que grep-ear en un
+servidor MCP cliente-HTTP-puro (MEF-ADR-0047 decision 3), asi que el token de tenancy es la senal
+mas confiable disponible sin salir a `gh` (que este agente, a diferencia de `apim-gateway-scaffolder`,
+no invoca). `{TenancyStrategy}` decide, mas abajo (Paso 1 items 7a-7c y Program.cs), si los
+componentes OAuth app-side se cablean o quedan como "propuesta" (CA-2 del issue #819).
+
 **Probe de idempotencia (gate del Paso 1):**
 
 ```bash
@@ -86,7 +107,7 @@ mkdir -p "$REPO_ROOT/src/<RootNamespace>.Mcp.{Proposito}/Infraestructura"
 mkdir -p "$REPO_ROOT/src/<RootNamespace>.Mcp.{Proposito}/Ejemplo"
 ```
 
-**1. `<RootNamespace>.Mcp.{Proposito}.csproj`** -- cero `ProjectReference` (MEF-ADR-0047 decision 3): cliente HTTP puro de las Function Apps del BC. Versiones verificadas contra `api.nuget.org/v3-flatcontainer/<paquete>/index.json` el 2026-08-30 (ultimas estables absolutas de cada paquete); revalidalas contra la fuente si ha pasado tiempo desde entonces.
+**1. `<RootNamespace>.Mcp.{Proposito}.csproj`** -- cero `ProjectReference` (MEF-ADR-0047 decision 3): cliente HTTP puro de las Function Apps del BC. Versiones verificadas contra `api.nuget.org/v3-flatcontainer/<paquete>/index.json` el 2026-08-30 (ultimas estables absolutas de cada paquete); revalidalas contra la fuente si ha pasado tiempo desde entonces. `Microsoft.IdentityModel.Protocols.OpenIdConnect`/`System.IdentityModel.Tokens.Jwt` (validacion de token de defensa en profundidad, MEF-ADR-0047 decision 7) verificadas el 2026-09-01, issue #819.
 
 > **Aviso de sustitucion**: el elemento `<RootNamespace>` de MSBuild y el token `<RootNamespace>` de este agente coinciden en texto por casualidad. En la linea `<RootNamespace><RootNamespace>.Mcp.{Proposito}</RootNamespace>` sustituye **solo** el token interior; el elemento exterior y su cierre quedan tal cual. No traslades esta nota al archivo generado.
 
@@ -113,7 +134,9 @@ mkdir -p "$REPO_ROOT/src/<RootNamespace>.Mcp.{Proposito}/Ejemplo"
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Mcp" Version="1.6.0" />
     <PackageReference Include="Microsoft.Azure.Functions.Worker.OpenTelemetry" Version="1.2.0" />
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Sdk" Version="2.1.0" />
+    <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.22.0" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.18.0" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.22.0" />
   </ItemGroup>
 
   <!-- Nombres de tool y topes de truncado son internal: contrato de cada tool con sus tests, no
@@ -236,7 +259,7 @@ public sealed class {DominioEjemplo}Api(HttpClient http)
 }
 ```
 
-**6. `Infraestructura/ConfiguracionClientesHttp.cs`** -- seam de composicion de los `HttpClient` tipados (MEF-ADR-0029: `Program.cs` invoca un unico metodo, nunca wirea inline). Mejora deliberada sobre el piloto de origen de esta doctrina, que registraba los `HttpClient` directamente en `Program.cs`: extraerlo a un seam alinea este proyecto con el mismo patron que ya usan `domain-scaffolder` (`ComposicionServicios{Dominio}`) y `projections-scaffolder` (`ConfiguracionMartenProjections`).
+**6. `Infraestructura/ConfiguracionClientesHttp.cs`** -- seam de composicion de los `HttpClient` tipados (MEF-ADR-0029: `Program.cs` invoca un unico metodo, nunca wirea inline). Mejora deliberada sobre el piloto de origen de esta doctrina, que registraba los `HttpClient` directamente en `Program.cs`: extraerlo a un seam alinea este proyecto con el mismo patron que ya usan `domain-scaffolder` (`ComposicionServicios{Dominio}`) y `projections-scaffolder` (`ConfiguracionMartenProjections`). Cada `HttpClient` encadena `AddHttpMessageHandler<PropagadorIdentidadTenantHandler>()` (item 6c, mas abajo): la propagacion de identidad es obligatoria en todo cliente tipado, nunca opcional por dominio (MEF-ADR-0047 decision 6).
 
 ```csharp
 using Microsoft.Extensions.Configuration;
@@ -256,10 +279,13 @@ public static class ConfiguracionClientesHttp
     public static IServiceCollection ConfigurarClientesHttp(this IServiceCollection services, IConfiguration configuration)
     {
         var baseUrl{DominioEjemplo} = LeerBaseUrl(configuration, "{DominioEjemplo}");
-        services.AddHttpClient<{DominioEjemplo}Api>(c => c.BaseAddress = baseUrl{DominioEjemplo});
+        services.AddHttpClient<{DominioEjemplo}Api>(c => c.BaseAddress = baseUrl{DominioEjemplo})
+            .AddHttpMessageHandler<PropagadorIdentidadTenantHandler>();
 
         // Extension point: cada tool nueva que consuma otro dominio del BC agrega aqui su propio
-        // par LeerBaseUrl(...) + AddHttpClient<{Dominio}Api>(...), siguiendo el mismo patron.
+        // par LeerBaseUrl(...) + AddHttpClient<{Dominio}Api>(...).AddHttpMessageHandler<PropagadorIdentidadTenantHandler>(),
+        // siguiendo el mismo patron -- el propagador de identidad (MEF-ADR-0047 decision 6) es
+        // obligatorio en todo HttpClient tipado nuevo, no solo en el de {DominioEjemplo}.
 
         return services;
     }
@@ -271,6 +297,78 @@ public static class ConfiguracionClientesHttp
         return string.IsNullOrWhiteSpace(valor)
             ? throw new InvalidOperationException($"Falta el app setting Api__{dominio}__BaseUrl")
             : new Uri(valor);
+    }
+}
+```
+
+**6a. `Infraestructura/IdentidadTenant.cs`** -- identidad interina que el propagador inyecta en cada request saliente (MEF-ADR-0047 decision 6).
+
+```csharp
+namespace <RootNamespace>.Mcp.{Proposito}.Infraestructura;
+
+/// <summary>
+/// Identidad propagada a las Function Apps del BC en cada request saliente (MEF-ADR-0047 decision
+/// 6). Interina mientras el servidor no reciba Authorization de una tool call (decision 7): un
+/// valor fijo por despliegue, nunca derivado del cliente MCP conectado.
+/// </summary>
+public sealed record IdentidadTenant(string TenantId, string UserId);
+```
+
+**6b. `Infraestructura/ConfiguracionIdentidadTenant.cs`** -- seam que resuelve la identidad interina desde app settings y registra el propagador (MEF-ADR-0029). **Siempre se genera y se invoca**, en cualquier `tenancy.strategy` (CA-1 del issue #819): a diferencia de `TenantResolverMonoTenantPorDefecto` (que lanza si el codigo del BC lee identidad sin headers en etapa b), este seam nunca falla el arranque -- degrada a un marcador explicito si el app setting no esta declarado, porque el servidor MCP debe poder arrancar incluso antes de que el Terraform del Paso 6b se aplique con esos valores.
+
+```csharp
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace <RootNamespace>.Mcp.{Proposito}.Infraestructura;
+
+/// <summary>
+/// Seam de composicion de la identidad interina y del propagador que la inyecta en cada
+/// HttpClient tipado (MEF-ADR-0029, MEF-ADR-0047 decision 6).
+/// </summary>
+public static class ConfiguracionIdentidadTenant
+{
+    public static IServiceCollection ConfigurarIdentidadTenant(this IServiceCollection services, IConfiguration configuration)
+    {
+        // TODO(tenancy etapa b / identidad derivada del token, MEF-ADR-0047 decision 6): el
+        // worker no recibe el Authorization de una tool call (decision 7), asi que el tenant y el
+        // usuario son un valor FIJO por despliegue, leido de app settings -- nunca derivado del
+        // cliente MCP conectado. Reemplazarlo por identidad derivada del token es evolucion fuera
+        // de alcance de este scaffold.
+        var identidad = new IdentidadTenant(
+            TenantId: configuration["Identidad:TenantIdInterino"] ?? "tenant-interino-sin-configurar",
+            UserId: configuration["Identidad:UserIdInterino"] ?? "mcp-sin-usuario-autenticado");
+
+        services.AddSingleton(identidad);
+        services.AddTransient<PropagadorIdentidadTenantHandler>();
+
+        return services;
+    }
+}
+```
+
+**6c. `Infraestructura/PropagadorIdentidadTenantHandler.cs`** -- el `DelegatingHandler` compartido (MEF-ADR-0047 decision 6).
+
+```csharp
+namespace <RootNamespace>.Mcp.{Proposito}.Infraestructura;
+
+/// <summary>
+/// DelegatingHandler compartido por todos los HttpClients tipados del servidor (MEF-ADR-0047
+/// decision 6): inyecta X-Tenant-Id/X-User-Id en cada request saliente hacia una Function App del
+/// BC -- los mismos headers canonicos que TenantContextMiddleware ya sabe leer sin parsing
+/// adicional (MEF-ADR-0028 seccion 4). Un unico handler compartido, no un Headers.Add(...)
+/// repetido por cliente tipado: ningun HttpClient nuevo puede "olvidar" propagar identidad.
+/// </summary>
+public sealed class PropagadorIdentidadTenantHandler(IdentidadTenant identidad) : DelegatingHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        request.Headers.Remove("X-Tenant-Id");
+        request.Headers.TryAddWithoutValidation("X-Tenant-Id", identidad.TenantId);
+        request.Headers.Remove("X-User-Id");
+        request.Headers.TryAddWithoutValidation("X-User-Id", identidad.UserId);
+
+        return base.SendAsync(request, cancellationToken);
     }
 }
 ```
@@ -315,7 +413,151 @@ public static class ConfiguracionObservabilidadMcp
 }
 ```
 
-**8. `Program.cs`** -- invoca los dos seams, nada mas (MEF-ADR-0029).
+**7a. `Infraestructura/ValidadorTokenAuthKit.cs`** -- validador de token de defensa en profundidad (MEF-ADR-0047 decision 7). **Siempre se genera** (es puro C#, sin cablear nada -- mismo principio que `workos-identity-scaffolder` aplica a su adapter: seguro escribirlo incluso si Program.cs termina degradando a "proponer"). Recibe el `IConfigurationManager<OpenIdConnectConfiguration>` por constructor (en vez de resolverlo el mismo) para poder testear con un doble de prueba sin red -- ver Paso 4.
+
+```csharp
+using System.IdentityModel.Tokens.Jwt;
+using Microsoft.IdentityModel.Protocols;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
+using Microsoft.IdentityModel.Tokens;
+
+namespace <RootNamespace>.Mcp.{Proposito}.Infraestructura;
+
+/// <summary>
+/// Validador de token de defensa en profundidad (MEF-ADR-0047 decision 7): nunca el gate primario
+/// -- ese vive en la politica dedicada de APIM (MEF-ADR-0032 seccion 9). ValidateAudience = false
+/// porque la audiencia ya la exige esa politica antes de que el request llegue a este worker.
+/// Authority = dominio AuthKit del entorno (MEF-ADR-0032 B12), nunca el issuer de login
+/// user_management/{client_id} -- re-verificar contra el discovery doc en vivo por consumidor.
+/// </summary>
+public sealed class ValidadorTokenAuthKit(IConfigurationManager<OpenIdConnectConfiguration> configManager)
+{
+    public static ValidadorTokenAuthKit ParaAuthorizationServer(string authorizationServer)
+    {
+        var discoveryUrl = $"{authorizationServer.TrimEnd('/')}/.well-known/openid-configuration";
+        return new ValidadorTokenAuthKit(
+            new ConfigurationManager<OpenIdConnectConfiguration>(discoveryUrl, new OpenIdConnectConfigurationRetriever()));
+    }
+
+    public async Task<bool> EsValidoAsync(string token, CancellationToken ct)
+    {
+        try
+        {
+            var config = await configManager.GetConfigurationAsync(ct);
+            var parametros = new TokenValidationParameters
+            {
+                ValidateIssuer = true,
+                ValidIssuer = config.Issuer,
+                ValidateAudience = false,
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKeys = config.SigningKeys,
+                ValidateLifetime = true
+            };
+
+            new JwtSecurityTokenHandler().ValidateToken(token, parametros, out _);
+            return true;
+        }
+        catch (Exception)
+        {
+            // Defensa en profundidad: cualquier fallo (token malformado, discovery doc no
+            // alcanzable, firma invalida) se trata como "no valido", nunca propaga -- este
+            // validador jamas debe tumbar el pipeline (MEF-ADR-0047 decision 7).
+            return false;
+        }
+    }
+}
+```
+
+**7b. `Infraestructura/AutorizacionMcpMiddleware.cs`** -- el limite estructural (CA-3 del issue #819), documentado en el propio codigo generado. **Siempre se genera**; solo Program.cs decide si `builder.UseMiddleware<AutorizacionMcpMiddleware>()` se invoca.
+
+```csharp
+using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.Functions.Worker.Middleware;
+using Microsoft.Extensions.Logging;
+
+namespace <RootNamespace>.Mcp.{Proposito}.Infraestructura;
+
+/// <summary>
+/// Defensa en profundidad, NUNCA el gate primario (MEF-ADR-0047 decision 7): las tool calls de un
+/// cliente MCP contra /runtime/webhooks/mcp llegan a este worker SIN header Authorization -- lo
+/// sirve el paquete del host de la extension MCP, que no lo reenvia. Intentar exigirlo aqui
+/// produce, en el mejor caso, un gate que nunca se activa, y en el peor, un rechazo universal
+/// porque el header buscado no existe nunca en ese punto. El gate real vive en la politica
+/// dedicada de APIM (MEF-ADR-0032 seccion 9). Este middleware solo registra, con Warning, un
+/// Authorization presente pero invalido en las superficies HTTP que si lo reciben (p. ej. un
+/// endpoint propio fuera del protocolo MCP) -- nunca bloquea el pipeline.
+/// </summary>
+public sealed class AutorizacionMcpMiddleware(
+    ValidadorTokenAuthKit validador,
+    ILogger<AutorizacionMcpMiddleware> logger) : IFunctionsWorkerMiddleware
+{
+    public async Task Invoke(FunctionContext context, FunctionExecutionDelegate next)
+    {
+        var request = await context.GetHttpRequestDataAsync();
+        var authorizationHeader = request is not null && request.Headers.TryGetValues("Authorization", out var valores)
+            ? valores.FirstOrDefault()
+            : null;
+        var token = authorizationHeader?.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) == true
+            ? authorizationHeader["Bearer ".Length..]
+            : null;
+
+        if (!string.IsNullOrWhiteSpace(token) && !await validador.EsValidoAsync(token, context.CancellationToken))
+            logger.LogWarning(
+                "Token Authorization presente pero invalido en {Funcion} -- defensa en profundidad, el request continua: el gate real es la politica de APIM (MEF-ADR-0032 seccion 9).",
+                context.FunctionDefinition.Name);
+
+        await next(context);
+    }
+}
+```
+
+**7c. `MetadataRecursoProtegido/MetadataRecursoProtegidoFunction.cs`** -- PRM (RFC 9728), anonimo (MEF-ADR-0032 seccion 9). **Siempre se genera** y queda registrado por el host como cualquier otra Function; si `Mcp:ResourceUri`/`Mcp:AuthorizationServer` todavia no estan declarados (BC en etapa (a), Paso 6b los deja como placeholder), responde `503` en vez de publicar un PRM inventado.
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+mkdir -p "$REPO_ROOT/src/<RootNamespace>.Mcp.{Proposito}/MetadataRecursoProtegido"
+```
+
+```csharp
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Azure.Functions.Worker;
+using Microsoft.Extensions.Configuration;
+
+namespace <RootNamespace>.Mcp.{Proposito}.MetadataRecursoProtegido;
+
+// Protected Resource Metadata (RFC 9728): descubrimiento anonimo que un cliente OAuth (flujo
+// MCP/Connect) usa para arrancar la autorizacion (MEF-ADR-0032 seccion 9). Defensa en profundidad
+// -- el gate real vive en la politica dedicada de APIM, que reenvia a este backend anonimo
+// (MEF-ADR-0047 decision 7). Mcp:ResourceUri debe coincidir byte a byte con el <audiences> de esa
+// politica y con el Resource Indicator (RFC 8707) que declara el cliente MCP.
+public class MetadataRecursoProtegidoFunction(IConfiguration configuration)
+{
+    [Function("MetadataRecursoProtegido")]
+    public IActionResult Run(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = ".well-known/oauth-protected-resource")]
+        HttpRequest req)
+    {
+        var resource = configuration["Mcp:ResourceUri"];
+        var authorizationServer = configuration["Mcp:AuthorizationServer"];
+
+        if (string.IsNullOrWhiteSpace(resource) || string.IsNullOrWhiteSpace(authorizationServer))
+            return new ObjectResult(
+                "PRM sin configurar: falta el app setting Mcp__ResourceUri o Mcp__AuthorizationServer.")
+            { StatusCode = StatusCodes.Status503ServiceUnavailable };
+
+        return new OkObjectResult(new
+        {
+            resource,
+            authorization_servers = new[] { authorizationServer }
+        });
+    }
+}
+```
+
+**8. `Program.cs`** -- invoca los seams, nada mas (MEF-ADR-0029). Los componentes OAuth app-side (items 7a/7b) se cablean solo si el Paso 0 resolvio `{TenancyStrategy}` = `multi-tenant-header`; en `mono-tenant-transitorio` quedan como comentario-propuesta (CA-2 del issue #819) -- el propagador de identidad (items 6a-6c), en cambio, **siempre** se cablea, sin importar la etapa.
+
+Si `{TenancyStrategy}` es `multi-tenant-header`:
 
 ```csharp
 using <RootNamespace>.Mcp.{Proposito}.Infraestructura;
@@ -325,8 +567,41 @@ using Microsoft.Extensions.Hosting;
 var builder = FunctionsApplication.CreateBuilder(args);
 builder.ConfigureFunctionsWebApplication();
 
+builder.Services.ConfigurarIdentidadTenant(builder.Configuration);
 builder.Services.ConfigurarClientesHttp(builder.Configuration);
 builder.Services.ConfigurarObservabilidadMcp();
+
+// Defensa en profundidad (MEF-ADR-0047 decision 7): el gate real vive en la politica dedicada de
+// APIM (MEF-ADR-0032 seccion 9). ValidateAudience = false -- la audiencia ya la exige esa politica.
+builder.Services.AddSingleton(ValidadorTokenAuthKit.ParaAuthorizationServer(
+    builder.Configuration["Mcp:AuthorizationServer"]
+        ?? throw new InvalidOperationException("Falta el app setting Mcp__AuthorizationServer")));
+builder.UseMiddleware<AutorizacionMcpMiddleware>();
+
+await builder.Build().RunAsync();
+```
+
+Si `{TenancyStrategy}` es `mono-tenant-transitorio` (default):
+
+```csharp
+using <RootNamespace>.Mcp.{Proposito}.Infraestructura;
+using Microsoft.Azure.Functions.Worker.Builder;
+using Microsoft.Extensions.Hosting;
+
+var builder = FunctionsApplication.CreateBuilder(args);
+builder.ConfigureFunctionsWebApplication();
+
+builder.Services.ConfigurarIdentidadTenant(builder.Configuration);
+builder.Services.ConfigurarClientesHttp(builder.Configuration);
+builder.Services.ConfigurarObservabilidadMcp();
+
+// PROPUESTA sin cablear (MEF-ADR-0047 decision 6-7): este BC todavia esta en
+// tenancy.strategy = "mono-tenant-transitorio" (sin WorkOS+APIM instalado). Infraestructura/ ya
+// tiene ValidadorTokenAuthKit y AutorizacionMcpMiddleware generados y compilando -- corre
+// /install-auth y vuelve a scaffoldear (o cablea a mano las dos lineas de abajo) cuando el BC
+// adopte el camino WorkOS+APIM:
+// builder.Services.AddSingleton(ValidadorTokenAuthKit.ParaAuthorizationServer(builder.Configuration["Mcp:AuthorizationServer"]!));
+// builder.UseMiddleware<AutorizacionMcpMiddleware>();
 
 await builder.Build().RunAsync();
 ```
@@ -550,6 +825,8 @@ BASE="$REPO_ROOT/tests/<RootNamespace>.Mcp.{Proposito}.Tests"
 test -f "$BASE/<RootNamespace>.Mcp.{Proposito}.Tests.csproj" && echo "csproj: EXISTE"        || echo "csproj: FALTA"
 test -f "$BASE/ComposicionDelServidorTests.cs"                && echo "composicion: EXISTE"   || echo "composicion: FALTA"
 test -f "$BASE/Ejemplo/EjemploListarToolTests.cs"              && echo "tool tests: EXISTE"    || echo "tool tests: FALTA"
+test -f "$BASE/Infraestructura/PropagadorIdentidadTenantHandlerTests.cs" && echo "propagador tests: EXISTE" || echo "propagador tests: FALTA"
+test -f "$BASE/Infraestructura/ValidadorTokenAuthKitTests.cs"            && echo "validador tests: EXISTE"  || echo "validador tests: FALTA"
 ```
 
 Si el csproj falta, crealo:
@@ -558,6 +835,7 @@ Si el csproj falta, crealo:
 REPO_ROOT=$(git rev-parse --show-toplevel)
 mkdir -p "$REPO_ROOT/tests/<RootNamespace>.Mcp.{Proposito}.Tests/Ejemplo/Soporte"
 mkdir -p "$REPO_ROOT/tests/<RootNamespace>.Mcp.{Proposito}.Tests/Ejemplo/Fixtures"
+mkdir -p "$REPO_ROOT/tests/<RootNamespace>.Mcp.{Proposito}.Tests/Infraestructura"
 ```
 
 **1. `<RootNamespace>.Mcp.{Proposito}.Tests.csproj`** -- pines exactos sin comodin en `AwesomeAssertions`/`xunit.v3.mtp-v2` (issue #605, misma disciplina que `domain-scaffolder`/`projections-scaffolder`): un comodin resuelve "la ultima version que matchea al momento del restore", asi que el resultado del build depende del dia, no del commit. Mismas versiones que el resto del repo consumidor (`9.5.0`/`3.2.2`) -- ningun `.csproj` del repo declara dos versiones distintas del mismo paquete de test.
@@ -809,6 +1087,77 @@ public class EjemploListarToolTests
 }
 ```
 
+**7. `Infraestructura/PropagadorIdentidadTenantHandlerTests.cs`** -- CA-5 del issue #819: los headers canonicos deben llegar a cada request saliente. `InnerHandler` apunta a un capturador que guarda el `HttpRequestMessage` recibido, sin red real.
+
+```csharp
+using System.Net;
+using AwesomeAssertions;
+using <RootNamespace>.Mcp.{Proposito}.Infraestructura;
+
+namespace <RootNamespace>.Mcp.{Proposito}.Tests.Infraestructura;
+
+public class PropagadorIdentidadTenantHandlerTests
+{
+    [Fact]
+    public async Task Send_PropagaTenantIdYUserId_EnCadaRequestSaliente()
+    {
+        HttpRequestMessage? requestCapturado = null;
+        var handler = new PropagadorIdentidadTenantHandler(new IdentidadTenant("tenant-123", "usuario-456"))
+        {
+            InnerHandler = new HandlerCapturador(r => requestCapturado = r)
+        };
+        var cliente = new HttpClient(handler) { BaseAddress = new Uri("https://dominio.falso.local") };
+
+        await cliente.GetAsync("api/recurso", TestContext.Current.CancellationToken);
+
+        requestCapturado.Should().NotBeNull();
+        requestCapturado!.Headers.GetValues("X-Tenant-Id").Should().ContainSingle().Which.Should().Be("tenant-123");
+        requestCapturado.Headers.GetValues("X-User-Id").Should().ContainSingle().Which.Should().Be("usuario-456");
+    }
+}
+
+internal sealed class HandlerCapturador(Action<HttpRequestMessage> capturar) : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        capturar(request);
+        return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+    }
+}
+```
+
+**8. `Infraestructura/ValidadorTokenAuthKitTests.cs`** -- CA-5 del issue #819: el validador nunca debe lanzar, solo degradar a "no valido" (defensa en profundidad, MEF-ADR-0047 decision 7). El doble de `IConfigurationManager<OpenIdConnectConfiguration>` evita cualquier red real -- ni siquiera un discovery doc en vivo.
+
+```csharp
+using AwesomeAssertions;
+using <RootNamespace>.Mcp.{Proposito}.Infraestructura;
+using Microsoft.IdentityModel.Protocols;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
+
+namespace <RootNamespace>.Mcp.{Proposito}.Tests.Infraestructura;
+
+public class ValidadorTokenAuthKitTests
+{
+    [Fact]
+    public async Task EsValidoAsync_DevuelveFalso_CuandoElTokenEstaMalformado()
+    {
+        var validador = new ValidadorTokenAuthKit(new ConfigManagerFalso());
+
+        var esValido = await validador.EsValidoAsync("no-es-un-jwt", TestContext.Current.CancellationToken);
+
+        esValido.Should().BeFalse("defensa en profundidad: nunca debe lanzar, solo degradar a invalido");
+    }
+}
+
+internal sealed class ConfigManagerFalso : IConfigurationManager<OpenIdConnectConfiguration>
+{
+    public Task<OpenIdConnectConfiguration> GetConfigurationAsync(CancellationToken cancel) =>
+        Task.FromResult(new OpenIdConnectConfiguration { Issuer = "https://auth.falso.local" });
+
+    public void RequestRefresh() { }
+}
+```
+
 ---
 
 ## Paso 5 - Wiring en la solucion y `global.json` (CA-6)
@@ -869,6 +1218,26 @@ ningun proyecto del BC.
 - **Tools 100% stateless**: el contexto conversacional vive en el cliente MCP, nunca aqui.
 - **Respuestas remodeladas para token-eficiencia**: cada tool poda campos internos y trunca
   listas largas con senal para que el asistente refine el filtro.
+
+## Identidad y gate OAuth (MEF-ADR-0047 decisiones 6-7, MEF-ADR-0032 seccion 9)
+
+- **Propagador de identidad, siempre activo**: cada HttpClient tipado hacia una Function App del
+  BC inyecta `X-Tenant-Id`/`X-User-Id` via `PropagadorIdentidadTenantHandler`. El valor es
+  interino por app settings (`Identidad__TenantIdInterino`/`Identidad__UserIdInterino`) mientras
+  el servidor no reciba identidad real de una tool call -- ver el `// TODO` en
+  `Infraestructura/ConfiguracionIdentidadTenant.cs`.
+- **Limite estructural del host**: las tool calls contra `/runtime/webhooks/mcp` llegan a este
+  worker **sin** header `Authorization` -- lo sirve el paquete del host de la extension MCP, que
+  no lo reenvia. Ningun middleware del worker puede exigirlo. El gate OAuth real de este servidor
+  vive exclusivamente en el borde (Azure API Management, variante MCP/Connect).
+- **`AutorizacionMcpMiddleware`/`ValidadorTokenAuthKit`**: defensa en profundidad, `ValidateAudience
+  = false` (la audiencia ya la exige la politica de APIM). Se generan siempre; si al scaffoldear
+  este servidor `tenancy.strategy` ya era `multi-tenant-header`, `Program.cs` los cablea. Si no,
+  quedan como propuesta comentada en `Program.cs` -- corre `/install-auth` y cablealos a mano (o
+  vuelve a scaffoldear).
+- **PRM (`MetadataRecursoProtegido/`)**: descubrimiento anonimo RFC 9728. Responde `503` hasta que
+  `Mcp__ResourceUri`/`Mcp__AuthorizationServer` esten declarados -- placeholders en el Terraform
+  del Paso 6b, que provisiona el modulo `apim-mcp-api` del issue hermano #820.
 
 ## Estado de este scaffold
 
@@ -1032,12 +1401,13 @@ done
 ```
 
 Cada linea `WIRE` produce una entrada `Api__{pascal}__BaseUrl = "https://${module.function_app_{snake}.default_hostname}"`
-del `app_settings` de abajo. Si ningun dominio tiene Terraform todavia (BC recien creado), **omite
-el bloque `app_settings` completo** -- el modulo `function-app` declara esa variable con
-`default = {}` (`infra-base-scaffolder` seccion 1.7), asi que no pasarla es equivalente y evita un
-mapa vacio decorativo. Deja entonces una nota en el resumen final avisando que ningun dominio
-quedo wireado y que agregar uno despues requiere editar este archivo a mano (la idempotencia del
-Paso 6b no lo va a regenerar).
+del `app_settings` de abajo. **El bloque `app_settings` nunca se omite entero** -- a diferencia de
+un dominio, este servidor siempre lleva la identidad interina (`Identidad__TenantIdInterino`/
+`Identidad__UserIdInterino`, CA-1 del issue #819) y los settings OAuth app-side (`Mcp__ResourceUri`/
+`Mcp__AuthorizationServer`, CA-4), asi que el mapa nunca queda vacio. Si ningun dominio tiene
+Terraform todavia (BC recien creado), omite solo las lineas `Api__{pascal}__BaseUrl` y deja una
+nota en el resumen final avisando que ningun dominio quedo wireado y que agregar uno despues
+requiere editar este archivo a mano (la idempotencia del Paso 6b no lo va a regenerar).
 
 **Resolucion de `local.prefix_func` y validacion del nombre de la Function App (MEF-ADR-0045
 seccion 1, Validacion 1a de `domain-scaffolder` Paso 0):** el `app-name` del workflow del Paso 6c
@@ -1156,8 +1526,20 @@ module "function_app_mcp_{proposito_snake}" {
   # Convencion Api:BaseUrl (el codigo del servidor la lee en ConfiguracionClientesHttp, Paso 1
   # punto 6): una linea por dominio ya scaffoldeado que este servidor consume. Agregar una tool
   # nueva que consuma otro dominio exige agregar aqui su linea a mano, igual que en el codigo.
+  #
+  # Identidad__* (Paso 1 punto 6b, MEF-ADR-0047 decision 6): valor interino por despliegue,
+  # TODO(tenancy etapa b / identidad derivada del token).
+  # Mcp__* (Paso 1 puntos 7a/7c, MEF-ADR-0047 decision 7, MEF-ADR-0032 seccion 9): placeholders --
+  # ResourceUri debe coincidir byte a byte con el PRM y el <audiences> de la politica dedicada de
+  # APIM; AuthorizationServer es el dominio AuthKit del entorno (MEF-ADR-0032 B12), nunca el
+  # issuer de login. Ninguno de los dos lo puede resolver este agente: los provisiona el modulo
+  # apim-mcp-api que scaffoldea el gateway APIM.
   app_settings = {
     Api__{DominioPascal}__BaseUrl = "https://${module.function_app_{dominio_snake}.default_hostname}"
+    Identidad__TenantIdInterino   = "tenant-interino-mcp-{proposito-kebab}"
+    Identidad__UserIdInterino     = "mcp-sin-usuario-autenticado"
+    Mcp__ResourceUri              = "PENDIENTE-URL-APIM-DEL-SERVIDOR-MCP"
+    Mcp__AuthorizationServer      = "PENDIENTE-DOMINIO-AUTHKIT-DEL-ENTORNO"
   }
   always_on = module.service_plan_mcp_{proposito_snake}.always_on
   tags      = local.tags
@@ -1186,8 +1568,8 @@ resource "azurerm_role_assignment" "function_app_mcp_{proposito_snake}_storage_t
 
 Sustituye `{proposito-kebab}` por el kebab del proposito, `{proposito_snake}` por ese mismo kebab
 con `_` en vez de `-`, `{mcp-storage}` por el `mcp_id` (truncado si aplico) resuelto arriba, y
-repite la linea `Api__{DominioPascal}__BaseUrl` una vez por cada linea `WIRE` (omitiendo el bloque
-`app_settings` entero si no hubo ninguna).
+repite la linea `Api__{DominioPascal}__BaseUrl` una vez por cada linea `WIRE` (omitiendo solo esas
+lineas si no hubo ninguna -- las cuatro `Identidad__*`/`Mcp__*` quedan siempre).
 
 ---
 
@@ -2075,3 +2457,15 @@ Cierra el reporte con lo que queda **fuera** de tu alcance y el usuario tiene qu
    deploy real (tras el `apply` del punto 1) -- no la ejecutaste vos mismo (Paso 7 solo la
    compila). Si falla ahi, lo mas probable es un `Api__*__BaseUrl` faltante (punto 2) o que la app
    no exponga todavia la system key `mcp_extension` (se genera con el primer deploy exitoso).
+6. **Identidad y OAuth (CA-3 del issue #819) -- repite esto siempre, incluso si todo lo demas ya
+   existia**: el gate OAuth de este servidor vive exclusivamente en el borde (Azure API
+   Management, variante MCP/Connect, MEF-ADR-0032 seccion 9) -- las tool calls contra
+   `/runtime/webhooks/mcp` llegan a este worker sin header `Authorization` (limite estructural del
+   host, MEF-ADR-0047 decision 7), asi que `AutorizacionMcpMiddleware`/`ValidadorTokenAuthKit`
+   nunca son el gate primario, solo defensa en profundidad. Reporta si `{TenancyStrategy}` resulto
+   `multi-tenant-header` (componentes cableados en `Program.cs`) o `mono-tenant-transitorio`
+   (quedaron como propuesta comentada -- corre `/install-auth` y cablealos, o vuelve a scaffoldear,
+   cuando el BC adopte WorkOS+APIM). En cualquiera de los dos casos, `Mcp__ResourceUri`/
+   `Mcp__AuthorizationServer` quedan como placeholder en el Terraform del Paso 6b hasta que el
+   modulo `apim-mcp-api` del issue hermano #820 los provisione -- el PRM responde `503` hasta
+   entonces.
