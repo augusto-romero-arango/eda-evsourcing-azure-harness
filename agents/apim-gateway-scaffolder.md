@@ -600,7 +600,7 @@ variable "display_name" {
 }
 
 variable "path" {
-  description = "Segmento de URL de este servidor MCP bajo el gateway (https://<apim>.azure-api.net/<path>) -- tambien el sufijo que RFC 9728 exige insertar despues de '.well-known/oauth-protected-resource' para distinguir el PRM de este servidor del de cualquier otro (seccion 3.1 de la RFC, 'Example with path component')"
+  description = "Segmento de URL de este servidor MCP bajo el gateway (https://<apim>.azure-api.net/<path>) -- tambien el sufijo que compone prm_url debajo del path de la API compartida del PRM (var.mcp_prm_api_path); Paso 3c documenta por que ese path no es el segmento '.well-known/oauth-protected-resource' que fija RFC 9728 seccion 3.1"
   type        = string
 }
 
@@ -621,6 +621,11 @@ variable "authorization_server_url" {
 
 variable "mcp_prm_api_name" {
   description = "Nombre de la API compartida que enruta el documento PRM de TODOS los servidores MCP del entorno (azurerm_api_management_api.mcp_prm.name de apim-mcp-prm.tf, Paso 3c) -- este modulo le agrega su propia operacion, nunca crea esa API"
+  type        = string
+}
+
+variable "mcp_prm_api_path" {
+  description = "path de la API compartida del PRM (azurerm_api_management_api.mcp_prm.path de apim-mcp-prm.tf, Paso 3c); nunca un literal, para que prm_url coincida byte a byte con la API por construccion"
   type        = string
 }
 
@@ -646,7 +651,17 @@ locals {
   # (resource_uri de arriba), el well-known se inserta ANTES del path, al nivel del host -- nunca
   # anidado bajo el propio path de la API de este servidor. Por eso la operacion PRM vive en la API
   # COMPARTIDA mcp_prm_api_name (Paso 3c), no en la API dedicada de este servidor.
-  prm_url = "${trimsuffix(var.gateway_url, "/")}/.well-known/oauth-protected-resource/${var.path}"
+  #
+  # DESVIACION DELIBERADA de RFC 9728 seccion 3 (issue #831): APIM rechaza en apply (nunca en
+  # validate/plan) un path de azurerm_api_management_api que empiece con punto, asi que la API
+  # compartida NO puede llevar el segmento well-known exacto que fija la RFC (ver el comentario de
+  # cabecera de apim-mcp-prm.tf, Paso 3c, para la evidencia). var.mcp_prm_api_path viene siempre del
+  # path REAL de esa API (azurerm_api_management_api.mcp_prm.path), nunca un literal duplicado aca,
+  # para que prm_url siga coincidiendo por construccion aunque ese path cambie. El unico mecanismo
+  # de descubrimiento que se garantiza para un cliente MCP es el resource_metadata del
+  # WWW-Authenticate del 401 (RFC 9728 seccion 5.1, <on-error> mas abajo) -- no la convencion
+  # well-known con punto inicial.
+  prm_url = "${trimsuffix(var.gateway_url, "/")}/${var.mcp_prm_api_path}/${var.path}"
 
   # Mismo trimsuffix defensivo que resource_uri, y por la misma exigencia byte a byte: el <issuer>
   # de la politica de abajo tiene que coincidir con el `issuer` que emite el discovery doc en vivo
@@ -839,7 +854,9 @@ XML
 
 # Operacion de ESTE servidor en la API COMPARTIDA del PRM (var.mcp_prm_api_name, Paso 3c) -- nunca
 # crea esa API. url_template = "/${var.path}" matchea el "Example with path component" de RFC 9728
-# seccion 3.1 relativo al path ".well-known/oauth-protected-resource" de esa API compartida.
+# seccion 3.1, pero el path de esa API compartida es "well-known/oauth-protected-resource" (SIN
+# punto inicial, desviacion de RFC 9728 impuesta por APIM -- ver el comentario de cabecera de
+# apim-mcp-prm.tf, Paso 3c, para la evidencia).
 resource "azurerm_api_management_api_operation" "prm" {
   operation_id        = "${var.path}-prm"
   api_name            = var.mcp_prm_api_name
@@ -1056,13 +1073,38 @@ Si falta, crea `infra/environments/<env>/apim-mcp-prm.tf`:
 # nuevo (Paso 4b) le agrega su propia operacion+backend, nunca toca este archivo (CA-6).
 #
 # Por que una API separada y no una operacion mas de cada servidor: RFC 9728 seccion 3.1 exige
-# insertar '.well-known/oauth-protected-resource' ANTES del path del resource identifier, al nivel
-# del host -- para el resource_uri de un servidor MCP (https://<apim>/<path-del-servidor>), el PRM
-# tiene que quedar en https://<apim>/.well-known/oauth-protected-resource/<path-del-servidor>, que
-# cae FUERA del prefijo de path de la API dedicada de ese servidor (Paso 2b). Una API con
-# path = ".well-known/oauth-protected-resource" resuelve esto para cualquier cantidad de
-# servidores MCP: cada uno agrega una operacion GET /<path-del-servidor> (Paso 2b, recurso
-# azurerm_api_management_api_operation.prm), nunca una API nueva.
+# insertar el segmento '.well-known/oauth-protected-resource' ANTES del path del resource
+# identifier, al nivel del host -- para el resource_uri de un servidor MCP
+# (https://<apim>/<path-del-servidor>), ese segmento cae FUERA del prefijo de path de la API
+# dedicada de ese servidor (Paso 2b). Una API compartida con una operacion GET /<path-del-servidor>
+# por cada servidor (Paso 2b, recurso azurerm_api_management_api_operation.prm) resuelve esto para
+# cualquier cantidad de servidores, sin crear una API nueva por cada uno.
+#
+# DESVIACION DELIBERADA de RFC 9728 seccion 3 (issue #831): ese segmento well-known, CON punto
+# inicial, no es alcanzable -- APIM rechaza en apply (nunca en validate/plan) cualquier path de
+# azurerm_api_management_api que empiece con punto. Evidencia: el pionero Bitakora.ControlAsistencia
+# convergio a esta forma en rojo (issue #575 del consumidor, run 33662634923 de Infra CD,
+# 2026-09-02): `Error: creating/updating Api (... "mcp-prm;rev=1"): unexpected status 400 ...
+# ValidationError: One or more fields contain incorrect values`, sin nombrar el campo. La regla es
+# "no punto INICIAL", no "no punto": el path de la API PRM anterior del pionero (#558) --que
+# empezaba con el segmento "api" antes de anidar el well-known-- aplico siempre sin problema. La doc
+# REST de "Api - Create Or Update" (Microsoft Learn) solo declara minLength 0 / maxLength 400 para
+# `properties.path` -- la regla es server-side y no esta documentada, invisible para
+# `validate`/`plan`. Fix verificado (hotfix a54ac6b del consumidor, re-apply verde run 33663796193,
+# 2026-09-02): path = "well-known/oauth-protected-resource" (SIN punto inicial, ver el recurso mas
+# abajo).
+#
+# El PRM de cada servidor queda entonces en <gateway>/well-known/oauth-protected-resource/<path-del-servidor>,
+# fuera de la ubicacion que fija la RFC. El unico mecanismo de descubrimiento que se garantiza es el
+# resource_metadata del WWW-Authenticate del 401 de cada servidor (RFC 9728 seccion 5.1, <on-error>
+# del Paso 2b); un cliente que arme esa URL por convencion, con el punto que la RFC fija, no la
+# encuentra.
+#
+# El <rewrite-uri> de la operacion por servidor (Paso 2b,
+# azurerm_api_management_api_operation_policy.prm) NO cambia por esta desviacion: sigue
+# reescribiendo hacia el path real de la Function del PRM en el Function App (ver el comentario de
+# esa politica, Paso 2b) -- ese path del backend interno si lleva el punto inicial; nunca fue
+# publico.
 
 variable "mcp_authorization_server_url" {
   description = "Dominio AuthKit del entorno (MEF-ADR-0032 B12) -- el mismo valor que cada servidor MCP usa como issuer (Paso 2b); se declara una sola vez aca porque es una propiedad del ENTORNO (un unico proyecto WorkOS), no de cada servidor."
@@ -1078,7 +1120,7 @@ resource "azurerm_api_management_api" "mcp_prm" {
   api_management_name   = module.api_management.name
   revision              = "1"
   display_name          = "MCP - Protected Resource Metadata"
-  path                  = ".well-known/oauth-protected-resource"
+  path                  = "well-known/oauth-protected-resource"
   protocols             = ["https"]
   subscription_required = false
 }
@@ -1198,6 +1240,7 @@ module "apim_mcp_{proposito_snake}" {
 
   authorization_server_url = var.mcp_authorization_server_url
   mcp_prm_api_name         = azurerm_api_management_api.mcp_prm.name
+  mcp_prm_api_path         = azurerm_api_management_api.mcp_prm.path
 
   tags = local.tags
 }
@@ -1297,10 +1340,10 @@ Imprime un resumen claro:
   - Modulo `apim-mcp-api` creado u omitido (ya existia); enrutador compartido `apim-mcp-prm.tf` creado (primera vez) u omitido (CA-6); provider `azapi` agregado a `providers.tf` o ya presente.
   - Por servidor: `apim-mcp-{proposito-kebab}.tf` creado vs omitido; cualquier servidor MCP que fallo el guard del Paso 0.4 (no scaffoldeado todavia -- indicar `/scaffold-mcp {Proposito}`); si el patch de `mcp-{proposito-kebab}.tf` (Paso 4b, CA-4) resolvio los placeholders `Mcp__ResourceUri`/`Mcp__AuthorizationServer` o si ya estaban resueltos de una corrida previa.
   - `WORKOS_AUTHORIZATION_SERVER_URL` (GitHub variable, no secreta) a crear manualmente por un admin si la instancia de `apim-mcp-prm.tf` se genero por primera vez, con el mismo valor que `var.mcp_authorization_server_url` resuelto en el Paso 0.
-  - **`NO VERIFICADO` a cerrar en el primer `apply` real**: que APIM acepte el `path` de la API compartida del PRM (`.well-known/oauth-protected-resource`, con punto inicial y barra interna) y que la operacion del PRM resuelva `200` con el `<rewrite-uri>` generado. Ambos puntos son del HCL vigente de Mefisto, no del HCL verificado del pionero -- si el `apply` los rechaza, la salida alternativa es exponer el PRM con un `path` sin punto inicial mas un `<rewrite-uri>` equivalente, nunca anidarlo bajo el path del servidor (RFC 9728 seccion 3.1, regla 21).
+  - **VERIFICADO**: el `path` de la API compartida del PRM (`well-known/oauth-protected-resource`, sin punto inicial) y la operacion del PRM de cada servidor resuelven `200` con el `<rewrite-uri>` generado -- confirmado por el pionero Bitakora.ControlAsistencia (issue #575 del consumidor): rojo con punto inicial (run 33662634923 de Infra CD, 400 ValidationError), verde tras el hotfix `a54ac6b` sin punto inicial (run 33663796193, 2026-09-02).
   - **Gate B12 (MEF-ADR-0032 seccion 3): reverificar `authorization_server_url` contra el discovery doc en vivo del proyecto WorkOS del entorno** (`GET {authorization_server_url}/.well-known/openid-configuration` y `GET {authorization_server_url}/.well-known/oauth-authorization-server`) antes de un `apply` real -- este agente no lo verifica por su cuenta (a diferencia del Paso 0.3 para el issuer de login), porque quien te invoca todavia no tiene un mecanismo automatico para resolver este dominio (ver "Parametros de entrada"). Marca este punto `NO VERIFICADO -- reconfirmar antes de aplicar` en el reporte si no te confirmaron que ya se hizo.
   - **Checklist operativo CA-4 (byte a byte, MEF-ADR-0032 seccion 9 "Consistencia byte a byte")**: por cada servidor, reporta el `resource_uri` resuelto (`module.apim_mcp_{proposito_snake}.resource_uri`) y pide al operador confirmar en el dashboard de WorkOS que el **Resource Indicator** configurado para el cliente MCP (Claude u otro) es ese mismo string, caracter por caracter -- incluido el trailing slash (o su ausencia). Una discrepancia de un solo caracter rompe la validacion de audiencia sin sintoma mas especifico que "401 con un token que deberia ser valido". Recuerda ademas que cualquier cliente MCP ya conectado a este servidor necesita **reconectarse** despues del `apply` (Resource Indicator/PRM nuevos invalidan la sesion OAuth previa).
-- **Siguiente paso**: abrir un PR con este HCL (el `plan` corre en CI, el `apply` real lo ejecuta `infra-cd.yml` al mergear a `main`, MEF-ADR-0022, nunca localmente). Antes de exponer trafico real, correr el checklist post-deploy de MEF-ADR-0032: `OPTIONS` sin `Authorization` -> CORS responde (no 404); `POST` sin token -> `401`; `POST` con token valido -> llega a la Function App y esta recibe `X-User-Id`/`X-Tenant-Id` no vacios; `QUERY` con token valido y `Content-Type: application/json` -> llega a la Function App (no `404`/`405` en el borde) -- **gate empirico del verbo (issue #608)**, cierra contra un gateway real el punto NO VERIFICADO "APIM Consumption reenviando QUERY end-to-end via `forward-request` de la politica global" registrado en MEF-ADR-0042 seccion 6; **si en cambio un request con token valido responde `404`** (ni `401` ni `400`), la causa NO es CORS (B3) ni el backend vacio (B2) -- es la operacion faltante (B11): confirmar que la `azurerm_api_management_api` del dominio tiene al menos una `azurerm_api_management_api_operation` que matchee el metodo del request (este modulo genera la wildcard por verbo automaticamente, incluido `QUERY` desde el issue #608; solo faltaria si alguien la borro a mano o el consumidor reemplazo la wildcard por operaciones explicitas incompletas).
+- **Siguiente paso**: abrir un PR con este HCL (el `plan` corre en CI, el `apply` real lo ejecuta `infra-cd.yml` al mergear a `main`, MEF-ADR-0022, nunca localmente). Antes de exponer trafico real, correr el checklist post-deploy de MEF-ADR-0032: `OPTIONS` sin `Authorization` -> CORS responde (no 404); `POST` sin token -> `401`; `POST` con token valido -> llega a la Function App y esta recibe `X-User-Id`/`X-Tenant-Id` no vacios; `QUERY` con token valido y `Content-Type: application/json` -> llega a la Function App (no `404`/`405` en el borde) -- **gate empirico del verbo (issue #608)**, cierra contra un gateway real el punto NO VERIFICADO "APIM Consumption reenviando QUERY end-to-end via `forward-request` de la politica global" registrado en MEF-ADR-0042 seccion 6; **si en cambio un request con token valido responde `404`** (ni `401` ni `400`), la causa NO es CORS (B3) ni el backend vacio (B2) -- es la operacion faltante (B11): confirmar que la `azurerm_api_management_api` del dominio tiene al menos una `azurerm_api_management_api_operation` que matchee el metodo del request (este modulo genera la wildcard por verbo automaticamente, incluido `QUERY` desde el issue #608; solo faltaria si alguien la borro a mano o el consumidor reemplazo la wildcard por operaciones explicitas incompletas). Para cada servidor MCP expuesto (Paso 4b), suma a ese mismo checklist: `GET {gateway}/well-known/oauth-protected-resource/{path}` sin token -> `200` con `resource` byte a byte igual a `{gateway}/{path}` (`Mcp__ResourceUri`); `POST {gateway}/{path}` sin token -> `401` con `WWW-Authenticate` cuyo `resource_metadata` es exactamente esa misma URL del PRM (evidencia post-apply del pionero, issue #575 del consumidor, run 33663796193). Advertencia operativa (issue #831): cualquier cambio o recreacion del `path` de la API PRM compartida (`apim-mcp-prm.tf`) deja ese `resource_metadata` apuntando a una URL en `404` mientras el `apply` no complete -- las reconexiones OAuth de los clientes MCP fallan en ese intervalo (las sesiones con token vigente siguen funcionando, `validate-jwt` no cambia).
 
 ---
 
@@ -1326,7 +1369,7 @@ Imprime un resumen claro:
 18. **NUNCA** uses `<required-claims>`/omitas `<audiences>` en la politica de un servidor MCP -- a diferencia de B4 (login humano, sin `aud`), el flujo MCP/Connect si exige verificar audiencia: `<audiences>` debe llevar el `resource_uri` del propio servidor (MEF-ADR-0032 seccion 9), nunca un `<required-claims>` sobre `client_id`. Y **NUNCA** interpoles `var.authorization_server_url` crudo en el `<issuer>`: pasalo siempre por `trimsuffix` (`local.authorization_server_issuer`) -- una barra final rompe la coincidencia byte a byte con el `issuer` del discovery doc y rechaza con `401` todo token legitimo, sin sintoma en `validate`/`plan`.
 19. **NUNCA** agregues `<cors>` a la politica de un servidor MCP ni a la del enrutador del PRM -- un cliente MCP no es un SPA navegador y la doctrina del issue #820 fija estas APIs sin CORS.
 20. **NUNCA** resuelvas la system key `mcp_extension` con `azurerm_function_app_host_keys` (B8) para un servidor MCP: ese data source no expone esa key (verificado 2026-09-01, sin mapa generico de system keys ni atributo dedicado). Usa siempre `azapi_resource_action` como **`resource`** (nunca `data`: la key no existe hasta el primer deploy del codigo, MEF-ADR-0047 decision 5 -- un `data` se evalua en `plan` y fallaria antes de ese deploy) con `type = "Microsoft.Web/sites/host@2023-12-01"`, `resource_id = "${var.function_app_id}/host/default"`, `action = "listkeys"`, `method = "POST"` y `sensitive_response_export_values` (nunca `response_export_values` para este valor). **NUNCA** cambies esta forma verificada contra el HCL aplicado del pionero (issue #827) por otra api-version o resource_id reconstruido a mano.
-21. **NUNCA** ubiques la operacion PRM de un servidor MCP dentro de la API dedicada de ese mismo servidor: RFC 9728 exige que el well-known quede al nivel del host, antes del path del recurso (seccion 3.1) -- va siempre en la API compartida `mcp-prm` (`apim-mcp-prm.tf`), como una operacion mas por servidor.
+21. **NUNCA** ubiques la operacion PRM de un servidor MCP dentro de la API dedicada de ese mismo servidor: RFC 9728 exige que el well-known quede al nivel del host, antes del path del recurso (seccion 3.1) -- va siempre en la API compartida `mcp-prm` (`apim-mcp-prm.tf`), como una operacion mas por servidor. Esa API comparte el path `well-known/oauth-protected-resource` SIN punto inicial (desviacion de RFC 9728 impuesta por APIM, issue #831 -- ver el comentario de cabecera de `apim-mcp-prm.tf`, Paso 3c), nunca el segmento completo con punto que fija la RFC.
 22. **NUNCA** sobrescribas los placeholders `PENDIENTE-...` de `Mcp__ResourceUri`/`Mcp__AuthorizationServer` en `mcp-{proposito-kebab}.tf` con un valor **literal**: siempre una referencia Terraform (`module.apim_mcp_{proposito_snake}.resource_uri`, `var.mcp_authorization_server_url`) -- un literal se desincroniza en silencio si el entorno cambia de dominio AuthKit o de nombre de gateway.
 23. **NUNCA** dejes una API de APIM sin backend efectivo: toda politica que este agente genera con `<forward-request />` necesita un `<set-backend-service backend-id="..." />` en su `<inbound>` (ninguna `azurerm_api_management_api` de estos modulos declara `service_url`), y toda operacion cuyo sufijo publico no coincida con la ruta real del backend necesita ademas un `<rewrite-uri>` -- APIM concatena al base-url del backend el sufijo que sobra del path publico. Sintoma de olvidarlo: `200` vacio / `404` con un JWT perfectamente valido, indistinguible a simple vista de B2/B11.
 24. **NUNCA** generes `infra/modules/apim-mcp-api/`, `apim-mcp-prm.tf`, el provider `azapi` en `providers.tf`, ni ningun `apim-mcp-{proposito-kebab}.tf` si el Paso 0.4 no recibio ningun servidor MCP -- CA-5: un BC sin servidores MCP corre este agente exactamente igual que antes del issue #820.
