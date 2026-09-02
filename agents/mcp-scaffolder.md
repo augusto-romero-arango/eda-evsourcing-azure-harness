@@ -413,7 +413,7 @@ public static class ConfiguracionObservabilidadMcp
 }
 ```
 
-**7a. `Infraestructura/ValidadorTokenAuthKit.cs`** -- validador de token de defensa en profundidad (MEF-ADR-0047 decision 7). **Siempre se genera** (es puro C#, sin cablear nada -- mismo principio que `workos-identity-scaffolder` aplica a su adapter: seguro escribirlo incluso si Program.cs termina degradando a "proponer"). Recibe el `IConfigurationManager<OpenIdConnectConfiguration>` por constructor (en vez de resolverlo el mismo) para poder testear con un doble de prueba sin red -- ver Paso 4.
+**7a. `Infraestructura/ValidadorTokenAuthKit.cs`** -- validador de token de defensa en profundidad (MEF-ADR-0047 decision 7). **Siempre se genera** (es puro C#, sin cablear nada -- mismo principio que `workos-identity-scaffolder` aplica a su adapter: seguro escribirlo incluso si Program.cs termina degradando a "proponer"). Recibe el `IConfigurationManager<OpenIdConnectConfiguration>` por constructor (en vez de resolverlo el mismo) para poder testear con un doble de prueba sin red -- ver Paso 4. **Nunca lanza, ni siquiera al construirse**: un `Mcp__AuthorizationServer` ausente o todavia en el placeholder que siembra el Terraform del Paso 6b degrada a un validador que responde "no valido". Un componente que el ADR define como defensa en profundidad no puede tumbar el arranque del worker -- se llevaria por delante `/api/version` y `/api/ready`, los endpoints de gate de los que dependen el deploy y los smoke tests (MEF-ADR-0048 seccion 3).
 
 ```csharp
 using System.IdentityModel.Tokens.Jwt;
@@ -430,17 +430,23 @@ namespace <RootNamespace>.Mcp.{Proposito}.Infraestructura;
 /// Authority = dominio AuthKit del entorno (MEF-ADR-0032 B12), nunca el issuer de login
 /// user_management/{client_id} -- re-verificar contra el discovery doc en vivo por consumidor.
 /// </summary>
-public sealed class ValidadorTokenAuthKit(IConfigurationManager<OpenIdConnectConfiguration> configManager)
+public sealed class ValidadorTokenAuthKit(IConfigurationManager<OpenIdConnectConfiguration>? configManager)
 {
-    public static ValidadorTokenAuthKit ParaAuthorizationServer(string authorizationServer)
-    {
-        var discoveryUrl = $"{authorizationServer.TrimEnd('/')}/.well-known/openid-configuration";
-        return new ValidadorTokenAuthKit(
-            new ConfigurationManager<OpenIdConnectConfiguration>(discoveryUrl, new OpenIdConnectConfigurationRetriever()));
-    }
+    // Sin authorization server resoluble -- app setting ausente, o todavia el placeholder que el
+    // Terraform siembra hasta que existe el API de APIM del servidor -- el validador degrada a
+    // "todo token es invalido", nunca a una excepcion de arranque (MEF-ADR-0047 decision 7).
+    public static ValidadorTokenAuthKit ParaAuthorizationServer(string? authorizationServer) =>
+        Uri.TryCreate(authorizationServer, UriKind.Absolute, out var autoridad)
+            ? new ValidadorTokenAuthKit(new ConfigurationManager<OpenIdConnectConfiguration>(
+                $"{autoridad.ToString().TrimEnd('/')}/.well-known/openid-configuration",
+                new OpenIdConnectConfigurationRetriever()))
+            : new ValidadorTokenAuthKit(configManager: null);
 
     public async Task<bool> EsValidoAsync(string token, CancellationToken ct)
     {
+        if (configManager is null)
+            return false;
+
         try
         {
             var config = await configManager.GetConfigurationAsync(ct);
@@ -471,6 +477,7 @@ public sealed class ValidadorTokenAuthKit(IConfigurationManager<OpenIdConnectCon
 **7b. `Infraestructura/AutorizacionMcpMiddleware.cs`** -- el limite estructural (CA-3 del issue #819), documentado en el propio codigo generado. **Siempre se genera**; solo Program.cs decide si `builder.UseMiddleware<AutorizacionMcpMiddleware>()` se invoca.
 
 ```csharp
+using Microsoft.AspNetCore.Http;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Middleware;
 using Microsoft.Extensions.Logging;
@@ -493,10 +500,10 @@ public sealed class AutorizacionMcpMiddleware(
 {
     public async Task Invoke(FunctionContext context, FunctionExecutionDelegate next)
     {
-        var request = await context.GetHttpRequestDataAsync();
-        var authorizationHeader = request is not null && request.Headers.TryGetValues("Authorization", out var valores)
-            ? valores.FirstOrDefault()
-            : null;
+        // GetHttpContext(), no GetHttpRequestDataAsync(): este proyecto usa la integracion ASP.NET
+        // Core, el mismo acceso a headers que TenantContextMiddleware en el BC (MEF-ADR-0028
+        // seccion 4). Devuelve null en cualquier invocacion que no venga de un trigger HTTP.
+        var authorizationHeader = context.GetHttpContext()?.Request.Headers.Authorization.FirstOrDefault();
         var token = authorizationHeader?.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) == true
             ? authorizationHeader["Bearer ".Length..]
             : null;
@@ -511,7 +518,7 @@ public sealed class AutorizacionMcpMiddleware(
 }
 ```
 
-**7c. `MetadataRecursoProtegido/MetadataRecursoProtegidoFunction.cs`** -- PRM (RFC 9728), anonimo (MEF-ADR-0032 seccion 9). **Siempre se genera** y queda registrado por el host como cualquier otra Function; si `Mcp:ResourceUri`/`Mcp:AuthorizationServer` todavia no estan declarados (BC en etapa (a), Paso 6b los deja como placeholder), responde `503` en vez de publicar un PRM inventado.
+**7c. `MetadataRecursoProtegido/MetadataRecursoProtegidoFunction.cs`** -- PRM (RFC 9728), anonimo (MEF-ADR-0032 seccion 9). **Siempre se genera** y queda registrado por el host como cualquier otra Function; mientras `Mcp:ResourceUri`/`Mcp:AuthorizationServer` no sean URIs absolutas responde `503` en vez de publicar un PRM inventado. El chequeo es por URI absoluta, no por "esta presente": el Terraform del Paso 6b siembra ambos settings con un `PENDIENTE-...`, asi que un `IsNullOrWhiteSpace` los daria por configurados y el PRM publicaria el propio placeholder como `authorization_servers`, mandando al cliente OAuth a un servidor inexistente.
 
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel)
@@ -531,6 +538,10 @@ namespace <RootNamespace>.Mcp.{Proposito}.MetadataRecursoProtegido;
 // -- el gate real vive en la politica dedicada de APIM, que reenvia a este backend anonimo
 // (MEF-ADR-0047 decision 7). Mcp:ResourceUri debe coincidir byte a byte con el <audiences> de esa
 // politica y con el Resource Indicator (RFC 8707) que declara el cliente MCP.
+//
+// Ruta efectiva: el host sirve esta Function bajo el routePrefix por defecto ("api"), o sea en
+// /api/.well-known/oauth-protected-resource. La ruta raiz que exige RFC 9728 la publica el borde
+// de APIM, mapeando /.well-known/oauth-protected-resource a esta.
 public class MetadataRecursoProtegidoFunction(IConfiguration configuration)
 {
     [Function("MetadataRecursoProtegido")]
@@ -541,9 +552,12 @@ public class MetadataRecursoProtegidoFunction(IConfiguration configuration)
         var resource = configuration["Mcp:ResourceUri"];
         var authorizationServer = configuration["Mcp:AuthorizationServer"];
 
-        if (string.IsNullOrWhiteSpace(resource) || string.IsNullOrWhiteSpace(authorizationServer))
+        // RFC 9728 exige URIs absolutas en ambos campos: el chequeo descarta a la vez el setting
+        // ausente y el placeholder que el Terraform siembra hasta que existe el API de APIM.
+        if (!Uri.TryCreate(resource, UriKind.Absolute, out _) ||
+            !Uri.TryCreate(authorizationServer, UriKind.Absolute, out _))
             return new ObjectResult(
-                "PRM sin configurar: falta el app setting Mcp__ResourceUri o Mcp__AuthorizationServer.")
+                "PRM sin configurar: Mcp__ResourceUri o Mcp__AuthorizationServer falta o sigue en placeholder.")
             { StatusCode = StatusCodes.Status503ServiceUnavailable };
 
         return new OkObjectResult(new
@@ -573,9 +587,11 @@ builder.Services.ConfigurarObservabilidadMcp();
 
 // Defensa en profundidad (MEF-ADR-0047 decision 7): el gate real vive en la politica dedicada de
 // APIM (MEF-ADR-0032 seccion 9). ValidateAudience = false -- la audiencia ya la exige esa politica.
-builder.Services.AddSingleton(ValidadorTokenAuthKit.ParaAuthorizationServer(
-    builder.Configuration["Mcp:AuthorizationServer"]
-        ?? throw new InvalidOperationException("Falta el app setting Mcp__AuthorizationServer")));
+// Sin Mcp__AuthorizationServer resoluble el validador degrada a "todo token es invalido"; no
+// fail-fast de arranque, a diferencia de las base URLs de los clientes tipados: aquellas sin las
+// que ninguna tool puede responder, esta solo apaga una defensa secundaria.
+builder.Services.AddSingleton(
+    ValidadorTokenAuthKit.ParaAuthorizationServer(builder.Configuration["Mcp:AuthorizationServer"]));
 builder.UseMiddleware<AutorizacionMcpMiddleware>();
 
 await builder.Build().RunAsync();
@@ -600,7 +616,7 @@ builder.Services.ConfigurarObservabilidadMcp();
 // tiene ValidadorTokenAuthKit y AutorizacionMcpMiddleware generados y compilando -- corre
 // /install-auth y vuelve a scaffoldear (o cablea a mano las dos lineas de abajo) cuando el BC
 // adopte el camino WorkOS+APIM:
-// builder.Services.AddSingleton(ValidadorTokenAuthKit.ParaAuthorizationServer(builder.Configuration["Mcp:AuthorizationServer"]!));
+// builder.Services.AddSingleton(ValidadorTokenAuthKit.ParaAuthorizationServer(builder.Configuration["Mcp:AuthorizationServer"]));
 // builder.UseMiddleware<AutorizacionMcpMiddleware>();
 
 await builder.Build().RunAsync();
@@ -1126,7 +1142,7 @@ internal sealed class HandlerCapturador(Action<HttpRequestMessage> capturar) : H
 }
 ```
 
-**8. `Infraestructura/ValidadorTokenAuthKitTests.cs`** -- CA-5 del issue #819: el validador nunca debe lanzar, solo degradar a "no valido" (defensa en profundidad, MEF-ADR-0047 decision 7). El doble de `IConfigurationManager<OpenIdConnectConfiguration>` evita cualquier red real -- ni siquiera un discovery doc en vivo.
+**8. `Infraestructura/ValidadorTokenAuthKitTests.cs`** -- CA-5 del issue #819: el validador nunca debe lanzar, solo degradar a "no valido" (defensa en profundidad, MEF-ADR-0047 decision 7). El doble de `IConfigurationManager<OpenIdConnectConfiguration>` evita cualquier red real -- ni siquiera un discovery doc en vivo; el segundo caso (authorization server todavia en placeholder) tampoco sale a la red, porque la fabrica ni construye el `ConfigurationManager`.
 
 ```csharp
 using AwesomeAssertions;
@@ -1146,6 +1162,16 @@ public class ValidadorTokenAuthKitTests
         var esValido = await validador.EsValidoAsync("no-es-un-jwt", TestContext.Current.CancellationToken);
 
         esValido.Should().BeFalse("defensa en profundidad: nunca debe lanzar, solo degradar a invalido");
+    }
+
+    [Fact]
+    public async Task ParaAuthorizationServer_NoLanzaYRechazaTodo_CuandoElAppSettingSigueEnPlaceholder()
+    {
+        var validador = ValidadorTokenAuthKit.ParaAuthorizationServer("PENDIENTE-DOMINIO-AUTHKIT-DEL-ENTORNO");
+
+        var esValido = await validador.EsValidoAsync("cualquier-token", TestContext.Current.CancellationToken);
+
+        esValido.Should().BeFalse("el placeholder del Terraform no puede tumbar el arranque del worker");
     }
 }
 
@@ -1235,13 +1261,16 @@ ningun proyecto del BC.
   este servidor `tenancy.strategy` ya era `multi-tenant-header`, `Program.cs` los cablea. Si no,
   quedan como propuesta comentada en `Program.cs` -- corre `/install-auth` y cablealos a mano (o
   vuelve a scaffoldear).
-- **PRM (`MetadataRecursoProtegido/`)**: descubrimiento anonimo RFC 9728. Responde `503` hasta que
-  `Mcp__ResourceUri`/`Mcp__AuthorizationServer` esten declarados -- placeholders en el Terraform
-  del Paso 6b, que provisiona el modulo `apim-mcp-api` del issue hermano #820.
+- **PRM (`MetadataRecursoProtegido/`)**: descubrimiento anonimo RFC 9728, servido en
+  `/api/.well-known/oauth-protected-resource` (routePrefix por defecto); la ruta raiz que exige el
+  RFC la publica el borde de APIM mapeando a esa. Responde `503` mientras `Mcp__ResourceUri`/
+  `Mcp__AuthorizationServer` no sean URIs absolutas -- el Terraform del servidor los siembra con
+  un `PENDIENTE-...` hasta que el modulo `apim-mcp-api` del gateway los resuelve.
 
 ## Estado de este scaffold
 
 Generado por `/scaffold-mcp` (fase 1 + fase 2 + fase 3): proyecto del servidor, tool de ejemplo,
+propagador de identidad y componentes OAuth app-side (seccion anterior),
 endpoints de gate, unit tests base, Terraform (Service Plan + Storage + Function App), el workflow
 de deploy encadenado tras el apply de infra, la suite **SmokeTests** con las cinco verificaciones
 canonicas del nivel 3 de la piramide de testing (handshake, tools/list vivo, tool call de lectura,
@@ -1528,12 +1557,15 @@ module "function_app_mcp_{proposito_snake}" {
   # nueva que consuma otro dominio exige agregar aqui su linea a mano, igual que en el codigo.
   #
   # Identidad__* (Paso 1 punto 6b, MEF-ADR-0047 decision 6): valor interino por despliegue,
-  # TODO(tenancy etapa b / identidad derivada del token).
+  # TODO(tenancy etapa b / identidad derivada del token). En etapa (b) el BC ya filtra por tenant:
+  # este valor tiene que pasar a ser un tenant real del entorno o toda tool call consultara un
+  # tenant inexistente y devolvera vacio sin error.
   # Mcp__* (Paso 1 puntos 7a/7c, MEF-ADR-0047 decision 7, MEF-ADR-0032 seccion 9): placeholders --
   # ResourceUri debe coincidir byte a byte con el PRM y el <audiences> de la politica dedicada de
   # APIM; AuthorizationServer es el dominio AuthKit del entorno (MEF-ADR-0032 B12), nunca el
   # issuer de login. Ninguno de los dos lo puede resolver este agente: los provisiona el modulo
-  # apim-mcp-api que scaffoldea el gateway APIM.
+  # apim-mcp-api que scaffoldea el gateway APIM. Mientras sigan en PENDIENTE-... el PRM responde
+  # 503 y el validador de token rechaza todo (degradacion deliberada, nunca fallo de arranque).
   app_settings = {
     Api__{DominioPascal}__BaseUrl = "https://${module.function_app_{dominio_snake}.default_hostname}"
     Identidad__TenantIdInterino   = "tenant-interino-mcp-{proposito-kebab}"
@@ -2467,5 +2499,15 @@ Cierra el reporte con lo que queda **fuera** de tu alcance y el usuario tiene qu
    (quedaron como propuesta comentada -- corre `/install-auth` y cablealos, o vuelve a scaffoldear,
    cuando el BC adopte WorkOS+APIM). En cualquiera de los dos casos, `Mcp__ResourceUri`/
    `Mcp__AuthorizationServer` quedan como placeholder en el Terraform del Paso 6b hasta que el
-   modulo `apim-mcp-api` del issue hermano #820 los provisione -- el PRM responde `503` hasta
-   entonces.
+   modulo `apim-mcp-api` del issue hermano #820 los provisione -- hasta entonces el PRM responde
+   `503` y el validador rechaza todo token, ambos por degradacion deliberada (ninguno tumba el
+   arranque del worker). Avisa ademas de dos cosas que ese modulo hermano necesita saber: el PRM
+   se sirve en `/api/.well-known/oauth-protected-resource` (routePrefix por defecto), asi que el
+   API de APIM tiene que mapear la ruta raiz de RFC 9728 a esa; y `Mcp__ResourceUri` debe quedar
+   byte a byte igual al `<audiences>` de la politica dedicada (MEF-ADR-0032 seccion 9).
+7. **Identidad interina en etapa (b) (CA-1)**: `Identidad__TenantIdInterino` se genera con un
+   marcador (`tenant-interino-mcp-...`), no con un tenant real. Si el BC ya esta en
+   `multi-tenant-header`, avisa que un humano debe reemplazarlo por un tenant real del entorno:
+   el BC filtra por ese header, asi que un tenant inexistente devuelve respuestas vacias sin error
+   -- exactamente el fallo silencioso que MEF-ADR-0047 decision 6 acepta como interinidad, no como
+   estado final.
