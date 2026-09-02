@@ -71,6 +71,8 @@ Si cualquiera de los dos falta, detente con el mensaje -- no continues con el re
 
 ### 2b. Detectar los servidores MCP del BC (CA-3 del issue #820)
 
+Resuelve primero `<RootNamespace>` leyendo el `CLAUDE.md` raiz del consumidor (seccion "Tokens del harness"), igual que el paso 9.1 -- este paso lo necesita antes que aquel. Si no esta declarado, **no te detengas aca**: reporta `SERVIDORES_MCP` como no determinable y segui (el paso 9.1 vuelve a intentarlo y ahi si es bloqueante).
+
 ```bash
 ls -d src/<RootNamespace>.Mcp.*/ 2>/dev/null | sed -E 's#.*<RootNamespace>\.Mcp\.([^/]+)/#\1#'
 ```
@@ -173,7 +175,7 @@ MCP_AUTH_SERVER_URL=$(gh variable list --json name,value -q '.[] | select(.name=
 - Si ya tiene un valor: repórtalo y, si `--authorization-server-url` trajo uno distinto, pregunta si el usuario quiere sobreescribirlo (mismo criterio que el paso 7 para `CORS_ALLOWED_ORIGINS`); si coinciden o no vino la flag, no toques nada.
 - Si no existe y `--authorization-server-url` vino en `$ARGUMENTS`: registralo (`gh variable set WORKOS_AUTHORIZATION_SERVER_URL --body "<url>"`).
 - Si no existe y la flag tampoco vino: **detente**. A diferencia de `WORKOS_CLIENT_ID` (paso 6, que puede degradar a `NO VERIFICADO` si el gateway ya existe), esta variable es **obligatoria** para generar el modulo `apim-mcp-api` de cualquier servidor MCP detectado -- sin ella, la politica de validate-jwt de la variante MCP/Connect no tiene issuer que validar. Indica al usuario el uso exacto (`--authorization-server-url <url>`) y el origen del valor: el dominio -- propio o de WorkOS -- que sirve AuthKit para el proyecto del entorno (MEF-ADR-0032 B12), visible en el dashboard de WorkOS, seccion AuthKit del proyecto.
-- Si `gh` no esta autenticado o falla, repórtalo `NO VERIFICADO` -- a diferencia de `CORS_ALLOWED_ORIGINS`, esto SI bloquea el resto del skill para los servidores MCP detectados (no para los dominios, que siguen su curso normal).
+- Si `gh` no esta autenticado o falla: cuando `--authorization-server-url` vino en `$ARGUMENTS`, usa ese valor y reporta la variable como `NO VERIFICADO -- no se pudo registrar en GitHub, hacerlo a mano antes del apply`; cuando tampoco vino, **detente** igual que en el caso anterior. No hay modo parcial "sigo con los dominios y omito los MCP": el skill deja el arbol sin tocar y el usuario lo reintenta con la flag.
 
 ### 8. Invocar el agente `apim-gateway-scaffolder` (CA-2, CA-3)
 
@@ -187,7 +189,7 @@ El agente es aditivo/idempotente por su cuenta (sus Pasos 0.2/0.4/1/2/2b/3/3b/3c
 
 #### 9.1 Resolver `<RootNamespace>`
 
-Lee el `CLAUDE.md` raiz del proyecto consumidor (contrato, seccion "Tokens del harness") para resolver `<RootNamespace>`. Si no esta declarado, detente y pide al usuario que lo declare -- mismo criterio que `domain-scaffolder`.
+Lee el `CLAUDE.md` raiz del proyecto consumidor (contrato, seccion "Tokens del harness") para resolver `<RootNamespace>` (si el paso 2b ya lo resolvio, reusa ese valor -- no lo releas). Si no esta declarado, detente y pide al usuario que lo declare -- mismo criterio que `domain-scaffolder`.
 
 #### 9.2 Flip del token
 

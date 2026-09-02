@@ -646,21 +646,30 @@ locals {
   # (resource_uri de arriba), el well-known se inserta ANTES del path, al nivel del host -- nunca
   # anidado bajo el propio path de la API de este servidor. Por eso la operacion PRM vive en la API
   # COMPARTIDA mcp_prm_api_name (Paso 3c), no en la API dedicada de este servidor.
-  prm_url          = "${trimsuffix(var.gateway_url, "/")}/.well-known/oauth-protected-resource/${var.path}"
+  prm_url           = "${trimsuffix(var.gateway_url, "/")}/.well-known/oauth-protected-resource/${var.path}"
   openid_config_url = "${trimsuffix(var.authorization_server_url, "/")}/.well-known/openid-configuration"
 }
 
-# Lee la system key mcp_extension via la accion ARM "List Host Keys" (Microsoft Learn, REST API
-# Web Apps - ListHostKeys, POST .../sites/{name}/host/default/listkeys, verificado 2026-09-01):
-# devuelve { functionKeys, masterKey, systemKeys }. azurerm_function_app_host_keys (B8, usado por
+# Lee la system key mcp_extension via la accion ARM "List Host Keys"
+# (POST .../sites/{name}/host/default/listkeys, que devuelve { functionKeys, masterKey,
+# systemKeys }; la accion RBAC correspondiente, `microsoft.web/sites/host/listkeys/action` --
+# "List Functions Host keys" -- esta documentada en Microsoft Learn, "Azure permissions for Web
+# and Mobile", verificado 2026-09-01). azurerm_function_app_host_keys (B8, usado por
 # apim-function-api) NO expone mcp_extension -- solo exporta una lista fija de extensiones
 # conocidas (blobs/durabletask/event grid/signalr/web pubsub), sin mapa generico ni entrada MCP
 # (verificado contra la documentacion del provider, 2026-09-01) -- de ahi azapi_resource_action,
 # que si puede invocar cualquier accion ARM sin que el provider azurerm tenga que conocerla de
-# antemano (Microsoft Learn, "Quickstart: Deploy your first Azure resource_action resource with
-# the AzAPI Terraform provider"). sensitive_response_export_values (en vez de
-# response_export_values) marca el valor como sensible en plan/apply -- el state en si sigue en
-# texto plano, mismo matiz que B8 ya documenta para default_function_key.
+# antemano.
+#
+# Forma del data source verificada contra el registry de Terraform (Azure/azapi 2.12.0, data
+# source `azapi_resource_action`, 2026-09-01): `type` es `<resource-type>@<api-version>` del
+# recurso DUENO de la accion (el site), `resource_id` es el ID de ESE recurso y la ruta hija va en
+# `action` -- de ahi `Microsoft.Web/sites@2024-04-01` + `action = "host/default/listkeys"`, nunca
+# un tipo hijo inventado ni una api-version que Microsoft.Web no publique (sus versiones son
+# siempre `AAAA-MM-01`; 2024-04-01 es una estable vigente). `sensitive_response_export_values`
+# (en vez de `response_export_values`) vuelca el valor en `sensitive_output` y lo marca sensible
+# en plan/apply -- el state en si sigue en texto plano, mismo matiz que B8 ya documenta para
+# default_function_key.
 #
 # Reconciliacion con MEF-ADR-0047 decision 5 ("ningun modulo Terraform del marco declara ni
 # administra mcp_extension como recurso"): ese principio prohibe PROVISIONAR o rotar la key por
@@ -670,9 +679,9 @@ locals {
 # APIs de dominio): lee el valor ya generado por el host para poder inyectarlo en el backend de
 # APIM, nunca lo crea, fija ni rota. Ninguna decision de MEF-ADR-0047 cambia por esto.
 data "azapi_resource_action" "mcp_extension_key" {
-  type        = "Microsoft.Web/sites/host@2026-07-15"
-  resource_id = "/subscriptions/${data.azapi_client_config.current.subscription_id}/resourceGroups/${var.function_app_resource_group_name}/providers/Microsoft.Web/sites/${var.function_app_name}/host/default"
-  action      = "listkeys"
+  type        = "Microsoft.Web/sites@2024-04-01"
+  resource_id = "/subscriptions/${data.azapi_client_config.current.subscription_id}/resourceGroups/${var.function_app_resource_group_name}/providers/Microsoft.Web/sites/${var.function_app_name}"
+  action      = "host/default/listkeys"
 
   sensitive_response_export_values = {
     mcp_extension = "systemKeys.mcp_extension"
@@ -709,13 +718,18 @@ resource "azurerm_api_management_backend" "protocol" {
 
 # Backend del PRM: anonimo tambien del lado del Function App (AuthorizationLevel.Anonymous en
 # MetadataRecursoProtegidoFunction, mcp-scaffolder) -- sin credentials, a diferencia del backend de
-# arriba.
+# arriba. La URL es la RAIZ del Function App, no la ruta del PRM: APIM concatena al base-url del
+# backend el sufijo que sobra del path publico (Microsoft Learn, "Set backend service" --
+# `https://<apim>/api/partners/15` sale como `<base-url>/partners/15`), y el sufijo de la operacion
+# de este servidor en la API compartida es `/${var.path}`. La ruta real de la Function la fija el
+# <rewrite-uri> de la politica de operacion, mas abajo -- sin el, el request saldria hacia
+# `/api/.well-known/oauth-protected-resource/${var.path}` y el host respondria 404.
 resource "azurerm_api_management_backend" "prm" {
   name                = "${var.api_name}-prm-backend"
   resource_group_name = var.resource_group_name
   api_management_name = var.api_management_name
   protocol            = "http"
-  url                 = "https://${local.function_app_default_hostname}/api/.well-known/oauth-protected-resource"
+  url                 = "https://${local.function_app_default_hostname}"
 }
 
 # subscription_required = false (B9): la puerta es el JWT Connect que valida la politica de abajo,
@@ -754,7 +768,10 @@ resource "azurerm_api_management_api_operation" "protocol" {
 # negociado contra un authorization server distinto (B12). Sin <cors>: un cliente MCP no es un SPA
 # navegador (a diferencia de las APIs de dominio, esta API no necesita preflight). Orden estricto
 # openid-config -> issuers -> audiences dentro de validate-jwt (B6, Microsoft Learn "Validate
-# JWT"). <backend><forward-request/></backend> obligatorio (B2). on-error responde 401 +
+# JWT"). <set-backend-service> es obligatorio: sin el, esta API no tiene backend (la
+# azurerm_api_management_api de arriba no declara service_url, a proposito -- la URL real vive en
+# el backend entity) y ademas NUNCA se inyectaria la system key mcp_extension, que viaja en las
+# `credentials` de ese backend. <backend><forward-request/></backend> obligatorio (B2). on-error responde 401 +
 # WWW-Authenticate con resource_metadata (RFC 9728, Model Context Protocol "Authorization") en vez
 # de heredar cualquier manejo de error de un scope padre -- sin <base/> tampoco aqui, es la unica
 # forma de que un cliente MCP reciba el reto que dispara su flujo Connect.
@@ -775,6 +792,7 @@ resource "azurerm_api_management_api_policy" "protocol" {
         <audience>${local.resource_uri}</audience>
       </audiences>
     </validate-jwt>
+    <set-backend-service backend-id="${azurerm_api_management_backend.protocol.name}" />
   </inbound>
   <backend>
     <forward-request />
@@ -807,6 +825,10 @@ resource "azurerm_api_management_api_operation" "prm" {
 # <base/> aqui SI corresponde (a diferencia de la politica dedicada de arriba): hereda la politica
 # anonima de la API compartida (Paso 3c, sin validate-jwt) y solo agrega el backend especifico de
 # ESTE servidor -- mismo patron que apim-function-api usa para diferenciar backends por dominio.
+# <rewrite-uri> fija la ruta que se concatena al base-url del backend (Microsoft Learn,
+# "Rewrite URL"): la Function del PRM vive en /api/.well-known/oauth-protected-resource (routePrefix
+# por defecto), una ruta que NO coincide con el sufijo publico /${var.path} que APIM reenviaria por
+# defecto.
 resource "azurerm_api_management_api_operation_policy" "prm" {
   operation_id        = azurerm_api_management_api_operation.prm.operation_id
   api_name            = var.mcp_prm_api_name
@@ -818,6 +840,7 @@ resource "azurerm_api_management_api_operation_policy" "prm" {
   <inbound>
     <base />
     <set-backend-service backend-id="${azurerm_api_management_backend.prm.name}" />
+    <rewrite-uri template="/api/.well-known/oauth-protected-resource" />
   </inbound>
   <backend>
     <base />
@@ -1135,8 +1158,8 @@ module "apim_mcp_{proposito_snake}" {
   source = "../../modules/apim-mcp-api"
 
   api_management_name = module.api_management.name
-  resource_group_name  = module.resource_group.name
-  gateway_url          = module.api_management.gateway_url
+  resource_group_name = module.resource_group.name
+  gateway_url         = module.api_management.gateway_url
 
   api_name     = "mcp-{proposito-kebab}"
   display_name = "MCP {DisplayNameProposito}"
@@ -1146,7 +1169,7 @@ module "apim_mcp_{proposito_snake}" {
   function_app_resource_group_name = module.resource_group.name
 
   authorization_server_url = var.mcp_authorization_server_url
-  mcp_prm_api_name          = azurerm_api_management_api.mcp_prm.name
+  mcp_prm_api_name         = azurerm_api_management_api.mcp_prm.name
 
   tags = local.tags
 }
@@ -1246,6 +1269,7 @@ Imprime un resumen claro:
   - Modulo `apim-mcp-api` creado u omitido (ya existia); enrutador compartido `apim-mcp-prm.tf` creado (primera vez) u omitido (CA-6); provider `azapi` agregado a `providers.tf` o ya presente.
   - Por servidor: `apim-mcp-{proposito-kebab}.tf` creado vs omitido; cualquier servidor MCP que fallo el guard del Paso 0.4 (no scaffoldeado todavia -- indicar `/scaffold-mcp {Proposito}`); si el patch de `mcp-{proposito-kebab}.tf` (Paso 4b, CA-4) resolvio los placeholders `Mcp__ResourceUri`/`Mcp__AuthorizationServer` o si ya estaban resueltos de una corrida previa.
   - `WORKOS_AUTHORIZATION_SERVER_URL` (GitHub variable, no secreta) a crear manualmente por un admin si la instancia de `apim-mcp-prm.tf` se genero por primera vez, con el mismo valor que `var.mcp_authorization_server_url` resuelto en el Paso 0.
+  - **`NO VERIFICADO` a cerrar en el primer `apply` real**: que APIM acepte el `path` de la API compartida del PRM (`.well-known/oauth-protected-resource`, con punto inicial y barra interna) y que la operacion del PRM resuelva `200` con el `<rewrite-uri>` generado. Ambos puntos son de la reconstruccion de Mefisto, no del HCL verificado del pionero -- si el `apply` los rechaza, la salida alternativa es exponer el PRM con un `path` sin punto inicial mas un `<rewrite-uri>` equivalente, nunca anidarlo bajo el path del servidor (RFC 9728 seccion 3.1, regla 21).
   - **Gate B12 (MEF-ADR-0032 seccion 3): reverificar `authorization_server_url` contra el discovery doc en vivo del proyecto WorkOS del entorno** (`GET {authorization_server_url}/.well-known/openid-configuration` y `GET {authorization_server_url}/.well-known/oauth-authorization-server`) antes de un `apply` real -- este agente no lo verifica por su cuenta (a diferencia del Paso 0.3 para el issuer de login), porque quien te invoca todavia no tiene un mecanismo automatico para resolver este dominio (ver "Parametros de entrada"). Marca este punto `NO VERIFICADO -- reconfirmar antes de aplicar` en el reporte si no te confirmaron que ya se hizo.
   - **Checklist operativo CA-4 (byte a byte, MEF-ADR-0032 seccion 9 "Consistencia byte a byte")**: por cada servidor, reporta el `resource_uri` resuelto (`module.apim_mcp_{proposito_snake}.resource_uri`) y pide al operador confirmar en el dashboard de WorkOS que el **Resource Indicator** configurado para el cliente MCP (Claude u otro) es ese mismo string, caracter por caracter -- incluido el trailing slash (o su ausencia). Una discrepancia de un solo caracter rompe la validacion de audiencia sin sintoma mas especifico que "401 con un token que deberia ser valido". Recuerda ademas que cualquier cliente MCP ya conectado a este servidor necesita **reconectarse** despues del `apply` (Resource Indicator/PRM nuevos invalidan la sesion OAuth previa).
 - **Siguiente paso**: abrir un PR con este HCL (el `plan` corre en CI, el `apply` real lo ejecuta `infra-cd.yml` al mergear a `main`, MEF-ADR-0022, nunca localmente). Antes de exponer trafico real, correr el checklist post-deploy de MEF-ADR-0032: `OPTIONS` sin `Authorization` -> CORS responde (no 404); `POST` sin token -> `401`; `POST` con token valido -> llega a la Function App y esta recibe `X-User-Id`/`X-Tenant-Id` no vacios; `QUERY` con token valido y `Content-Type: application/json` -> llega a la Function App (no `404`/`405` en el borde) -- **gate empirico del verbo (issue #608)**, cierra contra un gateway real el punto NO VERIFICADO "APIM Consumption reenviando QUERY end-to-end via `forward-request` de la politica global" registrado en MEF-ADR-0042 seccion 6; **si en cambio un request con token valido responde `404`** (ni `401` ni `400`), la causa NO es CORS (B3) ni el backend vacio (B2) -- es la operacion faltante (B11): confirmar que la `azurerm_api_management_api` del dominio tiene al menos una `azurerm_api_management_api_operation` que matchee el metodo del request (este modulo genera la wildcard por verbo automaticamente, incluido `QUERY` desde el issue #608; solo faltaria si alguien la borro a mano o el consumidor reemplazo la wildcard por operaciones explicitas incompletas).
@@ -1273,7 +1297,8 @@ Imprime un resumen claro:
 17. **NUNCA** pongas `<base/>` en la politica dedicada de un servidor MCP (`azurerm_api_management_api_policy.protocol`, modulo `apim-mcp-api`) ni en la politica del enrutador compartido del PRM (`azurerm_api_management_api_policy.mcp_prm`, `apim-mcp-prm.tf`) -- MEF-ADR-0032 seccion 9: heredar la politica global de login validaria el token Connect contra el issuer/audiencia equivocados (B12). `<base/>` SI va en la politica de CADA OPERACION del PRM (`azurerm_api_management_api_operation_policy.prm`, modulo `apim-mcp-api`): esa hereda del enrutador compartido y solo agrega su propio backend.
 18. **NUNCA** uses `<required-claims>`/omitas `<audiences>` en la politica de un servidor MCP -- a diferencia de B4 (login humano, sin `aud`), el flujo MCP/Connect si exige verificar audiencia: `<audiences>` debe llevar el `resource_uri` del propio servidor (MEF-ADR-0032 seccion 9), nunca un `<required-claims>` sobre `client_id`.
 19. **NUNCA** agregues `<cors>` a la politica de un servidor MCP ni a la del enrutador del PRM -- un cliente MCP no es un SPA navegador y la doctrina del issue #820 fija estas APIs sin CORS.
-20. **NUNCA** resuelvas la system key `mcp_extension` con `azurerm_function_app_host_keys` (B8) para un servidor MCP: ese data source no expone esa key (verificado 2026-09-01, sin mapa generico de system keys ni atributo dedicado). Usa siempre `data.azapi_resource_action` contra la accion ARM `listkeys` del recurso `host/default` de la Function App, con `sensitive_response_export_values` (nunca `response_export_values` para este valor).
+20. **NUNCA** resuelvas la system key `mcp_extension` con `azurerm_function_app_host_keys` (B8) para un servidor MCP: ese data source no expone esa key (verificado 2026-09-01, sin mapa generico de system keys ni atributo dedicado). Usa siempre `data.azapi_resource_action` con `type = "Microsoft.Web/sites@<api-version>"`, `resource_id` = el ID del **site** y `action = "host/default/listkeys"`, con `sensitive_response_export_values` (nunca `response_export_values` para este valor). **NUNCA** inventes la `api-version`: `Microsoft.Web` solo publica versiones `AAAA-MM-01` (2023-01-01, 2023-12-01, 2024-04-01, 2024-11-01, 2025-03-01) -- una version inexistente tumba el `plan`, no el `apply`.
 21. **NUNCA** ubiques la operacion PRM de un servidor MCP dentro de la API dedicada de ese mismo servidor: RFC 9728 exige que el well-known quede al nivel del host, antes del path del recurso (seccion 3.1) -- va siempre en la API compartida `mcp-prm` (`apim-mcp-prm.tf`), como una operacion mas por servidor.
 22. **NUNCA** sobrescribas los placeholders `PENDIENTE-...` de `Mcp__ResourceUri`/`Mcp__AuthorizationServer` en `mcp-{proposito-kebab}.tf` con un valor **literal**: siempre una referencia Terraform (`module.apim_mcp_{proposito_snake}.resource_uri`, `var.mcp_authorization_server_url`) -- un literal se desincroniza en silencio si el entorno cambia de dominio AuthKit o de nombre de gateway.
-23. **NUNCA** generes `infra/modules/apim-mcp-api/`, `apim-mcp-prm.tf`, el provider `azapi` en `providers.tf`, ni ningun `apim-mcp-{proposito-kebab}.tf` si el Paso 0.4 no recibio ningun servidor MCP -- CA-5: un BC sin servidores MCP corre este agente exactamente igual que antes del issue #820.
+23. **NUNCA** dejes una API de APIM sin backend efectivo: toda politica que este agente genera con `<forward-request />` necesita un `<set-backend-service backend-id="..." />` en su `<inbound>` (ninguna `azurerm_api_management_api` de estos modulos declara `service_url`), y toda operacion cuyo sufijo publico no coincida con la ruta real del backend necesita ademas un `<rewrite-uri>` -- APIM concatena al base-url del backend el sufijo que sobra del path publico. Sintoma de olvidarlo: `200` vacio / `404` con un JWT perfectamente valido, indistinguible a simple vista de B2/B11.
+24. **NUNCA** generes `infra/modules/apim-mcp-api/`, `apim-mcp-prm.tf`, el provider `azapi` en `providers.tf`, ni ningun `apim-mcp-{proposito-kebab}.tf` si el Paso 0.4 no recibio ningun servidor MCP -- CA-5: un BC sin servidores MCP corre este agente exactamente igual que antes del issue #820.
