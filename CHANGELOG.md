@@ -4,6 +4,102 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-09-02
+
+### Added
+
+- Se agrega el modo `--collapse-panes` a `scripts/herdr-pipeline.sh`: poda el registro de paneles Herdr y cierra los libres sobrantes del propio workspace (dejando uno vivo) sin despachar ningun pipeline. `/merge` lo invoca best-effort al terminar merges exitosos dentro de Herdr, cerrando los paneles `[ok]`/`[fallo]` que un lote de `/parallel` deja abiertos hasta el proximo despacho.
+- `apim-gateway-scaffolder` genera el modulo `apim-mcp-api` (aditivo, uno por servidor MCP) y el enrutador compartido del documento PRM (`apim-mcp-prm.tf`, RFC 9728), materializando el gate OAuth de la variante MCP/Connect que fija MEF-ADR-0032 seccion 9 (`validate-jwt` sin `<base/>` ni CORS, audiencia = URL de APIM del servidor, `on-error` con `401` + `WWW-Authenticate: resource_metadata=...`, backend hacia `/runtime/webhooks/mcp` con la system key `mcp_extension` leida via `azapi_resource_action` e inyectada como named value secreto).
+- `/install-apim` detecta automaticamente los servidores MCP ya scaffoldeados del BC (`src/{RootNamespace}.Mcp.*`) y los expone en el mismo flip a->b de tenancy: resuelve/registra la GitHub variable `WORKOS_AUTHORIZATION_SERVER_URL` (dominio AuthKit del entorno, MEF-ADR-0032 B12), invoca `apim-gateway-scaffolder` con la lista de servidores detectados y cablea `Mcp__ResourceUri`/`Mcp__AuthorizationServer` de cada servidor a la URL real de APIM, reportando el checklist manual del operador (Resource Indicator en WorkOS byte a byte, reconexion del cliente MCP). Un BC sin servidores MCP corre el skill exactamente igual que antes de este cambio.
+
+### Changed
+
+- Se enmienda MEF-ADR-0047 (doctrina de servidores MCP serverless): fija la decision 6
+  (identidad y tenancy) -- todo servidor MCP propaga `X-Tenant-Id`/`X-User-Id` hacia las Function
+  Apps de su BC via un `DelegatingHandler` compartido por todos sus HttpClients tipados, con el
+  tenant interino por app settings (`// TODO` explicito) mientras no exista identidad de usuario
+  derivada del token -- evolucion fuera de alcance, Bitakora.ControlAsistencia issue #540 -- y la
+  decision 7 (limite estructural del host) -- las tool calls llegan al worker sin header
+  `Authorization`, asi que el gate OAuth de un servidor MCP vive exclusivamente en el borde APIM,
+  y el worker valida token solo como defensa en profundidad con `ValidateAudience = false`.
+- Se enmienda MEF-ADR-0032 (identidad y autenticacion en el borde): fija la seccion 9, variante
+  MCP/Connect -- politica por-API dedicada sin `<base/>`, `audiences` = URL de APIM del servidor
+  MCP, `on-error` con `401` + `WWW-Authenticate: resource_metadata=...`, PRM anonimo, backend
+  `/runtime/webhooks/mcp` y consistencia byte a byte PRM/Resource Indicator/audience -- y registra
+  la trampa **B12**: el authorization server y el issuer de un token Connect son el dominio AuthKit
+  del entorno, no el issuer de login client-specific de B5.
+- Ambas enmiendas quedan validadas en dev/produccion por el consumidor pionero
+  Bitakora.ControlAsistencia (issues #539/#554/#556/#558/#560/#561, mergeados); la derivacion de
+  tenant/usuario desde el token del usuario conectado queda fuera de alcance (su issue #540,
+  abierto sin refinar). MEF-ADR-0048 no requiere enmienda: sus smoke tests autentican directo con
+  la system key `mcp_extension`, sin pasar por el gate OAuth nuevo.
+- Los runners `tmux-pipeline.sh`/`herdr-pipeline.sh` (y su espejo interno `mefisto-tmux-pipeline.sh`/`mefisto-herdr-pipeline.sh`) anteponen `caffeinate -i` al lanzamiento de cada sub-pipeline en macOS, evitando que el equipo entre en suspension idle mientras el pipeline corre; no-op en sistemas sin `caffeinate` (Linux/CI).
+- Se enmienda MEF-ADR-0028 (estrategia de tenancy): la transicion (a)->(b) de tenancy deja de prescribir
+  `Cosmos.MultiTenancy.CritterStack.AgregarTenantResolverHibrido()` (`ProxyTenantResolver`), probado roto
+  en Azure Functions isolated worker para HTTP (decide la rama HTTP/Wolverine en su constructor, antes de
+  que `HttpContext` quede adjunto al scope de la invocacion), y adopta en su lugar una biblioteca
+  scaffoldeada por dominio consumidor (`src/{RootNamespace}.TenantResolver/`) con identidad en
+  `AsyncLocal` poblada por un `IFunctionsWorkerMiddleware`, fiel al patron ya validado en produccion en
+  Cosmos.ControlPlane. Documenta como evidencia el incidente real en Bitakora.ControlAsistencia
+  (2026-09-01) y explica por que el gate de composicion del contenedor (MEF-ADR-0029) no atrapa esta
+  clase de fallo, sin relajarlo.
+- Se alinea MEF-ADR-0032 (identidad y autenticacion en el borde) con la enmienda anterior: su seccion 5
+  describia la etapa (b) de MEF-ADR-0028 como cableada con el hibrido de `Cosmos.MultiTenancy.CritterStack`.
+  Ninguna decision de MEF-ADR-0032 cambia -- la normalizacion de claims a headers canonicos en la politica
+  global del gateway sigue siendo el insight del que depende la transicion de tenancy.
+- Se reescribe el paso 9 de `/install-apim` (transicion (a)->(b) de tenancy, MEF-ADR-0028 seccion 4
+  enmendada por el issue #802): en vez de cablear `Cosmos.MultiTenancy.CritterStack.AgregarTenantResolverHibrido()`
+  (`ProxyTenantResolver`, probado roto en Azure Functions isolated worker para HTTP), el skill
+  scaffoldea la biblioteca `src/{RootNamespace}.TenantResolver/` (`TenantExecutionContext` +
+  `TenantContextMiddleware`, identidad en `AsyncLocal` poblada por un middleware del worker) y migra
+  cada dominio a `services.AgregarTenantResolverAsyncLocal()` + `builder.UsarTenantContextMiddleware()`.
+  La deteccion del paso se invierte: un dominio con `AgregarTenantResolverHibrido()` deja de
+  reportarse como "ya migrado, omite" y pasa a tratarse como estado roto que tambien se re-migra,
+  limpiando el `using`/`PackageReference` de `Cosmos.MultiTenancy.CritterStack` si queda huerfano. El
+  gate de composicion del contenedor (MEF-ADR-0029) sigue exigido en verde por dominio, ahora sin el
+  fallback `AddHttpContextAccessor()` (ya no aplica: `TenantExecutionContext` no tiene dependencias de
+  DI). La biblioteca y sus tests se registran en el `<SolutionFile>` del consumidor (sin eso el
+  `build-and-test` del CI nunca correria los tests nuevos) y cada dominio migrado suma
+  `src/{RootNamespace}.TenantResolver/**` al filtro `paths` de su `deploy-{kebab}.yml` -- la biblioteca
+  entra al artefacto desplegado, y sin la ruta un cambio posterior en ella no dispararia deploy
+  (misma staleness silenciosa de los issues #454/#544). Se actualizan las 2 menciones al hibrido en
+  `/install-auth` y la fila del catalogo de `CLAUDE.md`; ninguna mencion normativa del patron anterior
+  sobrevive en ninguno de los dos skills.
+- La rama etapa (b) de `domain-scaffolder` (tenancy.strategy = "multi-tenant-header") ya no auto-cablea `AgregarTenantResolverHibrido()` (`Cosmos.MultiTenancy.CritterStack`, probado roto en Azure Functions isolated worker, issue #802): ahora referencia la biblioteca scaffoldeada `src/{RootNamespace}.TenantResolver/` (`ProjectReference` + `services.AgregarTenantResolverAsyncLocal()` + `builder.UsarTenantContextMiddleware()`) si `/install-apim` ya la creo en el repo consumidor, y degrada a "proponer" (placeholder mono-tenant registrado, gate MEF-ADR-0029 en verde) si todavia no existe. En esa rama el workflow `deploy-{kebab}.yml` suma ademas `src/{RootNamespace}.TenantResolver/**` a su filtro `on.push.paths` y al filtro de alcance del job `determinar-alcance` (la biblioteca se compila dentro del artefacto publicado). El fallback CA-7 y el `// TODO(tenancy etapa b)` de la etapa (a) apuntan al patron nuevo.
+- Se enmienda MEF-ADR-0004: la capa 2 (precondiciones de orquestacion) declina con la
+  jerarquia tipada `PrecondicionComandoException` (base abstracta, scaffoldeada en el
+  consumidor) con derivadas `RecursoYaExisteException` (409) y `RecursoNoEncontradoException`
+  (404), en vez de `InvalidOperationException` generica; el endpoint captura solo la base y
+  toda otra excepcion — incluida `InvalidOperationException` de infraestructura — sube como
+  500. Motivado por el incidente Bitakora.ControlAsistencia #802, donde un `ProxyTenantResolver`
+  roto lanzaba `InvalidOperationException` y el catch amplio la traducia al mismo 409 que una
+  colision real de datos. Fija el regimen de migracion (rige codigo nuevo, sin migracion de
+  oficio, precedente MEF-ADR-0043 seccion 7). Ripples de una linea de ejemplo en MEF-ADR-0016
+  y MEF-ADR-0009, sin cambio de doctrina propia en ninguno de los dos.
+- Los templates de `agents/implementer.md` (CommandHandler y FunctionEndpoint) ahora prescriben la
+  jerarquia tipada de precondicion de MEF-ADR-0004 enmendado (`PrecondicionComandoException` +
+  `RecursoYaExisteException` -> 409 / `RecursoNoEncontradoException` -> 404) en vez de la
+  `InvalidOperationException` generica, que queda reservada a fallos de infraestructura y sube como
+  500. Incluye el scaffold de los tres tipos ("si no existen, crearlos" en `Infraestructura/`, mismo
+  criterio que `IRequestValidator`), el mapeo exhaustivo por tipo en el `catch` con bare rethrow para
+  derivadas no reconocidas, y el regimen de coexistencia con handlers y tests legados que siguen
+  lanzando el tipo generico (sin migracion de oficio, precedente MEF-ADR-0043 seccion 7).
+- `agents/test-writer.md` genera las precondiciones de orquestacion del CommandHandler con
+  `ThrowExactlyAsync<RecursoYaExisteException>`/`ThrowExactlyAsync<RecursoNoEncontradoException>`
+  (antes `InvalidOperationException`) y el naming enmendado de MEF-ADR-0016
+  (`..._LanzaRecursoYaExisteException_Cuando...`/`..._LanzaRecursoNoEncontradoException_Cuando...`),
+  alineado con la enmienda de MEF-ADR-0004 (#805). Suma el scaffold de los tres tipos como stub de
+  fase roja ("si no existen, crearlos" en `Infraestructura/`, mismo criterio que el implementer: sin
+  ellos el build de la suite nueva falla antes de llegar al assert) y el regimen de coexistencia:
+  las suites preexistentes que asertan `InvalidOperationException` no se migran de oficio, y un test
+  nuevo sobre un handler legado aserta el mismo tipo generico que su suite actual — el implementer
+  no puede cambiar el throw de ese handler sin romper el test que es su especificacion.
+- `mcp-scaffolder` genera siempre el propagador de identidad tenant/usuario (`PropagadorIdentidadTenantHandler` + `IdentidadTenant`, DelegatingHandler compartido por todos los HttpClients tipados, MEF-ADR-0047 decision 6) y los componentes OAuth app-side de defensa en profundidad (PRM RFC 9728, `ValidadorTokenAuthKit`, `AutorizacionMcpMiddleware` con su limite estructural documentado, MEF-ADR-0047 decision 7 y MEF-ADR-0032 seccion 9), cableados o degradados a "proponer" segun el `tenancy.strategy` del BC.
+
+### Fixed
+
+- `scripts/herdr-pipeline.sh` corrige una directiva `# shellcheck disable=SC2086 -- ...` con sufijo no parseable: shellcheck abortaba el analisis del archivo en esa linea, dejando ciegos los ~380 restantes (entre ellos el guard SC2168 de `scripts/tests/test-no-toplevel-local.sh`).
+
 ## [0.34.0] - 2026-08-31
 
 ### Changed
@@ -1647,7 +1743,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.34.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.35.0...HEAD
+[0.35.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.31.0...v0.32.0
