@@ -2505,12 +2505,13 @@ Cierra el reporte con lo que queda **fuera** de tu alcance y el usuario tiene qu
    `Mcp__AuthorizationServer` quedan como placeholder en el Terraform del Paso 6b hasta que el
    modulo `apim-mcp-api` del issue hermano #820 los provisione -- hasta entonces el PRM responde
    `503` y el validador rechaza todo token, ambos por degradacion deliberada (ninguno tumba el
-   arranque del worker). Avisa ademas de dos cosas que ese modulo hermano necesita saber: el PRM
-   se sirve en `/api/.well-known/oauth-protected-resource` (routePrefix por defecto), y la
-   operacion por servidor de la API PRM compartida (Paso 2b de `apim-gateway-scaffolder`) reescribe
-   `/well-known/oauth-protected-resource/<path-del-servidor>` hacia esa ruta con `<rewrite-uri>`; y
-   `Mcp__ResourceUri` debe quedar byte a byte igual al `<audiences>` de la politica dedicada
-   (MEF-ADR-0032 seccion 9).
+   arranque del worker). Avisa ademas de dos cosas del contrato con ese modulo hermano: el PRM se
+   sirve en `/api/.well-known/oauth-protected-resource` (routePrefix por defecto) y la URL publica
+   la fija el gateway -- la operacion por servidor de la API PRM compartida (Paso 2b de
+   `apim-gateway-scaffolder`) ya reescribe hacia esa ruta, con `<rewrite-uri>`, el sufijo
+   `/well-known/oauth-protected-resource/<path-del-servidor>` (sin punto inicial por restriccion de
+   APIM); y `Mcp__ResourceUri` debe quedar byte a byte igual al `<audiences>` de la politica
+   dedicada (MEF-ADR-0032 seccion 9).
 7. **Identidad interina en etapa (b) (CA-1)**: `Identidad__TenantIdInterino` se genera con un
    marcador (`tenant-interino-mcp-...`), no con un tenant real. Si el BC ya esta en
    `multi-tenant-header`, avisa que un humano debe reemplazarlo por un tenant real del entorno:
