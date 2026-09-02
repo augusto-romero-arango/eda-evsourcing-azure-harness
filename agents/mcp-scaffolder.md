@@ -540,8 +540,8 @@ namespace <RootNamespace>.Mcp.{Proposito}.MetadataRecursoProtegido;
 // politica y con el Resource Indicator (RFC 8707) que declara el cliente MCP.
 //
 // Ruta efectiva: el host sirve esta Function bajo el routePrefix por defecto ("api"), o sea en
-// /api/.well-known/oauth-protected-resource. La ruta raiz que exige RFC 9728 la publica el borde
-// de APIM, mapeando /.well-known/oauth-protected-resource a esta.
+// /api/.well-known/oauth-protected-resource. La URL publica del PRM la fija el gateway APIM (ver
+// el README de este scaffold).
 public class MetadataRecursoProtegidoFunction(IConfiguration configuration)
 {
     [Function("MetadataRecursoProtegido")]
@@ -1262,10 +1262,14 @@ ningun proyecto del BC.
   quedan como propuesta comentada en `Program.cs` -- corre `/install-auth` y cablealos a mano (o
   vuelve a scaffoldear).
 - **PRM (`MetadataRecursoProtegido/`)**: descubrimiento anonimo RFC 9728, servido en
-  `/api/.well-known/oauth-protected-resource` (routePrefix por defecto); la ruta raiz que exige el
-  RFC la publica el borde de APIM mapeando a esa. Responde `503` mientras `Mcp__ResourceUri`/
-  `Mcp__AuthorizationServer` no sean URIs absolutas -- el Terraform del servidor los siembra con
-  un `PENDIENTE-...` hasta que el modulo `apim-mcp-api` del gateway los resuelve.
+  `/api/.well-known/oauth-protected-resource` (routePrefix por defecto). Esa ruta nunca es la URL
+  publica del PRM: la fija el gateway APIM (output `prm_url` del modulo `apim-mcp-api`, forma
+  `https://<apim>/well-known/oauth-protected-resource/<path-del-servidor>`, sin punto inicial por
+  restriccion de APIM), que reescribe hacia esta Function con `<rewrite-uri>`. Los clientes MCP
+  descubren esa URL siempre por el `resource_metadata` del `WWW-Authenticate` del `401` (RFC 9728
+  seccion 5.1, MEF-ADR-0032 seccion 9), nunca por convencion well-known. Responde `503` mientras
+  `Mcp__ResourceUri`/`Mcp__AuthorizationServer` no sean URIs absolutas -- el Terraform del servidor
+  los siembra con un `PENDIENTE-...` hasta que el modulo `apim-mcp-api` del gateway los resuelve.
 
 ## Estado de este scaffold
 
@@ -2501,10 +2505,13 @@ Cierra el reporte con lo que queda **fuera** de tu alcance y el usuario tiene qu
    `Mcp__AuthorizationServer` quedan como placeholder en el Terraform del Paso 6b hasta que el
    modulo `apim-mcp-api` del issue hermano #820 los provisione -- hasta entonces el PRM responde
    `503` y el validador rechaza todo token, ambos por degradacion deliberada (ninguno tumba el
-   arranque del worker). Avisa ademas de dos cosas que ese modulo hermano necesita saber: el PRM
-   se sirve en `/api/.well-known/oauth-protected-resource` (routePrefix por defecto), asi que el
-   API de APIM tiene que mapear la ruta raiz de RFC 9728 a esa; y `Mcp__ResourceUri` debe quedar
-   byte a byte igual al `<audiences>` de la politica dedicada (MEF-ADR-0032 seccion 9).
+   arranque del worker). Avisa ademas de dos cosas del contrato con ese modulo hermano: el PRM se
+   sirve en `/api/.well-known/oauth-protected-resource` (routePrefix por defecto) y la URL publica
+   la fija el gateway -- la operacion por servidor de la API PRM compartida (Paso 2b de
+   `apim-gateway-scaffolder`) ya reescribe hacia esa ruta, con `<rewrite-uri>`, el sufijo
+   `/well-known/oauth-protected-resource/<path-del-servidor>` (sin punto inicial por restriccion de
+   APIM); y `Mcp__ResourceUri` debe quedar byte a byte igual al `<audiences>` de la politica
+   dedicada (MEF-ADR-0032 seccion 9).
 7. **Identidad interina en etapa (b) (CA-1)**: `Identidad__TenantIdInterino` se genera con un
    marcador (`tenant-interino-mcp-...`), no con un tenant real. Si el BC ya esta en
    `multi-tenant-header`, avisa que un humano debe reemplazarlo por un tenant real del entorno:
