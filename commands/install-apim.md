@@ -2,7 +2,7 @@
 model: sonnet
 ---
 
-Instala/actualiza el gateway APIM (Azure API Management) delante de las Function Apps del BC, fiel a MEF-ADR-0032: invoca el agente `apim-gateway-scaffolder` (issue #335) para generar/actualizar los modulos Terraform `api-management`/`apim-function-api` de forma aditiva por dominio, cablea `TF_VAR_workos_client_id` desde la GitHub variable `WORKOS_CLIENT_ID` (la que registro `/install-workos`), y ejecuta la **transicion a->b de tenancy** (MEF-ADR-0028 seccion 4, issue #337, enmendada por el issue #802): flip de `tenancy.strategy` a `"multi-tenant-header"`, scaffold de la biblioteca `src/{RootNamespace}.TenantResolver/` (patron AsyncLocal + middleware, issue #803) y migracion del `ITenantResolver` de **todos** los dominios ya scaffoldeados del BC -- incluidos los que quedaron en el hibrido `AgregarTenantResolverHibrido()` probado roto en Azure Functions isolated worker (issue #802) -- a esa biblioteca. Es la capa de **borde** de la auth (segunda tras `/install-workos`): APIM se monta delante de Function Apps existentes, asi que exige infra base + al menos un dominio ya scaffoldeado. Comunicate en **espanol**.
+Instala/actualiza el gateway APIM (Azure API Management) delante de las Function Apps del BC, fiel a MEF-ADR-0032: invoca el agente `apim-gateway-scaffolder` (issue #335) para generar/actualizar los modulos Terraform `api-management`/`apim-function-api` de forma aditiva por dominio, cablea `TF_VAR_workos_client_id` desde la GitHub variable `WORKOS_CLIENT_ID` (la que registro `/install-workos`), y ejecuta la **transicion a->b de tenancy** (MEF-ADR-0028 seccion 4, issue #337, enmendada por el issue #802): flip de `tenancy.strategy` a `"multi-tenant-header"`, scaffold de la biblioteca `src/{RootNamespace}.TenantResolver/` (patron AsyncLocal + middleware, issue #803) y migracion del `ITenantResolver` de **todos** los dominios ya scaffoldeados del BC -- incluidos los que quedaron en el hibrido `AgregarTenantResolverHibrido()` probado roto en Azure Functions isolated worker (issue #802) -- a esa biblioteca. Ademas **detecta automaticamente los servidores MCP del BC** (`src/{RootNamespace}.Mcp.*`, issue #820) y los expone en el mismo flip a->b con el modulo `apim-mcp-api` (gate OAuth de la variante MCP/Connect, MEF-ADR-0032 seccion 9), cableando `Mcp__ResourceUri`/`Mcp__AuthorizationServer` del servidor a la URL real de APIM. Es la capa de **borde** de la auth (segunda tras `/install-workos`): APIM se monta delante de Function Apps existentes, asi que exige infra base + al menos un dominio ya scaffoldeado. Comunicate en **espanol**.
 
 ## Pre-condicion: cwd != Mefisto
 
@@ -23,12 +23,15 @@ Si el bloque imprime `ERROR`, detente y muestra el mensaje al usuario.
 `$ARGUMENTS`:
 
 ```
---domain <Dominio> [--domain <Dominio2> ...] [--env <env>] [--cors-origin <origin> ...]
+--domain <Dominio> [--domain <Dominio2> ...] [--env <env>] [--cors-origin <origin> ...] [--authorization-server-url <url>]
 ```
 
 - **`--domain <Dominio>`** (obligatorio, repetible): uno o mas dominios **ya scaffoldeados** (`/scaffold`) a exponer detras del gateway. Acepta kebab o PascalCase. Podes correr este skill varias veces agregando dominios nuevos cada vez (CA-2, aditivo) sin re-crear la instancia.
 - **`--env <env>`** (opcional, default `dev`): ambiente Terraform.
 - **`--cors-origin <origin>`** (repetible): origen del SPA para el preflight CORS (B3, MEF-ADR-0032). **Obligatorio solo la primera vez** que se instala el gateway en este entorno (cuando `apim.tf` todavia no existe); en corridas posteriores se ignora -- agregar un origen a un gateway ya instalado es cambiar el valor de la GitHub variable `CORS_ALLOWED_ORIGINS` (fuera del alcance de este skill, se hace con `gh variable set CORS_ALLOWED_ORIGINS`).
+- **`--authorization-server-url <url>`** (issue #820): dominio AuthKit del entorno (MEF-ADR-0032 B12), **nunca** el issuer client-specific de login. No hace falta pasarlo a mano si `WORKOS_AUTHORIZATION_SERVER_URL` ya esta registrada como GitHub variable (de una corrida previa que expuso un servidor MCP); **obligatorio solo la primera vez que este skill detecta al menos un servidor MCP** (Paso 2b) y esa variable todavia no existe. Un BC sin ningun servidor MCP puede ignorar esta flag por completo (CA-5).
+
+**Los servidores MCP del BC (`src/{RootNamespace}.Mcp.*`) se detectan automaticamente** -- no hay una flag `--mcp-server`: a diferencia de los dominios (que este skill nunca crea), el operador no elige "cuales" servidores MCP exponer, expone **todos** los que `/scaffold-mcp` ya genero, igual que la migracion de tenancy del paso 9 aplica a todos los dominios ya scaffoldeados (no solo a los pasados por `--domain`).
 
 Si falta `--domain`, responde con el uso exacto y detente sin ejecutar nada.
 
@@ -38,6 +41,7 @@ Si falta `--domain`, responde con el uso exacto y detente sin ejecutar nada.
 |---|---|---|
 | GitHub **variable** (client_id de login) | `WORKOS_CLIENT_ID` | Ya la registro `/install-workos` (MEF-ADR-0032 seccion 6/7); este skill solo la **lee/verifica**, nunca la crea desde cero. |
 | GitHub **variable** (origenes CORS) | `CORS_ALLOWED_ORIGINS` | JSON list; requerida sin default por `apim.tf` (`var.cors_allowed_origins`), solo la primera vez que se crea el archivo (`agents/apim-gateway-scaffolder.md` Paso 3b). |
+| GitHub **variable** (dominio AuthKit del entorno, issue #820) | `WORKOS_AUTHORIZATION_SERVER_URL` | No secreta (MEF-ADR-0032 seccion 6, mismo estatus que `WORKOS_CLIENT_ID`); requerida sin default por `apim-mcp-prm.tf` (`var.mcp_authorization_server_url`), solo la primera vez que este skill detecta al menos un servidor MCP (`agents/apim-gateway-scaffolder.md` Paso 3c). |
 | Token en `harness.config.json` | `tenancy.strategy = "multi-tenant-header"` | Flip que ejecuta CA-4 (MEF-ADR-0028 seccion 4). |
 | Biblioteca de tenancy scaffoldeada | `src/<RootNamespace>.TenantResolver/` | `TenantExecutionContext` + `TenantContextMiddleware`, patron AsyncLocal + middleware (MEF-ADR-0028 seccion 4, enmendada por el issue #802). Una sola por BC, referenciada por todos los dominios migrados. |
 | Registro de `ITenantResolver` que reemplaza el transitorio (o el hibrido roto) | `services.AgregarTenantResolverAsyncLocal()` | Extension de la biblioteca scaffoldeada de arriba -- ya no de `Cosmos.MultiTenancy.CritterStack` (issue #802). |
@@ -47,7 +51,7 @@ Si falta `--domain`, responde con el uso exacto y detente sin ejecutar nada.
 
 ### 1. Parsear `$ARGUMENTS`
 
-Extrae la lista de `DOMINIOS` (uno o mas `--domain`), `ENV` (default `dev`) y la lista de `CORS_ORIGINS` (`--cors-origin`, puede venir vacia). Si no hay ningun `--domain`, responde con el uso exacto y detente.
+Extrae la lista de `DOMINIOS` (uno o mas `--domain`), `ENV` (default `dev`), la lista de `CORS_ORIGINS` (`--cors-origin`, puede venir vacia) y `AUTHORIZATION_SERVER_URL` (`--authorization-server-url`, puede venir vacio -- issue #820). Si no hay ningun `--domain`, responde con el uso exacto y detente.
 
 ### 2. Verificar prerequisitos (CA-1)
 
@@ -65,12 +69,23 @@ ls infra/environments/"${ENV}"/dominio-*.tf >/dev/null 2>&1 || {
 
 Si cualquiera de los dos falta, detente con el mensaje -- no continues con el resto del proceso.
 
+### 2b. Detectar los servidores MCP del BC (CA-3 del issue #820)
+
+Resuelve primero `<RootNamespace>` leyendo el `CLAUDE.md` raiz del consumidor (seccion "Tokens del harness"), igual que el paso 9.1 -- este paso lo necesita antes que aquel. Si no esta declarado, **no te detengas aca**: reporta `SERVIDORES_MCP` como no determinable y segui (el paso 9.1 vuelve a intentarlo y ahi si es bloqueante).
+
+```bash
+ls -d src/<RootNamespace>.Mcp.*/ 2>/dev/null | sed -E 's#.*<RootNamespace>\.Mcp\.([^/]+)/#\1#'
+```
+
+Cada nombre listado es un `{Proposito}` (PascalCase) ya scaffoldeado por `/scaffold-mcp`. Llama a esta lista `SERVIDORES_MCP` -- puede venir vacia, y **eso es un resultado normal, no un error** (CA-5): un BC sin servidores MCP sigue el resto del proceso exactamente igual que antes del issue #820, sin ningun paso adicional de MCP en ningun punto de este skill. No hay flag para elegir "cuales" servidores MCP exponer -- se exponen todos los detectados, igual que la migracion de tenancy del paso 9 aplica a todos los dominios.
+
 ### 3. Confirmar con el usuario
 
 Muestra exactamente lo que va a pasar y pide confirmacion explicita -- este skill escribe Terraform, GitHub variables, y **reescribe codigo C# existente** en todos los dominios del BC (la migracion de tenancy, no solo en los dominios pasados por `--domain`):
 
 ```
 Se va a instalar/actualizar el gateway APIM en el entorno "<env>" para: <lista de dominios>
+<si SERVIDORES_MCP no esta vacia, agregar aca: "y para los servidores MCP: <lista de SERVIDORES_MCP>">
 
   1. Modulos Terraform api-management/apim-function-api (agente apim-gateway-scaffolder, issue #335),
      aditivo por dominio -- nunca re-crea la instancia si ya existe.
@@ -84,10 +99,16 @@ Se va a instalar/actualizar el gateway APIM en el entorno "<env>" para: <lista d
      services.AgregarTenantResolverAsyncLocal() + builder.UsarTenantContextMiddleware(), eliminando
      TenantResolverMonoTenantPorDefecto.cs de cada uno. Cada dominio migrado se valida con su propio
      test de composicion del contenedor (MEF-ADR-0029) antes de commitear.
+<si SERVIDORES_MCP no esta vacia, agregar:>
+  4. MCP (issue #820, MEF-ADR-0032 seccion 9): modulo apim-mcp-api + enrutador compartido del PRM
+     (agente apim-gateway-scaffolder), uno por servidor MCP detectado -- gate OAuth de la variante
+     MCP/Connect en el borde, nunca en el worker del servidor (MEF-ADR-0047 decision 7). Cablea
+     Mcp__ResourceUri/Mcp__AuthorizationServer del servidor a la URL real de APIM (CA-4).
 
 El apply real (el que provisiona APIM en Azure) corre en CI al mergear el PR (MEF-ADR-0022); este
 skill nunca ejecuta terraform plan/apply. El checklist post-deploy (CORS, 401, 202, headers de
-identidad, verbo QUERY) queda pendiente para despues de ese apply.
+identidad, verbo QUERY<si aplica MCP: ", Resource Indicator byte a byte">) queda pendiente para
+despues de ese apply.
 
 ¿Continuar? (s/n)
 ```
@@ -143,19 +164,32 @@ gh variable set CORS_ALLOWED_ORIGINS --body "$CORS_JSON"
 
 Si `GATEWAY_EXISTE=true`, omite este paso -- `CORS_ALLOWED_ORIGINS` ya deberia existir de la instalacion original. Si no existe (estado inconsistente: `apim.tf` ya aplicado pero la variable ausente), repórtalo `NO VERIFICADO` sin bloquear -- el `apply` de CI fallaria por su cuenta si de verdad falta, señal mas fuerte que la de este skill.
 
+### 7b. Resolver `WORKOS_AUTHORIZATION_SERVER_URL` (solo si `SERVIDORES_MCP` no esta vacia, issue #820)
+
+Omite este paso entero si el paso 2b no detecto ningun servidor MCP (CA-5).
+
+```bash
+MCP_AUTH_SERVER_URL=$(gh variable list --json name,value -q '.[] | select(.name=="WORKOS_AUTHORIZATION_SERVER_URL") | .value' 2>/dev/null)
+```
+
+- Si ya tiene un valor: repórtalo y, si `--authorization-server-url` trajo uno distinto, pregunta si el usuario quiere sobreescribirlo (mismo criterio que el paso 7 para `CORS_ALLOWED_ORIGINS`); si coinciden o no vino la flag, no toques nada.
+- Si no existe y `--authorization-server-url` vino en `$ARGUMENTS`: registralo (`gh variable set WORKOS_AUTHORIZATION_SERVER_URL --body "<url>"`).
+- Si no existe y la flag tampoco vino: **detente**. A diferencia de `WORKOS_CLIENT_ID` (paso 6, que puede degradar a `NO VERIFICADO` si el gateway ya existe), esta variable es **obligatoria** para generar el modulo `apim-mcp-api` de cualquier servidor MCP detectado -- sin ella, la politica de validate-jwt de la variante MCP/Connect no tiene issuer que validar. Indica al usuario el uso exacto (`--authorization-server-url <url>`) y el origen del valor: el dominio -- propio o de WorkOS -- que sirve AuthKit para el proyecto del entorno (MEF-ADR-0032 B12), visible en el dashboard de WorkOS, seccion AuthKit del proyecto.
+- Si `gh` no esta autenticado o falla: cuando `--authorization-server-url` vino en `$ARGUMENTS`, usa ese valor y reporta la variable como `NO VERIFICADO -- no se pudo registrar en GitHub, hacerlo a mano antes del apply`; cuando tampoco vino, **detente** igual que en el caso anterior. No hay modo parcial "sigo con los dominios y omito los MCP": el skill deja el arbol sin tocar y el usuario lo reintenta con la flag.
+
 ### 8. Invocar el agente `apim-gateway-scaffolder` (CA-2, CA-3)
 
 ```bash
-claude --agent apim-gateway-scaffolder "Instala/actualiza el gateway APIM en el entorno <env> para los dominios: <lista de --domain, separados por coma>. WorkOS client_id: <WORKOS_CLIENT_ID resuelto, o 'NO VERIFICADO' si vacio>. CORS allowed origins: <lista de --cors-origin, o 'gateway ya instalado, no recrear cors_allowed_origins' si GATEWAY_EXISTE=true>."
+claude --agent apim-gateway-scaffolder "Instala/actualiza el gateway APIM en el entorno <env> para los dominios: <lista de --domain, separados por coma>. WorkOS client_id: <WORKOS_CLIENT_ID resuelto, o 'NO VERIFICADO' si vacio>. CORS allowed origins: <lista de --cors-origin, o 'gateway ya instalado, no recrear cors_allowed_origins' si GATEWAY_EXISTE=true>. Servidores MCP a exponer: <lista de SERVIDORES_MCP separados por coma, o 'ninguno' si vacia>. Dominio AuthKit del entorno (authorization_server_url): <MCP_AUTH_SERVER_URL resuelto, o 'N/A -- sin servidores MCP' si SERVIDORES_MCP vino vacia>."
 ```
 
-El agente es aditivo/idempotente por su cuenta (sus Pasos 0.2/1/2/3/4): si algun `--domain` no esta scaffoldeado, lo omite y lo reporta sin abortar el resto del batch -- reflejalo en el reporte final (paso 13). Tambien cablea `TF_VAR_workos_client_id`/`TF_VAR_cors_allowed_origins` en `infra-cd.yml` (su Paso 3b -- esto **es** el CA-3 de este issue, ya resuelto por el agente) y corre `fmt`/`init -backend=false`/`validate` (su Paso 5) antes de commitear (su Paso 6, en la rama que ya creaste en el paso 4).
+El agente es aditivo/idempotente por su cuenta (sus Pasos 0.2/0.4/1/2/2b/3/3b/3c/4/4b): si algun `--domain` o servidor MCP no esta scaffoldeado, lo omite y lo reporta sin abortar el resto del batch -- reflejalo en el reporte final (paso 13). Tambien cablea `TF_VAR_workos_client_id`/`TF_VAR_cors_allowed_origins`/`TF_VAR_mcp_authorization_server_url` en `infra-cd.yml` (sus Pasos 3b/3c -- esto **es** el CA-3 de este issue y del issue #820, ya resuelto por el agente), genera `apim-mcp-api`/`apim-mcp-prm.tf`/`apim-mcp-{proposito-kebab}.tf` por cada servidor MCP detectado y patchea `Mcp__ResourceUri`/`Mcp__AuthorizationServer` en el `mcp-{proposito-kebab}.tf` de cada uno (su Paso 4b -- esto **es** el CA-4 de este issue), y corre `fmt`/`init -backend=false`/`validate` (su Paso 5) antes de commitear (su Paso 6, en la rama que ya creaste en el paso 4).
 
 ### 9. Ejecutar la transicion a->b de tenancy (CA-4, MEF-ADR-0028 seccion 4)
 
 #### 9.1 Resolver `<RootNamespace>`
 
-Lee el `CLAUDE.md` raiz del proyecto consumidor (contrato, seccion "Tokens del harness") para resolver `<RootNamespace>`. Si no esta declarado, detente y pide al usuario que lo declare -- mismo criterio que `domain-scaffolder`.
+Lee el `CLAUDE.md` raiz del proyecto consumidor (contrato, seccion "Tokens del harness") para resolver `<RootNamespace>` (si el paso 2b ya lo resolvio, reusa ese valor -- no lo releas). Si no esta declarado, detente y pide al usuario que lo declare -- mismo criterio que `domain-scaffolder`.
 
 #### 9.2 Flip del token
 
@@ -623,7 +657,10 @@ Resumen claro y en orden:
 
 - **Prerequisitos** (paso 2): verificados.
 - **`WORKOS_CLIENT_ID`/`CORS_ALLOWED_ORIGINS`** (pasos 6-7): resueltos, registrados, o `NO VERIFICADO`.
+- **Servidores MCP detectados** (paso 2b, issue #820): lista de `SERVIDORES_MCP` (o "ninguno" -- CA-5); si vino al menos uno, `WORKOS_AUTHORIZATION_SERVER_URL` (paso 7b): resuelta, registrada, o el bloqueo si faltaba y no vino `--authorization-server-url`.
 - **Agente `apim-gateway-scaffolder`** (paso 8): modulos creados/omitidos, dominios agregados/omitidos (con el motivo si alguno fallo el guard de scaffold), resultado de `terraform validate`, gates B5/B10 pendientes que el agente haya reportado, y el delta manual de CORS (`<method>QUERY</method>` ausente en un modulo `api-management` preexistente, issue #608) si el agente lo reporto.
+- **Servidores MCP expuestos** (paso 8, issue #820), si `SERVIDORES_MCP` no vino vacia: `apim-mcp-api`/`apim-mcp-prm.tf` creados u omitidos; `apim-mcp-{proposito-kebab}.tf` por servidor, creado u omitido; cualquier servidor MCP que fallo el guard de scaffold del agente (indicar `/scaffold-mcp <Proposito>`); si el patch de `Mcp__ResourceUri`/`Mcp__AuthorizationServer` en `mcp-{proposito-kebab}.tf` se aplico o ya estaba resuelto (CA-4); gate B12 (dominio AuthKit del entorno) marcado `NO VERIFICADO` si el agente no pudo confirmarlo contra el discovery doc en vivo; si algun servidor MCP detectado todavia no tuvo su primer deploy de codigo exitoso (el `apply` de su modulo fallaria al leer `mcp_extension` -- avisa antes de mergear el PR).
+- **Checklist operativo CA-4, por cada servidor MCP expuesto**: el `resource_uri` resuelto y el recordatorio de confirmar en el dashboard de WorkOS que el Resource Indicator del cliente MCP es ese mismo string byte a byte (trailing slash incluido), y de reconectar cualquier cliente MCP ya conectado despues del `apply`.
 - **Migracion de tenancy** (paso 9): token flip (hecho / ya estaba en etapa b); biblioteca `src/<RootNamespace>.TenantResolver/` (creada y verificada por build+test / ya existia); lista de dominios migrados (distinguiendo si venian de la etapa (a) mono-tenant o del hibrido roto `AgregarTenantResolverHibrido()`, issue #802); lista de dominios ya migrados al patron nuevo (omitidos); lista de dominios degradados (con el motivo) o con resolver custom (revision manual pendiente).
 - **Siguiente paso**: push + PR (si todo quedo verde) o la lista de reconciliacion pendiente.
 - **Checklist post-deploy** (paso 12): recordatorio de correrlo tras el `apply` de CI.
@@ -631,13 +668,15 @@ Resumen claro y en orden:
 ## Reglas
 
 - **Nunca ejecutes `terraform plan` ni `terraform apply`.** El `apply` real corre en CI al mergear el PR (MEF-ADR-0022); este skill (via el agente del paso 8) solo llega hasta `fmt`/`validate`.
-- **Nunca crees el/los dominio(s) destino.** Si un `--domain` no esta scaffoldeado, el agente del paso 8 lo omite y lo reporta -- indica `/scaffold <dominio>` en el reporte final, no lo crees vos.
+- **Nunca crees el/los dominio(s) destino ni ningun servidor MCP.** Si un `--domain` o un servidor MCP detectado en el paso 2b no esta scaffoldeado, el agente del paso 8 lo omite y lo reporta -- indica `/scaffold <dominio>` o `/scaffold-mcp <Proposito>` en el reporte final, no lo crees vos.
+- **Un BC sin servidores MCP corre este skill identico a como corria antes del issue #820** (CA-5): el paso 2b detecta la lista vacia, el paso 7b se omite entero, y el agente del paso 8 nunca genera `infra/modules/apim-mcp-api/` ni toca `providers.tf`.
+- **Nunca pidas ni imprimas el valor de `WORKOS_API_KEY`** ni de ningun otro secreto, incluida `WORKOS_AUTHORIZATION_SERVER_URL` -- esta ultima es un dominio publico, no una credencial, pero sigue el mismo tratamiento no-secreto que `WORKOS_CLIENT_ID`/`CORS_ALLOWED_ORIGINS` (GitHub **variable**, nunca secret).
 - **Nunca migres un dominio fuera de los descubiertos en el paso 9.4** (todo `src/<RootNamespace>.*/Infraestructura/ComposicionServicios*.cs`) -- la migracion aplica a **todo** el BC, no solo a los `--domain` de esta corrida, pero nunca a una forma de registro que no sea exactamente la mono-tenant transitoria de MEF-ADR-0028 seccion 2 o el hibrido roto `AgregarTenantResolverHibrido()` que esta migracion reemplaza (issue #802) -- un resolver custom sigue siendo revision manual, nunca auto-migrado.
 - **Nunca dejes un dominio commiteado con el contenedor DI sin construir** (gate MEF-ADR-0029): `TenantExecutionContext` no depende de `IHttpContextAccessor` ni de ningun otro servicio registrado -- si el test de composicion no pasa, revierte ese dominio completo antes de commitear (ya no hay ningun wiring adicional que probar primero).
 - **Nunca migres ni referencies un dominio contra la biblioteca `src/<RootNamespace>.TenantResolver/` sin que el paso 9.3 la haya compilado y testeado en verde** -- una biblioteca sin verificar rompe la compilacion de todo dominio que la referencie.
 - **Nunca dupliques** un `PackageReference`, un `using`, o un registro de `ITenantResolver` ya presente -- verifica antes de escribir (mismo criterio de idempotencia que el resto del harness).
-- **Nunca pidas ni imprimas el valor de `WORKOS_API_KEY`** ni de ningun otro secreto -- este skill solo lee la GitHub **variable** `WORKOS_CLIENT_ID` (no secreta, MEF-ADR-0032 seccion 6/7) y registra `CORS_ALLOWED_ORIGINS` (tampoco secreta).
 - **Nunca trabajes contra `main` directo.** Crea la rama compartida del paso 4 antes de invocar el agente o de tocar cualquier archivo.
 - **Nunca hagas push si el agente omitio un dominio pedido o si algun dominio quedo degradado** en la migracion de tenancy (paso 11) -- deja la reconciliacion pendiente explicita en el reporte.
 - Si `$ARGUMENTS` no trae al menos un `--domain`, responde con el uso exacto y detente -- no adivines dominios.
 - Si es la primera instalacion del gateway (`apim.tf` ausente) y falta `--cors-origin`, responde con el uso exacto y detente -- no inventes origenes.
+- Si el paso 2b detecto al menos un servidor MCP y `WORKOS_AUTHORIZATION_SERVER_URL` no existe ni vino `--authorization-server-url`, responde con el uso exacto y detente -- no inventes ni adivines el dominio AuthKit del entorno.
