@@ -788,6 +788,7 @@ Si existe, **omite todo este paso**: un humano ya reemplazo la tool de ejemplo p
 Si falta, crea `Ejemplo/EjemploListarTool.cs` -- demuestra el patron completo de una tool de consulta (MEF-ADR-0047 decision 4): descripcion en lenguaje ubicuo como atributo, `readOnlyHint` via `McpMetadata`, mensajes runtime en `.resx` (MEF-ADR-0009), respuesta remodelada token-eficiente con truncado con senal y un filtro que evita listar todo sin limite.
 
 ```csharp
+using System.Globalization;
 using System.Net.Http.Json;
 using <RootNamespace>.Mcp.{Proposito}.Infraestructura;
 using Microsoft.Azure.Functions.Worker;
@@ -798,6 +799,10 @@ namespace <RootNamespace>.Mcp.{Proposito}.Ejemplo;
 // Tool de EJEMPLO generada por /scaffold-mcp (MEF-ADR-0047 decision 4): reemplazala por las tools
 // reales de tu BC. El nombre, la descripcion y el remodelado deben salir del lenguaje ubicuo real
 // del dominio (MEF-ADR-0040) -- el texto de abajo es deliberadamente generico.
+// fecha_referencia no filtra el catalogo: existe para demostrar el patron de validacion de fecha
+// string (McpToolProperty + TryParseExact + mensaje .resx) y darle al smoke e2e un camino valido
+// verificable -- sin el, ningun parametro de este scaffold prueba que el middleware que restaura
+// el texto original coercionado por la extension MCP sigue activo tras un deploy.
 public partial class EjemploListarTool({DominioEjemplo}Api api)
 {
     internal const string NombreTool = "ejemplo_listar";
@@ -817,6 +822,10 @@ public partial class EjemploListarTool({DominioEjemplo}Api api)
             "filtro_nombre",
             "Texto a buscar dentro del nombre (sin distinguir mayusculas ni acentos).")]
         string? filtroNombre,
+        [McpToolProperty(
+            "fecha_referencia",
+            "Fecha de referencia en formato yyyy-MM-dd (opcional; por defecto no filtra).")]
+        string? fechaReferencia,
         CancellationToken ct)
     {
         // Validacion con mensaje .resx (MEF-ADR-0047 "mensajes runtime en .resx", MEF-ADR-0048
@@ -824,6 +833,14 @@ public partial class EjemploListarTool({DominioEjemplo}Api api)
         // antes de llamar al API cuando el filtro es un abuso obvio del parametro.
         if (!string.IsNullOrWhiteSpace(filtroNombre) && filtroNombre.Length > MaximoLargoFiltro)
             return string.Format(Mensajes.ErrorFiltroDemasiadoLargo, MaximoLargoFiltro);
+
+        // fecha_referencia sigue siendo string (MEF-ADR-0047 decision 1): la extension MCP coerciona
+        // todo string con forma de fecha antes de que la tool lo reciba, asi que declarar DateOnly
+        // aqui perderia el texto original que el middleware de restauracion recompone.
+        if (fechaReferencia is not null
+            && !DateOnly.TryParseExact(
+                fechaReferencia, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+            return string.Format(Mensajes.ErrorFechaReferenciaInvalida, fechaReferencia);
 
         var respuesta = await api.ListarElementos(ct);
         respuesta.EnsureSuccessStatusCode();
@@ -841,7 +858,8 @@ public partial class EjemploListarTool({DominioEjemplo}Api api)
             ? string.Format(Mensajes.NotaTruncado, visibles.Count, elementos.Count)
             : null;
 
-        return RespuestaJson.Serializar(new CatalogoDeEjemplos(elementos.Count, visibles.Count, nota, visibles));
+        return RespuestaJson.Serializar(
+            new CatalogoDeEjemplos(elementos.Count, visibles.Count, nota, fechaReferencia, visibles));
     }
 }
 
@@ -849,7 +867,8 @@ public partial class EjemploListarTool({DominioEjemplo}Api api)
 internal sealed record ElementoDto(string Id, string Nombre, string? Detalle);
 
 /// <summary>Contrato de respuesta de ejemplo_listar hacia el asistente (remodelado token-eficiente).</summary>
-public sealed record CatalogoDeEjemplos(int Total, int Mostrando, string? Nota, IReadOnlyList<ElementoResumido> Elementos);
+public sealed record CatalogoDeEjemplos(
+    int Total, int Mostrando, string? Nota, string? FechaReferencia, IReadOnlyList<ElementoResumido> Elementos);
 
 public sealed record ElementoResumido(string Id, string Nombre);
 ```
@@ -874,6 +893,9 @@ public partial class EjemploListarTool
 
         /// <summary>{0}: largo maximo permitido.</summary>
         public static string ErrorFiltroDemasiadoLargo => ResourceManager.GetString(nameof(ErrorFiltroDemasiadoLargo))!;
+
+        /// <summary>{0}: valor crudo recibido para fecha_referencia.</summary>
+        public static string ErrorFechaReferenciaInvalida => ResourceManager.GetString(nameof(ErrorFechaReferenciaInvalida))!;
     }
 }
 ```
@@ -908,6 +930,9 @@ public partial class EjemploListarTool
   </data>
   <data name="ErrorFiltroDemasiadoLargo" xml:space="preserve">
     <value>El filtro no puede superar {0} caracteres.</value>
+  </data>
+  <data name="ErrorFechaReferenciaInvalida" xml:space="preserve">
+    <value>'fecha_referencia' debe tener formato yyyy-MM-dd; llego '{0}'.</value>
   </data>
 </root>
 ```
@@ -1042,7 +1067,7 @@ public class ComposicionDelServidorTests
     }
 
     [Fact]
-    public void EjemploListar_DeclaraFiltroNombreComoOpcional_CuandoSeInspeccionaLaTool()
+    public void EjemploListar_DeclaraSusParametrosComoOpcionales_CuandoSeInspeccionaLaTool()
     {
         var metodo = MetodosDeTool.Single(m =>
             ParametroTrigger(m)!.GetCustomAttribute<McpToolTriggerAttribute>()!.ToolName == EjemploListarTool.NombreTool);
@@ -1052,7 +1077,9 @@ public class ComposicionDelServidorTests
             .Where(a => a is not null)
             .Select(a => (a!.PropertyName, a.IsRequired));
 
-        propiedades.Should().ContainSingle().Which.Should().Be(("filtro_nombre", false));
+        propiedades.Should().BeEquivalentTo(
+            [("filtro_nombre", false), ("fecha_referencia", false)],
+            opciones => opciones.WithoutStrictOrdering());
     }
 }
 ```
@@ -1128,12 +1155,13 @@ namespace <RootNamespace>.Mcp.{Proposito}.Tests.Ejemplo;
 
 public class EjemploListarToolTests
 {
-    private static async Task<JsonNode> Ejecutar(string fixture, string? filtroNombre = null)
+    private static async Task<JsonNode> Ejecutar(
+        string fixture, string? filtroNombre = null, string? fechaReferencia = null)
     {
         var cliente = ClienteFalso.Con(Fixtures.Leer(fixture));
         var tool = new EjemploListarTool(new {DominioEjemplo}Api(cliente));
 
-        var resultado = await tool.Run(null!, filtroNombre, TestContext.Current.CancellationToken);
+        var resultado = await tool.Run(null!, filtroNombre, fechaReferencia, TestContext.Current.CancellationToken);
 
         return JsonNode.Parse(resultado)!;
     }
@@ -1146,6 +1174,7 @@ public class EjemploListarToolTests
         json["total"]!.GetValue<int>().Should().Be(4);
         json["mostrando"]!.GetValue<int>().Should().Be(4);
         json.AsObject().ContainsKey("nota").Should().BeFalse("sin truncado no hay senal");
+        json.AsObject().ContainsKey("fechaReferencia").Should().BeFalse("sin el parametro, el eco no viaja");
 
         var primero = json["elementos"]![0]!.AsObject();
         primero["id"]!.GetValue<string>().Should().Be("elem-001");
@@ -1180,9 +1209,28 @@ public class EjemploListarToolTests
         var tool = new EjemploListarTool(new {DominioEjemplo}Api(cliente));
         var filtroDemasiadoLargo = new string('a', EjemploListarTool.MaximoLargoFiltro + 1);
 
-        var resultado = await tool.Run(null!, filtroDemasiadoLargo, TestContext.Current.CancellationToken);
+        var resultado = await tool.Run(null!, filtroDemasiadoLargo, null, TestContext.Current.CancellationToken);
 
         resultado.Should().Be("El filtro no puede superar 100 caracteres.");
+    }
+
+    [Fact]
+    public async Task EjemploListar_HaceEcoDeLaFechaDeReferencia_CuandoLaFechaEsValida()
+    {
+        var json = await Ejecutar("catalogo.json", fechaReferencia: "2026-09-01");
+
+        json["fechaReferencia"]!.GetValue<string>().Should().Be("2026-09-01");
+    }
+
+    [Fact]
+    public async Task EjemploListar_RespondeElMensajeDeValidacion_CuandoLaFechaDeReferenciaEsInvalida()
+    {
+        var cliente = ClienteFalso.Con(Fixtures.Leer("catalogo.json"));
+        var tool = new EjemploListarTool(new {DominioEjemplo}Api(cliente));
+
+        var resultado = await tool.Run(null!, null, "2026-99-99", TestContext.Current.CancellationToken);
+
+        resultado.Should().Be("'fecha_referencia' debe tener formato yyyy-MM-dd; llego '2026-99-99'.");
     }
 }
 ```
@@ -1556,7 +1604,9 @@ endpoints de gate, unit tests base, Terraform (Service Plan + Storage + Function
 de deploy encadenado tras el apply de infra, la suite **SmokeTests** con las cinco verificaciones
 canonicas del nivel 3 de la piramide de testing (handshake, tools/list vivo, tool call de lectura,
 error path del `.resx`, 401 sin key -- MEF-ADR-0048 secciones 1-2) y el reusable
-`smoke-tests-mcp.yml` con su job `smoke-tests` encadenado tras el deploy.
+`smoke-tests-mcp.yml` con su job `smoke-tests` encadenado tras el deploy. El camino valido de todo
+parametro fecha o identificador de una tool tiene su propia tool call en el smoke (MEF-ADR-0048
+seccion 2 verificacion 3) -- `ejemplo_listar` lo demuestra con `fecha_referencia`.
 
 ### SmokeTests
 
@@ -1573,13 +1623,16 @@ error path del `.resx`, 401 sin key -- MEF-ADR-0048 secciones 1-2) y el reusable
   runtime con `az functionapp keys list` (MEF-ADR-0047 decision 5, MEF-ADR-0048 seccion 4).
 - Al reemplazar `ejemplo_listar` por las tools reales del BC, actualiza los asserts **pinneados**
   de `ComposicionDelHost/` y `Ejemplo/`: el catalogo exacto de `tools/list` y el error path del
-  `.resx` son contrato, no muestreo (MEF-ADR-0048 seccion 2, verificaciones 2 y 4).
+  `.resx` son contrato, no muestreo (MEF-ADR-0048 seccion 2, verificaciones 2 y 4). Toda tool nueva
+  o modificada con un parametro fecha o identificador gana su propia tool call de camino valido en
+  el smoke (MEF-ADR-0048 seccion 2 verificacion 3, seccion 6) -- omitir el parametro o solo probar
+  el error path no cubre esa restauracion.
 
 ## Tools
 
 | Tool | Que responde | Parametros |
 |---|---|---|
-| `ejemplo_listar` | **EJEMPLO** -- catalogo de {DominioEjemplo}: id, nombre | `filtro_nombre?` |
+| `ejemplo_listar` | **EJEMPLO** -- catalogo de {DominioEjemplo}: id, nombre | `filtro_nombre?`, `fecha_referencia?` |
 
 Reemplaza `ejemplo_listar` por las tools reales de tu BC (lenguaje ubicuo, MEF-ADR-0040) antes
 de publicar este servidor.
@@ -2419,6 +2472,42 @@ public class EjemploListarSmokeTests(McpFixture mcp)
 
         resultado.Content.OfType<TextContentBlock>().Single().Text
             .Should().Be("El filtro no puede superar 100 caracteres.");
+    }
+
+    // Camino valido de fecha_referencia (MEF-ADR-0048 seccion 2 verificacion 3): la extension MCP
+    // coerciona todo string con forma de fecha antes de que la tool lo reciba, y
+    // ArgumentosCrudosMcpMiddleware lo restaura (Paso 6, "Estado de este scaffold"). El eco exacto
+    // de la fecha es la unica deteccion e2e de que ese middleware sigue activo -- ni esta tool call
+    // omitiendo el parametro ni el error path de arriba ejercitan esa restauracion.
+    [Fact]
+    [Trait("Category", "Smoke")]
+    public async Task EjemploListar_DevuelveLaFechaDeReferenciaIntacta_CuandoLaFechaEsValida()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var resultado = await mcp.Cliente.CallToolAsync(
+            "ejemplo_listar",
+            new Dictionary<string, object?> { ["fecha_referencia"] = "2026-09-01" },
+            cancellationToken: ct);
+
+        resultado.IsError.Should().NotBeTrue();
+        var texto = resultado.Content.OfType<TextContentBlock>().Single().Text;
+
+        using var json = JsonDocument.Parse(texto);
+        json.RootElement.GetProperty("fechaReferencia").GetString().Should().Be("2026-09-01");
+    }
+
+    [Fact]
+    [Trait("Category", "Smoke")]
+    public async Task EjemploListar_RespondeElMensajeDeValidacion_CuandoLaFechaDeReferenciaEsInvalida()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var resultado = await mcp.Cliente.CallToolAsync(
+            "ejemplo_listar",
+            new Dictionary<string, object?> { ["fecha_referencia"] = "2026-99-99" },
+            cancellationToken: ct);
+
+        resultado.Content.OfType<TextContentBlock>().Single().Text
+            .Should().Be("'fecha_referencia' debe tener formato yyyy-MM-dd; llego '2026-99-99'.");
     }
 }
 ```
