@@ -785,7 +785,7 @@ test -f "$REPO_ROOT/src/<RootNamespace>.Mcp.{Proposito}/Ejemplo/EjemploListarToo
 
 Si existe, **omite todo este paso**: un humano ya reemplazo la tool de ejemplo por una tool real del BC, y sobrescribirla la destruiria.
 
-Si falta, crea `Ejemplo/EjemploListarTool.cs` -- demuestra el patron completo de una tool de consulta (MEF-ADR-0047 decision 4): descripcion en lenguaje ubicuo como atributo, `readOnlyHint` via `McpMetadata`, mensajes runtime en `.resx` (MEF-ADR-0009), respuesta remodelada token-eficiente con truncado con senal y un filtro que evita listar todo sin limite.
+Si falta, crea `Ejemplo/EjemploListarTool.cs` -- demuestra el patron completo de una tool de consulta (MEF-ADR-0047 decision 4): descripcion en lenguaje ubicuo como atributo, `readOnlyHint` via `McpMetadata`, mensajes runtime en `.resx` (MEF-ADR-0009), respuesta remodelada token-eficiente con truncado con senal, un filtro que evita listar todo sin limite y un parametro de fecha declarado como `string` (MEF-ADR-0047 decision 1) validado contra su formato con su propio mensaje de error.
 
 ```csharp
 using System.Globalization;
@@ -1084,7 +1084,7 @@ public class ComposicionDelServidorTests
 }
 ```
 
-> **`ContainSingle().Which` en vez de `BeEquivalentTo([...])` para el caso de un solo elemento**: `BeEquivalentTo` tiene una sobrecarga `params` y otra `IEnumerable<TExpectation>`, y una expresion de coleccion de un elemento es convertible a las dos -- resolucion ambigua en tiempo de compilacion. `ContainSingle().Which` afirma exactamente lo mismo ("uno y solo uno, e igual a") sin esa ambiguedad. Cuando la tool de ejemplo se reemplace por varias tools reales, la forma con lista si es la adecuada, pero exige la sobrecarga de dos argumentos (`BeEquivalentTo([...], opciones => opciones.WithoutStrictOrdering())`), que desambigua por si sola.
+> **`ContainSingle().Which` en vez de `BeEquivalentTo([...])` para el caso de un solo elemento**: `BeEquivalentTo` tiene una sobrecarga `params` y otra `IEnumerable<TExpectation>`, y una expresion de coleccion de un elemento es convertible a las dos -- resolucion ambigua en tiempo de compilacion. `ContainSingle().Which` afirma exactamente lo mismo ("uno y solo uno, e igual a") sin esa ambiguedad. Para dos o mas elementos la forma con lista si es la adecuada, pero exige la sobrecarga de dos argumentos (`BeEquivalentTo([...], opciones => opciones.WithoutStrictOrdering())`), que desambigua por si sola: es la que usa el pin de propiedades de `ejemplo_listar`, y la que toma el pin del catalogo cuando la tool de ejemplo se reemplaza por varias tools reales.
 
 **3. `Ejemplo/Soporte/ClienteFalso.cs`** -- `HttpMessageHandler` falso: responde el JSON enlatado, sin red real.
 
@@ -2493,7 +2493,12 @@ public class EjemploListarSmokeTests(McpFixture mcp)
         var texto = resultado.Content.OfType<TextContentBlock>().Single().Text;
 
         using var json = JsonDocument.Parse(texto);
-        json.RootElement.GetProperty("fechaReferencia").GetString().Should().Be("2026-09-01");
+        var raiz = json.RootElement;
+        var mostrando = raiz.GetProperty("mostrando").GetInt32();
+
+        raiz.GetProperty("fechaReferencia").GetString().Should().Be("2026-09-01");
+        raiz.GetProperty("total").GetInt32().Should().BeGreaterThanOrEqualTo(mostrando);
+        raiz.GetProperty("elementos").EnumerateArray().ToList().Should().HaveCount(mostrando);
     }
 
     [Fact]
