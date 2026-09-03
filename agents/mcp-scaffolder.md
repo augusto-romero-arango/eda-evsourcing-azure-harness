@@ -1,7 +1,7 @@
 ---
 name: mcp-scaffolder
 model: sonnet
-description: Genera el proyecto de un servidor MCP `<RootNamespace>.Mcp.{Proposito}` (Azure Functions isolated worker + extension Microsoft.Azure.Functions.Worker.Extensions.Mcp, cero ProjectReference al BC, HttpClients tipados con fail-fast de arranque, OpenTelemetry con sampler configurable, RespuestaJson token-eficiente), el propagador de identidad tenant/usuario hacia las Function Apps del BC (DelegatingHandler compartido por todos los HttpClients tipados, MEF-ADR-0047 decision 6) y los componentes OAuth app-side de defensa en profundidad (PRM RFC 9728, validador de token WorkOS AuthKit, middleware con su limite estructural documentado -- MEF-ADR-0047 decision 7, MEF-ADR-0032 seccion 9) segun el estado de auth del BC, una tool de ejemplo con el patron completo (McpToolTrigger + McpMetadata + mensajes .resx + remodelado con truncado con senal + validacion con error .resx), los endpoints de gate VersionCheck/ReadyCheck, el proyecto de unit tests base (composicion por reflexion + tests de la tool de ejemplo con handler falso, del propagador de identidad y del validador de token), el Terraform del servidor (Service Plan + Storage + Function App, reutilizando el modulo `function-app` del consumidor), el workflow de deploy encadenado tras el apply de infra, la suite SmokeTests e2e (McpFixture con el SDK ModelContextProtocol.Core + las cinco verificaciones canonicas -- handshake, tools/list vivo, tool call de lectura, error path del .resx, 401 sin key) y el reusable `smoke-tests-mcp.yml` con su job encadenado tras el deploy, fiel a MEF-ADR-0047 (doctrina de servidores MCP), MEF-ADR-0032 (identidad y auth en el borde) y MEF-ADR-0048 (testing de servidores MCP). Fase 1 (issue #768) + fase 2 (issue #769) + fase 3 (issue #770) + identidad/OAuth app-side (issue #819).
+description: Genera el proyecto de un servidor MCP `<RootNamespace>.Mcp.{Proposito}` (Azure Functions isolated worker + extension Microsoft.Azure.Functions.Worker.Extensions.Mcp, cero ProjectReference al BC, HttpClients tipados con fail-fast de arranque, OpenTelemetry con sampler configurable, RespuestaJson token-eficiente), el propagador de identidad tenant/usuario hacia las Function Apps del BC (DelegatingHandler compartido por todos los HttpClients tipados, MEF-ADR-0047 decision 6) y los componentes OAuth app-side de defensa en profundidad (PRM RFC 9728, validador de token WorkOS AuthKit, middleware con su limite estructural documentado -- MEF-ADR-0047 decision 7, MEF-ADR-0032 seccion 9) segun el estado de auth del BC, el middleware que restaura el texto original de los argumentos `string` coercionados a fecha/GUID por `Microsoft.Azure.Functions.Worker.Extensions.Mcp` (siempre generado y cableado, `Azure/azure-functions-mcp-extension#129`), una tool de ejemplo con el patron completo (McpToolTrigger + McpMetadata + mensajes .resx + remodelado con truncado con senal + validacion con error .resx), los endpoints de gate VersionCheck/ReadyCheck, el proyecto de unit tests base (composicion por reflexion + tests de la tool de ejemplo con handler falso, del propagador de identidad y del validador de token), el Terraform del servidor (Service Plan + Storage + Function App, reutilizando el modulo `function-app` del consumidor), el workflow de deploy encadenado tras el apply de infra, la suite SmokeTests e2e (McpFixture con el SDK ModelContextProtocol.Core + las cinco verificaciones canonicas -- handshake, tools/list vivo, tool call de lectura, error path del .resx, 401 sin key) y el reusable `smoke-tests-mcp.yml` con su job encadenado tras el deploy, fiel a MEF-ADR-0047 (doctrina de servidores MCP), MEF-ADR-0032 (identidad y auth en el borde) y MEF-ADR-0048 (testing de servidores MCP). Fase 1 (issue #768) + fase 2 (issue #769) + fase 3 (issue #770) + identidad/OAuth app-side (issue #819).
 tools: Bash, Read, Write, Edit, Glob, Grep
 ---
 
@@ -569,7 +569,78 @@ public class MetadataRecursoProtegidoFunction(IConfiguration configuration)
 }
 ```
 
-**8. `Program.cs`** -- invoca los seams, nada mas (MEF-ADR-0029). Los componentes OAuth app-side (items 7a/7b) se cablean solo si el Paso 0 resolvio `{TenancyStrategy}` = `multi-tenant-header`; en `mono-tenant-transitorio` quedan como comentario-propuesta (CA-2 del issue #819) -- el propagador de identidad (items 6a-6c), en cambio, **siempre** se cablea, sin importar la etapa.
+**7d. `Infraestructura/ArgumentosCrudosMcpMiddleware.cs`** -- restaura el texto original de los argumentos `string` que la extension coerciona a fecha/GUID antes de que la tool los reciba (`Azure/azure-functions-mcp-extension#129`, cerrado "completed" sin preservar el texto original). **Siempre se genera** (temporal mientras la extension no corrija la coercion) y, a diferencia de los componentes OAuth app-side de los items 7a-7c, se cablea **siempre** en `Program.cs` sin importar `tenancy.strategy` -- ver item 8.
+
+```csharp
+using System.Text.Json;
+using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.Functions.Worker.Extensions.Mcp;
+using Microsoft.Azure.Functions.Worker.Middleware;
+
+namespace <RootNamespace>.Mcp.{Proposito}.Infraestructura;
+
+// DictionaryStringObjectJsonConverter.ReadString (Microsoft.Azure.Functions.Worker.Extensions.Mcp)
+// aplica TryGetDateTimeOffset/Guid.TryParse a TODO string de "arguments" antes de que la tool lo
+// reciba; con destino string, McpInputConversionHelper.ConvertArgumentToTargetType cae en
+// Convert.ToString(valor, InvariantCulture) -- "2026-09-01" llega como
+// "09/01/2026 00:00:00 +00:00". Azure/azure-functions-mcp-extension#129 cerro este comportamiento
+// como "completed" sin preservar el texto original. Este middleware reconstruye, desde el JSON
+// crudo del binding, el ToolInvocationContext que la tool recibe.
+public sealed class ArgumentosCrudosMcpMiddleware : IFunctionsWorkerMiddleware
+{
+    // Mismos valores que Constants.ToolInvocationContextKey/Constants.McpToolTriggerBindingType de
+    // la extension -- ambas internal, sin forma de referenciarlas desde este proyecto.
+    private const string ClaveContextoTool = "ToolInvocationContext";
+    private const string TipoBindingMcpToolTrigger = "mcpToolTrigger";
+
+    public async Task Invoke(FunctionContext context, FunctionExecutionDelegate next)
+    {
+        if (context.FunctionDefinition.InputBindings.Values
+                .FirstOrDefault(b => b.Type == TipoBindingMcpToolTrigger) is { } binding &&
+            context.BindingContext.BindingData.TryGetValue(binding.Name, out var valorCrudo) &&
+            valorCrudo?.ToString() is { } jsonCrudo &&
+            context.Items.TryGetValue(ClaveContextoTool, out var itemCrudo) &&
+            itemCrudo is ToolInvocationContext bindeado)
+        {
+            context.Items[ClaveContextoTool] = RestaurarTextoOriginal(bindeado, jsonCrudo);
+        }
+
+        await next(context);
+    }
+
+    // internal, no private: Paso 4 lo prueba nivel 1 sin host (FunctionContext no es instanciable;
+    // ToolInvocationContext si).
+    internal static ToolInvocationContext RestaurarTextoOriginal(ToolInvocationContext bindeado, string jsonCrudo)
+    {
+        if (bindeado.Arguments is null)
+            return bindeado;
+
+        using var documento = JsonDocument.Parse(jsonCrudo);
+
+        if (!documento.RootElement.TryGetProperty("arguments", out var argumentos) ||
+            argumentos.ValueKind != JsonValueKind.Object)
+            return bindeado;
+
+        var restaurados = new Dictionary<string, object>(bindeado.Arguments, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var propiedad in argumentos.EnumerateObject())
+        {
+            if (propiedad.Value.ValueKind == JsonValueKind.String && restaurados.ContainsKey(propiedad.Name))
+                restaurados[propiedad.Name] = propiedad.Value.GetString()!;
+        }
+
+        return new ToolInvocationContext
+        {
+            Name = bindeado.Name,
+            Arguments = restaurados,
+            SessionId = bindeado.SessionId,
+            Transport = bindeado.Transport
+        };
+    }
+}
+```
+
+**8. `Program.cs`** -- invoca los seams, nada mas (MEF-ADR-0029). Los componentes OAuth app-side (items 7a/7b) se cablean solo si el Paso 0 resolvio `{TenancyStrategy}` = `multi-tenant-header`; en `mono-tenant-transitorio` quedan como comentario-propuesta (CA-2 del issue #819) -- el propagador de identidad (items 6a-6c) y el middleware de restauracion de argumentos (item 7d), en cambio, **siempre** se cablean, sin importar la etapa.
 
 Si `{TenancyStrategy}` es `multi-tenant-header`:
 
@@ -580,6 +651,12 @@ using Microsoft.Extensions.Hosting;
 
 var builder = FunctionsApplication.CreateBuilder(args);
 builder.ConfigureFunctionsWebApplication();
+
+// Debe correr justo despues de ConfigureFunctionsWebApplication() (para que Items ya traiga el
+// ToolInvocationContext que deja FunctionsMcpContextMiddleware) y antes de cualquier middleware
+// que haga BindInputAsync<ToolInvocationContext>: ese bind cachea el ConversionResult en
+// IBindingCache bajo el nombre del parametro, y la tool recibiria el diccionario coercionado.
+builder.UseMiddleware<ArgumentosCrudosMcpMiddleware>();
 
 builder.Services.ConfigurarIdentidadTenant(builder.Configuration);
 builder.Services.ConfigurarClientesHttp(builder.Configuration);
@@ -606,6 +683,12 @@ using Microsoft.Extensions.Hosting;
 
 var builder = FunctionsApplication.CreateBuilder(args);
 builder.ConfigureFunctionsWebApplication();
+
+// Debe correr justo despues de ConfigureFunctionsWebApplication() (para que Items ya traiga el
+// ToolInvocationContext que deja FunctionsMcpContextMiddleware) y antes de cualquier middleware
+// que haga BindInputAsync<ToolInvocationContext>: ese bind cachea el ConversionResult en
+// IBindingCache bajo el nombre del parametro, y la tool recibiria el diccionario coercionado.
+builder.UseMiddleware<ArgumentosCrudosMcpMiddleware>();
 
 builder.Services.ConfigurarIdentidadTenant(builder.Configuration);
 builder.Services.ConfigurarClientesHttp(builder.Configuration);
@@ -843,6 +926,7 @@ test -f "$BASE/ComposicionDelServidorTests.cs"                && echo "composici
 test -f "$BASE/Ejemplo/EjemploListarToolTests.cs"              && echo "tool tests: EXISTE"    || echo "tool tests: FALTA"
 test -f "$BASE/Infraestructura/PropagadorIdentidadTenantHandlerTests.cs" && echo "propagador tests: EXISTE" || echo "propagador tests: FALTA"
 test -f "$BASE/Infraestructura/ValidadorTokenAuthKitTests.cs"            && echo "validador tests: EXISTE"  || echo "validador tests: FALTA"
+test -f "$BASE/Infraestructura/ArgumentosCrudosMcpMiddlewareTests.cs"    && echo "argumentos crudos tests: EXISTE" || echo "argumentos crudos tests: FALTA"
 ```
 
 Si el csproj falta, crealo:
@@ -1184,6 +1268,196 @@ internal sealed class ConfigManagerFalso : IConfigurationManager<OpenIdConnectCo
 }
 ```
 
+**9. `Infraestructura/ArgumentosCrudosMcpMiddlewareTests.cs`** -- nivel 1 de la piramide (MEF-ADR-0048 seccion 1), sin host: prueba el nucleo `RestaurarTextoOriginal` directo, `ToolInvocationContext` construido a mano y el JSON crudo del binding armado con `JsonSerializer.Serialize` (mismo limite ya documentado -- `FunctionContext` no es instanciable fuera de un host real, `ToolInvocationContext` si).
+
+```csharp
+using System.Text.Json;
+using AwesomeAssertions;
+using <RootNamespace>.Mcp.{Proposito}.Infraestructura;
+using Microsoft.Azure.Functions.Worker.Extensions.Mcp;
+
+namespace <RootNamespace>.Mcp.{Proposito}.Tests.Infraestructura;
+
+public class ArgumentosCrudosMcpMiddlewareTests
+{
+    [Fact]
+    public void RestaurarTextoOriginal_DevuelveElTextoExacto_CuandoLaExtensionCoercionoUnaFecha()
+    {
+        var bindeado = new ToolInvocationContext
+        {
+            Name = "cualquier_tool",
+            Arguments = new Dictionary<string, object> { ["fecha_inicio"] = DateTimeOffset.Parse("2026-09-01T00:00:00+00:00") }
+        };
+        var jsonCrudo = JsonSerializer.Serialize(new
+        {
+            name = "cualquier_tool",
+            arguments = new { fecha_inicio = "2026-09-01" }
+        });
+
+        var restaurado = ArgumentosCrudosMcpMiddleware.RestaurarTextoOriginal(bindeado, jsonCrudo);
+
+        restaurado.Arguments!["fecha_inicio"].Should().Be("2026-09-01");
+    }
+
+    [Fact]
+    public void RestaurarTextoOriginal_DevuelveElTextoExacto_CuandoLaExtensionCoercionoUnGuid()
+    {
+        const string guidOriginalFormatoN = "3FA85F6457174562B3FC2C963F66AFA6";
+        var bindeado = new ToolInvocationContext
+        {
+            Name = "cualquier_tool",
+            Arguments = new Dictionary<string, object> { ["identificador"] = Guid.Parse(guidOriginalFormatoN) }
+        };
+        var jsonCrudo = JsonSerializer.Serialize(new
+        {
+            name = "cualquier_tool",
+            arguments = new { identificador = guidOriginalFormatoN }
+        });
+
+        var restaurado = ArgumentosCrudosMcpMiddleware.RestaurarTextoOriginal(bindeado, jsonCrudo);
+
+        restaurado.Arguments!["identificador"].Should().Be(guidOriginalFormatoN);
+    }
+
+    [Fact]
+    public void RestaurarTextoOriginal_DejaIntactosLosEscalaresYCompuestos_CuandoNingunoEsUnaHojaDeTexto()
+    {
+        var bindeado = new ToolInvocationContext
+        {
+            Name = "cualquier_tool",
+            Arguments = new Dictionary<string, object>
+            {
+                ["cantidad"] = 5,
+                ["activo"] = true,
+                ["comentario"] = null!,
+                ["opciones"] = new Dictionary<string, object> { ["clave"] = "valor" },
+                ["etiquetas"] = new[] { "a", "b" }
+            }
+        };
+        var jsonCrudo = JsonSerializer.Serialize(new
+        {
+            name = "cualquier_tool",
+            arguments = new
+            {
+                cantidad = 5,
+                activo = true,
+                comentario = (string?)null,
+                opciones = new { clave = "valor" },
+                etiquetas = new[] { "a", "b" }
+            }
+        });
+
+        var restaurado = ArgumentosCrudosMcpMiddleware.RestaurarTextoOriginal(bindeado, jsonCrudo);
+
+        restaurado.Arguments.Should().BeEquivalentTo(bindeado.Arguments);
+    }
+
+    [Fact]
+    public void RestaurarTextoOriginal_DevuelveElMismoContexto_CuandoArgumentsEsNulo()
+    {
+        var bindeado = new ToolInvocationContext { Name = "cualquier_tool", Arguments = null };
+
+        var restaurado = ArgumentosCrudosMcpMiddleware.RestaurarTextoOriginal(
+            bindeado, """{"name":"cualquier_tool"}""");
+
+        restaurado.Should().BeSameAs(bindeado);
+    }
+
+    [Fact]
+    public void RestaurarTextoOriginal_DevuelveElMismoContexto_CuandoElJsonNoTraeArguments()
+    {
+        var bindeado = new ToolInvocationContext
+        {
+            Name = "cualquier_tool",
+            Arguments = new Dictionary<string, object> { ["fecha_inicio"] = DateTimeOffset.UtcNow }
+        };
+
+        var restaurado = ArgumentosCrudosMcpMiddleware.RestaurarTextoOriginal(
+            bindeado, """{"name":"cualquier_tool"}""");
+
+        restaurado.Should().BeSameAs(bindeado);
+    }
+
+    [Fact]
+    public void RestaurarTextoOriginal_DevuelveElMismoContexto_CuandoArgumentsDelJsonNoEsUnObjeto()
+    {
+        var bindeado = new ToolInvocationContext
+        {
+            Name = "cualquier_tool",
+            Arguments = new Dictionary<string, object> { ["fecha_inicio"] = DateTimeOffset.UtcNow }
+        };
+
+        var restaurado = ArgumentosCrudosMcpMiddleware.RestaurarTextoOriginal(
+            bindeado, """{"name":"cualquier_tool","arguments":null}""");
+
+        restaurado.Should().BeSameAs(bindeado);
+    }
+
+    [Fact]
+    public void RestaurarTextoOriginal_ResuelveLaClaveSinDistinguirMayusculas_CuandoElJsonUsaOtroCasing()
+    {
+        var bindeado = new ToolInvocationContext
+        {
+            Name = "cualquier_tool",
+            Arguments = new Dictionary<string, object> { ["Fecha_Inicio"] = DateTimeOffset.Parse("2026-09-01T00:00:00+00:00") }
+        };
+        var jsonCrudo = JsonSerializer.Serialize(new
+        {
+            name = "cualquier_tool",
+            arguments = new { fecha_inicio = "2026-09-01" }
+        });
+
+        var restaurado = ArgumentosCrudosMcpMiddleware.RestaurarTextoOriginal(bindeado, jsonCrudo);
+
+        restaurado.Arguments!["FECHA_INICIO"].Should().Be("2026-09-01");
+    }
+
+    [Fact]
+    public void RestaurarTextoOriginal_ConservaNombreSesionYTransporte_CuandoRestauraArgumentos()
+    {
+        var transporte = new HttpTransport("http-streamable");
+        var bindeado = new ToolInvocationContext
+        {
+            Name = "cualquier_tool",
+            Arguments = new Dictionary<string, object> { ["fecha_inicio"] = DateTimeOffset.Parse("2026-09-01T00:00:00+00:00") },
+            SessionId = "sesion-1",
+            Transport = transporte
+        };
+        var jsonCrudo = JsonSerializer.Serialize(new
+        {
+            name = "cualquier_tool",
+            arguments = new { fecha_inicio = "2026-09-01" },
+            sessionid = "sesion-1"
+        });
+
+        var restaurado = ArgumentosCrudosMcpMiddleware.RestaurarTextoOriginal(bindeado, jsonCrudo);
+
+        restaurado.Name.Should().Be(bindeado.Name);
+        restaurado.SessionId.Should().Be(bindeado.SessionId);
+        restaurado.Transport.Should().BeSameAs(transporte);
+    }
+
+    [Fact]
+    public void RestaurarTextoOriginal_NoAgregaClavesNuevas_CuandoElJsonTraeUnaClaveQueElBindeadoNoTiene()
+    {
+        var bindeado = new ToolInvocationContext
+        {
+            Name = "cualquier_tool",
+            Arguments = new Dictionary<string, object> { ["fecha_inicio"] = DateTimeOffset.Parse("2026-09-01T00:00:00+00:00") }
+        };
+        var jsonCrudo = JsonSerializer.Serialize(new
+        {
+            name = "cualquier_tool",
+            arguments = new { fecha_inicio = "2026-09-01", clave_extra = "no deberia agregarse" }
+        });
+
+        var restaurado = ArgumentosCrudosMcpMiddleware.RestaurarTextoOriginal(bindeado, jsonCrudo);
+
+        restaurado.Arguments.Should().ContainSingle().Which.Key.Should().Be("fecha_inicio");
+    }
+}
+```
+
 ---
 
 ## Paso 5 - Wiring en la solucion y `global.json` (CA-6)
@@ -1274,7 +1548,10 @@ ningun proyecto del BC.
 ## Estado de este scaffold
 
 Generado por `/scaffold-mcp` (fase 1 + fase 2 + fase 3): proyecto del servidor, tool de ejemplo,
-propagador de identidad y componentes OAuth app-side (seccion anterior),
+propagador de identidad, componentes OAuth app-side (seccion anterior), el middleware que restaura
+los argumentos `string` coercionados a fecha/GUID por la extension MCP
+(`Infraestructura/ArgumentosCrudosMcpMiddleware.cs`, siempre activo -- temporal mientras upstream
+no preserve el texto original, `Azure/azure-functions-mcp-extension#129`),
 endpoints de gate, unit tests base, Terraform (Service Plan + Storage + Function App), el workflow
 de deploy encadenado tras el apply de infra, la suite **SmokeTests** con las cinco verificaciones
 canonicas del nivel 3 de la piramide de testing (handshake, tools/list vivo, tool call de lectura,
