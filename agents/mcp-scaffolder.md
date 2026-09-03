@@ -579,9 +579,9 @@ using Microsoft.Azure.Functions.Worker.Middleware;
 
 namespace <RootNamespace>.Mcp.{Proposito}.Infraestructura;
 
-// DictionaryStringObjectJsonConverter (Microsoft.Azure.Functions.Worker.Extensions.Mcp) aplica
-// TryGetDateTimeOffset/Guid.TryParse a TODO string de "arguments" antes de que la tool lo reciba;
-// con destino string, McpInputConversionHelper.ConvertArgumentToTargetType cae en
+// DictionaryStringObjectJsonConverter.ReadString (Microsoft.Azure.Functions.Worker.Extensions.Mcp)
+// aplica TryGetDateTimeOffset/Guid.TryParse a TODO string de "arguments" antes de que la tool lo
+// reciba; con destino string, McpInputConversionHelper.ConvertArgumentToTargetType cae en
 // Convert.ToString(valor, InvariantCulture) -- "2026-09-01" llega como
 // "09/01/2026 00:00:00 +00:00". Azure/azure-functions-mcp-extension#129 cerro este comportamiento
 // como "completed" sin preservar el texto original. Este middleware reconstruye, desde el JSON
@@ -1379,6 +1379,21 @@ public class ArgumentosCrudosMcpMiddlewareTests
     }
 
     [Fact]
+    public void RestaurarTextoOriginal_DevuelveElMismoContexto_CuandoArgumentsDelJsonNoEsUnObjeto()
+    {
+        var bindeado = new ToolInvocationContext
+        {
+            Name = "cualquier_tool",
+            Arguments = new Dictionary<string, object> { ["fecha_inicio"] = DateTimeOffset.UtcNow }
+        };
+
+        var restaurado = ArgumentosCrudosMcpMiddleware.RestaurarTextoOriginal(
+            bindeado, """{"name":"cualquier_tool","arguments":null}""");
+
+        restaurado.Should().BeSameAs(bindeado);
+    }
+
+    [Fact]
     public void RestaurarTextoOriginal_ResuelveLaClaveSinDistinguirMayusculas_CuandoElJsonUsaOtroCasing()
     {
         var bindeado = new ToolInvocationContext
@@ -1533,9 +1548,10 @@ ningun proyecto del BC.
 ## Estado de este scaffold
 
 Generado por `/scaffold-mcp` (fase 1 + fase 2 + fase 3): proyecto del servidor, tool de ejemplo,
-propagador de identidad, componentes OAuth app-side (seccion anterior) y el middleware que
-restaura los argumentos `string` coercionados por la extension MCP
-(`Infraestructura/ArgumentosCrudosMcpMiddleware.cs`, siempre activo),
+propagador de identidad, componentes OAuth app-side (seccion anterior), el middleware que restaura
+los argumentos `string` coercionados a fecha/GUID por la extension MCP
+(`Infraestructura/ArgumentosCrudosMcpMiddleware.cs`, siempre activo -- temporal mientras upstream
+no preserve el texto original, `Azure/azure-functions-mcp-extension#129`),
 endpoints de gate, unit tests base, Terraform (Service Plan + Storage + Function App), el workflow
 de deploy encadenado tras el apply de infra, la suite **SmokeTests** con las cinco verificaciones
 canonicas del nivel 3 de la piramide de testing (handshake, tools/list vivo, tool call de lectura,
