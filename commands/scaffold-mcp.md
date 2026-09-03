@@ -101,6 +101,10 @@ Se va a generar el servidor MCP <RootNamespace>.Mcp.{Proposito} con mefisto <VER
                                                se cablean en Program.cs si tenancy.strategy =
                                                multi-tenant-header -- en mono-tenant-transitorio
                                                quedan como propuesta, CA-2 de #819)
+      ArgumentosCrudosMcpMiddleware.cs        (restaura el texto original de los argumentos string
+                                               coercionados a fecha/GUID por la extension MCP;
+                                               siempre generado y siempre cableado, sin importar
+                                               tenancy.strategy, Azure/azure-functions-mcp-extension#129)
     MetadataRecursoProtegido/MetadataRecursoProtegidoFunction.cs
                                               (PRM RFC 9728 anonimo, MEF-ADR-0032 seccion 9)
     VersionCheck.cs / ReadyCheck.cs          (endpoints de gate, MEF-ADR-0048 seccion 3)
@@ -114,6 +118,8 @@ Se va a generar el servidor MCP <RootNamespace>.Mcp.{Proposito} con mefisto <VER
                                               (headers canonicos en cada request saliente, #819)
     Infraestructura/ValidadorTokenAuthKitTests.cs
                                               (nunca lanza, degrada a "no valido", #819)
+    Infraestructura/ArgumentosCrudosMcpMiddlewareTests.cs
+                                              (nucleo RestaurarTextoOriginal, nivel 1 sin host)
 
   tests/<RootNamespace>.Mcp.{Proposito}.SmokeTests/
     Fixtures/McpFixture.cs                   (sesion MCP real con ModelContextProtocol.Core)
