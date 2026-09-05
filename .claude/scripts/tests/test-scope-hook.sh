@@ -155,7 +155,8 @@ for p in \
     ".claude/pipeline/summaries/stage-1-writer.md" \
     ".claude/pipeline/summaries/stage-2-reviewer.md" \
     ".claude/pipeline/status.json" \
-    ".claude/settings.local.json"
+    ".claude/settings.local.json" \
+    ".mefisto/pipeline/summaries/stage-1-writer.md"
 do
     # Precondicion: la ruta debe estar fuera de la allowlist Y ignorada por git.
     # Si alguna dejara de estarlo, el caso pierde sentido y hay que revisarlo.

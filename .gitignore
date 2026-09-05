@@ -1,6 +1,10 @@
 # Runtime de los pipelines internos de Mefisto (no se versiona):
 .claude/pipeline/
 
+# Estado interno canonico de Mefisto (MEF-ADR-0049 CA-3, issue #856): solo
+# estado, entero fuera del gate de scope, igual que .claude/pipeline/ arriba.
+.mefisto/
+
 # Senal transitoria del pipeline, fuera de .claude/ (MEF-ADR-0017):
 pipeline-state/
 

@@ -172,7 +172,7 @@ fi
 TMP_DIR="$(mktemp -d)"
 FAKE_MEFISTO="$TMP_DIR/fake-mefisto"
 FAKE_BIN="$TMP_DIR/bin"
-mkdir -p "$FAKE_MEFISTO/.claude-plugin" "$FAKE_MEFISTO/.claude/scripts" "$FAKE_BIN"
+mkdir -p "$FAKE_MEFISTO/.claude-plugin" "$FAKE_MEFISTO/.claude/scripts" "$FAKE_MEFISTO/src/internal/scripts/lib" "$FAKE_BIN"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 cat > "$FAKE_MEFISTO/.claude-plugin/plugin.json" <<'EOF'
@@ -182,6 +182,7 @@ cat > "$FAKE_MEFISTO/.claude-plugin/plugin.json" <<'EOF'
 }
 EOF
 cp "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" "$FAKE_MEFISTO/.claude/scripts/_mefisto-common.sh"
+cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-state.sh"
 cp "$REPO_ROOT/.claude/scripts/mefisto-tmux-pipeline.sh" "$FAKE_MEFISTO/.claude/scripts/mefisto-tmux-pipeline.sh"
 cp "$REPO_ROOT/.claude/scripts/mefisto-herdr-pipeline.sh" "$FAKE_MEFISTO/.claude/scripts/mefisto-herdr-pipeline.sh"
 (cd "$FAKE_MEFISTO" && git init -q && git -c user.email="test@example.com" -c user.name="Test" commit --allow-empty -q -m "commit inicial")
