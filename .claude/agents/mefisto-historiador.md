@@ -137,7 +137,7 @@ Ojo con el estado del shell: cada bloque `bash` corre en su propio proceso, asi 
 
 ### 1. Crear rama de trabajo si estas en main
 
-La politica del marco prohibe trabajar contra `main` directo (ver `CLAUDE.md` raiz). La rama usa la fecha de la entrada **mas reciente** entre las que estas cerrando en esta sesion, no la fecha en que corre el historiador:
+La politica del marco prohibe trabajar contra `main` directo (ver `AGENTS.md` raiz; `CLAUDE.md` es su shim de compatibilidad). La rama usa la fecha de la entrada **mas reciente** entre las que estas cerrando en esta sesion, no la fecha en que corre el historiador:
 
 ```bash
 FECHA_MAS_RECIENTE="..."  # la mayor entre las fechas de las entradas de esta sesion (nuevas o extendidas)
