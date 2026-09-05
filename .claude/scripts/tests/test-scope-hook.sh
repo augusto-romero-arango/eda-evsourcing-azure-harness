@@ -82,7 +82,11 @@ for p in \
     "changelog.d/523.added.md" \
     "commands/implement.md" \
     "skills/projections/SKILL.md" \
-    "CLAUDE.md"
+    "CLAUDE.md" \
+    "src/internal/foo.ts" \
+    ".opencode/agents/foo.md" \
+    "AGENTS.md" \
+    "opencode.json"
 do
     run_hook "$p"
     if [ "$HOOK_EXIT" -eq 0 ] && [ -z "$HOOK_STDERR" ] && [ -z "$HOOK_STDOUT" ]; then
@@ -104,7 +108,7 @@ fi
 
 echo ""
 echo "[B] Ruta FUERA de scope -> exit 2 con stderr accionable"
-for p in "src/Foo.cs" "tests/Foo.Tests/FooTests.cs" ".github/workflows/ci.yml" ".claude/harness.config.json" "infra/main.tf"; do
+for p in "src/Foo.cs" "tests/Foo.Tests/FooTests.cs" ".github/workflows/ci.yml" ".claude/harness.config.json" "infra/main.tf" ".opencode/agent/x.md" "dist/x" ".mefisto/models.json"; do
     run_hook "$p"
     if [ "$HOOK_EXIT" -eq 2 ]; then
         pass "$p -> exit 2"

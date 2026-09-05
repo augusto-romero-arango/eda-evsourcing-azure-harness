@@ -153,6 +153,30 @@ get_harness_sha() {
 #                            (issue #522): en el repo consumidor, .mcp.json en la raiz es su
 #                            propia configuracion MCP de proyecto, ruta legitima suya, no
 #                            reservada del plugin.
+#   src/internal/            Layout interno del BC bajo la arquitectura neutral de runtime
+#                            y proveedor (MEF-ADR-0049, issue #851): recetas/plantillas de
+#                            USO EXCLUSIVO de Mefisto, analogas a src/ del consumidor pero
+#                            fuera de su alcance. Registrada de antemano por el issue #852
+#                            (MEF-ADR-0019 seccion E). src/ fuera de internal/ sigue fuera de
+#                            scope (Mefisto no tiene src/ propio, solo este layout interno).
+#                            Deliberadamente NO se replica en is_path_in_consumer_blocklist:
+#                            src/ es una ruta legitima del consumidor (mismo precedente que
+#                            .mcp.json, issue #763, y .claude/settings.json, issue #522).
+#   .opencode/{agents,commands,plugins,skills}/   Adaptadores OpenCode del propio Mefisto
+#                            (MEF-ADR-0049), espejo neutral de .claude/{agents,commands,skills}/.
+#                            Solo PLURAL: OpenCode 1.18.29 acepta singular y plural por igual,
+#                            pero el generador (#854) solo emite plural y aqui solo se registra
+#                            lo que se usa. Registrada de antemano por el issue #852.
+#                            Deliberadamente NO se replica en is_path_in_consumer_blocklist:
+#                            .opencode/ es la config legitima de OpenCode del consumidor.
+#   AGENTS.md, opencode.json   Doctrina canonica neutral (AGENTS.md) y config raiz de OpenCode
+#                            (opencode.json, issue #868) -- MEF-ADR-0049. Entradas EXACTAS de
+#                            la raiz del repo, no globs, mismo precedente que .mcp.json (issue
+#                            #763) y .claude/settings.json (issue #522). Registradas de
+#                            antemano por el issue #852. Deliberadamente NO se replican en
+#                            is_path_in_consumer_blocklist: ambas son rutas legitimas del
+#                            consumidor (AGENTS.md es su propia doctrina neutral; opencode.json
+#                            su propia config de proyecto OpenCode).
 #   changelog.d/             Fragmentos de CHANGELOG/indice de ADRs (issue #380)
 #   README.md, CHANGELOG.md, CLAUDE.md, .gitignore   Gobierno del repo
 is_path_in_mefisto_scope() {
@@ -161,11 +185,13 @@ is_path_in_mefisto_scope() {
 
     case "$path" in
         commands/*|skills/*|agents/*|scripts/*|hooks/*|docs/*) return 0 ;;
+        src/internal/*) return 0 ;;
         .claude-plugin/*) return 0 ;;
         .claude/commands/*|.claude/skills/*|.claude/agents/*|.claude/scripts/*) return 0 ;;
         .claude/settings.json) return 0 ;;
+        .opencode/agents/*|.opencode/commands/*|.opencode/plugins/*|.opencode/skills/*) return 0 ;;
         .mcp.json) return 0 ;;
-        README.md|CHANGELOG.md|CLAUDE.md|.gitignore) return 0 ;;
+        README.md|CHANGELOG.md|CLAUDE.md|.gitignore|AGENTS.md|opencode.json) return 0 ;;
         changelog.d/*) return 0 ;;
         *) return 1 ;;
     esac
@@ -201,8 +227,9 @@ validate_mefisto_scope_changes() {
         echo "" >&2
         echo "Mefisto solo permite cambios en: commands/, skills/, agents/, scripts/," >&2
         echo "hooks/, docs/, .claude-plugin/, .claude/{commands,skills,agents,scripts}/," >&2
-        echo ".claude/settings.json, .mcp.json, changelog.d/, README.md, CHANGELOG.md," >&2
-        echo "CLAUDE.md, .gitignore" >&2
+        echo ".claude/settings.json, .mcp.json, src/internal/," >&2
+        echo ".opencode/{agents,commands,plugins,skills}/, AGENTS.md, opencode.json," >&2
+        echo "changelog.d/, README.md, CHANGELOG.md, CLAUDE.md, .gitignore" >&2
         return 1
     fi
 }
@@ -218,6 +245,8 @@ validate_mefisto_scope_changes() {
 #   docs/bitacora/**   Bitacora y field notes (no son cambios de comportamiento)
 #   README.md          Documentacion de gobierno
 #   CLAUDE.md          Instrucciones de gobierno
+#   AGENTS.md          Doctrina canonica neutral (MEF-ADR-0049, issue #852) -- mismo
+#                      tratamiento de gobierno que CLAUDE.md
 #   .gitignore         Configuracion de gobierno
 #
 # Todo lo demas dentro del scope de Mefisto (commands/, agents/, scripts/, hooks/,
@@ -229,7 +258,7 @@ is_path_changelog_exempt() {
 
     case "$path" in
         docs/bitacora/*) return 0 ;;
-        README.md|CLAUDE.md|.gitignore) return 0 ;;
+        README.md|CLAUDE.md|AGENTS.md|.gitignore) return 0 ;;
         *) return 1 ;;
     esac
 }
