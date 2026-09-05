@@ -68,7 +68,9 @@ done
 echo ""
 echo "[A] is_path_changelog_exempt clasifica rutas exentas vs notables"
 
-for exempt in "docs/bitacora/algo.md" "docs/bitacora/field-notes/2026-x.md" "README.md" "CLAUDE.md" ".gitignore"; do
+# AGENTS.md: doctrina canonica neutral (MEF-ADR-0049, issue #852) -- mismo
+# tratamiento de gobierno que CLAUDE.md, exenta de exigir fragmento.
+for exempt in "docs/bitacora/algo.md" "docs/bitacora/field-notes/2026-x.md" "README.md" "CLAUDE.md" "AGENTS.md" ".gitignore"; do
     if is_path_changelog_exempt "$exempt"; then
         pass "'$exempt' exento (no exige fragmento)"
     else
@@ -76,7 +78,9 @@ for exempt in "docs/bitacora/algo.md" "docs/bitacora/field-notes/2026-x.md" "REA
     fi
 done
 
-for notable in "commands/x.md" "agents/y.md" "scripts/z.sh" ".claude/scripts/w.sh" "docs/adr/mef-adr-0021-infraestructura-base.md" "hooks/hooks.json" "CHANGELOG.md"; do
+# src/internal/, .opencode/** y opencode.json estan en scope (issue #852) pero NO
+# son gobierno: cambiarlos es un cambio de comportamiento y exige fragmento.
+for notable in "commands/x.md" "agents/y.md" "scripts/z.sh" ".claude/scripts/w.sh" "docs/adr/mef-adr-0021-infraestructura-base.md" "hooks/hooks.json" "CHANGELOG.md" "src/internal/x.ts" ".opencode/agents/x.md" "opencode.json"; do
     if is_path_changelog_exempt "$notable"; then
         fail "'$notable' deberia ser NOTABLE (exige fragmento)"
     else

@@ -82,7 +82,14 @@ for p in \
     "changelog.d/523.added.md" \
     "commands/implement.md" \
     "skills/projections/SKILL.md" \
-    "CLAUDE.md"
+    "CLAUDE.md" \
+    "src/internal/foo.ts" \
+    ".opencode/agents/foo.md" \
+    ".opencode/commands/foo.md" \
+    ".opencode/plugins/foo.js" \
+    ".opencode/skills/foo/SKILL.md" \
+    "AGENTS.md" \
+    "opencode.json"
 do
     run_hook "$p"
     if [ "$HOOK_EXIT" -eq 0 ] && [ -z "$HOOK_STDERR" ] && [ -z "$HOOK_STDOUT" ]; then
@@ -104,7 +111,12 @@ fi
 
 echo ""
 echo "[B] Ruta FUERA de scope -> exit 2 con stderr accionable"
-for p in "src/Foo.cs" "tests/Foo.Tests/FooTests.cs" ".github/workflows/ci.yml" ".claude/harness.config.json" "infra/main.tf"; do
+# .mefisto/** queda deliberadamente FUERA de este bloque: el issue #856 lo anade
+# a .gitignore, y desde ese momento el hook calla por paridad con el gate final
+# (ver bloque [C]), no por la allowlist. Afirmar aqui exit 2 seria un test que se
+# rompe solo al mergear #856; su clasificacion la cubre test-guards.sh [E2], que
+# ejercita is_path_in_mefisto_scope directamente y es inmune a .gitignore.
+for p in "src/Foo.cs" "src/otro/x.sh" "tests/Foo.Tests/FooTests.cs" ".github/workflows/ci.yml" ".claude/harness.config.json" "infra/main.tf" ".opencode/x.json" ".opencode/agent/x.md" "dist/x" "sub/opencode.json" "foo.opencode.json"; do
     run_hook "$p"
     if [ "$HOOK_EXIT" -eq 2 ]; then
         pass "$p -> exit 2"
