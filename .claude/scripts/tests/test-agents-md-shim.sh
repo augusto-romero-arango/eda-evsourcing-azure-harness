@@ -3,13 +3,13 @@
 #
 # AGENTS.md es la fuente canonica de las directivas del repo (doctrina neutral a
 # runtime); CLAUDE.md queda como shim de compatibilidad que la importa via
-# `@AGENTS.md` (sintaxis de imports de Claude Code, ver Referencias en AGENTS.md).
+# `@AGENTS.md` (sintaxis de imports de Claude Code, MEF-ADR-0049 Referencias [7]).
 # Este test evita que alguien vuelva a poblar CLAUDE.md con doctrina duplicada.
 #
 #   [A] CLAUDE.md: <= 10 lineas y exactamente una linea `@AGENTS.md`.
 #   [B] AGENTS.md: existe, no esta vacio y contiene los encabezados obligatorios.
 #   [C] AGENTS.md: ninguna linea presenta a Claude Code como runtime unico (las
-#       3 frases retiradas por este issue).
+#       4 frases retiradas por este issue).
 #
 # Uso: .claude/scripts/tests/test-agents-md-shim.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -78,6 +78,7 @@ echo ""
 echo "[C] AGENTS.md no presenta a Claude Code como runtime unico"
 for frase in \
     "Claude Code carga" \
+    "Claude Code los carga" \
     "Es un **Claude Code Plugin**" \
     "Harness opinionado para Claude Code"
 do

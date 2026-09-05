@@ -1,4 +1,4 @@
-# CLAUDE.md — mefisto
+# AGENTS.md — mefisto
 
 Harness opinionado para agentes de codigo (nombre interno: `mefisto`, repo: `eda-evsourcing-azure-harness`): orquesta el desarrollo asistido de aplicaciones .NET 10 serverless en Azure con Event Driven Architecture y Event Sourcing. Claude Code se conserva como runtime compatible detras de un adaptador; OpenCode es el runtime del dogfooding interno (MEF-ADR-0049).
 
@@ -10,8 +10,8 @@ Harness opinionado para agentes de codigo (nombre interno: `mefisto`, repo: `eda
 ## Qué es este repo
 
 Empaqueta skills, agentes, pipelines bash, ADRs y hooks (ver `ls` en la raíz del repo para el
-layout exacto) que empaquetan doctrina neutral a runtime (MEF-ADR-0049); el adaptador `.claude/`
-distribuye ese contenido como **Claude Code Plugin** (ver `.claude-plugin/plugin.json`). Además incluye:
+layout exacto) con doctrina neutral a runtime (MEF-ADR-0049); el adaptador `.claude/` distribuye
+ese contenido como **Claude Code Plugin** (ver `.claude-plugin/plugin.json`). Además incluye:
 
 - Un **servidor MCP bundleado** en `.mcp.json` en la raíz del plugin (`mcpServers.microsoft-learn`, endpoint HTTP remoto de Microsoft Learn, sin autenticación — ningún secreto viaja en la configuración, MEF-ADR-0025): lo usa el `planner` para verificar documentación oficial de Azure/.NET/C# al redactar issues
 
@@ -83,8 +83,8 @@ El proyecto consumidor puede tener sus propios ADRs adicionales (sobre dominio o
 
 ### Índice temático
 
-Ver `docs/adr/INDICE-TEMATICO.md` (migrado fuera de este archivo por tamaño: era el 34% del
-CLAUDE.md raíz). Mismo régimen de edición: `/mefisto-release` es el único que la consolida,
+Ver `docs/adr/INDICE-TEMATICO.md` (migrado fuera de este archivo por tamaño: era el 34% de las
+directivas de la raíz). Mismo régimen de edición: `/mefisto-release` es el único que la consolida,
 por fragmento en `changelog.d/<issue>.adr-index.md`.
 
 ## Convenciones del marco
@@ -126,7 +126,7 @@ Mefisto mantiene **dos sets** de skills/agentes/pipelines físicamente separados
 - **Publicados** (`commands/`, `skills/`, `agents/`, `scripts/`, `hooks/`): se distribuyen vía marketplace y operan únicamente sobre archivos del consumidor.
 - **Internos** (`.claude/commands/`, `.claude/skills/`, `.claude/agents/`, `.claude/scripts/`): no se publican; el runtime de agente activo (Claude Code u OpenCode, MEF-ADR-0049) los carga al abrir este repo. Llevan prefijo `mefisto-` y operan solo sobre archivos del propio plugin.
 
-`skills/` y `.claude/skills/` son las ubicaciones de Agent Skills (MEF-ADR-0033) y ya están registradas en los gates de scope; el primero publicado es `skills/projections/` (ver "Agent Skills disponibles"), y del lado interno están `harness-config-contract` y `agent-skill-authoring` (migrados desde este mismo `CLAUDE.md`). La integridad de todo Skill nuevo (su `name` frontmatter, sus recursos de Nivel 3 y las referencias `skills:` de los agentes) la valida el bloque `[F]` de `scripts/tests/test-guards.sh`: un `skills:` mal escrito degrada en silencio, sin error visible en un pipeline headless. **Todo tipo de artefacto nuevo del plugin debe registrarse a mano** en el blocklist publicado (`is_path_in_consumer_blocklist`) y en la allowlist interna (`is_path_in_mefisto_scope`): ambos enumeran rutas explícitamente. Ese registro y el uso de la ruta son **dos PRs distintos, y el de registro va primero** — el gate que juzga un PR se carga fuera de su worktree, así que un PR que registra una ruta y la puebla a la vez se autobloquea (regla completa en MEF-ADR-0019, sección E).
+`skills/` y `.claude/skills/` son las ubicaciones de Agent Skills (MEF-ADR-0033) y ya están registradas en los gates de scope; el primero publicado es `skills/projections/` (ver "Agent Skills disponibles"), y del lado interno están `harness-config-contract` y `agent-skill-authoring` (migrados desde este mismo archivo). La integridad de todo Skill nuevo (su `name` frontmatter, sus recursos de Nivel 3 y las referencias `skills:` de los agentes) la valida el bloque `[F]` de `scripts/tests/test-guards.sh`: un `skills:` mal escrito degrada en silencio, sin error visible en un pipeline headless. **Todo tipo de artefacto nuevo del plugin debe registrarse a mano** en el blocklist publicado (`is_path_in_consumer_blocklist`) y en la allowlist interna (`is_path_in_mefisto_scope`): ambos enumeran rutas explícitamente. Ese registro y el uso de la ruta son **dos PRs distintos, y el de registro va primero** — el gate que juzga un PR se carga fuera de su worktree, así que un PR que registra una ruta y la puebla a la vez se autobloquea (regla completa en MEF-ADR-0019, sección E).
 
 La única operación cross-repo desde el consumidor hacia Mefisto es **crear drafts** (`estado:borrador`); el refinamiento y demás gestión de issues ocurre con `/mefisto-plan` dentro de este repo.
 
