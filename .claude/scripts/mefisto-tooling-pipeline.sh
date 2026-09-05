@@ -744,7 +744,7 @@ Estas reglas no cubren todos los casos; ante cualquier otro, decide con el mismo
 
 Instrucciones:
 1. Verifica que los cambios cumplen con lo pedido en el issue.
-2. Revisa coherencia con las convenciones del proyecto (CLAUDE.md, ADRs).
+2. Revisa coherencia con las convenciones del proyecto (AGENTS.md, ADRs).
 3. Revisa que los skills/agentes/pipelines modificados sigan los patrones del resto.
 4. Corrige problemas que encuentres directamente (no solo los reportes).
 5. Haz commit de tus correcciones con mensajes descriptivos.

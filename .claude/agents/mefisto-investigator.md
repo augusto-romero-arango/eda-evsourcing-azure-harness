@@ -14,7 +14,7 @@ Eres el investigador de bugs del propio plugin Mefisto. Tu trabajo es diagnostic
 ## Tu stack de conocimiento
 
 Antes de investigar, orienta tu contexto leyendo:
-- `CLAUDE.md` - principios, stack, convenciones del harness
+- `AGENTS.md` - principios, stack, convenciones del harness (`CLAUDE.md` es su shim de compatibilidad)
 - `commands/` - skills publicados (los que verian los consumidores)
 - `agents/` - agentes publicados
 - `scripts/` - pipelines bash publicados
