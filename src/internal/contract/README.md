@@ -671,3 +671,83 @@ requerido ausente; `type` fuera de `types`; `run.completed` declarando un
 `.claude/scripts/tests/test-mefisto-run-agent.sh` corre el runner
 real contra cada guion de `runtime-fake.sh` y valida ambas dimensiones a la
 vez sobre su propia salida.
+
+## Abrir Mefisto con OpenCode (issue #868)
+
+Config raiz para que el checkout del propio plugin -- rama principal o
+cualquier worktree -- cargue localmente sus agentes/comandos internos con
+OpenCode, sin instalar el plugin publicado ni fijar proveedor/modelo
+(MEF-ADR-0049 CA-5). `opencode.json`, en la raiz del repo, es la unica pieza
+de configuracion de proyecto que introduce este issue:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json"
+}
+```
+
+- **Sin `plugin`**: el scope temprano en OpenCode no necesita un
+  `.opencode/plugins/*.js` -- lo cubre el `edit` deny-por-defecto del bloque
+  `permission` por agente (MEF-ADR-0049 decision 5, issue #863, ver "Scope
+  temprano en OpenCode" arriba); no hay razon para declarar `plugin` aqui
+  tampoco.
+- **Sin `instructions`**: verificado contra la doc publica
+  (<https://opencode.ai/docs/rules/>) y confirmado leyendo el binario OpenCode
+  1.18.29 (mismo criterio de verificacion que el resto de este contrato):
+  `Instruction.systemPaths` recorre los candidatos de proyecto
+  `["AGENTS.md", "CLAUDE.md", "CONTEXT.md"]` y corta (`break`) en el primero
+  con alguna coincidencia, de modo que la resolucion es "el primero que existe
+  gana" -- si `AGENTS.md` esta presente, `CLAUDE.md` **ni se lee** -- no una
+  carga aditiva de ambos archivos. La evidencia queda registrada en
+  `docs/testing/agents-md-shim-smoke.md`. Como este repo ya tiene `AGENTS.md` como fuente canonica
+  (MEF-ADR-0049 decision 3, issue #855), declarar `instructions: ["AGENTS.md"]`
+  seria redundante: OpenCode ya lo descubre por convencion, sin config
+  explicita. Si una version futura de OpenCode cambiara esa precedencia a
+  aditiva, `instructions: ["AGENTS.md"]` acotaria la carga a un solo archivo.
+- **Sin `provider`, `model`, `permission` global, tokens ni rutas al auth
+  store**: el runtime resuelve proveedor/modelo desde la config global del
+  usuario (`~/.config/opencode/opencode.json`, fuera de este repo) y las
+  credenciales por su cuenta (MEF-ADR-0049 decision 5); los permisos van por
+  agente (`permission` en cada `.opencode/agents/*.md` generado, issue #862),
+  nunca a nivel de proyecto.
+- **`MEFISTO_RUNTIME` no vive aqui**: `opencode.json` no tiene mecanismo de
+  entorno. Lo antepone cada comando generado en el momento de invocar un
+  script (`{{mefisto:run}}`, issue #867): `MEFISTO_RUNTIME=opencode
+  ./.claude/scripts/<script>`.
+
+### Que descubre OpenCode al abrir este repo
+
+Sin ninguna instalacion adicional, OpenCode 1.18.29 descubre en la raiz (o en
+cualquier worktree):
+
+| Ruta | Contenido |
+|---|---|
+| `.opencode/agents/*.md` | Agentes internos generados (#865): hoy `mefisto-{planner,investigator,historiador}` |
+| `.opencode/commands/*.md` | Los diez comandos internos generados (#866/#867), disponibles como `/mefisto-*` |
+| `AGENTS.md` | Directivas canonicas del repo (MEF-ADR-0049 decision 3) |
+| `.claude/skills/*/SKILL.md` | Agent Skills internos, ruta Claude-compatible que OpenCode ya reconoce nativamente (MEF-ADR-0049 seccion 2) |
+
+`opencode agent list` lista los agentes; `opencode debug config` expone el
+resto de la config resuelta (comandos incluidos, bajo `.command`).
+
+Claude Code, en el mismo checkout, sigue sin leer `opencode.json`: sus
+adaptadores (`.claude/agents/`, `.claude/commands/`, `CLAUDE.md` via el shim
+`@AGENTS.md`) son independientes de esta config (CA-6) -- `scripts/tests/test-guards.sh`
+y `.claude/scripts/tests/test-agents-md-shim.sh` lo verifican.
+
+### Chequeo local
+
+```bash
+.claude/scripts/tests/test-opencode-discovery.sh
+```
+
+Valida, sin invocar ningun modelo: las fuentes neutrales de agentes/comandos
+(`validate-internal-artifacts.sh`), que el generador este en `--check` (sin
+divergencias entre fuente y adaptadores versionados), que `opencode.json` y
+`AGENTS.md` existan, que `opencode.json` no declare mas claves que `$schema`
+(ni `plugin`/`provider`/`model`/`permission`/tokens/API keys/auth store), que
+ningun comando de ejecucion que use `{{mefisto:run}}` pierda el prefijo
+`MEFISTO_RUNTIME=opencode`, y que cada agente traiga su bloque `permission`
+con `external_directory` en `deny`. Si el CLI `opencode` esta instalado,
+ademas corre `opencode agent list` y `opencode debug config` para confirmar
+el descubrimiento real; si no, omite esos pasos con un aviso.
