@@ -42,8 +42,9 @@
 # Portabilidad (CA-6): bash 3.2 aborta con "unbound variable" al expandir un
 # array vacio como "${a[@]}" bajo `set -u` (bash 4.4 lo arreglo, pero macOS
 # sigue trayendo 3.2.57 -- MEF-ADR-0049, Consecuencias). Por eso todo recorrido
-# de FILES/GENERATED_RELPATHS usa ${a[@]+"${a[@]}"}: el caso vacio es el normal
-# hoy, con src/internal/{agents,commands} todavia sin poblar (#865-#867).
+# de FILES/GENERATED_RELPATHS usa ${a[@]+"${a[@]}"}: la fuente neutral ya esta
+# poblada (#865, #866), pero el caso vacio sigue siendo alcanzable -- los tests
+# corren el generador contra un --out y un arbol de fuentes propios.
 
 set -uo pipefail
 export LC_ALL=C

@@ -17,6 +17,11 @@
 #         coinciden byte-a-byte con lo que la fuente neutral produce (CA-1).
 #   [claude-output] La salida Claude de los cuatro comandos `fast` lleva
 #         `model: "haiku"`; la de `fix-review` (`deep`) omite `model:` (CA-2).
+#   [guard] El bloque del guard inverso (`.claude-plugin/plugin.json`) es
+#         identico byte-a-byte entre la salida Claude y la OpenCode de cada
+#         uno de los cinco comandos (CA-2).
+#   [ca-5] Ninguna fuente cita `CLAUDE.md` como referencia de gobierno: si
+#         aparece, la linea debe describirlo como shim de compatibilidad.
 #   [command-path] mefisto-bitacora encadena mefisto-merge via
 #         `{{mefisto:command-path}}`: cada salida apunta a su propio
 #         directorio de comandos (CA-4).
@@ -120,22 +125,65 @@ for pair in $declare_pairs; do
     fi
 done
 
-for pattern in "${FORBIDDEN_PATTERNS[@]}"; do
-    for id in $COMMAND_IDS; do
-        for out_file in "$REPO_ROOT/.claude/commands/$id.md" "$REPO_ROOT/.opencode/commands/$id.md"; do
-            [ -f "$out_file" ] || continue
-            # Las salidas SI referencian su propio runtime y sus propios
-            # directorios (los introduce el generador) -- lo que CA-3 prohibe
-            # es que la salida Claude mencione rutas de OpenCode y viceversa.
+# Las salidas SI referencian su propio runtime y su propio directorio de
+# comandos (los introduce el generador). Lo que CA-3 prohibe en una salida es
+# (a) que nombre el directorio de comandos del OTRO runtime, (b) que la salida
+# OpenCode conserve la invocacion `claude --agent` de la variante Claude, y
+# (c) que cualquiera de las dos siga citando `.claude/pipeline` o
+# `.claude/agents` -- las dos rutas que este issue reemplazo por
+# `.mefisto/pipeline` y `src/internal/agents`.
+cross_ok=1
+for id in $COMMAND_IDS; do
+    for out_file in "$REPO_ROOT/.claude/commands/$id.md" "$REPO_ROOT/.opencode/commands/$id.md"; do
+        [ -f "$out_file" ] || { fail "no existe la salida generada $out_file"; cross_ok=0; continue; }
+        if [[ "$out_file" == *".opencode/"* ]]; then
+            other_dir=".claude/commands"
+            if grep -qF "claude --agent" "$out_file" 2>/dev/null; then
+                fail "$out_file: conserva 'claude --agent' (invocacion de la variante Claude)"
+                cross_ok=0
+            fi
+        else
             other_dir=".opencode/commands"
-            [[ "$out_file" == *".opencode/"* ]] && other_dir=".claude/commands"
-            if grep -qF "$other_dir" "$out_file" 2>/dev/null; then
-                fail "$out_file: menciona '$other_dir' (deberia apuntar solo a su propio directorio)"
+        fi
+        if grep -qF "$other_dir" "$out_file" 2>/dev/null; then
+            fail "$out_file: menciona '$other_dir' (deberia apuntar solo a su propio directorio)"
+            cross_ok=0
+        fi
+        for stale in ".claude/pipeline" ".claude/agents"; do
+            if grep -qF "$stale" "$out_file" 2>/dev/null; then
+                fail "$out_file: sigue citando '$stale' (CA-3)"
+                cross_ok=0
             fi
         done
     done
 done
-pass "cada salida generada solo referencia su propio directorio de comandos"
+[ "$cross_ok" -eq 1 ] && pass "cada salida generada referencia solo su propio runtime y ninguna ruta reemplazada por CA-3"
+
+echo ""
+echo "[guard] CA-2: el bloque del guard inverso es identico en ambas salidas de cada comando"
+for id in $COMMAND_IDS; do
+    claude_guard=$(sed -n '/^\[ -f "\$REPO_ROOT\/\.claude-plugin\/plugin\.json" \]/,/^}$/p' "$REPO_ROOT/.claude/commands/$id.md" 2>/dev/null)
+    opencode_guard=$(sed -n '/^\[ -f "\$REPO_ROOT\/\.claude-plugin\/plugin\.json" \]/,/^}$/p' "$REPO_ROOT/.opencode/commands/$id.md" 2>/dev/null)
+    if [ -n "$claude_guard" ] && [ "$claude_guard" = "$opencode_guard" ]; then
+        pass "$id: guard inverso presente e identico en ambos adaptadores"
+    else
+        fail "$id: guard inverso ausente o divergente entre .claude/commands y .opencode/commands"
+    fi
+done
+
+echo ""
+echo "[ca-5] Las referencias de gobierno usan AGENTS.md; CLAUDE.md solo como shim de compatibilidad"
+ca5_ok=1
+for src in "${ALL_SOURCES[@]}"; do
+    while IFS= read -r hit; do
+        [ -n "$hit" ] || continue
+        case "$hit" in
+            *shim*) ;;
+            *) fail "$(basename "$src"): cita CLAUDE.md fuera de un 'shim de compatibilidad': $hit"; ca5_ok=0 ;;
+        esac
+    done < <(grep -nF 'CLAUDE.md' "$src" 2>/dev/null)
+done
+[ "$ca5_ok" -eq 1 ] && pass "ninguna fuente cita CLAUDE.md como fuente de gobierno"
 
 echo ""
 echo "[claude-output] model: \"haiku\" en los cuatro fast; fix-review sin model:"

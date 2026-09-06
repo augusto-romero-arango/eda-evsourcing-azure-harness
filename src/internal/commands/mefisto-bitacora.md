@@ -4,7 +4,8 @@
   "id": "mefisto-bitacora",
   "description": "Orquesta el ciclo completo de la bitacora del propio plugin Mefisto: invoca al agente `mefisto-historiador` y, si termina con un PR creado, encadena el merge automaticamente sobre ese PR.",
   "profile": "fast",
-  "agent": "mefisto-historiador"
+  "agent": "mefisto-historiador",
+  "arguments": "[YYYY-MM-DD]"
 }
 ---
 
@@ -61,8 +62,15 @@ El contrato del historiador (su propia seccion "Al terminar") es reportar explic
 Con el numero de PR verificado, lee integramente el `Proceso` de `/mefisto-merge` y ejecutalo para ese PR. El skill interno vive en el repo activo, asi que se lee desde la raiz del propio repo -- resuelta **en este mismo bloque**, porque cada bloque `bash` corre en su propio proceso y el `REPO_ROOT` de la pre-condicion no sobrevive hasta aca:
 
 ```bash
-cat "$(git rev-parse --show-toplevel)/{{mefisto:command-path mefisto-merge}}"
+MERGE_SKILL="$(git rev-parse --show-toplevel)/{{mefisto:command-path mefisto-merge}}"
+[ -f "$MERGE_SKILL" ] || {
+    echo "ERROR: no existe $MERGE_SKILL -- /mefisto-merge todavia no esta disponible para este runtime."
+    exit 1
+}
+cat "$MERGE_SKILL"
 ```
+
+Si el bloque imprime `ERROR`, reporta el PR verificado en el paso 2 y **detente sin mergear**: sin el `Proceso` de `/mefisto-merge` a la vista no hay forma de delegarle el merge, y este skill nunca lo reimplementa (ver Reglas).
 
 Ejecuta su `Proceso` completo (validar el PR, mostrar resumen, mergear con `gh pr merge --squash --delete-branch`, reportar) tal cual, con el numero de PR del paso 2 como su `$ARGUMENTS` -- su `## Entrada` queda cubierta por ese numero, y su pre-condicion "estas en el repo de Mefisto" por la de este skill (misma verificacion). No pidas ninguna confirmacion adicional antes de mergear -- el usuario ya autorizo el ciclo completo al escribir `/mefisto-bitacora` explicitamente.
 

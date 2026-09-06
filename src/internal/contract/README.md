@@ -9,9 +9,12 @@ generador consume estos archivos `.md` y produce `.claude/{agents,commands}/*.md
 consumidor lo adopte**: vive enteramente del lado interno del propio plugin
 Mefisto (MEF-ADR-0019).
 
-Ningun agente ni comando real de `.claude/{agents,commands}/` esta migrado
-todavia a este formato: eso es alcance de #865-#867, y hasta entonces
-`src/internal/{agents,commands}/` esta vacio.
+Estado de la migracion: los tres agentes internos (#865) y los cinco comandos
+de analisis y seguimiento -- `mefisto-{plan,bug,bitacora,work-status,fix-review}`
+(#866) -- ya nacen de este formato. Los comandos de ejecucion
+(`mefisto-{tooling,tooling-verbose,sequential,merge,release}`) siguen escritos
+a mano en `.claude/commands/` hasta #867; el `--check` del generador los
+tolera porque no llevan el marcador de generado.
 
 ## Formato de un artefacto
 
