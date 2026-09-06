@@ -213,9 +213,18 @@ skills: [\"agent-skill-authoring\",\"comment-cleanup\"]
 Cuerpo de prueba."
 assert_eq "$EXPECTED_CLAUDE_AGENT" "$(cat "$OUT_BASIC/.claude/agents/mefisto-fx-agent-basic.md" 2>/dev/null)" "agente Claude: contenido exacto"
 
+# El bloque `permission` esperado se DERIVA del adaptador (con el mismo
+# mapping que consume el generador) en vez de repetir aqui sus ~3 KB de JSON:
+# lo que este check fija es el LAYOUT del frontmatter -- orden de los campos y
+# `permission` como flow mapping de una sola linea (issue #862). El contenido
+# del bloque lo cubre .claude/scripts/tests/test-opencode-permissions.sh, que
+# es tambien el unico lugar donde hay que tocar tests si el mapping cambia.
+source "$LIB_DIR/adapter-opencode.sh"
+EXPECTED_OPENCODE_PERMISSION_BASIC="$(opencode_permission_json "$SRC_DIR/mefisto-fx-agent-basic.md" '["read","edit"]' "subagent")"
 EXPECTED_OPENCODE_AGENT="---
 description: \"Agente de prueba minimo para el generador de adaptadores (issue #854).\"
 mode: \"subagent\"
+permission: $EXPECTED_OPENCODE_PERMISSION_BASIC
 ---
 <!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh desde $SRC_DIR/mefisto-fx-agent-basic.md. No editar a mano. -->
 

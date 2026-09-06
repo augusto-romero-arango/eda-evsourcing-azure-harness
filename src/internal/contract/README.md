@@ -121,7 +121,7 @@ adaptador por runtime en `src/internal/scripts/lib/adapter-{claude,opencode}.sh`
 | `id` (comando) | -- | -- (el nombre lo da el archivo) |
 | `description` | `description` | `description` |
 | `mode` (agente) | -- (lo ignora) | `mode` |
-| `capabilities` | `tools` (agente) / `allowed-tools` (comando) | -- (diferido a #862) |
+| `capabilities` | `tools` (agente) / `allowed-tools` (comando) | `permission` (solo agente, issue #862) |
 | `skills` | `skills` (MEF-ADR-0033) | -- |
 | `agent` (comando) | -- (lo resuelve la directiva de body) | `agent` + `subtask: true` |
 | `arguments` | `argument-hint` | -- (OpenCode no tiene equivalente) |
@@ -129,9 +129,9 @@ adaptador por runtime en `src/internal/scripts/lib/adapter-{claude,opencode}.sh`
 | body | body, tras el marcador de generado | body (`template`), tras el marcador |
 
 Un `--` significa que ese runtime no recibe el campo: o no tiene un equivalente
-(`argument-hint`, `skills`), o lo ignora (`mode` en Claude Code), o su emision
-esta diferida a un issue de seguimiento (`tools`/`permission` de OpenCode ->
-#862). Ningun campo se emite "por si acaso": lo que no esta en esta tabla, el
+(`argument-hint`, `skills`, `tools` de OpenCode -- no tiene una restriccion
+declarativa de tools mas alla de `permission`), o lo ignora (`mode` en Claude
+Code). Ningun campo se emite "por si acaso": lo que no esta en esta tabla, el
 generador no lo escribe.
 
 ### `profile` -> `model` de Claude Code (MEF-ADR-0049 CA-4 enmendada, issue #857)
@@ -199,6 +199,75 @@ lo necesite trae consigo la decision.
 
 Las tools se concatenan en el orden en que las capacidades aparecen en la
 fuente: `["read", "edit"]` -> `tools: "Read, Glob, Grep, Edit, Write"`.
+
+### `capabilities` -> `permission` de OpenCode (issue #862, MEF-ADR-0049 decision 5)
+
+Solo agentes (los comandos de OpenCode no declaran `permission`: enrutan a
+traves de un agente via `agent`). `opencode run --auto` aprueba todo lo que
+quedaria en `ask` y solo respeta `deny` -- headless sin un bloque `permission`
+cerrado por defecto no aisla nada. El mapping declarativo
+`src/internal/contract/opencode-permissions.json` traduce cada capacidad al
+vocabulario de 17 claves verificado contra el binario **OpenCode 1.18.29**
+(`bash`, `edit`, `write`, `patch`, `read`, `list`, `glob`, `grep`, `question`,
+`skill`, `task`, `lsp`, `todowrite`, `websearch`, `webfetch`,
+`external_directory`, `doom_loop`) -- distinto de la doc publica
+(<https://opencode.ai/docs/permissions/>), que funde `write`/`patch` bajo
+`edit`. **Toda clave recibe un valor explicito**, nunca hereda un default
+global; un agente con `capabilities: []` (o sin el campo) obtiene las 17
+claves en `deny`.
+
+| Capacidad (o `mode`) | Claves de `permission` | Regla |
+|---|---|---|
+| (siempre) | `external_directory`, `doom_loop` | `deny`, sin excepcion |
+| `mode` del agente | `question` | `allow` solo si `mode: primary`; `deny` en `subagent`/`all` (headless no tiene a quien preguntar) |
+| `web` | `webfetch`, `websearch` | `allow` si esta declarada, si no `deny` |
+| `skill` | `skill` | idem |
+| `task` | `task` | idem |
+| `read` | `list`, `glob`, `grep`, `lsp`, `todowrite` | idem |
+| `shell` | `bash` (mapa de patrones) | `{"*": "deny"}` si no esta declarada; si esta, `"*": "deny"` + patrones de `git`, `gh`, `jq`, coreutils de lectura (con y sin argumentos), los scripts del repo bajo `scripts/tests/`, `.claude/scripts/` y `src/internal/scripts/` (como `bash <script>`, como invocacion directa y en la forma exacta que emite `{{mefisto:run}}`, `MEFISTO_RUNTIME=opencode ./.claude/scripts/*`), `shasum`, `mkdir`, `date`, `mktemp`, `diff` en `allow` -- `rm`, `curl`, `ssh`, `scp`, `sudo`, `npm`, `pip`, `brew`, `git push --force*`, `gh repo delete*` quedan `deny` aunque `shell` este presente |
+| `edit` | `edit`, `write`, `patch` (mismo mapa de patrones) | `{"*": "deny"}` si no esta declarada; si esta, `"*": "deny"` + las rutas de `is_path_in_mefisto_scope` (`.claude/scripts/_mefisto-common.sh`) mas `.mefisto/pipeline/summaries/**` y `.claude/pipeline/summaries/**` en `allow` |
+| `read` | `read` (mapa de patrones) | `{"*": "deny"}` si no esta declarada; si esta, `"*": "allow"` + `.env`, `.env.*`, `**/.env`, `**/.env.*`, `**/auth.json`, `**/.aws/**`, `**/.ssh/**`, `~/.local/share/opencode/**`, `~/.claude/**` en `deny` |
+| `mcp` | -- | **sin mapeo**: el generador aborta con `capacidad mcp sin mapeo OpenCode` (mismo criterio que `mcp` en la tabla Claude de arriba) |
+
+OpenCode evalua cada mapa de patrones en el orden declarado y **gana la
+ultima coincidencia**: por eso el catch-all `"*"` va siempre primero y las
+reglas especificas despues, y el emisor (`opencode_permission_json` en
+`adapter-opencode.sh`) preserva ese orden (`jq` sin `-S`) al construir el
+objeto. `src/internal/scripts/lib/opencode-permission-eval.jq` reproduce
+unicamente esa regla de orden para los tests (no el motor real de OpenCode);
+`.claude/scripts/tests/test-opencode-permissions.sh` lo ejercita, incluida
+una paridad `edit` vs `is_path_in_mefisto_scope` sobre una muestra de rutas.
+Si el dogfooding (#874) revela una discrepancia con OpenCode real, se corrige
+el mapping, nunca el test.
+
+Cuatro detalles de la semantica de 1.18.29 que condicionan la **forma** de los
+patrones (verificados leyendo el bundle del binario; el mapping los repite en
+su `$comment_semantica_verificada` para que sobrevivan a este README):
+
+1. La evaluacion es `findLast(regla => match(permiso, regla.permiso) &&
+   match(candidato, regla.patron))` con default `{action: "ask"}`. De ahi las
+   dos reglas de diseno: catch-all primero (gana la ultima coincidencia) y
+   **valor explicito en toda clave** -- lo que no matchea ninguna regla queda
+   en `ask`, y `--auto` auto-aprueba todo `ask`. Una clave omitida no es un
+   default seguro: es un permiso abierto.
+2. El candidato de `bash` no es el nombre del programa sino el **texto
+   completo de cada nodo `command`** del arbol tree-sitter (un candidato por
+   comando de la tuberia, prefijo de asignaciones de entorno incluido). Por
+   eso los coreutils llevan su forma desnuda ademas de `X *`, y los scripts
+   del repo llevan la forma que emite `{{mefisto:run}}`. El anclaje al inicio
+   del texto es deliberado en los `deny` (`rm *` no matchea `FOO=1 rm x`), asi
+   que ningun `allow` empieza con un comodin que pueda absorber un prefijo de
+   entorno arbitrario.
+3. El candidato de `edit` y `read` es la **ruta relativa al worktree** en
+   POSIX. Por eso los patrones de ruta son relativos; los que empiezan por `~`
+   se expanden a `$HOME` y nunca casan con un candidato relativo -- quedan
+   como defensa en profundidad, y lo que de verdad contiene el acceso fuera
+   del worktree es `external_directory: deny`.
+4. `write` y `patch` son **inertes** en 1.18.29: las tools `edit`, `write` y
+   `apply_patch` preguntan todas bajo el permiso `edit`, que es el que manda.
+   Se emiten igual (CA-1 pide valor explicito en todo el vocabulario, y si
+   OpenCode separa las claves no quedan abiertas), con el mismo mapa de rutas
+   que `edit` para que no puedan divergir.
 
 ### Directivas de body
 
