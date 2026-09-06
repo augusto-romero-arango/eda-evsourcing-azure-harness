@@ -2,15 +2,16 @@
 
 Fuente de verdad del formato que todo agente/comando de
 `src/internal/{agents,commands}/` debe cumplir (MEF-ADR-0049 CA-6, issue
-#853). Es la **interfaz canonica del generador de adaptadores** (issue #854,
-todavia sin implementar): el generador consumira estos archivos `.md` y
-producira `.claude/agents/*.md` + `.opencode/agent/*.md` (y sus equivalentes
-de comando). **No es un formato para que un proyecto consumidor lo adopte**:
-vive enteramente del lado interno del propio plugin Mefisto (MEF-ADR-0019).
+#853). Es la **interfaz canonica del generador de adaptadores**
+(`src/internal/scripts/generate-internal-adapters.sh`, issue #854): el
+generador consume estos archivos `.md` y produce `.claude/{agents,commands}/*.md`
++ `.opencode/{agents,commands}/*.md`. **No es un formato para que un proyecto
+consumidor lo adopte**: vive enteramente del lado interno del propio plugin
+Mefisto (MEF-ADR-0019).
 
-Este issue (#853) no migra ningun agente ni comando real de
-`.claude/{agents,commands}/` a este formato (eso es alcance de #865-#867) ni
-implementa el generador (#854): solo fija el contrato y su validador.
+Ningun agente ni comando real de `.claude/{agents,commands}/` esta migrado
+todavia a este formato: eso es alcance de #865-#867, y hasta entonces
+`src/internal/{agents,commands}/` esta vacio.
 
 ## Formato de un artefacto
 
@@ -108,6 +109,91 @@ responsabilidad de un issue de seguimiento (#862), no de este contrato:
 | `skill` | Invocar Agent Skills (progressive disclosure, MEF-ADR-0033) |
 | `task` | Delegar trabajo en un subagente |
 | `mcp` | Invocar tools expuestas por un servidor MCP |
+
+## Mapeo campo neutral -> campo por runtime
+
+Lo aplica `src/internal/scripts/generate-internal-adapters.sh` (issue #854), un
+adaptador por runtime en `src/internal/scripts/lib/adapter-{claude,opencode}.sh`.
+
+| Campo neutral | Claude Code | OpenCode 1.18.29 |
+|---|---|---|
+| `id` (agente) | `name` | -- (el nombre lo da el archivo) |
+| `id` (comando) | -- | -- (el nombre lo da el archivo) |
+| `description` | `description` | `description` |
+| `mode` (agente) | -- (lo ignora) | `mode` |
+| `capabilities` | `tools` (agente) / `allowed-tools` (comando) | -- (diferido a #862) |
+| `skills` | `skills` (MEF-ADR-0033) | -- |
+| `agent` (comando) | -- (lo resuelve la directiva de body) | `agent` + `subtask: true` |
+| `arguments` | `argument-hint` | -- (OpenCode no tiene equivalente) |
+| `profile` | -- (diferido a #857) | -- (diferido a #857) |
+| body | body, tras el marcador de generado | body (`template`), tras el marcador |
+
+Un `--` significa que ese runtime no recibe el campo: o no tiene un equivalente
+(`argument-hint`, `skills`), o lo ignora (`mode` en Claude Code), o su emision
+esta diferida a un issue de seguimiento (`profile` -> #857; `tools`/`permission`
+de OpenCode -> #862). Ningun campo se emite "por si acaso": lo que no esta en
+esta tabla, el generador no lo escribe.
+
+### `capabilities` -> `tools`/`allowed-tools` de Claude Code
+
+| Capacidad | Tools emitidas |
+|---|---|
+| `read` | `Read, Glob, Grep` |
+| `edit` | `Edit, Write` |
+| `shell` | `Bash` |
+| `web` | `WebFetch, WebSearch` |
+| `skill` | `Skill` |
+| `task` | `Task` |
+| `mcp` | **sin mapeo**: el generador aborta con `capacidad mcp sin mapeo Claude definido` |
+
+`mcp` aborta a proposito en vez de degradar a "sin tools": ningun artefacto
+interno lo declara todavia, y un mapeo inventado hoy (`mcp__*` con que scope?)
+seria una decision de seguridad tomada sin caso de uso. El primer artefacto que
+lo necesite trae consigo la decision.
+
+Las tools se concatenan en el orden en que las capacidades aparecen en la
+fuente: `["read", "edit"]` -> `tools: "Read, Glob, Grep, Edit, Write"`.
+
+### Directivas de body
+
+Unico mecanismo por el que un body neutral referencia un runtime o un script
+sin nombrarlos (el validador rechaza `claude`/`opencode` en el body, ver
+arriba). Cada adaptador las traduce; **una directiva `{{mefisto:...}}`
+desconocida aborta la generacion**, nunca se copia tal cual.
+
+| Directiva | Claude Code | OpenCode |
+|---|---|---|
+| `{{mefisto:launch-agent <id>}}` (linea completa) | bloque bash con `claude --agent <id> "$ARGUMENTS"` | frontmatter `agent: <id>` + `subtask: true`, y la frase ``Actua como `<id>` con este mensaje inicial: $ARGUMENTS`` en lugar de la directiva |
+| `{{mefisto:run <script.sh> <args>}}` | `MEFISTO_RUNTIME=claude ./.claude/scripts/<script.sh> <args>` | `MEFISTO_RUNTIME=opencode ./.claude/scripts/<script.sh> <args>` |
+| `{{mefisto:command-path <id>}}` | `.claude/commands/<id>.md` | `.opencode/commands/<id>.md` |
+
+`{{mefisto:run}}` apunta a `.claude/scripts/` en **ambos** runtimes: esos shims
+son la superficie estable de invocacion (#864), y lo que cambia entre runtimes
+es la variable `MEFISTO_RUNTIME` que reciben, no su ruta.
+
+`{{mefisto:launch-agent}}` solo se reconoce cuando ocupa una linea completa
+(el frontmatter `agent:` de OpenCode es por-archivo, no por-ocurrencia); las
+otras dos se traducen en el sitio exacto de la linea, para poder anidarlas
+(`cat "{{mefisto:command-path <id>}}"`).
+
+## Marcador de generado y `--check`
+
+Cada archivo generado lleva, como primera linea de su body, exactamente:
+
+```
+<!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh desde <ruta-fuente>. No editar a mano. -->
+```
+
+Sin fecha ni hash: el determinismo (misma fuente -> mismos bytes) es lo que
+hace verificable a `--check`, y un timestamp lo romperia en cada corrida.
+
+`generate-internal-adapters.sh --check` no escribe nada -- ni siquiera el
+directorio de salida: genera en un temporal y compara contra lo versionado,
+imprimiendo una linea `<ruta>: faltante|distinta|huerfana` por divergencia y
+saliendo con exit 1. *Huerfana* es un archivo **con** el marcador cuya fuente
+ya no existe. Un archivo **sin** marcador se tolera (es de autoria manual):
+es la toleracion transitoria que sostiene a `.claude/{agents,commands}/`
+mientras #865-#867 migran, y que #873 retira.
 
 ## Subconjunto de JSON Schema soportado
 
