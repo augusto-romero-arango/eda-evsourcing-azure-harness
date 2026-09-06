@@ -19,8 +19,9 @@
 #   mefisto-tooling-pipeline.sh (bloques 11-14) -- --models se resuelve ANTES
 #       de crear el worktree (CA-1: un malformado no debe dejar un worktree a
 #       medias), el mensaje de abort, el wiring de run_agent (resolve_stage_model
-#       por clave exacta, defaults 'writer'/'sonnet' y 'reviewer'/'opus' intactos)
-#       y la ayuda del script.
+#       por clave exacta sigue ganando, y sin match cae a mefisto_resolve_model
+#       por perfil -- balanced para writer/merge, deep para reviewer -- ya sin
+#       los defaults fijos sonnet/opus, issue #910) y la ayuda del script.
 #   mefisto-tmux-pipeline.sh (bloques 15-18) -- --tooling reenvia --models
 #       intacto al send-keys (con comillas simples, CA-3), se combina con
 #       --from-stage, --models sin valor aborta, y --batch lo rechaza
@@ -142,16 +143,27 @@ else
 fi
 
 echo ""
-echo "[13] run_agent aplica resolve_stage_model por clave exacta, defaults intactos"
-if grep -qF 'AGENT_MODEL="$(resolve_stage_model "$agent" "$AGENT_MODEL_DEFAULT")"' "$PIPE_PATH"; then
-    pass "AGENT_MODEL se resuelve via resolve_stage_model"
+echo "[13] run_agent: --models por clave exacta sigue ganando; sin defaults fijos sonnet/opus (issue #910)"
+if grep -qF 'AGENT_MODEL="$(resolve_stage_model "$agent" "")"' "$PIPE_PATH"; then
+    pass "AGENT_MODEL consulta primero el override --models (default vacio = sin match)"
 else
-    fail "no se encontro la resolucion de AGENT_MODEL via resolve_stage_model"
+    fail "no se encontro la consulta de resolve_stage_model con default vacio"
 fi
-if grep -qF 'reviewer) AGENT_MODEL_DEFAULT="opus" ;;' "$PIPE_PATH" && grep -qF '*)        AGENT_MODEL_DEFAULT="sonnet" ;;' "$PIPE_PATH"; then
-    pass "defaults intactos: reviewer=opus, resto=sonnet"
+if grep -qF 'mefisto_resolve_model "$MEFISTO_RUNTIME_RESUELTO" "$MEFISTO_AGENT_ID" "$AGENT_PROFILE"' "$PIPE_PATH"; then
+    pass "sin override, AGENT_MODEL cae a mefisto_resolve_model (runtime + id neutral + perfil)"
 else
-    fail "los defaults de AGENT_MODEL_DEFAULT cambiaron o no se encontraron"
+    fail "no se encontro la resolucion via mefisto_resolve_model"
+fi
+if grep -qF 'reviewer) MEFISTO_AGENT_ID="mefisto-reviewer"; AGENT_PROFILE="deep" ;;' "$PIPE_PATH" \
+    && grep -qF '*)        MEFISTO_AGENT_ID="mefisto-writer";   AGENT_PROFILE="balanced" ;;' "$PIPE_PATH"; then
+    pass "perfiles intactos: reviewer=deep, resto (writer/merge)=balanced"
+else
+    fail "los perfiles por agente cambiaron o no se encontraron"
+fi
+if grep -qE 'AGENT_MODEL_DEFAULT="(sonnet|opus)"' "$PIPE_PATH"; then
+    fail "quedan defaults fijos sonnet/opus en el pipeline (CA-2: deben desaparecer)"
+else
+    pass "los defaults fijos sonnet/opus ya no estan en el pipeline"
 fi
 
 echo ""
