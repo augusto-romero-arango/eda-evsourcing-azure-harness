@@ -261,6 +261,25 @@ discover_stream_in_dirs() {
     return 0
 }
 
+# discover_current_stream
+#
+# Resuelve los directorios de logs y descubre en ellos (CA-1). Re-resuelve
+# con mefisto_state_read_paths en CADA llamada, y eso no es una ineficiencia
+# a limpiar: read_paths solo emite las rutas que YA existen, y el modo de uso
+# normal del visor es arrancarlo ANTES que el pipeline (es la razon de ser de
+# --newer-than, y lo que hacen los lanzadores de tmux/herdr). Resolviendo una
+# sola vez al arrancar, un visor lanzado sobre un directorio de logs todavia
+# inexistente se quedaria con la lista vacia PARA SIEMPRE y nunca mostraria la
+# corrida que nace un segundo despues -- justo el sintoma que el aviso de
+# main() promete que se resuelve solo. El costo por ciclo son dos `-e`.
+discover_current_stream() {
+    local dirs=() d
+    while IFS= read -r d; do
+        [ -n "$d" ] && dirs+=("$d")
+    done < <(mefisto_state_read_paths "logs")
+    discover_stream_in_dirs "${dirs[@]+"${dirs[@]}"}"
+}
+
 # parse_stream_header <archivo_de_eventos>
 #
 # Imprime el encabezado de CA-1: el nombre del archivo ya codifica issue,
@@ -397,10 +416,17 @@ render_terminal_summary() {
           tokens_in="${10}" tokens_out="${11}" ttft_ms="${12}" denials="${13}" \
           error_kind="${14}" ignored_count="${15}"
 
+    # Un terminal con status "success" PUEDE traer `error` no nulo: el
+    # contrato lo documenta como la muerte posterior a que el runtime declarara
+    # cumplido su contrato (senal, exit distinto de cero), que no invalida el
+    # trabajo hecho. Ahi el estado sigue siendo OK -- pero el `kind` se muestra
+    # igual (CA-2 pide `error.kind` en el cierre): callarlo perderia la unica
+    # senal de que la corrida murio despues de terminar.
     local estado_color estado_txt
     if [ "$status" = "success" ]; then
         estado_color="$GREEN"
         estado_txt="OK"
+        is_missing "$error_kind" || estado_txt="OK, con $error_kind posterior"
     else
         estado_color="$RED"
         estado_txt="ERROR"
@@ -471,7 +497,11 @@ render_row() {
             printf '%b\n' "${BLUE}[${now_str}]${NC} ${delta_str}  ${YELLOW}${etiqueta}${NC}"
             ;;
         tool)
-            local estado_tool="ok"
+            # `ok` es obligatorio en el contrato, pero un "ok" fabricado sobre
+            # un campo que no llego mentiria sobre el desenlace de la tool
+            # (MEF-ADR-0049: ausente se muestra, no se inventa).
+            local estado_tool="n/d"
+            [ "$p4" = "true" ] && estado_tool="ok"
             [ "$p4" = "false" ] && estado_tool="fallo"
             printf '%b\n' "${BLUE}[${now_str}]${NC} ${delta_str}  ${BOLD}${p3}${NC} (${estado_tool}, $(fmt_ms_nd "$p5"))"
             ;;
@@ -549,7 +579,8 @@ process_new_lines() {
 #
 # Bucle principal (CA-1): sin argumentos descubre y sigue el *.events.jsonl
 # mas reciente entre los directorios de logs que resuelve
-# mefisto_state_read_paths (canonico primero, legacy despues), cambiando de
+# mefisto_state_read_paths (canonico primero, legacy despues -- via
+# discover_current_stream, que los re-resuelve en cada ciclo), cambiando de
 # archivo cuando aparece uno mas nuevo; con un argumento sigue/inspecciona esa
 # ruta fija sin descubrir otras. Sin ningun directorio de logs todavia, avisa
 # en vez de fallar y sigue esperando -- el directorio aparece en cuanto
@@ -599,13 +630,6 @@ main() {
     IGNORED_COUNT=0
     CURRENT_STREAM=""
 
-    local LOG_DIRS=()
-    if [ -z "$pinned_path" ]; then
-        while IFS= read -r d; do
-            [ -n "$d" ] && LOG_DIRS+=("$d")
-        done < <(mefisto_state_read_paths "logs")
-    fi
-
     printf '%b\n' "${CYAN}${BOLD}Mefisto -- visor en vivo del flujo de eventos (issue #434/#878)${NC}"
     if [ -n "$pinned_path" ]; then
         echo "Inspeccionando: $pinned_path"
@@ -616,10 +640,11 @@ main() {
             printf '%b\n' "${YELLOW}Esperando la traza de esta corrida (el archivo del stage 1 nace cuando arranca${NC}"
             printf '%b\n' "${YELLOW}el primer agente, tras crear el worktree y validar el DoR)...${NC}"
         fi
-        if [ "${#LOG_DIRS[@]}" -eq 0 ]; then
+        if [ -z "$(mefisto_state_read_paths "logs")" ]; then
             printf '%b\n' "${YELLOW}Aviso: todavia no hay ningun directorio de logs del harness resuelto por${NC}"
-            printf '%b\n' "${YELLOW}mefisto_state_read_paths. Se creara cuando arranque un pipeline; si esperabas${NC}"
-            printf '%b\n' "${YELLOW}una corrida en curso, lanza el visor desde la raiz del repo principal.${NC}"
+            printf '%b\n' "${YELLOW}mefisto_state_read_paths. Se creara cuando arranque un pipeline (el visor lo${NC}"
+            printf '%b\n' "${YELLOW}reintenta cada ciclo); si esperabas una corrida en curso, lanza el visor${NC}"
+            printf '%b\n' "${YELLOW}desde la raiz del repo principal.${NC}"
         fi
     fi
     echo ""
@@ -629,7 +654,7 @@ main() {
         if [ -n "$pinned_path" ]; then
             stream="$pinned_path"
         else
-            stream=$(discover_stream_in_dirs "${LOG_DIRS[@]+"${LOG_DIRS[@]}"}")
+            stream=$(discover_current_stream)
         fi
 
         if [ -n "$stream" ] && [ "$stream" != "$CURRENT_STREAM" ]; then

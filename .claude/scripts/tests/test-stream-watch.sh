@@ -30,7 +30,9 @@
 #   [D] Cierre de stage con los campos ausentes tipicos de una corrida
 #       degradada (session_id/cost_usd/turns/tokens/ttft_ms/api_duration_ms
 #       en null) -> "n/d" en cada uno, nunca 0 ni el layout roto; el status
-#       no-exitoso se señala como "ERROR: <error.kind>" (CA-3).
+#       no-exitoso se señala como "ERROR: <error.kind>" (CA-3). Un terminal
+#       success con `error` no nulo (la muerte posterior que el contrato
+#       documenta) conserva el OK y muestra igual el error.kind.
 #   [E] Una linea JSON valida pero no-objeto, y una con `.type` fuera del
 #       vocabulario reconocido, se cuentan como "eventos ignorados" sin
 #       aportar ninguna fila (CA-4).
@@ -46,6 +48,10 @@
 #   [I] discover_stream_in_dirs: el directorio canonico gana aunque el legacy
 #       tenga un candidato mas reciente; si el canonico no tiene ninguno,
 #       cae al legacy; sin directorios no falla (CA-1).
+#   [I2] discover_current_stream re-resuelve los directorios con
+#       mefisto_state_read_paths en CADA llamada: un directorio de logs que
+#       aparece DESPUES de arrancar el visor si se descubre (CA-1; el visor se
+#       lanza antes que el pipeline, ver --newer-than).
 #   [J] parse_stream_header deriva issue/stage/agente del nombre de archivo
 #       `.events.jsonl` (sin leer contenido) y degrada a mostrar el nombre
 #       tal cual si no matchea el patron conocido (CA-1).
@@ -56,11 +62,12 @@
 #       variantes, lista y sin filtro (paridad con el visor previo, sobre la
 #       extension .events.jsonl).
 #   [N] stream_is_newer_than + discover_stream con filtros activos.
-#   [O] CA-5: dos corridas completas equivalentes (una con todas las
-#       metricas, como las reporta hoy el adaptador Claude; otra con
-#       cost_usd/ttft_ms/turns/session_id/api_duration_ms en null, como
-#       reporta el adaptador OpenCode) producen el mismo conteo de tools y el
-#       mismo estado terminal; los "n/d" aparecen solo en la segunda.
+#   [O] CA-5: el JSONL neutral que producen los adaptadores REALES de #859 y
+#       #860 sobre sus fixtures de traza cruda (no JSONL escrito a mano)
+#       rinde el mismo conteo de tools y el mismo estado terminal en ambos
+#       runtimes; los "n/d" aparecen solo en la corrida OpenCode, y los
+#       campos que OpenCode si reporta (cost_usd=0, session_id) no se
+#       degradan a "n/d".
 #   [P] CA-6: el script no contiene ninguno de los campos propios de la
 #       traza cruda de Claude (`"assistant"`, `"result"`, `tool_use`,
 #       `num_turns`, `total_cost_usd`) ni `.claude/pipeline`, y si localiza
@@ -95,11 +102,23 @@ TMP=$(mktemp -d)
 cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT
 
+# discover_current_stream llama a mefisto_state_read_paths, asi que el helper
+# de estado (#856) tiene que estar cargado. Se sourcea la LIBRERIA sola, no
+# _mefisto-common.sh entero: esa dispara assert_in_mefisto y demas codigo
+# top-level, justo lo que este estilo de test evita. Fijar las dos variables
+# ANTES del source las deja apuntando a directorios de este TMP (la libreria
+# usa `: "${VAR:=default}"`, que respeta un valor previo), para que ningun
+# bloque toque el estado real del repo.
+MEFISTO_STATE_DIR="$TMP/state-canonico/pipeline"
+MEFISTO_LEGACY_STATE_DIR="$TMP/state-legacy/pipeline"
+export MEFISTO_STATE_DIR MEFISTO_LEGACY_STATE_DIR
+source "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh"
+
 # Colores a vacio: las funciones extraidas los referencian, y este test corre
 # con `set -u` (mismo motivo que test-abort-log-tail.sh).
 RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; BOLD=""; NC=""
 
-FNS="write_jq_filter stream_matches_issues stream_is_newer_than discover_stream discover_stream_in_dirs parse_stream_header is_missing fmt_time_hhmmss fmt_delta_s fmt_nd fmt_ms_nd ms_to_s render_terminal_summary render_row process_new_lines"
+FNS="write_jq_filter stream_matches_issues stream_is_newer_than discover_stream discover_stream_in_dirs discover_current_stream parse_stream_header is_missing fmt_time_hhmmss fmt_delta_s fmt_nd fmt_ms_nd ms_to_s render_terminal_summary render_row process_new_lines"
 
 echo "[pre] Las funciones bajo prueba se pueden extraer y cargar desde mefisto-stream-watch.sh"
 ALL_LOADED=1
@@ -335,6 +354,27 @@ else
     fail "D-5: tokens/ttft/denials incorrectos: $OUT_D"
 fi
 
+# El contrato (run-events.schema.json) documenta explicitamente un
+# run.completed con status "success" Y `error` no nulo: la muerte POSTERIOR a
+# que el runtime declarara cumplido su contrato (senal, exit distinto de
+# cero), que no invalida el trabajo hecho. El estado sigue siendo OK, pero
+# callar el `kind` perderia la unica senal de esa muerte (CA-2 pide error.kind
+# en el cierre).
+reset_stage_state
+STREAM_D2="$TMP/d2-stream.jsonl"
+printf '%s\n' \
+  '{"v":1,"type":"run.completed","ts":"2026-09-05T10:06:00Z","status":"success","runtime":"claude","model":"m","session_id":"s","duration_ms":9000,"tokens":{"input":10,"output":20},"cost_usd":0.1,"turns":3,"denials":0,"ttft_ms":100,"api_duration_ms":8000,"error":{"kind":"killed","detail":"SIGKILL tras el result"}}' \
+  > "$STREAM_D2"
+
+run_process_new_lines "$STREAM_D2" "$TMP/d2-out.txt"
+OUT_D2=$(cat "$TMP/d2-out.txt")
+
+if printf '%s' "$OUT_D2" | grep -q "OK" && printf '%s' "$OUT_D2" | grep -q "killed"; then
+    pass "D-6: un terminal success con error no nulo conserva el estado OK y muestra igual el error.kind"
+else
+    fail "D-6: se esperaba OK + el error.kind 'killed': $OUT_D2"
+fi
+
 # -------- Bloque E: JSON valido no-objeto y type desconocido -- CA-4 --------
 
 echo ""
@@ -518,6 +558,39 @@ else
     fail "I-3: se esperaba exit 0 y vacio sin directorios, se obtuvo rc=$RC_I3 out='$FOUND_I3'"
 fi
 
+# -------- Bloque I2: discover_current_stream re-resuelve cada ciclo (CA-1) --------
+
+echo ""
+echo "[I2] discover_current_stream re-resuelve los directorios en CADA llamada: un visor lanzado"
+echo "     antes que el pipeline encuentra la corrida que nace despues (CA-1)"
+
+# La regresion que cubre: mefisto_state_read_paths solo emite rutas que YA
+# existen, y el modo de uso normal del visor es arrancarlo ANTES que el
+# pipeline (es la razon de --newer-than, y lo que hacen los lanzadores de
+# tmux/herdr). Resolviendo la lista una sola vez al arrancar, el visor se
+# quedaria con la lista vacia para siempre y no mostraria nada de la corrida
+# que empieza un segundo despues -- en silencio, sin error, exactamente el
+# sintoma que el issue #434 vino a eliminar.
+FOUND_I2_ANTES=$(discover_current_stream)
+RC_I2_ANTES=$?
+
+mkdir -p "$MEFISTO_STATE_DIR/logs"
+echo '{}' > "$MEFISTO_STATE_DIR/logs/mefisto-tooling-stage-1-writer-20260905-100000-issue-878.events.jsonl"
+
+FOUND_I2_DESPUES=$(discover_current_stream)
+
+if [ "$RC_I2_ANTES" -eq 0 ] && [ -z "$FOUND_I2_ANTES" ]; then
+    pass "I2-1: sin directorio de logs todavia, devuelve vacio sin abortar"
+else
+    fail "I2-1: se esperaba exit 0 y vacio, se obtuvo rc=$RC_I2_ANTES out='$FOUND_I2_ANTES'"
+fi
+
+if [ "$(basename "$FOUND_I2_DESPUES")" = "mefisto-tooling-stage-1-writer-20260905-100000-issue-878.events.jsonl" ]; then
+    pass "I2-2: el directorio creado DESPUES de la primera llamada si se descubre en la siguiente"
+else
+    fail "I2-2: no se descubrio el archivo aparecido despues: '$FOUND_I2_DESPUES'"
+fi
+
 # -------- Bloque J: parse_stream_header (CA-1) --------
 
 echo ""
@@ -693,42 +766,57 @@ NEWER_THAN=""
 # -------- Bloque O: CA-5 -- paridad Claude/OpenCode sobre la misma corrida --------
 
 echo ""
-echo "[O] CA-5: mismo conteo de tools y mismo estado terminal entre una corrida con todas las metricas"
-echo "    (como reporta el adaptador Claude) y una degradada (como reporta el adaptador OpenCode);"
-echo "    los n/d aparecen solo en la segunda."
+echo "[O] CA-5: la MISMA corrida traducida por el adaptador Claude y por el de OpenCode produce"
+echo "    el mismo conteo de tools y el mismo estado terminal; los n/d aparecen solo en OpenCode."
+
+# Las dos entradas de este bloque NO son JSONL escrito a mano: se generan
+# corriendo los adaptadores reales de #859/#860 sobre sus fixtures de traza
+# cruda, que es lo que pide CA-5 ("las fixtures neutrales de #861 para Claude
+# y OpenCode"). La diferencia importa: inventar el JSONL neutral deja al test
+# afirmando lo que el autor CREE que reporta cada runtime, no lo que reporta.
+# Contra los adaptadores reales queda a la vista, por ejemplo, que OpenCode SI
+# trae session_id y que su cost_usd llega en 0 (no en null) -- dos campos que
+# un fixture a mano marcaria como ausentes.
+#
+# neutral_run <lib> <fn> <fixture-dir> <fixture> <runtime> <modelo> <destino>
+#
+# Reproduce el archivo tal como queda en disco: el `run.started` que emite el
+# runner, la traduccion del adaptador, y el `duration_ms` del terminal
+# sobreescrito con el reloj de pared que mide el runner (mefisto-run-agent.sh
+# lo hace explicitamente -- el adaptador lo deja en null). Sin ese ultimo paso
+# el test estaria juzgando un archivo que el visor nunca ve.
+neutral_run() {
+    local lib="$1" fn="$2" fixdir="$3" fixture="$4" runtime="$5" modelo="$6" dest="$7"
+    jq -n -c --arg rt "$runtime" --argjson model "$([ -n "$modelo" ] && printf '"%s"' "$modelo" || printf 'null')" \
+        '{v: 1, type: "run.started", ts: "2026-09-05T10:00:00Z", runtime: $rt, agent: "mefisto-writer", model: $model, cwd: "/tmp/w"}' \
+        > "$dest"
+    bash -c "cd '$REPO_ROOT' && source '$lib' && $fn '$fixdir/$fixture' '$runtime' '$modelo' 0 ''" \
+        | jq -c 'if (.type == "run.completed" or .type == "run.failed") then .duration_ms = 5000 else . end' \
+        >> "$dest"
+}
+
+LIB_DIR="$REPO_ROOT/src/internal/scripts/lib"
+FIX_CLAUDE="$SCRIPT_DIR/fixtures/runtime-claude"
+FIX_OC="$SCRIPT_DIR/fixtures/runtime-opencode"
 
 reset_stage_state
-STREAM_CLAUDE="$TMP/claude-like.events.jsonl"
-printf '%s\n' \
-  '{"v":1,"type":"run.started","ts":"2026-09-05T10:00:00Z","runtime":"claude","agent":"mefisto-writer","model":"claude-sonnet-5","cwd":"/tmp/w"}' \
-  '{"v":1,"type":"message","ts":"2026-09-05T10:00:01Z","role":"assistant","text":"Analizando el issue.","kind":"text"}' \
-  '{"v":1,"type":"tool.started","ts":"2026-09-05T10:00:02Z","tool":"Read","input_summary":null}' \
-  '{"v":1,"type":"tool.completed","ts":"2026-09-05T10:00:02.100Z","tool":"Read","ok":true,"duration_ms":100}' \
-  '{"v":1,"type":"tool.started","ts":"2026-09-05T10:00:03Z","tool":"Bash","input_summary":null}' \
-  '{"v":1,"type":"tool.completed","ts":"2026-09-05T10:00:04Z","tool":"Bash","ok":true,"duration_ms":1000}' \
-  '{"v":1,"type":"run.completed","ts":"2026-09-05T10:00:05Z","status":"success","runtime":"claude","model":"claude-sonnet-5","session_id":"sess-abc","duration_ms":5000,"tokens":{"input":1200,"output":340},"cost_usd":0.021,"turns":4,"denials":0,"ttft_ms":850,"api_duration_ms":2600,"error":null}' \
-  > "$STREAM_CLAUDE"
+STREAM_CLAUDE="$TMP/claude.events.jsonl"
+neutral_run "$LIB_DIR/runtime-claude.sh" runtime_claude_translate \
+    "$FIX_CLAUDE" "success.jsonl" "claude" "claude-sonnet-5" "$STREAM_CLAUDE"
 run_process_new_lines "$STREAM_CLAUDE" "$TMP/claude-out.txt"
 OUT_CLAUDE=$(cat "$TMP/claude-out.txt")
-TOOLS_CLAUDE=$(printf '%s\n' "$OUT_CLAUDE" | grep -cE "Read \(ok|Bash \(ok")
+TOOLS_CLAUDE=$(grep -c "(ok, " "$TMP/claude-out.txt" | tr -d ' ')
 
 reset_stage_state
-STREAM_OC="$TMP/opencode-like.events.jsonl"
-printf '%s\n' \
-  '{"v":1,"type":"run.started","ts":"2026-09-05T11:00:00Z","runtime":"opencode","agent":"mefisto-writer","model":null,"cwd":"/tmp/w"}' \
-  '{"v":1,"type":"message","ts":"2026-09-05T11:00:01Z","role":"assistant","text":"Analizando el issue."}' \
-  '{"v":1,"type":"tool.started","ts":"2026-09-05T11:00:02Z","tool":"Read","input_summary":null}' \
-  '{"v":1,"type":"tool.completed","ts":"2026-09-05T11:00:02.100Z","tool":"Read","ok":true,"duration_ms":100}' \
-  '{"v":1,"type":"tool.started","ts":"2026-09-05T11:00:03Z","tool":"Bash","input_summary":null}' \
-  '{"v":1,"type":"tool.completed","ts":"2026-09-05T11:00:04Z","tool":"Bash","ok":true,"duration_ms":1000}' \
-  '{"v":1,"type":"run.completed","ts":"2026-09-05T11:00:05Z","status":"success","runtime":"opencode","model":null,"session_id":null,"duration_ms":5000,"tokens":{"input":1540,"output":27},"cost_usd":null,"turns":null,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":null}' \
-  > "$STREAM_OC"
+STREAM_OC="$TMP/opencode.events.jsonl"
+neutral_run "$LIB_DIR/runtime-opencode.sh" runtime_opencode_translate \
+    "$FIX_OC" "success-tool-1.18.29.jsonl" "opencode" "" "$STREAM_OC"
 run_process_new_lines "$STREAM_OC" "$TMP/opencode-out.txt"
 OUT_OC=$(cat "$TMP/opencode-out.txt")
-TOOLS_OC=$(printf '%s\n' "$OUT_OC" | grep -cE "Read \(ok|Bash \(ok")
+TOOLS_OC=$(grep -c "(ok, " "$TMP/opencode-out.txt" | tr -d ' ')
 
-if [ "$TOOLS_CLAUDE" -eq 2 ] && [ "$TOOLS_OC" -eq 2 ]; then
-    pass "O-1: mismo conteo de tools (2) en ambas corridas"
+if [ "$TOOLS_CLAUDE" -eq 1 ] && [ "$TOOLS_OC" -eq 1 ]; then
+    pass "O-1: mismo conteo de tools (1) en ambas corridas, sobre la salida real de cada adaptador"
 else
     fail "O-1: conteo de tools distinto -- claude=$TOOLS_CLAUDE opencode=$TOOLS_OC"
 fi
@@ -736,20 +824,30 @@ fi
 if printf '%s' "$OUT_CLAUDE" | grep -q -- "(OK)" && printf '%s' "$OUT_OC" | grep -q -- "(OK)"; then
     pass "O-2: mismo estado terminal (OK) en ambas corridas"
 else
-    fail "O-2: el estado terminal no coincide entre ambas corridas"
+    fail "O-2: el estado terminal no coincide -- claude='$OUT_CLAUDE' opencode='$OUT_OC'"
 fi
 
 if printf '%s' "$OUT_CLAUDE" | grep -q "n/d"; then
-    fail "O-3: la corrida con todas las metricas no deberia mostrar ningun n/d: $OUT_CLAUDE"
+    fail "O-3: la corrida Claude reporta todas las metricas, no deberia mostrar ningun n/d: $OUT_CLAUDE"
 else
-    pass "O-3: la corrida con todas las metricas no muestra ningun n/d"
+    pass "O-3: la corrida Claude no muestra ningun n/d (reporta todas las metricas del contrato)"
 fi
 
-if printf '%s' "$OUT_OC" | grep -q "modelo=n/d" && printf '%s' "$OUT_OC" | grep -q "costo_usd=n/d" \
-    && printf '%s' "$OUT_OC" | grep -q "turnos=n/d" && printf '%s' "$OUT_OC" | grep -q "ttft=n/d"; then
-    pass "O-4: la corrida degradada (OpenCode) muestra n/d en modelo, costo, turnos y ttft"
+if printf '%s' "$OUT_OC" | grep -q "modelo=n/d" && printf '%s' "$OUT_OC" | grep -q "turnos=n/d" \
+    && printf '%s' "$OUT_OC" | grep -q "ttft=n/d" && printf '%s' "$OUT_OC" | grep -q "api=n/d"; then
+    pass "O-4: la corrida OpenCode muestra n/d en los campos que ese runtime no reporta (modelo, turnos, ttft, api)"
 else
-    fail "O-4: la corrida degradada no mostro los n/d esperados: $OUT_OC"
+    fail "O-4: la corrida OpenCode no mostro los n/d esperados: $OUT_OC"
+fi
+
+# El contraste que da sentido a CA-3: un campo que OpenCode SI reporta no se
+# degrada a n/d por venir de un runtime "pobre". cost_usd=0 es el caso filoso
+# -- 0 es un valor, no un dato ausente, y confundirlos es justo el error que
+# MEF-ADR-0049 prohibe en la direccion contraria.
+if printf '%s' "$OUT_OC" | grep -q "costo_usd=0" && ! printf '%s' "$OUT_OC" | grep -q "session_id=n/d"; then
+    pass "O-5: los campos que OpenCode si reporta (cost_usd=0, session_id) no se degradan a n/d"
+else
+    fail "O-5: un campo presente de la corrida OpenCode se mostro como ausente: $OUT_OC"
 fi
 
 # -------- Bloque P: CA-6 -- neutralidad del script fuente --------
