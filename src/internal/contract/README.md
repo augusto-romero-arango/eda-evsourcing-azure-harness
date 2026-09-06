@@ -338,8 +338,8 @@ ante faltantes o invalidos. `--model` vacio o ausente se trata como
 "heredar": no llega al adaptador -- `build_cmd` nunca ve un flag de modelo en
 ese caso.
 
-`run_agent_with_watchdog` (issue #424, hoy en `.claude/scripts/
-_mefisto-common.sh`) se reutiliza tal cual -- ya es neutral a runtime -- y el
+`run_agent_with_watchdog` (issue #424, hoy en
+`.claude/scripts/_mefisto-common.sh`) se reutiliza tal cual -- ya es neutral a runtime -- y el
 runner la envuelve, traduciendo su senal de timeout a `run.failed{status:
 "timeout"}`. El traslado de esa lib comun a `src/internal/scripts/` es
 alcance de #869, no de este contrato.
@@ -391,7 +391,14 @@ el array `types` del schema):
 | `message` | `ts`, `role`, `text`, `kind?: "text"\|"thinking"` |
 | `tool.started` | `ts`, `tool`, `input_summary\|null` |
 | `tool.completed` | `ts`, `tool`, `ok`, `duration_ms\|null` |
-| `run.completed` / `run.failed` | `status: "success"\|"failed"\|"timeout"\|"protocol_invalid"`, `runtime`, `model\|null`, `session_id\|null`, `duration_ms`, `tokens {input\|null, output\|null}`, `cost_usd\|null`, `turns\|null`, `denials\|null`, `ttft_ms\|null`, `api_duration_ms\|null`, `error\|null` |
+| `run.completed` / `run.failed` | `status`, `runtime`, `model\|null`, `session_id\|null`, `duration_ms`, `tokens {input\|null, output\|null}`, `cost_usd\|null`, `turns\|null`, `denials\|null`, `ttft_ms\|null`, `api_duration_ms\|null`, `error\|null` |
+
+El vocabulario de `status` de CA-4 esta **partido entre los dos terminales**:
+`run.completed` solo admite `success` y `run.failed` admite `failed`,
+`timeout` y `protocol_invalid`. Asi un `run.completed{status:"timeout"}` es
+irrepresentable -- la tabla de exit codes de la seccion siguiente no sabria
+puntuarlo, y un gate que leyera solo `.type` y otro que leyera solo `.status`
+llegarian a veredictos distintos sobre la misma corrida.
 
 `error`, cuando no es `null`, es `{kind, detail}` con `kind` en
 `timeout`/`killed`/`api_error`/`stream_cut`/`nonzero_exit`/`no_result`/
@@ -437,6 +444,32 @@ traducir): un timeout no es confiable a mitad de vuelo, y un protocolo
 invalido no tiene un terminal legitimo entre los que sobran o faltan. Es la
 misma doctrina de MEF-ADR-0031 (gates deterministas por evidencia
 verificable) aplicada al desenlace de un proceso, no solo a su readiness.
+Los eventos **no terminales** (`message`, `tool.*`) se conservan siempre,
+tambien tras un timeout: son hechos completos y ya ocurridos, y son la
+evidencia con la que se diagnostica donde se colgo la corrida.
+
+El `timeout` de la tercera fila exige **dos evidencias coincidentes**: la senal
+que deja el watchdog en disco y el reloj de pared que el runner mide alrededor
+de la invocacion completa (`ELAPSED_S >= --timeout`). La senal sola no alcanza:
+el watchdog de `run_agent_with_watchdog` duerme y despues hace `touch`, asi que
+un `sleep` que no llegue a dormir (una maquina cargada que no puede forkearlo)
+deja la senal puesta en el mismo instante en que arranco. Se observo bajo carga:
+corridas con la senal presente, `elapsed=0` y `--timeout 1800`, clasificadas
+como TIMEOUT sin haber esperado nada. El corte por reloj no puede descartar un
+timeout real -- con segundos truncados el elapsed medido nunca queda por debajo
+de la duracion real, y una corrida que el watchdog mato duro al menos el
+timeout -- pero si descarta las senales que el reloj desmiente, que es lo que
+MEF-ADR-0031 pide de un gate: decidir por estado verificable, no por un unico
+indicio.
+
+La primera fila de la tabla lee "el adaptador declaro exito" y no "el proceso
+salio con cero" a proposito: si el runtime alcanzo a declarar que cumplio su
+contrato, un exit distinto de cero o una senal **posteriores** a esa
+declaracion no invalidan el trabajo, y el terminal sigue siendo
+`run.completed{status:"success"}` (opcionalmente con constancia de esa muerte
+en `error`). Es la misma excepcion que el pipeline ya aplica desde el PR #446
+(`agent_failure_is_unrecoverable` en `.claude/scripts/_mefisto-common.sh`),
+trasladada al contrato neutral en vez de re-derivada por cada consumidor.
 
 ### Fixtures (`fixtures/run-events/`)
 
@@ -446,8 +479,10 @@ terminal) que validan linea a linea. `invalid-two-terminals.jsonl` es
 cumple su schema -- pero viola la invariante cross-linea de la seccion
 anterior (2 terminales): documenta que ese invariante no lo puede expresar
 `run-events.schema.json` por si solo, hace falta contarlos.
-`invalid-missing-field.jsonl` y `invalid-unknown-type.jsonl` si son
-rechazables linea a linea (campo requerido ausente; `type` fuera de
-`types`). `.claude/scripts/tests/test-mefisto-run-agent.sh` corre el runner
+`invalid-missing-field.jsonl`, `invalid-unknown-type.jsonl` e
+`invalid-status-mismatch.jsonl` si son rechazables linea a linea (campo
+requerido ausente; `type` fuera de `types`; `run.completed` declarando un
+`status` que solo `run.failed` admite).
+`.claude/scripts/tests/test-mefisto-run-agent.sh` corre el runner
 real contra cada guion de `runtime-fake.sh` y valida ambas dimensiones a la
 vez sobre su propia salida.

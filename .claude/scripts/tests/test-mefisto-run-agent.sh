@@ -17,7 +17,9 @@
 #       linea a linea contra su definitions[.type]; cada fixture de
 #       invalid-*.jsonl tiene al menos una linea que NO valida (o, en el caso
 #       de dos terminales, un conteo de eventos terminales != 1 -- invariante
-#       que el schema por-linea no puede expresar).
+#       que el schema por-linea no puede expresar). Incluye la particion del
+#       vocabulario de `status` entre los dos terminales (`run.completed` solo
+#       admite `success`).
 #   [D] CA-5/CA-6: runtime-fake.sh recorre cada guion de MEFISTO_FAKE_SCRIPT
 #       invocando el runner real (mefisto-run-agent.sh --runtime fake) y
 #       verifica exit code, que TODAS las lineas de --event-log validen
@@ -27,6 +29,9 @@
 #   [E] Ida y vuelta de --model: recibido vs. omitido llega igual a
 #       run.started.model y al terminal.model (CA-1: vacio/ausente no llega
 #       al adaptador).
+#   [G] El runner resuelve sus propias libs por su UBICACION, no por el cwd
+#       del caller: invocado desde un cwd fuera de todo repo git sigue
+#       corriendo (regresion de la resolucion via `git rev-parse`).
 #   [F] Ningun test de este archivo invoca `claude` ni `opencode` (grep sobre
 #       si mismo) -- todo corre contra el adaptador fake.
 #
@@ -311,6 +316,24 @@ else
     fail "invalid-unknown-type.jsonl: deberia rechazarse por 'type' desconocido"
 fi
 
+# El vocabulario de status esta partido entre los dos terminales: un
+# run.completed solo puede declararse 'success'. Sin esta particion, un gate
+# que decidiera por .type y otro que decidiera por .status podrian puntuar la
+# misma corrida distinto -- justo lo que MEF-ADR-0031 no admite.
+BAD_LINE="$(sed -n '2p' "$FIXTURES_DIR/invalid-status-mismatch.jsonl")"
+if ! validate_event_line "$BAD_LINE" >/dev/null 2>&1; then
+    pass "invalid-status-mismatch.jsonl: run.completed{status:'timeout'} se rechaza"
+else
+    fail "invalid-status-mismatch.jsonl: deberia rechazarse (status 'timeout' solo es de run.failed)"
+fi
+
+GOOD_LINE="$(sed -n '3p' "$FIXTURES_DIR/valid-failed.jsonl")"
+if validate_event_line "$GOOD_LINE" >/dev/null 2>&1; then
+    pass "valid-failed.jsonl: run.failed{status:'failed'} sigue validando tras partir el vocabulario"
+else
+    fail "valid-failed.jsonl: la particion de status rompio un terminal legitimo"
+fi
+
 # ============================================================================
 echo ""
 echo "[D] CA-5/CA-6: runner real contra cada guion de runtime-fake.sh"
@@ -394,6 +417,14 @@ if [ -n "$DURATION_MS" ] && [ "$DURATION_MS" -ge 1000 ]; then
 else
     fail "hang (timeout): duration_ms='$DURATION_MS' (se esperaba >= 1000)"
 fi
+# El terminal sintetizado reemplaza al del adaptador, pero los eventos NO
+# terminales son hechos ya ocurridos: son la unica pista de DONDE se colgo la
+# corrida, y descartarlos dejaria el --event-log de un timeout sin evidencia.
+if jq -e 'select(.type=="message")' "$EV" >/dev/null 2>&1; then
+    pass "hang (timeout): el mensaje emitido antes del cuelgue sobrevive en --event-log"
+else
+    fail "hang (timeout): se perdieron los eventos no terminales previos al timeout"
+fi
 
 EV="$TMP/d-no-terminal.jsonl"
 RC=$(MEFISTO_FAKE_SCRIPT=no-terminal run_fake_scenario "$EV")
@@ -437,6 +468,23 @@ else
 fi
 
 # ============================================================================
+echo ""
+echo "[G] El runner no depende del cwd del caller para encontrar sus propias libs"
+
+# El caller natural de este runner es un pipeline parado dentro de un worktree
+# ajeno al checkout donde vive el plugin. Resolver la raiz con `git rev-parse
+# --show-toplevel` respondia por el cwd DEL CALLER: desde un cwd que no es un
+# repo git el runner moria con exit 69 antes de arrancar. Se ejercita con un
+# cwd deliberadamente fuera de cualquier repo (el propio $TMP de este test).
+G_OUT="$TMP/g-outside.jsonl"
+G_RC=$( cd "$TMP" && MEFISTO_FAKE_SCRIPT=success "$RUNNER" --runtime fake --agent test-agent \
+        --cwd "$WORKDIR" --prompt-file "$PROMPT_FILE" --event-log "$G_OUT" >/dev/null 2>&1; echo $? )
+if [ "$G_RC" = "0" ] && [ -s "$G_OUT" ]; then
+    pass "G-1: invocado desde un cwd fuera de todo repo git, el runner corre igual (exit 0)"
+else
+    fail "G-1: exit $G_RC desde un cwd fuera del repo (se esperaba 0 con --event-log poblado)"
+fi
+
 echo ""
 echo "[F] Ningun test de este archivo invoca claude ni opencode reales"
 

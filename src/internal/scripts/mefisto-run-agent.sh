@@ -71,8 +71,14 @@ set -uo pipefail
 export LC_ALL=C
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
-[ -n "$REPO_ROOT" ] || REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+# Raiz resuelta contra la UBICACION de este script (src/internal/scripts/ ->
+# tres niveles arriba), nunca contra `git rev-parse --show-toplevel`: ese
+# comando responde por el cwd DEL CALLER, y el caller natural de este runner es
+# un pipeline parado dentro de un worktree distinto del checkout donde vive el
+# plugin. Desde un cwd que no sea un repo git devolvia vacio y el fallback
+# quedaba corto un nivel (src/ en vez de la raiz), asi que el `source` de
+# _mefisto-common.sh moria con exit 69 sin que el runner llegara a arrancar.
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 LIB_DIR="$SCRIPT_DIR/lib"
 COMMON_LIB="$REPO_ROOT/.claude/scripts/_mefisto-common.sh"
 
@@ -187,36 +193,49 @@ fi
 # --- Archivos de trabajo ------------------------------------------------
 
 mkdir -p "$(dirname "$OPT_EVENT_LOG")" 2>/dev/null || true
+if ! : > "$OPT_EVENT_LOG" 2>/dev/null; then
+    abort_usage "--event-log '$OPT_EVENT_LOG' no es escribible"
+fi
 
-CLEANUP_FILES=()
+# Un unico directorio temporal por corrida, del que cuelga todo lo efimero
+# (traza cruda y stderr cuando no se pidieron por flag, log de texto del
+# watchdog y senal de timeout). La senal NECESITA un nombre que ninguna otra
+# corrida pueda recibir: si el watchdog de una corrida anterior sobrevive a su
+# kill y luego hace `touch` sobre un nombre reciclado, ESTA corrida se
+# clasifica como TIMEOUT sin haberse agotado -- exactamente el riesgo que
+# mefisto-tooling-pipeline.sh ya evita numerando su senal por intento. `mktemp
+# -d` reserva el directorio en disco; `mktemp -u` solo proponia un nombre libre
+# y lo dejaba disponible para el siguiente que preguntara.
+RUN_TMP_DIR="$(mktemp -d -t mefisto-run-agent)"
+if [ -z "$RUN_TMP_DIR" ] || [ ! -d "$RUN_TMP_DIR" ]; then
+    echo "ERROR: no se pudo crear el directorio temporal de la corrida" >&2
+    exit 69
+fi
+
+cleanup() {
+    rm -rf "$RUN_TMP_DIR" 2>/dev/null || true
+}
+trap cleanup EXIT
 
 if [ -n "$OPT_RAW_LOG" ]; then
     RAW_LOG="$OPT_RAW_LOG"
     mkdir -p "$(dirname "$RAW_LOG")" 2>/dev/null || true
 else
-    RAW_LOG="$(mktemp -t mefisto-run-agent-raw)"
-    CLEANUP_FILES+=("$RAW_LOG")
+    RAW_LOG="$RUN_TMP_DIR/raw.log"
 fi
 
 if [ -n "$OPT_STDERR_LOG" ]; then
     STDERR_LOG="$OPT_STDERR_LOG"
     mkdir -p "$(dirname "$STDERR_LOG")" 2>/dev/null || true
 else
-    STDERR_LOG="$(mktemp -t mefisto-run-agent-stderr)"
-    CLEANUP_FILES+=("$STDERR_LOG")
+    STDERR_LOG="$RUN_TMP_DIR/stderr.log"
 fi
 
 # events_log de run_agent_with_watchdog: solo recibe SU linea de texto plano
 # de diagnostico ("[HH:MM:SS] TIMEOUT: ..."), nunca el JSONL neutral -- mezclar
 # ambos formatos en --event-log corromperia el contrato (CA-3/CA-4).
-WATCHDOG_EVENTS_LOG="$(mktemp -t mefisto-run-agent-watchdog-events)"
-SIGNAL_FILE="$(mktemp -u -t mefisto-run-agent-signal)"
-CLEANUP_FILES+=("$WATCHDOG_EVENTS_LOG")
-
-cleanup() {
-    rm -f "${CLEANUP_FILES[@]+"${CLEANUP_FILES[@]}"}" "$SIGNAL_FILE" 2>/dev/null || true
-}
-trap cleanup EXIT
+WATCHDOG_EVENTS_LOG="$RUN_TMP_DIR/watchdog-events.log"
+SIGNAL_FILE="$RUN_TMP_DIR/timeout.signal"
 
 # --- Helpers -----------------------------------------------------------
 
@@ -247,10 +266,33 @@ jq -n -c \
 START_EPOCH=$(date +%s)
 ADAPTER_EXIT=$(run_agent_with_watchdog "$OPT_CWD" "$TIMEOUT_S" "$RAW_LOG" "$STDERR_LOG" "$WATCHDOG_EVENTS_LOG" "$OPT_AGENT" "$SIGNAL_FILE" "${MEFISTO_RUNTIME_CMD[@]}")
 END_EPOCH=$(date +%s)
-ELAPSED_MS=$(( (END_EPOCH - START_EPOCH) * 1000 ))
+# run_agent_with_watchdog devuelve el exit code IMPRIMIENDOLO por stdout. Si lo
+# que llega no es un entero, no se puede afirmar nada sobre el proceso: se
+# asume fallo antes que arriesgar un exit 0 sobre un desenlace desconocido.
+case "$ADAPTER_EXIT" in
+    ''|*[!0-9]*) ADAPTER_EXIT=1 ;;
+esac
+ELAPSED_S=$(( END_EPOCH - START_EPOCH ))
+ELAPSED_MS=$(( ELAPSED_S * 1000 ))
 
+# Un timeout se afirma con DOS evidencias que tienen que coincidir: la senal
+# que dejo el watchdog y el reloj de pared que este runner midio alrededor de
+# la invocacion completa. La senal sola no alcanza -- el watchdog de
+# run_agent_with_watchdog (#424) hace `sleep <timeout>` y despues `touch`, asi
+# que basta con que ese `sleep` no llegue a dormir (una maquina cargada que no
+# puede forkearlo, por ejemplo) para que deje la senal en el mismo instante en
+# que arranco. Verificado: bajo carga aparecieron corridas con la senal puesta,
+# `elapsed=0` y `--timeout 1800`, clasificadas como TIMEOUT sin haber esperado
+# nada -- un gate no determinista, justo lo que MEF-ADR-0031 no admite.
+#
+# El corte `ELAPSED_S >= TIMEOUT_S` no puede descartar un timeout real: con
+# segundos truncados, floor(fin)-floor(inicio) nunca queda por debajo de
+# floor(duracion real), y una corrida que el watchdog mato duro al menos
+# TIMEOUT_S. Solo descarta senales que el reloj desmiente.
 TIMED_OUT=false
-[ -f "$SIGNAL_FILE" ] && TIMED_OUT=true
+if [ -f "$SIGNAL_FILE" ] && [ "$ELAPSED_S" -ge "$TIMEOUT_S" ]; then
+    TIMED_OUT=true
+fi
 rm -f "$SIGNAL_FILE"
 
 # --- Traduccion del adaptador --------------------------------------------
@@ -277,9 +319,13 @@ FINAL_EXIT=1
 
 if [ "$TIMED_OUT" = "true" ]; then
     # El watchdog mato el proceso a mitad de vuelo: cualquier terminal que el
-    # adaptador haya alcanzado a traducir de todos modos no es confiable (la
-    # senal pudo llegar a mitad de escritura). Se descarta sin miralo.
-    NON_TERMINAL_JSON=""
+    # adaptador haya alcanzado a traducir no es confiable (la senal pudo llegar
+    # a mitad de escritura), asi que se descarta y el runner sintetiza el suyo.
+    # Los eventos NO terminales si se conservan: son hechos completos y ya
+    # ocurridos (mensajes, tool calls) y son justamente la evidencia con la que
+    # se diagnostica DONDE se colgo la corrida. Tirarlos no protegeria de nada
+    # -- una linea cortada a media escritura la descarta antes el parseo
+    # tolerante del propio adaptador, y nunca llega hasta aqui.
     CHOSEN_TERMINAL="$(jq -n -c \
         --arg ts "$(now_ts)" --arg runtime "$RUNTIME_ID" --argjson model "$RUN_STARTED_MODEL_JSON" \
         --arg detail "el watchdog mato el proceso tras superar ${TIMEOUT_S}s" \
@@ -292,6 +338,13 @@ elif [ "$TERMINAL_COUNT" -eq 1 ]; then
     CHOSEN_TERMINAL="$TERMINAL_JSON"
     TERMINAL_STATUS="$(printf '%s' "$CHOSEN_TERMINAL" | jq -r '.status')"
     if [ "$TERMINAL_STATUS" = "success" ]; then
+        # El exito declarado por el adaptador manda sobre el exit code del CLI.
+        # Es la doctrina que el pipeline ya aplica desde el PR #446 (ver
+        # agent_failure_is_unrecoverable en .claude/scripts/_mefisto-common.sh):
+        # si el runtime alcanzo a declarar que cumplio su contrato, una senal o
+        # un exit distinto de cero POSTERIOR a esa declaracion es una muerte de
+        # despues, no un trabajo a medias. El adaptador puede dejar constancia
+        # de ella en `error` sin degradar el status.
         FINAL_EXIT=0
     elif [ "$ADAPTER_EXIT" -ne 0 ] 2>/dev/null; then
         FINAL_EXIT="$ADAPTER_EXIT"

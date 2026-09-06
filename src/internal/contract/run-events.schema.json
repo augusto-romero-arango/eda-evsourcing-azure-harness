@@ -61,7 +61,7 @@
         "v": { "type": "number" },
         "type": { "type": "string", "enum": ["run.completed"] },
         "ts": { "type": "string", "minLength": 1 },
-        "status": { "type": "string", "enum": ["success", "failed", "timeout", "protocol_invalid"] },
+        "status": { "$comment": "Solo 'success': un desenlace no exitoso se emite como 'run.failed'. Partir el vocabulario de CA-4 entre los dos terminales hace irrepresentable un run.completed{status:'timeout'} -- que la tabla de exit codes de CA-5 no sabria puntuar.", "type": "string", "enum": ["success"] },
         "runtime": { "type": "string", "minLength": 1 },
         "model": { "$comment": "string o null" },
         "session_id": { "$comment": "string o null" },
@@ -81,7 +81,7 @@
         "ttft_ms": { "$comment": "number o null" },
         "api_duration_ms": { "$comment": "number o null" },
         "error": {
-          "$comment": "null en exito; objeto {kind, detail} si status != success (p. ej. senal posterior a un result exitoso, ver #446). Sin 'type' a proposito: null y objeto conviven en el mismo campo.",
+          "$comment": "Normalmente null. Un objeto {kind, detail} aqui NO contradice el status 'success': documenta una muerte POSTERIOR a que el runtime declarara cumplido su contrato (senal, exit distinto de cero) -- la excepcion que el PR #446 ya reconoce en el pipeline y que no invalida el trabajo hecho. Sin 'type' a proposito: null y objeto conviven en el mismo campo.",
           "required": ["kind", "detail"],
           "properties": {
             "kind": { "type": "string", "enum": ["timeout", "killed", "api_error", "stream_cut", "nonzero_exit", "no_result", "protocol_invalid"] },
@@ -99,7 +99,7 @@
         "v": { "type": "number" },
         "type": { "type": "string", "enum": ["run.failed"] },
         "ts": { "type": "string", "minLength": 1 },
-        "status": { "type": "string", "enum": ["success", "failed", "timeout", "protocol_invalid"] },
+        "status": { "$comment": "Todo el vocabulario de CA-4 menos 'success', que pertenece a 'run.completed'.", "type": "string", "enum": ["failed", "timeout", "protocol_invalid"] },
         "runtime": { "type": "string", "minLength": 1 },
         "model": { "$comment": "string o null" },
         "session_id": { "$comment": "string o null" },
