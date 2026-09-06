@@ -1,6 +1,7 @@
 ---
 description: "Lanza el agente `mefisto-planner` para planear, refinar o reorganizar issues del propio repo de Mefisto."
-model: "haiku"
+agent: "mefisto-planner"
+subtask: true
 ---
 <!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh desde src/internal/commands/mefisto-plan.md. No editar a mano. -->
 
@@ -27,9 +28,7 @@ REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
 
 Invoca al agente `mefisto-planner` con el contexto disponible (si `$ARGUMENTS` trae texto, pasalo como mensaje inicial; si no, deja que el agente pregunte el modo).
 
-```bash
-claude --agent mefisto-planner "$ARGUMENTS"
-```
+Actua como `mefisto-planner` con este mensaje inicial: $ARGUMENTS
 
 ## Reglas
 

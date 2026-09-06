@@ -40,6 +40,15 @@ Cuerpo Markdown. $ARGUMENTS es el unico placeholder neutral de argumentos.
   frontmatter puede nombrar un runtime cuando ese runtime *es* el tema (p. ej.
   al describir por que un campo esta prohibido).
 
+  Dos excepciones literales (issue #866): `.claude-plugin/` (el manifiesto
+  fisico del Claude Code Plugin, identico e indispensable en ambos runtimes --
+  el "guard inverso" que abre todo comando lo cita tal cual) y
+  `.claude/scripts/` (la superficie estable de invocacion de los pipelines
+  internos, identica en la salida de ambos adaptadores -- ver "Directivas de
+  body" mas abajo). Ninguna otra forma de `.claude/` (`.claude/pipeline`,
+  `.claude/agents`, `.claude/commands`) ni de `claude`/`opencode` a secas
+  entra en esta excepcion.
+
 ## Regla de extraccion del frontmatter
 
 El bloque JSON es todo lo que hay entre la primera linea (`---`) y la

@@ -1,8 +1,12 @@
 ---
-description: "Resuelve los comentarios de revision de un pull request del repo de Mefisto."
-argument-hint: "<numero-de-PR>"
+{
+  "kind": "command",
+  "id": "mefisto-fix-review",
+  "description": "Resuelve los comentarios de revision de un pull request del repo de Mefisto.",
+  "profile": "deep",
+  "arguments": "<numero-de-PR>"
+}
 ---
-<!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh desde src/internal/commands/mefisto-fix-review.md. No editar a mano. -->
 
 Resuelve los comentarios de revision de un pull request del repo de Mefisto. Comunicate en **espanol**.
 

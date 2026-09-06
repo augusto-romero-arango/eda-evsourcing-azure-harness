@@ -54,11 +54,26 @@ source "$FRONTMATTER_LIB"
 # directorios; esas referencias las introduce el generador (#854) o el
 # adaptador. Sin este chequeo, la mitad de CA-1 quedaria documentada pero no
 # verificada, justo cuando #865-#867 migren los artefactos reales.
+#
+# Dos excepciones literales (issue #866, CA-2/CA-3): `.claude-plugin/` es el
+# manifiesto fisico del Claude Code Plugin, identico e indispensable en
+# ambos runtimes -- no un nombre de runtime, y el "guard inverso" que abre
+# todo comando lo cita tal cual. `.claude/scripts/` es la superficie estable
+# de invocacion de los pipelines internos (ver README.md, "Directivas de
+# body"): el propio adaptador emite ese mismo prefijo para los dos runtimes,
+# asi que citarlo en prosa no filtra ninguna decision especifica de runtime.
+# Ninguna otra forma de "claude"/"opencode" (bare, `.claude/pipeline`,
+# `.claude/agents`, `.claude/commands`, etc.) entra en esta excepcion.
 body_runtime_references() {
     awk '
         NR==1 && $0 != "---" { exit }
         NR>1 && $0 == "---" && !seen { seen=1; next }
-        seen && tolower($0) ~ /claude|opencode/ { print NR }
+        seen {
+            line = $0
+            gsub(/\.claude-plugin/, "", line)
+            gsub(/\.claude\/scripts/, "", line)
+            if (tolower(line) ~ /claude|opencode/) print NR
+        }
     ' "$1"
 }
 

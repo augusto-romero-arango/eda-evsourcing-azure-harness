@@ -1,8 +1,11 @@
 ---
-description: "Dashboard de los pipelines INTERNOS de Mefisto (en tmux)."
-model: "haiku"
+{
+  "kind": "command",
+  "id": "mefisto-work-status",
+  "description": "Dashboard de los pipelines INTERNOS de Mefisto (en tmux).",
+  "profile": "fast"
+}
 ---
-<!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh desde src/internal/commands/mefisto-work-status.md. No editar a mano. -->
 
 Dashboard de los pipelines INTERNOS de Mefisto (en tmux). Solo opera dentro del repo de Mefisto.
 

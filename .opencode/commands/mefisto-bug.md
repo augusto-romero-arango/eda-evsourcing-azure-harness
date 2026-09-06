@@ -1,7 +1,7 @@
 ---
 description: "Investiga un error o sintoma observado al desarrollar el plugin Mefisto."
-model: "haiku"
-argument-hint: "[descripcion del sintoma]"
+agent: "mefisto-investigator"
+subtask: true
 ---
 <!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh desde src/internal/commands/mefisto-bug.md. No editar a mano. -->
 
@@ -34,9 +34,7 @@ REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
 
 Lanza directamente `mefisto-investigator`:
 
-```bash
-claude --agent mefisto-investigator "$ARGUMENTS"
-```
+Actua como `mefisto-investigator` con este mensaje inicial: $ARGUMENTS
 
 Responde con:
 
