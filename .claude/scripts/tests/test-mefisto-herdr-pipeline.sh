@@ -40,6 +40,13 @@
 #         ".claude/scripts" en codigo son la invocacion del visor -- que sigue
 #         viviendo ahi porque #878 neutralizo su fuente de datos, no su
 #         ubicacion (mismo caso que mefisto-tmux-pipeline.sh tras #871).
+#   [24]  tail -f en vivo del .report.log dentro de --_pane-runner (issue
+#         #926, CA-1/2/3): sin HERDR_PANE_ID en el entorno, un comando falso
+#         que imprime una linea, duerme 3s e imprime otra prueba que la
+#         primera linea llega a la captura del pane ANTES de que el comando
+#         termine, que al final ambas lineas aparecen exactamente una vez (sin
+#         duplicarse con un cat/tail final, que CA-2 elimina) y que el rc
+#         devuelto es el del comando falso (exit 0 y exit 7).
 #
 # Uso: .claude/scripts/tests/test-mefisto-herdr-pipeline.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -516,6 +523,106 @@ fi
 echo ""
 echo "----------------------------------------"
 echo "  Guards de contexto y del canonico: $PASS pass, $FAIL fail (hasta aqui)"
+echo "----------------------------------------"
+
+# --- [24] tail -f en vivo del .report.log dentro de --_pane-runner (CA-1/2/3) -
+#
+# Corre el runner interno directamente (sin pasar por el shim ni por herdr
+# real), sin HERDR_PANE_ID en el entorno -- salta los "herdr pane rename" y
+# aisla el chequeo del tail -f del resto del contrato de panes. El comando
+# falso imprime una linea, duerme 3s e imprime otra: mientras duerme, la
+# primera linea ya debe estar en la captura del stdout del runner (CA-1). Al
+# terminar, ambas lineas aparecen exactamente una vez (no se duplican con un
+# cat/tail final, que CA-2 elimina) y el rc devuelto es el del comando falso.
+
+FAKE_CMD="$TMP_DIR/fake-cmd.sh"
+cat > "$FAKE_CMD" <<'FAKECMD'
+#!/usr/bin/env bash
+echo "linea-uno-del-comando-falso"
+sleep 3
+echo "linea-dos-del-comando-falso"
+exit "${1:-0}"
+FAKECMD
+chmod +x "$FAKE_CMD"
+
+# run_pane_runner_live <exit_code_esperado>
+#
+# Lanza --_pane-runner en background (capturando su stdout+stderr a un
+# archivo), sondea hasta 2.5s -- bien antes de los 3s que duerme el comando
+# falso -- esperando ver la primera linea ya en la captura, y solo entonces
+# espera a que el runner termine para verificar el resto.
+run_pane_runner_live() {
+    local expected_rc="$1"
+    local capture="$TMP_DIR/pane-runner-stdout-$expected_rc.log"
+    (
+        cd "$FAKE_MEFISTO" || exit 99
+        env -u MEFISTO_UI -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_WORKSPACE_ID \
+            -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR \
+            -u MEFISTO_REPO_ROOT -u MEFISTO_PROJECT_NAME -u MEFISTO_REPO_SLUG \
+            PATH="$FAKE_BIN:$PATH" \
+            "$FAKE_MEFISTO/src/internal/scripts/mefisto-herdr-pipeline.sh" \
+            --_pane-runner --title t --issues 999999 -- "$FAKE_CMD" "$expected_rc"
+    ) </dev/null >"$capture" 2>&1 &
+    local runner_pid=$!
+
+    local waited=0 seen=false
+    while [ "$waited" -lt 25 ]; do
+        if grep -qF "linea-uno-del-comando-falso" "$capture" 2>/dev/null; then
+            seen=true
+            break
+        fi
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+    if [ "$seen" = "true" ] && kill -0 "$runner_pid" 2>/dev/null; then
+        pass "(rc esperado $expected_rc) la primera linea aparece en vivo antes de que el comando falso termine"
+    else
+        fail "(rc esperado $expected_rc) la primera linea no aparecio en vivo a tiempo -- captura: $(cat "$capture" 2>/dev/null)"
+    fi
+
+    local runner_rc=0
+    wait "$runner_pid" || runner_rc=$?
+    if [ "$runner_rc" -eq "$expected_rc" ]; then
+        pass "el rc devuelto es el del comando falso ($expected_rc)"
+    else
+        fail "rc esperado $expected_rc, obtenido $runner_rc"
+    fi
+
+    local count_uno count_dos
+    count_uno=$(grep -cF "linea-uno-del-comando-falso" "$capture")
+    count_dos=$(grep -cF "linea-dos-del-comando-falso" "$capture")
+    if [ "$count_uno" -eq 1 ] && [ "$count_dos" -eq 1 ]; then
+        pass "ambas lineas aparecen exactamente una vez en la captura final"
+    else
+        fail "conteo inesperado (linea-uno=$count_uno, linea-dos=$count_dos) -- captura: $(cat "$capture")"
+    fi
+
+    if [ "$expected_rc" -eq 0 ]; then
+        if grep -q "pipeline terminado OK" "$capture"; then
+            pass "banner OK impreso"
+        else
+            fail "no se imprimio el banner OK -- captura: $(cat "$capture")"
+        fi
+    else
+        if grep -qF "pipeline FALLO (exit $expected_rc)" "$capture"; then
+            pass "banner de fallo impreso con el exit code correcto"
+        else
+            fail "no se imprimio el banner de fallo con exit $expected_rc -- captura: $(cat "$capture")"
+        fi
+    fi
+}
+
+echo ""
+echo "[24a] --_pane-runner con un comando falso que termina exit 0"
+run_pane_runner_live 0
+
+echo ""
+echo "[24b] --_pane-runner con un comando falso que termina exit 7"
+run_pane_runner_live 7
+
+echo ""
+echo "----------------------------------------"
+echo "  tail -f en vivo del reporte: $PASS pass, $FAIL fail (hasta aqui)"
 echo "----------------------------------------"
 
 echo ""
