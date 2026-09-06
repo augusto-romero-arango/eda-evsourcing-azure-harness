@@ -117,6 +117,10 @@ if [ ! -d "$ROOT" ]; then
     exit 1
 fi
 ROOT="$(cd "$ROOT" && pwd)"
+if ! git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "ERROR: --root '$ROOT' no es un repositorio git (el universo de archivos sale de git ls-files)" >&2
+    exit 1
+fi
 
 if [ ! -f "$ALLOWLIST_FILE" ]; then
     echo "ERROR: no existe la allowlist '$ALLOWLIST_FILE'" >&2
@@ -224,16 +228,16 @@ run_text_rule() {
 }
 
 # --- R1: alias/ids de modelo, `model` en frontmatter, tools/permission crudos
-# `claude-(opus|sonnet|haiku|fable|[0-9])...` (no un `[a-z0-9]` suelto tras
-# "claude-") es deliberado: un `[a-z0-9]` suelto matchea ".claude-plugin"
-# (el manifiesto fisico del plugin, citado en casi todo archivo interno via
-# el "guard inverso") como si fuera un id de modelo -- falso positivo medido
-# en la primera corrida de este gate contra el repo real. Anclar al
-# vocabulario de familias conocidas o a un digito evita ese choque sin perder
-# ids reales (`claude-opus-5[1m]`, `claude-haiku-4-5-20251001`, `claude-3-5-sonnet`).
+# `claude-[a-z0-9]...` lleva un borde izquierdo que excluye el `.`: sin el,
+# ".claude-plugin" (el manifiesto fisico del plugin, citado en casi todo
+# archivo interno via el "guard inverso") contaria como id de modelo -- falso
+# positivo medido en la primera corrida de este gate contra el repo real. Con
+# ese borde el vocabulario queda abierto a cualquier familia de ids
+# `claude-*` (CA-1: `claude-[a-z0-9-]+`) sin ese choque, y sigue cazando los
+# ids reales (`claude-opus-5[1m]`, `claude-haiku-4-5-20251001`).
 # `"model"[[:space:]]*:` es la forma JSON porque el frontmatter de la fuente
 # neutral (src/internal/{agents,commands}/*.md) es JSON, no YAML.
-R1_REGEX='(^|[^A-Za-z0-9_.-])(haiku|sonnet|opus|fable)([^A-Za-z0-9_.-]|$)|claude-(opus|sonnet|haiku|fable|[0-9])[A-Za-z0-9._-]*|gpt-[0-9][A-Za-z0-9._-]*|openai/|anthropic/|"model"[[:space:]]*:|"(Bash|Read|Write|Edit|Glob|Grep|WebFetch|WebSearch|Skill|Task)"|"(permission|external_directory|doom_loop|todowrite|webfetch|websearch|lsp)"'
+R1_REGEX='(^|[^A-Za-z0-9_.-])(haiku|sonnet|opus|fable)([^A-Za-z0-9_.-]|$)|(^|[^.A-Za-z0-9_-])claude-[a-z0-9][A-Za-z0-9._-]*|gpt-[0-9a-z][A-Za-z0-9._-]*|openai/|anthropic/|"model"[[:space:]]*:|"(Bash|Read|Write|Edit|Glob|Grep|WebFetch|WebSearch|Skill|Task)"|"(permission|external_directory|doom_loop|todowrite|webfetch|websearch|lsp)"'
 run_text_rule "R1" "$R1_REGEX" ${R1_FILES[@]+"${R1_FILES[@]}"}
 
 # --- R2: invocaciones directas de CLI de un runtime concreto
@@ -286,13 +290,15 @@ for f in ${FILES[@]+"${FILES[@]}"}; do
     is_toplevel_claude_script "$f" || continue
     is_not_migrated "$f" && continue
 
-    content="$(cat "$f" 2>/dev/null)"
     if [ "$f" = ".claude/scripts/_mefisto-common.sh" ]; then
         expected="$MEFISTO_COMMON_SHIM_TEMPLATE"
     else
         expected="$SHIM_TEMPLATE"
     fi
-    if [ "$content" != "$expected" ]; then
+    # Byte-exacto (CA-1): `cmp` contra la plantilla con su unico salto de linea
+    # final. Un `[ "$(cat "$f")" = "$expected" ]` recortaria los saltos finales
+    # y dejaria pasar un shim con lineas en blanco de mas o sin salto final.
+    if ! printf '%s\n' "$expected" | cmp -s - "$f" 2>/dev/null; then
         VIOLATIONS+=("$f:1: R4")
     fi
 done

@@ -9,7 +9,9 @@
 #                   "opencode runtime" que NO es invocacion, sin fugas)
 #                   termina en exit 0 sin imprimir nada.
 #   [R1]-[R4]       Un negativo por regla, cada uno con la linea
-#                   "<ruta>:<linea>: <regla>" esperada.
+#                   "<ruta>:<linea>: <regla>" esperada; R1 anade un id de
+#                   familia no enumerada (claude-nova-9) y R4 un shim con un
+#                   salto de linea de mas (byte-exacto).
 #   [adapters-check] Una divergencia de generate-internal-adapters.sh --check
 #                   se reemite como "<ruta>: <estado>: adapters-check".
 #   [allowlist]     Una entrada de la allowlist sin 'motivo' hace abortar el
@@ -156,6 +158,7 @@ write_allowlist "$DIR_CLEAN" '{
 mkdir -p "$DIR_CLEAN/src/internal/scripts/lib"
 printf '#!/usr/bin/env bash\n# menciona el modelo sonnet a proposito (cubierto por la excepcion)\necho ok\n' > "$DIR_CLEAN/src/internal/scripts/lib/fx-allowed-model.sh"
 printf '#!/usr/bin/env bash\n# el opencode runtime lo resuelve el runner neutral: esto es prosa, no una invocacion\necho ok\n' > "$DIR_CLEAN/src/internal/scripts/lib/fx-clean.sh"
+printf '#!/usr/bin/env bash\n# lee .claude-plugin/plugin.json (manifiesto fisico del plugin, no un id de modelo)\necho ok\n' > "$DIR_CLEAN/src/internal/scripts/lib/fx-plugin-manifest.sh"
 printf 'doctrina neutral de ejemplo, sin fugas.\n' > "$DIR_CLEAN/AGENTS.md"
 write_generic_shim "$DIR_CLEAN/.claude/scripts/fx-shim.sh"
 write_common_shim "$DIR_CLEAN/.claude/scripts/_mefisto-common.sh"
@@ -183,6 +186,7 @@ write_allowlist "$DIR_R1" "$EMPTY_ALLOWLIST"
 write_clean_generator "$DIR_R1"
 mkdir -p "$DIR_R1/src/internal/scripts/lib"
 printf '#!/usr/bin/env bash\n# usa el modelo sonnet para esta tarea\necho ok\n' > "$DIR_R1/src/internal/scripts/lib/fx-model-leak.sh"
+printf '#!/usr/bin/env bash\n# id de una familia que R1 no enumera: claude-nova-9\necho ok\n' > "$DIR_R1/src/internal/scripts/lib/fx-model-id-leak.sh"
 git_add_all "$DIR_R1"
 R1_OUT="$(run_gate "$DIR_R1")"
 R1_RC=$?
@@ -190,6 +194,11 @@ if [ "$R1_RC" -ne 0 ] && printf '%s\n' "$R1_OUT" | grep -qE '^src/internal/scrip
     pass "reporta 'src/internal/scripts/lib/fx-model-leak.sh:<linea>: R1' con exit != 0"
 else
     fail "no reporto la violacion R1 esperada. exit=$R1_RC salida: $R1_OUT"
+fi
+if printf '%s\n' "$R1_OUT" | grep -qE '^src/internal/scripts/lib/fx-model-id-leak\.sh:[0-9]+: R1$'; then
+    pass "reporta un id claude-* de familia no enumerada (claude-nova-9) como R1"
+else
+    fail "no reporto el id claude-nova-9 como R1. salida: $R1_OUT"
 fi
 
 echo ""
@@ -231,6 +240,8 @@ write_allowlist "$DIR_R4" "$EMPTY_ALLOWLIST"
 write_clean_generator "$DIR_R4"
 mkdir -p "$DIR_R4/.claude/scripts"
 printf '#!/usr/bin/env bash\necho "no soy un shim conforme"\n' > "$DIR_R4/.claude/scripts/fx-bad-shim.sh"
+write_generic_shim "$DIR_R4/.claude/scripts/fx-trailing-shim.sh"
+printf '\n' >> "$DIR_R4/.claude/scripts/fx-trailing-shim.sh"
 git_add_all "$DIR_R4"
 R4_OUT="$(run_gate "$DIR_R4")"
 R4_RC=$?
@@ -238,6 +249,11 @@ if [ "$R4_RC" -ne 0 ] && printf '%s\n' "$R4_OUT" | grep -qF '.claude/scripts/fx-
     pass "reporta '.claude/scripts/fx-bad-shim.sh:1: R4' con exit != 0"
 else
     fail "no reporto la violacion R4 esperada. exit=$R4_RC salida: $R4_OUT"
+fi
+if printf '%s\n' "$R4_OUT" | grep -qF '.claude/scripts/fx-trailing-shim.sh:1: R4'; then
+    pass "un shim con un salto de linea de mas no es byte-exacto -> R4"
+else
+    fail "no reporto el shim con salto de linea de mas como R4. salida: $R4_OUT"
 fi
 
 echo ""
