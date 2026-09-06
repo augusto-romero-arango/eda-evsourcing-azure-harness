@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # mefisto-run-agent.sh -- Runner neutral a runtime de una invocacion de agente
 # (MEF-ADR-0049 CA-1/CA-2, issue #858). Reemplaza, para quien lo adopte
-# (#869), la invocacion directa de `claude -p ...` de
+# (#869), la invocacion directa del CLI de un runtime concreto desde
 # .claude/scripts/mefisto-tooling-pipeline.sh:463 por un contrato que ningun
 # pipeline necesita conocer en detalle: recibe argumentos opacos, escribe
 # JSONL neutral (vocabulario cerrado en src/internal/contract/run-events.

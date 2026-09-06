@@ -62,8 +62,9 @@ source "$FRONTMATTER_LIB"
 # de invocacion de los pipelines internos (ver README.md, "Directivas de
 # body"): el propio adaptador emite ese mismo prefijo para los dos runtimes,
 # asi que citarlo en prosa no filtra ninguna decision especifica de runtime.
-# Ninguna otra forma de "claude"/"opencode" (bare, `.claude/pipeline`,
-# `.claude/agents`, `.claude/commands`, etc.) entra en esta excepcion.
+# Ninguna otra forma de "claude"/"opencode" (bare, la ruta de estado legacy
+# previa a la migracion, `.claude/agents`, `.claude/commands`, etc.) entra en
+# esta excepcion.
 body_runtime_references() {
     awk '
         NR==1 && $0 != "---" { exit }

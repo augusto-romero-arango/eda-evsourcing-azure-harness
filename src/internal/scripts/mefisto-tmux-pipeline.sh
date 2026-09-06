@@ -86,10 +86,10 @@ NC='\033[0m'
 
 PROJECT_ROOT="$MEFISTO_REPO_ROOT"
 # El events.log de la corrida se resuelve con mefisto_state_path (issue #869):
-# ".mefisto/pipeline/events.log" canonico, nunca una ruta ".claude/pipeline"
-# compuesta a mano -- ese hardcodeo era el bug que dejaba al pane monitor
-# tail-eando un archivo vacio toda la corrida, sin una sola linea y sin error
-# visible.
+# ".mefisto/pipeline/events.log" canonico, nunca una ruta compuesta a mano con
+# el prefijo legacy previo a la migracion -- ese hardcodeo era el bug que
+# dejaba al pane monitor tail-eando un archivo vacio toda la corrida, sin una
+# sola linea y sin error visible.
 EVENTS_LOG="$(mefisto_state_path "events.log")"
 # CAFF: prefijo "caffeinate -i" (o vacio fuera de macOS), calculado UNA vez
 # por corrida y antepuesto al send-keys que lanza cada sub-pipeline interno --
@@ -214,8 +214,9 @@ extract_wrapper_flags() {
                 # cmd_tooling/cmd_batch lo interpretarian posicionalmente (issue
                 # #709, mismo defecto que motivo el pre-parseo de --from-stage).
                 # Comillas simples: el valor puede traer '[' / ']' de un id de
-                # modelo completo (p. ej. claude-opus-5[1m]) que el shell del
-                # send-keys de tmux tomaria como glob sin ellas.
+                # modelo completo con corchetes (formato habitual de version
+                # de modelo) que el shell del send-keys de tmux tomaria como
+                # glob sin ellas.
                 i=$((i + 1))
                 local models_value="${args[$i]:-}"
                 [ -n "$models_value" ] || abort "Falta el valor de --models"

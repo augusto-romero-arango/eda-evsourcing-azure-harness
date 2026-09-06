@@ -9,7 +9,7 @@
 #
 # Uso (misma superficie de modos que mefisto-tmux-pipeline.sh):
 #   src/internal/scripts/mefisto-herdr-pipeline.sh --tooling 42 [--from-stage N]
-#   src/internal/scripts/mefisto-herdr-pipeline.sh --tooling 42 --models 'reviewer=opus'
+#   src/internal/scripts/mefisto-herdr-pipeline.sh --tooling 42 --models 'reviewer=<modelo>'
 #   src/internal/scripts/mefisto-herdr-pipeline.sh --tooling 42 --variant experimento-a
 #   src/internal/scripts/mefisto-herdr-pipeline.sh --batch 42 43 44
 #
@@ -56,7 +56,7 @@ PROJECT_ROOT="$MEFISTO_REPO_ROOT"
 # panes resuelven contra MEFISTO_STATE_DIR (".mefisto/pipeline/", exportada
 # por mefisto-state.sh via _mefisto-common.sh), el mismo canonico que usa
 # mefisto-tooling-pipeline.sh/mefisto-batch-pipeline.sh para escribir --
-# nunca una ruta ".claude/pipeline" compuesta a mano.
+# nunca una ruta compuesta a mano con el prefijo legacy previo a la migracion.
 LOG_DIR_ABS="$(mefisto_state_path "logs")"
 # CAFF: prefijo "caffeinate -i" (o vacio fuera de macOS), calculado UNA vez
 # por corrida y antepuesto al lanzamiento en background del sub-pipeline
@@ -358,9 +358,10 @@ cmd_tooling() {
     # models: el valor crudo de --models (issue #709), como argumento propio y
     # entrecomillado -- NO concatenado a extra_args. extra_args se expande sin
     # comillas (lista de flags simples, p. ej. "--from-stage 2") y ahi un id de
-    # modelo completo como 'claude-opus-5[1m]' es un patron glob valido que la
-    # pathname expansion podria alterar. Como argumento propio llega intacto a
-    # dispatch_to_pane, que lo quotea con printf %q hacia el pane.
+    # modelo completo con corchetes (forma habitual de version de modelo) es
+    # un patron glob valido que la pathname expansion podria alterar. Como
+    # argumento propio llega intacto a dispatch_to_pane, que lo quotea con
+    # printf %q hacia el pane.
     local models="${3:-}"
     # variant: label crudo de --variant (issue #711), mismo criterio que
     # 'models' -- argumento propio, no concatenado a extra_args. Ademas
