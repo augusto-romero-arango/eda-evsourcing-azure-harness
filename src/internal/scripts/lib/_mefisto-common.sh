@@ -137,9 +137,9 @@ get_harness_version() {
 #
 # Opera sobre el cwd del proceso que la invoca: el caller (el prologo de
 # mefisto-tooling-pipeline.sh) debe llamarla ANTES de crear el worktree del
-# issue, cuando el cwd todavia es el checkout principal -- los
-# .claude/scripts/ que ejecutan la corrida son los del checkout principal, no
-# los del worktree (que arranca desde origin/main y puede estar en otro SHA).
+# issue, cuando el cwd todavia es el checkout principal -- los scripts que
+# ejecutan la corrida son los del checkout principal, no los del worktree (que
+# arranca desde origin/main y puede estar en otro SHA).
 #
 # Degrada a cadena vacia -- sin abortar, exit 0 siempre -- si 'git' no esta
 # en PATH o si el cwd no es un repositorio git.

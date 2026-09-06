@@ -350,7 +350,17 @@ EOF
 {"issue":"3","title":"aborto con ambos campos en null","pipeline":"mefisto-tooling","harness_version":null,"harness_sha":null,"started":"20260103-100000","finished":"2026-01-03T10:10:00","state":"failed","stage":"writer","error":"algo"}
 EOF
 
-    K_OUT=$( (cd "$FAKE_REPO" && ./.claude/scripts/mefisto-metrics-report.sh) 2>&1 )
+    # `env -u` de las MEFISTO_* de estado (issue #869): esta suite corre dentro
+    # de una invocacion real del pipeline interno, que EXPORTA MEFISTO_STATE_DIR
+    # / MEFISTO_LEGACY_STATE_DIR apuntando al repo REAL (mefisto-state.sh los
+    # resuelve con `: "${VAR:=...}"`, respetando a proposito un valor previo del
+    # entorno). Desde que el reporte agrega AMBAS ubicaciones, sin desmontarlos
+    # el fixture de 3 lineas se mezclaria con el historial real y K-1 mediria
+    # corridas ajenas. MEFISTO_REPO_ROOT tambien se desmonta: assert_in_mefisto
+    # lo re-exporta dentro de FAKE_REPO, pero heredarlo hace que ese re-export
+    # dependa del orden de evaluacion en vez de del cwd.
+    K_OUT=$( (cd "$FAKE_REPO" && env -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR \
+        -u MEFISTO_REPO_ROOT ./.claude/scripts/mefisto-metrics-report.sh) 2>&1 )
     K_RC=$?
     if [ "$K_RC" -eq 0 ] && echo "$K_OUT" | grep -q "Corridas mefisto-tooling en la ventana: 3"; then
         pass "K-1: las 3 lineas (legada, con ambos campos, con ambos en null) se agregan sin cambios"
