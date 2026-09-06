@@ -1,0 +1,2 @@
+{"v":1,"type":"run.started","ts":"2026-09-05T10:20:00Z","runtime":"fake","agent":"mefisto-writer","model":null,"cwd":"/tmp/worktree"}
+{"v":1,"type":"run.completed","ts":"2026-09-05T10:20:01Z","status":"success","runtime":"fake","model":null,"session_id":null,"duration_ms":1000,"cost_usd":null,"turns":null,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":null}

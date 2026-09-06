@@ -1,0 +1,133 @@
+{
+  "$comment": "Contrato neutral del protocolo de ejecucion y eventos (MEF-ADR-0049 CA-1/CA-3/CA-4, issue #858). Cada linea del JSONL neutral que emite mefisto-run-agent.sh (--event-log) es UN objeto que valida contra definitions[<su .type>] -- este archivo NO usa 'oneOf' porque el dispatch de oneOf en jsonschema-lite.jq (issue #853) esta fijado al campo discriminador 'kind' (dispatch por 'kind' del contrato de agentes/comandos), y el discriminador de ESTE contrato es 'type' (vocabulario cerrado listado en 'types'). El caller (ver 'validate_event_line' en .claude/scripts/tests/test-mefisto-run-agent.sh) selecciona definitions[.type] antes de invocar jsonschema-lite.jq; un '.type' fuera de 'types' no tiene entrada en definitions y el caller lo rechaza el mismo. Un campo documentado como '<tipo> o null' se declara SIN la palabra clave 'type' en su sub-schema (jsonschema-lite no soporta union de tipos ni 'const'): 'type'/'required'/'properties'/'additionalProperties' solo se aplican cuando la instancia es del jtype correspondiente (ver jsonschema-lite.jq), asi que omitir 'type' deja pasar tanto el valor tipado como null sin poder rechazar aqui un tipo intermedio incorrecto (p. ej. un booleano donde se esperaba string o null) -- limitacion documentada, no un descuido. Ver src/internal/contract/README.md, seccion 'Protocolo de ejecucion y eventos'.",
+  "types": ["run.started", "message", "tool.started", "tool.completed", "run.completed", "run.failed"],
+  "definitions": {
+    "run.started": {
+      "type": "object",
+      "required": ["v", "type", "ts", "runtime", "agent", "model", "cwd"],
+      "properties": {
+        "v": { "type": "number" },
+        "type": { "type": "string", "enum": ["run.started"] },
+        "ts": { "type": "string", "minLength": 1 },
+        "runtime": { "type": "string", "minLength": 1 },
+        "agent": { "type": "string", "minLength": 1 },
+        "model": { "$comment": "string o null -- null cuando --model llega vacio/ausente (heredar)" },
+        "cwd": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "message": {
+      "type": "object",
+      "required": ["v", "type", "ts", "role", "text"],
+      "properties": {
+        "v": { "type": "number" },
+        "type": { "type": "string", "enum": ["message"] },
+        "ts": { "type": "string", "minLength": 1 },
+        "role": { "type": "string", "minLength": 1 },
+        "text": { "type": "string" },
+        "kind": { "type": "string", "enum": ["text", "thinking"] }
+      },
+      "additionalProperties": false
+    },
+    "tool.started": {
+      "type": "object",
+      "required": ["v", "type", "ts", "tool", "input_summary"],
+      "properties": {
+        "v": { "type": "number" },
+        "type": { "type": "string", "enum": ["tool.started"] },
+        "ts": { "type": "string", "minLength": 1 },
+        "tool": { "type": "string", "minLength": 1 },
+        "input_summary": { "$comment": "string o null" }
+      },
+      "additionalProperties": false
+    },
+    "tool.completed": {
+      "type": "object",
+      "required": ["v", "type", "ts", "tool", "ok", "duration_ms"],
+      "properties": {
+        "v": { "type": "number" },
+        "type": { "type": "string", "enum": ["tool.completed"] },
+        "ts": { "type": "string", "minLength": 1 },
+        "tool": { "type": "string", "minLength": 1 },
+        "ok": { "type": "boolean" },
+        "duration_ms": { "$comment": "number o null" }
+      },
+      "additionalProperties": false
+    },
+    "run.completed": {
+      "type": "object",
+      "required": ["v", "type", "ts", "status", "runtime", "model", "session_id", "duration_ms", "tokens", "cost_usd", "turns", "denials", "ttft_ms", "api_duration_ms", "error"],
+      "properties": {
+        "v": { "type": "number" },
+        "type": { "type": "string", "enum": ["run.completed"] },
+        "ts": { "type": "string", "minLength": 1 },
+        "status": { "type": "string", "enum": ["success", "failed", "timeout", "protocol_invalid"] },
+        "runtime": { "type": "string", "minLength": 1 },
+        "model": { "$comment": "string o null" },
+        "session_id": { "$comment": "string o null" },
+        "duration_ms": { "type": "number" },
+        "tokens": {
+          "type": "object",
+          "required": ["input", "output"],
+          "properties": {
+            "input": { "$comment": "number o null" },
+            "output": { "$comment": "number o null" }
+          },
+          "additionalProperties": false
+        },
+        "cost_usd": { "$comment": "number o null" },
+        "turns": { "$comment": "number o null" },
+        "denials": { "$comment": "number o null" },
+        "ttft_ms": { "$comment": "number o null" },
+        "api_duration_ms": { "$comment": "number o null" },
+        "error": {
+          "$comment": "null en exito; objeto {kind, detail} si status != success (p. ej. senal posterior a un result exitoso, ver #446). Sin 'type' a proposito: null y objeto conviven en el mismo campo.",
+          "required": ["kind", "detail"],
+          "properties": {
+            "kind": { "type": "string", "enum": ["timeout", "killed", "api_error", "stream_cut", "nonzero_exit", "no_result", "protocol_invalid"] },
+            "detail": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "run.failed": {
+      "type": "object",
+      "required": ["v", "type", "ts", "status", "runtime", "model", "session_id", "duration_ms", "tokens", "cost_usd", "turns", "denials", "ttft_ms", "api_duration_ms", "error"],
+      "properties": {
+        "v": { "type": "number" },
+        "type": { "type": "string", "enum": ["run.failed"] },
+        "ts": { "type": "string", "minLength": 1 },
+        "status": { "type": "string", "enum": ["success", "failed", "timeout", "protocol_invalid"] },
+        "runtime": { "type": "string", "minLength": 1 },
+        "model": { "$comment": "string o null" },
+        "session_id": { "$comment": "string o null" },
+        "duration_ms": { "type": "number" },
+        "tokens": {
+          "type": "object",
+          "required": ["input", "output"],
+          "properties": {
+            "input": { "$comment": "number o null" },
+            "output": { "$comment": "number o null" }
+          },
+          "additionalProperties": false
+        },
+        "cost_usd": { "$comment": "number o null" },
+        "turns": { "$comment": "number o null" },
+        "denials": { "$comment": "number o null" },
+        "ttft_ms": { "$comment": "number o null" },
+        "api_duration_ms": { "$comment": "number o null" },
+        "error": {
+          "required": ["kind", "detail"],
+          "properties": {
+            "kind": { "type": "string", "enum": ["timeout", "killed", "api_error", "stream_cut", "nonzero_exit", "no_result", "protocol_invalid"] },
+            "detail": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

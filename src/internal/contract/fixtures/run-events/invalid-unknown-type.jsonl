@@ -1,0 +1,2 @@
+{"v":1,"type":"run.started","ts":"2026-09-05T10:25:00Z","runtime":"fake","agent":"mefisto-writer","model":null,"cwd":"/tmp/worktree"}
+{"v":1,"type":"bogus.event","ts":"2026-09-05T10:25:01Z","status":"success"}
