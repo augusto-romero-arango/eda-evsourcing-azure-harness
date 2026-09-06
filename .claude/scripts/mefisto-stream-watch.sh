@@ -32,10 +32,13 @@
 # silencio en el medio, sin forma de notar que el agente esta dando vueltas ni
 # de aprender mirando. Este visor sigue incrementalmente el JSONL neutral que
 # el runner escribe por stage (`<log_base>.events.jsonl`, protocolo de
-# ejecucion y eventos de MEF-ADR-0049, issue #858) y renderiza una linea
-# legible por actividad: mensajes de texto o razonamiento sin llamada a
-# herramienta, el cierre de cada llamada a herramienta con su duracion si esta
-# disponible, y el cierre del stage con sus metricas.
+# ejecucion y eventos de MEF-ADR-0049, issue #858) y renderiza una linea con
+# marca de tiempo por actividad (issue #925): el texto completo de cada
+# mensaje (razonamiento o respuesta, sin truncar ni colapsar saltos de linea),
+# cada tool al arrancar con su `input_summary` (para que se vea que hace el
+# agente MIENTRAS corre, no solo al terminar), el fallo de una tool si lo hay
+# (un exito no produce linea -- ya se vio al arrancar) y el cierre del stage
+# con sus metricas.
 #
 # Neutral a runtime (CA-6, MEF-ADR-0049): el parser solo conoce el vocabulario
 # de run-events.schema.json (`message`, `tool.started`, `tool.completed`,
@@ -106,18 +109,24 @@ LAST_LINE=0
 PREV_EMS=""
 IGNORED_COUNT=0
 CURRENT_STREAM=""
+CURRENT_CWD=""
 
 # write_jq_filter <dest_file>
 #
 # Escribe en <dest_file> el programa jq que traduce una linea del JSONL
 # neutral (run-events.schema.json, issue #858) a una fila TSV lista para
 # render_row:
-#   "message"  -> kind del turno sin llamada a herramienta ("text"/"thinking",
-#                 CA-2).
+#   "run_started"  -> `cwd` de un `run.started` (issue #925: solo fija el cwd
+#                 vigente para relativizar `input_summary`, no imprime fila).
+#   "message"  -> kind del turno sin llamada a herramienta ("text"/"thinking")
+#                 mas su `text` completo (issue #925).
+#   "tool_started" -> nombre + `input_summary` de un `tool.started` (issue
+#                 #925: se renderiza al arrancar la tool, no al terminar --
+#                 es la unica forma de ver que hace el agente MIENTRAS corre).
 #   "tool"     -> nombre + `ok` + `duration_ms` de un `tool.completed` (una
-#                 sola fila por herramienta; `tool.started` se reconoce pero
-#                 no produce fila -- el runtime lo emite antes de conocer su
-#                 duracion, y CA-2 pide "una linea por tool", no dos).
+#                 sola fila por herramienta; render_row solo la imprime
+#                 cuando `ok == false`, issue #925 -- un exito no aporta nada
+#                 que `tool_started` no haya mostrado ya).
 #   "terminal" -> cierre de stage (`run.completed`/`run.failed`): status,
 #                 runtime, model, session_id, duration_ms, api_duration_ms,
 #                 cost_usd, turns, tokens.input/output, ttft_ms, denials,
@@ -133,7 +142,12 @@ CURRENT_STREAM=""
 # espacio en blanco para IFS -- bash colapsa dos tabs seguidos en un solo
 # separador, asi que un campo vacio en el medio DESPLAZARIA todos los que
 # siguen. Con placeholder no hay campo vacio y la posicion se conserva; el
-# shell lo traduce de vuelta con is_missing.
+# shell lo traduce de vuelta con is_missing. `@tsv` (dentro de `row`) escapa
+# tab/salto de linea/barra invertida de CADA celda como secuencias de dos
+# caracteres (`\t`/`\n`/`\\`) antes de unirlas con tabs reales -- por eso
+# `text` (de `message`) e `input_summary` (de `tool_started`) viajan intactos
+# sin desplazar ningun campo, y el shell los reconstruye con tsv_decode
+# (issue #925, `printf '%b'`).
 write_jq_filter() {
     local dest="$1"
     cat > "$dest" <<'MEFISTO_STREAM_WATCH_JQ'
@@ -161,12 +175,16 @@ else
   | ($e.type // null) as $t
   | if ($t == null) or (known_type($t) | not) then
       ["ignored"] | row
-    elif ($t == "run.started") or ($t == "tool.started") then
-      empty
+    elif $t == "run.started" then
+      ($e.ts | epoch_ms) as $ems
+      | ["run_started", $ems, ($e.cwd // null)] | row
+    elif $t == "tool.started" then
+      ($e.ts | epoch_ms) as $ems
+      | ["tool_started", $ems, ($e.tool // null), ($e.input_summary // null)] | row
     elif $t == "message" then
       ($e.ts | epoch_ms) as $ems
       | (if ($e.kind // "text") == "thinking" then "thinking" else "text" end) as $k
-      | ["message", $ems, $k] | row
+      | ["message", $ems, $k, ($e.text // null)] | row
     elif $t == "tool.completed" then
       ($e.ts | epoch_ms) as $ems
       | ["tool", $ems, ($e.tool // null), $e.ok, ($e.duration_ms // null)] | row
@@ -324,6 +342,47 @@ is_missing() {
     esac
 }
 
+# tsv_decode <celda>
+#
+# Revierte el escapado de `@tsv` (issue #925): una celda ya separada por
+# `IFS=$'\t' read` trae `\t`/`\n`/`\\` como secuencias literales de dos
+# caracteres (nunca un tab o salto de linea reales -- eso rompería el
+# contrato de filas, ver write_jq_filter), y `printf '%b'` las revierte a los
+# caracteres reales sin doble-interpretar nada mas: `@tsv` escapa TODO
+# backslash de la celda original (incluido uno que preceda a una letra suelta
+# como "n" o "t" sin ser una secuencia de escape), asi que lo que le llega a
+# `%b` como backslash unico proviene siempre de un backslash real ya
+# duplicado por `@tsv` -- nunca deja una secuencia ambigua tipo octal.
+tsv_decode() {
+    printf '%b' "$1"
+}
+
+# relativize_path <valor> <cwd>
+#
+# Si <valor> empieza exactamente por "<cwd>/", devuelve el resto sin ese
+# prefijo; en cualquier otro caso (o si <cwd> falta -- CA-2 de #925: sin
+# `run.started` previo, p.ej. un archivo pineado que arranca a mitad, no se
+# relativiza) devuelve <valor> tal cual. La comparacion es por PREFIJO
+# LITERAL, nunca por regex: <cwd> puede traer espacios o caracteres
+# especiales de glob, y citarlo dentro del patron de `case` (`"$cwd"/*`)
+# fuerza esos caracteres a matchear como texto en vez de como operadores de
+# glob -- solo el `/*` final (sin comillas) actua como comodin.
+relativize_path() {
+    local valor="$1" cwd="$2"
+    if is_missing "$cwd" || is_missing "$valor"; then
+        printf '%s' "$valor"
+        return 0
+    fi
+    case "$valor" in
+        "$cwd"/*)
+            printf '%s' "${valor#"$cwd"/}"
+            ;;
+        *)
+            printf '%s' "$valor"
+            ;;
+    esac
+}
+
 # fmt_time_hhmmss <epoch_ms>
 #
 # Formatea un timestamp epoch-en-milisegundos (el que produce epoch_ms del
@@ -457,22 +516,40 @@ render_terminal_summary() {
 # render_row <kind> <ts> <p3> <p4> <p5> <p6> <p7> <p8> <p9> <p10> <p11> <p12> <p13> <p14> <p15>
 #
 # Renderiza una fila TSV ya producida por el filtro jq (write_jq_filter):
-#   kind=ignored  -> solo incrementa IGNORED_COUNT (CA-4), sin imprimir nada.
-#   kind=message  -> p3 = kind del turno ("text"/"thinking", CA-2).
-#   kind=tool     -> p3=nombre, p4=ok, p5=duration_ms.
-#   kind=terminal -> p3..p15 = status,runtime,model,session_id,duration_ms,
-#                    api_duration_ms,cost_usd,turns,tokens_in,tokens_out,
-#                    ttft_ms,denials,error_kind (cierre de stage).
+#   kind=ignored     -> solo incrementa IGNORED_COUNT (CA-4), sin imprimir
+#                       nada.
+#   kind=run_started -> p3=cwd (tsv-escapado). Fija CURRENT_CWD para
+#                       relativizar el proximo tool_started (issue #925);
+#                       no imprime nada ni actualiza PREV_EMS.
+#   kind=message     -> p3=kind del turno ("text"/"thinking"), p4=texto
+#                       completo (tsv-escapado, issue #925).
+#   kind=tool_started -> p3=nombre, p4=input_summary (tsv-escapado, issue
+#                       #925).
+#   kind=tool        -> p3=nombre, p4=ok, p5=duration_ms -- solo imprime
+#                       linea si p4="false" (issue #925: un exito ya se vio
+#                       al arrancar via tool_started).
+#   kind=terminal    -> p3..p15 = status,runtime,model,session_id,
+#                       duration_ms,api_duration_ms,cost_usd,turns,
+#                       tokens_in,tokens_out,ttft_ms,denials,error_kind
+#                       (cierre de stage).
 #
 # Todo campo ausente llega como el placeholder "-" del filtro (is_missing).
-# Actualiza PREV_EMS (delta de la proxima accion); el cierre de stage reinicia
-# PREV_EMS e IGNORED_COUNT para la proxima corrida.
+# Actualiza PREV_EMS SOLO cuando la fila produce una linea visible (issue
+# #925: un tool_started/message impreso lo actualiza, un tool exitoso
+# silenciado NO -- asi el delta de la proxima linea visible sigue revelando
+# el tiempo total entre acciones observables, round-trips incluidos). El
+# cierre de stage reinicia PREV_EMS e IGNORED_COUNT para la proxima corrida.
 render_row() {
     local kind="$1" ts="$2" p3="$3" p4="$4" p5="$5" p6="$6" p7="$7" p8="$8" \
           p9="$9" p10="${10}" p11="${11}" p12="${12}" p13="${13}" p14="${14}" p15="${15}"
 
     if [ "$kind" = "ignored" ]; then
         IGNORED_COUNT=$((IGNORED_COUNT + 1))
+        return 0
+    fi
+
+    if [ "$kind" = "run_started" ]; then
+        CURRENT_CWD=$(tsv_decode "$p3")
         return 0
     fi
 
@@ -492,22 +569,57 @@ render_row() {
 
     case "$kind" in
         message)
-            local etiqueta="(pensando)"
-            [ "$p3" = "text" ] && etiqueta="(texto)"
-            printf '%b\n' "${BLUE}[${now_str}]${NC} ${delta_str}  ${YELLOW}${etiqueta}${NC}"
+            # Etiqueta delante del texto: "(pensando)" para `kind=thinking`
+            # siempre (CA-1 de #925); "(texto)" solo cuando el texto viene
+            # vacio -- con texto presente el turno "text" no lleva etiqueta,
+            # el texto mismo ya lo dice.
+            local etiqueta="" texto
+            [ "$p3" = "thinking" ] && etiqueta="(pensando)"
+            texto=$(tsv_decode "$p4")
+            if is_missing "$texto"; then
+                [ "$p3" != "thinking" ] && etiqueta="(texto)"
+                printf '%b\n' "${BLUE}[${now_str}]${NC} ${delta_str}  ${YELLOW}${etiqueta}${NC}"
+            else
+                local etiqueta_coloreada="" indent primera=1 linea
+                [ -n "$etiqueta" ] && etiqueta_coloreada="${YELLOW}${etiqueta}${NC} "
+                indent=$(printf '%20s' '')
+                printf '%b' "${BLUE}[${now_str}]${NC} ${delta_str}  "
+                while IFS= read -r linea || [ -n "$linea" ]; do
+                    if [ "$primera" -eq 1 ]; then
+                        printf '%b%s\n' "$etiqueta_coloreada" "$linea"
+                        primera=0
+                    else
+                        printf '%s%s\n' "$indent" "$linea"
+                    fi
+                done <<< "$texto"
+            fi
+            PREV_EMS="$ts"
+            ;;
+        tool_started)
+            local resumen
+            resumen=$(tsv_decode "$p4")
+            if is_missing "$resumen"; then
+                printf '%b\n' "${BLUE}[${now_str}]${NC} ${delta_str}  ${BOLD}${p3}${NC}"
+            else
+                resumen=$(relativize_path "$resumen" "$CURRENT_CWD")
+                printf '%b\n' "${BLUE}[${now_str}]${NC} ${delta_str}  ${BOLD}${p3}${NC}: ${resumen}"
+            fi
+            PREV_EMS="$ts"
             ;;
         tool)
-            # `ok` es obligatorio en el contrato, pero un "ok" fabricado sobre
-            # un campo que no llego mentiria sobre el desenlace de la tool
-            # (MEF-ADR-0049: ausente se muestra, no se inventa).
-            local estado_tool="n/d"
-            [ "$p4" = "true" ] && estado_tool="ok"
-            [ "$p4" = "false" ] && estado_tool="fallo"
-            printf '%b\n' "${BLUE}[${now_str}]${NC} ${delta_str}  ${BOLD}${p3}${NC} (${estado_tool}, $(fmt_ms_nd "$p5"))"
+            # `ok` es obligatorio en el contrato; un exito ya se vio al
+            # arrancar la tool (tool_started) y no aporta nada nuevo, asi que
+            # solo el fallo produce linea (issue #925). Inventar una linea
+            # para un `ok` ausente mentiria sobre el desenlace de la tool
+            # (MEF-ADR-0049: ausente se muestra, no se inventa) -- pero el
+            # contrato lo declara obligatorio, asi que esa rama nunca ocurre
+            # en la practica.
+            if [ "$p4" = "false" ]; then
+                printf '%b\n' "${BLUE}[${now_str}]${NC} ${delta_str}  ${BOLD}${p3}${NC} fallo ($(fmt_ms_nd "$p5"))"
+                PREV_EMS="$ts"
+            fi
             ;;
     esac
-
-    PREV_EMS="$ts"
 }
 
 # process_new_lines <archivo_de_eventos>
@@ -629,6 +741,7 @@ main() {
     PREV_EMS=""
     IGNORED_COUNT=0
     CURRENT_STREAM=""
+    CURRENT_CWD=""
 
     printf '%b\n' "${CYAN}${BOLD}Mefisto -- visor en vivo del flujo de eventos (issue #434/#878)${NC}"
     if [ -n "$pinned_path" ]; then
@@ -662,6 +775,7 @@ main() {
             LAST_LINE=0
             PREV_EMS=""
             IGNORED_COUNT=0
+            CURRENT_CWD=""
             echo ""
             parse_stream_header "$CURRENT_STREAM"
             echo ""
