@@ -13,9 +13,11 @@
 #   [check] generate-internal-adapters.sh --check esta en verde: los
 #         adaptadores versionados en .claude/agents/ y .opencode/agents/
 #         coinciden byte-a-byte con lo que la fuente neutral produce (CA-2).
-#   [claude-output] .claude/agents/*.md de los tres agentes llevan el
-#         marcador de generado, ningun `model: fable|opus`, y el historiador
-#         lleva `model: "sonnet"` (CA-2).
+#   [claude-output] Los seis adaptadores generados (.claude/agents/ y
+#         .opencode/agents/) llevan el marcador de generado y ninguno
+#         menciona `fable`, `opus` ni un id de modelo completo; en la salida
+#         Claude el historiador lleva `model: "sonnet"` y planner/investigator
+#         no declaran `model:` (perfil deep, heredan la sesion) (CA-2).
 #   [opencode-cli] Si el CLI `opencode` esta instalado, `opencode agent list`
 #         corrido en la raiz del repo lista los tres ids como agentes
 #         primary; si no esta instalado, se omite con aviso (CA-6).
@@ -104,11 +106,23 @@ for id in $AGENT_IDS; do
     else
         fail "$id: .claude/agents/$id.md no lleva el marcador de generado"
     fi
-    if grep -qiE '(^|[^-])\b(fable|opus)\b' "$out_file"; then
-        fail "$id: .claude/agents/$id.md menciona un id de modelo prohibido (fable/opus)"
+    if grep -q "^<!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh" "$REPO_ROOT/.opencode/agents/$id.md" 2>/dev/null; then
+        pass "$id: .opencode/agents/$id.md lleva el marcador de generado"
     else
-        pass "$id: .claude/agents/$id.md sin fable/opus"
+        fail "$id: .opencode/agents/$id.md no lleva el marcador de generado"
     fi
+done
+
+for id in $AGENT_IDS; do
+    for out_file in "$REPO_ROOT/.claude/agents/$id.md" "$REPO_ROOT/.opencode/agents/$id.md"; do
+        rel="${out_file#"$REPO_ROOT"/}"
+        [ -f "$out_file" ] || { fail "$rel: no existe"; continue; }
+        if grep -qiE '\b(fable|opus)\b|claude-[a-z0-9]+-[0-9]' "$out_file"; then
+            fail "$rel: menciona un id de modelo prohibido (fable/opus o un id completo)"
+        else
+            pass "$rel: sin fable/opus ni id de modelo"
+        fi
+    done
 done
 
 if grep -q '^model: "sonnet"$' "$REPO_ROOT/.claude/agents/mefisto-historiador.md" 2>/dev/null; then
@@ -128,7 +142,18 @@ done
 echo ""
 echo "[opencode-cli] 'opencode agent list' lista los tres ids (se omite si el CLI no esta instalado)"
 if command -v opencode >/dev/null 2>&1; then
+    # Un reintento: el CLI descubre los agentes leyendo .opencode/agents/, que
+    # el generador acaba de reescribir en la corrida tipica (writer regenera ->
+    # test verifica). Una lectura que cae en ese instante devuelve el listado
+    # sin alguno de los tres; reintentar una vez distingue esa carrera de una
+    # ausencia real, sin debilitar la asercion.
     out=$(cd "$REPO_ROOT" && opencode agent list 2>&1)
+    for id in $AGENT_IDS; do
+        printf '%s' "$out" | grep -q "^$id (primary)" || {
+            out=$(cd "$REPO_ROOT" && opencode agent list 2>&1)
+            break
+        }
+    done
     for id in $AGENT_IDS; do
         if printf '%s' "$out" | grep -q "^$id (primary)"; then
             pass "$id: listado por 'opencode agent list' como primary"

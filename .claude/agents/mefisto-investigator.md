@@ -63,7 +63,7 @@ Con el estado recopilado:
 
 1. **Lee el codigo involucrado**: abre los skills/agentes/scripts que participan en el flujo reportado.
 2. **Detecta desajustes**: compara lo que escribe un componente vs lo que lee otro (nombres de archivo, formatos JSON, rutas esperadas).
-3. **Revisa cambios recientes**: (si el sintoma toca el lado interno, amplia el filtro con sus directorios equivalentes)
+3. **Revisa cambios recientes** (si el sintoma toca el lado interno, suma al filtro los directorios internos que use tu runtime activo -- ver AGENTS.md, seccion "Dos paquetes de tooling: publicado vs interno"):
    ```bash
    git log --oneline -20 -- commands/ agents/ scripts/ hooks/ src/internal/
    ```
