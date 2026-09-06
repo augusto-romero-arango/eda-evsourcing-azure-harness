@@ -19,12 +19,21 @@
 #
 # Casos cubiertos:
 #   [pre] Todas las funciones bajo prueba se pueden extraer y cargar.
-#   [A] message: kind=thinking -> "(pensando)"; kind=text -> "(texto)"; kind
-#       ausente degrada a "(texto)" (CA-2).
-#   [B] tool.completed: una sola fila por herramienta, con su duracion en ms
-#       si esta disponible; ok=false se señala como "fallo" (CA-2/CA-3).
-#       tool.started y run.started se reconocen pero no producen fila ni
-#       cuentan como ignorados.
+#   [A] message (issue #925): con texto vacio se mantiene "(pensando)"/
+#       "(texto)" tal cual antes; con texto presente se imprime completo,
+#       primera linea junto a la marca de tiempo y las siguientes indentadas
+#       sin truncar ni colapsar saltos de linea -- "(pensando)" se conserva
+#       delante del texto, "(texto)" NO (el texto mismo ya lo dice). Un texto
+#       con `\n`/`\t`/`\` literales se reproduce fiel en pantalla.
+#   [B] tool.started (issue #925): renderiza `<tool>: <input_summary>` (solo
+#       `<tool>` si `input_summary` es null), relativizando contra el `cwd`
+#       del `run.started` vigente cuando el resumen empieza por ese prefijo.
+#       tool.completed deja de imprimir linea cuando ok=true (ya se vio al
+#       arrancar); ok=false si señala "fallo" con su duracion. run.started no
+#       imprime nada por si mismo (solo fija el cwd) ni cuenta como ignorado.
+#       Un input_summary con `\t`/`\c` literales (comando de Bash) se
+#       muestra fiel y sin truncar (CA-6 aplicado al resumen, no solo al
+#       texto).
 #   [C] Cierre de stage (terminal) con TODOS los campos presentes -> "OK" y
 #       ningun "n/d" en la salida (CA-2/CA-3).
 #   [D] Cierre de stage con los campos ausentes tipicos de una corrida
@@ -118,7 +127,7 @@ source "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh"
 # con `set -u` (mismo motivo que test-abort-log-tail.sh).
 RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; BOLD=""; NC=""
 
-FNS="write_jq_filter stream_matches_issues stream_is_newer_than discover_stream discover_stream_in_dirs discover_current_stream parse_stream_header is_missing fmt_time_hhmmss fmt_delta_s fmt_nd fmt_ms_nd ms_to_s render_terminal_summary render_row process_new_lines"
+FNS="write_jq_filter stream_matches_issues stream_is_newer_than discover_stream discover_stream_in_dirs discover_current_stream parse_stream_header is_missing tsv_decode relativize_path fmt_time_hhmmss fmt_delta_s fmt_nd fmt_ms_nd ms_to_s render_terminal_summary render_row process_new_lines"
 
 echo "[pre] Las funciones bajo prueba se pueden extraer y cargar desde mefisto-stream-watch.sh"
 ALL_LOADED=1
@@ -160,6 +169,7 @@ reset_stage_state() {
     LAST_LINE=0
     PREV_EMS=""
     IGNORED_COUNT=0
+    CURRENT_CWD=""
 }
 
 # run_process_new_lines <stream_file> <out_file>
@@ -175,17 +185,19 @@ run_process_new_lines() {
     process_new_lines "$stream" > "$outfile"
 }
 
-# -------- Bloque A: message (kind=thinking/text/ausente) -- CA-2 --------
+# -------- Bloque A: message -- texto completo e indentacion (issue #925) --------
 
 echo ""
-echo "[A] message: kind=thinking -> (pensando); kind=text -> (texto); sin kind -> (texto) (CA-2)"
+echo "[A] message: texto completo, indentacion multilinea, y el degrade con texto vacio (issue #925)"
 
 reset_stage_state
 STREAM_A="$TMP/a-stream.jsonl"
 printf '%s\n' \
   '{"v":1,"type":"message","ts":"2026-09-05T10:00:00Z","role":"assistant","text":"","kind":"thinking"}' \
-  '{"v":1,"type":"message","ts":"2026-09-05T10:00:05Z","role":"assistant","text":"hola","kind":"text"}' \
-  '{"v":1,"type":"message","ts":"2026-09-05T10:00:10Z","role":"assistant","text":"listo"}' \
+  '{"v":1,"type":"message","ts":"2026-09-05T10:00:05Z","role":"assistant","text":"","kind":"text"}' \
+  '{"v":1,"type":"message","ts":"2026-09-05T10:00:10Z","role":"assistant","text":"linea uno\nlinea dos"}' \
+  '{"v":1,"type":"message","ts":"2026-09-05T10:00:15Z","role":"assistant","text":"razono paso 1\nrazono paso 2","kind":"thinking"}' \
+  '{"v":1,"type":"message","ts":"2026-09-05T10:00:20Z","role":"assistant","text":"ruta C:\\temp con\ttab y \\n literal"}' \
   > "$STREAM_A"
 
 run_process_new_lines "$STREAM_A" "$TMP/a-out.txt"
@@ -193,71 +205,146 @@ OUT_A=$(cat "$TMP/a-out.txt")
 L1=$(sed -n '1p' "$TMP/a-out.txt")
 L2=$(sed -n '2p' "$TMP/a-out.txt")
 L3=$(sed -n '3p' "$TMP/a-out.txt")
+L4=$(sed -n '4p' "$TMP/a-out.txt")
+L5=$(sed -n '5p' "$TMP/a-out.txt")
+L6=$(sed -n '6p' "$TMP/a-out.txt")
+L7=$(sed -n '7p' "$TMP/a-out.txt")
 
-if printf '%s' "$L1" | grep -q "pensando"; then
-    pass "A-1: kind=thinking se señala como (pensando)"
+if printf '%s' "$L1" | grep -q "pensando" && ! printf '%s' "$L1" | grep -qi "linea"; then
+    pass "A-1: kind=thinking con texto vacio se señala solo con (pensando), como antes"
 else
-    fail "A-1: no se encontro (pensando): $L1"
+    fail "A-1: no se encontro (pensando) solo: $L1"
 fi
 
 if printf '%s' "$L2" | grep -q "texto"; then
-    pass "A-2: kind=text se señala como (texto)"
+    pass "A-2: kind=text con texto vacio se señala solo con (texto), como antes"
 else
     fail "A-2: no se encontro (texto): $L2"
 fi
 
-if printf '%s' "$L3" | grep -q "texto"; then
-    pass "A-3: sin kind, degrada a (texto)"
+if printf '%s' "$L3" | grep -q "linea uno" && ! printf '%s' "$L3" | grep -q "texto"; then
+    pass "A-3: con texto presente, kind=text NO lleva la etiqueta (texto) -- el texto mismo la reemplaza"
 else
-    fail "A-3: sin kind deberia degradar a (texto): $L3"
+    fail "A-3: se esperaba 'linea uno' sin la etiqueta (texto): $L3"
 fi
 
-if [ "$LAST_LINE" -eq 3 ]; then
-    pass "A-4: LAST_LINE avanzo a 3 (las 3 lineas, bien formadas)"
+if printf '%s' "$L4" | grep -qE '^[[:space:]]+linea dos$'; then
+    pass "A-4: la segunda linea del texto se imprime SOLA, indentada, sin marca de tiempo ni truncar"
 else
-    fail "A-4: se esperaba LAST_LINE=3, se obtuvo $LAST_LINE"
+    fail "A-4: la segunda linea no quedo indentada tal cual: $L4"
 fi
 
-# -------- Bloque B: tool.completed -- una fila por tool (CA-2/CA-3) --------
+if printf '%s' "$L5" | grep -q "(pensando)" && printf '%s' "$L5" | grep -q "razono paso 1"; then
+    pass "A-5: kind=thinking con texto presente SI conserva la etiqueta (pensando) delante del texto"
+else
+    fail "A-5: no se encontro (pensando) + el texto en la misma linea: $L5"
+fi
+
+if printf '%s' "$L6" | grep -qE '^[[:space:]]+razono paso 2$' && ! printf '%s' "$L6" | grep -q "pensando"; then
+    pass "A-6: la segunda linea de un thinking multilinea va indentada, sin repetir la etiqueta"
+else
+    fail "A-6: la segunda linea de thinking no quedo como se esperaba: $L6"
+fi
+
+if printf '%s' "$L7" | grep -qF 'ruta C:\temp con' && printf '%s' "$L7" | grep -qF $'\ttab y \\n literal'; then
+    pass "A-7 (CA-6): backslash, tab y la secuencia \\n literales se reproducen fieles, sin escapes crudos"
+else
+    fail "A-7: el texto con backslash/tab/\\n literal no se reprodujo fiel: $L7"
+fi
+
+if [ "$LAST_LINE" -eq 5 ]; then
+    pass "A-8: LAST_LINE avanzo a 5 (las 5 lineas, bien formadas)"
+else
+    fail "A-8: se esperaba LAST_LINE=5, se obtuvo $LAST_LINE"
+fi
+
+# -------- Bloque B: tool.started + tool.completed (issue #925) --------
 
 echo ""
-echo "[B] tool.completed: una fila por tool con su duracion; tool.started/run.started sin fila (CA-2)"
+echo "[B] tool.started visible con input_summary relativizado; tool.completed silencioso salvo fallo (issue #925)"
 
 reset_stage_state
 STREAM_B="$TMP/b-stream.jsonl"
 printf '%s\n' \
-  '{"v":1,"type":"run.started","ts":"2026-09-05T10:00:00Z","runtime":"fake","agent":"mefisto-writer","model":"m","cwd":"/tmp"}' \
-  '{"v":1,"type":"tool.started","ts":"2026-09-05T10:00:01Z","tool":"Read","input_summary":null}' \
+  '{"v":1,"type":"run.started","ts":"2026-09-05T10:00:00Z","runtime":"fake","agent":"mefisto-writer","model":"m","cwd":"/tmp/worktree"}' \
+  '{"v":1,"type":"tool.started","ts":"2026-09-05T10:00:01Z","tool":"Read","input_summary":"/tmp/worktree/src/Foo.cs"}' \
   '{"v":1,"type":"tool.completed","ts":"2026-09-05T10:00:01.500Z","tool":"Read","ok":true,"duration_ms":42}' \
+  '{"v":1,"type":"tool.started","ts":"2026-09-05T10:00:02Z","tool":"Bash","input_summary":null}' \
   '{"v":1,"type":"tool.completed","ts":"2026-09-05T10:00:05Z","tool":"Bash","ok":false,"duration_ms":null}' \
+  '{"v":1,"type":"tool.started","ts":"2026-09-05T10:00:06Z","tool":"WebFetch","input_summary":"/otra/ruta/afuera.txt"}' \
+  '{"v":1,"type":"tool.completed","ts":"2026-09-05T10:00:06.200Z","tool":"WebFetch","ok":false,"duration_ms":200}' \
+  '{"v":1,"type":"tool.started","ts":"2026-09-05T10:00:07Z","tool":"Bash","input_summary":"sed -e s/\\t/x/ f && grep -F \\c f"}' \
   > "$STREAM_B"
 
 run_process_new_lines "$STREAM_B" "$TMP/b-out.txt"
 OUT_B=$(cat "$TMP/b-out.txt")
 
-if [ "$(wc -l < "$TMP/b-out.txt" | tr -d ' ')" = "2" ]; then
-    pass "B-1: run.started y tool.started no producen fila -- solo las 2 tool.completed"
+if [ "$(wc -l < "$TMP/b-out.txt" | tr -d ' ')" = "6" ]; then
+    pass "B-1: run.started no produce fila; Read exitoso tampoco -- los 4 tool.started y los 2 fallos (Bash, WebFetch) si (6 filas)"
 else
-    fail "B-1: se esperaban 2 filas (una por tool.completed), se obtuvo: $OUT_B"
+    fail "B-1: se esperaban 6 filas, se obtuvo: $OUT_B"
 fi
 
-if printf '%s' "$OUT_B" | grep -q "Read (ok, 42ms)"; then
-    pass "B-2: Read ok con duracion en ms, sin convertir a segundos (resolucion de una tool rapida)"
+if printf '%s' "$OUT_B" | grep -q "Read: src/Foo.cs"; then
+    pass "B-2: tool.started de Read relativiza input_summary contra el cwd del run.started vigente"
 else
-    fail "B-2: no se encontro la fila esperada de Read: $OUT_B"
+    fail "B-2: no se encontro 'Read: src/Foo.cs' relativizado: $OUT_B"
 fi
 
-if printf '%s' "$OUT_B" | grep -q "Bash (fallo, n/d)"; then
-    pass "B-3: Bash con ok=false se señala como fallo, y duration_ms null como n/d"
+if printf '%s' "$OUT_B" | grep -qE '^\[[0-9:]+\] .*  Bash$'; then
+    pass "B-3: tool.started de Bash con input_summary null renderiza solo el nombre de la tool"
 else
-    fail "B-3: no se encontro la fila esperada de Bash: $OUT_B"
+    fail "B-3: no se encontro la fila 'Bash' sin resumen: $OUT_B"
+fi
+
+if ! printf '%s' "$OUT_B" | grep -q "Read (ok"; then
+    pass "B-4: el tool.completed{ok:true} de Read no produce ninguna linea (ya se vio al arrancar)"
+else
+    fail "B-4: el tool.completed exitoso no deberia imprimir nada: $OUT_B"
+fi
+
+if printf '%s' "$OUT_B" | grep -q "Bash fallo (n/d)"; then
+    pass "B-5: Bash con ok=false SI imprime linea, con duration_ms null como n/d"
+else
+    fail "B-5: no se encontro la fila de fallo de Bash: $OUT_B"
+fi
+
+if printf '%s' "$OUT_B" | grep -q "WebFetch: /otra/ruta/afuera.txt"; then
+    pass "B-6: un input_summary que NO empieza por el cwd se muestra tal cual, sin relativizar"
+else
+    fail "B-6: WebFetch deberia mostrarse sin relativizar: $OUT_B"
+fi
+
+if printf '%s' "$OUT_B" | grep -q "WebFetch fallo (200ms)"; then
+    pass "B-7: WebFetch con ok=false SI imprime linea con su duracion"
+else
+    fail "B-7: no se encontro la fila de fallo de WebFetch: $OUT_B"
 fi
 
 if [ "$IGNORED_COUNT" -eq 0 ]; then
-    pass "B-4: run.started/tool.started no cuentan como eventos ignorados"
+    pass "B-8: run.started no cuenta como evento ignorado"
 else
-    fail "B-4: se esperaba IGNORED_COUNT=0, se obtuvo $IGNORED_COUNT"
+    fail "B-8: se esperaba IGNORED_COUNT=0, se obtuvo $IGNORED_COUNT"
 fi
+
+# CA-6 aplicado al `input_summary`, no solo al `text`: un comando de Bash
+# trae backslashes de verdad, y `tsv_decode` ya los decodifico una sola vez.
+# Si la fila se imprimiera interpolando el resumen dentro de un formato `%b`
+# (como hacia la primera version de #925), ese segundo pase convertiria el
+# `\t` del comando en un tab real y el `\c` CORTARIA la salida ahi mismo --
+# tragandose el resto del comando y el propio salto de linea, pegando la
+# fila siguiente a esta.
+B_BASH_LINE=$(grep -F "sed " "$TMP/b-out.txt" || true)
+if printf '%s' "$B_BASH_LINE" | grep -qF 'sed -e s/\t/x/ f && grep -F \c f'; then
+    pass "B-9 (CA-6): el input_summary de un Bash con \\t y \\c se muestra literal y completo, sin re-interpretar ni truncar"
+else
+    fail "B-9: el input_summary con backslashes se re-interpreto o se trunco: $B_BASH_LINE"
+fi
+
+case "$B_BASH_LINE" in
+    *$'\t'*) fail "B-10 (CA-6): la fila del Bash tiene un tab REAL -- el \\t del comando se re-interpreto" ;;
+    *) pass "B-10 (CA-6): la fila del Bash no contiene ningun tab real (nada re-interpreto su \\t)" ;;
+esac
 
 # -------- Bloque C: terminal con TODOS los campos presentes -- CA-2/CA-3 --------
 
@@ -436,8 +523,8 @@ else
     fail "F-2: se esperaba LAST_LINE=2, se obtuvo $LAST_LINE"
 fi
 
-if printf '%s' "$OUT_F" | grep -q "texto"; then
-    pass "F-3: la linea valida posterior a la corrupta SI se renderizo"
+if printf '%s' "$OUT_F" | grep -q "hola"; then
+    pass "F-3: la linea valida posterior a la corrupta SI se renderizo (con su texto completo)"
 else
     fail "F-3: no se renderizo la linea posterior a la corrupta: $OUT_F"
 fi
@@ -478,8 +565,10 @@ else
 fi
 
 # El productor real termina de escribir esa misma linea (cierra el JSON) y
-# agrega una linea nueva completa a continuacion.
-printf '%s\n' '2Z","tool":"Bash","ok":true,"duration_ms":10}' >> "$STREAM_G"
+# agrega una linea nueva completa a continuacion. ok=false (en vez de true)
+# a proposito -- issue #925 silencia el tool.completed exitoso, y este bloque
+# necesita una fila VISIBLE para comprobar que la reconstruccion se renderizo.
+printf '%s\n' '2Z","tool":"Bash","ok":false,"duration_ms":10}' >> "$STREAM_G"
 printf '%s\n' '{"v":1,"type":"message","ts":"2026-09-05T10:00:12Z","role":"assistant","text":"otra"}' >> "$STREAM_G"
 
 run_process_new_lines "$STREAM_G" "$TMP/g-out2.txt"
@@ -491,7 +580,7 @@ else
     fail "G-4: se esperaba LAST_LINE=3, se obtuvo $LAST_LINE"
 fi
 
-if printf '%s' "$OUT_G2" | grep -q "Bash (ok, 10ms)"; then
+if printf '%s' "$OUT_G2" | grep -q "Bash fallo (10ms)"; then
     pass "G-5: la tool call reparada se renderizo con su duracion"
 else
     fail "G-5: no se encontro la tool call reparada: $OUT_G2"
@@ -805,7 +894,11 @@ neutral_run "$LIB_DIR/runtime-claude.sh" runtime_claude_translate \
     "$FIX_CLAUDE" "success.jsonl" "claude" "claude-sonnet-5" "$STREAM_CLAUDE"
 run_process_new_lines "$STREAM_CLAUDE" "$TMP/claude-out.txt"
 OUT_CLAUDE=$(cat "$TMP/claude-out.txt")
-TOOLS_CLAUDE=$(grep -c "(ok, " "$TMP/claude-out.txt" | tr -d ' ')
+# El tool.completed{ok:true} de ambas fixtures ya no imprime linea (issue
+# #925): se cuenta por el tool.started, que si es siempre visible -- ambas
+# fixtures traen exactamente una llamada a tool ("Read" en Claude, "glob" en
+# OpenCode).
+TOOLS_CLAUDE=$(grep -c "Read: x" "$TMP/claude-out.txt" | tr -d ' ')
 
 reset_stage_state
 STREAM_OC="$TMP/opencode.events.jsonl"
@@ -813,7 +906,7 @@ neutral_run "$LIB_DIR/runtime-opencode.sh" runtime_opencode_translate \
     "$FIX_OC" "success-tool-1.18.29.jsonl" "opencode" "" "$STREAM_OC"
 run_process_new_lines "$STREAM_OC" "$TMP/opencode-out.txt"
 OUT_OC=$(cat "$TMP/opencode-out.txt")
-TOOLS_OC=$(grep -c "(ok, " "$TMP/opencode-out.txt" | tr -d ' ')
+TOOLS_OC=$(grep -cE '  glob$' "$TMP/opencode-out.txt" | tr -d ' ')
 
 if [ "$TOOLS_CLAUDE" -eq 1 ] && [ "$TOOLS_OC" -eq 1 ]; then
     pass "O-1: mismo conteo de tools (1) en ambas corridas, sobre la salida real de cada adaptador"
