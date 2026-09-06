@@ -1,64 +1,74 @@
 #!/usr/bin/env bash
-# mefisto-stream-watch.sh -- Visor en vivo del flujo de acciones del agente
-# sobre la traza stream-json cruda de un stage (issue #434)
+# mefisto-stream-watch.sh -- Visor en vivo del flujo de actividad de un stage
+# sobre el JSONL neutral de eventos (issue #878, protocolo de #858/#861).
 #
 # Uso:
 #   .claude/scripts/mefisto-stream-watch.sh
-#       Descubre por si solo el *.stream.jsonl mas reciente en
-#       .claude/pipeline/logs/ y lo sigue en vivo. Cuando aparece un stream
-#       mas nuevo (stage 2, o el siguiente issue de un batch/secuencial)
+#       Descubre por si solo el *.events.jsonl mas reciente entre los
+#       directorios de logs que resuelve mefisto_state_read_paths (canonico
+#       primero, legacy despues -- CA-1) y lo sigue en vivo. Cuando aparece un
+#       archivo mas nuevo (stage 2, o el siguiente issue de un batch/secuencial)
 #       cambia a el solo.
 #
-#   .claude/scripts/mefisto-stream-watch.sh <ruta-al-stream>
-#       Sigue/inspecciona un stream concreto (p. ej. para revisar una corrida
-#       pasada) en vez de descubrir el mas reciente.
+#   .claude/scripts/mefisto-stream-watch.sh <ruta-al-archivo>
+#       Sigue/inspecciona un *.events.jsonl concreto (p. ej. para revisar una
+#       corrida pasada) en vez de descubrir el mas reciente.
 #
 #   .claude/scripts/mefisto-stream-watch.sh --issues 42,43
-#       Restringe el descubrimiento a los streams de esos issues (por el
+#       Restringe el descubrimiento a los eventos de esos issues (por el
 #       `-issue-<N>` del nombre de archivo, incluidas las copias
 #       .attempt-<k> de los reintentos). Evita que dos corridas concurrentes
 #       en panes distintos se crucen los visores (interfaz herdr).
 #
 #   .claude/scripts/mefisto-stream-watch.sh --newer-than <epoch-segundos>
-#       Ignora streams con mtime anterior a <epoch>: el visor arranca
+#       Ignora archivos con mtime anterior a <epoch>: el visor arranca
 #       esperando la corrida nueva en vez de mostrar la traza de la corrida
 #       ANTERIOR hasta que la nueva empiece a escribirse (el caveat que
 #       documenta el encabezado de mefisto-tmux-pipeline.sh).
 #
-# Contexto: durante una corrida de /mefisto-tooling el pane de tmux que hace
-# `tail -f` de events.log solo ve DOS lineas por corrida completa ("STAGE 1:
-# writer" / "STAGE 2: reviewer") -- 20+ minutos de silencio en el medio, sin
-# forma de notar que el agente esta dando vueltas ni de aprender mirando. La
-# traza cruda `<log_base>.stream.jsonl` (una linea JSON por evento del CLI,
-# `--output-format stream-json --verbose`, ver run_agent en
-# mefisto-tooling-pipeline.sh) ya crece en vivo desde #431; este script la sigue
-# incrementalmente y renderiza una linea legible por accion: hora, delta
-# desde la accion anterior (el reloj es lo que revela los round-trips de
-# ~20s), herramienta y objetivo. Los turnos SIN tool call tambien se señalan
-# (texto y bloques de thinking): son los que no mueven ningun archivo y donde
-# se va el tiempo de razonamiento.
+# Contexto (issue #434): durante una corrida el pane de tmux que hace
+# `tail -f` del log de eventos del pipeline solo ve DOS lineas por stage
+# completo ("STAGE 1: writer" / "STAGE 2: reviewer") -- 20+ minutos de
+# silencio en el medio, sin forma de notar que el agente esta dando vueltas ni
+# de aprender mirando. Este visor sigue incrementalmente el JSONL neutral que
+# el runner escribe por stage (`<log_base>.events.jsonl`, protocolo de
+# ejecucion y eventos de MEF-ADR-0049, issue #858) y renderiza una linea
+# legible por actividad: mensajes de texto o razonamiento sin llamada a
+# herramienta, el cierre de cada llamada a herramienta con su duracion si esta
+# disponible, y el cierre del stage con sus metricas.
 #
-# Solo lectura y autonomo (CA-6): no modifica ningun pipeline ni archivo
-# existente, no escribe en .claude/pipeline/ (solo en un directorio temporal
-# propio via mktemp) y se puede invocar a mano en cualquier terminal contra
-# una corrida en marcha o pasada.
+# Neutral a runtime (CA-6, MEF-ADR-0049): el parser solo conoce el vocabulario
+# de run-events.schema.json (`message`, `tool.started`, `tool.completed`,
+# `run.completed`, `run.failed`; `run.started` se reconoce pero no se
+# renderiza) -- nunca un nombre de campo propio de un runtime concreto. Un
+# campo no disponible (`null` en el JSONL) se muestra como "n/d", nunca como
+# un cero fabricado (CA-3).
+#
+# Solo lectura y autonomo: no modifica ningun pipeline ni archivo existente,
+# no escribe mas que en un directorio temporal propio via mktemp, y se puede
+# invocar a mano en cualquier terminal contra una corrida en marcha o pasada.
 #
 # Lectura incremental sin `tail -f` (notas tecnicas del issue): se lleva un
 # contador de lineas ya consumidas y se emiten las nuevas con
 # `sed -n "$((last+1)),\$p"` cada ~1s -- mas simple y portable que anidar
-# `tail -f` y matarlo al cambiar de stream (tail -F de BSD no acepta --pid),
-# y resuelve el cambio de stream con solo comparar la ruta descubierta.
+# `tail -f` y matarlo al cambiar de archivo, y resuelve el cambio de corrida
+# con solo comparar la ruta descubierta.
 #
 # Entorno: macOS con bash 3.2.57 en PATH -- nada de `declare -A` (bash 3.2 no
-# la tiene); el contador de repeticion de CA-4 usa un archivo temporal en vez
-# de un array asociativo.
+# la tiene) y toda expansion de un array indexado que puede estar vacio usa el
+# idiom `"${arr[@]+"${arr[@]}"}"` (bash 3.2 con `set -u` aborta con "unbound
+# variable" ante `"${arr[@]}"` cuando el array no tiene elementos).
 #
-# A proposito NO se reutiliza ni modifica derive_stage_log_from_stream de
-# _mefisto-common.sh (deriva el log COMPLETO post-mortem, no un render
-# incremental) -- evita colisionar con el trabajo de #427 sobre el mismo
-# archivo.
+# Tolerancia a corrupcion (CA-4): una linea que no es JSON valido, o que
+# parsea pero no es un objeto, o cuyo `.type` no esta en el vocabulario
+# reconocido, se cuenta en "eventos ignorados" (visible en el cierre de
+# stage) y NUNCA aborta el visor. La unica excepcion es la ULTIMA linea del
+# lote leido en un ciclo: si esa no parsea como JSON se asume que el proceso
+# productor la esta escribiendo a medias, y se reintenta en el proximo ciclo
+# sin contarla ni consumirla (mismo caveat que documentaba la version anterior
+# de este visor sobre la traza cruda del runtime que la version previa seguia).
 #
-# Testeable sin invocar el CLI ni depender de una corrida real (CA-7): cada
+# Testeable sin invocar ningun CLI ni depender de una corrida real: cada
 # pieza de logica vive en su propia funcion pura (o casi pura, con estado en
 # variables globales explicitas) para que
 # .claude/scripts/tests/test-stream-watch.sh pueda extraerlas con el mismo
@@ -80,7 +90,6 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-LOG_DIR="$MEFISTO_REPO_ROOT/.claude/pipeline/logs"
 POLL_INTERVAL=1
 
 # Filtros de descubrimiento (ver Uso arriba). Vacios = sin filtro, el
@@ -90,42 +99,41 @@ ISSUES_CSV=""
 NEWER_THAN=""
 
 # Estado runtime (mutado por process_new_lines/render_row a lo largo del
-# bucle principal). Sin `declare -A` disponible en bash 3.2, la repeticion de
-# CA-4 se lleva en un archivo temporal (TOUCHED_FILE, una linea por toque).
+# bucle principal).
 TMP_STATE=""
-TOUCHED_FILE=""
 JQ_FILTER_PATH=""
 LAST_LINE=0
 PREV_EMS=""
+IGNORED_COUNT=0
 CURRENT_STREAM=""
 
 # write_jq_filter <dest_file>
 #
-# Escribe en <dest_file> el programa jq que traduce una linea cruda del
-# stream (un evento `assistant`/`result`, ya parseado por linea en
-# process_new_lines) a una fila TSV lista para render_row: "tool" (nombre +
-# objetivo aplanado a una sola linea via `flatten`, CA-3), "text" (turno sin
-# tool call -- texto o bloque de thinking, CA-2) o "result" (cierre de stage,
-# CA-5). El guard `if (type != "object") then empty` tolera una linea que SI
-# es JSON valido pero no es un objeto (select(type=="object") en
-# derive_stage_log_from_stream cubre el mismo caso) sin que jq aborte con un
-# error de indexado duro.
+# Escribe en <dest_file> el programa jq que traduce una linea del JSONL
+# neutral (run-events.schema.json, issue #858) a una fila TSV lista para
+# render_row:
+#   "message"  -> kind del turno sin llamada a herramienta ("text"/"thinking",
+#                 CA-2).
+#   "tool"     -> nombre + `ok` + `duration_ms` de un `tool.completed` (una
+#                 sola fila por herramienta; `tool.started` se reconoce pero
+#                 no produce fila -- el runtime lo emite antes de conocer su
+#                 duracion, y CA-2 pide "una linea por tool", no dos).
+#   "terminal" -> cierre de stage (`run.completed`/`run.failed`): status,
+#                 runtime, model, session_id, duration_ms, api_duration_ms,
+#                 cost_usd, turns, tokens.input/output, ttft_ms, denials,
+#                 error.kind.
+#   "ignored"  -> una linea JSON valida pero no-objeto, o con un `.type` fuera
+#                 del vocabulario reconocido (CA-4). Una linea que ni
+#                 siquiera es JSON valido nunca llega aqui -- jq aborta antes,
+#                 y process_new_lines decide alli si se reintenta o se cuenta
+#                 como ignorada (ver su propio comentario).
 #
 # `cell` sustituye por "-" todo campo nulo o vacio, y NO es cosmetico: la
 # fila se lee en el shell con `IFS=$'\t' read`, y el tab es un caracter de
 # espacio en blanco para IFS -- bash colapsa dos tabs seguidos en un solo
 # separador, asi que un campo vacio en el medio DESPLAZARIA todos los que
 # siguen. Con placeholder no hay campo vacio y la posicion se conserva; el
-# shell lo traduce de vuelta con is_missing. El caso real que lo exige: el
-# evento `result` del CLI NO trae `.timestamp` (verificado contra las trazas
-# de .claude/pipeline/logs/), asi que su segundo campo siempre estaria vacio
-# y el cierre de stage reportaria duration_ms como turnos y is_error como
-# costo.
-#
-# El objetivo por herramienta sigue el vocabulario de CA-2: ruta para
-# Read/Edit/Write/NotebookEdit, comando para Bash, patron (+ruta si la trae)
-# para Grep/Glob; el resto cae a un fallback generico (primer valor string
-# del input, o "(sin detalle)").
+# shell lo traduce de vuelta con is_missing.
 write_jq_filter() {
     local dest="$1"
     cat > "$dest" <<'MEFISTO_STREAM_WATCH_JQ'
@@ -140,70 +148,36 @@ def epoch_ms:
       end
   end;
 
-# Aplana a una sola linea (CA-3): los comandos Bash traen newlines embebidos,
-# y volcarlos crudos parte un comando en varias lineas del pane. Se barren
-# primero los caracteres de control ([[:cntrl:]] cubre newline/tab/CR y
-# tambien el ESC de una secuencia ANSI, que garabatearia el pane) y luego se
-# colapsa la corrida de espacios resultante.
-def flatten: tostring | gsub("[[:cntrl:]]"; " ") | gsub("\\s+"; " ") | gsub("^ +| +$"; "");
-
-# Campo vacio o nulo -> "-", para que la fila TSV nunca colapse en el
-# `IFS=$'\t' read` del shell (ver el comentario de write_jq_filter).
 def cell: if (. == null or . == "") then "-" else tostring end;
 def row: map(cell) | @tsv;
 
-def is_file_tool($name):
-  ($name == "Read" or $name == "Edit" or $name == "Write"
-    or $name == "NotebookEdit" or $name == "MultiEdit");
+def known_type($t):
+  ($t == "run.started" or $t == "message" or $t == "tool.started"
+    or $t == "tool.completed" or $t == "run.completed" or $t == "run.failed");
 
-def target_for($name; $in):
-  if is_file_tool($name) then
-    ($in.file_path // $in.notebook_path // "?")
-  elif $name == "Bash" then
-    ($in.command // "?")
-  elif ($name == "Grep" or $name == "Glob") then
-    (($in.pattern // $in.glob // "?") as $p
-      | ($in.path // null) as $pa
-      | if $pa then ($p + " @ " + $pa) else $p end)
-  elif $name == "WebFetch" then
-    ($in.url // "?")
-  elif $name == "WebSearch" then
-    ($in.query // "?")
-  elif ($name == "Task" or $name == "Agent") then
-    ($in.description // $in.prompt // "?")
-  else
-    ((try [$in | to_entries[] | select(.value | type == "string") | .value] catch []) | first // "(sin detalle)")
-  end;
-
-if (type != "object") then empty else
+if (type != "object") then ["ignored"] | row
+else
   . as $e
-  | ($e.timestamp | epoch_ms) as $ems
-  | if $e.type == "assistant" then
-      ($e.message.content // []) as $content
-      | ($content | map(select(.type == "tool_use"))) as $tools
-      | if ($tools | length) > 0 then
-          $tools[] as $t
-          | ($t.input // {}) as $in
-          | [ "tool", $ems, $t.name, (target_for($t.name; $in) | flatten),
-              (if is_file_tool($t.name) then (($in.file_path // $in.notebook_path // "") | flatten) else "" end) ]
-          | row
-        else
-          # Turno sin tool call: ahi se va el tiempo de razonamiento (CA-2). Se
-          # distinguen los dos sabores que produce el CLI, porque ambos son
-          # frecuentes en una traza real: bloques `text` (el agente escribe al
-          # humano) y bloques `thinking` (razonamiento; su texto viaja vacio y
-          # solo queda la firma, asi que se señala el turno, no su contenido).
-          if ($content | map(select(.type == "text" and ((.text // "") | length > 0))) | length) > 0 then
-            [ "text", $ems, "texto" ] | row
-          elif ($content | map(select(.type == "thinking")) | length) > 0 then
-            [ "text", $ems, "pensamiento" ] | row
-          else empty end
-        end
-    elif $e.type == "result" then
-      [ "result", $ems, $e.num_turns, $e.duration_ms, $e.duration_api_ms,
-        $e.total_cost_usd, $e.is_error ]
-      | row
-    else empty end
+  | ($e.type // null) as $t
+  | if ($t == null) or (known_type($t) | not) then
+      ["ignored"] | row
+    elif ($t == "run.started") or ($t == "tool.started") then
+      empty
+    elif $t == "message" then
+      ($e.ts | epoch_ms) as $ems
+      | (if ($e.kind // "text") == "thinking" then "thinking" else "text" end) as $k
+      | ["message", $ems, $k] | row
+    elif $t == "tool.completed" then
+      ($e.ts | epoch_ms) as $ems
+      | ["tool", $ems, ($e.tool // null), $e.ok, ($e.duration_ms // null)] | row
+    else
+      ($e.ts | epoch_ms) as $ems
+      | ["terminal", $ems, $e.status, $e.runtime, ($e.model // null), ($e.session_id // null),
+         $e.duration_ms, ($e.api_duration_ms // null), ($e.cost_usd // null), ($e.turns // null),
+         ($e.tokens.input // null), ($e.tokens.output // null), ($e.ttft_ms // null),
+         ($e.denials // null), (($e.error.kind) // null)]
+        | row
+    end
 end
 MEFISTO_STREAM_WATCH_JQ
 }
@@ -212,9 +186,9 @@ MEFISTO_STREAM_WATCH_JQ
 #
 # 0 si el nombre de archivo corresponde a uno de los issues de la lista
 # (separada por comas). El match es sobre el segmento `-issue-<N>` seguido de
-# `.stream.jsonl`, de una copia de reintento (`.attempt-<k>.stream.jsonl`, ver
+# `.events.jsonl`, de una copia de reintento (`.attempt-<k>.events.jsonl`, ver
 # run_agent en mefisto-tooling-pipeline.sh) o del sufijo de una corrida de
-# variante (`-<label>.stream.jsonl`, --variant del issue #711): un substring
+# variante (`-<label>.events.jsonl`, --variant del issue #711): un substring
 # simple confundiria el issue 4 con el 42. Con lista vacia matchea todo (sin
 # filtro).
 stream_matches_issues() {
@@ -224,9 +198,9 @@ stream_matches_issues() {
     for issue in ${csv//,/ }; do
         [ -n "$issue" ] || continue
         case "$base" in
-            *"-issue-${issue}.stream.jsonl") return 0 ;;
-            *"-issue-${issue}.attempt-"*".stream.jsonl") return 0 ;;
-            *"-issue-${issue}-"*".stream.jsonl") return 0 ;;
+            *"-issue-${issue}.events.jsonl") return 0 ;;
+            *"-issue-${issue}.attempt-"*".events.jsonl") return 0 ;;
+            *"-issue-${issue}-"*".events.jsonl") return 0 ;;
         esac
     done
     return 1
@@ -237,8 +211,8 @@ stream_matches_issues() {
 # 0 si el mtime del archivo es >= <epoch> (el mismo segundo cuenta: el
 # runner de la interfaz herdr toma su epoch justo antes de lanzar el
 # pipeline). Con <epoch> vacio, o si stat no puede leer el archivo, matchea:
-# nunca se descarta un stream por no poder juzgarlo. `stat -f %m` es la forma
-# BSD (macOS); el segundo intento cubre el stat de GNU.
+# nunca se descarta un archivo por no poder juzgarlo. `stat -f %m` es la
+# forma BSD (macOS); el segundo intento cubre el stat de GNU.
 stream_is_newer_than() {
     local path="$1" epoch="$2"
     [ -n "$epoch" ] || return 0
@@ -250,14 +224,9 @@ stream_is_newer_than() {
 
 # discover_stream <log_dir>
 #
-# Imprime por stdout la ruta absoluta del *.stream.jsonl mas reciente (por
+# Imprime por stdout la ruta absoluta del *.events.jsonl mas reciente (por
 # mtime) de <log_dir> que pase los filtros ISSUES_CSV/NEWER_THAN, o nada si
-# el directorio no existe o ningun candidato pasa (CA-1). El mtime es el
-# criterio correcto para detectar el cambio de stage/issue: dentro de una
-# corrida solo un agente esta corriendo, asi que su stream es el unico que
-# sigue recibiendo escrituras -- y el filtro por issue evita que la corrida
-# concurrente de OTRO pane (que si escribe a la vez) se cuele como "mas
-# reciente".
+# el directorio no existe o ningun candidato pasa (CA-1).
 discover_stream() {
     local dir="$1"
     [ -d "$dir" ] || return 0
@@ -268,33 +237,50 @@ discover_stream() {
         stream_is_newer_than "$candidate" "$NEWER_THAN" || continue
         echo "$candidate"
         return 0
-    done < <(ls -t "$dir"/*.stream.jsonl 2>/dev/null)
+    done < <(ls -t "$dir"/*.events.jsonl 2>/dev/null)
     return 0
 }
 
-# parse_stream_header <stream_path>
+# discover_stream_in_dirs <dir1> [<dir2> ...]
 #
-# Imprime el encabezado de CA-1: el nombre del stream ya codifica issue,
-# stage y agente (`mefisto-tooling-stage-<N>-<agente>-<TS>-issue-<N>.stream.jsonl`,
+# Aplica discover_stream a cada directorio en el orden dado y devuelve el
+# primer resultado no vacio (CA-1: canonico primero, legacy despues -- los
+# llama main() en ese orden, el mismo que devuelve mefisto_state_read_paths).
+# Sin combinar mtimes entre directorios: si el primero tiene algun candidato
+# valido, gana aunque el segundo tenga uno mas reciente -- mismo criterio de
+# "el primero que exista" que mefisto_state_read_first.
+discover_stream_in_dirs() {
+    local dir found
+    for dir in "$@"; do
+        found=$(discover_stream "$dir")
+        if [ -n "$found" ]; then
+            echo "$found"
+            return 0
+        fi
+    done
+    return 0
+}
+
+# parse_stream_header <archivo_de_eventos>
+#
+# Imprime el encabezado de CA-1: el nombre del archivo ya codifica issue,
+# stage y agente (`mefisto-tooling-stage-<N>-<agente>-<TS>-issue-<N>.events.jsonl`,
 # ver run_agent en mefisto-tooling-pipeline.sh) -- de ahi sale el encabezado
 # sin leer el contenido del archivo. Si la ruta no matchea ese patron (una
 # ruta manual con otro nombre, o una convencion futura), degrada a mostrar
 # el nombre tal cual en vez de fallar.
 #
-# Los streams de reintento (`.attempt-<k>`) y los de una corrida de variante
+# Los archivos de reintento (`.attempt-<k>`) y los de una corrida de variante
 # (`-issue-<N>-<label>`, --variant del issue #711) caen hoy en esa
 # degradacion: se ven, pero con el nombre de archivo crudo en vez del
-# encabezado formateado. El fix no es de una linea -- un grupo opcional
-# codicioso al final de la regex se tragaria tambien el sufijo de reintento en
-# TODOS los pipelines -- y amerita issue propio, no ampliar el alcance de
-# #711. El filtro por issue (stream_matches_issues) si los matchea, que es lo
-# que decide si el visor los muestra.
+# encabezado formateado. El filtro por issue (stream_matches_issues) si los
+# matchea, que es lo que decide si el visor los muestra.
 parse_stream_header() {
     local path="$1"
     local base
     base=$(basename "$path")
 
-    if [[ "$base" =~ ^mefisto-tooling-stage-([^-]+)-([^-]+)-([0-9]{8}-[0-9]{6})-issue-([0-9]+)\.stream\.jsonl$ ]]; then
+    if [[ "$base" =~ ^mefisto-tooling-stage-([^-]+)-([^-]+)-([0-9]{8}-[0-9]{6})-issue-([0-9]+)\.events\.jsonl$ ]]; then
         local stage="${BASH_REMATCH[1]}"
         local agent="${BASH_REMATCH[2]}"
         local ts="${BASH_REMATCH[3]}"
@@ -304,25 +290,6 @@ parse_stream_header() {
         printf '%b\n' "${CYAN}${BOLD}=== ${base} ===${NC}"
     fi
     printf '%b\n' "${CYAN}${path}${NC}"
-}
-
-# pane_width
-#
-# Ancho de columnas de la terminal actual (`tput cols`), o 80 si no se puede
-# determinar (headless, sin tty). Usado por render_row para truncar targets
-# largos al ancho real del pane (CA-3). Un COLUMNS explicito en el entorno
-# gana: permite fijar el ancho a mano (`COLUMNS=60 mefisto-stream-watch.sh`)
-# y deja el truncado verificable en el test sin depender del tty que corra.
-pane_width() {
-    local w="${COLUMNS:-}"
-    if [ -z "$w" ]; then
-        w=$(tput cols 2>/dev/null)
-    fi
-    if [ -n "$w" ] && [ "$w" -gt 0 ] 2>/dev/null; then
-        echo "$w"
-    else
-        echo 80
-    fi
 }
 
 # is_missing <valor>
@@ -338,48 +305,11 @@ is_missing() {
     esac
 }
 
-# truncate_target <texto> <maxlen>
-#
-# Trunca <texto> a <maxlen> caracteres con sufijo "..." si excede; lo
-# devuelve tal cual si ya entra. <maxlen> se sanea a un minimo de 4 (el
-# sufijo por si solo ya ocupa 3). Corta por el final: es lo correcto para un
-# comando Bash, donde lo que identifica la accion esta al principio
-# (`dotnet test ...`).
-truncate_target() {
-    local s="$1" maxlen="$2"
-    [ "$maxlen" -lt 4 ] 2>/dev/null && maxlen=4
-    local len=${#s}
-    if [ "$len" -le "$maxlen" ]; then
-        printf '%s' "$s"
-    else
-        printf '%s...' "${s:0:$((maxlen - 3))}"
-    fi
-}
-
-# truncate_path <ruta> <maxlen>
-#
-# Como truncate_target pero conservando la COLA, con el prefijo "..." al
-# principio. El agente reporta rutas absolutas, y en este repo el prefijo
-# comun se come el ancho entero de un pane estrecho: truncar por el final
-# deja `/Users/augusto-romero-arango/Codigo/Sincosof...` en toda linea de
-# Read/Edit/Write -- sin el nombre del archivo, que es justo la unica parte
-# informativa y la que sostiene la señal de repeticion de CA-4.
-truncate_path() {
-    local s="$1" maxlen="$2"
-    [ "$maxlen" -lt 4 ] 2>/dev/null && maxlen=4
-    local len=${#s}
-    if [ "$len" -le "$maxlen" ]; then
-        printf '%s' "$s"
-    else
-        printf '...%s' "${s:$((len - maxlen + 3))}"
-    fi
-}
-
 # fmt_time_hhmmss <epoch_ms>
 #
 # Formatea un timestamp epoch-en-milisegundos (el que produce epoch_ms del
 # filtro jq) como hora local HH:MM:SS. "--:--:--" si <epoch_ms> falta
-# (is_missing: evento sin `.timestamp` parseable). `date -r` es la forma BSD
+# (is_missing: evento sin `.ts` parseable). `date -r` es la forma BSD
 # (macOS, el entorno del harness); el segundo intento cubre el `date` de GNU
 # por si el visor se corre en Linux.
 fmt_time_hhmmss() {
@@ -398,7 +328,7 @@ fmt_time_hhmmss() {
 #
 # Formatea el delta "+N.Ns" desde la accion anterior -- el reloj que revela
 # los round-trips de ~20s (CA-2). "-" si no hay accion anterior en el stage
-# actual (primer render tras un cambio de stream) o si falta algun operando.
+# actual (primer render tras un cambio de archivo) o si falta algun operando.
 fmt_delta_s() {
     local prev="$1" ems="$2"
     if is_missing "$prev" || is_missing "$ems"; then
@@ -408,143 +338,165 @@ fmt_delta_s() {
     awk -v a="$prev" -v b="$ems" 'BEGIN{d=(b-a)/1000; printf "+%5.1fs", d}'
 }
 
+# fmt_nd <valor>
+#
+# <valor> tal cual si esta presente, "n/d" si es un campo ausente
+# (is_missing) -- CA-3: turns/cost_usd/tokens/session_id/denials/model nunca
+# se muestran como 0 ni en blanco cuando el runtime no los provee.
+fmt_nd() {
+    local v="$1"
+    if is_missing "$v"; then
+        echo "n/d"
+    else
+        printf '%s' "$v"
+    fi
+}
+
+# fmt_ms_nd <milisegundos>
+#
+# "<n>ms" cuando <milisegundos> esta presente, "n/d" si es un campo ausente.
+# Sin convertir a segundos (a diferencia de ms_to_s): la duracion de una tool
+# call y el ttft suelen ser del orden de decenas/cientos de ms, y un decimal
+# en segundos perderia esa resolucion.
+fmt_ms_nd() {
+    local ms="$1"
+    if is_missing "$ms"; then
+        echo "n/d"
+    else
+        printf '%sms' "$ms"
+    fi
+}
+
 # ms_to_s <milisegundos>
 #
-# Milisegundos a segundos con un decimal ("?" si el campo viene ausente).
+# "<n>.<d>s" cuando <milisegundos> esta presente, "n/d" si es un campo
+# ausente (CA-3): la duracion total del stage y su desglose api/no-api se
+# muestran en segundos, con un decimal.
 ms_to_s() {
     local ms="$1"
     if is_missing "$ms"; then
-        echo "?"
-        return 0
-    fi
-    awk -v v="$ms" 'BEGIN{printf "%.1f", v/1000}'
-}
-
-# touch_count <touched_file> <target>
-#
-# Marca un toque sobre <target> en <touched_file> (una linea por toque,
-# CA-4) y devuelve por stdout cuantas veces (incluido este) se toco ese
-# mismo objetivo dentro del stage actual. <touched_file> se trunca a vacio
-# cada vez que el bucle principal cambia de stream (nueva corrida = nuevo
-# stage = contador en cero). Solo se llama para herramientas con un archivo
-# como objetivo (Read/Edit/Write/NotebookEdit) -- CA-4 senala explicitamente
-# que la repeticion de un mismo comando Bash NO se detecta (es rarisima
-# medida contra 108 writers; la señal barata esta en el patron sobre el
-# mismo archivo).
-touch_count() {
-    local touched_file="$1" target="$2"
-    local count
-    count=$(grep -c -F -x -- "$target" "$touched_file" 2>/dev/null)
-    count=$((count + 1))
-    printf '%s\n' "$target" >> "$touched_file"
-    echo "$count"
-}
-
-# render_result_summary <hora> <turnos> <duration_ms> <duration_api_ms> <cost_usd> <is_error>
-#
-# Imprime el cierre de stage de CA-5: turnos, costo y duracion total
-# desglosada en API vs no-API. No termina el proceso -- el bucle principal
-# sigue esperando el siguiente stream.
-render_result_summary() {
-    local now_str="$1" turns="$2" duration_ms="$3" duration_api_ms="$4" cost_usd="$5" is_error="$6"
-
-    local dur_s dur_api_s dur_nonapi_s
-    dur_s=$(ms_to_s "$duration_ms")
-    dur_api_s=$(ms_to_s "$duration_api_ms")
-    if ! is_missing "$duration_ms" && ! is_missing "$duration_api_ms"; then
-        dur_nonapi_s=$(awk -v a="$duration_ms" -v b="$duration_api_ms" 'BEGIN{printf "%.1f", (a-b)/1000}')
+        echo "n/d"
     else
-        dur_nonapi_s="?"
+        awk -v v="$ms" 'BEGIN{printf "%.1fs", v/1000}'
+    fi
+}
+
+# render_terminal_summary <hora> <status> <runtime> <model> <session_id>
+#   <duration_ms> <api_duration_ms> <cost_usd> <turns> <tokens_in>
+#   <tokens_out> <ttft_ms> <denials> <error_kind> <ignored_count>
+#
+# Imprime el cierre de stage (CA-2/CA-3): estado (OK si `status=="success"`,
+# ERROR con `error_kind` si no), runtime/modelo/session_id, turnos/costo/
+# duracion (total, api, no-api), tokens/ttft/denials y el contador de eventos
+# ignorados (CA-4). Todo campo ausente se muestra como "n/d" -- nunca como 0
+# ni en blanco. No termina el proceso -- el bucle principal sigue esperando
+# el siguiente archivo.
+render_terminal_summary() {
+    local now_str="$1" status="$2" runtime="$3" model="$4" session_id="$5" \
+          duration_ms="$6" api_duration_ms="$7" cost_usd="$8" turns="$9" \
+          tokens_in="${10}" tokens_out="${11}" ttft_ms="${12}" denials="${13}" \
+          error_kind="${14}" ignored_count="${15}"
+
+    local estado_color estado_txt
+    if [ "$status" = "success" ]; then
+        estado_color="$GREEN"
+        estado_txt="OK"
+    else
+        estado_color="$RED"
+        estado_txt="ERROR"
+        is_missing "$error_kind" || estado_txt="ERROR: $error_kind"
     fi
 
-    local estado="${GREEN}OK${NC}"
-    [ "$is_error" = "true" ] && estado="${RED}ERROR${NC}"
-
-    local turns_disp="$turns"
-    is_missing "$turns_disp" && turns_disp="?"
-    local cost_disp="$cost_usd"
-    is_missing "$cost_disp" && cost_disp="?"
+    local dur_disp api_disp nonapi_disp
+    dur_disp=$(ms_to_s "$duration_ms")
+    api_disp=$(ms_to_s "$api_duration_ms")
+    if ! is_missing "$duration_ms" && ! is_missing "$api_duration_ms"; then
+        nonapi_disp=$(awk -v a="$duration_ms" -v b="$api_duration_ms" 'BEGIN{printf "%.1fs", (a-b)/1000}')
+    else
+        nonapi_disp="n/d"
+    fi
 
     echo ""
-    printf '%b\n' "${GREEN}${BOLD}--- cierre de stage [${now_str}] (${estado}${GREEN}${BOLD}) ---${NC}"
-    printf 'turnos=%s  costo_usd=%s  duracion=%ss (api=%ss, no-api=%ss)\n' \
-        "$turns_disp" "$cost_disp" "$dur_s" "$dur_api_s" "$dur_nonapi_s"
-    printf '%b\n' "${GREEN}${BOLD}Esperando el siguiente stream...${NC}"
+    printf '%b\n' "${estado_color}${BOLD}--- cierre de stage [${now_str}] (${estado_txt}) ---${NC}"
+    printf 'runtime=%s  modelo=%s  session_id=%s\n' "$(fmt_nd "$runtime")" "$(fmt_nd "$model")" "$(fmt_nd "$session_id")"
+    printf 'turnos=%s  costo_usd=%s  duracion=%s (api=%s, no-api=%s)\n' \
+        "$(fmt_nd "$turns")" "$(fmt_nd "$cost_usd")" "$dur_disp" "$api_disp" "$nonapi_disp"
+    printf 'tokens: in=%s out=%s  ttft=%s  denials=%s\n' \
+        "$(fmt_nd "$tokens_in")" "$(fmt_nd "$tokens_out")" "$(fmt_ms_nd "$ttft_ms")" "$(fmt_nd "$denials")"
+    printf 'eventos ignorados: %s\n' "$ignored_count"
+    printf '%b\n' "${estado_color}${BOLD}Esperando el siguiente archivo...${NC}"
     echo ""
 }
 
-# render_row <kind> <epoch_ms> <a> <b> <c> <d> <e>
+# render_row <kind> <ts> <p3> <p4> <p5> <p6> <p7> <p8> <p9> <p10> <p11> <p12> <p13> <p14> <p15>
 #
 # Renderiza una fila TSV ya producida por el filtro jq (write_jq_filter):
-#   kind=tool   -> a=nombre, b=objetivo aplanado, c=ruta (si es tool de archivo, "-" si no)
-#   kind=text   -> a=sabor del turno sin tool call ("texto" o "pensamiento")
-#   kind=result -> a=turnos, b=duration_ms, c=duration_api_ms, d=cost_usd, e=is_error
+#   kind=ignored  -> solo incrementa IGNORED_COUNT (CA-4), sin imprimir nada.
+#   kind=message  -> p3 = kind del turno ("text"/"thinking", CA-2).
+#   kind=tool     -> p3=nombre, p4=ok, p5=duration_ms.
+#   kind=terminal -> p3..p15 = status,runtime,model,session_id,duration_ms,
+#                    api_duration_ms,cost_usd,turns,tokens_in,tokens_out,
+#                    ttft_ms,denials,error_kind (cierre de stage).
 #
 # Todo campo ausente llega como el placeholder "-" del filtro (is_missing).
-#
-# Actualiza PREV_EMS (delta de la proxima accion) y, para tools de archivo,
-# marca la repeticion via touch_count sobre TOUCHED_FILE (CA-4).
+# Actualiza PREV_EMS (delta de la proxima accion); el cierre de stage reinicia
+# PREV_EMS e IGNORED_COUNT para la proxima corrida.
 render_row() {
-    local kind="$1" ems="$2" a="$3" b="$4" c="$5" d="$6" e="$7"
+    local kind="$1" ts="$2" p3="$3" p4="$4" p5="$5" p6="$6" p7="$7" p8="$8" \
+          p9="$9" p10="${10}" p11="${11}" p12="${12}" p13="${13}" p14="${14}" p15="${15}"
 
-    if [ "$kind" = "result" ]; then
-        # El evento `result` del CLI no trae `.timestamp` (verificado contra
-        # las trazas reales), asi que el reloj del cierre es el de la ultima
-        # accion vista. Es la hora honesta en los dos modos de uso: en vivo
-        # coincide con "ahora", y sobre un stream pasado no inventa el
-        # momento en que se corrio el visor.
-        local close_ems="$ems"
+    if [ "$kind" = "ignored" ]; then
+        IGNORED_COUNT=$((IGNORED_COUNT + 1))
+        return 0
+    fi
+
+    if [ "$kind" = "terminal" ]; then
+        local close_ems="$ts"
         is_missing "$close_ems" && close_ems="$PREV_EMS"
-        render_result_summary "$(fmt_time_hhmmss "$close_ems")" "$a" "$b" "$c" "$d" "$e"
+        render_terminal_summary "$(fmt_time_hhmmss "$close_ems")" \
+            "$p3" "$p4" "$p5" "$p6" "$p7" "$p8" "$p9" "$p10" "$p11" "$p12" "$p13" "$p14" "$p15" "$IGNORED_COUNT"
         PREV_EMS=""
+        IGNORED_COUNT=0
         return 0
     fi
 
     local now_str delta_str
-    now_str=$(fmt_time_hhmmss "$ems")
-    delta_str=$(fmt_delta_s "$PREV_EMS" "$ems")
+    now_str=$(fmt_time_hhmmss "$ts")
+    delta_str=$(fmt_delta_s "$PREV_EMS" "$ts")
 
     case "$kind" in
-        text)
-            local etiqueta="(razonamiento, sin tool call)"
-            [ "$a" = "texto" ] && etiqueta="(mensaje de texto, sin tool call)"
+        message)
+            local etiqueta="(pensando)"
+            [ "$p3" = "text" ] && etiqueta="(texto)"
             printf '%b\n' "${BLUE}[${now_str}]${NC} ${delta_str}  ${YELLOW}${etiqueta}${NC}"
             ;;
         tool)
-            local name="$a" target="$b" file_target="$c"
-            local suffix=""
-            if ! is_missing "$file_target"; then
-                local count
-                count=$(touch_count "$TOUCHED_FILE" "$file_target")
-                [ "$count" -gt 1 ] && suffix="  ${YELLOW}(x${count})${NC}"
-            fi
-            local prefix_plain="[${now_str}] ${delta_str}  ${name} "
-            local budget=$(( $(pane_width) - ${#prefix_plain} - 8 ))
-            [ "$budget" -lt 10 ] && budget=10
-            local shown
-            if is_missing "$file_target"; then
-                shown=$(truncate_target "$target" "$budget")
-            else
-                shown=$(truncate_path "$target" "$budget")
-            fi
-            printf '%b\n' "${BLUE}[${now_str}]${NC} ${delta_str}  ${BOLD}${name}${NC} ${shown}${suffix}"
+            local estado_tool="ok"
+            [ "$p4" = "false" ] && estado_tool="fallo"
+            printf '%b\n' "${BLUE}[${now_str}]${NC} ${delta_str}  ${BOLD}${p3}${NC} (${estado_tool}, $(fmt_ms_nd "$p5"))"
             ;;
     esac
 
-    PREV_EMS="$ems"
+    PREV_EMS="$ts"
 }
 
-# process_new_lines <stream_file>
+# process_new_lines <archivo_de_eventos>
 #
 # Un ciclo de lectura incremental (CA-1/CA-2): emite con
 # `sed -n "$((LAST_LINE+1)),\$p"` las lineas nuevas desde la ultima vez,
 # parsea cada una con el filtro jq y renderiza sus filas via render_row.
 #
-# Tolerancia de CA-6: si una linea no parsea (jq exit != 0 -- lectura pillada
-# a mitad de escritura del proceso productor), NO avanza LAST_LINE mas alla
-# de ella y corta el resto del lote: esa linea (y cualquiera despues) se
-# reintenta en el proximo ciclo, cuando ya este completa. Una linea vacia se
-# cuenta como consumida sin renderizar nada.
+# Tolerancia de CA-4: si una linea no es JSON valido (jq exit != 0), la
+# ULTIMA linea del lote leido se trata como un corte a mitad de escritura --
+# no avanza LAST_LINE mas alla de ella y se reintenta en el proximo ciclo,
+# cuando ya este completa. Cualquier OTRA linea del lote que falle (hay
+# contenido posterior que ya se proceso o se intentara aparte, asi que esta
+# ya esta sellada y no es una escritura a medias) se cuenta en IGNORED_COUNT
+# y se consume: el visor nunca se queda atascado en una linea irrecuperable.
+# Una linea JSON valida pero no-objeto, o con un `.type` fuera del
+# vocabulario reconocido, tambien incrementa IGNORED_COUNT -- eso lo resuelve
+# el propio filtro jq (fila kind=ignored, ver write_jq_filter), no esta
+# funcion. Una linea vacia se cuenta como consumida sin renderizar nada.
 process_new_lines() {
     local stream="$1"
     [ -f "$stream" ] || return 0
@@ -553,10 +505,15 @@ process_new_lines() {
     new_content=$(sed -n "$((LAST_LINE + 1)),\$p" "$stream" 2>/dev/null)
     [ -z "$new_content" ] && return 0
 
+    local batch_total
+    batch_total=$(printf '%s' "$new_content" | awk 'END{print NR}')
+
     local line_num=$LAST_LINE
+    local batch_idx=0
     local line rows rc
     while IFS= read -r line; do
         line_num=$((line_num + 1))
+        batch_idx=$((batch_idx + 1))
 
         if [ -z "$line" ]; then
             LAST_LINE=$line_num
@@ -567,29 +524,37 @@ process_new_lines() {
         rc=$?
 
         if [ "$rc" -ne 0 ]; then
-            break
+            if [ "$batch_idx" -eq "$batch_total" ]; then
+                break
+            fi
+            IGNORED_COUNT=$((IGNORED_COUNT + 1))
+            LAST_LINE=$line_num
+            continue
         fi
 
         LAST_LINE=$line_num
 
         [ -z "$rows" ] && continue
 
-        while IFS=$'\t' read -r kind ems a b c d e; do
+        while IFS=$'\t' read -r kind v2 v3 v4 v5 v6 v7 v8 v9 v10 v11 v12 v13 v14 v15; do
             [ -z "$kind" ] && continue
-            render_row "$kind" "$ems" "$a" "$b" "$c" "$d" "$e"
+            render_row "$kind" "$v2" "$v3" "$v4" "$v5" "$v6" "$v7" "$v8" "$v9" "$v10" "$v11" "$v12" "$v13" "$v14" "$v15"
         done <<< "$rows"
     done <<< "$new_content"
 
     return 0
 }
 
-# main [<ruta-al-stream>]
+# main [<ruta-al-archivo>]
 #
-# Bucle principal (CA-1/CA-5/CA-6): sin argumentos descubre y sigue el stream
-# mas reciente, cambiando de stream cuando aparece uno mas nuevo; con un
-# argumento seguido/inspecciona esa ruta fija sin descubrir otras. Nunca
-# termina por si solo (Ctrl-C lo corta limpiamente via el trap de EXIT/INT/TERM,
-# que borra el directorio temporal propio -- CA-6, "solo lectura y aislado").
+# Bucle principal (CA-1): sin argumentos descubre y sigue el *.events.jsonl
+# mas reciente entre los directorios de logs que resuelve
+# mefisto_state_read_paths (canonico primero, legacy despues), cambiando de
+# archivo cuando aparece uno mas nuevo; con un argumento sigue/inspecciona esa
+# ruta fija sin descubrir otras. Sin ningun directorio de logs todavia, avisa
+# en vez de fallar y sigue esperando -- el directorio aparece en cuanto
+# arranca un pipeline. Nunca termina por si solo (Ctrl-C lo corta limpiamente
+# via el trap de EXIT/INT/TERM, que borra el directorio temporal propio).
 main() {
     local pinned_path=""
     while [ $# -gt 0 ]; do
@@ -613,7 +578,7 @@ main() {
     done
 
     if [ -n "$pinned_path" ] && [ ! -f "$pinned_path" ]; then
-        echo "ERROR: no existe el stream indicado: $pinned_path" >&2
+        echo "ERROR: no existe el archivo de eventos indicado: $pinned_path" >&2
         return 1
     fi
 
@@ -626,33 +591,35 @@ main() {
     trap 'rm -rf "$TMP_STATE"' EXIT
     trap 'rm -rf "$TMP_STATE"; exit 130' INT TERM
 
-    TOUCHED_FILE="$TMP_STATE/touched.txt"
-    : > "$TOUCHED_FILE"
     JQ_FILTER_PATH="$TMP_STATE/filter.jq"
     write_jq_filter "$JQ_FILTER_PATH"
 
     LAST_LINE=0
     PREV_EMS=""
+    IGNORED_COUNT=0
     CURRENT_STREAM=""
 
-    printf '%b\n' "${CYAN}${BOLD}Mefisto -- visor en vivo del stream de acciones (issue #434)${NC}"
+    local LOG_DIRS=()
+    if [ -z "$pinned_path" ]; then
+        while IFS= read -r d; do
+            [ -n "$d" ] && LOG_DIRS+=("$d")
+        done < <(mefisto_state_read_paths "logs")
+    fi
+
+    printf '%b\n' "${CYAN}${BOLD}Mefisto -- visor en vivo del flujo de eventos (issue #434/#878)${NC}"
     if [ -n "$pinned_path" ]; then
         echo "Inspeccionando: $pinned_path"
     else
-        echo "Descubriendo el stream mas reciente en $LOG_DIR ..."
+        echo "Descubriendo el archivo de eventos mas reciente..."
         [ -n "$ISSUES_CSV" ] && echo "Filtro de issues: $ISSUES_CSV"
         if [ -n "$NEWER_THAN" ]; then
-            printf '%b\n' "${YELLOW}Esperando la traza de esta corrida (el stream del stage 1 nace cuando arranca${NC}"
+            printf '%b\n' "${YELLOW}Esperando la traza de esta corrida (el archivo del stage 1 nace cuando arranca${NC}"
             printf '%b\n' "${YELLOW}el primer agente, tras crear el worktree y validar el DoR)...${NC}"
         fi
-        # El pipeline escribe sus logs bajo la raiz desde la que se lanzo, no
-        # dentro del worktree del issue: si el directorio no existe, el visor
-        # se quedaria esperando en silencio para siempre -- exactamente el
-        # sintoma que este issue viene a eliminar. Se avisa y se sigue
-        # esperando (el directorio aparece en cuanto arranca un pipeline).
-        if [ ! -d "$LOG_DIR" ]; then
-            printf '%b\n' "${YELLOW}Aviso: $LOG_DIR todavia no existe. Se creara cuando arranque un pipeline;${NC}"
-            printf '%b\n' "${YELLOW}si esperabas una corrida en curso, lanza el visor desde la raiz del repo principal.${NC}"
+        if [ "${#LOG_DIRS[@]}" -eq 0 ]; then
+            printf '%b\n' "${YELLOW}Aviso: todavia no hay ningun directorio de logs del harness resuelto por${NC}"
+            printf '%b\n' "${YELLOW}mefisto_state_read_paths. Se creara cuando arranque un pipeline; si esperabas${NC}"
+            printf '%b\n' "${YELLOW}una corrida en curso, lanza el visor desde la raiz del repo principal.${NC}"
         fi
     fi
     echo ""
@@ -662,14 +629,14 @@ main() {
         if [ -n "$pinned_path" ]; then
             stream="$pinned_path"
         else
-            stream=$(discover_stream "$LOG_DIR")
+            stream=$(discover_stream_in_dirs "${LOG_DIRS[@]+"${LOG_DIRS[@]}"}")
         fi
 
         if [ -n "$stream" ] && [ "$stream" != "$CURRENT_STREAM" ]; then
             CURRENT_STREAM="$stream"
             LAST_LINE=0
             PREV_EMS=""
-            : > "$TOUCHED_FILE"
+            IGNORED_COUNT=0
             echo ""
             parse_stream_header "$CURRENT_STREAM"
             echo ""
