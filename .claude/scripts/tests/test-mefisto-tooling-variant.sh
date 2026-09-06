@@ -421,12 +421,27 @@ fi
 
 echo ""
 echo "[19] mefisto-tmux-pipeline.sh: --tooling propaga MEFISTO_RUNTIME al pane cuando el launcher lo hereda (issue #871, CA-2)"
+# El pane nace en un shell nuevo: no hereda el entorno del wrapper. Sin la
+# asignacion explicita en el send-keys, el sub-pipeline autodetectaria el
+# runtime y una corrida lanzada desde OpenCode caeria en Claude Code sin
+# avisar. Se verifica sobre la LINEA del send-keys (no sobre el log entero)
+# para que la guarda no la satisfaga cualquier otra aparicion del nombre.
 MEFISTO_RUNTIME=opencode run_wrapper --tooling 711
 if [ "$LAST_RC" -eq 0 ]; then pass "corre sin abortar con MEFISTO_RUNTIME heredado (rc=$LAST_RC)"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
-if grep -qF "MEFISTO_RUNTIME=opencode" "$TMUX_STUB_LOG"; then
-    pass "el pane recibe MEFISTO_RUNTIME=opencode"
+if grep -qE 'send-keys -t %[0-9]+ MEFISTO_RUNTIME=opencode .*mefisto-tooling-pipeline\.sh 711' "$TMUX_STUB_LOG"; then
+    pass "el send-keys de ejecucion antepone MEFISTO_RUNTIME=opencode al pipeline"
 else
     fail "el pane no recibe MEFISTO_RUNTIME=opencode -- log: $(cat "$TMUX_STUB_LOG")"
+fi
+
+# Contraparte negativa: sin la variable en el entorno del wrapper no se
+# antepone nada. Fijar un default aqui romperia la precedencia -- quien
+# resuelve el runtime ausente es el sub-pipeline, no el lanzador.
+(unset MEFISTO_RUNTIME MEFISTO_MODELS_FILE; run_wrapper --tooling 711)
+if grep -qF "MEFISTO_RUNTIME=" "$TMUX_STUB_LOG"; then
+    fail "sin MEFISTO_RUNTIME heredado el launcher igual lo fija -- log: $(cat "$TMUX_STUB_LOG")"
+else
+    pass "sin MEFISTO_RUNTIME heredado no se antepone ninguna asignacion"
 fi
 
 echo ""

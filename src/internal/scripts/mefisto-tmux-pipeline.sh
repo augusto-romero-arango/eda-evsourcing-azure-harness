@@ -111,6 +111,16 @@ ENV_PREFIX=""
 [ -n "${MEFISTO_RUNTIME:-}" ] && ENV_PREFIX="${ENV_PREFIX}MEFISTO_RUNTIME=$(printf '%q' "$MEFISTO_RUNTIME") "
 [ -n "${MEFISTO_MODELS_FILE:-}" ] && ENV_PREFIX="${ENV_PREFIX}MEFISTO_MODELS_FILE=$(printf '%q' "$MEFISTO_MODELS_FILE") "
 
+# El pane re-parsea con un shell el string que le llega por send-keys, asi que
+# la ruta de los sub-pipelines viaja escapada con printf %q, no cruda (CA-4).
+# Hasta el traslado a src/internal/scripts/ (issue #871) era la literal
+# relativa "./.claude/scripts/...", inmune a espacios por construccion; ahora
+# se deriva de SCRIPT_DIR, y un checkout bajo un directorio con espacios --
+# "~/Mis Repos/mefisto" -- partiria el comando en dos argumentos y el pane
+# moriria con "command not found", sin que nada mas lo advierta.
+TOOLING_SCRIPT_Q="$(printf '%q' "$SCRIPT_DIR/mefisto-tooling-pipeline.sh")"
+BATCH_SCRIPT_Q="$(printf '%q' "$SCRIPT_DIR/mefisto-batch-pipeline.sh")"
+
 log()     { echo -e "${BLUE}[$(date +%H:%M:%S)]${NC} $1"; }
 success() { echo -e "${GREEN}${BOLD}v${NC} $1"; }
 warn()    { echo -e "${YELLOW}!${NC} $1"; }
@@ -477,7 +487,7 @@ cmd_tooling() {
     fi
 
     script_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    local pipeline_cmd="$SCRIPT_DIR/mefisto-tooling-pipeline.sh $issue"
+    local pipeline_cmd="$TOOLING_SCRIPT_Q $issue"
     [ -n "$FROM_STAGE_EXTRA" ] && pipeline_cmd="$pipeline_cmd $FROM_STAGE_EXTRA"
     [ -n "$MODELS_EXTRA" ] && pipeline_cmd="$pipeline_cmd $MODELS_EXTRA"
     [ -n "$VARIANT_EXTRA" ] && pipeline_cmd="$pipeline_cmd $VARIANT_EXTRA"
@@ -547,7 +557,7 @@ cmd_batch() {
     fi
 
     script_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    tmux send-keys -t "$script_pane" "${ENV_PREFIX}$CAFF $SCRIPT_DIR/mefisto-batch-pipeline.sh $issues_str" Enter
+    tmux send-keys -t "$script_pane" "${ENV_PREFIX}$CAFF $BATCH_SCRIPT_Q $issues_str" Enter
 
     # even-horizontal deshace el split -v de arriba (lo aplana a 3 columnas):
     # solo se aplica sin --verbose, donde nunca hubo split -v que preservar.
