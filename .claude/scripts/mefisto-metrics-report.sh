@@ -34,6 +34,19 @@
 # previo a #662. harness_sha NO es eje de agrupacion (casi cada corrida
 # tendria su propio grupo): viaja como columna en "Por corrida", ausente/null
 # cuando la linea no lo trae.
+#
+# Normalizacion vieja/neutral y segmentacion por runtime (issue #908): desde
+# #907 una corrida nueva anota agents.<agente>.metrics con la forma neutral
+# (runtime, status, error_kind, tokens{input,output}, api_duration_ms -- sin
+# is_error/stop_reason/cache_read/cache_creation) mientras el historico previo
+# sigue en la forma vieja (is_error, duration_api_ms, tokens con
+# cache_read/cache_creation). normalize_agent_metrics (dentro del jq de
+# compute_metrics_report_json) proyecta ambas formas a una sola forma interna
+# antes de que el resto del reporte las toque -- ningun otro punto del script
+# lee is_error/stop_reason/terminal_reason. El reporte agrega ademas una tabla
+# "POR RUNTIME", leyendo el "runtime" de nivel de corrida (no el de
+# metrics.runtime): cae a "(sin runtime)" para el historial previo a esta
+# anotacion, mismo criterio que "(sin version)".
 
 set -euo pipefail
 
@@ -102,17 +115,74 @@ def parse_started:
   else (try (strptime("%Y%m%d-%H%M%S") | mktime) catch null)
   end;
 
-def run_api_ms: ((.agents.writer.metrics.duration_api_ms // 0) + (.agents.reviewer.metrics.duration_api_ms // 0));
-def run_non_api_ms: ((.agents.writer.metrics.non_api_ms // 0) + (.agents.reviewer.metrics.non_api_ms // 0));
-def run_tool_calls_arr: (((.agents.writer.metrics.tool_calls // []) + (.agents.reviewer.metrics.tool_calls // [])));
+# normalize_agent_metrics (issue #908, CA-1) -- proyecta agents.<agente>.metrics
+# (forma vieja, pre-#907 -- is_error/stop_reason/duration_api_ms/tokens con
+# cache_read+cache_creation -- o neutral, #907 -- runtime/status/error_kind/
+# api_duration_ms/tokens solo input+output) a UNA sola forma interna. A partir
+# de aqui el resto del reporte solo lee este resultado: ningun otro punto de
+# este jq nombra is_error/stop_reason/terminal_reason/duration_api_ms. `null`
+# de entrada (el stage no dejo metrics) produce `null` de salida.
+#
+# status: si la forma ya trae "status" (neutral) se copia tal cual; si no,
+# se deriva de is_error (forma vieja: false->"success", true->"failed"); sin
+# ninguno de los dos, null.
+#
+# api_duration_ms lee api_duration_ms (neutral) o cae a duration_api_ms
+# (vieja) -- incompatibilidad de nombre pura, NUNCA los dos a la vez. Con
+# ambos ausentes/null, non_api_ms tambien null (nunca 0): un `0` real en
+# cost_usd/tokens/turns nunca se confunde con "no hubo dato" (CA-1/CA-3).
+def normalize_agent_metrics:
+  if . == null then null
+  else
+    . as $m
+    | (if ($m.api_duration_ms != null) then $m.api_duration_ms
+       elif ($m.duration_api_ms != null) then $m.duration_api_ms
+       else null end) as $api_ms
+    | {
+        runtime: (if ($m.runtime | type) == "string" then $m.runtime else null end),
+        status: (
+          if ($m.status | type) == "string" then $m.status
+          elif ($m.is_error | type) == "boolean" then (if $m.is_error then "failed" else "success" end)
+          else null end
+        ),
+        model: $m.model,
+        cost_usd: $m.cost_usd,
+        tokens: {
+          input: $m.tokens.input,
+          output: $m.tokens.output,
+          cache_read: $m.tokens.cache_read,
+          cache_creation: $m.tokens.cache_creation
+        },
+        turns: $m.turns,
+        duration_ms: $m.duration_ms,
+        api_duration_ms: $api_ms,
+        non_api_ms: (if ($m.duration_ms != null and $api_ms != null) then ($m.duration_ms - $api_ms) else null end),
+        tool_calls: ($m.tool_calls // [])
+      }
+  end;
+
+def wr_norm: (.agents.writer.metrics | normalize_agent_metrics);
+def rv_norm: (.agents.reviewer.metrics | normalize_agent_metrics);
+
+# null_safe_sum(a; b) -- suma preservando null: null solo cuando AMBOS son
+# null (ningun agente dejo el dato), suma de los no-null en cualquier otro
+# caso. Evita que compute_metrics_report_json trate un `turns`/`cost_usd`/
+# `tokens` neutral en null (p. ej. OpenCode no reporta turnos) como un 0 real
+# al combinar writer+reviewer (CA-3): un `0` real (el costo de una corrida
+# bajo suscripcion) sigue sumando como 0 gracias al `// 0` de la rama no-null.
+def null_safe_sum(a; b): if (a == null and b == null) then null else ((a // 0) + (b // 0)) end;
+
+def run_api_ms: ((wr_norm.api_duration_ms // 0) + (rv_norm.api_duration_ms // 0));
+def run_non_api_ms: ((wr_norm.non_api_ms // 0) + (rv_norm.non_api_ms // 0));
+def run_tool_calls_arr: ((wr_norm.tool_calls // []) + (rv_norm.tool_calls // []));
 def run_tool_ms: ([run_tool_calls_arr[] | (.duration_ms_sum // 0)] | add // 0);
 def run_tool_calls_count: ([run_tool_calls_arr[] | .count] | add // 0);
-def run_turns: ((.agents.writer.metrics.turns // 0) + (.agents.reviewer.metrics.turns // 0));
-def run_tokens_input: ((.agents.writer.metrics.tokens.input // 0) + (.agents.reviewer.metrics.tokens.input // 0));
-def run_tokens_output: ((.agents.writer.metrics.tokens.output // 0) + (.agents.reviewer.metrics.tokens.output // 0));
-def run_tokens_cache_read: ((.agents.writer.metrics.tokens.cache_read // 0) + (.agents.reviewer.metrics.tokens.cache_read // 0));
-def run_tokens_cache_creation: ((.agents.writer.metrics.tokens.cache_creation // 0) + (.agents.reviewer.metrics.tokens.cache_creation // 0));
-def run_cost_usd: ((.agents.writer.metrics.cost_usd // 0) + (.agents.reviewer.metrics.cost_usd // 0));
+def run_turns: null_safe_sum(wr_norm.turns; rv_norm.turns);
+def run_tokens_input: null_safe_sum(wr_norm.tokens.input; rv_norm.tokens.input);
+def run_tokens_output: null_safe_sum(wr_norm.tokens.output; rv_norm.tokens.output);
+def run_tokens_cache_read: null_safe_sum(wr_norm.tokens.cache_read; rv_norm.tokens.cache_read);
+def run_tokens_cache_creation: null_safe_sum(wr_norm.tokens.cache_creation; rv_norm.tokens.cache_creation);
+def run_cost_usd: null_safe_sum(wr_norm.cost_usd; rv_norm.cost_usd);
 
 def week_key: if ._ts == null then null else (._ts | gmtime | strftime("%G-W%V")) end;
 def month_key: if ._ts == null then null else (._ts | gmtime | strftime("%Y-%m")) end;
@@ -137,12 +207,12 @@ def period_summary(keyfn):
           # instrumentadas, y mezclar denominadores volveria incomparable
           # justo la atribucion que el reporte existe para hacer.
           wall_mean_instr_s: ($g_instr | map(._wall_s) | map(select(. != null)) | avgOrNull),
-          turns_mean: ($g_instr | map(run_turns) | avgOrNull),
+          turns_mean: ($g_instr | map(run_turns) | map(select(. != null)) | avgOrNull),
           tool_calls_mean: ($g_instr | map(run_tool_calls_count) | avgOrNull),
-          tokens_input_mean: ($g_instr | map(run_tokens_input) | avgOrNull),
-          tokens_output_mean: ($g_instr | map(run_tokens_output) | avgOrNull),
-          cache_read_mean: ($g_instr | map(run_tokens_cache_read) | avgOrNull),
-          cache_creation_mean: ($g_instr | map(run_tokens_cache_creation) | avgOrNull),
+          tokens_input_mean: ($g_instr | map(run_tokens_input) | map(select(. != null)) | avgOrNull),
+          tokens_output_mean: ($g_instr | map(run_tokens_output) | map(select(. != null)) | avgOrNull),
+          cache_read_mean: ($g_instr | map(run_tokens_cache_read) | map(select(. != null)) | avgOrNull),
+          cache_creation_mean: ($g_instr | map(run_tokens_cache_creation) | map(select(. != null)) | avgOrNull),
           cache_read_pct: (if ($cr_total + $cc_total) > 0 then ($cr_total / ($cr_total + $cc_total) * 100) else null end),
           non_api_ms_mean: ($g_instr | map(run_non_api_ms) | avgOrNull)
         }
@@ -156,7 +226,7 @@ def summarize_agent:
     cost_usd_mean: (map(.cost_usd) | map(select(. != null)) | avgOrNull),
     cost_usd_total: (map(.cost_usd) | map(select(. != null)) | (if length == 0 then null else add end)),
     duration_ms_mean: (map(.duration_ms) | map(select(. != null)) | avgOrNull),
-    duration_api_ms_mean: (map(.duration_api_ms) | map(select(. != null)) | avgOrNull),
+    duration_api_ms_mean: (map(.api_duration_ms) | map(select(. != null)) | avgOrNull),
     non_api_ms_mean: (map(.non_api_ms) | map(select(. != null)) | avgOrNull),
     tokens_input_mean: (map(.tokens.input) | map(select(. != null)) | avgOrNull),
     tokens_output_mean: (map(.tokens.output) | map(select(. != null)) | avgOrNull),
@@ -165,12 +235,19 @@ def summarize_agent:
     tool_calls_mean: (map([(.tool_calls // [])[] | .count] | add // 0) | avgOrNull)
   };
 
-# version_summary -- issue #664, mismo shape que el porte publicado (#663):
-# agregados de wallclock/turnos/costo restringidos al grupo de corridas de una
-# sola harness_version. Opera sobre $group (corridas totales de esa version),
-# no solo sobre las instrumentadas, para que n_total/n_instrumented reutilicen
-# el mismo par instrumented/legacy del resto del reporte.
-def version_summary:
+# group_summary -- agregados de wallclock/turnos/costo restringidos a UN grupo
+# de corridas, sea cual sea el eje que lo formo: harness_version (issue #664,
+# mismo shape que el porte publicado #663) o runtime de nivel de corrida
+# (issue #908). Los dos ejes piden exactamente las mismas seis cifras, asi
+# que comparten def: dos copias divergirian en la primera columna que se le
+# agregue a una sola de las tablas.
+#
+# Opera sobre $group (corridas TOTALES del grupo), no solo sobre las
+# instrumentadas, para que n_total/n_instrumented reutilicen el mismo par
+# instrumented/legacy del resto del reporte. Filtra null antes de promediar
+# turnos/costo (CA-3, #908): una corrida cuyo runtime no reporta turnos
+# (turns: null) no debe leerse como 0 al mezclarse con las que si lo reportan.
+def group_summary:
   . as $group
   | ($group | map(select(._has_metrics))) as $g_instr
   | ($g_instr | map(run_api_ms) | add // 0) as $api_total
@@ -180,8 +257,8 @@ def version_summary:
       n_instrumented: ($g_instr | length),
       wall_mean_instr_s: ($g_instr | map(._wall_s) | map(select(. != null)) | avgOrNull),
       pct_api: (if ($api_total + $non_api_total) > 0 then ($api_total / ($api_total + $non_api_total) * 100) else null end),
-      turns_mean: ($g_instr | map(run_turns) | avgOrNull),
-      cost_usd_mean: ($g_instr | map(run_cost_usd) | avgOrNull)
+      turns_mean: ($g_instr | map(run_turns) | map(select(. != null)) | avgOrNull),
+      cost_usd_mean: ($g_instr | map(run_cost_usd) | map(select(. != null)) | avgOrNull)
     };
 
 # version_sort_key -- orden semver NUMERICO por componente, no lexicografico
@@ -214,7 +291,12 @@ def delta_of(f; l):
     # harness_version llego con #662: el historial previo (o cualquier linea
     # futura que no lo traiga) cae en su propio cajon "(sin version)" en vez
     # de romper la segmentacion by_version (issue #664).
-    _version: (if (.harness_version | type) == "string" then .harness_version else "(sin version)" end)
+    _version: (if (.harness_version | type) == "string" then .harness_version else "(sin version)" end),
+    # runtime de NIVEL DE CORRIDA (issue #908) -- distinto de metrics.runtime,
+    # que vive dentro de cada agente. El historial previo a esta anotacion (o
+    # cualquier linea futura que no lo traiga) cae en "(sin runtime)", mismo
+    # criterio que "(sin version)".
+    _runtime: (if (.runtime | type) == "string" then .runtime else "(sin runtime)" end)
   })) as $entries
 
 | ($entries | length) as $total_n
@@ -239,8 +321,8 @@ def delta_of(f; l):
     | sort_by(-.time_ms)
   ) as $tool_ranking
 
-| ($instr | map(.agents.writer.metrics) | map(select(. != null))) as $wr_metrics
-| ($instr | map(.agents.reviewer.metrics) | map(select(. != null))) as $rv_metrics
+| ($instr | map(.agents.writer.metrics | normalize_agent_metrics) | map(select(. != null))) as $wr_metrics
+| ($instr | map(.agents.reviewer.metrics | normalize_agent_metrics) | map(select(. != null))) as $rv_metrics
 
 | ($instr | map(run_api_ms) | add // 0) as $agg_api_ms
 | ($instr | map(run_non_api_ms) | add // 0) as $agg_non_api_ms
@@ -285,9 +367,15 @@ def delta_of(f; l):
 
 | ($entries
     | group_by(._version)
-    | map(. as $group | ($group | version_summary) + {version: $group[0]._version})
+    | map(. as $group | ($group | group_summary) + {version: $group[0]._version})
     | sort_by([(.version == "(sin version)"), (.version | version_sort_key)])
   ) as $by_version
+
+| ($entries
+    | group_by(._runtime)
+    | map(. as $group | ($group | group_summary) + {runtime: $group[0]._runtime})
+    | sort_by([(.runtime == "(sin runtime)"), .runtime])
+  ) as $by_runtime
 
 | {
     meta: {
@@ -318,6 +406,7 @@ def delta_of(f; l):
       monthly: $monthly
     },
     by_version: $by_version,
+    by_runtime: $by_runtime,
     legacy: {
       count: $legacy_n,
       issues: $legacy_list
@@ -619,6 +708,39 @@ render_by_version() {
     done < <(jq -r "$JQ_ROW"'.by_version[] | [.version, .n_total, .n_instrumented, .wall_mean_instr_s, .turns_mean, .pct_api, .cost_usd_mean] | row' <<<"$agg")
 }
 
+# render_by_runtime -- issue #908: una fila por "runtime" de nivel de corrida
+# presente en el historial (mas "(sin runtime)" para el historial previo a
+# esta anotacion), restringiendo a ese runtime los mismos agregados de
+# wallclock/turnos/costo que POR VERSION DE HARNESS. No asume ningun nombre
+# de runtime concreto (CA-2): el valor sale tal cual de "runtime", sin lista
+# fija de ids.
+render_by_runtime() {
+    local agg="$1"
+    local count
+    count=$(jq -r '.by_runtime | length' <<<"$agg")
+
+    echo ""
+    echo "$RULE_MINOR"
+    echo "POR RUNTIME (n = corridas totales/instrumentadas de ese runtime)"
+    echo "$RULE_MINOR"
+
+    if [ "$count" -eq 0 ]; then
+        echo "(sin corridas en la ventana)"
+        return 0
+    fi
+
+    echo "n(t/i) = corridas totales / de ellas instrumentadas. Mismo criterio que POR"
+    echo "VERSION DE HARNESS: todas las cifras -- el wall incluido -- salen solo de las"
+    echo "instrumentadas."
+    echo ""
+    printf '%-20s %-8s %10s %7s %7s %10s\n' "Runtime" "n(t/i)" "WallMedia" "Turnos" "%API" "Costo"
+    while IFS=$'\t' read -r runtime n_total n_instr wall_mean turns pct_api cost_mean; do
+        printf '%-20s %-8s %10s %7s %7s %10s\n' \
+            "$(_txt "$runtime")" "${n_total}/${n_instr}" \
+            "$(fmt_dur_s "$wall_mean")" "$(_num1 "$turns")" "$(fmt_pct "$pct_api")" "$(_money "$cost_mean")"
+    done < <(jq -r "$JQ_ROW"'.by_runtime[] | [.runtime, .n_total, .n_instrumented, .wall_mean_instr_s, .turns_mean, .pct_api, .cost_usd_mean] | row' <<<"$agg")
+}
+
 render_legacy() {
     local agg="$1"
     local count
@@ -656,8 +778,8 @@ Uso: mefisto-metrics-report.sh [--desde YYYY-MM-DD]
 Reporte agregado de las corridas del pipeline mefisto-tooling: ranking de
 herramientas, reparto del wall-clock (API vs no-API, writer vs reviewer),
 deriva temporal semanal/mensual y agregados por harness_version (que version
-corrio cada corrida, con harness_sha por-corrida en "Por corrida"). Solo
-lectura.
+corrio cada corrida, con harness_sha por-corrida en "Por corrida") y por
+runtime (con que runtime corrio cada corrida). Solo lectura.
 EOF
                 exit 0
                 ;;
@@ -703,7 +825,16 @@ EOF
         if [ -n "$merged" ]; then
             # El trap se registra solo cuando hay algo que borrar: este script
             # no tiene otro trap EXIT que este pisaria.
-            trap 'rm -f "$merged"' EXIT
+            #
+            # La ruta se INTERPOLA al registrar el trap, no se difiere entre
+            # comillas simples: "$merged" es un local de main() y el trap EXIT
+            # corre cuando main ya retorno y ese local ya no existe -- con
+            # `set -u` eso aborta el shell con "merged: unbound variable" y
+            # deja el reporte en exit 1 justo despues de imprimirlo entero.
+            # Solo se manifiesta con las DOS ubicaciones de historial
+            # presentes (la unica rama que crea temporal), que es el estado
+            # normal de un repo con historico legacy.
+            trap "rm -f '$merged'" EXIT
             while IFS= read -r _src; do
                 [ -n "$_src" ] || continue
                 cat "$_src" >> "$merged" 2>/dev/null || true
@@ -745,6 +876,7 @@ EOF
     render_period_table "$agg" ".series.monthly" "DERIVA TEMPORAL - MENSUAL"
     render_comparison "$agg"
     render_by_version "$agg"
+    render_by_runtime "$agg"
     render_legacy "$agg"
 
     echo ""
