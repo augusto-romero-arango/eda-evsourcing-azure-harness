@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # adapter-opencode.sh -- Traduce un artefacto neutral (frontmatter JSON +
 # body, ver src/internal/contract/README.md) al formato que OpenCode 1.18.29
-# consume: `description`, `mode` (agente); `description`, `agent`, `subtask`
-# (comando). Sin `model` -- decision de MEF-ADR-0049 (CA-4 enmendada, issue
-# #857): el adaptador OpenCode no tiene tabla por defecto, siempre hereda el
-# modelo activo de la sesion salvo mapping local o override -- ni
-# `tools`/`permission` (issue #862). Issue #854.
+# consume: `description`, `mode`, `permission` (agente); `description`,
+# `agent`, `subtask` (comando). Sin `model` -- decision de MEF-ADR-0049 (CA-4
+# enmendada, issue #857): el adaptador OpenCode no tiene tabla por defecto,
+# siempre hereda el modelo activo de la sesion salvo mapping local o
+# override. Sin `tools` -- OpenCode no tiene un equivalente declarativo de
+# restriccion de tools mas alla de `permission` (issue #862, que si define la
+# emision de ese bloque). Issue #854.
 #
 # Se `source`a desde generate-internal-adapters.sh. Ninguna funcion de aqui
 # escribe en disco: todas imprimen a stdout el contenido completo del archivo
@@ -25,6 +27,74 @@ adapter_opencode_default_model() {
         fast|balanced|deep) printf '%s' "" ;;
         *)                  return 1 ;;
     esac
+}
+
+# OPENCODE_PERMISSIONS_MAPPING -- ruta al mapping declarativo capacidad ->
+# permiso (issue #862), resuelta relativa a este propio archivo (mismo patron
+# BASH_SOURCE que mefisto-state.sh usa desde _mefisto-common.sh) para que
+# resuelva sea cual sea el cwd desde el que corra el generador.
+OPENCODE_PERMISSIONS_MAPPING="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../contract/opencode-permissions.json"
+
+# opencode_capability_known <capacidad> -- 0 si <capacidad> tiene mapeo a
+# `permission` de OpenCode (read, edit, shell, web, skill, task); 1 en
+# cualquier otro caso, incluida `mcp` -- CA-5: sin mapeo definido todavia
+# (mismo criterio que claude_map_capability_tools con `mcp` en
+# adapter-claude.sh, aqui sin degradar nunca a un permiso inventado).
+opencode_capability_known() {
+    case "$1" in
+        read|edit|shell|web|skill|task) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# opencode_permission_json <rel_source> <capabilities_json> <mode> -- imprime
+# el objeto JSON compacto (orden de claves preservado, sin jq -S -- MEF-ADR-0049
+# CA-6, issue #862 notas tecnicas) del bloque `permission` para un agente:
+# valor explicito en las 17 claves del vocabulario de OpenCode 1.18.29
+# (CA-1), derivado de <capabilities_json> (array neutral, puede llegar
+# null/vacio -- capabilities: [] o ausente da un permiso cerrado por
+# completo) y de <mode> (solo afecta `question`: allow en primary, deny en
+# cualquier otro valor). Aborta (return 1, mensaje en stderr citando
+# rel_source) si <capabilities_json> declara una capacidad sin mapeo OpenCode
+# (CA-5): "<rel_source>: capacidad <x> sin mapeo OpenCode" -- sin imprimir
+# nada por stdout.
+opencode_permission_json() {
+    local rel_source="$1" capabilities_json="${2:-[]}" mode="$3"
+    [ "$capabilities_json" = "null" ] && capabilities_json="[]"
+
+    local cap
+    while IFS= read -r cap; do
+        [ -n "$cap" ] || continue
+        if ! opencode_capability_known "$cap"; then
+            echo "$rel_source: capacidad $cap sin mapeo OpenCode" >&2
+            return 1
+        fi
+    done < <(printf '%s' "$capabilities_json" | jq -r '.[]')
+
+    jq -c -n \
+        --slurpfile mapping_arr "$OPENCODE_PERMISSIONS_MAPPING" \
+        --argjson capabilities "$capabilities_json" \
+        --arg mode "$mode" '
+        ($mapping_arr[0]) as $m
+        | (reduce ($m.always_deny[]) as $k ({}; . + {($k): "deny"}))
+        + {"question": ($m.question[$mode] // "deny")}
+        + (reduce ($m.capability_scalar | to_entries[]) as $e (
+             {};
+             . + (reduce ($e.value[]) as $k (
+                    {};
+                    . + {($k): (if ($capabilities | index($e.key)) then "allow" else "deny" end)}
+                 ))
+           ))
+        + (reduce ($m.capability_map | to_entries[]) as $e (
+             {};
+             ($e.value) as $spec
+             | (if ($capabilities | index($e.key))
+                then ({"*": $spec.catch_all} + (reduce ($spec.rules[]) as $r ({}; . + {($r.pattern): $r.value})))
+                else {"*": "deny"}
+                end) as $obj
+             | . + (reduce ($spec.keys[]) as $k ({}; . + {($k): $obj}))
+           ))
+        '
 }
 
 # opencode_translate_body <rel_source> <body> -- imprime el body con las
@@ -91,7 +161,13 @@ opencode_render() {
     local fm_lines=()
     fm_lines+=("description: $(printf '%s' "$instance_json" | jq -r '.description | @json')")
     if [ "$kind" = "agent" ]; then
+        local mode
+        mode="$(printf '%s' "$instance_json" | jq -r '.mode')"
         fm_lines+=("mode: $(printf '%s' "$instance_json" | jq -r '.mode | @json')")
+
+        local permission_json
+        permission_json="$(opencode_permission_json "$rel_source" "$(printf '%s' "$instance_json" | jq -c '.capabilities')" "$mode")" || return 1
+        fm_lines+=("permission: $permission_json")
     else
         local agent_id
         agent_id="$(printf '%s' "$instance_json" | jq -r 'if (.agent != null) then .agent else empty end')"

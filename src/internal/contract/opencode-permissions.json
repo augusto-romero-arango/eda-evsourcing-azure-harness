@@ -1,0 +1,112 @@
+{
+  "$comment": "Mapping declarativo capacidad neutral (#853) -> bloque `permission` de OpenCode (issue #862, MEF-ADR-0049 decision 5). Vocabulario de 17 claves verificado contra el binario OpenCode 1.18.29 (bash, edit, write, patch, read, list, glob, grep, question, skill, task, lsp, todowrite, websearch, webfetch, external_directory, doom_loop) -- distinto de la doc publica (https://opencode.ai/docs/permissions/), que funde write/patch bajo `edit`: aqui las 17 claves reciben cada una un valor explicito, nunca heredan un default global. `src/internal/scripts/lib/adapter-opencode.sh` consume este archivo; `opencode-permission-eval.jq` lo evalua en los tests con la regla de OpenCode 'ultima coincidencia gana'. Si el dogfooding (#874) revela una discrepancia con OpenCode real, se corrige ESTE mapping, nunca el test.",
+
+  "always_deny": ["external_directory", "doom_loop"],
+
+  "question": {
+    "primary": "allow",
+    "subagent": "deny",
+    "all": "deny"
+  },
+
+  "capability_scalar": {
+    "web": ["webfetch", "websearch"],
+    "skill": ["skill"],
+    "task": ["task"],
+    "read": ["list", "glob", "grep", "lsp", "todowrite"]
+  },
+
+  "capability_map": {
+    "shell": {
+      "keys": ["bash"],
+      "catch_all": "deny",
+      "rules": [
+        { "pattern": "git *", "value": "allow" },
+        { "pattern": "gh *", "value": "allow" },
+        { "pattern": "jq *", "value": "allow" },
+        { "pattern": "cat *", "value": "allow" },
+        { "pattern": "ls *", "value": "allow" },
+        { "pattern": "head *", "value": "allow" },
+        { "pattern": "tail *", "value": "allow" },
+        { "pattern": "wc *", "value": "allow" },
+        { "pattern": "find *", "value": "allow" },
+        { "pattern": "sort *", "value": "allow" },
+        { "pattern": "uniq *", "value": "allow" },
+        { "pattern": "cut *", "value": "allow" },
+        { "pattern": "tr *", "value": "allow" },
+        { "pattern": "grep *", "value": "allow" },
+        { "pattern": "bash scripts/tests/*", "value": "allow" },
+        { "pattern": "sh scripts/tests/*", "value": "allow" },
+        { "pattern": "bash .claude/scripts/*", "value": "allow" },
+        { "pattern": "sh .claude/scripts/*", "value": "allow" },
+        { "pattern": "bash src/internal/scripts/*", "value": "allow" },
+        { "pattern": "sh src/internal/scripts/*", "value": "allow" },
+        { "pattern": "shasum *", "value": "allow" },
+        { "pattern": "mkdir *", "value": "allow" },
+        { "pattern": "date", "value": "allow" },
+        { "pattern": "date *", "value": "allow" },
+        { "pattern": "mktemp", "value": "allow" },
+        { "pattern": "mktemp *", "value": "allow" },
+        { "pattern": "diff *", "value": "allow" },
+        { "pattern": "rm *", "value": "deny" },
+        { "pattern": "curl *", "value": "deny" },
+        { "pattern": "ssh *", "value": "deny" },
+        { "pattern": "scp *", "value": "deny" },
+        { "pattern": "sudo *", "value": "deny" },
+        { "pattern": "npm *", "value": "deny" },
+        { "pattern": "pip *", "value": "deny" },
+        { "pattern": "brew *", "value": "deny" },
+        { "pattern": "git push --force*", "value": "deny" },
+        { "pattern": "gh repo delete*", "value": "deny" }
+      ]
+    },
+    "edit": {
+      "$comment": "Las mismas rutas para `edit`, `write` y `patch` (issue #862 CA-2): replican is_path_in_mefisto_scope (.claude/scripts/_mefisto-common.sh) mas los dos directorios de resumenes de stage que OpenCode bloquearia sin regla explicita.",
+      "keys": ["edit", "write", "patch"],
+      "catch_all": "deny",
+      "rules": [
+        { "pattern": "commands/**", "value": "allow" },
+        { "pattern": "skills/**", "value": "allow" },
+        { "pattern": "agents/**", "value": "allow" },
+        { "pattern": "scripts/**", "value": "allow" },
+        { "pattern": "hooks/**", "value": "allow" },
+        { "pattern": "docs/**", "value": "allow" },
+        { "pattern": "src/internal/**", "value": "allow" },
+        { "pattern": ".claude-plugin/**", "value": "allow" },
+        { "pattern": ".claude/commands/**", "value": "allow" },
+        { "pattern": ".claude/skills/**", "value": "allow" },
+        { "pattern": ".claude/agents/**", "value": "allow" },
+        { "pattern": ".claude/scripts/**", "value": "allow" },
+        { "pattern": ".claude/settings.json", "value": "allow" },
+        { "pattern": ".opencode/agents/**", "value": "allow" },
+        { "pattern": ".opencode/commands/**", "value": "allow" },
+        { "pattern": ".opencode/plugins/**", "value": "allow" },
+        { "pattern": ".opencode/skills/**", "value": "allow" },
+        { "pattern": ".mcp.json", "value": "allow" },
+        { "pattern": "README.md", "value": "allow" },
+        { "pattern": "CHANGELOG.md", "value": "allow" },
+        { "pattern": "CLAUDE.md", "value": "allow" },
+        { "pattern": ".gitignore", "value": "allow" },
+        { "pattern": "AGENTS.md", "value": "allow" },
+        { "pattern": "opencode.json", "value": "allow" },
+        { "pattern": "changelog.d/**", "value": "allow" },
+        { "pattern": ".mefisto/pipeline/summaries/**", "value": "allow" },
+        { "pattern": ".claude/pipeline/summaries/**", "value": "allow" }
+      ]
+    },
+    "read": {
+      "$comment": "Con la capacidad `read`, el catch-all es `allow` (leer el repo es la intencion general) y las reglas son denegaciones especificas de rutas sensibles (issue #862 CA-2), evaluadas despues -- 'ultima coincidencia gana' hace que estas denegaciones prevalezcan sobre el allow general.",
+      "keys": ["read"],
+      "catch_all": "allow",
+      "rules": [
+        { "pattern": ".env", "value": "deny" },
+        { "pattern": ".env.*", "value": "deny" },
+        { "pattern": "**/auth.json", "value": "deny" },
+        { "pattern": "**/.aws/**", "value": "deny" },
+        { "pattern": "**/.ssh/**", "value": "deny" },
+        { "pattern": "~/.local/share/opencode/**", "value": "deny" },
+        { "pattern": "~/.claude/**", "value": "deny" }
+      ]
+    }
+  }
+}
