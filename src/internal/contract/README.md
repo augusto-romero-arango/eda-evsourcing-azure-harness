@@ -9,12 +9,11 @@ generador consume estos archivos `.md` y produce `.claude/{agents,commands}/*.md
 consumidor lo adopte**: vive enteramente del lado interno del propio plugin
 Mefisto (MEF-ADR-0019).
 
-Estado de la migracion: los tres agentes internos (#865) y los cinco comandos
-de analisis y seguimiento -- `mefisto-{plan,bug,bitacora,work-status,fix-review}`
-(#866) -- ya nacen de este formato. Los comandos de ejecucion
-(`mefisto-{tooling,tooling-verbose,sequential,merge,release}`) siguen escritos
-a mano en `.claude/commands/` hasta #867; el `--check` del generador los
-tolera porque no llevan el marcador de generado.
+Estado de la migracion: los tres agentes internos (#865) y los diez comandos
+internos -- los cinco de analisis y seguimiento,
+`mefisto-{plan,bug,bitacora,work-status,fix-review}` (#866), y los cinco de
+ejecucion, `mefisto-{tooling,tooling-verbose,sequential,merge,release}`
+(#867) -- ya nacen de este formato.
 
 ## Formato de un artefacto
 
@@ -366,8 +365,7 @@ directorio de salida: genera en un temporal y compara contra lo versionado,
 imprimiendo una linea `<ruta>: faltante|distinta|huerfana` por divergencia y
 saliendo con exit 1. *Huerfana* es un archivo **con** el marcador cuya fuente
 ya no existe. Un archivo **sin** marcador se tolera (es de autoria manual):
-es la toleracion transitoria que sostiene a `.claude/{agents,commands}/`
-mientras #865-#867 migran, y que #873 retira.
+es la toleracion transitoria que #873 retira.
 
 ## Subconjunto de JSON Schema soportado
 
@@ -399,9 +397,9 @@ No implementado (y no necesario para este contrato): `$ref`, `allOf`,
 src/internal/scripts/validate-internal-artifacts.sh [archivo...]
 ```
 
-Sin argumentos, valida todo `src/internal/{agents,commands}/*.md` (vacio hoy:
-#865-#867 todavia no migraron ningun artefacto real, asi que el validador sale
-con exit 0 sin encontrar nada que rechazar). Cada rechazo imprime una linea
+Sin argumentos, valida todo `src/internal/{agents,commands}/*.md` (hoy los
+tres agentes internos de #865 y los diez comandos internos de #866/#867).
+Cada rechazo imprime una linea
 `<archivo>: <campo>: <motivo>` y el proceso sale con exit distinto de cero si
 cualquier archivo se rechaza. Corre con bash 3.2 + jq 1.7, sin red ni
 paquetes (MEF-ADR-0049 CA-6).

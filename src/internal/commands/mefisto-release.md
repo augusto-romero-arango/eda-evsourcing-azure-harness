@@ -1,9 +1,12 @@
 ---
-description: "Versiona y publica el plugin Mefisto siguiendo SemVer y Keep a Changelog."
-model: "sonnet"
-argument-hint: "patch|minor|major [--prepare-only]"
+{
+  "kind": "command",
+  "id": "mefisto-release",
+  "description": "Versiona y publica el plugin Mefisto siguiendo SemVer y Keep a Changelog.",
+  "profile": "balanced",
+  "arguments": "patch|minor|major [--prepare-only]"
+}
 ---
-<!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh desde src/internal/commands/mefisto-release.md. No editar a mano. -->
 
 Versiona y publica el plugin Mefisto siguiendo SemVer y Keep a Changelog. Comunicate en **espanol**.
 
@@ -38,7 +41,7 @@ REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
 ### 1. Delegar al pipeline
 
 ```bash
-MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-release.sh $ARGUMENTS
+{{mefisto:run mefisto-release.sh $ARGUMENTS}}
 ```
 
 El script detecta solo en que fase estamos:

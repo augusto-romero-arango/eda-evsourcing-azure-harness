@@ -1,7 +1,5 @@
 ---
 description: "Lanza el pipeline INTERNO secuencial para varios issues del repo de Mefisto, dentro de una sesion tmux."
-model: "haiku"
-argument-hint: "<issue1> <issue2> ..."
 ---
 <!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh desde src/internal/commands/mefisto-sequential.md. No editar a mano. -->
 
@@ -99,7 +97,7 @@ Para clasificar, necesitas la **lista ordenada** de issues que sobrevivieron al 
 argumentos, respetando el orden del batch:
 
 ```bash
-MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-validate-batch-deps.sh <issue1> <issue2> ...
+MEFISTO_RUNTIME=opencode ./.claude/scripts/mefisto-validate-batch-deps.sh <issue1> <issue2> ...
 ```
 
 El script interpreta el batch completo (no un issue a la vez) y termina con uno de tres
@@ -149,7 +147,7 @@ Secuencial --- N issues:
 Luego lanza el motor secuencial dentro de tmux:
 
 ```bash
-MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-tmux-pipeline.sh --batch <issue1> <issue2> ...
+MEFISTO_RUNTIME=opencode ./.claude/scripts/mefisto-tmux-pipeline.sh --batch <issue1> <issue2> ...
 ```
 
 ### 4. Instrucciones de conexion

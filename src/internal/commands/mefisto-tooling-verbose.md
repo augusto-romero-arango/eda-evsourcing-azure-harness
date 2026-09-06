@@ -1,9 +1,12 @@
 ---
-description: "Lanza el pipeline INTERNO de tooling para un issue del repo de Mefisto igual que `/mefisto-tooling`, pero con el visor en vivo abierto en un tercer pane."
-model: "haiku"
-argument-hint: "<numero-de-issue> [--models 'agente=modelo[,agente=modelo...]'] [--variant <label>]"
+{
+  "kind": "command",
+  "id": "mefisto-tooling-verbose",
+  "description": "Lanza el pipeline INTERNO de tooling para un issue del repo de Mefisto igual que `/mefisto-tooling`, pero con el visor en vivo abierto en un tercer pane.",
+  "profile": "fast",
+  "arguments": "<numero-de-issue> [--models 'agente=modelo[,agente=modelo...]'] [--variant <label>]"
+}
 ---
-<!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh desde src/internal/commands/mefisto-tooling-verbose.md. No editar a mano. -->
 
 Lanza el pipeline INTERNO de tooling para un issue del repo de Mefisto igual que `/mefisto-tooling`, pero con el visor en vivo abierto en un tercer pane (`--verbose`, issue #435 sobre el visor `mefisto-stream-watch.sh` de #434). Delega integramente en `/mefisto-tooling` para toda la validacion; la unica desviacion del procedimiento es el flag que se pasa al wrapper tmux en el lanzamiento (y, en consecuencia, las instrucciones de conexion, que describen 3 panes en vez de 2). Comunicate en **espanol**.
 
@@ -47,7 +50,7 @@ Si el bloque imprime `ERROR`, detente y muestra el mensaje al usuario.
 Lee integramente el skill delegado -- vive en el mismo repo, sin necesidad de resolver `$PLUGIN_ROOT` (patron interno de delegacion skill -> skill, ver `/mefisto-bitacora`):
 
 ```bash
-TOOLING_SKILL="$(git rev-parse --show-toplevel)/.claude/commands/mefisto-tooling.md"
+TOOLING_SKILL="$(git rev-parse --show-toplevel)/{{mefisto:command-path mefisto-tooling}}"
 [ -f "$TOOLING_SKILL" ] || {
     echo "ERROR: no existe $TOOLING_SKILL -- /mefisto-tooling todavia no esta disponible para este runtime."
     exit 1
@@ -66,7 +69,7 @@ Los dos ultimos tramos del skill delegado los **reemplazan** los pasos de aca y 
 Donde la segunda mitad del Paso 3 de `/mefisto-tooling` lanzaria el pipeline sin el flag, esta skill lo suma:
 
 ```bash
-MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling $ARGUMENTS --verbose
+{{mefisto:run mefisto-tmux-pipeline.sh --tooling $ARGUMENTS --verbose}}
 ```
 
 ### 3. Instrucciones de conexion -- layout de 3 panes (CA-4)

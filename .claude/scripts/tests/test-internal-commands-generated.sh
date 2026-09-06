@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# test-internal-commands-generated.sh -- Tests de la migracion de los cinco
-# comandos internos de analisis y seguimiento (plan, bug, bitacora,
-# work-status, fix-review) a la fuente neutral (MEF-ADR-0049, issue #866).
+# test-internal-commands-generated.sh -- Tests de la migracion de los diez
+# comandos internos a la fuente neutral: los cinco de analisis y seguimiento
+# (plan, bug, bitacora, work-status, fix-review, issue #866) y los cinco de
+# ejecucion (tooling, tooling-verbose, sequential, merge, release, issue
+# #867) (MEF-ADR-0049).
 #
 # Cubre:
-#   [sources] Las cinco src/internal/commands/mefisto-{plan,bug,bitacora,
-#         work-status,fix-review}.md existen y pasan
-#         validate-internal-artifacts.sh (#853).
+#   [sources] Las diez src/internal/commands/mefisto-{plan,bug,bitacora,
+#         work-status,fix-review,tooling,tooling-verbose,sequential,merge,
+#         release}.md existen y pasan validate-internal-artifacts.sh (#853).
 #   [ca-3] Ninguna fuente ni salida generada contiene `claude --agent`,
 #         `.claude/pipeline`, `.claude/agents` ni `.claude/commands` (CA-3);
 #         la salida Claude de plan/bug/bitacora invoca
@@ -30,6 +32,22 @@
 #   [opencode-cli] Si el CLI `opencode` esta instalado, `opencode debug
 #         config` corrido en la raiz del repo lista los cinco ids bajo
 #         `.command`; si no esta instalado, se omite con aviso (CA-6).
+#   [exec-sources] Los cinco comandos de ejecucion (issue #867) existen y
+#         pasan validate-internal-artifacts.sh.
+#   [exec-ca-3] La salida Claude y OpenCode de tooling/tooling-verbose/
+#         sequential/release invoca el script real con `MEFISTO_RUNTIME=
+#         <runtime> ./.claude/scripts/<script>` (CA-3, issue #867).
+#   [exec-command-path] mefisto-tooling-verbose encadena mefisto-tooling via
+#         `{{mefisto:command-path}}` (issue #867).
+#   [exec-claude-output] La salida Claude de los cuatro comandos de
+#         ejecucion `fast` lleva `model: "haiku"`; la de `release`
+#         (`balanced`) lleva `model: "sonnet"` (CA-5, issue #867).
+#   [ca-4] mefisto-tooling no prescribe un alias Anthropic concreto en sus
+#         ejemplos de `--models` y remite a models.example.json (CA-4, issue
+#         #867).
+#   [run-quoting] {{mefisto:run}} preserva sin alterar un argumento con
+#         espacios y comillas (`--models 'writer=a b'`) en ambos runtimes
+#         (CA-6, issue #867).
 #
 # Uso: .claude/scripts/tests/test-internal-commands-generated.sh
 # Exit code: 0 si todos los checks pasan, 1 si alguno falla.
@@ -44,6 +62,7 @@ VALIDATOR="$REPO_ROOT/src/internal/scripts/validate-internal-artifacts.sh"
 GENERATOR="$REPO_ROOT/src/internal/scripts/generate-internal-adapters.sh"
 
 COMMAND_IDS="mefisto-plan mefisto-bug mefisto-bitacora mefisto-work-status mefisto-fix-review"
+EXEC_COMMAND_IDS="mefisto-tooling mefisto-tooling-verbose mefisto-sequential mefisto-merge mefisto-release"
 
 PASS=0
 FAIL=0
@@ -52,6 +71,25 @@ fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 
 echo "[sources] Las cinco fuentes existen y pasan validate-internal-artifacts.sh"
 for id in $COMMAND_IDS; do
+    src="$COMMANDS_DIR/$id.md"
+    if [ ! -f "$src" ]; then
+        fail "$id: no existe src/internal/commands/$id.md"
+        continue
+    fi
+    pass "existe: src/internal/commands/$id.md"
+
+    out=$("$VALIDATOR" "$src" 2>&1)
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+        pass "$id: pasa el validador del contrato neutral"
+    else
+        fail "$id: el validador rechazo la fuente. Salida: $out"
+    fi
+done
+
+echo ""
+echo "[exec-sources] Los cinco comandos de ejecucion existen y pasan validate-internal-artifacts.sh (issue #867)"
+for id in $EXEC_COMMAND_IDS; do
     src="$COMMANDS_DIR/$id.md"
     if [ ! -f "$src" ]; then
         fail "$id: no existe src/internal/commands/$id.md"
@@ -86,7 +124,7 @@ echo ""
 echo "[ca-3] Ninguna fuente ni salida contiene las referencias prohibidas; plan/bug/bitacora invocan su agente en ambos runtimes"
 FORBIDDEN_PATTERNS=("claude --agent" "\.claude/pipeline" "\.claude/agents" "\.claude/commands")
 ALL_SOURCES=()
-for id in $COMMAND_IDS; do
+for id in $COMMAND_IDS $EXEC_COMMAND_IDS; do
     ALL_SOURCES+=("$COMMANDS_DIR/$id.md")
 done
 for pattern in "${FORBIDDEN_PATTERNS[@]}"; do
@@ -133,7 +171,7 @@ done
 # `.claude/agents` -- las dos rutas que este issue reemplazo por
 # `.mefisto/pipeline` y `src/internal/agents`.
 cross_ok=1
-for id in $COMMAND_IDS; do
+for id in $COMMAND_IDS $EXEC_COMMAND_IDS; do
     for out_file in "$REPO_ROOT/.claude/commands/$id.md" "$REPO_ROOT/.opencode/commands/$id.md"; do
         [ -f "$out_file" ] || { fail "no existe la salida generada $out_file"; cross_ok=0; continue; }
         if [[ "$out_file" == *".opencode/"* ]]; then
@@ -161,7 +199,7 @@ done
 
 echo ""
 echo "[guard] CA-2: el bloque del guard inverso es identico en ambas salidas de cada comando"
-for id in $COMMAND_IDS; do
+for id in $COMMAND_IDS $EXEC_COMMAND_IDS; do
     claude_guard=$(sed -n '/^\[ -f "\$REPO_ROOT\/\.claude-plugin\/plugin\.json" \]/,/^}$/p' "$REPO_ROOT/.claude/commands/$id.md" 2>/dev/null)
     opencode_guard=$(sed -n '/^\[ -f "\$REPO_ROOT\/\.claude-plugin\/plugin\.json" \]/,/^}$/p' "$REPO_ROOT/.opencode/commands/$id.md" 2>/dev/null)
     if [ -n "$claude_guard" ] && [ "$claude_guard" = "$opencode_guard" ]; then
@@ -226,12 +264,12 @@ else
 fi
 
 echo ""
-echo "[opencode-cli] 'opencode debug config' lista los cinco comandos (se omite si el CLI no esta instalado)"
+echo "[opencode-cli] 'opencode debug config' lista los diez comandos (se omite si el CLI no esta instalado)"
 if command -v opencode >/dev/null 2>&1; then
     tmpf=$(mktemp)
     (cd "$REPO_ROOT" && opencode debug config >"$tmpf" 2>/dev/null)
     if [ -s "$tmpf" ] && jq -e '.command' "$tmpf" >/dev/null 2>&1; then
-        for id in $COMMAND_IDS; do
+        for id in $COMMAND_IDS $EXEC_COMMAND_IDS; do
             if jq -e --arg id "$id" '.command | has($id)' "$tmpf" >/dev/null 2>&1; then
                 pass "$id: listado por 'opencode debug config' bajo .command"
             else
@@ -245,6 +283,127 @@ if command -v opencode >/dev/null 2>&1; then
 else
     echo "  AVISO: CLI 'opencode' no instalado, se omite este bloque"
 fi
+
+echo ""
+echo "[exec-ca-3] Las invocaciones de script de los comandos de ejecucion pasan por {{mefisto:run}} en ambos runtimes (issue #867)"
+check_run_invocation() {
+    local id="$1" invocation="$2"
+    local claude_out="$REPO_ROOT/.claude/commands/$id.md"
+    local opencode_out="$REPO_ROOT/.opencode/commands/$id.md"
+    if [ -f "$claude_out" ] && grep -qF "MEFISTO_RUNTIME=claude ./.claude/scripts/$invocation" "$claude_out"; then
+        pass "$id: salida Claude invoca 'MEFISTO_RUNTIME=claude ./.claude/scripts/$invocation'"
+    else
+        fail "$id: salida Claude NO invoca 'MEFISTO_RUNTIME=claude ./.claude/scripts/$invocation' ($claude_out)"
+    fi
+    if [ -f "$opencode_out" ] && grep -qF "MEFISTO_RUNTIME=opencode ./.claude/scripts/$invocation" "$opencode_out"; then
+        pass "$id: salida OpenCode invoca 'MEFISTO_RUNTIME=opencode ./.claude/scripts/$invocation'"
+    else
+        fail "$id: salida OpenCode NO invoca 'MEFISTO_RUNTIME=opencode ./.claude/scripts/$invocation' ($opencode_out)"
+    fi
+}
+check_run_invocation mefisto-tooling 'mefisto-tmux-pipeline.sh --tooling $ARGUMENTS'
+check_run_invocation mefisto-tooling-verbose 'mefisto-tmux-pipeline.sh --tooling $ARGUMENTS --verbose'
+check_run_invocation mefisto-sequential 'mefisto-validate-batch-deps.sh <issue1> <issue2> ...'
+check_run_invocation mefisto-sequential 'mefisto-tmux-pipeline.sh --batch <issue1> <issue2> ...'
+check_run_invocation mefisto-release 'mefisto-release.sh $ARGUMENTS'
+
+echo ""
+echo "[exec-command-path] mefisto-tooling-verbose encadena mefisto-tooling apuntando al propio directorio de cada runtime (issue #867)"
+claude_tooling_verbose="$REPO_ROOT/.claude/commands/mefisto-tooling-verbose.md"
+opencode_tooling_verbose="$REPO_ROOT/.opencode/commands/mefisto-tooling-verbose.md"
+if grep -qF '.claude/commands/mefisto-tooling.md' "$claude_tooling_verbose" 2>/dev/null; then
+    pass "mefisto-tooling-verbose: salida Claude apunta a .claude/commands/mefisto-tooling.md"
+else
+    fail "mefisto-tooling-verbose: salida Claude NO apunta a .claude/commands/mefisto-tooling.md"
+fi
+if grep -qF '.opencode/commands/mefisto-tooling.md' "$opencode_tooling_verbose" 2>/dev/null; then
+    pass "mefisto-tooling-verbose: salida OpenCode apunta a .opencode/commands/mefisto-tooling.md"
+else
+    fail "mefisto-tooling-verbose: salida OpenCode NO apunta a .opencode/commands/mefisto-tooling.md"
+fi
+
+echo ""
+echo "[exec-claude-output] model: \"haiku\" en los cuatro fast; release (balanced) con model: \"sonnet\" (issue #867)"
+for id in mefisto-tooling mefisto-tooling-verbose mefisto-sequential mefisto-merge; do
+    out_file="$REPO_ROOT/.claude/commands/$id.md"
+    if grep -q '^model: "haiku"$' "$out_file" 2>/dev/null; then
+        pass "$id: .claude/commands lleva model: \"haiku\""
+    else
+        fail "$id: .claude/commands NO lleva model: \"haiku\" ($out_file)"
+    fi
+done
+if grep -q '^model: "sonnet"$' "$REPO_ROOT/.claude/commands/mefisto-release.md" 2>/dev/null; then
+    pass "mefisto-release: .claude/commands lleva model: \"sonnet\""
+else
+    fail "mefisto-release: .claude/commands NO lleva model: \"sonnet\""
+fi
+for id in $EXEC_COMMAND_IDS; do
+    if grep -q '^model:' "$REPO_ROOT/.opencode/commands/$id.md" 2>/dev/null; then
+        fail "$id: .opencode/commands NO deberia declarar 'model:'"
+    else
+        pass "$id: .opencode/commands sin 'model:'"
+    fi
+done
+
+echo ""
+echo "[ca-4] mefisto-tooling no prescribe un alias Anthropic concreto en sus ejemplos de --models y remite a models.example.json (issue #867)"
+src_tooling="$COMMANDS_DIR/mefisto-tooling.md"
+if grep -qiE -- "--models[^\`]*=(opus|sonnet|haiku)" "$src_tooling" 2>/dev/null; then
+    fail "mefisto-tooling: la fuente todavia prescribe un alias Anthropic concreto en un ejemplo --models"
+else
+    pass "mefisto-tooling: ningun ejemplo --models prescribe un alias Anthropic concreto"
+fi
+if grep -qF 'models.example.json' "$src_tooling" 2>/dev/null; then
+    pass "mefisto-tooling: remite a src/internal/models.example.json para ids por runtime"
+else
+    fail "mefisto-tooling: NO remite a src/internal/models.example.json"
+fi
+
+echo ""
+echo "[run-quoting] {{mefisto:run}} preserva sin alterar un argumento con espacios y comillas (CA-6, issue #867)"
+FIXTURE_DIR=$(mktemp -d)
+FIXTURE_OUT=$(mktemp -d)
+trap 'rm -rf "$FIXTURE_DIR" "$FIXTURE_OUT"' EXIT
+FIXTURE_FILE="$FIXTURE_DIR/mefisto-test-run-quoting.md"
+cat > "$FIXTURE_FILE" <<'FIXTURE_EOF'
+---
+{
+  "kind": "command",
+  "id": "mefisto-test-run-quoting",
+  "description": "Fixture de test: verifica que {{mefisto:run}} preserva argumentos con espacios y comillas (issue #867 CA-6). No se invoca en produccion."
+}
+---
+
+Invocacion de prueba:
+
+{{mefisto:run mefisto-tmux-pipeline.sh --tooling $ARGUMENTS --models 'writer=a b'}}
+FIXTURE_EOF
+
+if out=$("$VALIDATOR" "$FIXTURE_FILE" 2>&1); then
+    pass "fixture de quoting: pasa el validador del contrato neutral"
+else
+    fail "fixture de quoting: el validador la rechazo. Salida: $out"
+fi
+
+if "$GENERATOR" --out "$FIXTURE_OUT" "$FIXTURE_FILE" >/dev/null 2>&1; then
+    claude_fixture_out="$FIXTURE_OUT/.claude/commands/mefisto-test-run-quoting.md"
+    opencode_fixture_out="$FIXTURE_OUT/.opencode/commands/mefisto-test-run-quoting.md"
+    expected_claude="MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling \$ARGUMENTS --models 'writer=a b'"
+    expected_opencode="MEFISTO_RUNTIME=opencode ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling \$ARGUMENTS --models 'writer=a b'"
+    if grep -qF "$expected_claude" "$claude_fixture_out" 2>/dev/null; then
+        pass "fixture de quoting: salida Claude conserva el argumento con espacios y comillas intacto"
+    else
+        fail "fixture de quoting: salida Claude altero el argumento con espacios/comillas ($claude_fixture_out)"
+    fi
+    if grep -qF "$expected_opencode" "$opencode_fixture_out" 2>/dev/null; then
+        pass "fixture de quoting: salida OpenCode conserva el argumento con espacios y comillas intacto"
+    else
+        fail "fixture de quoting: salida OpenCode altero el argumento con espacios/comillas ($opencode_fixture_out)"
+    fi
+else
+    fail "fixture de quoting: generate-internal-adapters.sh fallo al generarla"
+fi
+rm -rf "$FIXTURE_DIR" "$FIXTURE_OUT"
 
 echo ""
 echo "RESULTADO: $PASS pasaron, $FAIL fallaron"
