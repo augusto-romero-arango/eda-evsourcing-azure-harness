@@ -24,6 +24,14 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/_mefisto-common.sh"
 assert_in_mefisto || exit 1
 
+# Puente temprano (issue #906, MEF-ADR-0049 decision 1): run_agent sigue
+# invocando `claude -p` directo (eso lo cambia el hijo de #879 que conecta el
+# runner neutral), pero traduce cada intento con runtime_claude_translate
+# para escribir el JSONL neutral que consumen las funciones de clasificacion
+# de lib/_mefisto-common.sh. Se sourcea relativo a este mismo pipeline, igual
+# que _mefisto-common.sh arriba.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/runtime-claude.sh"
+
 # Version y SHA del propio plugin que corre esta corrida (issue #662),
 # calculados UNA sola vez aqui -- ANTES de crear el worktree del issue, sobre
 # el repo principal (get_harness_sha opera sobre el cwd). El trap de aborto
@@ -421,6 +429,12 @@ run_agent() {
     local log_stage="${log_base}.log"
     local stream_file="${log_base}.stream.jsonl"
     local stderr_file="${log_base}.stderr.log"
+    # JSONL neutral del puente (issue #906): lo escribe este mismo run_agent
+    # tras cada intento (mas abajo), traduciendo $stream_file/$stderr_file con
+    # runtime_claude_translate. Las funciones de clasificacion de
+    # lib/_mefisto-common.sh leen SOLO este archivo -- la traza cruda sigue
+    # guardandose para diagnostico, pero ningun gate la parsea.
+    local events_file="${log_base}.events.jsonl"
     local start_ts
     start_ts=$(date +%s)
 
@@ -490,18 +504,40 @@ run_agent() {
             --output-format stream-json --verbose)
         elapsed=$(( $(date +%s) - attempt_start_ts ))
 
-        # CA-1/CA-3: el stream crudo (una linea JSON por evento) queda en
-        # $stream_file para analisis posterior; $log_stage se deriva de el (texto
-        # del asistente + una linea por tool call) mas el contenido de
-        # $stderr_file, con el mismo nombre de archivo de siempre -- la
-        # clasificacion de fallos de mas abajo sigue leyendo $log_stage sin
-        # cambios.
-        derive_stage_log_from_stream "$stream_file" "$stderr_file" "$log_stage"
+        # Puente (issue #906): traduce la traza cruda del intento con el
+        # adaptador de Claude Code (#859) y fija duration_ms del terminal con
+        # el reloj de pared de ESTE intento -- misma regla que
+        # mefisto-run-agent.sh, nunca un 0 fabricado (MEF-ADR-0049 CA-1). El
+        # runner neutral no emite run.started aqui: los consumidores de esta
+        # capa (derive_stage_log_from_stream, classify_agent_failure,
+        # agent_failure_is_unrecoverable) no lo necesitan.
+        : > "$events_file" 2>/dev/null || true
+        local elapsed_ms=$(( elapsed * 1000 ))
+        local translated_events=""
+        translated_events=$(runtime_claude_translate "$stream_file" claude "$AGENT_MODEL" "$CLAUDE_EXIT" "$stderr_file") || translated_events=""
+        if [ -n "$translated_events" ]; then
+            if command -v jq >/dev/null 2>&1; then
+                printf '%s\n' "$translated_events" | jq -c --argjson d "$elapsed_ms" \
+                    'if (.type == "run.completed" or .type == "run.failed") then .duration_ms = $d else . end' \
+                    > "$events_file" 2>/dev/null \
+                    || printf '%s\n' "$translated_events" > "$events_file"
+            else
+                printf '%s\n' "$translated_events" > "$events_file"
+            fi
+        fi
 
-        # CA-1 (issue #426): metricas por stage derivadas de la misma traza cruda
-        # que ya deriva el log legible de arriba. Se escriben SIEMPRE (stage
-        # exitoso o fallido) -- un fallo de instrumentacion (jq ausente, stream
-        # vacio, sin evento result) degrada a "null" y nunca aborta el pipeline.
+        # $log_stage se deriva del JSONL neutral (texto del asistente + una
+        # linea por tool call + la linea de error del terminal) mas el
+        # contenido de $stderr_file, con el mismo nombre de archivo de
+        # siempre. La traza cruda ($stream_file) se conserva solo para
+        # diagnostico -- ningun gate la parsea desde este issue.
+        derive_stage_log_from_stream "$events_file" "$stderr_file" "$log_stage"
+
+        # CA-1 (issue #426): metricas por stage derivadas de la traza cruda
+        # (compute_stage_metrics no cambia en este issue -- hijo 2 de #861).
+        # Se escriben SIEMPRE (stage exitoso o fallido) -- un fallo de
+        # instrumentacion (jq ausente, stream vacio, sin evento result)
+        # degrada a "null" y nunca aborta el pipeline.
         metrics_json=$(compute_stage_metrics "$stream_file")
         echo "$metrics_json" > "$PIPELINE_DIR_ABS/metrics/mefisto-tooling-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-${stage}-${agent}.json" 2>/dev/null || true
 
@@ -511,7 +547,7 @@ run_agent() {
 
         failure_type=""
         if [ "$CLAUDE_EXIT" -ne 0 ] || [ "$TIMED_OUT" = true ]; then
-            failure_type=$(classify_agent_failure "$TIMED_OUT" "$CLAUDE_EXIT" "$elapsed" "$log_stage" "$stream_file")
+            failure_type=$(classify_agent_failure "$TIMED_OUT" "$CLAUDE_EXIT" "$elapsed" "$events_file")
         fi
 
         # Salida normal: exito, fallo no reintentable, o reintentos agotados.
@@ -529,6 +565,7 @@ run_agent() {
         # copia la evidencia del fallo que motivo el reintento se perderia.
         cp -f "$log_stage" "${log_base}.attempt-${attempt}.log" 2>/dev/null || true
         cp -f "$stream_file" "${log_base}.attempt-${attempt}.stream.jsonl" 2>/dev/null || true
+        cp -f "$events_file" "${log_base}.attempt-${attempt}.events.jsonl" 2>/dev/null || true
 
         if [ "$ENTRY_CLEAN" = true ] && [ -n "$ENTRY_COMMIT" ]; then
             # CA-5: `clean -fd` va sin -x a proposito -- .mefisto/pipeline/ esta
@@ -560,7 +597,7 @@ run_agent() {
         # exito en ella exime al stage de esa regla (la muerte fue posterior al
         # trabajo), sin saltarse los gates de agent_work_is_trustworthy.
         local UNRECOVERABLE=false
-        if agent_failure_is_unrecoverable "$TIMED_OUT" "$CLAUDE_EXIT" "$log_stage" "$stream_file"; then
+        if agent_failure_is_unrecoverable "$TIMED_OUT" "$CLAUDE_EXIT" "$events_file"; then
             UNRECOVERABLE=true
         fi
 

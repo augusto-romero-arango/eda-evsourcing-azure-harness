@@ -116,6 +116,12 @@ EOF
 cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/_mefisto-common.sh"
 cp "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" "$FAKE_MEFISTO/.claude/scripts/_mefisto-common.sh"
 cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-state.sh"
+# runtime-claude.sh/.jq (issue #906): mefisto-tooling-pipeline.sh los sourcea
+# ahora para el puente run_agent -> JSONL neutral; sin copiarlos, el bloque
+# [18] (invocacion real del pipeline) aborta con "No such file or directory"
+# antes de llegar al chequeo de --variant que ese bloque quiere ejercer.
+cp "$REPO_ROOT/src/internal/scripts/lib/runtime-claude.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/runtime-claude.sh"
+cp "$REPO_ROOT/src/internal/scripts/lib/runtime-claude.jq" "$FAKE_MEFISTO/src/internal/scripts/lib/runtime-claude.jq"
 cp "$REPO_ROOT/.claude/scripts/mefisto-tmux-pipeline.sh" "$FAKE_MEFISTO/.claude/scripts/mefisto-tmux-pipeline.sh"
 cp "$REPO_ROOT/src/internal/scripts/mefisto-tmux-pipeline.sh" "$FAKE_MEFISTO/src/internal/scripts/mefisto-tmux-pipeline.sh"
 cp "$REPO_ROOT/.claude/scripts/mefisto-herdr-pipeline.sh" "$FAKE_MEFISTO/.claude/scripts/mefisto-herdr-pipeline.sh"

@@ -1,16 +1,29 @@
 #!/usr/bin/env bash
 # test-agent-retry.sh -- Tests del reintento con backoff ante fallo transitorio
-# del servidor (issue #534).
+# del servidor (issue #534, actualizada sobre el JSONL neutral en el issue
+# #906).
 #
 # Contexto (medido el 2026-08-05): 6 de 10 intentos de stage murieron con
 # 522/529 de api.anthropic.com. El pipeline no reintentaba nunca, asi que cada
 # uno tiraba el trabajo del stage entero pese a que el payload del 522 declara
 # `"retryable": true, "retry_after": 120`.
 #
+# Desde el issue #906, classify_agent_failure lee `error.kind`/`error.detail`
+# del `<log_base>.events.jsonl` que run_agent escribe traduciendo cada intento
+# con runtime_claude_translate (#859) -- no un log de texto ni la traza cruda
+# de Claude. El bloque [A] usa fixtures de JSONL neutral escritas a mano
+# (conforme a run-events.schema.json); el bloque [C] ejercita run_agent
+# extraido de verdad, con un stub de run_agent_with_watchdog que escribe
+# trazas REALES de Claude Code (`fixtures/runtime-claude/*.jsonl`) para que el
+# traductor real produzca el JSONL neutral que consume la clasificacion --
+# mismo espiritu que el bloque [O] de test-stream-watch.sh.
+#
 # Casos cubiertos:
 #   [pre] las funciones nuevas existen en _mefisto-common.sh
-#   [A]   classify_agent_failure: paridad con la clasificacion inline anterior
-#   [B]   agent_failure_is_retryable: solo API_ERROR_SERVER reintenta
+#   [A]   classify_agent_failure: paridad con la clasificacion anterior, ahora
+#         leyendo el JSONL neutral en vez de grepear un log de texto
+#   [B]   agent_failure_is_retryable: solo API_ERROR_SERVER reintenta (sin
+#         cambios -- no lee el JSONL neutral)
 #   [C]   el bucle de run_agent: reintenta 5xx, respeta el tope, no reintenta
 #         los demas tipos, y restaura el worktree solo si entraba limpio
 #
@@ -29,8 +42,11 @@ fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 
 # shellcheck source=/dev/null
 source "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" 2>/dev/null
+# shellcheck source=/dev/null
+source "$REPO_ROOT/src/internal/scripts/lib/runtime-claude.sh" 2>/dev/null
 
 INTERNAL_PIPELINE="$REPO_ROOT/src/internal/scripts/mefisto-tooling-pipeline.sh"
+FIXDIR="$SCRIPT_DIR/fixtures/runtime-claude"
 
 # extract_fn <function_name> <file> -- mismo patron que test-abort-log-tail.sh
 extract_fn() {
@@ -45,7 +61,7 @@ trap cleanup EXIT
 # -------- Bloque pre --------
 
 echo "[pre] Las funciones nuevas estan definidas en _mefisto-common.sh"
-for fn in classify_agent_failure agent_failure_is_retryable; do
+for fn in classify_agent_failure agent_failure_is_retryable agent_events_error_kind; do
     if declare -F "$fn" >/dev/null; then
         pass "$fn definida"
     else
@@ -56,17 +72,22 @@ done
 # -------- Bloque A: classify_agent_failure --------
 
 echo ""
-echo "[A] classify_agent_failure conserva las etiquetas de la clasificacion inline"
+echo "[A] classify_agent_failure conserva las etiquetas, ahora desde el JSONL neutral"
 
-LOG_5XX="$TMP/log-5xx.txt";  printf 'blah\nAPI Error: 529 Overloaded\n' > "$LOG_5XX"
-LOG_4XX="$TMP/log-4xx.txt";  printf 'blah\nAPI Error: 400 Bad Request\n' > "$LOG_4XX"
-LOG_CUT="$TMP/log-cut.txt";  printf 'blah\nConnection closed mid-response\n' > "$LOG_CUT"
-LOG_PLAIN="$TMP/log-plain.txt"; printf 'todo tranquilo\n' > "$LOG_PLAIN"
-
-STREAM_OK="$TMP/stream-ok.jsonl"
-printf '%s\n' '{"type":"result","subtype":"success","is_error":false}' > "$STREAM_OK"
-STREAM_BAD="$TMP/stream-bad.jsonl"
-printf '%s\n' '{"type":"assistant"}' > "$STREAM_BAD"
+# Fixtures inline conforme a run-events.schema.json (issue #906): un terminal
+# run.completed/run.failed con `error{kind, detail}` estructurado.
+EVENTS_5XX="$TMP/events-5xx.jsonl"
+printf '%s\n' '{"v":1,"type":"run.failed","ts":"2026-08-05T10:00:00Z","status":"failed","runtime":"claude","model":null,"session_id":null,"duration_ms":100,"tokens":{"input":null,"output":null},"cost_usd":null,"turns":null,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":{"kind":"api_error","detail":"API Error: 529 Overloaded"}}' > "$EVENTS_5XX"
+EVENTS_4XX="$TMP/events-4xx.jsonl"
+printf '%s\n' '{"v":1,"type":"run.failed","ts":"2026-08-05T10:00:00Z","status":"failed","runtime":"claude","model":null,"session_id":null,"duration_ms":100,"tokens":{"input":null,"output":null},"cost_usd":null,"turns":null,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":{"kind":"api_error","detail":"API Error: 400 Bad Request"}}' > "$EVENTS_4XX"
+EVENTS_CUT="$TMP/events-cut.jsonl"
+printf '%s\n' '{"v":1,"type":"run.failed","ts":"2026-08-05T10:00:00Z","status":"failed","runtime":"claude","model":null,"session_id":null,"duration_ms":100,"tokens":{"input":null,"output":null},"cost_usd":null,"turns":null,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":{"kind":"stream_cut","detail":"Connection closed mid-response"}}' > "$EVENTS_CUT"
+EVENTS_PLAIN="$TMP/events-plain.jsonl"
+printf '%s\n' '{"v":1,"type":"run.failed","ts":"2026-08-05T10:00:00Z","status":"failed","runtime":"claude","model":null,"session_id":null,"duration_ms":100,"tokens":{"input":null,"output":null},"cost_usd":null,"turns":null,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":{"kind":"nonzero_exit","detail":"stop_reason=? subtype=?"}}' > "$EVENTS_PLAIN"
+EVENTS_OK="$TMP/events-ok.jsonl"
+printf '%s\n' '{"v":1,"type":"run.completed","ts":"2026-08-05T10:00:00Z","status":"success","runtime":"claude","model":"claude-sonnet-5","session_id":null,"duration_ms":100,"tokens":{"input":null,"output":null},"cost_usd":null,"turns":null,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":null}' > "$EVENTS_OK"
+EVENTS_BAD="$TMP/events-bad.jsonl"
+printf '%s\n' '{"v":1,"type":"message","ts":"2026-08-05T10:00:00Z","role":"assistant","text":"trabajando"}' > "$EVENTS_BAD"
 
 check_label() {
     local desc="$1" expected="$2"; shift 2
@@ -80,22 +101,22 @@ check_label() {
 }
 
 check_label "A-1: watchdog disparo" \
-    "TIMEOUT (99s, exit 1)"                 "true"  "1"   "99" "$LOG_PLAIN" "$STREAM_BAD"
-check_label "A-2: senal con result de exito" \
-    "SIGNAL_POST_SUCCESS (exit 137, 12s)"   "false" "137" "12" "$LOG_PLAIN" "$STREAM_OK"
-check_label "A-3: senal sin result" \
-    "SIGNAL_MID_FLIGHT (exit 137, 12s)"     "false" "137" "12" "$LOG_PLAIN" "$STREAM_BAD"
+    "TIMEOUT (99s, exit 1)"                 "true"  "1"   "99" "$EVENTS_BAD"
+check_label "A-2: senal con terminal de exito" \
+    "SIGNAL_POST_SUCCESS (exit 137, 12s)"   "false" "137" "12" "$EVENTS_OK"
+check_label "A-3: senal sin terminal" \
+    "SIGNAL_MID_FLIGHT (exit 137, 12s)"     "false" "137" "12" "$EVENTS_BAD"
 check_label "A-4: 5xx del servidor" \
-    "API_ERROR_SERVER (exit 1)"             "false" "1"   "12" "$LOG_5XX"   "$STREAM_BAD"
+    "API_ERROR_SERVER (exit 1)"             "false" "1"   "12" "$EVENTS_5XX"
 check_label "A-5: 4xx del cliente" \
-    "API_ERROR_CLIENT (exit 1)"             "false" "1"   "12" "$LOG_4XX"   "$STREAM_BAD"
+    "API_ERROR_CLIENT (exit 1)"             "false" "1"   "12" "$EVENTS_4XX"
 check_label "A-6: corte de stream" \
-    "STREAM_CUT (exit 1)"                   "false" "1"   "12" "$LOG_CUT"   "$STREAM_BAD"
+    "STREAM_CUT (exit 1)"                   "false" "1"   "12" "$EVENTS_CUT"
 check_label "A-7: sin sintoma reconocible" \
-    "CLI_ERROR (exit 3)"                    "false" "3"   "12" "$LOG_PLAIN" "$STREAM_BAD"
-# El orden importa: un TIMEOUT del watchdog gana aunque el log traiga un 5xx.
+    "CLI_ERROR (exit 3)"                    "false" "3"   "12" "$EVENTS_PLAIN"
+# El orden importa: un TIMEOUT del watchdog gana aunque el terminal traiga un 5xx.
 check_label "A-8: TIMEOUT precede al 5xx" \
-    "TIMEOUT (99s, exit 1)"                 "true"  "1"   "99" "$LOG_5XX"   "$STREAM_BAD"
+    "TIMEOUT (99s, exit 1)"                 "true"  "1"   "99" "$EVENTS_5XX"
 
 # -------- Bloque B: agent_failure_is_retryable --------
 
@@ -122,6 +143,15 @@ done
 
 echo ""
 echo "[C] run_agent reintenta el 5xx, respeta el tope y no toca los demas tipos"
+
+# Trazas REALES de Claude Code (no inventadas): el mismo traductor que corre
+# en produccion (runtime_claude_translate) las convierte al JSONL neutral que
+# consume classify_agent_failure -- mismo patron que el bloque [O] de
+# test-stream-watch.sh.
+RAW_5XX="$(cat "$FIXDIR/api-error-529.jsonl")"
+RAW_4XX="$(cat "$FIXDIR/api-error-404.jsonl")"
+RAW_GENERIC="$(cat "$FIXDIR/result-max-turns.jsonl")"
+RAW_SUCCESS="$(cat "$FIXDIR/success.jsonl")"
 
 # Entorno minimo para ejecutar run_agent extraido, sin invocar el CLI real.
 setup_run_agent_env() {
@@ -157,23 +187,28 @@ setup_run_agent_env() {
     agent_work_is_trustworthy() { return 1; }
 }
 
-# Stub del invocador: falla con el sintoma indicado durante los primeros
-# $STUB_FAILURES intentos y luego devuelve exito. Lleva la cuenta en disco.
+# Stub del invocador: falla con la traza cruda indicada durante los primeros
+# $STUB_FAILURES intentos y luego devuelve exito. Escribe DIRECTO al
+# $stdout_file/$stderr_file que run_agent le pasa (posiciones 3 y 4) -- el
+# resto de run_agent (runtime_claude_translate real, derive_stage_log_from_stream
+# stubeado, classify_agent_failure real) corre sin cambios. Lleva la cuenta en
+# disco.
 make_watchdog_stub() {
-    local symptom="$1"
-    STUB_SYMPTOM="$symptom"
+    local raw_fail="$1" raw_success="$2"
+    STUB_RAW_FAIL="$raw_fail"
+    STUB_RAW_SUCCESS="$raw_success"
     : > "$TMP/attempts.txt"
     run_agent_with_watchdog() {
-        local stdout_file="$3" log_file_unused
+        local stdout_file="$3" stderr_file="$4"
         echo "x" >> "$TMP/attempts.txt"
         local n
         n=$(wc -l < "$TMP/attempts.txt" | tr -d ' ')
-        : > "$stdout_file"
+        : > "$stderr_file"
         if [ "$n" -le "$STUB_FAILURES" ]; then
-            printf '%s\n' "$STUB_SYMPTOM" > "$LOG_STAGE_PATH"
+            printf '%s\n' "$STUB_RAW_FAIL" > "$stdout_file"
             echo "1"
         else
-            printf 'todo bien\n' > "$LOG_STAGE_PATH"
+            printf '%s\n' "$STUB_RAW_SUCCESS" > "$stdout_file"
             echo "0"
         fi
     }
@@ -181,12 +216,8 @@ make_watchdog_stub() {
 
 attempts_made() { wc -l < "$TMP/attempts.txt" | tr -d ' '; }
 
-# El log del stage lo escribe el stub (derive_stage_log_from_stream esta
-# neutralizado), asi que necesita la misma ruta que calcula run_agent.
-LOG_STAGE_PATH=""
-
 run_case() {
-    local desc="$1" symptom="$2" failures="$3" expected_attempts="$4" expect_ok="$5"
+    local desc="$1" raw_fail="$2" failures="$3" expected_attempts="$4" expect_ok="$5"
 
     local wt="$TMP/wt-$RANDOM"
     mkdir -p "$wt"
@@ -197,9 +228,8 @@ run_case() {
     git -C "$wt" add -A && git -C "$wt" commit -qm base
 
     setup_run_agent_env "$wt"
-    LOG_STAGE_PATH="$LOG_DIR_ABS/mefisto-tooling-stage-1-writer-${TIMESTAMP}-issue-${ISSUE_NUM}.log"
     STUB_FAILURES="$failures"
-    make_watchdog_stub "$symptom"
+    make_watchdog_stub "$raw_fail" "$RAW_SUCCESS"
 
     eval "$(extract_fn run_agent "$INTERNAL_PIPELINE")"
 
@@ -220,13 +250,13 @@ run_case() {
 }
 
 run_case "C-1: 5xx transitorio, exito al 2do intento" \
-    "API Error: 529 Overloaded" 1 2 ok
+    "$RAW_5XX" 1 2 ok
 run_case "C-2: 5xx persistente, se detiene en el tope de 3" \
-    "API Error: 529 Overloaded" 9 3 fail
+    "$RAW_5XX" 9 3 fail
 run_case "C-3: 4xx del cliente, no se reintenta" \
-    "API Error: 400 Bad Request" 9 1 fail
+    "$RAW_4XX" 9 1 fail
 run_case "C-4: error generico del CLI, no se reintenta" \
-    "algo raro paso" 9 1 fail
+    "$RAW_GENERIC" 9 1 fail
 
 # C-5: worktree restaurado entre reintentos cuando entraba limpio.
 WT_C5="$TMP/wt-c5"
@@ -238,24 +268,22 @@ echo "base" > "$WT_C5/base.txt"
 git -C "$WT_C5" add -A && git -C "$WT_C5" commit -qm base
 
 setup_run_agent_env "$WT_C5"
-LOG_STAGE_PATH="$LOG_DIR_ABS/mefisto-tooling-stage-1-writer-${TIMESTAMP}-issue-${ISSUE_NUM}.log"
 STUB_FAILURES=1
 : > "$TMP/attempts.txt"
-STUB_SYMPTOM="API Error: 529 Overloaded"
 run_agent_with_watchdog() {
-    local stdout_file="$3"
+    local stdout_file="$3" stderr_file="$4"
     echo "x" >> "$TMP/attempts.txt"
     local n
     n=$(wc -l < "$TMP/attempts.txt" | tr -d ' ')
-    : > "$stdout_file"
+    : > "$stderr_file"
     if [ "$n" -le "$STUB_FAILURES" ]; then
         # El intento que falla deja basura en el worktree.
         echo "a medias" > "$WT_C5/basura.txt"
         echo "modificado" >> "$WT_C5/base.txt"
-        printf '%s\n' "$STUB_SYMPTOM" > "$LOG_STAGE_PATH"
+        printf '%s\n' "$RAW_5XX" > "$stdout_file"
         echo "1"
     else
-        printf 'todo bien\n' > "$LOG_STAGE_PATH"
+        printf '%s\n' "$RAW_SUCCESS" > "$stdout_file"
         echo "0"
     fi
 }
@@ -280,10 +308,9 @@ git -C "$WT_C6" add -A && git -C "$WT_C6" commit -qm base
 echo "trabajo del writer sin commitear" > "$WT_C6/previo.txt"
 
 setup_run_agent_env "$WT_C6"
-LOG_STAGE_PATH="$LOG_DIR_ABS/mefisto-tooling-stage-1-writer-${TIMESTAMP}-issue-${ISSUE_NUM}.log"
 STUB_FAILURES=1
 : > "$TMP/attempts.txt"
-make_watchdog_stub "API Error: 529 Overloaded"
+make_watchdog_stub "$RAW_5XX" "$RAW_SUCCESS"
 eval "$(extract_fn run_agent "$INTERNAL_PIPELINE")"
 run_agent "1" "writer" "prompt" >/dev/null 2>&1 || true
 

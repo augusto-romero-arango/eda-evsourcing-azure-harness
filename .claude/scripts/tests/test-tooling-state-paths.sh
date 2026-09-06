@@ -225,6 +225,12 @@ EOF
     printf '.mefisto/\n.claude/pipeline/\n' > "$FAKE_MEFISTO/.gitignore"
     cp "$CANON_LIB" "$FAKE_MEFISTO/src/internal/scripts/lib/_mefisto-common.sh"
     cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-state.sh"
+    # runtime-claude.sh/.jq (issue #906): mefisto-tooling-pipeline.sh los
+    # sourcea ahora para el puente run_agent -> JSONL neutral; sin copiarlos,
+    # la corrida real del bloque G aborta con "No such file or directory"
+    # antes de escribir un solo archivo de estado.
+    cp "$REPO_ROOT/src/internal/scripts/lib/runtime-claude.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/runtime-claude.sh"
+    cp "$REPO_ROOT/src/internal/scripts/lib/runtime-claude.jq" "$FAKE_MEFISTO/src/internal/scripts/lib/runtime-claude.jq"
     cp "$CANON_PIPE" "$FAKE_MEFISTO/src/internal/scripts/mefisto-tooling-pipeline.sh"
     cp "$SHIM_LIB" "$FAKE_MEFISTO/.claude/scripts/_mefisto-common.sh"
     cp "$SHIM_PIPE" "$FAKE_MEFISTO/.claude/scripts/mefisto-tooling-pipeline.sh"
