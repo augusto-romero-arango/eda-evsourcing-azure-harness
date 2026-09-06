@@ -1,9 +1,13 @@
 ---
-description: "Investiga un error o sintoma observado al desarrollar el plugin Mefisto."
-model: "haiku"
-argument-hint: "[descripcion del sintoma]"
+{
+  "kind": "command",
+  "id": "mefisto-bug",
+  "description": "Investiga un error o sintoma observado al desarrollar el plugin Mefisto.",
+  "profile": "fast",
+  "agent": "mefisto-investigator",
+  "arguments": "[descripcion del sintoma]"
+}
 ---
-<!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh desde src/internal/commands/mefisto-bug.md. No editar a mano. -->
 
 Investiga un error o sintoma observado al desarrollar el plugin Mefisto. Enruta al agente `mefisto-investigator`. Comunicate en **espanol**.
 
@@ -34,9 +38,7 @@ REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
 
 Lanza directamente `mefisto-investigator`:
 
-```bash
-claude --agent mefisto-investigator "$ARGUMENTS"
-```
+{{mefisto:launch-agent mefisto-investigator}}
 
 Responde con:
 

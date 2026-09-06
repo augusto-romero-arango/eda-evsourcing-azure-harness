@@ -1,7 +1,7 @@
 ---
 description: "Orquesta el ciclo completo de la bitacora del propio plugin Mefisto: invoca al agente `mefisto-historiador` y, si termina con un PR creado, encadena el merge automaticamente sobre ese PR."
-model: "haiku"
-argument-hint: "[YYYY-MM-DD]"
+agent: "mefisto-historiador"
+subtask: true
 ---
 <!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh desde src/internal/commands/mefisto-bitacora.md. No editar a mano. -->
 
@@ -34,9 +34,7 @@ Los argumentos estan en: $ARGUMENTS
 
 ### 1. Invocar al agente `mefisto-historiador` (CA-2)
 
-```bash
-claude --agent mefisto-historiador "$ARGUMENTS"
-```
+Actua como `mefisto-historiador` con este mensaje inicial: $ARGUMENTS
 
 El agente interpreta `$ARGUMENTS` tal cual lo describe su propia doctrina: vacio procesa todo el backlog pendiente, una fecha `YYYY-MM-DD` acota el procesamiento a ese dia unicamente. Corre de forma autonoma de punta a punta: recopila el backlog, escribe (o extiende) una entrada por cada dia pendiente, mueve todas las field notes del backlog a `procesadas/` y ejecuta el cierre atomico (rama + entradas + PR), todo sin pausas ni confirmaciones intermedias. Por eso la invocacion corre en **primer plano** -- espera a que la sesion del agente termine, nunca lo lances en segundo plano --: el encadenamiento del merge (pasos 2-4) necesita el numero de PR que el historiador reporta en su mensaje final. Ese encadenamiento ocurre despues, ya de vuelta en este hilo: un subagente no puede invocar slash commands, y por eso ese eslabon vive en el skill y no dentro del historiador.
 
@@ -60,7 +58,7 @@ El contrato del historiador (su propia seccion "Al terminar") es reportar explic
 Con el numero de PR verificado, lee integramente el `Proceso` de `/mefisto-merge` y ejecutalo para ese PR. El skill interno vive en el repo activo, asi que se lee desde la raiz del propio repo -- resuelta **en este mismo bloque**, porque cada bloque `bash` corre en su propio proceso y el `REPO_ROOT` de la pre-condicion no sobrevive hasta aca:
 
 ```bash
-MERGE_SKILL="$(git rev-parse --show-toplevel)/.claude/commands/mefisto-merge.md"
+MERGE_SKILL="$(git rev-parse --show-toplevel)/.opencode/commands/mefisto-merge.md"
 [ -f "$MERGE_SKILL" ] || {
     echo "ERROR: no existe $MERGE_SKILL -- /mefisto-merge todavia no esta disponible para este runtime."
     exit 1

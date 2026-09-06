@@ -1,6 +1,5 @@
 ---
 description: "Dashboard de los pipelines INTERNOS de Mefisto (en tmux)."
-model: "haiku"
 ---
 <!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh desde src/internal/commands/mefisto-work-status.md. No editar a mano. -->
 

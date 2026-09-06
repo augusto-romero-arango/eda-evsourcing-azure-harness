@@ -9,9 +9,12 @@ generador consume estos archivos `.md` y produce `.claude/{agents,commands}/*.md
 consumidor lo adopte**: vive enteramente del lado interno del propio plugin
 Mefisto (MEF-ADR-0019).
 
-Ningun agente ni comando real de `.claude/{agents,commands}/` esta migrado
-todavia a este formato: eso es alcance de #865-#867, y hasta entonces
-`src/internal/{agents,commands}/` esta vacio.
+Estado de la migracion: los tres agentes internos (#865) y los cinco comandos
+de analisis y seguimiento -- `mefisto-{plan,bug,bitacora,work-status,fix-review}`
+(#866) -- ya nacen de este formato. Los comandos de ejecucion
+(`mefisto-{tooling,tooling-verbose,sequential,merge,release}`) siguen escritos
+a mano en `.claude/commands/` hasta #867; el `--check` del generador los
+tolera porque no llevan el marcador de generado.
 
 ## Formato de un artefacto
 
@@ -39,6 +42,15 @@ Cuerpo Markdown. $ARGUMENTS es el unico placeholder neutral de argumentos.
   numero de linea. Solo se inspecciona el body: el `description` del
   frontmatter puede nombrar un runtime cuando ese runtime *es* el tema (p. ej.
   al describir por que un campo esta prohibido).
+
+  Dos excepciones literales (issue #866): `.claude-plugin/` (el manifiesto
+  fisico del Claude Code Plugin, identico e indispensable en ambos runtimes --
+  el "guard inverso" que abre todo comando lo cita tal cual) y
+  `.claude/scripts/` (la superficie estable de invocacion de los pipelines
+  internos, identica en la salida de ambos adaptadores -- ver "Directivas de
+  body" mas abajo). Ninguna otra forma de `.claude/` (`.claude/pipeline`,
+  `.claude/agents`, `.claude/commands`) ni de `claude`/`opencode` a secas
+  entra en esta excepcion.
 
 ## Regla de extraccion del frontmatter
 
