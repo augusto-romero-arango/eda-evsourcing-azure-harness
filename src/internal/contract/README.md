@@ -265,9 +265,16 @@ parecidos por historia (`--event-log` es anterior, issue #858).
 
 Por cada linea de `--event-log` que sea `tool.completed`, el runner agrega a
 `--events-log` `[HH:MM:SS][tool] <agente> <tool> <ok|fail> <ruta-o-resumen|->`;
-por cada `tool.started` cuyo `input_summary` no sea `null`, agrega
+por cada `tool.started` **de un tool de archivo** (`edit`/`write`/`read`, sin
+distinguir mayusculas: `Edit`/`Write`/`Read` en Claude Code, `edit`/`write`/
+`read` en OpenCode) cuyo `input_summary` no sea `null`, agrega
 `[HH:MM:SS][archivo] <ruta>` (mismo formato de linea que hoy produce el hook
-publicado, `hooks/hooks.json`). El evento terminal siempre agrega
+publicado, `hooks/hooks.json`). `Bash`/`bash` tambien lleva `input_summary`
+-- los primeros 80 caracteres del comando -- pero NO produce linea
+`[archivo]`: un comando no es una ruta, y `/mefisto-work-status` lee ese tag
+como actividad de archivos. Las lineas `[test]` y `[terraform]` del hook
+publicado no tienen equivalente aqui: dependen del RESULTADO de un comando,
+que el JSONL neutral no transporta. El evento terminal siempre agrega
 `[HH:MM:SS][stage] <agente> <status>`. El `HH:MM:SS` de cada linea es el de
 `.ts` del propio evento neutral (nunca el reloj de al escribir): asi la
 telemetria es reproducible a partir del mismo `--event-log`. El

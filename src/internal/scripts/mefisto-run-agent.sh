@@ -44,13 +44,17 @@
 #   --stderr-log <f>      Donde conservar el stderr crudo del proceso. Mismo
 #                         default que --raw-log si se omite.
 #   --events-log <archivo> Telemetria HUMANA del pipeline (issue #863), NUNCA
-#                         el JSONL neutral de --event-log: mismas lineas
-#                         "[HH:MM:SS][archivo]"/"[HH:MM:SS][test]" que hoy
-#                         escribe el hook publicado (hooks/hooks.json), mas
-#                         "[HH:MM:SS][tool] <agente> <tool> <ok|fail>
-#                         <ruta-o-resumen|->" por cada tool.completed y
-#                         "[HH:MM:SS][stage] <agente> <status>" en el
-#                         terminal. Default: `mefisto_state_path events.log`.
+#                         el JSONL neutral de --event-log: lineas
+#                         "[HH:MM:SS][archivo] <ruta>" con el MISMO formato
+#                         que hoy escribe el hook publicado
+#                         (hooks/hooks.json), mas "[HH:MM:SS][tool] <agente>
+#                         <tool> <ok|fail> <ruta-o-resumen|->" por cada
+#                         tool.completed y "[HH:MM:SS][stage] <agente>
+#                         <status>" en el terminal. Las lineas "[test]" y
+#                         "[terraform]" siguen siendo exclusivas del hook
+#                         publicado: dependen del RESULTADO de un comando,
+#                         que el JSONL neutral no transporta.
+#                         Default: `mefisto_state_path events.log`.
 #                         Un fallo al escribir (directorio inexistente, sin
 #                         permisos) degrada a un aviso en stderr -- nunca
 #                         altera el exit code ni el evento terminal de
@@ -430,12 +434,25 @@ EVENTS_LOG_LINES="$(printf '%s\n' "$NON_TERMINAL_JSON" | jq -s -r \
     --arg term_ts "$EVENTS_LOG_TERM_TS" \
     --arg term_status "$EVENTS_LOG_TERM_STATUS" '
     def hms: if (type == "string") and (length >= 19) then .[11:19] else "--:--:--" end;
+    # Un tool.started solo produce linea [archivo] si el tool ES de archivo.
+    # `Bash`/`bash` tambien trae input_summary -- los primeros 80 caracteres
+    # del comando (ver "Notas tecnicas" de #863) -- pero un comando NO es una
+    # ruta: emitirlo como [archivo] llenaria el events.log que lee
+    # /mefisto-work-status de archivos inexistentes. CA-1 lo dice literal:
+    # linea [archivo] "por cada tool.started CON RUTA DE ARCHIVO en
+    # input_summary". El nombre se compara en minusculas porque es la unica
+    # forma de cubrir los dos runtimes con una sola lista sin volver el runner
+    # dependiente de ninguno (Edit/Write/Read en Claude Code, edit/write/read
+    # en OpenCode -- misma terna, distinta capitalizacion).
+    def es_tool_de_archivo:
+        ((. // "") | ascii_downcase) as $t
+        | $t == "edit" or $t == "write" or $t == "read";
     def tool_lines:
         reduce .[] as $ev (
             {q: {}, out: []};
             if $ev.type == "tool.started" then
                 .q[$ev.tool] = ((.q[$ev.tool] // []) + [$ev.input_summary])
-                | if $ev.input_summary != null then
+                | if ($ev.input_summary != null) and ($ev.tool | es_tool_de_archivo) then
                       .out += ["[" + ($ev.ts|hms) + "][archivo] " + $ev.input_summary]
                   else . end
             elif $ev.type == "tool.completed" then
@@ -452,7 +469,10 @@ EVENTS_LOG_WRITTEN=false
 if [ -n "$EVENTS_LOG_LINES" ] && [ -n "$EVENTS_LOG_TARGET" ]; then
     EVENTS_LOG_DIR="$(dirname "$EVENTS_LOG_TARGET")"
     if [ -d "$EVENTS_LOG_DIR" ] && [ -w "$EVENTS_LOG_DIR" ]; then
-        if printf '%s\n' "$EVENTS_LOG_LINES" >> "$EVENTS_LOG_TARGET" 2>/dev/null; then
+        # 2>/dev/null ANTES del >>: una redireccion que falla la reporta el
+        # shell por el stderr vigente EN ESE MOMENTO, asi que al reves el
+        # "cannot create" se escaparia a la consola pese al guard de arriba.
+        if printf '%s\n' "$EVENTS_LOG_LINES" 2>/dev/null >> "$EVENTS_LOG_TARGET"; then
             EVENTS_LOG_WRITTEN=true
         fi
     fi

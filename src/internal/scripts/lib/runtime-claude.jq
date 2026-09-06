@@ -10,7 +10,8 @@
 # los tools de archivo -- Edit, Write, Read -- `input_summary` es
 # `.input.file_path`; para `Bash`, los primeros 80 caracteres de
 # `.input.command`; para cualquier otro tool, `null` -- nunca se inventa un
-# valor que el tool_use no trae); `user` con
+# valor que el tool_use no trae); `user` con `tool_result` ->
+# `tool.completed{tool, ok, duration_ms}` (tool resuelto por
 # emparejamiento tool_use.id <-> tool_result.tool_use_id, mismo patron que
 # compute_stage_metrics en _mefisto-common.sh); `result` -> terminal
 # (run.completed/run.failed). El evento `system`/`init` NUNCA se re-emite como

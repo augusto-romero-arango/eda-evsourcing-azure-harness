@@ -15,6 +15,10 @@
 #       (fixtures/runtime-claude/success.jsonl, tool Read con
 #       input.file_path:"x") -- el runner completo (stub `claude` en el PATH)
 #       produce `[archivo] x` y `[tool] <agente> Read ok x`.
+#   [B2] CA-1: un `tool.started` de `Bash` (input_summary = comando, no ruta)
+#       produce la "ruta-o-resumen" de la linea `[tool]` pero NUNCA una linea
+#       `[archivo]` -- ese tag lo lee /mefisto-work-status como actividad de
+#       archivos.
 #   [C] CA-2: contra el fixture REAL de OpenCode
 #       (fixtures/runtime-opencode/success-tool-1.18.29.jsonl, tool `glob`
 #       sin mapeo de ruta) -- el runner completo (stub `opencode` en el PATH)
@@ -162,6 +166,53 @@ if grep -Eq "$RE_STAGE" "$EV_B_LOG"; then
     pass "B-3: linea [stage] final presente"
 else
     fail "B-3: no se encontro la linea [stage]. Contenido: $(cat "$EV_B_LOG" 2>/dev/null)"
+fi
+
+# ============================================================================
+echo ""
+echo "[B2] CA-1: un tool.started de Bash NO produce linea [archivo] (su input_summary es un comando, no una ruta)"
+
+# Fixture inline (no congelado en fixtures/: no captura una version de ningun
+# CLI, solo reordena los mismos bloques que success.jsonl con un tool `Bash`).
+# `Bash` SI lleva input_summary -- los primeros 80 caracteres del comando, ver
+# "Notas tecnicas" de #863 -- asi que alimenta la "ruta-o-resumen" de la linea
+# [tool]; pero un comando no es una ruta y `/mefisto-work-status` lee
+# `[archivo]` como actividad de archivos, de modo que esa linea NO debe salir.
+B2_FIXTURE="$TMP/b2-bash.jsonl"
+cat > "$B2_FIXTURE" <<'FIXEOF'
+{"type":"system","subtype":"init","session_id":"sess-b2","model":"claude-sonnet-5"}
+{"type":"assistant","timestamp":"2026-07-27T22:09:34.500Z","message":{"content":[{"type":"tool_use","id":"toolu_b2","name":"Bash","input":{"command":"git status -sb"}}]}}
+{"type":"user","timestamp":"2026-07-27T22:09:34.700Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_b2","content":"## main"}]}}
+{"type":"result","is_error":false,"subtype":"success","stop_reason":"end_turn","num_turns":1,"duration_ms":1000,"duration_api_ms":800,"total_cost_usd":0.01,"usage":{"input_tokens":10,"output_tokens":5},"ttft_ms":100,"permission_denials":[],"timestamp":"2026-07-27T22:09:36.000Z"}
+FIXEOF
+
+B2_STUB_BIN="$TMP/bin-claude-b2"
+mkdir -p "$B2_STUB_BIN"
+cat > "$B2_STUB_BIN/claude" <<STUBEOF
+#!/bin/sh
+cat "$B2_FIXTURE"
+exit 0
+STUBEOF
+chmod +x "$B2_STUB_BIN/claude"
+
+EV_B2_JSONL="$TMP/b2-event.jsonl"
+EV_B2_LOG="$TMP/b2-events.log"
+PATH="$B2_STUB_BIN:$ORIG_PATH"
+"$RUNNER" --runtime claude --agent writer \
+    --cwd "$WORKDIR" --prompt-file "$PROMPT_FILE" --event-log "$EV_B2_JSONL" \
+    --events-log "$EV_B2_LOG" >/dev/null 2>&1
+PATH="$ORIG_PATH"
+
+if ! grep -q '\[archivo\]' "$EV_B2_LOG"; then
+    pass "B2-1: el tool.started de Bash no emitio ninguna linea [archivo]"
+else
+    fail "B2-1: se emitio una linea [archivo] para un comando. Contenido: $(cat "$EV_B2_LOG" 2>/dev/null)"
+fi
+
+if grep -q '\[tool\] writer Bash ok git status -sb' "$EV_B2_LOG"; then
+    pass "B2-2: el comando si viaja como 'ruta-o-resumen' de la linea [tool]"
+else
+    fail "B2-2: no se encontro '... Bash ok git status -sb'. Contenido: $(cat "$EV_B2_LOG" 2>/dev/null)"
 fi
 
 # ============================================================================
