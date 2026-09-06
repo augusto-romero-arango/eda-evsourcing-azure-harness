@@ -233,10 +233,15 @@ validate_mefisto_scope_changes() {
     local wt="$1"
     local base="$2"
 
+    # --untracked-files=all: sin el, git colapsa un directorio nuevo sin trackear
+    # a su raiz ("src/") y esa entrada no casa con patrones como src/internal/*
+    # en is_path_in_mefisto_scope, rechazando cambios que si estan en scope
+    # (issue #882). Mismo patron que changes_require_changelog y
+    # changelog_fragment_added.
     local changed
     changed=$(
         git -C "$wt" diff --name-only "$base..HEAD" 2>/dev/null
-        git -C "$wt" status --porcelain 2>/dev/null | sed 's/^...//'
+        git -C "$wt" status --porcelain --untracked-files=all 2>/dev/null | sed 's/^...//'
     )
 
     local violations=()
