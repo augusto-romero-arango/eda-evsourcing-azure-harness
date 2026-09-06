@@ -309,3 +309,180 @@ que nombra un runtime concreto.
 `.claude/scripts/tests/test-internal-artifact-contract.sh` corre el
 validador contra cada fixture y comprueba exit code **y** el motivo esperado
 en el mensaje, para que un fixture invalido no pase por la razon equivocada.
+
+## Protocolo de ejecucion y eventos
+
+Contrato de **como se invoca un agente** y **que eventos produce esa
+invocacion**, neutral a runtime (MEF-ADR-0049 CA-1, issue #858). Antes de
+este contrato, el unico pipeline interno invocaba `claude -p` directamente
+(`.claude/scripts/mefisto-tooling-pipeline.sh:463`) y todas sus decisiones
+(exito, clasificacion de fallo, metricas) dependian de nombres de campo
+propios de Claude Code (`is_error`, `stop_reason`, `subtype`, `num_turns`).
+Este protocolo es la frontera: un pipeline que lo consuma no necesita conocer
+flags ni eventos de ningun runtime concreto.
+
+### `mefisto-run-agent.sh`
+
+```
+src/internal/scripts/mefisto-run-agent.sh \
+    --agent <id> --cwd <dir> --prompt-file <f> --event-log <jsonl> \
+    [--runtime <id>] [--model <opaco>] [--system-file <f>] \
+    [--timeout <s>] [--raw-log <f>] [--stderr-log <f>]
+```
+
+Es un **script**, no una funcion `source`ada: un subproceso con argumentos
+explicitos, exit code y archivo de eventos, para que el contrato se pruebe
+con un adaptador falso sin tocar ningun pipeline. Valida sus argumentos
+(archivos existentes, `--timeout` entero > 0) y aborta con uso y **exit 64**
+ante faltantes o invalidos. `--model` vacio o ausente se trata como
+"heredar": no llega al adaptador -- `build_cmd` nunca ve un flag de modelo en
+ese caso.
+
+`run_agent_with_watchdog` (issue #424, hoy en
+`.claude/scripts/_mefisto-common.sh`) se reutiliza tal cual -- ya es neutral a runtime -- y el
+runner la envuelve, traduciendo su senal de timeout a `run.failed{status:
+"timeout"}`. El traslado de esa lib comun a `src/internal/scripts/` es
+alcance de #869, no de este contrato.
+
+### Seleccion de runtime (`lib/mefisto-runtime.sh`)
+
+`mefisto_resolve_runtime` resuelve, en este orden de precedencia:
+
+1. `--runtime <id>` explicito.
+2. `MEFISTO_RUNTIME` (entorno).
+3. Autodeteccion: `command -v claude` / `command -v opencode`. Exactamente
+   uno instalado lo selecciona; **cero o ambos abortan** (exit 69 en el
+   runner) con un mensaje que nombra `MEFISTO_RUNTIME` para desambiguar.
+
+Un runtime resuelto por cualquiera de las tres vias que no tenga libreria de
+adaptador `src/internal/scripts/lib/runtime-<id>.sh` aborta igual. La
+funcion vive en su propio archivo (no en `mefisto-run-agent.sh`) para que el
+pipeline (#879) y el batch (#870) la reutilicen en su chequeo de
+dependencias sin duplicar la precedencia. `MEFISTO_RUNTIME_LIB_DIR` es
+overrideable (mismo patron `: "${VAR:=default}"` que `mefisto-state.sh`):
+producción resuelve siempre contra el directorio real de la libreria, un
+test puede apuntarlo a un directorio temporal con adaptadores de prueba.
+
+### Interfaz de adaptador: dos funciones por runtime
+
+Cada `src/internal/scripts/lib/runtime-<id>.sh` (`source`ado por el runner)
+implementa:
+
+| Funcion | Contrato |
+|---|---|
+| `runtime_<id>_build_cmd <agent> <cwd> <prompt_file> <model> <system_file>` | Rellena el array global `MEFISTO_RUNTIME_CMD` con el argv completo a invocar via `run_agent_with_watchdog`, **sin `eval`**. `<model>`/`<system_file>` pueden llegar vacios; el adaptador decide si eso omite un flag o usa un valor propio (permisos como `--permission-mode bypassPermissions` / `--auto` son responsabilidad de esta funcion, no del runner). |
+| `runtime_<id>_translate <raw_file> <runtime_id> <model>` | Imprime por stdout, una linea JSON por evento, el JSONL neutral (`message`/`tool.*`/terminal) derivado de `<raw_file>`. **Nunca emite `run.started`** -- eso lo hace el runner directo, porque no depende de ningun dato especifico del adaptador. |
+
+Este issue (#858) entrega **solo** `lib/runtime-fake.sh`: reproduce guiones
+(exito, fallo con exit N, cuelgue hasta timeout, sin evento terminal, dos
+terminales, JSON malformado, `--model` recibido/omitido) via la variable de
+entorno `MEFISTO_FAKE_SCRIPT`, para poder probar el runner sin invocar
+`claude` ni `opencode`. Los adaptadores reales son #859 (Claude Code) y #860
+(OpenCode).
+
+### Vocabulario de eventos (`run-events.schema.json`)
+
+Todo evento del JSONL neutral lleva `v: 1` y `type` (vocabulario cerrado en
+el array `types` del schema):
+
+| `type` | Campos propios |
+|---|---|
+| `run.started` | `ts`, `runtime`, `agent`, `model\|null`, `cwd` |
+| `message` | `ts`, `role`, `text`, `kind?: "text"\|"thinking"` |
+| `tool.started` | `ts`, `tool`, `input_summary\|null` |
+| `tool.completed` | `ts`, `tool`, `ok`, `duration_ms\|null` |
+| `run.completed` / `run.failed` | `status`, `runtime`, `model\|null`, `session_id\|null`, `duration_ms`, `tokens {input\|null, output\|null}`, `cost_usd\|null`, `turns\|null`, `denials\|null`, `ttft_ms\|null`, `api_duration_ms\|null`, `error\|null` |
+
+El vocabulario de `status` de CA-4 esta **partido entre los dos terminales**:
+`run.completed` solo admite `success` y `run.failed` admite `failed`,
+`timeout` y `protocol_invalid`. Asi un `run.completed{status:"timeout"}` es
+irrepresentable -- la tabla de exit codes de la seccion siguiente no sabria
+puntuarlo, y un gate que leyera solo `.type` y otro que leyera solo `.status`
+llegarian a veredictos distintos sobre la misma corrida.
+
+`error`, cuando no es `null`, es `{kind, detail}` con `kind` en
+`timeout`/`killed`/`api_error`/`stream_cut`/`nonzero_exit`/`no_result`/
+`protocol_invalid`. Ningun campo lleva un nombre propio de Claude Code
+(`is_error`, `stop_reason`, `subtype`, `num_turns`); campos no disponibles
+son siempre `null`, nunca un cero fabricado (MEF-ADR-0049 CA-1) -- `duration_ms`
+de un evento terminal es la unica excepcion aparente: el runner SIEMPRE lo
+sobreescribe con el tiempo real medido alrededor de la invocacion completa
+(el unico reloj de pared que existe fuera del proceso del adaptador), nunca
+con un placeholder.
+
+**`run-events.schema.json` no usa `oneOf`** para dispatchar por `type`: el
+`oneOf` de `jsonschema-lite.jq` (#853) esta fijado al discriminador `kind`
+(el de `internal-artifact.schema.json`), y el discriminador de este contrato
+es `type`. En su lugar, el archivo declara `definitions.<type>` -- un
+sub-schema completo por cada valor de `types` -- y quien valida una linea
+selecciona `definitions[.type]` antes de invocar `jsonschema-lite.jq` (ver
+`validate_event_line` en `.claude/scripts/tests/test-mefisto-run-agent.sh`).
+Un campo documentado como "`<tipo>` o null" (la mayoria de los campos del
+evento terminal) se declara **sin** la palabra clave `type` en su
+sub-schema: `jsonschema-lite.jq` solo aplica `type`/`required`/`properties`
+cuando la instancia es del jtype que esas palabras clave asumen, asi que
+omitir `type` deja pasar tanto el valor tipado como `null` -- a costa de no
+poder rechazar aqui un tipo intermedio incorrecto. Es una limitacion
+documentada del subconjunto de JSON Schema (#853), no un descuido.
+
+### Exactamente un evento terminal (MEF-ADR-0031, CA-5 de #858)
+
+El runner **garantiza** que `--event-log` termine con exactamente un evento
+terminal (`run.completed` o `run.failed`), sin importar cuantos haya emitido
+el adaptador:
+
+| Situacion | `status` del terminal | Exit code |
+|---|---|---|
+| El adaptador emitio exactamente 1 terminal `success` | `success` | `0` |
+| El adaptador emitio exactamente 1 terminal no-exitoso | `failed` (u otro) | El exit code del adaptador (!= 0) |
+| El watchdog mato el proceso por timeout | `timeout` | `124` |
+| El adaptador emitio 0 o >=2 terminales | `protocol_invalid` | `65` |
+
+En los dos ultimos casos el runner **sintetiza** el evento terminal el mismo
+(descartando cualquier terminal parcial que el adaptador haya alcanzado a
+traducir): un timeout no es confiable a mitad de vuelo, y un protocolo
+invalido no tiene un terminal legitimo entre los que sobran o faltan. Es la
+misma doctrina de MEF-ADR-0031 (gates deterministas por evidencia
+verificable) aplicada al desenlace de un proceso, no solo a su readiness.
+Los eventos **no terminales** (`message`, `tool.*`) se conservan siempre,
+tambien tras un timeout: son hechos completos y ya ocurridos, y son la
+evidencia con la que se diagnostica donde se colgo la corrida.
+
+El `timeout` de la tercera fila exige **dos evidencias coincidentes**: la senal
+que deja el watchdog en disco y el reloj de pared que el runner mide alrededor
+de la invocacion completa (`ELAPSED_S >= --timeout`). La senal sola no alcanza:
+el watchdog de `run_agent_with_watchdog` duerme y despues hace `touch`, asi que
+un `sleep` que no llegue a dormir (una maquina cargada que no puede forkearlo)
+deja la senal puesta en el mismo instante en que arranco. Se observo bajo carga:
+corridas con la senal presente, `elapsed=0` y `--timeout 1800`, clasificadas
+como TIMEOUT sin haber esperado nada. El corte por reloj no puede descartar un
+timeout real -- con segundos truncados el elapsed medido nunca queda por debajo
+de la duracion real, y una corrida que el watchdog mato duro al menos el
+timeout -- pero si descarta las senales que el reloj desmiente, que es lo que
+MEF-ADR-0031 pide de un gate: decidir por estado verificable, no por un unico
+indicio.
+
+La primera fila de la tabla lee "el adaptador declaro exito" y no "el proceso
+salio con cero" a proposito: si el runtime alcanzo a declarar que cumplio su
+contrato, un exit distinto de cero o una senal **posteriores** a esa
+declaracion no invalidan el trabajo, y el terminal sigue siendo
+`run.completed{status:"success"}` (opcionalmente con constancia de esa muerte
+en `error`). Es la misma excepcion que el pipeline ya aplica desde el PR #446
+(`agent_failure_is_unrecoverable` en `.claude/scripts/_mefisto-common.sh`),
+trasladada al contrato neutral en vez de re-derivada por cada consumidor.
+
+### Fixtures (`fixtures/run-events/`)
+
+`valid-*.jsonl` son corridas completas (con `run.started` y exactamente un
+terminal) que validan linea a linea. `invalid-two-terminals.jsonl` es
+**valido linea a linea** -- cada `run.completed`/`run.failed` individual
+cumple su schema -- pero viola la invariante cross-linea de la seccion
+anterior (2 terminales): documenta que ese invariante no lo puede expresar
+`run-events.schema.json` por si solo, hace falta contarlos.
+`invalid-missing-field.jsonl`, `invalid-unknown-type.jsonl` e
+`invalid-status-mismatch.jsonl` si son rechazables linea a linea (campo
+requerido ausente; `type` fuera de `types`; `run.completed` declarando un
+`status` que solo `run.failed` admite).
+`.claude/scripts/tests/test-mefisto-run-agent.sh` corre el runner
+real contra cada guion de `runtime-fake.sh` y valida ambas dimensiones a la
+vez sobre su propia salida.
