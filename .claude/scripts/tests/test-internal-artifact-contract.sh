@@ -9,9 +9,10 @@
 #   [invalid] Cada fixture de fixtures/invalid/ se rechaza (exit != 0) Y el
 #         mensaje contiene el motivo esperado -- para que un fixture invalido
 #         no pase por la razon equivocada (CA-5).
-#   [no-args] Sin argumentos, valida todo src/internal/{agents,commands}; si
-#         esas carpetas todavia no existen (este issue no migra ningun agente
-#         real, ver CA-6/README.md), el validador sale con exit 0.
+#   [no-args] Sin argumentos, valida todo src/internal/{agents,commands} con
+#         exit 0 -- hoy porque esas carpetas todavia no existen (este issue no
+#         migra ningun agente real, ver CA-6/README.md) y despues de #865-#867
+#         porque los artefactos migrados deben cumplir el contrato.
 #
 # Uso: .claude/scripts/tests/test-internal-artifact-contract.sh
 # Exit code: 0 si todos los checks pasan, 1 si alguno falla.
@@ -127,19 +128,22 @@ check_invalid "no-frontmatter.md" "frontmatter: ausente"
 check_invalid "frontmatter-not-json.md" "no es JSON valido"
 check_invalid "mismatched-id.md" "distinto del nombre de archivo"
 check_invalid "mefisto-missing-mode.md" "mode: campo requerido ausente"
+check_invalid "mefisto-id-not-string.md" "id: tipo esperado string"
+check_invalid "mefisto-body-runtime-reference.md" "nombra un runtime concreto"
 
 echo ""
 echo "[no-args] Sin argumentos: valida todo src/internal/{agents,commands}"
-if [ -d "$REPO_ROOT/src/internal/agents" ] || [ -d "$REPO_ROOT/src/internal/commands" ]; then
-    pass "src/internal/{agents,commands} ya existe: se omite este check (fuera del alcance del issue #853)"
+# Vale tanto hoy (las carpetas todavia no existen: #853 no migra ningun
+# artefacto real) como despues de #865-#867: una migracion correcta deja todos
+# los agentes/comandos reales pasando el contrato, asi que exit 0 es la
+# expectativa en ambos casos y el check no se auto-desactiva al aparecer las
+# carpetas.
+OUT=$("$VALIDATOR" 2>&1)
+RC=$?
+if [ "$RC" -eq 0 ]; then
+    pass "src/internal/{agents,commands} valida completo -> exit 0"
 else
-    OUT=$("$VALIDATOR" 2>&1)
-    RC=$?
-    if [ "$RC" -eq 0 ]; then
-        pass "sin agentes/comandos reales todavia -> exit 0 sin fallar"
-    else
-        fail "exit $RC sin argumentos y sin src/internal/{agents,commands} (deberia ser 0). Salida: $OUT"
-    fi
+    fail "exit $RC sin argumentos (deberia ser 0). Salida: $OUT"
 fi
 
 echo ""

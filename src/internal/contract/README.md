@@ -33,7 +33,11 @@ Cuerpo Markdown. $ARGUMENTS es el unico placeholder neutral de argumentos.
 - **Body**: Markdown libre. Nunca referencia `claude`, `opencode`, `.claude/`
   ni `.opencode/` -- esas las introduce el generador o el adaptador, no la
   fuente neutral. `$ARGUMENTS` es el unico placeholder de argumentos
-  reconocido.
+  reconocido. El validador **aplica** esta regla: rechaza toda linea del body
+  que contenga `claude` u `opencode` (sin distinguir mayusculas), citando el
+  numero de linea. Solo se inspecciona el body: el `description` del
+  frontmatter puede nombrar un runtime cuando ese runtime *es* el tema (p. ej.
+  al describir por que un campo esta prohibido).
 
 ## Regla de extraccion del frontmatter
 
@@ -143,18 +147,33 @@ cualquier archivo se rechaza. Corre con bash 3.2 + jq 1.7, sin red ni
 paquetes (MEF-ADR-0049 CA-6).
 
 El schema es la unica declaracion de campos validos: el script no duplica esa
-lista, solo orquesta la extraccion del frontmatter y dos chequeos que el
-schema no puede expresar por si mismo (frontmatter ausente/no-JSON, e `id`
-comparado contra el nombre del archivo).
+lista, solo orquesta la extraccion del frontmatter y los tres chequeos que el
+schema no puede expresar porque no dependen solo del frontmatter:
+
+1. **Estructura del archivo**: frontmatter ausente, sin delimitador de cierre,
+   vacio o no-JSON (cada caso con su propio motivo).
+2. **`id` vs. nombre de archivo**: el nombre no viaja en la instancia, asi que
+   el schema no puede compararlos.
+3. **Neutralidad del body** (CA-1): ninguna linea del body nombra `claude` ni
+   `opencode`.
+
+El schema corre **primero** y es quien juzga los campos: si `id` falta, no es
+un string o la instancia ni siquiera es un objeto JSON, el motivo que se
+imprime es el del schema (`tipo esperado string`, `se esperaba un objeto
+JSON`, ...) y no un generico "id ausente" que ocultaria la causa real. Un
+archivo con varios defectos los reporta todos, uno por linea, en vez de parar
+en el primero.
 
 ## Fixtures
 
 `fixtures/valid/` contiene un agente y un comando completos, con todos los
 campos opcionales poblados. `fixtures/invalid/` contiene un archivo por
 motivo de rechazo: frontmatter ausente, frontmatter no-JSON, `id` que no
-coincide con el archivo, propiedad adicional (incluidos `model`, `tools`,
-`permission` y `allowed-tools` como casos explicitos), `profile` y
-`capabilities` fuera de vocabulario, y `mode` ausente en un agente.
+coincide con el archivo, `id` mal tipado (fija que el motivo lo da el schema y
+no el chequeo de nombre de archivo), propiedad adicional (incluidos `model`,
+`tools`, `permission` y `allowed-tools` como casos explicitos), `profile` y
+`capabilities` fuera de vocabulario, `mode` ausente en un agente, y un body
+que nombra un runtime concreto.
 `.claude/scripts/tests/test-internal-artifact-contract.sh` corre el
 validador contra cada fixture y comprueba exit code **y** el motivo esperado
 en el mensaje, para que un fixture invalido no pase por la razon equivocada.

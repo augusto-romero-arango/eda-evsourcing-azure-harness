@@ -9,5 +9,5 @@
 ---
 
 Fixture de `fixtures/invalid/` (issue #853): debe rechazarse por
-`capabilities` con un valor fuera del vocabulario cerrado (`bash` es un
-permiso de OpenCode, no una capacidad semantica del contrato).
+`capabilities` con un valor fuera del vocabulario cerrado (`bash` es una clave
+de permiso de un runtime, no una capacidad semantica del contrato).
