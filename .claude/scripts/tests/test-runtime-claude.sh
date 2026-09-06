@@ -275,8 +275,8 @@ else
     fail "B-1: los mensajes traducidos no coinciden: $(jq -c 'select(.type=="message")' "$B_OUT")"
 fi
 
-if jq -e 'select(.type=="tool.started") | .tool == "Read" and .input_summary == null' "$B_OUT" >/dev/null 2>&1; then
-    pass "B-2: el bloque tool_use se tradujo a tool.started{tool:'Read', input_summary:null}"
+if jq -e 'select(.type=="tool.started") | .tool == "Read" and .input_summary == "x"' "$B_OUT" >/dev/null 2>&1; then
+    pass "B-2: el bloque tool_use se tradujo a tool.started{tool:'Read', input_summary:'x'} (issue #863: file_path puebla input_summary)"
 else
     fail "B-2: no se encontro el tool.started esperado: $(jq -c 'select(.type=="tool.started")' "$B_OUT")"
 fi

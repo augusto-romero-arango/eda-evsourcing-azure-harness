@@ -14,6 +14,7 @@
 #                         [--runtime <id>] [--model <opaco>]
 #                         [--system-file <f>] [--timeout <s>]
 #                         [--raw-log <f>] [--stderr-log <f>]
+#                         [--events-log <archivo>]
 #
 #   --runtime <id>       Fuerza el runtime (precedencia sobre MEFISTO_RUNTIME
 #                         y la autodeteccion, ver mefisto_resolve_runtime en
@@ -42,6 +43,18 @@
 #                         Sin el, se usa un archivo temporal descartable.
 #   --stderr-log <f>      Donde conservar el stderr crudo del proceso. Mismo
 #                         default que --raw-log si se omite.
+#   --events-log <archivo> Telemetria HUMANA del pipeline (issue #863), NUNCA
+#                         el JSONL neutral de --event-log: mismas lineas
+#                         "[HH:MM:SS][archivo]"/"[HH:MM:SS][test]" que hoy
+#                         escribe el hook publicado (hooks/hooks.json), mas
+#                         "[HH:MM:SS][tool] <agente> <tool> <ok|fail>
+#                         <ruta-o-resumen|->" por cada tool.completed y
+#                         "[HH:MM:SS][stage] <agente> <status>" en el
+#                         terminal. Default: `mefisto_state_path events.log`.
+#                         Un fallo al escribir (directorio inexistente, sin
+#                         permisos) degrada a un aviso en stderr -- nunca
+#                         altera el exit code ni el evento terminal de
+#                         --event-log (CA-3).
 #
 # Exit code (CA-5): 0 solo con un evento terminal run.completed{status:
 # "success"}; 124 si el watchdog mato el proceso por timeout; 65 si el
@@ -95,6 +108,7 @@ usage() {
 Uso: mefisto-run-agent.sh --agent <id> --cwd <dir> --prompt-file <f> --event-log <jsonl>
                            [--runtime <id>] [--model <opaco>] [--system-file <f>]
                            [--timeout <s>] [--raw-log <f>] [--stderr-log <f>]
+                           [--events-log <archivo>]
 EOF
 }
 
@@ -134,6 +148,7 @@ OPT_SYSTEM_FILE=""
 OPT_TIMEOUT=""
 OPT_RAW_LOG=""
 OPT_STDERR_LOG=""
+OPT_EVENTS_LOG=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -147,6 +162,7 @@ while [ $# -gt 0 ]; do
         --timeout)     [ $# -ge 2 ] || abort_usage "--timeout requiere un valor"; OPT_TIMEOUT="$2"; shift 2 ;;
         --raw-log)     [ $# -ge 2 ] || abort_usage "--raw-log requiere un valor"; OPT_RAW_LOG="$2"; shift 2 ;;
         --stderr-log)  [ $# -ge 2 ] || abort_usage "--stderr-log requiere un valor"; OPT_STDERR_LOG="$2"; shift 2 ;;
+        --events-log)  [ $# -ge 2 ] || abort_usage "--events-log requiere un valor"; OPT_EVENTS_LOG="$2"; shift 2 ;;
         *) abort_usage "argumento desconocido: '$1'" ;;
     esac
 done
@@ -237,6 +253,19 @@ if [ -n "$OPT_STDERR_LOG" ]; then
     mkdir -p "$(dirname "$STDERR_LOG")" 2>/dev/null || true
 else
     STDERR_LOG="$RUN_TMP_DIR/stderr.log"
+fi
+
+# events.log (CA-1/#863): default `mefisto_state_path events.log` (resuelve
+# ".mefisto/pipeline/events.log" contra el cwd DEL CALLER, no contra --cwd --
+# mismo criterio que summaries/, ver mefisto-state.sh). Un fallo aqui (mkdir
+# sin permisos) deja EVENTS_LOG_TARGET vacio: el bloque de escritura al final
+# de este script lo trata como "no resuelto" y degrada a un aviso, nunca
+# aborta (CA-3).
+if [ -n "$OPT_EVENTS_LOG" ]; then
+    EVENTS_LOG_TARGET="$OPT_EVENTS_LOG"
+    mkdir -p "$(dirname "$EVENTS_LOG_TARGET")" 2>/dev/null || true
+else
+    EVENTS_LOG_TARGET="$(mefisto_state_path "events.log" 2>/dev/null)" || true
 fi
 
 # events_log de run_agent_with_watchdog: solo recibe SU linea de texto plano
@@ -378,5 +407,58 @@ CHOSEN_TERMINAL="$(printf '%s' "$CHOSEN_TERMINAL" | jq -c --argjson d "$ELAPSED_
 
 [ -n "$NON_TERMINAL_JSON" ] && printf '%s\n' "$NON_TERMINAL_JSON" >> "$OPT_EVENT_LOG"
 printf '%s\n' "$CHOSEN_TERMINAL" >> "$OPT_EVENT_LOG"
+
+# --- events.log (CA-1/CA-2/CA-3, issue #863): telemetria HUMANA derivada del
+# mismo JSONL neutral que ya se escribio arriba, best-effort -- nunca puede
+# alterar $FINAL_EXIT ni el evento terminal de --event-log, que ya quedaron
+# decididos por completo antes de este bloque.
+#
+# El emparejamiento tool.completed <-> tool.started es por NOMBRE de tool en
+# orden FIFO (una cola por nombre, "q"): el JSONL neutral no trae un id de
+# llamada que sobreviva la traduccion (a diferencia de Claude, que empareja
+# tool_use/tool_result por id ANTES de traducir), pero dentro de una misma
+# corrida los eventos de un mismo tool llegan en el orden en que ocurrieron,
+# asi que la primera cola-pendiente es siempre la correcta. `$summary // "-"`
+# es la unica fuente del campo "ruta-o-resumen": si el tool no es de archivo
+# ni Bash (Read/Write/Edit/Bash o edit/write/read/bash), input_summary llego
+# null desde el traductor y aqui se escribe "-", nunca se inventa (CA-2).
+EVENTS_LOG_TERM_TS="$(printf '%s' "$CHOSEN_TERMINAL" | jq -r '.ts')"
+EVENTS_LOG_TERM_STATUS="$(printf '%s' "$CHOSEN_TERMINAL" | jq -r '.status')"
+
+EVENTS_LOG_LINES="$(printf '%s\n' "$NON_TERMINAL_JSON" | jq -s -r \
+    --arg agent "$OPT_AGENT" \
+    --arg term_ts "$EVENTS_LOG_TERM_TS" \
+    --arg term_status "$EVENTS_LOG_TERM_STATUS" '
+    def hms: if (type == "string") and (length >= 19) then .[11:19] else "--:--:--" end;
+    def tool_lines:
+        reduce .[] as $ev (
+            {q: {}, out: []};
+            if $ev.type == "tool.started" then
+                .q[$ev.tool] = ((.q[$ev.tool] // []) + [$ev.input_summary])
+                | if $ev.input_summary != null then
+                      .out += ["[" + ($ev.ts|hms) + "][archivo] " + $ev.input_summary]
+                  else . end
+            elif $ev.type == "tool.completed" then
+                ((.q[$ev.tool] // [])[0]) as $summary
+                | .q[$ev.tool] = ((.q[$ev.tool] // [])[1:])
+                | .out += ["[" + ($ev.ts|hms) + "][tool] " + $agent + " " + $ev.tool + " "
+                    + (if $ev.ok then "ok" else "fail" end) + " " + ($summary // "-")]
+            else . end
+        ) | .out[];
+    tool_lines, ("[" + ($term_ts|hms) + "][stage] " + $agent + " " + $term_status)
+' 2>/dev/null)"
+
+EVENTS_LOG_WRITTEN=false
+if [ -n "$EVENTS_LOG_LINES" ] && [ -n "$EVENTS_LOG_TARGET" ]; then
+    EVENTS_LOG_DIR="$(dirname "$EVENTS_LOG_TARGET")"
+    if [ -d "$EVENTS_LOG_DIR" ] && [ -w "$EVENTS_LOG_DIR" ]; then
+        if printf '%s\n' "$EVENTS_LOG_LINES" >> "$EVENTS_LOG_TARGET" 2>/dev/null; then
+            EVENTS_LOG_WRITTEN=true
+        fi
+    fi
+fi
+if [ "$EVENTS_LOG_WRITTEN" = "false" ]; then
+    echo "AVISO: no se pudo escribir la telemetria de herramientas en events.log (destino: '${EVENTS_LOG_TARGET:-<sin resolver>}'); se omite sin afectar el exit code ni el evento terminal de la corrida (CA-3, issue #863)" >&2
+fi
 
 exit "$FINAL_EXIT"

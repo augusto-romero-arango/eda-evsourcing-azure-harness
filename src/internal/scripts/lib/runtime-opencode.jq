@@ -25,6 +25,17 @@
 #     UN SOLO evento ya resuelto: este programa sintetiza tool.started +
 #     tool.completed a partir de esa unica linea en vez de emparejar por
 #     `callID` contra un segundo evento que esta version del CLI no emite.
+#     `input_summary` de `tool.started` (issue #863) se llena desde
+#     `.part.state.input`: `.filePath` para los tools de archivo (`edit`,
+#     `write`, `read` -- verificado en la captura de `read` con
+#     `state.status:"error"` de test-runtime-opencode.sh, que trae
+#     `input.filePath`), primeros 80 caracteres de `.command` para `bash`
+#     (asumido por el esquema publico de la tool `bash` de OpenCode -- ningun
+#     fixture congelado todavia captura una tool call de bash resuelta; si el
+#     dogfooding, #874, revela un campo distinto, se corrige aqui y se agrega
+#     el fixture que falta). Cualquier otro tool (p. ej. `glob`) deja
+#     `input_summary` en `null`: nunca se inventa un resumen que el evento no
+#     trae.
 #   - `error`: evento de fallo a nivel de proceso (observado con un `-m`
 #     invalido: `{"type":"error","error":{"name":...,"data":{"message":...}}}`,
 #     exit 1, SIN nada por stderr). Deliberadamente NO se usa para clasificar
@@ -88,6 +99,13 @@ def ms_to_iso:
 # legibilidad de todo el log neutral (mismo criterio que runtime-claude.jq).
 def clip: if . == null then null else (tostring | .[0:300]) end;
 
+# input_summary de un tool_use (issue #863): ver comentario de cabecera sobre
+# `.part.state.input`. Nunca se inventa un resumen para un tool sin mapeo.
+def opencode_input_summary($tool; $input):
+    if ($tool == "edit" or $tool == "write" or $tool == "read") then ($input.filePath // null)
+    elif ($tool == "bash") then (($input.command // null) | if . == null then null else (tostring | .[0:80]) end)
+    else null end;
+
 (now | todate) as $fallback_ts
 | ($model_param | if . == "" then null else . end) as $model_param_or_null
 | ($exit_code | if . == "" then null else (tonumber? // null) end) as $exit
@@ -133,6 +151,7 @@ def clip: if . == null then null else (tostring | .[0:300]) end;
       elif ($ev.type == "tool_use") then
           ($ev.part.tool // "?") as $tool
           | ($ev.part.state.status // "") as $status
+          | ($ev.part.state.input // {}) as $input
           | ($ev.part.state.time.start) as $start_raw
           | ($ev.part.state.time.end) as $end_raw
           | ($ev.timestamp | ms_to_iso) as $ev_ts
@@ -140,7 +159,7 @@ def clip: if . == null then null else (tostring | .[0:300]) end;
               {
                 v: 1, type: "tool.started",
                 ts: (($start_raw | ms_to_iso) // $ev_ts // $fallback_ts),
-                tool: $tool, input_summary: null
+                tool: $tool, input_summary: (opencode_input_summary($tool; $input))
               },
               (
                 if ($status == "completed" or $status == "error") then

@@ -240,6 +240,46 @@ una paridad `edit` vs `is_path_in_mefisto_scope` sobre una muestra de rutas.
 Si el dogfooding (#874) revela una discrepancia con OpenCode real, se corrige
 el mapping, nunca el test.
 
+### Scope temprano en OpenCode (issue #863)
+
+`mefisto-scope-hook.sh` (`.claude/scripts/mefisto-scope-hook.sh`, PostToolUse
+de `.claude/settings.json`) solo aplica a sesiones **Claude Code**: avisa
+DESPUES de una escritura fuera de la allowlist interna, porque un hook
+PostToolUse no puede bloquear retroactivamente lo que el tool ya ejecuto. Ese
+mecanismo no se porta a OpenCode -- no existe un `.opencode/plugins/`
+equivalente (ver "Notas tecnicas" del issue #863) -- porque OpenCode ya tiene
+algo mas fuerte: el `edit` deny-por-defecto del bloque `permission` (tabla de
+arriba) **rechaza la escritura antes de que ocurra**, para cualquier ruta
+fuera de `is_path_in_mefisto_scope`. En ambos runtimes, el gate final
+(`validate_mefisto_scope_changes`, evaluado sobre `git diff`/`git status` al
+cierre del stage) sigue siendo el juez -- ni el aviso posterior de Claude Code
+ni el deny previo de OpenCode lo sustituyen (MEF-ADR-0031).
+
+## Telemetria de herramientas (`--events-log`, issue #863)
+
+`mefisto-run-agent.sh` acepta un flag separado, `--events-log <archivo>`
+(default `mefisto_state_path events.log`), para la telemetria **legible**
+del pipeline -- nunca confundir con `--event-log` (el JSONL neutral de este
+contrato): son dos artefactos distintos, con nombres deliberadamente
+parecidos por historia (`--event-log` es anterior, issue #858).
+
+Por cada linea de `--event-log` que sea `tool.completed`, el runner agrega a
+`--events-log` `[HH:MM:SS][tool] <agente> <tool> <ok|fail> <ruta-o-resumen|->`;
+por cada `tool.started` cuyo `input_summary` no sea `null`, agrega
+`[HH:MM:SS][archivo] <ruta>` (mismo formato de linea que hoy produce el hook
+publicado, `hooks/hooks.json`). El evento terminal siempre agrega
+`[HH:MM:SS][stage] <agente> <status>`. El `HH:MM:SS` de cada linea es el de
+`.ts` del propio evento neutral (nunca el reloj de al escribir): asi la
+telemetria es reproducible a partir del mismo `--event-log`. El
+emparejamiento entre un `tool.completed` y el `input_summary` de su
+`tool.started` es por nombre de tool en orden FIFO (el JSONL neutral no
+conserva un id de llamada tras la traduccion); la "ruta-o-resumen" es `-`
+cuando el tool no es de archivo ni `Bash`/`bash` -- nunca se inventa.
+
+Un fallo al escribir `--events-log` (directorio inexistente, sin permisos)
+degrada a un aviso en stderr: nunca altera el exit code del runner ni el
+evento terminal que ya quedo escrito en `--event-log`.
+
 Cuatro detalles de la semantica de 1.18.29 que condicionan la **forma** de los
 patrones (verificados leyendo el bundle del binario; el mapping los repite en
 su `$comment_semantica_verificada` para que sobrevivan a este README):

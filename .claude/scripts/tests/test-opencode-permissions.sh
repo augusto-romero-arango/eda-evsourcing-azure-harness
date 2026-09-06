@@ -12,6 +12,10 @@
 #   [read] Lectura de `.env` -> deny (CA-2) con la capacidad `read`.
 #   [edit] Edicion de `src/Foo.cs` -> deny, de `commands/x.md` -> allow y de
 #       `.mefisto/pipeline/summaries/stage-1-writer.md` -> allow (CA-2).
+#   [edit-scope-temprano] `infra/main.tf` y `.github/workflows/x.yml` -> deny,
+#       `src/internal/agents/x.md` -> allow: el "scope temprano" de OpenCode
+#       (issue #863) es este mismo deny-por-defecto de `edit`, sin hook
+#       portado -- ver "Protocolo de ejecucion y eventos" del README.
 #   [bash] `rm -rf x` -> deny y `git status` -> allow (CA-3) con la capacidad
 #       `shell`.
 #   [question] `allow` solo en `mode: primary`, `deny` en `subagent` (CA-4).
@@ -206,6 +210,19 @@ assert_eq "deny" "$(eval_perm mefisto-fx-perm-writer edit 'src/Foo.cs')" "edicio
 assert_eq "allow" "$(eval_perm mefisto-fx-perm-writer edit 'commands/x.md')" "edicion de commands/x.md permite"
 assert_eq "allow" "$(eval_perm mefisto-fx-perm-writer edit '.mefisto/pipeline/summaries/stage-1-writer.md')" "edicion del resumen de stage (.mefisto/) permite"
 assert_eq "allow" "$(eval_perm mefisto-fx-perm-writer edit '.claude/pipeline/summaries/stage-1-writer.md')" "edicion del resumen de stage (.claude/) permite"
+
+echo ""
+echo "[edit-scope-temprano] CA-4 (issue #863): scope temprano de OpenCode sobre el mismo veredicto que el gate final"
+# Mismo caso que documenta la seccion 'Protocolo de ejecucion y eventos' del
+# README (issue #863): sin hook portado, el 'edit' deny-por-defecto de
+# OpenCode ES el feedback temprano -- rechaza ANTES de escribir, mas fuerte
+# que el aviso posterior de mefisto-scope-hook.sh (que solo aplica a Claude
+# Code). infra/ y .github/workflows/ no existen en el scope de Mefisto (este
+# repo no tiene infra/ ni .github/workflows/, ver AGENTS.md): is_path_in_
+# mefisto_scope los deniega igual que src/Foo.cs.
+assert_eq "deny" "$(eval_perm mefisto-fx-perm-writer edit 'infra/main.tf')" "edicion de infra/main.tf deniega (Mefisto no tiene infra/)"
+assert_eq "deny" "$(eval_perm mefisto-fx-perm-writer edit '.github/workflows/x.yml')" "edicion de .github/workflows/x.yml deniega (Mefisto no tiene .github/workflows/)"
+assert_eq "allow" "$(eval_perm mefisto-fx-perm-writer edit 'src/internal/agents/x.md')" "edicion de src/internal/agents/x.md permite (src/internal/ esta en la allowlist)"
 
 echo ""
 echo "[bash] CA-3: rm -rf x deny, git status allow, con la capacidad shell"
