@@ -478,8 +478,10 @@ else
 fi
 
 # Paridad con el pipeline: tiene que pasar el JSONL neutral, no el log
-# derivado ni la traza cruda de Claude.
-if grep -q 'agent_failure_is_unrecoverable "\$TIMED_OUT" "\$CLAUDE_EXIT" "\$events_file"' "$PIPE"; then
+# derivado ni la traza cruda de Claude. RUN_EXIT (issue #910) es el exit code
+# del runner neutral (mefisto-run-agent.sh) -- reemplaza a CLAUDE_EXIT, que
+# era el exit code de `claude -p` invocado directo.
+if grep -q 'agent_failure_is_unrecoverable "\$TIMED_OUT" "\$RUN_EXIT" "\$events_file"' "$PIPE"; then
     pass "G-10: el pipeline pasa el JSONL neutral (events_file) a agent_failure_is_unrecoverable"
 else
     fail "G-10: el pipeline NO pasa events_file a agent_failure_is_unrecoverable"

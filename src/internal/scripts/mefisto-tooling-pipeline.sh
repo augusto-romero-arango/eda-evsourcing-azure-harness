@@ -21,16 +21,26 @@
 
 set -euo pipefail
 
-source "$(dirname "${BASH_SOURCE[0]}")/lib/_mefisto-common.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/_mefisto-common.sh"
 assert_in_mefisto || exit 1
 
-# Puente temprano (issue #906, MEF-ADR-0049 decision 1): run_agent sigue
-# invocando `claude -p` directo (eso lo cambia el hijo de #879 que conecta el
-# runner neutral), pero traduce cada intento con runtime_claude_translate
-# para escribir el JSONL neutral que consumen las funciones de clasificacion
-# de lib/_mefisto-common.sh. Se sourcea relativo a este mismo pipeline, igual
-# que _mefisto-common.sh arriba.
-source "$(dirname "${BASH_SOURCE[0]}")/lib/runtime-claude.sh"
+# Runner neutral a runtime (MEF-ADR-0049 decision 1, issue #910): run_agent ya
+# no invoca `claude -p` directo -- lanza src/internal/scripts/mefisto-run-agent.sh
+# (issue #858), que resuelve su propio adaptador (runtime-claude.sh/runtime-
+# opencode.sh) y escribe el JSONL neutral que consumen las funciones de
+# clasificacion de lib/_mefisto-common.sh (el puente runtime_claude_translate
+# del issue #906 se retira: el runner ya hace esa traduccion el mismo).
+# mefisto-runtime.sh resuelve el runtime activo (mefisto_resolve_runtime) y
+# mefisto-models.sh el modelo por perfil (mefisto_resolve_model), que a su vez
+# consulta la tabla fija de cada adaptador (adapter_<runtime>_default_model)
+# -- se sourcean los dos, igual que hace generate-internal-adapters.sh, sin
+# saber todavia cual de los dos runtimes resolvera mefisto_resolve_runtime
+# mas abajo.
+source "$SCRIPT_DIR/lib/mefisto-runtime.sh"
+source "$SCRIPT_DIR/lib/mefisto-models.sh"
+source "$SCRIPT_DIR/lib/adapter-claude.sh"
+source "$SCRIPT_DIR/lib/adapter-opencode.sh"
 
 # Version y SHA del propio plugin que corre esta corrida (issue #662),
 # calculados UNA sola vez aqui -- ANTES de crear el worktree del issue, sobre
@@ -63,16 +73,15 @@ LOG_DIR="$PIPELINE_DIR/logs"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 LOG_FILE="$LOG_DIR/mefisto-tooling-pipeline-$TIMESTAMP.log"
 
-# --- Runtime recibido de los comandos (issue #867, CA-4 de #869) -----------
+# --- Runtime activo (issue #867/#910) --------------------------------------
 #
 # MEFISTO_RUNTIME viaja como variable de entorno desde la directiva
 # {{mefisto:run}} de cada comando ("MEFISTO_RUNTIME=<runtime> ./.claude/scripts/...").
-# Este issue solo lo REGISTRA (events.log + status + historial); no selecciona
-# CLI con el -- eso es #879, que conecta este pipeline a mefisto-run-agent.sh
-# (lib/mefisto-runtime.sh). `claude -p` mas abajo no cambia.
-MEFISTO_RUNTIME_RECEIVED="${MEFISTO_RUNTIME:-}"
+# MEFISTO_RUNTIME_JSON se completa mas abajo, tras resolver el runtime
+# (mefisto_resolve_runtime, en la verificacion de dependencias) -- "null" aqui
+# es solo un placeholder para que abort() no reviente bajo `set -u` si un
+# aborto de parseo de argumentos ocurre ANTES de esa resolucion.
 MEFISTO_RUNTIME_JSON="null"
-[ -n "$MEFISTO_RUNTIME_RECEIVED" ] && MEFISTO_RUNTIME_JSON="\"$MEFISTO_RUNTIME_RECEIVED\""
 
 # Lineas de log que abort() reemite al fallar (issue #379): la causa real de un
 # fallo externo (gh, git...) vive en el log del pipeline, no en el mensaje de
@@ -276,9 +285,22 @@ if ! [[ "$FROM_STAGE" =~ ^[1-2]$ ]]; then
 fi
 
 # --- Verificar dependencias ---
-for cmd in claude gh git; do
+for cmd in gh git jq; do
     command -v "$cmd" &>/dev/null || abort "Falta comando requerido: $cmd"
 done
+
+# --- Resolver runtime activo (MEF-ADR-0049, issue #910) ---------------------
+# ANTES de crear el worktree: un runtime no resoluble no debe dejar un
+# worktree a medias, mismo criterio que --variant/--models mas abajo.
+# mefisto_resolve_runtime prioriza MEFISTO_RUNTIME (entorno, lo antepone el
+# comando generado por la directiva {{mefisto:run}}) sobre la autodeteccion;
+# este pipeline no expone un flag --runtime propio.
+if ! MEFISTO_RUNTIME_RESUELTO="$(mefisto_resolve_runtime)"; then
+    abort "No se pudo resolver el runtime activo: $MEFISTO_RUNTIME_ERROR"
+fi
+command -v "$MEFISTO_RUNTIME_RESUELTO" &>/dev/null \
+    || abort "Falta el CLI del runtime resuelto ('$MEFISTO_RUNTIME_RESUELTO'). Fija MEFISTO_RUNTIME=claude|opencode con un runtime instalado."
+MEFISTO_RUNTIME_JSON="\"$MEFISTO_RUNTIME_RESUELTO\""
 
 # --- Preparar directorio de pipeline ---
 mkdir -p "$LOG_DIR"
@@ -292,7 +314,7 @@ EVENTS_LOG_ABS="$PIPELINE_DIR_ABS/events.log"
 touch "$EVENTS_LOG_ABS"
 
 echo "=== SESSION MEFISTO-TOOLING $TIMESTAMP issue:$ISSUE_NUM from-stage:$FROM_STAGE ===" >> "$EVENTS_LOG_ABS"
-[ -n "$MEFISTO_RUNTIME_RECEIVED" ] && echo "[$(date +%H:%M:%S)] RUNTIME: $MEFISTO_RUNTIME_RECEIVED (registrado; todavia no selecciona CLI -- #879)" >> "$EVENTS_LOG_ABS"
+echo "[$(date +%H:%M:%S)] RUNTIME: $MEFISTO_RUNTIME_RESUELTO" >> "$EVENTS_LOG_ABS"
 
 # --- Resolver --models (issue #709) --------------------------------------
 # Se valida ANTES de crear el worktree: un --models malformado debe abortar
@@ -304,6 +326,63 @@ if [ -n "$MEFISTO_STAGE_MODELS" ]; then
     log "Modelos por stage (--models): $STAGE_MODELS_LOG"
     echo "[$(date +%H:%M:%S)] MODELS: $STAGE_MODELS_LOG" >> "$EVENTS_LOG_ABS"
 fi
+
+# --- Resolver el modelo de cada stage (MEF-ADR-0049 decision 4, issue #910) --
+# Se resuelve aqui, ANTES de crear el worktree, por el mismo motivo que
+# --models justo arriba: un mapping local invalido (.mefisto/models.json) o un
+# adaptador sin tabla debe abortar temprano, no a mitad de Stage 1 con un
+# worktree ya en disco.
+#
+# Perfil por rol: balanced para escritura, deep para revision -- mismo criterio
+# de siempre (issue #710), ahora expresado como perfil logico en vez de un
+# modelo fijo. Los defaults 'sonnet'/'opus' ya no viven en este pipeline: quien
+# quiera pinnear un modelo usa --models (por corrida) o .mefisto/models.json
+# (por maquina). El stage de resolucion de conflictos corre como
+# `run_agent "merge" "writer"`, asi que reusa el modelo del writer.
+MODEL_WRITER=""
+MODEL_REVIEWER=""
+
+# resolve_pipeline_stage_model <clave-de-stage> <agent-id-neutral> <perfil>
+#
+# Deja el modelo resuelto en MEFISTO_STAGE_MODEL_RESUELTO (cadena vacia =
+# heredar el modelo activo del CLI; run_agent omite --model por completo en ese
+# caso). Precedencia: override --models por clave EXACTA de stage
+# (resolve_stage_model, issue #709) y, sin match, mefisto_resolve_model
+# (mapping local -> tabla del adaptador -> heredar).
+MEFISTO_STAGE_MODEL_RESUELTO=""
+resolve_pipeline_stage_model() {
+    local stage_key="$1" agent_id="$2" profile="$3"
+
+    MEFISTO_STAGE_MODEL_RESUELTO="$(resolve_stage_model "$stage_key" "")"
+    if [ -n "$MEFISTO_STAGE_MODEL_RESUELTO" ]; then
+        # Constancia del override que SI hizo match: el mapa que se loguea
+        # arriba no dice cuales claves aplicaron, y una clave con typo
+        # ('revieweer=opus') no sobreescribe nada -- sin esta linea el
+        # experimento correria con el modelo por defecto y el reporte se lo
+        # atribuiria al override.
+        echo "[$(date +%H:%M:%S)] MODELS: $stage_key -> $MEFISTO_STAGE_MODEL_RESUELTO (override --models)" >> "$EVENTS_LOG_ABS"
+        return 0
+    fi
+
+    # Redirect simple (>), NUNCA "$(...)": una sustitucion de comando forkea un
+    # subshell y MEFISTO_MODELS_ERROR, asignada DENTRO de mefisto_resolve_model,
+    # se perderia al volver -- el abort quedaria sin motivo (la propia libreria
+    # advierte de esta trampa, ver lib/mefisto-models.sh).
+    local out_file
+    out_file="$(mktemp)"
+    if ! mefisto_resolve_model "$MEFISTO_RUNTIME_RESUELTO" "$agent_id" "$profile" > "$out_file"; then
+        rm -f "$out_file"
+        abort "No se pudo resolver el modelo de $agent_id (perfil $profile): ${MEFISTO_MODELS_ERROR:-motivo desconocido}"
+    fi
+    MEFISTO_STAGE_MODEL_RESUELTO="$(cat "$out_file")"
+    rm -f "$out_file"
+    echo "[$(date +%H:%M:%S)] MODELS: $stage_key -> ${MEFISTO_STAGE_MODEL_RESUELTO:-<heredado>} (perfil $profile)" >> "$EVENTS_LOG_ABS"
+}
+
+resolve_pipeline_stage_model "writer" "mefisto-writer" "balanced"
+MODEL_WRITER="$MEFISTO_STAGE_MODEL_RESUELTO"
+resolve_pipeline_stage_model "reviewer" "mefisto-reviewer" "deep"
+MODEL_REVIEWER="$MEFISTO_STAGE_MODEL_RESUELTO"
 
 # --- Anunciar el modo variante (issue #711) -------------------------------
 # El label ya se valido y ya derivo los nombres de archivo arriba, junto al
@@ -429,12 +508,19 @@ run_agent() {
     local log_stage="${log_base}.log"
     local stream_file="${log_base}.stream.jsonl"
     local stderr_file="${log_base}.stderr.log"
-    # JSONL neutral del puente (issue #906): lo escribe este mismo run_agent
-    # tras cada intento (mas abajo), traduciendo $stream_file/$stderr_file con
-    # runtime_claude_translate. Las funciones de clasificacion de
-    # lib/_mefisto-common.sh leen SOLO este archivo -- la traza cruda sigue
-    # guardandose para diagnostico, pero ningun gate la parsea.
+    # JSONL neutral (issue #910): lo escribe mefisto-run-agent.sh directo, un
+    # nivel por debajo de este pipeline. Las funciones de clasificacion de
+    # lib/_mefisto-common.sh leen SOLO este archivo -- la traza cruda
+    # ($stream_file) se conserva aparte, solo para diagnostico, y ningun gate
+    # la parsea.
     local events_file="${log_base}.events.jsonl"
+    # Prompt del stage, en archivo (CA-1): mefisto-run-agent.sh recibe
+    # --prompt-file, nunca el texto inline -- a diferencia de la vieja
+    # invocacion directa de `claude -p "$prompt"`.
+    local prompt_file="$PIPELINE_DIR_ABS/prompts/mefisto-tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}.prompt.md"
+    mkdir -p "$(dirname "$prompt_file")"
+    printf '%s' "$prompt" > "$prompt_file"
+
     local start_ts
     start_ts=$(date +%s)
 
@@ -443,28 +529,21 @@ run_agent() {
         writer)   AGENT_WR_RES="running" ;;
         reviewer) AGENT_RV_RES="running" ;;
     esac
-    # Modelo por etapa: escritura (writer y merge) en sonnet, revision en opus.
-    # resolve_stage_model (issue #709) aplica el override de --models por clave
-    # exacta de agente; sin entrada en el mapa (o sin --models), cae en este
-    # default -- byte a byte el comportamiento previo al flag.
-    local AGENT_MODEL AGENT_MODEL_DEFAULT
+
+    # Id de agente neutral + modelo, ambos ya resueltos ANTES de crear el
+    # worktree (CA-2, resolve_pipeline_stage_model): aqui solo se selecciona
+    # por rol. El stage de resolucion de conflictos corre como
+    # `run_agent "merge" "writer"` y por eso cae en la rama de escritura --
+    # mismo agente y mismo modelo que el writer de Stage 1.
+    local MEFISTO_AGENT_ID AGENT_MODEL
     case "$agent" in
-        reviewer) AGENT_MODEL_DEFAULT="opus" ;;
-        *)        AGENT_MODEL_DEFAULT="sonnet" ;;
+        reviewer) MEFISTO_AGENT_ID="mefisto-reviewer"; AGENT_MODEL="$MODEL_REVIEWER" ;;
+        *)        MEFISTO_AGENT_ID="mefisto-writer";   AGENT_MODEL="$MODEL_WRITER" ;;
     esac
-    AGENT_MODEL="$(resolve_stage_model "$agent" "$AGENT_MODEL_DEFAULT")"
-    # Constancia por stage del override que SI hizo match: el mapa que se
-    # loguea al arrancar no dice cuales claves aplicaron, y una clave con typo
-    # ('revieweer=opus') no sobreescribe nada -- sin esta linea el experimento
-    # correria con los defaults y el reporte lo atribuiria al override.
-    if [ "$AGENT_MODEL" != "$AGENT_MODEL_DEFAULT" ]; then
-        echo "[$(date +%H:%M:%S)] MODELS: stage $stage/$agent -> $AGENT_MODEL (default: $AGENT_MODEL_DEFAULT)" >> "$EVENTS_LOG_ABS"
-    fi
     update_status "$stage-$agent" "running"
     log "Invocando $agent..."
 
     local AGENT_TIMEOUT_SECONDS=1800
-    local NONINTERACTIVE_SYSTEM="You are running in non-interactive print mode. There is no human to approve anything. You MUST use Write and Edit tools directly to create and modify files at any path including .claude/. Never output text asking for permissions or confirmations -- doing so causes pipeline failure."
 
     # --- Reintento ante fallo transitorio del servidor (issue #534) ---
     # Ambos parametros son overridables por entorno para que los tests puedan
@@ -486,51 +565,54 @@ run_agent() {
         ENTRY_CLEAN=true
     fi
 
-    local CLAUDE_EXIT=0 TIMED_OUT=false failure_type="" metrics_json="" elapsed=0
+    # Ruta del runner, overridable por entorno: los tests apuntan a un stub
+    # en vez del mefisto-run-agent.sh real, sin depender de un CLI instalado.
+    local RUN_AGENT_BIN="${MEFISTO_RUN_AGENT_BIN:-$SCRIPT_DIR/mefisto-run-agent.sh}"
+
+    local RUN_EXIT=0 TIMED_OUT=false failure_type="" metrics_json="" elapsed=0
     local attempt=1
     while :; do
         local attempt_start_ts
         attempt_start_ts=$(date +%s)
 
-        # La senal del watchdog lleva el numero de intento: si el watchdog de
-        # un intento anterior sobrevivio a su kill, no puede marcar como
-        # TIMEOUT al intento siguiente (el nombre ya no colisiona).
-        local TIMEOUT_SIGNAL_FILE="$PIPELINE_DIR_ABS/watchdog-timeout-${stage}-${agent}-${TIMESTAMP}-${attempt}"
+        local RUN_AGENT_ARGS=(
+            --runtime "$MEFISTO_RUNTIME_RESUELTO"
+            --agent "$MEFISTO_AGENT_ID"
+            --cwd "$WORKTREE_PATH"
+            --prompt-file "$prompt_file"
+            --system-file "$SCRIPT_DIR/../prompts/noninteractive-system.md"
+            --event-log "$events_file"
+            --raw-log "$stream_file"
+            --stderr-log "$stderr_file"
+            --events-log "$EVENTS_LOG_ABS"
+            --timeout "$AGENT_TIMEOUT_SECONDS"
+        )
+        [ -n "$AGENT_MODEL" ] && RUN_AGENT_ARGS+=(--model "$AGENT_MODEL")
 
-        CLAUDE_EXIT=$(run_agent_with_watchdog "$WORKTREE_PATH" "$AGENT_TIMEOUT_SECONDS" "$stream_file" "$stderr_file" "$EVENTS_LOG_ABS" "$agent" "$TIMEOUT_SIGNAL_FILE" \
-            claude -p "$prompt" --model "$AGENT_MODEL" \
-            --permission-mode bypassPermissions \
-            --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
-            --output-format stream-json --verbose)
+        # Diagnostico propio del runner (uso invalido, avisos best-effort de
+        # --events-log): archivo dedicado junto al resto de artefactos del
+        # intento, sin depender de LOG_FILE_ABS -- run_agent no lo necesita
+        # para nada mas.
+        #
+        # A diferencia del viejo run_agent_with_watchdog (que SIEMPRE
+        # retornaba 0 -- su ultimo comando era un `echo` del exit code
+        # capturado), mefisto-run-agent.sh es un proceso real cuyo propio
+        # exit code ES el desenlace (CA-5 de #858): bajo `set -e`, invocarlo
+        # como sentencia simple mataria el pipeline entero en el primer
+        # intento fallido, sin pasar nunca por classify_agent_failure ni por
+        # abort(). El if/else evita justamente eso.
+        if "$RUN_AGENT_BIN" "${RUN_AGENT_ARGS[@]}" >>"${log_base}.runner.log" 2>&1; then
+            RUN_EXIT=0
+        else
+            RUN_EXIT=$?
+        fi
         elapsed=$(( $(date +%s) - attempt_start_ts ))
 
-        # Puente (issue #906): traduce la traza cruda del intento con el
-        # adaptador de Claude Code (#859) y fija duration_ms del terminal con
-        # el reloj de pared de ESTE intento -- misma regla que
-        # mefisto-run-agent.sh, nunca un 0 fabricado (MEF-ADR-0049 CA-1). El
-        # runner neutral no emite run.started aqui: los consumidores de esta
-        # capa (derive_stage_log_from_stream, classify_agent_failure,
-        # agent_failure_is_unrecoverable) no lo necesitan.
-        : > "$events_file" 2>/dev/null || true
-        local elapsed_ms=$(( elapsed * 1000 ))
-        local translated_events=""
-        translated_events=$(runtime_claude_translate "$stream_file" claude "$AGENT_MODEL" "$CLAUDE_EXIT" "$stderr_file") || translated_events=""
-        if [ -n "$translated_events" ]; then
-            if command -v jq >/dev/null 2>&1; then
-                printf '%s\n' "$translated_events" | jq -c --argjson d "$elapsed_ms" \
-                    'if (.type == "run.completed" or .type == "run.failed") then .duration_ms = $d else . end' \
-                    > "$events_file" 2>/dev/null \
-                    || printf '%s\n' "$translated_events" > "$events_file"
-            else
-                printf '%s\n' "$translated_events" > "$events_file"
-            fi
-        fi
-
-        # $log_stage se deriva del JSONL neutral (texto del asistente + una
-        # linea por tool call + la linea de error del terminal) mas el
-        # contenido de $stderr_file, con el mismo nombre de archivo de
-        # siempre. La traza cruda ($stream_file) se conserva solo para
-        # diagnostico -- ningun gate la parsea desde este issue.
+        # $log_stage se deriva del JSONL neutral que el runner ya escribio en
+        # $events_file (texto del asistente + una linea por tool call + la
+        # linea de error del terminal) mas el contenido de $stderr_file, con
+        # el mismo nombre de archivo de siempre. La traza cruda ($stream_file)
+        # se conserva solo para diagnostico -- ningun gate la parsea.
         derive_stage_log_from_stream "$events_file" "$stderr_file" "$log_stage"
 
         # CA-1 (issue #426, reescrita sobre el JSONL neutral en el issue
@@ -542,13 +624,16 @@ run_agent() {
         metrics_json=$(compute_stage_metrics "$events_file")
         echo "$metrics_json" > "$PIPELINE_DIR_ABS/metrics/mefisto-tooling-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-${stage}-${agent}.json" 2>/dev/null || true
 
+        # CA-3: el runner ya distingue el timeout (exit 124, MEF-ADR-0031 --
+        # el terminal neutral, nunca el exit code a secas) de cualquier otro
+        # desenlace -- ya no hace falta un archivo de senal propio en este
+        # nivel: el watchdog vive dentro de mefisto-run-agent.sh.
         TIMED_OUT=false
-        [ -f "$TIMEOUT_SIGNAL_FILE" ] && TIMED_OUT=true
-        rm -f "$TIMEOUT_SIGNAL_FILE"
+        [ "$RUN_EXIT" -eq 124 ] && TIMED_OUT=true
 
         failure_type=""
-        if [ "$CLAUDE_EXIT" -ne 0 ] || [ "$TIMED_OUT" = true ]; then
-            failure_type=$(classify_agent_failure "$TIMED_OUT" "$CLAUDE_EXIT" "$elapsed" "$events_file")
+        if [ "$RUN_EXIT" -ne 0 ]; then
+            failure_type=$(classify_agent_failure "$TIMED_OUT" "$RUN_EXIT" "$elapsed" "$events_file")
         fi
 
         # Salida normal: exito, fallo no reintentable, o reintentos agotados.
@@ -598,7 +683,7 @@ run_agent() {
         # exito en ella exime al stage de esa regla (la muerte fue posterior al
         # trabajo), sin saltarse los gates de agent_work_is_trustworthy.
         local UNRECOVERABLE=false
-        if agent_failure_is_unrecoverable "$TIMED_OUT" "$CLAUDE_EXIT" "$events_file"; then
+        if agent_failure_is_unrecoverable "$TIMED_OUT" "$RUN_EXIT" "$events_file"; then
             UNRECOVERABLE=true
         fi
 

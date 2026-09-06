@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
 # test-agent-retry.sh -- Tests del reintento con backoff ante fallo transitorio
 # del servidor (issue #534, actualizada sobre el JSONL neutral en el issue
-# #906).
+# #906, y sobre el runner neutral en el issue #910).
 #
 # Contexto (medido el 2026-08-05): 6 de 10 intentos de stage murieron con
 # 522/529 de api.anthropic.com. El pipeline no reintentaba nunca, asi que cada
 # uno tiraba el trabajo del stage entero pese a que el payload del 522 declara
 # `"retryable": true, "retry_after": 120`.
 #
-# Desde el issue #906, classify_agent_failure lee `error.kind`/`error.detail`
-# del `<log_base>.events.jsonl` que run_agent escribe traduciendo cada intento
-# con runtime_claude_translate (#859) -- no un log de texto ni la traza cruda
-# de Claude. El bloque [A] usa fixtures de JSONL neutral escritas a mano
-# (conforme a run-events.schema.json); el bloque [C] ejercita run_agent
-# extraido de verdad, con un stub de run_agent_with_watchdog que escribe
-# trazas REALES de Claude Code (`fixtures/runtime-claude/*.jsonl`) para que el
-# traductor real produzca el JSONL neutral que consume la clasificacion --
-# mismo espiritu que el bloque [O] de test-stream-watch.sh.
+# classify_agent_failure lee `error.kind`/`error.detail` del
+# `<log_base>.events.jsonl` que, desde el issue #910, escribe directo
+# mefisto-run-agent.sh (run_agent ya no traduce nada -- ese puente era del
+# issue #906 y se retiro). El bloque [A] usa fixtures de JSONL neutral
+# escritas a mano (conforme a run-events.schema.json); el bloque [C] ejercita
+# run_agent extraido de verdad, con un STUB del runner (apuntado via
+# MEFISTO_RUN_AGENT_BIN, en vez de un stub de run_agent_with_watchdog) que
+# copia una de esas mismas fixtures al --event-log que run_agent le pasa y
+# retorna el exit code pedido -- ejercita el bucle de reintento sin invocar
+# ningun CLI real ni depender de la traduccion de ningun adaptador.
 #
 # Casos cubiertos:
 #   [pre] las funciones nuevas existen en _mefisto-common.sh
@@ -42,11 +43,13 @@ fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 
 # shellcheck source=/dev/null
 source "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" 2>/dev/null
-# shellcheck source=/dev/null
-source "$REPO_ROOT/src/internal/scripts/lib/runtime-claude.sh" 2>/dev/null
+# Desde el issue #910 run_agent no sourcea ni invoca ninguna libreria de
+# runtime/modelos: el runtime y el modelo se resuelven en el cuerpo del
+# pipeline, antes del worktree, y llegan aqui como variables ya fijadas
+# (MEFISTO_RUNTIME_RESUELTO, MODEL_WRITER/MODEL_REVIEWER). Este test solo
+# necesita _mefisto-common.sh, que ya esta sourceado arriba.
 
 INTERNAL_PIPELINE="$REPO_ROOT/src/internal/scripts/mefisto-tooling-pipeline.sh"
-FIXDIR="$SCRIPT_DIR/fixtures/runtime-claude"
 
 # extract_fn <function_name> <file> -- mismo patron que test-abort-log-tail.sh
 extract_fn() {
@@ -144,16 +147,8 @@ done
 echo ""
 echo "[C] run_agent reintenta el 5xx, respeta el tope y no toca los demas tipos"
 
-# Trazas REALES de Claude Code (no inventadas): el mismo traductor que corre
-# en produccion (runtime_claude_translate) las convierte al JSONL neutral que
-# consume classify_agent_failure -- mismo patron que el bloque [O] de
-# test-stream-watch.sh.
-RAW_5XX="$(cat "$FIXDIR/api-error-529.jsonl")"
-RAW_4XX="$(cat "$FIXDIR/api-error-404.jsonl")"
-RAW_GENERIC="$(cat "$FIXDIR/result-max-turns.jsonl")"
-RAW_SUCCESS="$(cat "$FIXDIR/success.jsonl")"
-
-# Entorno minimo para ejecutar run_agent extraido, sin invocar el CLI real.
+# Entorno minimo para ejecutar run_agent extraido, sin invocar ningun CLI ni
+# el runner real.
 setup_run_agent_env() {
     local wt="$1"
 
@@ -174,6 +169,18 @@ setup_run_agent_env() {
     AGENT_WR_METRICS_JSON=""; AGENT_RV_METRICS_JSON=""
     LAST_AGENT_DURATION=0; LAST_AGENT_METRICS_JSON=""
 
+    # run_agent (issue #910) referencia estas bajo `set -u`: SCRIPT_DIR solo se
+    # usa para componer el default de RUN_AGENT_BIN/--system-file, y
+    # MEFISTO_RUNTIME_RESUELTO viaja tal cual al runner -- ninguno de los dos
+    # necesita resolver a algo real porque el stub del runner ignora ambos.
+    SCRIPT_DIR="$REPO_ROOT/src/internal/scripts"
+    MEFISTO_RUNTIME_RESUELTO="claude"
+    # El modelo por stage lo resuelve el pipeline ANTES del worktree (CA-2), no
+    # run_agent: aqui basta con fijar el resultado. Vacio = heredar, que es
+    # ademas el caso que ejerce la rama sin --model del array del runner.
+    MODEL_WRITER=""
+    MODEL_REVIEWER=""
+
     # Reintentos rapidos: el bucle real espera 120s.
     export MEFISTO_AGENT_MAX_ATTEMPTS=3
     export MEFISTO_AGENT_RETRY_BACKOFF_SECONDS=0
@@ -187,37 +194,44 @@ setup_run_agent_env() {
     agent_work_is_trustworthy() { return 1; }
 }
 
-# Stub del invocador: falla con la traza cruda indicada durante los primeros
-# $STUB_FAILURES intentos y luego devuelve exito. Escribe DIRECTO al
-# $stdout_file/$stderr_file que run_agent le pasa (posiciones 3 y 4) -- el
-# resto de run_agent (runtime_claude_translate real, derive_stage_log_from_stream
-# stubeado, classify_agent_failure real) corre sin cambios. Lleva la cuenta en
-# disco.
-make_watchdog_stub() {
-    local raw_fail="$1" raw_success="$2"
-    STUB_RAW_FAIL="$raw_fail"
-    STUB_RAW_SUCCESS="$raw_success"
+# make_run_agent_stub <events_fail> <events_success> <fail_exit> <failures>
+#
+# Genera un runner de mentira (MEFISTO_RUN_AGENT_BIN) que falla con
+# <events_fail>/<fail_exit> durante los primeros <failures> intentos y luego
+# copia <events_success> con exit 0. No invoca ningun CLI real ni traduce
+# nada: run_agent ya recibe el JSONL neutral tal cual, como lo dejaria
+# mefisto-run-agent.sh. Lleva la cuenta de intentos en disco.
+make_run_agent_stub() {
+    local events_fail="$1" events_success="$2" fail_exit="$3" failures="$4"
     : > "$TMP/attempts.txt"
-    run_agent_with_watchdog() {
-        local stdout_file="$3" stderr_file="$4"
-        echo "x" >> "$TMP/attempts.txt"
-        local n
-        n=$(wc -l < "$TMP/attempts.txt" | tr -d ' ')
-        : > "$stderr_file"
-        if [ "$n" -le "$STUB_FAILURES" ]; then
-            printf '%s\n' "$STUB_RAW_FAIL" > "$stdout_file"
-            echo "1"
-        else
-            printf '%s\n' "$STUB_RAW_SUCCESS" > "$stdout_file"
-            echo "0"
-        fi
-    }
+    cat > "$TMP/fake-run-agent.sh" <<EOF
+#!/usr/bin/env bash
+set -u
+echo "x" >> "$TMP/attempts.txt"
+n=\$(wc -l < "$TMP/attempts.txt" | tr -d ' ')
+event_log=""
+while [ \$# -gt 0 ]; do
+    case "\$1" in
+        --event-log) event_log="\$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+if [ "\$n" -le "$failures" ]; then
+    cp "$events_fail" "\$event_log"
+    exit "$fail_exit"
+else
+    cp "$events_success" "\$event_log"
+    exit 0
+fi
+EOF
+    chmod +x "$TMP/fake-run-agent.sh"
+    export MEFISTO_RUN_AGENT_BIN="$TMP/fake-run-agent.sh"
 }
 
 attempts_made() { wc -l < "$TMP/attempts.txt" | tr -d ' '; }
 
 run_case() {
-    local desc="$1" raw_fail="$2" failures="$3" expected_attempts="$4" expect_ok="$5"
+    local desc="$1" fail_events="$2" failures="$3" expected_attempts="$4" expect_ok="$5"
 
     local wt="$TMP/wt-$RANDOM"
     mkdir -p "$wt"
@@ -228,8 +242,7 @@ run_case() {
     git -C "$wt" add -A && git -C "$wt" commit -qm base
 
     setup_run_agent_env "$wt"
-    STUB_FAILURES="$failures"
-    make_watchdog_stub "$raw_fail" "$RAW_SUCCESS"
+    make_run_agent_stub "$fail_events" "$EVENTS_OK" 1 "$failures"
 
     eval "$(extract_fn run_agent "$INTERNAL_PIPELINE")"
 
@@ -250,13 +263,13 @@ run_case() {
 }
 
 run_case "C-1: 5xx transitorio, exito al 2do intento" \
-    "$RAW_5XX" 1 2 ok
+    "$EVENTS_5XX" 1 2 ok
 run_case "C-2: 5xx persistente, se detiene en el tope de 3" \
-    "$RAW_5XX" 9 3 fail
+    "$EVENTS_5XX" 9 3 fail
 run_case "C-3: 4xx del cliente, no se reintenta" \
-    "$RAW_4XX" 9 1 fail
+    "$EVENTS_4XX" 9 1 fail
 run_case "C-4: error generico del CLI, no se reintenta" \
-    "$RAW_GENERIC" 9 1 fail
+    "$EVENTS_PLAIN" 9 1 fail
 
 # C-5: worktree restaurado entre reintentos cuando entraba limpio.
 WT_C5="$TMP/wt-c5"
@@ -268,25 +281,32 @@ echo "base" > "$WT_C5/base.txt"
 git -C "$WT_C5" add -A && git -C "$WT_C5" commit -qm base
 
 setup_run_agent_env "$WT_C5"
-STUB_FAILURES=1
 : > "$TMP/attempts.txt"
-run_agent_with_watchdog() {
-    local stdout_file="$3" stderr_file="$4"
-    echo "x" >> "$TMP/attempts.txt"
-    local n
-    n=$(wc -l < "$TMP/attempts.txt" | tr -d ' ')
-    : > "$stderr_file"
-    if [ "$n" -le "$STUB_FAILURES" ]; then
-        # El intento que falla deja basura en el worktree.
-        echo "a medias" > "$WT_C5/basura.txt"
-        echo "modificado" >> "$WT_C5/base.txt"
-        printf '%s\n' "$RAW_5XX" > "$stdout_file"
-        echo "1"
-    else
-        printf '%s\n' "$RAW_SUCCESS" > "$stdout_file"
-        echo "0"
-    fi
-}
+cat > "$TMP/fake-run-agent-c5.sh" <<EOF
+#!/usr/bin/env bash
+set -u
+echo "x" >> "$TMP/attempts.txt"
+n=\$(wc -l < "$TMP/attempts.txt" | tr -d ' ')
+event_log=""
+while [ \$# -gt 0 ]; do
+    case "\$1" in
+        --event-log) event_log="\$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+if [ "\$n" -le "1" ]; then
+    # El intento que falla deja basura en el worktree.
+    echo "a medias" > "$WT_C5/basura.txt"
+    echo "modificado" >> "$WT_C5/base.txt"
+    cp "$EVENTS_5XX" "\$event_log"
+    exit 1
+else
+    cp "$EVENTS_OK" "\$event_log"
+    exit 0
+fi
+EOF
+chmod +x "$TMP/fake-run-agent-c5.sh"
+export MEFISTO_RUN_AGENT_BIN="$TMP/fake-run-agent-c5.sh"
 eval "$(extract_fn run_agent "$INTERNAL_PIPELINE")"
 run_agent "1" "writer" "prompt" >/dev/null 2>&1 || true
 
@@ -308,9 +328,7 @@ git -C "$WT_C6" add -A && git -C "$WT_C6" commit -qm base
 echo "trabajo del writer sin commitear" > "$WT_C6/previo.txt"
 
 setup_run_agent_env "$WT_C6"
-STUB_FAILURES=1
-: > "$TMP/attempts.txt"
-make_watchdog_stub "$RAW_5XX" "$RAW_SUCCESS"
+make_run_agent_stub "$EVENTS_5XX" "$EVENTS_OK" 1 1
 eval "$(extract_fn run_agent "$INTERNAL_PIPELINE")"
 run_agent "1" "writer" "prompt" >/dev/null 2>&1 || true
 

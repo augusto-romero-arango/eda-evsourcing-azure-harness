@@ -18,9 +18,12 @@
 #       de auditoria (CA-4).
 #   mefisto-tooling-pipeline.sh (bloques 11-14) -- --models se resuelve ANTES
 #       de crear el worktree (CA-1: un malformado no debe dejar un worktree a
-#       medias), el mensaje de abort, el wiring de run_agent (resolve_stage_model
-#       por clave exacta, defaults 'writer'/'sonnet' y 'reviewer'/'opus' intactos)
-#       y la ayuda del script.
+#       medias), el mensaje de abort, el wiring del modelo por stage
+#       (resolve_stage_model por clave exacta sigue ganando, y sin match cae a
+#       mefisto_resolve_model por perfil -- balanced para writer/merge, deep
+#       para reviewer -- ya sin los defaults fijos sonnet/opus; tambien ANTES
+#       del worktree, y run_agent solo selecciona lo ya resuelto, issue #910) y
+#       la ayuda del script.
 #   mefisto-tmux-pipeline.sh (bloques 15-18) -- --tooling reenvia --models
 #       intacto al send-keys (con comillas simples, CA-3), se combina con
 #       --from-stage, --models sin valor aborta, y --batch lo rechaza
@@ -142,16 +145,50 @@ else
 fi
 
 echo ""
-echo "[13] run_agent aplica resolve_stage_model por clave exacta, defaults intactos"
-if grep -qF 'AGENT_MODEL="$(resolve_stage_model "$agent" "$AGENT_MODEL_DEFAULT")"' "$PIPE_PATH"; then
-    pass "AGENT_MODEL se resuelve via resolve_stage_model"
+echo "[13] el modelo por stage se resuelve ANTES del worktree: --models gana por clave exacta, sin defaults fijos sonnet/opus (issue #910)"
+if grep -qF 'MEFISTO_STAGE_MODEL_RESUELTO="$(resolve_stage_model "$stage_key" "")"' "$PIPE_PATH"; then
+    pass "la resolucion consulta primero el override --models (default vacio = sin match)"
 else
-    fail "no se encontro la resolucion de AGENT_MODEL via resolve_stage_model"
+    fail "no se encontro la consulta de resolve_stage_model con default vacio"
 fi
-if grep -qF 'reviewer) AGENT_MODEL_DEFAULT="opus" ;;' "$PIPE_PATH" && grep -qF '*)        AGENT_MODEL_DEFAULT="sonnet" ;;' "$PIPE_PATH"; then
-    pass "defaults intactos: reviewer=opus, resto=sonnet"
+if grep -qF 'mefisto_resolve_model "$MEFISTO_RUNTIME_RESUELTO" "$agent_id" "$profile" > "$out_file"' "$PIPE_PATH"; then
+    pass "sin override, cae a mefisto_resolve_model (runtime + id neutral + perfil)"
 else
-    fail "los defaults de AGENT_MODEL_DEFAULT cambiaron o no se encontraron"
+    fail "no se encontro la resolucion via mefisto_resolve_model"
+fi
+# Redirect simple (>), nunca "$(...)": mefisto_resolve_model deja el motivo del
+# fallo en MEFISTO_MODELS_ERROR, y una sustitucion de comando lo perderia en su
+# subshell -- el abort del pipeline quedaria con "motivo desconocido" SIEMPRE.
+if grep -qF 'abort "No se pudo resolver el modelo de $agent_id (perfil $profile): ${MEFISTO_MODELS_ERROR' "$PIPE_PATH"; then
+    pass "el abort interpola MEFISTO_MODELS_ERROR (leible porque la llamada NO va en \$(...))"
+else
+    fail "el abort del modelo no interpola MEFISTO_MODELS_ERROR"
+fi
+if grep -qF 'resolve_pipeline_stage_model "writer" "mefisto-writer" "balanced"' "$PIPE_PATH" \
+    && grep -qF 'resolve_pipeline_stage_model "reviewer" "mefisto-reviewer" "deep"' "$PIPE_PATH"; then
+    pass "perfiles intactos: reviewer=deep, writer (y el stage merge)=balanced"
+else
+    fail "los perfiles por agente cambiaron o no se encontraron"
+fi
+# CA-2: igual que --models, un mapping local invalido debe abortar antes de
+# dejar un worktree a medias en disco.
+model_line=$(grep -n 'resolve_pipeline_stage_model "writer"' "$PIPE_PATH" | head -n1 | cut -d: -f1)
+if [ -n "$model_line" ] && [ -n "$worktree_line" ] && [ "$model_line" -lt "$worktree_line" ]; then
+    pass "la resolucion del modelo (linea $model_line) antecede a git worktree add (linea $worktree_line)"
+else
+    fail "orden incorrecto: resolucion de modelo=$model_line, git worktree add=$worktree_line"
+fi
+# run_agent ya no resuelve nada: solo selecciona el modelo ya resuelto por rol.
+if grep -qF 'reviewer) MEFISTO_AGENT_ID="mefisto-reviewer"; AGENT_MODEL="$MODEL_REVIEWER" ;;' "$PIPE_PATH" \
+    && grep -qF '*)        MEFISTO_AGENT_ID="mefisto-writer";   AGENT_MODEL="$MODEL_WRITER" ;;' "$PIPE_PATH"; then
+    pass "run_agent selecciona el modelo ya resuelto (writer/merge -> MODEL_WRITER, reviewer -> MODEL_REVIEWER)"
+else
+    fail "run_agent no selecciona el modelo ya resuelto por rol"
+fi
+if grep -qE 'AGENT_MODEL_DEFAULT="(sonnet|opus)"' "$PIPE_PATH"; then
+    fail "quedan defaults fijos sonnet/opus en el pipeline (CA-2: deben desaparecer)"
+else
+    pass "los defaults fijos sonnet/opus ya no estan en el pipeline"
 fi
 
 echo ""
