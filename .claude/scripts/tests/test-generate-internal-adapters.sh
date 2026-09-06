@@ -16,8 +16,9 @@
 #   [invalid-source] Un fixture invalido de #853 aborta sin escribir nada.
 #   [determinism] CA-4: dos corridas consecutivas y una tercera tras tocar el
 #         mtime de las fuentes producen el mismo arbol de salida (shasum).
-#   [check] --check en sus tres estados: al dia, distinta, huerfana (con
-#         toleracion de archivos sin marcador, CA-5).
+#   [check] --check en sus cuatro estados: al dia, distinta, huerfana y sin
+#         marcador (issue #913: la toleracion residual del archivo sin
+#         marcador se retira -- ahora es divergencia, no un caso tolerado).
 #   [escaping] id con muchos guiones y description con ':' y comillas.
 #   [mcp-capability] CA-2: la capacidad `mcp` no tiene mapeo Claude definido y
 #         aborta con ese motivo, sin escribir nada.
@@ -362,7 +363,7 @@ assert_eq "$SUM_A" "$SUM_B" "dos corridas consecutivas producen el mismo arbol"
 assert_eq "$SUM_B" "$SUM_C" "una tercera corrida tras tocar el mtime de las fuentes produce el mismo arbol"
 
 echo ""
-echo "[check] --check en sus tres estados"
+echo "[check] --check en sus cuatro estados (al dia, distinta, huerfana, sin marcador)"
 CHECK_DIR="$WORKDIR/check-dir"
 "$GENERATOR" --out "$CHECK_DIR" "$SRC_DIR/mefisto-fx-agent-basic.md" "$SRC_DIR/mefisto-fx-command-basic.md" >/dev/null 2>&1
 
@@ -402,10 +403,10 @@ if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qF ".claude/commands/mefisto-fx
 else
     fail "huerfana -> no reporto la divergencia esperada. exit=$RC salida: $OUT"
 fi
-if printf '%s' "$OUT" | grep -qF "mefisto-manual.md"; then
-    fail "un archivo sin marcador (autoria manual) se reporto incorrectamente como huerfano/distinto (CA-5)"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qF ".claude/commands/mefisto-manual.md: sin marcador"; then
+    pass "sin marcador -> exit != 0 con la linea esperada (issue #913, ya no se tolera)"
 else
-    pass "un archivo sin marcador (autoria manual) se tolera, no se reporta (CA-5)"
+    fail "sin marcador -> no reporto la divergencia esperada. exit=$RC salida: $OUT"
 fi
 
 echo ""

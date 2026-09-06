@@ -161,6 +161,13 @@
       "motivo": "Hook PostToolUse de scope temprano (issue #523): Claude Code lo lanza por la ruta fija de .claude/settings.json y documenta (nunca compone) la ruta ignorada por git .claude/pipeline/** que debe callar para mantener paridad con validate_mefisto_scope_changes -- el estado legacy que MEF-ADR-0049 seccion 3 deja sin migrar. Excepcion nombrada por el padre #873."
     },
     {
+      "path": ".claude/scripts/mefisto-metrics-report.sh",
+      "rules": [
+        "R3"
+      ],
+      "motivo": "Reporte agregado de metricas del pipeline interno (issue #427), declarado not_migrated: documenta (nunca compone) la lectura dual de .mefisto/pipeline/ (canonico) y .claude/pipeline/ (legacy sin migrar, MEF-ADR-0049 seccion 3) que mefisto_state_read_paths resuelve (issue #869) -- prosa que explica por que agrega dos ubicaciones, no una invocacion ni una ruta compuesta a mano (issue #913)."
+    },
+    {
       "path": ".claude/agents/**",
       "rules": [
         "R2"

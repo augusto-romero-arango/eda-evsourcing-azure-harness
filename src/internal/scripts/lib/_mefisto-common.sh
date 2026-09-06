@@ -23,8 +23,8 @@
 # (MEF-ADR-0049 CA-3). Vive junto a este archivo, en src/internal/scripts/lib/
 # (issue #851/#869); este archivo solo lo `source`a. Misma tecnica de
 # resolucion de ruta que get_harness_version (mas abajo): relativa a este
-# propio archivo via BASH_SOURCE, nunca a CLAUDE_PROJECT_DIR ni
-# CLAUDE_PLUGIN_ROOT (issue #873 CA-4 lo prohibira).
+# propio archivo via BASH_SOURCE, nunca a una variable de entorno especifica
+# de un runtime concreto (issue #873, R3 del gate de neutralidad lo prohibe).
 # El `[ -f ]` previo al `source` no es defensa decorativa: sin el, un helper
 # ausente o movido aborta con un "No such file or directory" crudo que no dice
 # ni que archivo faltaba ni por que; y si el `cd` fallara, la ruta compuesta
@@ -170,7 +170,8 @@ get_harness_sha() {
 #   .claude/agents/          Agentes internos
 #   .claude/scripts/         Pipelines internos
 #   .claude/settings.json    Hooks del pipeline interno. Entrada EXACTA, no .claude/*:
-#                            .claude/harness.config.json y .claude/pipeline/* siguen fuera.
+#                            .claude/harness.config.json y el legado de estado
+#                            previo a MEF-ADR-0049 siguen fuera.
 #                            Deliberadamente NO se replica en is_path_in_consumer_blocklist
 #                            (scripts/_pipeline-common.sh registra el porque).
 #   .mcp.json                Declaracion del servidor MCP bundleado del plugin (server
@@ -643,9 +644,9 @@ find_open_pr_for_branch() {
 # worktree del issue: una entrada malformada debe abortar temprano, no a mitad
 # de Stage 1 con un worktree ya creado.
 #
-# No valida el NOMBRE del modelo (alias como 'sonnet'/'opus' o un id completo
-# como 'claude-opus-5[1m]' son ambos pass-through, sin allowlist propia -- los
-# alias evolucionan con el CLI): solo la forma 'clave=valor' de cada entrada y
+# No valida el NOMBRE del modelo (un alias corto o un id de modelo completo son
+# ambos pass-through, sin allowlist propia -- el vocabulario de modelos de cada
+# proveedor evoluciona con el CLI): solo la forma 'clave=valor' de cada entrada y
 # que ninguna clave de agente se repita. Un modelo invalido lo delata el
 # patron de error existente del stream (result.is_error, ya clasificado por
 # classify_agent_failure/run_agent).
@@ -783,11 +784,12 @@ validate_variant_label() {
 # `EXIT=$(run_agent_with_watchdog ...)`).
 #
 # La separacion stdout/stderr es deliberada (issue #425): desde que el caller
-# invoca `claude -p` con `--output-format stream-json`, <stdout_file> recibe
-# el stream JSON crudo (una linea por evento) mientras que los mensajes de
-# error del propio CLI (`API Error: ...`, cortes de conexion) siguen llegando
-# como texto plano por stderr. Un `2>&1` clasico mezclaria ese texto DENTRO
-# del JSONL y lo corromperia -- exactamente lo que este cambio evita.
+# invoca el CLI del runtime en modo no interactivo con la salida de eventos en
+# streaming JSON, <stdout_file> recibe el stream JSON crudo (una linea por
+# evento) mientras que los mensajes de error del propio CLI (`API Error: ...`,
+# cortes de conexion) siguen llegando como texto plano por stderr. Un `2>&1`
+# clasico mezclaria ese texto DENTRO del JSONL y lo corromperia -- exactamente
+# lo que este cambio evita.
 #
 # Arregla dos grietas de correctitud del watchdog original de
 # mefisto-tooling-pipeline.sh (issue #424), con evidencia en el historico: los
@@ -1416,8 +1418,9 @@ build_agents_history_json() {
 #
 # Alcance: se calcula UNA vez por corrida y se aplica en los RUNNERS
 # (mefisto-tmux-pipeline.sh, mefisto-herdr-pipeline.sh) sobre el lanzamiento
-# del sub-pipeline interno, no en cada `claude -p` individual. Un pipeline
-# invocado directo, sin pasar por un runner, queda sin envolver.
+# del sub-pipeline interno, no en cada invocacion individual del CLI del
+# runtime. Un pipeline invocado directo, sin pasar por un runner, queda sin
+# envolver.
 caffeinate_prefix() {
     if command -v caffeinate >/dev/null 2>&1; then
         printf '%s' "caffeinate -i"

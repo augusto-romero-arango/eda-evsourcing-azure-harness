@@ -363,10 +363,13 @@ hace verificable a `--check`, y un timestamp lo romperia en cada corrida.
 
 `generate-internal-adapters.sh --check` no escribe nada -- ni siquiera el
 directorio de salida: genera en un temporal y compara contra lo versionado,
-imprimiendo una linea `<ruta>: faltante|distinta|huerfana` por divergencia y
-saliendo con exit 1. *Huerfana* es un archivo **con** el marcador cuya fuente
-ya no existe. Un archivo **sin** marcador se tolera (es de autoria manual):
-es la toleracion transitoria que #873 retira.
+imprimiendo una linea `<ruta>: faltante|distinta|huerfana|sin marcador` por
+divergencia y saliendo con exit 1. *Huerfana* es un archivo **con** el marcador
+cuya fuente ya no existe; *sin marcador* es un `.md` bajo `.claude/{agents,commands}`
+u `.opencode/{agents,commands}` cuyo body no empieza por el marcador. Ambos son
+divergencia: no queda ningun adaptador de autoria manual bajo esas rutas, asi
+que la toleracion transitoria de #854 se retiro (issue #913, MEF-ADR-0049
+decision 2).
 
 ## Subconjunto de JSON Schema soportado
 

@@ -10,7 +10,7 @@
 #   src/internal/scripts/mefisto-tooling-pipeline.sh 42
 #   src/internal/scripts/mefisto-tooling-pipeline.sh --issue 42
 #   src/internal/scripts/mefisto-tooling-pipeline.sh 42 --from-stage 2
-#   src/internal/scripts/mefisto-tooling-pipeline.sh 42 --models 'reviewer=opus,writer=sonnet'  # Modelo por stage (experimentos)
+#   src/internal/scripts/mefisto-tooling-pipeline.sh 42 --models 'reviewer=<modelo>,writer=<modelo>'  # Modelo por stage (experimentos)
 #   src/internal/scripts/mefisto-tooling-pipeline.sh 42 --variant experimento-a  # Corrida paralela del mismo issue (sin PR, rama local)
 #
 # Ciclo: Issue (en repo Mefisto) -> Worktree -> Writer -> Reviewer -> Sync main -> PR -> Cleanup
@@ -26,7 +26,7 @@ source "$SCRIPT_DIR/lib/_mefisto-common.sh"
 assert_in_mefisto || exit 1
 
 # Runner neutral a runtime (MEF-ADR-0049 decision 1, issue #910): run_agent ya
-# no invoca `claude -p` directo -- lanza src/internal/scripts/mefisto-run-agent.sh
+# no invoca el CLI de un runtime concreto directo -- lanza src/internal/scripts/mefisto-run-agent.sh
 # (issue #858), que resuelve su propio adaptador (runtime-claude.sh/runtime-
 # opencode.sh) y escribe el JSONL neutral que consumen las funciones de
 # clasificacion de lib/_mefisto-common.sh (el puente runtime_claude_translate
@@ -335,8 +335,8 @@ fi
 #
 # Perfil por rol: balanced para escritura, deep para revision -- mismo criterio
 # de siempre (issue #710), ahora expresado como perfil logico en vez de un
-# modelo fijo. Los defaults 'sonnet'/'opus' ya no viven en este pipeline: quien
-# quiera pinnear un modelo usa --models (por corrida) o .mefisto/models.json
+# modelo fijo. Los defaults por alias de modelo ya no viven en este pipeline:
+# quien quiera pinnear un modelo usa --models (por corrida) o .mefisto/models.json
 # (por maquina). El stage de resolucion de conflictos corre como
 # `run_agent "merge" "writer"`, asi que reusa el modelo del writer.
 MODEL_WRITER=""
@@ -357,7 +357,7 @@ resolve_pipeline_stage_model() {
     if [ -n "$MEFISTO_STAGE_MODEL_RESUELTO" ]; then
         # Constancia del override que SI hizo match: el mapa que se loguea
         # arriba no dice cuales claves aplicaron, y una clave con typo
-        # ('revieweer=opus') no sobreescribe nada -- sin esta linea el
+        # ('revieweer=<modelo>') no sobreescribe nada -- sin esta linea el
         # experimento correria con el modelo por defecto y el reporte se lo
         # atribuiria al override.
         echo "[$(date +%H:%M:%S)] MODELS: $stage_key -> $MEFISTO_STAGE_MODEL_RESUELTO (override --models)" >> "$EVENTS_LOG_ABS"
@@ -482,8 +482,8 @@ else
     #
     # Si algun dia un hook interno necesita la ruta absoluta del events.log
     # centralizado, hay que resolverlo sin `git checkout --` sobre un archivo
-    # que el writer puede estar editando legitimamente (p. ej. leyendo
-    # $CLAUDE_PROJECT_DIR desde el propio hook).
+    # que el writer puede estar editando legitimamente (p. ej. leyendo una
+    # variable de entorno especifica de runtime desde el propio hook).
 
     update_status "setup" "running"
 
@@ -516,7 +516,7 @@ run_agent() {
     local events_file="${log_base}.events.jsonl"
     # Prompt del stage, en archivo (CA-1): mefisto-run-agent.sh recibe
     # --prompt-file, nunca el texto inline -- a diferencia de la vieja
-    # invocacion directa de `claude -p "$prompt"`.
+    # invocacion directa del CLI del runtime con el prompt inline.
     local prompt_file="$PIPELINE_DIR_ABS/prompts/mefisto-tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}.prompt.md"
     mkdir -p "$(dirname "$prompt_file")"
     printf '%s' "$prompt" > "$prompt_file"

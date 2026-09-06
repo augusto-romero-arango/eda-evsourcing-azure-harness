@@ -23,17 +23,16 @@
 #                 .claude/ ni .opencode/ reales del repo.
 #   --check       No escribe nada: genera en un directorio temporal y compara
 #                 contra lo ya versionado bajo la raiz de salida. Exit 1 y una
-#                 linea "<ruta>: faltante|distinta|huerfana" por divergencia;
-#                 exit 0 si todo coincide. Un archivo existente sin el
-#                 marcador de generado no cuenta como huerfano (toleracion
-#                 residual de CA-5: tras #865-#867 ya no queda ningun
-#                 adaptador de autoria manual bajo .claude/{agents,commands}
-#                 ni .opencode/, y #873 retira la toleracion).
+#                 linea "<ruta>: faltante|distinta|huerfana|sin marcador" por
+#                 divergencia; exit 0 si todo coincide. Todo archivo .md bajo
+#                 .claude/{agents,commands} u .opencode/{agents,commands} debe
+#                 llevar el marcador de generado -- no queda ningun adaptador
+#                 de autoria manual bajo esas rutas (issue #913).
 #
 # Exit code: 0 si genero (o, con --check, verifico) sin divergencias; 1 si la
 # validacion previa fallo, si algun archivo tiene una directiva de body
 # desconocida o una capacidad sin mapeo Claude, o si --check encontro
-# divergencias.
+# divergencias (incluida la ausencia del marcador de generado).
 #
 # Determinismo (CA-4): LC_ALL=C, archivos procesados en el orden recibido (o
 # el de un `find | sort` determinista si no se pasan explicitos), marcador de
@@ -216,6 +215,10 @@ if [ "$CHECK_MODE" -eq 1 ]; then
                     echo "$rel: huerfana"
                     DIVERGENCE=1
                 fi
+                ;;
+            *)
+                echo "$rel: sin marcador"
+                DIVERGENCE=1
                 ;;
         esac
     done < <(find "$OUT_ROOT/.claude/agents" "$OUT_ROOT/.claude/commands" "$OUT_ROOT/.opencode/agents" "$OUT_ROOT/.opencode/commands" -name '*.md' 2>/dev/null | sort)
