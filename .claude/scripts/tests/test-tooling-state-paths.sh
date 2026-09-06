@@ -222,6 +222,7 @@ else
 
     mkdir -p "$FAKE_MEFISTO/.claude-plugin" "$FAKE_MEFISTO/.claude/scripts" \
              "$FAKE_MEFISTO/src/internal/scripts/lib" "$FAKE_MEFISTO/src/internal/prompts" \
+             "$FAKE_MEFISTO/src/internal/contract" \
              "$FAKE_MEFISTO/docs" "$FAKE_MEFISTO/changelog.d"
     cat > "$FAKE_MEFISTO/.claude-plugin/plugin.json" <<'EOF'
 {
@@ -246,6 +247,14 @@ EOF
     cp "$REPO_ROOT/src/internal/prompts/noninteractive-system.md" "$FAKE_MEFISTO/src/internal/prompts/noninteractive-system.md"
     cp "$REPO_ROOT/src/internal/scripts/mefisto-run-agent.sh" "$FAKE_MEFISTO/src/internal/scripts/mefisto-run-agent.sh"
     chmod +x "$FAKE_MEFISTO/src/internal/scripts/mefisto-run-agent.sh"
+    # Gate de neutralidad (issue #914): mefisto-tooling-pipeline.sh ahora lo
+    # invoca tras cada stage, mismo motivo que runtime-claude.sh/mefisto-run-agent.sh
+    # arriba -- sin el, la corrida real del bloque G aborta con "No such file
+    # or directory" antes de llegar al gate de changelog.d/ que este bloque
+    # espera ejercer.
+    cp "$REPO_ROOT/src/internal/scripts/mefisto-neutrality-gate.sh" "$FAKE_MEFISTO/src/internal/scripts/mefisto-neutrality-gate.sh"
+    cp "$REPO_ROOT/src/internal/contract/neutrality-allowlist.json" "$FAKE_MEFISTO/src/internal/contract/neutrality-allowlist.json"
+    chmod +x "$FAKE_MEFISTO/src/internal/scripts/mefisto-neutrality-gate.sh"
     cp "$CANON_PIPE" "$FAKE_MEFISTO/src/internal/scripts/mefisto-tooling-pipeline.sh"
     cp "$SHIM_LIB" "$FAKE_MEFISTO/.claude/scripts/_mefisto-common.sh"
     cp "$SHIM_PIPE" "$FAKE_MEFISTO/.claude/scripts/mefisto-tooling-pipeline.sh"

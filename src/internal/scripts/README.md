@@ -34,7 +34,9 @@ adaptadores nunca se editan a mano" de MEF-ADR-0049 decision 2 -- esa regla
 gobierna `.claude/{agents,commands}/`, que si son salida del generador --:
 tres lineas identicas para todos, sin un solo campo que derive de la fuente
 neutral, no justifican una etapa de generacion; lo que si hace falta es un
-gate que verifique la conformidad, y ese es el trabajo de #873.
+gate que verifique la conformidad: `mefisto-neutrality-gate.sh` (regla R4,
+issue #911), que `mefisto-tooling-pipeline.sh` corre tras cada stage y
+`mefisto-release.sh` en su fase `prepare` (issue #914).
 
 ## Precedente: mefisto-release.sh (issue #864) y _mefisto-common.sh (issue #869)
 
