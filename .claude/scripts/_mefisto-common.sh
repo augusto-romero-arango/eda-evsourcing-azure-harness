@@ -10,6 +10,32 @@
 # del consumidor) ni dotnet/Terraform. Operan sobre commands/, agents/, scripts/,
 # hooks/, docs/adr/ y archivos de gobierno del repo.
 
+# --- Estado interno resuelto por mefisto-state.sh (issue #856) --------------
+#
+# Fuente unica de MEFISTO_STATE_DIR/MEFISTO_LEGACY_STATE_DIR y de las funciones
+# mefisto_state_path/mefisto_state_read_paths/mefisto_state_read_first
+# (MEF-ADR-0049 CA-3). Vive en src/internal/scripts/lib/ (layout canonico del
+# ADR, issue #851) para no tener que moverlo despues; este archivo solo lo
+# `source`a. Misma tecnica de resolucion de ruta que get_harness_version (mas
+# abajo): relativa a este propio archivo via BASH_SOURCE, nunca a
+# CLAUDE_PROJECT_DIR ni CLAUDE_PLUGIN_ROOT (issue #873 CA-4 lo prohibira).
+# El `[ -f ]` previo al `source` no es defensa decorativa: sin el, un helper
+# ausente o movido aborta con un "No such file or directory" crudo que no dice
+# ni que archivo faltaba ni por que; y si el `cd` fallara, la ruta compuesta
+# seria un "/../../src/..." que despista mas de lo que informa. El `return 1`
+# corta el resto de este archivo a proposito -- deja is_path_in_mefisto_scope
+# sin definir, que es justo lo que el hook de scope detecta con `declare -F`
+# para degradar en silencio (mefisto-scope-hook.sh), mientras los pipelines
+# con `set -e` abortan de una con el motivo en stderr.
+_mefisto_common_state_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/../../src/internal/scripts/lib/mefisto-state.sh"
+if [ ! -f "$_mefisto_common_state_lib" ]; then
+    echo "ERROR: no se encontro el helper de estado interno de Mefisto en '$_mefisto_common_state_lib' (issue #856)" >&2
+    unset _mefisto_common_state_lib
+    return 1
+fi
+source "$_mefisto_common_state_lib"
+unset _mefisto_common_state_lib
+
 # assert_in_mefisto
 #
 # Verifica que estamos en el repo del propio Mefisto (presencia de

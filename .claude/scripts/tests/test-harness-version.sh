@@ -95,8 +95,9 @@ fi
 # .claude/).
 
 FIXTURE="$TMP/fixture"
-mkdir -p "$FIXTURE/.claude/scripts" "$FIXTURE/.claude-plugin"
+mkdir -p "$FIXTURE/.claude/scripts" "$FIXTURE/.claude-plugin" "$FIXTURE/src/internal/scripts/lib"
 cp "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" "$FIXTURE/.claude/scripts/_mefisto-common.sh"
+cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FIXTURE/src/internal/scripts/lib/mefisto-state.sh"
 
 # -------- Bloque A: con jq, version valida --------
 
@@ -328,7 +329,7 @@ echo "[K] mefisto-metrics-report.sh agrega historial mixto legado + con los camp
 
 if command -v jq >/dev/null 2>&1; then
     FAKE_REPO="$TMP/fake-mefisto"
-    mkdir -p "$FAKE_REPO/.claude/scripts" "$FAKE_REPO/.claude-plugin" "$FAKE_REPO/.claude/pipeline"
+    mkdir -p "$FAKE_REPO/.claude/scripts" "$FAKE_REPO/.claude-plugin" "$FAKE_REPO/.claude/pipeline" "$FAKE_REPO/src/internal/scripts/lib"
     git -C "$FAKE_REPO" init -q
     cat > "$FAKE_REPO/.claude-plugin/plugin.json" <<'EOF'
 {
@@ -337,6 +338,7 @@ if command -v jq >/dev/null 2>&1; then
 }
 EOF
     cp "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" "$FAKE_REPO/.claude/scripts/_mefisto-common.sh"
+    cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_REPO/src/internal/scripts/lib/mefisto-state.sh"
     cp "$REPO_ROOT/.claude/scripts/mefisto-metrics-report.sh" "$FAKE_REPO/.claude/scripts/mefisto-metrics-report.sh"
     chmod +x "$FAKE_REPO/.claude/scripts/mefisto-metrics-report.sh"
 
