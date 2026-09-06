@@ -282,7 +282,7 @@ if [ "$SHIM_LINES" -eq 3 ] \
     && ! grep -qE '\bCLAUDE_PLUGIN_ROOT\b|\bCLAUDE_PROJECT_DIR\b' "$RELEASE_SHIM"; then
     pass "G-4: el shim son 3 lineas, reenvia con 'exec \"\$@\"' y no referencia variables de Claude Code"
 else
-    fail "G-4: el shim no sigue la plantilla de src/internal/scripts/README.md (${SHIM_LINES} lineas no comentario/vacias)"
+    fail "G-4: el shim no sigue la plantilla de src/internal/scripts/README.md (${SHIM_LINES} lineas no vacias)"
 fi
 
 # Solo lineas de CODIGO (no comentarios): el criterio prohibe rutas

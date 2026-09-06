@@ -28,11 +28,19 @@ issue #873 verificara que todo `.claude/scripts/*.sh` sea, o bien un shim
 conforme a esta plantilla, o bien un script explicitamente listado como
 todavia-no-migrado.
 
+Los shims se escriben **a mano**, copiando la plantilla; no los emite
+`generate-internal-adapters.sh`. Es la excepcion deliberada al "los
+adaptadores nunca se editan a mano" de MEF-ADR-0049 decision 2 -- esa regla
+gobierna `.claude/{agents,commands}/`, que si son salida del generador --:
+tres lineas identicas para todos, sin un solo campo que derive de la fuente
+neutral, no justifican una etapa de generacion; lo que si hace falta es un
+gate que verifique la conformidad, y ese es el trabajo de #873.
+
 ## Precedente: mefisto-release.sh (issue #864)
 
 Primer script trasladado. Su unica referencia a `.claude/scripts/` es el
-`source` de `_mefisto-common.sh` (issue #856), resuelto vía `MEFISTO_REPO_ROOT`
--- nunca vía `dirname "$0"`, porque el script ya no vive en ese directorio.
+`source` de `_mefisto-common.sh` (issue #856), resuelto via `MEFISTO_REPO_ROOT`
+-- nunca via `dirname "$0"`, porque el script ya no vive en ese directorio.
 Es transitorio: cuando `_mefisto-common.sh` se traslade a
 `src/internal/scripts/lib/` (issue #869), ese `source` pasa a resolverse igual
 que el resto de la libreria (relativo al propio archivo).
