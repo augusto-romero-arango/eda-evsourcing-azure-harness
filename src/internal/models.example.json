@@ -1,0 +1,22 @@
+{
+  "claude": {
+    "profiles": {
+      "fast": "<provider/model>",
+      "balanced": "<provider/model>",
+      "deep": "<provider/model>"
+    },
+    "agents": {
+      "<agent-id>": "<provider/model>"
+    }
+  },
+  "opencode": {
+    "profiles": {
+      "fast": "<provider/model>",
+      "balanced": "<provider/model>",
+      "deep": "<provider/model>"
+    },
+    "agents": {
+      "<agent-id>": "<provider/model>"
+    }
+  }
+}

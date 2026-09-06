@@ -2,13 +2,30 @@
 # adapter-opencode.sh -- Traduce un artefacto neutral (frontmatter JSON +
 # body, ver src/internal/contract/README.md) al formato que OpenCode 1.18.29
 # consume: `description`, `mode` (agente); `description`, `agent`, `subtask`
-# (comando). Sin `model` (issue #857) ni `tools`/`permission` (issue #862).
-# Issue #854.
+# (comando). Sin `model` -- decision de MEF-ADR-0049 (CA-4 enmendada, issue
+# #857): el adaptador OpenCode no tiene tabla por defecto, siempre hereda el
+# modelo activo de la sesion salvo mapping local o override -- ni
+# `tools`/`permission` (issue #862). Issue #854.
 #
 # Se `source`a desde generate-internal-adapters.sh. Ninguna funcion de aqui
 # escribe en disco: todas imprimen a stdout el contenido completo del archivo
 # de salida, o fallan (return 1, mensaje ya impreso en stderr) sin imprimir
 # nada por stdout.
+
+# adapter_opencode_default_model <perfil> -- el adaptador OpenCode no tiene
+# tabla por defecto (MEF-ADR-0049 CA-4 enmendada, issue #857): imprime
+# siempre cadena vacia ("" = hereda) para cualquier perfil del vocabulario
+# cerrado. Existe solo para que mefisto_resolve_model (src/internal/scripts/
+# lib/mefisto-models.sh) trate a los dos runtimes con la misma interfaz
+# adapter_<runtime>_default_model -- no porque OpenCode necesite una tabla.
+# Retorna 1 sin imprimir nada si <perfil> no esta en el vocabulario cerrado
+# fast|balanced|deep (no ocurre en la practica: ver adapter_claude_default_model).
+adapter_opencode_default_model() {
+    case "$1" in
+        fast|balanced|deep) printf '%s' "" ;;
+        *)                  return 1 ;;
+    esac
+}
 
 # opencode_translate_body <rel_source> <body> -- imprime el body con las
 # directivas neutrales (CA-3) traducidas a su forma OpenCode:

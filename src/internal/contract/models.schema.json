@@ -1,0 +1,43 @@
+{
+  "$comment": "Contrato del mapping local de modelos (MEF-ADR-0049 CA-4 enmendada, issue #857): .mefisto/models.json, NUNCA versionado (ver src/internal/models.example.json para la plantilla con placeholders). Validado por jsonschema-lite.jq -- sin $ref (no soportado por ese subconjunto), el sub-schema de runtime se repite literalmente para 'claude' y 'opencode' en vez de referenciarse. 'agents' es un mapa abierto agente-id -> modelo (string): jsonschema-lite.jq no soporta patternProperties, asi que el schema no puede acotar el TIPO de cada valor de ese mapa mas alla de lo que 'properties'/'additionalProperties' ya cubren a nivel de runtime -- los valores opacos que declara CA-4 del issue #857 se propagan sin mas validacion que la de mefisto_resolve_model en tiempo de ejecucion.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "claude": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "profiles": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "fast": { "type": "string", "minLength": 1 },
+            "balanced": { "type": "string", "minLength": 1 },
+            "deep": { "type": "string", "minLength": 1 }
+          }
+        },
+        "agents": {
+          "type": "object"
+        }
+      }
+    },
+    "opencode": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "profiles": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "fast": { "type": "string", "minLength": 1 },
+            "balanced": { "type": "string", "minLength": 1 },
+            "deep": { "type": "string", "minLength": 1 }
+          }
+        },
+        "agents": {
+          "type": "object"
+        }
+      }
+    }
+  }
+}
