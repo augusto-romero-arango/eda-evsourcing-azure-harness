@@ -353,6 +353,11 @@ is_missing() {
 # como "n" o "t" sin ser una secuencia de escape), asi que lo que le llega a
 # `%b` como backslash unico proviene siempre de un backslash real ya
 # duplicado por `@tsv` -- nunca deja una secuencia ambigua tipo octal.
+#
+# Lo que sale de aqui es TEXTO YA DECODIFICADO: imprimirlo hay que hacerlo
+# con `%s`, nunca interpolandolo dentro de un formato `%b`. Un segundo pase
+# de `%b` reinterpretaria los backslashes que el dato contiene de verdad
+# (`\t` -> tab real, `\c` -> corta la salida y se traga el salto de linea).
 tsv_decode() {
     printf '%b' "$1"
 }
@@ -596,13 +601,23 @@ render_row() {
             PREV_EMS="$ts"
             ;;
         tool_started)
-            local resumen
+            # El nombre de la tool y el resumen van por `%s`, NUNCA
+            # interpolados en el formato `%b`: `tsv_decode` ya los decodifico
+            # una vez, y un segundo pase de `%b` volveria a interpretar los
+            # backslashes que el propio comando contiene -- un
+            # `input_summary` de Bash como `sed 's/\t/ /'` imprimiria un tab
+            # real en vez del texto del comando, y uno con `\c` TRUNCARIA la
+            # linea (incluido su salto de linea) pegando el evento siguiente
+            # a esta fila. Solo los codigos de color, que son literales de
+            # este script, se interpolan en el `%b`.
+            local resumen prefijo
+            prefijo="${BLUE}[${now_str}]${NC} ${delta_str}  ${BOLD}"
             resumen=$(tsv_decode "$p4")
             if is_missing "$resumen"; then
-                printf '%b\n' "${BLUE}[${now_str}]${NC} ${delta_str}  ${BOLD}${p3}${NC}"
+                printf '%b%s%b\n' "$prefijo" "$p3" "${NC}"
             else
                 resumen=$(relativize_path "$resumen" "$CURRENT_CWD")
-                printf '%b\n' "${BLUE}[${now_str}]${NC} ${delta_str}  ${BOLD}${p3}${NC}: ${resumen}"
+                printf '%b%s%b%s\n' "$prefijo" "$p3" "${NC}: " "$resumen"
             fi
             PREV_EMS="$ts"
             ;;
@@ -615,7 +630,8 @@ render_row() {
             # contrato lo declara obligatorio, asi que esa rama nunca ocurre
             # en la practica.
             if [ "$p4" = "false" ]; then
-                printf '%b\n' "${BLUE}[${now_str}]${NC} ${delta_str}  ${BOLD}${p3}${NC} fallo ($(fmt_ms_nd "$p5"))"
+                printf '%b%s%b\n' "${BLUE}[${now_str}]${NC} ${delta_str}  ${BOLD}" \
+                    "$p3" "${NC} fallo ($(fmt_ms_nd "$p5"))"
                 PREV_EMS="$ts"
             fi
             ;;

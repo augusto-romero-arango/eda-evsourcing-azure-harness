@@ -31,6 +31,9 @@
 #       tool.completed deja de imprimir linea cuando ok=true (ya se vio al
 #       arrancar); ok=false si señala "fallo" con su duracion. run.started no
 #       imprime nada por si mismo (solo fija el cwd) ni cuenta como ignorado.
+#       Un input_summary con `\t`/`\c` literales (comando de Bash) se
+#       muestra fiel y sin truncar (CA-6 aplicado al resumen, no solo al
+#       texto).
 #   [C] Cierre de stage (terminal) con TODOS los campos presentes -> "OK" y
 #       ningun "n/d" en la salida (CA-2/CA-3).
 #   [D] Cierre de stage con los campos ausentes tipicos de una corrida
@@ -270,15 +273,16 @@ printf '%s\n' \
   '{"v":1,"type":"tool.completed","ts":"2026-09-05T10:00:05Z","tool":"Bash","ok":false,"duration_ms":null}' \
   '{"v":1,"type":"tool.started","ts":"2026-09-05T10:00:06Z","tool":"WebFetch","input_summary":"/otra/ruta/afuera.txt"}' \
   '{"v":1,"type":"tool.completed","ts":"2026-09-05T10:00:06.200Z","tool":"WebFetch","ok":false,"duration_ms":200}' \
+  '{"v":1,"type":"tool.started","ts":"2026-09-05T10:00:07Z","tool":"Bash","input_summary":"sed -e s/\\t/x/ f && grep -F \\c f"}' \
   > "$STREAM_B"
 
 run_process_new_lines "$STREAM_B" "$TMP/b-out.txt"
 OUT_B=$(cat "$TMP/b-out.txt")
 
-if [ "$(wc -l < "$TMP/b-out.txt" | tr -d ' ')" = "5" ]; then
-    pass "B-1: run.started no produce fila; Read exitoso tampoco -- los 3 tool.started y los 2 fallos (Bash, WebFetch) si (5 filas)"
+if [ "$(wc -l < "$TMP/b-out.txt" | tr -d ' ')" = "6" ]; then
+    pass "B-1: run.started no produce fila; Read exitoso tampoco -- los 4 tool.started y los 2 fallos (Bash, WebFetch) si (6 filas)"
 else
-    fail "B-1: se esperaban 5 filas, se obtuvo: $OUT_B"
+    fail "B-1: se esperaban 6 filas, se obtuvo: $OUT_B"
 fi
 
 if printf '%s' "$OUT_B" | grep -q "Read: src/Foo.cs"; then
@@ -322,6 +326,25 @@ if [ "$IGNORED_COUNT" -eq 0 ]; then
 else
     fail "B-8: se esperaba IGNORED_COUNT=0, se obtuvo $IGNORED_COUNT"
 fi
+
+# CA-6 aplicado al `input_summary`, no solo al `text`: un comando de Bash
+# trae backslashes de verdad, y `tsv_decode` ya los decodifico una sola vez.
+# Si la fila se imprimiera interpolando el resumen dentro de un formato `%b`
+# (como hacia la primera version de #925), ese segundo pase convertiria el
+# `\t` del comando en un tab real y el `\c` CORTARIA la salida ahi mismo --
+# tragandose el resto del comando y el propio salto de linea, pegando la
+# fila siguiente a esta.
+B_BASH_LINE=$(grep -F "sed " "$TMP/b-out.txt" || true)
+if printf '%s' "$B_BASH_LINE" | grep -qF 'sed -e s/\t/x/ f && grep -F \c f'; then
+    pass "B-9 (CA-6): el input_summary de un Bash con \\t y \\c se muestra literal y completo, sin re-interpretar ni truncar"
+else
+    fail "B-9: el input_summary con backslashes se re-interpreto o se trunco: $B_BASH_LINE"
+fi
+
+case "$B_BASH_LINE" in
+    *$'\t'*) fail "B-10 (CA-6): la fila del Bash tiene un tab REAL -- el \\t del comando se re-interpreto" ;;
+    *) pass "B-10 (CA-6): la fila del Bash no contiene ningun tab real (nada re-interpreto su \\t)" ;;
+esac
 
 # -------- Bloque C: terminal con TODOS los campos presentes -- CA-2/CA-3 --------
 
