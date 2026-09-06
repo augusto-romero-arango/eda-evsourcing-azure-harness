@@ -29,6 +29,11 @@
 #   [E] Ida y vuelta de --model: recibido vs. omitido llega igual a
 #       run.started.model y al terminal.model (CA-1: vacio/ausente no llega
 #       al adaptador).
+#   [H] CA-1..CA-4 (issue #924): con runtime-fake.sh slow-success y
+#       MEFISTO_RUN_AGENT_LIVE_INTERVAL=1, --event-log ya trae 'message' y
+#       'tool.started' (sin terminal) ANTES de que el runner termine; al
+#       cierre hay exactamente un run.completed{status:"success"}, sin
+#       tool.started/tool.completed duplicados, y todas las lineas validan.
 #   [G] El runner resuelve sus propias libs por su UBICACION, no por el cwd
 #       del caller: invocado desde un cwd fuera de todo repo git sigue
 #       corriendo (regresion de la resolucion via `git rev-parse`).
@@ -468,6 +473,86 @@ else
 fi
 
 # ============================================================================
+echo ""
+echo "[H] CA-1..CA-4 (issue #924): anexo en vivo de eventos no terminales"
+
+EV="$TMP/h-slow-success.jsonl"
+RC_FILE="$TMP/h-rc"
+(
+    MEFISTO_FAKE_SCRIPT=slow-success MEFISTO_FAKE_STEP_DELAY_S=2 MEFISTO_RUN_AGENT_LIVE_INTERVAL=1 \
+        "$RUNNER" --runtime fake --agent test-agent --cwd "$WORKDIR" \
+        --prompt-file "$PROMPT_FILE" --event-log "$EV" --timeout 60 >/dev/null 2>&1
+    echo $? > "$RC_FILE"
+) &
+H_PID=$!
+
+# El guion slow-success tarda ~6s (3 sleeps de MEFISTO_FAKE_STEP_DELAY_S=2) y
+# el intervalo en vivo es 1s: hay margen de sobra para observar el archivo a
+# mitad de vuelo, con message y tool.started ya anexados y sin terminal
+# todavia.
+H_SEEN_LIVE=false
+i=0
+while [ "$i" -lt 40 ]; do
+    if [ -s "$EV" ] \
+        && jq -e 'select(.type=="message")' "$EV" >/dev/null 2>&1 \
+        && jq -e 'select(.type=="tool.started")' "$EV" >/dev/null 2>&1 \
+        && ! jq -e 'select(.type=="run.completed" or .type=="run.failed")' "$EV" >/dev/null 2>&1; then
+        H_SEEN_LIVE=true
+        break
+    fi
+    kill -0 "$H_PID" 2>/dev/null || break
+    sleep 0.25
+    i=$((i + 1))
+done
+
+if [ "$H_SEEN_LIVE" = "true" ]; then
+    pass "H-1: --event-log ya trae 'message' y 'tool.started' (sin terminal) ANTES de que el runner termine"
+else
+    fail "H-1: no se observo el anexo en vivo antes de que el runner terminara"
+fi
+
+wait "$H_PID" 2>/dev/null
+H_RC="$(cat "$RC_FILE" 2>/dev/null || echo "?")"
+
+if [ "$H_RC" = "0" ]; then
+    pass "H-2: el runner termina con exit 0"
+else
+    fail "H-2: exit '$H_RC' (esperaba 0)"
+fi
+
+H_TERMS=$(count_terminals "$EV")
+if [ "$H_TERMS" = "1" ]; then
+    pass "H-3: exactamente 1 evento terminal en --event-log al terminar"
+else
+    fail "H-3: se contaron $H_TERMS eventos terminales (se esperaba 1)"
+fi
+
+H_STATUS="$(jq -r 'select(.type=="run.completed") | .status' "$EV" 2>/dev/null | tail -n1)"
+if [ "$H_STATUS" = "success" ]; then
+    pass "H-4: run.completed{status:'success'} sin duplicados"
+else
+    fail "H-4: status='$H_STATUS' (esperaba 'success')"
+fi
+
+H_STARTED_COUNT=$(jq -c 'select(.type=="tool.started")' "$EV" 2>/dev/null | wc -l | tr -d ' ')
+H_COMPLETED_COUNT=$(jq -c 'select(.type=="tool.completed")' "$EV" 2>/dev/null | wc -l | tr -d ' ')
+if [ "$H_STARTED_COUNT" = "1" ] && [ "$H_COMPLETED_COUNT" = "1" ]; then
+    pass "H-5: exactamente 1 tool.started y 1 tool.completed (el anexo en vivo no duplico nada al cierre)"
+else
+    fail "H-5: tool.started=$H_STARTED_COUNT tool.completed=$H_COMPLETED_COUNT (se esperaba 1 y 1)"
+fi
+
+H_ALL_VALID=true
+while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    validate_event_line "$line" >/dev/null 2>&1 || H_ALL_VALID=false
+done < "$EV"
+if [ "$H_ALL_VALID" = "true" ]; then
+    pass "H-6: todas las lineas de --event-log (anexadas en vivo o al cierre) validan contra el schema"
+else
+    fail "H-6: alguna linea de --event-log no valido contra el schema"
+fi
+
 echo ""
 echo "[G] El runner no depende del cwd del caller para encontrar sus propias libs"
 

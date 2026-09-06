@@ -60,6 +60,17 @@
 #                         altera el exit code ni el evento terminal de
 #                         --event-log (CA-3).
 #
+# --event-log en vivo (CA-1/CA-2/CA-3, issue #924): mientras el agente corre,
+# este runner reanexa a --event-log, cada MEFISTO_RUN_AGENT_LIVE_INTERVAL
+# segundos (entero > 0; default 2; un valor invalido cae al default con un
+# aviso en stderr), los eventos NO terminales nuevos que produce el traductor
+# del propio adaptador sobre el raw log parcial -- append-only, nunca trunca
+# ni reescribe. Es best-effort: un fallo en un tick (jq, raw log inexistente,
+# --event-log no escribible) nunca altera FINAL_EXIT ni el evento terminal,
+# que siguen decidiendose exclusivamente al cierre (MEF-ADR-0031). El
+# terminal (exactamente uno, ver mas abajo) solo se anexa al cierre, nunca
+# en vivo.
+#
 # Exit code (CA-5): 0 solo con un evento terminal run.completed{status:
 # "success"}; 124 si el watchdog mato el proceso por timeout; 65 si el
 # protocolo resulto invalido (el adaptador emitio cero o mas de un evento
@@ -189,6 +200,23 @@ if [ -n "$OPT_TIMEOUT" ]; then
 fi
 TIMEOUT_S="${OPT_TIMEOUT:-1800}"
 
+# --- Intervalo del anexo en vivo (CA-1, issue #924) -------------------------
+# Un valor invalido (no entero, <= 0) cae al default sin abortar la corrida:
+# el anexo en vivo es best-effort, nunca una condicion de arranque (CA-3).
+LIVE_INTERVAL_DEFAULT=2
+case "${MEFISTO_RUN_AGENT_LIVE_INTERVAL:-}" in
+    '')
+        LIVE_INTERVAL="$LIVE_INTERVAL_DEFAULT"
+        ;;
+    *[!0-9]*|0)
+        echo "AVISO: MEFISTO_RUN_AGENT_LIVE_INTERVAL='$MEFISTO_RUN_AGENT_LIVE_INTERVAL' invalido (debe ser un entero > 0); usando el default (${LIVE_INTERVAL_DEFAULT}s)" >&2
+        LIVE_INTERVAL="$LIVE_INTERVAL_DEFAULT"
+        ;;
+    *)
+        LIVE_INTERVAL="$MEFISTO_RUN_AGENT_LIVE_INTERVAL"
+        ;;
+esac
+
 # --- Resolucion de runtime (CA-2) -------------------------------------------
 
 if ! RUNTIME_ID="$(mefisto_resolve_runtime "$OPT_RUNTIME")"; then
@@ -240,7 +268,25 @@ if [ -z "$RUN_TMP_DIR" ] || [ ! -d "$RUN_TMP_DIR" ]; then
     exit 69
 fi
 
+# Senal de parada del bucle en vivo (CA-2/CA-3, issue #924): un archivo, nunca
+# un `kill` -- el bucle puede estar a mitad de un `printf` de anexo y un
+# `kill` ahi mismo lo cortaria a media escritura. `stop_live_tail` es
+# idempotente (LIVE_STOPPED) porque la llama tanto el flujo normal, ANTES de
+# la traduccion final (CA-2), como `cleanup` en cualquier salida temprana.
+LIVE_STOP_FILE="$RUN_TMP_DIR/live.stop"
+LIVE_LOOP_PID=""
+LIVE_STOPPED=false
+
+stop_live_tail() {
+    [ "$LIVE_STOPPED" = "true" ] && return 0
+    LIVE_STOPPED=true
+    : > "$LIVE_STOP_FILE" 2>/dev/null || true
+    [ -n "$LIVE_LOOP_PID" ] && wait "$LIVE_LOOP_PID" 2>/dev/null
+    return 0
+}
+
 cleanup() {
+    stop_live_tail
     rm -rf "$RUN_TMP_DIR" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -302,6 +348,55 @@ jq -n -c \
     '{v: 1, type: "run.started", ts: $ts, runtime: $runtime, agent: $agent, model: $model, cwd: $cwd}' \
     > "$OPT_EVENT_LOG"
 
+# --- Anexo en vivo de no terminales (CA-1/CA-3, issue #924) -----------------
+# Arranca DESPUES de run.started (ya escrito arriba) y ANTES de
+# run_agent_with_watchdog (mas abajo, invocada dentro de un `$(...)`): el
+# bucle tiene que vivir en ESTE proceso -- si colgara del `$(...)` de mas
+# abajo moriria junto con ese subshell antes de que el proceso del agente
+# termine. Lanzado aqui, sin `set -m` activo en este shell
+# (run_agent_with_watchdog lo activa y desactiva puertas adentro, alrededor
+# SOLO del CLI y de su propio watchdog), este `&` no se vuelve lider de un
+# grupo de procesos nuevo -- por eso el `kill -9 -"$pid"` que el watchdog
+# dispara sobre el GRUPO del agente jamas lo alcanza (CA-3).
+live_tail_tick() {
+    [ -f "$RAW_LOG" ] || return 0
+    [ -w "$OPT_EVENT_LOG" ] || return 0
+
+    local total_lines n_prev translated non_terminal m_new pending
+    total_lines="$(wc -l < "$OPT_EVENT_LOG" 2>/dev/null | tr -d ' ')"
+    case "$total_lines" in ''|*[!0-9]*) return 0 ;; esac
+    n_prev=$((total_lines - 1))
+    [ "$n_prev" -ge 0 ] || n_prev=0
+
+    # exit_code y stderr_file vacios: solo afectan al terminal que este tick
+    # descarta -- un raw log parcial no tiene ninguno de los dos todavia.
+    translated="$("$TRANSLATE_FN" "$RAW_LOG" "$RUNTIME_ID" "$OPT_MODEL" "" "" 2>/dev/null)" || return 0
+    [ -n "$translated" ] || return 0
+
+    non_terminal="$(printf '%s\n' "$translated" | jq -c 'select(type == "object") | select(.type != "run.completed" and .type != "run.failed")' 2>/dev/null)"
+    [ -n "$non_terminal" ] || return 0
+
+    m_new="$(printf '%s\n' "$non_terminal" | wc -l | tr -d ' ')"
+    [ "$m_new" -gt "$n_prev" ] || return 0
+
+    pending="$(printf '%s\n' "$non_terminal" | tail -n "+$((n_prev + 1))")"
+    [ -n "$pending" ] || return 0
+
+    printf '%s\n' "$pending" >> "$OPT_EVENT_LOG" 2>/dev/null
+    return 0
+}
+
+live_tail_loop() {
+    while [ ! -f "$LIVE_STOP_FILE" ]; do
+        sleep "$LIVE_INTERVAL"
+        [ -f "$LIVE_STOP_FILE" ] && break
+        live_tail_tick
+    done
+}
+
+live_tail_loop &
+LIVE_LOOP_PID=$!
+
 # --- Invocacion bajo watchdog (CA-5) -----------------------------------
 
 START_EPOCH=$(date +%s)
@@ -335,6 +430,11 @@ if [ -f "$SIGNAL_FILE" ] && [ "$ELAPSED_S" -ge "$TIMEOUT_S" ]; then
     TIMED_OUT=true
 fi
 rm -f "$SIGNAL_FILE"
+
+# El bucle en vivo se detiene ANTES de traducir el raw log completo (CA-2):
+# despues de este punto ya no hay mas anexos concurrentes a --event-log, asi
+# que el bloque de mas abajo puede contar sus lineas sin correr con nadie.
+stop_live_tail
 
 # --- Traduccion del adaptador --------------------------------------------
 
@@ -409,7 +509,23 @@ fi
 # adaptador haya (o no) traducido, nunca un cero fabricado (MEF-ADR-0049 CA-1).
 CHOSEN_TERMINAL="$(printf '%s' "$CHOSEN_TERMINAL" | jq -c --argjson d "$ELAPSED_MS" '.duration_ms = $d')"
 
-[ -n "$NON_TERMINAL_JSON" ] && printf '%s\n' "$NON_TERMINAL_JSON" >> "$OPT_EVENT_LOG"
+# Anexo final: solo los no terminales PENDIENTES (CA-2, issue #924). El
+# bucle en vivo (ya detenido arriba, antes de traducir) pudo haber anexado
+# una parte de $NON_TERMINAL_JSON mientras corria -- reanexar el conjunto
+# COMPLETO los duplicaria. N = lineas de --event-log menos 1 (por
+# run.started) es la cuenta de no terminales YA escritos; solo se anexa
+# desde la posicion N+1 en adelante. Cuando el bucle nunca llego a tickear
+# (la corrida termino antes del primer intervalo), N=0 y esto anexa el
+# conjunto completo -- el comportamiento de siempre.
+ALREADY_LINES="$(wc -l < "$OPT_EVENT_LOG" 2>/dev/null | tr -d ' ')"
+case "$ALREADY_LINES" in ''|*[!0-9]*) ALREADY_LINES=1 ;; esac
+ALREADY_NON_TERMINAL=$((ALREADY_LINES - 1))
+[ "$ALREADY_NON_TERMINAL" -ge 0 ] || ALREADY_NON_TERMINAL=0
+
+if [ -n "$NON_TERMINAL_JSON" ]; then
+    NON_TERMINAL_PENDING="$(printf '%s\n' "$NON_TERMINAL_JSON" | tail -n "+$((ALREADY_NON_TERMINAL + 1))")"
+    [ -n "$NON_TERMINAL_PENDING" ] && printf '%s\n' "$NON_TERMINAL_PENDING" >> "$OPT_EVENT_LOG"
+fi
 printf '%s\n' "$CHOSEN_TERMINAL" >> "$OPT_EVENT_LOG"
 
 # --- events.log (CA-1/CA-2/CA-3, issue #863): telemetria HUMANA derivada del
