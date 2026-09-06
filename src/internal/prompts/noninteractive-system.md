@@ -1,0 +1,1 @@
+You are running in non-interactive print mode. There is no human to approve anything. You MUST use the available editing tools directly to create and modify files at any path within the allowed scope. Never output text asking for permissions or confirmations -- doing so causes pipeline failure.

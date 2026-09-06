@@ -4,7 +4,7 @@
 #
 # Lista y resuelve todos los artefactos SIN invocar ningun modelo. Cubre:
 #   [CA-1] Todo agente y todo comando de la fuente neutral (`src/internal/`)
-#       tiene su salida `.opencode/` -- hoy tres agentes (#865) y diez
+#       tiene su salida `.opencode/` -- hoy cinco agentes (#865/#909) y diez
 #       comandos (#866/#867) -- y si el CLI `opencode` esta instalado,
 #       ademas se listan via `opencode agent list` y `opencode debug config`.
 #   [CA-2] `opencode.json` declara unicamente `$schema` (y `instructions`, si
@@ -53,6 +53,15 @@ COMMAND_IDS=$(ids_de "$REPO_ROOT/src/internal/commands")
 AGENT_COUNT=$(printf '%s' "$AGENT_IDS" | wc -w | tr -d ' ')
 COMMAND_COUNT=$(printf '%s' "$COMMAND_IDS" | wc -w | tr -d ' ')
 
+# `mode` tambien sale de la fuente neutral (issue #909: mefisto-writer/
+# mefisto-reviewer nacen en `subagent`, no todos los agentes son `primary`).
+# Extrae el frontmatter con el mismo `awk` de una pasada que documenta
+# src/internal/contract/README.md.
+mode_de() {
+    awk 'NR==1 && $0!="---"{exit 1} NR>1 && $0=="---"{exit} NR>1' "$REPO_ROOT/src/internal/agents/$1.md" \
+        | jq -r '.mode // "primary"'
+}
+
 PASS=0
 FAIL=0
 pass() { echo "  PASS: $1"; PASS=$((PASS+1)); }
@@ -90,18 +99,31 @@ if command -v opencode >/dev/null 2>&1; then
     # Reintento unico: el CLI descubre los agentes/comandos leyendo .opencode/,
     # que un writer en curso puede estar regenerando en ese instante (mismo
     # riesgo de carrera que test-internal-agents-generated.sh).
+    #
+    # `grep -q` sobre here-string (<<<), nunca sobre un pipe. `grep -q` cierra
+    # su stdin en el primer match; si el escritor del otro extremo del pipe
+    # todavia no termino, muere con SIGPIPE y `pipefail` propaga ese 141
+    # aunque grep haya salido en 0. Con tres agentes el volcado de 'opencode
+    # agent list' cabia en el buffer del pipe (64KB en macOS) y el escritor
+    # terminaba antes de que grep saliera; con cinco son ~98KB y el fallo se
+    # vuelve determinista para todo id que aparezca temprano en el listado
+    # (medido en #909: los tres `primary` fallaban con rc=141 y los dos
+    # `subagent`, al final del volcado, pasaban). El here-string no tiene un
+    # segundo proceso que pueda recibir la señal.
     agent_out=$(cd "$REPO_ROOT" && opencode agent list 2>&1)
     for id in $AGENT_IDS; do
-        printf '%s' "$agent_out" | grep -q "^$id (primary)" || {
+        mode=$(mode_de "$id")
+        grep -q "^$id ($mode)" <<<"$agent_out" || {
             agent_out=$(cd "$REPO_ROOT" && opencode agent list 2>&1)
             break
         }
     done
     for id in $AGENT_IDS; do
-        if printf '%s' "$agent_out" | grep -q "^$id (primary)"; then
-            pass "$id: listado por 'opencode agent list' como primary"
+        mode=$(mode_de "$id")
+        if grep -q "^$id ($mode)" <<<"$agent_out"; then
+            pass "$id: listado por 'opencode agent list' como $mode"
         else
-            fail "$id: NO aparece en 'opencode agent list' como primary"
+            fail "$id: NO aparece en 'opencode agent list' como $mode"
         fi
     done
 
