@@ -371,14 +371,26 @@ implementa:
 | Funcion | Contrato |
 |---|---|
 | `runtime_<id>_build_cmd <agent> <cwd> <prompt_file> <model> <system_file>` | Rellena el array global `MEFISTO_RUNTIME_CMD` con el argv completo a invocar via `run_agent_with_watchdog`, **sin `eval`**. `<model>`/`<system_file>` pueden llegar vacios; el adaptador decide si eso omite un flag o usa un valor propio (permisos como `--permission-mode bypassPermissions` / `--auto` son responsabilidad de esta funcion, no del runner). |
-| `runtime_<id>_translate <raw_file> <runtime_id> <model>` | Imprime por stdout, una linea JSON por evento, el JSONL neutral (`message`/`tool.*`/terminal) derivado de `<raw_file>`. **Nunca emite `run.started`** -- eso lo hace el runner directo, porque no depende de ningun dato especifico del adaptador. |
+| `runtime_<id>_translate <raw_file> <runtime_id> <model> [<exit_code>] [<stderr_file>]` | Imprime por stdout, una linea JSON por evento, el JSONL neutral (`message`/`tool.*`/terminal) derivado de `<raw_file>`. **Nunca emite `run.started`** -- eso lo hace el runner directo, porque no depende de ningun dato especifico del adaptador. Los dos ultimos argumentos son **opcionales para el adaptador** (ignorarlos es una implementacion valida -- `runtime-fake.sh` lo hace) pero el runner **siempre los pasa**: sin el exit code y el stderr crudo no hay forma de clasificar una muerte por senal (`killed`, exit 137/143) ni el `API Error: <status>` que un CLI escribe solo por stderr (los dos canales siguen separados, #425), y el adaptador tendria que devolver `no_result` para desenlaces que si son distinguibles. |
 
-Este issue (#858) entrega **solo** `lib/runtime-fake.sh`: reproduce guiones
-(exito, fallo con exit N, cuelgue hasta timeout, sin evento terminal, dos
-terminales, JSON malformado, `--model` recibido/omitido) via la variable de
-entorno `MEFISTO_FAKE_SCRIPT`, para poder probar el runner sin invocar
-`claude` ni `opencode`. Los adaptadores reales son #859 (Claude Code) y #860
-(OpenCode).
+`lib/runtime-fake.sh` (#858) reproduce guiones (exito, fallo con exit N,
+cuelgue hasta timeout, sin evento terminal, dos terminales, JSON malformado,
+`--model` recibido/omitido) via la variable de entorno `MEFISTO_FAKE_SCRIPT`,
+para poder probar el runner sin invocar ningun CLI real.
+
+`lib/runtime-claude.sh` + `lib/runtime-claude.jq` (#859) es el adaptador de
+Claude Code: el **unico** lugar del repo, fuera de tests y fixtures, que
+compone `claude -p` con `--permission-mode bypassPermissions`,
+`--output-format stream-json --verbose`, `--append-system-prompt` (desde
+`--system-file`) y `--model` (solo cuando el runner entrega un valor no
+vacio), y el unico que conoce los nombres de evento de ese CLI (`is_error`,
+`stop_reason`, `subtype`, `num_turns`, `api_error_status`). Su clasificacion
+reproduce el orden de `classify_agent_failure`
+(`.claude/scripts/_mefisto-common.sh`) y su criterio de exito el de
+`agent_stream_completed_successfully`, de modo que la migracion del pipeline
+(#869) no cambia ningun veredicto.
+`.claude/scripts/tests/test-runtime-claude.sh` lo ejerce contra una CLI
+`claude` falsa puesta primero en el `PATH`. El adaptador de OpenCode es #860.
 
 ### Vocabulario de eventos (`run-events.schema.json`)
 

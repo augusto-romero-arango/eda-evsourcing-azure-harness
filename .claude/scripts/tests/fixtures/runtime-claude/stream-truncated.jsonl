@@ -1,0 +1,2 @@
+{"type":"assistant","message":{"content":[{"type":"text","text":"antes del corte"}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_9","name":"Bash","input":{"command":"ls

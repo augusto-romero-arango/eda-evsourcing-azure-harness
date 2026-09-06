@@ -1,0 +1,2 @@
+{"type":"assistant","message":{"content":[{"type":"text","text":"trabajando cuando llego la senal"}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls"}}]}}

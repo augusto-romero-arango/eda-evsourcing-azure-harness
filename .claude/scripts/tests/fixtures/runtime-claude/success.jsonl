@@ -1,0 +1,6 @@
+{"type":"system","subtype":"init","session_id":"sess-abc","model":"claude-sonnet-5"}
+{"type":"assistant","timestamp":"2026-07-27T22:09:34.000Z","message":{"model":"claude-sonnet-5","content":[{"type":"text","text":"Voy a investigar."}]}}
+{"type":"assistant","timestamp":"2026-07-27T22:09:34.500Z","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":"x"}}]}}
+{"type":"user","timestamp":"2026-07-27T22:09:34.700Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"contenido"}]}}
+{"type":"assistant","timestamp":"2026-07-27T22:09:35.000Z","message":{"content":[{"type":"text","text":"Listo, hice el cambio."}]}}
+{"type":"result","is_error":false,"subtype":"success","stop_reason":"end_turn","num_turns":2,"duration_ms":2000,"duration_api_ms":1500,"total_cost_usd":0.01,"usage":{"input_tokens":100,"output_tokens":50},"ttft_ms":300,"permission_denials":[{"tool_name":"Bash"}],"timestamp":"2026-07-27T22:09:36.000Z"}
