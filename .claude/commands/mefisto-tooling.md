@@ -24,7 +24,7 @@ Si `$ARGUMENTS` esta vacio, responde: `Uso: /mefisto-tooling <numero-de-issue> [
 /mefisto-tooling 42 --variant b --models writer=<modelo-b>
 ```
 
-Extrae `ISSUE_NUM` como el primer token numerico de `$ARGUMENTS` y usalo en los pasos 1, 2 y 2.5 de abajo (esos `gh issue view`/`gh issue edit` no entienden `--models` ni `--variant`; sin ninguno de los dos, `ISSUE_NUM` es simplemente `$ARGUMENTS` completo). `$ARGUMENTS` completo, con `--models`/`--variant` incluidos si vinieron, se reenvia intacto al pipeline en el paso 3.
+Extrae `ISSUE_NUM` como el primer token numerico de `$ARGUMENTS` y usalo en los pasos 1, 2 y 2.5 de abajo (esos `gh issue view`/`gh issue edit` no entienden `--models` ni `--variant`; sin ninguno de los dos, `ISSUE_NUM` es simplemente `$ARGUMENTS` completo). `$ARGUMENTS` completo, con `--models`/`--variant` incluidos si vinieron, se reenvia intacto a `mefisto-tmux-pipeline.sh --tooling` en el paso 3.
 
 ## Proceso
 

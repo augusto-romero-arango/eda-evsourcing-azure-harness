@@ -14,7 +14,7 @@ Lanza el pipeline INTERNO de tooling para un issue del repo de Mefisto igual que
 
 ## Por que una skill aparte, y no un flag en /mefisto-tooling
 
-`/mefisto-tooling` solo extrae de `$ARGUMENTS` el `ISSUE_NUM` (primer token numerico, para sus validaciones con `gh`) y el flag `--models` (issue #709, con contrato explicito). Sumarle `--verbose` ahi obligaria a separar un tercer flag de los mismos argumentos **dentro de un prompt** -- un parser blando que se desincroniza de `extract_wrapper_flags` (el wrapper tmux, la fuente de verdad del parseo real) sin que nadie lo note en una corrida headless. Esta skill evita el problema de raiz: `--verbose` nunca viaja dentro de `$ARGUMENTS` de `/mefisto-tooling` -- lo agrega esta skill aparte, en el propio lanzamiento (Paso 2), despues de delegar toda la validacion.
+`/mefisto-tooling` solo extrae de `$ARGUMENTS` el `ISSUE_NUM` (primer token numerico, para sus validaciones con `gh`) y el flag `--models` (issue #709, con contrato explicito). Sumarle `--verbose` ahi obligaria a separar un tercer flag de los mismos argumentos **dentro de un prompt** -- un parser blando que se desincroniza de `extract_wrapper_flags` (`mefisto-tmux-pipeline.sh`, la fuente de verdad del parseo real) sin que nadie lo note en una corrida headless. Esta skill evita el problema de raiz: `--verbose` nunca viaja dentro de `$ARGUMENTS` de `/mefisto-tooling` -- lo agrega esta skill aparte, en el propio lanzamiento (Paso 2), despues de delegar toda la validacion.
 
 ## Por que no hay variante para /mefisto-sequential ni para lotes
 
@@ -66,7 +66,7 @@ Los dos ultimos tramos del skill delegado los **reemplazan** los pasos de aca y 
 
 ### 2. Lanzar con `--verbose` (unica desviacion, CA-3)
 
-Donde la segunda mitad del Paso 3 de `/mefisto-tooling` lanzaria el pipeline sin el flag, esta skill lo suma:
+Donde la segunda mitad del Paso 3 de `/mefisto-tooling` lanzaria `mefisto-tmux-pipeline.sh --tooling $ARGUMENTS` sin el flag, esta skill lo suma:
 
 ```bash
 {{mefisto:run mefisto-tmux-pipeline.sh --tooling $ARGUMENTS --verbose}}

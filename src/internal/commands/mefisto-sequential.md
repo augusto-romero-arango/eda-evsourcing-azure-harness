@@ -177,7 +177,7 @@ Usa /mefisto-work-status para ver el progreso sin salir de aqui.
 
 ### 5. Sincronizacion verificada entre eslabones (fail-loud)
 
-El motor procesa los issues en orden
+El motor (`mefisto-batch-pipeline.sh`) procesa los issues en orden
 `pipeline -> PR -> merge -> sync -> siguiente`. Para que una cadena con dependencias
 funcione (ej. #44 depende de #43), cada eslabon debe construirse sobre el merge del
 anterior. El batch lo garantiza asi:

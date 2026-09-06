@@ -53,7 +53,7 @@ source "$FRONTMATTER_LIB"
 # fuente neutral describe intenciones, nunca `claude`/`opencode` ni sus
 # directorios; esas referencias las introduce el generador (#854) o el
 # adaptador. Sin este chequeo, la mitad de CA-1 quedaria documentada pero no
-# verificada, justo cuando #865-#867 migren los artefactos reales.
+# verificada, justo cuando #865-#867 migraron los artefactos reales.
 #
 # Dos excepciones literales (issue #866, CA-2/CA-3): `.claude-plugin/` es el
 # manifiesto fisico del Claude Code Plugin, identico e indispensable en
