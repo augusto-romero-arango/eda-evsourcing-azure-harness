@@ -1234,62 +1234,57 @@ agent_work_is_trustworthy() {
     return 1
 }
 
-# compute_stage_metrics <stream_file>
+# compute_stage_metrics <events_file>
 #
-# Deriva las metricas de un stage (issue #426) a partir del stream JSON crudo
-# que run_agent_with_watchdog captura (issue #425): turnos, duraciones, costo,
-# tokens desglosados, modelo, motivo de fin y un histograma de tool calls por
-# nombre (count + tiempo atribuido, suma y mediana, via emparejamiento
-# tool_use.id <-> tool_use_id, ambos fechados por el `timestamp` ISO-8601 de
-# nivel superior de cada evento -- ver notas tecnicas del issue).
+# Deriva las metricas de un stage (issue #426, reescrita sobre el JSONL
+# neutral en el issue #907) a partir de <events_file> -- el
+# `<log_base>.events.jsonl` que run_agent escribe traduciendo la traza cruda
+# del runtime con runtime_<id>_translate (issue #906, MEF-ADR-0049). Ya no
+# interpreta el vocabulario de ningun runtime concreto: todo lo que imprime
+# sale del vocabulario cerrado de src/internal/contract/run-events.schema.json.
+# El evento terminal (`run.completed`/`run.failed`) ya trae runtime, model,
+# status, duration_ms, tokens{input,output}, cost_usd, turns, denials,
+# ttft_ms, api_duration_ms y error{kind,detail}|null calculados por el
+# traductor -- esta funcion solo los copia y arma el histograma de tool
+# calls agrupando por nombre los eventos `tool.started` (cuenta) y
+# `tool.completed` (duration_ms, cuando no es null).
 #
 # Imprime por stdout un JSON compacto de una sola linea, o el literal "null"
 # si no hay nada que derivar. Nunca aborta y siempre retorna 0 (CA-5): sin
-# jq, con el stream vacio, o si el evento `result` no aparece (stage matado
-# a mitad de corrida, sin chance de escribirlo), degrada a "null".
+# jq, con el archivo vacio, o si ningun evento terminal aparece (stage matado
+# a mitad de corrida sin evento sintetizado todavia), degrada a "null".
 #
-# `num_turns`, `duration_ms`, `duration_api_ms`, `total_cost_usd`, `usage`,
-# `is_error`, `stop_reason` y `terminal_reason` del evento `result` estan
-# verificados contra el CLI instalado (v2.1.220, ver issue #425). El "model"
-# NO esta en esa lista verificada: se busca primero en el evento
-# `system`/`init` (`.model`) y, si falta, en `.message.model` del primer
-# evento `assistant` -- si ninguno lo trae, queda "model": null sin abortar.
+# `cost_usd` (y el resto de campos numericos del terminal) se copia tal
+# cual, sin el operador `//` de jq: un `0` real (el costo de una corrida bajo
+# suscripcion de OpenCode, ver runtime-opencode.jq) nunca debe degradar a
+# null, y `//` colapsa `0` igual que colapsa `false`/`null` si se usara aqui.
 #
-# Ademas de lo que CA-1 exige se persisten tres cifras que el issue marca
-# opcionales "si son baratos de derivar": `ttft_ms`, el conteo de
-# `permission_denials` (solo la cardinalidad -- el arreglo trae los inputs
-# denegados, que pueden cargar rutas y comandos y no aportan al analisis de
-# tiempos) y el conteo de eventos `rate_limit_event` del stream. Las tres
-# apuntan directo a dos causas candidatas de la lentitud que este issue
-# existe para medir: denegaciones de permiso que obligan a reintentar, y
-# throttling. `permission_denials` y `ttft_ms` estan verificados en el evento
-# `result` del CLI instalado (v2.1.220); si un CLI futuro dejara de emitirlos
-# quedan en null sin abortar.
+# `tool_calls` agrupa por NOMBRE, no por id: el contrato neutral ya no expone
+# un id de tool call (`tool.completed.duration_ms` viene precalculado por el
+# traductor de cada runtime), asi que agrupar por nombre es la unica
+# correlacion posible -- y la que CA-1 pide. Un `tool.started` sin
+# `tool.completed` (el proceso murio a mitad de la llamada), o con
+# `tool.completed.duration_ms: null`, cuenta en `count` pero no aporta a
+# `duration_ms_sum`/`duration_ms_median`. El caso simetrico -- un
+# `tool.completed` cuyo nombre no aparece en ningun `tool.started` (traza
+# cortada justo antes del inicio, o un traductor que no pudo resolver el
+# nombre y emitio "?") -- no aparece en `tool_calls`: `count` es la cuenta
+# de llamadas EMPEZADAS, y sumar ahi una duracion sin llamada que la
+# explique dejaria un `duration_ms_sum` sin `count` que lo respalde.
 compute_stage_metrics() {
-    local stream_file="$1"
+    local events_file="$1"
 
     if ! command -v jq >/dev/null 2>&1; then
         echo "null"
         return 0
     fi
-    if [ ! -s "$stream_file" ]; then
+    if [ ! -s "$events_file" ]; then
         echo "null"
         return 0
     fi
 
     local out
     out=$(jq -R -s -c '
-        def parse_ts:
-            if . == null or (type != "string") then null
-            else
-                ((capture("^(?<base>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(\\.(?<frac>[0-9]+))?Z$")) // null) as $c
-                | if $c == null then null
-                  else
-                      (($c.base + "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) as $sec
-                      | $sec * 1000 + (if $c.frac then (($c.frac + "000") | .[0:3] | tonumber) else 0 end)
-                  end
-            end;
-
         def median:
             sort as $s
             | ($s | length) as $n
@@ -1299,77 +1294,52 @@ compute_stage_metrics() {
               end;
 
         (split("\n") | map(select(length > 0)) | map(try fromjson catch empty) | map(select(type == "object"))) as $events
-        | ($events | map(select(.type == "result")) | last) as $result
-        | if $result == null then null
+        | ($events | map(select(.type == "run.completed" or .type == "run.failed")) | last) as $terminal
+        | if $terminal == null then null
           else
-              ($events | map(select(.type == "system" and .subtype == "init")) | first | .model) as $model_from_init
-            | ($events | map(select(.type == "assistant")) | first | .message.model) as $model_from_assistant
+              (
+                $events
+                | map(select(.type == "tool.started"))
+                | group_by(.tool)
+                | map({name: .[0].tool, count: length})
+              ) as $counts
             | (
-                [ $events[] | select(.type == "assistant") | . as $ev
-                  | ($ev.message.content // [])[]?
-                  | select(.type == "tool_use")
-                  | {id: .id, name: .name, ts: (try ($ev.timestamp | parse_ts) catch null)}
-                ]
-              ) as $tool_uses
+                $events
+                | map(select(.type == "tool.completed"))
+                | group_by(.tool)
+                | map({name: .[0].tool, durations: (map(select(.duration_ms != null) | .duration_ms))})
+              ) as $durations_by_name
             | (
-                [ $events[] | select(.type == "user") | . as $ev
-                  | ($ev.message.content // [])[]?
-                  | select(.type == "tool_result")
-                  | {id: .tool_use_id, ts: (try ($ev.timestamp | parse_ts) catch null)}
-                ]
-              ) as $tool_results
-            | ($tool_results | INDEX(.id)) as $results_by_id
-            | (
-                $tool_uses
-                | group_by(.name)
+                $counts
                 | map(
-                    . as $group
-                    | ($group | map(
-                        . as $u
-                        # `// ""` y no `[$u.id]` a secas: en jq indexar un
-                        # objeto con null es un error DURO (no algo que `try`
-                        # local atrape aqui), y ese error tumba la expresion
-                        # entera -- un unico tool_use sin `id` dejaria el
-                        # stage sin NINGUNA metrica, aunque el evento
-                        # `result` viniera completo. Con la clave vacia el
-                        # lookup solo devuelve null: la tool call sigue
-                        # contando en `count` y las demas no se pierden.
-                        | ($results_by_id[$u.id // ""]) as $r
-                        | select($r != null and $u.ts != null and $r.ts != null)
-                        | ($r.ts - $u.ts)
-                      )) as $durations
+                    . as $c
+                    | (($durations_by_name | map(select(.name == $c.name)) | first | .durations) // []) as $d
                     | {
-                        name: $group[0].name,
-                        count: ($group | length),
-                        duration_ms_sum: (if ($durations | length) > 0 then ($durations | add) else null end),
-                        duration_ms_median: (if ($durations | length) > 0 then ($durations | median) else null end)
+                        name: $c.name,
+                        count: $c.count,
+                        duration_ms_sum: (if ($d | length) > 0 then ($d | add) else null end),
+                        duration_ms_median: (if ($d | length) > 0 then ($d | median) else null end)
                       }
                   )
                 | sort_by(.name)
               ) as $tool_calls
             | {
-                turns: $result.num_turns,
-                duration_ms: $result.duration_ms,
-                duration_api_ms: $result.duration_api_ms,
-                non_api_ms: (if ($result.duration_ms != null and $result.duration_api_ms != null) then ($result.duration_ms - $result.duration_api_ms) else null end),
-                cost_usd: $result.total_cost_usd,
-                tokens: {
-                    input: $result.usage.input_tokens,
-                    output: $result.usage.output_tokens,
-                    cache_read: $result.usage.cache_read_input_tokens,
-                    cache_creation: $result.usage.cache_creation_input_tokens
-                },
-                model: ($model_from_init // $model_from_assistant),
-                is_error: $result.is_error,
-                stop_reason: $result.stop_reason,
-                terminal_reason: $result.terminal_reason,
-                ttft_ms: $result.ttft_ms,
-                permission_denials: (if ($result.permission_denials | type) == "array" then ($result.permission_denials | length) else null end),
-                rate_limit_events: ($events | map(select(.type == "rate_limit_event")) | length),
+                runtime: $terminal.runtime,
+                model: $terminal.model,
+                status: $terminal.status,
+                error_kind: $terminal.error.kind,
+                duration_ms: $terminal.duration_ms,
+                api_duration_ms: $terminal.api_duration_ms,
+                non_api_ms: (if ($terminal.duration_ms != null and $terminal.api_duration_ms != null) then ($terminal.duration_ms - $terminal.api_duration_ms) else null end),
+                ttft_ms: $terminal.ttft_ms,
+                turns: $terminal.turns,
+                cost_usd: $terminal.cost_usd,
+                tokens: { input: $terminal.tokens.input, output: $terminal.tokens.output },
+                denials: $terminal.denials,
                 tool_calls: $tool_calls
               }
           end
-    ' "$stream_file" 2>/dev/null) || out=""
+    ' "$events_file" 2>/dev/null) || out=""
 
     if [ -n "$out" ]; then
         echo "$out"
@@ -1382,18 +1352,23 @@ compute_stage_metrics() {
 # build_agents_history_json <wr_dur> <wr_metrics_json> <rv_dur> <rv_metrics_json>
 #
 # Construye el objeto JSON "agents" para una entrada de pipeline-history.jsonl
-# (issue #426), agregando agents.<agente>.metrics con las cifras derivadas de
-# la traza (compute_stage_metrics) SIN tocar el campo "duration" existente --
-# CA-2 solo agrega, nunca renombra ni mueve. <wr_metrics_json>/<rv_metrics_json>
-# son el JSON compacto que devuelve compute_stage_metrics (o cadena vacia si
-# ese stage todavia no corrio).
+# (issue #426), agregando agents.<agente>.metrics con las cifras derivadas del
+# JSONL neutral (compute_stage_metrics) SIN tocar el campo "duration"
+# existente -- CA-2 solo agrega, nunca renombra ni mueve. Ademas de "metrics"
+# agrega "runtime" (issue #907): el mismo dato que ya trae metrics.runtime,
+# promovido a la raiz de cada agente porque es la pregunta mas frecuente
+# sobre una corrida ("con que runtime corrio esto") y no deberia obligar a
+# bajar un nivel para leerla -- `null` si ese stage no dejo metricas (no
+# corrio, o compute_stage_metrics degrado a "null"). <wr_metrics_json>/
+# <rv_metrics_json> son el JSON compacto que devuelve compute_stage_metrics
+# (o cadena vacia si ese stage todavia no corrio).
 #
 # Con jq disponible construye via `jq -n --argjson` (interpolar objetos
 # anidados por concatenacion de string es fragil); sin jq -- o si el jq
 # falla por cualquier motivo -- degrada al formato plano de siempre (sin
-# "metrics"), igual que antes de este issue (CA-5). Imprime por stdout el
-# JSON compacto de "agents" en una sola linea. Retorna siempre 0: un fallo de
-# instrumentacion nunca debe tumbar la escritura del historial.
+# "metrics" ni "runtime"), igual que antes de este issue (CA-5). Imprime por
+# stdout el JSON compacto de "agents" en una sola linea. Retorna siempre 0:
+# un fallo de instrumentacion nunca debe tumbar la escritura del historial.
 build_agents_history_json() {
     local wr_dur="$1" wr_metrics="$2" rv_dur="$3" rv_metrics="$4"
 
@@ -1409,8 +1384,8 @@ build_agents_history_json() {
         built=$(jq -n -c \
             --argjson wr_dur "$wr_dur_json" --argjson wr_metrics "$wr_metrics" \
             --argjson rv_dur "$rv_dur_json" --argjson rv_metrics "$rv_metrics" \
-            '{writer: {duration: $wr_dur, metrics: $wr_metrics},
-              reviewer: {duration: $rv_dur, metrics: $rv_metrics}}' 2>/dev/null) || built=""
+            '{writer: {duration: $wr_dur, metrics: $wr_metrics, runtime: $wr_metrics.runtime},
+              reviewer: {duration: $rv_dur, metrics: $rv_metrics, runtime: $rv_metrics.runtime}}' 2>/dev/null) || built=""
         if [ -n "$built" ]; then
             echo "$built"
             return 0
