@@ -1,6 +1,8 @@
 {
   "$comment": "Mapping declarativo capacidad neutral (#853) -> bloque `permission` de OpenCode (issue #862, MEF-ADR-0049 decision 5). Vocabulario de 17 claves verificado contra el binario OpenCode 1.18.29 (bash, edit, write, patch, read, list, glob, grep, question, skill, task, lsp, todowrite, websearch, webfetch, external_directory, doom_loop) -- distinto de la doc publica (https://opencode.ai/docs/permissions/), que funde write/patch bajo `edit`: aqui las 17 claves reciben cada una un valor explicito, nunca heredan un default global. `src/internal/scripts/lib/adapter-opencode.sh` consume este archivo; `opencode-permission-eval.jq` lo evalua en los tests con la regla de OpenCode 'ultima coincidencia gana'. Si el dogfooding (#874) revela una discrepancia con OpenCode real, se corrige ESTE mapping, nunca el test.",
 
+  "$comment_semantica_verificada": "Semantica confirmada leyendo el bundle de opencode 1.18.29 (documentada aqui porque las decisiones de forma de los patrones dependen de ella). (1) La evaluacion es `findLast(regla => match(permiso, regla.permiso) && match(candidato, regla.patron))` con default `{action: 'ask'}`: gana la ULTIMA coincidencia (de ahi el catch-all primero) y toda clave sin regla cae en `ask`, que `--auto` auto-aprueba -- por eso CA-1 exige valor explicito en todas. (2) El candidato de `bash` NO es el nombre del programa sino el TEXTO COMPLETO de cada nodo `command` del arbol tree-sitter (un candidato por comando de la tuberia, incluidas las asignaciones de entorno del prefijo): por eso hay patrones para la forma que emite `{{mefisto:run}}` (`MEFISTO_RUNTIME=opencode ./.claude/scripts/*`) y formas desnudas de los coreutils, que en una tuberia aparecen sin argumentos. (3) El candidato de `edit`/`read` es la ruta RELATIVA al worktree en POSIX (`path.relative(worktree, archivo)`), por eso los patrones de rutas son relativos; los patrones con `~` se expanden a $HOME y por tanto nunca casan con un candidato relativo -- la contencion real de lo que esta fuera del worktree es `external_directory: deny`, y quedan como defensa en profundidad por si OpenCode cambia el candidato. (4) `write` y `patch` son inertes en 1.18.29 (las tools edit/write/apply_patch preguntan todas bajo el permiso `edit`); se emiten igual por CA-1 y para no quedar abiertas si OpenCode separa las claves.",
+
   "always_deny": ["external_directory", "doom_loop"],
 
   "question": {
@@ -18,6 +20,7 @@
 
   "capability_map": {
     "shell": {
+      "$comment": "Un unico patron por comando permitido, no listas por rol (decision de refinamiento del #862): la diferencia entre roles la da que capacidades declara cada agente. El candidato es el texto completo del comando (ver $comment_semantica_verificada), asi que cada coreutil de lectura lleva su forma con argumentos y su forma desnuda (aparece asi en una tuberia), y los scripts del repo llevan tanto la forma `bash <script>` como la invocacion directa y la forma exacta que emite `{{mefisto:run}}`. El bloque `deny` va DESPUES de todos los allow para que gane por 'ultima coincidencia'; su anclaje al inicio del texto es deliberado (`rm *` no casa con `FOO=1 rm x`), y por eso ningun allow de script empieza con un comodin que pueda absorber un prefijo de entorno arbitrario.",
       "keys": ["bash"],
       "catch_all": "deny",
       "rules": [
@@ -25,12 +28,18 @@
         { "pattern": "gh *", "value": "allow" },
         { "pattern": "jq *", "value": "allow" },
         { "pattern": "cat *", "value": "allow" },
+        { "pattern": "ls", "value": "allow" },
         { "pattern": "ls *", "value": "allow" },
+        { "pattern": "head", "value": "allow" },
         { "pattern": "head *", "value": "allow" },
+        { "pattern": "tail", "value": "allow" },
         { "pattern": "tail *", "value": "allow" },
+        { "pattern": "wc", "value": "allow" },
         { "pattern": "wc *", "value": "allow" },
         { "pattern": "find *", "value": "allow" },
+        { "pattern": "sort", "value": "allow" },
         { "pattern": "sort *", "value": "allow" },
+        { "pattern": "uniq", "value": "allow" },
         { "pattern": "uniq *", "value": "allow" },
         { "pattern": "cut *", "value": "allow" },
         { "pattern": "tr *", "value": "allow" },
@@ -41,6 +50,16 @@
         { "pattern": "sh .claude/scripts/*", "value": "allow" },
         { "pattern": "bash src/internal/scripts/*", "value": "allow" },
         { "pattern": "sh src/internal/scripts/*", "value": "allow" },
+        { "pattern": "scripts/tests/*", "value": "allow" },
+        { "pattern": "./scripts/tests/*", "value": "allow" },
+        { "pattern": ".claude/scripts/*", "value": "allow" },
+        { "pattern": "./.claude/scripts/*", "value": "allow" },
+        { "pattern": "src/internal/scripts/*", "value": "allow" },
+        { "pattern": "./src/internal/scripts/*", "value": "allow" },
+        { "pattern": "MEFISTO_RUNTIME=opencode ./.claude/scripts/*", "value": "allow" },
+        { "pattern": "MEFISTO_RUNTIME=opencode ./scripts/tests/*", "value": "allow" },
+        { "pattern": "MEFISTO_RUNTIME=opencode ./src/internal/scripts/*", "value": "allow" },
+        { "pattern": "shasum", "value": "allow" },
         { "pattern": "shasum *", "value": "allow" },
         { "pattern": "mkdir *", "value": "allow" },
         { "pattern": "date", "value": "allow" },
@@ -61,7 +80,7 @@
       ]
     },
     "edit": {
-      "$comment": "Las mismas rutas para `edit`, `write` y `patch` (issue #862 CA-2): replican is_path_in_mefisto_scope (.claude/scripts/_mefisto-common.sh) mas los dos directorios de resumenes de stage que OpenCode bloquearia sin regla explicita.",
+      "$comment": "Las mismas rutas para `edit`, `write` y `patch` (issue #862 CA-2): replican is_path_in_mefisto_scope (.claude/scripts/_mefisto-common.sh) mas los dos directorios de resumenes de stage que OpenCode bloquearia sin regla explicita. Rutas relativas al worktree porque ese es el candidato que pasa la tool (ver $comment_semantica_verificada).",
       "keys": ["edit", "write", "patch"],
       "catch_all": "deny",
       "rules": [
@@ -95,12 +114,14 @@
       ]
     },
     "read": {
-      "$comment": "Con la capacidad `read`, el catch-all es `allow` (leer el repo es la intencion general) y las reglas son denegaciones especificas de rutas sensibles (issue #862 CA-2), evaluadas despues -- 'ultima coincidencia gana' hace que estas denegaciones prevalezcan sobre el allow general.",
+      "$comment": "Con la capacidad `read`, el catch-all es `allow` (leer el repo es la intencion general) y las reglas son denegaciones especificas de rutas sensibles (issue #862 CA-2), evaluadas despues -- 'ultima coincidencia gana' hace que estas denegaciones prevalezcan sobre el allow general. Las dos ultimas (`~/...`) son defensa en profundidad: con el candidato relativo de 1.18.29 nunca casan, y lo que contiene de verdad el acceso fuera del worktree es `external_directory: deny` (ver $comment_semantica_verificada).",
       "keys": ["read"],
       "catch_all": "allow",
       "rules": [
         { "pattern": ".env", "value": "deny" },
         { "pattern": ".env.*", "value": "deny" },
+        { "pattern": "**/.env", "value": "deny" },
+        { "pattern": "**/.env.*", "value": "deny" },
         { "pattern": "**/auth.json", "value": "deny" },
         { "pattern": "**/.aws/**", "value": "deny" },
         { "pattern": "**/.ssh/**", "value": "deny" },

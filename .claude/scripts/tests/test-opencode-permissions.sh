@@ -5,6 +5,10 @@
 # Cubre (CA-6, mas CA-1/CA-5 desde el mismo arnes):
 #   [empty] Un agente con `capabilities: []` obtiene todo deny, incluidos
 #       bash/read/edit (CA-1).
+#   [vocabulario] Las 17 claves del vocabulario reciben valor explicito en los
+#       5 agentes, en el orden que declara el mapping (CA-1): una clave
+#       ausente equivale a un permiso abierto, porque OpenCode devuelve `ask`
+#       por defecto y `--auto` auto-aprueba todo `ask`.
 #   [read] Lectura de `.env` -> deny (CA-2) con la capacidad `read`.
 #   [edit] Edicion de `src/Foo.cs` -> deny, de `commands/x.md` -> allow y de
 #       `.mefisto/pipeline/summaries/stage-1-writer.md` -> allow (CA-2).
@@ -179,9 +183,22 @@ assert_eq '"deny"' "$(permission_of mefisto-fx-perm-empty external_directory)" "
 assert_eq '"deny"' "$(permission_of mefisto-fx-perm-empty doom_loop)" "doom_loop deny"
 
 echo ""
+echo "[vocabulario] CA-1: las 17 claves con valor explicito en los 5 agentes"
+# Sin este check, una clave que se cayera del mapping no fallaria ningun test
+# y quedaria SIN regla: OpenCode devuelve `ask` por defecto para lo que no
+# matchea, y `opencode run --auto` auto-aprueba todo `ask`. La clave ausente
+# seria, en headless, un permiso abierto.
+EXPECTED_KEYS='["external_directory","doom_loop","question","webfetch","websearch","skill","task","list","glob","grep","lsp","todowrite","bash","edit","write","patch","read"]'
+for id in mefisto-fx-perm-empty mefisto-fx-perm-read mefisto-fx-perm-planner mefisto-fx-perm-writer mefisto-fx-perm-web; do
+    assert_eq "$EXPECTED_KEYS" "$(opencode_permission_line "$id" | jq -c 'keys_unsorted')" "$id: las 17 claves del vocabulario, en el orden del mapping"
+done
+
+echo ""
 echo "[read] CA-2: lectura de .env -> deny con la capacidad read"
 assert_eq "deny" "$(eval_perm mefisto-fx-perm-read read '.env')" "lectura de .env deniega"
 assert_eq "allow" "$(eval_perm mefisto-fx-perm-read read 'README.md')" "lectura de una ruta comun permite (catch-all)"
+assert_eq "deny" "$(eval_perm mefisto-fx-perm-read read 'infra/dev/.env')" "lectura de un .env en subdirectorio deniega"
+assert_eq "deny" "$(eval_perm mefisto-fx-perm-read read 'src/config/.aws/credentials')" "lectura bajo .aws/ deniega"
 
 echo ""
 echo "[edit] CA-2: src/Foo.cs deny, commands/x.md allow, resumen de stage allow"
@@ -196,6 +213,19 @@ assert_eq "deny" "$(eval_perm mefisto-fx-perm-planner bash 'rm -rf x')" "'rm -rf
 assert_eq "allow" "$(eval_perm mefisto-fx-perm-planner bash 'git status')" "'git status' permite"
 assert_eq "deny" "$(eval_perm mefisto-fx-perm-planner bash 'git push --force origin main')" "'git push --force' deniega pese al allow general de 'git *'"
 assert_eq "deny" "$(eval_perm mefisto-fx-perm-planner bash 'curl https://example.com')" "'curl' deniega (no listado)"
+# El candidato que OpenCode 1.18.29 evalua para `bash` es el TEXTO COMPLETO de
+# cada nodo `command` del arbol tree-sitter -- asignaciones de entorno del
+# prefijo incluidas, y un candidato por comando de la tuberia. De ahi estos
+# tres casos, que la lista original de patrones no cubria: la forma que emite
+# {{mefisto:run}}, la invocacion directa de un script del repo, y un coreutil
+# desnudo (como aparece en una tuberia).
+assert_eq "allow" "$(eval_perm mefisto-fx-perm-planner bash 'MEFISTO_RUNTIME=opencode ./.claude/scripts/mefisto-tooling-pipeline.sh 862')" "la forma que emite {{mefisto:run}} permite"
+assert_eq "allow" "$(eval_perm mefisto-fx-perm-planner bash './.claude/scripts/tests/test-generate-internal-adapters.sh')" "invocacion directa de un script interno permite"
+assert_eq "allow" "$(eval_perm mefisto-fx-perm-planner bash 'sort')" "coreutil desnudo (en tuberia) permite"
+# El anclaje al inicio del texto es lo que hace utiles los deny: ningun allow
+# empieza con un comodin que absorba un prefijo de entorno arbitrario, asi que
+# un `rm` disfrazado con el prefijo de {{mefisto:run}} no cae en el allow.
+assert_eq "deny" "$(eval_perm mefisto-fx-perm-planner bash 'MEFISTO_RUNTIME=opencode rm -rf x')" "'rm' con prefijo de entorno no cae en el allow de scripts"
 
 echo ""
 echo "[question] CA-4: allow solo en mode primary"

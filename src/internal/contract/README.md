@@ -224,9 +224,9 @@ claves en `deny`.
 | `skill` | `skill` | idem |
 | `task` | `task` | idem |
 | `read` | `list`, `glob`, `grep`, `lsp`, `todowrite` | idem |
-| `shell` | `bash` (mapa de patrones) | `{"*": "deny"}` si no esta declarada; si esta, `"*": "deny"` + patrones de `git`, `gh`, `jq`, coreutils de lectura, `bash`/`sh` sobre `scripts/tests/*`/`.claude/scripts/*`/`src/internal/scripts/*`, `shasum`, `mkdir`, `date`, `mktemp`, `diff` en `allow` -- `rm`, `curl`, `ssh`, `scp`, `sudo`, `npm`, `pip`, `brew`, `git push --force*`, `gh repo delete*` quedan `deny` aunque `shell` este presente |
+| `shell` | `bash` (mapa de patrones) | `{"*": "deny"}` si no esta declarada; si esta, `"*": "deny"` + patrones de `git`, `gh`, `jq`, coreutils de lectura (con y sin argumentos), los scripts del repo bajo `scripts/tests/`, `.claude/scripts/` y `src/internal/scripts/` (como `bash <script>`, como invocacion directa y en la forma exacta que emite `{{mefisto:run}}`, `MEFISTO_RUNTIME=opencode ./.claude/scripts/*`), `shasum`, `mkdir`, `date`, `mktemp`, `diff` en `allow` -- `rm`, `curl`, `ssh`, `scp`, `sudo`, `npm`, `pip`, `brew`, `git push --force*`, `gh repo delete*` quedan `deny` aunque `shell` este presente |
 | `edit` | `edit`, `write`, `patch` (mismo mapa de patrones) | `{"*": "deny"}` si no esta declarada; si esta, `"*": "deny"` + las rutas de `is_path_in_mefisto_scope` (`.claude/scripts/_mefisto-common.sh`) mas `.mefisto/pipeline/summaries/**` y `.claude/pipeline/summaries/**` en `allow` |
-| `read` | `read` (mapa de patrones) | `{"*": "deny"}` si no esta declarada; si esta, `"*": "allow"` + `.env`, `.env.*`, `**/auth.json`, `**/.aws/**`, `**/.ssh/**`, `~/.local/share/opencode/**`, `~/.claude/**` en `deny` |
+| `read` | `read` (mapa de patrones) | `{"*": "deny"}` si no esta declarada; si esta, `"*": "allow"` + `.env`, `.env.*`, `**/.env`, `**/.env.*`, `**/auth.json`, `**/.aws/**`, `**/.ssh/**`, `~/.local/share/opencode/**`, `~/.claude/**` en `deny` |
 | `mcp` | -- | **sin mapeo**: el generador aborta con `capacidad mcp sin mapeo OpenCode` (mismo criterio que `mcp` en la tabla Claude de arriba) |
 
 OpenCode evalua cada mapa de patrones en el orden declarado y **gana la
@@ -239,6 +239,35 @@ unicamente esa regla de orden para los tests (no el motor real de OpenCode);
 una paridad `edit` vs `is_path_in_mefisto_scope` sobre una muestra de rutas.
 Si el dogfooding (#874) revela una discrepancia con OpenCode real, se corrige
 el mapping, nunca el test.
+
+Cuatro detalles de la semantica de 1.18.29 que condicionan la **forma** de los
+patrones (verificados leyendo el bundle del binario; el mapping los repite en
+su `$comment_semantica_verificada` para que sobrevivan a este README):
+
+1. La evaluacion es `findLast(regla => match(permiso, regla.permiso) &&
+   match(candidato, regla.patron))` con default `{action: "ask"}`. De ahi las
+   dos reglas de diseno: catch-all primero (gana la ultima coincidencia) y
+   **valor explicito en toda clave** -- lo que no matchea ninguna regla queda
+   en `ask`, y `--auto` auto-aprueba todo `ask`. Una clave omitida no es un
+   default seguro: es un permiso abierto.
+2. El candidato de `bash` no es el nombre del programa sino el **texto
+   completo de cada nodo `command`** del arbol tree-sitter (un candidato por
+   comando de la tuberia, prefijo de asignaciones de entorno incluido). Por
+   eso los coreutils llevan su forma desnuda ademas de `X *`, y los scripts
+   del repo llevan la forma que emite `{{mefisto:run}}`. El anclaje al inicio
+   del texto es deliberado en los `deny` (`rm *` no matchea `FOO=1 rm x`), asi
+   que ningun `allow` empieza con un comodin que pueda absorber un prefijo de
+   entorno arbitrario.
+3. El candidato de `edit` y `read` es la **ruta relativa al worktree** en
+   POSIX. Por eso los patrones de ruta son relativos; los que empiezan por `~`
+   se expanden a `$HOME` y nunca casan con un candidato relativo -- quedan
+   como defensa en profundidad, y lo que de verdad contiene el acceso fuera
+   del worktree es `external_directory: deny`.
+4. `write` y `patch` son **inertes** en 1.18.29: las tools `edit`, `write` y
+   `apply_patch` preguntan todas bajo el permiso `edit`, que es el que manda.
+   Se emiten igual (CA-1 pide valor explicito en todo el vocabulario, y si
+   OpenCode separa las claves no quedan abiertas), con el mismo mapa de rutas
+   que `edit` para que no puedan divergir.
 
 ### Directivas de body
 

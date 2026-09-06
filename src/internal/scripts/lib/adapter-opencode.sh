@@ -36,15 +36,18 @@ adapter_opencode_default_model() {
 OPENCODE_PERMISSIONS_MAPPING="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../contract/opencode-permissions.json"
 
 # opencode_capability_known <capacidad> -- 0 si <capacidad> tiene mapeo a
-# `permission` de OpenCode (read, edit, shell, web, skill, task); 1 en
-# cualquier otro caso, incluida `mcp` -- CA-5: sin mapeo definido todavia
-# (mismo criterio que claude_map_capability_tools con `mcp` en
-# adapter-claude.sh, aqui sin degradar nunca a un permiso inventado).
+# `permission` de OpenCode, 1 en cualquier otro caso, incluida `mcp` -- CA-5:
+# sin mapeo definido todavia (mismo criterio que claude_map_capability_tools
+# con `mcp` en adapter-claude.sh, aqui sin degradar nunca a un permiso
+# inventado). El vocabulario NO se repite aqui: sale de las claves del propio
+# mapping (`capability_scalar` + `capability_map`), que es la fuente de
+# verdad; duplicarlo en un `case` dejaria que agregar una capacidad al JSON
+# siguiera abortando en silencio por este lado.
 opencode_capability_known() {
-    case "$1" in
-        read|edit|shell|web|skill|task) return 0 ;;
-        *) return 1 ;;
-    esac
+    jq -e --arg cap "$1" '
+        ((.capability_scalar | keys_unsorted) + (.capability_map | keys_unsorted))
+        | index($cap) != null
+    ' "$OPENCODE_PERMISSIONS_MAPPING" >/dev/null 2>&1
 }
 
 # opencode_permission_json <rel_source> <capabilities_json> <mode> -- imprime
@@ -57,10 +60,18 @@ opencode_capability_known() {
 # cualquier otro valor). Aborta (return 1, mensaje en stderr citando
 # rel_source) si <capabilities_json> declara una capacidad sin mapeo OpenCode
 # (CA-5): "<rel_source>: capacidad <x> sin mapeo OpenCode" -- sin imprimir
-# nada por stdout.
+# nada por stdout. Aborta igual, con el mismo contrato, si el mapping
+# declarativo no esta en su ruta (mismo criterio que el chequeo de libs
+# requeridas de generate-internal-adapters.sh: mejor un motivo legible que un
+# error crudo de jq).
 opencode_permission_json() {
     local rel_source="$1" capabilities_json="${2:-[]}" mode="$3"
     [ "$capabilities_json" = "null" ] && capabilities_json="[]"
+
+    if [ ! -f "$OPENCODE_PERMISSIONS_MAPPING" ]; then
+        echo "$rel_source: no existe el mapping de permisos '$OPENCODE_PERMISSIONS_MAPPING'" >&2
+        return 1
+    fi
 
     local cap
     while IFS= read -r cap; do
