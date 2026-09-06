@@ -3,9 +3,10 @@
 # propio checkout de Mefisto para dogfooding interno (issue #868, MEF-ADR-0049).
 #
 # Lista y resuelve todos los artefactos SIN invocar ningun modelo. Cubre:
-#   [CA-1] Los tres agentes y los diez comandos internos generados existen y
-#       son validos; si el CLI `opencode` esta instalado, ademas se listan
-#       via `opencode agent list` y `opencode debug config`.
+#   [CA-1] Todo agente y todo comando de la fuente neutral (`src/internal/`)
+#       tiene su salida `.opencode/` -- hoy tres agentes (#865) y diez
+#       comandos (#866/#867) -- y si el CLI `opencode` esta instalado,
+#       ademas se listan via `opencode agent list` y `opencode debug config`.
 #   [CA-2] `opencode.json` declara unicamente `$schema` (y `instructions`, si
 #       algun dia hiciera falta acotarlo): nunca `plugin`, `provider`,
 #       `model`, `permission` global, tokens, API keys ni rutas al auth
@@ -36,8 +37,21 @@ AGENTS_MD="$REPO_ROOT/AGENTS.md"
 VALIDATOR="$REPO_ROOT/src/internal/scripts/validate-internal-artifacts.sh"
 GENERATOR="$REPO_ROOT/src/internal/scripts/generate-internal-adapters.sh"
 
-AGENT_IDS="mefisto-planner mefisto-investigator mefisto-historiador"
-COMMAND_IDS="mefisto-plan mefisto-bug mefisto-bitacora mefisto-work-status mefisto-fix-review mefisto-tooling mefisto-tooling-verbose mefisto-sequential mefisto-merge mefisto-release"
+# Los ids salen de la fuente neutral (#853), no de una lista fija: este test
+# pregunta si TODO artefacto interno es descubrible por OpenCode, asi que los
+# agentes que sumen issues futuros (#879) quedan cubiertos sin tocarlo.
+ids_de() {
+    local f id
+    for f in "$1"/*.md; do
+        [ -f "$f" ] || continue
+        id="${f##*/}"
+        printf '%s ' "${id%.md}"
+    done
+}
+AGENT_IDS=$(ids_de "$REPO_ROOT/src/internal/agents")
+COMMAND_IDS=$(ids_de "$REPO_ROOT/src/internal/commands")
+AGENT_COUNT=$(printf '%s' "$AGENT_IDS" | wc -w | tr -d ' ')
+COMMAND_COUNT=$(printf '%s' "$COMMAND_IDS" | wc -w | tr -d ' ')
 
 PASS=0
 FAIL=0
@@ -45,6 +59,16 @@ pass() { echo "  PASS: $1"; PASS=$((PASS+1)); }
 fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 
 echo "[CA-1] Los agentes y comandos internos generados existen"
+if [ "$AGENT_COUNT" -ge 3 ]; then
+    pass "src/internal/agents aporta $AGENT_COUNT agentes (>= 3, los de #865)"
+else
+    fail "src/internal/agents aporta $AGENT_COUNT agentes (esperaba >= 3, los de #865)"
+fi
+if [ "$COMMAND_COUNT" -ge 10 ]; then
+    pass "src/internal/commands aporta $COMMAND_COUNT comandos (>= 10, los de #866/#867)"
+else
+    fail "src/internal/commands aporta $COMMAND_COUNT comandos (esperaba >= 10, los de #866/#867)"
+fi
 for id in $AGENT_IDS; do
     if [ -f "$REPO_ROOT/.opencode/agents/$id.md" ]; then
         pass "$id: existe .opencode/agents/$id.md"

@@ -19,4 +19,4 @@ Verificacion de sesion (no automatizable con `bash + jq`) de que ambos runtimes 
 |---|---|---|---|---|
 | 2026-09-05 | Claude Code (sesion headless del pipeline de #855) | si | n/a (es el archivo que dispara el import) | El import `@AGENTS.md` resolvio: el runtime inyecto el contenido integro de `AGENTS.md` como project instructions. Falta la comprobacion interactiva con `/memory` |
 | _pendiente_ | Claude Code (sesion interactiva) | | | |
-| _pendiente_ | OpenCode | | | |
+| 2026-09-06 | OpenCode 1.18.29 (issue #868) | si | no | `Instruction.systemPaths` recorre los candidatos de proyecto `["AGENTS.md", "CLAUDE.md", "CONTEXT.md"]` y corta (`break`) en el primero con alguna coincidencia: con `AGENTS.md` en la raiz, `CLAUDE.md` **no se lee**. Por eso `opencode.json` no declara `instructions` |

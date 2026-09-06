@@ -686,15 +686,20 @@ de configuracion de proyecto que introduce este issue:
 }
 ```
 
-- **Sin `plugin`**: MEF-ADR-0049 decision 2 no necesita un `.opencode/plugins/*.js`
-  para el scope temprano (issue #863, ver "Scope temprano en OpenCode" arriba);
-  no hay razon para declarar `plugin` aqui tampoco.
+- **Sin `plugin`**: el scope temprano en OpenCode no necesita un
+  `.opencode/plugins/*.js` -- lo cubre el `edit` deny-por-defecto del bloque
+  `permission` por agente (MEF-ADR-0049 decision 5, issue #863, ver "Scope
+  temprano en OpenCode" arriba); no hay razon para declarar `plugin` aqui
+  tampoco.
 - **Sin `instructions`**: verificado contra la doc publica
   (<https://opencode.ai/docs/rules/>) y confirmado leyendo el binario OpenCode
-  1.18.29 (mismo criterio de verificacion que el resto de este contrato): la
-  resolucion de reglas de proyecto es "el primero que existe gana" -- si
-  `AGENTS.md` esta presente, `CLAUDE.md` **ni se lee** -- no una carga aditiva
-  de ambos archivos. Como este repo ya tiene `AGENTS.md` como fuente canonica
+  1.18.29 (mismo criterio de verificacion que el resto de este contrato):
+  `Instruction.systemPaths` recorre los candidatos de proyecto
+  `["AGENTS.md", "CLAUDE.md", "CONTEXT.md"]` y corta (`break`) en el primero
+  con alguna coincidencia, de modo que la resolucion es "el primero que existe
+  gana" -- si `AGENTS.md` esta presente, `CLAUDE.md` **ni se lee** -- no una
+  carga aditiva de ambos archivos. La evidencia queda registrada en
+  `docs/testing/agents-md-shim-smoke.md`. Como este repo ya tiene `AGENTS.md` como fuente canonica
   (MEF-ADR-0049 decision 3, issue #855), declarar `instructions: ["AGENTS.md"]`
   seria redundante: OpenCode ya lo descubre por convencion, sin config
   explicita. Si una version futura de OpenCode cambiara esa precedencia a
