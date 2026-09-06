@@ -8,19 +8,32 @@
 # del repo indicado (default: el repo git del cwd) con los dos panes
 # principales del flujo Mefisto:
 #
-#   - Pane izquierdo  "planner":   una sesion de Claude Code corriendo el
-#     agente de Knowledge Crunching -- `claude --agent mefisto:planner` en un
-#     proyecto consumidor, `claude --agent mefisto-planner` en el propio repo
-#     de Mefisto (los agentes internos llevan prefijo, MEF-ADR-0019).
-#   - Pane derecho    "ejecucion": una sesion de Claude Code para despachar
+#   - Pane izquierdo  "planner":   una sesion de agente corriendo el agente
+#     de Knowledge Crunching -- `--agent mefisto:planner` en un proyecto
+#     consumidor, `--agent mefisto-planner` en el propio repo de Mefisto (los
+#     agentes internos llevan prefijo, MEF-ADR-0019).
+#   - Pane derecho    "ejecucion": una sesion de agente para despachar
 #     issues (/implement, /tooling, /infra, /sequential). Dentro de herdr,
 #     esos skills abren el tercer pane con el visor en vivo (issue #690).
+#
+# Runtime (MEFISTO_RUNTIME, issue #875): en el propio repo de Mefisto ambos
+# panes arrancan con `herdr agent start --kind "${MEFISTO_RUNTIME:-claude}"`
+# -- Claude Code por default, OpenCode si MEFISTO_RUNTIME=opencode -- y
+# heredan MEFISTO_RUNTIME (y MEFISTO_MODELS_FILE si esta definida) en su
+# entorno via `--env` de herdr, para que /mefisto-tooling y /mefisto-batch
+# despachados desde el pane de ejecucion (mefisto-herdr-pipeline.sh, #872)
+# hereden el mismo runtime sin fijarlo a mano. En un proyecto consumidor el
+# runtime sigue siendo siempre Claude Code (el plugin publicado aun no
+# soporta OpenCode): un MEFISTO_RUNTIME distinto de "claude" se ignora con un
+# aviso, exactamente el comportamiento de hoy. El script nunca fija
+# provider, modelo ni credenciales, ni lee opencode.json o un auth store.
 #
 # Los agentes se lanzan con `herdr agent start` bajo nombres unicos por
 # workspace (planner-<slug>, ejecucion-<slug>) para que el sidebar de herdr
 # muestre su estado (working/blocked/done). Si un lanzamiento falla (p. ej.
 # el nombre ya esta vivo en otro workspace del mismo repo), el pane queda
-# con su shell y el script lo avisa: lanzar `claude` a mano ahi lo resuelve.
+# con su shell y el script lo avisa: lanzar el runtime activo a mano ahi lo
+# resuelve.
 #
 # Donde correrlo: en cualquier terminal. Dentro de un pane herdr actua sobre
 # la sesion actual; fuera de herdr, sobre la sesion default del servidor (las
@@ -78,6 +91,23 @@ planner_agent_for_repo() {
     fi
 }
 
+# runtime_kind_for_repo <planner_agent>
+#
+# Imprime el argumento de `herdr agent start --kind` para el runtime activo
+# (issue #875): en el propio repo de Mefisto (planner_agent =
+# "mefisto-planner") honra MEFISTO_RUNTIME, default "claude"; en un
+# consumidor SIEMPRE "claude" -- el plugin publicado aun no soporta OpenCode.
+# Pura (solo imprime el kind resuelto): el aviso de un MEFISTO_RUNTIME
+# ignorado en un consumidor lo emite el llamador, que no captura este stdout.
+runtime_kind_for_repo() {
+    local planner_agent="$1"
+    if [ "$planner_agent" = "mefisto-planner" ]; then
+        echo "${MEFISTO_RUNTIME:-claude}"
+    else
+        echo "claude"
+    fi
+}
+
 # pane_shell_is_free <pane_id>
 #
 # 0 si el pane esta en su prompt interactivo, sin comando en foreground
@@ -107,22 +137,28 @@ wait_for_free_shell() {
     return 1
 }
 
-# start_agent_in_pane <nombre> <pane_id> <arg-de---agent (vacio = claude pelado)>
+# start_agent_in_pane <nombre> <pane_id> <arg-de---agent (vacio = runtime pelado)> [<kind>]
 #
-# Lanza una sesion de Claude Code en el pane via `herdr agent start` (asi el
-# sidebar muestra su estado de vida). El arranque tiene una carrera conocida:
-# recien creado el pane, el primer intento puede fallar aunque el shell ya
-# reporte su prompt (visto en vivo: el mismo comando reintentado a mano
-# funciona) -- por eso un fallo se reintenta UNA vez tras una pausa, pasando
-# antes por `herdr agent get`: un primer intento que fallo con
-# agent_not_ready puede haber dejado a claude levantando con el nombre ya
-# reservado, y ahi el get lo confirma sin un segundo start que chocaria con
-# el nombre. Los errores del CLI (JSON por stderr) se muestran en el aviso
-# en vez de tragarse: sin eso el fallo real es indiagnosticable. Si ambos
-# intentos fallan, degrada a un aviso: el pane queda con su shell y el
-# humano puede lanzar `claude` a mano.
+# Lanza una sesion del runtime activo (<kind>, default "claude") en el pane
+# via `herdr agent start` (asi el sidebar muestra su estado de vida). El
+# arranque tiene una carrera conocida: recien creado el pane, el primer
+# intento puede fallar aunque el shell ya reporte su prompt (visto en vivo:
+# el mismo comando reintentado a mano funciona) -- por eso un fallo se
+# reintenta UNA vez tras una pausa, pasando antes por `herdr agent get`: un
+# primer intento que fallo con agent_not_ready puede haber dejado al runtime
+# levantando con el nombre ya reservado, y ahi el get lo confirma sin un
+# segundo start que chocaria con el nombre. Los errores del CLI (JSON por
+# stderr) se muestran en el aviso en vez de tragarse: sin eso el fallo real
+# es indiagnosticable. Si ambos intentos fallan, degrada a un aviso: el pane
+# queda con su shell y el humano puede lanzar el runtime a mano.
+#
+# MEFISTO_AGENT_START_RETRY_PAUSE (segundos, default 3) es la pausa entre el
+# start fallido y el `agent get` que lo confirma; existe para que los tests no
+# paguen esa espera de reloj cuatro veces (mismo criterio que
+# MEFISTO_AGENT_MAX_ATTEMPTS en el pipeline de tooling). En produccion nadie
+# la fija: el default es el comportamiento de siempre.
 start_agent_in_pane() {
-    local name="$1" pane="$2" agent_arg="$3"
+    local name="$1" pane="$2" agent_arg="$3" kind="${4:-claude}"
     if ! wait_for_free_shell "$pane"; then
         warn "El shell del pane $pane no llego a su prompt; lanza el agente a mano ahi."
         return 0
@@ -132,17 +168,17 @@ start_agent_in_pane() {
     for intento in 1 2; do
         rc=0
         if [ -n "$agent_arg" ]; then
-            err=$(herdr agent start "$name" --kind claude --pane "$pane" --timeout 90000 -- --agent "$agent_arg" 2>&1 >/dev/null) || rc=$?
+            err=$(herdr agent start "$name" --kind "$kind" --pane "$pane" --timeout 90000 -- --agent "$agent_arg" 2>&1 >/dev/null) || rc=$?
         else
-            err=$(herdr agent start "$name" --kind claude --pane "$pane" --timeout 90000 2>&1 >/dev/null) || rc=$?
+            err=$(herdr agent start "$name" --kind "$kind" --pane "$pane" --timeout 90000 2>&1 >/dev/null) || rc=$?
         fi
         if [ "$rc" -eq 0 ]; then
-            success "Agente '$name' corriendo en el pane $pane${agent_arg:+ (claude --agent $agent_arg)}"
+            success "Agente '$name' corriendo en el pane $pane${agent_arg:+ ($kind --agent $agent_arg)}"
             return 0
         fi
-        sleep 3
+        sleep "${MEFISTO_AGENT_START_RETRY_PAUSE:-3}"
         if herdr agent get "$name" >/dev/null 2>&1; then
-            success "Agente '$name' corriendo en el pane $pane (levanto tras el primer intento)${agent_arg:+ (claude --agent $agent_arg)}"
+            success "Agente '$name' corriendo en el pane $pane (levanto tras el primer intento)${agent_arg:+ ($kind --agent $agent_arg)}"
             return 0
         fi
         if [ "$intento" -eq 1 ]; then
@@ -151,7 +187,7 @@ start_agent_in_pane() {
     done
 
     warn "No se pudo lanzar '$name' en el pane $pane tras 2 intentos (rc=$rc).${err:+ Detalle: $(echo "$err" | head -c 200)}"
-    warn "El pane quedo con su shell: lanza ahi 'claude${agent_arg:+ --agent $agent_arg}' a mano."
+    warn "El pane quedo con su shell: lanza ahi '$kind${agent_arg:+ --agent $agent_arg}' a mano."
     return 0
 }
 
@@ -173,6 +209,23 @@ main() {
         warn "El workspace se abre igual, pero los pipelines fallaran hasta completar el onboarding."
     fi
 
+    # Runtime (MEFISTO_RUNTIME, issue #875): runtime_kind_for_repo es el unico
+    # punto de decision del kind -- solo su rama Mefisto honra la variable.
+    # env_args viaja a `herdr workspace create`/`herdr pane split` para que
+    # AMBOS panes (CA-2) hereden MEFISTO_RUNTIME/MEFISTO_MODELS_FILE en su
+    # entorno -- nunca se fija provider, modelo ni credenciales. En un
+    # consumidor env_args queda vacio siempre: el runtime sigue siendo
+    # Claude Code, exactamente como hoy (CA-3).
+    local runtime_kind
+    local env_args=()
+    runtime_kind=$(runtime_kind_for_repo "$planner_agent")
+    if [ "$planner_agent" = "mefisto-planner" ]; then
+        [ -n "${MEFISTO_RUNTIME:-}" ] && env_args+=(--env "MEFISTO_RUNTIME=$MEFISTO_RUNTIME")
+        [ -n "${MEFISTO_MODELS_FILE:-}" ] && env_args+=(--env "MEFISTO_MODELS_FILE=$MEFISTO_MODELS_FILE")
+    elif [ -n "${MEFISTO_RUNTIME:-}" ] && [ "$MEFISTO_RUNTIME" != "claude" ]; then
+        warn "El plugin publicado aun no soporta OpenCode (MEFISTO_RUNTIME=$MEFISTO_RUNTIME); se usa 'claude'."
+    fi
+
     local label slug
     label=$(basename "$repo_root")
     slug=$(workspace_slug "$label")
@@ -190,14 +243,17 @@ main() {
 
     log "Creando el workspace '$label' para $repo_root ..."
     local resp ws p1
-    resp=$(herdr workspace create --cwd "$repo_root" --label "$label" 2>&1) \
+    # env_args vacio no puede expandirse a secas: bash 3.2 con `set -u` aborta
+    # con "unbound variable" -- de ahi el idiom `"${a[@]+"${a[@]}"}"` (mismo
+    # que mefisto-stream-watch.sh), que en ese caso no aporta ningun argumento.
+    resp=$(herdr workspace create --cwd "$repo_root" --label "$label" "${env_args[@]+"${env_args[@]}"}" 2>&1) \
         || abort "No se pudo crear el workspace: $resp"
     ws=$(echo "$resp" | jq -r '.result.workspace.workspace_id // empty')
     p1=$(echo "$resp" | jq -r '.result.root_pane.pane_id // empty')
     [ -n "$ws" ] && [ -n "$p1" ] || abort "herdr workspace create no devolvio ids. Respuesta: $resp"
 
     local p2=""
-    resp=$(herdr pane split --pane "$p1" --direction right --cwd "$repo_root" --no-focus 2>&1) \
+    resp=$(herdr pane split --pane "$p1" --direction right --cwd "$repo_root" --no-focus "${env_args[@]+"${env_args[@]}"}" 2>&1) \
         && p2=$(echo "$resp" | jq -r '.result.pane.pane_id // empty')
     if [ -z "$p2" ]; then
         warn "No se pudo crear el pane de ejecucion (split fallo): el workspace queda con el pane del planner."
@@ -206,8 +262,8 @@ main() {
     herdr pane rename "$p1" "planner" >/dev/null 2>&1 || true
     [ -n "$p2" ] && herdr pane rename "$p2" "ejecucion" >/dev/null 2>&1 || true
 
-    start_agent_in_pane "planner-$slug" "$p1" "$planner_agent"
-    [ -n "$p2" ] && start_agent_in_pane "ejecucion-$slug" "$p2" ""
+    start_agent_in_pane "planner-$slug" "$p1" "$planner_agent" "$runtime_kind"
+    [ -n "$p2" ] && start_agent_in_pane "ejecucion-$slug" "$p2" "" "$runtime_kind"
 
     echo ""
     success "Workspace '$label' listo ($ws): planner ($p1) + ejecucion (${p2:-no creado})."

@@ -751,3 +751,37 @@ ningun comando de ejecucion que use `{{mefisto:run}}` pierda el prefijo
 con `external_directory` en `deny`. Si el CLI `opencode` esta instalado,
 ademas corre `opencode agent list` y `opencode debug config` para confirmar
 el descubrimiento real; si no, omite esos pasos con un aviso.
+
+## Workspace herdr con el runtime activo (issue #875)
+
+`scripts/herdr-workspace.sh` (publicado, issue #691) abre el workspace de dos
+panes (`planner` + `ejecucion`) que da acceso al resto de este contrato. Solo
+su rama Mefisto (deteccion por `.claude-plugin/plugin.json`, igual que
+`planner_agent_for_repo`) honra `MEFISTO_RUNTIME`: ambos panes arrancan con
+`herdr agent start --kind "${MEFISTO_RUNTIME:-claude}"` y heredan
+`MEFISTO_RUNTIME` (y `MEFISTO_MODELS_FILE` si esta definida) en su entorno via
+`--env` de `herdr workspace create`/`herdr pane split` -- el script nunca fija
+provider, modelo ni credenciales, ni lee `opencode.json` o un auth store. La
+rama consumidor no cambia: el runtime sigue siendo siempre Claude Code, y un
+`MEFISTO_RUNTIME` distinto de `claude` se ignora con un aviso.
+
+Ese `--env` es lo que cierra el lazo con `mefisto-herdr-pipeline.sh` (#872,
+seccion "`mefisto-herdr-pipeline.sh`" mas arriba): al despachar `/mefisto-
+tooling` o `/mefisto-batch` desde el pane de ejecucion, ese script lee
+`MEFISTO_RUNTIME`/`MEFISTO_MODELS_FILE` del entorno del PROPIO pane (heredado
+al crearlo) y los antepone como asignacion de entorno al comando que despacha
+en el pane run (su `ENV_PREFIX`), de donde el sub-pipeline los hereda como
+cualquier proceso hijo -- sin que `herdr-workspace.sh` necesite conocer nada
+de ese runner. Smoke documental (sin depender de un servidor herdr real): con
+`MEFISTO_RUNTIME=opencode` fijado antes de abrir el workspace, un pane de
+ejecucion recien creado reporta `echo $MEFISTO_RUNTIME` -> `opencode`, y
+`mefisto-herdr-pipeline.sh --tooling <issue>` corrido ahi antepone
+`MEFISTO_RUNTIME=opencode` al comando del pane run, de modo que
+`mefisto-tooling-pipeline.sh` corre con ese runtime sin que el humano lo haya
+fijado a mano en ese pane.
+`scripts/tests/test-herdr-workspace.sh` cubre el `--kind`/`--env` de
+`herdr-workspace.sh` con un stub de `herdr`;
+`.claude/scripts/tests/test-mefisto-herdr-pipeline.sh` (bloques 1-5) cubre por
+separado que `mefisto-herdr-pipeline.sh` reenvia esas mismas variables al pane
+run -- ningun test corre ambos scripts encadenados contra un servidor herdr
+real.
