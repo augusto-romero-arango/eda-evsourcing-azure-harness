@@ -17,6 +17,10 @@
 #       invocador y no resolveria tras el cd).
 #   [D] Coherencia del skill: .claude/commands/mefisto-release.md documenta
 #       --prepare-only y el encadenamiento por defecto (CA-4).
+#   [E] Migracion al layout canonico (issue #864): la implementacion vive en
+#       src/internal/scripts/mefisto-release.sh; .claude/scripts/mefisto-
+#       release.sh es un shim de tres lineas que reenvia ahi con `exec`,
+#       preservando argumentos (incluidos los que traen espacios) y exit code.
 #
 # mefisto-release.sh NO es sourceable (ejecuta el pipeline completo en su nivel
 # superior). El bloque [A] extrae el parseo con sed y lo evalua aislado, misma
@@ -29,7 +33,8 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-RELEASE_SCRIPT="$REPO_ROOT/.claude/scripts/mefisto-release.sh"
+RELEASE_SCRIPT="$REPO_ROOT/src/internal/scripts/mefisto-release.sh"
+RELEASE_SHIM="$REPO_ROOT/.claude/scripts/mefisto-release.sh"
 RELEASE_SKILL="$REPO_ROOT/.claude/commands/mefisto-release.md"
 
 PASS=0
@@ -185,6 +190,77 @@ for token in '--prepare-only' 'encadena'; do
         fail "D: mefisto-release.md deberia mencionar '${token}'"
     fi
 done
+
+# -------- Bloque E: migracion al layout canonico (issue #864) --------
+
+echo ""
+echo "[E] El shim .claude/scripts/mefisto-release.sh reenvia a la implementacion canonica"
+
+if [ -f "$RELEASE_SCRIPT" ] && [ -x "$RELEASE_SCRIPT" ]; then
+    pass "E-1: la implementacion canonica existe y es ejecutable"
+else
+    fail "E-1: no existe o no es ejecutable $RELEASE_SCRIPT"
+fi
+
+if [ -f "$RELEASE_SHIM" ] && [ -x "$RELEASE_SHIM" ] && bash -n "$RELEASE_SHIM" 2>/dev/null; then
+    pass "E-2: el shim existe, es ejecutable y pasa 'bash -n'"
+else
+    fail "E-2: el shim no existe, no es ejecutable o no pasa 'bash -n'"
+fi
+
+EXPECTED_SHIM=$(cat <<'SHIMEOF'
+#!/usr/bin/env bash
+# Shim de compatibilidad (MEF-ADR-0049): la implementacion canonica vive en src/internal/scripts/. No editar.
+exec "$(cd "$(dirname "$0")/../.." && pwd)/src/internal/scripts/$(basename "$0")" "$@"
+SHIMEOF
+)
+if [ "$(cat "$RELEASE_SHIM")" = "$EXPECTED_SHIM" ]; then
+    pass "E-3: el shim es byte a byte la plantilla documentada en src/internal/scripts/README.md"
+else
+    fail "E-3: el shim no coincide con la plantilla documentada en src/internal/scripts/README.md"
+fi
+
+# E-4: reenvio dinamico -- se ejercita el shim REAL, pero contra una raiz de
+# repo temporal con un canonico FALSO en el lugar exacto que la plantilla
+# resuelve (repo/src/internal/scripts/mefisto-release.sh), para comprobar
+# reenvio de argumentos (incluido uno con espacios) y de exit code sin
+# disparar ningun efecto real de git/gh/jq.
+E4_TMP=$(mktemp -d)
+mkdir -p "$E4_TMP/.claude/scripts" "$E4_TMP/src/internal/scripts"
+cp "$RELEASE_SHIM" "$E4_TMP/.claude/scripts/mefisto-release.sh"
+chmod +x "$E4_TMP/.claude/scripts/mefisto-release.sh"
+cat > "$E4_TMP/src/internal/scripts/mefisto-release.sh" <<'FAKEEOF'
+#!/usr/bin/env bash
+printf 'ARGC=%s\n' "$#"
+i=0
+for arg in "$@"; do
+    i=$((i+1))
+    printf 'ARG%s=[%s]\n' "$i" "$arg"
+done
+exit 17
+FAKEEOF
+chmod +x "$E4_TMP/src/internal/scripts/mefisto-release.sh"
+
+E4_OUT=$("$E4_TMP/.claude/scripts/mefisto-release.sh" patch "un valor con espacios" --prepare-only 2>&1)
+E4_EXIT=$?
+
+if [ "$E4_EXIT" -eq 17 ]; then
+    pass "E-4: el exit code del canonico (17, != 0) se reenvia tal cual a traves del shim"
+else
+    fail "E-4: se esperaba exit code 17, se obtuvo ${E4_EXIT}"
+fi
+
+EXPECTED_E4_OUT=$'ARGC=3\nARG1=[patch]\nARG2=[un valor con espacios]\nARG3=[--prepare-only]'
+if [ "$E4_OUT" = "$EXPECTED_E4_OUT" ]; then
+    pass "E-4: los argumentos (incluido uno con espacios) llegan intactos al canonico via el shim"
+else
+    fail "E-4: los argumentos no llegaron intactos -- esperado:
+${EXPECTED_E4_OUT}
+obtenido:
+${E4_OUT}"
+fi
+
+rm -rf "$E4_TMP"
 
 # -------- Resumen --------
 

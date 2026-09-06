@@ -23,11 +23,15 @@
 #       (```) no son entradas y no deben inflar el indice; y una seccion sin
 #       subsecciones "### Categoria" produce resumen vacio, caso para el que el
 #       script trae un fallback (el body nunca queda con una seccion muda).
+#   [G] Migracion al layout canonico (issue #864): la implementacion vive en
+#       src/internal/scripts/mefisto-release.sh; .claude/scripts/mefisto-
+#       release.sh es un shim de tres lineas que reenvia ahi con `exec`.
 #
-# summarize_version_section vive en mefisto-release.sh, que NO es sourceable
-# (ejecuta el pipeline completo -- git switch, push, gh pr create -- en su
-# nivel superior). Para probar la funcion sin disparar esos efectos, se
-# extrae su definicion con sed y se evalua de forma aislada.
+# summarize_version_section vive en mefisto-release.sh (la implementacion
+# CANONICA, src/internal/scripts/, issue #864), que NO es sourceable (ejecuta
+# el pipeline completo -- git switch, push, gh pr create -- en su nivel
+# superior). Para probar la funcion sin disparar esos efectos, se extrae su
+# definicion con sed y se evalua de forma aislada.
 #
 # Uso: .claude/scripts/tests/test-release-pr-body.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -36,7 +40,8 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-RELEASE_SCRIPT="$REPO_ROOT/.claude/scripts/mefisto-release.sh"
+RELEASE_SCRIPT="$REPO_ROOT/src/internal/scripts/mefisto-release.sh"
+RELEASE_SHIM="$REPO_ROOT/.claude/scripts/mefisto-release.sh"
 
 PASS=0
 FAIL=0
@@ -246,6 +251,50 @@ if grep -q 'if \[ -z "\$RELEASE_SUMMARY" \]; then' "$RELEASE_SCRIPT"; then
     pass "F-2: mefisto-release.sh trae el fallback para resumen vacio (el body no queda con una seccion muda)"
 else
     fail "F-2: falta en mefisto-release.sh la guarda de resumen vacio"
+fi
+
+# -------- Bloque G: migracion al layout canonico (issue #864) --------
+
+echo ""
+echo "[G] La implementacion canonica vive en src/internal/scripts/; el shim reenvia ahi"
+
+if [ -f "$RELEASE_SCRIPT" ]; then
+    pass "G-1: existe la implementacion canonica en src/internal/scripts/mefisto-release.sh"
+else
+    fail "G-1: no existe $RELEASE_SCRIPT"
+fi
+
+if [ -f "$RELEASE_SHIM" ]; then
+    pass "G-2: existe el shim .claude/scripts/mefisto-release.sh"
+else
+    fail "G-2: no existe $RELEASE_SHIM"
+fi
+
+if bash -n "$RELEASE_SHIM" 2>/dev/null; then
+    pass "G-3: el shim pasa 'bash -n'"
+else
+    fail "G-3: el shim no pasa 'bash -n'"
+fi
+
+SHIM_LINES=$(grep -c . "$RELEASE_SHIM")
+if [ "$SHIM_LINES" -eq 3 ] \
+    && grep -q '^exec "\$(cd "\$(dirname "\$0")/\.\./\.\." && pwd)/src/internal/scripts/\$(basename "\$0")" "\$@"$' "$RELEASE_SHIM" \
+    && ! grep -qE '\bCLAUDE_PLUGIN_ROOT\b|\bCLAUDE_PROJECT_DIR\b' "$RELEASE_SHIM"; then
+    pass "G-4: el shim son 3 lineas, reenvia con 'exec \"\$@\"' y no referencia variables de Claude Code"
+else
+    fail "G-4: el shim no sigue la plantilla de src/internal/scripts/README.md (${SHIM_LINES} lineas no comentario/vacias)"
+fi
+
+# Solo lineas de CODIGO (no comentarios): el criterio prohibe rutas
+# .claude/scripts fuera del source transitorio, pero el propio source esta
+# deliberadamente comentado como transitorio -- esos comentarios SI pueden
+# nombrar la ruta.
+CODE_CLAUDE_SCRIPTS_REFS=$(grep -vE '^\s*#' "$RELEASE_SCRIPT" | grep -c '\.claude/scripts')
+if ! grep -qE '\bCLAUDE_PLUGIN_ROOT\b|\bCLAUDE_PROJECT_DIR\b' "$RELEASE_SCRIPT" \
+    && [ "$CODE_CLAUDE_SCRIPTS_REFS" -eq 1 ]; then
+    pass "G-5: la implementacion canonica no referencia CLAUDE_PLUGIN_ROOT/CLAUDE_PROJECT_DIR y solo tiene 1 linea de codigo con ruta .claude/scripts (el source transitorio de _mefisto-common.sh)"
+else
+    fail "G-5: la implementacion canonica deberia estar libre de variables de Claude Code y de rutas .claude/scripts en codigo salvo el source transitorio (encontradas: ${CODE_CLAUDE_SCRIPTS_REFS})"
 fi
 
 # -------- Resumen --------
