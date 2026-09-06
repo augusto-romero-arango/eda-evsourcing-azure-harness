@@ -27,6 +27,19 @@
 #         (sin "pane split" en el log).
 #   [17]  Un pane registrado pero ocupado se descarta: crea uno nuevo via
 #         "pane split" en vez de reusarlo.
+#   [18-21] Flags que se consumen o se reenvian (CA-3): --verbose e --if-exists
+#         no viajan nunca al sub-pipeline (uno es no-op en herdr, el otro es de
+#         las sesiones tmux, y avisa); --from-stage y --variant si viajan con su
+#         valor, y --from-stage no numerico aborta antes de despachar.
+#   [22]  Guard de contexto herdr (CA-5): sin HERDR_ENV=1 aborta remitiendo a
+#         mefisto-tmux-pipeline.sh, sin despachar ningun pane.
+#   [23]  Guard estatico del canonico REAL (CA-4), contraparte del bloque [B]
+#         de test-batch-runtime.sh: cero menciones de "claude -p", estado
+#         resuelto con mefisto_state_path (logs y registro de panes), cero
+#         ".claude/pipeline" en codigo, y las unicas referencias
+#         ".claude/scripts" en codigo son la invocacion del visor -- que sigue
+#         viviendo ahi porque #878 neutralizo su fuente de datos, no su
+#         ubicacion (mismo caso que mefisto-tmux-pipeline.sh tras #871).
 #
 # Uso: .claude/scripts/tests/test-mefisto-herdr-pipeline.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -355,6 +368,154 @@ fi
 echo ""
 echo "----------------------------------------"
 echo "  Reutilizacion de panes: $PASS pass, $FAIL fail (hasta aqui)"
+echo "----------------------------------------"
+
+# --- [18-20] Flags que se consumen o se reenvian tal cual (CA-3) --------------
+#
+# --verbose e --if-exists no llegan nunca al sub-pipeline (uno es no-op en
+# herdr, el otro es de las sesiones tmux); --from-stage y --variant si, y su
+# valor tiene que aparecer en la linea que se teclea en el pane. Sin estos
+# casos, un flag mal ruteado se descartaria en silencio -- exactamente el
+# defecto que #709/#711 corrigieron para --models/--variant.
+
+echo ""
+echo "[18] --verbose se consume sin efecto: despacha igual y no viaja al sub-pipeline"
+run_herdr --tooling 872 --verbose
+if [ "$LAST_RC" -eq 0 ]; then pass "corre sin abortar (rc=$LAST_RC)"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
+if grep -qF "mefisto-tooling-pipeline.sh 872" "$HERDR_STUB_LOG"; then
+    pass "despacha el issue igual que sin --verbose"
+else
+    fail "no despacho el issue -- log: $(cat "$HERDR_STUB_LOG")"
+fi
+if grep -qF -- "--verbose" "$HERDR_STUB_LOG"; then
+    fail "--verbose no deberia viajar al sub-pipeline -- log: $(cat "$HERDR_STUB_LOG")"
+else
+    pass "--verbose no viaja al sub-pipeline"
+fi
+
+echo ""
+echo "[19] --if-exists avisa por stderr y se ignora (es de las sesiones tmux)"
+run_herdr --tooling 872 --if-exists fail
+if [ "$LAST_RC" -eq 0 ]; then pass "corre sin abortar (rc=$LAST_RC)"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
+if printf '%s' "$LAST_STDERR" | grep -q "no aplica en herdr"; then pass "avisa que no aplica en herdr"; else fail "sin aviso en stderr: $LAST_STDERR"; fi
+if grep -qF -- "--if-exists" "$HERDR_STUB_LOG"; then
+    fail "--if-exists no deberia viajar al sub-pipeline -- log: $(cat "$HERDR_STUB_LOG")"
+else
+    pass "--if-exists no viaja al sub-pipeline"
+fi
+
+echo ""
+echo "[20] --from-stage y --variant se reenvian con su valor al sub-pipeline canonico"
+run_herdr --tooling 872 --from-stage 2 --variant experimento-a
+if [ "$LAST_RC" -eq 0 ]; then pass "corre sin abortar (rc=$LAST_RC)"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
+if grep -qF -- "mefisto-tooling-pipeline.sh 872 --from-stage 2" "$HERDR_STUB_LOG"; then
+    pass "--from-stage 2 llega al sub-pipeline en la posicion esperada"
+else
+    fail "--from-stage no llego al sub-pipeline -- log: $(cat "$HERDR_STUB_LOG")"
+fi
+if grep -qF -- "--variant experimento-a" "$HERDR_STUB_LOG"; then
+    pass "--variant llega al sub-pipeline con su label"
+else
+    fail "--variant no llego al sub-pipeline -- log: $(cat "$HERDR_STUB_LOG")"
+fi
+if grep -qF "experimento-a" "$HERDR_STUB_LOG" && grep -qF -- "--title" "$HERDR_STUB_LOG"; then
+    pass "el titulo del pane distingue la variante"
+else
+    fail "el titulo del pane no distingue la variante -- log: $(cat "$HERDR_STUB_LOG")"
+fi
+
+echo ""
+echo "[21] --from-stage con valor no numerico aborta antes de despachar"
+run_herdr --tooling 872 --from-stage dos
+if [ "$LAST_RC" -eq 1 ]; then pass "aborta (rc=$LAST_RC)"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+if printf '%s' "$LAST_STDERR" | grep -q "numero entero"; then pass "mensaje: debe ser un numero entero"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+if grep -q "pane run" "$HERDR_STUB_LOG"; then fail "no deberia despachar ningun pane"; else pass "ningun pane despachado"; fi
+
+echo ""
+echo "----------------------------------------"
+echo "  Flags consumidos y reenviados: $PASS pass, $FAIL fail (hasta aqui)"
+echo "----------------------------------------"
+
+# --- [22] Guard de contexto herdr (CA-5) -------------------------------------
+
+echo ""
+echo "[22] fuera de un pane herdr (HERDR_ENV != 1) aborta remitiendo al lanzador tmux"
+: > "$HERDR_STUB_LOG"
+echo 0 > "$HERDR_STUB_COUNTER"
+(
+    cd "$FAKE_MEFISTO" || exit 99
+    env -u MEFISTO_UI -u HERDR_ENV \
+        -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR \
+        -u MEFISTO_REPO_ROOT -u MEFISTO_PROJECT_NAME -u MEFISTO_REPO_SLUG \
+        PATH="$FAKE_BIN:$PATH" \
+        HERDR_PANE_ID="w1:p0" HERDR_WORKSPACE_ID="w1" \
+        HERDR_STUB_LOG="$HERDR_STUB_LOG" HERDR_STUB_COUNTER="$HERDR_STUB_COUNTER" \
+        "$HERDR_SCRIPT" --tooling 872
+) </dev/null >"$TMP_DIR/stdout" 2>"$TMP_DIR/stderr"
+LAST_RC=$?
+LAST_STDERR=$(cat "$TMP_DIR/stderr")
+if [ "$LAST_RC" -eq 1 ]; then pass "aborta (rc=$LAST_RC)"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+if printf '%s' "$LAST_STDERR" | grep -q "mefisto-tmux-pipeline.sh"; then pass "el remedio nombra mefisto-tmux-pipeline.sh"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+if grep -q "pane run" "$HERDR_STUB_LOG"; then fail "no deberia despachar ningun pane"; else pass "ningun pane despachado"; fi
+
+# --- [23] Guard estatico del canonico (CA-4) ---------------------------------
+#
+# Contraparte del bloque [B] de test-batch-runtime.sh, sobre el archivo REAL
+# (no la copia del fixture). La ruta legacy del estado ya la fija el bloque
+# [I] de test-tooling-state-paths.sh; aqui se cierra la parte de CA-4 que no
+# cubre nadie: que ningun comentario siga hablando de `claude -p` como si el
+# runner fuera siempre Claude Code (MEF-ADR-0049), y que el estado se resuelva
+# con mefisto_state_path en vez de componerse a mano.
+
+CANON_HERDR="$REPO_ROOT/src/internal/scripts/mefisto-herdr-pipeline.sh"
+
+echo ""
+echo "[23] el canonico no menciona 'claude -p' y resuelve su estado con mefisto_state_path"
+if grep -qF 'claude -p' "$CANON_HERDR"; then
+    fail "todavia menciona 'claude -p' (el runner depende del runtime activo)"
+    grep -nF 'claude -p' "$CANON_HERDR"
+else
+    pass "cero menciones de 'claude -p' (codigo y comentarios)"
+fi
+if grep -qF 'LOG_DIR_ABS="$(mefisto_state_path "logs")"' "$CANON_HERDR"; then
+    pass "LOG_DIR_ABS resuelve con mefisto_state_path"
+else
+    fail "LOG_DIR_ABS ya no resuelve con mefisto_state_path"
+fi
+if grep -qF 'PANES_STATE="$(mefisto_state_path "herdr-report-panes.txt")"' "$CANON_HERDR"; then
+    pass "el registro de panes resuelve con mefisto_state_path"
+else
+    fail "el registro de panes ya no resuelve con mefisto_state_path"
+fi
+LEGACY_CODE_REFS=$(grep -vE '^\s*#' "$CANON_HERDR" | grep -c '\.claude/pipeline' || true)
+if [ "$LEGACY_CODE_REFS" -eq 0 ]; then
+    pass "cero lineas de codigo con '.claude/pipeline'"
+else
+    fail "$LEGACY_CODE_REFS linea(s) de codigo con '.claude/pipeline'"
+fi
+# La unica referencia a .claude/scripts que sobrevive en CODIGO es la
+# invocacion del visor, que todavia vive ahi (#878 neutralizo su fuente de
+# datos, no su ubicacion) -- mismo caso que mefisto-tmux-pipeline.sh tras
+# #871. Fijar el numero exacto convierte cualquier ruta legacy nueva en un
+# fallo, sin pedir lo imposible mientras el visor no se mueva.
+SCRIPTS_CODE_REFS=$(grep -vE '^\s*#' "$CANON_HERDR" | grep -c '\.claude/scripts' || true)
+VIEWER_CODE_REFS=$(grep -vE '^\s*#' "$CANON_HERDR" | grep -c '\.claude/scripts/mefisto-stream-watch\.sh' || true)
+if [ "$SCRIPTS_CODE_REFS" -eq "$VIEWER_CODE_REFS" ] && [ "$VIEWER_CODE_REFS" -gt 0 ]; then
+    pass "las $VIEWER_CODE_REFS referencias a .claude/scripts en codigo son solo el visor"
+else
+    fail "hay referencias a .claude/scripts en codigo que no son el visor ($SCRIPTS_CODE_REFS totales, $VIEWER_CODE_REFS del visor)"
+    grep -vE '^\s*#' "$CANON_HERDR" | grep -n '\.claude/scripts'
+fi
+if grep -qF 'dispatch_to_pane "$title" "$issue" "$SCRIPT_DIR/mefisto-tooling-pipeline.sh"' "$CANON_HERDR" \
+   && grep -qF 'dispatch_to_pane "mefisto-batch ${issues_csv}" "$issues_csv" "$SCRIPT_DIR/mefisto-batch-pipeline.sh"' "$CANON_HERDR"; then
+    pass "tooling y batch se despachan a los siblings canonicos via SCRIPT_DIR (CA-2)"
+else
+    fail "tooling/batch ya no se despachan a los siblings canonicos via SCRIPT_DIR"
+fi
+
+echo ""
+echo "----------------------------------------"
+echo "  Guards de contexto y del canonico: $PASS pass, $FAIL fail (hasta aqui)"
 echo "----------------------------------------"
 
 echo ""
