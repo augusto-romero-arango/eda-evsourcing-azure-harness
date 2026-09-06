@@ -117,6 +117,7 @@ cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FAKE_MEFISTO/src/i
 cp "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" "$FAKE_MEFISTO/.claude/scripts/_mefisto-common.sh"
 cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-state.sh"
 cp "$REPO_ROOT/.claude/scripts/mefisto-tmux-pipeline.sh" "$FAKE_MEFISTO/.claude/scripts/mefisto-tmux-pipeline.sh"
+cp "$REPO_ROOT/src/internal/scripts/mefisto-tmux-pipeline.sh" "$FAKE_MEFISTO/src/internal/scripts/mefisto-tmux-pipeline.sh"
 cp "$REPO_ROOT/.claude/scripts/mefisto-herdr-pipeline.sh" "$FAKE_MEFISTO/.claude/scripts/mefisto-herdr-pipeline.sh"
 (cd "$FAKE_MEFISTO" && git init -q && git -c user.email="test@example.com" -c user.name="Test" commit --allow-empty -q -m "commit inicial")
 
@@ -416,6 +417,16 @@ if compgen -G "$FAKE_MEFISTO/../worktree-mefisto-issue-711-*" >/dev/null 2>&1; t
     fail "se creo un worktree pese al label invalido"
 else
     pass "no se creo ningun worktree (aborta antes)"
+fi
+
+echo ""
+echo "[19] mefisto-tmux-pipeline.sh: --tooling propaga MEFISTO_RUNTIME al pane cuando el launcher lo hereda (issue #871, CA-2)"
+MEFISTO_RUNTIME=opencode run_wrapper --tooling 711
+if [ "$LAST_RC" -eq 0 ]; then pass "corre sin abortar con MEFISTO_RUNTIME heredado (rc=$LAST_RC)"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
+if grep -qF "MEFISTO_RUNTIME=opencode" "$TMUX_STUB_LOG"; then
+    pass "el pane recibe MEFISTO_RUNTIME=opencode"
+else
+    fail "el pane no recibe MEFISTO_RUNTIME=opencode -- log: $(cat "$TMUX_STUB_LOG")"
 fi
 
 echo ""

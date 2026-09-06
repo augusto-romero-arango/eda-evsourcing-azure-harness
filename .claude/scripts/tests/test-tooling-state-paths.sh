@@ -420,14 +420,15 @@ echo ""
 echo "[I] tmux/herdr resuelven el estado de la corrida con mefisto_state_path (CA-3)"
 
 # El traslado del pipeline mueve events.log y logs/ a .mefisto/pipeline/. Los
-# lanzadores que aun viven en .claude/scripts/ los componian a mano contra
-# .claude/pipeline/, asi que -- sin cambiar una linea de su codigo -- pasaban a
-# vigilar archivos que ya nadie escribe: el pane monitor de tmux tail-eando un
-# archivo vacio toda la corrida, y el pane de reporte de herdr apuntando a un
-# directorio de logs muerto. Ninguno de los dos falla ni avisa; simplemente no
-# muestra nada. El porte completo de ambos es #871/#872; esto solo fija que la
+# lanzadores que en ese momento vivian en .claude/scripts/ los componian a
+# mano contra .claude/pipeline/, asi que -- sin cambiar una linea de su codigo
+# -- pasaban a vigilar archivos que ya nadie escribe: el pane monitor de tmux
+# tail-eando un archivo vacio toda la corrida, y el pane de reporte de herdr
+# apuntando a un directorio de logs muerto. Ninguno de los dos falla ni avisa;
+# simplemente no muestra nada. El porte de tmux se cerro en #871 (ya canonico
+# en src/internal/scripts/); el de herdr sigue en #872. Esto solo fija que la
 # resolucion no vuelva a quedarse atras.
-TMUX_LAUNCHER="$REPO_ROOT/.claude/scripts/mefisto-tmux-pipeline.sh"
+TMUX_LAUNCHER="$REPO_ROOT/src/internal/scripts/mefisto-tmux-pipeline.sh"
 HERDR_LAUNCHER="$REPO_ROOT/.claude/scripts/mefisto-herdr-pipeline.sh"
 
 if grep -qF 'EVENTS_LOG="$(mefisto_state_path "events.log")"' "$TMUX_LAUNCHER"; then
