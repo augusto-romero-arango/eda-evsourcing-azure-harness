@@ -1,50 +1,77 @@
 #!/usr/bin/env bash
-# test-stream-watch.sh -- Tests del visor en vivo del stream-json (issue #434).
+# test-stream-watch.sh -- Tests del visor en vivo sobre el JSONL neutral de
+# eventos (issue #878, protocolo de #858/#861).
 #
 # Contexto: mefisto-stream-watch.sh sigue incrementalmente
-# `<log_base>.stream.jsonl` (la traza cruda que #431 ya deja creciendo en
-# vivo en .claude/pipeline/logs/) y renderiza una linea legible por accion
-# del agente -- hora, delta desde la accion anterior, herramienta y objetivo
-# -- para que un humano viendo el pane de tmux pueda notar que el agente esta
-# dando vueltas en vez de mirar 20 minutos de silencio.
+# `<log_base>.events.jsonl` (el JSONL neutral que el runner escribe por
+# stage, run-events.schema.json de #858) y renderiza una linea legible por
+# actividad -- mensaje de texto/razonamiento sin llamada a herramienta,
+# cierre de cada llamada a herramienta con su duracion, y cierre de stage con
+# sus metricas -- para que un humano viendo el pane de tmux pueda notar que
+# el agente esta dando vueltas en vez de mirar 20 minutos de silencio.
 #
 # Estilo test-abort-log-tail.sh: el script bajo prueba corre codigo top-level
 # (source de _mefisto-common.sh, assert_in_mefisto, el chequeo de jq) antes
 # de llegar a definir sus funciones -- sourcing el archivo completo lo
-# disparia. En vez de eso se extrae SOLO el cuerpo de cada funcion (awk sobre
-# "nombre() {" .. "}" en columna 0) y se evalua en este proceso, igual que
-# test-abort-log-tail.sh y test-stream-json-trace.sh. `main` (el bucle
-# infinito real) nunca se extrae ni se llama: no terminaria.
+# dispararia. En vez de eso se extrae SOLO el cuerpo de cada funcion (awk
+# sobre "nombre() {" .. "}" en columna 0) y se evalua en este proceso. `main`
+# (el bucle infinito real) nunca se extrae ni se llama: no terminaria.
 #
 # Casos cubiertos:
 #   [pre] Todas las funciones bajo prueba se pueden extraer y cargar.
-#   [A] Bash con comando multilinea -> el objetivo llega aplanado a una sola
-#       linea, sin newlines embebidos (CA-2/CA-3).
-#   [B] Repeticion sobre el mismo archivo (Read, Edit, Read) -> sin sufijo la
-#       primera vez, "(x2)" la segunda, "(x3)" la tercera; un Bash repetido
-#       NO se cuenta (CA-4, exclusion explicita de comandos identicos).
-#   [C] Turno sin tool call -> se señala distinto de una tool call, tanto el
-#       de solo texto como el de solo thinking (CA-2).
-#   [D] Evento `result` REAL (sin `.timestamp`, como lo emite el CLI) ->
-#       cierre de stage con turnos/costo/duracion (API vs no-API) sin
-#       desplazamiento de campos, con el reloj de la ultima accion; no aborta
-#       ni termina el proceso que lo invoca (CA-5).
-#   [E] Linea final truncada (pillada a mitad de escritura) -> no avanza el
-#       contador de lineas mas alla de ella ni la descarta; al completarse en
-#       el streaming real, el siguiente ciclo la procesa junto con lo que
-#       vino despues (CA-6).
-#   [F] discover_stream elige el *.stream.jsonl mas reciente por mtime, entre
+#   [A] message: kind=thinking -> "(pensando)"; kind=text -> "(texto)"; kind
+#       ausente degrada a "(texto)" (CA-2).
+#   [B] tool.completed: una sola fila por herramienta, con su duracion en ms
+#       si esta disponible; ok=false se señala como "fallo" (CA-2/CA-3).
+#       tool.started y run.started se reconocen pero no producen fila ni
+#       cuentan como ignorados.
+#   [C] Cierre de stage (terminal) con TODOS los campos presentes -> "OK" y
+#       ningun "n/d" en la salida (CA-2/CA-3).
+#   [D] Cierre de stage con los campos ausentes tipicos de una corrida
+#       degradada (session_id/cost_usd/turns/tokens/ttft_ms/api_duration_ms
+#       en null) -> "n/d" en cada uno, nunca 0 ni el layout roto; el status
+#       no-exitoso se señala como "ERROR: <error.kind>" (CA-3). Un terminal
+#       success con `error` no nulo (la muerte posterior que el contrato
+#       documenta) conserva el OK y muestra igual el error.kind.
+#   [E] Una linea JSON valida pero no-objeto, y una con `.type` fuera del
+#       vocabulario reconocido, se cuentan como "eventos ignorados" sin
+#       aportar ninguna fila (CA-4).
+#   [F] Una linea que NO es JSON valido, a mitad de un lote (hay contenido
+#       posterior), se cuenta como ignorada y el visor avanza mas alla de
+#       ella -- nunca se queda atascado (CA-4).
+#   [G] La MISMA situacion pero como ULTIMA linea del lote (posible corte a
+#       mitad de escritura) NO se cuenta ni se consume -- se reintenta en el
+#       siguiente ciclo, cuando ya esta completa (paridad con el
+#       comportamiento previo del visor sobre la traza cruda).
+#   [H] discover_stream elige el *.events.jsonl mas reciente por mtime, entre
 #       varios candidatos, y no falla si el directorio no existe (CA-1).
-#   [G] parse_stream_header deriva issue/stage/agente del nombre de archivo
-#       (sin leer contenido) y degrada a mostrar el nombre tal cual si no
-#       matchea el patron conocido (CA-1).
-#   [H] fmt_delta_s -> "-" sin accion anterior, numerico con ella (CA-2).
-#   [I] Una linea JSON valida pero no-objeto no rompe el resto del lote
-#       (paridad con select(type=="object") de derive_stage_log_from_stream).
-#   [J] Truncado al ancho del pane: un comando corta por el final y una ruta
-#       conserva la cola, para que el nombre del archivo no se pierda (CA-3).
-#   [K] is_missing y el placeholder "-" del filtro jq: el contrato que evita
-#       que un campo vacio desplace la fila en el `IFS=$'\t' read`.
+#   [I] discover_stream_in_dirs: el directorio canonico gana aunque el legacy
+#       tenga un candidato mas reciente; si el canonico no tiene ninguno,
+#       cae al legacy; sin directorios no falla (CA-1).
+#   [I2] discover_current_stream re-resuelve los directorios con
+#       mefisto_state_read_paths en CADA llamada: un directorio de logs que
+#       aparece DESPUES de arrancar el visor si se descubre (CA-1; el visor se
+#       lanza antes que el pipeline, ver --newer-than).
+#   [J] parse_stream_header deriva issue/stage/agente del nombre de archivo
+#       `.events.jsonl` (sin leer contenido) y degrada a mostrar el nombre
+#       tal cual si no matchea el patron conocido (CA-1).
+#   [K] fmt_delta_s -> "-" sin accion anterior, numerico con ella (CA-2).
+#   [L] is_missing/fmt_nd/fmt_ms_nd/ms_to_s: el contrato de "n/d" para un
+#       campo ausente (CA-3), sin confundir 0/false con ausente.
+#   [M] stream_matches_issues: match exacto por issue, copias .attempt-,
+#       variantes, lista y sin filtro (paridad con el visor previo, sobre la
+#       extension .events.jsonl).
+#   [N] stream_is_newer_than + discover_stream con filtros activos.
+#   [O] CA-5: el JSONL neutral que producen los adaptadores REALES de #859 y
+#       #860 sobre sus fixtures de traza cruda (no JSONL escrito a mano)
+#       rinde el mismo conteo de tools y el mismo estado terminal en ambos
+#       runtimes; los "n/d" aparecen solo en la corrida OpenCode, y los
+#       campos que OpenCode si reporta (cost_usd=0, session_id) no se
+#       degradan a "n/d".
+#   [P] CA-6: el script no contiene ninguno de los campos propios de la
+#       traza cruda de Claude (`"assistant"`, `"result"`, `tool_use`,
+#       `num_turns`, `total_cost_usd`) ni `.claude/pipeline`, y si localiza
+#       archivos con mefisto_state_read_paths + el sufijo *.events.jsonl.
 #
 # Uso: .claude/scripts/tests/test-stream-watch.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -75,11 +102,23 @@ TMP=$(mktemp -d)
 cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT
 
+# discover_current_stream llama a mefisto_state_read_paths, asi que el helper
+# de estado (#856) tiene que estar cargado. Se sourcea la LIBRERIA sola, no
+# _mefisto-common.sh entero: esa dispara assert_in_mefisto y demas codigo
+# top-level, justo lo que este estilo de test evita. Fijar las dos variables
+# ANTES del source las deja apuntando a directorios de este TMP (la libreria
+# usa `: "${VAR:=default}"`, que respeta un valor previo), para que ningun
+# bloque toque el estado real del repo.
+MEFISTO_STATE_DIR="$TMP/state-canonico/pipeline"
+MEFISTO_LEGACY_STATE_DIR="$TMP/state-legacy/pipeline"
+export MEFISTO_STATE_DIR MEFISTO_LEGACY_STATE_DIR
+source "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh"
+
 # Colores a vacio: las funciones extraidas los referencian, y este test corre
 # con `set -u` (mismo motivo que test-abort-log-tail.sh).
 RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; BOLD=""; NC=""
 
-FNS="write_jq_filter stream_matches_issues stream_is_newer_than discover_stream parse_stream_header pane_width is_missing truncate_target truncate_path fmt_time_hhmmss fmt_delta_s ms_to_s touch_count render_result_summary render_row process_new_lines"
+FNS="write_jq_filter stream_matches_issues stream_is_newer_than discover_stream discover_stream_in_dirs discover_current_stream parse_stream_header is_missing fmt_time_hhmmss fmt_delta_s fmt_nd fmt_ms_nd ms_to_s render_terminal_summary render_row process_new_lines"
 
 echo "[pre] Las funciones bajo prueba se pueden extraer y cargar desde mefisto-stream-watch.sh"
 ALL_LOADED=1
@@ -109,568 +148,733 @@ JQ_FILTER_PATH="$TMP/filter.jq"
 write_jq_filter "$JQ_FILTER_PATH"
 
 # Filtros de descubrimiento en su default (sin filtro): discover_stream los
-# referencia bajo `set -u`, y los bloques que los prueban ([L]/[M]) los
-# setean y los devuelven a vacio.
+# referencia bajo `set -u`, y los bloques que los prueban ([N]) los setean y
+# los devuelven a vacio.
 ISSUES_CSV=""
 NEWER_THAN=""
 
-# reset_stage_state -- vuelve al estado "recien cambiado de stream" (lo que
+# reset_stage_state -- vuelve al estado "recien cambiado de archivo" (lo que
 # hace el bucle principal en cada switch): contador de lineas en cero, sin
-# accion previa, sin toques registrados.
-STATE_SEQ=0
+# accion previa, sin eventos ignorados.
 reset_stage_state() {
     LAST_LINE=0
     PREV_EMS=""
-    STATE_SEQ=$((STATE_SEQ+1))
-    TOUCHED_FILE="$TMP/touched-${STATE_SEQ}.txt"
-    : > "$TOUCHED_FILE"
+    IGNORED_COUNT=0
 }
 
 # run_process_new_lines <stream_file> <out_file>
 #
 # Llama a process_new_lines SIN command substitution: `$(...)` correria en
-# una subshell y las mutaciones a LAST_LINE/PREV_EMS (variables globales que
-# el bucle principal real depende que persistan entre ciclos) se perderian
-# al volver -- exactamente lo que necesitamos observar en estos tests. La
-# redireccion simple `>` no crea subshell para un comando simple, asi que el
-# estado global si sobrevive a la llamada.
+# una subshell y las mutaciones a LAST_LINE/PREV_EMS/IGNORED_COUNT (variables
+# globales que el bucle principal real depende que persistan entre ciclos) se
+# perderian al volver -- exactamente lo que necesitamos observar en estos
+# tests. La redireccion simple `>` no crea subshell para un comando simple,
+# asi que el estado global si sobrevive a la llamada.
 run_process_new_lines() {
     local stream="$1" outfile="$2"
     process_new_lines "$stream" > "$outfile"
 }
 
-# -------- Bloque A: Bash multilinea se aplana a una sola linea (CA-2/CA-3) --------
+# -------- Bloque A: message (kind=thinking/text/ausente) -- CA-2 --------
 
 echo ""
-echo "[A] Bash con comando multilinea -> objetivo aplanado a una sola linea (CA-3)"
+echo "[A] message: kind=thinking -> (pensando); kind=text -> (texto); sin kind -> (texto) (CA-2)"
 
 reset_stage_state
 STREAM_A="$TMP/a-stream.jsonl"
-printf '%s\n' '{"type":"assistant","timestamp":"2026-07-29T10:00:00.000Z","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls -la\ncat foo.sh\necho listo"}}]}}' > "$STREAM_A"
+printf '%s\n' \
+  '{"v":1,"type":"message","ts":"2026-09-05T10:00:00Z","role":"assistant","text":"","kind":"thinking"}' \
+  '{"v":1,"type":"message","ts":"2026-09-05T10:00:05Z","role":"assistant","text":"hola","kind":"text"}' \
+  '{"v":1,"type":"message","ts":"2026-09-05T10:00:10Z","role":"assistant","text":"listo"}' \
+  > "$STREAM_A"
 
 run_process_new_lines "$STREAM_A" "$TMP/a-out.txt"
 OUT_A=$(cat "$TMP/a-out.txt")
+L1=$(sed -n '1p' "$TMP/a-out.txt")
+L2=$(sed -n '2p' "$TMP/a-out.txt")
+L3=$(sed -n '3p' "$TMP/a-out.txt")
 
-if [ "$(wc -l < "$TMP/a-out.txt" | tr -d ' ')" = "1" ]; then
-    pass "A-1: el comando multilinea produce una sola linea de salida"
+if printf '%s' "$L1" | grep -q "pensando"; then
+    pass "A-1: kind=thinking se señala como (pensando)"
 else
-    fail "A-1: se esperaba una sola linea de salida, se obtuvo: $OUT_A"
+    fail "A-1: no se encontro (pensando): $L1"
 fi
 
-if printf '%s' "$OUT_A" | grep -q "ls -la cat foo.sh echo listo"; then
-    pass "A-2: el comando aplanado conserva las tres partes en orden, separadas por espacio"
+if printf '%s' "$L2" | grep -q "texto"; then
+    pass "A-2: kind=text se señala como (texto)"
 else
-    fail "A-2: no se encontro el comando aplanado esperado: $OUT_A"
+    fail "A-2: no se encontro (texto): $L2"
 fi
 
-if printf '%s' "$OUT_A" | grep -q "Bash"; then
-    pass "A-3: el nombre de la herramienta (Bash) aparece en la linea"
+if printf '%s' "$L3" | grep -q "texto"; then
+    pass "A-3: sin kind, degrada a (texto)"
 else
-    fail "A-3: no se encontro el nombre de la herramienta: $OUT_A"
+    fail "A-3: sin kind deberia degradar a (texto): $L3"
 fi
 
-if [ "$LAST_LINE" -eq 1 ]; then
-    pass "A-4: LAST_LINE avanzo a 1 (unica linea del stream, bien formada)"
+if [ "$LAST_LINE" -eq 3 ]; then
+    pass "A-4: LAST_LINE avanzo a 3 (las 3 lineas, bien formadas)"
 else
-    fail "A-4: se esperaba LAST_LINE=1, se obtuvo $LAST_LINE"
+    fail "A-4: se esperaba LAST_LINE=3, se obtuvo $LAST_LINE"
 fi
 
-# -------- Bloque B: repeticion sobre el mismo archivo (CA-4) --------
+# -------- Bloque B: tool.completed -- una fila por tool (CA-2/CA-3) --------
 
 echo ""
-echo "[B] Repeticion sobre el mismo archivo -> sin sufijo, luego (x2), luego (x3) (CA-4)"
+echo "[B] tool.completed: una fila por tool con su duracion; tool.started/run.started sin fila (CA-2)"
 
 reset_stage_state
 STREAM_B="$TMP/b-stream.jsonl"
 printf '%s\n' \
-  '{"type":"assistant","timestamp":"2026-07-29T10:00:00.000Z","message":{"content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"src/Foo.cs"}}]}}' \
-  '{"type":"assistant","timestamp":"2026-07-29T10:00:05.000Z","message":{"content":[{"type":"tool_use","id":"t2","name":"Edit","input":{"file_path":"src/Foo.cs","old_string":"a","new_string":"b"}}]}}' \
-  '{"type":"assistant","timestamp":"2026-07-29T10:00:10.000Z","message":{"content":[{"type":"tool_use","id":"t3","name":"Read","input":{"file_path":"src/Foo.cs"}}]}}' \
-  '{"type":"assistant","timestamp":"2026-07-29T10:00:15.000Z","message":{"content":[{"type":"tool_use","id":"t4","name":"Bash","input":{"command":"dotnet build"}}]}}' \
-  '{"type":"assistant","timestamp":"2026-07-29T10:00:20.000Z","message":{"content":[{"type":"tool_use","id":"t5","name":"Bash","input":{"command":"dotnet build"}}]}}' \
+  '{"v":1,"type":"run.started","ts":"2026-09-05T10:00:00Z","runtime":"fake","agent":"mefisto-writer","model":"m","cwd":"/tmp"}' \
+  '{"v":1,"type":"tool.started","ts":"2026-09-05T10:00:01Z","tool":"Read","input_summary":null}' \
+  '{"v":1,"type":"tool.completed","ts":"2026-09-05T10:00:01.500Z","tool":"Read","ok":true,"duration_ms":42}' \
+  '{"v":1,"type":"tool.completed","ts":"2026-09-05T10:00:05Z","tool":"Bash","ok":false,"duration_ms":null}' \
   > "$STREAM_B"
 
 run_process_new_lines "$STREAM_B" "$TMP/b-out.txt"
 OUT_B=$(cat "$TMP/b-out.txt")
-LINE1=$(printf '%s\n' "$OUT_B" | sed -n '1p')
-LINE2=$(printf '%s\n' "$OUT_B" | sed -n '2p')
-LINE3=$(printf '%s\n' "$OUT_B" | sed -n '3p')
-LINE4=$(printf '%s\n' "$OUT_B" | sed -n '4p')
-LINE5=$(printf '%s\n' "$OUT_B" | sed -n '5p')
 
-if ! printf '%s' "$LINE1" | grep -q "(x"; then
-    pass "B-1: el primer toque de src/Foo.cs no lleva sufijo de repeticion"
+if [ "$(wc -l < "$TMP/b-out.txt" | tr -d ' ')" = "2" ]; then
+    pass "B-1: run.started y tool.started no producen fila -- solo las 2 tool.completed"
 else
-    fail "B-1: el primer toque no deberia llevar sufijo: $LINE1"
+    fail "B-1: se esperaban 2 filas (una por tool.completed), se obtuvo: $OUT_B"
 fi
 
-if printf '%s' "$LINE2" | grep -q "(x2)"; then
-    pass "B-2: el segundo toque (Edit) lleva sufijo (x2)"
+if printf '%s' "$OUT_B" | grep -q "Read (ok, 42ms)"; then
+    pass "B-2: Read ok con duracion en ms, sin convertir a segundos (resolucion de una tool rapida)"
 else
-    fail "B-2: se esperaba (x2) en el segundo toque: $LINE2"
+    fail "B-2: no se encontro la fila esperada de Read: $OUT_B"
 fi
 
-if printf '%s' "$LINE3" | grep -q "(x3)"; then
-    pass "B-3: el tercer toque (Read de nuevo) lleva sufijo (x3)"
+if printf '%s' "$OUT_B" | grep -q "Bash (fallo, n/d)"; then
+    pass "B-3: Bash con ok=false se señala como fallo, y duration_ms null como n/d"
 else
-    fail "B-3: se esperaba (x3) en el tercer toque: $LINE3"
+    fail "B-3: no se encontro la fila esperada de Bash: $OUT_B"
 fi
 
-if ! printf '%s' "$LINE4" | grep -q "(x" && ! printf '%s' "$LINE5" | grep -q "(x"; then
-    pass "B-4: el Bash repetido (dotnet build x2) NO se marca -- CA-4 excluye comandos identicos"
+if [ "$IGNORED_COUNT" -eq 0 ]; then
+    pass "B-4: run.started/tool.started no cuentan como eventos ignorados"
 else
-    fail "B-4: un Bash repetido no deberia llevar sufijo de repeticion: '$LINE4' / '$LINE5'"
+    fail "B-4: se esperaba IGNORED_COUNT=0, se obtuvo $IGNORED_COUNT"
 fi
 
-# -------- Bloque C: turno de solo texto (CA-2) --------
+# -------- Bloque C: terminal con TODOS los campos presentes -- CA-2/CA-3 --------
 
 echo ""
-echo "[C] Turno de solo texto (sin tool call) se señala distinto de una tool call (CA-2)"
+echo "[C] Cierre de stage con todos los campos presentes -> OK, sin ningun n/d (CA-2/CA-3)"
 
 reset_stage_state
 STREAM_C="$TMP/c-stream.jsonl"
-printf '%s\n' '{"type":"assistant","timestamp":"2026-07-29T10:00:00.000Z","message":{"content":[{"type":"text","text":"Estoy pensando en el enfoque."}]}}' > "$STREAM_C"
+printf '%s\n' \
+  '{"v":1,"type":"message","ts":"2026-09-05T10:04:55Z","role":"assistant","text":"listo"}' \
+  '{"v":1,"type":"run.completed","ts":"2026-09-05T10:05:00Z","status":"success","runtime":"claude","model":"claude-sonnet-5","session_id":"sess-1","duration_ms":45000,"tokens":{"input":1200,"output":340},"cost_usd":0.55,"turns":7,"denials":0,"ttft_ms":300,"api_duration_ms":40000,"error":null}' \
+  > "$STREAM_C"
 
 run_process_new_lines "$STREAM_C" "$TMP/c-out.txt"
 OUT_C=$(cat "$TMP/c-out.txt")
 
-if [ -n "$OUT_C" ]; then
-    pass "C-1: un turno de solo texto SI produce una linea (no se descarta silenciosamente)"
+if printf '%s' "$OUT_C" | grep -q "n/d"; then
+    fail "C-1: con todos los campos presentes no deberia aparecer ningun n/d: $OUT_C"
 else
-    fail "C-1: un turno de solo texto no genero ninguna linea"
+    pass "C-1: sin ningun n/d cuando todos los campos estan presentes"
 fi
 
-if ! printf '%s' "$OUT_C" | grep -qE "Read|Edit|Write|Bash|Grep|Glob"; then
-    pass "C-2: la linea de un turno de solo texto no aparenta ser una tool call"
+if printf '%s' "$OUT_C" | grep -q -- "(OK)"; then
+    pass "C-2: status=success se muestra como (OK)"
 else
-    fail "C-2: la linea de texto se confundio con una tool call: $OUT_C"
+    fail "C-2: no se encontro (OK): $OUT_C"
 fi
 
-# Un turno de SOLO thinking es el otro sabor de turno sin tool call, y en una
-# traza real es el mas frecuente de los dos (11 bloques thinking contra 4 de
-# texto en el stream del reviewer de #437): si no se señalara, su tiempo de
-# razonamiento se le cargaria al delta de la accion siguiente, que es
-# justamente la lectura que CA-2 quiere habilitar. El texto del bloque viaja
-# vacio en el stream (solo queda la firma), asi que se señala el turno.
-reset_stage_state
-STREAM_C2="$TMP/c2-stream.jsonl"
-printf '%s\n' \
-  '{"type":"assistant","timestamp":"2026-07-29T10:00:00.000Z","message":{"content":[{"type":"thinking","thinking":"","signature":"CAIS"}]}}' \
-  '{"type":"assistant","timestamp":"2026-07-29T10:00:30.000Z","message":{"content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"z.txt"}}]}}' \
-  > "$STREAM_C2"
-
-run_process_new_lines "$STREAM_C2" "$TMP/c2-out.txt"
-OUT_C2=$(cat "$TMP/c2-out.txt")
-
-if [ "$(wc -l < "$TMP/c2-out.txt" | tr -d ' ')" = "2" ]; then
-    pass "C-3: un turno de solo thinking tambien produce su linea (2 lineas: razonamiento + Read)"
+if printf '%s' "$OUT_C" | grep -q "turnos=7" && printf '%s' "$OUT_C" | grep -q "costo_usd=0.55"; then
+    pass "C-3: turnos y costo del evento terminal, sin desplazamiento de campos"
 else
-    fail "C-3: se esperaban 2 lineas (thinking + Read), se obtuvo: $OUT_C2"
+    fail "C-3: turnos/costo incorrectos: $OUT_C"
 fi
 
-if printf '%s\n' "$OUT_C2" | sed -n '1p' | grep -q "razonamiento"; then
-    pass "C-4: el turno de solo thinking se señala como razonamiento"
+if printf '%s' "$OUT_C" | grep -q "duracion=45.0s (api=40.0s, no-api=5.0s)"; then
+    pass "C-4: duracion total y desglose api/no-api correctos"
 else
-    fail "C-4: el turno de thinking no se señalo: $OUT_C2"
+    fail "C-4: desglose de duracion incorrecto: $OUT_C"
 fi
 
-if printf '%s\n' "$OUT_C2" | sed -n '2p' | grep -q "30.0s"; then
-    pass "C-5: el delta de 30s queda entre el razonamiento y la accion, no oculto antes de ella"
+if printf '%s' "$OUT_C" | grep -q "runtime=claude  modelo=claude-sonnet-5  session_id=sess-1"; then
+    pass "C-5: runtime/modelo/session_id del cierre (CA-3)"
 else
-    fail "C-5: no se encontro el delta de 30s en la accion posterior: $OUT_C2"
+    fail "C-5: no se encontro runtime/modelo/session_id: $OUT_C"
 fi
 
-# -------- Bloque D: evento result -> cierre de stage (CA-5) --------
+if [ "$IGNORED_COUNT" -eq 0 ]; then
+    pass "C-6: IGNORED_COUNT se reinicia a 0 tras el cierre de stage"
+else
+    fail "C-6: se esperaba IGNORED_COUNT=0 tras el cierre, se obtuvo $IGNORED_COUNT"
+fi
+
+# -------- Bloque D: terminal degradado (nulls tipo OpenCode) -- CA-3 --------
 
 echo ""
-echo "[D] Evento result -> cierre de stage con turnos/costo/duracion API vs no-API (CA-5)"
+echo "[D] Cierre de stage con campos ausentes -> n/d en cada uno, ERROR: <kind> (CA-3)"
 
-# El fixture reproduce el evento `result` REAL del CLI, que NO trae
-# `.timestamp` (verificado contra las trazas de .claude/pipeline/logs/). Es la
-# forma exacta que hacia fallar el render: con el campo de hora vacio, la fila
-# TSV se leia desplazada (`IFS=$'\t' read` colapsa dos tabs seguidos porque el
-# tab es espacio en blanco para IFS) y el cierre reportaba duration_ms como
-# turnos y is_error como costo. Va precedido de una accion con hora, porque el
-# reloj del cierre es el de la ultima accion vista.
 reset_stage_state
 STREAM_D="$TMP/d-stream.jsonl"
 printf '%s\n' \
-  '{"type":"assistant","timestamp":"2026-07-29T10:04:55.000Z","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"git status"}}]}}' \
-  '{"type":"result","subtype":"success","is_error":false,"duration_ms":45000,"duration_api_ms":40000,"num_turns":7,"total_cost_usd":0.55,"session_id":"abc"}' \
+  '{"v":1,"type":"run.failed","ts":"2026-09-05T10:05:05Z","status":"failed","runtime":"opencode","model":null,"session_id":null,"duration_ms":5000,"tokens":{"input":800,"output":null},"cost_usd":null,"turns":null,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":{"kind":"nonzero_exit","detail":"exit 1"}}' \
   > "$STREAM_D"
 
-process_new_lines "$STREAM_D" > "$TMP/d-out.txt"
-RC_D=$?
+run_process_new_lines "$STREAM_D" "$TMP/d-out.txt"
 OUT_D=$(cat "$TMP/d-out.txt")
 
-if [ "$RC_D" -eq 0 ]; then
-    pass "D-1: procesar el evento result no aborta el proceso que invoca (CA-5, sigue esperando)"
+if printf '%s' "$OUT_D" | grep -q -- "--- cierre de stage \[.*\] (ERROR: nonzero_exit) ---"; then
+    pass "D-1: status no-exitoso se señala como ERROR: <error.kind>"
 else
-    fail "D-1: se esperaba exit 0, se obtuvo $RC_D"
+    fail "D-1: no se encontro el estado ERROR esperado: $OUT_D"
 fi
 
-if printf '%s' "$OUT_D" | grep -q "turnos=7"; then
-    pass "D-2: el cierre reporta los turnos del evento result (num_turns=7, no duration_ms)"
+if printf '%s' "$OUT_D" | grep -q "modelo=n/d" && printf '%s' "$OUT_D" | grep -q "session_id=n/d"; then
+    pass "D-2: modelo y session_id ausentes se muestran como n/d"
 else
-    fail "D-2: no se encontraron los turnos esperados: $OUT_D"
+    fail "D-2: modelo/session_id deberian ser n/d: $OUT_D"
 fi
 
-if printf '%s' "$OUT_D" | grep -q "costo_usd=0.55"; then
-    pass "D-3: el cierre reporta el costo del evento result (no is_error)"
+if printf '%s' "$OUT_D" | grep -q "turnos=n/d  costo_usd=n/d"; then
+    pass "D-3: turnos y costo ausentes se muestran como n/d, nunca 0"
 else
-    fail "D-3: no se encontro el costo esperado: $OUT_D"
+    fail "D-3: turnos/costo deberian ser n/d: $OUT_D"
 fi
 
-if printf '%s' "$OUT_D" | grep -q "api=40.0s" && printf '%s' "$OUT_D" | grep -q "no-api=5.0s"; then
-    pass "D-4: el cierre desglosa duracion API (40.0s) vs no-API (45-40=5.0s)"
+if printf '%s' "$OUT_D" | grep -q "duracion=5.0s (api=n/d, no-api=n/d)"; then
+    pass "D-4: duration_ms (siempre presente) se muestra en segundos; api/no-api ausentes son n/d"
 else
-    fail "D-4: el desglose API/no-API no es el esperado: $OUT_D"
+    fail "D-4: desglose de duracion incorrecto: $OUT_D"
 fi
 
-if printf '%s' "$OUT_D" | grep -q "duracion=45.0s"; then
-    pass "D-5: sin timestamp en el result, los campos NO se desplazan (duracion=45.0s)"
+if printf '%s' "$OUT_D" | grep -q "tokens: in=800 out=n/d  ttft=n/d  denials=n/d"; then
+    pass "D-5: tokens.input presente se muestra tal cual, el resto ausente como n/d"
 else
-    fail "D-5: los campos del result se desplazaron -- duracion incorrecta: $OUT_D"
+    fail "D-5: tokens/ttft/denials incorrectos: $OUT_D"
 fi
 
-# El reloj del cierre debe ser el de la ultima accion, no la epoca ni la hora
-# en que se corre el visor (asi sirve igual sobre un stream pasado). Se compara
-# contra la hora que el propio render puso en la linea de la accion, para no
-# atarse a la zona horaria de la maquina que corre el test.
-HORA_ACCION_D=$(printf '%s\n' "$OUT_D" | sed -n 's/^\[\([0-9:]*\)\].*Bash.*/\1/p' | head -1)
-HORA_CIERRE_D=$(printf '%s\n' "$OUT_D" | sed -n 's/^--- cierre de stage \[\([0-9:-]*\)\].*/\1/p' | head -1)
-if [ -n "$HORA_ACCION_D" ] && [ "$HORA_CIERRE_D" = "$HORA_ACCION_D" ]; then
-    pass "D-6: el cierre usa el reloj de la ultima accion ($HORA_CIERRE_D), no la epoca ni 'ahora'"
+# El contrato (run-events.schema.json) documenta explicitamente un
+# run.completed con status "success" Y `error` no nulo: la muerte POSTERIOR a
+# que el runtime declarara cumplido su contrato (senal, exit distinto de
+# cero), que no invalida el trabajo hecho. El estado sigue siendo OK, pero
+# callar el `kind` perderia la unica senal de esa muerte (CA-2 pide error.kind
+# en el cierre).
+reset_stage_state
+STREAM_D2="$TMP/d2-stream.jsonl"
+printf '%s\n' \
+  '{"v":1,"type":"run.completed","ts":"2026-09-05T10:06:00Z","status":"success","runtime":"claude","model":"m","session_id":"s","duration_ms":9000,"tokens":{"input":10,"output":20},"cost_usd":0.1,"turns":3,"denials":0,"ttft_ms":100,"api_duration_ms":8000,"error":{"kind":"killed","detail":"SIGKILL tras el result"}}' \
+  > "$STREAM_D2"
+
+run_process_new_lines "$STREAM_D2" "$TMP/d2-out.txt"
+OUT_D2=$(cat "$TMP/d2-out.txt")
+
+if printf '%s' "$OUT_D2" | grep -q "OK" && printf '%s' "$OUT_D2" | grep -q "killed"; then
+    pass "D-6: un terminal success con error no nulo conserva el estado OK y muestra igual el error.kind"
 else
-    fail "D-6: hora del cierre '$HORA_CIERRE_D' != hora de la ultima accion '$HORA_ACCION_D': $OUT_D"
+    fail "D-6: se esperaba OK + el error.kind 'killed': $OUT_D2"
 fi
 
-# -------- Bloque E: linea final truncada -> se reintenta, no se descarta (CA-6) --------
+# -------- Bloque E: JSON valido no-objeto y type desconocido -- CA-4 --------
 
 echo ""
-echo "[E] Linea final truncada -> no avanza el contador ni la descarta; se completa en el siguiente ciclo (CA-6)"
+echo "[E] Linea JSON no-objeto y type desconocido -> eventos ignorados, sin fila (CA-4)"
 
 reset_stage_state
 STREAM_E="$TMP/e-stream.jsonl"
-printf '%s\n' '{"type":"assistant","timestamp":"2026-07-29T10:00:00.000Z","message":{"content":[{"type":"text","text":"primera accion completa"}]}}' > "$STREAM_E"
-# Linea truncada a mitad de escritura -- SIN newline final, como quedaria si
-# el proceso productor fuera pillado a mitad del write() de esta linea.
-printf '%s' '{"type":"assistant","timestamp":"2026-07-29T10:00:05.000Z","message":{"content":[{"type":"tool_use","id":"t9","name":"Bash","input":{"command":"ls' >> "$STREAM_E"
+printf '%s\n' \
+  '"una linea suelta"' \
+  '{"v":1,"type":"algo.no.reconocido","ts":"2026-09-05T10:00:00Z"}' \
+  '{"v":1,"type":"message","ts":"2026-09-05T10:00:01Z","role":"assistant","text":"hola"}' \
+  > "$STREAM_E"
 
-process_new_lines "$STREAM_E" > "$TMP/e-out1.txt"
-RC_E1=$?
-OUT_E1=$(cat "$TMP/e-out1.txt")
-LAST_LINE_AFTER_1=$LAST_LINE
+run_process_new_lines "$STREAM_E" "$TMP/e-out.txt"
+OUT_E=$(cat "$TMP/e-out.txt")
 
-if [ "$RC_E1" -eq 0 ]; then
-    pass "E-1: una linea truncada no aborta el proceso (set -uo pipefail activo)"
+if [ "$IGNORED_COUNT" -eq 2 ]; then
+    pass "E-1: la linea no-objeto y el type desconocido cuentan como 2 eventos ignorados"
 else
-    fail "E-1: se esperaba exit 0 con una linea truncada, se obtuvo $RC_E1"
+    fail "E-1: se esperaba IGNORED_COUNT=2, se obtuvo $IGNORED_COUNT"
 fi
 
-if printf '%s' "$OUT_E1" | grep -q "sin tool call"; then
-    pass "E-2: el turno completo anterior a la linea truncada SI se renderizo"
+if [ "$(wc -l < "$TMP/e-out.txt" | tr -d ' ')" = "1" ]; then
+    pass "E-2: solo la linea message produjo una fila visible"
 else
-    fail "E-2: no se renderizo el turno completo previo: $OUT_E1"
+    fail "E-2: se esperaba 1 sola fila visible, se obtuvo: $OUT_E"
+fi
+
+if [ "$LAST_LINE" -eq 3 ]; then
+    pass "E-3: LAST_LINE avanzo sobre las 3 lineas (las ignoradas tambien se consumen)"
+else
+    fail "E-3: se esperaba LAST_LINE=3, se obtuvo $LAST_LINE"
+fi
+
+# -------- Bloque F: linea no-JSON A MITAD del lote -- CA-4 --------
+
+echo ""
+echo "[F] Linea no-JSON que NO es la ultima del lote -> se cuenta como ignorada y no atasca (CA-4)"
+
+reset_stage_state
+STREAM_F="$TMP/f-stream.jsonl"
+printf '%s\n' \
+  'esto no es JSON en absoluto' \
+  '{"v":1,"type":"message","ts":"2026-09-05T10:00:00Z","role":"assistant","text":"hola"}' \
+  > "$STREAM_F"
+
+run_process_new_lines "$STREAM_F" "$TMP/f-out.txt"
+OUT_F=$(cat "$TMP/f-out.txt")
+
+if [ "$IGNORED_COUNT" -eq 1 ]; then
+    pass "F-1: la linea no-JSON se cuenta como ignorada"
+else
+    fail "F-1: se esperaba IGNORED_COUNT=1, se obtuvo $IGNORED_COUNT"
+fi
+
+if [ "$LAST_LINE" -eq 2 ]; then
+    pass "F-2: LAST_LINE avanza mas alla de la linea corrupta -- no se queda atascado"
+else
+    fail "F-2: se esperaba LAST_LINE=2, se obtuvo $LAST_LINE"
+fi
+
+if printf '%s' "$OUT_F" | grep -q "texto"; then
+    pass "F-3: la linea valida posterior a la corrupta SI se renderizo"
+else
+    fail "F-3: no se renderizo la linea posterior a la corrupta: $OUT_F"
+fi
+
+# -------- Bloque G: linea no-JSON COMO ULTIMA del lote -- reintento (CA-4) --------
+
+echo ""
+echo "[G] Linea no-JSON como ULTIMA del lote -> no se cuenta ni se consume, se reintenta despues (CA-4)"
+
+reset_stage_state
+STREAM_G="$TMP/g-stream.jsonl"
+printf '%s\n' '{"v":1,"type":"message","ts":"2026-09-05T10:00:00Z","role":"assistant","text":"primera accion completa"}' > "$STREAM_G"
+# Linea truncada a mitad de escritura -- SIN newline final, como quedaria si
+# el proceso productor fuera pillado a mitad del write() de esta linea.
+printf '%s' '{"v":1,"type":"tool.completed","ts":"2026-09-05T10:00:0' >> "$STREAM_G"
+
+process_new_lines "$STREAM_G" > "$TMP/g-out1.txt"
+RC_G1=$?
+LAST_LINE_AFTER_1=$LAST_LINE
+IGNORED_AFTER_1=$IGNORED_COUNT
+
+if [ "$RC_G1" -eq 0 ]; then
+    pass "G-1: una linea truncada no aborta el proceso (set -uo pipefail activo)"
+else
+    fail "G-1: se esperaba exit 0 con una linea truncada, se obtuvo $RC_G1"
 fi
 
 if [ "$LAST_LINE_AFTER_1" -eq 1 ]; then
-    pass "E-3: LAST_LINE se detuvo en 1 -- la linea truncada NO se cuenta como consumida"
+    pass "G-2: LAST_LINE se detuvo en 1 -- la linea truncada NO se cuenta como consumida"
 else
-    fail "E-3: se esperaba LAST_LINE=1 tras la linea truncada, se obtuvo $LAST_LINE_AFTER_1"
+    fail "G-2: se esperaba LAST_LINE=1, se obtuvo $LAST_LINE_AFTER_1"
 fi
 
-if ! printf '%s' "$OUT_E1" | grep -q "Bash"; then
-    pass "E-4: la tool call de la linea truncada NO aparecio (ni a medias)"
+if [ "$IGNORED_AFTER_1" -eq 0 ]; then
+    pass "G-3: la linea truncada NO se cuenta como ignorada (se reintenta, no se descarta)"
 else
-    fail "E-4: la linea truncada no deberia haber producido salida: $OUT_E1"
+    fail "G-3: se esperaba IGNORED_COUNT=0, se obtuvo $IGNORED_AFTER_1"
 fi
 
 # El productor real termina de escribir esa misma linea (cierra el JSON) y
 # agrega una linea nueva completa a continuacion.
-printf '%s\n' '"}}]}}' >> "$STREAM_E"
-printf '%s\n' '{"type":"assistant","timestamp":"2026-07-29T10:00:12.000Z","message":{"content":[{"type":"tool_use","id":"t10","name":"Read","input":{"file_path":"x.txt"}}]}}' >> "$STREAM_E"
+printf '%s\n' '2Z","tool":"Bash","ok":true,"duration_ms":10}' >> "$STREAM_G"
+printf '%s\n' '{"v":1,"type":"message","ts":"2026-09-05T10:00:12Z","role":"assistant","text":"otra"}' >> "$STREAM_G"
 
-run_process_new_lines "$STREAM_E" "$TMP/e-out2.txt"
-OUT_E2=$(cat "$TMP/e-out2.txt")
+run_process_new_lines "$STREAM_G" "$TMP/g-out2.txt"
+OUT_G2=$(cat "$TMP/g-out2.txt")
 
 if [ "$LAST_LINE" -eq 3 ]; then
-    pass "E-5: al completarse, el siguiente ciclo avanza sobre la linea reparada Y la que vino despues"
+    pass "G-4: al completarse, el siguiente ciclo avanza sobre la linea reparada Y la que vino despues"
 else
-    fail "E-5: se esperaba LAST_LINE=3 tras completar la linea, se obtuvo $LAST_LINE"
+    fail "G-4: se esperaba LAST_LINE=3, se obtuvo $LAST_LINE"
 fi
 
-if printf '%s' "$OUT_E2" | grep -q "Bash" && printf '%s' "$OUT_E2" | grep -q "Read"; then
-    pass "E-6: el segundo ciclo renderiza tanto la linea reparada (Bash) como la nueva (Read)"
+if printf '%s' "$OUT_G2" | grep -q "Bash (ok, 10ms)"; then
+    pass "G-5: la tool call reparada se renderizo con su duracion"
 else
-    fail "E-6: no se encontraron ambas tool calls en el segundo ciclo: $OUT_E2"
+    fail "G-5: no se encontro la tool call reparada: $OUT_G2"
 fi
 
-# -------- Bloque F: discover_stream elige el mas reciente por mtime (CA-1) --------
+# -------- Bloque H: discover_stream elige el mas reciente por mtime (CA-1) --------
 
 echo ""
-echo "[F] discover_stream elige el *.stream.jsonl mas reciente por mtime (CA-1)"
+echo "[H] discover_stream elige el *.events.jsonl mas reciente por mtime (CA-1)"
 
-DIR_F="$TMP/logs-f"
-mkdir -p "$DIR_F"
-echo '{}' > "$DIR_F/mefisto-tooling-stage-1-writer-20260729-090000-issue-100.stream.jsonl"
-touch -t 202607290900 "$DIR_F/mefisto-tooling-stage-1-writer-20260729-090000-issue-100.stream.jsonl"
-echo '{}' > "$DIR_F/mefisto-tooling-stage-2-reviewer-20260729-093000-issue-100.stream.jsonl"
-touch -t 202607290930 "$DIR_F/mefisto-tooling-stage-2-reviewer-20260729-093000-issue-100.stream.jsonl"
+DIR_H="$TMP/logs-h"
+mkdir -p "$DIR_H"
+echo '{}' > "$DIR_H/mefisto-tooling-stage-1-writer-20260729-090000-issue-100.events.jsonl"
+touch -t 202607290900 "$DIR_H/mefisto-tooling-stage-1-writer-20260729-090000-issue-100.events.jsonl"
+echo '{}' > "$DIR_H/mefisto-tooling-stage-2-reviewer-20260729-093000-issue-100.events.jsonl"
+touch -t 202607290930 "$DIR_H/mefisto-tooling-stage-2-reviewer-20260729-093000-issue-100.events.jsonl"
 
-FOUND_F=$(discover_stream "$DIR_F")
-if [ "$(basename "$FOUND_F")" = "mefisto-tooling-stage-2-reviewer-20260729-093000-issue-100.stream.jsonl" ]; then
-    pass "F-1: elige el archivo con mtime mas reciente (stage 2), no el mas viejo (stage 1)"
+FOUND_H=$(discover_stream "$DIR_H")
+if [ "$(basename "$FOUND_H")" = "mefisto-tooling-stage-2-reviewer-20260729-093000-issue-100.events.jsonl" ]; then
+    pass "H-1: elige el archivo con mtime mas reciente (stage 2), no el mas viejo (stage 1)"
 else
-    fail "F-1: se esperaba el stream de stage 2, se obtuvo: $FOUND_F"
+    fail "H-1: se esperaba el archivo de stage 2, se obtuvo: $FOUND_H"
 fi
 
-FOUND_F_EMPTY=$(discover_stream "$TMP/no-existe-jamas")
-RC_F_EMPTY=$?
-if [ "$RC_F_EMPTY" -eq 0 ] && [ -z "$FOUND_F_EMPTY" ]; then
-    pass "F-2: un directorio inexistente no aborta -- devuelve vacio"
+FOUND_H_EMPTY=$(discover_stream "$TMP/no-existe-jamas")
+RC_H_EMPTY=$?
+if [ "$RC_H_EMPTY" -eq 0 ] && [ -z "$FOUND_H_EMPTY" ]; then
+    pass "H-2: un directorio inexistente no aborta -- devuelve vacio"
 else
-    fail "F-2: se esperaba exit 0 y vacio con directorio inexistente, se obtuvo rc=$RC_F_EMPTY out='$FOUND_F_EMPTY'"
+    fail "H-2: se esperaba exit 0 y vacio con directorio inexistente, se obtuvo rc=$RC_H_EMPTY out='$FOUND_H_EMPTY'"
 fi
 
-# -------- Bloque G: parse_stream_header deriva issue/stage/agente del nombre (CA-1) --------
+# -------- Bloque I: discover_stream_in_dirs -- canonico primero (CA-1) --------
 
 echo ""
-echo "[G] parse_stream_header deriva issue/stage/agente del nombre del archivo (CA-1)"
+echo "[I] discover_stream_in_dirs: canonico gana aunque legacy sea mas nuevo; cae a legacy si el canonico esta vacio (CA-1)"
 
-HEADER_G1=$(parse_stream_header "/tmp/x/mefisto-tooling-stage-1-writer-20260729-100000-issue-434.stream.jsonl")
-if printf '%s' "$HEADER_G1" | grep -q "issue #434" \
-    && printf '%s' "$HEADER_G1" | grep -q "stage 1" \
-    && printf '%s' "$HEADER_G1" | grep -q "writer"; then
-    pass "G-1: extrae issue=434, stage=1, agente=writer del nombre convencional"
+DIR_CANON="$TMP/canon"; DIR_LEGACY="$TMP/legacy"; DIR_EMPTY="$TMP/vacio"
+mkdir -p "$DIR_CANON" "$DIR_LEGACY" "$DIR_EMPTY"
+echo '{}' > "$DIR_LEGACY/mefisto-tooling-stage-1-writer-20260826-100000-issue-10.events.jsonl"
+touch -t 202608261000 "$DIR_LEGACY/mefisto-tooling-stage-1-writer-20260826-100000-issue-10.events.jsonl"
+echo '{}' > "$DIR_CANON/mefisto-tooling-stage-1-writer-20260826-080000-issue-20.events.jsonl"
+touch -t 202608260800 "$DIR_CANON/mefisto-tooling-stage-1-writer-20260826-080000-issue-20.events.jsonl"
+
+FOUND_I1=$(discover_stream_in_dirs "$DIR_CANON" "$DIR_LEGACY")
+if [ "$(basename "$FOUND_I1")" = "mefisto-tooling-stage-1-writer-20260826-080000-issue-20.events.jsonl" ]; then
+    pass "I-1: el canonico gana aunque el legacy tenga un archivo con mtime mas reciente"
 else
-    fail "G-1: no se extrajeron los campos esperados: $HEADER_G1"
+    fail "I-1: se esperaba el archivo del canonico, se obtuvo: $FOUND_I1"
 fi
 
-HEADER_G2=$(parse_stream_header "/tmp/x/mefisto-tooling-stage-merge-writer-20260729-100000-issue-441.stream.jsonl")
-if printf '%s' "$HEADER_G2" | grep -q "stage merge"; then
-    pass "G-2: el stage 'merge' (no numerico) tambien se extrae -- run_agent lo usa para la resolucion de conflictos"
+FOUND_I2=$(discover_stream_in_dirs "$DIR_EMPTY" "$DIR_LEGACY")
+if [ "$(basename "$FOUND_I2")" = "mefisto-tooling-stage-1-writer-20260826-100000-issue-10.events.jsonl" ]; then
+    pass "I-2: sin candidatos en el canonico, cae al legacy"
 else
-    fail "G-2: no se extrajo el stage 'merge': $HEADER_G2"
+    fail "I-2: se esperaba el archivo del legacy, se obtuvo: $FOUND_I2"
 fi
 
-HEADER_G3=$(parse_stream_header "/tmp/x/un-nombre-cualquiera.jsonl")
-if printf '%s' "$HEADER_G3" | grep -q "un-nombre-cualquiera.jsonl"; then
-    pass "G-3: un nombre que no matchea el patron degrada a mostrarlo tal cual (no falla)"
+FOUND_I3=$(discover_stream_in_dirs)
+RC_I3=$?
+if [ "$RC_I3" -eq 0 ] && [ -z "$FOUND_I3" ]; then
+    pass "I-3: sin ningun directorio no aborta -- devuelve vacio"
 else
-    fail "G-3: no degrado mostrando el nombre tal cual: $HEADER_G3"
+    fail "I-3: se esperaba exit 0 y vacio sin directorios, se obtuvo rc=$RC_I3 out='$FOUND_I3'"
 fi
 
-# -------- Bloque H: delta -- "-" sin accion previa, numerico con ella (CA-2) --------
+# -------- Bloque I2: discover_current_stream re-resuelve cada ciclo (CA-1) --------
 
 echo ""
-echo "[H] fmt_delta_s -- sin accion previa devuelve '-', con ella devuelve el delta en segundos (CA-2)"
+echo "[I2] discover_current_stream re-resuelve los directorios en CADA llamada: un visor lanzado"
+echo "     antes que el pipeline encuentra la corrida que nace despues (CA-1)"
 
-DELTA_H1=$(fmt_delta_s "" "1785190194169")
-if printf '%s' "$DELTA_H1" | grep -q -- "-"; then
-    pass "H-1: sin accion previa, el delta se muestra como '-'"
+# La regresion que cubre: mefisto_state_read_paths solo emite rutas que YA
+# existen, y el modo de uso normal del visor es arrancarlo ANTES que el
+# pipeline (es la razon de --newer-than, y lo que hacen los lanzadores de
+# tmux/herdr). Resolviendo la lista una sola vez al arrancar, el visor se
+# quedaria con la lista vacia para siempre y no mostraria nada de la corrida
+# que empieza un segundo despues -- en silencio, sin error, exactamente el
+# sintoma que el issue #434 vino a eliminar.
+FOUND_I2_ANTES=$(discover_current_stream)
+RC_I2_ANTES=$?
+
+mkdir -p "$MEFISTO_STATE_DIR/logs"
+echo '{}' > "$MEFISTO_STATE_DIR/logs/mefisto-tooling-stage-1-writer-20260905-100000-issue-878.events.jsonl"
+
+FOUND_I2_DESPUES=$(discover_current_stream)
+
+if [ "$RC_I2_ANTES" -eq 0 ] && [ -z "$FOUND_I2_ANTES" ]; then
+    pass "I2-1: sin directorio de logs todavia, devuelve vacio sin abortar"
 else
-    fail "H-1: se esperaba '-' sin accion previa, se obtuvo: $DELTA_H1"
+    fail "I2-1: se esperaba exit 0 y vacio, se obtuvo rc=$RC_I2_ANTES out='$FOUND_I2_ANTES'"
 fi
 
-DELTA_H2=$(fmt_delta_s "1785190174000" "1785190194169")
-if printf '%s' "$DELTA_H2" | grep -q "20.2"; then
-    pass "H-2: con accion previa, el delta es la diferencia en segundos (20.2s)"
+if [ "$(basename "$FOUND_I2_DESPUES")" = "mefisto-tooling-stage-1-writer-20260905-100000-issue-878.events.jsonl" ]; then
+    pass "I2-2: el directorio creado DESPUES de la primera llamada si se descubre en la siguiente"
 else
-    fail "H-2: delta incorrecto, se esperaba ~20.2s: $DELTA_H2"
+    fail "I2-2: no se descubrio el archivo aparecido despues: '$FOUND_I2_DESPUES'"
 fi
 
-# -------- Bloque I: JSON valido pero no-objeto no rompe el lote --------
+# -------- Bloque J: parse_stream_header (CA-1) --------
 
 echo ""
-echo "[I] Una linea JSON valida pero no-objeto no rompe la derivacion del resto"
+echo "[J] parse_stream_header deriva issue/stage/agente del nombre .events.jsonl (CA-1)"
 
-reset_stage_state
-STREAM_I="$TMP/i-stream.jsonl"
-printf '%s\n' \
-  '"una linea suelta"' \
-  '{"type":"assistant","timestamp":"2026-07-29T10:00:00.000Z","message":{"content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"y.txt"}}]}}' \
-  > "$STREAM_I"
-
-process_new_lines "$STREAM_I" > "$TMP/i-out.txt"
-RC_I=$?
-OUT_I=$(cat "$TMP/i-out.txt")
-
-if [ "$RC_I" -eq 0 ] && [ "$LAST_LINE" -eq 2 ]; then
-    pass "I-1: la linea no-objeto se salta sin cortar el resto del lote (LAST_LINE llega a 2)"
+HEADER_J1=$(parse_stream_header "/tmp/x/mefisto-tooling-stage-1-writer-20260729-100000-issue-434.events.jsonl")
+if printf '%s' "$HEADER_J1" | grep -q "issue #434" \
+    && printf '%s' "$HEADER_J1" | grep -q "stage 1" \
+    && printf '%s' "$HEADER_J1" | grep -q "writer"; then
+    pass "J-1: extrae issue=434, stage=1, agente=writer del nombre convencional"
 else
-    fail "I-1: se esperaba rc=0 y LAST_LINE=2, se obtuvo rc=$RC_I LAST_LINE=$LAST_LINE"
+    fail "J-1: no se extrajeron los campos esperados: $HEADER_J1"
 fi
 
-if printf '%s' "$OUT_I" | grep -q "Read"; then
-    pass "I-2: la tool call posterior a la linea rara SI se renderizo"
+HEADER_J2=$(parse_stream_header "/tmp/x/mefisto-tooling-stage-merge-writer-20260729-100000-issue-441.events.jsonl")
+if printf '%s' "$HEADER_J2" | grep -q "stage merge"; then
+    pass "J-2: el stage 'merge' (no numerico) tambien se extrae"
 else
-    fail "I-2: no se renderizo la tool call posterior a la linea rara: $OUT_I"
+    fail "J-2: no se extrajo el stage 'merge': $HEADER_J2"
 fi
 
-# -------- Bloque J: truncado -- comando por el final, ruta por la cola (CA-3) --------
+HEADER_J3=$(parse_stream_header "/tmp/x/un-nombre-cualquiera.jsonl")
+if printf '%s' "$HEADER_J3" | grep -q "un-nombre-cualquiera.jsonl"; then
+    pass "J-3: un nombre que no matchea el patron degrada a mostrarlo tal cual (no falla)"
+else
+    fail "J-3: no degrado mostrando el nombre tal cual: $HEADER_J3"
+fi
+
+# -------- Bloque K: fmt_delta_s (CA-2) --------
 
 echo ""
-echo "[J] Truncado al ancho del pane: el comando corta por el final, la ruta conserva la cola (CA-3)"
+echo "[K] fmt_delta_s -- sin accion previa devuelve '-', con ella devuelve el delta en segundos (CA-2)"
 
-CMD_J=$(truncate_target "dotnet test tests/Proyecto.Dominio.Tests/Proyecto.Dominio.Tests.csproj --no-build" 30)
-if [ "${#CMD_J}" -le 30 ] && printf '%s' "$CMD_J" | grep -q "^dotnet test" && printf '%s' "$CMD_J" | grep -q '\.\.\.$'; then
-    pass "J-1: un comando se trunca por el final -- lo que identifica la accion esta al principio"
+DELTA_K1=$(fmt_delta_s "" "1785190194169")
+if printf '%s' "$DELTA_K1" | grep -q -- "-"; then
+    pass "K-1: sin accion previa, el delta se muestra como '-'"
 else
-    fail "J-1: truncado de comando inesperado: '$CMD_J'"
+    fail "K-1: se esperaba '-' sin accion previa, se obtuvo: $DELTA_K1"
 fi
 
-# El agente reporta rutas absolutas y el prefijo comun del worktree se come el
-# ancho de un pane estrecho: truncar por el final dejaria solo
-# "/Users/augusto-romero-arango/Codigo/Sinco..." en cada Read/Edit/Write, sin
-# el nombre del archivo -- la unica parte informativa y la que sostiene la
-# señal de repeticion de CA-4.
-PATH_J="/Users/augusto-romero-arango/Codigo/Sincosoft/Cosmos/worktree-mefisto-issue-434-anadir/agents/infra-reviewer.md"
-CUT_J=$(truncate_path "$PATH_J" 40)
-if [ "${#CUT_J}" -le 40 ] && printf '%s' "$CUT_J" | grep -q "agents/infra-reviewer.md$" && printf '%s' "$CUT_J" | grep -q "^\.\.\."; then
-    pass "J-2: una ruta larga conserva la cola (el nombre del archivo) con '...' al principio"
+DELTA_K2=$(fmt_delta_s "1785190174000" "1785190194169")
+if printf '%s' "$DELTA_K2" | grep -q "20.2"; then
+    pass "K-2: con accion previa, el delta es la diferencia en segundos (20.2s)"
 else
-    fail "J-2: truncado de ruta inesperado: '$CUT_J'"
+    fail "K-2: delta incorrecto, se esperaba ~20.2s: $DELTA_K2"
 fi
 
-CORTO_J=$(truncate_path "agents/x.md" 40)
-if [ "$CORTO_J" = "agents/x.md" ]; then
-    pass "J-3: una ruta que ya entra en el ancho se devuelve intacta"
-else
-    fail "J-3: se esperaba la ruta intacta, se obtuvo: '$CORTO_J'"
-fi
-
-reset_stage_state
-STREAM_J="$TMP/j-stream.jsonl"
-printf '%s\n' '{"type":"assistant","timestamp":"2026-07-29T10:00:00.000Z","message":{"content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/Users/augusto-romero-arango/Codigo/Sincosoft/Cosmos/worktree-mefisto-issue-434-anadir/agents/infra-reviewer.md"}}]}}' > "$STREAM_J"
-
-export COLUMNS=80
-run_process_new_lines "$STREAM_J" "$TMP/j-out.txt"
-unset COLUMNS
-OUT_J=$(cat "$TMP/j-out.txt")
-if [ "${#OUT_J}" -le 80 ] && printf '%s' "$OUT_J" | grep -q "infra-reviewer.md"; then
-    pass "J-4: en un pane de 80 columnas el Read se trunca y el nombre del archivo sigue visible"
-else
-    fail "J-4: el nombre del archivo se perdio en el truncado (ancho ${#OUT_J}): $OUT_J"
-fi
-
-# -------- Bloque K: is_missing -- contrato del placeholder de la fila jq --------
+# -------- Bloque L: is_missing/fmt_nd/fmt_ms_nd/ms_to_s (CA-3) --------
 
 echo ""
-echo "[K] is_missing reconoce los tres sabores de campo ausente de una fila del filtro"
+echo "[L] is_missing/fmt_nd/fmt_ms_nd/ms_to_s: el contrato de n/d para un campo ausente (CA-3)"
 
 MISSING_OK=1
 for v in "" "-" "null"; do
-    is_missing "$v" || { fail "K-1: is_missing deberia reconocer '$v' como ausente"; MISSING_OK=0; }
+    is_missing "$v" || { fail "L-1: is_missing deberia reconocer '$v' como ausente"; MISSING_OK=0; }
 done
-[ "$MISSING_OK" -eq 1 ] && pass "K-1: vacio, '-' (placeholder de cell) y 'null' cuentan como ausente"
+[ "$MISSING_OK" -eq 1 ] && pass "L-1: vacio, '-' (placeholder de cell) y 'null' cuentan como ausente"
 
-if ! is_missing "0" && ! is_missing "false" && ! is_missing "src/Foo.cs"; then
-    pass "K-2: un valor real no se confunde con ausente (0, false y una ruta son presentes)"
+if ! is_missing "0" && ! is_missing "false" && ! is_missing "42"; then
+    pass "L-2: un valor real no se confunde con ausente (0, false y un numero son presentes)"
 else
-    fail "K-2: un valor real se clasifico como ausente"
+    fail "L-2: un valor real se clasifico como ausente"
 fi
 
-if [ "$(ms_to_s "-")" = "?" ] && [ "$(fmt_time_hhmmss "-")" = "--:--:--" ]; then
-    pass "K-3: los formateadores traducen el placeholder a su marca de dato ausente"
+if [ "$(fmt_nd "-")" = "n/d" ] && [ "$(fmt_nd "3")" = "3" ]; then
+    pass "L-3: fmt_nd traduce el placeholder a n/d y deja pasar un valor presente tal cual"
 else
-    fail "K-3: los formateadores no tradujeron el placeholder: ms_to_s='$(ms_to_s "-")' hora='$(fmt_time_hhmmss "-")'"
+    fail "L-3: fmt_nd no se comporto como se esperaba: ausente='$(fmt_nd "-")' presente='$(fmt_nd "3")'"
 fi
 
-# -------- Bloque L: stream_matches_issues -- filtro exacto por issue --------
+if [ "$(fmt_ms_nd "-")" = "n/d" ] && [ "$(fmt_ms_nd "42")" = "42ms" ]; then
+    pass "L-4: fmt_ms_nd agrega la unidad ms sin convertir a segundos, y n/d si esta ausente"
+else
+    fail "L-4: fmt_ms_nd incorrecto: ausente='$(fmt_ms_nd "-")' presente='$(fmt_ms_nd "42")'"
+fi
+
+if [ "$(ms_to_s "-")" = "n/d" ] && [ "$(ms_to_s "3000")" = "3.0s" ]; then
+    pass "L-5: ms_to_s convierte a segundos con un decimal, y n/d si esta ausente"
+else
+    fail "L-5: ms_to_s incorrecto: ausente='$(ms_to_s "-")' presente='$(ms_to_s "3000")'"
+fi
+
+if [ "$(fmt_time_hhmmss "-")" = "--:--:--" ]; then
+    pass "L-6: fmt_time_hhmmss traduce el placeholder a su marca de hora ausente"
+else
+    fail "L-6: fmt_time_hhmmss no tradujo el placeholder: '$(fmt_time_hhmmss "-")'"
+fi
+
+# -------- Bloque M: stream_matches_issues (paridad, extension .events.jsonl) --------
 
 echo ""
-echo "[L] stream_matches_issues: match exacto por issue, copias .attempt-, variantes, lista y sin filtro"
+echo "[M] stream_matches_issues: match exacto por issue, copias .attempt-, variantes, lista y sin filtro"
 
-if stream_matches_issues "mefisto-tooling-stage-1-writer-20260826-100000-issue-42.stream.jsonl" "42"; then
-    pass "L-1: el stream del issue 42 matchea el filtro '42'"
+if stream_matches_issues "mefisto-tooling-stage-1-writer-20260826-100000-issue-42.events.jsonl" "42"; then
+    pass "M-1: el archivo del issue 42 matchea el filtro '42'"
 else
-    fail "L-1: el stream del issue 42 no matcheo el filtro '42'"
+    fail "M-1: el archivo del issue 42 no matcheo el filtro '42'"
 fi
 
-if ! stream_matches_issues "mefisto-tooling-stage-1-writer-20260826-100000-issue-42.stream.jsonl" "4"; then
-    pass "L-2: el filtro '4' NO matchea el issue 42 (el match es exacto, no substring)"
+if ! stream_matches_issues "mefisto-tooling-stage-1-writer-20260826-100000-issue-42.events.jsonl" "4"; then
+    pass "M-2: el filtro '4' NO matchea el issue 42 (el match es exacto, no substring)"
 else
-    fail "L-2: el filtro '4' matcheo el issue 42 -- cruzaria visores de corridas concurrentes"
+    fail "M-2: el filtro '4' matcheo el issue 42 -- cruzaria visores de corridas concurrentes"
 fi
 
-if stream_matches_issues "mefisto-tooling-stage-2-reviewer-20260826-100000-issue-42.attempt-2.stream.jsonl" "42"; then
-    pass "L-3: la copia de reintento (.attempt-2) sigue matcheando su issue"
+if stream_matches_issues "mefisto-tooling-stage-2-reviewer-20260826-100000-issue-42.attempt-2.events.jsonl" "42"; then
+    pass "M-3: la copia de reintento (.attempt-2) sigue matcheando su issue"
 else
-    fail "L-3: la copia .attempt-2 no matcheo su issue"
+    fail "M-3: la copia .attempt-2 no matcheo su issue"
 fi
 
-if stream_matches_issues "mefisto-tooling-stage-1-writer-20260826-100000-issue-43.stream.jsonl" "42,43,44" \
-    && ! stream_matches_issues "mefisto-tooling-stage-1-writer-20260826-100000-issue-99.stream.jsonl" "42,43,44"; then
-    pass "L-4: una lista de issues (batch) matchea sus miembros y rechaza los ajenos"
+if stream_matches_issues "mefisto-tooling-stage-1-writer-20260826-100000-issue-43.events.jsonl" "42,43,44" \
+    && ! stream_matches_issues "mefisto-tooling-stage-1-writer-20260826-100000-issue-99.events.jsonl" "42,43,44"; then
+    pass "M-4: una lista de issues (batch) matchea sus miembros y rechaza los ajenos"
 else
-    fail "L-4: la lista '42,43,44' no filtro como se esperaba"
+    fail "M-4: la lista '42,43,44' no filtro como se esperaba"
 fi
 
-if stream_matches_issues "mefisto-tooling-stage-1-writer-20260826-100000-issue-42-experimento-a.stream.jsonl" "42"; then
-    pass "L-6: el stream de una corrida de variante (--variant, issue #711) matchea su issue"
+if stream_matches_issues "mefisto-tooling-stage-1-writer-20260826-100000-issue-42-experimento-a.events.jsonl" "42" \
+    && ! stream_matches_issues "mefisto-tooling-stage-1-writer-20260826-100000-issue-42-experimento-a.events.jsonl" "4"; then
+    pass "M-5: el archivo de una corrida de variante (--variant, issue #711) matchea su issue sin relajar el match exacto"
 else
-    fail "L-6: el stream de variante no matcheo su issue -- el pane del visor quedaria en blanco toda la corrida"
+    fail "M-5: el filtro de variante no se comporto como se esperaba"
 fi
 
-if ! stream_matches_issues "mefisto-tooling-stage-1-writer-20260826-100000-issue-42-experimento-a.stream.jsonl" "4"; then
-    pass "L-7: el filtro '4' NO matchea el stream de variante del issue 42 (el sufijo no relaja el match exacto)"
+if stream_matches_issues "cualquier-cosa.events.jsonl" ""; then
+    pass "M-6: sin filtro (lista vacia) todo archivo matchea -- el comportamiento original"
 else
-    fail "L-7: el filtro '4' matcheo el stream de variante del issue 42 -- cruzaria visores"
+    fail "M-6: la lista vacia deberia matchear todo"
 fi
 
-if stream_matches_issues "mefisto-tooling-stage-2-reviewer-20260826-100000-issue-42-b.attempt-2.stream.jsonl" "42"; then
-    pass "L-8: el reintento DE una corrida de variante sigue matcheando su issue"
-else
-    fail "L-8: el reintento de una corrida de variante no matcheo su issue"
-fi
-
-if stream_matches_issues "cualquier-cosa.stream.jsonl" ""; then
-    pass "L-5: sin filtro (lista vacia) todo stream matchea -- el comportamiento original"
-else
-    fail "L-5: la lista vacia deberia matchear todo"
-fi
-
-# -------- Bloque M: stream_is_newer_than + discover_stream con filtros --------
+# -------- Bloque N: stream_is_newer_than + discover_stream con filtros --------
 
 echo ""
-echo "[M] stream_is_newer_than y discover_stream con filtros activos"
+echo "[N] stream_is_newer_than y discover_stream con filtros activos"
 
-DIR_M="$TMP/logs-m"
-mkdir -p "$DIR_M"
-echo '{}' > "$DIR_M/mefisto-tooling-stage-1-writer-20260826-090000-issue-10.stream.jsonl"
-touch -t 202608260900 "$DIR_M/mefisto-tooling-stage-1-writer-20260826-090000-issue-10.stream.jsonl"
-echo '{}' > "$DIR_M/mefisto-tooling-stage-1-writer-20260826-100000-issue-20.stream.jsonl"
-touch -t 202608261000 "$DIR_M/mefisto-tooling-stage-1-writer-20260826-100000-issue-20.stream.jsonl"
+DIR_N="$TMP/logs-n"
+mkdir -p "$DIR_N"
+echo '{}' > "$DIR_N/mefisto-tooling-stage-1-writer-20260826-090000-issue-10.events.jsonl"
+touch -t 202608260900 "$DIR_N/mefisto-tooling-stage-1-writer-20260826-090000-issue-10.events.jsonl"
+echo '{}' > "$DIR_N/mefisto-tooling-stage-1-writer-20260826-100000-issue-20.events.jsonl"
+touch -t 202608261000 "$DIR_N/mefisto-tooling-stage-1-writer-20260826-100000-issue-20.events.jsonl"
 
-if ! stream_is_newer_than "$DIR_M/mefisto-tooling-stage-1-writer-20260826-090000-issue-10.stream.jsonl" "9999999999" \
-    && stream_is_newer_than "$DIR_M/mefisto-tooling-stage-1-writer-20260826-100000-issue-20.stream.jsonl" "1" \
-    && stream_is_newer_than "$DIR_M/mefisto-tooling-stage-1-writer-20260826-090000-issue-10.stream.jsonl" ""; then
-    pass "M-1: el corte por mtime rechaza lo anterior, deja pasar lo posterior y sin corte pasa todo"
+if ! stream_is_newer_than "$DIR_N/mefisto-tooling-stage-1-writer-20260826-090000-issue-10.events.jsonl" "9999999999" \
+    && stream_is_newer_than "$DIR_N/mefisto-tooling-stage-1-writer-20260826-100000-issue-20.events.jsonl" "1" \
+    && stream_is_newer_than "$DIR_N/mefisto-tooling-stage-1-writer-20260826-090000-issue-10.events.jsonl" ""; then
+    pass "N-1: el corte por mtime rechaza lo anterior, deja pasar lo posterior y sin corte pasa todo"
 else
-    fail "M-1: stream_is_newer_than no filtro como se esperaba"
+    fail "N-1: stream_is_newer_than no filtro como se esperaba"
 fi
 
 ISSUES_CSV="10"
 NEWER_THAN=""
-FOUND_M1=$(discover_stream "$DIR_M")
-if [ "$(basename "$FOUND_M1")" = "mefisto-tooling-stage-1-writer-20260826-090000-issue-10.stream.jsonl" ]; then
-    pass "M-2: con ISSUES_CSV=10, discover_stream ignora el stream mas reciente de OTRO issue"
+FOUND_N1=$(discover_stream "$DIR_N")
+if [ "$(basename "$FOUND_N1")" = "mefisto-tooling-stage-1-writer-20260826-090000-issue-10.events.jsonl" ]; then
+    pass "N-2: con ISSUES_CSV=10, discover_stream ignora el archivo mas reciente de OTRO issue"
 else
-    fail "M-2: se esperaba el stream del issue 10, se obtuvo: $FOUND_M1"
+    fail "N-2: se esperaba el archivo del issue 10, se obtuvo: $FOUND_N1"
 fi
 
 ISSUES_CSV="10"
 NEWER_THAN="9999999999"
-FOUND_M2=$(discover_stream "$DIR_M")
-if [ -z "$FOUND_M2" ]; then
-    pass "M-3: con un corte posterior al mtime, discover_stream espera (devuelve vacio)"
+FOUND_N2=$(discover_stream "$DIR_N")
+if [ -z "$FOUND_N2" ]; then
+    pass "N-3: con un corte posterior al mtime, discover_stream espera (devuelve vacio)"
 else
-    fail "M-3: se esperaba vacio con corte futuro, se obtuvo: $FOUND_M2"
+    fail "N-3: se esperaba vacio con corte futuro, se obtuvo: $FOUND_N2"
 fi
 
 ISSUES_CSV=""
 NEWER_THAN=""
+
+# -------- Bloque O: CA-5 -- paridad Claude/OpenCode sobre la misma corrida --------
+
+echo ""
+echo "[O] CA-5: la MISMA corrida traducida por el adaptador Claude y por el de OpenCode produce"
+echo "    el mismo conteo de tools y el mismo estado terminal; los n/d aparecen solo en OpenCode."
+
+# Las dos entradas de este bloque NO son JSONL escrito a mano: se generan
+# corriendo los adaptadores reales de #859/#860 sobre sus fixtures de traza
+# cruda, que es lo que pide CA-5 ("las fixtures neutrales de #861 para Claude
+# y OpenCode"). La diferencia importa: inventar el JSONL neutral deja al test
+# afirmando lo que el autor CREE que reporta cada runtime, no lo que reporta.
+# Contra los adaptadores reales queda a la vista, por ejemplo, que OpenCode SI
+# trae session_id y que su cost_usd llega en 0 (no en null) -- dos campos que
+# un fixture a mano marcaria como ausentes.
+#
+# neutral_run <lib> <fn> <fixture-dir> <fixture> <runtime> <modelo> <destino>
+#
+# Reproduce el archivo tal como queda en disco: el `run.started` que emite el
+# runner, la traduccion del adaptador, y el `duration_ms` del terminal
+# sobreescrito con el reloj de pared que mide el runner (mefisto-run-agent.sh
+# lo hace explicitamente -- el adaptador lo deja en null). Sin ese ultimo paso
+# el test estaria juzgando un archivo que el visor nunca ve.
+neutral_run() {
+    local lib="$1" fn="$2" fixdir="$3" fixture="$4" runtime="$5" modelo="$6" dest="$7"
+    jq -n -c --arg rt "$runtime" --argjson model "$([ -n "$modelo" ] && printf '"%s"' "$modelo" || printf 'null')" \
+        '{v: 1, type: "run.started", ts: "2026-09-05T10:00:00Z", runtime: $rt, agent: "mefisto-writer", model: $model, cwd: "/tmp/w"}' \
+        > "$dest"
+    bash -c "cd '$REPO_ROOT' && source '$lib' && $fn '$fixdir/$fixture' '$runtime' '$modelo' 0 ''" \
+        | jq -c 'if (.type == "run.completed" or .type == "run.failed") then .duration_ms = 5000 else . end' \
+        >> "$dest"
+}
+
+LIB_DIR="$REPO_ROOT/src/internal/scripts/lib"
+FIX_CLAUDE="$SCRIPT_DIR/fixtures/runtime-claude"
+FIX_OC="$SCRIPT_DIR/fixtures/runtime-opencode"
+
+reset_stage_state
+STREAM_CLAUDE="$TMP/claude.events.jsonl"
+neutral_run "$LIB_DIR/runtime-claude.sh" runtime_claude_translate \
+    "$FIX_CLAUDE" "success.jsonl" "claude" "claude-sonnet-5" "$STREAM_CLAUDE"
+run_process_new_lines "$STREAM_CLAUDE" "$TMP/claude-out.txt"
+OUT_CLAUDE=$(cat "$TMP/claude-out.txt")
+TOOLS_CLAUDE=$(grep -c "(ok, " "$TMP/claude-out.txt" | tr -d ' ')
+
+reset_stage_state
+STREAM_OC="$TMP/opencode.events.jsonl"
+neutral_run "$LIB_DIR/runtime-opencode.sh" runtime_opencode_translate \
+    "$FIX_OC" "success-tool-1.18.29.jsonl" "opencode" "" "$STREAM_OC"
+run_process_new_lines "$STREAM_OC" "$TMP/opencode-out.txt"
+OUT_OC=$(cat "$TMP/opencode-out.txt")
+TOOLS_OC=$(grep -c "(ok, " "$TMP/opencode-out.txt" | tr -d ' ')
+
+if [ "$TOOLS_CLAUDE" -eq 1 ] && [ "$TOOLS_OC" -eq 1 ]; then
+    pass "O-1: mismo conteo de tools (1) en ambas corridas, sobre la salida real de cada adaptador"
+else
+    fail "O-1: conteo de tools distinto -- claude=$TOOLS_CLAUDE opencode=$TOOLS_OC"
+fi
+
+if printf '%s' "$OUT_CLAUDE" | grep -q -- "(OK)" && printf '%s' "$OUT_OC" | grep -q -- "(OK)"; then
+    pass "O-2: mismo estado terminal (OK) en ambas corridas"
+else
+    fail "O-2: el estado terminal no coincide -- claude='$OUT_CLAUDE' opencode='$OUT_OC'"
+fi
+
+if printf '%s' "$OUT_CLAUDE" | grep -q "n/d"; then
+    fail "O-3: la corrida Claude reporta todas las metricas, no deberia mostrar ningun n/d: $OUT_CLAUDE"
+else
+    pass "O-3: la corrida Claude no muestra ningun n/d (reporta todas las metricas del contrato)"
+fi
+
+if printf '%s' "$OUT_OC" | grep -q "modelo=n/d" && printf '%s' "$OUT_OC" | grep -q "turnos=n/d" \
+    && printf '%s' "$OUT_OC" | grep -q "ttft=n/d" && printf '%s' "$OUT_OC" | grep -q "api=n/d"; then
+    pass "O-4: la corrida OpenCode muestra n/d en los campos que ese runtime no reporta (modelo, turnos, ttft, api)"
+else
+    fail "O-4: la corrida OpenCode no mostro los n/d esperados: $OUT_OC"
+fi
+
+# El contraste que da sentido a CA-3: un campo que OpenCode SI reporta no se
+# degrada a n/d por venir de un runtime "pobre". cost_usd=0 es el caso filoso
+# -- 0 es un valor, no un dato ausente, y confundirlos es justo el error que
+# MEF-ADR-0049 prohibe en la direccion contraria.
+if printf '%s' "$OUT_OC" | grep -q "costo_usd=0" && ! printf '%s' "$OUT_OC" | grep -q "session_id=n/d"; then
+    pass "O-5: los campos que OpenCode si reporta (cost_usd=0, session_id) no se degradan a n/d"
+else
+    fail "O-5: un campo presente de la corrida OpenCode se mostro como ausente: $OUT_OC"
+fi
+
+# -------- Bloque P: CA-6 -- neutralidad del script fuente --------
+
+echo ""
+echo "[P] CA-6: el script no referencia campos propios de la traza cruda de Claude ni rutas legacy hardcodeadas"
+
+CA6_OK=1
+for pat in '"assistant"' '"result"' 'tool_use' 'num_turns' 'total_cost_usd' '.claude/pipeline'; do
+    if grep -qF -- "$pat" "$TARGET"; then
+        fail "P-1: el script contiene el patron prohibido: $pat"
+        CA6_OK=0
+    fi
+done
+[ "$CA6_OK" -eq 1 ] && pass "P-1: ninguno de los patrones prohibidos (assistant/result/tool_use/num_turns/total_cost_usd/.claude/pipeline) esta presente"
+
+if grep -q "mefisto_state_read_paths" "$TARGET"; then
+    pass "P-2: el visor localiza el archivo con mefisto_state_read_paths (CA-1)"
+else
+    fail "P-2: no se encontro una llamada a mefisto_state_read_paths"
+fi
+
+if grep -q '\*\.events\.jsonl' "$TARGET"; then
+    pass "P-3: el visor sigue *.events.jsonl (el JSONL neutral, no la traza cruda)"
+else
+    fail "P-3: no se encontro la referencia a *.events.jsonl"
+fi
 
 echo ""
 echo "----------------------------------------"
