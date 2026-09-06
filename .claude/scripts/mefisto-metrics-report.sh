@@ -6,12 +6,16 @@
 #   .claude/scripts/mefisto-metrics-report.sh --desde 2026-07-01
 #
 # Responde "donde se van los 30 minutos" de un issue de tooling interno,
-# agregando .claude/pipeline/pipeline-history.jsonl (una linea por corrida del
-# pipeline mefisto-tooling, con agents.<agente>.metrics derivado de la traza
-# por #426): ranking de herramientas, reparto API vs no-API del wall-clock
-# (agregado, por corrida y writer vs reviewer), deriva temporal semanal/
-# mensual y agregado por harness_version (issue #664). Solo lectura: nunca
-# escribe en .claude/pipeline/.
+# agregando pipeline-history.jsonl (una linea por corrida del pipeline
+# mefisto-tooling, con agents.<agente>.metrics derivado de la traza por #426):
+# ranking de herramientas, reparto API vs no-API del wall-clock (agregado, por
+# corrida y writer vs reviewer), deriva temporal semanal/mensual y agregado por
+# harness_version (issue #664). Solo lectura: nunca escribe estado.
+#
+# El historial se lee de las DOS ubicaciones que resuelve mefisto_state_read_paths
+# (issue #869): la canonica .mefisto/pipeline/ -- donde el pipeline anota desde
+# su traslado al layout de MEF-ADR-0049 -- y la legacy .claude/pipeline/, que
+# conserva el historico previo sin migrarlo. Ver main().
 #
 # El historico es MIXTO por diseno (CA-5): las corridas previas a #426 no
 # traen "metrics" (solo la duracion plana de siempre) y se reportan aparte
@@ -20,7 +24,7 @@
 #
 # Solo requiere pipeline-history.jsonl: el detalle por tool call ya viaja en
 # agents.<agente>.metrics (#426), asi que no hace falta bajar a los archivos
-# .claude/pipeline/metrics/*.json por stage (ver notas tecnicas del issue).
+# metrics/*.json por stage (ver notas tecnicas del issue).
 #
 # Segmentacion por harness_version (issue #664, mismo shape que el porte
 # publicado #663): cada linea trae "harness_version"/"harness_sha" desde #662.
@@ -669,12 +673,59 @@ EOF
         exit 1
     fi
 
-    local history_file="$MEFISTO_REPO_ROOT/.claude/pipeline/pipeline-history.jsonl"
+    # El historial se agrega desde las DOS ubicaciones (issue #869). Desde que
+    # mefisto-tooling-pipeline.sh se traslado al layout canonico, las corridas
+    # nuevas se anotan en .mefisto/pipeline/pipeline-history.jsonl mientras las
+    # anteriores se quedan -- para siempre, sin migracion automatica
+    # (MEF-ADR-0049 seccion 3) -- en .claude/pipeline/. Leer una sola de las dos
+    # parte la serie justo en el commit del traslado: o el reporte pierde de
+    # vista toda corrida nueva, o pierde los meses de historico contra los que
+    # existe para comparar. Es el caso que mefisto_state_read_paths documenta
+    # como propio ("un historial viejo que se queda en legacy para siempre").
+    #
+    # El orden de las lineas del archivo concatenado no importa: el jq de
+    # compute_metrics_report_json agrupa por el campo "started" de cada linea,
+    # nunca por posicion.
+    local history_sources history_label history_file merged=""
+    history_sources=$(mefisto_state_read_paths "pipeline-history.jsonl")
+
+    if [ -z "$history_sources" ]; then
+        # Ninguna de las dos existe todavia: se le pasa igual la canonica para
+        # que el mensaje de "sin corridas registradas" nombre la ruta donde el
+        # historial VA a aparecer, no una temporal.
+        history_file="$MEFISTO_STATE_DIR/pipeline-history.jsonl"
+        history_label="$history_file"
+    elif [ "$(printf '%s\n' "$history_sources" | grep -c .)" -eq 1 ]; then
+        history_file="$history_sources"
+        history_label="$history_file"
+    else
+        merged=$(mktemp "${TMPDIR:-/tmp}/mefisto-history.XXXXXX") || merged=""
+        if [ -n "$merged" ]; then
+            # El trap se registra solo cuando hay algo que borrar: este script
+            # no tiene otro trap EXIT que este pisaria.
+            trap 'rm -f "$merged"' EXIT
+            while IFS= read -r _src; do
+                [ -n "$_src" ] || continue
+                cat "$_src" >> "$merged" 2>/dev/null || true
+                # Sin este salto de linea defensivo, un historial legacy cuyo
+                # ultimo caracter no sea '\n' pegaria su ultima corrida con la
+                # primera del siguiente archivo y las DOS lineas se perderian
+                # (jq las descarta como JSON invalido).
+                printf '\n' >> "$merged"
+            done <<< "$history_sources"
+            history_file="$merged"
+        else
+            # Sin temporal utilizable se degrada a la canonica antes que abortar
+            # el reporte entero: mejor una serie parcial que ninguna.
+            history_file=$(printf '%s\n' "$history_sources" | head -n1)
+        fi
+        history_label=$(printf '%s\n' "$history_sources" | tr '\n' ' ' | sed 's/ $//')
+    fi
 
     local agg
     agg=$(compute_metrics_report_json "$history_file" "$desde") || true
     if [ -z "$agg" ]; then
-        echo "ERROR: no se pudo procesar el historial ($history_file)" >&2
+        echo "ERROR: no se pudo procesar el historial ($history_label)" >&2
         exit 1
     fi
 

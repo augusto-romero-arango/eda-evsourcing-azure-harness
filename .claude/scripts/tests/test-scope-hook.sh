@@ -33,7 +33,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 HOOK="$REPO_ROOT/.claude/scripts/mefisto-scope-hook.sh"
 SETTINGS="$REPO_ROOT/.claude/settings.json"
-PIPELINE="$REPO_ROOT/.claude/scripts/mefisto-tooling-pipeline.sh"
+PIPELINE="$REPO_ROOT/src/internal/scripts/mefisto-tooling-pipeline.sh"
 
 PASS=0
 FAIL=0

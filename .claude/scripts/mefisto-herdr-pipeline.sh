@@ -46,16 +46,20 @@ NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$MEFISTO_REPO_ROOT"
-LOG_DIR_ABS="$PROJECT_ROOT/.claude/pipeline/logs"
+# Mismo motivo que en mefisto-tmux-pipeline.sh (issue #869): el pipeline
+# interno ya escribe sus logs bajo .mefisto/pipeline/logs/, asi que la ruta
+# hardcodeada dejaba al pane de reporte apuntando a un directorio que ya no
+# recibe nada. El porte completo de este launcher es el issue #872.
+LOG_DIR_ABS="$(mefisto_state_path "logs")"
 # CAFF: prefijo "caffeinate -i" (o vacio fuera de macOS), calculado UNA vez
 # por corrida y antepuesto al lanzamiento en background del sub-pipeline
 # interno dentro de cmd_pane_runner -- issue #800. Evita que el Mac entre en
 # suspension idle mientras el pane de ejecucion corre.
 CAFF="$(caffeinate_prefix)"
 # Registro de panes de ejecucion creados por esta interfaz (uno por linea,
-# ids publicos de herdr como "w1:p3"). Vive en .claude/pipeline/ como el
-# resto del estado runtime.
-PANES_STATE="$PROJECT_ROOT/.claude/pipeline/herdr-report-panes.txt"
+# ids publicos de herdr como "w1:p3"). Vive junto al resto del estado runtime,
+# donde lo deja mefisto_state_path (.mefisto/pipeline/, issue #869).
+PANES_STATE="$(mefisto_state_path "herdr-report-panes.txt")"
 
 # Los mensajes de progreso van a stderr: acquire_report_pane devuelve su
 # resultado por stdout y un log colado ahi corromperia el valor capturado.

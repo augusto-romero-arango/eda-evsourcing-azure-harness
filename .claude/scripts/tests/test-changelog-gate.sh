@@ -199,7 +199,7 @@ fi
 echo ""
 echo "[D] Paridad: el pipeline real invoca las mismas funciones que este test"
 
-PIPE="$REPO_ROOT/.claude/scripts/mefisto-tooling-pipeline.sh"
+PIPE="$REPO_ROOT/src/internal/scripts/mefisto-tooling-pipeline.sh"
 
 if grep -q 'if changelog_fragment_added "\$WORKTREE_PATH" "\$SNAPSHOT_COMMIT"; then' "$PIPE"; then
     pass "D-1: mefisto-tooling-pipeline.sh invoca changelog_fragment_added en el gate"

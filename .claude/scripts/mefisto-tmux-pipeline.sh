@@ -72,7 +72,15 @@ NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$MEFISTO_REPO_ROOT"
-EVENTS_LOG="$PROJECT_ROOT/.claude/pipeline/events.log"
+# El events.log de la corrida se resuelve con mefisto_state_path (issue #869):
+# desde que mefisto-tooling-pipeline.sh escribe su estado bajo
+# .mefisto/pipeline/ (MEF-ADR-0049), esta ruta hardcodeada apuntaba a un
+# archivo que ya nadie escribe -- el pane monitor tail-eaba un archivo vacio
+# durante toda la corrida, sin una sola linea y sin error visible. La
+# migracion completa de este launcher al layout canonico es el issue #871;
+# aqui solo se corrige la resolucion, para que el traslado del pipeline no
+# deje el monitor ciego en el intervalo.
+EVENTS_LOG="$(mefisto_state_path "events.log")"
 # CAFF: prefijo "caffeinate -i" (o vacio fuera de macOS), calculado UNA vez
 # por corrida y antepuesto al send-keys que lanza cada sub-pipeline interno --
 # issue #800. Evita que el Mac entre en suspension idle durante la corrida.

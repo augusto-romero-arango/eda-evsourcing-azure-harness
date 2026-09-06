@@ -96,6 +96,7 @@ fi
 
 FIXTURE="$TMP/fixture"
 mkdir -p "$FIXTURE/.claude/scripts" "$FIXTURE/.claude-plugin" "$FIXTURE/src/internal/scripts/lib"
+cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FIXTURE/src/internal/scripts/lib/_mefisto-common.sh"
 cp "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" "$FIXTURE/.claude/scripts/_mefisto-common.sh"
 cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FIXTURE/src/internal/scripts/lib/mefisto-state.sh"
 
@@ -283,7 +284,7 @@ fi
 echo ""
 echo "[I] HARNESS_VERSION y HARNESS_SHA se calculan UNA vez en el prologo, no dentro de abort()"
 
-PIPE_PATH="$REPO_ROOT/.claude/scripts/mefisto-tooling-pipeline.sh"
+PIPE_PATH="$REPO_ROOT/src/internal/scripts/mefisto-tooling-pipeline.sh"
 abort_line=$(grep -n '^abort() {' "$PIPE_PATH" | head -n1 | cut -d: -f1)
 
 for var_assign in 'HARNESS_VERSION="\$(get_harness_version)"' 'HARNESS_SHA="\$(get_harness_sha)"'; do
@@ -337,6 +338,7 @@ if command -v jq >/dev/null 2>&1; then
   "version": "9.9.9"
 }
 EOF
+    cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FAKE_REPO/src/internal/scripts/lib/_mefisto-common.sh"
     cp "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" "$FAKE_REPO/.claude/scripts/_mefisto-common.sh"
     cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_REPO/src/internal/scripts/lib/mefisto-state.sh"
     cp "$REPO_ROOT/.claude/scripts/mefisto-metrics-report.sh" "$FAKE_REPO/.claude/scripts/mefisto-metrics-report.sh"
@@ -348,7 +350,17 @@ EOF
 {"issue":"3","title":"aborto con ambos campos en null","pipeline":"mefisto-tooling","harness_version":null,"harness_sha":null,"started":"20260103-100000","finished":"2026-01-03T10:10:00","state":"failed","stage":"writer","error":"algo"}
 EOF
 
-    K_OUT=$( (cd "$FAKE_REPO" && ./.claude/scripts/mefisto-metrics-report.sh) 2>&1 )
+    # `env -u` de las MEFISTO_* de estado (issue #869): esta suite corre dentro
+    # de una invocacion real del pipeline interno, que EXPORTA MEFISTO_STATE_DIR
+    # / MEFISTO_LEGACY_STATE_DIR apuntando al repo REAL (mefisto-state.sh los
+    # resuelve con `: "${VAR:=...}"`, respetando a proposito un valor previo del
+    # entorno). Desde que el reporte agrega AMBAS ubicaciones, sin desmontarlos
+    # el fixture de 3 lineas se mezclaria con el historial real y K-1 mediria
+    # corridas ajenas. MEFISTO_REPO_ROOT tambien se desmonta: assert_in_mefisto
+    # lo re-exporta dentro de FAKE_REPO, pero heredarlo hace que ese re-export
+    # dependa del orden de evaluacion en vez de del cwd.
+    K_OUT=$( (cd "$FAKE_REPO" && env -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR \
+        -u MEFISTO_REPO_ROOT ./.claude/scripts/mefisto-metrics-report.sh) 2>&1 )
     K_RC=$?
     if [ "$K_RC" -eq 0 ] && echo "$K_OUT" | grep -q "Corridas mefisto-tooling en la ventana: 3"; then
         pass "K-1: las 3 lineas (legada, con ambos campos, con ambos en null) se agregan sin cambios"

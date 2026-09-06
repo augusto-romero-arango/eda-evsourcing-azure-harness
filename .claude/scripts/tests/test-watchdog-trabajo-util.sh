@@ -17,7 +17,7 @@
 #      el pipeline evaluo has_work=true (bastaba cualquier archivo sucio en el
 #      worktree) y abrio el PR #421 con una revision truncada a mitad de frase.
 #
-# Arreglo (.claude/scripts/_mefisto-common.sh):
+# Arreglo (_mefisto-common.sh, canonico en src/internal/scripts/lib/):
 #   - run_agent_with_watchdog: activa job control (`set -m`/`set +m`) al
 #     lanzar el comando para que el job sea lider de su propio grupo de
 #     procesos -- asi `kill -9 -$pid` SI alcanza a todo el arbol (CA-1); deja
@@ -169,16 +169,16 @@ fi
 # -------- Fixtures de worktree para los bloques D y E --------
 
 WT="$TMP/worktree"
-mkdir -p "$WT/commands" "$WT/.claude/pipeline/summaries"
+mkdir -p "$WT/commands" "$WT/.mefisto/pipeline/summaries"
 git -C "$WT" init -q
 git -C "$WT" config user.email "t@t.test"
 git -C "$WT" config user.name "test"
 echo "base" > "$WT/commands/base.md"
-# .claude/pipeline/ replica el .gitignore real del repo (issue #424, bloque E):
-# sin esto, escribir el resumen de stage bajo .claude/pipeline/summaries/
+# .mefisto/ replica el .gitignore real del repo (issue #856/#869, bloque E):
+# sin esto, escribir el resumen de stage bajo .mefisto/pipeline/summaries/
 # ensuciaria el status por si solo y el fixture de worktree LIMPIO (E-4) seria
 # imposible de construir.
-echo ".claude/pipeline/" > "$WT/.gitignore"
+echo ".mefisto/" > "$WT/.gitignore"
 git -C "$WT" add -A >/dev/null
 git -C "$WT" commit -qm "base"
 BASE_COMMIT=$(git -C "$WT" rev-parse HEAD)
@@ -186,10 +186,10 @@ BASE_COMMIT=$(git -C "$WT" rev-parse HEAD)
 reset_wt() {
     git -C "$WT" reset -q --hard "$BASE_COMMIT"
     git -C "$WT" clean -qfd
-    mkdir -p "$WT/.claude/pipeline/summaries"
+    mkdir -p "$WT/.mefisto/pipeline/summaries"
 }
 
-SUMMARY="$WT/.claude/pipeline/summaries/stage-1-writer.md"
+SUMMARY="$WT/.mefisto/pipeline/summaries/stage-1-writer.md"
 
 # -------- Bloque D: CA-4, unrecoverable siempre gana --------
 
@@ -298,7 +298,7 @@ fi
 echo ""
 echo "[F] Paridad: run_agent del pipeline real usa las funciones nuevas"
 
-PIPE="$REPO_ROOT/.claude/scripts/mefisto-tooling-pipeline.sh"
+PIPE="$REPO_ROOT/src/internal/scripts/mefisto-tooling-pipeline.sh"
 
 if grep -q "run_agent_with_watchdog" "$PIPE"; then
     pass "F-1: mefisto-tooling-pipeline.sh invoca run_agent_with_watchdog"
@@ -458,7 +458,7 @@ fi
 # en _mefisto-common.sh (issue #534): al pasar a gobernar tambien si un stage
 # se REINTENTA, inline no habia forma de ejercerla sin invocar el CLI real. La
 # distincion de #446 sigue siendo obligatoria; solo cambio de archivo.
-if grep -q 'SIGNAL_POST_SUCCESS' "$REPO_ROOT/.claude/scripts/_mefisto-common.sh"; then
+if grep -q 'SIGNAL_POST_SUCCESS' "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh"; then
     pass "G-12: la clasificacion distingue una senal posterior al exito de un TIMEOUT"
 else
     fail "G-12: la clasificacion no distingue SIGNAL_POST_SUCCESS"

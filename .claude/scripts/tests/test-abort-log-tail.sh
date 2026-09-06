@@ -39,7 +39,7 @@ FAIL=0
 pass() { echo "  PASS: $1"; PASS=$((PASS+1)); }
 fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 
-INTERNAL_PIPELINE="$REPO_ROOT/.claude/scripts/mefisto-tooling-pipeline.sh"
+INTERNAL_PIPELINE="$REPO_ROOT/src/internal/scripts/mefisto-tooling-pipeline.sh"
 PUBLISHED_TOOLING="$REPO_ROOT/scripts/tooling-pipeline.sh"
 PUBLISHED_TDD="$REPO_ROOT/scripts/tdd-pipeline.sh"
 

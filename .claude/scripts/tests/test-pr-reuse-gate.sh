@@ -211,7 +211,7 @@ fi
 extract_helper_body() {
     awk '/^find_open_pr_for_branch\(\) \{/,/^\}/' "$1"
 }
-INTERNAL_BODY=$(extract_helper_body "$REPO_ROOT/.claude/scripts/_mefisto-common.sh")
+INTERNAL_BODY=$(extract_helper_body "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh")
 PUBLISHED_BODY=$(extract_helper_body "$REPO_ROOT/scripts/_pipeline-common.sh")
 
 if [ -z "$INTERNAL_BODY" ] || [ -z "$PUBLISHED_BODY" ]; then

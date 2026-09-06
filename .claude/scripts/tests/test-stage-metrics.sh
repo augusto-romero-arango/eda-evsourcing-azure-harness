@@ -359,7 +359,7 @@ assert_field "J-4: agents.writer.metrics.turns esta presente (campo nuevo)" "4" 
 echo ""
 echo "[L] Cableado en mefisto-tooling-pipeline.sh (CA-1/CA-2/CA-3)"
 
-PIPE="$REPO_ROOT/.claude/scripts/mefisto-tooling-pipeline.sh"
+PIPE="$REPO_ROOT/src/internal/scripts/mefisto-tooling-pipeline.sh"
 
 if grep -q "compute_stage_metrics" "$PIPE"; then
     pass "L-1: el pipeline invoca compute_stage_metrics al cerrar cada stage"

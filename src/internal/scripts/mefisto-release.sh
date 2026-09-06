@@ -34,15 +34,11 @@
 
 set -euo pipefail
 
-# _mefisto-common.sh sigue en .claude/scripts/ hasta que #869 la traslade a
-# src/internal/scripts/lib/ -- transitorio, no un destino final. Este script ya
-# NO vive en ese directorio, asi que no se puede resolver por dirname "$0" (la
-# tecnica que usaba antes de moverse, issue #864): se computa MEFISTO_REPO_ROOT
-# primero, desde la propia ubicacion canonica de este archivo, y se la usa para
-# alcanzar la lib. assert_in_mefisto (definida dentro) la vuelve a exportar con
-# el mismo valor -- idempotente, no un conflicto.
-MEFISTO_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-source "$MEFISTO_REPO_ROOT/.claude/scripts/_mefisto-common.sh"
+# _mefisto-common.sh ya vive en src/internal/scripts/lib/ (issue #869): se
+# resuelve relativo a este propio archivo, igual que el resto de la libreria
+# (mefisto-state.sh, mefisto-runtime.sh...), sin pasar por .claude/scripts/.
+# assert_in_mefisto (definida dentro) exporta MEFISTO_REPO_ROOT.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/_mefisto-common.sh"
 assert_in_mefisto || exit 1
 
 # Ruta absoluta del propio script, resuelta ANTES del cd: la fase prepare se

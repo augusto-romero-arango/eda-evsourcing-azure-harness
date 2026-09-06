@@ -128,13 +128,22 @@ FAKE_REPO="$TMP/fake-mefisto"
 mkdir -p "$FAKE_REPO/.claude-plugin" "$FAKE_REPO/.claude/scripts" "$FAKE_REPO/.claude/pipeline" "$FAKE_REPO/src/internal/scripts/lib"
 git -C "$FAKE_REPO" init -q
 echo '{"name":"mefisto"}' > "$FAKE_REPO/.claude-plugin/plugin.json"
+cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FAKE_REPO/src/internal/scripts/lib/_mefisto-common.sh"
 cp "$COMMON_SCRIPT" "$FAKE_REPO/.claude/scripts/_mefisto-common.sh"
 cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_REPO/src/internal/scripts/lib/mefisto-state.sh"
 cp "$REPORT_SCRIPT" "$FAKE_REPO/.claude/scripts/mefisto-metrics-report.sh"
 chmod +x "$FAKE_REPO/.claude/scripts/mefisto-metrics-report.sh"
 
 run_report() {
-    (cd "$FAKE_REPO" && ./.claude/scripts/mefisto-metrics-report.sh "$@")
+    # `env -u` de las MEFISTO_* de estado: esta suite corre dentro de una
+    # invocacion real del pipeline interno, que EXPORTA MEFISTO_STATE_DIR /
+    # MEFISTO_LEGACY_STATE_DIR apuntando al repo REAL (mefisto-state.sh los
+    # resuelve con `: "${VAR:=...}"`, respetando a proposito un valor previo del
+    # entorno). Sin desmontarlos aqui, el reporte lanzado contra FAKE_REPO
+    # agregaria el historial del repo real -- y las aserciones de conteo de
+    # abajo, calibradas sobre el fixture, medirian corridas ajenas.
+    (cd "$FAKE_REPO" && env -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR \
+        -u MEFISTO_REPO_ROOT ./.claude/scripts/mefisto-metrics-report.sh "$@")
 }
 
 echo ""
