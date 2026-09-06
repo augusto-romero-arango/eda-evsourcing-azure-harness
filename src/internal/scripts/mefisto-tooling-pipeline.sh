@@ -533,12 +533,13 @@ run_agent() {
         # diagnostico -- ningun gate la parsea desde este issue.
         derive_stage_log_from_stream "$events_file" "$stderr_file" "$log_stage"
 
-        # CA-1 (issue #426): metricas por stage derivadas de la traza cruda
-        # (compute_stage_metrics no cambia en este issue -- hijo 2 de #861).
-        # Se escriben SIEMPRE (stage exitoso o fallido) -- un fallo de
-        # instrumentacion (jq ausente, stream vacio, sin evento result)
-        # degrada a "null" y nunca aborta el pipeline.
-        metrics_json=$(compute_stage_metrics "$stream_file")
+        # CA-1 (issue #426, reescrita sobre el JSONL neutral en el issue
+        # #907): metricas por stage derivadas de $events_file, no de la traza
+        # cruda -- compute_stage_metrics ya no interpreta el vocabulario de
+        # ningun runtime concreto. Se escriben SIEMPRE (stage exitoso o
+        # fallido) -- un fallo de instrumentacion (jq ausente, archivo vacio,
+        # sin evento terminal) degrada a "null" y nunca aborta el pipeline.
+        metrics_json=$(compute_stage_metrics "$events_file")
         echo "$metrics_json" > "$PIPELINE_DIR_ABS/metrics/mefisto-tooling-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-${stage}-${agent}.json" 2>/dev/null || true
 
         TIMED_OUT=false

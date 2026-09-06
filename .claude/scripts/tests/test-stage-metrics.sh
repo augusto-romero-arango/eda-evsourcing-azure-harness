@@ -1,62 +1,73 @@
 #!/usr/bin/env bash
-# test-stage-metrics.sh -- Tests de las metricas por stage derivadas de la
-# traza stream-json (issue #426).
+# test-stage-metrics.sh -- Tests de las metricas por stage derivadas del
+# JSONL neutral (issue #426, reescrita sobre run-events.schema.json en el
+# issue #907).
 #
-# Contexto: con la traza cruda ya capturada (#425), el historico seguia
-# registrando una sola cifra por agente (agents.<agente>.duration en
-# segundos) -- no alcanza para saber si un issue tardo mas por mas turnos,
-# mas tool calls, o cache que dejo de acertar. Este issue agrega dos
-# funciones nuevas a _mefisto-common.sh:
+# Contexto: con el puente del issue #906, `run_agent` ya escribe
+# `<log_base>.events.jsonl` traduciendo la traza cruda de cualquier runtime
+# (Claude Code, OpenCode) al vocabulario cerrado de
+# src/internal/contract/run-events.schema.json, y la clasificacion de
+# fallos ya lee solo ese archivo. Este issue termina la migracion: las dos
+# funciones de METRICAS de _mefisto-common.sh dejan de nombrar nada propio
+# de Claude Code y pasan a leer el evento terminal (`run.completed`/
+# `run.failed`) y los eventos `tool.started`/`tool.completed` neutrales.
 #
-#   - compute_stage_metrics <stream_file>: deriva del stream JSON crudo
-#     turnos, duraciones (total/API/no-API), costo, tokens desglosados,
-#     modelo, motivo de fin y un histograma de tool calls por nombre (count +
-#     tiempo atribuido via emparejamiento tool_use.id <-> tool_use_id, ambos
-#     fechados por el `timestamp` ISO-8601 de nivel superior de cada evento).
+#   - compute_stage_metrics <events_file>: deriva runtime, model, status,
+#     error_kind, duraciones (total/API/no-API), ttft_ms, turns, cost_usd,
+#     tokens{input,output}, denials y un histograma de tool calls por nombre
+#     (count desde `tool.started`, duracion desde `tool.completed.duration_ms`
+#     -- ya calculada por el traductor de cada runtime, sin emparejar por id).
 #     Imprime JSON compacto o el literal "null"; nunca aborta (CA-5).
 #   - build_agents_history_json <wr_dur> <wr_metrics> <rv_dur> <rv_metrics>:
 #     construye el objeto "agents" de una entrada de pipeline-history.jsonl,
-#     agregando agents.<agente>.metrics SIN tocar "duration" (CA-2). Sin jq
-#     degrada al formato plano de siempre (CA-5).
+#     agregando agents.<agente>.metrics Y agents.<agente>.runtime SIN tocar
+#     "duration" (CA-2). Sin jq degrada al formato plano de siempre (CA-5).
 #
 # Casos cubiertos:
 #   [pre] Las dos funciones nuevas estan definidas en _mefisto-common.sh.
-#   [A] Stream completo con varias tool calls -> todos los campos derivados
-#       correctamente, incluido el histograma (count, suma y mediana del
-#       tiempo atribuido por nombre de herramienta) (CA-1).
-#   [B] Stream sin evento `result` (stage matado a mitad de corrida, sin
-#       chance de escribirlo) -> "null", no aborta (CA-5).
-#   [C] Stream vacio -> "null" (CA-5).
-#   [D] Stream truncado a mitad de linea, con `result` valido despues de la
-#       linea rota -> la linea truncada se ignora sin abortar; el resto de
-#       las metricas se deriva igual (CA-1/CA-5).
+#   [A] JSONL neutral completo con varias tool calls -> todos los campos
+#       derivados correctamente, incluido el histograma (CA-1).
+#   [B] Sin evento terminal (`run.completed`/`run.failed`) -> "null", no
+#       aborta (CA-5).
+#   [C] Archivo vacio -> "null" (CA-5).
+#   [D] Linea truncada a mitad, con terminal valido despues -> la linea rota
+#       se ignora sin abortar; el resto de las metricas se deriva igual
+#       (CA-1/CA-5).
 #   [E] jq ausente -> degrada a "null" sin abortar (CA-5).
-#   [F] `is_error:false` se preserva tal cual -- NO se convierte en null.
-#       jq trata `false` igual que `null` para el operador `//`; usar ese
-#       operador sobre un campo booleano lo rompe. Regresion especifica de
-#       este bug (detectado y arreglado durante la implementacion).
-#   [G] Milisegundos en los timestamps: el tiempo atribuido a una tool call
-#       de duracion sub-segundo se calcula correcto (no se trunca la
-#       fraccion, ver notas tecnicas del issue).
-#   [H] Tool call sin `tool_result` emparejado (huerfana) -> cuenta en
-#       `count` pero no contribuye a `duration_ms_sum`/`duration_ms_median`.
-#   [K] Tool call sin `id` -> no cuesta TODAS las metricas del stage. En jq
-#       indexar un objeto con null es un error duro que aborta la expresion
-#       entera, asi que un unico evento malformado devolvia "null" pese a
-#       traer el `result` completo. Cubre tambien los campos opcionales
-#       ausentes (ttft_ms, permission_denials).
-#   [I] build_agents_history_json: agrega "metrics" preservando "duration"
-#       intacto (CA-2); con jq ausente degrada al formato plano legado
-#       (mismas dos claves de siempre, sin "metrics") (CA-5).
-#   [J] Integracion: la linea resultante es JSON valido de una sola linea
+#   [F] `cost_usd: 0` (el costo real de una corrida bajo suscripcion de
+#       OpenCode) se preserva tal cual -- NO se convierte en null. jq trata
+#       `0` igual que `false`/`null` para el operador `//`; copiar el campo
+#       sin ese operador es lo que evita el bug.
+#   [G] tool.completed con `duration_ms: null` (huerfana parcial) -> cuenta
+#       en `count`, no contribuye a `duration_ms_sum`/`duration_ms_median`.
+#   [H] tool.started sin ningun tool.completed emparejado (huerfana total,
+#       el proceso murio a mitad de la llamada) -> mismo resultado que [G].
+#   [I] Campos opcionales ausentes DEL TODO en el terminal (ni siquiera como
+#       null explicito) -> compute_stage_metrics no aborta; el resto de las
+#       cifras se deriva igual.
+#   [J] build_agents_history_json: agrega "metrics" Y "runtime" preservando
+#       "duration" intacto (CA-2); "runtime" es null si ese stage no dejo
+#       metricas; sin jq degrada al formato plano legado (CA-5).
+#   [K] Integracion: la linea resultante es JSON valido de una sola linea
 #       (CA-4) y conserva `agents.writer.duration` numerico ademas de
-#       agregar `agents.writer.metrics`.
-#   [L] Cableado en mefisto-tooling-pipeline.sh: las dos entradas de
-#       historial (completed y la de abort) pasan por
-#       build_agents_history_json, y las metricas se cosechan por stage y no
-#       por nombre de agente -- el stage de merge corre como
-#       `run_agent "merge" "writer"` y con un case por agente un merge
-#       fallido pisaba las metricas del writer de stage 1.
+#       agregar `agents.writer.metrics`/`agents.writer.runtime`.
+#   [L] Cableado en mefisto-tooling-pipeline.sh (CA-3): compute_stage_metrics
+#       se invoca sobre `$events_file` (el JSONL neutral), no sobre
+#       `$stream_file` (la traza cruda); las dos entradas de historial
+#       (completed y la de abort) pasan por build_agents_history_json; las
+#       metricas se cosechan por stage y no por nombre de agente.
+#   [M] Paridad Claude/OpenCode -- exito con tool calls (CA-4): las metricas
+#       derivadas de `runtime_claude_translate` sobre
+#       fixtures/runtime-claude/success.jsonl y de
+#       `runtime_opencode_translate` sobre
+#       fixtures/runtime-opencode/success-tool-1.18.29.jsonl coinciden en
+#       `status` y en la forma de `tool_calls[].name/count` (nombres propios
+#       de cada runtime); las cifras exclusivas de Claude (ttft_ms, turns,
+#       api_duration_ms) salen null en OpenCode sin invalidar nada.
+#   [N] Paridad Claude/OpenCode -- fallo api_error y timeout (CA-4):
+#       terminales neutrales escritos inline conforme al schema, con
+#       runtime:"claude" y runtime:"opencode", producen el mismo
+#       status/error_kind.
 #
 # Uso: .claude/scripts/tests/test-stage-metrics.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -65,6 +76,9 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+LIB_DIR="$REPO_ROOT/src/internal/scripts/lib"
+FIXTURES_CLAUDE="$SCRIPT_DIR/fixtures/runtime-claude"
+FIXTURES_OPENCODE="$SCRIPT_DIR/fixtures/runtime-opencode"
 
 PASS=0
 FAIL=0
@@ -73,12 +87,25 @@ fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 
 # shellcheck source=/dev/null
 source "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" 2>/dev/null
+# shellcheck source=/dev/null
+source "$LIB_DIR/runtime-claude.sh" 2>/dev/null
+# shellcheck source=/dev/null
+source "$LIB_DIR/runtime-opencode.sh" 2>/dev/null
 
 TMP=$(mktemp -d)
 cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT
 
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq no disponible en este entorno, no se puede correr la suite"; exit 0; }
+
+assert_field() {
+    local desc="$1" expected="$2" actual="$3"
+    if [ "$actual" = "$expected" ]; then
+        pass "$desc"
+    else
+        fail "$desc (esperado '$expected', obtenido '$actual')"
+    fi
+}
 
 # -------- Bloque pre: funciones existen --------
 
@@ -91,48 +118,37 @@ for fn in compute_stage_metrics build_agents_history_json; do
     fi
 done
 
-# -------- Bloque A: stream completo con tool calls --------
+# -------- Bloque A: JSONL neutral completo con tool calls --------
 
 echo ""
-echo "[A] Stream completo con varias tool calls -> todos los campos derivados (CA-1)"
+echo "[A] JSONL neutral completo con varias tool calls -> todos los campos derivados (CA-1)"
 
-cat > "$TMP/a-stream.jsonl" <<'EOF'
-{"type":"system","subtype":"init","session_id":"abc","model":"claude-sonnet-5"}
-{"type":"assistant","timestamp":"2026-07-27T22:09:34.000Z","message":{"model":"claude-sonnet-5","content":[{"type":"text","text":"Voy a investigar."}]}}
-{"type":"assistant","timestamp":"2026-07-27T22:09:34.500Z","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Read","input":{}}]}}
-{"type":"user","timestamp":"2026-07-27T22:09:34.700Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"contenido"}]}}
-{"type":"assistant","timestamp":"2026-07-27T22:09:35.000Z","message":{"content":[{"type":"tool_use","id":"toolu_2","name":"Read","input":{}}]}}
-{"type":"user","timestamp":"2026-07-27T22:09:35.900Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_2","content":"ok"}]}}
-{"type":"assistant","timestamp":"2026-07-27T22:09:36.000Z","message":{"content":[{"type":"tool_use","id":"toolu_3","name":"Write","input":{}}]}}
-{"type":"user","timestamp":"2026-07-27T22:09:37.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_3","content":"ok"}]}}
-{"type":"rate_limit_event","timestamp":"2026-07-27T22:09:37.500Z","status":"allowed_warning"}
-{"type":"result","num_turns":4,"duration_ms":9451,"duration_api_ms":5289,"total_cost_usd":0.0234,"is_error":false,"stop_reason":"end_turn","terminal_reason":null,"ttft_ms":3797,"permission_denials":[{"tool_name":"Bash"},{"tool_name":"Write"}],"usage":{"input_tokens":1200,"output_tokens":340,"cache_read_input_tokens":900,"cache_creation_input_tokens":100}}
+cat > "$TMP/a-events.jsonl" <<'EOF'
+{"v":1,"type":"message","ts":"2026-07-27T22:09:34.000Z","role":"assistant","text":"Voy a investigar."}
+{"v":1,"type":"tool.started","ts":"2026-07-27T22:09:34.500Z","tool":"Read","input_summary":null}
+{"v":1,"type":"tool.completed","ts":"2026-07-27T22:09:34.700Z","tool":"Read","ok":true,"duration_ms":200}
+{"v":1,"type":"tool.started","ts":"2026-07-27T22:09:35.000Z","tool":"Read","input_summary":null}
+{"v":1,"type":"tool.completed","ts":"2026-07-27T22:09:35.900Z","tool":"Read","ok":true,"duration_ms":900}
+{"v":1,"type":"tool.started","ts":"2026-07-27T22:09:36.000Z","tool":"Write","input_summary":null}
+{"v":1,"type":"tool.completed","ts":"2026-07-27T22:09:37.000Z","tool":"Write","ok":true,"duration_ms":1000}
+{"v":1,"type":"run.completed","ts":"2026-07-27T22:09:37.500Z","status":"success","runtime":"claude","model":"claude-sonnet-5","session_id":"sess-abc","duration_ms":9451,"tokens":{"input":1200,"output":340},"cost_usd":0.0234,"turns":4,"denials":2,"ttft_ms":3797,"api_duration_ms":5289,"error":null}
 EOF
 
-A_OUT=$(compute_stage_metrics "$TMP/a-stream.jsonl")
+A_OUT=$(compute_stage_metrics "$TMP/a-events.jsonl")
 
-assert_field() {
-    local desc="$1" expected="$2" actual="$3"
-    if [ "$actual" = "$expected" ]; then
-        pass "$desc"
-    else
-        fail "$desc (esperado '$expected', obtenido '$actual')"
-    fi
-}
-
-assert_field "A-1: turns" "4" "$(echo "$A_OUT" | jq -r '.turns')"
-assert_field "A-2: duration_ms" "9451" "$(echo "$A_OUT" | jq -r '.duration_ms')"
-assert_field "A-3: duration_api_ms" "5289" "$(echo "$A_OUT" | jq -r '.duration_api_ms')"
-assert_field "A-4: non_api_ms derivado (9451-5289)" "4162" "$(echo "$A_OUT" | jq -r '.non_api_ms')"
-assert_field "A-5: cost_usd" "0.0234" "$(echo "$A_OUT" | jq -r '.cost_usd')"
-assert_field "A-6: tokens.input" "1200" "$(echo "$A_OUT" | jq -r '.tokens.input')"
-assert_field "A-7: tokens.output" "340" "$(echo "$A_OUT" | jq -r '.tokens.output')"
-assert_field "A-8: tokens.cache_read" "900" "$(echo "$A_OUT" | jq -r '.tokens.cache_read')"
-assert_field "A-9: tokens.cache_creation" "100" "$(echo "$A_OUT" | jq -r '.tokens.cache_creation')"
-assert_field "A-10: model (desde system/init)" "claude-sonnet-5" "$(echo "$A_OUT" | jq -r '.model')"
-assert_field "A-11: is_error" "false" "$(echo "$A_OUT" | jq -r '.is_error')"
-assert_field "A-12: stop_reason" "end_turn" "$(echo "$A_OUT" | jq -r '.stop_reason')"
-assert_field "A-13: terminal_reason" "null" "$(echo "$A_OUT" | jq -r '.terminal_reason')"
+assert_field "A-1: runtime" "claude" "$(echo "$A_OUT" | jq -r '.runtime')"
+assert_field "A-2: model" "claude-sonnet-5" "$(echo "$A_OUT" | jq -r '.model')"
+assert_field "A-3: status" "success" "$(echo "$A_OUT" | jq -r '.status')"
+assert_field "A-4: error_kind (terminal sin error)" "null" "$(echo "$A_OUT" | jq -r '.error_kind')"
+assert_field "A-5: duration_ms" "9451" "$(echo "$A_OUT" | jq -r '.duration_ms')"
+assert_field "A-6: api_duration_ms" "5289" "$(echo "$A_OUT" | jq -r '.api_duration_ms')"
+assert_field "A-7: non_api_ms derivado (9451-5289)" "4162" "$(echo "$A_OUT" | jq -r '.non_api_ms')"
+assert_field "A-8: ttft_ms" "3797" "$(echo "$A_OUT" | jq -r '.ttft_ms')"
+assert_field "A-9: turns" "4" "$(echo "$A_OUT" | jq -r '.turns')"
+assert_field "A-10: cost_usd" "0.0234" "$(echo "$A_OUT" | jq -r '.cost_usd')"
+assert_field "A-11: tokens.input" "1200" "$(echo "$A_OUT" | jq -r '.tokens.input')"
+assert_field "A-12: tokens.output" "340" "$(echo "$A_OUT" | jq -r '.tokens.output')"
+assert_field "A-13: denials" "2" "$(echo "$A_OUT" | jq -r '.denials')"
 
 # Histograma: Read aparece 2 veces (200ms y 900ms), Write 1 vez (1000ms)
 assert_field "A-14: tool_calls[Read].count" "2" "$(echo "$A_OUT" | jq -r '.tool_calls[] | select(.name=="Read") | .count')"
@@ -141,75 +157,70 @@ assert_field "A-16: tool_calls[Read].duration_ms_median" "550" "$(echo "$A_OUT" 
 assert_field "A-17: tool_calls[Write].count" "1" "$(echo "$A_OUT" | jq -r '.tool_calls[] | select(.name=="Write") | .count')"
 assert_field "A-18: tool_calls[Write].duration_ms_sum" "1000" "$(echo "$A_OUT" | jq -r '.tool_calls[] | select(.name=="Write") | .duration_ms_sum')"
 
-# Senales de lentitud que el issue marca opcionales "si son baratos de derivar".
-assert_field "A-19: ttft_ms" "3797" "$(echo "$A_OUT" | jq -r '.ttft_ms')"
-assert_field "A-20: permission_denials cuenta la cardinalidad, no el arreglo" "2" "$(echo "$A_OUT" | jq -r '.permission_denials')"
-assert_field "A-21: rate_limit_events contados desde el stream" "1" "$(echo "$A_OUT" | jq -r '.rate_limit_events')"
-
 if [ "$(printf '%s' "$A_OUT" | wc -l | tr -d ' ')" = "0" ] && echo "$A_OUT" | jq -e 'type == "object"' >/dev/null 2>&1; then
-    pass "A-22: la salida es un objeto JSON valido en una sola linea"
+    pass "A-19: la salida es un objeto JSON valido en una sola linea"
 else
-    fail "A-22: la salida no es un objeto JSON de una sola linea: $A_OUT"
+    fail "A-19: la salida no es un objeto JSON de una sola linea: $A_OUT"
 fi
 
-# -------- Bloque B: sin evento result --------
+# -------- Bloque B: sin evento terminal --------
 
 echo ""
-echo "[B] Stream sin evento result -> \"null\", no aborta (CA-5)"
+echo "[B] Sin evento terminal -> \"null\", no aborta (CA-5)"
 
-printf '{"type":"assistant","timestamp":"2026-07-27T22:09:34.000Z","message":{"content":[{"type":"text","text":"trabajando"}]}}\n' > "$TMP/b-stream.jsonl"
+printf '{"v":1,"type":"message","ts":"2026-07-27T22:09:34.000Z","role":"assistant","text":"trabajando"}\n' > "$TMP/b-events.jsonl"
 
-B_OUT=$(compute_stage_metrics "$TMP/b-stream.jsonl")
+B_OUT=$(compute_stage_metrics "$TMP/b-events.jsonl")
 RC=$?
 if [ "$RC" -eq 0 ] && [ "$B_OUT" = "null" ]; then
-    pass "B-1: sin evento result, la funcion retorna exit 0 y \"null\""
+    pass "B-1: sin evento terminal, la funcion retorna exit 0 y \"null\""
 else
     fail "B-1: se esperaba exit 0 y 'null', se obtuvo rc=$RC salida='$B_OUT'"
 fi
 
-# -------- Bloque C: stream vacio --------
+# -------- Bloque C: archivo vacio --------
 
 echo ""
-echo "[C] Stream vacio -> \"null\" (CA-5)"
+echo "[C] Archivo vacio -> \"null\" (CA-5)"
 
-: > "$TMP/c-stream.jsonl"
-C_OUT=$(compute_stage_metrics "$TMP/c-stream.jsonl")
+: > "$TMP/c-events.jsonl"
+C_OUT=$(compute_stage_metrics "$TMP/c-events.jsonl")
 RC=$?
 if [ "$RC" -eq 0 ] && [ "$C_OUT" = "null" ]; then
-    pass "C-1: stream vacio, exit 0 y 'null'"
+    pass "C-1: archivo vacio, exit 0 y 'null'"
 else
     fail "C-1: se esperaba exit 0 y 'null', se obtuvo rc=$RC salida='$C_OUT'"
 fi
 
-# -------- Bloque D: stream truncado a mitad de linea, con result valido despues --------
+# -------- Bloque D: linea truncada, con terminal valido despues --------
 
 echo ""
-echo "[D] Stream truncado a mitad de linea, con result valido despues -> se ignora sin abortar (CA-1/CA-5)"
+echo "[D] Linea truncada a mitad, con terminal valido despues -> se ignora sin abortar (CA-1/CA-5)"
 
 {
-    printf '{"type":"assistant","timestamp":"2026-07-27T22:09:34.000Z","message":{"content":[{"type":"tool_use","id":"toolu_9","name":"Bash","input":{"command":"ls'
+    printf '{"v":1,"type":"tool.started","ts":"2026-07-27T22:09:34.000Z","tool":"Bash","input_summary":"ls'
     printf '\n'
-    printf '{"type":"result","num_turns":1,"duration_ms":100,"duration_api_ms":80,"is_error":false,"stop_reason":"end_turn"}\n'
-} > "$TMP/d-stream.jsonl"
+    printf '{"v":1,"type":"run.completed","ts":"2026-07-27T22:09:35.000Z","status":"success","runtime":"claude","model":"claude-sonnet-5","session_id":null,"duration_ms":100,"tokens":{"input":null,"output":null},"cost_usd":null,"turns":1,"denials":null,"ttft_ms":null,"api_duration_ms":80,"error":null}\n'
+} > "$TMP/d-events.jsonl"
 
 (
     set -euo pipefail
-    D_OUT=$(compute_stage_metrics "$TMP/d-stream.jsonl")
+    D_OUT=$(compute_stage_metrics "$TMP/d-events.jsonl")
     echo "$D_OUT" > "$TMP/d-out.txt"
 )
 RC=$?
 
 if [ "$RC" -eq 0 ]; then
-    pass "D-1: stream truncado no aborta el pipeline (set -euo pipefail activo)"
+    pass "D-1: linea truncada no aborta el pipeline (set -euo pipefail activo)"
 else
     fail "D-1: se esperaba exit 0, se obtuvo $RC"
 fi
 
 D_OUT=$(cat "$TMP/d-out.txt" 2>/dev/null)
 if echo "$D_OUT" | jq -e '.turns == 1 and .duration_ms == 100' >/dev/null 2>&1; then
-    pass "D-2: el result valido posterior a la linea rota si se deriva"
+    pass "D-2: el terminal valido posterior a la linea rota si se deriva"
 else
-    fail "D-2: no se derivaron las metricas del result valido: $D_OUT"
+    fail "D-2: no se derivaron las metricas del terminal valido: $D_OUT"
 fi
 
 if echo "$D_OUT" | jq -e '.tool_calls | length == 0' >/dev/null 2>&1; then
@@ -229,7 +240,7 @@ mkdir -p "$E_PATH_SIN_JQ"
 (
     set -euo pipefail
     PATH="$E_PATH_SIN_JQ:/bin"
-    E_OUT=$(compute_stage_metrics "$TMP/a-stream.jsonl")
+    E_OUT=$(compute_stage_metrics "$TMP/a-events.jsonl")
     echo "$E_OUT" > "$TMP/e-out.txt"
 )
 RC=$?
@@ -241,118 +252,115 @@ else
     fail "E-1: se esperaba exit 0 y 'null', se obtuvo rc=$RC salida='$E_OUT'"
 fi
 
-# -------- Bloque F: is_error:false se preserva --------
+# -------- Bloque F: cost_usd:0 se preserva --------
 
 echo ""
-echo "[F] is_error:false se preserva tal cual (no se convierte en null)"
+echo "[F] cost_usd:0 (costo real de una corrida bajo suscripcion) se preserva -- NO se convierte en null"
 
-cat > "$TMP/f-stream.jsonl" <<'EOF'
-{"type":"result","num_turns":1,"duration_ms":100,"duration_api_ms":90,"is_error":false,"stop_reason":"end_turn"}
+cat > "$TMP/f-events.jsonl" <<'EOF'
+{"v":1,"type":"run.completed","ts":"2026-07-27T22:09:30.000Z","status":"success","runtime":"opencode","model":null,"session_id":null,"duration_ms":500,"tokens":{"input":10,"output":5},"cost_usd":0,"turns":null,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":null}
 EOF
 
-F_OUT=$(compute_stage_metrics "$TMP/f-stream.jsonl")
-F_IS_ERROR=$(echo "$F_OUT" | jq -r '.is_error')
-if [ "$F_IS_ERROR" = "false" ]; then
-    pass "F-1: is_error:false se preserva (jq trata false igual que null en el operador //; usarlo sobre un booleano lo rompe)"
+F_OUT=$(compute_stage_metrics "$TMP/f-events.jsonl")
+F_COST=$(echo "$F_OUT" | jq -r '.cost_usd')
+if [ "$F_COST" = "0" ]; then
+    pass "F-1: cost_usd:0 se preserva (jq trata 0 igual que null en el operador //; copiar el campo sin ese operador lo evita)"
 else
-    fail "F-1: is_error deberia ser 'false', se obtuvo '$F_IS_ERROR': $F_OUT"
+    fail "F-1: cost_usd deberia ser '0', se obtuvo '$F_COST': $F_OUT"
 fi
 
-# -------- Bloque G: milisegundos en los timestamps --------
+# -------- Bloque G: tool.completed con duration_ms null (huerfana parcial) --------
 
 echo ""
-echo "[G] Milisegundos en los timestamps -> el tiempo atribuido no se trunca (CA-1, notas tecnicas)"
+echo "[G] tool.completed con duration_ms:null -> cuenta en count, no en duration_ms_sum/median"
 
-cat > "$TMP/g-stream.jsonl" <<'EOF'
-{"type":"assistant","timestamp":"2026-07-27T22:09:35.169Z","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Grep","input":{}}]}}
-{"type":"user","timestamp":"2026-07-27T22:09:35.253Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok"}]}}
-{"type":"result","num_turns":1,"duration_ms":200,"duration_api_ms":150,"is_error":false}
+cat > "$TMP/g-events.jsonl" <<'EOF'
+{"v":1,"type":"tool.started","ts":"2026-07-27T22:09:34.000Z","tool":"Bash","input_summary":null}
+{"v":1,"type":"tool.completed","ts":"2026-07-27T22:09:34.100Z","tool":"Bash","ok":true,"duration_ms":null}
+{"v":1,"type":"run.completed","ts":"2026-07-27T22:09:35.000Z","status":"success","runtime":"claude","model":"claude-sonnet-5","session_id":null,"duration_ms":100,"tokens":{"input":null,"output":null},"cost_usd":null,"turns":1,"denials":null,"ttft_ms":null,"api_duration_ms":80,"error":null}
 EOF
 
-G_OUT=$(compute_stage_metrics "$TMP/g-stream.jsonl")
-assert_field "G-1: duracion sub-segundo de tool call (253ms-169ms=84ms)" "84" "$(echo "$G_OUT" | jq -r '.tool_calls[0].duration_ms_sum')"
+G_OUT=$(compute_stage_metrics "$TMP/g-events.jsonl")
+assert_field "G-1: count incluye la tool call con duration_ms null" "1" "$(echo "$G_OUT" | jq -r '.tool_calls[0].count')"
+assert_field "G-2: duration_ms_sum es null" "null" "$(echo "$G_OUT" | jq -r '.tool_calls[0].duration_ms_sum')"
+assert_field "G-3: duration_ms_median es null" "null" "$(echo "$G_OUT" | jq -r '.tool_calls[0].duration_ms_median')"
 
-# -------- Bloque H: tool call sin tool_result emparejado --------
+# -------- Bloque H: tool.started sin ningun tool.completed (huerfana total) --------
 
 echo ""
-echo "[H] Tool call huerfana (sin tool_result) -> cuenta en count, no en duration_ms_sum"
+echo "[H] tool.started sin tool.completed emparejado -> cuenta en count, no en duration_ms_sum/median"
 
-cat > "$TMP/h-stream.jsonl" <<'EOF'
-{"type":"assistant","timestamp":"2026-07-27T22:09:34.000Z","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{}}]}}
-{"type":"result","num_turns":1,"duration_ms":100,"duration_api_ms":80,"is_error":false}
+cat > "$TMP/h-events.jsonl" <<'EOF'
+{"v":1,"type":"tool.started","ts":"2026-07-27T22:09:34.000Z","tool":"Bash","input_summary":null}
+{"v":1,"type":"run.completed","ts":"2026-07-27T22:09:35.000Z","status":"success","runtime":"claude","model":"claude-sonnet-5","session_id":null,"duration_ms":100,"tokens":{"input":null,"output":null},"cost_usd":null,"turns":1,"denials":null,"ttft_ms":null,"api_duration_ms":80,"error":null}
 EOF
 
-H_OUT=$(compute_stage_metrics "$TMP/h-stream.jsonl")
+H_OUT=$(compute_stage_metrics "$TMP/h-events.jsonl")
 assert_field "H-1: count incluye la tool call huerfana" "1" "$(echo "$H_OUT" | jq -r '.tool_calls[0].count')"
-assert_field "H-2: duration_ms_sum es null (sin tool_result para emparejar)" "null" "$(echo "$H_OUT" | jq -r '.tool_calls[0].duration_ms_sum')"
+assert_field "H-2: duration_ms_sum es null (sin tool.completed para emparejar)" "null" "$(echo "$H_OUT" | jq -r '.tool_calls[0].duration_ms_sum')"
 assert_field "H-3: duration_ms_median es null" "null" "$(echo "$H_OUT" | jq -r '.tool_calls[0].duration_ms_median')"
 
-# -------- Bloque K: tool_use sin `id` no tumba las metricas del stage --------
+# -------- Bloque I: campos opcionales ausentes del todo en el terminal --------
 
 echo ""
-echo "[K] Un tool_use sin \`id\` no puede costar TODAS las metricas del stage (CA-5)"
+echo "[I] Campos opcionales ausentes DEL TODO en el terminal (ni como null) -> no abortan (CA-5)"
 
-cat > "$TMP/k-stream.jsonl" <<'EOF'
-{"type":"assistant","timestamp":"2026-07-27T22:09:34.000Z","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}]}}
-{"type":"assistant","timestamp":"2026-07-27T22:09:35.000Z","message":{"content":[{"type":"tool_use","id":"toolu_ok","name":"Read","input":{}}]}}
-{"type":"user","timestamp":"2026-07-27T22:09:35.400Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_ok","content":"ok"}]}}
-{"type":"result","num_turns":2,"duration_ms":500,"duration_api_ms":300,"is_error":false}
+cat > "$TMP/i-events.jsonl" <<'EOF'
+{"v":1,"type":"tool.started","ts":"2026-07-27T22:09:34.000Z","tool":"Grep","input_summary":null}
+{"v":1,"type":"tool.completed","ts":"2026-07-27T22:09:34.200Z","tool":"Grep","ok":true,"duration_ms":150}
+{"v":1,"type":"run.completed","ts":"2026-07-27T22:09:35.000Z","status":"success","runtime":"claude","model":"claude-sonnet-5","duration_ms":500,"tokens":{"input":10,"output":5},"cost_usd":0.001,"turns":2,"api_duration_ms":300,"error":null}
 EOF
 
-K_OUT=$(compute_stage_metrics "$TMP/k-stream.jsonl")
-# En jq, indexar un objeto con null es un error duro que aborta la expresion
-# entera: sin el guardarraiz `// ""` del lookup, este stream devolvia "null" y
-# el stage se quedaba sin una sola cifra pese a traer el `result` completo.
-assert_field "K-1: las metricas del result se derivan igual" "2" "$(echo "$K_OUT" | jq -r '.turns')"
-assert_field "K-2: la tool call con id si obtiene su tiempo atribuido" "400" "$(echo "$K_OUT" | jq -r '.tool_calls[] | select(.name=="Read") | .duration_ms_sum')"
-assert_field "K-3: la tool call sin id sigue contando en count" "1" "$(echo "$K_OUT" | jq -r '.tool_calls[] | select(.name=="Bash") | .count')"
-assert_field "K-4: la tool call sin id no inventa tiempo atribuido" "null" "$(echo "$K_OUT" | jq -r '.tool_calls[] | select(.name=="Bash") | .duration_ms_sum')"
+I_OUT=$(compute_stage_metrics "$TMP/i-events.jsonl")
+assert_field "I-1: turns se deriva igual pese a las claves ausentes" "2" "$(echo "$I_OUT" | jq -r '.turns')"
+assert_field "I-2: ttft_ms ausente -> null" "null" "$(echo "$I_OUT" | jq -r '.ttft_ms')"
+assert_field "I-3: denials ausente -> null" "null" "$(echo "$I_OUT" | jq -r '.denials')"
+assert_field "I-4: tool_calls[Grep].duration_ms_sum sigue derivandose" "150" "$(echo "$I_OUT" | jq -r '.tool_calls[0].duration_ms_sum')"
 
-# CLI sin los campos opcionales (o version futura que deje de emitirlos):
-# quedan en null / 0 sin abortar.
-assert_field "K-5: ttft_ms ausente -> null" "null" "$(echo "$K_OUT" | jq -r '.ttft_ms')"
-assert_field "K-6: permission_denials ausente -> null (no 0, que sonaria a medido)" "null" "$(echo "$K_OUT" | jq -r '.permission_denials')"
-assert_field "K-7: rate_limit_events sin eventos -> 0" "0" "$(echo "$K_OUT" | jq -r '.rate_limit_events')"
-
-# -------- Bloque I: build_agents_history_json --------
+# -------- Bloque J: build_agents_history_json --------
 
 echo ""
-echo "[I] build_agents_history_json: agrega metrics preservando duration (CA-2); sin jq degrada al formato plano (CA-5)"
+echo "[J] build_agents_history_json: agrega metrics y runtime preservando duration (CA-2); sin jq degrada al formato plano (CA-5)"
 
-I_OUT=$(build_agents_history_json "125" "$A_OUT" "210" "null")
-assert_field "I-1: preserva writer.duration" "125" "$(echo "$I_OUT" | jq -r '.writer.duration')"
-assert_field "I-2: preserva reviewer.duration" "210" "$(echo "$I_OUT" | jq -r '.reviewer.duration')"
-assert_field "I-3: agrega writer.metrics.turns" "4" "$(echo "$I_OUT" | jq -r '.writer.metrics.turns')"
-assert_field "I-4: reviewer.metrics es null cuando no corrio ese stage" "null" "$(echo "$I_OUT" | jq -r '.reviewer.metrics')"
+J_OUT=$(build_agents_history_json "125" "$A_OUT" "210" "null")
+assert_field "J-1: preserva writer.duration" "125" "$(echo "$J_OUT" | jq -r '.writer.duration')"
+assert_field "J-2: preserva reviewer.duration" "210" "$(echo "$J_OUT" | jq -r '.reviewer.duration')"
+assert_field "J-3: agrega writer.metrics.turns" "4" "$(echo "$J_OUT" | jq -r '.writer.metrics.turns')"
+assert_field "J-4: reviewer.metrics es null cuando no corrio ese stage" "null" "$(echo "$J_OUT" | jq -r '.reviewer.metrics')"
+assert_field "J-5: agrega writer.runtime (issue #907)" "claude" "$(echo "$J_OUT" | jq -r '.writer.runtime')"
+assert_field "J-6: reviewer.runtime es null cuando no hay metrics" "null" "$(echo "$J_OUT" | jq -r '.reviewer.runtime')"
 
-I_NOJQ_OUT=$(PATH="$E_PATH_SIN_JQ:/bin" build_agents_history_json "125" "" "" "")
-if echo "$I_NOJQ_OUT" | grep -qF '"writer":{"duration":125}' && ! echo "$I_NOJQ_OUT" | grep -q "metrics"; then
-    pass "I-5: sin jq, degrada al formato plano legado (mismas dos claves, sin 'metrics')"
+J_NOJQ_OUT=$(PATH="$E_PATH_SIN_JQ:/bin" build_agents_history_json "125" "" "" "")
+if echo "$J_NOJQ_OUT" | grep -qF '"writer":{"duration":125}' \
+    && ! echo "$J_NOJQ_OUT" | grep -q "metrics" \
+    && ! echo "$J_NOJQ_OUT" | grep -q "runtime"; then
+    pass "J-7: sin jq, degrada al formato plano legado (mismas dos claves, sin 'metrics' ni 'runtime')"
 else
-    fail "I-5: el degrade sin jq no coincide con el formato legado: $I_NOJQ_OUT"
+    fail "J-7: el degrade sin jq no coincide con el formato legado: $J_NOJQ_OUT"
 fi
 
-# -------- Bloque J: integracion -- linea de historial valida y retrocompatible --------
+# -------- Bloque K: integracion -- linea de historial valida --------
 
 echo ""
-echo "[J] Integracion: la linea de historial resultante es JSON valido de una sola linea (CA-4)"
+echo "[K] Integracion: la linea de historial resultante es JSON valido de una sola linea (CA-4)"
 
-HISTORY_LINE="{\"issue\":\"426\",\"title\":\"Test\",\"pipeline\":\"mefisto-tooling\",\"started\":\"20260727-220000\",\"finished\":\"2026-07-27T22:10:00\",\"state\":\"completed\",\"agents\":$I_OUT,\"pr\":\"https://github.com/x/y/pull/1\"}"
+HISTORY_LINE="{\"issue\":\"907\",\"title\":\"Test\",\"pipeline\":\"mefisto-tooling\",\"started\":\"20260906-100000\",\"finished\":\"2026-09-06T10:10:00\",\"state\":\"completed\",\"agents\":$J_OUT,\"pr\":\"https://github.com/x/y/pull/1\"}"
 
 if [ "$(echo "$HISTORY_LINE" | wc -l)" -eq 1 ]; then
-    pass "J-1: la entrada ocupa una sola linea"
+    pass "K-1: la entrada ocupa una sola linea"
 else
-    fail "J-1: la entrada ocupa mas de una linea"
+    fail "K-1: la entrada ocupa mas de una linea"
 fi
 
 if echo "$HISTORY_LINE" | jq -e '.' >/dev/null 2>&1; then
-    pass "J-2: la entrada es JSON valido"
+    pass "K-2: la entrada es JSON valido"
 else
-    fail "J-2: la entrada no es JSON valido: $HISTORY_LINE"
+    fail "K-2: la entrada no es JSON valido: $HISTORY_LINE"
 fi
 
-assert_field "J-3: agents.writer.duration sigue siendo numerico (campo legado intacto)" "125" "$(echo "$HISTORY_LINE" | jq -r '.agents.writer.duration')"
-assert_field "J-4: agents.writer.metrics.turns esta presente (campo nuevo)" "4" "$(echo "$HISTORY_LINE" | jq -r '.agents.writer.metrics.turns')"
+assert_field "K-3: agents.writer.duration sigue siendo numerico (campo legado intacto)" "125" "$(echo "$HISTORY_LINE" | jq -r '.agents.writer.duration')"
+assert_field "K-4: agents.writer.metrics.turns esta presente (campo nuevo)" "4" "$(echo "$HISTORY_LINE" | jq -r '.agents.writer.metrics.turns')"
+assert_field "K-5: agents.writer.runtime esta presente (campo nuevo)" "claude" "$(echo "$HISTORY_LINE" | jq -r '.agents.writer.runtime')"
 
 # -------- Bloque L: cableado en el pipeline interno --------
 
@@ -361,16 +369,22 @@ echo "[L] Cableado en mefisto-tooling-pipeline.sh (CA-1/CA-2/CA-3)"
 
 PIPE="$REPO_ROOT/src/internal/scripts/mefisto-tooling-pipeline.sh"
 
-if grep -q "compute_stage_metrics" "$PIPE"; then
-    pass "L-1: el pipeline invoca compute_stage_metrics al cerrar cada stage"
+if grep -q 'compute_stage_metrics "\$events_file"' "$PIPE"; then
+    pass "L-1: el pipeline invoca compute_stage_metrics sobre \$events_file (el JSONL neutral, no la traza cruda)"
 else
-    fail "L-1: el pipeline NO invoca compute_stage_metrics"
+    fail "L-1: el pipeline NO invoca compute_stage_metrics sobre \$events_file"
+fi
+
+if grep -q 'compute_stage_metrics "\$stream_file"' "$PIPE"; then
+    fail "L-2: el pipeline todavia invoca compute_stage_metrics sobre \$stream_file (la traza cruda) -- CA-3 exige \$events_file"
+else
+    pass "L-2: el pipeline ya no invoca compute_stage_metrics sobre \$stream_file"
 fi
 
 if [ "$(grep -c "build_agents_history_json" "$PIPE")" -ge 2 ]; then
-    pass "L-2: build_agents_history_json alimenta las dos entradas de historial (completed y la de abort)"
+    pass "L-3: build_agents_history_json alimenta las dos entradas de historial (completed y la de abort)"
 else
-    fail "L-2: build_agents_history_json no se usa en las dos entradas de historial"
+    fail "L-3: build_agents_history_json no se usa en las dos entradas de historial"
 fi
 
 # El stage de resolucion de conflictos corre como `run_agent "merge" "writer"`:
@@ -378,17 +392,101 @@ fi
 # las del writer de stage 1 y el historial reporte, bajo agents.writer.metrics,
 # los turnos y tokens de otro stage. Por eso la cosecha va por "$stage".
 if grep -q 'run_agent "merge" "writer"' "$PIPE"; then
-    pass "L-3: existe el stage merge reusando el nombre de agente 'writer' (premisa de L-4)"
+    pass "L-4: existe el stage merge reusando el nombre de agente 'writer' (premisa de L-5)"
 else
-    fail "L-3: cambio el stage merge -- revisar si L-4 sigue teniendo sentido"
+    fail "L-4: cambio el stage merge -- revisar si L-5 sigue teniendo sentido"
 fi
 
 if grep -qE 'AGENT_WR_METRICS_JSON="\$metrics_json"' "$PIPE" \
    && ! grep -qE 'writer\).*AGENT_WR_METRICS_JSON' "$PIPE"; then
-    pass "L-4: las metricas se cosechan por stage, no por nombre de agente (el merge no pisa al writer)"
+    pass "L-5: las metricas se cosechan por stage, no por nombre de agente (el merge no pisa al writer)"
 else
-    fail "L-4: las metricas se cosechan por nombre de agente -- un merge fallido pisaria las del writer"
+    fail "L-5: las metricas se cosechan por nombre de agente -- un merge fallido pisaria las del writer"
 fi
+
+# -------- Bloque M: paridad Claude/OpenCode -- exito con tool calls --------
+
+echo ""
+echo "[M] Paridad Claude/OpenCode: exito con tools (CA-4)"
+
+for fn in runtime_claude_translate runtime_opencode_translate; do
+    if ! declare -F "$fn" >/dev/null; then
+        fail "M-pre: $fn NO definida (falta sourcear runtime-claude.sh/runtime-opencode.sh)"
+    fi
+done
+
+M_CLAUDE_EVENTS="$TMP/m-claude-events.jsonl"
+runtime_claude_translate "$FIXTURES_CLAUDE/success.jsonl" "claude" "claude-sonnet-5" "0" "" > "$M_CLAUDE_EVENTS"
+
+M_OPENCODE_EVENTS="$TMP/m-opencode-events.jsonl"
+runtime_opencode_translate "$FIXTURES_OPENCODE/success-tool-1.18.29.jsonl" "opencode" "opencode/some-model" "0" "" > "$M_OPENCODE_EVENTS"
+
+M_CLAUDE_OUT=$(compute_stage_metrics "$M_CLAUDE_EVENTS")
+M_OPENCODE_OUT=$(compute_stage_metrics "$M_OPENCODE_EVENTS")
+
+assert_field "M-1: status coincide entre runtimes (claude)" "success" "$(echo "$M_CLAUDE_OUT" | jq -r '.status')"
+assert_field "M-2: status coincide entre runtimes (opencode)" "success" "$(echo "$M_OPENCODE_OUT" | jq -r '.status')"
+
+assert_field "M-3: claude tool_calls trae el nombre propio de su runtime (Read)" "Read" "$(echo "$M_CLAUDE_OUT" | jq -r '.tool_calls[0].name')"
+assert_field "M-4: claude tool_calls[0].count" "1" "$(echo "$M_CLAUDE_OUT" | jq -r '.tool_calls[0].count')"
+assert_field "M-5: opencode tool_calls trae el nombre propio de su runtime (glob)" "glob" "$(echo "$M_OPENCODE_OUT" | jq -r '.tool_calls[0].name')"
+assert_field "M-6: opencode tool_calls[0].count" "1" "$(echo "$M_OPENCODE_OUT" | jq -r '.tool_calls[0].count')"
+
+if echo "$M_CLAUDE_OUT" | jq -e '.tool_calls[0] | has("name") and has("count") and has("duration_ms_sum") and has("duration_ms_median")' >/dev/null 2>&1 \
+   && echo "$M_OPENCODE_OUT" | jq -e '.tool_calls[0] | has("name") and has("count") and has("duration_ms_sum") and has("duration_ms_median")' >/dev/null 2>&1; then
+    pass "M-7: ambos tool_calls[0] tienen la misma forma (name/count/duration_ms_sum/duration_ms_median)"
+else
+    fail "M-7: la forma de tool_calls difiere entre runtimes: claude=$M_CLAUDE_OUT opencode=$M_OPENCODE_OUT"
+fi
+
+# Cifras exclusivas de Claude Code: presentes ahi, null en OpenCode (el wire
+# format de OpenCode 1.18.29 no las trae -- ver runtime-opencode.jq).
+if echo "$M_CLAUDE_OUT" | jq -e '.ttft_ms != null and .turns != null and .api_duration_ms != null' >/dev/null 2>&1; then
+    pass "M-8: claude preserva ttft_ms/turns/api_duration_ms (no null)"
+else
+    fail "M-8: claude perdio ttft_ms/turns/api_duration_ms: $M_CLAUDE_OUT"
+fi
+
+if echo "$M_OPENCODE_OUT" | jq -e '.ttft_ms == null and .turns == null and .api_duration_ms == null' >/dev/null 2>&1; then
+    pass "M-9: opencode deja ttft_ms/turns/api_duration_ms en null sin invalidar el resto"
+else
+    fail "M-9: opencode deberia dejar ttft_ms/turns/api_duration_ms en null: $M_OPENCODE_OUT"
+fi
+
+# -------- Bloque N: paridad Claude/OpenCode -- fallo api_error y timeout --------
+
+echo ""
+echo "[N] Paridad Claude/OpenCode: fallo api_error y timeout (CA-4)"
+
+cat > "$TMP/n-api-claude-events.jsonl" <<'EOF'
+{"v":1,"type":"run.failed","ts":"2026-09-06T10:00:00Z","status":"failed","runtime":"claude","model":"claude-sonnet-5","session_id":"sess-1","duration_ms":45000,"tokens":{"input":100,"output":20},"cost_usd":0.05,"turns":3,"denials":0,"ttft_ms":500,"api_duration_ms":40000,"error":{"kind":"api_error","detail":"API Error: 529"}}
+EOF
+cat > "$TMP/n-api-opencode-events.jsonl" <<'EOF'
+{"v":1,"type":"run.failed","ts":"2026-09-06T10:00:00Z","status":"failed","runtime":"opencode","model":null,"session_id":null,"duration_ms":12000,"tokens":{"input":null,"output":null},"cost_usd":null,"turns":null,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":{"kind":"api_error","detail":"el proceso de OpenCode termino con exit 1"}}
+EOF
+
+N_API_CLAUDE_OUT=$(compute_stage_metrics "$TMP/n-api-claude-events.jsonl")
+N_API_OPENCODE_OUT=$(compute_stage_metrics "$TMP/n-api-opencode-events.jsonl")
+
+assert_field "N-1: status api_error coincide (claude)" "failed" "$(echo "$N_API_CLAUDE_OUT" | jq -r '.status')"
+assert_field "N-2: status api_error coincide (opencode)" "failed" "$(echo "$N_API_OPENCODE_OUT" | jq -r '.status')"
+assert_field "N-3: error_kind api_error coincide (claude)" "api_error" "$(echo "$N_API_CLAUDE_OUT" | jq -r '.error_kind')"
+assert_field "N-4: error_kind api_error coincide (opencode)" "api_error" "$(echo "$N_API_OPENCODE_OUT" | jq -r '.error_kind')"
+
+cat > "$TMP/n-timeout-claude-events.jsonl" <<'EOF'
+{"v":1,"type":"run.failed","ts":"2026-09-06T10:05:00Z","status":"timeout","runtime":"claude","model":"claude-sonnet-5","session_id":null,"duration_ms":1800000,"tokens":{"input":null,"output":null},"cost_usd":null,"turns":null,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":{"kind":"timeout","detail":"el watchdog mato el proceso tras superar 1800s"}}
+EOF
+cat > "$TMP/n-timeout-opencode-events.jsonl" <<'EOF'
+{"v":1,"type":"run.failed","ts":"2026-09-06T10:05:00Z","status":"timeout","runtime":"opencode","model":null,"session_id":null,"duration_ms":1800000,"tokens":{"input":null,"output":null},"cost_usd":null,"turns":null,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":{"kind":"timeout","detail":"el watchdog mato el proceso tras superar 1800s"}}
+EOF
+
+N_TIMEOUT_CLAUDE_OUT=$(compute_stage_metrics "$TMP/n-timeout-claude-events.jsonl")
+N_TIMEOUT_OPENCODE_OUT=$(compute_stage_metrics "$TMP/n-timeout-opencode-events.jsonl")
+
+assert_field "N-5: status timeout coincide (claude)" "timeout" "$(echo "$N_TIMEOUT_CLAUDE_OUT" | jq -r '.status')"
+assert_field "N-6: status timeout coincide (opencode)" "timeout" "$(echo "$N_TIMEOUT_OPENCODE_OUT" | jq -r '.status')"
+assert_field "N-7: error_kind timeout coincide (claude)" "timeout" "$(echo "$N_TIMEOUT_CLAUDE_OUT" | jq -r '.error_kind')"
+assert_field "N-8: error_kind timeout coincide (opencode)" "timeout" "$(echo "$N_TIMEOUT_OPENCODE_OUT" | jq -r '.error_kind')"
 
 echo ""
 echo "----------------------------------------"
