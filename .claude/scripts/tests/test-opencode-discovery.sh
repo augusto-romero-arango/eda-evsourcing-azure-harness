@@ -53,6 +53,15 @@ COMMAND_IDS=$(ids_de "$REPO_ROOT/src/internal/commands")
 AGENT_COUNT=$(printf '%s' "$AGENT_IDS" | wc -w | tr -d ' ')
 COMMAND_COUNT=$(printf '%s' "$COMMAND_IDS" | wc -w | tr -d ' ')
 
+# `mode` tambien sale de la fuente neutral (issue #909: mefisto-writer/
+# mefisto-reviewer nacen en `subagent`, no todos los agentes son `primary`).
+# Extrae el frontmatter con el mismo `awk` de una pasada que documenta
+# src/internal/contract/README.md.
+mode_de() {
+    awk 'NR==1 && $0!="---"{exit 1} NR>1 && $0=="---"{exit} NR>1' "$REPO_ROOT/src/internal/agents/$1.md" \
+        | jq -r '.mode // "primary"'
+}
+
 PASS=0
 FAIL=0
 pass() { echo "  PASS: $1"; PASS=$((PASS+1)); }
@@ -90,18 +99,28 @@ if command -v opencode >/dev/null 2>&1; then
     # Reintento unico: el CLI descubre los agentes/comandos leyendo .opencode/,
     # que un writer en curso puede estar regenerando en ese instante (mismo
     # riesgo de carrera que test-internal-agents-generated.sh).
+    #
+    # grep -q via here-string (<<<), nunca via pipe: con cinco o mas agentes
+    # el volcado de 'opencode agent list' supera el buffer del pipe (~64KB en
+    # macOS) y `grep -q` cierra su stdin en cuanto encuentra el match -- si el
+    # lado escritor del pipe todavia estaba emitiendo, recibe SIGPIPE (rc 141)
+    # y, bajo `pipefail`, ese 141 se propaga aunque `grep` haya salido en 0
+    # (issue #909). El here-string no tiene un segundo proceso escritor que
+    # pueda recibir esa señal.
     agent_out=$(cd "$REPO_ROOT" && opencode agent list 2>&1)
     for id in $AGENT_IDS; do
-        printf '%s' "$agent_out" | grep -q "^$id (primary)" || {
+        mode=$(mode_de "$id")
+        grep -q "^$id ($mode)" <<<"$agent_out" || {
             agent_out=$(cd "$REPO_ROOT" && opencode agent list 2>&1)
             break
         }
     done
     for id in $AGENT_IDS; do
-        if printf '%s' "$agent_out" | grep -q "^$id (primary)"; then
-            pass "$id: listado por 'opencode agent list' como primary"
+        mode=$(mode_de "$id")
+        if grep -q "^$id ($mode)" <<<"$agent_out"; then
+            pass "$id: listado por 'opencode agent list' como $mode"
         else
-            fail "$id: NO aparece en 'opencode agent list' como primary"
+            fail "$id: NO aparece en 'opencode agent list' como $mode"
         fi
     done
 

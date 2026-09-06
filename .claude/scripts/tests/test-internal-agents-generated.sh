@@ -1,26 +1,29 @@
 #!/usr/bin/env bash
-# test-internal-agents-generated.sh -- Tests de la migracion de los tres
-# agentes internos (planner, investigator, historiador) a la fuente neutral
-# (MEF-ADR-0049, issue #865).
+# test-internal-agents-generated.sh -- Tests de la migracion de los cinco
+# agentes internos (planner, investigator, historiador, writer, reviewer) a
+# la fuente neutral (MEF-ADR-0049, issues #865 y #909).
 #
 # Cubre:
-#   [sources] Los tres src/internal/agents/mefisto-{planner,investigator,
-#         historiador}.md existen y pasan validate-internal-artifacts.sh
-#         (#853).
-#   [neutral] Ningun body de las tres fuentes nombra `claude`/`opencode`
+#   [sources] Los cinco src/internal/agents/mefisto-{planner,investigator,
+#         historiador,writer,reviewer}.md existen y pasan
+#         validate-internal-artifacts.sh (#853).
+#   [neutral] Ningun body de las cinco fuentes nombra `claude`/`opencode`
 #         (CA-1/CA-5) -- ya lo cubre el validador, este bloque solo hace
-#         explicito el motivo para estos tres agentes en concreto.
+#         explicito el motivo para estos cinco agentes en concreto.
 #   [check] generate-internal-adapters.sh --check esta en verde: los
 #         adaptadores versionados en .claude/agents/ y .opencode/agents/
 #         coinciden byte-a-byte con lo que la fuente neutral produce (CA-2).
-#   [claude-output] Los seis adaptadores generados (.claude/agents/ y
+#   [claude-output] Los diez adaptadores generados (.claude/agents/ y
 #         .opencode/agents/) llevan el marcador de generado y ninguno
 #         menciona `fable`, `opus` ni un id de modelo completo; en la salida
-#         Claude el historiador lleva `model: "sonnet"` y planner/investigator
-#         no declaran `model:` (perfil deep, heredan la sesion) (CA-2).
+#         Claude, los agentes de perfil `balanced` (historiador, writer)
+#         llevan `model: "sonnet"` y los de perfil `deep` (planner,
+#         investigator, reviewer) no declaran `model:` (heredan la sesion)
+#         (CA-2).
 #   [opencode-cli] Si el CLI `opencode` esta instalado, `opencode agent list`
-#         corrido en la raiz del repo lista los tres ids como agentes
-#         primary; si no esta instalado, se omite con aviso (CA-6).
+#         corrido en la raiz del repo lista cada id con su modo -- `primary`
+#         para planner/investigator/historiador, `subagent` para
+#         writer/reviewer; si no esta instalado, se omite con aviso (CA-6).
 #   [guard-f] El bloque [F] de scripts/tests/test-guards.sh (integridad de
 #         Agent Skills) sigue en verde tras la migracion.
 #
@@ -37,7 +40,26 @@ VALIDATOR="$REPO_ROOT/src/internal/scripts/validate-internal-artifacts.sh"
 GENERATOR="$REPO_ROOT/src/internal/scripts/generate-internal-adapters.sh"
 GUARDS="$REPO_ROOT/scripts/tests/test-guards.sh"
 
-AGENT_IDS="mefisto-planner mefisto-investigator mefisto-historiador"
+AGENT_IDS="mefisto-planner mefisto-investigator mefisto-historiador mefisto-writer mefisto-reviewer"
+
+# Perfil declarado por cada agente (MEF-ADR-0049 CA-4): condiciona el
+# `model:` esperado en la salida Claude y el modo esperado en
+# `opencode agent list`. Sin arrays asociativos (bash 3.2, MEF-ADR-0049 CA-6).
+profile_for_agent() {
+    case "$1" in
+        mefisto-historiador|mefisto-writer) echo "balanced" ;;
+        mefisto-planner|mefisto-investigator|mefisto-reviewer) echo "deep" ;;
+        *) echo "" ;;
+    esac
+}
+
+mode_for_agent() {
+    case "$1" in
+        mefisto-planner|mefisto-investigator|mefisto-historiador) echo "primary" ;;
+        mefisto-writer|mefisto-reviewer) echo "subagent" ;;
+        *) echo "" ;;
+    esac
+}
 
 PASS=0
 FAIL=0
@@ -125,40 +147,55 @@ for id in $AGENT_IDS; do
     done
 done
 
-if grep -q '^model: "sonnet"$' "$REPO_ROOT/.claude/agents/mefisto-historiador.md" 2>/dev/null; then
-    pass "mefisto-historiador: .claude/agents lleva model: \"sonnet\""
-else
-    fail "mefisto-historiador: .claude/agents no lleva model: \"sonnet\""
-fi
-
-for id in mefisto-planner mefisto-investigator; do
-    if grep -q '^model:' "$REPO_ROOT/.claude/agents/$id.md" 2>/dev/null; then
-        fail "$id: .claude/agents no deberia declarar 'model:' (perfil deep hereda la sesion)"
+for id in $AGENT_IDS; do
+    profile=$(profile_for_agent "$id")
+    if [ "$profile" = "balanced" ]; then
+        if grep -q '^model: "sonnet"$' "$REPO_ROOT/.claude/agents/$id.md" 2>/dev/null; then
+            pass "$id: .claude/agents lleva model: \"sonnet\" (perfil balanced)"
+        else
+            fail "$id: .claude/agents no lleva model: \"sonnet\" (perfil balanced)"
+        fi
     else
-        pass "$id: .claude/agents sin 'model:' (perfil deep)"
+        if grep -q '^model:' "$REPO_ROOT/.claude/agents/$id.md" 2>/dev/null; then
+            fail "$id: .claude/agents no deberia declarar 'model:' (perfil deep hereda la sesion)"
+        else
+            pass "$id: .claude/agents sin 'model:' (perfil deep)"
+        fi
     fi
 done
 
 echo ""
-echo "[opencode-cli] 'opencode agent list' lista los tres ids (se omite si el CLI no esta instalado)"
+echo "[opencode-cli] 'opencode agent list' lista los cinco ids con su modo (se omite si el CLI no esta instalado)"
 if command -v opencode >/dev/null 2>&1; then
     # Un reintento: el CLI descubre los agentes leyendo .opencode/agents/, que
     # el generador acaba de reescribir en la corrida tipica (writer regenera ->
     # test verifica). Una lectura que cae en ese instante devuelve el listado
-    # sin alguno de los tres; reintentar una vez distingue esa carrera de una
+    # sin alguno de los cinco; reintentar una vez distingue esa carrera de una
     # ausencia real, sin debilitar la asercion.
+    #
+    # grep -q via here-string (<<<), nunca via pipe: con cinco agentes el
+    # volcado de 'opencode agent list' supera el buffer del pipe (~64KB en
+    # macOS) y `grep -q` cierra su stdin en cuanto encuentra el match --si
+    # el `printf` del otro extremo del pipe todavia estaba escribiendo,
+    # recibe SIGPIPE (rc 141) y, bajo `pipefail`, ese 141 se propaga aunque
+    # `grep` haya salido en 0 (issue #909; mismo patron de trampa que
+    # documenta test-opencode-discovery.sh para "el writer lo atribuyo a
+    # IFS/SIGPIPE"). El here-string no tiene un segundo proceso escritor que
+    # pueda recibir esa señal.
     out=$(cd "$REPO_ROOT" && opencode agent list 2>&1)
     for id in $AGENT_IDS; do
-        printf '%s' "$out" | grep -q "^$id (primary)" || {
+        mode=$(mode_for_agent "$id")
+        grep -q "^$id ($mode)" <<<"$out" || {
             out=$(cd "$REPO_ROOT" && opencode agent list 2>&1)
             break
         }
     done
     for id in $AGENT_IDS; do
-        if printf '%s' "$out" | grep -q "^$id (primary)"; then
-            pass "$id: listado por 'opencode agent list' como primary"
+        mode=$(mode_for_agent "$id")
+        if grep -q "^$id ($mode)" <<<"$out"; then
+            pass "$id: listado por 'opencode agent list' como $mode"
         else
-            fail "$id: NO aparece en 'opencode agent list' como primary"
+            fail "$id: NO aparece en 'opencode agent list' como $mode"
         fi
     done
 else
