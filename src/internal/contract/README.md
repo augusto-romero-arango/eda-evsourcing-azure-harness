@@ -489,9 +489,16 @@ El bucle vive en el proceso padre del runner (nunca dentro del `$(...)` que
 envuelve a `run_agent_with_watchdog`) y fuera del grupo de procesos del
 agente, para que el `kill -9 -"$pid"` del watchdog nunca lo alcance; se
 detiene por archivo senal (nunca `kill`, para no cortar un `printf` de anexo
-a mitad de escritura) antes de la traduccion final del cierre, que solo
+a mitad de escritura) antes de la traduccion final del cierre; el bucle
+duerme el intervalo en rebanadas cortas y no en una sola pieza, para que esa
+parada le cueste al cierre una fraccion de segundo y no un intervalo entero
+de espera muerta por corrida. El cierre solo
 anexa los no terminales que el bucle todavia no habia alcanzado a escribir
-mas exactamente un evento terminal. Es best-effort (MEF-ADR-0031): un fallo
+mas exactamente un evento terminal. Si el runner muere sin llegar a correr su
+`trap EXIT` (un SIGKILL desde afuera) y por lo tanto sin dejar nunca la
+senal, el bucle igual termina solo: comprueba en cada rebanada que el PID del
+runner siga vivo, para no quedar huerfano anexando al `--event-log` de una
+corrida que ya no existe. Es best-effort (MEF-ADR-0031): un fallo
 de `jq`, un raw log todavia inexistente o un `--event-log` no escribible en
 un tick nunca alteran el exit code del runner ni el evento terminal, que
 siguen decidiendose exclusivamente al cierre. `run-events.schema.json` no

@@ -203,19 +203,20 @@ TIMEOUT_S="${OPT_TIMEOUT:-1800}"
 # --- Intervalo del anexo en vivo (CA-1, issue #924) -------------------------
 # Un valor invalido (no entero, <= 0) cae al default sin abortar la corrida:
 # el anexo en vivo es best-effort, nunca una condicion de arranque (CA-3).
+# Quien decide "> 0" es la comparacion NUMERICA, no la forma del literal: "00"
+# es todo digitos y aun asi vale cero, y un intervalo cero convierte el bucle
+# de mas abajo en una espera activa que retraduce el raw log sin pausa.
 LIVE_INTERVAL_DEFAULT=2
+LIVE_INTERVAL=""
 case "${MEFISTO_RUN_AGENT_LIVE_INTERVAL:-}" in
-    '')
-        LIVE_INTERVAL="$LIVE_INTERVAL_DEFAULT"
-        ;;
-    *[!0-9]*|0)
-        echo "AVISO: MEFISTO_RUN_AGENT_LIVE_INTERVAL='$MEFISTO_RUN_AGENT_LIVE_INTERVAL' invalido (debe ser un entero > 0); usando el default (${LIVE_INTERVAL_DEFAULT}s)" >&2
-        LIVE_INTERVAL="$LIVE_INTERVAL_DEFAULT"
-        ;;
-    *)
-        LIVE_INTERVAL="$MEFISTO_RUN_AGENT_LIVE_INTERVAL"
-        ;;
+    '') LIVE_INTERVAL="$LIVE_INTERVAL_DEFAULT" ;;
+    *[!0-9]*) ;;
+    *) [ "$MEFISTO_RUN_AGENT_LIVE_INTERVAL" -gt 0 ] && LIVE_INTERVAL="$MEFISTO_RUN_AGENT_LIVE_INTERVAL" ;;
 esac
+if [ -z "$LIVE_INTERVAL" ]; then
+    echo "AVISO: MEFISTO_RUN_AGENT_LIVE_INTERVAL='${MEFISTO_RUN_AGENT_LIVE_INTERVAL:-}' invalido (debe ser un entero > 0); usando el default (${LIVE_INTERVAL_DEFAULT}s)" >&2
+    LIVE_INTERVAL="$LIVE_INTERVAL_DEFAULT"
+fi
 
 # --- Resolucion de runtime (CA-2) -------------------------------------------
 
@@ -386,10 +387,34 @@ live_tail_tick() {
     return 0
 }
 
+# El intervalo NO se duerme de una sola pieza. `stop_live_tail` senaliza por
+# archivo y despues espera al bucle con `wait`, asi que un `sleep
+# "$LIVE_INTERVAL"` entero le regalaba al cierre de CADA corrida hasta un
+# intervalo completo de espera muerta -- medido en
+# test-mefisto-run-agent.sh: 9,6s -> 27,7s, ~12s de puro `wait` repartidos
+# entre sus 10 invocaciones del runner. Durmiendo en rebanadas cortas la
+# cadencia de los ticks sigue siendo LIVE_INTERVAL, pero el cierre nunca
+# espera mas de una rebanada.
+LIVE_SLEEP_SLICE_S=0.25
+LIVE_SLICES_PER_TICK=$((LIVE_INTERVAL * 4))
+
 live_tail_loop() {
-    while [ ! -f "$LIVE_STOP_FILE" ]; do
-        sleep "$LIVE_INTERVAL"
-        [ -f "$LIVE_STOP_FILE" ] && break
+    local slice
+    while :; do
+        slice=0
+        while [ "$slice" -lt "$LIVE_SLICES_PER_TICK" ]; do
+            sleep "$LIVE_SLEEP_SLICE_S"
+            [ -f "$LIVE_STOP_FILE" ] && return 0
+            # Segunda condicion de parada, para el caso en que el runner
+            # muere sin llegar a correr su `trap EXIT` (un SIGKILL desde
+            # afuera, p. ej.) y por lo tanto sin dejar nunca la senal: sin
+            # esto el bucle quedaria huerfano anexando al --event-log de una
+            # corrida que ya no existe (CA-3, "no sobrevive al runner"). `$$`
+            # no cambia en un subshell -- es el PID del runner, no el de este
+            # hijo.
+            kill -0 "$$" 2>/dev/null || return 0
+            slice=$((slice + 1))
+        done
         live_tail_tick
     done
 }

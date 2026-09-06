@@ -33,7 +33,12 @@
 #       MEFISTO_RUN_AGENT_LIVE_INTERVAL=1, --event-log ya trae 'message' y
 #       'tool.started' (sin terminal) ANTES de que el runner termine; al
 #       cierre hay exactamente un run.completed{status:"success"}, sin
-#       tool.started/tool.completed duplicados, y todas las lineas validan.
+#       tool.started/tool.completed duplicados, todas las lineas validan, y
+#       la secuencia final (type/tool/text/status) es IDENTICA a la del
+#       guion success, que por terminar antes del primer tick nunca pasa por
+#       el anexo en vivo -- la paridad "igual que hoy" de CA-2. Cierra con la
+#       degradacion de CA-1: un MEFISTO_RUN_AGENT_LIVE_INTERVAL invalido
+#       avisa por stderr, cae al default y no altera el desenlace.
 #   [G] El runner resuelve sus propias libs por su UBICACION, no por el cwd
 #       del caller: invocado desde un cwd fuera de todo repo git sigue
 #       corriendo (regresion de la resolucion via `git rev-parse`).
@@ -552,6 +557,42 @@ if [ "$H_ALL_VALID" = "true" ]; then
 else
     fail "H-6: alguna linea de --event-log no valido contra el schema"
 fi
+
+# CA-2 ("la misma secuencia de eventos que hoy"): el guion success termina muy
+# por debajo del primer intervalo, asi que su --event-log nunca pasa por el
+# anexo en vivo -- es exactamente el "hoy" contra el que hay que comparar. La
+# proyeccion descarta ts y duration_ms (varian entre corridas por
+# construccion: runtime_fake_translate pone `ts: now` y el runner mide el
+# duration_ms real) y conserva lo que el CA nombra.
+h_event_shape() { jq -c '[.type, (.tool // ""), (.text // ""), (.status // "")]' "$1" 2>/dev/null; }
+
+H_BASELINE="$TMP/h-success-baseline.jsonl"
+MEFISTO_FAKE_SCRIPT=success "$RUNNER" --runtime fake --agent test-agent --cwd "$WORKDIR" \
+    --prompt-file "$PROMPT_FILE" --event-log "$H_BASELINE" >/dev/null 2>&1
+if [ -s "$H_BASELINE" ] && [ "$(h_event_shape "$H_BASELINE")" = "$(h_event_shape "$EV")" ]; then
+    pass "H-7: la secuencia final con anexo en vivo es identica a la del guion success sin anexo (CA-2)"
+else
+    fail "H-7: la secuencia final difiere de la del guion success (sin anexo en vivo)"
+fi
+
+# CA-1: un intervalo invalido no es una condicion de arranque -- avisa, cae al
+# default y la corrida termina igual. "00" es el caso que un chequeo puramente
+# lexico de digitos dejaria pasar como valido siendo cero.
+for H_BAD in "abc" "0" "00" "-1"; do
+    H_BAD_EV="$TMP/h-bad-interval.jsonl"
+    H_BAD_ERR="$TMP/h-bad-interval.err"
+    MEFISTO_RUN_AGENT_LIVE_INTERVAL="$H_BAD" MEFISTO_FAKE_SCRIPT=success \
+        "$RUNNER" --runtime fake --agent test-agent --cwd "$WORKDIR" \
+        --prompt-file "$PROMPT_FILE" --event-log "$H_BAD_EV" >/dev/null 2>"$H_BAD_ERR"
+    H_BAD_RC=$?
+    if [ "$H_BAD_RC" = "0" ] \
+        && grep -q "MEFISTO_RUN_AGENT_LIVE_INTERVAL" "$H_BAD_ERR" \
+        && [ "$(count_terminals "$H_BAD_EV")" = "1" ]; then
+        pass "H-8: MEFISTO_RUN_AGENT_LIVE_INTERVAL='$H_BAD' avisa por stderr, cae al default y no altera el desenlace (exit 0, 1 terminal)"
+    else
+        fail "H-8: MEFISTO_RUN_AGENT_LIVE_INTERVAL='$H_BAD' -> exit $H_BAD_RC, terminales=$(count_terminals "$H_BAD_EV"), aviso=$(grep -c MEFISTO_RUN_AGENT_LIVE_INTERVAL "$H_BAD_ERR")"
+    fi
+done
 
 echo ""
 echo "[G] El runner no depende del cwd del caller para encontrar sus propias libs"
