@@ -50,7 +50,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-SCRIPT="$REPO_ROOT/.claude/scripts/mefisto-batch-pipeline.sh"
+SCRIPT="$REPO_ROOT/src/internal/scripts/mefisto-batch-pipeline.sh"
 
 PASS=0
 FAIL=0
