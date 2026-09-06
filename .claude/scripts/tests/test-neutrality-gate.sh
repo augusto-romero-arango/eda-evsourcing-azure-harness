@@ -19,6 +19,12 @@
 #   [allowlist-origin] La allowlist se carga desde el gate (o --allowlist),
 #                   nunca desde --root: un arbol que se exonera a si mismo en
 #                   su propia allowlist sigue reportado (MEF-ADR-0019 E).
+#   [wiring]        Afirmacion estatica (issue #914): mefisto-tooling-pipeline.sh
+#                   invoca el gate tras Stage 1 y tras Stage 2 (grep de las
+#                   llamadas literales), y mefisto-release.sh lo invoca en la
+#                   fase prepare. El escenario e2e negativo (CLI falso del
+#                   writer con una fuga real) vive en
+#                   test-tooling-runtime-neutral.sh, escenario [F].
 #   [perf]          CA-3 con margen: una corrida completa contra el repo real
 #                   termina en menos de 20s (el limite de CA-3 es 10s),
 #                   exit 0 o 1 indistinto.
@@ -314,6 +320,31 @@ if [ "$ORIGIN_RC" -ne 0 ] && printf '%s\n' "$ORIGIN_OUT" | grep -qE '^src/intern
     pass "ignora la allowlist del --root y reporta la fuga con la allowlist propia del gate"
 else
     fail "el gate consulto la allowlist del --root (o no reporto la fuga). exit=$ORIGIN_RC salida: $ORIGIN_OUT"
+fi
+
+echo ""
+echo "[wiring] el gate se invoca tras ambos stages del pipeline canonico y en la fase prepare del release (issue #914)"
+PIPELINE_SRC="$REPO_ROOT/src/internal/scripts/mefisto-tooling-pipeline.sh"
+RELEASE_SRC="$REPO_ROOT/src/internal/scripts/mefisto-release.sh"
+
+if grep -qF 'mefisto-neutrality-gate.sh" --root "$WORKTREE_PATH"' "$PIPELINE_SRC"; then
+    pass "mefisto-tooling-pipeline.sh invoca mefisto-neutrality-gate.sh --root \$WORKTREE_PATH"
+else
+    fail "mefisto-tooling-pipeline.sh no invoca mefisto-neutrality-gate.sh sobre el worktree"
+fi
+
+PIPELINE_STAGE1_CALL=$(grep -c 'run_neutrality_gate 1 writer' "$PIPELINE_SRC" 2>/dev/null || echo 0)
+PIPELINE_STAGE2_CALL=$(grep -c 'run_neutrality_gate 2 reviewer' "$PIPELINE_SRC" 2>/dev/null || echo 0)
+if [ "${PIPELINE_STAGE1_CALL:-0}" -ge 1 ] && [ "${PIPELINE_STAGE2_CALL:-0}" -ge 1 ]; then
+    pass "el pipeline invoca el gate tras Stage 1 (writer) y tras Stage 2 (reviewer)"
+else
+    fail "no se encontraron ambas invocaciones (stage1=$PIPELINE_STAGE1_CALL, stage2=$PIPELINE_STAGE2_CALL)"
+fi
+
+if grep -qF 'src/internal/scripts/mefisto-neutrality-gate.sh"' "$RELEASE_SRC"; then
+    pass "mefisto-release.sh invoca mefisto-neutrality-gate.sh en la fase prepare"
+else
+    fail "mefisto-release.sh no invoca mefisto-neutrality-gate.sh"
 fi
 
 echo ""

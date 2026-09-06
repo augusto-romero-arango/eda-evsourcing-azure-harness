@@ -761,6 +761,41 @@ auto_commit_if_needed() {
     fi
 }
 
+# --- Funcion auxiliar: gate de neutralidad de runtime (MEF-ADR-0049, issue #914) ---
+# Se invoca tras el gate de scope y antes de auto_commit_if_needed, misma
+# degradacion que ese gate (CA-1): aborta el stage con la lista de violaciones
+# "<ruta>:<linea>: <regla>" que ya imprime el propio mefisto-neutrality-gate.sh
+# y el comando de retoma --from-stage. Se carga SIEMPRE desde $SCRIPT_DIR (el
+# checkout principal, nunca el worktree -- MEF-ADR-0019 seccion E: el PR bajo
+# revision no puede alterar el gate que lo juzga) y escanea el arbol del
+# worktree via --root. Una corrida limpia no imprime mas que la linea de exito.
+run_neutrality_gate() {
+    local stage="$1" role="$2"
+    local out
+
+    # El gate escanea git ls-files (universo VERSIONADO -- CA-3/CA-1 de
+    # mefisto-neutrality-gate.sh, issue #911), a diferencia de
+    # validate_mefisto_scope_changes (que ya lee tambien el working tree sucio
+    # con `git status --untracked-files=all`, y ya se corrio en verde justo
+    # antes que esta funcion). Un archivo nuevo del writer/reviewer que aun no
+    # este ni siquiera staged seria invisible para `git ls-files` y el gate
+    # pasaria en falso a pesar de la fuga -- `git add -A` staguea (sin
+    # commitear) el mismo universo que el gate de scope ya valido como
+    # permitido, para que ambos vean el mismo estado. auto_commit_if_needed,
+    # justo despues, sigue siendo quien decide si hay algo que commitear.
+    git -C "$WORKTREE_PATH" add -A >/dev/null 2>&1 || true
+
+    if out="$("$SCRIPT_DIR/mefisto-neutrality-gate.sh" --root "$WORKTREE_PATH" 2>&1)"; then
+        success "Gate de neutralidad: sin fugas"
+        return 0
+    fi
+    abort "Stage $stage fallido: el $role dejo fuga(s) de neutralidad de runtime (MEF-ADR-0049):
+$out
+Registrar una excepcion nueva en la allowlist y usarla son dos PRs distintos -- el de registro va primero (MEF-ADR-0019 seccion E).
+Corrige las fugas en el worktree ($WORKTREE_PATH) y retoma con:
+  ./.claude/scripts/mefisto-tooling-pipeline.sh $ISSUE_NUM --from-stage $stage${VARIANT_LABEL:+ --variant $VARIANT_LABEL}"
+}
+
 # --- STAGE 1: Writer (implementacion) ---
 if [ "$FROM_STAGE" -le 1 ]; then
     header "Stage 1: Writer (implementacion)"
@@ -805,7 +840,7 @@ Cada turno tuyo cuesta ~13 s de reloj (el 96,6% del tiempo de una corrida es el 
 - Agrupa en un mismo turno las tool calls independientes entre si (varias busquedas, varias lecturas, varias escrituras a archivos distintos). No las encadenes de a una: hoy el 82% de los turnos del pipeline gasta una sola tool call, y cada una de esas cadenas paga 13 s por eslabon.
 - La suite de tests (scripts/tests/, .claude/scripts/tests/) correla UNA vez, al final, cuando ya no vayas a tocar mas archivos. No la corras despues de cada edicion. Correrla al cerrar es obligatorio -- lo que sobra es repetirla.
 - No re-inspecciones el arbol con 'git status' ni 'git diff' para confirmar algo que acabas de escribir: Write y Edit fallan con error si no aplican, asi que el exito de la herramienta ya es la confirmacion.
-- No verifiques el scope de un archivo antes de escribirlo (ni con 'git status' ni releyendo is_path_in_mefisto_scope): un hook PostToolUse te avisa EN EL INSTANTE, gratis, si un Edit/Write cae fuera de la allowlist -- no hay motivo para inspeccionar preventivamente algo que el hook ya te va a decir si sale mal. Eso no reemplaza el gate final (validate_mefisto_scope_changes sigue corriendo al cierre del stage): el hook es aviso temprano, no el juez.
+- No verifiques el scope de un archivo antes de escribirlo (ni con 'git status' ni releyendo is_path_in_mefisto_scope): un hook PostToolUse te avisa EN EL INSTANTE, gratis, si un Edit/Write cae fuera de la allowlist -- no hay motivo para inspeccionar preventivamente algo que el hook ya te va a decir si sale mal. Eso no reemplaza los gates finales (validate_mefisto_scope_changes y mefisto-neutrality-gate.sh siguen corriendo al cierre del stage): el hook es aviso temprano, no el juez.
 Estas reglas no cubren todos los casos; ante cualquier otro, decide con el mismo criterio -- un turno extra cuesta ~13 s, y solo vale la pena si te ahorra un error que costaria mas.
 
 Instrucciones:
@@ -842,6 +877,8 @@ Instrucciones:
     if ! validate_mefisto_scope_changes "$WORKTREE_PATH" "$SNAPSHOT_COMMIT"; then
         abort "Stage 1 fallido: el writer toco archivos fuera del scope de Mefisto."
     fi
+
+    run_neutrality_gate 1 writer
 
     auto_commit_if_needed "writer" "mefisto-tooling(#${ISSUE_NUM}): implementacion"
 
@@ -887,7 +924,7 @@ Cada turno tuyo cuesta ~13 s de reloj (el 96,6% del tiempo de una corrida es el 
 - Agrupa en un mismo turno las tool calls independientes entre si (varias busquedas, varias lecturas, varias escrituras a archivos distintos). No las encadenes de a una: hoy el 82% de los turnos del pipeline gasta una sola tool call, y cada una de esas cadenas paga 13 s por eslabon.
 - La suite de tests (scripts/tests/, .claude/scripts/tests/) correla UNA vez, al final, cuando ya no vayas a tocar mas archivos. No la corras despues de cada correccion. Correrla al cerrar es obligatorio -- lo que sobra es repetirla.
 - Ya tienes el diff completo del writer aqui arriba: no lo vuelvas a pedir con 'git diff'. Y no re-inspecciones el arbol con 'git status' para confirmar algo que acabas de escribir -- Write y Edit fallan con error si no aplican, asi que el exito de la herramienta ya es la confirmacion.
-- No verifiques el scope de un archivo antes de escribirlo: un hook PostToolUse te avisa EN EL INSTANTE, gratis, si un Edit/Write cae fuera de la allowlist -- no hay motivo para inspeccionar preventivamente algo que el hook ya te va a decir si sale mal. Eso no reemplaza el gate final (validate_mefisto_scope_changes sigue corriendo al cierre del stage): el hook es aviso temprano, no el juez.
+- No verifiques el scope de un archivo antes de escribirlo: un hook PostToolUse te avisa EN EL INSTANTE, gratis, si un Edit/Write cae fuera de la allowlist -- no hay motivo para inspeccionar preventivamente algo que el hook ya te va a decir si sale mal. Eso no reemplaza los gates finales (validate_mefisto_scope_changes y mefisto-neutrality-gate.sh siguen corriendo al cierre del stage): el hook es aviso temprano, no el juez.
 Estas reglas no cubren todos los casos; ante cualquier otro, decide con el mismo criterio -- un turno extra cuesta ~13 s, y solo vale la pena si te ahorra un error que costaria mas.
 
 Instrucciones:
@@ -907,6 +944,8 @@ Instrucciones:
     if ! validate_mefisto_scope_changes "$WORKTREE_PATH" "$SNAPSHOT_COMMIT"; then
         abort "Stage 2 fallido: el reviewer toco archivos fuera del scope de Mefisto."
     fi
+
+    run_neutrality_gate 2 reviewer
 
     auto_commit_if_needed "reviewer" "mefisto-tooling(#${ISSUE_NUM}): revision y correcciones"
 

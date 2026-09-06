@@ -39,6 +39,14 @@
 #       `--model <no vacio>` (balanced -> sonnet en la tabla del adaptador),
 #       lo que demuestra que el stub captura el flag cuando el runner lo
 #       emite -- la ausencia en el reviewer es herencia, no ceguera del stub.
+#   (e) [F] Gate de neutralidad (issue #914): MEFISTO_RUNTIME=claude, el CLI
+#       falso del writer introduce ademas una fuga real -- un archivo nuevo
+#       src/internal/agents/fx-leak.md con `"model": "sonnet"` en el
+#       frontmatter -- dentro del scope permitido (src/internal/**), asi que
+#       el gate de scope da via libre y el UNICO gate que puede frenar la
+#       corrida es mefisto-neutrality-gate.sh. Stage 1 aborta citando la
+#       violacion 'src/internal/agents/fx-leak.md:<linea>: R1' y el comando
+#       de retoma --from-stage 1, sin llegar a crear PR.
 #
 # CA-2 (evidencia verificable, MEF-ADR-0031 -- los artefactos de una corrida
 # real, no la lectura del codigo): <log_base>.events.jsonl de cada stage
@@ -118,10 +126,14 @@ mkdir -p "$FAKE_BIN"
 # por basename "$0"). Reproduce tal cual (cat, sin editarlo) el fixture crudo
 # congelado que indique MEFISTO_TEST_FIXTURE, captura su argv completo como
 # array JSON con jq --args (issue #863: el prompt puede traer saltos de
-# linea, un separador de texto no serviria) y, en modo "success", escribe el
-# resumen de AMBOS stages + un archivo notable dentro del scope + un fragmento
-# de changelog.d/ (para que el gate de fragmentos del issue #380 de via libre
-# hasta crear el PR). Sale con MEFISTO_TEST_EXIT_CODE.
+# linea, un separador de texto no serviria) y, en modo "success" o "leak",
+# escribe el resumen de AMBOS stages + un archivo notable dentro del scope +
+# un fragmento de changelog.d/ (para que el gate de fragmentos del issue #380
+# de via libre hasta crear el PR). En modo "leak" (issue #914) anade ademas
+# una fuga real de neutralidad -- src/internal/agents/fx-leak.md con
+# `"model": "sonnet"` en el frontmatter -- dentro del scope permitido, para
+# que el UNICO gate que frene la corrida sea mefisto-neutrality-gate.sh, no el
+# de scope. Sale con MEFISTO_TEST_EXIT_CODE.
 write_cli_stub() {
     local name="$1"
     cat > "$FAKE_BIN/$name" <<'STUB'
@@ -133,12 +145,17 @@ N=$(( $(cat "$N_FILE" 2>/dev/null || echo 0) + 1 ))
 echo "$N" > "$N_FILE"
 jq -n --args '$ARGS.positional' -- "$@" > "$CAP/$ME-call-$N.json" 2>/dev/null || true
 
-if [ "${MEFISTO_TEST_MODE:-success}" = "success" ]; then
+if [ "${MEFISTO_TEST_MODE:-success}" = "success" ] || [ "${MEFISTO_TEST_MODE:-success}" = "leak" ]; then
     mkdir -p .mefisto/pipeline/summaries docs changelog.d
     echo "resumen stub writer ($ME)" > .mefisto/pipeline/summaries/stage-1-writer.md
     echo "resumen stub reviewer ($ME)" > .mefisto/pipeline/summaries/stage-2-reviewer.md
     echo "cambio del stub e2e ($ME, llamada $N)" >> docs/912-e2e-marker.md
     echo "- cambio del stub e2e (runtime-neutral)" > changelog.d/912-e2e.added.md
+fi
+
+if [ "${MEFISTO_TEST_MODE:-success}" = "leak" ]; then
+    mkdir -p src/internal/agents
+    printf -- '---\n{"id": "fx-leak", "kind": "agent", "model": "sonnet"}\n---\n\nFuga de neutralidad de runtime para el escenario negativo (issue #914): el campo `model` no debe aparecer en la fuente neutral src/internal/**.\n' > src/internal/agents/fx-leak.md
 fi
 
 if [ -n "${MEFISTO_TEST_FIXTURE:-}" ]; then
@@ -156,6 +173,7 @@ setup_harness() {
 
     mkdir -p "$FAKE_MEFISTO/.claude-plugin" "$FAKE_MEFISTO/.claude/scripts" \
              "$FAKE_MEFISTO/src/internal/scripts/lib" "$FAKE_MEFISTO/src/internal/prompts" \
+             "$FAKE_MEFISTO/src/internal/contract" \
              "$FAKE_MEFISTO/docs" "$FAKE_MEFISTO/changelog.d"
     cat > "$FAKE_MEFISTO/.claude-plugin/plugin.json" <<'EOF'
 {
@@ -177,6 +195,19 @@ EOF
     done
     cp "$REPO_ROOT/src/internal/prompts/noninteractive-system.md" "$FAKE_MEFISTO/src/internal/prompts/noninteractive-system.md"
     cp "$REPO_ROOT/src/internal/scripts/mefisto-run-agent.sh" "$FAKE_MEFISTO/src/internal/scripts/mefisto-run-agent.sh"
+    # Gate de neutralidad (issue #914): el pipeline lo invoca tras cada stage
+    # -- copias REALES (no un stub), byte-identicas al repo, para que el
+    # escenario [F] ejercite el gate de verdad. La allowlist real trae las
+    # excepciones (R1) de los propios adaptadores que setup_harness copia mas
+    # abajo (adapter-claude.sh, adapter-opencode.sh...), asi que los
+    # escenarios de exito ((a)/(b)) siguen pasando el gate en 0. No se copia
+    # generate-internal-adapters.sh: sin el, el gate salta adapters-check en
+    # silencio (guarda `[ -f "$ADAPTERS_SCRIPT" ]`), y ningun escenario de esta
+    # suite necesita ejercer esa verificacion estructural (ya cubierta por
+    # test-neutrality-gate.sh).
+    cp "$REPO_ROOT/src/internal/scripts/mefisto-neutrality-gate.sh" "$FAKE_MEFISTO/src/internal/scripts/mefisto-neutrality-gate.sh"
+    cp "$REPO_ROOT/src/internal/contract/neutrality-allowlist.json" "$FAKE_MEFISTO/src/internal/contract/neutrality-allowlist.json"
+    chmod +x "$FAKE_MEFISTO/src/internal/scripts/mefisto-neutrality-gate.sh"
     cp "$CANON_PIPE" "$FAKE_MEFISTO/src/internal/scripts/mefisto-tooling-pipeline.sh"
     cp "$SHIM_LIB" "$FAKE_MEFISTO/.claude/scripts/_mefisto-common.sh"
     cp "$SHIM_PIPE" "$FAKE_MEFISTO/.claude/scripts/mefisto-tooling-pipeline.sh"
@@ -525,6 +556,61 @@ if [ -n "$A_WRITER_CALL" ]; then
     fi
 else
     fail "E-3: no se pudo localizar la invocacion del writer de la corrida (a)"
+fi
+
+
+# ============================================================================
+# [F] Escenario (e): gate de neutralidad (issue #914) -- el CLI falso del
+# writer introduce una fuga real (src/internal/agents/fx-leak.md con
+# "model": "sonnet") DENTRO del scope permitido, asi que el gate de scope da
+# via libre y Stage 1 aborta por mefisto-neutrality-gate.sh, sin PR.
+# ============================================================================
+
+echo ""
+echo "[F] Escenario (e): MEFISTO_RUNTIME=claude, fuga de neutralidad en Stage 1 -- el gate la frena (CA-2)"
+
+F_ISSUE="912104"
+run_scenario claude "$F_ISSUE" leak "$FIXTURES_CLAUDE_DIR/success.jsonl" 0
+F_CAP="$SCEN_CAP"
+
+if [ "$SCEN_RC" -ne 0 ]; then
+    pass "F-1: el pipeline aborta en Stage 1 por la fuga de neutralidad (rc=$SCEN_RC != 0)"
+else
+    fail "F-1: se esperaba que el pipeline abortara (rc=0)"
+fi
+
+if [ ! -f "$F_CAP/gh-pr-create.calls" ]; then
+    pass "F-2: el stub de 'gh pr create' nunca se invoco"
+else
+    fail "F-2: 'gh pr create' se invoco pese a la fuga de neutralidad"
+fi
+
+F_STATUS_FILE="$STATE_DIR/pipeline-status-mefisto-tooling-${F_ISSUE}.json"
+if [ -f "$F_STATUS_FILE" ] && [ "$(jq -r '.state' "$F_STATUS_FILE")" = "failed" ]; then
+    pass "F-3: el status de la corrida queda en 'failed'"
+else
+    fail "F-3: no se encontro pipeline-status-mefisto-tooling-${F_ISSUE}.json con state:failed"
+fi
+
+if grep -qE 'src/internal/agents/fx-leak\.md:[0-9]+: R1' "$SCEN_ERR"; then
+    pass "F-4: el mensaje de aborto incluye la violacion del gate ('src/internal/agents/fx-leak.md:<linea>: R1')"
+else
+    fail "F-4: el mensaje de aborto no incluye la violacion esperada. stderr: $(cat "$SCEN_ERR")"
+fi
+
+if grep -qF -- "--from-stage 1" "$SCEN_ERR"; then
+    pass "F-5: el mensaje de aborto incluye el comando de retoma --from-stage 1"
+else
+    fail "F-5: el mensaje de aborto no incluye el comando de retoma. stderr: $(cat "$SCEN_ERR")"
+fi
+
+F_HIST="$STATE_DIR/pipeline-history.jsonl"
+F_FAILED_COUNT="$(jq -c --arg issue "$F_ISSUE" 'select(.issue == $issue and .state == "failed")' "$F_HIST" 2>/dev/null | wc -l | tr -d ' ')"
+F_COMPLETED_COUNT="$(jq -c --arg issue "$F_ISSUE" 'select(.issue == $issue and .state == "completed")' "$F_HIST" 2>/dev/null | wc -l | tr -d ' ')"
+if [ "${F_FAILED_COUNT:-0}" -ge 1 ] && [ "${F_COMPLETED_COUNT:-0}" = "0" ]; then
+    pass "F-6: pipeline-history.jsonl tiene una entrada 'failed' del issue $F_ISSUE y ninguna 'completed'"
+else
+    fail "F-6: historial inesperado -- failed=$F_FAILED_COUNT completed=$F_COMPLETED_COUNT"
 fi
 
 echo ""

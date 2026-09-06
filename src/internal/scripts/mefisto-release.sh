@@ -388,6 +388,25 @@ EOF
     git switch -c "$RELEASE_BRANCH" origin/main >/dev/null 2>&1 \
         || abort "No se pudo crear la rama ${RELEASE_BRANCH} (verifica que origin/main existe)"
 
+    # Gate de neutralidad de runtime (MEF-ADR-0049, issue #914): sobre la rama
+    # de release recien creada, antes de consolidar changelog.d/ -- misma
+    # degradacion que el gate de tooling (mefisto-tooling-pipeline.sh): lista
+    # de violaciones "<ruta>:<linea>: <regla>" y aborto si mefisto-neutrality-gate.sh
+    # sale en 1. Sin --root: a diferencia del pipeline de tooling (que juzga un
+    # WORKTREE separado desde el checkout principal), aqui no hay dos arboles
+    # -- el propio script resuelve su repo (este mismo checkout, ya en
+    # ${RELEASE_BRANCH}) por defecto. "publish" no repite este gate (CA-2).
+    log_info "Verificando neutralidad de runtime (MEF-ADR-0049)..."
+    NEUTRALITY_OUT=""
+    if NEUTRALITY_OUT="$("$MEFISTO_REPO_ROOT/src/internal/scripts/mefisto-neutrality-gate.sh" 2>&1)"; then
+        log_success "Gate de neutralidad: sin fugas"
+    else
+        abort "Fuga(s) de neutralidad de runtime (MEF-ADR-0049) en la rama ${RELEASE_BRANCH}:
+$NEUTRALITY_OUT
+Registrar una excepcion nueva en la allowlist y usarla son dos PRs distintos -- el de registro va primero (MEF-ADR-0019 seccion E).
+Corrige las fugas, comitealas en ${RELEASE_BRANCH} y reintenta '/mefisto-release ${BUMP_PART}'; o borra la rama (git branch -D ${RELEASE_BRANCH}) para reintentar desde cero."
+    fi
+
     # Consolidar fragmentos de changelog.d/ (issue #380): cada PR anoto su
     # cambio como fragmento propio en vez de editar CHANGELOG.md/docs/adr/
     # INDICE-TEMATICO.md directo. Se consolida AQUI -- ya en la rama de release, ramificada de
