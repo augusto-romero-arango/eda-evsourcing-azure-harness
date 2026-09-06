@@ -390,7 +390,54 @@ reproduce el orden de `classify_agent_failure`
 `agent_stream_completed_successfully`, de modo que la migracion del pipeline
 (#869) no cambia ningun veredicto.
 `.claude/scripts/tests/test-runtime-claude.sh` lo ejerce contra una CLI
-`claude` falsa puesta primero en el `PATH`. El adaptador de OpenCode es #860.
+`claude` falsa puesta primero en el `PATH`.
+
+`lib/runtime-opencode.sh` + `lib/runtime-opencode.jq` (#860) es el adaptador de
+OpenCode, el runtime del dogfooding interno (MEF-ADR-0049 CA-5): el **unico**
+lugar del repo, fuera de tests y fixtures, que compone `opencode run --agent
+<id> --dir <cwd> --format json --auto` (mas `-m <modelo>` solo cuando el runner
+entrega un valor no vacio) y que conoce los nombres de evento de ese CLI
+(`step_start`, `step_finish`, `text`, `tool_use`). Tres diferencias con el
+adaptador Claude Code condicionan todo lo demas:
+
+1. **No hay flag equivalente a `--append-system-prompt`**: el `--system-file`
+   se inyecta como **prefijo del mensaje** (`"<system>\n\n<prompt>"`), que
+   viaja como unico argumento posicional -- misma restriccion de `ARG_MAX` que
+   `claude -p "$prompt"`.
+2. **No hay senal propia de exito/fallo** (nada equivalente a `is_error` /
+   `subtype` / `stop_reason`), asi que la clasificacion completa depende del
+   exit code y del stderr crudo que el runner siempre pasa. Su orden es:
+   exito (exit 0 + texto visible) > `nonzero_exit` > `no_result` (stream
+   vacio) > `protocol_invalid` (linea no-JSON) > `no_result` (exit 0 sin texto
+   visible). `timeout` lo sigue sintetizando el runner.
+3. **No hay evento `result` con el acumulado de la corrida**: cada
+   `step_finish` reporta los tokens y el costo de SU paso, asi que el terminal
+   los **suma** (quedarse con el ultimo reportaria el costo del cierre como si
+   fuera el de la corrida entera, y `mefisto-metrics-report.sh` lo propaga a
+   `cost_usd_total`). Ningun evento trae un id de modelo, asi que `model`
+   degrada siempre al parametro que pidio el runner. `turns`, `denials`,
+   `ttft_ms` y `api_duration_ms` son siempre `null`: este wire format no
+   tiene equivalente.
+
+Un `type` de evento no reconocido se **descarta** (nunca cuenta como exito, ni
+se filtra al JSONL neutral); su cardinalidad se cuenta y se emite por el stderr
+del propio programa `jq` (`raw_ignored=<n>`) y no como campo del terminal,
+porque `run-events.schema.json` fija `additionalProperties: false` sobre
+`run.completed`/`run.failed` y este contrato no cambia con la llegada de un
+runtime nuevo.
+
+El adaptador **no** lee, copia, valida ni menciona el almacen de credenciales
+local de OpenCode ni ninguna variable de API key de proveedor: autenticacion y
+disponibilidad del provider son responsabilidad exclusiva del CLI
+(MEF-ADR-0049 CA-5), y `test-runtime-opencode.sh` lo verifica con un grep sobre
+el propio adaptador. Ese test lo ejerce contra una CLI `opencode` falsa puesta
+primero en el `PATH`, que reproduce capturas reales de **OpenCode 1.18.29**
+congeladas en `.claude/scripts/tests/fixtures/runtime-opencode/*-1.18.29.jsonl`
+(procedencia, comandos de captura y regla de "no editar un fixture viejo" en el
+`README.md` de ese directorio). `--format json` esta documentado solo como "raw
+JSON events" (<https://opencode.ai/docs/cli/>), sin especificacion estable: si
+una version futura cambia el formato, se **agrega** un fixture con su version
+en el nombre, nunca se edita el viejo.
 
 ### Vocabulario de eventos (`run-events.schema.json`)
 
