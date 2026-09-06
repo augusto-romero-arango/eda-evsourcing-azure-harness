@@ -62,6 +62,20 @@
 #       compute_metrics_report_json y contra el render end-to-end de la
 #       seccion "POR VERSION DE HARNESS" y la columna SHA de "Por corrida"
 #       (CA-3), sin alterar las secciones existentes.
+#   [M] Normalizacion vieja/neutral y tabla POR RUNTIME (issue #908): fixture
+#       con una corrida forma vieja sin runtime de nivel de corrida, una
+#       forma neutral Claude con runtime, una forma neutral OpenCode con
+#       runtime, cost_usd:0 real y turns:null (ningun agente lo reporta), y
+#       una sin instrumentar. Verifica que nada fuera de
+#       normalize_agent_metrics lee los campos crudos de la forma vieja
+#       (CA-1), que el ranking de herramientas admite el nombre de tool de
+#       OpenCode igual que el de Claude (CA-2), que by_runtime agrupa por el
+#       runtime de nivel de corrida cayendo a "(sin runtime)" para el
+#       historico previo (CA-2), y que el 0 real de OpenCode se agrega como
+#       0 -- nunca "n/d" ni perdido -- mientras sus turnos ausentes SI
+#       agregan como n/d en vez de leerse como 0 (CA-3). Verificado contra
+#       compute_metrics_report_json y contra el render end-to-end de la
+#       seccion "POR RUNTIME", sin alterar las secciones existentes.
 #
 # Uso: .claude/scripts/tests/test-metrics-report.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -496,6 +510,81 @@ if echo "$OUT" | grep -qE '^#910 .* -$'; then
     pass "L-15: la fila de la corrida 910 (sin sha) muestra '-' en su columna, sin corrimiento"
 else
     fail "L-15: no se encontro la fila #910 con '-' en SHA: $(echo "$OUT" | grep '^#910' || echo '(no aparece)')"
+fi
+
+echo ""
+echo "[M] Normalizacion vieja/neutral (CA-1) y tabla POR RUNTIME (CA-2/CA-3, issue #908)"
+
+echo "  -- guarda de neutralidad (CA-1): nada fuera de normalize_agent_metrics lee los campos crudos de la forma vieja --"
+M_CMR_SRC=$(awk '/^compute_metrics_report_json\(\) \{/,/^\}/' "$REPORT_SCRIPT")
+for pattern in '.metrics.is_error' '.metrics.stop_reason' '.metrics.terminal_reason' '.metrics.duration_api_ms'; do
+    if printf '%s' "$M_CMR_SRC" | grep -qF -- "$pattern"; then
+        fail "M-guard: '$pattern' aparece fuera de normalize_agent_metrics (deberia leerse solo via \$m dentro de esa funcion)"
+    else
+        pass "M-guard: '$pattern' no aparece (la lectura pasa por normalize_agent_metrics)"
+    fi
+done
+
+# Fixture: 600 forma vieja SIN runtime de nivel de corrida (historico previo a
+# #907/anotacion de runtime) + 601 forma neutral Claude CON runtime + 602
+# forma neutral OpenCode CON runtime, cost_usd:0 real y turns:null (ningun
+# agente lo reporto) + 603 sin instrumentar (sin metrics, sin runtime). Los
+# numeros esperados de abajo se derivaron a mano sumando estos mismos campos
+# (mismo criterio que los bloques [C]/[J]/[L]).
+cat > "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" <<'EOF'
+{"issue":"600","title":"Forma vieja sin runtime","pipeline":"mefisto-tooling","started":"20260901-090000","state":"completed","agents":{"writer":{"duration":250,"metrics":{"turns":6,"duration_ms":200000,"duration_api_ms":150000,"non_api_ms":50000,"cost_usd":0.35,"tokens":{"input":5000,"output":700,"cache_read":4000,"cache_creation":500},"model":"claude-opus","is_error":false,"stop_reason":"end_turn","terminal_reason":null,"tool_calls":[{"name":"Read","count":4,"duration_ms_sum":3000,"duration_ms_median":700}]}},"reviewer":{"duration":130,"metrics":{"turns":3,"duration_ms":100000,"duration_api_ms":70000,"non_api_ms":30000,"cost_usd":0.15,"tokens":{"input":2000,"output":300,"cache_read":1500,"cache_creation":200},"model":"claude-opus","is_error":false,"stop_reason":"end_turn","terminal_reason":null,"tool_calls":[{"name":"Bash","count":2,"duration_ms_sum":4000,"duration_ms_median":2000}]}}}}
+{"issue":"601","title":"Forma neutral Claude con runtime","pipeline":"mefisto-tooling","runtime":"claude","started":"20260902-090000","state":"completed","agents":{"writer":{"duration":310,"metrics":{"runtime":"claude","status":"success","error_kind":null,"model":"claude-sonnet-5","cost_usd":0.5,"tokens":{"input":8000,"output":900},"turns":9,"duration_ms":300000,"api_duration_ms":200000,"non_api_ms":100000,"tool_calls":[{"name":"Read","count":5,"duration_ms_sum":4000,"duration_ms_median":800}]}},"reviewer":{"duration":160,"metrics":{"runtime":"claude","status":"success","error_kind":null,"model":"claude-sonnet-5","cost_usd":0.2,"tokens":{"input":3000,"output":400},"turns":4,"duration_ms":150000,"api_duration_ms":100000,"non_api_ms":50000,"tool_calls":[{"name":"Edit","count":2,"duration_ms_sum":2000,"duration_ms_median":1000}]}}}}
+{"issue":"602","title":"Forma neutral OpenCode cost 0 turns null","pipeline":"mefisto-tooling","runtime":"opencode","started":"20260903-090000","state":"completed","agents":{"writer":{"duration":190,"metrics":{"runtime":"opencode","status":"success","error_kind":null,"model":null,"cost_usd":0,"tokens":{"input":6000,"output":500},"turns":null,"duration_ms":180000,"api_duration_ms":140000,"non_api_ms":40000,"tool_calls":[{"name":"glob","count":3,"duration_ms_sum":3000,"duration_ms_median":1000}]}},"reviewer":{"duration":null,"metrics":null}}}
+{"issue":"603","title":"Sin instrumentar","pipeline":"mefisto-tooling","started":"20260904-090000","state":"completed","agents":{"writer":{"duration":90},"reviewer":{"duration":40}}}
+EOF
+
+AGG_M=$(compute_metrics_report_json "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" "")
+
+echo "  -- meta --"
+assert_field "M-1: total (4 lineas)" "4" "$(echo "$AGG_M" | jq -r '.meta.total')"
+assert_field "M-2: instrumentadas (600/601/602)" "3" "$(echo "$AGG_M" | jq -r '.meta.instrumented')"
+assert_field "M-3: sin instrumentar (603)" "1" "$(echo "$AGG_M" | jq -r '.meta.legacy')"
+
+echo "  -- ranking de herramientas: nombre de tool de OpenCode entra igual que el de Claude (CA-2) --"
+assert_field "M-4: tool_ranking incluye 'glob' (OpenCode) con sus calls" "3" "$(echo "$AGG_M" | jq -r '.tool_ranking[] | select(.name=="glob") | .calls')"
+
+echo "  -- tabla POR RUNTIME (CA-2/CA-3): 3 grupos, claude/opencode/(sin runtime) --"
+assert_field "M-5: tres grupos en by_runtime" "3" "$(echo "$AGG_M" | jq -r '.by_runtime | length')"
+
+assert_field "M-6: claude.n_total/n_instrumented" "1" "$(echo "$AGG_M" | jq -r '.by_runtime[] | select(.runtime=="claude") | .n_total')"
+assert_field "M-7: claude.turns_mean (9+4)" "13" "$(echo "$AGG_M" | jq -r '.by_runtime[] | select(.runtime=="claude") | .turns_mean')"
+assert_field "M-8: claude.cost_usd_mean (0.5+0.2)" "0.7" "$(echo "$AGG_M" | jq -r '.by_runtime[] | select(.runtime=="claude") | .cost_usd_mean')"
+
+assert_field "M-9: opencode.n_total/n_instrumented" "1" "$(echo "$AGG_M" | jq -r '.by_runtime[] | select(.runtime=="opencode") | .n_total')"
+assert_field "M-10: opencode.cost_usd_mean es el 0 REAL, no n/d ni perdido" "0" "$(echo "$AGG_M" | jq -r '.by_runtime[] | select(.runtime=="opencode") | .cost_usd_mean')"
+assert_field "M-11: opencode.turns_mean es null (ningun agente reporto turnos, no se cuenta como 0)" "null" "$(echo "$AGG_M" | jq -r '.by_runtime[] | select(.runtime=="opencode") | .turns_mean')"
+
+assert_field "M-12: (sin runtime).n_total (600+603, el historico previo)" "2" "$(echo "$AGG_M" | jq -r '.by_runtime[] | select(.runtime=="(sin runtime)") | .n_total')"
+assert_field "M-13: (sin runtime).n_instrumented (solo 600 -- 603 no dejo metrics)" "1" "$(echo "$AGG_M" | jq -r '.by_runtime[] | select(.runtime=="(sin runtime)") | .n_instrumented')"
+assert_field "M-14: (sin runtime).turns_mean (6+3, forma vieja normalizada)" "9" "$(echo "$AGG_M" | jq -r '.by_runtime[] | select(.runtime=="(sin runtime)") | .turns_mean')"
+
+echo "  -- render end-to-end: seccion POR RUNTIME con el 0 de OpenCode y el n/d de sus turnos (CA-3) --"
+OUT=$(run_report)
+RC=$?
+if [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "POR RUNTIME"; then
+    pass "M-15: la seccion POR RUNTIME aparece en el render (exit 0)"
+else
+    fail "M-15: no aparecio la seccion POR RUNTIME (rc=$RC)"
+fi
+if echo "$OUT" | grep -qE '^opencode +1/1 +3m10s +- +77\.8% +0\.00'; then
+    pass "M-16: fila opencode -- turnos en '-' (n/d) y costo 0.00 (el 0 real, no perdido)"
+else
+    fail "M-16: no se encontro la fila opencode esperada: $(echo "$OUT" | grep '^opencode' || echo '(no aparece)')"
+fi
+if echo "$OUT" | grep -qE '^claude +1/1 +7m50s +13\.0 +66\.7% +0\.70'; then
+    pass "M-17: fila claude con turnos/costo/API correctos"
+else
+    fail "M-17: no se encontro la fila claude esperada: $(echo "$OUT" | grep '^claude' || echo '(no aparece)')"
+fi
+if echo "$OUT" | grep -qE '^\(sin runtime\) +2/1 +6m20s +9\.0 +73\.3% +0\.50'; then
+    pass "M-18: fila (sin runtime) agrega el historico previo a la anotacion de runtime"
+else
+    fail "M-18: no se encontro la fila (sin runtime) esperada: $(echo "$OUT" | grep '^(sin runtime)' || echo '(no aparece)')"
 fi
 
 echo ""
