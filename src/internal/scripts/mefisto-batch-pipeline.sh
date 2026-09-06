@@ -29,7 +29,8 @@
 #   sobre el merge del anterior. La garantia de correccion la da el commit de
 #   merge confirmado en origin/main (paso 3 de sync_main_after_merge) MAS que
 #   cada worktree del tooling-pipeline nace SIEMPRE de origin/main (issue #66,
-#   mefisto-tooling-pipeline.sh:269) -- no de la rama activa del repo. El motor
+#   `git worktree add ... origin/main` en mefisto-tooling-pipeline.sh) -- no de
+#   la rama activa del repo. El motor
 #   arranca en main/master solo para mantener main LOCAL comodo para el humano
 #   entre eslabones, no porque el worktree parta de ahi; por eso el gate de
 #   arranque, en vez de exigirlo, se auto-recupera cuando el arbol de trabajo
@@ -350,13 +351,23 @@ if ! command -v "$BATCH_RUNTIME" >/dev/null 2>&1; then
     exit 1
 fi
 
+# Se re-exporta YA RESUELTO (CA-3): sin esto, cuando el runtime llego por
+# autodeteccion (MEFISTO_RUNTIME vacio en el entorno) cada eslabon volveria a
+# autodetectar por su cuenta, y el batch estaria anunciando en su cabecera un
+# runtime que ningun hijo llego a ver. Con el export, "el eslabon hereda el
+# runtime del entorno" es literal para las tres vias de resolucion, y el que
+# hereda es exactamente el que esta precondicion verifico instalado. El resto
+# del entorno (MEFISTO_MODELS_FILE, ...) viaja solo, sin que este script lo
+# toque.
+export MEFISTO_RUNTIME="$BATCH_RUNTIME"
+
 # ensure_repo_on_base_branch
 #
 # Gate de arranque del batch (issue #46, auto-recuperacion agregada en el
 # issue #726). Cada worktree del tooling-pipeline nace SIEMPRE de origin/main,
-# sea cual sea la rama activa del repo principal (issue #66,
-# mefisto-tooling-pipeline.sh:249-270) -- ese invariante no depende de este
-# gate. La razon real de exigir main/master aqui es puramente higienica:
+# sea cual sea la rama activa del repo principal (issue #66, `git worktree add
+# ... origin/main` en mefisto-tooling-pipeline.sh) -- ese invariante no depende
+# de este gate. La razon real de exigir main/master aqui es puramente higienica:
 # mantener main LOCAL sincronizado entre eslabones para el humano que sigue
 # la corrida (issue #566).
 #
@@ -487,7 +498,7 @@ for ISSUE_NUM in "${ISSUE_NUMS[@]}"; do
     # -- Stage 3: Merge del PR --
     # En Mefisto no usamos pr-sync.sh (es del lado publicado). Mergeamos con
     # gh pr merge directo, con squash + delete-branch (consistente con
-    # .claude/commands/mefisto-merge.md).
+    # src/internal/commands/mefisto-merge.md).
     log "Mergeando PR #$PR_NUM a main (squash + delete-branch)..."
 
     MERGE_EXIT=0
@@ -511,7 +522,7 @@ for ISSUE_NUM in "${ISSUE_NUMS[@]}"; do
     # el merge confirmado (return 2), SI abortamos -- el siguiente worktree
     # naceria de una base vieja. Si solo fallo dejar main LOCAL sincronizado
     # (return 1), degradamos a warning y continuamos: el siguiente worktree
-    # nace de origin/main (mefisto-tooling-pipeline.sh:269), que ya esta al dia.
+    # nace de origin/main, que ya esta al dia.
     IS_LAST_ISSUE=false
     [ "$CURRENT" -eq "$TOTAL" ] && IS_LAST_ISSUE=true
 

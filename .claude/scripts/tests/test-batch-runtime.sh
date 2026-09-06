@@ -6,7 +6,7 @@
 #   [pre] mefisto-batch-pipeline.sh y mefisto-validate-batch-deps.sh viven en
 #         src/internal/scripts/ con sintaxis bash valida; sus shims en
 #         .claude/scripts/ siguen la plantilla exacta de exec de 3 lineas
-#         (CA-1).
+#         (CA-1), y reenvian de verdad (mismo exit code que el canonico).
 #   [A]   El pipeline canonico resuelve su estado con MEFISTO_STATE_DIR, no
 #         con la ruta legacy hardcodeada (CA-4).
 #   [B]   Guard de regresion (CA-4): ninguna linea de CODIGO (no comentario)
@@ -24,7 +24,9 @@
 #           'claude' aborta en modo claude aunque 'opencode' este presente, y
 #           viceversa), el mensaje de abort indica 'MEFISTO_RUNTIME=claude|opencode'
 #           como remedio;
-#         - con el CLI presente, un fallo en el primer eslabon (--stop-on-error)
+#         - con el CLI presente, el eslabon HEREDA MEFISTO_RUNTIME ya resuelto
+#           (CA-3) -- tanto cuando llega del entorno como cuando el batch lo
+#           AUTODETECTA -- y un fallo en el primer eslabon (--stop-on-error)
 #           detiene la cadena ANTES de invocar el segundo eslabon.
 #
 # Uso: .claude/scripts/tests/test-batch-runtime.sh
@@ -80,10 +82,29 @@ for shim in "$SHIM_BATCH" "$SHIM_DEPS"; do
     else
         fail "$(basename "$shim"): no coincide con la plantilla de exec de src/internal/scripts/README.md"
     fi
-    if [ "$(grep -cv '^\s*#' "$shim" | grep -cv '^\s*$')" -le 2 ]; then
-        pass "$(basename "$shim"): no tiene logica propia (solo shebang + exec)"
+    shim_code_lines=$(grep -vcE '^[[:space:]]*(#|$)' "$shim")
+    if [ "$shim_code_lines" -eq 1 ]; then
+        pass "$(basename "$shim"): no tiene logica propia (1 linea de codigo: el exec)"
     else
-        fail "$(basename "$shim"): tiene mas codigo del esperado"
+        fail "$(basename "$shim"): $shim_code_lines lineas de codigo (la plantilla tiene 1: el exec)"
+    fi
+done
+
+# El shim REENVIA de verdad, no solo "contiene el exec correcto": la plantilla
+# compone la ruta del canonico con '$0' y un '../..' relativo, asi que un shim
+# textualmente perfecto colocado a la profundidad equivocada seguiria pasando
+# el grep de arriba y fallaria en ejecucion. Se invoca cada par sin argumentos
+# -- camino inocuo en ambos (usage del batch, guarda fail-loud del validador):
+# ni tocan disco ni llaman a gh -- y se compara el exit code observado.
+for pair in "$SHIM_BATCH:$CANON_BATCH:1" "$SHIM_DEPS:$CANON_DEPS:2"; do
+    shim="${pair%%:*}"; rest="${pair#*:}"
+    canon="${rest%%:*}"; expected="${rest##*:}"
+    ( cd "$REPO_ROOT" && "$shim" ) </dev/null >/dev/null 2>&1; shim_rc=$?
+    ( cd "$REPO_ROOT" && "$canon" ) </dev/null >/dev/null 2>&1; canon_rc=$?
+    if [ "$shim_rc" -eq "$expected" ] && [ "$canon_rc" -eq "$expected" ]; then
+        pass "$(basename "$shim"): el shim reenvia al canonico (ambos exit $expected sin args)"
+    else
+        fail "$(basename "$shim"): shim exit $shim_rc, canonico exit $canon_rc (se esperaba $expected en ambos)"
     fi
 done
 
@@ -203,7 +224,7 @@ fake_tooling_pipeline() {
     local dir="$1" call_log="$2" failing_issue="$3"
     cat > "$dir/src/internal/scripts/mefisto-tooling-pipeline.sh" <<EOF
 #!/usr/bin/env bash
-echo "\$1" >> "$call_log"
+echo "\$1 MEFISTO_RUNTIME=\${MEFISTO_RUNTIME:-<sin-fijar>}" >> "$call_log"
 if [ "\$1" = "$failing_issue" ]; then
     echo "fake tooling-pipeline: fallo simulado para el eslabon \$1" >&2
     exit 1
@@ -231,15 +252,28 @@ chmod +x "$FAKE_BIN/gh"
 # entorno), nunca claude/opencode/gh.
 SAFE_SYSTEM_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 
+# run_batch <dir> <runtime|""> <args...>
+#
+# <runtime> vacio = MEFISTO_RUNTIME SIN FIJAR en el entorno: es el unico modo
+# que ejerce la rama de AUTODETECCION de mefisto_resolve_runtime (y con ella el
+# re-export del runtime resuelto hacia el eslabon). Con un valor, se fija en el
+# entorno, que es la via de produccion (la antepone el comando generado, #867).
 run_batch() {
     local dir="$1" runtime="$2"; shift 2
     local out="$TMP/stdout" err="$TMP/stderr"
     (
         cd "$dir" || exit 99
-        env -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR -u MEFISTO_REPO_ROOT \
-            -u MEFISTO_PROJECT_NAME -u MEFISTO_REPO_SLUG -u MEFISTO_RUNTIME_LIB_DIR \
-            MEFISTO_RUNTIME="$runtime" PATH="$FAKE_BIN:$SAFE_SYSTEM_PATH" \
-            ./src/internal/scripts/mefisto-batch-pipeline.sh "$@"
+        if [ -n "$runtime" ]; then
+            env -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR -u MEFISTO_REPO_ROOT \
+                -u MEFISTO_PROJECT_NAME -u MEFISTO_REPO_SLUG -u MEFISTO_RUNTIME_LIB_DIR \
+                MEFISTO_RUNTIME="$runtime" PATH="$FAKE_BIN:$SAFE_SYSTEM_PATH" \
+                ./src/internal/scripts/mefisto-batch-pipeline.sh "$@"
+        else
+            env -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR -u MEFISTO_REPO_ROOT \
+                -u MEFISTO_PROJECT_NAME -u MEFISTO_REPO_SLUG -u MEFISTO_RUNTIME_LIB_DIR \
+                -u MEFISTO_RUNTIME PATH="$FAKE_BIN:$SAFE_SYSTEM_PATH" \
+                ./src/internal/scripts/mefisto-batch-pipeline.sh "$@"
+        fi
     ) </dev/null >"$out" 2>"$err"
     LAST_RC=$?
     LAST_STDOUT=$(cat "$out")
@@ -315,10 +349,48 @@ STUB
     else
         fail "E ($runtime): el primer eslabon nunca se invoco: $(cat "$CALL_LOG" 2>/dev/null)"
     fi
+    # CA-3: el eslabon HEREDA el runtime ya resuelto por el batch. Se ejerce
+    # con MEFISTO_RUNTIME fijado en el entorno, la via de produccion (lo
+    # antepone el comando generado, issue #867).
+    if grep -qF "100 MEFISTO_RUNTIME=$runtime" "$CALL_LOG"; then
+        pass "E ($runtime): el eslabon heredo MEFISTO_RUNTIME=$runtime del batch"
+    else
+        fail "E ($runtime): el eslabon no heredo MEFISTO_RUNTIME=$runtime -- log: $(cat "$CALL_LOG")"
+    fi
     if grep -qF "200" "$CALL_LOG"; then
         fail "E ($runtime): el segundo eslabon (issue 200) NO deberia haberse invocado -- log: $(cat "$CALL_LOG")"
     else
         pass "E ($runtime): el segundo eslabon (issue 200) nunca se invoco (el fallo del primero detuvo la cadena)"
+    fi
+    rm -rf "$DIR"
+done
+
+# E-5: MEFISTO_RUNTIME SIN FIJAR -- el batch autodetecta (un unico CLI en PATH)
+# y el eslabon debe recibir ESE runtime igual. Sin el re-export del valor ya
+# resuelto, el hijo volveria a autodetectar por su cuenta y el runtime que el
+# batch anuncia en su cabecera no seria el que ningun eslabon vio.
+for runtime in claude opencode; do
+    DIR=$(mktemp -d)
+    setup_fake_repo "$DIR"
+    CALL_LOG="$TMP/call-log-auto-$runtime"
+    : > "$CALL_LOG"
+    # Falla a proposito: corta tras el Stage 1 (lo unico que este caso mide) sin
+    # pagar los reintentos con sleep del sync verificado, que el stub de gh no
+    # puede satisfacer.
+    fake_tooling_pipeline "$DIR" "$CALL_LOG" "100"
+
+    rm -f "$FAKE_BIN/claude" "$FAKE_BIN/opencode"
+    cat > "$FAKE_BIN/$runtime" <<STUB
+#!/usr/bin/env bash
+exit 0
+STUB
+    chmod +x "$FAKE_BIN/$runtime"
+
+    run_batch "$DIR" "" 100
+    if grep -qF "100 MEFISTO_RUNTIME=$runtime" "$CALL_LOG"; then
+        pass "E (autodeteccion): el eslabon heredo MEFISTO_RUNTIME=$runtime resuelto por el batch"
+    else
+        fail "E (autodeteccion): el eslabon no heredo el runtime autodetectado '$runtime' -- log: $(cat "$CALL_LOG")"
     fi
     rm -rf "$DIR"
 done
