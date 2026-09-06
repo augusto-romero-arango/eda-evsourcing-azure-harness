@@ -76,6 +76,13 @@
 #       agregan como n/d en vez de leerse como 0 (CA-3). Verificado contra
 #       compute_metrics_report_json y contra el render end-to-end de la
 #       seccion "POR RUNTIME", sin alterar las secciones existentes.
+#   [N] Historial en las DOS ubicaciones (issue #869): el fixture pone una
+#       corrida en .claude/pipeline/ y otra en .mefisto/pipeline/ para entrar
+#       en la rama que las concatena en un temporal -- la que corre en
+#       cualquier repo real con historico legacy y que ningun otro bloque
+#       tocaba. Verifica que el reporte cierre en exit 0, que no imprima
+#       "unbound variable" al limpiar ese temporal y que las corridas de
+#       ambas ubicaciones entren en la ventana.
 #
 # Uso: .claude/scripts/tests/test-metrics-report.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -516,14 +523,37 @@ echo ""
 echo "[M] Normalizacion vieja/neutral (CA-1) y tabla POR RUNTIME (CA-2/CA-3, issue #908)"
 
 echo "  -- guarda de neutralidad (CA-1): nada fuera de normalize_agent_metrics lee los campos crudos de la forma vieja --"
-M_CMR_SRC=$(awk '/^compute_metrics_report_json\(\) \{/,/^\}/' "$REPORT_SCRIPT")
-for pattern in '.metrics.is_error' '.metrics.stop_reason' '.metrics.terminal_reason' '.metrics.duration_api_ms'; do
-    if printf '%s' "$M_CMR_SRC" | grep -qF -- "$pattern"; then
-        fail "M-guard: '$pattern' aparece fuera de normalize_agent_metrics (deberia leerse solo via \$m dentro de esa funcion)"
+# La guarda se aplica al jq de compute_metrics_report_json MENOS el bloque de
+# normalize_agent_metrics (la unica funcion autorizada a nombrar la forma
+# vieja) y MENOS las lineas de comentario (que la describen a proposito).
+#
+# Y busca el IDENTIFICADOR PELADO, no `.metrics.<campo>`: ese prefijo seria
+# una guarda vacua para is_error/stop_reason/terminal_reason -- el reporte no
+# los leia con esa sintaxis ni antes de este issue, asi que el patron pasaria
+# en verde aunque alguien cableara `$m.is_error` en pleno agregado. Con el
+# identificador pelado la guarda falla exactamente cuando CA-1 dice que debe
+# fallar: cuando la forma vieja se vuelve a leer fuera de la normalizacion.
+M_LIVE_SRC=$(awk '/^compute_metrics_report_json\(\) \{/,/^\}/' "$REPORT_SCRIPT" \
+    | awk '/^def normalize_agent_metrics:/{skip=1} skip{if ($0 == "  end;") skip=0; next} {print}' \
+    | grep -v '^[[:space:]]*#')
+# El identificador se ancla entre no-identificadores para que la clave de
+# SALIDA duration_api_ms_mean (vocabulario del reporte desde #427, ajena a la
+# forma vieja de entrada) no dispare la guarda por ser un prefijo suyo.
+for pattern in 'is_error' 'stop_reason' 'terminal_reason' 'duration_api_ms'; do
+    if printf '%s' "$M_LIVE_SRC" | grep -qE -- "(^|[^_[:alnum:]])${pattern}([^_[:alnum:]]|\$)"; then
+        fail "M-guard: '$pattern' aparece en codigo vivo fuera de normalize_agent_metrics (deberia leerse solo via \$m dentro de esa funcion)"
     else
-        pass "M-guard: '$pattern' no aparece (la lectura pasa por normalize_agent_metrics)"
+        pass "M-guard: '$pattern' no aparece en codigo vivo (la lectura pasa por normalize_agent_metrics)"
     fi
 done
+# Contraprueba de la guarda: sin ella, un cambio que borre normalize_agent_metrics
+# del recorte no la haria fallar. Si el recorte quedo vacio o no incluye el resto
+# del agregado, la guarda de arriba es verde por vacuidad.
+if printf '%s' "$M_LIVE_SRC" | grep -q 'normalize_agent_metrics'; then
+    pass "M-guard: el recorte conserva las llamadas a normalize_agent_metrics (la guarda no es verde por vacuidad)"
+else
+    fail "M-guard: el recorte quedo sin llamadas a normalize_agent_metrics -- la guarda de arriba no prueba nada"
+fi
 
 # Fixture: 600 forma vieja SIN runtime de nivel de corrida (historico previo a
 # #907/anotacion de runtime) + 601 forma neutral Claude CON runtime + 602
@@ -586,6 +616,43 @@ if echo "$OUT" | grep -qE '^\(sin runtime\) +2/1 +6m20s +9\.0 +73\.3% +0\.50'; t
 else
     fail "M-18: no se encontro la fila (sin runtime) esperada: $(echo "$OUT" | grep '^(sin runtime)' || echo '(no aparece)')"
 fi
+
+echo ""
+echo "[N] Historial en las DOS ubicaciones: se agregan ambas y el reporte cierra en 0 (issue #869)"
+
+# Hasta aqui el repo de mentira solo tenia .claude/pipeline/ (una sola fuente),
+# asi que ninguna prueba entraba en la rama que concatena las dos ubicaciones
+# en un temporal -- la rama que corre en CUALQUIER repo real con historico
+# legacy. Ahi el `trap ... EXIT` que borra el temporal se ejecuta cuando main()
+# ya retorno: si difiere la expansion de su variable local, `set -u` tumba el
+# shell con "unbound variable" y el reporte termina en exit 1 despues de
+# haberse impreso entero.
+mkdir -p "$FAKE_REPO/.mefisto/pipeline"
+cat > "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" <<'EOF'
+{"issue":"700","title":"Legacy","pipeline":"mefisto-tooling","started":"20260901-090000","state":"completed","agents":{"writer":{"duration":100},"reviewer":{"duration":50}}}
+EOF
+printf '%s' '{"issue":"701","title":"Canonica","pipeline":"mefisto-tooling","runtime":"opencode","started":"20260902-090000","state":"completed","agents":{"writer":{"duration":80},"reviewer":{"duration":40}}}' \
+    > "$FAKE_REPO/.mefisto/pipeline/pipeline-history.jsonl"
+
+OUT=$(run_report 2>&1)
+RC=$?
+if [ "$RC" -eq 0 ]; then
+    pass "N-1: con las dos ubicaciones presentes el reporte cierra en exit 0"
+else
+    fail "N-1: el reporte cerro en rc=$RC con las dos ubicaciones presentes: $(echo "$OUT" | tail -3)"
+fi
+if echo "$OUT" | grep -q 'unbound variable'; then
+    fail "N-2: el reporte imprimio 'unbound variable': $(echo "$OUT" | grep 'unbound variable')"
+else
+    pass "N-2: el reporte no imprime 'unbound variable' al limpiar el temporal"
+fi
+# Sin el salto de linea defensivo del concatenado, la ultima corrida del
+# legacy y la primera de la canonica (que aqui se escribe SIN '\n' final) se
+# pegarian y las dos se perderian.
+assert_field "N-3: las corridas de AMBAS ubicaciones entran en la ventana" "2" \
+    "$(echo "$OUT" | grep -oE 'ventana: [0-9]+' | head -1 | awk '{print $2}')"
+
+rm -rf "$FAKE_REPO/.mefisto"
 
 echo ""
 echo "----------------------------------------"

@@ -235,31 +235,19 @@ def summarize_agent:
     tool_calls_mean: (map([(.tool_calls // [])[] | .count] | add // 0) | avgOrNull)
   };
 
-# version_summary -- issue #664, mismo shape que el porte publicado (#663):
-# agregados de wallclock/turnos/costo restringidos al grupo de corridas de una
-# sola harness_version. Opera sobre $group (corridas totales de esa version),
-# no solo sobre las instrumentadas, para que n_total/n_instrumented reutilicen
-# el mismo par instrumented/legacy del resto del reporte.
-def version_summary:
-  . as $group
-  | ($group | map(select(._has_metrics))) as $g_instr
-  | ($g_instr | map(run_api_ms) | add // 0) as $api_total
-  | ($g_instr | map(run_non_api_ms) | add // 0) as $non_api_total
-  | {
-      n_total: ($group | length),
-      n_instrumented: ($g_instr | length),
-      wall_mean_instr_s: ($g_instr | map(._wall_s) | map(select(. != null)) | avgOrNull),
-      pct_api: (if ($api_total + $non_api_total) > 0 then ($api_total / ($api_total + $non_api_total) * 100) else null end),
-      turns_mean: ($g_instr | map(run_turns) | map(select(. != null)) | avgOrNull),
-      cost_usd_mean: ($g_instr | map(run_cost_usd) | map(select(. != null)) | avgOrNull)
-    };
-
-# runtime_summary -- issue #908: mismo shape que version_summary, agrupando
-# por el "runtime" de nivel de corrida (no metrics.runtime) en vez de
-# harness_version. Filtra null antes de promediar turnos/costo (CA-3): una
-# corrida OpenCode con turns:null no debe leerse como 0 al mezclarse con
-# corridas Claude que si lo reportan.
-def runtime_summary:
+# group_summary -- agregados de wallclock/turnos/costo restringidos a UN grupo
+# de corridas, sea cual sea el eje que lo formo: harness_version (issue #664,
+# mismo shape que el porte publicado #663) o runtime de nivel de corrida
+# (issue #908). Los dos ejes piden exactamente las mismas seis cifras, asi
+# que comparten def: dos copias divergirian en la primera columna que se le
+# agregue a una sola de las tablas.
+#
+# Opera sobre $group (corridas TOTALES del grupo), no solo sobre las
+# instrumentadas, para que n_total/n_instrumented reutilicen el mismo par
+# instrumented/legacy del resto del reporte. Filtra null antes de promediar
+# turnos/costo (CA-3, #908): una corrida cuyo runtime no reporta turnos
+# (turns: null) no debe leerse como 0 al mezclarse con las que si lo reportan.
+def group_summary:
   . as $group
   | ($group | map(select(._has_metrics))) as $g_instr
   | ($g_instr | map(run_api_ms) | add // 0) as $api_total
@@ -379,13 +367,13 @@ def delta_of(f; l):
 
 | ($entries
     | group_by(._version)
-    | map(. as $group | ($group | version_summary) + {version: $group[0]._version})
+    | map(. as $group | ($group | group_summary) + {version: $group[0]._version})
     | sort_by([(.version == "(sin version)"), (.version | version_sort_key)])
   ) as $by_version
 
 | ($entries
     | group_by(._runtime)
-    | map(. as $group | ($group | runtime_summary) + {runtime: $group[0]._runtime})
+    | map(. as $group | ($group | group_summary) + {runtime: $group[0]._runtime})
     | sort_by([(.runtime == "(sin runtime)"), .runtime])
   ) as $by_runtime
 
@@ -837,7 +825,16 @@ EOF
         if [ -n "$merged" ]; then
             # El trap se registra solo cuando hay algo que borrar: este script
             # no tiene otro trap EXIT que este pisaria.
-            trap 'rm -f "$merged"' EXIT
+            #
+            # La ruta se INTERPOLA al registrar el trap, no se difiere entre
+            # comillas simples: "$merged" es un local de main() y el trap EXIT
+            # corre cuando main ya retorno y ese local ya no existe -- con
+            # `set -u` eso aborta el shell con "merged: unbound variable" y
+            # deja el reporte en exit 1 justo despues de imprimirlo entero.
+            # Solo se manifiesta con las DOS ubicaciones de historial
+            # presentes (la unica rama que crea temporal), que es el estado
+            # normal de un repo con historico legacy.
+            trap "rm -f '$merged'" EXIT
             while IFS= read -r _src; do
                 [ -n "$_src" ] || continue
                 cat "$_src" >> "$merged" 2>/dev/null || true
