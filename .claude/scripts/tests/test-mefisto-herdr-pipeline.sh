@@ -45,8 +45,10 @@
 #         que imprime una linea, duerme 3s e imprime otra prueba que la
 #         primera linea llega a la captura del pane ANTES de que el comando
 #         termine, que al final ambas lineas aparecen exactamente una vez (sin
-#         duplicarse con un cat/tail final, que CA-2 elimina) y que el rc
-#         devuelto es el del comando falso (exit 0 y exit 7).
+#         duplicarse con un cat/tail final, que CA-2 elimina), que el visor y
+#         el tail comparten ese unico pane, que el rc devuelto es el del
+#         comando falso (exit 0 y exit 7) y que no queda ningun `tail -f` del
+#         reporte vivo tras la corrida (CA-3).
 #
 # Uso: .claude/scripts/tests/test-mefisto-herdr-pipeline.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -83,6 +85,20 @@ cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FAKE_MEFISTO/src/i
 cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-state.sh"
 cp "$REPO_ROOT/src/internal/scripts/mefisto-herdr-pipeline.sh" "$FAKE_MEFISTO/src/internal/scripts/mefisto-herdr-pipeline.sh"
 cp "$REPO_ROOT/.claude/scripts/mefisto-herdr-pipeline.sh" "$FAKE_MEFISTO/.claude/scripts/mefisto-herdr-pipeline.sh"
+
+# Stub del visor: el runner interno (bloque 24) lo lanza en background contra
+# la ruta explicita ".claude/scripts/mefisto-stream-watch.sh" del repo. Sin
+# stub, bash escupe un "No such file or directory" al mismo stdout que se
+# captura y el bloque nunca ejercita lo que el issue #926 promete -- visor y
+# `tail -f` compartiendo un unico pane. Emite su marca y `exec`-a el sleep
+# para que el PID que el runner mata sea el del propio sleep (sin exec, kill
+# mataria al bash envolvente y dejaria el sleep huerfano).
+cat > "$FAKE_MEFISTO/.claude/scripts/mefisto-stream-watch.sh" <<'STUB'
+#!/usr/bin/env bash
+echo "visor-stub-arrancado"
+exec sleep 30
+STUB
+chmod +x "$FAKE_MEFISTO/.claude/scripts/mefisto-stream-watch.sh"
 (cd "$FAKE_MEFISTO" && git init -q && git -c user.email="test@example.com" -c user.name="Test" commit --allow-empty -q -m "commit inicial")
 
 cat > "$FAKE_BIN/gh" <<'STUB'
@@ -595,6 +611,32 @@ run_pane_runner_live() {
         pass "ambas lineas aparecen exactamente una vez en la captura final"
     else
         fail "conteo inesperado (linea-uno=$count_uno, linea-dos=$count_dos) -- captura: $(cat "$capture")"
+    fi
+
+    # El pane es uno solo: la marca del visor y las lineas del reporte tienen
+    # que convivir en la misma captura (es lo que pide el issue #926). De paso
+    # el chequeo del "No such file" delata que el stub del visor dejo de
+    # resolverse -- ahi el bloque estaria midiendo el tail contra un pane
+    # vacio en vez de contra el visor.
+    if grep -qF "visor-stub-arrancado" "$capture" \
+        && ! grep -qF "No such file or directory" "$capture"; then
+        pass "el visor y el tail comparten el mismo pane (marca del visor presente, sin errores de arranque)"
+    else
+        fail "el visor no arranco junto al tail -- captura: $(cat "$capture")"
+    fi
+
+    # CA-3: ni la corrida normal ni el trap dejan un `tail -f` del reporte
+    # vivo. El snapshot de ps se vuelca a un archivo ANTES de grepearlo para
+    # que el propio grep (que lleva el patron en su cmdline) no se autodelate.
+    local ps_snapshot="$TMP_DIR/ps-snapshot-$expected_rc.txt"
+    # -ww: sin el, ps trunca la cmdline a 80 columnas y la ruta larga del
+    # reporte (bajo /var/folders/... o /tmp/...) se cortaria justo antes del
+    # patron -- el chequeo pasaria siempre, incluso con un tail huerfano.
+    ps -Aww -o args= > "$ps_snapshot" 2>/dev/null || true
+    if grep -qF "$FAKE_MEFISTO/.mefisto/pipeline/logs" "$ps_snapshot"; then
+        fail "quedo un proceso vivo sobre el .report.log tras la corrida: $(grep -F "$FAKE_MEFISTO/.mefisto/pipeline/logs" "$ps_snapshot")"
+    else
+        pass "no queda ningun tail -f del .report.log vivo tras la corrida"
     fi
 
     if [ "$expected_rc" -eq 0 ]; then

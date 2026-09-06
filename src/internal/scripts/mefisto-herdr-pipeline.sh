@@ -208,7 +208,7 @@ dispatch_to_pane() {
         || abort "No se pudo lanzar el pipeline en el pane $pane (herdr pane run fallo)."
 
     success "Pipeline '$title' corriendo en el pane $pane de este workspace."
-    log "El pane muestra el visor en vivo del agente; el reporte completo queda en $LOG_DIR_ABS/."
+    log "El pane muestra en vivo el visor del agente y el stdout del pipeline; el reporte completo queda en $LOG_DIR_ABS/."
     log "No hay sesion que adjuntar: el pane ya esta visible en el workspace (barra lateral de herdr)."
 }
 
