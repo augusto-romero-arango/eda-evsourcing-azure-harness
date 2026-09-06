@@ -60,7 +60,12 @@ mefisto_state_path() {
     fi
 
     local full="$base/$rel"
-    mkdir -p "$(dirname "$full")" 2>/dev/null
+    # Sin el `|| return 1`, un mkdir que falla (permisos, un archivo donde
+    # deberia ir el directorio) devolveria igual una ruta con exit 0 y el
+    # caller la usaria como destino de escritura: el fallo apareceria recien
+    # en el redirect, ya sin el motivo original. Se deja el stderr de mkdir a
+    # la vista por lo mismo.
+    mkdir -p "$(dirname "$full")" || return 1
     echo "$full"
 }
 

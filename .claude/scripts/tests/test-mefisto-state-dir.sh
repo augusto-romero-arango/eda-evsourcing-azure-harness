@@ -15,10 +15,13 @@
 #   [C] Ambos existen -> dos lineas, canonico primero (CA-3).
 #   [D] Ninguno existe -> lista vacia; mefisto_state_read_first sale con exit
 #       distinto de cero.
-#   [E] MEFISTO_STATE_DIR externo -> se respeta (no se pisa) y mefisto_state_path
-#       sin <root> resuelve contra el.
+#   [E] MEFISTO_STATE_DIR externo -> se respeta (no se pisa); tanto
+#       mefisto_state_path como mefisto_state_read_paths, sin <root>, resuelven
+#       contra el.
 #   [F] <rel> con subdirectorio (logs/x.log, summaries/stage-1-writer.md) --
 #       mefisto_state_path crea el directorio padre.
+#   [G] Directorio padre no creable -> mefisto_state_path falla, en vez de
+#       devolver una ruta inservible con exit 0.
 #   [CA-2/CA-4] El helper nunca escribe en legacy ni copia/renombra/borra nada
 #       alli -- checksum del arbol legacy antes/despues de resolver y escribir
 #       en canonico.
@@ -207,6 +210,17 @@ else
     fail "mefisto_state_path sin <root> dio '$CANON_PATH' o no creo el directorio padre"
 fi
 
+# La LECTURA tambien tiene que honrar el override, no solo la escritura: es la
+# combinacion que va a usar cualquier caller migrado (#861 en adelante) que
+# apunte el estado a otro directorio y despues lo lea.
+echo "escrito" > "$CUSTOM_STATE_DIR/foo/bar.txt"
+OUT=$(call_with_state_dir "$TMPDIR_ROOT" "$CUSTOM_STATE_DIR" mefisto_state_read_paths "foo/bar.txt")
+if [ "$OUT" = "$CUSTOM_STATE_DIR/foo/bar.txt" ]; then
+    pass "mefisto_state_read_paths resuelve la canonica contra el MEFISTO_STATE_DIR externo"
+else
+    fail "mefisto_state_read_paths con override dio '$OUT' (esperaba '$CUSTOM_STATE_DIR/foo/bar.txt')"
+fi
+
 echo ""
 echo "[F] <rel> con subdirectorio -> mefisto_state_path crea el directorio padre"
 ROOT_F="$TMPDIR_ROOT/case-f"
@@ -222,6 +236,21 @@ if [ "$PATH_SUMMARY" = "$ROOT_F/.mefisto/pipeline/summaries/stage-1-writer.md" ]
     pass "summaries/stage-1-writer.md -> ruta correcta y directorio padre creado"
 else
     fail "summaries/stage-1-writer.md -> ruta '$PATH_SUMMARY' o directorio padre ausente"
+fi
+
+echo ""
+echo "[G] mkdir imposible -> mefisto_state_path falla en vez de devolver una ruta inservible"
+ROOT_G="$TMPDIR_ROOT/case-g"
+mkdir -p "$ROOT_G/.mefisto/pipeline"
+# Un archivo regular donde deberia ir el directorio "logs/": mkdir -p no puede
+# crearlo, y devolver la ruta con exit 0 dejaria al caller escribiendo a ciegas.
+echo "soy un archivo, no un directorio" > "$ROOT_G/.mefisto/pipeline/logs"
+call "" mefisto_state_path "logs/x.log" "$ROOT_G" >/dev/null 2>&1
+RC=$?
+if [ "$RC" -ne 0 ]; then
+    pass "mefisto_state_path con directorio padre no creable -> exit distinto de 0"
+else
+    fail "mefisto_state_path con directorio padre no creable -> exit 0 (deberia fallar)"
 fi
 
 echo ""
