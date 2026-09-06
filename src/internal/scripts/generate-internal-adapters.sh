@@ -26,8 +26,9 @@
 #                 linea "<ruta>: faltante|distinta|huerfana" por divergencia;
 #                 exit 0 si todo coincide. Un archivo existente sin el
 #                 marcador de generado no cuenta como huerfano (toleracion
-#                 transitoria de CA-5 mientras #865-#867 migran; #873 la
-#                 retira).
+#                 residual de CA-5: tras #865-#867 ya no queda ningun
+#                 adaptador de autoria manual bajo .claude/{agents,commands}
+#                 ni .opencode/, y #873 retira la toleracion).
 #
 # Exit code: 0 si genero (o, con --check, verifico) sin divergencias; 1 si la
 # validacion previa fallo, si algun archivo tiene una directiva de body
@@ -43,7 +44,7 @@
 # array vacio como "${a[@]}" bajo `set -u` (bash 4.4 lo arreglo, pero macOS
 # sigue trayendo 3.2.57 -- MEF-ADR-0049, Consecuencias). Por eso todo recorrido
 # de FILES/GENERATED_RELPATHS usa ${a[@]+"${a[@]}"}: la fuente neutral ya esta
-# poblada (#865, #866), pero el caso vacio sigue siendo alcanzable -- los tests
+# poblada (#865, #866, #867), pero el caso vacio sigue siendo alcanzable -- los tests
 # corren el generador contra un --out y un arbol de fuentes propios.
 
 set -uo pipefail

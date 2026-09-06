@@ -1,7 +1,5 @@
 ---
 description: "Lanza el pipeline INTERNO de tooling para un issue del repo de Mefisto, dentro de una sesion tmux."
-model: "haiku"
-argument-hint: "<numero-de-issue> [--models 'agente=modelo[,agente=modelo...]'] [--variant <label>]"
 ---
 <!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh desde src/internal/commands/mefisto-tooling.md. No editar a mano. -->
 
@@ -105,7 +103,7 @@ Tipo: tooling | Estado: listo | Repo: mefisto
 Luego lanza el pipeline interno en tmux:
 
 ```bash
-MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling $ARGUMENTS
+MEFISTO_RUNTIME=opencode ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling $ARGUMENTS
 ```
 
 ### 4. Instrucciones de conexion

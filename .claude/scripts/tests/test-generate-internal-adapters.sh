@@ -468,9 +468,9 @@ fi
 echo ""
 echo "[no-sources] sin argumentos, con la fuente neutral vacia, no revienta en bash 3.2"
 # `for x in "${a[@]}"` con `a` vacio es un "unbound variable" bajo `set -u` en
-# bash 3.2 (macOS). Hoy src/internal/{agents,commands} esta vacio (#865-#867 no
-# migraron nada), asi que el modo por defecto del generador es exactamente ese
-# caso vacio -- y seguira sin poder reventar cuando esas carpetas se pueblen.
+# bash 3.2 (macOS). Desde #865-#867 src/internal/{agents,commands} ya esta
+# poblado, asi que este bloque ejerce el modo por defecto sobre la fuente real:
+# lo que fija es que el scan por defecto no revienta, poblado o vacio.
 OUT=$("$GENERATOR" --out "$WORKDIR/out-nosources" 2>&1)
 RC=$?
 if printf '%s' "$OUT" | grep -q "unbound variable"; then

@@ -1,7 +1,5 @@
 ---
 description: "Mergea uno o varios PRs del repo de Mefisto."
-model: "haiku"
-argument-hint: "<numero-de-PR> [<numero-de-PR> ...] | --all"
 ---
 <!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh desde src/internal/commands/mefisto-merge.md. No editar a mano. -->
 
