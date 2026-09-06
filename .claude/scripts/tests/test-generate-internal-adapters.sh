@@ -363,7 +363,7 @@ assert_eq "$SUM_A" "$SUM_B" "dos corridas consecutivas producen el mismo arbol"
 assert_eq "$SUM_B" "$SUM_C" "una tercera corrida tras tocar el mtime de las fuentes produce el mismo arbol"
 
 echo ""
-echo "[check] --check en sus tres estados"
+echo "[check] --check en sus cuatro estados (al dia, distinta, huerfana, sin marcador)"
 CHECK_DIR="$WORKDIR/check-dir"
 "$GENERATOR" --out "$CHECK_DIR" "$SRC_DIR/mefisto-fx-agent-basic.md" "$SRC_DIR/mefisto-fx-command-basic.md" >/dev/null 2>&1
 
