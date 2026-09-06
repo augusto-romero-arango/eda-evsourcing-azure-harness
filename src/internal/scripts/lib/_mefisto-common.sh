@@ -1265,7 +1265,12 @@ agent_work_is_trustworthy() {
 # correlacion posible -- y la que CA-1 pide. Un `tool.started` sin
 # `tool.completed` (el proceso murio a mitad de la llamada), o con
 # `tool.completed.duration_ms: null`, cuenta en `count` pero no aporta a
-# `duration_ms_sum`/`duration_ms_median`.
+# `duration_ms_sum`/`duration_ms_median`. El caso simetrico -- un
+# `tool.completed` cuyo nombre no aparece en ningun `tool.started` (traza
+# cortada justo antes del inicio, o un traductor que no pudo resolver el
+# nombre y emitio "?") -- no aparece en `tool_calls`: `count` es la cuenta
+# de llamadas EMPEZADAS, y sumar ahi una duracion sin llamada que la
+# explique dejaria un `duration_ms_sum` sin `count` que lo respalde.
 compute_stage_metrics() {
     local events_file="$1"
 

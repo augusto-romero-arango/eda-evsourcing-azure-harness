@@ -68,6 +68,12 @@
 #       terminales neutrales escritos inline conforme al schema, con
 #       runtime:"claude" y runtime:"opencode", producen el mismo
 #       status/error_kind.
+#   [O] Guarda de neutralidad (CA-1): el CUERPO de compute_stage_metrics no
+#       nombra el vocabulario de Claude Code. Los bloques A-N verifican el
+#       comportamiento sobre entradas neutrales, y eso lo cumple tambien una
+#       implementacion que siga parseando `type == "result"` como camino
+#       alterno -- justo la recaida que este issue existe para cerrar. La
+#       unica forma de cubrir "no contiene X" es mirar el texto.
 #
 # Uso: .claude/scripts/tests/test-stage-metrics.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -487,6 +493,29 @@ assert_field "N-5: status timeout coincide (claude)" "timeout" "$(echo "$N_TIMEO
 assert_field "N-6: status timeout coincide (opencode)" "timeout" "$(echo "$N_TIMEOUT_OPENCODE_OUT" | jq -r '.status')"
 assert_field "N-7: error_kind timeout coincide (claude)" "timeout" "$(echo "$N_TIMEOUT_CLAUDE_OUT" | jq -r '.error_kind')"
 assert_field "N-8: error_kind timeout coincide (opencode)" "timeout" "$(echo "$N_TIMEOUT_OPENCODE_OUT" | jq -r '.error_kind')"
+
+# -------- Bloque O: guarda de neutralidad del cuerpo de la funcion --------
+
+echo ""
+echo "[O] compute_stage_metrics no nombra el vocabulario de Claude Code (CA-1)"
+
+# El rango va de la firma a la primera llave de cierre en columna 0: el jq
+# embebido esta todo indentado, asi que ninguna de sus lineas cierra el rango
+# antes de tiempo. Se lee la fuente canonica (src/internal/scripts/lib/), no el
+# shim de .claude/scripts/.
+O_BODY=$(awk '/^compute_stage_metrics\(\) \{/,/^\}/' "$LIB_DIR/_mefisto-common.sh")
+
+if [ -z "$O_BODY" ]; then
+    fail "O-pre: no se pudo extraer el cuerpo de compute_stage_metrics de _mefisto-common.sh"
+fi
+
+for token in 'type == "assistant"' '"result"' 'is_error' 'stop_reason' 'num_turns' 'total_cost_usd' 'rate_limit_event'; do
+    if printf '%s' "$O_BODY" | grep -qF -- "$token"; then
+        fail "O: el cuerpo de compute_stage_metrics todavia nombra '$token' -- CA-1 exige que derive solo del vocabulario neutral"
+    else
+        pass "O: el cuerpo de compute_stage_metrics no nombra '$token'"
+    fi
+done
 
 echo ""
 echo "----------------------------------------"
