@@ -52,7 +52,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-SCRIPT="$REPO_ROOT/.claude/scripts/mefisto-validate-batch-deps.sh"
+SCRIPT="$REPO_ROOT/src/internal/scripts/mefisto-validate-batch-deps.sh"
 
 PASS=0
 FAIL=0
