@@ -27,33 +27,26 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 CONTRACT_DIR="$REPO_ROOT/src/internal/contract"
 SCHEMA_FILE="$CONTRACT_DIR/internal-artifact.schema.json"
 JSONSCHEMA_LITE="$SCRIPT_DIR/lib/jsonschema-lite.jq"
+FRONTMATTER_LIB="$SCRIPT_DIR/lib/frontmatter.sh"
 
 if ! command -v jq >/dev/null 2>&1; then
     echo "ERROR: jq no esta instalado (MEF-ADR-0049 CA-6: bash + jq, sin validador externo)" >&2
     exit 1
 fi
 
-for required in "$SCHEMA_FILE" "$JSONSCHEMA_LITE"; do
+for required in "$SCHEMA_FILE" "$JSONSCHEMA_LITE" "$FRONTMATTER_LIB"; do
     if [ ! -f "$required" ]; then
         echo "ERROR: no existe '$required'" >&2
         exit 1
     fi
 done
 
-# extract_frontmatter <archivo> -- imprime por stdout el bloque entre la
-# primera linea ("---") y la siguiente linea que sea exactamente "---". Un
-# objeto JSON nunca contiene una linea que sea solo "---", asi que el corte es
-# robusto sin necesitar un parser JSON para encontrar el limite (ver README.md,
-# "Regla de extraccion del frontmatter").
-# Exit: 0 bloque delimitado, 1 la primera linea no es "---", 2 falta el cierre.
-extract_frontmatter() {
-    awk '
-        NR==1 { if ($0 != "---") { bad=1; exit 1 } ; next }
-        $0 == "---" { closed=1; exit 0 }
-        { print }
-        END { if (bad) exit 1; if (!closed) exit 2 }
-    ' "$1"
-}
+# La regla de corte del bloque '---' vive en lib/frontmatter.sh y se consume
+# por `source` desde aqui y desde generate-internal-adapters.sh (#854): una
+# sola implementacion, porque una copia por consumidor es exactamente la
+# divergencia que la fuente neutral existe para evitar (ver README.md, "Regla
+# de extraccion del frontmatter").
+source "$FRONTMATTER_LIB"
 
 # body_runtime_references <archivo> -- imprime el numero de linea (relativo al
 # archivo) de cada linea del body que nombra un runtime concreto. CA-1: la

@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # frontmatter.sh -- Extraccion del frontmatter JSON y del body de un artefacto
-# neutral src/internal/{agents,commands}/<id>.md (MEF-ADR-0049 CA-6, issue
-# #853). Fuente unica de la regla de corte del bloque '---' para el lado que
-# la consume via `source`: generate-internal-adapters.sh (issue #854).
-# validate-internal-artifacts.sh mantiene su propia copia de
-# extract_frontmatter (no se modifica en este issue, ver Impacto en archivos
-# de #854); este archivo no la reemplaza, solo evita que el generador la
-# reimplemente inline.
+# neutral src/internal/{agents,commands}/<id>.md (MEF-ADR-0049 CA-6, issues
+# #853 y #854). Implementacion unica de la regla de corte del bloque '---':
+# la consumen por `source` tanto validate-internal-artifacts.sh (#853) como
+# generate-internal-adapters.sh (#854). Cualquier consumidor nuevo la toma de
+# aqui -- una segunda copia divergiria en silencio, que es justo lo que la
+# fuente neutral existe para evitar.
 #
 # Uso: source "$(dirname "${BASH_SOURCE[0]}")/frontmatter.sh"
 

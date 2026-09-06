@@ -38,6 +38,12 @@
 # el de un `find | sort` determinista si no se pasan explicitos), marcador de
 # generado sin timestamp ni hash -- dos corridas consecutivas con la misma
 # entrada producen bytes identicos.
+#
+# Portabilidad (CA-6): bash 3.2 aborta con "unbound variable" al expandir un
+# array vacio como "${a[@]}" bajo `set -u` (bash 4.4 lo arreglo, pero macOS
+# sigue trayendo 3.2.57 -- MEF-ADR-0049, Consecuencias). Por eso todo recorrido
+# de FILES/GENERATED_RELPATHS usa ${a[@]+"${a[@]}"}: el caso vacio es el normal
+# hoy, con src/internal/{agents,commands} todavia sin poblar (#865-#867).
 
 set -uo pipefail
 export LC_ALL=C
@@ -109,8 +115,14 @@ if [ ${#FILES[@]} -eq 0 ]; then
     done < <(find "$REPO_ROOT/src/internal/agents" "$REPO_ROOT/src/internal/commands" -name '*.md' 2>/dev/null | sort)
 fi
 
-mkdir -p "$OUT_ROOT"
-OUT_ROOT="$(cd "$OUT_ROOT" && pwd)"
+# CA-5: con --check no se escribe nada, ni siquiera el directorio de salida
+# -- si no existe, todas las salidas se reportan como "faltante".
+if [ "$CHECK_MODE" -eq 0 ]; then
+    mkdir -p "$OUT_ROOT"
+fi
+if [ -d "$OUT_ROOT" ]; then
+    OUT_ROOT="$(cd "$OUT_ROOT" && pwd)"
+fi
 
 # --- Generar en un directorio temporal: nunca se escribe directo en destino -
 STAGE_DIR="$(mktemp -d)"
@@ -119,7 +131,7 @@ trap 'rm -rf "$STAGE_DIR"' EXIT
 GEN_STATUS=0
 GENERATED_RELPATHS=()
 
-for file in "${FILES[@]}"; do
+for file in ${FILES[@]+"${FILES[@]}"}; do
     rel_source="${file#"$REPO_ROOT"/}"
 
     fm="$(extract_frontmatter "$file")"
@@ -171,7 +183,7 @@ fi
 # corrida (relativa a OUT_ROOT, mismo formato que GENERATED_RELPATHS).
 path_in_generated_list() {
     local needle="$1" candidate
-    for candidate in "${GENERATED_RELPATHS[@]}"; do
+    for candidate in ${GENERATED_RELPATHS[@]+"${GENERATED_RELPATHS[@]}"}; do
         [ "$candidate" = "$needle" ] && return 0
     done
     return 1
@@ -180,7 +192,7 @@ path_in_generated_list() {
 if [ "$CHECK_MODE" -eq 1 ]; then
     DIVERGENCE=0
 
-    for relpath in "${GENERATED_RELPATHS[@]}"; do
+    for relpath in ${GENERATED_RELPATHS[@]+"${GENERATED_RELPATHS[@]}"}; do
         staged="$STAGE_DIR/$relpath"
         existing="$OUT_ROOT/$relpath"
         if [ ! -f "$existing" ]; then
@@ -209,7 +221,7 @@ if [ "$CHECK_MODE" -eq 1 ]; then
     exit $DIVERGENCE
 fi
 
-for relpath in "${GENERATED_RELPATHS[@]}"; do
+for relpath in ${GENERATED_RELPATHS[@]+"${GENERATED_RELPATHS[@]}"}; do
     dest="$OUT_ROOT/$relpath"
     mkdir -p "$(dirname "$dest")"
     cp "$STAGE_DIR/$relpath" "$dest"

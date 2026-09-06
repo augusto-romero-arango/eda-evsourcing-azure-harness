@@ -19,6 +19,12 @@
 #   [check] --check en sus tres estados: al dia, distinta, huerfana (con
 #         toleracion de archivos sin marcador, CA-5).
 #   [escaping] id con muchos guiones y description con ':' y comillas.
+#   [mcp-capability] CA-2: la capacidad `mcp` no tiene mapeo Claude definido y
+#         aborta con ese motivo, sin escribir nada.
+#   [no-sources] Regresion bash 3.2: sin argumentos (el modo por defecto) la
+#         lista de fuentes esta vacia hoy, y expandir un array vacio bajo
+#         `set -u` aborta con "unbound variable" hasta bash 4.4.
+#   [check-no-write] CA-5: --check no crea ni el directorio de salida.
 #
 # Uso: .claude/scripts/tests/test-generate-internal-adapters.sh
 # Exit code: 0 si todos los checks pasan, 1 si alguno falla.
@@ -414,6 +420,77 @@ if grep -qF 'description: "Hace X: paso \"importante\" para el usuario."' "$OUT_
     pass "description con ':' y comillas escapado correctamente (OpenCode)"
 else
     fail "description mal escapado (OpenCode)"
+fi
+
+echo ""
+echo "[mcp-capability] CA-2: la capacidad mcp aborta sin mapeo Claude definido"
+cat > "$SRC_DIR/mefisto-fx-mcp-capability.md" <<'EOF'
+---
+{
+  "kind": "agent",
+  "id": "mefisto-fx-mcp-capability",
+  "description": "Agente que declara la capacidad mcp, sin mapeo Claude (issue #854).",
+  "mode": "subagent",
+  "capabilities": ["read", "mcp"]
+}
+---
+
+Cuerpo.
+EOF
+OUT_MCP="$WORKDIR/out-mcp"
+OUT=$("$GENERATOR" --out "$OUT_MCP" "$SRC_DIR/mefisto-fx-mcp-capability.md" 2>&1)
+RC=$?
+if [ "$RC" -ne 0 ]; then
+    pass "exit != 0 ($RC)"
+else
+    fail "exit 0 (deberia abortar)"
+fi
+if printf '%s' "$OUT" | grep -qF "capacidad mcp sin mapeo Claude definido"; then
+    pass "mensaje exacto de CA-2"
+else
+    fail "el mensaje no es el de CA-2. Salida: $OUT"
+fi
+if [ ! -e "$OUT_MCP/.claude" ] && [ ! -e "$OUT_MCP/.opencode" ]; then
+    pass "no escribio nada (.claude/.opencode no existen)"
+else
+    fail "escribio algo pese al abort"
+fi
+
+echo ""
+echo "[no-sources] sin argumentos, con la fuente neutral vacia, no revienta en bash 3.2"
+# `for x in "${a[@]}"` con `a` vacio es un "unbound variable" bajo `set -u` en
+# bash 3.2 (macOS). Hoy src/internal/{agents,commands} esta vacio (#865-#867 no
+# migraron nada), asi que el modo por defecto del generador es exactamente ese
+# caso vacio -- y seguira sin poder reventar cuando esas carpetas se pueblen.
+OUT=$("$GENERATOR" --out "$WORKDIR/out-nosources" 2>&1)
+RC=$?
+if printf '%s' "$OUT" | grep -q "unbound variable"; then
+    fail "aborto con 'unbound variable' (bash 3.2, array vacio bajo set -u). Salida: $OUT"
+else
+    pass "sin 'unbound variable' en la generacion por defecto (exit $RC)"
+fi
+OUT=$("$GENERATOR" --check --out "$WORKDIR/out-nosources" 2>&1)
+RC=$?
+if printf '%s' "$OUT" | grep -q "unbound variable"; then
+    fail "--check aborto con 'unbound variable'. Salida: $OUT"
+else
+    pass "sin 'unbound variable' en --check por defecto (exit $RC)"
+fi
+
+echo ""
+echo "[check-no-write] CA-5: --check no crea ni el directorio de salida"
+NEVER_DIR="$WORKDIR/never-created"
+OUT=$("$GENERATOR" --check --out "$NEVER_DIR" "$SRC_DIR/mefisto-fx-agent-basic.md" 2>&1)
+RC=$?
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qF ".claude/agents/mefisto-fx-agent-basic.md: faltante"; then
+    pass "reporta 'faltante' con exit != 0"
+else
+    fail "no reporto 'faltante'. exit=$RC salida: $OUT"
+fi
+if [ ! -e "$NEVER_DIR" ]; then
+    pass "no creo el directorio de salida"
+else
+    fail "creo '$NEVER_DIR' pese a --check (CA-5: no escribe nada)"
 fi
 
 echo ""
