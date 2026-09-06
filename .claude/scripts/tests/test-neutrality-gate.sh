@@ -5,22 +5,28 @@
 # Cubre:
 #   [pre]           El gate existe, es ejecutable y tiene sintaxis valida.
 #   [clean]         Un arbol positivo (shims conformes, salidas con marcador,
-#                   una excepcion de la allowlist realmente filtrada, sin
-#                   fugas) termina en exit 0 sin imprimir nada.
+#                   una excepcion de la allowlist realmente filtrada, prosa
+#                   "opencode runtime" que NO es invocacion, sin fugas)
+#                   termina en exit 0 sin imprimir nada.
 #   [R1]-[R4]       Un negativo por regla, cada uno con la linea
 #                   "<ruta>:<linea>: <regla>" esperada.
 #   [adapters-check] Una divergencia de generate-internal-adapters.sh --check
 #                   se reemite como "<ruta>: <estado>: adapters-check".
 #   [allowlist]     Una entrada de la allowlist sin 'motivo' hace abortar el
 #                   gate (exit 1) antes de escanear nada.
+#   [allowlist-origin] La allowlist se carga desde el gate (o --allowlist),
+#                   nunca desde --root: un arbol que se exonera a si mismo en
+#                   su propia allowlist sigue reportado (MEF-ADR-0019 E).
 #   [perf]          CA-3 con margen: una corrida completa contra el repo real
 #                   termina en menos de 20s (el limite de CA-3 es 10s),
 #                   exit 0 o 1 indistinto.
 #
 # Los arboles de fixture son repos git minimos bajo un directorio temporal
-# propio (nunca el repo real, salvo en [perf]): cada uno solo necesita los
-# archivos en el INDICE (`git add -A`, sin commit -- `git ls-files` no exige
-# un commit) para que el gate los vea.
+# propio (nunca el repo real, salvo en [perf] y en la allowlist real que usa
+# [allowlist-origin]): cada uno solo necesita los archivos en el INDICE
+# (`git add -A`, sin commit -- `git ls-files` no exige un commit) para que el
+# gate los vea. Cada arbol lleva su allowlist en la ruta canonica y se la pasa
+# al gate con --allowlist, porque el gate NO la lee de --root.
 #
 # Uso: .claude/scripts/tests/test-neutrality-gate.sh
 # Exit code: 0 si todos los checks pasan, 1 si alguno falla.
@@ -111,8 +117,10 @@ git_add_all() {
     git -C "$1" add -A >/dev/null 2>&1
 }
 
+# run_gate <dir> -- corre el gate sobre el arbol <dir> CON la allowlist de ese
+# mismo arbol (el gate no la toma de --root; ver [allowlist-origin]).
 run_gate() {
-    "$GATE" --root "$1" 2>&1
+    "$GATE" --root "$1" --allowlist "$1/src/internal/contract/neutrality-allowlist.json" 2>&1
 }
 
 echo "[pre] el gate existe, es ejecutable y tiene sintaxis valida"
@@ -126,12 +134,11 @@ if [ -x "$GATE" ]; then
 else
     fail "no tiene el bit ejecutable"
 fi
-if bash -n "$GATE" 2>/tmp/mefisto-neutrality-gate-syntax.$$; then
+if bash -n "$GATE" 2>"$SCRATCH/syntax.err"; then
     pass "sintaxis bash valida"
 else
-    fail "error de sintaxis: $(cat /tmp/mefisto-neutrality-gate-syntax.$$)"
+    fail "error de sintaxis: $(cat "$SCRATCH/syntax.err")"
 fi
-rm -f /tmp/mefisto-neutrality-gate-syntax.$$
 
 echo ""
 echo "[clean] arbol positivo: shims conformes, salidas con marcador, excepcion de la allowlist filtrada, sin fugas -> exit 0 sin salida"
@@ -148,7 +155,7 @@ write_allowlist "$DIR_CLEAN" '{
 }'
 mkdir -p "$DIR_CLEAN/src/internal/scripts/lib"
 printf '#!/usr/bin/env bash\n# menciona el modelo sonnet a proposito (cubierto por la excepcion)\necho ok\n' > "$DIR_CLEAN/src/internal/scripts/lib/fx-allowed-model.sh"
-printf '#!/usr/bin/env bash\necho ok\n' > "$DIR_CLEAN/src/internal/scripts/lib/fx-clean.sh"
+printf '#!/usr/bin/env bash\n# el opencode runtime lo resuelve el runner neutral: esto es prosa, no una invocacion\necho ok\n' > "$DIR_CLEAN/src/internal/scripts/lib/fx-clean.sh"
 printf 'doctrina neutral de ejemplo, sin fugas.\n' > "$DIR_CLEAN/AGENTS.md"
 write_generic_shim "$DIR_CLEAN/.claude/scripts/fx-shim.sh"
 write_common_shim "$DIR_CLEAN/.claude/scripts/_mefisto-common.sh"
@@ -265,6 +272,32 @@ if [ "$BAD_ALLOW_RC" -ne 0 ] && printf '%s\n' "$BAD_ALLOW_OUT" | grep -qi "motiv
     pass "aborta (exit $BAD_ALLOW_RC) citando 'motivo'"
 else
     fail "no aborto citando 'motivo'. exit=$BAD_ALLOW_RC salida: $BAD_ALLOW_OUT"
+fi
+
+echo ""
+echo "[allowlist-origin] la allowlist se carga desde el gate, nunca desde --root (MEF-ADR-0019 seccion E)"
+DIR_ORIGIN="$(new_tree allowlist-origin)"
+# El arbol trae una allowlist que exoneraria su propia fuga -- exactamente lo
+# que un writer podria intentar desde su worktree...
+write_allowlist "$DIR_ORIGIN" '{
+  "scope_excluded": [],
+  "exceptions": [
+    { "path": "src/internal/scripts/lib/fx-self-exempt.sh", "rules": ["ALL"], "motivo": "Fixture: un PR que intenta exonerarse a si mismo desde su propio worktree." }
+  ],
+  "not_migrated": []
+}'
+write_clean_generator "$DIR_ORIGIN"
+mkdir -p "$DIR_ORIGIN/src/internal/scripts/lib"
+printf '#!/usr/bin/env bash\n# usa el modelo sonnet para esta tarea\necho ok\n' > "$DIR_ORIGIN/src/internal/scripts/lib/fx-self-exempt.sh"
+git_add_all "$DIR_ORIGIN"
+# ...pero el gate, invocado SIN --allowlist, usa la que acompana al script (la
+# real del repo), que no conoce esa excepcion: la fuga se reporta igual.
+ORIGIN_OUT="$("$GATE" --root "$DIR_ORIGIN" 2>&1)"
+ORIGIN_RC=$?
+if [ "$ORIGIN_RC" -ne 0 ] && printf '%s\n' "$ORIGIN_OUT" | grep -qE '^src/internal/scripts/lib/fx-self-exempt\.sh:[0-9]+: R1$'; then
+    pass "ignora la allowlist del --root y reporta la fuga con la allowlist propia del gate"
+else
+    fail "el gate consulto la allowlist del --root (o no reporto la fuga). exit=$ORIGIN_RC salida: $ORIGIN_OUT"
 fi
 
 echo ""
