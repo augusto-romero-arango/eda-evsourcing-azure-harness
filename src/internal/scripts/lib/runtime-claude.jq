@@ -6,8 +6,12 @@
 # `--rawfile stderr_text` (stderr crudo del proceso, "" si no hubo).
 #
 # Mapeo (CA-2): `assistant` con bloques `text` -> `message{role:"assistant"}`;
-# bloques `tool_use` -> `tool.started{tool, input_summary:null}`; `user` con
-# `tool_result` -> `tool.completed{tool, ok, duration_ms}` (tool resuelto por
+# bloques `tool_use` -> `tool.started{tool, input_summary}` (issue #863: para
+# los tools de archivo -- Edit, Write, Read -- `input_summary` es
+# `.input.file_path`; para `Bash`, los primeros 80 caracteres de
+# `.input.command`; para cualquier otro tool, `null` -- nunca se inventa un
+# valor que el tool_use no trae); `user` con `tool_result` ->
+# `tool.completed{tool, ok, duration_ms}` (tool resuelto por
 # emparejamiento tool_use.id <-> tool_result.tool_use_id, mismo patron que
 # compute_stage_metrics en _mefisto-common.sh); `result` -> terminal
 # (run.completed/run.failed). El evento `system`/`init` NUNCA se re-emite como
@@ -72,6 +76,15 @@ def parse_ts:
 # encabezado y si arruina la legibilidad de todo el log neutral.
 def clip: if . == null then null else (tostring | .[0:300]) end;
 
+# input_summary de un tool_use (issue #863): ruta relativa al cwd para los
+# tools de archivo (Edit/Write/Read comparten el parametro `file_path`),
+# primeros 80 caracteres del comando para Bash, `null` para cualquier otro
+# tool -- nunca se inventa un resumen que el tool_use no trae.
+def claude_input_summary($name; $input):
+    if ($name == "Edit" or $name == "Write" or $name == "Read") then ($input.file_path // null)
+    elif ($name == "Bash") then (($input.command // null) | if . == null then null else (tostring | .[0:80]) end)
+    else null end;
+
 (now | todate) as $fallback_ts
 | ($model_param | if . == "" then null else . end) as $model_param_or_null
 | ($exit_code | if . == "" then null else (tonumber? // null) end) as $exit
@@ -111,7 +124,8 @@ def clip: if . == null then null else (tostring | .[0:300]) end;
           | if .type == "text" then
                 {v: 1, type: "message", ts: ($ev.timestamp // $fallback_ts), role: "assistant", text: (.text // "")}
             elif .type == "tool_use" then
-                {v: 1, type: "tool.started", ts: ($ev.timestamp // $fallback_ts), tool: (.name // "?"), input_summary: null}
+                {v: 1, type: "tool.started", ts: ($ev.timestamp // $fallback_ts), tool: (.name // "?"),
+                 input_summary: (claude_input_summary(.name // "?"; .input // {}))}
             else empty end
       elif ($ev.type == "user") then
           ($ev.message.content // [])[]?

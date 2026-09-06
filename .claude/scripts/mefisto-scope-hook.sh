@@ -30,6 +30,15 @@
 # worktree o fallo propio (jq ausente, _mefisto-common.sh no sourceable): este
 # hook nunca es la fuente de verdad, solo un aviso -- el gate final
 # (validate_mefisto_scope_changes) sigue siendo el juez.
+#
+# SOLO APLICA A SESIONES CLAUDE CODE (issue #863): este mecanismo de hooks
+# (`.claude/settings.json` -> PostToolUse) es propio de Claude Code. En
+# OpenCode el equivalente de "feedback temprano de scope" NO es un hook
+# portado -- es el `edit` deny-por-defecto del bloque `permission` generado
+# desde capacidades neutrales (issue #862): OpenCode rechaza la escritura
+# ANTES de que ocurra, mas fuerte que este aviso posterior. Ninguno de los
+# dos reemplaza el gate final: `validate_mefisto_scope_changes` sigue siendo
+# el juez en ambos runtimes (MEF-ADR-0031).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
