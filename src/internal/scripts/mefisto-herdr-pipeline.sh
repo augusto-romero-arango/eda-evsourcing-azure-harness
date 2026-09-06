@@ -17,11 +17,14 @@
 # esta interfaz trabaja DENTRO del workspace herdr actual: reutiliza (o crea
 # con `herdr pane split`) un pane de ejecucion al lado del pane que despacha,
 # corre el sub-pipeline en background con su reporte a un log, y muestra en
-# el pane el visor en vivo (mefisto-stream-watch.sh, #434 -- su neutralizacion
-# de fuente de datos fue #878, su traslado de ubicacion no es parte de ningun
-# issue: sigue en .claude/scripts/) que sigue al agente en curso -- un solo
-# pane para toda la secuencia de agentes del issue. Al terminar (o si el
-# pipeline muere antes de escribir traza) el pane muestra el reporte final.
+# el mismo pane -- intercalados -- el visor en vivo (mefisto-stream-watch.sh,
+# #434 -- su neutralizacion de fuente de datos fue #878, su traslado de
+# ubicacion no es parte de ningun issue: sigue en .claude/scripts/) que sigue
+# al agente en curso, y un `tail -f` del .report.log que muestra en vivo los
+# hitos del propio pipeline -- creacion/merge de PR, resumen final -- que el
+# visor no cubre (issue #926). Un solo pane para toda la secuencia de agentes
+# del issue Y sus hitos de entrega. Al terminar, el pane muestra solo el
+# banner final y la ruta del .report.log completo: ya se vio todo en vivo.
 #
 # --verbose se acepta y se consume sin efecto: en herdr el visor es siempre
 # visible (era el opt-in del modo tmux, issue #435). --if-exists tampoco
@@ -205,7 +208,7 @@ dispatch_to_pane() {
         || abort "No se pudo lanzar el pipeline en el pane $pane (herdr pane run fallo)."
 
     success "Pipeline '$title' corriendo en el pane $pane de este workspace."
-    log "El pane muestra el visor en vivo del agente; el reporte completo queda en $LOG_DIR_ABS/."
+    log "El pane muestra en vivo el visor del agente y el stdout del pipeline; el reporte completo queda en $LOG_DIR_ABS/."
     log "No hay sesion que adjuntar: el pane ya esta visible en el workspace (barra lateral de herdr)."
 }
 
@@ -215,8 +218,11 @@ dispatch_to_pane() {
 #
 # Mismo ciclo que el runner publicado: renombra el pane, lanza <cmd> en
 # background con stdout+stderr al reporte, muestra el visor filtrado a los
-# issues de ESTA corrida y a streams nacidos despues de ahora, y al terminar
-# corta el visor, imprime el reporte y renombra el pane [ok]/[fallo].
+# issues de ESTA corrida y a streams nacidos despues de ahora, y en paralelo
+# sigue en vivo el propio .report.log con `tail -f` (issue #926) -- asi los
+# hitos del pipeline (PR creado, merge, resumen) se ven en el pane mientras
+# corre, no solo al final. Al terminar corta el visor y el tail, imprime el
+# banner final y renombra el pane [ok]/[fallo].
 cmd_pane_runner() {
     local title="" issues_csv=""
     while [ $# -gt 0 ]; do
@@ -278,6 +284,12 @@ cmd_pane_runner() {
         esac
     done < <(env)
 
+    # Se pre-crea el archivo ANTES de lanzar el pipeline en background: el
+    # `tail -f` de abajo arranca inmediatamente despues y necesita que el
+    # archivo ya exista para no fallar con "No such file" por una carrera
+    # contra el fork del pipeline (issue #926).
+    : > "$report_log"
+
     # $CAFF se expande sin comillas a proposito (0 o 2 palabras, "caffeinate -i"):
     # aplica el prefijo sin duplicar el lanzamiento en una rama if/else por cada
     # valor posible (issue #800). caffeinate exec-a el comando en su lugar (ver
@@ -286,6 +298,14 @@ cmd_pane_runner() {
     # shellcheck disable=SC2086
     $CAFF env "${env_unset[@]}" "$@" >"$report_log" 2>&1 &
     local pipe_pid=$!
+
+    # tail -f en vivo del propio .report.log (issue #926): el visor cubre la
+    # actividad del agente, pero los hitos del pipeline (creacion/merge de PR,
+    # resumen final) solo se escriben ahi, nunca al stream que lee el visor.
+    # Se elige tail -f sobre tee/un pipe para no alterar $!/wait/rc y no
+    # depender de que todos los descendientes del pipeline cierren su stdout.
+    tail -n +1 -f "$report_log" &
+    local tail_pid=$!
 
     local viewer_pid=""
     # El visor todavia vive en .claude/scripts/ (su neutralizacion de fuente
@@ -299,10 +319,11 @@ cmd_pane_runner() {
     fi
     viewer_pid=$!
 
-    # Ctrl+C en el pane ya llega a pipeline y visor (comparten el grupo de
-    # foreground); el trap solo asegura la limpieza y deja constancia.
+    # Ctrl+C en el pane ya llega a pipeline, tail y visor (comparten el grupo
+    # de foreground); el trap solo asegura la limpieza y deja constancia.
     trap '
         kill '"$pipe_pid"' 2>/dev/null || true
+        kill '"$tail_pid"' 2>/dev/null || true
         kill '"$viewer_pid"' 2>/dev/null || true
         [ -n "${HERDR_PANE_ID:-}" ] && herdr pane rename "$HERDR_PANE_ID" "[cortado] '"$title"'" >/dev/null 2>&1 || true
         echo ""
@@ -314,7 +335,13 @@ cmd_pane_runner() {
     wait "$pipe_pid" || rc=$?
     trap - INT TERM
 
+    # Drenaje del tail -f antes de matarlo: en macOS (BSD, kqueue) no hace
+    # falta, pero en Linux (GNU tail, con polling) sin este respiro las
+    # ultimas lineas del reporte podrian no llegar a imprimirse en el pane.
+    sleep 1
+    kill "$tail_pid" 2>/dev/null || true
     kill "$viewer_pid" 2>/dev/null || true
+    wait "$tail_pid" 2>/dev/null || true
     wait "$viewer_pid" 2>/dev/null || true
 
     echo ""
@@ -323,21 +350,8 @@ cmd_pane_runner() {
     else
         echo -e "${RED}${BOLD}=== $title: pipeline FALLO (exit $rc) ===${NC}"
     fi
+    echo -e "${CYAN}Reporte completo: $report_log${NC}"
     echo ""
-
-    if [ -f "$report_log" ]; then
-        local total_lines
-        total_lines=$(wc -l < "$report_log" | tr -d ' ')
-        if [ "$total_lines" -le 60 ]; then
-            cat "$report_log"
-        else
-            echo -e "${YELLOW}(ultimas 40 lineas del reporte; completo en $report_log)${NC}"
-            echo ""
-            tail -n 40 "$report_log"
-        fi
-    else
-        echo "(el pipeline no llego a escribir reporte)"
-    fi
 
     if [ -n "${HERDR_PANE_ID:-}" ]; then
         if [ "$rc" -eq 0 ]; then
