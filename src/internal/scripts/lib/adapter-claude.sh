@@ -133,7 +133,7 @@ claude_render() {
     # `model` (issue #857): solo si la fuente declara `profile`, y solo la
     # tabla fija del adaptador (adapter_claude_default_model) -- nunca el
     # mapping local de .mefisto/models.json, que es estado de maquina y
-    # rompería el determinismo de esta salida versionada entre maquinas.
+    # romperia el determinismo de esta salida versionada entre maquinas.
     local model_q=""
     local has_profile
     has_profile="$(printf '%s' "$instance_json" | jq -r 'if (.profile != null) then "1" else "0" end')"

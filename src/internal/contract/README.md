@@ -148,7 +148,7 @@ si esa tabla devuelve un valor no vacio:
 | `deep` | (se omite el campo -- hereda el modelo activo) | (nunca se emite) |
 
 El generador no lee `.mefisto/models.json` a proposito: es estado de maquina,
-y leerlo rompería el determinismo (misma fuente -> mismos bytes) que sostiene
+y leerlo romperia el determinismo (misma fuente -> mismos bytes) que sostiene
 su modo `--check`. Ese mapping local solo interviene en **tiempo de
 ejecucion**, via `mefisto_resolve_model` (`src/internal/scripts/lib/
 mefisto-models.sh`) -- la funcion que usaran los pipelines headless (#859,

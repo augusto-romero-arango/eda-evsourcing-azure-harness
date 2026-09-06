@@ -23,6 +23,12 @@
 #         campo, via jsonschema-lite.jq.
 #   [12]  El generador emite/omite `model:` segun CA-3: fast/balanced en
 #         Claude, nada en deep ni en OpenCode (ningun perfil).
+#   [13]  El mapping local de OpenCode resuelve aunque el adaptador no tenga
+#         tabla; sin entrada, OpenCode sigue heredando.
+#   [14]  Un valor de `agents` que no es un string no vacio aborta -- el guard
+#         que cubre lo que jsonschema-lite.jq no puede expresar (CA-4).
+#   [15]  Sin el adaptador sourceado, aborta con motivo -- nunca con
+#         MEFISTO_MODELS_ERROR vacio (CA-5).
 #
 # Uso: .claude/scripts/tests/test-mefisto-models.sh
 # Exit code: 0 si todos los checks pasan, 1 si alguno falla.
@@ -115,16 +121,20 @@ echo "[2] mapping local (paso 2): profiles.<profile> gana sobre la tabla del ada
 { "claude": { "profiles": { "fast": "claude-custom-fast", "deep": "claude-custom-deep" } } }
 EOF
     R=$(mefisto_resolve_model claude mefisto-planner fast)
-    [ "$R" = "claude-custom-fast" ] && echo PASS || echo "FAIL:$R"
+    [ "$R" = "claude-custom-fast" ] && echo PASS1 || echo "FAIL1:$R"
     R=$(mefisto_resolve_model claude mefisto-planner deep)
-    [ "$R" = "claude-custom-deep" ] && echo PASS || echo "FAIL:$R"
+    [ "$R" = "claude-custom-deep" ] && echo PASS2 || echo "FAIL2:$R"
     R=$(mefisto_resolve_model claude mefisto-planner balanced)
-    [ "$R" = "sonnet" ] && echo PASS || echo "FAIL:$R"
+    [ "$R" = "sonnet" ] && echo PASS3 || echo "FAIL3:$R"
 ) > "$SCRIPT_DIR/.tmp-out-2" 2>&1
 while IFS= read -r line; do
     case "$line" in
-        PASS) pass "mapping local por profile aplica y cae a la tabla cuando no hay entrada" ;;
-        FAIL:*) fail "mapping local por profile -- obtenido '${line#FAIL:}'" ;;
+        PASS1) pass "profiles.fast gana sobre la tabla del adaptador (haiku)" ;;
+        FAIL1:*) fail "profiles.fast deberia ganar -- obtenido '${line#FAIL1:}'" ;;
+        PASS2) pass "profiles.deep resuelve donde la tabla del adaptador hereda" ;;
+        FAIL2:*) fail "profiles.deep deberia resolver -- obtenido '${line#FAIL2:}'" ;;
+        PASS3) pass "un perfil sin entrada en el mapping cae en la tabla del adaptador" ;;
+        FAIL3:*) fail "deberia caer en la tabla -- obtenido '${line#FAIL3:}'" ;;
     esac
 done < "$SCRIPT_DIR/.tmp-out-2"
 rm -f "$SCRIPT_DIR/.tmp-out-2"
@@ -437,6 +447,71 @@ if grep -q '^model:' "$OUT_DIR/.opencode/agents/mefisto-fx-models-balanced.md" 2
 else
     pass "mefisto-fx-models-balanced: OpenCode sin model: (nunca lo emite)"
 fi
+
+echo ""
+echo "[13] mapping local de OpenCode por profile (la tabla del adaptador nunca lo tapa)"
+(
+    source "$LIB_DIR/adapter-claude.sh"
+    source "$LIB_DIR/adapter-opencode.sh"
+    source "$MODELS_LIB"
+    TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+    export MEFISTO_MODELS_FILE="$TMP/models.json"
+    cat > "$MEFISTO_MODELS_FILE" <<'EOF'
+{ "opencode": { "profiles": { "balanced": "vendor-x/modelo-medio" } } }
+EOF
+    R=$(mefisto_resolve_model opencode mefisto-planner balanced)
+    [ "$R" = "vendor-x/modelo-medio" ] && echo PASS1 || echo "FAIL1:$R"
+    R=$(mefisto_resolve_model opencode mefisto-planner fast)
+    [ -z "$R" ] && echo PASS2 || echo "FAIL2:$R"
+) > "$SCRIPT_DIR/.tmp-out-13" 2>&1
+while IFS= read -r line; do
+    case "$line" in
+        PASS1) pass "opencode profiles.balanced resuelve desde el mapping local" ;;
+        FAIL1:*) fail "opencode profiles.balanced -- obtenido '${line#FAIL1:}'" ;;
+        PASS2) pass "opencode sin entrada en el mapping sigue heredando (sin tabla)" ;;
+        FAIL2:*) fail "opencode deberia heredar -- obtenido '${line#FAIL2:}'" ;;
+    esac
+done < "$SCRIPT_DIR/.tmp-out-13"
+rm -f "$SCRIPT_DIR/.tmp-out-13"
+
+echo ""
+echo "[14] valor de 'agents' que no es un string no vacio aborta (CA-4, guard fuera del schema)"
+(
+    source "$LIB_DIR/adapter-claude.sh"
+    source "$LIB_DIR/adapter-opencode.sh"
+    source "$MODELS_LIB"
+    TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+    export MEFISTO_MODELS_FILE="$TMP/models.json"
+    cat > "$MEFISTO_MODELS_FILE" <<'EOF'
+{ "claude": { "agents": { "mefisto-planner": { "model": "anidado" } } } }
+EOF
+    mefisto_resolve_model claude mefisto-planner fast >/dev/null
+    echo "rc=$? err=[$MEFISTO_MODELS_ERROR]"
+) > "$SCRIPT_DIR/.tmp-out-14"
+CONTENT=$(cat "$SCRIPT_DIR/.tmp-out-14")
+if printf '%s' "$CONTENT" | grep -q "rc=1" && printf '%s' "$CONTENT" | grep -qF "claude.agents.mefisto-planner: se esperaba un string no vacio"; then
+    pass "valor de agente no-string -- aborta citando la clave exacta"
+else
+    fail "obtenido: $CONTENT"
+fi
+rm -f "$SCRIPT_DIR/.tmp-out-14"
+
+echo ""
+echo "[15] adaptador no sourceado aborta con motivo (nunca con MEFISTO_MODELS_ERROR vacio)"
+(
+    source "$MODELS_LIB"
+    TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+    export MEFISTO_MODELS_FILE="$TMP/no-existe.json"
+    mefisto_resolve_model claude mefisto-planner fast >/dev/null 2>&1
+    echo "rc=$? err=[$MEFISTO_MODELS_ERROR]"
+) > "$SCRIPT_DIR/.tmp-out-15"
+CONTENT=$(cat "$SCRIPT_DIR/.tmp-out-15")
+if printf '%s' "$CONTENT" | grep -q "rc=1" && printf '%s' "$CONTENT" | grep -qF "adapter_claude_default_model: no esta disponible"; then
+    pass "sin adapter-claude.sh sourceado -- aborta con '<origen>: <motivo>'"
+else
+    fail "obtenido: $CONTENT"
+fi
+rm -f "$SCRIPT_DIR/.tmp-out-15"
 
 echo ""
 echo "RESULTADO: $PASS pasaron, $FAIL fallaron"

@@ -32,6 +32,11 @@ _MEFISTO_MODELS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _MEFISTO_MODELS_JSONSCHEMA_LITE="$_MEFISTO_MODELS_LIB_DIR/jsonschema-lite.jq"
 : "${MEFISTO_MODELS_SCHEMA_FILE:=$_MEFISTO_MODELS_LIB_DIR/../../contract/models.schema.json}"
 
+# Inicializada al sourcear para que un caller bajo `set -u` pueda leerla
+# (p. ej. abort "$MEFISTO_MODELS_ERROR") aunque todavia no haya invocado
+# mefisto_resolve_model -- mismo contrato que MEFISTO_STAGE_MODELS_ERROR.
+MEFISTO_MODELS_ERROR=""
+
 # _mefisto_models_file
 #
 # Imprime la ruta resuelta del mapping local: MEFISTO_MODELS_FILE si esta
@@ -52,29 +57,58 @@ _mefisto_models_file() {
 
 # _mefisto_models_validate_local_file
 #
-# Valida el mapping local resuelto por _mefisto_models_file: JSON valido y
-# conforme a models.schema.json. Archivo ausente NUNCA es error (CA-5):
-# retorna 0 sin validar nada. Deja el motivo en MEFISTO_MODELS_ERROR si es
-# invalido -- por eso el caller (mefisto_resolve_model) la invoca DIRECTO,
-# nunca dentro de "$(...)": una asignacion a MEFISTO_MODELS_ERROR hecha en el
-# subshell que crea una sustitucion de comando se pierde al volver al shell
-# que la invoco, y el caller quedaria con el motivo vacio pese a retornar 1.
+# Valida el mapping local resuelto por _mefisto_models_file: JSON valido,
+# conforme a models.schema.json, y con valores de `agents` que sean strings no
+# vacios. Archivo ausente NUNCA es error (CA-5): retorna 0 sin validar nada.
+# Deja el motivo en MEFISTO_MODELS_ERROR si es invalido -- por eso el caller
+# (mefisto_resolve_model) la invoca DIRECTO, nunca dentro de "$(...)": una
+# asignacion a MEFISTO_MODELS_ERROR hecha en el subshell que crea una
+# sustitucion de comando se pierde al volver al shell que la invoco, y el
+# caller quedaria con el motivo vacio pese a retornar 1.
+#
+# El chequeo de tipo de `agents` va aqui y no en el schema porque
+# jsonschema-lite.jq (#853) no implementa patternProperties: `agents` es un
+# mapa abierto <agent-id> -> string y el schema solo puede declararlo
+# "type": "object". CA-4 del issue #857 exige que esos valores sean strings,
+# asi que el contrato se completa con este guard -- sin el, un valor objeto o
+# numerico se propagaria como modelo tras pasar por `jq -r`.
 _mefisto_models_validate_local_file() {
-    local file raw errors_json errors_count
+    local file raw errors_json errors_count type_errors
     file="$(_mefisto_models_file)"
     [ -f "$file" ] || return 0
 
     raw="$(cat "$file" 2>/dev/null)"
-    if ! printf '%s' "$raw" | jq -e '.' >/dev/null 2>&1; then
+    if ! printf '%s' "$raw" | jq empty >/dev/null 2>&1; then
         MEFISTO_MODELS_ERROR="$file: no es JSON valido"
+        return 1
+    fi
+
+    if [ ! -f "$MEFISTO_MODELS_SCHEMA_FILE" ]; then
+        MEFISTO_MODELS_ERROR="$MEFISTO_MODELS_SCHEMA_FILE: no existe el schema del mapping local"
         return 1
     fi
 
     errors_json="$(jq -n --argjson schema "$(cat "$MEFISTO_MODELS_SCHEMA_FILE")" \
         --argjson instance "$raw" -f "$_MEFISTO_MODELS_JSONSCHEMA_LITE" 2>/dev/null)"
     errors_count="$(printf '%s' "$errors_json" | jq 'length' 2>/dev/null)"
-    if [ -z "$errors_count" ] || [ "$errors_count" != "0" ]; then
+    if [ -z "$errors_count" ]; then
+        MEFISTO_MODELS_ERROR="$file: la validacion contra $(basename "$MEFISTO_MODELS_SCHEMA_FILE") no produjo resultado (jq fallo)"
+        return 1
+    fi
+    if [ "$errors_count" != "0" ]; then
         MEFISTO_MODELS_ERROR="$file: $(printf '%s' "$errors_json" | jq -r 'join("; ")' 2>/dev/null)"
+        return 1
+    fi
+
+    type_errors="$(printf '%s' "$raw" | jq -r '
+        [ to_entries[]
+          | .key as $rt
+          | ((.value.agents // {}) | to_entries[])
+          | select(((.value | type) != "string") or (.value == ""))
+          | "\($rt).agents.\(.key): se esperaba un string no vacio, encontrado \(.value | tojson)" ]
+        | join("; ")' 2>/dev/null)"
+    if [ -n "$type_errors" ]; then
+        MEFISTO_MODELS_ERROR="$file: $type_errors"
         return 1
     fi
     return 0
@@ -86,9 +120,9 @@ _mefisto_models_validate_local_file() {
 # si no hay entrada de agente, para (runtime, profile) -- CA-2 paso 2. Cadena
 # vacia si el archivo no existe o no fija nada para esta clave. Asume que
 # _mefisto_models_validate_local_file ya corrio con exito -- no vuelve a
-# comprobar JSON/schema, solo extrae el valor. Segura de invocar dentro de
-# "$(...)": a diferencia de la validacion, aqui no hay ningun motivo de error
-# que perder en un subshell.
+# comprobar JSON/schema/tipos, solo extrae el valor. Segura de invocar dentro
+# de "$(...)": a diferencia de la validacion, aqui no hay ningun motivo de
+# error que perder en un subshell.
 _mefisto_models_local_lookup() {
     local runtime="$1" agent_id="$2" profile="$3"
     local file raw val
@@ -114,18 +148,16 @@ _mefisto_models_local_lookup() {
 # antemano (adapter-claude.sh / adapter-opencode.sh). No sourcea esos
 # archivos por si misma: mefisto-models.sh no asume cual de los dos runtimes
 # esta en juego, y sourcear ambos incondicionalmente acoplaria esta libreria
-# neutral a la implementacion concreta de cada adaptador. El caso `*)` no
-# ocurre en la practica -- mefisto_resolve_model ya valido <runtime> antes de
-# llamar aqui -- por eso no deja motivo en MEFISTO_MODELS_ERROR (se pierde en
-# el subshell de "$(...)" igual que en _mefisto_models_local_lookup, pero sin
-# consecuencia porque este camino es inalcanzable).
+# neutral a la implementacion concreta de cada adaptador. Retorna 1 sin
+# imprimir nada si <runtime> no tiene adaptador conocido o si su funcion de
+# tabla no esta sourceada; el motivo lo redacta el caller
+# (mefisto_resolve_model), porque una asignacion hecha aqui se perderia en el
+# subshell de la sustitucion de comando que la invoca.
 _mefisto_models_adapter_default() {
     local runtime="$1" profile="$2"
-    case "$runtime" in
-        claude)   adapter_claude_default_model "$profile" ;;
-        opencode) adapter_opencode_default_model "$profile" ;;
-        *)        return 1 ;;
-    esac
+    local fn="adapter_${runtime}_default_model"
+    command -v "$fn" >/dev/null 2>&1 || return 1
+    "$fn" "$profile"
 }
 
 # mefisto_resolve_model <runtime> <agent-id> <profile>
@@ -133,11 +165,11 @@ _mefisto_models_adapter_default() {
 # Imprime por stdout el modelo a usar, o cadena vacia (= heredar). Retorna 1
 # y deja el motivo en MEFISTO_MODELS_ERROR (formato "<origen>: <motivo>",
 # listo para pasarle a abort()) si <profile> no esta en el vocabulario
-# cerrado fast|balanced|deep, si <runtime> no es claude|opencode, o si el
-# mapping local es invalido (CA-5) -- en ningun caso imprime nada por stdout
-# cuando retorna 1. El caller debe invocarla para TODOS los stages al
-# arrancar, antes de crear el worktree del issue (mismo contrato que
-# parse_stage_models, issue #709).
+# cerrado fast|balanced|deep, si <runtime> no es claude|opencode, si el
+# adaptador de ese runtime no esta sourceado, o si el mapping local es
+# invalido (CA-5) -- en ningun caso imprime nada por stdout cuando retorna 1.
+# El caller debe invocarla para TODOS los stages al arrancar, antes de crear
+# el worktree del issue (mismo contrato que parse_stage_models, issue #709).
 mefisto_resolve_model() {
     local runtime="$1" agent_id="$2" profile="$3"
     MEFISTO_MODELS_ERROR=""
@@ -162,7 +194,10 @@ mefisto_resolve_model() {
     local model
     model="$(_mefisto_models_local_lookup "$runtime" "$agent_id" "$profile")"
     if [ -z "$model" ]; then
-        model="$(_mefisto_models_adapter_default "$runtime" "$profile")" || return 1
+        if ! model="$(_mefisto_models_adapter_default "$runtime" "$profile")"; then
+            MEFISTO_MODELS_ERROR="adapter_${runtime}_default_model: no esta disponible (sourcea src/internal/scripts/lib/adapter-${runtime}.sh antes de resolver modelos)"
+            return 1
+        fi
     fi
 
     if command -v resolve_stage_model >/dev/null 2>&1; then
