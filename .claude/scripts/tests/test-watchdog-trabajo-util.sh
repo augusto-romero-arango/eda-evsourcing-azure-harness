@@ -23,8 +23,9 @@
 #     procesos -- asi `kill -9 -$pid` SI alcanza a todo el arbol (CA-1); deja
 #     el evento TIMEOUT como sentencia independiente, nunca colgada de un
 #     `&&` (CA-2); y deja una senal en disco cuando dispara (CA-3).
-#   - agent_log_has_stream_cut / agent_failure_is_unrecoverable: derivan si el
-#     fallo admite recuperacion (CA-4).
+#   - agent_failure_is_unrecoverable: deriva si el fallo admite recuperacion
+#     (CA-4), leyendo `error.kind` del terminal del JSONL neutral via
+#     agent_events_error_kind (issue #906) en vez de grepear el log.
 #   - agent_work_is_trustworthy: el atajo has_work deja de aplicar cuando el
 #     fallo es irrecuperable (CA-4), y para el resto de fallos exige ademas
 #     que el resumen de stage exista y no este vacio -- evidencia de que el
@@ -72,7 +73,7 @@ trap cleanup EXIT
 # -------- Bloque pre: funciones existen --------
 
 echo "[pre] Las funciones nuevas estan definidas en _mefisto-common.sh"
-for fn in run_agent_with_watchdog agent_log_has_stream_cut agent_failure_is_unrecoverable agent_work_is_trustworthy agent_stream_completed_successfully; do
+for fn in run_agent_with_watchdog agent_events_error_kind agent_failure_is_unrecoverable agent_work_is_trustworthy agent_stream_completed_successfully; do
     if declare -F "$fn" >/dev/null; then
         pass "$fn definida"
     else
@@ -166,6 +167,36 @@ else
     fail "C-5: quedaron $ORPHANS 'sleep $C_TIMEOUT' huerfanos tras cancelar el watchdog"
 fi
 
+# C-6/C-7: la senal NO puede aparecer despues de que el proceso termino solo.
+# Un watchdog que sobrevive a su `sleep` alcanza a hacer su `touch` en la
+# ventana entre `wait` y el `kill` que lo cancela, y deja la senal de un stage
+# que en realidad termino bien -- el caller la lee como TIMEOUT y descarta
+# trabajo bueno. Se manifesto como "TIMEOUT (0s, exit 0)" en el bloque G de
+# test-tooling-state-paths.sh cuando el CLI responde en menos de un segundo.
+# El arreglo: la rama que cancela el watchdog (la que ya decidio que NO habia
+# disparado) borra cualquier senal posterior.
+C6_ESPURIAS=0
+for c6_i in $(seq 1 30); do
+    run_agent_with_watchdog "$WT_C" 3607 "$TMP/c6-log.txt" "$TMP/c6-stderr.txt" "$TMP/c6-events.log" "writer" "$TMP/c6-signal-$c6_i" \
+        /bin/echo hola >/dev/null
+    # Margen para que un watchdog perdido alcance a tocar la senal.
+    sleep 0.05
+    [ -f "$TMP/c6-signal-$c6_i" ] && C6_ESPURIAS=$((C6_ESPURIAS+1))
+done
+if [ "$C6_ESPURIAS" = "0" ]; then
+    pass "C-6: 30 corridas que terminan solas, cero senales de timeout espurias"
+else
+    fail "C-6: $C6_ESPURIAS de 30 corridas dejaron una senal espuria (se clasificarian TIMEOUT)"
+fi
+
+C7_LIB="$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh"
+C7_RM=$(grep -c 'rm -f "\$signal_file"' "$C7_LIB" 2>/dev/null || echo 0)
+if [ "$C7_RM" -ge 2 ]; then
+    pass "C-7: la rama que cancela el watchdog limpia la senal, ademas del rm de entrada"
+else
+    fail "C-7: falta el rm de la senal tras cancelar el watchdog (solo $C7_RM ocurrencia(s))"
+fi
+
 # -------- Fixtures de worktree para los bloques D y E --------
 
 WT="$TMP/worktree"
@@ -198,35 +229,44 @@ echo "[D] CA-4: unrecoverable (TIMEOUT / corte de stream) nunca se recupera"
 
 # Primero la DERIVACION del flag (agent_failure_is_unrecoverable): es la
 # decision que de hecho corta el paso a un PR truncado, asi que se testea la
-# funcion real y no una reimplementacion del criterio.
-LOG_LIMPIO="$TMP/d-log-limpio.txt"
-printf 'todo bien\nresumen escrito\n' > "$LOG_LIMPIO"
-LOG_CORTE="$TMP/d-log-corte.txt"
-printf 'trabajando...\nAPI Error: Connection closed mid-response\n' > "$LOG_CORTE"
+# funcion real y no una reimplementacion del criterio. Desde el issue #906
+# lee el JSONL neutral (el `<log_base>.events.jsonl` que run_agent escribe),
+# no un log de texto -- las fixtures son ahora terminales `run.failed` con
+# `error.kind` estructurado.
+EVENTS_LIMPIO="$TMP/d-events-limpio.jsonl"
+cat > "$EVENTS_LIMPIO" <<'EOF'
+{"v":1,"type":"message","ts":"2026-09-06T10:00:00Z","role":"assistant","text":"todo bien"}
+{"v":1,"type":"run.failed","ts":"2026-09-06T10:00:01Z","status":"failed","runtime":"claude","model":null,"session_id":null,"duration_ms":100,"tokens":{"input":null,"output":null},"cost_usd":null,"turns":null,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":{"kind":"nonzero_exit","detail":"stop_reason=? subtype=? exit=1"}}
+EOF
+EVENTS_CORTE="$TMP/d-events-corte.jsonl"
+cat > "$EVENTS_CORTE" <<'EOF'
+{"v":1,"type":"message","ts":"2026-09-06T10:00:00Z","role":"assistant","text":"trabajando..."}
+{"v":1,"type":"run.failed","ts":"2026-09-06T10:00:01Z","status":"failed","runtime":"claude","model":null,"session_id":null,"duration_ms":100,"tokens":{"input":null,"output":null},"cost_usd":null,"turns":null,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":{"kind":"stream_cut","detail":"el stream de Claude se corto a mitad de escritura"}}
+EOF
 
-if agent_failure_is_unrecoverable "true" "0" "$LOG_LIMPIO"; then
+if agent_failure_is_unrecoverable "true" "0" "$EVENTS_LIMPIO"; then
     pass "D-1: la senal de TIMEOUT marca irrecuperable aunque el exit code sea 0"
 else
     fail "D-1: timed_out=true deberia marcar irrecuperable"
 fi
 
-if agent_failure_is_unrecoverable "false" "137" "$LOG_LIMPIO"; then
-    pass "D-2: exit 137 (SIGKILL) marca irrecuperable sin mirar el log"
+if agent_failure_is_unrecoverable "false" "137" "$EVENTS_LIMPIO"; then
+    pass "D-2: exit 137 (SIGKILL) marca irrecuperable sin mirar el terminal"
 else
     fail "D-2: exit 137 deberia marcar irrecuperable"
 fi
 
-# El incidente literal de #416: exit code ordinario, log con el corte de stream.
-if agent_failure_is_unrecoverable "false" "1" "$LOG_CORTE"; then
-    pass "D-3: 'API Error: Connection closed mid-response' en el log marca irrecuperable (incidente #416)"
+# El incidente literal de #416: exit code ordinario, terminal con error.kind=stream_cut.
+if agent_failure_is_unrecoverable "false" "1" "$EVENTS_CORTE"; then
+    pass "D-3: error.kind == 'stream_cut' en el terminal marca irrecuperable (incidente #416)"
 else
     fail "D-3: el corte de stream a mitad de respuesta deberia marcar irrecuperable"
 fi
 
-if agent_failure_is_unrecoverable "false" "1" "$LOG_LIMPIO"; then
+if agent_failure_is_unrecoverable "false" "1" "$EVENTS_LIMPIO"; then
     fail "D-4 (control): un fallo ordinario NO deberia marcarse irrecuperable"
 else
-    pass "D-4 (control): fallo ordinario (exit 1, log sin corte) sigue siendo recuperable"
+    pass "D-4 (control): fallo ordinario (exit 1, error.kind != stream_cut) sigue siendo recuperable"
 fi
 
 # Y ahora el EFECTO del flag sobre el criterio de recuperacion.
@@ -331,9 +371,9 @@ else
 fi
 
 # El patron del corte de stream tiene que vivir en UN solo lugar
-# (agent_log_has_stream_cut). Si reaparece como grep inline en el pipeline,
-# etiqueta (STREAM_CUT) y decision (abortar) pueden desincronizarse en
-# silencio. Se busca la llamada a grep, no la frase suelta: el pipeline la
+# (agent_events_error_kind, issue #906). Si reaparece como grep inline en el
+# pipeline, etiqueta (STREAM_CUT) y decision (abortar) pueden desincronizarse
+# en silencio. Se busca la llamada a grep, no la frase suelta: el pipeline la
 # menciona legitimamente en un comentario.
 if grep -q 'grep -qE "Connection closed mid-response' "$PIPE"; then
     fail "F-5: quedo una copia inline del grep de corte de stream en el pipeline"
@@ -344,59 +384,57 @@ fi
 # -------- Bloque G: issue #446, una senal DESPUES del exito no es un timeout --------
 
 echo ""
-echo "[G] #446: un evento 'result' de exito en la traza exime al stage de irrecuperable"
+echo "[G] #446: un terminal 'run.completed{status:success}' exime al stage de irrecuperable"
 
-# Traza minima pero fiel a la forma real: una linea JSON por evento, el
-# `result` al final. Es lo que emite `claude --output-format stream-json`.
-STREAM_OK="$TMP/g-ok.stream.jsonl"
+# JSONL neutral (issue #906): agent_stream_completed_successfully/
+# agent_failure_is_unrecoverable ya no leen la traza cruda de Claude, sino el
+# `<log_base>.events.jsonl` que run_agent escribe traduciendola.
+EVENTS_OK="$TMP/g-ok.events.jsonl"
 {
-    echo '{"type":"system","subtype":"init","model":"claude-sonnet-5"}'
-    echo '{"type":"assistant","message":{"model":"claude-sonnet-5"}}'
-    echo '{"type":"result","subtype":"success","is_error":false,"duration_ms":217358,"num_turns":34}'
-} > "$STREAM_OK"
+    echo '{"v":1,"type":"message","ts":"2026-07-28T10:00:00Z","role":"assistant","text":"trabajando"}'
+    echo '{"v":1,"type":"run.completed","ts":"2026-07-28T10:03:37Z","status":"success","runtime":"claude","model":"claude-sonnet-5","session_id":null,"duration_ms":217358,"tokens":{"input":null,"output":null},"cost_usd":null,"turns":34,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":null}'
+} > "$EVENTS_OK"
 
-# Traza de una muerte a mitad de vuelo: nunca llega el evento `result`.
-STREAM_CORTADA="$TMP/g-cut.stream.jsonl"
+# Traza de una muerte a mitad de vuelo: nunca llega el evento terminal.
+EVENTS_CORTADA="$TMP/g-cut.events.jsonl"
 {
-    echo '{"type":"system","subtype":"init","model":"claude-sonnet-5"}'
-    echo '{"type":"assistant","message":{"model":"claude-sonnet-5"}}'
-} > "$STREAM_CORTADA"
+    echo '{"v":1,"type":"message","ts":"2026-07-28T10:00:00Z","role":"assistant","text":"trabajando"}'
+} > "$EVENTS_CORTADA"
 
-# Traza con `result` de error: el CLI llego al final pero declarando fallo.
-STREAM_ERROR="$TMP/g-err.stream.jsonl"
+# Terminal de error: el CLI llego al final pero declarando fallo.
+EVENTS_ERROR="$TMP/g-err.events.jsonl"
 {
-    echo '{"type":"system","subtype":"init","model":"claude-sonnet-5"}'
-    echo '{"type":"result","subtype":"error_during_execution","is_error":true}'
-} > "$STREAM_ERROR"
+    echo '{"v":1,"type":"run.failed","ts":"2026-07-28T10:00:01Z","status":"failed","runtime":"claude","model":null,"session_id":null,"duration_ms":100,"tokens":{"input":null,"output":null},"cost_usd":null,"turns":null,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":{"kind":"nonzero_exit","detail":"stop_reason=? subtype=error_during_execution"}}'
+} > "$EVENTS_ERROR"
 
 # Traza truncada a media linea: el proceso murio escribiendo el JSON. El
 # parseo tolerante la descarta; afirmar exito aqui seria el peor falso
 # positivo posible.
-STREAM_TRUNCA="$TMP/g-trunc.stream.jsonl"
+EVENTS_TRUNCA="$TMP/g-trunc.events.jsonl"
 {
-    echo '{"type":"system","subtype":"init","model":"claude-sonnet-5"}'
-    printf '{"type":"result","subtype":"suc'
-} > "$STREAM_TRUNCA"
+    echo '{"v":1,"type":"message","ts":"2026-07-28T10:00:00Z","role":"assistant","text":"trabajando"}'
+    printf '{"v":1,"type":"run.completed","status":"suc'
+} > "$EVENTS_TRUNCA"
 
-if agent_stream_completed_successfully "$STREAM_OK"; then
-    pass "G-1: traza con result success/is_error=false -> exito declarado"
+if agent_stream_completed_successfully "$EVENTS_OK"; then
+    pass "G-1: terminal run.completed{status:success} -> exito declarado"
 else
-    fail "G-1: no reconocio una traza con result de exito"
+    fail "G-1: no reconocio un terminal de exito"
 fi
 
-if agent_stream_completed_successfully "$STREAM_CORTADA"; then
-    fail "G-2: afirmo exito sobre una traza SIN evento result"
+if agent_stream_completed_successfully "$EVENTS_CORTADA"; then
+    fail "G-2: afirmo exito sobre una traza SIN evento terminal"
 else
-    pass "G-2: traza sin evento result -> no se afirma exito"
+    pass "G-2: traza sin evento terminal -> no se afirma exito"
 fi
 
-if agent_stream_completed_successfully "$STREAM_ERROR"; then
-    fail "G-3: afirmo exito sobre una traza con result is_error=true"
+if agent_stream_completed_successfully "$EVENTS_ERROR"; then
+    fail "G-3: afirmo exito sobre un terminal run.failed"
 else
-    pass "G-3: traza con result de error -> no se afirma exito"
+    pass "G-3: terminal run.failed -> no se afirma exito"
 fi
 
-if agent_stream_completed_successfully "$STREAM_TRUNCA"; then
+if agent_stream_completed_successfully "$EVENTS_TRUNCA"; then
     fail "G-4: afirmo exito sobre una traza truncada a media linea"
 else
     pass "G-4: traza truncada -> no se afirma exito"
@@ -409,43 +447,42 @@ else
 fi
 
 # El caso de los dos incidentes del 2026-07-28: exit code de senal, el
-# watchdog NO disparo, y la traza declara exito. Antes de #446 esto se
+# watchdog NO disparo, y el terminal declara exito. Antes de #446 esto se
 # clasificaba TIMEOUT y se descartaba el trabajo.
-if agent_failure_is_unrecoverable "false" "137" "$LOG_LIMPIO" "$STREAM_OK"; then
-    fail "G-6: exit 137 con traza de exito sigue marcado irrecuperable (bug de #446)"
+if agent_failure_is_unrecoverable "false" "137" "$EVENTS_OK"; then
+    fail "G-6: exit 137 con terminal de exito sigue marcado irrecuperable (bug de #446)"
 else
-    pass "G-6: exit 137 con traza de exito -> recuperable (la muerte fue posterior)"
+    pass "G-6: exit 137 con terminal de exito -> recuperable (la muerte fue posterior)"
 fi
 
-# El incidente de #416 NO puede relajarse: sin evento result, sigue irrecuperable.
-if agent_failure_is_unrecoverable "false" "137" "$LOG_LIMPIO" "$STREAM_CORTADA"; then
-    pass "G-7: exit 137 sin evento result sigue irrecuperable (no se relaja #416)"
+# El incidente de #416 NO puede relajarse: sin evento terminal, sigue irrecuperable.
+if agent_failure_is_unrecoverable "false" "137" "$EVENTS_CORTADA"; then
+    pass "G-7: exit 137 sin evento terminal sigue irrecuperable (no se relaja #416)"
 else
     fail "G-7: se relajo un corte a mitad de vuelo (regresion sobre #416)"
 fi
 
 # Un TIMEOUT real del watchdog sobre una traza cortada tampoco se relaja.
-if agent_failure_is_unrecoverable "true" "0" "$LOG_LIMPIO" "$STREAM_CORTADA"; then
-    pass "G-8: TIMEOUT del watchdog sin result sigue irrecuperable"
+if agent_failure_is_unrecoverable "true" "0" "$EVENTS_CORTADA"; then
+    pass "G-8: TIMEOUT del watchdog sin terminal sigue irrecuperable"
 else
     fail "G-8: se relajo un TIMEOUT real del watchdog"
 fi
 
-# Retrocompatibilidad: llamada con 3 argumentos (sin traza) se comporta igual
-# que antes de #446 -- el bloque D entero depende de esto.
-if agent_failure_is_unrecoverable "false" "137" "$LOG_LIMPIO"; then
-    pass "G-9: sin cuarto argumento, exit 137 sigue irrecuperable (retrocompatible)"
+# Tolerancia (issue #906): un events_file vacio/inexistente no rompe la
+# funcion -- cae al mismo criterio que un fallo ordinario sin terminal.
+if agent_failure_is_unrecoverable "false" "137" ""; then
+    pass "G-9: sin events_file, exit 137 sigue irrecuperable (tolera archivo vacio/inexistente)"
 else
-    fail "G-9: la llamada de 3 argumentos cambio de comportamiento"
+    fail "G-9: agent_failure_is_unrecoverable no deberia fallar con events_file vacio"
 fi
 
-# Paridad con el pipeline: tiene que pasar la traza y dejar de llamar TIMEOUT
-# a una senal. Si el cuarto argumento se pierde, G-6 pasaria en la funcion
-# pero el pipeline seguiria tirando trabajo.
-if grep -q 'agent_failure_is_unrecoverable "\$TIMED_OUT" "\$CLAUDE_EXIT" "\$log_stage" "\$stream_file"' "$PIPE"; then
-    pass "G-10: el pipeline pasa la traza como cuarto argumento"
+# Paridad con el pipeline: tiene que pasar el JSONL neutral, no el log
+# derivado ni la traza cruda de Claude.
+if grep -q 'agent_failure_is_unrecoverable "\$TIMED_OUT" "\$CLAUDE_EXIT" "\$events_file"' "$PIPE"; then
+    pass "G-10: el pipeline pasa el JSONL neutral (events_file) a agent_failure_is_unrecoverable"
 else
-    fail "G-10: el pipeline NO pasa la traza a agent_failure_is_unrecoverable"
+    fail "G-10: el pipeline NO pasa events_file a agent_failure_is_unrecoverable"
 fi
 
 if grep -q 'failure_type="TIMEOUT (${elapsed}s)"' "$PIPE"; then

@@ -515,6 +515,17 @@ reproduce el orden de `classify_agent_failure`
 (`.claude/scripts/_mefisto-common.sh`) y su criterio de exito el de
 `agent_stream_completed_successfully`, de modo que la migracion del pipeline
 (#869) no cambia ningun veredicto.
+
+Esa paridad ya tiene un consumidor real: desde #906 `run_agent`
+(`src/internal/scripts/mefisto-tooling-pipeline.sh`) traduce con
+`runtime_claude_translate` la traza cruda de cada intento a
+`<log_base>.events.jsonl` y las funciones de clasificacion de
+`lib/_mefisto-common.sh` (`derive_stage_log_from_stream`,
+`agent_stream_completed_successfully`, `agent_events_error_kind` /
+`agent_events_error_detail`, `agent_failure_is_unrecoverable`,
+`classify_agent_failure`) leen **solo** ese archivo -- la traza cruda queda
+para diagnostico y ningun gate la parsea. Es un puente: la invocacion sigue
+siendo `claude -p` directo hasta que #879 conecte el runner neutral.
 `.claude/scripts/tests/test-runtime-claude.sh` lo ejerce contra una CLI
 `claude` falsa puesta primero en el `PATH`.
 

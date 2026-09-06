@@ -863,91 +863,92 @@ run_agent_with_watchdog() {
         wait "$watchdog_pid" 2>/dev/null || true
     else
         kill -9 -"$watchdog_pid" 2>/dev/null || true
+        # Respaldo al PID pelado por si el kill al GRUPO no alcanzo al
+        # watchdog (medido: el `sleep` sobrevive al kill de grupo en ~2% de
+        # las corridas cortas, ver mas abajo). Deja huerfano el `sleep` -- mal
+        # menor frente a un watchdog vivo que dentro de 30 min haria
+        # `kill -9` sobre un PGID ya reciclado por un proceso ajeno.
+        kill -9 "$watchdog_pid" 2>/dev/null || true
         wait "$watchdog_pid" 2>/dev/null || true
+        # Carrera del watchdog perdido: entre que `wait` retorno y este `kill`
+        # aterrizo, un watchdog que sobrevivio a su `sleep` alcanza a hacer su
+        # `touch` -- y deja <signal_file> creado para un stage que en realidad
+        # termino solo. El caller lo leeria como TIMEOUT y descartaria trabajo
+        # bueno (se observo como "TIMEOUT (0s, exit 0)" en el bloque G de
+        # test-tooling-state-paths.sh, ~40% de las corridas cuando el CLI
+        # responde en menos de un segundo). Aqui ya se decidio que el watchdog
+        # NO habia disparado cuando el proceso termino -- esa es la rama else
+        # --, asi que cualquier senal posterior es ruido y se borra. El caso
+        # legitimo (el watchdog SI disparo) va por la rama de arriba y su
+        # senal nunca se toca.
+        rm -f "$signal_file"
     fi
 
     echo "$exit_code"
 }
 
-# derive_stage_log_from_stream <stream_file> <stderr_file> <out_file>
+# derive_stage_log_from_stream <events_file> <stderr_file> <out_file>
 #
-# Deriva el log legible de un stage (issue #425) a partir del stream JSON
-# crudo que run_agent_with_watchdog capturo en <stream_file> bajo
-# `--output-format stream-json --verbose`: una linea por cada bloque de texto
-# del asistente y una linea "[tool] <nombre>" por cada tool_use, en el orden
-# en que aparecen en el stream. Al final anexa el contenido de <stderr_file>
-# tal cual (ya es texto plano). Sobreescribe <out_file> si ya existia.
-#
-# CA-5 -- por que tambien se deriva el evento `result` cuando `is_error` es
-# true: verificado contra el CLI instalado (v2.1.220) que en una corrida
-# fallida el texto del error NO viaja por stderr. Una invocacion con un modelo
-# inexistente termino con exit 1, stderr sin una sola linea de error, y todo
-# el diagnostico dentro del evento `result` de stdout:
-# `{"is_error":true,"terminal_reason":"api_error","api_error_status":404,
-# "result":"There's an issue with the selected model ..."}`. Derivar solo los
-# eventos `assistant` dejaria ese texto fuera del log, y entonces los
-# `grep "API Error: 5"`/`"API Error: 4"` y agent_log_has_stream_cut de
-# run_agent no matchearian nunca: un 5xx se clasificaria CLI_ERROR, seria
-# "recuperable" y el pipeline volveria a abrir PRs con trabajo truncado --
-# exactamente el bug de #416 que arreglo #424. Por eso el filtro emite,
-# ademas, una linea por cada `result` con `is_error == true`, prefijada con
-# el token canonico `API Error: <status>` cuando el CLI reporta
-# `api_error_status` (el status es dato del propio CLI; solo se lo re-expresa
-# en el vocabulario que la clasificacion ya leia). Un `result` sin error no
-# emite nada: no se introducen falsos positivos en corridas sanas.
+# Deriva el log legible de un stage (issue #425, reescrita sobre el JSONL
+# neutral en el issue #906) a partir de <events_file> -- el
+# `<log_base>.events.jsonl` que run_agent escribe traduciendo la traza cruda
+# del CLI con runtime_claude_translate (MEF-ADR-0049 decision 1: esta capa ya
+# no interpreta el vocabulario de un runtime concreto). Emite una linea por
+# cada `message{kind:"text"}` (la ausencia de `kind` tambien cuenta como
+# texto, ver run-events.schema.json), una linea "[tool] <nombre>" por cada
+# `tool.started`, y una linea "<error.kind>: <error.detail>" cuando el
+# evento terminal (`run.completed`/`run.failed`) trae `error` no nulo -- el
+# `detail` ya llega con el prefijo "API Error: <status>" cuando el traductor
+# lo conoce (runtime-claude.jq), asi que el log derivado sigue siendo
+# grep-able para un humano aunque la clasificacion de mas abajo ya no lea de
+# aqui (ver agent_events_error_kind). Al final anexa el contenido de
+# <stderr_file> tal cual (ya es texto plano). Sobreescribe <out_file> si ya
+# existia.
 #
 # El nombre y la ruta de <out_file> NO cambian (sigue siendo
 # mefisto-tooling-stage-<N>-<agente>-<TS>-issue-<N>.log): _mefisto-work-status
-# y mefisto-investigator lo referencian, y run_agent sigue clasificando
-# fallos (grep "API Error"/agent_log_has_stream_cut) y mostrando el `tail`
-# de diagnostico del abort contra este mismo archivo derivado -- por eso el
-# stderr anexado tiene que llegar aqui, no solo quedarse en <stderr_file>.
+# y mefisto-investigator lo referencian, y run_agent muestra el `tail` de
+# diagnostico del abort contra este mismo archivo derivado.
 #
-# CA-4: tolera una traza truncada (la ultima linea puede haber quedado a
-# medias si el proceso murio a mitad de escritura) y una traza vacia. La
+# CA-4 (#425): tolera una traza truncada (la ultima linea puede haber quedado
+# a medias si el proceso murio a mitad de escritura) y una traza vacia. La
 # tolerancia la da `fromjson?`: jq lee cada linea como texto (`-R`) y el `?`
 # descarta en silencio la que no parsea, sin abortar y sin perder lo ya
 # derivado de las lineas anteriores. El `select(type == "object")` cubre el
-# otro caso degenerado -- una linea que SI es JSON valido pero no un objeto
-# (`.type` sobre un string es un error duro de jq, no algo que `?` atrape).
+# otro caso degenerado -- una linea que SI es JSON valido pero no un objeto.
 #
 # Es una sola invocacion de jq para todo el archivo, no una por linea:
 # medido sobre un stream sintetico de 1000 eventos, un jq por linea tarda 5s
-# y una sola pasada 0.01s. Un stage real de 30 min produce bastante mas que
-# eso, asi que la version por-linea le sumaba decenas de segundos por stage
-# al mismo wall-clock que este issue existe para medir (el bash orquestador
-# entero cuesta hoy ~10s por issue).
+# y una sola pasada 0.01s.
 #
-# Si jq no esta disponible, degrada con gracia (issue #425, notas tecnicas):
-# deja una nota explicita en vez de intentar parsear JSON a mano, y de todos
-# modos anexa <stderr_file> -- que ya es texto plano y es donde vive la causa
-# de la mayoria de los fallos que le importan a run_agent. Un fallo de
+# Si jq no esta disponible, degrada con gracia (issue #425): deja una nota
+# explicita en vez de intentar parsear JSON a mano, y de todos modos anexa
+# <stderr_file> -- que ya es texto plano y es donde vive la causa de la
+# mayoria de los fallos que le importan a run_agent. Un fallo de
 # instrumentacion (falta jq, stream vacio o inexistente) nunca debe tumbar el
 # pipeline: la funcion siempre retorna 0.
 derive_stage_log_from_stream() {
-    local stream_file="$1" stderr_file="$2" out_file="$3"
+    local events_file="$1" stderr_file="$2" out_file="$3"
 
     : > "$out_file" 2>/dev/null || return 0
 
-    if [ -s "$stream_file" ]; then
+    if [ -s "$events_file" ]; then
         if command -v jq >/dev/null 2>&1; then
             jq -R -r '
                 fromjson?
                 | select(type == "object")
-                | if .type == "assistant" then
-                      (.message.content // [])[]?
-                      | if .type == "text" then (.text // "")
-                        elif .type == "tool_use" then "[tool] " + (.name // "?")
-                        else empty end
-                  elif .type == "result" and .is_error == true then
-                      (if (.api_error_status // null) != null
-                         then "API Error: " + (.api_error_status | tostring) + " "
-                         else "" end)
-                      + ((.result // .error // .terminal_reason // .subtype // "error") | tostring)
+                | if .type == "message" then
+                      (if (.kind // "text") == "text" then (.text // "") else empty end)
+                  elif .type == "tool.started" then
+                      "[tool] " + (.tool // "?")
+                  elif (.type == "run.completed" or .type == "run.failed") then
+                      (if (.error // null) != null
+                       then ((.error.kind // "error") + ": " + (.error.detail // ""))
+                       else empty end)
                   else empty end
-            ' "$stream_file" >> "$out_file" 2>/dev/null || true
+            ' "$events_file" >> "$out_file" 2>/dev/null || true
         else
-            echo "(jq no disponible: no se pudo derivar texto legible del stream crudo -- ver $stream_file)" >> "$out_file"
+            echo "(jq no disponible: no se pudo derivar texto legible del JSONL neutral -- ver $events_file)" >> "$out_file"
         fi
     fi
 
@@ -959,69 +960,110 @@ derive_stage_log_from_stream() {
     return 0
 }
 
-# agent_log_has_stream_cut <log_file>
+# agent_stream_completed_successfully <events_file>
 #
-# Retorna 0 si el log de un stage muestra que el CLI murio a mitad de
-# respuesta. Unico lugar donde vive el patron: lo consumen tanto
-# agent_failure_is_unrecoverable (que decide si se aborta) como la
-# clasificacion de failure_type de run_agent (que solo pone la etiqueta
-# STREAM_CUT). Con el patron duplicado en los dos, una edicion de uno solo
-# desincroniza etiqueta y decision en silencio -- el log diria STREAM_CUT
-# mientras el pipeline sigue de largo, que es exactamente el bug de #416.
+# Retorna 0 si el JSONL neutral de un stage (<events_file>, el
+# `<log_base>.events.jsonl` que escribe run_agent -- issue #906) contiene un
+# evento terminal `run.completed{status:"success"}`, 1 en cualquier otro caso
+# -- incluido que falte el archivo, que no haya terminal, que jq no este
+# instalado o que la traza este corrupta. El default en 1 (no se puede
+# afirmar el exito) es deliberado: esta funcion solo sirve para RELAJAR una
+# clasificacion de fallo, asi que ante la duda tiene que dejarla como estaba.
 #
-# El match es a proposito amplio (`API Error` sin anclar al codigo de estado,
-# asi cubre tanto `API Error: 5xx` como el corte de conexion): la unica
-# consecuencia de un falso positivo es abortar un stage que quiza era
-# recuperable -- se relanza y listo -- mientras que un falso negativo es
-# exactamente el bug que este issue arregla, trabajo truncado llegando a main.
-# Ante la duda, se aborta.
-agent_log_has_stream_cut() {
-    local log_file="$1"
-    grep -qE "Connection closed mid-response|API Error" "$log_file" 2>/dev/null
-}
-
-# agent_stream_completed_successfully <stream_file>
+# `run.completed{status:"success"}` es la unica forma en que el contrato
+# neutral (run-events.schema.json) representa que el runtime cumplio su
+# contrato -- MEF-ADR-0049 CA-4 parte el vocabulario de `status` entre los
+# dos terminales a proposito, asi que basta leer `.type`/`.status`, sin
+# nombrar ningun campo propio de un runtime concreto (los que antes de este
+# issue vivian aqui: ver el historial de git de esta funcion).
 #
-# Retorna 0 si la traza cruda de un stage contiene un evento `result` final que
-# declara exito (`is_error == false` y `subtype == "success"`), 1 en cualquier
-# otro caso -- incluido que falte el archivo, que no haya evento `result`, que
-# jq no este instalado o que la traza este corrupta. El default en 1 (no se
-# puede afirmar el exito) es deliberado: esta funcion solo sirve para RELAJAR
-# una clasificacion de fallo, asi que ante la duda tiene que dejarla como
-# estaba.
-#
-# El evento `result` es la ultima linea que emite el CLI bajo `--output-format
-# stream-json` y es su propia declaracion de haber cumplido el contrato del
-# stage: `subtype: success`, `is_error: false`, `stop_reason: end_turn`. La
-# traza ya se captura desde el issue #431 y compute_stage_metrics ya la parsea
-# (issue #432) -- esta funcion no la vuelve a derivar, solo lee el mismo hecho
-# para una decision distinta.
-#
-# Usa el mismo parseo tolerante que compute_stage_metrics (`try fromjson catch
-# empty` sobre las lineas) porque la traza puede traer lineas truncadas si el
-# proceso murio a media escritura -- y ese es justamente el caso que NO debe
-# reportar exito.
+# Parseo tolerante (`try fromjson catch empty`) porque la traza puede traer
+# lineas truncadas si el proceso murio a media escritura -- y ese es
+# justamente el caso que NO debe reportar exito.
 agent_stream_completed_successfully() {
-    local stream_file="${1:-}"
+    local events_file="${1:-}"
 
-    [ -n "$stream_file" ] || return 1
-    [ -s "$stream_file" ] || return 1
+    [ -n "$events_file" ] || return 1
+    [ -s "$events_file" ] || return 1
     command -v jq >/dev/null 2>&1 || return 1
 
     local verdict
     verdict=$(jq -Rsr '
         (split("\n") | map(select(length > 0)) | map(try fromjson catch empty)
             | map(select(type == "object"))) as $events
-        | ($events | map(select(.type == "result")) | last) as $result
-        | if ($result != null and $result.is_error == false
-              and $result.subtype == "success")
+        | ($events | map(select(.type == "run.completed" or .type == "run.failed")) | last) as $terminal
+        | if ($terminal != null and $terminal.type == "run.completed" and $terminal.status == "success")
           then "yes" else "no" end
-    ' "$stream_file" 2>/dev/null) || return 1
+    ' "$events_file" 2>/dev/null) || return 1
 
     [ "$verdict" = "yes" ]
 }
 
-# agent_failure_is_unrecoverable <timed_out> <exit_code> <log_file> [<stream_file>]
+# agent_events_error_field <events_file> <campo>
+#
+# Imprime por stdout `error.<campo>` del evento terminal (`run.completed` o
+# `run.failed`) del JSONL neutral <events_file> (issue #906), o cadena vacia
+# si no hay terminal, el terminal no trae `error` (null), el archivo esta
+# vacio/inexistente o jq no esta disponible. Nunca aborta, siempre retorna 0.
+#
+# Es el UNICO lugar donde vive la seleccion del evento terminal para decidir
+# recuperacion/clasificacion; sus dos wrappers (agent_events_error_kind /
+# agent_events_error_detail) son la interfaz que usan los callers. Con la
+# expresion duplicada en cada consumidor, un cambio en como se elige el
+# terminal (hoy: el ULTIMO, por si una traza trae dos) tendria que replicarse
+# a mano en cada copia -- el mismo modo de desincronizacion silenciosa que
+# motivo centralizar el patron del corte de stream en #424.
+#
+# Antes de este issue la decision vivia en un grep amplio sobre el log
+# DERIVADO -- MEF-ADR-0049 (decision 1) prohibe que esta capa interprete el
+# vocabulario de un runtime concreto, asi que la fuente pasa a ser el campo
+# estructurado que el adaptador ya declaro.
+#
+# Parseo tolerante (`try fromjson catch empty`), igual que
+# agent_stream_completed_successfully: una linea truncada a mitad de escritura
+# se descarta sin perder las anteriores.
+agent_events_error_field() {
+    local events_file="${1:-}" field="${2:-kind}"
+
+    if [ -z "$events_file" ] || [ ! -s "$events_file" ] || ! command -v jq >/dev/null 2>&1; then
+        echo ""
+        return 0
+    fi
+
+    local value
+    value=$(jq -Rsr --arg field "$field" '
+        (split("\n") | map(select(length > 0)) | map(try fromjson catch empty)
+            | map(select(type == "object"))) as $events
+        | ($events | map(select(.type == "run.completed" or .type == "run.failed")) | last) as $terminal
+        | ((($terminal.error // {})[$field]) // "")
+    ' "$events_file" 2>/dev/null) || value=""
+
+    echo "$value"
+    return 0
+}
+
+# agent_events_error_kind <events_file>
+#
+# `error.kind` del terminal, o cadena vacia. Lo consumen
+# agent_failure_is_unrecoverable (que solo mira si vale "stream_cut") y
+# classify_agent_failure (que ademas necesita el detalle para distinguir 5xx
+# de 4xx dentro de "api_error", ver agent_events_error_detail).
+agent_events_error_kind() {
+    agent_events_error_field "${1:-}" kind
+}
+
+# agent_events_error_detail <events_file>
+#
+# `error.detail` del terminal, o cadena vacia. Solo lo consulta
+# classify_agent_failure cuando el kind ya es "api_error": el status HTTP no
+# es un campo propio del contrato neutral, viaja dentro del detalle con el
+# prefijo canonico "API Error: <status>" que el adaptador ya normaliza
+# (runtime-claude.jq).
+agent_events_error_detail() {
+    agent_events_error_field "${1:-}" detail
+}
+
+# agent_failure_is_unrecoverable <timed_out> <exit_code> <events_file>
 #
 # Deriva el flag <unrecoverable> que consume agent_work_is_trustworthy (CA-4
 # del issue #424): retorna 0 si el fallo del CLI es de los que NUNCA admiten
@@ -1034,63 +1076,54 @@ agent_stream_completed_successfully() {
 # Dos familias son irrecuperables:
 #   - TIMEOUT: <timed_out>="true" (la senal que dejo el watchdog) o un exit
 #     code de senal (137 SIGKILL / 143 SIGTERM).
-#   - Corte de stream a mitad de respuesta (agent_log_has_stream_cut). Fue el
-#     incidente de #416 -- el reviewer murio con `API Error: Connection closed
-#     mid-response` a los 882s y el pipeline abrio igual el PR #421 con una
-#     revision truncada a mitad de frase.
+#   - `error.kind == "stream_cut"` del terminal (issue #906: antes de este
+#     issue este criterio era un grep amplio -- "Connection closed
+#     mid-response"/"API Error", cualquier status -- que de paso marcaba
+#     irrecuperable un fallo de API ordinario; ahora solo el corte de stream
+#     genuino lo hace, y un `api_error` que agota reintentos cae al mismo
+#     atajo has_work que un CLI_ERROR). El corte de stream a mitad de
+#     respuesta fue el incidente de #416 -- el reviewer murio con `API Error:
+#     Connection closed mid-response` a los 882s y el pipeline abrio igual el
+#     PR #421 con una revision truncada a mitad de frase.
 #
-# EXCEPCION (PR #446): si la traza del stage trae un evento `result` de
-# exito, el CLI ya habia cumplido su contrato y lo que vino despues -- una
-# senal al proceso, un exit code distinto de cero -- es una muerte POSTERIOR
-# al trabajo, no a mitad de vuelo. Ese caso si es recuperable, y sigue pasando
-# por los gates de agent_work_is_trustworthy (resumen de stage presente + diff
-# real), asi que la relajacion no abre la puerta a un PR con trabajo a medias.
-#
-# Motivacion, con dos incidentes medidos el 2026-07-28: el writer de #436
-# (219s, 34 turnos) y el de #437 (96s, 16 turnos) terminaron ambos con
-# `subtype: success` / `is_error: false` / `stop_reason: end_turn`, stderr
-# vacio y su commit ya hecho en el worktree; el watchdog NUNCA disparo (limite
-# nominal 1800s, sin linea TIMEOUT en events.log), pero el proceso volvio con
-# un exit code de senal y la clasificacion los llamo TIMEOUT y tiro el trabajo.
-# El de #437 ademas corto un batch a mitad de cadena. La causa de la senal no
-# esta identificada -- las tres corridas observadas que murieron asi corrian
-# bajo tmux y la que corrio fuera no, pero con n=3 eso es una hipotesis, no un
-# diagnostico. Esta funcion no intenta resolver esa causa: hace que el
-# pipeline deje de descartar trabajo que el propio CLI declaro completo.
-#
-# El caso de #416 sigue cubierto: un CLI que muere a mitad de respuesta nunca
-# llega a emitir su evento `result`, asi que agent_stream_completed_successfully
-# retorna 1 y la clasificacion no se relaja. Un TIMEOUT real del watchdog
-# tampoco: el kill llega a mitad de vuelo, sin `result` en la traza.
+# EXCEPCION (PR #446): si el terminal del stage declara exito
+# (agent_stream_completed_successfully), el CLI ya habia cumplido su
+# contrato y lo que vino despues -- una senal al proceso, un exit code
+# distinto de cero -- es una muerte POSTERIOR al trabajo, no a mitad de
+# vuelo. Ese caso si es recuperable, y sigue pasando por los gates de
+# agent_work_is_trustworthy (resumen de stage presente + diff real), asi que
+# la relajacion no abre la puerta a un PR con trabajo a medias.
 agent_failure_is_unrecoverable() {
-    local timed_out="$1" exit_code="$2" log_file="$3" stream_file="${4:-}"
+    local timed_out="$1" exit_code="$2" events_file="$3"
 
     # Antes que nada: si el CLI declaro exito, la muerte fue posterior.
-    agent_stream_completed_successfully "$stream_file" && return 1
+    agent_stream_completed_successfully "$events_file" && return 1
 
     [ "$timed_out" = "true" ] && return 0
     [ "$exit_code" = "137" ] && return 0
     [ "$exit_code" = "143" ] && return 0
 
-    agent_log_has_stream_cut "$log_file" && return 0
+    [ "$(agent_events_error_kind "$events_file")" = "stream_cut" ] && return 0
 
     return 1
 }
 
-# classify_agent_failure <timed_out> <exit_code> <elapsed_s> <log_file> [<stream_file>]
+# classify_agent_failure <timed_out> <exit_code> <elapsed_s> <events_file>
 #
 # Traduce el desenlace de una invocacion fallida del CLI a la etiqueta
 # <failure_type> que run_agent registra en events.log. Era logica inline de
-# run_agent; se extrae aqui (issue #534) por el mismo motivo que
-# agent_failure_is_unrecoverable: pasa a gobernar si un stage se REINTENTA,
-# y inline no habia forma de ejercerla sin invocar el CLI real.
+# run_agent; se extrajo aqui en el issue #534 por el mismo motivo que
+# agent_failure_is_unrecoverable: pasa a gobernar si un stage se REINTENTA, y
+# inline no habia forma de ejercerla sin invocar el CLI real.
 #
-# El orden de los casos es significativo y se conserva verbatim del original:
-# el TIMEOUT del watchdog gana sobre cualquier otro sintoma (es el unico
-# TIMEOUT de verdad), y el match de `API Error: 5` precede al de `API Error:
-# 4` y al corte de stream generico -- que es mas amplio y se los tragaria.
+# El orden de los casos es significativo y se conserva verbatim de versiones
+# previas (issue #906 solo cambia la FUENTE -- `error.kind`/`error.detail`
+# del terminal del JSONL neutral en vez de un grep sobre el log): el TIMEOUT
+# del watchdog gana sobre cualquier otro sintoma (es el unico TIMEOUT de
+# verdad), y el match de "API Error: 5" precede al de "API Error: 4" y al
+# `stream_cut` generico -- que es mas amplio y se los tragaria.
 classify_agent_failure() {
-    local timed_out="$1" exit_code="$2" elapsed="$3" log_file="$4" stream_file="${5:-}"
+    local timed_out="$1" exit_code="$2" elapsed="$3" events_file="$4"
 
     if [ "$timed_out" = "true" ]; then
         echo "TIMEOUT (${elapsed}s, exit $exit_code)"
@@ -1098,7 +1131,7 @@ classify_agent_failure() {
     fi
 
     if [ "$exit_code" = "137" ] || [ "$exit_code" = "143" ]; then
-        if agent_stream_completed_successfully "$stream_file"; then
+        if agent_stream_completed_successfully "$events_file"; then
             echo "SIGNAL_POST_SUCCESS (exit $exit_code, ${elapsed}s)"
         else
             echo "SIGNAL_MID_FLIGHT (exit $exit_code, ${elapsed}s)"
@@ -1106,11 +1139,20 @@ classify_agent_failure() {
         return 0
     fi
 
-    if grep -q "API Error: 5" "$log_file" 2>/dev/null; then
-        echo "API_ERROR_SERVER (exit $exit_code)"
-    elif grep -q "API Error: 4" "$log_file" 2>/dev/null; then
-        echo "API_ERROR_CLIENT (exit $exit_code)"
-    elif agent_log_has_stream_cut "$log_file"; then
+    local error_kind
+    error_kind="$(agent_events_error_kind "$events_file")"
+
+    if [ "$error_kind" = "api_error" ]; then
+        local error_detail
+        error_detail="$(agent_events_error_detail "$events_file")"
+        if printf '%s' "$error_detail" | grep -q "API Error: 5"; then
+            echo "API_ERROR_SERVER (exit $exit_code)"
+        elif printf '%s' "$error_detail" | grep -q "API Error: 4"; then
+            echo "API_ERROR_CLIENT (exit $exit_code)"
+        else
+            echo "CLI_ERROR (exit $exit_code)"
+        fi
+    elif [ "$error_kind" = "stream_cut" ]; then
         echo "STREAM_CUT (exit $exit_code)"
     else
         echo "CLI_ERROR (exit $exit_code)"
@@ -1155,10 +1197,11 @@ agent_failure_is_retryable() {
 # confiable, 1 si no. Usada por run_agent tras un fallo del CLI (issue #424).
 #
 # CA-4: <unrecoverable>="true" descalifica la recuperacion sin mirar nada mas
-# -- el caller la marca en TIMEOUT o cuando el log del stage contiene un corte
-# de stream a mitad de respuesta (`Connection closed mid-response`, `API
-# Error`). El incidente de #416 fue justo esto: el reviewer murio con `API
-# Error: Connection closed mid-response` a los 882s, y como el worktree tenia
+# -- el caller la marca en TIMEOUT, en una senal de proceso (137/143) sin
+# exito previo, o cuando el terminal del JSONL neutral del stage trae
+# `error.kind == "stream_cut"` (issue #906, agent_failure_is_unrecoverable).
+# El incidente de #416 fue justo esto: el reviewer murio con `API Error:
+# Connection closed mid-response` a los 882s, y como el worktree tenia
 # archivos sucios el pipeline abrio igual el PR #421 con una revision
 # truncada a mitad de frase -- un CLI que muere a mitad de su contrato nunca
 # es recuperable, sin importar cuantos archivos sucios deje.

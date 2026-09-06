@@ -387,7 +387,7 @@ fi
 STDERR_CUT="$TMP/stderr-cut.log"; printf 'Connection closed mid-response\n' > "$STDERR_CUT"
 C_STDERRCUT="$TMP/c-stderrcut.jsonl"; translate_fixture killed-no-result.jsonl "" 1 "$STDERR_CUT" > "$C_STDERRCUT"
 if jq -e 'select(.type=="run.failed") | .error.kind == "stream_cut"' "$C_STDERRCUT" >/dev/null 2>&1; then
-    pass "C-12: 'Connection closed mid-response' en stderr (el otro patron de agent_log_has_stream_cut) -> stream_cut"
+    pass "C-12: 'Connection closed mid-response' en stderr (el patron historico del corte, #416) -> stream_cut"
 else
     fail "C-12: no se clasifico el corte anunciado por stderr: $(jq -c 'select(.type=="run.failed")' "$C_STDERRCUT")"
 fi
