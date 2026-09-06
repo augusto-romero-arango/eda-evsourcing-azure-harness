@@ -1,0 +1,66 @@
+{
+  "$comment": "Contrato neutral de agentes/comandos internos de Mefisto (MEF-ADR-0049 CA-6, issue #853). Subconjunto de JSON Schema soportado por src/internal/scripts/lib/jsonschema-lite.jq: type, required, properties, additionalProperties, enum, items, pattern, minLength, oneOf (dispatchado por el campo discriminador 'kind'). No es JSON Schema completo: $ref, allOf, anyOf, if/then/else, const, not, contains, patternProperties no estan implementados. Ver src/internal/contract/README.md.",
+  "oneOf": [
+    {
+      "$comment": "kind: agent",
+      "type": "object",
+      "required": ["kind", "id", "description", "mode"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["agent"] },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^mefisto-[a-z0-9]+(-[a-z0-9]+)*$"
+        },
+        "description": { "type": "string", "minLength": 1 },
+        "mode": { "type": "string", "enum": ["primary", "subagent", "all"] },
+        "profile": { "type": "string", "enum": ["fast", "balanced", "deep"] },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["read", "edit", "shell", "web", "skill", "task", "mcp"]
+          }
+        },
+        "skills": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "$comment": "kind: command",
+      "type": "object",
+      "required": ["kind", "id", "description"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["command"] },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^mefisto-[a-z0-9]+(-[a-z0-9]+)*$"
+        },
+        "description": { "type": "string", "minLength": 1 },
+        "profile": { "type": "string", "enum": ["fast", "balanced", "deep"] },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["read", "edit", "shell", "web", "skill", "task", "mcp"]
+          }
+        },
+        "skills": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "agent": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^mefisto-[a-z0-9]+(-[a-z0-9]+)*$"
+        },
+        "arguments": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    }
+  ]
+}
