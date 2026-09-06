@@ -769,14 +769,16 @@ Ese `--env` es lo que cierra el lazo con `mefisto-herdr-pipeline.sh` (#872,
 seccion "`mefisto-herdr-pipeline.sh`" mas arriba): al despachar `/mefisto-
 tooling` o `/mefisto-batch` desde el pane de ejecucion, ese script lee
 `MEFISTO_RUNTIME`/`MEFISTO_MODELS_FILE` del entorno del PROPIO pane (heredado
-al crearlo) y los antepone al invocar el runner del sub-pipeline (su
-`ENV_PREFIX`) -- sin que `herdr-workspace.sh` necesite conocer nada de ese
-runner. Smoke documental (sin depender de un servidor herdr real): con
+al crearlo) y los antepone como asignacion de entorno al comando que despacha
+en el pane run (su `ENV_PREFIX`), de donde el sub-pipeline los hereda como
+cualquier proceso hijo -- sin que `herdr-workspace.sh` necesite conocer nada
+de ese runner. Smoke documental (sin depender de un servidor herdr real): con
 `MEFISTO_RUNTIME=opencode` fijado antes de abrir el workspace, un pane de
 ejecucion recien creado reporta `echo $MEFISTO_RUNTIME` -> `opencode`, y
 `mefisto-herdr-pipeline.sh --tooling <issue>` corrido ahi antepone
-`MEFISTO_RUNTIME=opencode` a la invocacion de `mefisto-tooling-pipeline.sh`
-sin que el humano lo haya fijado a mano en ese pane.
+`MEFISTO_RUNTIME=opencode` al comando del pane run, de modo que
+`mefisto-tooling-pipeline.sh` corre con ese runtime sin que el humano lo haya
+fijado a mano en ese pane.
 `scripts/tests/test-herdr-workspace.sh` cubre el `--kind`/`--env` de
 `herdr-workspace.sh` con un stub de `herdr`;
 `.claude/scripts/tests/test-mefisto-herdr-pipeline.sh` (bloques 1-5) cubre por

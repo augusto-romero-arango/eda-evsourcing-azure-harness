@@ -31,6 +31,8 @@
 #   [F] Fallo de `herdr agent start` en los 2 intentos: reintenta una vez y
 #       degrada con aviso sin abortar el workspace (mecanica actual,
 #       preservada tras parametrizar --kind).
+#   [G] Reabrir un workspace ya montado con MEFISTO_RUNTIME=opencode: solo lo
+#       enfoca -- ni pane split ni agent start, con cualquier runtime (CA-5).
 #
 # Uso: scripts/tests/test-herdr-workspace.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -156,7 +158,8 @@ FAKE_CONSUMER=$(cd "$FAKE_CONSUMER" && pwd -P)
 
 # Stub de herdr: registra cada invocacion y responde JSON determinista.
 #   status server     -> ok (exit 0, sin cuerpo)
-#   workspace list    -> sin workspaces (nunca toma la rama de idempotencia)
+#   workspace list    -> sin workspaces, salvo HERDR_STUB_EXISTING_LABEL, que
+#                        devuelve uno con ese label (rama de idempotencia)
 #   workspace create  -> workspace_id w1, root_pane w1:p1
 #   pane split        -> pane_id w1:p2
 #   agent start       -> ok, salvo HERDR_STUB_AGENT_START_FAIL=1 (falla siempre)
@@ -171,7 +174,11 @@ case "${1:-} ${2:-}" in
         exit 0
         ;;
     "workspace list")
-        echo '{"result":{"workspaces":[]}}'
+        if [ -n "${HERDR_STUB_EXISTING_LABEL:-}" ]; then
+            echo "{\"result\":{\"workspaces\":[{\"workspace_id\":\"w-existente\",\"label\":\"$HERDR_STUB_EXISTING_LABEL\"}]}}"
+        else
+            echo '{"result":{"workspaces":[]}}'
+        fi
         ;;
     "workspace create")
         echo '{"result":{"workspace":{"workspace_id":"w1"},"root_pane":{"pane_id":"w1:p1"}}}'
@@ -206,6 +213,11 @@ chmod +x "$FAKE_BIN/herdr"
 TARGET_SCRIPT="$REPO_ROOT/scripts/herdr-workspace.sh"
 HERDR_STUB_LOG="$TMP/herdr-invocations.log"
 export HERDR_STUB_LOG
+
+# Seam de la pausa entre el start fallido y el `agent get` que lo confirma: en
+# produccion son 3s, y el bloque [F] la pagaria cuatro veces (2 intentos x 2
+# agentes = 12s de reloj) sin ejercitar nada distinto.
+export MEFISTO_AGENT_START_RETRY_PAUSE=0
 
 LAST_STDOUT=""
 LAST_STDERR=""
@@ -343,6 +355,30 @@ if printf '%s\n%s' "$LAST_STDOUT" "$LAST_STDERR" | grep -qF "lanza ahi 'claude -
     pass "F-4: el aviso nombra el runtime activo (claude) para lanzarlo a mano"
 else
     fail "F-4: el aviso no nombro el runtime -- stdout: $LAST_STDOUT / stderr: $LAST_STDERR"
+fi
+
+echo ""
+echo "[G] Reabrir un workspace ya montado con MEFISTO_RUNTIME=opencode: solo lo enfoca (CA-5)"
+
+export MEFISTO_RUNTIME=opencode
+export HERDR_STUB_EXISTING_LABEL="fake-mefisto-repo"
+run_workspace "$FAKE_MEFISTO"
+unset MEFISTO_RUNTIME HERDR_STUB_EXISTING_LABEL
+
+if [ "$LAST_RC" -eq 0 ]; then
+    pass "G-1: sale limpio al enfocar el workspace existente (rc=$LAST_RC)"
+else
+    fail "G-1: no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"
+fi
+if grep -qxF "herdr workspace focus w-existente" "$HERDR_STUB_LOG"; then
+    pass "G-2: enfoca el workspace ya montado"
+else
+    fail "G-2: no enfoco el workspace existente -- log: $(cat "$HERDR_STUB_LOG")"
+fi
+if ! grep -qF "agent start" "$HERDR_STUB_LOG" && ! grep -qF "pane split" "$HERDR_STUB_LOG"; then
+    pass "G-3: no duplica panes ni agentes (sin 'pane split' ni 'agent start')"
+else
+    fail "G-3: duplico panes o agentes -- log: $(cat "$HERDR_STUB_LOG")"
 fi
 
 echo ""

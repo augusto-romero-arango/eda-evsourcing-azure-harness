@@ -151,6 +151,12 @@ wait_for_free_shell() {
 # stderr) se muestran en el aviso en vez de tragarse: sin eso el fallo real
 # es indiagnosticable. Si ambos intentos fallan, degrada a un aviso: el pane
 # queda con su shell y el humano puede lanzar el runtime a mano.
+#
+# MEFISTO_AGENT_START_RETRY_PAUSE (segundos, default 3) es la pausa entre el
+# start fallido y el `agent get` que lo confirma; existe para que los tests no
+# paguen esa espera de reloj cuatro veces (mismo criterio que
+# MEFISTO_AGENT_MAX_ATTEMPTS en el pipeline de tooling). En produccion nadie
+# la fija: el default es el comportamiento de siempre.
 start_agent_in_pane() {
     local name="$1" pane="$2" agent_arg="$3" kind="${4:-claude}"
     if ! wait_for_free_shell "$pane"; then
@@ -170,7 +176,7 @@ start_agent_in_pane() {
             success "Agente '$name' corriendo en el pane $pane${agent_arg:+ ($kind --agent $agent_arg)}"
             return 0
         fi
-        sleep 3
+        sleep "${MEFISTO_AGENT_START_RETRY_PAUSE:-3}"
         if herdr agent get "$name" >/dev/null 2>&1; then
             success "Agente '$name' corriendo en el pane $pane (levanto tras el primer intento)${agent_arg:+ ($kind --agent $agent_arg)}"
             return 0
@@ -203,16 +209,17 @@ main() {
         warn "El workspace se abre igual, pero los pipelines fallaran hasta completar el onboarding."
     fi
 
-    # Runtime (MEFISTO_RUNTIME, issue #875): solo la rama Mefisto lo honra.
+    # Runtime (MEFISTO_RUNTIME, issue #875): runtime_kind_for_repo es el unico
+    # punto de decision del kind -- solo su rama Mefisto honra la variable.
     # env_args viaja a `herdr workspace create`/`herdr pane split` para que
     # AMBOS panes (CA-2) hereden MEFISTO_RUNTIME/MEFISTO_MODELS_FILE en su
     # entorno -- nunca se fija provider, modelo ni credenciales. En un
     # consumidor env_args queda vacio siempre: el runtime sigue siendo
     # Claude Code, exactamente como hoy (CA-3).
-    local runtime_kind="claude"
+    local runtime_kind
     local env_args=()
+    runtime_kind=$(runtime_kind_for_repo "$planner_agent")
     if [ "$planner_agent" = "mefisto-planner" ]; then
-        runtime_kind=$(runtime_kind_for_repo "$planner_agent")
         [ -n "${MEFISTO_RUNTIME:-}" ] && env_args+=(--env "MEFISTO_RUNTIME=$MEFISTO_RUNTIME")
         [ -n "${MEFISTO_MODELS_FILE:-}" ] && env_args+=(--env "MEFISTO_MODELS_FILE=$MEFISTO_MODELS_FILE")
     elif [ -n "${MEFISTO_RUNTIME:-}" ] && [ "$MEFISTO_RUNTIME" != "claude" ]; then
@@ -236,25 +243,18 @@ main() {
 
     log "Creando el workspace '$label' para $repo_root ..."
     local resp ws p1
-    if [ ${#env_args[@]} -gt 0 ]; then
-        resp=$(herdr workspace create --cwd "$repo_root" --label "$label" "${env_args[@]}" 2>&1) \
-            || abort "No se pudo crear el workspace: $resp"
-    else
-        resp=$(herdr workspace create --cwd "$repo_root" --label "$label" 2>&1) \
-            || abort "No se pudo crear el workspace: $resp"
-    fi
+    # env_args vacio no puede expandirse a secas: bash 3.2 con `set -u` aborta
+    # con "unbound variable" -- de ahi el idiom `"${a[@]+"${a[@]}"}"` (mismo
+    # que mefisto-stream-watch.sh), que en ese caso no aporta ningun argumento.
+    resp=$(herdr workspace create --cwd "$repo_root" --label "$label" "${env_args[@]+"${env_args[@]}"}" 2>&1) \
+        || abort "No se pudo crear el workspace: $resp"
     ws=$(echo "$resp" | jq -r '.result.workspace.workspace_id // empty')
     p1=$(echo "$resp" | jq -r '.result.root_pane.pane_id // empty')
     [ -n "$ws" ] && [ -n "$p1" ] || abort "herdr workspace create no devolvio ids. Respuesta: $resp"
 
     local p2=""
-    if [ ${#env_args[@]} -gt 0 ]; then
-        resp=$(herdr pane split --pane "$p1" --direction right --cwd "$repo_root" --no-focus "${env_args[@]}" 2>&1) \
-            && p2=$(echo "$resp" | jq -r '.result.pane.pane_id // empty')
-    else
-        resp=$(herdr pane split --pane "$p1" --direction right --cwd "$repo_root" --no-focus 2>&1) \
-            && p2=$(echo "$resp" | jq -r '.result.pane.pane_id // empty')
-    fi
+    resp=$(herdr pane split --pane "$p1" --direction right --cwd "$repo_root" --no-focus "${env_args[@]+"${env_args[@]}"}" 2>&1) \
+        && p2=$(echo "$resp" | jq -r '.result.pane.pane_id // empty')
     if [ -z "$p2" ]; then
         warn "No se pudo crear el pane de ejecucion (split fallo): el workspace queda con el pane del planner."
     fi
