@@ -173,15 +173,16 @@ if command -v opencode >/dev/null 2>&1; then
     # sin alguno de los cinco; reintentar una vez distingue esa carrera de una
     # ausencia real, sin debilitar la asercion.
     #
-    # grep -q via here-string (<<<), nunca via pipe: con cinco agentes el
-    # volcado de 'opencode agent list' supera el buffer del pipe (~64KB en
-    # macOS) y `grep -q` cierra su stdin en cuanto encuentra el match --si
-    # el `printf` del otro extremo del pipe todavia estaba escribiendo,
-    # recibe SIGPIPE (rc 141) y, bajo `pipefail`, ese 141 se propaga aunque
-    # `grep` haya salido en 0 (issue #909; mismo patron de trampa que
-    # documenta test-opencode-discovery.sh para "el writer lo atribuyo a
-    # IFS/SIGPIPE"). El here-string no tiene un segundo proceso escritor que
-    # pueda recibir esa señal.
+    # `grep -q` sobre here-string (<<<), nunca sobre un pipe. `grep -q` cierra
+    # su stdin en el primer match; si el escritor del otro extremo del pipe
+    # todavia no termino, muere con SIGPIPE y `pipefail` propaga ese 141
+    # aunque grep haya salido en 0. Con tres agentes el volcado de 'opencode
+    # agent list' cabia en el buffer del pipe (64KB en macOS) y el escritor
+    # terminaba antes de que grep saliera; con cinco son ~98KB y el fallo se
+    # vuelve determinista para todo id que aparezca temprano en el listado
+    # (medido en #909: los tres `primary` fallaban con rc=141 y los dos
+    # `subagent`, al final del volcado, pasaban). El here-string no tiene un
+    # segundo proceso que pueda recibir la señal.
     out=$(cd "$REPO_ROOT" && opencode agent list 2>&1)
     for id in $AGENT_IDS; do
         mode=$(mode_for_agent "$id")

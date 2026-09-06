@@ -9,7 +9,8 @@ generador consume estos archivos `.md` y produce `.claude/{agents,commands}/*.md
 consumidor lo adopte**: vive enteramente del lado interno del propio plugin
 Mefisto (MEF-ADR-0019).
 
-Estado de la migracion: los tres agentes internos (#865) y los diez comandos
+Estado de la migracion: los cinco agentes internos (los tres de #865 y los
+dos de stage del pipeline de tooling, `mefisto-{writer,reviewer}`, de #909) y los diez comandos
 internos -- los cinco de analisis y seguimiento,
 `mefisto-{plan,bug,bitacora,work-status,fix-review}` (#866), y los cinco de
 ejecucion, `mefisto-{tooling,tooling-verbose,sequential,merge,release}`
@@ -398,7 +399,7 @@ src/internal/scripts/validate-internal-artifacts.sh [archivo...]
 ```
 
 Sin argumentos, valida todo `src/internal/{agents,commands}/*.md` (hoy los
-tres agentes internos de #865 y los diez comandos internos de #866/#867).
+cinco agentes internos de #865/#909 y los diez comandos internos de #866/#867).
 Cada rechazo imprime una linea
 `<archivo>: <campo>: <motivo>` y el proceso sale con exit distinto de cero si
 cualquier archivo se rechaza. Corre con bash 3.2 + jq 1.7, sin red ni

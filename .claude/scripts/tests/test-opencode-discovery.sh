@@ -4,7 +4,7 @@
 #
 # Lista y resuelve todos los artefactos SIN invocar ningun modelo. Cubre:
 #   [CA-1] Todo agente y todo comando de la fuente neutral (`src/internal/`)
-#       tiene su salida `.opencode/` -- hoy tres agentes (#865) y diez
+#       tiene su salida `.opencode/` -- hoy cinco agentes (#865/#909) y diez
 #       comandos (#866/#867) -- y si el CLI `opencode` esta instalado,
 #       ademas se listan via `opencode agent list` y `opencode debug config`.
 #   [CA-2] `opencode.json` declara unicamente `$schema` (y `instructions`, si
@@ -100,13 +100,16 @@ if command -v opencode >/dev/null 2>&1; then
     # que un writer en curso puede estar regenerando en ese instante (mismo
     # riesgo de carrera que test-internal-agents-generated.sh).
     #
-    # grep -q via here-string (<<<), nunca via pipe: con cinco o mas agentes
-    # el volcado de 'opencode agent list' supera el buffer del pipe (~64KB en
-    # macOS) y `grep -q` cierra su stdin en cuanto encuentra el match -- si el
-    # lado escritor del pipe todavia estaba emitiendo, recibe SIGPIPE (rc 141)
-    # y, bajo `pipefail`, ese 141 se propaga aunque `grep` haya salido en 0
-    # (issue #909). El here-string no tiene un segundo proceso escritor que
-    # pueda recibir esa señal.
+    # `grep -q` sobre here-string (<<<), nunca sobre un pipe. `grep -q` cierra
+    # su stdin en el primer match; si el escritor del otro extremo del pipe
+    # todavia no termino, muere con SIGPIPE y `pipefail` propaga ese 141
+    # aunque grep haya salido en 0. Con tres agentes el volcado de 'opencode
+    # agent list' cabia en el buffer del pipe (64KB en macOS) y el escritor
+    # terminaba antes de que grep saliera; con cinco son ~98KB y el fallo se
+    # vuelve determinista para todo id que aparezca temprano en el listado
+    # (medido en #909: los tres `primary` fallaban con rc=141 y los dos
+    # `subagent`, al final del volcado, pasaban). El here-string no tiene un
+    # segundo proceso que pueda recibir la señal.
     agent_out=$(cd "$REPO_ROOT" && opencode agent list 2>&1)
     for id in $AGENT_IDS; do
         mode=$(mode_de "$id")
