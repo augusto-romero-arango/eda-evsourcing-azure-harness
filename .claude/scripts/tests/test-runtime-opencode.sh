@@ -6,8 +6,9 @@
 # Ninguno de estos tests invoca el CLI real de OpenCode -- todo corre contra
 # una CLI `opencode` FALSA (stub bash) puesta primero en el PATH, que
 # reproduce fixtures de .claude/scripts/tests/fixtures/runtime-opencode/
-# *-1.18.29.jsonl (capturados con una corrida real minima, ver el comentario
-# de cabecera de esos archivos) y devuelve el exit code que le indique el
+# *-1.18.29.jsonl (capturados con corridas reales minimas; su procedencia,
+# la version del CLI y la regla de "no editar un fixture viejo" estan en el
+# README.md de ese directorio) y devuelve el exit code que le indique el
 # escenario (mismo espiritu que test-runtime-claude.sh, pero aqui la CLI
 # falsa tiene que ser un binario real llamado `opencode`: runtime_opencode_
 # build_cmd invoca literalmente ese nombre).
@@ -26,14 +27,17 @@
 #       (segun state.status)->tool.started/tool.completed sintetizados desde
 #       la MISMA linea (OpenCode 1.18.29 no separa tool_use/tool_result como
 #       Claude), y descarta en silencio cualquier tipo no reconocido (nunca
-#       expone el wire format al JSONL neutral).
+#       expone el wire format al JSONL neutral) contandolo por el canal de
+#       diagnostico (`raw_ignored`), con membresia EXACTA: un tipo futuro que
+#       sea subcadena de uno conocido tampoco cuenta como reconocido.
 #   [C] CA-3: clasificacion completa -- exito (exit 0 + texto visible) >
 #       nonzero_exit (exit != 0, detalle de stderr) > no_result (stream
 #       vacio) > protocol_invalid (linea no-JSON) > no_result (exit 0 sin
 #       texto visible). El TIMEOUT del watchdog no se ejercita aqui via
 #       translate directo (lo sintetiza el runner, ver seccion [F]).
 #   [D] CA-4: el terminal preserva session_id/tokens/cost_usd cuando el wire
-#       format los trae (del ULTIMO step_finish); turns/denials/ttft_ms/
+#       format los trae (SUMANDO todos los step_finish, que reportan por paso
+#       y no acumulado); turns/denials/ttft_ms/
 #       api_duration_ms SIEMPRE null (el wire format no tiene equivalente);
 #       model degrada siempre al parametro pedido (el wire format no lo
 #       trae en ninguna version verificada).
@@ -356,6 +360,39 @@ else
     fail "B-8: el tipo desconocido se filtro al JSONL neutral: $(cat "$B_UNKNOWN_OUT")"
 fi
 
+# `raw_ignored` (CA-2): el conteo vive SOLO en el canal de diagnostico del
+# propio programa jq (run-events.schema.json fija additionalProperties:false
+# sobre el terminal y este issue no lo modifica), asi que hay que invocar el
+# programa a mano, sin el `2>/dev/null` con el que lo silencia
+# runtime_opencode_translate. Los dos tipos que se esperan contados incluyen
+# uno ('step') que es SUBCADENA de un tipo conocido ('step_start'): con una
+# membresia por subcadena se lo tragaria como reconocido y el diagnostico
+# mentiria por lo bajo.
+B_IGNORED_FIXTURE="$TMP/raw-ignored.jsonl"
+cat > "$B_IGNORED_FIXTURE" <<'EOF'
+{"type":"step_start","timestamp":1000,"sessionID":"ses_i","part":{"type":"step-start"}}
+{"type":"step","timestamp":1001,"sessionID":"ses_i","part":{"text":"tipo futuro, subcadena de step_start"}}
+{"type":"reasoning_delta","timestamp":1002,"sessionID":"ses_i","part":{"text":"pensando..."}}
+{"type":"text","timestamp":1003,"sessionID":"ses_i","part":{"text":"listo"}}
+{"type":"step_finish","timestamp":1004,"sessionID":"ses_i","part":{"tokens":{"input":1,"output":1},"cost":0}}
+EOF
+B_IGNORED_ERR="$TMP/raw-ignored.stderr"
+B_IGNORED_OUT="$TMP/raw-ignored.out.jsonl"
+jq -R -s -c \
+    --arg runtime "opencode" --arg model_param "" --arg exit_code "0" \
+    --rawfile stderr_text /dev/null \
+    -f "$OPENCODE_JQ" "$B_IGNORED_FIXTURE" > "$B_IGNORED_OUT" 2> "$B_IGNORED_ERR"
+if grep -q 'raw_ignored=2' "$B_IGNORED_ERR"; then
+    pass "B-9: raw_ignored=2 por el canal de diagnostico (membresia EXACTA: 'step' no lo absorbe 'step_start')"
+else
+    fail "B-9: el diagnostico no reporto raw_ignored=2: $(cat "$B_IGNORED_ERR")"
+fi
+if ! grep -q 'raw_ignored' "$B_IGNORED_OUT"; then
+    pass "B-10: raw_ignored NUNCA aparece en el JSONL neutral (el terminal es additionalProperties:false)"
+else
+    fail "B-10: raw_ignored se filtro al JSONL neutral: $(cat "$B_IGNORED_OUT")"
+fi
+
 # ============================================================================
 echo ""
 echo "[C] CA-3: clasificacion completa"
@@ -414,7 +451,7 @@ done
 
 # ============================================================================
 echo ""
-echo "[D] CA-4: el terminal preserva session_id/tokens/cost_usd; turns/denials/ttft_ms/api_duration_ms siempre null; model degrada al parametro"
+echo "[D] CA-4: el terminal SUMA los step_finish de session_id/tokens/cost_usd; turns/denials/ttft_ms/api_duration_ms siempre null; model degrada al parametro"
 
 D_OUT="$TMP/d-full.jsonl"; translate_fixture success-tool-1.18.29.jsonl "" 0 > "$D_OUT"
 TERM="$(jq -c 'select(.type=="run.completed")' "$D_OUT")"
@@ -427,9 +464,27 @@ assert_field() {
     fi
 }
 assert_field "D-1: session_id (del ultimo step_finish/evento con sessionID)" "ses_f8b28e18effew6dRCNC6Tm8NHq" "$(echo "$TERM" | jq -r '.session_id')"
-assert_field "D-2: tokens.input (del ULTIMO step_finish)" "6167" "$(echo "$TERM" | jq -r '.tokens.input')"
-assert_field "D-3: tokens.output (del ULTIMO step_finish)" "10" "$(echo "$TERM" | jq -r '.tokens.output')"
-assert_field "D-4: cost_usd (del ULTIMO step_finish, incluso si es 0)" "0" "$(echo "$TERM" | jq -r '.cost_usd')"
+assert_field "D-2: tokens.input = SUMA de los dos step_finish (6127+6167), no el ultimo" "12294" "$(echo "$TERM" | jq -r '.tokens.input')"
+assert_field "D-3: tokens.output = SUMA de los dos step_finish (17+10), no el ultimo" "27" "$(echo "$TERM" | jq -r '.tokens.output')"
+assert_field "D-4: cost_usd = SUMA de los step_finish (incluso si el total es 0)" "0" "$(echo "$TERM" | jq -r '.cost_usd')"
+
+# Cada `step_finish` reporta lo de SU paso, no un acumulado: quedarse con el
+# ultimo reportaria el costo del cierre de la corrida como el de la corrida
+# entera, y mefisto-metrics-report.sh lo propaga a cost_usd_total. Con costos
+# distintos por paso el error se vuelve visible (el fixture real trae 0 en
+# ambos, que no distingue suma de "ultimo").
+D_COST_FIXTURE="$TMP/multi-cost.jsonl"
+cat > "$D_COST_FIXTURE" <<'EOF'
+{"type":"step_finish","timestamp":1000,"sessionID":"ses_c","part":{"type":"step-finish","reason":"tool-calls","tokens":{"input":100,"output":10},"cost":0.25}}
+{"type":"text","timestamp":1001,"sessionID":"ses_c","part":{"type":"text","text":"listo"}}
+{"type":"step_finish","timestamp":1002,"sessionID":"ses_c","part":{"type":"step-finish","reason":"stop","tokens":{"input":200,"output":20},"cost":0.5}}
+EOF
+D_COST_OUT="$TMP/d-multi-cost.jsonl"
+runtime_opencode_translate "$D_COST_FIXTURE" "opencode" "" 0 > "$D_COST_OUT"
+TERM_COST="$(jq -c 'select(.type=="run.completed")' "$D_COST_OUT")"
+assert_field "D-4b: cost_usd suma pasos con costo distinto (0.25+0.5)" "0.75" "$(echo "$TERM_COST" | jq -r '.cost_usd')"
+assert_field "D-4c: tokens.input suma pasos (100+200)" "300" "$(echo "$TERM_COST" | jq -r '.tokens.input')"
+assert_field "D-4d: tokens.output suma pasos (10+20)" "30" "$(echo "$TERM_COST" | jq -r '.tokens.output')"
 assert_field "D-5: turns siempre null (sin equivalente en el wire format)" "null" "$(echo "$TERM" | jq -r '.turns')"
 assert_field "D-6: denials siempre null (sin equivalente en el wire format)" "null" "$(echo "$TERM" | jq -r '.denials')"
 assert_field "D-7: ttft_ms siempre null (sin equivalente en el wire format)" "null" "$(echo "$TERM" | jq -r '.ttft_ms')"

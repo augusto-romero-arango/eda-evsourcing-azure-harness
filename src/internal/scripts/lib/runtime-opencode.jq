@@ -12,7 +12,9 @@
 # ms, NUNCA un string ISO) y `.sessionID` de nivel superior. Tipos observados:
 #   - `step_start` / `step_finish`: limites de un paso de razonamiento.
 #     `step_finish.part.tokens{input,output,...}` y `.part.cost` son la unica
-#     fuente de metricas -- no hay un evento "result" unico como en Claude.
+#     fuente de metricas -- no hay un evento "result" unico como en Claude, y
+#     cada `step_finish` reporta lo de SU paso, asi que el terminal los suma
+#     (ver el bloque `$steps` mas abajo).
 #   - `text`: `.part.text` es un fragmento de texto visible del asistente.
 #   - `tool_use`: `.part.tool` (nombre), `.part.callID`, `.part.state.status`
 #     ("completed"/"error", nunca observado en "pending"/"running" en las dos
@@ -96,14 +98,30 @@ def clip: if . == null then null else (tostring | .[0:300]) end;
 | ($raw_lines | map({line: ., parsed: (try fromjson catch null)})) as $attempts
 | ($attempts | map(select(.parsed == null or (.parsed | type) != "object"))) as $bad_lines
 | ($attempts | map(select(.parsed != null and (.parsed | type) == "object") | .parsed)) as $events
+# Metricas del terminal (CA-4): OpenCode no emite un evento "result" unico con
+# el acumulado de la corrida -- cada `step_finish` reporta lo de SU paso (en la
+# captura de referencia con tool call: input 6127+6167, output 17+10, cada uno
+# su propio `cost`). El terminal por lo tanto SUMA todos los `step_finish`, no
+# toma el ultimo: cada paso es una llamada facturada aparte, y quedarse con el
+# ultimo reportaria el costo del cierre de la corrida como si fuera el de la
+# corrida entera -- un sesgo que mefisto-metrics-report.sh propaga directo a
+# `cost_usd_total`/`cost_usd_mean`. `add` sobre una lista vacia o toda-null
+# devuelve null, que es exactamente lo que CA-4 pide cuando el wire format no
+# trae el dato (nunca un cero fabricado).
+| ($events | map(select(.type == "step_finish"))) as $steps
 
 | ($stderr_text | split("\n") | map(select(length > 0))) as $stderr_lines
 | ($stderr_lines | (if length > 5 then .[-5:] else . end) | join("\n") | clip) as $stderr_tail
 
 # Diagnostico de tipos no reconocidos (CA-2): ver comentario de cabecera.
-| ($events | map(select(([.type] | inside(["text", "tool_use", "step_start", "step_finish", "error"])) | not)) | length) as $raw_ignored
+# `IN(...)` y no `[.type] | inside([...])`: `inside` compara strings por
+# SUBCADENA, asi que un tipo futuro como "step" o "tool" (subcadena de
+# "step_start"/"tool_use") se contaria como reconocido y `raw_ignored`
+# quedaria por debajo de lo que realmente se descarto -- justo el numero que
+# este diagnostico existe para no falsear.
+| ($events | map(select(.type | IN("text", "tool_use", "step_start", "step_finish", "error") | not)) | length) as $raw_ignored
 | (if $raw_ignored > 0
-   then ($raw_ignored | debug("runtime-opencode.jq: raw_ignored"))
+   then ($raw_ignored | debug("runtime-opencode.jq: raw_ignored=" + ($raw_ignored | tostring)))
    else $raw_ignored end) as $_raw_ignored_diag
 
 | [
@@ -185,10 +203,10 @@ def clip: if . == null then null else (tostring | .[0:300]) end;
     session_id: (($events | map(.sessionID) | map(select(. != null)) | first) // null),
     duration_ms: null,
     tokens: {
-        input: (($events | map(select(.type == "step_finish")) | last | .part.tokens.input) // null),
-        output: (($events | map(select(.type == "step_finish")) | last | .part.tokens.output) // null)
+        input: ($steps | map(.part.tokens.input) | add),
+        output: ($steps | map(.part.tokens.output) | add)
     },
-    cost_usd: (($events | map(select(.type == "step_finish")) | last | .part.cost) // null),
+    cost_usd: ($steps | map(.part.cost) | add),
     turns: null,
     denials: null,
     ttft_ms: null,
