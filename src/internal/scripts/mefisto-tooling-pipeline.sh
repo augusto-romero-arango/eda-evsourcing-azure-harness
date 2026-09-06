@@ -327,6 +327,63 @@ if [ -n "$MEFISTO_STAGE_MODELS" ]; then
     echo "[$(date +%H:%M:%S)] MODELS: $STAGE_MODELS_LOG" >> "$EVENTS_LOG_ABS"
 fi
 
+# --- Resolver el modelo de cada stage (MEF-ADR-0049 decision 4, issue #910) --
+# Se resuelve aqui, ANTES de crear el worktree, por el mismo motivo que
+# --models justo arriba: un mapping local invalido (.mefisto/models.json) o un
+# adaptador sin tabla debe abortar temprano, no a mitad de Stage 1 con un
+# worktree ya en disco.
+#
+# Perfil por rol: balanced para escritura, deep para revision -- mismo criterio
+# de siempre (issue #710), ahora expresado como perfil logico en vez de un
+# modelo fijo. Los defaults 'sonnet'/'opus' ya no viven en este pipeline: quien
+# quiera pinnear un modelo usa --models (por corrida) o .mefisto/models.json
+# (por maquina). El stage de resolucion de conflictos corre como
+# `run_agent "merge" "writer"`, asi que reusa el modelo del writer.
+MODEL_WRITER=""
+MODEL_REVIEWER=""
+
+# resolve_pipeline_stage_model <clave-de-stage> <agent-id-neutral> <perfil>
+#
+# Deja el modelo resuelto en MEFISTO_STAGE_MODEL_RESUELTO (cadena vacia =
+# heredar el modelo activo del CLI; run_agent omite --model por completo en ese
+# caso). Precedencia: override --models por clave EXACTA de stage
+# (resolve_stage_model, issue #709) y, sin match, mefisto_resolve_model
+# (mapping local -> tabla del adaptador -> heredar).
+MEFISTO_STAGE_MODEL_RESUELTO=""
+resolve_pipeline_stage_model() {
+    local stage_key="$1" agent_id="$2" profile="$3"
+
+    MEFISTO_STAGE_MODEL_RESUELTO="$(resolve_stage_model "$stage_key" "")"
+    if [ -n "$MEFISTO_STAGE_MODEL_RESUELTO" ]; then
+        # Constancia del override que SI hizo match: el mapa que se loguea
+        # arriba no dice cuales claves aplicaron, y una clave con typo
+        # ('revieweer=opus') no sobreescribe nada -- sin esta linea el
+        # experimento correria con el modelo por defecto y el reporte se lo
+        # atribuiria al override.
+        echo "[$(date +%H:%M:%S)] MODELS: $stage_key -> $MEFISTO_STAGE_MODEL_RESUELTO (override --models)" >> "$EVENTS_LOG_ABS"
+        return 0
+    fi
+
+    # Redirect simple (>), NUNCA "$(...)": una sustitucion de comando forkea un
+    # subshell y MEFISTO_MODELS_ERROR, asignada DENTRO de mefisto_resolve_model,
+    # se perderia al volver -- el abort quedaria sin motivo (la propia libreria
+    # advierte de esta trampa, ver lib/mefisto-models.sh).
+    local out_file
+    out_file="$(mktemp)"
+    if ! mefisto_resolve_model "$MEFISTO_RUNTIME_RESUELTO" "$agent_id" "$profile" > "$out_file"; then
+        rm -f "$out_file"
+        abort "No se pudo resolver el modelo de $agent_id (perfil $profile): ${MEFISTO_MODELS_ERROR:-motivo desconocido}"
+    fi
+    MEFISTO_STAGE_MODEL_RESUELTO="$(cat "$out_file")"
+    rm -f "$out_file"
+    echo "[$(date +%H:%M:%S)] MODELS: $stage_key -> ${MEFISTO_STAGE_MODEL_RESUELTO:-<heredado>} (perfil $profile)" >> "$EVENTS_LOG_ABS"
+}
+
+resolve_pipeline_stage_model "writer" "mefisto-writer" "balanced"
+MODEL_WRITER="$MEFISTO_STAGE_MODEL_RESUELTO"
+resolve_pipeline_stage_model "reviewer" "mefisto-reviewer" "deep"
+MODEL_REVIEWER="$MEFISTO_STAGE_MODEL_RESUELTO"
+
 # --- Anunciar el modo variante (issue #711) -------------------------------
 # El label ya se valido y ya derivo los nombres de archivo arriba, junto al
 # parseo de argumentos; aqui solo se anuncia, que es lo primero que se puede
@@ -473,29 +530,16 @@ run_agent() {
         reviewer) AGENT_RV_RES="running" ;;
     esac
 
-    # Id de agente neutral + perfil por rol (CA-2): balanced para escritura
-    # (writer y merge), deep para revision -- mismo criterio de siempre
-    # (issue #710), ahora expresado como perfil logico en vez de un modelo
-    # fijo (MEF-ADR-0049 decision 4).
-    local MEFISTO_AGENT_ID AGENT_PROFILE
+    # Id de agente neutral + modelo, ambos ya resueltos ANTES de crear el
+    # worktree (CA-2, resolve_pipeline_stage_model): aqui solo se selecciona
+    # por rol. El stage de resolucion de conflictos corre como
+    # `run_agent "merge" "writer"` y por eso cae en la rama de escritura --
+    # mismo agente y mismo modelo que el writer de Stage 1.
+    local MEFISTO_AGENT_ID AGENT_MODEL
     case "$agent" in
-        reviewer) MEFISTO_AGENT_ID="mefisto-reviewer"; AGENT_PROFILE="deep" ;;
-        *)        MEFISTO_AGENT_ID="mefisto-writer";   AGENT_PROFILE="balanced" ;;
+        reviewer) MEFISTO_AGENT_ID="mefisto-reviewer"; AGENT_MODEL="$MODEL_REVIEWER" ;;
+        *)        MEFISTO_AGENT_ID="mefisto-writer";   AGENT_MODEL="$MODEL_WRITER" ;;
     esac
-
-    # Modelo: el override --models por clave exacta de stage (resolve_stage_model,
-    # issue #709) sigue ganando -- se consulta primero, con default vacio para
-    # detectar si hubo match. Sin match, mefisto_resolve_model resuelve por
-    # mapping local (.mefisto/models.json) -> tabla del adaptador -> heredar
-    # (cadena vacia, MEF-ADR-0049 decision 4).
-    local AGENT_MODEL
-    AGENT_MODEL="$(resolve_stage_model "$agent" "")"
-    if [ -n "$AGENT_MODEL" ]; then
-        echo "[$(date +%H:%M:%S)] MODELS: stage $stage/$agent -> $AGENT_MODEL (override --models)" >> "$EVENTS_LOG_ABS"
-    else
-        AGENT_MODEL="$(mefisto_resolve_model "$MEFISTO_RUNTIME_RESUELTO" "$MEFISTO_AGENT_ID" "$AGENT_PROFILE")" \
-            || abort "No se pudo resolver el modelo de $MEFISTO_AGENT_ID: ${MEFISTO_MODELS_ERROR:-motivo desconocido}"
-    fi
     update_status "$stage-$agent" "running"
     log "Invocando $agent..."
 

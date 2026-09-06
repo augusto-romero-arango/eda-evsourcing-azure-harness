@@ -43,14 +43,11 @@ fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 
 # shellcheck source=/dev/null
 source "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" 2>/dev/null
-# shellcheck source=/dev/null
-source "$REPO_ROOT/src/internal/scripts/lib/mefisto-runtime.sh" 2>/dev/null
-# shellcheck source=/dev/null
-source "$REPO_ROOT/src/internal/scripts/lib/mefisto-models.sh" 2>/dev/null
-# shellcheck source=/dev/null
-source "$REPO_ROOT/src/internal/scripts/lib/adapter-claude.sh" 2>/dev/null
-# shellcheck source=/dev/null
-source "$REPO_ROOT/src/internal/scripts/lib/adapter-opencode.sh" 2>/dev/null
+# Desde el issue #910 run_agent no sourcea ni invoca ninguna libreria de
+# runtime/modelos: el runtime y el modelo se resuelven en el cuerpo del
+# pipeline, antes del worktree, y llegan aqui como variables ya fijadas
+# (MEFISTO_RUNTIME_RESUELTO, MODEL_WRITER/MODEL_REVIEWER). Este test solo
+# necesita _mefisto-common.sh, que ya esta sourceado arriba.
 
 INTERNAL_PIPELINE="$REPO_ROOT/src/internal/scripts/mefisto-tooling-pipeline.sh"
 
@@ -172,15 +169,17 @@ setup_run_agent_env() {
     AGENT_WR_METRICS_JSON=""; AGENT_RV_METRICS_JSON=""
     LAST_AGENT_DURATION=0; LAST_AGENT_METRICS_JSON=""
 
-    # run_agent (issue #910) referencia estas dos bajo `set -u`: SCRIPT_DIR
-    # solo se usa para componer el default de RUN_AGENT_BIN/--system-file, y
+    # run_agent (issue #910) referencia estas bajo `set -u`: SCRIPT_DIR solo se
+    # usa para componer el default de RUN_AGENT_BIN/--system-file, y
     # MEFISTO_RUNTIME_RESUELTO viaja tal cual al runner -- ninguno de los dos
     # necesita resolver a algo real porque el stub del runner ignora ambos.
     SCRIPT_DIR="$REPO_ROOT/src/internal/scripts"
     MEFISTO_RUNTIME_RESUELTO="claude"
-    # Aisla mefisto_resolve_model de cualquier .mefisto/models.json que exista
-    # de verdad en la maquina del desarrollador (es gitignored, no versionado).
-    MEFISTO_MODELS_FILE="$TMP/no-existe-models.json"
+    # El modelo por stage lo resuelve el pipeline ANTES del worktree (CA-2), no
+    # run_agent: aqui basta con fijar el resultado. Vacio = heredar, que es
+    # ademas el caso que ejerce la rama sin --model del array del runner.
+    MODEL_WRITER=""
+    MODEL_REVIEWER=""
 
     # Reintentos rapidos: el bucle real espera 120s.
     export MEFISTO_AGENT_MAX_ATTEMPTS=3
