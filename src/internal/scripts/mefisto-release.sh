@@ -401,10 +401,15 @@ EOF
     if NEUTRALITY_OUT="$("$MEFISTO_REPO_ROOT/src/internal/scripts/mefisto-neutrality-gate.sh" 2>&1)"; then
         log_success "Gate de neutralidad: sin fugas"
     else
-        abort "Fuga(s) de neutralidad de runtime (MEF-ADR-0049) en la rama ${RELEASE_BRANCH}:
+        # La rama de release aun no tiene commits propios y el arbol esta limpio
+        # (require_clean_tree): se deshace antes de abortar, para que el
+        # reintento no tropiece con "Ya existe localmente la rama". Las fugas
+        # vienen de origin/main, asi que la rama de release tampoco era el
+        # lugar para corregirlas.
+        git switch "$CURRENT_BRANCH" >/dev/null 2>&1 && git branch -D "$RELEASE_BRANCH" >/dev/null 2>&1 || true
+        abort "Fuga(s) de neutralidad de runtime (MEF-ADR-0049) en origin/main:
 $NEUTRALITY_OUT
-Registrar una excepcion nueva en la allowlist y usarla son dos PRs distintos -- el de registro va primero (MEF-ADR-0019 seccion E).
-Corrige las fugas, comitealas en ${RELEASE_BRANCH} y reintenta '/mefisto-release ${BUMP_PART}'; o borra la rama (git branch -D ${RELEASE_BRANCH}) para reintentar desde cero."
+Una release no se publica con fugas: corrigelas en main via PR de issue (el pipeline de tooling corre este mismo gate) y reintenta '/mefisto-release ${BUMP_PART}'. Registrar una excepcion nueva en la allowlist y usarla son dos PRs distintos -- el de registro va primero (MEF-ADR-0019 seccion E). La rama ${RELEASE_BRANCH} se deshizo (no tenia commits propios); estas de vuelta en ${CURRENT_BRANCH}."
     fi
 
     # Consolidar fragmentos de changelog.d/ (issue #380): cada PR anoto su
