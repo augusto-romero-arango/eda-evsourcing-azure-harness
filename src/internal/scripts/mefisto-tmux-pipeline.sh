@@ -580,11 +580,10 @@ fi
 # ejecucion en el workspace actual, sin sesion tmux); fuera de herdr, o para
 # --attach, todo sigue igual que siempre.
 if should_delegate_to_herdr "$@"; then
-    # mefisto-herdr-pipeline.sh todavia no migro a src/internal/scripts/
-    # (issue #872): a diferencia de mefisto-tooling-pipeline.sh y
-    # mefisto-batch-pipeline.sh, que ya son hermanos de este script en
-    # SCRIPT_DIR, este solo existe bajo la ruta legacy.
-    exec "$PROJECT_ROOT/.claude/scripts/mefisto-herdr-pipeline.sh" "$@"
+    # mefisto-herdr-pipeline.sh ya es canonico en src/internal/scripts/
+    # (issue #872): mismo criterio que TOOLING_SCRIPT_Q/BATCH_SCRIPT_Q arriba,
+    # hermano de este script en SCRIPT_DIR.
+    exec "$SCRIPT_DIR/mefisto-herdr-pipeline.sh" "$@"
 fi
 
 case "$1" in

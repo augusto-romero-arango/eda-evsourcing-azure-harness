@@ -31,10 +31,10 @@
 #         el legacy (.claude/pipeline/, que ya no recibe corridas nuevas y no se
 #         migra) y el canonico (.mefisto/pipeline/), corriendo el CLI real
 #         contra un repo de mentira con una corrida en cada una (CA-6).
-#   [I]   Los lanzadores que aun viven en .claude/scripts/ (tmux, herdr)
-#         resuelven events.log y logs/ con mefisto_state_path, de modo que el
-#         traslado del pipeline no los deja vigilando archivos que ya nadie
-#         escribe (CA-3; el porte completo de ambos es #871/#872).
+#   [I]   Los lanzadores (tmux, herdr) resuelven events.log y logs/ con
+#         mefisto_state_path, de modo que el traslado del pipeline no los deja
+#         vigilando archivos que ya nadie escribe (CA-3; el porte completo de
+#         ambos es #871/#872).
 #
 # Uso: .claude/scripts/tests/test-tooling-state-paths.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -425,11 +425,11 @@ echo "[I] tmux/herdr resuelven el estado de la corrida con mefisto_state_path (C
 # -- pasaban a vigilar archivos que ya nadie escribe: el pane monitor de tmux
 # tail-eando un archivo vacio toda la corrida, y el pane de reporte de herdr
 # apuntando a un directorio de logs muerto. Ninguno de los dos falla ni avisa;
-# simplemente no muestra nada. El porte de tmux se cerro en #871 (ya canonico
-# en src/internal/scripts/); el de herdr sigue en #872. Esto solo fija que la
+# simplemente no muestra nada. El porte de tmux se cerro en #871 y el de herdr
+# en #872 (ambos ya canonicos en src/internal/scripts/). Esto solo fija que la
 # resolucion no vuelva a quedarse atras.
 TMUX_LAUNCHER="$REPO_ROOT/src/internal/scripts/mefisto-tmux-pipeline.sh"
-HERDR_LAUNCHER="$REPO_ROOT/.claude/scripts/mefisto-herdr-pipeline.sh"
+HERDR_LAUNCHER="$REPO_ROOT/src/internal/scripts/mefisto-herdr-pipeline.sh"
 
 if grep -qF 'EVENTS_LOG="$(mefisto_state_path "events.log")"' "$TMUX_LAUNCHER"; then
     pass "I-1: el pane monitor de tmux tail-ea el events.log que el pipeline escribe hoy"
