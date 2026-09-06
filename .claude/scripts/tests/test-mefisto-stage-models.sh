@@ -116,7 +116,7 @@ echo "----------------------------------------"
 
 # --- mefisto-tooling-pipeline.sh: wiring de --models (CA-1/CA-2) ------------
 
-PIPE_PATH="$REPO_ROOT/.claude/scripts/mefisto-tooling-pipeline.sh"
+PIPE_PATH="$REPO_ROOT/src/internal/scripts/mefisto-tooling-pipeline.sh"
 
 echo ""
 echo "[11] --models se resuelve ANTES de crear el worktree (CA-1: un malformado no debe dejar un worktree a medias)"
@@ -181,6 +181,7 @@ cat > "$FAKE_MEFISTO/.claude-plugin/plugin.json" <<'EOF'
   "version": "0.0.0"
 }
 EOF
+cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/_mefisto-common.sh"
 cp "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" "$FAKE_MEFISTO/.claude/scripts/_mefisto-common.sh"
 cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-state.sh"
 cp "$REPO_ROOT/.claude/scripts/mefisto-tmux-pipeline.sh" "$FAKE_MEFISTO/.claude/scripts/mefisto-tmux-pipeline.sh"

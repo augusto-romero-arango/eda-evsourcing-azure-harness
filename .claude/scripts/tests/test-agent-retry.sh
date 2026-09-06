@@ -30,7 +30,7 @@ fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 # shellcheck source=/dev/null
 source "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" 2>/dev/null
 
-INTERNAL_PIPELINE="$REPO_ROOT/.claude/scripts/mefisto-tooling-pipeline.sh"
+INTERNAL_PIPELINE="$REPO_ROOT/src/internal/scripts/mefisto-tooling-pipeline.sh"
 
 # extract_fn <function_name> <file> -- mismo patron que test-abort-log-tail.sh
 extract_fn() {

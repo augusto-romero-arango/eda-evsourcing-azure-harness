@@ -27,7 +27,7 @@
 #       hay push/PR/comentario al issue (CA-3), y el label viaja en el status
 #       y en el historial (CA-4).
 #   mefisto-tooling-pipeline.sh (bloque 18) -- corrida real: un label invalido
-#       aborta con el motivo visible en stderr aun sin .claude/pipeline/logs
+#       aborta con el motivo visible en stderr aun sin .mefisto/pipeline/logs
 #       preexistente, y sin dejar worktree (CA-1).
 #
 # Uso: .claude/scripts/tests/test-mefisto-tooling-variant.sh
@@ -113,6 +113,7 @@ cat > "$FAKE_MEFISTO/.claude-plugin/plugin.json" <<'EOF'
   "version": "0.0.0"
 }
 EOF
+cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/_mefisto-common.sh"
 cp "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" "$FAKE_MEFISTO/.claude/scripts/_mefisto-common.sh"
 cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-state.sh"
 cp "$REPO_ROOT/.claude/scripts/mefisto-tmux-pipeline.sh" "$FAKE_MEFISTO/.claude/scripts/mefisto-tmux-pipeline.sh"
@@ -315,7 +316,7 @@ echo "----------------------------------------"
 # y un worktree real, y lo que aqui importa no es la corrida sino DONDE quedan
 # cableados el sufijo y las supresiones -- justamente lo que una
 # refactorizacion futura puede mover de lugar sin que ningun test se queje.
-PIPE="$REPO_ROOT/.claude/scripts/mefisto-tooling-pipeline.sh"
+PIPE="$REPO_ROOT/src/internal/scripts/mefisto-tooling-pipeline.sh"
 
 echo ""
 echo "[15] mefisto-tooling-pipeline.sh: el sufijo -<label> llega a rama, worktree, status y logs (CA-2)"
@@ -384,7 +385,7 @@ else
 fi
 
 echo ""
-echo "[18] mefisto-tooling-pipeline.sh: un --variant invalido aborta con el motivo VISIBLE, aunque .claude/pipeline/logs no exista (CA-1)"
+echo "[18] mefisto-tooling-pipeline.sh: un --variant invalido aborta con el motivo VISIBLE, aunque .mefisto/pipeline/logs no exista (CA-1)"
 # El caso real: primera corrida sobre un clon fresco. La validacion de
 # --variant ocurre ANTES de 'mkdir -p "$LOG_DIR"', asi que abort() escribe a un
 # log cuyo directorio todavia no existe. Si el tee de abort() no tolera ese
@@ -392,7 +393,8 @@ echo "[18] mefisto-tooling-pipeline.sh: un --variant invalido aborta con el moti
 # un '||' y por tanto NO hereda la exencion de errexit -- y el humano solo ve
 # "tee: ... No such file or directory": el motivo real nunca llega a stderr.
 cp "$REPO_ROOT/.claude/scripts/mefisto-tooling-pipeline.sh" "$FAKE_MEFISTO/.claude/scripts/mefisto-tooling-pipeline.sh"
-rm -rf "$FAKE_MEFISTO/.claude/pipeline"
+cp "$REPO_ROOT/src/internal/scripts/mefisto-tooling-pipeline.sh" "$FAKE_MEFISTO/src/internal/scripts/mefisto-tooling-pipeline.sh"
+rm -rf "$FAKE_MEFISTO/.mefisto"
 ABORT_OUT="$TMP_DIR/abort-stdout"; ABORT_ERR="$TMP_DIR/abort-stderr"
 (
     cd "$FAKE_MEFISTO" || exit 99

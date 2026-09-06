@@ -96,6 +96,7 @@ fi
 
 FIXTURE="$TMP/fixture"
 mkdir -p "$FIXTURE/.claude/scripts" "$FIXTURE/.claude-plugin" "$FIXTURE/src/internal/scripts/lib"
+cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FIXTURE/src/internal/scripts/lib/_mefisto-common.sh"
 cp "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" "$FIXTURE/.claude/scripts/_mefisto-common.sh"
 cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FIXTURE/src/internal/scripts/lib/mefisto-state.sh"
 
@@ -283,7 +284,7 @@ fi
 echo ""
 echo "[I] HARNESS_VERSION y HARNESS_SHA se calculan UNA vez en el prologo, no dentro de abort()"
 
-PIPE_PATH="$REPO_ROOT/.claude/scripts/mefisto-tooling-pipeline.sh"
+PIPE_PATH="$REPO_ROOT/src/internal/scripts/mefisto-tooling-pipeline.sh"
 abort_line=$(grep -n '^abort() {' "$PIPE_PATH" | head -n1 | cut -d: -f1)
 
 for var_assign in 'HARNESS_VERSION="\$(get_harness_version)"' 'HARNESS_SHA="\$(get_harness_sha)"'; do
@@ -337,6 +338,7 @@ if command -v jq >/dev/null 2>&1; then
   "version": "9.9.9"
 }
 EOF
+    cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FAKE_REPO/src/internal/scripts/lib/_mefisto-common.sh"
     cp "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" "$FAKE_REPO/.claude/scripts/_mefisto-common.sh"
     cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_REPO/src/internal/scripts/lib/mefisto-state.sh"
     cp "$REPO_ROOT/.claude/scripts/mefisto-metrics-report.sh" "$FAKE_REPO/.claude/scripts/mefisto-metrics-report.sh"

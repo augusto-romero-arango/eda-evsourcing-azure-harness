@@ -36,14 +36,22 @@ tres lineas identicas para todos, sin un solo campo que derive de la fuente
 neutral, no justifican una etapa de generacion; lo que si hace falta es un
 gate que verifique la conformidad, y ese es el trabajo de #873.
 
-## Precedente: mefisto-release.sh (issue #864)
+## Precedente: mefisto-release.sh (issue #864) y _mefisto-common.sh (issue #869)
 
-Primer script trasladado. Su unica referencia a `.claude/scripts/` es el
-`source` de `_mefisto-common.sh` (issue #856), resuelto via `MEFISTO_REPO_ROOT`
--- nunca via `dirname "$0"`, porque el script ya no vive en ese directorio.
-Es transitorio: cuando `_mefisto-common.sh` se traslade a
-`src/internal/scripts/lib/` (issue #869), ese `source` pasa a resolverse igual
-que el resto de la libreria (relativo al propio archivo).
+`mefisto-release.sh` fue el primer script trasladado. `_mefisto-common.sh` -- la
+lib de todos los scripts internos -- lo siguio en el issue #869, junto con
+`mefisto-tooling-pipeline.sh`. Con la lib ya en `src/internal/scripts/lib/`,
+`mefisto-release.sh` la `source`a relativa a su propio archivo (`lib/_mefisto-common.sh`),
+igual que el resto de la libreria (`mefisto-state.sh`, `mefisto-runtime.sh`...),
+sin pasar por `.claude/scripts/`. El shim de `_mefisto-common.sh` en
+`.claude/scripts/` es la unica excepcion a la plantilla de `exec` de arriba: es
+un `source` de una linea, para que los scripts que aun viven en `.claude/scripts/`
+(`mefisto-batch-pipeline.sh`, `mefisto-tmux-pipeline.sh`,
+`mefisto-herdr-pipeline.sh`, `mefisto-stream-watch.sh`,
+`mefisto-metrics-report.sh`, `mefisto-scope-hook.sh`) sigan resolviendo la lib
+por su propio `dirname "${BASH_SOURCE[0]}"` sin cambiar una linea, y para que el
+gate de scope (MEF-ADR-0019 seccion E) siga cargandose desde el checkout
+principal.
 
 ## Deuda conocida: `python3` en el resumen del CHANGELOG
 

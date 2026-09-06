@@ -128,6 +128,7 @@ FAKE_REPO="$TMP/fake-mefisto"
 mkdir -p "$FAKE_REPO/.claude-plugin" "$FAKE_REPO/.claude/scripts" "$FAKE_REPO/.claude/pipeline" "$FAKE_REPO/src/internal/scripts/lib"
 git -C "$FAKE_REPO" init -q
 echo '{"name":"mefisto"}' > "$FAKE_REPO/.claude-plugin/plugin.json"
+cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FAKE_REPO/src/internal/scripts/lib/_mefisto-common.sh"
 cp "$COMMON_SCRIPT" "$FAKE_REPO/.claude/scripts/_mefisto-common.sh"
 cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_REPO/src/internal/scripts/lib/mefisto-state.sh"
 cp "$REPORT_SCRIPT" "$FAKE_REPO/.claude/scripts/mefisto-metrics-report.sh"

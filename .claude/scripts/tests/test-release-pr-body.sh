@@ -285,16 +285,17 @@ else
     fail "G-4: el shim no sigue la plantilla de src/internal/scripts/README.md (${SHIM_LINES} lineas no vacias)"
 fi
 
-# Solo lineas de CODIGO (no comentarios): el criterio prohibe rutas
-# .claude/scripts fuera del source transitorio, pero el propio source esta
-# deliberadamente comentado como transitorio -- esos comentarios SI pueden
-# nombrar la ruta.
+# Solo lineas de CODIGO (no comentarios): _mefisto-common.sh ya vive en
+# src/internal/scripts/lib/ (issue #869) -- el source transitorio que
+# resolvia via .claude/scripts/ desaparecio, asi que el criterio ya no admite
+# ninguna referencia de codigo a esa ruta (los comentarios si pueden nombrarla
+# en prosa, p. ej. al describir el shim).
 CODE_CLAUDE_SCRIPTS_REFS=$(grep -vE '^\s*#' "$RELEASE_SCRIPT" | grep -c '\.claude/scripts')
 if ! grep -qE '\bCLAUDE_PLUGIN_ROOT\b|\bCLAUDE_PROJECT_DIR\b' "$RELEASE_SCRIPT" \
-    && [ "$CODE_CLAUDE_SCRIPTS_REFS" -eq 1 ]; then
-    pass "G-5: la implementacion canonica no referencia CLAUDE_PLUGIN_ROOT/CLAUDE_PROJECT_DIR y solo tiene 1 linea de codigo con ruta .claude/scripts (el source transitorio de _mefisto-common.sh)"
+    && [ "$CODE_CLAUDE_SCRIPTS_REFS" -eq 0 ]; then
+    pass "G-5: la implementacion canonica no referencia CLAUDE_PLUGIN_ROOT/CLAUDE_PROJECT_DIR y no tiene ninguna linea de codigo con ruta .claude/scripts (_mefisto-common.sh ya es canonica, issue #869)"
 else
-    fail "G-5: la implementacion canonica deberia estar libre de variables de Claude Code y de rutas .claude/scripts en codigo salvo el source transitorio (encontradas: ${CODE_CLAUDE_SCRIPTS_REFS})"
+    fail "G-5: la implementacion canonica deberia estar libre de variables de Claude Code y de rutas .claude/scripts en codigo (encontradas: ${CODE_CLAUDE_SCRIPTS_REFS})"
 fi
 
 # -------- Resumen --------
