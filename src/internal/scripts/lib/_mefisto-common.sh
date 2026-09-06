@@ -863,7 +863,25 @@ run_agent_with_watchdog() {
         wait "$watchdog_pid" 2>/dev/null || true
     else
         kill -9 -"$watchdog_pid" 2>/dev/null || true
+        # Respaldo al PID pelado por si el kill al GRUPO no alcanzo al
+        # watchdog (medido: el `sleep` sobrevive al kill de grupo en ~2% de
+        # las corridas cortas, ver mas abajo). Deja huerfano el `sleep` -- mal
+        # menor frente a un watchdog vivo que dentro de 30 min haria
+        # `kill -9` sobre un PGID ya reciclado por un proceso ajeno.
+        kill -9 "$watchdog_pid" 2>/dev/null || true
         wait "$watchdog_pid" 2>/dev/null || true
+        # Carrera del watchdog perdido: entre que `wait` retorno y este `kill`
+        # aterrizo, un watchdog que sobrevivio a su `sleep` alcanza a hacer su
+        # `touch` -- y deja <signal_file> creado para un stage que en realidad
+        # termino solo. El caller lo leeria como TIMEOUT y descartaria trabajo
+        # bueno (se observo como "TIMEOUT (0s, exit 0)" en el bloque G de
+        # test-tooling-state-paths.sh, ~40% de las corridas cuando el CLI
+        # responde en menos de un segundo). Aqui ya se decidio que el watchdog
+        # NO habia disparado cuando el proceso termino -- esa es la rama else
+        # --, asi que cualquier senal posterior es ruido y se borra. El caso
+        # legitimo (el watchdog SI disparo) va por la rama de arriba y su
+        # senal nunca se toca.
+        rm -f "$signal_file"
     fi
 
     echo "$exit_code"
@@ -925,7 +943,7 @@ derive_stage_log_from_stream() {
                       "[tool] " + (.tool // "?")
                   elif (.type == "run.completed" or .type == "run.failed") then
                       (if (.error // null) != null
-                       then (.error.kind + ": " + (.error.detail // ""))
+                       then ((.error.kind // "error") + ": " + (.error.detail // ""))
                        else empty end)
                   else empty end
             ' "$events_file" >> "$out_file" 2>/dev/null || true
@@ -981,39 +999,68 @@ agent_stream_completed_successfully() {
     [ "$verdict" = "yes" ]
 }
 
-# agent_events_error_kind <events_file>
+# agent_events_error_field <events_file> <campo>
 #
-# Imprime por stdout el `error.kind` del evento terminal (`run.completed` o
+# Imprime por stdout `error.<campo>` del evento terminal (`run.completed` o
 # `run.failed`) del JSONL neutral <events_file> (issue #906), o cadena vacia
 # si no hay terminal, el terminal no trae `error` (null), el archivo esta
 # vacio/inexistente o jq no esta disponible. Nunca aborta, siempre retorna 0.
 #
-# Unico lugar donde vive la lectura de `error.kind` para decidir
-# recuperacion/clasificacion -- lo consumen tanto agent_failure_is_unrecoverable
-# (que solo mira si vale "stream_cut") como classify_agent_failure (que ademas
-# lee `error.detail` para distinguir 5xx de 4xx dentro de "api_error"). Antes
-# de este issue esa decision vivia en un grep amplio sobre el log DERIVADO --
-# MEF-ADR-0049 (decision 1) prohibe que esta capa interprete el vocabulario de
-# un runtime concreto, asi que la fuente pasa a ser el campo estructurado que
-# el adaptador ya declaro.
-agent_events_error_kind() {
-    local events_file="${1:-}"
+# Es el UNICO lugar donde vive la seleccion del evento terminal para decidir
+# recuperacion/clasificacion; sus dos wrappers (agent_events_error_kind /
+# agent_events_error_detail) son la interfaz que usan los callers. Con la
+# expresion duplicada en cada consumidor, un cambio en como se elige el
+# terminal (hoy: el ULTIMO, por si una traza trae dos) tendria que replicarse
+# a mano en cada copia -- el mismo modo de desincronizacion silenciosa que
+# motivo centralizar el patron del corte de stream en #424.
+#
+# Antes de este issue la decision vivia en un grep amplio sobre el log
+# DERIVADO -- MEF-ADR-0049 (decision 1) prohibe que esta capa interprete el
+# vocabulario de un runtime concreto, asi que la fuente pasa a ser el campo
+# estructurado que el adaptador ya declaro.
+#
+# Parseo tolerante (`try fromjson catch empty`), igual que
+# agent_stream_completed_successfully: una linea truncada a mitad de escritura
+# se descarta sin perder las anteriores.
+agent_events_error_field() {
+    local events_file="${1:-}" field="${2:-kind}"
 
     if [ -z "$events_file" ] || [ ! -s "$events_file" ] || ! command -v jq >/dev/null 2>&1; then
         echo ""
         return 0
     fi
 
-    local kind
-    kind=$(jq -Rsr '
+    local value
+    value=$(jq -Rsr --arg field "$field" '
         (split("\n") | map(select(length > 0)) | map(try fromjson catch empty)
             | map(select(type == "object"))) as $events
         | ($events | map(select(.type == "run.completed" or .type == "run.failed")) | last) as $terminal
-        | ($terminal.error.kind // "")
-    ' "$events_file" 2>/dev/null) || kind=""
+        | ((($terminal.error // {})[$field]) // "")
+    ' "$events_file" 2>/dev/null) || value=""
 
-    echo "$kind"
+    echo "$value"
     return 0
+}
+
+# agent_events_error_kind <events_file>
+#
+# `error.kind` del terminal, o cadena vacia. Lo consumen
+# agent_failure_is_unrecoverable (que solo mira si vale "stream_cut") y
+# classify_agent_failure (que ademas necesita el detalle para distinguir 5xx
+# de 4xx dentro de "api_error", ver agent_events_error_detail).
+agent_events_error_kind() {
+    agent_events_error_field "${1:-}" kind
+}
+
+# agent_events_error_detail <events_file>
+#
+# `error.detail` del terminal, o cadena vacia. Solo lo consulta
+# classify_agent_failure cuando el kind ya es "api_error": el status HTTP no
+# es un campo propio del contrato neutral, viaja dentro del detalle con el
+# prefijo canonico "API Error: <status>" que el adaptador ya normaliza
+# (runtime-claude.jq).
+agent_events_error_detail() {
+    agent_events_error_field "${1:-}" detail
 }
 
 # agent_failure_is_unrecoverable <timed_out> <exit_code> <events_file>
@@ -1096,15 +1143,8 @@ classify_agent_failure() {
     error_kind="$(agent_events_error_kind "$events_file")"
 
     if [ "$error_kind" = "api_error" ]; then
-        local error_detail=""
-        if [ -n "$events_file" ] && [ -s "$events_file" ] && command -v jq >/dev/null 2>&1; then
-            error_detail=$(jq -Rsr '
-                (split("\n") | map(select(length > 0)) | map(try fromjson catch empty)
-                    | map(select(type == "object"))) as $events
-                | ($events | map(select(.type == "run.completed" or .type == "run.failed")) | last) as $terminal
-                | ($terminal.error.detail // "")
-            ' "$events_file" 2>/dev/null) || error_detail=""
-        fi
+        local error_detail
+        error_detail="$(agent_events_error_detail "$events_file")"
         if printf '%s' "$error_detail" | grep -q "API Error: 5"; then
             echo "API_ERROR_SERVER (exit $exit_code)"
         elif printf '%s' "$error_detail" | grep -q "API Error: 4"; then

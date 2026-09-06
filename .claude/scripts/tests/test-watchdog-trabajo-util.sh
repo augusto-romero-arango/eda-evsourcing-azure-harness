@@ -167,6 +167,36 @@ else
     fail "C-5: quedaron $ORPHANS 'sleep $C_TIMEOUT' huerfanos tras cancelar el watchdog"
 fi
 
+# C-6/C-7: la senal NO puede aparecer despues de que el proceso termino solo.
+# Un watchdog que sobrevive a su `sleep` alcanza a hacer su `touch` en la
+# ventana entre `wait` y el `kill` que lo cancela, y deja la senal de un stage
+# que en realidad termino bien -- el caller la lee como TIMEOUT y descarta
+# trabajo bueno. Se manifesto como "TIMEOUT (0s, exit 0)" en el bloque G de
+# test-tooling-state-paths.sh cuando el CLI responde en menos de un segundo.
+# El arreglo: la rama que cancela el watchdog (la que ya decidio que NO habia
+# disparado) borra cualquier senal posterior.
+C6_ESPURIAS=0
+for c6_i in $(seq 1 30); do
+    run_agent_with_watchdog "$WT_C" 3607 "$TMP/c6-log.txt" "$TMP/c6-stderr.txt" "$TMP/c6-events.log" "writer" "$TMP/c6-signal-$c6_i" \
+        /bin/echo hola >/dev/null
+    # Margen para que un watchdog perdido alcance a tocar la senal.
+    sleep 0.05
+    [ -f "$TMP/c6-signal-$c6_i" ] && C6_ESPURIAS=$((C6_ESPURIAS+1))
+done
+if [ "$C6_ESPURIAS" = "0" ]; then
+    pass "C-6: 30 corridas que terminan solas, cero senales de timeout espurias"
+else
+    fail "C-6: $C6_ESPURIAS de 30 corridas dejaron una senal espuria (se clasificarian TIMEOUT)"
+fi
+
+C7_LIB="$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh"
+C7_RM=$(grep -c 'rm -f "\$signal_file"' "$C7_LIB" 2>/dev/null || echo 0)
+if [ "$C7_RM" -ge 2 ]; then
+    pass "C-7: la rama que cancela el watchdog limpia la senal, ademas del rm de entrada"
+else
+    fail "C-7: falta el rm de la senal tras cancelar el watchdog (solo $C7_RM ocurrencia(s))"
+fi
+
 # -------- Fixtures de worktree para los bloques D y E --------
 
 WT="$TMP/worktree"

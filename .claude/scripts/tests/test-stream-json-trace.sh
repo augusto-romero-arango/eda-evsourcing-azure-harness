@@ -37,8 +37,9 @@
 #       agent_events_error_kind (issue #906) expone ese mismo `error.kind`
 #       para que classify_agent_failure/agent_failure_is_unrecoverable
 #       clasifiquen sin volver a grepear el log (CA-2). Incluye el caso
-#       negativo (un terminal sin error no debe ensuciar el log) y una linea
-#       de JSON valido pero no-objeto, que no debe tumbar la derivacion.
+#       negativo (un terminal sin error no debe ensuciar el log), el caso
+#       degenerado de un events_file ausente y una linea de JSON valido pero
+#       no-objeto, que no debe tumbar la derivacion.
 #
 # Uso: .claude/scripts/tests/test-stream-json-trace.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -63,7 +64,7 @@ trap cleanup EXIT
 # -------- Bloque pre: funciones existen --------
 
 echo "[pre] Las funciones nuevas estan definidas en _mefisto-common.sh"
-for fn in derive_stage_log_from_stream run_agent_with_watchdog agent_events_error_kind; do
+for fn in derive_stage_log_from_stream run_agent_with_watchdog agent_events_error_kind agent_events_error_detail; do
     if declare -F "$fn" >/dev/null; then
         pass "$fn definida"
     else
@@ -287,6 +288,15 @@ else
     fail "G-2: agent_events_error_kind no devolvio 'api_error': '$(agent_events_error_kind "$TMP/g-events-5xx.jsonl")'"
 fi
 
+# El detalle es lo que classify_agent_failure grepea para partir 5xx de 4xx:
+# el contrato neutral no tiene un campo de status HTTP, viaja aqui con el
+# prefijo canonico que normaliza el adaptador.
+if [ "$(agent_events_error_detail "$TMP/g-events-5xx.jsonl")" = "API Error: 500 Overloaded" ]; then
+    pass "G-2b: agent_events_error_detail expone el detalle con el prefijo 'API Error: <status>'"
+else
+    fail "G-2b: agent_events_error_detail no devolvio el detalle esperado: '$(agent_events_error_detail "$TMP/g-events-5xx.jsonl")'"
+fi
+
 if grep -qF "Empiezo a trabajar." "$TMP/g-out-5xx.log"; then
     pass "G-3: el texto previo al fallo se conserva"
 else
@@ -329,10 +339,25 @@ if [ "$(cat "$TMP/g-out-ok.log")" = "Listo." ]; then
 else
     fail "G-7: el terminal sano ensucio el log: $(cat "$TMP/g-out-ok.log")"
 fi
-if [ -z "$(agent_events_error_kind "$TMP/g-events-ok.jsonl")" ]; then
-    pass "G-8: agent_events_error_kind devuelve vacio cuando el terminal no trae error"
+if [ -z "$(agent_events_error_kind "$TMP/g-events-ok.jsonl")" ] \
+   && [ -z "$(agent_events_error_detail "$TMP/g-events-ok.jsonl")" ]; then
+    pass "G-8: agent_events_error_kind/_detail devuelven vacio cuando el terminal no trae error"
 else
-    fail "G-8: agent_events_error_kind deberia devolver vacio: '$(agent_events_error_kind "$TMP/g-events-ok.jsonl")'"
+    fail "G-8: deberian devolver vacio: kind='$(agent_events_error_kind "$TMP/g-events-ok.jsonl")' detail='$(agent_events_error_detail "$TMP/g-events-ok.jsonl")'"
+fi
+
+# Archivo vacio/inexistente: los lectores degradan a vacio sin abortar bajo
+# set -euo pipefail (es la ruta que toma un stage cuya traza nunca se
+# escribio -- jq ausente, o el CLI murio antes del primer evento).
+(
+    set -euo pipefail
+    [ -z "$(agent_events_error_kind "$TMP/no-existe.jsonl")" ]
+    [ -z "$(agent_events_error_detail "")" ]
+)
+if [ $? -eq 0 ]; then
+    pass "G-8b: sin events_file (inexistente o vacio) los lectores devuelven vacio sin abortar"
+else
+    fail "G-8b: los lectores abortaron o devolvieron algo con un events_file ausente"
 fi
 
 # Linea de JSON valido pero no-objeto: `.type` sobre un string es un error duro
