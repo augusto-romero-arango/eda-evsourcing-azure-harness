@@ -474,6 +474,42 @@ runner la envuelve, traduciendo su senal de timeout a `run.failed{status:
 "timeout"}`. El traslado de esa lib comun a `src/internal/scripts/` es
 alcance de #869, no de este contrato.
 
+### Anexo en vivo de eventos no terminales (issue #924)
+
+Mientras el agente corre, el runner reanexa a `--event-log`, cada
+`MEFISTO_RUN_AGENT_LIVE_INTERVAL` segundos (entero > 0, default 2; un valor
+invalido cae al default con un aviso en stderr), los eventos **no
+terminales** nuevos que produce `runtime_<id>_translate` sobre el raw log
+parcial -- el mismo traductor que ya usa el cierre de la corrida, nunca un
+traductor linea-a-linea aparte que pudiera divergir de el. `--event-log` es
+**append-only durante toda la corrida**: nunca se trunca ni se reescribe, ni
+en vivo ni al cierre.
+
+El bucle vive en el proceso padre del runner (nunca dentro del `$(...)` que
+envuelve a `run_agent_with_watchdog`) y fuera del grupo de procesos del
+agente, para que el `kill -9 -"$pid"` del watchdog nunca lo alcance; se
+detiene por archivo senal (nunca `kill`, para no cortar un `printf` de anexo
+a mitad de escritura) antes de la traduccion final del cierre; el bucle
+duerme el intervalo en rebanadas cortas y no en una sola pieza, para que esa
+parada le cueste al cierre una fraccion de segundo y no un intervalo entero
+de espera muerta por corrida. El cierre solo
+anexa los no terminales que el bucle todavia no habia alcanzado a escribir
+mas exactamente un evento terminal. Si el runner muere sin llegar a correr su
+`trap EXIT` (un SIGKILL desde afuera) y por lo tanto sin dejar nunca la
+senal, el bucle igual termina solo: comprueba en cada rebanada que el PID del
+runner siga vivo, para no quedar huerfano anexando al `--event-log` de una
+corrida que ya no existe. Es best-effort (MEF-ADR-0031): un fallo
+de `jq`, un raw log todavia inexistente o un `--event-log` no escribible en
+un tick nunca alteran el exit code del runner ni el evento terminal, que
+siguen decidiendose exclusivamente al cierre. `run-events.schema.json` no
+cambia: el vocabulario y la forma de cada evento son los mismos, solo cambia
+CUANDO se anexan.
+
+`lib/runtime-fake.sh` gana el guion `slow-success` (identico a `success` pero
+con un `sleep ${MEFISTO_FAKE_STEP_DELAY_S:-2}` entre cada linea) para poder
+ejercer este anexo en vivo contra el runner real sin depender de la latencia
+de un CLI verdadero.
+
 ### Seleccion de runtime (`lib/mefisto-runtime.sh`)
 
 `mefisto_resolve_runtime` resuelve, en este orden de precedencia:

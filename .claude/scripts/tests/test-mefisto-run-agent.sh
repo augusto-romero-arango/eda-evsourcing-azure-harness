@@ -29,6 +29,16 @@
 #   [E] Ida y vuelta de --model: recibido vs. omitido llega igual a
 #       run.started.model y al terminal.model (CA-1: vacio/ausente no llega
 #       al adaptador).
+#   [H] CA-1..CA-4 (issue #924): con runtime-fake.sh slow-success y
+#       MEFISTO_RUN_AGENT_LIVE_INTERVAL=1, --event-log ya trae 'message' y
+#       'tool.started' (sin terminal) ANTES de que el runner termine; al
+#       cierre hay exactamente un run.completed{status:"success"}, sin
+#       tool.started/tool.completed duplicados, todas las lineas validan, y
+#       la secuencia final (type/tool/text/status) es IDENTICA a la del
+#       guion success, que por terminar antes del primer tick nunca pasa por
+#       el anexo en vivo -- la paridad "igual que hoy" de CA-2. Cierra con la
+#       degradacion de CA-1: un MEFISTO_RUN_AGENT_LIVE_INTERVAL invalido
+#       avisa por stderr, cae al default y no altera el desenlace.
 #   [G] El runner resuelve sus propias libs por su UBICACION, no por el cwd
 #       del caller: invocado desde un cwd fuera de todo repo git sigue
 #       corriendo (regresion de la resolucion via `git rev-parse`).
@@ -468,6 +478,122 @@ else
 fi
 
 # ============================================================================
+echo ""
+echo "[H] CA-1..CA-4 (issue #924): anexo en vivo de eventos no terminales"
+
+EV="$TMP/h-slow-success.jsonl"
+RC_FILE="$TMP/h-rc"
+(
+    MEFISTO_FAKE_SCRIPT=slow-success MEFISTO_FAKE_STEP_DELAY_S=2 MEFISTO_RUN_AGENT_LIVE_INTERVAL=1 \
+        "$RUNNER" --runtime fake --agent test-agent --cwd "$WORKDIR" \
+        --prompt-file "$PROMPT_FILE" --event-log "$EV" --timeout 60 >/dev/null 2>&1
+    echo $? > "$RC_FILE"
+) &
+H_PID=$!
+
+# El guion slow-success tarda ~6s (3 sleeps de MEFISTO_FAKE_STEP_DELAY_S=2) y
+# el intervalo en vivo es 1s: hay margen de sobra para observar el archivo a
+# mitad de vuelo, con message y tool.started ya anexados y sin terminal
+# todavia.
+H_SEEN_LIVE=false
+i=0
+while [ "$i" -lt 40 ]; do
+    if [ -s "$EV" ] \
+        && jq -e 'select(.type=="message")' "$EV" >/dev/null 2>&1 \
+        && jq -e 'select(.type=="tool.started")' "$EV" >/dev/null 2>&1 \
+        && ! jq -e 'select(.type=="run.completed" or .type=="run.failed")' "$EV" >/dev/null 2>&1; then
+        H_SEEN_LIVE=true
+        break
+    fi
+    kill -0 "$H_PID" 2>/dev/null || break
+    sleep 0.25
+    i=$((i + 1))
+done
+
+if [ "$H_SEEN_LIVE" = "true" ]; then
+    pass "H-1: --event-log ya trae 'message' y 'tool.started' (sin terminal) ANTES de que el runner termine"
+else
+    fail "H-1: no se observo el anexo en vivo antes de que el runner terminara"
+fi
+
+wait "$H_PID" 2>/dev/null
+H_RC="$(cat "$RC_FILE" 2>/dev/null || echo "?")"
+
+if [ "$H_RC" = "0" ]; then
+    pass "H-2: el runner termina con exit 0"
+else
+    fail "H-2: exit '$H_RC' (esperaba 0)"
+fi
+
+H_TERMS=$(count_terminals "$EV")
+if [ "$H_TERMS" = "1" ]; then
+    pass "H-3: exactamente 1 evento terminal en --event-log al terminar"
+else
+    fail "H-3: se contaron $H_TERMS eventos terminales (se esperaba 1)"
+fi
+
+H_STATUS="$(jq -r 'select(.type=="run.completed") | .status' "$EV" 2>/dev/null | tail -n1)"
+if [ "$H_STATUS" = "success" ]; then
+    pass "H-4: run.completed{status:'success'} sin duplicados"
+else
+    fail "H-4: status='$H_STATUS' (esperaba 'success')"
+fi
+
+H_STARTED_COUNT=$(jq -c 'select(.type=="tool.started")' "$EV" 2>/dev/null | wc -l | tr -d ' ')
+H_COMPLETED_COUNT=$(jq -c 'select(.type=="tool.completed")' "$EV" 2>/dev/null | wc -l | tr -d ' ')
+if [ "$H_STARTED_COUNT" = "1" ] && [ "$H_COMPLETED_COUNT" = "1" ]; then
+    pass "H-5: exactamente 1 tool.started y 1 tool.completed (el anexo en vivo no duplico nada al cierre)"
+else
+    fail "H-5: tool.started=$H_STARTED_COUNT tool.completed=$H_COMPLETED_COUNT (se esperaba 1 y 1)"
+fi
+
+H_ALL_VALID=true
+while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    validate_event_line "$line" >/dev/null 2>&1 || H_ALL_VALID=false
+done < "$EV"
+if [ "$H_ALL_VALID" = "true" ]; then
+    pass "H-6: todas las lineas de --event-log (anexadas en vivo o al cierre) validan contra el schema"
+else
+    fail "H-6: alguna linea de --event-log no valido contra el schema"
+fi
+
+# CA-2 ("la misma secuencia de eventos que hoy"): el guion success termina muy
+# por debajo del primer intervalo, asi que su --event-log nunca pasa por el
+# anexo en vivo -- es exactamente el "hoy" contra el que hay que comparar. La
+# proyeccion descarta ts y duration_ms (varian entre corridas por
+# construccion: runtime_fake_translate pone `ts: now` y el runner mide el
+# duration_ms real) y conserva lo que el CA nombra.
+h_event_shape() { jq -c '[.type, (.tool // ""), (.text // ""), (.status // "")]' "$1" 2>/dev/null; }
+
+H_BASELINE="$TMP/h-success-baseline.jsonl"
+MEFISTO_FAKE_SCRIPT=success "$RUNNER" --runtime fake --agent test-agent --cwd "$WORKDIR" \
+    --prompt-file "$PROMPT_FILE" --event-log "$H_BASELINE" >/dev/null 2>&1
+if [ -s "$H_BASELINE" ] && [ "$(h_event_shape "$H_BASELINE")" = "$(h_event_shape "$EV")" ]; then
+    pass "H-7: la secuencia final con anexo en vivo es identica a la del guion success sin anexo (CA-2)"
+else
+    fail "H-7: la secuencia final difiere de la del guion success (sin anexo en vivo)"
+fi
+
+# CA-1: un intervalo invalido no es una condicion de arranque -- avisa, cae al
+# default y la corrida termina igual. "00" es el caso que un chequeo puramente
+# lexico de digitos dejaria pasar como valido siendo cero.
+for H_BAD in "abc" "0" "00" "-1"; do
+    H_BAD_EV="$TMP/h-bad-interval.jsonl"
+    H_BAD_ERR="$TMP/h-bad-interval.err"
+    MEFISTO_RUN_AGENT_LIVE_INTERVAL="$H_BAD" MEFISTO_FAKE_SCRIPT=success \
+        "$RUNNER" --runtime fake --agent test-agent --cwd "$WORKDIR" \
+        --prompt-file "$PROMPT_FILE" --event-log "$H_BAD_EV" >/dev/null 2>"$H_BAD_ERR"
+    H_BAD_RC=$?
+    if [ "$H_BAD_RC" = "0" ] \
+        && grep -q "MEFISTO_RUN_AGENT_LIVE_INTERVAL" "$H_BAD_ERR" \
+        && [ "$(count_terminals "$H_BAD_EV")" = "1" ]; then
+        pass "H-8: MEFISTO_RUN_AGENT_LIVE_INTERVAL='$H_BAD' avisa por stderr, cae al default y no altera el desenlace (exit 0, 1 terminal)"
+    else
+        fail "H-8: MEFISTO_RUN_AGENT_LIVE_INTERVAL='$H_BAD' -> exit $H_BAD_RC, terminales=$(count_terminals "$H_BAD_EV"), aviso=$(grep -c MEFISTO_RUN_AGENT_LIVE_INTERVAL "$H_BAD_ERR")"
+    fi
+done
+
 echo ""
 echo "[G] El runner no depende del cwd del caller para encontrar sus propias libs"
 

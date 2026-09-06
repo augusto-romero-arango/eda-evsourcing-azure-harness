@@ -32,6 +32,17 @@
 # Guiones soportados via MEFISTO_FAKE_SCRIPT (CA-6):
 #   success        Emite message + tool.started/tool.completed + terminal
 #                   status=success. Exit 0.
+#   slow-success   Emite las MISMAS lineas que "success", byte a byte, pero
+#                   con un `sleep ${MEFISTO_FAKE_STEP_DELAY_S:-2}` entre cada
+#                   una (issue #924): existe para poder observar en un test el
+#                   anexo EN VIVO de mefisto-run-agent.sh a mitad de una
+#                   corrida real, algo que "success" no permite por terminar
+#                   antes de que transcurra el primer intervalo. La identidad
+#                   linea a linea con "success" no es cosmetica: es lo que
+#                   deja comparar el --event-log de ambos y afirmar que el
+#                   anexo en vivo produce la misma secuencia que el volcado
+#                   al cierre (CA-2). Si se cambia un guion hay que cambiar
+#                   el otro.
 #   fail            Emite terminal status=failed (error.kind=nonzero_exit).
 #                   Exit $MEFISTO_FAKE_EXIT_CODE (default 3, debe ser != 0).
 #   hang            No termina solo: se queda dormido muy por encima de
@@ -122,6 +133,17 @@ _runtime_fake_emit_main() {
             echo '{"fake":"message","text":"hola desde el guion fake"}'
             echo '{"fake":"tool_start","tool":"demo"}'
             echo '{"fake":"tool_end","tool":"demo","ok":true,"duration_ms":5}'
+            printf '{"fake":"terminal","status":"success","model":%s}\n' "$model_json"
+            exit 0
+            ;;
+        slow-success)
+            local step_delay="${MEFISTO_FAKE_STEP_DELAY_S:-2}"
+            echo '{"fake":"message","text":"hola desde el guion fake"}'
+            sleep "$step_delay"
+            echo '{"fake":"tool_start","tool":"demo"}'
+            sleep "$step_delay"
+            echo '{"fake":"tool_end","tool":"demo","ok":true,"duration_ms":5}'
+            sleep "$step_delay"
             printf '{"fake":"terminal","status":"success","model":%s}\n' "$model_json"
             exit 0
             ;;
