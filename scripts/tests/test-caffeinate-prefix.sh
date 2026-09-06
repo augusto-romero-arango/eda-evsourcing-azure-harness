@@ -141,7 +141,7 @@ echo "[C] herdr: el lanzamiento en background lleva \$CAFF; CAFF se calcula una 
 
 HERDR_RUNNERS=(
     "scripts/herdr-pipeline.sh"
-    ".claude/scripts/mefisto-herdr-pipeline.sh"
+    "src/internal/scripts/mefisto-herdr-pipeline.sh"
 )
 
 for runner in "${HERDR_RUNNERS[@]}"; do

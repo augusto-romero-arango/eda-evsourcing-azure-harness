@@ -119,6 +119,7 @@ cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_MEFISTO/src/int
 cp "$REPO_ROOT/.claude/scripts/mefisto-tmux-pipeline.sh" "$FAKE_MEFISTO/.claude/scripts/mefisto-tmux-pipeline.sh"
 cp "$REPO_ROOT/src/internal/scripts/mefisto-tmux-pipeline.sh" "$FAKE_MEFISTO/src/internal/scripts/mefisto-tmux-pipeline.sh"
 cp "$REPO_ROOT/.claude/scripts/mefisto-herdr-pipeline.sh" "$FAKE_MEFISTO/.claude/scripts/mefisto-herdr-pipeline.sh"
+cp "$REPO_ROOT/src/internal/scripts/mefisto-herdr-pipeline.sh" "$FAKE_MEFISTO/src/internal/scripts/mefisto-herdr-pipeline.sh"
 (cd "$FAKE_MEFISTO" && git init -q && git -c user.email="test@example.com" -c user.name="Test" commit --allow-empty -q -m "commit inicial")
 
 cat > "$FAKE_BIN/gh" <<'STUB'
@@ -257,7 +258,16 @@ run_herdr() {
     local out="$TMP_DIR/stdout" err="$TMP_DIR/stderr"
     (
         cd "$FAKE_MEFISTO" || exit 99
+        # Las -u de estado/repo (issue #872) aislan el fixture de un
+        # MEFISTO_STATE_DIR/MEFISTO_REPO_ROOT ya exportado en el entorno --
+        # p. ej. si este test corre DENTRO de una corrida real de
+        # mefisto-tooling-pipeline.sh, que exporta ambos apuntando al repo
+        # real. Sin esto, mefisto-state.sh (`: "${VAR:=default}"`) los
+        # respeta tal cual y el fixture deja de escribir en su propio
+        # FAKE_MEFISTO/.mefisto/pipeline/.
         env -u MEFISTO_UI \
+            -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR \
+            -u MEFISTO_REPO_ROOT -u MEFISTO_PROJECT_NAME -u MEFISTO_REPO_SLUG \
             PATH="$FAKE_BIN:$PATH" \
             HERDR_ENV=1 HERDR_PANE_ID="w1:p0" HERDR_WORKSPACE_ID="w1" \
             HERDR_STUB_LOG="$HERDR_STUB_LOG" HERDR_STUB_COUNTER="$HERDR_STUB_COUNTER" \
