@@ -2,12 +2,34 @@
 # adapter-claude.sh -- Traduce un artefacto neutral (frontmatter JSON + body,
 # ver src/internal/contract/README.md) al formato que Claude Code consume:
 # frontmatter YAML en bloque con escalares JSON-quoted (MEF-ADR-0049 CA-6),
-# sin `model` (issue #857) ni flow mappings (issue #862). Issue #854.
+# con `model` derivado de `profile` via la tabla fija de este adaptador
+# (issue #857) pero sin flow mappings (issue #862). Issue #854.
 #
 # Se `source`a desde generate-internal-adapters.sh. Ninguna funcion de aqui
 # escribe en disco: todas imprimen a stdout el contenido completo del archivo
 # de salida, o fallan (return 1, mensaje ya impreso en stderr) sin imprimir
 # nada por stdout.
+
+# adapter_claude_default_model <perfil> -- imprime el modelo por defecto de
+# la tabla fija del adaptador Claude Code para <perfil> (MEF-ADR-0049 CA-4
+# enmendada, issue #857): fast->haiku, balanced->sonnet, deep->"" (cadena
+# vacia = hereda el modelo activo de la sesion interactiva o el default del
+# CLI en headless, sin `model:` en frontmatter ni `--model` explicito).
+# Consumida por mefisto_resolve_model (src/internal/scripts/lib/
+# mefisto-models.sh, tiempo de ejecucion) y por claude_render (mas abajo, en
+# tiempo de generacion) para decidir si un artefacto con `profile` declarado
+# emite `model:` y con que valor. Retorna 1 sin imprimir nada si <perfil> no
+# esta en el vocabulario cerrado fast|balanced|deep -- no ocurre en la
+# practica porque el schema del contrato (#853) ya lo exige antes de llegar
+# aqui, pero se guarda el mismo contrato defensivo que claude_map_capability_tools.
+adapter_claude_default_model() {
+    case "$1" in
+        fast)     printf '%s' "haiku" ;;
+        balanced) printf '%s' "sonnet" ;;
+        deep)     printf '%s' "" ;;
+        *)        return 1 ;;
+    esac
+}
 
 # claude_map_capability_tools <capacidad> -- imprime la lista de tools de
 # Claude Code que corresponde a una capacidad neutral (CA-2):
@@ -108,16 +130,32 @@ claude_render() {
         tools_q="$(printf '%s' "$tools_str" | jq -Rr '@json')"
     fi
 
+    # `model` (issue #857): solo si la fuente declara `profile`, y solo la
+    # tabla fija del adaptador (adapter_claude_default_model) -- nunca el
+    # mapping local de .mefisto/models.json, que es estado de maquina y
+    # romperia el determinismo de esta salida versionada entre maquinas.
+    local model_q=""
+    local has_profile
+    has_profile="$(printf '%s' "$instance_json" | jq -r 'if (.profile != null) then "1" else "0" end')"
+    if [ "$has_profile" = "1" ]; then
+        local profile model
+        profile="$(printf '%s' "$instance_json" | jq -r '.profile')"
+        model="$(adapter_claude_default_model "$profile")"
+        [ -n "$model" ] && model_q="$(printf '%s' "$model" | jq -Rr '@json')"
+    fi
+
     local fm_lines=()
     if [ "$kind" = "agent" ]; then
         fm_lines+=("name: $(printf '%s' "$instance_json" | jq -r '.id | @json')")
         fm_lines+=("description: $(printf '%s' "$instance_json" | jq -r '.description | @json')")
+        [ -n "$model_q" ] && fm_lines+=("model: $model_q")
         [ -n "$tools_q" ] && fm_lines+=("tools: $tools_q")
         local has_skills
         has_skills="$(printf '%s' "$instance_json" | jq -r 'if (.skills != null and (.skills | length) > 0) then "1" else "0" end')"
         [ "$has_skills" = "1" ] && fm_lines+=("skills: $(printf '%s' "$instance_json" | jq -c '.skills')")
     else
         fm_lines+=("description: $(printf '%s' "$instance_json" | jq -r '.description | @json')")
+        [ -n "$model_q" ] && fm_lines+=("model: $model_q")
         local has_arguments
         has_arguments="$(printf '%s' "$instance_json" | jq -r 'if (.arguments != null) then "1" else "0" end')"
         [ "$has_arguments" = "1" ] && fm_lines+=("argument-hint: $(printf '%s' "$instance_json" | jq -r '.arguments | @json')")

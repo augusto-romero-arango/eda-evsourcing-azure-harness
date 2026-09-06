@@ -125,14 +125,60 @@ adaptador por runtime en `src/internal/scripts/lib/adapter-{claude,opencode}.sh`
 | `skills` | `skills` (MEF-ADR-0033) | -- |
 | `agent` (comando) | -- (lo resuelve la directiva de body) | `agent` + `subtask: true` |
 | `arguments` | `argument-hint` | -- (OpenCode no tiene equivalente) |
-| `profile` | -- (diferido a #857) | -- (diferido a #857) |
+| `profile` | `model` (tabla fija: `fast`->`haiku`, `balanced`->`sonnet`, `deep`->-- omitido) | -- (sin tabla, siempre hereda) |
 | body | body, tras el marcador de generado | body (`template`), tras el marcador |
 
 Un `--` significa que ese runtime no recibe el campo: o no tiene un equivalente
 (`argument-hint`, `skills`), o lo ignora (`mode` en Claude Code), o su emision
-esta diferida a un issue de seguimiento (`profile` -> #857; `tools`/`permission`
-de OpenCode -> #862). Ningun campo se emite "por si acaso": lo que no esta en
-esta tabla, el generador no lo escribe.
+esta diferida a un issue de seguimiento (`tools`/`permission` de OpenCode ->
+#862). Ningun campo se emite "por si acaso": lo que no esta en esta tabla, el
+generador no lo escribe.
+
+### `profile` -> `model` de Claude Code (MEF-ADR-0049 CA-4 enmendada, issue #857)
+
+Cuando la fuente declara `profile`, el generador consulta la tabla fija de
+`adapter_claude_default_model` (`src/internal/scripts/lib/adapter-claude.sh`)
+-- **nunca** el mapping local `.mefisto/models.json` -- y emite `model:` solo
+si esa tabla devuelve un valor no vacio:
+
+| `profile` | `model` emitido (Claude) | `model` emitido (OpenCode) |
+|---|---|---|
+| `fast` | `"haiku"` | (nunca se emite) |
+| `balanced` | `"sonnet"` | (nunca se emite) |
+| `deep` | (se omite el campo -- hereda el modelo activo) | (nunca se emite) |
+
+El generador no lee `.mefisto/models.json` a proposito: es estado de maquina,
+y leerlo romperia el determinismo (misma fuente -> mismos bytes) que sostiene
+su modo `--check`. Ese mapping local solo interviene en **tiempo de
+ejecucion**, via `mefisto_resolve_model` (`src/internal/scripts/lib/
+mefisto-models.sh`) -- la funcion que usaran los pipelines headless (#859,
+#869), no el generador. Su precedencia completa (override `--models` ->
+mapping local -> tabla del adaptador -> herencia) esta documentada en el
+propio archivo y en MEF-ADR-0049 decision 4.
+
+`mefisto_resolve_model` imprime cadena vacia cuando corresponde heredar; el
+caller debe entonces omitir por completo el argumento de modelo (`--model` de
+`claude -p`, `-m` de `opencode run`) en vez de pasarlo vacio.
+
+### Listar ids de modelo reales (para poblar `.mefisto/models.json`)
+
+`.mefisto/models.json` nunca se commitea (`.gitignore`, MEF-ADR-0049
+decision 4); solo se versiona la plantilla `src/internal/models.example.json`
+con placeholders `<provider/model>`. Para poblarlo con ids reales:
+
+- **Claude Code**: `claude --help` lista los alias de familia disponibles
+  (`fast`, `sonnet`, `opus`, ...) y como pinnear una version concreta
+  (`claude-opus-5[1m]`, etc.).
+- **OpenCode**: `opencode models <provider>` lista los ids `provider/model`
+  que ese provider expone.
+
+Los ids de OpenCode los certifica el mantenedor al cerrar el dogfooding
+(issue #874) y quedan registrados ahi como evidencia -- no en este repo.
+
+El modelo **interactivo** por agente en OpenCode (fuera de un pipeline
+headless) no se fija en `.mefisto/models.json`: OpenCode lo resuelve desde la
+config global del usuario (`~/.config/opencode/opencode.json`), fuera del
+alcance de Mefisto.
 
 ### `capabilities` -> `tools`/`allowed-tools` de Claude Code
 
