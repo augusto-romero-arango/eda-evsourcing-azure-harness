@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"sess-maxturns","model":"claude-sonnet-5"}
+{"type":"result","is_error":false,"subtype":"error_max_turns","stop_reason":"max_turns","num_turns":50,"duration_ms":120000}

@@ -23,19 +23,23 @@
 #       tool_use -> tool.started, tool_result -> tool.completed (con el
 #       nombre de tool resuelto por emparejamiento de id), en el orden del
 #       stream.
-#   [C] CA-3: clasificacion de fallo (api_error 529/404, stream_cut sin
-#       result, no_result sin result) y el criterio de exito de tres
-#       condiciones (is_error==false + subtype==success + stop_reason==
-#       end_turn).
+#   [C] CA-3: la clasificacion completa, en el orden de
+#       classify_agent_failure: killed (exit 137/143) > api_error (del evento
+#       `result` o del stderr, 5xx antes que 4xx) > stream_cut > no_result >
+#       nonzero_exit; mas el criterio de exito de tres condiciones
+#       (is_error==false + subtype==success + stop_reason==end_turn), que
+#       gana sobre cualquier exit code (PR #446) dejando la muerte posterior
+#       documentada en `error` sin degradar el `status`.
 #   [D] CA-4: el terminal preserva session_id/tokens/cost_usd/turns/
 #       ttft_ms/denials/api_duration_ms cuando Claude los entrega: ausentes
 #       -> null, nunca 0 (success-minimal.jsonl).
 #   [E] CA-5: --raw-log conserva la traza cruda intacta (mismo contenido que
 #       el fixture, sin traducir).
 #   [F] CA-6: runner real (mefisto-run-agent.sh --runtime claude) contra la
-#       CLI falsa: exito, is_error 529/404, stream truncado, timeout (stub
-#       que duerme), exit 137, modelo heredado (sin --model en la linea de
-#       comando capturada) y modelo opaco con "[1m]" reenviado literal. Cada
+#       CLI falsa: exito, is_error 529/404, "API Error: 500" solo por stderr,
+#       stream truncado, timeout (stub que duerme), exit 137, modelo heredado
+#       (sin --model en la linea de comando capturada) y modelo opaco con
+#       "[1m]" reenviado literal. Cada
 #       caso valida el JSONL contra run-events.schema.json y exactamente un
 #       evento terminal.
 #
@@ -67,11 +71,13 @@ TMP=$(mktemp -d)
 cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT
 
-# translate_fixture <fixture.jsonl> [model] -- corre runtime_claude_translate
-# directo (sin pasar por el runner) contra un fixture, imprime el JSONL.
+# translate_fixture <fixture.jsonl> [model] [exit_code] [stderr_file] -- corre
+# runtime_claude_translate directo (sin pasar por el runner) contra un
+# fixture, imprime el JSONL. <exit_code>/<stderr_file> vacios ejercen el
+# degradado documentado (el adaptador solo afirma lo que el stream permite).
 translate_fixture() {
-    local fixture="$1" model="${2:-}"
-    runtime_claude_translate "$FIXTURES_DIR/$fixture" "claude" "$model"
+    local fixture="$1" model="${2:-}" exit_code="${3:-}" stderr_file="${4:-}"
+    runtime_claude_translate "$FIXTURES_DIR/$fixture" "claude" "$model" "$exit_code" "$stderr_file"
 }
 
 # validate_event_line <json-line> -- mismo patron que
@@ -332,7 +338,69 @@ else
     fail "C-5: no se clasifico como no_result: $(jq -c 'select(.type=="run.failed")' "$C_NORESULT")"
 fi
 
-for f in "$C_SUCCESS" "$C_529" "$C_404" "$C_CUT" "$C_NORESULT"; do
+# --- Clasificacion que SOLO es posible con el exit code y el stderr ---------
+# Sin esos dos datos, `killed`, el `API Error: <status>` que Claude escribe
+# unicamente por stderr (#425) y `nonzero_exit` son indistinguibles de un
+# stream que termino sin declarar nada: por eso la interfaz de traduccion
+# acepta los dos argumentos opcionales (ver src/internal/contract/README.md).
+
+C_KILLED="$TMP/c-killed.jsonl"; translate_fixture killed-no-result.jsonl "" 137 > "$C_KILLED"
+if jq -e 'select(.type=="run.failed") | .error.kind == "killed" and (.error.detail | contains("137"))' "$C_KILLED" >/dev/null 2>&1; then
+    pass "C-7: exit 137 sin result -> run.failed{error.kind:killed} (gana sobre no_result, orden de classify_agent_failure)"
+else
+    fail "C-7: no se clasifico el exit 137 como killed: $(jq -c 'select(.type=="run.failed")' "$C_KILLED")"
+fi
+
+C_KILLED143="$TMP/c-killed143.jsonl"; translate_fixture killed-no-result.jsonl "" 143 > "$C_KILLED143"
+if jq -e 'select(.type=="run.failed") | .error.kind == "killed"' "$C_KILLED143" >/dev/null 2>&1; then
+    pass "C-8: exit 143 (SIGTERM) -> run.failed{error.kind:killed}"
+else
+    fail "C-8: no se clasifico el exit 143 como killed: $(jq -c 'select(.type=="run.failed")' "$C_KILLED143")"
+fi
+
+# PR #446: el exito declarado gana sobre la senal posterior, y la senal queda
+# documentada en `error` sin degradar el status (caso que el $comment de
+# `error` en run-events.schema.json reconoce explicitamente).
+C_POST="$TMP/c-post-success.jsonl"; translate_fixture success.jsonl "" 137 > "$C_POST"
+if jq -e 'select(.type=="run.completed") | .status == "success" and .error.kind == "killed"' "$C_POST" >/dev/null 2>&1; then
+    pass "C-9: exito declarado + exit 137 -> run.completed{status:success, error.kind:killed} (muerte POSTERIOR, PR #446)"
+else
+    fail "C-9: el exito declarado no sobrevivio al exit 137: $(jq -c 'select(.type=="run.completed" or .type=="run.failed")' "$C_POST")"
+fi
+
+STDERR_5XX="$TMP/stderr-5xx.log"; printf 'ruido previo\nAPI Error: 500 Internal Server Error\n' > "$STDERR_5XX"
+C_STDERR5="$TMP/c-stderr5.jsonl"; translate_fixture killed-no-result.jsonl "" 1 "$STDERR_5XX" > "$C_STDERR5"
+if jq -e 'select(.type=="run.failed") | .error.kind == "api_error" and (.error.detail | contains("500"))' "$C_STDERR5" >/dev/null 2>&1; then
+    pass "C-10: 'API Error: 500' solo en stderr -> run.failed{error.kind:api_error} con el status en el detalle"
+else
+    fail "C-10: no se leyo el API Error del stderr: $(jq -c 'select(.type=="run.failed")' "$C_STDERR5")"
+fi
+
+STDERR_MIX="$TMP/stderr-mix.log"; printf 'API Error: 400 Bad Request\nAPI Error: 529 Overloaded\n' > "$STDERR_MIX"
+C_STDERRMIX="$TMP/c-stderrmix.jsonl"; translate_fixture killed-no-result.jsonl "" 1 "$STDERR_MIX" > "$C_STDERRMIX"
+if jq -e 'select(.type=="run.failed") | .error.detail | contains("529")' "$C_STDERRMIX" >/dev/null 2>&1; then
+    pass "C-11: con 4xx y 5xx en el mismo stderr gana el 5xx (mismo orden que classify_agent_failure)"
+else
+    fail "C-11: el 5xx no gano sobre el 4xx: $(jq -c 'select(.type=="run.failed")' "$C_STDERRMIX")"
+fi
+
+STDERR_CUT="$TMP/stderr-cut.log"; printf 'Connection closed mid-response\n' > "$STDERR_CUT"
+C_STDERRCUT="$TMP/c-stderrcut.jsonl"; translate_fixture killed-no-result.jsonl "" 1 "$STDERR_CUT" > "$C_STDERRCUT"
+if jq -e 'select(.type=="run.failed") | .error.kind == "stream_cut"' "$C_STDERRCUT" >/dev/null 2>&1; then
+    pass "C-12: 'Connection closed mid-response' en stderr (el otro patron de agent_log_has_stream_cut) -> stream_cut"
+else
+    fail "C-12: no se clasifico el corte anunciado por stderr: $(jq -c 'select(.type=="run.failed")' "$C_STDERRCUT")"
+fi
+
+C_MAXTURNS="$TMP/c-maxturns.jsonl"; translate_fixture result-max-turns.jsonl "" 1 > "$C_MAXTURNS"
+if jq -e 'select(.type=="run.failed") | .error.kind == "nonzero_exit" and (.error.detail | contains("max_turns"))' "$C_MAXTURNS" >/dev/null 2>&1; then
+    pass "C-13: result sin is_error que tampoco declara exito (subtype error_max_turns) -> nonzero_exit"
+else
+    fail "C-13: no se clasifico el result no-exitoso como nonzero_exit: $(jq -c 'select(.type=="run.failed")' "$C_MAXTURNS")"
+fi
+
+for f in "$C_SUCCESS" "$C_529" "$C_404" "$C_CUT" "$C_NORESULT" \
+         "$C_KILLED" "$C_KILLED143" "$C_POST" "$C_STDERR5" "$C_STDERRMIX" "$C_STDERRCUT" "$C_MAXTURNS"; do
     T=$(count_terminals "$f")
     if [ "$T" = "1" ]; then
         pass "C-6 ($(basename "$f")): exactamente 1 evento terminal"
@@ -394,6 +462,11 @@ if [ -n "${MEFISTO_CLAUDE_STUB_SLEEP:-}" ]; then
 fi
 if [ -n "${MEFISTO_CLAUDE_STUB_FIXTURE:-}" ] && [ -f "$MEFISTO_CLAUDE_STUB_FIXTURE" ]; then
     cat "$MEFISTO_CLAUDE_STUB_FIXTURE"
+fi
+# stdout y stderr separados, como el CLI real (#425): el `API Error` de un
+# fallo de transporte solo aparece por este canal.
+if [ -n "${MEFISTO_CLAUDE_STUB_STDERR:-}" ]; then
+    printf '%s\n' "$MEFISTO_CLAUDE_STUB_STDERR" >&2
 fi
 exit "${MEFISTO_CLAUDE_STUB_EXIT:-0}"
 STUBEOF
@@ -481,6 +554,10 @@ F_EV="$TMP/f-404.jsonl"
 RC=$(MEFISTO_CLAUDE_STUB_FIXTURE="$FIXTURES_DIR/api-error-404.jsonl" MEFISTO_CLAUDE_STUB_EXIT=1 run_claude_scenario "$F_EV")
 check_scenario "is_error API Error: 404" "$F_EV" 1 "failed" "api_error" "$RC"
 
+F_EV="$TMP/f-stderr-500.jsonl"
+RC=$(MEFISTO_CLAUDE_STUB_FIXTURE="$FIXTURES_DIR/killed-no-result.jsonl" MEFISTO_CLAUDE_STUB_STDERR="API Error: 500 Internal Server Error" MEFISTO_CLAUDE_STUB_EXIT=1 run_claude_scenario "$F_EV")
+check_scenario "API Error: 500 solo por stderr" "$F_EV" 1 "failed" "api_error" "$RC"
+
 F_EV="$TMP/f-truncated.jsonl"
 RC=$(MEFISTO_CLAUDE_STUB_FIXTURE="$FIXTURES_DIR/stream-truncated.jsonl" MEFISTO_CLAUDE_STUB_EXIT=1 run_claude_scenario "$F_EV")
 check_scenario "stream truncado" "$F_EV" 1 "failed" "stream_cut" "$RC"
@@ -491,7 +568,7 @@ check_scenario "timeout (stub que duerme)" "$F_EV" 124 "timeout" "timeout" "$RC"
 
 F_EV="$TMP/f-exit137.jsonl"
 RC=$(MEFISTO_CLAUDE_STUB_FIXTURE="$FIXTURES_DIR/killed-no-result.jsonl" MEFISTO_CLAUDE_STUB_EXIT=137 run_claude_scenario "$F_EV")
-check_scenario "exit 137 (senal externa, sin timeout del watchdog)" "$F_EV" 137 "failed" "no_result" "$RC"
+check_scenario "exit 137 (senal externa, sin timeout del watchdog)" "$F_EV" 137 "failed" "killed" "$RC"
 
 F_EV="$TMP/f-model-heredado.jsonl"
 F_ARGS="$TMP/f-model-heredado.args"

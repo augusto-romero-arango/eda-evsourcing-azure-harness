@@ -58,9 +58,17 @@
 #     Rellena el array global MEFISTO_RUNTIME_CMD con el argv completo a
 #     invocar via run_agent_with_watchdog, SIN `eval`.
 #   runtime_<id>_translate <raw_file> <runtime_id> <model>
+#                          [<exit_code>] [<stderr_file>]
 #     Imprime por stdout el JSONL neutral (message/tool.*/terminal) derivado
 #     de <raw_file>. Nunca emite run.started -- eso lo hace este runner,
 #     directo, porque no depende de ningun dato especifico del adaptador.
+#     Los dos ultimos argumentos son OPCIONALES para el adaptador (los
+#     ignorar sigue siendo una implementacion valida, como hace
+#     runtime-fake.sh) pero este runner SIEMPRE los pasa: sin el exit code y
+#     el stderr, un adaptador no puede distinguir una muerte por senal
+#     (137/143) ni el `API Error: <status>` que un CLI escribe solo por
+#     stderr -- los dos canales siguen separados (#425) -- de un stream que
+#     simplemente termino sin declarar nada.
 #
 # Ver src/internal/contract/README.md ("Protocolo de ejecucion y eventos")
 # para el detalle completo del contrato y su justificacion.
@@ -297,7 +305,7 @@ rm -f "$SIGNAL_FILE"
 
 # --- Traduccion del adaptador --------------------------------------------
 
-TRANSLATED="$("$TRANSLATE_FN" "$RAW_LOG" "$RUNTIME_ID" "$OPT_MODEL" 2>/dev/null)"
+TRANSLATED="$("$TRANSLATE_FN" "$RAW_LOG" "$RUNTIME_ID" "$OPT_MODEL" "$ADAPTER_EXIT" "$STDERR_LOG" 2>/dev/null)"
 
 NON_TERMINAL_JSON=""
 TERMINAL_JSON=""
