@@ -190,15 +190,7 @@ Guarda su reporte final (Paso 13 de `/install-apim`, incluido el checklist post-
 
 ### 9. Emitir el checklist post-deploy (CA-5, delegado de `/install-apim`)
 
-Reutiliza **tal cual** el checklist que la etapa 2 ya emitio en su Paso 12 (guardado en el Paso 7 de
-este orquestador) -- no lo transcribas de nuevo aca. Una copia hardcodeada en este archivo es
-exactamente la causa raiz del desfase que este fix corrige (esta copia habia quedado fijando `202
-Accepted` para cualquier POST autenticado despues de que el issue #999 corrigiera el criterio en
-`/install-apim` a "endpoint POST seleccionado + codigo de exito documentado", MEF-ADR-0004/0011/0043)
--- cualquier redaccion nueva aca vuelve a divergir la proxima vez que `/install-apim` cambie la suya.
-Aclara unicamente, al presentarlo, que corre **despues** de que CI aplique el PR (MEF-ADR-0022); el
-resto de las verificaciones (401, evidencia en App Insights, headers de identidad, verbo QUERY,
-operacion APIM faltante) viajan intactas dentro de ese mismo bloque reutilizado.
+Presenta **tal cual** el checklist que la etapa 2 ya emitio en su Paso 12 (guardado en el Paso 7 de este orquestador), aclarando unicamente que corre **despues** de que CI aplique el PR (MEF-ADR-0022). Todas sus verificaciones -- CORS, 401, el codigo de exito documentado del endpoint POST elegido (MEF-ADR-0004/0011/0043), la evidencia en App Insights de que el request llego al backend, los headers de identidad, el verbo QUERY y la operacion APIM faltante -- viajan dentro de ese bloque; no las reinterpretes ni las resumas.
 
 ### 10. Reportar
 
@@ -212,7 +204,7 @@ Resumen claro y en orden, consolidando lo que reporto cada etapa (no reinterpret
 
 ## Reglas
 
-- **Nunca reimplementes la logica de `/install-workos` ni de `/install-apim`.** Este skill delega leyendo integramente su `Proceso` -- nunca duplica sus chequeos de idempotencia, sus nombres fijos, ni su HCL/C# generado.
+- **Nunca reimplementes la logica de `/install-workos` ni de `/install-apim`.** Este skill delega leyendo integramente su `Proceso` -- nunca duplica sus chequeos de idempotencia, sus nombres fijos, su HCL/C# generado, ni su checklist post-deploy. Ese checklist en particular **nunca se transcribe en este archivo**: una copia aca es una segunda fuente que divergira la proxima vez que `/install-apim` cambie la suya -- el criterio del codigo de exito del POST autenticado es justamente el que ya se desfaso una vez asi.
 - **Nunca saltees el gate humano del Paso 6.** No invoques la etapa 2 sin verificar que `WORKOS_CLIENT_ID` y `WORKOS_API_KEY` existen en el repo -- ese chequeo es el que evita el fallo tipico de aplicar APIM sin las credenciales de WorkOS registradas.
 - **Nunca asumas las credenciales del gate si `gh` falla.** A diferencia de otras verificaciones tolerantes del harness, este gate es bloqueante: sin poder confirmar `WORKOS_CLIENT_ID`/`WORKOS_API_KEY`, deten el flujo antes de la etapa 2 en vez de continuar a ciegas.
 - **Nunca pidas ni imprimas el valor de `WORKOS_API_KEY`** ni de ningun otro secreto -- ni este skill ni las etapas que invoca lo hacen; solo se verifica su existencia.
