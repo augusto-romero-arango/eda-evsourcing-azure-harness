@@ -18,11 +18,13 @@
 #      worktree) y abrio el PR #421 con una revision truncada a mitad de frase.
 #
 # Arreglo (_mefisto-common.sh, canonico en src/internal/scripts/lib/):
-#   - run_agent_with_watchdog: activa job control (`set -m`/`set +m`) al
-#     lanzar el comando para que el job sea lider de su propio grupo de
-#     procesos -- asi `kill -9 -$pid` SI alcanza a todo el arbol (CA-1); deja
-#     el evento TIMEOUT como sentencia independiente, nunca colgada de un
-#     `&&` (CA-2); y deja una senal en disco cuando dispara (CA-3).
+#   - run_agent_with_watchdog: lanza el comando en una SESION nueva (`setsid`,
+#     o su fallback Perl; degrada a job control `set -m` solo si ninguno de
+#     los dos esta en PATH, issue #943 aisla ademas la tty) para que sea
+#     lider de su propio grupo de procesos -- asi `kill -9 -$pid` SI alcanza
+#     a todo el arbol (CA-1); deja el evento TIMEOUT como sentencia
+#     independiente, nunca colgada de un `&&` (CA-2); y deja una senal en
+#     disco cuando dispara (CA-3).
 #   - agent_failure_is_unrecoverable: deriva si el fallo admite recuperacion
 #     (CA-4), leyendo `error.kind` del terminal del JSONL neutral via
 #     agent_events_error_kind (issue #906) en vez de grepear el log.

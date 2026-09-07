@@ -800,24 +800,40 @@ validate_variant_label() {
 # CA-1 (mata todo el arbol, no solo el subshell): `kill -9 -$pid` apunta al
 # GRUPO de procesos, pero un subshell lanzado con `&` hereda por defecto el
 # PGID del shell que lo lanza -- no es lider de su propio grupo, asi que ese
-# kill no alcanzaba ni al `claude` ni a sus hijos node. `setsid` no existe en
-# macOS (verificado: `command -v setsid` -> vacio). El arreglo verificado en
-# bash 3.2/darwin es activar job control (`set -m`) justo antes de lanzar
-# <cmd...> en background: con monitor mode activo ese job SI se vuelve lider
-# de su propio grupo (PGID == PID del job), y `kill -9 -$pid` alcanza a todo
-# el arbol. `set +m` restaura el modo normal enseguida despues del lanzamiento
-# -- con job control activo bash reporta cambios de estado de jobs por
-# stderr, y acotar la ventana evita ese ruido en el resto de la funcion.
+# kill no alcanzaba ni al `claude` ni a sus hijos node. El mecanismo YA NO es
+# job control (`set -m`) sobre el lanzamiento del AGENTE (issue #943): activar
+# monitor mode ahi volvia al job lider de su propio grupo, si, pero ese grupo
+# seguia colgado de la MISMA sesion que la pty del pane -- y cualquier tool
+# del arbol que tocara la terminal (`read </dev/tty`, `stty`/tcsetattr, o
+# simplemente leer stdin heredado) disparaba SIGTTIN/SIGTTOU y el kernel
+# detenia al grupo ENTERO (STAT=T), a veces durante minutos hasta un
+# `SIGCONT` manual -- confirmado por experimento en una pty de tmux. Ahora
+# <cmd...> arranca en una SESION nueva y sin terminal de control: `setsid` si
+# esta en PATH (Linux), o si no el fallback
+# `perl -e 'use POSIX; POSIX::setsid() or die; exec @ARGV' -- <cmd...>`
+# (macOS, donde `setsid(1)` no existe -- verificado: `command -v setsid` ->
+# vacio en macOS 26.4 -- pero `/usr/bin/perl` si). Una sesion nueva resuelve
+# las DOS cosas a la vez: hace al proceso lider de su propio GRUPO por si
+# misma (PGID == PID, el mismo invariante que necesita CA-1) y ademas lo deja
+# SIN terminal de control -- sin ella, `SIGTTIN`/`SIGTTOU` son imposibles
+# (`isbackground()` del kernel exige la MISMA sesion que la terminal): un
+# `open /dev/tty` falla con ENXIO y un `stty` sobre stdin (redirigido a
+# `/dev/null`) falla con "not a terminal", ninguno de los dos detiene nada. Si
+# ni `setsid` ni `perl` estan en PATH, la funcion degrada al mecanismo viejo
+# (`set -m` mas `</dev/null` en stdin) y deja constancia EXPLICITA con un WARN
+# en <events_log> -- nunca en silencio, porque ese camino vuelve a exponer la
+# clase de bug que este issue elimina.
 #
-# El watchdog se lanza DENTRO de esa misma ventana de `set -m`, por el mismo
-# motivo del otro lado: cuando <cmd...> termina solo y hay que cancelarlo, un
-# `kill` al PID del subshell del watchdog mata al subshell pero deja su
-# `sleep <timeout_s>` huerfano hasta media hora (verificado: un `sleep`
-# colgado por stage). Siendo lider de su propio grupo, `kill -9 -$watchdog_pid`
-# se lleva subshell y `sleep` de una. Tiene que ser SIGKILL al GRUPO y no
-# SIGTERM al `sleep` por separado: matar solo al `sleep` haria que el subshell
-# despertara y siguiera con el `touch`/`kill`/`echo`, escribiendo un evento
-# TIMEOUT espurio de un stage que en realidad termino bien.
+# El watchdog se lanza en su PROPIA ventana de `set -m` (la unica que le
+# queda a esta funcion en el camino feliz -- el agente ya no la necesita, ver
+# arriba): cuando <cmd...> termina solo y hay que cancelarlo, un `kill` al PID
+# del subshell del watchdog mata al subshell pero deja su `sleep <timeout_s>`
+# huerfano hasta media hora (verificado: un `sleep` colgado por stage).
+# Siendo lider de su propio grupo, `kill -9 -$watchdog_pid` se lleva subshell
+# y `sleep` de una. Tiene que ser SIGKILL al GRUPO y no SIGTERM al `sleep`
+# por separado: matar solo al `sleep` haria que el subshell despertara y
+# siguiera con el `touch`/`kill`/`echo`, escribiendo un evento TIMEOUT espurio
+# de un stage que en realidad termino bien.
 #
 # CA-2 (evento TIMEOUT incondicional): el `touch`/`kill`/`echo` del watchdog
 # ya NO cuelgan de un `&&` en cadena -- antes, si el `kill` fallaba (como
@@ -838,10 +854,22 @@ run_agent_with_watchdog() {
 
     rm -f "$signal_file"
 
-    set -m
-    ( cd "$workdir" && "$@" ) >"$stdout_file" 2>"$stderr_file" &
-    local pid=$!
+    local pid
+    if command -v setsid >/dev/null 2>&1; then
+        ( cd "$workdir" && exec setsid "$@" ) </dev/null >"$stdout_file" 2>"$stderr_file" &
+        pid=$!
+    elif command -v perl >/dev/null 2>&1; then
+        ( cd "$workdir" && exec perl -e 'use POSIX; POSIX::setsid() or die; exec @ARGV' -- "$@" ) </dev/null >"$stdout_file" 2>"$stderr_file" &
+        pid=$!
+    else
+        echo "[$(date +%H:%M:%S)] WARN: $label corre con terminal de control (sin setsid ni perl): riesgo de SIGTTIN" >> "$events_log"
+        set -m
+        ( cd "$workdir" && "$@" ) </dev/null >"$stdout_file" 2>"$stderr_file" &
+        pid=$!
+        set +m
+    fi
 
+    set -m
     (
         sleep "$timeout_s"
         touch "$signal_file" 2>/dev/null

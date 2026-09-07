@@ -53,6 +53,16 @@
 #   two-terminals   Emite DOS eventos terminales validos. Exit 0.
 #   malformed       Emite una linea valida y luego una linea JSON truncada a
 #                   media escritura (nunca llega a un terminal valido). Exit 1.
+#   touch-tty       Repro determinista del aislamiento de tty (issue #943):
+#                   emite un message, intenta `read -r x </dev/tty`, despues
+#                   `stty -echo` (tcsetattr sobre stdin) y despues `read -r y`
+#                   de stdin -- los tres disparadores de SIGTTIN/SIGTTOU que
+#                   detuvieron un writer real en STAT=T. Ignora los fallos de
+#                   las tres (este archivo no usa `set -e`): con terminal de
+#                   control, cualquiera de ellas detiene al grupo; sin ella
+#                   (sesion nueva + stdin en /dev/null), fallan rapido y sin
+#                   señal (ENXIO / "not a terminal" / EOF). Termina con
+#                   terminal status=success. Exit 0.
 # Default sin MEFISTO_FAKE_SCRIPT: "success".
 #
 # Bash 3.2 + jq 1.7: sin arrays asociativos, sin dependencias de red.
@@ -168,6 +178,14 @@ _runtime_fake_emit_main() {
             echo '{"fake":"message","text":"antes del corte"}'
             printf '{"fake":"terminal","status":"suc'
             exit 1
+            ;;
+        touch-tty)
+            echo '{"fake":"message","text":"tocando la tty antes de terminar"}'
+            read -r _touch_tty_x </dev/tty
+            stty -echo
+            read -r _touch_tty_y
+            printf '{"fake":"terminal","status":"success","model":%s}\n' "$model_json"
+            exit 0
             ;;
         *)
             echo "runtime-fake.sh: MEFISTO_FAKE_SCRIPT desconocido: '${MEFISTO_FAKE_SCRIPT:-}'" >&2
