@@ -16,30 +16,21 @@
 #     (/implement, /tooling, /infra, /sequential). Dentro de herdr, esos
 #     skills abren el tercer pane con el visor en vivo (issue #690).
 #
-# Dos filas por runtime en el repo de Mefisto (issue #931, MEF-ADR-0049): el
-# workspace del propio repo de Mefisto admite una fila de planner+ejecucion
-# POR RUNTIME (Claude Code y OpenCode lado a lado, dogfooding), montadas con
-# invocaciones independientes (`MEFISTO_RUNTIME=claude mef-abrir`,
-# `MEFISTO_RUNTIME=opencode mef-abrir`). El workspace se comparte a proposito
-# -- el aislamiento real es por repo (`.mefisto/pipeline/`, worktrees, `main`
-# local), no por workspace. Un `pane split` anida bajo el pane que lo pide,
-# asi que la unica forma de que cada fila sea un contenedor propio
-# (redimensionable de un tiron) es que el PRIMER split del workspace sea
-# `down`: la primera invocacion lo hace para reservar la fila 2 con un pane
-# ANCLA (label "fila libre", sin --env), y recien despues abre su propia fila
-# hacia la derecha. Una segunda invocacion con un runtime nuevo localiza ese
-# ancla por label, monta ahi su fila (dos splits `right` encadenados: ancla
-# -> planner -> ejecucion) y cierra el ancla -- nunca reutiliza su shell
-# porque nacio sin el `--env` del runtime nuevo. En un proyecto consumidor el
-# layout no cambia: una sola fila, sin ancla.
+# Filas por runtime en Mefisto (issue #958, MEF-ADR-0049/0050): una invocacion
+# monta una fila planner+ejecucion por cada kind. MEFISTO_RUNTIMES (separada
+# por comas) tiene precedencia; MEFISTO_RUNTIME selecciona una sola fila si la
+# lista no esta definida; sin ambas, el default es `claude,opencode`. El orden
+# visual sigue el orden de la lista. Como `pane split` anida bajo quien lo
+# pide, al crear el workspace todos los `down` salen del pane raiz ANTES de
+# cualquier `right` y recorren la lista al reves: herdr inserta cada pane
+# inmediatamente debajo de la raiz. Con tres o mas filas, las inferiores
+# pueden quedar anidadas por la geometria de herdr; es un limite conocido y
+# aceptado. En consumidores se conserva una fila sin variables de runtime.
 #
-# Runtime (MEFISTO_RUNTIME, issue #875): en el propio repo de Mefisto los
-# panes de la fila arrancan con `herdr agent start --kind
-# "${MEFISTO_RUNTIME:-claude}"` -- Claude Code por default, OpenCode si
-# MEFISTO_RUNTIME=opencode -- y llevan SIEMPRE `--env MEFISTO_RUNTIME=<kind>`
-# (tambien con el kind default, issue #931: el despacho de #928 necesita
-# resolver el mismo runtime para esa fila) mas MEFISTO_MODELS_FILE si esta
-# definida. En un proyecto consumidor el runtime sigue siendo siempre Claude
+# Los panes de cada fila de Mefisto arrancan con `--kind <kind>` y llevan
+# SIEMPRE `--env MEFISTO_RUNTIME=<kind>` (tambien para los defaults, porque el
+# despacho de #928 debe resolver el runtime de su fila), mas
+# MEFISTO_MODELS_FILE si esta definida. En un consumidor el runtime es Claude
 # Code (el plugin publicado aun no soporta OpenCode): un MEFISTO_RUNTIME
 # distinto de "claude" se ignora con un aviso, sin --env -- exactamente el
 # comportamiento de hoy. El script nunca fija provider, modelo ni
@@ -62,12 +53,10 @@
 #
 # Idempotencia: en un consumidor, un workspace con el label del repo ya
 # montado solo se enfoca -- nunca duplica panes ni agentes. En el repo de
-# Mefisto la idempotencia es por PAR (workspace, runtime): reinvocar con un
-# runtime cuya fila ya existe (label "planner [<kind>]" presente en `herdr
-# pane list --workspace <ws>`) tambien solo enfoca -- la deteccion es por
-# label de pane, nunca por si el agente llego a arrancar. Sin el pane ancla
-# (lo cerraron a mano) al pedir una fila nueva, el script aborta sin tocar el
-# layout: nunca anida la fila 2 bajo la fila 1.
+# Mefisto la idempotencia es por (workspace, runtime): una fila con label
+# `planner [<kind>]` no se toca. Las faltantes se agregan con `down` desde el
+# planner de la ultima fila existente y luego su `right`; ese agregado puede
+# quedar anidado y se acepta para no reconstruir filas que ya estan activas.
 
 set -euo pipefail
 
@@ -143,28 +132,43 @@ planner_agent_for_repo() {
     fi
 }
 
-# runtime_kind_for_repo <planner_agent>
+# runtimes_for_repo <planner_agent>
 #
-# Imprime el argumento de `herdr agent start --kind` para el runtime activo
-# (issue #875): en el propio repo de Mefisto (planner_agent =
-# "mefisto-planner") honra MEFISTO_RUNTIME, default "claude"; en un
-# consumidor SIEMPRE "claude" -- el plugin publicado aun no soporta OpenCode.
-# Pura (solo imprime el kind resuelto): el aviso de un MEFISTO_RUNTIME
-# ignorado en un consumidor lo emite el llamador, que no captura este stdout.
-runtime_kind_for_repo() {
+# Imprime un kind por linea. En Mefisto normaliza la lista, elimina vacios y
+# duplicados conservando la primera aparicion. En consumidores siempre
+# devuelve `claude`, sin leer las variables.
+runtimes_for_repo() {
     local planner_agent="$1"
-    if [ "$planner_agent" = "mefisto-planner" ]; then
-        echo "${MEFISTO_RUNTIME:-claude}"
-    else
+    if [ "$planner_agent" != "mefisto-planner" ]; then
         echo "claude"
+        return
     fi
+
+    local configured
+    if [ -n "${MEFISTO_RUNTIMES:-}" ]; then
+        configured="$MEFISTO_RUNTIMES"
+    elif [ -n "${MEFISTO_RUNTIME:-}" ]; then
+        configured="$MEFISTO_RUNTIME"
+    else
+        configured="claude,opencode"
+    fi
+    printf '%s\n' "$configured" | awk -F, '
+        {
+            for (i = 1; i <= NF; i++) {
+                value = $i
+                sub(/^[[:space:]]+/, "", value)
+                sub(/[[:space:]]+$/, "", value)
+                if (value != "" && !seen[value]++) print value
+            }
+        }
+    '
 }
 
 # pane_label_lookup <workspace_id> <label>
 #
 # Imprime el pane_id del primer pane de <workspace_id> cuyo label sea
 # exactamente <label> (vacio si ninguno calza). Base de la deteccion de
-# filas por (workspace, runtime) y del pane ancla (issue #931 CA-2/CA-3/CA-4):
+# filas por (workspace, runtime) (issue #958 CA-4):
 # SIEMPRE por label, nunca por si el agente del pane llego a arrancar (un
 # `herdr agent start` fallido no debe hacer creer que la fila no existe).
 # Un `herdr pane list` que falla (o devuelve algo que jq no puede leer) es
@@ -261,65 +265,36 @@ start_agent_in_pane() {
     return 0
 }
 
-# mount_first_row <repo_root> <label> <planner_agent> <runtime_kind> <name_kind> <with_row2 (0|1)> <env_args...>
+# mount_first_row <repo_root> <label> <planner_agent>
 #
-# Monta la PRIMERA fila del workspace (workspace inexistente): `workspace
-# create` (pane raiz = planner) y, si <with_row2>=1 (repo de Mefisto, issue
-# #931 CA-1), reserva antes que nada el pane ANCLA de la fila 2 con un split
-# `down` SIN --env (el primer split del workspace tiene que ser `down` para
-# que cada fila quede como un contenedor propio -- ver cabecera del archivo).
-# Recien despues abre la fila hacia la derecha (`--direction right`, con
-# <env_args> si los hay). En un consumidor <with_row2>=0: sin ancla, layout
-# de siempre (CA-5). <name_kind> es el sufijo de nombre de agente (vacio en
-# un consumidor, runtime_kind en el repo de Mefisto).
+# Monta la unica fila de un consumidor, con el contrato previo intacto.
 mount_first_row() {
-    local repo_root="$1" label="$2" planner_agent="$3" runtime_kind="$4" name_kind="$5" with_row2="$6"
-    shift 6
-    local env_args=("$@")
+    local repo_root="$1" label="$2" planner_agent="$3"
 
     log "Creando el workspace '$label' para $repo_root ..."
     local resp ws p1
-    # env_args vacio no puede expandirse a secas: bash 3.2 con `set -u` aborta
-    # con "unbound variable" -- de ahi el idiom `"${a[@]+"${a[@]}"}"` (mismo
-    # que mefisto-stream-watch.sh), que en ese caso no aporta ningun argumento.
-    resp=$(herdr workspace create --cwd "$repo_root" --label "$label" "${env_args[@]+"${env_args[@]}"}" 2>&1) \
+    resp=$(herdr workspace create --cwd "$repo_root" --label "$label" 2>&1) \
         || abort "No se pudo crear el workspace: $resp"
     ws=$(echo "$resp" | jq -r '.result.workspace.workspace_id // empty')
     p1=$(echo "$resp" | jq -r '.result.root_pane.pane_id // empty')
     [ -n "$ws" ] && [ -n "$p1" ] || abort "herdr workspace create no devolvio ids. Respuesta: $resp"
 
-    if [ "$with_row2" = "1" ]; then
-        local anchor=""
-        resp=$(herdr pane split --pane "$p1" --direction down --cwd "$repo_root" --no-focus 2>&1) \
-            && anchor=$(echo "$resp" | jq -r '.result.pane.pane_id // empty')
-        if [ -z "$anchor" ]; then
-            warn "No se pudo reservar el pane ancla de la fila 2 (split fallo): una segunda invocacion con otro runtime no podra montar su fila hasta cerrar y reabrir el workspace."
-        else
-            herdr pane rename "$anchor" "fila libre" >/dev/null 2>&1 || true
-        fi
-    fi
-
     local p2=""
-    resp=$(herdr pane split --pane "$p1" --direction right --cwd "$repo_root" --no-focus "${env_args[@]+"${env_args[@]}"}" 2>&1) \
+    resp=$(herdr pane split --pane "$p1" --direction right --cwd "$repo_root" --no-focus 2>&1) \
         && p2=$(echo "$resp" | jq -r '.result.pane.pane_id // empty')
     if [ -z "$p2" ]; then
         warn "No se pudo crear el pane de ejecucion (split fallo): el workspace queda con el pane del planner."
     fi
 
-    local planner_label="planner" ejecucion_label="ejecucion"
-    if [ -n "$name_kind" ]; then
-        planner_label="planner [$runtime_kind]"
-        ejecucion_label="ejecucion [$runtime_kind]"
-    fi
-    herdr pane rename "$p1" "$planner_label" >/dev/null 2>&1 || true
-    [ -n "$p2" ] && herdr pane rename "$p2" "$ejecucion_label" >/dev/null 2>&1 || true
+    herdr pane rename "$p1" "planner" >/dev/null 2>&1 || true
+    [ -n "$p2" ] && herdr pane rename "$p2" "ejecucion" >/dev/null 2>&1 || true
 
     local planner_name ejecucion_name
-    planner_name=$(agent_name_for_role "planner" "$label" "$name_kind")
-    ejecucion_name=$(agent_name_for_role "ejecucion" "$label" "$name_kind")
+    planner_name=$(agent_name_for_role "planner" "$label" "")
+    ejecucion_name=$(agent_name_for_role "ejecucion" "$label" "")
 
-    start_agent_in_pane "$planner_name" "$p1" "$planner_agent" "$runtime_kind"
-    [ -n "$p2" ] && start_agent_in_pane "$ejecucion_name" "$p2" "" "$runtime_kind"
+    start_agent_in_pane "$planner_name" "$p1" "$planner_agent" "claude"
+    [ -n "$p2" ] && start_agent_in_pane "$ejecucion_name" "$p2" "" "claude"
 
     echo ""
     success "Workspace '$label' listo ($ws): planner ($p1) + ejecucion (${p2:-no creado})."
@@ -327,37 +302,28 @@ mount_first_row() {
     log "dentro de herdr cada corrida abre su pane con el visor en vivo (issue #690)."
 }
 
-# mount_second_row <repo_root> <ws> <anchor_pane> <label> <planner_agent> <runtime_kind> <env_args...>
+# mount_runtime_row <repo_root> <base_pane> <label> <planner_agent> <kind>
 #
-# Monta la fila de <runtime_kind> sobre el pane ANCLA ya reservado (issue
-# #931 CA-2): dos splits `right` encadenados -- ancla -> planner, planner ->
-# ejecucion -- y CIERRA el ancla (su shell nacio sin el --env del runtime
-# nuevo, asi que no sirve como planner). Ningun rename/close/agent start
-# toca los panes de otras filas: solo referencia <anchor_pane> y los dos
-# panes que crea.
-mount_second_row() {
-    local repo_root="$1" ws="$2" anchor="$3" label="$4" planner_agent="$5" runtime_kind="$6"
-    shift 6
-    local env_args=("$@")
-
-    log "Montando la fila de '$runtime_kind' en el workspace '$label' ($ws) ..."
-    # p_planner/p_ejecucion arrancan vacias, no solo declaradas: si el split
-    # falla no se asignan, y `set -u` mataria el script con "unbound variable"
-    # en vez de dar el abort accionable de abajo (el ancla sigue en pie, asi
-    # que reinvocar es la salida).
+# Agrega una fila faltante debajo de <base_pane>. Publica el planner nuevo en
+# MOUNTED_RUNTIME_PLANNER para que el llamador pueda encadenar otra faltante.
+mount_runtime_row() {
+    local repo_root="$1" base_pane="$2" label="$3" planner_agent="$4" runtime_kind="$5"
+    local env_args=(--env "MEFISTO_RUNTIME=$runtime_kind")
+    [ -n "${MEFISTO_MODELS_FILE:-}" ] && env_args+=(--env "MEFISTO_MODELS_FILE=$MEFISTO_MODELS_FILE")
+    log "Montando la fila de '$runtime_kind' en el workspace '$label' ..."
     local resp p_planner="" p_ejecucion=""
-    resp=$(herdr pane split --pane "$anchor" --direction right --cwd "$repo_root" --no-focus "${env_args[@]+"${env_args[@]}"}" 2>&1) \
+    resp=$(herdr pane split --pane "$base_pane" --direction down --cwd "$repo_root" --no-focus "${env_args[@]}" 2>&1) \
         && p_planner=$(echo "$resp" | jq -r '.result.pane.pane_id // empty')
-    [ -n "$p_planner" ] || abort "No se pudo crear el pane del planner de la fila '$runtime_kind': $resp"
+    if [ -z "$p_planner" ]; then
+        warn "No se pudo crear el pane del planner de la fila '$runtime_kind': $resp"
+        return 0
+    fi
 
     resp=$(herdr pane split --pane "$p_planner" --direction right --cwd "$repo_root" --no-focus "${env_args[@]+"${env_args[@]}"}" 2>&1) \
         && p_ejecucion=$(echo "$resp" | jq -r '.result.pane.pane_id // empty')
     if [ -z "$p_ejecucion" ]; then
         warn "No se pudo crear el pane de ejecucion de la fila '$runtime_kind' (split fallo): la fila queda con el pane del planner."
     fi
-
-    herdr pane close "$anchor" >/dev/null 2>&1 \
-        || warn "No se pudo cerrar el pane ancla ($anchor); cierralo a mano."
 
     herdr pane rename "$p_planner" "planner [$runtime_kind]" >/dev/null 2>&1 || true
     [ -n "$p_ejecucion" ] && herdr pane rename "$p_ejecucion" "ejecucion [$runtime_kind]" >/dev/null 2>&1 || true
@@ -370,8 +336,67 @@ mount_second_row() {
     [ -n "$p_ejecucion" ] && start_agent_in_pane "$ejecucion_name" "$p_ejecucion" "" "$runtime_kind"
 
     echo ""
-    success "Fila de '$runtime_kind' lista en '$label' ($ws): planner ($p_planner) + ejecucion (${p_ejecucion:-no creado})."
+    success "Fila de '$runtime_kind' lista en '$label': planner ($p_planner) + ejecucion (${p_ejecucion:-no creado})."
     log "Desde el pane de ejecucion despacha issues con /mefisto-tooling, /mefisto-sequential, etc."
+    MOUNTED_RUNTIME_PLANNER="$p_planner"
+}
+
+# mount_runtime_rows <repo_root> <label> <planner_agent> <runtime...>
+#
+# Crea todas las filas: primero los `down` inversos, despues todos los `right`.
+mount_runtime_rows() {
+    local repo_root="$1" label="$2" planner_agent="$3"
+    shift 3
+    local runtimes=("$@")
+    local first_kind="${runtimes[0]}"
+    local first_env=(--env "MEFISTO_RUNTIME=$first_kind")
+    [ -n "${MEFISTO_MODELS_FILE:-}" ] && first_env+=(--env "MEFISTO_MODELS_FILE=$MEFISTO_MODELS_FILE")
+    local resp ws root i kind pane
+
+    log "Creando el workspace '$label' para $repo_root ..."
+    resp=$(herdr workspace create --cwd "$repo_root" --label "$label" "${first_env[@]}" 2>&1) \
+        || abort "No se pudo crear el workspace: $resp"
+    ws=$(echo "$resp" | jq -r '.result.workspace.workspace_id // empty')
+    root=$(echo "$resp" | jq -r '.result.root_pane.pane_id // empty')
+    [ -n "$ws" ] && [ -n "$root" ] || abort "herdr workspace create no devolvio ids. Respuesta: $resp"
+
+    local planners=("$root") ejecuciones=()
+    for ((i=${#runtimes[@]}-1; i>=1; i--)); do
+        kind="${runtimes[$i]}"
+        local env_args=(--env "MEFISTO_RUNTIME=$kind")
+        [ -n "${MEFISTO_MODELS_FILE:-}" ] && env_args+=(--env "MEFISTO_MODELS_FILE=$MEFISTO_MODELS_FILE")
+        pane=""
+        resp=$(herdr pane split --pane "$root" --direction down --cwd "$repo_root" --no-focus "${env_args[@]}" 2>&1) \
+            && pane=$(echo "$resp" | jq -r '.result.pane.pane_id // empty')
+        [ -n "$pane" ] || warn "No se pudo crear el planner de la fila '$kind': $resp"
+        planners[$i]="$pane"
+    done
+
+    for ((i=0; i<${#runtimes[@]}; i++)); do
+        kind="${runtimes[$i]}"
+        pane="${planners[$i]:-}"
+        [ -n "$pane" ] || continue
+        local row_env=(--env "MEFISTO_RUNTIME=$kind")
+        [ -n "${MEFISTO_MODELS_FILE:-}" ] && row_env+=(--env "MEFISTO_MODELS_FILE=$MEFISTO_MODELS_FILE")
+        local execution=""
+        resp=$(herdr pane split --pane "$pane" --direction right --cwd "$repo_root" --no-focus "${row_env[@]}" 2>&1) \
+            && execution=$(echo "$resp" | jq -r '.result.pane.pane_id // empty')
+        [ -n "$execution" ] || warn "No se pudo crear el pane de ejecucion de la fila '$kind'."
+        ejecuciones[$i]="$execution"
+    done
+
+    for ((i=0; i<${#runtimes[@]}; i++)); do
+        kind="${runtimes[$i]}"
+        pane="${planners[$i]:-}"
+        [ -n "$pane" ] || continue
+        herdr pane rename "$pane" "planner [$kind]" >/dev/null 2>&1 || true
+        [ -n "${ejecuciones[$i]:-}" ] && herdr pane rename "${ejecuciones[$i]}" "ejecucion [$kind]" >/dev/null 2>&1 || true
+        start_agent_in_pane "$(agent_name_for_role planner "$label" "$kind")" "$pane" "$planner_agent" "$kind"
+        [ -n "${ejecuciones[$i]:-}" ] && start_agent_in_pane "$(agent_name_for_role ejecucion "$label" "$kind")" "${ejecuciones[$i]}" "" "$kind"
+    done
+
+    echo ""
+    success "Workspace '$label' listo ($ws): ${#runtimes[@]} fila(s) de runtime."
 }
 
 main() {
@@ -415,39 +440,48 @@ main() {
             success "El workspace '$label' ya existe ($existing): enfocado, sin duplicar panes ni agentes."
             exit 0
         fi
-        mount_first_row "$repo_root" "$label" "$planner_agent" "claude" "" "0"
+        mount_first_row "$repo_root" "$label" "$planner_agent"
         return
     fi
 
-    # --- Rama Mefisto: dos filas por runtime (issue #931, MEF-ADR-0049) ---
-    # env_args SIEMPRE lleva MEFISTO_RUNTIME=<kind> -- tambien con el kind
-    # default (CA-1), para que el despacho de #928 resuelva el mismo runtime
-    # desde cualquier fila.
-    local runtime_kind
-    runtime_kind=$(runtime_kind_for_repo "$planner_agent")
-    local env_args=(--env "MEFISTO_RUNTIME=$runtime_kind")
-    [ -n "${MEFISTO_MODELS_FILE:-}" ] && env_args+=(--env "MEFISTO_MODELS_FILE=$MEFISTO_MODELS_FILE")
+    # --- Rama Mefisto: una fila por runtime configurado (issue #958) ---
+    local runtimes=() runtime_kind
+    while IFS= read -r runtime_kind; do
+        [ -n "$runtime_kind" ] && runtimes+=("$runtime_kind")
+    done < <(runtimes_for_repo "$planner_agent")
+    [ "${#runtimes[@]}" -gt 0 ] || abort "La lista de runtimes quedo vacia."
 
     if [ -z "$existing" ]; then
-        mount_first_row "$repo_root" "$label" "$planner_agent" "$runtime_kind" "$runtime_kind" "1" "${env_args[@]}"
-        log "Otra invocacion con MEFISTO_RUNTIME=<otro-kind> monta una segunda fila en este mismo workspace."
+        mount_runtime_rows "$repo_root" "$label" "$planner_agent" "${runtimes[@]}"
         return
     fi
 
     local ws="$existing"
-    local row_pane
-    row_pane=$(pane_label_lookup "$ws" "planner [$runtime_kind]")
-    if [ -n "$row_pane" ]; then
-        herdr workspace focus "$ws" >/dev/null 2>&1 || true
-        success "El workspace '$label' ya tiene la fila de '$runtime_kind' ($ws): enfocado, sin duplicar panes ni agentes."
-        exit 0
+    herdr workspace focus "$ws" >/dev/null 2>&1 || true
+    local row_panes=() last_existing="" i
+    for ((i=0; i<${#runtimes[@]}; i++)); do
+        row_panes[$i]=$(pane_label_lookup "$ws" "planner [${runtimes[$i]}]")
+        [ -n "${row_panes[$i]}" ] && last_existing="${row_panes[$i]}"
+    done
+
+    if [ -z "$last_existing" ]; then
+        warn "El workspace '$label' existe pero no contiene ninguna fila de los runtimes pedidos; se enfoco sin modificar el layout."
+        return
     fi
 
-    local anchor
-    anchor=$(pane_label_lookup "$ws" "fila libre")
-    [ -n "$anchor" ] || abort "El workspace '$label' ($ws) no tiene el pane ancla ('fila libre') para montar la fila de '$runtime_kind' -- probablemente lo cerraron a mano. Cierra el workspace en herdr y vuelve a abrirlo (la primera invocacion recrea el ancla)."
-
-    mount_second_row "$repo_root" "$ws" "$anchor" "$label" "$planner_agent" "$runtime_kind" "${env_args[@]}"
+    local mounted=0
+    for ((i=0; i<${#runtimes[@]}; i++)); do
+        [ -n "${row_panes[$i]}" ] && continue
+        MOUNTED_RUNTIME_PLANNER=""
+        mount_runtime_row "$repo_root" "$last_existing" "$label" "$planner_agent" "${runtimes[$i]}"
+        if [ -n "$MOUNTED_RUNTIME_PLANNER" ]; then
+            last_existing="$MOUNTED_RUNTIME_PLANNER"
+            mounted=$((mounted + 1))
+        fi
+    done
+    [ "$mounted" -gt 0 ] \
+        && success "Workspace '$label' enfocado; se montaron $mounted fila(s) faltante(s)." \
+        || success "El workspace '$label' ya tiene todas las filas pedidas ($ws): enfocado sin duplicar panes ni agentes."
 }
 
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
