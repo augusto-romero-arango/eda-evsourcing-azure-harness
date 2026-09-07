@@ -106,9 +106,10 @@ Se va a instalar/actualizar el gateway APIM en el entorno "<env>" para: <lista d
      Mcp__ResourceUri/Mcp__AuthorizationServer del servidor a la URL real de APIM (CA-4).
 
 El apply real (el que provisiona APIM en Azure) corre en CI al mergear el PR (MEF-ADR-0022); este
-skill nunca ejecuta terraform plan/apply. El checklist post-deploy (CORS, 401, 202, headers de
-identidad, verbo QUERY<si aplica MCP: ", Resource Indicator byte a byte">) queda pendiente para
-despues de ese apply.
+skill nunca ejecuta terraform plan/apply. El checklist post-deploy (CORS, 401, codigo de exito del
+endpoint POST elegido segun su contrato -- MEF-ADR-0043 --, evidencia de forwarding en App Insights,
+headers de identidad, verbo QUERY<si aplica MCP: ", Resource Indicator byte a byte">) queda pendiente
+para despues de ese apply.
 
 ¿Continuar? (s/n)
 ```
@@ -634,17 +635,25 @@ Checklist post-deploy (correr una vez que el apply de CI termine, contra el gate
 
   1. OPTIONS sin header Authorization -> CORS responde (200/204, nunca 404).
   2. POST sin token -> 401.
-  3. POST con token WorkOS valido -> 202 Accepted, y el request llega a la Function App backend
-     (confirmar en App Insights que el request aparece, no solo que APIM respondio -- B2 de
-     MEF-ADR-0032, el "acepta y no hace nada" es el bug mas traicionero del catalogo).
-  4. En el backend, X-User-Id y X-Tenant-Id llegan no vacios (confirma que el mapping de claims
+  3. Elegir un endpoint POST real ya expuesto detras del gateway (no un placeholder) y su codigo de
+     exito documentado en el contrato HTTP de ese comando -- verbo + ruta + paso de precedencia +
+     codigo de exito, MEF-ADR-0043 seccion 2/6: 200, 201, 202 o 204 segun el paso que aplique. POST
+     con token WorkOS valido contra ese endpoint -> responde exactamente ese codigo, nunca 202 por
+     default: 202 solo es correcto si el propio endpoint declara procesamiento diferido y su issue
+     justifico por que (MEF-ADR-0004, MEF-ADR-0043 seccion 2 paso 4) -- este checklist prueba que
+     APIM autentica y reenvia, no que el backend responda un status en particular.
+  4. La prueba de que APIM reenvio la request es independiente del status de la respuesta: confirmar
+     en App Insights que el request aparece en la Function App backend, no solo que APIM respondio
+     con un 2xx -- un 2xx aislado no demuestra el forwarding (B2 de MEF-ADR-0032, el "acepta y no hace
+     nada" es el bug mas traicionero del catalogo).
+  5. En el backend, X-User-Id y X-Tenant-Id llegan no vacios (confirma que el mapping de claims
      esta resolviendo valores reales, no cadenas vacias por un claim mal nombrado -- B10 de
      MEF-ADR-0032).
-  5. QUERY con token valido y Content-Type: application/json -> llega a la Function App (ni 404 ni
+  6. QUERY con token valido y Content-Type: application/json -> llega a la Function App (ni 404 ni
      405 en el borde). Gate empirico del verbo QUERY (issue #608): cierra el punto NO VERIFICADO
      "APIM Consumption reenviando QUERY end-to-end" de MEF-ADR-0042 seccion 6 -- correrlo antes de
      exponer el primer endpoint QUERY real detras del gateway.
-  6. Si un request con token valido responde 404 (ni 401 ni 400), la causa no es CORS (B3) ni el
+  7. Si un request con token valido responde 404 (ni 401 ni 400), la causa no es CORS (B3) ni el
      <backend> vacio (B2): es la operacion faltante -- B11 de MEF-ADR-0032. Confirmar que la
      azurerm_api_management_api del dominio tiene al menos una azurerm_api_management_api_operation
      que matchee el metodo del request (el modulo genera la wildcard por verbo automaticamente,
