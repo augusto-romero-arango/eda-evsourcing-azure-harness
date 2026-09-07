@@ -150,17 +150,15 @@ pane_is_free() {
 # al primer barrido, sin cerrar su pane -- costo unico de migracion, conservador
 # (CA-5): no hay forma de saber a que runtime pertenecian.
 acquire_report_pane() {
-    # mefisto_resolve_runtime es pura (no aborta, no escribe en disco) pero
-    # MEFISTO_RUNTIME_ERROR es una variable global que solo sobrevive en ESTE
-    # shell: invocada dentro de una sustitucion de comandos ($(...)) corre en
-    # un subshell, y ahi cualquier asignacion a MEFISTO_RUNTIME_ERROR se pierde
-    # al salir. Se llama primero sin capturar salida para que, si falla, el
-    # motivo quede fijado en el shell actual; solo si tuvo exito se vuelve a
-    # llamar via $(...) para capturar el id.
+    # Misma forma que mefisto-tooling-pipeline.sh, con una vuelta extra en el
+    # camino de error: $(...) corre en un subshell, asi que la asignacion a
+    # MEFISTO_RUNTIME_ERROR que el resolutor hace al fallar se pierde al salir.
+    # Repetir la llamada en ESTE shell -- solo cuando ya se sabe que fallo --
+    # fija el motivo aqui, para que abort() muestre la causa y no un texto
+    # vacio. El camino feliz resuelve una sola vez.
     local runtime
-    if mefisto_resolve_runtime >/dev/null 2>&1; then
-        runtime=$(mefisto_resolve_runtime)
-    else
+    if ! runtime=$(mefisto_resolve_runtime); then
+        mefisto_resolve_runtime >/dev/null 2>&1 || true
         abort "No se pudo resolver el runtime activo: $MEFISTO_RUNTIME_ERROR"
     fi
 

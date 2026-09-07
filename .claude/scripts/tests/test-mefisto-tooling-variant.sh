@@ -268,6 +268,19 @@ esac
 STUB
 chmod +x "$FAKE_BIN/herdr"
 
+# Stub de "claude" (issue #928): desde que acquire_report_pane resuelve el
+# runtime con mefisto_resolve_runtime, los bloques 11-14 dependen de que la
+# autodeteccion vea UN solo runtime instalado. Con el PATH recortado de
+# run_herdr (abajo) este stub es el unico candidato, asi que la resolucion es
+# la misma en cualquier maquina -- tenga instalados claude, opencode o ambos.
+# Ningun bloque llega a ejecutarlo: el pane run del stub de herdr solo registra
+# la linea tecleada.
+cat > "$FAKE_BIN/claude" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+chmod +x "$FAKE_BIN/claude"
+
 run_herdr() {
     : > "$HERDR_STUB_LOG"
     echo 0 > "$HERDR_STUB_COUNTER"
@@ -281,10 +294,17 @@ run_herdr() {
         # real. Sin esto, mefisto-state.sh (`: "${VAR:=default}"`) los
         # respeta tal cual y el fixture deja de escribir en su propio
         # FAKE_MEFISTO/.mefisto/pipeline/.
-        env -u MEFISTO_UI \
+        #
+        # PATH="$FAKE_BIN:/usr/bin:/bin" y -u MEFISTO_RUNTIME (issue #928): la
+        # resolucion de runtime de acquire_report_pane no debe depender ni de
+        # que CLIs reales tenga la maquina (tipicamente en ~/.local/bin o
+        # /opt/homebrew/bin, fuera de este PATH recortado) ni de un
+        # MEFISTO_RUNTIME ya exportado por la corrida que ejecuta esta suite.
+        # /usr/bin y /bin alcanzan para git, jq y el resto de coreutils.
+        env -u MEFISTO_UI -u MEFISTO_RUNTIME \
             -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR \
             -u MEFISTO_REPO_ROOT -u MEFISTO_PROJECT_NAME -u MEFISTO_REPO_SLUG \
-            PATH="$FAKE_BIN:$PATH" \
+            PATH="$FAKE_BIN:/usr/bin:/bin" \
             HERDR_ENV=1 HERDR_PANE_ID="w1:p0" HERDR_WORKSPACE_ID="w1" \
             HERDR_STUB_LOG="$HERDR_STUB_LOG" HERDR_STUB_COUNTER="$HERDR_STUB_COUNTER" \
             "$HERDR_SCRIPT" "$@"

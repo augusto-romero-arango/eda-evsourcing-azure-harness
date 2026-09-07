@@ -379,7 +379,11 @@ run_herdr() {
         # mefisto_resolve_runtime, y un "claude"/"opencode" real en
         # ~/.local/bin o /opt/homebrew/bin haria la autodeteccion no
         # determinista segun la maquina.
-        env -u MEFISTO_UI \
+        # -u MEFISTO_RUNTIME (issue #928): ningun bloque herdr de esta suite
+        # depende de heredarla, y desfijarla deja la resolucion de runtime en
+        # manos del unico stub del PATH recortado -- identica corra la suite
+        # sola o dentro de una corrida real del pipeline, que la exporta.
+        env -u MEFISTO_UI -u MEFISTO_RUNTIME \
             -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR \
             -u MEFISTO_REPO_ROOT -u MEFISTO_PROJECT_NAME -u MEFISTO_REPO_SLUG \
             PATH="$FAKE_BIN:/usr/bin:/bin" \

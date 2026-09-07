@@ -237,6 +237,15 @@ run_herdr() {
     LAST_STDERR=$(cat "$err")
 }
 
+# Punto de partida explicito (issue #928): esta suite corre a menudo DENTRO
+# de una corrida real del pipeline interno, que exporta MEFISTO_RUNTIME. Los
+# bloques que ejercen la ausencia de la variable ([5], [18], [22]) no pueden
+# depender de que un `unset` de otro bloque anterior la haya limpiado por
+# casualidad -- run_herdr no puede desfijarla, porque [1-4] verifican
+# justamente que se herede. Se limpia una vez aqui y cada bloque que la
+# necesita la exporta y la vuelve a desfijar.
+unset MEFISTO_RUNTIME MEFISTO_MODELS_FILE
+
 # --- [1-4] MEFISTO_RUNTIME/MEFISTO_MODELS_FILE heredados en el pane (CA-2) --
 
 echo "[1] --tooling hereda MEFISTO_RUNTIME=claude en el pane run"
@@ -588,7 +597,7 @@ echo "----------------------------------------"
 echo "  Runtime como clave del pool: $PASS pass, $FAIL fail (hasta aqui)"
 echo "----------------------------------------"
 
-# --- [18-20] Flags que se consumen o se reenvian tal cual (CA-3) --------------
+# --- [23-26] Flags que se consumen o se reenvian tal cual (CA-3 de #872) -----
 #
 # --verbose e --if-exists no llegan nunca al sub-pipeline (uno es no-op en
 # herdr, el otro es de las sesiones tmux); --from-stage y --variant si, y su
@@ -654,7 +663,7 @@ echo "----------------------------------------"
 echo "  Flags consumidos y reenviados: $PASS pass, $FAIL fail (hasta aqui)"
 echo "----------------------------------------"
 
-# --- [27] Guard de contexto herdr (CA-5) -------------------------------------
+# --- [27] Guard de contexto herdr (CA-5 de #872) -----------------------------
 
 echo ""
 echo "[27] fuera de un pane herdr (HERDR_ENV != 1) aborta remitiendo al lanzador tmux"
@@ -752,7 +761,7 @@ echo "----------------------------------------"
 echo "  Guards de contexto y del canonico: $PASS pass, $FAIL fail (hasta aqui)"
 echo "----------------------------------------"
 
-# --- [29] tail -f en vivo del .report.log dentro de --_pane-runner (CA-1/2/3) -
+# --- [29] tail -f del .report.log dentro de --_pane-runner (CA-1/2/3 de #926) -
 #
 # Corre el runner interno directamente (sin pasar por el shim ni por herdr
 # real), sin HERDR_PANE_ID en el entorno -- salta los "herdr pane rename" y
