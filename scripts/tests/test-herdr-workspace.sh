@@ -17,15 +17,20 @@
 # Casos cubiertos:
 #   [pre] Las funciones bajo prueba se pueden extraer y cargar.
 #   [A] workspace_slug: minusculas, caracteres raros a '-', sin guiones en
-#       los extremos, tope de 20 caracteres (los nombres de agente de herdr
-#       admiten 32 y el prefijo mas largo ocupa 10).
+#       los extremos, tope de 20 caracteres por default y parametrizable
+#       (los nombres de agente de herdr admiten 32 y el prefijo mas largo
+#       ocupa 10).
+#   [A2] agent_name_for_role: nombre completo rol-slug[-kind], mismo slug
+#       para planner/ejecucion recortado por el prefijo mas largo (CA-2, CA-4).
 #   [B] planner_agent_for_repo: mefisto-planner en el repo del plugin
 #       (.claude-plugin/plugin.json presente), mefisto:planner en un consumidor.
 #   [C] Workspace Mefisto con MEFISTO_RUNTIME=opencode: ambos panes arrancan
-#       con --kind opencode y heredan MEFISTO_RUNTIME via --env en
-#       `workspace create`/`pane split` (CA-1, CA-2).
-#   [D] Workspace Mefisto sin MEFISTO_RUNTIME: --kind claude y ningun --env
-#       -- comportamiento byte a byte el actual (CA-1).
+#       con --kind opencode, nombre de agente sufijado con "-opencode" y
+#       heredan MEFISTO_RUNTIME via --env en `workspace create`/`pane split`
+#       (CA-1, CA-2).
+#   [D] Workspace Mefisto sin MEFISTO_RUNTIME: --kind claude, nombre de
+#       agente sufijado con "-claude" (issue #930: siempre, incluso con el
+#       runtime default) y ningun --env (CA-1).
 #   [E] Repo consumidor con MEFISTO_RUNTIME=opencode: aviso + fallback a
 #       claude, sin --env -- la rama consumidor no cambia (CA-3).
 #   [F] Fallo de `herdr agent start` en los 2 intentos: reintenta una vez y
@@ -59,7 +64,7 @@ trap cleanup EXIT
 
 echo "[pre] Las funciones bajo prueba se pueden extraer y cargar desde herdr-workspace.sh"
 ALL_LOADED=1
-for fn in workspace_slug planner_agent_for_repo; do
+for fn in workspace_slug agent_name_for_role planner_agent_for_repo; do
     body=$(extract_fn "$fn" "$TARGET")
     if [ -n "$body" ]; then
         eval "$body"
@@ -111,6 +116,39 @@ if [ "$SLUG_A4" = "abc" ]; then
     pass "A-4: un nombre ya valido se devuelve intacto"
 else
     fail "A-4: se esperaba 'abc', se obtuvo '$SLUG_A4'"
+fi
+
+SLUG_A5=$(workspace_slug "eda-evsourcing-azure-harness" 13)
+if [ "$SLUG_A5" = "eda-evsourcin" ] && [ "${#SLUG_A5}" -le 13 ]; then
+    pass "A-5: el tope es parametrizable (max=13) sin guion colgante"
+else
+    fail "A-5: slug inesperado con max=13: '$SLUG_A5'"
+fi
+
+# -------- Bloque A2: agent_name_for_role --------
+
+echo ""
+echo "[A2] agent_name_for_role: rol-slug[-kind], mismo slug para planner/ejecucion (CA-2, CA-4)"
+
+NAME_A2_1=$(agent_name_for_role "ejecucion" "eda-evsourcing-azure-harness" "opencode")
+if [ "$NAME_A2_1" = "ejecucion-eda-evsourcin-opencode" ] && [ "${#NAME_A2_1}" -le 32 ]; then
+    pass "A2-1: ejecucion con kind=opencode y el label real de Mefisto -> '$NAME_A2_1' (32 chars)"
+else
+    fail "A2-1: nombre inesperado: '$NAME_A2_1'"
+fi
+
+NAME_A2_2=$(agent_name_for_role "planner" "eda-evsourcing-azure-harness" "opencode")
+if [ "$NAME_A2_2" = "planner-eda-evsourcin-opencode" ]; then
+    pass "A2-2: planner comparte el MISMO slug que ejecucion (recortado por el prefijo mas largo)"
+else
+    fail "A2-2: nombre inesperado: '$NAME_A2_2'"
+fi
+
+NAME_A2_3=$(agent_name_for_role "planner" "Bitakora.ControlAsistencia" "")
+if [ "$NAME_A2_3" = "planner-bitakora-controlasis" ]; then
+    pass "A2-3: kind vacio (consumidor) no agrega sufijo, tope de 20 (CA-3)"
+else
+    fail "A2-3: nombre inesperado: '$NAME_A2_3'"
 fi
 
 # -------- Bloque B: planner_agent_for_repo --------
@@ -242,7 +280,7 @@ run_workspace() {
 }
 
 echo ""
-echo "[C] Workspace Mefisto con MEFISTO_RUNTIME=opencode: --kind opencode y --env en ambos panes"
+echo "[C] Workspace Mefisto con MEFISTO_RUNTIME=opencode: --kind opencode, nombre sufijado y --env en ambos panes"
 
 export MEFISTO_RUNTIME=opencode
 run_workspace "$FAKE_MEFISTO"
@@ -253,13 +291,13 @@ if [ "$LAST_RC" -eq 0 ]; then
 else
     fail "C-1: no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"
 fi
-if grep -qxF "herdr agent start planner-fake-mefisto-repo --kind opencode --pane w1:p1 --timeout 90000 -- --agent mefisto-planner" "$HERDR_STUB_LOG"; then
-    pass "C-2: el pane planner arranca --kind opencode con --agent mefisto-planner"
+if grep -qxF "herdr agent start planner-fake-mefisto-opencode --kind opencode --pane w1:p1 --timeout 90000 -- --agent mefisto-planner" "$HERDR_STUB_LOG"; then
+    pass "C-2: el pane planner arranca --kind opencode con nombre sufijado y --agent mefisto-planner"
 else
     fail "C-2: no se encontro la invocacion esperada -- log: $(cat "$HERDR_STUB_LOG")"
 fi
-if grep -qxF "herdr agent start ejecucion-fake-mefisto-repo --kind opencode --pane w1:p2 --timeout 90000" "$HERDR_STUB_LOG"; then
-    pass "C-3: el pane ejecucion arranca --kind opencode sin --agent"
+if grep -qxF "herdr agent start ejecucion-fake-mefisto-opencode --kind opencode --pane w1:p2 --timeout 90000" "$HERDR_STUB_LOG"; then
+    pass "C-3: el pane ejecucion arranca --kind opencode con nombre sufijado sin --agent"
 else
     fail "C-3: no se encontro la invocacion esperada -- log: $(cat "$HERDR_STUB_LOG")"
 fi
@@ -275,7 +313,7 @@ else
 fi
 
 echo ""
-echo "[D] Workspace Mefisto sin MEFISTO_RUNTIME: --kind claude y sin --env (byte a byte el actual)"
+echo "[D] Workspace Mefisto sin MEFISTO_RUNTIME: --kind claude, nombre sufijado igual (issue #930) y sin --env"
 
 run_workspace "$FAKE_MEFISTO"
 
@@ -284,8 +322,8 @@ if [ "$LAST_RC" -eq 0 ]; then
 else
     fail "D-1: no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"
 fi
-if grep -qxF "herdr agent start planner-fake-mefisto-repo --kind claude --pane w1:p1 --timeout 90000 -- --agent mefisto-planner" "$HERDR_STUB_LOG"; then
-    pass "D-2: el pane planner arranca --kind claude (default)"
+if grep -qxF "herdr agent start planner-fake-mefisto-re-claude --kind claude --pane w1:p1 --timeout 90000 -- --agent mefisto-planner" "$HERDR_STUB_LOG"; then
+    pass "D-2: el pane planner arranca --kind claude (default) con el sufijo -claude en el nombre"
 else
     fail "D-2: no se encontro la invocacion esperada -- log: $(cat "$HERDR_STUB_LOG")"
 fi
@@ -340,13 +378,13 @@ if [ "$LAST_RC" -eq 0 ]; then
 else
     fail "F-1: no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"
 fi
-ATTEMPTS_PLANNER=$(grep -cF "agent start planner-fake-mefisto-repo" "$HERDR_STUB_LOG")
+ATTEMPTS_PLANNER=$(grep -cF "agent start planner-fake-mefisto-re-claude" "$HERDR_STUB_LOG")
 if [ "$ATTEMPTS_PLANNER" -eq 2 ]; then
     pass "F-2: reintenta exactamente una vez tras el primer fallo (2 intentos)"
 else
     fail "F-2: se esperaban 2 intentos, hubo $ATTEMPTS_PLANNER -- log: $(cat "$HERDR_STUB_LOG")"
 fi
-if printf '%s\n%s' "$LAST_STDOUT" "$LAST_STDERR" | grep -qF "No se pudo lanzar 'planner-fake-mefisto-repo'"; then
+if printf '%s\n%s' "$LAST_STDOUT" "$LAST_STDERR" | grep -qF "No se pudo lanzar 'planner-fake-mefisto-re-claude'"; then
     pass "F-3: degrada con el aviso de fallo tras 2 intentos"
 else
     fail "F-3: no aviso la degradacion -- stdout: $LAST_STDOUT / stderr: $LAST_STDERR"

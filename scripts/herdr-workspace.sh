@@ -29,10 +29,14 @@
 # provider, modelo ni credenciales, ni lee opencode.json o un auth store.
 #
 # Los agentes se lanzan con `herdr agent start` bajo nombres unicos por
-# workspace (planner-<slug>, ejecucion-<slug>) para que el sidebar de herdr
-# muestre su estado (working/blocked/done). Si un lanzamiento falla (p. ej.
-# el nombre ya esta vivo en otro workspace del mismo repo), el pane queda
-# con su shell y el script lo avisa: lanzar el runtime activo a mano ahi lo
+# workspace: planner-<slug>, ejecucion-<slug> en un consumidor; en el propio
+# repo de Mefisto, planner-<slug>-<kind>, ejecucion-<slug>-<kind> -- el
+# sufijo es SIEMPRE el runtime activo (issue #930: tambien con kind="claude"),
+# para que una segunda fila con otro runtime (MEF-ADR-0049, dogfooding) no
+# choque de nombre con la primera, y el sidebar de herdr muestre de un
+# vistazo que runtime corre cada agente. Si un lanzamiento falla (p. ej. el
+# nombre ya esta vivo en otro workspace del mismo repo), el pane queda con
+# su shell y el script lo avisa: lanzar el runtime activo a mano ahi lo
 # resuelve.
 #
 # Donde correrlo: en cualquier terminal. Dentro de un pane herdr actua sobre
@@ -59,21 +63,42 @@ success() { echo -e "${GREEN}${BOLD}v${NC} $1"; }
 warn()    { echo -e "${YELLOW}!${NC} $1"; }
 abort()   { echo -e "\n${RED}${BOLD}x $1${NC}" >&2; exit 1; }
 
-# workspace_slug <label>
+# workspace_slug <label> [max]
 #
-# Deriva el sufijo de los nombres de agente (planner-<slug>, ejecucion-<slug>)
-# a partir del label del workspace: minusculas, todo lo que no sea [a-z0-9]
-# colapsa a '-', sin guiones en los extremos, maximo 20 caracteres -- los
-# nombres de agente de herdr admiten [a-z][a-z0-9_-]{0,31} y el prefijo mas
-# largo ("ejecucion-") ocupa 10.
+# Deriva el slug que alimenta el nombre de agente a partir del label del
+# workspace: minusculas, todo lo que no sea [a-z0-9] colapsa a '-', sin
+# guiones en los extremos, tope de <max> caracteres (default 20 -- el tope de
+# un consumidor, que no lleva sufijo de runtime). agent_name_for_role calcula
+# el <max> real cuando hay sufijo, para que el nombre completo quepa en los
+# 32 caracteres que admiten los nombres de agente de herdr
+# ([a-z][a-z0-9_-]{0,31}).
 workspace_slug() {
+    local max="${2:-20}"
     echo "$1" \
         | tr '[:upper:]' '[:lower:]' \
         | sed 's/[^a-z0-9]/-/g' \
         | tr -s '-' \
         | sed 's/^-//; s/-$//' \
-        | cut -c1-20 \
+        | cut -c1-"$max" \
         | sed 's/-$//'
+}
+
+# agent_name_for_role <rol> <label> <kind>
+#
+# Imprime el nombre de agente herdr para <rol> ("planner" o "ejecucion") a
+# partir del label del workspace y el sufijo de runtime <kind> (issue #930;
+# vacio = sin sufijo, comportamiento de un consumidor -- CA-3). Con <kind> no
+# vacio el slug se recorta al tope que deja espacio para el prefijo MAS LARGO
+# ("ejecucion-", 10 caracteres) + "-<kind>", para que planner y ejecucion
+# compartan el mismo slug pase lo que pase con <rol>. Los nombres de agente
+# de herdr admiten [a-z][a-z0-9_-]{0,31} (32 caracteres).
+agent_name_for_role() {
+    local rol="$1" label="$2" kind="$3"
+    local max=20
+    [ -n "$kind" ] && max=$((32 - 10 - 1 - ${#kind}))
+    local slug
+    slug=$(workspace_slug "$label" "$max")
+    echo "${rol}-${slug}${kind:+-$kind}"
 }
 
 # planner_agent_for_repo <repo_root>
@@ -226,9 +251,15 @@ main() {
         warn "El plugin publicado aun no soporta OpenCode (MEFISTO_RUNTIME=$MEFISTO_RUNTIME); se usa 'claude'."
     fi
 
-    local label slug
+    # Sufijo de nombre (issue #930): SIEMPRE en el repo de Mefisto (incluso
+    # con runtime_kind="claude"), NUNCA en un consumidor -- --kind es el
+    # runtime real que arranca el pane, name_kind es el sufijo visible del
+    # nombre de agente (vacio = sin sufijo, CA-3).
+    local name_kind=""
+    [ "$planner_agent" = "mefisto-planner" ] && name_kind="$runtime_kind"
+
+    local label
     label=$(basename "$repo_root")
-    slug=$(workspace_slug "$label")
 
     # Idempotencia: un workspace con este label ya montado solo se enfoca.
     local existing
@@ -262,8 +293,12 @@ main() {
     herdr pane rename "$p1" "planner" >/dev/null 2>&1 || true
     [ -n "$p2" ] && herdr pane rename "$p2" "ejecucion" >/dev/null 2>&1 || true
 
-    start_agent_in_pane "planner-$slug" "$p1" "$planner_agent" "$runtime_kind"
-    [ -n "$p2" ] && start_agent_in_pane "ejecucion-$slug" "$p2" "" "$runtime_kind"
+    local planner_name ejecucion_name
+    planner_name=$(agent_name_for_role "planner" "$label" "$name_kind")
+    ejecucion_name=$(agent_name_for_role "ejecucion" "$label" "$name_kind")
+
+    start_agent_in_pane "$planner_name" "$p1" "$planner_agent" "$runtime_kind"
+    [ -n "$p2" ] && start_agent_in_pane "$ejecucion_name" "$p2" "" "$runtime_kind"
 
     echo ""
     success "Workspace '$label' listo ($ws): planner ($p1) + ejecucion (${p2:-no creado})."
