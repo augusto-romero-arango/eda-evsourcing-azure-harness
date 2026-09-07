@@ -9,9 +9,14 @@ description: Notas operativas para definir o modificar agentes y comandos -- fue
 
 Los agentes y comandos **internos** (prefijo `mefisto-`, MEF-ADR-0019) se escriben **solo** en
 `src/internal/{agents,commands}/<id>.md`: frontmatter JSON del contrato (`kind`, `id`,
-`description`, `capabilities` en vez de `tools`, `profile` en vez de `model`, mas
-`mode`/`agent`/`arguments` segun aplique) y un body que nunca nombra `claude` ni `opencode` (el
-validador rechaza esa linea). Se regeneran con `src/internal/scripts/generate-internal-adapters.sh`.
+`description`, `capabilities` en vez de `tools`, `profile` en vez de `model`, `skills` con los
+Agent Skills precargados, mas `mode`/`agent`/`arguments` segun aplique) y un body que nunca
+nombra `claude` ni `opencode` -- el validador rechaza la linea entera citando su numero, y solo
+inspecciona el body: el `description` del frontmatter si puede nombrar un runtime cuando ese
+runtime *es* el tema. Solo dos excepciones literales en el body: `.claude-plugin/` (el manifiesto
+fisico del plugin, identico e indispensable en ambos runtimes) y `.claude/scripts/` (la
+superficie estable de invocacion de los pipelines internos); ninguna otra forma de `.claude/`
+pasa. Se regeneran con `src/internal/scripts/generate-internal-adapters.sh`.
 **Nunca se edita a mano** `.claude/{agents,commands}/*.md` ni `.opencode/{agents,commands}/*.md`
 -- son adaptadores generados; una edicion manual se pierde en la siguiente regeneracion y
 `--check` la reporta como divergencia. Contrato completo (campos, vocabularios cerrados, mapeo
@@ -28,12 +33,15 @@ frontmatter no portable.
 ## Agent Skills (ambos lados)
 
 Frontmatter de todo `SKILL.md` portable -- publicado (`skills/<nombre>/SKILL.md`) o interno
-(`.claude/skills/<nombre>/SKILL.md`) -- limitado a los cinco campos del estandar abierto: `name`,
-`description`, `license`, `compatibility`, `metadata` [1]. **`allowed-tools` prohibido**: es una
-extension *Experimental* de Claude Code que OpenCode **ignora en silencio** [2] -- un Skill que
-dependiera de ese campo para restringir que tools puede invocar al dispararse degradaria sin
-ninguna senal bajo OpenCode. La regla F5 del bloque `[F]` de `scripts/tests/test-guards.sh` lo
-verifica (MEF-ADR-0050 seccion 3, issue #937).
+(`.claude/skills/<nombre>/SKILL.md`) -- limitado a los cinco campos portables del estandar
+abierto: `name`, `description`, `license`, `compatibility`, `metadata` [1]. El sexto campo que la
+spec reconoce, **`allowed-tools`, queda prohibido**: es una extension *Experimental* de Claude
+Code que OpenCode **ignora en silencio** [2] -- un Skill que dependiera de ese campo para
+restringir que tools puede invocar al dispararse degradaria sin ninguna senal bajo OpenCode. La
+regla F5 del bloque `[F]` de `scripts/tests/test-guards.sh` lo verifica (MEF-ADR-0050 seccion 3,
+issue #937). La prohibicion es **del frontmatter de un `SKILL.md`**: en un *comando* de Claude
+Code `allowed-tools` es legitimo, y del lado interno lo emite el generador desde `capabilities`
+-- nunca se escribe a mano.
 
 - `name` = nombre del directorio, patron `^[a-z0-9]+(-[a-z0-9]+)*$` (la spec no admite `:`; F1 ya
   verifica esta igualdad).
@@ -66,7 +74,11 @@ diez pasos, con el archivo exacto de cada uno: MEF-ADR-0050 seccion 2):
    `is_path_in_consumer_blocklist` (publicado).
 4. Excepcion en `neutrality-allowlist.json` si el adaptador necesita nombrar su propio runtime en
    texto.
-5. Tests: `test-runtime-<id>.sh` (contrato del adaptador) + cobertura de discovery equivalente a
+5. Kind reconocido por Herdr, si algun pipeline orquesta ese runtime en un pane:
+   `runtime_kind_for_repo` (`scripts/herdr-workspace.sh`) ya reenvia `MEFISTO_RUNTIME` tal cual
+   como `--kind`, asi que del lado de Mefisto no hay nada que editar -- solo verificarlo del lado
+   de Herdr.
+6. Tests: `test-runtime-<id>.sh` (contrato del adaptador) + cobertura de discovery equivalente a
    `test-opencode-discovery.sh`.
 
 ## Especifico del adaptador Claude Code -- lado publicado
@@ -82,8 +94,11 @@ diez pasos, con el archivo exacto de cada uno: MEF-ADR-0050 seccion 2):
   se declara en `.mcp.json` y se referencia en `tools:` como
   `mcp__plugin_mefisto_microsoft-learn__*`.
 - Si el agente **no** define `tools:`, hereda todas incluyendo MCP.
-- Un agente publicado precarga un Agent Skill con el campo frontmatter `skills:` (no requiere la
-  tool `Skill` en `tools:`).
+- Un agente precarga un Agent Skill con el campo frontmatter `skills:` (no requiere la tool
+  `Skill` en `tools:`). En el lado publicado se escribe a mano; en el interno se declara en el
+  campo neutral `skills` de la fuente y el generador lo emite aqui. La regla F4 exige que cada
+  valor resuelva al `name` de un `SKILL.md` real -- barre `agents/` y `.claude/agents/` por
+  igual, porque una referencia mal escrita degrada en silencio.
 
 ## Especifico del adaptador OpenCode -- lado interno
 
@@ -95,8 +110,10 @@ Nunca se hand-authorea: es lo que `generate-internal-adapters.sh` produce en
   `src/internal/contract/opencode-permissions.json`) -- nunca `tools:` ni `allowed-tools`, que
   OpenCode no tiene.
 - Un comando enruta a su agente con frontmatter `agent: <id>` + `subtask: true` (campo neutral
-  `agent` del comando) -- OpenCode no tiene namespace de plugin, asi que no hay un equivalente
-  directo a un comando "de plugin".
+  `agent` del comando); `arguments` no viaja, porque OpenCode no tiene equivalente de
+  `argument-hint`. Al no existir primitiva de plugin, el namespace publicado `mefisto:` se
+  materializa como separador `:` literal en el nombre del comando, no como manifiesto
+  (MEF-ADR-0050 decision 4).
 - **Sin `skills:`**: OpenCode no tiene ese campo de frontmatter de agente; un Agent Skill se
   dispara solo por su `description` via la tool nativa `skill` (misma mecanica de progressive
   disclosure, distinto punto de enganche que Claude Code).
