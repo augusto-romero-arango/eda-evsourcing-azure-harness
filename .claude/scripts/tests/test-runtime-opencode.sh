@@ -75,6 +75,16 @@ SCHEMA_FILE="$CONTRACT_DIR/run-events.schema.json"
 JSONSCHEMA_LITE="$LIB_DIR/jsonschema-lite.jq"
 FIXTURES_DIR="$SCRIPT_DIR/fixtures/runtime-opencode"
 
+# El runner (mefisto-run-agent.sh) resuelve la lib de adaptador via
+# MEFISTO_RUNTIME_LIB_DIR (mefisto-runtime.sh), que respeta un valor ya
+# EXPORTADO por el caller. Los pipelines internos la exportan apuntando al
+# checkout donde arrancaron, asi que sin pinearla aqui el bloque del runner
+# real traduciria con el adaptador de OTRO checkout (el principal) en vez del
+# que este test esta juzgando: un gate no determinista que da por bueno
+# codigo que nunca ejecuto (MEF-ADR-0031). test-mefisto-run-agent.sh ya la
+# controla por el mismo motivo.
+export MEFISTO_RUNTIME_LIB_DIR="$LIB_DIR"
+
 PASS=0
 FAIL=0
 pass() { echo "  PASS: $1"; PASS=$((PASS+1)); }

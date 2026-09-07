@@ -11,6 +11,13 @@
 # real llamado `claude`: runtime_claude_build_cmd invoca literalmente ese
 # nombre).
 #
+# rate-limit-exhausted.jsonl (issue #965) es una reproduccion VERBATIM de la
+# secuencia real que reporta anthropics/claude-code#57096 (CLI v2.1.132):
+# `resetsAt: 1778193600` y el "resets 6:40pm (America/New_York)" del mensaje
+# sintetico son el par capturado ahi, no valores de adorno -- no "corregirlos"
+# para que la fecha del reset se parezca a la del resto del fixture, porque
+# entonces el fixture deja de ser evidencia de nada.
+#
 # Casos cubiertos:
 #   [pre] Los archivos nuevos existen, tienen sintaxis valida y el programa
 #         jq corre sin errores.
@@ -64,6 +71,16 @@ CLAUDE_JQ="$LIB_DIR/runtime-claude.jq"
 SCHEMA_FILE="$CONTRACT_DIR/run-events.schema.json"
 JSONSCHEMA_LITE="$LIB_DIR/jsonschema-lite.jq"
 FIXTURES_DIR="$SCRIPT_DIR/fixtures/runtime-claude"
+
+# El runner (mefisto-run-agent.sh) resuelve la lib de adaptador via
+# MEFISTO_RUNTIME_LIB_DIR (mefisto-runtime.sh), que respeta un valor ya
+# EXPORTADO por el caller. Los pipelines internos la exportan apuntando al
+# checkout donde arrancaron, asi que sin pinearla aqui el bloque del runner
+# real traduciria con el adaptador de OTRO checkout (el principal) en vez del
+# que este test esta juzgando: un gate no determinista que da por bueno
+# codigo que nunca ejecuto (MEF-ADR-0031). test-mefisto-run-agent.sh ya la
+# controla por el mismo motivo.
+export MEFISTO_RUNTIME_LIB_DIR="$LIB_DIR"
 
 PASS=0
 FAIL=0
