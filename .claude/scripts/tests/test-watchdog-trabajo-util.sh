@@ -169,6 +169,23 @@ else
     fail "C-5: quedaron $ORPHANS 'sleep $C_TIMEOUT' huerfanos tras cancelar el watchdog"
 fi
 
+# C-5b: desde #945 el watchdog duerme en rebanadas de MEFISTO_WATCHDOG_POLL_S
+# (default 5), asi que la corrida de arriba ya no crea ningun `sleep 3607` --
+# C-5 pasaria aunque el kill de grupo dejara huerfanos, por no tener nada que
+# encontrar. Esta corrida gemela fija poll_s == timeout para reconstruir la
+# forma exacta que C-5 vigilaba (un unico `sleep <C_TIMEOUT>`) y volver a
+# ejercitar de verdad el invariante de #424.
+MEFISTO_WATCHDOG_POLL_S="$C_TIMEOUT" run_agent_with_watchdog "$WT_C" "$C_TIMEOUT" \
+    "$TMP/c5b-log.txt" "$TMP/c5b-stderr.txt" "$TMP/c5b-events.log" "writer" "$TMP/c5b-signal" \
+    bash -c "echo hola" >/dev/null
+sleep 1
+ORPHANS_5B=$(pgrep -f "sleep $C_TIMEOUT" 2>/dev/null | wc -l | tr -d ' ')
+if [ "$ORPHANS_5B" = "0" ]; then
+    pass "C-5b: con poll_s == timeout (rebanada unica, la forma pre-#945) tampoco queda 'sleep' huerfano"
+else
+    fail "C-5b: quedaron $ORPHANS_5B 'sleep $C_TIMEOUT' huerfanos con poll_s == timeout"
+fi
+
 # C-6/C-7: la senal NO puede aparecer despues de que el proceso termino solo.
 # Un watchdog que sobrevive a su `sleep` alcanza a hacer su `touch` en la
 # ventana entre `wait` y el `kill` que lo cancela, y deja la senal de un stage

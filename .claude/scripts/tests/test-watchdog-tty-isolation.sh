@@ -276,11 +276,15 @@ else
     fail "945-CA-3-4: events_log tiene $STOPPED_LINES linea(s) STOPPED: (esperaba 1): $(cat "$EVENTS_STOP" 2>/dev/null)"
 fi
 
-TOTAL_LINES_STOP=$(grep -c . "$EVENTS_STOP" 2>/dev/null || echo 0)
-if [ "$TOTAL_LINES_STOP" = "1" ] && grep -q "SIGCONT enviado" "$EVENTS_STOP" 2>/dev/null; then
-    pass "945-CA-3-5: la unica linea de events_log es la STOPPED con 'SIGCONT enviado' (ningun TIMEOUT espurio)"
+# No se afirma "el events_log tiene UNA sola linea": en una maquina sin
+# `setsid` ni `perl` la funcion degrada y escribe ademas su linea WARN (CA-4),
+# perfectamente legitima. Lo que importa aqui es lo especifico: la STOPPED
+# trae su "SIGCONT enviado" y NO hay ningun TIMEOUT (el detector reanudo al
+# proceso a tiempo, no lo mato el presupuesto).
+if grep -q "SIGCONT enviado" "$EVENTS_STOP" 2>/dev/null && ! grep -q "TIMEOUT:" "$EVENTS_STOP" 2>/dev/null; then
+    pass "945-CA-3-5: la linea STOPPED trae 'SIGCONT enviado' y no hay ninguna linea TIMEOUT"
 else
-    fail "945-CA-3-5: events_log no coincide con 'una sola linea STOPPED': $(cat "$EVENTS_STOP" 2>/dev/null)"
+    fail "945-CA-3-5: events_log sin 'SIGCONT enviado' o con un TIMEOUT espurio: $(cat "$EVENTS_STOP" 2>/dev/null)"
 fi
 
 # ============================================================================
@@ -291,7 +295,13 @@ WORKDIR_STOP_CTRL="$TMP/wt-stop-ctrl"; mkdir -p "$WORKDIR_STOP_CTRL"
 CTRL_STOP_STDOUT="$TMP/ctrl-stop-stdout.log"
 CTRL_STOP_STDERR="$TMP/ctrl-stop-stderr.log"
 CTRL_STOP_PIDFILE="$TMP/ctrl-stop.pid"
-CTRL_STOP_TIMEOUT=2
+# Holgado a proposito: el kill del "watchdog viejo" no puede aterrizar antes
+# de que la espera activa de abajo (hasta ~3s de reloj, 60 vueltas de 0.05s
+# mas el fork de `ps` de cada una) alcance a ver el STAT=T. Con 2s, una
+# maquina cargada mataba al proceso antes de observarlo y 945-control-1
+# fallaba de forma intermitente en la direccion peor: por carrera del test, no
+# por el comportamiento bajo prueba.
+CTRL_STOP_TIMEOUT=8
 
 RUN_SCRIPT_STOP_CTRL="$TMP/run-stop-ctrl.sh"
 cat > "$RUN_SCRIPT_STOP_CTRL" <<EOF
@@ -326,10 +336,17 @@ else
     fail "945-control-1: nunca se observo STAT=T -- el guion self-stop no se detuvo"
 fi
 
-# Margen para que el kill -9 del "watchdog viejo" (tras CTRL_STOP_TIMEOUT) termine al proceso.
-sleep "$((CTRL_STOP_TIMEOUT + 2))"
-
+# Espera acotada POR CONDICION (no un `sleep` fijo) a que el kill -9 del
+# "watchdog viejo" aterrice: termina apenas el proceso muere, y solo agota el
+# techo si de verdad sobrevivio.
 CTRL_STOP_PID="$(cat "$CTRL_STOP_PIDFILE" 2>/dev/null || echo "")"
+i=0
+while [ "$i" -lt $(( (CTRL_STOP_TIMEOUT + 3) * 20 )) ]; do
+    [ -n "$CTRL_STOP_PID" ] && ! kill -0 "$CTRL_STOP_PID" 2>/dev/null && break
+    sleep 0.05
+    i=$((i + 1))
+done
+
 if [ -n "$CTRL_STOP_PID" ] && ! kill -0 "$CTRL_STOP_PID" 2>/dev/null; then
     pass "945-control-2: sin SIGCONT, el kill de timeout es lo unico que termina al proceso detenido"
 else
