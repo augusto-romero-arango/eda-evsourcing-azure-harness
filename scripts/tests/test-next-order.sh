@@ -42,7 +42,7 @@
 #             tanto con issues lanzables como con el conjunto vacio.
 #   [P]       Sin el flag, la linea de lanzamiento cae al default
 #             '/mefisto:sequential'.
-#   [Q]       '--launch-command' sin argumento -> exit 2.
+#   [Q]       '--launch-command' sin argumento, o con texto vacio, -> exit 2.
 #
 # Uso: scripts/tests/test-next-order.sh
 # Exit code: 0 si todos los checks pasan, 1 si alguno falla.
@@ -638,7 +638,7 @@ fi
 # -------- Bloque Q: --launch-command sin argumento --------
 
 echo ""
-echo "[Q] --launch-command sin argumento -> exit 2"
+echo "[Q] --launch-command sin argumento (o vacio) -> exit 2"
 
 OUTPUT=$(run_script --launch-command 2>&1)
 RC=$?
@@ -646,6 +646,16 @@ if [ "$RC" -eq 2 ]; then
     pass "Q: --launch-command sin argumento -> exit 2"
 else
     fail "Q: se esperaba exit 2, se obtuvo $RC: $OUTPUT"
+fi
+
+# Un texto vacio emitiria una ultima linea con espacio inicial y sin comando,
+# indistinguible de una lista suelta de numeros: se rechaza en vez de degradar.
+OUTPUT=$(run_script --launch-command "" 2>&1)
+RC=$?
+if [ "$RC" -eq 2 ] && echo "$OUTPUT" | grep -q "no admite texto vacio"; then
+    pass "Q: --launch-command con texto vacio -> exit 2 con mensaje claro"
+else
+    fail "Q: se esperaba exit 2 por texto vacio, se obtuvo $RC: $OUTPUT"
 fi
 
 # -------- Resumen --------

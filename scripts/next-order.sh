@@ -37,6 +37,11 @@
 #        quedaron en ciclos y/o bloqueados)
 #   2 -- fallo 'gh issue list', o se invoco con argumentos invalidos
 #
+# El guard de entorno (cwd = repo de Mefisto, o cwd fuera de un repo git)
+# tambien sale con 1, con mensaje en stderr: es la convencion de todos los
+# scripts publicados, y el bloque C2 de scripts/tests/test-guards.sh la
+# verifica script por script.
+#
 # Universo de analisis (MEF-ADR-0011, Definition of Ready): exactamente los
 # issues 'estado:listo' Y abiertos del repo consumidor -- ni borradores ni
 # cerrados. El label 'bloqueado' no filtra nada: un issue que lo lleva puesto
@@ -92,6 +97,11 @@ while [ "$#" -gt 0 ]; do
         --launch-command)
             if [ "$#" -lt 2 ]; then
                 echo "ERROR: --launch-command requiere un argumento." >&2
+                echo 'Uso: scripts/next-order.sh [--launch-command "<texto>"]' >&2
+                exit 2
+            fi
+            if [ -z "$2" ]; then
+                echo "ERROR: --launch-command no admite texto vacio (la ultima linea quedaria sin comando)." >&2
                 echo 'Uso: scripts/next-order.sh [--launch-command "<texto>"]' >&2
                 exit 2
             fi
@@ -346,9 +356,9 @@ if [ "${#ORDER[@]}" -gt 0 ]; then
         LAUNCH_NUMS="$LAUNCH_NUMS ${NUM[idx]}"
         pos=$((pos + 1))
     done
-    echo "$LAUNCH_COMMAND$LAUNCH_NUMS"
+    printf '%s\n' "$LAUNCH_COMMAND$LAUNCH_NUMS"
     exit 0
 fi
 
-echo "$LAUNCH_COMMAND (sin issues lanzables)"
+printf '%s\n' "$LAUNCH_COMMAND (sin issues lanzables)"
 exit 1

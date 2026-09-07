@@ -2,6 +2,12 @@
 # mefisto-next-order.sh -- Calcula el orden topologico de lanzamiento de los
 # issues 'estado:listo' abiertos del repo de Mefisto (issue #936).
 #
+# Copia hermana deliberada de scripts/next-order.sh (issue #940), que corre el
+# mismo algoritmo sobre los issues del repo CONSUMIDOR: MEF-ADR-0019 prohibe al
+# lado publicado depender de src/internal/, asi que se duplica en vez de
+# compartirse (MEF-ADR-0018, regla de tres). Todo fix al calculo del orden
+# (Kahn, deteccion de ciclos, bloqueos externos/indirectos) va a AMBAS copias.
+#
 # Implementacion CANONICA (MEF-ADR-0049 decision 2 y 6): bash 3.2 + jq + gh +
 # git, sin `declare -A`. El shim de compatibilidad en .claude/scripts/ lo
 # aporta el issue del comando que lo consume (#939), via `{{mefisto:run}}`

@@ -171,7 +171,7 @@ echo "[C2] Scripts auxiliares publicados: el guard aborta cuando se ejecutan en 
 AUX_SCRIPTS=(
     appinsights-query.sh setup-github-ci.sh setup-github-labels.sh
     bootstrap-backend.sh seed-secret.sh onboard-diagnose.sh update-plugin.sh
-    purge-store.sh
+    purge-store.sh next-order.sh
 )
 
 for aux in "${AUX_SCRIPTS[@]}"; do
