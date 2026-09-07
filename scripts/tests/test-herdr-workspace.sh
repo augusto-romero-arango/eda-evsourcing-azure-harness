@@ -57,6 +57,11 @@ export MEFISTO_RUNTIMES
 [ "$(runtimes_for_repo mefisto:planner)" = "claude" ] \
     && pass "consumidor ignora ambas variables y usa claude" \
     || fail "el consumidor leyo configuracion de runtimes"
+MEFISTO_RUNTIMES=''
+export MEFISTO_RUNTIMES
+[ -z "$(runtimes_for_repo mefisto-planner)" ] \
+    && pass "MEFISTO_RUNTIMES definida vacia conserva precedencia" \
+    || fail "MEFISTO_RUNTIMES vacia cayo en MEFISTO_RUNTIME"
 unset MEFISTO_RUNTIMES MEFISTO_RUNTIME
 
 FAKE_MEFISTO="$TMP/fake-mefisto-repo"
@@ -197,6 +202,32 @@ EOF
 assert_no_anchor_protocol C-2
 
 echo ""
+echo "[C2] Workspace nuevo de Mefisto: tres runtimes"
+export MEFISTO_RUNTIMES=claude,opencode,codex
+run_workspace "$FAKE_MEFISTO"
+unset MEFISTO_RUNTIMES
+DOWNS=$(grep -F ' --direction down ' "$HERDR_STUB_LOG")
+EXPECTED_DOWNS=$(cat <<EOF
+herdr pane split --pane w1:p1 --direction down --cwd $FAKE_MEFISTO --no-focus --env MEFISTO_RUNTIME=codex
+herdr pane split --pane w1:p1 --direction down --cwd $FAKE_MEFISTO --no-focus --env MEFISTO_RUNTIME=opencode
+EOF
+)
+[ "$DOWNS" = "$EXPECTED_DOWNS" ] \
+    && pass "C2-1: los down recorren tres runtimes en orden inverso" \
+    || fail "C2-1: orden de down inesperado: $DOWNS"
+FIRST_RIGHT_LINE=$(grep -nF ' --direction right ' "$HERDR_STUB_LOG" | cut -d: -f1 | head -1)
+LAST_DOWN_LINE=$(grep -nF ' --direction down ' "$HERDR_STUB_LOG" | cut -d: -f1 | tail -1)
+[ "$LAST_DOWN_LINE" -lt "$FIRST_RIGHT_LINE" ] \
+    && pass "C2-2: todos los down ocurren antes de cualquier right" \
+    || fail "C2-2: un right ocurrio antes de terminar los down"
+grep -qxF 'herdr pane rename w1:p1 planner [claude]' "$HERDR_STUB_LOG" \
+    && grep -qxF 'herdr pane rename w1:p3 planner [opencode]' "$HERDR_STUB_LOG" \
+    && grep -qxF 'herdr pane rename w1:p2 planner [codex]' "$HERDR_STUB_LOG" \
+    && pass "C2-3: las tres filas quedan asociadas al kind correcto" \
+    || fail "C2-3: labels inesperados: $(cat "$HERDR_STUB_LOG")"
+assert_no_anchor_protocol C2-4
+
+echo ""
 echo "[D] Workspace existente con todas las filas: solo focus"
 export HERDR_STUB_EXISTING_LABEL=fake-mefisto-repo
 export HERDR_STUB_PANES='planner [claude]=w1:p1;ejecucion [claude]=w1:p3;planner [opencode]=w1:p2;ejecucion [opencode]=w1:p4'
@@ -232,6 +263,24 @@ grep -qxF 'herdr pane rename w1:p4 planner [opencode]' "$HERDR_STUB_LOG" \
     && pass "E-3: etiqueta solo los panes nuevos" \
     || fail "E-3: labels inesperados: $(cat "$HERDR_STUB_LOG")"
 assert_no_anchor_protocol E-4
+
+echo ""
+echo "[F] Workspace existente con una lista disjunta: monta desde el ultimo planner disponible"
+export HERDR_STUB_EXISTING_LABEL=fake-mefisto-repo
+export HERDR_STUB_PANES='planner [codex]=w1:p7;ejecucion [codex]=w1:p8'
+export MEFISTO_RUNTIMES=claude
+run_workspace "$FAKE_MEFISTO" 9
+unset HERDR_STUB_EXISTING_LABEL HERDR_STUB_PANES MEFISTO_RUNTIMES
+grep -qxF "herdr pane split --pane w1:p7 --direction down --cwd $FAKE_MEFISTO --no-focus --env MEFISTO_RUNTIME=claude" "$HERDR_STUB_LOG" \
+    && grep -qxF "herdr pane split --pane w1:p9 --direction right --cwd $FAKE_MEFISTO --no-focus --env MEFISTO_RUNTIME=claude" "$HERDR_STUB_LOG" \
+    && pass "F-1: monta la fila pedida aunque ninguna configurada existiera antes" \
+    || fail "F-1: no monto desde el planner disponible: $(cat "$HERDR_STUB_LOG")"
+if grep -qE 'rename w1:p7|rename w1:p8|agent start .*codex' "$HERDR_STUB_LOG"; then
+    fail "F-2: toco la fila codex existente: $(cat "$HERDR_STUB_LOG")"
+else
+    pass "F-2: no modifica la fila usada como base"
+fi
+assert_no_anchor_protocol F-3
 
 echo ""
 echo "[H] Consumidor: comportamiento previo byte a byte"

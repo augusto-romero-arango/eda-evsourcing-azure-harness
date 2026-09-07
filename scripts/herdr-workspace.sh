@@ -145,7 +145,7 @@ runtimes_for_repo() {
     fi
 
     local configured
-    if [ -n "${MEFISTO_RUNTIMES:-}" ]; then
+    if [ "${MEFISTO_RUNTIMES+x}" = "x" ]; then
         configured="$MEFISTO_RUNTIMES"
     elif [ -n "${MEFISTO_RUNTIME:-}" ]; then
         configured="$MEFISTO_RUNTIME"
@@ -180,6 +180,19 @@ pane_label_lookup() {
     herdr pane list --workspace "$ws" 2>/dev/null \
         | jq -r --arg l "$label" '.result.panes[]? | select(.label == $l) | .pane_id' 2>/dev/null \
         | head -1 || true
+}
+
+# last_runtime_planner_lookup <workspace_id>
+#
+# Imprime el ultimo planner de runtime listado por herdr. Es el fallback para
+# agregar una fila cuando el workspace solo contiene runtimes que no forman
+# parte de la configuracion actual (por ejemplo, al pasar de una lista de un
+# elemento a otra lista disjunta). No renombra ni reinicia esa fila existente.
+last_runtime_planner_lookup() {
+    local ws="$1"
+    herdr pane list --workspace "$ws" 2>/dev/null \
+        | jq -r '[.result.panes[]? | select((.label? // "") | startswith("planner [")) | .pane_id] | last // empty' 2>/dev/null \
+        || true
 }
 
 # pane_shell_is_free <pane_id>
@@ -464,8 +477,9 @@ main() {
         [ -n "${row_panes[$i]}" ] && last_existing="${row_panes[$i]}"
     done
 
+    [ -n "$last_existing" ] || last_existing=$(last_runtime_planner_lookup "$ws")
     if [ -z "$last_existing" ]; then
-        warn "El workspace '$label' existe pero no contiene ninguna fila de los runtimes pedidos; se enfoco sin modificar el layout."
+        warn "El workspace '$label' ($ws) no contiene ningun planner de runtime desde el cual montar las filas faltantes; se enfoco sin modificar el layout."
         return
     fi
 
