@@ -1,6 +1,5 @@
 ---
 description: "Mergea uno o varios PRs del repo de Mefisto."
-model: "openai/gpt-5.6-luna"
 ---
 <!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh desde src/internal/commands/mefisto-merge.md. No editar a mano. -->
 

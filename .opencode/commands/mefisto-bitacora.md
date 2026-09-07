@@ -1,6 +1,5 @@
 ---
 description: "Orquesta el ciclo completo de la bitacora del propio plugin Mefisto: invoca al agente `mefisto-historiador` y, si termina con un PR creado, encadena el merge automaticamente sobre ese PR."
-model: "openai/gpt-5.6-luna"
 agent: "mefisto-historiador"
 subtask: true
 ---

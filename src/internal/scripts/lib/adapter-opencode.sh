@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # adapter-opencode.sh -- Traduce un artefacto neutral (frontmatter JSON +
 # body, ver src/internal/contract/README.md) al formato que OpenCode 1.18.29
-# consume: `description`, `model`, `mode`, `permission` (agente);
-# `description`, `model`, `agent`, `subtask` (comando). `model` deriva de
-# `profile` mediante la tabla fija de este adaptador (issue #961). Sin `tools`
-# -- OpenCode no tiene un equivalente declarativo de
+# consume: `description`, `mode`, `permission` (agente); `description`,
+# `agent`, `subtask` (comando). Omite `model` para que los artefactos
+# interactivos hereden la configuracion OpenCode del usuario; la tabla de
+# perfiles de este adaptador solo aplica a pipelines headless. Sin `tools` --
+# OpenCode no tiene un equivalente declarativo de
 # restriccion de tools mas alla de `permission` (issue #862, que si define la
 # emision de ese bloque). Issue #854.
 #
@@ -14,9 +15,10 @@
 # nada por stdout.
 
 # adapter_opencode_default_model <perfil> -- imprime el modelo OpenCode por
-# defecto para el vocabulario neutral (MEF-ADR-0049, issue #961). La misma
-# tabla alimenta la resolucion headless y el frontmatter generado. Retorna 1
-# sin imprimir nada si <perfil> no es fast|balanced|deep.
+# defecto para el vocabulario neutral (MEF-ADR-0049, issue #961). La tabla
+# alimenta exclusivamente la resolucion headless; el frontmatter generado
+# omite `model`. Retorna 1 sin imprimir nada si <perfil> no es
+# fast|balanced|deep.
 adapter_opencode_default_model() {
     case "$1" in
         fast)     printf '%s' "openai/gpt-5.6-luna" ;;
@@ -166,19 +168,8 @@ opencode_render() {
 
     translated_body="$(opencode_translate_body "$rel_source" "$body")" || return 1
 
-    # Solo la tabla versionada participa en la generacion; el mapping local
-    # .mefisto/models.json queda reservado para resolucion en runtime.
-    local model_q="" has_profile profile model
-    has_profile="$(printf '%s' "$instance_json" | jq -r 'if (.profile != null) then "1" else "0" end')"
-    if [ "$has_profile" = "1" ]; then
-        profile="$(printf '%s' "$instance_json" | jq -r '.profile')"
-        model="$(adapter_opencode_default_model "$profile")" || return 1
-        [ -n "$model" ] && model_q="$(printf '%s' "$model" | jq -Rr '@json')"
-    fi
-
     local fm_lines=()
     fm_lines+=("description: $(printf '%s' "$instance_json" | jq -r '.description | @json')")
-    [ -n "$model_q" ] && fm_lines+=("model: $model_q")
     if [ "$kind" = "agent" ]; then
         local mode
         mode="$(printf '%s' "$instance_json" | jq -r '.mode')"

@@ -137,7 +137,7 @@ adaptador por runtime en `src/internal/scripts/lib/adapter-{claude,opencode}.sh`
 | `skills` | `skills` (MEF-ADR-0033) | -- |
 | `agent` (comando) | -- (lo resuelve la directiva de body) | `agent` + `subtask: true` |
 | `arguments` | `argument-hint` | -- (OpenCode no tiene equivalente) |
-| `profile` | `model` (tabla fija: `fast`->`haiku`, `balanced`->`sonnet`, `deep`->-- omitido) | `model` (tabla fija: `fast`->Luna, `balanced`->Terra, `deep`->Sol) |
+| `profile` | `model` (tabla fija: `fast`->`haiku`, `balanced`->`sonnet`, `deep`->-- omitido) | -- (`model` se omite; hereda la configuracion del usuario) |
 | body | body, tras el marcador de generado | body (`template`), tras el marcador |
 
 Un `--` significa que ese runtime no recibe el campo: o no tiene un equivalente
@@ -148,19 +148,19 @@ generador no lo escribe.
 
 ### `profile` -> `model` por runtime (MEF-ADR-0049 CA-4, issues #857 y #961)
 
-Cuando la fuente declara `profile`, el generador consulta la tabla fija de su
-adaptador (`adapter_claude_default_model` o
-`adapter_opencode_default_model`) -- **nunca** el mapping local
-`.mefisto/models.json` -- y emite `model:` solo si esa tabla devuelve un valor
-no vacio. OpenCode documenta `model` tanto para agentes como para comandos
-Markdown ([Agents](https://opencode.ai/docs/agents/#model),
-[Commands](https://opencode.ai/docs/commands/#model)):
+El generador Claude consulta `adapter_claude_default_model` y emite `model:`
+solo si su tabla devuelve un valor no vacio. El generador OpenCode **siempre
+omite** `model:` en agentes y comandos: asi la ejecucion interactiva hereda el
+proveedor/modelo configurado por el usuario, comportamiento documentado por
+OpenCode ([Agents](https://opencode.ai/docs/agents/#model),
+[Commands](https://opencode.ai/docs/commands/#model)). Su tabla versionada se
+usa exclusivamente en `mefisto_resolve_model`, para pipelines headless:
 
-| `profile` | `model` emitido (Claude) | `model` emitido (OpenCode) |
-|---|---|---|
-| `fast` | `"haiku"` | `"openai/gpt-5.6-luna"` |
-| `balanced` | `"sonnet"` | `"openai/gpt-5.6-terra"` |
-| `deep` | (se omite el campo -- hereda el modelo activo) | `"openai/gpt-5.6-sol"` |
+| `profile` | `model` emitido (Claude) | fallback headless OpenCode | `model` emitido (OpenCode) |
+|---|---|---|---|
+| `fast` | `"haiku"` | `openai/gpt-5.6-luna` | (se omite) |
+| `balanced` | `"sonnet"` | `openai/gpt-5.6-terra` | (se omite) |
+| `deep` | (se omite -- hereda) | `openai/gpt-5.6-sol` | (se omite) |
 
 El generador no lee `.mefisto/models.json` a proposito: es estado de maquina,
 y leerlo romperia el determinismo (misma fuente -> mismos bytes) que sostiene
@@ -187,8 +187,8 @@ con placeholders `<provider/model>`. Para poblarlo con ids reales:
 - **OpenCode**: `opencode models <provider>` lista los ids `provider/model`
   que ese provider expone.
 
-Los ids de OpenCode los certifica el mantenedor al cerrar el dogfooding
-(issue #874) y quedan registrados ahi como evidencia -- no en este repo.
+Los defaults OpenCode versionados se verifican contra este catalogo; cualquier
+otro proveedor/modelo se selecciona en la configuracion local o global.
 
 El modelo **interactivo** por agente en OpenCode (fuera de un pipeline
 headless) no se fija en `.mefisto/models.json`: OpenCode lo resuelve desde la

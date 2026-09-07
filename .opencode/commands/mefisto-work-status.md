@@ -1,6 +1,5 @@
 ---
 description: "Dashboard de los pipelines INTERNOS de Mefisto (en tmux)."
-model: "openai/gpt-5.6-luna"
 ---
 <!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh desde src/internal/commands/mefisto-work-status.md. No editar a mano. -->
 

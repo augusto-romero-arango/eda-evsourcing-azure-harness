@@ -117,10 +117,10 @@ Nunca se hand-authorea: es lo que `generate-internal-adapters.sh` produce en
 - **Sin `skills:`**: OpenCode no tiene ese campo de frontmatter de agente; un Agent Skill se
   dispara solo por su `description` via la tool nativa `skill` (misma mecanica de progressive
   disclosure, distinto punto de enganche que Claude Code).
-- `profile` -> `model:` mediante la tabla fija de OpenCode: `fast`->`openai/gpt-5.6-luna`,
-  `balanced`->`openai/gpt-5.6-terra`, `deep`->`openai/gpt-5.6-sol`. La misma tabla alimenta
-  `mefisto_resolve_model`; `--models` y `.mefisto/models.json` conservan precedencia
-  (MEF-ADR-0049, issue #961).
+- `profile` **no emite `model:`** en agentes ni comandos OpenCode: estos heredan la configuracion
+  global del usuario. La tabla fija (`fast` Luna, `balanced` Terra, `deep` Sol) solo alimenta
+  `mefisto_resolve_model` en pipelines headless; `--models` y `.mefisto/models.json` conservan
+  precedencia (MEF-ADR-0049, issue #961).
 
 Mapeo completo campo-a-campo, incluidas las directivas de body (`{{mefisto:launch-agent}}`,
 `{{mefisto:run}}`, `{{mefisto:command-path}}`): `src/internal/contract/README.md`.

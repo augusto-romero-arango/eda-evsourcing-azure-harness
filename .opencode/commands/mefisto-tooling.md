@@ -1,6 +1,5 @@
 ---
 description: "Lanza el pipeline INTERNO de tooling para un issue del repo de Mefisto, dentro de una sesion tmux."
-model: "openai/gpt-5.6-luna"
 ---
 <!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh desde src/internal/commands/mefisto-tooling.md. No editar a mano. -->
 

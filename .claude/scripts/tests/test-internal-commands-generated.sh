@@ -19,8 +19,8 @@
 #         coinciden byte-a-byte con lo que la fuente neutral produce (CA-1).
 #   [claude-output] La salida Claude de los cuatro comandos `fast` lleva
 #         `model: "haiku"`; la de `fix-review` (`deep`) omite `model:` (CA-2).
-#   [opencode-output] La salida OpenCode emite Luna/Terra/Sol segun el perfil
-#         neutral de cada comando (issue #961).
+#   [opencode-output] La salida OpenCode omite `model:` para heredar la
+#         configuracion del usuario (issue #961).
 #   [guard] El bloque del guard inverso (`.claude-plugin/plugin.json`) es
 #         identico byte-a-byte entre la salida Claude y la OpenCode de cada
 #         uno de los cinco comandos (CA-2).
@@ -242,26 +242,14 @@ else
 fi
 
 echo ""
-echo "[opencode-output] model por perfil en los comandos OpenCode"
-for id in mefisto-plan mefisto-bug mefisto-bitacora mefisto-work-status; do
-    if grep -q '^model: "openai/gpt-5.6-luna"$' "$REPO_ROOT/.opencode/commands/$id.md" 2>/dev/null; then
-        pass "$id: .opencode/commands lleva model: \"openai/gpt-5.6-luna\""
+echo "[opencode-output] ningun comando OpenCode fija model:"
+for id in $COMMAND_IDS $EXEC_COMMAND_IDS mefisto-next-order; do
+    if grep -q '^model:' "$REPO_ROOT/.opencode/commands/$id.md" 2>/dev/null; then
+        fail "$id: .opencode/commands no deberia fijar model:"
     else
-        fail "$id: .opencode/commands NO lleva model: \"openai/gpt-5.6-luna\""
+        pass "$id: .opencode/commands sin model: (hereda la configuracion del usuario)"
     fi
 done
-if grep -q '^model: "openai/gpt-5.6-sol"$' "$REPO_ROOT/.opencode/commands/mefisto-fix-review.md" 2>/dev/null; then
-    pass "mefisto-fix-review: .opencode/commands lleva model: \"openai/gpt-5.6-sol\""
-else
-    fail "mefisto-fix-review: .opencode/commands NO lleva model: \"openai/gpt-5.6-sol\""
-fi
-
-echo ""
-if grep -q '^model: "openai/gpt-5.6-luna"$' "$REPO_ROOT/.opencode/commands/mefisto-next-order.md" 2>/dev/null; then
-    pass "mefisto-next-order: .opencode/commands lleva model: \"openai/gpt-5.6-luna\""
-else
-    fail "mefisto-next-order: .opencode/commands NO lleva model: \"openai/gpt-5.6-luna\""
-fi
 
 echo ""
 echo "[command-path] mefisto-bitacora encadena mefisto-merge apuntando al propio directorio de cada runtime (CA-4)"
@@ -361,19 +349,6 @@ if grep -q '^model: "sonnet"$' "$REPO_ROOT/.claude/commands/mefisto-release.md" 
 else
     fail "mefisto-release: .claude/commands NO lleva model: \"sonnet\""
 fi
-for id in mefisto-tooling mefisto-tooling-verbose mefisto-sequential mefisto-merge; do
-    if grep -q '^model: "openai/gpt-5.6-luna"$' "$REPO_ROOT/.opencode/commands/$id.md" 2>/dev/null; then
-        pass "$id: .opencode/commands lleva model: \"openai/gpt-5.6-luna\""
-    else
-        fail "$id: .opencode/commands NO lleva model: \"openai/gpt-5.6-luna\""
-    fi
-done
-if grep -q '^model: "openai/gpt-5.6-terra"$' "$REPO_ROOT/.opencode/commands/mefisto-release.md" 2>/dev/null; then
-    pass "mefisto-release: .opencode/commands lleva model: \"openai/gpt-5.6-terra\""
-else
-    fail "mefisto-release: .opencode/commands NO lleva model: \"openai/gpt-5.6-terra\""
-fi
-
 echo ""
 echo "[ca-4] mefisto-tooling no prescribe un alias Anthropic concreto en sus ejemplos de --models y remite a models.example.json (issue #867)"
 src_tooling="$COMMANDS_DIR/mefisto-tooling.md"

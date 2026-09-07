@@ -14,8 +14,8 @@
 #         adaptadores versionados en .claude/agents/ y .opencode/agents/
 #         coinciden byte-a-byte con lo que la fuente neutral produce (CA-2).
 #   [runtime-output] Los diez adaptadores generados llevan el marcador;
-#         Claude conserva su tabla y OpenCode emite Luna/Terra/Sol segun
-#         `profile` (CA-2, issue #961).
+#         Claude conserva su tabla y OpenCode omite `model:` para heredar la
+#         configuracion del usuario (CA-2, issue #961).
 #   [opencode-cli] Si el CLI `opencode` esta instalado, `opencode agent list`
 #         corrido en la raiz del repo lista cada id con su modo -- `primary`
 #         para planner/investigator/historiador, `subagent` para
@@ -161,16 +161,10 @@ for id in $AGENT_IDS; do
 done
 
 for id in $AGENT_IDS; do
-    profile=$(profile_for_agent "$id")
-    case "$profile" in
-        balanced) expected="openai/gpt-5.6-terra" ;;
-        deep) expected="openai/gpt-5.6-sol" ;;
-        *) expected="openai/gpt-5.6-luna" ;;
-    esac
-    if grep -q "^model: \"$expected\"$" "$REPO_ROOT/.opencode/agents/$id.md" 2>/dev/null; then
-        pass "$id: .opencode/agents lleva model: \"$expected\" (perfil $profile)"
+    if grep -q '^model:' "$REPO_ROOT/.opencode/agents/$id.md" 2>/dev/null; then
+        fail "$id: .opencode/agents no deberia fijar model:"
     else
-        fail "$id: .opencode/agents no lleva model: \"$expected\" (perfil $profile)"
+        pass "$id: .opencode/agents sin model: (hereda la configuracion del usuario)"
     fi
 done
 

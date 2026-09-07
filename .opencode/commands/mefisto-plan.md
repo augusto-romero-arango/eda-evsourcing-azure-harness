@@ -1,6 +1,5 @@
 ---
 description: "Lanza el agente `mefisto-planner` para planear, refinar o reorganizar issues del propio repo de Mefisto."
-model: "openai/gpt-5.6-luna"
 agent: "mefisto-planner"
 subtask: true
 ---

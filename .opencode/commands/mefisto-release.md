@@ -1,6 +1,5 @@
 ---
 description: "Versiona y publica el plugin Mefisto siguiendo SemVer y Keep a Changelog."
-model: "openai/gpt-5.6-terra"
 ---
 <!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh desde src/internal/commands/mefisto-release.md. No editar a mano. -->
 

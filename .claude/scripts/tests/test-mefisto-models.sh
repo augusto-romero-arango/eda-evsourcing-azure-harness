@@ -21,8 +21,8 @@
 #   [10]  models.json no-JSON aborta citando el archivo.
 #   [11]  models.json mal tipado (additionalProperties) aborta citando el
 #         campo, via jsonschema-lite.jq.
-#   [12]  El generador emite/omite `model:` segun CA-3: tabla fija por runtime
-#         cuando hay profile; sin profile, ningun runtime emite el campo.
+#   [12]  El generador emite `model:` desde la tabla Claude; OpenCode siempre
+#         lo omite para heredar la configuracion del usuario.
 #   [13]  El mapping local de OpenCode conserva precedencia sobre la tabla;
 #         sin entrada, cae en el default versionado del perfil.
 #   [14]  Un valor de `agents` que no es un string no vacio aborta -- el guard
@@ -361,7 +361,7 @@ fi
 rm -f "$SCRIPT_DIR/.tmp-out-11"
 
 echo ""
-echo "[12] el generador emite 'model:' desde la tabla fija de cada runtime cuando hay profile"
+echo "[12] el generador emite 'model:' en Claude y lo omite siempre en OpenCode"
 FIX_DIR="$(mktemp -d)"
 trap 'rm -rf "$FIX_DIR"' EXIT
 
@@ -443,25 +443,17 @@ if grep -q '^model:' "$OUT_DIR/.claude/commands/mefisto-fx-models-none.md" 2>/de
 else
     pass "sin profile -> sin model: en Claude"
 fi
-if grep -q '^model: "openai/gpt-5.6-luna"$' "$OUT_DIR/.opencode/commands/mefisto-fx-models-fast.md" 2>/dev/null; then
-    pass "profile fast -> model: \"openai/gpt-5.6-luna\" en OpenCode"
+for f in mefisto-fx-models-fast mefisto-fx-models-deep mefisto-fx-models-none; do
+    if grep -q '^model:' "$OUT_DIR/.opencode/commands/$f.md" 2>/dev/null; then
+        fail "$f: OpenCode no deberia emitir model:"
+    else
+        pass "$f: OpenCode sin model: (hereda la configuracion del usuario)"
+    fi
+done
+if grep -q '^model:' "$OUT_DIR/.opencode/agents/mefisto-fx-models-balanced.md" 2>/dev/null; then
+    fail "mefisto-fx-models-balanced: OpenCode no deberia emitir model:"
 else
-    fail "profile fast no emitio model: \"openai/gpt-5.6-luna\" en OpenCode"
-fi
-if grep -q '^model: "openai/gpt-5.6-terra"$' "$OUT_DIR/.opencode/agents/mefisto-fx-models-balanced.md" 2>/dev/null; then
-    pass "profile balanced -> model: \"openai/gpt-5.6-terra\" en OpenCode"
-else
-    fail "profile balanced no emitio model: \"openai/gpt-5.6-terra\" en OpenCode"
-fi
-if grep -q '^model: "openai/gpt-5.6-sol"$' "$OUT_DIR/.opencode/commands/mefisto-fx-models-deep.md" 2>/dev/null; then
-    pass "profile deep -> model: \"openai/gpt-5.6-sol\" en OpenCode"
-else
-    fail "profile deep no emitio model: \"openai/gpt-5.6-sol\" en OpenCode"
-fi
-if grep -q '^model:' "$OUT_DIR/.opencode/commands/mefisto-fx-models-none.md" 2>/dev/null; then
-    fail "sin profile no deberia emitir model: en OpenCode"
-else
-    pass "sin profile -> sin model: en OpenCode"
+    pass "mefisto-fx-models-balanced: OpenCode sin model: (hereda la configuracion del usuario)"
 fi
 
 echo ""
