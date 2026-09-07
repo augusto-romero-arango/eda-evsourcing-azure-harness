@@ -64,6 +64,40 @@ Por tipo de comando:
   - ServiceBus → emite evento de fallo (alguien downstream espera respuesta)
 - **Upsert**: maneja ambos casos sin error (idempotencia natural)
 
+#### Estado ya alcanzado: no-op exitoso
+
+Cuando la identidad y el alcance que requiere el comando existen, y la intencion del comando
+ya esta satisfecha en el estado vigente, la operacion es un **no-op exitoso**. No es una
+precondicion ausente ni una regla de negocio violada: simplemente no hay un hecho nuevo que
+registrar. El aggregate retorna normalmente **antes** de agregar eventos a
+`_uncommittedEvents`; el handler termina normalmente y no persiste ni publica nada nuevo. El
+endpoint retorna el codigo de exito contractual del comando, incluido el que corresponda a
+PUT o DELETE.
+
+"Ya ausente" solo es un no-op si el contrato reconoce la identidad o el alcance y puede saber
+que la intencion ya se cumple. Una identidad nunca conocida o un stream padre inexistente no
+califican: conservan la precondicion explicita de recurso no encontrado.
+
+| Situacion | Tratamiento |
+|---|---|
+| Cambio necesario | Aplica la doctrina vigente y emite el hecho correspondiente. |
+| Estado ya alcanzado (identidad/alcance existente + intencion satisfecha) | Exito contractual sin excepcion, evento persistido ni publicacion nueva. |
+| Identidad o stream requerido inexistente | Tratamiento `404 NotFound` vigente para HTTP; evento de fallo para ServiceBus cuando corresponda. |
+| POST de creacion sobre stream existente | Tratamiento `409 Conflict` vigente para HTTP; retorno silencioso para ServiceBus. |
+| Regla de negocio real | Evento de fallo vigente del aggregate. |
+
+El mecanismo canonico es el retorno normal del metodo del aggregate antes de agregar eventos,
+seguido de la finalizacion normal del handler. No se exige `SinCambios`, `Result<T>` ni ningun
+tipo nuevo entre aggregate, handler y endpoint. Los tests del harness validan este camino con
+`Then()` o `Then(streamId)` sin eventos esperados, que exige count exacto cero, y con los
+asserts vacios de publicacion, que validan que no se publico nada.
+
+RFC 9110 define la idempotencia por la igualdad del efecto pretendido en el servidor y aclara
+que las respuestas de solicitudes identicas pueden diferir (seccion 9.2.2). Sus secciones
+9.3.4 (PUT) y 9.3.5 (DELETE) no imponen una respuesta unica para este caso. Elegir exito
+estable para el no-op es una convencion deliberada de Mefisto, orientada a no generar ruido al
+cliente; no es una obligacion del RFC.
+
 **3. Reglas de negocio (AggregateRoot)**
 
 El aggregate **emite eventos de fallo** en `_uncommittedEvents` cuando una regla de
@@ -99,13 +133,17 @@ explicitamente cual procesamiento queda pendiente.
 
 | Operacion completada y durable antes de responder | Respuesta | Condicion adicional |
 | --- | --- | --- |
-| `POST` crea una entidad | `201 Created` | Incluye `Location` hacia la URI canonica de lectura cuando existe. Una proyeccion `Async` puede hacer que esa URI responda temporalmente `404`; el read-side debe probarla con polling. |
+| `POST` crea una entidad | `201 Created` | Incluye `Location` hacia la URI canonica de lectura cuando existe. Una proyeccion `Async` puede hacer que esa URI responda temporalmente `404`; los tests del read-side deben tolerar esa ventana mediante polling. |
 | `PUT` reemplaza una representacion existente | `204 No Content` | Este es el caso canonico del marco: reemplazar un slot existente. |
 | `PUT` crea una representacion antes inexistente | `201 Created` | RFC 9110 §9.3.4 exige informar la creacion. |
-| `DELETE` ejecutado | `204 No Content` | Solo cubre el camino de exito completado; el estado ya alcanzado es alcance de #850. |
+| `DELETE` ejecutado o no-op por estado ya alcanzado | `204 No Content` | El no-op exige identidad y alcance reconocidos, segun la seccion 2. |
 | Accion `POST` sin representacion de respuesta | `204 No Content` | El cambio primario ya quedo durable. |
 | Accion que devuelve una representacion | `200 OK` | La representacion forma parte de la respuesta. |
 | Procesamiento primario diferido | `202 Accepted` | El issue justifica que trabajo queda pendiente y por que no completo antes de responder. |
+
+El no-op de un `PUT` o `DELETE` definido en la seccion 2 devuelve el mismo codigo contractual
+de la tabla que la operacion que si produjo un cambio. Que no exista un evento nuevo no lo
+convierte en procesamiento diferido ni justifica responder `202 Accepted`.
 
 Los errores y precondiciones conservan su mapeo:
 
@@ -136,24 +174,28 @@ infraestructura nunca se disfrace de conflicto de negocio.
 
 ### No se adopta Result Pattern
 
-No es necesario entre Handler y Endpoint porque el endpoint elige el resultado HTTP despues
-de que el router retorna y segun el cambio primario que el contrato del comando completo.
-El IRequestValidator ya resuelve la validacion con una tupla simple. Las excepciones tipadas
-de precondicion (seccion 2) no reabren esta decision: siguen siendo *excepciones*, no un tipo
-de retorno `Result<T>` — el handler declina lanzando, el endpoint traduce por tipo en el
-catch; no se introduce un canal de retorno adicional entre ambos.
+No es necesario entre Handler y Endpoint porque el endpoint elige la respuesta HTTP conforme
+al contrato de la operacion una vez que el router retorna; no necesita que el handler devuelva
+un resultado para decidir si el cambio primario quedo durable. El `IRequestValidator` ya
+resuelve la validacion con una tupla simple. Las excepciones tipadas de precondicion (seccion
+2) no reabren esta decision: siguen siendo *excepciones*, no un tipo de retorno `Result<T>` —
+el handler declina lanzando, el endpoint traduce por tipo en el catch; no se introduce un
+canal de retorno adicional entre ambos.
 
 ### Regimen de migracion
 
 Esta doctrina rige el codigo **nuevo**: todo command handler y endpoint que se escriba o
 reescriba a partir de esta enmienda lanza/captura las excepciones tipadas de la seccion 2 y
-elige el status de exito con la tabla anterior. Los handlers, endpoints y tests
-**preexistentes** que ya lanzaban/capturaban `InvalidOperationException` no se migran de
-oficio — sus suites siguen en verde porque su codigo sigue lanzando el tipo generico, y cada
-consumidor decide su propio ritmo de migracion (mismo precedente de MEF-ADR-0043 seccion 7,
-"Aplicabilidad: solo endpoints nuevos"). Cambiar el status de un endpoint preexistente exige
-un issue de refactor del consumidor con inventario de endpoints afectados y aviso a sus
-clientes integrados; nunca es automatico ni bloqueante de un PR no relacionado.
+elige el status de exito con la tabla anterior.
+La regla de estado ya alcanzado aplica a todo PUT o DELETE **nuevo**. Cambiar un endpoint
+preexistente —su status o su comportamiento ante un estado ya alcanzado— requiere un issue de
+refactor propio con inventario de los endpoints afectados y aviso a sus clientes o consumidores
+integrados antes de cambiar el contrato; nunca se migra de oficio en un PR no relacionado.
+Los handlers, endpoints y tests **preexistentes** que lanzan/capturan
+`InvalidOperationException` no se migran de oficio — sus suites siguen en verde porque su
+codigo sigue lanzando el tipo generico, y cada consumidor decide su propio ritmo de
+migracion (mismo precedente de MEF-ADR-0043 seccion 7, "Aplicabilidad: solo endpoints
+nuevos").
 
 ## Consecuencias
 
@@ -195,32 +237,56 @@ clientes integrados; nunca es automatico ni bloqueante de un PR no relacionado.
   migracion que adopta la seccion "Regimen de migracion" de esta enmienda.
 - MEF-ADR-0009 (patron de mensajes `.resx` per-aggregate): el mensaje de las excepciones
   tipadas de la capa 2 sigue su convencion sin cambio de doctrina propia.
-- RFC 9110, "HTTP Semantics" — IETF: §9.3.3 (POST), §9.3.4 (PUT) y §9.3.5 (DELETE) fijan la
-  semantica de los metodos; §§15.3.2 (`201 Created`), 15.3.3 (`202 Accepted`) y 15.3.5
-  (`204 No Content`) fijan los codigos de exito. https://www.rfc-editor.org/rfc/rfc9110.html
+- RFC 9110, "HTTP Semantics" — IETF: §9.2.2 define idempotencia y permite que las respuestas
+  difieran; §§9.3.3 (POST), 9.3.4 (PUT) y 9.3.5 (DELETE) fijan la semantica de los metodos;
+  §§15.3.1 (`200 OK`), 15.3.2 (`201 Created`), 15.3.3 (`202 Accepted`) y 15.3.5
+  (`204 No Content`) fijan los codigos de exito.
+  https://www.rfc-editor.org/rfc/rfc9110.html
 - `Cosmos.EventSourcing.CritterStack` 2.3.1, inspeccionado por decompilacion: la invocacion
   `ICommandRouter.InvokeAsync` completa el handler y el middleware transaccional de Marten
   (append y `SaveChangesAsync`) antes de retornar al endpoint.
-- Evidencia de campo, Bitakora.ControlAsistencia (issue #620, 2026-09-05): 29 endpoints de
-  comando respondian `AcceptedResult` pese a confirmar la transaccion antes de responder;
-  sus smoke tests consecutivos POST+POST y POST+DELETE observan esa durabilidad inmediata.
+- Evidencia de campo,
+  [Bitakora.ControlAsistencia#620](https://github.com/augusto-romero-arango/Bitakora.ControlAsistencia/issues/620)
+  (2026-09-05): 29 endpoints de comando respondian `AcceptedResult` pese a confirmar la
+  transaccion antes de responder; sus smoke tests consecutivos POST+POST y POST+DELETE
+  observan esa durabilidad inmediata.
 - MEF-ADR-0034, seccion 3: una proyeccion `Async` se materializa fuera de la transaccion del
   write-side; su consistencia eventual no cambia el commit primario.
+- `docs/testing/harness-cheatsheet.md` (DSL `Then` y asserts de publicacion vacios): confirma
+  que los asserts sin eventos validan exactamente la ausencia de persistencia y publicacion.
+- Issue #849: fija el codigo de exito contractual que tambien retorna el no-op.
+- Issue #1003: propagara esta convencion a PUT/DELETE en MEF-ADR-0043 y a sus agentes/tests.
+- Regla del experto, 2026-09-05: "Es idempotente quitar algo que ya no existe y le generamos
+  ruido al cliente innecesario". Descubierta al refinar
+  [Bitakora.ControlAsistencia#622](https://github.com/augusto-romero-arango/Bitakora.ControlAsistencia/issues/622);
+  el inventario de campo encontro exito sin evento en `AsignarSede`, `409` en
+  `RetirarEtiqueta`, `RetirarCentroDeCostos` y `RetirarTurno`, y `404` en
+  `RetirarDispositivo`.
 
 ## Control de cambios
 
+- 2026-09-07: enmienda (issue #850). La seccion 2 clasifica estado ya alcanzado -- identidad y
+  alcance existentes con la intencion ya satisfecha -- como no-op exitoso: el aggregate retorna
+  antes de agregar eventos y el handler finaliza sin persistir ni publicar; el endpoint responde
+  el codigo de exito contractual. Fija la frontera frente a cambio necesario, identidad/stream
+  inexistente, POST de creacion sobre stream existente y regla de negocio real; no exige
+  `SinCambios`, `Result<T>` ni otro protocolo de retorno. Cita RFC 9110 §§9.2.2, 9.3.4 y 9.3.5:
+  el exito estable es convencion de Mefisto, no mandato del estandar. Aplica a PUT/DELETE nuevos;
+  cualquier endpoint existente requiere refactor con inventario y aviso a consumidores. Origen:
+  regla del experto del 2026-09-05 y divergencia descubierta en Bitakora.ControlAsistencia al
+  refinar #622. Depende de #849 y bloquea #1003.
 - 2026-09-07: enmienda (issue #849). Corrige el falso `202 Accepted` universal: el criterio
   de exito pregunta si el cambio primario solicitado quedo durable antes de responder, no si
   existen proyecciones `Async` o efectos posteriores por Service Bus. Agrega la tabla de
-  respuestas sincrona (`201 Created` con `Location` para creacion, `204 No Content` para
+  respuestas sincronas (`201 Created` con `Location` para creacion, `204 No Content` para
   reemplazo, delete o accion sin representacion, `200 OK` para accion que la devuelve), el
   caso `PUT` que crea una representacion inexistente (`201`), y restringe `202` al
   procesamiento primario diferido con justificacion explicita. Conserva 400/404/409/500 y la
   decision de no usar `Result<T>` por su razon real. La migracion rige endpoints nuevos;
   cambiar statuses existentes exige un issue de refactor con inventario y aviso a clientes.
-  Cita RFC 9110 §§9.3.3, 9.3.4, 9.3.5, 15.3.2, 15.3.3 y 15.3.5, la decompilacion de
+  Cita RFC 9110 §§9.3.3, 9.3.4, 9.3.5, 15.3.1, 15.3.2, 15.3.3 y 15.3.5, la decompilacion de
   `Cosmos.EventSourcing.CritterStack` 2.3.1 y la evidencia de campo de
-  Bitakora.ControlAsistencia.
+  Bitakora.ControlAsistencia#620.
 - 2026-09-01: enmienda (issue #805). La seccion 2 ("Precondiciones de orquestacion")
   reemplaza `InvalidOperationException` generica por la jerarquia tipada
   `PrecondicionComandoException` (base abstracta, scaffoldeada en el consumidor) con
