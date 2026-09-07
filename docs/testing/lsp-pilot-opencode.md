@@ -10,7 +10,8 @@ investigacion manual y aislada, no soporte de instalacion para consumidores.
 
 ## Veredicto
 
-**NO EVALUABLE (corpus en cero pares), con el preflight completo en verde.**
+**NO EVALUABLE (corpus en cero pares), con los tres gates de mecanismo en
+verde y el gate 4 (frescura) no concluyente.**
 A diferencia de #979 (Claude Code), ningun gate del mecanismo LSP de OpenCode
 fallo en este entorno: con `.NET SDK` detectado, la seccion `lsp` habilitada
 en la config, `OPENCODE_EXPERIMENTAL_LSP_TOOL=true` y el permiso `lsp: allow`,
@@ -27,10 +28,10 @@ del mecanismo.
 
 | CA (#980) | Estado | Nota |
 |---|---|---|
-| CA-1 | pasa | version de OpenCode, modelo, SHA del consumidor y los tres gates (servidor C#, feature flag, permiso) probados por separado y en conjunto, con evidencia reproducible abajo |
+| CA-1 | pasa con reserva | version de OpenCode, modelo y SHA del consumidor documentados con evidencia reproducible abajo. El gate 1 si se probo aislado (con y sin seccion `lsp`); los gates 2 y 3 quedaron confirmados **en conjunto**, dentro de la misma sesion que invoco la tool, sin control negativo con el feature flag sin exportar ni con `lsp: deny`. El "por separado" que pide CA-1 se cumple para el gate 1 y solo parcialmente para los otros dos |
 | CA-2 | no evaluable | cero pares corridos: la materializacion de agentes publicados como config temporal de OpenCode y su ejecucion sobre el SHA congelado del consumidor son el paso humano que sigue a este piloto, no algo que la etapa headless de tooling de Mefisto pueda ejecutar sobre un repo ajeno |
 | CA-3 | no evaluable | no hay filas de evidencia de pares que reportar; la tabla de metricas del protocolo queda vacia por diseno. Las consultas de control (no son pares) si reportan tokens, costo y duracion, ver abajo |
-| CA-4 | parcial | se separa arranque/indexacion del contexto del LLM (ver gate 1) y se registra una consulta desincronizada/excesiva (intento de verificar frescura tras una edicion, abortado tras 10m48s sin respuesta); no hay edicion dentro de un brazo LSP real del corpus cuya frescura verificar todavia |
+| CA-4 | parcial | se separa arranque/indexacion local del contexto del LLM (ver gate 1) y se registran las consultas vacias (`opencode debug lsp` devuelve resultados vacios pese al servidor registrado, ver gate 1) y las dos invocaciones abortadas sin respuesta (ver gate 4); no hay edicion dentro de un brazo LSP real del corpus cuya frescura verificar todavia, y ninguna respuesta semantica desincronizada llego a observarse |
 | CA-5 | pasa (conclusion `no evaluable` para los tres roles, sin generalizar) | ver "Conclusion por rol" abajo |
 | CA-6 | pasa | `changelog.d/980.added.md` creado; ningun `opencode.json`, agente temporal ni cambio del consumidor se versiona en este repo -- toda la config de prueba vivio en `/tmp`, fuera del arbol de Mefisto y del consumidor |
 
@@ -45,7 +46,7 @@ detiene en el primero porque **ninguno fallo**:
 | 1 | Servidor C# disponible (seccion `lsp` habilitada + .NET SDK detectado) | **pasa** (verificado con invocacion real de la tool, no solo con el log de registro) |
 | 2 | Feature flag `OPENCODE_EXPERIMENTAL_LSP_TOOL=true` | **pasa** |
 | 3 | Permiso `lsp: allow` | **pasa** |
-| 4 | Frescura de las respuestas semanticas tras una edicion | **no concluyente** -- la consulta de verificacion no respondio en 10m48s y se aborto (ver abajo) |
+| 4 | Frescura de las respuestas semanticas tras una edicion | **no concluyente** -- la consulta de verificacion se colgo en el arranque de `opencode run`, no respondio en 10m48s y se aborto (ver abajo) |
 
 ### Entorno verificado
 
@@ -53,7 +54,7 @@ detiene en el primero porque **ninguno fallo**:
 |---|---|---|
 | Fecha | 2026-09-07 | -- |
 | OpenCode | `1.18.29` | `opencode --version` |
-| .NET SDK | `10.0.201` | `dotnet --version` (>= la version que el servidor `csharp` built-in de OpenCode requiere detectar, ver **[1]**) |
+| .NET SDK | `10.0.201` | `dotnet --version`. La fuente oficial **[1]** solo exige ".NET SDK installed" para el servidor `csharp`, sin fijar version minima: este piloto documenta la version presente, no un umbral |
 | Modelo de las consultas de control | `openai/gpt-5.4-mini` | unico proveedor con credenciales OAuth activas en este entorno (`opencode auth list` -> solo `OpenAI`); no hay Anthropic configurado, asi que este piloto **no** usa el mismo proveedor/modelo que #979 -- el protocolo no lo exige (compara texto-vs-LSP dentro de OpenCode, nunca cifras absolutas contra Claude Code) |
 | Modelo de la etapa que redacta este reporte | `sonnet` (alias del frontmatter de la etapa del pipeline interno) | -- |
 | `opencode.json` de Mefisto (raiz del repo) | solo `{"$schema": "..."}`, sin seccion `lsp` ni `permission` | lectura directa del archivo -- confirma que el repo de Mefisto **no** trae el mecanismo LSP habilitado por defecto, ni para su propio dogfooding interno |
@@ -64,32 +65,43 @@ detiene en el primero porque **ninguno fallo**:
 
 Con `"lsp": true` en un `opencode.jsonc` de prueba (sandbox `/tmp`, fuera del
 arbol de Mefisto y del consumidor) y un proyecto `dotnet new console` minimo,
-el log de arranque (`--print-logs --log-level DEBUG`) confirma que OpenCode
-registra `csharp` entre los servidores habilitados:
+el log de arranque (`--print-logs --log-level DEBUG`) muestra el subsistema
+LSP activo con `csharp` entre los servidores registrados:
 
 ```
-message="enabled LSP servers" serverIds="... csharp ..."
+message="enabled LSP servers" serverIds="zls, yaml-ls, ..., csharp, biome, bash, astro"
 ```
 
-Sin esa seccion (config con solo `$schema`, la que trae Mefisto hoy), esa
-linea de log **no aparece en absoluto** -- el subsistema LSP queda inactivo
-por completo, tal como documenta la fuente oficial **[1]**: "LSP is disabled
-by default".
+Esa linea enumera **todos** los servidores built-in del binario (36), no una
+seleccion por lenguaje detectado: prueba que el subsistema esta activo y que
+`csharp` figura registrado, no que el servidor de C# haya arrancado. Segun
+**[1]**, los servidores se lanzan despues, al abrirse un archivo con la
+extension correspondiente y cumplirse el requisito (para `csharp`, tener .NET
+SDK instalado). Quien confirma el arranque real es la invocacion de la tool
+mas abajo, no este log.
+
+Como control negativo, sin esa seccion (config con solo `$schema`, la que trae
+Mefisto hoy) la linea no aparece y el log emite en su lugar
+`message="all LSPs are disabled"`: el subsistema queda inactivo por completo,
+tal como documenta la fuente oficial **[1]** ("LSP is disabled by default").
 
 **Limitacion registrada, no omitida**: los comandos `opencode debug lsp
-document-symbols/symbols/diagnostics` devolvieron `[]`/`{}` incluso con
-`csharp` registrado -- se investigo con logs `DEBUG` y la traza muestra que
-esos comandos crean una instancia y la destruyen (`disposing instance`) en el
-mismo milisegundo del `init`, sin tiempo para que el servidor real spawee e
-inicialice. Esa CLI de debug **no es un proxy fiable del gate 1** en este
-entorno; el gate 1 solo quedo confirmado con la ruta real que usa el pipeline
-(la tool `lsp` invocada dentro de una sesion de `opencode run`, ver abajo).
+document-symbols/symbols/diagnostics` devolvieron resultados vacios (`[]`,
+`[]` y `{"<archivo>": []}`) incluso con `csharp` registrado -- se investigo
+con logs `DEBUG` y la traza muestra que esos comandos crean una instancia y la
+destruyen (`disposing instance`) en el mismo milisegundo del `init`, sin
+llegar a lanzar el servidor real. Esa CLI de debug **no es un proxy fiable
+del gate 1** en este entorno; el gate 1 solo quedo confirmado con la ruta real
+que usa el pipeline (la tool `lsp` invocada dentro de una sesion de
+`opencode run`, ver abajo).
 
-### Gates 2 y 3 -- feature flag y permiso: confirmados con invocacion real de la tool
+### Gates 2 y 3 -- feature flag y permiso: confirmados en conjunto con invocacion real de la tool
 
-Con `OPENCODE_EXPERIMENTAL_LSP_TOOL=true`, `"lsp": true` y
-`"permission": {"lsp": "allow", ...}` (el resto de permisos en `deny` para
-acotar la sesion a una consulta de solo lectura), una sesion real de
+Con `OPENCODE_EXPERIMENTAL_LSP_TOOL=true`, `"lsp": true` y un bloque
+`permission` que deja en `allow` la familia de solo lectura (`lsp`, `read`,
+`list`, `glob`, `grep`) y en `deny` todo lo que muta o sale a la red (`bash`,
+`edit`, `write`, `patch`, `webfetch`, `websearch`, `question`, `skill`,
+`task`, `external_directory`, `doom_loop`), una sesion real de
 `opencode run` sobre el proyecto de prueba (`Saludador.Saludar`) invoco la
 tool `lsp` con `operation: documentSymbol` y devolvio los simbolos reales del
 archivo:
@@ -104,11 +116,20 @@ Saludar(string nombre)
 Esto es evidencia mas fuerte que un log de registro o que la respuesta de un
 modelo sobre si mismo: son datos semanticos correctos, verificables contra el
 contenido real del archivo, producidos por la ruta exacta (`opencode run`,
-tool `lsp`) que un agente real usaria.
+tool `lsp`) que un agente real usaria. El log de esa sesion registra ademas la
+evaluacion del permiso como paso propio
+(`evaluated permission=lsp pattern=* action.action=allow`), corroboracion
+especifica del gate 3.
+
+Los dos gates quedaron confirmados **juntos**, en la misma corrida: no se
+ejecuto el control negativo con el feature flag sin exportar (que mostraria la
+tool desaparecer) ni con `lsp: deny`. #976 pide verificarlos por separado
+porque son fallos independientes; aqui esa separacion solo se logro para el
+gate 1.
 
 | Consulta | Prompt (resumen) | Resultado | Sesion | Duracion (primer->ultimo evento) | Tokens (in/out/reasoning) | Costo USD |
 |---|---|---|---|---|---|---|
-| C1 | enumerar los nombres exactos de las tools disponibles (sin invocar ninguna) | **abortada**: sin respuesta tras 16 min, se aborto el proceso; se registra como consulta excesiva, no como evidencia de ausencia | -- | > 16 min (abortada) | -- | -- |
+| C1 | enumerar los nombres exactos de las tools disponibles (sin invocar ninguna) | **abortada**: el proceso se colgo en el arranque -- su ultima linea de log es `init`, nunca creo sesion ni llamo al proveedor -- y se mato tras 16m31s; no es evidencia de ausencia de la tool | -- | > 16 min (abortada, sin sesion creada) | -- | -- |
 | C2 | responder SI/NO a si existe una tool llamada exactamente `lsp` | `SI` | `ses_f840fc201ffe3iKO6600lybURR` | 2419 ms | 3710 / 7 / 36 | 0 |
 | C3 (gate 1+2+3 combinados) | usar la tool `lsp` para pedir los document symbols de `Program.cs` y reportar solo la lista | invoco `glob` y luego `lsp(documentSymbol)`; devolvio los 4 simbolos reales listados arriba | `ses_f8406e588ffea8CJ0WCrc8bzSC` | 7749 ms | 3738+267+765 / 49+45+28 / 43+26+69 (tres pasos) | 0 (los tres pasos) |
 
@@ -116,28 +137,36 @@ Un costo `0` USD es el costo de suscripcion/OAuth de este entorno, no ausencia
 de consumo: los tokens reales quedan arriba (issue #976, formato de
 evidencia).
 
-`C1` es la unica consulta que no llego a completarse: se registra como dato
-(una consulta de control puede quedar "excesiva o desincronizada" segun CA-4
-de este mismo issue) y no invalida `C2`/`C3`, que corrieron en sesiones
-independientes y si completaron con evidencia reproducible.
+`C1` no llego a completarse por un cuelgue de arranque del propio
+`opencode run`, no por el mecanismo LSP: el log de OpenCode termina en `init`
+sin la linea `created` de sesion, y la base de sesiones no registra ninguna
+fila para ese directorio a esa hora. Se anota como dato operativo (CA-4 pide
+registrar las consultas que quedan vacias, excesivas o desincronizadas) y no
+invalida `C2`/`C3`, que corrieron en sesiones independientes y si completaron
+con evidencia reproducible.
 
 ### Gate 4 -- frescura tras una edicion (no concluyente)
 
 Sobre la misma sesion de `C3` (`ses_f8406e588ffea8CJ0WCrc8bzSC`), se edito
 `Program.cs` fuera de la sesion (se agrego el metodo `Despedir`) y se pidio
-`--session <id>` que repitiera la consulta de document symbols para confirmar
-si la respuesta reflejaba la edicion. Ese intento **no respondio en 10 minutos
-48 segundos** y se aborto (proceso con solo 8.19s de CPU acumulado en ese
-lapso, seal de espera de red/API, no de computo local). No hay evidencia de
-que la sincronizacion funcione ni de que falle: el gate 4 queda sin verificar
-en este piloto.
+con `--session <id>` que repitiera la consulta de document symbols para
+confirmar si la respuesta reflejaba la edicion. Ese intento **no respondio en
+10 minutos 48 segundos** y se aborto (proceso con solo 8.19s de CPU acumulado
+en ese lapso). No hay evidencia de que la sincronizacion funcione ni de que
+falle: el gate 4 queda sin verificar en este piloto.
 
-Esto contrasta con `C3` (mismo modelo, sesion nueva, sin `--session`), que
-completo en 7.7 segundos. La diferencia sugiere que continuar una sesion con
-`--session` tras una edicion externa al archivo puede ser sustancialmente mas
-lento (o quedarse colgado) en este entorno -- dato operativo relevante para
-quien ejecute el corpus real: medir el wall-clock de continuar sesiones antes
-de asumir que es comparable a una sesion nueva.
+**Donde se colgo, y que no se concluye de ahi.** El log de OpenCode muestra
+que ese proceso se detuvo en el mismo punto que `C1`: su ultima linea es
+`init`, sin `created`/`event connected`/`loop`/`stream`, o sea antes de
+adjuntarse a la sesion y antes de cualquier llamada al proveedor; la sesion de
+`C3` no registro ningun mensaje nuevo (su ultima actualizacion sigue siendo la
+de `C3`). Como `C1` era una sesion nueva, sin `--session` y sin edicion
+previa, y se colgo igual, **este piloto no puede atribuir el cuelgue a
+continuar sesion ni a la edicion**. Lo unico que la evidencia sostiene es que
+dos de las cuatro invocaciones de `opencode run` de este piloto se colgaron en
+el arranque, en el mismo punto, mientras las otras dos completaron en 2.4s y
+7.7s. Ni la latencia de continuar sesion ni la frescura tras editar quedaron
+medidas.
 
 ## Casos, brazos y formato de evidencia (CA-2, CA-3, CA-4)
 
@@ -158,16 +187,19 @@ confirma disponible y funcional -- sino porque correr un caso real exige:
   escribir esa equivalencia es trabajo manual de quien opere el piloto sobre
   el consumidor.
 - Tres repeticiones por caso, contrabalanceo de orden y worktrees limpios: un
-  volumen de ejecucion (18 pares, 36 corridas) muy por encima del turno
-  "activo" de operador de 30 minutos que fija la revision de complejidad del
-  issue, y del alcance de una etapa headless no interactiva.
+  volumen de ejecucion de 9 pares (18 ejecuciones individuales) solo para el
+  brazo OpenCode -- los 18 pares / 36 ejecuciones que cita #976 son el total de
+  los dos runtimes --, muy por encima del turno "activo" de operador de 30
+  minutos que fija la revision de complejidad del issue, y del alcance de una
+  etapa headless no interactiva.
 
 La nota tecnica del issue es explicita en esto: *"La ejecucion y exportacion
 de evidencia desde el consumidor son pasos humanos; el PR de Mefisto solo
 incorpora el reporte sanitizado."* Este documento es ese reporte -- documenta
 que el mecanismo esta listo para usarse, deja la receta de configuracion
 verificada (arriba) y dos limitaciones concretas (CLI de debug no fiable como
-proxy de gate 1, continuar sesion tras editar puede colgarse), pero no fabrica
+proxy de gate 1, arranque de `opencode run` colgado en dos de cuatro
+invocaciones), pero no fabrica
 pares que no se corrieron.
 
 La tabla de evidencia queda con la cabecera comun que #976 fija -- para que
@@ -212,9 +244,13 @@ Este resultado:
 - **Es especifico de este entorno en esta fecha**: OpenCode `1.18.29`, .NET
   SDK `10.0.201`, modelo `openai/gpt-5.4-mini`. Un piloto futuro con otro
   modelo o version de OpenCode reverifica los cuatro gates desde cero.
-- **No es determinista al 100%.** La consulta `C1` (enumerar tools) no
-  completo en el mismo entorno donde `C2` (pregunta cerrada) y `C3` (uso real
-  de la tool) si completaron con evidencia consistente entre si. La
+- **No es determinista al 100%.** Dos de las cuatro invocaciones de
+  `opencode run` (`C1` y la sonda del gate 4) se colgaron en el arranque,
+  antes de crear o adjuntar sesion y antes de llamar al proveedor, en el mismo
+  entorno donde `C2` (pregunta cerrada) y `C3` (uso real de la tool) si
+  completaron con evidencia consistente entre si. Ese cuelgue es del arranque
+  de la CLI, no del mecanismo LSP, pero afecta a quien planifique corridas por
+  lotes. La
   triangulacion entre `C2` y `C3` -- una respuesta declarativa del modelo mas
   una invocacion real con datos semanticos verificables -- es lo que sostiene
   la conclusion de gates 2 y 3, no ninguna de las dos por si sola.
@@ -244,11 +280,13 @@ ausencia de corpus:
 4. Repetir el gate 4 (frescura) **dentro de la ejecucion real de cada
    repeticion del brazo LSP**, no como sonda aislada: cuando el brazo LSP edite
    un archivo con su propia tool `edit`, la siguiente consulta semantica debe
-   reflejar esa edicion antes de aceptarla como valida. Medir tambien el
-   wall-clock de esa continuacion -- este piloto encontro que continuar una
-   sesion con `--session` tras una edicion externa puede tardar mucho mas que
-   una sesion nueva, y esa asimetria de latencia es en si misma un dato del
-   experimento (columna `wall_clock_s`), no solo un problema de tooling.
+   reflejar esa edicion antes de aceptarla como valida (asi la define #976:
+   dentro de una misma ejecucion, no como sonda externa). Prever ademas un
+   limite de tiempo por ejecucion y una politica de reintento: dos de las
+   cuatro invocaciones de este piloto se colgaron en el arranque de
+   `opencode run` sin llegar al proveedor, y una repeticion que se cuelga se
+   marca `no evaluable` y se reemplaza desde un worktree limpio (regla de
+   parada de #976), nunca se rellena con la cifra de otra.
 5. Ejecutar los 3 casos x 3 pares con contrabalanceo de orden y llenar la
    tabla de evidencia con datos reales; exportar las trazas y traerlas
    sanitizadas a este repo en un PR de seguimiento.
@@ -286,6 +324,10 @@ hoy vale para hoy y para este entorno (OpenCode `1.18.29`, .NET SDK
   Claude Code; mismo protocolo, mismo SHA de consumidor, conclusion
   independiente (`no evaluable` por gate de mecanismo ausente, no por corpus
   pendiente).
+- `docs/adr/mef-adr-0052-navegacion-semantica-csharp.md` (issue #981) --
+  sintesis multi-runtime que consume este reporte; se enmienda en el mismo PR
+  que lo incorpora, sin cambiar su conclusion (`evidencia insuficiente` en las
+  seis combinaciones, corpus en cero pares).
 - `docs/testing/opencode-dogfooding.md` (issue #874) -- precedente de reporte
   parcial con evidencia reproducible en vez de datos fabricados cuando una
   certificacion no puede completarse en el entorno disponible.
