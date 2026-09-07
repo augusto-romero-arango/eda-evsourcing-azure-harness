@@ -553,11 +553,19 @@ compone `claude -p` con `--permission-mode bypassPermissions`,
 `--output-format stream-json --verbose`, `--append-system-prompt` (desde
 `--system-file`) y `--model` (solo cuando el runner entrega un valor no
 vacio), y el unico que conoce los nombres de evento de ese CLI (`is_error`,
-`stop_reason`, `subtype`, `num_turns`, `api_error_status`). Su clasificacion
-reproduce el orden de `classify_agent_failure`
-(`.claude/scripts/_mefisto-common.sh`) y su criterio de exito el de
-`agent_stream_completed_successfully`, de modo que la migracion del pipeline
-(#869) no cambia ningun veredicto.
+`stop_reason`, `subtype`, `num_turns`, `api_error_status`, y desde el issue
+#965 `rate_limit_event`/`rate_limit_info`). Su clasificacion reproduce el
+orden de `classify_agent_failure` (`.claude/scripts/_mefisto-common.sh`) y su
+criterio de exito el de `agent_stream_completed_successfully`, de modo que la
+migracion del pipeline (#869) no cambia ningun veredicto. Desde #965, un
+`rate_limit_event{rate_limit_info.status != "allowed"}` en el stream
+clasifica `rate_limit` (con `resets_at` desde `rate_limit_info.resetsAt`) por
+encima de cualquier `api_error`/`stream_cut` posterior, y un
+`api_error_status` 5xx clasifica `provider_unavailable` en vez de
+`api_error` -- forma verificada contra dos issues publicos de Anthropic
+(`anthropics/claude-agent-sdk-python#599`, `anthropics/claude-code#57096`),
+no contra un transcript local (ninguno de los 66 revisados capturaba el
+evento).
 
 Esa paridad ya tiene un consumidor real: desde #906 `run_agent`
 (`src/internal/scripts/mefisto-tooling-pipeline.sh`) traduce con
@@ -587,9 +595,13 @@ adaptador Claude Code condicionan todo lo demas:
 2. **No hay senal propia de exito/fallo** (nada equivalente a `is_error` /
    `subtype` / `stop_reason`), asi que la clasificacion completa depende del
    exit code y del stderr crudo que el runner siempre pasa. Su orden es:
-   exito (exit 0 + texto visible) > `nonzero_exit` > `no_result` (stream
-   vacio) > `protocol_invalid` (linea no-JSON) > `no_result` (exit 0 sin texto
-   visible). `timeout` lo sigue sintetizando el runner.
+   exito (exit 0 + texto visible) > `rate_limit` (exit != 0 con un patron
+   textual CONSERVADOR en stderr -- "429" junto con "rate limit"/"usage
+   limit", issue #965; ningun `--format json` de OpenCode confirma un evento
+   estructurado equivalente a `rate_limit_event` de Claude, asi que
+   `resets_at` queda siempre `null` aqui) > `nonzero_exit` > `no_result`
+   (stream vacio) > `protocol_invalid` (linea no-JSON) > `no_result` (exit 0
+   sin texto visible). `timeout` lo sigue sintetizando el runner.
 3. **No hay evento `result` con el acumulado de la corrida**: cada
    `step_finish` reporta los tokens y el costo de SU paso, asi que el terminal
    los **suma** (quedarse con el ultimo reportaria el costo del cierre como si
@@ -630,7 +642,7 @@ el array `types` del schema):
 | `message` | `ts`, `role`, `text`, `kind?: "text"\|"thinking"` |
 | `tool.started` | `ts`, `tool`, `input_summary\|null` |
 | `tool.completed` | `ts`, `tool`, `ok`, `duration_ms\|null` |
-| `run.completed` / `run.failed` | `status`, `runtime`, `model\|null`, `session_id\|null`, `duration_ms`, `tokens {input\|null, output\|null}`, `cost_usd\|null`, `turns\|null`, `denials\|null`, `ttft_ms\|null`, `api_duration_ms\|null`, `error\|null` |
+| `run.completed` / `run.failed` | `status`, `runtime`, `model\|null`, `session_id\|null`, `duration_ms`, `tokens {input\|null, output\|null}`, `cost_usd\|null`, `turns\|null`, `denials\|null`, `ttft_ms\|null`, `api_duration_ms\|null`, `error\|null`, `resets_at\|null` (opcional, issue #965) |
 
 El vocabulario de `status` de CA-4 esta **partido entre los dos terminales**:
 `run.completed` solo admite `success` y `run.failed` admite `failed`,
@@ -640,14 +652,31 @@ puntuarlo, y un gate que leyera solo `.type` y otro que leyera solo `.status`
 llegarian a veredictos distintos sobre la misma corrida.
 
 `error`, cuando no es `null`, es `{kind, detail}` con `kind` en
-`timeout`/`killed`/`api_error`/`stream_cut`/`nonzero_exit`/`no_result`/
-`protocol_invalid`. Ningun campo lleva un nombre propio de Claude Code
-(`is_error`, `stop_reason`, `subtype`, `num_turns`); campos no disponibles
-son siempre `null`, nunca un cero fabricado (MEF-ADR-0049 CA-1) -- `duration_ms`
-de un evento terminal es la unica excepcion aparente: el runner SIEMPRE lo
-sobreescribe con el tiempo real medido alrededor de la invocacion completa
-(el unico reloj de pared que existe fuera del proceso del adaptador), nunca
-con un placeholder.
+`timeout`/`killed`/`api_error`/`rate_limit`/`provider_unavailable`/
+`stream_cut`/`nonzero_exit`/`no_result`/`protocol_invalid`. Ningun campo
+lleva un nombre propio de Claude Code (`is_error`, `stop_reason`, `subtype`,
+`num_turns`); campos no disponibles son siempre `null`, nunca un cero
+fabricado (MEF-ADR-0049 CA-1) -- `duration_ms` de un evento terminal es la
+unica excepcion aparente: el runner SIEMPRE lo sobreescribe con el tiempo
+real medido alrededor de la invocacion completa (el unico reloj de pared que
+existe fuera del proceso del adaptador), nunca con un placeholder.
+
+`rate_limit` (ventana de uso agotada) y `provider_unavailable` (5xx/522/529
+del proveedor, antes indistinguible de un 4xx bajo el mismo `api_error`) son
+del issue #965: MEF-ADR-0050 pide que la deteccion del limite viva detras
+del adaptador de cada runtime, nunca en el pipeline, asi que ambos splits
+(rate_limit vs. api_error, y provider_unavailable vs. api_error) los decide
+`runtime-claude.jq`/`runtime-opencode.jq` al construir el terminal --
+`classify_agent_failure` (`.claude/scripts/_mefisto-common.sh`) ya no grepea
+`error.detail` para partirlos, solo traduce `error.kind` 1:1 a su etiqueta.
+`resets_at` (string ISO 8601 o `null`, campo opcional) acompana a `error`
+cuando `kind` es `rate_limit`: el momento en que el runtime informa que se
+levanta el limite, para que una politica de espera (hold, todavia no
+implementada) pueda dormir hasta esa hora en vez de sondear a ciegas.
+Claude Code lo puebla desde `rate_limit_info.resetsAt` de su propio
+`rate_limit_event` (ver "Interfaz de adaptador" mas abajo); OpenCode no
+expone ningun campo estructurado equivalente, asi que ahi `resets_at` es
+siempre `null`.
 
 **`run-events.schema.json` no usa `oneOf`** para dispatchar por `type`: el
 `oneOf` de `jsonschema-lite.jq` (#853) esta fijado al discriminador `kind`
@@ -725,6 +754,11 @@ requerido ausente; `type` fuera de `types`; `run.completed` declarando un
 `.claude/scripts/tests/test-mefisto-run-agent.sh` corre el runner
 real contra cada guion de `runtime-fake.sh` y valida ambas dimensiones a la
 vez sobre su propia salida.
+
+`valid-rate-limit-claude.jsonl` y `valid-rate-limit-opencode.jsonl` (issue
+#965) son el terminal de un agotamiento de ventana de uso, uno por runtime:
+`error.kind:"rate_limit"` con `resets_at` poblado (Claude, desde
+`rate_limit_info.resetsAt`) o `null` (OpenCode, que no expone ese campo).
 
 ## Abrir Mefisto con OpenCode (issue #868)
 

@@ -1169,19 +1169,21 @@ agent_events_error_field() {
 #
 # `error.kind` del terminal, o cadena vacia. Lo consumen
 # agent_failure_is_unrecoverable (que solo mira si vale "stream_cut") y
-# classify_agent_failure (que ademas necesita el detalle para distinguir 5xx
-# de 4xx dentro de "api_error", ver agent_events_error_detail).
+# classify_agent_failure, que desde el issue #965 traduce el vocabulario
+# COMPLETO de `error.kind` (incluidos "rate_limit" y "provider_unavailable")
+# directo a su etiqueta -- ya no necesita `agent_events_error_detail` para
+# partir 5xx de 4xx, porque esa distincion la hace ahora el adaptador
+# (runtime-claude.jq/runtime-opencode.jq), no un grep sobre el detalle.
 agent_events_error_kind() {
     agent_events_error_field "${1:-}" kind
 }
 
 # agent_events_error_detail <events_file>
 #
-# `error.detail` del terminal, o cadena vacia. Solo lo consulta
-# classify_agent_failure cuando el kind ya es "api_error": el status HTTP no
-# es un campo propio del contrato neutral, viaja dentro del detalle con el
-# prefijo canonico "API Error: <status>" que el adaptador ya normaliza
-# (runtime-claude.jq).
+# `error.detail` del terminal, o cadena vacia. classify_agent_failure ya no
+# la consulta (issue #965: el split 5xx/4xx vive en el adaptador), pero sigue
+# siendo la interfaz para cualquier consumidor que quiera el texto crudo del
+# fallo (p. ej. un mensaje de log) sin reinventar el acceso al terminal.
 agent_events_error_detail() {
     agent_events_error_field "${1:-}" detail
 }
@@ -1207,7 +1209,17 @@ agent_events_error_detail() {
 #     atajo has_work que un CLI_ERROR). El corte de stream a mitad de
 #     respuesta fue el incidente de #416 -- el reviewer murio con `API Error:
 #     Connection closed mid-response` a los 882s y el pipeline abrio igual el
-#     PR #421 con una revision truncada a mitad de frase.
+#     PR #421 con una revision truncada a mitad de frase. Un STREAM_CUT que
+#     de verdad viene de una ventana de uso agotada ya no llega aqui como
+#     "stream_cut": el adaptador lo clasifica "rate_limit" antes (issue #965,
+#     ver runtime-claude.jq), asi que un STREAM_CUT que SI cae en esta
+#     funcion es, por construccion, uno sin senal de limite -- conserva
+#     exactamente el trato de #416. `rate_limit`/`provider_unavailable` (los
+#     dos kinds nuevos de #965) NO estan en la lista de arriba a proposito:
+#     ninguno es un fallo a mitad de vuelo indistinguible de trabajo util,
+#     asi que ambos caen al default recuperable de esta funcion, dejando a
+#     `classify_agent_failure`/`agent_failure_is_retryable` decidir si
+#     conviene reintentar.
 #
 # EXCEPCION (PR #446): si el terminal del stage declara exito
 # (agent_stream_completed_successfully), el CLI ya habia cumplido su
@@ -1243,8 +1255,21 @@ agent_failure_is_unrecoverable() {
 # previas (issue #906 solo cambia la FUENTE -- `error.kind`/`error.detail`
 # del terminal del JSONL neutral en vez de un grep sobre el log): el TIMEOUT
 # del watchdog gana sobre cualquier otro sintoma (es el unico TIMEOUT de
-# verdad), y el match de "API Error: 5" precede al de "API Error: 4" y al
-# `stream_cut` generico -- que es mas amplio y se los tragaria.
+# verdad), y luego una senal (killed) gana sobre cualquier `error.kind`.
+#
+# Desde el issue #965 el mapeo `error.kind` -> <failure_type> es una
+# traduccion DIRECTA (un `case` de una via), sin grep: el split entre
+# "rate_limit"/"provider_unavailable"/"api_error" (antes, un grep sobre
+# `error.detail` buscando "API Error: 5"/"API Error: 4") ya lo hizo el
+# adaptador (runtime-claude.jq/runtime-opencode.jq) al construir el
+# terminal, que es quien de verdad conoce el payload del CLI (MEF-ADR-0050:
+# el pipeline consume `error.kind`, nunca texto de un runtime concreto).
+# PROVIDER_UNAVAILABLE es el reemplazo 1:1 de la vieja etiqueta
+# API_ERROR_SERVER (5xx/522/529, misma semantica de reintentable -- ver
+# agent_failure_is_retryable); RATE_LIMIT es nueva (ventana de uso agotada,
+# 429 con `rate_limit_event`, issue #965) y API_ERROR_CLIENT conserva su
+# nombre y su alcance (un 4xx que YA no incluye 429 de limite, porque ese
+# ahora es RATE_LIMIT antes de llegar aqui).
 classify_agent_failure() {
     local timed_out="$1" exit_code="$2" elapsed="$3" events_file="$4"
 
@@ -1265,50 +1290,61 @@ classify_agent_failure() {
     local error_kind
     error_kind="$(agent_events_error_kind "$events_file")"
 
-    if [ "$error_kind" = "api_error" ]; then
-        local error_detail
-        error_detail="$(agent_events_error_detail "$events_file")"
-        if printf '%s' "$error_detail" | grep -q "API Error: 5"; then
-            echo "API_ERROR_SERVER (exit $exit_code)"
-        elif printf '%s' "$error_detail" | grep -q "API Error: 4"; then
+    case "$error_kind" in
+        rate_limit)
+            echo "RATE_LIMIT (exit $exit_code)"
+            ;;
+        provider_unavailable)
+            echo "PROVIDER_UNAVAILABLE (exit $exit_code)"
+            ;;
+        api_error)
             echo "API_ERROR_CLIENT (exit $exit_code)"
-        else
+            ;;
+        stream_cut)
+            echo "STREAM_CUT (exit $exit_code)"
+            ;;
+        *)
             echo "CLI_ERROR (exit $exit_code)"
-        fi
-    elif [ "$error_kind" = "stream_cut" ]; then
-        echo "STREAM_CUT (exit $exit_code)"
-    else
-        echo "CLI_ERROR (exit $exit_code)"
-    fi
+            ;;
+    esac
 }
 
 # agent_failure_is_retryable <failure_type>
 #
 # Retorna 0 si <failure_type> describe un fallo TRANSITORIO del lado del
-# servidor -- el unico que vale la pena reintentar tal cual (issue #534);
-# 1 en cualquier otro caso.
+# servidor -- el unico que vale la pena reintentar tal cual, con el backoff
+# corto de este mismo intento de stage (issue #534); 1 en cualquier otro
+# caso.
 #
-# Solo califica API_ERROR_SERVER. La evidencia que motiva el reintento: el
+# Solo califica PROVIDER_UNAVAILABLE (issue #965: reemplaza 1:1 a la vieja
+# etiqueta API_ERROR_SERVER, mismo criterio y misma evidencia -- el
 # 2026-08-05, 6 de 10 intentos de stage murieron con 522/529 de
 # api.anthropic.com, y el payload del 522 declara literalmente
-# `"retryable": true, "retry_after": 120`.
+# `"retryable": true, "retry_after": 120`).
 #
 # Los demas tipos quedan fuera a proposito, y el default es NO reintentar:
 #   - TIMEOUT: el agente estuvo media hora colgado. Reintentar paga otra media
 #     hora por el mismo desenlace.
 #   - API_ERROR_CLIENT (4xx): un 400/401/413 no se arregla repitiendo la misma
 #     peticion; hace falta cambiar la peticion.
+#   - RATE_LIMIT (issue #965): una ventana de uso de 5h agotada no se arregla
+#     con el backoff de segundos de este reintento -- hace falta esperar
+#     hasta `resets_at`, que es la politica de espera (hold) que este issue
+#     deja preparada pero NO implementa todavia (ver notas tecnicas de
+#     #965). Que no sea retryable aqui NO la deja unrecoverable: sigue
+#     pasando por agent_failure_is_unrecoverable como cualquier fallo
+#     ordinario, asi que el trabajo del stage no se descarta sin necesidad.
 #   - SIGNAL_*, STREAM_CUT, CLI_ERROR: causa local o no identificada. Un
 #     reintento a ciegas duplica el gasto sin evidencia de que ayude.
 #
 # La comparacion es por prefijo porque classify_agent_failure adjunta el exit
-# code a la etiqueta ("API_ERROR_SERVER (exit 1)").
+# code a la etiqueta ("PROVIDER_UNAVAILABLE (exit 1)").
 agent_failure_is_retryable() {
     local failure_type="${1:-}"
 
     case "$failure_type" in
-        API_ERROR_SERVER*) return 0 ;;
-        *)                 return 1 ;;
+        PROVIDER_UNAVAILABLE*) return 0 ;;
+        *)                     return 1 ;;
     esac
 }
 

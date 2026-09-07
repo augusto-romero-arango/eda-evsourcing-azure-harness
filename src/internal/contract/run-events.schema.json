@@ -84,11 +84,12 @@
           "$comment": "Normalmente null. Un objeto {kind, detail} aqui NO contradice el status 'success': documenta una muerte POSTERIOR a que el runtime declarara cumplido su contrato (senal, exit distinto de cero) -- la excepcion que el PR #446 ya reconoce en el pipeline y que no invalida el trabajo hecho. Sin 'type' a proposito: null y objeto conviven en el mismo campo.",
           "required": ["kind", "detail"],
           "properties": {
-            "kind": { "type": "string", "enum": ["timeout", "killed", "api_error", "stream_cut", "nonzero_exit", "no_result", "protocol_invalid"] },
+            "kind": { "type": "string", "enum": ["timeout", "killed", "api_error", "rate_limit", "provider_unavailable", "stream_cut", "nonzero_exit", "no_result", "protocol_invalid"] },
             "detail": { "type": "string" }
           },
           "additionalProperties": false
-        }
+        },
+        "resets_at": { "$comment": "string ISO 8601 o null (issue #965). Momento en que el runtime informa que se levanta el limite de la ventana de uso -- solo tiene sentido junto a error.kind:'rate_limit'; null cuando el runtime no lo informa (incluida cualquier otra clasificacion). Campo OPCIONAL a proposito (fuera de 'required'): asi un adaptador que no lo sepa poblar, o un fixture escrito antes de este issue, sigue siendo valido sin tener que agregarlo con null." }
       },
       "additionalProperties": false
     },
@@ -121,11 +122,12 @@
         "error": {
           "required": ["kind", "detail"],
           "properties": {
-            "kind": { "type": "string", "enum": ["timeout", "killed", "api_error", "stream_cut", "nonzero_exit", "no_result", "protocol_invalid"] },
+            "kind": { "type": "string", "enum": ["timeout", "killed", "api_error", "rate_limit", "provider_unavailable", "stream_cut", "nonzero_exit", "no_result", "protocol_invalid"] },
             "detail": { "type": "string" }
           },
           "additionalProperties": false
-        }
+        },
+        "resets_at": { "$comment": "string ISO 8601 o null (issue #965). Ver el mismo campo en 'run.completed' -- valido aqui por identico motivo." }
       },
       "additionalProperties": false
     }
