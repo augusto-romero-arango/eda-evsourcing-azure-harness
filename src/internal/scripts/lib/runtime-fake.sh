@@ -161,6 +161,7 @@ _runtime_fake_emit_main() {
     # --fake-resume llego con el id esperado) lo vuelca aqui, ANTES de
     # descartar ningun token.
     if [ -n "${MEFISTO_FAKE_ARGS_FILE:-}" ]; then
+        local a
         : > "$MEFISTO_FAKE_ARGS_FILE"
         for a in "$@"; do
             printf '%s\n' "$a" >> "$MEFISTO_FAKE_ARGS_FILE"
@@ -172,11 +173,15 @@ _runtime_fake_emit_main() {
     shift || true # prompt_file
     shift || true # system_file
 
-    local fake_model="" fake_resume=""
+    local fake_model=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --fake-model) fake_model="${2:-}"; shift 2 ;;
-            --fake-resume) fake_resume="${2:-}"; shift 2 ;;
+            # --fake-resume se CONSUME sin guardarse: ningun guion del fake
+            # cambia por reanudar (no modela una sesion con memoria), y lo
+            # unico que un test comprueba de el es que llego al argv -- eso
+            # ya quedo volcado en MEFISTO_FAKE_ARGS_FILE mas arriba.
+            --fake-resume) shift 2 ;;
             *) shift ;;
         esac
     done

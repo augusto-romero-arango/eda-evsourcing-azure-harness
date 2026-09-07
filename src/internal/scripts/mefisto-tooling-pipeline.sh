@@ -43,14 +43,6 @@ source "$SCRIPT_DIR/lib/mefisto-runtime.sh"
 source "$SCRIPT_DIR/lib/mefisto-models.sh"
 source "$SCRIPT_DIR/lib/adapter-claude.sh"
 source "$SCRIPT_DIR/lib/adapter-opencode.sh"
-# runtime-claude.sh/runtime-opencode.sh (issue #968): sourceados aqui solo
-# por runtime_<id>_supports_resume -- build_cmd/translate de estos dos
-# archivos los sigue invocando exclusivamente mefisto-run-agent.sh, un
-# proceso aparte (#910). Mismo criterio que adapter-claude.sh/adapter-
-# opencode.sh arriba: se sourcean los DOS sin saber todavia cual resolvera
-# mefisto_resolve_runtime mas abajo.
-source "$SCRIPT_DIR/lib/runtime-claude.sh"
-source "$SCRIPT_DIR/lib/runtime-opencode.sh"
 
 # Version y SHA del propio plugin que corre esta corrida (issue #662),
 # calculados UNA sola vez aqui -- ANTES de crear el worktree del issue, sobre
@@ -109,11 +101,17 @@ AGENT_RV_METRICS_JSON=""
 # entro en hold. Se cosecha en los mismos puntos que AGENT_*_DUR (CA-6).
 AGENT_WR_HOLD_SECONDS=0
 AGENT_RV_HOLD_SECONDS=0
+# Si el stage reanudo al menos una sesion truncada tras un hold (issue #968,
+# CA-6) -- se cosecha en los mismos puntos que AGENT_*_HOLD_SECONDS y viaja
+# al cuerpo del PR, que es el resumen del stage que SOBREVIVE al worktree.
+AGENT_WR_RESUMED=false
+AGENT_RV_RESUMED=false
 PIPELINE_PR=""
 PIPELINE_ERROR=""
 LAST_AGENT_DURATION=0
 LAST_AGENT_METRICS_JSON=""
 LAST_AGENT_HOLD_SECONDS=0
+LAST_AGENT_RESUMED=false
 CURRENT_STAGE="setup"
 
 _strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
@@ -529,19 +527,35 @@ collect_summary() {
 
 # runtime_supports_resume <runtime-id> (issue #968, CA-4 caso b)
 #
-# 0 si el adaptador de <runtime-id> (ya sourceado arriba) expone
-# runtime_<id>_supports_resume y esa funcion retorna 0; 1 en cualquier otro
-# caso -- incluida la ausencia de la funcion, que es el default SEGURO para
-# un runtime futuro que todavia no la implemente (MEF-ADR-0050: un runtime
-# sin soporte de reanudacion degrada la operacion, nunca la rompe). Mismo
-# patron de dispatch por nombre que _mefisto_models_adapter_default
-# (mefisto-models.sh): `command -v` antes de invocar, para no reventar bajo
-# `set -u`/`set -e` si el adaptador resuelto no define la funcion.
+# 0 si el adaptador de <runtime-id> expone runtime_<id>_supports_resume y esa
+# funcion retorna 0; 1 en cualquier otro caso -- adaptador inexistente,
+# funcion ausente, o funcion que responde "no". Esa es la degradacion segura
+# que pide MEF-ADR-0050: un runtime sin soporte de reanudacion degrada la
+# operacion (stage desde cero), nunca la rompe.
+#
+# El adaptador se DESCUBRE, no se enumera: la ruta sale de
+# $MEFISTO_RUNTIME_LIB_DIR (el mismo seam overridable que usa
+# mefisto_resolve_runtime en mefisto-runtime.sh), asi que un runtime nuevo
+# queda cubierto con solo aportar su lib -- este pipeline nunca nombra
+# `runtime-claude.sh` ni `runtime-opencode.sh` (MEF-ADR-0049: ningun pipeline
+# nombra un runtime concreto; MEF-ADR-0050: el conjunto de runtimes
+# soportados es abierto).
+#
+# La carga va en un SUBSHELL a proposito: lo unico que este pipeline necesita
+# del adaptador es esta capability, y sourcearlo en su propio namespace
+# importaria tambien runtime_<id>_build_cmd/_translate -- que son
+# competencia exclusiva de mefisto-run-agent.sh, un proceso aparte (#910).
 runtime_supports_resume() {
-    local runtime="$1" fn
-    fn="runtime_${runtime}_supports_resume"
-    command -v "$fn" >/dev/null 2>&1 || return 1
-    "$fn"
+    local runtime="$1"
+    local lib="${MEFISTO_RUNTIME_LIB_DIR:-$SCRIPT_DIR/lib}/runtime-${runtime}.sh"
+    [ -f "$lib" ] || return 1
+    (
+        # shellcheck source=/dev/null
+        source "$lib" >/dev/null 2>&1 || exit 1
+        fn="runtime_${runtime}_supports_resume"
+        command -v "$fn" >/dev/null 2>&1 || exit 1
+        "$fn"
+    )
 }
 
 # --- Funcion auxiliar para invocar agentes ---
@@ -956,6 +970,7 @@ CONTEXTO DE EJECUCION (sigue vigente): modo no-interactivo, sin humano al otro l
     LAST_AGENT_DURATION=$total_elapsed
     LAST_AGENT_METRICS_JSON="$metrics_json"
     LAST_AGENT_HOLD_SECONDS=$HOLD_TOTAL_SECONDS
+    LAST_AGENT_RESUMED=$RESUMED_ANY
     if [ "$HOLD_TOTAL_SECONDS" -gt 0 ]; then
         # CA-6: un stage que se recupera tras esperar termina como exito
         # normal -- esta linea es la unica diferencia visible, y es lo que
@@ -1134,6 +1149,7 @@ Instrucciones:
     AGENT_WR_DUR=$LAST_AGENT_DURATION
     AGENT_WR_METRICS_JSON=$LAST_AGENT_METRICS_JSON
     AGENT_WR_HOLD_SECONDS=$LAST_AGENT_HOLD_SECONDS
+    AGENT_WR_RESUMED=$LAST_AGENT_RESUMED
     AGENT_WR_RES="passed"
     update_status "1-writer" "passed"
     success "Stage 1 completado"
@@ -1202,6 +1218,7 @@ Instrucciones:
     AGENT_RV_DUR=$LAST_AGENT_DURATION
     AGENT_RV_METRICS_JSON=$LAST_AGENT_METRICS_JSON
     AGENT_RV_HOLD_SECONDS=$LAST_AGENT_HOLD_SECONDS
+    AGENT_RV_RESUMED=$LAST_AGENT_RESUMED
     AGENT_RV_RES="passed"
     update_status "2-reviewer" "passed"
     success "Stage 2 completado"
@@ -1302,11 +1319,28 @@ else
         _fmt_dur() { local s="${1:-0}"; echo "$((s/60))m $((s%60))s"; }
         WR_DUR_FMT=$(_fmt_dur "${AGENT_WR_DUR:-0}")
         RV_DUR_FMT=$(_fmt_dur "${AGENT_RV_DUR:-0}")
-        # CA-6 (#967): cuanto de esa duracion fue espera (hold), no trabajo.
-        WR_HOLD_NOTE=""
-        [ "${AGENT_WR_HOLD_SECONDS:-0}" -gt 0 ] && WR_HOLD_NOTE=" (incluye $(_fmt_dur "$AGENT_WR_HOLD_SECONDS") en espera/hold)"
-        RV_HOLD_NOTE=""
-        [ "${AGENT_RV_HOLD_SECONDS:-0}" -gt 0 ] && RV_HOLD_NOTE=" (incluye $(_fmt_dur "$AGENT_RV_HOLD_SECONDS") en espera/hold)"
+        # CA-6 (#967): cuanto de esa duracion fue espera (hold), no trabajo,
+        # y CA-6 (#968): si esa espera termino REANUDANDO la sesion truncada
+        # en vez de repetir el stage desde cero. events.log registra las dos
+        # cosas, pero muere con el worktree: el cuerpo del PR es el unico
+        # resumen del stage que le queda a un post-mortem para distinguir un
+        # stage limpio de uno esperado/reanudado.
+        _hold_note() {
+            local secs="${1:-0}" resumed="${2:-false}" parts=""
+            [ "$secs" -gt 0 ] && parts="incluye $(_fmt_dur "$secs") en espera/hold"
+            if [ "$resumed" = true ]; then
+                [ -n "$parts" ] && parts="$parts; "
+                parts="${parts}reanudo la sesion truncada"
+            fi
+            # `return 0` explicito: sin el, un stage SIN nota (el caso comun)
+            # dejaria el ultimo `[ -n ... ]` en falso y la asignacion
+            # `WR_HOLD_NOTE=$(_hold_note ...)` heredaria ese exit != 0 --
+            # bajo `set -e` eso mata el pipeline justo antes de crear el PR.
+            [ -n "$parts" ] && echo " ($parts)"
+            return 0
+        }
+        WR_HOLD_NOTE=$(_hold_note "${AGENT_WR_HOLD_SECONDS:-0}" "${AGENT_WR_RESUMED:-false}")
+        RV_HOLD_NOTE=$(_hold_note "${AGENT_RV_HOLD_SECONDS:-0}" "${AGENT_RV_RESUMED:-false}")
 
         PR_URL=$(gh pr create \
             --title "$ISSUE_TITLE" \

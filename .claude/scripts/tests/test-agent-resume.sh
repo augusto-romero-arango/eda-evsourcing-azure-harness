@@ -16,6 +16,9 @@
 #
 # Casos cubiertos:
 #   [pre] las funciones nuevas estan definidas
+#   [pre-2] runtime_supports_resume DESCUBRE el adaptador en
+#         $MEFISTO_RUNTIME_LIB_DIR (no enumera runtimes por nombre) y degrada
+#         a "sin soporte" si falta la lib o la capability
 #   [A]   agent_events_session_id: lee `session_id` del terminal, cadena
 #         vacia cuando falta/es null
 #   [B]   CA-3: tras un hold, el intento siguiente reanuda -- --resume-session
@@ -59,6 +62,24 @@ TMP=$(mktemp -d)
 cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT
 
+# make_runtime_lib <dir> <yes|no> -- escribe en <dir> un runtime-claude.sh de
+# prueba. Con "yes" define runtime_claude_supports_resume; con "no" lo omite
+# a proposito (el caso del adaptador de un runtime que todavia no implemento
+# la capability). Es el seam que documenta el contrato: el pipeline DESCUBRE
+# el adaptador en $MEFISTO_RUNTIME_LIB_DIR -- no enumera runtimes por nombre
+# (MEF-ADR-0049/0050) -- asi que un test lo apunta a un directorio temporal
+# con adaptadores de prueba en vez de redefinir funciones a mano.
+make_runtime_lib() {
+    local dir="$1" supports="$2"
+    mkdir -p "$dir"
+    {
+        echo '#!/usr/bin/env bash'
+        echo 'runtime_claude_build_cmd() { MEFISTO_RUNTIME_CMD=(true); }'
+        echo 'runtime_claude_translate() { :; }'
+        [ "$supports" = "yes" ] && echo 'runtime_claude_supports_resume() { return 0; }'
+    } > "$dir/runtime-claude.sh"
+}
+
 # -------- Bloque pre --------
 
 echo "[pre] Las funciones nuevas estan definidas"
@@ -82,6 +103,42 @@ if declare -F run_agent >/dev/null; then
     pass "run_agent extraida de mefisto-tooling-pipeline.sh"
 else
     fail "run_agent NO se pudo extraer"
+fi
+
+# -------- Bloque pre-2: runtime_supports_resume DESCUBRE el adaptador --------
+#
+# MEF-ADR-0049/0050: el pipeline no enumera runtimes por nombre -- resuelve
+# "$MEFISTO_RUNTIME_LIB_DIR/runtime-<id>.sh". Un runtime nuevo queda cubierto
+# con solo aportar su lib, y uno sin lib (o sin la capability) degrada a
+# "sin soporte" en vez de romper.
+echo ""
+echo "[pre-2] runtime_supports_resume resuelve el adaptador por \$MEFISTO_RUNTIME_LIB_DIR"
+make_runtime_lib "$TMP/pre-yes" yes
+make_runtime_lib "$TMP/pre-no" no
+
+MEFISTO_RUNTIME_LIB_DIR="$TMP/pre-yes"
+if runtime_supports_resume claude; then
+    pass "pre-2a: lib con la capability -> soportado"
+else
+    fail "pre-2a: la lib define runtime_claude_supports_resume y no se detecto"
+fi
+if runtime_supports_resume runtime-inexistente; then
+    fail "pre-2b: un runtime sin lib deberia degradar a no soportado"
+else
+    pass "pre-2b: runtime sin lib -> no soportado, sin romper (conjunto abierto)"
+fi
+
+MEFISTO_RUNTIME_LIB_DIR="$TMP/pre-no"
+if runtime_supports_resume claude; then
+    fail "pre-2c: lib SIN la capability deberia degradar a no soportado"
+else
+    pass "pre-2c: lib sin la capability -> no soportado (MEF-ADR-0050)"
+fi
+
+if ! declare -F runtime_claude_build_cmd >/dev/null 2>&1; then
+    pass "pre-2d: consultar la capability NO importo runtime_claude_build_cmd al namespace del caller"
+else
+    fail "pre-2d: runtime_claude_build_cmd se filtro al namespace del caller (deberia cargarse en un subshell)"
 fi
 
 # -------- Bloque A: agent_events_session_id --------
@@ -137,7 +194,12 @@ setup_run_agent_env() {
     MODEL_WRITER=""
     MODEL_REVIEWER=""
 
-    unset -f runtime_claude_supports_resume 2>/dev/null
+    # El adaptador de prueba vive en un directorio propio por bloque: asi el
+    # test ejercita el DESCUBRIMIENTO real de runtime_supports_resume, no una
+    # funcion inyectada en su namespace.
+    MEFISTO_RUNTIME_LIB_DIR="$TMP/rt-lib-$RANDOM-$RANDOM"
+    export MEFISTO_RUNTIME_LIB_DIR
+    make_runtime_lib "$MEFISTO_RUNTIME_LIB_DIR" yes
 
     # Reintento corto de #534 fuera de juego, igual que test-agent-hold.sh:
     # este archivo prueba la reanudacion sobre el hold, no el backoff corto.
@@ -226,7 +288,6 @@ echo "[B] CA-3: tras un hold, el intento siguiente reanuda la sesion muerta"
 
 WT_B=$(new_wt)
 setup_run_agent_env "$WT_B"
-runtime_claude_supports_resume() { return 0; }
 
 EVENTS_B1="$TMP/events-b1.jsonl"
 write_rate_limit_event "$EVENTS_B1" "sess-b1"
@@ -285,6 +346,12 @@ else
     fail "B-7 (CA-6): falta la linea de cierre que distingue un stage reanudado de uno limpio"
 fi
 
+if [ "${LAST_AGENT_RESUMED:-}" = true ]; then
+    pass "B-8 (CA-6): LAST_AGENT_RESUMED=true -- la constancia llega al resumen del stage que va al cuerpo del PR (sobrevive al worktree, a diferencia de events.log)"
+else
+    fail "B-8 (CA-6): LAST_AGENT_RESUMED deberia ser true, fue '${LAST_AGENT_RESUMED:-<unset>}'"
+fi
+
 # -------- Bloque C: CA-4 caso (a), sin session_id --------
 
 echo ""
@@ -292,7 +359,6 @@ echo "[C] CA-4 caso (a): terminal sin session_id -- reintenta sin reanudar"
 
 WT_C=$(new_wt)
 setup_run_agent_env "$WT_C"
-runtime_claude_supports_resume() { return 0; }
 
 EVENTS_C1="$TMP/events-c1.jsonl"
 write_rate_limit_event "$EVENTS_C1" ""
@@ -318,6 +384,12 @@ else
     fail "C-2: events.log no nombra el caso (a) esperado"
 fi
 
+if [ "${LAST_AGENT_RESUMED:-}" = false ]; then
+    pass "C-3 (CA-6): LAST_AGENT_RESUMED=false -- un stage degradado no se reporta como reanudado"
+else
+    fail "C-3 (CA-6): LAST_AGENT_RESUMED deberia ser false, fue '${LAST_AGENT_RESUMED:-<unset>}'"
+fi
+
 # -------- Bloque D: CA-4 caso (b), runtime sin soporte --------
 
 echo ""
@@ -325,9 +397,11 @@ echo "[D] CA-4 caso (b): runtime sin runtime_<id>_supports_resume -- reintenta s
 
 WT_D=$(new_wt)
 setup_run_agent_env "$WT_D"
-# A proposito: runtime_claude_supports_resume NO se define en este bloque
-# (setup_run_agent_env ya la deja unset) -- runtime_supports_resume degrada
-# a "sin soporte" cuando la funcion del adaptador no existe (MEF-ADR-0050).
+# A proposito: el adaptador de prueba de este bloque NO define
+# runtime_claude_supports_resume -- runtime_supports_resume degrada a "sin
+# soporte" cuando la capability falta en la lib del runtime activo
+# (MEF-ADR-0050).
+make_runtime_lib "$MEFISTO_RUNTIME_LIB_DIR" no
 
 EVENTS_D1="$TMP/events-d1.jsonl"
 write_rate_limit_event "$EVENTS_D1" "sess-d1"
@@ -360,7 +434,6 @@ echo "[E] CA-4 caso (c): la sesion reanudada muere de nuevo sin dejar el resumen
 
 WT_E=$(new_wt)
 setup_run_agent_env "$WT_E"
-runtime_claude_supports_resume() { return 0; }
 
 EVENTS_E1="$TMP/events-e1.jsonl"; write_rate_limit_event "$EVENTS_E1" "sess-e1"
 EVENTS_E2="$TMP/events-e2.jsonl"; write_rate_limit_event "$EVENTS_E2" "sess-e2"
@@ -412,7 +485,6 @@ WT_F=$(new_wt)
 setup_run_agent_env "$WT_F"
 export MEFISTO_HOLD_MAX_SECONDS=1
 export MEFISTO_HOLD_PROBE_SECONDS=1
-runtime_claude_supports_resume() { return 0; }
 
 EVENTS_F1="$TMP/events-f1.jsonl"; write_rate_limit_event "$EVENTS_F1" "sess-f1"
 

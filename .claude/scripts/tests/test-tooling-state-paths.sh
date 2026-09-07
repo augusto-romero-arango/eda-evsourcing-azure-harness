@@ -247,15 +247,9 @@ EOF
     # mefisto-tooling-pipeline.sh ya no invoca `claude -p` directo -- lanza
     # mefisto-run-agent.sh, que resuelve runtime/modelo con estas libs. Sin
     # copiarlas, la corrida real del bloque G aborta con "No such file or
-    # directory" antes de escribir un solo archivo de estado. runtime-
-    # opencode.sh/.jq se suman por el mismo motivo desde el issue #968: el
-    # pipeline sourcea los DOS adaptadores de runtime para poder consultar
-    # runtime_<id>_supports_resume sin saber de antemano cual resolvio
-    # mefisto_resolve_runtime.
+    # directory" antes de escribir un solo archivo de estado.
     cp "$REPO_ROOT/src/internal/scripts/lib/runtime-claude.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/runtime-claude.sh"
     cp "$REPO_ROOT/src/internal/scripts/lib/runtime-claude.jq" "$FAKE_MEFISTO/src/internal/scripts/lib/runtime-claude.jq"
-    cp "$REPO_ROOT/src/internal/scripts/lib/runtime-opencode.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/runtime-opencode.sh"
-    cp "$REPO_ROOT/src/internal/scripts/lib/runtime-opencode.jq" "$FAKE_MEFISTO/src/internal/scripts/lib/runtime-opencode.jq"
     cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-runtime.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-runtime.sh"
     cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-models.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-models.sh"
     cp "$REPO_ROOT/src/internal/scripts/lib/adapter-claude.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/adapter-claude.sh"

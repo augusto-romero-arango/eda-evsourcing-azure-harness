@@ -542,7 +542,7 @@ implementa:
 |---|---|
 | `runtime_<id>_build_cmd <agent> <cwd> <prompt_file> <model> <system_file> [<resume_session_id>]` | Rellena el array global `MEFISTO_RUNTIME_CMD` con el argv completo a invocar via `run_agent_with_watchdog`, **sin `eval`**. `<model>`/`<system_file>` pueden llegar vacios; el adaptador decide si eso omite un flag o usa un valor propio (permisos como `--permission-mode bypassPermissions` / `--auto` son responsabilidad de esta funcion, no del runner). `<resume_session_id>` (issue #968) es el ultimo argumento, opcional para el adaptador y opaco para el runner: vacio/ausente omite cualquier flag de reanudacion (comportamiento identico a antes de #968); no vacio lo traduce a su propio flag (`--resume` en Claude Code, `--session` en OpenCode). |
 | `runtime_<id>_translate <raw_file> <runtime_id> <model> [<exit_code>] [<stderr_file>]` | Imprime por stdout, una linea JSON por evento, el JSONL neutral (`message`/`tool.*`/terminal) derivado de `<raw_file>`. **Nunca emite `run.started`** -- eso lo hace el runner directo, porque no depende de ningun dato especifico del adaptador. Los dos ultimos argumentos son **opcionales para el adaptador** (ignorarlos es una implementacion valida -- `runtime-fake.sh` lo hace) pero el runner **siempre los pasa**: sin el exit code y el stderr crudo no hay forma de clasificar una muerte por senal (`killed`, exit 137/143) ni el `API Error: <status>` que un CLI escribe solo por stderr (los dos canales siguen separados, #425), y el adaptador tendria que devolver `no_result` para desenlaces que si son distinguibles. |
-| `runtime_<id>_supports_resume` (issue #968, sin argumentos) | 0 si el adaptador soporta reanudacion de sesion, 1 si no. El runner **no** la consulta -- reenvia `--resume-session` sin condicion, siempre via `build_cmd`. Es el CALLER (`mefisto-tooling-pipeline.sh`, via `runtime_supports_resume`) quien la consulta antes de decidir si vale la pena intentar reanudar. Ausente = 1 (sin soporte): el default seguro para un runtime que todavia no la implemente (MEF-ADR-0050). |
+| `runtime_<id>_supports_resume` (issue #968, sin argumentos) | 0 si el adaptador soporta reanudacion de sesion, 1 si no. El runner **no** la consulta -- reenvia `--resume-session` sin condicion, siempre via `build_cmd`. Es el CALLER (`mefisto-tooling-pipeline.sh`, via `runtime_supports_resume`) quien la consulta antes de decidir si vale la pena gastar un intento en reanudar; para eso **descubre** la lib en `$MEFISTO_RUNTIME_LIB_DIR/runtime-<id>.sh` (el mismo seam que `mefisto_resolve_runtime`, nunca una lista de runtimes escrita a mano) y la carga en un **subshell**, para no importar `build_cmd`/`translate` a su propio namespace -- de esas dos se encarga en exclusiva el runner, que es otro proceso (#910). Ausente = 1 (sin soporte), igual que una lib inexistente: el default seguro para un runtime que todavia no la implemente (MEF-ADR-0050). |
 
 ### Reanudacion de sesion (`--resume-session`, issue #968)
 
@@ -570,6 +570,12 @@ del stage: no se reintenta reanudar con el mismo id una tercera vez, y
 **nunca** se usa `--fork`/`--fork-session` para bifurcar a un id nuevo
 (bifurcar pierde la trazabilidad de todo el stage en un unico transcript).
 
+Ninguno de los tres casos nombra un runtime: (b) sale de
+`runtime_supports_resume`, que resuelve la lib del runtime **activo** por
+`$MEFISTO_RUNTIME_LIB_DIR`. Un runtime nuevo queda cubierto con solo aportar
+su `runtime-<id>.sh` -- si trae la capability reanuda, y si no degrada
+(MEF-ADR-0050: el conjunto de runtimes soportados es abierto).
+
 Cuando SI reanuda, el pipeline nunca reenvia el prompt completo del stage:
 envia un mensaje corto de continuacion ("segui donde quedaste, no reinicies,
 termina tu contrato incluido el resumen") -- reenviar el prompt entero
@@ -578,6 +584,13 @@ arriesga que el agente reinterprete la instruccion como "empeza de nuevo".
 #416) se aplican **sin cambios** al resultado de la sesion reanudada: la
 garantia de calidad que evita un PR con revision truncada a mitad de frase no
 se relaja por reanudar.
+
+La reanudacion deja constancia en dos sitios, y a proposito: la linea
+`[hold][resume]` de `events.log` (detalle por ciclo, muere con el worktree) y
+el resumen del stage en el **cuerpo del PR** -- que es lo que sobrevive a la
+corrida, y lo unico que le queda a un post-mortem para distinguir un stage
+limpio de uno reanudado. Va junto a la nota de espera de #967, en la misma
+linea `<summary>` del stage.
 
 `lib/runtime-fake.sh` (#858) reproduce guiones (exito, fallo con exit N,
 cuelgue hasta timeout, sin evento terminal, dos terminales, JSON malformado,
