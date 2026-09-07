@@ -4,7 +4,8 @@
 # Ejecuta iac-pipeline.sh contra un consumidor falso. Los stubs registran los
 # efectos para comprobar que una dependencia abierta aborta antes de fetch,
 # worktree o agentes; las otras rutas llegan al fetch normal sin consultar deps
-# innecesarias o retiran el semaforo cuando todas estan resueltas.
+# innecesarias o retiran el semaforo cuando todas estan resueltas. Incluye una
+# seccion vacia para cubrir la expansion de arrays bajo Bash 3.2 de macOS.
 
 set -uo pipefail
 
@@ -62,6 +63,7 @@ if [ "${1:-}" = "issue" ] && [ "${2:-}" = "view" ] && [ "${3:-}" = "829" ]; then
         no-label) printf '%s\n' '{"number":829,"title":"Infra de prueba","body":"## Dependencias\n- Depende de #42\n","state":"OPEN","labels":[]}' ;;
         open)     printf '%s\n' '{"number":829,"title":"Infra de prueba","body":"## Dependencias\n- Depende de #42\n","state":"OPEN","labels":[{"name":"bloqueado"}]}' ;;
         resolved) printf '%s\n' '{"number":829,"title":"Infra de prueba","body":"## Dependencias\n- Depende de #42 y PR #43\n## Ambiente\ndev","state":"OPEN","labels":[{"name":"bloqueado"}]}' ;;
+        no-refs)  printf '%s\n' '{"number":829,"title":"Infra de prueba","body":"## Dependencias\nNinguna.\n","state":"OPEN","labels":[{"name":"bloqueado"}]}' ;;
     esac
     exit 0
 fi
@@ -110,6 +112,7 @@ run_case() {
 echo "[1] Sin label: conserva el flujo y no consulta dependencias (CA-1)"
 run_case no-label
 if [ "$LAST_RC" -ne 0 ]; then pass "el flujo normal alcanza su fetch stub"; else fail "el fetch stub deberia detener la corrida"; fi
+assert_contains "la descarga inicial solicita labels" "gh issue view 829 --json number,title,body,state,labels" "$STUB_LOG"
 assert_not_contains "sin label no consulta #42" "gh issue view 42" "$STUB_LOG"
 assert_not_contains "sin label no intenta quitar el semaforo" "gh issue edit 829 --remove-label bloqueado" "$STUB_LOG"
 assert_contains "sin label alcanza fetch normal" "git fetch origin main" "$STUB_LOG"
@@ -131,6 +134,13 @@ assert_contains "consulta PR tras fallback de issue" "gh pr view 43 --json state
 assert_contains "retira el label bloqueado" "gh issue edit 829 --remove-label bloqueado" "$STUB_LOG"
 assert_contains "informa el desbloqueo" "Dependencias resueltas: se quito el label 'bloqueado'" "$TMP_DIR/resolved.out"
 assert_contains "continua hacia fetch" "git fetch origin main" "$STUB_LOG"
+
+echo "[4] Seccion sin referencias: no falla por array vacio en Bash 3.2"
+run_case no-refs
+if [ "$LAST_RC" -ne 0 ]; then pass "sin referencias alcanza el fetch normal"; else fail "el fetch stub deberia detener la corrida"; fi
+assert_not_contains "sin referencias no inventa consultas" "gh issue view 42" "$STUB_LOG"
+assert_contains "sin referencias retira el label" "gh issue edit 829 --remove-label bloqueado" "$STUB_LOG"
+assert_contains "sin referencias continua hacia fetch" "git fetch origin main" "$STUB_LOG"
 
 echo
 echo "Resumen: $PASS pass, $FAIL fail"

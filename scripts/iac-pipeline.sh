@@ -253,19 +253,24 @@ if section:
 ')
 
     PENDING_DEPENDENCIES=()
-    for dependency in "${DEPENDENCY_REFS[@]}"; do
-        # Una referencia puede apuntar a issue o PR. Conservamos el orden del
-        # contrato de /implement: issue primero y PR como fallback.
-        DEPENDENCY_JSON=$(gh issue view "$dependency" --json state,title 2>/dev/null \
-            || gh pr view "$dependency" --json state,title 2>/dev/null \
-            || echo '{"state":"UNKNOWN","title":"titulo no disponible"}')
-        DEPENDENCY_STATE=$(echo "$DEPENDENCY_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("state", "UNKNOWN"))' 2>/dev/null || echo "UNKNOWN")
-        DEPENDENCY_TITLE=$(echo "$DEPENDENCY_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("title", "titulo no disponible"))' 2>/dev/null || echo "titulo no disponible")
+    # Bash 3.2 (el /bin/bash nativo de macOS) aborta bajo set -u al expandir un
+    # array vacio. La seccion puede no contener referencias y eso equivale a que
+    # no quedan dependencias pendientes, no a un fallo del pipeline.
+    if [ ${#DEPENDENCY_REFS[@]} -gt 0 ]; then
+        for dependency in "${DEPENDENCY_REFS[@]}"; do
+            # Una referencia puede apuntar a issue o PR. Conservamos el orden del
+            # contrato de /implement: issue primero y PR como fallback.
+            DEPENDENCY_JSON=$(gh issue view "$dependency" --json state,title 2>/dev/null \
+                || gh pr view "$dependency" --json state,title 2>/dev/null \
+                || echo '{"state":"UNKNOWN","title":"titulo no disponible"}')
+            DEPENDENCY_STATE=$(echo "$DEPENDENCY_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("state", "UNKNOWN"))' 2>/dev/null || echo "UNKNOWN")
+            DEPENDENCY_TITLE=$(echo "$DEPENDENCY_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("title", "titulo no disponible"))' 2>/dev/null || echo "titulo no disponible")
 
-        if [ "$DEPENDENCY_STATE" != "CLOSED" ] && [ "$DEPENDENCY_STATE" != "MERGED" ]; then
-            PENDING_DEPENDENCIES+=("  - #$dependency: $DEPENDENCY_TITLE ($DEPENDENCY_STATE)")
-        fi
-    done
+            if [ "$DEPENDENCY_STATE" != "CLOSED" ] && [ "$DEPENDENCY_STATE" != "MERGED" ]; then
+                PENDING_DEPENDENCIES+=("  - #$dependency: $DEPENDENCY_TITLE ($DEPENDENCY_STATE)")
+            fi
+        done
+    fi
 
     if [ ${#PENDING_DEPENDENCIES[@]} -gt 0 ]; then
         abort "El issue #$ISSUE_NUM esta bloqueado. Dependencias abiertas:
