@@ -162,6 +162,7 @@ Dentro de herdr (`HERDR_ENV=1` en el entorno), el script delega en la interfaz h
 Batch secuencial mefisto corriendo en un pane de este workspace (visor en vivo del agente).
 Los issues se procesaran en orden: pipeline -> PR -> merge -> sync verificado -> siguiente.
 Usa /mefisto-work-status para ver el progreso sin salir de aqui.
+Para frenarlo sin violencia: /mefisto-batch-stop (termina el eslabon en curso y aplaza el resto).
 ```
 
 Fuera de herdr responde con:
@@ -172,6 +173,7 @@ Batch secuencial mefisto lanzado en tmux. Para monitorear:
 
 Los issues se procesaran en orden: pipeline -> PR -> merge -> sync verificado -> siguiente.
 Usa /mefisto-work-status para ver el progreso sin salir de aqui.
+Para frenarlo sin violencia: /mefisto-batch-stop (termina el eslabon en curso y aplaza el resto).
 ```
 
 ### 5. Sincronizacion verificada entre eslabones (fail-loud)
@@ -209,6 +211,16 @@ Esto reemplaza el viejo `git pull origin main` best-effort, que silenciaba el fa
 un warning `(continuando)` y dejaba que la cadena siguiera sobre un main potencialmente
 atrasado; a diferencia de aquel, el esquema actual distingue cual paso del sync es critico
 para la cadena y cual solo es comodidad para el humano.
+
+### 6. Parada suave de la cadena (issue #966)
+
+Una cadena larga no hace falta matarla a mano. `/mefisto-batch-stop` escribe la senal
+`.mefisto/pipeline/batch-stop`, que el motor consulta **despues del sync verificado de cada
+eslabon** -- el unico punto seguro de la cadena: ahi el PR del eslabon en curso ya esta
+mergeado y `origin/main` ya lo incluye. El eslabon en curso se completa entero (pipeline,
+PR, merge, sync) y los restantes quedan `aplazado` en el resumen final, con la linea lista
+para relanzarlos en el mismo orden. No es un fallo: el exit code es 0 y no dispara
+`--stop-on-error`. La senal se consume al detenerse, asi que no afecta la corrida siguiente.
 
 ## Reglas
 
