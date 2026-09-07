@@ -107,3 +107,9 @@ no necesita estar residente en cada sesión, solo cuando se busca en qué ADR vi
 | Variante MCP/Connect en el borde APIM: politica por-API dedicada, `audiences`/PRM/Resource Indicator consistentes byte a byte, `on-error` 401 con `WWW-Authenticate`, y trampa B12 (dominio AuthKit como authorization server de tokens Connect, distinto del issuer de login) | MEF-ADR-0032 |
 | Transicion (a)->(b) de tenancy en Azure Functions isolated worker: biblioteca scaffoldeada `src/{RootNamespace}.TenantResolver/` (`TenantExecutionContext` sobre `AsyncLocal` + `TenantContextMiddleware` de worker), y por que `ProxyTenantResolver` no sirve para HTTP | MEF-ADR-0028 |
 | Enmienda en MEF-ADR-0004: excepciones de precondicion tipadas (`PrecondicionComandoException`/`RecursoYaExisteException`/`RecursoNoEncontradoException`) en la capa 2, en vez de `InvalidOperationException` generica | MEF-ADR-0004 |
+| Ubicacion del PRM de los servidores MCP en APIM: API compartida por entorno, fuera del well-known de RFC 9728 por restriccion de APIM (path sin punto inicial), descubrimiento exclusivo por resource_metadata | MEF-ADR-0032 |
+| Restriccion de coercion de argumentos string de la extension MCP y su middleware de restauracion | MEF-ADR-0047 |
+| Cobertura obligatoria del camino valido de cada parametro fecha/identificador en la tool call real del smoke MCP | MEF-ADR-0048 |
+| Arquitectura neutral de runtime y proveedor: OpenCode como dogfooding interno, fuente canonica `src/internal/` con adaptadores generados, perfiles logicos de modelo, y toolchain Bash + jq | MEF-ADR-0049 |
+| Perfiles logicos de modelo por runtime: tabla por defecto del adaptador (enmienda) | MEF-ADR-0049 |
+| Principio de neutralidad de runtime para toda operación de Mefisto (conjunto de runtimes abierto, frontmatter portable de Agent Skills, namespace `mefisto` por adaptador) | MEF-ADR-0050 |
