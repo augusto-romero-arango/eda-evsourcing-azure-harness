@@ -194,17 +194,17 @@ public async Task HandleAsync(MiEvento evento, CancellationToken ct)
 
 **Stream existente (Modificar):**
 ```csharp
-public partial class AsignarEmpleadoATurnoCommandHandler(IEventStore eventStore, IPrivateEventSender eventSender)
-    : ICommandHandlerAsync<AsignarEmpleadoATurno>
+public partial class ReemplazarNombreDeTurnoCommandHandler(IEventStore eventStore, IPrivateEventSender eventSender)
+    : ICommandHandlerAsync<ReemplazarNombreDeTurno>
 {
-    public async Task HandleAsync(AsignarEmpleadoATurno comando, CancellationToken ct)
+    public async Task HandleAsync(ReemplazarNombreDeTurno comando, CancellationToken ct)
     {
         var turno = await eventStore.GetAggregateRootAsync<TurnoAggregateRoot>(
             comando.TurnoId.ToString(), ct);
         if (turno is null)
             throw new RecursoNoEncontradoException(Mensajes.TurnoNoEncontrado);
 
-        turno.AsignarEmpleado(comando.EmpleadoId);
+        turno.ReemplazarNombre(comando.Nombre);
 
         var eventos = turno.GetPrivateEvents();
         if (eventos.Any())
