@@ -467,58 +467,65 @@ run_agent() {
 
     if [ "$CLAUDE_EXIT" -ne 0 ]; then
         local failure_type
-        if [ "$CLAUDE_EXIT" -eq 137 ] || [ "$CLAUDE_EXIT" -eq 143 ]; then
-            failure_type="TIMEOUT (signal $CLAUDE_EXIT, ${elapsed}s)"
-        elif grep -q "API Error: 5" "$log_stage" 2>/dev/null; then
-            failure_type="API_ERROR_SERVER (exit $CLAUDE_EXIT)"
-        elif grep -q "API Error: 4" "$log_stage" 2>/dev/null; then
-            failure_type="API_ERROR_CLIENT (exit $CLAUDE_EXIT)"
-        else
-            failure_type="CLI_ERROR (exit $CLAUDE_EXIT)"
-        fi
+        failure_type=$(classify_agent_failure "$CLAUDE_EXIT" "$elapsed" "$log_stage" "$stream_file")
         log "$agent fallo despues de ${elapsed}s -- tipo: $failure_type"
         echo "[$(date +%H:%M:%S)] FALLO $agent: $failure_type" >> "$EVENTS_LOG_ABS"
 
-        # Retry para errores 5xx sin trabajo previo
-        if echo "$failure_type" | grep -q "API_ERROR_SERVER"; then
-            local has_work=false
-            if ! git -C "$WORKTREE_PATH" diff --quiet "${SNAPSHOT_COMMIT:-HEAD}..HEAD" 2>/dev/null; then
-                has_work=true
+        # Espera (hold) ante RATE_LIMIT/PROVIDER_UNAVAILABLE persistente (issue
+        # #971, doctrina de MEF-ADR-0051 -- mismos defaults/env vars que el
+        # lado interno, issue #967): el propio reintento hace de sonda, en un
+        # bucle acotado por agent_hold_wait (techo MEFISTO_HOLD_MAX_SECONDS).
+        # A diferencia del viejo retry one-shot de API_ERROR_SERVER, este
+        # camino NO exige "sin trabajo previo" ni restaura el worktree: ese
+        # trabajo parcial es justo lo que una reanudacion futura (issue de
+        # seguimiento de este bloque) necesitaria conservar.
+        local HOLD_STARTED_TS="" HOLD_TOTAL_SECONDS=0 hold_attempt=0
+        while agent_failure_is_holdable "$failure_type"; do
+            [ -z "$HOLD_STARTED_TS" ] && HOLD_STARTED_TS=$(date +%s)
+            local hold_slept
+            if ! hold_slept=$(agent_hold_wait "$EVENTS_LOG_ABS" "$failure_type" "$HOLD_STARTED_TS"); then
+                warn "$agent: techo de espera (hold) agotado -- ultima senal: $failure_type"
+                log "$agent: techo de espera (hold) agotado tras $((HOLD_TOTAL_SECONDS / 60))m $((HOLD_TOTAL_SECONDS % 60))s"
+                break
             fi
-            if [ "$has_work" = false ]; then
-                warn "$agent: API error 5xx -- reintentando una vez..."
-                echo "[$(date +%H:%M:%S)] RETRY $agent: API error 5xx" >> "$EVENTS_LOG_ABS"
-                local log_stage_retry="$LOG_DIR_ABS/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-retry.log"
-                local stream_file_retry="${log_stage_retry%.log}.stream.jsonl"
-                local stderr_file_retry="${log_stage_retry%.log}.stderr.log"
-                CLAUDE_EXIT=0
-                if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
-                    (cd "$WORKTREE_PATH" && claude -p "$prompt" --model "$AGENT_MODEL" \
-                        --permission-mode bypassPermissions \
-                        --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
-                        --output-format stream-json --verbose \
-                        >"$stream_file_retry" 2>"$stderr_file_retry") || CLAUDE_EXIT=$?
-                    # El retry escribe su propio stream/stderr y deriva su propio
-                    # -retry.log, sin pisar los archivos del primer intento.
-                    derive_stage_log_from_stream "$stream_file_retry" "$stderr_file_retry" "$log_stage_retry"
-                else
-                    (cd "$WORKTREE_PATH" && claude -p "$prompt" --model "$AGENT_MODEL" \
-                        --permission-mode bypassPermissions \
-                        --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
-                        --output-format text \
-                        >"$log_stage_retry" 2>&1) || CLAUDE_EXIT=$?
-                fi
-                elapsed=$(( $(date +%s) - start_ts ))
-                log_stage="$log_stage_retry"
-                if [ "$CLAUDE_EXIT" -ne 0 ]; then
-                    log "$agent fallo tambien en reintento"
-                    echo "[$(date +%H:%M:%S)] RETRY_FALLO $agent" >> "$EVENTS_LOG_ABS"
-                else
-                    log "$agent: reintento exitoso en ${elapsed}s"
-                    echo "[$(date +%H:%M:%S)] RETRY_OK $agent" >> "$EVENTS_LOG_ABS"
-                fi
+            HOLD_TOTAL_SECONDS=$(( HOLD_TOTAL_SECONDS + hold_slept ))
+            hold_attempt=$((hold_attempt + 1))
+            warn "$agent: $failure_type -- en espera (hold), reintentando (sonda #$hold_attempt)..."
+
+            local log_stage_hold="$LOG_DIR_ABS/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-hold-${hold_attempt}.log"
+            local stream_file_hold="${log_stage_hold%.log}.stream.jsonl"
+            local stderr_file_hold="${log_stage_hold%.log}.stderr.log"
+            CLAUDE_EXIT=0
+            if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
+                (cd "$WORKTREE_PATH" && claude -p "$prompt" --model "$AGENT_MODEL" \
+                    --permission-mode bypassPermissions \
+                    --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
+                    --output-format stream-json --verbose \
+                    >"$stream_file_hold" 2>"$stderr_file_hold") || CLAUDE_EXIT=$?
+                # Cada sonda escribe su propio stream/stderr y deriva su propio
+                # -hold-N.log, sin pisar los archivos de intentos anteriores.
+                derive_stage_log_from_stream "$stream_file_hold" "$stderr_file_hold" "$log_stage_hold"
+            else
+                (cd "$WORKTREE_PATH" && claude -p "$prompt" --model "$AGENT_MODEL" \
+                    --permission-mode bypassPermissions \
+                    --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
+                    --output-format text \
+                    >"$log_stage_hold" 2>&1) || CLAUDE_EXIT=$?
             fi
-        fi
+            elapsed=$(( $(date +%s) - start_ts ))
+            log_stage="$log_stage_hold"
+            stream_file="$stream_file_hold"
+
+            if [ "$CLAUDE_EXIT" -eq 0 ]; then
+                log "$agent: hold resuelto, reintento exitoso en ${elapsed}s (tras $((HOLD_TOTAL_SECONDS / 60))m $((HOLD_TOTAL_SECONDS % 60))s de espera)"
+                echo "[$(date +%H:%M:%S)] RETRY_OK $agent: exitoso tras hold" >> "$EVENTS_LOG_ABS"
+                break
+            fi
+
+            failure_type=$(classify_agent_failure "$CLAUDE_EXIT" "$elapsed" "$log_stage" "$stream_file")
+            log "$agent fallo tras sonda de hold -- tipo: $failure_type"
+            echo "[$(date +%H:%M:%S)] FALLO $agent: $failure_type (tras hold)" >> "$EVENTS_LOG_ABS"
+        done
 
         # Retry para bloqueo por permisos (race condition en ejecucion paralela)
         if [ "$CLAUDE_EXIT" -ne 0 ] && grep -qiE "permisos|permission|bloqueado|blocked|approve" "$log_stage" 2>/dev/null; then

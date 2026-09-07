@@ -959,6 +959,176 @@ build_agents_history_json() {
     return 0
 }
 
+# --- Clasificacion de fallos de agente y politica de espera (hold, issue #971) -
+#
+# Unifica la clasificacion que hasta este issue vivia inline y duplicada en
+# tdd-pipeline.sh y tooling-pipeline.sh (una cadena de `grep` sobre el log
+# derivado del stage), mas el reintento one-shot de API_ERROR_SERVER, en dos
+# funciones compartidas. Contraparte publicada de classify_agent_failure/
+# agent_failure_is_holdable (`src/internal/scripts/lib/_mefisto-common.sh`,
+# issues #534/#965/#967) -- MEF-ADR-0051 fija la taxonomia y los defaults de
+# la politica de espera como doctrina transversal a los dos lados de
+# MEF-ADR-0019, aunque solo el interno la implementaba hasta ahora.
+#
+# Diferencia deliberada con el interno: el lado publicado no migra al runner
+# neutral en este issue (MEF-ADR-0050 lo declara obra aparte) -- no hay
+# adaptador que traduzca el payload crudo del CLI a un `error.kind` cerrado
+# (`run-events.schema.json`). classify_agent_failure aqui sigue leyendo texto
+# (el log derivado, y el stream crudo cuando esta capturado) en vez de un
+# campo estructurado; MEF-ADR-0050 exige igual que esa lectura quede aislada
+# en UNA funcion, para que una futura migracion al runner neutral tenga un
+# solo punto que cambiar.
+
+# classify_agent_failure <exit_code> <elapsed_s> <log_stage> [stream_file]
+#
+# Traduce el desenlace de una invocacion fallida del CLI a la etiqueta
+# <failure_type> que run_agent registra en events.log. Mismas familias que el
+# lado interno (`_mefisto-common.sh:classify_agent_failure`) alcanzables sin
+# el vocabulario `error.kind` del contrato neutral:
+#
+#   TIMEOUT              - exit de señal (137 SIGKILL / 143 SIGTERM), el
+#                           watchdog del stage.
+#   RATE_LIMIT            - ventana de uso agotada (429). Con <stream_file>
+#                           capturado (PIPELINE_CAPTURE_STREAM=true), se
+#                           detecta el evento estructurado `rate_limit_event`
+#                           con `rate_limit_info.status != "allowed"` (mismo
+#                           criterio que runtime-claude.jq del lado interno,
+#                           issue #965); sin stream, un grep conservador sobre
+#                           el log exige "429" Y un indicio textual de "rate
+#                           limit"/"usage limit" (case-insensitive) a la vez,
+#                           igual que el fallback de runtime-opencode.jq --
+#                           exigir ambos evita que un 4xx no relacionado con
+#                           un "429" propio de otro significado dispare un
+#                           falso positivo.
+#   PROVIDER_UNAVAILABLE  - reemplazo 1:1 de la vieja etiqueta
+#                           API_ERROR_SERVER: "API Error: 5" en el log
+#                           (5xx/522/529 del proveedor).
+#   API_ERROR_CLIENT      - "API Error: 4" en el log (4xx que no es limite de
+#                           uso -- el RATE_LIMIT de arriba ya se descarto).
+#   CLI_ERROR             - causa no identificada (default).
+#
+# El orden de los casos es significativo: TIMEOUT gana sobre cualquier otro
+# sintoma, RATE_LIMIT se evalua antes que PROVIDER_UNAVAILABLE/API_ERROR_CLIENT
+# (un 429 no debe caer en "API Error: 4"), y CLI_ERROR es el fallback final.
+#
+# <stream_file> es opcional: sin el (o vacio, inexistente, o sin jq en PATH),
+# la deteccion de RATE_LIMIT degrada al grep de texto -- nunca aborta.
+classify_agent_failure() {
+    local exit_code="$1" elapsed="$2" log_stage="$3" stream_file="${4:-}"
+
+    if [ "$exit_code" = "137" ] || [ "$exit_code" = "143" ]; then
+        echo "TIMEOUT (signal $exit_code, ${elapsed}s)"
+        return 0
+    fi
+
+    if [ -n "$stream_file" ] && [ -s "$stream_file" ] && command -v jq >/dev/null 2>&1; then
+        local rejected
+        rejected=$(jq -R -s '
+            (split("\n") | map(select(length > 0)) | map(try fromjson catch empty)
+                | map(select(type == "object"))) as $events
+            | ($events | map(select(.type == "rate_limit_event"))
+                | map(select((.rate_limit_info.status // "allowed") != "allowed"))
+                | length) > 0
+        ' "$stream_file" 2>/dev/null) || rejected="false"
+        if [ "$rejected" = "true" ]; then
+            echo "RATE_LIMIT (exit $exit_code)"
+            return 0
+        fi
+    fi
+
+    if grep -q "429" "$log_stage" 2>/dev/null && grep -qiE "rate.?limit|usage.?limit" "$log_stage" 2>/dev/null; then
+        echo "RATE_LIMIT (exit $exit_code)"
+        return 0
+    fi
+
+    if grep -q "API Error: 5" "$log_stage" 2>/dev/null; then
+        echo "PROVIDER_UNAVAILABLE (exit $exit_code)"
+        return 0
+    fi
+
+    if grep -q "API Error: 4" "$log_stage" 2>/dev/null; then
+        echo "API_ERROR_CLIENT (exit $exit_code)"
+        return 0
+    fi
+
+    echo "CLI_ERROR (exit $exit_code)"
+    return 0
+}
+
+# agent_failure_is_holdable <failure_type>
+#
+# Retorna 0 si <failure_type> describe una de las dos familias que ameritan
+# ESPERAR (hold) en vez de abortar de una: RATE_LIMIT (ventana de uso
+# agotada) y PROVIDER_UNAVAILABLE (el proveedor caido) -- mismo criterio y
+# mismos dos labels que el homologo interno
+# (`_mefisto-common.sh:agent_failure_is_holdable`, issue #967). El bucle de
+# run_agent la consulta tras clasificar el fallo; API_ERROR_CLIENT/CLI_ERROR/
+# TIMEOUT quedan fuera a proposito y caen al aborto ordinario.
+#
+# La comparacion es por prefijo: classify_agent_failure adjunta el exit code
+# a la etiqueta ("PROVIDER_UNAVAILABLE (exit 1)").
+agent_failure_is_holdable() {
+    local failure_type="${1:-}"
+
+    case "$failure_type" in
+        RATE_LIMIT*|PROVIDER_UNAVAILABLE*) return 0 ;;
+        *)                                 return 1 ;;
+    esac
+}
+
+# agent_hold_wait <events_log> <failure_type> <hold_started_ts>
+#
+# Sondea-y-espera una vez: calcula cuanto dormir dado el techo de la espera,
+# deja constancia en <events_log> con el MISMO formato de linea que el lado
+# interno, duerme, e imprime por stdout los segundos dormidos. Mismos
+# defaults y MISMAS variables de entorno que el homologo interno
+# (`_mefisto-common.sh`, issue #967) -- divergir seria doctrina duplicada
+# (MEF-ADR-0051):
+#
+#   MEFISTO_HOLD_PROBE_SECONDS  - cadencia de sondeo (default 300s = 5 min).
+#   MEFISTO_HOLD_MAX_SECONDS    - techo de la espera, medido en reloj de
+#                                 pared desde <hold_started_ts> (default
+#                                 21600s = 6h).
+#
+# A diferencia del interno, esta funcion NO consulta `resets_at` (ese dato
+# vive en el evento terminal del JSONL neutral, fuera de alcance de este
+# issue -- MEF-ADR-0050): siempre sondea a la cadencia fija, recortada al
+# remanente del techo -- el mismo piso que el interno ya acepta cuando
+# `resets_at` no esta disponible (MEF-ADR-0051, Consecuencias negativas).
+#
+# Retorna 1 SIN dormir si el techo ya se agoto (remanente <= 0) -- el caller
+# rompe su bucle de espera y cae al trato ordinario de fallo. Retorna 0 tras
+# dormir en cualquier otro caso.
+agent_hold_wait() {
+    local events_log="$1" failure_type="$2" hold_started_ts="$3"
+    local hold_max="${MEFISTO_HOLD_MAX_SECONDS:-21600}"
+    local hold_probe="${MEFISTO_HOLD_PROBE_SECONDS:-300}"
+
+    local now_epoch hold_elapsed hold_remaining
+    now_epoch=$(date +%s)
+    hold_elapsed=$(( now_epoch - hold_started_ts ))
+    hold_remaining=$(( hold_max - hold_elapsed ))
+    if [ "$hold_remaining" -le 0 ]; then
+        return 1
+    fi
+
+    local hold_sleep="$hold_probe"
+    [ "$hold_sleep" -gt "$hold_remaining" ] && hold_sleep="$hold_remaining"
+
+    local hold_family="${failure_type%% *}"
+    local hold_deadline_epoch=$(( hold_started_ts + hold_max ))
+    local next_probe_epoch=$(( now_epoch + hold_sleep ))
+    local next_probe_hms deadline_hm
+    next_probe_hms=$(date -r "$next_probe_epoch" +%H:%M:%S 2>/dev/null || date -d "@$next_probe_epoch" +%H:%M:%S 2>/dev/null || echo "??:??:??")
+    deadline_hm=$(date -r "$hold_deadline_epoch" +%H:%M 2>/dev/null || date -d "@$hold_deadline_epoch" +%H:%M 2>/dev/null || echo "??:??")
+
+    echo "[$(date +%H:%M:%S)][hold] $hold_family: esperando, proxima sonda $next_probe_hms (techo $deadline_hm)" >> "$events_log"
+
+    sleep "$hold_sleep"
+    echo "$hold_sleep"
+    return 0
+}
+
 # --- Helpers de naming de Azure Storage Account (tfstate backend) -------------
 #
 # El nombre de una Storage Account es un endpoint DNS publico

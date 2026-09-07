@@ -378,6 +378,68 @@ run_agent() {
     fi
 
     if [ "$CLAUDE_EXIT" -ne 0 ]; then
+        local failure_type
+        failure_type=$(classify_agent_failure "$CLAUDE_EXIT" "$elapsed" "$log_stage" "$stream_file")
+        log "$agent fallo despues de ${elapsed}s -- tipo: $failure_type"
+        echo "[$(date +%H:%M:%S)] FALLO $agent: $failure_type" >> "$EVENTS_LOG_ABS"
+
+        # Espera (hold) ante RATE_LIMIT/PROVIDER_UNAVAILABLE persistente (issue
+        # #971, doctrina de MEF-ADR-0051 -- mismos defaults/env vars que el
+        # lado interno, issue #967): el propio reintento hace de sonda, en un
+        # bucle acotado por agent_hold_wait (techo MEFISTO_HOLD_MAX_SECONDS).
+        # Nunca restaura el worktree: ese trabajo parcial es justo lo que una
+        # reanudacion futura (issue de seguimiento de este bloque) necesitaria
+        # conservar.
+        local HOLD_STARTED_TS="" HOLD_TOTAL_SECONDS=0 hold_attempt=0
+        while agent_failure_is_holdable "$failure_type"; do
+            [ -z "$HOLD_STARTED_TS" ] && HOLD_STARTED_TS=$(date +%s)
+            local hold_slept
+            if ! hold_slept=$(agent_hold_wait "$EVENTS_LOG_ABS" "$failure_type" "$HOLD_STARTED_TS"); then
+                warn "$agent: techo de espera (hold) agotado -- ultima senal: $failure_type"
+                log "$agent: techo de espera (hold) agotado tras $((HOLD_TOTAL_SECONDS / 60))m $((HOLD_TOTAL_SECONDS % 60))s"
+                break
+            fi
+            HOLD_TOTAL_SECONDS=$(( HOLD_TOTAL_SECONDS + hold_slept ))
+            hold_attempt=$((hold_attempt + 1))
+            warn "$agent: $failure_type -- en espera (hold), reintentando (sonda #$hold_attempt)..."
+
+            local log_stage_hold="$LOG_DIR_ABS/iac-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_NUM}-hold-${hold_attempt}.log"
+            local stream_file_hold="${log_stage_hold%.log}.stream.jsonl"
+            local stderr_file_hold="${log_stage_hold%.log}.stderr.log"
+            CLAUDE_EXIT=0
+            if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
+                (cd "$WORKTREE_PATH" && claude -p "$prompt" \
+                    --agent "$agent" \
+                    --permission-mode bypassPermissions \
+                    --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
+                    --output-format stream-json --verbose \
+                    >"$stream_file_hold" 2>"$stderr_file_hold") || CLAUDE_EXIT=$?
+                derive_stage_log_from_stream "$stream_file_hold" "$stderr_file_hold" "$log_stage_hold"
+            else
+                (cd "$WORKTREE_PATH" && claude -p "$prompt" \
+                    --agent "$agent" \
+                    --permission-mode bypassPermissions \
+                    --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
+                    --output-format text \
+                    >"$log_stage_hold" 2>&1) || CLAUDE_EXIT=$?
+            fi
+            elapsed=$(( $(date +%s) - start_ts ))
+            log_stage="$log_stage_hold"
+            stream_file="$stream_file_hold"
+
+            if [ "$CLAUDE_EXIT" -eq 0 ]; then
+                log "$agent: hold resuelto, reintento exitoso en ${elapsed}s (tras $((HOLD_TOTAL_SECONDS / 60))m $((HOLD_TOTAL_SECONDS % 60))s de espera)"
+                echo "[$(date +%H:%M:%S)] RETRY_OK $agent: exitoso tras hold" >> "$EVENTS_LOG_ABS"
+                break
+            fi
+
+            failure_type=$(classify_agent_failure "$CLAUDE_EXIT" "$elapsed" "$log_stage" "$stream_file")
+            log "$agent fallo tras sonda de hold -- tipo: $failure_type"
+            echo "[$(date +%H:%M:%S)] FALLO $agent: $failure_type (tras hold)" >> "$EVENTS_LOG_ABS"
+        done
+    fi
+
+    if [ "$CLAUDE_EXIT" -ne 0 ]; then
         case "$agent" in
             infra-writer)   AGENT_WR_DUR=$elapsed; AGENT_WR_RES="failed" ;;
             infra-reviewer) AGENT_RV_DUR=$elapsed; AGENT_RV_RES="failed" ;;
@@ -385,7 +447,7 @@ run_agent() {
         update_status "$stage-$agent" "failed"
         echo -e "\n${RED}-- Ultimas lineas del log de $agent:${NC}"
         tail -20 "$log_stage"
-        abort "$agent fallo. Log completo: $log_stage"
+        abort "$agent fallo ($failure_type). Log completo: $log_stage"
     fi
 
     LAST_AGENT_DURATION=$elapsed
