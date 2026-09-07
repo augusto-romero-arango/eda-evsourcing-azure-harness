@@ -591,10 +591,16 @@ run_agent() {
     # instante exacto en que se levanta el limite, pero despertar justo en el
     # segundo cero puede ganarle por poco a una ventana todavia cerrada.
     local HOLD_RESET_MARGIN_SECONDS=60
-    # CA-4: contador PROPIO, independiente de $attempt/$MAX_ATTEMPTS -- el
+    # CA-4: contadores PROPIOS, independientes de $attempt/$MAX_ATTEMPTS -- el
     # hold es una politica distinta sobre una causa distinta, y no debe
     # consumir el presupuesto de reintentos de #534.
+    #
+    # Son dos medidas distintas a proposito: HOLD_TOTAL_SECONDS suma solo las
+    # siestas (es "cuanto se estuvo esperando", lo que reporta CA-6) y
+    # HOLD_ELAPSED_SECONDS es el reloj desde que empezo la espera (es contra
+    # lo que se mide el techo de CA-2).
     local HOLD_TOTAL_SECONDS=0
+    local HOLD_ELAPSED_SECONDS=0
     local HOLD_STARTED_TS=""
 
     # CA-4: estado del worktree AL ENTRAR al stage, para poder restaurarlo
@@ -719,11 +725,23 @@ run_agent() {
             # abortar. $attempt/$MAX_ATTEMPTS quedan intactos a proposito
             # (CA-4): son dos presupuestos sobre dos causas distintas.
             [ -z "$HOLD_STARTED_TS" ] && HOLD_STARTED_TS=$(date +%s)
-            local hold_remaining=$(( HOLD_MAX_SECONDS - HOLD_TOTAL_SECONDS ))
+            local now_epoch
+            now_epoch=$(date +%s)
+
+            # CA-2: el techo se mide en RELOJ desde que arranco la espera, no
+            # sumando solo las siestas. Cada sonda que falla consume tiempo
+            # real -- un PROVIDER_UNAVAILABLE puede tardar minutos en morir --
+            # y contar unicamente los `sleep` dejaria el techo efectivo muy
+            # por encima de HOLD_MAX_SECONDS, que es justo lo que CA-2
+            # prohibe ("un proveedor caido 12h no puede dejar el pane
+            # esperando en silencio para siempre"). Es ademas la unica medida
+            # coherente con el "(techo HH:MM)" que se imprime mas abajo.
+            HOLD_ELAPSED_SECONDS=$(( now_epoch - HOLD_STARTED_TS ))
+            local hold_remaining=$(( HOLD_MAX_SECONDS - HOLD_ELAPSED_SECONDS ))
             if [ "$hold_remaining" -le 0 ]; then
                 # CA-2: techo agotado -- se rompe SIN dormir de nuevo. El
                 # bloque de abajo (agent_work_is_trustworthy / abort) hereda
-                # HOLD_TOTAL_SECONDS y nombra cuanto se espero.
+                # los dos contadores y nombra cuanto se espero.
                 break
             fi
 
@@ -732,9 +750,8 @@ run_agent() {
             # HOLD_PROBE_SECONDS es el piso garantizado -- corre cuando
             # `resets_at` falta (runtime que no lo informa, o un adaptador
             # que siempre lo deja null, ver runtime-opencode.jq).
-            local resets_at hold_sleep now_epoch
+            local resets_at hold_sleep
             resets_at=$(agent_events_resets_at "$events_file")
-            now_epoch=$(date +%s)
             hold_sleep="$HOLD_PROBE_SECONDS"
             if [ -n "$resets_at" ]; then
                 local resets_epoch
@@ -781,7 +798,7 @@ run_agent() {
         # nombra cuanto se espero -- distingue este aborto de uno ordinario
         # sin obligar a bucear en events.log.
         [ "$HOLD_TOTAL_SECONDS" -gt 0 ] \
-            && log "$agent: techo de espera (hold) agotado tras $((HOLD_TOTAL_SECONDS / 60))m -- ultima senal: $failure_type"
+            && log "$agent: techo de espera (hold) agotado tras $((HOLD_ELAPSED_SECONDS / 60))m $((HOLD_ELAPSED_SECONDS % 60))s -- ultima senal: $failure_type"
 
         # CA-4: un TIMEOUT o un corte de stream a mitad de respuesta nunca es
         # recuperable via has_work -- el incidente de #416 fue justo esto (el
@@ -827,7 +844,7 @@ run_agent() {
             # techo de espera agotado -- nombra cuanto espero y la ultima
             # senal, en vez del mensaje generico de cualquier otro fallo.
             if [ "$HOLD_TOTAL_SECONDS" -gt 0 ]; then
-                abort "$agent: techo de espera agotado tras $((HOLD_TOTAL_SECONDS / 60))m (limite ${HOLD_MAX_SECONDS}s) -- ultima senal: $failure_type. Log completo: $log_stage"
+                abort "$agent: techo de espera agotado tras $((HOLD_ELAPSED_SECONDS / 60))m $((HOLD_ELAPSED_SECONDS % 60))s (limite ${HOLD_MAX_SECONDS}s) -- ultima senal: $failure_type. Log completo: $log_stage"
             else
                 abort "$agent fallo ($failure_type). Log completo: $log_stage"
             fi
@@ -841,7 +858,7 @@ run_agent() {
         # CA-6: un stage que se recupera tras esperar termina como exito
         # normal -- esta linea es la unica diferencia visible, y es lo que
         # distingue una corrida lenta por hold de una corrida lenta a secas.
-        log "$agent completado en ${total_elapsed}s (incluye $((HOLD_TOTAL_SECONDS / 60))m en espera/hold)"
+        log "$agent completado en ${total_elapsed}s (incluye $((HOLD_TOTAL_SECONDS / 60))m $((HOLD_TOTAL_SECONDS % 60))s en espera/hold)"
     elif [ "$attempt" -gt 1 ]; then
         log "$agent completado en ${total_elapsed}s (intento $attempt/$MAX_ATTEMPTS; ${elapsed}s el ultimo)"
     else

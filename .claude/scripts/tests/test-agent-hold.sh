@@ -129,6 +129,22 @@ else
     fail "B-3: se esperaba cadena vacia, se obtuvo '$got'"
 fi
 
+FIXTURES_DIR="$REPO_ROOT/src/internal/contract/fixtures/run-events"
+
+got=$(agent_events_resets_at "$FIXTURES_DIR/valid-rate-limit-claude.jsonl")
+if [ "$got" = "2026-05-07T22:40:00Z" ]; then
+    pass "B-4: fixture canonico del contrato (claude) -> resets_at poblado"
+else
+    fail "B-4: se esperaba '2026-05-07T22:40:00Z' del fixture canonico, se obtuvo '$got'"
+fi
+
+got=$(agent_events_resets_at "$FIXTURES_DIR/valid-rate-limit-opencode.jsonl")
+if [ -z "$got" ]; then
+    pass "B-5: fixture canonico del contrato (opencode) -> resets_at null da cadena vacia"
+else
+    fail "B-5: se esperaba cadena vacia del fixture canonico, se obtuvo '$got'"
+fi
+
 # -------- Bloque C: iso8601_to_epoch --------
 
 echo ""
@@ -398,6 +414,50 @@ if ! grep -q "TIMEOUT" "$EVENTS_LOG_ABS"; then
     pass "D-4b: el hold nunca dispara el watchdog del stage (sin TIMEOUT en events.log)"
 else
     fail "D-4b: events.log no deberia mencionar TIMEOUT durante un hold"
+fi
+
+# D-8 (CA-2): el techo se mide en RELOJ desde que arranco la espera, no
+# sumando solo los `sleep`. Con MEFISTO_HOLD_PROBE_SECONDS=0 la suma de
+# siestas es 0 para siempre: si el techo se midiera asi, el bucle no
+# terminaria nunca aunque cada sonda queme segundos reales (el caso de un
+# PROVIDER_UNAVAILABLE que tarda minutos en morir). El stub gasta 1s por
+# intento y cede al 20mo como valvula de seguridad -- una regresion a la
+# contabilidad por siestas se delata gastando esos 20 intentos.
+WT_D8=$(new_wt)
+setup_run_agent_env "$WT_D8"
+export MEFISTO_HOLD_MAX_SECONDS=2
+export MEFISTO_HOLD_PROBE_SECONDS=0
+: > "$TMP/attempts.txt"
+cat > "$TMP/fake-run-agent-d8.sh" <<EOF
+#!/usr/bin/env bash
+set -u
+echo "x" >> "$TMP/attempts.txt"
+n=\$(wc -l < "$TMP/attempts.txt" | tr -d ' ')
+event_log=""
+while [ \$# -gt 0 ]; do
+    case "\$1" in
+        --event-log) event_log="\$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+sleep 1
+if [ "\$n" -le "20" ]; then
+    cp "$EVENTS_RATE_LIMIT_NULL_RESET" "\$event_log"
+    exit 1
+else
+    cp "$EVENTS_OK" "\$event_log"
+    exit 0
+fi
+EOF
+chmod +x "$TMP/fake-run-agent-d8.sh"
+export MEFISTO_RUN_AGENT_BIN="$TMP/fake-run-agent-d8.sh"
+run_agent "1" "writer" "prompt" >/dev/null 2>&1 || true
+
+got=$(attempts_made)
+if [ "$got" -le 6 ]; then
+    pass "D-8: el techo se agota por reloj aunque las siestas sumen 0 ($got invocaciones)"
+else
+    fail "D-8: el techo no se esta midiendo en reloj -- $got invocaciones (se esperaban <= 6)"
 fi
 
 # -------- Resumen --------
