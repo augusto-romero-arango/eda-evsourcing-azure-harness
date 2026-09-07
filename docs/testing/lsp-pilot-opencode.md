@@ -199,8 +199,7 @@ incorpora el reporte sanitizado."* Este documento es ese reporte -- documenta
 que el mecanismo esta listo para usarse, deja la receta de configuracion
 verificada (arriba) y dos limitaciones concretas (CLI de debug no fiable como
 proxy de gate 1, arranque de `opencode run` colgado en dos de cuatro
-invocaciones), pero no fabrica
-pares que no se corrieron.
+invocaciones), pero no fabrica pares que no se corrieron.
 
 La tabla de evidencia queda con la cabecera comun que #976 fija -- para que
 #981 la concatene sin normalizar nada a mano -- y **sin ninguna fila**:
@@ -208,7 +207,7 @@ La tabla de evidencia queda con la cabecera comun que #976 fija -- para que
 | caso | rol | brazo | pos | rep | tokens_in | tokens_out | costo | wall_clock_s | tool_calls | reintentos | build | tests | hallazgos_mayores | oraculo | cache |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 
-Las cifras de las tres consultas de control de arriba **no** son filas de este
+Las cifras de las consultas de control de arriba **no** son filas de este
 corpus: miden disponibilidad y comportamiento del mecanismo, no un caso del
 experimento, y no entran en ninguna mediana.
 
@@ -234,10 +233,10 @@ Este resultado:
   de proyecciones -- #976 ya los excluye del corpus.
 - **No se compara** con Claude Code (#979): ese piloto corrio su propio
   preflight sobre su propio mecanismo y llego a `no evaluable` por un gate que
-  fallo (plugin/binario ausentes); este piloto llega a `no evaluable` con
-  todos los gates en verde. Ambos resultados son independientes y ninguno se
-  lee como superioridad de un runtime sobre otro -- eso es precisamente lo que
-  el protocolo prohibe.
+  fallo (plugin/binario ausentes); este piloto llega a `no evaluable` con los
+  tres gates de mecanismo en verde. Ambos resultados son independientes y
+  ninguno se lee como superioridad de un runtime sobre otro -- eso es
+  precisamente lo que el protocolo prohibe.
 - **No decide adopcion de LSP** en ningun agente publicado ni presenta el
   mecanismo experimental de OpenCode como contrato portable (MEF-ADR-0050):
   esa decision es de #981, y de todas formas requeriria el corpus real.
@@ -249,11 +248,11 @@ Este resultado:
   antes de crear o adjuntar sesion y antes de llamar al proveedor, en el mismo
   entorno donde `C2` (pregunta cerrada) y `C3` (uso real de la tool) si
   completaron con evidencia consistente entre si. Ese cuelgue es del arranque
-  de la CLI, no del mecanismo LSP, pero afecta a quien planifique corridas por
-  lotes. La
-  triangulacion entre `C2` y `C3` -- una respuesta declarativa del modelo mas
-  una invocacion real con datos semanticos verificables -- es lo que sostiene
-  la conclusion de gates 2 y 3, no ninguna de las dos por si sola.
+  de la CLI, no del mecanismo LSP, pero afecta a quien planifique corridas
+  por lotes. La triangulacion entre `C2` y `C3` -- una respuesta declarativa
+  del modelo mas una invocacion real con datos semanticos verificables -- es
+  lo que sostiene la conclusion de gates 2 y 3, no ninguna de las dos por si
+  sola.
 
 ## Que sigue (backlog, no ejecutado en este piloto)
 
