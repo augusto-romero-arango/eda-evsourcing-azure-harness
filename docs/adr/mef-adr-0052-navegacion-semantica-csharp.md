@@ -32,9 +32,20 @@ Consecuencia: **cero pares corridos** en los tres roles -- ni siquiera el brazo 
 
 ### Resultado de #980 (piloto OpenCode)
 
-A la fecha de este ADR (2026-09-07), **el issue #980 sigue abierto (`estado:listo`, sin PR)**. No existe `docs/testing/lsp-pilot-opencode.md` en el repo. Esto **no es equivalente** al `no evaluable` de #979: en #979 el preflight se ejecuto y fallo en un gate observado empiricamente; en #980 **la ejecucion misma nunca comenzo** -- no hay preflight de servidor C#/feature-flag/permiso corrido, no hay consultas de control, no hay ninguna fila de evidencia, ni siquiera un intento fallido de par.
+`docs/testing/lsp-pilot-opencode.md` concluye **NO EVALUABLE** para los tres roles del corpus, con el preflight **completo en verde**. El piloto evaluo los cuatro gates sin detenerse en ninguno, porque ninguno de los tres gates de mecanismo fallo:
 
-Este ADR registra ese estado con la misma transparencia que exige CA-1: no oculta que una de las dos dependencias declaradas (#980) no aporto evidencia, y no fabrica ni infiere un resultado en su lugar.
+| Gate | Resultado |
+|---|---|
+| 1. Servidor C# built-in (seccion `lsp` habilitada + .NET SDK detectado) | pasa (confirmado con invocacion real de la tool, no solo con el log de registro) |
+| 2. Feature flag `OPENCODE_EXPERIMENTAL_LSP_TOOL=true` | pasa |
+| 3. Permiso `lsp: allow` | pasa |
+| 4. Frescura tras una edicion | no concluyente (la consulta de verificacion no respondio en 10m48s y se aborto) |
+
+La evidencia de los gates 2 y 3 es una sesion real de `opencode run` que invoco la tool `lsp` con `operation: documentSymbol` sobre un `.cs` de prueba y devolvio sus cuatro simbolos correctos, verificables contra el contenido del archivo -- no un log de registro ni la respuesta de un modelo sobre si mismo. Entorno: OpenCode `1.18.29`, .NET SDK `10.0.201`, modelo `openai/gpt-5.4-mini` (unico proveedor con credenciales activas ahi, asi que el piloto **no** comparte proveedor/modelo con #979 -- el protocolo no lo exige, porque nunca se comparan cifras absolutas entre runtimes).
+
+Consecuencia: **cero pares corridos** en los tres roles, igual que #979, pero **por una causa distinta**. Aqui el mecanismo esta disponible y funcional desde el preflight; lo que falta es la ejecucion del corpus, porque los 3 casos x 3 pares exigen worktrees del SHA congelado del consumidor con oraculos predeclarados por un operador humano -- exactamente lo que la nota tecnica de #980 reserva como paso humano posterior ("La ejecucion y exportacion de evidencia desde el consumidor son pasos humanos; el PR de Mefisto solo incorpora el reporte sanitizado").
+
+El piloto deja ademas dos limitaciones operativas registradas, relevantes para quien ejecute el corpus real: los comandos `opencode debug lsp document-symbols/symbols/diagnostics` devuelven `[]`/`{}` incluso con el servidor `csharp` registrado -- crean y destruyen la instancia en el mismo milisegundo del `init` --, asi que esa CLI **no** es un proxy fiable del gate 1; y continuar una sesion con `--session` tras editar el archivo fuera de ella puede colgarse (10m48s sin respuesta, con 8.19s de CPU acumulado: espera de red/API, no computo local), frente a los 7.7s de una sesion nueva equivalente.
 
 ## Decision
 
@@ -47,9 +58,9 @@ Ninguna celda compara cifras absolutas entre runtimes -- ninguna de las seis com
 | Claude Code | `planner` | si (4 gates, falla en gate 3) | 0/3 | `no evaluable` |
 | Claude Code | `implementer` | si (4 gates, falla en gate 3) | 0/3 | `no evaluable` |
 | Claude Code | `reviewer` | si (4 gates, falla en gate 3) | 0/3 | `no evaluable` |
-| OpenCode | `planner` | no (piloto #980 no ejecutado) | 0/3 | `no evaluable` (piloto pendiente) |
-| OpenCode | `implementer` | no (piloto #980 no ejecutado) | 0/3 | `no evaluable` (piloto pendiente) |
-| OpenCode | `reviewer` | no (piloto #980 no ejecutado) | 0/3 | `no evaluable` (piloto pendiente) |
+| OpenCode | `planner` | si (4 gates: 1-3 en verde, gate 4 no concluyente) | 0/3 | `no evaluable` (corpus pendiente, mecanismo disponible) |
+| OpenCode | `implementer` | si (4 gates: 1-3 en verde, gate 4 no concluyente) | 0/3 | `no evaluable` (corpus pendiente, mecanismo disponible) |
+| OpenCode | `reviewer` | si (4 gates: 1-3 en verde, gate 4 no concluyente) | 0/3 | `no evaluable` (corpus pendiente, mecanismo disponible) |
 
 **Como se lee la regla del protocolo.** #976 dice que un rol cuyo mecanismo LSP no esta disponible de forma estable "concluye `no evaluable` y queda fuera de la sintesis de #981". Este ADR lo lee como *fuera del calculo de medianas y de cualquier adopcion*, **no** fuera del registro: CA-1 de #981 exige explicitamente no ocultar corridas fallidas ni no evaluables. De ahi que las seis combinaciones figuren en la tabla con su causa y su conteo de pares en cero, y que ninguna aporte cifra a ningun umbral del punto 2.
 
@@ -64,12 +75,12 @@ Para las **seis** combinaciones runtime x rol de la tabla, la decision es **evid
 
 Tradeoffs de tokens, tiempo y calidad quedan **sin medir** en las seis combinaciones -- no hay una sola fila de evidencia cuantitativa que reportar.
 
-El tradeoff de **indexacion** queda igualmente sin medir: la columna `cache` (`fria`/`caliente`) que el formato de evidencia de #976 obliga a anotar aparte -- nunca promediada con tokens ni con tiempo -- no tiene un solo valor registrado en ninguno de los dos pilotos. Lo unico conocido hoy de ese eje es cualitativo y se deriva del diseno de cada mecanismo, no de una medicion: en **Claude Code** el plugin no aporta servidor propio sino que ejecuta el binario `csharp-ls` del `PATH`, que debe cargar proyecto/solucion antes de responder la primera consulta semantica -- por eso el costo de arranque en frio es un dato del preflight y no un supuesto heredable; en **OpenCode** el servidor C# nativo exige un .NET SDK detectado y arranca deshabilitado salvo configuracion explicita de la seccion `lsp`. Ninguna de las dos observaciones es un costo cuantificado, y este ADR no las contrasta entre si.
+El tradeoff de **indexacion** queda igualmente sin medir: la columna `cache` (`fria`/`caliente`) que el formato de evidencia de #976 obliga a anotar aparte -- nunca promediada con tokens ni con tiempo -- no tiene un solo valor registrado en ninguno de los dos pilotos. Lo unico conocido hoy de ese eje es cualitativo y se deriva del diseno de cada mecanismo, no de una medicion: en **Claude Code** el plugin no aporta servidor propio sino que ejecuta el binario `csharp-ls` del `PATH`, que debe cargar proyecto/solucion antes de responder la primera consulta semantica -- por eso el costo de arranque en frio es un dato del preflight y no un supuesto heredable; en **OpenCode** el servidor C# built-in exige un .NET SDK detectado y arranca deshabilitado salvo configuracion explicita de la seccion `lsp`, y el piloto #980 si dejo dos wall-clocks observados en consultas de control -- 7.7s para una sesion nueva que invoca `glob` + `lsp(documentSymbol)`, y mas de 10m48s (abortada) al continuar esa misma sesion con `--session` tras editar el archivo. Esas dos cifras miden disponibilidad y comportamiento del mecanismo, **no** entran en ninguna mediana del corpus, y ninguna es un costo de indexacion cuantificado; este ADR no las contrasta entre runtimes.
 
 Los dos ejes restantes con senal cualitativa -- **madurez experimental** y causa del bloqueo -- son distintos entre runtimes y no se promedian entre si:
 
 - **Claude Code**: el bloqueador es de **entorno**, no de mecanismo. El plugin `csharp-lsp` es oficial, versionado (`1.0.0`) y depende de una instalacion externa a nivel de usuario/maquina (binario `csharp-ls` + `claude plugin install`) que ningun stage headless del pipeline publicado ejecuta hoy por su cuenta. Dos reportes abiertos del tracker de terceros (`anthropics/claude-code#84125`, `#79744`) senalan riesgo adicional de poda de la tool en subagentes y de desincronizacion tras editar en modo interactivo -- ninguno de los dos se llego a verificar aqui porque el gate 3 fallo antes.
-- **OpenCode**: el bloqueador es de **ejecucion del piloto**, no de mecanismo ni de entorno conocido -- no hay ningun dato, ni siquiera negativo, sobre si los tres gates (servidor C#, feature flag, permiso) pasarian en el entorno del pipeline. La propia documentacion oficial de OpenCode (citada por #976/#980) advierte que LSP "no siempre es beneficio neto", y el mecanismo exige tres gates independientes en vez de uno, una superficie de fallo mayor que la de Claude Code -- una senal de madurez experimental a favor de no asumir disponibilidad, no una conclusion sobre resultado.
+- **OpenCode**: el mecanismo esta **confirmado disponible** en el entorno del piloto -- los tres gates en verde con invocacion real de la tool --, asi que el bloqueador no es de mecanismo ni de entorno: es la **ejecucion del corpus**, un paso humano sobre el consumidor congelado. La senal de madurez experimental se mantiene, pero ahora con matices medidos en vez de supuestos: la documentacion oficial de OpenCode (citada por #976/#980) advierte que LSP "no siempre es beneficio neto"; el mecanismo exige tres gates independientes en vez de uno, una superficie de fallo mayor que la de Claude Code; el gate 4 de frescura quedo **sin verificar** al colgarse la consulta de continuacion de sesion; y una de las tres consultas de control (`C1`, enumerar las tools disponibles) no completo en el mismo entorno donde las otras dos si -- el mecanismo responde, pero no de forma determinista al 100%.
 
 ### 3. Capacidad neutral separada de `read` (CA-3, condicional -- no disparada)
 
@@ -95,13 +106,13 @@ Como consecuencia directa de este ADR:
 Se enumeran como candidatos; **ninguno se ejecuta en este ADR** y este ADR no crea un issue que los agrupe. Cualquier issue de adopcion posterior debe declarar su dependencia de `MEF-ADR-0052`:
 
 1. **Lado publicado, Claude Code**: instalar `csharp-ls` (`dotnet tool install --global csharp-ls` o Homebrew) y el plugin `csharp-lsp@claude-plugins-official` en el entorno donde corre el pipeline headless; repetir los cuatro gates del preflight de #979 -- esta vez el gate 3 desde un worktree del consumidor y dentro de los subagentes que invoca cada etapa (no solo la sesion padre), y el gate 4 de frescura tras una edicion real -- antes de correr los 3 casos x 3 pares que fija #976.
-2. **Lado publicado, OpenCode**: ejecutar #980 desde cero -- el issue sigue abierto y sin reporte. Verificar los tres gates (servidor C#, feature flag, permiso) por separado antes de cualquier par.
+2. **Lado publicado, OpenCode**: #980 ya dejo el preflight en verde y la receta de configuracion verificada, asi que lo pendiente **no** es reejecutar el preflight sino correr el corpus -- materializar `planner`/`implementer`/`reviewer` como configuracion temporal equivalente de OpenCode (hoy sin generador automatico: `generate-internal-adapters.sh` opera sobre agentes internos, no sobre los publicados) y ejecutar los 3 casos x 3 pares sobre worktrees limpios del SHA congelado. Cerrar de paso el gate 4 de frescura, que quedo sin verificar, y reverificar los cuatro gates desde cero si cambia la version de OpenCode, el .NET SDK o el modelo.
 3. **Ambos runtimes**: si un piloto futuro aprueba el paso 1 (no inferioridad de calidad) en algun rol, evaluar el paso 2 (umbrales -10%/-15%) con las tres repeticiones por caso que exige #976, sin comparar cifras absolutas entre Claude Code y OpenCode en ningun punto.
 4. **Lado interno**: si algun rol/runtime resultara adoptado en un ADR futuro, revisar entonces la asimetria `read` -> `lsp` de `src/internal/contract/opencode-permissions.json` a la luz del punto 3 de esta decision (capacidad neutral separada), en vez de asumir que el mapping actual ya es la doctrina correcta.
 
 ### 6. Fragmentos de changelog (CA-6)
 
-`changelog.d/981.added.md` y `changelog.d/981.adr-index.md` documentan este ADR sin editar `CHANGELOG.md` ni `docs/adr/INDICE-TEMATICO.md` directamente.
+`changelog.d/981.added.md` y `changelog.d/981.adr-index.md` documentan este ADR sin editar `CHANGELOG.md` ni `docs/adr/INDICE-TEMATICO.md` directamente. La enmienda del 2026-09-07 anade `changelog.d/980.changed.md` y **no** un segundo fragmento de indice: `changelog.d/981.adr-index.md` sigue sin consolidar y ya aporta la fila de `MEF-ADR-0052`, asi que otro produciria una fila duplicada del mismo ADR.
 
 ## Alternativas consideradas
 
@@ -109,13 +120,17 @@ Se enumeran como candidatos; **ninguno se ejecuta en este ADR** y este ADR no cr
 
 Posponer este ADR hasta que el piloto OpenCode produzca su propio reporte, para que las seis combinaciones tengan al menos un preflight ejecutado.
 
-**Descartada**: el propio issue #981 anticipa en su contexto que la sintesis puede concluir `no adoptar`, `adoptar solo en <runtime/rol>` o **pedir un nuevo piloto acotado** cuando un rol/runtime "no fue evaluable" -- exactamente el estado de OpenCode hoy. Bloquear la sintesis indefinidamente en una dependencia no cerrada es menos util que documentar el estado actual con transparencia total (incluyendo que #980 no corrio) y dejar el follow-up 2 explicito; un ADR futuro puede enmendar esta conclusion en cuanto #980 aporte evidencia real, sin que este documento haya fingido una espera que no tiene fecha.
+**Descartada**: el propio issue #981 anticipa en su contexto que la sintesis puede concluir `no adoptar`, `adoptar solo en <runtime/rol>` o **pedir un nuevo piloto acotado** cuando un rol/runtime "no fue evaluable" -- exactamente el estado de OpenCode. Bloquear la sintesis indefinidamente en una dependencia no cerrada es menos util que documentar el estado con transparencia total y dejar el follow-up 2 explicito, sin fingir una espera que no tiene fecha.
+
+La enmienda del 2026-09-07 confirma que la eleccion fue correcta en su forma, pero no en su lectura del estado: el reporte de #980 si existia -- escrito y con el preflight en verde -- y solo no estaba en `main` porque el watchdog del pipeline interno mato a su etapa `writer` por timeout antes del commit (`TIMEOUT`, 1859s, exit 124), tras haber escrito los deliverables. Incorporarlo no cambio la conclusion de la sintesis (las seis combinaciones siguen en `evidencia insuficiente` por corpus vacio), pero si la causa registrada para OpenCode. Leccion transferible para futuras sintesis: la ausencia de un archivo en `main` no es evidencia de que el trabajo no se hizo, sobre todo cuando la dependencia declarada corrio en el mismo batch.
 
 ### Alt b: Extrapolar el resultado `no evaluable` de Claude Code a OpenCode
 
 Asumir que, si el mecanismo Claude Code no esta disponible en este entorno, tampoco lo estara el de OpenCode, y cerrar la sintesis sin distinguir ambos casos.
 
-**Descartada**: contradice el principio del propio protocolo (#976) de que solo son validos los deltas dentro del mismo runtime -- cada uno tiene su propio mecanismo, servidor y gates de activacion completamente independientes. El bloqueador de Claude Code es de instalacion de un plugin+binario concretos; el de OpenCode (a la fecha de este ADR) es que el piloto nunca corrio. Son causas distintas que este ADR mantiene distinguidas en la tabla del punto 1 y en el punto 2, en vez de fundirlas en una sola conclusion.
+**Descartada**: contradice el principio del propio protocolo (#976) de que solo son validos los deltas dentro del mismo runtime -- cada uno tiene su propio mecanismo, servidor y gates de activacion completamente independientes. El bloqueador de Claude Code es de instalacion de un plugin+binario concretos; el de OpenCode es la ejecucion del corpus, con el mecanismo ya confirmado disponible. Son causas distintas que este ADR mantiene distinguidas en la tabla del punto 1 y en el punto 2, en vez de fundirlas en una sola conclusion.
+
+La evidencia de #980 muestra ademas que la extrapolacion habria sido **factualmente falsa**, no solo metodologicamente invalida: el mecanismo LSP de OpenCode si estaba disponible y respondiendo con datos semanticos correctos en el mismo entorno donde el de Claude Code no lo estaba.
 
 ### Alt c: Instalar el plugin/binario de Claude Code dentro de este mismo stage para desbloquear el piloto
 
@@ -127,16 +142,16 @@ Aprovechar la escritura de este ADR para instalar `csharp-ls` y el plugin `cshar
 
 ### Positivas
 
-- **Ninguna doctrina de agente cambia por intuicion o por extrapolacion entre runtimes**: las seis combinaciones quedan en evidencia insuficiente, con la causa de cada bloqueo documentada por separado (entorno vs ejecucion pendiente).
+- **Ninguna doctrina de agente cambia por intuicion o por extrapolacion entre runtimes**: las seis combinaciones quedan en evidencia insuficiente, con la causa de cada bloqueo documentada por separado (entorno ausente en Claude Code vs corpus pendiente en OpenCode, con el mecanismo ahi confirmado disponible).
 - **El fallback textual post-#978 sigue siendo la unica doctrina activa**, sin que ningun agente publicado cargue schema o configuracion de LSP como efecto colateral de un piloto que no concluyo.
-- **Los follow-ups quedan concretos y verificables** (instalacion exacta para Claude Code, ejecucion pendiente de #980 para OpenCode) en vez de un generico "reintentar mas adelante".
+- **Los follow-ups quedan concretos y verificables** (instalacion exacta para Claude Code; corpus sobre el consumidor congelado para OpenCode, con la receta de configuracion ya verificada por #980) en vez de un generico "reintentar mas adelante".
 - **MEF-ADR-0050 y MEF-ADR-0049 quedan honrados**: ninguna doctrina comun asume un mecanismo de runtime concreto, y el punto 3 deja fijado el criterio de mapeo neutral para cuando (si) haga falta.
 
 ### Negativas
 
 - **La pregunta original de #976 (LSP reduce tokens/mejora calidad frente a texto?) sigue sin respuesta** para los tres roles en ambos runtimes -- este ADR sintetiza ausencia de evidencia, no un resultado positivo o negativo del mecanismo en si.
 - **El piloto Claude Code requiere trabajo de entorno fuera del pipeline** (instalar plugin + binario a nivel de usuario/maquina) antes de poder reintentarse con datos reales.
-- **El piloto OpenCode representa esfuerzo pendiente completo**: #980 no tiene ni un preflight corrido, a diferencia de #979 que al menos deja los cuatro gates documentados.
+- **El corpus real es el esfuerzo pendiente en ambos runtimes**: #980 deja el preflight en verde y la receta de configuracion verificada, pero los 18 pares (36 corridas) sobre el consumidor congelado son trabajo humano no ejecutado -- y en Claude Code no se llega siquiera a ese punto sin resolver antes la instalacion del plugin/binario. El gate 4 de frescura queda sin verificar en OpenCode, con la senal de que continuar sesiones tras una edicion puede colgarse.
 - **La asimetria `read` -> `lsp` del contrato interno sigue vigente** tras este ADR (punto 4): los adaptadores OpenCode del lado interno conceden `lsp: allow` por herencia de `read`, hoy inerte por el feature flag no exportado, y su correccion queda diferida al follow-up 4 en vez de resolverse aqui.
 - **Un tercer ADR de sintesis podria ser necesario** si #979 y #980 se re-ejecutan en momentos distintos y ninguno de los dos justifica reabrir este documento por si solo -- riesgo aceptado porque forzar sincronizacion exacta entre dos pilotos independientes no esta en el alcance de ninguno de los tres issues (#979, #980, #981).
 
@@ -145,7 +160,7 @@ Aprovechar la escritura de este ADR para instalar `csharp-ls` y el plugin `cshar
 - Issue #976: protocolo, corpus, umbrales y formato de evidencia (`docs/testing/lsp-experiment-protocol.md`).
 - Issue #978 (PR #1002): retiro de la dependencia del MCP de Rider de los agentes publicados -- baseline textual de ambos pilotos.
 - Issue #979 (PR #1011): piloto Claude Code, `docs/testing/lsp-pilot-claude.md` -- fuente del resultado `no evaluable` y de los cuatro gates de preflight citados en este ADR.
-- Issue #980: piloto OpenCode -- abierto sin reporte a la fecha de este ADR (2026-09-07); fuente del estado "piloto no ejecutado" citado en este ADR.
+- Issue #980 (PR #1014): piloto OpenCode, `docs/testing/lsp-pilot-opencode.md` -- fuente del preflight en verde (gates 1-3 con invocacion real de la tool), del gate 4 no concluyente, del entorno verificado y de las dos limitaciones operativas citadas en este ADR.
 - MEF-ADR-0050 (principio de neutralidad de runtime): fuente del criterio de capacidad neutral separada de `read` que el punto 3 fijaria si se adoptara.
 - MEF-ADR-0049 (arquitectura neutral runtime/proveedor): precedente de mapeos por runtime y origen de `src/internal/contract/opencode-permissions.json`, cuya asimetria `read`->`lsp` cita el punto 3.
 - MEF-ADR-0019 (publicado vs interno): los follow-ups del punto 5 declaran explicitamente a que lado pertenece cada uno.
@@ -154,3 +169,4 @@ Aprovechar la escritura de este ADR para instalar `csharp-ls` y el plugin `cshar
 ## Control de cambios
 
 - 2026-09-07: creacion como `aceptado` (issue #981). Sintetiza la evidencia de #979 (piloto Claude Code, `no evaluable` por plugin/binario ausentes en el entorno, no por inviabilidad del mecanismo) y #980 (piloto OpenCode, no ejecutado -- issue abierto sin reporte a esta fecha); fija `evidencia insuficiente` para las seis combinaciones runtime x rol evaluables por #976, sin comparar cifras absolutas entre runtimes y sin extrapolar el bloqueo de uno al otro (seccion "Decision", puntos 1-2); deja fijado el criterio de capacidad neutral separada de `read` para una adopcion futura, sin dispararlo (punto 3); mantiene el fallback textual post-#978 y prohibe cargar configuracion/schema de LSP en cualquier agente publicado como efecto de este ADR, dejando los roles no probados explicitamente fuera y registrando que el `lsp: allow` heredado de `read` en los adaptadores internos de OpenCode preexiste a los pilotos y no se toca aqui (punto 4); y enumera cuatro follow-ups por componente y lado sin ejecutarlos ni crear un issue contenedor (punto 5).
+- 2026-09-07: enmienda con la evidencia real de #980 (PR #1014, `docs/testing/lsp-pilot-opencode.md`). La version original registro que el piloto OpenCode "nunca comenzo" porque su reporte no estaba en `main`: la etapa `writer` del pipeline interno lo habia escrito y habia pasado los guards, pero el watchdog la mato por timeout antes del commit, asi que el ADR se redacto sobre un `main` que no lo contenia. La conclusion de sintesis **no cambia** -- las seis combinaciones siguen en `evidencia insuficiente`, con el corpus en cero pares --, pero si la causa registrada para OpenCode: el preflight si corrio y los tres gates de mecanismo (servidor C# built-in, feature flag, permiso) quedaron **en verde** con invocacion real de la tool `lsp`, con el gate 4 de frescura no concluyente. Se reescriben en consecuencia la seccion "Resultado de #980", las tres filas de OpenCode del punto 1, el tradeoff de indexacion y la senal de madurez del punto 2, el follow-up 2 del punto 5 (de "ejecutar desde cero" a "correr el corpus"), las alternativas a y b, dos consecuencias positivas y una negativa, y la referencia a #980.
