@@ -41,7 +41,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-SCRIPT="$REPO_ROOT/src/internal/scripts/mefisto-batch-pipeline.sh"
+SCRIPT="$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh"
 
 PASS=0
 FAIL=0
@@ -55,7 +55,7 @@ extract_fn() {
     awk -v fn="$name" '$0 ~ "^"fn"\\(\\) \\{" {p=1} p{print} p && /^}/{p=0}' "$file"
 }
 
-echo "[pre] ensure_repo_on_base_branch() se extrae de $SCRIPT"
+echo "[pre] ensure_repo_on_base_branch() se extrae de la libreria canonica $SCRIPT"
 
 FN_SRC=$(extract_fn "ensure_repo_on_base_branch" "$SCRIPT")
 if [ -z "$FN_SRC" ]; then
@@ -85,6 +85,7 @@ run_gate() {
     : > "$WARN_LOG"; : > "$ABORT_LOG"; : > "$STATE_LOG"
     (
         cd "$workdir" || exit 9
+        MEFISTO_REPO_ROOT="$workdir"
         warn()  { echo "$1" >> "$WARN_LOG"; }
         abort() { echo "$1" >> "$ABORT_LOG"; exit 77; }
         eval "$FN_SRC"
@@ -173,7 +174,12 @@ echo "[B] Rama != main/master, arbol SUCIO: aborta fail-loud sin tocar HEAD (CA-
 
 WORK_B=$(new_work_clone "work-b")
 git -C "$WORK_B" checkout -q -b feature-sucia
-echo "cambio sin commitear" > "$WORK_B/archivo-sin-trackear.txt"
+echo "cambio staged" > "$WORK_B/archivo-staged.txt"
+git -C "$WORK_B" add archivo-staged.txt
+echo "cambio modificado" > "$WORK_B/archivo-modificado.txt"
+git -C "$WORK_B" add archivo-modificado.txt
+echo "cambio posterior" >> "$WORK_B/archivo-modificado.txt"
+echo "cambio sin trackear" > "$WORK_B/archivo-sin-trackear.txt"
 
 run_gate "$WORK_B"
 RC=$?
@@ -201,6 +207,18 @@ if [ -f "$WORK_B/archivo-sin-trackear.txt" ]; then
     pass "B: el archivo sin commitear sigue presente (no se descarto nada)"
 else
     fail "B: el archivo sin commitear desaparecio"
+fi
+
+if git -C "$WORK_B" diff --cached --quiet; then
+    fail "B: el cambio staged desaparecio"
+else
+    pass "B: el cambio staged sigue presente"
+fi
+
+if git -C "$WORK_B" diff --quiet; then
+    fail "B: el cambio modificado desaparecio"
+else
+    pass "B: el cambio modificado sigue presente"
 fi
 
 # -------- Bloque C: arbol limpio pero 'main' local diverge de origin (CA-3) --------

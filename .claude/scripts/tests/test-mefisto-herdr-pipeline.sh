@@ -411,6 +411,17 @@ if printf '%s' "$LAST_STDERR" | grep -q "no es valido con --batch"; then pass "m
 if grep -q "pane run" "$HERDR_STUB_LOG"; then fail "no deberia despachar ningun pane"; else pass "ningun pane despachado"; fi
 
 echo ""
+echo "[15b] --batch con arbol sucio aborta antes de adquirir o despachar un pane"
+git -C "$FAKE_MEFISTO" checkout -q -b feature-sucia-herdr
+echo "nota pendiente" > "$FAKE_MEFISTO/nota-pendiente.txt"
+run_herdr --batch 872 873
+rm -f "$FAKE_MEFISTO/nota-pendiente.txt"
+git -C "$FAKE_MEFISTO" checkout -q master 2>/dev/null || git -C "$FAKE_MEFISTO" checkout -q main
+if [ "$LAST_RC" -eq 1 ]; then pass "aborta (rc=$LAST_RC)"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+if printf '%s' "$LAST_STDERR" | grep -qi "arbol.*limpio"; then pass "el error explica que solo se recupera con arbol limpio"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+if [ -s "$HERDR_STUB_LOG" ]; then fail "no deberia adquirir, cerrar ni ejecutar panes -- log: $(cat "$HERDR_STUB_LOG")"; else pass "ningun pane tocado antes del preflight"; fi
+
+echo ""
 echo "----------------------------------------"
 echo "  Combinaciones invalidas: $PASS pass, $FAIL fail (hasta aqui)"
 echo "----------------------------------------"

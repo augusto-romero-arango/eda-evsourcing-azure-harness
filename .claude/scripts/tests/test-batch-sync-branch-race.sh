@@ -51,6 +51,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 SCRIPT="$REPO_ROOT/src/internal/scripts/mefisto-batch-pipeline.sh"
+COMMON_LIB="$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh"
 
 PASS=0
 FAIL=0
@@ -293,7 +294,7 @@ fi
 echo ""
 echo "[D] Guard de regresion (CA-5): el gate de arranque ya no atribuye el worktree a la rama activa"
 
-GATE_BLOCK=$(extract_fn "ensure_repo_on_base_branch" "$SCRIPT")
+GATE_BLOCK=$(extract_fn "ensure_repo_on_base_branch" "$COMMON_LIB")
 
 if [ -z "$GATE_BLOCK" ]; then
     fail "D: no se pudo extraer el bloque del gate de arranque"

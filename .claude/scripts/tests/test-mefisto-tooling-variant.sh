@@ -234,6 +234,17 @@ if [ "$LAST_RC" -eq 1 ]; then pass "--batch + --variant aborta"; else fail "debe
 if printf '%s' "$LAST_STDERR" | grep -q "no es valido con --batch"; then pass "mensaje: no valido con --batch"; else fail "mensaje inesperado: $LAST_STDERR"; fi
 
 echo ""
+echo "[11] mefisto-tmux-pipeline.sh: --batch sucio aborta antes de tocar panes"
+git -C "$FAKE_MEFISTO" checkout -q -b feature-sucia-tmux
+echo "nota pendiente" > "$FAKE_MEFISTO/nota-pendiente.txt"
+run_wrapper --batch 711 712
+rm -f "$FAKE_MEFISTO/nota-pendiente.txt"
+git -C "$FAKE_MEFISTO" checkout -q master 2>/dev/null || git -C "$FAKE_MEFISTO" checkout -q main
+if [ "$LAST_RC" -eq 1 ]; then pass "--batch sucio aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+if printf '%s' "$LAST_STDERR" | grep -qi "arbol.*limpio"; then pass "el error explica que solo se recupera con arbol limpio"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+if [ -s "$TMUX_STUB_LOG" ]; then fail "no deberia crear, cerrar ni reutilizar panes -- log: $(cat "$TMUX_STUB_LOG")"; else pass "no toca tmux antes del preflight"; fi
+
+echo ""
 echo "----------------------------------------"
 echo "  mefisto-tmux-pipeline.sh: $PASS pass, $FAIL fail (hasta aqui)"
 echo "----------------------------------------"
