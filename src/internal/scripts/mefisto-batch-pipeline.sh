@@ -15,6 +15,10 @@
 # flag --runtime propio, solo verifica en la precondicion que el CLI del
 # runtime resuelto (lib/mefisto-runtime.sh) este instalado (issue #870).
 #
+# MEFISTO_AGENT_TIMEOUT_SECONDS (timeout de watchdog por stage, default 1800 --
+# issue #946) tambien viaja heredado a cada eslabon: este script no lo lee ni
+# lo reenvia, lo valida el pipeline de tooling en cada corrida.
+#
 # Flujo por issue:
 #   1. src/internal/scripts/mefisto-tooling-pipeline.sh <issue>
 #   2. Extraer URL del PR del output
