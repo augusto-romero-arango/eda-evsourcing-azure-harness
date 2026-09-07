@@ -11,6 +11,13 @@
 # real llamado `claude`: runtime_claude_build_cmd invoca literalmente ese
 # nombre).
 #
+# rate-limit-exhausted.jsonl (issue #965) es una reproduccion VERBATIM de la
+# secuencia real que reporta anthropics/claude-code#57096 (CLI v2.1.132):
+# `resetsAt: 1778193600` y el "resets 6:40pm (America/New_York)" del mensaje
+# sintetico son el par capturado ahi, no valores de adorno -- no "corregirlos"
+# para que la fecha del reset se parezca a la del resto del fixture, porque
+# entonces el fixture deja de ser evidencia de nada.
+#
 # Casos cubiertos:
 #   [pre] Los archivos nuevos existen, tienen sintaxis valida y el programa
 #         jq corre sin errores.
@@ -24,12 +31,15 @@
 #       nombre de tool resuelto por emparejamiento de id), en el orden del
 #       stream.
 #   [C] CA-3: la clasificacion completa, en el orden de
-#       classify_agent_failure: killed (exit 137/143) > api_error (del evento
-#       `result` o del stderr, 5xx antes que 4xx) > stream_cut > no_result >
-#       nonzero_exit; mas el criterio de exito de tres condiciones
-#       (is_error==false + subtype==success + stop_reason==end_turn), que
-#       gana sobre cualquier exit code (PR #446) dejando la muerte posterior
-#       documentada en `error` sin degradar el `status`.
+#       classify_agent_failure: killed (exit 137/143) > rate_limit
+#       (`rate_limit_event{status:"rejected"}`, issue #965) > api_error/
+#       provider_unavailable (del evento `result` o del stderr, 5xx ->
+#       provider_unavailable antes que 4xx -> api_error) > stream_cut >
+#       no_result > nonzero_exit; mas el criterio de exito de tres
+#       condiciones (is_error==false + subtype==success +
+#       stop_reason==end_turn), que gana sobre cualquier exit code (PR #446)
+#       dejando la muerte posterior documentada en `error` sin degradar el
+#       `status`.
 #   [D] CA-4: el terminal preserva session_id/tokens/cost_usd/turns/
 #       ttft_ms/denials/api_duration_ms cuando Claude los entrega: ausentes
 #       -> null, nunca 0 (success-minimal.jsonl).
@@ -61,6 +71,16 @@ CLAUDE_JQ="$LIB_DIR/runtime-claude.jq"
 SCHEMA_FILE="$CONTRACT_DIR/run-events.schema.json"
 JSONSCHEMA_LITE="$LIB_DIR/jsonschema-lite.jq"
 FIXTURES_DIR="$SCRIPT_DIR/fixtures/runtime-claude"
+
+# El runner (mefisto-run-agent.sh) resuelve la lib de adaptador via
+# MEFISTO_RUNTIME_LIB_DIR (mefisto-runtime.sh), que respeta un valor ya
+# EXPORTADO por el caller. Los pipelines internos la exportan apuntando al
+# checkout donde arrancaron, asi que sin pinearla aqui el bloque del runner
+# real traduciria con el adaptador de OTRO checkout (el principal) en vez del
+# que este test esta juzgando: un gate no determinista que da por bueno
+# codigo que nunca ejecuto (MEF-ADR-0031). test-mefisto-run-agent.sh ya la
+# controla por el mismo motivo.
+export MEFISTO_RUNTIME_LIB_DIR="$LIB_DIR"
 
 PASS=0
 FAIL=0
@@ -311,10 +331,17 @@ else
 fi
 
 C_529="$TMP/c-529.jsonl"; translate_fixture api-error-529.jsonl > "$C_529"
-if jq -e 'select(.type=="run.failed") | .status == "failed" and .error.kind == "api_error" and (.error.detail | contains("529"))' "$C_529" >/dev/null 2>&1; then
-    pass "C-2: result.is_error con api_error_status:529 -> run.failed{error.kind:api_error, detail con '529'}"
+if jq -e 'select(.type=="run.failed") | .status == "failed" and .error.kind == "provider_unavailable" and (.error.detail | contains("529"))' "$C_529" >/dev/null 2>&1; then
+    pass "C-2: result.is_error con api_error_status:529 -> run.failed{error.kind:provider_unavailable, detail con '529'} (issue #965)"
 else
     fail "C-2: no se clasifico el 529 como se esperaba: $(jq -c 'select(.type=="run.failed")' "$C_529")"
+fi
+
+C_RATELIMIT="$TMP/c-ratelimit.jsonl"; translate_fixture rate-limit-exhausted.jsonl "" 1 > "$C_RATELIMIT"
+if jq -e 'select(.type=="run.failed") | .error.kind == "rate_limit" and .resets_at == "2026-05-07T22:40:00Z"' "$C_RATELIMIT" >/dev/null 2>&1; then
+    pass "C-2b: rate_limit_event{status:rejected} -> run.failed{error.kind:rate_limit, resets_at poblado} (issue #965)"
+else
+    fail "C-2b: no se clasifico la ventana agotada como se esperaba: $(jq -c 'select(.type=="run.failed")' "$C_RATELIMIT")"
 fi
 
 C_404="$TMP/c-404.jsonl"; translate_fixture api-error-404.jsonl > "$C_404"
@@ -370,16 +397,16 @@ fi
 
 STDERR_5XX="$TMP/stderr-5xx.log"; printf 'ruido previo\nAPI Error: 500 Internal Server Error\n' > "$STDERR_5XX"
 C_STDERR5="$TMP/c-stderr5.jsonl"; translate_fixture killed-no-result.jsonl "" 1 "$STDERR_5XX" > "$C_STDERR5"
-if jq -e 'select(.type=="run.failed") | .error.kind == "api_error" and (.error.detail | contains("500"))' "$C_STDERR5" >/dev/null 2>&1; then
-    pass "C-10: 'API Error: 500' solo en stderr -> run.failed{error.kind:api_error} con el status en el detalle"
+if jq -e 'select(.type=="run.failed") | .error.kind == "provider_unavailable" and (.error.detail | contains("500"))' "$C_STDERR5" >/dev/null 2>&1; then
+    pass "C-10: 'API Error: 500' solo en stderr -> run.failed{error.kind:provider_unavailable} con el status en el detalle (issue #965)"
 else
     fail "C-10: no se leyo el API Error del stderr: $(jq -c 'select(.type=="run.failed")' "$C_STDERR5")"
 fi
 
 STDERR_MIX="$TMP/stderr-mix.log"; printf 'API Error: 400 Bad Request\nAPI Error: 529 Overloaded\n' > "$STDERR_MIX"
 C_STDERRMIX="$TMP/c-stderrmix.jsonl"; translate_fixture killed-no-result.jsonl "" 1 "$STDERR_MIX" > "$C_STDERRMIX"
-if jq -e 'select(.type=="run.failed") | .error.detail | contains("529")' "$C_STDERRMIX" >/dev/null 2>&1; then
-    pass "C-11: con 4xx y 5xx en el mismo stderr gana el 5xx (mismo orden que classify_agent_failure)"
+if jq -e 'select(.type=="run.failed") | .error.kind == "provider_unavailable" and (.error.detail | contains("529"))' "$C_STDERRMIX" >/dev/null 2>&1; then
+    pass "C-11: con 4xx y 5xx en el mismo stderr gana el 5xx -> provider_unavailable (issue #965)"
 else
     fail "C-11: el 5xx no gano sobre el 4xx: $(jq -c 'select(.type=="run.failed")' "$C_STDERRMIX")"
 fi
@@ -548,7 +575,7 @@ check_scenario "exito" "$F_EV" 0 "success" "" "$RC"
 
 F_EV="$TMP/f-529.jsonl"
 RC=$(MEFISTO_CLAUDE_STUB_FIXTURE="$FIXTURES_DIR/api-error-529.jsonl" MEFISTO_CLAUDE_STUB_EXIT=1 run_claude_scenario "$F_EV")
-check_scenario "is_error API Error: 529" "$F_EV" 1 "failed" "api_error" "$RC"
+check_scenario "is_error API Error: 529" "$F_EV" 1 "failed" "provider_unavailable" "$RC"
 
 F_EV="$TMP/f-404.jsonl"
 RC=$(MEFISTO_CLAUDE_STUB_FIXTURE="$FIXTURES_DIR/api-error-404.jsonl" MEFISTO_CLAUDE_STUB_EXIT=1 run_claude_scenario "$F_EV")
@@ -556,7 +583,11 @@ check_scenario "is_error API Error: 404" "$F_EV" 1 "failed" "api_error" "$RC"
 
 F_EV="$TMP/f-stderr-500.jsonl"
 RC=$(MEFISTO_CLAUDE_STUB_FIXTURE="$FIXTURES_DIR/killed-no-result.jsonl" MEFISTO_CLAUDE_STUB_STDERR="API Error: 500 Internal Server Error" MEFISTO_CLAUDE_STUB_EXIT=1 run_claude_scenario "$F_EV")
-check_scenario "API Error: 500 solo por stderr" "$F_EV" 1 "failed" "api_error" "$RC"
+check_scenario "API Error: 500 solo por stderr" "$F_EV" 1 "failed" "provider_unavailable" "$RC"
+
+F_EV="$TMP/f-ratelimit.jsonl"
+RC=$(MEFISTO_CLAUDE_STUB_FIXTURE="$FIXTURES_DIR/rate-limit-exhausted.jsonl" MEFISTO_CLAUDE_STUB_EXIT=1 run_claude_scenario "$F_EV")
+check_scenario "ventana de uso agotada (rate_limit_event, issue #965)" "$F_EV" 1 "failed" "rate_limit" "$RC"
 
 F_EV="$TMP/f-truncated.jsonl"
 RC=$(MEFISTO_CLAUDE_STUB_FIXTURE="$FIXTURES_DIR/stream-truncated.jsonl" MEFISTO_CLAUDE_STUB_EXIT=1 run_claude_scenario "$F_EV")

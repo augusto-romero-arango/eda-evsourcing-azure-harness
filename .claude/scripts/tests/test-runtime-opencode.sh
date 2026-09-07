@@ -31,6 +31,9 @@
 #       diagnostico (`raw_ignored`), con membresia EXACTA: un tipo futuro que
 #       sea subcadena de uno conocido tampoco cuenta como reconocido.
 #   [C] CA-3: clasificacion completa -- exito (exit 0 + texto visible) >
+#       rate_limit (exit != 0 con "429" + "rate limit"/"usage limit" en
+#       stderr, patron conservador del issue #965: OpenCode no expone un
+#       evento estructurado equivalente al `rate_limit_event` de Claude) >
 #       nonzero_exit (exit != 0, detalle de stderr) > no_result (stream
 #       vacio) > protocol_invalid (linea no-JSON) > no_result (exit 0 sin
 #       texto visible). El TIMEOUT del watchdog no se ejercita aqui via
@@ -71,6 +74,16 @@ OPENCODE_JQ="$LIB_DIR/runtime-opencode.jq"
 SCHEMA_FILE="$CONTRACT_DIR/run-events.schema.json"
 JSONSCHEMA_LITE="$LIB_DIR/jsonschema-lite.jq"
 FIXTURES_DIR="$SCRIPT_DIR/fixtures/runtime-opencode"
+
+# El runner (mefisto-run-agent.sh) resuelve la lib de adaptador via
+# MEFISTO_RUNTIME_LIB_DIR (mefisto-runtime.sh), que respeta un valor ya
+# EXPORTADO por el caller. Los pipelines internos la exportan apuntando al
+# checkout donde arrancaron, asi que sin pinearla aqui el bloque del runner
+# real traduciria con el adaptador de OTRO checkout (el principal) en vez del
+# que este test esta juzgando: un gate no determinista que da por bueno
+# codigo que nunca ejecuto (MEF-ADR-0031). test-mefisto-run-agent.sh ya la
+# controla por el mismo motivo.
+export MEFISTO_RUNTIME_LIB_DIR="$LIB_DIR"
 
 PASS=0
 FAIL=0
@@ -413,10 +426,22 @@ fi
 
 STDERR_FILE="$TMP/stderr.log"; printf 'ruido previo\nOpenAI: rate limit exceeded\n' > "$STDERR_FILE"
 C_STDERR="$TMP/c-stderr.jsonl"; translate_fixture success-1.18.29.jsonl "" 1 "$STDERR_FILE" > "$C_STDERR"
-if jq -e 'select(.type=="run.failed") | .error.detail | contains("rate limit exceeded")' "$C_STDERR" >/dev/null 2>&1; then
-    pass "C-3: exit != 0 con stderr -> el detalle incluye las ultimas lineas de stderr"
+if jq -e 'select(.type=="run.failed") | .error.kind == "nonzero_exit" and (.error.detail | contains("rate limit exceeded"))' "$C_STDERR" >/dev/null 2>&1; then
+    pass "C-3: exit != 0 con stderr -> el detalle incluye las ultimas lineas de stderr (sin '429': nonzero_exit, no rate_limit)"
 else
-    fail "C-3: el detalle no incluyo el stderr esperado: $(jq -c 'select(.type=="run.failed")' "$C_STDERR")"
+    fail "C-3: no se clasifico como se esperaba: $(jq -c 'select(.type=="run.failed")' "$C_STDERR")"
+fi
+
+# issue #965: patron conservador -- hace falta "429" JUNTO con "rate limit"
+# (evidencia real: anomalyco/opencode#42029, `Error: 429: {"type":
+# "FreeUsageLimitError","message":"...Rate limit exceeded..."}`).
+STDERR_RL="$TMP/stderr-ratelimit.log"
+printf 'Error: 429: {"type":"FreeUsageLimitError","message":"Error from provider (Console): Rate limit exceeded. Please try again later."}\n' > "$STDERR_RL"
+C_RATELIMIT="$TMP/c-ratelimit.jsonl"; translate_fixture success-1.18.29.jsonl "" 1 "$STDERR_RL" > "$C_RATELIMIT"
+if jq -e 'select(.type=="run.failed") | .error.kind == "rate_limit" and .resets_at == null' "$C_RATELIMIT" >/dev/null 2>&1; then
+    pass "C-3b: '429' + 'Rate limit exceeded' en stderr -> run.failed{error.kind:rate_limit, resets_at:null} (issue #965)"
+else
+    fail "C-3b: no se clasifico la ventana agotada como se esperaba: $(jq -c 'select(.type=="run.failed")' "$C_RATELIMIT")"
 fi
 
 C_EMPTY="$TMP/c-empty.jsonl"; translate_fixture empty-1.18.29.jsonl "" 0 > "$C_EMPTY"

@@ -39,24 +39,44 @@
 #      `run.completed{status:"success"}` -- el caso que run-events.schema.json
 #      reconoce explicitamente en el `$comment` de `error`.
 #   1. exit 137/143 -> killed (senal; SIGKILL/SIGTERM).
-#   2. `result.is_error==true` -> api_error, con "API Error: <status>" en el
-#      detalle cuando el CLI trae `api_error_status`. Forma real capturada del
-#      CLI v2.1.220 (ver bloque [G] de test-stream-json-trace.sh): en un fallo
-#      de API el status viaja DENTRO del evento `result`, con `subtype`
-#      todavia en "success".
-#   3. stderr con `API Error: 5xx` (y solo despues `4xx`) -> api_error. Mismo
-#      orden y mismos greps que classify_agent_failure: el 5xx precede al 4xx,
+#   2. Un evento `rate_limit_event` con `rate_limit_info.status != "allowed"`
+#      -> rate_limit, con `resets_at` poblado desde `rate_limit_info.resetsAt`
+#      (epoch segundos -> ISO 8601) -- issue #965. Gana sobre cualquier
+#      clasificacion posterior de `result`/stderr: la MISMA ventana agotada
+#      puede terminar como un `result.is_error` con `api_error_status:429`, o
+#      como un corte de stream a mitad de la respuesta sintetica ("You're out
+#      of extra usage..."), y en ambos casos es la misma causa, no un
+#      `api_error`/`stream_cut` generico. Forma real verificada en dos issues
+#      publicos de Anthropic (ningun transcript local disponible la capturo,
+#      ver notas tecnicas del issue #965):
+#      anthropics/claude-agent-sdk-python#599 (CLI v2.1.49, evento suelto en
+#      el stream: `{"type":"rate_limit_event","rate_limit_info":
+#      {"rateLimitType":"five_hour","resetsAt":<epoch>,"status":"allowed"}}`)
+#      y anthropics/claude-code#57096 (CLI v2.1.132, secuencia completa de un
+#      429 real: el `rate_limit_event` con `status:"rejected"` precede a un
+#      `assistant` sintetico y al `result{is_error:true,api_error_status:429}`
+#      que el punto 3 clasificaria como api_error si este punto no existiera).
+#   3. `result.is_error==true` -> provider_unavailable si `api_error_status`
+#      es 5xx (522/529 incluidos), api_error en cualquier otro caso (un 4xx
+#      que no es limite de uso, sin cambio de comportamiento -- issue #965
+#      CA-2), con "API Error: <status>" en el detalle cuando el CLI trae
+#      `api_error_status`. Forma real capturada del CLI v2.1.220 (ver bloque
+#      [G] de test-stream-json-trace.sh): en un fallo de API el status viaja
+#      DENTRO del evento `result`, con `subtype` todavia en "success".
+#   4. stderr con `API Error: 5xx` (y solo despues `4xx`) -> mismo split
+#      5xx->provider_unavailable / 4xx->api_error del punto anterior. Mismo
+#      orden y mismos greps que antes del issue #965: el 5xx precede al 4xx,
 #      y ambos preceden al corte de stream generico, que es mas amplio y se
 #      los tragaria. La traza de stdout y el stderr siguen separados (#425),
 #      por eso hacen falta las dos fuentes.
-#   4. Sin evento `result`:
+#   5. Sin evento `result`:
 #        - ultima linea no vacia del stream sin parsear (corte a mitad de
 #          escritura) -> stream_cut;
 #        - stderr con "Connection closed mid-response" (el otro patron de
 #          agent_log_has_stream_cut) -> stream_cut;
 #        - en cualquier otro caso -> no_result (el proceso termino sin
 #          declarar nada).
-#   5. `result` presente que no declara exito ni `is_error` (p. ej.
+#   6. `result` presente que no declara exito ni `is_error` (p. ej.
 #      `subtype=="error_max_turns"`) o exit distinto de cero sin patron
 #      reconocido -> nonzero_exit.
 
@@ -102,6 +122,17 @@ def claude_input_summary($name; $input):
 | ($stderr_lines | map(select(test("API Error: 5"))) | first) as $stderr_api_5xx
 | ($stderr_lines | map(select(test("API Error: 4"))) | first) as $stderr_api_4xx
 | ($stderr_lines | map(select(test("Connection closed mid-response"))) | first) as $stderr_cut
+
+# Ventana de uso agotada (issue #965): ver comentario de cabecera, punto 2.
+# `last` y no `first` porque el CLI puede emitir varios `rate_limit_event`
+# informativos con status "allowed" antes del que de verdad rechaza la
+# peticion -- el ultimo rechazado es el que describe el desenlace real.
+| ($events | map(select(.type == "rate_limit_event"))) as $rate_limit_events
+| ($rate_limit_events | map(select((.rate_limit_info.status // "allowed") != "allowed")) | last) as $rate_limit_rejected_event
+| ($rate_limit_rejected_event != null) as $rate_limit_rejected
+| ($rate_limit_rejected_event.rate_limit_info.resetsAt // null) as $resets_at_epoch
+| (if $resets_at_epoch == null then null else ($resets_at_epoch | try todate catch null) end) as $resets_at_iso
+| ($rate_limit_rejected_event.rate_limit_info.rateLimitType // null) as $rate_limit_type
 
 | ($events | map(select(.type == "system" and .subtype == "init")) | (.[0].session_id // null)) as $session_id
 | ($events | map(select(.type == "system" and .subtype == "init")) | (.[0].model // null)) as $model_from_init
@@ -170,18 +201,27 @@ def claude_input_summary($name; $input):
           error_kind: "killed",
           error_detail: ("el proceso murio por senal (exit " + ($exit | tostring) + ") sin declarar exito")
         }
-    elif ($result != null and $result.is_error == true) then
+    elif $rate_limit_rejected then
         {
           status: "failed",
-          error_kind: "api_error",
-          error_detail: (
-              ($result_api_prefix
-                + ((($result.result) // $result.error // $result.terminal_reason // $result.subtype // "error") | tostring)
-              ) | clip
-          )
+          error_kind: "rate_limit",
+          error_detail: ("ventana de uso agotada (rateLimitType=" + ($rate_limit_type // "?")
+              + ", resetsAt=" + ($resets_at_iso // "?") + ")")
         }
+    elif ($result != null and $result.is_error == true) then
+        (
+          (
+            ($result_api_prefix
+              + ((($result.result) // $result.error // $result.terminal_reason // $result.subtype // "error") | tostring)
+            ) | clip
+          ) as $is_error_detail
+          | if (($result.api_error_status // null) != null and (($result.api_error_status | tostring) | test("^5")))
+            then { status: "failed", error_kind: "provider_unavailable", error_detail: $is_error_detail }
+            else { status: "failed", error_kind: "api_error", error_detail: $is_error_detail }
+            end
+        )
     elif ($stderr_api_5xx != null) then
-        { status: "failed", error_kind: "api_error", error_detail: ($stderr_api_5xx | clip) }
+        { status: "failed", error_kind: "provider_unavailable", error_detail: ($stderr_api_5xx | clip) }
     elif ($stderr_api_4xx != null) then
         { status: "failed", error_kind: "api_error", error_detail: ($stderr_api_4xx | clip) }
     elif ($result == null and $truncated) then
@@ -225,7 +265,8 @@ def claude_input_summary($name; $input):
     denials: (if (($result.permission_denials // null) | type) == "array" then ($result.permission_denials | length) else null end),
     ttft_ms: ($result.ttft_ms // null),
     api_duration_ms: ($result.duration_api_ms // null),
-    error: (if $verdict.error_kind == null then null else {kind: $verdict.error_kind, detail: $verdict.error_detail} end)
+    error: (if $verdict.error_kind == null then null else {kind: $verdict.error_kind, detail: $verdict.error_detail} end),
+    resets_at: (if $verdict.error_kind == "rate_limit" then $resets_at_iso else null end)
   } as $terminal
 
 | $translated_events[], $terminal

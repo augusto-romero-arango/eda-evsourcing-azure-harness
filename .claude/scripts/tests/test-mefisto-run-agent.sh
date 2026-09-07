@@ -304,6 +304,20 @@ check_all_lines_valid() {
 check_all_lines_valid "valid-success.jsonl" "$FIXTURES_DIR/valid-success.jsonl"
 check_all_lines_valid "valid-failed.jsonl" "$FIXTURES_DIR/valid-failed.jsonl"
 check_all_lines_valid "valid-timeout.jsonl" "$FIXTURES_DIR/valid-timeout.jsonl"
+# issue #965: terminal de un agotamiento de ventana de uso, uno por runtime.
+check_all_lines_valid "valid-rate-limit-claude.jsonl" "$FIXTURES_DIR/valid-rate-limit-claude.jsonl"
+check_all_lines_valid "valid-rate-limit-opencode.jsonl" "$FIXTURES_DIR/valid-rate-limit-opencode.jsonl"
+
+if jq -e 'select(.type=="run.failed") | .error.kind == "rate_limit" and .resets_at == "2026-05-07T22:40:00Z"' "$FIXTURES_DIR/valid-rate-limit-claude.jsonl" >/dev/null 2>&1; then
+    pass "valid-rate-limit-claude.jsonl: error.kind='rate_limit' con resets_at poblado"
+else
+    fail "valid-rate-limit-claude.jsonl: no trae el error.kind/resets_at esperado"
+fi
+if jq -e 'select(.type=="run.failed") | .error.kind == "rate_limit" and .resets_at == null' "$FIXTURES_DIR/valid-rate-limit-opencode.jsonl" >/dev/null 2>&1; then
+    pass "valid-rate-limit-opencode.jsonl: error.kind='rate_limit' con resets_at null (sin campo estructurado en OpenCode)"
+else
+    fail "valid-rate-limit-opencode.jsonl: no trae el error.kind/resets_at esperado"
+fi
 
 TERMS=$(count_terminals "$FIXTURES_DIR/invalid-two-terminals.jsonl")
 if [ "$TERMS" = "2" ]; then

@@ -56,8 +56,20 @@
 # igual que un CLI que muere no necesita ademas explicar POR QUE su stream
 # quedo raro.
 #   1. exit == 0 (conocido) y al menos un `message` de texto visible -> success.
-#   2. exit != 0 (conocido) -> failed{error.kind:nonzero_exit}, con las
-#      ULTIMAS lineas de stderr como detalle (nunca el evento `error` del
+#   2. exit != 0 (conocido): si stderr trae una senal textual de limite de
+#      uso/rate limit -> failed{error.kind:rate_limit, resets_at:null}
+#      (issue #965; patron CONSERVADOR y no un campo estructurado: a
+#      diferencia de Claude Code, ningun transcript ni documentacion oficial
+#      de OpenCode confirma un evento equivalente a `rate_limit_event` -- ver
+#      anomalyco/opencode#42029, que solo muestra el mensaje suelto `Error:
+#      429: {"type":"FreeUsageLimitError","message":"...Rate limit
+#      exceeded..."}` por stderr/consola, y #8203, donde versiones viejas del
+#      CLI ni siquiera llegaban a salir con exit != 0 ante un 429 -- se
+#      quedaban colgadas. `resets_at` queda SIEMPRE null aqui: sin campo
+#      estructurado no hay de donde derivarlo; la politica de espera pierde
+#      la optimizacion de dormir exactamente hasta el reset y sondea en su
+#      lugar). En cualquier otro caso -> failed{error.kind:nonzero_exit}, con
+#      las ULTIMAS lineas de stderr como detalle (nunca el evento `error` del
 #      propio stdout, ver arriba). Sin stderr, el detalle nombra el exit code.
 #   3. TIMEOUT no se clasifica aqui: lo sintetiza mefisto-run-agent.sh con el
 #      reloj de pared que envuelve la invocacion completa (ver
@@ -131,6 +143,17 @@ def opencode_input_summary($tool; $input):
 | ($stderr_text | split("\n") | map(select(length > 0))) as $stderr_lines
 | ($stderr_lines | (if length > 5 then .[-5:] else . end) | join("\n") | clip) as $stderr_tail
 
+# Ventana de uso agotada (issue #965): ver comentario de cabecera, punto 2.
+# Patron textual conservador sobre TODO el stderr (no solo $stderr_tail, que
+# puede recortar la linea relevante si el proceso escribio ruido despues):
+# busca a la vez un indicio de codigo 429 y de "rate limit" -- exigir ambos
+# evita que un 4xx no relacionado (que tambien puede traer un 429 propio de
+# OTRO significado) o un mensaje generico que solo mencione "limit" disparen
+# un falso positivo.
+| ($stderr_lines | join("\n")) as $stderr_joined
+| ($stderr_joined | test("429")
+    and ($stderr_joined | test("rate.?limit|usage.?limit"; "i"))) as $stderr_rate_limit_signal
+
 # Diagnostico de tipos no reconocidos (CA-2): ver comentario de cabecera.
 # `IN(...)` y no `[.type] | inside([...])`: `inside` compara strings por
 # SUBCADENA, asi que un tipo futuro como "step" o "tool" (subcadena de
@@ -184,6 +207,15 @@ def opencode_input_summary($tool; $input):
 | (
     if ($exit == 0 and $has_text) then
         { status: "success", error_kind: null, error_detail: null }
+    elif ($nonzero and $stderr_rate_limit_signal) then
+        {
+          status: "failed", error_kind: "rate_limit",
+          error_detail: (
+              if ($stderr_tail // "") != "" then $stderr_tail
+              else "el proceso de OpenCode aviso un limite de uso (exit " + ($exit | tostring) + ") sin mas detalle por stderr"
+              end
+          )
+        }
     elif $nonzero then
         {
           status: "failed", error_kind: "nonzero_exit",
@@ -230,7 +262,8 @@ def opencode_input_summary($tool; $input):
     denials: null,
     ttft_ms: null,
     api_duration_ms: null,
-    error: (if $verdict.error_kind == null then null else {kind: $verdict.error_kind, detail: $verdict.error_detail} end)
+    error: (if $verdict.error_kind == null then null else {kind: $verdict.error_kind, detail: $verdict.error_detail} end),
+    resets_at: null
   } as $terminal
 
 | $translated_events[], $terminal

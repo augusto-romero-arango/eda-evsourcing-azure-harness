@@ -23,8 +23,9 @@
 #   [pre] las funciones nuevas existen en _mefisto-common.sh
 #   [A]   classify_agent_failure: paridad con la clasificacion anterior, ahora
 #         leyendo el JSONL neutral en vez de grepear un log de texto
-#   [B]   agent_failure_is_retryable: solo API_ERROR_SERVER reintenta (sin
-#         cambios -- no lee el JSONL neutral)
+#   [B]   agent_failure_is_retryable: solo PROVIDER_UNAVAILABLE reintenta
+#         (issue #965: reemplaza a la vieja etiqueta API_ERROR_SERVER; RATE_LIMIT,
+#         la otra etiqueta nueva del issue, queda deliberadamente fuera)
 #   [C]   el bucle de run_agent: reintenta 5xx, respeta el tope, no reintenta
 #         los demas tipos, y restaura el worktree solo si entraba limpio
 #
@@ -77,10 +78,16 @@ done
 echo ""
 echo "[A] classify_agent_failure conserva las etiquetas, ahora desde el JSONL neutral"
 
-# Fixtures inline conforme a run-events.schema.json (issue #906): un terminal
-# run.completed/run.failed con `error{kind, detail}` estructurado.
+# Fixtures inline conforme a run-events.schema.json (issue #906, kinds
+# "rate_limit"/"provider_unavailable" agregados en el issue #965): un
+# terminal run.completed/run.failed con `error{kind, detail}` estructurado.
+# Desde #965 el kind YA viene disambiguado del adaptador -- EVENTS_5XX usa
+# "provider_unavailable" (no "api_error") porque asi es como runtime-claude.jq
+# clasifica hoy un 529 (ver su elif de `api_error_status | test("^5")`).
 EVENTS_5XX="$TMP/events-5xx.jsonl"
-printf '%s\n' '{"v":1,"type":"run.failed","ts":"2026-08-05T10:00:00Z","status":"failed","runtime":"claude","model":null,"session_id":null,"duration_ms":100,"tokens":{"input":null,"output":null},"cost_usd":null,"turns":null,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":{"kind":"api_error","detail":"API Error: 529 Overloaded"}}' > "$EVENTS_5XX"
+printf '%s\n' '{"v":1,"type":"run.failed","ts":"2026-08-05T10:00:00Z","status":"failed","runtime":"claude","model":null,"session_id":null,"duration_ms":100,"tokens":{"input":null,"output":null},"cost_usd":null,"turns":null,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":{"kind":"provider_unavailable","detail":"API Error: 529 Overloaded"}}' > "$EVENTS_5XX"
+EVENTS_RATE_LIMIT="$TMP/events-rate-limit.jsonl"
+printf '%s\n' '{"v":1,"type":"run.failed","ts":"2026-08-05T10:00:00Z","status":"failed","runtime":"claude","model":null,"session_id":null,"duration_ms":100,"tokens":{"input":null,"output":null},"cost_usd":null,"turns":null,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":{"kind":"rate_limit","detail":"ventana de uso agotada (rateLimitType=five_hour, resetsAt=2026-08-05T15:00:00Z)"},"resets_at":"2026-08-05T15:00:00Z"}' > "$EVENTS_RATE_LIMIT"
 EVENTS_4XX="$TMP/events-4xx.jsonl"
 printf '%s\n' '{"v":1,"type":"run.failed","ts":"2026-08-05T10:00:00Z","status":"failed","runtime":"claude","model":null,"session_id":null,"duration_ms":100,"tokens":{"input":null,"output":null},"cost_usd":null,"turns":null,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":{"kind":"api_error","detail":"API Error: 400 Bad Request"}}' > "$EVENTS_4XX"
 EVENTS_CUT="$TMP/events-cut.jsonl"
@@ -109,14 +116,16 @@ check_label "A-2: senal con terminal de exito" \
     "SIGNAL_POST_SUCCESS (exit 137, 12s)"   "false" "137" "12" "$EVENTS_OK"
 check_label "A-3: senal sin terminal" \
     "SIGNAL_MID_FLIGHT (exit 137, 12s)"     "false" "137" "12" "$EVENTS_BAD"
-check_label "A-4: 5xx del servidor" \
-    "API_ERROR_SERVER (exit 1)"             "false" "1"   "12" "$EVENTS_5XX"
+check_label "A-4: 5xx del proveedor (kind provider_unavailable)" \
+    "PROVIDER_UNAVAILABLE (exit 1)"         "false" "1"   "12" "$EVENTS_5XX"
 check_label "A-5: 4xx del cliente" \
     "API_ERROR_CLIENT (exit 1)"             "false" "1"   "12" "$EVENTS_4XX"
 check_label "A-6: corte de stream" \
     "STREAM_CUT (exit 1)"                   "false" "1"   "12" "$EVENTS_CUT"
 check_label "A-7: sin sintoma reconocible" \
     "CLI_ERROR (exit 3)"                    "false" "3"   "12" "$EVENTS_PLAIN"
+check_label "A-9: ventana de uso agotada (kind rate_limit, issue #965)" \
+    "RATE_LIMIT (exit 1)"                   "false" "1"   "12" "$EVENTS_RATE_LIMIT"
 # El orden importa: un TIMEOUT del watchdog gana aunque el terminal traiga un 5xx.
 check_label "A-8: TIMEOUT precede al 5xx" \
     "TIMEOUT (99s, exit 1)"                 "true"  "1"   "99" "$EVENTS_5XX"
@@ -126,14 +135,19 @@ check_label "A-8: TIMEOUT precede al 5xx" \
 echo ""
 echo "[B] agent_failure_is_retryable: solo el 5xx transitorio se reintenta"
 
-if agent_failure_is_retryable "API_ERROR_SERVER (exit 1)"; then
-    pass "B-1: API_ERROR_SERVER es reintentable"
+if agent_failure_is_retryable "PROVIDER_UNAVAILABLE (exit 1)"; then
+    pass "B-1: PROVIDER_UNAVAILABLE es reintentable"
 else
-    fail "B-1: API_ERROR_SERVER deberia ser reintentable"
+    fail "B-1: PROVIDER_UNAVAILABLE deberia ser reintentable"
 fi
 
+# RATE_LIMIT (issue #965) queda deliberadamente FUERA del reintento con
+# backoff corto de este bucle: una ventana de 5h agotada no se arregla en
+# segundos, hace falta la politica de espera (hold) que este issue prepara
+# pero no implementa (ver notas tecnicas de #965).
 for label in "TIMEOUT (1800s, exit 137)" "API_ERROR_CLIENT (exit 1)" \
              "STREAM_CUT (exit 1)" "CLI_ERROR (exit 3)" \
+             "RATE_LIMIT (exit 1)" \
              "SIGNAL_MID_FLIGHT (exit 137, 12s)" "SIGNAL_POST_SUCCESS (exit 137, 12s)" ""; do
     if agent_failure_is_retryable "$label"; then
         fail "B-2: '$label' NO deberia ser reintentable"
@@ -344,7 +358,7 @@ else
 fi
 
 # C-7: cada reintento queda registrado en events.log.
-if grep -q "REINTENTO writer: API_ERROR_SERVER" "$EVENTS_LOG_ABS"; then
+if grep -q "REINTENTO writer: PROVIDER_UNAVAILABLE" "$EVENTS_LOG_ABS"; then
     pass "C-7: el reintento quedo anotado en events.log"
 else
     fail "C-7: events.log no registra el reintento"
