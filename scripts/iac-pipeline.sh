@@ -326,6 +326,9 @@ collect_summary() {
 }
 
 # --- Funcion auxiliar para invocar agentes ---
+# $RESUME_ARGS (issue #972) se expande SIN comillas a proposito: vacio debe
+# desaparecer del argv (mismo patron que $MODEL_ARGS en tdd-pipeline.sh).
+# shellcheck disable=SC2086
 run_agent() {
     local stage="$1"
     local agent="$2"
@@ -388,10 +391,18 @@ run_agent() {
         # #971, doctrina de MEF-ADR-0051 -- mismos defaults/env vars que el
         # lado interno, issue #967): el propio reintento hace de sonda, en un
         # bucle acotado por agent_hold_wait (techo MEFISTO_HOLD_MAX_SECONDS).
-        # Nunca restaura el worktree: ese trabajo parcial es justo lo que una
-        # reanudacion futura (issue de seguimiento de este bloque) necesitaria
-        # conservar.
+        # Nunca restaura el worktree: ese trabajo parcial es el que la
+        # reanudacion de sesion de la sonda (issue #972, mas abajo) se apoya
+        # en conservar.
         local HOLD_STARTED_TS="" HOLD_TOTAL_SECONDS=0 hold_attempt=0
+        # Reanudacion de sesion (issue #972, CA-1): mientras RESUME_DEGRADED
+        # siga en false, cada sonda del hold continua (-c) la conversacion
+        # truncada en vez de reenviar $prompt entero. SUMMARY_FILE es el
+        # mismo archivo que collect_summary lee al final del pipeline -- se
+        # reutiliza aqui solo como senal de si la sonda resumida llego al
+        # final de su contrato (CA-2).
+        local RESUME_DEGRADED=false
+        local SUMMARY_FILE="$WORKTREE_PATH/.claude/pipeline/summaries/stage-${stage}-${agent}.md"
         while agent_failure_is_holdable "$failure_type"; do
             [ -z "$HOLD_STARTED_TS" ] && HOLD_STARTED_TS=$(date +%s)
             local hold_slept
@@ -402,7 +413,20 @@ run_agent() {
             fi
             HOLD_TOTAL_SECONDS=$(( HOLD_TOTAL_SECONDS + hold_slept ))
             hold_attempt=$((hold_attempt + 1))
-            warn "$agent: $failure_type -- en espera (hold), reintentando (sonda #$hold_attempt)..."
+
+            # CA-1/CA-2: RESUME_ARGS vacio hace que $RESUME_ARGS desaparezca
+            # del argv (mismo patron que MODEL_ARGS de tdd-pipeline.sh) --
+            # degradado, la sonda reenvia el prompt original completo, byte a
+            # byte el comportamiento previo a este issue.
+            local attempt_used_resume=false RESUME_ARGS="" attempt_prompt="$prompt"
+            if [ "$RESUME_DEGRADED" = false ]; then
+                attempt_used_resume=true
+                RESUME_ARGS="-c"
+                attempt_prompt="$(agent_resume_prompt "$stage" "$agent")"
+                warn "$agent: $failure_type -- en espera (hold), reanudando sesion truncada (sonda #$hold_attempt)..."
+            else
+                warn "$agent: $failure_type -- en espera (hold), reintentando desde cero (sonda #$hold_attempt)..."
+            fi
 
             local log_stage_hold="$LOG_DIR_ABS/iac-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_NUM}-hold-${hold_attempt}.log"
             local stream_file_hold="${log_stage_hold%.log}.stream.jsonl"
@@ -416,15 +440,16 @@ run_agent() {
             local probe_start_ts CLAUDE_PID_HOLD PROBE_WATCHDOG_PID
             probe_start_ts=$(date +%s)
             CLAUDE_EXIT=0
+            # shellcheck disable=SC2086  # RESUME_ARGS vacio debe desaparecer del argv (ver MODEL_ARGS en tdd-pipeline.sh)
             if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
-                (cd "$WORKTREE_PATH" && claude -p "$prompt" \
+                (cd "$WORKTREE_PATH" && claude $RESUME_ARGS -p "$attempt_prompt" \
                     --agent "$agent" \
                     --permission-mode bypassPermissions \
                     --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
                     --output-format stream-json --verbose \
                     >"$stream_file_hold" 2>"$stderr_file_hold") &
             else
-                (cd "$WORKTREE_PATH" && claude -p "$prompt" \
+                (cd "$WORKTREE_PATH" && claude $RESUME_ARGS -p "$attempt_prompt" \
                     --agent "$agent" \
                     --permission-mode bypassPermissions \
                     --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
@@ -458,6 +483,16 @@ run_agent() {
             failure_type=$(classify_agent_failure "$CLAUDE_EXIT" "$elapsed" "$log_stage" "$stream_file")
             log "$agent fallo tras sonda de hold -- tipo: $failure_type"
             echo "[$(date +%H:%M:%S)] FALLO $agent: $failure_type (tras hold)" >> "$EVENTS_LOG_ABS"
+
+            # CA-2: la sonda resumida volvio a morir sin dejar el resumen del
+            # stage -- se degrada a "stage desde cero" de forma PERMANENTE
+            # para el resto de este run_agent (nunca se vuelve a intentar
+            # reanudar tras esta degradacion).
+            if [ "$attempt_used_resume" = true ] && [ ! -s "$SUMMARY_FILE" ]; then
+                warn "$agent: la sesion reanudada volvio a morir sin dejar el resumen del stage -- se degrada a stage desde cero"
+                echo "[$(date +%H:%M:%S)][hold][resume] $agent: sesion reanudada murio de nuevo sin resumen -- degradado a stage desde cero" >> "$EVENTS_LOG_ABS"
+                RESUME_DEGRADED=true
+            fi
         done
     fi
 

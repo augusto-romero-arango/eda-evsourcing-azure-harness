@@ -1129,6 +1129,42 @@ agent_hold_wait() {
     return 0
 }
 
+# agent_resume_prompt <stage> <agent>
+#
+# Prompt corto de continuacion para la sonda de hold que reanuda la sesion
+# truncada (issue #972, CA-1) en vez de reenviar el prompt original completo
+# del stage. Se envia junto con `-c`/`--continue` (continua la conversacion
+# MAS RECIENTE del directorio actual, verificado en `claude --help`): cada
+# stage ya hace `cd "$WORKTREE_PATH"` antes de invocar el CLI, y cada issue
+# tiene su propio worktree, asi que `-c` desde ahi resuelve la sesion
+# truncada de ESE stage sin necesitar `session_id` -- que del lado publicado
+# solo existe con PIPELINE_CAPTURE_STREAM=true (MEF-ADR-0051). Verificado a
+# mano (CA-4) que "la mas reciente del directorio" resuelve lo esperado
+# cuando dos sesiones distintas corrieron en secuencia en el mismo directorio
+# (el segundo -c continua la SEGUNDA, no la primera) -- ver changelog.d/
+# 972.changed.md para el detalle del experimento.
+#
+# Nunca se usa junto a --fork-session: reusar el mismo id de sesion es lo que
+# mantiene un solo transcript por stage (notas tecnicas del issue).
+#
+# Mismo contrato de contenido que el homologo interno (RESUME_PROMPT_TEXT de
+# `mefisto-tooling-pipeline.sh`, issue #968): pide continuar sin reiniciar el
+# analisis y dejar (o completar) el resumen del stage -- los gates de
+# confianza de cada pipeline (existencia del summary, deteccion de trabajo
+# truncado) se aplican sin cambios al resultado (CA-3).
+agent_resume_prompt() {
+    local stage="$1" agent="$2"
+    cat <<RESUME_PROMPT_EOF
+Tu sesion anterior en este mismo stage (stage ${stage}, agente ${agent}) se corto por un limite de uso o una caida del proveedor -- el pipeline ya espero (hold) a que se restableciera. Estas reanudando esa MISMA conversacion (--continue): tu memoria de trabajo, lo que ya leiste y lo que ya escribiste sigue disponible.
+
+Continua exactamente donde quedaste. No reinicies tu analisis desde cero, no releas archivos que ya revisaste ni repitas ediciones ya hechas.
+
+Termina tu contrato del stage, incluido dejar escrito (o completar si quedo a medias) el resumen en .claude/pipeline/summaries/stage-${stage}-${agent}.md. Si ese archivo ya existe completo, dejalo como esta; si no, escribelo ahora y agrega una linea que diga que esta sesion se reanudo tras una espera.
+
+CONTEXTO DE EJECUCION (sigue vigente): modo no-interactivo, sin humano al otro lado. PROHIBIDO hacer 'git push' o 'gh pr create': eso sigue siendo responsabilidad exclusiva del pipeline.
+RESUME_PROMPT_EOF
+}
+
 # --- Helpers de naming de Azure Storage Account (tfstate backend) -------------
 #
 # El nombre de una Storage Account es un endpoint DNS publico
