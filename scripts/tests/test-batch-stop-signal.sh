@@ -8,30 +8,37 @@
 #   [pre] Ambos scripts existen, son ejecutables y tienen sintaxis valida.
 #   [A]   batch_stop_requested()/defer_from_index() de batch-pipeline.sh en
 #         aislamiento: sin senal no dispara nada; con senal, defer_from_index
-#         consume el archivo (CA-4) y marca "aplazado" (CA-2/CA-3) solo desde
-#         el indice indicado, sin tocar los issues anteriores.
+#         consume el archivo (CA-5) y marca "aplazado" (CA-2) solo desde el
+#         indice indicado, sin tocar los issues anteriores.
 #   [B]   Guard de regresion: defer_from_index() de batch-pipeline.sh nunca
 #         toca HAVE_ERRORS ni FAILED (CA-5 -- una parada solicitada no es un
 #         fallo).
 #   [C]   batch_stop_requested()/defer_pending_issues() de parallel-pipeline.sh
 #         en aislamiento: consume la senal y marca DEFERRED_FLAG solo para los
-#         indices que seguian pendientes de lanzar (CA-3/CA-4), sin tocar los
+#         indices que seguian pendientes de lanzar (CA-3/CA-5), sin tocar los
 #         ya lanzados.
 #   [D]   Guard de regresion: defer_pending_issues() de parallel-pipeline.sh
 #         nunca toca PIDS ni FAILED (CA-5).
 #   [E]   batch-pipeline.sh, corrida real end-to-end: la senal YA presente
 #         antes de arrancar detiene el batch entero sin invocar
 #         tooling-pipeline.sh para NINGUN issue (CA-1 momento 1, CA-2), deja
-#         "aplazado" a los tres, exit 0 (CA-5) y consume la senal (CA-4).
+#         "aplazado" a los tres, exit 0 y consume la senal (CA-5).
 #   [F]   batch-pipeline.sh, corrida real end-to-end: la senal aparece DURANTE
 #         el primer eslabon -- ese eslabon se completa entero (pipeline, PR,
 #         merge) y los restantes quedan "aplazado" sin arrancar ningun
 #         worktree (CA-1 momento 2, CA-2), exit 0 y sin incrementar FAILED
-#         (CA-5), con la linea de relanzamiento en el orden correcto (CA-3).
+#         (CA-5), con la linea de relanzamiento en el orden correcto (CA-4).
 #   [G]   Caso limite: la senal llega durante el ULTIMO eslabon. No queda nada
 #         que aplazar (defer de cero issues, que bajo `set -e` no debe matar
 #         al motor), no se imprime linea de relanzamiento y la senal se
-#         consume igual (CA-4).
+#         consume igual (CA-5).
+#   [H]   parallel-pipeline.sh, corrida real end-to-end: la senal YA presente
+#         antes de la primera pasada del scheduler deja el lote entero
+#         "aplazado" sin lanzar ningun worktree (CA-3), imprime la linea de
+#         relanzamiento (CA-4), consume la senal y termina en exit 0 (CA-5).
+#         Es ademas el guard de regresion del caso "cero lanzados": con PIDS
+#         vacio, el loop de monitoreo no debe expandir "${PIDS[@]}" (bash 3.2
+#         aborta bajo `set -u` y el resumen con los aplazados no se imprimiria).
 #
 # Uso: scripts/tests/test-batch-stop-signal.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -247,7 +254,8 @@ setup_work_repo() {
     mkdir -p "$dir/scripts"
     cp "$COMMON_LIB" "$dir/scripts/_pipeline-common.sh"
     cp "$BATCH_SCRIPT" "$dir/scripts/batch-pipeline.sh"
-    chmod +x "$dir/scripts/batch-pipeline.sh"
+    cp "$PARALLEL_SCRIPT" "$dir/scripts/parallel-pipeline.sh"
+    chmod +x "$dir/scripts/batch-pipeline.sh" "$dir/scripts/parallel-pipeline.sh"
 }
 
 # fake_tooling_pipeline <dir> <call_log> [<signal_after_issue> <signal_path>]
@@ -331,6 +339,19 @@ run_batch() {
     (
         cd "$dir" || exit 99
         PATH="$FAKE_BIN:$SAFE_SYSTEM_PATH" ./scripts/batch-pipeline.sh "$@"
+    ) </dev/null >"$out" 2>"$err"
+    LAST_RC=$?
+    LAST_STDOUT=$(cat "$out")
+    LAST_STDERR=$(cat "$err")
+}
+
+# run_parallel <dir> <args...>
+run_parallel() {
+    local dir="$1"; shift
+    local out="$TMP/stdout" err="$TMP/stderr"
+    (
+        cd "$dir" || exit 99
+        PATH="$FAKE_BIN:$SAFE_SYSTEM_PATH" ./scripts/parallel-pipeline.sh "$@"
     ) </dev/null >"$out" 2>"$err"
     LAST_RC=$?
     LAST_STDOUT=$(cat "$out")
@@ -507,6 +528,74 @@ if echo "$LAST_STDOUT" | grep -qF "era el ultimo eslabon del batch"; then
     pass "G: el aviso dice la verdad (no promete aplazados inexistentes)"
 else
     fail "G: se esperaba el aviso del caso 'ultimo eslabon'. stdout: $LAST_STDOUT"
+fi
+
+# -------- Bloque H: parallel-pipeline.sh con la senal presente antes de lanzar --------
+
+echo ""
+echo "[H] parallel-pipeline.sh, corrida real: senal presente ANTES de la primera pasada del scheduler -- nada se lanza (CA-3, CA-4, CA-5)"
+
+WORK_H="$TMP/work-h"
+new_origin "$TMP/origin-h.git" "$WORK_H"
+setup_work_repo "$WORK_H"
+CALL_LOG_H="$TMP/call-log-h"; : > "$CALL_LOG_H"
+fake_tooling_pipeline "$WORK_H" "$CALL_LOG_H"
+
+mkdir -p "$WORK_H/pipeline-state"
+touch "$WORK_H/pipeline-state/batch-stop"
+
+run_parallel "$WORK_H" 501 502
+
+# Regresion del caso "cero lanzados": el loop de monitoreo corria
+# `for pid in "${PIDS[@]}"` sobre un PIDS vacio y bash 3.2 lo mataba con
+# "unbound variable" bajo `set -u`, justo antes del resumen que tenia todos los
+# aplazados por reportar.
+if [ "$LAST_RC" -eq 0 ]; then
+    pass "H: exit 0 (una parada solicitada no es un fallo, CA-5)"
+else
+    fail "H: se esperaba exit 0, se obtuvo $LAST_RC. stdout: $LAST_STDOUT / stderr: $LAST_STDERR"
+fi
+
+if ! echo "$LAST_STDERR" | grep -q "unbound variable"; then
+    pass "H: el motor no aborta por 'unbound variable' con cero pipelines en vuelo"
+else
+    fail "H: el motor aborto por 'unbound variable'. stderr: $LAST_STDERR"
+fi
+
+if [ ! -s "$CALL_LOG_H" ]; then
+    pass "H: no se lanzo ningun worktree (CA-3)"
+else
+    fail "H: se lanzo algun pipeline pese a la senal previa: $(cat "$CALL_LOG_H")"
+fi
+
+ALL_DEFERRED_H=true
+for i in 501 502; do
+    if ! echo "$LAST_STDOUT" | grep -E "#$i\s" | grep -q "aplazado"; then
+        ALL_DEFERRED_H=false
+    fi
+done
+if [ "$ALL_DEFERRED_H" = true ]; then
+    pass "H: los dos issues quedaron 'aplazado' en el resumen (CA-4)"
+else
+    fail "H: se esperaban dos issues 'aplazado' en el resumen. stdout: $LAST_STDOUT"
+fi
+
+if echo "$LAST_STDOUT" | grep -qF "parallel-pipeline.sh 501 502"; then
+    pass "H: la linea de relanzamiento apunta al orquestador paralelo, en orden (CA-4)"
+else
+    fail "H: no se encontro la linea de relanzamiento esperada. stdout: $LAST_STDOUT"
+fi
+
+if [ ! -e "$WORK_H/pipeline-state/batch-stop" ]; then
+    pass "H: la senal quedo consumida (borrada) (CA-5)"
+else
+    fail "H: la senal deberia haberse borrado tras detenerse el lote"
+fi
+
+if ! echo "$LAST_STDOUT" | grep -q "Fallidos: [^0]"; then
+    pass "H: FAILED se mantuvo en 0 (CA-5)"
+else
+    fail "H: FAILED no deberia incrementarse por una parada solicitada. stdout: $LAST_STDOUT"
 fi
 
 # -------- Resumen --------

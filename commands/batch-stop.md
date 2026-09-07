@@ -1,5 +1,5 @@
 ---
-model: "haiku"
+model: haiku
 ---
 
 Escribe la senal de parada suave de los orquestadores publicados de Mefisto (`batch-pipeline.sh` y `parallel-pipeline.sh`). Comunicate en **espanol**.
@@ -16,6 +16,15 @@ if [ -f "$REPO_ROOT/.claude-plugin/plugin.json" ]; then
 fi
 ```
 
+## Alcance: que orquestadores tienen cola que retener
+
+La senal es cooperativa: solo la consulta un orquestador que **mantiene una cola de issues sin lanzar**. Son dos:
+
+- `batch-pipeline.sh` --- el motor que lanza `/sequential`. Se detiene tras el eslabon en curso (pipeline -> PR -> merge).
+- `parallel-pipeline.sh` invocado directo (el camino de `--max-parallel` y de la serializacion de `tipo:projection`). Deja de lanzar pendientes; los worktrees ya en vuelo terminan.
+
+`/parallel` **no** entra aqui: delega en `tmux-pipeline.sh --parallel`, que abre un pane por issue de entrada y no deja ninguna cola pendiente. Si el usuario pide detener un `/parallel` en modo pane, dile que ahi no hay nada que retener --- todos los issues ya estan en vuelo --- y que la unica via es cerrar los panes de los que aun no quiera (con el costo de dejarlos a medio pipeline).
+
 ## Proceso
 
 ### 1. Detectar si hay un orquestador corriendo
@@ -26,7 +35,11 @@ Criterio: el proceso real de `batch-pipeline.sh` o `parallel-pipeline.sh` -- ni 
 pgrep -f "[s]cripts/batch-pipeline\.sh" >/dev/null 2>&1 || pgrep -f "[s]cripts/parallel-pipeline\.sh" >/dev/null 2>&1
 ```
 
-El patron ancla en `scripts/` (no solo `batch-pipeline.sh` a secas) para no confundirse con el motor interno de Mefisto (`mefisto-batch-pipeline.sh`, que vive en `src/internal/scripts/` de OTRO repo/checkout): si ese proceso corre en la misma maquina, `batch-pipeline.sh` SI aparece como substring de `mefisto-batch-pipeline.sh`, pero `scripts/batch-pipeline.sh` no.
+Tres detalles del patron, los tres deliberados:
+
+- `[s]cripts` en vez de `scripts`: el patron viaja en la linea de comandos del propio shell que corre este `pgrep`, y `pgrep -f` la mira igual que cualquier otra. Con la clase de un solo caracter, el texto literal del patron ya no encaja con la expresion, asi que la deteccion no puede auto-cumplirse: sin orquestador corriendo, el exit es 1.
+- Ancla en `scripts/` (no `batch-pipeline.sh` a secas) para no confundirse con el motor interno de Mefisto (`mefisto-batch-pipeline.sh`, que vive en `src/internal/scripts/` de OTRO repo/checkout): si ese proceso corre en la misma maquina, `batch-pipeline.sh` SI aparece como substring de `mefisto-batch-pipeline.sh`, pero `scripts/batch-pipeline.sh` no.
+- El criterio es **por maquina**, no por checkout: si el orquestador corre sobre otro clon del consumidor, aqui tambien da positivo y la senal se escribe en ESTE repo, donde nadie la va a consumir hasta la proxima corrida local (que se detendra de entrada, con todos sus issues `aplazado`, y la consumira). Es el precio de no inventar estado nuevo; invoca este comando desde el checkout donde lanzaste el batch.
 
 - Si **no** hay ningun proceso: responde y detente sin escribir nada:
   ```
@@ -57,4 +70,4 @@ Los issues no procesados quedaran "aplazado" en el resumen final, con la linea l
 - No pidas confirmacion adicional: el usuario ya la dio al escribir `/batch-stop` explicitamente.
 - No mates ningun proceso ni pane: la senal es cooperativa, el propio motor la consulta.
 - No la escribas si no detectaste ningun orquestador corriendo (paso 1): dejarla puesta sin necesidad envenenaria la proxima corrida.
-- La senal se autoconsume: el propio motor la borra al detenerse (`pipeline-state/` esta gitignored, MEF-ADR-0017). Este comando nunca la borra por su cuenta.
+- La senal se autoconsume: el propio motor la borra al detenerse (`pipeline-state/` es estado transitorio del pipeline y no se versiona, MEF-ADR-0017). Este comando nunca la borra por su cuenta.

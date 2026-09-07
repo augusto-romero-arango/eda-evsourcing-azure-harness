@@ -122,8 +122,11 @@ fail_issue() {
 # (sin campos que parsear) que /batch-stop escribe desde el checkout principal.
 # Vive en pipeline-state/batch-stop -- fuera de .claude/ por construccion
 # (MEF-ADR-0017: el runtime intercepta toda escritura bajo .claude/**, incluidas
-# redirecciones de Bash) -- y nunca se commitea (pipeline-state/ esta en
-# .gitignore del consumidor, mismo precedente que refactor-signal.md).
+# redirecciones de Bash) --, misma ubicacion que refactor-signal.md. Que no se
+# versione no depende de este script: el bloque de .gitignore que emite
+# infra-base-scaffolder lista pipeline-state/ en greenfield (un consumidor ya
+# scaffoldeado tiene que anadir la linea a mano, issue #485) y el auto-commit de
+# tooling-pipeline.sh la excluye de su `git add` en cualquier caso.
 #
 # Se consulta en dos momentos (CA-1): antes de arrancar el primer eslabon, y
 # despues de cada eslabon completado (pipeline + PR + merge) -- el unico punto
@@ -138,8 +141,8 @@ batch_stop_requested() {
 
 # defer_from_index <indice-0-based>
 #
-# Consume la senal (CA-4: se borra para no envenenar la corrida siguiente) y
-# marca "aplazado" (CA-2/CA-3) todos los issues de ISSUE_NUMS desde <indice> en
+# Consume la senal (CA-5: se borra para no envenenar la corrida siguiente) y
+# marca "aplazado" (CA-2) todos los issues de ISSUE_NUMS desde <indice> en
 # adelante. Nunca toca HAVE_ERRORS/FAILED/--stop-on-error (CA-5: una parada
 # solicitada no es un fallo del batch).
 defer_from_index() {
@@ -379,7 +382,7 @@ for ISSUE_NUM in "${ISSUE_NUMS[@]}"; do
     printf "${COLOR}%-10s %-8s %-45s${NC}\n" "#$ISSUE_NUM" "${PR:-(n/a)}" "$STATUS"
 done
 
-# Issues aplazados (issue #974, CA-3): en el mismo orden en que quedaron en
+# Issues aplazados (issue #974, CA-4): en el mismo orden en que quedaron en
 # ISSUE_NUMS, para que la linea de relanzamiento respete el orden del batch.
 DEFERRED_NUMS=()
 for ISSUE_NUM in "${ISSUE_NUMS[@]}"; do

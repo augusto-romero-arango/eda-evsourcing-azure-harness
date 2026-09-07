@@ -236,7 +236,7 @@ DEFERRED_FLAG=()   # DEFERRED_FLAG[i]="true" si el issue en esa posicion quedo a
 
 # defer_pending_issues
 #
-# Consume la senal (CA-4: se borra para no envenenar la corrida siguiente) y
+# Consume la senal (CA-5: se borra para no envenenar la corrida siguiente) y
 # marca "aplazado" (DEFERRED_FLAG) todos los indices que seguian en
 # PENDING_IDXS sin lanzar. Vacia PENDING_IDXS para que el scheduler termine su
 # loop de inmediato. Nunca toca PIDS ni FAILED (CA-5: una parada solicitada no
@@ -346,6 +346,15 @@ print_dashboard() {
     for i in "${!ISSUE_NUMS[@]}"; do
         local issue="${ISSUE_NUMS[$i]}"
         local pid="${PIDS[$i]:-}"
+
+        # Issue aplazado por la senal de parada (issue #974): ya no espera
+        # turno, nunca se va a lanzar en esta corrida. Sin esta rama el
+        # dashboard lo seguiria mostrando "en espera" en cada refresco del
+        # monitoreo, contradiciendo el aviso de parada que ya se imprimio.
+        if [ "${DEFERRED_FLAG[$i]:-false}" = "true" ]; then
+            printf "  ${YELLOW}%-6s  %-14s  %-8s  %s${NC}\n" "#$issue" "aplazado" "-" ""
+            continue
+        fi
 
         # Issue todavia sin lanzar: el scheduler le esta reteniendo el turno
         # (--max-parallel copado, u otra tipo:projection viva -- issue #372). No
@@ -471,10 +480,20 @@ if batch_stop_requested; then
 fi
 
 # ─── Loop de monitoreo ────────────────────────────────────────────────────────
-log "Todos los pipelines lanzados. Monitoreando progreso (Ctrl+C para cancelar)..."
+# Con la parada solicitada ANTES de lanzar el primer issue (issue #974) no hay
+# ningun proceso en vuelo: PIDS queda vacio y no hay nada que monitorear. La
+# condicion del while no es cosmetica -- bash 3.2 aborta con "unbound variable"
+# al expandir "${PIDS[@]}" vacio bajo `set -u`, y el resumen (que justo ahi
+# tiene todos los aplazados por reportar) nunca se imprimiria. PIDS solo crece,
+# asi que con al menos un lanzamiento el loop se comporta igual que antes.
+if [ ${#PIDS[@]} -gt 0 ]; then
+    log "Todos los pipelines lanzados. Monitoreando progreso (Ctrl+C para cancelar)..."
+else
+    log "Ningun pipeline quedo en vuelo: no hay nada que monitorear."
+fi
 echo ""
 
-while true; do
+while [ ${#PIDS[@]} -gt 0 ]; do
     # Verificar si todos los procesos terminaron
     ALL_DONE=true
     for pid in "${PIDS[@]}"; do
@@ -566,7 +585,7 @@ for i in "${!ISSUE_NUMS[@]}"; do
         "#$ISSUE_NUM" "${RESULT:0:50}" "$DUR" "${PR:-(sin PR)}"
 done
 
-# Issues aplazados (issue #974, CA-3): mismo orden que ISSUE_NUMS, para que la
+# Issues aplazados (issue #974, CA-4): mismo orden que ISSUE_NUMS, para que la
 # linea de relanzamiento respete el orden del lote.
 DEFERRED=0
 DEFERRED_NUMS=()
@@ -584,7 +603,12 @@ echo ""
 
 if [ "$DEFERRED" -gt 0 ]; then
     warn "Parada solicitada: $DEFERRED issue(s) quedaron aplazados en esta corrida. No es un fallo del lote: el exit code no cambia por esto y ningun worktree lanzado quedo a medio pipeline."
-    echo -e "  Relanza los aplazados, en el mismo orden: ${BOLD}/sequential ${DEFERRED_NUMS[*]}${NC}"
+    # Mismo formato que batch-pipeline.sh y que el motor interno (issue #966),
+    # pero apuntando al orquestador que se detuvo: /parallel lanza un pane por
+    # issue sin cola (tmux-pipeline.sh --parallel), asi que este scheduler solo
+    # corre cuando se invoca el script directo. Proponer /sequential aqui
+    # degradaria en silencio el lote paralelo a secuencial.
+    echo -e "  Relanza los aplazados, en el mismo orden: ${BOLD}parallel-pipeline.sh ${DEFERRED_NUMS[*]}${NC}"
     echo ""
 fi
 
