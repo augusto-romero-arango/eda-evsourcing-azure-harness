@@ -10,11 +10,11 @@ consumidor lo adopte**: vive enteramente del lado interno del propio plugin
 Mefisto (MEF-ADR-0019).
 
 Estado de la migracion: los cinco agentes internos (los tres de #865 y los
-dos de stage del pipeline de tooling, `mefisto-{writer,reviewer}`, de #909) y los diez comandos
+dos de stage del pipeline de tooling, `mefisto-{writer,reviewer}`, de #909) y los once comandos
 internos -- los cinco de analisis y seguimiento,
-`mefisto-{plan,bug,bitacora,work-status,fix-review}` (#866), y los cinco de
+`mefisto-{plan,bug,bitacora,work-status,fix-review}` (#866), los cinco de
 ejecucion, `mefisto-{tooling,tooling-verbose,sequential,merge,release}`
-(#867) -- ya nacen de este formato.
+(#867), y `mefisto-next-order` (#939) -- ya nacen de este formato.
 
 ## Formato de un artefacto
 
