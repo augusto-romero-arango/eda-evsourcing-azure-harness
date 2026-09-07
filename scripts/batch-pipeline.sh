@@ -115,6 +115,41 @@ fail_issue() {
     HAVE_ERRORS=true
 }
 
+# ─── Senal de parada suave del batch (issue #974, mismo diseno que el motor ──
+# ─── interno #966) ────────────────────────────────────────────────────────────
+# Un batch largo no se podia frenar sin matar el pane de tmux/herdr, dejando el
+# eslabon en curso a medio pipeline. La senal es un archivo de mera PRESENCIA
+# (sin campos que parsear) que /batch-stop escribe desde el checkout principal.
+# Vive en pipeline-state/batch-stop -- fuera de .claude/ por construccion
+# (MEF-ADR-0017: el runtime intercepta toda escritura bajo .claude/**, incluidas
+# redirecciones de Bash) -- y nunca se commitea (pipeline-state/ esta en
+# .gitignore del consumidor, mismo precedente que refactor-signal.md).
+#
+# Se consulta en dos momentos (CA-1): antes de arrancar el primer eslabon, y
+# despues de cada eslabon completado (pipeline + PR + merge) -- el unico punto
+# seguro de la cadena. Un eslabon que fallo nunca llega al segundo chequeo: su
+# `continue` lo salta, asi que la senal no interrumpe una cadena que ya estaba
+# fallando por otra razon -- solo el camino de exito la consulta.
+BATCH_STOP_SIGNAL="pipeline-state/batch-stop"
+
+batch_stop_requested() {
+    [ -f "$BATCH_STOP_SIGNAL" ]
+}
+
+# defer_from_index <indice-0-based>
+#
+# Consume la senal (CA-4: se borra para no envenenar la corrida siguiente) y
+# marca "aplazado" (CA-2/CA-3) todos los issues de ISSUE_NUMS desde <indice> en
+# adelante. Nunca toca HAVE_ERRORS/FAILED/--stop-on-error (CA-5: una parada
+# solicitada no es un fallo del batch).
+defer_from_index() {
+    local from="$1" i
+    rm -f "$BATCH_STOP_SIGNAL"
+    for ((i = from; i < ${#ISSUE_NUMS[@]}; i++)); do
+        set_status "${ISSUE_NUMS[$i]}" "aplazado (parada solicitada; no se proceso en esta corrida)"
+    done
+}
+
 # ─── Parsear argumentos ───────────────────────────────────────────────────────
 ISSUE_NUMS=()
 STOP_ON_ERROR=false
@@ -196,13 +231,31 @@ log "Pipeline: $([ -n "$PIPELINE_OVERRIDE" ] && echo "$PIPELINE_OVERRIDE (overri
 log "Issues a procesar: ${ISSUE_NUMS[*]}"
 log "Modo en error: $([ "$STOP_ON_ERROR" = true ] && echo 'detener' || echo 'continuar')"
 log "Log: $LOG_FILE_ABS"
+log "Parada suave: /batch-stop detiene el batch tras el eslabon en curso (issue #974)"
 
 # ─── Loop principal ───────────────────────────────────────────────────────────
 COMPLETED=0
 FAILED=0
 TOTAL=${#ISSUE_NUMS[@]}
 
-for ISSUE_NUM in "${ISSUE_NUMS[@]}"; do
+# Cola efectiva de esta corrida (issue #974): ISSUE_NUMS conserva el orden
+# pedido -- es lo que recorre el resumen final --, mientras BATCH_QUEUE es lo
+# que el loop realmente procesa. Vaciarla es como se salta el loop completo sin
+# envolverlo en un `if` (que forzaria a reindentar todo su cuerpo).
+BATCH_QUEUE=("${ISSUE_NUMS[@]}")
+
+# Parada suave, momento 1 (CA-1): la senal ya estaba puesta antes de arrancar
+# el primer eslabon, asi que ningun issue se procesa en esta corrida.
+if batch_stop_requested; then
+    warn "Parada solicitada ($BATCH_STOP_SIGNAL) antes de arrancar el primer eslabon: ningun issue se procesa en esta corrida."
+    defer_from_index 0
+    BATCH_QUEUE=()
+fi
+
+# ${a[@]+"${a[@]}"}: bash 3.2 aborta con "unbound variable" al expandir un array
+# vacio bajo `set -u` (este script corre con `set -euo pipefail`), y la cola
+# queda vacia justamente cuando la parada se pidio antes del primer eslabon.
+for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
     CURRENT=$((COMPLETED + FAILED + 1))
     header "Issue #$ISSUE_NUM ($CURRENT/$TOTAL)"
 
@@ -292,6 +345,19 @@ for ISSUE_NUM in "${ISSUE_NUMS[@]}"; do
     set_status "$ISSUE_NUM" "completado (PR #$PR_NUM mergeado)"
     COMPLETED=$((COMPLETED + 1))
     success "Issue #$ISSUE_NUM completado y mergeado"
+
+    # Parada suave, momento 2 (CA-1): el unico punto seguro de la cadena -- el
+    # PR ya esta mergeado. Un eslabon fallido (pipeline/PR/merge) nunca llega
+    # aqui: sus `continue` de arriba lo saltan.
+    if batch_stop_requested; then
+        if [ "$CURRENT" -lt "$TOTAL" ]; then
+            warn "Parada solicitada ($BATCH_STOP_SIGNAL) tras completar #$ISSUE_NUM: los eslabones restantes quedan aplazados, sin arrancar ningun worktree."
+        else
+            warn "Parada solicitada ($BATCH_STOP_SIGNAL) tras completar #$ISSUE_NUM, que era el ultimo eslabon del batch: no quedaba ninguno por arrancar. La senal se consumio igual, para no afectar la corrida siguiente."
+        fi
+        defer_from_index "$CURRENT"
+        break
+    fi
 done
 
 # ─── Resumen final ────────────────────────────────────────────────────────────
@@ -313,10 +379,26 @@ for ISSUE_NUM in "${ISSUE_NUMS[@]}"; do
     printf "${COLOR}%-10s %-8s %-45s${NC}\n" "#$ISSUE_NUM" "${PR:-(n/a)}" "$STATUS"
 done
 
+# Issues aplazados (issue #974, CA-3): en el mismo orden en que quedaron en
+# ISSUE_NUMS, para que la linea de relanzamiento respete el orden del batch.
+DEFERRED_NUMS=()
+for ISSUE_NUM in "${ISSUE_NUMS[@]}"; do
+    case "$(get_status "$ISSUE_NUM")" in
+        aplazado*) DEFERRED_NUMS+=("$ISSUE_NUM") ;;
+    esac
+done
+DEFERRED=${#DEFERRED_NUMS[@]}
+
 echo ""
-echo -e "  Total: $TOTAL  |  ${GREEN}Completados: $COMPLETED${NC}  |  ${RED}Fallidos: $FAILED${NC}"
+echo -e "  Total: $TOTAL  |  ${GREEN}Completados: $COMPLETED${NC}  |  ${RED}Fallidos: $FAILED${NC}  |  ${YELLOW}Aplazados: $DEFERRED${NC}"
 echo -e "  Log: $LOG_FILE_ABS"
 echo ""
+
+if [ "$DEFERRED" -gt 0 ]; then
+    warn "Parada solicitada: $DEFERRED issue(s) quedaron aplazados en esta corrida. No es un fallo del batch: el exit code no cambia por esto y nada quedo a medio pipeline."
+    echo -e "  Relanza los aplazados, en el mismo orden: ${BOLD}/sequential ${DEFERRED_NUMS[*]}${NC}"
+    echo ""
+fi
 
 if [ "$HAVE_ERRORS" = true ]; then
     warn "Algunos issues tuvieron errores. Revisa el log: $LOG_FILE_ABS"
