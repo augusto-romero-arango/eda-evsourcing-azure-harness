@@ -1,92 +1,124 @@
 #!/usr/bin/env bash
-# mefisto-next-order.sh -- Calcula el orden topologico de lanzamiento de los
-# issues 'estado:listo' abiertos del repo de Mefisto (issue #936).
+# next-order.sh -- Calcula el orden topologico de lanzamiento de los issues
+# 'estado:listo' abiertos del repo consumidor (issue #940).
 #
-# Copia hermana deliberada de scripts/next-order.sh (issue #940), que corre el
-# mismo algoritmo sobre los issues del repo CONSUMIDOR: MEF-ADR-0019 prohibe al
-# lado publicado depender de src/internal/, asi que se duplica en vez de
-# compartirse (MEF-ADR-0018, regla de tres). Todo fix al calculo del orden
-# (Kahn, deteccion de ciclos, bloqueos externos/indirectos) va a AMBAS copias.
+# Copia hermana deliberada de src/internal/scripts/mefisto-next-order.sh
+# (issue #936), MEF-ADR-0018 regla de tres: el lado publicado no puede
+# depender de src/internal/ (MEF-ADR-0019), asi que el algoritmo se duplica en
+# vez de compartirse via source. Cualquier fix al calculo del orden (Kahn,
+# deteccion de ciclos, bloqueos externos/indirectos) debe aplicarse a AMBAS
+# copias.
 #
-# Implementacion CANONICA (MEF-ADR-0049 decision 2 y 6): bash 3.2 + jq + gh +
-# git, sin `declare -A`. El shim de compatibilidad en .claude/scripts/ lo
-# aporta el issue del comando que lo consume (#939), via `{{mefisto:run}}`
-# (plantilla documentada en src/internal/scripts/README.md).
-#
-# Por que existe: el modo 'orden-de-batch' de mefisto-planner ordena los
-# issues A MANO leyendo '## Dependencias', y mefisto-validate-batch-deps.sh
-# (paso 1.5 de /mefisto-sequential) solo VALIDA un orden ya dado -- no lo
-# calcula, no detecta ciclos y no separa los issues lanzables de los que
-# tienen un bloqueo externo abierto. Con 3+ issues 'estado:listo'
-# interdependientes el planner razona el grafo cada vez y puede equivocarse
-# en silencio. Este script hace ese calculo de forma determinista y solo
-# lectura (a diferencia del validador, nunca muta labels ni bodies).
+# Diferencia con la copia interna: la ultima linea de la salida es la linea de
+# lanzamiento de un comando de secuenciamiento, y ese comando depende del
+# runtime del consumidor (MEF-ADR-0050): hoy el unico adaptador publicado es
+# Claude Code Plugin y el comando se invoca '/mefisto:sequential'; bajo
+# OpenCode (#874) el namespace puede diferir. Este script NUNCA hardcodea esa
+# decision: la recibe por '--launch-command "<texto>"' (el wrapper de cada
+# runtime la pasa), y sin el flag cae al default '/mefisto:sequential' -- el
+# unico adaptador publicado hoy.
 #
 # Uso:
-#   src/internal/scripts/mefisto-next-order.sh
-#   (sin argumentos: opera sobre TODO el universo 'estado:listo' abierto)
+#   scripts/next-order.sh
+#   scripts/next-order.sh --launch-command "/mefisto:sequential"
+#   (sin mas argumentos: opera sobre TODO el universo 'estado:listo' abierto
+#   del repo consumidor)
+#
+# Cada linea del orden incluye el label 'tipo:' del issue ('N. #123
+# [tipo:feature] Titulo -- tras #A'): el consumidor lo necesita para decidir
+# si un tramo va a /mefisto:sequential o podria ir a /mefisto:parallel en su
+# lugar. Este script NO propone oleadas paralelas -- calcula un unico orden
+# lineal; agrupar issues sin dependencia mutua en oleadas sigue siendo el modo
+# 'oleadas' del planner publicado.
 #
 # Exit codes:
 #   0 -- hay al menos un issue lanzable (el orden no quedo vacio)
 #   1 -- no hay ningun issue lanzable (universo vacio, o todos los issues
 #        quedaron en ciclos y/o bloqueados)
-#   2 -- fallo 'gh issue list', o se invoco con argumentos (no acepta ninguno)
+#   2 -- fallo 'gh issue list', o se invoco con argumentos invalidos
+#
+# El guard de entorno (cwd = repo de Mefisto, o cwd fuera de un repo git)
+# tambien sale con 1, con mensaje en stderr: es la convencion de todos los
+# scripts publicados, y el bloque C2 de scripts/tests/test-guards.sh la
+# verifica script por script.
 #
 # Universo de analisis (MEF-ADR-0011, Definition of Ready): exactamente los
-# issues 'estado:listo' Y abiertos -- ni borradores ni cerrados. El label
-# 'bloqueado' no filtra nada (issue #466): un issue que lo lleva puesto entra
-# igual al analisis, y si su dependencia queda resuelta por el orden calculado
-# aqui simplemente entra al orden -- este script nunca muta ese label
-# (a diferencia de mefisto-validate-batch-deps.sh, que si lo hace).
+# issues 'estado:listo' Y abiertos del repo consumidor -- ni borradores ni
+# cerrados. El label 'bloqueado' no filtra nada: un issue que lo lleva puesto
+# entra igual al analisis, y si su dependencia queda resuelta por el orden
+# calculado aqui simplemente entra al orden -- este script nunca muta labels.
 #
-# Extraccion de dependencias (segunda copia del mismo awk|grep de
-# mefisto-validate-batch-deps.sh -- MEF-ADR-0018, regla de tres: se extrae a
-# _mefisto-common.sh solo cuando aparezca un tercer consumidor): SOLO
-# dependencias forward de la seccion '## Dependencias' ('Depende de #N' /
-# 'Bloqueado por #N', case-insensitive); se ignoran 'Bloquea', 'Consumido
-# por' y la prosa libre. Una dependencia DENTRO del universo esta abierta por
-# construccion (el listado es --state open); para las de FUERA se consulta su
-# estado, y CLOSED/MERGED = satisfecha (no genera arista ni bloqueo).
+# Extraccion de dependencias: SOLO dependencias forward de la seccion
+# '## Dependencias' ('Depende de #N' / 'Bloqueado por #N', case-insensitive);
+# se ignoran 'Bloquea', 'Consumido por' y la prosa libre. Una dependencia
+# DENTRO del universo esta abierta por construccion (el listado es --state
+# open); para las de FUERA se consulta su estado, y CLOSED/MERGED = satisfecha
+# (no genera arista ni bloqueo).
 #
-# Clasificacion de cada issue del universo -- toda exclusion se reporta, ese
-# es el punto del script (un issue que no aparece ni en el orden ni en la
-# cabecera seria un silencio indistinguible de "no se miro"):
+# Clasificacion de cada issue del universo -- toda exclusion se reporta:
 #   (a) Bloqueo externo: declara al menos una dependencia abierta que NO esta
 #       en el universo 'estado:listo' -- excluido del orden, reportado como
 #       '#N bloqueado por #M: fuera de estado:listo, estado OPEN'.
 #   (b) Ciclo: depende directa o indirectamente de si mismo -- excluido del
 #       orden, reportado con sus miembros ('ciclo: #A -> #B -> #A').
 #   (c) Bloqueo indirecto: sus dependencias son todas intra-universo, pero al
-#       menos una quedo excluida por (a), (b) o (c) -- excluido del orden
-#       (lanzarlo violaria su dependencia), reportado como '#N bloqueado por
-#       #M: excluido del orden'. Sin este caso el script emitiria una linea
-#       '/mefisto-sequential' que mefisto-validate-batch-deps.sh rechaza en el
-#       paso 1.5: para el validador, una dependencia abierta fuera del batch
-#       es un bloqueo real y aborta el batch entero.
+#       menos una quedo excluida por (a), (b) o (c) -- excluido del orden,
+#       reportado como '#N bloqueado por #M: excluido del orden'.
 #   (d) Lanzable: todas sus dependencias abiertas estan en el orden, antes que
 #       el. Entra al orden por Kahn con seleccion golosa del menor numero
-#       disponible en cada paso -- de ahi el empate resuelto por numero de
-#       issue ascendente que pide CA-2.
+#       disponible en cada paso (empate resuelto por numero de issue
+#       ascendente).
 #
-# La ultima linea de la salida es SIEMPRE la linea de lanzamiento
-# ('/mefisto-sequential <orden>', o '/mefisto-sequential (sin issues
-# lanzables)' si el orden quedo vacio) -- nunca una salida vacia con exit 0.
-#
-# No usa 'set -e' (mismo motivo que el validador: 'gh issue view' de una
-# dependencia puede ser un PR, y esa falla es esperada -- se cae a 'gh pr
-# view' explicitamente, nunca se propaga como abort).
+# No usa 'set -e': 'gh issue view' de una dependencia puede ser un PR, y esa
+# falla es esperada -- se cae a 'gh pr view' explicitamente, nunca se propaga
+# como abort.
 
 set -uo pipefail
 
-if [ "$#" -gt 0 ]; then
-    echo "ERROR: argumento desconocido: $*. Este script no acepta argumentos." >&2
-    echo "Uso: src/internal/scripts/mefisto-next-order.sh" >&2
-    exit 2
+# Guard defensivo: este script es del lado publicado y solo aplica al
+# consumidor. No sourcea _pipeline-common.sh (solo hace falta el guard, y
+# arrastrar ese archivo aqui sumaria dependencias -- dotnet, colores -- que
+# este script no usa).
+_REPO_TOP=$(git rev-parse --show-toplevel 2>/dev/null) || {
+    echo "ERROR: no estas en un repositorio git" >&2
+    exit 1
+}
+if [ -f "$_REPO_TOP/.claude-plugin/plugin.json" ]; then
+    echo "ERROR: scripts/next-order.sh es del plugin publicado y solo aplica al consumidor." >&2
+    echo "Estas en el repo de Mefisto. Usa src/internal/scripts/mefisto-next-order.sh en su lugar." >&2
+    exit 1
 fi
+unset _REPO_TOP
+
+LAUNCH_COMMAND="/mefisto:sequential"
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --launch-command)
+            if [ "$#" -lt 2 ]; then
+                echo "ERROR: --launch-command requiere un argumento." >&2
+                echo 'Uso: scripts/next-order.sh [--launch-command "<texto>"]' >&2
+                exit 2
+            fi
+            if [ -z "$2" ]; then
+                echo "ERROR: --launch-command no admite texto vacio (la ultima linea quedaria sin comando)." >&2
+                echo 'Uso: scripts/next-order.sh [--launch-command "<texto>"]' >&2
+                exit 2
+            fi
+            LAUNCH_COMMAND="$2"
+            shift 2
+            ;;
+        *)
+            echo "ERROR: argumento desconocido: $1." >&2
+            echo 'Uso: scripts/next-order.sh [--launch-command "<texto>"]' >&2
+            exit 2
+            ;;
+    esac
+done
 
 ISSUE_LIMIT=200
 
-if ! ISSUES_JSON=$(gh issue list --label "estado:listo" --state open --limit "$ISSUE_LIMIT" --json number,title,body 2>/dev/null); then
+if ! ISSUES_JSON=$(gh issue list --label "estado:listo" --state open --limit "$ISSUE_LIMIT" --json number,title,body,labels 2>/dev/null); then
     echo "ERROR: fallo 'gh issue list --label estado:listo --state open'." >&2
     exit 2
 fi
@@ -109,8 +141,19 @@ body_of() {
     echo "$ISSUES_JSON" | jq -r --argjson n "$1" '.[] | select(.number==$n) | .body'
 }
 
-# Pertenece un numero de issue al universo (lista NUMS)? Mismo patron que
-# pos_in_batch de mefisto-validate-batch-deps.sh, pero solo de pertenencia.
+# Label 'tipo:X' de un issue del universo (CA-3): el consumidor lo necesita
+# para decidir si un tramo va a /mefisto:sequential o /mefisto:parallel. Si el
+# issue no lleva ningun label 'tipo:*' (no deberia pasar, es obligatorio por
+# convencion), imprime "tipo:desconocido" en vez de dejar la linea sin
+# clasificar en silencio.
+tipo_of() {
+    local t
+    t=$(echo "$ISSUES_JSON" | jq -r --argjson n "$1" \
+        '.[] | select(.number==$n) | [.labels[]?.name] | map(select(startswith("tipo:"))) | first // "tipo:desconocido"')
+    echo "$t"
+}
+
+# Pertenece un numero de issue al universo (lista NUMS)?
 in_universe() {
     local target="$1" n
     for n in $NUMS; do
@@ -119,10 +162,8 @@ in_universe() {
     return 1
 }
 
-# Estado (issue o PR) de una dependencia -- puede fallar si no existe. Solo se
-# consulta para dependencias FUERA del universo: las de dentro estan abiertas
-# por construccion, y preguntarlo de nuevo seria un round-trip a gh por arista
-# cuyo fallo transitorio degradaria a "satisfecha" una dependencia real.
+# Estado (issue o PR) de una dependencia -- solo se consulta para
+# dependencias FUERA del universo.
 dep_state_of() {
     local dep="$1"
     gh issue view "$dep" --json state -q '.state' 2>/dev/null \
@@ -141,12 +182,10 @@ format_dep_list() {
 }
 
 # --- Pase 1: leer el grafo del universo entero -------------------------------
-# Los arrays cubren TODOS los issues del universo (no solo los lanzables): un
-# issue excluido sigue siendo nodo del grafo, y sus dependientes necesitan
-# poder apuntarle para clasificarse como caso (c).
 
 NUM=()
 TITLE=()
+TIPO=()
 DEPS_IN=()      # dependencias abiertas intra-universo
 EXCLUDED=()     # 1 si ya se sabe que no puede entrar al orden
 BLOCKED_MSGS=""
@@ -172,14 +211,14 @@ for ISSUE in $NUMS; do
 
     NUM+=("$ISSUE")
     TITLE+=("$(title_of "$ISSUE")")
+    TIPO+=("$(tipo_of "$ISSUE")")
     DEPS_IN+=("$INSET")
     EXCLUDED+=("$IS_BLOCKED")
 done
 
 COUNT=${#NUM[@]}
 
-# Indice (0-based) de un numero de issue dentro del universo; status != 0 si
-# ese numero no esta en el universo.
+# Indice (0-based) de un numero de issue dentro del universo.
 index_of() {
     local target="$1" i
     for ((i = 0; i < COUNT; i++)); do
@@ -189,9 +228,6 @@ index_of() {
 }
 
 # --- Pase 2: Kahn sobre los nodos no excluidos -------------------------------
-# Un nodo excluido nunca se elige y nunca decrementa a sus dependientes: por
-# eso sus dependientes se quedan sin resolver y caen al caso (c) del reporte,
-# en vez de colarse al orden con su dependencia incumplida.
 
 RESOLVED=()
 INDEG=()
@@ -232,11 +268,6 @@ while [ "$progress" -eq 1 ]; do
 done
 
 # --- Pase 3: ciclos entre los nodos que quedaron sin resolver ----------------
-# DFS blanco/gris/negro clasico sobre las aristas "depende de" (u -> v si u
-# depende de v). Un nodo gris re-visitado es un ancestro en la pila actual: el
-# segmento de la pila desde ese ancestro hasta el tope ES el ciclo. Un nodo que
-# solo depende TRANSITIVAMENTE de un ciclo queda antes de ese ancestro en la
-# pila, nunca aparece en el ciclo reportado, y se reporta en el pase 4.
 
 CYCLE_MSGS=""
 CYCLE_NUMS=""   # numeros de issue que son miembros de algun ciclo
@@ -288,8 +319,6 @@ for ((i = 0; i < COUNT; i++)); do
 done
 
 # --- Pase 4: bloqueos indirectos (caso c) ------------------------------------
-# Todo lo que quedo sin resolver y no tiene ya un reporte propio -- ni bloqueo
-# externo (a) ni miembro de ciclo (b) -- esta detras de algo que si lo tiene.
 
 INDIRECT_MSGS=""
 for ((i = 0; i < COUNT; i++)); do
@@ -323,13 +352,13 @@ if [ "${#ORDER[@]}" -gt 0 ]; then
             # shellcheck disable=SC2086
             JUST="tras $(format_dep_list ${DEPS_IN[idx]})"
         fi
-        echo "$pos. #${NUM[idx]} ${TITLE[idx]} -- $JUST"
+        echo "$pos. #${NUM[idx]} [${TIPO[idx]}] ${TITLE[idx]} -- $JUST"
         LAUNCH_NUMS="$LAUNCH_NUMS ${NUM[idx]}"
         pos=$((pos + 1))
     done
-    echo "/mefisto-sequential$LAUNCH_NUMS"
+    printf '%s\n' "$LAUNCH_COMMAND$LAUNCH_NUMS"
     exit 0
 fi
 
-echo "/mefisto-sequential (sin issues lanzables)"
+printf '%s\n' "$LAUNCH_COMMAND (sin issues lanzables)"
 exit 1
