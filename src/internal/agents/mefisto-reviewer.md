@@ -3,7 +3,7 @@
   "kind": "agent",
   "id": "mefisto-reviewer",
   "description": "Ejecuta la fase de revision del pipeline interno de tooling de Mefisto: audita la calidad de los cambios producidos por mefisto-writer en la misma corrida y corrige directamente los problemas que encuentra. Solo opera dentro del repo de Mefisto, orquestado por ese pipeline.",
-  "mode": "subagent",
+  "mode": "all",
   "profile": "deep",
   "capabilities": ["read", "edit", "shell"]
 }
