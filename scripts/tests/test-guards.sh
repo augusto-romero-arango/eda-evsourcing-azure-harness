@@ -318,10 +318,18 @@ frontmatter_field() {
     ' "$1"
 }
 
-# frontmatter_top_level_keys <archivo> -- imprime las claves de nivel superior
-# del bloque de frontmatter (una por linea). Una linea indentada (^[ \t]) es
-# una sub-clave anidada (p. ej. bajo `metadata:`) y no cuenta como propia.
-frontmatter_top_level_keys() {
+# Unica fuente de la lista de campos que MEF-ADR-0050 seccion 3 admite en el
+# frontmatter de un SKILL.md, y su grafia para el mensaje de fallo de F5:
+# duplicarla entre la regla y sus fixtures dejaria a estos validando una lista
+# vieja mientras la regla real usa otra.
+PORTABLE_SKILL_FRONTMATTER_FIELDS="name description license compatibility metadata"
+PORTABLE_SKILL_FRONTMATTER_FIELDS_SLASHED="$(printf '%s' "$PORTABLE_SKILL_FRONTMATTER_FIELDS" | tr ' ' '/')"
+
+# non_portable_frontmatter_fields <archivo> -- imprime (una por linea) las
+# claves de nivel superior del frontmatter que NO pertenecen al estandar
+# portable. Una linea indentada (^[ \t]) es una sub-clave anidada (p. ej. bajo
+# `metadata:`) y no cuenta como campo propio.
+non_portable_frontmatter_fields() {
     awk '
         NR == 1 { if ($0 != "---") exit; next }
         $0 == "---" { exit }
@@ -330,7 +338,12 @@ frontmatter_top_level_keys() {
             match($0, /^[A-Za-z][A-Za-z0-9-]*/)
             print substr($0, RSTART, RLENGTH)
         }
-    ' "$1"
+    ' "$1" | while IFS= read -r fm_key; do
+        case " $PORTABLE_SKILL_FRONTMATTER_FIELDS " in
+            *" $fm_key "*) continue ;;
+        esac
+        printf '%s\n' "$fm_key"
+    done
 }
 
 SKILL_FILES="$(find "$REPO_ROOT/skills" "$REPO_ROOT/.claude/skills" -name 'SKILL.md' 2>/dev/null | sort)"
@@ -387,19 +400,15 @@ EOF
         # (MEF-ADR-0050 seccion 3) -- `allowed-tools` en particular, que OpenCode
         # ignora en silencio. Solo cuentan claves de nivel superior: una linea
         # indentada (^[ \t]) es una sub-clave anidada bajo `metadata:` y no cuenta.
-        non_portable_fields="$(frontmatter_top_level_keys "$skill_file")"
-        f5_failed=0
-        while IFS= read -r field; do
-            [ -n "$field" ] || continue
-            case "$field" in
-                name|description|license|compatibility|metadata) continue ;;
-            esac
-            fail "$rel: frontmatter con campo no portable '$field' (MEF-ADR-0050: solo name/description/license/compatibility/metadata; OpenCode lo ignora en silencio)"
-            f5_failed=1
-        done <<EOF
+        non_portable_fields="$(non_portable_frontmatter_fields "$skill_file")"
+        if [ -n "$non_portable_fields" ]; then
+            while IFS= read -r field; do
+                [ -n "$field" ] || continue
+                fail "$rel: frontmatter con campo no portable '$field' (MEF-ADR-0050: solo $PORTABLE_SKILL_FRONTMATTER_FIELDS_SLASHED; OpenCode lo ignora en silencio)"
+            done <<EOF
 $non_portable_fields
 EOF
-        if [ "$f5_failed" -eq 0 ]; then
+        else
             pass "$rel: frontmatter limitado al estandar portable (MEF-ADR-0050)"
         fi
     done <<EOF
@@ -421,7 +430,7 @@ allowed-tools: Bash
 
 # Fixture
 EOF
-HITS_F5_NEG="$(frontmatter_top_level_keys "$SYNTH_DIR_F5/synthetic-non-portable.md" | grep -vx 'name\|description\|license\|compatibility\|metadata' || true)"
+HITS_F5_NEG="$(non_portable_frontmatter_fields "$SYNTH_DIR_F5/synthetic-non-portable.md")"
 if [ -n "$HITS_F5_NEG" ]; then
     pass "F5 detecta 'allowed-tools' introducido a mano en un archivo sintetico"
 else
@@ -439,7 +448,7 @@ metadata:
 
 # Fixture
 EOF
-HITS_F5_POS="$(frontmatter_top_level_keys "$SYNTH_DIR_F5/synthetic-nested-metadata.md" | grep -vx 'name\|description\|license\|compatibility\|metadata' || true)"
+HITS_F5_POS="$(non_portable_frontmatter_fields "$SYNTH_DIR_F5/synthetic-nested-metadata.md")"
 rm -rf "$SYNTH_DIR_F5"
 if [ -z "$HITS_F5_POS" ]; then
     pass "F5 no marca sub-claves anidadas de 'metadata:' (sin falsos positivos)"
