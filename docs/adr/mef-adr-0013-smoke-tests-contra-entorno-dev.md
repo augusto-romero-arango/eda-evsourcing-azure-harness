@@ -82,23 +82,31 @@ producir un evento ni una publicacion nuevos, el smoke test tiene que demostrarl
 su contrato declara como no-op, repite la **misma intencion** (mismo verbo, misma ruta, mismo id,
 mismo payload cuando el comando lo recibe), y verifica:
 
-1. El segundo intento responde el **mismo codigo de exito contractual** que el primero -- el
-   mismo status de la tabla de "Respuestas HTTP" de MEF-ADR-0004, sin reclasificar a `404`/`409`.
-2. El segundo intento **no agrega un evento** al stream -- correlacionado por el streamId o el
-   identificador de negocio de la corrida, nunca por un conteo global.
+1. El segundo intento responde el **mismo codigo de exito contractual** que el primero -- el que
+   el contrato HTTP del issue declara para ese endpoint (seccion "Codigo de exito esperado" de este
+   ADR), nunca un status memorizado ni deducido de una tabla. Si el campo "Estado ya alcanzado" del
+   issue declaro y justifico una respuesta distinta del no-op -- la excepcion explicita que admite
+   MEF-ADR-0043 seccion 6 --, el smoke test asierta esa respuesta declarada; sin esa declaracion,
+   reclasificar el estado ya alcanzado a `404`/`409` es precisamente el defecto que el test detecta.
+2. El segundo intento **no agrega un evento** al stream de la corrida -- se compara la cantidad de
+   eventos (o la version) de **ese** stream antes y despues del Act 2, nunca un conteo global de la
+   tabla de eventos. Un `ExisteEventoAsync` booleano no sirve para este assert: responde lo mismo
+   con un evento que con dos. Si el `PostgresFixture` del dominio todavia no expone esa consulta
+   acotada al stream, el smoke test la agrega al fixture -- es infraestructura del proyecto de
+   smoke tests (ver "Integracion en el proceso de desarrollo"), no una excepcion a la regla.
 3. El segundo intento **no produce una publicacion nueva** atribuible a la repeticion, cuando el
    comando publica a Service Bus.
 
 ```
 Arrange: PurgeAsync(topic, suscripcion)               <- purge previo, patron vigente
 Act 1:   PUT /api/colaboradores/{id}/nombres {valor}  <- primer intento, cambia el VO
-Assert 1: 204 No Content; PostgresFixture.ExisteEventoAsync confirma el evento persistido;
-          WaitForMessageAsync recibe la publicacion
+Assert 1: 204 No Content; PostgresFixture confirma el evento persistido y cuenta los eventos de
+          ESE stream; WaitForMessageAsync recibe la publicacion (y la completa, con lo que la
+          saca de la suscripcion)
 Act 2:   PUT /api/colaboradores/{id}/nombres {valor}  <- repite la MISMA intencion
-Assert 2: 204 No Content (mismo codigo); el mismo mecanismo de PostgresFixture usado en el
-          Assert 1 confirma que el stream no sumo un evento adicional (sigue siendo el evento de
-          Act 1, no dos); ninguna publicacion nueva matchea el identificador de la corrida en la
-          suscripcion ya purgada
+Assert 2: 204 No Content (mismo codigo); el conteo de eventos de ESE stream sigue siendo el del
+          Assert 1; la espera de publicacion acotada al identificador de la corrida se agota sin
+          recibir mensaje -- ese TimeoutException es el resultado esperado, no un fallo
 ```
 
 **Correlacion por stream/id de la corrida, no por conteo global**: el assert de "cero efectos
@@ -106,11 +114,16 @@ nuevos" nunca exige la suscripcion o el stream globalmente vacios -- el mismo ri
 que ya motivo "Hermeticidad del assert de dead-letter: acotado a la corrida". Se correlaciona por
 el streamId o el identificador de negocio unico que el propio test genero con
 `Guid.CreateVersion7()` (seccion "Aislamiento de datos"). Para Service Bus, la purga previa al Act
-(patron purge-before-act vigente) **no se repite entre Act 1 y Act 2**: purgar entre ambos actos
-consumiria un mensaje legitimo si Act 2 publicara indebidamente, exactamente lo que el test
-necesita detectar. La ausencia de publicacion nueva se verifica esperando con un timeout acotado
-(mismo `Polling` tolerante a excepciones de este ADR) sin encontrar un mensaje adicional que
-matchee el identificador de la corrida.
+(patron purge-before-act vigente) corre una sola vez, en el Arrange, y **no se repite entre Act 1 y
+Act 2**: purgar entre ambos actos consumiria el mensaje que Act 2 hubiera publicado indebidamente,
+exactamente lo que el test necesita detectar. Tampoco hace falta repetirla -- el
+`WaitForMessageAsync` del Assert 1 ya completo (elimino) el mensaje de Act 1 de la suscripcion
+(ver "Fail-on-mismatch en WaitForMessageAsync"), asi que un mensaje que matchee el identificador de
+la corrida despues del Act 2 solo puede venir del Act 2. La ausencia se verifica con esa misma
+espera, invirtiendo su criterio de exito: el `TimeoutException` que `WaitForMessageAsync` lanza al
+agotar el timeout **es** el resultado esperado del assert, y recibir un mensaje es el fallo. Ese
+timeout se paga completo en cada corrida verde, asi que se elige corto, no el timeout generoso de
+una espera que si espera recibir algo.
 
 **Distincion frente a identidad nunca conocida o stream padre inexistente**: el no-op exige que la
 identidad o el alcance que el comando requiere ya sean reconocidos por el contrato (MEF-ADR-0004,
@@ -119,6 +132,13 @@ contrato nunca conocio, o a un stream padre inexistente, verifica el `404 NotFou
 escenario de test distinto, nunca el mismo caso que el no-op. Ambos escenarios se escriben como
 tests separados dentro de la misma clase del comando (seccion "Estructura: una clase por
 comando"): uno cubre el estado ya alcanzado, otro cubre la identidad desconocida.
+
+**El unit test del aggregate no descarga esta obligacion**: el `Then()` sin eventos esperados
+(MEF-ADR-0004) prueba que el aggregate no emite eventos ante el estado ya alcanzado, y lo hace
+sobre el store en memoria del DSL (MEF-ADR-0002). Prueba la decision del dominio, no que el
+endpoint desplegado, su handler y su pipeline de publicacion no agreguen efectos observables en
+dev -- que es lo que este ADR verifica black-box. Son coberturas complementarias: la del unit test
+no sustituye la del smoke test.
 
 **Aplicabilidad**: este escenario rige todo PUT/DELETE **nuevo o migrado** (mismo regimen que
 MEF-ADR-0004 "Regimen de migracion" y MEF-ADR-0043 seccion 7). No se exige al POST de creacion
@@ -426,7 +446,16 @@ en el repo (idempotente; ver "Integracion en el proceso de desarrollo").
   `reviewer` para nombrar la cobertura del no-op como algo a escribir y a revisar. Acota el
   alcance al mismo regimen de aplicabilidad que ya fijan MEF-ADR-0004 ("Regimen de migracion") y
   MEF-ADR-0043 (seccion 7): no aplica al POST de creacion ni se retrofitea a un PUT/DELETE
-  preexistente fuera de una migracion pactada.
+  preexistente fuera de una migracion pactada. El assert de cero eventos nuevos se especifica sobre
+  el conteo (o la version) del stream de la corrida, no sobre `ExisteEventoAsync`, que responde lo
+  mismo con un evento que con dos: cuando el `PostgresFixture` de un dominio no expone esa consulta
+  acotada al stream, agregarla es parte del trabajo del smoke test. Divergencia conocida que esta
+  enmienda abre y que requiere un issue dependiente de sincronizacion: MEF-ADR-0011 ("Por que cada
+  campo critico", bullet "Estado ya alcanzado", issue #1004) asigna hoy la confirmacion de cero
+  eventos al test unitario del aggregate y se la niega explicitamente al smoke test, mientras este
+  ADR -- fuente de la doctrina black-box -- pasa a exigirsela tambien end-to-end. Este ADR es la
+  fuente autoritativa para la capa black-box; mientras esa frase de MEF-ADR-0011 no se sincronice,
+  el `smoke-test-writer` sigue esta seccion y el `reviewer` la aplica como defecto bloqueante.
 - 2026-09-07: enmienda (issue #992, depende de #991) para vincular el status code del camino feliz
   de un smoke test al contrato HTTP declarado en el issue en vez de un `202` memorizado por el
   `smoke-test-writer`. Motivo: tras las enmiendas de MEF-ADR-0004 (issue #849, retira el `202`
