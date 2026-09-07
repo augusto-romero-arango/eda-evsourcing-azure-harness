@@ -24,22 +24,32 @@ cifra absoluta de Claude Code se compara contra OpenCode, ni aqui ni en #979/#98
 ## Consumidor y SHA de referencia
 
 El corpus corre sobre `Bitakora.ControlAsistencia` (consumidor de origen de la
-investigacion). Como este issue no ejecuta nada, **no fija aqui un hash literal** --
-fija la regla que hace reproducible el SHA entre pilotos:
+investigacion), congelado en un unico SHA de referencia:
 
-1. La preflight del primer piloto que arranca (hoy #979, salvo que #980 arranque antes)
-   resuelve el SHA de referencia con `git rev-parse HEAD` sobre un checkout limpio de la
-   rama por defecto del consumidor y lo registra en su propio reporte
-   (`docs/testing/lsp-pilot-claude.md` o `docs/testing/lsp-pilot-opencode.md`).
-2. Ese mismo SHA queda **congelado** para los tres casos, las tres repeticiones por
-   caso y ambos brazos (texto/LSP) de ese piloto -- ninguna repeticion vuelve a
-   resolver `HEAD` por su cuenta, ni siquiera si el consumidor avanza mientras el
-   piloto esta en curso.
-3. El segundo piloto en ejecutarse **hereda el mismo SHA** del primero (lo cita de su
-   reporte), en vez de resolver uno propio. Si el SHA original ya no existe en el
-   consumidor (rebase, borrado de rama), el segundo piloto lo declara en su preflight y
-   detiene su ejecucion como `no evaluable` para ese caso -- no elige un SHA distinto en
-   silencio, porque eso reintroduce una variable no controlada entre runtimes.
+```
+repo: augusto-romero-arango/Bitakora.ControlAsistencia
+SHA:  21757bd2d6c0b261443158c4aec25e83e7f6597c   (main, commit del 2026-09-06)
+```
+
+Resuelto el 2026-09-07 con
+`gh api repos/augusto-romero-arango/Bitakora.ControlAsistencia/commits/main --jq .sha`.
+Que `main` avance despues no invalida nada: el SHA fijado sigue siendo un commit
+alcanzable, y es el punto de comparacion del experimento, no "lo ultimo del consumidor".
+
+Reglas de uso:
+
+1. **Los dos pilotos usan este SHA**, no uno propio. Es la unica forma de que los deltas
+   texto-vs-LSP de #979 y de #980 describan el mismo codigo. Cada piloto lo copia a su
+   preflight (`docs/testing/lsp-pilot-claude.md`, `docs/testing/lsp-pilot-opencode.md`)
+   como dato reverificado con el comando de arriba, no como supuesto heredado.
+2. Queda **congelado** para los tres casos, las tres repeticiones por caso y ambos brazos
+   (texto/LSP) de cada piloto -- ninguna repeticion resuelve `HEAD` por su cuenta, ni
+   siquiera si el consumidor avanza mientras el piloto esta en curso.
+3. Si el SHA deja de ser alcanzable (rebase destructivo, borrado del repo), el piloto que
+   lo detecte **enmienda este documento** con el SHA nuevo y su fecha antes de correr, y
+   el otro piloto se realinea a ese mismo valor. Ninguno elige un SHA distinto en
+   silencio dentro de su propio reporte: eso reintroduce una variable no controlada entre
+   runtimes, que es precisamente lo que este SHA existe para eliminar.
 
 ## Casos (tres roles, un oraculo independiente cada uno)
 
@@ -63,7 +73,7 @@ respuestas no acotadas o ambiguas que contaminarian la medicion:
 - `workspaceSymbol` vacio o ambiguo (sin un termino que resuelva a un unico candidato).
 - Referencias sobre simbolos transversales de uso masivo (`Handle`, `Id`,
   `CancellationToken`): su conteo de referencias no es comparable entre repeticiones ni
-  aporta señal sobre el caso concreto.
+  aporta senal sobre el caso concreto.
 
 ## Diseno experimental
 
@@ -93,9 +103,18 @@ respuestas no acotadas o ambiguas que contaminarian la medicion:
 
 ### Brazo texto (baseline)
 
-- Sin MCP de Rider (retirado del baseline por #978).
+- Sin MCP de Rider. El baseline asume #978 ya mergeado (retira de `implementer`,
+  `projection-implementer` y `reviewer` la preferencia por el MCP de Rider user-level que
+  Mefisto no instala). Si un piloto arranca antes de ese merge, desactiva el MCP en la
+  corrida y lo registra en su preflight: un brazo texto que consulte Rider no es el
+  baseline que este protocolo define.
 - Sin ninguna tool ni schema de LSP expuesto al agente -- no solo "sin usarlo": la
-  capacidad no esta declarada en la config de esa corrida.
+  capacidad no esta declarada en la config de esa corrida. Mecanismo concreto por
+  runtime: en **Claude Code**, el plugin `csharp-lsp` no esta cargado en esa corrida y se
+  confirma en la traza que la tool no aparece; en **OpenCode**,
+  `OPENCODE_EXPERIMENTAL_LSP_TOOL` sin exportar **y** `lsp: deny` en el bloque
+  `permission` -- los dos gates, porque cerrar uno solo no evidencia que el otro
+  estuviera cerrado.
 - Navegacion con `Glob`/`Grep`/`Read`; diagnostico con `dotnet build`/`dotnet test`,
   igual que el agente publicado hoy tras #978.
 
@@ -137,6 +156,18 @@ Cada repeticion (brazo individual) registra, como minimo:
 | Resultado del oraculo | pasa/no pasa, segun la tabla de casos |
 | Indexacion/cache fria vs caliente | anotada aparte de las metricas anteriores, nunca mezclada en los promedios de tokens/tiempo |
 
+Ambos pilotos emiten esas filas con **la misma cabecera**, para que #981 concatene los
+dos reportes sin normalizar nada a mano (y siempre leyendo los tokens y el tiempo dentro
+de cada runtime, nunca entre runtimes):
+
+| caso | rol | brazo | pos | rep | tokens_in | tokens_out | costo | wall_clock_s | tool_calls | reintentos | build | tests | hallazgos_mayores | oraculo | cache |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+
+`tool_calls` va desglosado por nombre dentro de la celda (`Grep:7 Read:12 LSP:0`), nunca
+como total; `cache` toma `fria` o `caliente` y no se promedia junto con las demas
+columnas; `pos` es `1ro`/`2do` dentro del par (el dato que hace auditable el
+contrabalanceo).
+
 El **tamano bruto de cada respuesta** (payload de la consulta LSP o del grep) es
 diagnostico opcional que se deriva de la traza solo cuando el runtime la expone -- no es
 metrica portable ni motivo para ampliar el contrato neutral de metricas antes de que
@@ -159,6 +190,29 @@ externa citable.
    dos condiciones se cumple, el resultado para ese rol es "no concluyente / sin
    adopcion", no un rechazo por calidad.
 
+### Que cuenta como "hallazgo mayor"
+
+El paso 1 depende de esta clasificacion, asi que queda fijada aqui y no la improvisa cada
+piloto. Es **mayor** el hallazgo que, sin corregirse, cambia el comportamiento o rompe un
+contrato: correctitud (resultado incorrecto, test rojo, regresion), invariante de dominio
+o de event sourcing violada, fuga de identidad/tenant o de secretos, contrato publico
+roto (firma, evento, endpoint), y toda desviacion de un ADR del marco que el propio agente
+no documente. **No** es mayor lo que no cambia comportamiento: naming, estilo,
+comentarios, orden de miembros, sugerencias de refactor.
+
+Un hallazgo mayor **adicional** del brazo LSP es el que aparece en su artefacto y no en el
+del brazo texto del mismo par. Los que aparecen en ambos brazos no penalizan a ninguno:
+son propiedad del caso, no del brazo.
+
+### Repeticiones `no evaluable` y la mediana
+
+La mediana del paso 2 se calcula sobre **tres** repeticiones validas por brazo. Si una
+queda `no evaluable` (ver reglas de parada), se corre una repeticion de reemplazo desde un
+worktree limpio, conservando el contrabalanceo del orden. Si el reemplazo no es posible
+(el mecanismo LSP no esta disponible de forma estable), el rol concluye `no evaluable` y
+queda fuera de la sintesis de #981: nunca se calcula la mediana sobre dos repeticiones ni
+se rellena la faltante con el promedio de las otras.
+
 ## Preflight y reglas de parada
 
 Antes de contar cualquier par como valido, cada piloto (#979/#980) verifica y registra:
@@ -167,10 +221,13 @@ Antes de contar cualquier par como valido, cada piloto (#979/#980) verifica y re
   "Consumidor y SHA de referencia").
 - **Disponibilidad del mecanismo LSP con una consulta pequena de control**, no solo su
   instalacion: Claude Code confirma que `csharp-lsp` responde dentro de `claude -p`
-  headless (los issues abiertos del tracker `anthropics/claude-code#84125` y `#79744`
-  son senales de riesgo, no fuentes normativas, y son exactamente la razon de verificar
-  esto en preflight en vez de asumirlo **[4][5]**); OpenCode confirma servidor C#,
-  feature flag y permiso como tres gates separados **[2][3]**.
+  headless. Los dos reportes abiertos del tracker ubican el fallo en el modo interactivo
+  y describen `-p` como el camino que si funciona **[4][5]**, pero eso no exime de
+  comprobarlo: son senales de riesgo de terceros, no fuentes normativas, y lo que el
+  preflight mide es que la tool aparece en la traza del stage tal como lo lanza el
+  pipeline -- incluidos los subagentes que ese stage invoque, que es justo donde **[4]**
+  reporta la poda -- y que responde a una consulta de control. OpenCode confirma servidor
+  C#, feature flag y permiso como tres gates separados **[2][3]**.
 - **Frescura tras una edicion**: dentro de una misma ejecucion, si el brazo LSP edita un
   archivo, la siguiente consulta semantica debe reflejar esa edicion antes de aceptarse
   como valida -- una respuesta que ignora una edicion reciente se registra como
@@ -202,9 +259,17 @@ detalle de implementacion del contrato interno de hoy, no una doctrina a preserv
 - **[3]** "LSP" -- documentacion oficial de OpenCode: servidor C# incluido cuando hay
   .NET SDK, deshabilitado por defecto salvo configuracion explicita de la seccion `lsp`.
   https://opencode.ai/docs/lsp/
-- **[4]** `anthropics/claude-code#84125` -- reporte abierto del tracker, senal de riesgo
-  sobre LSP interactivo, no verificado para el modo headless `-p` que usa el pipeline
-  publicado de Mefisto.
-- **[5]** `anthropics/claude-code#79744` -- idem, reporta ademas una diferencia entre
-  modo interactivo y `-p`, motivo directo de la verificacion de preflight de esta
-  seccion.
+- **[4]** `anthropics/claude-code#84125` (abierto) -- "LSP tool is pruned from all
+  subagent tool sets in interactive sessions (present in the parent, and in subagents
+  under -p)". Senal de riesgo de terceros, no fuente normativa: reporta el modo
+  interactivo como el roto y `-p` como el que si expone la tool a los subagentes; de ahi
+  que el preflight verifique la presencia de la tool en la forma exacta en que corre el
+  pipeline, subagentes incluidos.
+  https://github.com/anthropics/claude-code/issues/84125
+- **[5]** `anthropics/claude-code#79744` (abierto) -- "Interactive LSP client never sends
+  didChange after Edit-tool writes -- server buffers stay frozen at first-query content
+  (headless `-p` syncs correctly)". Misma naturaleza: atribuye la desincronizacion tras
+  editar al modo interactivo. Que el reporte afirme que `-p` sincroniza bien es
+  exactamente lo que la verificacion de frescura de este protocolo debe confirmar de
+  forma empirica en vez de dar por hecho.
+  https://github.com/anthropics/claude-code/issues/79744
