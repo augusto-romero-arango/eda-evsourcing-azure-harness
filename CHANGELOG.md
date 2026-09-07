@@ -4,6 +4,309 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-09-07
+
+### Added
+
+- `/scaffold-mcp` agrega a la tool de ejemplo `ejemplo_listar` el parametro opcional `fecha_referencia` (`yyyy-MM-dd`, validado con `.resx` y ecoado en la respuesta cuando es valido), y a la suite SmokeTests el camino valido correspondiente: la unica deteccion e2e de que el middleware que restaura los argumentos coercionados por la extension MCP sigue activo en el primer deploy.
+- Se registra MEF-ADR-0049, la arquitectura neutral de runtime y proveedor de Mefisto: separa runtime (OpenCode como dogfooding interno, Claude Code como adaptador compatible), proveedor y modelo como conceptos independientes; fija `src/internal/{agents,commands,scripts}` como fuente canonica con `.claude/`/`.opencode/` como adaptadores generados; `AGENTS.md`/`.mefisto/pipeline` como canonicos con fallback indefinido a `CLAUDE.md`/`.claude/pipeline`; los perfiles logicos `fast|balanced|deep` como vocabulario de modelo; la ejecucion headless de OpenCode bajo permisos deny-por-defecto; y el toolchain Bash + jq con rollout interno-primero.
+- Se define el contrato neutral de agentes y comandos internos de Mefisto
+  (`src/internal/contract/`, MEF-ADR-0049 CA-6): un schema validable con
+  `jq` (`internal-artifact.schema.json` + `jsonschema-lite.jq`), el
+  validador `validate-internal-artifacts.sh` -- que ademas de los campos
+  verifica la neutralidad del body (no nombra `claude` ni `opencode`) y la
+  correspondencia entre `id` y nombre de archivo --, fixtures validos e
+  invalidos y su test. Fija el formato de entrada del futuro generador de
+  adaptadores (#854); no migra ningun agente ni comando real.
+- Se anade el generador de adaptadores internos versionados
+  (`src/internal/scripts/generate-internal-adapters.sh` + `src/internal/scripts/lib/adapter-{claude,opencode}.sh`),
+  que produce `.claude/{agents,commands}/*.md` y `.opencode/{agents,commands}/*.md`
+  desde la fuente neutral `src/internal/{agents,commands}/*.md` (MEF-ADR-0049),
+  validando primero con `validate-internal-artifacts.sh` (#853). Soporta las
+  tres directivas de body (`{{mefisto:launch-agent}}`, `{{mefisto:run}}`,
+  `{{mefisto:command-path}}`), es determinista (mismas fuentes -> mismos
+  bytes) y expone `--check` para detectar adaptadores faltantes, desactualizados
+  u huerfanos sin escribir nada.
+- `src/internal/contract/README.md` documenta el mapeo campo neutral -> campo
+  por runtime (con lo que cada runtime no recibe y por que), la tabla
+  `capabilities` -> `tools`/`allowed-tools` de Claude Code, las tres directivas
+  de body y el marcador de generado que hace verificable a `--check`.
+- Nuevo helper `src/internal/scripts/lib/mefisto-state.sh` (sourceado por `_mefisto-common.sh`): resuelve el estado interno canonico de Mefisto bajo `.mefisto/pipeline`, con fallback de lectura a `.claude/pipeline` sin migracion automatica (MEF-ADR-0049 CA-3). Expone `mefisto_state_path`, `mefisto_state_read_paths` y `mefisto_state_read_first`; ningun caller necesita concatenar rutas de pipeline a mano.
+- Se define el protocolo neutral de ejecucion y eventos (MEF-ADR-0049 CA-1):
+  `src/internal/scripts/mefisto-run-agent.sh` invoca un agente sin que el
+  caller conozca flags ni eventos de ningun runtime concreto, resolviendo el
+  runtime activo (`--runtime` > `MEFISTO_RUNTIME` > autodeteccion) via la
+  nueva `src/internal/scripts/lib/mefisto-runtime.sh`
+  (`mefisto_resolve_runtime`) y garantizando exactamente un evento terminal
+  (`run.completed`/`run.failed`) por corrida, con exit code coherente (0
+  exito, 124 timeout, 65 protocolo invalido, o el del adaptador). Se entrega
+  el vocabulario JSONL cerrado en `src/internal/contract/run-events.schema.json`
+  y el unico adaptador de este issue, `src/internal/scripts/lib/runtime-fake.sh`,
+  que reproduce guiones de prueba (exito, fallo, cuelgue, protocolo invalido)
+  sin invocar `claude` ni `opencode`. Los adaptadores reales (Claude Code,
+  OpenCode) son los issues #859/#860.
+  El vocabulario de `status` queda partido entre los dos terminales
+  (`run.completed` solo admite `success`), y el desenlace `timeout` exige dos
+  evidencias coincidentes -- la senal del watchdog y el reloj de pared del
+  propio runner -- porque la senal sola clasificaba como TIMEOUT corridas que
+  no habian esperado nada cuando la maquina no alcanzaba a forkear el `sleep`
+  del watchdog.
+- Se entrega el adaptador de runtime Claude Code del protocolo neutral de
+  ejecucion y eventos (MEF-ADR-0049, issue #859):
+  `src/internal/scripts/lib/runtime-claude.sh` (`runtime_claude_build_cmd`/
+  `runtime_claude_translate`) mas `runtime-claude.jq` para la traduccion.
+  `runtime_claude_build_cmd` es el unico lugar del harness que compone
+  `claude -p` y sus flags (`--permission-mode bypassPermissions`,
+  `--output-format stream-json --verbose`, `--append-system-prompt` desde
+  `--system-file`, `--model` solo si el runner entrego un valor no vacio),
+  pasando el prompt como argumento sin `eval` (paridad con
+  `run_agent_with_watchdog`). `runtime_claude_translate` mapea la traza cruda
+  al JSONL neutral (`message`/`tool.started`/`tool.completed`/terminal) sin
+  emitir nunca `run.started` (responsabilidad exclusiva del runner) y
+  clasifica el desenlace en el mismo orden que `classify_agent_failure`
+  (`killed` por exit 137/143 > `api_error` del evento `result` o del stderr,
+  5xx antes que 4xx > `stream_cut` > `no_result` > `nonzero_exit`), con el
+  criterio de exito de tres condiciones de
+  `agent_stream_completed_successfully` (`is_error==false`,
+  `subtype==success`, `stop_reason==end_turn`) ganando sobre cualquier exit
+  code posterior (PR #446): esa muerte de despues queda documentada en
+  `error{kind,detail}` sin degradar el `status`. El terminal preserva
+  `session_id`, tokens, costo, turnos, `ttft_ms` y la cardinalidad de
+  `permission_denials` cuando Claude los entrega (`null`, nunca un cero
+  fabricado, cuando faltan). `--raw-log` sigue conservando la traza cruda
+  intacta para que `derive_stage_log_from_stream` y las metricas actuales del
+  pipeline sigan funcionando hasta que #861 las migre al JSONL neutral. El
+  pipeline todavia no se conecta a este adaptador (#869).
+- La interfaz de adaptador del runner neutral (`mefisto-run-agent.sh`, issue
+  #858) suma dos argumentos **opcionales** a `runtime_<id>_translate`: el exit
+  code del proceso y la ruta del stderr crudo. Ignorarlos sigue siendo una
+  implementacion valida (`runtime-fake.sh` lo hace), pero sin ellos ningun
+  adaptador puede distinguir una muerte por senal del `API Error: <status>`
+  que un CLI escribe solo por stderr (canales separados desde #425) ni de un
+  stream que simplemente termino sin declarar nada.
+- Se entrega el adaptador de runtime OpenCode del protocolo neutral de
+  ejecucion y eventos (MEF-ADR-0049, issue #860):
+  `src/internal/scripts/lib/runtime-opencode.sh` (`runtime_opencode_build_cmd`/
+  `runtime_opencode_translate`) mas `runtime-opencode.jq` para la traduccion.
+  `runtime_opencode_build_cmd` es el unico lugar del harness que compone
+  `opencode run --agent <id> --dir <cwd> --format json --auto`, con `-m
+  <modelo>` solo si el runner entrego un valor no vacio y el mensaje final
+  (`--system-file` inyectado como prefijo del prompt, sin flag propio) como
+  UN elemento del argv, sin `eval` (paridad con `claude -p "$prompt"` y con
+  `run_agent_with_watchdog`). A diferencia del adaptador Claude Code, `<agent>`
+  y `<cwd>` SI viajan en el argv (`opencode run` los exige como flags
+  propios). `runtime_opencode_translate` traduce el wire format de
+  `--format json` (verificado con OpenCode 1.18.29, capturado con corridas
+  reales minimas y congelado en
+  `.claude/scripts/tests/fixtures/runtime-opencode/*-1.18.29.jsonl`) al JSONL
+  neutral: cada evento `tool_use` ya trae el ciclo de vida completo de la
+  tool call en una unica linea (a diferencia de Claude, que lo parte en dos
+  bloques emparejados por id), asi que se sintetizan `tool.started` +
+  `tool.completed` desde ese unico evento. El wire format no trae ninguna
+  senal propia de exito/fallo (sin equivalente a `is_error`/`subtype`/
+  `stop_reason`), asi que la clasificacion depende del exit code y del
+  stderr crudo: exito (exit 0 + texto visible) > `nonzero_exit` (exit != 0,
+  detalle de las ultimas lineas de stderr) > `no_result` (stream vacio) >
+  `protocol_invalid` (linea no-JSON) > `no_result` (exit 0 sin texto
+  visible). Tipos de evento no reconocidos se descartan en silencio del
+  JSONL neutral (diagnostico solo por el stderr del propio programa jq,
+  nunca expuesto a un pipeline, con membresia exacta para que un tipo futuro
+  que sea subcadena de uno conocido no se cuele como reconocido). El terminal
+  preserva `session_id` y **suma** los tokens/costo de todos los
+  `step_finish` cuando el wire format los trae -- cada paso los reporta por
+  separado y es una llamada facturada aparte, asi que quedarse con el ultimo
+  reportaria el costo del cierre de la corrida como si fuera el de la corrida
+  entera, sesgo que `mefisto-metrics-report.sh` propagaria a
+  `cost_usd_total`/`cost_usd_mean` -- (`null`, nunca un cero fabricado,
+  cuando faltan); `turns`/`denials`/
+  `ttft_ms`/`api_duration_ms` son siempre `null` (sin equivalente en este
+  wire format) y `model` degrada siempre al parametro pedido (el wire format
+  no trae un id de modelo en ninguna version verificada). El adaptador no
+  lee, copia, valida ni menciona el almacen de credenciales local de
+  OpenCode ni variables de API key de proveedor -- autenticacion queda
+  exclusivamente en manos de OpenCode (MEF-ADR-0049 CA-5).
+  `src/internal/contract/README.md` documenta el adaptador junto al de Claude
+  Code (las tres diferencias que condicionan su diseno: sin flag de system
+  prompt, sin senal propia de exito/fallo, sin evento `result` acumulado), y
+  el `README.md` del directorio de fixtures registra la version del CLI
+  capturada, el comando de captura de cada archivo y la regla de que un
+  fixture viejo nunca se edita -- una version futura del wire format agrega
+  fixture, no lo reemplaza. El pipeline todavia no se conecta a este
+  adaptador (#869).
+- El adaptador OpenCode (`src/internal/scripts/lib/adapter-opencode.sh`) ahora emite un bloque `permission` cerrado por defecto en cada agente generado, derivado de sus capacidades neutrales (`src/internal/contract/opencode-permissions.json`): las 17 claves del vocabulario de OpenCode 1.18.29 reciben siempre un valor explicito (`allow`/`ask`/`deny`), nunca heredan un default global -- requisito de `opencode run --auto`, que solo respeta `deny` y auto-aprueba todo lo que quede en `ask`.
+- Los patrones de `bash` cubren la forma real en la que OpenCode 1.18.29 evalua un comando -- el texto completo de cada comando de la tuberia, prefijo de asignaciones de entorno incluido -- y por tanto la invocacion que emite `{{mefisto:run}}` (`MEFISTO_RUNTIME=opencode ./.claude/scripts/*`) y los coreutils de lectura sin argumentos, que en una tuberia aparecen desnudos.
+- Se anade `opencode.json` en la raiz del repo (solo `$schema`, sin `plugin`/`provider`/`model`/`permission` global ni credenciales) para que el checkout de Mefisto -- rama principal o cualquier worktree -- cargue localmente sus agentes y comandos internos con OpenCode, sin instalar el plugin publicado ni fijar proveedor/modelo (MEF-ADR-0049 CA-5).
+- Se anade `.claude/scripts/tests/test-opencode-discovery.sh`, el chequeo local que lista y resuelve todos los artefactos internos (agentes, comandos, `opencode.json`, `AGENTS.md`) sin invocar ningun modelo.
+- Queda registrada en `docs/testing/agents-md-shim-smoke.md` la evidencia que sustenta la ausencia de `instructions` en `opencode.json`: OpenCode 1.18.29 recorre los candidatos de reglas de proyecto `AGENTS.md` -> `CLAUDE.md` -> `CONTEXT.md` y corta en el primero que existe, asi que con `AGENTS.md` en la raiz el shim `CLAUDE.md` no se carga y no hay doble carga que acotar.
+- Nuevo `docs/testing/opencode-dogfooding.md`: certificacion del dogfooding interno con OpenCode 1.18.29 + OpenAI (MEF-ADR-0049), con evidencia real de la maquina del mantenedor -- autenticacion OAuth sin secretos en el repo, en el PR ni en los logs de la corrida; descubrimiento de los 10 comandos y 3 agentes internos (el issue #874 asumia 5, discrepancia registrada); `/mefisto-work-status` y `/mefisto-plan` (backlog, read-only) corridos bajo `openai/gpt-5.4-mini-fast`; y `runtime`/`model` poblados por `runtime_opencode_translate` a partir de la salida cruda de una sesion real.
+- La certificacion queda declarada **parcial**: procesar un issue con `/mefisto-tooling` bajo OpenCode (CA-3), los smokes tmux/batch/Herdr (CA-5) y el registro de `runtime` en `pipeline-history.jsonl` y en las metricas de stage de una corrida real (CA-4) estan bloqueados por el issue #879 -- `mefisto-tooling-pipeline.sh` todavia invoca `claude -p` directo y solo registra `MEFISTO_RUNTIME` sin usarlo para elegir CLI. El documento deja el backlog ordenado con esa dependencia al frente.
+- Nuevas funciones `agent_events_error_kind` y `agent_events_error_detail` (`src/internal/scripts/lib/_mefisto-common.sh`, sobre el lector comun `agent_events_error_field`): exponen `error.kind`/`error.detail` del evento terminal del JSONL neutral de un stage. Son el unico lugar donde vive la lectura estructurada que antes hacia un grep de texto sobre el log derivado, y el unico que elige el evento terminal (el ultimo, por si la traza trae dos).
+- Nueva tabla "POR RUNTIME" en el reporte de metricas: agrega wall medio, turnos medios, %API y costo medio por `runtime` de nivel de corrida, cayendo a `(sin runtime)` para el historico previo a esta anotacion.
+- Agentes neutrales `mefisto-writer` y `mefisto-reviewer` (`src/internal/agents/`, MEF-ADR-0049) para las fases de escritura y revision del pipeline interno de tooling, con perfiles `balanced` y `deep` respectivamente, capacidades `read`/`edit`/`shell` y sus salidas generadas en `.claude/agents/` y `.opencode/agents/`.
+- `src/internal/prompts/noninteractive-system.md`: version neutralizada de `NONINTERACTIVE_SYSTEM` (sin "Write and Edit tools" ni ".claude/", sin nombrar ningun runtime), lista para que un pipeline la lea via `--system-file`; el pipeline en si no cambia todavia.
+- Se anade el gate de neutralidad de runtime (`src/internal/scripts/mefisto-neutrality-gate.sh`,
+  MEF-ADR-0049, issue #911, hijo 1 de 3 de #873): cuatro reglas deterministas
+  sobre los archivos versionados del lado interno (alias/ids de modelo de
+  proveedor y `model` de frontmatter en `src/internal/**`; invocaciones
+  directas `claude -p`/`claude --agent`/`opencode run`; variables/rutas de
+  runtime concreto como `CLAUDE_PROJECT_DIR`/`.claude/pipeline`; conformidad
+  de shim de `.claude/scripts/*.sh` contra la plantilla de
+  `src/internal/scripts/README.md`) mas la integracion con
+  `generate-internal-adapters.sh --check` (solo un exit distinto de 0 anade
+  violaciones). Imprime `<ruta>:<linea>: <regla>` por violacion, acepta
+  `--root <dir>` para escanear un worktree desde el checkout principal y
+  termina en menos de 10s sobre el repo real (un unico `grep -nHE` por regla,
+  allowlist aplicada como filtro posterior).
+- Se anade la allowlist declarativa `src/internal/contract/neutrality-allowlist.json`,
+  que exige `motivo` no vacio por entrada y declara las excepciones legitimas
+  y permanentes (los adaptadores y runtimes que emiten esas mismas cadenas al
+  traducir la fuente neutral, `opencode-permissions.json`, `mefisto-state.sh`,
+  `.claude/settings.json`, `mefisto-scope-hook.sh`, tests y fixtures, doctrina
+  en prosa) y los tres `.claude/scripts/*.sh` que todavia no son shim
+  (`mefisto-metrics-report.sh`, `mefisto-stream-watch.sh`,
+  `mefisto-scope-hook.sh`). El gate la carga siempre desde su propia
+  ubicacion, nunca desde `--root` (MEF-ADR-0019 seccion E: el PR bajo revision
+  no puede alterar el gate que lo juzga, asi que registrar una excepcion y
+  usarla son dos PRs); `--allowlist <file>` la sobreescribe explicitamente
+  para los tests.
+- Se anaden los tests unitarios `.claude/scripts/tests/test-neutrality-gate.sh`
+  (un positivo limpio, un negativo por regla y por `adapters-check`, la
+  allowlist sin `motivo`, el origen de la allowlist y el tope de tiempo de
+  CA-3, sobre arboles git temporales).
+- Se agrega `test-tooling-runtime-neutral.sh`: prueba e2e del pipeline interno
+  de tooling que corre `mefisto-tooling-pipeline.sh` real con CLIs falsas de
+  `claude` y `opencode` en PATH, verificando que ambos runtimes producen los
+  mismos artefactos neutrales (events.jsonl, metrics, pipeline-history.jsonl),
+  que un fallo terminal del writer en Stage 1 aborta sin abrir PR, y que el
+  modelo heredado nunca llega al CLI como flag vacio.
+- `herdr-workspace.sh` monta en el repo de Mefisto una fila de planner+ejecucion **por runtime** dentro del mismo workspace (Claude Code y OpenCode lado a lado, MEF-ADR-0049): la primera invocacion reserva la fila 2 con un pane ancla (`fila libre`, primer split `down` del workspace) antes de abrir su propia fila hacia la derecha; una segunda invocacion con `MEFISTO_RUNTIME` distinto localiza el ancla, monta ahi su fila (dos splits `right` encadenados) y la cierra. La idempotencia pasa a ser por par (workspace, runtime) -- detectada por el label del pane (`planner [<kind>]`), nunca por si el agente llego a arrancar --, y sin el ancla (cerrado a mano) el script aborta sin anidar la fila 2 bajo la fila 1. La rama de un proyecto consumidor no cambia: una sola fila, sin ancla, labels sin sufijo.
+- Se agrega MEF-ADR-0050 (principio de neutralidad de runtime para toda operacion de Mefisto): generaliza MEF-ADR-0049 a un principio transversal -- conjunto de runtimes abierto, checklist de extension para un runtime nuevo, frontmatter portable obligatorio de todo `SKILL.md`, namespace `mefisto` por adaptador y definicion operativa de "agnostico" contra los gates existentes. `AGENTS.md` gana una linea de principio que referencia el ADR.
+- Se anade `src/internal/scripts/mefisto-next-order.sh` (canonico, solo lectura), que calcula el orden topologico de lanzamiento de los issues `estado:listo` abiertos: extrae las dependencias forward de `## Dependencias` (mismo `awk | grep` que `mefisto-validate-batch-deps.sh`), corre Kahn con empate por numero de issue ascendente y cierra siempre con la linea `/mefisto-sequential <orden>` lista para copiar. Todo issue excluido del orden se reporta al tope con su motivo -- ciclo con sus miembros, bloqueo externo abierto, o bloqueo indirecto (`#N bloqueado por #M: excluido del orden`) cuando su dependencia intra-universo es la que quedo fuera --, de modo que un issue del universo nunca desaparece en silencio ni se cuela a una linea de lanzamiento que el paso 1.5 de `/mefisto-sequential` rechazaria.
+- Se anade la regla **F5** al bloque `[F]` de `scripts/tests/test-guards.sh`: valida que el frontmatter de todo `SKILL.md` (`skills/` y `.claude/skills/`) se limite al estandar portable `name`/`description`/`license`/`compatibility`/`metadata` (MEF-ADR-0050), fallando si aparece un campo especifico de Claude Code como `allowed-tools`.
+- Se anade el comando neutral `/mefisto-next-order`, que invoca `mefisto-next-order.sh` (#936) y reproduce tal cual el orden topologico de lanzamiento de los issues `estado:listo`; el modo `orden-de-batch` de `mefisto-planner` ahora delega en el en vez de razonar el grafo de dependencias a mano.
+- Se anade `scripts/next-order.sh`, copia hermana publicada de `mefisto-next-order.sh` (MEF-ADR-0018): calcula el orden topologico de lanzamiento de los issues `estado:listo` abiertos del repo consumidor, reporta ciclos y bloqueos externos/indirectos, y anota el label `tipo:` de cada issue en la linea del orden. La linea final de lanzamiento acepta `--launch-command "<texto>"` (default `/mefisto:sequential`) para que el separador de namespace del comando lo decida el adaptador de cada runtime (MEF-ADR-0050), no el script. El flag rechaza el texto vacio (saldria una ultima linea sin comando, indistinguible de una lista suelta de numeros) y el guard del script queda verificado por el bloque C2 de `scripts/tests/test-guards.sh`.
+- Se anade el comando publicado `/next-order`, que invoca `scripts/next-order.sh` con `--launch-command "/mefisto:sequential"` y reproduce el orden topologico de lanzamiento de los issues `estado:listo` del consumidor, listo para copiar a `/mefisto:sequential`.
+
+### Changed
+
+- MEF-ADR-0032 seccion 9: el PRM de un servidor MCP deja de describirse como "una operacion de la misma API" -- es una operacion `GET /<path-del-servidor>` en la API compartida `mcp-prm` del entorno, cuya politica de API omite `<base/>` y `validate-jwt`, ubicada fuera del well-known de RFC 9728 (`https://<apim>/well-known/oauth-protected-resource/<path>`, sin punto inicial) por restriccion de APIM; el descubrimiento del PRM se garantiza exclusivamente por el `resource_metadata` del `WWW-Authenticate`, sin fallback por convencion well-known.
+- Se enmienda MEF-ADR-0047 (decision 1) con la restriccion conocida de `Microsoft.Azure.Functions.Worker.Extensions.Mcp`: coerciona todo string de `arguments` con forma de fecha o GUID (`DictionaryStringObjectJsonConverter.ReadString`), y el fallback a `string` de `McpInputConversionHelper` no preserva el texto original (`Azure/azure-functions-mcp-extension#129`). Fija como conclusion normativa el middleware de restauracion siempre generado y cableado, y que los parametros de fecha/identificador se declaran `string`, nunca `DateTimeOffset` ni `object`.
+- Se enmienda MEF-ADR-0048 (seccion 2, verificacion 3) para exigir que la tool call real de toda tool con parametros de forma fecha o identificador ejercite cada uno con un valor valido representativo, afirmando que ni la tool call que omite el parametro ni el error path `.resx` de la verificacion 4 sustituyen esa cobertura.
+- `smoke-test-writer`, `reviewer` y `planner` ahora exigen que la tool call real de una tool MCP con parametros de forma fecha/identificador ejercite cada uno con un valor valido (`yyyy-MM-dd`; GUID/codigo del dominio) -- ni el default del parametro opcional ni el error path del `.resx` cubren ese camino (MEF-ADR-0048 seccion 6, enmendada por #841). El reviewer ademas marca como hallazgo mayor una tool con estos parametros en un servidor sin el middleware de restauracion de argumentos (`ArgumentosCrudosMcpMiddleware`, #840), y el planner advierte que estos parametros se declaran `string`, nunca `DateTimeOffset`/`object` (MEF-ADR-0047).
+- Registradas en el gate de scope interno (`is_path_in_mefisto_scope`) las rutas de la arquitectura neutral de runtime/proveedor (MEF-ADR-0049): `src/internal/*`, `.opencode/{agents,commands,plugins,skills}/*` y los archivos exactos de raiz `AGENTS.md`/`opencode.json` -- registro previo sin poblar (MEF-ADR-0019 seccion E), ninguna entrada existente se retira.
+- `is_path_changelog_exempt` exime ahora `AGENTS.md` con el mismo criterio que `CLAUDE.md`.
+- `validate-internal-artifacts.sh` (#853) toma la extraccion del frontmatter de
+  `src/internal/scripts/lib/frontmatter.sh` por `source`, en vez de mantener su
+  propia copia del `awk` que corta el bloque `---`. El generador de adaptadores
+  (#854) consume la misma implementacion: dos copias de la regla de corte
+  divergirian en silencio, que es exactamente lo que la fuente neutral existe
+  para evitar.
+- `AGENTS.md` pasa a ser la fuente canonica de las directivas del repo de Mefisto (via `git mv` desde `CLAUDE.md`, preservando historial); `CLAUDE.md` queda como shim de compatibilidad de 4 lineas que la importa con `@AGENTS.md` (sintaxis de imports de Claude Code, MEF-ADR-0049 CA-3). Las 4 frases que presentaban a Claude Code como unico runtime se reescriben para describirlo como runtime compatible detras de un adaptador y a OpenCode como runtime del dogfooding interno, sin nombrar proveedores ni modelos; salvo el titulo del archivo y sus auto-referencias (`# AGENTS.md — mefisto`, "este mismo archivo"), ninguna otra doctrina cambia.
+- Las referencias internas que mandaban leer `CLAUDE.md` como fuente de directivas (`.claude/agents/mefisto-planner.md`, `.claude/agents/mefisto-investigator.md`, `.claude/agents/mefisto-historiador.md`, el prompt del reviewer en `.claude/scripts/mefisto-tooling-pipeline.sh`) ahora apuntan a `AGENTS.md`.
+- Nuevo `.claude/scripts/tests/test-agents-md-shim.sh`: verifica que `CLAUDE.md` se mantenga como shim (<= 10 lineas, un solo `@AGENTS.md`), que `AGENTS.md` conserve las secciones obligatorias y que las frases retiradas no reaparezcan. El smoke manual de sesion de ambos runtimes queda documentado en `docs/testing/agents-md-shim-smoke.md`.
+- Se enmienda MEF-ADR-0049 (decision 4): la resolucion de perfiles logicos de modelo (`fast|balanced|deep`) suma un cuarto paso de precedencia -- la tabla por defecto de cada adaptador (`adapter_<runtime>_default_model`: Claude Code `fast`->`haiku`, `balanced`->`sonnet`, `deep`->hereda; OpenCode siempre hereda) -- entre el mapping local (`.mefisto/models.json`, nunca versionado) y la herencia del modelo activo del runtime. Se entrega `mefisto_resolve_model` (`src/internal/scripts/lib/mefisto-models.sh`), la tabla fija de cada adaptador, el contrato `src/internal/contract/models.schema.json` y la plantilla `src/internal/models.example.json` (con placeholders `<provider/model>`, nunca ids reales).
+- El generador de adaptadores internos (`generate-internal-adapters.sh`) emite `model: "haiku"`/`model: "sonnet"` en la salida Claude Code cuando la fuente neutral declara `profile: fast`/`profile: balanced`; omite el campo para `deep` y para toda la salida OpenCode, consultando solo la tabla fija del adaptador (nunca el mapping local, para preservar el determinismo de `--check` entre maquinas).
+- `mefisto-run-agent.sh` acepta un nuevo flag `--events-log <archivo>` (default `mefisto_state_path events.log`), separado del `--event-log` del JSONL neutral: emite telemetria legible del pipeline -- `[HH:MM:SS][tool] <agente> <tool> <ok|fail> <ruta-o-resumen|->` por cada `tool.completed`, `[HH:MM:SS][archivo] <ruta>` por cada `tool.started` de un tool de archivo (`edit`/`write`/`read`, sin distinguir mayusculas) -- nunca por un `bash`, cuyo `input_summary` es un comando y no una ruta -- y `[HH:MM:SS][stage] <agente> <status>` en el evento terminal -- igual para una corrida Claude Code y una OpenCode. Un fallo al escribirla (directorio inexistente, sin permisos) degrada a un aviso en stderr, sin alterar el exit code ni el evento terminal de la corrida.
+- `runtime-claude.jq` y `runtime-opencode.jq` pueblan `input_summary` de `tool.started` para los tools de archivo (Edit/Write/Read en Claude; edit/write/read en OpenCode, via `file_path`/`filePath`) y para Bash/bash (primeros 80 caracteres del comando); cualquier otro tool sigue en `null`.
+- El scope temprano de OpenCode para escrituras fuera de la allowlist interna de Mefisto ya lo da el `edit` deny-por-defecto del bloque `permission` (issue #862): no se porta el hook `mefisto-scope-hook.sh`, que documenta en su cabecera que solo aplica a sesiones Claude Code.
+- Se migra `mefisto-release.sh` al layout canonico `src/internal/scripts/` (MEF-ADR-0049 decision 2), primer script interno trasladado: `.claude/scripts/mefisto-release.sh` queda como shim de compatibilidad de tres lineas (reenvia argumentos y exit code con `exec`, sin logica propia), documentado en `src/internal/scripts/README.md`, que fija la plantilla de shim para los siguientes scripts a migrar y deja registrado por que esos shims se escriben a mano en vez de generarse. `changelog.d/README.md` deja de senalar `.claude/scripts/` como la ubicacion de la fase *prepare* y apunta a la implementacion canonica.
+- Los tres agentes internos (`mefisto-planner`, `mefisto-investigator`, `mefisto-historiador`) migran a la fuente neutral `src/internal/agents/*.md` (MEF-ADR-0049): `kind: agent`, `mode: primary`, perfil `deep` para planner/investigator y `balanced` para historiador, capacidades `[read, edit, shell]`. `.claude/agents/*.md` pasa a ser salida generada (no se edita a mano) y se suma su equivalente `.opencode/agents/*.md`, con `mode: primary` y el bloque `permission` de OpenCode. Efecto colateral del mapeo de capacidades: `mefisto-planner` y `mefisto-investigator` suman la tool `Edit` a su allowlist Claude (antes solo `Write`); la restriccion de escritura del investigator pasa a sostenerse en el prompt, no en la ausencia de la tool. Las referencias a rutas concretas de un runtime (`.claude/agents`, `.claude/commands`, `.claude/scripts`, `.claude/pipeline`, `.claude-plugin`, `CLAUDE.md`) se reescriben de forma neutral; ningun cambio de doctrina.
+- Nuevo `.claude/scripts/tests/test-internal-agents-generated.sh`: valida las tres fuentes contra el contrato neutral, corre `generate-internal-adapters.sh --check`, confirma la ausencia de `fable`/`opus` en la salida Claude y verifica que `opencode agent list` liste los tres agentes como `primary` (se omite con aviso si el CLI no esta instalado).
+- Los cinco comandos internos de analisis y seguimiento (`mefisto-plan`, `mefisto-bug`, `mefisto-bitacora`, `mefisto-work-status`, `mefisto-fix-review`) migran a la fuente neutral `src/internal/commands/*.md` (MEF-ADR-0049): `kind: command`, perfil `fast` para los primeros cuatro (`model: "haiku"` en la salida Claude) y `deep` para `fix-review` (sin `model:`, hereda la sesion activa -- antes fijaba `opus`). Las invocaciones de agente (`claude --agent <id> "$ARGUMENTS"`) se expresan con la directiva `{{mefisto:launch-agent <id>}}`; el encadenamiento de `mefisto-bitacora` hacia `mefisto-merge` usa `{{mefisto:command-path mefisto-merge}}`. `mefisto-work-status` describe sus rutas de estado como `.mefisto/pipeline/...` con nota de fallback legacy (issue #856); `mefisto-fix-review` deja de nombrar `.claude/agents/` como destino de edicion de agentes internos (ahora `src/internal/agents/`, issue #865). `.claude/commands/*.md` de estos cinco pasa a ser salida generada (no se edita a mano) y se suma su equivalente `.opencode/commands/*.md`.
+- `validate-internal-artifacts.sh` (contrato #853) suma dos excepciones literales a la neutralidad del body: `.claude-plugin/` (manifiesto fisico del plugin, identico en ambos runtimes -- el guard inverso lo cita tal cual) y `.claude/scripts/` (superficie estable de invocacion de pipelines, identica en la salida de ambos adaptadores). Ninguna otra forma de `.claude/` ni de `claude`/`opencode` a secas entra en la excepcion.
+- Nuevo `.claude/scripts/tests/test-internal-commands-generated.sh`: valida las cinco fuentes contra el contrato neutral, corre `generate-internal-adapters.sh --check`, verifica por grep la ausencia de referencias prohibidas (CA-3) en fuentes y salidas, y comprueba que `opencode debug config` liste los cinco comandos (se omite con aviso si el CLI no esta instalado).
+- `mefisto-bitacora` gana el hint `[YYYY-MM-DD]` (`argument-hint` en la salida Claude) y su paso 3 verifica que el comando `mefisto-merge` exista en el directorio de comandos del runtime activo antes de leerlo: mientras `mefisto-merge` siga escrito a mano solo en `.claude/commands/` (migra en #867), la variante OpenCode falla con un `ERROR` legible y se detiene sin mergear, en vez de un `cat` a un archivo inexistente.
+- Los cinco comandos internos de ejecucion (`mefisto-tooling`, `mefisto-tooling-verbose`, `mefisto-sequential`, `mefisto-merge`, `mefisto-release`) migran a la fuente neutral `src/internal/commands/*.md` (MEF-ADR-0049): `kind: command`, perfil `fast` para los primeros cuatro (`model: "haiku"` en la salida Claude) y `balanced` para `release` (`model: "sonnet"`). Toda invocacion de script (`mefisto-tmux-pipeline.sh`, `mefisto-validate-batch-deps.sh`, `mefisto-release.sh`) se expresa con la directiva `{{mefisto:run <script> <args>}}`, que cada adaptador traduce a `MEFISTO_RUNTIME=<runtime> ./.claude/scripts/<script> <args>`; el encadenamiento de `mefisto-tooling-verbose` hacia `mefisto-tooling` usa `{{mefisto:command-path mefisto-tooling}}`. `.claude/commands/*.md` de estos cinco pasa a ser salida generada (no se edita a mano) y se suma su equivalente `.opencode/commands/*.md`: con esto, los diez comandos internos de Mefisto nacen de la fuente neutral.
+- Los ejemplos de `--models` de `mefisto-tooling` dejan de prescribir un alias Anthropic concreto (`opus`/`sonnet`) y usan el placeholder `writer=<modelo>`, remitiendo a `src/internal/models.example.json` para los ids reales por runtime (issue #857).
+- `test-internal-commands-generated.sh` se amplia para cubrir los diez comandos internos: valida las cinco fuentes nuevas contra el contrato neutral, verifica la invocacion `{{mefisto:run}}` de cada script en ambos runtimes, el encadenamiento `mefisto-tooling-verbose` -> `mefisto-tooling`, `model:` por perfil, la ausencia de alias Anthropic en los ejemplos de `mefisto-tooling`, y que un argumento con espacios y comillas (`--models 'writer=a b'`) llegue intacto a la linea generada por `{{mefisto:run}}`.
+- Al migrar los bodies a la fuente neutral se conservan los nombres de los scripts que la prosa citaba (`mefisto-batch-pipeline.sh` en `/mefisto-sequential`, `mefisto-tmux-pipeline.sh` en `/mefisto-tooling` y `/mefisto-tooling-verbose`): lo que la neutralidad exige quitar es el prefijo de runtime `.claude/scripts/`, no la identidad del script -- el mismo criterio que ya siguen los agentes neutrales de #865.
+- Se migran `mefisto-tooling-pipeline.sh` y `_mefisto-common.sh` -- la lib compartida por todos los scripts internos -- al layout canonico `src/internal/scripts/{,lib/}` (MEF-ADR-0049 decision 2): `.claude/scripts/mefisto-tooling-pipeline.sh` queda como shim `exec` de tres lineas (misma plantilla de #864) y `.claude/scripts/_mefisto-common.sh` como shim `source` de una linea, de modo que el gate de scope (`mefisto-scope-hook.sh`) y los scripts que aun viven en `.claude/scripts/` (batch, tmux, herdr, stream-watch, metrics-report) sigan cargando la lib sin cambiar una linea. El pipeline resuelve ahora sus logs, metricas, status e historial con `MEFISTO_STATE_DIR`/`mefisto_state_path` (`.mefisto/pipeline`, con el historial legado en `.claude/pipeline` intacto y todavia leible por `mefisto-metrics-report.sh`); el resumen de stage del worktree pasa a `.mefisto/pipeline/summaries/` y los prompts de writer/reviewer lo piden ahi. `mefisto-release.sh` deja de resolver `_mefisto-common.sh` via `.claude/scripts/` (ya innecesario) y la sourcea relativa a si mismo, igual que el resto de la libreria. El pipeline registra ademas `MEFISTO_RUNTIME` (recibido de los comandos, issue #867) en `events.log`, el status y el historial, sin usarlo todavia para seleccionar CLI -- la invocacion de `claude -p` no cambia en este issue (la conecta #879).
+- Los consumidores del estado que aun viven en `.claude/scripts/` siguen viendo la corrida tras ese traslado: `mefisto-tmux-pipeline.sh` resuelve el `events.log` que tail-ea su pane monitor con `mefisto_state_path` (antes componia `.claude/pipeline/events.log` a mano, y tras el traslado vigilaba un archivo que ya nadie escribe -- sin fallar ni avisar), `mefisto-herdr-pipeline.sh` hace lo propio con el directorio de logs y su registro de panes, y `mefisto-metrics-report.sh` agrega el historial de las DOS ubicaciones (`mefisto_state_read_paths`), de modo que la serie temporal que el reporte existe para medir no se parte en el commit del traslado.
+- Se migran `mefisto-batch-pipeline.sh` y `mefisto-validate-batch-deps.sh` al layout canonico `src/internal/scripts/` (MEF-ADR-0049 decision 2, issue #870): sus rutas en `.claude/scripts/` quedan como shims `exec` de tres lineas (misma plantilla de #864/#869). El motor de batch resuelve ahora su estado (logs de la corrida, log por issue) con `MEFISTO_STATE_DIR` en vez de la ruta legacy `.claude/pipeline`, e invoca directo el `mefisto-tooling-pipeline.sh` canonico (sibling en `src/internal/scripts/`, ya no el shim), heredando `MEFISTO_RUNTIME`/`MEFISTO_MODELS_FILE` del entorno como cualquier proceso hijo. La precondicion de dependencias ya no exige `claude` a secas: comprueba `git`, `gh`, `jq` y el CLI del runtime que resuelve `mefisto_resolve_runtime` (`lib/mefisto-runtime.sh`, issue #858) -- el abort por runtime ausente o ambiguo indica `MEFISTO_RUNTIME=claude|opencode` como remedio. El runtime resuelto se re-exporta ya fijado antes del primer eslabon, de modo que cada `mefisto-tooling-pipeline.sh` hijo hereda exactamente el que el batch verifico instalado y anuncio en su cabecera -- tambien cuando llego por autodeteccion, donde antes cada hijo lo habria vuelto a resolver por su cuenta. El orden por `## Dependencias`, la distincion entre dependencia resuelta por el propio orden del batch y bloqueo externo, el stop-on-error y el sync verificado de `main` (fetch + ff-only + confirmacion del commit de merge) no cambian -- los tres tests existentes (`test-batch-deps-validation.sh`, `test-batch-sync-branch-race.sh`, `test-batch-start-branch-recovery.sh`) pasan sin modificar su logica, solo apuntando al script canonico. `test-batch-runtime.sh` (nuevo) corre un batch real de dos issues con stubs de `gh` y un tooling-pipeline falso en los dos modos `MEFISTO_RUNTIME=claude`/`=opencode`, verificando que el CLI exigido es el especifico del runtime resuelto (no "alguno"), que el eslabon hereda el `MEFISTO_RUNTIME` resuelto (por entorno y por autodeteccion), que ambos shims reenvian de verdad al canonico (mismo exit code, no solo el texto de la plantilla) y que un fallo del primer eslabon detiene el segundo con `--stop-on-error`.
+- Se migra `mefisto-tmux-pipeline.sh` al layout canonico `src/internal/scripts/` (MEF-ADR-0049 decision 2, issue #871): su ruta en `.claude/scripts/` queda como shim `exec` de tres lineas (misma plantilla de #864/#869/#870). `--tooling` y `--batch` invocan ahora directo a los siblings canonicos `mefisto-tooling-pipeline.sh`/`mefisto-batch-pipeline.sh` (ya no la ruta legacy `.claude/scripts/...`), y propagan `MEFISTO_RUNTIME`/`MEFISTO_MODELS_FILE` al pane recien creado (que nace en un shell nuevo, sin heredar el entorno del wrapper) anteponiendolos al `send-keys` con `printf %q` para que sobrevivan como dato aunque traigan espacios, comillas o corchetes (p. ej. un id de modelo completo como `claude-opus-5[1m]`). La ruta absoluta de esos dos siblings (derivada de `SCRIPT_DIR`) tambien viaja escapada con `printf %q`: hasta el traslado era la literal relativa `./.claude/scripts/...`, inmune a espacios por construccion, y sin escapar un checkout bajo un directorio con espacios partiria el comando del pane en dos argumentos. El visor en vivo (`mefisto-stream-watch.sh`) y la delegacion a la interfaz herdr siguen apuntando a `.claude/scripts/`, deliberado: ninguno de los dos migro todavia (issues #861/#872). La ayuda y los ejemplos de `--models` dejan de prescribir un alias Anthropic concreto (`opus`/`sonnet`) y usan el placeholder `writer=<modelo>`, remitiendo a `src/internal/models.example.json` (issue #857), igual que ya hizo `/mefisto-tooling` en #867. `test-mefisto-tooling-variant.sh`, `test-mefisto-stage-models.sh`, `test-caffeinate-prefix.sh` (comparte el prefijo `caffeinate` con el lado publicado) y `test-tooling-state-paths.sh` pasan contra el canonico, el primero a traves del shim en al menos un caso; se suma un caso nuevo que verifica que el pane recibe `MEFISTO_RUNTIME=opencode` cuando el launcher lo hereda.
+- Se migra `mefisto-herdr-pipeline.sh` al layout canonico `src/internal/scripts/` (MEF-ADR-0049 decision 2, issue #872): su ruta en `.claude/scripts/` queda como shim `exec` de tres lineas (misma plantilla de #864/#869/#870/#871). `--tooling` y `--batch` heredan `MEFISTO_RUNTIME`/`MEFISTO_MODELS_FILE` en el pane de ejecucion (que nace de un shell YA VIVO del workspace herdr, sin heredar el entorno de quien despacha) anteponiendolos como asignacion de entorno a la invocacion del runner, con `printf %q` para que sobrevivan como dato aunque traigan espacios, comillas o corchetes -- mismo criterio que ya aplico `mefisto-tmux-pipeline.sh` en #871. `LOG_DIR_ABS` y el registro de panes (`herdr-report-panes.txt`) siguen resolviendo con `mefisto_state_path`; el script ya no contiene ninguna ruta `.claude/pipeline` ni la frase `claude -p` en sus comentarios (ahora "el runner del runtime activo"). El visor en vivo (`mefisto-stream-watch.sh`) sigue viviendo en `.claude/scripts/` -- su neutralizacion de fuente de datos se cerro en #878, su traslado de ubicacion no es parte de ningun issue -- y se invoca por su ruta explicita en vez de via `SCRIPT_DIR`, igual que ya hace el lanzador tmux. `mefisto-tmux-pipeline.sh` delega ahora al sibling canonico en vez de a la ruta legacy. `test-mefisto-tooling-variant.sh`, `test-mefisto-stage-models.sh`, `test-tooling-state-paths.sh` y `test-caffeinate-prefix.sh` (lado publicado, comparte el prefijo `caffeinate`) pasan contra el canonico. Se suma `test-mefisto-herdr-pipeline.sh` (nuevo), que cubre el despacho tooling/batch con `MEFISTO_RUNTIME=opencode`/`=claude`, argumentos con caracteres especiales, argumentos faltantes, las combinaciones invalidas de `--batch` con `--models`/`--variant`/`--from-stage`, la reutilizacion (o descarte) de un pane ya registrado segun este libre u ocupado, el consumo sin efecto de `--verbose`/`--if-exists` (que nunca viajan al sub-pipeline) frente al reenvio real de `--from-stage`/`--variant` con su valor, el guard de contexto `HERDR_ENV` (aborta remitiendo al lanzador tmux, sin despachar pane) y un guard estatico sobre el archivo canonico -- contraparte del bloque `[B]` de `test-batch-runtime.sh` -- que fija cero menciones de `claude -p`, `LOG_DIR_ABS`/`herdr-report-panes.txt` resueltos con `mefisto_state_path`, cero `.claude/pipeline` en codigo y que las unicas referencias `.claude/scripts` en codigo sean la invocacion del visor.
+- `scripts/herdr-workspace.sh` honra `MEFISTO_RUNTIME` en el propio repo de Mefisto: arranca ambos panes con `herdr agent start --kind "${MEFISTO_RUNTIME:-claude}"` y los hace heredar `MEFISTO_RUNTIME`/`MEFISTO_MODELS_FILE` en su entorno (via `--env` de `herdr workspace create`/`herdr pane split`), para que `/mefisto-tooling`/`/mefisto-batch` despachados desde el pane de ejecucion hereden el mismo runtime sin fijarlo a mano. En un proyecto consumidor el runtime sigue siendo siempre Claude Code: un `MEFISTO_RUNTIME` distinto de `claude` se ignora con un aviso, comportamiento sin cambios. El script no fija provider, modelo ni credenciales, y no lee `opencode.json` ni ningun auth store. La pausa entre el `agent start` fallido y el `agent get` que lo confirma queda tras el seam `MEFISTO_AGENT_START_RETRY_PAUSE` (default 3s, el de siempre) para que los tests no la paguen cuatro veces. `test-herdr-workspace.sh` suma un stub de `herdr` que registra cada invocacion y cubre, sobre el script real: workspace Mefisto con OpenCode y con Claude, consumidor con `MEFISTO_RUNTIME=opencode` (aviso + `claude`, sin `--env`), el fallo de `agent start` en los dos intentos y la idempotencia al reabrir un workspace ya montado con cualquier runtime.
+- El visor interno `mefisto-stream-watch.sh` deja de leer la traza `stream-json` cruda de Claude y sigue en su lugar el JSONL neutral `<stage>.events.jsonl` (protocolo de ejecucion y eventos de MEF-ADR-0049, issue #858), localizado con `mefisto_state_read_paths` (canonico primero, legacy despues) y re-resuelto en cada ciclo, de modo que un visor lanzado ANTES que el pipeline descubre igual la corrida que nace despues. Clasifica solo el vocabulario neutral (`message`, `tool.started`/`tool.completed`, `run.completed`/`run.failed`); los campos ausentes (`turns`, `cost_usd`, `tokens`, `ttft_ms`, `api_duration_ms`, `session_id`, `model`) se muestran como "n/d", nunca como 0 ni como un "ok" fabricado; el cierre de stage suma `runtime`, `model` y el `error.kind`, tambien cuando acompana a un terminal `success` (la muerte posterior que el contrato documenta). Una linea no-JSON o con un `type` desconocido se ignora con un contador visible en el cierre, sin abortar el visor.
+- `derive_stage_log_from_stream`, `agent_stream_completed_successfully`, `agent_failure_is_unrecoverable` y `classify_agent_failure` (`src/internal/scripts/lib/_mefisto-common.sh`) ya no interpretan la traza cruda de Claude Code: leen el JSONL neutral (`<log_base>.events.jsonl`) que `run_agent` escribe traduciendo cada intento con `runtime_claude_translate` (MEF-ADR-0049 decision 1). El vocabulario de un runtime concreto (`is_error`, `subtype`, `stop_reason`, `num_turns`, `total_cost_usd`) deja de aparecer en esta capa.
+- El criterio de "fallo irrecuperable" se estrecha: antes, cualquier "API Error" (4xx o 5xx) en el log tambien impedia la recuperacion por `has_work`; ahora solo un corte de stream genuino (`error.kind == "stream_cut"`) lo hace, y un `API_ERROR_SERVER`/`API_ERROR_CLIENT` que agota reintentos cae al mismo atajo de recuperacion que un `CLI_ERROR`.
+- El visor `mefisto-stream-watch.sh` (#878) ya no queda a oscuras: `run_agent` ahora escribe el `.events.jsonl`/`.attempt-<k>.events.jsonl` que el visor descubre.
+- `compute_stage_metrics` y `build_agents_history_json` (`src/internal/scripts/lib/_mefisto-common.sh`) dejan de interpretar el vocabulario de Claude Code: ahora derivan del JSONL neutral (`<log_base>.events.jsonl`, issue #906) y de `src/internal/contract/run-events.schema.json`. El archivo de metricas por stage cambia de forma -- `runtime`, `model`, `status`, `error_kind`, `duration_ms`, `api_duration_ms`, `non_api_ms`, `ttft_ms`, `turns`, `cost_usd`, `tokens{input,output}`, `denials`, `tool_calls[{name,count,duration_ms_sum,duration_ms_median}]` -- y ya no trae `is_error`, `stop_reason`, `terminal_reason`, `num_turns`, `total_cost_usd`, `tokens.cache_read`/`tokens.cache_creation` ni `rate_limit_events` (sin fuente neutral, se retira sin inventar un equivalente). `build_agents_history_json` agrega ademas `agents.<agente>.runtime` sin mover ni renombrar `duration`/`metrics`. `run_agent` (`mefisto-tooling-pipeline.sh`) invoca `compute_stage_metrics` sobre `$events_file` en vez de la traza cruda `$stream_file`. Los archivos de metricas existentes (forma Claude) no se migran.
+- `mefisto-metrics-report.sh` normaliza `agents.<agente>.metrics` (forma vieja pre-#907 o neutral post-#907) a una sola forma interna antes de agregarla: ningun agregado de costo, tokens o turnos confunde ya `null` con `0` al mezclar corridas Claude e instrumentadas OpenCode.
+- `run_agent` del pipeline interno de tooling (`mefisto-tooling-pipeline.sh`) ya no invoca `claude -p` directo: lanza `src/internal/scripts/mefisto-run-agent.sh` (MEF-ADR-0049), escribiendo el prompt del stage en un archivo bajo `.mefisto/pipeline/prompts/` y el system prompt vía `--system-file src/internal/prompts/noninteractive-system.md`.
+- El runtime activo (`claude`/`opencode`) se resuelve una sola vez con `mefisto_resolve_runtime`, antes de crear el worktree del issue; el chequeo de dependencias exige `gh`, `git`, `jq` y el CLI del runtime resuelto, nunca `claude` a secas ni ambos runtimes a la vez.
+- El modelo de cada stage se resuelve también antes de crear el worktree (mismo criterio que `--models` desde el issue #709: un `.mefisto/models.json` inválido debe abortar temprano, no a mitad de Stage 1): el override `--models` por clave exacta de stage sigue ganando y, sin match, cae en `mefisto_resolve_model` (perfil `balanced` para writer/merge, `deep` para reviewer). Los defaults fijos `sonnet`/`opus` desaparecen del pipeline.
+- El timeout de cada intento lo aplica el runner (`--timeout`, exit 124) en vez de un archivo de señal propio de `run_agent`; `classify_agent_failure`/`agent_failure_is_unrecoverable` siguen recibiendo el exit code y el `<stage>.events.jsonl`, sin cambios en su clasificación.
+- `generate-internal-adapters.sh --check` ya no tolera un archivo sin marcador de
+  generado bajo `.claude/{agents,commands}` u `.opencode/{agents,commands}`: reporta
+  `<ruta>: sin marcador` y termina en 1 (MEF-ADR-0049, issue #913, hijo 2 de 3 de
+  #873, retira la toleracion residual de #854); el bloque `[check]` de
+  `test-generate-internal-adapters.sh` pasa a exigir esa divergencia en vez de
+  tolerarla.
+- Se resuelven, sin cambio de comportamiento, las fugas de neutralidad que
+  `mefisto-neutrality-gate.sh` reportaba sobre el repo en HEAD (issue #911):
+  se reformulan los comentarios y textos de ayuda de `_mefisto-common.sh`,
+  `mefisto-herdr-pipeline.sh`, `mefisto-tmux-pipeline.sh`,
+  `mefisto-tooling-pipeline.sh`, `mefisto-run-agent.sh` y
+  `validate-internal-artifacts.sh` que nombraban un alias/id de modelo, una
+  invocacion directa del CLI de un runtime concreto, o una ruta/variable de
+  entorno propia de un runtime, por su descripcion conceptual.
+- Se registra en `src/internal/contract/neutrality-allowlist.json` la excepcion
+  legitima de `.claude/scripts/mefisto-metrics-report.sh` (regla R3): documenta,
+  sin componerla ni invocarla, la lectura dual del historico legacy y el
+  canonico (mismo criterio ya aplicado a `mefisto-scope-hook.sh`).
+- `src/internal/contract/README.md` (seccion "Marcador de generado y `--check`")
+  documenta el cuarto estado `sin marcador` y deja de describir la toleracion
+  retirada.
+- El pipeline interno de tooling (`mefisto-tooling-pipeline.sh`) ahora ejecuta `mefisto-neutrality-gate.sh` tras el gate de scope de cada stage (writer y reviewer) y antes del auto-commit, abortando el stage con la lista de violaciones y el comando de retoma `--from-stage` si detecta una fuga de neutralidad de runtime (MEF-ADR-0049, MEF-ADR-0031).
+- La fase `prepare` de `mefisto-release.sh` ejecuta el mismo gate sobre la rama de release recien creada, antes de consolidar `changelog.d/`.
+- `mefisto-stream-watch.sh` (visor interno del pipeline) ahora renderiza cada fila con marca de tiempo, el texto completo de cada `message` (multilinea, sin truncar), y cada `tool.started` con su `input_summary` relativizado contra el `cwd` vigente en vez de esperar al `tool.completed`; un `tool.completed{ok:true}` deja de imprimir linea (ya se vio al arrancar) y solo el fallo se señala.
+- La interfaz herdr (`mefisto-herdr-pipeline.sh`) ahora sigue en vivo el `.report.log` del pipeline con `tail -f` en el mismo pane que el visor mientras corre, en vez de mostrar el reporte recortado (o completo) recien al terminar: los hitos de PR/merge y el resumen final ya se ven durante la corrida, no solo al cierre.
+- `herdr-workspace.sh` sufija los nombres de agente con el runtime activo (`planner-<slug>-<kind>`, `ejecucion-<slug>-<kind>`) en el repo de Mefisto, siempre -- tambien con el runtime default (`claude`) -- para que una segunda fila con otro runtime (MEF-ADR-0049) no choque de nombre con la primera. En un consumidor los nombres siguen siendo `planner-<slug>`/`ejecucion-<slug>`, sin cambios.
+- Se reescribe el Agent Skill interno `agent-skill-authoring` en clave neutral a runtime (MEF-ADR-0050): abre con la regla de oro de la fuente neutral `src/internal/{agents,commands}/` para el lado interno, agrega la seccion de frontmatter portable de todo `SKILL.md`, el checklist de "nuevo runtime = nuevo adaptador", y separa en subsecciones explicitas las notas especificas de Claude Code (lado publicado) y de OpenCode (lado interno).
+
+### Fixed
+
+- Se alinea `/scaffold-mcp` con lo que realmente genera `mcp-scaffolder`: el parrafo de apertura y el bloque "Informar" ahora citan los cuatro alcances (issues #768/#769/#770/#819) y listan el propagador de identidad tenant/usuario, los componentes OAuth app-side (PRM, validador de token, middleware) y los cuatro app settings nuevos del Terraform. El bloque "Informar" imprime ademas la version del plugin en ejecucion y cierra remitiendo al parrafo **Alcance** de `agents/mcp-scaffolder.md` como fuente canonica.
+- Se reconcilia el modulo `apim-mcp-api` de `apim-gateway-scaffolder` (Paso 2b/4b) con el HCL
+  verificado y aplicado en dev del pionero Bitakora.ControlAsistencia, corrigiendo cuatro
+  regresiones que `terraform validate`/`plan` no detectan: orden de `<audiences>`/`<issuers>` en
+  `<validate-jwt>`, hostname del backend concatenado a mano (ahora `function_app_id`/
+  `function_app_default_hostname` computados por el caller), backend del protocolo con el path en
+  la base-url sin `<rewrite-uri>`, y lectura de la system key `mcp_extension` con un `data` source
+  evaluado en `plan` en vez de `azapi_resource_action` como `resource` evaluado en `apply`.
+- Se endurece ademas el `<issuer>` de esa misma politica: se interpola
+  `local.authorization_server_issuer` (con `trimsuffix`) en vez de `var.authorization_server_url`
+  crudo -- una barra final en el dominio AuthKit rompia la coincidencia byte a byte con el
+  `issuer` del discovery doc y rechazaba con `401` todo token legitimo (misma defensa que el HCL
+  aplicado del pionero).
+- Se corrige el `path` de la API compartida del PRM (`apim-mcp-prm.tf`, Paso 3c) de
+  `apim-gateway-scaffolder`: pasa de `.well-known/oauth-protected-resource` (con punto inicial) a
+  `well-known/oauth-protected-resource` (sin punto), y `local.prm_url` (Paso 2b) se compone ahora
+  con la nueva variable `mcp_prm_api_path` en vez de duplicar el literal -- APIM rechaza en `apply`
+  (nunca en `validate`/`plan`) cualquier `path` de `azurerm_api_management_api` que empiece con
+  punto, verificado en rojo/verde por el pionero Bitakora.ControlAsistencia (issue #575 del
+  consumidor, runs 33662634923/33663796193 de Infra CD, hotfix `a54ac6b`). El PRM queda entonces
+  fuera de la ubicacion well-known que fija RFC 9728 seccion 3; el checklist post-deploy del
+  reporte final (Paso 7) ahora exige verificar el `resource_metadata` del `WWW-Authenticate` como
+  unico mecanismo de descubrimiento garantizado, y advierte que un cambio del `path` de esa API
+  deja las reconexiones OAuth de los clientes MCP en falla mientras el `apply` no complete.
+  Un consumidor que ya tenga generados el modulo `apim-mcp-api` o `apim-mcp-prm.tf` recibe el
+  cambio como **delta manual**: el agente lo detecta en los Pasos 2b/3c.2 (ninguno de esos archivos
+  se sobrescribe) y reporta los fragmentos exactos en el Paso 7.
+- Se corrige `agents/mcp-scaffolder.md`: dejaba de afirmar que el borde de APIM publica el PRM (RFC 9728) en la ruta raiz well-known `/.well-known/oauth-protected-resource`; ahora la prosa (comentario del codigo generado, README de onboarding y nota 6 del Paso 7) coincide con la ubicacion real que fija `apim-gateway-scaffolder` (`https://<apim>/well-known/oauth-protected-resource/<path>`, sin punto inicial por restriccion de APIM) y con el descubrimiento por `resource_metadata` del `WWW-Authenticate`, nunca por convencion well-known.
+- `/scaffold-mcp` incorpora `Infraestructura/ArgumentosCrudosMcpMiddleware.cs`, siempre generado y siempre cableado en `Program.cs` (las dos variantes de tenancy): restaura el texto original de los argumentos `string` que `Microsoft.Azure.Functions.Worker.Extensions.Mcp` coerciona a fecha/GUID antes de que la tool los reciba (`Azure/azure-functions-mcp-extension#129`), evitando que fechas e identificadores validos lleguen corrompidos a toda tool generada por el scaffold.
+- El gate de scope interno (`validate_mefisto_scope_changes`) ya no rechaza cambios que si estan en scope cuando el writer crea un directorio de primer nivel nuevo (p. ej. `src/internal/`, `.opencode/`): usa `git status --porcelain --untracked-files=all` para que git no colapse el arbol sin trackear a su raiz, alineado con las otras dos funciones del mismo archivo. Un test de regresion con repo temporal cubre los casos en scope, fuera de scope y mezclado.
+- `run_agent_with_watchdog` (`src/internal/scripts/lib/_mefisto-common.sh`) ya no deja una senal de timeout espuria cuando el proceso termina por su cuenta. Un watchdog que sobrevivia al `kill -9` de su grupo alcanzaba a hacer su `touch` en la ventana entre el `wait` y esa cancelacion, y el caller leia la senal como TIMEOUT: un stage que habia terminado bien se clasificaba `TIMEOUT (0s, exit 0)` y su trabajo se descartaba. La rama que cancela el watchdog -- la que ya decidio que NO habia disparado -- ahora borra cualquier senal posterior y remata con un `kill` al PID pelado por si el kill al grupo no alcanzo. Se manifestaba en corridas donde el CLI responde en menos de un segundo (medido: ~2% de las invocaciones aisladas, ~40% de las corridas del bloque G de `test-tooling-state-paths.sh` una vez que el puente al JSONL neutral ensancho la ventana).
+- `mefisto-metrics-report.sh` ya no termina en exit 1 con `merged: unbound variable` cuando el historial vive en las dos ubicaciones (`.mefisto/pipeline/` y la legacy `.claude/pipeline/`, issue #869): el `trap EXIT` que borra el temporal concatenado difería la expansión de una variable local de `main()`, que con `set -u` tumbaba el shell justo después de imprimir el reporte completo.
+- `test-opencode-discovery.sh` y `test-internal-agents-generated.sh`: las aserciones sobre `opencode agent list` ya no fallan con falsos negativos. Comparaban con `printf ... | grep -q`, y `grep -q` cierra su stdin en el primer match: con el volcado por encima del buffer del pipe (64KB en macOS) el escritor muere con SIGPIPE y `pipefail` propaga rc 141 aunque `grep` haya salido en 0. Al sumar dos agentes el volcado pasa de ~60KB a ~98KB y el fallo se vuelve determinista para todo id que aparezca temprano en el listado; ahora la comparacion va por here-string, sin segundo proceso que pueda recibir la señal.
+- `mefisto-run-agent.sh` ahora anexa en vivo, cada `MEFISTO_RUN_AGENT_LIVE_INTERVAL` segundos (default 2), los eventos no terminales de la corrida en curso a `--event-log`, en vez de volcar todo de golpe al cierre -- el visor interno y cualquier otro consumidor del JSONL neutral dejan de quedar a oscuras durante todo el stage.
+- Se corrige que una corrida de `mefisto-herdr-pipeline.sh` (interfaz herdr de los pipelines internos) pudiera robar o cerrar el pane del visor de una corrida de otro runtime: el pool de panes de reporte (`herdr-report-panes.txt`) ahora guarda el runtime junto al `pane_id` (`<pane_id> <runtime>`) y tanto la seleccion como la poda de sobrantes solo consideran panes del mismo runtime que la corrida en curso, resuelto con `mefisto_resolve_runtime` antes de tocar el archivo -- una resolucion fallida aborta sin ningun `herdr pane split/run/close` y sin modificar el pool, nunca cae a un runtime literal por defecto (MEF-ADR-0049). Las lineas legacy sin clave se descartan del registro al primer barrido, sin cerrar su pane. Es la parte 1 del workspace herdr en dos filas por runtime (#931, #930). `test-mefisto-herdr-pipeline.sh` suma los bloques [18-22] que fijan los cinco comportamientos, y las tres suites internas que ejercen este lanzador (`test-mefisto-herdr-pipeline.sh`, `test-mefisto-stage-models.sh`, `test-mefisto-tooling-variant.sh`) dejan de depender de que CLIs tenga instalados la maquina y de un `MEFISTO_RUNTIME` ya exportado por la corrida que las ejecuta.
+
+### Removed
+
+- Se elimina `agent_log_has_stream_cut` (`src/internal/scripts/lib/_mefisto-common.sh`): su grep de "API Error"/"Connection closed mid-response" sobre el log derivado lo reemplaza `agent_events_error_kind`, que lee `error.kind` del JSONL neutral.
+- Se retira de `mefisto-tooling-pipeline.sh` el puente `runtime_claude_translate` (issue #906): la traducción del stream del CLI al JSONL neutral la hace ahora directo `mefisto-run-agent.sh`. También se retiran `--permission-mode`, `--append-system-prompt`, `--output-format stream-json` y la variable inline `NONINTERACTIVE_SYSTEM` -- viven en el adaptador de runtime, nunca en el pipeline.
+
 ## [0.35.0] - 2026-09-02
 
 ### Added
@@ -1743,7 +2046,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.35.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.36.0...HEAD
+[0.36.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.32.0...v0.33.0
