@@ -2,7 +2,7 @@
 
 ## Estado
 
-Aceptado (actualizado 2026-04-13: cobertura completa de efectos secundarios, una clase por comando, ejecucion secuencial, patron purge-before-act; actualizado 2026-07-19: asserts de dead-letter acotados a la corrida, prohibicion del assert cross-domain; actualizado 2026-08-05: csproj referencia `PublicEvents`/`PrivateEvents` en vez de Contracts, MEF-ADR-0039)
+Aceptado (actualizado 2026-04-13: cobertura completa de efectos secundarios, una clase por comando, ejecucion secuencial, patron purge-before-act; actualizado 2026-07-19: asserts de dead-letter acotados a la corrida, prohibicion del assert cross-domain; actualizado 2026-08-05: csproj referencia `PublicEvents`/`PrivateEvents` en vez de Contracts, MEF-ADR-0039; actualizado 2026-09-07: el codigo de exito del camino feliz viene del contrato HTTP del issue, nunca de un default `202`; distincion commit del event store vs materializacion de proyeccion `Async`)
 
 ## Contexto
 
@@ -30,9 +30,10 @@ interna.
 ### Alcance de un smoke test: cobertura completa de efectos secundarios
 
 **Un smoke test debe verificar todos los efectos secundarios de la funcion bajo prueba.** Verificar
-solo el status code HTTP es cobertura incompleta. Si una funcion retorna 202 y ademas publica eventos
-a Service Bus, el test debe consumir y verificar esos eventos. Si persiste en Postgres, debe verificar
-la persistencia. Si hace ambas cosas, verifica ambas.
+solo el status code HTTP es cobertura incompleta. Si una funcion responde su codigo de exito
+contractual (ver "Codigo de exito esperado" abajo) y ademas publica eventos a Service Bus, el test
+debe consumir y verificar esos eventos. Si persiste en Postgres, debe verificar la persistencia. Si
+hace ambas cosas, verifica ambas.
 
 Esta regla existe porque los efectos secundarios no verificados generan mensajes huerfanos en Service
 Bus que terminan en dead letter, contaminando la senal operacional. Dead letters en la suscripcion
@@ -45,9 +46,55 @@ Efectos secundarios conocidos y como verificarlos:
 | Publicacion a topic | `IPublicEventSender.PublishAsync(eventos)` | `PurgeAsync` previo + `WaitForMessageAsync` desde suscripcion `smoke-tests` |
 | Persistencia en event store | `IEventStore.StartStream(...)` o `AppendToStream(...)` | `PostgresFixture.ExisteEventoAsync` / `ObtenerEventoAsync` |
 | Envio a queue (futuro) | `ISender.SendAsync(...)` o similar | Consumir de la queue y verificar contenido |
+| Materializacion de una proyeccion `Async` | No esta en el handler: la proyeccion del evento vive registrada en el named store del worker de proyecciones (MEF-ADR-0034) | GET a la Function de consulta envuelto en `Polling.WaitUntilTrueAsync` con el timeout estandar, que tolera la ventana de materializacion |
 
 Los tests que no generan operaciones exitosas (400, 404) no producen efectos secundarios y no necesitan
 verificarlos.
+
+### Codigo de exito esperado: viene del contrato HTTP del issue, nunca de un default
+
+El status code que un smoke test asierta para el camino feliz no es un valor memorizado por el
+`smoke-test-writer`: es el codigo de exito que el contrato HTTP del comando declara en el issue
+(MEF-ADR-0011, fila "Contrato HTTP del comando" -- el cuarto elemento del contrato, junto a verbo,
+ruta y paso de precedencia de MEF-ADR-0043). El agente lee ese codigo del issue y lo asierta tal
+cual: `200`, `201`, `204` o `202`, segun lo que el contrato haya fijado para ese endpoint especifico.
+Si el issue no lo declara, el smoke test no se escribe con un default asumido -- eso es un problema
+del Definition of Ready (MEF-ADR-0011), no algo que el `smoke-test-writer` deba resolver adivinando.
+
+**`202 Accepted` no es el default de un comando exitoso.** MEF-ADR-0004 restringe `202` al caso donde
+el procesamiento primario solicitado continua despues de responder, y exige que el issue documente
+explicitamente que trabajo queda pendiente y por que no completo antes de responder. Un smoke test
+que asierta `202` sin que el contrato del issue lo haya declarado adivina el mismo default que
+MEF-ADR-0004 (issue #849) y MEF-ADR-0011 (issue #991) ya retiraron del resto del pipeline -- el
+`smoke-test-writer` no es una excepcion a esa correccion.
+
+### Persistencia del write-side vs. materializacion del read-side: el polling del GET no cambia el status del POST
+
+La tabla de efectos secundarios distingue **persistir en el event store** de **materializar una
+proyeccion**. Son dos operaciones con distinta temporalidad, y un smoke test debe distinguirlas igual
+que MEF-ADR-0034 distingue el ciclo de vida `Inline` del `Async`:
+
+- El **commit del event store** es sincronico respecto del endpoint de escritura: no responde su
+  codigo de exito hasta que el evento quedo durable (MEF-ADR-0004, "Respuestas HTTP"). El smoke test
+  verifica esa persistencia con `PostgresFixture.ExisteEventoAsync`/`ObtenerEventoAsync` sin
+  ventana de consistencia eventual que tolerar: si el POST ya respondio su codigo de exito, el
+  evento ya esta en el stream. El `timeout` que esos metodos reciben no espera esa durabilidad --
+  cubre los transitorios de la consulta (ver "Polling tolerante a excepciones") y se pasa igual. La
+  excepcion esta en el Act, no en el write-side: cuando el smoke test dispara el flujo publicando al
+  topic en vez de por HTTP (dominio consumidor), el procesamiento del consumidor si es asincronico
+  respecto del Act y ese timeout es la espera real.
+- La **materializacion de una proyeccion `Async`** ocurre en el daemon del worker de proyecciones,
+  fuera del request que escribio (MEF-ADR-0034): es consistencia eventual por diseno. Un smoke test
+  que verifica una vista materializada via su Function GET necesita `Polling` tolerante a que la
+  vista todavia no exista (`404` o coleccion vacia durante la ventana de materializacion) -- el mismo
+  matiz que MEF-ADR-0004 ya advierte para el `Location` de un `201 Created` hacia una URI que una
+  proyeccion `Async` puede tardar en poblar.
+
+Ninguna de las dos verificaciones cambia el codigo de exito del POST: ese status ya quedo fijado por
+si el cambio primario termino y quedo durable al responder (MEF-ADR-0004), sin importar si el
+read-side ya materializo o todavia esta materializando. Un smoke test nunca reclasifica un endpoint
+de comando como `202 Accepted` porque su proyeccion asociada sea `Async` -- eso confundiria la
+latencia del read-side con el contrato sincronico del write-side.
 
 ### Estructura: una clase por comando
 
@@ -239,10 +286,13 @@ Responsabilidades separadas:
   reutilizable `.github/workflows/smoke-tests-dominio.yml` (`workflow_call`) que el deploy referencia,
   y el workflow global `.github/workflows/smoke-tests.yml` que arma su matrix por glob de
   `.github/smoke-tests/*.json`.
-- **smoke-test-writer**: escribe tests dentro de ese proyecto. Verifica todos los efectos secundarios
-  de cada funcion. Usa `Assert.SkipWhen` para tests que dependen de ServiceBus o Postgres.
-- **reviewer**: verifica que cada smoke test con operacion exitosa cubra todos los efectos secundarios
-  del command handler. La cobertura incompleta es defecto bloqueante.
+- **smoke-test-writer**: escribe tests dentro de ese proyecto. Asierta el codigo de exito declarado
+  en el contrato HTTP del issue (MEF-ADR-0011), nunca un default memorizado. Verifica todos los
+  efectos secundarios de cada funcion. Usa `Assert.SkipWhen` para tests que dependen de ServiceBus o
+  Postgres.
+- **reviewer**: verifica que cada smoke test con operacion exitosa asierte el codigo de exito
+  contractual del issue y cubra todos los efectos secundarios del command handler. Tanto el status
+  code incorrecto como la cobertura incompleta son defecto bloqueante.
 
 ### CI/CD
 
@@ -298,6 +348,27 @@ en el repo (idempotente; ver "Integracion en el proceso de desarrollo").
 
 ## Control de cambios
 
+- 2026-09-07: enmienda (issue #992, depende de #991) para vincular el status code del camino feliz
+  de un smoke test al contrato HTTP declarado en el issue en vez de un `202` memorizado por el
+  `smoke-test-writer`. Motivo: tras las enmiendas de MEF-ADR-0004 (issue #849, retira el `202`
+  universal) y MEF-ADR-0011 (issue #991, hace obligatorio el codigo de exito como cuarto elemento del
+  contrato), esta doctrina seguia presentando `202` como respuesta representativa en su ejemplo de
+  cobertura de efectos secundarios, sin decir de donde sale el valor esperado -- un desfase que dejaba
+  al `smoke-test-writer` como la unica pieza del pipeline todavia adivinando entre `200`/`201`/`202`/
+  `204`. Se agregan las secciones "Codigo de exito esperado: viene del contrato HTTP del issue, nunca
+  de un default" (remite a MEF-ADR-0011 como fuente contractual y a MEF-ADR-0004 para la restriccion
+  de `202` a procesamiento diferido justificado) y "Persistencia del write-side vs. materializacion
+  del read-side: el polling del GET no cambia el status del POST" (distingue el commit sincronico del
+  event store, sin ventana de consistencia eventual que tolerar cuando el Act es el propio POST, de la
+  materializacion eventual de una proyeccion `Async` del worker de proyecciones, MEF-ADR-0034; el
+  polling que tolera la ventana de materializacion de una vista nunca reclasifica el status del comando
+  que la origino), y se suma a la tabla de efectos secundarios la fila de esa materializacion, que la
+  seccion nueva daba por presente sin estarlo. Se
+  neutraliza el ejemplo de la seccion "Alcance de un smoke test" (dejaba de citar `202` como caso
+  representativo) y se actualizan las responsabilidades del `smoke-test-writer` y del `reviewer` para
+  nombrar el codigo de exito contractual como algo a asertar y a revisar, no a asumir. No se toca la
+  regla de cobertura completa de efectos secundarios ni la respuesta de no-op idempotente (#850, fuera
+  de alcance de este issue).
 - 2026-08-30: enmienda (issue #767, creacion de MEF-ADR-0048) -- MEF-ADR-0048 extiende esta doctrina
   a servidores MCP (piramide de tres niveles, verificaciones canonicas del nivel e2e, endpoints de
   gate propios y credencial de CI). Sin cambio en el cuerpo de este ADR.
