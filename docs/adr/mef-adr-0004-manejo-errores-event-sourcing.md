@@ -60,6 +60,40 @@ Por tipo de comando:
   - ServiceBus → emite evento de fallo (alguien downstream espera respuesta)
 - **Upsert**: maneja ambos casos sin error (idempotencia natural)
 
+#### Estado ya alcanzado: no-op exitoso
+
+Cuando la identidad y el alcance que requiere el comando existen, y la intencion del comando
+ya esta satisfecha en el estado vigente, la operacion es un **no-op exitoso**. No es una
+precondicion ausente ni una regla de negocio violada: simplemente no hay un hecho nuevo que
+registrar. El aggregate retorna normalmente **antes** de agregar eventos a
+`_uncommittedEvents`; el handler termina normalmente y no persiste ni publica nada nuevo. El
+endpoint retorna el codigo de exito contractual del comando, incluido el que corresponda a
+PUT o DELETE.
+
+"Ya ausente" solo es un no-op si el contrato reconoce la identidad o el alcance y puede saber
+que la intencion ya se cumple. Una identidad nunca conocida o un stream padre inexistente no
+califican: conservan la precondicion explicita de recurso no encontrado.
+
+| Situacion | Tratamiento |
+|---|---|
+| Cambio necesario | Aplica la doctrina vigente y emite el hecho correspondiente. |
+| Estado ya alcanzado (identidad/alcance existente + intencion satisfecha) | Exito contractual sin excepcion, evento persistido ni publicacion nueva. |
+| Identidad o stream requerido inexistente | Tratamiento `404 NotFound` vigente para HTTP; evento de fallo para ServiceBus cuando corresponda. |
+| POST de creacion sobre stream existente | Tratamiento `409 Conflict` vigente para HTTP; retorno silencioso para ServiceBus. |
+| Regla de negocio real | Evento de fallo vigente del aggregate. |
+
+El mecanismo canonico es el retorno normal del metodo del aggregate antes de agregar eventos,
+seguido de la finalizacion normal del handler. No se exige `SinCambios`, `Result<T>` ni ningun
+tipo nuevo entre aggregate, handler y endpoint. Los tests del harness validan este camino con
+`Then()` o `Then(streamId)` sin eventos esperados, que exige count exacto cero, y con los
+asserts vacios de publicacion, que validan que no se publico nada.
+
+RFC 9110 define la idempotencia por la igualdad del efecto pretendido en el servidor y aclara
+que las respuestas de solicitudes identicas pueden diferir (seccion 9.2.2). Sus secciones
+9.3.4 (PUT) y 9.3.5 (DELETE) no imponen una respuesta unica para este caso. Elegir exito
+estable para el no-op es una convencion deliberada de Mefisto, orientada a no generar ruido al
+cliente; no es una obligacion del RFC.
+
 **3. Reglas de negocio (AggregateRoot)**
 
 El aggregate **emite eventos de fallo** en `_uncommittedEvents` cuando una regla de
@@ -127,6 +161,10 @@ traduce por tipo en el catch; no se introduce un canal de retorno adicional entr
 
 Esta doctrina rige el codigo **nuevo**: todo command handler y endpoint que se escriba o
 reescriba a partir de esta enmienda lanza/captura las excepciones tipadas de la seccion 2.
+La regla de estado ya alcanzado aplica a todo PUT o DELETE **nuevo**. Cambiar un endpoint
+existente que hoy responde distinto requiere un issue de refactor propio con inventario de los
+endpoints afectados y aviso a sus consumidores antes de cambiar su contrato; nunca se migra de
+oficio dentro de un PR no relacionado.
 Los handlers, endpoints y tests **preexistentes** que ya lanzaban/capturaban
 `InvalidOperationException` no se migran de oficio — sus suites siguen en verde porque su
 codigo sigue lanzando el tipo generico, y cada consumidor decide su propio ritmo de
@@ -174,9 +212,31 @@ humano, nunca automatico ni bloqueante de un PR no relacionado.
   migracion que adopta la seccion "Regimen de migracion" de esta enmienda.
 - MEF-ADR-0009 (patron de mensajes `.resx` per-aggregate): el mensaje de las excepciones
   tipadas de la capa 2 sigue su convencion sin cambio de doctrina propia.
+- RFC 9110, "HTTP Semantics" -- IETF, §9.2.2 (idempotencia: el efecto pretendido es el mismo,
+  aunque las respuestas de solicitudes identicas puedan diferir), §9.3.4 (PUT) y §9.3.5
+  (DELETE). https://www.rfc-editor.org/rfc/rfc9110.html#section-9.2.2
+- `docs/testing/harness-cheatsheet.md` (DSL `Then` y asserts de publicacion vacios): confirma
+  que los asserts sin eventos validan exactamente la ausencia de persistencia y publicacion.
+- Issue #849: fija el codigo de exito contractual que tambien retorna el no-op.
+- Issue #1003: propagara esta convencion a PUT/DELETE en MEF-ADR-0043 y a sus agentes/tests.
+- Regla del experto, 2026-09-05: "Es idempotente quitar algo que ya no existe y le generamos
+  ruido al cliente innecesario". Descubierta al refinar el issue #622 de
+  Bitakora.ControlAsistencia; el inventario de campo encontro exito sin evento en
+  `AsignarSede`, `409` en `RetirarEtiqueta`, `RetirarCentroDeCostos` y `RetirarTurno`, y `404`
+  en `RetirarDispositivo`.
 
 ## Control de cambios
 
+- 2026-09-07: enmienda (issue #850). La seccion 2 clasifica estado ya alcanzado -- identidad y
+  alcance existentes con la intencion ya satisfecha -- como no-op exitoso: el aggregate retorna
+  antes de agregar eventos y el handler finaliza sin persistir ni publicar; el endpoint responde
+  el codigo de exito contractual. Fija la frontera frente a cambio necesario, identidad/stream
+  inexistente, POST de creacion sobre stream existente y regla de negocio real; no exige
+  `SinCambios`, `Result<T>` ni otro protocolo de retorno. Cita RFC 9110 §§9.2.2, 9.3.4 y 9.3.5:
+  el exito estable es convencion de Mefisto, no mandato del estandar. Aplica a PUT/DELETE nuevos;
+  cualquier endpoint existente requiere refactor con inventario y aviso a consumidores. Origen:
+  regla del experto del 2026-09-05 y divergencia descubierta en Bitakora.ControlAsistencia al
+  refinar #622. Depende de #849 y bloquea #1003.
 - 2026-09-01: enmienda (issue #805). La seccion 2 ("Precondiciones de orquestacion")
   reemplaza `InvalidOperationException` generica por la jerarquia tipada
   `PrecondicionComandoException` (base abstracta, scaffoldeada en el consumidor) con
