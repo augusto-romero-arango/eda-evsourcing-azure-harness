@@ -14,14 +14,19 @@
 #      sourcean en un contexto donde .claude-plugin/plugin.json existe.
 #   D) Las funciones validate_*_scope_changes son sourceables sin errores.
 #   F) Integridad de los Agent Skills (MEF-ADR-0033 seccion 4): el `name` del
-#      frontmatter de cada SKILL.md coincide con su directorio, tiene
-#      `description` no vacio, sus recursos de Nivel 3 referenciados existen, y
-#      todo valor de `skills:` declarado por un agente resuelve a un Skill real.
+#      frontmatter de cada SKILL.md coincide con su directorio (F1), tiene
+#      `description` no vacio (F2), sus recursos de Nivel 3 referenciados
+#      existen (F3), todo valor de `skills:` declarado por un agente resuelve a
+#      un Skill real (F4), y el frontmatter no declara ningun campo fuera del
+#      estandar portable `name`/`description`/`license`/`compatibility`/
+#      `metadata` -- `allowed-tools` en particular (F5, MEF-ADR-0050 seccion 3).
 #      Esta es la mitigacion que MEF-ADR-0033 delego al issue que creara el
 #      primer Skill: un `skills:` mal escrito NO aborta el agente ni emite error
 #      visible ("Claude Code skips it and logs a warning to the debug log"), asi
 #      que en los pipelines headless (`claude -p`) el subagente correria sin su
-#      doctrina y produciria codigo plausible pero ciego a ella.
+#      doctrina y produciria codigo plausible pero ciego a ella. F5 cierra el
+#      hueco anotado en MEF-ADR-0049: un campo especifico de Claude Code pasaba
+#      el bloque `[F]` sin senal y OpenCode lo ignoraba en silencio.
 #   G) Ningun bloque triple-backtick `bash` de commands/*.md contiene sintaxis
 #      posicional de shell ($1..$9, ${N}, $*, $@, $#): Claude Code la expande como
 #      placeholder de argumentos del slash command ANTES de entregar el texto al
@@ -313,6 +318,21 @@ frontmatter_field() {
     ' "$1"
 }
 
+# frontmatter_top_level_keys <archivo> -- imprime las claves de nivel superior
+# del bloque de frontmatter (una por linea). Una linea indentada (^[ \t]) es
+# una sub-clave anidada (p. ej. bajo `metadata:`) y no cuenta como propia.
+frontmatter_top_level_keys() {
+    awk '
+        NR == 1 { if ($0 != "---") exit; next }
+        $0 == "---" { exit }
+        /^[ \t]/ { next }
+        /^[A-Za-z][A-Za-z0-9-]*:/ {
+            match($0, /^[A-Za-z][A-Za-z0-9-]*/)
+            print substr($0, RSTART, RLENGTH)
+        }
+    ' "$1"
+}
+
 SKILL_FILES="$(find "$REPO_ROOT/skills" "$REPO_ROOT/.claude/skills" -name 'SKILL.md' 2>/dev/null | sort)"
 SKILL_NAMES=""
 
@@ -362,9 +382,69 @@ EOF
         else
             pass "$rel: todos los recursos Nivel-3 referenciados existen"
         fi
+
+        # F5: el frontmatter no declara ningun campo fuera del estandar portable
+        # (MEF-ADR-0050 seccion 3) -- `allowed-tools` en particular, que OpenCode
+        # ignora en silencio. Solo cuentan claves de nivel superior: una linea
+        # indentada (^[ \t]) es una sub-clave anidada bajo `metadata:` y no cuenta.
+        non_portable_fields="$(frontmatter_top_level_keys "$skill_file")"
+        f5_failed=0
+        while IFS= read -r field; do
+            [ -n "$field" ] || continue
+            case "$field" in
+                name|description|license|compatibility|metadata) continue ;;
+            esac
+            fail "$rel: frontmatter con campo no portable '$field' (MEF-ADR-0050: solo name/description/license/compatibility/metadata; OpenCode lo ignora en silencio)"
+            f5_failed=1
+        done <<EOF
+$non_portable_fields
+EOF
+        if [ "$f5_failed" -eq 0 ]; then
+            pass "$rel: frontmatter limitado al estandar portable (MEF-ADR-0050)"
+        fi
     done <<EOF
 $SKILL_FILES
 EOF
+fi
+
+# F5 (verificacion positiva/negativa, CA-3): el guard debe SI marcar un campo
+# no portable introducido a mano, y NO marcar un `metadata:` con sub-claves
+# anidadas -- sin este par, F5 podria ser un guard ciego o, al reves, uno
+# demasiado ruidoso que confunde una sub-clave con un campo de nivel superior.
+SYNTH_DIR_F5=$(mktemp -d)
+cat > "$SYNTH_DIR_F5/synthetic-non-portable.md" <<'EOF'
+---
+name: synthetic-non-portable
+description: Fixture sintetico para F5.
+allowed-tools: Bash
+---
+
+# Fixture
+EOF
+HITS_F5_NEG="$(frontmatter_top_level_keys "$SYNTH_DIR_F5/synthetic-non-portable.md" | grep -vx 'name\|description\|license\|compatibility\|metadata' || true)"
+if [ -n "$HITS_F5_NEG" ]; then
+    pass "F5 detecta 'allowed-tools' introducido a mano en un archivo sintetico"
+else
+    fail "F5 NO detecto 'allowed-tools' introducido a mano (guard ciego)"
+fi
+
+cat > "$SYNTH_DIR_F5/synthetic-nested-metadata.md" <<'EOF'
+---
+name: synthetic-nested-metadata
+description: Fixture sintetico para F5.
+metadata:
+  author: x
+  version: "1.0"
+---
+
+# Fixture
+EOF
+HITS_F5_POS="$(frontmatter_top_level_keys "$SYNTH_DIR_F5/synthetic-nested-metadata.md" | grep -vx 'name\|description\|license\|compatibility\|metadata' || true)"
+rm -rf "$SYNTH_DIR_F5"
+if [ -z "$HITS_F5_POS" ]; then
+    pass "F5 no marca sub-claves anidadas de 'metadata:' (sin falsos positivos)"
+else
+    fail "falso positivo de F5 sobre sub-claves anidadas de 'metadata:': $HITS_F5_POS"
 fi
 
 # F4: todo valor de `skills:` de un agente resuelve a un Skill real del repo.
