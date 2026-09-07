@@ -415,7 +415,7 @@ tests/<RootNamespace>.{Dominio}.Tests/
     }
     ```
 
-6. **Estado ya alcanzado en PUT/DELETE** (obligatorio para todo endpoint PUT/DELETE nuevo o migrado): cuando el issue declara que la identidad y el alcance existen, pero el aggregate ya esta en el estado objetivo, ejecuta el comando directamente con `await WhenAsync(...)` o `When(...)`. No uses `ThrowExactlyAsync`: la ejecucion debe terminar sin excepcion. Verifica cero eventos persistidos con `Then()` para el stream por defecto o `Then(streamId)` para identidad compuesta, conserva al menos un `And<>()` que demuestre que el aggregate sigue en el estado objetivo y, si el handler publica en el camino de cambio real, verifica tambien cero publicaciones con los asserts vacios del sender correspondiente.
+6. **Estado ya alcanzado en PUT/DELETE** (obligatorio para todo endpoint PUT/DELETE nuevo o migrado): cuando el issue declara que la identidad y el alcance existen, pero el aggregate ya esta en el estado objetivo, ejecuta el comando directamente con `await WhenAsync(...)` o `When(...)`. No uses `ThrowExactlyAsync`: la ejecucion debe terminar sin excepcion. Verifica cero eventos persistidos con `Then()` para el stream por defecto o `Then(streamId)` para identidad compuesta, conserva al menos un `And<>()` que demuestre que el aggregate sigue en el estado objetivo y, si el handler publica en el camino de cambio real, verifica tambien cero publicaciones con los asserts vacios del sender correspondiente. El ejemplo incluye ambos asserts de publicacion porque asume que el camino de cambio publica por ambos canales; conserva solo los que correspondan al handler real.
    ```csharp
    [Fact]
    public async Task RenombrarTurno_NoEmiteEventos_CuandoYaTieneElNombreSolicitado()
@@ -423,8 +423,8 @@ tests/<RootNamespace>.{Dominio}.Tests/
        Given(new TurnoCreado(GuidAggregateId, "Turno Manana", ...));
        await WhenAsync(new RenombrarTurno(GuidAggregateId, "Turno Manana"));
        Then();
-       ThenIsPublishedPrivately(); // Incluyelo solo si el camino de cambio publica eventos privados.
-       ThenIsPublishedPublicly();  // Incluyelo solo si el camino de cambio publica eventos publicos.
+       ThenIsPublishedPrivately();
+       ThenIsPublishedPublicly();
        And<TurnoAggregateRoot, string>(t => t.Nombre, "Turno Manana");
    }
    ```
