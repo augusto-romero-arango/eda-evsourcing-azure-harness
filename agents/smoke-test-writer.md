@@ -143,9 +143,24 @@ Los fixtures se inyectan automaticamente porque estan registrados en `AssemblyFi
 
 ## Que testear por cada endpoint
 
+### Codigo de exito: viene del contrato HTTP del issue, nunca de un default
+
+El status code que el test del camino feliz asierta no es un valor memorizado por este agente: es el codigo de exito que el issue declaro en su "Contrato HTTP del comando" (MEF-ADR-0011, cuarto elemento del contrato -- junto a verbo, ruta y paso de precedencia de MEF-ADR-0043). Lee ese codigo del issue y asiertalo tal cual (`200`, `201`, `204` o `202`). Si el issue no lo declara, no asumas un default -- eso es un problema del Definition of Ready (MEF-ADR-0011), no algo que este agente resuelva adivinando: deja sin escribir el caso del camino feliz de ese endpoint, escribe los demas casos y **declara el vacio en tu resumen** (seccion "Output"), mismo criterio que el `test-writer` aplica en su `FunctionEndpointTests`.
+
+**`202 Accepted` no es la respuesta por defecto de un camino feliz.** MEF-ADR-0004 restringe `202` al caso donde el procesamiento primario solicitado continua despues de responder, y exige que el issue documente que trabajo queda pendiente y por que. Nunca generes `response.StatusCode.Should().Be(HttpStatusCode.Accepted)` solo porque el endpoint publica a Service Bus -- publicar no implica procesamiento diferido si el cambio primario (persistencia en el event store) ya quedo durable antes de responder (MEF-ADR-0013).
+
+Segun el codigo declarado, verifica ademas:
+
+| Codigo | Verificacion adicional en el smoke test |
+|---|---|
+| `201 Created` | Si el contrato exige `Location`, verifica que el header apunte a la URI canonica de lectura del recurso creado (`response.Headers.Location`). **Verifica el header, no lo dereferencies**: si esa vista la materializa una proyeccion `Async`, la URI responde `404` durante la ventana de materializacion (MEF-ADR-0004, MEF-ADR-0034) -- consultarla es otro test, con el polling de la seccion read-side. |
+| `204 No Content` | Verifica que el body de la respuesta venga vacio (`(await response.Content.ReadAsStringAsync(ct)).Should().BeEmpty()`). |
+| `200 OK` | Valida la representacion que declara el contrato: presencia y forma de los campos que el issue espera en el body, nunca reglas de negocio (ver "NO verificar el body de la respuesta en detalle" mas abajo -- esas ya las cubren los unit tests). |
+| `202 Accepted` | Solo si el contrato lo declaro con su justificacion -- el procesamiento sigue en curso, no hay representacion que validar. |
+
 ### Regla de cobertura completa de efectos secundarios
 
-**Todo test donde el comando se ejecuta exitosamente (202, 201, etc.) DEBE verificar todos los efectos secundarios de la funcion bajo prueba.** Un smoke test no esta completo si solo verifica el status code HTTP -- debe verificar que los efectos realmente ocurrieron:
+**Todo test donde el comando se ejecuta exitosamente DEBE verificar todos los efectos secundarios de la funcion bajo prueba, sin importar si el endpoint responde `200`, `201`, `202` o `204`.** Un smoke test no esta completo si solo verifica el status code HTTP -- debe verificar que los efectos realmente ocurrieron:
 
 | Efecto secundario | Como detectarlo en el handler | Como verificarlo en el smoke test |
 |---|---|---|
@@ -162,7 +177,7 @@ Para descubrir los efectos secundarios del comando:
 
 ### Endpoint POST (crear/modificar)
 
-1. **Camino feliz** - payload valido retorna el status esperado (202 Accepted, 201 Created, etc.) **y se verifican todos los efectos secundarios** (publicaciones a Service Bus, persistencia en Postgres, etc.)
+1. **Camino feliz** - payload valido retorna el status code que declara el contrato HTTP del issue (ver "Codigo de exito" arriba -- nunca un default asumido) **y se verifican todos los efectos secundarios** (publicaciones a Service Bus, persistencia en Postgres, etc.)
 2. **Duplicado/conflicto** - si aplica, enviar el mismo payload dos veces y verificar 409 Conflict
 3. **Validacion** - payload con campos vacios/invalidos retorna 400 Bad Request
 4. **Fan-out de arreglos** - cuando el payload contiene un arreglo que produce un evento por elemento (fan-out), el test del camino feliz debe enviar al menos 2 elementos y verificar que se emitan N eventos correspondientes. No testear fan-out con un solo elemento — eso no distingue "emite 1 evento" de "emite N eventos".
@@ -181,6 +196,8 @@ Para queries generadas por la receta read-side del marco (Skill `projections`, p
 3. **Listado** (`Listar{X}s`, si el dominio expone esa query) - verifica 200 y que el recurso creado en el arrange aparece en la coleccion retornada, filtrando por el id unico generado en el arrange o por su nombre con prefijo `[TEST]` -- nunca por posicion/indice.
 
 **La consistencia es eventual: los casos 1 y 3 DEBEN reintentar la consulta.** El ciclo de vida canonico de una proyeccion es `Async` (MEF-ADR-0034 seccion 3): un worker aparte materializa la vista *despues* de que el comando persistio sus eventos, asi que un GET inmediato al POST puede devolver 404 legitimamente y un test sin reintento es flaky por construccion. Envuelve la consulta en `Polling.WaitUntilTrueAsync(...)` con el timeout estandar (`TimeSpan.FromSeconds(30)`) -- esta es la unica excepcion al "no lo uses directamente en tests" de la tabla de fixtures, porque ningun fixture envuelve lecturas HTTP. Si el timeout se agota **es un fallo real** (worker no desplegado, proyeccion sin registrar en el named store, lifecycle equivocado), nunca un caso para `Assert.Skip`.
+
+**Esa eventualidad no cambia el status del POST que origino los datos.** El comando ya respondio su codigo de exito contractual cuando el evento quedo durable en el event store (MEF-ADR-0004); que la proyeccion `Async` tarde en materializarse es una propiedad del read-side, no una razon para que el smoke test del POST espere `202 Accepted`. El polling de arriba pertenece al test del GET, nunca al del POST que lo origino (MEF-ADR-0013, seccion "Persistencia del write-side vs. materializacion del read-side").
 
 Este Skill viene **precargado** en este agente, no se dispara por contenido (MEF-ADR-0033 seccion 3). Si el issue es puramente write-side, su doctrina no aplica y el flujo generico de "Endpoint GET (consultar)" arriba queda intacto.
 
@@ -226,7 +243,7 @@ Para descubrir la estructura del payload:
 
 ## Flujo de trabajo
 
-1. **Lee el issue** para entender que endpoints y escenarios cubrir
+1. **Lee el issue** para entender que endpoints y escenarios cubrir, incluyendo el codigo de exito que el contrato HTTP declara para cada uno (ver "Codigo de exito" arriba)
 2. **Verifica que el proyecto SmokeTests existe** en `tests/<RootNamespace>.{Dominio}.SmokeTests/`
 3. **Lee los endpoints** del dominio buscando `[Function(` y `[HttpTrigger(` en el codigo fuente
 4. **Lee los command handlers** para descubrir los efectos secundarios de cada comando: busca `IPublicEventSender.PublishAsync` (publicacion a topics), `IEventStore.StartStream`/`AppendToStream` (persistencia), y en el futuro `ISender.SendAsync` (queues). Cada efecto encontrado sera verificado en el test del camino feliz.
@@ -251,7 +268,7 @@ Los smoke tests no solo verifican respuestas HTTP. Tambien verifican que los eve
 
 ### Patron 1: Dominio publicador (HTTP -> Service Bus)
 
-El dominio recibe un comando HTTP y publica un evento a Service Bus. El smoke test verifica que el evento llega al topic.
+El dominio recibe un comando HTTP y publica un evento a Service Bus. El smoke test verifica que el evento llega al topic. **El status code sincrono de este endpoint no es automaticamente `202` por publicar a Service Bus** -- viene del contrato HTTP del issue igual que cualquier otro endpoint (ver "Codigo de exito" arriba). El ejemplo de abajo asierta `202` porque asi lo declaro el contrato de **ese** comando especifico, con su justificacion; sustituye ese assert por el codigo que declare el contrato de tu propio comando -- `200`, `201` y `204` son igual de validos y no requieren justificacion adicional. El comentario que acompana el assert en el ejemplo sobrevive solo mientras documente esa justificacion concreta (umbral doble de MEF-ADR-0044); si tu contrato declara otro codigo, el assert va sin comentario.
 
 **Flujo:** HTTP POST -> Function App procesa -> evento publicado al topic -> smoke test consume de suscripcion `smoke-tests`
 
@@ -280,6 +297,9 @@ public class SolicitarProgramacionTurnoSmokeTests(ApiFixture api, ServiceBusFixt
         var solicitudId = Guid.CreateVersion7();
         var payload = new { id = solicitudId, /* ... campos del comando ... */ };
         var response = await _client.PostAsJsonAsync("/api/programacion/solicitudes", payload, ct);
+        // 202 porque el contrato de este comando declaro procesamiento primario diferido: la
+        // solicitud queda registrada y publicada, y la programacion final del turno la resuelve
+        // un consumidor downstream (MEF-ADR-0004).
         response.StatusCode.Should().Be(HttpStatusCode.Accepted);
 
         var evento = await serviceBus.WaitForMessageAsync<ProgramacionTurnoDiarioSolicitada>(
@@ -481,7 +501,8 @@ Esto permite que:
 - **NO modificar codigo de produccion** - si algo no funciona, informa al usuario
 - **NO usar `Skip.When()`** - no existe en xUnit v3, usa `Assert.SkipWhen()`
 - **NO filtrar eventos por posicion** (`eventos[^1]`) - siempre filtrar por campo identificador unico
-- **NO escribir un test que genera una operacion exitosa sin verificar todos sus efectos secundarios** - un 202 sin verificar los eventos publicados es cobertura incompleta. Lee el command handler para identificar todos los efectos (`PublishAsync`, `StartStream`, `AppendToStream`) y verificalos en el test
+- **NO escribir un test que genera una operacion exitosa sin verificar todos sus efectos secundarios** - una respuesta exitosa sin verificar los eventos publicados es cobertura incompleta, sin importar el status code. Lee el command handler para identificar todos los efectos (`PublishAsync`, `StartStream`, `AppendToStream`) y verificalos en el test
+- **NO asertar `HttpStatusCode.Accepted` (o cualquier otro codigo) por default** - el status del camino feliz viene del contrato HTTP declarado en el issue (MEF-ADR-0011). Asertar `202` sin que el contrato lo declare es adivinar el mismo default que MEF-ADR-0004 y MEF-ADR-0011 ya retiraron del resto del pipeline (MEF-ADR-0013)
 - **NO exigir el DLQ globalmente vacio** (`PeekDeadLetterMessagesAsync(...).Should().BeEmpty()` o equivalente) - un dead-letter residual de una corrida anterior, de un warmup contra codigo viejo, o de un race deploy->smoke tumba el test aunque esta corrida haya sido correcta. Acota siempre el assert a la corrida con `ExisteDeadLetterDeLaCorridaAsync<T>` filtrando por el identificador unico de la corrida (MEF-ADR-0013, issue #324)
 - **NO assertar sobre el DLQ/subscription de un dominio distinto** - un smoke test solo verifica la suscripcion que pertenece a su propio dominio. Verificar la suscripcion de otro dominio (patron cross-domain) acopla los smoke tests entre dominios; "acotar a la corrida" no elimina ese acoplamiento, por eso se prohibe por separado (MEF-ADR-0013, issue #324)
 
@@ -530,6 +551,9 @@ Al finalizar, genera el summary en `.claude/pipeline/summaries/smoke-test-writer
 **Endpoints cubiertos:**
 - `POST /api/{dominio}/{recurso}` - camino feliz, duplicado, validacion
 - `GET /api/health` - disponibilidad
+
+**Codigos de exito asertados:** `POST /api/{dominio}/{recurso}` -> {200|201|202|204} (declarado en el contrato HTTP del issue)
+**Endpoints sin codigo de exito declarado en el issue:** {ninguno | lista -- camino feliz no escrito, vacio del DoR a resolver (MEF-ADR-0011)}
 
 **Resultado contra dev:** {PASSED | FAILED | ENTORNO NO DISPONIBLE}
 ```
