@@ -150,6 +150,15 @@ LOG_FILE_ABS="$REPO_ROOT/$LOG_FILE"
 PIPELINE_DIR_ABS="$REPO_ROOT/$PIPELINE_DIR"
 touch "$LOG_FILE_ABS"
 
+# events.log del checkout (issue #973): el MISMO archivo que tdd-pipeline.sh/
+# tooling-pipeline.sh/iac-pipeline.sh escriben para cada worktree que lanza
+# este scheduler (PIPELINE_DIR_ABS resuelve igual en los tres). hold_recently_
+# active/format_hold_status (_pipeline-common.sh) lo consultan para saber si
+# HAY una espera activa ahora mismo, sin bloquear a este proceso.
+EVENTS_LOG_ABS="$PIPELINE_DIR_ABS/events.log"
+mkdir -p "$(dirname "$EVENTS_LOG_ABS")"
+touch "$EVENTS_LOG_ABS"
+
 # ─── Verificar dependencias ───────────────────────────────────────────────────
 MISSING_DEPS=""
 for dep in claude gh git dotnet; do
@@ -337,6 +346,11 @@ except:
 print_dashboard() {
     local now
     now=$(date +%s)
+    # Calculado UNA vez por refresco (issue #973, CA-2): format_hold_status
+    # relee events.log; evitarlo por fila no cambia el resultado (el archivo
+    # no se toca dentro de este mismo refresco) y ahorra N-1 lecturas.
+    local GLOBAL_HOLD_STATUS
+    GLOBAL_HOLD_STATUS=$(format_hold_status "$EVENTS_LOG_ABS") || GLOBAL_HOLD_STATUS=""
     local header_str="${CYAN}${BOLD}parallel-pipeline — $TOTAL issue(s) en proceso${NC}"
     echo -e "\n$header_str"
     printf "%s\n" "----------------------------------------------------------------------"
@@ -417,6 +431,21 @@ print_dashboard() {
             status_label="${stage:--}"
         fi
 
+        # Espera (hold) activa (issue #973, CA-2): un issue todavia corriendo
+        # (no completado ni fallido) durante una espera global se muestra
+        # como "en espera" con la causa y la proxima sonda en vez de su stage
+        # -- sin esto el dashboard seguiria mostrando el mismo stage con el
+        # cronometro creciendo, indistinguible de un pipeline colgado (la
+        # motivacion original del issue). No se distingue DE CUAL worktree es
+        # la espera (ver nota de hold_recently_active en _pipeline-common.sh):
+        # se aplica a todo issue en vuelo mientras la espera este activa.
+        if [ "$running" = "true" ] && [ "$state" != "completed" ] && [ "$state" != "failed" ] \
+            && [ -n "$GLOBAL_HOLD_STATUS" ]; then
+            status_color="$YELLOW"
+            status_label="en espera"
+            agents_str="$GLOBAL_HOLD_STATUS"
+        fi
+
         printf "  ${status_color}%-6s  %-14s  %-8s  %s${NC}\n" \
             "#$issue" "${status_label:0:14}" "$time_str" "$agents_str"
     done
@@ -445,6 +474,22 @@ while [ ${#PENDING_IDXS[@]} -gt 0 ]; do
         warn "Parada solicitada ($BATCH_STOP_SIGNAL): $_deferred_count issue(s) en cola quedan aplazados, sin lanzar ningun worktree. Los ya lanzados terminan su pipeline y abren su PR."
         break
     fi
+
+    # Espera (hold) activa en algun worktree en vuelo (issue #973, CA-3): un
+    # limite de uso agotado pone en espera a TODOS los que esten corriendo a
+    # la vez, asi que lanzar mas de la cola solo multiplicaria los que
+    # esperan. Se reintenta en la siguiente pasada -- ninguno de los
+    # pendientes se marca "aplazado" (a diferencia de la parada suave de
+    # arriba, esto no es una parada: en cuanto la espera se resuelva, el
+    # scheduler retoma el lanzamiento normal sin intervencion humana).
+    if hold_recently_active "$EVENTS_LOG_ABS"; then
+        print_dashboard
+        echo ""
+        log "Limite de uso agotado -- $(format_hold_status "$EVENTS_LOG_ABS"). ${#PENDING_IDXS[@]} issue(s) en cola esperan a que se libere antes de lanzar el siguiente."
+        sleep "$MONITOR_INTERVAL"
+        continue
+    fi
+
     NEXT_PENDING=()
     for idx in "${PENDING_IDXS[@]}"; do
         _proj_running="false"

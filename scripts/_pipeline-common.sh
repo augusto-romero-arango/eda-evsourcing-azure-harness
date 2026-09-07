@@ -1226,6 +1226,90 @@ CONTEXTO DE EJECUCION (sigue vigente): modo no-interactivo, sin humano al otro l
 RESUME_PROMPT_EOF
 }
 
+# --- Deteccion de espera (hold) activa para orquestadores con cola (issue #973) -
+#
+# batch-pipeline.sh y parallel-pipeline.sh envuelven a tdd-pipeline.sh/
+# tooling-pipeline.sh/iac-pipeline.sh, que ya implementan la politica de
+# espera (agent_hold_wait, issue #971): mientras un stage esta en hold, el
+# pipeline que lo contiene esta bloqueado en un sleep, sin salir con exit !=
+# 0 -- por eso batch-pipeline.sh (secuencial, un pipeline a la vez) ya hereda
+# gratis el CA-1 de #973 (una espera no incrementa FAILED ni dispara
+# --stop-on-error, y el exit code final no cambia por haber esperado, CA-5).
+#
+# Lo que NO viene gratis es la VISIBILIDAD de esa espera para un orquestador
+# con cola: parallel-pipeline.sh corre varios worktrees a la vez y necesita
+# saber, sin bloquearse, si HAY una espera activa en este momento -- para no
+# lanzar mas issues de la cola (CA-3) y para reflejarlo en su dashboard
+# (CA-2) -- y /work-status necesita lo mismo para distinguir avanzando/en
+# espera/sin novedades (CA-4).
+#
+# events.log es UN SOLO archivo compartido por checkout (no por worktree):
+# PIPELINE_DIR_ABS resuelve siempre a <repo>/.claude/pipeline/events.log, el
+# mismo para TODOS los issues que corren en el mismo checkout del consumidor
+# (batch, parallel, o un pipeline suelto). Por eso estas funciones no
+# distinguen DE CUAL issue es la espera -- pero no hace falta: un limite de
+# uso agotado es una propiedad de la CUENTA, no de un stage puntual, asi que
+# si un worktree esta esperando lo mas probable es que cualquier otro que
+# intentara arrancar ahora mismo se topara con el mismo limite.
+
+# hold_recently_active <events_log>
+#
+# Retorna 0 si <events_log> tiene una linea de anuncio de hold (la que
+# escribe agent_hold_wait: "esperando, proxima sonda HH:MM:SS") cuya proxima
+# sonda TODAVIA no llego -- es decir, hay una espera activa ahora mismo.
+# Retorna 1 si no hay ninguna linea de ese tipo, si la ultima ya paso su hora
+# de proxima sonda (se resolvio, se agoto el techo, o simplemente es vieja de
+# una corrida anterior), o si el reloj no se pudo parsear.
+#
+# Deliberadamente NO mira las lineas "[hold][resume]" (sub-eventos de una
+# sonda puntual que agent_resume_prompt/run_agent anotan aparte, no el
+# anuncio de la espera en si) -- el `][hold] ` con el espacio final solo
+# aparece en la linea que escribe agent_hold_wait.
+#
+# Nunca aborta: toda falla de parseo (grep sin match, `date` sin poder leer
+# el HH:MM:SS) degrada a "no hay espera activa" (retorna 1), nunca propaga un
+# error al caller.
+hold_recently_active() {
+    local events_log="$1"
+    [ -f "$events_log" ] || return 1
+
+    local last_hold_line
+    last_hold_line=$(grep -F '][hold] ' "$events_log" 2>/dev/null \
+        | grep -F 'esperando, proxima sonda' | tail -n1) || true
+    [ -n "$last_hold_line" ] || return 1
+
+    local next_probe_hms
+    next_probe_hms=$(printf '%s' "$last_hold_line" \
+        | grep -oE 'proxima sonda [0-9]{2}:[0-9]{2}:[0-9]{2}' \
+        | grep -oE '[0-9]{2}:[0-9]{2}:[0-9]{2}')
+    [ -n "$next_probe_hms" ] || return 1
+
+    local today next_probe_epoch now_epoch
+    today="$(date +%Y-%m-%d)"
+    next_probe_epoch=$(date -j -f "%Y-%m-%d %H:%M:%S" "$today $next_probe_hms" +%s 2>/dev/null) \
+        || next_probe_epoch=$(date -d "$today $next_probe_hms" +%s 2>/dev/null) \
+        || return 1
+    now_epoch=$(date +%s)
+
+    [ "$now_epoch" -lt "$next_probe_epoch" ]
+}
+
+# format_hold_status <events_log>
+#
+# Si hold_recently_active es verdadero, imprime por stdout la ULTIMA linea de
+# anuncio de hold sin su timestamp ni corchetes -- p. ej. "RATE_LIMIT:
+# esperando, proxima sonda 14:37:07 (techo 20:32)" -- lista para el dashboard
+# de parallel-pipeline.sh (CA-2) y para /work-status (CA-4). No imprime nada
+# y retorna 1 si no hay espera activa.
+format_hold_status() {
+    local events_log="$1"
+    hold_recently_active "$events_log" || return 1
+
+    grep -F '][hold] ' "$events_log" 2>/dev/null \
+        | grep -F 'esperando, proxima sonda' | tail -n1 \
+        | sed -E 's/^\[[0-9:]+\]\[hold\] //'
+}
+
 # --- Helpers de naming de Azure Storage Account (tfstate backend) -------------
 #
 # El nombre de una Storage Account es un endpoint DNS publico

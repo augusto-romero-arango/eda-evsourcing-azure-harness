@@ -211,6 +211,19 @@ mkdir -p "$LOG_DIR"
 LOG_FILE_ABS="$REPO_ROOT/$LOG_FILE"
 touch "$LOG_FILE_ABS"
 
+# events.log del checkout (issue #973): el MISMO archivo que tdd-pipeline.sh/
+# tooling-pipeline.sh escriben para el worktree del issue en curso. Este
+# orquestador ya hereda gratis CA-1/CA-5 (una espera por limite de uso no
+# incrementa FAILED, no dispara --stop-on-error y no cambia el exit code:
+# mientras el stage esta en hold, el pipeline invocado abajo sigue bloqueado
+# en su propio sleep, sin devolver el control con exit != 0) -- lo unico que
+# agrega este orquestador es anotar en el tracker si el eslabon esperó, para
+# que el resumen final (CA-2) no lo deje indistinguible de un pipeline sin
+# incidentes.
+EVENTS_LOG_ABS="$REPO_ROOT/.claude/pipeline/events.log"
+mkdir -p "$(dirname "$EVENTS_LOG_ABS")"
+touch "$EVENTS_LOG_ABS"
+
 # Inicializar status tracker
 for issue in "${ISSUE_NUMS[@]}"; do
     set_status "$issue" "pendiente"
@@ -288,14 +301,29 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
     ISSUE_LOG="$REPO_ROOT/$LOG_DIR/batch-issue-${ISSUE_NUM}-${TIMESTAMP}.log"
     touch "$ISSUE_LOG"
 
+    # Linea base de events.log ANTES de invocar el pipeline (issue #973,
+    # CA-2): permite saber, despues, si este eslabon paso por una espera --
+    # sin marcar de mas un hold de OTRA corrida anterior en el mismo checkout.
+    EVENTS_LOG_LINES_BEFORE=$(wc -l < "$EVENTS_LOG_ABS" 2>/dev/null | tr -d ' ')
+    [ -z "$EVENTS_LOG_LINES_BEFORE" ] && EVENTS_LOG_LINES_BEFORE=0
+
     PIPELINE_EXIT=0
     "$PIPELINE_SCRIPT" "$ISSUE_NUM" 2>&1 | tee "$ISSUE_LOG" || PIPELINE_EXIT=$?
 
     # Agregar el log del issue al log general
     cat "$ISSUE_LOG" | _strip_ansi >> "$LOG_FILE_ABS"
 
+    # Espero (hold) durante este eslabon (issue #973, CA-2): no cambia
+    # FAILED/HAVE_ERRORS/--stop-on-error (CA-1) -- solo se anota en el
+    # tracker para que el resumen final distinga un eslabon que esperó por
+    # limite de uso de uno sin incidentes.
+    ISSUE_HELD_NOTE=""
+    if tail -n "+$((EVENTS_LOG_LINES_BEFORE + 1))" "$EVENTS_LOG_ABS" 2>/dev/null | grep -qF '][hold] '; then
+        ISSUE_HELD_NOTE=" (esperó por límite de uso durante el pipeline)"
+    fi
+
     if [ "$PIPELINE_EXIT" -ne 0 ]; then
-        fail_issue "$ISSUE_NUM" "pipeline fallo (exit $PIPELINE_EXIT). Log: $ISSUE_LOG"
+        fail_issue "$ISSUE_NUM" "pipeline fallo (exit $PIPELINE_EXIT)$ISSUE_HELD_NOTE. Log: $ISSUE_LOG"
         FAILED=$((FAILED + 1))
         if [ "$STOP_ON_ERROR" = true ]; then
             abort "Detenido por --stop-on-error en issue #$ISSUE_NUM"
@@ -345,9 +373,9 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
     log "Actualizando main local..."
     git pull origin main >>"$LOG_FILE_ABS" 2>&1 || warn "git pull origin main falló (continuando)"
 
-    set_status "$ISSUE_NUM" "completado (PR #$PR_NUM mergeado)"
+    set_status "$ISSUE_NUM" "completado (PR #$PR_NUM mergeado)$ISSUE_HELD_NOTE"
     COMPLETED=$((COMPLETED + 1))
-    success "Issue #$ISSUE_NUM completado y mergeado"
+    success "Issue #$ISSUE_NUM completado y mergeado$ISSUE_HELD_NOTE"
 
     # Parada suave, momento 2 (CA-1): el unico punto seguro de la cadena -- el
     # PR ya esta mergeado. Un eslabon fallido (pipeline/PR/merge) nunca llega
