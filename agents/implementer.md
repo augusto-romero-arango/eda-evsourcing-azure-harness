@@ -58,6 +58,7 @@ El AggregateRoot es el guardian de las reglas de negocio del dominio. Tiene cuat
 public partial class TurnoAggregateRoot : AggregateRoot
 {
     public EstadoTurno Estado { get; private set; }
+    public string Nombre { get; private set; } = string.Empty;
     public List<Guid> EmpleadosAsignados { get; private set; } = [];
 
     public static TurnoAggregateRoot Crear(Guid turnoId, string nombre,
@@ -86,12 +87,25 @@ public partial class TurnoAggregateRoot : AggregateRoot
         Apply(evento);
     }
 
+    public void ReemplazarNombre(string nombre)
+    {
+        if (Nombre == nombre)
+            return;
+
+        var evento = new NombreTurnoReemplazado(Guid.Parse(Id), nombre);
+        _uncommittedEvents.Add(evento);
+        Apply(evento);
+    }
+
     // Apply: reconstruye estado, NUNCA lanza excepciones
     public void Apply(TurnoCreado e)
     {
         Id = e.TurnoId.ToString();
         Estado = EstadoTurno.Activo;
+        Nombre = e.Nombre;
     }
+
+    public void Apply(NombreTurnoReemplazado e) => Nombre = e.Nombre;
 
     public void Apply(EmpleadoAsignado e) =>
         EmpleadosAsignados.Add(e.EmpleadoId);
@@ -104,6 +118,7 @@ public partial class TurnoAggregateRoot : AggregateRoot
 - Factory method estatico para creacion, nunca constructor publico con parametros
 - Propiedades con `private set` — encapsulacion real
 - Metodos de comportamiento: si la regla se viola, emite un evento de fallo (no throw)
+- Para un PUT/DELETE cuyo contrato declara que el estado objetivo ya esta alcanzado, usa una guard clause que retorna normalmente antes de agregar eventos a `_uncommittedEvents`. Es un no-op exitoso: no emite evento de exito ni de fallo, no lanza `PrecondicionComandoException` y no introduce `SinCambios`, `Result<T>` ni otro protocolo de retorno. La guarda solo aplica cuando la identidad y el alcance ya son reconocidos y la intencion ya esta satisfecha; un stream o identidad inexistente conserva su precondicion, y una regla de negocio real conserva su evento de fallo (MEF-ADR-0004).
 - `Apply(TEvent)` solo asigna estado — nunca contiene lógica condicional ni lanza excepciones
 - Usar LINQ sobre for/foreach para transformaciones y filtros en propiedades calculadas
 
@@ -179,19 +194,21 @@ public async Task HandleAsync(MiEvento evento, CancellationToken ct)
 
 **Stream existente (Modificar):**
 ```csharp
-public partial class AsignarEmpleadoATurnoCommandHandler(IEventStore eventStore, IPrivateEventSender eventSender)
-    : ICommandHandlerAsync<AsignarEmpleadoATurno>
+public partial class ReemplazarNombreDeTurnoCommandHandler(IEventStore eventStore, IPrivateEventSender eventSender)
+    : ICommandHandlerAsync<ReemplazarNombreDeTurno>
 {
-    public async Task HandleAsync(AsignarEmpleadoATurno comando, CancellationToken ct)
+    public async Task HandleAsync(ReemplazarNombreDeTurno comando, CancellationToken ct)
     {
         var turno = await eventStore.GetAggregateRootAsync<TurnoAggregateRoot>(
             comando.TurnoId.ToString(), ct);
         if (turno is null)
             throw new RecursoNoEncontradoException(Mensajes.TurnoNoEncontrado);
 
-        turno.AsignarEmpleado(comando.EmpleadoId);
+        turno.ReemplazarNombre(comando.Nombre);
 
-        await eventSender.PublishAsync(turno.GetPrivateEvents());   // manual, requerido
+        var eventos = turno.GetPrivateEvents();
+        if (eventos.Any())
+            await eventSender.PublishAsync(eventos);                // manual, requerido
         // AppendEvents y SaveChangesAsync son automaticos
     }
 }
@@ -202,6 +219,7 @@ public partial class AsignarEmpleadoATurnoCommandHandler(IEventStore eventStore,
 - NUNCA hagas try-catch de excepciones de dominio
 - Para triggers ServiceBus: si el aggregate no existe o falla, el aggregate emite evento de fallo — no throw
 - Para triggers HTTP, la precondicion de orquestacion lanza la excepcion tipada correspondiente (`RecursoYaExisteException`/`RecursoNoEncontradoException`, ver "Excepciones tipadas de precondicion" mas abajo) — nunca `InvalidOperationException` generica, reservada a fallos de infraestructura (MEF-ADR-0004 enmendado, incidente #802)
+- Tras delegar en un aggregate, publica solo si hay eventos nuevos. Para el no-op de estado ya alcanzado, el handler termina sin excepcion, append ni publicaciones observables; reutiliza la forma ya adoptada por el consumidor para evitar invocar el sender con una coleccion vacia. No agregues `SinCambios`, `Result<T>` ni otro tipo solo para informar ese camino al endpoint.
 
 ### EventHandler — reaccionar a un evento privado (sin comando espejo)
 
@@ -331,6 +349,8 @@ custodia de la clave): **MEF-ADR-0027**. Este agente no la duplica.
 ### Endpoint HTTP
 
 **El verbo HTTP, la ruta y el codigo de exito vienen decididos en el issue -- nunca los derivas por creatividad propia.** El campo "Contrato HTTP del comando" del Definition of Ready (MEF-ADR-0011, enmendado por MEF-ADR-0043) es **Critico** para todo issue que introduzca o modifique un endpoint HTTP de comando: declara el verbo (`POST`/`PUT`/`DELETE`), la ruta REST completa en kebab-case minusculo, el paso del test de precedencia de MEF-ADR-0043 seccion 2 que lo justifica, y el **codigo de exito** de la respuesta sincrona (`201`/`204`/`200`, o `202 Accepted` solo cuando el procesamiento solicitado queda diferido, con su justificacion explicita -- MEF-ADR-0004, MEF-ADR-0043 seccion 6). Usa ese contrato tal como esta escrito: el `IActionResult` que el `Run` devuelve tras `await commandRouter.InvokeAsync(...)` es el que el issue declaro -- **nunca `AcceptedResult` por default**, la practica universal que corrigio MEF-ADR-0004 (issue #849).
+
+Para el PUT o DELETE cuyo contrato declara "Estado ya alcanzado", el endpoint no ramifica por si hubo eventos: si el router retorna normalmente, devuelve el mismo codigo de exito contractual tanto para el cambio real como para el no-op. No transforma ese retorno normal en evento, `404`, `409` ni una excepcion; una respuesta distinta solo procede si el contrato justifico explicitamente que el estado no era equivalente o que la identidad era desconocida (MEF-ADR-0004, MEF-ADR-0011, MEF-ADR-0043).
 
 **Fallback -- issue legado sin contrato declarado:** si el issue no trae ese campo (trabajo iniciado antes de MEF-ADR-0043), aplica tu mismo el test de precedencia de MEF-ADR-0043 seccion 2 -- que a la vez fija el codigo de exito, MEF-ADR-0004 -- (crea algo que el dominio modela como entidad -> `POST` a la coleccion, `201 Created`; reemplaza completo un value object atomico direccionable -> `PUT`, `204 No Content` salvo que el issue declare explicitamente una creacion real por PUT, `201 Created`; remueve veraz y sin payload un sub-recurso -> `DELETE`, `204 No Content`; todo lo demas -> `POST {recurso}:{verbo}`, `204 No Content` sin representacion o `200 OK` con representacion, `202 Accepted` unicamente si el procesamiento solicitado queda diferido; `PATCH` proscrito de forma transversal) y **anota en el PR** que paso aplicaste, que codigo de exito elegiste y por que -- mismo criterio de reportar-sin-decidir-en-silencio que ya rige otros gaps del issue (ver "Precedente ≠ autoridad" mas abajo). **Nunca conserves `202 Accepted` solo porque era la practica previa del marco**: sin una justificacion explicita de que trabajo queda pendiente y por que no completo antes de responder, `202` no es una opcion valida del contrato (MEF-ADR-0043 seccion 6). Todo segmento de la ruta va en kebab-case minusculo (MEF-ADR-0043 seccion 3) -- el ejemplo de abajo (`programacion/turnos`) usa el paso 1 del test (create canonico, `201 Created`).
 
