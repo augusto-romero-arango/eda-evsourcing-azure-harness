@@ -167,11 +167,15 @@ runtime_kind_for_repo() {
 # filas por (workspace, runtime) y del pane ancla (issue #931 CA-2/CA-3/CA-4):
 # SIEMPRE por label, nunca por si el agente del pane llego a arrancar (un
 # `herdr agent start` fallido no debe hacer creer que la fila no existe).
+# Un `herdr pane list` que falla (o devuelve algo que jq no puede leer) es
+# "no encontre el pane", no un error fatal: sin el `|| true` final, pipefail
+# haria fallar la asignacion del llamador y `set -e` mataria el script en
+# silencio -- justo tragandose el aviso accionable de CA-4.
 pane_label_lookup() {
     local ws="$1" label="$2"
     herdr pane list --workspace "$ws" 2>/dev/null \
-        | jq -r --arg l "$label" '.result.panes[]? | select(.label == $l) | .pane_id' \
-        | head -1
+        | jq -r --arg l "$label" '.result.panes[]? | select(.label == $l) | .pane_id' 2>/dev/null \
+        | head -1 || true
 }
 
 # pane_shell_is_free <pane_id>
@@ -337,13 +341,16 @@ mount_second_row() {
     local env_args=("$@")
 
     log "Montando la fila de '$runtime_kind' en el workspace '$label' ($ws) ..."
-    local resp p_planner p_ejecucion
-    resp=$(herdr pane split --pane "$anchor" --direction right --cwd "$repo_root" --no-focus "${env_args[@]}" 2>&1) \
+    # p_planner/p_ejecucion arrancan vacias, no solo declaradas: si el split
+    # falla no se asignan, y `set -u` mataria el script con "unbound variable"
+    # en vez de dar el abort accionable de abajo (el ancla sigue en pie, asi
+    # que reinvocar es la salida).
+    local resp p_planner="" p_ejecucion=""
+    resp=$(herdr pane split --pane "$anchor" --direction right --cwd "$repo_root" --no-focus "${env_args[@]+"${env_args[@]}"}" 2>&1) \
         && p_planner=$(echo "$resp" | jq -r '.result.pane.pane_id // empty')
     [ -n "$p_planner" ] || abort "No se pudo crear el pane del planner de la fila '$runtime_kind': $resp"
 
-    local p_ejecucion=""
-    resp=$(herdr pane split --pane "$p_planner" --direction right --cwd "$repo_root" --no-focus "${env_args[@]}" 2>&1) \
+    resp=$(herdr pane split --pane "$p_planner" --direction right --cwd "$repo_root" --no-focus "${env_args[@]+"${env_args[@]}"}" 2>&1) \
         && p_ejecucion=$(echo "$resp" | jq -r '.result.pane.pane_id // empty')
     if [ -z "$p_ejecucion" ]; then
         warn "No se pudo crear el pane de ejecucion de la fila '$runtime_kind' (split fallo): la fila queda con el pane del planner."
@@ -397,13 +404,16 @@ main() {
 
     if [ "$planner_agent" != "mefisto-planner" ]; then
         # --- Rama consumidor: layout de hoy, sin cambios (issue #931 CA-5) ---
+        # El aviso va ANTES de la rama de idempotencia (comportamiento de
+        # #875): un MEFISTO_RUNTIME ignorado hay que decirlo tambien al
+        # reenfocar un workspace ya montado, no solo al crearlo.
+        if [ -n "${MEFISTO_RUNTIME:-}" ] && [ "$MEFISTO_RUNTIME" != "claude" ]; then
+            warn "El plugin publicado aun no soporta OpenCode (MEFISTO_RUNTIME=$MEFISTO_RUNTIME); se usa 'claude'."
+        fi
         if [ -n "$existing" ]; then
             herdr workspace focus "$existing" >/dev/null 2>&1 || true
             success "El workspace '$label' ya existe ($existing): enfocado, sin duplicar panes ni agentes."
             exit 0
-        fi
-        if [ -n "${MEFISTO_RUNTIME:-}" ] && [ "$MEFISTO_RUNTIME" != "claude" ]; then
-            warn "El plugin publicado aun no soporta OpenCode (MEFISTO_RUNTIME=$MEFISTO_RUNTIME); se usa 'claude'."
         fi
         mount_first_row "$repo_root" "$label" "$planner_agent" "claude" "" "0"
         return

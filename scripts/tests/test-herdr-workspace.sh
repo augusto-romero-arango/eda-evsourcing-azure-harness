@@ -51,6 +51,9 @@
 #   [J] Fallo de `herdr agent start` en los 2 intentos (fila 1 del repo de
 #       Mefisto): reintenta una vez y degrada con aviso sin abortar el
 #       workspace (mecanica de #875, preservada tras el ancla de #931).
+#   [K] Fallo del primer `pane split` al montar la fila 2: aborta con el
+#       aviso accionable (no con un "unbound variable" de bash) y NO cierra
+#       el ancla, para que reinvocar siga siendo la salida.
 #
 # Uso: scripts/tests/test-herdr-workspace.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -250,6 +253,10 @@ case "${1:-} ${2:-}" in
         echo '{"result":{"workspace":{"workspace_id":"w1"},"root_pane":{"pane_id":"w1:p1"}}}'
         ;;
     "pane split")
+        if [ "${HERDR_STUB_SPLIT_FAIL:-0}" = "1" ]; then
+            echo '{"error":"split_failed (stub)"}' >&2
+            exit 1
+        fi
         n=$(cat "$HERDR_STUB_SPLIT_COUNTER" 2>/dev/null || echo "${HERDR_STUB_SPLIT_START:-2}")
         echo $((n+1)) > "$HERDR_STUB_SPLIT_COUNTER"
         echo "{\"result\":{\"pane\":{\"pane_id\":\"w1:p$n\"}}}"
@@ -258,8 +265,12 @@ case "${1:-} ${2:-}" in
         {
             printf '{"result":{"panes":['
             first=1
+            items=()
             IFS=';' read -ra items <<< "${HERDR_STUB_PANES:-}"
-            for item in "${items[@]}"; do
+            # bash 3.2 (el /bin/bash de macOS) trata un array vacio como no
+            # definido bajo `set -u`: sin el idiom `${a[@]+...}` este for
+            # aborta el stub cuando HERDR_STUB_PANES no esta fijada.
+            for item in "${items[@]+"${items[@]}"}"; do
                 [ -n "$item" ] || continue
                 lbl="${item%%=*}"
                 pid="${item#*=}"
@@ -569,6 +580,11 @@ if ! grep -qF "agent start" "$HERDR_STUB_LOG" && ! grep -qF "pane split" "$HERDR
 else
     fail "I-3: duplico panes o agentes -- log: $(cat "$HERDR_STUB_LOG")"
 fi
+if printf '%s\n%s' "$LAST_STDOUT" "$LAST_STDERR" | grep -q "El plugin publicado aun no soporta OpenCode"; then
+    pass "I-4: avisa el MEFISTO_RUNTIME ignorado tambien al reenfocar (comportamiento de #875)"
+else
+    fail "I-4: no aviso al reenfocar -- stdout: $LAST_STDOUT / stderr: $LAST_STDERR"
+fi
 
 echo ""
 echo "[J] Fallo de 'herdr agent start' en los 2 intentos (fila 1, repo de Mefisto): reintenta y degrada sin abortar"
@@ -598,6 +614,37 @@ if printf '%s\n%s' "$LAST_STDOUT" "$LAST_STDERR" | grep -qF "lanza ahi 'claude -
     pass "J-4: el aviso nombra el runtime activo (claude) para lanzarlo a mano"
 else
     fail "J-4: el aviso no nombro el runtime -- stdout: $LAST_STDOUT / stderr: $LAST_STDERR"
+fi
+
+echo ""
+echo "[K] Fallo del primer 'pane split' al montar la fila 2: aborta con aviso accionable y deja el ancla en pie"
+
+export HERDR_STUB_EXISTING_LABEL="fake-mefisto-repo"
+export HERDR_STUB_PANES="planner [claude]=w1:p1;ejecucion [claude]=w1:p3;fila libre=w1:p2"
+export MEFISTO_RUNTIME=opencode
+export HERDR_STUB_SPLIT_FAIL=1
+run_workspace "$FAKE_MEFISTO"
+unset HERDR_STUB_EXISTING_LABEL HERDR_STUB_PANES MEFISTO_RUNTIME HERDR_STUB_SPLIT_FAIL
+
+if [ "$LAST_RC" -ne 0 ]; then
+    pass "K-1: aborta cuando el split de la fila 2 falla (rc=$LAST_RC)"
+else
+    fail "K-1: deberia abortar (rc=$LAST_RC)"
+fi
+if printf '%s\n%s' "$LAST_STDOUT" "$LAST_STDERR" | grep -qF "No se pudo crear el pane del planner de la fila 'opencode'"; then
+    pass "K-2: el aviso es el del script, no un 'unbound variable' de bash"
+else
+    fail "K-2: no salio el aviso del script -- stdout: $LAST_STDOUT / stderr: $LAST_STDERR"
+fi
+if printf '%s\n%s' "$LAST_STDOUT" "$LAST_STDERR" | grep -qi "unbound variable"; then
+    fail "K-3: el script murio por 'unbound variable' -- stderr: $LAST_STDERR"
+else
+    pass "K-3: ningun 'unbound variable' (p_planner nace vacia, no solo declarada)"
+fi
+if grep -qF "pane close" "$HERDR_STUB_LOG"; then
+    fail "K-4: cerro el ancla pese a no haber montado la fila -- log: $(cat "$HERDR_STUB_LOG")"
+else
+    pass "K-4: el ancla queda en pie: reinvocar sigue siendo la salida"
 fi
 
 echo ""
