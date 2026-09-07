@@ -96,6 +96,11 @@ agent_name_for_role() {
     local rol="$1" label="$2" kind="$3"
     local max=20
     [ -n "$kind" ] && max=$((32 - 10 - 1 - ${#kind}))
+    # MEFISTO_RUNTIME es texto libre: un kind absurdamente largo dejaria
+    # max <= 0, y `cut -c1-0` abortaria el script entero (set -e + pipefail).
+    # Con el piso el nombre queda largo y degrada por la via de siempre:
+    # `herdr agent start` falla y el pane conserva su shell.
+    [ "$max" -lt 1 ] && max=1
     local slug
     slug=$(workspace_slug "$label" "$max")
     echo "${rol}-${slug}${kind:+-$kind}"

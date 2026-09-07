@@ -21,7 +21,8 @@
 #       (los nombres de agente de herdr admiten 32 y el prefijo mas largo
 #       ocupa 10).
 #   [A2] agent_name_for_role: nombre completo rol-slug[-kind], mismo slug
-#       para planner/ejecucion recortado por el prefijo mas largo (CA-2, CA-4).
+#       para planner/ejecucion recortado por el prefijo mas largo, y piso del
+#       tope ante un kind absurdamente largo (#930 CA-2, CA-4).
 #   [B] planner_agent_for_repo: mefisto-planner en el repo del plugin
 #       (.claude-plugin/plugin.json presente), mefisto:planner en un consumidor.
 #   [C] Workspace Mefisto con MEFISTO_RUNTIME=opencode: ambos panes arrancan
@@ -88,7 +89,7 @@ fi
 # -------- Bloque A: workspace_slug --------
 
 echo ""
-echo "[A] workspace_slug: minusculas, caracteres raros a '-', extremos limpios, tope de 20"
+echo "[A] workspace_slug: minusculas, caracteres raros a '-', extremos limpios, tope de 20 parametrizable"
 
 SLUG_A1=$(workspace_slug "Bitakora.ControlAsistencia")
 if [ "$SLUG_A1" = "bitakora-controlasis" ] && [ "${#SLUG_A1}" -le 20 ]; then
@@ -128,7 +129,7 @@ fi
 # -------- Bloque A2: agent_name_for_role --------
 
 echo ""
-echo "[A2] agent_name_for_role: rol-slug[-kind], mismo slug para planner/ejecucion (CA-2, CA-4)"
+echo "[A2] agent_name_for_role: rol-slug[-kind], mismo slug para planner/ejecucion (#930 CA-2, CA-4)"
 
 NAME_A2_1=$(agent_name_for_role "ejecucion" "eda-evsourcing-azure-harness" "opencode")
 if [ "$NAME_A2_1" = "ejecucion-eda-evsourcin-opencode" ] && [ "${#NAME_A2_1}" -le 32 ]; then
@@ -149,6 +150,14 @@ if [ "$NAME_A2_3" = "planner-bitakora-controlasis" ]; then
     pass "A2-3: kind vacio (consumidor) no agrega sufijo, tope de 20 (CA-3)"
 else
     fail "A2-3: nombre inesperado: '$NAME_A2_3'"
+fi
+
+NAME_A2_4=$(agent_name_for_role "planner" "eda-evsourcing-azure-harness" "unruntimeconunnombrelarguisimo" 2>&1)
+RC_A2_4=$?
+if [ "$RC_A2_4" -eq 0 ] && [ "$NAME_A2_4" = "planner-e-unruntimeconunnombrelarguisimo" ]; then
+    pass "A2-4: un kind absurdamente largo no rompe el calculo del tope (piso de 1, sin error de cut)"
+else
+    fail "A2-4: rc=$RC_A2_4, salida: '$NAME_A2_4'"
 fi
 
 # -------- Bloque B: planner_agent_for_repo --------
