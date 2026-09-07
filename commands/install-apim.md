@@ -635,17 +635,21 @@ Checklist post-deploy (correr una vez que el apply de CI termine, contra el gate
 
   1. OPTIONS sin header Authorization -> CORS responde (200/204, nunca 404).
   2. POST sin token -> 401.
-  3. Elegir un endpoint POST real ya expuesto detras del gateway (no un placeholder) y su codigo de
-     exito documentado en el contrato HTTP de ese comando -- verbo + ruta + paso de precedencia +
-     codigo de exito, MEF-ADR-0043 seccion 2/6: 200, 201, 202 o 204 segun el paso que aplique. POST
-     con token WorkOS valido contra ese endpoint -> responde exactamente ese codigo, nunca 202 por
-     default: 202 solo es correcto si el propio endpoint declara procesamiento diferido y su issue
-     justifico por que (MEF-ADR-0004, MEF-ADR-0043 seccion 2 paso 4) -- este checklist prueba que
-     APIM autentica y reenvia, no que el backend responda un status en particular.
-  4. La prueba de que APIM reenvio la request es independiente del status de la respuesta: confirmar
-     en App Insights que el request aparece en la Function App backend, no solo que APIM respondio
-     con un 2xx -- un 2xx aislado no demuestra el forwarding (B2 de MEF-ADR-0032, el "acepta y no hace
-     nada" es el bug mas traicionero del catalogo).
+  3. Elegir un endpoint POST real ya expuesto detras del gateway (no un placeholder) y leer el
+     codigo de exito que declara su contrato HTTP -- verbo + ruta + paso de precedencia + codigo de
+     exito (MEF-ADR-0011, MEF-ADR-0043 seccion 2/6): 200, 201, 202 o 204 segun el paso que aplique.
+     POST con token WorkOS valido contra ese endpoint -> responde ese codigo. Este punto **verifica**
+     el contrato del endpoint elegido, no lo **impone**: 202 es correcto si el endpoint declara
+     procesamiento diferido y su issue lo justifica (MEF-ADR-0004, MEF-ADR-0043 seccion 2 paso 4), y
+     lo sigue siendo en un endpoint preexistente que quedo con el 202 universal anterior al issue
+     #849 -- MEF-ADR-0043 seccion 7 no fuerza esa migracion, y un desfase asi es conversacion con el
+     equipo del consumidor, nunca un fallo del gateway. Lo que ya no vale es esperar 202 porque si:
+     no hay codigo por default del borde. Si el endpoint elegido no declara ninguno, no lo adivines
+     -- registra el vacio del contrato y apoyate en el punto 4, que es el gate real de este paso.
+  4. La evidencia de que APIM autentico y reenvio la request es independiente del status devuelto:
+     confirmar en App Insights que el request aparece en la Function App backend, no solo que APIM
+     respondio con un 2xx -- un 2xx aislado no demuestra el forwarding (B2 de MEF-ADR-0032, el
+     "acepta y no hace nada" es el bug mas traicionero del catalogo).
   5. En el backend, X-User-Id y X-Tenant-Id llegan no vacios (confirma que el mapping de claims
      esta resolviendo valores reales, no cadenas vacias por un claim mal nombrado -- B10 de
      MEF-ADR-0032).
