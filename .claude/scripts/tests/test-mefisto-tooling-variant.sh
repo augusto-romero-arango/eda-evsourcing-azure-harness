@@ -113,6 +113,7 @@ cat > "$FAKE_MEFISTO/.claude-plugin/plugin.json" <<'EOF'
   "version": "0.0.0"
 }
 EOF
+printf '.mefisto/\n' > "$FAKE_MEFISTO/.gitignore"
 cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/_mefisto-common.sh"
 cp "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" "$FAKE_MEFISTO/.claude/scripts/_mefisto-common.sh"
 cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-state.sh"
@@ -136,7 +137,16 @@ cp "$REPO_ROOT/.claude/scripts/mefisto-tmux-pipeline.sh" "$FAKE_MEFISTO/.claude/
 cp "$REPO_ROOT/src/internal/scripts/mefisto-tmux-pipeline.sh" "$FAKE_MEFISTO/src/internal/scripts/mefisto-tmux-pipeline.sh"
 cp "$REPO_ROOT/.claude/scripts/mefisto-herdr-pipeline.sh" "$FAKE_MEFISTO/.claude/scripts/mefisto-herdr-pipeline.sh"
 cp "$REPO_ROOT/src/internal/scripts/mefisto-herdr-pipeline.sh" "$FAKE_MEFISTO/src/internal/scripts/mefisto-herdr-pipeline.sh"
-(cd "$FAKE_MEFISTO" && git init -q && git -c user.email="test@example.com" -c user.name="Test" commit --allow-empty -q -m "commit inicial")
+(cd "$FAKE_MEFISTO" && git init -q && git add . && git -c user.email="test@example.com" -c user.name="Test" commit -q -m "commit inicial" && git branch -M main)
+BARE_ORIGIN="$TMP_DIR/origin.git"
+PUBLISHER="$TMP_DIR/publisher"
+git init -q --bare "$BARE_ORIGIN"
+git -C "$BARE_ORIGIN" symbolic-ref HEAD refs/heads/main
+git -C "$FAKE_MEFISTO" remote add origin "$BARE_ORIGIN"
+git -C "$FAKE_MEFISTO" push -q -u origin main
+git clone -q "$BARE_ORIGIN" "$PUBLISHER"
+git -C "$PUBLISHER" config user.email "test@example.com"
+git -C "$PUBLISHER" config user.name "Test"
 
 cat > "$FAKE_BIN/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -232,6 +242,30 @@ echo "[10] mefisto-tmux-pipeline.sh: --batch + --variant aborta (ambiguo sobre v
 run_wrapper --batch 711 712 --variant a
 if [ "$LAST_RC" -eq 1 ]; then pass "--batch + --variant aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
 if printf '%s' "$LAST_STDERR" | grep -q "no es valido con --batch"; then pass "mensaje: no valido con --batch"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+
+echo ""
+echo "[11] mefisto-tmux-pipeline.sh: --batch sucio aborta antes de tocar panes"
+git -C "$FAKE_MEFISTO" checkout -q -b feature-sucia-tmux
+echo "nota pendiente" > "$FAKE_MEFISTO/nota-pendiente.txt"
+run_wrapper --batch 711 712
+rm -f "$FAKE_MEFISTO/nota-pendiente.txt"
+git -C "$FAKE_MEFISTO" checkout -q master 2>/dev/null || git -C "$FAKE_MEFISTO" checkout -q main
+if [ "$LAST_RC" -eq 1 ]; then pass "--batch sucio aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+if printf '%s' "$LAST_STDERR" | grep -qi "arbol.*limpio"; then pass "el error explica que solo se recupera con arbol limpio"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+if [ -s "$TMUX_STUB_LOG" ]; then fail "no deberia crear, cerrar ni reutilizar panes -- log: $(cat "$TMUX_STUB_LOG")"; else pass "no toca tmux antes del preflight"; fi
+
+echo ""
+echo "[12] mefisto-tmux-pipeline.sh: --batch limpio recupera y actualiza main antes del dispatch"
+git -C "$PUBLISHER" commit -q --allow-empty -m "origin avanza antes del preflight tmux"
+git -C "$PUBLISHER" push -q origin main
+EXPECTED_MAIN=$(git -C "$PUBLISHER" rev-parse main)
+git -C "$FAKE_MEFISTO" checkout -q -b feature-limpia-tmux
+run_wrapper --batch 711 712
+CURRENT_BRANCH=$(git -C "$FAKE_MEFISTO" rev-parse --abbrev-ref HEAD)
+CURRENT_MAIN=$(git -C "$FAKE_MEFISTO" rev-parse main)
+if [ "$LAST_RC" -eq 0 ]; then pass "--batch limpio se despacha"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
+if [ "$CURRENT_BRANCH" = main ] && [ "$CURRENT_MAIN" = "$EXPECTED_MAIN" ]; then pass "recupera a main actualizado"; else fail "rama/base inesperada: HEAD=$CURRENT_BRANCH main=$CURRENT_MAIN esperado=$EXPECTED_MAIN"; fi
+if grep -qF "mefisto-batch-pipeline.sh 711 712" "$TMUX_STUB_LOG"; then pass "despacha solo despues de recuperar la base"; else fail "no despacho el batch -- log: $(cat "$TMUX_STUB_LOG")"; fi
 
 echo ""
 echo "----------------------------------------"

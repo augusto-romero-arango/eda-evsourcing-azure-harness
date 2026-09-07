@@ -80,6 +80,61 @@ assert_in_mefisto() {
     fi
 }
 
+# ensure_repo_on_base_branch
+#
+# Gate canonico de arranque para batches internos. Cada worktree del tooling
+# pipeline nace de origin/main sin depender de la rama activa (issue #66), pero
+# el checkout principal debe quedar en una base local sincronizada para quien
+# sigue la cadena. Los callers definen warn()/abort() antes de invocarlo.
+#
+# Si ya esta en main/master es un no-op. Fuera de esas ramas, solo un arbol
+# limpio se recupera: prefiere main, cae a master, hace switch y pull --ff-only.
+# Un arbol sucio, una base ausente o un pull fallido abortan sin stash, reset ni
+# switch forzado. Opera siempre contra MEFISTO_REPO_ROOT, no contra el cwd.
+ensure_repo_on_base_branch() {
+    local repo_root="${MEFISTO_REPO_ROOT:-}"
+    if [ -z "$repo_root" ]; then
+        repo_root=$(git rev-parse --show-toplevel 2>/dev/null) \
+            || { abort "No se pudo resolver la raiz del repo para prevalidar el batch."; return 1; }
+    fi
+
+    local current_branch
+    current_branch=$(git -C "$repo_root" rev-parse --abbrev-ref HEAD) \
+        || { abort "No se pudo determinar la rama activa del repo principal antes de arrancar el batch."; return 1; }
+
+    if [ "$current_branch" = "main" ] || [ "$current_branch" = "master" ]; then
+        MAIN_BRANCH="$current_branch"
+        return 0
+    fi
+
+    if [ -n "$(git -C "$repo_root" status --porcelain)" ]; then
+        abort "El repo principal esta en la rama '$current_branch', no en main/master, y el arbol de trabajo no esta limpio (cambios sin commitear, staged o archivos sin trackear). Cada worktree del tooling-pipeline nace de origin/main sin importar la rama activa (issue #66), pero el batch tambien mantiene la base local sincronizada. La auto-recuperacion solo aplica con el arbol de trabajo LIMPIO; con cambios pendientes se requiere resolucion humana: conservalos, commitealos o resuelvelos y haz 'git switch main' a mano antes de lanzar el batch."
+        return 1
+    fi
+
+    local base_branch
+    if git -C "$repo_root" rev-parse --verify -q refs/heads/main >/dev/null 2>&1; then
+        base_branch="main"
+    elif git -C "$repo_root" rev-parse --verify -q refs/heads/master >/dev/null 2>&1; then
+        base_branch="master"
+    else
+        abort "El repo principal esta en la rama '$current_branch' y no existe ni 'main' ni 'master' local para auto-recuperar el gate. Crea o rescata una de las dos antes de lanzar el batch."
+        return 1
+    fi
+
+    git -C "$repo_root" switch -q "$base_branch" \
+        || { abort "El repo principal esta en la rama '$current_branch' (arbol limpio), pero 'git switch $base_branch' fallo. Resuelve a mano antes de lanzar el batch."; return 1; }
+
+    local pull_output
+    if ! pull_output=$(git -C "$repo_root" pull --ff-only 2>&1); then
+        abort "El repo principal estaba en la rama '$current_branch' (arbol limpio); el gate lo auto-recupero a '$base_branch', pero 'git pull --ff-only' fallo ahi -- tipicamente porque '$base_branch' local divergio de origin/$base_branch (tambien cae aqui una base sin upstream configurado). La premisa de higiene no se puede cumplir asi: resuelve la divergencia a mano (el repo quedo en '$base_branch') antes de relanzar el batch. Salida de git: $(printf '%s' "$pull_output" | tr '\n' ' ')"
+        return 1
+    fi
+
+    warn "El repo principal estaba en la rama '$current_branch' (arbol limpio) al arrancar el batch; el gate se auto-recupero a '$base_branch' y lo sincronizo con origin/$base_branch (issue #726). Los commits de '$current_branch' siguen intactos en su rama."
+    MAIN_BRANCH="$base_branch"
+}
+
 # get_harness_version
 #
 # Imprime por stdout el '.version' de .claude-plugin/plugin.json del repo de

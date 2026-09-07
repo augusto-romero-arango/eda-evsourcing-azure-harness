@@ -151,13 +151,16 @@ Secuencial --- N issues:
   3. #44: [titulo]
 ```
 
-Luego lanza el motor secuencial dentro de tmux:
+Luego lanza el motor secuencial dentro de tmux y verifica que el launcher haya terminado con exito:
 
 ```bash
 {{mefisto:run mefisto-tmux-pipeline.sh --batch <issue1> <issue2> ...}}
 ```
 
-### 4. Instrucciones de conexion
+### 4. Instrucciones de conexion (solo tras lanzamiento exitoso)
+
+Si el launcher aborta, no anuncies que el batch esta corriendo ni muestres instrucciones de
+conexion. Corrige primero el error reportado y relanzalo.
 
 Dentro de herdr (`HERDR_ENV=1` en el entorno), el script delega en la interfaz herdr (`mefisto-herdr-pipeline.sh`) y no hay nada que adjuntar: el batch queda corriendo en un pane de este mismo workspace con el visor en vivo, que salta solo de issue en issue. En ese caso responde con:
 
@@ -190,10 +193,13 @@ anterior. El batch lo garantiza asi:
   crea **siempre** desde `origin/main` actualizado, sea cual sea la rama activa del repo
   principal (issue #66, `mefisto-tooling-pipeline.sh:269`). Ese invariante no depende de
   en que rama estes.
-- **Arranca solo en main/master.** Si no estas en main/master, el motor aborta antes de
-  empezar (haz `git switch main` primero). La razon es higienica, no de correccion: el
-  batch tambien mantiene main **local** al dia entre eslabones, y arrancar fuera de
-  main/master genera sorpresas ahi.
+- **Prevalidacion sincronica de la rama base.** Antes de crear, reutilizar o despachar un
+  pane, el launcher del batch aplica el mismo gate que conserva el motor como defensa. Si
+  estas fuera de main/master con el arbol **limpio**, se recupera a `main` (o `master` si
+  `main` no existe) y ejecuta `git pull --ff-only`. Si hay cambios staged, modificados o
+  sin trackear, aborta sin stash, reset ni switch forzado: conserva el trabajo y requiere
+  resolucion humana antes de relanzar. La razon es higienica, no de correccion: el batch
+  tambien mantiene la base **local** al dia entre eslabones.
 - **Sync verificado tras cada merge.** Despues de mergear el PR de un eslabon, el motor
   hace `git fetch origin main` y **confirma** que el commit de merge del PR llego a
   `origin/main`; aparte, fast-forwardea main **local** a `origin/main` operando sobre esa

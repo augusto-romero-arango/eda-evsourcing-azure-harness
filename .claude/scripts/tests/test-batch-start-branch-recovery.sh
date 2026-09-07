@@ -18,7 +18,8 @@
 # gate sigue siendo fail-loud y aborta -- la auto-recuperacion no aplica.
 #
 # Casos cubiertos (fixture con repos git temporales, sin red):
-#   [pre] La funcion ensure_repo_on_base_branch() se pudo extraer del script.
+#   [pre] La funcion ensure_repo_on_base_branch() se pudo extraer de la
+#       libreria canonica y el motor conserva su llamada defensiva.
 #   [A] Rama != main/master, arbol LIMPIO, origin adelanto de forma
 #       fast-forwardeable: se auto-recupera -- switch a main, pull --ff-only
 #       trae el commit nuevo, warn nombra la rama original, sin abort (CA-1).
@@ -33,6 +34,7 @@
 #       del issue).
 #   [F] HEAD detached con arbol limpio: se recupera por el mismo camino que
 #       una rama con nombre.
+#   [G] Ya en 'master': conserva el no-op historico aunque no exista 'main'.
 #
 # Uso: .claude/scripts/tests/test-batch-start-branch-recovery.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -41,7 +43,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-SCRIPT="$REPO_ROOT/src/internal/scripts/mefisto-batch-pipeline.sh"
+SCRIPT="$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh"
 
 PASS=0
 FAIL=0
@@ -55,7 +57,7 @@ extract_fn() {
     awk -v fn="$name" '$0 ~ "^"fn"\\(\\) \\{" {p=1} p{print} p && /^}/{p=0}' "$file"
 }
 
-echo "[pre] ensure_repo_on_base_branch() se extrae de $SCRIPT"
+echo "[pre] ensure_repo_on_base_branch() se extrae de la libreria canonica $SCRIPT"
 
 FN_SRC=$(extract_fn "ensure_repo_on_base_branch" "$SCRIPT")
 if [ -z "$FN_SRC" ]; then
@@ -67,6 +69,15 @@ if [ -z "$FN_SRC" ]; then
     exit 1
 fi
 pass "la funcion se extrajo del script real"
+
+BATCH_SCRIPT="$REPO_ROOT/src/internal/scripts/mefisto-batch-pipeline.sh"
+GATE_CALL_LINE=$(grep -n '^ensure_repo_on_base_branch$' "$BATCH_SCRIPT" | cut -d: -f1)
+HEADER_LINE=$(grep -n '^# --- Cabecera ---$' "$BATCH_SCRIPT" | cut -d: -f1)
+if [ -n "$GATE_CALL_LINE" ] && [ -n "$HEADER_LINE" ] && [ "$GATE_CALL_LINE" -lt "$HEADER_LINE" ]; then
+    pass "el motor conserva el gate defensivo antes de su cabecera y loop"
+else
+    fail "mefisto-batch-pipeline.sh debe invocar el gate antes de la cabecera"
+fi
 
 TMP=$(mktemp -d)
 cleanup() { rm -rf "$TMP"; }
@@ -85,6 +96,7 @@ run_gate() {
     : > "$WARN_LOG"; : > "$ABORT_LOG"; : > "$STATE_LOG"
     (
         cd "$workdir" || exit 9
+        MEFISTO_REPO_ROOT="$workdir"
         warn()  { echo "$1" >> "$WARN_LOG"; }
         abort() { echo "$1" >> "$ABORT_LOG"; exit 77; }
         eval "$FN_SRC"
@@ -173,7 +185,12 @@ echo "[B] Rama != main/master, arbol SUCIO: aborta fail-loud sin tocar HEAD (CA-
 
 WORK_B=$(new_work_clone "work-b")
 git -C "$WORK_B" checkout -q -b feature-sucia
-echo "cambio sin commitear" > "$WORK_B/archivo-sin-trackear.txt"
+echo "cambio staged" > "$WORK_B/archivo-staged.txt"
+git -C "$WORK_B" add archivo-staged.txt
+echo "cambio modificado" > "$WORK_B/archivo-modificado.txt"
+git -C "$WORK_B" add archivo-modificado.txt
+echo "cambio posterior" >> "$WORK_B/archivo-modificado.txt"
+echo "cambio sin trackear" > "$WORK_B/archivo-sin-trackear.txt"
 
 run_gate "$WORK_B"
 RC=$?
@@ -201,6 +218,18 @@ if [ -f "$WORK_B/archivo-sin-trackear.txt" ]; then
     pass "B: el archivo sin commitear sigue presente (no se descarto nada)"
 else
     fail "B: el archivo sin commitear desaparecio"
+fi
+
+if git -C "$WORK_B" diff --cached --quiet; then
+    fail "B: el cambio staged desaparecio"
+else
+    pass "B: el cambio staged sigue presente"
+fi
+
+if git -C "$WORK_B" diff --quiet; then
+    fail "B: el cambio modificado desaparecio"
+else
+    pass "B: el cambio modificado sigue presente"
 fi
 
 # -------- Bloque C: arbol limpio pero 'main' local diverge de origin (CA-3) --------
@@ -303,6 +332,31 @@ if [ "$RC" -eq 0 ] && [ "$HEAD_AFTER_F" = "main" ]; then
     pass "F: HEAD detached con arbol limpio se recupero a 'main' sin abortar"
 else
     fail "F: se esperaba HEAD en 'main' (exit 0), obtuvo exit=$RC HEAD='$HEAD_AFTER_F'. abort: $(cat "$ABORT_LOG")"
+fi
+
+# -------- Bloque G: ya en 'master' -- no-op historico --------
+
+echo ""
+echo "[G] Ya en 'master' y sin 'main': no-op, sin abort ni warn"
+
+WORK_G=$(new_work_clone "work-g")
+git -C "$WORK_G" branch -m main master
+git -C "$WORK_G" branch --unset-upstream >/dev/null 2>&1 || true
+
+run_gate "$WORK_G"
+RC=$?
+
+HEAD_AFTER_G=$(git -C "$WORK_G" rev-parse --abbrev-ref HEAD)
+if [ "$RC" -eq 0 ] && [ "$HEAD_AFTER_G" = "master" ] && [ ! -s "$ABORT_LOG" ] && [ ! -s "$WARN_LOG" ]; then
+    pass "G: conserva el no-op cuando la rama activa ya es 'master'"
+else
+    fail "G: se esperaba no-op en master; exit=$RC HEAD='$HEAD_AFTER_G' abort=$(cat "$ABORT_LOG") warn=$(cat "$WARN_LOG")"
+fi
+
+if grep -qF "MAIN_BRANCH=master" "$STATE_LOG"; then
+    pass "G: MAIN_BRANCH queda en 'master'"
+else
+    fail "G: MAIN_BRANCH inesperado. Contenido: $(cat "$STATE_LOG")"
 fi
 
 # -------- Resumen --------

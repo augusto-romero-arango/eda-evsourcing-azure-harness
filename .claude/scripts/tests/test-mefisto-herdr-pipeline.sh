@@ -104,6 +104,7 @@ cat > "$FAKE_MEFISTO/.claude-plugin/plugin.json" <<'EOF'
   "version": "0.0.0"
 }
 EOF
+printf '.mefisto/\n' > "$FAKE_MEFISTO/.gitignore"
 cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/_mefisto-common.sh"
 cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-state.sh"
 cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-runtime.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-runtime.sh"
@@ -132,7 +133,16 @@ echo "visor-stub-arrancado"
 exec sleep 30
 STUB
 chmod +x "$FAKE_MEFISTO/.claude/scripts/mefisto-stream-watch.sh"
-(cd "$FAKE_MEFISTO" && git init -q && git -c user.email="test@example.com" -c user.name="Test" commit --allow-empty -q -m "commit inicial")
+(cd "$FAKE_MEFISTO" && git init -q && git add . && git -c user.email="test@example.com" -c user.name="Test" commit -q -m "commit inicial" && git branch -M main)
+BARE_ORIGIN="$TMP_DIR/origin.git"
+PUBLISHER="$TMP_DIR/publisher"
+git init -q --bare "$BARE_ORIGIN"
+git -C "$BARE_ORIGIN" symbolic-ref HEAD refs/heads/main
+git -C "$FAKE_MEFISTO" remote add origin "$BARE_ORIGIN"
+git -C "$FAKE_MEFISTO" push -q -u origin main
+git clone -q "$BARE_ORIGIN" "$PUBLISHER"
+git -C "$PUBLISHER" config user.email "test@example.com"
+git -C "$PUBLISHER" config user.name "Test"
 
 cat > "$FAKE_BIN/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -409,6 +419,30 @@ run_herdr --batch 872 873 --from-stage 2
 if [ "$LAST_RC" -eq 1 ]; then pass "aborta (rc=$LAST_RC)"; else fail "deberia abortar (rc=$LAST_RC)"; fi
 if printf '%s' "$LAST_STDERR" | grep -q "no es valido con --batch"; then pass "mensaje: --from-stage no valido con --batch"; else fail "mensaje inesperado: $LAST_STDERR"; fi
 if grep -q "pane run" "$HERDR_STUB_LOG"; then fail "no deberia despachar ningun pane"; else pass "ningun pane despachado"; fi
+
+echo ""
+echo "[15b] --batch con arbol sucio aborta antes de adquirir o despachar un pane"
+git -C "$FAKE_MEFISTO" checkout -q -b feature-sucia-herdr
+echo "nota pendiente" > "$FAKE_MEFISTO/nota-pendiente.txt"
+run_herdr --batch 872 873
+rm -f "$FAKE_MEFISTO/nota-pendiente.txt"
+git -C "$FAKE_MEFISTO" checkout -q master 2>/dev/null || git -C "$FAKE_MEFISTO" checkout -q main
+if [ "$LAST_RC" -eq 1 ]; then pass "aborta (rc=$LAST_RC)"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+if printf '%s' "$LAST_STDERR" | grep -qi "arbol.*limpio"; then pass "el error explica que solo se recupera con arbol limpio"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+if [ -s "$HERDR_STUB_LOG" ]; then fail "no deberia adquirir, cerrar ni ejecutar panes -- log: $(cat "$HERDR_STUB_LOG")"; else pass "ningun pane tocado antes del preflight"; fi
+
+echo ""
+echo "[15c] --batch limpio recupera y actualiza main antes del dispatch Herdr"
+git -C "$PUBLISHER" commit -q --allow-empty -m "origin avanza antes del preflight herdr"
+git -C "$PUBLISHER" push -q origin main
+EXPECTED_MAIN=$(git -C "$PUBLISHER" rev-parse main)
+git -C "$FAKE_MEFISTO" checkout -q -b feature-limpia-herdr
+run_herdr --batch 872 873
+CURRENT_BRANCH=$(git -C "$FAKE_MEFISTO" rev-parse --abbrev-ref HEAD)
+CURRENT_MAIN=$(git -C "$FAKE_MEFISTO" rev-parse main)
+if [ "$LAST_RC" -eq 0 ]; then pass "--batch limpio se despacha"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
+if [ "$CURRENT_BRANCH" = main ] && [ "$CURRENT_MAIN" = "$EXPECTED_MAIN" ]; then pass "recupera a main actualizado"; else fail "rama/base inesperada: HEAD=$CURRENT_BRANCH main=$CURRENT_MAIN esperado=$EXPECTED_MAIN"; fi
+if grep -qF "pane run" "$HERDR_STUB_LOG" && grep -qF "mefisto-batch-pipeline.sh 872 873" "$HERDR_STUB_LOG"; then pass "despacha solo despues de recuperar la base"; else fail "no despacho el batch -- log: $(cat "$HERDR_STUB_LOG")"; fi
 
 echo ""
 echo "----------------------------------------"
