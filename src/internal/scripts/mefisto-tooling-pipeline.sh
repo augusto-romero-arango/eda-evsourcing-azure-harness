@@ -12,6 +12,7 @@
 #   src/internal/scripts/mefisto-tooling-pipeline.sh 42 --from-stage 2
 #   src/internal/scripts/mefisto-tooling-pipeline.sh 42 --models 'reviewer=<modelo>,writer=<modelo>'  # Modelo por stage (experimentos)
 #   src/internal/scripts/mefisto-tooling-pipeline.sh 42 --variant experimento-a  # Corrida paralela del mismo issue (sin PR, rama local)
+#   MEFISTO_AGENT_TIMEOUT_SECONDS=<s> src/internal/scripts/mefisto-tooling-pipeline.sh 42  # Timeout de watchdog por stage (default 1800; entero > 0, issue #946)
 #
 # Ciclo: Issue (en repo Mefisto) -> Worktree -> Writer -> Reviewer -> Sync main -> PR -> Cleanup
 #
@@ -284,6 +285,19 @@ if ! [[ "$FROM_STAGE" =~ ^[1-2]$ ]]; then
     abort "--from-stage debe ser 1 o 2 (recibido: $FROM_STAGE)"
 fi
 
+# --- Resolver MEFISTO_AGENT_TIMEOUT_SECONDS (issue #946) --------------------
+# Se valida ANTES de crear el worktree, mismo criterio que --variant/--models
+# mas abajo: un valor invalido no debe dejar un worktree a medias. Misma
+# validacion que --timeout hace en mefisto-run-agent.sh (entero > 0) -- si se
+# dejara pasar hasta ahi, el abort_usage de ese script ocurriria con el
+# worktree ya creado.
+MEFISTO_AGENT_TIMEOUT_SECONDS="${MEFISTO_AGENT_TIMEOUT_SECONDS:-1800}"
+case "$MEFISTO_AGENT_TIMEOUT_SECONDS" in
+    ''|*[!0-9]*) abort "MEFISTO_AGENT_TIMEOUT_SECONDS '$MEFISTO_AGENT_TIMEOUT_SECONDS' no es un entero" ;;
+esac
+[ "$MEFISTO_AGENT_TIMEOUT_SECONDS" -gt 0 ] \
+    || abort "MEFISTO_AGENT_TIMEOUT_SECONDS debe ser mayor que 0 (recibido: $MEFISTO_AGENT_TIMEOUT_SECONDS)"
+
 # --- Verificar dependencias ---
 for cmd in gh git jq; do
     command -v "$cmd" &>/dev/null || abort "Falta comando requerido: $cmd"
@@ -543,7 +557,9 @@ run_agent() {
     update_status "$stage-$agent" "running"
     log "Invocando $agent..."
 
-    local AGENT_TIMEOUT_SECONDS=1800
+    # Ya validado (entero > 0) y con su default aplicado ANTES de crear el
+    # worktree -- ver el bloque MEFISTO_AGENT_TIMEOUT_SECONDS mas arriba.
+    local AGENT_TIMEOUT_SECONDS="$MEFISTO_AGENT_TIMEOUT_SECONDS"
 
     # --- Reintento ante fallo transitorio del servidor (issue #534) ---
     # Ambos parametros son overridables por entorno para que los tests puedan
