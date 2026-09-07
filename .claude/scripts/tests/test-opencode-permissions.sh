@@ -18,7 +18,8 @@
 #       portado -- ver "Protocolo de ejecucion y eventos" del README.
 #   [bash] `rm -rf x` -> deny y `git status` -> allow (CA-3) con la capacidad
 #       `shell`.
-#   [question] `allow` solo en `mode: primary`, `deny` en `subagent` (CA-4).
+#   [question] `allow` solo en `mode: primary`, `deny` en `subagent` y `all`
+#       (CA-4; issue #1034).
 #   [mcp-abort] La capacidad `mcp` aborta con "capacidad mcp sin mapeo
 #       OpenCode", sin escribir nada (CA-5).
 #   [parity] Paridad `edit` vs `is_path_in_mefisto_scope` sobre 10 rutas
@@ -141,8 +142,8 @@ cat > "$SRC_DIR/mefisto-fx-perm-writer.md" <<'EOF'
 {
   "kind": "agent",
   "id": "mefisto-fx-perm-writer",
-  "description": "Agente estilo writer/historiador (read+edit+shell, mode subagent), para CA-2/CA-4 (issue #862).",
-  "mode": "subagent",
+  "description": "Agente estilo writer/reviewer (read+edit+shell, mode all), para CA-2/CA-4 (issues #862/#1034).",
+  "mode": "all",
   "capabilities": ["read", "edit", "shell"]
 }
 ---
@@ -247,7 +248,8 @@ assert_eq "deny" "$(eval_perm mefisto-fx-perm-planner bash 'MEFISTO_RUNTIME=open
 echo ""
 echo "[question] CA-4: allow solo en mode primary"
 assert_eq '"allow"' "$(permission_of mefisto-fx-perm-planner question)" "question allow en mode primary"
-assert_eq '"deny"' "$(permission_of mefisto-fx-perm-writer question)" "question deny en mode subagent"
+assert_eq '"deny"' "$(permission_of mefisto-fx-perm-read question)" "question deny en mode subagent"
+assert_eq '"deny"' "$(permission_of mefisto-fx-perm-writer question)" "question deny en mode all"
 
 echo ""
 echo "[web-skill-task] CA-4: sin la capacidad correspondiente, deny"

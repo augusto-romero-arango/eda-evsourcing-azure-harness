@@ -18,8 +18,11 @@
 #         configuracion del usuario (CA-2, issue #961).
 #   [opencode-cli] Si el CLI `opencode` esta instalado, `opencode agent list`
 #         corrido en la raiz del repo lista cada id con su modo -- `primary`
-#         para planner/investigator/historiador, `subagent` para
-#         writer/reviewer; si no esta instalado, se omite con aviso (CA-6).
+#         para planner/investigator/historiador, `all` para writer/reviewer;
+#         si no esta instalado, se omite con aviso (CA-6).
+#   [writer-reviewer] Writer y reviewer se mantienen seleccionables como
+#         agentes primarios (`mode: all`) sin abrir permisos de stages
+#         headless (CA-3/CA-4, issue #1034).
 #   [guard-f] El bloque [F] de scripts/tests/test-guards.sh (integridad de
 #         Agent Skills) sigue en verde tras la migracion.
 #
@@ -52,7 +55,7 @@ profile_for_agent() {
 mode_for_agent() {
     case "$1" in
         mefisto-planner|mefisto-investigator|mefisto-historiador) echo "primary" ;;
-        mefisto-writer|mefisto-reviewer) echo "subagent" ;;
+        mefisto-writer|mefisto-reviewer) echo "all" ;;
         *) echo "" ;;
     esac
 }
@@ -62,7 +65,7 @@ FAIL=0
 pass() { echo "  PASS: $1"; PASS=$((PASS+1)); }
 fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 
-echo "[sources] Las tres fuentes existen y pasan validate-internal-artifacts.sh"
+echo "[sources] Las cinco fuentes existen y pasan validate-internal-artifacts.sh"
 for id in $AGENT_IDS; do
     src="$AGENTS_DIR/$id.md"
     if [ ! -f "$src" ]; then
@@ -77,6 +80,58 @@ for id in $AGENT_IDS; do
         pass "$id: pasa el validador del contrato neutral"
     else
         fail "$id: el validador rechazo la fuente. Salida: $out"
+    fi
+done
+
+echo ""
+echo "[writer-reviewer] Writer y reviewer son seleccionables como agentes primarios sin abrir permisos"
+for id in mefisto-writer mefisto-reviewer; do
+    src="$AGENTS_DIR/$id.md"
+    out_file="$REPO_ROOT/.opencode/agents/$id.md"
+    if grep -q '"mode": "all"' "$src" 2>/dev/null; then
+        pass "$id: fuente neutral declara mode: all"
+    else
+        fail "$id: fuente neutral debe declarar mode: all (no subagent)"
+    fi
+    if grep -q '^mode: "all"$' "$out_file" 2>/dev/null; then
+        pass "$id: adaptador OpenCode declara mode: all"
+    else
+        fail "$id: adaptador OpenCode debe declarar mode: all"
+    fi
+    permission="$(sed -n 's/^permission: //p' "$out_file")"
+    for key in question task skill webfetch websearch external_directory; do
+        if [ "$(printf '%s' "$permission" | jq -r --arg key "$key" '.[$key] // empty')" = "deny" ]; then
+            pass "$id: permission.$key permanece en deny"
+        else
+            fail "$id: permission.$key debe permanecer en deny"
+        fi
+    done
+    for key in list glob grep lsp todowrite; do
+        if [ "$(printf '%s' "$permission" | jq -r --arg key "$key" '.[$key] // empty')" = "allow" ]; then
+            pass "$id: permission.$key permanece en allow por capability read"
+        else
+            fail "$id: permission.$key debe permanecer en allow por capability read"
+        fi
+    done
+    for key in edit write patch; do
+        if [ "$(printf '%s' "$permission" | jq -r --arg key "$key" '.[ $key ]["src/internal/**"] // empty')" = "allow" ] \
+            && [ "$(printf '%s' "$permission" | jq -r --arg key "$key" '.[ $key ]["*"] // empty')" = "deny" ]; then
+            pass "$id: permission.$key conserva la allowlist de capability edit"
+        else
+            fail "$id: permission.$key debe conservar catch-all deny y src/internal/** allow"
+        fi
+    done
+    if [ "$(printf '%s' "$permission" | jq -r '.bash["git *"] // empty')" = "allow" ] \
+        && [ "$(printf '%s' "$permission" | jq -r '.bash["*"] // empty')" = "deny" ]; then
+        pass "$id: permission.bash conserva la allowlist de capability shell"
+    else
+        fail "$id: permission.bash debe conservar catch-all deny y git * allow"
+    fi
+    if [ "$(printf '%s' "$permission" | jq -r '.read["*"] // empty')" = "allow" ] \
+        && [ "$(printf '%s' "$permission" | jq -r '.read[".env"] // empty')" = "deny" ]; then
+        pass "$id: permission.read conserva la allowlist de capability read"
+    else
+        fail "$id: permission.read debe conservar catch-all allow y .env deny"
     fi
 done
 
