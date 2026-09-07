@@ -1,0 +1,365 @@
+#!/usr/bin/env bash
+# test-hold-visibility.sh -- Tests de la visibilidad y la contabilidad de la
+# espera (hold) en los orquestadores publicados con cola (issue #973,
+# contraparte publicada de #969, consumidora de la politica de espera del
+# issue #971).
+#
+# Contexto: agent_hold_wait (issue #971, _pipeline-common.sh) ya deja
+# constancia de una espera activa en events.log, pero solo el pipeline que la
+# sufre (tdd/tooling/iac-pipeline.sh) la ve -- esta bloqueado en su propio
+# sleep. De ahi las dos necesidades que cubren las funciones bajo test:
+#   - parallel-pipeline.sh necesita saber, SIN bloquearse, si hay una espera
+#     activa: para no lanzar mas issues de la cola (CA-3) y para reflejarlo en
+#     su dashboard (CA-2).
+#   - batch-pipeline.sh esta bloqueado en el `tee` del eslabon mientras este
+#     espera, asi que solo puede anotar cuanto se espero AL CERRARLO -- como
+#     nota anexa al desenlace real, nunca como fallo (CA-1/CA-5).
+#
+# Casos cubiertos:
+#   [1] hold_recently_active: sin events.log -> falso.
+#   [2] hold_recently_active: events.log vacio -> falso.
+#   [3] hold_recently_active: "proxima sonda" en el FUTURO -> espera activa.
+#   [4] hold_recently_active: "proxima sonda" en el PASADO -> falso (se
+#       resolvio, o se agoto el techo).
+#   [5] hold_recently_active: solo lineas "[hold][resume]" -> falso (no son
+#       el anuncio de la espera).
+#   [6] hold_recently_active: con varias lineas de hold, usa la ULTIMA.
+#   [7] hold_recently_active: linea de OTRO dia (hora de anuncio en el
+#       futuro) -> falso, aunque su "proxima sonda" caiga mas adelante en el
+#       reloj de hoy. Sin esto el scheduler se negaria a lanzar la cola por
+#       una espera inexistente.
+#   [8] hold_recently_active: la marca <from_line> descarta lo escrito antes
+#       de que arrancara el consumidor.
+#   [9] hold_line_window: un ciclo que cruza medianoche da duracion positiva.
+#   [10] format_hold_status: con espera activa imprime causa + sonda + techo
+#        sin el timestamp; sin espera activa no imprime nada y retorna 1.
+#   [11] fmt_hold_duration / hold_note_suffix: formato y neutralidad (0
+#        segundos -> sin nota, y retorna 0 para no matar un `set -e`).
+#   [12] hold_seconds_in_range: suma los ciclos del rango, ignora
+#        "[hold][resume]", respeta <from_line> y atribuye por cabecera de
+#        sesion (una corrida concurrente de otro issue no le regala su espera
+#        al eslabon en curso).
+#   [13] CA-3: parallel-pipeline.sh consulta hold_recently_active ANTES de
+#        lanzar el siguiente pendiente de la cola (wiring).
+#   [14] CA-2: parallel-pipeline.sh dibuja la espera en su dashboard via
+#        format_hold_status, con etiqueta propia -- distinta de la que ya usa
+#        para el issue que espera TURNO de la cola.
+#   [15] CA-1/CA-5: batch-pipeline.sh anota la espera en todos los desenlaces
+#        sin tocar FAILED/HAVE_ERRORS/STOP_ON_ERROR ni el exit code.
+#
+# Uso: scripts/tests/test-hold-visibility.sh
+# Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+BATCH_SCRIPT="$REPO_ROOT/scripts/batch-pipeline.sh"
+PARALLEL_SCRIPT="$REPO_ROOT/scripts/parallel-pipeline.sh"
+
+PASS=0
+FAIL=0
+pass() { echo "  PASS: $1"; PASS=$((PASS+1)); }
+fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
+
+# shellcheck source=/dev/null
+source "$REPO_ROOT/scripts/_pipeline-common.sh"
+
+TMP=$(mktemp -d)
+cleanup() { rm -rf "$TMP"; }
+trap cleanup EXIT
+
+# hms_at <delta_segundos> -- HH:MM:SS de "ahora + delta" (mismo patron que
+# agent_hold_wait para formatear un epoch: date -r (BSD/macOS) con fallback a
+# date -d (GNU)). Usado para construir lineas [hold] relativas al reloj real,
+# sin acoplar el test a una hora fija.
+hms_at() {
+    local delta="$1"
+    local epoch=$(( $(date +%s) + delta ))
+    date -r "$epoch" +%H:%M:%S 2>/dev/null || date -d "@$epoch" +%H:%M:%S 2>/dev/null
+}
+
+echo "[1] hold_recently_active: sin events.log -> falso"
+if hold_recently_active "$TMP/no-existe.log"; then
+    fail "deberia ser falso sin events.log"
+else
+    pass "sin events.log -> falso"
+fi
+
+echo ""
+echo "[2] hold_recently_active: events.log vacio -> falso"
+EMPTY_LOG="$TMP/empty-events.log"
+: > "$EMPTY_LOG"
+if hold_recently_active "$EMPTY_LOG"; then
+    fail "deberia ser falso con events.log vacio"
+else
+    pass "events.log vacio -> falso"
+fi
+
+echo ""
+echo "[3] hold_recently_active: proxima sonda en el FUTURO -> espera activa"
+FUTURE_LOG="$TMP/future.log"
+FUTURE_HMS=$(hms_at 120)
+cat > "$FUTURE_LOG" <<EOF
+=== SESSION TOOLING 20260101-000000 issue:42 from-stage:1 ===
+[$(hms_at -180)][hold] RATE_LIMIT: esperando, proxima sonda $FUTURE_HMS (techo 23:59)
+EOF
+if hold_recently_active "$FUTURE_LOG"; then
+    pass "proxima sonda en el futuro -> espera activa"
+else
+    fail "deberia detectar espera activa con proxima sonda en el futuro"
+fi
+
+echo ""
+echo "[4] hold_recently_active: proxima sonda en el PASADO -> ya no esta activa"
+PAST_LOG="$TMP/past.log"
+cat > "$PAST_LOG" <<EOF
+[$(hms_at -420)][hold] PROVIDER_UNAVAILABLE: esperando, proxima sonda $(hms_at -120) (techo 23:59)
+EOF
+if hold_recently_active "$PAST_LOG"; then
+    fail "no deberia estar activa con proxima sonda ya pasada"
+else
+    pass "proxima sonda en el pasado -> no activa (resuelta o techo agotado)"
+fi
+
+echo ""
+echo "[5] hold_recently_active: solo lineas [hold][resume] -> no cuentan como anuncio"
+RESUME_ONLY_LOG="$TMP/resume-only.log"
+cat > "$RESUME_ONLY_LOG" <<EOF
+[$(hms_at -60)][hold][resume] writer: el intento fallido no dejo transcript en el worktree -- reintento desde cero (sin -c)
+EOF
+if hold_recently_active "$RESUME_ONLY_LOG"; then
+    fail "una linea [hold][resume] sola no deberia contar como espera activa"
+else
+    pass "solo [hold][resume] -> no activa (no es el anuncio de agent_hold_wait)"
+fi
+
+echo ""
+echo "[6] hold_recently_active: con varias lineas, usa la ULTIMA"
+MULTI_LOG="$TMP/multi.log"
+cat > "$MULTI_LOG" <<EOF
+[$(hms_at -900)][hold] RATE_LIMIT: esperando, proxima sonda $(hms_at -600) (techo 23:59)
+[$(hms_at -180)][hold] RATE_LIMIT: esperando, proxima sonda $FUTURE_HMS (techo 23:59)
+EOF
+if hold_recently_active "$MULTI_LOG"; then
+    pass "usa la ultima linea (proxima sonda en el futuro), no la primera (ya pasada)"
+else
+    fail "deberia usar la ultima linea de hold, que sigue activa"
+fi
+
+echo ""
+echo "[7] hold_recently_active: linea de otro dia (anuncio en el futuro) -> no activa"
+STALE_LOG="$TMP/stale-yesterday.log"
+cat > "$STALE_LOG" <<EOF
+[$(hms_at 7200)][hold] RATE_LIMIT: esperando, proxima sonda $(hms_at 7500) (techo 23:59)
+EOF
+if hold_recently_active "$STALE_LOG"; then
+    fail "una linea cuyo anuncio esta en el futuro es de otro dia: no deberia estar activa"
+else
+    pass "anuncio en el futuro -> linea de otro dia, no activa"
+fi
+
+echo ""
+echo "[8] hold_recently_active: <from_line> descarta lo anterior al arranque del consumidor"
+BOUNDED_LOG="$TMP/bounded.log"
+cat > "$BOUNDED_LOG" <<EOF
+=== SESSION TOOLING 20260101-000000 issue:41 from-stage:1 ===
+[$(hms_at -180)][hold] RATE_LIMIT: esperando, proxima sonda $FUTURE_HMS (techo 23:59)
+EOF
+if hold_recently_active "$BOUNDED_LOG" 0; then
+    pass "sin acotar (from_line=0) ve la espera activa"
+else
+    fail "sin acotar deberia ver la espera activa"
+fi
+if hold_recently_active "$BOUNDED_LOG" 2; then
+    fail "acotado por encima de la linea de hold no deberia ver ninguna espera"
+else
+    pass "from_line descarta el hold escrito antes del arranque"
+fi
+
+echo ""
+echo "[9] hold_line_window: un ciclo que cruza medianoche da duracion positiva"
+WINDOW=$(hold_line_window "[23:58:00][hold] RATE_LIMIT: esperando, proxima sonda 00:03:00 (techo 05:00)")
+if [ -n "$WINDOW" ] && [ "$(( ${WINDOW##* } - ${WINDOW%% *} ))" -eq 300 ]; then
+    pass "23:58:00 -> 00:03:00 = 300s (rollover de medianoche resuelto)"
+else
+    fail "hold_line_window devolvio '$WINDOW' (esperaba una ventana de 300s)"
+fi
+
+echo ""
+echo "[10] format_hold_status: causa + proxima sonda + techo, sin el timestamp"
+OUT=$(format_hold_status "$FUTURE_LOG")
+case "$OUT" in
+    "RATE_LIMIT: esperando, proxima sonda $FUTURE_HMS (techo 23:59)")
+        pass "format_hold_status: linea formateada como se esperaba" ;;
+    *)  fail "format_hold_status devolvio '$OUT'" ;;
+esac
+case "$OUT" in
+    "["*) fail "format_hold_status no deberia dejar el timestamp/corchete inicial" ;;
+    *)    pass "sin timestamp ni corchete inicial" ;;
+esac
+OUT=""
+if OUT=$(format_hold_status "$PAST_LOG"); then
+    fail "deberia retornar 1 sin espera activa"
+else
+    pass "retorna 1 sin espera activa"
+fi
+if [ -z "$OUT" ]; then
+    pass "sin salida cuando no hay espera activa"
+else
+    fail "no deberia imprimir nada, imprimio '$OUT'"
+fi
+
+echo ""
+echo "[11] fmt_hold_duration / hold_note_suffix"
+if [ "$(fmt_hold_duration 130)" = "2m 10s" ]; then
+    pass "fmt_hold_duration 130 -> '2m 10s'"
+else
+    fail "fmt_hold_duration 130 -> '$(fmt_hold_duration 130)'"
+fi
+if [ "$(hold_note_suffix 130)" = " (incluye 2m 10s en espera/hold)" ]; then
+    pass "hold_note_suffix 130 -> nota anexa con el mismo vocabulario del eslabon"
+else
+    fail "hold_note_suffix 130 -> '$(hold_note_suffix 130)'"
+fi
+NOTE="pendiente"
+if NOTE=$(hold_note_suffix 0); then
+    pass "hold_note_suffix 0 retorna 0 (no mata un caller con set -e)"
+else
+    fail "hold_note_suffix 0 deberia retornar 0"
+fi
+if [ -z "$NOTE" ]; then
+    pass "hold_note_suffix 0 -> sin nota"
+else
+    fail "hold_note_suffix 0 no deberia anotar nada, anoto '$NOTE'"
+fi
+
+echo ""
+echo "[12] hold_seconds_in_range: suma, acota y atribuye por sesion"
+RANGE_LOG="$TMP/range.log"
+cat > "$RANGE_LOG" <<'EOF'
+=== SESSION TOOLING 20260101-080000 issue:41 from-stage:1 ===
+[08:00:00][hold] RATE_LIMIT: esperando, proxima sonda 08:05:00 (techo 14:00)
+=== SESSION TOOLING 20260101-090000 issue:42 from-stage:1 ===
+[09:00:00][hold] RATE_LIMIT: esperando, proxima sonda 09:05:00 (techo 15:00)
+[09:05:10][hold][resume] writer: sesion reanudada murio de nuevo sin resumen -- degradado a stage desde cero
+=== SESSION IAC 20260101-091000 issue:43 env:dev from-stage:1 ===
+[09:10:00][hold] PROVIDER_UNAVAILABLE: esperando, proxima sonda 09:20:00 (techo 15:10)
+─── SESSION 20260101-093000 issue:file from-stage:1 ───
+[09:30:00][hold] RATE_LIMIT: esperando, proxima sonda 09:35:00 (techo 15:30)
+EOF
+TOTAL_ALL=$(hold_seconds_in_range "$RANGE_LOG" 0)
+if [ "$TOTAL_ALL" = "1500" ]; then
+    pass "sin issue: suma los cuatro ciclos (300+300+600+300=1500s), ignorando [hold][resume]"
+else
+    fail "sin issue devolvio '$TOTAL_ALL' (esperaba 1500)"
+fi
+TOTAL_42=$(hold_seconds_in_range "$RANGE_LOG" 0 42)
+if [ "$TOTAL_42" = "300" ]; then
+    pass "issue 42: solo su ciclo (300s) -- la espera de otra sesion no se le atribuye"
+else
+    fail "issue 42 devolvio '$TOTAL_42' (esperaba 300)"
+fi
+TOTAL_43=$(hold_seconds_in_range "$RANGE_LOG" 0 43)
+if [ "$TOTAL_43" = "600" ]; then
+    pass "issue 43: cabecera IAC reconocida (600s)"
+else
+    fail "issue 43 devolvio '$TOTAL_43' (esperaba 600)"
+fi
+TOTAL_BOUNDED=$(hold_seconds_in_range "$RANGE_LOG" 2 41)
+if [ "$TOTAL_BOUNDED" = "0" ]; then
+    pass "from_line descarta el ciclo del issue 41 escrito antes de la marca"
+else
+    fail "acotado devolvio '$TOTAL_BOUNDED' (esperaba 0)"
+fi
+TOTAL_MISSING=$(hold_seconds_in_range "$TMP/no-existe.log" 0 42)
+if [ "$TOTAL_MISSING" = "0" ]; then
+    pass "sin events.log -> 0, sin abortar"
+else
+    fail "sin events.log devolvio '$TOTAL_MISSING'"
+fi
+
+# -------- Bloques de wiring (structural): confirman que los orquestadores --
+# -------- CONSUMEN las funciones de arriba, no que las reimplementan -------
+
+echo ""
+echo "[13] CA-3: parallel-pipeline.sh consulta hold_recently_active antes de lanzar el siguiente pendiente"
+if grep -q 'hold_recently_active "\$EVENTS_LOG_ABS" "\$EVENTS_LOG_LINES_AT_START"' "$PARALLEL_SCRIPT"; then
+    pass "parallel-pipeline.sh invoca hold_recently_active acotado al arranque de la corrida"
+else
+    fail "parallel-pipeline.sh no invoca hold_recently_active con la marca de arranque"
+fi
+# El chequeo debe vivir DENTRO del while del scheduler, antes del bucle que
+# recorre PENDING_IDXS y lanza -- si no, gatearia el lanzamiento de nada.
+SCHED_BLOCK=$(awk '/^while \[ \$\{#PENDING_IDXS\[@\]\} -gt 0 \]; do/{p=1} p{print} p && /^done$/{exit}' "$PARALLEL_SCRIPT")
+if echo "$SCHED_BLOCK" | grep -q "hold_recently_active" && echo "$SCHED_BLOCK" | grep -q "for idx in \"\${PENDING_IDXS\[@\]}\""; then
+    pass "el chequeo de hold vive dentro del while del scheduler, junto al lanzamiento de pendientes"
+else
+    fail "no se pudo confirmar que el chequeo de hold este dentro del while del scheduler"
+fi
+
+echo ""
+echo "[14] CA-2: parallel-pipeline.sh dibuja la espera en su dashboard, con etiqueta propia"
+if grep -q 'format_hold_status "\$EVENTS_LOG_ABS" "\$EVENTS_LOG_LINES_AT_START"' "$PARALLEL_SCRIPT"; then
+    pass "parallel-pipeline.sh invoca format_hold_status acotado al arranque de la corrida"
+else
+    fail "parallel-pipeline.sh no invoca format_hold_status con la marca de arranque"
+fi
+if grep -q 'status_label="espera/hold"' "$PARALLEL_SCRIPT"; then
+    pass "print_dashboard etiqueta el hold como 'espera/hold'"
+else
+    fail "print_dashboard no tiene la etiqueta del hold"
+fi
+# La etiqueta del hold no puede ser la misma que la del issue que espera turno
+# de la cola: son dos situaciones distintas en la misma columna.
+if [ "$(grep -c 'status_label="espera/hold"' "$PARALLEL_SCRIPT")" -eq 1 ] \
+    && grep -q '"#\$issue" "en espera" "-"' "$PARALLEL_SCRIPT"; then
+    pass "la etiqueta del hold es distinta de la del issue que espera turno ('en espera')"
+else
+    fail "no se pudo confirmar que las dos esperas tengan etiquetas distintas"
+fi
+
+echo ""
+echo "[15] CA-1/CA-5: batch-pipeline.sh anota la espera sin tocar FAILED/HAVE_ERRORS/STOP_ON_ERROR ni el exit code"
+HELD_BLOCK=$(awk '/ISSUE_HOLD_SECONDS=\$\(hold_seconds_in_range/{p=1} p{print} p && /^    fi$/{exit}' "$BATCH_SCRIPT")
+if [ -n "$HELD_BLOCK" ]; then
+    pass "se extrajo el bloque de contabilidad de hold de batch-pipeline.sh"
+else
+    fail "no se pudo extraer el bloque de contabilidad de hold de batch-pipeline.sh"
+fi
+HELD_BLOCK_CODE=$(echo "$HELD_BLOCK" | grep -vE '^[[:space:]]*#')
+if echo "$HELD_BLOCK_CODE" | grep -qE 'FAILED|HAVE_ERRORS|STOP_ON_ERROR|\bexit\b'; then
+    fail "el bloque de contabilidad de hold no deberia referenciar FAILED/HAVE_ERRORS/STOP_ON_ERROR/exit"
+else
+    pass "el bloque de contabilidad de hold es puramente informativo (CA-1/CA-5)"
+fi
+if grep -q 'set_status "\$ISSUE_NUM" "completado (PR #\$PR_NUM mergeado)\$ISSUE_HELD_NOTE"' "$BATCH_SCRIPT"; then
+    pass "la nota de espera se anexa al estado 'completado', sin reemplazarlo (CA-2)"
+else
+    fail "no se encontro la nota de espera en el estado 'completado'"
+fi
+# Un eslabon puede esperar horas y fallar igual al agotar el techo: la nota
+# tiene que llegar tambien a los desenlaces fallidos, sin volverlos otra cosa.
+FAIL_LINES=$(grep -c 'fail_issue "\$ISSUE_NUM" .*\$ISSUE_HELD_NOTE"' "$BATCH_SCRIPT")
+FAIL_TOTAL=$(grep -c 'fail_issue "\$ISSUE_NUM"' "$BATCH_SCRIPT")
+if [ "$FAIL_LINES" -eq "$FAIL_TOTAL" ] && [ "$FAIL_TOTAL" -gt 0 ]; then
+    pass "los $FAIL_TOTAL desenlaces fallidos del eslabon llevan la nota de espera"
+else
+    fail "solo $FAIL_LINES de $FAIL_TOTAL fail_issue llevan la nota de espera"
+fi
+if grep -q 'BATCH_TOTAL_HOLD_SECONDS=$(( BATCH_TOTAL_HOLD_SECONDS + ISSUE_HOLD_SECONDS ))' "$BATCH_SCRIPT" \
+    && grep -q 'En espera (hold) durante el batch' "$BATCH_SCRIPT"; then
+    pass "el resumen final reporta el tiempo total en espera del batch"
+else
+    fail "el resumen final no reporta el tiempo total en espera del batch"
+fi
+
+echo ""
+echo "----------------------------------------"
+echo "  Resumen: $PASS pass, $FAIL fail"
+echo "----------------------------------------"
+
+if [ "$FAIL" -gt 0 ]; then
+    exit 1
+fi
+exit 0

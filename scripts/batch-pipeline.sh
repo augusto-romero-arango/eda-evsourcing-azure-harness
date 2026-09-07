@@ -211,6 +211,31 @@ mkdir -p "$LOG_DIR"
 LOG_FILE_ABS="$REPO_ROOT/$LOG_FILE"
 touch "$LOG_FILE_ABS"
 
+# events.log del checkout (issue #973): el MISMO archivo que tdd-pipeline.sh/
+# tooling-pipeline.sh/iac-pipeline.sh escriben, uno solo para todas las
+# corridas lanzadas desde aqui (lo resuelven contra este cwd, no contra el
+# worktree del issue). Este orquestador ya hereda gratis CA-1/CA-5: mientras
+# el stage esta en hold, el pipeline invocado abajo sigue bloqueado en su
+# propio sleep, sin devolver el control con exit != 0, asi que una espera no
+# incrementa FAILED, no dispara --stop-on-error y no cambia el exit code.
+#
+# Reparto del reporte de espera (mismo que el homologo interno, issue #969):
+#   - EN VIVO, mientras el eslabon espera: la linea la emite el propio
+#     eslabon ("... en espera (hold), ...", issue #971) y llega a este pane
+#     por el `tee` de mas abajo; en paralelo /work-status la lee de este mismo
+#     events.log y renderiza "EN ESPERA" con causa y hora de sonda (CA-2/CA-4).
+#     El batch no la duplica: mientras el eslabon corre esta bloqueado en el `tee`.
+#   - AL CERRAR el eslabon: este script anota cuanto se espero, como nota
+#     ANEXA al desenlace real -- nunca como fallo (CA-1).
+EVENTS_LOG_ABS="$REPO_ROOT/$PIPELINE_DIR/events.log"
+mkdir -p "$(dirname "$EVENTS_LOG_ABS")"
+touch "$EVENTS_LOG_ABS"
+
+# Tiempo total en espera (hold) de todo el batch: contador puramente
+# informativo, nunca leido en la logica de HAVE_ERRORS/FAILED/--stop-on-error
+# (CA-1/CA-5).
+BATCH_TOTAL_HOLD_SECONDS=0
+
 # Inicializar status tracker
 for issue in "${ISSUE_NUMS[@]}"; do
     set_status "$issue" "pendiente"
@@ -288,14 +313,34 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
     ISSUE_LOG="$REPO_ROOT/$LOG_DIR/batch-issue-${ISSUE_NUM}-${TIMESTAMP}.log"
     touch "$ISSUE_LOG"
 
+    # Marca de arranque para el reporte de hold de este eslabon (issue #973):
+    # hold_seconds_in_range solo cuenta desde aqui, y ademas atribuye por
+    # cabecera de sesion (tercer argumento) -- con el numero de linea solo,
+    # otra corrida del mismo checkout intercalada en el mismo events.log le
+    # regalaria sus esperas a este eslabon.
+    HOLD_LINE_START=$(wc -l < "$EVENTS_LOG_ABS" 2>/dev/null | tr -d ' ')
+    [ -z "$HOLD_LINE_START" ] && HOLD_LINE_START=0
+
     PIPELINE_EXIT=0
     "$PIPELINE_SCRIPT" "$ISSUE_NUM" 2>&1 | tee "$ISSUE_LOG" || PIPELINE_EXIT=$?
 
     # Agregar el log del issue al log general
     cat "$ISSUE_LOG" | _strip_ansi >> "$LOG_FILE_ABS"
 
+    # Segundos en espera (hold) durante ESTE eslabon (issue #973): se anotan
+    # como nota ANEXA a cualquier desenlace -- completado o fallido -- porque
+    # un eslabon puede haber esperado horas y fallar igual al agotar el techo
+    # de espera, y ese tiempo explica su reloj. Nunca cambia
+    # FAILED/HAVE_ERRORS/--stop-on-error ni el exit code (CA-1/CA-5).
+    ISSUE_HOLD_SECONDS=$(hold_seconds_in_range "$EVENTS_LOG_ABS" "$HOLD_LINE_START" "$ISSUE_NUM")
+    ISSUE_HELD_NOTE="$(hold_note_suffix "$ISSUE_HOLD_SECONDS")"
+    if [ "$ISSUE_HOLD_SECONDS" -gt 0 ]; then
+        BATCH_TOTAL_HOLD_SECONDS=$(( BATCH_TOTAL_HOLD_SECONDS + ISSUE_HOLD_SECONDS ))
+        log "Issue #$ISSUE_NUM: $(fmt_hold_duration "$ISSUE_HOLD_SECONDS") en espera (hold) durante este eslabon -- no cuenta como fallo"
+    fi
+
     if [ "$PIPELINE_EXIT" -ne 0 ]; then
-        fail_issue "$ISSUE_NUM" "pipeline fallo (exit $PIPELINE_EXIT). Log: $ISSUE_LOG"
+        fail_issue "$ISSUE_NUM" "pipeline fallo (exit $PIPELINE_EXIT). Log: $ISSUE_LOG$ISSUE_HELD_NOTE"
         FAILED=$((FAILED + 1))
         if [ "$STOP_ON_ERROR" = true ]; then
             abort "Detenido por --stop-on-error en issue #$ISSUE_NUM"
@@ -312,7 +357,7 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
         | head -1)
 
     if [ -z "$PR_URL" ]; then
-        fail_issue "$ISSUE_NUM" "no se pudo extraer la URL del PR del output. Log: $ISSUE_LOG"
+        fail_issue "$ISSUE_NUM" "no se pudo extraer la URL del PR del output. Log: $ISSUE_LOG$ISSUE_HELD_NOTE"
         FAILED=$((FAILED + 1))
         if [ "$STOP_ON_ERROR" = true ]; then
             abort "Detenido por --stop-on-error en issue #$ISSUE_NUM"
@@ -333,7 +378,7 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
     cat "$ISSUE_LOG" | _strip_ansi >> "$LOG_FILE_ABS"
 
     if [ "$SYNC_EXIT" -ne 0 ]; then
-        fail_issue "$ISSUE_NUM" "merge del PR #$PR_NUM falló (exit $SYNC_EXIT). Log: $ISSUE_LOG"
+        fail_issue "$ISSUE_NUM" "merge del PR #$PR_NUM falló (exit $SYNC_EXIT). Log: $ISSUE_LOG$ISSUE_HELD_NOTE"
         FAILED=$((FAILED + 1))
         if [ "$STOP_ON_ERROR" = true ]; then
             abort "Detenido por --stop-on-error en issue #$ISSUE_NUM"
@@ -345,9 +390,9 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
     log "Actualizando main local..."
     git pull origin main >>"$LOG_FILE_ABS" 2>&1 || warn "git pull origin main falló (continuando)"
 
-    set_status "$ISSUE_NUM" "completado (PR #$PR_NUM mergeado)"
+    set_status "$ISSUE_NUM" "completado (PR #$PR_NUM mergeado)$ISSUE_HELD_NOTE"
     COMPLETED=$((COMPLETED + 1))
-    success "Issue #$ISSUE_NUM completado y mergeado"
+    success "Issue #$ISSUE_NUM completado y mergeado$ISSUE_HELD_NOTE"
 
     # Parada suave, momento 2 (CA-1): el unico punto seguro de la cadena -- el
     # PR ya esta mergeado. Un eslabon fallido (pipeline/PR/merge) nunca llega
@@ -395,6 +440,11 @@ DEFERRED=${#DEFERRED_NUMS[@]}
 echo ""
 echo -e "  Total: $TOTAL  |  ${GREEN}Completados: $COMPLETED${NC}  |  ${RED}Fallidos: $FAILED${NC}  |  ${YELLOW}Aplazados: $DEFERRED${NC}"
 echo -e "  Log: $LOG_FILE_ABS"
+# Tiempo total en espera (issue #973): informativo, aparte del recuento de
+# desenlaces -- una espera nunca es un fallo ni un aplazado.
+if [ "$BATCH_TOTAL_HOLD_SECONDS" -gt 0 ]; then
+    echo -e "  ${YELLOW}En espera (hold) durante el batch: $(fmt_hold_duration "$BATCH_TOTAL_HOLD_SECONDS")${NC} -- por limite de uso o caida del proveedor, no cuenta como fallo"
+fi
 echo ""
 
 if [ "$DEFERRED" -gt 0 ]; then

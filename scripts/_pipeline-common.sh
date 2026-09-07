@@ -1226,6 +1226,226 @@ CONTEXTO DE EJECUCION (sigue vigente): modo no-interactivo, sin humano al otro l
 RESUME_PROMPT_EOF
 }
 
+# --- Espera (hold) vista desde los orquestadores con cola (issue #973) --------
+#
+# batch-pipeline.sh y parallel-pipeline.sh envuelven a tdd-pipeline.sh/
+# tooling-pipeline.sh/iac-pipeline.sh, que ya implementan la politica de
+# espera (agent_hold_wait, issue #971): mientras un stage esta en hold, el
+# pipeline que lo contiene esta bloqueado en un sleep, sin salir con exit !=
+# 0 -- por eso los dos orquestadores ya heredan gratis el CA-1/CA-5 de #973
+# (una espera no incrementa FAILED, no dispara --stop-on-error y no cambia el
+# exit code final).
+#
+# Lo que NO viene gratis son dos cosas:
+#   - La VISIBILIDAD de la espera sin bloquearse: parallel-pipeline.sh corre
+#     varios worktrees a la vez y necesita saber si HAY una espera activa
+#     ahora mismo, para no lanzar mas issues de la cola (CA-3) y para
+#     reflejarlo en su dashboard (CA-2) -- hold_recently_active/
+#     format_hold_status.
+#   - La CONTABILIDAD de lo esperado al cerrar un eslabon: batch-pipeline.sh
+#     esta bloqueado en el `tee` del eslabon mientras este espera (la senal en
+#     vivo la emite el propio eslabon, issue #971, y /work-status la lee de
+#     events.log, CA-4), asi que solo puede anotar cuanto se espero al cerrar
+#     -- hold_seconds_in_range/hold_note_suffix, nota ANEXA al desenlace real,
+#     nunca un fallo nuevo (CA-1).
+#
+# Vocabulario y mecanica deliberadamente identicos a los del homologo interno
+# (`src/internal/scripts/mefisto-batch-pipeline.sh`, issue #969): la doctrina
+# de MEF-ADR-0051 rige los dos lados de MEF-ADR-0019 y divergir en la frase o
+# en el criterio seria duplicarla.
+#
+# events.log es UN SOLO archivo compartido por checkout (no por worktree):
+# tdd/tooling/iac-pipeline.sh lo resuelven contra el cwd desde el que los
+# lanza el orquestador (<repo>/.claude/pipeline/events.log), nunca contra el
+# worktree del issue. De ahi los dos ejes de acotamiento que estas funciones
+# aceptan: el numero de linea ya presente cuando arranco el consumidor (que
+# descarta corridas anteriores) y, para la contabilidad por eslabon, la
+# cabecera "SESSION ... issue:<N>" que abre cada corrida (la UNICA marca del
+# archivo que nombra el issue). Sin el segundo eje, otra corrida del mismo
+# checkout le regalaria sus esperas al eslabon en curso.
+
+# _pc_epoch_at <YYYY-MM-DD> <HH:MM:SS>
+#
+# Epoch de esa fecha y hora local. BSD/macOS primero (`date -j -f`), GNU como
+# fallback (`date -d`); retorna 1 sin imprimir nada si ninguna lo puede leer.
+_pc_epoch_at() {
+    date -j -f "%Y-%m-%d %H:%M:%S" "$1 $2" +%s 2>/dev/null \
+        || date -d "$1 $2" +%s 2>/dev/null \
+        || return 1
+}
+
+# hold_line_window <linea_de_hold>
+#
+# Traduce las dos horas que trae una linea de anuncio de hold
+# ("[HH:MM:SS][hold] <FAMILIA>: esperando, proxima sonda HH:MM:SS (techo
+# HH:MM)", formato fijado por agent_hold_wait) a dos epochs absolutos, y los
+# imprime separados por un espacio: "<inicio> <proxima_sonda>".
+#
+# events.log guarda hora del dia sin fecha, asi que los epochs se
+# reconstruyen contra el reloj actual con dos correcciones -- sin ellas una
+# corrida que cruza medianoche y una linea vieja de OTRO dia se leen igual de
+# mal:
+#   1. sonda < inicio -> el ciclo cruzo medianoche: la sonda es del dia
+#      siguiente al del anuncio.
+#   2. inicio > ahora -> el anuncio no puede ser de hoy (una siesta empieza
+#      siempre en el pasado): la linea es de ayer y se corren AMBOS epochs un
+#      dia atras. Esto es lo que evita el falso positivo caro: sin la
+#      correccion, un events.log cuyo ultimo hold es de ayer 18:00 con sonda
+#      18:05 se leeria como espera activa hasta las 18:05 de HOY, y
+#      parallel-pipeline.sh se negaria a lanzar la cola durante horas por una
+#      espera que ya no existe.
+#
+# Retorna 1 sin imprimir nada si la linea no trae las dos horas o si `date`
+# no las puede leer.
+hold_line_window() {
+    local line="$1"
+    local start_hms probe_hms
+    start_hms=$(printf '%s' "$line" | sed -nE 's/^\[([0-9]{2}:[0-9]{2}:[0-9]{2})\]\[hold\] .*/\1/p')
+    probe_hms=$(printf '%s' "$line" | sed -nE 's/.*proxima sonda ([0-9]{2}:[0-9]{2}:[0-9]{2}).*/\1/p')
+    [ -n "$start_hms" ] && [ -n "$probe_hms" ] || return 1
+
+    local today start_epoch probe_epoch now_epoch
+    today="$(date +%Y-%m-%d)"
+    start_epoch=$(_pc_epoch_at "$today" "$start_hms") || return 1
+    probe_epoch=$(_pc_epoch_at "$today" "$probe_hms") || return 1
+    [ "$probe_epoch" -lt "$start_epoch" ] && probe_epoch=$(( probe_epoch + 86400 ))
+
+    now_epoch=$(date +%s)
+    if [ "$start_epoch" -gt "$now_epoch" ]; then
+        start_epoch=$(( start_epoch - 86400 ))
+        probe_epoch=$(( probe_epoch - 86400 ))
+    fi
+
+    echo "$start_epoch $probe_epoch"
+}
+
+# last_hold_line <events_log> [from_line]
+#
+# Imprime la ULTIMA linea de ANUNCIO de hold de <events_log>, considerando
+# solo lo escrito despues de <from_line> (default 0 = todo el archivo). Vacio
+# si no hay ninguna.
+#
+# Deliberadamente NO considera las lineas "[hold][resume]" (sub-eventos de la
+# reanudacion de sesion DENTRO de un ciclo ya anunciado, issue #972): no
+# matchean ni el `][hold] ` con espacio final ni el "esperando, proxima
+# sonda" que solo escribe agent_hold_wait.
+last_hold_line() {
+    local events_log="$1" from_line="${2:-0}"
+    [ -f "$events_log" ] || return 1
+
+    tail -n "+$(( from_line + 1 ))" "$events_log" 2>/dev/null \
+        | grep -F '][hold] ' \
+        | grep -F 'esperando, proxima sonda' \
+        | tail -n1
+}
+
+# hold_recently_active <events_log> [from_line]
+#
+# Retorna 0 si hay una espera activa AHORA MISMO en <events_log>: existe una
+# linea de anuncio de hold (desde <from_line>+1) cuya proxima sonda todavia no
+# llego. Retorna 1 si no hay ninguna, si la ultima ya paso su hora de sonda
+# (se resolvio o se agoto el techo) o si el reloj no se pudo parsear.
+#
+# Nunca aborta: toda falla de parseo degrada a "no hay espera activa".
+hold_recently_active() {
+    local events_log="$1" from_line="${2:-0}"
+
+    local line window probe_epoch now_epoch
+    line=$(last_hold_line "$events_log" "$from_line") || return 1
+    [ -n "$line" ] || return 1
+
+    window=$(hold_line_window "$line") || return 1
+    probe_epoch="${window##* }"
+    now_epoch=$(date +%s)
+
+    [ "$now_epoch" -lt "$probe_epoch" ]
+}
+
+# format_hold_status <events_log> [from_line]
+#
+# Si hay una espera activa, imprime la ultima linea de anuncio sin su
+# timestamp ni corchetes -- p. ej. "RATE_LIMIT: esperando, proxima sonda
+# 14:37:07 (techo 20:32)" -- lista para el dashboard de parallel-pipeline.sh
+# (CA-2) y para /work-status (CA-4). Sin espera activa no imprime nada y
+# retorna 1.
+format_hold_status() {
+    local events_log="$1" from_line="${2:-0}"
+    hold_recently_active "$events_log" "$from_line" || return 1
+
+    last_hold_line "$events_log" "$from_line" | sed -E 's/^\[[0-9:]+\]\[hold\] //'
+}
+
+# fmt_hold_duration <segundos>
+#
+# "Xm Ys" a partir de segundos enteros. Mismo formato con el que el propio
+# eslabon reporta su hold (tdd/tooling/iac-pipeline.sh, issue #971), para que
+# el numero se lea igual en el log del eslabon y en el resumen del batch.
+fmt_hold_duration() {
+    local secs="${1:-0}"
+    echo "$(( secs / 60 ))m $(( secs % 60 ))s"
+}
+
+# hold_seconds_in_range <events_log> <from_line> [<issue>]
+#
+# Suma los segundos en espera (hold) registrados en <events_log> desde la
+# linea <from_line>+1 hasta EOF. Cada linea de anuncio trae, en su propio
+# texto, la hora en que empezo esa siesta y la hora de su proxima sonda: la
+# diferencia ES la duracion de ese ciclo, sin necesidad de acceso al proceso
+# del sub-pipeline (que ya termino cuando el orquestador invoca esto).
+#
+# Con <issue> dado, solo cuentan las lineas que caen bajo una cabecera
+# "... SESSION ... issue:<issue> ..." -- la unica marca de events.log que
+# nombra el issue (las lineas de hold y de stage no lo llevan). Sin <issue>
+# cuenta todo el rango. Una cabecera sin numero (tdd-pipeline.sh en modo
+# --file imprime "issue:file") cierra la atribucion en vez de heredar la
+# anterior.
+#
+# Imprime el total en segundos; 0 si <events_log> no existe o no hay lineas
+# atribuibles en el rango. Nunca aborta.
+hold_seconds_in_range() {
+    local events_log="$1" from_line="$2" want_issue="${3:-}"
+    [ -f "$events_log" ] || { echo 0; return 0; }
+
+    local total=0 line window session_issue=""
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        if [[ "$line" == *"SESSION "* ]]; then
+            if [[ "$line" =~ issue:([0-9]+) ]]; then
+                session_issue="${BASH_REMATCH[1]}"
+            else
+                session_issue=""
+            fi
+            continue
+        fi
+        if [ -n "$want_issue" ] && [ "$session_issue" != "$want_issue" ]; then
+            continue
+        fi
+        case "$line" in
+            *'][hold] '*'esperando, proxima sonda'*) ;;
+            *) continue ;;
+        esac
+        window=$(hold_line_window "$line") || continue
+        total=$(( total + ${window##* } - ${window%% *} ))
+    done < <(tail -n "+$(( from_line + 1 ))" "$events_log" 2>/dev/null)
+
+    echo "$total"
+}
+
+# hold_note_suffix <segundos>
+#
+# " (incluye Xm Ys en espera/hold)" si <segundos> > 0, cadena vacia si no --
+# mismo vocabulario que el homologo interno (issue #969) y que el reporte de
+# hold del propio eslabon. Listo para concatenar al final de un mensaje de
+# set_status/fail_issue sin alterar su prefijo ("completado"/"ERROR:"): CA-1
+# exige que una espera nunca convierta un desenlace real en fallo ni
+# viceversa, asi que esto es siempre una nota ANEXA. Retorna 0 siempre (los
+# callers corren bajo `set -e` y la asignan en una substitucion).
+hold_note_suffix() {
+    local secs="${1:-0}"
+    [ "$secs" -gt 0 ] && echo " (incluye $(fmt_hold_duration "$secs") en espera/hold)"
+    return 0
+}
+
 # --- Helpers de naming de Azure Storage Account (tfstate backend) -------------
 #
 # El nombre de una Storage Account es un endpoint DNS publico
