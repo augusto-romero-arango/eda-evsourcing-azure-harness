@@ -11,10 +11,14 @@ capas: validacion de entrada, precondiciones de orquestacion, reglas de negocio 
 aggregate, y fallos de infraestructura. Cada capa tiene diferentes necesidades de
 retroalimentacion y diferentes consumidores del error.
 
-Adicionalmente, el sistema es eventual: un endpoint HTTP no espera el resultado completo
-del procesamiento de dominio — los efectos downstream son asincronos. Y los handlers
-que reaccionan a eventos de ServiceBus tienen consumidores downstream que esperan una
-respuesta (de exito o de fallo) para continuar sus propios flujos.
+Adicionalmente, el sistema tiene dos tiempos distintos. El procesamiento primario que el
+cliente solicita puede completar durante la invocacion HTTP: el endpoint espera
+`ICommandRouter.InvokeAsync(comando)` y el `UnitOfWorkMiddleware` hace el append y
+`SaveChangesAsync` antes de que el router retorne. Las proyecciones `Async` de Marten y
+los efectos que cruzan Service Bus son posteriores y eventuales; no vuelven asincrono el
+commit durable del write-side. Los handlers que reaccionan a eventos de ServiceBus tienen
+consumidores downstream que esperan una respuesta (de exito o de fallo) para continuar sus
+propios flujos.
 
 La decision de como manejar errores en cada capa impacta el diseno de aggregates, handlers,
 tests y la comunicacion entre dominios.
@@ -85,11 +89,26 @@ de ServiceBus donde se hace dead letter explicito.
 
 ### Respuestas HTTP
 
-El endpoint HTTP responde con la aceptacion de la solicitud, no con el resultado del
-procesamiento de dominio, salvo cuando el handler declina la precondicion de orquestacion
-(seccion 2):
+El criterio de exito es decidible: **al responder, termino y quedo durable el cambio
+primario que solicito el endpoint?** Si si, el endpoint devuelve el codigo de exito
+sincrono que corresponde a la operacion. La materializacion posterior de una proyeccion
+`Async` o la publicacion y consumo downstream por Service Bus no cambia esa respuesta: son
+efectos posteriores al commit del write-side. Si no, porque el endpoint solo publico o
+encolo trabajo cuyo cambio primario ocurrira despues, devuelve `202 Accepted` y documenta
+explicitamente cual procesamiento queda pendiente.
 
-- 202 Accepted — comando aceptado, efectos downstream son asincronos
+| Operacion completada y durable antes de responder | Respuesta | Condicion adicional |
+| --- | --- | --- |
+| `POST` crea una entidad | `201 Created` | Incluye `Location` hacia la URI canonica de lectura cuando existe. Una proyeccion `Async` puede hacer que esa URI responda temporalmente `404`; el read-side debe probarla con polling. |
+| `PUT` reemplaza una representacion existente | `204 No Content` | Este es el caso canonico del marco: reemplazar un slot existente. |
+| `PUT` crea una representacion antes inexistente | `201 Created` | RFC 9110 §9.3.4 exige informar la creacion. |
+| `DELETE` ejecutado | `204 No Content` | Solo cubre el camino de exito completado; el estado ya alcanzado es alcance de #850. |
+| Accion `POST` sin representacion de respuesta | `204 No Content` | El cambio primario ya quedo durable. |
+| Accion que devuelve una representacion | `200 OK` | La representacion forma parte de la respuesta. |
+| Procesamiento primario diferido | `202 Accepted` | El issue justifica que trabajo queda pendiente y por que no completo antes de responder. |
+
+Los errores y precondiciones conservan su mapeo:
+
 - 400 BadRequest — validacion de estructura (IRequestValidator)
 - 404 NotFound — el handler lanzo `RecursoNoEncontradoException`
 - 409 Conflict — el handler lanzo `RecursoYaExisteException`
@@ -117,22 +136,24 @@ infraestructura nunca se disfrace de conflicto de negocio.
 
 ### No se adopta Result Pattern
 
-No es necesario entre Handler y Endpoint porque el HTTP siempre responde 202 si paso la
-validacion. El IRequestValidator ya resuelve la validacion con una tupla simple. Las
-excepciones tipadas de precondicion (seccion 2) no reabren esta decision: siguen siendo
-*excepciones*, no un tipo de retorno `Result<T>` — el handler declina lanzando, el endpoint
-traduce por tipo en el catch; no se introduce un canal de retorno adicional entre ambos.
+No es necesario entre Handler y Endpoint porque el endpoint elige el resultado HTTP despues
+de que el router retorna y segun el cambio primario que el contrato del comando completo.
+El IRequestValidator ya resuelve la validacion con una tupla simple. Las excepciones tipadas
+de precondicion (seccion 2) no reabren esta decision: siguen siendo *excepciones*, no un tipo
+de retorno `Result<T>` — el handler declina lanzando, el endpoint traduce por tipo en el
+catch; no se introduce un canal de retorno adicional entre ambos.
 
 ### Regimen de migracion
 
 Esta doctrina rige el codigo **nuevo**: todo command handler y endpoint que se escriba o
-reescriba a partir de esta enmienda lanza/captura las excepciones tipadas de la seccion 2.
-Los handlers, endpoints y tests **preexistentes** que ya lanzaban/capturaban
-`InvalidOperationException` no se migran de oficio — sus suites siguen en verde porque su
-codigo sigue lanzando el tipo generico, y cada consumidor decide su propio ritmo de
-migracion (mismo precedente de MEF-ADR-0043 seccion 7, "Aplicabilidad: solo endpoints
-nuevos"). Sugerir la migracion de un handler viejo es legitimo pero siempre discutido con el
-humano, nunca automatico ni bloqueante de un PR no relacionado.
+reescriba a partir de esta enmienda lanza/captura las excepciones tipadas de la seccion 2 y
+elige el status de exito con la tabla anterior. Los handlers, endpoints y tests
+**preexistentes** que ya lanzaban/capturaban `InvalidOperationException` no se migran de
+oficio — sus suites siguen en verde porque su codigo sigue lanzando el tipo generico, y cada
+consumidor decide su propio ritmo de migracion (mismo precedente de MEF-ADR-0043 seccion 7,
+"Aplicabilidad: solo endpoints nuevos"). Cambiar el status de un endpoint preexistente exige
+un issue de refactor del consumidor con inventario de endpoints afectados y aviso a sus
+clientes integrados; nunca es automatico ni bloqueante de un PR no relacionado.
 
 ## Consecuencias
 
@@ -174,9 +195,32 @@ humano, nunca automatico ni bloqueante de un PR no relacionado.
   migracion que adopta la seccion "Regimen de migracion" de esta enmienda.
 - MEF-ADR-0009 (patron de mensajes `.resx` per-aggregate): el mensaje de las excepciones
   tipadas de la capa 2 sigue su convencion sin cambio de doctrina propia.
+- RFC 9110, "HTTP Semantics" — IETF: §9.3.3 (POST), §9.3.4 (PUT) y §9.3.5 (DELETE) fijan la
+  semantica de los metodos; §§15.3.2 (`201 Created`), 15.3.3 (`202 Accepted`) y 15.3.5
+  (`204 No Content`) fijan los codigos de exito. https://www.rfc-editor.org/rfc/rfc9110.html
+- `Cosmos.EventSourcing.CritterStack` 2.3.1, inspeccionado por decompilacion: la invocacion
+  `ICommandRouter.InvokeAsync` completa el handler y el middleware transaccional de Marten
+  (append y `SaveChangesAsync`) antes de retornar al endpoint.
+- Evidencia de campo, Bitakora.ControlAsistencia (issue #620, 2026-09-05): 29 endpoints de
+  comando respondian `AcceptedResult` pese a confirmar la transaccion antes de responder;
+  sus smoke tests consecutivos POST+POST y POST+DELETE observan esa durabilidad inmediata.
+- MEF-ADR-0034, seccion 3: una proyeccion `Async` se materializa fuera de la transaccion del
+  write-side; su consistencia eventual no cambia el commit primario.
 
 ## Control de cambios
 
+- 2026-09-07: enmienda (issue #849). Corrige el falso `202 Accepted` universal: el criterio
+  de exito pregunta si el cambio primario solicitado quedo durable antes de responder, no si
+  existen proyecciones `Async` o efectos posteriores por Service Bus. Agrega la tabla de
+  respuestas sincrona (`201 Created` con `Location` para creacion, `204 No Content` para
+  reemplazo, delete o accion sin representacion, `200 OK` para accion que la devuelve), el
+  caso `PUT` que crea una representacion inexistente (`201`), y restringe `202` al
+  procesamiento primario diferido con justificacion explicita. Conserva 400/404/409/500 y la
+  decision de no usar `Result<T>` por su razon real. La migracion rige endpoints nuevos;
+  cambiar statuses existentes exige un issue de refactor con inventario y aviso a clientes.
+  Cita RFC 9110 §§9.3.3, 9.3.4, 9.3.5, 15.3.2, 15.3.3 y 15.3.5, la decompilacion de
+  `Cosmos.EventSourcing.CritterStack` 2.3.1 y la evidencia de campo de
+  Bitakora.ControlAsistencia.
 - 2026-09-01: enmienda (issue #805). La seccion 2 ("Precondiciones de orquestacion")
   reemplaza `InvalidOperationException` generica por la jerarquia tipada
   `PrecondicionComandoException` (base abstracta, scaffoldeada en el consumidor) con
