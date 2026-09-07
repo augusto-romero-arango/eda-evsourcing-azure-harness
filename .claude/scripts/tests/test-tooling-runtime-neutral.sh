@@ -29,16 +29,9 @@
 #   (c) [D] MEFISTO_RUNTIME=opencode, fallo terminal del writer en Stage 1 --
 #       el CLI falso reproduce fixtures/runtime-opencode/empty-1.18.29.jsonl
 #       (stream vacio, fixture congelado) y sale con exit 1, sin resumen.
-#   (d) [E] Modelo heredado: sin .mefisto/models.json ni --models, la linea de
-#       comando capturada del CLI falso para el reviewer (perfil deep) no
-#       trae --model ni -m en NINGUNO de los dos runtimes (se verifica sobre
-#       las capturas de (a) y (b): adapter_claude_default_model y
-#       adapter_opencode_default_model dejan cadena vacia = heredar para
-#       "deep", asi que una corrida extra no aportaria nada nuevo). Con
-#       control positivo: el writer (perfil balanced) bajo claude SI recibe
-#       `--model <no vacio>` (balanced -> sonnet en la tabla del adaptador),
-#       lo que demuestra que el stub captura el flag cuando el runner lo
-#       emite -- la ausencia en el reviewer es herencia, no ceguera del stub.
+#   (d) [E] Defaults: sin .mefisto/models.json ni --models, OpenCode recibe
+#       Terra para writer y Sol para reviewer; Claude conserva sonnet para
+#       writer y herencia para reviewer deep.
 #   (e) [F] Gate de neutralidad (issue #914): MEFISTO_RUNTIME=claude, el CLI
 #       falso del writer introduce ademas una fuga real -- un archivo nuevo
 #       src/internal/agents/fx-leak.md con `"model": "sonnet"` en el
@@ -510,27 +503,31 @@ else
 fi
 
 # ============================================================================
-# [E] Escenario (d): modelo heredado -- el reviewer (perfil deep) nunca ve
-# --model ni -m, en ninguno de los dos runtimes (MEF-ADR-0049 decision 4).
-# Se reutilizan las capturas de (a) y (b): sin .mefisto/models.json ni
-# --models, el perfil deep resuelve a cadena vacia (= heredar) tanto en
-# adapter_claude_default_model como en adapter_opencode_default_model.
-# Control positivo: el writer (perfil balanced) bajo claude SI recibe
-# --model <no vacio> -- demuestra que el stub ve el flag cuando el runner lo
-# emite, asi que su ausencia en el reviewer es herencia y no ceguera.
+# [E] Escenario (d): sin mapping local ni --models se aplican las tablas de
+# cada adaptador. Claude deep hereda; OpenCode usa Terra/Sol para los stages.
 # ============================================================================
 
 echo ""
-echo "[E] Escenario (d): modelo heredado -- el reviewer nunca ve --model ni -m (CA-1)"
+echo "[E] Escenario (d): defaults de modelo por runtime y perfil (CA-1)"
 
 if [ -n "$B_REVIEWER_CALL" ]; then
-    if _argv_has_no_model_flag "$B_REVIEWER_CALL"; then
-        pass "E-1: opencode -- la linea de comando del reviewer (perfil deep) no contiene -m ni --model ni flags vacios"
+    if _argv_has_flag_value "$B_REVIEWER_CALL" -m openai/gpt-5.6-sol; then
+        pass "E-1: opencode -- reviewer deep usa '-m openai/gpt-5.6-sol'"
     else
-        fail "E-1: opencode -- la linea de comando del reviewer SI trae -m/--model o un flag vacio: $(cat "$B_REVIEWER_CALL")"
+        fail "E-1: opencode -- reviewer deep no uso el default Sol: $(cat "$B_REVIEWER_CALL")"
     fi
 else
     fail "E-1: no se pudo localizar la invocacion del reviewer de la corrida (b)"
+fi
+
+if [ -n "$B_WRITER_CALL" ]; then
+    if _argv_has_flag_value "$B_WRITER_CALL" -m openai/gpt-5.6-terra; then
+        pass "E-2: opencode -- writer balanced usa '-m openai/gpt-5.6-terra'"
+    else
+        fail "E-2: opencode -- writer balanced no uso el default Terra: $(cat "$B_WRITER_CALL")"
+    fi
+else
+    fail "E-2: no se pudo localizar la invocacion del writer de la corrida (b)"
 fi
 
 # En claude el agente no viaja como flag: se ubica cada stage por el archivo
@@ -539,23 +536,23 @@ A_WRITER_CALL="$(_find_call "$A_CAP" claude stage-1-writer.md || true)"
 A_REVIEWER_CALL="$(_find_call "$A_CAP" claude stage-2-reviewer.md || true)"
 if [ -n "$A_REVIEWER_CALL" ]; then
     if _argv_has_no_model_flag "$A_REVIEWER_CALL"; then
-        pass "E-2: claude -- la linea de comando del reviewer (perfil deep) no contiene --model ni -m ni flags vacios"
+        pass "E-3: claude -- la linea de comando del reviewer (perfil deep) no contiene --model ni -m ni flags vacios"
     else
-        fail "E-2: claude -- la linea de comando del reviewer SI trae --model/-m o un flag vacio: $(cat "$A_REVIEWER_CALL")"
+        fail "E-3: claude -- la linea de comando del reviewer SI trae --model/-m o un flag vacio: $(cat "$A_REVIEWER_CALL")"
     fi
 else
-    fail "E-2: no se pudo localizar la invocacion del reviewer de la corrida (a)"
+    fail "E-3: no se pudo localizar la invocacion del reviewer de la corrida (a)"
 fi
 
 if [ -n "$A_WRITER_CALL" ]; then
     A_WR_MODEL="$(jq -r '(index("--model")) as $i | if $i == null then "" else .[$i+1] // "" end' "$A_WRITER_CALL" 2>/dev/null)"
     if [ -n "$A_WR_MODEL" ]; then
-        pass "E-3: control positivo -- claude writer (perfil balanced) SI recibe '--model $A_WR_MODEL' (el stub captura el flag cuando el runner lo emite)"
+        pass "E-4: control positivo -- claude writer (perfil balanced) SI recibe '--model $A_WR_MODEL'"
     else
-        fail "E-3: control positivo -- claude writer (perfil balanced) deberia recibir --model <no vacio>: $(cat "$A_WRITER_CALL")"
+        fail "E-4: claude writer (perfil balanced) deberia recibir --model <no vacio>: $(cat "$A_WRITER_CALL")"
     fi
 else
-    fail "E-3: no se pudo localizar la invocacion del writer de la corrida (a)"
+    fail "E-4: no se pudo localizar la invocacion del writer de la corrida (a)"
 fi
 
 

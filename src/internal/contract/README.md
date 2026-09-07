@@ -137,7 +137,7 @@ adaptador por runtime en `src/internal/scripts/lib/adapter-{claude,opencode}.sh`
 | `skills` | `skills` (MEF-ADR-0033) | -- |
 | `agent` (comando) | -- (lo resuelve la directiva de body) | `agent` + `subtask: true` |
 | `arguments` | `argument-hint` | -- (OpenCode no tiene equivalente) |
-| `profile` | `model` (tabla fija: `fast`->`haiku`, `balanced`->`sonnet`, `deep`->-- omitido) | -- (sin tabla, siempre hereda) |
+| `profile` | `model` (tabla fija: `fast`->`haiku`, `balanced`->`sonnet`, `deep`->-- omitido) | `model` (tabla fija: `fast`->Luna, `balanced`->Terra, `deep`->Sol) |
 | body | body, tras el marcador de generado | body (`template`), tras el marcador |
 
 Un `--` significa que ese runtime no recibe el campo: o no tiene un equivalente
@@ -146,18 +146,21 @@ declarativa de tools mas alla de `permission`), o lo ignora (`mode` en Claude
 Code). Ningun campo se emite "por si acaso": lo que no esta en esta tabla, el
 generador no lo escribe.
 
-### `profile` -> `model` de Claude Code (MEF-ADR-0049 CA-4 enmendada, issue #857)
+### `profile` -> `model` por runtime (MEF-ADR-0049 CA-4, issues #857 y #961)
 
-Cuando la fuente declara `profile`, el generador consulta la tabla fija de
-`adapter_claude_default_model` (`src/internal/scripts/lib/adapter-claude.sh`)
--- **nunca** el mapping local `.mefisto/models.json` -- y emite `model:` solo
-si esa tabla devuelve un valor no vacio:
+Cuando la fuente declara `profile`, el generador consulta la tabla fija de su
+adaptador (`adapter_claude_default_model` o
+`adapter_opencode_default_model`) -- **nunca** el mapping local
+`.mefisto/models.json` -- y emite `model:` solo si esa tabla devuelve un valor
+no vacio. OpenCode documenta `model` tanto para agentes como para comandos
+Markdown ([Agents](https://opencode.ai/docs/agents/#model),
+[Commands](https://opencode.ai/docs/commands/#model)):
 
 | `profile` | `model` emitido (Claude) | `model` emitido (OpenCode) |
 |---|---|---|
-| `fast` | `"haiku"` | (nunca se emite) |
-| `balanced` | `"sonnet"` | (nunca se emite) |
-| `deep` | (se omite el campo -- hereda el modelo activo) | (nunca se emite) |
+| `fast` | `"haiku"` | `"openai/gpt-5.6-luna"` |
+| `balanced` | `"sonnet"` | `"openai/gpt-5.6-terra"` |
+| `deep` | (se omite el campo -- hereda el modelo activo) | `"openai/gpt-5.6-sol"` |
 
 El generador no lee `.mefisto/models.json` a proposito: es estado de maquina,
 y leerlo romperia el determinismo (misma fuente -> mismos bytes) que sostiene

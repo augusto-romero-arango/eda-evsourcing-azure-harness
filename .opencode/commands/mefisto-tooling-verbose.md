@@ -1,5 +1,6 @@
 ---
 description: "Lanza el pipeline INTERNO de tooling para un issue del repo de Mefisto igual que `/mefisto-tooling`, pero con el visor en vivo abierto en un tercer pane."
+model: "openai/gpt-5.6-luna"
 ---
 <!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh desde src/internal/commands/mefisto-tooling-verbose.md. No editar a mano. -->
 

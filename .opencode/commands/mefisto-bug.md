@@ -1,5 +1,6 @@
 ---
 description: "Investiga un error o sintoma observado al desarrollar el plugin Mefisto."
+model: "openai/gpt-5.6-luna"
 agent: "mefisto-investigator"
 subtask: true
 ---

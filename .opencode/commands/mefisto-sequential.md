@@ -1,5 +1,6 @@
 ---
 description: "Lanza el pipeline INTERNO secuencial para varios issues del repo de Mefisto, dentro de una sesion tmux."
+model: "openai/gpt-5.6-luna"
 ---
 <!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh desde src/internal/commands/mefisto-sequential.md. No editar a mano. -->
 

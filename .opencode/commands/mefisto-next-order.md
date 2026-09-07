@@ -1,5 +1,6 @@
 ---
 description: "Calcula el orden topologico de lanzamiento de los issues 'estado:listo' abiertos del repo de Mefisto a partir de sus dependencias declaradas (ciclos y bloqueos al tope), y deja lista la linea de lanzamiento de /mefisto-sequential."
+model: "openai/gpt-5.6-luna"
 ---
 <!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh desde src/internal/commands/mefisto-next-order.md. No editar a mano. -->
 

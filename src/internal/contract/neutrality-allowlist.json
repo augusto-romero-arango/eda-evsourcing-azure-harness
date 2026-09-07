@@ -66,10 +66,11 @@
     {
       "path": "src/internal/scripts/lib/adapter-opencode.sh",
       "rules": [
+        "R1",
         "R2",
         "R3"
       ],
-      "motivo": "Traduce la directiva neutral {{mefisto:run}} al literal `MEFISTO_RUNTIME=opencode ./.claude/scripts/<script> ...` (issue #854): salida documentada del adaptador OpenCode, declarada de antemano por si el vocabulario de R2/R3 se amplia a esa forma exacta."
+      "motivo": "Contiene la tabla versionada profile->provider/model de OpenCode (issue #961) y traduce la directiva neutral {{mefisto:run}} al literal `MEFISTO_RUNTIME=opencode ./.claude/scripts/<script> ...` (issue #854). Es el adaptador autorizado para esas referencias concretas; la fuente neutral sigue bajo R1."
     },
     {
       "path": "src/internal/scripts/lib/runtime-claude.sh",

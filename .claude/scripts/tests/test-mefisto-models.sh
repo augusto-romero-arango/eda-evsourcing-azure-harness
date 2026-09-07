@@ -21,10 +21,10 @@
 #   [10]  models.json no-JSON aborta citando el archivo.
 #   [11]  models.json mal tipado (additionalProperties) aborta citando el
 #         campo, via jsonschema-lite.jq.
-#   [12]  El generador emite/omite `model:` segun CA-3: fast/balanced en
-#         Claude, nada en deep ni en OpenCode (ningun perfil).
-#   [13]  El mapping local de OpenCode resuelve aunque el adaptador no tenga
-#         tabla; sin entrada, OpenCode sigue heredando.
+#   [12]  El generador emite/omite `model:` segun CA-3: tabla fija por runtime
+#         cuando hay profile; sin profile, ningun runtime emite el campo.
+#   [13]  El mapping local de OpenCode conserva precedencia sobre la tabla;
+#         sin entrada, cae en el default versionado del perfil.
 #   [14]  Un valor de `agents` que no es un string no vacio aborta -- el guard
 #         que cubre lo que jsonschema-lite.jq no puede expresar (CA-4).
 #   [15]  Sin el adaptador sourceado, aborta con motivo -- nunca con
@@ -72,15 +72,23 @@ if grep -qE '"(claude-|gpt-|opus|sonnet|haiku|fable)[^"]*"' "$EXAMPLE_FILE"; the
 else
     pass "models.example.json solo contiene placeholders"
 fi
-# CA-1: ningun id provider/model real en src/internal/ (grep de la exclusion).
+# CA-1: ningun id provider/model real fuera de las tablas de los adaptadores.
 if grep -rE '"(claude-(opus|sonnet|haiku)|gpt-[0-9])[^"]*"' "$REPO_ROOT/src/internal" 2>/dev/null | grep -v '\.md:'; then
-    fail "src/internal/ contiene un id de modelo real fuera de un .md"
+    fail "src/internal/ contiene un id de modelo real fuera de las tablas de adaptador"
 else
-    pass "src/internal/ (fuera de .md) no contiene ids de modelo reales"
+    pass "src/internal/ no contiene ids de modelo reales fuera de las tablas de adaptador"
 fi
 
 echo ""
-echo "[1] tabla del adaptador (paso 3): Claude fast/balanced/deep, OpenCode siempre vacio"
+if grep -r 'openai/gpt-' "$REPO_ROOT/src/internal" 2>/dev/null \
+    | grep -v '\.md:' \
+    | grep -v '/scripts/lib/adapter-opencode\.sh:'; then
+    fail "src/internal/ contiene un id OpenCode real fuera de adapter-opencode.sh"
+else
+    pass "los ids OpenCode reales solo aparecen en adapter-opencode.sh"
+fi
+
+echo "[1] tabla del adaptador (paso 3): defaults versionados por runtime y perfil"
 (
     source "$LIB_DIR/adapter-claude.sh"
     source "$LIB_DIR/adapter-opencode.sh"
@@ -95,11 +103,11 @@ echo "[1] tabla del adaptador (paso 3): Claude fast/balanced/deep, OpenCode siem
     R=$(mefisto_resolve_model claude mefisto-planner deep)
     [ -z "$R" ] && echo "PASS:claude/deep -> cadena vacia (hereda)" || echo "FAIL:claude/deep deberia ser vacio (obtenido '$R')"
     R=$(mefisto_resolve_model opencode mefisto-planner fast)
-    [ -z "$R" ] && echo "PASS:opencode/fast -> cadena vacia (sin tabla)" || echo "FAIL:opencode/fast deberia ser vacio (obtenido '$R')"
+    [ "$R" = "openai/gpt-5.6-luna" ] && echo "PASS:opencode/fast -> openai/gpt-5.6-luna" || echo "FAIL:opencode/fast deberia ser 'openai/gpt-5.6-luna' (obtenido '$R')"
     R=$(mefisto_resolve_model opencode mefisto-planner balanced)
-    [ -z "$R" ] && echo "PASS:opencode/balanced -> cadena vacia (sin tabla)" || echo "FAIL:opencode/balanced deberia ser vacio (obtenido '$R')"
+    [ "$R" = "openai/gpt-5.6-terra" ] && echo "PASS:opencode/balanced -> openai/gpt-5.6-terra" || echo "FAIL:opencode/balanced deberia ser 'openai/gpt-5.6-terra' (obtenido '$R')"
     R=$(mefisto_resolve_model opencode mefisto-planner deep)
-    [ -z "$R" ] && echo "PASS:opencode/deep -> cadena vacia (sin tabla)" || echo "FAIL:opencode/deep deberia ser vacio (obtenido '$R')"
+    [ "$R" = "openai/gpt-5.6-sol" ] && echo "PASS:opencode/deep -> openai/gpt-5.6-sol" || echo "FAIL:opencode/deep deberia ser 'openai/gpt-5.6-sol' (obtenido '$R')"
 ) > "$SCRIPT_DIR/.tmp-out-1" 2>&1
 while IFS= read -r line; do
     case "$line" in
@@ -353,7 +361,7 @@ fi
 rm -f "$SCRIPT_DIR/.tmp-out-11"
 
 echo ""
-echo "[12] el generador emite/omite 'model:' segun CA-3 (fast/balanced en Claude, nunca en OpenCode)"
+echo "[12] el generador emite 'model:' desde la tabla fija de cada runtime cuando hay profile"
 FIX_DIR="$(mktemp -d)"
 trap 'rm -rf "$FIX_DIR"' EXIT
 
@@ -435,21 +443,29 @@ if grep -q '^model:' "$OUT_DIR/.claude/commands/mefisto-fx-models-none.md" 2>/de
 else
     pass "sin profile -> sin model: en Claude"
 fi
-for f in mefisto-fx-models-fast mefisto-fx-models-deep mefisto-fx-models-none; do
-    if grep -q '^model:' "$OUT_DIR/.opencode/commands/$f.md" 2>/dev/null; then
-        fail "$f: OpenCode no deberia emitir model: nunca"
-    else
-        pass "$f: OpenCode sin model: (nunca lo emite)"
-    fi
-done
-if grep -q '^model:' "$OUT_DIR/.opencode/agents/mefisto-fx-models-balanced.md" 2>/dev/null; then
-    fail "mefisto-fx-models-balanced: OpenCode no deberia emitir model: nunca"
+if grep -q '^model: "openai/gpt-5.6-luna"$' "$OUT_DIR/.opencode/commands/mefisto-fx-models-fast.md" 2>/dev/null; then
+    pass "profile fast -> model: \"openai/gpt-5.6-luna\" en OpenCode"
 else
-    pass "mefisto-fx-models-balanced: OpenCode sin model: (nunca lo emite)"
+    fail "profile fast no emitio model: \"openai/gpt-5.6-luna\" en OpenCode"
+fi
+if grep -q '^model: "openai/gpt-5.6-terra"$' "$OUT_DIR/.opencode/agents/mefisto-fx-models-balanced.md" 2>/dev/null; then
+    pass "profile balanced -> model: \"openai/gpt-5.6-terra\" en OpenCode"
+else
+    fail "profile balanced no emitio model: \"openai/gpt-5.6-terra\" en OpenCode"
+fi
+if grep -q '^model: "openai/gpt-5.6-sol"$' "$OUT_DIR/.opencode/commands/mefisto-fx-models-deep.md" 2>/dev/null; then
+    pass "profile deep -> model: \"openai/gpt-5.6-sol\" en OpenCode"
+else
+    fail "profile deep no emitio model: \"openai/gpt-5.6-sol\" en OpenCode"
+fi
+if grep -q '^model:' "$OUT_DIR/.opencode/commands/mefisto-fx-models-none.md" 2>/dev/null; then
+    fail "sin profile no deberia emitir model: en OpenCode"
+else
+    pass "sin profile -> sin model: en OpenCode"
 fi
 
 echo ""
-echo "[13] mapping local de OpenCode por profile (la tabla del adaptador nunca lo tapa)"
+echo "[13] mapping local de OpenCode por profile gana sobre la tabla del adaptador"
 (
     source "$LIB_DIR/adapter-claude.sh"
     source "$LIB_DIR/adapter-opencode.sh"
@@ -462,14 +478,14 @@ EOF
     R=$(mefisto_resolve_model opencode mefisto-planner balanced)
     [ "$R" = "vendor-x/modelo-medio" ] && echo PASS1 || echo "FAIL1:$R"
     R=$(mefisto_resolve_model opencode mefisto-planner fast)
-    [ -z "$R" ] && echo PASS2 || echo "FAIL2:$R"
+    [ "$R" = "openai/gpt-5.6-luna" ] && echo PASS2 || echo "FAIL2:$R"
 ) > "$SCRIPT_DIR/.tmp-out-13" 2>&1
 while IFS= read -r line; do
     case "$line" in
         PASS1) pass "opencode profiles.balanced resuelve desde el mapping local" ;;
         FAIL1:*) fail "opencode profiles.balanced -- obtenido '${line#FAIL1:}'" ;;
-        PASS2) pass "opencode sin entrada en el mapping sigue heredando (sin tabla)" ;;
-        FAIL2:*) fail "opencode deberia heredar -- obtenido '${line#FAIL2:}'" ;;
+        PASS2) pass "opencode sin entrada en el mapping cae en el default versionado" ;;
+        FAIL2:*) fail "opencode deberia caer en el default versionado -- obtenido '${line#FAIL2:}'" ;;
     esac
 done < "$SCRIPT_DIR/.tmp-out-13"
 rm -f "$SCRIPT_DIR/.tmp-out-13"
