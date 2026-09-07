@@ -87,9 +87,21 @@ LOG_FILE="$LOG_DIR/mefisto-batch-$TIMESTAMP.log"
 # events.log del pipeline de tooling (issue #969): un unico archivo,
 # compartido por TODAS las corridas lanzadas desde este checkout (lo resuelve
 # mefisto-tooling-pipeline.sh contra MEFISTO_STATE_DIR, no contra el worktree
-# del issue) -- por eso el reporte de hold de mas abajo se apoya en un
-# contador de lineas ya leidas por issue, nunca en descubrir "el" events.log
-# de la corrida.
+# del issue) -- por eso el reporte de hold de mas abajo acota su lectura por
+# DOS ejes a la vez: el numero de linea ya leido antes de arrancar el eslabon
+# y la cabecera "=== SESSION ... issue:<N> ===" que abre cada corrida. Con un
+# solo eje, otra corrida del mismo checkout (un /mefisto-tooling suelto en
+# otro pane) le regalaria sus esperas a este eslabon.
+#
+# Reparto de responsabilidades del reporte de espera (issue #969):
+#   - EN VIVO, mientras el eslabon espera: la linea la emite el propio
+#     eslabon (issue #967, `warn "... en espera (hold), proxima sonda ..."`)
+#     y llega al pane del batch por el `tee` de mas abajo; en paralelo,
+#     /mefisto-work-status la lee de este mismo events.log y renderiza
+#     "EN ESPERA" con causa y hora de sonda (CA-2/CA-4). El batch no la
+#     duplica: mientras el eslabon corre esta bloqueado en el `tee`.
+#   - AL CERRAR el eslabon: este script anota cuanto se espero, como nota
+#     ANEXA al desenlace real (CA-3), y suma el total del batch.
 EVENTS_LOG_PATH="$PIPELINE_DIR/events.log"
 
 _strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
@@ -187,7 +199,7 @@ fmt_hold_duration() {
     echo "$((secs / 60))m $((secs % 60))s"
 }
 
-# hold_seconds_in_range <events_log> <from_line>
+# hold_seconds_in_range <events_log> <from_line> [<issue>]
 #
 # Suma los segundos en espera (hold) registrados en <events_log> desde la
 # linea <from_line>+1 hasta EOF. Cada linea "[hold]" (formato fijo por el
@@ -201,19 +213,37 @@ fmt_hold_duration() {
 # espera adicional, son eventos de la reanudacion de sesion DENTRO de un
 # ciclo ya contado.
 #
+# Con <issue> dado, solo cuentan las lineas que caen bajo una cabecera
+# "=== SESSION MEFISTO-TOOLING <ts> issue:<issue> ... ===" -- la UNICA marca
+# de events.log que nombra el issue (ni las lineas "[hold]" ni las de stage
+# lo llevan). Esto es lo que separa la espera de ESTE eslabon de la de otra
+# corrida del mismo checkout intercalada en el mismo archivo: acotar por
+# numero de linea sola no alcanza, porque una corrida concurrente escribe
+# DESPUES de la marca de arranque de este eslabon. Sin <issue> (o vacio)
+# cuenta todo el rango, que es lo que quieren los tests de la funcion en
+# aislamiento.
+#
 # Ambas horas son HH:MM:SS del MISMO dia (un solo ciclo nunca excede
 # MEFISTO_HOLD_MAX_SECONDS, tipicamente minutos); si la resta da negativa
 # (el ciclo cruzo medianoche) se suma un dia completo. Imprime el total en
 # segundos por stdout; 0 si <events_log> no existe o no hay lineas "[hold]"
-# en el rango. Nunca aborta (los tests corren esta funcion sola, sin `set -e`
-# heredado del script completo).
+# atribuibles en el rango. Nunca aborta (los tests corren esta funcion sola,
+# sin `set -e` heredado del script completo).
 hold_seconds_in_range() {
-    local events_log="$1" from_line="$2"
+    local events_log="$1" from_line="$2" want_issue="${3:-}"
     [ -f "$events_log" ] || { echo 0; return 0; }
 
     local total=0 line start_hms probe_hms start_epoch probe_epoch delta
+    local session_issue=""
     while IFS= read -r line; do
         [ -z "$line" ] && continue
+        if [[ "$line" =~ ^===\ SESSION\ MEFISTO-TOOLING\ [^\ ]+\ issue:([0-9]+) ]]; then
+            session_issue="${BASH_REMATCH[1]}"
+            continue
+        fi
+        if [ -n "$want_issue" ] && [ "$session_issue" != "$want_issue" ]; then
+            continue
+        fi
         if [[ "$line" =~ ^\[([0-9]{2}:[0-9]{2}:[0-9]{2})\]\[hold\]\ [^:]+:\ esperando,\ proxima\ sonda\ ([0-9]{2}:[0-9]{2}:[0-9]{2}) ]]; then
             start_hms="${BASH_REMATCH[1]}"
             probe_hms="${BASH_REMATCH[2]}"
@@ -232,14 +262,17 @@ hold_seconds_in_range() {
 
 # hold_note_suffix <segundos>
 #
-# " (espero Xm Ys en hold)" si <segundos> > 0, cadena vacia si no -- listo
-# para concatenar al final de un mensaje de set_status/fail_issue sin alterar
-# su prefijo ("completado"/"ERROR:"): CA-1 exige que una espera nunca convierta
-# un desenlace real en fallo ni viceversa, asi que esto es siempre una nota
+# " (incluye Xm Ys en espera/hold)" si <segundos> > 0, cadena vacia si no --
+# mismo vocabulario que usa el propio eslabon para su reporte de hold (issue
+# #967, "incluye Xm Ys en espera/hold"), para que el humano lea la misma frase
+# en el log del eslabon y en el resumen del batch. Listo para concatenar al
+# final de un mensaje de set_status/fail_issue sin alterar su prefijo
+# ("completado"/"ERROR:"): CA-1 exige que una espera nunca convierta un
+# desenlace real en fallo ni viceversa, asi que esto es siempre una nota
 # ANEXA, nunca lo que decide el prefijo.
 hold_note_suffix() {
     local secs="${1:-0}"
-    [ "$secs" -gt 0 ] && echo " (espero $(fmt_hold_duration "$secs") en hold)"
+    [ "$secs" -gt 0 ] && echo " (incluye $(fmt_hold_duration "$secs") en espera/hold)"
     return 0
 }
 
@@ -600,9 +633,10 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
 
     # Marca de arranque para el reporte de hold de este eslabon (issue #969,
     # CA-3): cuantas lineas tenia EVENTS_LOG_PATH antes de invocar el
-    # pipeline. Con jq/wc ausentes o el archivo todavia inexistente
-    # (primera corrida del checkout), hold_seconds_in_range degrada a 0 --
-    # nunca aborta el batch por esto.
+    # pipeline. Con el archivo todavia inexistente (primera corrida del
+    # checkout) o un `wc -l` que no devuelve un numero, degrada a 0 y
+    # hold_seconds_in_range se apoya solo en el scoping por sesion -- nunca
+    # aborta el batch por esto.
     HOLD_LINE_START=0
     [ -f "$EVENTS_LOG_PATH" ] && HOLD_LINE_START=$(wc -l < "$EVENTS_LOG_PATH" 2>/dev/null | tr -d ' ')
     [ -z "$HOLD_LINE_START" ] && HOLD_LINE_START=0
@@ -618,7 +652,7 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
     # esperado horas y fallar igual al agotar el techo de espera, y ese tiempo
     # tambien cuenta para el total del batch. Nunca decide FAILED/HAVE_ERRORS
     # (CA-1): es una nota informativa que se concatena a los mensajes de abajo.
-    ISSUE_HOLD_SECONDS=$(hold_seconds_in_range "$EVENTS_LOG_PATH" "$HOLD_LINE_START")
+    ISSUE_HOLD_SECONDS=$(hold_seconds_in_range "$EVENTS_LOG_PATH" "$HOLD_LINE_START" "$ISSUE_NUM")
     if [ "$ISSUE_HOLD_SECONDS" -gt 0 ]; then
         BATCH_TOTAL_HOLD_SECONDS=$((BATCH_TOTAL_HOLD_SECONDS + ISSUE_HOLD_SECONDS))
         log "Issue #$ISSUE_NUM: $(fmt_hold_duration "$ISSUE_HOLD_SECONDS") en espera (hold) durante este eslabon"

@@ -8,7 +8,10 @@
 #         aislamiento: suman los ciclos "[hold]" del rango pedido, ignoran
 #         "[hold][resume]" (issue #968), respetan el offset de linea (no
 #         cuentan el hold de un issue anterior en el mismo events.log
-#         compartido) y degradan a 0 sin archivo.
+#         compartido), atribuyen cada ciclo a la cabecera de sesion
+#         ("=== SESSION ... issue:<N> ===") bajo la que cae -- de modo que una
+#         corrida CONCURRENTE del mismo checkout no le regala sus esperas al
+#         eslabon en curso -- y degradan a 0 sin archivo.
 #   [B]   Guard de regresion: ninguna de esas tres funciones referencia
 #         HAVE_ERRORS ni FAILED -- el reporte de hold es puramente
 #         informativo (CA-1).
@@ -27,6 +30,10 @@
 #         propio tiempo (sin arrastrar el del anterior, pese a compartir el
 #         mismo events.log) y el total del resumen es la suma exacta de
 #         ambos.
+#   [F]   Corrida real end-to-end con una sesion AJENA intercalada en el mismo
+#         events.log (lo que hace un /mefisto-tooling suelto en otro pane
+#         mientras el batch corre): el eslabon reporta solo SU espera, no la
+#         de la corrida ajena.
 #
 # Uso: .claude/scripts/tests/test-batch-hold-reporting.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -140,6 +147,36 @@ else
     fail "A: con offset se esperaban 250s, se obtuvo '$TOTAL_A_OFFSET'"
 fi
 
+# Scoping por sesion: dos cabeceras de sesion, un ciclo de espera bajo cada
+# una. Pidiendo el issue 900 solo cuenta el suyo; sin issue cuenta ambos.
+EVENTS_A2="$TMP/events-a2.log"
+: > "$EVENTS_A2"
+echo "=== SESSION MEFISTO-TOOLING 20260101-090000 issue:900 from-stage:1 ===" >> "$EVENTS_A2"
+write_hold_cycle "$EVENTS_A2" 300
+echo "=== SESSION MEFISTO-TOOLING 20260101-091500 issue:999 from-stage:1 ===" >> "$EVENTS_A2"
+write_hold_cycle "$EVENTS_A2" 120
+
+TOTAL_A2_SCOPED=$(hold_seconds_in_range "$EVENTS_A2" 0 900)
+if [ "$TOTAL_A2_SCOPED" -eq 300 ]; then
+    pass "A: con <issue> solo suma los ciclos bajo la cabecera de sesion de ese issue (300, no 420)"
+else
+    fail "A: con issue=900 se esperaban 300s, se obtuvo '$TOTAL_A2_SCOPED'"
+fi
+
+TOTAL_A2_ALL=$(hold_seconds_in_range "$EVENTS_A2" 0)
+if [ "$TOTAL_A2_ALL" -eq 420 ]; then
+    pass "A: sin <issue> cuenta todo el rango (300+120=420)"
+else
+    fail "A: sin issue se esperaban 420s, se obtuvo '$TOTAL_A2_ALL'"
+fi
+
+TOTAL_A2_OTHER=$(hold_seconds_in_range "$EVENTS_A2" 0 777)
+if [ "$TOTAL_A2_OTHER" -eq 0 ]; then
+    pass "A: un issue sin cabecera de sesion propia suma 0 (nunca hereda la del vecino)"
+else
+    fail "A: con issue=777 se esperaban 0s, se obtuvo '$TOTAL_A2_OTHER'"
+fi
+
 TOTAL_MISSING=$(hold_seconds_in_range "$TMP/no-existe.log" 0)
 if [ "$TOTAL_MISSING" -eq 0 ]; then
     pass "A: un events.log inexistente degrada a 0, nunca aborta"
@@ -217,10 +254,14 @@ EOF
 # Stub del pipeline de tooling: registra cada issue invocado en <call_log>.
 # <hold_spec> es "issue:segundos:familia:desenlace" (desenlace = "ok" o
 # "fail"), uno o mas separados por espacio -- solo actua cuando "$1" matchea
-# el <issue> de algun spec. Escribe la(s) linea(s) "[hold]" reales en el
-# events.log COMPARTIDO del checkout (mismo archivo que
-# mefisto-tooling-pipeline.sh usaria) antes de terminar, para ejercer
+# el <issue> de algun spec. Escribe la cabecera de sesion y la(s) linea(s)
+# "[hold]" reales en el events.log COMPARTIDO del checkout (mismo archivo y
+# mismo formato que mefisto-tooling-pipeline.sh usa), para ejercer
 # hold_seconds_in_range() con datos identicos a los de una corrida real.
+#
+# FOREIGN_HOLD_SECONDS (opcional, en el entorno del stub) intercala despues
+# una cabecera de sesion de OTRO issue con su propia espera: asi se simula un
+# /mefisto-tooling suelto corriendo en paralelo desde el mismo checkout.
 fake_tooling_pipeline_hold() {
     local dir="$1" call_log="$2"; shift 2
     local specs=("$@")
@@ -230,6 +271,7 @@ fake_tooling_pipeline_hold() {
         echo "echo \"\$1\" >> \"$call_log\""
         echo 'EVENTS_LOG="$PWD/.mefisto/pipeline/events.log"'
         echo 'mkdir -p "$(dirname "$EVENTS_LOG")"'
+        echo 'echo "=== SESSION MEFISTO-TOOLING $(date +%Y%m%d-%H%M%S) issue:$1 from-stage:1 ===" >> "$EVENTS_LOG"'
         for spec in "${specs[@]}"; do
             IFS=':' read -r sp_issue sp_secs sp_familia sp_outcome <<< "$spec"
             cat <<EOF
@@ -239,6 +281,16 @@ if [ "\$1" = "$sp_issue" ]; then
     START_HMS=\$(date -r "\$NOW_EPOCH" +%H:%M:%S 2>/dev/null || date -d "@\$NOW_EPOCH" +%H:%M:%S)
     PROBE_HMS=\$(date -r "\$PROBE_EPOCH" +%H:%M:%S 2>/dev/null || date -d "@\$PROBE_EPOCH" +%H:%M:%S)
     echo "[\$START_HMS][hold] $sp_familia: esperando, proxima sonda \$PROBE_HMS (techo 23:59)" >> "\$EVENTS_LOG"
+EOF
+            cat <<'EOF'
+    if [ -n "${FOREIGN_HOLD_SECONDS:-}" ]; then
+        echo "=== SESSION MEFISTO-TOOLING $(date +%Y%m%d-%H%M%S) issue:99999 from-stage:1 ===" >> "$EVENTS_LOG"
+        F_NOW=$(date +%s)
+        F_PROBE=$((F_NOW + FOREIGN_HOLD_SECONDS))
+        F_START_HMS=$(date -r "$F_NOW" +%H:%M:%S 2>/dev/null || date -d "@$F_NOW" +%H:%M:%S)
+        F_PROBE_HMS=$(date -r "$F_PROBE" +%H:%M:%S 2>/dev/null || date -d "@$F_PROBE" +%H:%M:%S)
+        echo "[$F_START_HMS][hold] RATE_LIMIT: esperando, proxima sonda $F_PROBE_HMS (techo 23:59)" >> "$EVENTS_LOG"
+    fi
 EOF
             if [ "$sp_outcome" = "fail" ]; then
                 echo "    exit 1"
@@ -293,6 +345,7 @@ run_batch() {
             -u MEFISTO_PROJECT_NAME -u MEFISTO_REPO_SLUG -u MEFISTO_RUNTIME_LIB_DIR \
             MEFISTO_RUNTIME=claude PATH="$FAKE_BIN:$SAFE_SYSTEM_PATH" \
             FAKE_GH_PUBLISHER="$publisher" FAKE_GH_SHA_DIR="$sha_dir" \
+            FOREIGN_HOLD_SECONDS="${FOREIGN_HOLD_SECONDS:-}" \
             ./src/internal/scripts/mefisto-batch-pipeline.sh "$@"
     ) </dev/null >"$out" 2>"$err"
     LAST_RC=$?
@@ -335,14 +388,14 @@ else
     fail "C: el issue 601 deberia quedar 'completado' sin 'ERROR:'. stdout: $LAST_STDOUT"
 fi
 
-if echo "$LAST_STDOUT" | grep -E '#601\s' | grep -qF "espero 10m 0s en hold"; then
-    pass "C: la fila del issue 601 nombra 'espero 10m 0s en hold' (CA-2)"
+if echo "$LAST_STDOUT" | grep -E '#601\s' | grep -qF "incluye 10m 0s en espera/hold"; then
+    pass "C: la fila del issue 601 nombra 'incluye 10m 0s en espera/hold' (CA-2)"
 else
     fail "C: se esperaba la nota de hold en la fila del issue 601. stdout: $LAST_STDOUT"
 fi
 
 if echo "$LAST_STDOUT" | grep -E '#602\s' | grep -q "completado" \
-    && ! echo "$LAST_STDOUT" | grep -E '#602\s' | grep -qF "en hold"; then
+    && ! echo "$LAST_STDOUT" | grep -E '#602\s' | grep -qF "en espera/hold"; then
     pass "C: el issue 602 (sin espera) no lleva nota de hold"
 else
     fail "C: el issue 602 no deberia mencionar hold. stdout: $LAST_STDOUT"
@@ -387,7 +440,7 @@ else
     fail "D: el issue 701 deberia quedar 'ERROR:'. stdout: $LAST_STDOUT"
 fi
 
-if echo "$LAST_STDOUT" | grep -E '#701\s' | grep -qF "espero 2m 0s en hold"; then
+if echo "$LAST_STDOUT" | grep -E '#701\s' | grep -qF "incluye 2m 0s en espera/hold"; then
     pass "D: el mensaje de error nombra igual cuanto se espero antes del fallo"
 else
     fail "D: se esperaba la nota de hold en el mensaje de error del issue 701. stdout: $LAST_STDOUT"
@@ -414,22 +467,57 @@ else
     fail "E: se esperaba exit 0, se obtuvo $LAST_RC. stdout: $LAST_STDOUT / stderr: $LAST_STDERR"
 fi
 
-if echo "$LAST_STDOUT" | grep -E '#801\s' | grep -qF "espero 5m 0s en hold"; then
+if echo "$LAST_STDOUT" | grep -E '#801\s' | grep -qF "incluye 5m 0s en espera/hold"; then
     pass "E: el issue 801 reporta su propia espera (5m 0s), sin arrastrar la del 802"
 else
-    fail "E: se esperaba 'espero 5m 0s en hold' en la fila del issue 801. stdout: $LAST_STDOUT"
+    fail "E: se esperaba 'incluye 5m 0s en espera/hold' en la fila del issue 801. stdout: $LAST_STDOUT"
 fi
 
-if echo "$LAST_STDOUT" | grep -E '#802\s' | grep -qF "espero 7m 30s en hold"; then
+if echo "$LAST_STDOUT" | grep -E '#802\s' | grep -qF "incluye 7m 30s en espera/hold"; then
     pass "E: el issue 802 reporta su propia espera (7m 30s), sin arrastrar la del 801"
 else
-    fail "E: se esperaba 'espero 7m 30s en hold' en la fila del issue 802. stdout: $LAST_STDOUT"
+    fail "E: se esperaba 'incluye 7m 30s en espera/hold' en la fila del issue 802. stdout: $LAST_STDOUT"
 fi
 
 if echo "$LAST_STDOUT" | grep -qF "Tiempo total en espera (hold): 12m 30s"; then
     pass "E: el total del resumen es la suma exacta de ambas esperas (5m+7m30s=12m30s)"
 else
     fail "E: se esperaba 'Tiempo total en espera (hold): 12m 30s'. stdout: $LAST_STDOUT"
+fi
+
+# -------- Bloque F: una sesion AJENA intercalada en el mismo events.log ----
+
+echo ""
+echo "[F] Sesion ajena concurrente en el mismo events.log: el eslabon reporta solo SU espera"
+
+BARE_F="$TMP/origin-f.git"; PUB_F="$TMP/pub-f"
+new_bare_with_publisher "$BARE_F" "$PUB_F"
+WORK_F="$TMP/work-f"
+git clone -q "$BARE_F" "$WORK_F"
+setup_work_repo "$WORK_F"
+CALL_LOG_F="$TMP/call-log-f"; : > "$CALL_LOG_F"
+fake_tooling_pipeline_hold "$WORK_F" "$CALL_LOG_F" "901:180:RATE_LIMIT:ok"
+
+# 600s ajenos: si el motor no atribuyera cada ciclo a su cabecera de sesion,
+# la fila del 901 diria 13m 0s en vez de 3m 0s.
+FOREIGN_HOLD_SECONDS=600 run_batch "$WORK_F" "$PUB_F" "$TMP/sha-f" 901
+
+if echo "$LAST_STDOUT" | grep -E '#901\s' | grep -qF "incluye 3m 0s en espera/hold"; then
+    pass "F: la fila del issue 901 reporta 3m 0s (su propia espera), no los 13m del archivo completo"
+else
+    fail "F: se esperaba 'incluye 3m 0s en espera/hold' en la fila del issue 901. stdout: $LAST_STDOUT"
+fi
+
+if echo "$LAST_STDOUT" | grep -qF "Tiempo total en espera (hold): 3m 0s"; then
+    pass "F: el total del batch tampoco absorbe la espera de la corrida ajena"
+else
+    fail "F: se esperaba 'Tiempo total en espera (hold): 3m 0s'. stdout: $LAST_STDOUT"
+fi
+
+if [ "$LAST_RC" -eq 0 ]; then
+    pass "F: exit 0"
+else
+    fail "F: se esperaba exit 0, se obtuvo $LAST_RC. stdout: $LAST_STDOUT / stderr: $LAST_STDERR"
 fi
 
 # -------- Resumen --------

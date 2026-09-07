@@ -50,26 +50,47 @@ historial, que tambien lleva el campo.
 #### Distinguir avanzando / en espera / sin novedades (issue #969)
 
 Antes de dibujar el panel de un pipeline con `state == "running"`, clasifica su
-situacion leyendo la cola de `events.log` (Paso 1, punto 5). `events.log` es
-compartido por TODAS las corridas del checkout, asi que filtra por el
-segmento `issue-{N}` de las lineas relevantes (`=== MEFISTO-TOOLING STAGE ...
-===`, `[hold]`, `FALLO`, etc. -- el mismo nombrado que usan los logs de stage)
-para no confundir la actividad de este pipeline con la de otro que corrio
-antes en el mismo archivo:
+situacion leyendo la cola de `events.log` (Paso 1, punto 5).
 
-1. Busca la ULTIMA linea `[hold]` de ese issue (formato fijo por el issue
+**Primero acota el rango del pipeline.** `events.log` es compartido por TODAS
+las corridas del checkout, y la UNICA linea que nombra el issue es la cabecera
+con la que cada corrida se abre:
+
+```
+=== SESSION MEFISTO-TOOLING 20260101-090000 issue:12 from-stage:1 ===
+```
+
+Las demas lineas -- `[HH:MM:SS] === MEFISTO-TOOLING STAGE 1: mefisto-writer
+===`, `[hold]`, `FALLO`, `RECUPERADO` -- **no llevan numero de issue**:
+pertenecen a la cabecera mas cercana por encima. Asi que:
+
+- Localiza la ULTIMA cabecera `=== SESSION MEFISTO-TOOLING ... issue:{N} ...`
+  del issue que estas clasificando. Si no aparece en la cola que leiste,
+  ubicala con `Bash(grep -n '=== SESSION MEFISTO-TOOLING' .mefisto/pipeline/events.log | tail -n 5)`
+  y relee `events.log` desde ese `offset`.
+- El rango de este pipeline son las lineas POSTERIORES a esa cabecera. Si
+  despues aparece otra cabecera de OTRO issue, la cola del archivo ya no es
+  de este pipeline: no puedes afirmar nada sobre su actividad reciente, asi
+  que reportalo como **SIN NOVEDADES** (no como en espera).
+- En una corrida de variante (`--variant`, issue #711) la cabecera NO lleva el
+  label: lo trae la linea `[HH:MM:SS] VARIANT: {{variant}}` inmediatamente
+  siguiente. Dos variantes simultaneas del mismo issue no se pueden separar en
+  `events.log` por otro medio.
+
+**Despues clasifica, dentro de ese rango:**
+
+1. Busca la ULTIMA linea `[hold]` del rango (formato fijo por el issue
    #967: `[HH:MM:SS][hold] <FAMILIA>: esperando, proxima sonda HH:MM:SS
    (techo HH:MM)`). Ignora las lineas `[hold][resume]` (issue #968, otro
    formato): son eventos de la reanudacion DENTRO de un ciclo de espera, no
    marcan un ciclo nuevo.
 2. Si esa linea existe y la hora actual (Paso 1, punto 4) todavia no llego a
-   su "proxima sonda", Y no hay ninguna linea POSTERIOR de ese issue en
-   `events.log` (un nuevo `=== STAGE ===`, un `FALLO`, un `RECUPERADO`...):
-   el pipeline esta **EN ESPERA**. Traduce la familia a una causa legible:
-   `RATE_LIMIT` -> "limite de uso", `PROVIDER_UNAVAILABLE` -> "proveedor
-   caido".
-3. Si no esta en espera, compara la hora de la ULTIMA linea de `events.log`
-   de ese issue con la hora actual:
+   su "proxima sonda", Y no hay ninguna linea POSTERIOR en el rango (un nuevo
+   `=== STAGE ===`, un `FALLO`, un `RECUPERADO`...): el pipeline esta
+   **EN ESPERA**. Traduce la familia a una causa legible: `RATE_LIMIT` ->
+   "limite de uso", `PROVIDER_UNAVAILABLE` -> "proveedor caido".
+3. Si no esta en espera, compara la hora de la ULTIMA linea del rango con la
+   hora actual:
    - Diferencia menor a ~2 minutos: **AVANZANDO** (el panel de siempre, con
      barra de progreso).
    - Diferencia mayor: **SIN NOVEDADES** desde hace esa diferencia (en
@@ -77,6 +98,11 @@ antes en el mismo archivo:
      `"running"`, simplemente no hay rastro reciente de actividad (candidato
      a pipeline colgado, a diferencia de un hold, que SIEMPRE deja su propia
      linea antes de cada siesta).
+
+Una corrida de batch (`/mefisto-sequential`) no cambia nada de lo anterior: sus
+eslabones son corridas de `mefisto-tooling` normales, cada una con su propia
+cabecera de sesion en el MISMO `events.log`, y el motor del batch anota aparte
+cuanto espero cada eslabon al cerrarlo (issue #969).
 
 **Si hay uno o mas pipelines con `state == "running"`:**
 
