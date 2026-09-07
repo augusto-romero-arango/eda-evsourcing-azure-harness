@@ -84,6 +84,26 @@ PIPELINE_DIR="$MEFISTO_STATE_DIR"
 LOG_DIR="$PIPELINE_DIR/logs"
 LOG_FILE="$LOG_DIR/mefisto-batch-$TIMESTAMP.log"
 
+# events.log del pipeline de tooling (issue #969): un unico archivo,
+# compartido por TODAS las corridas lanzadas desde este checkout (lo resuelve
+# mefisto-tooling-pipeline.sh contra MEFISTO_STATE_DIR, no contra el worktree
+# del issue) -- por eso el reporte de hold de mas abajo acota su lectura por
+# DOS ejes a la vez: el numero de linea ya leido antes de arrancar el eslabon
+# y la cabecera "=== SESSION ... issue:<N> ===" que abre cada corrida. Con un
+# solo eje, otra corrida del mismo checkout (un /mefisto-tooling suelto en
+# otro pane) le regalaria sus esperas a este eslabon.
+#
+# Reparto de responsabilidades del reporte de espera (issue #969):
+#   - EN VIVO, mientras el eslabon espera: la linea la emite el propio
+#     eslabon (issue #967, `warn "... en espera (hold), proxima sonda ..."`)
+#     y llega al pane del batch por el `tee` de mas abajo; en paralelo,
+#     /mefisto-work-status la lee de este mismo events.log y renderiza
+#     "EN ESPERA" con causa y hora de sonda (CA-2/CA-4). El batch no la
+#     duplica: mientras el eslabon corre esta bloqueado en el `tee`.
+#   - AL CERRAR el eslabon: este script anota cuanto se espero, como nota
+#     ANEXA al desenlace real (CA-3), y suma el total del batch.
+EVENTS_LOG_PATH="$PIPELINE_DIR/events.log"
+
 _strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
 _log_file()   { echo -e "$1" | _strip_ansi >> "$LOG_FILE_ABS"; }
 
@@ -161,6 +181,100 @@ HAVE_ERRORS=false
 # contradecir la propia degradacion a warning con un exit 1 y un resumen que
 # afirme que "algunos issues tuvieron errores" cuando ninguno lo tuvo.
 HAVE_WARNINGS=false
+
+# Tiempo total en espera (hold) de todo el batch (issue #969, CA-3): una
+# espera por RATE_LIMIT/PROVIDER_UNAVAILABLE (issue #967) NUNCA suma aqui como
+# fallo -- este contador es puramente informativo, nunca se lee en la logica
+# de HAVE_ERRORS/FAILED/--stop-on-error (CA-1/CA-5).
+BATCH_TOTAL_HOLD_SECONDS=0
+
+# fmt_hold_duration <segundos>
+#
+# "Xm Ys" a partir de segundos enteros. Mismo formato que usa
+# mefisto-tooling-pipeline.sh para su propio reporte de hold (issue #967),
+# para que el numero se lea igual en el log del eslabon y en el resumen del
+# batch.
+fmt_hold_duration() {
+    local secs="${1:-0}"
+    echo "$((secs / 60))m $((secs % 60))s"
+}
+
+# hold_seconds_in_range <events_log> <from_line> [<issue>]
+#
+# Suma los segundos en espera (hold) registrados en <events_log> desde la
+# linea <from_line>+1 hasta EOF. Cada linea "[hold]" (formato fijo por el
+# issue #967: "[HH:MM:SS][hold] <FAMILIA>: esperando, proxima sonda HH:MM:SS
+# (techo HH:MM)") ya trae, en su propio texto, la hora en que empezo esa
+# siesta y la hora en que se reanudara -- la diferencia ES la duracion de ese
+# ciclo de espera, sin necesidad de acceso al proceso del sub-pipeline (que ya
+# termino cuando el batch llega a invocar esta funcion). Las lineas
+# "[hold][resume]" (issue #968, mismo prefijo pero otro formato, sin "proxima
+# sonda") no matchean el patron y se ignoran -- no representan tiempo de
+# espera adicional, son eventos de la reanudacion de sesion DENTRO de un
+# ciclo ya contado.
+#
+# Con <issue> dado, solo cuentan las lineas que caen bajo una cabecera
+# "=== SESSION MEFISTO-TOOLING <ts> issue:<issue> ... ===" -- la UNICA marca
+# de events.log que nombra el issue (ni las lineas "[hold]" ni las de stage
+# lo llevan). Esto es lo que separa la espera de ESTE eslabon de la de otra
+# corrida del mismo checkout intercalada en el mismo archivo: acotar por
+# numero de linea sola no alcanza, porque una corrida concurrente escribe
+# DESPUES de la marca de arranque de este eslabon. Sin <issue> (o vacio)
+# cuenta todo el rango, que es lo que quieren los tests de la funcion en
+# aislamiento.
+#
+# Ambas horas son HH:MM:SS del MISMO dia (un solo ciclo nunca excede
+# MEFISTO_HOLD_MAX_SECONDS, tipicamente minutos); si la resta da negativa
+# (el ciclo cruzo medianoche) se suma un dia completo. Imprime el total en
+# segundos por stdout; 0 si <events_log> no existe o no hay lineas "[hold]"
+# atribuibles en el rango. Nunca aborta (los tests corren esta funcion sola,
+# sin `set -e` heredado del script completo).
+hold_seconds_in_range() {
+    local events_log="$1" from_line="$2" want_issue="${3:-}"
+    [ -f "$events_log" ] || { echo 0; return 0; }
+
+    local total=0 line start_hms probe_hms start_epoch probe_epoch delta
+    local session_issue=""
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        if [[ "$line" =~ ^===\ SESSION\ MEFISTO-TOOLING\ [^\ ]+\ issue:([0-9]+) ]]; then
+            session_issue="${BASH_REMATCH[1]}"
+            continue
+        fi
+        if [ -n "$want_issue" ] && [ "$session_issue" != "$want_issue" ]; then
+            continue
+        fi
+        if [[ "$line" =~ ^\[([0-9]{2}:[0-9]{2}:[0-9]{2})\]\[hold\]\ [^:]+:\ esperando,\ proxima\ sonda\ ([0-9]{2}:[0-9]{2}:[0-9]{2}) ]]; then
+            start_hms="${BASH_REMATCH[1]}"
+            probe_hms="${BASH_REMATCH[2]}"
+            start_epoch=$(date -j -f '%H:%M:%S' "$start_hms" +%s 2>/dev/null || date -d "$start_hms" +%s 2>/dev/null || echo "")
+            probe_epoch=$(date -j -f '%H:%M:%S' "$probe_hms" +%s 2>/dev/null || date -d "$probe_hms" +%s 2>/dev/null || echo "")
+            [ -z "$start_epoch" ] && continue
+            [ -z "$probe_epoch" ] && continue
+            delta=$(( probe_epoch - start_epoch ))
+            [ "$delta" -lt 0 ] && delta=$(( delta + 86400 ))
+            total=$(( total + delta ))
+        fi
+    done < <(tail -n "+$((from_line + 1))" "$events_log" 2>/dev/null)
+
+    echo "$total"
+}
+
+# hold_note_suffix <segundos>
+#
+# " (incluye Xm Ys en espera/hold)" si <segundos> > 0, cadena vacia si no --
+# mismo vocabulario que usa el propio eslabon para su reporte de hold (issue
+# #967, "incluye Xm Ys en espera/hold"), para que el humano lea la misma frase
+# en el log del eslabon y en el resumen del batch. Listo para concatenar al
+# final de un mensaje de set_status/fail_issue sin alterar su prefijo
+# ("completado"/"ERROR:"): CA-1 exige que una espera nunca convierta un
+# desenlace real en fallo ni viceversa, asi que esto es siempre una nota
+# ANEXA, nunca lo que decide el prefijo.
+hold_note_suffix() {
+    local secs="${1:-0}"
+    [ "$secs" -gt 0 ] && echo " (incluye $(fmt_hold_duration "$secs") en espera/hold)"
+    return 0
+}
 
 fail_issue() {
     local issue="$1" msg="$2"
@@ -472,6 +586,7 @@ log "Rama base: $MAIN_BRANCH (el batch la mantiene sincronizada con origin/main 
 log "Modo en error: $([ "$STOP_ON_ERROR" = true ] && echo 'detener' || echo 'continuar')"
 log "Log: $LOG_FILE_ABS"
 log "Parada suave: /mefisto-batch-stop detiene el batch tras el eslabon en curso (issue #966)"
+log "Espera automatica: ante RATE_LIMIT/PROVIDER_UNAVAILABLE el eslabon en curso espera (hold) en vez de fallar (issue #967) -- mientras espera, /mefisto-work-status lo reporta 'en espera' (issue #969)"
 
 # Eslabon canonico (issue #870): se invoca directo, sin pasar por el shim de
 # compatibilidad. Ruta absoluta derivada de SCRIPT_DIR (donde vive este mismo
@@ -516,14 +631,35 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
     ISSUE_LOG="$LOG_DIR/mefisto-batch-issue-${ISSUE_NUM}-${TIMESTAMP}.log"
     touch "$ISSUE_LOG"
 
+    # Marca de arranque para el reporte de hold de este eslabon (issue #969,
+    # CA-3): cuantas lineas tenia EVENTS_LOG_PATH antes de invocar el
+    # pipeline. Con el archivo todavia inexistente (primera corrida del
+    # checkout) o un `wc -l` que no devuelve un numero, degrada a 0 y
+    # hold_seconds_in_range se apoya solo en el scoping por sesion -- nunca
+    # aborta el batch por esto.
+    HOLD_LINE_START=0
+    [ -f "$EVENTS_LOG_PATH" ] && HOLD_LINE_START=$(wc -l < "$EVENTS_LOG_PATH" 2>/dev/null | tr -d ' ')
+    [ -z "$HOLD_LINE_START" ] && HOLD_LINE_START=0
+
     PIPELINE_EXIT=0
     "$PIPELINE_SCRIPT" "$ISSUE_NUM" 2>&1 | tee "$ISSUE_LOG" || PIPELINE_EXIT=$?
 
     # Agregar el log del issue al log general (sin codigos ANSI)
     _strip_ansi < "$ISSUE_LOG" >> "$LOG_FILE_ABS"
 
+    # Segundos en espera (hold) durante ESTE eslabon (issue #969, CA-3): se
+    # calcula pase lo que pase con PIPELINE_EXIT -- un eslabon puede haber
+    # esperado horas y fallar igual al agotar el techo de espera, y ese tiempo
+    # tambien cuenta para el total del batch. Nunca decide FAILED/HAVE_ERRORS
+    # (CA-1): es una nota informativa que se concatena a los mensajes de abajo.
+    ISSUE_HOLD_SECONDS=$(hold_seconds_in_range "$EVENTS_LOG_PATH" "$HOLD_LINE_START" "$ISSUE_NUM")
+    if [ "$ISSUE_HOLD_SECONDS" -gt 0 ]; then
+        BATCH_TOTAL_HOLD_SECONDS=$((BATCH_TOTAL_HOLD_SECONDS + ISSUE_HOLD_SECONDS))
+        log "Issue #$ISSUE_NUM: $(fmt_hold_duration "$ISSUE_HOLD_SECONDS") en espera (hold) durante este eslabon"
+    fi
+
     if [ "$PIPELINE_EXIT" -ne 0 ]; then
-        fail_issue "$ISSUE_NUM" "pipeline fallo (exit $PIPELINE_EXIT). Log: $ISSUE_LOG"
+        fail_issue "$ISSUE_NUM" "pipeline fallo (exit $PIPELINE_EXIT). Log: $ISSUE_LOG$(hold_note_suffix "$ISSUE_HOLD_SECONDS")"
         FAILED=$((FAILED + 1))
         if [ "$STOP_ON_ERROR" = true ]; then
             abort "Detenido por --stop-on-error en issue #$ISSUE_NUM"
@@ -540,7 +676,7 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
         | head -1)
 
     if [ -z "$PR_URL" ]; then
-        fail_issue "$ISSUE_NUM" "no se pudo extraer la URL del PR del output. Log: $ISSUE_LOG"
+        fail_issue "$ISSUE_NUM" "no se pudo extraer la URL del PR del output. Log: $ISSUE_LOG$(hold_note_suffix "$ISSUE_HOLD_SECONDS")"
         FAILED=$((FAILED + 1))
         if [ "$STOP_ON_ERROR" = true ]; then
             abort "Detenido por --stop-on-error en issue #$ISSUE_NUM"
@@ -564,7 +700,7 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
     _strip_ansi < "$ISSUE_LOG" >> "$LOG_FILE_ABS"
 
     if [ "$MERGE_EXIT" -ne 0 ]; then
-        fail_issue "$ISSUE_NUM" "merge del PR #$PR_NUM fallo (exit $MERGE_EXIT). Log: $ISSUE_LOG"
+        fail_issue "$ISSUE_NUM" "merge del PR #$PR_NUM fallo (exit $MERGE_EXIT). Log: $ISSUE_LOG$(hold_note_suffix "$ISSUE_HOLD_SECONDS")"
         FAILED=$((FAILED + 1))
         if [ "$STOP_ON_ERROR" = true ]; then
             abort "Detenido por --stop-on-error en issue #$ISSUE_NUM"
@@ -589,14 +725,14 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
 
     if [ "$SYNC_RC" -eq 0 ]; then
         success "$MAIN_BRANCH local incluye el merge del PR #$PR_NUM (commit ${MERGE_SHA_SYNCED:0:12})"
-        set_status "$ISSUE_NUM" "completado (PR #$PR_NUM mergeado)"
+        set_status "$ISSUE_NUM" "completado (PR #$PR_NUM mergeado)$(hold_note_suffix "$ISSUE_HOLD_SECONDS")"
         COMPLETED=$((COMPLETED + 1))
         success "Issue #$ISSUE_NUM completado y mergeado"
     elif [ "$SYNC_RC" -eq 1 ]; then
         # origin/main SI tiene el merge confirmado (paso 3 exitoso): la correccion
         # de la cadena esta garantizada aunque main LOCAL no haya quedado
         # sincronizado. No fatal (CA-3): degrada a warning y continua.
-        set_status "$ISSUE_NUM" "completado (PR #$PR_NUM mergeado; sync de $MAIN_BRANCH LOCAL fallido, no fatal)"
+        set_status "$ISSUE_NUM" "completado (PR #$PR_NUM mergeado; sync de $MAIN_BRANCH LOCAL fallido, no fatal)$(hold_note_suffix "$ISSUE_HOLD_SECONDS")"
         COMPLETED=$((COMPLETED + 1))
         HAVE_WARNINGS=true
         success "Issue #$ISSUE_NUM completado y mergeado"
@@ -605,7 +741,7 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
         # SYNC_RC = 2: el merge commit no llego a origin/main. El PR ya quedo
         # mergeado (el issue en si esta resuelto), pero el siguiente worktree
         # naceria de una base desactualizada. Esto SI rompe la cadena.
-        set_status "$ISSUE_NUM" "completado (PR #$PR_NUM mergeado; sync de origin/main FALLIDO)"
+        set_status "$ISSUE_NUM" "completado (PR #$PR_NUM mergeado; sync de origin/main FALLIDO)$(hold_note_suffix "$ISSUE_HOLD_SECONDS")"
         COMPLETED=$((COMPLETED + 1))
         HAVE_ERRORS=true
         if [ "$IS_LAST_ISSUE" = true ]; then
@@ -667,6 +803,14 @@ echo ""
 echo -e "  Total: $TOTAL  |  ${GREEN}Completados: $COMPLETED${NC}  |  ${RED}Fallidos: $FAILED${NC}  |  ${YELLOW}Aplazados: $DEFERRED${NC}"
 echo -e "  Log: $LOG_FILE_ABS"
 echo ""
+
+# Tiempo total en espera del batch (issue #969, CA-3): informativo, nunca
+# afecta FAILED/HAVE_ERRORS/el exit code (CA-1/CA-5) -- por eso se imprime
+# aparte, despues de la fila de totales, y solo cuando hubo alguna espera.
+if [ "$BATCH_TOTAL_HOLD_SECONDS" -gt 0 ]; then
+    echo -e "  Tiempo total en espera (hold): $(fmt_hold_duration "$BATCH_TOTAL_HOLD_SECONDS")"
+    echo ""
+fi
 
 if [ "$DEFERRED" -gt 0 ]; then
     warn "Parada solicitada: $DEFERRED issue(s) quedaron aplazados en esta corrida. No es un fallo del batch: el exit code es 0 y nada quedo a medio pipeline."
