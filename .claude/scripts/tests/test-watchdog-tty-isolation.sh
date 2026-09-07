@@ -26,6 +26,16 @@
 #   [CA-4] Degradacion explicita: con un PATH que no expone `setsid` ni
 #       `perl`, run_agent_with_watchdog cae al patron viejo (set -m +
 #       /dev/null) pero deja una linea WARN en events_log, nunca en silencio.
+#   [945-CA-3] Detector de procesos detenidos (issue #945), dentro de la
+#       misma pty real: el guion 'self-stop' de runtime-fake.sh (message +
+#       `kill -STOP $$`, terminal success al reanudarse) corre bajo
+#       run_agent_with_watchdog --timeout 30 y termina exit 0 en <30s con
+#       exactamente una linea 'STOPPED:' en events_log -- el polling detecta
+#       el STAT=T y manda SIGCONT al grupo.
+#   [945-control] El MISMO guion 'self-stop', bajo el patron VIEJO (un solo
+#       `sleep` sin polling ni SIGCONT) replicado inline: el proceso SI queda
+#       en STAT=T, nunca imprime su evento terminal, y solo el kill de
+#       timeout lo termina -- demuestra que [945-CA-3] no pasa en vacio.
 #
 # Si `tmux` no esta en PATH, el test FALLA con un mensaje explicito -- nunca
 # se salta en silencio (CA-3): sin una pty real no hay forma de ejercitar
@@ -57,12 +67,18 @@ fi
 TMP=$(mktemp -d)
 SESSION_A="mefisto-tty-a-$$"
 SESSION_CTRL="mefisto-tty-ctrl-$$"
+SESSION_STOP="mefisto-tty-stop-$$"
+SESSION_STOP_CTRL="mefisto-tty-stop-ctrl-$$"
 CTRL_PID=""
+CTRL_STOP_PID=""
 
 cleanup() {
     tmux kill-session -t "$SESSION_A" >/dev/null 2>&1 || true
     tmux kill-session -t "$SESSION_CTRL" >/dev/null 2>&1 || true
+    tmux kill-session -t "$SESSION_STOP" >/dev/null 2>&1 || true
+    tmux kill-session -t "$SESSION_STOP_CTRL" >/dev/null 2>&1 || true
     [ -n "$CTRL_PID" ] && kill -9 -"$CTRL_PID" 2>/dev/null
+    [ -n "$CTRL_STOP_PID" ] && kill -9 -"$CTRL_STOP_PID" 2>/dev/null
     rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -196,6 +212,138 @@ fi
 CTRL_PID="$(cat "$CTRL_PIDFILE" 2>/dev/null || echo "")"
 [ -n "$CTRL_PID" ] && kill -9 -"$CTRL_PID" 2>/dev/null
 tmux kill-session -t "$SESSION_CTRL" >/dev/null 2>&1 || true
+
+# ============================================================================
+echo ""
+echo "[945-CA-3] run_agent_with_watchdog detecta un proceso auto-detenido (guion self-stop) y lo reanuda con SIGCONT"
+
+# shellcheck source=/dev/null
+source "$COMMON_LIB" 2>/dev/null
+
+WORKDIR_STOP="$TMP/wt-stop"; mkdir -p "$WORKDIR_STOP"
+EVENTS_STOP="$TMP/events-stop.log"
+SIGNAL_STOP="$TMP/signal-stop"
+RC_STOP="$TMP/rc-stop"
+DONE_STOP="$TMP/done-stop"
+
+RUN_SCRIPT_STOP="$TMP/run-stop.sh"
+cat > "$RUN_SCRIPT_STOP" <<EOF
+#!/usr/bin/env bash
+# shellcheck source=/dev/null
+source "$COMMON_LIB" 2>/dev/null
+EXIT_STOP=\$(MEFISTO_FAKE_SCRIPT=self-stop run_agent_with_watchdog "$WORKDIR_STOP" 30 "$TMP/stop-stdout.log" "$TMP/stop-stderr.log" "$EVENTS_STOP" "writer" "$SIGNAL_STOP" bash "$FAKE_LIB" __mefisto-fake-emit test-agent "$PROMPT_FILE" "$SYSTEM_FILE")
+echo "\$EXIT_STOP" > "$RC_STOP"
+touch "$DONE_STOP"
+EOF
+chmod +x "$RUN_SCRIPT_STOP"
+
+START_STOP=$(date +%s)
+tmux new-session -d -s "$SESSION_STOP" "$RUN_SCRIPT_STOP"
+
+i=0
+while [ "$i" -lt 620 ]; do
+    [ -f "$DONE_STOP" ] && break
+    sleep 0.05
+    i=$((i + 1))
+done
+END_STOP=$(date +%s)
+DURATION_STOP=$((END_STOP - START_STOP))
+tmux kill-session -t "$SESSION_STOP" >/dev/null 2>&1 || true
+
+if [ -f "$DONE_STOP" ]; then
+    pass "945-CA-3-1: la corrida termino dentro de la ventana de espera (< 31s)"
+else
+    fail "945-CA-3-1: la corrida no termino tras 31s de espera activa"
+fi
+
+RC_VAL_STOP="$(cat "$RC_STOP" 2>/dev/null || echo "?")"
+if [ "$RC_VAL_STOP" = "0" ]; then
+    pass "945-CA-3-2: run_agent_with_watchdog termino con exit 0 (el guion se reanudo y llego a su terminal success)"
+else
+    fail "945-CA-3-2: exit '$RC_VAL_STOP' (esperaba 0)"
+fi
+
+if [ "$DURATION_STOP" -lt 30 ]; then
+    pass "945-CA-3-3: duracion total ${DURATION_STOP}s < 30s"
+else
+    fail "945-CA-3-3: duracion total ${DURATION_STOP}s >= 30s"
+fi
+
+STOPPED_LINES=$(grep -c "STOPPED:" "$EVENTS_STOP" 2>/dev/null || echo 0)
+if [ "$STOPPED_LINES" = "1" ]; then
+    pass "945-CA-3-4: events_log contiene exactamente una linea STOPPED:"
+else
+    fail "945-CA-3-4: events_log tiene $STOPPED_LINES linea(s) STOPPED: (esperaba 1): $(cat "$EVENTS_STOP" 2>/dev/null)"
+fi
+
+TOTAL_LINES_STOP=$(grep -c . "$EVENTS_STOP" 2>/dev/null || echo 0)
+if [ "$TOTAL_LINES_STOP" = "1" ] && grep -q "SIGCONT enviado" "$EVENTS_STOP" 2>/dev/null; then
+    pass "945-CA-3-5: la unica linea de events_log es la STOPPED con 'SIGCONT enviado' (ningun TIMEOUT espurio)"
+else
+    fail "945-CA-3-5: events_log no coincide con 'una sola linea STOPPED': $(cat "$EVENTS_STOP" 2>/dev/null)"
+fi
+
+# ============================================================================
+echo ""
+echo "[945-control] sin polling+SIGCONT, el guion self-stop se queda detenido y solo un kill de timeout lo termina"
+
+WORKDIR_STOP_CTRL="$TMP/wt-stop-ctrl"; mkdir -p "$WORKDIR_STOP_CTRL"
+CTRL_STOP_STDOUT="$TMP/ctrl-stop-stdout.log"
+CTRL_STOP_STDERR="$TMP/ctrl-stop-stderr.log"
+CTRL_STOP_PIDFILE="$TMP/ctrl-stop.pid"
+CTRL_STOP_TIMEOUT=2
+
+RUN_SCRIPT_STOP_CTRL="$TMP/run-stop-ctrl.sh"
+cat > "$RUN_SCRIPT_STOP_CTRL" <<EOF
+#!/usr/bin/env bash
+set -m
+( cd "$WORKDIR_STOP_CTRL" && MEFISTO_FAKE_SCRIPT=self-stop bash "$FAKE_LIB" __mefisto-fake-emit test-agent "$PROMPT_FILE" "$SYSTEM_FILE" ) >"$CTRL_STOP_STDOUT" 2>"$CTRL_STOP_STDERR" &
+echo \$! > "$CTRL_STOP_PIDFILE"
+set +m
+# Watchdog VIEJO (pre-#945): un solo sleep, sin polling ni SIGCONT.
+sleep $CTRL_STOP_TIMEOUT
+kill -9 -\$(cat "$CTRL_STOP_PIDFILE") 2>/dev/null
+sleep 30
+EOF
+chmod +x "$RUN_SCRIPT_STOP_CTRL"
+
+tmux new-session -d -s "$SESSION_STOP_CTRL" "$RUN_SCRIPT_STOP_CTRL"
+
+SEEN_T_STOP_CTRL=false
+i=0
+while [ "$i" -lt 60 ]; do
+    if any_stopped "$TMP"; then
+        SEEN_T_STOP_CTRL=true
+        break
+    fi
+    sleep 0.05
+    i=$((i + 1))
+done
+
+if [ "$SEEN_T_STOP_CTRL" = "true" ]; then
+    pass "945-control-1: el guion self-stop SI queda en STAT=T (kill -STOP funciona, el escenario no es vacio)"
+else
+    fail "945-control-1: nunca se observo STAT=T -- el guion self-stop no se detuvo"
+fi
+
+# Margen para que el kill -9 del "watchdog viejo" (tras CTRL_STOP_TIMEOUT) termine al proceso.
+sleep "$((CTRL_STOP_TIMEOUT + 2))"
+
+CTRL_STOP_PID="$(cat "$CTRL_STOP_PIDFILE" 2>/dev/null || echo "")"
+if [ -n "$CTRL_STOP_PID" ] && ! kill -0 "$CTRL_STOP_PID" 2>/dev/null; then
+    pass "945-control-2: sin SIGCONT, el kill de timeout es lo unico que termina al proceso detenido"
+else
+    fail "945-control-2: el proceso self-stop deberia estar muerto tras el timeout viejo"
+fi
+
+if ! grep -q '"terminal"' "$CTRL_STOP_STDOUT" 2>/dev/null; then
+    pass "945-control-3: sin el detector, el guion NUNCA llega a imprimir su evento terminal (muere detenido)"
+else
+    fail "945-control-3: el guion self-stop imprimio su terminal pese a no recibir SIGCONT -- el control no es valido"
+fi
+
+tmux kill-session -t "$SESSION_STOP_CTRL" >/dev/null 2>&1 || true
+[ -n "$CTRL_STOP_PID" ] && kill -9 -"$CTRL_STOP_PID" 2>/dev/null
 
 # ============================================================================
 echo ""
