@@ -65,7 +65,7 @@ FAIL=0
 pass() { echo "  PASS: $1"; PASS=$((PASS+1)); }
 fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 
-echo "[sources] Las tres fuentes existen y pasan validate-internal-artifacts.sh"
+echo "[sources] Las cinco fuentes existen y pasan validate-internal-artifacts.sh"
 for id in $AGENT_IDS; do
     src="$AGENTS_DIR/$id.md"
     if [ ! -f "$src" ]; then
@@ -106,6 +106,33 @@ for id in mefisto-writer mefisto-reviewer; do
             fail "$id: permission.$key debe permanecer en deny"
         fi
     done
+    for key in list glob grep lsp todowrite; do
+        if [ "$(printf '%s' "$permission" | jq -r --arg key "$key" '.[$key] // empty')" = "allow" ]; then
+            pass "$id: permission.$key permanece en allow por capability read"
+        else
+            fail "$id: permission.$key debe permanecer en allow por capability read"
+        fi
+    done
+    for key in edit write patch; do
+        if [ "$(printf '%s' "$permission" | jq -r --arg key "$key" '.[ $key ]["src/internal/**"] // empty')" = "allow" ] \
+            && [ "$(printf '%s' "$permission" | jq -r --arg key "$key" '.[ $key ]["*"] // empty')" = "deny" ]; then
+            pass "$id: permission.$key conserva la allowlist de capability edit"
+        else
+            fail "$id: permission.$key debe conservar catch-all deny y src/internal/** allow"
+        fi
+    done
+    if [ "$(printf '%s' "$permission" | jq -r '.bash["git *"] // empty')" = "allow" ] \
+        && [ "$(printf '%s' "$permission" | jq -r '.bash["*"] // empty')" = "deny" ]; then
+        pass "$id: permission.bash conserva la allowlist de capability shell"
+    else
+        fail "$id: permission.bash debe conservar catch-all deny y git * allow"
+    fi
+    if [ "$(printf '%s' "$permission" | jq -r '.read["*"] // empty')" = "allow" ] \
+        && [ "$(printf '%s' "$permission" | jq -r '.read[".env"] // empty')" = "deny" ]; then
+        pass "$id: permission.read conserva la allowlist de capability read"
+    else
+        fail "$id: permission.read debe conservar catch-all allow y .env deny"
+    fi
 done
 
 echo ""

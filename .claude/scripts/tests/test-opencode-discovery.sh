@@ -53,8 +53,8 @@ COMMAND_IDS=$(ids_de "$REPO_ROOT/src/internal/commands")
 AGENT_COUNT=$(printf '%s' "$AGENT_IDS" | wc -w | tr -d ' ')
 COMMAND_COUNT=$(printf '%s' "$COMMAND_IDS" | wc -w | tr -d ' ')
 
-# `mode` tambien sale de la fuente neutral (issue #909: mefisto-writer/
-# mefisto-reviewer nacen en `subagent`, no todos los agentes son `primary`).
+# `mode` tambien sale de la fuente neutral (issues #909/#1034: no todos los
+# agentes son `primary`; writer/reviewer usan `all`).
 # Extrae el frontmatter con el mismo `awk` de una pasada que documenta
 # src/internal/contract/README.md.
 mode_de() {
