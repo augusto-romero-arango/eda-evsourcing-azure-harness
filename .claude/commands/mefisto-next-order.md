@@ -28,7 +28,16 @@ MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-next-order.sh
 
 Reproduce la salida tal cual, sin reordenarla, resumirla ni completarla con informacion propia: el reporte de ciclos/bloqueos (si los hay) y la lista numerada de issues lanzables, terminando siempre con la linea `/mefisto-sequential ...`.
 
+Como leer el exit code -- el script nunca deja la salida vacia, asi que un exit distinto de `0` no significa "no hay nada que mostrar":
+
+- **`0`**: hay al menos un issue lanzable. Reproduce la salida y termina.
+- **`1`**: no quedo ningun issue lanzable (universo vacio, o todos en ciclos o bloqueados). **No es un fallo del comando**: reproduce igual la salida -- el motivo de cada exclusion esta ahi -- y no reintentes.
+- **`2`**: fallo real (`gh issue list` no respondio, o se le pasaron argumentos). Reporta el mensaje de error tal cual.
+
+Si el script emite una linea `ADVERTENCIA` de universo truncado, reproducela tambien: el orden pudo calcularse sobre un grafo incompleto.
+
 ## Reglas
 
 - No dupliques a mano el calculo del orden ni la deteccion de ciclos: el script es la unica fuente de verdad.
 - Este comando es de solo lectura: nunca muta labels ni bodies de issues.
+- **No lances el batch por tu cuenta.** La linea `/mefisto-sequential ...` queda lista para copiar; decidir si se lanza -- y con que subconjunto -- es del usuario.
