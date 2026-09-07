@@ -45,6 +45,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/_mefisto-common.sh"
 assert_in_mefisto || exit 1
 
+# Runtime activo (MEF-ADR-0049, issue #928): el pool de panes de reporte usa
+# el runtime como parte de su clave -- dos filas (Claude/OpenCode) del mismo
+# workspace ya no pueden compartir ni robarse panes libres entre si. Mismo
+# resolutor canonico que mefisto-tooling-pipeline.sh (mefisto_resolve_runtime,
+# nunca un default literal en esta capa neutral).
+source "$SCRIPT_DIR/lib/mefisto-runtime.sh"
+
 # --- Colores ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -126,41 +133,75 @@ pane_is_free() {
 # acquire_report_pane
 #
 # Imprime por stdout el pane_id donde correr el proximo pipeline: el primer
-# pane registrado que siga vivo, pertenezca a ESTE workspace y este libre; o
-# uno nuevo (split a la derecha del pane que despacha, sin robar el foco).
-# De paso poda del registro los panes que ya no existen y CIERRA los panes
-# libres sobrantes de corridas concurrentes ya terminadas: el layout colapsa
-# naturalmente de vuelta a UN solo pane de seguimiento, y despachar un issue
-# nuevo "reemplaza" al pane del que termino en vez de acumular ventanas (el
-# reporte de cada corrida pasada sigue en su .report.log).
+# pane registrado que siga vivo, pertenezca a ESTE workspace, sea del MISMO
+# runtime que esta corrida y este libre; o uno nuevo (split a la derecha del
+# pane que despacha, sin robar el foco). De paso poda del registro los panes
+# que ya no existen y CIERRA los panes libres sobrantes -- del mismo runtime,
+# de corridas concurrentes ya terminadas: cada fila (Claude/OpenCode, MEF-ADR-
+# 0049, issue #928) colapsa de vuelta a UN solo pane de seguimiento propio, sin
+# tocar ni cerrar los panes libres de la otra fila (el reporte de cada corrida
+# pasada sigue en su .report.log).
+#
+# El pool guarda una linea "<pane_id> <runtime>" por pane (issue #928 CA-2):
+# el runtime de ESTA corrida se resuelve ANTES de tocar el archivo (CA-1) --
+# una resolucion fallida (p. ej. ambos CLIs instalados sin MEFISTO_RUNTIME)
+# aborta sin ningun herdr pane split/run/close y sin modificar el pool. Las
+# lineas legacy sin clave (anteriores a este issue) se descartan del registro
+# al primer barrido, sin cerrar su pane -- costo unico de migracion, conservador
+# (CA-5): no hay forma de saber a que runtime pertenecian.
 acquire_report_pane() {
+    # Misma forma que mefisto-tooling-pipeline.sh, con una vuelta extra en el
+    # camino de error: $(...) corre en un subshell, asi que la asignacion a
+    # MEFISTO_RUNTIME_ERROR que el resolutor hace al fallar se pierde al salir.
+    # Repetir la llamada en ESTE shell -- solo cuando ya se sabe que fallo --
+    # fija el motivo aqui, para que abort() muestre la causa y no un texto
+    # vacio. El camino feliz resuelve una sola vez.
+    local runtime
+    if ! runtime=$(mefisto_resolve_runtime); then
+        mefisto_resolve_runtime >/dev/null 2>&1 || true
+        abort "No se pudo resolver el runtime activo: $MEFISTO_RUNTIME_ERROR"
+    fi
+
     mkdir -p "$(dirname "$PANES_STATE")"
     touch "$PANES_STATE"
 
-    local kept="" chosen="" id
-    while IFS= read -r id; do
-        [ -n "$id" ] || continue
+    local kept="" chosen="" line id pane_runtime
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        case "$line" in
+            *' '*)
+                id="${line%% *}"
+                pane_runtime="${line#* }"
+                ;;
+            *)
+                continue ;;
+        esac
         pane_exists "$id" || continue
         case "$id" in
             "$HERDR_WORKSPACE_ID:"*) ;;
             *)
-                kept="${kept}${id}
+                kept="${kept}${line}
 "
                 continue ;;
         esac
+        if [ "$pane_runtime" != "$runtime" ]; then
+            kept="${kept}${line}
+"
+            continue
+        fi
         if pane_is_free "$id"; then
             if [ -z "$chosen" ]; then
                 chosen="$id"
-                kept="${kept}${id}
+                kept="${kept}${line}
 "
             elif herdr pane close "$id" >/dev/null 2>&1; then
                 log "Pane sobrante de una corrida terminada cerrado: $id"
             else
-                kept="${kept}${id}
+                kept="${kept}${line}
 "
             fi
         else
-            kept="${kept}${id}
+            kept="${kept}${line}
 "
         fi
     done < "$PANES_STATE"
@@ -172,7 +213,7 @@ acquire_report_pane() {
             || abort "No se pudo crear el pane de ejecucion (herdr pane split): $resp"
         chosen=$(echo "$resp" | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
         [ -n "$chosen" ] || abort "herdr pane split no devolvio pane_id. Respuesta: $resp"
-        echo "$chosen" >> "$PANES_STATE"
+        echo "$chosen $runtime" >> "$PANES_STATE"
         log "Pane de ejecucion nuevo: $chosen"
     else
         log "Reusando el pane de ejecucion libre: $chosen"

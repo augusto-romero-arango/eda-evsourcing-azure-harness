@@ -221,10 +221,17 @@ EOF
 cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/_mefisto-common.sh"
 cp "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" "$FAKE_MEFISTO/.claude/scripts/_mefisto-common.sh"
 cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-state.sh"
+cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-runtime.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-runtime.sh"
 cp "$REPO_ROOT/.claude/scripts/mefisto-tmux-pipeline.sh" "$FAKE_MEFISTO/.claude/scripts/mefisto-tmux-pipeline.sh"
 cp "$REPO_ROOT/src/internal/scripts/mefisto-tmux-pipeline.sh" "$FAKE_MEFISTO/src/internal/scripts/mefisto-tmux-pipeline.sh"
 cp "$REPO_ROOT/.claude/scripts/mefisto-herdr-pipeline.sh" "$FAKE_MEFISTO/.claude/scripts/mefisto-herdr-pipeline.sh"
 cp "$REPO_ROOT/src/internal/scripts/mefisto-herdr-pipeline.sh" "$FAKE_MEFISTO/src/internal/scripts/mefisto-herdr-pipeline.sh"
+# Adaptadores de runtime reales (issue #928): mefisto-herdr-pipeline.sh ahora
+# sourcea mefisto-runtime.sh y acquire_report_pane invoca
+# mefisto_resolve_runtime -- mismo criterio que test-mefisto-tooling-variant.sh
+# / test-tooling-state-paths.sh, se copian los reales en vez de vacios.
+cp "$REPO_ROOT/src/internal/scripts/lib/runtime-claude.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/runtime-claude.sh"
+cp "$REPO_ROOT/src/internal/scripts/lib/runtime-opencode.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/runtime-opencode.sh"
 (cd "$FAKE_MEFISTO" && git init -q && git -c user.email="test@example.com" -c user.name="Test" commit --allow-empty -q -m "commit inicial")
 
 cat > "$FAKE_BIN/gh" <<'STUB'
@@ -342,6 +349,17 @@ esac
 STUB
 chmod +x "$FAKE_BIN/herdr"
 
+# Stub de "claude" (issue #928): mefisto_resolve_runtime autodetecta cuando
+# MEFISTO_RUNTIME no esta fijado (bloques 19-21, ninguno lo fija), y necesita
+# resolver a un UNICO runtime instalado. Junto con el PATH recortado de
+# run_herdr (mas abajo), evita depender de que claude/opencode -- reales --
+# esten ambos o ninguno instalados en la maquina que corre la suite.
+cat > "$FAKE_BIN/claude" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+chmod +x "$FAKE_BIN/claude"
+
 run_herdr() {
     : > "$HERDR_STUB_LOG"
     echo 0 > "$HERDR_STUB_COUNTER"
@@ -355,10 +373,20 @@ run_herdr() {
         # real. Sin esto, mefisto-state.sh (`: "${VAR:=default}"`) los
         # respeta tal cual y el fixture deja de escribir en su propio
         # FAKE_MEFISTO/.mefisto/pipeline/.
-        env -u MEFISTO_UI \
+        #
+        # PATH="$FAKE_BIN:/usr/bin:/bin" (issue #928), no "$FAKE_BIN:$PATH":
+        # acquire_report_pane ahora resuelve el runtime con
+        # mefisto_resolve_runtime, y un "claude"/"opencode" real en
+        # ~/.local/bin o /opt/homebrew/bin haria la autodeteccion no
+        # determinista segun la maquina.
+        # -u MEFISTO_RUNTIME (issue #928): ningun bloque herdr de esta suite
+        # depende de heredarla, y desfijarla deja la resolucion de runtime en
+        # manos del unico stub del PATH recortado -- identica corra la suite
+        # sola o dentro de una corrida real del pipeline, que la exporta.
+        env -u MEFISTO_UI -u MEFISTO_RUNTIME \
             -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR \
             -u MEFISTO_REPO_ROOT -u MEFISTO_PROJECT_NAME -u MEFISTO_REPO_SLUG \
-            PATH="$FAKE_BIN:$PATH" \
+            PATH="$FAKE_BIN:/usr/bin:/bin" \
             HERDR_ENV=1 HERDR_PANE_ID="w1:p0" HERDR_WORKSPACE_ID="w1" \
             HERDR_STUB_LOG="$HERDR_STUB_LOG" HERDR_STUB_COUNTER="$HERDR_STUB_COUNTER" \
             "$HERDR_SCRIPT" "$@"

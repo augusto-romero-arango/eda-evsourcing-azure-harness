@@ -8,10 +8,10 @@
 # tests internos que ya tocan mefisto-herdr-pipeline.sh (test-mefisto-tooling-variant.sh,
 # test-mefisto-stage-models.sh, test-tooling-state-paths.sh).
 #
-# Cubre (CA-6):
+# Cubre (CA-6 de #872; el pool con clave de runtime es CA-1..CA-6 de #928):
 #   [1-4] --tooling/--batch heredan MEFISTO_RUNTIME=claude|opencode (y
 #         MEFISTO_MODELS_FILE) en el pane run, antepuestos como asignacion de
-#         entorno a la invocacion del runner (CA-2).
+#         entorno a la invocacion del runner (CA-2 de #872).
 #   [5]   Sin MEFISTO_RUNTIME/MEFISTO_MODELS_FILE fijados, el pane run no
 #         lleva ninguna asignacion de entorno (ENV_PREFIX vacio no cambia el
 #         comportamiento de autodeteccion respecto de no fijarlo).
@@ -23,24 +23,45 @@
 #   [13-15] Combinaciones invalidas: --batch rechaza --models, --variant y
 #         --from-stage (serian ambiguos sobre varios issues) sin despachar
 #         ningun pane.
-#   [16]  Reutilizacion de un pane libre ya registrado: no crea un pane nuevo
-#         (sin "pane split" en el log).
+#   [16]  Reutilizacion de un pane libre ya registrado del MISMO runtime: no
+#         crea un pane nuevo (sin "pane split" en el log) -- pool con clave
+#         (issue #928).
 #   [17]  Un pane registrado pero ocupado se descarta: crea uno nuevo via
 #         "pane split" en vez de reusarlo.
-#   [18-21] Flags que se consumen o se reenvian (CA-3): --verbose e --if-exists
-#         no viajan nunca al sub-pipeline (uno es no-op en herdr, el otro es de
-#         las sesiones tmux, y avisa); --from-stage y --variant si viajan con su
-#         valor, y --from-stage no numerico aborta antes de despachar.
-#   [22]  Guard de contexto herdr (CA-5): sin HERDR_ENV=1 aborta remitiendo a
-#         mefisto-tmux-pipeline.sh, sin despachar ningun pane.
-#   [23]  Guard estatico del canonico REAL (CA-4), contraparte del bloque [B]
-#         de test-batch-runtime.sh: cero menciones de "claude -p", estado
-#         resuelto con mefisto_state_path (logs y registro de panes), cero
-#         ".claude/pipeline" en codigo, y las unicas referencias
-#         ".claude/scripts" en codigo son la invocacion del visor -- que sigue
-#         viviendo ahi porque #878 neutralizo su fuente de datos, no su
-#         ubicacion (mismo caso que mefisto-tmux-pipeline.sh tras #871).
-#   [24]  tail -f en vivo del .report.log dentro de --_pane-runner (issue
+#   [18]  CA-1 (#928): con claude y opencode instalados a la vez y sin
+#         MEFISTO_RUNTIME, acquire_report_pane aborta con el texto de
+#         MEFISTO_RUNTIME_ERROR ANTES de tocar el pool -- cero herdr pane
+#         split/run/close y el archivo del pool queda intacto.
+#   [19]  CA-2 (#928): un despacho que crea pane nuevo escribe la linea con
+#         clave "<pane_id> <runtime>" en el pool.
+#   [20]  CA-3 (#928): con el pool en "w1:p9 claude" libre y un despacho
+#         opencode, se crea pane nuevo (no se reutiliza ni se cierra el de
+#         otro runtime) y "w1:p9 claude" sigue en el archivo.
+#   [21]  CA-4 (#928): la poda de panes libres sobrantes solo considera el
+#         mismo runtime -- con "w1:p8 opencode"/"w1:p9 opencode"/"w1:p7 claude"
+#         libres y un despacho opencode, se reutiliza w1:p8, se cierra w1:p9 y
+#         w1:p7 (otro runtime) ni se cierra ni sale del pool.
+#   [22]  CA-5 (#928): una linea legacy sin clave de runtime ("w1:p9") se
+#         descarta del pool al primer barrido, sin "herdr pane close" -- costo
+#         unico de migracion.
+#   [23-26] Flags que se consumen o se reenvian (CA-3 de #872): --verbose e
+#         --if-exists no viajan nunca al sub-pipeline (uno es no-op en herdr,
+#         el otro es de las sesiones tmux, y avisa); --from-stage y --variant
+#         si viajan con su valor, y --from-stage no numerico aborta antes de
+#         despachar.
+#   [27]  Guard de contexto herdr (CA-5 de #872): sin HERDR_ENV=1 aborta
+#         remitiendo a mefisto-tmux-pipeline.sh, sin despachar ningun pane.
+#   [28]  Guard estatico del canonico REAL (CA-4 de #872 + CA-6 de #928),
+#         contraparte del bloque [B] de test-batch-runtime.sh: cero menciones
+#         de "claude -p", estado resuelto con mefisto_state_path (logs y
+#         registro de panes), cero ".claude/pipeline" en codigo, las unicas
+#         referencias ".claude/scripts" en codigo son la invocacion del visor
+#         -- que sigue viviendo ahi porque #878 neutralizo su fuente de datos,
+#         no su ubicacion (mismo caso que mefisto-tmux-pipeline.sh tras #871)
+#         -- y cero defaults literales de runtime (ningun ":-(claude|opencode)",
+#         issue #928 CA-6: el runtime se resuelve siempre con
+#         mefisto_resolve_runtime, nunca incrustado en esta capa neutral).
+#   [29]  tail -f en vivo del .report.log dentro de --_pane-runner (issue
 #         #926, CA-1/2/3): sin HERDR_PANE_ID en el entorno, un comando falso
 #         que imprime una linea, duerme 3s e imprime otra prueba que la
 #         primera linea llega a la captura del pane ANTES de que el comando
@@ -48,7 +69,9 @@
 #         duplicarse con un cat/tail final, que CA-2 elimina), que el visor y
 #         el tail comparten ese unico pane, que el rc devuelto es el del
 #         comando falso (exit 0 y exit 7) y que no queda ningun `tail -f` del
-#         reporte vivo tras la corrida (CA-3).
+#         reporte vivo tras la corrida (CA-3). No pasa por acquire_report_pane
+#         (el runner interno no resuelve runtime, issue #928 nota tecnica), asi
+#         que no depende del stub de claude/opencode en PATH.
 #
 # Uso: .claude/scripts/tests/test-mefisto-herdr-pipeline.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -83,8 +106,18 @@ cat > "$FAKE_MEFISTO/.claude-plugin/plugin.json" <<'EOF'
 EOF
 cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/_mefisto-common.sh"
 cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-state.sh"
+cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-runtime.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-runtime.sh"
 cp "$REPO_ROOT/src/internal/scripts/mefisto-herdr-pipeline.sh" "$FAKE_MEFISTO/src/internal/scripts/mefisto-herdr-pipeline.sh"
 cp "$REPO_ROOT/.claude/scripts/mefisto-herdr-pipeline.sh" "$FAKE_MEFISTO/.claude/scripts/mefisto-herdr-pipeline.sh"
+
+# Adaptadores de runtime reales (issue #928): mefisto_resolve_runtime solo
+# chequea que "runtime-<id>.sh" exista junto a mefisto-runtime.sh, pero se
+# copian los reales (mismo criterio que test-mefisto-tooling-variant.sh /
+# test-tooling-state-paths.sh) en vez de archivos vacios -- estos tests nunca
+# corren el sub-pipeline real (el pane run del stub de herdr solo registra el
+# comando tecleado), asi que el contenido nunca se ejecuta.
+cp "$REPO_ROOT/src/internal/scripts/lib/runtime-claude.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/runtime-claude.sh"
+cp "$REPO_ROOT/src/internal/scripts/lib/runtime-opencode.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/runtime-opencode.sh"
 
 # Stub del visor: el runner interno (bloque 24) lo lanza en background contra
 # la ruta explicita ".claude/scripts/mefisto-stream-watch.sh" del repo. Sin
@@ -106,6 +139,19 @@ cat > "$FAKE_BIN/gh" <<'STUB'
 exit 1
 STUB
 chmod +x "$FAKE_BIN/gh"
+
+# Stub de "claude" (issue #928): unico runtime visible por defecto dentro del
+# PATH restringido de run_herdr (ver mas abajo), asi la autodeteccion de
+# mefisto_resolve_runtime resuelve siempre "claude" en los tests que no fijan
+# MEFISTO_RUNTIME explicitamente -- sin esto, la maquina real que corre la
+# suite (con claude Y/O opencode instalados de verdad) haria la autodeteccion
+# no determinista. El bloque [18] (CA-1, runtimes ambiguos) agrega un
+# "opencode" temporal a este mismo directorio solo durante su corrida.
+cat > "$FAKE_BIN/claude" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+chmod +x "$FAKE_BIN/claude"
 
 # HERDR_STUB_FREE controla la respuesta de "pane process-info" (bloques
 # 16/17): "true" (default) simula un pane en su prompt interactivo; "false"
@@ -163,6 +209,14 @@ LAST_RC=0
 # FAKE_MEFISTO/.mefisto/pipeline/ para escribir en el .mefisto/pipeline/ del
 # repo que orquesta esta misma sesion (visto en vivo: un primer intento sin
 # estas -u filtro el registro de panes del checkout real).
+#
+# PATH="$FAKE_BIN:/usr/bin:/bin" (issue #928), no "$FAKE_BIN:$PATH": desde que
+# acquire_report_pane resuelve el runtime con mefisto_resolve_runtime, un
+# "command -v claude"/"command -v opencode" que se cuele hasta un CLI real
+# (tipicamente en ~/.local/bin o /opt/homebrew/bin, fuera de este PATH
+# recortado) haria la autodeteccion no determinista segun que runtimes tenga
+# instalados la maquina que corre la suite. /usr/bin y /bin alcanzan para git,
+# jq y el resto de coreutils que el canonico y _mefisto-common.sh usan.
 run_herdr() {
     : > "$HERDR_STUB_LOG"
     echo 0 > "$HERDR_STUB_COUNTER"
@@ -172,7 +226,7 @@ run_herdr() {
         env -u MEFISTO_UI \
             -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR \
             -u MEFISTO_REPO_ROOT -u MEFISTO_PROJECT_NAME -u MEFISTO_REPO_SLUG \
-            PATH="$FAKE_BIN:$PATH" \
+            PATH="$FAKE_BIN:/usr/bin:/bin" \
             HERDR_ENV=1 HERDR_PANE_ID="w1:p0" HERDR_WORKSPACE_ID="w1" \
             HERDR_STUB_LOG="$HERDR_STUB_LOG" HERDR_STUB_COUNTER="$HERDR_STUB_COUNTER" \
             HERDR_STUB_FREE="${HERDR_STUB_FREE:-true}" \
@@ -182,6 +236,15 @@ run_herdr() {
     LAST_STDOUT=$(cat "$out")
     LAST_STDERR=$(cat "$err")
 }
+
+# Punto de partida explicito (issue #928): esta suite corre a menudo DENTRO
+# de una corrida real del pipeline interno, que exporta MEFISTO_RUNTIME. Los
+# bloques que ejercen la ausencia de la variable ([5], [18], [22]) no pueden
+# depender de que un `unset` de otro bloque anterior la haya limpiado por
+# casualidad -- run_herdr no puede desfijarla, porque [1-4] verifican
+# justamente que se herede. Se limpia una vez aqui y cada bloque que la
+# necesita la exporta y la vuelve a desfijar.
+unset MEFISTO_RUNTIME MEFISTO_MODELS_FILE
 
 # --- [1-4] MEFISTO_RUNTIME/MEFISTO_MODELS_FILE heredados en el pane (CA-2) --
 
@@ -353,12 +416,19 @@ echo "  Combinaciones invalidas: $PASS pass, $FAIL fail (hasta aqui)"
 echo "----------------------------------------"
 
 # --- [16-17] Reutilizacion de panes -------------------------------------------
+#
+# Pool con clave de runtime (issue #928 CA-2): las lineas se escriben
+# "<pane_id> <runtime>". MEFISTO_RUNTIME=claude se fija explicito en ambos
+# bloques para que la seleccion compare contra el mismo runtime que la linea
+# del pool, independiente de la autodeteccion por defecto (stub "claude").
 
 echo ""
-echo "[16] un pane libre ya registrado se reutiliza (sin 'pane split')"
+echo "[16] un pane libre ya registrado del mismo runtime se reutiliza (sin 'pane split')"
 mkdir -p "$FAKE_MEFISTO/.mefisto/pipeline"
-printf 'w1:p9\n' > "$FAKE_MEFISTO/.mefisto/pipeline/herdr-report-panes.txt"
+printf 'w1:p9 claude\n' > "$FAKE_MEFISTO/.mefisto/pipeline/herdr-report-panes.txt"
+export MEFISTO_RUNTIME=claude
 HERDR_STUB_FREE=true run_herdr --tooling 872
+unset MEFISTO_RUNTIME
 if [ "$LAST_RC" -eq 0 ]; then pass "corre sin abortar (rc=$LAST_RC)"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
 if grep -q "pane split" "$HERDR_STUB_LOG"; then
     fail "no deberia crear un pane nuevo -- log: $(cat "$HERDR_STUB_LOG")"
@@ -374,8 +444,10 @@ fi
 echo ""
 echo "[17] un pane registrado pero ocupado se descarta: crea uno nuevo (pane split)"
 mkdir -p "$FAKE_MEFISTO/.mefisto/pipeline"
-printf 'w1:p9\n' > "$FAKE_MEFISTO/.mefisto/pipeline/herdr-report-panes.txt"
+printf 'w1:p9 claude\n' > "$FAKE_MEFISTO/.mefisto/pipeline/herdr-report-panes.txt"
+export MEFISTO_RUNTIME=claude
 HERDR_STUB_FREE=false run_herdr --tooling 872
+unset MEFISTO_RUNTIME
 if [ "$LAST_RC" -eq 0 ]; then pass "corre sin abortar (rc=$LAST_RC)"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
 if grep -q "pane split" "$HERDR_STUB_LOG"; then
     pass "crea un pane nuevo porque el registrado esta ocupado"
@@ -393,7 +465,139 @@ echo "----------------------------------------"
 echo "  Reutilizacion de panes: $PASS pass, $FAIL fail (hasta aqui)"
 echo "----------------------------------------"
 
-# --- [18-20] Flags que se consumen o se reenvian tal cual (CA-3) --------------
+# --- [18-22] Runtime como clave del pool (issue #928, CA-1..CA-5) ------------
+
+echo ""
+echo "[18] CA-1: claude y opencode instalados a la vez sin MEFISTO_RUNTIME -- aborta antes de tocar el pool"
+mkdir -p "$FAKE_MEFISTO/.mefisto/pipeline"
+printf 'w1:p9 claude\n' > "$FAKE_MEFISTO/.mefisto/pipeline/herdr-report-panes.txt"
+POOL_BEFORE=$(cat "$FAKE_MEFISTO/.mefisto/pipeline/herdr-report-panes.txt")
+cat > "$FAKE_BIN/opencode" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+chmod +x "$FAKE_BIN/opencode"
+run_herdr --tooling 872
+rm -f "$FAKE_BIN/opencode"
+if [ "$LAST_RC" -eq 1 ]; then pass "aborta (rc=$LAST_RC)"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+if printf '%s' "$LAST_STDERR" | grep -q "No se pudo resolver el runtime activo" \
+    && printf '%s' "$LAST_STDERR" | grep -q "ambos runtimes instalados"; then
+    pass "mensaje: MEFISTO_RUNTIME_ERROR de runtimes ambiguos"
+else
+    fail "mensaje inesperado: $LAST_STDERR"
+fi
+if [ -s "$HERDR_STUB_LOG" ]; then
+    fail "no deberia invocar herdr en absoluto -- log: $(cat "$HERDR_STUB_LOG")"
+else
+    pass "ningun pane split/run/close (el stub de herdr no se invoco)"
+fi
+POOL_AFTER=$(cat "$FAKE_MEFISTO/.mefisto/pipeline/herdr-report-panes.txt")
+if [ "$POOL_BEFORE" = "$POOL_AFTER" ]; then
+    pass "el archivo del pool no se modifico"
+else
+    fail "el pool se modifico -- antes: '$POOL_BEFORE', despues: '$POOL_AFTER'"
+fi
+
+echo ""
+echo "[19] CA-2: un despacho que crea pane nuevo escribe '<pane_id> <runtime>' en el pool"
+rm -f "$FAKE_MEFISTO/.mefisto/pipeline/herdr-report-panes.txt"
+export MEFISTO_RUNTIME=opencode
+run_herdr --tooling 872
+unset MEFISTO_RUNTIME
+if [ "$LAST_RC" -eq 0 ]; then pass "corre sin abortar (rc=$LAST_RC)"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
+POOL_CONTENT=$(cat "$FAKE_MEFISTO/.mefisto/pipeline/herdr-report-panes.txt" 2>/dev/null)
+if printf '%s\n' "$POOL_CONTENT" | grep -qE '^w1:p[0-9]+ opencode$'; then
+    pass "el pool guarda la linea con clave '<pane_id> opencode'"
+else
+    fail "el pool no tiene el formato esperado -- contenido: '$POOL_CONTENT'"
+fi
+
+echo ""
+echo "[20] CA-3: pool con 'w1:p9 claude' libre, despacho opencode crea pane nuevo sin tocar el de claude"
+printf 'w1:p9 claude\n' > "$FAKE_MEFISTO/.mefisto/pipeline/herdr-report-panes.txt"
+export MEFISTO_RUNTIME=opencode
+HERDR_STUB_FREE=true run_herdr --tooling 872
+unset MEFISTO_RUNTIME
+if [ "$LAST_RC" -eq 0 ]; then pass "corre sin abortar (rc=$LAST_RC)"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
+if grep -q "pane split" "$HERDR_STUB_LOG"; then
+    pass "crea un pane nuevo (el libre registrado es de otro runtime)"
+else
+    fail "deberia haber creado un pane nuevo -- log: $(cat "$HERDR_STUB_LOG")"
+fi
+if grep -qF "pane close w1:p9" "$HERDR_STUB_LOG"; then
+    fail "no deberia cerrar el pane de otro runtime -- log: $(cat "$HERDR_STUB_LOG")"
+else
+    pass "no cierra w1:p9 (claude)"
+fi
+POOL_CONTENT=$(cat "$FAKE_MEFISTO/.mefisto/pipeline/herdr-report-panes.txt")
+if printf '%s\n' "$POOL_CONTENT" | grep -qxF "w1:p9 claude"; then
+    pass "w1:p9 claude sigue en el pool"
+else
+    fail "w1:p9 claude ya no esta en el pool -- contenido: '$POOL_CONTENT'"
+fi
+
+echo ""
+echo "[21] CA-4: la poda de panes libres sobrantes solo considera el mismo runtime"
+printf 'w1:p8 opencode\nw1:p9 opencode\nw1:p7 claude\n' > "$FAKE_MEFISTO/.mefisto/pipeline/herdr-report-panes.txt"
+export MEFISTO_RUNTIME=opencode
+HERDR_STUB_FREE=true run_herdr --tooling 872
+unset MEFISTO_RUNTIME
+if [ "$LAST_RC" -eq 0 ]; then pass "corre sin abortar (rc=$LAST_RC)"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
+if grep -q "pane split" "$HERDR_STUB_LOG"; then
+    fail "no deberia crear un pane nuevo -- deberia reusar w1:p8 -- log: $(cat "$HERDR_STUB_LOG")"
+else
+    pass "no crea un pane nuevo (reusa uno libre del mismo runtime)"
+fi
+if grep -qF "pane run w1:p8" "$HERDR_STUB_LOG"; then
+    pass "reutiliza w1:p8 (opencode)"
+else
+    fail "no reutilizo w1:p8 -- log: $(cat "$HERDR_STUB_LOG")"
+fi
+if grep -qF "pane close w1:p9" "$HERDR_STUB_LOG"; then
+    pass "cierra el sobrante w1:p9 (opencode)"
+else
+    fail "no cerro el sobrante w1:p9 -- log: $(cat "$HERDR_STUB_LOG")"
+fi
+if grep -qF "pane close w1:p7" "$HERDR_STUB_LOG"; then
+    fail "no deberia cerrar w1:p7 (otro runtime) -- log: $(cat "$HERDR_STUB_LOG")"
+else
+    pass "no cierra w1:p7 (claude)"
+fi
+POOL_CONTENT=$(cat "$FAKE_MEFISTO/.mefisto/pipeline/herdr-report-panes.txt")
+if printf '%s\n' "$POOL_CONTENT" | grep -qxF "w1:p7 claude"; then
+    pass "w1:p7 claude sigue en el pool"
+else
+    fail "w1:p7 claude salio del pool -- contenido: '$POOL_CONTENT'"
+fi
+if printf '%s\n' "$POOL_CONTENT" | grep -qxF "w1:p9 opencode"; then
+    fail "w1:p9 opencode deberia haber salido del pool tras cerrarse -- contenido: '$POOL_CONTENT'"
+else
+    pass "w1:p9 opencode ya no esta en el pool"
+fi
+
+echo ""
+echo "[22] CA-5: una linea legacy sin clave de runtime se descarta del pool sin cerrar su pane"
+printf 'w1:p9\n' > "$FAKE_MEFISTO/.mefisto/pipeline/herdr-report-panes.txt"
+run_herdr --tooling 872
+if [ "$LAST_RC" -eq 0 ]; then pass "corre sin abortar (rc=$LAST_RC)"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
+if grep -qF "pane close w1:p9" "$HERDR_STUB_LOG"; then
+    fail "no deberia cerrar la linea legacy -- log: $(cat "$HERDR_STUB_LOG")"
+else
+    pass "no cierra w1:p9 (legacy, sin clave)"
+fi
+POOL_CONTENT=$(cat "$FAKE_MEFISTO/.mefisto/pipeline/herdr-report-panes.txt")
+if printf '%s\n' "$POOL_CONTENT" | grep -qxF "w1:p9"; then
+    fail "la linea legacy deberia haber salido del pool -- contenido: '$POOL_CONTENT'"
+else
+    pass "la linea legacy salio del pool"
+fi
+
+echo ""
+echo "----------------------------------------"
+echo "  Runtime como clave del pool: $PASS pass, $FAIL fail (hasta aqui)"
+echo "----------------------------------------"
+
+# --- [23-26] Flags que se consumen o se reenvian tal cual (CA-3 de #872) -----
 #
 # --verbose e --if-exists no llegan nunca al sub-pipeline (uno es no-op en
 # herdr, el otro es de las sesiones tmux); --from-stage y --variant si, y su
@@ -402,7 +606,7 @@ echo "----------------------------------------"
 # defecto que #709/#711 corrigieron para --models/--variant.
 
 echo ""
-echo "[18] --verbose se consume sin efecto: despacha igual y no viaja al sub-pipeline"
+echo "[23] --verbose se consume sin efecto: despacha igual y no viaja al sub-pipeline"
 run_herdr --tooling 872 --verbose
 if [ "$LAST_RC" -eq 0 ]; then pass "corre sin abortar (rc=$LAST_RC)"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
 if grep -qF "mefisto-tooling-pipeline.sh 872" "$HERDR_STUB_LOG"; then
@@ -417,7 +621,7 @@ else
 fi
 
 echo ""
-echo "[19] --if-exists avisa por stderr y se ignora (es de las sesiones tmux)"
+echo "[24] --if-exists avisa por stderr y se ignora (es de las sesiones tmux)"
 run_herdr --tooling 872 --if-exists fail
 if [ "$LAST_RC" -eq 0 ]; then pass "corre sin abortar (rc=$LAST_RC)"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
 if printf '%s' "$LAST_STDERR" | grep -q "no aplica en herdr"; then pass "avisa que no aplica en herdr"; else fail "sin aviso en stderr: $LAST_STDERR"; fi
@@ -428,7 +632,7 @@ else
 fi
 
 echo ""
-echo "[20] --from-stage y --variant se reenvian con su valor al sub-pipeline canonico"
+echo "[25] --from-stage y --variant se reenvian con su valor al sub-pipeline canonico"
 run_herdr --tooling 872 --from-stage 2 --variant experimento-a
 if [ "$LAST_RC" -eq 0 ]; then pass "corre sin abortar (rc=$LAST_RC)"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
 if grep -qF -- "mefisto-tooling-pipeline.sh 872 --from-stage 2" "$HERDR_STUB_LOG"; then
@@ -448,7 +652,7 @@ else
 fi
 
 echo ""
-echo "[21] --from-stage con valor no numerico aborta antes de despachar"
+echo "[26] --from-stage con valor no numerico aborta antes de despachar"
 run_herdr --tooling 872 --from-stage dos
 if [ "$LAST_RC" -eq 1 ]; then pass "aborta (rc=$LAST_RC)"; else fail "deberia abortar (rc=$LAST_RC)"; fi
 if printf '%s' "$LAST_STDERR" | grep -q "numero entero"; then pass "mensaje: debe ser un numero entero"; else fail "mensaje inesperado: $LAST_STDERR"; fi
@@ -459,10 +663,10 @@ echo "----------------------------------------"
 echo "  Flags consumidos y reenviados: $PASS pass, $FAIL fail (hasta aqui)"
 echo "----------------------------------------"
 
-# --- [22] Guard de contexto herdr (CA-5) -------------------------------------
+# --- [27] Guard de contexto herdr (CA-5 de #872) -----------------------------
 
 echo ""
-echo "[22] fuera de un pane herdr (HERDR_ENV != 1) aborta remitiendo al lanzador tmux"
+echo "[27] fuera de un pane herdr (HERDR_ENV != 1) aborta remitiendo al lanzador tmux"
 : > "$HERDR_STUB_LOG"
 echo 0 > "$HERDR_STUB_COUNTER"
 (
@@ -481,7 +685,7 @@ if [ "$LAST_RC" -eq 1 ]; then pass "aborta (rc=$LAST_RC)"; else fail "deberia ab
 if printf '%s' "$LAST_STDERR" | grep -q "mefisto-tmux-pipeline.sh"; then pass "el remedio nombra mefisto-tmux-pipeline.sh"; else fail "mensaje inesperado: $LAST_STDERR"; fi
 if grep -q "pane run" "$HERDR_STUB_LOG"; then fail "no deberia despachar ningun pane"; else pass "ningun pane despachado"; fi
 
-# --- [23] Guard estatico del canonico (CA-4) ---------------------------------
+# --- [28] Guard estatico del canonico (CA-4 de #872, CA-6 de #928) ----------
 #
 # Contraparte del bloque [B] de test-batch-runtime.sh, sobre el archivo REAL
 # (no la copia del fixture). La ruta legacy del estado ya la fija el bloque
@@ -493,7 +697,7 @@ if grep -q "pane run" "$HERDR_STUB_LOG"; then fail "no deberia despachar ningun 
 CANON_HERDR="$REPO_ROOT/src/internal/scripts/mefisto-herdr-pipeline.sh"
 
 echo ""
-echo "[23] el canonico no menciona 'claude -p' y resuelve su estado con mefisto_state_path"
+echo "[28] el canonico no menciona 'claude -p' y resuelve su estado con mefisto_state_path"
 if grep -qF 'claude -p' "$CANON_HERDR"; then
     fail "todavia menciona 'claude -p' (el runner depende del runtime activo)"
     grep -nF 'claude -p' "$CANON_HERDR"
@@ -535,13 +739,29 @@ if grep -qF 'dispatch_to_pane "$title" "$issue" "$SCRIPT_DIR/mefisto-tooling-pip
 else
     fail "tooling/batch ya no se despachan a los siblings canonicos via SCRIPT_DIR"
 fi
+# CA-6 (issue #928): el runtime de esta capa neutral se resuelve siempre con
+# mefisto_resolve_runtime -- un default literal incrustado aqui (p. ej.
+# "${MEFISTO_RUNTIME:-claude}") degradaria en silencio a un unico runtime
+# fijo, exactamente lo que el pool con clave de runtime deja de tolerar.
+if grep -qE ':-(claude|opencode)' "$CANON_HERDR"; then
+    fail "el canonico incrusta un default literal de runtime"
+    grep -nE ':-(claude|opencode)' "$CANON_HERDR"
+else
+    pass "cero defaults literales de runtime (':-(claude|opencode)')"
+fi
+if grep -qF 'source "$SCRIPT_DIR/lib/mefisto-runtime.sh"' "$CANON_HERDR" \
+   && grep -qF 'runtime=$(mefisto_resolve_runtime)' "$CANON_HERDR"; then
+    pass "acquire_report_pane resuelve el runtime con mefisto_resolve_runtime"
+else
+    fail "acquire_report_pane ya no resuelve el runtime con mefisto_resolve_runtime"
+fi
 
 echo ""
 echo "----------------------------------------"
 echo "  Guards de contexto y del canonico: $PASS pass, $FAIL fail (hasta aqui)"
 echo "----------------------------------------"
 
-# --- [24] tail -f en vivo del .report.log dentro de --_pane-runner (CA-1/2/3) -
+# --- [29] tail -f del .report.log dentro de --_pane-runner (CA-1/2/3 de #926) -
 #
 # Corre el runner interno directamente (sin pasar por el shim ni por herdr
 # real), sin HERDR_PANE_ID en el entorno -- salta los "herdr pane rename" y
@@ -655,11 +875,11 @@ run_pane_runner_live() {
 }
 
 echo ""
-echo "[24a] --_pane-runner con un comando falso que termina exit 0"
+echo "[29a] --_pane-runner con un comando falso que termina exit 0"
 run_pane_runner_live 0
 
 echo ""
-echo "[24b] --_pane-runner con un comando falso que termina exit 7"
+echo "[29b] --_pane-runner con un comando falso que termina exit 7"
 run_pane_runner_live 7
 
 echo ""
