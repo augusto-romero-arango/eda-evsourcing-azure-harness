@@ -13,6 +13,7 @@
 #   src/internal/scripts/mefisto-tooling-pipeline.sh 42 --models 'reviewer=<modelo>,writer=<modelo>'  # Modelo por stage (experimentos)
 #   src/internal/scripts/mefisto-tooling-pipeline.sh 42 --variant experimento-a  # Corrida paralela del mismo issue (sin PR, rama local)
 #   MEFISTO_AGENT_TIMEOUT_SECONDS=<s> src/internal/scripts/mefisto-tooling-pipeline.sh 42  # Timeout de watchdog por stage (default 1800; entero > 0, issue #946)
+#   MEFISTO_HOLD_MAX_SECONDS=<s> / MEFISTO_HOLD_PROBE_SECONDS=<s> src/internal/scripts/mefisto-tooling-pipeline.sh 42  # Techo (default 21600 = 6h) y cadencia de sondeo (default 300) de la espera ante RATE_LIMIT/PROVIDER_UNAVAILABLE (issue #967)
 #
 # Ciclo: Issue (en repo Mefisto) -> Worktree -> Writer -> Reviewer -> Sync main -> PR -> Cleanup
 #
@@ -96,10 +97,15 @@ AGENT_RV_DUR="" AGENT_RV_RES="pending"
 # cosechado en los mismos puntos donde ya se cosecha AGENT_*_DUR.
 AGENT_WR_METRICS_JSON=""
 AGENT_RV_METRICS_JSON=""
+# Segundos en espera (hold, issue #967) por stage -- 0 si el stage nunca
+# entro en hold. Se cosecha en los mismos puntos que AGENT_*_DUR (CA-6).
+AGENT_WR_HOLD_SECONDS=0
+AGENT_RV_HOLD_SECONDS=0
 PIPELINE_PR=""
 PIPELINE_ERROR=""
 LAST_AGENT_DURATION=0
 LAST_AGENT_METRICS_JSON=""
+LAST_AGENT_HOLD_SECONDS=0
 CURRENT_STAGE="setup"
 
 _strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
@@ -567,6 +573,30 @@ run_agent() {
     local MAX_ATTEMPTS="${MEFISTO_AGENT_MAX_ATTEMPTS:-3}"
     local RETRY_BACKOFF_SECONDS="${MEFISTO_AGENT_RETRY_BACKOFF_SECONDS:-120}"
 
+    # --- Espera (hold) ante RATE_LIMIT/PROVIDER_UNAVAILABLE persistente
+    # (issue #967) ---
+    # Segunda politica del mismo bucle: cuando el reintento corto de arriba no
+    # aplica (RATE_LIMIT, que #965 deja fuera de agent_failure_is_retryable
+    # desde el primer fallo) o se agota sin resolver (PROVIDER_UNAVAILABLE
+    # persistente), el stage no aborta -- se sienta a esperar. El propio
+    # reintento es la sonda: si la causa sigue vigente, el intento siguiente
+    # muere en segundos con la misma senal y se vuelve a esperar (decision de
+    # diseno de #967: evita construir un mecanismo de sondeo separado por
+    # runtime). Overridables por entorno, igual que MAX_ATTEMPTS/
+    # RETRY_BACKOFF_SECONDS, para que los tests ejerzan el bucle sin esperar
+    # horas reales.
+    local HOLD_MAX_SECONDS="${MEFISTO_HOLD_MAX_SECONDS:-21600}"
+    local HOLD_PROBE_SECONDS="${MEFISTO_HOLD_PROBE_SECONDS:-300}"
+    # Margen fijo sobre `resets_at` (issue #965): el runtime informa el
+    # instante exacto en que se levanta el limite, pero despertar justo en el
+    # segundo cero puede ganarle por poco a una ventana todavia cerrada.
+    local HOLD_RESET_MARGIN_SECONDS=60
+    # CA-4: contador PROPIO, independiente de $attempt/$MAX_ATTEMPTS -- el
+    # hold es una politica distinta sobre una causa distinta, y no debe
+    # consumir el presupuesto de reintentos de #534.
+    local HOLD_TOTAL_SECONDS=0
+    local HOLD_STARTED_TS=""
+
     # CA-4: estado del worktree AL ENTRAR al stage, para poder restaurarlo
     # entre reintentos. No sirve $SNAPSHOT_COMMIT: ese es el commit de entrada
     # al PIPELINE, y en stage 2 resetear ahi borraria el commit del writer.
@@ -652,35 +682,92 @@ run_agent() {
             failure_type=$(classify_agent_failure "$TIMED_OUT" "$RUN_EXIT" "$elapsed" "$events_file")
         fi
 
-        # Salida normal: exito, fallo no reintentable, o reintentos agotados.
+        # Salida normal: exito.
         [ -z "$failure_type" ] && break
-        agent_failure_is_retryable "$failure_type" || break
-        [ "$attempt" -ge "$MAX_ATTEMPTS" ] && break
 
-        # CA-6: el reintento deja rastro. Sin esta linea un post-mortem no
-        # puede distinguir "salio a la primera" de "salio al tercer intento".
-        warn "$agent: $failure_type -- reintentando ($((attempt + 1))/$MAX_ATTEMPTS) tras ${RETRY_BACKOFF_SECONDS}s"
-        echo "[$(date +%H:%M:%S)] REINTENTO $agent: $failure_type (intento $attempt/$MAX_ATTEMPTS, espera ${RETRY_BACKOFF_SECONDS}s)" >> "$EVENTS_LOG_ABS"
+        if agent_failure_is_retryable "$failure_type" && [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
+            # CA-6 (#534): el reintento deja rastro. Sin esta linea un
+            # post-mortem no puede distinguir "salio a la primera" de "salio
+            # al tercer intento".
+            warn "$agent: $failure_type -- reintentando ($((attempt + 1))/$MAX_ATTEMPTS) tras ${RETRY_BACKOFF_SECONDS}s"
+            echo "[$(date +%H:%M:%S)] REINTENTO $agent: $failure_type (intento $attempt/$MAX_ATTEMPTS, espera ${RETRY_BACKOFF_SECONDS}s)" >> "$EVENTS_LOG_ABS"
 
-        # El log y la traza del intento fallido se preservan aparte: el
-        # siguiente intento sobrescribe los nombres canonicos, y sin esta
-        # copia la evidencia del fallo que motivo el reintento se perderia.
-        cp -f "$log_stage" "${log_base}.attempt-${attempt}.log" 2>/dev/null || true
-        cp -f "$stream_file" "${log_base}.attempt-${attempt}.stream.jsonl" 2>/dev/null || true
-        cp -f "$events_file" "${log_base}.attempt-${attempt}.events.jsonl" 2>/dev/null || true
+            # El log y la traza del intento fallido se preservan aparte: el
+            # siguiente intento sobrescribe los nombres canonicos, y sin esta
+            # copia la evidencia del fallo que motivo el reintento se perderia.
+            cp -f "$log_stage" "${log_base}.attempt-${attempt}.log" 2>/dev/null || true
+            cp -f "$stream_file" "${log_base}.attempt-${attempt}.stream.jsonl" 2>/dev/null || true
+            cp -f "$events_file" "${log_base}.attempt-${attempt}.events.jsonl" 2>/dev/null || true
 
-        if [ "$ENTRY_CLEAN" = true ] && [ -n "$ENTRY_COMMIT" ]; then
-            # CA-5: `clean -fd` va sin -x a proposito -- .mefisto/pipeline/ esta
-            # gitignored y sus summaries deben sobrevivir al reintento.
-            git -C "$WORKTREE_PATH" reset --hard "$ENTRY_COMMIT" >/dev/null 2>&1 || true
-            git -C "$WORKTREE_PATH" clean -fd >/dev/null 2>&1 || true
-            log "Worktree restaurado a ${ENTRY_COMMIT:0:8} para el reintento"
+            if [ "$ENTRY_CLEAN" = true ] && [ -n "$ENTRY_COMMIT" ]; then
+                # CA-5 (#534): `clean -fd` va sin -x a proposito --
+                # .mefisto/pipeline/ esta gitignored y sus summaries deben
+                # sobrevivir al reintento.
+                git -C "$WORKTREE_PATH" reset --hard "$ENTRY_COMMIT" >/dev/null 2>&1 || true
+                git -C "$WORKTREE_PATH" clean -fd >/dev/null 2>&1 || true
+                log "Worktree restaurado a ${ENTRY_COMMIT:0:8} para el reintento"
+            else
+                log "El worktree ya tenia cambios al entrar al stage: NO se restaura (se reintenta sobre el estado actual)"
+            fi
+
+            sleep "$RETRY_BACKOFF_SECONDS"
+            attempt=$((attempt + 1))
+        elif agent_failure_is_holdable "$failure_type"; then
+            # CA-1/CA-2 (issue #967): RATE_LIMIT desde el primer fallo (nunca
+            # paso por la rama de arriba) y PROVIDER_UNAVAILABLE una vez
+            # agotado su presupuesto de reintento corto entran aqui en vez de
+            # abortar. $attempt/$MAX_ATTEMPTS quedan intactos a proposito
+            # (CA-4): son dos presupuestos sobre dos causas distintas.
+            [ -z "$HOLD_STARTED_TS" ] && HOLD_STARTED_TS=$(date +%s)
+            local hold_remaining=$(( HOLD_MAX_SECONDS - HOLD_TOTAL_SECONDS ))
+            if [ "$hold_remaining" -le 0 ]; then
+                # CA-2: techo agotado -- se rompe SIN dormir de nuevo. El
+                # bloque de abajo (agent_work_is_trustworthy / abort) hereda
+                # HOLD_TOTAL_SECONDS y nombra cuanto se espero.
+                break
+            fi
+
+            # CA-1: si el terminal trajo `resets_at`, dormir hasta esa hora
+            # (mas el margen) en vez de sondear a ciegas. El sondeo cada
+            # HOLD_PROBE_SECONDS es el piso garantizado -- corre cuando
+            # `resets_at` falta (runtime que no lo informa, o un adaptador
+            # que siempre lo deja null, ver runtime-opencode.jq).
+            local resets_at hold_sleep now_epoch
+            resets_at=$(agent_events_resets_at "$events_file")
+            now_epoch=$(date +%s)
+            hold_sleep="$HOLD_PROBE_SECONDS"
+            if [ -n "$resets_at" ]; then
+                local resets_epoch
+                resets_epoch=$(iso8601_to_epoch "$resets_at" 2>/dev/null || echo "")
+                if [ -n "$resets_epoch" ]; then
+                    hold_sleep=$(( resets_epoch + HOLD_RESET_MARGIN_SECONDS - now_epoch ))
+                    [ "$hold_sleep" -lt 1 ] && hold_sleep=1
+                fi
+            fi
+            [ "$hold_sleep" -gt "$hold_remaining" ] && hold_sleep="$hold_remaining"
+
+            # CA-3: rastro por ciclo de espera, formato fijo para que un
+            # post-mortem distinga un hold en curso de un pipeline colgado.
+            local hold_family="${failure_type%% *}"
+            local next_probe_hms deadline_hm hold_deadline_epoch next_probe_epoch
+            hold_deadline_epoch=$(( HOLD_STARTED_TS + HOLD_MAX_SECONDS ))
+            next_probe_epoch=$(( now_epoch + hold_sleep ))
+            next_probe_hms=$(date -r "$next_probe_epoch" +%H:%M:%S 2>/dev/null || date -d "@$next_probe_epoch" +%H:%M:%S 2>/dev/null || echo "??:??:??")
+            deadline_hm=$(date -r "$hold_deadline_epoch" +%H:%M 2>/dev/null || date -d "@$hold_deadline_epoch" +%H:%M 2>/dev/null || echo "??:??")
+
+            warn "$agent: $failure_type -- en espera (hold), proxima sonda a las $next_probe_hms"
+            echo "[$(date +%H:%M:%S)][hold] $hold_family: esperando, proxima sonda $next_probe_hms (techo $deadline_hm)" >> "$EVENTS_LOG_ABS"
+
+            # CA-5: a diferencia del reintento corto de arriba, el hold NUNCA
+            # restaura el worktree a $ENTRY_COMMIT -- la reanudacion de sesion
+            # (issue siguiente) se apoya en el trabajo que dejo el stage
+            # truncado, y mientras esa reanudacion no exista el reintento
+            # corre sobre ese mismo estado.
+            sleep "$hold_sleep"
+            HOLD_TOTAL_SECONDS=$(( HOLD_TOTAL_SECONDS + hold_sleep ))
         else
-            log "El worktree ya tenia cambios al entrar al stage: NO se restaura (se reintenta sobre el estado actual)"
+            break
         fi
-
-        sleep "$RETRY_BACKOFF_SECONDS"
-        attempt=$((attempt + 1))
     done
 
     # El wall-clock del stage incluye todos los intentos y sus esperas: es lo
@@ -690,6 +777,11 @@ run_agent() {
     if [ -n "$failure_type" ]; then
         log "$agent fallo despues de ${elapsed}s -- tipo: $failure_type"
         echo "[$(date +%H:%M:%S)] FALLO $agent: $failure_type" >> "$EVENTS_LOG_ABS"
+        # CA-2 (#967): si el fallo llega tras agotar el techo de espera, se
+        # nombra cuanto se espero -- distingue este aborto de uno ordinario
+        # sin obligar a bucear en events.log.
+        [ "$HOLD_TOTAL_SECONDS" -gt 0 ] \
+            && log "$agent: techo de espera (hold) agotado tras $((HOLD_TOTAL_SECONDS / 60))m -- ultima senal: $failure_type"
 
         # CA-4: un TIMEOUT o un corte de stream a mitad de respuesta nunca es
         # recuperable via has_work -- el incidente de #416 fue justo esto (el
@@ -731,13 +823,26 @@ run_agent() {
             update_status "$stage-$agent" "failed"
             echo -e "\n${RED}-- Ultimas lineas del log de $agent:${NC}"
             tail -20 "$log_stage"
-            abort "$agent fallo ($failure_type). Log completo: $log_stage"
+            # CA-2 (#967): mensaje de aborto especifico cuando la causa fue el
+            # techo de espera agotado -- nombra cuanto espero y la ultima
+            # senal, en vez del mensaje generico de cualquier otro fallo.
+            if [ "$HOLD_TOTAL_SECONDS" -gt 0 ]; then
+                abort "$agent: techo de espera agotado tras $((HOLD_TOTAL_SECONDS / 60))m (limite ${HOLD_MAX_SECONDS}s) -- ultima senal: $failure_type. Log completo: $log_stage"
+            else
+                abort "$agent fallo ($failure_type). Log completo: $log_stage"
+            fi
         fi
     fi
 
     LAST_AGENT_DURATION=$total_elapsed
     LAST_AGENT_METRICS_JSON="$metrics_json"
-    if [ "$attempt" -gt 1 ]; then
+    LAST_AGENT_HOLD_SECONDS=$HOLD_TOTAL_SECONDS
+    if [ "$HOLD_TOTAL_SECONDS" -gt 0 ]; then
+        # CA-6: un stage que se recupera tras esperar termina como exito
+        # normal -- esta linea es la unica diferencia visible, y es lo que
+        # distingue una corrida lenta por hold de una corrida lenta a secas.
+        log "$agent completado en ${total_elapsed}s (incluye $((HOLD_TOTAL_SECONDS / 60))m en espera/hold)"
+    elif [ "$attempt" -gt 1 ]; then
         log "$agent completado en ${total_elapsed}s (intento $attempt/$MAX_ATTEMPTS; ${elapsed}s el ultimo)"
     else
         log "$agent completado en ${total_elapsed}s"
@@ -900,6 +1005,7 @@ Instrucciones:
 
     AGENT_WR_DUR=$LAST_AGENT_DURATION
     AGENT_WR_METRICS_JSON=$LAST_AGENT_METRICS_JSON
+    AGENT_WR_HOLD_SECONDS=$LAST_AGENT_HOLD_SECONDS
     AGENT_WR_RES="passed"
     update_status "1-writer" "passed"
     success "Stage 1 completado"
@@ -967,6 +1073,7 @@ Instrucciones:
 
     AGENT_RV_DUR=$LAST_AGENT_DURATION
     AGENT_RV_METRICS_JSON=$LAST_AGENT_METRICS_JSON
+    AGENT_RV_HOLD_SECONDS=$LAST_AGENT_HOLD_SECONDS
     AGENT_RV_RES="passed"
     update_status "2-reviewer" "passed"
     success "Stage 2 completado"
@@ -1067,6 +1174,11 @@ else
         _fmt_dur() { local s="${1:-0}"; echo "$((s/60))m $((s%60))s"; }
         WR_DUR_FMT=$(_fmt_dur "${AGENT_WR_DUR:-0}")
         RV_DUR_FMT=$(_fmt_dur "${AGENT_RV_DUR:-0}")
+        # CA-6 (#967): cuanto de esa duracion fue espera (hold), no trabajo.
+        WR_HOLD_NOTE=""
+        [ "${AGENT_WR_HOLD_SECONDS:-0}" -gt 0 ] && WR_HOLD_NOTE=" (incluye $(_fmt_dur "$AGENT_WR_HOLD_SECONDS") en espera/hold)"
+        RV_HOLD_NOTE=""
+        [ "${AGENT_RV_HOLD_SECONDS:-0}" -gt 0 ] && RV_HOLD_NOTE=" (incluye $(_fmt_dur "$AGENT_RV_HOLD_SECONDS") en espera/hold)"
 
         PR_URL=$(gh pr create \
             --title "$ISSUE_TITLE" \
@@ -1080,14 +1192,14 @@ Pipeline mefisto-tooling completado:
 ## Decisiones del pipeline
 
 <details>
-<summary>Writer -- ${WR_DUR_FMT}</summary>
+<summary>Writer -- ${WR_DUR_FMT}${WR_HOLD_NOTE}</summary>
 
 ${WR_SUMMARY}
 
 </details>
 
 <details>
-<summary>Reviewer -- ${RV_DUR_FMT}</summary>
+<summary>Reviewer -- ${RV_DUR_FMT}${RV_HOLD_NOTE}</summary>
 
 ${RV_SUMMARY}
 
