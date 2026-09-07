@@ -53,7 +53,7 @@ Fue creado por el `domain-scaffolder` e incluye:
 - `appsettings.json` con la URL del entorno dev y connection strings vacios (`""`)
 - `Fixtures/ApiFixture.cs` con HttpClient configurado y health check fail-fast
 - `Fixtures/ServiceBusFixture.cs` con `PublishAsync` (publicar al topic) y `WaitForMessageAsync` (consumir de suscripcion), patron `IsConfigured` para skip graceful
-- `Fixtures/PostgresFixture.cs` con `ExisteEventoAsync` y `ObtenerEventoAsync`, patron `IsConfigured` + `SkipReason` (incluye diagnostico de firewall)
+- `Fixtures/PostgresFixture.cs` con consultas de eventos del stream, patron `IsConfigured` + `SkipReason` (incluye diagnostico de firewall)
 - `Fixtures/Polling.cs` con `WaitUntilAsync` y `WaitUntilTrueAsync`, tolerante a excepciones transitorias dentro del loop (no muere al primer error SQL); lanza `TimeoutException` con la ultima excepcion al agotar el timeout
 - `Fixtures/AssemblyFixture.cs` con registro de los tres fixtures via `[assembly: AssemblyFixture(typeof(...))]`
 
@@ -174,6 +174,7 @@ Para descubrir los efectos secundarios del comando:
 3. Busca llamadas a `IEventStore.StartStream` o `AppendToStream` (persistencia)
 4. En el futuro, busca llamadas a `ISender.SendAsync` (queues)
 5. Cada efecto encontrado DEBE tener su verificacion en el test del camino feliz
+6. Para cada PUT/DELETE nuevo o migrado, lee tambien el campo "Estado ya alcanzado" del contrato: identifica el stream e identificador unico que permiten comparar el Act 1 con el Act 2 y revisa el `PostgresFixture` real antes de elegir la asercion de inventario/version
 
 ### Endpoint POST (crear/modificar)
 
@@ -181,6 +182,19 @@ Para descubrir los efectos secundarios del comando:
 2. **Duplicado/conflicto** - si aplica, enviar el mismo payload dos veces y verificar 409 Conflict
 3. **Validacion** - payload con campos vacios/invalidos retorna 400 Bad Request
 4. **Fan-out de arreglos** - cuando el payload contiene un arreglo que produce un evento por elemento (fan-out), el test del camino feliz debe enviar al menos 2 elementos y verificar que se emitan N eventos correspondientes. No testear fan-out con un solo elemento — eso no distingue "emite 1 evento" de "emite N eventos".
+
+### Endpoint PUT/DELETE (cambio y no-op idempotente)
+
+Para cada PUT/DELETE **nuevo o migrado** cuyo contrato declare "Estado ya alcanzado", escribe un test separado que demuestre el no-op end-to-end (MEF-ADR-0004, MEF-ADR-0011, MEF-ADR-0013 y MEF-ADR-0043). No aplica al POST de creacion ni obliga a modificar endpoints PUT/DELETE preexistentes fuera del issue.
+
+1. Genera el id unico de la corrida y prepara una identidad o stream padre **conocido**. Ejecuta el cambio una vez, o usa el Arrange que el contrato declare, hasta dejar el estado objetivo alcanzado.
+2. Si el handler publica a Service Bus, ejecuta `PurgeAsync(topic, "smoke-tests")` una sola vez **antes** del Act 1. Tras el primer intento, consume todos sus mensajes con `WaitForMessageAsync` usando el identificador unico de la corrida; asi no queda un mensaje del Act 1 que pueda ocultar una publicacion indebida del Act 2.
+3. Asierta en el Act 1 el codigo de exito declarado por el contrato HTTP. Despues, obtiene del `PostgresFixture` **real** del consumidor el inventario, conteo o version del stream de esa corrida y conserva el valor como linea base. No supongas que el fixture expone un metodo con un nombre concreto: leelo primero y reutiliza su consulta acotada al stream; si no permite distinguir una version de otra, agrega al fixture de smoke tests una consulta minima por `stream_id`.
+4. Repite la **misma intencion**: mismo verbo, ruta, identificador y payload cuando exista. Asierta el codigo de exito que el campo "Estado ya alcanzado" declara, que por defecto es el mismo codigo de exito contractual; nunca espera `404` o `409` por defecto.
+5. Vuelve a consultar el mismo stream y asierta que su inventario, conteo o version no cambio. Nunca uses un conteo global de `mt_events` ni `ExisteEventoAsync` como prueba de ausencia: ambos pueden dar verde con eventos ajenos o con un segundo evento en el stream.
+6. Si el handler publica a Service Bus, no ejecutes otro purge entre ambos actos. Espera durante un timeout corto un mensaje correlacionado con el id de la corrida; el `TimeoutException` de `WaitForMessageAsync` es el resultado esperado. Recibir un mensaje es fallo: demuestra una publicacion adicional atribuible al Act 2.
+
+La identidad nunca conocida o el stream padre inexistente es otro escenario. Escribe un test independiente con un id nuevo y asierta el status que el issue declare para ese caso; no lo reutilices para representar el estado ya alcanzado ni lo confundas con el no-op.
 
 ### Endpoint GET (consultar)
 
@@ -502,6 +516,9 @@ Esto permite que:
 - **NO usar `Skip.When()`** - no existe en xUnit v3, usa `Assert.SkipWhen()`
 - **NO filtrar eventos por posicion** (`eventos[^1]`) - siempre filtrar por campo identificador unico
 - **NO escribir un test que genera una operacion exitosa sin verificar todos sus efectos secundarios** - una respuesta exitosa sin verificar los eventos publicados es cobertura incompleta, sin importar el status code. Lee el command handler para identificar todos los efectos (`PublishAsync`, `StartStream`, `AppendToStream`) y verificalos en el test
+- **NO omitir el no-op de un PUT/DELETE nuevo o migrado** - prepara o ejecuta el cambio, repite la misma intencion sobre el estado ya alcanzado, asierta el codigo declarado y demuestra cero eventos y publicaciones adicionales correlacionados con la corrida. No aplica al POST de creacion ni convierte en alcance un endpoint preexistente fuera del issue
+- **NO usar conteos globales ni una mera existencia de evento para el no-op** - compara el inventario, conteo o version del stream de la corrida antes y despues del Act 2, usando la consulta del `PostgresFixture` real. Para Service Bus, purga solo antes del Act 1, consume los mensajes de este y espera un timeout corto por el id de la corrida despues del Act 2
+- **NO confundir el no-op con identidad desconocida o stream padre inexistente** - son escenarios separados; el ultimo asierta exclusivamente el status que el issue declare
 - **NO asertar `HttpStatusCode.Accepted` (o cualquier otro codigo) por default** - el status del camino feliz viene del contrato HTTP declarado en el issue (MEF-ADR-0011). Asertar `202` sin que el contrato lo declare es adivinar el mismo default que MEF-ADR-0004 y MEF-ADR-0011 ya retiraron del resto del pipeline (MEF-ADR-0013)
 - **NO exigir el DLQ globalmente vacio** (`PeekDeadLetterMessagesAsync(...).Should().BeEmpty()` o equivalente) - un dead-letter residual de una corrida anterior, de un warmup contra codigo viejo, o de un race deploy->smoke tumba el test aunque esta corrida haya sido correcta. Acota siempre el assert a la corrida con `ExisteDeadLetterDeLaCorridaAsync<T>` filtrando por el identificador unico de la corrida (MEF-ADR-0013, issue #324)
 - **NO assertar sobre el DLQ/subscription de un dominio distinto** - un smoke test solo verifica la suscripcion que pertenece a su propio dominio. Verificar la suscripcion de otro dominio (patron cross-domain) acopla los smoke tests entre dominios; "acotar a la corrida" no elimina ese acoplamiento, por eso se prohibe por separado (MEF-ADR-0013, issue #324)
@@ -554,6 +571,8 @@ Al finalizar, genera el summary en `.claude/pipeline/summaries/smoke-test-writer
 
 **Codigos de exito asertados:** `POST /api/{dominio}/{recurso}` -> {200|201|202|204} (declarado en el contrato HTTP del issue)
 **Endpoints sin codigo de exito declarado en el issue:** {ninguno | lista -- camino feliz no escrito, vacio del DoR a resolver (MEF-ADR-0011)}
+**No-ops PUT/DELETE cubiertos:** {ninguno | lista con endpoint, estado ya alcanzado, codigo declarado y verificacion de cero eventos/publicaciones por corrida}
+**Escenarios de identidad/stream inexistente separados:** {ninguno | lista con endpoint y status declarado en el issue}
 
 **Resultado contra dev:** {PASSED | FAILED | ENTORNO NO DISPONIBLE}
 ```
