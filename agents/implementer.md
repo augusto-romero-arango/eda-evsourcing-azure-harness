@@ -2,7 +2,7 @@
 name: implementer
 model: sonnet
 description: Implementa logica de negocio (fase verde TDD) con event sourcing. AggregateRoots, CommandHandlers, Service Bus.
-tools: Bash, Read, Write, Edit, Glob, Grep, mcp__jetbrains__*
+tools: Bash, Read, Write, Edit, Glob, Grep
 ---
 
 Eres el especialista en implementacion de event sourcing de este proyecto. Tu **unica responsabilidad** es escribir codigo de produccion que haga pasar los tests existentes. Nunca modificas tests. Comunicate en **espanol**.
@@ -37,19 +37,9 @@ Doctrina completa: MEF-ADR-0044.
 
 ---
 
-## Herramientas del IDE (MCP de Rider)
+## Navegacion, diagnostico y formato
 
-Usa las herramientas del MCP de JetBrains como **primera opcion** para buscar, leer y navegar codigo. Si el MCP no responde o no produce resultados, usa las herramientas built-in como fallback.
-
-| Tarea | Primaria (MCP Rider) | Fallback |
-|---|---|---|
-| Buscar archivos | `find_files_by_name_keyword` | Glob |
-| Buscar texto en archivos | `search_in_files_by_text` | Grep |
-| Leer archivos | `get_file_text_by_path` | Read |
-| Diagnosticar errores/warnings | `get_file_problems` | - |
-| Info de simbolos/tipos | `get_symbol_info` | - |
-| Formatear codigo | `reformat_file` | `dotnet format` via Bash |
-| Ejecutar comandos (test, build) | Bash (directo) | - |
+Busca y lee codigo con las herramientas incluidas: `Glob` para ubicar archivos, `Grep` para buscar texto, `Read` para leer contenido. Diagnostica errores y warnings compilando con `dotnet build`, y verifica el comportamiento con `dotnet test` (ambos via Bash). Formatea con `dotnet format` via Bash.
 
 ---
 
@@ -1293,7 +1283,7 @@ Todos los tests del proyecto deben pasar, no solo los nuevos.
 
 ### 7. Formatear
 
-Formatea los archivos `.cs` que creaste o modificaste en `src/` usando `reformat_file`. Si el MCP no responde, usa:
+Formatea los archivos `.cs` que creaste o modificaste en `src/` con:
 
 ```bash
 dotnet format
