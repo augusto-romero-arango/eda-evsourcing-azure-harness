@@ -137,6 +137,15 @@ Un costo `0` USD es el costo de suscripcion/OAuth de este entorno, no ausencia
 de consumo: los tokens reales quedan arriba (issue #976, formato de
 evidencia).
 
+Cache del proveedor, anotada aparte: en `C3` los pasos 2 y 3 leyeron 3584
+tokens de cache de prompt cada uno (`write` 0 en los tres pasos; el paso 1 y
+`C2` no leyeron ninguno), y la sesion acumula 7168 de `cache read`. Eso es
+cache de prompt del LLM y **no** es la columna `cache` (`fria`/`caliente`) que
+#976 obliga a registrar por separado: esa mide indexacion del servidor LSP y
+sigue **sin un solo valor** en este piloto -- las consultas de control corren
+sobre un archivo de prueba trivial, no sobre el corpus, asi que no dicen nada
+del costo de arranque en frio sobre codigo real.
+
 `C1` no llego a completarse por un cuelgue de arranque del propio
 `opencode run`, no por el mecanismo LSP: el log de OpenCode termina en `init`
 sin la linea `created` de sesion, y la base de sesiones no registra ninguna
