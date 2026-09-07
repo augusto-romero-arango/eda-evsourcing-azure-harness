@@ -1188,6 +1188,35 @@ agent_events_error_detail() {
     agent_events_error_field "${1:-}" detail
 }
 
+# agent_events_resets_at <events_file>
+#
+# `resets_at` del evento terminal (run.completed/run.failed), o cadena vacia
+# si falta, es null, el archivo esta vacio/inexistente o jq no esta
+# disponible. A diferencia de agent_events_error_field, el campo vive en la
+# RAIZ del terminal (ver run-events.schema.json), no bajo `error` -- issue
+# #965 lo agrega para documentar cuando se levanta el limite de la ventana de
+# uso; la politica de espera (hold, issue #967) lo usa para dormir hasta ese
+# instante en vez de sondear a ciegas cada MEFISTO_HOLD_PROBE_SECONDS.
+agent_events_resets_at() {
+    local events_file="${1:-}"
+
+    if [ -z "$events_file" ] || [ ! -s "$events_file" ] || ! command -v jq >/dev/null 2>&1; then
+        echo ""
+        return 0
+    fi
+
+    local value
+    value=$(jq -Rsr '
+        (split("\n") | map(select(length > 0)) | map(try fromjson catch empty)
+            | map(select(type == "object"))) as $events
+        | ($events | map(select(.type == "run.completed" or .type == "run.failed")) | last) as $terminal
+        | (($terminal.resets_at) // "")
+    ' "$events_file" 2>/dev/null) || value=""
+
+    echo "$value"
+    return 0
+}
+
 # agent_failure_is_unrecoverable <timed_out> <exit_code> <events_file>
 #
 # Deriva el flag <unrecoverable> que consume agent_work_is_trustworthy (CA-4
@@ -1329,11 +1358,12 @@ classify_agent_failure() {
 #     peticion; hace falta cambiar la peticion.
 #   - RATE_LIMIT (issue #965): una ventana de uso de 5h agotada no se arregla
 #     con el backoff de segundos de este reintento -- hace falta esperar
-#     hasta `resets_at`, que es la politica de espera (hold) que este issue
-#     deja preparada pero NO implementa todavia (ver notas tecnicas de
-#     #965). Que no sea retryable aqui NO la deja unrecoverable: sigue
-#     pasando por agent_failure_is_unrecoverable como cualquier fallo
-#     ordinario, asi que el trabajo del stage no se descarta sin necesidad.
+#     hasta `resets_at`, que es la politica de espera (hold,
+#     agent_failure_is_holdable, issue #967) que el bucle de run_agent
+#     consulta cuando esta funcion dice que no. Que no sea retryable aqui NO
+#     la deja unrecoverable: sigue pasando por agent_failure_is_unrecoverable
+#     como cualquier fallo ordinario, asi que el trabajo del stage no se
+#     descarta sin necesidad.
 #   - SIGNAL_*, STREAM_CUT, CLI_ERROR: causa local o no identificada. Un
 #     reintento a ciegas duplica el gasto sin evidencia de que ayude.
 #
@@ -1345,6 +1375,44 @@ agent_failure_is_retryable() {
     case "$failure_type" in
         PROVIDER_UNAVAILABLE*) return 0 ;;
         *)                     return 1 ;;
+    esac
+}
+
+# iso8601_to_epoch <iso_8601>
+#
+# Imprime por stdout el epoch en segundos de <iso_8601> (formato
+# "%Y-%m-%dT%H:%M:%SZ", el que emite jq `todate` -- ver `resets_at` en
+# runtime-claude.jq, issue #965), o nada con exit distinto de cero si no se
+# pudo parsear. `date -j -f` es la forma BSD (macOS, el entorno del harness);
+# el segundo intento cubre el `date` de GNU por si el pipeline corre en Linux
+# -- mismo patron de dos intentos que fmt_time_hhmmss en mefisto-stream-watch.sh.
+iso8601_to_epoch() {
+    local iso="${1:-}"
+    [ -z "$iso" ] && return 1
+    date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$iso" +%s 2>/dev/null \
+        || date -u -d "$iso" +%s 2>/dev/null
+}
+
+# agent_failure_is_holdable <failure_type>
+#
+# Retorna 0 si <failure_type> describe una de las dos familias que ameritan
+# ESPERAR en vez de abortar (issue #967): RATE_LIMIT (ventana de uso agotada)
+# y PROVIDER_UNAVAILABLE (el proveedor caido). El bucle de run_agent la
+# consulta como alternativa cuando agent_failure_is_retryable ya no aplica --
+# RATE_LIMIT nunca fue retryable (#965 la deja fuera del reintento corto de
+# #534 a proposito) y PROVIDER_UNAVAILABLE deja de serlo en cuanto agota el
+# presupuesto MAX_ATTEMPTS de ese mismo reintento. En ambos casos la espera
+# (hold) reemplaza al aborto, nunca al reintento corto: un 5xx que se resuelve
+# dentro del presupuesto de #534 nunca llega a ver esta funcion.
+#
+# La comparacion es por prefijo, igual que agent_failure_is_retryable:
+# classify_agent_failure adjunta el exit code a la etiqueta.
+agent_failure_is_holdable() {
+    local failure_type="${1:-}"
+
+    case "$failure_type" in
+        RATE_LIMIT*|PROVIDER_UNAVAILABLE*) return 0 ;;
+        *)                                 return 1 ;;
     esac
 }
 

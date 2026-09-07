@@ -27,7 +27,12 @@
 #         (issue #965: reemplaza a la vieja etiqueta API_ERROR_SERVER; RATE_LIMIT,
 #         la otra etiqueta nueva del issue, queda deliberadamente fuera)
 #   [C]   el bucle de run_agent: reintenta 5xx, respeta el tope, no reintenta
-#         los demas tipos, y restaura el worktree solo si entraba limpio
+#         los demas tipos, y restaura el worktree solo si entraba limpio -- con
+#         el techo de hold en 0 (issue #967: MEFISTO_HOLD_MAX_SECONDS=0 en
+#         setup_run_agent_env), asi que un PROVIDER_UNAVAILABLE que agota el
+#         tope de reintento corto sigue abortando aqui tal cual antes de #967.
+#         La politica de espera (hold) en si -- lo que pasa cuando SI hay
+#         presupuesto -- se prueba en test-agent-hold.sh.
 #
 # Uso: .claude/scripts/tests/test-agent-retry.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -143,8 +148,8 @@ fi
 
 # RATE_LIMIT (issue #965) queda deliberadamente FUERA del reintento con
 # backoff corto de este bucle: una ventana de 5h agotada no se arregla en
-# segundos, hace falta la politica de espera (hold) que este issue prepara
-# pero no implementa (ver notas tecnicas de #965).
+# segundos, hace falta la politica de espera (hold, issue #967) que prueba
+# test-agent-hold.sh.
 for label in "TIMEOUT (1800s, exit 137)" "API_ERROR_CLIENT (exit 1)" \
              "STREAM_CUT (exit 1)" "CLI_ERROR (exit 3)" \
              "RATE_LIMIT (exit 1)" \
@@ -198,6 +203,13 @@ setup_run_agent_env() {
     # Reintentos rapidos: el bucle real espera 120s.
     export MEFISTO_AGENT_MAX_ATTEMPTS=3
     export MEFISTO_AGENT_RETRY_BACKOFF_SECONDS=0
+    # Techo de hold en 0 (issue #967): este archivo prueba SOLO el reintento
+    # corto de #534 -- con el techo agotado desde el arranque, la rama hold de
+    # run_agent rompe el bucle sin dormir en cuanto PROVIDER_UNAVAILABLE agota
+    # $MAX_ATTEMPTS, preservando el desenlace de siempre (abort tras el tope).
+    # La politica de espera en si se prueba en test-agent-hold.sh.
+    export MEFISTO_HOLD_MAX_SECONDS=0
+    export MEFISTO_HOLD_PROBE_SECONDS=0
     # run_agent (issue #946) ya no fija el timeout inline -- lee la variable
     # global ya validada por el pipeline. Aqui no hay pipeline real que la
     # valide, asi que hace falta fijarla a mano o run_agent revienta bajo
