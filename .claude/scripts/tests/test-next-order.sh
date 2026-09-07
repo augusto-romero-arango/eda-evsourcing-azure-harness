@@ -27,6 +27,11 @@
 #   [J]       Fallo de 'gh issue list' -> exit 2, sin imprimir ningun orden.
 #   [K]       Guardas: argumento desconocido -> exit 2; universo sano sin
 #             ciclos/bloqueos imprime 'Sin ciclos ni bloqueos externos.'.
+#   [L]       Bloqueo indirecto: un issue cuya dependencia intra-universo esta
+#             bloqueada por un externo no se cuela al orden y se reporta.
+#   [M]       Dependiente de un ciclo: queda fuera del orden, se reporta, y no
+#             se confunde con un miembro del ciclo.
+#   [N]       Higiene de formato: la cabecera no arranca con lineas en blanco.
 #
 # Uso: .claude/scripts/tests/test-next-order.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -476,6 +481,101 @@ if [ "$RC" -eq 0 ] && echo "$OUTPUT" | grep -q "^1\. #480 Depende de un PR merge
     pass "K: dependencia-PR MERGED no bloquea (exit 0, sin dependencias abiertas)"
 else
     fail "K: se esperaba exit 0 con #480 sin dependencias abiertas, se obtuvo exit $RC: $OUTPUT"
+fi
+
+# -------- Bloque L: bloqueo indirecto por bloqueo externo aguas arriba --------
+
+echo ""
+echo "[L] Bloqueo indirecto: 506 depende de 505, que esta bloqueada por un externo abierto"
+
+reset_fixtures
+set_issue_list <<'EOF'
+[
+  {"number":504,"title":"Sana","body":"## Dependencias\n\nNinguna."},
+  {"number":505,"title":"Bloqueada por externo","body":"## Dependencias\n\nDepende de #999"},
+  {"number":506,"title":"Depende de la bloqueada","body":"## Dependencias\n\nDepende de #505"}
+]
+EOF
+set_state 999 "OPEN"
+
+OUTPUT=$(run_script)
+RC=$?
+# Regresion: #506 declara una dependencia abierta (#505) que NO entra al orden.
+# Colarla al orden emitiria un '/mefisto-sequential 504 506' que
+# mefisto-validate-batch-deps.sh rechaza en el paso 1.5 (dependencia abierta
+# fuera del batch = bloqueo real, aborta el batch entero).
+if echo "$OUTPUT" | grep -q "^/mefisto-sequential 504$"; then
+    pass "L: solo #504 es lanzable; #506 no se cuela a la linea de lanzamiento"
+else
+    fail "L: se esperaba '/mefisto-sequential 504', se obtuvo (exit $RC): $OUTPUT"
+fi
+if echo "$OUTPUT" | grep -q "^#506 bloqueado por #505: excluido del orden$"; then
+    pass "L: #506 se reporta como bloqueo indirecto (no queda en silencio)"
+else
+    fail "L: #506 no se reporto como excluido: $OUTPUT"
+fi
+if echo "$OUTPUT" | grep -qE "^[0-9]+\. #506"; then
+    fail "L: #506 no deberia aparecer en el orden: $OUTPUT"
+else
+    pass "L: #506 excluido del orden"
+fi
+
+# -------- Bloque M: dependiente de un ciclo --------
+
+echo ""
+echo "[M] Dependiente de un ciclo: 511<->512 en ciclo, 513 depende de 511"
+
+reset_fixtures
+set_issue_list <<'EOF'
+[
+  {"number":511,"title":"CicloA","body":"## Dependencias\n\nDepende de #512"},
+  {"number":512,"title":"CicloB","body":"## Dependencias\n\nDepende de #511"},
+  {"number":513,"title":"Detras del ciclo","body":"## Dependencias\n\nDepende de #511"},
+  {"number":514,"title":"Sana","body":"## Dependencias\n\nNinguna."}
+]
+EOF
+
+OUTPUT=$(run_script)
+RC=$?
+if [ "$RC" -eq 0 ] && echo "$OUTPUT" | grep -q "^/mefisto-sequential 514$"; then
+    pass "M: solo #514 es lanzable (exit 0)"
+else
+    fail "M: se esperaba exit 0 con '/mefisto-sequential 514', se obtuvo exit $RC: $OUTPUT"
+fi
+if echo "$OUTPUT" | grep -q "^ciclo: #511 -> #512 -> #511$"; then
+    pass "M: reporta el ciclo #511 <-> #512"
+else
+    fail "M: no reporto el ciclo: $OUTPUT"
+fi
+if echo "$OUTPUT" | grep -q "^#513 bloqueado por #511: excluido del orden$"; then
+    pass "M: #513 (detras del ciclo) se reporta, no queda en silencio"
+else
+    fail "M: #513 no se reporto como excluido: $OUTPUT"
+fi
+if echo "$OUTPUT" | grep -qE "^ciclo: .*#513"; then
+    fail "M: #513 no es miembro del ciclo, no debe aparecer en la linea de ciclo: $OUTPUT"
+else
+    pass "M: #513 no se reporta como miembro del ciclo"
+fi
+
+# -------- Bloque N: higiene de formato de la cabecera --------
+
+echo ""
+echo "[N] La cabecera del reporte no arranca con lineas en blanco"
+
+reset_fixtures
+set_issue_list <<'EOF'
+[
+  {"number":521,"title":"Bloqueada","body":"## Dependencias\n\nDepende de #998"}
+]
+EOF
+set_state 998 "OPEN"
+
+OUTPUT=$(run_script)
+if [ -n "$(echo "$OUTPUT" | head -1)" ]; then
+    pass "N: la primera linea de la salida es contenido, no una linea en blanco"
+else
+    fail "N: la salida arranca con una linea en blanco: $OUTPUT"
 fi
 
 # -------- Resumen --------
