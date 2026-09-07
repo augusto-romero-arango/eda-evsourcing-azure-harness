@@ -30,12 +30,12 @@ Lee estos archivos en paralelo usando Read, Glob y Bash:
 
 Solo si el glob de `pipeline-status-*.json` no encuentra nada Y `pipeline-history.jsonl` no existe o esta vacio:
 
-5. `Glob .claude/pipeline/status*.json` -- status TDD viejo (incluye `status.json` y `status-{N}.json`)
-6. `Glob .claude/pipeline/tooling-status*.json` -- status tooling viejo
-7. `Read .claude/pipeline/infra-status.json` -- status infra viejo
-8. `Read .claude/pipeline/history.jsonl` -- historial TDD viejo
-9. `Read .claude/pipeline/tooling-history.jsonl` -- historial tooling viejo
-10. `Read .claude/pipeline/infra-history.jsonl` -- historial infra viejo
+6. `Glob .claude/pipeline/status*.json` -- status TDD viejo (incluye `status.json` y `status-{N}.json`)
+7. `Glob .claude/pipeline/tooling-status*.json` -- status tooling viejo
+8. `Read .claude/pipeline/infra-status.json` -- status infra viejo
+9. `Read .claude/pipeline/history.jsonl` -- historial TDD viejo
+10. `Read .claude/pipeline/tooling-history.jsonl` -- historial tooling viejo
+11. `Read .claude/pipeline/infra-history.jsonl` -- historial infra viejo
 
 Para archivos de status viejos sin campo `"pipeline"`, inferir el tipo:
 - `status*.json` sin campo pipeline -> `"tdd"`
@@ -46,10 +46,11 @@ Para archivos de status viejos sin campo `"pipeline"`, inferir el tipo:
 
 `events.log` es UN SOLO archivo por checkout, compartido por todos los pipelines lanzados desde el mismo checkout (batch, parallel, o uno suelto) -- no distingue de cual issue es la espera, pero un limite de uso agotado afecta a la cuenta completa, asi que basta con saber que hay una espera activa AHORA MISMO para aplicarla a todo pipeline con `state == "running"`.
 
-1. Busca la ULTIMA linea que matchee el patron `[hold] <FAMILIA>: esperando, proxima sonda HH:MM:SS (techo HH:MM)` (la que escribe `agent_hold_wait`, issue #971). Ignora las lineas `[hold][resume]` (sub-eventos de una sonda puntual, no el anuncio de la espera en si).
+1. Busca la ULTIMA linea que matchee el patron `[HH:MM:SS][hold] <FAMILIA>: esperando, proxima sonda HH:MM:SS (techo HH:MM)` (la que escribe `agent_hold_wait`, issue #971). Ignora las lineas `[hold][resume]` (sub-eventos de la reanudacion de sesion dentro de un ciclo ya anunciado, no el anuncio de la espera en si).
 2. Si no hay ninguna: no hay espera activa.
-3. Si hay una: compara su `HH:MM:SS` de "proxima sonda" contra la hora actual (Paso 1, item 4).
-   - Si la proxima sonda **todavia no llego**: hay una espera activa. `<FAMILIA>` es la causa (`RATE_LIMIT` o `PROVIDER_UNAVAILABLE`), y el `techo HH:MM` es cuando se agota el maximo de espera (default 6h).
+3. Si hay una, mira sus DOS horas -- la del anuncio (el `[HH:MM:SS]` del inicio de la linea) y la de "proxima sonda" -- contra la hora actual (Paso 1, item 4):
+   - La linea no lleva fecha, solo hora del dia. Si la hora del **anuncio esta en el futuro**, la linea no puede ser de hoy: es de una corrida de otro dia, tratala como NO activa. Sin este chequeo, un `events.log` cuyo ultimo hold es de ayer 18:00 con sonda 18:05 se leeria como espera activa durante todo el dia de hoy hasta las 18:05.
+   - Si la proxima sonda **todavia no llego**: hay una espera activa. Traduce `<FAMILIA>` a una causa legible -- `RATE_LIMIT` -> "limite de uso", `PROVIDER_UNAVAILABLE` -> "proveedor caido" -- y el `techo HH:MM` es cuando se agota el maximo de espera (default 6h).
    - Si la proxima sonda **ya paso**: la espera se resolvio (o se agoto el techo) -- no la trates como activa, aunque sea la ultima linea de ese tipo en el archivo.
 
 ## Paso 2: Generar el dashboard
@@ -81,15 +82,15 @@ Cada linea: tipo (ancho fijo 8), issue (#N), titulo truncado (hasta 24 chars), s
 **Tres variantes de una fila `running` (issue #973), en este orden de prioridad:**
 
 1. **Avanzando** (el caso de arriba): sin espera activa (Paso 1c) y el pipeline sigue su curso normal -- se muestra el stage tal cual.
-2. **En espera**: hay una espera activa (Paso 1c). Reemplaza el stage por `EN ESPERA` y anota la causa y la proxima sonda donde normalmente iria la duracion de agentes:
+2. **En espera**: hay una espera activa (Paso 1c). Reemplaza el stage por `EN ESPERA` y anota la causa legible y la proxima sonda donde normalmente iria la duracion de agentes:
 
    ```
    |  TDD      #42  Registrar marcacion de entr  EN ESPERA      12m40s |
-   |    -> RATE_LIMIT: esperando, proxima sonda 14:37:07 (techo 20:32) |
+   |    -> limite de uso, proxima sonda 14:37:07 (techo 20:32)         |
    ```
 
    Como `events.log` no distingue de cual issue es la espera (Paso 1c), aplica esta variante a TODO pipeline `running` mientras la espera este activa -- no solo al que la origino.
-3. **Sin novedades**: NO hay espera activa, pero el campo `updated` del status lleva mas de 35 minutos sin cambiar (holgura sobre el watchdog de stage, 30 minutos: si nada la resolvio y nada la esta esperando, algo dejo de llamar a `update_status` a tiempo). Reemplaza el stage por `SIN NOVEDADES`:
+3. **Sin novedades**: NO hay espera activa, pero el campo `updated` del status lleva mas de 35 minutos sin cambiar (holgura sobre el watchdog por agente, `AGENT_TIMEOUT_SECONDS=1800` = 30 minutos: si nada la resolvio y nada la esta esperando, algo dejo de llamar a `update_status` a tiempo). Ojo con el orden de prioridad: durante una espera, cada sonda corre bajo su propio watchdog de 30 minutos y nadie llama a `update_status`, asi que `updated` puede quedar horas sin cambiar de forma legitima -- por eso la variante 2 se evalua ANTES que esta. Reemplaza el stage por `SIN NOVEDADES`:
 
    ```
    |  TOOLING  #18  Agregar script de migracion  SIN NOVEDADES  38m12s |
@@ -130,7 +131,7 @@ Si el unico pipeline activo esta en la variante "en espera" o "sin novedades" (a
 +--------------------------------------------------------------------+
 | EN ESPERA  TDD  #42  Registrar marcacion de entrada                |
 +--------------------------------------------------------------------+
-| RATE_LIMIT: esperando, proxima sonda 14:37:07 (techo 20:32)        |
+| limite de uso -- proxima sonda 14:37:07 (techo 20:32)              |
 | Iniciado 08:54  -  Transcurrido: 12m 40s                           |
 +--------------------------------------------------------------------+
 ```
