@@ -1,0 +1,133 @@
+# MEF-ADR-0051: Resiliencia del pipeline ante limite de uso y caida del proveedor
+
+- **Fecha**: 2026-09-07
+- **Estado**: aceptado
+- **Aplica a**: doctrina transversal a los dos lados de MEF-ADR-0019 (publicado e interno) sobre como debe reaccionar cualquier pipeline de Mefisto cuando la invocacion de un agente falla porque el proveedor de modelo agoto la ventana de uso o cayo temporalmente. Hoy solo el lado interno la implementa (`src/internal/scripts/mefisto-tooling-pipeline.sh`, `src/internal/scripts/lib/_mefisto-common.sh`), pero la doctrina no es una propiedad de ese archivo -- es el criterio con el que cualquier pipeline publicado (`scripts/tooling-pipeline.sh` y equivalentes) debe alinearse el dia que incorpore la misma capacidad. Cross-referencia MEF-ADR-0049 (arquitectura neutral runtime/proveedor: la deteccion que esta decision presupone vive detras del adaptador que ese ADR define), MEF-ADR-0050 (principio de neutralidad: la politica se decide sobre el vocabulario cerrado `error.kind` del contrato neutral, nunca sobre el texto de un runtime concreto) y MEF-ADR-0019 (separacion publicado/interno: esta doctrina rige en ambos lados aunque hoy un solo archivo la ejecute).
+
+## Contexto
+
+El pipeline interno de tooling invoca agentes de larga duracion (`mefisto-writer`, `mefisto-reviewer`) bajo un watchdog con timeout duro. Esa invocacion puede fallar de formas muy distintas, y el pipeline necesita decidir, para cada una, si vale la pena reintentar, si vale la pena esperar, o si hay que abortar el stage y descartar lo que el agente alcanzo a producir.
+
+**El precedente que fija el trato por defecto (issue #416).** El reviewer murio con `API Error: Connection closed mid-response` a los 882 segundos, y el pipeline -- sin ningun criterio que distinguiera esa muerte de un fallo ordinario -- abrio igual el PR #421 con una revision truncada a mitad de frase. La correccion (issue #906) fue estricta: un corte de stream a mitad de respuesta, de causa no identificada, se declara **irrecuperable** (`agent_failure_is_unrecoverable`, `src/internal/scripts/lib/_mefisto-common.sh:1290-1303`) y el trabajo que el agente haya dejado en el worktree se descarta sin mirar si hay diff -- `agent_work_is_trustworthy` (`_mefisto-common.sh:1478-1492`) lo desclasifica antes de llegar a comprobar si hay cambios sucios. La razon de fondo, documentada en el propio codigo (`_mefisto-common.sh:1260-1281`): un CLI que muere a mitad de su contrato deja en un estado desconocido el razonamiento que llevo a ese diff, y ningun volumen de archivos tocados compra de vuelta esa confianza.
+
+**Por que ese trato no basta para todo fallo (issues #965, #967, #968).** Antes del issue #965, cualquier fallo de servidor que llegara como "conexion cortada" caia en la misma clasificacion `stream_cut`, sin distinguir un corte genuino de una ventana de uso agotada -- el mismo `error.kind` cubria dos causas con implicaciones opuestas. El issue #965 le dio al adaptador de cada runtime (`runtime-claude.jq`, `runtime-opencode.jq`) la responsabilidad de traducir el payload crudo del CLI a dos `error.kind` nuevos y distinguibles -- `rate_limit` (ventana de uso de 5h agotada, 429 con `rate_limit_event`) y `provider_unavailable` (el reemplazo 1:1 de la vieja etiqueta `API_ERROR_SERVER`, 5xx/522/529) -- antes de que el fallo llegue a `classify_agent_failure` (`_mefisto-common.sh:1332-1369`). Ninguno de los dos entra en la lista de causas irrecuperables de `agent_failure_is_unrecoverable`: un limite de uso o una caida del proveedor no son un corte a mitad de vuelo de causa desconocida, son una parada limpia de causa conocida. El issue #967 construyo sobre esa distincion la politica de espera (**hold**): en vez de abortar el stage cuando ninguno de los dos se resuelve dentro del reintento corto ya existente (issue #534), el pipeline se sienta a esperar. El issue #968 completo el mecanismo: si el runtime activo soporta reanudacion de sesion, el intento que sigue a una espera retoma la MISMA sesion en vez de repetir el stage desde cero.
+
+**La aparente contradiccion que este ADR resuelve por escrito.** "Esperar en vez de abortar" (#967/#968) y "un corte a mitad de vuelo se descarta sin miramientos" (#416/#906) conviven en el mismo archivo, gobernando ramas distintas del mismo `case`, y sin un documento que lo diga explicitamente alguien de buena fe puede leer la politica de espera como una relajacion general de la confianza y revertir el trato estricto de #416. No lo es: son dos causas distintas con dos tratos distintos, y el matiz que las separa (RATE_LIMIT/PROVIDER_UNAVAILABLE vs STREAM_CUT) es precisamente lo que este ADR fija.
+
+**Por que se redacta despues de #968 y no antes.** La doctrina que este documento fija ya corrio en produccion -- el hold y la reanudacion de sesion son codigo verificado, no una intencion de diseño. Documentar despues de verificar, no antes de implementar, es deliberado: un ADR describe lo que se comprobo funcionando, no lo que se planeo en una sesion de conversacion.
+
+### Alcance
+
+Este ADR fija la taxonomia de fallos de agente y el trato que corresponde a cada familia (reintentar, esperar, abortar), los defaults de la politica de espera, y el reparto de responsabilidad entre el pipeline (que decide la politica) y el adaptador de cada runtime (que detecta la causa). Aplica como doctrina a cualquier pipeline de Mefisto, en cualquiera de los dos lados de MEF-ADR-0019.
+
+### Que queda fuera de este ADR
+
+- **La implementacion del lado publicado.** `scripts/tooling-pipeline.sh` y el resto de pipelines publicados no implementan hoy esta taxonomia ni la politica de espera -- ver Consecuencias. Este ADR fija el criterio que esa implementacion futura debe seguir; no la ejecuta.
+- **El protocolo neutral de eventos y el contrato `runtime_<id>_translate`/`build_cmd`/`supports_resume`**: ya viven en `src/internal/contract/README.md` y en MEF-ADR-0049/0050. Este ADR los referencia, no los reabre.
+- **La mecanica de reintento corto ante fallo transitorio (issue #534)**: sigue vigente sin cambios; este ADR solo fija que pasa cuando ese reintento se agota sin resolver la causa (issue #967, decision 3).
+
+## Decision
+
+### 1. Taxonomia de fallos de agente: quien reintenta, quien espera, quien aborta (CA-1)
+
+`classify_agent_failure` (`_mefisto-common.sh:1332-1369`) traduce el desenlace de una invocacion fallida a una de ocho etiquetas. Cada una tiene exactamente un trato, decidido por tres funciones independientes que el bucle de `run_agent` (`mefisto-tooling-pipeline.sh:681-904`) consulta en orden -- reintento corto primero, espera despues, abortar como default:
+
+| `failure_type` | `agent_failure_is_retryable` (reintento corto, #534) | `agent_failure_is_holdable` (espera, #967) | `agent_failure_is_unrecoverable` (descarta el trabajo, #906) |
+|---|---|---|---|
+| `TIMEOUT` | no | no | **si** (watchdog agoto `timed_out=true`), salvo la excepcion de PR #446: `agent_stream_completed_successfully` se evalua ANTES que `timed_out` (`_mefisto-common.sh:1294`), asi que un CLI que ya declaro exito y luego se pasa del watchdog no queda irrecuperable |
+| `SIGNAL_MID_FLIGHT` (137/143 sin exito previo) | no | no | **si** |
+| `SIGNAL_POST_SUCCESS` (137/143 tras exito, PR #446) | no | no | no -- pasa por `agent_work_is_trustworthy` como cualquier fallo ordinario |
+| `STREAM_CUT` (`error.kind=stream_cut`) | no | no | **si** -- el trato de #416 |
+| `PROVIDER_UNAVAILABLE` (`error.kind=provider_unavailable`, 5xx/522/529) | **si**, hasta agotar `MAX_ATTEMPTS` (default 3) | **si**, una vez agotado el reintento corto | no |
+| `RATE_LIMIT` (`error.kind=rate_limit`, 429 de ventana agotada) | no, nunca -- deliberado (#965) | **si**, desde el primer fallo | no |
+| `API_ERROR_CLIENT` (4xx que no es limite de uso) | no | no | no |
+| `CLI_ERROR` (causa no identificada) | no | no | no |
+
+Tres familias, tres tratos: **reintenta** (`PROVIDER_UNAVAILABLE` mientras dure el presupuesto corto de #534 -- un 5xx que declara `"retryable": true, "retry_after": 120` en su propio payload, evidencia medida el 2026-08-05 con 6 de 10 intentos de stage muriendo asi contra `api.anthropic.com`); **espera** (`RATE_LIMIT` siempre, `PROVIDER_UNAVAILABLE` cuando el reintento corto no alcanzo a resolverlo); **aborta y descarta el trabajo** (`TIMEOUT`, `SIGNAL_MID_FLIGHT`, `STREAM_CUT` -- las tres unicas causas irrecuperables). Todo lo demas (`API_ERROR_CLIENT`, `CLI_ERROR`, `SIGNAL_POST_SUCCESS`) aborta el intento pero **no** descalifica de entrada el trabajo dejado: sigue pasando por `agent_work_is_trustworthy`, que exige ademas el resumen de stage no vacio (`_mefisto-common.sh:1466-1473`, la evidencia de que el agente llego al final de su contrato) antes de aceptar un diff sucio como recuperable.
+
+### 2. Por que `RATE_LIMIT` no es `STREAM_CUT`: se matiza #416, no se revierte (CA-2)
+
+El eje que separa las dos familias no es la severidad del fallo, es **si se sabe en que estado quedo el razonamiento del agente**:
+
+- **`STREAM_CUT` es una muerte de causa desconocida a mitad de frase.** El incidente de #416 -- `API Error: Connection closed mid-response` a los 882s -- es exactamente esto: nadie sabe si el modelo estaba a mitad de escribir una edicion, a mitad de decidir el proximo tool call, o a mitad de cualquier otra cosa. El worktree puede tener archivos sucios, pero esos archivos son el residuo de un pensamiento interrumpido sin registro de en que punto. Por eso `agent_work_is_trustworthy` lo descalifica sin mirar el diff (`_mefisto-common.sh:1456-1464`): ningun volumen de cambios compra de vuelta la certeza de que esos cambios son el resultado de un razonamiento completo.
+- **`RATE_LIMIT`/`PROVIDER_UNAVAILABLE` son una parada limpia de causa conocida.** El adaptador de cada runtime (`runtime-claude.jq`/`runtime-opencode.jq`, issue #965) ya distingue estos dos casos del corte generico ANTES de que el fallo llegue a `classify_agent_failure`: un 429 con `rate_limit_event` o un 5xx/522/529 con `"retryable": true` no es un misterio de protocolo, es el proveedor diciendo explicitamente "mi ventana esta agotada" o "estoy caido, reintenta". La sesion del CLI no se destruye -- el proceso que la sostenia murio, pero Claude Code persiste el transcript completo en `~/.claude/projects/<slug>/<session-id>.jsonl` (verificado, `src/internal/contract/README.md:553-558`), y ambos adaptadores capturan `session_id` de un evento TEMPRANO del stream (`system/init` en Claude Code, el primer evento con `sessionID` en OpenCode) hacia el terminal -- asi que un run que muere por limite de uso lo deja poblado igual que uno que completa con exito.
+
+**La confianza no se relaja: se pospone el juicio hasta tener un stage completo.** El hold (#967) no acepta el trabajo parcial de una sesion interrumpida por limite de uso como si fuera un stage terminado -- lo que hace es dejar que esa MISMA sesion **termine su contrato** via reanudacion (#968, decision 4), y solo entonces el resumen de stage no vacio vuelve a ser la evidencia que `agent_work_is_trustworthy` exige. Ningun camino de esta decision acepta un diff de una sesion que murio por limite de uso y nunca se reanudo con exito -- si la reanudacion se degrada (decision 4) y el reintento subsiguiente tambien falla por una causa no holdable/retryable, ese fallo cae en su propia clasificacion y su propio trato, no hereda una excepcion del RATE_LIMIT original.
+
+### 3. Defaults de la politica de espera: sonda, techo, y presupuestos independientes del watchdog y del reintento (CA-3)
+
+El hold (`mefisto-tooling-pipeline.sh:615-643` para sus parametros, `:791-904` para el bucle) fija tres parametros, todos overridables por variable de entorno para que los tests lo ejerzan sin esperar horas reales:
+
+- **Sonda (`MEFISTO_HOLD_PROBE_SECONDS`, default 300s = 5 min)**: la cadencia de sondeo por defecto, la que corre cuando el terminal del intento fallido no informa `resets_at`. Cuando si lo informa (Claude Code lo hace para `RATE_LIMIT`), el hold duerme hasta ese instante exacto mas un margen fijo de 60s (`HOLD_RESET_MARGIN_SECONDS`) en vez de sondear a ciegas -- despertar justo en el segundo cero puede ganarle por poco a una ventana todavia cerrada. Ese default no es un piso incondicional en ninguno de los dos caminos: el techo manda, y cualquier siesta se recorta al remanente que quede (`mefisto-tooling-pipeline.sh:834`) para no dormir mas alla del limite.
+- **Techo (`MEFISTO_HOLD_MAX_SECONDS`, default 21600s = 6h)**: medido en reloj de pared desde que arranco la espera, no sumando solo las siestas -- una sonda que tarda minutos en fallar (un `PROVIDER_UNAVAILABLE` que no muere rapido) tambien consume el techo. Agotado sin resolver, el stage rompe el bucle sin dormir de nuevo y cae al trato ordinario de fallo (ni retryable ni holdable en ese punto): un proveedor caido 12 horas no deja el pane esperando en silencio para siempre.
+- **El propio reintento corto es la sonda**: en vez de construir un mecanismo de sondeo separado por runtime, el hold reutiliza el intento siguiente del bucle -- si la causa sigue vigente, ese intento muere en segundos con la misma senal y se vuelve a esperar (decision de diseño de #967).
+
+**La espera no consume el watchdog del stage ni el presupuesto de reintentos**, por diseño y no por accidente: `HOLD_TOTAL_SECONDS`/`HOLD_ELAPSED_SECONDS` son contadores propios, independientes de `attempt`/`MAX_ATTEMPTS` (`mefisto-tooling-pipeline.sh:633-643`, y la rama del hold los deja intactos explicitamente en `:791-796`) -- son dos politicas sobre dos causas distintas, y una no debe pagar el precio de la otra. Ademas, el `sleep` del hold ocurre en el bucle del pipeline (`mefisto-tooling-pipeline.sh:899`), **fuera** de la invocacion del runner (`mefisto-run-agent.sh`, que es quien monta el watchdog via `run_agent_with_watchdog`): cada intento nuevo arranca con su propio `--timeout $AGENT_TIMEOUT_SECONDS` completo, sin arrastrar el tiempo ya gastado esperando.
+
+### 4. La deteccion es del adaptador de cada runtime; un runtime sin reanudacion degrada, no rompe (CA-4)
+
+El pipeline nunca inspecciona el texto crudo de un runtime concreto para decidir si esperar -- consume unicamente `error.kind` del vocabulario cerrado del contrato neutral (`rate_limit`/`provider_unavailable`/`stream_cut`/`api_error`, `src/internal/contract/run-events.schema.json`), tal como MEF-ADR-0050 exige. Traducir el payload crudo del CLI (un 429 con `rate_limit_event`, un 522 con `"retryable": true`) a ese vocabulario es responsabilidad exclusiva del adaptador de cada runtime (`runtime-claude.jq`, `runtime-opencode.jq`) -- el pipeline consume la traduccion, nunca reimplementa el parseo.
+
+Lo mismo aplica a la capacidad de reanudar: `runtime_<id>_supports_resume` (contrato en `src/internal/contract/README.md:545`) es la unica pregunta que el pipeline hace antes de intentar reanudar, y **degrada, no rompe**, en exactamente tres casos (`mefisto-tooling-pipeline.sh:853-892`):
+
+- **(a)** el terminal del intento muerto no trajo `session_id` -- se reintenta sin reanudar.
+- **(b)** el runtime activo no implementa `runtime_<id>_supports_resume` (ausente = sin soporte, el default seguro de MEF-ADR-0050) -- se reintenta sin reanudar.
+- **(c)** la sesion reanudada vuelve a morir sin dejar el resumen del stage -- degradado de forma **permanente** para el resto de esa corrida: insistir con un id que ya murio dos veces sin evidencia de avance no tiene respaldo, y el pipeline nunca bifurca a un id nuevo (`--fork-session`) porque reusar el id original es lo que da trazabilidad.
+
+Hoy los dos runtimes soportados lo implementan: Claude Code via `--resume <session-id>`/`-r` (`runtime-claude.sh:68-70` para el flag, `:80-82` para la funcion) y OpenCode via `-s`/`--session <id>` (`runtime-opencode.sh:89-91` y `:104-106`, verificado en `opencode run --help` local). Un runtime nuevo que se agregue siguiendo el checklist de MEF-ADR-0050 seccion 2 sin implementar esta funcion simplemente cae siempre en el caso (b) -- pierde la reanudacion, no la espera: el hold sigue funcionando (duerme y reintenta desde cero), solo sin la continuidad de sesion.
+
+## Alternativas consideradas
+
+### Alt a: tratar `RATE_LIMIT`/`PROVIDER_UNAVAILABLE` igual que `STREAM_CUT` (irrecuperable)
+
+Mantener una sola familia de "corte a mitad de vuelo, descartar siempre", sin distinguir causa conocida de causa desconocida.
+
+**Descartada**: habria descartado sistematicamente el trabajo de cualquier stage que tropezara con un limite de uso de 5 horas o una caida de minutos del proveedor -- exactamente el desperdicio que #967 midio y vino a resolver. La distincion de causa (decision 2) es barata de mantener porque el adaptador ya la hace por otro motivo (#965); ignorarla habria sido tirar informacion que ya esta disponible.
+
+### Alt b: sondeo activo con temporizador propio por runtime, en vez de reusar el reintento como sonda
+
+Construir un mecanismo de polling dedicado (p. ej. una llamada ligera de "ping" al proveedor) para detectar cuando se levanta el limite o se restablece el servicio.
+
+**Descartada** (decision de diseño de #967, seccion 3): un segundo mecanismo por runtime duplicaria la logica que el reintento corto ya ejerce, y cada adaptador tendria que implementar su propio ping. Reusar el intento siguiente del bucle como sonda es gratis: si la causa sigue vigente, muere rapido con la misma senal; si se resolvio, el intento simplemente tiene exito.
+
+### Alt c: `--fork-session` en vez de reusar el `session_id` original al reanudar
+
+Bifurcar a una sesion nueva que herede el contexto de la original, en vez de reanudar la misma sesion con su mismo id.
+
+**Descartada** (notas tecnicas de #968): reusar el id original es lo que da trazabilidad end-to-end entre el intento que murio y el que lo continua -- un post-mortem puede seguir el mismo `session_id` a traves de multiples intentos. Bifurcar rompe ese hilo sin ganar nada a cambio, y el caso (c) de la decision 4 (degradacion permanente) ya cubre el escenario donde insistir con el id original deja de tener sentido.
+
+## Consecuencias
+
+### Positivas
+
+- **El trabajo de un stage que tropieza con un limite de uso ya no se tira a la basura por default**: antes de #967, cualquier fallo que agotara el reintento corto de #534 abortaba el stage sin mas -- hoy `RATE_LIMIT`/`PROVIDER_UNAVAILABLE` tienen una tercera salida.
+- **El precedente de #416 sobrevive intacto donde importa**: `STREAM_CUT` sigue siendo irrecuperable sin excepcion, y ningun camino de esta decision relaja esa regla -- la espera solo aplica a las dos causas que el adaptador ya distingue como limpias.
+- **El costo de la espera es acotado y visible**: el techo de 6h (overridable) y el rastro por ciclo en `EVENTS_LOG_ABS` (`[hold] <familia>: esperando, proxima sonda HH:MM:SS (techo HH:MM)`) evitan que un pane quede esperando en silencio de forma indefinida.
+- **La reanudacion de sesion convierte una espera en progreso real**: cuando el runtime la soporta, el intento que sigue a un hold no repite trabajo ya hecho -- continua literalmente donde el agente se quedo.
+
+### Negativas
+
+- **El lado publicado no implementa nada de esto todavia.** `scripts/tooling-pipeline.sh` no tiene taxonomia de `error.kind`, ni reintento corto, ni hold, ni reanudacion de sesion -- un consumidor que instale el plugin hoy no se beneficia de esta doctrina hasta que un issue de seguimiento la porte al lado publicado. Este ADR fija el criterio que esa portacion debe seguir, no la ejecuta.
+- **El techo de 6h es una eleccion, no una medicion de cuanto puede durar una caida real del proveedor.** Una interrupcion mas larga que el techo sigue abortando el stage -- el hold pospone el aborto, no lo elimina.
+- **La degradacion permanente del caso (c) puede ser prematura en un caso raro**: una sesion que murio dos veces sin resumen se descarta para el resto de la corrida aunque la tercera vez pudiera haber funcionado -- aceptado porque insistir sin evidencia de avance no tiene respaldo (decision 4), y la corrida siguiente del pipeline arranca sin ese lastre.
+- **La sonda cada 5 minutos (piso) gasta ciclos de reintento cuando `resets_at` no esta disponible** (p. ej. OpenCode, cuyo adaptador puede dejarlo `null`): el hold sondea a ciegas en vez de dormir hasta un instante preciso, coste aceptado porque el piso sigue siendo mas barato que abortar y repetir el stage completo.
+
+## Referencias
+
+- Issue #416: origen del precedente -- el reviewer murio con `API Error: Connection closed mid-response` a los 882s y el pipeline abrio el PR #421 con una revision truncada. Documentado inline en `src/internal/scripts/lib/_mefisto-common.sh:1269-1271` y `:1460-1464`.
+- Issue #906: introduce `agent_failure_is_unrecoverable` y restringe el criterio de irrecuperable a TIMEOUT/senal-sin-exito/`stream_cut` genuino, en vez del grep amplio anterior que marcaba irrecuperable cualquier fallo de API. `_mefisto-common.sh:1250-1303`.
+- Issue #534: reintento corto ante fallo transitorio de servidor, con la evidencia del payload 522 (`"retryable": true, "retry_after": 120`, medido el 2026-08-05, 6 de 10 intentos muriendo asi). `_mefisto-common.sh:1305-1409`.
+- Issue #965: el adaptador de cada runtime (`runtime-claude.jq`/`runtime-opencode.jq`) traduce el payload crudo a `error.kind` `rate_limit`/`provider_unavailable`, vocabulario que `classify_agent_failure` consume por traduccion directa, sin grep. `_mefisto-common.sh:1305-1332`.
+- Issue #967: la politica de espera (hold) -- `agent_failure_is_holdable`, los defaults de sonda/techo, y el bucle de espera del pipeline. `_mefisto-common.sh:1411-1447` (incluye `iso8601_to_epoch`, que traduce `resets_at`), `mefisto-tooling-pipeline.sh:615-643` y `:791-904`.
+- Issue #968: la reanudacion de sesion tras un hold -- captura de `session_id`, los tres casos de degradacion, y el prompt corto de continuacion. `mefisto-tooling-pipeline.sh:663-677` (estado de la reanudacion) y `:848-892` (captura del `session_id` y los tres casos); contrato en `src/internal/contract/README.md:541-566`.
+- PR #446: excepcion de `SIGNAL_POST_SUCCESS` -- una senal recibida DESPUES de que el CLI declaro exito no es una muerte a mitad de vuelo. `_mefisto-common.sh:1283-1289`.
+- `src/internal/scripts/lib/runtime-claude.sh:73-82` y `src/internal/scripts/lib/runtime-opencode.sh:96-106`: soporte de reanudacion verificado por runtime (`--resume`/`-r` en Claude Code, `-s`/`--session` en OpenCode).
+- MEF-ADR-0049 (arquitectura neutral runtime/proveedor): fuente de la separacion entre pipeline (decide politica) y adaptador (detecta causa) que la decision 4 aplica.
+- MEF-ADR-0050 (principio de neutralidad de runtime): fuente de la regla "el pipeline consume `error.kind`, nunca texto de un runtime concreto" citada en la decision 4, y del default seguro (ausente = sin soporte) para `runtime_<id>_supports_resume`.
+- MEF-ADR-0019 (separacion publicado/interno): la doctrina de este ADR aplica a ambos lados que ese ADR separa, aunque hoy solo el interno la implemente (ver Consecuencias).
+- MEF-ADR-0030 (esquema de identificacion de ADRs): fija el numero `MEF-ADR-0051` (verificado libre: `docs/adr/` llegaba a `MEF-ADR-0050` antes de este ADR).
+- Issue #970: origen de este ADR.
+
+## Control de cambios
+
+- 2026-09-07: creacion como `aceptado` (issue #970). Fija la taxonomia de fallos de agente y su trato -- reintenta, espera o aborta -- (seccion 1); el matiz que separa `RATE_LIMIT`/`PROVIDER_UNAVAILABLE` (parada limpia de causa conocida) de `STREAM_CUT` (corte a mitad de vuelo de causa desconocida, precedente de #416 que se matiza sin revertir) (seccion 2); los defaults de la politica de espera -- sonda de 300s, techo de 21600s (6h), margen de 60s sobre `resets_at` -- y la independencia de sus contadores frente al watchdog del stage y al presupuesto de reintentos (seccion 3); y el reparto de responsabilidad entre el pipeline (consume `error.kind` y decide la politica) y el adaptador de cada runtime (detecta la causa y expone `supports_resume`, degradando sin romper cuando falta) (seccion 4). No implementa nada nuevo: documenta la doctrina ya verificada en produccion por los issues #416, #906, #534, #965, #967 y #968.
