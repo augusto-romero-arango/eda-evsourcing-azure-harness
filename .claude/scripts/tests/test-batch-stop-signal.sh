@@ -20,6 +20,10 @@
 #         verificado) y los restantes quedan "aplazado" sin arrancar ningun
 #         worktree (CA-1 momento 2, CA-2), exit 0 y sin incrementar FAILED
 #         (CA-5), con la linea de relanzamiento en el orden correcto (CA-3).
+#   [E]   Caso limite: la senal llega durante el ULTIMO eslabon. No queda nada
+#         que aplazar (defer de cero issues, que bajo `set -e` no debe matar al
+#         motor), no se imprime linea de relanzamiento y la senal se consume
+#         igual (CA-4).
 #
 # Uso: .claude/scripts/tests/test-batch-stop-signal.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -381,6 +385,61 @@ if ! echo "$LAST_STDOUT" | grep -q "Fallidos: [^0]"; then
     pass "D: FAILED se mantuvo en 0 pese a la parada (CA-5)"
 else
     fail "D: FAILED no deberia incrementarse por una parada solicitada. stdout: $LAST_STDOUT"
+fi
+
+# -------- Bloque E: la senal llega durante el ULTIMO eslabon --------
+
+echo ""
+echo "[E] Senal durante el ULTIMO eslabon: no hay nada que aplazar, pero la senal se consume igual (CA-4)"
+
+BARE_E="$TMP/origin-e.git"; PUB_E="$TMP/pub-e"
+new_bare_with_publisher "$BARE_E" "$PUB_E"
+WORK_E="$TMP/work-e"
+git clone -q "$BARE_E" "$WORK_E"
+setup_work_repo "$WORK_E"
+CALL_LOG_E="$TMP/call-log-e"; : > "$CALL_LOG_E"
+SIGNAL_E="$WORK_E/.mefisto/pipeline/batch-stop"
+fake_tooling_pipeline "$WORK_E" "$CALL_LOG_E" "402" "$SIGNAL_E"
+
+run_batch "$WORK_E" "$PUB_E" "$TMP/sha-e" 401 402
+
+# El caso limite del `for ((i = from; i < ${#ISSUE_NUMS[@]}; i++))` de
+# defer_from_index: cero iteraciones bajo `set -e`. Si ese for devolviera un
+# exit code no-cero, el motor moriria aqui en vez de cerrar el resumen.
+if [ "$LAST_RC" -eq 0 ]; then
+    pass "E: exit 0 (el defer de cero issues no mata el motor bajo set -e)"
+else
+    fail "E: se esperaba exit 0, se obtuvo $LAST_RC. stdout: $LAST_STDOUT / stderr: $LAST_STDERR"
+fi
+
+if grep -qF "401" "$CALL_LOG_E" && grep -qF "402" "$CALL_LOG_E"; then
+    pass "E: los dos eslabones se procesaron completos"
+else
+    fail "E: se esperaban los dos eslabones procesados: $(cat "$CALL_LOG_E")"
+fi
+
+if ! echo "$LAST_STDOUT" | grep -q "aplazado"; then
+    pass "E: ningun issue quedo 'aplazado' (no quedaba ninguno por arrancar)"
+else
+    fail "E: no deberia haber aplazados. stdout: $LAST_STDOUT"
+fi
+
+if ! echo "$LAST_STDOUT" | grep -qF "/mefisto-sequential 4"; then
+    pass "E: no se imprimio linea de relanzamiento (no hay nada que relanzar)"
+else
+    fail "E: no deberia haber linea de relanzamiento. stdout: $LAST_STDOUT"
+fi
+
+if [ ! -e "$SIGNAL_E" ]; then
+    pass "E: la senal se consumio igual (CA-4: no envenena la corrida siguiente)"
+else
+    fail "E: la senal deberia haberse borrado aunque no hubiera eslabones restantes"
+fi
+
+if echo "$LAST_STDOUT" | grep -qF "era el ultimo eslabon del batch"; then
+    pass "E: el aviso dice la verdad (no promete aplazados inexistentes)"
+else
+    fail "E: se esperaba el aviso del caso 'ultimo eslabon'. stdout: $LAST_STDOUT"
 fi
 
 # -------- Resumen --------

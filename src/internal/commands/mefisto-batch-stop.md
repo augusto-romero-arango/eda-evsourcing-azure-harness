@@ -35,8 +35,22 @@ proceso directo en un pane, sin sesion tmux propia), y un archivo de log en
 terminada sin volver a parsear su contenido.
 
 ```bash
-pgrep -f "mefisto-batch-pipeline.sh" >/dev/null 2>&1
+pgrep -f "[m]efisto-batch-pipeline\.sh" >/dev/null 2>&1
 ```
+
+Dos detalles del patron, ambos deliberados:
+
+- `[m]efisto` en vez de `mefisto`: el patron viaja en la linea de comandos del
+  propio shell que corre este `pgrep`, y `pgrep -f` la mira igual que cualquier
+  otra. Con la clase de un solo caracter, el texto literal del patron
+  (`[m]efisto...`) ya no encaja con la expresion, asi que la deteccion no puede
+  auto-cumplirse: sin batch corriendo, el exit es 1.
+- El criterio es **por maquina**, no por checkout: si el batch corre en otro
+  clon de Mefisto, aqui tambien da positivo y la senal se escribe en ESTE
+  repo, donde nadie la va a consumir hasta la proxima corrida local (que se
+  detendra de entrada, con todos sus issues `aplazado`, y la consumira). Es el
+  precio de no inventar estado nuevo; invoca este comando desde el checkout
+  donde lanzaste el batch.
 
 - Si **no** hay ningun proceso: responde y detente sin escribir nada:
   ```

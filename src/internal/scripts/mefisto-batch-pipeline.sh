@@ -485,17 +485,25 @@ fi
 COMPLETED=0
 FAILED=0
 TOTAL=${#ISSUE_NUMS[@]}
-BATCH_STOPPED=false
 
-# CA-1 (momento 1): antes de arrancar el primer eslabon.
+# Cola efectiva de esta corrida (issue #966): ISSUE_NUMS conserva el orden
+# pedido -- es lo que recorre el resumen final --, mientras BATCH_QUEUE es lo
+# que el loop realmente procesa. Vaciarla es como se salta el loop completo sin
+# envolverlo en un `if` (que forzaria a reindentar todo su cuerpo).
+BATCH_QUEUE=("${ISSUE_NUMS[@]}")
+
+# Parada suave, momento 1 (issue #966, CA-1): la senal ya estaba puesta antes de
+# arrancar el primer eslabon, asi que ningun issue se procesa en esta corrida.
 if batch_stop_requested; then
     warn "Parada solicitada ($BATCH_STOP_SIGNAL) antes de arrancar el primer eslabon: ningun issue se procesa en esta corrida."
     defer_from_index 0
-    BATCH_STOPPED=true
+    BATCH_QUEUE=()
 fi
 
-if [ "$BATCH_STOPPED" = false ]; then
-for ISSUE_NUM in "${ISSUE_NUMS[@]}"; do
+# ${a[@]+"${a[@]}"}: bash 3.2 aborta con "unbound variable" al expandir un array
+# vacio bajo `set -u` (mismo idioma que generate-internal-adapters.sh), y la cola
+# queda vacia justamente cuando la parada se pidio antes del primer eslabon.
+for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
     CURRENT=$((COMPLETED + FAILED + 1))
     header "Issue #$ISSUE_NUM ($CURRENT/$TOTAL)"
 
@@ -612,12 +620,19 @@ for ISSUE_NUM in "${ISSUE_NUMS[@]}"; do
     # incluye el merge). Un eslabon fallido (pipeline/PR/merge) nunca llega
     # aqui: sus `continue` de arriba lo saltan.
     if batch_stop_requested; then
-        warn "Parada solicitada ($BATCH_STOP_SIGNAL) tras el sync verificado de #$ISSUE_NUM: los eslabones restantes quedan aplazados, sin arrancar ningun worktree."
+        if [ "$CURRENT" -lt "$TOTAL" ]; then
+            warn "Parada solicitada ($BATCH_STOP_SIGNAL) tras el sync verificado de #$ISSUE_NUM: los eslabones restantes quedan aplazados, sin arrancar ningun worktree."
+        else
+            # La senal llego mientras corria el ULTIMO eslabon: no queda nada
+            # que aplazar, pero igual hay que consumirla (CA-4) para no
+            # envenenar la corrida siguiente. Decirlo evita que el humano
+            # busque en el resumen unos aplazados que nunca existieron.
+            warn "Parada solicitada ($BATCH_STOP_SIGNAL) tras el sync verificado de #$ISSUE_NUM, que era el ultimo eslabon del batch: no quedaba ninguno por arrancar. La senal se consumio igual, para no afectar la corrida siguiente."
+        fi
         defer_from_index "$CURRENT"
         break
     fi
 done
-fi
 
 # --- Resumen final ---
 header "Resumen"
@@ -654,7 +669,7 @@ echo -e "  Log: $LOG_FILE_ABS"
 echo ""
 
 if [ "$DEFERRED" -gt 0 ]; then
-    warn "Parada solicitada: $DEFERRED issue(s) quedaron aplazados en esta corrida (no es un fallo, CA-5)."
+    warn "Parada solicitada: $DEFERRED issue(s) quedaron aplazados en esta corrida. No es un fallo del batch: el exit code es 0 y nada quedo a medio pipeline."
     echo -e "  Relanza los aplazados, en el mismo orden: ${BOLD}/mefisto-sequential ${DEFERRED_NUMS[*]}${NC}"
     echo ""
 fi
