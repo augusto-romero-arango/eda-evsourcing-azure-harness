@@ -546,6 +546,20 @@ public partial class RegistrarMarcacionCommandHandler : ICommandHandlerAsync<Reg
 }
 ```
 
+**Endpoint HTTP de comando** (implementa la firma que `implementer.md` documenta en su seccion "Endpoint HTTP" -- constructor con `IRequestValidator`/`ICommandRouter`, mismo `[Function]`/`[HttpTrigger]`/`Route` que declara el contrato del issue -- pero el cuerpo de `Run` es un stub, nunca el manejo de excepciones ni el mapeo a resultado que le corresponde al implementer):
+```csharp
+public class FunctionEndpoint(IRequestValidator requestValidator, ICommandRouter commandRouter)
+{
+    [Function("CrearTurno")]
+    public Task<IActionResult> Run(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "programacion/turnos")]
+        HttpRequest req,
+        CancellationToken ct)
+        => throw new NotImplementedException();
+}
+```
+Ver seccion 6g para como `FunctionEndpointTests` verifica, contra este stub, el codigo de exito exacto que declara el contrato HTTP del issue.
+
 **Excepciones tipadas de precondicion** (solo si el proyecto aun no las tiene): los escenarios 4 y 5 las referencian, asi que sin ellas la fase roja no compila — falla el build, no el assert. Crea los tres tipos de MEF-ADR-0004 seccion 2 en `Infraestructura/PrecondicionComandoException.cs`, una sola vez por proyecto (mismo criterio "si no existe, crearlo" de `IRequestValidator`), nunca una copia por comando:
 ```csharp
 public abstract class PrecondicionComandoException(string message) : Exception(message);
@@ -869,6 +883,138 @@ public async Task AgregarServiciosControlHoras_CongelaElAliasDeTurnoCreado()
 
 Autoridad completa (mecanica del alias, `EventNamingStyle`, las tres proscripciones de registro): **MEF-ADR-0036**. Esta seccion no la duplica — solo enseña donde y como se congela el guardrail.
 
+### 6g. FunctionEndpointTests: assertar el codigo de exito exacto del contrato (MEF-ADR-0043)
+
+El campo "Contrato HTTP del comando" del Definition of Ready (MEF-ADR-0011, enmendado por MEF-ADR-0043) declara, para todo endpoint HTTP de comando, cuatro elementos: verbo, ruta, el paso del test de precedencia de MEF-ADR-0043 seccion 2 que se aplico, y el **codigo de exito** de la respuesta sincrona. Lee ese contrato del issue antes de escribir `FunctionEndpointTests.cs` -- **nunca asumas un codigo por default, y nunca asumas `AcceptedResult`**: fue la practica universal del marco antes de que MEF-ADR-0004 (enmendada por el issue #849) corrigiera esa premisa, y sigue siendo el error mas facil de heredar por copiar un test viejo.
+
+**Mapeo codigo declarado -> contrato observable que fija el assert:**
+
+| Codigo declarado | Que assertea el test | Resultado canonico del implementer |
+|---|---|---|
+| `201 Created` | El status `201` y, si el contrato declara ademas la URI canonica de lectura del recurso creado, el header `Location` con esa URI exacta (MEF-ADR-0043 seccion 2, paso 1). Si el contrato no declara esa URI, el test se detiene en el status -- no inventes un valor de `Location` que el issue no fijo | `CreatedResult` |
+| `204 No Content` | El status `204` **y** la ausencia de cuerpo (el resultado no es un `ObjectResult`) | `NoContentResult` |
+| `200 OK` | El status `200` **y** el `Value` -- la representacion exacta que el contrato promete devolver | `OkObjectResult` |
+| `202 Accepted` | El status `202`, y solo cuando el contrato declara `202` **con su justificacion** (MEF-ADR-0043 seccion 6: que procesamiento queda pendiente y por que no completo antes de responder). Sin esa justificacion en el issue, `202` no es una opcion valida del contrato -- no escribas este test; reporta el vacio en tu resumen (seccion 9) y usa el codigo que corresponda por defecto segun el paso de precedencia | `AcceptedResult` |
+
+**Assertea el contrato observable, no la clase MVC.** Lo que el issue fija es status, headers y cuerpo; que clase concreta de `Microsoft.AspNetCore.Mvc` los produce es decision del implementer, y varias producen el mismo contrato observable (`CreatedResult` y `CreatedAtRouteResult` para un `201`; `OkObjectResult` y un `ObjectResult { StatusCode = 200 }` para un `200`). Por eso el assert del status va contra `IStatusCodeActionResult` (`using Microsoft.AspNetCore.Mvc.Infrastructure;`) con las constantes de `StatusCodes` (`using Microsoft.AspNetCore.Http;`), nunca contra el tipo concreto -- la tercera columna de la tabla es el resultado que el implementer escribe por default, no el sujeto de la asercion. La unica vez que el tipo aparece es como **medio para leer una propiedad**: `Location` y `Value` solo son legibles desde un tipo que los expone sin ejecutar el resultado (`CreatedResult`, `ObjectResult`). Si el implementer elige una variante que computa el header en tiempo de ejecucion (`CreatedAtRouteResult` construye `Location` con el `UrlHelper`), el unit test se queda en el status y el header queda para el smoke test.
+
+El stub del endpoint (seccion 6) siempre lanza `NotImplementedException`, asi que estos tests compilan y fallan al ejecutar -- exactamente el principio fundamental de este agente (seccion "Principio fundamental").
+
+**Fakes para `FunctionEndpointTests`** -- ninguno usa NSubstitute (regla absoluta #5). Antes de declararlos, busca los que el proyecto ya tiene (paso 3, "Que fakes manuales ya existen"): el `domain-scaffolder` deja un `FakeCommandRouter` en `tests/<RootNamespace>.{Dominio}.Tests/Infraestructura/`. Si tu archivo cae en ese mismo namespace, **reusalo con un `using`** -- una segunda clase con el mismo nombre en el mismo namespace es un CS0101 y la fase roja no compila. Si ese fake no alcanza (el scaffoldeado lanza `NotImplementedException` en la sobrecarga `InvokeAsync<TCommand, TResult>`, que es la que necesita un contrato de `200 OK`), **extiende esa definicion** con el parametro `resultado` de abajo en vez de duplicarla:
+
+```csharp
+internal class FakeRequestValidator<TComando> : IRequestValidator
+{
+    private readonly TComando? _comando;
+    private readonly IActionResult? _error;
+
+    private FakeRequestValidator(TComando? comando, IActionResult? error)
+    {
+        _comando = comando;
+        _error = error;
+    }
+
+    public static FakeRequestValidator<TComando> ConComandoValido(TComando comando) => new(comando, null);
+    public static FakeRequestValidator<TComando> ConError(IActionResult error) => new(default, error);
+
+    public Task<(T? Comando, IActionResult? Error)> ValidarAsync<T>(HttpRequest req, CancellationToken ct)
+        => Task.FromResult<(T?, IActionResult?)>(((T?)(object?)_comando, _error));
+}
+
+internal class FakeCommandRouter(object? resultado = null, Exception? excepcion = null) : ICommandRouter
+{
+    public Task InvokeAsync<TCommand>(TCommand command, CancellationToken ct = default) where TCommand : class
+    {
+        if (excepcion is not null) throw excepcion;
+        return Task.CompletedTask;
+    }
+
+    public Task<TResult> InvokeAsync<TCommand, TResult>(TCommand command, CancellationToken ct = default) where TCommand : class
+    {
+        if (excepcion is not null) throw excepcion;
+        return Task.FromResult((TResult)resultado!);
+    }
+}
+```
+
+**Ejemplos por codigo declarado** (mismo dominio sintetico `Programacion/Turnos` de `implementer.md`):
+
+```csharp
+using AwesomeAssertions;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Infrastructure;
+
+public class FunctionEndpointTests
+{
+    private static readonly Guid TurnoId = Guid.NewGuid();
+
+    [Fact]
+    public async Task CrearTurno_Retorna201ConLocation_CuandoElComandoEsValido()
+    {
+        var comando = new CrearTurno(TurnoId, "Turno Manana", new TimeOnly(6, 0), new TimeOnly(14, 0));
+        var endpoint = new FunctionEndpoint(
+            FakeRequestValidator<CrearTurno>.ConComandoValido(comando), new FakeCommandRouter());
+
+        // null! deliberado: el HttpTrigger exige el parametro req, pero el fake del validador no lo lee.
+        var resultado = await endpoint.Run(null!, CancellationToken.None);
+
+        resultado.Should().BeAssignableTo<IStatusCodeActionResult>()
+            .Which.StatusCode.Should().Be(StatusCodes.Status201Created);
+        // La URI de Location es la que declara el contrato del issue, con el prefijo de ruta del host
+        // incluido (/api por default en Functions); el test no la deriva de la ruta del HttpTrigger.
+        ((CreatedResult)resultado).Location.Should().Be($"/api/programacion/turnos/{TurnoId}");
+    }
+
+    [Fact]
+    public async Task RenombrarTurno_Retorna204SinCuerpo_CuandoElComandoEsValido()
+    {
+        var comando = new RenombrarTurno(TurnoId, "Turno Tarde");
+        var endpoint = new FunctionEndpoint(
+            FakeRequestValidator<RenombrarTurno>.ConComandoValido(comando), new FakeCommandRouter());
+
+        var resultado = await endpoint.Run(null!, CancellationToken.None);
+
+        resultado.Should().BeAssignableTo<IStatusCodeActionResult>()
+            .Which.StatusCode.Should().Be(StatusCodes.Status204NoContent);
+        resultado.Should().NotBeAssignableTo<ObjectResult>();
+    }
+
+    [Fact]
+    public async Task ConsolidarCierreTurno_Retorna200ConElEstadoResultante_CuandoElComandoEsValido()
+    {
+        var comando = new ConsolidarCierreTurno(TurnoId);
+        var esperado = new CierreTurnoDto(TurnoId, EstadoTurno.Cerrado);
+        var endpoint = new FunctionEndpoint(
+            FakeRequestValidator<ConsolidarCierreTurno>.ConComandoValido(comando),
+            new FakeCommandRouter(resultado: esperado));
+
+        var resultado = await endpoint.Run(null!, CancellationToken.None);
+
+        var conRepresentacion = resultado.Should().BeAssignableTo<ObjectResult>().Subject;
+        conRepresentacion.StatusCode.Should().Be(StatusCodes.Status200OK);
+        conRepresentacion.Value.Should().Be(esperado);
+    }
+
+    // La conciliacion masiva sigue corriendo despues de responder: el resultado se confirma via el
+    // evento ConciliacionCompletada, nunca de forma sincrona en este endpoint.
+    [Fact]
+    public async Task SolicitarConciliacionMasiva_Retorna202_CuandoElComandoEsValido()
+    {
+        var comando = new SolicitarConciliacionMasiva(TurnoId);
+        var endpoint = new FunctionEndpoint(
+            FakeRequestValidator<SolicitarConciliacionMasiva>.ConComandoValido(comando), new FakeCommandRouter());
+
+        var resultado = await endpoint.Run(null!, CancellationToken.None);
+
+        resultado.Should().BeAssignableTo<IStatusCodeActionResult>()
+            .Which.StatusCode.Should().Be(StatusCodes.Status202Accepted);
+    }
+}
+```
+
+El comentario del ultimo ejemplo es el unico que sobrevive el umbral doble de MEF-ADR-0044 en este archivo: el nombre del test dice `202`, pero no dice **que** queda pendiente -- y sin esa razon un mantenedor futuro podria "corregir" el `202` a `204`. Se escribe con la razon concreta que trae el issue, nunca copiando esta; si el issue no trae ninguna, el contrato no admite `202` (tabla de arriba) y este test no se escribe.
+
 ---
 
 ### 7. Verificar que compila
@@ -977,3 +1123,4 @@ Crea el archivo `.claude/pipeline/summaries/stage-1-test-writer.md`:
 19. **Si detectas una contradiccion estructural en el issue** (ej. un test listado en "Impacto / Modifica" debe usar API de un proyecto que el test no puede referenciar; una sugerencia de "Interfaz publica propuesta" contradice un ADR; un CA exige un archivo en una ubicacion imposible), **tu decides la resolucion**: reubica el test al proyecto correcto, reemplazalo por uno equivalente, divide la cobertura en dos archivos, o elimina el test obsoleto si el refactor del issue lo vuelve insostenible y otro test cubre el CA. Documenta la decision en tu resumen bajo "Desviaciones del plan del planner" (ver seccion 9) con el formato: *regla/sugerencia del issue / desviacion aplicada / razon tecnica / consecuencia*. **No reportes bloqueo por esto** — la autoridad es tuya. Reportar bloqueo se reserva para situaciones donde no puedes decidir con la informacion disponible (no para contradicciones que tu mismo puedes resolver con criterio).
 20. **El valor esperado de toda asercion (`Then`, `And<>`, `ThenIsPublished*`) se construye SIEMPRE a mano como oraculo independiente**, con las primitivas y factories del dominio. **NUNCA lo derives ejecutando la logica bajo prueba** — ni el SUT ni los colaboradores de produccion que esa logica invoca. Un esperado calculado por el mismo codigo que se verifica vuelve el test tautologico: el bug contamina por igual el esperado y el actual, ambos coinciden, y la prueba pasa sin detectar la regresion. Antipatron: `var esperado = ConsolidadorDesgloseHoras.Consolidar(...)` para luego compararlo contra el resultado que el aggregate produjo con esa misma consolidacion. Patron correcto: armar el esperado con `new MomentoDelDia(...)`, `IntervaloTemporal.Crear(...)`, `new DesgloseHoras(...)`, etc. Fuente del principio: MEF-ADR-0002, seccion "Oraculo independiente (no-tautologia)" (ver `"$PLUGIN_ROOT/docs/adr/mef-adr-0002-estrategia-testing-event-sourcing.md"`, resuelto como en "Localizar los ADRs del marco"). Ejemplos en la seccion "Verificacion del estado del agregado" (paso 4).
 21. **Todo evento con marker de bus (`IPrivateEvent` o `IPublicEvent`) DEBE tener ademas un test de portabilidad por el bus** (seccion 6e): round-trip con `JsonSerializerOptions` POR DEFECTO (sin el resolver custom) que verifique que no hay perdida de datos. Es distinto del round-trip de Marten (regla 16 / seccion 6d, que usa `CrearOpcionesMarten()` con resolver): aquel cubre el event store; este cubre el canal de serializacion del bus (namespace interno o de integracion), donde el destino no tiene el resolver del productor. **NUNCA** repliques el test "sin registro falla" de 6d sobre un evento con marker de bus -- para un `IPrivateEvent` o `IPublicEvent` la expectativa se invierte: debe **sobrevivir** sin resolver, no fallar. Autoridad: MEF-ADR-0012, "Frontera de serializacion: event store vs bus"; doctrina raiz: MEF-ADR-0023 (criterio "¿cruza un bus?").
+22. **`FunctionEndpointTests` assertea el codigo de exito exacto que declara el contrato HTTP del issue (MEF-ADR-0043), nunca `202 Accepted` por default** (seccion 6g): el assert fija el **contrato observable** -- status via `IStatusCodeActionResult`, mas el header o el cuerpo que el contrato exige (`Location` en un `201` con URI canonica de lectura declarada; ausencia de `ObjectResult` en un `204`; el `Value` esperado en un `200`) --, **nunca la clase concreta de `Microsoft.AspNetCore.Mvc`**, que es decision del implementer y admite variantes equivalentes. `202` **solo** si el contrato trae la justificacion de que procesamiento queda pendiente (MEF-ADR-0043 seccion 6); sin esa justificacion, `202` no es una opcion valida: reporta el vacio del DoR en tu resumen en vez de escribir el test. El stub del endpoint (seccion 6) sigue limitado a `throw new NotImplementedException()` -- nunca implementes el mapeo real para que el test pase.
