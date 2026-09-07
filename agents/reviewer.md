@@ -479,9 +479,10 @@ previene.
 
 ### 5. Revisar calidad del codigo de produccion
 
-Con el objetivo de elegancia como guia, consulta primero los diagnosticos del IDE:
-- Usa `get_file_problems` sobre cada archivo `.cs` modificado en el diff — detecta warnings del compilador, imports innecesarios, posibles NullReference, naming conventions
-- Usa `get_symbol_info` para verificar que los tipos publicos nuevos tienen el uso esperado
+Con el objetivo de elegancia como guia, consulta primero los diagnosticos de la toolchain:
+- Corre `dotnet build` y lee **todos** los warnings, no solo los errores — nullability, miembros obsoletos, codigo inalcanzable, variables sin usar
+- Corre `dotnet format --verify-no-changes` sobre los proyectos del diff — señala imports innecesarios y desviaciones de estilo/naming segun el `.editorconfig` del repo
+- Usa `Grep` sobre el nombre de cada tipo publico nuevo para verificar que su uso en el resto del proyecto es el esperado (y que no quedo huerfano)
 
 Luego revisa manualmente buscando:
 

@@ -1182,7 +1182,7 @@ Si el issue **no** tiene la seccion `## ADRs aplicables` o esta vacia:
 dotnet test --verbosity normal 2>&1 | tail -50
 ```
 
-Busca los stubs usando `search_in_files_by_text` con query `NotImplementedException` en `src/`. Si el MCP no responde, usa Grep.
+Busca los stubs con `Grep` (patron `NotImplementedException`) sobre `src/`.
 
 ### 3. Explorar la implementacion existente
 
@@ -1190,14 +1190,14 @@ Antes de escribir, entiende el dominio:
 - Lee el AggregateRoot existente (propiedades, metodos Apply, metodos de comportamiento)
 - Lee los eventos del dominio (campos, interfaces que implementan)
 - Lee los CommandHandlers existentes para seguir los mismos patrones
-- Usa `get_symbol_info` para consultar tipos sin leer archivos completos
+- Ubica la declaracion de un tipo con `Grep` (`class X`/`record X`/`interface IX`) y lee solo esa region con `Read`, en vez de abrir archivos completos
 
 ### 4. Implementar
 
 Reemplaza los `throw new NotImplementedException()` con logica real. Sigue el principio de **minima implementacion**: solo lo necesario para pasar los tests.
 
 Despues de cada cambio significativo:
-1. Usa `get_file_problems` sobre los archivos `.cs` modificados para detectar errores del IDE
+1. Corre `dotnet build` para detectar errores y warnings del compilador en los archivos modificados
 2. Corre los tests:
 
 ```bash
