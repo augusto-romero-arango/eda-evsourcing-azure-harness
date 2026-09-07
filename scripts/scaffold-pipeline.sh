@@ -6,6 +6,7 @@
 #   ./scripts/scaffold-pipeline.sh 42 --domain calculo-horas   # issue + dominio explicito
 #   ./scripts/scaffold-pipeline.sh --domain calculo-horas       # sin issue (solo scaffold + PR)
 #   ./scripts/scaffold-pipeline.sh --help
+#   MEFISTO_HOLD_MAX_SECONDS=<s> / MEFISTO_HOLD_PROBE_SECONDS=<s> ./scripts/scaffold-pipeline.sh --domain calculo-horas  # Techo (default 21600 = 6h) y cadencia de sondeo (default 300) de la espera ante RATE_LIMIT/PROVIDER_UNAVAILABLE (issue #971, MEF-ADR-0051)
 #
 # Ciclo: Issue -> Worktree -> Label -> domain-scaffolder -> PR -> Cleanup
 
@@ -273,8 +274,64 @@ wait $WATCHDOG_PID 2>/dev/null || true
 scaffold_elapsed=$(( $(date +%s) - scaffold_start ))
 
 if [ "$SCAFFOLD_EXIT" -ne 0 ]; then
-    echo "[$(date +%H:%M:%S)] FALLO domain-scaffolder (${scaffold_elapsed}s, exit $SCAFFOLD_EXIT)" >> "$EVENTS_LOG"
-    abort "El scaffold del dominio '$DOMAIN_NAME' fallo despues de ${scaffold_elapsed}s. Revisa: $SCAFFOLD_LOG"
+    SCAFFOLD_FAILURE_TYPE=$(classify_agent_failure "$SCAFFOLD_EXIT" "$scaffold_elapsed" "$SCAFFOLD_LOG" "")
+    echo "[$(date +%H:%M:%S)] FALLO domain-scaffolder: $SCAFFOLD_FAILURE_TYPE" >> "$EVENTS_LOG"
+
+    # Espera (hold) ante RATE_LIMIT/PROVIDER_UNAVAILABLE persistente (issue
+    # #971, doctrina de MEF-ADR-0051 -- mismos defaults/env vars que el lado
+    # interno, issue #967): el propio reintento hace de sonda, en un bucle
+    # acotado por agent_hold_wait (techo MEFISTO_HOLD_MAX_SECONDS).
+    HOLD_STARTED_TS=""
+    HOLD_TOTAL_SECONDS=0
+    hold_attempt=0
+    while agent_failure_is_holdable "$SCAFFOLD_FAILURE_TYPE"; do
+        [ -z "$HOLD_STARTED_TS" ] && HOLD_STARTED_TS=$(date +%s)
+        if ! hold_slept=$(agent_hold_wait "$EVENTS_LOG" "$SCAFFOLD_FAILURE_TYPE" "$HOLD_STARTED_TS"); then
+            warn "domain-scaffolder: techo de espera (hold) agotado -- ultima senal: $SCAFFOLD_FAILURE_TYPE"
+            break
+        fi
+        HOLD_TOTAL_SECONDS=$(( HOLD_TOTAL_SECONDS + hold_slept ))
+        hold_attempt=$((hold_attempt + 1))
+        warn "domain-scaffolder: $SCAFFOLD_FAILURE_TYPE -- en espera (hold), reintentando (sonda #$hold_attempt)..."
+
+        SCAFFOLD_LOG_HOLD="$LOG_DIR/scaffold-agent-$TIMESTAMP-$DOMAIN_NAME-$$-hold-${hold_attempt}.log"
+        # CA-5: lo que no cuenta contra el watchdog es la ESPERA (el `sleep` de
+        # agent_hold_wait, ya consumido arriba); la SONDA si corre bajo su
+        # propio watchdog de $SCAFFOLD_TIMEOUT, igual que el primer intento.
+        # Sin el, una sonda colgada dejaria el pipeline esperando para siempre
+        # y volveria decorativo el techo de agent_hold_wait, que solo se evalua
+        # al tope del bucle.
+        SCAFFOLD_EXIT=0
+        probe_start=$(date +%s)
+        (cd "$WORKTREE_PATH" && claude -p "$SCAFFOLD_PROMPT" \
+            --agent domain-scaffolder \
+            --permission-mode bypassPermissions \
+            --output-format text \
+            >"$SCAFFOLD_LOG_HOLD" 2>&1) &
+        SCAFFOLD_PID_HOLD=$!
+        (sleep $SCAFFOLD_TIMEOUT && kill -9 $SCAFFOLD_PID_HOLD 2>/dev/null && \
+            echo "[$(date +%H:%M:%S)] TIMEOUT: domain-scaffolder (sonda de hold #$hold_attempt) supero ${SCAFFOLD_TIMEOUT}s" >> "$EVENTS_LOG") &
+        PROBE_WATCHDOG_PID=$!
+        wait $SCAFFOLD_PID_HOLD || SCAFFOLD_EXIT=$?
+        kill $PROBE_WATCHDOG_PID 2>/dev/null || true
+        wait $PROBE_WATCHDOG_PID 2>/dev/null || true
+        # La duracion que se reporta es la de la SONDA, no el reloj desde que
+        # arranco el scaffold: sumar ahi las horas de espera inflaria el
+        # "completado en Xs" de la linea de cierre.
+        scaffold_elapsed=$(( $(date +%s) - probe_start ))
+        SCAFFOLD_LOG="$SCAFFOLD_LOG_HOLD"
+
+        if [ "$SCAFFOLD_EXIT" -eq 0 ]; then
+            echo "[$(date +%H:%M:%S)] RETRY_OK domain-scaffolder: exitoso tras hold" >> "$EVENTS_LOG"
+            break
+        fi
+        SCAFFOLD_FAILURE_TYPE=$(classify_agent_failure "$SCAFFOLD_EXIT" "$scaffold_elapsed" "$SCAFFOLD_LOG" "")
+        echo "[$(date +%H:%M:%S)] FALLO domain-scaffolder: $SCAFFOLD_FAILURE_TYPE (tras hold)" >> "$EVENTS_LOG"
+    done
+
+    if [ "$SCAFFOLD_EXIT" -ne 0 ]; then
+        abort "El scaffold del dominio '$DOMAIN_NAME' fallo despues de ${scaffold_elapsed}s ($SCAFFOLD_FAILURE_TYPE). Revisa: $SCAFFOLD_LOG"
+    fi
 fi
 
 # Verificar que el proyecto fue creado
