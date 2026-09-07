@@ -46,6 +46,7 @@ Efectos secundarios conocidos y como verificarlos:
 | Publicacion a topic | `IPublicEventSender.PublishAsync(eventos)` | `PurgeAsync` previo + `WaitForMessageAsync` desde suscripcion `smoke-tests` |
 | Persistencia en event store | `IEventStore.StartStream(...)` o `AppendToStream(...)` | `PostgresFixture.ExisteEventoAsync` / `ObtenerEventoAsync` |
 | Envio a queue (futuro) | `ISender.SendAsync(...)` o similar | Consumir de la queue y verificar contenido |
+| Materializacion de una proyeccion `Async` | No esta en el handler: la proyeccion del evento vive registrada en el named store del worker de proyecciones (MEF-ADR-0034) | GET a la Function de consulta envuelto en `Polling.WaitUntilTrueAsync` con el timeout estandar, que tolera la ventana de materializacion |
 
 Los tests que no generan operaciones exitosas (400, 404) no producen efectos secundarios y no necesitan
 verificarlos.
@@ -73,11 +74,15 @@ La tabla de efectos secundarios distingue **persistir en el event store** de **m
 proyeccion**. Son dos operaciones con distinta temporalidad, y un smoke test debe distinguirlas igual
 que MEF-ADR-0034 distingue el ciclo de vida `Inline` del `Async`:
 
-- El **commit del event store** es sincronico: el endpoint de escritura no responde su codigo de
-  exito hasta que el evento quedo durable (MEF-ADR-0004, "Respuestas HTTP"). El smoke test verifica
-  esta persistencia con `PostgresFixture.ExisteEventoAsync`/`ObtenerEventoAsync` inmediatamente
-  despues del Act, sin polling: si el POST ya respondio su codigo de exito, el evento ya esta en el
-  stream.
+- El **commit del event store** es sincronico respecto del endpoint de escritura: no responde su
+  codigo de exito hasta que el evento quedo durable (MEF-ADR-0004, "Respuestas HTTP"). El smoke test
+  verifica esa persistencia con `PostgresFixture.ExisteEventoAsync`/`ObtenerEventoAsync` sin
+  ventana de consistencia eventual que tolerar: si el POST ya respondio su codigo de exito, el
+  evento ya esta en el stream. El `timeout` que esos metodos reciben no espera esa durabilidad --
+  cubre los transitorios de la consulta (ver "Polling tolerante a excepciones") y se pasa igual. La
+  excepcion esta en el Act, no en el write-side: cuando el smoke test dispara el flujo publicando al
+  topic en vez de por HTTP (dominio consumidor), el procesamiento del consumidor si es asincronico
+  respecto del Act y ese timeout es la espera real.
 - La **materializacion de una proyeccion `Async`** ocurre en el daemon del worker de proyecciones,
   fuera del request que escribio (MEF-ADR-0034): es consistencia eventual por diseno. Un smoke test
   que verifica una vista materializada via su Function GET necesita `Polling` tolerante a que la
@@ -354,9 +359,11 @@ en el repo (idempotente; ver "Integracion en el proceso de desarrollo").
   de un default" (remite a MEF-ADR-0011 como fuente contractual y a MEF-ADR-0004 para la restriccion
   de `202` a procesamiento diferido justificado) y "Persistencia del write-side vs. materializacion
   del read-side: el polling del GET no cambia el status del POST" (distingue el commit sincronico del
-  event store, verificado sin polling inmediatamente despues del Act, de la materializacion eventual
-  de una proyeccion `Async` del worker de proyecciones, MEF-ADR-0034; el polling que tolera la ventana
-  de materializacion de una vista nunca reclasifica el status del comando que la origino). Se
+  event store, sin ventana de consistencia eventual que tolerar cuando el Act es el propio POST, de la
+  materializacion eventual de una proyeccion `Async` del worker de proyecciones, MEF-ADR-0034; el
+  polling que tolera la ventana de materializacion de una vista nunca reclasifica el status del comando
+  que la origino), y se suma a la tabla de efectos secundarios la fila de esa materializacion, que la
+  seccion nueva daba por presente sin estarlo. Se
   neutraliza el ejemplo de la seccion "Alcance de un smoke test" (dejaba de citar `202` como caso
   representativo) y se actualizan las responsabilidades del `smoke-test-writer` y del `reviewer` para
   nombrar el codigo de exito contractual como algo a asertar y a revisar, no a asumir. No se toca la
