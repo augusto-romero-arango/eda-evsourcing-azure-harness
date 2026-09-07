@@ -165,7 +165,7 @@ fi
 
 # shellcheck source=/dev/null
 source "$CLAUDE_LIB" 2>/dev/null
-for fn in runtime_claude_build_cmd runtime_claude_translate; do
+for fn in runtime_claude_build_cmd runtime_claude_translate runtime_claude_supports_resume; do
     if declare -F "$fn" >/dev/null 2>&1; then
         pass "$fn definida"
     else
@@ -279,6 +279,30 @@ if contains_pair "--model" "claude-opus-5[1m]"; then
     pass "A-10: modelo opaco con '[1m]' reenviado literal"
 else
     fail "A-10: el modelo opaco no llego intacto: ${MEFISTO_RUNTIME_CMD[*]}"
+fi
+
+# --- Reanudacion de sesion (issue #968) ---
+
+MEFISTO_RUNTIME_CMD=()
+runtime_claude_build_cmd "writer" "$TMP" "$PROMPT_PLAIN" "" "" "sess-abc-123"
+if contains_pair "--resume" "sess-abc-123"; then
+    pass "A-11: resume_session_id no vacio -> --resume <id> en el argv"
+else
+    fail "A-11: falta --resume sess-abc-123: ${MEFISTO_RUNTIME_CMD[*]}"
+fi
+
+MEFISTO_RUNTIME_CMD=()
+runtime_claude_build_cmd "writer" "$TMP" "$PROMPT_PLAIN" "" "" ""
+if ! contains_elem "--resume"; then
+    pass "A-12: resume_session_id vacio (o ausente) -> ningun --resume en el argv (byte a byte igual a antes de #968)"
+else
+    fail "A-12: resume_session_id vacio pero el argv trae --resume: ${MEFISTO_RUNTIME_CMD[*]}"
+fi
+
+if runtime_claude_supports_resume; then
+    pass "A-13: runtime_claude_supports_resume retorna 0 (Claude Code soporta reanudacion)"
+else
+    fail "A-13: runtime_claude_supports_resume deberia retornar 0"
 fi
 
 # ============================================================================

@@ -14,7 +14,7 @@
 #                         [--runtime <id>] [--model <opaco>]
 #                         [--system-file <f>] [--timeout <s>]
 #                         [--raw-log <f>] [--stderr-log <f>]
-#                         [--events-log <archivo>]
+#                         [--events-log <archivo>] [--resume-session <id>]
 #
 #   --runtime <id>       Fuerza el runtime (precedencia sobre MEFISTO_RUNTIME
 #                         y la autodeteccion, ver mefisto_resolve_runtime en
@@ -59,6 +59,15 @@
 #                         permisos) degrada a un aviso en stderr -- nunca
 #                         altera el exit code ni el evento terminal de
 #                         --event-log (CA-3).
+#   --resume-session <id> Reanuda una sesion previa del runtime activo en vez
+#                         de arrancar una nueva (issue #968, CA-1). Opaco
+#                         para este runner: viaja tal cual al adaptador, que
+#                         decide su propio flag (`--resume` en Claude Code,
+#                         `--session` en OpenCode) o lo ignora si no soporta
+#                         reanudacion. Vacio o ausente (default): NO llega al
+#                         adaptador -- build_cmd nunca ve el flag en ese caso,
+#                         y el comportamiento es identico byte a byte al de
+#                         antes de #968.
 #
 # --event-log en vivo (CA-1/CA-2/CA-3, issue #924): mientras el agente corre,
 # este runner reanexa a --event-log, cada MEFISTO_RUN_AGENT_LIVE_INTERVAL
@@ -79,12 +88,23 @@
 # code del adaptador (distinto de cero). Validacion de argumentos: exit 64
 # (uso). Resolucion de runtime fallida: exit 69.
 #
-# Interfaz de adaptador (dos funciones por runtime, `source`adas desde
+# Interfaz de adaptador (funciones por runtime, `source`adas desde
 # lib/runtime-<id>.sh; este issue solo entrega runtime-fake.sh -- Claude Code
 # y OpenCode son #859/#860):
 #   runtime_<id>_build_cmd <agent> <cwd> <prompt_file> <model> <system_file>
+#                          [<resume_session_id>]
 #     Rellena el array global MEFISTO_RUNTIME_CMD con el argv completo a
-#     invocar via run_agent_with_watchdog, SIN `eval`.
+#     invocar via run_agent_with_watchdog, SIN `eval`. <resume_session_id>
+#     (issue #968) es el ultimo argumento, OPCIONAL para el adaptador --
+#     ignorarlo es una implementacion valida (equivale a no soportar
+#     reanudacion); este runner SIEMPRE lo pasa (vacio si --resume-session no
+#     se recibio).
+#   runtime_<id>_supports_resume (issue #968, sin argumentos)
+#     0 si el adaptador soporta reanudacion, 1 si no. Este runner NO la
+#     consulta (reenvia --resume-session sin condicion): la decision de
+#     invocar o no con el flag es del CALLER (mefisto-tooling-pipeline.sh,
+#     CA-4), que la usa para decidir si vale la pena intentar reanudar antes
+#     de gastar un intento.
 #   runtime_<id>_translate <raw_file> <runtime_id> <model>
 #                          [<exit_code>] [<stderr_file>]
 #     Imprime por stdout el JSONL neutral (message/tool.*/terminal) derivado
@@ -123,7 +143,7 @@ usage() {
 Uso: mefisto-run-agent.sh --agent <id> --cwd <dir> --prompt-file <f> --event-log <jsonl>
                            [--runtime <id>] [--model <opaco>] [--system-file <f>]
                            [--timeout <s>] [--raw-log <f>] [--stderr-log <f>]
-                           [--events-log <archivo>]
+                           [--events-log <archivo>] [--resume-session <id>]
 EOF
 }
 
@@ -164,6 +184,7 @@ OPT_TIMEOUT=""
 OPT_RAW_LOG=""
 OPT_STDERR_LOG=""
 OPT_EVENTS_LOG=""
+OPT_RESUME_SESSION=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -178,6 +199,7 @@ while [ $# -gt 0 ]; do
         --raw-log)     [ $# -ge 2 ] || abort_usage "--raw-log requiere un valor"; OPT_RAW_LOG="$2"; shift 2 ;;
         --stderr-log)  [ $# -ge 2 ] || abort_usage "--stderr-log requiere un valor"; OPT_STDERR_LOG="$2"; shift 2 ;;
         --events-log)  [ $# -ge 2 ] || abort_usage "--events-log requiere un valor"; OPT_EVENTS_LOG="$2"; shift 2 ;;
+        --resume-session) [ $# -ge 2 ] || abort_usage "--resume-session requiere un valor"; OPT_RESUME_SESSION="$2"; shift 2 ;;
         *) abort_usage "argumento desconocido: '$1'" ;;
     esac
 done
@@ -241,7 +263,7 @@ if ! declare -F "$TRANSLATE_FN" >/dev/null 2>&1; then
 fi
 
 MEFISTO_RUNTIME_CMD=()
-"$BUILD_FN" "$OPT_AGENT" "$OPT_CWD" "$OPT_PROMPT_FILE" "$OPT_MODEL" "$OPT_SYSTEM_FILE"
+"$BUILD_FN" "$OPT_AGENT" "$OPT_CWD" "$OPT_PROMPT_FILE" "$OPT_MODEL" "$OPT_SYSTEM_FILE" "$OPT_RESUME_SESSION"
 if [ "${#MEFISTO_RUNTIME_CMD[@]}" -eq 0 ]; then
     echo "ERROR: $BUILD_FN no genero ningun comando (MEFISTO_RUNTIME_CMD vacio)" >&2
     exit 69

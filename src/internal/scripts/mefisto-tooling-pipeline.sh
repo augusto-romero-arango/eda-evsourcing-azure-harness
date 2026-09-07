@@ -43,6 +43,14 @@ source "$SCRIPT_DIR/lib/mefisto-runtime.sh"
 source "$SCRIPT_DIR/lib/mefisto-models.sh"
 source "$SCRIPT_DIR/lib/adapter-claude.sh"
 source "$SCRIPT_DIR/lib/adapter-opencode.sh"
+# runtime-claude.sh/runtime-opencode.sh (issue #968): sourceados aqui solo
+# por runtime_<id>_supports_resume -- build_cmd/translate de estos dos
+# archivos los sigue invocando exclusivamente mefisto-run-agent.sh, un
+# proceso aparte (#910). Mismo criterio que adapter-claude.sh/adapter-
+# opencode.sh arriba: se sourcean los DOS sin saber todavia cual resolvera
+# mefisto_resolve_runtime mas abajo.
+source "$SCRIPT_DIR/lib/runtime-claude.sh"
+source "$SCRIPT_DIR/lib/runtime-opencode.sh"
 
 # Version y SHA del propio plugin que corre esta corrida (issue #662),
 # calculados UNA sola vez aqui -- ANTES de crear el worktree del issue, sobre
@@ -519,6 +527,23 @@ collect_summary() {
     if [ -f "$f" ]; then cat "$f"; else echo "_(El agente no genero resumen)_"; fi
 }
 
+# runtime_supports_resume <runtime-id> (issue #968, CA-4 caso b)
+#
+# 0 si el adaptador de <runtime-id> (ya sourceado arriba) expone
+# runtime_<id>_supports_resume y esa funcion retorna 0; 1 en cualquier otro
+# caso -- incluida la ausencia de la funcion, que es el default SEGURO para
+# un runtime futuro que todavia no la implemente (MEF-ADR-0050: un runtime
+# sin soporte de reanudacion degrada la operacion, nunca la rompe). Mismo
+# patron de dispatch por nombre que _mefisto_models_adapter_default
+# (mefisto-models.sh): `command -v` antes de invocar, para no reventar bajo
+# `set -u`/`set -e` si el adaptador resuelto no define la funcion.
+runtime_supports_resume() {
+    local runtime="$1" fn
+    fn="runtime_${runtime}_supports_resume"
+    command -v "$fn" >/dev/null 2>&1 || return 1
+    "$fn"
+}
+
 # --- Funcion auxiliar para invocar agentes ---
 run_agent() {
     local stage="$1"
@@ -621,17 +646,47 @@ run_agent() {
     # en vez del mefisto-run-agent.sh real, sin depender de un CLI instalado.
     local RUN_AGENT_BIN="${MEFISTO_RUN_AGENT_BIN:-$SCRIPT_DIR/mefisto-run-agent.sh}"
 
+    # --- Reanudacion de sesion tras un hold (issue #968) ---
+    # SUMMARY_FILE se computa UNA vez aqui (mismo archivo que collect_summary
+    # y que el bloque final de este stage ya leian por separado): CA-4 caso
+    # (c) necesita comprobar su existencia DENTRO del bucle, en cada ciclo de
+    # hold, no solo al final.
+    local SUMMARY_FILE
+    SUMMARY_FILE=$(mefisto_state_path "summaries/stage-${stage}-${agent}.md" "$WORKTREE_PATH")
+    # RESUME_SESSION_ID no vacio = el PROXIMO intento reanuda esa sesion en
+    # vez de arrancar una nueva (CA-3). RESUME_DEGRADED=true es permanente
+    # para el resto de esta invocacion de run_agent: una vez que el caso (c)
+    # degrada, no se vuelve a intentar reanudar en este mismo stage.
+    # RESUMED_ANY deja constancia (CA-6) de que hubo al menos una reanudacion,
+    # para el log de cierre del stage.
+    local RESUME_SESSION_ID="" RESUME_DEGRADED=false RESUMED_ANY=false
+    local RESUME_PROMPT_FILE="$PIPELINE_DIR_ABS/prompts/mefisto-tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}.resume-prompt.md"
+
     local RUN_EXIT=0 TIMED_OUT=false failure_type="" metrics_json="" elapsed=0
     local attempt=1
     while :; do
         local attempt_start_ts
         attempt_start_ts=$(date +%s)
 
+        # attempt_used_resume (issue #968): refleja si ESTE intento arranca
+        # reanudando una sesion -- capturado ANTES de invocar, para que el
+        # caso (c) de CA-4 (mas abajo, tras el fallo) sepa si el fallo que
+        # acaba de ocurrir fue de un intento resumido o de uno nuevo. Cuando
+        # hay reanudacion, el prompt que se envia es el mensaje corto de
+        # continuacion (RESUME_PROMPT_FILE), NUNCA el prompt completo del
+        # stage: reenviarlo entero arriesga que el agente reinicie su
+        # analisis desde cero (notas tecnicas de #968).
+        local attempt_used_resume=false attempt_prompt_file="$prompt_file"
+        if [ -n "$RESUME_SESSION_ID" ]; then
+            attempt_used_resume=true
+            attempt_prompt_file="$RESUME_PROMPT_FILE"
+        fi
+
         local RUN_AGENT_ARGS=(
             --runtime "$MEFISTO_RUNTIME_RESUELTO"
             --agent "$MEFISTO_AGENT_ID"
             --cwd "$WORKTREE_PATH"
-            --prompt-file "$prompt_file"
+            --prompt-file "$attempt_prompt_file"
             --system-file "$SCRIPT_DIR/../prompts/noninteractive-system.md"
             --event-log "$events_file"
             --raw-log "$stream_file"
@@ -640,6 +695,7 @@ run_agent() {
             --timeout "$AGENT_TIMEOUT_SECONDS"
         )
         [ -n "$AGENT_MODEL" ] && RUN_AGENT_ARGS+=(--model "$AGENT_MODEL")
+        [ -n "$RESUME_SESSION_ID" ] && RUN_AGENT_ARGS+=(--resume-session "$RESUME_SESSION_ID")
 
         # Diagnostico propio del runner (uso invalido, avisos best-effort de
         # --events-log): archivo dedicado junto al resto de artefactos del
@@ -775,11 +831,57 @@ run_agent() {
             warn "$agent: $failure_type -- en espera (hold), proxima sonda a las $next_probe_hms"
             echo "[$(date +%H:%M:%S)][hold] $hold_family: esperando, proxima sonda $next_probe_hms (techo $deadline_hm)" >> "$EVENTS_LOG_ABS"
 
+            # --- Reanudacion de sesion para el proximo intento (issue #968, CA-3/CA-4) ---
+            # Degrada a "stage desde cero" (deja RESUME_SESSION_ID vacio) en
+            # EXACTAMENTE tres casos -- fuera de ellos, el comportamiento es
+            # el mismo de antes de este issue. Cada caso deja un aviso
+            # explicito que nombra el motivo (CA-4).
+            if [ "$RESUME_DEGRADED" = false ]; then
+                if [ "$attempt_used_resume" = true ] && [ ! -s "$SUMMARY_FILE" ]; then
+                    # Caso (c): la sesion reanudada volvio a morir a mitad de
+                    # vuelo sin dejar el resumen del stage -- degradado de
+                    # forma PERMANENTE para el resto de esta corrida: insistir
+                    # con un id que ya murio dos veces sin evidencia de avance
+                    # no tiene respaldo, y --resume-session/--fork-session NO
+                    # se usan para bifurcar a un id nuevo (notas tecnicas de
+                    # #968: reusar el id original es lo que da trazabilidad).
+                    warn "$agent: la sesion reanudada ($RESUME_SESSION_ID) volvio a morir sin dejar el resumen del stage -- se degrada a stage desde cero"
+                    echo "[$(date +%H:%M:%S)][hold][resume] $agent: sesion $RESUME_SESSION_ID murio de nuevo sin resumen -- degradado a stage desde cero (CA-4c)" >> "$EVENTS_LOG_ABS"
+                    RESUME_DEGRADED=true
+                    RESUME_SESSION_ID=""
+                elif [ -z "$RESUME_SESSION_ID" ]; then
+                    local candidate_session_id
+                    candidate_session_id=$(agent_events_session_id "$events_file")
+                    if [ -z "$candidate_session_id" ]; then
+                        # Caso (a): el terminal del intento muerto no trajo session_id.
+                        warn "$agent: el intento fallido no dejo session_id en el terminal -- se reintenta sin reanudar"
+                        echo "[$(date +%H:%M:%S)][hold][resume] $agent: sin session_id en el terminal -- reintento sin reanudar (CA-4a)" >> "$EVENTS_LOG_ABS"
+                    elif ! runtime_supports_resume "$MEFISTO_RUNTIME_RESUELTO"; then
+                        # Caso (b): el adaptador del runtime activo no soporta reanudacion.
+                        warn "$agent: el runtime '$MEFISTO_RUNTIME_RESUELTO' no soporta reanudacion -- se reintenta sin reanudar"
+                        echo "[$(date +%H:%M:%S)][hold][resume] $agent: runtime '$MEFISTO_RUNTIME_RESUELTO' sin soporte de reanudacion -- reintento sin reanudar (CA-4b)" >> "$EVENTS_LOG_ABS"
+                    else
+                        RESUME_SESSION_ID="$candidate_session_id"
+                        RESUMED_ANY=true
+                        local RESUME_PROMPT_TEXT="Tu sesion anterior en este mismo stage (stage ${stage}, agente ${agent}) se corto por un limite de uso del proveedor -- el pipeline ya espero (hold) a que se restableciera. Estas reanudando esa MISMA sesion: tu memoria de trabajo, lo que ya leiste y lo que ya escribiste sigue disponible.
+
+Continua exactamente donde quedaste. No reinicies tu analisis desde cero, no releas archivos que ya revisaste ni repitas ediciones ya hechas.
+
+Termina tu contrato del stage, incluido dejar escrito (o completar si quedo a medias) el resumen en .mefisto/pipeline/summaries/stage-${stage}-${agent}.md. Si ese archivo ya existe completo, dejalo como esta; si no, escribelo ahora y agrega una linea que diga que esta sesion se reanudo tras una espera por limite de uso del proveedor.
+
+CONTEXTO DE EJECUCION (sigue vigente): modo no-interactivo, sin humano al otro lado. PROHIBIDO hacer 'git push' o 'gh pr create': eso sigue siendo responsabilidad exclusiva del pipeline."
+                        printf '%s' "$RESUME_PROMPT_TEXT" > "$RESUME_PROMPT_FILE"
+                        log "$agent: reanudando sesion $RESUME_SESSION_ID en el proximo intento (hold)"
+                        echo "[$(date +%H:%M:%S)][hold][resume] $agent: reanudando sesion $RESUME_SESSION_ID" >> "$EVENTS_LOG_ABS"
+                    fi
+                fi
+            fi
+
             # CA-5: a diferencia del reintento corto de arriba, el hold NUNCA
             # restaura el worktree a $ENTRY_COMMIT -- la reanudacion de sesion
-            # (issue siguiente) se apoya en el trabajo que dejo el stage
-            # truncado, y mientras esa reanudacion no exista el reintento
-            # corre sobre ese mismo estado.
+            # de arriba se apoya justamente en el trabajo que dejo el stage
+            # truncado, y aunque no se pueda reanudar (CA-4) el reintento
+            # sigue corriendo sobre ese mismo estado, nunca uno restaurado.
             sleep "$hold_sleep"
             HOLD_TOTAL_SECONDS=$(( HOLD_TOTAL_SECONDS + hold_sleep ))
         else
@@ -814,9 +916,9 @@ run_agent() {
 
         # CA-5: para el resto de fallos, has_work exige ademas que el resumen
         # de stage exista y no este vacio -- evidencia de que el agente llego
-        # al final de su contrato (ver agent_work_is_trustworthy).
-        local SUMMARY_FILE
-        SUMMARY_FILE=$(mefisto_state_path "summaries/stage-${stage}-${agent}.md" "$WORKTREE_PATH")
+        # al final de su contrato (ver agent_work_is_trustworthy). SUMMARY_FILE
+        # ya se calculo antes del bucle de reintento (issue #968: el caso (c)
+        # de la reanudacion de sesion necesita comprobarla dentro del hold).
 
         if agent_work_is_trustworthy "$WORKTREE_PATH" "${SNAPSHOT_COMMIT:-HEAD}" "$UNRECOVERABLE" "$SUMMARY_FILE"; then
             warn "$agent: CLI retorno error ($failure_type) pero hay trabajo util -- continuando"
@@ -863,6 +965,15 @@ run_agent() {
         log "$agent completado en ${total_elapsed}s (intento $attempt/$MAX_ATTEMPTS; ${elapsed}s el ultimo)"
     else
         log "$agent completado en ${total_elapsed}s"
+    fi
+
+    # CA-6 (issue #968): rastro explicito de que este stage reanudo al menos
+    # una sesion truncada -- para que un post-mortem lo distinga de un stage
+    # que solo espero (hold) sin reanudar (los tres casos de degradacion de
+    # CA-4, o un hold que se resolvio al primer intento sin fallar de nuevo).
+    if [ "$RESUMED_ANY" = true ]; then
+        log "$agent: la corrida reanudo al menos una sesion truncada por espera (hold, issue #968)"
+        echo "[$(date +%H:%M:%S)][hold][resume] $agent: stage completado tras reanudar sesion" >> "$EVENTS_LOG_ABS"
     fi
 }
 

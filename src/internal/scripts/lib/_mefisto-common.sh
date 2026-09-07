@@ -1217,6 +1217,36 @@ agent_events_resets_at() {
     return 0
 }
 
+# agent_events_session_id <events_file>
+#
+# `session_id` del evento terminal (run.completed/run.failed), o cadena vacia
+# si falta, es null, el archivo esta vacio/inexistente o jq no esta
+# disponible. Issue #968: la reanudacion de sesion tras un hold (CA-3)
+# necesita esta llave para invocar `--resume-session` -- ambos adaptadores ya
+# la capturan de un evento TEMPRANO del stream (runtime-claude.jq del
+# `system/init`, runtime-opencode.jq del primer evento con `sessionID`) y la
+# dejan en el terminal aunque el proceso muera a mitad de camino: el 429/5xx
+# no destruye la sesion, solo el proceso que la sostenia.
+agent_events_session_id() {
+    local events_file="${1:-}"
+
+    if [ -z "$events_file" ] || [ ! -s "$events_file" ] || ! command -v jq >/dev/null 2>&1; then
+        echo ""
+        return 0
+    fi
+
+    local value
+    value=$(jq -Rsr '
+        (split("\n") | map(select(length > 0)) | map(try fromjson catch empty)
+            | map(select(type == "object"))) as $events
+        | ($events | map(select(.type == "run.completed" or .type == "run.failed")) | last) as $terminal
+        | (($terminal.session_id) // "")
+    ' "$events_file" 2>/dev/null) || value=""
+
+    echo "$value"
+    return 0
+}
+
 # agent_failure_is_unrecoverable <timed_out> <exit_code> <events_file>
 #
 # Deriva el flag <unrecoverable> que consume agent_work_is_trustworthy (CA-4

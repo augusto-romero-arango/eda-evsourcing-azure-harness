@@ -10,16 +10,19 @@
 # nombrar `claude`, `--permission-mode`, `--append-system-prompt` ni
 # `--output-format stream-json` -- eso vive aqui.
 #
-# Implementa la interfaz de dos funciones que todo adaptador de runtime debe
-# exponer (ver src/internal/contract/README.md, "Interfaz de adaptador: dos
-# funciones por runtime"):
+# Implementa la interfaz de funciones que todo adaptador de runtime debe
+# exponer (ver src/internal/contract/README.md, "Interfaz de adaptador"):
 #   runtime_claude_build_cmd <agent> <cwd> <prompt_file> <model> <system_file>
+#                            [<resume_session_id>]
 #     Rellena MEFISTO_RUNTIME_CMD con el argv de `claude -p` (sin `eval`,
 #     paridad con run_agent_with_watchdog -- ver #424/_mefisto-common.sh):
 #     el contenido de <prompt_file> viaja como UN elemento del array bash, sin
 #     volver a interpretarse. <agent>/<cwd> no participan del argv: <cwd> ya
 #     lo aplica run_agent_with_watchdog (`cd "$workdir"` antes de invocar),
-#     igual que runtime-fake.sh.
+#     igual que runtime-fake.sh. <resume_session_id> (issue #968, CA-1/CA-2)
+#     es OPCIONAL y opaco -- vacio/ausente = comportamiento identico a antes
+#     de #968 (sin `--resume` en el argv); no vacio agrega `--resume <id>`
+#     (compatible con `-p`, verificado en `claude --help` local).
 #   runtime_claude_translate <raw_file> <runtime_id> <model>
 #                            [<exit_code>] [<stderr_file>]
 #     Delega en runtime-claude.jq (`jq -R -s -c -f`, mismo idiom que
@@ -48,7 +51,7 @@
 # --- runtime_claude_build_cmd ------------------------------------------------
 
 runtime_claude_build_cmd() {
-    local agent="$1" cwd="$2" prompt_file="$3" model="$4" system_file="$5"
+    local agent="$1" cwd="$2" prompt_file="$3" model="$4" system_file="$5" resume_session_id="${6:-}"
     local prompt
     prompt="$(cat "$prompt_file")"
 
@@ -61,6 +64,21 @@ runtime_claude_build_cmd() {
     if [ -n "$system_file" ]; then
         MEFISTO_RUNTIME_CMD+=(--append-system-prompt "$(cat "$system_file")")
     fi
+
+    if [ -n "$resume_session_id" ]; then
+        MEFISTO_RUNTIME_CMD+=(--resume "$resume_session_id")
+    fi
+}
+
+# runtime_claude_supports_resume (issue #968, CA-4 caso b)
+#
+# Claude Code soporta reanudacion de sesion en modo headless via `--resume
+# <session-id>` (alias corto `-r`), compatible con `-p` -- verificado en
+# `claude --help` local. Retorna 0 siempre; consumida por
+# `runtime_supports_resume` (mefisto-tooling-pipeline.sh) para decidir si el
+# hold de #967 puede reanudar en vez de repetir el stage desde cero.
+runtime_claude_supports_resume() {
+    return 0
 }
 
 # --- runtime_claude_translate -------------------------------------------------

@@ -5,15 +5,29 @@
 # invocar un CLI real, guionando escenarios (exito, fallo, cuelgue, protocolo
 # invalido) por variable de entorno.
 #
-# Implementa la interfaz de dos funciones que todo adaptador de runtime debe
+# Implementa la interfaz de funciones que todo adaptador de runtime debe
 # exponer (ver src/internal/contract/README.md, "Protocolo de ejecucion y
 # eventos"):
 #   runtime_fake_build_cmd <agent> <cwd> <prompt_file> <model> <system_file>
+#                          [<resume_session_id>]
 #     Rellena el array global MEFISTO_RUNTIME_CMD con el argv a invocar via
 #     run_agent_with_watchdog (sin `eval`). <model> puede llegar vacio
 #     (heredar, CA-1): en ese caso NO se agrega ningun flag de modelo al argv
 #     -- el CLI fake nunca lo ve, igual que un adaptador real nunca deberia
-#     pasar un --model vacio al CLI que envuelve.
+#     pasar un --model vacio al CLI que envuelve. <resume_session_id> (issue
+#     #968) sigue el mismo criterio: vacio/ausente no agrega nada al argv;
+#     no vacio agrega `--fake-resume <id>`, que el "CLI fake" solo usa para
+#     dejar constancia en MEFISTO_FAKE_ARGS_FILE (ver mas abajo) -- ningun
+#     guion cambia de comportamiento por reanudar, porque el fake no modela
+#     una sesion real con memoria.
+#   runtime_fake_supports_resume
+#     0 (soporta) solo si MEFISTO_FAKE_SUPPORTS_RESUME="1"; 1 en cualquier
+#     otro caso, INCLUIDO el default sin fijar -- a proposito: el fake existe
+#     para ejercer el runner sin depender de un CLI real, y el default mas
+#     seguro para un adaptador de prueba es "sin soporte todavia", el mismo
+#     trato que le tocaria a un runtime nuevo que no haya implementado
+#     resume. Un test que quiera ejercer el camino de reanudacion fija esta
+#     variable explicitamente.
 #   runtime_fake_translate <raw_file> <runtime_id> <model>
 #     Imprime por stdout el JSONL neutral derivado de <raw_file> (una linea
 #     por evento, sin emitir "run.started": eso lo hace el runner). El campo
@@ -78,7 +92,7 @@
 # --- runtime_fake_build_cmd ---------------------------------------------
 
 runtime_fake_build_cmd() {
-    local agent="$1" cwd="$2" prompt_file="$3" model="$4" system_file="$5"
+    local agent="$1" cwd="$2" prompt_file="$3" model="$4" system_file="$5" resume_session_id="${6:-}"
     # Resuelto contra el propio BASH_SOURCE (no MEFISTO_RUNTIME_LIB_DIR): esta
     # funcion debe encontrar su propio "CLI fake" aunque quien la invoque haya
     # sourceado este archivo desde un directorio de prueba distinto al
@@ -91,6 +105,15 @@ runtime_fake_build_cmd() {
     if [ -n "$model" ]; then
         MEFISTO_RUNTIME_CMD+=(--fake-model "$model")
     fi
+    if [ -n "$resume_session_id" ]; then
+        MEFISTO_RUNTIME_CMD+=(--fake-resume "$resume_session_id")
+    fi
+}
+
+# --- runtime_fake_supports_resume ----------------------------------------
+
+runtime_fake_supports_resume() {
+    [ "${MEFISTO_FAKE_SUPPORTS_RESUME:-}" = "1" ]
 }
 
 # --- runtime_fake_translate ----------------------------------------------
@@ -129,16 +152,31 @@ runtime_fake_translate() {
 # --- Modo "CLI fake": logica que corre cuando este archivo se EJECUTA -------
 
 _runtime_fake_emit_main() {
-    # Args: __mefisto-fake-emit <agent> <prompt_file> <system_file> [--fake-model <valor>]
+    # Args: __mefisto-fake-emit <agent> <prompt_file> <system_file>
+    #       [--fake-model <valor>] [--fake-resume <valor>]
+
+    # MEFISTO_FAKE_ARGS_FILE (issue #968): mismo patron que
+    # MEFISTO_CLAUDE_STUB_ARGS_FILE de test-runtime-claude.sh -- un test que
+    # necesite comprobar QUE argv exacto recibio el "CLI fake" (p. ej. que
+    # --fake-resume llego con el id esperado) lo vuelca aqui, ANTES de
+    # descartar ningun token.
+    if [ -n "${MEFISTO_FAKE_ARGS_FILE:-}" ]; then
+        : > "$MEFISTO_FAKE_ARGS_FILE"
+        for a in "$@"; do
+            printf '%s\n' "$a" >> "$MEFISTO_FAKE_ARGS_FILE"
+        done
+    fi
+
     shift # descarta el token __mefisto-fake-emit
     shift || true # agent (sin uso: el guion no depende del agente invocado)
     shift || true # prompt_file
     shift || true # system_file
 
-    local fake_model=""
+    local fake_model="" fake_resume=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --fake-model) fake_model="${2:-}"; shift 2 ;;
+            --fake-resume) fake_resume="${2:-}"; shift 2 ;;
             *) shift ;;
         esac
     done

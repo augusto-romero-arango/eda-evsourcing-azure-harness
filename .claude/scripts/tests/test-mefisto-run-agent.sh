@@ -493,6 +493,33 @@ fi
 
 # ============================================================================
 echo ""
+echo "[I] CA-1 (issue #968): --resume-session se reenvia al adaptador activo"
+
+EV="$TMP/i-resume-received.jsonl"
+ARGS_FILE="$TMP/i-resume-received.args"
+RC=$(MEFISTO_FAKE_ARGS_FILE="$ARGS_FILE" MEFISTO_FAKE_SCRIPT=success run_fake_scenario "$EV" --resume-session "sess-resume-1")
+if [ "$RC" = "0" ]; then
+    pass "I-1: --resume-session no rompe una corrida exitosa (exit 0)"
+else
+    fail "I-1: exit inesperado con --resume-session presente: $RC"
+fi
+if [ -f "$ARGS_FILE" ] && grep -A1 -xF -- "--fake-resume" "$ARGS_FILE" | tail -n1 | grep -qxF "sess-resume-1"; then
+    pass "I-2: --resume-session llego al build_cmd del adaptador activo (--fake-resume sess-resume-1 en el argv capturado)"
+else
+    fail "I-2: el adaptador no recibio el resume_session_id: $(cat "$ARGS_FILE" 2>/dev/null)"
+fi
+
+EV="$TMP/i-resume-omitted.jsonl"
+ARGS_FILE="$TMP/i-resume-omitted.args"
+RC=$(MEFISTO_FAKE_ARGS_FILE="$ARGS_FILE" MEFISTO_FAKE_SCRIPT=success run_fake_scenario "$EV")
+if [ -f "$ARGS_FILE" ] && ! grep -qxF -- "--fake-resume" "$ARGS_FILE"; then
+    pass "I-3: sin --resume-session, ningun --fake-resume llega al adaptador (byte a byte igual a antes de #968, CA-1)"
+else
+    fail "I-3: --fake-resume aparecio sin que --resume-session se pasara: $(cat "$ARGS_FILE" 2>/dev/null)"
+fi
+
+# ============================================================================
+echo ""
 echo "[H] CA-1..CA-4 (issue #924): anexo en vivo de eventos no terminales"
 
 EV="$TMP/h-slow-success.jsonl"

@@ -460,7 +460,8 @@ flags ni eventos de ningun runtime concreto.
 src/internal/scripts/mefisto-run-agent.sh \
     --agent <id> --cwd <dir> --prompt-file <f> --event-log <jsonl> \
     [--runtime <id>] [--model <opaco>] [--system-file <f>] \
-    [--timeout <s>] [--raw-log <f>] [--stderr-log <f>]
+    [--timeout <s>] [--raw-log <f>] [--stderr-log <f>] \
+    [--resume-session <id>]
 ```
 
 Es un **script**, no una funcion `source`ada: un subproceso con argumentos
@@ -532,15 +533,51 @@ overrideable (mismo patron `: "${VAR:=default}"` que `mefisto-state.sh`):
 producción resuelve siempre contra el directorio real de la libreria, un
 test puede apuntarlo a un directorio temporal con adaptadores de prueba.
 
-### Interfaz de adaptador: dos funciones por runtime
+### Interfaz de adaptador: funciones por runtime
 
 Cada `src/internal/scripts/lib/runtime-<id>.sh` (`source`ado por el runner)
 implementa:
 
 | Funcion | Contrato |
 |---|---|
-| `runtime_<id>_build_cmd <agent> <cwd> <prompt_file> <model> <system_file>` | Rellena el array global `MEFISTO_RUNTIME_CMD` con el argv completo a invocar via `run_agent_with_watchdog`, **sin `eval`**. `<model>`/`<system_file>` pueden llegar vacios; el adaptador decide si eso omite un flag o usa un valor propio (permisos como `--permission-mode bypassPermissions` / `--auto` son responsabilidad de esta funcion, no del runner). |
+| `runtime_<id>_build_cmd <agent> <cwd> <prompt_file> <model> <system_file> [<resume_session_id>]` | Rellena el array global `MEFISTO_RUNTIME_CMD` con el argv completo a invocar via `run_agent_with_watchdog`, **sin `eval`**. `<model>`/`<system_file>` pueden llegar vacios; el adaptador decide si eso omite un flag o usa un valor propio (permisos como `--permission-mode bypassPermissions` / `--auto` son responsabilidad de esta funcion, no del runner). `<resume_session_id>` (issue #968) es el ultimo argumento, opcional para el adaptador y opaco para el runner: vacio/ausente omite cualquier flag de reanudacion (comportamiento identico a antes de #968); no vacio lo traduce a su propio flag (`--resume` en Claude Code, `--session` en OpenCode). |
 | `runtime_<id>_translate <raw_file> <runtime_id> <model> [<exit_code>] [<stderr_file>]` | Imprime por stdout, una linea JSON por evento, el JSONL neutral (`message`/`tool.*`/terminal) derivado de `<raw_file>`. **Nunca emite `run.started`** -- eso lo hace el runner directo, porque no depende de ningun dato especifico del adaptador. Los dos ultimos argumentos son **opcionales para el adaptador** (ignorarlos es una implementacion valida -- `runtime-fake.sh` lo hace) pero el runner **siempre los pasa**: sin el exit code y el stderr crudo no hay forma de clasificar una muerte por senal (`killed`, exit 137/143) ni el `API Error: <status>` que un CLI escribe solo por stderr (los dos canales siguen separados, #425), y el adaptador tendria que devolver `no_result` para desenlaces que si son distinguibles. |
+| `runtime_<id>_supports_resume` (issue #968, sin argumentos) | 0 si el adaptador soporta reanudacion de sesion, 1 si no. El runner **no** la consulta -- reenvia `--resume-session` sin condicion, siempre via `build_cmd`. Es el CALLER (`mefisto-tooling-pipeline.sh`, via `runtime_supports_resume`) quien la consulta antes de decidir si vale la pena intentar reanudar. Ausente = 1 (sin soporte): el default seguro para un runtime que todavia no la implemente (MEF-ADR-0050). |
+
+### Reanudacion de sesion (`--resume-session`, issue #968)
+
+Cuando el hold de #967 despierta de una espera por `RATE_LIMIT`/
+`PROVIDER_UNAVAILABLE`, el pipeline interno (`mefisto-tooling-pipeline.sh`)
+intenta que el siguiente intento **reanude** la sesion del `run.failed` que
+acaba de morir, en vez de repetir el stage desde cero: la conversacion
+sobrevive en disco (Claude Code persiste el transcript completo en
+`~/.claude/projects/<slug>/<session-id>.jsonl`; el proceso que la sostenia
+murio, no el hilo de pensamiento) y ambos runtimes ya capturan `session_id`
+de un evento **temprano** del stream (`system/init` en Claude Code,
+`.sessionID` del primer evento en OpenCode) hacia el terminal, asi que un run
+que muere a mitad de camino igual lo deja poblado en `run.failed.session_id`.
+
+El runner (`mefisto-run-agent.sh`) solo sabe reenviar `--resume-session <id>`
+al adaptador activo -- no decide NADA sobre cuando usarlo. Esa decision es
+del pipeline, que degrada a "stage desde cero" (mismo comportamiento que
+antes de #968) en exactamente tres casos, cada uno con su propio aviso: (a)
+el terminal del intento muerto no trajo `session_id`; (b) el runtime activo
+no tiene `runtime_<id>_supports_resume`; (c) la sesion reanudada vuelve a
+morir sin dejar el resumen del stage (`.mefisto/pipeline/summaries/
+stage-<N>-<agente>.md`), evidencia de que el intento resumido no llego mas
+lejos que uno nuevo -- ese caso degrada de forma **permanente** para el resto
+del stage: no se reintenta reanudar con el mismo id una tercera vez, y
+**nunca** se usa `--fork`/`--fork-session` para bifurcar a un id nuevo
+(bifurcar pierde la trazabilidad de todo el stage en un unico transcript).
+
+Cuando SI reanuda, el pipeline nunca reenvia el prompt completo del stage:
+envia un mensaje corto de continuacion ("segui donde quedaste, no reinicies,
+termina tu contrato incluido el resumen") -- reenviar el prompt entero
+arriesga que el agente reinterprete la instruccion como "empeza de nuevo".
+`agent_work_is_trustworthy`/`agent_failure_is_unrecoverable` (PR #446, issue
+#416) se aplican **sin cambios** al resultado de la sesion reanudada: la
+garantia de calidad que evita un PR con revision truncada a mitad de frase no
+se relaja por reanudar.
 
 `lib/runtime-fake.sh` (#858) reproduce guiones (exito, fallo con exit N,
 cuelgue hasta timeout, sin evento terminal, dos terminales, JSON malformado,

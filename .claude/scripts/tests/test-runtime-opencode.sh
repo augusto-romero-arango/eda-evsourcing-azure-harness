@@ -167,7 +167,7 @@ fi
 
 # shellcheck source=/dev/null
 source "$OPENCODE_LIB" 2>/dev/null
-for fn in runtime_opencode_build_cmd runtime_opencode_translate; do
+for fn in runtime_opencode_build_cmd runtime_opencode_translate runtime_opencode_supports_resume; do
     if declare -F "$fn" >/dev/null 2>&1; then
         pass "$fn definida"
     else
@@ -286,6 +286,36 @@ if contains_pair "-m" "openai/gpt-4.1 mini"; then
     pass "A-10: modelo opaco con '/' y espacios reenviado literal"
 else
     fail "A-10: el modelo opaco no llego intacto: ${MEFISTO_RUNTIME_CMD[*]}"
+fi
+
+# --- Reanudacion de sesion (issue #968) ---
+
+MEFISTO_RUNTIME_CMD=()
+runtime_opencode_build_cmd "writer" "$TMP" "$PROMPT_PLAIN" "" "" "sess-xyz-789"
+if contains_pair "--session" "sess-xyz-789"; then
+    pass "A-11: resume_session_id no vacio -> --session <id> en el argv"
+else
+    fail "A-11: falta --session sess-xyz-789: ${MEFISTO_RUNTIME_CMD[*]}"
+fi
+LAST_IDX=$(( ${#MEFISTO_RUNTIME_CMD[@]} - 1 ))
+if [ "${MEFISTO_RUNTIME_CMD[$LAST_IDX]}" = "Instrucciones de prueba." ]; then
+    pass "A-11b: el mensaje sigue siendo el ULTIMO elemento del argv con --session presente"
+else
+    fail "A-11b: --session desplazo el mensaje del final: '${MEFISTO_RUNTIME_CMD[$LAST_IDX]}'"
+fi
+
+MEFISTO_RUNTIME_CMD=()
+runtime_opencode_build_cmd "writer" "$TMP" "$PROMPT_PLAIN" "" "" ""
+if ! contains_elem "--session"; then
+    pass "A-12: resume_session_id vacio (o ausente) -> ningun --session en el argv (byte a byte igual a antes de #968)"
+else
+    fail "A-12: resume_session_id vacio pero el argv trae --session: ${MEFISTO_RUNTIME_CMD[*]}"
+fi
+
+if runtime_opencode_supports_resume; then
+    pass "A-13: runtime_opencode_supports_resume retorna 0 (OpenCode soporta reanudacion)"
+else
+    fail "A-13: runtime_opencode_supports_resume deberia retornar 0"
 fi
 
 # ============================================================================
