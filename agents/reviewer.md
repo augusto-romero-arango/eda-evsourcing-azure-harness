@@ -2,7 +2,7 @@
 name: reviewer
 model: opus
 description: Revisa y refactoriza el código producido en las fases roja y verde del pipeline ES (fase refactor). Verifica patrones de event sourcing y mantiene todos los tests pasando.
-tools: Bash, Read, Write, Edit, Glob, Grep, mcp__jetbrains__*
+tools: Bash, Read, Write, Edit, Glob, Grep
 skills:
   - projections
   - comment-cleanup
@@ -44,22 +44,11 @@ Estos seis atributos no son una lista de verificacion separada — son el lente 
 
 ---
 
-## Herramientas del IDE (MCP de Rider)
+## Navegacion, diagnostico y formato
 
-Usa las herramientas del MCP de JetBrains como **primera opcion** para buscar, leer y navegar codigo. Si el MCP no responde o no produce resultados, usa las herramientas built-in como fallback.
+Busca y lee codigo con las herramientas incluidas: `Glob` para ubicar archivos, `Grep` para buscar texto, `Read` para leer contenido. Diagnostica con `dotnet build` y `dotnet test`, y formatea con `dotnet format` (todos via Bash). Para renombrar simbolos, ver seccion "6. Refactorizar".
 
-| Tarea | Primaria (MCP Rider) | Fallback |
-|---|---|---|
-| Buscar archivos | `find_files_by_name_keyword` | Glob |
-| Buscar texto en archivos | `search_in_files_by_text` | Grep |
-| Leer archivos | `get_file_text_by_path` | Read |
-| Diagnosticar errores/warnings | `get_file_problems` | - |
-| Info de simbolos/tipos | `get_symbol_info` | - |
-| Renombrar simbolos | `rename_refactoring` | Edit manual |
-| Formatear codigo | `reformat_file` | `dotnet format` via Bash |
-| Ejecutar comandos (test, format) | Bash (directo) | - |
-
-**Aviso sobre `rename_refactoring` y eventos persistidos**: la garantia de `rename_refactoring` es de **compilacion** (actualiza referencias del proyecto, incluidos tests) — no de datos. Renombrar la clase de un evento que este en `IdentidadEventos{Dominio}.TiposPersistidos` cambia su alias en el event store, y ninguna referencia del proyecto lo delata. Ver seccion "6. Refactorizar" para el protocolo cuando esto aplica; autoridad completa: MEF-ADR-0036.
+**Aviso sobre renombrar eventos persistidos**: la garantia de un rename verificado con busqueda textual (`Grep`) y build en verde es de **compilacion** (confirma que todas las referencias del proyecto, incluidos los tests, quedaron actualizadas) — no de datos. Renombrar la clase de un evento que este en `IdentidadEventos{Dominio}.TiposPersistidos` cambia su alias en el event store, y ninguna referencia del proyecto lo delata. Ver seccion "6. Refactorizar" para el protocolo cuando esto aplica; autoridad completa: MEF-ADR-0036.
 
 ---
 
@@ -490,9 +479,10 @@ previene.
 
 ### 5. Revisar calidad del codigo de produccion
 
-Con el objetivo de elegancia como guia, consulta primero los diagnosticos del IDE:
-- Usa `get_file_problems` sobre cada archivo `.cs` modificado en el diff — detecta warnings del compilador, imports innecesarios, posibles NullReference, naming conventions
-- Usa `get_symbol_info` para verificar que los tipos publicos nuevos tienen el uso esperado
+Con el objetivo de elegancia como guia, consulta primero los diagnosticos de la toolchain:
+- Corre `dotnet build` y lee **todos** los warnings, no solo los errores — nullability, miembros obsoletos, codigo inalcanzable, variables sin usar
+- Corre `dotnet format --verify-no-changes` sobre los proyectos del diff — señala imports innecesarios y desviaciones de estilo/naming segun el `.editorconfig` del repo
+- Usa `Grep` sobre el nombre de cada tipo publico nuevo para verificar que su uso en el resto del proyecto es el esperado (y que no quedo huerfano)
 
 Luego revisa manualmente buscando:
 
@@ -522,9 +512,9 @@ Luego revisa manualmente buscando:
 
 ### 6. Refactorizar (si aplica)
 
-Para renombrar variables, metodos, clases o parametros, usa `rename_refactoring` en lugar de buscar/reemplazar manual. El IDE actualiza todas las referencias del proyecto de forma segura, incluyendo tests.
+Para renombrar variables, metodos, clases o parametros, ubica primero **todas** las referencias con `Grep` (incluidos los tests) y aplica el cambio con `Edit` en cada ocurrencia. Corre `dotnet build` despues del rename: una referencia olvidada rompe la compilacion y la delata de inmediato.
 
-**Excepcion: rename de un tipo en `IdentidadEventos{Dominio}.TiposPersistidos`.** `rename_refactoring` sigue siendo la herramienta correcta para ejecutar el cambio — esto no retira su prescripcion, la acota. Si el diff renombra la clase de un evento que esta en esa lista:
+**Excepcion: rename de un tipo en `IdentidadEventos{Dominio}.TiposPersistidos`.** Buscar con `Grep` y editar cada referencia sigue siendo el mecanismo correcto para ejecutar el cambio — esto no retira la verificacion, la acota. Si el diff renombra la clase de un evento que esta en esa lista:
 
 1. Verifica que exista el guardrail de alias del test-writer para ese tipo (`ComposicionContenedorTests`, seccion 6f de `test-writer.md`). **Cual es el literal correcto depende de una pregunta que el rename no responde por si solo**: si el entorno destino no tiene streams escritos, es el alias nuevo; si los tiene, el protocolo de MEF-ADR-0036 seccion 5 preserva el alias viejo con `MapEventType`, y entonces el literal correcto **sigue siendo el viejo**. Es hallazgo bloqueante tanto que el guardrail falte como que su literal se haya actualizado al alias nuevo sin que esa pregunta este respondida en el issue o en el resumen del implementer.
 2. **No lo apruebes por verde.** Escalalo en tu resumen: un rename de este tipo cambia el contrato de datos ya escrito en `mt_events`, algo que ningun test de compilacion detecta. Remite al protocolo de dos despliegues de MEF-ADR-0036 seccion 5 (el registro del alias va en un despliegue separado, antes del que renombra, si el entorno destino ya tiene streams escritos).
@@ -584,7 +574,7 @@ archivo del diff ya estaba limpio, indicalo explicitamente -- igual que con el r
 
 ### 7. Verificar formato y namespaces
 
-Formatea los archivos modificados usando `reformat_file` sobre cada archivo `.cs` del diff (tanto `src/` como `tests/`). Luego verifica con:
+Formatea los archivos modificados con `dotnet format` sobre cada archivo `.cs` del diff (tanto `src/` como `tests/`). Luego verifica con:
 
 ```bash
 dotnet test

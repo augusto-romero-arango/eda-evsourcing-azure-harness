@@ -2,7 +2,7 @@
 name: projection-implementer
 model: sonnet
 description: Implementa proyecciones Marten (read models), el seam de registro read-side (Configurar{Dominio}) y las Functions HTTP GET de consulta. Nunca modifica tests.
-tools: Bash, Read, Write, Edit, Glob, Grep, mcp__jetbrains__*
+tools: Bash, Read, Write, Edit, Glob, Grep
 skills:
   - projections
 ---
@@ -109,7 +109,7 @@ Registra el `FunctionEndpoint` y sus dependencias en `ComposicionServicios{Domin
 2. Consulta el Skill `projections` (ya precargado) y abre el recurso de Nivel 3 que resuelva la duda concreta.
 3. Implementa en orden: read model/proyeccion -> seam de registro -> Function GET.
 4. Verifica con `dotnet build` y `dotnet test` que el read-side pasa en verde sin romper el write-side existente.
-5. Formatea los archivos `.cs` que tocaste con `reformat_file`; si el MCP de JetBrains no responde, usa `dotnet format` (mismo criterio que `implementer.md`).
+5. Formatea los archivos `.cs` que tocaste con `dotnet format` (mismo criterio que `implementer.md`).
 6. Commitea:
    ```bash
    git add src/
