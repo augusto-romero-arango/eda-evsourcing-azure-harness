@@ -371,13 +371,21 @@ public class FunctionEndpoint(IRequestValidator requestValidator, ICommandRouter
                 ex.InnerExceptions.Select(e => e.Message));
         }
 
-        // Contrato del issue, paso 1 de MEF-ADR-0043 (create): 201, Location = GET canonico (ObtenerTurno)
         return new CreatedResult($"/api/programacion/turnos/{comando!.TurnoId}", null);
     }
 }
 ```
 
-**`Location` en un `201`: nunca una reconstruccion manual desalineada del contrato de lectura.** Cuando el paso 1 aplica y existe la Function GET del recurso creado (`Obtener{Concepto}`, MEF-ADR-0006), el valor de `Location` es la ruta REST *tal como la declara esa Function* -- mismo casing kebab-case, mismos segmentos, mismo orden -- nunca una cadena que la reinvente por su cuenta: una `s` de mas o de menos, un segmento reordenado o un PascalCase heredado del ejemplo viejo de MEF-ADR-0006 producen una URI que no resuelve contra el GET real. Si el proyecto ya tiene cableado un helper de generacion de URLs (`LinkGenerator`, `IUrlHelper`), usalo; si no, la cadena literal copia exactamente la `Route` del `[HttpTrigger]` de la Function GET -- nunca se deriva solo del nombre del recurso. Si esa Function GET todavia no existe (el issue solo crea, la lectura queda para un issue read-side posterior), el `201` se devuelve sin `Location`.
+**`Location` en un `201`: nunca una reconstruccion manual desalineada del contrato de lectura.** Cuando el paso 1 aplica y existe la Function GET del recurso creado (`Obtener{Concepto}`, MEF-ADR-0006), el valor de `Location` es la URI *tal como la sirve esa Function* -- mismo casing kebab-case, mismos segmentos, mismo orden --, nunca una cadena que la reinvente por su cuenta: una `s` de mas o de menos, un segmento reordenado o un PascalCase copiado de un endpoint legado del propio BC (MEF-ADR-0043 seccion 7) producen una URI que no resuelve contra el GET real.
+
+Esa URI se arma con **dos** piezas, y se leen las dos del proyecto -- nunca del nombre del recurso ni del nombre de la Function:
+
+1. El **prefijo de ruta del host**: `api` por default en Azure Functions, configurable en `extensions.http.routePrefix` de `host.json` ([Microsoft Learn, "host.json reference"](https://learn.microsoft.com/azure/azure-functions/functions-host-json#http)). Si el consumidor lo cambio o lo vacio, manda el `host.json` del proyecto.
+2. La **`Route` del `[HttpTrigger]`** de la Function GET, que **no** incluye ese prefijo.
+
+Omitir la pieza 1 es el error mecanico mas facil de esta linea: `/programacion/turnos/{id}` no resuelve, `/api/programacion/turnos/{id}` si -- y es el valor exacto que `FunctionEndpointTests` ya assertea del lado rojo (`agents/test-writer.md`, seccion 6g).
+
+**No** delegues la construccion en un helper de generacion de URLs (`LinkGenerator`, `IUrlHelper`, `CreatedAtRouteResult`) asumiendo que funciona: las rutas de `[HttpTrigger]` las resuelve el host de Functions, no la tabla de endpoints de ASP.NET Core que el worker aislado construye, asi que la generacion por nombre de ruta **no esta verificada** en este modelo de hosting -- si el proyecto ya la tiene cableada y con test que lo pruebe, usala; si no, la cadena literal es la forma canonica. Si esa Function GET todavia no existe (el issue solo crea, la lectura queda para un issue read-side posterior), el `201` se devuelve sin `Location`.
 
 El `default` relanza con `throw;` (bare rethrow, preserva el stack trace) en vez de adivinar un codigo: el mapeo es **exhaustivo solo sobre las derivadas declaradas**, y una derivada que no reconoce sube como `500`. Si el consumidor agrega una tercera, extiende el mapeo con un `case` nuevo — nunca con un `default` que le asigne un codigo (MEF-ADR-0004 enmendado, incidente #802).
 
