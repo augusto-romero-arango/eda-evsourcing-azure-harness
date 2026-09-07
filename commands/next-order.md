@@ -20,7 +20,7 @@ Si el bloque imprime `ERROR`, detente y muestra el mensaje al usuario.
 
 ## Entrada
 
-Este comando no acepta argumentos: siempre analiza TODO el universo `estado:listo` abierto del consumidor. Si `$ARGUMENTS` trae texto, ignoralo por completo -- no se lo pases al script.
+Este comando no acepta argumentos: siempre analiza TODO el universo `estado:listo` abierto del consumidor. Si `$ARGUMENTS` trae texto, ignoralo por completo -- no se lo pases al script -- y dilo en una nota al reportar la salida, para que el usuario sepa que su filtro no se aplico.
 
 ## Proceso
 
@@ -56,5 +56,5 @@ Si el script emite una linea `ADVERTENCIA` de universo truncado, reproducela tam
 
 - No dupliques a mano el calculo del orden ni la deteccion de ciclos: el script es la unica fuente de verdad.
 - Este comando es de solo lectura: nunca muta labels ni bodies de issues.
-- **No propongas oleadas paralelas.** Este script calcula un unico orden lineal; agrupar issues sin dependencia mutua en oleadas para `/parallel` es el modo `oleadas` de `/mefisto:planner`, no este comando.
+- **No propongas oleadas paralelas.** Este script calcula un unico orden lineal; agrupar issues sin dependencia mutua en oleadas para `/parallel` es el modo `oleadas` del agente `planner` (`claude --agent planner`), no este comando.
 - **No lances el batch por tu cuenta.** La linea `/mefisto:sequential ...` queda lista para copiar; decidir si se lanza -- y con que subconjunto -- es del usuario.
