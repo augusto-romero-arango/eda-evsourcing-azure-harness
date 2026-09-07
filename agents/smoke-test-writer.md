@@ -192,7 +192,16 @@ Para cada PUT/DELETE **nuevo o migrado** cuyo contrato declare "Estado ya alcanz
 3. Asierta en el Act 1 el codigo de exito declarado por el contrato HTTP. Despues, obtiene del `PostgresFixture` **real** del consumidor el inventario, conteo o version del stream de esa corrida y conserva el valor como linea base. No supongas que el fixture expone un metodo con un nombre concreto: leelo primero y reutiliza su consulta acotada al stream; si no permite distinguir una version de otra, agrega al fixture de smoke tests una consulta minima por `stream_id`.
 4. Repite la **misma intencion**: mismo verbo, ruta, identificador y payload cuando exista. Asierta el codigo de exito que el campo "Estado ya alcanzado" declara, que por defecto es el mismo codigo de exito contractual; nunca espera `404` o `409` por defecto.
 5. Vuelve a consultar el mismo stream y asierta que su inventario, conteo o version no cambio. Nunca uses un conteo global de `mt_events` ni `ExisteEventoAsync` como prueba de ausencia: ambos pueden dar verde con eventos ajenos o con un segundo evento en el stream.
-6. Si el handler publica a Service Bus, no ejecutes otro purge entre ambos actos. Espera durante un timeout corto un mensaje correlacionado con el id de la corrida; el `TimeoutException` de `WaitForMessageAsync` es el resultado esperado. Recibir un mensaje es fallo: demuestra una publicacion adicional atribuible al Act 2.
+6. Si el handler publica a Service Bus, no ejecutes otro purge entre ambos actos. Espera durante un timeout corto un mensaje correlacionado con el id de la corrida y asierta **el tipo exacto** de la excepcion con `Assert.ThrowsAsync<TimeoutException>`; no uses un `try/catch` que acepte cualquier fallo. Recibir el mensaje hace que `WaitForMessageAsync` retorne y falle el assert; un mensaje del mismo tipo que no cumpla el predicado produce `InvalidOperationException` y tambien falla, conforme al fail-on-mismatch del fixture. Solo agotar el timeout demuestra que no hubo una publicacion adicional atribuible al Act 2:
+
+```csharp
+await Assert.ThrowsAsync<TimeoutException>(() =>
+    serviceBus.WaitForMessageAsync<EventoPublicado>(
+        TopicSalida,
+        Suscripcion,
+        evento => evento.Identificador == identificador,
+        TimeSpan.FromSeconds(3)));
+```
 
 La identidad nunca conocida o el stream padre inexistente es otro escenario. Escribe un test independiente con un id nuevo y asierta el status que el issue declare para ese caso; no lo reutilices para representar el estado ya alcanzado ni lo confundas con el no-op.
 
@@ -517,7 +526,7 @@ Esto permite que:
 - **NO filtrar eventos por posicion** (`eventos[^1]`) - siempre filtrar por campo identificador unico
 - **NO escribir un test que genera una operacion exitosa sin verificar todos sus efectos secundarios** - una respuesta exitosa sin verificar los eventos publicados es cobertura incompleta, sin importar el status code. Lee el command handler para identificar todos los efectos (`PublishAsync`, `StartStream`, `AppendToStream`) y verificalos en el test
 - **NO omitir el no-op de un PUT/DELETE nuevo o migrado** - prepara o ejecuta el cambio, repite la misma intencion sobre el estado ya alcanzado, asierta el codigo declarado y demuestra cero eventos y publicaciones adicionales correlacionados con la corrida. No aplica al POST de creacion ni convierte en alcance un endpoint preexistente fuera del issue
-- **NO usar conteos globales ni una mera existencia de evento para el no-op** - compara el inventario, conteo o version del stream de la corrida antes y despues del Act 2, usando la consulta del `PostgresFixture` real. Para Service Bus, purga solo antes del Act 1, consume los mensajes de este y espera un timeout corto por el id de la corrida despues del Act 2
+- **NO usar conteos globales ni una mera existencia de evento para el no-op** - compara el inventario, conteo o version del stream de la corrida antes y despues del Act 2, usando la consulta del `PostgresFixture` real. Para Service Bus, purga solo antes del Act 1, consume los mensajes de este y asierta `Assert.ThrowsAsync<TimeoutException>` sobre una espera corta correlacionada despues del Act 2; no aceptes cualquier excepcion como prueba de ausencia
 - **NO confundir el no-op con identidad desconocida o stream padre inexistente** - son escenarios separados; el ultimo asierta exclusivamente el status que el issue declare
 - **NO asertar `HttpStatusCode.Accepted` (o cualquier otro codigo) por default** - el status del camino feliz viene del contrato HTTP declarado en el issue (MEF-ADR-0011). Asertar `202` sin que el contrato lo declare es adivinar el mismo default que MEF-ADR-0004 y MEF-ADR-0011 ya retiraron del resto del pipeline (MEF-ADR-0013)
 - **NO exigir el DLQ globalmente vacio** (`PeekDeadLetterMessagesAsync(...).Should().BeEmpty()` o equivalente) - un dead-letter residual de una corrida anterior, de un warmup contra codigo viejo, o de un race deploy->smoke tumba el test aunque esta corrida haya sido correcta. Acota siempre el assert a la corrida con `ExisteDeadLetterDeLaCorridaAsync<T>` filtrando por el identificador unico de la corrida (MEF-ADR-0013, issue #324)
