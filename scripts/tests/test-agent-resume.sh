@@ -40,10 +40,19 @@
 #       vuelve a fallar sin dejar el resumen del stage, la SIGUIENTE sonda
 #       corre SIN "-c" (RESUME_DEGRADED permanente) y con el prompt original
 #       completo -- nunca se vuelve a intentar reanudar en ese run_agent.
-#   [5] CA-2 (degradacion "sin conversacion previa"): delegada al propio CLI,
-#       no a este pipeline -- documentado, no reejercido en esta suite (ver
-#       la nota de CA-4 arriba: `claude -c` sin sesion previa en el directorio
-#       arranca una sesion nueva en silencio, exit 0, verificado a mano).
+#   [5] CA-2 (degradacion "sin conversacion previa"): cuando el intento muerto
+#       no dejo transcript en el worktree, NINGUNA sonda usa "-c" (aterrizaria
+#       en la sesion de otro stage anterior del mismo worktree) -- reenvia el
+#       prompt original completo, nombra el motivo en el warning y en el log
+#       de eventos, y NO marca RESUME_DEGRADED permanente. Esta degradacion no
+#       se delega al CLI a proposito: `claude -c` sin sesion previa arranca una
+#       sesion nueva con exit 0, pero IGNORANDO EN SILENCIO `--agent`
+#       (verificado con el CLI real: `-c --agent <nombre inexistente>` no falla
+#       y responde como Claude generico, mientras que sin `-c` aborta con "not
+#       found") -- delegarla mandaria el prompt de continuacion a una sesion
+#       virgen y sin la definicion del agente, con bypassPermissions activo.
+#       agent_session_transcript_count cubre la precondicion; el bloque [1b]
+#       la testea directo y el prompt trae ademas un corte de seguridad.
 #   [6] Nunca se usa --fork-session en la sonda de ningun pipeline (notas
 #       tecnicas del issue: reusar la sesion mantiene un solo transcript por
 #       stage).
@@ -86,6 +95,49 @@ if echo "$PROMPT_TXT" | grep -q "gh pr create"; then
 else
     fail "no conserva la prohibicion de 'gh pr create'/'git push'"
 fi
+# Defensa en profundidad del aterrizaje equivocado: `-c` IGNORA en silencio
+# `--agent` (verificado con el CLI real), asi que una reanudacion que caiga en
+# una conversacion ajena correria sin la definicion del agente y con
+# bypassPermissions -- el prompt tiene que ordenar cortar sin tocar archivos.
+if echo "$PROMPT_TXT" | grep -q "SIN_SESION_PREVIA"; then
+    pass "incluye el corte de seguridad si la reanudacion aterrizo en otra conversacion"
+else
+    fail "no incluye el corte de seguridad 'SIN_SESION_PREVIA'"
+fi
+
+echo ""
+echo "[1b] agent_session_transcript_count: precondicion de -c"
+CFG_DIR=$(mktemp -d)
+WT_PROBE=$(mktemp -d)
+_slug_for() {
+    local real s
+    real=$(cd "$1" && pwd -P)
+    s="${real//\//-}"
+    s="${s//./-}"
+    printf '%s' "$s"
+}
+CFG_DIR_ORIG="${CLAUDE_CONFIG_DIR:-}"
+export CLAUDE_CONFIG_DIR="$CFG_DIR"
+if [ "$(agent_session_transcript_count "$WT_PROBE")" = "0" ]; then
+    pass "sin store para el directorio -> 0 (fail-safe: no reanuda)"
+else
+    fail "sin store para el directorio deberia dar 0, dio $(agent_session_transcript_count "$WT_PROBE")"
+fi
+mkdir -p "$CFG_DIR/projects/$(_slug_for "$WT_PROBE")"
+: > "$CFG_DIR/projects/$(_slug_for "$WT_PROBE")/aaa.jsonl"
+: > "$CFG_DIR/projects/$(_slug_for "$WT_PROBE")/bbb.jsonl"
+if [ "$(agent_session_transcript_count "$WT_PROBE")" = "2" ]; then
+    pass "cuenta los transcripts del store del directorio (slug del path fisico)"
+else
+    fail "esperaba 2 transcripts, dio $(agent_session_transcript_count "$WT_PROBE")"
+fi
+if [ "$(agent_session_transcript_count "")" = "0" ]; then
+    pass "directorio vacio como argumento -> 0"
+else
+    fail "directorio vacio como argumento deberia dar 0"
+fi
+if [ -n "$CFG_DIR_ORIG" ]; then export CLAUDE_CONFIG_DIR="$CFG_DIR_ORIG"; else unset CLAUDE_CONFIG_DIR; fi
+rm -rf "$CFG_DIR" "$WT_PROBE"
 
 echo ""
 echo "[2] CA-1 (estatico): las tres run_agent con hold consumen agent_resume_prompt y pasan \$RESUME_ARGS"
@@ -130,18 +182,42 @@ else
     TMP_DIR=$(mktemp -d)
     trap 'rm -rf "$TMP_DIR"' EXIT
 
-    # run_hold_scenario <call_log> <count_file> <mode>
+    # run_hold_scenario <call_log> <count_file> <mode> <baseline> <transcripts>
     #   mode=succeed_on_resume  -> la sonda tiene exito en el primer intento
     #                              (resumido) -- CA-1.
     #   mode=fail_without_summary -> la sonda SIEMPRE falla con PROVIDER_UNAVAILABLE
     #                              y nunca deja el resumen del stage -- CA-2.
+    #   mode=no_prior_session   -> la sonda falla siempre y el store del
+    #                              worktree NO crecio respecto a <baseline>
+    #                              (el intento muerto no dejo transcript) --
+    #                              CA-2, primera degradacion.
+    #
+    # <baseline> es el valor de RESUME_BASELINE_SESSIONS que el pipeline
+    # captura antes del intento original; <transcripts> cuantos archivos
+    # `.jsonl` tiene el store falso del worktree cuando corre el hold. El
+    # store es real (lo lee agent_session_transcript_count via
+    # CLAUDE_CONFIG_DIR), solo su contenido es fabricado -- asi el test
+    # ejercita el calculo de slug de verdad y no una funcion mockeada.
     run_hold_scenario() {
-        local call_log="$1" count_file="$2" mode="$3"
+        local call_log="$1" count_file="$2" mode="$3" baseline="${4:-0}" transcripts="${5:-1}"
         local worktree="$TMP_DIR/wt-$mode"
         rm -rf "$worktree"
         mkdir -p "$worktree"
         : > "$call_log"
         echo 0 > "$count_file"
+
+        local cfg_dir="$TMP_DIR/cfg-$mode"
+        local wt_real slug
+        wt_real=$(cd "$worktree" && pwd -P)
+        slug="${wt_real//\//-}"
+        slug="${slug//./-}"
+        rm -rf "$cfg_dir"
+        mkdir -p "$cfg_dir/projects/$slug"
+        local i=0
+        while [ "$i" -lt "$transcripts" ]; do
+            : > "$cfg_dir/projects/$slug/sesion-$i.jsonl"
+            i=$((i + 1))
+        done
 
         local test_script="$TMP_DIR/block-$mode.sh"
         cat > "$test_script" <<EOF
@@ -152,7 +228,9 @@ source "$REPO_ROOT/scripts/_pipeline-common.sh" 2>/dev/null
 
 export MEFISTO_HOLD_PROBE_SECONDS=1
 export MEFISTO_HOLD_MAX_SECONDS=5
+export CLAUDE_CONFIG_DIR="$cfg_dir"
 
+RESUME_BASELINE_SESSIONS=$baseline
 WORKTREE_PATH="$worktree"
 LOG_DIR_ABS="$TMP_DIR"
 TIMESTAMP="test"
@@ -211,7 +289,7 @@ EOF
 
     CALL_LOG_A="$TMP_DIR/calls-succeed.log"
     COUNT_A="$TMP_DIR/count-succeed"
-    OUT_A=$(run_hold_scenario "$CALL_LOG_A" "$COUNT_A" "succeed_on_resume")
+    OUT_A=$(run_hold_scenario "$CALL_LOG_A" "$COUNT_A" "succeed_on_resume" 0 1)
 
     # CA-1: la primera (y unica) sonda debe pasar "-c" ANTES de "-p", con el
     # prompt corto de continuacion -- nunca el prompt original completo.
@@ -233,7 +311,7 @@ EOF
 
     CALL_LOG_B="$TMP_DIR/calls-degrade.log"
     COUNT_B="$TMP_DIR/count-degrade"
-    OUT_B=$(run_hold_scenario "$CALL_LOG_B" "$COUNT_B" "fail_without_summary")
+    OUT_B=$(run_hold_scenario "$CALL_LOG_B" "$COUNT_B" "fail_without_summary" 0 1)
 
     N_CALLS_B=$(wc -l < "$CALL_LOG_B" 2>/dev/null | tr -d ' ')
     if [ "${N_CALLS_B:-0}" -ge 2 ]; then
@@ -264,6 +342,43 @@ EOF
         pass "CA-2: RESUME_DEGRADED queda en true de forma permanente"
     else
         fail "CA-2: RESUME_DEGRADED no quedo en true: $OUT_B"
+    fi
+
+    # CA-2, primera degradacion: el intento muerto no dejo transcript en el
+    # worktree (el store no crecio respecto a la linea base), asi que `-c`
+    # aterrizaria en la sesion de otro stage anterior del mismo worktree --
+    # y ahi `--agent` se ignora en silencio. NINGUNA sonda debe usar -c.
+    CALL_LOG_C="$TMP_DIR/calls-noprior.log"
+    COUNT_C="$TMP_DIR/count-noprior"
+    OUT_C=$(run_hold_scenario "$CALL_LOG_C" "$COUNT_C" "no_prior_session" 1 1)
+
+    if grep -q '^CALL: \[-c\]' "$CALL_LOG_C" 2>/dev/null; then
+        fail "CA-2: hubo una sonda con -c sin conversacion previa de este stage: $(cat "$CALL_LOG_C")"
+    else
+        pass "CA-2: sin transcript nuevo del intento muerto, ninguna sonda usa -c"
+    fi
+    if grep -q "PROMPT ORIGINAL COMPLETO DEL STAGE" "$CALL_LOG_C" 2>/dev/null; then
+        pass "CA-2: esas sondas reenvian el prompt original completo del stage"
+    else
+        fail "CA-2: la sonda sin reanudacion no reenvio el prompt original: $(cat "$CALL_LOG_C" 2>/dev/null)"
+    fi
+    if echo "$OUT_C" | grep -q "sin conversacion previa de este stage"; then
+        pass "CA-2: el warning nombra el motivo de la degradacion"
+    else
+        fail "CA-2: no se emitio el warning que nombra el motivo: $OUT_C"
+    fi
+    if grep -q "no dejo transcript en el worktree" "$TMP_DIR/events-no_prior_session.log" 2>/dev/null; then
+        pass "CA-2: el motivo queda en el log de eventos del pipeline"
+    else
+        fail "CA-2: el log de eventos no registro el motivo: $(cat "$TMP_DIR/events-no_prior_session.log" 2>/dev/null)"
+    fi
+    # La degradacion NO es permanente en este caso: solo se salta la
+    # reanudacion mientras no haya nada que continuar (RESUME_DEGRADED, que si
+    # es permanente, esta reservado al caso de la sesion que muere dos veces).
+    if echo "$OUT_C" | grep -q "FINAL_RESUME_DEGRADED=false"; then
+        pass "CA-2: 'sin conversacion previa' no marca RESUME_DEGRADED permanente"
+    else
+        fail "CA-2: 'sin conversacion previa' no debe degradar permanentemente: $OUT_C"
     fi
 fi
 

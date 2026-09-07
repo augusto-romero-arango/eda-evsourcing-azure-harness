@@ -665,6 +665,13 @@ run_agent() {
     fi
 
     local AGENT_TIMEOUT_SECONDS=1800  # 30 minutos por agente
+    # Linea base de transcripts del worktree ANTES de invocar al CLI (issue
+    # #972, CA-4): si tras el fallo el conteo no crecio, el intento muerto no
+    # dejo sesion y `-c` aterrizaria en la de un stage anterior de este mismo
+    # worktree -- la sonda lo detecta y no reanuda. Ver
+    # agent_session_transcript_count en _pipeline-common.sh.
+    local RESUME_BASELINE_SESSIONS
+    RESUME_BASELINE_SESSIONS=$(agent_session_transcript_count "$WORKTREE_PATH")
     local NONINTERACTIVE_SYSTEM="You are running in non-interactive print mode. There is no human to approve anything. You MUST use Write and Edit tools directly to create and modify files at any path including .claude/. Never output text asking for permissions or confirmations -- doing so causes pipeline failure."
     if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
         (cd "$WORKTREE_PATH" && claude -p "$prompt" \
@@ -752,13 +759,24 @@ run_agent() {
             # la sonda reenvia el prompt original completo, byte a byte el
             # comportamiento previo a este issue.
             local attempt_used_resume=false RESUME_ARGS="" attempt_prompt="$prompt"
-            if [ "$RESUME_DEGRADED" = false ]; then
+            local sessions_now
+            sessions_now=$(agent_session_transcript_count "$WORKTREE_PATH")
+            if [ "$RESUME_DEGRADED" = true ]; then
+                warn "$agent: $failure_type -- en espera (hold), reintentando desde cero (sonda #$hold_attempt)..."
+            elif [ "$sessions_now" -le "$RESUME_BASELINE_SESSIONS" ]; then
+                # CA-2, primera degradacion: el intento muerto no dejo
+                # transcript en este worktree, asi que `-c` aterrizaria en la
+                # sesion de OTRO stage anterior (o en ninguna) -- y `-c` ignora
+                # en silencio `--agent`, asi que ese aterrizaje correria sin la
+                # definicion del agente. No es permanente: esta sonda deja su
+                # propia sesion, asi que la siguiente ya tendra que continuar.
+                warn "$agent: $failure_type -- en espera (hold), sin conversacion previa de este stage que continuar -- reintentando desde cero (sonda #$hold_attempt)"
+                echo "[$(date +%H:%M:%S)][hold][resume] $agent: el intento fallido no dejo transcript en el worktree -- reintento desde cero (sin -c)" >> "$EVENTS_LOG_ABS"
+            else
                 attempt_used_resume=true
                 RESUME_ARGS="-c"
                 attempt_prompt="$(agent_resume_prompt "$stage" "$agent")"
                 warn "$agent: $failure_type -- en espera (hold), reanudando sesion truncada (sonda #$hold_attempt)..."
-            else
-                warn "$agent: $failure_type -- en espera (hold), reintentando desde cero (sonda #$hold_attempt)..."
             fi
 
             local log_stage_hold="$LOG_DIR_ABS/stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-hold-${hold_attempt}.log"

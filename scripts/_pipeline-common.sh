@@ -1129,6 +1129,53 @@ agent_hold_wait() {
     return 0
 }
 
+# agent_session_transcript_count <dir>
+#
+# Imprime cuantos transcripts de sesion del CLI tiene <dir> en el store local
+# (0 si no hay ninguno, si el directorio no existe o si el store cambio de
+# forma). Lo consume la sonda de hold para decidir si `-c`/`--continue` tiene
+# algo VALIDO que continuar (issue #972, CA-2/CA-4): compara el conteo de
+# antes del intento original contra el de despues del fallo -- si NO crecio,
+# el intento muerto no dejo transcript y `-c` desde ese directorio aterrizaria
+# en la sesion de OTRO stage anterior del mismo worktree (tdd-pipeline.sh
+# corre hasta siete agentes en secuencia sobre el mismo path) o en ninguna.
+#
+# Por que un conteo y no un `session_id`: el lado publicado no puede capturar
+# el id de forma confiable (solo existe con PIPELINE_CAPTURE_STREAM=true,
+# MEF-ADR-0051) -- pero si puede verificar la PRECONDICION de `-c`. Verificado
+# a mano: cada invocacion no reanudada deja exactamente un `<session-id>.jsonl`
+# en el store del directorio, y una reanudada (`-c`) reusa el mismo id y
+# APENDE al mismo archivo, sin crear uno nuevo (dos sesiones + un `-c` en un
+# directorio limpio dejaron 2 archivos, no 3).
+#
+# Es deliberadamente fail-safe y acoplada a un detalle interno de Claude Code
+# (el layout `<config>/projects/<cwd-slug>/*.jsonl`, con `/` y `.` del path
+# fisico mapeados a `-`): si ese layout cambia, la funcion devuelve 0, la
+# sonda no reanuda y el pipeline degrada al comportamiento previo a #972
+# (stage desde cero) en vez de romperse.
+agent_session_transcript_count() {
+    local dir="${1:-}"
+    [ -n "$dir" ] || { echo 0; return 0; }
+
+    local real_dir
+    real_dir=$(cd "$dir" 2>/dev/null && pwd -P) || { echo 0; return 0; }
+
+    local slug="${real_dir//\//-}"
+    slug="${slug//./-}"
+    local store="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$slug"
+    [ -d "$store" ] || { echo 0; return 0; }
+
+    # Glob con nullglob en vez de `find`: el path del store arranca con '-'
+    # (el slug de una ruta absoluta), que find/bfs interpretan como flag.
+    local nullglob_ya=0
+    shopt -q nullglob && nullglob_ya=1
+    shopt -s nullglob
+    local transcripts=( "$store"/*.jsonl )
+    [ "$nullglob_ya" -eq 1 ] || shopt -u nullglob
+
+    echo "${#transcripts[@]}"
+}
+
 # agent_resume_prompt <stage> <agent>
 #
 # Prompt corto de continuacion para la sonda de hold que reanuda la sesion
@@ -1139,10 +1186,19 @@ agent_hold_wait() {
 # tiene su propio worktree, asi que `-c` desde ahi resuelve la sesion
 # truncada de ESE stage sin necesitar `session_id` -- que del lado publicado
 # solo existe con PIPELINE_CAPTURE_STREAM=true (MEF-ADR-0051). Verificado a
-# mano (CA-4) que "la mas reciente del directorio" resuelve lo esperado
-# cuando dos sesiones distintas corrieron en secuencia en el mismo directorio
-# (el segundo -c continua la SEGUNDA, no la primera) -- ver changelog.d/
-# 972.changed.md para el detalle del experimento.
+# mano con el CLI real (CA-4, no asumido) que "la mas reciente del directorio"
+# resuelve lo esperado cuando dos sesiones distintas corrieron en secuencia en
+# el mismo directorio: el `-c` posterior devolvio el `session_id` de la
+# SEGUNDA, nunca el de la primera.
+#
+# La precondicion "hay algo de ESTE stage que continuar" NO se delega al CLI:
+# la verifica el caller con agent_session_transcript_count, porque `-c`
+# IGNORA EN SILENCIO `--agent` (verificado: `claude -c -p --agent <nombre
+# inexistente>` no falla y responde como Claude generico, mientras que sin
+# `-c` el mismo flag aborta con "not found"). Sin esa verificacion, un
+# directorio sin transcript del intento muerto recibiria este prompt de
+# continuacion en una sesion virgen y SIN la definicion del agente, con
+# bypassPermissions activo -- peor que repetir el stage desde cero.
 #
 # Nunca se usa junto a --fork-session: reusar el mismo id de sesion es lo que
 # mantiene un solo transcript por stage (notas tecnicas del issue).
@@ -1151,7 +1207,10 @@ agent_hold_wait() {
 # `mefisto-tooling-pipeline.sh`, issue #968): pide continuar sin reiniciar el
 # analisis y dejar (o completar) el resumen del stage -- los gates de
 # confianza de cada pipeline (existencia del summary, deteccion de trabajo
-# truncado) se aplican sin cambios al resultado (CA-3).
+# truncado) se aplican sin cambios al resultado (CA-3). Suma sobre el interno
+# un parrafo de corte para el caso en que, pese al chequeo del caller, la
+# sesion continuada no sea la esperada: defensa en profundidad, no el
+# mecanismo principal.
 agent_resume_prompt() {
     local stage="$1" agent="$2"
     cat <<RESUME_PROMPT_EOF
@@ -1160,6 +1219,8 @@ Tu sesion anterior en este mismo stage (stage ${stage}, agente ${agent}) se cort
 Continua exactamente donde quedaste. No reinicies tu analisis desde cero, no releas archivos que ya revisaste ni repitas ediciones ya hechas.
 
 Termina tu contrato del stage, incluido dejar escrito (o completar si quedo a medias) el resumen en .claude/pipeline/summaries/stage-${stage}-${agent}.md. Si ese archivo ya existe completo, dejalo como esta; si no, escribelo ahora y agrega una linea que diga que esta sesion se reanudo tras una espera.
+
+CORTE DE SEGURIDAD: si no tienes memoria de haber trabajado antes en este stage (stage ${stage}, agente ${agent}) -- es decir, si esta conversacion arranca aqui y no reconoces el trabajo previo que se describe arriba -- entonces la reanudacion aterrizo en la conversacion equivocada. En ese caso NO edites, crees ni borres ningun archivo y NO escribas el resumen del stage: responde unicamente la linea 'SIN_SESION_PREVIA' y termina. El pipeline lo detecta por la ausencia del resumen y relanza el stage completo desde cero.
 
 CONTEXTO DE EJECUCION (sigue vigente): modo no-interactivo, sin humano al otro lado. PROHIBIDO hacer 'git push' o 'gh pr create': eso sigue siendo responsabilidad exclusiva del pipeline.
 RESUME_PROMPT_EOF
