@@ -117,9 +117,10 @@ Nunca se hand-authorea: es lo que `generate-internal-adapters.sh` produce en
 - **Sin `skills:`**: OpenCode no tiene ese campo de frontmatter de agente; un Agent Skill se
   dispara solo por su `description` via la tool nativa `skill` (misma mecanica de progressive
   disclosure, distinto punto de enganche que Claude Code).
-- `profile` no resuelve a ningun `model:` fijo en este adaptador -- OpenCode siempre hereda el
-  modelo activo de la sesion salvo mapping local (`mefisto_resolve_model`), a diferencia de la
-  tabla fija de Claude Code (`fast`->`haiku`, `balanced`->`sonnet`).
+- `profile` **no emite `model:`** en agentes ni comandos OpenCode: estos heredan la configuracion
+  global del usuario. La tabla fija (`fast` Luna, `balanced` Terra, `deep` Sol) solo alimenta
+  `mefisto_resolve_model` en pipelines headless; `--models` y `.mefisto/models.json` conservan
+  precedencia (MEF-ADR-0049, issue #961).
 
 Mapeo completo campo-a-campo, incluidas las directivas de body (`{{mefisto:launch-agent}}`,
 `{{mefisto:run}}`, `{{mefisto:command-path}}`): `src/internal/contract/README.md`.
@@ -141,6 +142,11 @@ Mapeo completo campo-a-campo, incluidas las directivas de body (`{{mefisto:launc
 - **[4]** "Plugins reference" -- Claude Code Docs. Fija el prefijo scoped
   `mcp__plugin_<plugin-name>_<server-name>__<tool>` para tools MCP provistas por un plugin.
   Verificado (fetch HTTP, 2026-09-06). https://code.claude.com/docs/en/plugins-reference
+- **[5]** "Agents" -- OpenCode Docs. Confirma `model` en el frontmatter Markdown de agentes y
+  el formato `provider/model-id`. Verificado (fetch HTTP, 2026-09-06).
+  https://opencode.ai/docs/agents/#model
+- **[6]** "Commands" -- OpenCode Docs. Confirma `model` en el frontmatter Markdown de comandos.
+  Verificado (fetch HTTP, 2026-09-06). https://opencode.ai/docs/commands/#model
 - MEF-ADR-0050 (principio de neutralidad de runtime): fuente de la regla de oro, el frontmatter
   portable de `SKILL.md` y el checklist de adaptador nuevo.
 - MEF-ADR-0049 (arquitectura neutral runtime/proveedor): fuente del layout `src/internal/` +

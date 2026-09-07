@@ -19,6 +19,8 @@
 #         coinciden byte-a-byte con lo que la fuente neutral produce (CA-1).
 #   [claude-output] La salida Claude de los cuatro comandos `fast` lleva
 #         `model: "haiku"`; la de `fix-review` (`deep`) omite `model:` (CA-2).
+#   [opencode-output] La salida OpenCode omite `model:` para heredar la
+#         configuracion del usuario (issue #961).
 #   [guard] El bloque del guard inverso (`.claude-plugin/plugin.json`) es
 #         identico byte-a-byte entre la salida Claude y la OpenCode de cada
 #         uno de los cinco comandos (CA-2).
@@ -240,6 +242,16 @@ else
 fi
 
 echo ""
+echo "[opencode-output] ningun comando OpenCode fija model:"
+for id in $COMMAND_IDS $EXEC_COMMAND_IDS mefisto-next-order; do
+    if grep -q '^model:' "$REPO_ROOT/.opencode/commands/$id.md" 2>/dev/null; then
+        fail "$id: .opencode/commands no deberia fijar model:"
+    else
+        pass "$id: .opencode/commands sin model: (hereda la configuracion del usuario)"
+    fi
+done
+
+echo ""
 echo "[command-path] mefisto-bitacora encadena mefisto-merge apuntando al propio directorio de cada runtime (CA-4)"
 claude_bitacora="$REPO_ROOT/.claude/commands/mefisto-bitacora.md"
 opencode_bitacora="$REPO_ROOT/.opencode/commands/mefisto-bitacora.md"
@@ -337,14 +349,6 @@ if grep -q '^model: "sonnet"$' "$REPO_ROOT/.claude/commands/mefisto-release.md" 
 else
     fail "mefisto-release: .claude/commands NO lleva model: \"sonnet\""
 fi
-for id in $EXEC_COMMAND_IDS; do
-    if grep -q '^model:' "$REPO_ROOT/.opencode/commands/$id.md" 2>/dev/null; then
-        fail "$id: .opencode/commands NO deberia declarar 'model:'"
-    else
-        pass "$id: .opencode/commands sin 'model:'"
-    fi
-done
-
 echo ""
 echo "[ca-4] mefisto-tooling no prescribe un alias Anthropic concreto en sus ejemplos de --models y remite a models.example.json (issue #867)"
 src_tooling="$COMMANDS_DIR/mefisto-tooling.md"

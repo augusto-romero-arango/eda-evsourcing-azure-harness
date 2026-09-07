@@ -13,13 +13,9 @@
 #   [check] generate-internal-adapters.sh --check esta en verde: los
 #         adaptadores versionados en .claude/agents/ y .opencode/agents/
 #         coinciden byte-a-byte con lo que la fuente neutral produce (CA-2).
-#   [claude-output] Los diez adaptadores generados (.claude/agents/ y
-#         .opencode/agents/) llevan el marcador de generado y ninguno
-#         menciona `fable`, `opus` ni un id de modelo completo; en la salida
-#         Claude, los agentes de perfil `balanced` (historiador, writer)
-#         llevan `model: "sonnet"` y los de perfil `deep` (planner,
-#         investigator, reviewer) no declaran `model:` (heredan la sesion)
-#         (CA-2).
+#   [runtime-output] Los diez adaptadores generados llevan el marcador;
+#         Claude conserva su tabla y OpenCode omite `model:` para heredar la
+#         configuracion del usuario (CA-2, issue #961).
 #   [opencode-cli] Si el CLI `opencode` esta instalado, `opencode agent list`
 #         corrido en la raiz del repo lista cada id con su modo -- `primary`
 #         para planner/investigator/historiador, `subagent` para
@@ -116,7 +112,7 @@ else
 fi
 
 echo ""
-echo "[claude-output] .claude/agents/*.md: marcador de generado, sin fable/opus/id de modelo, historiador con model sonnet"
+echo "[runtime-output] .claude/agents/*.md y .opencode/agents/*.md reflejan las tablas por runtime"
 for id in $AGENT_IDS; do
     out_file="$REPO_ROOT/.claude/agents/$id.md"
     if [ ! -f "$out_file" ]; then
@@ -161,6 +157,14 @@ for id in $AGENT_IDS; do
         else
             pass "$id: .claude/agents sin 'model:' (perfil deep)"
         fi
+    fi
+done
+
+for id in $AGENT_IDS; do
+    if grep -q '^model:' "$REPO_ROOT/.opencode/agents/$id.md" 2>/dev/null; then
+        fail "$id: .opencode/agents no deberia fijar model:"
+    else
+        pass "$id: .opencode/agents sin model: (hereda la configuracion del usuario)"
     fi
 done
 
