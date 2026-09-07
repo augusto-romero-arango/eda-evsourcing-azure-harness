@@ -145,7 +145,7 @@ Los fixtures se inyectan automaticamente porque estan registrados en `AssemblyFi
 
 ### Codigo de exito: viene del contrato HTTP del issue, nunca de un default
 
-El status code que el test del camino feliz asierta no es un valor memorizado por este agente: es el codigo de exito que el issue declaro en su "Contrato HTTP del comando" (MEF-ADR-0011, cuarto elemento del contrato -- junto a verbo, ruta y paso de precedencia de MEF-ADR-0043). Lee ese codigo del issue y asiertalo tal cual (`200`, `201`, `204` o `202`). Si el issue no lo declara, no asumas un default -- eso es un problema del Definition of Ready (MEF-ADR-0011), no algo que este agente resuelva adivinando.
+El status code que el test del camino feliz asierta no es un valor memorizado por este agente: es el codigo de exito que el issue declaro en su "Contrato HTTP del comando" (MEF-ADR-0011, cuarto elemento del contrato -- junto a verbo, ruta y paso de precedencia de MEF-ADR-0043). Lee ese codigo del issue y asiertalo tal cual (`200`, `201`, `204` o `202`). Si el issue no lo declara, no asumas un default -- eso es un problema del Definition of Ready (MEF-ADR-0011), no algo que este agente resuelva adivinando: deja sin escribir el caso del camino feliz de ese endpoint, escribe los demas casos y **declara el vacio en tu resumen** (seccion "Output"), mismo criterio que el `test-writer` aplica en su `FunctionEndpointTests`.
 
 **`202 Accepted` no es la respuesta por defecto de un camino feliz.** MEF-ADR-0004 restringe `202` al caso donde el procesamiento primario solicitado continua despues de responder, y exige que el issue documente que trabajo queda pendiente y por que. Nunca generes `response.StatusCode.Should().Be(HttpStatusCode.Accepted)` solo porque el endpoint publica a Service Bus -- publicar no implica procesamiento diferido si el cambio primario (persistencia en el event store) ya quedo durable antes de responder (MEF-ADR-0013).
 
@@ -153,9 +153,9 @@ Segun el codigo declarado, verifica ademas:
 
 | Codigo | Verificacion adicional en el smoke test |
 |---|---|
-| `201 Created` | Si el contrato exige `Location`, verifica que el header apunte a la URI canonica de lectura del recurso creado. |
-| `204 No Content` | Verifica que el body de la respuesta este vacio. |
-| `200 OK` | Valida la representacion declarada por el contrato (los campos que el issue espera en el body). |
+| `201 Created` | Si el contrato exige `Location`, verifica que el header apunte a la URI canonica de lectura del recurso creado (`response.Headers.Location`). **Verifica el header, no lo dereferencies**: si esa vista la materializa una proyeccion `Async`, la URI responde `404` durante la ventana de materializacion (MEF-ADR-0004, MEF-ADR-0034) -- consultarla es otro test, con el polling de la seccion read-side. |
+| `204 No Content` | Verifica que el body de la respuesta venga vacio (`(await response.Content.ReadAsStringAsync(ct)).Should().BeEmpty()`). |
+| `200 OK` | Valida la representacion que declara el contrato: presencia y forma de los campos que el issue espera en el body, nunca reglas de negocio (ver "NO verificar el body de la respuesta en detalle" mas abajo -- esas ya las cubren los unit tests). |
 | `202 Accepted` | Solo si el contrato lo declaro con su justificacion -- el procesamiento sigue en curso, no hay representacion que validar. |
 
 ### Regla de cobertura completa de efectos secundarios
@@ -268,7 +268,7 @@ Los smoke tests no solo verifican respuestas HTTP. Tambien verifican que los eve
 
 ### Patron 1: Dominio publicador (HTTP -> Service Bus)
 
-El dominio recibe un comando HTTP y publica un evento a Service Bus. El smoke test verifica que el evento llega al topic. **El status code sincrono de este endpoint no es automaticamente `202` por publicar a Service Bus** -- viene del contrato HTTP del issue igual que cualquier otro endpoint (ver "Codigo de exito" arriba). El ejemplo de abajo asierta `202` porque asi lo declaro el contrato de **ese** comando especifico, con su justificacion; el tuyo puede declarar `200`, `201` o `204` sin justificacion adicional.
+El dominio recibe un comando HTTP y publica un evento a Service Bus. El smoke test verifica que el evento llega al topic. **El status code sincrono de este endpoint no es automaticamente `202` por publicar a Service Bus** -- viene del contrato HTTP del issue igual que cualquier otro endpoint (ver "Codigo de exito" arriba). El ejemplo de abajo asierta `202` porque asi lo declaro el contrato de **ese** comando especifico, con su justificacion; sustituye ese assert por el codigo que declare el contrato de tu propio comando -- `200`, `201` y `204` son igual de validos y no requieren justificacion adicional. El comentario que acompana el assert en el ejemplo sobrevive solo mientras documente esa justificacion concreta (umbral doble de MEF-ADR-0044); si tu contrato declara otro codigo, el assert va sin comentario.
 
 **Flujo:** HTTP POST -> Function App procesa -> evento publicado al topic -> smoke test consume de suscripcion `smoke-tests`
 
@@ -297,11 +297,9 @@ public class SolicitarProgramacionTurnoSmokeTests(ApiFixture api, ServiceBusFixt
         var solicitudId = Guid.CreateVersion7();
         var payload = new { id = solicitudId, /* ... campos del comando ... */ };
         var response = await _client.PostAsJsonAsync("/api/programacion/solicitudes", payload, ct);
-        // Este ejemplo asierta 202 porque el contrato HTTP de ESTE comando lo declaro asi: la
-        // solicitud queda registrada y publicada, pero la programacion final del turno la
-        // resuelve un consumidor downstream (procesamiento primario diferido, MEF-ADR-0004).
-        // Sustituye este assert por el codigo que declare el contrato de tu propio comando --
-        // 200, 201 y 204 son igual de validos y no requieren justificacion adicional.
+        // 202 porque el contrato de este comando declaro procesamiento primario diferido: la
+        // solicitud queda registrada y publicada, y la programacion final del turno la resuelve
+        // un consumidor downstream (MEF-ADR-0004).
         response.StatusCode.Should().Be(HttpStatusCode.Accepted);
 
         var evento = await serviceBus.WaitForMessageAsync<ProgramacionTurnoDiarioSolicitada>(
@@ -553,6 +551,9 @@ Al finalizar, genera el summary en `.claude/pipeline/summaries/smoke-test-writer
 **Endpoints cubiertos:**
 - `POST /api/{dominio}/{recurso}` - camino feliz, duplicado, validacion
 - `GET /api/health` - disponibilidad
+
+**Codigos de exito asertados:** `POST /api/{dominio}/{recurso}` -> {200|201|202|204} (declarado en el contrato HTTP del issue)
+**Endpoints sin codigo de exito declarado en el issue:** {ninguno | lista -- camino feliz no escrito, vacio del DoR a resolver (MEF-ADR-0011)}
 
 **Resultado contra dev:** {PASSED | FAILED | ENTORNO NO DISPONIBLE}
 ```
