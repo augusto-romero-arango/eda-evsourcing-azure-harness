@@ -560,6 +560,9 @@ case "${1:-}" in
         [ -n "$MODELS_SPEC" ] && abort "--models no es valido con --batch (seria ambiguo sobre varios issues). Usa --tooling <issue> --models 'agente=modelo' para un unico issue."
         [ -n "$VARIANT_SPEC" ] && abort "--variant no es valido con --batch (seria ambiguo sobre varios issues). Usa --tooling <issue> --variant <label> para un unico issue."
         require_herdr_context
+        # El launcher valida la rama antes de adquirir/reutilizar/cerrar panes.
+        # El --_pane-runner no pasa por este dispatcher y no lo repite.
+        ensure_repo_on_base_branch
         cmd_batch "$@"
         ;;
     "")

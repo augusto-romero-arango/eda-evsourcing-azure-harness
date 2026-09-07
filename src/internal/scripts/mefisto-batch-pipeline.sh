@@ -514,67 +514,6 @@ fi
 # toque.
 export MEFISTO_RUNTIME="$BATCH_RUNTIME"
 
-# ensure_repo_on_base_branch
-#
-# Gate de arranque del batch (issue #46, auto-recuperacion agregada en el
-# issue #726). Cada worktree del tooling-pipeline nace SIEMPRE de origin/main,
-# sea cual sea la rama activa del repo principal (issue #66, `git worktree add
-# ... origin/main` en mefisto-tooling-pipeline.sh) -- ese invariante no depende
-# de este gate. La razon real de exigir main/master aqui es puramente higienica:
-# mantener main LOCAL sincronizado entre eslabones para el humano que sigue
-# la corrida (issue #566).
-#
-# Si la rama activa ya es main/master, no hace nada. Si no lo es:
-#   - Arbol de trabajo LIMPIO (`git status --porcelain` vacio): la rama
-#     abandonada no pierde nada (sus commits ya estan en su ref, tipicamente
-#     tambien en origin) -- el gate se AUTO-RECUPERA en vez de abortar:
-#     cambia a la rama base (preferida 'main' si existe localmente, si no
-#     'master') y la deja al dia con origin (`git pull --ff-only`), dejando
-#     un warning que nombra la rama original (mismo tono que los warnings de
-#     sync del issue #566).
-#   - Arbol SUCIO (cambios sin commitear o staged): la auto-recuperacion no
-#     aplica -- switchear arrastraria o descartaria ese trabajo. Aborta
-#     fail-loud, igual que el gate original (issue #46, robustez).
-#   - El `git pull --ff-only` posterior al switch falla (la rama base LOCAL
-#     diverge de origin): aborta fail-loud -- la premisa de higiene de este
-#     gate no se puede cumplir sin que el humano resuelva la divergencia a
-#     mano.
-#
-# Deja MAIN_BRANCH con la rama base efectiva (la activa al entrar si ya era
-# main/master, o la rama a la que se auto-recupero).
-ensure_repo_on_base_branch() {
-    local current_branch
-    current_branch=$(git rev-parse --abbrev-ref HEAD)
-
-    if [ "$current_branch" = "main" ] || [ "$current_branch" = "master" ]; then
-        MAIN_BRANCH="$current_branch"
-        return 0
-    fi
-
-    if [ -n "$(git status --porcelain)" ]; then
-        abort "El repo principal esta en la rama '$current_branch', no en main/master, y el arbol de trabajo no esta limpio (cambios sin commitear, staged o archivos sin trackear). Cada worktree del tooling-pipeline nace de origin/main sin importar la rama activa (issue #66), pero el batch tambien mantiene main LOCAL sincronizado entre eslabones para el humano que sigue la corrida -- arrancar fuera de main/master genera sorpresas ahi. La auto-recuperacion del gate (issue #726) solo aplica con el arbol de trabajo LIMPIO; con cambios pendientes, resuelvelos o descartalos y haz 'git switch main' a mano antes de lanzar el batch."
-    fi
-
-    local base_branch
-    if git rev-parse --verify -q refs/heads/main >/dev/null 2>&1; then
-        base_branch="main"
-    elif git rev-parse --verify -q refs/heads/master >/dev/null 2>&1; then
-        base_branch="master"
-    else
-        abort "El repo principal esta en la rama '$current_branch' y no existe ni 'main' ni 'master' local para auto-recuperar el gate. Crea o rescata una de las dos antes de lanzar el batch."
-    fi
-
-    git switch -q "$base_branch" || abort "El repo principal esta en la rama '$current_branch' (arbol limpio), pero 'git switch $base_branch' fallo. Resuelve a mano antes de lanzar el batch."
-
-    local pull_output
-    if ! pull_output=$(git pull --ff-only 2>&1); then
-        abort "El repo principal estaba en la rama '$current_branch' (arbol limpio); el gate lo auto-recupero a '$base_branch' (issue #726), pero 'git pull --ff-only' fallo ahi -- tipicamente porque '$base_branch' LOCAL divergio de origin/$base_branch (tambien cae aqui una base sin upstream configurado). La premisa de higiene de este gate no se puede cumplir asi: resuelve la divergencia a mano (el repo quedo en '$base_branch') antes de relanzar el batch. Salida de git: $(printf '%s' "$pull_output" | tr '\n' ' ')"
-    fi
-
-    warn "El repo principal estaba en la rama '$current_branch' (arbol limpio) al arrancar el batch; el gate se auto-recupero a '$base_branch' y lo sincronizo con origin/$base_branch (issue #726). Los commits de '$current_branch' siguen intactos en su rama."
-    MAIN_BRANCH="$base_branch"
-}
-
 ensure_repo_on_base_branch
 
 # --- Cabecera ---

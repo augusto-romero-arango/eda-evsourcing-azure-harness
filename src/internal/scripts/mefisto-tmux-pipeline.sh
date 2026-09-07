@@ -570,6 +570,20 @@ cmd_batch() {
     print_connect_hint "$session"
 }
 
+# Valida el modo batch y adelanta su gate de rama al limite sincronico del
+# launcher. Debe correr antes de delegar a herdr o tocar tmux; el motor repite
+# el mismo helper como defensa ante invocacion directa y carreras posteriores.
+preflight_batch_start() {
+    extract_wrapper_flags "$@"
+    local issues=()
+    [ ${#REMAINING_ARGS[@]} -gt 0 ] && issues=("${REMAINING_ARGS[@]}")
+    [ ${#issues[@]} -gt 0 ] || abort "Debes especificar al menos un issue. Uso: --batch 42 43 44 [--verbose]"
+    [ -z "$FROM_STAGE_EXTRA" ] || abort "--from-stage no es valido con --batch (seria ambiguo sobre varios issues). Usa --tooling <issue> --from-stage N para un unico issue."
+    [ -z "$MODELS_EXTRA" ] || abort "--models no es valido con --batch (seria ambiguo sobre varios issues). Usa --tooling <issue> --models 'agente=modelo' para un unico issue."
+    [ -z "$VARIANT_EXTRA" ] || abort "--variant no es valido con --batch (seria ambiguo sobre varios issues). Usa --tooling <issue> --variant <label> para un unico issue."
+    ensure_repo_on_base_branch
+}
+
 # --- Dispatcher ---
 if [ $# -eq 0 ]; then
     print_usage
@@ -580,6 +594,10 @@ fi
 # herdr, los modos con equivalente se despachan a la interfaz herdr (pane de
 # ejecucion en el workspace actual, sin sesion tmux); fuera de herdr, o para
 # --attach, todo sigue igual que siempre.
+if [ "$1" = "--batch" ]; then
+    preflight_batch_start "${@:2}"
+fi
+
 if should_delegate_to_herdr "$@"; then
     # mefisto-herdr-pipeline.sh ya es canonico en src/internal/scripts/
     # (issue #872): mismo criterio que TOOLING_SCRIPT_Q/BATCH_SCRIPT_Q arriba,
