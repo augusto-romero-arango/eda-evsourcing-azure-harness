@@ -27,6 +27,8 @@ Si `$ARGUMENTS` esta vacio, responde: `Uso: /mefisto-tooling <numero-de-issue> [
 /mefisto-tooling 42 --variant b --models writer=<modelo-b>
 ```
 
+El timeout de watchdog por stage (`--timeout` de `mefisto-run-agent.sh`) es configurable con la variable de entorno `MEFISTO_AGENT_TIMEOUT_SECONDS` (default 1800; entero > 0, issue #946), util para issues con stages legitimamente largos.
+
 Extrae `ISSUE_NUM` como el primer token numerico de `$ARGUMENTS` y usalo en los pasos 1, 2 y 2.5 de abajo (esos `gh issue view`/`gh issue edit` no entienden `--models` ni `--variant`; sin ninguno de los dos, `ISSUE_NUM` es simplemente `$ARGUMENTS` completo). `$ARGUMENTS` completo, con `--models`/`--variant` incluidos si vinieron, se reenvia intacto a `mefisto-tmux-pipeline.sh --tooling` en el paso 3.
 
 ## Proceso

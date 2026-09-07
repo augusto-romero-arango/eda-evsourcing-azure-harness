@@ -37,6 +37,16 @@
 #         mefisto_state_path, de modo que el traslado del pipeline no los deja
 #         vigilando archivos que ya nadie escribe (CA-3; el porte completo de
 #         ambos es #871/#872).
+#   [J]   MEFISTO_AGENT_TIMEOUT_SECONDS (issue #946): con un runtime fake que
+#         se cuelga, el stage termina por TIMEOUT en ~1s con
+#         MEFISTO_AGENT_TIMEOUT_SECONDS=1, no con el default de 1800s (CA-4);
+#         con un valor no entero (p. ej. "abc") el pipeline aborta ANTES de
+#         crear el worktree (CA-2). Reutiliza el fixture del bloque G.
+#   [K]   MEFISTO_AGENT_TIMEOUT_SECONDS viaja hasta el eslabon (issue #946,
+#         CA-3): ni mefisto-batch-pipeline.sh ni mefisto-herdr-pipeline.sh
+#         filtran el entorno del pipeline de tooling mas alla de las HERDR_*,
+#         asi que la variable llega heredada sin que ningun eslabon la
+#         reenvie a mano. Guarda estatica -- sin fixture, siempre corre.
 #
 # Uso: .claude/scripts/tests/test-tooling-state-paths.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -382,6 +392,118 @@ STUB
     else
         fail "G-9/G-10: no se encontro el worktree de la corrida (abort() lo deja en disco, ver nota tecnica del pipeline)"
     fi
+
+    # -------- Bloque J: MEFISTO_AGENT_TIMEOUT_SECONDS (issue #946) --------
+    #
+    # Reutiliza el mismo FAKE_MEFISTO/FAKE_BIN del bloque G (origin/main sigue
+    # intacto: la corrida de G aborto en el gate de changelog.d/ antes de
+    # pushear nada). J-1/J-2/J-3 prueban CA-4 con un runtime fake que se
+    # cuelga: el stage debe terminar por TIMEOUT en ~1s con
+    # MEFISTO_AGENT_TIMEOUT_SECONDS=1, no esperar el default de 1800s.
+    # J-4/J-5/J-6 prueban CA-2: un valor no entero aborta el pipeline ANTES de
+    # crear el worktree.
+
+    echo ""
+    echo "[J] MEFISTO_AGENT_TIMEOUT_SECONDS controla el timeout de stage (issue #946)"
+
+    cat > "$FAKE_BIN/claude" <<'STUB'
+#!/usr/bin/env bash
+sleep 1000
+STUB
+    chmod +x "$FAKE_BIN/claude"
+
+    J1_ERR="$G_TMP/j1-stderr"
+    J1_START=$(date +%s)
+    (
+        cd "$FAKE_MEFISTO" || exit 99
+        env -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR -u MEFISTO_REPO_ROOT \
+            -u MEFISTO_PROJECT_NAME -u MEFISTO_REPO_SLUG \
+            PATH="$FAKE_BIN:$PATH" MEFISTO_RUNTIME=claude MEFISTO_AGENT_RETRY_BACKOFF_SECONDS=0 \
+            MEFISTO_AGENT_TIMEOUT_SECONDS=1 MEFISTO_AGENT_MAX_ATTEMPTS=1 \
+            ./.claude/scripts/mefisto-tooling-pipeline.sh 870
+    ) </dev/null >/dev/null 2>"$J1_ERR"
+    J1_RC=$?
+    J1_ELAPSED=$(( $(date +%s) - J1_START ))
+
+    if [ "$J1_RC" -ne 0 ]; then
+        pass "J-1: la corrida aborta (rc=$J1_RC) tras el TIMEOUT del stage 1"
+    else
+        fail "J-1: se esperaba que la corrida abortara por TIMEOUT (rc=0)"
+    fi
+    if grep -q "TIMEOUT" "$J1_ERR"; then
+        pass "J-2: el motivo del aborto menciona TIMEOUT"
+    else
+        fail "J-2: el aborto no menciona TIMEOUT -- stderr: $(cat "$J1_ERR")"
+    fi
+    if [ "$J1_ELAPSED" -le 30 ]; then
+        pass "J-3: el stage termino en ${J1_ELAPSED}s -- acorde a MEFISTO_AGENT_TIMEOUT_SECONDS=1, no al default de 1800s"
+    else
+        fail "J-3: el stage tardo ${J1_ELAPSED}s -- MEFISTO_AGENT_TIMEOUT_SECONDS=1 no parece haberse aplicado"
+    fi
+
+    J4_ERR="$G_TMP/j4-stderr"
+    (
+        cd "$FAKE_MEFISTO" || exit 99
+        env -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR -u MEFISTO_REPO_ROOT \
+            -u MEFISTO_PROJECT_NAME -u MEFISTO_REPO_SLUG \
+            PATH="$FAKE_BIN:$PATH" MEFISTO_RUNTIME=claude MEFISTO_AGENT_TIMEOUT_SECONDS=abc \
+            ./.claude/scripts/mefisto-tooling-pipeline.sh 871
+    ) </dev/null >/dev/null 2>"$J4_ERR"
+    J4_RC=$?
+
+    if [ "$J4_RC" -ne 0 ]; then
+        pass "J-4: MEFISTO_AGENT_TIMEOUT_SECONDS=abc aborta el pipeline"
+    else
+        fail "J-4: se esperaba que abc abortara el pipeline (rc=0)"
+    fi
+    if grep -q "MEFISTO_AGENT_TIMEOUT_SECONDS" "$J4_ERR" && grep -q "abc" "$J4_ERR"; then
+        pass "J-5: el mensaje de aborto nombra la variable y el valor recibido"
+    else
+        fail "J-5: el mensaje de aborto no nombra la variable/valor -- stderr: $(cat "$J4_ERR")"
+    fi
+    if compgen -G "$FAKE_MEFISTO/../worktree-mefisto-issue-871-*" >/dev/null 2>&1; then
+        fail "J-6: se creo un worktree para el issue 871 pese a que MEFISTO_AGENT_TIMEOUT_SECONDS era invalido"
+    else
+        pass "J-6: no se creo worktree para el issue 871 (abort ocurrio antes de crear el worktree)"
+    fi
+fi
+
+# -------- Bloque K: la variable de timeout viaja heredada hasta el eslabon --------
+
+echo ""
+echo "[K] MEFISTO_AGENT_TIMEOUT_SECONDS se hereda en batch y herdr sin reenvio explicito (issue #946, CA-3)"
+
+# CA-3 se cumple hoy por OMISION: ningun eslabon menciona la variable, y por
+# eso mismo un grep de presencia no la puede acreditar. Lo que hay que fijar
+# es la propiedad que la sostiene -- que ninguno de los dos lanzadores PODE el
+# entorno del hijo. Es fragil de la forma que una guarda estatica ataja bien:
+# el filtro de mefisto-herdr-pipeline.sh (env_unset) ya existe y es un
+# denylist, asi que ampliarlo una linea de mas apagaria en silencio todo
+# override de timeout de una corrida en herdr -- sin error visible, solo
+# stages volviendo al default de 1800s.
+
+CANON_BATCH="$REPO_ROOT/src/internal/scripts/mefisto-batch-pipeline.sh"
+CANON_HERDR="$REPO_ROOT/src/internal/scripts/mefisto-herdr-pipeline.sh"
+
+if grep -qE '\benv (-u|-i)\b' "$CANON_BATCH"; then
+    fail "K-1: mefisto-batch-pipeline.sh filtra el entorno del eslabon (env -u/-i): $(grep -nE '\benv (-u|-i)\b' "$CANON_BATCH" | head -n1)"
+else
+    pass "K-1: mefisto-batch-pipeline.sh no filtra el entorno del eslabon (lo hereda completo)"
+fi
+
+HERDR_UNSET_ARMS=$(grep -cE 'env_unset\+=' "$CANON_HERDR")
+HERDR_UNSET_NON_HERDR=$(grep -E 'env_unset\+=' "$CANON_HERDR" | grep -cvE '^[[:space:]]*HERDR_\*\)' || true)
+if [ "$HERDR_UNSET_ARMS" -ge 1 ] && [ "$HERDR_UNSET_NON_HERDR" -eq 0 ]; then
+    pass "K-2: el unico filtro de mefisto-herdr-pipeline.sh es la rama HERDR_* ($HERDR_UNSET_ARMS acumulacion(es) de env_unset)"
+else
+    fail "K-2: mefisto-herdr-pipeline.sh acumula env_unset fuera de la rama HERDR_* ($HERDR_UNSET_NON_HERDR linea(s)): un denylist mas ancho puede tragarse MEFISTO_AGENT_TIMEOUT_SECONDS"
+fi
+
+K3_HITS=$(grep -lE -- '-u "?MEFISTO_' "$CANON_BATCH" "$CANON_HERDR" 2>/dev/null || true)
+if [ -z "$K3_HITS" ]; then
+    pass "K-3: ninguno de los dos lanzadores desregistra una MEFISTO_* del entorno del hijo"
+else
+    fail "K-3: hay lanzadores que desregistran alguna MEFISTO_* del entorno del hijo: $K3_HITS"
 fi
 
 # -------- Bloque H: el historial legado sigue leible, y el nuevo tambien --------

@@ -857,6 +857,31 @@ validate_variant_label() {
 # caller (run_agent) la usa para clasificar failure_type=TIMEOUT sin depender
 # de que el exit code que observe `wait` sea justo 137/143 -- una senal de
 # grupo no siempre se refleja asi.
+#
+# Clase de evento STOPPED (issue #945; las CA-1..CA-3 que se citan mas abajo
+# EN EL CUERPO son las de ese issue, no las de #424 que numeran los parrafos
+# anteriores): el subshell del watchdog ya no duerme <timeout_s> de una sola
+# pieza -- itera en rebanadas de MEFISTO_WATCHDOG_POLL_S segundos (default 5)
+# hasta agotar el presupuesto (la ultima rebanada se recorta para que la suma
+# nunca exceda <timeout_s>, asi que el disparo de TIMEOUT ocurre en el mismo
+# instante que antes). En cada rebanada revisa con `ps -eo pid=,pgid=,stat=`
+# -- nunca `ps -g`, cuyo significado difiere entre BSD/macOS y GNU/Linux --
+# filtrado por PGID con awk (portable en ambos) si algun proceso del grupo de
+# <cmd...> quedo en STAT=T (detenido: SIGSTOP/SIGTSTP/SIGTTIN/SIGTTOU -- no
+# necesariamente el mismo mecanismo que #943 ya elimino, sino defensa en
+# profundidad ante cualquier causa futura). Si encuentra alguno, envia SIGCONT
+# al GRUPO (`kill -CONT -"$pid"`, NUNCA otra senal por este camino) y deja
+# constancia en <events_log>: "[HH:MM:SS] STOPPED: <label> tenia N proceso(s)
+# detenido(s) -- SIGCONT enviado". Es observabilidad y auto-sanado DENTRO del
+# lazo de control existente (issue #945 retoma esto de la evaluacion de la
+# propuesta "supervisor autonomo"), nunca un supervisor externo, y no cambia
+# la semantica de TIMEOUT (MEF-ADR-0031): sigue siendo el unico exit code que
+# esta funcion provoca, la clase STOPPED solo anota un evento de texto plano.
+#
+# Efecto colateral del troceo sobre el `sleep` huerfano de CA-1/#424: la
+# ventana de fuga ya no es <timeout_s> sino una rebanada. Si el kill de grupo
+# con que se cancela el watchdog no alcanza a su `sleep`, ese huerfano muere
+# solo en <= MEFISTO_WATCHDOG_POLL_S segundos en vez de sobrevivir media hora.
 run_agent_with_watchdog() {
     local workdir="$1" timeout_s="$2" stdout_file="$3" stderr_file="$4" events_log="$5" label="$6" signal_file="$7"
     shift 7
@@ -878,9 +903,56 @@ run_agent_with_watchdog() {
         set +m
     fi
 
+    # <poll_s> tiene que ser un entero >= 1. Con 0 (o con un valor no numerico,
+    # donde el `sleep` falla al instante y la aritmetica no avanza) <elapsed>
+    # nunca crece: el watchdog giraria para siempre forkeando `ps` y jamas
+    # dispararia el TIMEOUT. Una variable de entorno mal puesta no puede
+    # desarmar en silencio el unico limite de presupuesto del pipeline, asi que
+    # cualquier valor invalido cae al default y el 0 se eleva al minimo.
+    local poll_s="${MEFISTO_WATCHDOG_POLL_S:-5}"
+    case "$poll_s" in
+        ''|*[!0-9]*) poll_s=5 ;;
+        0) poll_s=1 ;;
+    esac
+
     set -m
     (
-        sleep "$timeout_s"
+        # CA-1 (#945): rebanadas de <poll_s> en vez de un solo
+        # `sleep <timeout_s>` -- cada rebanada es una oportunidad de revisar
+        # si el grupo quedo detenido (ver CA-6 en la cabecera de esta
+        # funcion) sin retrasar el disparo de TIMEOUT: la ultima rebanada se
+        # recorta para que la suma de todas nunca exceda <timeout_s>.
+        elapsed=0
+        while [ "$elapsed" -lt "$timeout_s" ]; do
+            slice="$poll_s"
+            remaining=$((timeout_s - elapsed))
+            [ "$slice" -gt "$remaining" ] && slice="$remaining"
+            sleep "$slice"
+            elapsed=$((elapsed + slice))
+
+            # CA-2 (#945): STAT empieza por T/t cuando el proceso esta detenido
+            # (SIGSTOP/SIGTSTP/SIGTTIN/SIGTTOU). `ps -eo pid=,pgid=,stat=`
+            # filtrado por PGID con awk, no `ps -g` (su significado difiere
+            # entre BSD/macOS y GNU/Linux).
+            # El conteo lo cierra el propio awk (`END { print n + 0 }`) y no un
+            # `| wc -l | tr -d ' '`: son dos forks menos por rebanada -- lo
+            # unico que este lazo agrega al presupuesto de TIMEOUT, y se paga
+            # una vez cada <poll_s> durante toda la corrida del agente.
+            stopped_count=$(ps -eo pid=,pgid=,stat= 2>/dev/null | awk -v pgid="$pid" '$2 == pgid && $3 ~ /^[Tt]/ { n++ } END { print n + 0 }')
+            if [ "${stopped_count:-0}" -gt 0 ]; then
+                # El evento se escribe ANTES del CONT, no despues: apenas se
+                # reanuda, el grupo puede terminar de inmediato y el caller
+                # (wait "$pid") cancela este watchdog con un SIGKILL de grupo
+                # -- si el `echo` fuera posterior al `kill -CONT`, esa
+                # cancelacion podria alcanzar al watchdog antes de que
+                # llegara a escribir su propia linea, perdiendo el evento.
+                # Nunca otra senal que CONT por este camino: reanudar, no
+                # terminar -- el grupo puede seguir trabajando.
+                echo "[$(date +%H:%M:%S)] STOPPED: $label tenia $stopped_count proceso(s) detenido(s) -- SIGCONT enviado" >> "$events_log"
+                kill -CONT -"$pid" 2>/dev/null
+            fi
+        done
+
         # `: >` (builtin, sin fork) y no `touch`: un `touch` es un proceso
         # externo, y si el SIGKILL con que esta funcion cancela al watchdog
         # aterriza justo entre el fork y el exit de ese `touch`, el binario

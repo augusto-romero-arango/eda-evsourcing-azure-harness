@@ -9,6 +9,8 @@ Lanza el pipeline INTERNO secuencial para varios issues del repo de Mefisto, den
 
 En Mefisto solo existe el pipeline de tooling, asi que **no se expone** `--pipeline tdd|tooling`.
 
+El timeout de watchdog por stage es configurable con la variable de entorno `MEFISTO_AGENT_TIMEOUT_SECONDS` (default 1800; entero > 0, issue #946), heredada por cada eslabon del batch.
+
 ## Entrada
 
 Los numeros de issues estan en: $ARGUMENTS

@@ -63,6 +63,14 @@
 #                   (sesion nueva + stdin en /dev/null), fallan rapido y sin
 #                   senal (ENXIO / "not a terminal" / EOF). Termina con
 #                   terminal status=success. Exit 0.
+#   self-stop       Repro determinista del detector STOPPED (issue #945):
+#                   emite un message y se auto-detiene con `kill -STOP $$`
+#                   (SIGSTOP directo, sin depender de ninguna tty) -- solo un
+#                   SIGCONT (nunca otra senal) lo reanuda. Al reanudarse,
+#                   sigue con el terminal status=success. Exit 0. A
+#                   diferencia de `touch-tty` (que reproduce la CAUSA de
+#                   #943), este guion reproduce la CLASE de evento que #945
+#                   detecta y sana, sin importar la causa.
 # Default sin MEFISTO_FAKE_SCRIPT: "success".
 #
 # Bash 3.2 + jq 1.7: sin arrays asociativos, sin dependencias de red.
@@ -184,6 +192,12 @@ _runtime_fake_emit_main() {
             read -r _touch_tty_x </dev/tty
             stty -echo
             read -r _touch_tty_y
+            printf '{"fake":"terminal","status":"success","model":%s}\n' "$model_json"
+            exit 0
+            ;;
+        self-stop)
+            echo '{"fake":"message","text":"a punto de auto-detenerme con SIGSTOP"}'
+            kill -STOP $$
             printf '{"fake":"terminal","status":"success","model":%s}\n' "$model_json"
             exit 0
             ;;

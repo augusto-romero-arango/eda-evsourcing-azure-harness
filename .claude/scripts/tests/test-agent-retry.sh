@@ -184,6 +184,11 @@ setup_run_agent_env() {
     # Reintentos rapidos: el bucle real espera 120s.
     export MEFISTO_AGENT_MAX_ATTEMPTS=3
     export MEFISTO_AGENT_RETRY_BACKOFF_SECONDS=0
+    # run_agent (issue #946) ya no fija el timeout inline -- lee la variable
+    # global ya validada por el pipeline. Aqui no hay pipeline real que la
+    # valide, asi que hace falta fijarla a mano o run_agent revienta bajo
+    # `set -u` (el stub del runner la ignora, igual que MEFISTO_RUNTIME_RESUELTO).
+    MEFISTO_AGENT_TIMEOUT_SECONDS=1800
 
     log()  { :; }
     warn() { :; }
