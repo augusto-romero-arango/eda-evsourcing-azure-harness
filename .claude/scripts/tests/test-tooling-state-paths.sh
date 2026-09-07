@@ -37,6 +37,11 @@
 #         mefisto_state_path, de modo que el traslado del pipeline no los deja
 #         vigilando archivos que ya nadie escribe (CA-3; el porte completo de
 #         ambos es #871/#872).
+#   [J]   MEFISTO_AGENT_TIMEOUT_SECONDS (issue #946): con un runtime fake que
+#         se cuelga, el stage termina por TIMEOUT en ~1s con
+#         MEFISTO_AGENT_TIMEOUT_SECONDS=1, no con el default de 1800s (CA-4);
+#         con un valor no entero (p. ej. "abc") el pipeline aborta ANTES de
+#         crear el worktree (CA-2). Reutiliza el fixture del bloque G.
 #
 # Uso: .claude/scripts/tests/test-tooling-state-paths.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -381,6 +386,80 @@ STUB
         fi
     else
         fail "G-9/G-10: no se encontro el worktree de la corrida (abort() lo deja en disco, ver nota tecnica del pipeline)"
+    fi
+
+    # -------- Bloque J: MEFISTO_AGENT_TIMEOUT_SECONDS (issue #946) --------
+    #
+    # Reutiliza el mismo FAKE_MEFISTO/FAKE_BIN del bloque G (origin/main sigue
+    # intacto: la corrida de G aborto en el gate de changelog.d/ antes de
+    # pushear nada). J-1/J-2/J-3 prueban CA-4 con un runtime fake que se
+    # cuelga: el stage debe terminar por TIMEOUT en ~1s con
+    # MEFISTO_AGENT_TIMEOUT_SECONDS=1, no esperar el default de 1800s.
+    # J-4/J-5/J-6 prueban CA-2: un valor no entero aborta el pipeline ANTES de
+    # crear el worktree.
+
+    echo ""
+    echo "[J] MEFISTO_AGENT_TIMEOUT_SECONDS controla el timeout de stage (issue #946)"
+
+    cat > "$FAKE_BIN/claude" <<'STUB'
+#!/usr/bin/env bash
+sleep 1000
+STUB
+    chmod +x "$FAKE_BIN/claude"
+
+    J1_ERR="$G_TMP/j1-stderr"
+    J1_START=$(date +%s)
+    (
+        cd "$FAKE_MEFISTO" || exit 99
+        env -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR -u MEFISTO_REPO_ROOT \
+            -u MEFISTO_PROJECT_NAME -u MEFISTO_REPO_SLUG \
+            PATH="$FAKE_BIN:$PATH" MEFISTO_RUNTIME=claude MEFISTO_AGENT_RETRY_BACKOFF_SECONDS=0 \
+            MEFISTO_AGENT_TIMEOUT_SECONDS=1 MEFISTO_AGENT_MAX_ATTEMPTS=1 \
+            ./.claude/scripts/mefisto-tooling-pipeline.sh 870
+    ) </dev/null >/dev/null 2>"$J1_ERR"
+    J1_RC=$?
+    J1_ELAPSED=$(( $(date +%s) - J1_START ))
+
+    if [ "$J1_RC" -ne 0 ]; then
+        pass "J-1: la corrida aborta (rc=$J1_RC) tras el TIMEOUT del stage 1"
+    else
+        fail "J-1: se esperaba que la corrida abortara por TIMEOUT (rc=0)"
+    fi
+    if grep -q "TIMEOUT" "$J1_ERR"; then
+        pass "J-2: el motivo del aborto menciona TIMEOUT"
+    else
+        fail "J-2: el aborto no menciona TIMEOUT -- stderr: $(cat "$J1_ERR")"
+    fi
+    if [ "$J1_ELAPSED" -le 30 ]; then
+        pass "J-3: el stage termino en ${J1_ELAPSED}s -- acorde a MEFISTO_AGENT_TIMEOUT_SECONDS=1, no al default de 1800s"
+    else
+        fail "J-3: el stage tardo ${J1_ELAPSED}s -- MEFISTO_AGENT_TIMEOUT_SECONDS=1 no parece haberse aplicado"
+    fi
+
+    J4_ERR="$G_TMP/j4-stderr"
+    (
+        cd "$FAKE_MEFISTO" || exit 99
+        env -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR -u MEFISTO_REPO_ROOT \
+            -u MEFISTO_PROJECT_NAME -u MEFISTO_REPO_SLUG \
+            PATH="$FAKE_BIN:$PATH" MEFISTO_RUNTIME=claude MEFISTO_AGENT_TIMEOUT_SECONDS=abc \
+            ./.claude/scripts/mefisto-tooling-pipeline.sh 871
+    ) </dev/null >/dev/null 2>"$J4_ERR"
+    J4_RC=$?
+
+    if [ "$J4_RC" -ne 0 ]; then
+        pass "J-4: MEFISTO_AGENT_TIMEOUT_SECONDS=abc aborta el pipeline"
+    else
+        fail "J-4: se esperaba que abc abortara el pipeline (rc=0)"
+    fi
+    if grep -q "MEFISTO_AGENT_TIMEOUT_SECONDS" "$J4_ERR" && grep -q "abc" "$J4_ERR"; then
+        pass "J-5: el mensaje de aborto nombra la variable y el valor recibido"
+    else
+        fail "J-5: el mensaje de aborto no nombra la variable/valor -- stderr: $(cat "$J4_ERR")"
+    fi
+    if compgen -G "$FAKE_MEFISTO/../worktree-mefisto-issue-871-*" >/dev/null 2>&1; then
+        fail "J-6: se creo un worktree para el issue 871 pese a que MEFISTO_AGENT_TIMEOUT_SECONDS era invalido"
+    else
+        pass "J-6: no se creo worktree para el issue 871 (abort ocurrio antes de crear el worktree)"
     fi
 fi
 
