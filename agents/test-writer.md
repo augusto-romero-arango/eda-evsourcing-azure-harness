@@ -546,6 +546,20 @@ public partial class RegistrarMarcacionCommandHandler : ICommandHandlerAsync<Reg
 }
 ```
 
+**Endpoint HTTP de comando** (implementa la firma que `implementer.md` documenta en su seccion "Endpoint HTTP" -- constructor con `IRequestValidator`/`ICommandRouter`, mismo `[Function]`/`[HttpTrigger]`/`Route` que declara el contrato del issue -- pero el cuerpo de `Run` es un stub, nunca el manejo de excepciones ni el mapeo a resultado que le corresponde al implementer):
+```csharp
+public class FunctionEndpoint(IRequestValidator requestValidator, ICommandRouter commandRouter)
+{
+    [Function("CrearTurno")]
+    public Task<IActionResult> Run(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "programacion/turnos")]
+        HttpRequest req,
+        CancellationToken ct)
+        => throw new NotImplementedException();
+}
+```
+Ver seccion 6g para como `FunctionEndpointTests` verifica, contra este stub, el codigo de exito exacto que declara el contrato HTTP del issue.
+
 **Excepciones tipadas de precondicion** (solo si el proyecto aun no las tiene): los escenarios 4 y 5 las referencian, asi que sin ellas la fase roja no compila — falla el build, no el assert. Crea los tres tipos de MEF-ADR-0004 seccion 2 en `Infraestructura/PrecondicionComandoException.cs`, una sola vez por proyecto (mismo criterio "si no existe, crearlo" de `IRequestValidator`), nunca una copia por comando:
 ```csharp
 public abstract class PrecondicionComandoException(string message) : Exception(message);
@@ -869,6 +883,128 @@ public async Task AgregarServiciosControlHoras_CongelaElAliasDeTurnoCreado()
 
 Autoridad completa (mecanica del alias, `EventNamingStyle`, las tres proscripciones de registro): **MEF-ADR-0036**. Esta seccion no la duplica — solo enseña donde y como se congela el guardrail.
 
+### 6g. FunctionEndpointTests: assertar el codigo de exito exacto del contrato (MEF-ADR-0043)
+
+El campo "Contrato HTTP del comando" del Definition of Ready (MEF-ADR-0011, enmendado por MEF-ADR-0043) declara, para todo endpoint HTTP de comando, cuatro elementos: verbo, ruta, el paso del test de precedencia de MEF-ADR-0043 seccion 2 que se aplico, y el **codigo de exito** de la respuesta sincrona. Lee ese contrato del issue antes de escribir `FunctionEndpointTests.cs` -- **nunca asumas un codigo por default, y nunca asumas `AcceptedResult`**: fue la practica universal del marco antes de que MEF-ADR-0004 (enmendada por el issue #849) corrigiera esa premisa, y sigue siendo el error mas facil de heredar por copiar un test viejo.
+
+**Mapeo codigo declarado -> tipo de `IActionResult` -> que assertea el test:**
+
+| Codigo declarado | Tipo de `IActionResult` | Que verifica el test |
+|---|---|---|
+| `201 Created` | `CreatedResult` | El tipo; si el contrato declara ademas una URI canonica de lectura para el recurso creado, tambien el header `Location` con esa URI exacta (MEF-ADR-0043 seccion 2, paso 1). Si el contrato no declara esa URI, el test se detiene en el tipo -- no inventes un valor de `Location` que el issue no fijo |
+| `204 No Content` | `NoContentResult` | Solo el tipo -- `NoContentResult` no tiene `Value` que leer; la ausencia de contenido es la firma del tipo mismo |
+| `200 OK` | `OkObjectResult` | El tipo Y el `Value` -- la representacion exacta que el contrato promete devolver |
+| `202 Accepted` | `AcceptedResult` | Solo cuando el contrato declara `202` **con su justificacion** (MEF-ADR-0043 seccion 6: que procesamiento queda pendiente y por que no completo antes de responder). Sin esa justificacion en el issue, `202` no es una opcion valida del contrato -- no escribas este test; reporta el vacio en tu resumen (seccion 9) y usa el codigo que corresponda por defecto segun el paso de precedencia |
+
+El stub del endpoint (seccion 6) siempre lanza `NotImplementedException`, asi que estos tests compilan y fallan al ejecutar -- exactamente el principio fundamental de este agente (seccion "Principio fundamental").
+
+**Fakes para `FunctionEndpointTests`** -- ninguno usa NSubstitute (regla absoluta #5), y ambos son locales al archivo de test del endpoint:
+
+```csharp
+internal class FakeRequestValidator<TComando> : IRequestValidator
+{
+    private readonly TComando? _comando;
+    private readonly IActionResult? _error;
+
+    private FakeRequestValidator(TComando? comando, IActionResult? error)
+    {
+        _comando = comando;
+        _error = error;
+    }
+
+    public static FakeRequestValidator<TComando> ConComandoValido(TComando comando) => new(comando, null);
+    public static FakeRequestValidator<TComando> ConError(IActionResult error) => new(default, error);
+
+    public Task<(T? Comando, IActionResult? Error)> ValidarAsync<T>(HttpRequest req, CancellationToken ct)
+        => Task.FromResult<(T?, IActionResult?)>(((T?)(object?)_comando, _error));
+}
+
+internal class FakeCommandRouter(object? resultado = null, Exception? excepcion = null) : ICommandRouter
+{
+    public Task InvokeAsync<TCommand>(TCommand command, CancellationToken ct = default) where TCommand : class
+    {
+        if (excepcion is not null) throw excepcion;
+        return Task.CompletedTask;
+    }
+
+    public Task<TResult> InvokeAsync<TCommand, TResult>(TCommand command, CancellationToken ct = default) where TCommand : class
+    {
+        if (excepcion is not null) throw excepcion;
+        return Task.FromResult((TResult)resultado!);
+    }
+}
+```
+
+**Ejemplos por codigo declarado** (mismo dominio sintetico `Programacion/Turnos` de `implementer.md`):
+
+```csharp
+public class FunctionEndpointTests
+{
+    private static readonly Guid TurnoId = Guid.NewGuid();
+
+    // CA-2: 201 Created -- el contrato declara la URI canonica de lectura del recurso creado
+    [Fact]
+    public async Task CrearTurno_Retorna201ConLocation_CuandoElComandoEsValido()
+    {
+        var comando = new CrearTurno(TurnoId, "Turno Manana", new TimeOnly(6, 0), new TimeOnly(14, 0));
+        var endpoint = new FunctionEndpoint(
+            FakeRequestValidator<CrearTurno>.ConComandoValido(comando), new FakeCommandRouter());
+
+        var resultado = await endpoint.Run(null!, CancellationToken.None);
+
+        resultado.Should().BeOfType<CreatedResult>();
+        ((CreatedResult)resultado).Location.Should().Be($"programacion/turnos/{TurnoId}");
+    }
+
+    // CA-2: 204 No Content -- paso 2 (reemplazo completo de un VO) o paso 4 (accion sin representacion)
+    [Fact]
+    public async Task RenombrarTurno_Retorna204_CuandoElComandoEsValido()
+    {
+        var comando = new RenombrarTurno(TurnoId, "Turno Tarde");
+        var endpoint = new FunctionEndpoint(
+            FakeRequestValidator<RenombrarTurno>.ConComandoValido(comando), new FakeCommandRouter());
+
+        var resultado = await endpoint.Run(null!, CancellationToken.None);
+
+        resultado.Should().BeOfType<NoContentResult>();
+    }
+
+    // CA-2: 200 OK -- paso 4, el contrato declara que la accion devuelve el estado resultante
+    [Fact]
+    public async Task ConsolidarCierreTurno_Retorna200ConElEstadoResultante_CuandoElComandoEsValido()
+    {
+        var comando = new ConsolidarCierreTurno(TurnoId);
+        var esperado = new CierreTurnoDto(TurnoId, EstadoTurno.Cerrado);
+        var endpoint = new FunctionEndpoint(
+            FakeRequestValidator<ConsolidarCierreTurno>.ConComandoValido(comando),
+            new FakeCommandRouter(resultado: esperado));
+
+        var resultado = await endpoint.Run(null!, CancellationToken.None);
+
+        resultado.Should().BeOfType<OkObjectResult>();
+        ((OkObjectResult)resultado).Value.Should().Be(esperado);
+    }
+
+    // CA-3: 202 Accepted -- solo si el contrato del issue trae la justificacion de MEF-ADR-0043 seccion 6.
+    // Ejemplo de justificacion real (parafraseada del issue, no un placeholder): la conciliacion
+    // masiva sigue corriendo en background tras responder; el resultado se confirma via el evento
+    // ConciliacionCompletada, no de forma sincrona en este endpoint.
+    [Fact]
+    public async Task SolicitarConciliacionMasiva_Retorna202_CuandoElComandoEsValido()
+    {
+        var comando = new SolicitarConciliacionMasiva(TurnoId);
+        var endpoint = new FunctionEndpoint(
+            FakeRequestValidator<SolicitarConciliacionMasiva>.ConComandoValido(comando), new FakeCommandRouter());
+
+        var resultado = await endpoint.Run(null!, CancellationToken.None);
+
+        resultado.Should().BeOfType<AcceptedResult>();
+    }
+}
+```
+
+El comentario de justificacion del ultimo ejemplo es para ti, no un texto que copies: en el archivo real, la razon concreta es la que trae el issue -- si el issue no trae ninguna, el contrato no admite `202` (tabla de arriba) y este test no se escribe.
+
 ---
 
 ### 7. Verificar que compila
@@ -977,3 +1113,4 @@ Crea el archivo `.claude/pipeline/summaries/stage-1-test-writer.md`:
 19. **Si detectas una contradiccion estructural en el issue** (ej. un test listado en "Impacto / Modifica" debe usar API de un proyecto que el test no puede referenciar; una sugerencia de "Interfaz publica propuesta" contradice un ADR; un CA exige un archivo en una ubicacion imposible), **tu decides la resolucion**: reubica el test al proyecto correcto, reemplazalo por uno equivalente, divide la cobertura en dos archivos, o elimina el test obsoleto si el refactor del issue lo vuelve insostenible y otro test cubre el CA. Documenta la decision en tu resumen bajo "Desviaciones del plan del planner" (ver seccion 9) con el formato: *regla/sugerencia del issue / desviacion aplicada / razon tecnica / consecuencia*. **No reportes bloqueo por esto** — la autoridad es tuya. Reportar bloqueo se reserva para situaciones donde no puedes decidir con la informacion disponible (no para contradicciones que tu mismo puedes resolver con criterio).
 20. **El valor esperado de toda asercion (`Then`, `And<>`, `ThenIsPublished*`) se construye SIEMPRE a mano como oraculo independiente**, con las primitivas y factories del dominio. **NUNCA lo derives ejecutando la logica bajo prueba** — ni el SUT ni los colaboradores de produccion que esa logica invoca. Un esperado calculado por el mismo codigo que se verifica vuelve el test tautologico: el bug contamina por igual el esperado y el actual, ambos coinciden, y la prueba pasa sin detectar la regresion. Antipatron: `var esperado = ConsolidadorDesgloseHoras.Consolidar(...)` para luego compararlo contra el resultado que el aggregate produjo con esa misma consolidacion. Patron correcto: armar el esperado con `new MomentoDelDia(...)`, `IntervaloTemporal.Crear(...)`, `new DesgloseHoras(...)`, etc. Fuente del principio: MEF-ADR-0002, seccion "Oraculo independiente (no-tautologia)" (ver `"$PLUGIN_ROOT/docs/adr/mef-adr-0002-estrategia-testing-event-sourcing.md"`, resuelto como en "Localizar los ADRs del marco"). Ejemplos en la seccion "Verificacion del estado del agregado" (paso 4).
 21. **Todo evento con marker de bus (`IPrivateEvent` o `IPublicEvent`) DEBE tener ademas un test de portabilidad por el bus** (seccion 6e): round-trip con `JsonSerializerOptions` POR DEFECTO (sin el resolver custom) que verifique que no hay perdida de datos. Es distinto del round-trip de Marten (regla 16 / seccion 6d, que usa `CrearOpcionesMarten()` con resolver): aquel cubre el event store; este cubre el canal de serializacion del bus (namespace interno o de integracion), donde el destino no tiene el resolver del productor. **NUNCA** repliques el test "sin registro falla" de 6d sobre un evento con marker de bus -- para un `IPrivateEvent` o `IPublicEvent` la expectativa se invierte: debe **sobrevivir** sin resolver, no fallar. Autoridad: MEF-ADR-0012, "Frontera de serializacion: event store vs bus"; doctrina raiz: MEF-ADR-0023 (criterio "¿cruza un bus?").
+22. **`FunctionEndpointTests` assertea el codigo de exito exacto que declara el contrato HTTP del issue (MEF-ADR-0043), nunca `AcceptedResult` por default** (seccion 6g): `201 Created` -> `CreatedResult` (mas `Location` cuando el contrato declara una URI canonica de lectura); `204 No Content` -> `NoContentResult`; `200 OK` -> `OkObjectResult` con el `Value` esperado; `202 Accepted` -> `AcceptedResult`, **solo** si el contrato trae la justificacion de que procesamiento queda pendiente (MEF-ADR-0043 seccion 6). Sin esa justificacion, `202` no es una opcion valida: reporta el vacio del DoR en tu resumen en vez de escribir el test. El stub del endpoint (seccion 6) sigue limitado a `throw new NotImplementedException()` -- nunca implementes el mapeo real para que el test pase.
