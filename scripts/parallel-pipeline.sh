@@ -59,6 +59,20 @@ abort() {
     exit 1
 }
 
+# ─── Senal de parada suave del lote (issue #974, mismo diseno que el motor ───
+# ─── interno #966 y que batch-pipeline.sh) ────────────────────────────────────
+# El archivo de mera PRESENCIA que /batch-stop escribe en pipeline-state/
+# batch-stop (fuera de .claude/, MEF-ADR-0017). Aqui "detenerse" significa: los
+# worktrees YA lanzados terminan su pipeline y abren su PR (CA-3) -- nunca se
+# matan --, pero el scheduler deja de lanzar los pendientes de la cola. Se
+# consulta en cada pasada del scheduler, antes de evaluar si algun pendiente
+# puede lanzarse ya.
+BATCH_STOP_SIGNAL="pipeline-state/batch-stop"
+
+batch_stop_requested() {
+    [ -f "$BATCH_STOP_SIGNAL" ]
+}
+
 # ─── Parsear argumentos ───────────────────────────────────────────────────────
 ISSUE_NUMS=()
 MAX_PARALLEL=0   # 0 = sin limite
@@ -154,6 +168,7 @@ log "Pipeline: $([ -n "$PIPELINE_OVERRIDE" ] && echo "$PIPELINE_OVERRIDE (overri
 log "Issues a procesar: ${ISSUE_NUMS[*]}"
 log "Paralelismo maximo: $([ "$MAX_PARALLEL" -gt 0 ] && echo "$MAX_PARALLEL" || echo 'sin limite')"
 log "Log: $LOG_FILE_ABS"
+log "Parada suave: /batch-stop deja de lanzar issues de la cola sin matar los ya en vuelo (issue #974)"
 
 # ─── Pre-validacion: verificar estado y resolver pipeline por issue ──────────
 # Una sola llamada a gh por issue (estado + labels combinados): resolve_issue_facts
@@ -217,6 +232,24 @@ PIDS=()
 STATUS_FILES=()
 ISSUE_LOGS=()
 START_TIMES=()
+DEFERRED_FLAG=()   # DEFERRED_FLAG[i]="true" si el issue en esa posicion quedo aplazado (issue #974, CA-3)
+
+# defer_pending_issues
+#
+# Consume la senal (CA-5: se borra para no envenenar la corrida siguiente) y
+# marca "aplazado" (DEFERRED_FLAG) todos los indices que seguian en
+# PENDING_IDXS sin lanzar. Vacia PENDING_IDXS para que el scheduler termine su
+# loop de inmediato. Nunca toca PIDS ni FAILED (CA-5: una parada solicitada no
+# es un fallo) -- los worktrees ya lanzados siguen su curso normal, esta
+# funcion solo afecta a los que todavia no arrancaron.
+defer_pending_issues() {
+    local idx
+    rm -f "$BATCH_STOP_SIGNAL"
+    for idx in ${PENDING_IDXS[@]+"${PENDING_IDXS[@]}"}; do
+        DEFERRED_FLAG[$idx]="true"
+    done
+    PENDING_IDXS=()
+}
 
 # launch_pipeline <idx>
 #
@@ -314,6 +347,15 @@ print_dashboard() {
         local issue="${ISSUE_NUMS[$i]}"
         local pid="${PIDS[$i]:-}"
 
+        # Issue aplazado por la senal de parada (issue #974): ya no espera
+        # turno, nunca se va a lanzar en esta corrida. Sin esta rama el
+        # dashboard lo seguiria mostrando "en espera" en cada refresco del
+        # monitoreo, contradiciendo el aviso de parada que ya se imprimio.
+        if [ "${DEFERRED_FLAG[$i]:-false}" = "true" ]; then
+            printf "  ${YELLOW}%-6s  %-14s  %-8s  %s${NC}\n" "#$issue" "aplazado" "-" ""
+            continue
+        fi
+
         # Issue todavia sin lanzar: el scheduler le esta reteniendo el turno
         # (--max-parallel copado, u otra tipo:projection viva -- issue #372). No
         # hay status file ni cronometro que leer todavia.
@@ -397,6 +439,12 @@ PENDING_IDXS=()
 for ((i = 0; i < TOTAL; i++)); do PENDING_IDXS+=("$i"); done
 
 while [ ${#PENDING_IDXS[@]} -gt 0 ]; do
+    if batch_stop_requested; then
+        _deferred_count=${#PENDING_IDXS[@]}
+        defer_pending_issues
+        warn "Parada solicitada ($BATCH_STOP_SIGNAL): $_deferred_count issue(s) en cola quedan aplazados, sin lanzar ningun worktree. Los ya lanzados terminan su pipeline y abren su PR."
+        break
+    fi
     NEXT_PENDING=()
     for idx in "${PENDING_IDXS[@]}"; do
         _proj_running="false"
@@ -423,11 +471,29 @@ while [ ${#PENDING_IDXS[@]} -gt 0 ]; do
     fi
 done
 
+# La senal pudo aparecer despues de que el ultimo pendiente ya se lanzo (nada
+# que aplazar): se consume igual (CA-4), para no envenenar la corrida
+# siguiente, y se avisa para que el humano no busque aplazados inexistentes.
+if batch_stop_requested; then
+    rm -f "$BATCH_STOP_SIGNAL"
+    warn "Parada solicitada ($BATCH_STOP_SIGNAL): no quedaba ningun issue en cola por lanzar (todos ya estaban en vuelo). La senal se consumio igual, para no afectar la corrida siguiente."
+fi
+
 # ─── Loop de monitoreo ────────────────────────────────────────────────────────
-log "Todos los pipelines lanzados. Monitoreando progreso (Ctrl+C para cancelar)..."
+# Con la parada solicitada ANTES de lanzar el primer issue (issue #974) no hay
+# ningun proceso en vuelo: PIDS queda vacio y no hay nada que monitorear. La
+# condicion del while no es cosmetica -- bash 3.2 aborta con "unbound variable"
+# al expandir "${PIDS[@]}" vacio bajo `set -u`, y el resumen (que justo ahi
+# tiene todos los aplazados por reportar) nunca se imprimiria. PIDS solo crece,
+# asi que con al menos un lanzamiento el loop se comporta igual que antes.
+if [ ${#PIDS[@]} -gt 0 ]; then
+    log "Todos los pipelines lanzados. Monitoreando progreso (Ctrl+C para cancelar)..."
+else
+    log "Ningun pipeline quedo en vuelo: no hay nada que monitorear."
+fi
 echo ""
 
-while true; do
+while [ ${#PIDS[@]} -gt 0 ]; do
     # Verificar si todos los procesos terminaron
     ALL_DONE=true
     for pid in "${PIDS[@]}"; do
@@ -455,6 +521,13 @@ COMPLETED=0
 FAILED=0
 
 for i in "${!ISSUE_NUMS[@]}"; do
+    if [ "${DEFERRED_FLAG[$i]:-false}" = "true" ]; then
+        ISSUE_RESULTS+=("aplazado (parada solicitada; no se proceso en esta corrida)")
+        ISSUE_PRS+=("")
+        ISSUE_DURATIONS+=("-")
+        continue
+    fi
+
     local_pid="${PIDS[$i]}"
     local_issue="${ISSUE_NUMS[$i]}"
     local_status="${STATUS_FILES[$i]}"
@@ -512,10 +585,33 @@ for i in "${!ISSUE_NUMS[@]}"; do
         "#$ISSUE_NUM" "${RESULT:0:50}" "$DUR" "${PR:-(sin PR)}"
 done
 
+# Issues aplazados (issue #974, CA-4): mismo orden que ISSUE_NUMS, para que la
+# linea de relanzamiento respete el orden del lote.
+DEFERRED=0
+DEFERRED_NUMS=()
+for i in "${!ISSUE_NUMS[@]}"; do
+    if [ "${DEFERRED_FLAG[$i]:-false}" = "true" ]; then
+        DEFERRED_NUMS+=("${ISSUE_NUMS[$i]}")
+        DEFERRED=$((DEFERRED + 1))
+    fi
+done
+
 echo ""
-echo -e "  Total: $TOTAL  |  ${GREEN}Completados: $COMPLETED${NC}  |  ${RED}Fallidos: $FAILED${NC}"
+echo -e "  Total: $TOTAL  |  ${GREEN}Completados: $COMPLETED${NC}  |  ${RED}Fallidos: $FAILED${NC}  |  ${YELLOW}Aplazados: $DEFERRED${NC}"
 echo -e "  Log: $LOG_FILE_ABS"
 echo ""
+
+if [ "$DEFERRED" -gt 0 ]; then
+    warn "Parada solicitada: $DEFERRED issue(s) quedaron aplazados en esta corrida. No es un fallo del lote: el exit code no cambia por esto y ningun worktree lanzado quedo a medio pipeline."
+    # Mismo formato que batch-pipeline.sh y que el motor interno (issue #966),
+    # pero apuntando al orquestador que se detuvo: /parallel lanza un pane por
+    # issue sin cola (tmux-pipeline.sh --parallel), asi que este scheduler solo
+    # corre cuando se invoca el script directo. Proponer /sequential aqui
+    # degradaria en silencio el lote paralelo a secuencial.
+    echo -e "  Relanza los aplazados, en el mismo orden: ${BOLD}parallel-pipeline.sh ${DEFERRED_NUMS[*]}${NC}"
+    echo ""
+fi
+
 echo -e "  ${YELLOW}Nota: los PRs NO se mergearon automáticamente.${NC}"
 echo -e "  Para integrar a main usa: ${CYAN}/merge <PR_NUM>${NC}"
 echo ""
