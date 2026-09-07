@@ -209,7 +209,7 @@ fi
 header "Preparando contexto"
 
 log "Descargando issue #$ISSUE_NUM..."
-ISSUE_JSON=$(gh issue view "$ISSUE_NUM" --json number,title,body,state 2>>"$LOG_FILE") \
+ISSUE_JSON=$(gh issue view "$ISSUE_NUM" --json number,title,body,state,labels 2>>"$LOG_FILE") \
     || abort "No se pudo obtener el issue #$ISSUE_NUM"
 ISSUE_STATE=$(echo "$ISSUE_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['state'])" 2>/dev/null || echo "UNKNOWN")
 if [ "$ISSUE_STATE" != "OPEN" ]; then
@@ -225,6 +225,59 @@ ISSUE_CONTEXT="# Issue #$ISSUE_NUM: $ISSUE_TITLE
 
 $ISSUE_BODY"
 log "Issue: $ISSUE_TITLE"
+
+# --- Gate de dependencias bloqueadas ---
+# Defensa en profundidad del semaforo que gestiona el planner (MEF-ADR-0007):
+# solo se inspeccionan dependencias si el issue trae el label, para conservar el
+# camino habitual sin consultas adicionales.
+ISSUE_HAS_BLOCKED_LABEL=$(echo "$ISSUE_JSON" | python3 -c '
+import json, sys
+labels = json.load(sys.stdin).get("labels") or []
+print("true" if any((label.get("name") if isinstance(label, dict) else label) == "bloqueado" for label in labels) else "false")
+' 2>/dev/null || echo "false")
+
+if [ "$ISSUE_HAS_BLOCKED_LABEL" = true ]; then
+    DEPENDENCY_REFS=()
+    while IFS= read -r dependency; do
+        [ -n "$dependency" ] && DEPENDENCY_REFS+=("$dependency")
+    done < <(printf '%s\n' "$ISSUE_BODY" | python3 -c '
+import re, sys
+body = sys.stdin.read()
+section = re.search(r"(?ms)^## Dependencias[^\n]*\n(.*?)(?=^## |\Z)", body)
+seen = set()
+if section:
+    for number in re.findall(r"#([0-9]+)", section.group(1)):
+        if number not in seen:
+            print(number)
+            seen.add(number)
+')
+
+    PENDING_DEPENDENCIES=()
+    for dependency in "${DEPENDENCY_REFS[@]}"; do
+        # Una referencia puede apuntar a issue o PR. Conservamos el orden del
+        # contrato de /implement: issue primero y PR como fallback.
+        DEPENDENCY_JSON=$(gh issue view "$dependency" --json state,title 2>/dev/null \
+            || gh pr view "$dependency" --json state,title 2>/dev/null \
+            || echo '{"state":"UNKNOWN","title":"titulo no disponible"}')
+        DEPENDENCY_STATE=$(echo "$DEPENDENCY_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("state", "UNKNOWN"))' 2>/dev/null || echo "UNKNOWN")
+        DEPENDENCY_TITLE=$(echo "$DEPENDENCY_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("title", "titulo no disponible"))' 2>/dev/null || echo "titulo no disponible")
+
+        if [ "$DEPENDENCY_STATE" != "CLOSED" ] && [ "$DEPENDENCY_STATE" != "MERGED" ]; then
+            PENDING_DEPENDENCIES+=("  - #$dependency: $DEPENDENCY_TITLE ($DEPENDENCY_STATE)")
+        fi
+    done
+
+    if [ ${#PENDING_DEPENDENCIES[@]} -gt 0 ]; then
+        abort "El issue #$ISSUE_NUM esta bloqueado. Dependencias abiertas:
+$(printf '%s\n' "${PENDING_DEPENDENCIES[@]}")
+
+Resuelve estas dependencias antes de lanzar el pipeline."
+    fi
+
+    gh issue edit "$ISSUE_NUM" --remove-label "bloqueado" >>"$LOG_FILE" 2>&1 \
+        || abort "No se pudo quitar el label 'bloqueado' del issue #$ISSUE_NUM"
+    success "Dependencias resueltas: se quito el label 'bloqueado' del issue #$ISSUE_NUM"
+fi
 
 echo "$ISSUE_CONTEXT" > "$PIPELINE_DIR/infra-input.md"
 
