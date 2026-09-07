@@ -190,21 +190,15 @@ Guarda su reporte final (Paso 13 de `/install-apim`, incluido el checklist post-
 
 ### 9. Emitir el checklist post-deploy (CA-5, delegado de `/install-apim`)
 
-Presentalo tal cual lo emitio la etapa 2 (su Paso 12), aclarando que corre **despues** de que CI aplique el PR (MEF-ADR-0022):
-
-```
-Checklist post-deploy (correr una vez que el apply de CI termine, contra el gateway_url real):
-
-  1. OPTIONS sin header Authorization -> CORS responde (200/204, nunca 404).
-  2. POST sin token -> 401.
-  3. POST con token WorkOS valido -> 202 Accepted, y el request llega a la Function App backend
-     (confirmar en App Insights que el request aparece, no solo que APIM respondio).
-  4. En el backend, X-User-Id y X-Tenant-Id llegan no vacios.
-  5. QUERY con token valido y Content-Type: application/json -> llega a la Function App (ni 404 ni
-     405 en el borde) -- gate empirico del verbo QUERY, MEF-ADR-0042 seccion 6.
-  6. Si un request con token valido responde 404 (ni 401 ni 400), la causa no es CORS (B3) ni el
-     <backend> vacio (B2): es la operacion APIM faltante (B11 de MEF-ADR-0032).
-```
+Reutiliza **tal cual** el checklist que la etapa 2 ya emitio en su Paso 12 (guardado en el Paso 7 de
+este orquestador) -- no lo transcribas de nuevo aca. Una copia hardcodeada en este archivo es
+exactamente la causa raiz del desfase que este fix corrige (esta copia habia quedado fijando `202
+Accepted` para cualquier POST autenticado despues de que el issue #999 corrigiera el criterio en
+`/install-apim` a "endpoint POST seleccionado + codigo de exito documentado", MEF-ADR-0004/0011/0043)
+-- cualquier redaccion nueva aca vuelve a divergir la proxima vez que `/install-apim` cambie la suya.
+Aclara unicamente, al presentarlo, que corre **despues** de que CI aplique el PR (MEF-ADR-0022); el
+resto de las verificaciones (401, evidencia en App Insights, headers de identidad, verbo QUERY,
+operacion APIM faltante) viajan intactas dentro de ese mismo bloque reutilizado.
 
 ### 10. Reportar
 
