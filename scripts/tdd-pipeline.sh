@@ -10,6 +10,7 @@
 #   ./scripts/tdd-pipeline.sh 42 --from-stage 4   # Retomar desde Stage 4 (coverage gate)
 #   ./scripts/tdd-pipeline.sh 42 --models 'reviewer=opus,test-writer=sonnet'  # Modelo por stage (experimentos)
 #   ./scripts/tdd-pipeline.sh 42 --variant experimento-a  # Corrida paralela del mismo issue (sin PR, rama local)
+#   MEFISTO_HOLD_MAX_SECONDS=<s> / MEFISTO_HOLD_PROBE_SECONDS=<s> ./scripts/tdd-pipeline.sh 42  # Techo (default 21600 = 6h) y cadencia de sondeo (default 300) de la espera ante RATE_LIMIT/PROVIDER_UNAVAILABLE (issue #971, MEF-ADR-0051)
 #
 # Ciclo completo: Issue → Worktree → Test Writer → Implementer → Reviewer → Sync main → Coverage Gate → PR → Cleanup
 
@@ -737,6 +738,14 @@ run_agent() {
             local log_stage_hold="$LOG_DIR_ABS/stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-hold-${hold_attempt}.log"
             local stream_file_hold="${log_stage_hold%.log}.stream.jsonl"
             local stderr_file_hold="${log_stage_hold%.log}.stderr.log"
+            # CA-5: lo que no cuenta contra el watchdog de stage es la ESPERA
+            # (el `sleep` de agent_hold_wait, ya consumido arriba); la SONDA si
+            # corre bajo su propio watchdog de $AGENT_TIMEOUT_SECONDS, igual
+            # que el primer intento. Sin el, una sonda colgada dejaria el
+            # pipeline esperando para siempre y volveria decorativo el techo de
+            # agent_hold_wait, que solo se evalua al tope del bucle.
+            local probe_start_ts CLAUDE_PID_HOLD PROBE_WATCHDOG_PID
+            probe_start_ts=$(date +%s)
             CLAUDE_EXIT=0
             if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
                 (cd "$WORKTREE_PATH" && claude -p "$prompt" \
@@ -744,7 +753,26 @@ run_agent() {
                     --permission-mode bypassPermissions \
                     --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
                     --output-format stream-json --verbose \
-                    >"$stream_file_hold" 2>"$stderr_file_hold") || CLAUDE_EXIT=$?
+                    >"$stream_file_hold" 2>"$stderr_file_hold") &
+            else
+                (cd "$WORKTREE_PATH" && claude -p "$prompt" \
+                    --agent "$agent" $MODEL_ARGS \
+                    --permission-mode bypassPermissions \
+                    --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
+                    --output-format text \
+                    >"$log_stage_hold" 2>&1) &
+            fi
+            CLAUDE_PID_HOLD=$!
+            # Grupo primero y PID despues: sin job control (el caso de un
+            # pipeline no interactivo) la subshell de arriba NO es lider de su
+            # propio grupo, asi que la forma negativa falla sola y sin el
+            # fallback el watchdog de la sonda no mataria nada.
+            (sleep $AGENT_TIMEOUT_SECONDS && { kill -9 -$CLAUDE_PID_HOLD 2>/dev/null || kill -9 $CLAUDE_PID_HOLD 2>/dev/null; } && echo "[$(date +%H:%M:%S)] TIMEOUT: $agent (sonda de hold #$hold_attempt) superó ${AGENT_TIMEOUT_SECONDS}s" >> "$EVENTS_LOG_ABS") </dev/null >/dev/null 2>&1 &
+            PROBE_WATCHDOG_PID=$!
+            wait $CLAUDE_PID_HOLD || CLAUDE_EXIT=$?
+            kill $PROBE_WATCHDOG_PID 2>/dev/null || true
+            wait $PROBE_WATCHDOG_PID 2>/dev/null || true
+            if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
                 # Cada sonda escribe su propio stream/stderr y deriva su propio
                 # -hold-N.log, sin pisar los archivos de intentos anteriores.
                 derive_stage_log_from_stream "$stream_file_hold" "$stderr_file_hold" "$log_stage_hold"
@@ -754,15 +782,13 @@ run_agent() {
                 # -hold-N.json (issue #646).
                 metrics_json=$(compute_stage_metrics "$stream_file_hold")
                 echo "$metrics_json" > "$PIPELINE_DIR_ABS/metrics/tdd-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-${stage}-${agent}-hold-${hold_attempt}.json" 2>/dev/null || true
-            else
-                (cd "$WORKTREE_PATH" && claude -p "$prompt" \
-                    --agent "$agent" $MODEL_ARGS \
-                    --permission-mode bypassPermissions \
-                    --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
-                    --output-format text \
-                    >"$log_stage_hold" 2>&1) || CLAUDE_EXIT=$?
             fi
-            elapsed=$(( $(date +%s) - start_ts ))
+            # La duracion que se reporta es la de la SONDA, no el reloj desde
+            # que arranco el stage: sumar ahi las horas de espera inflaria
+            # AGENT_*_DUR y las metricas de la corrida. El interno mide igual
+            # (por intento, attempt_start_ts) y reporta la espera aparte, con
+            # HOLD_TOTAL_SECONDS.
+            elapsed=$(( $(date +%s) - probe_start_ts ))
             log_stage="$log_stage_hold"
             stream_file="$stream_file_hold"
 

@@ -6,6 +6,7 @@
 #   ./scripts/scaffold-pipeline.sh 42 --domain calculo-horas   # issue + dominio explicito
 #   ./scripts/scaffold-pipeline.sh --domain calculo-horas       # sin issue (solo scaffold + PR)
 #   ./scripts/scaffold-pipeline.sh --help
+#   MEFISTO_HOLD_MAX_SECONDS=<s> / MEFISTO_HOLD_PROBE_SECONDS=<s> ./scripts/scaffold-pipeline.sh --domain calculo-horas  # Techo (default 21600 = 6h) y cadencia de sondeo (default 300) de la espera ante RATE_LIMIT/PROVIDER_UNAVAILABLE (issue #971, MEF-ADR-0051)
 #
 # Ciclo: Issue -> Worktree -> Label -> domain-scaffolder -> PR -> Cleanup
 
@@ -294,13 +295,30 @@ if [ "$SCAFFOLD_EXIT" -ne 0 ]; then
         warn "domain-scaffolder: $SCAFFOLD_FAILURE_TYPE -- en espera (hold), reintentando (sonda #$hold_attempt)..."
 
         SCAFFOLD_LOG_HOLD="$LOG_DIR/scaffold-agent-$TIMESTAMP-$DOMAIN_NAME-$$-hold-${hold_attempt}.log"
+        # CA-5: lo que no cuenta contra el watchdog es la ESPERA (el `sleep` de
+        # agent_hold_wait, ya consumido arriba); la SONDA si corre bajo su
+        # propio watchdog de $SCAFFOLD_TIMEOUT, igual que el primer intento.
+        # Sin el, una sonda colgada dejaria el pipeline esperando para siempre
+        # y volveria decorativo el techo de agent_hold_wait, que solo se evalua
+        # al tope del bucle.
         SCAFFOLD_EXIT=0
+        probe_start=$(date +%s)
         (cd "$WORKTREE_PATH" && claude -p "$SCAFFOLD_PROMPT" \
             --agent domain-scaffolder \
             --permission-mode bypassPermissions \
             --output-format text \
-            >"$SCAFFOLD_LOG_HOLD" 2>&1) || SCAFFOLD_EXIT=$?
-        scaffold_elapsed=$(( $(date +%s) - scaffold_start ))
+            >"$SCAFFOLD_LOG_HOLD" 2>&1) &
+        SCAFFOLD_PID_HOLD=$!
+        (sleep $SCAFFOLD_TIMEOUT && kill -9 $SCAFFOLD_PID_HOLD 2>/dev/null && \
+            echo "[$(date +%H:%M:%S)] TIMEOUT: domain-scaffolder (sonda de hold #$hold_attempt) supero ${SCAFFOLD_TIMEOUT}s" >> "$EVENTS_LOG") &
+        PROBE_WATCHDOG_PID=$!
+        wait $SCAFFOLD_PID_HOLD || SCAFFOLD_EXIT=$?
+        kill $PROBE_WATCHDOG_PID 2>/dev/null || true
+        wait $PROBE_WATCHDOG_PID 2>/dev/null || true
+        # La duracion que se reporta es la de la SONDA, no el reloj desde que
+        # arranco el scaffold: sumar ahi las horas de espera inflaria el
+        # "completado en Xs" de la linea de cierre.
+        scaffold_elapsed=$(( $(date +%s) - probe_start ))
         SCAFFOLD_LOG="$SCAFFOLD_LOG_HOLD"
 
         if [ "$SCAFFOLD_EXIT" -eq 0 ]; then

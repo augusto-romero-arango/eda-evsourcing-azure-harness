@@ -30,11 +30,19 @@
 #       con el mismo formato que el lado interno, y retorna los segundos
 #       dormidos.
 #   [9] agent_hold_wait: techo agotado -> retorna 1 SIN dormir de nuevo.
+#   [9b] agent_hold_wait: la sonda se recorta al remanente del techo -- nunca
+#        duerme mas alla de MEFISTO_HOLD_MAX_SECONDS.
 #   [10] CA-6: tdd-pipeline.sh, tooling-pipeline.sh, iac-pipeline.sh y
 #        scaffold-pipeline.sh consumen classify_agent_failure/
 #        agent_failure_is_holdable -- no queda ninguna cadena de grep "API
 #        Error: 5"/"API Error: 4" inline duplicada en esos archivos (la unica
 #        que debe quedar es la de _pipeline-common.sh).
+#   [11] CA-5: cada sonda del bucle de espera corre bajo el watchdog de stage
+#        (lo que queda fuera del watchdog es el `sleep` de la espera, no la
+#        invocacion del agente). Sin watchdog en la sonda, una invocacion
+#        colgada dejaria el pipeline esperando para siempre y el techo de
+#        agent_hold_wait -- que solo se evalua al tope del bucle -- nunca se
+#        alcanzaria.
 #
 # Uso: scripts/tests/test-agent-failure-hold.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -184,6 +192,19 @@ else
     pass "retorna 1 con el techo agotado"
 fi
 if [ -s "$EVENTS_LOG_TEST" ]; then fail "no deberia escribir linea [hold] si ya no va a dormir"; else pass "sin linea [hold] espuria"; fi
+
+echo ""
+echo "[9b] agent_hold_wait: la sonda se recorta al remanente del techo"
+: > "$EVENTS_LOG_TEST"
+export MEFISTO_HOLD_PROBE_SECONDS=60
+export MEFISTO_HOLD_MAX_SECONDS=2
+NOW_TS=$(date +%s)
+SLEPT=$(agent_hold_wait "$EVENTS_LOG_TEST" "RATE_LIMIT (exit 1)" "$NOW_TS")
+if [ "$SLEPT" = "2" ]; then
+    pass "sonda de 60s recortada al remanente del techo (2s)"
+else
+    fail "esperaba dormir 2s (remanente del techo), obtuve '$SLEPT'"
+fi
 unset MEFISTO_HOLD_PROBE_SECONDS MEFISTO_HOLD_MAX_SECONDS
 
 echo ""
@@ -195,17 +216,52 @@ for f in tdd-pipeline.sh tooling-pipeline.sh iac-pipeline.sh scaffold-pipeline.s
     else
         fail "$f no invoca classify_agent_failure"
     fi
+    if grep -q "agent_failure_is_holdable" "$path" && grep -q "agent_hold_wait" "$path"; then
+        pass "$f consume la politica de espera compartida"
+    else
+        fail "$f no consume agent_failure_is_holdable/agent_hold_wait"
+    fi
     if grep -qE '(elif |if )grep -q "API Error: 5"' "$path"; then
         fail "$f todavia tiene una cadena de grep inline (deberia haber desaparecido)"
     else
         pass "$f no tiene clasificacion inline duplicada"
     fi
+    # Ninguno de los cuatro debe redefinir las funciones compartidas: usarlas
+    # es el punto del issue, copiarlas seria la duplicacion que elimina.
+    if grep -qE '^[[:space:]]*(classify_agent_failure|agent_failure_is_holdable|agent_hold_wait)\(\)' "$path"; then
+        fail "$f redefine una de las funciones compartidas (debe consumirlas, no copiarlas)"
+    else
+        pass "$f no redefine las funciones compartidas"
+    fi
 done
-if grep -q "classify_agent_failure" "$REPO_ROOT/scripts/_pipeline-common.sh"; then
-    pass "_pipeline-common.sh define classify_agent_failure"
+for fn in classify_agent_failure agent_failure_is_holdable agent_hold_wait; do
+    if grep -qE "^${fn}\(\)" "$REPO_ROOT/scripts/_pipeline-common.sh"; then
+        pass "_pipeline-common.sh define $fn"
+    else
+        fail "_pipeline-common.sh deberia definir $fn"
+    fi
+done
+
+echo ""
+echo "[11] CA-5: la sonda del bucle de espera corre bajo el watchdog de stage"
+# El bloque de la sonda se delimita por su propio nombre de log (-hold-) y el
+# watchdog por el `sleep <timeout>` que lo acompana: si la sonda volviera a
+# invocar el CLI de forma sincrona (sin `&` y sin watchdog), una invocacion
+# colgada dejaria el pipeline esperando indefinidamente.
+if grep -q "sonda de hold" "$REPO_ROOT/scripts/tdd-pipeline.sh" &&
+   grep -q "PROBE_WATCHDOG_PID" "$REPO_ROOT/scripts/tdd-pipeline.sh"; then
+    pass "tdd-pipeline.sh: sonda con watchdog propio"
 else
-    fail "_pipeline-common.sh deberia definir classify_agent_failure"
+    fail "tdd-pipeline.sh: la sonda de hold no corre bajo watchdog"
 fi
+for f in tooling-pipeline.sh iac-pipeline.sh scaffold-pipeline.sh; do
+    path="$REPO_ROOT/scripts/$f"
+    if grep -q "PROBE_WATCHDOG_PID" "$path" && grep -q "sonda de hold" "$path"; then
+        pass "$f: sonda con watchdog propio"
+    else
+        fail "$f: la sonda de hold no corre bajo watchdog"
+    fi
+done
 
 echo ""
 echo "----------------------------------------"

@@ -693,15 +693,15 @@ run_tests_projects() {
 # <stderr_file> tal cual al final. Sobreescribe <out_file> si ya existia.
 #
 # El evento `result` con `is_error == true` tambien se deriva, prefijado con
-# "API Error: <status>" cuando el CLI reporta api_error_status: en una
-# corrida fallida ese texto no siempre llega por stderr, y run_agent() de
-# tdd-pipeline.sh clasifica fallos con `grep "API Error: 5"`/`"API Error: 4"`
-# sobre <out_file> -- sin esta linea esos greps nunca matchean y un 5xx se
-# clasificaria como CLI_ERROR generico en vez de API_ERROR_SERVER.
+# "API Error: <status>" cuando el CLI reporta api_error_status: en una corrida
+# fallida ese texto no siempre llega por stderr, y classify_agent_failure
+# (mas abajo, issue #971) clasifica fallos con `grep "API Error: 5"`/
+# `"API Error: 4"` sobre <out_file> -- sin esta linea esos greps nunca
+# matchean y un 5xx se clasificaria como CLI_ERROR generico en vez de
+# PROVIDER_UNAVAILABLE.
 #
 # El nombre y la ruta de <out_file> NO cambian (sigue siendo el mismo .log de
-# siempre): los greps de clasificacion de tdd-pipeline.sh lo siguen leyendo
-# sin saberlo.
+# siempre): los greps de classify_agent_failure lo siguen leyendo sin saberlo.
 #
 # Tolera un stream truncado (proceso muerto a mitad de escritura, p. ej. por
 # el watchdog de timeout) o vacio via `fromjson?`. Sin jq en el PATH, deja una

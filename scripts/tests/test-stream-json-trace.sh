@@ -10,8 +10,9 @@
 # stderr en archivos separados, y deriva el .log de siempre (misma ruta, CA-2)
 # con derive_stage_log_from_stream: texto del asistente + una linea
 # "[tool] <nombre>" por tool call, con el stderr anexado al final. La
-# clasificacion de fallos de run_agent() (grep "API Error: 5"/"API Error: 4"
-# sobre ese mismo .log, l.531-534) sigue leyendo el archivo sin cambios.
+# clasificacion de fallos (classify_agent_failure en _pipeline-common.sh
+# desde el issue #971: grep "API Error: 5"/"API Error: 4" sobre ese mismo
+# .log) sigue leyendo el archivo sin cambios.
 #
 # A diferencia del test interno equivalente, este NO cubre
 # run_agent_with_watchdog ni agent_log_has_stream_cut: el porte publicado
@@ -30,8 +31,8 @@
 #       de un stage matado por el watchdog queda truncado en disco).
 #   [C] Traza vacia (stream vacio, sin stderr) -> no falla, log derivado vacio.
 #   [D] .stderr.log con "API Error: 500"/"API Error: 400" -> el texto llega al
-#       log derivado, en el mismo lugar que hoy consultan los grep de
-#       clasificacion de run_agent (l.531/533 de tdd-pipeline.sh).
+#       log derivado, en el mismo lugar que consultan los grep de
+#       classify_agent_failure (_pipeline-common.sh).
 #   [E] jq ausente -> degrada con gracia: no aborta, deja una nota legible y
 #       de todos modos anexa el stderr (CA-4).
 #   [G] Evento `result` con is_error y stderr VACIO -> el error igual llega al
@@ -188,7 +189,7 @@ echo "[D] .stderr.log con errores del CLI -> el texto llega al log derivado, don
 echo "API Error: 500 Internal Server Error" > "$TMP/d-stderr-5xx.log"
 derive_stage_log_from_stream "$TMP/d-stream.jsonl" "$TMP/d-stderr-5xx.log" "$TMP/d-out-5xx.log"
 if grep -q "API Error: 5" "$TMP/d-out-5xx.log"; then
-    pass "D-1: 'API Error: 500' del .stderr.log llega al log derivado (mismo grep que usa run_agent para API_ERROR_SERVER)"
+    pass "D-1: 'API Error: 500' del .stderr.log llega al log derivado (mismo grep con que classify_agent_failure emite PROVIDER_UNAVAILABLE)"
 else
     fail "D-1: no se encontro 'API Error: 5' en el log derivado: $(cat "$TMP/d-out-5xx.log")"
 fi
@@ -196,7 +197,7 @@ fi
 echo "API Error: 400 Bad Request" > "$TMP/d-stderr-4xx.log"
 derive_stage_log_from_stream "$TMP/d-stream.jsonl" "$TMP/d-stderr-4xx.log" "$TMP/d-out-4xx.log"
 if grep -q "API Error: 4" "$TMP/d-out-4xx.log"; then
-    pass "D-2: 'API Error: 400' del .stderr.log llega al log derivado (mismo grep que usa run_agent para API_ERROR_CLIENT)"
+    pass "D-2: 'API Error: 400' del .stderr.log llega al log derivado (mismo grep con que classify_agent_failure emite API_ERROR_CLIENT)"
 else
     fail "D-2: no se encontro 'API Error: 4' en el log derivado: $(cat "$TMP/d-out-4xx.log")"
 fi
@@ -262,7 +263,7 @@ EOF
 derive_stage_log_from_stream "$TMP/g-stream-5xx.jsonl" "$TMP/g-stderr-vacio.log" "$TMP/g-out-5xx.log"
 
 if grep -q "API Error: 5" "$TMP/g-out-5xx.log"; then
-    pass "G-1: un 5xx reportado SOLO en el evento result se clasifica API_ERROR_SERVER (mismo grep de run_agent)"
+    pass "G-1: un 5xx reportado SOLO en el evento result se clasifica PROVIDER_UNAVAILABLE (mismo grep de classify_agent_failure)"
 else
     fail "G-1: el 5xx del evento result no llego al log derivado: $(cat "$TMP/g-out-5xx.log")"
 fi
