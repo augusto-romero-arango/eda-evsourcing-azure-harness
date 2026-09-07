@@ -2,7 +2,7 @@
 
 ## Estado
 
-Aceptado (actualizado 2026-04-13: cobertura completa de efectos secundarios, una clase por comando, ejecucion secuencial, patron purge-before-act; actualizado 2026-07-19: asserts de dead-letter acotados a la corrida, prohibicion del assert cross-domain; actualizado 2026-08-05: csproj referencia `PublicEvents`/`PrivateEvents` en vez de Contracts, MEF-ADR-0039; actualizado 2026-09-07: el codigo de exito del camino feliz viene del contrato HTTP del issue, nunca de un default `202`; distincion commit del event store vs materializacion de proyeccion `Async`)
+Aceptado (actualizado 2026-04-13: cobertura completa de efectos secundarios, una clase por comando, ejecucion secuencial, patron purge-before-act; actualizado 2026-07-19: asserts de dead-letter acotados a la corrida, prohibicion del assert cross-domain; actualizado 2026-08-05: csproj referencia `PublicEvents`/`PrivateEvents` en vez de Contracts, MEF-ADR-0039; actualizado 2026-09-07: el codigo de exito del camino feliz viene del contrato HTTP del issue, nunca de un default `202`; distincion commit del event store vs materializacion de proyeccion `Async`; actualizado 2026-09-07: todo PUT/DELETE nuevo o migrado cubre el no-op idempotente de estado ya alcanzado y verifica cero efectos nuevos en la repeticion)
 
 ## Contexto
 
@@ -67,6 +67,64 @@ explicitamente que trabajo queda pendiente y por que no completo antes de respon
 que asierta `202` sin que el contrato del issue lo haya declarado adivina el mismo default que
 MEF-ADR-0004 (issue #849) y MEF-ADR-0011 (issue #991) ya retiraron del resto del pipeline -- el
 `smoke-test-writer` no es una excepcion a esa correccion.
+
+### No-op idempotente de PUT/DELETE: repetir la intencion y verificar cero efectos nuevos
+
+Todo smoke test de un comando PUT o DELETE **nuevo o migrado** (MEF-ADR-0043, pasos 2 y 3 del
+test de precedencia) cubre, ademas del camino que produce el cambio, el camino de **estado ya
+alcanzado** que MEF-ADR-0004 clasifica como no-op exitoso y que MEF-ADR-0011 exige declarar como
+quinto elemento del contrato HTTP -- el campo "Estado ya alcanzado" (MEF-ADR-0043 seccion 6). La
+cobertura completa de efectos secundarios que ya fija este ADR (seccion "Alcance de un smoke
+test") no distingue entre el primer intento y una repeticion: si el segundo intento no debe
+producir un evento ni una publicacion nuevos, el smoke test tiene que demostrarlo, no asumirlo.
+
+**Estructura del test**: prepara o ejecuta una vez el cambio que deja al comando en el estado que
+su contrato declara como no-op, repite la **misma intencion** (mismo verbo, misma ruta, mismo id,
+mismo payload cuando el comando lo recibe), y verifica:
+
+1. El segundo intento responde el **mismo codigo de exito contractual** que el primero -- el
+   mismo status de la tabla de "Respuestas HTTP" de MEF-ADR-0004, sin reclasificar a `404`/`409`.
+2. El segundo intento **no agrega un evento** al stream -- correlacionado por el streamId o el
+   identificador de negocio de la corrida, nunca por un conteo global.
+3. El segundo intento **no produce una publicacion nueva** atribuible a la repeticion, cuando el
+   comando publica a Service Bus.
+
+```
+Arrange: PurgeAsync(topic, suscripcion)               <- purge previo, patron vigente
+Act 1:   PUT /api/colaboradores/{id}/nombres {valor}  <- primer intento, cambia el VO
+Assert 1: 204 No Content; PostgresFixture.ExisteEventoAsync confirma el evento persistido;
+          WaitForMessageAsync recibe la publicacion
+Act 2:   PUT /api/colaboradores/{id}/nombres {valor}  <- repite la MISMA intencion
+Assert 2: 204 No Content (mismo codigo); el mismo mecanismo de PostgresFixture usado en el
+          Assert 1 confirma que el stream no sumo un evento adicional (sigue siendo el evento de
+          Act 1, no dos); ninguna publicacion nueva matchea el identificador de la corrida en la
+          suscripcion ya purgada
+```
+
+**Correlacion por stream/id de la corrida, no por conteo global**: el assert de "cero efectos
+nuevos" nunca exige la suscripcion o el stream globalmente vacios -- el mismo riesgo de falso rojo
+que ya motivo "Hermeticidad del assert de dead-letter: acotado a la corrida". Se correlaciona por
+el streamId o el identificador de negocio unico que el propio test genero con
+`Guid.CreateVersion7()` (seccion "Aislamiento de datos"). Para Service Bus, la purga previa al Act
+(patron purge-before-act vigente) **no se repite entre Act 1 y Act 2**: purgar entre ambos actos
+consumiria un mensaje legitimo si Act 2 publicara indebidamente, exactamente lo que el test
+necesita detectar. La ausencia de publicacion nueva se verifica esperando con un timeout acotado
+(mismo `Polling` tolerante a excepciones de este ADR) sin encontrar un mensaje adicional que
+matchee el identificador de la corrida.
+
+**Distincion frente a identidad nunca conocida o stream padre inexistente**: el no-op exige que la
+identidad o el alcance que el comando requiere ya sean reconocidos por el contrato (MEF-ADR-0004,
+"Estado ya alcanzado: no-op exitoso"). Un smoke test que dirige el PUT/DELETE a un id que el
+contrato nunca conocio, o a un stream padre inexistente, verifica el `404 NotFound` vigente -- un
+escenario de test distinto, nunca el mismo caso que el no-op. Ambos escenarios se escriben como
+tests separados dentro de la misma clase del comando (seccion "Estructura: una clase por
+comando"): uno cubre el estado ya alcanzado, otro cubre la identidad desconocida.
+
+**Aplicabilidad**: este escenario rige todo PUT/DELETE **nuevo o migrado** (mismo regimen que
+MEF-ADR-0004 "Regimen de migracion" y MEF-ADR-0043 seccion 7). No se exige al POST de creacion
+(paso 1 de MEF-ADR-0043): un POST sobre un stream que ya existe conserva su `409 Conflict`
+vigente, no es un no-op. Tampoco se retrofitea a un PUT/DELETE preexistente fuera de una
+migracion pactada con inventario y aviso a consumidores.
 
 ### Persistencia del write-side vs. materializacion del read-side: el polling del GET no cambia el status del POST
 
@@ -288,11 +346,16 @@ Responsabilidades separadas:
   `.github/smoke-tests/*.json`.
 - **smoke-test-writer**: escribe tests dentro de ese proyecto. Asierta el codigo de exito declarado
   en el contrato HTTP del issue (MEF-ADR-0011), nunca un default memorizado. Verifica todos los
-  efectos secundarios de cada funcion. Usa `Assert.SkipWhen` para tests que dependen de ServiceBus o
-  Postgres.
+  efectos secundarios de cada funcion. Para un PUT/DELETE nuevo o migrado, ademas escribe el test
+  del no-op idempotente de "Estado ya alcanzado" (repetir la intencion, mismo codigo de exito,
+  cero efectos nuevos) segun la seccion "No-op idempotente de PUT/DELETE" de este ADR. Usa
+  `Assert.SkipWhen` para tests que dependen de ServiceBus o Postgres.
 - **reviewer**: verifica que cada smoke test con operacion exitosa asierte el codigo de exito
-  contractual del issue y cubra todos los efectos secundarios del command handler. Tanto el status
-  code incorrecto como la cobertura incompleta son defecto bloqueante.
+  contractual del issue y cubra todos los efectos secundarios del command handler. Para todo
+  PUT/DELETE nuevo o migrado, verifica ademas que el smoke test cubre el no-op idempotente con la
+  repeticion de la misma intencion y el assert de cero efectos nuevos. Tanto el status code
+  incorrecto como la cobertura incompleta -- de efectos secundarios o del no-op -- son defecto
+  bloqueante.
 
 ### CI/CD
 
@@ -348,6 +411,22 @@ en el repo (idempotente; ver "Integracion en el proceso de desarrollo").
 
 ## Control de cambios
 
+- 2026-09-07: enmienda (issue #1005, depende de #992 y #1004) para exigir que todo smoke test de
+  un PUT/DELETE **nuevo o migrado** cubra el no-op idempotente de "Estado ya alcanzado" que
+  MEF-ADR-0004 clasifica como exito sin evento (issue #850) y que MEF-ADR-0011/MEF-ADR-0043
+  seccion 6 exigen declarar como quinto elemento del contrato HTTP (issue #1004). Hasta esta
+  enmienda, la doctrina black-box cubria status y efectos secundarios del primer intento, pero no
+  exigia repetir la misma intencion ni demostrar que el segundo intento no agrego eventos ni
+  publicaciones. Se agrega la seccion "No-op idempotente de PUT/DELETE: repetir la intencion y
+  verificar cero efectos nuevos" (estructura prepara/ejecuta-repite-verifica, correlacion por
+  streamId/identificador de la corrida en vez de conteos globales, reuso del patron
+  purge-before-act sin repetir la purga entre el primer y el segundo intento, y la distincion
+  frente a una identidad nunca conocida o un stream padre inexistente, que conservan el `404`
+  vigente en vez del no-op) y se actualizan las responsabilidades del `smoke-test-writer` y del
+  `reviewer` para nombrar la cobertura del no-op como algo a escribir y a revisar. Acota el
+  alcance al mismo regimen de aplicabilidad que ya fijan MEF-ADR-0004 ("Regimen de migracion") y
+  MEF-ADR-0043 (seccion 7): no aplica al POST de creacion ni se retrofitea a un PUT/DELETE
+  preexistente fuera de una migracion pactada.
 - 2026-09-07: enmienda (issue #992, depende de #991) para vincular el status code del camino feliz
   de un smoke test al contrato HTTP declarado en el issue en vez de un `202` memorizado por el
   `smoke-test-writer`. Motivo: tras las enmiendas de MEF-ADR-0004 (issue #849, retira el `202`
