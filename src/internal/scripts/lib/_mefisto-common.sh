@@ -824,6 +824,15 @@ validate_variant_label() {
 # en <events_log> -- nunca en silencio, porque ese camino vuelve a exponer la
 # clase de bug que este issue elimina.
 #
+# El `set -m` NO puede volver a envolver el lanzamiento del agente, y no solo
+# porque sea innecesario: `setsid(1)` de util-linux, cuando su invocante YA es
+# lider de grupo (que es justo lo que `set -m` provoca), no puede llamar a
+# setsid(2) -- forkea, y el padre sale con exit 0 de inmediato. `$!` dejaria de
+# apuntar al proceso real, `wait "$pid"` devolveria 0 al instante para un
+# agente todavia corriendo y `kill -9 -"$pid"` apuntaria a un grupo ajeno. El
+# `exec` del subshell es la otra mitad del mismo invariante: conserva el PID
+# que `$!` capturo.
+#
 # El watchdog se lanza en su PROPIA ventana de `set -m` (la unica que le
 # queda a esta funcion en el camino feliz -- el agente ya no la necesita, ver
 # arriba): cuando <cmd...> termina solo y hay que cancelarlo, un `kill` al PID
@@ -872,7 +881,19 @@ run_agent_with_watchdog() {
     set -m
     (
         sleep "$timeout_s"
-        touch "$signal_file" 2>/dev/null
+        # `: >` (builtin, sin fork) y no `touch`: un `touch` es un proceso
+        # externo, y si el SIGKILL con que esta funcion cancela al watchdog
+        # aterriza justo entre el fork y el exit de ese `touch`, el binario
+        # queda HUERFANO y termina de crear <signal_file> DESPUES del
+        # `rm -f "$signal_file"` de la rama de cancelacion -- una senal de
+        # timeout para un stage que termino bien, que el caller clasifica
+        # como TIMEOUT y descarta trabajo bueno. Medido en la rama de #943:
+        # 2-4 senales espurias por cada 300 corridas cortas con `touch`
+        # (bloque C-6 de test-watchdog-trabajo-util.sh, fallo intermitente
+        # que precede a este issue), cero con la redireccion builtin, que se
+        # completa dentro del propio proceso del watchdog y por tanto nunca
+        # sobrevive al kill.
+        : > "$signal_file" 2>/dev/null
         kill -9 -"$pid" 2>/dev/null
         echo "[$(date +%H:%M:%S)] TIMEOUT: $label supero ${timeout_s}s" >> "$events_log"
     ) </dev/null >/dev/null 2>&1 &
@@ -883,8 +904,8 @@ run_agent_with_watchdog() {
     wait "$pid" || exit_code=$?
 
     # Si <signal_file> ya existe aqui, el watchdog fue quien mato a <pid> --
-    # esta a mitad de escribir su evento TIMEOUT (touch precede a kill en su
-    # propio cuerpo, en el mismo proceso, sin concurrencia posible entre
+    # esta a mitad de escribir su evento TIMEOUT (la senal precede al kill en
+    # su propio cuerpo, en el mismo proceso, sin concurrencia posible entre
     # ambos). Una senal nuestra en ese instante podria cortarlo antes de
     # llegar al `echo` incondicional (CA-2) -- se lo deja terminar solo, NUNCA
     # se lo mata; solo se cancela el watchdog cuando <pid> termino por su
@@ -902,7 +923,7 @@ run_agent_with_watchdog() {
         wait "$watchdog_pid" 2>/dev/null || true
         # Carrera del watchdog perdido: entre que `wait` retorno y este `kill`
         # aterrizo, un watchdog que sobrevivio a su `sleep` alcanza a hacer su
-        # `touch` -- y deja <signal_file> creado para un stage que en realidad
+        # senal -- y deja <signal_file> creado para un stage que en realidad
         # termino solo. El caller lo leeria como TIMEOUT y descartaria trabajo
         # bueno (se observo como "TIMEOUT (0s, exit 0)" en el bloque G de
         # test-tooling-state-paths.sh, ~40% de las corridas cuando el CLI

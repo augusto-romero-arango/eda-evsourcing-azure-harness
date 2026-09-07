@@ -68,11 +68,15 @@ cleanup() {
 trap cleanup EXIT
 
 # any_stopped <marker> -- exit 0 si algun proceso vivo cuyo argv contiene
-# <marker> esta en STAT=T (detenido), 1 si ninguno lo esta.
+# <marker> esta en STAT=T (detenido), 1 si ninguno lo esta. El anclaje `^[Tt]`
+# no es cosmetico: el estado va SIEMPRE en el primer caracter de STAT y los
+# flags que le siguen (`s`, `+`, `N`, `<`...) no incluyen ninguna T -- un
+# `/T/` suelto podria dar un falso positivo sobre un flag futuro y volver el
+# test flaky en la direccion peor (fallar cuando el arreglo funciona).
 any_stopped() {
     local marker="$1"
     ps -axo stat=,command= 2>/dev/null | awk -v m="$marker" '
-        index($0, m) > 0 && $1 ~ /T/ { found=1 }
+        index($0, m) > 0 && $1 ~ /^[Tt]/ { found=1 }
         END { exit(found ? 0 : 1) }
     '
 }

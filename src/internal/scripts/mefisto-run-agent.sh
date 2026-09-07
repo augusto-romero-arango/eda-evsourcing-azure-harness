@@ -354,11 +354,12 @@ jq -n -c \
 # run_agent_with_watchdog (mas abajo, invocada dentro de un `$(...)`): el
 # bucle tiene que vivir en ESTE proceso -- si colgara del `$(...)` de mas
 # abajo moriria junto con ese subshell antes de que el proceso del agente
-# termine. Lanzado aqui, sin `set -m` activo en este shell
-# (run_agent_with_watchdog lo activa y desactiva puertas adentro, alrededor
-# SOLO del CLI y de su propio watchdog), este `&` no se vuelve lider de un
-# grupo de procesos nuevo -- por eso el `kill -9 -"$pid"` que el watchdog
-# dispara sobre el GRUPO del agente jamas lo alcanza (CA-3).
+# termine. Lanzado aqui, sin `set -m` activo en este shell (desde #943
+# run_agent_with_watchdog ya no lo activa alrededor del CLI -- lo lanza en una
+# sesion nueva con `setsid`; solo lo activa y desactiva puertas adentro
+# alrededor de su propio watchdog), este `&` no se vuelve lider de un grupo de
+# procesos nuevo -- por eso el `kill -9 -"$pid"` que el watchdog dispara sobre
+# el GRUPO del agente jamas lo alcanza (CA-3).
 live_tail_tick() {
     [ -f "$RAW_LOG" ] || return 0
     [ -w "$OPT_EVENT_LOG" ] || return 0

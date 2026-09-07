@@ -61,7 +61,7 @@
 #                   las tres (este archivo no usa `set -e`): con terminal de
 #                   control, cualquiera de ellas detiene al grupo; sin ella
 #                   (sesion nueva + stdin en /dev/null), fallan rapido y sin
-#                   señal (ENXIO / "not a terminal" / EOF). Termina con
+#                   senal (ENXIO / "not a terminal" / EOF). Termina con
 #                   terminal status=success. Exit 0.
 # Default sin MEFISTO_FAKE_SCRIPT: "success".
 #
