@@ -17,10 +17,10 @@
 # archivo ni en runtime-opencode.jq) -- la disponibilidad del provider la
 # valida OpenCode al ejecutar, no Mefisto.
 #
-# Implementa la interfaz de dos funciones que todo adaptador de runtime debe
-# exponer (ver src/internal/contract/README.md, "Interfaz de adaptador: dos
-# funciones por runtime"):
+# Implementa la interfaz de funciones que todo adaptador de runtime debe
+# exponer (ver src/internal/contract/README.md, "Interfaz de adaptador"):
 #   runtime_opencode_build_cmd <agent> <cwd> <prompt_file> <model> <system_file>
+#                              [<resume_session_id>]
 #     Rellena MEFISTO_RUNTIME_CMD con el argv de `opencode run` (sin `eval`,
 #     paridad con run_agent_with_watchdog): el mensaje viaja como UN elemento
 #     del array bash, sin volver a interpretarse. A diferencia de
@@ -28,7 +28,12 @@
 #     (`--agent <id> --dir <cwd>`) porque `opencode run` los exige como flags
 #     propios -- `run_agent_with_watchdog` sigue haciendo `cd "$workdir"`
 #     antes de invocar, pero OpenCode ademas necesita que se le diga
-#     explicitamente donde correr (CA-1).
+#     explicitamente donde correr (CA-1). <resume_session_id> (issue #968,
+#     CA-1/CA-2) es OPCIONAL y opaco -- vacio/ausente = comportamiento
+#     identico a antes de #968 (sin `--session` en el argv); no vacio agrega
+#     `--session <id>` (verificado en `opencode run --help` local). `--fork`
+#     queda deliberadamente sin usar: reusar el id original mantiene la
+#     trazabilidad del stage en un solo transcript (notas tecnicas de #968).
 #   runtime_opencode_translate <raw_file> <runtime_id> <model>
 #                              [<exit_code>] [<stderr_file>]
 #     Delega en runtime-opencode.jq (`jq -R -s -c`, mismo idiom que
@@ -65,7 +70,7 @@
 # --- runtime_opencode_build_cmd ---------------------------------------------
 
 runtime_opencode_build_cmd() {
-    local agent="$1" cwd="$2" prompt_file="$3" model="$4" system_file="$5"
+    local agent="$1" cwd="$2" prompt_file="$3" model="$4" system_file="$5" resume_session_id="${6:-}"
     local prompt message
 
     prompt="$(cat "$prompt_file")"
@@ -81,7 +86,23 @@ runtime_opencode_build_cmd() {
         MEFISTO_RUNTIME_CMD+=(-m "$model")
     fi
 
+    if [ -n "$resume_session_id" ]; then
+        MEFISTO_RUNTIME_CMD+=(--session "$resume_session_id")
+    fi
+
     MEFISTO_RUNTIME_CMD+=("$message")
+}
+
+# runtime_opencode_supports_resume (issue #968, CA-4 caso b)
+#
+# OpenCode soporta reanudacion de sesion en modo headless via `-s/--session
+# <id>` (con `--fork` opcional para bifurcar en vez de continuar la misma
+# sesion, que este adaptador no usa) -- verificado en `opencode run --help`
+# local. Retorna 0 siempre; consumida por `runtime_supports_resume`
+# (mefisto-tooling-pipeline.sh) para decidir si el hold de #967 puede
+# reanudar en vez de repetir el stage desde cero.
+runtime_opencode_supports_resume() {
+    return 0
 }
 
 # --- runtime_opencode_translate ----------------------------------------------
