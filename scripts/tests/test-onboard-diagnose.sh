@@ -10,6 +10,8 @@
 #        el caso que motiva la extraccion (issue #443): un awk '{print $1}' sin
 #        aislar en una funcion se hubiera repetido 4 veces sin test que probara
 #        que de verdad ignora las demas columnas.
+#   S-3: _mefisto_pipeline_ignored() -- exige el ignore especifico del estado y
+#        rechaza ignorar tambien la configuracion sibling versionada.
 #
 # El script se sourcea (no se ejecuta): scripts/onboard-diagnose.sh solo corre su
 # main() cuando BASH_SOURCE[0] == $0, asi que sourcearlo aqui carga row()/
@@ -162,6 +164,18 @@ if git -C "$IGNORE_REPO" check-ignore -q .mefisto/harness.config.json; then
     fail "el patron especifico ignora indebidamente harness.config.json"
 else
     pass "no ignora .mefisto/harness.config.json"
+fi
+
+printf '.mefisto/\n' > "$IGNORE_REPO/.gitignore"
+if _mefisto_pipeline_ignored "$IGNORE_REPO"; then
+    fail "acepta indebidamente el ignore amplio .mefisto/"
+else
+    pass "rechaza .mefisto/ completo porque ocultaria harness.config.json"
+fi
+if [ "$(cat "$IGNORE_REPO/.gitignore")" = ".mefisto/" ]; then
+    pass "el diagnostico no modifica .gitignore"
+else
+    fail "el diagnostico modifico .gitignore"
 fi
 
 echo ""

@@ -39,7 +39,9 @@ call_override() {
 
 echo "[pre/defaults] helper y bases canonica/legacy"
 if bash -n "$COMMON"; then pass "sintaxis valida"; else fail "sintaxis invalida"; fi
-if [ "$(call "$TMP" printenv MEFISTO_STATE_DIR)" = "$TMP/.mefisto/pipeline" ] && [ "$(call "$TMP" printenv MEFISTO_LEGACY_STATE_DIR)" = "$TMP/.claude/pipeline" ]; then
+if grep -v '^[[:space:]]*#' "$COMMON" | grep -q 'declare -A'; then fail "usa arrays asociativos incompatibles con Bash 3.2"; else pass "sin arrays asociativos"; fi
+mkdir -p "$TMP/nested/work"
+if [ "$(call "$TMP/nested/work" printenv MEFISTO_STATE_DIR)" = "$TMP/.mefisto/pipeline" ] && [ "$(call "$TMP/nested/work" printenv MEFISTO_LEGACY_STATE_DIR)" = "$TMP/.claude/pipeline" ]; then
     pass "defaults se resuelven contra git toplevel"
 else
     fail "defaults no se resuelven contra git toplevel"
@@ -49,6 +51,9 @@ echo "[overrides/lectura] canonico primero, legacy despues"
 CUSTOM="$TMP/custom"; CUSTOM_LEGACY="$TMP/custom-legacy"
 PATH_OUT=$(call_override "$TMP" "$CUSTOM" "$CUSTOM_LEGACY" mefisto_state_path logs/events.log)
 if [ "$PATH_OUT" = "$CUSTOM/logs/events.log" ] && [ -d "$CUSTOM/logs" ]; then pass "respeta override y crea padre canonico"; else fail "override o padre incorrecto"; fi
+mkdir -p "$CUSTOM_LEGACY/logs"
+printf legacy-override > "$CUSTOM_LEGACY/logs/override.log"
+if [ "$(call_override "$TMP" "$CUSTOM" "$CUSTOM_LEGACY" mefisto_state_read_first logs/override.log)" = "$CUSTOM_LEGACY/logs/override.log" ]; then pass "respeta override legacy en lectura"; else fail "override legacy ignorado"; fi
 ROOT="$TMP/root"
 mkdir -p "$ROOT/.mefisto/pipeline/logs"
 printf canon > "$ROOT/.mefisto/pipeline/logs/x.log"
@@ -72,7 +77,8 @@ printf canon > "$CANON"
 AFTER=$(shasum "$ROOT/.claude/pipeline/logs/events.log")
 if [ "$BEFORE" = "$AFTER" ] && [ "$CANON" = "$ROOT/.mefisto/pipeline/logs/events.log" ]; then pass "legacy queda inalterado"; else fail "legacy fue alterado"; fi
 BAD="$TMP/bad"; mkdir -p "$BAD/.mefisto/pipeline"; printf file > "$BAD/.mefisto/pipeline/logs"
-if ! call "$TMP" mefisto_state_path logs/x.log "$BAD" >/dev/null 2>&1; then pass "fallo al crear padre no imprime ruta utilizable"; else fail "mkdir imposible devolvio exito"; fi
+BAD_STDOUT="$TMP/bad.stdout"
+if ! call "$TMP" mefisto_state_path logs/x.log "$BAD" >"$BAD_STDOUT" 2>/dev/null && [ ! -s "$BAD_STDOUT" ]; then pass "fallo al crear padre no imprime ruta utilizable"; else fail "mkdir imposible devolvio exito o imprimio una ruta"; fi
 
 echo "RESULTADO: $PASS pasaron, $FAIL fallaron"
 [ "$FAIL" -eq 0 ]

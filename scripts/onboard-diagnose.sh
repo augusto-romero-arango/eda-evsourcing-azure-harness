@@ -47,11 +47,13 @@ _secret_present() {
 
 # _mefisto_pipeline_ignored [repo_root]
 # Consulta git, sin modificar el consumidor, con un hijo representativo del
-# directorio que debe quedar no versionado. No se ignora .mefisto/ completo:
-# .mefisto/harness.config.json es configuracion canonica versionada.
+# directorio que debe quedar no versionado. Tambien exige que el config sibling
+# siga siendo versionable, para no aceptar por error un ignore amplio de
+# .mefisto/ completo.
 _mefisto_pipeline_ignored() {
     local repo_root="${1:-.}"
-    git -C "$repo_root" check-ignore -q .mefisto/pipeline/.onboard-probe
+    git -C "$repo_root" check-ignore -q -- .mefisto/pipeline/.onboard-probe &&
+        ! git -C "$repo_root" check-ignore -q -- .mefisto/harness.config.json
 }
 
 # row <estado> <texto...>
