@@ -228,12 +228,12 @@ sorted_insert_version() {
 
 active_version() {
     local target version
-    [ -L "$ACTIVE" ] || error 'no hay una release activa; la poda no puede determinar que preservar'
-    target="$(readlink "$ACTIVE")" || error 'no se pudo leer active'
+    [ -L "$ACTIVE" ] || error 'no hay una release activa; instale o active una release OpenCode'
+    target="$(readlink "$ACTIVE")" || error 'no se pudo leer active; reinstale o active la release OpenCode'
     version="${target#releases/}"
     [ "$target" = "releases/$version" ] && valid_version "$version" \
         && manifest_valid "$RELEASES/$version" "$version" && release_immutable "$RELEASES/$version" \
-        || error 'active no apunta a una release valida, completa e inmutable'
+        || error 'active no apunta a una release valida, completa e inmutable; reinstale o active la release OpenCode'
     printf '%s\n' "$version"
 }
 

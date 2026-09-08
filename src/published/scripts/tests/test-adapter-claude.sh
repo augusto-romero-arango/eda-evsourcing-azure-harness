@@ -13,6 +13,18 @@ fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
 contains() { case "$1" in *"$2"*) pass "$3" ;; *) fail "$3" ;; esac; }
 absent() { case "$1" in *"$2"*) fail "$3" ;; *) pass "$3" ;; esac; }
 render() { bash "$ADAPTER" render "$1" '<!-- GENERADO por prueba desde fixture. No editar a mano. -->'; }
+extract_preamble() { awk '/^```bash$/{inside=1; next} /^```$/{if (inside) exit} inside' "$1"; }
+make_plugin_root() {
+    local root="$1" name="${2:-mefisto}" version="${3:-1.2.3}"
+    mkdir -p "$root/.claude-plugin" "$root/scripts"
+    jq -n --arg name "$name" --arg version "$version" '{name: $name, version: $version}' > "$root/.claude-plugin/plugin.json"
+    printf '%s\n' '#!/bin/sh' 'printf invoked > "$MEFISTO_TEST_TRACE"' > "$root/scripts/probe.sh"
+    chmod +x "$root/scripts/probe.sh"
+}
+resolve_claude() {
+    local cwd="$1" runtime_root="$2" trace="$3"
+    (cd "$cwd" && CLAUDE_PLUGIN_ROOT="$runtime_root" MEFISTO_TEST_TRACE="$trace" bash -c "$PREAMBLE_CODE"$'\n''printf "ROOT=%s\\n" "$MEFISTO_PACKAGE_ROOT"; "$MEFISTO_PACKAGE_ROOT/scripts/probe.sh"')
+}
 make_agent() { printf '%s\n' '---' "{\"kind\":\"agent\",\"id\":\"$1\",\"description\":\"Prueba.\",\"mode\":\"subagent\",\"capabilities\":$2${3:-}}" '---' '{{mefisto:assert-consumer-repo}}' > "$WORK/$1.md"; }
 render_fails_without_output() {
     local source="$1" expected="$2" label="$3" rc
@@ -49,6 +61,50 @@ absent "$agent" '/Users/' 'sin rutas de maquina'
 absent "$agent" 'mefisto-agent-completo' 'sin prefijo interno'
 command="$(< "$WORK/command.md")"
 absent "$command" 'MEFISTO_PACKAGE_ROOT' 'body sin directivas de raiz no recibe preambulo'
+
+printf '%s\n' '[resolucion] precedencia, normalizacion y fallos Claude'
+PREAMBLE_CODE="$(extract_preamble "$WORK/agent.md")"
+CONSUMER="$WORK/consumidor con espacios"; SUBDIR="$CONSUMER/sub/directorio"; mkdir -p "$SUBDIR"
+RUNTIME_ROOT="$WORK/plugin runtime"; CANONICAL_ROOT="$WORK/plugin canonico"; LEGACY_ROOT="$WORK/plugin legacy"
+make_plugin_root "$RUNTIME_ROOT"; make_plugin_root "$CANONICAL_ROOT"; make_plugin_root "$LEGACY_ROOT"
+RUNTIME_PHYSICAL="$(cd "$RUNTIME_ROOT" && pwd -P)"; CANONICAL_PHYSICAL="$(cd "$CANONICAL_ROOT" && pwd -P)"; LEGACY_PHYSICAL="$(cd "$LEGACY_ROOT" && pwd -P)"
+mkdir -p "$CONSUMER/.mefisto/pipeline" "$CONSUMER/.claude/pipeline"
+printf '%s/\n' "$CANONICAL_ROOT" > "$CONSUMER/.mefisto/pipeline/.plugin-root"
+printf '%s\n' "$LEGACY_ROOT" > "$CONSUMER/.claude/pipeline/.plugin-root"
+out="$(resolve_claude "$SUBDIR" "$RUNTIME_ROOT/" "$WORK/runtime.trace" 2> "$WORK/runtime.err")"; rc=$?
+[ "$rc" -eq 0 ] && [ "$out" = "ROOT=$RUNTIME_PHYSICAL" ] && [ -f "$WORK/runtime.trace" ] && pass 'variable runtime prevalece y normaliza paths con espacios' || fail 'variable runtime no prevalecio o no ejecuto el script'
+out="$(resolve_claude "$SUBDIR" '' "$WORK/canonical.trace" 2> "$WORK/canonical.err")"; rc=$?
+[ "$rc" -eq 0 ] && [ "$out" = "ROOT=$CANONICAL_PHYSICAL" ] && pass 'marker canonico se resuelve desde un subdirectorio' || fail 'marker canonico no se resolvio desde subdirectorio'
+rm "$CONSUMER/.mefisto/pipeline/.plugin-root"
+out="$(resolve_claude "$SUBDIR" '' "$WORK/legacy.trace" 2> "$WORK/legacy.err")"; rc=$?
+[ "$rc" -eq 0 ] && [ "$out" = "ROOT=$LEGACY_PHYSICAL" ] && pass 'marker legacy queda como fallback' || fail 'marker legacy no se resolvio'
+
+assert_claude_resolution_fails() {
+    local candidate="$1" label="$2" trace="$WORK/failure.trace" rc
+    rm -f "$trace"
+    resolve_claude "$WORK" "$candidate" "$trace" > "$WORK/failure.stdout" 2> "$WORK/failure.stderr"; rc=$?
+    if [ "$rc" -ne 0 ] && [ ! -e "$trace" ]; then
+        contains "$(< "$WORK/failure.stderr")" 'ERROR Claude:' "$label"
+        contains "$(< "$WORK/failure.stderr")" 'reabra o reinstale' "$label incluye accion concreta"
+    else
+        fail "$label"; fail "$label incluye accion concreta"
+    fi
+}
+assert_claude_resolution_fails 'relativa/plugin' 'raiz relativa aborta antes del script'
+assert_claude_resolution_fails "$WORK/no-existe" 'raiz ausente aborta antes del script'
+BROKEN="$WORK/plugin roto"; ln -s "$WORK/no-existe" "$BROKEN"
+assert_claude_resolution_fails "$BROKEN" 'symlink roto aborta antes del script'
+WRONG_NAME="$WORK/plugin nombre ajeno"; make_plugin_root "$WRONG_NAME" otro 1.2.3
+assert_claude_resolution_fails "$WRONG_NAME" 'nombre inesperado aborta antes del script'
+WRONG_VERSION="$WORK/plugin version invalida"; make_plugin_root "$WRONG_VERSION" mefisto version-invalida
+assert_claude_resolution_fails "$WRONG_VERSION" 'version no SemVer aborta antes del script'
+UNREADABLE="$WORK/plugin metadata ilegible"; make_plugin_root "$UNREADABLE"; printf '%s\n' '{' > "$UNREADABLE/.claude-plugin/plugin.json"
+assert_claude_resolution_fails "$UNREADABLE" 'metadata ilegible aborta antes del script'
+
+WORKTREE="$WORK/worktree consumidor/directorio"; mkdir -p "$WORKTREE/.mefisto/pipeline" "$WORKTREE/sub"
+printf '%s\n' "$CANONICAL_ROOT" > "$WORKTREE/.mefisto/pipeline/.plugin-root"
+out="$(resolve_claude "$WORKTREE/sub" '' "$WORK/worktree.trace" 2>/dev/null)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$out" = "ROOT=$CANONICAL_PHYSICAL" ] && pass 'marker funciona desde worktree' || fail 'marker no funciona desde worktree'
 
 printf '%s\n' '[fallos] fail-closed'
 make_agent capacidad '["desconocida"]'
