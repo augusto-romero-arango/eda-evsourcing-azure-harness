@@ -5,10 +5,63 @@
 #
 # No invocar directamente (prefijo _ = sourceable).
 
+# resolve_harness_config_path <read|write> [repo_root]
+#
+# Resuelve la ubicacion neutral del config del consumidor. stdout queda reservado
+# exclusivamente para la ruta absoluta; todos los diagnosticos van a stderr.
+# En lectura conserva el fallback legacy de MEF-ADR-0053; en escritura devuelve
+# siempre la ubicacion canonica y no migra archivos por su cuenta.
+resolve_harness_config_path() {
+    local mode="$1" repo_root="${2:-}" canonical legacy
+
+    case "$mode" in
+        read|write) ;;
+        *)
+            echo "ERROR: modo invalido '$mode'; use read o write." >&2
+            return 1
+            ;;
+    esac
+
+    if [ -z "$repo_root" ]; then
+        repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || {
+            echo "ERROR: no se pudo resolver la raiz del repositorio Git para harness.config.json." >&2
+            return 1
+        }
+    fi
+    if [ ! -d "$repo_root" ]; then
+        echo "ERROR: la raiz de repositorio no existe: $repo_root" >&2
+        return 1
+    fi
+    repo_root=$(cd "$repo_root" && pwd -P) || return 1
+    canonical="$repo_root/.mefisto/harness.config.json"
+    legacy="$repo_root/.claude/harness.config.json"
+
+    if [ "$mode" = "write" ]; then
+        printf '%s\n' "$canonical"
+        return 0
+    fi
+    if [ -f "$canonical" ]; then
+        if [ -f "$legacy" ]; then
+            echo "AVISO: se usara el config canonico $canonical; se ignora el legacy $legacy. Migra o elimina conscientemente el archivo legacy para evitar divergencias." >&2
+        fi
+        printf '%s\n' "$canonical"
+        return 0
+    fi
+    if [ -f "$legacy" ]; then
+        printf '%s\n' "$legacy"
+        return 0
+    fi
+
+    echo "ERROR: no se encontro el config canonico requerido $canonical." >&2
+    echo "  Se acepta solo para lectura el fallback legacy $legacy." >&2
+    return 1
+}
+
 # load_harness_config [config_path]
 #
-# Carga la configuracion del harness desde .claude/harness.config.json del
-# consumidor y exporta las variables HARNESS_* al entorno. Llamar al inicio
+# Carga la configuracion del harness desde .mefisto/harness.config.json del
+# consumidor (con fallback legacy de solo lectura) y exporta las variables HARNESS_*
+# al entorno. Llamar al inicio
 # de cualquier script de pipeline que necesite los tokens del proyecto.
 #
 # Variables exportadas:
@@ -74,12 +127,19 @@
 #
 # Si no existe el config file, emite mensaje claro de error y retorna 1.
 load_harness_config() {
-    local config="${1:-.claude/harness.config.json}"
+    local config
+    if [ "$#" -gt 0 ]; then
+        config="$1"
+    else
+        config=$(resolve_harness_config_path read) || return 1
+    fi
 
     if [ ! -f "$config" ]; then
         echo "ERROR: no se encontro $config" >&2
-        echo "  El harness requiere un archivo .claude/harness.config.json en la raiz" >&2
-        echo "  del proyecto consumidor con la forma:" >&2
+        echo "  El harness requiere .mefisto/harness.config.json en la raiz" >&2
+        echo "  del proyecto consumidor; .claude/harness.config.json solo se acepta" >&2
+        echo "  como fallback de lectura para consumidores legacy." >&2
+        echo "  El archivo tiene la forma:" >&2
         echo "    {" >&2
         echo "      \"projectName\": \"...\"," >&2
         echo "      \"namespacePrefix\": \"...\"," >&2
@@ -97,6 +157,13 @@ load_harness_config() {
         echo "ERROR: jq no esta instalado. Requerido para parsear $config" >&2
         return 1
     fi
+
+    if ! jq empty "$config" >/dev/null 2>&1; then
+        echo "ERROR: el JSON de $config no es parseable." >&2
+        return 1
+    fi
+
+    export HARNESS_CONFIG_PATH="$config"
 
     export HARNESS_PROJECT_NAME=$(jq -r '.projectName // ""' "$config")
     export HARNESS_NAMESPACE_PREFIX=$(jq -r '.namespacePrefix // ""' "$config")
@@ -408,12 +475,24 @@ load_harness_config() {
 # (el caller ya restringe los valores que pasa; load_harness_config valida el resultado
 # final la proxima vez que se cargue el config).
 #
-# Retorna 0 si escribio bien, 1 si el config no existe o jq falla.
+# Retorna 0 si escribio bien, 1 si el config no existe, es JSON invalido o jq falla.
 upsert_harness_secret() {
     local name="$1"
     local source_type="$2"
     local source_value="$3"
-    local config="${4:-.claude/harness.config.json}"
+    local config canonical legacy
+    if [ "$#" -ge 4 ]; then
+        config="$4"
+    else
+        config=$(resolve_harness_config_path write) || return 1
+        canonical="$config"
+        legacy="${canonical%/.mefisto/harness.config.json}/.claude/harness.config.json"
+        if [ ! -f "$canonical" ] && [ -f "$legacy" ]; then
+            echo "ERROR: solo existe el config legacy $legacy; no se modificara." >&2
+            echo "  Migra conscientemente el archivo completo a $canonical antes de registrar secretos." >&2
+            return 1
+        fi
+    fi
 
     if [ ! -f "$config" ]; then
         echo "ERROR: no se encontro $config" >&2
@@ -422,6 +501,11 @@ upsert_harness_secret() {
 
     if ! command -v jq >/dev/null 2>&1; then
         echo "ERROR: jq no esta instalado. Requerido para actualizar $config" >&2
+        return 1
+    fi
+
+    if ! jq empty "$config" >/dev/null 2>&1; then
+        echo "ERROR: el JSON de $config no es parseable; no se modifico el archivo." >&2
         return 1
     fi
 

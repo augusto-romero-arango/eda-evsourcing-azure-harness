@@ -58,6 +58,13 @@
 #          ausentes, y ambas variables quedan exportadas (nunca unset: los consumidores las
 #          leen bajo 'set -u').
 #
+# Cubre la resolucion neutral de harness.config.json (issue #1049, MEF-ADR-0053):
+#   CFG-1: lectura canonica, fallback legacy, precedencia canonica y raiz Git/explicita.
+#   CFG-2: load_harness_config exporta la ruta efectiva y respeta el override exacto.
+#   CFG-3: ausencia e invalidez abortan con un unico diagnostico, sin exports parciales.
+#   CFG-4: la escritura por defecto solo toca la canonica; nunca migra ni muta la legacy.
+#   CFG-5: un JSON invalido no es reemplazado por upsert_harness_secret.
+#
 # Uso: scripts/tests/test-harness-config.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
 
@@ -76,6 +83,8 @@ if ! command -v jq >/dev/null 2>&1; then
     echo "SKIP: jq no esta instalado; load_harness_config requiere jq para parsear el config." >&2
     exit 0
 fi
+
+source "$REPO_ROOT/scripts/_pipeline-common.sh"
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -374,6 +383,29 @@ naming_exports_strict() {
         load_harness_config "$cfg" >/dev/null 2>&1
         echo "SOBREVIVE:${HARNESS_AZURE_REGION_SHORT}|${HARNESS_RESOURCE_SEQUENCE}"
     ) 2>/dev/null
+}
+
+# default_load_exports <repo_root> -> "config|project|namespace" usando la resolucion por defecto.
+default_load_exports() {
+    local root="$1"
+    (
+        set +u
+        cd "$root" || exit 1
+        source "$REPO_ROOT/scripts/_pipeline-common.sh"
+        load_harness_config >/dev/null || exit 1
+        echo "${HARNESS_CONFIG_PATH:-}|${HARNESS_PROJECT_NAME:-}|${HARNESS_NAMESPACE_PREFIX:-}"
+    )
+}
+
+# explicit_load_exports <config_path> -> "config|project" conservando exactamente el override.
+explicit_load_exports() {
+    local config="$1"
+    (
+        set +u
+        source "$REPO_ROOT/scripts/_pipeline-common.sh"
+        load_harness_config "$config" >/dev/null || exit 1
+        echo "${HARNESS_CONFIG_PATH:-}|${HARNESS_PROJECT_NAME:-}"
+    )
 }
 
 echo "[CA-1] terraformStateStorage invalido aborta con return 1"
@@ -831,6 +863,86 @@ if [ "$OUT" = "SOBREVIVE:eus2|003" ]; then
 else
     fail "contraprueba fallida (salida: '${OUT:-<vacia>}')"
 fi
+
+echo ""
+echo "[CFG-1049] resolucion canonica, fallback legacy y escritura segura"
+
+CFG_ROOT="$TMP_DIR/config-root"
+mkdir -p "$CFG_ROOT/.mefisto" "$CFG_ROOT/.claude"
+git init -q "$CFG_ROOT"
+CFG_ROOT="$(cd "$CFG_ROOT" && pwd -P)"
+CANONICAL="$CFG_ROOT/.mefisto/harness.config.json"
+LEGACY="$CFG_ROOT/.claude/harness.config.json"
+
+write_config "$CANONICAL" "__OMIT__"
+OUT=$(resolve_harness_config_path read "$CFG_ROOT" 2>"$TMP_DIR/canonical.err"); RC=$?
+if [ "$RC" -eq 0 ] && [ "$OUT" = "$CANONICAL" ]; then pass "solo canonica: resolver imprime su ruta absoluta"; else fail "solo canonica: ruta o rc incorrectos ($OUT, $RC)"; fi
+if [ "$(default_load_exports "$CFG_ROOT")" = "$CANONICAL|MiControlPlane|MiControlPlane.Dominio" ]; then pass "load por defecto exporta HARNESS_CONFIG_PATH canonico"; else fail "load por defecto no usa la canonica"; fi
+OUT=$(
+    cd "$CFG_ROOT" || exit 1
+    resolve_harness_config_path read 2>"$TMP_DIR/git-root.err"
+); RC=$?
+if [ "$RC" -eq 0 ] && [ "$OUT" = "$CANONICAL" ] && [ ! -s "$TMP_DIR/git-root.err" ]; then pass "sin raiz explicita: resolver usa la raiz del repositorio Git"; else fail "sin raiz explicita: no uso la raiz Git o ensucio stderr"; fi
+
+rm -f "$CANONICAL"
+write_config "$LEGACY" "__OMIT__"
+OUT=$(resolve_harness_config_path read "$CFG_ROOT" 2>"$TMP_DIR/legacy.err"); RC=$?
+if [ "$RC" -eq 0 ] && [ "$OUT" = "$LEGACY" ]; then pass "solo legacy: resolver conserva fallback de lectura"; else fail "solo legacy: ruta o rc incorrectos ($OUT, $RC)"; fi
+if [ "$(default_load_exports "$CFG_ROOT")" = "$LEGACY|MiControlPlane|MiControlPlane.Dominio" ]; then pass "load por defecto exporta HARNESS_CONFIG_PATH legacy efectivo"; else fail "load por defecto no usa el fallback legacy"; fi
+
+write_config "$CANONICAL" "__OMIT__"
+sed -i.bak 's/MiControlPlane/Canonico/' "$CANONICAL" && rm -f "$CANONICAL.bak"
+sed -i.bak 's/MiControlPlane/LegacyIgnorado/' "$LEGACY" && rm -f "$LEGACY.bak"
+ERR="$TMP_DIR/both.err"
+OUT=$(default_load_exports "$CFG_ROOT" 2>"$ERR"); RC=$?
+if [ "$RC" -eq 0 ] && [ "$OUT" = "$CANONICAL|Canonico|Canonico.Dominio" ]; then pass "ambas rutas: la canonica gana sin mezclar campos"; else fail "ambas rutas: precedencia incorrecta ($OUT, $RC)"; fi
+if grep -q "se ignora el legacy $LEGACY" "$ERR"; then pass "ambas rutas: avisa por stderr el legacy ignorado"; else fail "ambas rutas: falta aviso accionable en stderr"; fi
+
+rm -f "$CANONICAL" "$LEGACY"
+OUT=$(resolve_harness_config_path read "$CFG_ROOT" 2>"$TMP_DIR/missing.err"); RC=$?
+if [ "$RC" -eq 1 ] && [ -z "$OUT" ] && grep -q "$CANONICAL" "$TMP_DIR/missing.err" && grep -q "$LEGACY" "$TMP_DIR/missing.err"; then pass "ninguna ruta: aborta y nombra canonica y fallback legacy"; else fail "ninguna ruta: diagnostico incorrecto"; fi
+
+printf '{ invalido\n' > "$CANONICAL"
+OUT=$(
+    exec 2>"$TMP_DIR/invalid.err"
+    export HARNESS_CONFIG_PATH="ruta-anterior" HARNESS_PROJECT_NAME="proyecto-anterior"
+    if load_harness_config "$CANONICAL" >/dev/null; then exit 0; fi
+    printf '%s|%s\n' "$HARNESS_CONFIG_PATH" "$HARNESS_PROJECT_NAME"
+    exit 1
+); RC=$?
+INVALID_ERRORS=$(grep -c "^ERROR:" "$TMP_DIR/invalid.err" || true)
+if [ "$RC" -eq 1 ] && [ "$OUT" = "ruta-anterior|proyecto-anterior" ] && [ "$INVALID_ERRORS" -eq 1 ] && grep -q "JSON de $CANONICAL no es parseable" "$TMP_DIR/invalid.err"; then pass "JSON invalido: aborta una vez antes de dejar exports parciales"; else fail "JSON invalido: diagnostico o exports incorrectos ($OUT, errores=$INVALID_ERRORS)"; fi
+
+INVALID_BEFORE=$(cksum "$CANONICAL")
+RC=0; run_upsert "$CANONICAL" "nuevo" "output" "valor" >/dev/null 2>"$TMP_DIR/upsert-invalid.err" || RC=$?
+INVALID_AFTER=$(cksum "$CANONICAL")
+if [ "$RC" -eq 1 ] && [ "$INVALID_BEFORE" = "$INVALID_AFTER" ] && grep -q "JSON de $CANONICAL no es parseable" "$TMP_DIR/upsert-invalid.err"; then pass "upsert con JSON invalido aborta sin reemplazar el archivo"; else fail "upsert modifico o reemplazo un JSON invalido"; fi
+
+write_config "$CANONICAL" "__OMIT__"
+write_config "$LEGACY" "__OMIT__"
+sed -i.bak 's/MiControlPlane/Override/' "$LEGACY" && rm -f "$LEGACY.bak"
+OUT=$(explicit_load_exports "$LEGACY")
+if [ "$OUT" = "$LEGACY|Override" ]; then pass "override explicito conserva precedencia y HARNESS_CONFIG_PATH exacto"; else fail "override explicito no se cargo exactamente ($OUT)"; fi
+OUT=$(resolve_harness_config_path write "$CFG_ROOT" 2>"$TMP_DIR/write.err"); RC=$?
+if [ "$RC" -eq 0 ] && [ "$OUT" = "$CANONICAL" ] && [ ! -s "$TMP_DIR/write.err" ]; then pass "raiz explicita y modo write resuelven solo la canonica"; else fail "modo write no resolvio la canonica limpia"; fi
+
+LEGACY_BEFORE=$(cksum "$LEGACY")
+RC=0; (
+    cd "$CFG_ROOT" || exit 1
+    upsert_harness_secret "canonico" "output" "valor"
+) >/dev/null 2>"$TMP_DIR/upsert-canonical.err" || RC=$?
+LEGACY_AFTER=$(cksum "$LEGACY")
+if [ "$RC" -eq 0 ] && [ "$(jq -r '.secrets[0].name' "$CANONICAL")" = "canonico" ] && [ "$LEGACY_BEFORE" = "$LEGACY_AFTER" ]; then pass "escritura por defecto modifica solo la canonica aunque exista la legacy"; else fail "escritura por defecto no quedo aislada en la canonica"; fi
+
+rm -f "$CANONICAL"
+LEGACY_BEFORE=$(cksum "$LEGACY")
+RC=0; (
+    cd "$CFG_ROOT" || exit 1
+    source "$REPO_ROOT/scripts/_pipeline-common.sh"
+    upsert_harness_secret "nuevo" "output" "valor"
+) >/dev/null 2>"$TMP_DIR/upsert-legacy.err" || RC=$?
+LEGACY_AFTER=$(cksum "$LEGACY")
+if [ "$RC" -eq 1 ] && [ ! -f "$CANONICAL" ] && [ "$LEGACY_BEFORE" = "$LEGACY_AFTER" ] && grep -q "Migra conscientemente el archivo completo" "$TMP_DIR/upsert-legacy.err"; then pass "escritura con solo legacy aborta sin migrar ni mutar"; else fail "escritura con solo legacy modifico o migro el config"; fi
 
 echo ""
 echo "----------------------------------------"
