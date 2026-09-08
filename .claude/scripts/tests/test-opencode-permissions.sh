@@ -270,14 +270,31 @@ for root in src/runtime src/published; do
     done
 done
 if jq -e '
-    .capability_map.shell.rules as $rules
-    | ([ $rules[] | select(.pattern | test("^(src/runtime|src/published)/scripts/")) | .pattern ] | all(startswith("*") | not))
-    and (([ $rules | to_entries[] | select(.value.pattern == "rm *") | .key ][0]) as $deny
-         | [ $rules | to_entries[] | select(.value.pattern | test("^(bash |sh |\\.?/?|MEFISTO_RUNTIME=opencode \\./)(src/runtime|src/published)/scripts/")) | .key ] | all(. < $deny))
+    ["src/runtime", "src/published"] as $roots
+    | [
+        $roots[] as $root
+        | "bash \($root)/scripts/*",
+          "sh \($root)/scripts/*",
+          "\($root)/scripts/*",
+          "./\($root)/scripts/*",
+          "MEFISTO_RUNTIME=opencode ./\($root)/scripts/*"
+      ] as $expected
+    | .capability_map.shell.rules as $rules
+    | [
+        $rules[]
+        | select(.pattern | contains("src/runtime/scripts/") or contains("src/published/scripts/"))
+        | select(.value == "allow")
+        | .pattern
+      ] as $actual
+    | ([ $actual[] ] | sort) == ([ $expected[] ] | sort)
+      and ($actual | all(startswith("*") | not))
+      and (([ $rules | to_entries[] | select(.value.value == "deny") | .key ] | min) as $first_deny
+           | [ $rules | to_entries[] | select(.value.pattern as $pattern | $expected | index($pattern)) | .key ]
+           | length == ($expected | length) and all(. < $first_deny))
 ' "$MAPPING" >/dev/null; then
-    pass "los allow de scripts neutralizados preceden deny y no absorben prefijos arbitrarios"
+    pass "shell declara exactamente cinco formas por raiz neutral, antes de deny y sin prefijos comodin"
 else
-    fail "los allow de scripts neutralizados deben preceder deny y no empezar con comodin"
+    fail "shell debe declarar exactamente cinco formas por raiz neutral, antes de deny y sin prefijos comodin"
 fi
 
 echo ""
