@@ -2,7 +2,7 @@
 
 ## Estado
 
-Aceptado (actualizado 2026-04-13: cobertura completa de efectos secundarios, una clase por comando, ejecucion secuencial, patron purge-before-act; actualizado 2026-07-19: asserts de dead-letter acotados a la corrida, prohibicion del assert cross-domain; actualizado 2026-08-05: csproj referencia `PublicEvents`/`PrivateEvents` en vez de Contracts, MEF-ADR-0039; actualizado 2026-09-07: el codigo de exito del camino feliz viene del contrato HTTP del issue, nunca de un default `202`; distincion commit del event store vs materializacion de proyeccion `Async`; actualizado 2026-09-07: todo PUT/DELETE nuevo o migrado cubre el no-op idempotente de estado ya alcanzado y verifica cero efectos nuevos en la repeticion)
+Aceptado (actualizado 2026-04-13: cobertura completa de efectos secundarios, una clase por comando, ejecucion secuencial, patron purge-before-act; actualizado 2026-07-19: asserts de dead-letter acotados a la corrida, prohibicion del assert cross-domain; actualizado 2026-08-05: csproj referencia `PublicEvents`/`PrivateEvents` en vez de Contracts, MEF-ADR-0039; actualizado 2026-09-07: el codigo de exito del camino feliz viene del contrato HTTP del issue, nunca de un default `202`; distincion commit del event store vs materializacion de proyeccion `Async`; todo PUT/DELETE nuevo o migrado cubre el no-op idempotente de estado ya alcanzado y verifica cero efectos nuevos en la repeticion; identidad sintetica configurable en HTTP y Service Bus para tenancy etapa (b))
 
 ## Contexto
 
@@ -26,6 +26,47 @@ Se necesita un enfoque que verifique "esto realmente funciona" con minima sobrec
 Se adoptan smoke tests con HttpClient puro contra el entorno dev desplegado. Los tests son black-box:
 llaman a los endpoints HTTP reales y verifican status codes. No tienen dependencia de la implementacion
 interna.
+
+### Identidad sintetica de smoke: directa a la Function App, configurable y uniforme
+
+Los smoke tests de dominio llaman **directamente a las Function Apps desplegadas**. No adquieren un
+token real de WorkOS ni atraviesan APIM: su proposito es verificar el backend black-box, no el gate de
+identidad del borde. La validacion de JWT, el mapping de claims y el anti-spoofing de APIM conservan su
+verificacion separada en el checklist post-deploy de `/install-apim` (MEF-ADR-0032).
+
+El incidente que motivo el draft de esta enmienda no fue causado por headers ausentes: los fixtures del
+consumidor ya enviaban `X-Tenant-Id`/`X-User-Id`, y el fallo era que `ProxyTenantResolver` decidia la
+rama HTTP/Wolverine demasiado pronto. El issue #802 lo reemplazo por `TenantExecutionContext`
+(`AsyncLocal`) y `TenantContextMiddleware` (MEF-ADR-0028). Sin embargo, el harness conserva un gap
+distinto y vigente: los fixtures que genera `domain-scaffolder` aun no transportan identidad en ninguno
+de los dos canales de entrada.
+
+Por eso, cada proyecto de smoke tests define una **unica identidad sintetica**, explicita y
+configurable, bajo la configuracion estandar de la suite:
+
+```json
+"SmokeIdentity": {
+  "TenantId": "tenant-smoke",
+  "UserId": "smoke-tests"
+}
+```
+
+Los defaults `tenant-smoke` y `smoke-tests` no son secretos. `appsettings.local.json` o las variables
+de entorno `SmokeIdentity__TenantId` y `SmokeIdentity__UserId` pueden sobreescribirlos, con la misma
+jerarquia de configuracion que `Api`, `ServiceBus` y `Postgres`. No se crea ni se siembra una
+organizacion en WorkOS: este flujo no atraviesa el IdP.
+
+Los fixtures aplican esa identidad incondicionalmente y sin que el proyecto de smoke interprete
+`harness.config.json` ni `tenancy.strategy`:
+
+- `ApiFixture` agrega por defecto `X-Tenant-Id` y `X-User-Id` a todas las llamadas HTTP.
+- `ServiceBusFixture.PublishAsync` agrega `tenant-id` y `user_id` a `ApplicationProperties` de todo
+  mensaje publicado.
+
+En la etapa (a) de MEF-ADR-0028, el resolver mono-tenant ignora esos valores; en la etapa (b),
+`TenantContextMiddleware` los consume y sus getters fallan ruidosamente si faltan. El envio
+incondicional mantiene los fixtures independientes de la estrategia de tenancy y permite que el mismo
+proyecto de smoke siga funcionando durante la transicion (a)->(b).
 
 ### Alcance de un smoke test: cobertura completa de efectos secundarios
 
@@ -298,11 +339,13 @@ si el dominio los necesita — el scaffolder los crea y estan listos para usar d
 
 Jerarquia estandar de .NET: `appsettings.json` < `appsettings.local.json` < variables de entorno.
 
-- `appsettings.json` (commiteado): contiene la URL base y placeholders vacios para ServiceBus y
-  Postgres connection strings. Nunca contiene valores reales.
+- `appsettings.json` (commiteado): contiene la URL base, placeholders vacios para ServiceBus y
+  Postgres connection strings, y la identidad sintetica no secreta `SmokeIdentity` con defaults
+  `tenant-smoke`/`smoke-tests`. Nunca contiene valores reales ni secretos.
 - `appsettings.local.json` (gitignored): cadenas de conexion reales para desarrollo local.
 - Variables de entorno en CI: `ServiceBus__ConnectionString`, `Postgres__ConnectionString`. Se pasan
-  como secrets opcionales (`required: false`) en el workflow de deploy.
+  como secrets opcionales (`required: false`) en el workflow de deploy. Las variables no secretas
+  `SmokeIdentity__TenantId` y `SmokeIdentity__UserId` pueden sobreescribir la identidad sintetica.
 
 Esta jerarquia permite que los smoke tests se ejecuten en cualquier contexto (local, CI, manual)
 sin cambiar codigo y sin exponer secrets en el repositorio.
@@ -356,14 +399,17 @@ La infraestructura del proyecto de smoke tests (csproj, fixtures, appsettings, w
 
 Responsabilidades separadas:
 - **domain-scaffolder**: crea `tests/*.SmokeTests/` con los 3 fixtures, Polling, appsettings.json
-  con placeholders, csproj con ProjectReference a `PublicEvents`/`PrivateEvents` (los ensamblados de
+  con placeholders y `SmokeIdentity` no secreta, csproj con ProjectReference a
+  `PublicEvents`/`PrivateEvents` (los ensamblados de
   eventos de bus del BC, para igualdad de records; MEF-ADR-0039), y el job
   `smoke-tests` con secrets opcionales en el workflow de deploy, y registra el dominio en su propio
   archivo `.github/smoke-tests/{kebab}.json` (un objeto JSON por dominio, issue #234). La **primera
   vez** que corre en un repo genera tambien (idempotente, no sobreescribe si ya existen) el workflow
   reutilizable `.github/workflows/smoke-tests-dominio.yml` (`workflow_call`) que el deploy referencia,
   y el workflow global `.github/workflows/smoke-tests.yml` que arma su matrix por glob de
-  `.github/smoke-tests/*.json`.
+  `.github/smoke-tests/*.json`. `ApiFixture` aplica `X-Tenant-Id`/`X-User-Id` y
+  `ServiceBusFixture.PublishAsync` aplica `tenant-id`/`user_id`, ambos desde la unica
+  `SmokeIdentity` configurable de la suite.
 - **smoke-test-writer**: escribe tests dentro de ese proyecto. Asierta el codigo de exito declarado
   en el contrato HTTP del issue (MEF-ADR-0011), nunca un default memorizado. Verifica todos los
   efectos secundarios de cada funcion. Para un PUT/DELETE nuevo o migrado, ademas escribe el test
@@ -431,6 +477,21 @@ en el repo (idempotente; ver "Integracion en el proceso de desarrollo").
 
 ## Control de cambios
 
+- 2026-09-07: enmienda (issue #798) para fijar una identidad sintetica, explicita y configurable para
+  los smoke tests de dominio. Corrige la premisa del draft: el incidente de Bitakora.ControlAsistencia
+  posterior a `/install-apim` no fue ausencia de headers -- los fixtures ya enviaban
+  `X-Tenant-Id`/`X-User-Id` -- sino `ProxyTenantResolver`, que decidia la rama HTTP/Wolverine demasiado
+  pronto; el issue #802 lo reemplazo por `TenantExecutionContext` (`AsyncLocal`) +
+  `TenantContextMiddleware` (MEF-ADR-0028). Confirma, separado de ese incidente, el gap vigente del
+  harness: `ApiFixture` no agrega los headers HTTP y `ServiceBusFixture.PublishAsync` no agrega las
+  `ApplicationProperties` de identidad. Los smoke de dominio siguen llamando directo a las Function
+  Apps, sin token WorkOS ni APIM; el gate real de JWT, mapping de claims y anti-spoofing permanece en
+  el checklist post-deploy de `/install-apim` (MEF-ADR-0032). Se exige una unica `SmokeIdentity`, con
+  defaults no secretos `tenant-smoke`/`smoke-tests` y overrides por `appsettings.local.json` o
+  `SmokeIdentity__TenantId`/`SmokeIdentity__UserId`; no se crea ni siembra una organizacion WorkOS.
+  Los fixtures la envian incondicionalmente como `X-Tenant-Id`/`X-User-Id` en HTTP y
+  `tenant-id`/`user_id` en `ApplicationProperties` de cada `PublishAsync`: la etapa (a) la ignora y la
+  etapa (b) la consume, sin que los smoke interpreten `harness.config.json`.
 - 2026-09-07: enmienda (issue #1005, depende de #992 y #1004) para exigir que todo smoke test de
   un PUT/DELETE **nuevo o migrado** cubra el no-op idempotente de "Estado ya alcanzado" que
   MEF-ADR-0004 clasifica como exito sin evento (issue #850) y que MEF-ADR-0011/MEF-ADR-0043
