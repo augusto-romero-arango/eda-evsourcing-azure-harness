@@ -33,6 +33,58 @@ published_claude_validate_skills() {
     done <<< "$skills"
 }
 
+published_claude_needs_package_root() {
+    case "$1" in *'{{mefisto:run '*|*'{{mefisto:package-root}}'*) return 0 ;; *) return 1 ;; esac
+}
+
+# Este bloque se emite dentro del artefacto Claude, no en la fuente neutral. No
+# carga codigo desde el candidato: valida primero la metadata de distribucion.
+published_claude_package_root_preamble() {
+    cat <<'EOF'
+```bash
+mefisto_claude_root=''
+mefisto_claude_candidate="${CLAUDE_PLUGIN_ROOT:-}"
+if [ -z "$mefisto_claude_candidate" ]; then
+    mefisto_claude_cursor="$PWD"
+    while :; do
+        if [ -f "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root" ]; then
+            mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root")"
+            break
+        fi
+        if [ "$mefisto_claude_cursor" = / ]; then break; fi
+        mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
+    done
+fi
+if [ -z "$mefisto_claude_candidate" ]; then
+    mefisto_claude_cursor="$PWD"
+    while :; do
+        if [ -f "$mefisto_claude_cursor/.claude/pipeline/.plugin-root" ]; then
+            mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.claude/pipeline/.plugin-root")"
+            break
+        fi
+        if [ "$mefisto_claude_cursor" = / ]; then break; fi
+        mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
+    done
+fi
+case "$mefisto_claude_candidate" in
+    /*) ;;
+    *) printf '%s\n' 'ERROR Claude: no se encontro una raiz absoluta valida; reabra o reinstale el plugin.' >&2; exit 1 ;;
+esac
+mefisto_claude_root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || {
+    printf '%s\n' 'ERROR Claude: la raiz del plugin no existe; reabra o reinstale el plugin.' >&2; exit 1;
+}
+if ! jq -e '
+  .name == "mefisto" and
+  (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"))
+' "$mefisto_claude_root/.claude-plugin/plugin.json" >/dev/null 2>&1; then
+    printf '%s\n' 'ERROR Claude: metadata del plugin invalida; reabra o reinstale el plugin.' >&2; exit 1
+fi
+MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"
+export MEFISTO_PACKAGE_ROOT
+```
+EOF
+}
+
 # Reemplaza de derecha a izquierda para conservar texto circundante y permitir
 # varias directivas inline en una misma linea.
 published_claude_translate_body() {
@@ -44,9 +96,9 @@ published_claude_translate_body() {
             if [[ "$line" =~ ^(.*)\{\{mefisto:run[[:space:]]+([^[:space:]]+)[[:space:]]+([^}]*)\}\}(.*)$ ]]; then
                 prefix="${BASH_REMATCH[1]}"; script="${BASH_REMATCH[2]}"; args="${BASH_REMATCH[3]}"; suffix="${BASH_REMATCH[4]}"
                 args="$(printf '%s' "$args" | sed -E 's/[[:space:]]+$//')"
-                translated="${prefix}\${CLAUDE_PLUGIN_ROOT}/scripts/${script} ${args}${suffix}"
+                translated="${prefix}\${MEFISTO_PACKAGE_ROOT}/scripts/${script} ${args}${suffix}"
             elif [[ "$line" =~ ^(.*)\{\{mefisto:package-root\}\}(.*)$ ]]; then
-                translated="${BASH_REMATCH[1]}\${CLAUDE_PLUGIN_ROOT}${BASH_REMATCH[2]}"
+                translated="${BASH_REMATCH[1]}\${MEFISTO_PACKAGE_ROOT}${BASH_REMATCH[2]}"
             elif [[ "$line" =~ ^(.*)\{\{mefisto:config-path\}\}(.*)$ ]]; then
                 translated="${BASH_REMATCH[1]}.mefisto/harness.config.json${BASH_REMATCH[2]}"
             elif [[ "$line" =~ ^(.*)\{\{mefisto:state-path[[:space:]]+([A-Za-z0-9][A-Za-z0-9._/-]*)\}\}(.*)$ ]]; then
@@ -67,13 +119,14 @@ published_claude_translate_body() {
 }
 
 published_claude_render() {
-    local source="$1" marker="$2" repo_root="$3" rel fm instance kind raw_body translated tools profile model model_line=''
+    local source="$1" marker="$2" repo_root="$3" rel fm instance kind raw_body translated preamble='' tools profile model model_line=''
     rel="${source#"$repo_root"/}"
     fm="$(awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$source")" || { published_claude_error "$rel" frontmatter 'no se pudo extraer'; return 1; }
     instance="$(printf '%s\n' "$fm" | jq -c '.' 2>/dev/null)" || { published_claude_error "$rel" frontmatter 'no es JSON valido'; return 1; }
     kind="$(printf '%s' "$instance" | jq -r '.kind')"
     raw_body="$(awk 'NR == 1 { next } $0 == "---" && !seen { seen=1; next } seen { print }' "$source")" || { published_claude_error "$rel" body 'no se pudo extraer'; return 1; }
     translated="$(published_claude_translate_body "$rel" "$raw_body")" || return 1
+    if published_claude_needs_package_root "$raw_body"; then preamble="$(published_claude_package_root_preamble)"; fi
     tools="$(published_claude_tools "$rel" "$instance")" || return 1
     published_claude_validate_skills "$rel" "$instance" "$repo_root" || return 1
     profile="$(printf '%s' "$instance" | jq -r '.profile // empty')"
@@ -92,5 +145,7 @@ published_claude_render() {
         [ -z "$tools" ] || printf 'allowed-tools: %s\n' "$(printf '%s' "$tools" | jq -Rr '@json')"
     fi
     [ -z "$model_line" ] || printf '%s\n' "$model_line"
-    printf '%s\n%s\n%s\n' '---' "$marker" "$translated"
+    printf '%s\n%s\n' '---' "$marker"
+    [ -z "$preamble" ] || printf '%s\n' "$preamble"
+    printf '%s\n' "$translated"
 }

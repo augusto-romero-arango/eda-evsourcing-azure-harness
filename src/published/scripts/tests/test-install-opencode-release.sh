@@ -62,6 +62,9 @@ assert_active 1.2.3 'primera instalacion activa la version inicial'
 assert_only_data_root 'bootstrap solo escribe bajo la raiz de datos'
 
 ACTIVE="$XDG_DATA_HOME/mefisto/active/bin/mefisto-opencode"
+PACKAGE_ROOT="$("$ACTIVE" package-root)"; rc=$?
+EXPECTED_PACKAGE_ROOT="$(cd "$XDG_DATA_HOME/mefisto/releases/1.2.3" && pwd -P)"
+[ "$rc" -eq 0 ] && [ "$PACKAGE_ROOT" = "$EXPECTED_PACKAGE_ROOT" ] && pass 'package-root imprime solo la ruta fisica de la release activa' || fail "package-root no resolvio la release activa: '$PACKAGE_ROOT'"
 MEFISTO_OPENCODE_RELEASE_BASE_URL="file://$WORK/assets" "$ACTIVE" install 2.0.0 >/dev/null; assert_rc "$?" 0 'upgrade descarga fixture local y valida checksum'
 assert_active 2.0.0 'upgrade activa la version descargada'
 [ -d "$XDG_DATA_HOME/mefisto/releases/1.2.3" ] && [ -d "$XDG_DATA_HOME/mefisto/releases/2.0.0" ] && pass 'upgrade conserva release anterior' || fail 'upgrade borro release anterior'
