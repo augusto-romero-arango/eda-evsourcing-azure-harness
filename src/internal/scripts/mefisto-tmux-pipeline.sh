@@ -290,7 +290,7 @@ print_usage() {
     echo "                  rechaza por la misma ambiguedad que --from-stage. Un"
     echo "                  --models malformado aborta ANTES de crear el worktree."
     echo "                  Ejemplo: --models writer=<modelo>,reviewer=<modelo> -- ver"
-     echo "                  src/runtime/contract/models.example.json (issue #1072) para la"
+    echo "                  src/runtime/contract/models.example.json (issue #1072) para la"
     echo "                  forma de los ids por runtime."
     echo ""
     echo "  --variant <label>  (issue #711, corridas paralelas del mismo issue)"

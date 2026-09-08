@@ -4,10 +4,6 @@ def model_errors($path):
   if type != "string" then [issue($path; "se esperaba un string no vacio")]
   elif length == 0 then [issue($path; "se esperaba un string no vacio")]
   else [] end;
-def object_errors($path):
-  if type != "object" then [issue($path; "se esperaba un objeto")]
-  else [] end;
-
 if type != "object" then
   [issue("."; "se esperaba un objeto")]
 else
@@ -20,7 +16,7 @@ else
      else
        ([ $config | keys_unsorted[] | select(. != "profiles" and . != "agents")
           | issue("\($runtime).\(.)"; "campo desconocido") ]
-        + (if $config.profiles == null then []
+        + (if ($config | has("profiles") | not) then []
            elif ($config.profiles | type) != "object" then [issue("\($runtime).profiles"; "se esperaba un objeto")]
            else [ $config.profiles | to_entries[]
                   | .key as $profile | .value
@@ -28,7 +24,7 @@ else
                     then issue("\($runtime).profiles.\($profile)"; "perfil desconocido")
                     else model_errors("\($runtime).profiles.\($profile)")[] end ]
            end)
-        + (if $config.agents == null then []
+        + (if ($config | has("agents") | not) then []
            elif ($config.agents | type) != "object" then [issue("\($runtime).agents"; "se esperaba un objeto")]
            else [ $config.agents | to_entries[] | .key as $agent | .value
                   | model_errors("\($runtime).agents.\($agent)")[] ]

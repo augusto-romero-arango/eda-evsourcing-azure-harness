@@ -23,11 +23,19 @@ _mefisto_models_validate_mapping() {
         MEFISTO_MODELS_ERROR="$MEFISTO_MODELS_VALIDATOR: no existe el validador del mapping de modelos"
         return 1
     fi
+    # jq acepta por defecto un stream de varios documentos; el contrato es un
+    # unico objeto JSON. Se separa este chequeo del validador de forma para que
+    # el programa dedicado siga operando sobre la raiz del mapping.
+    if ! jq -e -s 'length == 1' "$file" >/dev/null 2>&1; then
+        MEFISTO_MODELS_ERROR="$file: no es JSON valido"
+        return 1
+    fi
     if ! errors="$(jq -r -f "$MEFISTO_MODELS_VALIDATOR" "$file" 2>/dev/null)"; then
         MEFISTO_MODELS_ERROR="$file: no es JSON valido"
         return 1
     fi
     if [ -n "$errors" ]; then
+        errors="${errors//$'\n'/; }"
         MEFISTO_MODELS_ERROR="$file: $errors"
         return 1
     fi
@@ -69,6 +77,11 @@ _mefisto_models_resolve() {
         MEFISTO_MODELS_ERROR="runtime '$runtime' no tiene adaptador ($adapter)"
         return 1
     fi
+    # Una resolucion anterior puede haber dejado la funcion de otro archivo
+    # runtime-<id>.sh con el mismo id. El adaptador que se acaba de localizar
+    # es la unica autoridad de esta invocacion: si no declara default, hereda.
+    fn="runtime_${runtime}_default_model"
+    unset -f "$fn" 2>/dev/null || true
     if ! source "$adapter"; then
         MEFISTO_MODELS_ERROR="runtime '$runtime': no se pudo cargar el adaptador ($adapter)"
         return 1
@@ -80,7 +93,6 @@ _mefisto_models_resolve() {
         _mefisto_models_validate_mapping "$mapping_file" || return 1
         model="$(_mefisto_models_lookup "$mapping_file" "$runtime" "$agent_id" "$profile")"
         if [ -z "$model" ]; then
-            fn="runtime_${runtime}_default_model"
             if declare -F "$fn" >/dev/null 2>&1; then
                 model="$($fn "$profile")" || {
                     MEFISTO_MODELS_ERROR="$fn: no acepta el perfil '$profile'"
