@@ -113,3 +113,15 @@ no necesita estar residente en cada sesión, solo cuando se busca en qué ADR vi
 | Arquitectura neutral de runtime y proveedor: OpenCode como dogfooding interno, fuente canonica `src/internal/` con adaptadores generados, perfiles logicos de modelo, y toolchain Bash + jq | MEF-ADR-0049 |
 | Perfiles logicos de modelo por runtime: tabla por defecto del adaptador (enmienda) | MEF-ADR-0049 |
 | Principio de neutralidad de runtime para toda operación de Mefisto (conjunto de runtimes abierto, frontmatter portable de Agent Skills, namespace `mefisto` por adaptador) | MEF-ADR-0050 |
+| No-op de PUT y DELETE por estado ya alcanzado en MEF-ADR-0043 (pasos 2-3 y contrato HTTP de la seccion 6) | MEF-ADR-0043 |
+| Estado ya alcanzado (no-op de PUT/DELETE) en el Definition of Ready | MEF-ADR-0011 |
+| Cobertura del no-op idempotente de PUT/DELETE (repetir la intencion, cero efectos nuevos) en los smoke tests black-box | MEF-ADR-0013 |
+| Smoke tests contra entorno dev desplegado | MEF-ADR-0013 |
+| Manejo de errores en event sourcing y exito HTTP | MEF-ADR-0004 |
+| Manejo de errores e idempotencia en event sourcing | MEF-ADR-0004 |
+| Defaults OpenCode por perfil (`fast` Luna, `balanced` Terra, `deep` Sol) | MEF-ADR-0049 |
+| Resiliencia del pipeline ante limite de uso y caida del proveedor: taxonomia de fallos de agente (reintenta/espera/aborta), matiz `RATE_LIMIT`/`PROVIDER_UNAVAILABLE` vs `STREAM_CUT` que precisa el precedente de #416 sin revertirlo, defaults de la espera (sonda, techo, presupuestos propios) y deteccion delegada al adaptador con degradacion de la reanudacion | MEF-ADR-0051 |
+| Decision multi-runtime sobre navegacion semantica en agentes C# (evidencia insuficiente Claude Code/OpenCode tras #979/#980, fallback textual, capacidad neutral separada de `read` diferida) | MEF-ADR-0052 |
+| Codigo de exito HTTP integrado al test de precedencia de MEF-ADR-0043 (201/204/200/202 por paso, `Location` en create, extension del regimen de migracion a cambios de codigo de exito) | MEF-ADR-0043 |
+| Codigo de exito HTTP como cuarto elemento critico del contrato en el DoR de MEF-ADR-0011 | MEF-ADR-0011 |
+| Vinculo entre el status code esperado por un smoke test y el contrato HTTP declarado en el issue (nunca `202` por defecto), y distincion commit del event store vs. materializacion de proyeccion `Async` | MEF-ADR-0013 |
