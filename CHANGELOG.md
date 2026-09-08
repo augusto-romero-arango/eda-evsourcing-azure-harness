@@ -4,6 +4,235 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-09-08
+
+### Added
+
+- El watchdog de `run_agent_with_watchdog` detecta y reanuda por si solo procesos detenidos: en vez de un unico `sleep <timeout_s>` ciego, itera en rebanadas (`MEFISTO_WATCHDOG_POLL_S`, default 5s) y en cada una revisa con `ps -eo pid=,pgid=,stat=` (filtrado por PGID via awk, portable entre BSD/macOS y GNU/Linux) si algun proceso del grupo del agente quedo en `STAT=T`. De ser asi, envia `SIGCONT` al grupo (nunca otra senal por este camino) y deja constancia en el log de eventos: `STOPPED: <label> tenia N proceso(s) detenido(s) -- SIGCONT enviado`. Es defensa en profundidad y observabilidad (#945), no el arreglo de la causa original (#943): el disparo de TIMEOUT (touch de la senal + kill de grupo + evento) sigue ocurriendo exactamente igual al agotarse el presupuesto -- MEF-ADR-0031 no gana un exit code nuevo. El valor de `MEFISTO_WATCHDOG_POLL_S` se sanea antes de entrar al lazo (no numerico -> default, `0` -> 1): con una rebanada de cero el contador nunca avanzaria y una variable de entorno mal puesta desarmaria en silencio el unico limite de presupuesto del pipeline. De paso, trocear el `sleep` acota la fuga de `sleep` huerfanos que vigila el bloque C de `test-watchdog-trabajo-util.sh`: si el kill de grupo no alcanza al `sleep` del watchdog, ese huerfano ahora muere solo en una rebanada en vez de sobrevivir media hora.
+- Timeout por stage de `mefisto-tooling-pipeline.sh` configurable via `MEFISTO_AGENT_TIMEOUT_SECONDS` (default 1800, entero > 0), mismo patron que `MEFISTO_AGENT_MAX_ATTEMPTS`/`MEFISTO_AGENT_RETRY_BACKOFF_SECONDS`; un valor invalido aborta el pipeline antes de crear el worktree (#946).
+- Se anade `/mefisto-batch-stop`, que escribe una senal de parada suave (`.mefisto/pipeline/batch-stop`) para el batch interno secuencial: el eslabon en curso se completa entero (pipeline, PR, merge, sync verificado) y los siguientes quedan `aplazado`, sin arrancar ningun worktree.
+- El resumen final de `mefisto-batch-pipeline.sh` distingue ahora `completado`/`ERROR`/`aplazado` e imprime la linea lista para relanzar los issues aplazados en el mismo orden (ej. `/mefisto-sequential 45 46`). Una parada solicitada no cuenta como fallo: no incrementa `FAILED`, no dispara `--stop-on-error` y el exit code es 0.
+- Se documenta MEF-ADR-0051 (resiliencia del pipeline ante limite de uso y caida del proveedor): fija la taxonomia de fallos de agente (reintenta/espera/aborta), el matiz entre `RATE_LIMIT`/`PROVIDER_UNAVAILABLE` (parada limpia, se espera) y `STREAM_CUT` (corte a mitad de vuelo, precedente de #416 que se matiza sin revertir), los defaults de la politica de espera (sonda, techo) y el reparto de responsabilidad entre el pipeline y el adaptador de cada runtime.
+- Se anade `/batch-stop`, que escribe una senal de parada suave (`pipeline-state/batch-stop`, MEF-ADR-0017) para los orquestadores publicados: en `batch-pipeline.sh` el eslabon en curso se completa entero (pipeline, PR, merge) y los siguientes quedan `aplazado`, sin arrancar ningun worktree; en `parallel-pipeline.sh` los worktrees ya lanzados terminan su pipeline y abren su PR, pero la cola deja de lanzar issues nuevos.
+- El resumen final de `batch-pipeline.sh` y `parallel-pipeline.sh` distingue ahora `completado`/`ERROR`/`aplazado` e imprime la linea lista para relanzar los issues aplazados en el mismo orden, apuntando al orquestador que se detuvo (`/sequential 45 46` en el batch; `parallel-pipeline.sh 45 46` en el lote paralelo, que es como se invoca ese scheduler --- `/parallel` delega en `tmux-pipeline.sh --parallel`, que abre un pane por issue de entrada y no deja cola que retener). Una parada solicitada no cuenta como fallo: no incrementa `FAILED`, no dispara `--stop-on-error` y el exit code no cambia por esto.
+- Se anade `docs/testing/lsp-experiment-protocol.md`: protocolo y corpus del experimento
+  multi-runtime que mide si LSP reduce contexto/tokens o mejora calidad frente a busqueda
+  textual en agentes C# (Claude Code y OpenCode por separado, sin comparar cifras
+  absolutas entre runtimes). Fija el SHA del consumidor de referencia, los tres casos con
+  oraculo independiente, el diseno de pares contrabalanceados, los brazos texto/LSP, el
+  formato de evidencia con cabecera comun, los umbrales de decision (con la definicion de
+  "hallazgo mayor" y el trato de las repeticiones `no evaluable`) y las reglas de
+  preflight/parada que ejecutaran #979 y #980.
+- Se ejecuta el piloto Claude Code del experimento LSP en agentes C# (`docs/testing/lsp-pilot-claude.md`, protocolo de #976): el preflight de disponibilidad falla en sus tres primeros gates -- el binario `csharp-ls` no esta en el `PATH`, el plugin oficial `csharp-lsp` no esta instalado a ningun scope, y dos consultas de control ejecutadas en `claude -p` headless confirman que la sesion no declara ninguna tool `LSP` -- por lo que el piloto termina como `no evaluable` para los tres roles del corpus (`planner`, `implementer`, `reviewer`), con la tabla de evidencia vacia y sin fabricar cifras.
+- Se ejecuta el piloto OpenCode del experimento LSP en agentes C# (`docs/testing/lsp-pilot-opencode.md`): el preflight confirma en verde los tres gates propios de OpenCode (servidor C# built-in, feature flag `OPENCODE_EXPERIMENTAL_LSP_TOOL` y permiso `lsp: allow`) con invocacion real de la tool, a diferencia del piloto hermano de Claude Code (#979); el corpus de 3 casos x 3 pares queda en cero por ser ejecucion humana sobre el consumidor congelado, no por indisponibilidad del mecanismo.
+- Se documenta MEF-ADR-0052 (decision multi-runtime sobre navegacion semantica en agentes C#): sintetiza la evidencia de #979 (piloto Claude Code, `no evaluable` por plugin/binario ausentes en el entorno) y #980 (piloto OpenCode, no ejecutado), fija `evidencia insuficiente` para las seis combinaciones runtime x rol del corpus de #976 sin comparar cifras absolutas entre runtimes, mantiene el fallback textual sin cargar configuracion/schema de LSP en ningun agente publicado (y registra que el `lsp: allow` heredado de la capacidad `read` en los adaptadores OpenCode del lado interno preexiste a los pilotos y queda diferido a un follow-up), y enumera follow-ups por componente y lado sin ejecutarlos ni crear un issue contenedor.
+
+### Changed
+
+- `/infra` ahora verifica dependencias bloqueadas antes de lanzar el pipeline IaC y desbloquea el issue cuando todas estan resueltas.
+- Se enmienda MEF-ADR-0013 para fijar una identidad sintetica configurable en los smoke tests de dominio, transportada por HTTP y Service Bus sin depender de WorkOS ni APIM.
+- Los pipelines headless de OpenCode usan defaults versionados por perfil
+  (`fast` Luna, `balanced` Terra, `deep` Sol) tras consultar `--models` y
+  `.mefisto/models.json`; agentes y comandos siguen heredando la configuracion
+  global del usuario para admitir cualquier proveedor soportado por OpenCode.
+- El agotamiento de la ventana de uso (5h) y la caida del proveedor pasan a ser familias propias de fallo de agente: `run-events.schema.json` admite `error.kind:"rate_limit"`/`"provider_unavailable"` y un campo opcional `resets_at`; `runtime-claude.jq` los deriva de `rate_limit_event`/`api_error_status` (5xx) y `runtime-opencode.jq` detecta el limite de uso con un patron textual conservador sobre stderr (OpenCode no expone un evento estructurado equivalente). `classify_agent_failure` emite `RATE_LIMIT`/`PROVIDER_UNAVAILABLE` (esta ultima reemplaza a `API_ERROR_SERVER`, misma semantica de reintentable); `RATE_LIMIT` no queda `unrecoverable` ni se reintenta con el backoff corto existente, dejando lista la base para una futura politica de espera (hold) (#965).
+- El pipeline interno de tooling espera en vez de abortar cuando `RATE_LIMIT` o `PROVIDER_UNAVAILABLE` tumban un stage (`run_agent`, `mefisto-tooling-pipeline.sh`): entra en una politica de espera (hold) propia, separada del reintento corto con backoff de #534 -- RATE_LIMIT nunca pasa por ese reintento (#965) y PROVIDER_UNAVAILABLE lo hace solo una vez agotado su presupuesto `MEFISTO_AGENT_MAX_ATTEMPTS`. Si el terminal trae `resets_at` duerme hasta esa hora (mas un margen); si no, sondea cada `MEFISTO_HOLD_PROBE_SECONDS` (default 300s) -- el propio reintento hace de sonda, sin mecanismo de sondeo separado. La espera tiene techo `MEFISTO_HOLD_MAX_SECONDS` (default 21600s = 6h): al agotarse aborta fail-loud, nombrando cuanto se espero y la ultima senal. No consume el presupuesto de reintentos de #534 ni cuenta contra el watchdog del stage (`MEFISTO_AGENT_TIMEOUT_SECONDS`), nunca restaura el worktree (a diferencia del reintento corto), deja rastro `[hold]` en `events.log` por cada ciclo, y un stage que se recupera reporta cuanto tiempo estuvo en espera en el resumen del pipeline (#967).
+- Tras la espera (hold) por `RATE_LIMIT`/`PROVIDER_UNAVAILABLE` de #967, el pipeline interno de tooling (`run_agent`, `mefisto-tooling-pipeline.sh`) reanuda la sesion del intento muerto en vez de repetir el stage completo desde el prompt original: `mefisto-run-agent.sh` acepta `--resume-session <id>` neutral, y cada adaptador lo traduce a su propio flag (`--resume` en Claude Code, `--session` en OpenCode, via las nuevas `runtime_<id>_supports_resume`). El intento reanudado recibe un mensaje corto de continuacion, nunca el prompt completo, y degrada a "stage desde cero" -- con un aviso explicito que nombra el motivo -- en exactamente tres casos: el terminal muerto no trajo `session_id`, el runtime activo no soporta reanudacion, o la sesion reanudada vuelve a morir sin dejar el resumen del stage (ese ultimo caso degrada de forma permanente para el resto de la corrida, sin bifurcar a un id nuevo). `agent_work_is_trustworthy`/`agent_failure_is_unrecoverable` (issue #416) se aplican sin cambios al resultado de la sesion reanudada, y el stage deja constancia de que hubo reanudacion tanto en `events.log` como en el resumen del stage del cuerpo del PR (junto a la nota de espera de #967, que es lo que sobrevive al worktree). El pipeline no enumera runtimes para saber quien soporta reanudacion: descubre la lib del runtime activo en `$MEFISTO_RUNTIME_LIB_DIR` y la carga en un subshell, asi que un runtime nuevo queda cubierto con solo aportar su adaptador (MEF-ADR-0050).
+- El batch interno de tooling (`mefisto-batch-pipeline.sh`) reporta el tiempo en espera (hold, issue #967) de cada eslabon como una nota informativa junto a su estado final (p. ej. "completado (PR #15 mergeado; incluye 10m 0s en espera/hold)"), nunca como fallo: una espera no incrementa `FAILED`, no dispara `--stop-on-error` ni deja `ERROR:` en el tracker; el resumen final del batch anota ademas el tiempo total en espera de toda la corrida. El calculo se apoya en las lineas `[hold]` que ya escribe `events.log` (issue #967), sin depender del proceso del sub-pipeline, y atribuye cada ciclo de espera a la cabecera `=== SESSION ... issue:<N> ===` bajo la que cae -- asi una corrida concurrente lanzada desde el mismo checkout no le regala sus esperas al eslabon en curso.
+- `/mefisto-work-status` distingue, para cada pipeline `running`, tres situaciones al leer la cola de `events.log`: avanzando (actividad reciente), en espera (con la causa y la hora de la proxima sonda) y sin novedades desde hace X minutos -- antes las tres se veian identicas ("EN CURSO" con el mismo cronometro corriendo). Documenta ademas como acotar el rango de un pipeline en ese archivo compartido: la cabecera de sesion es la unica linea que nombra el issue (las de stage, `[hold]`, `FALLO` y `RECUPERADO` no lo llevan).
+- Se unifica la clasificacion de fallos de agente del lado publicado
+  (`classify_agent_failure`, `scripts/_pipeline-common.sh`) y se le suma la
+  politica de espera (hold) ante `RATE_LIMIT`/`PROVIDER_UNAVAILABLE`, con los
+  mismos defaults y variables de entorno que el lado interno
+  (`MEFISTO_HOLD_PROBE_SECONDS`=300s, `MEFISTO_HOLD_MAX_SECONDS`=21600s,
+  MEF-ADR-0051): `tdd-pipeline.sh`, `tooling-pipeline.sh`, `iac-pipeline.sh` y
+  `scaffold-pipeline.sh` ya no duplican su propia cadena de `grep` ni el
+  reintento one-shot ante un 5xx, y ahora esperan en vez de descartar el
+  trabajo del stage cuando el proveedor agota la ventana de uso o cae
+  temporalmente. Lo que queda fuera del watchdog de stage es la espera (el
+  `sleep` entre sondas), no la sonda: cada reintento del bucle corre bajo su
+  propio watchdog de `AGENT_TIMEOUT_SECONDS` y reporta su propia duracion, asi
+  que una sonda colgada no deja el pipeline esperando indefinidamente ni infla
+  las metricas del stage con las horas de espera. El reintento ad hoc por
+  bloqueo de permisos de `tooling-pipeline.sh` se conserva sin cambios -- es
+  otra causa, y la espera no la absorbe.
+- Se enmienda MEF-ADR-0051 (issue #971): el lado publicado deja de figurar como
+  implementacion pendiente. Lo que queda fuera es la migracion al runner neutral
+  (la deteccion publicada sigue leyendo texto, aislada en una sola funcion) y la
+  reanudacion de sesion tras una espera.
+- La sonda de espera (hold) de `tdd-pipeline.sh`, `tooling-pipeline.sh` e
+  `iac-pipeline.sh` ya no reenvia el prompt original completo del stage tras
+  una espera por `RATE_LIMIT`/`PROVIDER_UNAVAILABLE`: reanuda la conversacion
+  truncada del propio worktree con `claude -c`/`--continue` (`--continue`
+  resuelve "la conversacion mas reciente del directorio actual", y cada stage
+  ya hace `cd "$WORKTREE_PATH"` antes de invocar el CLI), con un prompt corto
+  de continuacion (`agent_resume_prompt`, `scripts/_pipeline-common.sh`) en
+  vez del prompt entero. A diferencia del lado interno, no hace falta
+  capturar `session_id` (solo confiable con `PIPELINE_CAPTURE_STREAM=true`):
+  verificado con el CLI real que dos sesiones consecutivas en el mismo
+  directorio resuelven `-c` a la SEGUNDA, nunca a la primera -- exactamente
+  lo que hace falta cuando varios agentes corrieron en secuencia en el mismo
+  worktree.
+- La sonda solo pasa `-c` si el intento que acaba de morir dejo su propia
+  sesion en el worktree: `agent_session_transcript_count`
+  (`scripts/_pipeline-common.sh`) cuenta los transcripts del store local del
+  directorio (`<config>/projects/<cwd-slug>/*.jsonl`, honrando
+  `CLAUDE_CONFIG_DIR`) y cada `run_agent` toma esa cuenta como linea base
+  antes de invocar al CLI. La precondicion no se le puede delegar al CLI
+  porque `-c` **ignora en silencio `--agent`** (verificado: con `-c`, un
+  `--agent <nombre inexistente>` no falla y responde como Claude generico;
+  sin `-c`, aborta con "not found") -- un `-c` sin nada que continuar
+  arrancaria una sesion virgen, sin el agente del stage, recibiendo el prompt
+  de continuacion con `bypassPermissions` activo, y en el pipeline TDD podria
+  aterrizar en la conversacion de un stage ANTERIOR del mismo worktree.
+- Dos degradaciones, ambas con warning que nombra el motivo (en consola y en
+  el log de eventos): si no hay sesion del intento muerto que continuar, la
+  sonda corre desde cero con el prompt original y el `--agent` correcto (no
+  es permanente -- esa sonda deja su sesion, asi que la siguiente ya puede
+  reanudar); si la sonda reanudada vuelve a morir sin dejar el resumen del
+  stage, la reanudacion se degrada de forma permanente para el resto de ese
+  stage. Los gates de confianza de cada stage (existencia del resumen,
+  deteccion de trabajo truncado) se aplican sin cambios al resultado.
+  `scaffold-pipeline.sh` queda fuera de este issue.
+- Se enmienda MEF-ADR-0051 (issue #972): se agrega la decision 5 (reanudacion
+  publicada via `-c`/`--continue` por directorio, sin `session_id`, con
+  verificacion propia de la precondicion) y se retira de "Que queda fuera" el
+  bullet de la reanudacion publicada, ya implementada.
+- `parallel-pipeline.sh` deja de lanzar issues nuevos de la cola mientras haya una espera (hold, issue #971) activa por limite de uso o caida del proveedor -- arrancar mas worktrees solo multiplicaria los que esperan -- y en su dashboard el issue en vuelo pasa a `espera/hold` con la causa y la hora de la proxima sonda, en vez de quedarse con el stage congelado y el cronometro corriendo (etiqueta propia, distinta del `en espera` que ya usa para el issue que espera turno de la cola). No es una parada: en cuanto la espera se resuelve, el scheduler retoma el lanzamiento sin intervencion humana y ningun pendiente queda `aplazado` (issue #973).
+- `batch-pipeline.sh` reporta el tiempo en espera (hold) de cada eslabon como nota informativa anexa a su desenlace real -- completado o fallido -- ("completado (PR #15 mergeado) (incluye 10m 0s en espera/hold)"), y suma el total de la corrida en el resumen final. Una espera nunca incrementa `FAILED`, dispara `--stop-on-error`, deja `ERROR:` en el tracker ni cambia el exit code. El calculo se apoya en las lineas `[hold]` que ya escribe `events.log`, sin depender del proceso del sub-pipeline, y atribuye cada ciclo a la cabecera de sesion (`SESSION ... issue:<N>`) bajo la que cae: una corrida concurrente lanzada desde el mismo checkout no le regala sus esperas al eslabon en curso (issue #973, homologo publicado del issue #969).
+- `/work-status` distingue, para cada pipeline `running`, avanzando / en espera (con la causa legible y la hora de la proxima sonda) / sin novedades desde hace X, leyendo las lineas `[hold]` de `events.log` -- antes una espera de tres horas era indistinguible de un pipeline colgado (issue #973).
+- Las funciones nuevas de `scripts/_pipeline-common.sh` (`hold_recently_active`, `format_hold_status`, `hold_seconds_in_range`, `hold_note_suffix`, `fmt_hold_duration`) reconstruyen los epochs de una linea `[hold]`, que solo guarda hora del dia sin fecha, corrigiendo el cruce de medianoche y descartando las lineas de otro dia: sin eso, un `events.log` cuyo ultimo hold es de ayer 18:00 se leia como espera activa durante el dia siguiente y bloqueaba la cola de `parallel-pipeline.sh` por horas (issue #973).
+- Se retira la dependencia del MCP de Rider/JetBrains de `implementer`, `projection-implementer` y `reviewer`: ya no declaran `mcp__jetbrains__*` en su allowlist `tools:` ni prescriben ese servidor como primera opcion. Navegacion y lectura pasan a las herramientas incluidas (`Glob`/`Grep`/`Read`); el diagnostico que hacian `get_file_problems`/`get_symbol_info` pasa a `dotnet build` (todos los warnings, no solo errores), `dotnet format --verify-no-changes` (imports innecesarios y estilo segun `.editorconfig`) y `Grep` sobre los tipos publicos nuevos; el formateo pasa a `dotnet format`; y el renombrado de simbolos en `reviewer` se verifica con busqueda textual (`Grep`) sobre todas las referencias mas build/tests en verde, conservando integro el guardrail de MEF-ADR-0036 sobre el renombrado de eventos persistidos. El servidor `jetbrains` es configuracion user-level que no viaja con el plugin, asi que la navegacion normal del harness ya no presupone Rider instalado (MEF-ADR-0050).
+- Se enmienda MEF-ADR-0052 con la evidencia real del piloto OpenCode: la
+  version original registro que ese piloto "nunca comenzo" porque su reporte no
+  estaba en `main` -- la etapa `writer` que lo escribio murio por el watchdog
+  antes de commitear --, cuando de hecho el preflight si corrio y sus tres gates
+  de mecanismo (servidor C# built-in, feature flag `OPENCODE_EXPERIMENTAL_LSP_TOOL`
+  y permiso `lsp: allow`) quedaron en verde con invocacion real de la tool. La
+  conclusion de sintesis no cambia (`evidencia insuficiente` en las seis
+  combinaciones, corpus en cero pares), pero si la causa registrada para OpenCode
+  y el follow-up que le corresponde: correr el corpus sobre el consumidor
+  congelado, no reejecutar el preflight desde cero.
+
+### Fixed
+
+- `/install-auth` deja de transcribir un checklist post-deploy propio en su Paso 9: reutiliza tal cual el que ya emite `/install-apim` (su Paso 12, corregido por el issue #999), eliminando la copia que seguia fijando `202 Accepted` para cualquier POST autenticado.
+- Se declara en MEF-ADR-0043 el no-op de PUT y DELETE cuando el estado pretendido ya esta alcanzado: los pasos 2 y 3 del test de precedencia fijan el mismo codigo de exito contractual sin evento nuevo, distinguiendolo de una identidad o un stream padre inexistente (que conservan el `404 NotFound` vigente de MEF-ADR-0004). El contrato HTTP de PUT/DELETE (seccion 6, DoR de MEF-ADR-0011) suma el campo "Estado ya alcanzado".
+- Se exige en MEF-ADR-0011 el campo **Estado ya alcanzado** como quinto elemento del contrato HTTP de todo comando PUT/DELETE nuevo o migrado (paso 2/3 del test de precedencia de MEF-ADR-0043): el estado observable que lo vuelve no-op, la respuesta esperada y la confirmacion de cero eventos, distinguiendo explicitamente ese no-op de una identidad/stream inexistente y de un conflicto o regla de negocio real. Cierra el vacio que dejaban #850/#1003 frente al Definition of Ready.
+- Se corrige MEF-ADR-0013: todo smoke test de un PUT/DELETE nuevo o migrado cubre ahora el no-op
+  idempotente de "Estado ya alcanzado" (#850/#1004) -- repite la misma intencion y verifica que el
+  segundo intento responde el mismo codigo de exito contractual sin agregar un evento ni una
+  publicacion nuevos. Distingue ese caso de una identidad nunca conocida o un stream padre
+  inexistente (conservan el `404` vigente) y correlaciona el assert de cero efectos nuevos por
+  streamId/identificador de la corrida, nunca por conteos globales, reutilizando el patron
+  purge-before-act de Service Bus sin repetir la purga entre el primer y el segundo intento.
+  El assert de cero eventos se especifica sobre el conteo (o la version) del stream de la corrida --
+  un `ExisteEventoAsync` booleano no distingue un evento de dos -- y el de cero publicaciones sobre
+  el `TimeoutException` de `WaitForMessageAsync` como resultado esperado.
+- Se corrige `agents/planner.md`: al sugerir el contrato HTTP de un PUT/DELETE (MEF-ADR-0043), el
+  planner ahora pregunta al experto cual es el **estado ya alcanzado** que vuelve al comando un
+  no-op, distinguiendo ese no-op de una identidad/stream padre inexistente y de un conflicto o
+  regla de negocio real (MEF-ADR-0004). La propuesta por defecto es el codigo de exito contractual
+  ya declarado, cero eventos y cero excepcion -- sin sugerir nunca un tipo `SinCambios`; una
+  respuesta distinta exige justificacion explicita del experto en el issue. El template de "Modelo
+  de eventos" suma el campo "Estado ya alcanzado" para PUT/DELETE (estado observable, respuesta y
+  eventos esperados `Ninguno`), el checklist pre-listo y el gate del Definition of Ready lo exigen
+  para todo endpoint que resuelva en los pasos 2 o 3 del test de precedencia, aclarando que la
+  convencion es propia de Mefisto y no una obligacion de RFC 9110. Se conserva el regimen de
+  migracion explicita (issue de refactor con inventario) para endpoints preexistentes no
+  conformes: el bloque "Endpoints preexistentes no conformes" suma el PUT/DELETE que hoy
+  responde `404`/`409` ante un estado ya alcanzado al inventario de no conformidades que el
+  planner solo puede **sugerir** migrar (MEF-ADR-0043 seccion 7), y el checklist pre-listo
+  acota el gate a endpoints nuevos o modificados.
+- Se exige que los tests de PUT/DELETE nuevo o migrado cubran el no-op de estado ya alcanzado: sin excepcion, eventos ni publicaciones, con estado final y codigo HTTP de exito contractual verificados.
+- Se ensena al agente implementer el no-op exitoso de PUT/DELETE: el aggregate retorna antes de agregar eventos cuando el estado objetivo ya esta alcanzado, el handler no publica una coleccion vacia y el endpoint conserva el codigo de exito contractual sin introducir protocolos de resultado nuevos.
+- Se ensena al agente smoke-test-writer a verificar el no-op idempotente de cada PUT/DELETE nuevo o migrado: repite la misma intencion sobre el estado ya alcanzado, asierta el codigo declarado y demuestra por stream e identificador de corrida que no se persisten eventos ni se publican mensajes adicionales.
+- Se corrige el gate HTTP del reviewer para bloquear no-ops PUT/DELETE nuevos o migrados que emitan efectos, fallen o no cubran el segundo intento en tests unitarios y smoke.
+- Se corrige el modo de los agentes internos writer y reviewer para que OpenCode los seleccione sin recurrir silenciosamente al agente predeterminado.
+- Se prevalida sincronicamente la rama base antes de despachar batches internos por tmux o Herdr, evitando anunciar corridas que abortaran por trabajo pendiente.
+- Se bloquea tempranamente el pipeline IaC cuando un issue marcado `bloqueado` conserva dependencias abiertas, evitando worktrees y agentes innecesarios.
+- Se corrige MEF-ADR-0004 para elegir el exito HTTP segun la durabilidad del cambio primario, en vez de responder `202 Accepted` por efectos downstream eventuales.
+- Se clasifica el estado ya alcanzado como no-op exitoso en MEF-ADR-0004, sin evento ni publicacion nueva.
+- Aislar la tty en `run_agent_with_watchdog`: el agente ya no arranca bajo `set -m` (job control), sino en una sesion nueva sin terminal de control (`setsid`, o su fallback en Perl si `setsid` no esta en PATH) con stdin desde `/dev/null`, para que ninguna tool Bash del agente pueda disparar `SIGTTIN`/`SIGTTOU` y dejar el stage entero suspendido (`STAT=T`) hasta un `SIGCONT` manual (#943). Sin `setsid` ni `perl` en PATH, degrada al mecanismo anterior dejando un WARN explicito en el log de eventos.
+- Se elimina la ultima senal de timeout espuria del watchdog de `run_agent_with_watchdog`: la senal en disco se crea con una redireccion builtin (`: >`) en vez de `touch`. Un `touch` es un proceso externo y, si el SIGKILL que cancela al watchdog aterrizaba entre su fork y su exit, quedaba huerfano y creaba el archivo despues del `rm -f` de la rama de cancelacion -- un stage que termino bien se clasificaba como TIMEOUT y su trabajo se descartaba. Medido: 2-4 espurias por cada 300 corridas cortas con `touch`, cero con la redireccion (bloque C-6 de `test-watchdog-trabajo-util.sh`, que fallaba de forma intermitente).
+- Se corrige `herdr-workspace.sh` para montar todas las filas de runtime configuradas en una sola invocacion, sin panes ancla ni cierres que puedan terminar el propio script.
+- `test-runtime-claude.sh` y `test-runtime-opencode.sh` pinean `MEFISTO_RUNTIME_LIB_DIR` a la `lib/` de su propio checkout antes de ejercitar el runner real. `mefisto-runtime.sh` respeta (a proposito) un valor ya exportado por el caller, y los pipelines internos la exportan apuntando al checkout donde arrancaron: corriendo dentro de un worktree, el bloque del runner de esas dos suites traducia con el adaptador del checkout PRINCIPAL en vez del que estaba juzgando, y daba por bueno codigo que nunca ejecuto (MEF-ADR-0031). Se detecto justamente con los kinds nuevos de #965, cuyas aserciones pasaban al invocar el adaptador directo y fallaban via runner (#965).
+- Se corrige MEF-ADR-0043: el test de precedencia de comandos HTTP (seccion 2) ahora fija tambien el codigo de exito de cada paso (`201 Created` con `Location` para create, `204 No Content` para PUT/DELETE/accion sin representacion, `200 OK` para accion con representacion, `202 Accepted` solo con procesamiento diferido y justificacion explicita), en vez de dejarlo desconectado del verbo y la ruta. Corrige ademas la consecuencia positiva que todavia citaba `POST 202 Accepted` como respuesta estandar universal de comando, premisa ya corregida en MEF-ADR-0004 por el issue #849.
+- Se corrige MEF-ADR-0011: el contrato HTTP critico de comandos exige ahora el codigo de exito (`201`/`204`/`200`/`202`) ademas de verbo, ruta y paso de precedencia, y para `202 Accepted` la razon concreta de que procesamiento queda pendiente. "Por que cada campo critico" nombra al `test-writer`, `implementer`, `smoke-test-writer` y `reviewer` como consumidores directos sin asumir un valor por defecto, y el criterio 6 de "Validacion en `/implement`" incorpora la presencia del codigo y su justificacion, sin tocar `commands/implement.md` (delegacion dinamica ya existente).
+- Se corrige MEF-ADR-0043 seccion 6: se retira del cuerpo el forward reference que el issue #990 dejo abierto ("MEF-ADR-0011 hoy enumera tres elementos", "el gate programatico sigue exigiendo solo los tres primeros"), afirmacion que la sincronizacion de MEF-ADR-0011 vuelve falsa; queda registrada solo en el control de cambios de ese ADR.
+- Se corrige MEF-ADR-0013: el status code del camino feliz de un smoke test viene ahora del contrato
+  HTTP declarado en el issue (MEF-ADR-0011), nunca de un `202` memorizado por el `smoke-test-writer`.
+  Cierra el desfase que dejaban el issue #849 (MEF-ADR-0004 retira el `202` universal) y el issue
+  #991 (MEF-ADR-0011 exige el codigo de exito como cuarto elemento del contrato) frente a esta
+  doctrina, que seguia citando `202` como ejemplo representativo. Suma ademas la distincion entre el
+  commit sincronico del event store y la materializacion eventual de una proyeccion `Async`
+  (MEF-ADR-0034) -- con su fila propia en la tabla de efectos secundarios: el polling del GET de una
+  vista materializada nunca cambia el status del POST que la origino.
+- Se corrige `agents/planner.md`: al sugerir el contrato HTTP de un comando (MEF-ADR-0043), el
+  planner ahora propone tambien el codigo de exito de la respuesta sincrona aplicando el criterio
+  autoritativo de MEF-ADR-0004 -- `201` al crear (con `Location` cuando existe URI canonica de
+  lectura, sin degradar el write-side a `202` por la visibilidad eventual del read-side), `204` al
+  completar sin representacion, `200` al devolver representacion y `202` solo con justificacion
+  verificable de que procesamiento continua tras responder. El template de "Modelo de eventos" suma
+  el campo "Codigo de exito", el checklist pre-listo lo exige por endpoint y rechaza un `202` sin
+  justificacion, y se conserva el regimen de migracion explicita (issue de refactor con inventario)
+  para endpoints preexistentes no conformes.
+- `agents/test-writer.md` ya no asume `AcceptedResult` para todo endpoint HTTP de comando: lee el codigo de exito declarado en el contrato del issue (MEF-ADR-0043) y assertea el contrato observable de la respuesta -- status code via `IStatusCodeActionResult`, mas el header `Location` cuando el contrato declara la URI canonica de lectura del recurso creado, la ausencia de cuerpo en un `204`, el `Value` esperado en un `200`, y `202` solo cuando el contrato trae la justificacion del procesamiento pendiente -- sin fijar la clase concreta de `Microsoft.AspNetCore.Mvc` que el implementer elija.
+- Se corrige `agents/implementer.md`: la seccion "Endpoint HTTP" ya no devuelve
+  `new AcceptedResult()` como default universal tras `await commandRouter.InvokeAsync(...)` --
+  devuelve el codigo de exito que el contrato del issue declara (MEF-ADR-0043 seccion 6), con la
+  tabla completa por paso de precedencia: `201 Created` al crear, `204 No Content` para PUT que
+  reemplaza, DELETE y accion sin representacion, `200 OK` para accion con representacion, y
+  `202 Accepted` unicamente cuando el procesamiento solicitado queda diferido y el issue lo
+  justifica. Aclara que la eventualidad de proyecciones y de efectos downstream por Service Bus no
+  convierte por si sola el commit sincrono en `202` (MEF-ADR-0004), fija como se arma el `Location`
+  de un `201` -- prefijo de ruta del host (`routePrefix`, `api` por default) mas la `Route` del
+  `[HttpTrigger]` de la Function GET canonica, nunca una cadena reinventada ni un helper de
+  generacion de URLs no verificado en el worker aislado --, y extiende el fallback de issues
+  legados sin contrato declarado para que derive el codigo de exito del mismo test de precedencia
+  y lo documente en el PR en vez de conservar `202` por precedente.
+- Se corrige `agents/smoke-test-writer.md`: el agente ya no fija `HttpStatusCode.Accepted` como
+  status del camino feliz; lo lee del contrato HTTP declarado en el issue (MEF-ADR-0011) y lo
+  asierta tal cual, sin default asumido (MEF-ADR-0013, issue #992). Cuando el issue no declara el
+  codigo, deja sin escribir el camino feliz de ese endpoint y reporta el vacio del DoR en su
+  resumen, en vez de adivinar. Suma verificaciones especificas por codigo -- `Location` para `201`
+  (verificando el header, nunca dereferenciandolo: una proyeccion `Async` lo hace responder `404`
+  durante su ventana de materializacion, MEF-ADR-0004/MEF-ADR-0034), body vacio para `204`,
+  representacion declarada para `200` sin invadir las reglas de negocio de los unit tests -- y deja
+  el ejemplo del dominio publicador con su `202` explicitamente justificado (procesamiento primario
+  diferido) en vez de ensenarlo como respuesta universal. Aclara ademas que el polling del GET sobre
+  una proyeccion `Async` nunca justifica que el smoke test del POST espere `202`.
+- Se corrige `agents/reviewer.md`: el checklist HTTP de comandos (MEF-ADR-0043) ahora contrasta el
+  codigo de exito observable contra el paso de precedencia aplicable y contra el contrato pactado en
+  el issue, ademas de verbo y ruta. Un `202 Accepted` sin declaracion y justificacion explicitas de
+  procesamiento pendiente es hallazgo bloqueante -- la sola eventualidad de una proyeccion `Async` o
+  de un efecto downstream por Service Bus nunca lo justifica cuando el cambio primario ya quedo
+  durable antes de responder (MEF-ADR-0004). Suma verificaciones por codigo -- `Location` contra la
+  URI canonica de lectura para `201`, ausencia de representacion para `204`, la representacion
+  pactada para `200` -- y exige en la revision de smoke tests el mismo codigo declarado en el
+  contrato, como chequeo separado de la cobertura de efectos secundarios (MEF-ADR-0013). El regimen
+  de endpoints preexistentes conserva su caracter no bloqueante salvo que el issue haya pactado
+  explicitamente migrar el codigo de exito. El criterio para juzgar un `202` es si el cambio primario
+  solicitado quedo durable al responder -- no si el handler agrego algun evento, que todos agregan --,
+  de modo que el `202` con procesamiento realmente pendiente sigue siendo valido; y en un issue legado
+  sin contrato declarado se omite solo el contraste con el contrato: la exigencia de justificar el
+  `202` nace de MEF-ADR-0004 y sigue vigente sobre un endpoint nuevo. Excluye del gate a los clientes HTTP tipados de un
+  servidor MCP que usan `IsSuccessStatusCode`/`EnsureSuccessStatusCode`, que toleran correctamente
+  cualquier `2xx` contractual sin fijar `202`.
+- Se corrige el checklist post-deploy de `/install-apim`: el POST autenticado deja de exigir un
+  `202 Accepted` fijo y pasa a pedir que se elija un endpoint POST real ya expuesto detras del
+  gateway y se verifique el codigo de exito que declara su contrato HTTP (`200`/`201`/`202`/`204`,
+  MEF-ADR-0011 y MEF-ADR-0043 seccion 2/6). El punto **verifica** ese contrato, no lo **impone**: un
+  `202` justificado por procesamiento diferido sigue siendo correcto (MEF-ADR-0004), igual que el
+  `202` universal anterior al issue #849 que conserve un endpoint preexistente -- MEF-ADR-0043
+  seccion 7 no fuerza esa migracion, y un desfase asi no es un fallo del gateway. Lo que desaparece
+  es el `202` como codigo por default del borde; si el endpoint elegido no declara ninguno, se
+  registra el vacio del contrato en vez de adivinarlo.
+- La evidencia de que APIM autentico y reenvio la request queda como punto separado del status del
+  backend: un `2xx` aislado no demuestra el forwarding -- lo demuestra ver el request en la Function
+  App backend desde App Insights (B2 de MEF-ADR-0032). Las verificaciones de CORS, 401, headers de
+  identidad, verbo QUERY y operacion APIM faltante (B11) no cambian.
+
 ## [0.36.0] - 2026-09-07
 
 ### Added
@@ -2046,7 +2275,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.36.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.0...HEAD
+[0.37.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.33.0...v0.34.0
