@@ -61,7 +61,7 @@
         "R1",
         "R2"
       ],
-      "motivo": "Tabla fija adapter_claude_default_model (fast->haiku, balanced->sonnet, MEF-ADR-0049 CA-4 enmendada, issue #857) y el literal `claude --agent <id> \"$ARGUMENTS\"` que emite al traducir la directiva neutral {{mefisto:launch-agent}} (issue #854): es la UNICA pieza autorizada a nombrar ese alias y esa invocacion, porque es la propia traduccion documentada hacia el runtime Claude Code."
+      "motivo": "Wrapper temporal de runtime_claude_default_model para la generacion de frontmatter y el literal `claude --agent <id> \"$ARGUMENTS\"` que emite al traducir la directiva neutral {{mefisto:launch-agent}} (issue #854): es la pieza autorizada a nombrar esa invocacion; la tabla concreta vive en src/runtime desde #1072."
     },
     {
       "path": "src/internal/scripts/lib/adapter-opencode.sh",
@@ -70,7 +70,7 @@
         "R2",
         "R3"
       ],
-      "motivo": "Contiene la tabla versionada profile->provider/model de OpenCode (issue #961) y traduce la directiva neutral {{mefisto:run}} al literal `MEFISTO_RUNTIME=opencode ./.claude/scripts/<script> ...` (issue #854). Es el adaptador autorizado para esas referencias concretas; la fuente neutral sigue bajo R1."
+      "motivo": "Envuelve runtime_opencode_default_model durante la migracion del generador y traduce la directiva neutral {{mefisto:run}} al literal `MEFISTO_RUNTIME=opencode ./.claude/scripts/<script> ...` (issue #854). La tabla concreta vive en src/runtime desde #1072; la fuente neutral sigue bajo R1."
     },
     {
       "path": "src/internal/scripts/lib/runtime-claude.sh",
