@@ -1011,11 +1011,11 @@ auto_commit_if_needed() {
     # inyecta ni revierte este archivo (ver el bloque de creacion del
     # worktree), asi que lo unico que puede aparecer aqui es una edicion
     # legitima del agente.
-    # src/{internal,published,runtime}/, dist/, .opencode/{agents,commands,plugins,skills}/,
-    # AGENTS.md y opencode.json
-    # (issue #852, MEF-ADR-0049): registrados de antemano en la allowlist (MEF-ADR-0019
-    # seccion E) para la arquitectura neutral de runtime/proveedor -- ver is_path_in_mefisto_scope
-    # (_mefisto-common.sh) para el detalle y justificacion de cada entrada.
+    # src/internal/, .opencode/{agents,commands,plugins,skills}/, AGENTS.md y
+    # opencode.json se registraron en #852 (MEF-ADR-0049); src/published/,
+    # src/runtime/ y dist/ se registran en #1043 (MEF-ADR-0053). Todas estas
+    # entradas respetan la secuencia de MEF-ADR-0019 seccion E; ver
+    # is_path_in_mefisto_scope (_mefisto-common.sh) para el detalle.
     local paths="commands/ agents/ scripts/ hooks/ docs/ .claude-plugin/ .claude/commands/ .claude/agents/ .claude/scripts/ .claude/settings.json changelog.d/ src/internal/ src/published/ src/runtime/ dist/ .opencode/agents/ .opencode/commands/ .opencode/plugins/ .opencode/skills/ AGENTS.md opencode.json README.md CHANGELOG.md CLAUDE.md .gitignore"
 
     if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- $paths 2>/dev/null)" ]; then
@@ -1092,7 +1092,7 @@ ALCANCE DE ESCRITURA PERMITIDO:
 
 Si el issue requiere escribir en una ruta o tipo de artefacto que NO esta en el listado anterior, verifica antes la allowlist autoritativa: la funcion is_path_in_mefisto_scope de src/internal/scripts/lib/_mefisto-common.sh, tal como esta en main (.claude/scripts/_mefisto-common.sh es solo el shim que la sourcea). Es la que el gate del pipeline evalua, y el listado de arriba puede quedarse corto frente a ella. Si la ruta tampoco esta ahi, NO intentes crear archivos en ella aunque el issue lo describa: primero hace falta un PR que la registre en los gates de scope/changelog (ver MEF-ADR-0019, seccion E -- registrar una ruta y usarla son dos PRs distintos, el de registro va primero y no crea archivos bajo la ruta que registra). Reporta ese bloqueo en tu resumen de stage 1 para que el PR de registro se abra antes de continuar con este issue.
 
-NO MODIFIQUES NADA FUERA DE ESE SCOPE. Mefisto no tiene tests/, infra/, ni .github/workflows/; src/ solo existe bajo src/internal/, y src/ fuera de internal/ sigue fuera de scope.
+NO MODIFIQUES NADA FUERA DE ESE SCOPE. Mefisto no tiene tests/, infra/, ni .github/workflows/; src/ fuera de internal/, published/ y runtime/ sigue fuera de scope.
 
 CONTEXTO DE EJECUCION:
 - Modo no-interactivo (print mode). No hay un humano al otro lado.

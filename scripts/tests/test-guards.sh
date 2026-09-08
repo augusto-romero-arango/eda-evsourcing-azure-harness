@@ -272,9 +272,10 @@ echo "[E2] is_path_in_mefisto_scope clasifica correctamente"
     # skills/ y .claude/skills/: Agent Skills publicados e internos (MEF-ADR-0033)
     # changelog.d/: fragmentos de CHANGELOG/indice de ADRs (issue #380)
     # .mcp.json: declaracion del server MCP bundleado (issue #763), entrada EXACTA
-    # src/{internal,published,runtime}/, dist/, .opencode/{agents,commands,plugins,skills}/,
-    # AGENTS.md, opencode.json:
-    # arquitectura neutral de runtime/proveedor (issue #852, MEF-ADR-0049)
+    # src/internal/, .opencode/{agents,commands,plugins,skills}/, AGENTS.md y
+    # opencode.json: arquitectura neutral interna (issue #852, MEF-ADR-0049).
+    # src/{published,runtime}/ y dist/: distribucion publicada multi-runtime
+    # registrada antes de poblarla (issue #1043, MEF-ADR-0053).
     for valid in "commands/foo.md" "skills/projections/SKILL.md" "skills/projections/scripts/check.sh" "agents/bar.md" "scripts/baz.sh" "hooks/hooks.json" "docs/adr/mef-adr-0001-service-bus-topics-por-evento.md" ".claude-plugin/plugin.json" ".claude/commands/mefisto-foo.md" ".claude/skills/mefisto-doctrina/SKILL.md" ".claude/settings.json" ".mcp.json" "changelog.d/380.added.md" "changelog.d/README.md" "README.md" "src/internal/foo.ts" "src/published/foo.md" "src/runtime/foo.sh" "dist/x" ".opencode/agents/foo.md" ".opencode/commands/foo.md" ".opencode/plugins/foo.js" ".opencode/skills/foo/SKILL.md" "AGENTS.md" "opencode.json"; do
         if is_path_in_mefisto_scope "$valid"; then
             echo "  PASS: '$valid' en scope de Mefisto"

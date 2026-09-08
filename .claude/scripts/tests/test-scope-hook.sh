@@ -17,7 +17,8 @@
 #   [D] Degradacion segura (CA-3): stdin vacio, JSON invalido, sin file_path y
 #       ruta absoluta fuera del worktree -> exit 0, nunca bloquea por error propio.
 #   [E] Cableado: .claude/settings.json registra el hook con matcher Edit|Write
-#       apuntando al script, y el pipeline ya no inyecta ni revierte ese archivo.
+#       apuntando al script; el pipeline reconcilia sus listas operativas con la
+#       allowlist y ya no inyecta ni revierte settings.json.
 #
 # El hook NO escribe archivos: recibe el JSON del tool call por stdin y solo
 # decide. Por eso los casos se ejercitan alimentandolo con el mismo payload que
@@ -149,6 +150,11 @@ if echo "$HOOK_STDERR" | grep -qi "revierte"; then
 else
     fail "el mensaje no pide revertir; en PostToolUse el archivo YA existe y decir 'no lo crees' es inaccionable"
 fi
+if echo "$HOOK_STDERR" | grep -q 'src/{internal,published,runtime}/, dist/'; then
+    pass "el catalogo del feedback temprano enumera las tres raices nuevas"
+else
+    fail "el catalogo del feedback temprano no refleja src/published/, src/runtime/ y dist/"
+fi
 
 # -------- Bloque C: rutas ignoradas por git no avisan --------
 
@@ -256,10 +262,16 @@ else
     pass "el pipeline interno ya no inyecta .claude/settings.json desde el clon principal"
 fi
 
-if grep -q 'src/published/ src/runtime/ dist/' "$PIPELINE"; then
-    pass "src/published/, src/runtime/ y dist/ estan en los paths de auto-commit / deteccion de cambios"
+if printf '%s\n' "$PIPELINE_CODE" | grep 'local paths=' | grep -q 'src/published/ src/runtime/ dist/'; then
+    pass "src/published/, src/runtime/ y dist/ estan en la lista operativa de auto-commit"
 else
-    fail "src/published/, src/runtime/ o dist/ no figura en los paths de auto-commit: una edicion del writer no llegaria al PR"
+    fail "la lista operativa de auto-commit omite src/published/, src/runtime/ o dist/"
+fi
+
+if printf '%s\n' "$PIPELINE_CODE" | grep 'status --porcelain -- commands/' | grep -q 'src/published/ src/runtime/ dist/'; then
+    pass "src/published/, src/runtime/ y dist/ estan en la deteccion de cambios del writer"
+else
+    fail "la deteccion de cambios del writer omite src/published/, src/runtime/ o dist/"
 fi
 
 echo ""
