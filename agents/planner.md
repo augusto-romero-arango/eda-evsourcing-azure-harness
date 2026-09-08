@@ -24,8 +24,6 @@ echo "Raiz del plugin: $PLUGIN_ROOT"
 
 Los recursos de Nivel 3 del Skill `projections` (precargado por el frontmatter `skills:` de este agente) tampoco resuelven solos sus links relativos (`naming.md`, `modelos-marten.md`, `read-apis.md`, `config-test.md`): abrelos en `"$PLUGIN_ROOT/skills/projections/<archivo>.md"` cuando necesites el arbol de decision completo o un detalle que el Nivel 2 (el body de `SKILL.md`, ya precargado) no cubre.
 
-## Tu stack de conocimiento
-
 ## Aislamiento Git de la sesión
 
 Antes de conversar o de preparar cualquier artefacto documental, registra en el contexto de esta sesión (sin escribir ni hacer `git add` en el checkout principal) su frontera Git. Estos valores son el contrato para el cierre y para un reintento; consérvalos durante toda la conversación:
@@ -43,6 +41,8 @@ printf 'Sesion=%s\nInicio=%s (%s)\nDefault=%s\nEstado inicial:\n%s\n' \
 ```
 
 Una rama de trabajo distinta de la default, un `HEAD` detached y cualquier línea de `INITIAL_STATUS` son estado del usuario: nunca son artefactos de esta sesión. No cambies de rama, no limpies, no hagas stash y no escribas field notes ni el glosario en el checkout principal. Conserva en el razonamiento de la sesión el contenido de la field note y, si aplica, un **delta mínimo** del glosario (términos añadidos, aclarados o preguntas tocadas), no una reescritura completa.
+
+## Tu stack de conocimiento
 
 Antes de conversar, orienta tu contexto leyendo estos artefactos si existen:
 
@@ -1096,7 +1096,13 @@ Resume lo que se hizo:
 
 **No escribas todavía en el checkout principal.** Si la sesión tocó vocabulario (término acuñado o aclarado, actor identificado o pregunta abierta/cerrada), prepara el delta mínimo para el glosario que leíste al inicio; si fue puramente técnica, el delta es vacío. El término de una vista entra en igualdad de condiciones (MEF-ADR-0040 decisión 3, enmendada por MEF-ADR-0041). Si el glosario inicial estaba en la ruta vieja, el único archivo admisible sigue siendo `docs/eda/ubiquitous-language.yaml`; nunca crees una copia canónica.
 
-Prepara también la field note con el timestamp de cierre, que será el único archivo nuevo de la sesión:
+Fija una sola vez el timestamp de cierre y conserva tanto el valor como la ruta durante cualquier reintento de esta sesión. Prepara la field note, que será el único archivo nuevo de la sesión:
+
+```bash
+CLOSING_TIMESTAMP=$(date "+%Y-%m-%d-%H%M")
+FIELD_NOTE="docs/bitacora/field-notes/${CLOSING_TIMESTAMP}-planner.md"
+printf 'Field note de esta sesión: %s\n' "$FIELD_NOTE"
+```
 
 ```
 ---
@@ -1129,56 +1135,82 @@ Si la sesión fue breve, las field notes pueden ser 3-5 líneas. Lo importante e
 
 ### Entrega aislada mediante PR
 
-Ejecuta este cierre sin pausas ni confirmaciones. Requiere los valores `SESSION_ID`, `INITIAL_HEAD_REF`, `INITIAL_HEAD_SHA`, `INITIAL_DEFAULT_BRANCH` e `INITIAL_STATUS` registrados al inicio. La rama es determinista para que un reintento de **esta misma sesión** reutilice su commit y su PR; no la reutilices para otra sesión.
+Ejecuta este cierre sin pausas ni confirmaciones. Requiere los valores `SESSION_ID`, `INITIAL_HEAD_REF`, `INITIAL_HEAD_SHA`, `INITIAL_DEFAULT_BRANCH` e `INITIAL_STATUS` registrados al inicio, además del mismo `FIELD_NOTE` fijado al cerrar. La rama es determinista para que un reintento de **esta misma sesión** reutilice su commit y su PR; no la reutilices para otra sesión. Lleva cuatro checkpoints en el contexto (`worktree`, `commit`, `push`, `PR`), inicialmente pendientes, y actualízalos únicamente después de observar el éxito de cada operación. Los bloques de Bash pueden ejecutarse en procesos distintos: sustituye en cada llamada los valores ya observados; no dependas de que una variable de shell sobreviva entre llamadas.
 
 ```bash
 DEFAULT_BRANCH="$INITIAL_DEFAULT_BRANCH"
 DOC_BRANCH="docs/planner-field-notes-${SESSION_ID}"
 WORKTREE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/planner-field-notes-${SESSION_ID}.XXXXXX")
-FIELD_NOTE="docs/bitacora/field-notes/YYYY-MM-DD-HHMM-planner.md" # sustituye por el timestamp de cierre
+FIELD_NOTE="docs/bitacora/field-notes/YYYY-MM-DD-HHMM-planner.md" # usa la ruta ya fijada, también al reintentar
 GLOSSARY_PATH="" # docs/ddd/ubiquitous-language.yaml, docs/eda/ubiquitous-language.yaml o vacío
 
-git fetch origin "$DEFAULT_BRANCH" || { echo "CIERRE INCOMPLETO: no se pudo actualizar origin/$DEFAULT_BRANCH. No se creó ningún artefacto ni rama documental."; rmdir "$WORKTREE_DIR" 2>/dev/null || true; exit 1; }
+git fetch origin "$DEFAULT_BRANCH" || exit 1
 
 # En un reintento, conserva la rama previa; en el primer cierre nace exactamente
 # desde origin/<default>. Nunca uses el checkout principal como worktree documental.
 if git show-ref --verify --quiet "refs/heads/$DOC_BRANCH"; then
-    git worktree add "$WORKTREE_DIR" "$DOC_BRANCH"
+    git worktree add "$WORKTREE_DIR" "$DOC_BRANCH" || exit 1
 elif git ls-remote --exit-code --heads origin "$DOC_BRANCH" >/dev/null 2>&1; then
-    git worktree add --track -b "$DOC_BRANCH" "$WORKTREE_DIR" "origin/$DOC_BRANCH"
+    git worktree add --track -b "$DOC_BRANCH" "$WORKTREE_DIR" "origin/$DOC_BRANCH" || exit 1
 else
-    git worktree add -b "$DOC_BRANCH" "$WORKTREE_DIR" "origin/$DEFAULT_BRANCH"
+    git worktree add -b "$DOC_BRANCH" "$WORKTREE_DIR" "origin/$DEFAULT_BRANCH" || exit 1
 fi
 ```
 
-Dentro de `"$WORKTREE_DIR"`, crea `"$FIELD_NOTE"` con el contenido preparado. Si hay delta de glosario, aplícalo **solo** sobre `"$GLOSSARY_PATH"` en ese worktree y verifica que conserva el YAML válido. Si el delta no aplica limpiamente sobre la base de la rama documental, aborta: no lo resuelvas copiando el glosario entero, no stages la field note y reporta que la recuperación es rebasar/reformular únicamente el delta contra `origin/$DEFAULT_BRANCH`. En todo caso, los únicos paths permitidos son `"$FIELD_NOTE"` y `"$GLOSSARY_PATH"` cuando no está vacío.
+Si el `fetch` falla, detén la entrega, elimina con `rmdir` el directorio aún vacío y reporta los cuatro checkpoints como no completados. Si falla `git worktree add`, elimina el directorio solo si sigue vacío, conserva cualquier rama documental que el comando haya alcanzado a crear y reporta `worktree: falló`; no continúes escribiendo.
+
+Dentro de `"$WORKTREE_DIR"`, crea `"$FIELD_NOTE"` con el contenido preparado. Si hay delta de glosario, aplícalo **solo** sobre `"$GLOSSARY_PATH"` en ese worktree y verifica que conserva el YAML válido con el validador que ya provea el consumidor; no instales dependencias para ello. El delta se reaplica término por término sobre el archivo presente en la rama documental, nunca copiando la versión del checkout principal. Si no aplica limpiamente o no puede validarse, detén el cierre antes del stage y reporta que la recuperación es reformular únicamente ese delta contra `origin/$DEFAULT_BRANCH`. En todo caso, los únicos paths que puedes crear o modificar son `"$FIELD_NOTE"` y `"$GLOSSARY_PATH"` cuando no está vacío.
 
 ```bash
 git -C "$WORKTREE_DIR" add -- "$FIELD_NOTE"
 [ -z "$GLOSSARY_PATH" ] || git -C "$WORKTREE_DIR" add -- "$GLOSSARY_PATH"
 
-# Deben coincidir exactamente con la lista explícita anterior: si aparece un path
-# ajeno, aborta antes del commit sin hacer reset ni tocar cambios del usuario.
-STAGED=$(git -C "$WORKTREE_DIR" diff --cached --name-only)
-EXPECTED="$FIELD_NOTE"
-[ -z "$GLOSSARY_PATH" ] || EXPECTED="$EXPECTED
-$GLOSSARY_PATH"
-[ "$STAGED" = "$EXPECTED" ] || { echo "CIERRE INCOMPLETO: el índice documental contiene paths ajenos; no se hizo commit."; exit 1; }
+# El sort hace estable la comparación sin depender del orden del índice. Deben
+# coincidir exactamente: la field note y, solo cuando aplica, el glosario.
+STAGED=$(git -C "$WORKTREE_DIR" diff --cached --name-only | LC_ALL=C sort)
+EXPECTED=$(printf '%s\n' "$FIELD_NOTE" ${GLOSSARY_PATH:+"$GLOSSARY_PATH"} | LC_ALL=C sort)
+[ "$STAGED" = "$EXPECTED" ] || { printf 'CIERRE INCOMPLETO: paths staged inesperados.\nEsperados:\n%s\nObservados:\n%s\n' "$EXPECTED" "$STAGED"; exit 1; }
 
 if ! git -C "$WORKTREE_DIR" diff --cached --quiet; then
-    git -C "$WORKTREE_DIR" commit -m "docs(bitacora): entregar field notes del planner"
+    git -C "$WORKTREE_DIR" commit -m "docs(bitacora): entregar field notes del planner" || exit 1
 fi
-git -C "$WORKTREE_DIR" push -u origin "$DOC_BRANCH" || { echo "CIERRE INCOMPLETO: commit documental local creado pero push falló. Recuperación: reintenta el push de $DOC_BRANCH; la rama se conserva."; exit 1; }
+git -C "$WORKTREE_DIR" push -u origin "$DOC_BRANCH" || exit 1
+```
 
-PR_URL=$(gh pr list --head "$DOC_BRANCH" --base "$DEFAULT_BRANCH" --state open --json number,url --jq '.[0] | "#\(.number) \(.url)"')
-if [ -z "$PR_URL" ] || [ "$PR_URL" = "null null" ]; then
+Si la comparación de paths falla, no hagas commit: reporta los paths observados frente a los esperados. Si el commit falla, reporta que solo el worktree y los archivos preparados se completaron. Si el push falla, reporta el hash del commit local y que la recuperación es reintentar el push de `"$DOC_BRANCH"`. En ninguno de esos casos avances al PR. Un diff vacío en un reintento significa que el commit de esta sesión ya existe; obtén su hash, no crees un commit vacío y continúa con push/PR.
+
+Después de un push exitoso, consulta primero cualquier PR de esa rama. Así el reintento no duplica entregas y siempre obtiene por separado número y URL. Si estuviera cerrado, reábrelo; si ya fue mergeado por un tercero, la entrega ya terminó y solo debes reportarlo, no crear otro:
+
+```bash
+PR_DATA=$(gh pr list --head "$DOC_BRANCH" --base "$DEFAULT_BRANCH" --state all --limit 1 \
+    --json number,url,state --jq '.[0] | [.number, .url, .state] | @tsv') || exit 1
+if [ -n "$PR_DATA" ]; then
+    IFS=$'\t' read -r PR_NUMBER PR_URL PR_STATE <<< "$PR_DATA"
+    if [ "$PR_STATE" = "CLOSED" ]; then
+        gh pr reopen "$PR_NUMBER" || exit 1
+    fi
+else
     PR_URL=$(gh pr create --base "$DEFAULT_BRANCH" --head "$DOC_BRANCH" \
         --title "docs(bitacora): field notes del planner" \
-        --body "Entrega aislada de la field note del planner de la sesión ${SESSION_ID}. No incluye cambios preexistentes.") \
-        || { echo "CIERRE INCOMPLETO: la rama $DOC_BRANCH fue empujada pero no se pudo abrir el PR. Recuperación: reintenta gh pr create contra $DEFAULT_BRANCH desde esa rama."; exit 1; }
+        --body "Entrega aislada de la field note del planner de la sesión ${SESSION_ID}. No incluye cambios preexistentes.") || exit 1
+    PR_NUMBER=$(gh pr view "$PR_URL" --json number --jq '.number') || exit 1
 fi
 ```
 
-Al salir por éxito o fallo, limpia `"$WORKTREE_DIR"` con `git worktree remove` solo si no contiene cambios no entregados; después elimina el directorio temporal si quedó vacío. Si hubo commit, push o PR incompleto, conserva `"$DOC_BRANCH"` para recuperación; nunca la borres automáticamente. Finalmente verifica que el checkout principal sigue exactamente en `INITIAL_HEAD_REF` (o en `INITIAL_HEAD_SHA` si empezó detached) y que `git status --porcelain=v1 --untracked-files=all` coincide con `INITIAL_STATUS`. Si no coincide, no intentes absorber ni borrar cambios: informa la discrepancia y la ruta afectada.
+Si la búsqueda, `gh pr create`, la reapertura o la consulta posterior del número falla, reporta `worktree`, `commit` y `push` completados, `PR` fallido, y como recuperación reintentar primero la búsqueda y luego, según su resultado, la reapertura o `gh pr create --base "$DEFAULT_BRANCH" --head "$DOC_BRANCH"`; no crees otra rama ni otro PR si la búsqueda no pudo determinar si ya existía.
 
-El mensaje final debe incluir: los issues y próximos pasos del resumen, el número y URL del PR abierto o reutilizado, la rama documental, y —ante fallo— exactamente qué se completó (worktree, commit, push, PR) y la acción de recuperación indicada. Nunca hagas push directo, commit ni escritura sobre la rama por defecto; al terminar, el usuario permanece en su rama o commit inicial.
+#### Limpieza y restauración obligatorias
+
+Ejecuta esta fase tanto en éxito como después de cualquier fallo. Inspecciona `git -C "$WORKTREE_DIR" status --porcelain=v1 --untracked-files=all`. Si está limpio, remuévelo normalmente con `git worktree remove "$WORKTREE_DIR"`. Si el cierre se detuvo antes del commit y **cada** línea observada corresponde exactamente a `"$FIELD_NOTE"` o al `"$GLOSSARY_PATH"` opcional, es seguro usar `git worktree remove --force "$WORKTREE_DIR"`: el contenido preparado continúa en el contexto de esta sesión para el reintento. Si aparece cualquier otro path, no fuerces ni borres nada; conserva el worktree y reporta su ruta y status. Elimina con `rmdir` solo un directorio temporal que haya quedado vacío. Conserva siempre `"$DOC_BRANCH"`: el commit local puede ser la única recuperación de un push o PR incompleto.
+
+Por último comprueba rama, commit y estado del checkout principal:
+
+```bash
+CURRENT_HEAD_REF=$(git symbolic-ref -q --short HEAD || true)
+CURRENT_HEAD_SHA=$(git rev-parse HEAD)
+CURRENT_STATUS=$(git status --porcelain=v1 --untracked-files=all)
+```
+
+Si la rama/estado detached o el SHA no coinciden con el inicio, intenta restaurarlos **sin** `--force`, `reset`, `clean` ni `stash`: `git switch "$INITIAL_HEAD_REF"` si había rama inicial, o `git switch --detach "$INITIAL_HEAD_SHA"` si empezó detached. Vuelve a medir los tres valores. El cierre solo queda verificado cuando la referencia inicial, `INITIAL_HEAD_SHA` y `INITIAL_STATUS` coinciden exactamente. Si una restauración segura falla o el status difiere, no absorbas ni borres cambios: informa los valores esperados y observados y las rutas afectadas.
+
+El mensaje final debe incluir: los issues y próximos pasos del resumen, el número y URL del PR abierto o reutilizado, la rama documental, y —ante fallo— exactamente qué se completó (`worktree`, `commit`, `push`, `PR`), qué se limpió o conservó y la acción de recuperación indicada. Nunca hagas push directo, commit ni escritura sobre la rama por defecto; al terminar, el usuario permanece en su rama o commit inicial.

@@ -651,12 +651,20 @@ echo "[I] Planner publicado: cierre documental aislado y recuperable"
 PLANNER="$REPO_ROOT/agents/planner.md"
 for required in \
     'INITIAL_HEAD_REF=$(git symbolic-ref -q --short HEAD || true)' \
+    'INITIAL_HEAD_SHA=$(git rev-parse HEAD)' \
     'INITIAL_DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef' \
     'INITIAL_STATUS=$(git status --porcelain=v1 --untracked-files=all)' \
+    'FIELD_NOTE="docs/bitacora/field-notes/${CLOSING_TIMESTAMP}-planner.md"' \
     'git worktree add -b "$DOC_BRANCH" "$WORKTREE_DIR" "origin/$DEFAULT_BRANCH"' \
     'git -C "$WORKTREE_DIR" add -- "$FIELD_NOTE"' \
+    'STAGED=$(git -C "$WORKTREE_DIR" diff --cached --name-only | LC_ALL=C sort)' \
+    'git -C "$WORKTREE_DIR" status --porcelain=v1 --untracked-files=all' \
+    'git worktree remove --force "$WORKTREE_DIR"' \
+    'PR_DATA=$(gh pr list --head "$DOC_BRANCH" --base "$DEFAULT_BRANCH" --state all' \
+    'gh pr reopen "$PR_NUMBER"' \
     'gh pr create --base "$DEFAULT_BRANCH" --head "$DOC_BRANCH"' \
-    'git status --porcelain=v1 --untracked-files=all` coincide con `INITIAL_STATUS`'; do
+    'git switch --detach "$INITIAL_HEAD_SHA"' \
+    'El cierre solo queda verificado cuando la referencia inicial, `INITIAL_HEAD_SHA` y `INITIAL_STATUS` coinciden exactamente.'; do
     if grep -qF "$required" "$PLANNER"; then
         pass "planner: conserva '$required'"
     else
