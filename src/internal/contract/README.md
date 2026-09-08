@@ -1,9 +1,8 @@
 # Contrato de artefactos y ejecucion internos (`src/internal/contract/`)
 
 Esta carpeta contiene el contrato exclusivo del lado interno para
-`src/internal/{agents,commands}/`, la configuracion de su generador de
-adaptadores y, hasta #1045, la interfaz ejecutable del runner interno. No es un
-formato para proyectos consumidores (MEF-ADR-0019).
+`src/internal/{agents,commands}/` y la configuracion de su generador de
+adaptadores. No es un formato para proyectos consumidores (MEF-ADR-0019).
 
 El vocabulario, schema, taxonomia de fallos, cardinalidad terminal y fixtures
 del stream JSONL son parte del nucleo comun y se documentan unicamente en
@@ -98,12 +97,18 @@ del archivo y comprueba la neutralidad del body. Usa
 fixtures propios de este contrato permanecen en `fixtures/{valid,invalid}/` y
 los ejercita `test-internal-artifact-contract.sh`.
 
-## Runner interno
+## Compatibilidad del runner interno
 
-Hasta que #1045 extraiga la mecanica, la interfaz es:
+La interfaz ejecutable y de adaptadores vive desde #1045 en el
+[contrato comun](../../runtime/contract/README.md). Los archivos homonimos de
+`src/internal/scripts/` son shims temporales hasta #1046 y delegan en
+`src/runtime/` sin duplicar mecanica. El shim del runner conserva el default
+interno `.mefisto/pipeline/events.log`; el nucleo no conoce esa ruta.
+
+Contrato historico que conserva el shim:
 
 ```bash
-src/internal/scripts/mefisto-run-agent.sh \
+src/runtime/mefisto-run-agent.sh \
   --agent <id> --cwd <dir> --prompt-file <archivo> \
   --event-log <jsonl> \
   [--runtime <id>] [--model <opaco>] [--system-file <archivo>] \
@@ -125,10 +130,11 @@ de runtimes (MEF-ADR-0050).
 
 ### Interfaz de adaptador
 
-Cada `src/internal/scripts/lib/runtime-<id>.sh` implementa:
+Cada `src/runtime/lib/runtime-<id>.sh` implementa:
 
 | Funcion | Contrato interno |
 |---|---|
+| `runtime_<id>_is_available` | Probe local usado solo en autodeteccion; no lee credenciales ni configuracion del proveedor |
 | `runtime_<id>_build_cmd <agent> <cwd> <prompt_file> <model> <system_file> [<resume_session_id>]` | Rellena el array global `MEFISTO_RUNTIME_CMD` sin `eval`; traduce opciones y omite las vacias |
 | `runtime_<id>_translate <raw_file> <runtime_id> <model> [<exit_code>] [<stderr_file>]` | Emite por stdout el JSONL comun derivado del wire format; nunca emite `run.started` |
 | `runtime_<id>_supports_resume` | Devuelve 0 si soporta reanudacion y 1 en otro caso; ausente equivale a no soportada |

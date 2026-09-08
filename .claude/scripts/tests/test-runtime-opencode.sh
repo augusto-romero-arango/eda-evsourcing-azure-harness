@@ -66,13 +66,13 @@ export LC_ALL=C
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 INTERNAL_SCRIPTS="$REPO_ROOT/src/internal/scripts"
-LIB_DIR="$INTERNAL_SCRIPTS/lib"
+LIB_DIR="$REPO_ROOT/src/runtime/lib"
 CONTRACT_DIR="$REPO_ROOT/src/runtime/contract"
-RUNNER="$INTERNAL_SCRIPTS/mefisto-run-agent.sh"
+RUNNER="$REPO_ROOT/src/runtime/mefisto-run-agent.sh"
 OPENCODE_LIB="$LIB_DIR/runtime-opencode.sh"
 OPENCODE_JQ="$LIB_DIR/runtime-opencode.jq"
 SCHEMA_FILE="$CONTRACT_DIR/run-events.schema.json"
-JSONSCHEMA_LITE="$LIB_DIR/jsonschema-lite.jq"
+JSONSCHEMA_LITE="$INTERNAL_SCRIPTS/lib/jsonschema-lite.jq"
 FIXTURES_DIR="$SCRIPT_DIR/fixtures/runtime-opencode"
 
 # El runner (mefisto-run-agent.sh) resuelve la lib de adaptador via

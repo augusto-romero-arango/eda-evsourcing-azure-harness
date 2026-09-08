@@ -6,7 +6,7 @@
 # invalido) por variable de entorno.
 #
 # Implementa la interfaz de funciones que todo adaptador de runtime debe
-# exponer (ver src/internal/contract/README.md, "Interfaz de adaptador"):
+# exponer (ver src/runtime/contract/README.md, "Interfaz de adaptador"):
 #   runtime_fake_build_cmd <agent> <cwd> <prompt_file> <model> <system_file>
 #                          [<resume_session_id>]
 #     Rellena el array global MEFISTO_RUNTIME_CMD con el argv a invocar via
@@ -87,6 +87,10 @@
 # Default sin MEFISTO_FAKE_SCRIPT: "success".
 #
 # Bash 3.2 + jq 1.7: sin arrays asociativos, sin dependencias de red.
+
+runtime_fake_is_available() {
+    [ "${MEFISTO_FAKE_AVAILABLE:-}" = "1" ]
+}
 
 # --- runtime_fake_build_cmd ---------------------------------------------
 

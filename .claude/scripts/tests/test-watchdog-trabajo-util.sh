@@ -208,7 +208,7 @@ else
     fail "C-6: $C6_ESPURIAS de 30 corridas dejaron una senal espuria (se clasificarian TIMEOUT)"
 fi
 
-C7_LIB="$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh"
+C7_LIB="$REPO_ROOT/src/runtime/lib/mefisto-process.sh"
 C7_RM=$(grep -c 'rm -f "\$signal_file"' "$C7_LIB" 2>/dev/null || echo 0)
 if [ "$C7_RM" -ge 2 ]; then
     pass "C-7: la rama que cancela el watchdog limpia la senal, ademas del rm de entrada"

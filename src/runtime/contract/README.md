@@ -99,5 +99,22 @@ la cardinalidad de exactamente un terminal; existe para comprobar el gate
 cross-linea. Los tests recorren todos los fixtures `valid-*` e `invalid-*` sin
 mantener una segunda copia del contrato.
 
-La interfaz ejecutable del runner y de sus adaptadores permanece, hasta #1045,
-en [`src/internal/contract/README.md`](../../internal/contract/README.md).
+## Runner y adaptadores
+
+`src/runtime/mefisto-run-agent.sh` recibe `--agent`, `--cwd`, `--prompt-file`
+y `--event-log`; acepta `--runtime`, modelo opaco, system prompt, timeout,
+raw/stderr logs, `--events-log` y `--resume-session`. `--events-log` es opt-in:
+el nucleo no deriva rutas de estado. Sus exits son 0 (exito), 64 (uso), 65
+(protocolo invalido), 69 (runtime/dependencia), 124 (timeout), o el exit no
+cero del adaptador.
+
+Cada `lib/runtime-<id>.sh` implementa `runtime_<id>_is_available` (probe sin
+leer credenciales), `runtime_<id>_build_cmd` y `runtime_<id>_translate`; puede
+implementar `runtime_<id>_supports_resume`. El resolutor respeta `--runtime` ->
+`MEFISTO_RUNTIME` -> autodeteccion. Esta ultima escanea adaptadores y ejecuta
+sus probes: un runtime nuevo no exige modificar el runner ni el resolutor.
+
+`lib/mefisto-process.sh` es la fuente unica del watchdog: ejecuta el argv sin
+`eval`, separa stdout/stderr y crea una sesion sin TTY de control. El runner
+decide timeout mediante la senal del watchdog y su reloj de pared conforme a
+MEF-ADR-0031.

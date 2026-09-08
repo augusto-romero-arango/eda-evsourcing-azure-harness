@@ -18,7 +18,7 @@
 # valida OpenCode al ejecutar, no Mefisto.
 #
 # Implementa la interfaz de funciones que todo adaptador de runtime debe
-# exponer (ver src/internal/contract/README.md, "Interfaz de adaptador"):
+# exponer (ver src/runtime/contract/README.md, "Interfaz de adaptador"):
 #   runtime_opencode_build_cmd <agent> <cwd> <prompt_file> <model> <system_file>
 #                              [<resume_session_id>]
 #     Rellena MEFISTO_RUNTIME_CMD con el argv de `opencode run` (sin `eval`,
@@ -43,7 +43,7 @@
 #     senal propia de exito/fallo (no hay equivalente a `is_error`/`subtype`/
 #     `stop_reason`): la clasificacion completa de CA-3 depende del exit code
 #     y del stderr crudo que este runner SIEMPRE pasa (ver
-#     src/internal/contract/README.md, "Interfaz de adaptador"), asi que los
+#     src/runtime/contract/README.md, "Interfaz de adaptador"), asi que los
 #     dos ultimos argumentos son mucho mas centrales aqui que en el adaptador
 #     Claude Code.
 #
@@ -66,6 +66,10 @@
 # disponibilidad real del provider/modelo la resuelve OpenCode al ejecutar.
 #
 # Bash 3.2 (macOS): sin arrays asociativos, sin novedades de bash 4+.
+
+runtime_opencode_is_available() {
+    command -v opencode >/dev/null 2>&1
+}
 
 # --- runtime_opencode_build_cmd ---------------------------------------------
 

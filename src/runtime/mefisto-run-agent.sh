@@ -55,7 +55,7 @@
 #                         "[terraform]" siguen siendo exclusivas del hook
 #                         publicado: dependen del RESULTADO de un comando,
 #                         que el JSONL neutral no transporta.
-#                         Default: `mefisto_state_path events.log`.
+#                         Sin default: omitido no escribe telemetria humana.
 #                         Un fallo al escribir (directorio inexistente, sin
 #                         permisos) degrada a un aviso en stderr -- nunca
 #                         altera el exit code ni el evento terminal de
@@ -119,8 +119,7 @@
 #     stderr -- los dos canales siguen separados (#425) -- de un stream que
 #     simplemente termino sin declarar nada.
 #
-# Ver src/internal/contract/README.md para la interfaz ejecutable y
-# src/runtime/contract/README.md para el vocabulario de eventos.
+# Ver src/runtime/contract/README.md para la interfaz y los eventos.
 #
 # Bash 3.2 + jq 1.7 (MEF-ADR-0049 CA-6): sin arrays asociativos.
 
@@ -128,16 +127,8 @@ set -uo pipefail
 export LC_ALL=C
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Raiz resuelta contra la UBICACION de este script (src/internal/scripts/ ->
-# tres niveles arriba), nunca contra `git rev-parse --show-toplevel`: ese
-# comando responde por el cwd DEL CALLER, y el caller natural de este runner es
-# un pipeline parado dentro de un worktree distinto del checkout donde vive el
-# plugin. Desde un cwd que no sea un repo git devolvia vacio y el fallback
-# quedaba corto un nivel (src/ en vez de la raiz), asi que el `source` de
-# _mefisto-common.sh moria con exit 69 sin que el runner llegara a arrancar.
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 LIB_DIR="$SCRIPT_DIR/lib"
-COMMON_LIB="$REPO_ROOT/.claude/scripts/_mefisto-common.sh"
+PROCESS_LIB="$LIB_DIR/mefisto-process.sh"
 
 usage() {
     cat <<'EOF' >&2
@@ -154,8 +145,8 @@ abort_usage() {
     exit 64
 }
 
-if [ ! -f "$COMMON_LIB" ]; then
-    echo "ERROR: no se encontro '$COMMON_LIB' (run_agent_with_watchdog, issue #424; el traslado de esta lib a src/internal/scripts es alcance de #869)" >&2
+if [ ! -f "$PROCESS_LIB" ]; then
+    echo "ERROR: no se encontro '$PROCESS_LIB' (ejecucion vigilada comun)" >&2
     exit 69
 fi
 if [ ! -f "$LIB_DIR/mefisto-runtime.sh" ]; then
@@ -168,7 +159,7 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 # shellcheck source=/dev/null
-source "$COMMON_LIB"
+source "$PROCESS_LIB"
 # shellcheck source=/dev/null
 source "$LIB_DIR/mefisto-runtime.sh"
 
@@ -243,10 +234,11 @@ fi
 
 # --- Resolucion de runtime (CA-2) -------------------------------------------
 
-if ! RUNTIME_ID="$(mefisto_resolve_runtime "$OPT_RUNTIME")"; then
+if ! mefisto_resolve_runtime "$OPT_RUNTIME" >/dev/null; then
     echo "ERROR: $MEFISTO_RUNTIME_ERROR" >&2
     exit 69
 fi
+RUNTIME_ID="$MEFISTO_RESOLVED_RUNTIME"
 
 RUNTIME_LIB="$MEFISTO_RUNTIME_LIB_DIR/runtime-${RUNTIME_ID}.sh"
 # shellcheck source=/dev/null
@@ -329,17 +321,13 @@ else
     STDERR_LOG="$RUN_TMP_DIR/stderr.log"
 fi
 
-# events.log (CA-1/#863): default `mefisto_state_path events.log` (resuelve
-# ".mefisto/pipeline/events.log" contra el cwd DEL CALLER, no contra --cwd --
-# mismo criterio que summaries/, ver mefisto-state.sh). Un fallo aqui (mkdir
-# sin permisos) deja EVENTS_LOG_TARGET vacio: el bloque de escritura al final
-# de este script lo trata como "no resuelto" y degrada a un aviso, nunca
-# aborta (CA-3).
+# Telemetria humana opt-in (CA-3/#1045): el nucleo no deriva rutas de estado.
+# Si el caller entrega una ruta, un fallo de escritura degrada a aviso.
 if [ -n "$OPT_EVENTS_LOG" ]; then
     EVENTS_LOG_TARGET="$OPT_EVENTS_LOG"
     mkdir -p "$(dirname "$EVENTS_LOG_TARGET")" 2>/dev/null || true
 else
-    EVENTS_LOG_TARGET="$(mefisto_state_path "events.log" 2>/dev/null)" || true
+    EVENTS_LOG_TARGET=""
 fi
 
 # events_log de run_agent_with_watchdog: solo recibe SU linea de texto plano
@@ -631,6 +619,7 @@ EVENTS_LOG_LINES="$(printf '%s\n' "$NON_TERMINAL_JSON" | jq -s -r \
 ' 2>/dev/null)"
 
 EVENTS_LOG_WRITTEN=false
+[ -z "$EVENTS_LOG_TARGET" ] && EVENTS_LOG_WRITTEN=true
 if [ -n "$EVENTS_LOG_LINES" ] && [ -n "$EVENTS_LOG_TARGET" ]; then
     EVENTS_LOG_DIR="$(dirname "$EVENTS_LOG_TARGET")"
     if [ -d "$EVENTS_LOG_DIR" ] && [ -w "$EVENTS_LOG_DIR" ]; then

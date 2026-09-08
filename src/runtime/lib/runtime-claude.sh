@@ -11,7 +11,7 @@
 # `--output-format stream-json` -- eso vive aqui.
 #
 # Implementa la interfaz de funciones que todo adaptador de runtime debe
-# exponer (ver src/internal/contract/README.md, "Interfaz de adaptador"):
+# exponer (ver src/runtime/contract/README.md, "Interfaz de adaptador"):
 #   runtime_claude_build_cmd <agent> <cwd> <prompt_file> <model> <system_file>
 #                            [<resume_session_id>]
 #     Rellena MEFISTO_RUNTIME_CMD con el argv de `claude -p` (sin `eval`,
@@ -31,7 +31,7 @@
 #     -- eso lo hace mefisto-run-agent.sh directo (issue #858).
 #     Los dos ultimos argumentos son la extension OPCIONAL de la interfaz de
 #     #858 (un adaptador que no los reciba sigue siendo valido, ver
-#     src/internal/contract/README.md): sin ellos la clasificacion de CA-3 no
+#     src/runtime/contract/README.md): sin ellos la clasificacion de CA-3 no
 #     es completable, porque `killed` (exit 137/143), el `API Error: <status>`
 #     que Claude escribe SOLO por stderr (los canales siguen separados desde
 #     #425) y `nonzero_exit` no son deducibles del stream de stdout. Vacios o
@@ -47,6 +47,10 @@
 # test-runtime-claude.sh que solo comprueba presencia/ausencia).
 #
 # Bash 3.2 + jq 1.7 (MEF-ADR-0049 CA-6): sin arrays asociativos.
+
+runtime_claude_is_available() {
+    command -v claude >/dev/null 2>&1
+}
 
 # --- runtime_claude_build_cmd ------------------------------------------------
 
