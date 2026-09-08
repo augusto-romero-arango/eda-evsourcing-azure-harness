@@ -358,9 +358,9 @@ else
     pass "mefisto-tooling: ningun ejemplo --models prescribe un alias Anthropic concreto"
 fi
 if grep -qF 'models.example.json' "$src_tooling" 2>/dev/null; then
-    pass "mefisto-tooling: remite a src/internal/models.example.json para ids por runtime"
+    pass "mefisto-tooling: remite al models.example.json comun para la forma del mapping"
 else
-    fail "mefisto-tooling: NO remite a src/internal/models.example.json"
+    fail "mefisto-tooling: NO remite a src/runtime/contract/models.example.json"
 fi
 
 echo ""

@@ -47,16 +47,16 @@ Agregar el runtime `<id>` (hoy `claude`/`opencode`; manana cualquier otro) es, e
 
 | Paso | Archivo/mecanismo a crear | Ya implementado hoy para |
 |---|---|---|
-| 1 | `src/internal/scripts/lib/runtime-<id>.sh` (`runtime_<id>_build_cmd` + `runtime_<id>_translate`, contrato en `src/internal/contract/README.md`) | `runtime-claude.sh`, `runtime-opencode.sh` |
-| 2 (solo si el runtime emite un wire format propio que traducir al JSONL neutral) | `src/internal/scripts/lib/runtime-<id>.jq` | `runtime-claude.jq`, `runtime-opencode.jq` |
-| 3 | `src/internal/scripts/lib/adapter-<id>.sh`: traduce las directivas `{{mefisto:...}}` del contrato neutral **y** expone `adapter_<id>_default_model <perfil>` -- la tabla por defecto del adaptador que `mefisto_resolve_model` consulta (MEF-ADR-0049 seccion 4, enmendada por #857) y sin la cual aborta | `adapter-claude.sh`, `adapter-opencode.sh` |
+| 1 | `src/runtime/lib/runtime-<id>.sh` (`runtime_<id>_build_cmd`, `runtime_<id>_translate` y, opcionalmente, `runtime_<id>_default_model`; contrato en `src/runtime/contract/README.md`) | `runtime-claude.sh`, `runtime-opencode.sh` |
+| 2 (solo si el runtime emite un wire format propio que traducir al JSONL neutral) | `src/runtime/lib/runtime-<id>.jq` | `runtime-claude.jq`, `runtime-opencode.jq` |
+| 3 | `src/internal/scripts/lib/adapter-<id>.sh`: traduce las directivas `{{mefisto:...}}` del contrato neutral; mientras el generador interno no migre, puede envolver sin duplicar `runtime_<id>_default_model` | `adapter-claude.sh`, `adapter-opencode.sh` |
 | 4 | Cableado del adaptador nuevo en `src/internal/scripts/generate-internal-adapters.sh`: exigirlo entre sus librerias requeridas, emitir `.<id>/{agents,commands}/*.md` junto a los destinos ya existentes, e incluir ese arbol en el barrido de divergencia de `--check` | las ramas `.claude/` y `.opencode/` del generador |
-| 5 | Rama de autodeteccion en `mefisto_resolve_runtime` (`src/internal/scripts/lib/mefisto-runtime.sh`) | ramas `has_claude`/`has_opencode` |
+| 5 | Ningun cableado central: `mefisto_resolve_runtime` descubre `src/runtime/lib/runtime-<id>.sh`, valida el id y ejecuta `runtime_<id>_is_available` | discovery abierto de `mefisto-runtime.sh` |
 | 6 | Entrada en `is_path_in_mefisto_scope` (`src/internal/scripts/lib/_mefisto-common.sh`) | entradas `.claude/*`, `.opencode/*` |
 | 7 | Entrada en el blocklist publicado `is_path_in_consumer_blocklist` (`scripts/_pipeline-common.sh`) | mismas rutas, lado espejo |
 | 8 | Entrada(s) en `src/internal/contract/neutrality-allowlist.json` si el adaptador nuevo necesita nombrar su propio runtime en texto (mismo patron que las excepciones ya declaradas para `adapter-claude.sh`/`adapter-opencode.sh`) | seccion `exceptions` del archivo |
 | 9 | Soporte del kind `<id>` en el propio Herdr, si un pipeline orquesta ese runtime en un pane: `runtime_kind_for_repo` (`scripts/herdr-workspace.sh`) ya reenvia `MEFISTO_RUNTIME` tal cual como `--kind`, asi que del lado de Mefisto no hay nada que editar -- solo verificar que Herdr reconozca ese kind | `--kind claude`, `--kind opencode` |
-| 10 | Tests: `test-runtime-<id>.sh` (contrato del adaptador) + cobertura de discovery equivalente a `test-opencode-discovery.sh` | `.claude/scripts/tests/test-runtime-claude.sh`, `test-runtime-opencode.sh`, `test-opencode-discovery.sh` |
+| 10 | Tests: contrato del adaptador, discovery abierto y resolucion de modelos sin proveedor real | `src/runtime/tests/` y sus shims en `.claude/scripts/tests/` |
 
 ### 3. Frontmatter portable de todo `SKILL.md` (CA-3)
 

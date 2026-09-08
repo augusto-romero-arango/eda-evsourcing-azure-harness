@@ -52,6 +52,15 @@ runtime_claude_is_available() {
     command -v claude >/dev/null 2>&1
 }
 
+runtime_claude_default_model() {
+    case "$1" in
+        fast) printf '%s' "haiku" ;;
+        balanced) printf '%s' "sonnet" ;;
+        deep) printf '%s' "" ;;
+        *) return 1 ;;
+    esac
+}
+
 # --- runtime_claude_build_cmd ------------------------------------------------
 
 runtime_claude_build_cmd() {
