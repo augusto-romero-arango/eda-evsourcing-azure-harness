@@ -10,6 +10,8 @@
 #        el caso que motiva la extraccion (issue #443): un awk '{print $1}' sin
 #        aislar en una funcion se hubiera repetido 4 veces sin test que probara
 #        que de verdad ignora las demas columnas.
+#   S-3: _mefisto_pipeline_ignored() -- exige el ignore especifico del estado y
+#        rechaza ignorar tambien la configuracion sibling versionada.
 #
 # El script se sourcea (no se ejecuta): scripts/onboard-diagnose.sh solo corre su
 # main() cuando BASH_SOURCE[0] == $0, asi que sourcearlo aqui carga row()/
@@ -140,6 +142,40 @@ if _secret_present "$SECRETS_LIST" "NO_EXISTE"; then
     fail "falso positivo: 'NO_EXISTE' no deberia estar presente"
 else
     pass "un secreto ausente por completo se reporta ausente"
+fi
+
+echo ""
+echo "[S-3] _mefisto_pipeline_ignored(): diagnostico de solo lectura del ignore especifico"
+IGNORE_REPO=$(mktemp -d)
+trap 'rm -f "$ROW_OUT"; rm -rf "$IGNORE_REPO"' EXIT
+(cd "$IGNORE_REPO" && git init -q)
+if _mefisto_pipeline_ignored "$IGNORE_REPO"; then
+    fail "reporta ignorado sin patron en .gitignore"
+else
+    pass "reporta falta cuando .mefisto/pipeline/ no esta ignorado"
+fi
+printf '.mefisto/pipeline/\n' > "$IGNORE_REPO/.gitignore"
+if _mefisto_pipeline_ignored "$IGNORE_REPO"; then
+    pass "detecta exactamente .mefisto/pipeline/ via git check-ignore"
+else
+    fail "no detecto el patron .mefisto/pipeline/"
+fi
+if git -C "$IGNORE_REPO" check-ignore -q .mefisto/harness.config.json; then
+    fail "el patron especifico ignora indebidamente harness.config.json"
+else
+    pass "no ignora .mefisto/harness.config.json"
+fi
+
+printf '.mefisto/\n' > "$IGNORE_REPO/.gitignore"
+if _mefisto_pipeline_ignored "$IGNORE_REPO"; then
+    fail "acepta indebidamente el ignore amplio .mefisto/"
+else
+    pass "rechaza .mefisto/ completo porque ocultaria harness.config.json"
+fi
+if [ "$(cat "$IGNORE_REPO/.gitignore")" = ".mefisto/" ]; then
+    pass "el diagnostico no modifica .gitignore"
+else
+    fail "el diagnostico modifico .gitignore"
 fi
 
 echo ""

@@ -45,6 +45,17 @@ _secret_present() {
     printf '%s\n' "$1" | awk '{print $1}' | grep -Fqx "$2"
 }
 
+# _mefisto_pipeline_ignored [repo_root]
+# Consulta git, sin modificar el consumidor, con un hijo representativo del
+# directorio que debe quedar no versionado. Tambien exige que el config sibling
+# siga siendo versionable, para no aceptar por error un ignore amplio de
+# .mefisto/ completo.
+_mefisto_pipeline_ignored() {
+    local repo_root="${1:-.}"
+    git -C "$repo_root" check-ignore -q -- .mefisto/pipeline/.onboard-probe &&
+        ! git -C "$repo_root" check-ignore -q -- .mefisto/harness.config.json
+}
+
 # row <estado> <texto...>
 #
 # Emisor de filas del checklist: acumula el contador correspondiente (N_OK,
@@ -180,6 +191,15 @@ main() {
             [ "$dir" = "infra/environments" ] && PA_INFRA_BASE_MISSING=1
         fi
     done
+
+    echo ""
+    echo "Estado operativo de Mefisto (MEF-ADR-0053):"
+    if _mefisto_pipeline_ignored "$REPO_ROOT"; then
+        row OK ".mefisto/pipeline/ esta excluido por .gitignore"
+    else
+        row FALTA ".mefisto/pipeline/ no esta excluido por .gitignore"
+        ACTIONS="${ACTIONS}  - Agrega exactamente '.mefisto/pipeline/' a .gitignore. No ignores '.mefisto/' completo: .mefisto/harness.config.json debe versionarse.\n"
+    fi
 
     # --- 4. Labels de GitHub (MEF-ADR-0007) ---
     echo ""

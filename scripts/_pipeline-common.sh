@@ -5,6 +5,53 @@
 #
 # No invocar directamente (prefijo _ = sourceable).
 
+# Estado operativo publicado (MEF-ADR-0053): los escritores usan exclusivamente
+# .mefisto/pipeline; .claude/pipeline permanece solo como fallback de lectura.
+# Los overrides se respetan para fixtures y worktrees de callers futuros.
+_mefisto_state_root="$(git rev-parse --show-toplevel 2>/dev/null)" || _mefisto_state_root="$(pwd)"
+: "${MEFISTO_STATE_DIR:=$_mefisto_state_root/.mefisto/pipeline}"
+: "${MEFISTO_LEGACY_STATE_DIR:=$_mefisto_state_root/.claude/pipeline}"
+export MEFISTO_STATE_DIR MEFISTO_LEGACY_STATE_DIR
+unset _mefisto_state_root
+
+# mefisto_state_path <rel> [root]
+# Imprime la ruta canonica de escritura y crea solo su directorio padre.
+mefisto_state_path() {
+    local rel="$1" root="${2:-}" base full
+    if [ -n "$root" ]; then
+        base="$root/.mefisto/pipeline"
+    else
+        base="$MEFISTO_STATE_DIR"
+    fi
+    full="$base/$rel"
+    mkdir -p "$(dirname "$full")" || return 1
+    printf '%s\n' "$full"
+}
+
+# mefisto_state_read_paths <rel> [root]
+# Imprime las rutas existentes, canonica primero y legacy despues, sin migrarlas.
+mefisto_state_read_paths() {
+    local rel="$1" root="${2:-}" canonical_base legacy_base
+    if [ -n "$root" ]; then
+        canonical_base="$root/.mefisto/pipeline"
+        legacy_base="$root/.claude/pipeline"
+    else
+        canonical_base="$MEFISTO_STATE_DIR"
+        legacy_base="$MEFISTO_LEGACY_STATE_DIR"
+    fi
+    [ -e "$canonical_base/$rel" ] && printf '%s\n' "$canonical_base/$rel"
+    [ -e "$legacy_base/$rel" ] && printf '%s\n' "$legacy_base/$rel"
+    return 0
+}
+
+# mefisto_state_read_first <rel> [root]
+mefisto_state_read_first() {
+    local rel="$1" root="${2:-}" first
+    first=$(mefisto_state_read_paths "$rel" "$root" | head -n1)
+    [ -n "$first" ] || return 1
+    printf '%s\n' "$first"
+}
+
 # resolve_harness_config_path <read|write> [repo_root]
 #
 # Resuelve la ubicacion neutral del config del consumidor. stdout queda reservado
