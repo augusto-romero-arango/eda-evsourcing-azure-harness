@@ -24,10 +24,10 @@ RELEASES="$ROOT/releases"
 ACTIVE="$ROOT/active"
 
 acquire_lock() {
-    mkdir -p "$ROOT" || error 'no se pudo crear la raiz de datos'
-    LOCK="$ROOT/.activation.lock"
+    mkdir -p "$RELEASES" || error 'no se pudo crear el almacen de releases'
+    LOCK="$RELEASES/.operation.lock"
     if ! mkdir "$LOCK" 2>/dev/null; then
-        error "hay otra instalacion o activacion en curso ($LOCK); espere y reintente"
+        error "hay otra instalacion, activacion o poda en curso ($LOCK); espere y reintente"
     fi
     trap 'if [ -n "${WORK:-}" ] && [ -e "$WORK" ]; then chmod -R u+w "$WORK" 2>/dev/null || true; rm -rf "$WORK"; fi; rm -rf "${LOCK:-}"' EXIT
     trap 'exit 1' HUP INT TERM
@@ -181,9 +181,12 @@ EOF
     IFS=. read -r right_major right_minor right_patch <<EOF
 $right_core
 EOF
-    if [ "$left_major" -ne "$right_major" ]; then [ "$left_major" -lt "$right_major" ]; return; fi
-    if [ "$left_minor" -ne "$right_minor" ]; then [ "$left_minor" -lt "$right_minor" ]; return; fi
-    if [ "$left_patch" -ne "$right_patch" ]; then [ "$left_patch" -lt "$right_patch" ]; return; fi
+    if [ "${#left_major}" -ne "${#right_major}" ]; then [ "${#left_major}" -lt "${#right_major}" ]; return; fi
+    if [ "$left_major" != "$right_major" ]; then [[ "$left_major" < "$right_major" ]]; return; fi
+    if [ "${#left_minor}" -ne "${#right_minor}" ]; then [ "${#left_minor}" -lt "${#right_minor}" ]; return; fi
+    if [ "$left_minor" != "$right_minor" ]; then [[ "$left_minor" < "$right_minor" ]]; return; fi
+    if [ "${#left_patch}" -ne "${#right_patch}" ]; then [ "${#left_patch}" -lt "${#right_patch}" ]; return; fi
+    if [ "$left_patch" != "$right_patch" ]; then [[ "$left_patch" < "$right_patch" ]]; return; fi
     [ -z "$left_pre" ] && return 1
     [ -z "$right_pre" ] && return 0
     left_pre="${left_pre#-}"; right_pre="${right_pre#-}"
@@ -191,15 +194,17 @@ EOF
     local i=0 left_part right_part
     while [ "$i" -lt "${#left_parts[@]}" ] && [ "$i" -lt "${#right_parts[@]}" ]; do
         left_part="${left_parts[$i]}"; right_part="${right_parts[$i]}"
-        [ "$left_part" = "$right_part" ] || {
-            case "$left_part:$right_part" in
-                *[!0-9:]*:[0-9]*|*[!0-9:]*:[!0-9:]*) [[ "$left_part" < "$right_part" ]] ;;
-                [0-9]*:*[^0-9]*) return 0 ;;
-                *[^0-9]*:[0-9]*) return 1 ;;
-                *) [ "$left_part" -lt "$right_part" ] ;;
-            esac
+        if [ "$left_part" != "$right_part" ]; then
+            case "$left_part" in *[!0-9]*) left_numeric=false ;; *) left_numeric=true ;; esac
+            case "$right_part" in *[!0-9]*) right_numeric=false ;; *) right_numeric=true ;; esac
+            if [ "$left_numeric" = true ] && [ "$right_numeric" = false ]; then return 0; fi
+            if [ "$left_numeric" = false ] && [ "$right_numeric" = true ]; then return 1; fi
+            if [ "$left_numeric" = true ]; then
+                if [ "${#left_part}" -ne "${#right_part}" ]; then [ "${#left_part}" -lt "${#right_part}" ]; return; fi
+            fi
+            [[ "$left_part" < "$right_part" ]]
             return
-        }
+        fi
         i=$((i + 1))
     done
     [ "${#left_parts[@]}" -lt "${#right_parts[@]}" ]
@@ -237,14 +242,15 @@ prune() {
     local kb=0 entry_kb marker confirmation candidate_count=0
     local -a protected candidates
     [ -d "$RELEASES" ] && [ ! -L "$RELEASES" ] || { printf 'No hay releases instaladas para podar.\n'; return 0; }
-    mkdir "$RELEASES/.prune.lock" 2>/dev/null || error "hay otra poda en curso ($RELEASES/.prune.lock); espere y reintente"
-    trap 'rm -rf "$RELEASES/.prune.lock"' EXIT
+    LOCK="$RELEASES/.operation.lock"
+    mkdir "$LOCK" 2>/dev/null || error "hay otra instalacion, activacion o poda en curso ($LOCK); espere y reintente"
+    trap 'rm -rf "$LOCK"' EXIT
     trap 'exit 1' HUP INT TERM
     active="$(active_version)"
     VALID_RELEASES_INITIALIZED=false
     for entry in "$RELEASES"/.[!.]* "$RELEASES"/..?* "$RELEASES"/*; do
         [ -e "$entry" ] || [ -L "$entry" ] || continue
-        [ "$entry" = "$RELEASES/.prune.lock" ] && continue
+        [ "$entry" = "$LOCK" ] && continue
         version="${entry##*/}"
         if valid_version "$version" && manifest_valid "$entry" "$version" && release_immutable "$entry"; then
             sorted_insert_version "$version"
@@ -260,9 +266,13 @@ prune() {
     [ "$i" -gt 0 ] && previous="${VALID_RELEASES[$((i - 1))]}"
     protected=( "$active" )
     [ -n "$previous" ] && protected=( "${protected[@]}" "$previous" )
+    retained_count="${#protected[@]}"
     for ((i=${#VALID_RELEASES[@]} - 1; i >= 0 && retained_count < keep; i--)); do
-        version="${VALID_RELEASES[$i]}"; retained_count=$((retained_count + 1))
-        case " ${protected[*]} " in *" $version "*) ;; *) protected=( "${protected[@]}" "$version" ) ;; esac
+        version="${VALID_RELEASES[$i]}"
+        case " ${protected[*]} " in
+            *" $version "*) ;;
+            *) protected=( "${protected[@]}" "$version" ); retained_count=$((retained_count + 1)) ;;
+        esac
     done
     candidates=()
     for version in "${VALID_RELEASES[@]}"; do
@@ -276,6 +286,7 @@ prune() {
     printf 'Releases que se eliminaran (%s KiB recuperables):\n' "$kb"
     for version in "${candidates[@]}"; do printf '  - %s\n' "$version"; done
     if [ "$assume_yes" != true ]; then
+        [ -t 0 ] || error 'la poda no interactiva requiere el flag explicito --yes'
         printf 'Confirma borrar estas releases? [si/NO] '
         IFS= read -r confirmation || confirmation=''
         [ "$confirmation" = si ] || { printf 'Poda cancelada; no se borro ninguna release.\n'; return 0; }

@@ -82,8 +82,9 @@ M="${XDG_DATA_HOME:-$HOME/.local/share}/mefisto/active/bin/mefisto-opencode" # L
 
 `prune` es siempre opt-in: ni `install` ni `activate` eliminan releases. Conserva
 la activa y su anterior inmediata para el rollback de un paso, incluso si
-`--keep` pide menos. Antes de borrar lista las releases y los KiB recuperables;
-responde exactamente `si` o usa `--yes` para una ejecución no interactiva.
+`--keep` (retención total, `2` por defecto) pide menos. Antes de borrar lista las
+releases y los KiB recuperables; responde exactamente `si` desde una terminal o
+usa `--yes` para una ejecución no interactiva.
 Las entradas que no son releases válidas se informan y se conservan.
 
 En macOS sin `XDG_DATA_HOME`, sustituye `M` por
