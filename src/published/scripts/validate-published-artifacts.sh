@@ -54,7 +54,7 @@ EOF
             status=1
         fi
 
-        placeholders="$(printf '%s\n' "$text" | grep -Eo '\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|\$[0-9@*#?!-]' || true)"
+        placeholders="$(printf '%s\n' "$text" | grep -Eo '\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@*#?!-]' || true)"
         while IFS= read -r placeholder; do
             [ -z "$placeholder" ] && continue
             if [ "$placeholder" != '$ARGUMENTS' ]; then
