@@ -19,7 +19,7 @@ objetos rechazan propiedades adicionales.
 | `mode` | requerido | no | selecciona la forma de ejecución; no se emite | `mode` |
 | `profile` | sí | sí | `model` resuelto por tabla del adaptador | modelo resuelto por configuración del adaptador |
 | `capabilities` | sí | sí | `tools`/`allowed-tools` generados | `permission` generado |
-| `skills` | sí | sí | `skills` con ids fuente | disponibilidad del Skill adaptado `mefisto-<id>` |
+| `skills` | sí | sí | `skills` con ids fuente, sin prefijo | disponibilidad del Skill adaptado `mefisto-<id>` |
 | `mcp` | sí | sí | matcher scoped por id lógico | entrada `mcp`/permiso por id lógico |
 | `agent` | no | sí | delegación al agente generado | `agent` + ejecución como subtask |
 | `arguments` | no | sí | `argument-hint` | hint equivalente si el runtime lo admite |
@@ -46,12 +46,14 @@ forma implícita (MEF-ADR-0052).
 kebab-case. Los ids iniciales son `mcp: ["microsoft-learn"]` y
 `mcp: ["terraform"]`. El schema registra esos mappings iniciales como un
 vocabulario cerrado: agregar otro id requiere actualizar el contrato y los
-mappings de todos los adaptadores. Una ausencia aborta validación/generación,
-nunca concede MCP genérico.
+mappings de todos los adaptadores. Si un runtime carece del mapping de un id
+declarado, su validación/generación aborta; nunca concede MCP genérico.
 
 Toda referencia `skills` debe resolver a un `skills/<id>/SKILL.md` publicado.
-La fuente conserva el id sin prefijo; un runtime sin plugin transforma la
-salida a `mefisto-<id>`. El prefijo adaptado no pertenece a la fuente.
+Las referencias `skills` y `agent`, igual que los argumentos `<id>` de las
+directivas, conservan ids fuente sin prefijo. Un runtime sin plugin transforma
+cada Skill en la salida a `mefisto-<id>`. El prefijo adaptado no pertenece a la
+fuente.
 
 ## Directivas del body
 
