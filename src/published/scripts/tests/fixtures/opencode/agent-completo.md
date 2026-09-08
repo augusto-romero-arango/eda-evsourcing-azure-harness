@@ -1,9 +1,8 @@
 ---
-{"kind":"agent","id":"agent-completo","description":"Lee, edita y ejecuta.","mode":"subagent","profile":"deep","capabilities":["read","edit","shell","web","task"]}
+{"kind":"agent","id":"agent-completo","description":"Lee, \"edita\" y ejecuta.","mode":"subagent","profile":"deep","capabilities":["read","edit","shell","web","task"]}
 ---
 {{mefisto:assert-consumer-repo}}
-Ruta: {{mefisto:config-path}}.
+Rutas: {{mefisto:config-path}} y {{mefisto:package-root}}.
 {{mefisto:state-path logs/con-espacio.log}}
 Ejecuta {{mefisto:run prueba.sh "$ARGUMENTS con espacios"}} ahora.
 Consulta {{mefisto:command otra-orden}}.
-{{mefisto:package-root}}

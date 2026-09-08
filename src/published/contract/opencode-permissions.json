@@ -1,6 +1,7 @@
 {
-  "$comment": "Mapping declarativo de las capacidades publicadas al bloque permission de OpenCode 1.18.29. La politica es sobre el consumidor: nunca importa ni replica el scope interno de Mefisto.",
-  "always_deny": ["external_directory", "doom_loop"],
+  "$comment": "Mapping declarativo de las capacidades publicadas al bloque permission de OpenCode 1.18.29. Las 17 claves soportadas reciben un valor explicito. La politica es sobre el consumidor y sigue su blocklist: nunca importa ni replica el scope interno de Mefisto.",
+  "supported_permissions": ["bash", "edit", "write", "patch", "read", "list", "glob", "grep", "question", "skill", "task", "lsp", "todowrite", "websearch", "webfetch", "external_directory", "doom_loop"],
+  "always_deny": ["external_directory", "doom_loop", "lsp", "todowrite"],
   "question": {"primary": "allow", "subagent": "deny", "all": "deny"},
   "capability_scalar": {
     "web": ["webfetch", "websearch"],
@@ -27,6 +28,7 @@
         {"pattern": "sh scripts/*", "value": "allow"},
         {"pattern": "scripts/*", "value": "allow"},
         {"pattern": "./scripts/*", "value": "allow"},
+        {"pattern": "${MEFISTO_PACKAGE_ROOT}/scripts/*", "value": "allow"},
         {"pattern": "mkdir *", "value": "allow"},
         {"pattern": "mktemp", "value": "allow"},
         {"pattern": "mktemp *", "value": "allow"},

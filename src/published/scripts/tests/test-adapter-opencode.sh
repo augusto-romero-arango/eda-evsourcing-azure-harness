@@ -5,6 +5,7 @@ export LC_ALL=C
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$HERE/../../../.." && pwd -P)"
 ADAPTER="$REPO_ROOT/src/published/scripts/adapters/adapter-opencode.sh"
+MAPPING="$REPO_ROOT/src/published/contract/opencode-permissions.json"
 FIXTURES="$HERE/fixtures/opencode"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -13,53 +14,91 @@ pass() { printf '  PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
 fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
 assert_contains() { case "$1" in *"$2"*) pass "$3" ;; *) fail "$3" ;; esac; }
 assert_not_contains() { case "$1" in *"$2"*) fail "$3" ;; *) pass "$3" ;; esac; }
+render() { "$ADAPTER" render "$1" '<!-- GENERADO por prueba desde fixture. No editar a mano. -->'; }
+make_agent() {
+    local name="$1" capabilities="$2" extras="${3:-}"
+    printf '%s\n' '---' "{\"kind\":\"agent\",\"id\":\"$name\",\"description\":\"Prueba.\",\"mode\":\"subagent\",\"capabilities\":$capabilities$extras}" '---' '{{mefisto:assert-consumer-repo}}' > "$WORK/$name.md"
+}
+permission_of() {
+    render "$1" | while IFS= read -r line; do
+        case "$line" in 'permission: '*) printf '%s\n' "${line#permission: }"; return 0 ;; esac
+    done
+}
 
-echo '[pre] adaptador y rutas'
+printf '%s\n' '[pre] adaptador, rutas y vocabulario'
 bash -n "$ADAPTER" && pass 'sintaxis Bash valida' || fail 'sintaxis Bash invalida'
-[ "$(bash "$ADAPTER" root)" = dist/opencode ] && pass 'raiz dist/opencode' || fail 'raiz incorrecta'
-[ "$(bash "$ADAPTER" path src/published/agents/agent-minimo.md)" = agents/agent-minimo.md ] && pass 'path de agente' || fail 'path de agente incorrecto'
-[ "$(bash "$ADAPTER" path src/published/commands/command-delegado.md)" = commands/mefisto:command-delegado.md ] && pass 'namespace literal del comando' || fail 'namespace incorrecto'
+[ -x "$ADAPTER" ] && pass 'adaptador ejecutable' || fail 'adaptador no ejecutable'
+[ "$("$ADAPTER" root)" = dist/opencode ] && pass 'raiz dist/opencode' || fail 'raiz incorrecta'
+agent_path="$("$ADAPTER" path src/published/agents/agent-minimo.md)"
+command_path="$("$ADAPTER" path src/published/commands/command-delegado.md)"
+[ "$agent_path" = agents/agent-minimo.md ] && pass 'path de agente' || fail 'path de agente incorrecto'
+[ "$command_path" = commands/mefisto:command-delegado.md ] && pass 'namespace literal del comando' || fail 'namespace incorrecto'
+assert_not_contains "$command_path" 'mefisto-command' 'no usa id interno mefisto-<id>'
+[ "$command_path" != commands/command-delegado.md ] && pass 'no publica comando sin namespace' || fail 'publico comando sin namespace'
+permission_count="$(jq -r '.supported_permissions | length' "$MAPPING")"
+[ "$permission_count" -eq 17 ] && pass 'mapping declara los 17 permisos soportados' || fail 'mapping no declara 17 permisos'
 
-echo '[render] frontmatter, permisos y directivas'
-marker='<!-- GENERADO por prueba desde fixture. No editar a mano. -->'
-bash "$ADAPTER" render "$FIXTURES/agent-minimo.md" "$marker" > "$WORK/minimo.md"; rc=$?
-[ "$rc" -eq 0 ] && pass 'render minimo' || fail 'render minimo'
-minimo="$(< "$WORK/minimo.md")"
-assert_contains "$minimo" 'mode: "primary"' 'mode de agente emitido'
-assert_contains "$minimo" '"external_directory":"deny"' 'external_directory denegado'
-assert_contains "$minimo" '"bash":{"*":"deny"}' 'shell deny por defecto'
-assert_not_contains "$minimo" 'model:' 'modelo heredado, no emitido'
-assert_not_contains "$minimo" 'tools:' 'campo Claude omitido'
+printf '%s\n' '[render] snapshots y frontmatter'
+if render "$FIXTURES/agent-minimo.md" > "$WORK/minimo.md" && cmp -s "$FIXTURES/expected-agent-minimo.md" "$WORK/minimo.md"; then
+    pass 'snapshot byte a byte de agente minimo'
+else
+    fail 'snapshot byte a byte de agente minimo'
+fi
+if render "$FIXTURES/command-delegado.md" > "$WORK/comando.md" && cmp -s "$FIXTURES/expected-command-delegado.md" "$WORK/comando.md"; then
+    pass 'snapshot byte a byte de comando delegado'
+else
+    fail 'snapshot byte a byte de comando delegado'
+fi
+comando="$(< "$WORK/comando.md")"
+assert_contains "$comando" 'agent: "agent-completo"' 'agent inferido de launch-agent'
+assert_contains "$comando" 'subtask: true' 'subtask del comando delegado'
+assert_not_contains "$comando" 'permission:' 'comando sin campo permission'
+assert_not_contains "$comando" 'model:' 'comando hereda modelo'
 
-bash "$ADAPTER" render "$FIXTURES/agent-completo.md" "$marker" > "$WORK/completo.md"; rc=$?
+render "$FIXTURES/agent-completo.md" > "$WORK/completo.md"; rc=$?
 [ "$rc" -eq 0 ] && pass 'render de capacidades combinadas' || fail 'render de capacidades combinadas'
 completo="$(< "$WORK/completo.md")"
+assert_contains "$completo" 'description: "Lee, \"edita\" y ejecuta."' 'description queda escapada como YAML valido'
 assert_contains "$completo" '"edit":{"*":"allow"' 'edicion sobre alcance consumidor'
 assert_contains "$completo" '"read":{"*":"allow"' 'lectura sobre consumidor'
 assert_contains "$completo" '"webfetch":"allow"' 'capacidad web'
+assert_contains "$completo" '"lsp":"deny"' 'read no habilita lsp implicitamente'
+assert_contains "$completo" '"todowrite":"deny"' 'permiso sin capacidad neutral queda denegado'
 assert_contains "$completo" '${MEFISTO_PACKAGE_ROOT}/scripts/prueba.sh "$ARGUMENTS con espacios"' 'run preserva argumentos con espacios'
-assert_contains "$completo" '.mefisto/harness.config.json' 'config-path traducida'
+assert_contains "$completo" 'Rutas: .mefisto/harness.config.json y ${MEFISTO_PACKAGE_ROOT}.' 'varias directivas preservan texto circundante'
 assert_contains "$completo" '.mefisto/pipeline/logs/con-espacio.log' 'state-path traducida'
 assert_contains "$completo" '/mefisto:otra-orden' 'command conserva namespace'
 assert_not_contains "$completo" '{{mefisto:' 'siete directivas resueltas'
 assert_not_contains "$completo" '.claude/' 'sin ruta Claude'
+assert_not_contains "$completo" '/Users/' 'sin path de maquina'
+assert_not_contains "$completo" 'model:' 'agente hereda modelo'
+assert_not_contains "$completo" 'tools:' 'campo Claude omitido'
 
-bash "$ADAPTER" render "$FIXTURES/command-delegado.md" "$marker" > "$WORK/comando.md"; rc=$?
-[ "$rc" -eq 0 ] && pass 'render de comando' || fail 'render de comando'
-comando="$(< "$WORK/comando.md")"
-assert_contains "$comando" 'agent: "agent-completo"' 'agent de comando'
-assert_contains "$comando" 'subtask: true' 'subtask de comando'
-assert_not_contains "$comando" 'permission:' 'comando sin permisos vacios'
+printf '%s\n' '[permisos] deny por defecto y capacidades aisladas'
+make_agent solo-read '["read"]'; read_permission="$(permission_of "$WORK/solo-read.md")"
+jq -e '.read["*"] == "allow" and .list == "allow" and .glob == "allow" and .grep == "allow" and .edit["*"] == "deny" and .bash["*"] == "deny"' <<< "$read_permission" >/dev/null && pass 'combinacion read' || fail 'combinacion read'
+make_agent solo-edit '["edit"]'; edit_permission="$(permission_of "$WORK/solo-edit.md")"
+jq -e '.edit["*"] == "allow" and .write["*"] == "allow" and .patch["*"] == "allow" and .read["*"] == "deny"' <<< "$edit_permission" >/dev/null && pass 'combinacion edit' || fail 'combinacion edit'
+make_agent solo-shell '["shell"]'; shell_permission="$(permission_of "$WORK/solo-shell.md")"
+jq -e '.bash["*"] == "deny" and .bash["${MEFISTO_PACKAGE_ROOT}/scripts/*"] == "allow" and .external_directory == "deny"' <<< "$shell_permission" >/dev/null && pass 'combinacion shell acotada' || fail 'combinacion shell acotada'
+keys="$(printf '%s' "$read_permission" | jq -c 'keys | sort')"
+supported="$(jq -c '.supported_permissions | sort' "$MAPPING")"
+[ "$keys" = "$supported" ] && pass 'todo permiso soportado tiene valor explicito' || fail 'faltan o sobran permisos emitidos'
 
-echo '[fallos] fail-closed'
-cp "$FIXTURES/agent-minimo.md" "$WORK/con-skill.md"
-perl -0pi -e 's/"mode":"primary"/"mode":"primary","skills":["algo"]/' "$WORK/con-skill.md"
-out="$(bash "$ADAPTER" render "$WORK/con-skill.md" "$marker" 2>&1)"; rc=$?
+printf '%s\n' '[fallos] fail-closed'
+make_agent desconocida '["desconocida"]'
+out="$(render "$WORK/desconocida.md" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && assert_contains "$out" 'capabilities: capacidad '\''desconocida'\'' sin mapping OpenCode' 'capacidad desconocida falla con campo' || fail 'capacidad desconocida debio fallar'
+make_agent con-skill '[]' ',"skills":["algo"]'
+out="$(render "$WORK/con-skill.md" 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && assert_contains "$out" 'skills: OpenCode no implementa' 'skills no desaparecen' || fail 'skills debieron fallar'
-cp "$FIXTURES/agent-minimo.md" "$WORK/directiva.md"
-printf '\n{{mefisto:desconocida}}\n' >> "$WORK/directiva.md"
-out="$(bash "$ADAPTER" render "$WORK/directiva.md" "$marker" 2>&1)"; rc=$?
-[ "$rc" -ne 0 ] && assert_contains "$out" 'body: directiva sin mapping OpenCode' 'directiva sin mapping falla' || fail 'directiva debio fallar'
+make_agent con-mcp '[]' ',"mcp":["terraform"]'
+out="$(render "$WORK/con-mcp.md" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && assert_contains "$out" 'mcp: OpenCode no implementa' 'mcp no desaparece' || fail 'mcp debio fallar'
+make_agent directiva '[]'
+printf '%s\n' '{{mefisto:desconocida}}' >> "$WORK/directiva.md"
+out="$(render "$WORK/directiva.md" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && assert_contains "$out" 'body: directiva sin mapping OpenCode' 'directiva sin mapping falla con campo' || fail 'directiva debio fallar'
 
 printf 'RESULTADO: %s pasaron, %s fallaron\n' "$PASS" "$FAIL"
 exit "$FAIL"
