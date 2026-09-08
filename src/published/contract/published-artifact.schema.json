@@ -1,0 +1,36 @@
+{
+  "$comment": "Contrato neutral publicado de agentes y comandos (MEF-ADR-0019, MEF-ADR-0050 y MEF-ADR-0053; issue #1047). Subconjunto JSON Schema implementado por src/published/scripts/lib/jsonschema-lite.jq.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["kind", "id", "description", "mode"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["agent"] },
+        "id": { "type": "string", "minLength": 1, "pattern": "^(?!mefisto-)[a-z0-9]+(-[a-z0-9]+)*$" },
+        "description": { "type": "string", "minLength": 1 },
+        "mode": { "type": "string", "enum": ["primary", "subagent", "all"] },
+        "profile": { "type": "string", "enum": ["fast", "balanced", "deep"] },
+        "capabilities": { "type": "array", "items": { "type": "string", "enum": ["read", "edit", "shell", "web", "skill", "task"] } },
+        "skills": { "type": "array", "items": { "type": "string", "minLength": 1, "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" } },
+        "mcp": { "type": "array", "items": { "type": "string", "minLength": 1, "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" } }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["kind", "id", "description"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["command"] },
+        "id": { "type": "string", "minLength": 1, "pattern": "^(?!mefisto-)[a-z0-9]+(-[a-z0-9]+)*$" },
+        "description": { "type": "string", "minLength": 1 },
+        "profile": { "type": "string", "enum": ["fast", "balanced", "deep"] },
+        "capabilities": { "type": "array", "items": { "type": "string", "enum": ["read", "edit", "shell", "web", "skill", "task"] } },
+        "skills": { "type": "array", "items": { "type": "string", "minLength": 1, "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" } },
+        "mcp": { "type": "array", "items": { "type": "string", "minLength": 1, "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" } },
+        "agent": { "type": "string", "minLength": 1, "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+        "arguments": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    }
+  ]
+}
