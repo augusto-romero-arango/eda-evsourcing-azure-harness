@@ -16,6 +16,7 @@ echo '[fuentes] contrato neutral y responsabilidades'
 for agent in tooling-writer tooling-reviewer; do
     source="$REPO_ROOT/src/published/agents/$agent.md"
     if bash "$REPO_ROOT/src/published/scripts/validate-published-artifacts.sh" "$source" >/dev/null; then pass "$agent valida"; else fail "$agent no valida"; fi
+    [ "$(awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$source" | jq -r '.id')" = "$agent" ] && pass "$agent conserva su id estable" || fail "$agent no conserva su id estable"
     body="$(awk 'NR == 1 { next } $0 == "---" && !seen { seen=1; next } seen { print }' "$source")"
     contains "$body" '{{mefisto:assert-consumer-repo}}' "$agent conserva el guard"
     contains "$body" 'archivo de summary' "$agent declara el summary entregado"
@@ -46,6 +47,8 @@ for runtime in claude opencode; do
 done
 claude_writer="$(< "$REPO_ROOT/dist/claude/agents/tooling-writer.md")"
 claude_reviewer="$(< "$REPO_ROOT/dist/claude/agents/tooling-reviewer.md")"
+contains "$claude_writer" 'name: "tooling-writer"' 'Claude expone el id del writer'
+contains "$claude_reviewer" 'name: "tooling-reviewer"' 'Claude expone el id del reviewer'
 contains "$claude_writer" 'tools: "Read, Glob, Grep, Edit, Write, Bash"' 'Claude writer deriva solo read/edit/shell'
 contains "$claude_writer" 'model: "sonnet"' 'Claude materializa perfil balanced'
 absent "$claude_reviewer" 'model:' 'Claude preserva herencia del perfil deep'
