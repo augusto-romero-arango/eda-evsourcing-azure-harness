@@ -13,26 +13,41 @@ objetos rechazan propiedades adicionales.
 
 | Campo | Agente | Comando | Claude Code | OpenCode |
 |---|---|---|---|---|
-| `kind`, `id`, `description` | requerido | requerido | metadata equivalente | metadata equivalente |
-| `mode` | requerido | no | perfil de ejecución | `mode` |
-| `profile` | sí | sí | modelo por tabla del adaptador | selección configurable |
-| `capabilities` | sí | sí | tools/allowlist generada | permisos generados |
-| `skills` | sí | sí | `skills` generado | Skill adaptado si aplica |
-| `mcp` | sí | sí | matcher scoped generado | permiso/configuración generado |
-| `agent`, `arguments` | no | sí | directiva/hint generado | `agent`/subtask generado |
+| `kind` | requerido | requerido | selecciona tipo de salida; no se emite | selecciona tipo de salida; no se emite |
+| `id` | requerido | requerido | nombre de archivo/ruta; no se emite | nombre de archivo/ruta; no se emite |
+| `description` | requerido | requerido | `description` | `description` |
+| `mode` | requerido | no | selecciona la forma de ejecución; no se emite | `mode` |
+| `profile` | sí | sí | `model` resuelto por tabla del adaptador | modelo resuelto por configuración del adaptador |
+| `capabilities` | sí | sí | `tools`/`allowed-tools` generados | `permission` generado |
+| `skills` | sí | sí | `skills` con ids fuente | disponibilidad del Skill adaptado `mefisto-<id>` |
+| `mcp` | sí | sí | matcher scoped por id lógico | entrada `mcp`/permiso por id lógico |
+| `agent` | no | sí | delegación al agente generado | `agent` + ejecución como subtask |
+| `arguments` | no | sí | `argument-hint` | hint equivalente si el runtime lo admite |
 
 Las capacidades son intenciones cerradas: `read`, `edit`, `shell`, `web`,
-`skill`, `task`. El mapeo es deny-by-default y solo concede herramientas o
-permisos del consumidor: `read` lee, `edit` edita bajo el scope/gate del
-pipeline consumidor, `shell` ejecuta comandos, `web` usa web, `skill` carga
-Skills y `task` delega subagentes. No sourcea ni replica como autoridad
-`is_path_in_mefisto_scope`.
+`skill`, `task`. Este es el mapping que los adaptadores deben materializar;
+cualquier tool o permiso no derivado queda denegado:
+
+| Capacidad | Claude Code (`tools`/`allowed-tools`) | OpenCode (`permission`) |
+|---|---|---|
+| `read` | `Read`, `Glob`, `Grep` | `read`, `list`, `glob`, `grep` |
+| `edit` | `Edit`, `Write` | `edit`, `write`, `patch` |
+| `shell` | `Bash` | `bash` |
+| `web` | `WebFetch`, `WebSearch` | `webfetch`, `websearch` |
+| `skill` | `Skill` | `skill` |
+| `task` | `Task` | `task` |
+
+El mapping solo concede permisos sobre el consumidor. `edit` queda sujeto al
+scope/gate del pipeline consumidor correspondiente: no sourcea ni replica como
+autoridad `is_path_in_mefisto_scope`. En OpenCode tampoco habilita `lsp` de
+forma implícita (MEF-ADR-0052).
 
 `mcp` no es una tool ni un permiso de runtime: es una lista de ids lógicos
 kebab-case. Los ids iniciales son `mcp: ["microsoft-learn"]` y
-`mcp: ["terraform"]`. Cada adaptador debe tener un mapping explícito y
-fail-closed: una ausencia aborta validación/generación, nunca concede MCP
-genérico.
+`mcp: ["terraform"]`. El schema registra esos mappings iniciales como un
+vocabulario cerrado: agregar otro id requiere actualizar el contrato y los
+mappings de todos los adaptadores. Una ausencia aborta validación/generación,
+nunca concede MCP genérico.
 
 Toda referencia `skills` debe resolver a un `skills/<id>/SKILL.md` publicado.
 La fuente conserva el id sin prefijo; un runtime sin plugin transforma la
@@ -44,18 +59,19 @@ Todo artefacto incluye `{{mefisto:assert-consumer-repo}}`, que aborta si el cwd
 es el repositorio de Mefisto. Cualquier directiva `{{mefisto:...}}` no listada
 o mal formada se rechaza.
 
-| Directiva | Expansión por adaptador |
-|---|---|
-| `{{mefisto:assert-consumer-repo}}` | guard que rechaza el repo de Mefisto |
-| `{{mefisto:launch-agent <id>}}` | lanzamiento/enrutamiento del agente publicado |
-| `{{mefisto:run <script> <args>}}` | invocación del script publicado correspondiente |
-| `{{mefisto:package-root}}` | raíz instalada del paquete del runtime |
-| `{{mefisto:config-path}}` | ruta de configuración del consumidor |
-| `{{mefisto:state-path <rel>}}` | ruta de estado del consumidor |
-| `{{mefisto:command <id>}}` | namespace de comando del adaptador |
+| Directiva | Claude Code | OpenCode |
+|---|---|---|
+| `{{mefisto:assert-consumer-repo}}` | guard generado que aborta en el repo de Mefisto | el mismo guard de consumidor, sin importar políticas internas |
+| `{{mefisto:launch-agent <id>}}` | delegación al agente generado del plugin | delegación al agente global generado |
+| `{{mefisto:run <script> <args>}}` | script bajo la raíz instalada del plugin + argumentos | script bajo la release activa + argumentos |
+| `{{mefisto:package-root}}` | raíz instalada del plugin | raíz de la release activa |
+| `{{mefisto:config-path}}` | `.mefisto/harness.config.json` del consumidor | `.mefisto/harness.config.json` del consumidor |
+| `{{mefisto:state-path <rel>}}` | `.mefisto/pipeline/<rel>` del consumidor | `.mefisto/pipeline/<rel>` del consumidor |
+| `{{mefisto:command <id>}}` | `/mefisto:<id>` | `/mefisto:<id>` |
 
 Los adaptadores materializan comandos como `/mefisto:<id>`. El body no puede
-nombrar CLIs, variables, cachés, directorios ni metadata de un runtime.
+nombrar CLIs, variables, cachés, directorios ni metadata de un runtime. Tampoco
+admite placeholders distintos de `$ARGUMENTS`.
 
 ## Validación
 
