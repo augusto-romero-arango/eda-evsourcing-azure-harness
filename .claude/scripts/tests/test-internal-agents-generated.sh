@@ -23,6 +23,9 @@
 #   [writer-reviewer] Writer y reviewer se mantienen seleccionables como
 #         agentes primarios (`mode: all`) sin abrir permisos de stages
 #         headless (CA-3/CA-4, issue #1034).
+#   [opencode-edit] Los cinco agentes, que declaran capability `edit`, reciben
+#         las rutas neutrales en edit/write/patch sin abrir el catch-all
+#         (CA-6, issue #1078).
 #   [guard-f] El bloque [F] de scripts/tests/test-guards.sh (integridad de
 #         Agent Skills) sigue en verde tras la migracion.
 #
@@ -113,14 +116,6 @@ for id in mefisto-writer mefisto-reviewer; do
             fail "$id: permission.$key debe permanecer en allow por capability read"
         fi
     done
-    for key in edit write patch; do
-        if [ "$(printf '%s' "$permission" | jq -r --arg key "$key" '.[ $key ]["src/internal/**"] // empty')" = "allow" ] \
-            && [ "$(printf '%s' "$permission" | jq -r --arg key "$key" '.[ $key ]["*"] // empty')" = "deny" ]; then
-            pass "$id: permission.$key conserva la allowlist de capability edit"
-        else
-            fail "$id: permission.$key debe conservar catch-all deny y src/internal/** allow"
-        fi
-    done
     if [ "$(printf '%s' "$permission" | jq -r '.bash["git *"] // empty')" = "allow" ] \
         && [ "$(printf '%s' "$permission" | jq -r '.bash["*"] // empty')" = "deny" ]; then
         pass "$id: permission.bash conserva la allowlist de capability shell"
@@ -133,6 +128,23 @@ for id in mefisto-writer mefisto-reviewer; do
     else
         fail "$id: permission.read debe conservar catch-all allow y .env deny"
     fi
+done
+
+echo ""
+echo "[opencode-edit] Los cinco agentes reciben las rutas neutrales en edit/write/patch"
+for id in $AGENT_IDS; do
+    out_file="$REPO_ROOT/.opencode/agents/$id.md"
+    permission="$(sed -n 's/^permission: //p' "$out_file")"
+    for key in edit write patch; do
+        if [ "$(printf '%s' "$permission" | jq -r --arg key "$key" '.[ $key ]["src/internal/**"] // empty')" = "allow" ] \
+            && [ "$(printf '%s' "$permission" | jq -r --arg key "$key" '.[ $key ]["src/published/**"] // empty')" = "allow" ] \
+            && [ "$(printf '%s' "$permission" | jq -r --arg key "$key" '.[ $key ]["src/runtime/**"] // empty')" = "allow" ] \
+            && [ "$(printf '%s' "$permission" | jq -r --arg key "$key" '.[ $key ]["*"] // empty')" = "deny" ]; then
+            pass "$id: permission.$key conserva la allowlist neutral de capability edit"
+        else
+            fail "$id: permission.$key debe conservar catch-all deny y allow para src/internal/**, src/published/** y src/runtime/**"
+        fi
+    done
 done
 
 echo ""
