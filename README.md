@@ -39,6 +39,44 @@ Si tu proyecto no encaja con este stack, este harness no es para ti.
 
 ## Instalación
 
+### OpenCode: bootstrap, upgrade y rollback
+
+OpenCode usa una release global por usuario; no copia el checkout ni escribe en la
+configuración global del runtime. La raíz es
+`${XDG_DATA_HOME:-$HOME/.local/share}/mefisto` o, en macOS cuando `XDG_DATA_HOME`
+no está definido, `$HOME/Library/Application Support/mefisto`, conforme a
+[MEF-ADR-0053](docs/adr/mef-adr-0053-distribucion-multi-runtime-consumidores.md)
+y la [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/).
+
+Para el primer bootstrap, descarga **el tarball y su checksum del mismo tag**,
+verifica antes de extraer y ejecuta exclusivamente el instalador que quedó dentro
+del contenido verificado:
+
+```bash
+VERSION=<semver>
+BASE="https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/releases/download/v$VERSION"
+curl -fL "$BASE/mefisto-opencode-v$VERSION.tar.gz" -o "mefisto-opencode-v$VERSION.tar.gz"
+curl -fL "$BASE/mefisto-opencode-v$VERSION.tar.gz.sha256" -o "mefisto-opencode-v$VERSION.tar.gz.sha256"
+(cd . && shasum -a 256 -c "mefisto-opencode-v$VERSION.tar.gz.sha256") && tar -xzf "mefisto-opencode-v$VERSION.tar.gz" -C mefisto-opencode-release && ./mefisto-opencode-release/install.sh install "$VERSION"
+```
+
+Tras el bootstrap, el único punto de entrada es
+`<raíz-de-datos>/mefisto/active/bin/mefisto-opencode`. El instalador instalado
+descarga y vuelve a verificar ambos assets antes de extraer; dos activaciones
+concurrentes se serializan con un lock bajo esa misma raíz. No crea enlaces en el
+`PATH`, no lee auth stores y no modifica `<config>/opencode.json` (esa proyección
+queda fuera de este paso).
+
+```bash
+M="$XDG_DATA_HOME/mefisto/active/bin/mefisto-opencode" # en Linux/XDG
+"$M" install <semver>    # upgrade verificando el tag v<semver>
+"$M" activate <semver>   # rollback a una release ya instalada
+"$M" status              # runtime, versión, tag, commit y diagnóstico
+```
+
+En macOS sin `XDG_DATA_HOME`, sustituye `M` por
+`"$HOME/Library/Application Support/mefisto/active/bin/mefisto-opencode"`.
+
 ### 1. Configurar `.claude/settings.json` del repo consumidor
 
 Crea (o extiende) `.claude/settings.json` en la raíz del repo consumidor con tres bloques — el marketplace, la habilitación del plugin y los permisos recomendados:
