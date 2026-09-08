@@ -7,6 +7,7 @@ REPO_ROOT="$(cd "$HERE/../../../.." && pwd -P)"
 INSTALLER="$REPO_ROOT/src/published/scripts/install-opencode-release.sh"
 LAUNCHER="$REPO_ROOT/src/published/scripts/mefisto-opencode"
 PROJECTOR="$REPO_ROOT/src/published/scripts/project-opencode-release.sh"
+DIAGNOSTIC="$REPO_ROOT/src/published/scripts/diagnose-installation-identity.sh"
 WORK="$(mktemp -d)"; trap 'chmod -R u+w "$WORK" 2>/dev/null || true; rm -rf "$WORK"' EXIT
 PASS=0; FAIL=0
 pass() { printf '  PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
@@ -23,8 +24,8 @@ make_release() {
     local version="$1" commit="$2" root asset
     root="$WORK/release-$version"; asset="mefisto-opencode-v$version.tar.gz"
     mkdir -p "$root/bin" "$WORK/assets/v$version"
-    cp "$INSTALLER" "$root/install.sh"; cp "$LAUNCHER" "$root/bin/mefisto-opencode"; cp "$PROJECTOR" "$root/project-opencode-release.sh"
-    chmod +x "$root/install.sh" "$root/bin/mefisto-opencode" "$root/project-opencode-release.sh"
+    cp "$INSTALLER" "$root/install.sh"; cp "$LAUNCHER" "$root/bin/mefisto-opencode"; cp "$PROJECTOR" "$root/project-opencode-release.sh"; cp "$DIAGNOSTIC" "$root/diagnose-installation-identity.sh"
+    chmod +x "$root/install.sh" "$root/bin/mefisto-opencode" "$root/project-opencode-release.sh" "$root/diagnose-installation-identity.sh"
     printf 'fixture %s\n' "$version" > "$root/contenido con espacios.txt"
     jq -n --arg version "$version" --arg commit "$commit" '{schemaVersion: 1, runtime: "opencode", version: $version, commit: $commit, minimumRuntimeVersion: "1.18.29"}' > "$root/mefisto-manifest.json"
     (cd "$root" && tar -czf "$WORK/assets/v$version/$asset" .) || exit 1
@@ -35,8 +36,8 @@ make_link_release() {
     local version="$1" root asset
     root="$WORK/release-$version"; asset="mefisto-opencode-v$version.tar.gz"
     mkdir -p "$root/bin" "$WORK/assets/v$version"
-    cp "$INSTALLER" "$root/install.sh"; cp "$LAUNCHER" "$root/bin/mefisto-opencode"; cp "$PROJECTOR" "$root/project-opencode-release.sh"
-    chmod +x "$root/install.sh" "$root/bin/mefisto-opencode" "$root/project-opencode-release.sh"
+    cp "$INSTALLER" "$root/install.sh"; cp "$LAUNCHER" "$root/bin/mefisto-opencode"; cp "$PROJECTOR" "$root/project-opencode-release.sh"; cp "$DIAGNOSTIC" "$root/diagnose-installation-identity.sh"
+    chmod +x "$root/install.sh" "$root/bin/mefisto-opencode" "$root/project-opencode-release.sh" "$root/diagnose-installation-identity.sh"
     ln -s /tmp "$root/enlace"
     jq -n --arg version "$version" '{schemaVersion: 1, runtime: "opencode", version: $version, commit: "3333333333333333333333333333333333333333", minimumRuntimeVersion: "1.18.29"}' > "$root/mefisto-manifest.json"
     (cd "$root" && tar -czf "$WORK/assets/v$version/$asset" .) || exit 1
@@ -44,7 +45,7 @@ make_link_release() {
 }
 
 printf '[pre] sintaxis y ejecutables\n'
-bash -n "$INSTALLER" && bash -n "$LAUNCHER" && bash -n "$PROJECTOR" && pass 'instalador, proyector y launcher Bash validos' || fail 'instalador, proyector o launcher invalido'
+bash -n "$INSTALLER" && bash -n "$LAUNCHER" && bash -n "$PROJECTOR" && bash -n "$DIAGNOSTIC" && pass 'instalador, proyector, diagnostico y launcher Bash validos' || fail 'instalador, proyector, diagnostico o launcher invalido'
 
 make_release 1.2.3 0123456789abcdef0123456789abcdef01234567
 make_release 2.0.0 abcdef0123456789abcdef0123456789abcdef01
@@ -89,6 +90,7 @@ MEFISTO_OPENCODE_RELEASE_BASE_URL="file://$WORK/assets" "$ACTIVE" install 5.0.0 
 [ ! -e "$XDG_DATA_HOME/mefisto/releases/5.0.0" ] && pass 'tarball inseguro no publica una release' || fail 'tarball inseguro publico un destino'
 
 STATUS="$("$ACTIVE" status)"; case "$STATUS" in *'Runtime: opencode'*'Version: 1.2.3'*'Tag: v1.2.3'*'Commit: 0123456789abcdef0123456789abcdef01234567'*"$XDG_DATA_HOME/mefisto"*) pass 'status informa identidad y raiz sin secretos' ;; *) fail 'status no informa identidad esperada' ;; esac
+DIAGNOSIS="$("$ACTIVE" diagnose)"; printf '%s' "$DIAGNOSIS" | jq -e '.status == "opencode_only" and .opencode.version == "1.2.3"' >/dev/null && pass 'diagnose expone el diagnostico parseable de la release activa' || fail 'diagnose no expone la identidad activa'
 rm "$XDG_DATA_HOME/mefisto/active"; ln -s "$HOME" "$XDG_DATA_HOME/mefisto/active"
 "$XDG_DATA_HOME/mefisto/releases/1.2.3/bin/mefisto-opencode" status >/dev/null 2>&1; assert_rc "$?" 1 'status rechaza active fuera del almacen sin inspeccionarlo'
 
