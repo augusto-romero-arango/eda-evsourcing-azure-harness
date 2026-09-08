@@ -22,8 +22,10 @@
 #       (CA-4; issue #1034).
 #   [mcp-abort] La capacidad `mcp` aborta con "capacidad mcp sin mapeo
 #       OpenCode", sin escribir nada (CA-5).
-#   [parity] Paridad `edit` vs `is_path_in_mefisto_scope` sobre 10 rutas
-#       (CA-6): defensa en profundidad, mismo veredicto que el gate real.
+#   [parity] Paridad `edit` vs `is_path_in_mefisto_scope` para cada patron que
+#       el gate declara, salvo las excepciones documentadas centralmente en el
+#       mapping (CA-5): defensa en profundidad, mismo veredicto que el gate
+#       real sin mantener una lista de rutas duplicada.
 #
 # Los agentes de prueba se generan con el generador real
 # (generate-internal-adapters.sh), no invocando las funciones del adaptador
@@ -45,6 +47,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 GENERATOR="$REPO_ROOT/src/internal/scripts/generate-internal-adapters.sh"
 EVALUATOR="$REPO_ROOT/src/internal/scripts/lib/opencode-permission-eval.jq"
+MAPPING="$REPO_ROOT/src/internal/contract/opencode-permissions.json"
 
 source "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" 2>/dev/null
 
@@ -211,6 +214,17 @@ assert_eq "deny" "$(eval_perm mefisto-fx-perm-writer edit 'src/Foo.cs')" "edicio
 assert_eq "allow" "$(eval_perm mefisto-fx-perm-writer edit 'commands/x.md')" "edicion de commands/x.md permite"
 assert_eq "allow" "$(eval_perm mefisto-fx-perm-writer edit '.mefisto/pipeline/summaries/stage-1-writer.md')" "edicion del resumen de stage (.mefisto/) permite"
 assert_eq "allow" "$(eval_perm mefisto-fx-perm-writer edit '.claude/pipeline/summaries/stage-1-writer.md')" "edicion del resumen de stage (.claude/) permite"
+assert_eq "allow" "$(eval_perm mefisto-fx-perm-writer edit 'src/runtime/lib/mefisto-models.sh')" "edicion de src/runtime/** permite"
+assert_eq "allow" "$(eval_perm mefisto-fx-perm-writer edit 'src/published/contract/README.md')" "edicion de src/published/** permite"
+for key in edit write patch; do
+    assert_eq "deny" "$(eval_perm mefisto-fx-perm-writer "$key" 'dist/claude/plugin.json')" "$key deniega dist/** (salida generada)"
+done
+assert_eq "deny" "$(eval_perm mefisto-fx-perm-writer edit 'tests/Foo.Tests.cs')" "edicion de tests/Foo.Tests.cs deniega"
+
+EDIT_RULES="$(opencode_permission_line mefisto-fx-perm-writer | jq -c '.edit | to_entries | sort_by(.key)')"
+for key in write patch; do
+    assert_eq "$EDIT_RULES" "$(opencode_permission_line mefisto-fx-perm-writer | jq -c --arg key "$key" '.[$key] | to_entries | sort_by(.key)')" "$key y edit tienen el mismo conjunto exacto de reglas"
+done
 
 echo ""
 echo "[edit-scope-temprano] CA-4 (issue #863): scope temprano de OpenCode sobre el mismo veredicto que el gate final"
@@ -231,6 +245,7 @@ assert_eq "deny" "$(eval_perm mefisto-fx-perm-planner bash 'rm -rf x')" "'rm -rf
 assert_eq "allow" "$(eval_perm mefisto-fx-perm-planner bash 'git status')" "'git status' permite"
 assert_eq "deny" "$(eval_perm mefisto-fx-perm-planner bash 'git push --force origin main')" "'git push --force' deniega pese al allow general de 'git *'"
 assert_eq "deny" "$(eval_perm mefisto-fx-perm-planner bash 'curl https://example.com')" "'curl' deniega (no listado)"
+assert_eq "deny" "$(eval_perm mefisto-fx-perm-planner bash 'sudo rm -rf x')" "'sudo' deniega pese a los allow de scripts"
 # El candidato que OpenCode 1.18.29 evalua para `bash` es el TEXTO COMPLETO de
 # cada nodo `command` del arbol tree-sitter -- asignaciones de entorno del
 # prefijo incluidas, y un candidato por comando de la tuberia. De ahi estos
@@ -244,6 +259,26 @@ assert_eq "allow" "$(eval_perm mefisto-fx-perm-planner bash 'sort')" "coreutil d
 # empieza con un comodin que absorba un prefijo de entorno arbitrario, asi que
 # un `rm` disfrazado con el prefijo de {{mefisto:run}} no cae en el allow.
 assert_eq "deny" "$(eval_perm mefisto-fx-perm-planner bash 'MEFISTO_RUNTIME=opencode rm -rf x')" "'rm' con prefijo de entorno no cae en el allow de scripts"
+for root in src/runtime src/published; do
+    for command in \
+        "bash $root/scripts/validate.sh" \
+        "sh $root/scripts/validate.sh" \
+        "$root/scripts/validate.sh" \
+        "./$root/scripts/validate.sh" \
+        "MEFISTO_RUNTIME=opencode ./$root/scripts/validate.sh"; do
+        assert_eq "allow" "$(eval_perm mefisto-fx-perm-planner bash "$command")" "shell permite $command"
+    done
+done
+if jq -e '
+    .capability_map.shell.rules as $rules
+    | ([ $rules[] | select(.pattern | test("^(src/runtime|src/published)/scripts/")) | .pattern ] | all(startswith("*") | not))
+    and (([ $rules | to_entries[] | select(.value.pattern == "rm *") | .key ][0]) as $deny
+         | [ $rules | to_entries[] | select(.value.pattern | test("^(bash |sh |\\.?/?|MEFISTO_RUNTIME=opencode \\./)(src/runtime|src/published)/scripts/")) | .key ] | all(. < $deny))
+' "$MAPPING" >/dev/null; then
+    pass "los allow de scripts neutralizados preceden deny y no absorben prefijos arbitrarios"
+else
+    fail "los allow de scripts neutralizados deben preceder deny y no empezar con comodin"
+fi
 
 echo ""
 echo "[question] CA-4: allow solo en mode primary"
@@ -286,28 +321,48 @@ else
 fi
 
 echo ""
-echo "[parity] CA-6: paridad edit vs is_path_in_mefisto_scope sobre 10 rutas"
+echo "[parity] CA-5: paridad edit vs is_path_in_mefisto_scope declarada por el gate"
 if declare -F is_path_in_mefisto_scope >/dev/null 2>&1; then
-    PARITY_PATHS=(
-        "commands/foo.md"
-        "agents/foo.md"
-        "scripts/foo.sh"
-        "docs/adr/MEF-ADR-0001-foo.md"
-        ".claude/scripts/foo.sh"
-        "src/internal/scripts/lib/foo.sh"
-        "README.md"
-        "changelog.d/862.added.md"
-        "src/Foo.cs"
-        "tests/Foo.Tests.cs"
-    )
-    for p in "${PARITY_PATHS[@]}"; do
-        expected="deny"
-        if is_path_in_mefisto_scope "$p"; then
-            expected="allow"
+    # Extrae los patrones allow del `case` canonico y les construye una ruta
+    # testigo. Asi un case nuevo del gate entra en la prueba sin editar esta
+    # lista. Las excepciones se declaran solo en el mapping y deben seguir
+    # perteneciendo al gate para no ocultar una deriva inversa.
+    while IFS= read -r gate_pattern; do
+        p="${gate_pattern//\*/__scope_probe__/archivo}"
+        exception=0
+        while IFS= read -r exception_pattern; do
+            [[ "$p" == $exception_pattern ]] && exception=1
+        done < <(jq -r '.edit_scope_exceptions[].pattern' "$MAPPING")
+        if [ "$exception" -eq 0 ]; then
+            assert_eq "allow" "$(eval_perm mefisto-fx-perm-writer edit "$p")" "paridad edit vs gate: $gate_pattern"
         fi
-        actual="$(eval_perm mefisto-fx-perm-writer edit "$p")"
-        assert_eq "$expected" "$actual" "paridad edit vs is_path_in_mefisto_scope: $p"
-    done
+    done < <(awk '
+        /is_path_in_mefisto_scope\(\)/ { inside=1; next }
+        inside && /case "\$path" in/ { cases=1; next }
+        cases && /\*\) return 1/ { exit }
+        cases && /return 0/ {
+            line=$0; sub(/^[[:space:]]*/, "", line); sub(/[[:space:]]*return 0.*/, "", line); sub(/\)[[:space:]]*$/, "", line)
+            count=split(line, parts, "|")
+            for (i=1; i<=count; i++) print parts[i]
+        }
+    ' "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh")
+    while IFS=$'\t' read -r pattern reason; do
+        p="${pattern//\*\*/__scope_probe__/archivo}"
+        p="${p//\*/archivo}"
+        if is_path_in_mefisto_scope "$p"; then
+            pass "excepcion declarada sigue en el gate: $pattern ($reason)"
+        else
+            fail "excepcion declarada no pertenece al gate: $pattern ($reason)"
+        fi
+        for key in edit write patch; do
+            assert_eq "deny" "$(eval_perm mefisto-fx-perm-writer "$key" "$p")" "excepcion $pattern deniega $key"
+        done
+    done < <(jq -r '.edit_scope_exceptions[] | [.pattern, .reason] | @tsv' "$MAPPING")
+    if jq -e '[.edit_scope_exceptions[] | select((.pattern | length) == 0 or (.reason | length) == 0)] | length == 0' "$MAPPING" >/dev/null; then
+        pass "todas las excepciones de edit tienen patron y motivo"
+    else
+        fail "cada excepcion de edit debe declarar patron y motivo"
+    fi
 else
     fail "is_path_in_mefisto_scope no disponible (no se pudo source-ar _mefisto-common.sh)"
 fi

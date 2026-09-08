@@ -50,15 +50,25 @@
         { "pattern": "sh .claude/scripts/*", "value": "allow" },
         { "pattern": "bash src/internal/scripts/*", "value": "allow" },
         { "pattern": "sh src/internal/scripts/*", "value": "allow" },
+        { "pattern": "bash src/runtime/scripts/*", "value": "allow" },
+        { "pattern": "sh src/runtime/scripts/*", "value": "allow" },
+        { "pattern": "bash src/published/scripts/*", "value": "allow" },
+        { "pattern": "sh src/published/scripts/*", "value": "allow" },
         { "pattern": "scripts/tests/*", "value": "allow" },
         { "pattern": "./scripts/tests/*", "value": "allow" },
         { "pattern": ".claude/scripts/*", "value": "allow" },
         { "pattern": "./.claude/scripts/*", "value": "allow" },
         { "pattern": "src/internal/scripts/*", "value": "allow" },
         { "pattern": "./src/internal/scripts/*", "value": "allow" },
+        { "pattern": "src/runtime/scripts/*", "value": "allow" },
+        { "pattern": "./src/runtime/scripts/*", "value": "allow" },
+        { "pattern": "src/published/scripts/*", "value": "allow" },
+        { "pattern": "./src/published/scripts/*", "value": "allow" },
         { "pattern": "MEFISTO_RUNTIME=opencode ./.claude/scripts/*", "value": "allow" },
         { "pattern": "MEFISTO_RUNTIME=opencode ./scripts/tests/*", "value": "allow" },
         { "pattern": "MEFISTO_RUNTIME=opencode ./src/internal/scripts/*", "value": "allow" },
+        { "pattern": "MEFISTO_RUNTIME=opencode ./src/runtime/scripts/*", "value": "allow" },
+        { "pattern": "MEFISTO_RUNTIME=opencode ./src/published/scripts/*", "value": "allow" },
         { "pattern": "shasum", "value": "allow" },
         { "pattern": "shasum *", "value": "allow" },
         { "pattern": "mkdir *", "value": "allow" },
@@ -80,7 +90,7 @@
       ]
     },
     "edit": {
-      "$comment": "Las mismas rutas para `edit`, `write` y `patch` (issue #862 CA-2): replican is_path_in_mefisto_scope (.claude/scripts/_mefisto-common.sh) mas los dos directorios de resumenes de stage que OpenCode bloquearia sin regla explicita. Rutas relativas al worktree porque ese es el candidato que pasa la tool (ver $comment_semantica_verificada).",
+      "$comment": "Las mismas rutas para `edit`, `write` y `patch` (issue #862 CA-2): replican is_path_in_mefisto_scope (src/internal/scripts/lib/_mefisto-common.sh) mas los dos directorios de resumenes de stage que OpenCode bloquearia sin regla explicita. `dist/**` es la excepcion deliberada: MEF-ADR-0053 decision 1 lo declara salida generada no editable a mano; se produce via `bash`, no con tools de edicion. Rutas relativas al worktree porque ese es el candidato que pasa la tool (ver $comment_semantica_verificada).",
       "keys": ["edit", "write", "patch"],
       "catch_all": "deny",
       "rules": [
@@ -91,6 +101,8 @@
         { "pattern": "hooks/**", "value": "allow" },
         { "pattern": "docs/**", "value": "allow" },
         { "pattern": "src/internal/**", "value": "allow" },
+        { "pattern": "src/published/**", "value": "allow" },
+        { "pattern": "src/runtime/**", "value": "allow" },
         { "pattern": ".claude-plugin/**", "value": "allow" },
         { "pattern": ".claude/commands/**", "value": "allow" },
         { "pattern": ".claude/skills/**", "value": "allow" },
@@ -129,5 +141,12 @@
         { "pattern": "~/.claude/**", "value": "deny" }
       ]
     }
-  }
+  },
+
+  "edit_scope_exceptions": [
+    {
+      "pattern": "dist/**",
+      "reason": "MEF-ADR-0053 decision 1: dist/ es salida generada, reproducible y no editable a mano; el generador la produce via bash."
+    }
+  ]
 }

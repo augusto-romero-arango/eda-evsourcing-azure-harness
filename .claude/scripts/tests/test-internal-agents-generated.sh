@@ -115,10 +115,12 @@ for id in mefisto-writer mefisto-reviewer; do
     done
     for key in edit write patch; do
         if [ "$(printf '%s' "$permission" | jq -r --arg key "$key" '.[ $key ]["src/internal/**"] // empty')" = "allow" ] \
+            && [ "$(printf '%s' "$permission" | jq -r --arg key "$key" '.[ $key ]["src/published/**"] // empty')" = "allow" ] \
+            && [ "$(printf '%s' "$permission" | jq -r --arg key "$key" '.[ $key ]["src/runtime/**"] // empty')" = "allow" ] \
             && [ "$(printf '%s' "$permission" | jq -r --arg key "$key" '.[ $key ]["*"] // empty')" = "deny" ]; then
             pass "$id: permission.$key conserva la allowlist de capability edit"
         else
-            fail "$id: permission.$key debe conservar catch-all deny y src/internal/** allow"
+            fail "$id: permission.$key debe conservar catch-all deny y allow para src/internal/**, src/published/** y src/runtime/**"
         fi
     done
     if [ "$(printf '%s' "$permission" | jq -r '.bash["git *"] // empty')" = "allow" ] \
