@@ -77,7 +77,14 @@ M="${XDG_DATA_HOME:-$HOME/.local/share}/mefisto/active/bin/mefisto-opencode" # L
 "$M" project             # proyecta comandos/agentes/Skills/plugins de active
 "$M" deactivate          # retira solo los enlaces creados por Mefisto
 "$M" status              # runtime, versión, tag, commit y diagnóstico
+"$M" prune --keep 2      # previsualiza y pide confirmar la poda de releases inactivas
 ```
+
+`prune` es siempre opt-in: ni `install` ni `activate` eliminan releases. Conserva
+la activa y su anterior inmediata para el rollback de un paso, incluso si
+`--keep` pide menos. Antes de borrar lista las releases y los KiB recuperables;
+responde exactamente `si` o usa `--yes` para una ejecución no interactiva.
+Las entradas que no son releases válidas se informan y se conservan.
 
 En macOS sin `XDG_DATA_HOME`, sustituye `M` por
 `"$HOME/Library/Application Support/mefisto/active/bin/mefisto-opencode"`.

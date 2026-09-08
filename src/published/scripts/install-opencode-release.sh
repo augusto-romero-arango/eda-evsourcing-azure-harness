@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Instala releases OpenCode verificadas bajo la raiz de datos del usuario.
-# Uso: install.sh install <semver> | install.sh activate <semver> | install.sh project | install.sh deactivate | install.sh status | install.sh diagnose
+# Uso: install.sh install <semver> | install.sh activate <semver> | install.sh prune [--keep <n>] [--yes] | install.sh project | install.sh deactivate | install.sh status | install.sh diagnose
 set -euo pipefail
 export LC_ALL=C
 
@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPOSITORY="${MEFISTO_OPENCODE_REPOSITORY:-augusto-romero-arango/eda-evsourcing-azure-harness}"
 
 error() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
-usage() { error 'uso: mefisto-opencode install <semver> | activate <semver> | project | deactivate | status | diagnose'; }
+usage() { error 'uso: mefisto-opencode install <semver> | activate <semver> | prune [--keep <n>] [--yes] | project | deactivate | status | diagnose'; }
 valid_version() {
     printf '%s\n' "$1" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
 }
@@ -167,10 +167,146 @@ status() {
     printf 'Diagnostico: use activate <semver> para rollback; las releases quedan en %s/releases.\n' "$ROOT"
 }
 
+# Orden SemVer sin depender de sort -V, ausente en el sort BSD de macOS.
+version_less_than() {
+    local left="$1" right="$2" left_core right_core left_pre right_pre
+    local left_major left_minor left_patch right_major right_minor right_patch
+    local -a left_parts right_parts
+    left_core="${left%%[-+]*}"; right_core="${right%%[-+]*}"
+    left_pre="${left#"$left_core"}"; right_pre="${right#"$right_core"}"
+    left_pre="${left_pre%%+*}"; right_pre="${right_pre%%+*}"
+    IFS=. read -r left_major left_minor left_patch <<EOF
+$left_core
+EOF
+    IFS=. read -r right_major right_minor right_patch <<EOF
+$right_core
+EOF
+    if [ "$left_major" -ne "$right_major" ]; then [ "$left_major" -lt "$right_major" ]; return; fi
+    if [ "$left_minor" -ne "$right_minor" ]; then [ "$left_minor" -lt "$right_minor" ]; return; fi
+    if [ "$left_patch" -ne "$right_patch" ]; then [ "$left_patch" -lt "$right_patch" ]; return; fi
+    [ -z "$left_pre" ] && return 1
+    [ -z "$right_pre" ] && return 0
+    left_pre="${left_pre#-}"; right_pre="${right_pre#-}"
+    IFS=. read -r -a left_parts <<< "$left_pre"; IFS=. read -r -a right_parts <<< "$right_pre"
+    local i=0 left_part right_part
+    while [ "$i" -lt "${#left_parts[@]}" ] && [ "$i" -lt "${#right_parts[@]}" ]; do
+        left_part="${left_parts[$i]}"; right_part="${right_parts[$i]}"
+        [ "$left_part" = "$right_part" ] || {
+            case "$left_part:$right_part" in
+                *[!0-9:]*:[0-9]*|*[!0-9:]*:[!0-9:]*) [[ "$left_part" < "$right_part" ]] ;;
+                [0-9]*:*[^0-9]*) return 0 ;;
+                *[^0-9]*:[0-9]*) return 1 ;;
+                *) [ "$left_part" -lt "$right_part" ] ;;
+            esac
+            return
+        }
+        i=$((i + 1))
+    done
+    [ "${#left_parts[@]}" -lt "${#right_parts[@]}" ]
+}
+
+sorted_insert_version() {
+    local version="$1" i=0
+    if [ "${VALID_RELEASES_INITIALIZED:-false}" = false ]; then
+        VALID_RELEASES=( "$version" ); VALID_RELEASES_INITIALIZED=true
+        return
+    fi
+    while [ "$i" -lt "${#VALID_RELEASES[@]}" ]; do
+        if version_less_than "$version" "${VALID_RELEASES[$i]}"; then
+            VALID_RELEASES=( "${VALID_RELEASES[@]:0:$i}" "$version" "${VALID_RELEASES[@]:$i}" )
+            return
+        fi
+        i=$((i + 1))
+    done
+    VALID_RELEASES=( "${VALID_RELEASES[@]}" "$version" )
+}
+
+active_version() {
+    local target version
+    [ -L "$ACTIVE" ] || error 'no hay una release activa; la poda no puede determinar que preservar'
+    target="$(readlink "$ACTIVE")" || error 'no se pudo leer active'
+    version="${target#releases/}"
+    [ "$target" = "releases/$version" ] && valid_version "$version" \
+        && manifest_valid "$RELEASES/$version" "$version" && release_immutable "$RELEASES/$version" \
+        || error 'active no apunta a una release valida, completa e inmutable'
+    printf '%s\n' "$version"
+}
+
+prune() {
+    local keep="$1" assume_yes="$2" active previous entry version i retained_count=0
+    local kb=0 entry_kb marker confirmation candidate_count=0
+    local -a protected candidates
+    [ -d "$RELEASES" ] && [ ! -L "$RELEASES" ] || { printf 'No hay releases instaladas para podar.\n'; return 0; }
+    mkdir "$RELEASES/.prune.lock" 2>/dev/null || error "hay otra poda en curso ($RELEASES/.prune.lock); espere y reintente"
+    trap 'rm -rf "$RELEASES/.prune.lock"' EXIT
+    trap 'exit 1' HUP INT TERM
+    active="$(active_version)"
+    VALID_RELEASES_INITIALIZED=false
+    for entry in "$RELEASES"/.[!.]* "$RELEASES"/..?* "$RELEASES"/*; do
+        [ -e "$entry" ] || [ -L "$entry" ] || continue
+        [ "$entry" = "$RELEASES/.prune.lock" ] && continue
+        version="${entry##*/}"
+        if valid_version "$version" && manifest_valid "$entry" "$version" && release_immutable "$entry"; then
+            sorted_insert_version "$version"
+        else
+            printf 'ADVERTENCIA: se conserva entrada ajena o invalida: %s\n' "$entry" >&2
+        fi
+    done
+    for i in "${!VALID_RELEASES[@]}"; do
+        [ "${VALID_RELEASES[$i]}" = "$active" ] && break
+    done
+    [ "${VALID_RELEASES[$i]:-}" = "$active" ] || error 'la release activa no aparece como release valida'
+    previous=''
+    [ "$i" -gt 0 ] && previous="${VALID_RELEASES[$((i - 1))]}"
+    protected=( "$active" )
+    [ -n "$previous" ] && protected=( "${protected[@]}" "$previous" )
+    for ((i=${#VALID_RELEASES[@]} - 1; i >= 0 && retained_count < keep; i--)); do
+        version="${VALID_RELEASES[$i]}"; retained_count=$((retained_count + 1))
+        case " ${protected[*]} " in *" $version "*) ;; *) protected=( "${protected[@]}" "$version" ) ;; esac
+    done
+    candidates=()
+    for version in "${VALID_RELEASES[@]}"; do
+        case " ${protected[*]} " in *" $version "*) continue ;; esac
+        if [ "$candidate_count" -eq 0 ]; then candidates=( "$version" ); else candidates=( "${candidates[@]}" "$version" ); fi
+        candidate_count=$((candidate_count + 1))
+        entry_kb="$(du -sk "$RELEASES/$version" | awk '{print $1}')"; kb=$((kb + entry_kb))
+    done
+    printf 'Releases conservadas: %s\n' "${protected[*]}"
+    if [ "$candidate_count" -eq 0 ]; then printf 'No hay releases podables.\n'; return 0; fi
+    printf 'Releases que se eliminaran (%s KiB recuperables):\n' "$kb"
+    for version in "${candidates[@]}"; do printf '  - %s\n' "$version"; done
+    if [ "$assume_yes" != true ]; then
+        printf 'Confirma borrar estas releases? [si/NO] '
+        IFS= read -r confirmation || confirmation=''
+        [ "$confirmation" = si ] || { printf 'Poda cancelada; no se borro ninguna release.\n'; return 0; }
+    fi
+    for version in "${candidates[@]}"; do
+        marker="$RELEASES/.pruning-$version-$$"
+        mv "$RELEASES/$version" "$marker" || error "no se pudo invalidar la release $version"
+        [ -z "${MEFISTO_OPENCODE_TEST_ABORT_AFTER_INVALIDATE:-}" ] || error 'interrupcion solicitada tras invalidar una release'
+        chmod -R u+w "$marker" || error "no se pudo preparar la eliminacion de $version"
+        rm -rf "$marker" || error "no se pudo eliminar la release invalidada $version"
+        printf 'Eliminada: %s\n' "$version"
+    done
+}
+
+parse_prune() {
+    local keep=2 assume_yes=false
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --keep) [ "$#" -ge 2 ] && printf '%s\n' "$2" | grep -Eq '^[0-9]+$' || usage; keep="$2"; shift 2 ;;
+            --yes) assume_yes=true; shift ;;
+            *) usage ;;
+        esac
+    done
+    prune "$keep" "$assume_yes"
+}
+
 command -v jq >/dev/null 2>&1 || error 'jq es requerido para validar el manifiesto'
 case "${1:-}" in
     install) [ "$#" -eq 2 ] || usage; acquire_lock; install "$2" ;;
     activate) [ "$#" -eq 2 ] || usage; acquire_lock; activate "$2" ;;
+    prune) shift; parse_prune "$@" ;;
     project) [ "$#" -eq 1 ] || usage; exec "$SCRIPT_DIR/project-opencode-release.sh" project ;;
     deactivate) [ "$#" -eq 1 ] || usage; exec "$SCRIPT_DIR/project-opencode-release.sh" deactivate ;;
     status) [ "$#" -eq 1 ] || usage; status ;;
