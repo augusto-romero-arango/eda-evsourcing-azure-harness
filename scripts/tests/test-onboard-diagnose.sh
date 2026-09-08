@@ -10,7 +10,8 @@
 #        el caso que motiva la extraccion (issue #443): un awk '{print $1}' sin
 #        aislar en una funcion se hubiera repetido 4 veces sin test que probara
 #        que de verdad ignora las demas columnas.
-#   S-3: _mefisto_pipeline_ignored() -- exige el ignore especifico del estado y
+#   S-3: _check_consumer_directives() -- contrato canónico, puente y fallback legacy.
+#   S-4: _mefisto_pipeline_ignored() -- exige el ignore especifico del estado y
 #        rechaza ignorar tambien la configuracion sibling versionada.
 #
 # El script se sourcea (no se ejecuta): scripts/onboard-diagnose.sh solo corre su
@@ -145,9 +146,120 @@ else
 fi
 
 echo ""
-echo "[S-3] _mefisto_pipeline_ignored(): diagnostico de solo lectura del ignore especifico"
+echo "[S-3] _check_consumer_directives(): AGENTS.md canónico y puente CLAUDE.md"
+DIRECTIVES_REPO=$(mktemp -d)
+trap 'rm -f "$ROW_OUT"; rm -rf "$IGNORE_REPO" "$DIRECTIVES_REPO"' EXIT
+
+write_complete_agents() {
+    printf '%s\n' \
+        '## Tokens del harness' \
+        '**RootNamespace**: Ejemplo' \
+        '**SolutionFile**: Ejemplo.sln' \
+        '**ProjectDisplayName**: Ejemplo' \
+        '**BoundedContext**: Ejemplo' \
+        '**BoundedContextDomains**: ejemplo' \
+        '## Verificación de fuentes (obligatorio para agentes)' > "$DIRECTIVES_REPO/AGENTS.md"
+}
+
+assert_directives() {
+    local scenario="$1" expected_agents="$2" expected_claude="$3" needle="$4"
+    _check_consumer_directives "$DIRECTIVES_REPO/AGENTS.md" "$DIRECTIVES_REPO/CLAUDE.md"
+    if [ "$AGENTS_DIRECTIVES_STATE" = "$expected_agents" ] && [ "$CLAUDE_BRIDGE_STATE" = "$expected_claude" ]; then
+        pass "$scenario: estados $expected_agents/$expected_claude"
+    else
+        fail "$scenario: estados $AGENTS_DIRECTIVES_STATE/$CLAUDE_BRIDGE_STATE (esperaba $expected_agents/$expected_claude)"
+    fi
+    if printf '%s\n%s\n' "$AGENTS_DIRECTIVES_DETAIL" "$CLAUDE_BRIDGE_DETAIL" | grep -Fq "$needle"; then
+        pass "$scenario: detalle accionable contiene '$needle'"
+    else
+        fail "$scenario: falta detalle '$needle'"
+    fi
+}
+
+assert_bridge_signals() {
+    local scenario="$1" expected_import="$2" expected_legacy="$3"
+    if [ "$CLAUDE_BRIDGE_HAS_IMPORT" -eq "$expected_import" ] && [ "$CLAUDE_BRIDGE_HAS_LEGACY" -eq "$expected_legacy" ]; then
+        pass "$scenario: señales import/legacy $expected_import/$expected_legacy"
+    else
+        fail "$scenario: señales import/legacy $CLAUDE_BRIDGE_HAS_IMPORT/$CLAUDE_BRIDGE_HAS_LEGACY (esperaba $expected_import/$expected_legacy)"
+    fi
+}
+
+# Greenfield completo: ambas ubicaciones son independientes y quedan listas.
+write_complete_agents
+printf '  @AGENTS.md  \n' > "$DIRECTIVES_REPO/CLAUDE.md"
+BEFORE=$(cksum "$DIRECTIVES_REPO/AGENTS.md" "$DIRECTIVES_REPO/CLAUDE.md")
+assert_directives "greenfield completo" OK OK "puente exacto"
+assert_bridge_signals "greenfield completo" 1 0
+AFTER=$(cksum "$DIRECTIVES_REPO/AGENTS.md" "$DIRECTIVES_REPO/CLAUDE.md")
+if [ "$BEFORE" = "$AFTER" ]; then pass "la comprobación de directivas no escribe archivos"; else fail "la comprobación de directivas modificó un archivo"; fi
+
+# AGENTS.md incompleto mantiene visible el puente correcto.
+printf '## Tokens del harness\n**RootNamespace**: Ejemplo\n' > "$DIRECTIVES_REPO/AGENTS.md"
+assert_directives "AGENTS.md incompleto" FALTA OK "BoundedContextDomains"
+
+# Los tokens deben pertenecer a su sección contractual, no estar dispersos.
+printf '%s\n' \
+    '## Tokens del harness' \
+    '## Otra sección' \
+    '**RootNamespace**: Ejemplo' \
+    '**SolutionFile**: Ejemplo.sln' \
+    '**ProjectDisplayName**: Ejemplo' \
+    '**BoundedContext**: Ejemplo' \
+    '**BoundedContextDomains**: ejemplo' \
+    '## Verificación de fuentes (obligatorio para agentes)' > "$DIRECTIVES_REPO/AGENTS.md"
+assert_directives "tokens fuera de la sección contractual" FALTA OK "RootNamespace"
+
+# Contenido específico de Claude permitido, pero una mención en prosa no es import.
+write_complete_agents
+printf '%s\n' 'Esta prosa menciona @AGENTS.md pero no lo importa.' > "$DIRECTIVES_REPO/CLAUDE.md"
+assert_directives "CLAUDE.md con contenido propio sin import" OK FALTA "linea independiente"
+assert_bridge_signals "CLAUDE.md con contenido propio sin import" 0 0
+
+# Un archivo ausente tiene una acción distinta de un archivo legacy legible.
+rm -f "$DIRECTIVES_REPO/CLAUDE.md"
+assert_directives "CLAUDE.md ausente" OK FALTA "no existe"
+assert_bridge_signals "CLAUDE.md ausente" 0 0
+
+# El fallback legacy explica el estado sin ocultar las dos faltas canónicas.
+rm -f "$DIRECTIVES_REPO/AGENTS.md"
+printf '%s\n' '## Tokens del harness' '**RootNamespace**: Ejemplo' '## Verificación de fuentes' > "$DIRECTIVES_REPO/CLAUDE.md"
+assert_directives "solo legacy" FALTA FALTA "legacy legible"
+assert_bridge_signals "solo legacy" 0 1
+
+# El import exacto no habilita duplicar las secciones de la fuente canónica.
+write_complete_agents
+printf '%s\n' '@AGENTS.md' '## Tokens del harness' '## Verificación de fuentes' > "$DIRECTIVES_REPO/CLAUDE.md"
+assert_directives "puente con doctrina contractual duplicada" OK FALTA "duplicadas"
+assert_bridge_signals "puente con doctrina contractual duplicada" 1 1
+
+# Otras directivas específicas de Claude pueden coexistir con el import.
+printf '%s\n' '# Directivas de Claude' 'Usa una capacidad exclusiva.' ' @AGENTS.md ' > "$DIRECTIVES_REPO/CLAUDE.md"
+assert_directives "puente correcto con contenido específico de Claude" OK OK "sin secciones contractuales duplicadas"
+assert_bridge_signals "puente correcto con contenido específico de Claude" 1 0
+
+# Un archivo existente pero inaccesible no se confunde con uno ausente.
+chmod 000 "$DIRECTIVES_REPO/AGENTS.md"
+_check_consumer_directives "$DIRECTIVES_REPO/AGENTS.md" "$DIRECTIVES_REPO/CLAUDE.md"
+if [ "$AGENTS_DIRECTIVES_STATE" = "NV" ]; then
+    pass "AGENTS.md existente no legible reporta NO VERIFICADO"
+else
+    fail "AGENTS.md no legible reportó $AGENTS_DIRECTIVES_STATE en vez de NO VERIFICADO"
+fi
+chmod 644 "$DIRECTIVES_REPO/AGENTS.md"
+chmod 000 "$DIRECTIVES_REPO/CLAUDE.md"
+_check_consumer_directives "$DIRECTIVES_REPO/AGENTS.md" "$DIRECTIVES_REPO/CLAUDE.md"
+if [ "$CLAUDE_BRIDGE_STATE" = "NV" ]; then
+    pass "CLAUDE.md existente no legible reporta NO VERIFICADO"
+else
+    fail "CLAUDE.md no legible reportó $CLAUDE_BRIDGE_STATE en vez de NO VERIFICADO"
+fi
+chmod 644 "$DIRECTIVES_REPO/CLAUDE.md"
+
+echo ""
+echo "[S-4] _mefisto_pipeline_ignored(): diagnostico de solo lectura del ignore especifico"
 IGNORE_REPO=$(mktemp -d)
-trap 'rm -f "$ROW_OUT"; rm -rf "$IGNORE_REPO"' EXIT
+trap 'rm -f "$ROW_OUT"; rm -rf "$IGNORE_REPO" "$DIRECTIVES_REPO"' EXIT
 (cd "$IGNORE_REPO" && git init -q)
 if _mefisto_pipeline_ignored "$IGNORE_REPO"; then
     fail "reporta ignorado sin patron en .gitignore"
