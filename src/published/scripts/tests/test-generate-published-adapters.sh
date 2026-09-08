@@ -46,6 +46,10 @@ OUT="$WORK/salida con espacios"
 assert_rc "$rc" 0 'dos adaptadores procesan fuente y paths con espacios'
 [ -f "$OUT/dist/alpha/artefactos/valida con espacios.md" ] && [ -f "$OUT/dist/beta/artefactos/valida con espacios.md" ] && pass 'salidas de ambos adaptadores' || fail 'faltan salidas'
 
+CHECK_OUT="$WORK/check no crea salida"
+"$GEN" --check --out "$CHECK_OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null; assert_rc "$?" 1 '--check informa salidas faltantes'
+[ ! -e "$CHECK_OUT" ] && pass '--check no crea la raiz de salida' || fail '--check creo la raiz de salida'
+"$GEN" --desconocida >/dev/null 2>&1; assert_rc "$?" 1 'argumento desconocido falla con exit 1'
 check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
 [ "$rc" -eq 0 ] && pass '--check al dia' || fail "--check al dia (exit $rc: $check_out)"
 printf 'cambio\n' >> "$OUT/dist/alpha/artefactos/valida con espacios.md"
