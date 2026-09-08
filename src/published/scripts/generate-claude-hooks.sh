@@ -40,7 +40,7 @@ ACTUAL="$(jq -r '[.bindings[].id] | sort | join(" ")' "$CONTRACT")"
 
 record_active_release='[ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && mkdir -p .mefisto/pipeline .claude/pipeline 2>/dev/null && printf "%s" "${CLAUDE_PLUGIN_ROOT}" > .mefisto/pipeline/.plugin-root 2>/dev/null && printf "%s" "${CLAUDE_PLUGIN_ROOT}" > .claude/pipeline/.plugin-root 2>/dev/null && rm -f .claude/pipeline/.plugin-root.previous 2>/dev/null || true'
 append_session='hv=""; [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && hv="$(basename "${CLAUDE_PLUGIN_ROOT}" 2>/dev/null)"; mkdir -p .mefisto/pipeline 2>/dev/null && jq -c --arg harness_version "$hv" '\''{session_id, transcript_path, cwd, source, timestamp: (now | strftime("%Y-%m-%dT%H:%M:%SZ")), harness_version: ($harness_version | if . == "" then null else . end)}'\'' 2>/dev/null >> .mefisto/pipeline/sessions.jsonl || true'
-remind_field_notes='echo "[recordatorio] Si esta sesion tuvo descubrimientos de dominio, decisiones o alternativas descartadas, considera escribir field notes en docs/bitacora/field-notes/ antes de continuar."'
+remind_field_notes='echo "[recordatorio] Si esta sesion tuvo descubrimientos de dominio, decisiones o alternativas descartadas, considera escribir field notes en docs/bitacora/field-notes/ antes de continuar." || true'
 append_file_change='mkdir -p .mefisto/pipeline 2>/dev/null && jq -r '\''"[" + (now | strftime("%H:%M:%S")) + "][archivo] " + (.tool_input.file_path // .tool_input.path // "(desconocido)")'\'' 2>/dev/null >> .mefisto/pipeline/events.log || true'
 append_dotnet_test='mkdir -p .mefisto/pipeline 2>/dev/null && jq -r '\''if (.tool_input.command // "") | test("dotnet test") then "[" + (now | strftime("%H:%M:%S")) + "][test] " + (if (.tool_result // "") | test("passed|Passed|Superado|Correctas") then "PASS" else "FAIL" end) else empty end'\'' 2>/dev/null >> .mefisto/pipeline/events.log || true'
 append_terraform='mkdir -p .mefisto/pipeline 2>/dev/null && jq -r '\''if (.tool_input.command // "") | test("terraform (plan|apply|init|validate)") then "[" + (now | strftime("%H:%M:%S")) + "][terraform] " + ((.tool_input.command | split(" ") | .[1]) // "?") + ": " + (if (.tool_result.exitCode // 0) == 0 then "OK" else "ERROR" end) else empty end'\'' 2>/dev/null >> .mefisto/pipeline/events.log || true'
@@ -60,10 +60,16 @@ jq -n \
 jq -e '
   (. | keys) == ["hooks"] and
   (.hooks | keys | sort) == ["PostToolUse", "SessionStart"] and
-  ([.hooks.SessionStart[].hooks[]] | length) == 2 and
+  (.hooks.SessionStart | type == "array" and length == 1) and
+  (.hooks.SessionStart[0] | keys == ["hooks"] and (.hooks | type == "array" and length == 2)) and
+  (.hooks.PostToolUse | type == "array" and length == 3) and
+  ([.hooks.PostToolUse[] | keys] | all(. == ["hooks", "matcher"])) and
+  ([.hooks.PostToolUse[].matcher] == ["ExitPlanMode", "Write|Edit", "Bash"]) and
+  ([.hooks.PostToolUse[].hooks | type] | all(. == "array")) and
   ([.hooks.PostToolUse[] | .hooks[]] | length) == 4 and
-  ([.hooks.SessionStart[].hooks[]?, .hooks.PostToolUse[].hooks[]?] | all(.type == "command" and (has("async") | not) and (has("timeout") | not))) and
-  ([.hooks.PostToolUse[].matcher] == ["ExitPlanMode", "Write|Edit", "Bash"])
+  ([.hooks.SessionStart[0].hooks[], .hooks.PostToolUse[].hooks[]] |
+    all(keys == ["command", "type"] and .type == "command" and (.command | type) == "string" and
+        (has("async") | not) and (has("timeout") | not)))
 ' "$STAGE" >/dev/null || usage_error "el adaptador Claude renderizado no cumple la estructura de hooks"
 
 DESTINATION="$OUT_ROOT/hooks/hooks.json"

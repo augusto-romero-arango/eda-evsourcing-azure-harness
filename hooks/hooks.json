@@ -20,7 +20,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo \"[recordatorio] Si esta sesion tuvo descubrimientos de dominio, decisiones o alternativas descartadas, considera escribir field notes en docs/bitacora/field-notes/ antes de continuar.\""
+            "command": "echo \"[recordatorio] Si esta sesion tuvo descubrimientos de dominio, decisiones o alternativas descartadas, considera escribir field notes en docs/bitacora/field-notes/ antes de continuar.\" || true"
           }
         ]
       },
