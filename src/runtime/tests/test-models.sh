@@ -2,6 +2,7 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 MODELS="$ROOT/src/runtime/lib/mefisto-models.sh"
+INTERNAL_MODELS="$ROOT/src/internal/scripts/lib/mefisto-models.sh"
 PASS=0; FAIL=0
 pass() { PASS=$((PASS + 1)); }
 fail() { echo "FAIL: $1" >&2; FAIL=$((FAIL + 1)); }
@@ -50,6 +51,11 @@ unset MEFISTO_FAKE_DEFAULT_MODEL
 (cd "$TMP" && mefisto_resolve_model fake writer balanced >/dev/null) && [ "$MEFISTO_RESOLVED_MODEL" = '' ] && pass || fail "fake hereda sin default"
 MEFISTO_FAKE_DEFAULT_MODEL='fake model with spaces'
 mefisto_resolve_model fake writer balanced >/dev/null && [ "$MEFISTO_RESOLVED_MODEL" = 'fake model with spaces' ] && pass || fail "fake configurable"
+
+MEFISTO_RUNTIME_LIB_DIR="$LIBS"
+MEFISTO_MODELS_FILE="$MAPPING"
+source "$INTERNAL_MODELS"
+mefisto_resolve_model alpha writer fast >/dev/null && [ "$MEFISTO_RESOLVED_MODEL" = 'agent model with spaces' ] && pass || fail "shim interno usa mapping legado"
 
 echo "RESULTADO modelos comunes: $PASS pasaron, $FAIL fallaron"
 [ "$FAIL" -eq 0 ]

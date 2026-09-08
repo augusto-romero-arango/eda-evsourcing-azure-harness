@@ -50,7 +50,7 @@ _mefisto_models_lookup() {
 # Fija MEFISTO_RESOLVED_MODEL y conserva MEFISTO_MODELS_ERROR en el shell
 # caller. Tambien imprime el resultado para conservar compatibilidad con
 # callers que ya lo redirigian a un archivo.
-mefisto_resolve_model() {
+_mefisto_models_resolve() {
     local runtime="${1:-}" agent_id="${2:-}" profile="${3:-}"
     local explicit_model="${4:-}" mapping_file="${5:-}" adapter fn model=""
     MEFISTO_MODELS_ERROR=""
@@ -92,4 +92,8 @@ mefisto_resolve_model() {
 
     MEFISTO_RESOLVED_MODEL="$model"
     printf '%s\n' "$MEFISTO_RESOLVED_MODEL"
+}
+
+mefisto_resolve_model() {
+    _mefisto_models_resolve "$@"
 }

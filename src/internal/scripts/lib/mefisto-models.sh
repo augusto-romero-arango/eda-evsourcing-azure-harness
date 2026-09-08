@@ -8,7 +8,6 @@ unset _mefisto_internal_models_dir
 
 # Compatibilidad de firma hasta #1046: los callers legados entregaban la ruta
 # mediante MEFISTO_MODELS_FILE. El nucleo siempre recibe una ruta explicita.
-_mefisto_runtime_resolve_model() { mefisto_resolve_model "$@"; }
 mefisto_resolve_model() {
-    _mefisto_runtime_resolve_model "${1:-}" "${2:-}" "${3:-}" "${4:-}" "${5:-${MEFISTO_MODELS_FILE:-}}"
+    _mefisto_models_resolve "${1:-}" "${2:-}" "${3:-}" "${4:-}" "${5:-${MEFISTO_MODELS_FILE:-}}"
 }
