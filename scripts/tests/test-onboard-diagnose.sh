@@ -176,11 +176,21 @@ assert_directives() {
     fi
 }
 
+assert_bridge_signals() {
+    local scenario="$1" expected_import="$2" expected_legacy="$3"
+    if [ "$CLAUDE_BRIDGE_HAS_IMPORT" -eq "$expected_import" ] && [ "$CLAUDE_BRIDGE_HAS_LEGACY" -eq "$expected_legacy" ]; then
+        pass "$scenario: señales import/legacy $expected_import/$expected_legacy"
+    else
+        fail "$scenario: señales import/legacy $CLAUDE_BRIDGE_HAS_IMPORT/$CLAUDE_BRIDGE_HAS_LEGACY (esperaba $expected_import/$expected_legacy)"
+    fi
+}
+
 # Greenfield completo: ambas ubicaciones son independientes y quedan listas.
 write_complete_agents
 printf '  @AGENTS.md  \n' > "$DIRECTIVES_REPO/CLAUDE.md"
 BEFORE=$(cksum "$DIRECTIVES_REPO/AGENTS.md" "$DIRECTIVES_REPO/CLAUDE.md")
 assert_directives "greenfield completo" OK OK "puente exacto"
+assert_bridge_signals "greenfield completo" 1 0
 AFTER=$(cksum "$DIRECTIVES_REPO/AGENTS.md" "$DIRECTIVES_REPO/CLAUDE.md")
 if [ "$BEFORE" = "$AFTER" ]; then pass "la comprobación de directivas no escribe archivos"; else fail "la comprobación de directivas modificó un archivo"; fi
 
@@ -188,20 +198,45 @@ if [ "$BEFORE" = "$AFTER" ]; then pass "la comprobación de directivas no escrib
 printf '## Tokens del harness\n**RootNamespace**: Ejemplo\n' > "$DIRECTIVES_REPO/AGENTS.md"
 assert_directives "AGENTS.md incompleto" FALTA OK "BoundedContextDomains"
 
+# Los tokens deben pertenecer a su sección contractual, no estar dispersos.
+printf '%s\n' \
+    '## Tokens del harness' \
+    '## Otra sección' \
+    '**RootNamespace**: Ejemplo' \
+    '**SolutionFile**: Ejemplo.sln' \
+    '**ProjectDisplayName**: Ejemplo' \
+    '**BoundedContext**: Ejemplo' \
+    '**BoundedContextDomains**: ejemplo' \
+    '## Verificación de fuentes (obligatorio para agentes)' > "$DIRECTIVES_REPO/AGENTS.md"
+assert_directives "tokens fuera de la sección contractual" FALTA OK "RootNamespace"
+
 # Contenido específico de Claude permitido, pero una mención en prosa no es import.
 write_complete_agents
 printf '%s\n' 'Esta prosa menciona @AGENTS.md pero no lo importa.' > "$DIRECTIVES_REPO/CLAUDE.md"
 assert_directives "CLAUDE.md con contenido propio sin import" OK FALTA "linea independiente"
+assert_bridge_signals "CLAUDE.md con contenido propio sin import" 0 0
+
+# Un archivo ausente tiene una acción distinta de un archivo legacy legible.
+rm -f "$DIRECTIVES_REPO/CLAUDE.md"
+assert_directives "CLAUDE.md ausente" OK FALTA "no existe"
+assert_bridge_signals "CLAUDE.md ausente" 0 0
 
 # El fallback legacy explica el estado sin ocultar las dos faltas canónicas.
 rm -f "$DIRECTIVES_REPO/AGENTS.md"
 printf '%s\n' '## Tokens del harness' '**RootNamespace**: Ejemplo' '## Verificación de fuentes' > "$DIRECTIVES_REPO/CLAUDE.md"
 assert_directives "solo legacy" FALTA FALTA "legacy legible"
+assert_bridge_signals "solo legacy" 0 1
 
 # El import exacto no habilita duplicar las secciones de la fuente canónica.
 write_complete_agents
 printf '%s\n' '@AGENTS.md' '## Tokens del harness' '## Verificación de fuentes' > "$DIRECTIVES_REPO/CLAUDE.md"
 assert_directives "puente con doctrina contractual duplicada" OK FALTA "duplicadas"
+assert_bridge_signals "puente con doctrina contractual duplicada" 1 1
+
+# Otras directivas específicas de Claude pueden coexistir con el import.
+printf '%s\n' '# Directivas de Claude' 'Usa una capacidad exclusiva.' ' @AGENTS.md ' > "$DIRECTIVES_REPO/CLAUDE.md"
+assert_directives "puente correcto con contenido específico de Claude" OK OK "sin secciones contractuales duplicadas"
+assert_bridge_signals "puente correcto con contenido específico de Claude" 1 0
 
 # Un archivo existente pero inaccesible no se confunde con uno ausente.
 chmod 000 "$DIRECTIVES_REPO/AGENTS.md"

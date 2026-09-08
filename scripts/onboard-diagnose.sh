@@ -59,17 +59,38 @@ _mefisto_pipeline_ignored() {
 # _has_contract_heading <file> <heading>
 # Reconoce solamente los encabezados Markdown de las secciones contractuales.
 _has_contract_heading() {
-    grep -Eq "^[[:space:]]*#{1,6}[[:space:]]+$2([[:space:]]|\\(|$)" "$1"
+    grep -Eq "^[[:space:]]*#{1,6}[[:space:]]+$2([[:space:]]*\\([^)]*\\))?[[:space:]]*$" "$1"
+}
+
+# _contract_section_has_token <file> <token>
+# Limita la búsqueda a "Tokens del harness": una ocurrencia incidental en otra
+# sección no completa el contrato de esa sección.
+_contract_section_has_token() {
+    awk -v token="$2" '
+        /^[[:space:]]*#{1,6}[[:space:]]+/ {
+            heading = $0
+            sub(/^[[:space:]]*#{1,6}[[:space:]]+/, "", heading)
+            sub(/[[:space:]]+$/, "", heading)
+            if (heading ~ /^Tokens del harness([[:space:]]*\([^)]*\))?$/) {
+                in_tokens = 1
+                next
+            }
+            if (in_tokens) in_tokens = 0
+        }
+        in_tokens && index($0, "**" token "**") { found = 1 }
+        END { exit(found ? 0 : 1) }
+    ' "$1"
 }
 
 # _check_consumer_directives [agents_md] [claude_md]
 # Diagnóstico sourceable para que main() y las pruebas consuman la misma lógica
-# sin invocar gh, az o jq. Deja los resultados en DIRECTIVES_*.
+# sin invocar gh, az o jq. Deja estados, detalles y señales en DIRECTIVES_*.
 _check_consumer_directives() {
     local agents_md="${1:-AGENTS.md}" claude_md="${2:-CLAUDE.md}"
     local missing="" token has_import=0 has_legacy=0
     AGENTS_DIRECTIVES_STATE=""; AGENTS_DIRECTIVES_DETAIL=""
     CLAUDE_BRIDGE_STATE=""; CLAUDE_BRIDGE_DETAIL=""
+    CLAUDE_BRIDGE_HAS_IMPORT=0; CLAUDE_BRIDGE_HAS_LEGACY=0
 
     if [ ! -e "$agents_md" ]; then
         AGENTS_DIRECTIVES_STATE="FALTA"
@@ -81,7 +102,7 @@ _check_consumer_directives() {
         _has_contract_heading "$agents_md" "Tokens del harness" || missing=" encabezado \"Tokens del harness\""
         _has_contract_heading "$agents_md" "Verificación de fuentes" || missing="${missing} encabezado \"Verificación de fuentes\""
         for token in RootNamespace SolutionFile ProjectDisplayName BoundedContext BoundedContextDomains; do
-            grep -Eq "\*\*${token}\*\*" "$agents_md" || missing="${missing} ${token}"
+            _contract_section_has_token "$agents_md" "$token" || missing="${missing} ${token}"
         done
         if [ -z "$missing" ]; then
             AGENTS_DIRECTIVES_STATE="OK"
@@ -101,6 +122,8 @@ _check_consumer_directives() {
     else
         grep -Eq '^[[:space:]]*@AGENTS\.md[[:space:]]*$' "$claude_md" && has_import=1
         if _has_contract_heading "$claude_md" "Tokens del harness" || _has_contract_heading "$claude_md" "Verificación de fuentes"; then has_legacy=1; fi
+        CLAUDE_BRIDGE_HAS_IMPORT=$has_import
+        CLAUDE_BRIDGE_HAS_LEGACY=$has_legacy
         if [ "$has_import" -eq 1 ] && [ "$has_legacy" -eq 0 ]; then
             CLAUDE_BRIDGE_STATE="OK"
             CLAUDE_BRIDGE_DETAIL="CLAUDE.md contiene el puente exacto @AGENTS.md sin secciones contractuales duplicadas"
@@ -143,12 +166,16 @@ main() {
     N_FALTA=0
     N_NV=0
     ACTIONS=""
+    DIRECTIVE_ACTIONS=""
     # Flags para el bloque de cierre "Proximos pasos" (CA-1): se fijan junto a cada row()
     # correspondiente, para no re-diagnosticar nada al construir el bloque en la seccion 10.
     # PA_AUTH_PATH (issue #341) no acompana un FALTA -- se fija cuando el camino declarado es (A) crecer.
     PA_CONFIG_FALTA=0
     PA_AGENTS_FALTA=0
-    PA_CLAUDE_BRIDGE_FALTA=0
+    PA_AGENTS_NV=0
+    PA_CLAUDE_IMPORT_FALTA=0
+    PA_CLAUDE_LEGACY_DUPLICATED=0
+    PA_CLAUDE_NV=0
     PA_LABELS_FALTA=0
     PA_CI_FALTA=0
     PA_INFRA_BASE_MISSING=0
@@ -226,20 +253,29 @@ main() {
     row "$AGENTS_DIRECTIVES_STATE" "$AGENTS_DIRECTIVES_DETAIL"
     if [ "$AGENTS_DIRECTIVES_STATE" = "FALTA" ]; then
         PA_AGENTS_FALTA=1
-        ACTIONS="${ACTIONS}  - Completa primero AGENTS.md: debe contener \"Tokens del harness\", \"Verificación de fuentes\" y los 5 tokens obligatorios. Es la fuente canónica para todos los runtimes.
+        DIRECTIVE_ACTIONS="${DIRECTIVE_ACTIONS}  - Completa primero AGENTS.md: debe contener \"Tokens del harness\", \"Verificación de fuentes\" y los 5 tokens obligatorios dentro de la sección de tokens. Es la fuente canónica para todos los runtimes.
 "
     elif [ "$AGENTS_DIRECTIVES_STATE" = "NV" ]; then
-        ACTIONS="${ACTIONS}  - Restaura permiso de lectura sobre AGENTS.md y vuelve a ejecutar /onboard para verificar la fuente canónica.
+        PA_AGENTS_NV=1
+        DIRECTIVE_ACTIONS="${DIRECTIVE_ACTIONS}  - Restaura permiso de lectura sobre AGENTS.md y vuelve a ejecutar /onboard para verificar la fuente canónica.
 "
     fi
     row "$CLAUDE_BRIDGE_STATE" "$CLAUDE_BRIDGE_DETAIL"
-    if [ "$CLAUDE_BRIDGE_STATE" = "FALTA" ]; then
-        PA_CLAUDE_BRIDGE_FALTA=1
-        ACTIONS="${ACTIONS}  - Deja CLAUDE.md como puente hacia AGENTS.md con una linea independiente @AGENTS.md. Si conserva \"Tokens del harness\" o \"Verificación de fuentes\", elimina esas copias manualmente; el diagnóstico no reescribe doctrina.
+    if [ "$CLAUDE_BRIDGE_STATE" = "NV" ]; then
+        PA_CLAUDE_NV=1
+        DIRECTIVE_ACTIONS="${DIRECTIVE_ACTIONS}  - Restaura permiso de lectura sobre CLAUDE.md y vuelve a ejecutar /onboard para verificar el puente @AGENTS.md.
 "
-    elif [ "$CLAUDE_BRIDGE_STATE" = "NV" ]; then
-        ACTIONS="${ACTIONS}  - Restaura permiso de lectura sobre CLAUDE.md y vuelve a ejecutar /onboard para verificar el puente @AGENTS.md.
+    else
+        if [ "$CLAUDE_BRIDGE_HAS_IMPORT" -eq 0 ]; then
+            PA_CLAUDE_IMPORT_FALTA=1
+            DIRECTIVE_ACTIONS="${DIRECTIVE_ACTIONS}  - Deja CLAUDE.md como puente hacia AGENTS.md con una linea independiente @AGENTS.md.
 "
+        fi
+        if [ "$CLAUDE_BRIDGE_HAS_LEGACY" -eq 1 ]; then
+            PA_CLAUDE_LEGACY_DUPLICATED=1
+            DIRECTIVE_ACTIONS="${DIRECTIVE_ACTIONS}  - Limpia manualmente de CLAUDE.md las secciones contractuales legacy \"Tokens del harness\" y/o \"Verificación de fuentes\" que aún conserve; el diagnóstico no copia, borra ni reescribe doctrina.
+"
+        fi
     fi
 
     # --- 3. Estructura de carpetas esperada (contrato punto 3, informativo) ---
@@ -437,8 +473,9 @@ main() {
 
     # --- 10. Acciones y resumen ---
     echo ""
-    if [ -n "$ACTIONS" ]; then
+    if [ -n "$DIRECTIVE_ACTIONS$ACTIONS" ]; then
         echo "Acciones sugeridas (el diagnostico no ejecuta ninguna; los labels faltantes y el CI los pueden provisionar los pasos opt-in, bajo tu confirmacion):"
+        printf '%s' "$DIRECTIVE_ACTIONS"
         printf '%s' "$ACTIONS"
         echo ""
     fi
@@ -454,8 +491,16 @@ main() {
     echo "===================================================================="
     echo ""
     echo "Proximos pasos (informativo -- no ejecuta nada; los comandos abajo son los que tu corres o confirmas):"
+    PA_STEP=0
+    if [ "$PA_AGENTS_NV" -eq 1 ]; then
+        PA_STEP=$((PA_STEP + 1))
+        echo "  $PA_STEP. Restaura permiso de lectura sobre AGENTS.md y repite /onboard para verificar la fuente canónica."
+    fi
+    if [ "$PA_CLAUDE_NV" -eq 1 ]; then
+        PA_STEP=$((PA_STEP + 1))
+        echo "  $PA_STEP. Restaura permiso de lectura sobre CLAUDE.md y repite /onboard para verificar el puente @AGENTS.md."
+    fi
     if [ "$N_FALTA" -eq 0 ]; then
-        PA_STEP=0
         if [ "$PA_INFRA_BASE_MISSING" -eq 1 ]; then
             PA_STEP=$((PA_STEP + 1))
             echo "  $PA_STEP. Genera la infraestructura base: /mefisto:infra-base dev"
@@ -483,18 +528,21 @@ main() {
             echo "     te ofrece este mismo /onboard."
         fi
     else
-        PA_STEP=0
-        if [ "$PA_CONFIG_FALTA" -eq 1 ]; then
-            PA_STEP=$((PA_STEP + 1))
-            echo "  $PA_STEP. Corrige .claude/harness.config.json (detalle en \"Acciones sugeridas\" arriba)."
-        fi
         if [ "$PA_AGENTS_FALTA" -eq 1 ]; then
             PA_STEP=$((PA_STEP + 1))
             echo "  $PA_STEP. Completa AGENTS.md como fuente canónica: las secciones \"Tokens del harness\" y \"Verificación de fuentes\" (detalle arriba)."
         fi
-        if [ "$PA_CLAUDE_BRIDGE_FALTA" -eq 1 ]; then
+        if [ "$PA_CLAUDE_IMPORT_FALTA" -eq 1 ]; then
             PA_STEP=$((PA_STEP + 1))
-            echo "  $PA_STEP. Deja CLAUDE.md como puente con una linea independiente @AGENTS.md y limpia manualmente cualquier sección contractual duplicada."
+            echo "  $PA_STEP. Deja CLAUDE.md como puente hacia AGENTS.md con una linea independiente @AGENTS.md."
+        fi
+        if [ "$PA_CLAUDE_LEGACY_DUPLICATED" -eq 1 ]; then
+            PA_STEP=$((PA_STEP + 1))
+            echo "  $PA_STEP. Limpia manualmente de CLAUDE.md las secciones contractuales legacy duplicadas (detalle arriba)."
+        fi
+        if [ "$PA_CONFIG_FALTA" -eq 1 ]; then
+            PA_STEP=$((PA_STEP + 1))
+            echo "  $PA_STEP. Corrige .claude/harness.config.json (detalle en \"Acciones sugeridas\" arriba)."
         fi
         if [ "$PA_LABELS_FALTA" -eq 1 ]; then
             PA_STEP=$((PA_STEP + 1))
