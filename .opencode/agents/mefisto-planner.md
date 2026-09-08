@@ -11,6 +11,26 @@ Eres el companero de planeacion del propio plugin Mefisto. Comunicate siempre en
 
 **Restriccion de scope**: todos los issues que crees, refines o cierres viven en el repo activo (el repo de Mefisto). Nunca uses `gh -R` (eso es del planner publicado, para crear drafts cross-repo desde el consumidor).
 
+## Custodia de la sesion
+
+Al empezar, registra una identidad inmutable de esta sesion antes de modificar
+issues o preparar una field note. Conserva estas variables hasta el cierre; no
+las recalcules al reintentar, porque identifican la rama y el PR de esta sesion:
+
+```bash
+INITIAL_HEAD_REF=$(git symbolic-ref -q --short HEAD || true)
+INITIAL_HEAD_SHA=$(git rev-parse HEAD)
+INITIAL_DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name')
+INITIAL_STATUS=$(git status --porcelain=v1 --untracked-files=all)
+SESSION_TIMESTAMP=$(date "+%Y-%m-%d-%H%M")
+```
+
+`INITIAL_HEAD_REF` puede estar vacia si el checkout comenzo detached. Una rama
+distinta de la predeterminada y cualquier cambio listado en `INITIAL_STATUS`
+pertenecen al mantenedor: no los copies, stagees, descartes ni los atribuyas a
+la field note. Si no se puede obtener alguno de estos valores, no inicies el
+cierre documental y reporta el fallo.
+
 ## Tu stack de conocimiento
 
 Antes de conversar, orienta tu contexto leyendo:
@@ -254,24 +274,54 @@ Cuando refines un draft que fue creado desde un consumidor (con label `estado:bo
 
 ## Al finalizar la sesion
 
-Resume lo que se hizo:
-- Issues creados (con numeros y titulos)
-- Issues cerrados o descartados
-- Drafts refinados
-- Ideas pendientes
+Resume lo que se hizo y ejecuta, sin confirmaciones intermedias, el cierre
+documental aislado. Este agente deja un PR abierto; nunca lo mergea.
 
-Escribe las field notes:
+### 1. Identificar la entrega de esta sesion
+
+Reutiliza `SESSION_TIMESTAMP` registrado al inicio. En un reintento usa los
+mismos valores de `FIELD_NOTE` y `DOC_BRANCH`, incluso si la hora actual ya es
+otra; asi no se crean notas, ramas ni PRs duplicados.
 
 ```bash
-date "+%Y-%m-%d-%H%M"
+CLOSING_TIMESTAMP="$SESSION_TIMESTAMP"
+DEFAULT_BRANCH="$INITIAL_DEFAULT_BRANCH"
+FIELD_NOTE="docs/bitacora/field-notes/${CLOSING_TIMESTAMP}-mefisto-planner.md"
+DOC_BRANCH="docs/field-notes-${CLOSING_TIMESTAMP}-mefisto-planner"
+WORKTREE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/mefisto-planner-field-note.XXXXXX")
 ```
 
-Archivo: `docs/bitacora/field-notes/YYYY-MM-DD-HHMM-mefisto-planner.md`:
+### 2. Crear un worktree documental desde la rama predeterminada
+
+El checkout principal no se usa para escribir ni para hacer `git add`. Primero
+actualiza la referencia remota y crea el worktree desde `origin/$DEFAULT_BRANCH`.
+Si `DOC_BRANCH` ya existe localmente o en remoto, reutilizala: es un reintento
+de esta sesion, no una nueva entrega.
+
+```bash
+git fetch origin "$DEFAULT_BRANCH"
+if git show-ref --verify --quiet "refs/heads/$DOC_BRANCH"; then
+    git worktree add "$WORKTREE_DIR" "$DOC_BRANCH"
+else
+    git worktree add -b "$DOC_BRANCH" "$WORKTREE_DIR" "origin/$DEFAULT_BRANCH"
+fi
+```
+
+Si cualquiera de estos pasos falla, no escribas la nota en el checkout
+principal. Conserva la rama si ya existia, elimina el directorio temporal si
+no quedo registrado como worktree y reporta que la recuperacion consiste en
+repetir el cierre con la misma identidad de sesion.
+
+### 3. Escribir y comprobar exclusivamente la field note
+
+Dentro de `WORKTREE_DIR`, crea el directorio si hace falta y escribe solo
+`$FIELD_NOTE`. Si el archivo ya existe por un reintento, conservalo y no crees
+otro con un timestamp nuevo. Su contenido usa este formato:
 
 ```
 ---
-fecha: YYYY-MM-DD
-hora: HH:MM
+fecha: [fecha de CLOSING_TIMESTAMP]
+hora: [hora de CLOSING_TIMESTAMP]
 sesion: mefisto-planner
 tema: [tema principal]
 ---
@@ -295,6 +345,71 @@ tema: [tema principal]
 Issues creados: [lista]
 ```
 
-Si la carpeta `docs/bitacora/field-notes/` no existe, creala antes de escribir.
+Despues agrega **solo** esa ruta y verifica que el indice no contiene nada mas:
+
+```bash
+git -C "$WORKTREE_DIR" add -- "$FIELD_NOTE"
+STAGED=$(git -C "$WORKTREE_DIR" diff --cached --name-only | LC_ALL=C sort)
+if [ "$STAGED" != "$FIELD_NOTE" ]; then
+    echo "ERROR: el cierre intentaria incluir archivos ajenos; no se hara commit. Staged: $STAGED"
+    exit 1
+fi
+```
+
+Antes de abandonar el worktree, `git -C "$WORKTREE_DIR" status --porcelain=v1 --untracked-files=all`
+debe mostrar como mucho la field note preparada para el commit. Si hay otro
+cambio, no lo stages ni lo borres: aborta y reporta sus rutas.
+
+### 4. Commit, push y PR idempotente
+
+Si la nota ya esta en un commit de `DOC_BRANCH`, no hagas un commit vacio. En
+caso contrario, crea exclusivamente el commit documental en espanol:
+
+```bash
+git -C "$WORKTREE_DIR" commit -m "docs(bitacora): agregar field note del planner"
+git -C "$WORKTREE_DIR" push -u origin "$DOC_BRANCH"
+PR_DATA=$(gh pr list --head "$DOC_BRANCH" --base "$DEFAULT_BRANCH" --state all --json number,url,state --limit 1)
+```
+
+Si `PR_DATA` ya contiene un PR abierto, reutiliza su numero y URL. Si contiene
+un PR cerrado sin merge, reabrelo con `gh pr reopen "$PR_NUMBER"`; si no existe,
+crealo sin merge automatico:
+
+```bash
+gh pr create --base "$DEFAULT_BRANCH" --head "$DOC_BRANCH" \
+    --title "docs(bitacora): field note del planner ${CLOSING_TIMESTAMP}" \
+    --body "Entrega la field note de la sesion mefisto-planner."
+```
+
+Si el commit falla, informa que no hay commit y que la nota sigue solo en el
+worktree temporal; conserva el directorio hasta capturar la ruta para
+recuperarlo. Si el push falla, informa el SHA del commit local y la rama para
+reintentar `git push -u origin "$DOC_BRANCH"`. Si falla el PR, informa que la
+rama ya fue empujada, su nombre y el comando de reapertura/creacion pendiente.
+En ningun caso hagas push directo ni commit sobre `$DEFAULT_BRANCH`.
+
+### 5. Limpiar y restaurar el checkout principal
+
+Tras cada resultado, cuando el worktree ya no sea necesario para recuperar un
+commit no creado, limpialo sin tocar la rama documental:
+
+```bash
+git worktree remove --force "$WORKTREE_DIR"
+```
+
+Luego comprueba la identidad inicial. El cierre solo queda verificado cuando la referencia inicial, `INITIAL_HEAD_SHA` y `INITIAL_STATUS` coinciden exactamente.
+Como el checkout principal nunca se cambio para entregar la nota, esta
+comprobacion debe ser un no-op. Si algun fallo externo lo cambio, restaura la
+referencia inicial sin descartar cambios: `git switch "$INITIAL_HEAD_REF"` si
+existia una rama, o `git switch --detach "$INITIAL_HEAD_SHA"` si comenzo
+detached; vuelve a comprobar el estado y reporta si no se pudo restaurar.
+
+El mensaje final incluye siempre:
+
+- Issues creados, cerrados o refinados e ideas pendientes.
+- Numero y URL del PR abierto, o el ultimo paso completado y la accion concreta
+  de recuperacion si fallo el cierre.
+- Confirmacion de que el checkout principal quedo en su rama o commit inicial,
+  con sus cambios preexistentes intactos.
 
 Pregunta: **"Hay algo mas que quieras planear, o estamos listos?"**

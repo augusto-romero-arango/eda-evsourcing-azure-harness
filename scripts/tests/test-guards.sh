@@ -646,15 +646,17 @@ fi
 # -------- Bloque I: cierre aislado de field notes del planner --------
 
 echo ""
-echo "[I] Planner publicado: cierre documental aislado y recuperable"
+echo "[I] Planner interno: cierre documental aislado y recuperable"
 
-PLANNER="$REPO_ROOT/agents/planner.md"
+PLANNER="$REPO_ROOT/src/internal/agents/mefisto-planner.md"
 for required in \
     'INITIAL_HEAD_REF=$(git symbolic-ref -q --short HEAD || true)' \
     'INITIAL_HEAD_SHA=$(git rev-parse HEAD)' \
     'INITIAL_DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef' \
     'INITIAL_STATUS=$(git status --porcelain=v1 --untracked-files=all)' \
-    'FIELD_NOTE="docs/bitacora/field-notes/${CLOSING_TIMESTAMP}-planner.md"' \
+    'SESSION_TIMESTAMP=$(date "+%Y-%m-%d-%H%M")' \
+    'FIELD_NOTE="docs/bitacora/field-notes/${CLOSING_TIMESTAMP}-mefisto-planner.md"' \
+    'DOC_BRANCH="docs/field-notes-${CLOSING_TIMESTAMP}-mefisto-planner"' \
     'git worktree add -b "$DOC_BRANCH" "$WORKTREE_DIR" "origin/$DEFAULT_BRANCH"' \
     'git -C "$WORKTREE_DIR" add -- "$FIELD_NOTE"' \
     'STAGED=$(git -C "$WORKTREE_DIR" diff --cached --name-only | LC_ALL=C sort)' \
