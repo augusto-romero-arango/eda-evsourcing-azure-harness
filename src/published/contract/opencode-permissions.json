@@ -1,0 +1,69 @@
+{
+  "$comment": "Mapping declarativo de las capacidades publicadas al bloque permission de OpenCode 1.18.29. La politica es sobre el consumidor: nunca importa ni replica el scope interno de Mefisto.",
+  "always_deny": ["external_directory", "doom_loop"],
+  "question": {"primary": "allow", "subagent": "deny", "all": "deny"},
+  "capability_scalar": {
+    "web": ["webfetch", "websearch"],
+    "skill": ["skill"],
+    "task": ["task"],
+    "read": ["list", "glob", "grep"]
+  },
+  "capability_map": {
+    "shell": {
+      "keys": ["bash"],
+      "catch_all": "deny",
+      "rules": [
+        {"pattern": "git *", "value": "allow"},
+        {"pattern": "gh *", "value": "allow"},
+        {"pattern": "jq *", "value": "allow"},
+        {"pattern": "cat *", "value": "allow"},
+        {"pattern": "ls", "value": "allow"},
+        {"pattern": "ls *", "value": "allow"},
+        {"pattern": "find *", "value": "allow"},
+        {"pattern": "grep *", "value": "allow"},
+        {"pattern": "sort", "value": "allow"},
+        {"pattern": "sort *", "value": "allow"},
+        {"pattern": "bash scripts/*", "value": "allow"},
+        {"pattern": "sh scripts/*", "value": "allow"},
+        {"pattern": "scripts/*", "value": "allow"},
+        {"pattern": "./scripts/*", "value": "allow"},
+        {"pattern": "mkdir *", "value": "allow"},
+        {"pattern": "mktemp", "value": "allow"},
+        {"pattern": "mktemp *", "value": "allow"},
+        {"pattern": "rm *", "value": "deny"},
+        {"pattern": "curl *", "value": "deny"},
+        {"pattern": "ssh *", "value": "deny"},
+        {"pattern": "scp *", "value": "deny"},
+        {"pattern": "sudo *", "value": "deny"}
+      ]
+    },
+    "edit": {
+      "keys": ["edit", "write", "patch"],
+      "catch_all": "allow",
+      "rules": [
+        {"pattern": "commands/**", "value": "deny"},
+        {"pattern": "skills/**", "value": "deny"},
+        {"pattern": "agents/**", "value": "deny"},
+        {"pattern": "hooks/**", "value": "deny"},
+        {"pattern": ".claude-plugin/**", "value": "deny"},
+        {"pattern": "src/published/**", "value": "deny"},
+        {"pattern": "src/runtime/**", "value": "deny"},
+        {"pattern": "dist/**", "value": "deny"},
+        {"pattern": "docs/adr/mef-adr-*", "value": "deny"}
+      ]
+    },
+    "read": {
+      "keys": ["read"],
+      "catch_all": "allow",
+      "rules": [
+        {"pattern": ".env", "value": "deny"},
+        {"pattern": ".env.*", "value": "deny"},
+        {"pattern": "**/.env", "value": "deny"},
+        {"pattern": "**/.env.*", "value": "deny"},
+        {"pattern": "**/auth.json", "value": "deny"},
+        {"pattern": "**/.aws/**", "value": "deny"},
+        {"pattern": "**/.ssh/**", "value": "deny"}
+      ]
+    }
+  }
+}
