@@ -12,7 +12,7 @@
 # nunca pasa por esa sustitucion: commands/onboard.md solo lo invoca por ruta.
 #
 # Reporta, sin tocar nada, el checklist de 9 secciones de /onboard: config,
-# tokens del harness en CLAUDE.md, estructura de carpetas, labels de GitHub,
+# directivas canónicas en AGENTS.md y su puente CLAUDE.md, estructura de carpetas, labels de GitHub,
 # CI hacia Azure, secretos que alimentan la siembra en Key Vault, el registro
 # secrets[], la bifurcacion de dos caminos de auth (tenancy.strategy) y el
 # worker de proyecciones. Las provisiones opt-in (labels, CI, tenancy,
@@ -56,6 +56,67 @@ _mefisto_pipeline_ignored() {
         ! git -C "$repo_root" check-ignore -q -- .mefisto/harness.config.json
 }
 
+# _has_contract_heading <file> <heading>
+# Reconoce solamente los encabezados Markdown de las secciones contractuales.
+_has_contract_heading() {
+    grep -Eq "^[[:space:]]*#{1,6}[[:space:]]+$2([[:space:]]|\\(|$)" "$1"
+}
+
+# _check_consumer_directives [agents_md] [claude_md]
+# Diagnóstico sourceable para que main() y las pruebas consuman la misma lógica
+# sin invocar gh, az o jq. Deja los resultados en DIRECTIVES_*.
+_check_consumer_directives() {
+    local agents_md="${1:-AGENTS.md}" claude_md="${2:-CLAUDE.md}"
+    local missing="" token has_import=0 has_legacy=0
+    AGENTS_DIRECTIVES_STATE=""; AGENTS_DIRECTIVES_DETAIL=""
+    CLAUDE_BRIDGE_STATE=""; CLAUDE_BRIDGE_DETAIL=""
+
+    if [ ! -e "$agents_md" ]; then
+        AGENTS_DIRECTIVES_STATE="FALTA"
+        AGENTS_DIRECTIVES_DETAIL="AGENTS.md no existe: crea las secciones \"Tokens del harness\" y \"Verificación de fuentes\" con los 5 tokens obligatorios"
+    elif [ ! -r "$agents_md" ]; then
+        AGENTS_DIRECTIVES_STATE="NV"
+        AGENTS_DIRECTIVES_DETAIL="AGENTS.md existe pero no es legible"
+    else
+        _has_contract_heading "$agents_md" "Tokens del harness" || missing=" encabezado \"Tokens del harness\""
+        _has_contract_heading "$agents_md" "Verificación de fuentes" || missing="${missing} encabezado \"Verificación de fuentes\""
+        for token in RootNamespace SolutionFile ProjectDisplayName BoundedContext BoundedContextDomains; do
+            grep -Eq "\*\*${token}\*\*" "$agents_md" || missing="${missing} ${token}"
+        done
+        if [ -z "$missing" ]; then
+            AGENTS_DIRECTIVES_STATE="OK"
+            AGENTS_DIRECTIVES_DETAIL="AGENTS.md contiene las dos secciones obligatorias y los 5 tokens"
+        else
+            AGENTS_DIRECTIVES_STATE="FALTA"
+            AGENTS_DIRECTIVES_DETAIL="AGENTS.md esta incompleto; faltan:${missing}"
+        fi
+    fi
+
+    if [ ! -e "$claude_md" ]; then
+        CLAUDE_BRIDGE_STATE="FALTA"
+        CLAUDE_BRIDGE_DETAIL="CLAUDE.md no existe: crea el puente con una linea independiente @AGENTS.md"
+    elif [ ! -r "$claude_md" ]; then
+        CLAUDE_BRIDGE_STATE="NV"
+        CLAUDE_BRIDGE_DETAIL="CLAUDE.md existe pero no es legible"
+    else
+        grep -Eq '^[[:space:]]*@AGENTS\.md[[:space:]]*$' "$claude_md" && has_import=1
+        if _has_contract_heading "$claude_md" "Tokens del harness" || _has_contract_heading "$claude_md" "Verificación de fuentes"; then has_legacy=1; fi
+        if [ "$has_import" -eq 1 ] && [ "$has_legacy" -eq 0 ]; then
+            CLAUDE_BRIDGE_STATE="OK"
+            CLAUDE_BRIDGE_DETAIL="CLAUDE.md contiene el puente exacto @AGENTS.md sin secciones contractuales duplicadas"
+        elif [ "$has_import" -eq 0 ] && [ "$has_legacy" -eq 1 ]; then
+            CLAUDE_BRIDGE_STATE="FALTA"
+            CLAUDE_BRIDGE_DETAIL="CLAUDE.md legacy legible: faltan el puente exacto @AGENTS.md y la limpieza manual de las secciones contractuales duplicadas"
+        elif [ "$has_import" -eq 0 ]; then
+            CLAUDE_BRIDGE_STATE="FALTA"
+            CLAUDE_BRIDGE_DETAIL="CLAUDE.md no contiene una linea independiente @AGENTS.md; agrega el puente hacia AGENTS.md"
+        else
+            CLAUDE_BRIDGE_STATE="FALTA"
+            CLAUDE_BRIDGE_DETAIL="CLAUDE.md contiene @AGENTS.md pero conserva secciones contractuales legacy duplicadas; eliminalas manualmente"
+        fi
+    fi
+}
+
 # row <estado> <texto...>
 #
 # Emisor de filas del checklist: acumula el contador correspondiente (N_OK,
@@ -86,7 +147,8 @@ main() {
     # correspondiente, para no re-diagnosticar nada al construir el bloque en la seccion 10.
     # PA_AUTH_PATH (issue #341) no acompana un FALTA -- se fija cuando el camino declarado es (A) crecer.
     PA_CONFIG_FALTA=0
-    PA_TOKENS_FALTA=0
+    PA_AGENTS_FALTA=0
+    PA_CLAUDE_BRIDGE_FALTA=0
     PA_LABELS_FALTA=0
     PA_CI_FALTA=0
     PA_INFRA_BASE_MISSING=0
@@ -157,26 +219,26 @@ main() {
 "
     fi
 
-    # --- 2. Tokens del harness en CLAUDE.md (contrato punto 2) ---
+    # --- 2. Directivas canónicas y puente Claude (MEF-ADR-0049/0053) ---
     echo ""
-    echo "Tokens del harness (seccion \"Tokens del harness\" en CLAUDE.md raiz):"
-    CLAUDE_MD="CLAUDE.md"
-    if [ -r "$CLAUDE_MD" ]; then
-        MISSING_TOKENS=""
-        for tok in RootNamespace SolutionFile ProjectDisplayName BoundedContext BoundedContextDomains; do
-            grep -Eq "\*\*${tok}\*\*" "$CLAUDE_MD" || MISSING_TOKENS="$MISSING_TOKENS $tok"
-        done
-        if [ -z "$MISSING_TOKENS" ]; then
-            row OK "los 5 tokens estan presentes (RootNamespace, SolutionFile, ProjectDisplayName, BoundedContext, BoundedContextDomains)"
-        else
-            row FALTA "faltan tokens en CLAUDE.md:$MISSING_TOKENS"
-            PA_TOKENS_FALTA=1
-            ACTIONS="${ACTIONS}  - Completa la seccion \"Tokens del harness\" de tu CLAUDE.md raiz con los tokens faltantes ($MISSING_TOKENS). Ver CLAUDE.md del harness, seccion \"Contrato con el proyecto consumidor\" punto 2, para el formato exacto.
+    echo "Directivas del consumidor (AGENTS.md canónico y puente CLAUDE.md):"
+    _check_consumer_directives "AGENTS.md" "CLAUDE.md"
+    row "$AGENTS_DIRECTIVES_STATE" "$AGENTS_DIRECTIVES_DETAIL"
+    if [ "$AGENTS_DIRECTIVES_STATE" = "FALTA" ]; then
+        PA_AGENTS_FALTA=1
+        ACTIONS="${ACTIONS}  - Completa primero AGENTS.md: debe contener \"Tokens del harness\", \"Verificación de fuentes\" y los 5 tokens obligatorios. Es la fuente canónica para todos los runtimes.
 "
-        fi
-    else
-        row NV "no se hallo un CLAUDE.md legible en la raiz del proyecto"
-        ACTIONS="${ACTIONS}  - Crea CLAUDE.md en la raiz del proyecto con la seccion \"Tokens del harness\" (ver CLAUDE.md del harness, seccion \"Contrato con el proyecto consumidor\" punto 2).
+    elif [ "$AGENTS_DIRECTIVES_STATE" = "NV" ]; then
+        ACTIONS="${ACTIONS}  - Restaura permiso de lectura sobre AGENTS.md y vuelve a ejecutar /onboard para verificar la fuente canónica.
+"
+    fi
+    row "$CLAUDE_BRIDGE_STATE" "$CLAUDE_BRIDGE_DETAIL"
+    if [ "$CLAUDE_BRIDGE_STATE" = "FALTA" ]; then
+        PA_CLAUDE_BRIDGE_FALTA=1
+        ACTIONS="${ACTIONS}  - Deja CLAUDE.md como puente hacia AGENTS.md con una linea independiente @AGENTS.md. Si conserva \"Tokens del harness\" o \"Verificación de fuentes\", elimina esas copias manualmente; el diagnóstico no reescribe doctrina.
+"
+    elif [ "$CLAUDE_BRIDGE_STATE" = "NV" ]; then
+        ACTIONS="${ACTIONS}  - Restaura permiso de lectura sobre CLAUDE.md y vuelve a ejecutar /onboard para verificar el puente @AGENTS.md.
 "
     fi
 
@@ -426,9 +488,13 @@ main() {
             PA_STEP=$((PA_STEP + 1))
             echo "  $PA_STEP. Corrige .claude/harness.config.json (detalle en \"Acciones sugeridas\" arriba)."
         fi
-        if [ "$PA_TOKENS_FALTA" -eq 1 ]; then
+        if [ "$PA_AGENTS_FALTA" -eq 1 ]; then
             PA_STEP=$((PA_STEP + 1))
-            echo "  $PA_STEP. Completa la seccion \"Tokens del harness\" en tu CLAUDE.md raiz (detalle arriba)."
+            echo "  $PA_STEP. Completa AGENTS.md como fuente canónica: las secciones \"Tokens del harness\" y \"Verificación de fuentes\" (detalle arriba)."
+        fi
+        if [ "$PA_CLAUDE_BRIDGE_FALTA" -eq 1 ]; then
+            PA_STEP=$((PA_STEP + 1))
+            echo "  $PA_STEP. Deja CLAUDE.md como puente con una linea independiente @AGENTS.md y limpia manualmente cualquier sección contractual duplicada."
         fi
         if [ "$PA_LABELS_FALTA" -eq 1 ]; then
             PA_STEP=$((PA_STEP + 1))
