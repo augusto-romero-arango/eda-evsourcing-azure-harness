@@ -4,9 +4,10 @@
 # (#869), la invocacion directa del CLI de un runtime concreto desde
 # .claude/scripts/mefisto-tooling-pipeline.sh:463 por un contrato que ningun
 # pipeline necesita conocer en detalle: recibe argumentos opacos, escribe
-# JSONL neutral (vocabulario cerrado en src/internal/contract/run-events.
-# schema.json) y devuelve un exit code que resume el desenlace sin que el
-# caller tenga que interpretar el stream crudo de ningun CLI.
+# JSONL neutral (vocabulario cerrado en
+# src/runtime/contract/run-events.schema.json) y devuelve un exit code que
+# resume el desenlace sin que el caller tenga que interpretar el stream crudo
+# de ningun CLI.
 #
 # Uso:
 #   mefisto-run-agent.sh --agent <id> --cwd <dir> --prompt-file <f>
@@ -118,8 +119,8 @@
 #     stderr -- los dos canales siguen separados (#425) -- de un stream que
 #     simplemente termino sin declarar nada.
 #
-# Ver src/runtime/contract/README.md
-# para el detalle completo del contrato y su justificacion.
+# Ver src/internal/contract/README.md para la interfaz ejecutable y
+# src/runtime/contract/README.md para el vocabulario de eventos.
 #
 # Bash 3.2 + jq 1.7 (MEF-ADR-0049 CA-6): sin arrays asociativos.
 

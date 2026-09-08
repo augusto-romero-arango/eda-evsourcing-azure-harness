@@ -16,7 +16,7 @@
 # compute_stage_metrics en _mefisto-common.sh); `result` -> terminal
 # (run.completed/run.failed). El evento `system`/`init` NUNCA se re-emite como
 # linea propia -- este adaptador jamas produce `run.started` (eso es
-# responsabilidad exclusiva del runner, ver src/runtime/contract/README.md,
+# responsabilidad exclusiva del runner, ver src/internal/contract/README.md,
 # "Interfaz de adaptador"): solo se usa para extraer `session_id` y `model`,
 # que van a parar al evento terminal (CA-4).
 #

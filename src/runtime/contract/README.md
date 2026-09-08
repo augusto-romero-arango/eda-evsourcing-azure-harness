@@ -1,49 +1,103 @@
 # Contrato comun de eventos de runtime (`src/runtime/contract/`)
 
-Esta es la fuente canonica, comun a los lados publicado e interno, del JSONL
-neutral que describe una ejecucion de agente. Es independiente del caller y
-versionado es `run-events.schema.json`; una linea del stream es un objeto que
-valida contra `definitions[.type]`.
+Esta carpeta es la fuente canonica, comun a callers publicados e internos, del
+stream JSONL neutral que describe una ejecucion de agente. El protocolo esta
+versionado en `run-events.schema.json`: cada linea es un objeto y valida contra
+`definitions[.type]`. El contrato no presupone un runtime, proveedor ni modelo
+concretos (MEF-ADR-0049 y MEF-ADR-0050).
 
 ## Vocabulario y version
 
-Todo evento lleva `v: 1` y un `type` del vocabulario cerrado:
+Todo evento lleva `v: 1` y un `type` del vocabulario cerrado declarado en
+`types`:
 
 | `type` | Campos propios |
 |---|---|
 | `run.started` | `ts`, `runtime`, `agent`, `model|null`, `cwd` |
-| `message` | `ts`, `role`, `text`, `kind?: "text"|"thinking"` |
+| `message` | `ts`, `role`, `text`, `kind?` (`text` o `thinking`) |
 | `tool.started` | `ts`, `tool`, `input_summary|null` |
 | `tool.completed` | `ts`, `tool`, `ok`, `duration_ms|null` |
-| `run.completed` / `run.failed` | `status`, `runtime`, `model|null`, `session_id|null`, `duration_ms`, `tokens`, metricas opcionales, `error|null` y `resets_at?` |
+| `run.completed` / `run.failed` | `ts`, `status`, `runtime`, `model|null`, `session_id|null`, `duration_ms`, `tokens`, `cost_usd|null`, `turns|null`, `denials|null`, `ttft_ms|null`, `api_duration_ms|null`, `error|null`, `resets_at?` |
 
-Los campos que un runtime no puede informar se representan con `null`, nunca
-con un valor inventado. `additionalProperties: false` fija la forma de cada
+`tokens` contiene exactamente `input` y `output`, ambos numero o `null`. Los
+datos que un runtime no puede informar se representan con `null`, nunca con un
+cero ni otro valor inventado. Cada definicion cierra su forma con
+`additionalProperties: false`; lo mismo hacen `tokens` y `error`.
 
-## Terminales, estado y fallo
+## Relacion entre terminal y estado
 
-Los terminales son `run.completed` y `run.failed`. La relacion entre `type` y
-`status` es deliberadamente cerrada:
+Los unicos terminales son `run.completed` y `run.failed`. `type` y `status` no
+son dos veredictos independientes: el schema divide deliberadamente el
+vocabulario de estados entre ambos.
 
-| Terminal | Estados validos |
+| Terminal | `status` valido |
 |---|---|
 | `run.completed` | `success` |
 | `run.failed` | `failed`, `timeout`, `protocol_invalid` |
 
-Una corrida completa tiene exactamente un evento terminal. Esta cardinalidad
-es una invariante del stream, no expresable por el schema de una linea: el
-runner o caller debe contar los terminales y rechazar cero o mas de uno
-(MEF-ADR-0031). Los eventos no terminales ya ocurridos se conservan incluso si
-el desenlace final es un timeout o un protocolo invalido.
+Combinaciones como `run.completed{status:"timeout"}` son invalidas. Una corrida
+completa tiene **exactamente un** terminal. La cardinalidad es una invariante
+del stream y no puede expresarse en el schema de una linea: el caller debe
+contar terminales y rechazar tanto cero como mas de uno (MEF-ADR-0031). Los
+eventos no terminales completos se conservan aunque el desenlace sea timeout o
+protocolo invalido.
 
-Cuando `error` no es `null`, es `{kind, detail}`. `error.kind` pertenece a la
-`provider_unavailable`, `stream_cut`, `nonzero_exit`, `no_result` o
-`protocol_invalid`. `rate_limit` y `provider_unavailable` preservan la
+## Taxonomia de `error.kind`
 
-## Validacion y fixtures
+`error` es `null` o un objeto `{kind, detail}`. `kind` pertenece al vocabulario
+cerrado siguiente (MEF-ADR-0051):
 
-El validador ligero existente selecciona `definitions[.type]` antes de llamar
+| `error.kind` | Significado neutral |
+|---|---|
+| `timeout` | El caller agoto el tiempo permitido |
+| `killed` | El proceso termino por una senal externa |
+| `api_error` | El proveedor informo un error de API no clasificado en otra familia |
+| `rate_limit` | Se agoto una ventana de uso |
+| `provider_unavailable` | El proveedor informo indisponibilidad transitoria |
+| `stream_cut` | El stream termino antes de declarar un desenlace confiable |
+| `nonzero_exit` | El proceso salio distinto de cero sin una causa mas especifica |
+| `no_result` | No hubo resultado util del runtime |
+| `protocol_invalid` | La traduccion produjo un stream que viola el contrato |
 
-`fixtures/run-events/valid-*.jsonl` contiene corridas completas validas con un
+La distincion entre `rate_limit`, `provider_unavailable`, `stream_cut` y las
+demas causas preserva la frontera de politica fijada por MEF-ADR-0051; un
+caller consume la clasificacion y no vuelve a inferirla desde texto crudo.
+`resets_at` es opcional y contiene un instante ISO 8601 o `null`: solo aporta
+el fin de la ventana cuando el runtime lo conoce. Que un runtime carezca de esa
+senal no cambia la taxonomia ni obliga a inventar el dato.
 
-La interfaz ejecutable del runner y de sus adaptadores sigue documentada en
+Un `run.completed` puede conservar excepcionalmente un `error` para registrar
+una muerte posterior a que el runtime ya declarara exito. Esto no contradice
+`status: "success"`; documenta el incidente posterior sin invalidar evidencia
+ya emitida.
+
+## Validacion
+
+El schema no usa `oneOf`: el `oneOf` del validador ligero
+`src/internal/scripts/lib/jsonschema-lite.jq` despacha por `kind`, mientras que
+este contrato discrimina por `type`. Quien valida una linea comprueba primero
+que `.type` pertenezca a `types`, selecciona `definitions[.type]` y pasa esa
+definicion al validador. `validate_event_line` de
+`.claude/scripts/tests/test-mefisto-run-agent.sh` es la implementacion de
+referencia vigente.
+
+El validador ligero no soporta uniones de tipos. Por eso los campos
+documentados como valor o `null` omiten `type` en su sub-schema. Esta es una
+limitacion conocida del toolchain Bash 3.2 + jq existente, no una autorizacion
+para que los productores emitan tipos arbitrarios.
+
+## Fixtures
+
+`fixtures/run-events/valid-*.jsonl` contiene corridas validas. Los casos de
+limite de uso muestran `resets_at` poblado cuando el runtime ofrece esa senal y
+`null` cuando no la ofrece. `invalid-missing-field.jsonl`,
+`invalid-unknown-type.jsonl` e `invalid-status-mismatch.jsonl` son rechazables
+linea a linea.
+
+`invalid-two-terminals.jsonl` tiene lineas individualmente validas, pero viola
+la cardinalidad de exactamente un terminal; existe para comprobar el gate
+cross-linea. Los tests recorren todos los fixtures `valid-*` e `invalid-*` sin
+mantener una segunda copia del contrato.
+
+La interfaz ejecutable del runner y de sus adaptadores permanece, hasta #1045,
+en [`src/internal/contract/README.md`](../../internal/contract/README.md).
