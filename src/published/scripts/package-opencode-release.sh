@@ -3,6 +3,8 @@
 # Uso: package-opencode-release.sh [--output <directorio>]
 set -uo pipefail
 export LC_ALL=C
+# Evita que las herramientas BSD incorporen metadata AppleDouble/xattrs del host.
+export COPYFILE_DISABLE=1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="${MEFISTO_PACKAGE_REPO_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd -P)}"
@@ -60,6 +62,8 @@ cp -pR "$DIST_ROOT/." "$STAGE/" || usage_error "no se pudo copiar dist/opencode 
 jq -n --arg version "$VERSION" --arg commit "$COMMIT" --arg minimumRuntimeVersion "$MINIMUM_RUNTIME_VERSION" \
     '{schemaVersion: 1, runtime: "opencode", version: $version, commit: $commit, minimumRuntimeVersion: $minimumRuntimeVersion}' \
     > "$STAGE/mefisto-manifest.json" || usage_error "no se pudo crear el manifiesto"
+chmod 0755 "$STAGE" || usage_error "no se pudo normalizar el directorio raiz"
+chmod 0644 "$STAGE/mefisto-manifest.json" || usage_error "no se pudo normalizar el manifiesto"
 
 # El timestamp fijo, el orden C y gzip -n eliminan datos de maquina y de reloj.
 find "$STAGE" -exec touch -t 198001010000 {} + || usage_error "no se pudo normalizar timestamps"
@@ -77,6 +81,17 @@ if ! cp "$TARBALL" "$CHECKSUM" "$PUBLISH_DIR/"; then
     rm -rf "$PUBLISH_DIR"
     usage_error "no se pudieron preparar los assets de salida"
 fi
+# `mv origen destino` anida el origen si el destino ya es un directorio. Se
+# validan ambos destinos antes del primer reemplazo para no publicar una pareja
+# incompleta ni aceptar enlaces como destinos de assets.
+for destination in "$OUTPUT_DIR/$TARBALL_NAME" "$OUTPUT_DIR/$CHECKSUM_NAME"; do
+    if [ -e "$destination" ] || [ -L "$destination" ]; then
+        if [ ! -f "$destination" ] || [ -L "$destination" ]; then
+            rm -rf "$PUBLISH_DIR"
+            usage_error "el destino de un asset existe y no es un archivo regular: $(basename "$destination")"
+        fi
+    fi
+done
 if ! mv "$PUBLISH_DIR/$TARBALL_NAME" "$OUTPUT_DIR/$TARBALL_NAME" || ! mv "$PUBLISH_DIR/$CHECKSUM_NAME" "$OUTPUT_DIR/$CHECKSUM_NAME"; then
     rm -f "$OUTPUT_DIR/$TARBALL_NAME" "$OUTPUT_DIR/$CHECKSUM_NAME"
     rm -rf "$PUBLISH_DIR"
