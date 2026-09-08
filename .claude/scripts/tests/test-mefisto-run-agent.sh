@@ -60,13 +60,14 @@ export LC_ALL=C
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 INTERNAL_SCRIPTS="$REPO_ROOT/src/internal/scripts"
-LIB_DIR="$INTERNAL_SCRIPTS/lib"
+RUNTIME_DIR="$REPO_ROOT/src/runtime"
+LIB_DIR="$RUNTIME_DIR/lib"
 CONTRACT_DIR="$REPO_ROOT/src/runtime/contract"
-RUNNER="$INTERNAL_SCRIPTS/mefisto-run-agent.sh"
+RUNNER="$RUNTIME_DIR/mefisto-run-agent.sh"
 RUNTIME_LIB="$LIB_DIR/mefisto-runtime.sh"
 FAKE_LIB="$LIB_DIR/runtime-fake.sh"
 SCHEMA_FILE="$CONTRACT_DIR/run-events.schema.json"
-JSONSCHEMA_LITE="$LIB_DIR/jsonschema-lite.jq"
+JSONSCHEMA_LITE="$INTERNAL_SCRIPTS/lib/jsonschema-lite.jq"
 FIXTURES_DIR="$CONTRACT_DIR/fixtures/run-events"
 
 PASS=0
@@ -214,7 +215,8 @@ BIN_BOTH="$TMP/bin-both"; mkdir -p "$BIN_BOTH"
 cp "$BIN_CLAUDE/claude" "$BIN_BOTH/claude"
 printf '#!/bin/sh\nexit 0\n' > "$BIN_BOTH/opencode"; chmod +x "$BIN_BOTH/opencode"
 LIBDIR_STUB="$TMP/libdir-stub"; mkdir -p "$LIBDIR_STUB"
-touch "$LIBDIR_STUB/runtime-claude.sh" "$LIBDIR_STUB/runtime-opencode.sh"
+printf '%s\n' 'runtime_claude_is_available() { command -v claude >/dev/null 2>&1; }' > "$LIBDIR_STUB/runtime-claude.sh"
+printf '%s\n' 'runtime_opencode_is_available() { command -v opencode >/dev/null 2>&1; }' > "$LIBDIR_STUB/runtime-opencode.sh"
 
 ORIG_PATH="$PATH"
 unset MEFISTO_RUNTIME
