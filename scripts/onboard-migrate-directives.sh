@@ -39,6 +39,19 @@ CREATE_AGENTS=0
 CREATE_CLAUDE=0
 ADD_IMPORT=0
 
+# Rechazar enlaces evita que una operación publicada escape del consumidor.
+for destination in "$AGENTS" "$CLAUDE"; do
+    if [ -L "$destination" ]; then
+        echo "ERROR: $(basename "$destination") es un enlace simbólico; no se siguen destinos fuera del consumidor." >&2
+        echo "       Reemplázalo conscientemente por un archivo regular y reintenta; no se modificó nada." >&2
+        exit 1
+    fi
+    if [ -e "$destination" ] && [ ! -f "$destination" ]; then
+        echo "ERROR: $(basename "$destination") existe pero no es un archivo regular; no se modificó nada." >&2
+        exit 1
+    fi
+done
+
 # Preflight completo: ningún destino se toca antes de poder ejecutar todas las
 # acciones deterministas. Un AGENTS existente e incompleto no se fusiona.
 _check_consumer_directives "$AGENTS" "$CLAUDE"
@@ -87,8 +100,20 @@ if [ "$MODE" = "--preview" ]; then
     exit 0
 fi
 
+TMP_AGENTS=""
+TMP_CLAUDE=""
+cleanup() {
+    [ -z "$TMP_AGENTS" ] || rm -f "$TMP_AGENTS"
+    [ -z "$TMP_CLAUDE" ] || rm -f "$TMP_CLAUDE"
+}
+trap cleanup EXIT HUP INT TERM
+
 if [ "$CREATE_AGENTS" -eq 1 ]; then
-    cat > "$AGENTS" <<EOF
+    TMP_AGENTS=$(mktemp "$REPO_ROOT/.onboard-agents.XXXXXX") || {
+        echo "ERROR: no se pudo preparar AGENTS.md; no se modificó nada." >&2
+        exit 1
+    }
+    if ! cat > "$TMP_AGENTS" <<EOF
 ### Tokens del harness
 
 - **RootNamespace**: $HARNESS_NAMESPACE_PREFIX
@@ -104,15 +129,56 @@ Antes de proponer o aplicar un ajuste técnico, verifica el enfoque contra la
 Functions, Marten, Wolverine, Azure Service Bus, Terraform, …). No te apoyes en
 conocimiento memorizado: puede estar desactualizado. Al afirmar una best practice
 o recomendación, **cita la fuente** (URL oficial, versión del paquete, ADR). Si un
-dato no pudiste verificarlo contra la fuente, decláralo como *no verificado* en tu
-propuesta en vez de darlo por cierto.
+dato no pudiste verificarlo contra la fuente, decláralo como *no verificado* en
+tu propuesta en vez de darlo por cierto.
 EOF
+    then
+        echo "ERROR: no se pudo preparar AGENTS.md; no se modificó ningún destino." >&2
+        exit 1
+    fi
+    chmod 644 "$TMP_AGENTS" || {
+        echo "ERROR: no se pudieron preparar los permisos de AGENTS.md; no se modificó ningún destino." >&2
+        exit 1
+    }
 fi
-if [ "$CREATE_CLAUDE" -eq 1 ]; then
-    printf '@AGENTS.md\n' > "$CLAUDE"
-elif [ "$ADD_IMPORT" -eq 1 ]; then
-    [ -s "$CLAUDE" ] && printf '\n' >> "$CLAUDE"
-    printf '@AGENTS.md\n' >> "$CLAUDE"
+
+if [ "$CREATE_CLAUDE" -eq 1 ] || [ "$ADD_IMPORT" -eq 1 ]; then
+    TMP_CLAUDE=$(mktemp "$REPO_ROOT/.onboard-claude.XXXXXX") || {
+        echo "ERROR: no se pudo preparar CLAUDE.md; no se modificó ningún destino." >&2
+        exit 1
+    }
+    if [ "$ADD_IMPORT" -eq 1 ]; then
+        cp -p "$CLAUDE" "$TMP_CLAUDE" || {
+            echo "ERROR: no se pudo copiar CLAUDE.md; no se modificó ningún destino." >&2
+            exit 1
+        }
+        [ -s "$TMP_CLAUDE" ] && printf '\n' >> "$TMP_CLAUDE"
+    else
+        chmod 644 "$TMP_CLAUDE" || {
+            echo "ERROR: no se pudieron preparar los permisos de CLAUDE.md; no se modificó ningún destino." >&2
+            exit 1
+        }
+    fi
+    printf '@AGENTS.md\n' >> "$TMP_CLAUDE" || {
+        echo "ERROR: no se pudo preparar el puente CLAUDE.md; no se modificó ningún destino." >&2
+        exit 1
+    }
+fi
+
+if [ "$CREATE_AGENTS" -eq 1 ]; then
+    mv "$TMP_AGENTS" "$AGENTS" || {
+        echo "ERROR: no se pudo crear AGENTS.md; no se modificó ningún destino." >&2
+        exit 1
+    }
+    TMP_AGENTS=""
+fi
+if [ -n "$TMP_CLAUDE" ]; then
+    if ! mv "$TMP_CLAUDE" "$CLAUDE"; then
+        [ "$CREATE_AGENTS" -eq 0 ] || rm -f "$AGENTS"
+        echo "ERROR: no se pudo actualizar CLAUDE.md; se revirtió la creación de AGENTS.md." >&2
+        exit 1
+    fi
+    TMP_CLAUDE=""
 fi
 
 echo "OK: migración conservadora aplicada."
