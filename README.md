@@ -57,7 +57,8 @@ VERSION=<semver>
 BASE="https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/releases/download/v$VERSION"
 curl -fL "$BASE/mefisto-opencode-v$VERSION.tar.gz" -o "mefisto-opencode-v$VERSION.tar.gz"
 curl -fL "$BASE/mefisto-opencode-v$VERSION.tar.gz.sha256" -o "mefisto-opencode-v$VERSION.tar.gz.sha256"
-(cd . && shasum -a 256 -c "mefisto-opencode-v$VERSION.tar.gz.sha256") && tar -xzf "mefisto-opencode-v$VERSION.tar.gz" -C mefisto-opencode-release && ./mefisto-opencode-release/install.sh install "$VERSION"
+shasum -a 256 -c "mefisto-opencode-v$VERSION.tar.gz.sha256"
+mkdir "mefisto-opencode-release" && tar -xzf "mefisto-opencode-v$VERSION.tar.gz" -C "mefisto-opencode-release" && ./mefisto-opencode-release/install.sh install "$VERSION"
 ```
 
 Tras el bootstrap, el único punto de entrada es
@@ -65,10 +66,12 @@ Tras el bootstrap, el único punto de entrada es
 descarga y vuelve a verificar ambos assets antes de extraer; dos activaciones
 concurrentes se serializan con un lock bajo esa misma raíz. No crea enlaces en el
 `PATH`, no lee auth stores y no modifica `<config>/opencode.json` (esa proyección
-queda fuera de este paso).
+queda fuera de este paso). Si un proceso termina forzosamente y deja
+`.activation.lock`, verifica que no haya otra instalación en curso y elimina solo
+ese directorio de lock antes de reintentar.
 
 ```bash
-M="$XDG_DATA_HOME/mefisto/active/bin/mefisto-opencode" # en Linux/XDG
+M="${XDG_DATA_HOME:-$HOME/.local/share}/mefisto/active/bin/mefisto-opencode" # Linux/XDG
 "$M" install <semver>    # upgrade verificando el tag v<semver>
 "$M" activate <semver>   # rollback a una release ya instalada
 "$M" status              # runtime, versión, tag, commit y diagnóstico
