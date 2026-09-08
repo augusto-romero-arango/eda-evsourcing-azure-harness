@@ -24,8 +24,12 @@ read_identity() {
         return
     fi
     manifest="$root/mefisto-manifest.json"
-    if [ ! -f "$manifest" ] || [ -L "$manifest" ]; then
+    if [ ! -e "$manifest" ] && [ ! -L "$manifest" ]; then
         jq -cn --arg runtime "$runtime" '{state:"metadata_missing", runtime:$runtime}'
+        return
+    fi
+    if [ ! -f "$manifest" ] || [ -L "$manifest" ]; then
+        jq -cn --arg runtime "$runtime" '{state:"metadata_invalid", runtime:$runtime}'
         return
     fi
     if jq -e --arg runtime "$runtime" --arg semver "$SEMVER_PATTERN" --arg commit "$COMMIT_PATTERN" '
@@ -56,19 +60,23 @@ OPENCODE="$(read_identity opencode "$OPENCODE_ROOT")"
 
 jq -cn --argjson claude "$CLAUDE" --argjson opencode "$OPENCODE" '
   def available($identity): $identity.state == "available";
-  def issue($identity): $identity.state == "metadata_missing" or $identity.state == "metadata_invalid";
+  def has_state($state): $claude.state == $state or $opencode.state == $state;
   if available($claude) and available($opencode) then
     if $claude.version == $opencode.version and $claude.commit == $opencode.commit then
       {schemaVersion:1, status:"aligned", claude:$claude, opencode:$opencode}
     else
       {schemaVersion:1, status:"drift", claude:$claude, opencode:$opencode,
+       actions:{claude:"actualizar el plugin Claude", opencode:"activar la release OpenCode con la misma version y commit"},
        message:("DEGRADACION VISIBLE: Claude version=" + $claude.version + " commit=" + $claude.commit +
                 "; OpenCode version=" + $opencode.version + " commit=" + $opencode.commit +
                 ". Accion: actualice el plugin Claude y active la release OpenCode de la misma version y commit; no se selecciono ninguna instalacion.")}
     end
-  elif issue($claude) or issue($opencode) then
-    {schemaVersion:1, status:"metadata_unavailable", claude:$claude, opencode:$opencode,
-     message:"DEGRADACION VISIBLE: falta o es ilegible la metadata generada; corrija la instalacion indicada antes de compararlas."}
+  elif has_state("metadata_invalid") then
+    {schemaVersion:1, status:"metadata_invalid", claude:$claude, opencode:$opencode,
+     message:"DEGRADACION VISIBLE: la metadata generada indicada es ilegible o invalida; corrija esa instalacion antes de compararlas."}
+  elif has_state("metadata_missing") then
+    {schemaVersion:1, status:"metadata_missing", claude:$claude, opencode:$opencode,
+     message:"DEGRADACION VISIBLE: falta la metadata generada indicada; reinstale esa distribucion antes de compararlas."}
   elif available($claude) then
     {schemaVersion:1, status:"claude_only", claude:$claude, opencode:$opencode,
      message:"DEGRADACION VISIBLE: solo esta disponible Claude; instale y active una release OpenCode para comparar identidades."}
