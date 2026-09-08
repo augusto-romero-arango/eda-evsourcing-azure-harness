@@ -13,13 +13,14 @@ PASS=0; FAIL=0
 pass() { printf '  PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
 fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
 assert_rc() { [ "$1" -eq "$2" ] && pass "$3" || fail "$3 (exit $1)"; }
+file_mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"; }
 
 setup_repo() {
     local name="$1"
     TEST_REPO="$WORK/$name"
     mkdir -p "$TEST_REPO/src/published/scripts/adapters" "$TEST_REPO/src/published/agents"
     cp "$SOURCE_GENERATOR" "$TEST_REPO/src/published/scripts/generate-published-adapters.sh"
-    cp "$FIXTURES"/adapter-*.sh "$TEST_REPO/src/published/scripts/adapters/"
+    cp "$FIXTURES"/adapter-alpha.sh "$FIXTURES"/adapter-beta.sh "$TEST_REPO/src/published/scripts/adapters/"
     chmod +x "$TEST_REPO/src/published/scripts/"*.sh "$TEST_REPO/src/published/scripts/adapters/"*.sh
     cat > "$TEST_REPO/src/published/scripts/validate-published-artifacts.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -37,6 +38,14 @@ fixture
 EOF
 }
 
+add_assets_adapter() {
+    cp "$FIXTURES/adapter-assets.sh" "$TEST_REPO/src/published/scripts/adapters/"
+    chmod +x "$TEST_REPO/src/published/scripts/adapters/adapter-assets.sh"
+    mkdir -p "$TEST_REPO/src/published/assets"
+    printf 'configuracion fuente\n' > "$TEST_REPO/src/published/assets/config.txt"
+    printf 'launcher fuente\n' > "$TEST_REPO/src/published/assets/launcher.txt"
+}
+
 echo '[pre] sintaxis y ejecutable'
 if bash -n "$SOURCE_GENERATOR" && [ -x "$SOURCE_GENERATOR" ]; then pass 'generador valido'; else fail 'generador invalido'; fi
 
@@ -46,6 +55,7 @@ OUT="$WORK/salida con espacios"
 "$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md"; rc=$?
 assert_rc "$rc" 0 'dos adaptadores procesan fuente y paths con espacios'
 [ -f "$OUT/dist/alpha/artefactos/valida con espacios.md" ] && [ -f "$OUT/dist/beta/artefactos/valida con espacios.md" ] && pass 'salidas de ambos adaptadores' || fail 'faltan salidas'
+[ -f "$OUT/dist/alpha/.mefisto-generated-assets.json" ] && pass 'inventario creado tambien sin extension' || fail 'falta inventario sin extension'
 if [ "$(sed -n '4p' "$OUT/dist/beta/artefactos/valida con espacios.md")" = '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/valida con espacios.md. No editar a mano. -->' ]; then
     pass 'el marcador puede ir despues del frontmatter'
 else
@@ -73,6 +83,38 @@ assert_rc "$rc" 1 '--check combina divergencias con exit 1'
 "$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null
 check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
 [ "$rc" -eq 0 ] && [ -z "$check_out" ] && pass 'escritura reconcilia distintas, faltantes, huerfanas y manuales' || fail 'escritura no converge al arbol esperado'
+
+setup_repo assets
+GEN="$TEST_REPO/src/published/scripts/generate-published-adapters.sh"; OUT="$WORK/assets-out"
+add_assets_adapter
+"$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md"; rc=$?
+assert_rc "$rc" 0 'assets suplementarios se generan junto con Markdown'
+[ "$(cat "$OUT/dist/assets/runtime/config.json")" = 'renderizado:configuracion fuente' ] && pass 'asset se renderiza desde su fuente' || fail 'asset no se renderizo desde fuente'
+[ "$(file_mode "$OUT/dist/assets/bin/launcher")" = 755 ] && pass 'asset ejecutable conserva modo 0755' || fail 'asset ejecutable no conserva modo'
+inventory="$OUT/dist/assets/.mefisto-generated-assets.json"
+jq -e '.schemaVersion == 1 and (.assets | length) == 2 and .assets[0].source == "src/published/assets/config.txt" and .assets[1].mode == "0755" and (.assets[] | .sha256 | length == 64)' "$inventory" >/dev/null && pass 'inventario determinista atribuye assets' || fail 'inventario de assets invalido'
+check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
+[ "$rc" -eq 0 ] && pass '--check acepta assets e inventario al dia' || fail "--check acepta assets e inventario al dia (exit $rc: $check_out)"
+chmod 0644 "$OUT/dist/assets/bin/launcher"
+check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
+assert_rc "$rc" 1 '--check detecta modo divergente'; case "$check_out" in *'dist/assets/bin/launcher: modo divergente'*) pass 'diagnostico modo divergente';; *) fail 'sin diagnostico modo divergente';; esac
+"$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null
+printf '{"schemaVersion":0,"assets":[]}' > "$inventory"
+check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
+assert_rc "$rc" 1 '--check detecta inventario inconsistente'; case "$check_out" in *'dist/assets/.mefisto-generated-assets.json: inventario inconsistente'*) pass 'diagnostico inventario inconsistente';; *) fail 'sin diagnostico inventario inconsistente';; esac
+"$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null
+first="$(shasum "$OUT/dist/assets/.mefisto-generated-assets.json" "$OUT/dist/assets/runtime/config.json" | shasum)"
+"$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null
+second="$(shasum "$OUT/dist/assets/.mefisto-generated-assets.json" "$OUT/dist/assets/runtime/config.json" | shasum)"
+[ "$first" = "$second" ] && pass 'assets e inventario son deterministas' || fail 'assets o inventario no son deterministas'
+
+for scenario in colision duplicado mismo-destino inseguro destino-inseguro ausente modo fallar render-fallar; do
+    setup_repo "asset-$scenario"; add_assets_adapter
+    GEN="$TEST_REPO/src/published/scripts/generate-published-adapters.sh"; OUT="$WORK/asset-$scenario-out"
+    FIXTURE_ASSETS="$scenario" "$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null 2>&1; rc=$?
+    assert_rc "$rc" 1 "asset $scenario se rechaza antes de publicar"
+    [ ! -e "$OUT" ] && pass "asset $scenario no deja salida parcial" || fail "asset $scenario creo salida"
+done
 
 setup_repo invalida
 GEN="$TEST_REPO/src/published/scripts/generate-published-adapters.sh"; OUT="$WORK/invalida-out"

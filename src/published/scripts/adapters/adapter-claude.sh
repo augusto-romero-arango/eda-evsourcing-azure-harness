@@ -10,5 +10,6 @@ case "${1:-}" in
     root) printf '%s\n' 'dist/claude' ;;
     path) case "${2:-}" in src/published/agents/*.md) printf 'agents/%s\n' "$(basename "$2")" ;; src/published/commands/*.md) printf 'commands/%s\n' "$(basename "$2")" ;; *) error "$2: path: fuente publicada desconocida" ;; esac ;;
     render) [ "$#" -eq 3 ] || error 'render: se esperaban fuente y marcador'; published_claude_render "$2" "$3" "$REPO_ROOT" ;;
-    *) error 'uso: adapter-claude.sh root|path|render' ;;
+    assets) printf '%s\n' '[]' ;;
+    *) error 'uso: adapter-claude.sh root|path|render|assets|render-asset' ;;
 esac
