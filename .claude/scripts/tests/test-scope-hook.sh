@@ -84,6 +84,9 @@ for p in \
     "skills/projections/SKILL.md" \
     "CLAUDE.md" \
     "src/internal/foo.ts" \
+    "src/published/foo.md" \
+    "src/runtime/foo.sh" \
+    "dist/x" \
     ".opencode/agents/foo.md" \
     ".opencode/commands/foo.md" \
     ".opencode/plugins/foo.js" \
@@ -116,7 +119,7 @@ echo "[B] Ruta FUERA de scope -> exit 2 con stderr accionable"
 # (ver bloque [C]), no por la allowlist. Afirmar aqui exit 2 seria un test que se
 # rompe solo al mergear #856; su clasificacion la cubre test-guards.sh [E2], que
 # ejercita is_path_in_mefisto_scope directamente y es inmune a .gitignore.
-for p in "src/Foo.cs" "src/otro/x.sh" "tests/Foo.Tests/FooTests.cs" ".github/workflows/ci.yml" ".claude/harness.config.json" "infra/main.tf" ".opencode/x.json" ".opencode/agent/x.md" "dist/x" "sub/opencode.json" "foo.opencode.json"; do
+for p in "src/Foo.cs" "src/otro/x.sh" "src/publication/foo.md" "src/runtime-local/foo.sh" "distribution/x" "dist-local/x" "tests/Foo.Tests/FooTests.cs" ".github/workflows/ci.yml" ".claude/harness.config.json" "infra/main.tf" ".opencode/x.json" ".opencode/agent/x.md" "sub/opencode.json" "foo.opencode.json"; do
     run_hook "$p"
     if [ "$HOOK_EXIT" -eq 2 ]; then
         pass "$p -> exit 2"
@@ -253,10 +256,10 @@ else
     pass "el pipeline interno ya no inyecta .claude/settings.json desde el clon principal"
 fi
 
-if grep -q '\.claude/settings\.json changelog\.d/' "$PIPELINE"; then
-    pass ".claude/settings.json esta en los paths de auto-commit / deteccion de cambios"
+if grep -q 'src/published/ src/runtime/ dist/' "$PIPELINE"; then
+    pass "src/published/, src/runtime/ y dist/ estan en los paths de auto-commit / deteccion de cambios"
 else
-    fail ".claude/settings.json no figura en los paths de auto-commit: una edicion del writer no llegaria al PR"
+    fail "src/published/, src/runtime/ o dist/ no figura en los paths de auto-commit: una edicion del writer no llegaria al PR"
 fi
 
 echo ""

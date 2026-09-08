@@ -238,7 +238,7 @@ echo "[E] is_path_in_consumer_blocklist clasifica correctamente"
 
     # Rutas que deben estar en el blocklist (reservadas al plugin)
     # skills/: Agent Skills publicados del plugin (MEF-ADR-0033)
-    for blocked in "commands/foo.md" "skills/projections/SKILL.md" "skills/projections/reference.md" "agents/bar.md" "hooks/baz.json" ".claude-plugin/plugin.json" "docs/adr/mef-adr-0001-service-bus-topics-por-evento.md"; do
+    for blocked in "commands/foo.md" "skills/projections/SKILL.md" "skills/projections/reference.md" "agents/bar.md" "hooks/baz.json" ".claude-plugin/plugin.json" "src/published/foo.md" "src/runtime/foo.sh" "dist/claude/plugin.json" "docs/adr/mef-adr-0001-service-bus-topics-por-evento.md"; do
         if is_path_in_consumer_blocklist "$blocked"; then
             echo "  PASS: '$blocked' detectado como blocklist"
         else
@@ -250,7 +250,7 @@ echo "[E] is_path_in_consumer_blocklist clasifica correctamente"
     # Rutas que NO deben estar en el blocklist (validas para el consumidor)
     # docs/adr/0028-*.md y docs/adr/ca-adr-0009-*.md: ADR local del consumidor
     # (MEF-ADR-0030 decision #4) -- solo docs/adr/mef-adr-* es del marco
-    for allowed in "src/Foo.cs" "tests/Bar.cs" ".github/workflows/deploy.yml" ".claude/settings.json" "docs/bitacora/notes.md" "docs/adr/0028-x.md" "docs/adr/ca-adr-0009-x.md" ".opencode/agents/foo.md" "AGENTS.md" "opencode.json"; do
+    for allowed in "src/Foo.cs" "src/publication/foo.md" "src/runtime-local/foo.sh" "distribution/foo.txt" "tests/Bar.cs" ".github/workflows/deploy.yml" ".claude/settings.json" "docs/bitacora/notes.md" "docs/adr/0028-x.md" "docs/adr/ca-adr-0009-x.md" ".opencode/agents/foo.md" "AGENTS.md" "opencode.json"; do
         if is_path_in_consumer_blocklist "$allowed"; then
             echo "  FAIL: '$allowed' detectado como blocklist (deberia estar permitido)"
             exit 1
@@ -272,9 +272,10 @@ echo "[E2] is_path_in_mefisto_scope clasifica correctamente"
     # skills/ y .claude/skills/: Agent Skills publicados e internos (MEF-ADR-0033)
     # changelog.d/: fragmentos de CHANGELOG/indice de ADRs (issue #380)
     # .mcp.json: declaracion del server MCP bundleado (issue #763), entrada EXACTA
-    # src/internal/, .opencode/{agents,commands,plugins,skills}/, AGENTS.md, opencode.json:
+    # src/{internal,published,runtime}/, dist/, .opencode/{agents,commands,plugins,skills}/,
+    # AGENTS.md, opencode.json:
     # arquitectura neutral de runtime/proveedor (issue #852, MEF-ADR-0049)
-    for valid in "commands/foo.md" "skills/projections/SKILL.md" "skills/projections/scripts/check.sh" "agents/bar.md" "scripts/baz.sh" "hooks/hooks.json" "docs/adr/mef-adr-0001-service-bus-topics-por-evento.md" ".claude-plugin/plugin.json" ".claude/commands/mefisto-foo.md" ".claude/skills/mefisto-doctrina/SKILL.md" ".claude/settings.json" ".mcp.json" "changelog.d/380.added.md" "changelog.d/README.md" "README.md" "src/internal/foo.ts" ".opencode/agents/foo.md" ".opencode/commands/foo.md" ".opencode/plugins/foo.js" ".opencode/skills/foo/SKILL.md" "AGENTS.md" "opencode.json"; do
+    for valid in "commands/foo.md" "skills/projections/SKILL.md" "skills/projections/scripts/check.sh" "agents/bar.md" "scripts/baz.sh" "hooks/hooks.json" "docs/adr/mef-adr-0001-service-bus-topics-por-evento.md" ".claude-plugin/plugin.json" ".claude/commands/mefisto-foo.md" ".claude/skills/mefisto-doctrina/SKILL.md" ".claude/settings.json" ".mcp.json" "changelog.d/380.added.md" "changelog.d/README.md" "README.md" "src/internal/foo.ts" "src/published/foo.md" "src/runtime/foo.sh" "dist/x" ".opencode/agents/foo.md" ".opencode/commands/foo.md" ".opencode/plugins/foo.js" ".opencode/skills/foo/SKILL.md" "AGENTS.md" "opencode.json"; do
         if is_path_in_mefisto_scope "$valid"; then
             echo "  PASS: '$valid' en scope de Mefisto"
         else
@@ -285,10 +286,9 @@ echo "[E2] is_path_in_mefisto_scope clasifica correctamente"
 
     # Rutas invalidas en Mefisto
     # ".mcp.json" es entrada EXACTA de la raiz: ni un glob *.mcp.json ni subdirectorios (issue #763).
-    # ".opencode/agent/" (singular), "dist/", ".mefisto/" y "opencode.json" fuera de la raiz
-    # exacta siguen fuera de scope (issue #852): dist/ diferido a un ADR posterior, .mefisto/
-    # es estado local que va a .gitignore (#856), nunca visible para el gate.
-    for invalid in "src/Foo.cs" "src/otro/x.sh" "tests/Bar.cs" ".github/workflows/deploy.yml" "infra/main.tf" ".claude/harness.config.json" ".claude/pipeline/events.log" "sub/.mcp.json" "foo.mcp.json" ".opencode/x.json" ".opencode/agent/x.md" "dist/x" ".mefisto/pipeline/events.log" ".mefisto/models.json" "sub/opencode.json" "foo.opencode.json"; do
+    # ".opencode/agent/" (singular), vecinos de src/{published,runtime}/ y dist/,
+    # ".mefisto/" y "opencode.json" fuera de la raiz exacta siguen fuera de scope.
+    for invalid in "src/Foo.cs" "src/otro/x.sh" "src/publication/foo.md" "src/runtime-local/foo.sh" "distribution/x" "dist-local/x" "tests/Bar.cs" ".github/workflows/deploy.yml" "infra/main.tf" ".claude/harness.config.json" ".claude/pipeline/events.log" "sub/.mcp.json" "foo.mcp.json" ".opencode/x.json" ".opencode/agent/x.md" ".mefisto/pipeline/events.log" ".mefisto/models.json" "sub/opencode.json" "foo.opencode.json"; do
         if is_path_in_mefisto_scope "$invalid"; then
             echo "  FAIL: '$invalid' esta en scope (NO deberia)"
             exit 1
