@@ -6,3 +6,4 @@ Rutas: {{mefisto:config-path}} y {{mefisto:package-root}}.
 {{mefisto:state-path logs/con-espacio.log}}
 Ejecuta {{mefisto:run prueba.sh "$ARGUMENTS con espacios"}} ahora.
 Consulta {{mefisto:command otra-orden}}.
+Guard inline: {{mefisto:assert-consumer-repo}} Fin.
