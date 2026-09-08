@@ -65,7 +65,20 @@ Muestra al usuario la salida del checklist tal como la imprimio el bloque (el fo
 
 No reinterpretes ni recalcules el checklist ni el bloque "Proximos pasos": el bloque bash ya hizo el diagnostico y ya derivo el siguiente paso.
 
-### 3. Provision opt-in de los labels faltantes
+### 3. Migración opt-in de directivas canónicas
+
+Ofrece este paso **solo** cuando el diagnóstico reportó que falta `AGENTS.md` o el puente exacto `@AGENTS.md` en `CLAUDE.md`. Muestra primero el plan que produce `--preview`: crear `AGENTS.md` solamente si está ausente, crear o añadir el puente sin mover ni borrar texto existente, y cualquier aviso de doctrina legacy duplicada. Si `AGENTS.md` existe pero está incompleto, explica que no se fusiona por heurística y que debe completarse manualmente.
+
+Advierte que, aunque la migración es conservadora, escribe archivos del consumidor. Presenta primero el plan real con este bloque, sin aplicar cambios:
+
+```bash
+MIGRATE_SCRIPT="${PLUGIN_SCRIPTS%/}/onboard-migrate-directives.sh"
+bash "$MIGRATE_SCRIPT" --preview
+```
+
+Pregunta si desea aplicar **ese plan exacto**. Sin un `si` explícito, no ejecutes ninguna escritura. Solo tras ese `si`, ejecuta `bash "$MIGRATE_SCRIPT" --apply`. El script hace su preflight y es idempotente; no reimplementes su plantilla ni sus validaciones. Si informa secciones legacy en `CLAUDE.md`, deja visible que deben retirarse manualmente antes de que el contrato sea completamente canónico.
+
+### 4. Provision opt-in de los labels faltantes
 
 Este es el **unico** paso que puede escribir algo, y solo bajo confirmacion explicita del usuario. El diagnostico (pasos 1-2) nunca crea ni borra labels.
 
