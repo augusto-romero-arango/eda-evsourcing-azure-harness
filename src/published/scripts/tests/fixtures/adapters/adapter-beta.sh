@@ -5,6 +5,6 @@ case "$1" in
     path) printf 'artefactos/%s\n' "$(basename "$2")" ;;
     render)
         case "$2" in *fallar*) echo 'fallo fixture beta' >&2; exit 1 ;; esac
-        printf '%s\nbeta:%s\n' "$3" "$(basename "$2")" ;;
+        printf '%s\n%s\n%s\n%s\nbeta:%s\n' '---' 'runtime: beta' '---' "$3" "$(basename "$2")" ;;
     *) exit 1 ;;
 esac

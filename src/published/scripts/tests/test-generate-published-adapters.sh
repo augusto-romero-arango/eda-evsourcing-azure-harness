@@ -24,6 +24,7 @@ setup_repo() {
     cat > "$TEST_REPO/src/published/scripts/validate-published-artifacts.sh" <<'EOF'
 #!/usr/bin/env bash
 set -u
+if [ -n "${VALIDATOR_LOG:-}" ]; then printf 'validate\n' >> "$VALIDATOR_LOG"; fi
 for file in "$@"; do case "$file" in *invalida*) echo "$file: invalida"; exit 1;; esac; done
 exit 0
 EOF
@@ -45,6 +46,11 @@ OUT="$WORK/salida con espacios"
 "$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md"; rc=$?
 assert_rc "$rc" 0 'dos adaptadores procesan fuente y paths con espacios'
 [ -f "$OUT/dist/alpha/artefactos/valida con espacios.md" ] && [ -f "$OUT/dist/beta/artefactos/valida con espacios.md" ] && pass 'salidas de ambos adaptadores' || fail 'faltan salidas'
+if [ "$(sed -n '4p' "$OUT/dist/beta/artefactos/valida con espacios.md")" = '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/valida con espacios.md. No editar a mano. -->' ]; then
+    pass 'el marcador puede ir despues del frontmatter'
+else
+    fail 'el adaptador no pudo ubicar el marcador despues del frontmatter'
+fi
 
 CHECK_OUT="$WORK/check no crea salida"
 "$GEN" --check --out "$CHECK_OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null; assert_rc "$?" 1 '--check informa salidas faltantes'
@@ -63,6 +69,10 @@ printf 'manual\n' > "$OUT/dist/beta/artefactos/manual.md"
 check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
 case "$check_out" in *'huerfana.md: huerfana'*) pass 'diagnostico huerfana';; *) fail 'sin diagnostico huerfana';; esac
 case "$check_out" in *'manual.md: sin marcador'*) pass 'diagnostico sin marcador';; *) fail 'sin diagnostico sin marcador';; esac
+assert_rc "$rc" 1 '--check combina divergencias con exit 1'
+"$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null
+check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
+[ "$rc" -eq 0 ] && [ -z "$check_out" ] && pass 'escritura reconcilia distintas, faltantes, huerfanas y manuales' || fail 'escritura no converge al arbol esperado'
 
 setup_repo invalida
 GEN="$TEST_REPO/src/published/scripts/generate-published-adapters.sh"; OUT="$WORK/invalida-out"
@@ -71,9 +81,12 @@ GEN="$TEST_REPO/src/published/scripts/generate-published-adapters.sh"; OUT="$WOR
 
 setup_repo fallo
 GEN="$TEST_REPO/src/published/scripts/generate-published-adapters.sh"; OUT="$WORK/fallo-out"
+"$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null
+before="$(shasum "$OUT"/dist/*/artefactos/* | shasum)"
 cp "$TEST_REPO/src/published/agents/valida con espacios.md" "$TEST_REPO/src/published/agents/fallar.md"
 "$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/fallar.md" >/dev/null 2>&1; assert_rc "$?" 1 'fallo del segundo adaptador aborta'
-[ ! -e "$OUT" ] && pass 'fallo no deja salida parcial' || fail 'fallo dejo salida parcial'
+after="$(shasum "$OUT"/dist/*/artefactos/* | shasum)"
+[ "$before" = "$after" ] && pass 'fallo conserva intacta la salida anterior' || fail 'fallo modifico parcialmente la salida'
 rm "$TEST_REPO/src/published/scripts/adapters/"adapter-*.sh
 "$GEN" --out "$WORK/sin-adaptadores" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null 2>&1; assert_rc "$?" 1 'cero adaptadores con fuente explicita falla'
 rm "$TEST_REPO/src/published/agents/"*.md
@@ -85,6 +98,16 @@ GEN="$TEST_REPO/src/published/scripts/generate-published-adapters.sh"; OUT="$WOR
 touch "$TEST_REPO/src/published/agents/valida con espacios.md"
 "$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" && second="$(shasum "$OUT"/dist/*/artefactos/* | shasum)"
 [ "$first" = "$second" ] && pass 'determinismo independiente de mtime' || fail 'salida no determinista'
+
+setup_repo orden-default
+GEN="$TEST_REPO/src/published/scripts/generate-published-adapters.sh"; OUT="$WORK/orden-default"
+mkdir -p "$TEST_REPO/src/published/commands"
+cp "$TEST_REPO/src/published/agents/valida con espacios.md" "$TEST_REPO/src/published/commands/zeta.md"
+cp "$TEST_REPO/src/published/agents/valida con espacios.md" "$TEST_REPO/src/published/agents/alfa.md"
+VALIDATOR_LOG="$WORK/validator.log" "$GEN" --out "$OUT"; rc=$?
+assert_rc "$rc" 0 'modo default valida y genera todas las fuentes'
+[ "$(wc -l < "$WORK/validator.log" | tr -d ' ')" -eq 1 ] && pass 'el validador se invoca una vez antes de generar' || fail 'invocacion inesperada del validador'
+[ -f "$OUT/dist/alpha/artefactos/alfa.md" ] && [ -f "$OUT/dist/alpha/artefactos/zeta.md" ] && pass 'scan default cubre agents y commands' || fail 'scan default incompleto'
 
 printf '\nResultado: %s PASS, %s FAIL\n' "$PASS" "$FAIL"
 exit "$FAIL"
