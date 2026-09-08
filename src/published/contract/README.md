@@ -65,8 +65,8 @@ o mal formada se rechaza.
 |---|---|---|
 | `{{mefisto:assert-consumer-repo}}` | guard generado que aborta en el repo de Mefisto | el mismo guard de consumidor, sin importar políticas internas |
 | `{{mefisto:launch-agent <id>}}` | delegación al agente generado del plugin | delegación al agente global generado |
-| `{{mefisto:run <script> <args>}}` | script bajo la raíz instalada del plugin + argumentos | script bajo la release activa + argumentos |
-| `{{mefisto:package-root}}` | raíz instalada del plugin | raíz de la release activa |
+| `{{mefisto:run <script> <args>}}` | script bajo `MEFISTO_PACKAGE_ROOT` + argumentos | script bajo `MEFISTO_PACKAGE_ROOT` + argumentos |
+| `{{mefisto:package-root}}` | `MEFISTO_PACKAGE_ROOT` | `MEFISTO_PACKAGE_ROOT` |
 | `{{mefisto:config-path}}` | `.mefisto/harness.config.json` del consumidor | `.mefisto/harness.config.json` del consumidor |
 | `{{mefisto:state-path <rel>}}` | `.mefisto/pipeline/<rel>` del consumidor | `.mefisto/pipeline/<rel>` del consumidor |
 | `{{mefisto:command <id>}}` | `/mefisto:<id>` | `/mefisto:<id>` |
@@ -74,6 +74,13 @@ o mal formada se rechaza.
 Los adaptadores materializan comandos como `/mefisto:<id>`. El body no puede
 nombrar CLIs, variables, cachés, directorios ni metadata de un runtime. Tampoco
 admite placeholders distintos de `$ARGUMENTS`.
+
+Cuando un body usa `run` o `package-root`, el adaptador antepone un bloque Bash
+que valida y exporta una única raíz física sin barra final:
+`MEFISTO_PACKAGE_ROOT`. Claude valida la distribución cargada desde su variable
+de runtime o los markers canónico/legacy del consumidor; OpenCode consulta el
+launcher de la release activa. Esta mecánica es exclusiva de cada salida: la
+fuente neutral y sus callers no conocen variables ni layouts de runtime.
 
 ## Validación
 

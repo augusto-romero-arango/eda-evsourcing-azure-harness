@@ -62,6 +62,9 @@ assert_active 1.2.3 'primera instalacion activa la version inicial'
 assert_only_data_root 'bootstrap solo escribe bajo la raiz de datos'
 
 ACTIVE="$XDG_DATA_HOME/mefisto/active/bin/mefisto-opencode"
+PACKAGE_ROOT="$("$ACTIVE" package-root)"; rc=$?
+EXPECTED_PACKAGE_ROOT="$(cd "$XDG_DATA_HOME/mefisto/releases/1.2.3" && pwd -P)"
+[ "$rc" -eq 0 ] && [ "$PACKAGE_ROOT" = "$EXPECTED_PACKAGE_ROOT" ] && pass 'package-root imprime solo la ruta fisica de la release activa' || fail "package-root no resolvio la release activa: '$PACKAGE_ROOT'"
 MEFISTO_OPENCODE_RELEASE_BASE_URL="file://$WORK/assets" "$ACTIVE" install 2.0.0 >/dev/null; assert_rc "$?" 0 'upgrade descarga fixture local y valida checksum'
 assert_active 2.0.0 'upgrade activa la version descargada'
 [ -d "$XDG_DATA_HOME/mefisto/releases/1.2.3" ] && [ -d "$XDG_DATA_HOME/mefisto/releases/2.0.0" ] && pass 'upgrade conserva release anterior' || fail 'upgrade borro release anterior'
@@ -93,6 +96,48 @@ STATUS="$("$ACTIVE" status)"; case "$STATUS" in *'Runtime: opencode'*'Version: 1
 DIAGNOSIS="$("$ACTIVE" diagnose)"; printf '%s' "$DIAGNOSIS" | jq -e '.status == "opencode_only" and .opencode.version == "1.2.3"' >/dev/null && pass 'diagnose expone el diagnostico parseable de la release activa' || fail 'diagnose no expone la identidad activa'
 rm "$XDG_DATA_HOME/mefisto/active"; ln -s "$HOME" "$XDG_DATA_HOME/mefisto/active"
 "$XDG_DATA_HOME/mefisto/releases/1.2.3/bin/mefisto-opencode" status >/dev/null 2>&1; assert_rc "$?" 1 'status rechaza active fuera del almacen sin inspeccionarlo'
+
+printf '\n[package-root] fail-closed sobre el almacen activo\n'
+INSTALLED_LAUNCHER="$XDG_DATA_HOME/mefisto/releases/1.2.3/bin/mefisto-opencode"
+assert_package_root_fails() {
+    local label="$1" output rc
+    output="$("$INSTALLED_LAUNCHER" package-root 2>&1)"; rc=$?
+    if [ "$rc" -ne 0 ]; then
+        case "$output" in *'instale o active'*|*'reinstale o active'*) pass "$label" ;; *) fail "$label: diagnostico sin accion concreta: $output" ;; esac
+    else
+        fail "$label"
+    fi
+}
+assert_package_root_fails 'package-root rechaza target externo'
+rm "$XDG_DATA_HOME/mefisto/active"; ln -s 'releases/9.9.9' "$XDG_DATA_HOME/mefisto/active"
+assert_package_root_fails 'package-root rechaza symlink roto'
+rm "$XDG_DATA_HOME/mefisto/active"
+assert_package_root_fails 'package-root rechaza active ausente'
+ln -s 'releases/1.2.3' "$XDG_DATA_HOME/mefisto/active"
+chmod u+w "$XDG_DATA_HOME/mefisto/releases/1.2.3/mefisto-manifest.json"
+jq '.runtime = "claude"' "$XDG_DATA_HOME/mefisto/releases/1.2.3/mefisto-manifest.json" > "$WORK/manifest.tmp" && command cp "$WORK/manifest.tmp" "$XDG_DATA_HOME/mefisto/releases/1.2.3/mefisto-manifest.json"
+chmod a-w "$XDG_DATA_HOME/mefisto/releases/1.2.3/mefisto-manifest.json"
+assert_package_root_fails 'package-root rechaza runtime inesperado'
+chmod u+w "$XDG_DATA_HOME/mefisto/releases/1.2.3/mefisto-manifest.json"
+jq '.runtime = "opencode" | .version = "2.0.0"' "$XDG_DATA_HOME/mefisto/releases/1.2.3/mefisto-manifest.json" > "$WORK/manifest.tmp" && command cp "$WORK/manifest.tmp" "$XDG_DATA_HOME/mefisto/releases/1.2.3/mefisto-manifest.json"
+chmod a-w "$XDG_DATA_HOME/mefisto/releases/1.2.3/mefisto-manifest.json"
+assert_package_root_fails 'package-root rechaza version divergente'
+chmod u+w "$XDG_DATA_HOME/mefisto/releases/1.2.3/mefisto-manifest.json"
+jq '.version = "1.2.3"' "$XDG_DATA_HOME/mefisto/releases/1.2.3/mefisto-manifest.json" > "$WORK/manifest.tmp" && command cp "$WORK/manifest.tmp" "$XDG_DATA_HOME/mefisto/releases/1.2.3/mefisto-manifest.json"
+chmod a-w "$XDG_DATA_HOME/mefisto/releases/1.2.3/mefisto-manifest.json"
+chmod u+w "$XDG_DATA_HOME/mefisto/releases/1.2.3/mefisto-manifest.json"
+printf '%s\n' '{' > "$XDG_DATA_HOME/mefisto/releases/1.2.3/mefisto-manifest.json"
+chmod a-w "$XDG_DATA_HOME/mefisto/releases/1.2.3/mefisto-manifest.json"
+assert_package_root_fails 'package-root rechaza metadata ilegible'
+chmod u+w "$XDG_DATA_HOME/mefisto/releases/1.2.3/mefisto-manifest.json"
+jq -n '{schemaVersion: 1, runtime: "opencode", version: "1.2.3", commit: "0123456789abcdef0123456789abcdef01234567", minimumRuntimeVersion: "1.18.29"}' > "$XDG_DATA_HOME/mefisto/releases/1.2.3/mefisto-manifest.json"
+chmod a-w "$XDG_DATA_HOME/mefisto/releases/1.2.3/mefisto-manifest.json"
+chmod u+w "$XDG_DATA_HOME/mefisto/releases/1.2.3/contenido con espacios.txt"
+assert_package_root_fails 'package-root rechaza release mutable'
+chmod a-w "$XDG_DATA_HOME/mefisto/releases/1.2.3/contenido con espacios.txt"
+chmod u+w "$XDG_DATA_HOME/mefisto/releases/1.2.3" "$XDG_DATA_HOME/mefisto/releases/1.2.3/diagnose-installation-identity.sh"
+rm "$XDG_DATA_HOME/mefisto/releases/1.2.3/diagnose-installation-identity.sh"
+assert_package_root_fails 'package-root rechaza paquete incompleto'
 
 printf '\nResultado: %s PASS, %s FAIL\n' "$PASS" "$FAIL"
 exit "$FAIL"

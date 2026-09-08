@@ -10,6 +10,34 @@ MAPPING="$SCRIPT_DIR/../../contract/opencode-permissions.json"
 error() { printf '%s\n' "$1" >&2; return 1; }
 frontmatter() { awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$1"; }
 body() { awk 'NR == 1 { next } $0 == "---" && !seen { seen=1; next } seen { print }' "$1"; }
+needs_package_root() { case "$1" in *'{{mefisto:run '*|*'{{mefisto:package-root}}'*) return 0 ;; *) return 1 ;; esac; }
+
+package_root_preamble() {
+    cat <<'EOF'
+```bash
+mefisto_opencode_data_root() {
+    if [ -n "${XDG_DATA_HOME:-}" ]; then printf '%s/mefisto\n' "$XDG_DATA_HOME"
+    elif [ "$(uname -s)" = Darwin ]; then printf '%s/Library/Application Support/mefisto\n' "$HOME"
+    else printf '%s/.local/share/mefisto\n' "$HOME"; fi
+}
+mefisto_opencode_launcher="$(mefisto_opencode_data_root)/active/bin/mefisto-opencode"
+if [ ! -f "$mefisto_opencode_launcher" ] || [ -L "$mefisto_opencode_launcher" ] || [ ! -x "$mefisto_opencode_launcher" ]; then
+    printf '%s\n' 'ERROR OpenCode: no hay una release activa valida; instale o active la release OpenCode.' >&2; exit 1
+fi
+MEFISTO_PACKAGE_ROOT="$("$mefisto_opencode_launcher" package-root)" || {
+    printf '%s\n' 'ERROR OpenCode: no se pudo resolver la release activa; instale o active la release OpenCode.' >&2; exit 1;
+}
+case "$MEFISTO_PACKAGE_ROOT" in
+    /*) ;;
+    *) printf '%s\n' 'ERROR OpenCode: la release activa no devolvio una raiz absoluta; reinstale o active la release OpenCode.' >&2; exit 1 ;;
+esac
+MEFISTO_PACKAGE_ROOT="$(cd "$MEFISTO_PACKAGE_ROOT" 2>/dev/null && pwd -P)" || {
+    printf '%s\n' 'ERROR OpenCode: la release activa no existe; reinstale o active la release OpenCode.' >&2; exit 1;
+}
+export MEFISTO_PACKAGE_ROOT
+```
+EOF
+}
 
 permission_json() {
     local rel="$1" capabilities="$2" mode="$3" cap
@@ -95,7 +123,7 @@ launch_agent_id() {
 }
 
 render() {
-    local source="$1" marker="$2" rel fm instance kind artifact_id raw_body translated mode permissions agent
+    local source="$1" marker="$2" rel fm instance kind artifact_id raw_body translated preamble='' mode permissions agent
     rel="${source#*/src/published/}"
     rel="src/published/$rel"
     fm="$(frontmatter "$source")" || { error "$rel: frontmatter: no se pudo extraer"; return 1; }
@@ -106,6 +134,7 @@ render() {
     if [ "$(printf '%s' "$instance" | jq '[.skills[]?] | length')" -gt 0 ]; then error "$rel: skills: OpenCode no implementa Skills publicados todavia"; return 1; fi
     if [ "$(printf '%s' "$instance" | jq '[.mcp[]?] | length')" -gt 0 ]; then error "$rel: mcp: OpenCode no implementa MCP publicado todavia"; return 1; fi
     translated="$(translate_body "$rel" "$raw_body")" || return 1
+    if needs_package_root "$raw_body"; then preamble="$(package_root_preamble)"; fi
     printf '%s\n' '---'
     printf 'description: %s\n' "$(printf '%s' "$instance" | jq -r '.description | @json')"
     if [ "$kind" = agent ]; then
@@ -117,7 +146,9 @@ render() {
         [ -n "$agent" ] || agent="$(launch_agent_id "$raw_body")"
         [ -z "$agent" ] || printf 'agent: %s\nsubtask: true\n' "$(printf '%s' "$agent" | jq -Rr '@json')"
     fi
-    printf '%s\n%s\n%s\n' '---' "$marker" "$translated"
+    printf '%s\n%s\n' '---' "$marker"
+    [ -z "$preamble" ] || printf '%s\n' "$preamble"
+    printf '%s\n' "$translated"
 }
 
 case "${1:-}" in

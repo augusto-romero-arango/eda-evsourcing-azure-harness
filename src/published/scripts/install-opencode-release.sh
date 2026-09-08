@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Instala releases OpenCode verificadas bajo la raiz de datos del usuario.
-# Uso: install.sh install <semver> | install.sh activate <semver> | install.sh prune [--keep <n>] [--yes] | install.sh project | install.sh deactivate | install.sh status | install.sh diagnose
+# Uso: install.sh install <semver> | install.sh activate <semver> | install.sh prune [--keep <n>] [--yes] | install.sh project | install.sh deactivate | install.sh status | install.sh diagnose | install.sh package-root
 set -euo pipefail
 export LC_ALL=C
 
@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPOSITORY="${MEFISTO_OPENCODE_REPOSITORY:-augusto-romero-arango/eda-evsourcing-azure-harness}"
 
 error() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
-usage() { error 'uso: mefisto-opencode install <semver> | activate <semver> | prune [--keep <n>] [--yes] | project | deactivate | status | diagnose'; }
+usage() { error 'uso: mefisto-opencode install <semver> | activate <semver> | prune [--keep <n>] [--yes] | project | deactivate | status | diagnose | package-root'; }
 valid_version() {
     printf '%s\n' "$1" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
 }
@@ -228,13 +228,21 @@ sorted_insert_version() {
 
 active_version() {
     local target version
-    [ -L "$ACTIVE" ] || error 'no hay una release activa; la poda no puede determinar que preservar'
-    target="$(readlink "$ACTIVE")" || error 'no se pudo leer active'
+    [ -L "$ACTIVE" ] || error 'no hay una release activa; instale o active una release OpenCode'
+    target="$(readlink "$ACTIVE")" || error 'no se pudo leer active; reinstale o active la release OpenCode'
     version="${target#releases/}"
     [ "$target" = "releases/$version" ] && valid_version "$version" \
         && manifest_valid "$RELEASES/$version" "$version" && release_immutable "$RELEASES/$version" \
-        || error 'active no apunta a una release valida, completa e inmutable'
+        || error 'active no apunta a una release valida, completa e inmutable; reinstale o active la release OpenCode'
     printf '%s\n' "$version"
+}
+
+package_root() {
+    local version release
+    version="$(active_version)"
+    release="$RELEASES/$version"
+    cd "$release" 2>/dev/null || error 'la release activa no se puede normalizar; reinstale o active la release OpenCode'
+    pwd -P
 }
 
 prune() {
@@ -322,5 +330,6 @@ case "${1:-}" in
     deactivate) [ "$#" -eq 1 ] || usage; exec "$SCRIPT_DIR/project-opencode-release.sh" deactivate ;;
     status) [ "$#" -eq 1 ] || usage; status ;;
     diagnose) [ "$#" -eq 1 ] || usage; exec "$SCRIPT_DIR/diagnose-installation-identity.sh" --opencode-root "$ROOT/active" ;;
+    package-root) [ "$#" -eq 1 ] || usage; package_root ;;
     *) usage ;;
 esac
