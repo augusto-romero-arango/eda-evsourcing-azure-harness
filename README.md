@@ -430,7 +430,7 @@ docs/
   tmux-cheatsheet.md
   testing/harness-cheatsheet.md
 .mcp.json              # servidor MCP bundleado (microsoft-learn)
-AGENTS.md              # directivas canónicas neutrales a runtime del consumidor
+AGENTS.md              # directivas canónicas neutrales a runtime de Mefisto
 CLAUDE.md              # puente de Claude Code hacia AGENTS.md
 CHANGELOG.md
 ```
@@ -453,6 +453,16 @@ Cada skill interno verifica al inicio que estás en el repo de Mefisto (presenci
 Cuando descubras desde un consumidor un problema atribuible al plugin, el tooling-investigator publicado puede **crear un draft cross-repo** en este repo (con `gh issue create -R augusto-romero-arango/eda-evsourcing-azure-harness --label "estado:borrador" …`). Luego, dentro del repo de Mefisto, refinas el draft con `/mefisto-plan` y lo implementas con `/mefisto-tooling`.
 
 ## Migración para consumidores existentes
+
+### Migrar directivas canónicas desde `CLAUDE.md`
+
+Cuando `AGENTS.md` todavía no existe, un `CLAUDE.md` legacy con "Tokens del harness" y "Verificación de fuentes" sigue siendo legible como fallback indefinido. Para que ambos runtimes consuman esas directivas desde la fuente canónica sin duplicarlas:
+
+1. mueve las dos secciones, sin reescribir su contenido, a `AGENTS.md`;
+2. elimina esas copias de `CLAUDE.md` y añade `@AGENTS.md` como línea independiente;
+3. conserva en `CLAUDE.md` solo las directivas realmente específicas de Claude Code, si las hay.
+
+Las demás convenciones del proyecto también pueden vivir en `AGENTS.md`, pero son opcionales y no tienen un formato impuesto por `/onboard`.
 
 ### Añadir `boundedContext`
 
@@ -477,7 +487,7 @@ El campo `boundedContext` es **obligatorio** (MEF-ADR-0023). Si actualizas desde
    - **BoundedContextDomains**: dominio1, dominio2
    ```
 
-3. **Deja `CLAUDE.md` como puente** con la línea independiente `@AGENTS.md`. Un `CLAUDE.md` legacy que aún contiene los tokens o la verificación de fuentes sigue siendo legible como fallback, pero debes migrar esa doctrina a `AGENTS.md` para que ambos runtimes puedan usarla.
+3. **Deja `CLAUDE.md` como puente** con la línea independiente `@AGENTS.md`. Si aún contiene los tokens o la verificación de fuentes, aplica primero la migración anterior para no duplicar la doctrina.
 
 4. **Verifica con `/mefisto:onboard`**: el checklist mostrará `[OK] boundedContext declarado: name='Principal' domains='...'`.
 

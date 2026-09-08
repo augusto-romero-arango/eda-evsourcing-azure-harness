@@ -67,7 +67,7 @@ Notas sobre campos concretos:
 
 ## 2. Secciones "Tokens del harness" y "Verificación de fuentes" en `AGENTS.md` raíz del consumidor
 
-`AGENTS.md` es la fuente canónica y neutral a runtime de las directivas del consumidor (MEF-ADR-0049, decisión 3; MEF-ADR-0053, decisión 4). Debe contener estas dos secciones obligatorias. Es necesaria porque los agentes/skills del harness no pueden hacer sustitución de variables. Los placeholders `<RootNamespace>`, `<SolutionFile>`, `<ProjectDisplayName>`, `<BoundedContext>` y `<BoundedContextDomains>` se resuelven leyendo el `AGENTS.md` del proyecto. Ejemplo mínimo:
+`AGENTS.md` es la fuente canónica y neutral a runtime de las directivas del consumidor (MEF-ADR-0049, decisión 3; MEF-ADR-0053, decisión 4). Debe contener estas dos secciones obligatorias. La sección de tokens es necesaria porque los agentes/skills del harness no pueden hacer sustitución de variables. Los placeholders `<RootNamespace>`, `<SolutionFile>`, `<ProjectDisplayName>`, `<BoundedContext>` y `<BoundedContextDomains>` se resuelven leyendo el `AGENTS.md` del proyecto. Ejemplo mínimo:
 
 ```markdown
 ### Tokens del harness
@@ -101,7 +101,13 @@ tu propuesta en vez de darlo por cierto.
 @AGENTS.md
 ```
 
-Un `CLAUDE.md` legacy que todavía contiene las secciones canónicas sigue siendo legible como fallback, pero debe migrarse a `AGENTS.md` y dejar el puente para que ambos runtimes consuman la misma doctrina. Las convenciones adicionales del proyecto pueden vivir en `AGENTS.md`, pero son opcionales: `/onboard` no debe inventar ni validar un formato para ellas.
+Cuando `AGENTS.md` todavía no existe, un `CLAUDE.md` legacy que contiene estas secciones sigue siendo legible como fallback indefinido. Para migrarlo sin perder directivas exclusivas de Claude Code:
+
+1. mueve las dos secciones obligatorias a `AGENTS.md`;
+2. elimina esas copias de `CLAUDE.md` y añade `@AGENTS.md` como línea independiente;
+3. conserva en `CLAUDE.md` solo las directivas realmente específicas de Claude Code, si las hay.
+
+Así ambos runtimes consumen la doctrina neutral desde la fuente canónica sin duplicarla. Las convenciones adicionales del proyecto pueden vivir en `AGENTS.md`, pero son opcionales: `/onboard` no debe inventar ni validar un formato para ellas.
 
 ## 3. Estructura de carpetas esperada
 
