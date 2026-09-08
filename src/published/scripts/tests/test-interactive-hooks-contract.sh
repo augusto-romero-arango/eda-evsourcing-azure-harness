@@ -26,8 +26,11 @@ expected_error() {
         action-without-contract.jq) echo "accion sin contrato" ;;
         additional-persisted-field.jq) echo "allowlist de campos persistibles divergente" ;;
         delivery-divergent.jq) echo "delivery divergente" ;;
+        duplicate-destination.jq) echo "destinos duplicados" ;;
         duplicate-id.jq) echo "id duplicado" ;;
         extra-property.jq) echo "propiedad adicional o faltante" ;;
+        legacy-destination-on-other-binding.jq) echo "destinos no coinciden con su contrato" ;;
+        missing-canonical-destination.jq) echo "falta el destino canonico obligatorio" ;;
         runtime-reference.jq) echo "referencia a runtime" ;;
         sensitive-field.jq) echo "campo persistible sensible" ;;
         unknown-action.jq) echo "accion desconocida" ;;
