@@ -29,9 +29,10 @@ Está pensado para instalarse vía marketplace en cualquier proyecto que adopte 
 
 ## Contrato con el proyecto consumidor
 
-Esquema completo de `.claude/harness.config.json`, secciones obligatorias del `CLAUDE.md` del
-consumidor y estructura de carpetas esperada: ver skill interno `harness-config-contract`
-(`.claude/skills/harness-config-contract/SKILL.md`).
+Esquema completo de `.claude/harness.config.json`, las secciones obligatorias `Tokens del harness`
+y `Verificación de fuentes` en el `AGENTS.md` del consumidor, el puente mínimo `CLAUDE.md` con
+`@AGENTS.md` y la estructura de carpetas esperada: ver skill interno
+`harness-config-contract` (`.claude/skills/harness-config-contract/SKILL.md`).
 
 ## Catálogo de skills
 
