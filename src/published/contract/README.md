@@ -17,7 +17,7 @@ objetos rechazan propiedades adicionales.
 | `id` | requerido | requerido | nombre de archivo/ruta; no se emite | nombre de archivo/ruta; no se emite |
 | `description` | requerido | requerido | `description` | `description` |
 | `mode` | requerido | no | selecciona la forma de ejecución; no se emite | `mode` |
-| `profile` | sí | sí | `model` resuelto por tabla del adaptador | modelo resuelto por configuración del adaptador |
+| `profile` | sí | sí | `model` resuelto por tabla del adaptador | no se emite `model`; hereda la configuración interactiva del usuario |
 | `capabilities` | sí | sí | `tools`/`allowed-tools` generados | `permission` generado |
 | `skills` | sí | sí | `skills` con ids fuente, sin prefijo | disponibilidad del Skill adaptado `mefisto-<id>` |
 | `mcp` | sí | sí | matcher scoped por id lógico | entrada `mcp`/permiso por id lógico |
