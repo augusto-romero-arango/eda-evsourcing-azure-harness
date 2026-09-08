@@ -169,7 +169,7 @@ El resource group del BC se forma como `infraResourceGroupPrefix`+`-`+`name` (ej
 
 `infra-base-scaffolder` registra idempotentemente los secretos **fijos** del BC (el interno de ASB, `app-insights-connection`, `marten-connection` y uno por cada alias de `serviceBus.external[]`) la primera vez que genera `infra-cd.yml` (ver "Bootstrap de infraestructura", paso 3). Para sembrar un secreto **nuevo** después del greenfield -- p. ej. la API key de un proveedor externo --, usa el skill `/seed-secret` (ver catálogo de skills), que registra la entrada y cablea la referencia en la Function App del dominio que la consume. `load_harness_config` valida la forma del array (`name` único, `source.type` en el vocabulario de arriba, `source.value` no vacío); es **opcional** (añadirlo no es MAJOR).
 
-Y añade una sección a `CLAUDE.md` raíz del consumidor declarando los tokens:
+Añade estas dos secciones a `AGENTS.md` raíz del consumidor. Es la fuente canónica de doctrina neutral a runtime; los agentes y skills del harness resuelven allí los tokens:
 
 ```markdown
 ### Tokens del harness
@@ -183,7 +183,7 @@ Y añade una sección a `CLAUDE.md` raíz del consumidor declarando los tokens:
 
 `BoundedContext` es el nombre del Bounded Context: grupo de dominios relacionados que comparte resource group y namespaces de Azure Service Bus (MEF-ADR-0023).
 
-Añade también, verbatim, la sección "Verificación de fuentes" al mismo `CLAUDE.md` — propaga al consumidor el principio de verificación de fuentes del propio harness, para que aplique aunque el usuario nunca invoque los skills/agentes de Mefisto:
+Añade también, verbatim, la sección "Verificación de fuentes" al mismo `AGENTS.md` — propaga al consumidor el principio de verificación de fuentes del propio harness, para que aplique aunque el usuario nunca invoque los skills/agentes de Mefisto:
 
 ```markdown
 ### Verificación de fuentes (obligatorio para agentes)
@@ -196,6 +196,14 @@ o recomendación, **cita la fuente** (URL oficial, versión del paquete, ADR). S
 dato no pudiste verificarlo contra la fuente, decláralo como *no verificado* en
 tu propuesta en vez de darlo por cierto.
 ```
+
+Para Claude Code, crea o conserva `CLAUDE.md` como puente mínimo con esta línea independiente:
+
+```markdown
+@AGENTS.md
+```
+
+Puedes añadir allí directivas realmente específicas de Claude Code, pero no dupliques las dos secciones neutrales. Las convenciones adicionales del proyecto pueden vivir opcionalmente en `AGENTS.md`; `/onboard` no inventa ni valida un formato para ellas.
 
 ### 4. Verificar instalación
 
@@ -265,7 +273,7 @@ Comprueba que el plugin cargó (mismo criterio que "Verificar instalación", pas
 
 ### 2. Crear `.claude/harness.config.json`
 
-Crea el archivo de configuración en la raíz del consumidor (sección Instalación, paso 3). Para el bootstrap de infra conviene declarar también el campo opcional `azureLocation` con tu región de Azure (ej. `"eastus2"`), así no tienes que pasar `--location` en cada corrida. Añade además las secciones "Tokens del harness" y "Verificación de fuentes" a tu `CLAUDE.md` raíz.
+Crea el archivo de configuración en la raíz del consumidor (sección Instalación, paso 3). Para el bootstrap de infra conviene declarar también el campo opcional `azureLocation` con tu región de Azure (ej. `"eastus2"`), así no tienes que pasar `--location` en cada corrida. Añade además las secciones "Tokens del harness" y "Verificación de fuentes" a tu `AGENTS.md` raíz y el puente `CLAUDE.md` con `@AGENTS.md`.
 
 Cuando lo tengas, corre `/mefisto:onboard` para verificar de un vistazo que el config está bien formado y qué te falta (labels, CI). Por defecto solo diagnostica; bajo tu confirmación explícita puede además provisionar los **labels** faltantes (el script subyacente es destructivo) y configurar el **CI** hacia Azure (crea recursos reales en Azure vía OIDC; debe correr **después** de `bootstrap-backend.sh`, ver paso 5). También puedes correr `setup-github-labels.sh` / `setup-github-ci.sh` a mano si prefieres.
 
@@ -385,7 +393,7 @@ Si tu dominio necesita un secreto nuevo (una API key de un proveedor externo, ot
 | `bootstrap-backend.sh`, `setup-github-ci.sh`, `iac-pipeline.sh`, `tdd-pipeline.sh`, ... | operan sobre tu repo consumidor | binario en el plugin; se resuelven vía `$PLUGIN_SCRIPTS` |
 | `terraform plan` (en cada PR) / `terraform apply` (al mergear a `main`) | **runner de GitHub Actions**, nunca tu máquina | workflow `.github/workflows/infra-cd.yml` (lo genera `/infra-base`; MEF-ADR-0021, MEF-ADR-0022) |
 | ADRs del marco (`docs/adr/`) | — | en el plugin; los agentes los leen vía `$PLUGIN_ROOT/docs/adr/` |
-| `.claude/harness.config.json`, `CLAUDE.md`, `src/`, `tests/`, `infra/` | tu repo consumidor | **tu repo** (los crea/edita el harness operando sobre el consumidor) |
+| `.claude/harness.config.json`, `AGENTS.md`, `CLAUDE.md` (puente), `src/`, `tests/`, `infra/` | tu repo consumidor | **tu repo** (los crea/edita el harness operando sobre el consumidor) |
 | `infra/environments/<env>/backend.tf` | tu repo consumidor | **tu repo** (lo escribe `bootstrap-backend.sh` en runtime) |
 
 Regla mnemónica: **los binarios viven en el plugin; los archivos del proyecto viven en tu repo.** Nunca edites archivos dentro del cache del plugin ni invoques sus scripts con rutas relativas. Y desde la reforma de la oleada "apply en CI" (MEF-ADR-0021, MEF-ADR-0022): **el plan/apply de infraestructura vive en CI, nunca en tu máquina** — la única excepción es el bootstrap inicial (backend + CI, sección "Bootstrap de infraestructura" arriba), una operación privilegiada de una sola vez que corre un admin con permisos de Azure. La siembra de los secretos de Key Vault (mismo paso 5) **ya no** es un tercer perfil manual recurrente: es un step automático dentro del mismo `apply` de CI, habilitado por el rol de datos que el propio `apply` se autoasigna sobre el vault (mecanismo M1, MEF-ADR-0022) — ningún humano necesita un rol de datos de Key Vault. Los perfiles de acceso **humanos** del marco quedan en dos (el tercer perfil de la decisión #10, la siembra, ya no lo ejecuta una persona sino CI): (a) desarrollador ongoing, cero credenciales de Azure, y (b) bootstrap, privilegiado y de una sola vez.
@@ -422,7 +430,8 @@ docs/
   tmux-cheatsheet.md
   testing/harness-cheatsheet.md
 .mcp.json              # servidor MCP bundleado (microsoft-learn)
-CLAUDE.md              # documentación viva para Claude Code
+AGENTS.md              # directivas canónicas neutrales a runtime de Mefisto
+CLAUDE.md              # puente de Claude Code hacia AGENTS.md
 CHANGELOG.md
 ```
 
@@ -445,6 +454,16 @@ Cuando descubras desde un consumidor un problema atribuible al plugin, el toolin
 
 ## Migración para consumidores existentes
 
+### Migrar directivas canónicas desde `CLAUDE.md`
+
+Cuando `AGENTS.md` todavía no existe, un `CLAUDE.md` legacy con "Tokens del harness" y "Verificación de fuentes" sigue siendo legible como fallback indefinido. Para que ambos runtimes consuman esas directivas desde la fuente canónica sin duplicarlas:
+
+1. mueve las dos secciones, sin reescribir su contenido, a `AGENTS.md`;
+2. elimina esas copias de `CLAUDE.md` y añade `@AGENTS.md` como línea independiente;
+3. conserva en `CLAUDE.md` solo las directivas realmente específicas de Claude Code, si las hay.
+
+Las demás convenciones del proyecto también pueden vivir en `AGENTS.md`, pero son opcionales y no tienen un formato impuesto por `/onboard`.
+
 ### Añadir `boundedContext`
 
 El campo `boundedContext` es **obligatorio** (MEF-ADR-0023). Si actualizas desde una versión que no lo exigía, `load_harness_config` abortará con un mensaje que muestra el shape exacto a añadir. Para migrar:
@@ -461,14 +480,16 @@ El campo `boundedContext` es **obligatorio** (MEF-ADR-0023). Si actualizas desde
    - `name`: elige un nombre para tu BC (ej: "Principal", "Admin", "Core"). Puede coincidir con `projectName`.
    - `domains`: lista tus `domainLabels` actuales. Si todos tus dominios pertenecen a un solo BC (caso más común), pon todos. Si tienes múltiples BCs futuros, pon solo los que pertenecen a este BC.
 
-2. **Añade los tokens al `CLAUDE.md`** de tu proyecto (sección "Tokens del harness"):
+2. **Añade los tokens al `AGENTS.md`** de tu proyecto (sección "Tokens del harness"):
 
    ```markdown
    - **BoundedContext**: Principal
    - **BoundedContextDomains**: dominio1, dominio2
    ```
 
-3. **Verifica con `/mefisto:onboard`**: el checklist mostrará `[OK] boundedContext declarado: name='Principal' domains='...'`.
+3. **Deja `CLAUDE.md` como puente** con la línea independiente `@AGENTS.md`. Si aún contiene los tokens o la verificación de fuentes, aplica primero la migración anterior para no duplicar la doctrina.
+
+4. **Verifica con `/mefisto:onboard`**: el checklist mostrará `[OK] boundedContext declarado: name='Principal' domains='...'`.
 
 > **Tip**: si tienes dudas sobre el nombre del BC, usa el mismo `projectName`. La convención del harness es `BC name ≈ projectName` cuando hay un solo BC por proyecto.
 

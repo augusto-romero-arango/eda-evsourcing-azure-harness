@@ -1,6 +1,6 @@
 ---
 name: harness-config-contract
-description: "Contrato que el harness Mefisto impone al repo consumidor: esquema completo de `.claude/harness.config.json`, las secciones obligatorias del `CLAUDE.md` del consumidor (Tokens del harness, Verificación de fuentes) y la estructura de carpetas esperada (src/, tests/, infra/, docs/). Usar cuando se haga onboarding, scaffolding (dominio, infra base, MCP, proyecciones), validacion de config, o cualquier tarea que lea o escriba `harness.config.json` o dependa de la estructura de carpetas del consumidor."
+description: "Contrato que el harness Mefisto impone al repo consumidor: esquema completo de `.claude/harness.config.json`, las secciones obligatorias de `AGENTS.md` (Tokens del harness, Verificación de fuentes), el puente mínimo de `CLAUDE.md` y la estructura de carpetas esperada (src/, tests/, infra/, docs/). Usar cuando se haga onboarding, scaffolding (dominio, infra base, MCP, proyecciones), validacion de config, o cualquier tarea que lea o escriba `harness.config.json` o dependa de la estructura de carpetas del consumidor."
 ---
 
 # Contrato con el proyecto consumidor
@@ -65,9 +65,9 @@ Notas sobre campos concretos:
 - **`repoSlug`** (opcional): slug `owner/repo` del fork de Mefisto al que se enrutan los drafts cross-repo (`estado:borrador`). Default: `augusto-romero-arango/eda-evsourcing-azure-harness`.
 - **`azureLocation`** (opcional): región de Azure por defecto para `bootstrap-backend.sh`.
 
-## 2. Secciones "Tokens del harness" y "Verificación de fuentes" en `CLAUDE.md` raíz del consumidor
+## 2. Secciones "Tokens del harness" y "Verificación de fuentes" en `AGENTS.md` raíz del consumidor
 
-Necesaria porque los agentes/skills del harness no pueden hacer sustitución de variables. Los placeholders `<RootNamespace>`, `<SolutionFile>`, `<ProjectDisplayName>`, `<BoundedContext>` y `<BoundedContextDomains>` se resuelven leyendo `CLAUDE.md` del proyecto. Ejemplo mínimo:
+`AGENTS.md` es la fuente canónica y neutral a runtime de las directivas del consumidor (MEF-ADR-0049, decisión 3; MEF-ADR-0053, decisión 4). Debe contener estas dos secciones obligatorias. La sección de tokens es necesaria porque los agentes/skills del harness no pueden hacer sustitución de variables. Los placeholders `<RootNamespace>`, `<SolutionFile>`, `<ProjectDisplayName>`, `<BoundedContext>` y `<BoundedContextDomains>` se resuelven leyendo el `AGENTS.md` del proyecto. Ejemplo mínimo:
 
 ```markdown
 ### Tokens del harness
@@ -81,7 +81,7 @@ Necesaria porque los agentes/skills del harness no pueden hacer sustitución de 
 
 `BoundedContext` es el nombre del Bounded Context declarado en `harness.config.json` (MEF-ADR-0023); puede coincidir o no con `ProjectDisplayName`.
 
-Además de "Tokens del harness", el `CLAUDE.md` mínimo del consumidor debe incluir la siguiente sección, verbatim, propagando al consumidor el principio de verificación de fuentes del propio harness (ver "Principios de respuesta" en el `CLAUDE.md` raíz de este repo):
+Además de "Tokens del harness", el `AGENTS.md` mínimo del consumidor debe incluir la siguiente sección, verbatim, propagando al consumidor el principio de verificación de fuentes del propio harness (ver "Principios de respuesta" en el `AGENTS.md` raíz de este repo):
 
 ```markdown
 ### Verificación de fuentes (obligatorio para agentes)
@@ -94,6 +94,20 @@ o recomendación, **cita la fuente** (URL oficial, versión del paquete, ADR). S
 dato no pudiste verificarlo contra la fuente, decláralo como *no verificado* en
 tu propuesta en vez de darlo por cierto.
 ```
+
+`CLAUDE.md` no duplica estas secciones: es únicamente el puente para Claude Code y puede sumar directivas realmente específicas de ese runtime cuando existan. Su forma mínima es:
+
+```markdown
+@AGENTS.md
+```
+
+Cuando `AGENTS.md` todavía no existe, un `CLAUDE.md` legacy que contiene estas secciones sigue siendo legible como fallback indefinido. Para migrarlo sin perder directivas exclusivas de Claude Code:
+
+1. mueve las dos secciones obligatorias a `AGENTS.md`;
+2. elimina esas copias de `CLAUDE.md` y añade `@AGENTS.md` como línea independiente;
+3. conserva en `CLAUDE.md` solo las directivas realmente específicas de Claude Code, si las hay.
+
+Así ambos runtimes consumen la doctrina neutral desde la fuente canónica sin duplicarla. Las convenciones adicionales del proyecto pueden vivir en `AGENTS.md`, pero son opcionales: `/onboard` no debe inventar ni validar un formato para ellas.
 
 ## 3. Estructura de carpetas esperada
 
