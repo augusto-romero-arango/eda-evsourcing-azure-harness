@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Contrato neutral de hooks interactivos publicados de Mefisto",
+  "type": "object",
+  "required": ["$schema", "contractVersion", "bindings"],
+  "properties": {
+    "$schema": {"const": "interactive-hooks.schema.json"},
+    "contractVersion": {"const": "1.0"},
+    "bindings": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "signal", "action", "destinations", "persistedFields", "delivery"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"},
+          "signal": {"enum": ["session.started", "plan.completed", "file.changed", "dotnet-test.completed", "terraform.completed"]},
+          "action": {"enum": ["record-active-release", "append-session", "remind-field-notes", "append-file-change", "append-dotnet-test-result", "append-terraform-result"]},
+          "destinations": {"type": "array", "minItems": 1, "items": {"enum": ["canonical-state", "session-registry", "human-log", "release-identity"]}},
+          "persistedFields": {"type": "array", "items": {"type": "string"}},
+          "delivery": {
+            "type": "object",
+            "required": ["mode", "failure", "timeoutSeconds"],
+            "properties": {
+              "mode": {"const": "sync"},
+              "failure": {"const": "continue"},
+              "timeoutSeconds": {"type": "null"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
