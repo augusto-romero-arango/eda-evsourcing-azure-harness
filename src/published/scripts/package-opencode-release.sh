@@ -65,7 +65,7 @@ jq -n --arg version "$VERSION" --arg commit "$COMMIT" --arg minimumRuntimeVersio
 find "$STAGE" -exec touch -t 198001010000 {} + || usage_error "no se pudo normalizar timestamps"
 (
     cd "$STAGE" || exit 1
-    find . -type f -print | sort | tar --format ustar --uid 0 --gid 0 --uname root --gname root -cf - -T - 2>/dev/null | gzip -n > "$TARBALL"
+    find . -print | sort | tar --no-recursion --format ustar --uid 0 --gid 0 --uname root --gname root -cf - -T - 2>/dev/null | gzip -n > "$TARBALL"
 ) || usage_error "no se pudo crear el tarball"
 [ -s "$TARBALL" ] || usage_error "el tarball quedo vacio"
 (cd "$WORK" && shasum -a 256 "$TARBALL_NAME" > "$CHECKSUM") || usage_error "no se pudo calcular SHA-256"
