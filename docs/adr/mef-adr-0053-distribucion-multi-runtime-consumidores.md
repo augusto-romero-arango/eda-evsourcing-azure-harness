@@ -43,13 +43,53 @@ OpenCode se instalara por usuario desde un artefacto de GitHub Release, nunca co
 
 Si `XDG_DATA_HOME` esta definido en macOS, tambien prevalece sobre el fallback. `active` es el unico puntero de version activa por usuario y se reemplaza atómicamente solo despues de validar checksum, estructura y completitud del release nuevo. La activacion conserva el puntero anterior hasta que el nuevo queda valido; el rollback es otro reemplazo atomico de `active` hacia una release inmutable ya instalada. Ni el repositorio principal ni worktrees hermanos son parte de la instalacion: ambos resuelven el mismo `active`, por lo que descubren la misma version activa sin depender de su cwd.
 
-Las rutas globales que OpenCode documenta se resolveran sin mezclar forma de proyecto y forma global: `${XDG_CONFIG_HOME:-$HOME/.config}/opencode` en Linux/XDG y `$HOME/Library/Application Support/opencode` en macOS cuando no exista `XDG_CONFIG_HOME`. La instalacion Mefisto permanece bajo su raiz de datos; #1053 decide y prueba la proyeccion desde `active` hacia la configuracion global soportada por OpenCode para cada clase de artefacto. No se asume que `.opencode/` de un proyecto sea una copia valida de esa configuracion global. Los secrets/auth stores del runtime quedan fuera de esas rutas y de toda inspeccion de Mefisto, conforme a MEF-ADR-0025.
+La raiz global efectiva de configuracion de OpenCode es
+`$OPENCODE_CONFIG_DIR` cuando ese override esta definido y, en caso contrario,
+`${XDG_CONFIG_HOME:-$HOME/.config}/opencode`, **tambien en macOS**. No se usa
+`$HOME/Library/Application Support/opencode`: ese es el fallback elegido arriba
+para los datos propios de Mefisto, no una ruta que OpenCode documente. La
+separacion se comprobo el 2026-09-07 contra la documentacion oficial vigente y
+OpenCode 1.18.29, la version soportada al aceptar este ADR.
+
+Esta es la superficie global documentada que #1053 debe proyectar desde
+`active`; fijarla no prejuzga si la proyeccion concreta sera enlace, archivo
+generado u otro mecanismo soportado:
+
+| Capacidad | Ubicacion global de OpenCode |
+|---|---|
+| Configuracion | `<config>/opencode.json` u `opencode.jsonc`; `OPENCODE_CONFIG` puede seleccionar un archivo explicito |
+| Comandos | `<config>/commands/*.md` |
+| Agentes | `<config>/agents/*.md` |
+| Agent Skills | `<config>/skills/*/SKILL.md`; OpenCode tambien descubre las ubicaciones globales compatibles `~/.claude/skills/` y `~/.agents/skills/` |
+| Plugins y hooks | `<config>/plugins/*.{js,ts}` para plugins locales, o el array `plugin` de la configuracion para paquetes; los hooks son API de plugin, no una carpeta global independiente |
+| Permisos | clave `permission` de la configuracion o frontmatter de agente; no tienen una raiz de archivos propia |
+| MCP | clave `mcp` de la configuracion; no tiene una raiz global de archivos propia |
+
+En la tabla, `<config>` es la raiz resuelta del parrafo anterior. La instalacion
+Mefisto permanece bajo su propia raiz de datos y `.opencode/` permanece como
+forma de proyecto: no se asume que copiarla a `<config>` produzca una
+instalacion global valida. Los secrets/auth stores del runtime quedan fuera de
+esas rutas y de toda inspeccion de Mefisto, conforme a MEF-ADR-0025.
 
 ### 3. Un release, dos adaptadores y diagnostico de deriva (CA-3)
 
-Cada release publica **una sola** version SemVer y un solo tag Git para Claude Code y OpenCode. El marketplace Claude sigue resolviendo el plugin `mefisto` desde su entrada actual; el mismo tag entrega el artefacto OpenCode en GitHub Release con su checksum verificable. Una version no se reedita: tag, artefacto y checksum son inmutables.
+Cada release publica **una sola** version SemVer `<semver>` y el tag Git
+`v<semver>` para Claude Code y OpenCode. El destino Claude del release es
+`dist/claude/`: cuando exista esa salida, la entrada `mefisto` de
+`.claude-plugin/marketplace.json` dejara de apuntar a la raiz del repo y
+apuntara a esa raiz generada, cuyo `plugin.json` llevara el mismo `<semver>`.
+El destino OpenCode del mismo tag es el asset de GitHub Release
+`mefisto-opencode-v<semver>.tar.gz`, acompanado por
+`mefisto-opencode-v<semver>.tar.gz.sha256`. Una version no se reedita: tag,
+contenido de ambos adaptadores, asset y checksum son inmutables.
 
-El runtime debe exponer, sin secretos, la identidad resuelta: `runtime`, `version` SemVer y `commit` del artefacto. Al iniciar o inspeccionar un workspace, Mefisto compara las identidades de Claude y OpenCode que esten disponibles. Si version o commit difieren, informa una degradacion visible con ambos valores y la accion de alinear/activar la version; no elige silenciosamente uno, ni lee tokens, auth stores, API keys o configuracion de proveedor para diagnosticarla.
+Cada distribucion incluye esa identidad en metadata generada y el runtime la
+expone, sin secretos, como `runtime`, `version` SemVer y `commit` del artefacto.
+Al iniciar o inspeccionar un workspace, Mefisto lee exclusivamente esa metadata
+de las instalaciones Claude y OpenCode disponibles y compara las identidades.
+Si version o commit difieren, informa una degradacion visible con ambos valores
+y la accion de alinear/activar la version; no elige silenciosamente uno, ni lee
+tokens, auth stores, API keys o configuracion de proveedor para diagnosticarla.
 
 ### 4. Contrato canonico de consumidor con lectura legacy indefinida (CA-4)
 
@@ -75,7 +115,7 @@ El primer unico flujo publicado a migrar es `/mefisto:tooling`. Antes de migrar 
 
 1. instalacion real de la **misma** version/tag en Claude Code y OpenCode, con checksum de artefacto OpenCode;
 2. descubrimiento de comandos, agentes, Skills, scripts, permisos, hooks y MCP en ambos runtimes;
-3. una ejecucion de `/mefisto:tooling` hasta un PR real, en modo headless y con los hooks interactivos ejercitados;
+3. una ejecucion headless de `/mefisto:tooling` hasta un PR real y un smoke interactivo de la misma version que ejerza sus hooks; ambas modalidades deben producir observabilidad correlacionable;
 4. Herdr con Claude en la fila superior, OpenCode en la inferior y pools de panes separados por runtime;
 5. logs, metricas y sesiones que identifiquen `runtime`, `modelo`, `version` y `commit`, sin secretos ni inputs sensibles.
 
@@ -129,7 +169,7 @@ La presencia de archivos generados no satisface este gate: la evidencia debe ser
 - MEF-ADR-0033: Agent Skills y frontmatter portable como parte de la distribucion.
 - MEF-ADR-0049: arquitectura neutral interna cuyo diferido publicado queda resuelto aqui.
 - MEF-ADR-0050: neutralidad, namespace `/mefisto:*` y prefijo `mefisto-` para Skills adaptados.
-- OpenCode Docs: [CLI](https://opencode.ai/docs/cli/), [Config](https://opencode.ai/docs/config/), [Commands](https://opencode.ai/docs/commands/), [Agents](https://opencode.ai/docs/agents/), [Skills](https://opencode.ai/docs/skills/), [Plugins](https://opencode.ai/docs/plugins/) y [Permissions](https://opencode.ai/docs/permissions/). Rutas y capacidades globales a verificar por #1053 contra la version minima soportada.
+- OpenCode Docs: [CLI](https://opencode.ai/docs/cli/), [Config](https://opencode.ai/docs/config/), [Commands](https://opencode.ai/docs/commands/), [Agents](https://opencode.ai/docs/agents/), [Skills](https://opencode.ai/docs/skills/), [Plugins](https://opencode.ai/docs/plugins/), [Permissions](https://opencode.ai/docs/permissions/) y [MCP servers](https://opencode.ai/docs/mcp-servers/). Fuente de las rutas y formas globales de la decision 2; verificadas el 2026-09-07 contra OpenCode 1.18.29. #1053 debe reverificarlas contra la version minima que implemente la proyeccion.
 - Claude Code Docs: [Plugins](https://docs.anthropic.com/en/docs/claude-code/plugins) y [Memory](https://docs.claude.com/en/docs/claude-code/memory).
 - [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/).
 - `docs/testing/opencode-dogfooding.md`: evidencia del gate interno que habilita esta decision.
