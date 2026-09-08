@@ -10,25 +10,12 @@
 # de salida, o fallan (return 1, mensaje ya impreso en stderr) sin imprimir
 # nada por stdout.
 
-# adapter_claude_default_model <perfil> -- imprime el modelo por defecto de
-# la tabla fija del adaptador Claude Code para <perfil> (MEF-ADR-0049 CA-4
-# enmendada, issue #857): fast->haiku, balanced->sonnet, deep->"" (cadena
-# vacia = hereda el modelo activo de la sesion interactiva o el default del
-# CLI en headless, sin `model:` en frontmatter ni `--model` explicito).
-# Consumida por mefisto_resolve_model (src/internal/scripts/lib/
-# mefisto-models.sh, tiempo de ejecucion) y por claude_render (mas abajo, en
-# tiempo de generacion) para decidir si un artefacto con `profile` declarado
-# emite `model:` y con que valor. Retorna 1 sin imprimir nada si <perfil> no
-# esta en el vocabulario cerrado fast|balanced|deep -- no ocurre en la
-# practica porque el schema del contrato (#853) ya lo exige antes de llegar
-# aqui, pero se guarda el mismo contrato defensivo que claude_map_capability_tools.
+# Wrapper temporal para la generacion de frontmatter. La tabla vive en el
+# adaptador de ejecucion comun; se retira al migrar el generador.
 adapter_claude_default_model() {
-    case "$1" in
-        fast)     printf '%s' "haiku" ;;
-        balanced) printf '%s' "sonnet" ;;
-        deep)     printf '%s' "" ;;
-        *)        return 1 ;;
-    esac
+    local runtime_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../runtime/lib/runtime-claude.sh"
+    source "$runtime_lib"
+    runtime_claude_default_model "$1"
 }
 
 # claude_map_capability_tools <capacidad> -- imprime la lista de tools de

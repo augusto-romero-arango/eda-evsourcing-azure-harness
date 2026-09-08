@@ -92,6 +92,13 @@ runtime_fake_is_available() {
     [ "${MEFISTO_FAKE_AVAILABLE:-}" = "1" ]
 }
 
+runtime_fake_default_model() {
+    case "$1" in
+        fast|balanced|deep) printf '%s' "${MEFISTO_FAKE_DEFAULT_MODEL:-}" ;;
+        *) return 1 ;;
+    esac
+}
+
 # --- runtime_fake_build_cmd ---------------------------------------------
 
 runtime_fake_build_cmd() {

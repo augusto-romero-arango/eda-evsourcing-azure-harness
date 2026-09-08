@@ -1,4 +1,4 @@
-# Contrato comun de eventos de runtime (`src/runtime/contract/`)
+# Contratos comunes de runtime (`src/runtime/contract/`)
 
 Esta carpeta es la fuente canonica, comun a callers publicados e internos, del
 stream JSONL neutral que describe una ejecucion de agente. El protocolo esta
@@ -110,7 +110,9 @@ cero del adaptador.
 
 Cada `lib/runtime-<id>.sh` implementa `runtime_<id>_is_available` (probe sin
 leer credenciales), `runtime_<id>_build_cmd` y `runtime_<id>_translate`; puede
-implementar `runtime_<id>_supports_resume`. El resolutor respeta `--runtime` ->
+implementar `runtime_<id>_supports_resume` y
+`runtime_<id>_default_model <profile>`. La ausencia de esta ultima funcion
+significa heredar el modelo activo. El resolutor respeta `--runtime` ->
 `MEFISTO_RUNTIME` -> autodeteccion. Esta ultima escanea adaptadores y ejecuta
 sus probes: un runtime nuevo no exige modificar el runner ni el resolutor.
 
@@ -118,3 +120,21 @@ sus probes: un runtime nuevo no exige modificar el runner ni el resolutor.
 `eval`, separa stdout/stderr y crea una sesion sin TTY de control. El runner
 decide timeout mediante la senal del watchdog y su reloj de pared conforme a
 MEF-ADR-0031.
+
+## Mapping de modelos
+
+`models.validate.jq` valida el mapping abierto que entrega cada caller al
+resolutor `lib/mefisto-models.sh`. La forma es `<runtime-id> -> {profiles,
+agents}`; `profiles` solo admite `fast`, `balanced` y `deep`, y cada modelo es
+un string no vacio (se preservan espacios). `models.example.json` usa
+placeholders y no declara un conjunto cerrado de runtimes.
+El placeholder `<runtime-id>` debe sustituirse por un id valido antes de pasar
+la plantilla al validador.
+
+`mefisto_resolve_model <runtime> <agent-id> <profile> [explicit-model]
+[mapping-file]` conserva el resultado y el motivo de error en
+`MEFISTO_RESOLVED_MODEL` y `MEFISTO_MODELS_ERROR`. Su precedencia es override
+explicito, agente, perfil, `runtime_<id>_default_model` y herencia (cadena
+vacia). Una ruta omitida, inexistente o vacia equivale a no tener mapping; JSON
+o forma invalidos fallan como `<archivo>: <campo>: <motivo>`. El nucleo no
+deriva la ruta ni consulta estado, Git o cwd.

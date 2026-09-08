@@ -10,7 +10,7 @@
 #   src/internal/scripts/mefisto-tmux-pipeline.sh --tooling 42
 #   src/internal/scripts/mefisto-tmux-pipeline.sh --tooling 42 --verbose
 #   src/internal/scripts/mefisto-tmux-pipeline.sh --tooling 42 --from-stage 2   # retomar
-#   src/internal/scripts/mefisto-tmux-pipeline.sh --tooling 42 --models 'writer=<modelo>'  # experimentos, ver src/internal/models.example.json (#857)
+#   src/internal/scripts/mefisto-tmux-pipeline.sh --tooling 42 --models 'writer=<modelo>'  # experimentos, ver src/runtime/contract/models.example.json (#1072)
 #   src/internal/scripts/mefisto-tmux-pipeline.sh --tooling 42 --variant experimento-a  # corrida paralela del mismo issue (sin PR, rama local)
 #   src/internal/scripts/mefisto-tmux-pipeline.sh --batch 42 43 44   # secuencial
 #   src/internal/scripts/mefisto-tmux-pipeline.sh --batch 42 43 44 --verbose
@@ -49,7 +49,7 @@
 # --models (issue #708, lado publicado). El wrapper NO valida el formato --eso
 # lo hace parse_stage_models en mefisto-tooling-pipeline.sh, ANTES de crear el
 # worktree. Los ids concretos de cada runtime no viven en este script: ver
-# src/internal/models.example.json (issue #857) para la forma que deben
+# src/runtime/contract/models.example.json (issue #1072) para la forma que deben
 # tener, o el mapping local .mefisto/models.json una vez poblado.
 #
 # --variant <label> (issue #711, en cualquier posicion) se propaga igual que
@@ -290,7 +290,7 @@ print_usage() {
     echo "                  rechaza por la misma ambiguedad que --from-stage. Un"
     echo "                  --models malformado aborta ANTES de crear el worktree."
     echo "                  Ejemplo: --models writer=<modelo>,reviewer=<modelo> -- ver"
-    echo "                  src/internal/models.example.json (issue #857) para la"
+    echo "                  src/runtime/contract/models.example.json (issue #1072) para la"
     echo "                  forma de los ids por runtime."
     echo ""
     echo "  --variant <label>  (issue #711, corridas paralelas del mismo issue)"

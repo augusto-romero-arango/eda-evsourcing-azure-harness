@@ -14,18 +14,12 @@
 # de salida, o fallan (return 1, mensaje ya impreso en stderr) sin imprimir
 # nada por stdout.
 
-# adapter_opencode_default_model <perfil> -- imprime el modelo OpenCode por
-# defecto para el vocabulario neutral (MEF-ADR-0049, issue #961). La tabla
-# alimenta exclusivamente la resolucion headless; el frontmatter generado
-# omite `model`. Retorna 1 sin imprimir nada si <perfil> no es
-# fast|balanced|deep.
+# Wrapper temporal para la generacion de frontmatter. La tabla vive en el
+# adaptador de ejecucion comun; se retira al migrar el generador.
 adapter_opencode_default_model() {
-    case "$1" in
-        fast)     printf '%s' "openai/gpt-5.6-luna" ;;
-        balanced) printf '%s' "openai/gpt-5.6-terra" ;;
-        deep)     printf '%s' "openai/gpt-5.6-sol" ;;
-        *)        return 1 ;;
-    esac
+    local runtime_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../runtime/lib/runtime-opencode.sh"
+    source "$runtime_lib"
+    runtime_opencode_default_model "$1"
 }
 
 # OPENCODE_PERMISSIONS_MAPPING -- ruta al mapping declarativo capacidad ->

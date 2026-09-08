@@ -71,6 +71,15 @@ runtime_opencode_is_available() {
     command -v opencode >/dev/null 2>&1
 }
 
+runtime_opencode_default_model() {
+    case "$1" in
+        fast) printf '%s' "openai/gpt-5.6-luna" ;;
+        balanced) printf '%s' "openai/gpt-5.6-terra" ;;
+        deep) printf '%s' "openai/gpt-5.6-sol" ;;
+        *) return 1 ;;
+    esac
+}
+
 # --- runtime_opencode_build_cmd ---------------------------------------------
 
 runtime_opencode_build_cmd() {
