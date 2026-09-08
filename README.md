@@ -41,8 +41,7 @@ Si tu proyecto no encaja con este stack, este harness no es para ti.
 
 ### OpenCode: bootstrap, upgrade y rollback
 
-OpenCode usa una release global por usuario; no copia el checkout ni escribe en la
-configuración global del runtime. La raíz es
+OpenCode usa una release global por usuario; no copia el checkout. La raíz es
 `${XDG_DATA_HOME:-$HOME/.local/share}/mefisto` o, en macOS cuando `XDG_DATA_HOME`
 no está definido, `$HOME/Library/Application Support/mefisto`, conforme a
 [MEF-ADR-0053](docs/adr/mef-adr-0053-distribucion-multi-runtime-consumidores.md)
@@ -65,8 +64,9 @@ Tras el bootstrap, el único punto de entrada es
 `<raíz-de-datos>/mefisto/active/bin/mefisto-opencode`. El instalador instalado
 descarga y vuelve a verificar ambos assets antes de extraer; dos activaciones
 concurrentes se serializan con un lock bajo esa misma raíz. No crea enlaces en el
-`PATH`, no lee auth stores y no modifica `<config>/opencode.json` (esa proyección
-queda fuera de este paso). Si un proceso termina forzosamente y deja
+`PATH`, no lee auth stores ni modifica `opencode.json`: el proyector global crea
+solo enlaces de Mefisto y conserva proveedores, modelos, permisos y MCP del
+usuario. Si un proceso termina forzosamente y deja
 `.activation.lock`, verifica que no haya otra instalación en curso y elimina solo
 ese directorio de lock antes de reintentar.
 
@@ -74,11 +74,21 @@ ese directorio de lock antes de reintentar.
 M="${XDG_DATA_HOME:-$HOME/.local/share}/mefisto/active/bin/mefisto-opencode" # Linux/XDG
 "$M" install <semver>    # upgrade verificando el tag v<semver>
 "$M" activate <semver>   # rollback a una release ya instalada
+"$M" project             # proyecta comandos/agentes/Skills/plugins de active
+"$M" deactivate          # retira solo los enlaces creados por Mefisto
 "$M" status              # runtime, versión, tag, commit y diagnóstico
 ```
 
 En macOS sin `XDG_DATA_HOME`, sustituye `M` por
 `"$HOME/Library/Application Support/mefisto/active/bin/mefisto-opencode"`.
+
+La configuración global de OpenCode es `$OPENCODE_CONFIG_DIR` si está definido;
+si no, `${XDG_CONFIG_HOME:-$HOME/.config}/opencode`, también en macOS. `project`
+usa enlaces por archivo a `active/{commands,agents,skills,plugins}` de la release
+actual (OpenCode 1.18.29 o posterior). Si un nombre ya pertenece al usuario,
+aborta sin sobrescribirlo; las capacidades que la release todavía no contiene se
+anuncian como degradación visible. La instalación no inspecciona auth stores.
+Véase [MEF-ADR-0053](docs/adr/mef-adr-0053-distribucion-multi-runtime-consumidores.md).
 
 ### 1. Configurar `.claude/settings.json` del repo consumidor
 

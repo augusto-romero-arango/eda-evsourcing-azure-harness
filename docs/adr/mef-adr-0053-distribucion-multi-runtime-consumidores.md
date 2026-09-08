@@ -10,7 +10,7 @@
 
 El rollout interno de MEF-ADR-0049 ya resolvio `MEFISTO_RUNTIME`, el runner neutral y los adaptadores internos. El artefacto publicado, en cambio, sigue siendo exclusivamente un Claude Code Plugin: el marketplace apunta a la raiz del checkout, `plugin.json` porta su version y los comandos/pipelines publicados conocen `CLAUDE_PLUGIN_ROOT`, el cache de marketplace, `CLAUDE.md` y `.claude/*`.
 
-No basta con copiar ese checkout para que OpenCode lo consuma. Un consumidor necesita una instalacion global, versionada y reversible; un contrato de proyecto neutral; y paridad observable entre comandos, agentes, Skills, hooks, MCP y ejecucion interactiva/headless. Las rutas de proyecto `.opencode/` y las globales no se presumen equivalentes: la documentacion de OpenCode las documenta por tipo de capacidad y el mecanismo concreto de proyeccion se verifica en #1053.
+No basta con copiar ese checkout para que OpenCode lo consuma. Un consumidor necesita una instalacion global, versionada y reversible; un contrato de proyecto neutral; y paridad observable entre comandos, agentes, Skills, hooks, MCP y ejecucion interactiva/headless. Las rutas de proyecto `.opencode/` y las globales no se presumen equivalentes: la documentacion de OpenCode las documenta por tipo de capacidad.
 
 ### Alcance
 
@@ -19,7 +19,6 @@ Este ADR fija la arquitectura de fuente, distribucion, contrato consumidor, vers
 ### Que queda fuera
 
 - No crea `src/published/`, `src/runtime/`, `dist/`, instaladores, artefactos de Release ni adaptadores publicados. MEF-ADR-0019.E obliga primero a registrar sus rutas en los gates; #1043 es ese PR y no puede poblarlas.
-- No decide el mecanismo concreto que proyecta la instalacion activa a las rutas globales que OpenCode soporte para comandos, agentes, Skills, plugins/configuracion, permisos, hooks, MCP u observabilidad. #1053 lo verifica contra la version minima soportada y la documentacion oficial vigente.
 - No migra ningun comando distinto del corte vertical `/mefisto:tooling`, ni borra contratos legacy ni modifica credenciales de runtime.
 
 ## Decision
@@ -51,9 +50,13 @@ para los datos propios de Mefisto, no una ruta que OpenCode documente. La
 separacion se comprobo el 2026-09-07 contra la documentacion oficial vigente y
 OpenCode 1.18.29, la version soportada al aceptar este ADR.
 
-Esta es la superficie global documentada que #1053 debe proyectar desde
-`active`; fijarla no prejuzga si la proyeccion concreta sera enlace, archivo
-generado u otro mecanismo soportado:
+Esta es la superficie global documentada que el proyector publicado proyecta
+desde `active`: enlaces simbolicos por archivo a `active/{commands,agents,skills,plugins}`.
+El enlace hacia `active` hace que un cambio de release no deje residuos de la
+anterior. El proyector no escribe `opencode.json`: conserva providers, modelos,
+permisos y `mcp` del usuario, y declara visiblemente las capacidades ausentes.
+El mecanismo se verifico el 2026-09-08 contra OpenCode **1.18.29** (version
+minima soportada) y la documentacion oficial vigente.
 
 | Capacidad | Ubicacion global de OpenCode |
 |---|---|
@@ -156,7 +159,6 @@ La presencia de archivos generados no satisface este gate: la evidencia debe ser
 
 - Se mantienen dos distribuciones y una proyeccion global que deben probarse en cada release.
 - La instalacion por usuario requiere administrar almacenamiento de releases inmutables y retencion segura para rollback.
-- Hasta que #1053 compruebe el mecanismo de discovery global contra OpenCode soportado, esta decision no autoriza asumir ni implementar una forma de configuracion global.
 
 ## Referencias
 
@@ -169,7 +171,7 @@ La presencia de archivos generados no satisface este gate: la evidencia debe ser
 - MEF-ADR-0033: Agent Skills y frontmatter portable como parte de la distribucion.
 - MEF-ADR-0049: arquitectura neutral interna cuyo diferido publicado queda resuelto aqui.
 - MEF-ADR-0050: neutralidad, namespace `/mefisto:*` y prefijo `mefisto-` para Skills adaptados.
-- OpenCode Docs: [CLI](https://opencode.ai/docs/cli/), [Config](https://opencode.ai/docs/config/), [Commands](https://opencode.ai/docs/commands/), [Agents](https://opencode.ai/docs/agents/), [Skills](https://opencode.ai/docs/skills/), [Plugins](https://opencode.ai/docs/plugins/), [Permissions](https://opencode.ai/docs/permissions/) y [MCP servers](https://opencode.ai/docs/mcp-servers/). Fuente de las rutas y formas globales de la decision 2; verificadas el 2026-09-07 contra OpenCode 1.18.29. #1053 debe reverificarlas contra la version minima que implemente la proyeccion.
+- OpenCode Docs: [CLI](https://opencode.ai/docs/cli/), [Config](https://opencode.ai/docs/config/), [Commands](https://opencode.ai/docs/commands/), [Agents](https://opencode.ai/docs/agents/), [Skills](https://opencode.ai/docs/skills/), [Plugins](https://opencode.ai/docs/plugins/), [Permissions](https://opencode.ai/docs/permissions/) y [MCP servers](https://opencode.ai/docs/mcp-servers/). Fuente de las rutas y formas globales de la decision 2; verificadas el 2026-09-08 contra OpenCode 1.18.29, la version minima soportada.
 - Claude Code Docs: [Plugins](https://docs.anthropic.com/en/docs/claude-code/plugins) y [Memory](https://docs.claude.com/en/docs/claude-code/memory).
 - [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/).
 - `docs/testing/opencode-dogfooding.md`: evidencia del gate interno que habilita esta decision.
@@ -178,3 +180,4 @@ La presencia de archivos generados no satisface este gate: la evidencia debe ser
 ## Control de cambios
 
 - 2026-09-07: creacion como `aceptado` (issue #1042). Resuelve los diferidos publicados de MEF-ADR-0049: fuente neutral `src/published/`, nucleo exclusivo de runner/eventos `src/runtime/` y distribuciones generadas `dist/{claude,opencode}/`, sin poblar rutas antes de #1043; instalacion OpenCode global, versionada, inmutable y reversible con puntero activo atomico; un SemVer/tag para ambos adaptadores y diagnostico visible de deriva; contrato consumidor `AGENTS.md`/`.mefisto` con lectura legacy indefinida; paridad distribuible sin degradacion silenciosa; y corte vertical `/mefisto:tooling` certificado hasta PR antes de migrar el catalogo restante.
+- 2026-09-08: enmienda la decision 2 (issue #1091). Fija el proyector global por enlaces a `active`, la version minima OpenCode 1.18.29 y la preservacion no destructiva de configuracion ajena; registra degradaciones de capacidades que el release aun no contiene.

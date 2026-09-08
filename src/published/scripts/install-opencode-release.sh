@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Instala releases OpenCode verificadas bajo la raiz de datos del usuario.
-# Uso: install.sh install <semver> | install.sh activate <semver> | install.sh status
+# Uso: install.sh install <semver> | install.sh activate <semver> | install.sh project | install.sh deactivate | install.sh status
 set -euo pipefail
 export LC_ALL=C
 
@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPOSITORY="${MEFISTO_OPENCODE_REPOSITORY:-augusto-romero-arango/eda-evsourcing-azure-harness}"
 
 error() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
-usage() { error 'uso: mefisto-opencode install <semver> | activate <semver> | status'; }
+usage() { error 'uso: mefisto-opencode install <semver> | activate <semver> | project | deactivate | status'; }
 valid_version() {
     printf '%s\n' "$1" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
 }
@@ -39,6 +39,7 @@ manifest_valid() {
     [ -d "$release" ] && [ ! -L "$release" ] || return 1
     [ -f "$manifest" ] && [ ! -L "$manifest" ] || return 1
     [ -f "$release/install.sh" ] && [ ! -L "$release/install.sh" ] && [ -x "$release/install.sh" ] || return 1
+    [ -f "$release/project-opencode-release.sh" ] && [ ! -L "$release/project-opencode-release.sh" ] && [ -x "$release/project-opencode-release.sh" ] || return 1
     [ -f "$release/bin/mefisto-opencode" ] && [ ! -L "$release/bin/mefisto-opencode" ] && [ -x "$release/bin/mefisto-opencode" ] || return 1
     [ -z "$(find "$release" -type l -print -quit)" ] || return 1
     [ -z "$(find "$release" ! -type f ! -type d -print -quit)" ] || return 1
@@ -169,6 +170,8 @@ command -v jq >/dev/null 2>&1 || error 'jq es requerido para validar el manifies
 case "${1:-}" in
     install) [ "$#" -eq 2 ] || usage; acquire_lock; install "$2" ;;
     activate) [ "$#" -eq 2 ] || usage; acquire_lock; activate "$2" ;;
+    project) [ "$#" -eq 1 ] || usage; exec "$SCRIPT_DIR/project-opencode-release.sh" project ;;
+    deactivate) [ "$#" -eq 1 ] || usage; exec "$SCRIPT_DIR/project-opencode-release.sh" deactivate ;;
     status) [ "$#" -eq 1 ] || usage; status ;;
     *) usage ;;
 esac
