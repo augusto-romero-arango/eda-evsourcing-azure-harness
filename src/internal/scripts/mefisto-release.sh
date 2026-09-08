@@ -27,8 +27,9 @@
 #   publish (plugin.json.version > ultimo tag)
 #     - exige main + working tree limpio + al dia con origin/main + gh auth
 #     - extrae notas de la seccion [X.Y.Z] del CHANGELOG
+#     - empaqueta y revalida el artefacto reproducible de OpenCode
 #     - crea tag anotado, lo pushea
-#     - crea GitHub Release con esas notas
+#     - crea GitHub Release con esas notas y los assets de OpenCode
 #
 # Sigue SemVer y Keep a Changelog (formato declarado en el header del CHANGELOG).
 
@@ -69,6 +70,7 @@ done
 
 PLUGIN_JSON="$MEFISTO_REPO_ROOT/.claude-plugin/plugin.json"
 CHANGELOG="$MEFISTO_REPO_ROOT/CHANGELOG.md"
+OPENCODE_PACKAGER="$MEFISTO_REPO_ROOT/src/published/scripts/package-opencode-release.sh"
 [ -f "$PLUGIN_JSON" ] || abort "No existe $PLUGIN_JSON"
 [ -f "$CHANGELOG" ]   || abort "No existe $CHANGELOG"
 
@@ -645,6 +647,50 @@ if release_exists "$NEW_TAG"; then
     abort "Ya existe un GitHub Release ${NEW_TAG}. Aborta."
 fi
 
+# El packager es la unica autoridad sobre los bytes y el checksum del asset.
+# Esta fase solo lo ejecuta en un directorio efimero y comprueba la identidad
+# que se va a asociar al tag antes de que Git o GitHub tengan efectos remotos.
+NOTES_FILE=""
+ASSETS_DIR=""
+cleanup_publish_temporaries() {
+    [ -n "$NOTES_FILE" ] && rm -f "$NOTES_FILE"
+    [ -n "$ASSETS_DIR" ] && rm -rf "$ASSETS_DIR"
+}
+trap cleanup_publish_temporaries EXIT HUP INT TERM
+
+[ -x "$OPENCODE_PACKAGER" ] || abort "No existe o no es ejecutable el packager OpenCode: ${OPENCODE_PACKAGER}"
+ASSETS_DIR=$(mktemp -d) || abort "No se pudo crear el temporal para los assets OpenCode"
+log_info "Empaquetando artefacto OpenCode para ${NEW_TAG}..."
+"$OPENCODE_PACKAGER" --output "$ASSETS_DIR" >/dev/null \
+    || abort "El empaquetado OpenCode fallo; no se creo ni subio el tag ${NEW_TAG}."
+
+TARBALL_NAME="mefisto-opencode-v${NEW_VERSION}.tar.gz"
+CHECKSUM_NAME="${TARBALL_NAME}.sha256"
+TARBALL_FILE="$ASSETS_DIR/$TARBALL_NAME"
+CHECKSUM_FILE="$ASSETS_DIR/$CHECKSUM_NAME"
+[ -f "$TARBALL_FILE" ] && [ -f "$CHECKSUM_FILE" ] \
+    || abort "El packager OpenCode no produjo los assets canonicos ${TARBALL_NAME} y ${CHECKSUM_NAME}; no se creo ni subio el tag ${NEW_TAG}."
+
+# Primero se restringe el formato para que shasum -c solo pueda validar el
+# basename del asset que se adjuntara; despues se usa la herramienta externa.
+grep -Eq "^[0-9a-f]{64}  ${TARBALL_NAME}$" "$CHECKSUM_FILE" \
+    || abort "El checksum OpenCode no corresponde al nombre canonico ${TARBALL_NAME}; no se creo ni subio el tag ${NEW_TAG}."
+(cd "$ASSETS_DIR" && shasum -a 256 -c "$CHECKSUM_NAME" >/dev/null) \
+    || abort "El checksum OpenCode no valida el tarball que se adjuntaria; no se creo ni subio el tag ${NEW_TAG}."
+
+MANIFEST=$(tar -xOf "$TARBALL_FILE" mefisto-manifest.json 2>/dev/null) \
+    || abort "No se pudo extraer mefisto-manifest.json del tarball OpenCode; no se creo ni subio el tag ${NEW_TAG}."
+MANIFEST_VERSION=$(printf '%s' "$MANIFEST" | jq -er '.version | strings' 2>/dev/null) \
+    || abort "El manifiesto del tarball OpenCode no contiene una version valida; no se creo ni subio el tag ${NEW_TAG}."
+MANIFEST_COMMIT=$(printf '%s' "$MANIFEST" | jq -er '.commit | strings' 2>/dev/null) \
+    || abort "El manifiesto del tarball OpenCode no contiene un commit valido; no se creo ni subio el tag ${NEW_TAG}."
+HEAD_COMMIT=$(git rev-parse HEAD) || abort "No se pudo resolver HEAD para validar el tarball OpenCode"
+ORIGIN_MAIN_COMMIT=$(git rev-parse origin/main) || abort "No se pudo resolver origin/main para validar el tarball OpenCode"
+[ "$MANIFEST_VERSION" = "$NEW_VERSION" ] \
+    || abort "El manifiesto OpenCode reporta ${MANIFEST_VERSION}, no la version ${NEW_VERSION} de plugin.json; no se creo ni subio el tag ${NEW_TAG}."
+[ "$MANIFEST_COMMIT" = "$HEAD_COMMIT" ] && [ "$MANIFEST_COMMIT" = "$ORIGIN_MAIN_COMMIT" ] \
+    || abort "El manifiesto OpenCode no corresponde a HEAD/origin/main; no se creo ni subio el tag ${NEW_TAG}."
+
 # Extraer notas del bloque versionado. A diferencia del body del PR (issue
 # #405), aqui SI se publican integras. La documentacion oficial de la REST API
 # no declara un maximo para 'body':
@@ -680,11 +726,11 @@ fi
 log_info "Creando GitHub Release ${NEW_TAG}..."
 if ! RELEASE_URL=$(gh release create "$NEW_TAG" \
         --title "${NEW_TAG}" \
-        --notes-file "$NOTES_FILE"); then
-    rm -f "$NOTES_FILE"
-    abort "No se pudo crear el GitHub Release ${NEW_TAG}. El tag ya esta pusheado; eliminalo manualmente si quieres reintentar."
+        --notes-file "$NOTES_FILE" \
+        "$TARBALL_FILE" \
+        "$CHECKSUM_FILE"); then
+    abort "No se pudo crear el GitHub Release ${NEW_TAG}. El tag ya esta pusheado; no reedites la version ni el tag. Recupera creando el release existente con las notas completas de CHANGELOG y ambos assets: gh release create ${NEW_TAG} --title ${NEW_TAG} --notes-file <notas-de-${NEW_VERSION}> <${TARBALL_NAME}> <${CHECKSUM_NAME}>."
 fi
-rm -f "$NOTES_FILE"
 
 log_success "GitHub Release publicado: ${RELEASE_URL}"
 
