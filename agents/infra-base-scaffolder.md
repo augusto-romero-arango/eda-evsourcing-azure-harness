@@ -2340,6 +2340,9 @@ coverage/
 
 # Senal transitoria del pipeline, fuera de .claude/ (MEF-ADR-0017)
 pipeline-state/
+
+# Estado operativo no versionado; el config sibling .mefisto/harness.config.json si se versiona (MEF-ADR-0053)
+.mefisto/pipeline/
 ```
 
 ---
@@ -2385,7 +2388,7 @@ Imprime un resumen claro:
 
 - **Modulos creados** vs **omitidos** (ya existian) bajo `infra/modules/`.
 - **Archivos del entorno creados** vs **omitidos** bajo `infra/environments/<env>/` (incluido `.gitignore`, Paso 2.5).
-- **`.gitignore` raiz del repo consumidor** (Paso 2c): creado u omitido (ya existia). Blinda `local.settings.json` desde el primer `/scaffold` (MEF-ADR-0025, issue #241).
+- **`.gitignore` raiz del repo consumidor** (Paso 2c): creado u omitido (ya existia). Blinda `local.settings.json` desde el primer `/scaffold` (MEF-ADR-0025, issue #241) y el estado operativo `.mefisto/pipeline/` sin ignorar el config versionado `.mefisto/harness.config.json` (MEF-ADR-0053).
 - **Workflow de CI** (`.github/workflows/infra-cd.yml`): creado u omitido (ya existia).
 - **Registro `harness.config.json > secrets[]`** (Paso 2b.0, issue #256): las entradas registradas o actualizadas (interno de ASB, `marten-connection`, `app-insights-connection`, una por alias de `serviceBus.external[]`). Corre siempre, incluso si el workflow ya existia.
 - **Worker de proyecciones (opt-in, MEF-ADR-0034, Paso 1.9/2.3b/2.4b)**: si `projections.enabled` es `true` en `harness.config.json`, reporta los 3 modulos (`container-registry`, `container-app-environment`, `container-app`) creados u omitidos, y si el wiring de `variables.tf`/`main.tf`/`outputs.tf` ya estaba presente o se acaba de agregar. Si el token no esta en `true`, reporta explicitamente que se omitio por diseno (CA-3), no como un error o una omision accidental. Reporta ademas, por separado (probe propio, issue #679), si la alerta dedicada de spike de excepciones (`projections_exception_spike`, umbral >5) ya estaba presente en `main.tf`, se acaba de agregar, o se **omitio** porque `CLAUDE.md` no declara el token `RootNamespace` (Paso 0) -- un entorno que ya tenia el resto del wiring de una corrida anterior a este issue puede tener los 3 modulos sin la alerta, y una alerta omitida por falta del token es lo unico que queda pendiente de una corrida por lo demas completa: dilo como accion para el consumidor (declarar el token y volver a invocarte), no como una nota al pie.
