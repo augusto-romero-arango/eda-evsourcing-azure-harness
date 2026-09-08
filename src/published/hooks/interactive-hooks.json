@@ -6,7 +6,7 @@
       "id": "record-active-release",
       "signal": "session.started",
       "action": "record-active-release",
-      "destinations": ["canonical-state", "release-identity"],
+      "destinations": ["canonical-state", "release-identity", "legacy-release-marker"],
       "persistedFields": ["release_identity"],
       "delivery": {"mode": "sync", "failure": "continue", "timeoutSeconds": null}
     },

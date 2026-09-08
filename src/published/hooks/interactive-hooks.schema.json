@@ -10,7 +10,7 @@
         "id": {"type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"},
         "signal": {"enum": ["session.started", "plan.completed", "file.changed", "dotnet-test.completed", "terraform.completed"]},
         "action": {"enum": ["record-active-release", "append-session", "remind-field-notes", "append-file-change", "append-dotnet-test-result", "append-terraform-result"]},
-        "destinations": {"type": "array", "minItems": 1, "items": {"enum": ["canonical-state", "session-registry", "human-log", "release-identity"]}},
+        "destinations": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["canonical-state", "session-registry", "human-log", "release-identity", "legacy-release-marker"]}},
         "persistedFields": {"type": "array", "items": {"type": "string"}},
         "delivery": {
           "type": "object",
@@ -38,7 +38,7 @@
         "allOf": [
           {"$ref": "#/$defs/binding"},
           {"oneOf": [
-            {"properties": {"id": {"const": "record-active-release"}, "signal": {"const": "session.started"}, "action": {"const": "record-active-release"}, "destinations": {"const": ["canonical-state", "release-identity"]}, "persistedFields": {"const": ["release_identity"]}}},
+            {"properties": {"id": {"const": "record-active-release"}, "signal": {"const": "session.started"}, "action": {"const": "record-active-release"}, "destinations": {"const": ["canonical-state", "release-identity", "legacy-release-marker"]}, "persistedFields": {"const": ["release_identity"]}}},
             {"properties": {"id": {"const": "append-session"}, "signal": {"const": "session.started"}, "action": {"const": "append-session"}, "destinations": {"const": ["canonical-state", "session-registry"]}, "persistedFields": {"const": ["session_id", "transcript_path", "cwd", "source", "timestamp", "harness_version"]}}},
             {"properties": {"id": {"const": "remind-field-notes"}, "signal": {"const": "plan.completed"}, "action": {"const": "remind-field-notes"}, "destinations": {"const": ["human-log"]}, "persistedFields": {"const": []}}},
             {"properties": {"id": {"const": "append-file-change"}, "signal": {"const": "file.changed"}, "action": {"const": "append-file-change"}, "destinations": {"const": ["canonical-state", "human-log"]}, "persistedFields": {"const": ["time", "family", "file_path"]}}},

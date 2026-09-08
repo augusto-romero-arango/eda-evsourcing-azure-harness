@@ -46,12 +46,14 @@ ERRORS=$(jq -r --slurpfile specification "$SCHEMA" '
     elif (.signal as $signal | $binding_schema.properties.signal.enum | index($signal)) == null then fail("binding " + .id + ": signal desconocida")
     elif (.action as $action | $binding_schema.properties.action.enum | index($action)) == null then fail("binding " + .id + ": accion desconocida")
     elif (.destinations | type) != "array" or (.destinations | length) == 0 or any(.destinations[]; . as $destination | ($binding_schema.properties.destinations.items.enum | index($destination)) == null) then fail("binding " + .id + ": destino desconocido")
+    elif (.destinations | unique | length) != (.destinations | length) then fail("binding " + .id + ": destinos duplicados")
     elif (.persistedFields | type) != "array" or any(.persistedFields[]; type != "string") then fail("binding " + .id + ": campo persistible desconocido")
     elif any(.persistedFields[]; test("(^|[-_])(prompt|command|token|cookie|header|credential|authorization|password|secret|api[-_]?key|auth[-_]?store)([-_]|$)"; "i")) then fail("binding " + .id + ": campo persistible sensible")
     elif (.delivery | type) != "object" or (.delivery | keys_are(["mode", "failure", "timeoutSeconds"]) | not) or (.delivery != $delivery) then fail("binding " + .id + ": delivery divergente")
     elif ($contracts[.id] == null) then fail("binding " + .id + ": accion sin contrato")
     else . as $binding | $contracts[$binding.id] as $expected |
       if $binding.signal != $expected.signal or $binding.action != $expected.action then fail("binding " + $binding.id + ": par signal/action desconocido")
+      elif ($binding.id == "record-active-release" and ($binding.destinations | index("canonical-state")) == null) then fail("binding record-active-release: falta el destino canonico obligatorio")
       elif $binding.destinations != $expected.destinations then fail("binding " + $binding.id + ": destinos no coinciden con su contrato")
       elif $binding.persistedFields != $expected.fields then fail("binding " + $binding.id + ": allowlist de campos persistibles divergente")
       else empty end

@@ -104,6 +104,14 @@ El contrato neutral de un consumidor es:
 
 Todo escritor nuevo escribe solo esas ubicaciones canonicas. Los lectores conservan indefinidamente fallback a `CLAUDE.md` y `.claude/*` -- incluidos `.claude/harness.config.json` y `.claude/pipeline/` -- cuando el equivalente canonico no existe. No hay migracion destructiva ni fecha de retiro del fallback.
 
+#### Enmienda transitoria: mirror de identidad de release del adaptador Claude (#1099)
+
+La regla de escritura solo canonica tiene una unica excepcion, transitoria y estrecha: `record-active-release` del adaptador publicado Claude puede, ademas de escribir obligatoria y primariamente `canonical-state`/`release-identity`, reflejar la misma identidad de la distribucion ya cargada observada desde `CLAUDE_PLUGIN_ROOT` en `.claude/pipeline/.plugin-root` y limpiar `.claude/pipeline/.plugin-root.previous`. No resuelve independientemente el mirror ni usa la version mas reciente del cache: esta puede no ser la version que la sesion mantiene cargada. El marker no contiene credenciales ni configuracion del proveedor.
+
+Ningun otro binding recibe permiso para escribir rutas legacy. En particular, `sessions.jsonl` y `events.log` se escriben exclusivamente bajo `.mefisto/pipeline/`. Si el mirror falla, el adaptador informa la degradacion aplicable pero no invalida la sesion; el destino canonico permanece el contrato primario. La capacidad `legacy-release-marker` pertenece solo al adaptador Claude publicado: no se propaga a OpenCode ni a hooks internos, conforme a MEF-ADR-0019 y MEF-ADR-0050.
+
+El mirror solo se retira mediante un issue posterior, tras comprobar un inventario verificable sin lectores de `.claude/pipeline/.plugin-root` ni `.claude/pipeline/.plugin-root.previous`. El cierre de #1054 no satisface ese gate ni autoriza el retiro implicito.
+
 El puente minimo de un consumidor que conserva Claude Code es un `CLAUDE.md` con `@AGENTS.md`; no duplica la doctrina. Las señales neutrales ya definidas bajo `pipeline-state/` no se absorben en `.mefisto/pipeline/`: permanecen gobernadas por MEF-ADR-0017 y su semantica transitoria no cambia.
 
 ### 5. Paridad distribuible y fallos visibles (CA-5)
@@ -181,3 +189,4 @@ La presencia de archivos generados no satisface este gate: la evidencia debe ser
 
 - 2026-09-07: creacion como `aceptado` (issue #1042). Resuelve los diferidos publicados de MEF-ADR-0049: fuente neutral `src/published/`, nucleo exclusivo de runner/eventos `src/runtime/` y distribuciones generadas `dist/{claude,opencode}/`, sin poblar rutas antes de #1043; instalacion OpenCode global, versionada, inmutable y reversible con puntero activo atomico; un SemVer/tag para ambos adaptadores y diagnostico visible de deriva; contrato consumidor `AGENTS.md`/`.mefisto` con lectura legacy indefinida; paridad distribuible sin degradacion silenciosa; y corte vertical `/mefisto:tooling` certificado hasta PR antes de migrar el catalogo restante.
 - 2026-09-08: enmienda la decision 2 (issue #1091). Fija el proyector global por enlaces a `active`, la version minima OpenCode 1.18.29 y la preservacion no destructiva de configuracion ajena; registra degradaciones de capacidades que el release aun no contiene.
+- 2026-09-08: enmienda la decision 4 (issue #1099). Autoriza exclusivamente a `record-active-release` del adaptador publicado Claude a mantener temporalmente el mirror `.claude/pipeline/.plugin-root` y limpiar `.plugin-root.previous`, siempre junto a la escritura canonica primaria; reserva su retiro a un issue posterior con inventario verificable de lectores legacy eliminado.
