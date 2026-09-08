@@ -38,9 +38,11 @@ list_sources() {
     done
 }
 owns() { [ -f "$STATE" ] && jq -e --arg path "$1" '.paths | index($path) != null' "$STATE" >/dev/null 2>&1; }
+state_valid() { jq -e '.schemaVersion == 1 and (.release | type == "string") and (.paths | type == "array" and all(.[]; type == "string"))' "$STATE" >/dev/null 2>&1; }
 remove_owned() {
     local rel target
     [ -f "$STATE" ] || return 0
+    state_valid || error "conflicto: $STATE no es un ledger Mefisto valido; no se retirara"
     while IFS= read -r rel; do
         target="$CONFIG/$rel"
         [ ! -L "$target" ] || rm -f "$target" || error "no se pudo retirar $target"
@@ -65,12 +67,15 @@ project() {
     command -v jq >/dev/null 2>&1 || error 'jq es requerido para proyectar la configuracion'
     release="$(active_release)"
     paths="$(list_sources "$release")"
+    [ ! -e "$STATE" ] || state_valid || error "conflicto: $STATE ya existe y no pertenece a una proyeccion Mefisto valida"
     # Se valida todo antes de tocar la configuracion del usuario.
     while IFS= read -r rel; do
         [ -n "$rel" ] || continue
         target="$CONFIG/$rel"
         if [ -e "$target" ] || [ -L "$target" ]; then
             owns "$rel" || error "conflicto: $target ya existe; renombrelo o ejecute deactivate antes de proyectar"
+            [ -L "$target" ] && [ "$(readlink "$target")" = "$ACTIVE/$rel" ] \
+                || error "conflicto: $target fue modificado fuera de Mefisto; no se sobrescribira"
         fi
     done <<< "$paths"
     remove_owned
