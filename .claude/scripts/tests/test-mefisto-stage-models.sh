@@ -151,10 +151,15 @@ if grep -qF 'MEFISTO_STAGE_MODEL_RESUELTO="$(resolve_stage_model "$stage_key" ""
 else
     fail "no se encontro la consulta de resolve_stage_model con default vacio"
 fi
-if grep -qF 'mefisto_resolve_model "$MEFISTO_RUNTIME_RESUELTO" "$agent_id" "$profile" > "$out_file"' "$PIPE_PATH"; then
-    pass "sin override, cae a mefisto_resolve_model (runtime + id neutral + perfil)"
+if grep -qF 'mefisto_resolve_model "$MEFISTO_RUNTIME_RESUELTO" "$agent_id" "$profile" "" "$INTERNAL_MODELS_FILE" > "$out_file"' "$PIPE_PATH"; then
+    pass "sin override, cae a mefisto_resolve_model (runtime + id neutral + perfil + mapping interno)"
 else
     fail "no se encontro la resolucion via mefisto_resolve_model"
+fi
+if grep -qF 'INTERNAL_MODELS_FILE="$MEFISTO_REPO_ROOT/.mefisto/models.json"' "$PIPE_PATH"; then
+    pass "el mapping interno se pasa explicitamente al resolutor comun"
+else
+    fail "no se encontro la ruta explicita al mapping interno de modelos"
 fi
 # Redirect simple (>), nunca "$(...)": mefisto_resolve_model deja el motivo del
 # fallo en MEFISTO_MODELS_ERROR, y una sustitucion de comando lo perderia en su
