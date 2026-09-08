@@ -87,7 +87,8 @@ si no, `${XDG_CONFIG_HOME:-$HOME/.config}/opencode`, también en macOS. `project
 usa enlaces por archivo a `active/{commands,agents,skills,plugins}` de la release
 actual (OpenCode 1.18.29 o posterior). Si un nombre ya pertenece al usuario,
 aborta sin sobrescribirlo; las capacidades que la release todavía no contiene se
-anuncian como degradación visible. La instalación no inspecciona auth stores.
+anuncian como degradación visible. `OPENCODE_CONFIG_DIR` definido pero vacío se
+rechaza para no proyectar accidentalmente en otra raíz. La instalación no inspecciona auth stores.
 Véase [MEF-ADR-0053](docs/adr/mef-adr-0053-distribucion-multi-runtime-consumidores.md).
 
 ### 1. Configurar `.claude/settings.json` del repo consumidor

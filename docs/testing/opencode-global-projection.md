@@ -24,8 +24,9 @@ export XDG_DATA_HOME="$HOME/data"
 export XDG_CONFIG_HOME="$HOME/config"
 M='<raíz-de-datos>/mefisto/active/bin/mefisto-opencode'
 "$M" project
-opencode command list | grep 'mefisto:'
 opencode agent list | grep mefisto-
+opencode run --command 'mefisto:tooling' --auto --format json \
+  'Responde solo PROYECCION_OK sin usar herramientas'
 "$M" deactivate
 ```
 
@@ -33,12 +34,14 @@ Salida relevante de la sesión de 2026-09-08:
 
 ```text
 Proyeccion OpenCode activa en .../config/opencode (release 1.2.3).
-mefisto:tooling
 mefisto-writer
+PROYECCION_OK
 Proyeccion Mefisto retirada; la configuracion ajena permanece intacta.
 ```
 
-La misma ejecución comprobó `project` dos veces, cambió `active` de `1.2.3` a
+El nombre del comando no se obtuvo de un listado de archivos: la invocación
+`opencode run --command` hizo que OpenCode lo resolviera y ejecutara en una
+sesión real. La misma ejecución comprobó `project` dos veces, cambió `active` de `1.2.3` a
 `2.0.0`, y verificó que el comando descubierto leyera el contenido `2.0.0` a
 través del enlace estable. Un archivo propio con el mismo nombre abortó con
 `ERROR: conflicto:` sin modificación. `deactivate` retiró enlaces y su ledger,
@@ -47,6 +50,8 @@ directorio vacío, lo retiró.
 
 La automatización reproducible de estos casos, incluidos `HOME`,
 `XDG_CONFIG_HOME` y `OPENCODE_CONFIG_DIR` temporales, es
-`scripts/tests/test-project-opencode-release.sh`. La evidencia no considera la
+`scripts/tests/test-project-opencode-release.sh`. Esa prueba valida además los
+directorios anidados de Skills, la restauración exacta de directorios previos,
+el rechazo de un ledger ajeno y los fallbacks de configuración. La evidencia no considera la
 mera presencia de archivos suficiente: registra el descubrimiento en una sesión
 OpenCode y ejecuta la prueba aislada del mecanismo (MEF-ADR-0031).
