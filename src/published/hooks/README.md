@@ -17,9 +17,9 @@ No se declara comportamiento para fin de sesión, inicio de herramienta, prompt,
 
 ## Excepción transitoria del marker de release
 
-El destino lógico `legacy-release-marker` está reservado en exclusiva a `record-active-release`. El adaptador Claude de #1058 materializará el reflejo en `.claude/pipeline/.plugin-root` y limpiará `.plugin-root.previous`; ambos contienen únicamente la identidad/ruta de la distribución cargada observada desde `CLAUDE_PLUGIN_ROOT`. El estado canónico sigue siendo obligatorio y primario: el adaptador no resuelve dos versiones ni usa el release más reciente del cache como fallback, porque ese cache puede haber avanzado y no describir la versión que la sesión ya cargó.
+El destino lógico `legacy-release-marker` está reservado en exclusiva a `record-active-release`. El adaptador Claude de #1058 materializará el reflejo en `.claude/pipeline/.plugin-root` con la identidad/ruta de la distribución cargada observada desde `CLAUDE_PLUGIN_ROOT` y limpiará `.claude/pipeline/.plugin-root.previous`; no copiará en el mirror el valor previo que conserva `/upgrade`. El estado canónico sigue siendo obligatorio y primario: el adaptador no resuelve dos versiones ni usa el release más reciente del cache como fallback, porque ese cache puede haber avanzado y no describir la versión que la sesión ya cargó.
 
-El fallo al mantener el mirror no invalida la sesión (`failure: continue`) ni autoriza dual-write para `sessions.jsonl` o `events.log`, que se escriben solo en el estado canónico. OpenCode no recibe este destino. La excepción se retira únicamente con un issue posterior, después de un inventario verificable sin lectores de `.claude/pipeline/.plugin-root` ni `.plugin-root.previous`; el cierre de #1054 no la retira implícitamente. Véanse MEF-ADR-0053, decisión 4, y la matriz de adaptación.
+El fallo al mantener el mirror no invalida la sesión (`failure: continue`) ni autoriza dual-write para `sessions.jsonl` o `events.log`, que se escriben solo en el estado canónico. OpenCode no recibe este destino. La excepción se retira únicamente con un issue posterior, después de un inventario verificable sin lectores de `.claude/pipeline/.plugin-root` ni `.claude/pipeline/.plugin-root.previous`; el cierre de #1054 no la retira implícitamente. Véanse MEF-ADR-0053, decisión 4, y la matriz de adaptación.
 
 ## Matriz de adaptación
 
