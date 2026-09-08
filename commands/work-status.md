@@ -24,7 +24,7 @@ Lee estos archivos en paralelo usando Read, Glob y Bash:
 2. `Read` cada archivo encontrado por el glob
 3. `Read .claude/pipeline/pipeline-history.jsonl` -- historial unificado
 4. `Bash(date '+%Y-%m-%d %H:%M:%S')` -- hora actual para calcular tiempo transcurrido
-5. `Read .claude/pipeline/events.log` (o `Bash(tail -n 50 .claude/pipeline/events.log)` si es largo) -- para detectar una espera (hold) activa, ver Paso 1c
+5. `Read .mefisto/pipeline/events.log` (o `Bash(tail -n 50 .mefisto/pipeline/events.log)` si es largo) -- para detectar una espera (hold) activa, ver Paso 1c
 
 ## Paso 1b: Fallback retrocompatibilidad
 

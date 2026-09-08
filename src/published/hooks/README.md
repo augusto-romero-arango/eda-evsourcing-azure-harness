@@ -1,6 +1,6 @@
 # Contrato neutral de hooks interactivos
 
-`interactive-hooks.json` expresa los seis comportamientos publicados que ya existen, sin fijar un runtime ni una forma ejecutable. Los adaptadores de #1058 y #1059 son quienes traducen señales, resuelven los destinos lógicos y reportan cualquier degradación. `timeoutSeconds: null` significa que Mefisto no agrega un plazo: el límite efectivo es el que documente y aplique cada runtime.
+`interactive-hooks.json` expresa los seis comportamientos publicados que ya existen, sin fijar un runtime ni una forma ejecutable. `src/published/scripts/generate-claude-hooks.sh` traduce el contrato a `hooks/hooks.json`; esa salida Claude-specific no lleva marcador generado porque el schema de Hooks no admite comentarios ni metadata adicional. El gate ejecuta el generador con `--check`. `timeoutSeconds: null` significa que Mefisto no agrega un plazo: el límite efectivo es el que documente y aplique cada runtime.
 
 La persistencia se rige por allowlist (MEF-ADR-0025). Ningún binding conserva prompts, input completo de herramientas, comandos shell completos, tokens, cookies, headers, variables de credenciales ni auth stores.
 
@@ -17,9 +17,9 @@ No se declara comportamiento para fin de sesión, inicio de herramienta, prompt,
 
 ## Excepción transitoria del marker de release
 
-El destino lógico `legacy-release-marker` está reservado en exclusiva a `record-active-release`. El adaptador Claude de #1058 materializará el reflejo en `.claude/pipeline/.plugin-root` con la identidad/ruta de la distribución cargada observada desde `CLAUDE_PLUGIN_ROOT` y limpiará `.claude/pipeline/.plugin-root.previous`; no copiará en el mirror el valor previo que conserva `/upgrade`. El estado canónico sigue siendo obligatorio y primario: el adaptador no resuelve dos versiones ni usa el release más reciente del cache como fallback, porque ese cache puede haber avanzado y no describir la versión que la sesión ya cargó.
+El destino lógico `legacy-release-marker` está reservado en exclusiva a `record-active-release`. El adaptador Claude escribe primero la identidad/ruta de la distribución cargada observada desde `CLAUDE_PLUGIN_ROOT` en `.mefisto/pipeline/.plugin-root` y refleja exactamente ese valor en `.claude/pipeline/.plugin-root`; limpia `.claude/pipeline/.plugin-root.previous` sin copiarlo. El estado canónico sigue siendo obligatorio y primario: el adaptador no resuelve dos versiones ni usa el release más reciente del cache como fallback, porque ese cache puede haber avanzado y no describir la versión que la sesión ya cargó.
 
-El fallo al mantener el mirror no invalida la sesión (`failure: continue`) ni autoriza dual-write para `sessions.jsonl` o `events.log`, que se escriben solo en el estado canónico. OpenCode no recibe este destino. La excepción se retira únicamente con un issue posterior, después de un inventario verificable sin lectores de `.claude/pipeline/.plugin-root` ni `.claude/pipeline/.plugin-root.previous`; el cierre de #1054 no la retira implícitamente. Véanse MEF-ADR-0053, decisión 4, y la matriz de adaptación.
+El fallo al mantener el mirror no invalida la sesión (`failure: continue`) ni autoriza dual-write para `.mefisto/pipeline/sessions.jsonl` o `.mefisto/pipeline/events.log`, que se escriben solo en el estado canónico. OpenCode no recibe este destino. La excepción se retira únicamente con un issue posterior, después de un inventario verificable sin lectores de `.claude/pipeline/.plugin-root` ni `.claude/pipeline/.plugin-root.previous`; el cierre de #1054 no la retira implícitamente. Véanse MEF-ADR-0053, decisión 4, y la matriz de adaptación.
 
 ## Matriz de adaptación
 

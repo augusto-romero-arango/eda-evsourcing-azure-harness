@@ -344,13 +344,14 @@ Cuando lo tengas, corre `/mefisto:onboard` para verificar de un vistazo que el c
 El patrón canónico para resolver la raíz del plugin es:
 
 ```bash
-PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+PLUGIN_ROOT=$(cat .mefisto/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
 [ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
 PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
 "$PLUGIN_SCRIPTS/<script>.sh" <args>
 ```
 
-`.claude/pipeline/.plugin-root` lo escribe el hook `SessionStart` del plugin al abrir la sesión (persiste `${CLAUDE_PLUGIN_ROOT}`); el fallback localiza el plugin por glob sobre el cache tomando la versión más reciente. Normalmente **no necesitas correr esto a mano**: lo hacen los skills (`/infra`, etc.) y los agentes (`infra-bootstrap`, `planner`) por ti.
+`.mefisto/pipeline/.plugin-root` es el marker canónico que escribe el hook `SessionStart` al abrir la sesión (persiste `${CLAUDE_PLUGIN_ROOT}`). Durante la transición, el hook refleja exactamente la misma identidad en `.claude/pipeline/.plugin-root`; se lee solo como fallback de compatibilidad. El fallback final localiza el plugin por glob sobre el cache tomando la versión más reciente. Normalmente **no necesitas correr esto a mano**: lo hacen los skills (`/infra`, etc.) y los agentes (`infra-bootstrap`, `planner`) por ti.
 
 ### 4. Bootstrap del repo del consumidor (labels y CI)
 
@@ -361,7 +362,8 @@ Para verificar de un vistazo qué falta (labels ausentes, CI sin configurar) ant
 **a. Labels de GitHub** — `setup-github-labels.sh`. El `planner`, `/draft` y los pipelines exigen los labels dimensionales `tipo:*`, `dom:*` y `estado:{borrador|listo}` como prerequisito operativo (**MEF-ADR-0007**); sin ellos el primer `/draft` falla al etiquetar. El script **borra 8 de los 9 labels default de GitHub** (`documentation`, `duplicate`, `enhancement`, `good first issue`, `help wanted`, `invalid`, `question`, `wontfix`) y **recrea `bug`** con el esquema del harness, además de crear el resto del esquema, incluyendo un `dom:<x>` por cada entrada de `domainLabels` en `.claude/harness.config.json`. **Prerequisitos**: `gh auth login` y el campo `domainLabels` ya declarado en el config (paso 2).
 
 ```bash
-PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+PLUGIN_ROOT=$(cat .mefisto/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
 [ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
 PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
 "$PLUGIN_SCRIPTS/setup-github-labels.sh"
@@ -376,7 +378,8 @@ El backend remoto de Terraform (donde vive el `tfstate`) es prerequisito de todo
 1. **Crear el backend del tfstate** con `bootstrap-backend.sh` (idempotente; crea Resource Group y Storage Account endurecida y container `tfstate`, y escribe `infra/environments/<env>/backend.tf` con el nombre final resuelto). El naming sigue dos formas según si declaraste `azureRegionShort` (MEF-ADR-0045, issue #732, ver la nota de `terraformStateStorage` arriba): sin declarar, `rg-<proyecto>-tfstate` y Storage con **sufijo de unicidad global** sobre el nombre base de `terraformStateStorage` (legacy, retrocompatible); declarado, `rg-tfstate-<proyecto>-<env>-<region>-<seq>` y Storage `sttfstate<proyecto><env><region><seq>` sin sufijo aleatorio (forma CAF):
 
    ```bash
-   PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+   PLUGIN_ROOT=$(cat .mefisto/pipeline/.plugin-root 2>/dev/null)
+   [ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
    [ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
    PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
    "$PLUGIN_SCRIPTS/bootstrap-backend.sh" --subscription <subscription-id> --env dev
@@ -480,7 +483,7 @@ Flujo típico:
 commands/              # skills publicados (los que ve el consumidor)
 agents/                # agentes publicados
 scripts/               # pipelines + utilidades bash publicadas
-hooks/hooks.json       # SessionStart (.plugin-root, limpieza del marker de /upgrade, sessions.jsonl) + PostToolUse para logging
+hooks/hooks.json       # salida Claude generada: SessionStart (.mefisto/pipeline/.plugin-root y mirror temporal, sessions.jsonl) + PostToolUse para logging
 .claude/               # skills/agentes/pipelines INTERNOS (no se publican)
   commands/            # /mefisto-tooling, /mefisto-plan, /mefisto-bug, ...
   agents/              # mefisto-investigator, mefisto-planner, mefisto-historiador

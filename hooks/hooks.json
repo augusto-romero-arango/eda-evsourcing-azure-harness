@@ -5,11 +5,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"${CLAUDE_PLUGIN_ROOT}\" ] && mkdir -p .claude/pipeline 2>/dev/null && printf '%s' \"${CLAUDE_PLUGIN_ROOT}\" > .claude/pipeline/.plugin-root 2>/dev/null && rm -f .claude/pipeline/.plugin-root.previous 2>/dev/null || true"
+            "command": "[ -n \"${CLAUDE_PLUGIN_ROOT:-}\" ] && mkdir -p .mefisto/pipeline .claude/pipeline 2>/dev/null && printf \"%s\" \"${CLAUDE_PLUGIN_ROOT}\" > .mefisto/pipeline/.plugin-root 2>/dev/null && printf \"%s\" \"${CLAUDE_PLUGIN_ROOT}\" > .claude/pipeline/.plugin-root 2>/dev/null && rm -f .claude/pipeline/.plugin-root.previous 2>/dev/null || true"
           },
           {
             "type": "command",
-            "command": "hv=\"\"; [ -n \"${CLAUDE_PLUGIN_ROOT}\" ] && hv=\"$(basename \"${CLAUDE_PLUGIN_ROOT}\" 2>/dev/null)\"; mkdir -p .claude/pipeline 2>/dev/null && jq -c --arg harness_version \"$hv\" '{session_id, transcript_path, cwd, source, timestamp: (now | strftime(\"%Y-%m-%dT%H:%M:%SZ\")), harness_version: ($harness_version | if . == \"\" then null else . end)}' 2>/dev/null >> .claude/pipeline/sessions.jsonl || true"
+            "command": "hv=\"\"; [ -n \"${CLAUDE_PLUGIN_ROOT:-}\" ] && hv=\"$(basename \"${CLAUDE_PLUGIN_ROOT}\" 2>/dev/null)\"; mkdir -p .mefisto/pipeline 2>/dev/null && jq -c --arg harness_version \"$hv\" '{session_id, transcript_path, cwd, source, timestamp: (now | strftime(\"%Y-%m-%dT%H:%M:%SZ\")), harness_version: ($harness_version | if . == \"\" then null else . end)}' 2>/dev/null >> .mefisto/pipeline/sessions.jsonl || true"
           }
         ]
       }
@@ -20,7 +20,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '[recordatorio] Si esta sesion tuvo descubrimientos de dominio, decisiones o alternativas descartadas, considera escribir field notes en docs/bitacora/field-notes/ antes de continuar.'"
+            "command": "echo \"[recordatorio] Si esta sesion tuvo descubrimientos de dominio, decisiones o alternativas descartadas, considera escribir field notes en docs/bitacora/field-notes/ antes de continuar.\""
           }
         ]
       },
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '\"[\" + (now | strftime(\"%H:%M:%S\")) + \"][archivo] \" + (.tool_input.file_path // .tool_input.path // \"(desconocido)\")' 2>/dev/null | tee -a .claude/pipeline/events.log 2>/dev/null || true"
+            "command": "mkdir -p .mefisto/pipeline 2>/dev/null && jq -r '\"[\" + (now | strftime(\"%H:%M:%S\")) + \"][archivo] \" + (.tool_input.file_path // .tool_input.path // \"(desconocido)\")' 2>/dev/null >> .mefisto/pipeline/events.log || true"
           }
         ]
       },
@@ -38,11 +38,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r 'if (.tool_input.command // \"\") | test(\"dotnet test\") then \"[\" + (now | strftime(\"%H:%M:%S\")) + \"][test] \" + (if (.tool_result // \"\") | test(\"passed|Passed|Superado|Correctas\") then \"PASS\" else \"FAIL\" end) else empty end' 2>/dev/null | tee -a .claude/pipeline/events.log 2>/dev/null || true"
+            "command": "mkdir -p .mefisto/pipeline 2>/dev/null && jq -r 'if (.tool_input.command // \"\") | test(\"dotnet test\") then \"[\" + (now | strftime(\"%H:%M:%S\")) + \"][test] \" + (if (.tool_result // \"\") | test(\"passed|Passed|Superado|Correctas\") then \"PASS\" else \"FAIL\" end) else empty end' 2>/dev/null >> .mefisto/pipeline/events.log || true"
           },
           {
             "type": "command",
-            "command": "jq -r 'if (.tool_input.command // \"\") | test(\"terraform (plan|apply|init|validate)\") then \"[\" + (now | strftime(\"%H:%M:%S\")) + \"][terraform] \" + ((.tool_input.command | split(\" \") | .[1]) // \"?\") + \": \" + (if (.tool_result.exitCode // 0) == 0 then \"OK\" else \"ERROR\" end) else empty end' 2>/dev/null | tee -a .claude/pipeline/events.log 2>/dev/null || true"
+            "command": "mkdir -p .mefisto/pipeline 2>/dev/null && jq -r 'if (.tool_input.command // \"\") | test(\"terraform (plan|apply|init|validate)\") then \"[\" + (now | strftime(\"%H:%M:%S\")) + \"][terraform] \" + ((.tool_input.command | split(\" \") | .[1]) // \"?\") + \": \" + (if (.tool_result.exitCode // 0) == 0 then \"OK\" else \"ERROR\" end) else empty end' 2>/dev/null >> .mefisto/pipeline/events.log || true"
           }
         ]
       }
