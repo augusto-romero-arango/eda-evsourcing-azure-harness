@@ -17,7 +17,8 @@
 #   [D] Degradacion segura (CA-3): stdin vacio, JSON invalido, sin file_path y
 #       ruta absoluta fuera del worktree -> exit 0, nunca bloquea por error propio.
 #   [E] Cableado: .claude/settings.json registra el hook con matcher Edit|Write
-#       apuntando al script, y el pipeline ya no inyecta ni revierte ese archivo.
+#       apuntando al script; el pipeline reconcilia sus listas operativas con la
+#       allowlist y ya no inyecta ni revierte settings.json.
 #
 # El hook NO escribe archivos: recibe el JSON del tool call por stdin y solo
 # decide. Por eso los casos se ejercitan alimentandolo con el mismo payload que
@@ -84,6 +85,9 @@ for p in \
     "skills/projections/SKILL.md" \
     "CLAUDE.md" \
     "src/internal/foo.ts" \
+    "src/published/foo.md" \
+    "src/runtime/foo.sh" \
+    "dist/x" \
     ".opencode/agents/foo.md" \
     ".opencode/commands/foo.md" \
     ".opencode/plugins/foo.js" \
@@ -116,7 +120,7 @@ echo "[B] Ruta FUERA de scope -> exit 2 con stderr accionable"
 # (ver bloque [C]), no por la allowlist. Afirmar aqui exit 2 seria un test que se
 # rompe solo al mergear #856; su clasificacion la cubre test-guards.sh [E2], que
 # ejercita is_path_in_mefisto_scope directamente y es inmune a .gitignore.
-for p in "src/Foo.cs" "src/otro/x.sh" "tests/Foo.Tests/FooTests.cs" ".github/workflows/ci.yml" ".claude/harness.config.json" "infra/main.tf" ".opencode/x.json" ".opencode/agent/x.md" "dist/x" "sub/opencode.json" "foo.opencode.json"; do
+for p in "src/Foo.cs" "src/otro/x.sh" "src/publication/foo.md" "src/runtime-local/foo.sh" "distribution/x" "dist-local/x" "tests/Foo.Tests/FooTests.cs" ".github/workflows/ci.yml" ".claude/harness.config.json" "infra/main.tf" ".opencode/x.json" ".opencode/agent/x.md" "sub/opencode.json" "foo.opencode.json"; do
     run_hook "$p"
     if [ "$HOOK_EXIT" -eq 2 ]; then
         pass "$p -> exit 2"
@@ -145,6 +149,11 @@ if echo "$HOOK_STDERR" | grep -qi "revierte"; then
     pass "el mensaje pide revertir lo ya escrito (semantica PostToolUse: el tool ya corrio)"
 else
     fail "el mensaje no pide revertir; en PostToolUse el archivo YA existe y decir 'no lo crees' es inaccionable"
+fi
+if echo "$HOOK_STDERR" | grep -q 'src/{internal,published,runtime}/, dist/'; then
+    pass "el catalogo del feedback temprano enumera las tres raices nuevas"
+else
+    fail "el catalogo del feedback temprano no refleja src/published/, src/runtime/ y dist/"
 fi
 
 # -------- Bloque C: rutas ignoradas por git no avisan --------
@@ -253,10 +262,16 @@ else
     pass "el pipeline interno ya no inyecta .claude/settings.json desde el clon principal"
 fi
 
-if grep -q '\.claude/settings\.json changelog\.d/' "$PIPELINE"; then
-    pass ".claude/settings.json esta en los paths de auto-commit / deteccion de cambios"
+if printf '%s\n' "$PIPELINE_CODE" | grep 'local paths=' | grep -q 'src/published/ src/runtime/ dist/'; then
+    pass "src/published/, src/runtime/ y dist/ estan en la lista operativa de auto-commit"
 else
-    fail ".claude/settings.json no figura en los paths de auto-commit: una edicion del writer no llegaria al PR"
+    fail "la lista operativa de auto-commit omite src/published/, src/runtime/ o dist/"
+fi
+
+if printf '%s\n' "$PIPELINE_CODE" | grep 'status --porcelain -- commands/' | grep -q 'src/published/ src/runtime/ dist/'; then
+    pass "src/published/, src/runtime/ y dist/ estan en la deteccion de cambios del writer"
+else
+    fail "la deteccion de cambios del writer omite src/published/, src/runtime/ o dist/"
 fi
 
 echo ""

@@ -1636,6 +1636,9 @@ compose_tfstate_storage_account_base() {
 #   agents/           Agentes publicados
 #   hooks/            Hooks del plugin
 #   .claude-plugin/   Metadata del plugin (plugin.json, marketplace.json)
+#   src/published/    Fuente neutral de los artefactos publicados (MEF-ADR-0053)
+#   src/runtime/      Nucleo neutral de runner y eventos publicados (MEF-ADR-0053)
+#   dist/             Distribuciones generadas por runtime (MEF-ADR-0053)
 #   docs/adr/mef-adr-*  ADRs del marco -- MEF-ADR-0030 decision #3 fija su filename
 #                     en minuscula (mef-adr-NNNN-slug.md). El resto de docs/adr/ es
 #                     del consumidor: MEF-ADR-0030 descarta reubicarlo bajo
@@ -1656,7 +1659,7 @@ is_path_in_consumer_blocklist() {
 
     case "$path" in
         commands/*|skills/*|agents/*|hooks/*) return 0 ;;
-        .claude-plugin/*) return 0 ;;
+        .claude-plugin/*|src/published/*|src/runtime/*|dist/*) return 0 ;;
         docs/adr/mef-adr-*) return 0 ;;
         *) return 1 ;;
     esac
@@ -1699,7 +1702,7 @@ validate_consumer_scope_changes() {
         echo "ERROR: el agente toco rutas reservadas al plugin Mefisto:" >&2
         printf '  - %s\n' "${violations[@]}" >&2
         echo "" >&2
-        echo "Las rutas commands/, skills/, agents/, hooks/, .claude-plugin/ y los archivos" >&2
+        echo "Las rutas commands/, skills/, agents/, hooks/, .claude-plugin/, src/published/, src/runtime/, dist/ y los archivos" >&2
         echo "docs/adr/mef-adr-* pertenecen al plugin (repo $repo_slug)." >&2
         echo "" >&2
         echo "El resto del trabajo del agente NO se perdio: ya quedo commiteado en '$branch'." >&2

@@ -18,7 +18,8 @@
 # Ciclo: Issue (en repo Mefisto) -> Worktree -> Writer -> Reviewer -> Sync main -> PR -> Cleanup
 #
 # ALCANCE: solo modifica archivos del propio plugin (commands/, agents/, scripts/,
-# hooks/, docs/, .claude-plugin/, .claude/{commands,agents,scripts}/, gobierno).
+# hooks/, docs/, .claude-plugin/, .claude/{commands,agents,scripts}/,
+# src/{internal,published,runtime}/, dist/ y gobierno).
 # No corre dotnet ni terraform. No usa .claude/harness.config.json.
 
 set -euo pipefail
@@ -1010,11 +1011,12 @@ auto_commit_if_needed() {
     # inyecta ni revierte este archivo (ver el bloque de creacion del
     # worktree), asi que lo unico que puede aparecer aqui es una edicion
     # legitima del agente.
-    # src/internal/, .opencode/{agents,commands,plugins,skills}/, AGENTS.md y opencode.json
-    # (issue #852, MEF-ADR-0049): registrados de antemano en la allowlist (MEF-ADR-0019
-    # seccion E) para la arquitectura neutral de runtime/proveedor -- ver is_path_in_mefisto_scope
-    # (_mefisto-common.sh) para el detalle y justificacion de cada entrada.
-    local paths="commands/ agents/ scripts/ hooks/ docs/ .claude-plugin/ .claude/commands/ .claude/agents/ .claude/scripts/ .claude/settings.json changelog.d/ src/internal/ .opencode/agents/ .opencode/commands/ .opencode/plugins/ .opencode/skills/ AGENTS.md opencode.json README.md CHANGELOG.md CLAUDE.md .gitignore"
+    # src/internal/, .opencode/{agents,commands,plugins,skills}/, AGENTS.md y
+    # opencode.json se registraron en #852 (MEF-ADR-0049); src/published/,
+    # src/runtime/ y dist/ se registran en #1043 (MEF-ADR-0053). Todas estas
+    # entradas respetan la secuencia de MEF-ADR-0019 seccion E; ver
+    # is_path_in_mefisto_scope (_mefisto-common.sh) para el detalle.
+    local paths="commands/ agents/ scripts/ hooks/ docs/ .claude-plugin/ .claude/commands/ .claude/agents/ .claude/scripts/ .claude/settings.json changelog.d/ src/internal/ src/published/ src/runtime/ dist/ .opencode/agents/ .opencode/commands/ .opencode/plugins/ .opencode/skills/ AGENTS.md opencode.json README.md CHANGELOG.md CLAUDE.md .gitignore"
 
     if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- $paths 2>/dev/null)" ]; then
         log "Haciendo commit automatico (fase $phase)..."
@@ -1082,6 +1084,7 @@ ALCANCE DE ESCRITURA PERMITIDO:
 - .claude/commands/, .claude/agents/, .claude/scripts/  (skills/agentes/pipelines INTERNOS de Mefisto)
 - .claude/settings.json  (hooks del pipeline interno; entrada EXACTA, no toda .claude/)
 - src/internal/  (layout interno de runtime/proveedor neutral, MEF-ADR-0049; src/ fuera de internal/ sigue fuera de scope)
+- src/published/, src/runtime/, dist/  (layout publicado multi-runtime de MEF-ADR-0053; registrado antes de poblarlo)
 - .opencode/agents/, .opencode/commands/, .opencode/plugins/, .opencode/skills/  (adaptadores OpenCode, MEF-ADR-0049; solo plural)
 - AGENTS.md, opencode.json  (doctrina canonica neutral y config raiz de OpenCode; entradas EXACTAS de la raiz, MEF-ADR-0049)
 - changelog.d/  (fragmentos de CHANGELOG e indice de ADRs, ver instruccion 5 abajo)
@@ -1089,7 +1092,7 @@ ALCANCE DE ESCRITURA PERMITIDO:
 
 Si el issue requiere escribir en una ruta o tipo de artefacto que NO esta en el listado anterior, verifica antes la allowlist autoritativa: la funcion is_path_in_mefisto_scope de src/internal/scripts/lib/_mefisto-common.sh, tal como esta en main (.claude/scripts/_mefisto-common.sh es solo el shim que la sourcea). Es la que el gate del pipeline evalua, y el listado de arriba puede quedarse corto frente a ella. Si la ruta tampoco esta ahi, NO intentes crear archivos en ella aunque el issue lo describa: primero hace falta un PR que la registre en los gates de scope/changelog (ver MEF-ADR-0019, seccion E -- registrar una ruta y usarla son dos PRs distintos, el de registro va primero y no crea archivos bajo la ruta que registra). Reporta ese bloqueo en tu resumen de stage 1 para que el PR de registro se abra antes de continuar con este issue.
 
-NO MODIFIQUES NADA FUERA DE ESE SCOPE. Mefisto no tiene tests/, infra/, ni .github/workflows/; src/ solo existe bajo src/internal/, y src/ fuera de internal/ sigue fuera de scope.
+NO MODIFIQUES NADA FUERA DE ESE SCOPE. Mefisto no tiene tests/, infra/, ni .github/workflows/; src/ fuera de internal/, published/ y runtime/ sigue fuera de scope.
 
 CONTEXTO DE EJECUCION:
 - Modo no-interactivo (print mode). No hay un humano al otro lado.
@@ -1130,7 +1133,7 @@ Instrucciones:
     if ! git -C "$WORKTREE_PATH" diff --quiet "$SNAPSHOT_COMMIT" HEAD 2>/dev/null; then
         HAS_COMMITS=true
     fi
-    if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- commands/ agents/ scripts/ hooks/ docs/ .claude-plugin/ .claude/commands/ .claude/agents/ .claude/scripts/ .claude/settings.json changelog.d/ src/internal/ .opencode/agents/ .opencode/commands/ .opencode/plugins/ .opencode/skills/ AGENTS.md opencode.json README.md CHANGELOG.md CLAUDE.md .gitignore 2>/dev/null)" ]; then
+    if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- commands/ agents/ scripts/ hooks/ docs/ .claude-plugin/ .claude/commands/ .claude/agents/ .claude/scripts/ .claude/settings.json changelog.d/ src/internal/ src/published/ src/runtime/ dist/ .opencode/agents/ .opencode/commands/ .opencode/plugins/ .opencode/skills/ AGENTS.md opencode.json README.md CHANGELOG.md CLAUDE.md .gitignore 2>/dev/null)" ]; then
         HAS_UNSTAGED=true
     fi
     if [ "$HAS_COMMITS" = false ] && [ "$HAS_UNSTAGED" = false ]; then
@@ -1176,7 +1179,7 @@ Tu tarea: revisa la calidad de los cambios producidos por el writer.
 ALCANCE DE ESCRITURA PERMITIDO (igual al del writer):
 commands/, agents/, scripts/, hooks/, docs/, .claude-plugin/,
 .claude/commands/, .claude/agents/, .claude/scripts/, .claude/settings.json,
-src/internal/, .opencode/agents/, .opencode/commands/, .opencode/plugins/, .opencode/skills/,
+src/internal/, src/published/, src/runtime/, dist/, .opencode/agents/, .opencode/commands/, .opencode/plugins/, .opencode/skills/,
 AGENTS.md, opencode.json, changelog.d/, README.md, CHANGELOG.md, CLAUDE.md, .gitignore.
 
 CONTEXTO DE EJECUCION:

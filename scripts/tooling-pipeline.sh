@@ -747,7 +747,7 @@ ALCANCE PERMITIDO de escritura:
   o sin prefijo. MEF-ADR-0030: no hay que reubicarlos fuera de docs/adr/)
 
 PROHIBIDO MODIFICAR (pertenece al plugin Mefisto, no a este repo):
-- commands/, skills/, agents/, hooks/, .claude-plugin/
+- commands/, skills/, agents/, hooks/, .claude-plugin/, src/published/, src/runtime/, dist/
 - docs/adr/mef-adr-*  (ADRs del marco; si copias uno para editarlo local, renombralo con tu propio prefijo)
 - src/ (eso es para /implement, no para /tooling)
 
@@ -864,7 +864,7 @@ ALCANCE PERMITIDO de escritura (igual al del writer):
 .claude/pipeline/, pipeline-state/, scripts/, tests/ (fixtures/helpers),
 docs/bitacora/, docs/ddd/, docs/adr-proyecto/, docs/adr/.
 
-PROHIBIDO: commands/, skills/, agents/, hooks/, .claude-plugin/, docs/adr/mef-adr-*, src/.
+PROHIBIDO: commands/, skills/, agents/, hooks/, .claude-plugin/, src/published/, src/runtime/, dist/, docs/adr/mef-adr-*, src/.
 
 Si el writer toco rutas prohibidas, reviertelas o reporta el problema en el resumen
 y NO hagas cambios extra al plugin.

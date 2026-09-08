@@ -250,6 +250,13 @@ get_harness_sha() {
 #                            Deliberadamente NO se replica en is_path_in_consumer_blocklist:
 #                            src/ es una ruta legitima del consumidor (mismo precedente que
 #                            .mcp.json, issue #763, y .claude/settings.json, issue #522).
+#   src/published/           Fuente neutral de los artefactos publicados (MEF-ADR-0053).
+#                            Registrada antes de poblarla conforme a MEF-ADR-0019 seccion E.
+#   src/runtime/             Nucleo neutral de runner y eventos del lado publicado
+#                            (MEF-ADR-0053), registrado antes de poblarlo.
+#   dist/                    Distribuciones generadas por runtime (MEF-ADR-0053), registrada
+#                            antes de crear dist/{claude,opencode}/. Los vecinos dist*/ siguen
+#                            fuera de scope.
 #   .opencode/{agents,commands,plugins,skills}/   Adaptadores OpenCode del propio Mefisto
 #                            (MEF-ADR-0049), espejo neutral de .claude/{agents,commands,skills}/.
 #                            Solo PLURAL: OpenCode 1.18.29 acepta singular y plural por igual,
@@ -273,7 +280,7 @@ is_path_in_mefisto_scope() {
 
     case "$path" in
         commands/*|skills/*|agents/*|scripts/*|hooks/*|docs/*) return 0 ;;
-        src/internal/*) return 0 ;;
+        src/internal/*|src/published/*|src/runtime/*|dist/*) return 0 ;;
         .claude-plugin/*) return 0 ;;
         .claude/commands/*|.claude/skills/*|.claude/agents/*|.claude/scripts/*) return 0 ;;
         .claude/settings.json) return 0 ;;
@@ -320,7 +327,7 @@ validate_mefisto_scope_changes() {
         echo "" >&2
         echo "Mefisto solo permite cambios en: commands/, skills/, agents/, scripts/," >&2
         echo "hooks/, docs/, .claude-plugin/, .claude/{commands,skills,agents,scripts}/," >&2
-        echo ".claude/settings.json, .mcp.json, src/internal/," >&2
+        echo ".claude/settings.json, .mcp.json, src/{internal,published,runtime}/, dist/," >&2
         echo ".opencode/{agents,commands,plugins,skills}/, AGENTS.md, opencode.json," >&2
         echo "changelog.d/, README.md, CHANGELOG.md, CLAUDE.md, .gitignore" >&2
         return 1
