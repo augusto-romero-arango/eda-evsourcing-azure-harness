@@ -643,7 +643,7 @@ else
     fail "se esperaban 3 concesiones de 'actions: read' en agents/domain-scaffolder.md (reutilizable + 2 invocadores), se encontraron $ACTIONS_READ"
 fi
 
-# -------- Bloque I: cierre aislado de field notes del planner --------
+# -------- Bloque I: cierre aislado de field notes del planner publicado --------
 
 echo ""
 echo "[I] Planner publicado: cierre documental aislado y recuperable"
@@ -669,6 +669,58 @@ for required in \
         pass "planner: conserva '$required'"
     else
         fail "planner: falta la garantia documental '$required'"
+    fi
+done
+
+# -------- Bloque J: cierre aislado de field notes de mefisto-planner --------
+
+echo ""
+echo "[J] Planner interno: cierre documental aislado, idempotente y recuperable"
+
+MEFISTO_PLANNER="$REPO_ROOT/src/internal/agents/mefisto-planner.md"
+for required in \
+    'INITIAL_HEAD_REF=$(git symbolic-ref -q --short HEAD || true)' \
+    'INITIAL_HEAD_SHA=$(git rev-parse HEAD)' \
+    'INITIAL_STATUS=$(git status --porcelain=v1 --untracked-files=all)' \
+    'SESSION_TIMESTAMP=$(date "+%Y-%m-%d-%H%M")' \
+    'SESSION_ID="${SESSION_TIMESTAMP}-$(date +%S)-$(git rev-parse --short=12 HEAD)-$$"' \
+    'REPO_ROOT=$(git rev-parse --show-toplevel)' \
+    'DEFAULT_BRANCH="main"' \
+    'FIELD_NOTE="docs/bitacora/field-notes/${CLOSING_TIMESTAMP}-mefisto-planner.md"' \
+    'DOC_BRANCH="docs/mefisto-planner-field-note-${SESSION_ID}"' \
+    'WORKTREE_DIR=$(mktemp -d "$REPO_ROOT/.mefisto/pipeline/summaries/' \
+    'git worktree add -b "$DOC_BRANCH" "$WORKTREE_DIR" "origin/$DEFAULT_BRANCH"' \
+    'git worktree add --track -b "$DOC_BRANCH" "$WORKTREE_DIR" "origin/$DOC_BRANCH"' \
+    'git -C "$WORKTREE_DIR" add -- "$FIELD_NOTE"' \
+    'git -C "$WORKTREE_DIR" cat-file -e "HEAD:$FIELD_NOTE"' \
+    'COMMIT_SHA=$(git -C "$WORKTREE_DIR" rev-parse HEAD)' \
+    'git -C "$WORKTREE_DIR" push -u origin "$DOC_BRANCH" || exit 1' \
+    "--jq '.[0] | [.number, .url, .state] | @tsv'" \
+    'IFS=$'"'"'\t'"'"' read -r PR_NUMBER PR_URL PR_STATE <<< "$PR_DATA"' \
+    'gh pr reopen "$PR_NUMBER" || exit 1' \
+    'PR_NUMBER=$(gh pr view "$PR_URL" --json number --jq '"'"'.number'"'"') || exit 1' \
+    'CURRENT_HEAD_REF=$(git symbolic-ref -q --short HEAD || true)' \
+    'CURRENT_HEAD_SHA=$(git rev-parse HEAD)' \
+    'CURRENT_STATUS=$(git status --porcelain=v1 --untracked-files=all)' \
+    'sin `--force`, `reset`, `clean` ni `stash`'; do
+    if grep -qF -- "$required" "$MEFISTO_PLANNER"; then
+        pass "mefisto-planner: conserva '$required'"
+    else
+        fail "mefisto-planner: falta la garantia documental '$required'"
+    fi
+done
+
+for scenario in \
+    'la sesion empezo en `main`, en otra rama o detached' \
+    'aunque tuviera cambios preexistentes' \
+    'Si el commit falla' \
+    'Si el push falla' \
+    'Si falla la busqueda del PR' \
+    'Si ya fue mergeado por un tercero'; do
+    if grep -qF -- "$scenario" "$MEFISTO_PLANNER"; then
+        pass "mefisto-planner: documenta escenario '$scenario'"
+    else
+        fail "mefisto-planner: no documenta escenario '$scenario'"
     fi
 done
 
