@@ -103,7 +103,12 @@ else
     fail 'el generador no proceso ambos agentes en conjunto'
 fi
 generated_count="$(find "$WORK/dist" -type f 2>/dev/null | wc -l | tr -d '[:space:]')"
-[ "$generated_count" = 4 ] && pass 'la integracion genera exactamente cuatro salidas' || fail "la integracion genero $generated_count salidas, no cuatro"
+[ "$generated_count" = 6 ] && pass 'la integracion genera cuatro agentes y dos inventarios' || fail "la integracion genero $generated_count salidas, no seis"
+if jq -e '.schemaVersion == 1 and .assets == []' "$WORK/dist/claude/.mefisto-generated-assets.json" "$WORK/dist/opencode/.mefisto-generated-assets.json" >/dev/null; then
+    pass 'los adaptadores sin assets productivos generan inventarios vacios validos'
+else
+    fail 'los inventarios vacios de integracion son invalidos'
+fi
 for runtime in claude opencode; do
     for agent in tooling-writer tooling-reviewer; do
         if cmp -s "$FIXTURES/expected-$runtime-$agent.md" "$WORK/dist/$runtime/agents/$agent.md"; then

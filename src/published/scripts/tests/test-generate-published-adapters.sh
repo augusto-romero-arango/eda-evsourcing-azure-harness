@@ -55,7 +55,7 @@ OUT="$WORK/salida con espacios"
 "$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md"; rc=$?
 assert_rc "$rc" 0 'dos adaptadores procesan fuente y paths con espacios'
 [ -f "$OUT/dist/alpha/artefactos/valida con espacios.md" ] && [ -f "$OUT/dist/beta/artefactos/valida con espacios.md" ] && pass 'salidas de ambos adaptadores' || fail 'faltan salidas'
-[ -f "$OUT/dist/alpha/.mefisto-generated-assets.json" ] && pass 'inventario creado tambien sin extension' || fail 'falta inventario sin extension'
+[ ! -e "$OUT/dist/alpha/.mefisto-generated-assets.json" ] && pass 'adaptador sin extension conserva su arbol anterior' || fail 'adaptador sin extension recibio inventario'
 if [ "$(sed -n '4p' "$OUT/dist/beta/artefactos/valida con espacios.md")" = '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/valida con espacios.md. No editar a mano. -->' ]; then
     pass 'el marcador puede ir despues del frontmatter'
 else
@@ -95,6 +95,14 @@ inventory="$OUT/dist/assets/.mefisto-generated-assets.json"
 jq -e '.schemaVersion == 1 and (.assets | length) == 2 and .assets[0].source == "src/published/assets/config.txt" and .assets[1].mode == "0755" and (.assets[] | .sha256 | length == 64)' "$inventory" >/dev/null && pass 'inventario determinista atribuye assets' || fail 'inventario de assets invalido'
 check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
 [ "$rc" -eq 0 ] && pass '--check acepta assets e inventario al dia' || fail "--check acepta assets e inventario al dia (exit $rc: $check_out)"
+printf 'alterado\n' > "$OUT/dist/assets/runtime/config.json"
+check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
+assert_rc "$rc" 1 '--check detecta asset distinto'; case "$check_out" in *'dist/assets/runtime/config.json: distinta'*) pass 'diagnostico asset distinto';; *) fail 'sin diagnostico asset distinto';; esac
+"$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null
+rm "$OUT/dist/assets/runtime/config.json"
+check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
+assert_rc "$rc" 1 '--check detecta asset faltante'; case "$check_out" in *'dist/assets/runtime/config.json: faltante'*) pass 'diagnostico asset faltante';; *) fail 'sin diagnostico asset faltante';; esac
+"$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null
 chmod 0644 "$OUT/dist/assets/bin/launcher"
 check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
 assert_rc "$rc" 1 '--check detecta modo divergente'; case "$check_out" in *'dist/assets/bin/launcher: modo divergente'*) pass 'diagnostico modo divergente';; *) fail 'sin diagnostico modo divergente';; esac
@@ -103,16 +111,28 @@ printf '{"schemaVersion":0,"assets":[]}' > "$inventory"
 check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
 assert_rc "$rc" 1 '--check detecta inventario inconsistente'; case "$check_out" in *'dist/assets/.mefisto-generated-assets.json: inventario inconsistente'*) pass 'diagnostico inventario inconsistente';; *) fail 'sin diagnostico inventario inconsistente';; esac
 "$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null
+check_out="$(FIXTURE_ASSETS=uno "$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
+assert_rc "$rc" 1 '--check detecta asset huerfano'; case "$check_out" in *'dist/assets/bin/launcher: huerfana'*) pass 'diagnostico asset huerfano';; *) fail 'sin diagnostico asset huerfano';; esac
 first="$(shasum "$OUT/dist/assets/.mefisto-generated-assets.json" "$OUT/dist/assets/runtime/config.json" | shasum)"
 "$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null
 second="$(shasum "$OUT/dist/assets/.mefisto-generated-assets.json" "$OUT/dist/assets/runtime/config.json" | shasum)"
 [ "$first" = "$second" ] && pass 'assets e inventario son deterministas' || fail 'assets o inventario no son deterministas'
+before="$(shasum "$OUT/dist/assets/.mefisto-generated-assets.json" "$OUT/dist/assets/runtime/config.json" "$OUT/dist/assets/bin/launcher" | shasum)"
+FIXTURE_ASSETS=render-fallar "$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null 2>&1; rc=$?
+after="$(shasum "$OUT/dist/assets/.mefisto-generated-assets.json" "$OUT/dist/assets/runtime/config.json" "$OUT/dist/assets/bin/launcher" | shasum)"
+[ "$rc" -eq 1 ] && [ "$before" = "$after" ] && pass 'fallo de render conserva intactas todas las raices previas' || fail 'fallo de render publico una salida parcial'
 
-for scenario in colision duplicado mismo-destino inseguro destino-inseguro ausente modo fallar render-fallar; do
+for scenario in colision colision-anidada duplicado mismo-destino destinos-anidados inventario inseguro id-inseguro destino-inseguro ausente symlink modo invalido fallar render-fallar; do
     setup_repo "asset-$scenario"; add_assets_adapter
+    ln -s "$WORK/fuera-del-repo" "$TEST_REPO/src/published/assets/link"
+    printf 'fuera\n' > "$WORK/fuera-del-repo"
     GEN="$TEST_REPO/src/published/scripts/generate-published-adapters.sh"; OUT="$WORK/asset-$scenario-out"
-    FIXTURE_ASSETS="$scenario" "$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null 2>&1; rc=$?
+    diagnostic="$(FIXTURE_ASSETS="$scenario" "$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" 2>&1)"; rc=$?
     assert_rc "$rc" 1 "asset $scenario se rechaza antes de publicar"
+    case "$scenario" in
+        fallar|render-fallar) ;;
+        *) case "$diagnostic" in *'adapter-assets.sh'*) pass "asset $scenario identifica su adaptador";; *) fail "asset $scenario no identifica su adaptador";; esac ;;
+    esac
     [ ! -e "$OUT" ] && pass "asset $scenario no deja salida parcial" || fail "asset $scenario creo salida"
 done
 

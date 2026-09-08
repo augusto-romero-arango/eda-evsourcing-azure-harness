@@ -6,7 +6,8 @@
 # Uso: generate-published-adapters.sh [--check] [--out <raiz>] [archivo...]
 # Sin archivos valida y procesa src/published/{agents,commands}/*.md en orden
 # LC_ALL=C. --out es la raiz que contiene dist/ (principalmente para tests).
-# --check nunca crea --out y lista <ruta>: faltante|distinta|huerfana|sin marcador.
+# --check nunca crea --out y lista <ruta>: faltante|distinta|huerfana|sin
+# marcador|modo divergente|inventario inconsistente.
 #
 # Interfaz de un adaptador ejecutable adapter-<runtime>.sh:
 #   root                          imprime su raiz relativa bajo --out (p.ej. dist/foo)
@@ -25,10 +26,11 @@
 # `source` y `destination` son rutas repo-relativas y relativas a la raiz del
 # adaptador, respectivamente; `mode` es 0644 o 0755. Los adaptadores previos a
 # esta extension pueden rechazar `assets` sin salida y conservan su conducta.
-# Los adaptadores que implementan la extension deben diagnosticar por stderr
-# cualquier fallo de enumeracion para diferenciarlo de esa ausencia heredada.
-# El motor escribe `.mefisto-generated-assets.json` en cada raiz: es su
-# inventario versionado (schemaVersion 1), no el manifest de releases.
+# La ausencia heredada se indica rechazando `assets` sin salida. Cualquier
+# salida junto a un exit no-cero se considera un fallo de enumeracion. El motor
+# escribe `.mefisto-generated-assets.json` solo en las raices cuyo adaptador
+# implementa `assets`: es su inventario versionado (schemaVersion 1), no el
+# manifest de releases.
 
 set -uo pipefail
 export LC_ALL=C
@@ -84,7 +86,11 @@ file_mode() {
 }
 
 sha256() {
-    shasum -a 256 "$1" | cut -d ' ' -f 1
+    if command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | cut -d ' ' -f 1
+    else
+        sha256sum "$1" | cut -d ' ' -f 1
+    fi
 }
 
 while [ $# -gt 0 ]; do
@@ -160,6 +166,7 @@ trap cleanup EXIT
 GENERATED=()
 ASSET_PLANS=()
 ASSET_COUNT=0
+ASSET_ROOTS=()
 
 for root in "${ROOTS[@]}"; do
     mkdir -p "$STAGE_DIR/$root" || usage_error "no se pudo preparar el staging"
@@ -223,6 +230,7 @@ for adapter_index in "${!ADAPTERS[@]}"; do
         fi
         continue
     fi
+    ASSET_ROOTS+=("$root")
     jq -e 'type == "array" and all(.[]; type == "object" and (keys | sort) == ["destination", "id", "mode", "source"] and (.id | type == "string") and (.source | type == "string") and (.destination | type == "string") and (.mode | type == "string"))' "$assets_stdout" >/dev/null 2>&1 || usage_error "$adapter_name declaro assets suplementarios invalidos"
     while IFS= read -r asset; do
         asset_id="$(printf '%s' "$asset" | jq -r '.id')"
@@ -237,15 +245,19 @@ for adapter_index in "${!ADAPTERS[@]}"; do
         absolute_asset_source="$asset_source_dir/$(basename "$asset_source")"
         case "$absolute_asset_source" in "$REPO_ROOT"/*) ;; *) usage_error "$adapter_name asset '$asset_id' declaro una fuente fuera del repositorio: $asset_source" ;; esac
         [ -f "$absolute_asset_source" ] || usage_error "$adapter_name asset '$asset_id' declaro una fuente ausente: $asset_source"
+        [ ! -L "$absolute_asset_source" ] || usage_error "$adapter_name asset '$asset_id' declaro una fuente fuera del repositorio mediante symlink: $asset_source"
         full_rel="$root/$asset_destination"
+        paths_overlap "$full_rel" "$root/.mefisto-generated-assets.json" && usage_error "$adapter_name asset '$asset_id' colisiona con el inventario del motor: $full_rel"
         for plan in ${ASSET_PLANS[@]+"${ASSET_PLANS[@]}"}; do
             plan_adapter="$(printf '%s' "$plan" | jq -r '.adapter')"
             plan_id="$(printf '%s' "$plan" | jq -r '.id')"
             plan_destination="$(printf '%s' "$plan" | jq -r '.destination')"
             [ "$plan_adapter:$plan_id" != "$adapter_name:$asset_id" ] || usage_error "$adapter_name asset '$asset_id' repite un id"
-            [ "$plan_destination" != "$full_rel" ] || usage_error "$adapter_name asset '$asset_id' colisiona en destino con otro asset: $full_rel"
+            ! paths_overlap "$plan_destination" "$full_rel" || usage_error "$adapter_name asset '$asset_id' colisiona en destino con otro asset: $full_rel"
         done
-        generated_contains "$full_rel" && usage_error "$adapter_name asset '$asset_id' colisiona con salida agent/command: $full_rel"
+        for generated_path in ${GENERATED[@]+"${GENERATED[@]}"}; do
+            ! paths_overlap "$generated_path" "$full_rel" || usage_error "$adapter_name asset '$asset_id' colisiona con salida agent/command: $full_rel"
+        done
         mkdir -p "$(dirname "$STAGE_DIR/$full_rel")" || usage_error "no se pudo preparar $full_rel"
         if ! "$adapter" render-asset "$asset_id" "$absolute_asset_source" > "$STAGE_DIR/$full_rel"; then
             printf "ERROR: %s no pudo renderizar el asset '%s'; no se escribio nada\n" "$adapter_name" "$asset_id" >&2
@@ -258,7 +270,7 @@ for adapter_index in "${!ADAPTERS[@]}"; do
     done < <(jq -c '.[]' "$assets_stdout")
 done
 
-for root in "${ROOTS[@]}"; do
+for root in ${ASSET_ROOTS[@]+"${ASSET_ROOTS[@]}"}; do
     inventory="$root/.mefisto-generated-assets.json"
     if [ "$ASSET_COUNT" -eq 0 ]; then
         inventory_assets='[]'
@@ -276,6 +288,15 @@ is_supplemental_asset() {
     for plan in "${ASSET_PLANS[@]}"; do
         [ "$(printf '%s' "$plan" | jq -r '.destination')" = "$needle" ] && return 0
     done
+    return 1
+}
+
+was_supplemental_asset() {
+    local inventory="$1" needle="$2" destination
+    [ -f "$inventory" ] || return 1
+    while IFS= read -r destination; do
+        [ "$destination" = "$needle" ] && return 0
+    done < <(jq -r '.assets[]?.destination // empty' "$inventory" 2>/dev/null)
     return 1
 }
 
@@ -307,11 +328,14 @@ if [ "$CHECK_MODE" -eq 1 ]; then
         fi
     done
     for root in "${ROOTS[@]}"; do
+        existing_inventory="$OUT_ROOT/$root/.mefisto-generated-assets.json"
         while IFS= read -r existing; do
             [ -n "$existing" ] || continue
             relpath="${existing#"$OUT_ROOT"/}"
             generated_contains "$relpath" && continue
             if has_any_generated_marker "$existing"; then
+                printf '%s: huerfana\n' "$relpath"
+            elif was_supplemental_asset "$existing_inventory" "${relpath#"$root"/}"; then
                 printf '%s: huerfana\n' "$relpath"
             elif [ "$(basename "$existing")" = '.mefisto-generated-assets.json' ]; then
                 printf '%s: inventario inconsistente\n' "$relpath"
