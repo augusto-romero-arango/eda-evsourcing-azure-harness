@@ -226,17 +226,12 @@ EOF
 cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/_mefisto-common.sh"
 cp "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" "$FAKE_MEFISTO/.claude/scripts/_mefisto-common.sh"
 cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-state.sh"
-cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-runtime.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-runtime.sh"
+cp -R "$REPO_ROOT/src/runtime" "$FAKE_MEFISTO/src/runtime"
 cp "$REPO_ROOT/.claude/scripts/mefisto-tmux-pipeline.sh" "$FAKE_MEFISTO/.claude/scripts/mefisto-tmux-pipeline.sh"
 cp "$REPO_ROOT/src/internal/scripts/mefisto-tmux-pipeline.sh" "$FAKE_MEFISTO/src/internal/scripts/mefisto-tmux-pipeline.sh"
 cp "$REPO_ROOT/.claude/scripts/mefisto-herdr-pipeline.sh" "$FAKE_MEFISTO/.claude/scripts/mefisto-herdr-pipeline.sh"
 cp "$REPO_ROOT/src/internal/scripts/mefisto-herdr-pipeline.sh" "$FAKE_MEFISTO/src/internal/scripts/mefisto-herdr-pipeline.sh"
-# Adaptadores de runtime reales (issue #928): mefisto-herdr-pipeline.sh ahora
-# sourcea mefisto-runtime.sh y acquire_report_pane invoca
-# mefisto_resolve_runtime -- mismo criterio que test-mefisto-tooling-variant.sh
-# / test-tooling-state-paths.sh, se copian los reales en vez de vacios.
-cp "$REPO_ROOT/src/internal/scripts/lib/runtime-claude.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/runtime-claude.sh"
-cp "$REPO_ROOT/src/internal/scripts/lib/runtime-opencode.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/runtime-opencode.sh"
+# Los lanzadores resuelven el runtime desde el nucleo comun del fixture.
 (cd "$FAKE_MEFISTO" && git init -q && git -c user.email="test@example.com" -c user.name="Test" commit --allow-empty -q -m "commit inicial")
 
 cat > "$FAKE_BIN/gh" <<'STUB'

@@ -527,6 +527,7 @@ else
     echo '{"name":"mefisto","version":"0.0.0"}' > "$H_REPO/.claude-plugin/plugin.json"
     cp "$CANON_LIB" "$H_REPO/src/internal/scripts/lib/_mefisto-common.sh"
     cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$H_REPO/src/internal/scripts/lib/mefisto-state.sh"
+    cp -R "$REPO_ROOT/src/runtime" "$H_REPO/src/runtime"
     cp "$SHIM_LIB" "$H_REPO/.claude/scripts/_mefisto-common.sh"
     cp "$METRICS_REPORT" "$H_REPO/.claude/scripts/mefisto-metrics-report.sh"
     chmod +x "$H_REPO/.claude/scripts/mefisto-metrics-report.sh"
