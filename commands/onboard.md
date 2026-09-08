@@ -72,6 +72,11 @@ Ofrece este paso **solo** cuando el diagnóstico reportó que falta `AGENTS.md` 
 Advierte que, aunque la migración es conservadora, escribe archivos del consumidor. Presenta primero el plan real con este bloque, sin aplicar cambios:
 
 ```bash
+PLUGIN_ROOT=$(cat .mefisto/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
+
 MIGRATE_SCRIPT="${PLUGIN_SCRIPTS%/}/onboard-migrate-directives.sh"
 if [ ! -f "$MIGRATE_SCRIPT" ]; then
   echo "ERROR: no se hallo onboard-migrate-directives.sh en el plugin ($MIGRATE_SCRIPT)."
@@ -225,7 +230,7 @@ Ofrece este paso siempre (a diferencia de labels/CI, no depende de que el diagno
 1. **Presenta la bifurcacion de dos caminos y pregunta cual aplica (CA-1).** Independientemente de lo que reporto el diagnostico (punto 8), presenta al usuario los dos caminos -- mapeados 1:1 a las dos etapas de MEF-ADR-0028 -- y pregunta cual elige, p. ej.: "Tu proyecto puede seguir uno de dos caminos de auth: **(A) crecer** -- va a madurar mas alla de esto y necesita autenticacion orquestada desde el inicio (WorkOS AuthKit + Azure API Management, MEF-ADR-0032; etapa `multi-tenant-header`) -- o **(B) POC** -- no va a madurar mas alla de una prueba de concepto y no necesita autenticacion (etapa `mono-tenant-transitorio`, el default). ¿Cual de los dos elegis? [A/B]".
    - Si responde **(B) POC** (o no sabe / prefiere decidir despues): el camino vigente es (a), `mono-tenant-transitorio`. Si el token ya esta ausente o ya vale eso, no hay nada que escribir (CA-2) -- informa y termina el paso sin tocar el archivo.
    - Si responde **(A) crecer**: el camino vigente es (b), `multi-tenant-header`.
-2. **No escribas nada sin confirmar el valor exacto (mismo patron que las provisiones anteriores).** Muestra el valor que vas a escribir/actualizar y pide confirmacion explicita, p. ej.: "Voy a escribir `tenancy.strategy = \"multi-tenant-header\"` en `.claude/harness.config.json`. ¿Confirmas? [si/no]". Si el usuario no confirma, no toques el archivo: recuerdale que puede editarlo a mano y termina el paso. El comportamiento por defecto de `/onboard` sigue siendo solo diagnostico.
+2. **No escribas nada sin confirmar el valor exacto (mismo patron que las provisiones anteriores).** Muestra el valor que vas a escribir/actualizar y la ruta efectiva que resolvió el harness, y pide confirmacion explicita, p. ej.: "Voy a escribir `tenancy.strategy = \"multi-tenant-header\"` en el config canónico `.mefisto/harness.config.json`. ¿Confirmas? [si/no]". Si el usuario no confirma, no toques el archivo: recuerdale que puede editarlo a mano y termina el paso. El comportamiento por defecto de `/onboard` sigue siendo solo diagnostico.
 3. **Solo si el usuario confirma**, escribe/actualiza el campo con `jq`, preservando el resto del archivo:
 
 ```bash
@@ -234,11 +239,24 @@ if [ -f "$REPO_ROOT/.claude-plugin/plugin.json" ]; then
   echo "ERROR: /onboard no aplica al repo de Mefisto."; exit 1
 fi
 
-CONFIG=".claude/harness.config.json"
+PLUGIN_ROOT=$(cat .mefisto/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
+COMMON="${PLUGIN_SCRIPTS%/}/_pipeline-common.sh"
+if [ ! -f "$COMMON" ]; then
+  echo "ERROR: no se hallo _pipeline-common.sh en el plugin ($COMMON)."
+  exit 1
+fi
+source "$COMMON"
+CONFIG=$(resolve_harness_config_path write "$REPO_ROOT") || exit 1
 ESTRATEGIA="<mono-tenant-transitorio|multi-tenant-header>"  # la que confirmo el usuario en el paso 2
 
-if [ ! -f "$CONFIG" ]; then
-  echo "ERROR: no existe $CONFIG. Crealo primero (ver README, seccion \"Configurar el consumidor\")."
+if ! load_harness_config >/dev/null; then
+  echo "ERROR: el config efectivo no es válido. Corrígelo antes de escribir $CONFIG."
+elif [ "$HARNESS_CONFIG_PATH" != "$CONFIG" ]; then
+  echo "ERROR: el config efectivo todavía es legacy ($HARNESS_CONFIG_PATH)."
+  echo "       Migra primero el config a $CONFIG; los escritores nuevos no modifican la ruta legacy."
 elif ! command -v jq >/dev/null 2>&1; then
   echo "ERROR: jq no esta instalado. Requerido para escribir $CONFIG."
 else

@@ -15,8 +15,8 @@
 # directivas canónicas en AGENTS.md y su puente CLAUDE.md, estructura de carpetas, labels de GitHub,
 # CI hacia Azure, secretos que alimentan la siembra en Key Vault, el registro
 # secrets[], la bifurcacion de dos caminos de auth (tenancy.strategy) y el
-# worker de proyecciones. Las provisiones opt-in (labels, CI, tenancy,
-# proyecciones) viven en los pasos 3-6 de commands/onboard.md, que invocan
+# worker de proyecciones. Las provisiones opt-in (directivas, labels, CI,
+# tenancy, proyecciones) viven en los pasos 3-7 de commands/onboard.md e invocan
 # otros scripts bajo confirmacion explicita del usuario -- este script nunca
 # escribe ni ejecuta ninguno de ellos.
 #

@@ -38,6 +38,10 @@ CLAUDE="$REPO_ROOT/CLAUDE.md"
 CREATE_AGENTS=0
 CREATE_CLAUDE=0
 ADD_IMPORT=0
+BOUNDED_CONTEXT_DOMAINS=$(jq -r '.boundedContext.domains | join(", ")' "$HARNESS_CONFIG_PATH") || {
+    echo "ERROR: no se pudieron derivar los dominios desde $HARNESS_CONFIG_PATH; no se modificó nada." >&2
+    exit 1
+}
 
 # Rechazar enlaces evita que una operación publicada escape del consumidor.
 for destination in "$AGENTS" "$CLAUDE"; do
@@ -120,7 +124,7 @@ if [ "$CREATE_AGENTS" -eq 1 ]; then
 - **SolutionFile**: $HARNESS_SOLUTION_FILE
 - **ProjectDisplayName**: $HARNESS_PROJECT_NAME
 - **BoundedContext**: $HARNESS_BC_NAME
-- **BoundedContextDomains**: ${HARNESS_BC_DOMAINS// /, }
+- **BoundedContextDomains**: $BOUNDED_CONTEXT_DOMAINS
 
 ### Verificación de fuentes (obligatorio para agentes)
 
