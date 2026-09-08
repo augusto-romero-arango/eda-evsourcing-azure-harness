@@ -24,6 +24,7 @@ out=$(bash "$VALIDATOR" "$FIXTURES/valid/interactive-hooks.json" 2>&1); [ $? -eq
 expected_error() {
     case "$1" in
         action-without-contract.jq) echo "accion sin contrato" ;;
+        additional-persisted-field.jq) echo "allowlist de campos persistibles divergente" ;;
         delivery-divergent.jq) echo "delivery divergente" ;;
         duplicate-id.jq) echo "id duplicado" ;;
         extra-property.jq) echo "propiedad adicional o faltante" ;;
@@ -50,6 +51,21 @@ for fixture in "$FIXTURES"/invalid/*.jq; do
         fail "$(basename "$fixture") fue aceptado"
     else
         fail "$(basename "$fixture") fue rechazado por otro motivo: $out"
+    fi
+done
+
+echo "[legacy-release-marker] reservado a record-active-release"
+for index in 1 2 3 4 5; do
+    candidate="$WORK/legacy-release-marker-$index.json"
+    jq ".bindings[$index].destinations += [\"legacy-release-marker\"]" "$FIXTURES/valid/interactive-hooks.json" > "$candidate"
+    out=$(bash "$VALIDATOR" "$candidate" 2>&1)
+    rc=$?
+    if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qF "destinos no coinciden con su contrato"; then
+        pass "binding $index rechaza legacy-release-marker"
+    elif [ "$rc" -eq 0 ]; then
+        fail "binding $index acepto legacy-release-marker"
+    else
+        fail "binding $index rechazo legacy-release-marker por otro motivo: $out"
     fi
 done
 
