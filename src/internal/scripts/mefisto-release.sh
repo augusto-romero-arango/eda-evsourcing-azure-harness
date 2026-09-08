@@ -656,7 +656,13 @@ cleanup_publish_temporaries() {
     [ -n "$NOTES_FILE" ] && rm -f "$NOTES_FILE"
     [ -n "$ASSETS_DIR" ] && rm -rf "$ASSETS_DIR"
 }
-trap cleanup_publish_temporaries EXIT HUP INT TERM
+trap cleanup_publish_temporaries EXIT
+# Un trap de senal que solo limpia y retorna permitiria que Bash continuara el
+# publish. Salir explicitamente garantiza que nunca se alcance el tag despues
+# de una interrupcion; el trap EXIT realiza la limpieza una sola vez.
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 [ -x "$OPENCODE_PACKAGER" ] || abort "No existe o no es ejecutable el packager OpenCode: ${OPENCODE_PACKAGER}"
 ASSETS_DIR=$(mktemp -d) || abort "No se pudo crear el temporal para los assets OpenCode"
@@ -729,7 +735,16 @@ if ! RELEASE_URL=$(gh release create "$NEW_TAG" \
         --notes-file "$NOTES_FILE" \
         "$TARBALL_FILE" \
         "$CHECKSUM_FILE"); then
-    abort "No se pudo crear el GitHub Release ${NEW_TAG}. El tag ya esta pusheado; no reedites la version ni el tag. Recupera creando el release existente con las notas completas de CHANGELOG y ambos assets: gh release create ${NEW_TAG} --title ${NEW_TAG} --notes-file <notas-de-${NEW_VERSION}> <${TARBALL_NAME}> <${CHECKSUM_NAME}>."
+    log_error "No se pudo crear el GitHub Release ${NEW_TAG}. El tag ya esta pusheado; no reedites la version ni el tag."
+    cat >&2 <<EOF
+Recuperacion (ejecuta el bloque completo desde la raiz del repo):
+  recovery_assets=\$(mktemp -d); recovery_notes=\$(mktemp)
+  trap 'rm -rf "\$recovery_assets"; rm -f "\$recovery_notes"' EXIT
+  src/published/scripts/package-opencode-release.sh --output "\$recovery_assets"
+  python3 -c 'import re,sys; text=open(sys.argv[1], encoding="utf-8").read(); match=re.search(r"(?ms)^##\\s*\\[" + re.escape(sys.argv[2]) + r"\\][^\\n]*\\n(.*?)(?=^##\\s*\\[|^\\[Unreleased\\]:|\\Z)", text); print(match.group(1).strip()) if match else sys.exit(1)' CHANGELOG.md "${NEW_VERSION}" > "\$recovery_notes"
+  gh release create "${NEW_TAG}" --title "${NEW_TAG}" --notes-file "\$recovery_notes" "\$recovery_assets/${TARBALL_NAME}" "\$recovery_assets/${CHECKSUM_NAME}"
+EOF
+    exit 1
 fi
 
 log_success "GitHub Release publicado: ${RELEASE_URL}"
