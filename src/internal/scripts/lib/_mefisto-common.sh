@@ -1560,7 +1560,7 @@ agent_work_is_trustworthy() {
 # `<log_base>.events.jsonl` que run_agent escribe traduciendo la traza cruda
 # del runtime con runtime_<id>_translate (issue #906, MEF-ADR-0049). Ya no
 # interpreta el vocabulario de ningun runtime concreto: todo lo que imprime
-# sale del vocabulario cerrado de src/internal/contract/run-events.schema.json.
+# sale del vocabulario cerrado de src/runtime/contract/run-events.schema.json.
 # El evento terminal (`run.completed`/`run.failed`) ya trae runtime, model,
 # status, duration_ms, tokens{input,output}, cost_usd, turns, denials,
 # ttft_ms, api_duration_ms y error{kind,detail}|null calculados por el

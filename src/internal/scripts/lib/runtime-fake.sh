@@ -6,8 +6,7 @@
 # invalido) por variable de entorno.
 #
 # Implementa la interfaz de funciones que todo adaptador de runtime debe
-# exponer (ver src/internal/contract/README.md, "Protocolo de ejecucion y
-# eventos"):
+# exponer (ver src/internal/contract/README.md, "Interfaz de adaptador"):
 #   runtime_fake_build_cmd <agent> <cwd> <prompt_file> <model> <system_file>
 #                          [<resume_session_id>]
 #     Rellena el array global MEFISTO_RUNTIME_CMD con el argv a invocar via

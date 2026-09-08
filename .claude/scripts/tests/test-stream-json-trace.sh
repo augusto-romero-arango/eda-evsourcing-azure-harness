@@ -7,7 +7,7 @@
 # ningun runtime concreto (MEF-ADR-0049 decision 1) -- lee el
 # `<log_base>.events.jsonl` que run_agent escribe traduciendo cada intento con
 # runtime_claude_translate (#859), y solo conoce el vocabulario neutral de
-# `src/internal/contract/run-events.schema.json`: `message{kind}`,
+# `src/runtime/contract/run-events.schema.json`: `message{kind}`,
 # `tool.started{tool}` y el evento terminal (`run.completed`/`run.failed`)
 # con su `error{kind, detail}`. La traza cruda de Claude sigue guardandose
 # (`.stream.jsonl`) solo para diagnostico -- ningun test de este archivo la

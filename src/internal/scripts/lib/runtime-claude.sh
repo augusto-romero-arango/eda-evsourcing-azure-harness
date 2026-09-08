@@ -2,8 +2,8 @@
 # runtime-claude.sh -- Adaptador de runtime Claude Code (MEF-ADR-0049, issue
 # #859). Unico lugar del repo (fuera de tests/fixtures/shims generados) que
 # compone la invocacion `claude -p` y traduce su stream-json al JSONL neutral
-# de src/internal/contract/run-events.schema.json -- ver
-# src/internal/contract/README.md, "Protocolo de ejecucion y eventos".
+# de src/runtime/contract/run-events.schema.json -- ver
+# src/runtime/contract/README.md.
 #
 # Claude Code sigue siendo runtime soportado por compatibilidad, nunca
 # dependencia del nucleo (MEF-ADR-0049): ningun otro archivo del harness debe

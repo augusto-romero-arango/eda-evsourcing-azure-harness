@@ -73,7 +73,7 @@
 #      propio stdout, ver arriba). Sin stderr, el detalle nombra el exit code.
 #   3. TIMEOUT no se clasifica aqui: lo sintetiza mefisto-run-agent.sh con el
 #      reloj de pared que envuelve la invocacion completa (ver
-#      src/internal/contract/README.md, "Exactamente un evento terminal").
+#      src/runtime/contract/README.md, "Terminales, estado y fallo").
 #   4. Stream vacio (cero lineas no vacias, incluido exit desconocido) ->
 #      failed{error.kind:no_result}.
 #   5. Alguna linea no vacia que no parseo como objeto JSON -> failed
