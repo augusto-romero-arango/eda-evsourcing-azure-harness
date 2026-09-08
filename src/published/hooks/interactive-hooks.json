@@ -31,7 +31,7 @@
       "signal": "file.changed",
       "action": "append-file-change",
       "destinations": ["canonical-state", "human-log"],
-      "persistedFields": ["timestamp", "family", "file_path"],
+      "persistedFields": ["time", "family", "file_path"],
       "delivery": {"mode": "sync", "failure": "continue", "timeoutSeconds": null}
     },
     {
@@ -39,7 +39,7 @@
       "signal": "dotnet-test.completed",
       "action": "append-dotnet-test-result",
       "destinations": ["canonical-state", "human-log"],
-      "persistedFields": ["timestamp", "family", "result"],
+      "persistedFields": ["time", "family", "result"],
       "delivery": {"mode": "sync", "failure": "continue", "timeoutSeconds": null}
     },
     {
@@ -47,7 +47,7 @@
       "signal": "terraform.completed",
       "action": "append-terraform-result",
       "destinations": ["canonical-state", "human-log"],
-      "persistedFields": ["timestamp", "family", "terraform_subcommand", "result"],
+      "persistedFields": ["time", "family", "terraform_subcommand", "result"],
       "delivery": {"mode": "sync", "failure": "continue", "timeoutSeconds": null}
     }
   ]

@@ -1,1 +1,1 @@
-.bindings[0].release = "CLAUDE_PLUGIN_ROOT"
+.bindings[0].id = "claude-release"

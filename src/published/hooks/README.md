@@ -9,9 +9,9 @@ La persistencia se rige por allowlist (MEF-ADR-0025). Ningún binding conserva p
 | `record-active-release` | identidad de la distribución activa observable | Solo `release_identity` en `canonical-state` y `release-identity`; no fija una ruta heredada | `SessionStart`, primer comando |
 | `append-session` | `session_id`, `transcript_path`, `cwd`, `source`, `timestamp`, `harness_version` | Esas seis claves, exactamente, en `canonical-state` y `session-registry`; `harness_version` es `null` si no es observable | `SessionStart`, segundo comando |
 | `remind-field-notes` | finalización de planificación | Solo el recordatorio visible al usuario en `human-log`; no persiste datos | `PostToolUse` con matcher `ExitPlanMode` |
-| `append-file-change` | path del archivo cambiado | `timestamp`, familia `archivo` y `file_path` en `canonical-state` y `human-log` | `PostToolUse` con matcher `Write|Edit` |
-| `append-dotnet-test-result` | resultado resumido de la prueba | `timestamp`, familia `test` y `result` resumido en `canonical-state` y `human-log` | primer comando de `PostToolUse` con matcher `Bash` |
-| `append-terraform-result` | subcomando y resultado resumido de Terraform | `timestamp`, familia `terraform`, `terraform_subcommand` y `result` resumido en `canonical-state` y `human-log` | segundo comando de `PostToolUse` con matcher `Bash` |
+| `append-file-change` | path del archivo cambiado | `time` (`HH:MM:SS` UTC), familia fija `archivo` y `file_path` en `canonical-state` y `human-log` | `PostToolUse` con matcher `Write|Edit` |
+| `append-dotnet-test-result` | resultado resumido de la prueba | `time` (`HH:MM:SS` UTC), familia fija `test` y `result` limitado a `PASS|FAIL` en `canonical-state` y `human-log` | primer comando de `PostToolUse` con matcher `Bash` |
+| `append-terraform-result` | subcomando y resultado resumido de Terraform | `time` (`HH:MM:SS` UTC), familia fija `terraform`, `terraform_subcommand` limitado a `plan|apply|init|validate` y `result` limitado a `OK|ERROR` en `canonical-state` y `human-log` | segundo comando de `PostToolUse` con matcher `Bash` |
 
 No se declara comportamiento para fin de sesión, inicio de herramienta, prompt, permiso, notificación ni compactación: no existen handlers vigentes para esas señales.
 
