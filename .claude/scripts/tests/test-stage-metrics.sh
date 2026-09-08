@@ -6,7 +6,7 @@
 # Contexto: con el puente del issue #906, `run_agent` ya escribe
 # `<log_base>.events.jsonl` traduciendo la traza cruda de cualquier runtime
 # (Claude Code, OpenCode) al vocabulario cerrado de
-# src/internal/contract/run-events.schema.json, y la clasificacion de
+# src/runtime/contract/run-events.schema.json, y la clasificacion de
 # fallos ya lee solo ese archivo. Este issue termina la migracion: las dos
 # funciones de METRICAS de _mefisto-common.sh dejan de nombrar nada propio
 # de Claude Code y pasan a leer el evento terminal (`run.completed`/

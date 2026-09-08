@@ -129,7 +129,7 @@ else
     fail "B-3: se esperaba cadena vacia, se obtuvo '$got'"
 fi
 
-FIXTURES_DIR="$REPO_ROOT/src/internal/contract/fixtures/run-events"
+FIXTURES_DIR="$REPO_ROOT/src/runtime/contract/fixtures/run-events"
 
 got=$(agent_events_resets_at "$FIXTURES_DIR/valid-rate-limit-claude.jsonl")
 if [ "$got" = "2026-05-07T22:40:00Z" ]; then

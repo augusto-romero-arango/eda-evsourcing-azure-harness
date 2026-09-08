@@ -127,13 +127,6 @@
       "motivo": "Documenta el log append-only de sesiones que el hook SessionStart anota en cada arranque, incluidas las sesiones headless de `claude -p` que corren los stages: prosa descriptiva, no invocacion."
     },
     {
-      "path": "src/internal/contract/run-events.schema.json",
-      "rules": [
-        "R1"
-      ],
-      "motivo": "Declara `model` como campo del contrato neutral de eventos de corrida (issue #858): es el modelo RESUELTO que reporta una corrida (o null si se hereda), no un alias de proveedor prohibido en frontmatter de agente/comando."
-    },
-    {
       "path": "src/internal/scripts/lib/runtime-fake.sh",
       "rules": [
         "R1"

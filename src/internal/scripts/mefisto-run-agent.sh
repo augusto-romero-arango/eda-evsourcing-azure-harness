@@ -118,7 +118,7 @@
 #     stderr -- los dos canales siguen separados (#425) -- de un stream que
 #     simplemente termino sin declarar nada.
 #
-# Ver src/internal/contract/README.md ("Protocolo de ejecucion y eventos")
+# Ver src/runtime/contract/README.md
 # para el detalle completo del contrato y su justificacion.
 #
 # Bash 3.2 + jq 1.7 (MEF-ADR-0049 CA-6): sin arrays asociativos.

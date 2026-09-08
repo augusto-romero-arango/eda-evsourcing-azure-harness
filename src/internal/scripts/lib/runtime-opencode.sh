@@ -3,8 +3,8 @@
 # #860). Unico lugar del repo (fuera de tests/fixtures/shims generados) que
 # compone la invocacion `opencode run` y traduce su `--format json` ("raw
 # JSON events", verificado en OpenCode 1.18.29) al JSONL neutral de
-# src/internal/contract/run-events.schema.json -- ver
-# src/internal/contract/README.md, "Protocolo de ejecucion y eventos".
+# src/runtime/contract/run-events.schema.json -- ver
+# src/runtime/contract/README.md.
 #
 # OpenCode es el runtime del dogfooding interno (MEF-ADR-0049 CA-5, #851):
 # ningun otro archivo del harness debe nombrar `opencode`, `--agent`, `--auto`

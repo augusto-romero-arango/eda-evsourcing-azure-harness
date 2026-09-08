@@ -6,7 +6,7 @@
 # invalido) por variable de entorno.
 #
 # Implementa la interfaz de funciones que todo adaptador de runtime debe
-# exponer (ver src/internal/contract/README.md, "Protocolo de ejecucion y
+# exponer (ver src/runtime/contract/README.md,
 # eventos"):
 #   runtime_fake_build_cmd <agent> <cwd> <prompt_file> <model> <system_file>
 #                          [<resume_session_id>]
