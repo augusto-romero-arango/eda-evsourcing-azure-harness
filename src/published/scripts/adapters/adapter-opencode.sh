@@ -156,5 +156,6 @@ case "${1:-}" in
     path)
         case "${2:-}" in src/published/agents/*.md) printf 'agents/%s\n' "$(basename "$2")" ;; src/published/commands/*.md) printf 'commands/mefisto:%s\n' "$(basename "$2")" ;; *) error "$2: path: fuente publicada desconocida" ;; esac ;;
     render) [ "$#" -eq 3 ] || error 'render: se esperaban fuente y marcador'; render "$2" "$3" ;;
-    *) error 'uso: adapter-opencode.sh root|path|render' ;;
+    assets) printf '%s\n' '[]' ;;
+    *) error 'uso: adapter-opencode.sh root|path|render|assets|render-asset' ;;
 esac
