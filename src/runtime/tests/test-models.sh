@@ -4,7 +4,6 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 MODELS="$ROOT/src/runtime/lib/mefisto-models.sh"
-INTERNAL_MODELS="$ROOT/src/internal/scripts/lib/mefisto-models.sh"
 PASS=0; FAIL=0
 pass() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail() { echo "  FAIL: $1" >&2; FAIL=$((FAIL + 1)); }
@@ -101,13 +100,6 @@ mefisto_resolve_model claude writer deep >/dev/null && assert_model '' "Claude d
 mefisto_resolve_model opencode writer fast >/dev/null && assert_model 'openai/gpt-5.6-luna' "OpenCode fast usa su default vigente"
 mefisto_resolve_model opencode writer balanced >/dev/null && assert_model 'openai/gpt-5.6-terra' "OpenCode balanced usa su default vigente"
 mefisto_resolve_model opencode writer deep >/dev/null && assert_model 'openai/gpt-5.6-sol' "OpenCode deep usa su default vigente"
-
-# El shim mantiene la firma legada hasta #1046, pero delega implementacion y
-# contrato al nucleo comun.
-MEFISTO_RUNTIME_LIB_DIR="$LIBS"
-MEFISTO_MODELS_FILE="$MAPPING"
-source "$INTERNAL_MODELS"
-mefisto_resolve_model alpha writer fast >/dev/null && assert_model 'agent model with spaces' "shim interno usa mapping legado"
 
 echo "RESULTADO modelos comunes: $PASS pasaron, $FAIL fallaron"
 [ "$FAIL" -eq 0 ]

@@ -117,22 +117,12 @@ printf '.mefisto/\n' > "$FAKE_MEFISTO/.gitignore"
 cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/_mefisto-common.sh"
 cp "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" "$FAKE_MEFISTO/.claude/scripts/_mefisto-common.sh"
 cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-state.sh"
-# runtime-claude.sh/.jq + mefisto-run-agent.sh y sus libs (issue #910):
-# mefisto-tooling-pipeline.sh ya no invoca `claude -p` directo -- lanza
-# mefisto-run-agent.sh, que resuelve runtime/modelo con estas libs. Sin
-# copiarlas, el bloque [18] (invocacion real del pipeline) aborta con "No
-# such file or directory" antes de llegar al chequeo de --variant que ese
-# bloque quiere ejercer.
-cp "$REPO_ROOT/src/internal/scripts/lib/runtime-claude.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/runtime-claude.sh"
-cp "$REPO_ROOT/src/internal/scripts/lib/runtime-claude.jq" "$FAKE_MEFISTO/src/internal/scripts/lib/runtime-claude.jq"
-cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-runtime.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-runtime.sh"
-cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-models.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-models.sh"
-cp "$REPO_ROOT/src/internal/scripts/lib/adapter-claude.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/adapter-claude.sh"
-cp "$REPO_ROOT/src/internal/scripts/lib/adapter-opencode.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/adapter-opencode.sh"
+# El bloque [18] invoca el pipeline real: copia el nucleo comun completo, no
+# los shims temporales que este corte elimina de src/internal/.
+cp -R "$REPO_ROOT/src/runtime" "$FAKE_MEFISTO/src/runtime"
 mkdir -p "$FAKE_MEFISTO/src/internal/prompts"
 cp "$REPO_ROOT/src/internal/prompts/noninteractive-system.md" "$FAKE_MEFISTO/src/internal/prompts/noninteractive-system.md"
-cp "$REPO_ROOT/src/internal/scripts/mefisto-run-agent.sh" "$FAKE_MEFISTO/src/internal/scripts/mefisto-run-agent.sh"
-chmod +x "$FAKE_MEFISTO/src/internal/scripts/mefisto-run-agent.sh"
+chmod +x "$FAKE_MEFISTO/src/runtime/mefisto-run-agent.sh"
 cp "$REPO_ROOT/.claude/scripts/mefisto-tmux-pipeline.sh" "$FAKE_MEFISTO/.claude/scripts/mefisto-tmux-pipeline.sh"
 cp "$REPO_ROOT/src/internal/scripts/mefisto-tmux-pipeline.sh" "$FAKE_MEFISTO/src/internal/scripts/mefisto-tmux-pipeline.sh"
 cp "$REPO_ROOT/.claude/scripts/mefisto-herdr-pipeline.sh" "$FAKE_MEFISTO/.claude/scripts/mefisto-herdr-pipeline.sh"

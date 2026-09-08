@@ -110,6 +110,15 @@ if grep -qF 'RUNTIME_DIR="$(cd "$SCRIPT_DIR/../../runtime" && pwd)"' "$CANON_PIP
 else
     fail "A-0: el pipeline no quedo conectado exclusivamente al nucleo comun"
 fi
+for legacy in \
+    "$REPO_ROOT/src/internal/scripts/mefisto-run-agent.sh" \
+    "$REPO_ROOT/src/internal/scripts/lib/mefisto-models.sh" \
+    "$REPO_ROOT/src/internal/scripts/lib/runtime-claude.sh" \
+    "$REPO_ROOT/src/internal/scripts/lib/runtime-opencode.sh"; do
+    if [ -e "$legacy" ]; then
+        fail "A-0: queda una frontera temporal sin consumidor: $legacy"
+    fi
+done
 
 # ============================================================================
 # [A] Arnes: origin bare + clon "fake-mefisto" + stubs de gh/claude/opencode

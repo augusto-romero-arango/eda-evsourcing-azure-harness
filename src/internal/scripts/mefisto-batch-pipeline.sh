@@ -62,7 +62,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/_mefisto-common.sh"
 assert_in_mefisto || exit 1
-source "$SCRIPT_DIR/lib/mefisto-runtime.sh"
+source "$(cd "$SCRIPT_DIR/../../runtime/lib" && pwd)/mefisto-runtime.sh"
 
 # --- Colores ---
 RED='\033[0;31m'

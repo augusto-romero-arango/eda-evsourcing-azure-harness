@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # test-runtime-claude.sh -- Tests del adaptador de runtime Claude Code
-# (MEF-ADR-0049, issue #859): src/internal/scripts/lib/runtime-claude.sh +
-# runtime-claude.jq.
+# (MEF-ADR-0049, issue #859): src/runtime/lib/runtime-claude.sh + su traductor.
 #
 # Ninguno de estos tests invoca el CLI real de Claude Code -- todo corre
 # contra una CLI `claude` FALSA (stub bash) puesta primero en el PATH, que

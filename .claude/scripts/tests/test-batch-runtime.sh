@@ -45,7 +45,7 @@ fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 CANON_BATCH="$REPO_ROOT/src/internal/scripts/mefisto-batch-pipeline.sh"
 CANON_DEPS="$REPO_ROOT/src/internal/scripts/mefisto-validate-batch-deps.sh"
 CANON_LIB="$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh"
-CANON_RUNTIME_LIB="$REPO_ROOT/src/internal/scripts/lib/mefisto-runtime.sh"
+CANON_RUNTIME="$REPO_ROOT/src/runtime"
 SHIM_BATCH="$REPO_ROOT/.claude/scripts/mefisto-batch-pipeline.sh"
 SHIM_DEPS="$REPO_ROOT/.claude/scripts/mefisto-validate-batch-deps.sh"
 
@@ -155,10 +155,10 @@ if grep -qF 'for dep in git gh jq; do' "$CANON_BATCH"; then
 else
     fail "el bucle de dependencias no comprueba exactamente git, gh, jq"
 fi
-if grep -qF 'source "$SCRIPT_DIR/lib/mefisto-runtime.sh"' "$CANON_BATCH"; then
-    pass "el pipeline sourcea lib/mefisto-runtime.sh"
+if grep -qF 'source "$(cd "$SCRIPT_DIR/../../runtime/lib" && pwd)/mefisto-runtime.sh"' "$CANON_BATCH"; then
+    pass "el pipeline sourcea el discovery comun de src/runtime"
 else
-    fail "el pipeline no sourcea lib/mefisto-runtime.sh"
+    fail "el pipeline no sourcea el discovery comun de src/runtime"
 fi
 if grep -qF 'mefisto_resolve_runtime' "$CANON_BATCH" && grep -qF 'command -v "$BATCH_RUNTIME"' "$CANON_BATCH"; then
     pass "la precondicion resuelve el runtime y verifica su CLI con command -v"
@@ -203,12 +203,7 @@ setup_fake_repo() {
 EOF
     cp "$CANON_LIB" "$dir/src/internal/scripts/lib/_mefisto-common.sh"
     cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$dir/src/internal/scripts/lib/mefisto-state.sh"
-    cp "$CANON_RUNTIME_LIB" "$dir/src/internal/scripts/lib/mefisto-runtime.sh"
-    # Adaptadores placeholder: mefisto_resolve_runtime solo comprueba que el
-    # archivo EXISTA (mismo patron que test-mefisto-run-agent.sh bloque B) --
-    # su contenido es irrelevante aqui, porque el tooling-pipeline (donde se
-    # invocaria el adaptador de verdad) esta stubbeado entero mas abajo.
-    touch "$dir/src/internal/scripts/lib/runtime-claude.sh" "$dir/src/internal/scripts/lib/runtime-opencode.sh"
+    cp -R "$CANON_RUNTIME" "$dir/src/runtime"
     cp "$CANON_BATCH" "$dir/src/internal/scripts/mefisto-batch-pipeline.sh"
     chmod +x "$dir/src/internal/scripts/mefisto-batch-pipeline.sh"
 }

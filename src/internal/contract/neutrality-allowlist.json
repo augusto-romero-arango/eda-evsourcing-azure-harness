@@ -73,36 +73,6 @@
       "motivo": "Envuelve runtime_opencode_default_model durante la migracion del generador y traduce la directiva neutral {{mefisto:run}} al literal `MEFISTO_RUNTIME=opencode ./.claude/scripts/<script> ...` (issue #854). La tabla concreta vive en src/runtime desde #1072; la fuente neutral sigue bajo R1."
     },
     {
-      "path": "src/internal/scripts/lib/runtime-claude.sh",
-      "rules": [
-        "R2"
-      ],
-      "motivo": "Compone la invocacion real `claude -p ...` del runtime Claude Code (runtime_claude_build_cmd, issue #879/#910): la UNICA pieza autorizada a invocarlo -- mefisto-run-agent.sh la sourcea en vez de invocar el CLI directo."
-    },
-    {
-      "path": "src/internal/scripts/lib/runtime-opencode.sh",
-      "rules": [
-        "R2"
-      ],
-      "motivo": "Compone la invocacion real `opencode run ...` del runtime OpenCode (runtime_opencode_build_cmd, issue #879): analogo a runtime-claude.sh para el otro runtime."
-    },
-    {
-      "path": "src/internal/scripts/lib/runtime-claude.jq",
-      "rules": [
-        "R1",
-        "R2"
-      ],
-      "motivo": "Traductor jq del stream-json de Claude Code al JSONL neutral (issue #879): cita campos/valores propios de ese wire format (incluidos alias de modelo reales) al traducirlos al contrato neutral run-events.schema.json."
-    },
-    {
-      "path": "src/internal/scripts/lib/runtime-opencode.jq",
-      "rules": [
-        "R1",
-        "R2"
-      ],
-      "motivo": "Traductor jq del wire format de OpenCode al JSONL neutral (issue #879): analogo a runtime-claude.jq para el otro runtime."
-    },
-    {
       "path": "src/internal/contract/opencode-permissions.json",
       "rules": [
         "R1",
