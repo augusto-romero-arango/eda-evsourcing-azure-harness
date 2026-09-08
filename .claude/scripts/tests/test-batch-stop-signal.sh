@@ -35,7 +35,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 CANON_BATCH="$REPO_ROOT/src/internal/scripts/mefisto-batch-pipeline.sh"
 CANON_LIB="$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh"
 CANON_STATE_LIB="$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh"
-CANON_RUNTIME_LIB="$REPO_ROOT/src/internal/scripts/lib/mefisto-runtime.sh"
+CANON_RUNTIME="$REPO_ROOT/src/runtime"
 
 PASS=0
 FAIL=0
@@ -184,8 +184,7 @@ setup_work_repo() {
 EOF
     cp "$CANON_LIB" "$dir/src/internal/scripts/lib/_mefisto-common.sh"
     cp "$CANON_STATE_LIB" "$dir/src/internal/scripts/lib/mefisto-state.sh"
-    cp "$CANON_RUNTIME_LIB" "$dir/src/internal/scripts/lib/mefisto-runtime.sh"
-    touch "$dir/src/internal/scripts/lib/runtime-claude.sh"
+    cp -R "$CANON_RUNTIME" "$dir/src/runtime"
     cp "$CANON_BATCH" "$dir/src/internal/scripts/mefisto-batch-pipeline.sh"
     chmod +x "$dir/src/internal/scripts/mefisto-batch-pipeline.sh"
 }

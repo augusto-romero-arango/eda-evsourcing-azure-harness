@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # test-runtime-opencode.sh -- Tests del adaptador de runtime OpenCode
-# (MEF-ADR-0049, issue #860): src/internal/scripts/lib/runtime-opencode.sh +
-# runtime-opencode.jq.
+# (MEF-ADR-0049, issue #860): src/runtime/lib/runtime-opencode.sh + su traductor.
 #
 # Ninguno de estos tests invoca el CLI real de OpenCode -- todo corre contra
 # una CLI `opencode` FALSA (stub bash) puesta primero en el PATH, que

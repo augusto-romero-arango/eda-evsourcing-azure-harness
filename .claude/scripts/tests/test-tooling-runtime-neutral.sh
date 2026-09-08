@@ -2,8 +2,8 @@
 # test-tooling-runtime-neutral.sh -- E2E del pipeline interno de tooling POR
 # RUNTIME, con CLIs falsas en PATH (MEF-ADR-0049, MEF-ADR-0031, issue #912).
 #
-# Hijo 3/3 de #879: #910 conecto run_agent al runner neutral
-# (mefisto-run-agent.sh), pero solo lo cubrian los tests unitarios ajustados
+# Hijo 3/3 de #879: el pipeline consume el runner neutral comun de
+# src/runtime/mefisto-run-agent.sh, pero solo lo cubrian los tests unitarios ajustados
 # (retry, stage-models, variant, state-paths). Esta suite corre el PIPELINE
 # REAL (src/internal/scripts/mefisto-tooling-pipeline.sh, via el shim
 # .claude/scripts/mefisto-tooling-pipeline.sh) de punta a punta, con CLIs
@@ -103,6 +103,23 @@ for f in "$CANON_LIB" "$CANON_PIPE" "$SHIM_LIB" "$SHIM_PIPE" \
     fi
 done
 
+if grep -qF 'RUNTIME_DIR="$(cd "$SCRIPT_DIR/../../runtime" && pwd)"' "$CANON_PIPE" \
+    && grep -qF 'RUN_AGENT_BIN_DEFAULT="$RUNTIME_DIR/mefisto-run-agent.sh"' "$CANON_PIPE" \
+    && ! grep -qF 'source "$SCRIPT_DIR/lib/mefisto-runtime.sh"' "$CANON_PIPE"; then
+    pass "A-0: el pipeline consume runtime, modelos y runner desde src/runtime/ (sin librerias internas canonicas)"
+else
+    fail "A-0: el pipeline no quedo conectado exclusivamente al nucleo comun"
+fi
+for legacy in \
+    "$REPO_ROOT/src/internal/scripts/mefisto-run-agent.sh" \
+    "$REPO_ROOT/src/internal/scripts/lib/mefisto-models.sh" \
+    "$REPO_ROOT/src/internal/scripts/lib/runtime-claude.sh" \
+    "$REPO_ROOT/src/internal/scripts/lib/runtime-opencode.sh"; do
+    if [ -e "$legacy" ]; then
+        fail "A-0: queda una frontera temporal sin consumidor: $legacy"
+    fi
+done
+
 # ============================================================================
 # [A] Arnes: origin bare + clon "fake-mefisto" + stubs de gh/claude/opencode
 # ============================================================================
@@ -176,18 +193,12 @@ setup_harness() {
 EOF
     printf '.mefisto/\n.claude/pipeline/\n' > "$FAKE_MEFISTO/.gitignore"
 
-    # Libs canonicas que el runner y el pipeline necesitan para resolver
-    # runtime/modelo sin invocar ningun CLI real (issue #910): los DOS
-    # adaptadores (claude Y opencode), a diferencia del bloque [G] de
-    # test-tooling-state-paths.sh que solo ejercita MEFISTO_RUNTIME=claude.
-    local lib
-    for lib in _mefisto-common.sh mefisto-state.sh mefisto-runtime.sh mefisto-models.sh \
-               runtime-claude.sh runtime-claude.jq adapter-claude.sh \
-               runtime-opencode.sh runtime-opencode.jq adapter-opencode.sh; do
-        cp "$REPO_ROOT/src/internal/scripts/lib/$lib" "$FAKE_MEFISTO/src/internal/scripts/lib/$lib"
-    done
+    # Solo la politica interna queda bajo src/internal/. Toda la mecanica de
+    # runtime se copia desde su frontera canonica; el fixture no trae shims.
+    cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/_mefisto-common.sh"
+    cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-state.sh"
+    cp -R "$REPO_ROOT/src/runtime" "$FAKE_MEFISTO/src/runtime"
     cp "$REPO_ROOT/src/internal/prompts/noninteractive-system.md" "$FAKE_MEFISTO/src/internal/prompts/noninteractive-system.md"
-    cp "$REPO_ROOT/src/internal/scripts/mefisto-run-agent.sh" "$FAKE_MEFISTO/src/internal/scripts/mefisto-run-agent.sh"
     # Gate de neutralidad (issue #914): el pipeline lo invoca tras cada stage
     # -- copias REALES (no un stub), byte-identicas al repo, para que el
     # escenario [F] ejercite el gate de verdad. La allowlist real trae las
@@ -204,7 +215,7 @@ EOF
     cp "$CANON_PIPE" "$FAKE_MEFISTO/src/internal/scripts/mefisto-tooling-pipeline.sh"
     cp "$SHIM_LIB" "$FAKE_MEFISTO/.claude/scripts/_mefisto-common.sh"
     cp "$SHIM_PIPE" "$FAKE_MEFISTO/.claude/scripts/mefisto-tooling-pipeline.sh"
-    chmod +x "$FAKE_MEFISTO/src/internal/scripts/mefisto-run-agent.sh" \
+    chmod +x "$FAKE_MEFISTO/src/runtime/mefisto-run-agent.sh" \
              "$FAKE_MEFISTO/src/internal/scripts/mefisto-tooling-pipeline.sh" \
              "$FAKE_MEFISTO/.claude/scripts/mefisto-tooling-pipeline.sh"
     echo "# changelog.d" > "$FAKE_MEFISTO/changelog.d/README.md"

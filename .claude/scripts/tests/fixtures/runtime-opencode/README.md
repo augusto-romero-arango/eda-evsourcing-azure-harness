@@ -2,7 +2,7 @@
 
 Capturas **reales** del stream crudo de `opencode run --format json`, congeladas
 para que `.claude/scripts/tests/test-runtime-opencode.sh` ejerza
-`src/internal/scripts/lib/runtime-opencode.{sh,jq}` sin invocar el CLI real
+`src/runtime/lib/runtime-opencode.{sh,jq}` sin invocar el CLI real
 (MEF-ADR-0049, issue #860).
 
 `--format json` esta documentado como "raw JSON events" (<https://opencode.ai/docs/cli/>)

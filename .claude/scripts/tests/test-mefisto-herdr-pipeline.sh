@@ -107,18 +107,11 @@ EOF
 printf '.mefisto/\n' > "$FAKE_MEFISTO/.gitignore"
 cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/_mefisto-common.sh"
 cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-state.sh"
-cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-runtime.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-runtime.sh"
+cp -R "$REPO_ROOT/src/runtime" "$FAKE_MEFISTO/src/runtime"
 cp "$REPO_ROOT/src/internal/scripts/mefisto-herdr-pipeline.sh" "$FAKE_MEFISTO/src/internal/scripts/mefisto-herdr-pipeline.sh"
 cp "$REPO_ROOT/.claude/scripts/mefisto-herdr-pipeline.sh" "$FAKE_MEFISTO/.claude/scripts/mefisto-herdr-pipeline.sh"
 
-# Adaptadores de runtime reales (issue #928): mefisto_resolve_runtime solo
-# chequea que "runtime-<id>.sh" exista junto a mefisto-runtime.sh, pero se
-# copian los reales (mismo criterio que test-mefisto-tooling-variant.sh /
-# test-tooling-state-paths.sh) en vez de archivos vacios -- estos tests nunca
-# corren el sub-pipeline real (el pane run del stub de herdr solo registra el
-# comando tecleado), asi que el contenido nunca se ejecuta.
-cp "$REPO_ROOT/src/internal/scripts/lib/runtime-claude.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/runtime-claude.sh"
-cp "$REPO_ROOT/src/internal/scripts/lib/runtime-opencode.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/runtime-opencode.sh"
+# Discovery y adaptadores se resuelven desde el nucleo comun del fixture.
 
 # Stub del visor: el runner interno (bloque 24) lo lanza en background contra
 # la ruta explicita ".claude/scripts/mefisto-stream-watch.sh" del repo. Sin
@@ -515,7 +508,7 @@ run_herdr --tooling 872
 rm -f "$FAKE_BIN/opencode"
 if [ "$LAST_RC" -eq 1 ]; then pass "aborta (rc=$LAST_RC)"; else fail "deberia abortar (rc=$LAST_RC)"; fi
 if printf '%s' "$LAST_STDERR" | grep -q "No se pudo resolver el runtime activo" \
-    && printf '%s' "$LAST_STDERR" | grep -q "ambos runtimes instalados"; then
+    && printf '%s' "$LAST_STDERR" | grep -q "varios runtimes disponibles"; then
     pass "mensaje: MEFISTO_RUNTIME_ERROR de runtimes ambiguos"
 else
     fail "mensaje inesperado: $LAST_STDERR"
@@ -783,7 +776,7 @@ if grep -qE ':-(claude|opencode)' "$CANON_HERDR"; then
 else
     pass "cero defaults literales de runtime (':-(claude|opencode)')"
 fi
-if grep -qF 'source "$SCRIPT_DIR/lib/mefisto-runtime.sh"' "$CANON_HERDR" \
+if grep -qF 'source "$(cd "$SCRIPT_DIR/../../runtime/lib" && pwd)/mefisto-runtime.sh"' "$CANON_HERDR" \
    && grep -qF 'runtime=$(mefisto_resolve_runtime)' "$CANON_HERDR"; then
     pass "acquire_report_pane resuelve el runtime con mefisto_resolve_runtime"
 else

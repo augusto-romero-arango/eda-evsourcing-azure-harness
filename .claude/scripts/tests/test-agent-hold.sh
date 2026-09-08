@@ -188,6 +188,8 @@ setup_run_agent_env() {
     LAST_AGENT_DURATION=0; LAST_AGENT_METRICS_JSON=""; LAST_AGENT_HOLD_SECONDS=0
 
     SCRIPT_DIR="$REPO_ROOT/src/internal/scripts"
+    RUNTIME_LIB_DIR="$REPO_ROOT/src/runtime/lib"
+    RUN_AGENT_BIN_DEFAULT="$REPO_ROOT/src/runtime/mefisto-run-agent.sh"
     MEFISTO_RUNTIME_RESUELTO="claude"
     MODEL_WRITER=""
     MODEL_REVIEWER=""

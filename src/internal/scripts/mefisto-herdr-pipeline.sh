@@ -50,7 +50,8 @@ assert_in_mefisto || exit 1
 # workspace ya no pueden compartir ni robarse panes libres entre si. Mismo
 # resolutor canonico que mefisto-tooling-pipeline.sh (mefisto_resolve_runtime,
 # nunca un default literal en esta capa neutral).
-source "$SCRIPT_DIR/lib/mefisto-runtime.sh"
+# Discovery comun; este lanzador conserva solo la orquestacion interna de panes.
+source "$(cd "$SCRIPT_DIR/../../runtime/lib" && pwd)/mefisto-runtime.sh"
 
 # --- Colores ---
 RED='\033[0;31m'

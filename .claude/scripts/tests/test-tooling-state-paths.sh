@@ -4,7 +4,7 @@
 # (MEF-ADR-0049, issue #869).
 #
 # Cubre:
-#   [pre] Los canonicos existen en src/internal/scripts/{,lib/} con sintaxis
+#   [pre] La politica interna y el nucleo comun existen con sintaxis
 #         bash valida; los shims de .claude/scripts/ tambien (CA-1).
 #   [A]   Los shims son EXACTAMENTE la plantilla documentada en
 #         src/internal/scripts/README.md: exec de 3 lineas para el pipeline,
@@ -20,7 +20,7 @@
 #         .mefisto/pipeline/summaries/, nunca bajo .claude/pipeline/ (CA-2).
 #   [F]   MEFISTO_RUNTIME se resuelve con mefisto_resolve_runtime y se conecta
 #         al runner neutral: run_agent ya no invoca `claude -p` directo, lanza
-#         mefisto-run-agent.sh (issue #910); el runtime resuelto se registra en
+#         src/runtime/mefisto-run-agent.sh (issue #910); el runtime resuelto se registra en
 #         events.log/status/historial.
 #   [G]   Corrida real con stubs (claude/gh) contra un origin bare: al cerrar
 #         Stage 1 y Stage 2, logs/, metrics/, pipeline-status-*.json y
@@ -144,6 +144,12 @@ if grep -qF 'PIPELINE_DIR="$MEFISTO_STATE_DIR"' "$CANON_PIPE"; then
 else
     fail "PIPELINE_DIR ya no se resuelve desde MEFISTO_STATE_DIR"
 fi
+if grep -qF 'INTERNAL_MODELS_FILE="$MEFISTO_REPO_ROOT/.mefisto/models.json"' "$CANON_PIPE" \
+    && grep -qF 'EVENTS_LOG_ABS="$PIPELINE_DIR_ABS/events.log"' "$CANON_PIPE"; then
+    pass "mapping interno y events.log se entregan por rutas explicitas al nucleo"
+else
+    fail "faltan rutas explicitas al mapping interno o events.log"
+fi
 if grep -qF 'mkdir -p "$WORKTREE_PATH/.mefisto/pipeline/summaries"' "$CANON_PIPE"; then
     pass "el directorio de summaries del worktree se crea bajo .mefisto/pipeline/"
 else
@@ -199,10 +205,10 @@ if [ "$RUNTIME_HISTORY_HITS" -ge 2 ]; then
 else
     fail "solo $RUNTIME_HISTORY_HITS linea(s) de historial llevan runtime: se esperan 2"
 fi
-if grep -qF 'SCRIPT_DIR/mefisto-run-agent.sh' "$CANON_PIPE"; then
-    pass "run_agent lanza mefisto-run-agent.sh (runner neutral)"
+if grep -qF 'RUN_AGENT_BIN_DEFAULT="$RUNTIME_DIR/mefisto-run-agent.sh"' "$CANON_PIPE"; then
+    pass "run_agent lanza el runner neutral comun de src/runtime/"
 else
-    fail "run_agent no lanza mefisto-run-agent.sh"
+    fail "run_agent no lanza el runner comun de src/runtime/"
 fi
 if grep -qE '^\s*claude -p "\$prompt"' "$CANON_PIPE"; then
     fail "todavia queda una invocacion directa de 'claude -p' (issue #910 la retira)"
@@ -243,20 +249,11 @@ EOF
     printf '.mefisto/\n.claude/pipeline/\n' > "$FAKE_MEFISTO/.gitignore"
     cp "$CANON_LIB" "$FAKE_MEFISTO/src/internal/scripts/lib/_mefisto-common.sh"
     cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-state.sh"
-    # runtime-claude.sh/.jq + mefisto-run-agent.sh y sus libs (issue #910):
-    # mefisto-tooling-pipeline.sh ya no invoca `claude -p` directo -- lanza
-    # mefisto-run-agent.sh, que resuelve runtime/modelo con estas libs. Sin
-    # copiarlas, la corrida real del bloque G aborta con "No such file or
-    # directory" antes de escribir un solo archivo de estado.
-    cp "$REPO_ROOT/src/internal/scripts/lib/runtime-claude.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/runtime-claude.sh"
-    cp "$REPO_ROOT/src/internal/scripts/lib/runtime-claude.jq" "$FAKE_MEFISTO/src/internal/scripts/lib/runtime-claude.jq"
-    cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-runtime.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-runtime.sh"
-    cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-models.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-models.sh"
-    cp "$REPO_ROOT/src/internal/scripts/lib/adapter-claude.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/adapter-claude.sh"
-    cp "$REPO_ROOT/src/internal/scripts/lib/adapter-opencode.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/adapter-opencode.sh"
+    # El fixture copia el nucleo completo y no conserva una segunda fuente
+    # ejecutable de runtime/modelos/runner bajo src/internal/.
+    cp -R "$REPO_ROOT/src/runtime" "$FAKE_MEFISTO/src/runtime"
     cp "$REPO_ROOT/src/internal/prompts/noninteractive-system.md" "$FAKE_MEFISTO/src/internal/prompts/noninteractive-system.md"
-    cp "$REPO_ROOT/src/internal/scripts/mefisto-run-agent.sh" "$FAKE_MEFISTO/src/internal/scripts/mefisto-run-agent.sh"
-    chmod +x "$FAKE_MEFISTO/src/internal/scripts/mefisto-run-agent.sh"
+    chmod +x "$FAKE_MEFISTO/src/runtime/mefisto-run-agent.sh"
     # Gate de neutralidad (issue #914): mefisto-tooling-pipeline.sh ahora lo
     # invoca tras cada stage, mismo motivo que runtime-claude.sh/mefisto-run-agent.sh
     # arriba -- sin el, la corrida real del bloque G aborta con "No such file
@@ -530,6 +527,7 @@ else
     echo '{"name":"mefisto","version":"0.0.0"}' > "$H_REPO/.claude-plugin/plugin.json"
     cp "$CANON_LIB" "$H_REPO/src/internal/scripts/lib/_mefisto-common.sh"
     cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$H_REPO/src/internal/scripts/lib/mefisto-state.sh"
+    cp -R "$REPO_ROOT/src/runtime" "$H_REPO/src/runtime"
     cp "$SHIM_LIB" "$H_REPO/.claude/scripts/_mefisto-common.sh"
     cp "$METRICS_REPORT" "$H_REPO/.claude/scripts/mefisto-metrics-report.sh"
     chmod +x "$H_REPO/.claude/scripts/mefisto-metrics-report.sh"

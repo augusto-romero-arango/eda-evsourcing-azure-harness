@@ -150,7 +150,7 @@ no repetir el problema de recursividad), hasta un PR real.
 **Nivel de adaptador: verificado con datos reales** (no sinteticos). Se tomo
 la salida cruda capturada de la corrida `gpt-5.4-mini-fast` de CA-1 y se le
 aplico `runtime_opencode_translate`
-(`src/internal/scripts/lib/runtime-opencode.sh:89`) directamente:
+(`src/runtime/lib/runtime-opencode.sh`) directamente:
 
 ```json
 {"v":1,"type":"message","role":"assistant","text":"LISTO", ...}

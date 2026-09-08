@@ -28,22 +28,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/_mefisto-common.sh"
 assert_in_mefisto || exit 1
 
-# Runner neutral a runtime (MEF-ADR-0049 decision 1, issue #910): run_agent ya
-# no invoca el CLI de un runtime concreto directo -- lanza src/internal/scripts/mefisto-run-agent.sh
-# (issue #858), que resuelve su propio adaptador (runtime-claude.sh/runtime-
-# opencode.sh) y escribe el JSONL neutral que consumen las funciones de
-# clasificacion de lib/_mefisto-common.sh (el puente runtime_claude_translate
-# del issue #906 se retira: el runner ya hace esa traduccion el mismo).
-# mefisto-runtime.sh resuelve el runtime activo (mefisto_resolve_runtime) y
-# mefisto-models.sh el modelo por perfil (mefisto_resolve_model), que a su vez
-# consulta la tabla fija de cada adaptador (adapter_<runtime>_default_model)
-# -- se sourcean los dos, igual que hace generate-internal-adapters.sh, sin
-# saber todavia cual de los dos runtimes resolvera mefisto_resolve_runtime
-# mas abajo.
-source "$SCRIPT_DIR/lib/mefisto-runtime.sh"
-source "$SCRIPT_DIR/lib/mefisto-models.sh"
-source "$SCRIPT_DIR/lib/adapter-claude.sh"
-source "$SCRIPT_DIR/lib/adapter-opencode.sh"
+# Frontera explicita con el nucleo comun (MEF-ADR-0053): el pipeline conserva
+# scope, prompts, worktrees y entrega internos; runtime, modelos y ejecucion
+# viven solo en src/runtime/. Las capacidades de generacion siguen siendo
+# internas y no se cargan para ejecutar stages.
+RUNTIME_DIR="$(cd "$SCRIPT_DIR/../../runtime" && pwd)"
+RUNTIME_LIB_DIR="$RUNTIME_DIR/lib"
+RUN_AGENT_BIN_DEFAULT="$RUNTIME_DIR/mefisto-run-agent.sh"
+INTERNAL_MODELS_FILE="$MEFISTO_REPO_ROOT/.mefisto/models.json"
+source "$RUNTIME_LIB_DIR/mefisto-runtime.sh"
+source "$RUNTIME_LIB_DIR/mefisto-models.sh"
 
 # Version y SHA del propio plugin que corre esta corrida (issue #662),
 # calculados UNA sola vez aqui -- ANTES de crear el worktree del issue, sobre
@@ -397,7 +391,7 @@ resolve_pipeline_stage_model() {
     # advierte de esta trampa, ver lib/mefisto-models.sh).
     local out_file
     out_file="$(mktemp)"
-    if ! mefisto_resolve_model "$MEFISTO_RUNTIME_RESUELTO" "$agent_id" "$profile" > "$out_file"; then
+    if ! mefisto_resolve_model "$MEFISTO_RUNTIME_RESUELTO" "$agent_id" "$profile" "" "$INTERNAL_MODELS_FILE" > "$out_file"; then
         rm -f "$out_file"
         abort "No se pudo resolver el modelo de $agent_id (perfil $profile): ${MEFISTO_MODELS_ERROR:-motivo desconocido}"
     fi
@@ -548,7 +542,7 @@ collect_summary() {
 # competencia exclusiva de mefisto-run-agent.sh, un proceso aparte (#910).
 runtime_supports_resume() {
     local runtime="$1"
-    local lib="${MEFISTO_RUNTIME_LIB_DIR:-$SCRIPT_DIR/lib}/runtime-${runtime}.sh"
+    local lib="${MEFISTO_RUNTIME_LIB_DIR:-${RUNTIME_LIB_DIR:-$SCRIPT_DIR/../../runtime/lib}}/runtime-${runtime}.sh"
     [ -f "$lib" ] || return 1
     (
         # shellcheck source=/dev/null
@@ -657,9 +651,8 @@ run_agent() {
         ENTRY_CLEAN=true
     fi
 
-    # Ruta del runner, overridable por entorno: los tests apuntan a un stub
-    # en vez del mefisto-run-agent.sh real, sin depender de un CLI instalado.
-    local RUN_AGENT_BIN="${MEFISTO_RUN_AGENT_BIN:-$SCRIPT_DIR/mefisto-run-agent.sh}"
+    # Ruta del runner comun, overridable por entorno para fixtures sin proveedor.
+    local RUN_AGENT_BIN="${MEFISTO_RUN_AGENT_BIN:-$RUN_AGENT_BIN_DEFAULT}"
 
     # --- Reanudacion de sesion tras un hold (issue #968) ---
     # SUMMARY_FILE se computa UNA vez aqui (mismo archivo que collect_summary

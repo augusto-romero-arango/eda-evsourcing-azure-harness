@@ -151,10 +151,15 @@ if grep -qF 'MEFISTO_STAGE_MODEL_RESUELTO="$(resolve_stage_model "$stage_key" ""
 else
     fail "no se encontro la consulta de resolve_stage_model con default vacio"
 fi
-if grep -qF 'mefisto_resolve_model "$MEFISTO_RUNTIME_RESUELTO" "$agent_id" "$profile" > "$out_file"' "$PIPE_PATH"; then
-    pass "sin override, cae a mefisto_resolve_model (runtime + id neutral + perfil)"
+if grep -qF 'mefisto_resolve_model "$MEFISTO_RUNTIME_RESUELTO" "$agent_id" "$profile" "" "$INTERNAL_MODELS_FILE" > "$out_file"' "$PIPE_PATH"; then
+    pass "sin override, cae a mefisto_resolve_model (runtime + id neutral + perfil + mapping interno)"
 else
     fail "no se encontro la resolucion via mefisto_resolve_model"
+fi
+if grep -qF 'INTERNAL_MODELS_FILE="$MEFISTO_REPO_ROOT/.mefisto/models.json"' "$PIPE_PATH"; then
+    pass "el mapping interno se pasa explicitamente al resolutor comun"
+else
+    fail "no se encontro la ruta explicita al mapping interno de modelos"
 fi
 # Redirect simple (>), nunca "$(...)": mefisto_resolve_model deja el motivo del
 # fallo en MEFISTO_MODELS_ERROR, y una sustitucion de comando lo perderia en su
@@ -221,17 +226,12 @@ EOF
 cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/_mefisto-common.sh"
 cp "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" "$FAKE_MEFISTO/.claude/scripts/_mefisto-common.sh"
 cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-state.sh"
-cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-runtime.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-runtime.sh"
+cp -R "$REPO_ROOT/src/runtime" "$FAKE_MEFISTO/src/runtime"
 cp "$REPO_ROOT/.claude/scripts/mefisto-tmux-pipeline.sh" "$FAKE_MEFISTO/.claude/scripts/mefisto-tmux-pipeline.sh"
 cp "$REPO_ROOT/src/internal/scripts/mefisto-tmux-pipeline.sh" "$FAKE_MEFISTO/src/internal/scripts/mefisto-tmux-pipeline.sh"
 cp "$REPO_ROOT/.claude/scripts/mefisto-herdr-pipeline.sh" "$FAKE_MEFISTO/.claude/scripts/mefisto-herdr-pipeline.sh"
 cp "$REPO_ROOT/src/internal/scripts/mefisto-herdr-pipeline.sh" "$FAKE_MEFISTO/src/internal/scripts/mefisto-herdr-pipeline.sh"
-# Adaptadores de runtime reales (issue #928): mefisto-herdr-pipeline.sh ahora
-# sourcea mefisto-runtime.sh y acquire_report_pane invoca
-# mefisto_resolve_runtime -- mismo criterio que test-mefisto-tooling-variant.sh
-# / test-tooling-state-paths.sh, se copian los reales en vez de vacios.
-cp "$REPO_ROOT/src/internal/scripts/lib/runtime-claude.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/runtime-claude.sh"
-cp "$REPO_ROOT/src/internal/scripts/lib/runtime-opencode.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/runtime-opencode.sh"
+# Los lanzadores resuelven el runtime desde el nucleo comun del fixture.
 (cd "$FAKE_MEFISTO" && git init -q && git -c user.email="test@example.com" -c user.name="Test" commit --allow-empty -q -m "commit inicial")
 
 cat > "$FAKE_BIN/gh" <<'STUB'
