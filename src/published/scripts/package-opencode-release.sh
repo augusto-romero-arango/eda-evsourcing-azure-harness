@@ -10,6 +10,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="${MEFISTO_PACKAGE_REPO_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd -P)}"
 GENERATOR="$REPO_ROOT/src/published/scripts/generate-published-adapters.sh"
 DIST_ROOT="$REPO_ROOT/dist/opencode"
+INSTALLER_SOURCE="$REPO_ROOT/src/published/scripts/install-opencode-release.sh"
+LAUNCHER_SOURCE="$REPO_ROOT/src/published/scripts/mefisto-opencode"
 PLUGIN_JSON="$REPO_ROOT/.claude-plugin/plugin.json"
 MINIMUM_RUNTIME_VERSION="1.18.29"
 OUTPUT_DIR="$REPO_ROOT/dist/releases"
@@ -27,6 +29,8 @@ while [ $# -gt 0 ]; do
 done
 
 [ -x "$GENERATOR" ] || usage_error "no existe o no es ejecutable el generador publicado"
+[ -f "$INSTALLER_SOURCE" ] || usage_error "no existe el instalador OpenCode"
+[ -f "$LAUNCHER_SOURCE" ] || usage_error "no existe el launcher OpenCode"
 [ -f "$PLUGIN_JSON" ] || usage_error "no existe .claude-plugin/plugin.json"
 command -v jq >/dev/null 2>&1 || usage_error "jq no esta instalado (MEF-ADR-0049: bash + jq)"
 command -v tar >/dev/null 2>&1 || usage_error "tar no esta instalado"
@@ -43,8 +47,10 @@ command -v shasum >/dev/null 2>&1 || usage_error "shasum no esta instalado"
 invalid_entry="$(find "$DIST_ROOT" -mindepth 1 \( -type l -o ! \( -type f -o -type d \) \) -print -quit)"
 [ -z "$invalid_entry" ] || usage_error "dist/opencode contiene una entrada no regular: ${invalid_entry#"$DIST_ROOT"/}"
 [ ! -e "$DIST_ROOT/mefisto-manifest.json" ] && [ ! -L "$DIST_ROOT/mefisto-manifest.json" ] || usage_error "dist/opencode no puede contener mefisto-manifest.json"
+[ ! -e "$DIST_ROOT/install.sh" ] && [ ! -L "$DIST_ROOT/install.sh" ] || usage_error "dist/opencode no puede contener install.sh"
+[ ! -e "$DIST_ROOT/bin/mefisto-opencode" ] && [ ! -L "$DIST_ROOT/bin/mefisto-opencode" ] || usage_error "dist/opencode no puede contener bin/mefisto-opencode"
 
-VERSION="$(jq -er '.version | strings | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.-]+)?$"))' "$PLUGIN_JSON" 2>/dev/null)" || usage_error "plugin.json no contiene una version SemVer valida"
+VERSION="$(jq -er '.version | strings | select(test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"))' "$PLUGIN_JSON" 2>/dev/null)" || usage_error "plugin.json no contiene una version SemVer valida"
 COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)" || usage_error "no se pudo resolver git rev-parse HEAD"
 case "$COMMIT" in *[!0123456789abcdef]*|'') usage_error "git rev-parse HEAD devolvio un commit invalido" ;; esac
 
@@ -59,6 +65,11 @@ CHECKSUM="$WORK/$CHECKSUM_NAME"
 
 mkdir -p "$STAGE" || usage_error "no se pudo preparar el staging"
 cp -pR "$DIST_ROOT/." "$STAGE/" || usage_error "no se pudo copiar dist/opencode al staging"
+cp -p "$INSTALLER_SOURCE" "$STAGE/install.sh" || usage_error "no se pudo incorporar el instalador"
+mkdir -p "$STAGE/bin" || usage_error "no se pudo preparar bin"
+chmod 0755 "$STAGE/bin" || usage_error "no se pudo normalizar bin"
+cp -p "$LAUNCHER_SOURCE" "$STAGE/bin/mefisto-opencode" || usage_error "no se pudo incorporar el launcher"
+chmod 0755 "$STAGE/install.sh" "$STAGE/bin/mefisto-opencode" || usage_error "no se pudieron normalizar los ejecutables"
 jq -n --arg version "$VERSION" --arg commit "$COMMIT" --arg minimumRuntimeVersion "$MINIMUM_RUNTIME_VERSION" \
     '{schemaVersion: 1, runtime: "opencode", version: $version, commit: $commit, minimumRuntimeVersion: $minimumRuntimeVersion}' \
     > "$STAGE/mefisto-manifest.json" || usage_error "no se pudo crear el manifiesto"

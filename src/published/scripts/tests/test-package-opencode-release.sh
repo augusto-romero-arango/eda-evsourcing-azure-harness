@@ -4,6 +4,8 @@ export LC_ALL=C
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$HERE/../../../.." && pwd -P)"
 SOURCE="$REPO_ROOT/src/published/scripts/package-opencode-release.sh"
+INSTALLER_SOURCE="$REPO_ROOT/src/published/scripts/install-opencode-release.sh"
+LAUNCHER_SOURCE="$REPO_ROOT/src/published/scripts/mefisto-opencode"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 PASS=0; FAIL=0
 pass() { printf '  PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
@@ -14,7 +16,10 @@ setup_repo() {
     TEST_REPO="$WORK/repo-$1"
     mkdir -p "$TEST_REPO/src/published/scripts" "$TEST_REPO/dist/opencode/comandos" "$TEST_REPO/.claude-plugin" "$TEST_REPO/bin"
     cp "$SOURCE" "$TEST_REPO/src/published/scripts/package-opencode-release.sh"
+    cp "$INSTALLER_SOURCE" "$TEST_REPO/src/published/scripts/install-opencode-release.sh"
+    cp "$LAUNCHER_SOURCE" "$TEST_REPO/src/published/scripts/mefisto-opencode"
     chmod +x "$TEST_REPO/src/published/scripts/package-opencode-release.sh"
+    chmod +x "$TEST_REPO/src/published/scripts/install-opencode-release.sh" "$TEST_REPO/src/published/scripts/mefisto-opencode"
     printf '{"version":"1.2.3"}\n' > "$TEST_REPO/.claude-plugin/plugin.json"
     cat > "$TEST_REPO/src/published/scripts/generate-published-adapters.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -59,7 +64,7 @@ SHA_DIGEST="${SHA_VALUE%%  *}"; SHA_FILE="${SHA_VALUE#*  }"
 [ "${#SHA_DIGEST}" -eq 64 ] && [ -z "${SHA_DIGEST//[0123456789abcdef]/}" ] && [ "$SHA_FILE" = 'mefisto-opencode-v1.2.3.tar.gz' ] && pass 'formato sha256 canonico y no interactivo' || fail 'formato sha256 invalido'
 
 EXTRACT="$WORK/extract"; mkdir "$EXTRACT"; tar -xzf "$TAR" -C "$EXTRACT"
-[ -f "$EXTRACT/mefisto-manifest.json" ] && [ -x "$EXTRACT/comandos/run.sh" ] && [ -d "$EXTRACT/directorio-vacio" ] && pass 'extrae sin envolvente y preserva ejecutable y directorios' || fail 'layout o permisos incorrectos'
+[ -f "$EXTRACT/mefisto-manifest.json" ] && [ -x "$EXTRACT/comandos/run.sh" ] && [ -x "$EXTRACT/install.sh" ] && [ -x "$EXTRACT/bin/mefisto-opencode" ] && [ -d "$EXTRACT/directorio-vacio" ] && pass 'extrae instalador, launcher y contenido sin envolvente' || fail 'layout o permisos incorrectos'
 jq -e '.schemaVersion == 1 and .runtime == "opencode" and .version == "1.2.3" and .commit == "0123456789abcdef0123456789abcdef01234567" and .minimumRuntimeVersion == "1.18.29" and (keys | length == 5)' "$EXTRACT/mefisto-manifest.json" >/dev/null && pass 'manifiesto completo, minimo y versionado' || fail 'manifiesto invalido'
 tar -tzf "$TAR" | grep -Eq '(^/|\.\./)' && fail 'tarball contiene ruta insegura' || pass 'tarball no contiene rutas inseguras'
 CONTENTS="$(tar -tzf "$TAR")"
