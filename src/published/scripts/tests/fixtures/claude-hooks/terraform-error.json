@@ -1,0 +1,1 @@
+{"tool_input":{"command":"terraform apply -var token=SENTINELA_SECRET"},"tool_result":{"exitCode":1,"output":"SENTINELA_OUTPUT"}}

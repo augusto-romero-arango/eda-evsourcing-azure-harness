@@ -44,6 +44,15 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
+# hooks/hooks.json es salida Claude-specific sin marcador JSON; su fuente y
+# sincronía se verifican por el generador dedicado, no por el generador Markdown.
+if bash "$REPO_ROOT/src/published/scripts/generate-claude-hooks.sh" --check; then
+    :
+else
+    echo "FAIL: hooks/hooks.json no coincide con generate-claude-hooks.sh" >&2
+    exit 1
+fi
+
 PASS=0
 FAIL=0
 

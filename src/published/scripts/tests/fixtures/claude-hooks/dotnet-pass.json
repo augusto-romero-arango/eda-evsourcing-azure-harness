@@ -1,0 +1,1 @@
+{"tool_input":{"command":"dotnet test --filter SENTINELA_SECRET"},"tool_result":"Passed; token=SENTINELA_TOKEN"}

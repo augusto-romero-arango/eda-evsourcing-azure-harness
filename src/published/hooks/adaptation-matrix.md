@@ -4,7 +4,7 @@ Fecha de verificación: 2026-09-08. Fuentes: [Claude Code Hooks](https://code.cl
 
 | Binding / señal neutral | Claude Code | Clasificación Claude | OpenCode | Clasificación OpenCode |
 |---|---|---|---|---|
-| `record-active-release` / `session.started` | evento `SessionStart`; escribe primero la identidad canónica y, durante la transición, refleja la misma identidad observada desde `CLAUDE_PLUGIN_ROOT` en `.claude/pipeline/.plugin-root` y elimina `.plugin-root.previous`; el fallo del reflejo continúa la sesión | equivalente con capacidad transitoria `legacy-release-marker` | evento `session.created` recibido por el hook `event` del plugin; solo identidad canónica, sin marker de compatibilidad | equivalente |
+| `record-active-release` / `session.started` | evento `SessionStart`; escribe la identidad observada desde `CLAUDE_PLUGIN_ROOT` en `.mefisto/pipeline/.plugin-root` y, durante la transición, refleja el mismo valor en `.claude/pipeline/.plugin-root` y elimina solo `.plugin-root.previous`; el fallo del reflejo continúa la sesión | equivalente con capacidad transitoria `legacy-release-marker` | evento `session.created` recibido por el hook `event` del plugin; solo identidad canónica, sin marker de compatibilidad | equivalente |
 | `append-session` / `session.started` | evento `SessionStart` | equivalente | evento `session.created` recibido por el hook `event` del plugin | equivalente |
 | `remind-field-notes` / `plan.completed` | `PostToolUse` filtrado por `ExitPlanMode` | sintetizado | no hay evento ni tool de finalización de planificación documentado | no soportado |
 | `append-file-change` / `file.changed` | `PostToolUse` filtrado por `Write|Edit` | sintetizado | `tool.execute.after`, filtrado por herramienta de escritura | sintetizado |

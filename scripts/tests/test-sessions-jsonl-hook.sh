@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-sessions-jsonl-hook.sh -- Tests del hook SessionStart que anota
-# .claude/pipeline/sessions.jsonl, y en particular del campo harness_version
+# .mefisto/pipeline/sessions.jsonl, y en particular del campo harness_version
 # (issue #661).
 #
 # Contexto: las entradas de sessions.jsonl no registraban con que version del
@@ -84,7 +84,7 @@ ejecutar_hook() {
     esac
 }
 
-ultima_linea() { tail -n 1 "$1/.claude/pipeline/sessions.jsonl" 2>/dev/null; }
+ultima_linea() { tail -n 1 "$1/.mefisto/pipeline/sessions.jsonl" 2>/dev/null; }
 
 # -------- Bloque pre: el hook existe y hooks.json es JSON valido --------
 
@@ -191,14 +191,14 @@ if env PATH="$BIN_SIN_JQ" sh -c 'command -v jq' >/dev/null 2>&1; then
     echo "  SKIP: el PATH sandbox no logro ocultar jq en este entorno"
 else
     DIR_E="$TMP/caso-e"
-    mkdir -p "$DIR_E/.claude/pipeline"
+    mkdir -p "$DIR_E/.mefisto/pipeline"
     printf '%s\n' '{"session_id":"vieja","transcript_path":"/tmp/v.jsonl","cwd":"/tmp","source":"startup","timestamp":"2026-01-01T00:00:00Z"}' \
-        > "$DIR_E/.claude/pipeline/sessions.jsonl"
-    LINEAS_ANTES=$(wc -l < "$DIR_E/.claude/pipeline/sessions.jsonl" | tr -d ' ')
+        > "$DIR_E/.mefisto/pipeline/sessions.jsonl"
+    LINEAS_ANTES=$(wc -l < "$DIR_E/.mefisto/pipeline/sessions.jsonl" | tr -d ' ')
 
     ejecutar_hook "$DIR_E" bash sin-jq "/cache/mefisto/0.25.0" 2>/dev/null
     E_RC=$?
-    LINEAS_DESPUES=$(wc -l < "$DIR_E/.claude/pipeline/sessions.jsonl" | tr -d ' ')
+    LINEAS_DESPUES=$(wc -l < "$DIR_E/.mefisto/pipeline/sessions.jsonl" | tr -d ' ')
 
     if [ "$E_RC" -eq 0 ]; then
         pass "E-1: sin jq el hook sale con 0 (se preserva el '|| true')"
@@ -252,12 +252,12 @@ fi
 echo "[G] las lineas previas del jsonl siguen siendo validas (CA-3)"
 
 DIR_G="$TMP/caso-g"
-mkdir -p "$DIR_G/.claude/pipeline"
+mkdir -p "$DIR_G/.mefisto/pipeline"
 LINEA_LEGADA='{"session_id":"legada","transcript_path":"/tmp/legada.jsonl","cwd":"/tmp","source":"startup","timestamp":"2026-01-01T00:00:00Z"}'
-printf '%s\n' "$LINEA_LEGADA" > "$DIR_G/.claude/pipeline/sessions.jsonl"
+printf '%s\n' "$LINEA_LEGADA" > "$DIR_G/.mefisto/pipeline/sessions.jsonl"
 
 ejecutar_hook "$DIR_G" bash con-valor "/cache/mefisto-marketplace/mefisto/0.26.0" >/dev/null
-G_PRIMERA=$(head -n 1 "$DIR_G/.claude/pipeline/sessions.jsonl")
+G_PRIMERA=$(head -n 1 "$DIR_G/.mefisto/pipeline/sessions.jsonl")
 
 if [ "$G_PRIMERA" = "$LINEA_LEGADA" ]; then
     pass "G-1: la linea legada (sin el campo) sobrevive byte por byte"
@@ -265,7 +265,7 @@ else
     fail "G-1: la linea legada cambio: '$G_PRIMERA'"
 fi
 
-if jq -e . "$DIR_G/.claude/pipeline/sessions.jsonl" >/dev/null 2>&1; then
+if jq -e . "$DIR_G/.mefisto/pipeline/sessions.jsonl" >/dev/null 2>&1; then
     pass "G-2: el archivo entero sigue siendo JSONL valido (legada + nueva)"
 else
     fail "G-2: el jsonl dejo de parsear tras el append"
