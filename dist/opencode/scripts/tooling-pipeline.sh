@@ -788,8 +788,7 @@ run_agent() {
         [ -z "$hold_started" ] && hold_started=$(date +%s)
         local slept resets
         resets="$(agent_events_resets_at "$events_file")"
-        if [ -n "$resets" ]; then MEFISTO_HOLD_PROBE_SECONDS=1; fi
-        if ! slept=$(agent_hold_wait "$EVENTS_LOG_ABS" "$failure_type" "$hold_started"); then break; fi
+        if ! slept=$(agent_hold_wait "$EVENTS_LOG_ABS" "$failure_type" "$hold_started" "$resets"); then break; fi
         hold_total=$((hold_total + slept))
         if [ "$attempt_resume" = true ] && [ ! -s "$WORKTREE_PATH/.mefisto/pipeline/summaries/stage-${stage}-${agent}.md" ]; then
             warn "$agent: la sesion reanudada termino sin resumen; se degrada permanentemente a inicio limpio"

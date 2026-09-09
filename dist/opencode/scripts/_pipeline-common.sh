@@ -1281,7 +1281,7 @@ agent_failure_is_holdable() {
 # rompe su bucle de espera y cae al trato ordinario de fallo. Retorna 0 tras
 # dormir en cualquier otro caso.
 agent_hold_wait() {
-    local events_log="$1" failure_type="$2" hold_started_ts="$3"
+    local events_log="$1" failure_type="$2" hold_started_ts="$3" resets_at="${4:-}"
     local hold_max="${MEFISTO_HOLD_MAX_SECONDS:-21600}"
     local hold_probe="${MEFISTO_HOLD_PROBE_SECONDS:-300}"
 
@@ -1294,6 +1294,16 @@ agent_hold_wait() {
     fi
 
     local hold_sleep="$hold_probe"
+    # El terminal neutral puede anunciar cuando se abre la ventana. El parser
+    # acepta las dos implementaciones date presentes en runtimes soportados.
+    if [ -n "$resets_at" ]; then
+        local resets_epoch
+        resets_epoch=$(date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$resets_at" +%s 2>/dev/null || date -d "$resets_at" +%s 2>/dev/null || true)
+        if [ -n "$resets_epoch" ]; then
+            hold_sleep=$((resets_epoch + 60 - now_epoch))
+            [ "$hold_sleep" -lt 1 ] && hold_sleep=1
+        fi
+    fi
     [ "$hold_sleep" -gt "$hold_remaining" ] && hold_sleep="$hold_remaining"
 
     local hold_family="${failure_type%% *}"
