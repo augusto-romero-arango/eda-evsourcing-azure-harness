@@ -55,8 +55,10 @@
 # sesiones nombradas de herdr son servidores separados: para abrir un
 # workspace en una de ellas, corre este script desde un pane de esa sesion).
 #
-# Idempotencia: en un consumidor, un workspace con el label del repo ya
-# montado solo se enfoca -- nunca duplica panes ni agentes. En el repo de
+# Idempotencia: en un consumidor normalizado, la fila OpenCode se agrega solo
+# si falta; con ambas filas el workspace solo se enfoca. Un layout legacy se
+# normaliza y se deja converger en una invocacion posterior, sin mezclar en la
+# misma operacion una migracion de labels con splits nuevos. En el repo de
 # Mefisto la idempotencia es por (workspace, runtime): una fila con label
 # `planner [<kind>]` no se toca. Las faltantes se agregan con `down` desde el
 # planner de la ultima fila existente y luego su `right`; ese agregado puede
@@ -378,8 +380,10 @@ mount_first_row() {
 
 # normalize_consumer_claude_row <workspace_id> <label>
 #
-# Renombra la fila legacy detectable sin reconstruirla. Cualquier duplicado, o
-# mezcla legacy/canonica, es ambiguo y se conserva para diagnostico humano.
+# Renombra la fila legacy detectable sin reconstruirla. Devuelve 0 solamente
+# cuando ya encontro la fila Claude completa y normalizada; devuelve 1 si hizo
+# una transicion o si el layout requiere intervencion/reintento. Asi el llamador
+# no agrega OpenCode sobre una topologia legacy en la misma invocacion.
 normalize_consumer_claude_row() {
     local ws="$1" label="$2"
     local panes_json
@@ -397,11 +401,11 @@ normalize_consumer_claude_row() {
         || { [ "$lp" -gt 0 ] && [ "$cp" -gt 0 ]; } \
         || { [ "$le" -gt 0 ] && [ "$ce" -gt 0 ]; }; then
         warn "El workspace '$label' ($ws) tiene labels Claude duplicados o ambiguos; revisa los panes 'planner'/'planner [claude]' y 'ejecucion'/'ejecucion [claude]' manualmente. Se enfoco sin modificar el layout."
-        return
+        return 1
     fi
     if [ "$lp" -eq 0 ] && [ "$cp" -eq 0 ]; then
         warn "El workspace '$label' ($ws) no contiene 'planner' ni 'planner [claude]'; se enfoco sin reconstruir panes. Renombra el planner correcto a 'planner [claude]' para normalizarlo."
-        return
+        return 1
     fi
     local renamed=0 failed=0
     if [ "$lp" -eq 1 ]; then
@@ -425,6 +429,8 @@ normalize_consumer_claude_row() {
     elif [ "$renamed" -gt 0 ]; then
         success "Workspace '$label' ($ws) normalizado a la fila Claude explicita; no se reiniciaron agentes ni se modifico el cwd."
     fi
+    [ "$failed" -eq 0 ] && [ "$renamed" -eq 0 ] \
+        && [ "$cp" -eq 1 ] && [ "$ce" -eq 1 ]
 }
 
 # mount_runtime_row <repo_root> <base_pane> <label> <planner_agent> <kind>
@@ -579,11 +585,14 @@ main() {
         return
     fi
 
-    if [ "$planner_agent" != "mefisto-planner" ]; then
-        normalize_consumer_claude_row "$existing" "$label"
+    local ws="$existing"
+    if [ "$planner_agent" != "mefisto-planner" ] \
+        && ! normalize_consumer_claude_row "$ws" "$label"; then
+        herdr workspace focus "$ws" >/dev/null 2>&1 || true
+        success "El workspace '$label' quedo enfocado; completa o reintenta la normalizacion Claude antes de agregar OpenCode."
+        return
     fi
 
-    local ws="$existing"
     herdr workspace focus "$ws" >/dev/null 2>&1 || true
     local row_panes=() last_existing="" i
     for ((i=0; i<${#runtimes[@]}; i++)); do

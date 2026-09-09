@@ -15,8 +15,10 @@ cierra ni divide panes, no reinicia agentes y no modifica el cwd. La migracion
 se completa por rol para poder reintentarse si un rename anterior quedo a
 medias. Si falta el planner, un mismo rol esta duplicado o conserva a la vez
 su label legacy y normalizado, informa un warning accionable y conserva el
-layout existente. Tras normalizar la fila Claude, una ejecucion posterior (o la
-misma si la normalizacion fue inequivoca) agrega solamente la fila OpenCode.
+layout existente. Si hubo una normalizacion, la invocacion solo enfoca: una
+ejecucion posterior, ya sobre los dos labels Claude normalizados, agrega
+solamente la fila OpenCode. Esta separacion evita dividir una topologia legacy
+parcial o ambigua.
 
 Antes de montar o enfocar, el script consulta el diagnostico de identidad con
 la raiz Claude derivada de su propio directorio y la release OpenCode activa.
@@ -26,5 +28,5 @@ impiden conservar la otra fila.
 
 La cobertura con el stub de Herdr esta en
 `scripts/tests/test-herdr-workspace.sh`: verifica argv, paths con espacios,
-migracion completa y parcial, ambiguedad e idempotencia de una fila ya
-normalizada.
+diagnosticos aligned/drift/metadata ausente/runtime ausente, fallos de arranque,
+migracion legacy, ambiguedad e idempotencia de ambas filas.
