@@ -21,17 +21,27 @@ metadata="$(awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$SOURCE")"
 if printf '%s' "$metadata" | jq -e '.kind == "command" and .id == "tooling" and .profile == "fast" and .arguments == "<issue> [--models '\''agente=modelo[,agente=modelo...]'\''] [--variant <label>]" and (keys | sort) == ["arguments", "description", "id", "kind", "profile"]' >/dev/null; then pass 'metadata sin capacidades ni runtime'; else fail 'metadata neutral invalida'; fi
 body="$(awk 'NR == 1 { next } $0 == "---" && !seen { seen=1; next } seen { print }' "$SOURCE")"
 contains "$body" '{{mefisto:assert-consumer-repo}}' 'guard consumidor antes del proceso'
+guard_line="$(grep -nF '{{mefisto:assert-consumer-repo}}' "$SOURCE" | cut -d: -f1)"
+operation_line="$(awk '/gh issue view/ { print NR; exit }' "$SOURCE")"
+[ -n "$guard_line" ] && [ -n "$operation_line" ] && [ "$guard_line" -lt "$operation_line" ] && pass 'guard precede cualquier operacion' || fail 'guard no precede las operaciones'
 contains "$body" 'primer token numerico' 'extrae el issue del primer token numerico'
+contains "$body" 'no contiene un token compuesto solo por digitos' 'sin issue numerico muestra uso'
+contains "$body" 'argumentos mal formados' 'flags mal formados muestran uso'
 contains "$body" 'Si no es consultable' 'issue no consultable bloquea'
 contains "$body" 'cerrado (`CLOSED`)' 'issue cerrado bloquea'
 contains "$body" 'confirmacion explicita' 'falta tipo tooling requiere confirmacion'
 contains "$body" 'Depende de #N' 'dependencias declaradas se filtran'
 contains "$body" 'Bloqueado por #N' 'dependencias bloqueadas se filtran'
-contains "$body" 'abierta o no consultable es un bloqueo visible' 'dependencia abierta o no consultable bloquea'
+contains "$body" 'Ignora cualquier otro `#N`' 'ignora referencias ajenas a dependencias'
+contains "$body" 'Si no hay una dependencia canonica consultable' 'label bloqueado sin dependencias no se retira'
+contains "$body" 'dependencia `OPEN` o no consultable es un bloqueo visible' 'dependencia abierta o no consultable bloquea'
 contains "$body" 'retira el label `bloqueado`' 'dependencias cerradas desbloquean'
 contains "$body" 'Con `--variant`, nunca mutas labels' 'variante no muta labels'
 contains "$body" 'claves de stage `writer` y `reviewer`' 'models conserva stages'
+contains "$body" 'no hace push, no abre PR ni muta el issue' 'variante conserva aislamiento sin efectos remotos'
+contains "$body" 'reenvia ambos flags intactos' 'forwarding de flags intacto'
 contains "$body" '{{mefisto:run tmux-pipeline.sh --tooling $ARGUMENTS}}' 'despacho neutral exacto'
+[ "$(grep -cF '{{mefisto:run tmux-pipeline.sh --tooling $ARGUMENTS}}' "$SOURCE")" -eq 1 ] && pass 'existe un unico despacho' || fail 'el despacho no es unico'
 contains "$body" 'Herdr' 'documenta despacho Herdr'
 contains "$body" 'sesion tmux' 'documenta despacho tmux'
 contains "$body" '/mefisto:tooling' 'documenta el nombre canonico'
@@ -40,8 +50,10 @@ for forbidden in 'Claude' 'OpenCode' '.claude/' '.opencode/' 'cache' 'model:' 't
 echo '[salidas] adaptadores y mirror'
 for file in "$CLAUDE" "$OPENCODE"; do [ -f "$file" ] && pass "existe ${file#"$REPO_ROOT/"}" || fail "falta ${file#"$REPO_ROOT/"}"; done
 contains "$(< "$CLAUDE")" 'model: "haiku"' 'Claude materializa el perfil fast'
+contains "$(< "$CLAUDE")" '"${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" --tooling $ARGUMENTS' 'Claude cita package root con espacios'
 contains "$(< "$OPENCODE")" 'description:' 'OpenCode materializa el comando'
 contains "$(< "$OPENCODE")" 'mefisto-opencode' 'OpenCode resuelve la release activa'
+contains "$(< "$OPENCODE")" '"${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" --tooling $ARGUMENTS' 'OpenCode cita package root con espacios'
 if cmp -s "$MIRROR" "$CLAUDE"; then pass 'mirror Claude coincide byte a byte'; else fail 'mirror Claude diverge'; fi
 contains "$(< "$MIRROR")" '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/tooling.md. No editar a mano. -->' 'mirror conserva marcador generado'
 if "$GENERATOR" --check >/dev/null; then pass 'generate-published-adapters --check esta al dia'; else fail 'generate-published-adapters --check detecto divergencias'; fi
