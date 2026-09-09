@@ -242,6 +242,11 @@ get_harness_sha() {
 #                            (issue #522): en el repo consumidor, .mcp.json en la raiz es su
 #                            propia configuracion MCP de proyecto, ruta legitima suya, no
 #                            reservada del plugin.
+#   mefisto-manifest.json    Metadata generada de la distribucion Claude mientras el
+#                            marketplace apunta a ./ (MEF-ADR-0053). Entrada EXACTA de la
+#                            raiz, sin prefijos, globs ni subdirectorios. Registrada antes de
+#                            poblarla por el issue #1135; el issue #1132 la poblara conforme a
+#                            MEF-ADR-0019 seccion E.
 #   src/internal/            Layout interno del BC bajo la arquitectura neutral de runtime
 #                            y proveedor (MEF-ADR-0049, issue #851): recetas/plantillas de
 #                            USO EXCLUSIVO de Mefisto, analogas a src/ del consumidor pero
@@ -287,7 +292,7 @@ is_path_in_mefisto_scope() {
         .claude/settings.json) return 0 ;;
         .opencode/agents/*|.opencode/commands/*|.opencode/plugins/*|.opencode/skills/*) return 0 ;;
         .mcp.json) return 0 ;;
-        README.md|CHANGELOG.md|CLAUDE.md|.gitignore|AGENTS.md|opencode.json) return 0 ;;
+        README.md|CHANGELOG.md|CLAUDE.md|.gitignore|AGENTS.md|opencode.json|mefisto-manifest.json) return 0 ;;
         changelog.d/*) return 0 ;;
         *) return 1 ;;
     esac

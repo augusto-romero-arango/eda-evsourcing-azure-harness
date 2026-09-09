@@ -1911,6 +1911,10 @@ compose_tfstate_storage_account_base() {
 #   src/published/    Fuente neutral de los artefactos publicados (MEF-ADR-0053)
 #   src/runtime/      Nucleo neutral de runner y eventos publicados (MEF-ADR-0053)
 #   dist/             Distribuciones generadas por runtime (MEF-ADR-0053)
+#   mefisto-manifest.json  Metadata generada de la distribucion Claude mientras el
+#                     marketplace apunta a ./ (MEF-ADR-0053). Entrada EXACTA de la raiz,
+#                     registrada por el issue #1135 antes de que #1132 la pueble, conforme a
+#                     MEF-ADR-0019 seccion E. Un pipeline publicado no puede editarla.
 #   docs/adr/mef-adr-*  ADRs del marco -- MEF-ADR-0030 decision #3 fija su filename
 #                     en minuscula (mef-adr-NNNN-slug.md). El resto de docs/adr/ es
 #                     del consumidor: MEF-ADR-0030 descarta reubicarlo bajo
@@ -1932,6 +1936,7 @@ is_path_in_consumer_blocklist() {
     case "$path" in
         commands/*|skills/*|agents/*|hooks/*) return 0 ;;
         .claude-plugin/*|src/published/*|src/runtime/*|dist/*) return 0 ;;
+        mefisto-manifest.json) return 0 ;;
         docs/adr/mef-adr-*) return 0 ;;
         *) return 1 ;;
     esac
