@@ -35,8 +35,8 @@
 # despacho de #928 debe resolver el runtime de su fila), mas
 # MEFISTO_MODELS_FILE si esta definida. En un consumidor el runtime es Claude
 # Code (el plugin publicado aun no soporta OpenCode): un MEFISTO_RUNTIME
-# distinto de "claude" se ignora con un aviso, sin --env -- exactamente el
-# comportamiento de hoy. El script nunca fija provider, modelo ni
+# distinto de "claude" se ignora con un aviso y la fila recibe explicitamente
+# `MEFISTO_RUNTIME=claude`. El script nunca fija provider, modelo ni
 # credenciales, ni lee opencode.json o un auth store.
 #
 # Los agentes se lanzan con `herdr agent start` bajo nombres unicos por
@@ -82,7 +82,7 @@ abort()   { echo -e "\n${RED}${BOLD}x $1${NC}" >&2; exit 1; }
 # Deriva el slug que alimenta el nombre de agente a partir del label del
 # workspace: minusculas, todo lo que no sea [a-z0-9] colapsa a '-', sin
 # guiones en los extremos, tope de <max> caracteres (default 20 -- el tope de
-# un consumidor, que no lleva sufijo de runtime). agent_name_for_role calcula
+# un consumidor legacy sin sufijo de runtime). agent_name_for_role calcula
 # el <max> real cuando hay sufijo, para que el nombre completo quepa en los
 # 32 caracteres que admiten los nombres de agente de herdr
 # ([a-z][a-z0-9_-]{0,31}).
@@ -101,7 +101,7 @@ workspace_slug() {
 #
 # Imprime el nombre de agente herdr para <rol> ("planner" o "ejecucion") a
 # partir del label del workspace y el sufijo de runtime <kind> (issue #930;
-# vacio = sin sufijo, comportamiento de un consumidor -- CA-3). Con <kind> no
+# vacio = sin sufijo, formato legacy conservado por compatibilidad). Con <kind> no
 # vacio el slug se recorta al tope que deja espacio para el prefijo MAS LARGO
 # ("ejecucion-", 10 caracteres) + "-<kind>", para que planner y ejecucion
 # compartan el mismo slug pase lo que pase con <rol>. Los nombres de agente
@@ -185,13 +185,14 @@ pane_label_lookup() {
         | head -1 || true
 }
 
-# pane_label_ids <workspace_id> <label>
+# pane_label_ids <pane-list-json> <label>
 #
-# Imprime todos los panes con el label exacto. La transicion del consumidor no
-# adivina cual renombrar ante duplicados: el label es su unica autoridad.
+# Imprime todos los panes del snapshot con el label exacto. La transicion del
+# consumidor no adivina cual renombrar ante duplicados: el label es su unica
+# autoridad.
 pane_label_ids() {
-    local ws="$1" label="$2"
-    herdr pane list --workspace "$ws" 2>/dev/null \
+    local panes_json="$1" label="$2"
+    printf '%s\n' "$panes_json" \
         | jq -r --arg l "$label" '.result.panes[]? | select(.label == $l) | .pane_id' 2>/dev/null \
         || true
 }
@@ -342,11 +343,13 @@ mount_first_row() {
 # mezcla legacy/canonica, es ambiguo y se conserva para diagnostico humano.
 normalize_consumer_claude_row() {
     local ws="$1" label="$2"
+    local panes_json
+    panes_json=$(herdr pane list --workspace "$ws" 2>/dev/null || true)
     local legacy_planner canonical_planner legacy_execution canonical_execution
-    legacy_planner=$(pane_label_ids "$ws" "planner")
-    canonical_planner=$(pane_label_ids "$ws" "planner [claude]")
-    legacy_execution=$(pane_label_ids "$ws" "ejecucion")
-    canonical_execution=$(pane_label_ids "$ws" "ejecucion [claude]")
+    legacy_planner=$(pane_label_ids "$panes_json" "planner")
+    canonical_planner=$(pane_label_ids "$panes_json" "planner [claude]")
+    legacy_execution=$(pane_label_ids "$panes_json" "ejecucion")
+    canonical_execution=$(pane_label_ids "$panes_json" "ejecucion [claude]")
     local lp cp le ce
     lp=$(pane_count "$legacy_planner"); cp=$(pane_count "$canonical_planner")
     le=$(pane_count "$legacy_execution"); ce=$(pane_count "$canonical_execution")
@@ -361,9 +364,26 @@ normalize_consumer_claude_row() {
         warn "El workspace '$label' ($ws) no contiene 'planner' ni 'planner [claude]'; se enfoco sin reconstruir panes. Renombra el planner correcto a 'planner [claude]' para normalizarlo."
         return
     fi
+    local renamed=0 failed=0
     if [ "$lp" -eq 1 ]; then
-        herdr pane rename "$legacy_planner" "planner [claude]" >/dev/null 2>&1 || true
-        [ "$le" -eq 1 ] && herdr pane rename "$legacy_execution" "ejecucion [claude]" >/dev/null 2>&1 || true
+        if herdr pane rename "$legacy_planner" "planner [claude]" >/dev/null 2>&1; then
+            renamed=$((renamed + 1))
+        else
+            failed=$((failed + 1))
+        fi
+    fi
+    # Se evalua por rol: esto permite terminar una migracion cuyo rename del
+    # planner si alcanzo a persistir pero el de ejecucion fallo.
+    if [ "$le" -eq 1 ]; then
+        if herdr pane rename "$legacy_execution" "ejecucion [claude]" >/dev/null 2>&1; then
+            renamed=$((renamed + 1))
+        else
+            failed=$((failed + 1))
+        fi
+    fi
+    if [ "$failed" -gt 0 ]; then
+        warn "El workspace '$label' ($ws) no pudo normalizar $failed label(s); vuelve a ejecutar el script o renombra los panes legacy manualmente. No se reconstruyo el layout."
+    elif [ "$renamed" -gt 0 ]; then
         success "Workspace '$label' ($ws) normalizado a la fila Claude explicita; no se reiniciaron agentes ni se modifico el cwd."
     fi
 }

@@ -83,6 +83,29 @@ cat > "$FAKE_BIN/herdr" <<'STUB'
 #!/usr/bin/env bash
 set -u
 echo "herdr $*" >> "$HERDR_STUB_LOG"
+
+option_value() {
+    local wanted="$1"
+    shift
+    while [ "$#" -gt 0 ]; do
+        if [ "$1" = "$wanted" ]; then
+            [ "$#" -gt 1 ] || return 1
+            printf '%s\n' "$2"
+            return 0
+        fi
+        shift
+    done
+    return 1
+}
+
+if [ -n "${HERDR_STUB_EXPECT_CWD:-}" ] \
+    && { [ "${1:-} ${2:-}" = "workspace create" ] || [ "${1:-} ${2:-}" = "pane split" ]; }; then
+    actual_cwd=$(option_value --cwd "$@")
+    if [ "$actual_cwd" != "$HERDR_STUB_EXPECT_CWD" ]; then
+        printf 'cwd recibido como argv distinto: <%s>\n' "$actual_cwd" >&2
+        exit 64
+    fi
+fi
 case "${1:-} ${2:-}" in
     "status server") exit 0 ;;
     "workspace list")
@@ -289,8 +312,9 @@ assert_no_anchor_protocol F-3
 echo ""
 echo "[H] Consumidor nuevo: fila Claude explicita y path con espacios"
 export MEFISTO_RUNTIME=opencode
+export HERDR_STUB_EXPECT_CWD="$FAKE_CONSUMER"
 run_workspace "$FAKE_CONSUMER"
-unset MEFISTO_RUNTIME
+unset MEFISTO_RUNTIME HERDR_STUB_EXPECT_CWD
 EXPECTED=$(cat <<EOF
 herdr status server
 herdr workspace list
@@ -304,7 +328,7 @@ herdr pane process-info --pane w1:p2
 herdr agent start ejecucion-fake-consumer-r-claude --kind claude --pane w1:p2 --timeout 90000
 EOF
 )
-[ "$(cat "$HERDR_STUB_LOG")" = "$EXPECTED" ] \
+[ "$LAST_RC" -eq 0 ] && [ "$(cat "$HERDR_STUB_LOG")" = "$EXPECTED" ] \
     && pass "H-1: una fila Claude con labels, nombres, kind y env exactos" \
     || fail "H-1: rama consumidor cambio. Esperado:\n$EXPECTED\nObtenido:\n$(cat "$HERDR_STUB_LOG")"
 printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q 'El plugin publicado aun no soporta OpenCode' \
@@ -342,8 +366,26 @@ export HERDR_STUB_PANES='planner=w1:p1;planner [claude]=w1:p3;ejecucion=w1:p2'
 run_workspace "$FAKE_CONSUMER"
 ! grep -qE 'pane rename|pane split|agent start|pane close' "$HERDR_STUB_LOG" \
     && printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q 'duplicados o ambiguos' \
-    && pass "J-2: mezcla ambigua avisa y no toca panes" \
+    && pass "J-2: mezcla ambigua en un rol avisa y no toca panes" \
     || fail "J-2: ambiguedad no conservadora: $(cat "$HERDR_STUB_LOG")"
+export HERDR_STUB_PANES='planner=w1:p1;planner=w1:p3;ejecucion=w1:p2'
+run_workspace "$FAKE_CONSUMER"
+! grep -qE 'pane rename|pane split|agent start|pane close' "$HERDR_STUB_LOG" \
+    && printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q 'duplicados o ambiguos' \
+    && pass "J-3: planner duplicado avisa y no elige un pane" \
+    || fail "J-3: duplicado no conservador: $(cat "$HERDR_STUB_LOG")"
+export HERDR_STUB_PANES='ejecucion=w1:p2'
+run_workspace "$FAKE_CONSUMER"
+! grep -qE 'pane rename|pane split|agent start|pane close' "$HERDR_STUB_LOG" \
+    && printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q "no contiene 'planner'" \
+    && pass "J-4: workspace sin planner avisa y conserva el layout" \
+    || fail "J-4: ausencia de planner no conservadora: $(cat "$HERDR_STUB_LOG")"
+export HERDR_STUB_PANES='planner [claude]=w1:p1;ejecucion=w1:p2'
+run_workspace "$FAKE_CONSUMER"
+grep -qxF 'herdr pane rename w1:p2 ejecucion [claude]' "$HERDR_STUB_LOG" \
+    && ! grep -qE 'pane split|agent start|pane close' "$HERDR_STUB_LOG" \
+    && pass "J-5: un segundo intento completa el label de ejecucion pendiente" \
+    || fail "J-5: migracion parcial no reintentable: $(cat "$HERDR_STUB_LOG")"
 export HERDR_STUB_PANES='planner [claude]=w1:p1;ejecucion [claude]=w1:p2'
 run_workspace "$FAKE_CONSUMER"
 FIRST_LOG=$(cat "$HERDR_STUB_LOG")
@@ -353,8 +395,8 @@ unset HERDR_STUB_EXISTING_LABEL HERDR_STUB_PANES
 [ "$SECOND_LOG" = "$FIRST_LOG" ] \
     && grep -qxF 'herdr workspace focus w1' <<< "$SECOND_LOG" \
     && ! grep -qE 'pane rename|pane split|agent start|pane close' <<< "$SECOND_LOG" \
-    && pass "J-3: dos ejecuciones normalizadas solo enfocan byte a byte" \
-    || fail "J-3: normalizado no converge: $SECOND_LOG"
+    && pass "J-6: dos ejecuciones normalizadas solo enfocan byte a byte" \
+    || fail "J-6: normalizado no converge: $SECOND_LOG"
 
 echo ""
 echo "[Z] Protocolo retirado del script"
