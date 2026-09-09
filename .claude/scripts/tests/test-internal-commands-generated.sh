@@ -325,19 +325,35 @@ check_run_invocation mefisto-release 'mefisto-release.sh $ARGUMENTS'
 echo ""
 echo "[merge-reconcile] mefisto-merge reconcilia cada cierre exitoso sin contaminar el resultado del merge (issue #1160)"
 merge_source="$COMMANDS_DIR/mefisto-merge.md"
-reconcile_directive='{{mefisto:run mefisto-validate-batch-deps.sh --reconcile-pr $pr}}'
+reconcile_directive='{{mefisto:run mefisto-validate-batch-deps.sh --reconcile-pr "$pr"}}'
 if [ "$(grep -cF "$reconcile_directive" "$merge_source" 2>/dev/null)" -eq 1 ]; then
     pass "mefisto-merge: la fuente contiene una unica directiva neutral --reconcile-pr"
 else
     fail "mefisto-merge: la fuente debe contener una unica directiva neutral --reconcile-pr"
 fi
-check_run_invocation mefisto-merge 'mefisto-validate-batch-deps.sh --reconcile-pr $pr'
-if grep -qF 'gh pr merge "$pr" --squash --delete-branch || {' "$merge_source" 2>/dev/null \
-    && grep -qF 'continue' "$merge_source" 2>/dev/null \
-    && grep -qF 'MERGED (POST-MERGE DEGRADADO)' "$merge_source" 2>/dev/null; then
-    pass "mefisto-merge: mezcla merges fallidos y exitosos; solo los exitosos se reconcilian y MERGED se conserva con warning"
+check_run_invocation mefisto-merge 'mefisto-validate-batch-deps.sh --reconcile-pr "$pr"'
+
+# Fija la estructura del loop, no solo la presencia aislada de sus tokens: el
+# continue del merge fallido debe preceder al reconciliador y no puede existir
+# otro continue en la rama post-merge. Asi una lista mixta reconcilia los merges
+# exitosos anteriores y posteriores sin reconciliar ni reintentar el fallido.
+merge_loop=$(sed -n '/^for pr in <prs>; do$/,/^done$/p' "$merge_source")
+merge_line=$(printf '%s\n' "$merge_loop" | grep -nF 'gh pr merge "$pr" --squash --delete-branch || {' | cut -d: -f1)
+continue_line=$(printf '%s\n' "$merge_loop" | grep -nF 'continue' | cut -d: -f1)
+reconcile_line=$(printf '%s\n' "$merge_loop" | grep -nF "$reconcile_directive" | cut -d: -f1)
+merged_line=$(printf '%s\n' "$merge_loop" | grep -nF 'resultado="MERGED"' | cut -d: -f1)
+degraded_line=$(printf '%s\n' "$merge_loop" | grep -nF 'resultado="MERGED (POST-MERGE DEGRADADO)"' | cut -d: -f1)
+continue_count=$(printf '%s\n' "$merge_loop" | grep -cF 'continue' || true)
+if [ -n "$merge_line" ] && [ -n "$continue_line" ] && [ -n "$reconcile_line" ] \
+    && [ -n "$merged_line" ] && [ -n "$degraded_line" ] \
+    && [ "$continue_count" -eq 1 ] \
+    && [ "$merge_line" -lt "$continue_line" ] \
+    && [ "$continue_line" -lt "$merged_line" ] \
+    && [ "$merged_line" -lt "$reconcile_line" ] \
+    && [ "$reconcile_line" -lt "$degraded_line" ]; then
+    pass "mefisto-merge: una lista mixta omite el fallido, reconcilia cada exitoso y degrada solo el post-merge"
 else
-    fail "mefisto-merge: falta aislar el fallo de merge o degradar solo el post-merge"
+    fail "mefisto-merge: el loop no aisla correctamente merges fallidos, exitosos y reconciliaciones degradadas"
 fi
 
 echo ""

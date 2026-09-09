@@ -72,7 +72,7 @@ for pr in <prs>; do
     }
 
     resultado="MERGED"
-    if ! MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-validate-batch-deps.sh --reconcile-pr $pr; then
+    if ! MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-validate-batch-deps.sh --reconcile-pr "$pr"; then
         echo "ADVERTENCIA: #$pr se mergeo, pero fallo la reconciliacion post-merge de bloqueados."
         resultado="MERGED (POST-MERGE DEGRADADO)"
     fi
