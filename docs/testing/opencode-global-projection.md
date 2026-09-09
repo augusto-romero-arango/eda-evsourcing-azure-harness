@@ -51,10 +51,26 @@ directorio vacío, lo retiró.
 La automatización reproducible de estos casos, incluidos `HOME`,
 `XDG_CONFIG_HOME` y `OPENCODE_CONFIG_DIR` temporales, es
 `scripts/tests/test-project-opencode-release.sh`. Esa prueba valida además los
-directorios anidados de Skills, la restauración exacta de directorios previos,
+directorios anidados de Skills y plugins, la restauración exacta de directorios previos,
 el rechazo de un ledger ajeno y los fallbacks de configuración. La evidencia no considera la
 mera presencia de archivos suficiente: registra el descubrimiento en una sesión
 OpenCode y ejecuta la prueba aislada del mecanismo (MEF-ADR-0031). Los Skills
 publicados se empaquetan bajo `dist/opencode/skills/mefisto-<id>/`: el directorio
 y el `name` de `SKILL.md` usan el mismo prefijo; los recursos relativos se copian
 sin transformación. El smoke de carga real con la tool `skill` queda para #1066.
+
+## MCP bundleado
+
+La release proyecta `plugins/mefisto-mcp.js` mediante el ledger, por lo que
+`deactivate` lo retira sin tocar `opencode.json`. Su hook `config` agrega solo
+`microsoft-learn` como servidor remoto, habilitado y sin OAuth si esa clave no
+existe; una clave de usuario distinta prevalece y emite el diagnóstico
+estructurado `mcp_config_conflict` sin incluir su valor. El registro neutral
+mantiene `terraform` como `external`, por lo que nunca se agrega a `config.mcp`.
+Los permisos MCP por agente/comando se traducen separadamente en #1145 y el
+smoke de conexión/listado no corre en CI: queda para #1066.
+
+La prueba aislada `src/published/scripts/tests/test-opencode-mcp-plugin.sh`
+cubre configuración vacía, configuración idéntica, conflicto, claves ajenas y
+doble invocación sin red ni stores de autenticación. El formato corresponde a
+la documentación y API de plugins de OpenCode 1.18.29 citadas en el issue.
