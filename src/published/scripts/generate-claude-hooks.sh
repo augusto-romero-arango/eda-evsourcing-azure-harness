@@ -34,9 +34,9 @@ command -v jq >/dev/null 2>&1 || usage_error "jq no esta instalado (MEF-ADR-0049
 
 # El descriptor validado es neutral; esta comprobacion declara exhaustivamente lo
 # que Claude puede representar antes de construir su topologia runtime-specific.
-EXPECTED='append-dotnet-test-result append-file-change append-session append-terraform-result record-active-release remind-field-notes'
+EXPECTED='append-dotnet-test-result append-file-change append-session append-session-model append-terraform-result record-active-release remind-field-notes'
 ACTUAL="$(jq -r '[.bindings[].id] | sort | join(" ")' "$CONTRACT")"
-[ "$ACTUAL" = "$EXPECTED" ] || usage_error "el contrato no contiene el conjunto exacto de seis bindings representables por Claude"
+[ "$ACTUAL" = "$EXPECTED" ] || usage_error "el contrato no contiene el conjunto exacto de siete bindings publicados"
 
 record_active_release='[ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && mkdir -p .mefisto/pipeline .claude/pipeline 2>/dev/null && printf "%s" "${CLAUDE_PLUGIN_ROOT}" > .mefisto/pipeline/.plugin-root 2>/dev/null && printf "%s" "${CLAUDE_PLUGIN_ROOT}" > .claude/pipeline/.plugin-root 2>/dev/null && rm -f .claude/pipeline/.plugin-root.previous 2>/dev/null || true'
 append_session='hv=""; [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && hv="$(basename "${CLAUDE_PLUGIN_ROOT}" 2>/dev/null)"; mkdir -p .mefisto/pipeline 2>/dev/null && jq -c --arg harness_version "$hv" '\''{session_id, transcript_path, cwd, source, timestamp: (now | strftime("%Y-%m-%dT%H:%M:%SZ")), harness_version: ($harness_version | if . == "" then null else . end)}'\'' 2>/dev/null >> .mefisto/pipeline/sessions.jsonl || true'

@@ -58,7 +58,7 @@ for fixture in "$FIXTURES"/invalid/*.jq; do
 done
 
 echo "[legacy-release-marker] reservado a record-active-release"
-for index in 1 2 3 4 5; do
+for index in 1 2 3 4 5 6; do
     candidate="$WORK/legacy-release-marker-$index.json"
     jq ".bindings[$index].destinations += [\"legacy-release-marker\"]" "$FIXTURES/valid/interactive-hooks.json" > "$candidate"
     out=$(bash "$VALIDATOR" "$candidate" 2>&1)
@@ -71,6 +71,41 @@ for index in 1 2 3 4 5; do
         fail "binding $index rechazo legacy-release-marker por otro motivo: $out"
     fi
 done
+
+echo "[sessions.jsonl] fixtures de compatibilidad y append-only"
+SESSION_FIXTURES="$FIXTURES/sessions"
+for fixture in "$SESSION_FIXTURES"/*.jsonl; do
+    if jq -e . "$fixture" >/dev/null 2>&1; then
+        pass "$(basename "$fixture"): JSONL valido"
+    else
+        fail "$(basename "$fixture"): JSONL invalido"
+    fi
+done
+
+started_keys='["cwd","harness_commit","harness_version","model","record_type","runtime","session_id","source","timestamp","transcript_path"]'
+observed_keys='["harness_commit","harness_version","model","record_type","runtime","session_id","timestamp"]'
+for fixture in started-complete.jsonl started-null-model.jsonl missing-manifest.jsonl; do
+    if jq -e --argjson keys "$started_keys" 'keys == $keys and .record_type == "session.started" and (.runtime == "claude" or .runtime == "opencode") and (.model == null or (type == "string" and length > 0)) and (.harness_version == null or type == "string") and (.harness_commit == null or test("^[0-9a-f]{40}$"))' "$SESSION_FIXTURES/$fixture" >/dev/null 2>&1; then
+        pass "$fixture: inicio con identidad completa o degradada"
+    else
+        fail "$fixture: inicio no cumple el contrato"
+    fi
+done
+if jq -e --argjson keys "$observed_keys" 'keys == $keys and .record_type == "session.model-observed" and (.model | type == "string" and length > 0) and .runtime == "opencode"' "$SESSION_FIXTURES/first-model-observation.jsonl" >/dev/null 2>&1; then
+    pass "first-model-observation.jsonl: observacion opaca no vacia"
+else
+    fail "first-model-observation.jsonl: observacion invalida"
+fi
+if jq -s '.[0].model == .[1].model and .[2].model != .[1].model and ([.[] | .record_type] == ["session.started", "session.model-observed", "session.model-observed"])' "$SESSION_FIXTURES/model-repeat-and-change.jsonl" >/dev/null 2>&1; then
+    pass "model-repeat-and-change.jsonl: A repetido se omite y A->B conserva ambos hechos"
+else
+    fail "model-repeat-and-change.jsonl: semantica append-only invalida"
+fi
+if jq -s 'length == 2 and (.[0] | has("record_type") | not) and .[1].record_type == "session.started"' "$SESSION_FIXTURES/legacy-and-new.jsonl" >/dev/null 2>&1; then
+    pass "legacy-and-new.jsonl: la linea historica se conserva sin migracion"
+else
+    fail "legacy-and-new.jsonl: compatibilidad historica invalida"
+fi
 
 echo "RESULTADO: $PASS pasaron, $FAIL fallaron"
 [ "$FAIL" -eq 0 ]
