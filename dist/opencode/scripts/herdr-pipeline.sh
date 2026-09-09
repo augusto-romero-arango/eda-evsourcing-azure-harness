@@ -50,6 +50,16 @@ set -euo pipefail
 # --- Funciones compartidas (resolve_pipeline) ---
 source "$(dirname "${BASH_SOURCE[0]}")/_pipeline-common.sh"
 
+# La clausura publicada distribuye los adaptadores de runtime junto al pipeline.
+# El runtime resuelto forma parte de la identidad del pool de panes: nunca se
+# infiere de un default concreto en esta capa neutral.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUNTIME_LIB_DIR="$(cd "$SCRIPT_DIR/../src/runtime/lib" 2>/dev/null && pwd -P)" \
+    || { echo "ERROR: no se encontro src/runtime/lib junto al paquete publicado" >&2; exit 1; }
+[ -f "$RUNTIME_LIB_DIR/mefisto-runtime.sh" ] \
+    || { echo "ERROR: no se encontro mefisto-runtime.sh en la clausura publicada" >&2; exit 1; }
+source "$RUNTIME_LIB_DIR/mefisto-runtime.sh"
+
 # Guard defensivo: este pipeline es del lado publicado y solo aplica al consumidor.
 # Si detectamos .claude-plugin/plugin.json en la raiz, estamos en el repo de Mefisto.
 _REPO_TOP=$(git rev-parse --show-toplevel 2>/dev/null) || {
@@ -71,8 +81,6 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-# SCRIPT_DIR: ubicacion de ESTE script (el plugin), para invocar sub-scripts.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # PROJECT_ROOT: repo objetivo del consumidor (git toplevel del cwd del usuario).
 PROJECT_ROOT="$_REPO_TOP"
 LOG_DIR_ABS="$PROJECT_ROOT/.claude/pipeline/logs"
@@ -81,10 +89,11 @@ LOG_DIR_ABS="$PROJECT_ROOT/.claude/pipeline/logs"
 # dentro de cmd_pane_runner -- issue #800. Evita que el Mac entre en
 # suspension idle mientras el pane de ejecucion corre.
 CAFF="$(caffeinate_prefix)"
-# Registro de panes de ejecucion creados por esta interfaz en este repo (uno
-# por linea, ids publicos de herdr como "w1:p3"). Vive en .claude/pipeline/
-# como el resto del estado runtime: nunca viaja en un commit del consumidor.
-PANES_STATE="$PROJECT_ROOT/.claude/pipeline/herdr-report-panes.txt"
+# Registro canonico de panes de ejecucion: una linea "<pane_id> <runtime>".
+# Se asigna mediante mefisto_state_path solo despues de resolver el runtime;
+# el ledger legacy .claude/pipeline no se lee ni se modifica.
+PANES_STATE=""
+HERDR_RUNTIME=""
 # Segundos entre arranques de los issues de un lote --parallel: varios
 # `claude -p` arrancando a la vez compiten por la API (mismo motivo que el
 # sleep del modo tmux). La espera corre DENTRO de cada pane (--delay del
@@ -115,6 +124,19 @@ require_herdr_context() {
         || abort "Faltan HERDR_PANE_ID/HERDR_WORKSPACE_ID en el entorno (los inyecta herdr en cada pane)."
     command -v jq &>/dev/null \
         || abort "La interfaz herdr requiere jq para leer las respuestas del socket API. Instala jq (brew install jq) o usa MEFISTO_UI=tmux."
+    resolve_report_runtime
+}
+
+# resolve_report_runtime -- resuelve una vez el runtime del despacho antes de
+# tocar el ledger o la API de panes. Se invoca desde require_herdr_context(),
+# que es el unico gate de todos los modos que despachan.
+resolve_report_runtime() {
+    if ! mefisto_resolve_runtime >/dev/null; then
+        abort "No se pudo resolver el runtime activo: ${MEFISTO_RUNTIME_ERROR:-motivo desconocido}"
+    fi
+    HERDR_RUNTIME="$MEFISTO_RESOLVED_RUNTIME"
+    PANES_STATE="$(mefisto_state_path "herdr-report-panes.txt")" \
+        || abort "No se pudo preparar el pool canonico de panes Herdr."
 }
 
 # --- Helpers de panes ---
@@ -144,40 +166,59 @@ pane_is_free() {
 # Poda compartida por acquire_report_pane y --collapse-panes (issue #799):
 # recorre PANES_STATE, quita los panes que ya no existen (cerrados a mano) y
 # CIERRA los panes libres sobrantes de corridas concurrentes ya terminadas
-# del PROPIO workspace, dejando vivo el primero que encuentra libre (no lo
-# cierra: queda disponible para reutilizar). Nunca toca panes ocupados ni de
-# otro workspace (el mismo repo abierto dos veces). Imprime por stdout dos
+# del MISMO workspace y runtime, dejando vivo el primero que encuentra libre
+# (no lo cierra: queda disponible para reutilizar). Nunca toca panes ocupados
+# ni de otro workspace/runtime. Las entradas de panes muertos se eliminan sin
+# importar su runtime. Imprime por stdout dos
 # lineas: el pane_id libre que quedo vivo (vacio si no habia ninguno) y la
 # cantidad de panes cerrados.
 prune_report_panes() {
     mkdir -p "$(dirname "$PANES_STATE")"
     touch "$PANES_STATE"
 
-    local kept="" chosen="" id closed=0
-    while IFS= read -r id; do
-        [ -n "$id" ] || continue
+    local kept="" chosen="" line id pane_runtime closed=0
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        case "$line" in
+            *' '*)
+                id="${line%% *}"
+                pane_runtime="${line#* }"
+                ;;
+            *)
+                # Una entrada sin runtime no tiene identidad segura: no se
+                # reutiliza ni cierra. El pool legacy ni siquiera se abre.
+                kept="${kept}${line}
+"
+                continue
+                ;;
+        esac
         pane_exists "$id" || continue
         case "$id" in
             "$HERDR_WORKSPACE_ID:"*) ;;
             *)
-                kept="${kept}${id}
+                kept="${kept}${line}
 "
                 continue ;;
         esac
+        if [ "$pane_runtime" != "$HERDR_RUNTIME" ]; then
+            kept="${kept}${line}
+"
+            continue
+        fi
         if pane_is_free "$id"; then
             if [ -z "$chosen" ]; then
                 chosen="$id"
-                kept="${kept}${id}
+                kept="${kept}${line}
 "
             elif herdr pane close "$id" >/dev/null 2>&1; then
                 log "Pane sobrante de una corrida terminada cerrado: $id"
                 closed=$((closed + 1))
             else
-                kept="${kept}${id}
+                kept="${kept}${line}
 "
             fi
         else
-            kept="${kept}${id}
+            kept="${kept}${line}
 "
         fi
     done < "$PANES_STATE"
@@ -206,7 +247,7 @@ acquire_report_pane() {
             || abort "No se pudo crear el pane de ejecucion (herdr pane split): $resp"
         chosen=$(echo "$resp" | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
         [ -n "$chosen" ] || abort "herdr pane split no devolvio pane_id. Respuesta: $resp"
-        echo "$chosen" >> "$PANES_STATE"
+        echo "$chosen $HERDR_RUNTIME" >> "$PANES_STATE"
         log "Pane de ejecucion nuevo: $chosen"
     else
         log "Reusando el pane de ejecucion libre: $chosen"
@@ -241,7 +282,7 @@ build_pane_runner_cmdline() {
     shift 3
 
     local cmdline
-    cmdline="cd $(printf '%q' "$PROJECT_ROOT") && $(printf '%q' "$SCRIPT_DIR/herdr-pipeline.sh") --_pane-runner --title $(printf '%q' "$title")"
+    cmdline="cd $(printf '%q' "$PROJECT_ROOT") && MEFISTO_RUNTIME=$(printf '%q' "$HERDR_RUNTIME") $(printf '%q' "$SCRIPT_DIR/herdr-pipeline.sh") --_pane-runner --title $(printf '%q' "$title")"
     if [ -n "$issues_csv" ]; then
         cmdline="$cmdline --issues $(printf '%q' "$issues_csv")"
     fi
@@ -666,7 +707,7 @@ cmd_parallel() {
             || abort "No se pudo crear el pane apilado $((k + 1))/$total (herdr pane split): $resp"
         pane=$(echo "$resp" | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
         [ -n "$pane" ] || abort "herdr pane split no devolvio pane_id. Respuesta: $resp"
-        echo "$pane" >> "$PANES_STATE"
+        echo "$pane $HERDR_RUNTIME" >> "$PANES_STATE"
         panes+=("$pane")
         prev="$pane"
     done
@@ -697,7 +738,7 @@ cmd_parallel() {
 # cmd_collapse_panes (issue #799)
 #
 # Poda del registro los paneles muertos y CIERRA los libres sobrantes del
-# propio workspace (dejando uno vivo) sin despachar ni crear ningun pane --
+# propio workspace y runtime (dejando uno vivo) sin despachar ni crear ningun pane --
 # la mitad de acquire_report_pane que no crea pane nuevo, compartida via
 # prune_report_panes (CA-4). Pensado para que /merge lo invoque al terminar
 # un lote --parallel: deja los paneles del lote mergeado colapsados de vuelta
@@ -705,16 +746,28 @@ cmd_parallel() {
 #
 # Imprime por stdout SOLO la cantidad de paneles cerrados (entero, "0" si no
 # hubo ninguno). Seguro fuera de contexto (CA-2): sin herdr/jq instalados, sin
-# HERDR_ENV=1, sin HERDR_PANE_ID/HERDR_WORKSPACE_ID o sin PANES_STATE previo,
+# HERDR_ENV=1, sin HERDR_PANE_ID/HERDR_WORKSPACE_ID, sin pool canonico previo
 # es un no-op que imprime "0" y sale 0 -- nunca aborta.
 cmd_collapse_panes() {
     if [ "${HERDR_ENV:-}" != "1" ] \
         || [ -z "${HERDR_PANE_ID:-}" ] || [ -z "${HERDR_WORKSPACE_ID:-}" ] \
         || ! command -v herdr &>/dev/null || ! command -v jq &>/dev/null \
-        || [ ! -f "$PANES_STATE" ]; then
+        || [ ! -f "$MEFISTO_STATE_DIR/herdr-report-panes.txt" ]; then
         echo "0"
         return 0
     fi
+
+    # Best-effort: un runtime ausente, invalido o ambiguo no permite decidir
+    # que pane pertenece a esta fila, asi que no modifica nada y conserva 0.
+    if ! mefisto_resolve_runtime >/dev/null; then
+        echo "0"
+        return 0
+    fi
+    HERDR_RUNTIME="$MEFISTO_RESOLVED_RUNTIME"
+    PANES_STATE="$(mefisto_state_path "herdr-report-panes.txt")" || {
+        echo "0"
+        return 0
+    }
 
     local result closed
     result=$(prune_report_panes)

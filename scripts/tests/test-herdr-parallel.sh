@@ -162,9 +162,9 @@ run_parallel() {
     echo 0 > "$HERDR_STUB_COUNTER"
     (
         cd "$FAKE_CONSUMER" || exit 99
-        env -u MEFISTO_UI \
+        env -u MEFISTO_UI -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR \
             PATH="$FAKE_BIN:$PATH" \
-            HERDR_ENV=1 HERDR_PANE_ID="w1:p0" HERDR_WORKSPACE_ID="w1" \
+            MEFISTO_RUNTIME="${HERDR_TEST_RUNTIME:-claude}" HERDR_ENV=1 HERDR_PANE_ID="w1:p0" HERDR_WORKSPACE_ID="w1" \
             HERDR_STUB_LOG="$HERDR_STUB_LOG" HERDR_STUB_COUNTER="$HERDR_STUB_COUNTER" \
             "$HERDR_SCRIPT" "$@" 2>&1
     )
@@ -191,7 +191,19 @@ assert_contains "3er issue arranca escalonado (--delay 60)" "$STUB_CALLS" "--del
 FIRST_RUN=$(grep "^herdr pane run w1:p1 " <<< "$STUB_CALLS")
 assert_not_contains "el 1er issue arranca sin delay" "$FIRST_RUN" "--delay"
 assert_contains "los panes corren el runner interno" "$STUB_CALLS" "--_pane-runner"
+assert_contains "el runner recibe el runtime resuelto argv-safe" "$STUB_CALLS" "MEFISTO_RUNTIME=claude"
 assert_not_contains "no delega a tmux" "$OUT" "tmux"
+
+# El runtime se resuelve antes de consultar o modificar el pool: uno invalido
+# aborta visible y no alcanza split/run/close.
+OUT=$(HERDR_TEST_RUNTIME=invalido run_parallel --parallel --pipeline tooling 42)
+RC=$?
+STUB_CALLS=$(cat "$HERDR_STUB_LOG")
+assert_eq "runtime invalido: exit 1 antes del pool" "1" "$RC"
+assert_contains "runtime invalido expone MEFISTO_RUNTIME_ERROR" "$OUT" "No se pudo resolver el runtime activo"
+assert_not_contains "runtime invalido no crea pane" "$STUB_CALLS" "pane split"
+assert_not_contains "runtime invalido no ejecuta pane" "$STUB_CALLS" "pane run"
+assert_not_contains "runtime invalido no cierra pane" "$STUB_CALLS" "pane close"
 
 # --- [C] Gate de projections ---
 echo "[C] Lote con >=2 tipo:projection aborta sin despachar"
