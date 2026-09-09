@@ -24,7 +24,11 @@ absent 'output-format' 'no fija formatos de stream de un runtime'
 absent 'kill -9' 'no conserva watchdog propio'
 contains 'if "$RUN_AGENT_BIN" "${args[@]}"' 'invoca el runner con un array, sin eval'
 contains 'agent_events_completed_successfully' 'exige terminal neutral de exito'
-contains 'summary_file="$WORKTREE_PATH/.claude/pipeline/summaries/' 'conserva la ruta publicada del summary'
+contains 'mefisto_state_path "summaries/stage-${stage}-${agent}.md" "$WORKTREE_PATH"' 'escribe summaries en el estado canonico del worktree'
+contains '--redact-observability' 'pide persistencia redactada al runner'
+absent '--raw-log' 'no persiste raw del runtime'
+absent '--stderr-log' 'no persiste stderr del runtime'
+contains "PIPELINE_OWN_WRITES=(':!.mefisto/pipeline')" 'excluye solo el estado canonico del commit del agente'
 
 echo '[contrato] helpers JSONL'
 # shellcheck source=/dev/null

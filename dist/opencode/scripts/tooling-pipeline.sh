@@ -52,6 +52,7 @@ load_harness_config || exit 1
 HARNESS_VERSION="$(get_harness_version)"
 HARNESS_VERSION_JSON="null"
 [ -n "$HARNESS_VERSION" ] && HARNESS_VERSION_JSON="\"$HARNESS_VERSION\""
+HARNESS_IDENTITY_JSON="$(get_harness_identity_json)"
 
 # --- Colores ---
 RED='\033[0;31m'
@@ -63,8 +64,8 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 # --- Logging ---
-PIPELINE_DIR=".claude/pipeline"
-LOG_DIR="$PIPELINE_DIR/logs"
+PIPELINE_DIR="$(dirname "$(mefisto_state_path '.state')")"
+LOG_DIR="$(dirname "$(mefisto_state_path 'logs/.state')")"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 LOG_FILE="$LOG_DIR/tooling-pipeline-$TIMESTAMP.log"
 
@@ -82,23 +83,20 @@ TAIL_LOG_LINES=20
 # dejaba huerfano el trabajo que caia fuera (docs/adr/, CLAUDE.md, ...). Mismo
 # patron que scaffold-pipeline.sh:301. Una sola definicion para que no vuelva a
 # haber varias listas divergiendo entre si. Lo excluido lo escribe el pipeline:
-#   .claude/pipeline/      estado runtime del plugin (summaries, .plugin-root,
-#                          sessions.jsonl); el .gitignore raiz del consumidor no
-#                          lo cubre -- solo ignora *.log -- asi que sin excluirlo
-#                          se colaria al PR.
-#   .claude/settings.json  copia parcheada con la ruta absoluta del events.log que
-#                          el setup del worktree escribe con sed (ver mas abajo).
-PIPELINE_OWN_WRITES=(':!.claude/pipeline' ':!.claude/settings.json')
+#   .mefisto/pipeline/     evidencia operacional canonica; nunca se versiona.
+PIPELINE_OWN_WRITES=(':!.mefisto/pipeline')
 
 # --- Tracking de estado ---
 AGENT_WR_DUR="" AGENT_WR_RES="pending"
 AGENT_RV_DUR="" AGENT_RV_RES="pending"
+AGENT_WR_METRICS="null" AGENT_RV_METRICS="null"
 PIPELINE_TESTS=""
 PIPELINE_PR=""
 PIPELINE_ERROR=""
 LAST_AGENT_DURATION=0
 LAST_AGENT_DENIALS=0
 CURRENT_STAGE="setup"
+HOLD_CAUSE_JSON="null" HOLD_NEXT_PROBE_JSON="null" HOLD_CEILING_JSON="null" HOLD_TOTAL=0
 
 _strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
 _log_file()   { echo -e "$1" | _strip_ansi >> "${LOG_FILE_ABS:-$LOG_FILE}"; }
@@ -147,7 +145,7 @@ abort() {
     fi
     if [ -n "${PIPELINE_DIR_ABS:-}" ]; then
         update_status "$CURRENT_STAGE" "failed"
-        echo "{\"issue\":\"${ISSUE_NUM:-}\",\"title\":\"$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')\",\"pipeline\":\"tooling\",\"variant\":${VARIANT_LABEL_JSON:-null},\"harness_version\":${HARNESS_VERSION_JSON:-null},\"started\":\"${TIMESTAMP:-}\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"failed\",\"stage\":\"$CURRENT_STAGE\",\"error\":\"$PIPELINE_ERROR\"}" \
+        echo "{\"issue\":\"${ISSUE_NUM:-}\",\"title\":\"$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')\",\"pipeline\":\"tooling\",\"variant\":${VARIANT_LABEL_JSON:-null},\"identity\":$HARNESS_IDENTITY_JSON,\"started\":\"${TIMESTAMP:-}\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"failed\",\"stage\":\"$CURRENT_STAGE\",\"error\":\"$PIPELINE_ERROR\"}" \
             >> "$PIPELINE_DIR_ABS/pipeline-history.jsonl" 2>/dev/null || true
     fi
     exit 1
@@ -163,12 +161,13 @@ update_status() {
     [ -n "$PIPELINE_TESTS" ] && tests_val="$PIPELINE_TESTS"
     [ -n "$PIPELINE_PR" ]    && pr_val="\"$PIPELINE_PR\""
     [ -n "$PIPELINE_ERROR" ] && error_val="\"$PIPELINE_ERROR\""
-    cat > "$PIPELINE_DIR_ABS/$STATUS_FILENAME" <<EOJSON
+    cat > "$(mefisto_state_path "$STATUS_FILENAME")" <<EOJSON
 {
   "issue": "${ISSUE_NUM:-null}",
   "title": "$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')",
   "pipeline": "tooling",
   "variant": ${VARIANT_LABEL_JSON:-null},
+  "identity": $HARNESS_IDENTITY_JSON,
   "started": "$TIMESTAMP",
   "stage": "$stage",
   "state": "$state",
@@ -176,12 +175,13 @@ update_status() {
   "worktree": "${WORKTREE_PATH:-}",
   "log": "${LOG_FILE_ABS:-$LOG_FILE}",
   "agents": {
-    "writer":   {"duration": $wr_dur, "result": "$AGENT_WR_RES"},
-    "reviewer": {"duration": $rv_dur, "result": "$AGENT_RV_RES"}
+    "writer":   {"duration": $wr_dur, "result": "$AGENT_WR_RES", "metrics": $AGENT_WR_METRICS},
+    "reviewer": {"duration": $rv_dur, "result": "$AGENT_RV_RES", "metrics": $AGENT_RV_METRICS}
   },
   "tests": $tests_val,
   "pr": $pr_val,
   "last_error": $error_val
+  ,"hold": {"cause": $HOLD_CAUSE_JSON, "next_probe": $HOLD_NEXT_PROBE_JSON, "ceiling_seconds": $HOLD_CEILING_JSON, "accumulated_seconds": $HOLD_TOTAL}
 }
 EOJSON
 }
@@ -301,10 +301,11 @@ fi
 mkdir -p "$LOG_DIR"
 echo "Pipeline tooling iniciado: $TIMESTAMP" > "$LOG_FILE"
 
-PIPELINE_DIR_ABS="$(realpath "$PIPELINE_DIR")"
-LOG_DIR_ABS="$(realpath "$LOG_DIR")"
-LOG_FILE_ABS="$(realpath "$LOG_FILE")"
-EVENTS_LOG_ABS="$PIPELINE_DIR_ABS/events.log"
+PIPELINE_DIR_ABS="$(dirname "$(mefisto_state_path '.state')")"
+LOG_DIR_ABS="$(dirname "$(mefisto_state_path 'logs/.state')")"
+LOG_FILE_ABS="$(mefisto_state_path "logs/$(basename "$LOG_FILE")")"
+LOG_FILE="$LOG_FILE_ABS"
+EVENTS_LOG_ABS="$(mefisto_state_path 'events.log')"
 
 echo "=== SESSION TOOLING $TIMESTAMP issue:$ISSUE_NUM from-stage:$FROM_STAGE ===" >> "$EVENTS_LOG_ABS"
 
@@ -372,7 +373,10 @@ ISSUE_CONTEXT="# Issue #$ISSUE_NUM: $ISSUE_TITLE
 $ISSUE_BODY"
 log "Issue: $ISSUE_TITLE"
 
-echo "$ISSUE_CONTEXT" > "$PIPELINE_DIR/tooling-input.md"
+# El contexto del issue es un input y no forma parte de la evidencia durable.
+ISSUE_CONTEXT_FILE="$(mktemp)"
+printf '%s' "$ISSUE_CONTEXT" > "$ISSUE_CONTEXT_FILE"
+trap 'rm -f "${ISSUE_CONTEXT_FILE:-}"' EXIT
 
 # --- Preparar worktree ---
 header "Preparando worktree"
@@ -419,13 +423,7 @@ else
 
     success "Worktree creado: $WORKTREE_PATH"
 
-    mkdir -p "$WORKTREE_PATH/.claude/pipeline/summaries"
-
-    # Parchear settings.json del worktree con ruta absoluta del events.log
-    if [ -f "$REPO_ROOT/.claude/settings.json" ]; then
-        sed "s|\.claude/pipeline/events\.log|${EVENTS_LOG_ABS}|g" \
-            "$REPO_ROOT/.claude/settings.json" > "$WORKTREE_PATH/.claude/settings.json"
-    fi
+    mefisto_state_path 'summaries/.state' "$WORKTREE_PATH" >/dev/null
 
     update_status "setup" "running"
 
@@ -436,7 +434,8 @@ fi
 # --- Funcion auxiliar: recolectar resumen de agente ---
 collect_summary() {
     local stage="$1" agent="$2"
-    local f="$WORKTREE_PATH/.claude/pipeline/summaries/stage-${stage}-${agent}.md"
+    local f
+    f="$(mefisto_state_path "summaries/stage-${stage}-${agent}.md" "$WORKTREE_PATH")"
     if [ -f "$f" ]; then cat "$f"; else echo "_(El agente no genero resumen)_"; fi
 }
 
@@ -444,8 +443,6 @@ collect_summary() {
 auto_commit_if_needed() {
     local phase="$1"
     local msg="$2"
-
-    git -C "$WORKTREE_PATH" checkout -- .claude/settings.json 2>/dev/null || true
 
     # Commitea todo menos lo que escribe el propio pipeline (issue #568, ver
     # PIPELINE_OWN_WRITES) y menos pipeline-state/, la senal transitoria que nunca
@@ -469,16 +466,16 @@ auto_commit_if_needed() {
 # terminal; este nivel conserva exclusivamente la politica de hold/retry.
 run_agent() {
     local stage="$1" agent="$2" prompt="$3" log_base="$LOG_DIR_ABS/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}"
-    local log_stage="${log_base}.log" raw_file="${log_base}.stream.jsonl" stderr_file="${log_base}.stderr.log" events_file="${log_base}.events.jsonl"
-    local prompt_file="$PIPELINE_DIR_ABS/prompts/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}.prompt.md"
-    local system_file="$PIPELINE_DIR_ABS/prompts/noninteractive-system.md"
-    mkdir -p "$(dirname "$prompt_file")"
+    local log_stage="${log_base}.log" events_file="${log_base}.events.jsonl"
+    local prompt_file system_file runner_file
+    prompt_file="$(mktemp)"; system_file="$(mktemp)"; runner_file="$(mktemp)"
+    trap 'rm -f "${prompt_file:-}" "${system_file:-}" "${runner_file:-}"' RETURN
     printf '%s' "$prompt" > "$prompt_file"
     printf '%s\n' 'You are running in non-interactive print mode. There is no human to approve anything. Use editing tools directly; never ask for permission. Do not push or create pull requests.' > "$system_file"
     local agent_id model start_ts run_exit=0 elapsed=0 failure_type="" hold_started="" hold_total=0 resume_session="" resume_degraded=false
     local denial_retry_used=false entry_commit summary_file
     entry_commit="$(git -C "$WORKTREE_PATH" rev-parse HEAD)"
-    summary_file="$WORKTREE_PATH/.claude/pipeline/summaries/stage-${stage}-${agent}.md"
+    summary_file="$(mefisto_state_path "summaries/stage-${stage}-${agent}.md" "$WORKTREE_PATH")"
     case "$agent" in reviewer) agent_id="tooling-reviewer"; model="$MODEL_REVIEWER" ;; *) agent_id="tooling-writer"; model="$MODEL_WRITER" ;; esac
     case "$agent" in writer) AGENT_WR_RES="running" ;; reviewer) AGENT_RV_RES="running" ;; esac
     update_status "$stage-$agent" running; start_ts=$(date +%s)
@@ -486,15 +483,20 @@ run_agent() {
         local attempt_prompt="$prompt_file" attempt_resume=false
         if [ -n "$resume_session" ]; then
             attempt_resume=true
-            attempt_prompt="$PIPELINE_DIR_ABS/prompts/tooling-stage-${stage}-${agent}-${TIMESTAMP}-resume.prompt.md"
+            attempt_prompt="$(mktemp)"
             printf '%s\n' "Continue the same stage and complete its summary." > "$attempt_prompt"
         fi
-        local args=(--runtime "$MEFISTO_RUNTIME_RESUELTO" --agent "$agent_id" --cwd "$WORKTREE_PATH" --prompt-file "$attempt_prompt" --system-file "$system_file" --event-log "$events_file" --raw-log "$raw_file" --stderr-log "$stderr_file" --events-log "$EVENTS_LOG_ABS" --timeout "$MEFISTO_AGENT_TIMEOUT_SECONDS")
+        local args=(--runtime "$MEFISTO_RUNTIME_RESUELTO" --agent "$agent_id" --cwd "$WORKTREE_PATH" --prompt-file "$attempt_prompt" --system-file "$system_file" --event-log "$events_file" --events-log "$EVENTS_LOG_ABS" --redact-observability --timeout "$MEFISTO_AGENT_TIMEOUT_SECONDS")
         [ -n "$model" ] && args+=(--model "$model")
         [ -n "$resume_session" ] && args+=(--resume-session "$resume_session")
-        if "$RUN_AGENT_BIN" "${args[@]}" >>"${log_base}.runner.log" 2>&1; then run_exit=0; else run_exit=$?; fi
+        if "$RUN_AGENT_BIN" "${args[@]}" >"$runner_file" 2>&1; then run_exit=0; else run_exit=$?; fi
+        [ "$attempt_prompt" = "$prompt_file" ] || rm -f "$attempt_prompt"
         elapsed=$(( $(date +%s) - start_ts ))
-        derive_stage_log_from_stream "$events_file" "$stderr_file" "$log_stage"
+        derive_stage_log_from_stream "$events_file" "" "$log_stage"
+        local metrics_json
+        metrics_json="$(compute_stage_metrics "$events_file")"
+        printf '%s\n' "$metrics_json" > "$(mefisto_state_path "metrics/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}.json")"
+        case "$agent" in writer) AGENT_WR_METRICS="$metrics_json" ;; reviewer) AGENT_RV_METRICS="$metrics_json" ;; esac
         local denials
         denials="$(agent_events_denials "$events_file")"
         case "$denials" in ''|*[!0-9]*) denials=0 ;; esac
@@ -523,10 +525,16 @@ run_agent() {
         failure_type="$(classify_neutral_agent_failure "$run_exit" "$events_file")"
         if ! agent_failure_is_holdable "$failure_type"; then break; fi
         [ -z "$hold_started" ] && hold_started=$(date +%s)
+        HOLD_CAUSE_JSON="\"$failure_type\""
+        HOLD_CEILING_JSON="${MEFISTO_HOLD_MAX_SECONDS:-21600}"
+        HOLD_NEXT_PROBE_JSON="\"$(date -u -v+"${MEFISTO_HOLD_PROBE_SECONDS:-300}"S +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)\""
+        HOLD_TOTAL="$hold_total"
+        update_status "$stage-$agent" "hold"
         local slept resets
         resets="$(agent_events_resets_at "$events_file")"
         if ! slept=$(agent_hold_wait "$EVENTS_LOG_ABS" "$failure_type" "$hold_started" "$resets"); then break; fi
         hold_total=$((hold_total + slept))
+        HOLD_TOTAL="$hold_total"
         if [ "$attempt_resume" = true ] && [ ! -s "$summary_file" ]; then
             warn "$agent: la sesion reanudada termino sin resumen; se degrada permanentemente a inicio limpio"
             resume_degraded=true; resume_session=""
@@ -564,6 +572,7 @@ run_agent() {
         case "$failure_type" in TIMEOUT|KILLED|STREAM_CUT|PROTOCOL_INVALID) abort "$agent fallo ($failure_type); se descarta trabajo parcial" ;; esac
         abort "$agent fallo ($failure_type). Log completo: $log_stage"
     fi
+    HOLD_CAUSE_JSON="null"; HOLD_NEXT_PROBE_JSON="null"; HOLD_CEILING_JSON="null"; HOLD_TOTAL="$hold_total"
     LAST_AGENT_DURATION=$((elapsed - hold_total)); log "$agent completado en ${LAST_AGENT_DURATION}s"
 }
 
@@ -583,7 +592,7 @@ ALCANCE PERMITIDO de escritura:
 - .github/workflows/                         (workflows del consumidor)
 - .claude/harness.config.json                (configuracion del consumidor)
 - .claude/settings.json                      (configuracion Claude del consumidor)
-- .claude/pipeline/                          (estado runtime; .gitignored)
+- .mefisto/pipeline/                         (estado runtime canonico; .gitignored)
 - pipeline-state/                            (senales del pipeline)
 - scripts/                                   (scripts ad-hoc del consumidor)
 - tests/                                     (SOLO fixtures, helpers, builders - NO logica de dominio)
@@ -613,7 +622,7 @@ Instrucciones:
 2. Reutiliza patrones y convenciones del proyecto (mira archivos similares).
 3. Haz commits frecuentes con mensajes descriptivos en espanol.
 4. Verifica que el proyecto compila con 'dotnet build' si modificaste codigo C#.
-5. Al terminar, escribe un resumen de lo que hiciste en .claude/pipeline/summaries/stage-1-writer.md"
+5. Al terminar, escribe un resumen de lo que hiciste en .mefisto/pipeline/summaries/stage-1-writer.md"
 
     run_agent "1" "writer" "$STAGE1_PROMPT"
 
@@ -625,7 +634,6 @@ Instrucciones:
     # fue justamente un cambio docs-only (docs/adr/, CLAUDE.md) que no veia.
     # El caso latente de #485 (senal SOLO en pipeline-state/ gitignored) sigue
     # latente por la razon de siempre: git status no reporta rutas ignoradas.
-    git -C "$WORKTREE_PATH" checkout -- .claude/settings.json 2>/dev/null || true
     HAS_COMMITS=false
     HAS_UNSTAGED=false
     if ! git -C "$WORKTREE_PATH" diff --quiet "$SNAPSHOT_COMMIT" HEAD 2>/dev/null; then
@@ -682,7 +690,7 @@ Tu tarea: revisa la calidad del codigo producido por el writer.
 
 ALCANCE PERMITIDO de escritura (igual al del writer):
 .github/workflows/, .claude/harness.config.json, .claude/settings.json,
-.claude/pipeline/, pipeline-state/, scripts/, tests/ (fixtures/helpers),
+.mefisto/pipeline/, pipeline-state/, scripts/, tests/ (fixtures/helpers),
 docs/bitacora/, docs/ddd/, docs/adr-proyecto/, docs/adr/.
 
 PROHIBIDO: commands/, skills/, agents/, hooks/, .claude-plugin/, src/published/, src/runtime/, dist/, docs/adr/mef-adr-*, src/.
@@ -704,7 +712,7 @@ Instrucciones:
 3. Si hay codigo C#, verifica que compila y que los tests existentes pasan.
 4. Corrige problemas que encuentres directamente (no solo los reportes).
 5. Haz commit de tus correcciones con mensajes descriptivos.
-6. Al terminar, escribe un resumen en .claude/pipeline/summaries/stage-2-reviewer.md"
+6. Al terminar, escribe un resumen en .mefisto/pipeline/summaries/stage-2-reviewer.md"
 
     run_agent "2" "reviewer" "$STAGE2_PROMPT"
 
@@ -878,18 +886,17 @@ update_status "done" "completed"
 # Historial
 PR_JSON="null"
 [ -n "$PR_URL" ] && PR_JSON="\"$PR_URL\""
-echo "{\"issue\":\"$ISSUE_NUM\",\"title\":\"$(echo "$ISSUE_TITLE" | sed 's/"/\\"/g')\",\"pipeline\":\"tooling\",\"variant\":${VARIANT_LABEL_JSON:-null},\"harness_version\":${HARNESS_VERSION_JSON:-null},\"started\":\"$TIMESTAMP\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"completed\",\"agents\":{\"writer\":{\"duration\":${AGENT_WR_DUR:-null}},\"reviewer\":{\"duration\":${AGENT_RV_DUR:-null}}},\"tests\":${PIPELINE_TESTS:-null},\"pr\":$PR_JSON}" \
+echo "{\"issue\":\"$ISSUE_NUM\",\"title\":\"$(echo "$ISSUE_TITLE" | sed 's/"/\\"/g')\",\"pipeline\":\"tooling\",\"variant\":${VARIANT_LABEL_JSON:-null},\"identity\":$HARNESS_IDENTITY_JSON,\"started\":\"$TIMESTAMP\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"completed\",\"agents\":{\"writer\":{\"duration\":${AGENT_WR_DUR:-null}},\"reviewer\":{\"duration\":${AGENT_RV_DUR:-null}}},\"tests\":${PIPELINE_TESTS:-null},\"pr\":$PR_JSON}" \
     >> "$PIPELINE_DIR_ABS/pipeline-history.jsonl"
 
 # Eliminar archivo de estado individual (ya esta en el historial)
-rm -f "$PIPELINE_DIR_ABS/$STATUS_FILENAME"
+rm -f "$(mefisto_state_path "$STATUS_FILENAME")"
 
 # --- Cleanup ---
 header "Cleanup"
 
 log "Eliminando worktree..."
 cd "$REPO_ROOT"
-git -C "$WORKTREE_PATH" checkout -- .claude/ 2>/dev/null || true
 git worktree remove --force "$WORKTREE_PATH" >>"$LOG_FILE" 2>&1 \
     || warn "No se pudo eliminar el worktree. Eliminalo manualmente: git worktree remove --force $WORKTREE_PATH"
 

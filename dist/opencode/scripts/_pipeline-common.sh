@@ -871,11 +871,12 @@ run_tests_projects() {
 
 # --- Derivacion de log legible desde eventos de agente ----------------------
 
-# derive_stage_log_from_stream <stream_file> <stderr_file> <out_file>
+# derive_stage_log_from_stream <events_file> <legacy_stderr_file> <out_file>
 #
-# Deriva el log legible de un stage desde el JSONL neutral del runner o, para
-# callers aun no migrados, desde su stream legacy. Anexa <stderr_file> y
-# sobreescribe <out_file>.
+# Deriva el log legible de un stage desde el JSONL neutral del runner. El segundo
+# argumento conserva la firma de callers legacy: solo se anexa cuando el primer
+# archivo contiene su vocabulario stream-json legado. Nunca se anexa stderr a la
+# evidencia neutral, porque stderr puede contener entradas sensibles.
 #
 # El evento `result` con `is_error == true` tambien se deriva, prefijado con
 # "API Error: <status>" cuando el CLI reporta api_error_status: en una corrida
@@ -899,10 +900,18 @@ derive_stage_log_from_stream() {
 
     if [ -s "$stream_file" ]; then
         if command -v jq >/dev/null 2>&1; then
-            jq -R -r '
-                fromjson?
-                | select(type == "object")
-                | if .type == "assistant" then
+            if jq -e -s 'any(.[]; .type == "run.started" or .type == "run.completed" or .type == "run.failed")' "$stream_file" >/dev/null 2>&1; then
+                jq -r '
+                    if .type == "tool.started" then "[tool] " + (.tool // .name // "?")
+                    elif .type == "run.failed" then (.error.kind // "error")
+                    elif .type == "run.completed" then (.status // "completed")
+                    else empty end
+                ' "$stream_file" >> "$out_file" 2>/dev/null || true
+            else
+                jq -R -r '
+                    fromjson?
+                    | select(type == "object")
+                    | if .type == "assistant" then
                       (.message.content // [])[]?
                       | if .type == "text" then (.text // "")
                         elif .type == "tool_use" then "[tool] " + (.name // "?")
@@ -915,14 +924,16 @@ derive_stage_log_from_stream() {
                          then "API Error: " + (.api_error_status | tostring) + " "
                          else "" end)
                       + ((.result // .error // .terminal_reason // .subtype // "error") | tostring)
-                  else empty end
-            ' "$stream_file" >> "$out_file" 2>/dev/null || true
+                      else empty end
+                ' "$stream_file" >> "$out_file" 2>/dev/null || true
+            fi
         else
             echo "(jq no disponible: no se pudo derivar texto legible del stream crudo -- ver $stream_file)" >> "$out_file"
         fi
     fi
 
-    if [ -s "$stderr_file" ]; then
+    # Solo los callers legacy conservan este comportamiento transitorio.
+    if [ -s "$stderr_file" ] && ! jq -e -s 'any(.[]; .type == "run.started" or .type == "run.completed" or .type == "run.failed")' "$stream_file" >/dev/null 2>&1; then
         [ -s "$out_file" ] && echo "" >> "$out_file"
         cat "$stderr_file" >> "$out_file" 2>/dev/null || true
     fi
@@ -960,6 +971,34 @@ compute_stage_metrics() {
     fi
     if [ ! -s "$stream_file" ]; then
         echo "null"
+        return 0
+    fi
+
+    # El protocolo neutral no expone texto/wire data. Su terminal contiene las
+    # cifras correlacionables; esta rama se selecciona por vocabulario, nunca por
+    # runtime, para no reinterpretar accidentalmente un stream nativo.
+    if jq -e -s 'any(.[]; .type == "run.completed" or .type == "run.failed")' "$stream_file" >/dev/null 2>&1; then
+        local neutral
+        neutral=$(jq -s -c '
+            [.[] | select(.type == "run.completed" or .type == "run.failed")] | last as $t
+            | if $t == null then null else {
+                turns: ($t.turns // $t.num_turns),
+                duration_ms: ($t.duration_ms // $t.duration),
+                duration_api_ms: $t.duration_api_ms,
+                non_api_ms: (if (($t.duration_ms // $t.duration) != null and $t.duration_api_ms != null) then (($t.duration_ms // $t.duration) - $t.duration_api_ms) else null end),
+                cost_usd: ($t.cost_usd // $t.total_cost_usd),
+                tokens: ($t.tokens // {input: $t.usage.input_tokens, output: $t.usage.output_tokens, cache_read: $t.usage.cache_read_input_tokens, cache_creation: $t.usage.cache_creation_input_tokens}),
+                model: ($t.model // $t.effective_model),
+                is_error: ($t.type == "run.failed"),
+                stop_reason: $t.status,
+                terminal_reason: ($t.error.kind // null),
+                ttft_ms: $t.ttft_ms,
+                permission_denials: ($t.denials // null),
+                rate_limit_events: null,
+                tool_calls: []
+              } end
+        ' "$stream_file" 2>/dev/null) || neutral=""
+        printf '%s\n' "${neutral:-null}"
         return 0
     fi
 
@@ -1967,6 +2006,21 @@ get_harness_version() {
 
     echo "$version"
     return 0
+}
+
+# get_harness_identity_json lee exclusivamente metadata distribuida con el
+# paquete. La ausencia de commit se declara degradada; nunca se infiere de Git.
+get_harness_identity_json() {
+    local script_dir plugin_json version commit state
+    script_dir="$(_pc_script_dir 2>/dev/null)" || script_dir=""
+    plugin_json="$script_dir/../.claude-plugin/plugin.json"
+    version=""; commit=""
+    if [ -f "$plugin_json" ] && command -v jq >/dev/null 2>&1; then
+        version=$(jq -r '.version // empty' "$plugin_json" 2>/dev/null) || true
+        commit=$(jq -r '.harness_commit // .harnessCommit // .commit // empty' "$plugin_json" 2>/dev/null) || true
+    fi
+    [ -n "$version" ] && [ -n "$commit" ] && state="complete" || state="degraded"
+    jq -cn --arg version "$version" --arg commit "$commit" --arg state "$state" '{harness_version: (if $version == "" then null else $version end), harness_commit: (if $commit == "" then null else $commit end), identity_state: $state}'
 }
 
 # resolve_pipeline <issue_num> [override]
