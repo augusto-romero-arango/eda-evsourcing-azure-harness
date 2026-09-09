@@ -44,6 +44,9 @@
 #       marcar $ARGUMENTS ni ${#ARRAY[@]} como falsos positivos -- y el guard
 #       SI detecta un $1 introducido a mano en un archivo sintetico (prueba de
 #       que el guard funciona, no solo que hoy no encuentra nada).
+#   [H] Reconciliacion post-merge: contrato de entrada, cierres multiples,
+#       parsing forward, estados issue/PR, fallos de API e idempotencia. Un
+#       control ejecuta el shim estable para probar tambien su delegacion.
 #
 # Uso: .claude/scripts/tests/test-batch-deps-validation.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -53,6 +56,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 SCRIPT="$REPO_ROOT/src/internal/scripts/mefisto-validate-batch-deps.sh"
+SHIM="$REPO_ROOT/.claude/scripts/mefisto-validate-batch-deps.sh"
 
 PASS=0
 FAIL=0
@@ -166,8 +170,12 @@ set_pr_body() { cat > "$FAKE_DATA/$1.pr_body"; }
 set_body() { cat > "$FAKE_DATA/$1.body"; }
 
 run_script() {
-    # El shim y el canónico deben funcionar con el bash 3.2 nativo de macOS.
+    # El canónico debe funcionar con el bash 3.2 nativo de macOS.
     FAKE_DATA_DIR="$FAKE_DATA" PATH="$FAKE_BIN:$PATH" /bin/bash "$SCRIPT" "$@"
+}
+
+run_shim() {
+    FAKE_DATA_DIR="$FAKE_DATA" PATH="$FAKE_BIN:$PATH" /bin/bash "$SHIM" "$@"
 }
 
 assert_gh_calls_empty() {
@@ -288,6 +296,15 @@ assert_gh_calls_empty "H-5"
 OUTPUT=$(run_script --reconcile-pr abc 2>&1); RC=$?
 if [ "$RC" -eq 2 ] && echo "$OUTPUT" | grep -q "uso:"; then pass "H-5: argumento de PR inválido falla con uso accionable"; else fail "H-5: argumento inválido rc=$RC: $OUTPUT"; fi
 
+OUTPUT=$(run_script --reconcile-pr 904 extra 2>&1); RC=$?
+if [ "$RC" -eq 2 ] && echo "$OUTPUT" | grep -q "uso:"; then pass "H-5: el modo exige exactamente un PR"; else fail "H-5: aridad inválida rc=$RC: $OUTPUT"; fi
+assert_gh_calls_empty "H-5 aridad"
+
+reset_fixtures
+OUTPUT=$(run_script --reconcile-pr 999 2>&1); RC=$?
+if [ "$RC" -ne 0 ] && echo "$OUTPUT" | grep -q "no se pudo consultar el PR #999"; then pass "H-5: PR inexistente falla con diagnóstico accionable"; else fail "H-5: PR inexistente rc=$RC: $OUTPUT"; fi
+assert_gh_calls_empty "H-5 inexistente"
+
 reset_fixtures
 set_pr_state 905 "MERGED"
 set_pr_body 905 <<'EOF'
@@ -325,6 +342,25 @@ OUTPUT=$(run_script --reconcile-pr 907 2>&1); RC=$?
 OUTPUT2=$(run_script --reconcile-pr 907 2>&1); RC2=$?
 EDIT_COUNT=$(grep -c "issue edit 205 --remove-label bloqueado" "$FAKE_DATA/gh_calls.log" 2>/dev/null || true)
 if [ "$RC" -eq 0 ] && [ "$RC2" -eq 0 ] && [ "$EDIT_COUNT" -eq 1 ]; then pass "H-8: invocación repetida es idempotente"; else fail "H-8: rc=$RC/$RC2, edits=$EDIT_COUNT: $OUTPUT $OUTPUT2"; fi
+
+reset_fixtures
+set_pr_state 908 "MERGED"
+set_pr_body 908 <<'EOF'
+Closes #160
+EOF
+echo "206" > "$FAKE_DATA/blocked.list"
+set_body 206 <<'EOF'
+## Dependencias
+Depende de #160
+EOF
+set_state 160 "CLOSED"
+OUTPUT=$(run_shim --reconcile-pr 908 2>&1); RC=$?
+if [ "$RC" -eq 0 ] && echo "$OUTPUT" | grep -q "Quitado 'bloqueado' de #206"; then
+    pass "H-9: el shim estable delega el modo de reconciliación al canónico"
+else
+    fail "H-9: el shim no delegó correctamente, rc=$RC: $OUTPUT"
+fi
+assert_issue_edit_called "H-9" 206
 
 # -------- Bloque A: pos_in_batch calcula la posicion correcta para los 3 --------
 # Extrae la funcion REAL del script (no la reimplementa): el test unitario

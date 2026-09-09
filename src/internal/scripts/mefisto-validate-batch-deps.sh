@@ -25,9 +25,9 @@
 #   src/internal/scripts/mefisto-validate-batch-deps.sh --reconcile-pr <pr>
 #
 # Exit codes:
-#   0 -- el batch se puede lanzar (ver clasificacion abajo)
-#   1 -- hay al menos un bloqueo real (tipo b): se aborta, no se muta ningun label
-#   2 -- invocado sin argumentos (guarda fail-loud: no se valido nada)
+#   0 -- validacion/reconciliacion exitosa (incluido el no-op sin Closes)
+#   1 -- bloqueo real del batch o fallo operativo durante la reconciliacion
+#   2 -- invocacion invalida (guarda fail-loud: no se valido nada)
 #
 # Clasificacion (issue #47, universo de analisis ampliado por issue #466): para
 # CADA issue del batch -- ya no solo los que llevan el label 'bloqueado', ver
@@ -83,7 +83,7 @@ contains_number() {
 
 reconcile_pr() {
     local pr="$1" pr_state pr_body closed_issues blocked_numbers blocked body deps
-    local closed dep state candidate generic_reference had_error=0
+    local closed dep state candidate had_error=0
 
     if ! pr_state=$(gh pr view "$pr" --json state -q '.state' 2>/dev/null); then
         echo "ERROR: no se pudo consultar el PR #$pr. Verifica que exista y que gh tenga acceso." >&2
