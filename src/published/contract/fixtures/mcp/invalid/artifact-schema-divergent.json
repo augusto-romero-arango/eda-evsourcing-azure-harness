@@ -1,0 +1,1 @@
+{"oneOf":[{"type":"object","properties":{"kind":{"enum":["agent"]},"mcp":{"items":{"enum":["terraform","microsoft-learn"]}}}},{"type":"object","properties":{"kind":{"enum":["command"]},"mcp":{"items":{"enum":["microsoft-learn","terraform"]}}}}]}

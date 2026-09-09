@@ -43,11 +43,22 @@ autoridad `is_path_in_mefisto_scope`. En OpenCode tampoco habilita `lsp` de
 forma implícita (MEF-ADR-0052).
 
 `mcp` no es una tool ni un permiso de runtime: es una lista de ids lógicos
-kebab-case. Los ids iniciales son `mcp: ["microsoft-learn"]` y
-`mcp: ["terraform"]`. El schema registra esos mappings iniciales como un
-vocabulario cerrado: agregar otro id requiere actualizar el contrato y los
-mappings de todos los adaptadores. Si un runtime carece del mapping de un id
-declarado, su validación/generación aborta; nunca concede MCP genérico.
+kebab-case. `mcp-servers.json` es la autoridad neutral de esos ids y de su
+provisioning; `published-artifact.schema.json` debe conservar exactamente el
+mismo enum y orden. El registro inicial distingue `microsoft-learn` como
+`bundled` (HTTP remoto HTTPS, sin autenticación) de `terraform` como
+`external` (sin transporte, URL ni autenticación): Mefisto no distribuye ni
+custodia Terraform. Agregar otro id requiere actualizar el registro, el
+contrato y los mappings de todos los adaptadores. Si un runtime carece del
+mapping de un id declarado, su validación/generación aborta; nunca concede MCP
+genérico.
+
+El registro no admite headers, environment, OAuth, tokens, secretos ni otras
+credenciales. Para cada entrada `bundled`,
+`validate-published-mcp.sh` deriva en memoria la proyección Claude
+(`remote-http` a `type: http`) y exige que `.mcp.json` sea idéntico, sin
+servidores externos ni claves adicionales. `.mcp.json` sigue versionado como
+adaptador Claude, no como autoridad conceptual.
 
 Toda referencia `skills` debe resolver a un `skills/<id>/SKILL.md` publicado,
 ser única y conservar el id lógico sin prefijo. Claude Code materializa esos
@@ -118,3 +129,11 @@ Sin argumentos valida `src/published/{agents,commands}/*.md`. Cada rechazo usa
 `<archivo>: <campo|body>: <motivo>`. El script requiere Bash 3.2 y `jq`; los
 fixtures y su prueba están en este contrato y en
 `scripts/tests/test-published-artifact-contract.sh`.
+
+```bash
+src/published/scripts/validate-published-mcp.sh
+```
+
+El segundo validador comprueba el schema del registro, sus reglas cruzadas, la
+sincronía del enum MCP y la proyección `.mcp.json`; tampoco realiza llamadas de
+red.

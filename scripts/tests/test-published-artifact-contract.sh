@@ -4,16 +4,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 CONTRACT_DIR="$REPO_ROOT/src/published/contract"
 VALIDATOR="$REPO_ROOT/src/published/scripts/validate-published-artifacts.sh"
+MCP_VALIDATOR="$REPO_ROOT/src/published/scripts/validate-published-mcp.sh"
+MCP_FIXTURES="$CONTRACT_DIR/fixtures/mcp"
 PASS=0 FAIL=0
 pass() { echo "  PASS: $1"; PASS=$((PASS+1)); }
 fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 
 echo "[pre] contrato publicado"
-for f in "$CONTRACT_DIR/published-artifact.schema.json" "$VALIDATOR" "$REPO_ROOT/src/published/scripts/lib/jsonschema-lite.jq"; do [ -f "$f" ] && pass "existe: ${f#"$REPO_ROOT"/}" || fail "no existe: ${f#"$REPO_ROOT"/}"; done
+for f in "$CONTRACT_DIR/published-artifact.schema.json" "$CONTRACT_DIR/mcp-servers.json" "$CONTRACT_DIR/mcp-servers.schema.json" "$VALIDATOR" "$MCP_VALIDATOR" "$REPO_ROOT/src/published/scripts/lib/jsonschema-lite.jq"; do [ -f "$f" ] && pass "existe: ${f#"$REPO_ROOT"/}" || fail "no existe: ${f#"$REPO_ROOT"/}"; done
 [ -x "$VALIDATOR" ] && pass "validador ejecutable" || fail "validador no ejecutable"
+[ -x "$MCP_VALIDATOR" ] && pass "validador MCP ejecutable" || fail "validador MCP no ejecutable"
 grep -q '^#!/usr/bin/env bash$' "$VALIDATOR" && pass "validador declara intérprete Bash" || fail "validador sin shebang Bash"
 jq empty "$CONTRACT_DIR/published-artifact.schema.json" >/dev/null 2>&1 && pass "schema JSON válido" || fail "schema JSON inválido"
 bash -n "$VALIDATOR" >/dev/null 2>&1 && pass "sintaxis Bash válida" || fail "sintaxis Bash inválida"
+bash -n "$MCP_VALIDATOR" >/dev/null 2>&1 && pass "sintaxis Bash MCP válida" || fail "sintaxis Bash MCP inválida"
 
 echo "[valid] fixtures válidos"
 for f in "$CONTRACT_DIR"/fixtures/valid/*.md; do out=$(bash "$VALIDATOR" "$f" 2>&1); rc=$?; [ "$rc" -eq 0 ] && pass "$(basename "$f")" || fail "$(basename "$f"): $out"; done
@@ -61,5 +65,28 @@ check_invalid "prefixed-directive-id.md" "directiva mefisto mal formada"
 
 echo "[no-args] fuentes publicadas"
 out=$(bash "$VALIDATOR" 2>&1); rc=$?; [ "$rc" -eq 0 ] && pass "todas las fuentes publicadas validan" || fail "sin argumentos: $out"
+
+echo "[mcp] registro neutral y proyeccion Claude"
+out=$(bash "$MCP_VALIDATOR" 2>&1); rc=$?; [ "$rc" -eq 0 ] && pass "registro MCP publicado valida" || fail "registro MCP: $out"
+out=$(bash "$MCP_VALIDATOR" --registry "$MCP_FIXTURES/valid/mcp-servers.json" 2>&1); rc=$?; [ "$rc" -eq 0 ] && pass "fixture MCP válido" || fail "fixture MCP válido: $out"
+check_invalid_mcp() {
+    local name="$1" expected="$2" out rc
+    out=$(bash "$MCP_VALIDATOR" --registry "$MCP_FIXTURES/invalid/$name" 2>&1); rc=$?
+    if [ "$rc" -eq 0 ]; then fail "MCP $name fue aceptado"
+    elif printf '%s' "$out" | grep -qF -- "$expected"; then pass "MCP $name: $expected"
+    else fail "MCP $name fue rechazado por otro motivo: $out"
+    fi
+}
+check_invalid_mcp "bundled-without-url.json" "bundled exige"
+check_invalid_mcp "external-with-connection.json" "external exige"
+check_invalid_mcp "sensitive-key.json" "headers: propiedad adicional"
+check_invalid_mcp "duplicate-id.json" "ids duplicados"
+check_invalid_mcp "non-kebab-id.json" "id: 'Microsoft_Learn' no coincide"
+out=$(bash "$MCP_VALIDATOR" --artifact-schema "$MCP_FIXTURES/invalid/artifact-schema-divergent.json" 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qF "enum mcp para agent difiere"; then pass "MCP detecta enum divergente"; else fail "MCP no detectó enum divergente: $out"; fi
+out=$(bash "$MCP_VALIDATOR" --artifact-schema "$MCP_FIXTURES/invalid/artifact-schema-duplicate-enum.json" 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qF "enum mcp para agent contiene ids duplicados"; then pass "MCP detecta enum duplicado"; else fail "MCP no detectó enum duplicado: $out"; fi
+out=$(bash "$MCP_VALIDATOR" --claude-config "$MCP_FIXTURES/invalid/claude-config-divergent.json" 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qF "difiere de la proyeccion Claude"; then pass "MCP detecta .mcp.json divergente"; else fail "MCP no detectó .mcp.json divergente: $out"; fi
 echo "RESULTADO: $PASS pasaron, $FAIL fallaron"
 [ "$FAIL" -eq 0 ]

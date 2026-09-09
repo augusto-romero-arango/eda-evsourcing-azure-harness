@@ -1,0 +1,26 @@
+{
+  "$comment": "Registro neutral de servidores MCP publicados (MEF-ADR-0019, MEF-ADR-0025, MEF-ADR-0049, MEF-ADR-0050 y MEF-ADR-0053; issue #1144).",
+  "type": "object",
+  "required": ["schemaVersion", "servers"],
+  "properties": {
+    "schemaVersion": { "type": "number", "enum": [1] },
+    "servers": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "required": ["id", "provisioning", "transport", "url", "authentication"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+          "provisioning": { "type": "string", "enum": ["bundled", "external"] },
+          "transport": { "type": ["string", "null"], "enum": ["remote-http", null] },
+          "url": { "type": ["string", "null"] },
+          "authentication": { "type": ["string", "null"], "enum": ["none", null] }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
