@@ -20,7 +20,8 @@
 # lo reenvia, lo valida el pipeline de tooling en cada corrida.
 #
 # Flujo por issue:
-#   1. src/internal/scripts/mefisto-tooling-pipeline.sh <issue>
+#   1. Materializar un worktree de ejecucion detached en el SHA confirmado de
+#      origin/main y ejecutar desde ahi mefisto-tooling-pipeline.sh <issue>
 #   2. Extraer URL del PR del output
 #   3. gh pr merge <num> --squash --delete-branch
 #   4. Sync VERIFICADO: confirma que el commit de merge del PR llego a
@@ -300,6 +301,54 @@ fail_issue() {
 # estaba fallando por otra razon -- solo el camino de exito la consulta.
 BATCH_STOP_SIGNAL="$MEFISTO_STATE_DIR/batch-stop"
 
+# --- Raiz ejecutable aislada por eslabon (issue #1107) ----------------------
+#
+# El checkout desde el que se lanzo el batch sigue siendo la fuente de estado,
+# configuracion local y señales, pero NUNCA de ejecutables durante un eslabon.
+# Cada raiz es un worktree detached en el SHA que acabamos de verificar en
+# origin/main. Asi writer y reviewer comparten maquinaria inmutable, y el
+# siguiente eslabon recibe el pipeline que su predecesor pudo haber mergeado.
+#
+# No se ubica dentro de REPO_ROOT (un worktree anidado mezcla infraestructura
+# temporal con el checkout humano): es un sibling con identidad propia, ajena a
+# worktree-mefisto-issue-<N>-<slug>. git worktree remove es la unica limpieza;
+# nunca hacemos reset, clean ni switch sobre el checkout lanzador.
+EXECUTION_ROOT=""
+EXECUTION_ROOT_ACTIVE=false
+EXECUTION_SHA=""
+
+cleanup_execution_root() {
+    if [ "$EXECUTION_ROOT_ACTIVE" = true ] && [ -n "$EXECUTION_ROOT" ]; then
+        git -C "$REPO_ROOT" worktree remove --force "$EXECUTION_ROOT" >/dev/null 2>&1 || true
+        EXECUTION_ROOT_ACTIVE=false
+    fi
+}
+
+refresh_execution_root() {
+    local issue="$1"
+    cleanup_execution_root
+
+    if ! git -C "$REPO_ROOT" fetch origin main >>"$LOG_FILE_ABS" 2>&1; then
+        warn "snapshot: git fetch origin main fallo antes del issue #$issue"
+        return 1
+    fi
+    EXECUTION_SHA=$(git -C "$REPO_ROOT" rev-parse --verify origin/main^{commit} 2>/dev/null) || {
+        warn "snapshot: no se pudo resolver el commit verificado de origin/main antes del issue #$issue"
+        return 1
+    }
+
+    EXECUTION_ROOT="${REPO_ROOT}/../mefisto-batch-execution-${TIMESTAMP}-$$"
+    if ! git -C "$REPO_ROOT" worktree add --detach "$EXECUTION_ROOT" "$EXECUTION_SHA" >>"$LOG_FILE_ABS" 2>&1; then
+        warn "snapshot: no se pudo materializar la raiz aislada $EXECUTION_ROOT en $EXECUTION_SHA"
+        EXECUTION_ROOT=""
+        return 1
+    fi
+    EXECUTION_ROOT_ACTIVE=true
+    return 0
+}
+
+trap cleanup_execution_root EXIT
+
 batch_stop_requested() {
     [ -f "$BATCH_STOP_SIGNAL" ]
 }
@@ -526,14 +575,7 @@ log "Modo en error: $([ "$STOP_ON_ERROR" = true ] && echo 'detener' || echo 'con
 log "Log: $LOG_FILE_ABS"
 log "Parada suave: /mefisto-batch-stop detiene el batch tras el eslabon en curso (issue #966)"
 log "Espera automatica: ante RATE_LIMIT/PROVIDER_UNAVAILABLE el eslabon en curso espera (hold) en vez de fallar (issue #967) -- mientras espera, /mefisto-work-status lo reporta 'en espera' (issue #969)"
-
-# Eslabon canonico (issue #870): se invoca directo, sin pasar por el shim de
-# compatibilidad. Ruta absoluta derivada de SCRIPT_DIR (donde vive este mismo
-# archivo, ya en src/internal/scripts/), indiferente al cwd del invocador.
-PIPELINE_SCRIPT="$SCRIPT_DIR/mefisto-tooling-pipeline.sh"
-if [ ! -x "$PIPELINE_SCRIPT" ]; then
-    abort "No se encontro el pipeline interno: $PIPELINE_SCRIPT"
-fi
+log "Ejecucion aislada: cada eslabon fija sus ejecutables en el SHA verificado de origin/main (issue #1107)"
 
 # --- Loop principal ---
 COMPLETED=0
@@ -561,6 +603,18 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
     CURRENT=$((COMPLETED + FAILED + 1))
     header "Issue #$ISSUE_NUM ($CURRENT/$TOTAL)"
 
+    # Se crea ANTES de cualquier tooling del issue. El snapshot queda vivo hasta
+    # que termine todo el eslabon (writer, reviewer, PR, merge y sync); la
+    # siguiente vuelta lo reemplaza tras el sync verificado del merge anterior.
+    if ! refresh_execution_root "$ISSUE_NUM"; then
+        abort "No se pudo preparar la raiz ejecutable aislada para issue #$ISSUE_NUM; no se lanzo ningun stage. Revisa el log: $LOG_FILE_ABS"
+    fi
+    PIPELINE_SCRIPT="$EXECUTION_ROOT/src/internal/scripts/mefisto-tooling-pipeline.sh"
+    if [ ! -x "$PIPELINE_SCRIPT" ]; then
+        abort "El snapshot $EXECUTION_SHA no contiene el pipeline interno ejecutable: $PIPELINE_SCRIPT"
+    fi
+    log "Snapshot ejecutable para #$ISSUE_NUM: ${EXECUTION_SHA:0:12} ($EXECUTION_ROOT)"
+
     # -- Stage 1: Ejecutar pipeline interno --
     # El propio pipeline interno valida que el issue exista y este OPEN.
     # Aqui solo capturamos el exit code y lo registramos como error del issue.
@@ -581,7 +635,19 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
     [ -z "$HOLD_LINE_START" ] && HOLD_LINE_START=0
 
     PIPELINE_EXIT=0
-    "$PIPELINE_SCRIPT" "$ISSUE_NUM" 2>&1 | tee "$ISSUE_LOG" || PIPELINE_EXIT=$?
+    # MEFISTO_STATE_DIR ya apunta al checkout lanzador y se hereda. La raiz de
+    # implementacion y el mapping local tambien viajan explicitamente para que
+    # el snapshot no cree estado/configuracion paralelos propios.
+    # El cwd tambien se fija al snapshot. Esto hace que assert_in_mefisto y
+    # get_harness_sha atribuyan la corrida al mismo commit que aporta el
+    # ejecutable; MEFISTO_LAUNCH_ROOT es la unica raiz para las operaciones
+    # deliberadas sobre el checkout lanzador.
+    (
+        cd "$EXECUTION_ROOT"
+        MEFISTO_LAUNCH_ROOT="$REPO_ROOT" \
+            MEFISTO_MODELS_FILE="${MEFISTO_MODELS_FILE:-$REPO_ROOT/.mefisto/models.json}" \
+            "$PIPELINE_SCRIPT" "$ISSUE_NUM"
+    ) 2>&1 | tee "$ISSUE_LOG" || PIPELINE_EXIT=$?
 
     # Agregar el log del issue al log general (sin codigos ANSI)
     _strip_ansi < "$ISSUE_LOG" >> "$LOG_FILE_ABS"

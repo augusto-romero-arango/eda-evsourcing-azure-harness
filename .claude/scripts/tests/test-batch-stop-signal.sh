@@ -187,6 +187,8 @@ EOF
     cp -R "$CANON_RUNTIME" "$dir/src/runtime"
     cp "$CANON_BATCH" "$dir/src/internal/scripts/mefisto-batch-pipeline.sh"
     chmod +x "$dir/src/internal/scripts/mefisto-batch-pipeline.sh"
+    git -C "$dir" config user.email "test@mefisto.local"
+    git -C "$dir" config user.name "Mefisto Test"
 }
 
 # fake_tooling_pipeline <dir> <call_log> [<signal_after_issue> <signal_path>]
@@ -208,6 +210,9 @@ echo "v PR creado: https://github.com/acme/mefisto-fake/pull/\$((\$1 + 1000))"
 exit 0
 EOF
     chmod +x "$dir/src/internal/scripts/mefisto-tooling-pipeline.sh"
+    git -C "$dir" add .
+    git -C "$dir" commit -q -m "tooling falso"
+    git -C "$dir" push -q origin main
 }
 
 # fake_gh <bin_dir> -- gh falso: "pr merge" empuja un commit nuevo desde
@@ -219,6 +224,7 @@ setup_fake_gh() {
 #!/usr/bin/env bash
 if [ "$1" = "pr" ] && [ "$2" = "merge" ]; then
     num="$3"
+    git -C "$FAKE_GH_PUBLISHER" pull -q --ff-only origin main >/dev/null 2>&1
     git -C "$FAKE_GH_PUBLISHER" commit -q --allow-empty -m "merge PR #$num" >/dev/null 2>&1
     git -C "$FAKE_GH_PUBLISHER" push -q origin main >/dev/null 2>&1
     mkdir -p "$FAKE_GH_SHA_DIR"

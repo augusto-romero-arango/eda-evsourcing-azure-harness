@@ -144,7 +144,7 @@ if grep -qF 'PIPELINE_DIR="$MEFISTO_STATE_DIR"' "$CANON_PIPE"; then
 else
     fail "PIPELINE_DIR ya no se resuelve desde MEFISTO_STATE_DIR"
 fi
-if grep -qF 'INTERNAL_MODELS_FILE="$MEFISTO_REPO_ROOT/.mefisto/models.json"' "$CANON_PIPE" \
+if grep -qF 'INTERNAL_MODELS_FILE="${MEFISTO_MODELS_FILE:-${MEFISTO_LAUNCH_ROOT:-$MEFISTO_REPO_ROOT}/.mefisto/models.json}"' "$CANON_PIPE" \
     && grep -qF 'EVENTS_LOG_ABS="$PIPELINE_DIR_ABS/events.log"' "$CANON_PIPE"; then
     pass "mapping interno y events.log se entregan por rutas explicitas al nucleo"
 else

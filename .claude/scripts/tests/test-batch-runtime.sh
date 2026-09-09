@@ -13,9 +13,8 @@
 #         del pipeline canonico contiene '.claude/pipeline' ni '.claude/scripts'
 #         -- mismo criterio que test-tooling-state-paths.sh bloque I: los
 #         comentarios SI pueden nombrar esas rutas al documentar el shim.
-#   [C]   El eslabon invoca el pipeline de tooling CANONICO (PIPELINE_SCRIPT
-#         resuelto contra SCRIPT_DIR, sibling de este mismo archivo), nunca el
-#         shim de .claude/scripts/ (CA-3).
+#   [C]   El eslabon invoca el pipeline de tooling CANONICO desde su snapshot
+#         aislado, nunca el shim ni el checkout mutable (CA-3).
 #   [D]   La precondicion de dependencias comprueba git, gh, jq y llama a
 #         mefisto_resolve_runtime -- ya no 'claude' a secas (CA-2).
 #   [E]   Corrida real de dos issues con stubs de gh y un tooling-pipeline
@@ -137,12 +136,12 @@ done
 # -------- Bloque C: invoca el pipeline de tooling CANONICO --------
 
 echo ""
-echo "[C] El eslabon invoca el tooling-pipeline CANONICO, no el shim (CA-3)"
+echo "[C] El eslabon invoca el tooling-pipeline CANONICO desde snapshot, no el shim (CA-3)"
 
-if grep -qF 'PIPELINE_SCRIPT="$SCRIPT_DIR/mefisto-tooling-pipeline.sh"' "$CANON_BATCH"; then
-    pass "PIPELINE_SCRIPT resuelve contra SCRIPT_DIR (sibling canonico)"
+if grep -qF 'PIPELINE_SCRIPT="$EXECUTION_ROOT/src/internal/scripts/mefisto-tooling-pipeline.sh"' "$CANON_BATCH"; then
+    pass "PIPELINE_SCRIPT resuelve contra el snapshot aislado"
 else
-    fail "PIPELINE_SCRIPT no resuelve contra el sibling canonico"
+    fail "PIPELINE_SCRIPT no resuelve contra el snapshot aislado"
 fi
 
 # -------- Bloque D: la precondicion usa mefisto_resolve_runtime --------
@@ -193,6 +192,11 @@ setup_fake_repo() {
     git init -q "$dir"
     git -C "$dir" symbolic-ref HEAD refs/heads/main
     git -C "$dir" -c user.email="test@mefisto.local" -c user.name="Mefisto Test" commit -q --allow-empty -m "base"
+    git -C "$dir" config user.email "test@mefisto.local"
+    git -C "$dir" config user.name "Mefisto Test"
+    # El batch de #1107 verifica origin/main antes de materializar su snapshot.
+    # Un remoto local basta para este fixture sin proveedor y no toca red.
+    git -C "$dir" remote add origin "$dir"
 
     mkdir -p "$dir/.claude-plugin" "$dir/src/internal/scripts/lib"
     cat > "$dir/.claude-plugin/plugin.json" <<'EOF'
@@ -228,6 +232,9 @@ echo "v PR creado: https://github.com/acme/mefisto-fake/pull/999"
 exit 0
 EOF
     chmod +x "$dir/src/internal/scripts/mefisto-tooling-pipeline.sh"
+    git -C "$dir" add .
+    git -C "$dir" commit -q -m "tooling falso"
+    git -C "$dir" fetch -q origin main
 }
 
 FAKE_BIN="$TMP/bin"
