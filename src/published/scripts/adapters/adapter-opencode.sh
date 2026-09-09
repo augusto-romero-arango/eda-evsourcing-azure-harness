@@ -6,6 +6,8 @@ export LC_ALL=C
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 MAPPING="$SCRIPT_DIR/../../contract/opencode-permissions.json"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd -P)"
+SKILLS_ROOT="$REPO_ROOT/skills"
 
 error() { printf '%s\n' "$1" >&2; return 1; }
 frontmatter() { awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$1"; }
@@ -122,6 +124,70 @@ launch_agent_id() {
     done <<< "$input"
 }
 
+# OpenCode descubre Skills por directorio. La fuente permanece nativa para
+# Claude; este borde adapta a la vez el directorio y el campo name (ADR-0050).
+skill_frontmatter_value() {
+    local key="$1" source="$2"
+    awk -v key="$key" 'NR == 1 { if ($0 != "---") exit 1; next } $0 == "---" { exit } $0 ~ "^" key ":[[:space:]]*" { sub("^" key ":[[:space:]]*", ""); print; exit }' "$source"
+}
+
+validate_skill_links() {
+    local skill_root="$1" source="$2" match target target_dir target_file physical_root physical_target
+    physical_root="$(cd "$skill_root" && pwd -P)" || return 1
+    while IFS= read -r match; do
+        target="${match#](}"
+        case "$target" in ''|*'://'*|mailto:*|/*|\#*) continue ;; esac
+        target_dir="$(dirname "$source")"
+        target_file="$target_dir/$target"
+        [ -e "$target_file" ] && [ ! -L "$target_file" ] || { error "$source: links: enlace local no resoluble: $target"; return 1; }
+        physical_target="$(cd "$(dirname "$target_file")" && pwd -P)/$(basename "$target_file")" || return 1
+        case "$physical_target" in "$physical_root"/*) ;; *) error "$source: links: enlace local fuera del Skill: $target"; return 1 ;; esac
+    done < <(grep -hoE '\]\([^ )#]+' "$source" 2>/dev/null || true)
+}
+
+validate_skills() {
+    local skill skill_id source_name description adapted link_source entry
+    [ -d "$SKILLS_ROOT" ] && [ ! -L "$SKILLS_ROOT" ] || { error 'skills: la raiz publicada no existe o es un symlink'; return 1; }
+    while IFS= read -r skill; do
+        [ ! -L "$skill" ] || { error "${skill#"$REPO_ROOT/"}: skill no puede ser symlink"; return 1; }
+        skill_id="$(basename "$skill")"
+        printf '%s\n' "$skill_id" | grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*$' || { error "$skill_id: id de Skill invalido"; return 1; }
+        [ -f "$skill/SKILL.md" ] && [ ! -L "$skill/SKILL.md" ] || { error "skills/$skill_id: falta SKILL.md regular"; return 1; }
+        source_name="$(skill_frontmatter_value name "$skill/SKILL.md")" || { error "skills/$skill_id/SKILL.md: frontmatter invalido"; return 1; }
+        [ "$source_name" = "$skill_id" ] || { error "skills/$skill_id/SKILL.md: name debe coincidir con el directorio"; return 1; }
+        adapted="mefisto-$skill_id"
+        [ "${#adapted}" -le 64 ] || { error "skills/$skill_id: nombre OpenCode supera 64 caracteres"; return 1; }
+        description="$(skill_frontmatter_value description "$skill/SKILL.md")" || { error "skills/$skill_id/SKILL.md: falta description"; return 1; }
+        [ "${#description}" -ge 1 ] && [ "${#description}" -le 1024 ] || { error "skills/$skill_id/SKILL.md: description debe tener entre 1 y 1024 caracteres"; return 1; }
+        while IFS= read -r link_source; do validate_skill_links "$skill" "$link_source" || return 1; done < <(find "$skill" -type f | LC_ALL=C sort)
+    done < <(find "$SKILLS_ROOT" -mindepth 1 -maxdepth 1 -type d | LC_ALL=C sort)
+    for entry in "$SKILLS_ROOT"/*; do
+        [ -e "$entry" ] || continue
+        [ -d "$entry" ] || { error "${entry#"$REPO_ROOT/"}: un Skill debe ser un directorio"; return 1; }
+    done
+    if find "$SKILLS_ROOT" -type l -print -quit | grep -q .; then error 'skills: no se admiten symlinks en la fuente'; return 1; fi
+}
+
+skill_assets() {
+    local source skill_id relative adapted asset_id
+    validate_skills || return 1
+    while IFS= read -r source; do
+        relative="${source#"$SKILLS_ROOT"/}"
+        skill_id="${relative%%/*}"
+        relative="${relative#*/}"
+        adapted="mefisto-$skill_id"
+        asset_id="skills/$skill_id/$relative"
+        jq -cn --arg id "$asset_id" --arg source "skills/$skill_id/$relative" --arg destination "skills/$adapted/$relative" --arg mode 0644 '{id: $id, source: $source, destination: $destination, mode: $mode}'
+    done < <(find "$SKILLS_ROOT" -type f | LC_ALL=C sort) | jq -s .
+}
+
+render_skill_asset() {
+    local asset_id="$1" source="$2" skill_id adapted
+    case "$asset_id" in skills/*/SKILL.md) ;; *) cat "$source"; return ;; esac
+    skill_id="${asset_id#skills/}"; skill_id="${skill_id%%/*}"; adapted="mefisto-$skill_id"
+    awk -v name="$adapted" 'NR == 1 { print; next } $0 == "---" && !closed { closed=1; print; next } !closed && $0 ~ /^name:[[:space:]]*/ { print "name: " name; next } { print }' "$source"
+}
+
 render() {
     local source="$1" marker="$2" rel fm instance kind artifact_id raw_body translated preamble='' mode permissions agent
     rel="${source#*/src/published/}"
@@ -156,6 +222,7 @@ case "${1:-}" in
     path)
         case "${2:-}" in src/published/agents/*.md) printf 'agents/%s\n' "$(basename "$2")" ;; src/published/commands/*.md) printf 'commands/mefisto:%s\n' "$(basename "$2")" ;; *) error "$2: path: fuente publicada desconocida" ;; esac ;;
     render) [ "$#" -eq 3 ] || error 'render: se esperaban fuente y marcador'; render "$2" "$3" ;;
-    assets) printf '%s\n' '[]' ;;
+    assets) skill_assets ;;
+    render-asset) [ "$#" -eq 3 ] || error 'render-asset: se esperaban id y fuente'; render_skill_asset "$2" "$3" ;;
     *) error 'uso: adapter-opencode.sh root|path|render|assets|render-asset' ;;
 esac

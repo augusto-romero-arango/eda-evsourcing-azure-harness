@@ -55,6 +55,17 @@ directivas, conservan ids fuente sin prefijo. Un runtime sin plugin transforma
 cada Skill en la salida a `mefisto-<id>`. El prefijo adaptado no pertenece a la
 fuente.
 
+## Layout de Skills empaquetados
+
+Los Skills publicados son fuente de solo lectura bajo `skills/<id>/`: `SKILL.md`
+es Nivel 2 y sus recursos relativos son Nivel 3 (MEF-ADR-0033). El adaptador
+OpenCode enumera ese árbol de forma determinista y lo materializa como
+`dist/opencode/skills/mefisto-<id>/`. Solo transforma el campo `name` del primer
+frontmatter de `SKILL.md` al mismo nombre del directorio; todos los recursos se
+copian byte a byte. La proyección global enlaza después esos archivos en
+`<config>/opencode/skills/mefisto-<id>/`. La prueba de carga on-demand mediante
+la tool `skill` corresponde a la certificación #1066.
+
 ## Directivas del body
 
 Todo artefacto incluye `{{mefisto:assert-consumer-repo}}`, que aborta si el cwd

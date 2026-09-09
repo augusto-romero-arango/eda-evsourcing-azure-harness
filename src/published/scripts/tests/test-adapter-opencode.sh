@@ -36,6 +36,12 @@ command_path="$("$ADAPTER" path src/published/commands/command-delegado.md)"
 [ "$command_path" = commands/mefisto:command-delegado.md ] && pass 'namespace literal del comando' || fail 'namespace incorrecto'
 assert_not_contains "$command_path" 'mefisto-command' 'no usa id interno mefisto-<id>'
 [ "$command_path" != commands/command-delegado.md ] && pass 'no publica comando sin namespace' || fail 'publico comando sin namespace'
+assets="$($ADAPTER assets)"; rc=$?
+[ "$rc" -eq 0 ] && pass 'enumera assets de Skills publicados' || fail 'no enumero assets de Skills publicados'
+jq -e 'length == 7 and all(.[]; .mode == "0644" and (.destination | startswith("skills/mefisto-"))) and ([.[] | select(.source == "skills/projections/SKILL.md" and .destination == "skills/mefisto-projections/SKILL.md")] | length) == 1 and ([.[] | select(.source == "skills/comment-cleanup/ejemplos.md" and .destination == "skills/mefisto-comment-cleanup/ejemplos.md")] | length) == 1' <<< "$assets" >/dev/null && pass 'assets preservan ambos Skills y recursos Nivel 3' || fail 'inventario de Skills incompleto'
+"$ADAPTER" render-asset skills/projections/SKILL.md "$REPO_ROOT/skills/projections/SKILL.md" > "$WORK/projections-skill.md"; rc=$?
+[ "$rc" -eq 0 ] && grep -q '^name: mefisto-projections$' "$WORK/projections-skill.md" && ! grep -q '^name: projections$' "$WORK/projections-skill.md" && pass 'SKILL.md adapta solo el name OpenCode' || fail 'SKILL.md no adapta el name OpenCode'
+cmp -s "$REPO_ROOT/skills/projections/read-apis.md" <("$ADAPTER" render-asset skills/projections/read-apis.md "$REPO_ROOT/skills/projections/read-apis.md") && pass 'recursos Nivel 3 se conservan byte a byte' || fail 'recurso Nivel 3 fue transformado'
 permission_count="$(jq -r '.supported_permissions | length' "$MAPPING")"
 [ "$permission_count" -eq 17 ] && pass 'mapping declara los 17 permisos soportados' || fail 'mapping no declara 17 permisos'
 
