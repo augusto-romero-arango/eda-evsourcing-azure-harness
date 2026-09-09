@@ -44,7 +44,7 @@ EOF
 }
 
 permission_json() {
-    local rel="$1" capabilities="$2" mode="$3" cap
+    local rel="$1" capabilities="$2" mode="$3" native_skills="$4" cap
     [ -f "$MAPPING" ] || { error "$rel: capabilities: no existe el mapping de permisos OpenCode"; return 1; }
     if ! jq -e '
       . as $mapping |
@@ -65,19 +65,22 @@ permission_json() {
             return 1
         fi
     done < <(printf '%s' "$capabilities" | jq -r '.[]')
-    jq -cn --slurpfile mapping "$MAPPING" --argjson capabilities "$capabilities" --arg mode "$mode" '
+    jq -cn --slurpfile mapping "$MAPPING" --argjson capabilities "$capabilities" --argjson native_skills "$native_skills" --arg mode "$mode" '
       ($mapping[0]) as $m |
       (reduce ($m.always_deny[]) as $key ({}; . + {($key): "deny"})) +
       {question: ($m.question[$mode] // "deny")} +
       (reduce ($m.capability_scalar | to_entries[]) as $entry ({};
         . + (reduce ($entry.value[]) as $key ({};
           . + {($key): (if $capabilities | index($entry.key) then "allow" else "deny" end)})))) +
-      (reduce ($m.capability_map | to_entries[]) as $entry ({};
-        ($entry.value) as $spec |
-        . + (reduce ($spec.keys[]) as $key ({};
-          . + {($key): (if $capabilities | index($entry.key)
-                         then ({"*": $spec.catch_all} + reduce ($spec.rules[]) as $rule ({}; . + {($rule.pattern): $rule.value}))
-                         else {"*": "deny"} end)}))))'
+       (reduce ($m.capability_map | to_entries[]) as $entry ({};
+         ($entry.value) as $spec |
+         . + (reduce ($spec.keys[]) as $key ({};
+           . + {($key): (if $capabilities | index($entry.key)
+                          then ({"*": $spec.catch_all} + reduce ($spec.rules[]) as $rule ({}; . + {($rule.pattern): $rule.value}))
+                          else {"*": "deny"} end)})))) +
+       (if ($capabilities | index("skill")) and ($native_skills | length > 0)
+        then {skill: ({"*": "deny"} + reduce $native_skills[] as $skill ({}; . + {($skill): "allow"}))}
+        else {} end)'
 }
 
 translate_body() {
@@ -196,6 +199,33 @@ validate_skills() {
     [ -z "$invalid_entry" ] || { error "${invalid_entry#"$REPO_ROOT/"}: recurso de Skill no regular"; return 1; }
 }
 
+# Las referencias siguen siendo ids neutrales en la fuente. La existencia se
+# comprueba contra el mismo arbol que el adaptador empaqueta como Skills nativos.
+native_skills() {
+    local rel="$1" instance="$2" skill adapted seen='|' output=''
+    validate_skills || return 1
+    while IFS= read -r skill; do
+        [ -z "$skill" ] && continue
+        case "$skill" in
+            mefisto-*) error "$rel: skills: la referencia '$skill' ya tiene prefijo OpenCode"; return 1 ;;
+            *[!a-z0-9-]*|''|-*|*--*|*-) error "$rel: skills: referencia no representable '$skill'"; return 1 ;;
+        esac
+        case "$seen" in *"|$skill|"*) error "$rel: skills: referencia duplicada '$skill'"; return 1 ;; esac
+        [ -f "$SKILLS_ROOT/$skill/SKILL.md" ] || { error "$rel: skills: Skill publicado '$skill' no existe en el inventario OpenCode"; return 1; }
+        seen="$seen$skill|"
+        adapted="mefisto-$skill"
+        [ -z "$output" ] || output="$output,"
+        output="$output\"$adapted\""
+    done < <(printf '%s' "$instance" | jq -r '.skills[]?')
+    printf '[%s]' "$output"
+}
+
+skill_preamble() {
+    local native_skills="$1" names
+    names="$(printf '%s' "$native_skills" | jq -r 'map("`\(.)`") | join(", ")')"
+    printf 'Antes de ejecutar este body, usa la tool nativa `skill` para cargar, en este orden: %s. Si una carga es denegada o falla, detén la ejecución.\n' "$names"
+}
+
 skill_assets() {
     local source skill_id relative adapted asset_id
     validate_skills || return 1
@@ -299,7 +329,7 @@ EOF
 }
 
 render() {
-    local source="$1" marker="$2" rel fm instance kind artifact_id raw_body translated preamble='' mode permissions agent
+    local source="$1" marker="$2" rel fm instance kind artifact_id raw_body translated preamble='' mode permissions agent native_skills='[]'
     rel="${source#*/src/published/}"
     rel="src/published/$rel"
     fm="$(frontmatter "$source")" || { error "$rel: frontmatter: no se pudo extraer"; return 1; }
@@ -307,15 +337,25 @@ render() {
     kind="$(printf '%s' "$instance" | jq -r '.kind')"
     artifact_id="$(printf '%s' "$instance" | jq -r '.id')"
     raw_body="$(body "$source")" || { error "$rel: body: no se pudo extraer"; return 1; }
-    if [ "$(printf '%s' "$instance" | jq '[.skills[]?] | length')" -gt 0 ]; then error "$rel: skills: OpenCode no implementa Skills publicados todavia"; return 1; fi
+    native_skills="$(native_skills "$rel" "$instance")" || return 1
+    if [ "$(printf '%s' "$native_skills" | jq 'length')" -gt 0 ]; then
+        preamble="$(skill_preamble "$native_skills")"
+    fi
     if [ "$(printf '%s' "$instance" | jq '[.mcp[]?] | length')" -gt 0 ]; then error "$rel: mcp: OpenCode no implementa MCP publicado todavia"; return 1; fi
     translated="$(translate_body "$rel" "$raw_body")" || return 1
-    if needs_package_root "$raw_body"; then preamble="$(package_root_preamble)"; fi
+    if needs_package_root "$raw_body"; then
+        [ -z "$preamble" ] || preamble="$preamble"$'\n'
+        preamble="$preamble$(package_root_preamble)"
+    fi
     printf '%s\n' '---'
     printf 'description: %s\n' "$(printf '%s' "$instance" | jq -r '.description | @json')"
     if [ "$kind" = agent ]; then
         mode="$(printf '%s' "$instance" | jq -r '.mode')"
-        permissions="$(permission_json "$rel" "$(printf '%s' "$instance" | jq -c '.capabilities // []')" "$mode")" || return 1
+        if [ "$(printf '%s' "$native_skills" | jq 'length')" -gt 0 ] && ! printf '%s' "$instance" | jq -e '(.capabilities // []) | index("skill") != null' >/dev/null; then
+            error "$rel: skills: requiere la capacidad 'skill' para un agente OpenCode"
+            return 1
+        fi
+        permissions="$(permission_json "$rel" "$(printf '%s' "$instance" | jq -c '.capabilities // []')" "$mode" "$native_skills")" || return 1
         printf 'mode: %s\npermission: %s\n' "$(printf '%s' "$mode" | jq -Rr '@json')" "$permissions"
     else
         agent="$(printf '%s' "$instance" | jq -r '.agent // empty')"

@@ -1,5 +1,5 @@
 ---
-{"kind":"agent","id":"agent-completo","description":"Lee, \"edita\" y ejecuta.","mode":"subagent","profile":"deep","capabilities":["read","edit","shell","web","task"]}
+{"kind":"agent","id":"agent-completo","description":"Lee, \"edita\" y ejecuta.","mode":"subagent","profile":"deep","capabilities":["read","edit","shell","web","skill","task"],"skills":["projections","comment-cleanup"]}
 ---
 {{mefisto:assert-consumer-repo}}
 Rutas: {{mefisto:config-path}} y {{mefisto:package-root}}.

@@ -101,6 +101,8 @@ assert_contains "$comando" 'agent: "agent-completo"' 'agent inferido de launch-a
 assert_contains "$comando" 'subtask: true' 'subtask del comando delegado'
 assert_not_contains "$comando" 'permission:' 'comando sin campo permission'
 assert_not_contains "$comando" 'model:' 'comando hereda modelo'
+assert_contains "$comando" 'usa la tool nativa `skill` para cargar, en este orden: `mefisto-projections`' 'comando solicita carga nativa del Skill'
+assert_not_contains "$comando" '## Projections' 'comando no copia doctrina del Skill'
 
 render "$FIXTURES/agent-completo.md" > "$WORK/completo.md"; rc=$?
 [ "$rc" -eq 0 ] && pass 'render de capacidades combinadas' || fail 'render de capacidades combinadas'
@@ -122,6 +124,9 @@ assert_not_contains "$completo" '.claude/' 'sin ruta Claude'
 assert_not_contains "$completo" '/Users/' 'sin path de maquina'
 assert_not_contains "$completo" 'model:' 'agente hereda modelo'
 assert_not_contains "$completo" 'tools:' 'campo Claude omitido'
+assert_contains "$completo" '"skill":{"*":"deny","mefisto-projections":"allow","mefisto-comment-cleanup":"allow"}' 'allowlist exacta de Skills adaptados'
+assert_contains "$completo" 'usa la tool nativa `skill` para cargar, en este orden: `mefisto-projections`, `mefisto-comment-cleanup`' 'agente solicita carga nativa en orden fuente'
+assert_not_contains "$completo" '## Projections' 'agente no copia doctrina del Skill'
 assert_not_contains "$comando" 'MEFISTO_PACKAGE_ROOT' 'body sin directivas de raiz no recibe preambulo'
 
 printf '%s\n' '[resolucion] launcher XDG y fallos OpenCode'
@@ -175,7 +180,19 @@ out="$(render "$WORK/desconocida.md" 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && assert_contains "$out" 'capabilities: capacidad '\''desconocida'\'' sin mapping OpenCode' 'capacidad desconocida falla con campo' || fail 'capacidad desconocida debio fallar'
 make_agent con-skill '[]' ',"skills":["algo"]'
 out="$(render "$WORK/con-skill.md" 2>&1)"; rc=$?
-[ "$rc" -ne 0 ] && assert_contains "$out" 'skills: OpenCode no implementa' 'skills no desaparecen' || fail 'skills debieron fallar'
+[ "$rc" -ne 0 ] && assert_contains "$out" "Skill publicado 'algo' no existe" 'Skill inexistente falla antes de publicar' || fail 'Skill inexistente debio fallar'
+make_agent sin-capacidad '[]' ',"skills":["projections"]'
+out="$(render "$WORK/sin-capacidad.md" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && assert_contains "$out" "requiere la capacidad 'skill'" 'agente con Skills sin capacidad falla' || fail 'Skills sin capacidad debieron fallar'
+make_agent duplicado '["skill"]' ',"skills":["projections","projections"]'
+out="$(render "$WORK/duplicado.md" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && assert_contains "$out" "referencia duplicada 'projections'" 'Skill duplicado falla' || fail 'Skill duplicado debio fallar'
+make_agent prefijado '["skill"]' ',"skills":["mefisto-projections"]'
+out="$(render "$WORK/prefijado.md" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && assert_contains "$out" 'ya tiene prefijo OpenCode' 'Skill prefijado falla' || fail 'Skill prefijado debio fallar'
+make_agent skill-sin-lista '["skill"]'
+skill_sin_lista="$(permission_of "$WORK/skill-sin-lista.md")"
+jq -e '.skill == "allow"' <<< "$skill_sin_lista" >/dev/null && pass 'capacidad skill sin referencias conserva politica general' || fail 'capacidad skill sin referencias altero politica'
 make_agent con-mcp '[]' ',"mcp":["terraform"]'
 out="$(render "$WORK/con-mcp.md" 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && assert_contains "$out" 'mcp: OpenCode no implementa' 'mcp no desaparece' || fail 'mcp debio fallar'
