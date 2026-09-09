@@ -1,0 +1,2 @@
+{"session_id":"legacy-session","transcript_path":"/tmp/legacy-session.jsonl","cwd":"/tmp/consumer","source":"startup","timestamp":"2026-01-01T00:00:00Z","harness_version":"0.25.0"}
+{"record_type":"session.started","session_id":"new-session","transcript_path":"/tmp/new-session.jsonl","cwd":"/tmp/consumer","source":"startup","timestamp":"2026-09-09T12:00:00Z","runtime":"claude","model":null,"harness_version":null,"harness_commit":null}

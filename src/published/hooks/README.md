@@ -1,19 +1,26 @@
 # Contrato neutral de hooks interactivos
 
-`interactive-hooks.json` expresa los seis comportamientos publicados que ya existen, sin fijar un runtime ni una forma ejecutable. `src/published/scripts/generate-claude-hooks.sh` traduce el contrato a `hooks/hooks.json`; esa salida Claude-specific no lleva marcador generado porque el schema de Hooks no admite comentarios ni metadata adicional. El gate ejecuta el generador con `--check`. `timeoutSeconds: null` significa que Mefisto no agrega un plazo: el límite efectivo es el que documente y aplique cada runtime.
+`interactive-hooks.json` expresa siete hechos publicados, sin fijar un runtime ni una forma ejecutable. `append-session-model` es una observación posterior al inicio: el adaptador Claude pendiente se implementa en #1136 y no se materializa todavía en `hooks/hooks.json`. `timeoutSeconds: null` significa que Mefisto no agrega un plazo: el límite efectivo es el que documente y aplique cada runtime.
 
 La persistencia se rige por allowlist (MEF-ADR-0025). Ningún binding conserva prompts, input completo de herramientas, comandos shell completos, tokens, cookies, headers, variables de credenciales ni auth stores.
 
 | Binding | Inputs mínimos permitidos | Salida/destino lógico permitido | Handler vigente |
 |---|---|---|---|
 | `record-active-release` | identidad de la distribución activa observable | `release_identity` en `canonical-state` y `release-identity`; exclusivamente como transición, también puede reflejar esa misma identidad en `legacy-release-marker` | `SessionStart`, primer comando |
-| `append-session` | `session_id`, `transcript_path`, `cwd`, `source`, `timestamp`, `harness_version` | Esas seis claves, exactamente, en `canonical-state` y `session-registry`; `harness_version` es `null` si no es observable | `SessionStart`, segundo comando |
+| `append-session` | `record_type`, `session_id`, `transcript_path`, `cwd`, `source`, `timestamp`, `runtime`, `model`, `harness_version`, `harness_commit` | Una línea `session.started` con esas diez claves, exactamente, en `canonical-state` y `session-registry`. `model`, versión y commit pueden ser `null`; `runtime` identifica al adaptador. | Inicio de sesión del adaptador |
+| `append-session-model` | `record_type`, `session_id`, `timestamp`, `runtime`, `model`, `harness_version`, `harness_commit` | Una línea `session.model-observed` con esas siete claves, exactamente. `model` es un identificador opaco no vacío observado por el runtime; no persiste `provider` separado. | Observación de modelo del adaptador |
 | `remind-field-notes` | finalización de planificación | Solo el recordatorio visible al usuario en `human-log`; no persiste datos | `PostToolUse` con matcher `ExitPlanMode` |
 | `append-file-change` | path del archivo cambiado | `time` (`HH:MM:SS` UTC), familia fija `archivo` y `file_path` en `canonical-state` y `human-log` | `PostToolUse` con matcher `Write|Edit` |
 | `append-dotnet-test-result` | resultado resumido de la prueba | `time` (`HH:MM:SS` UTC), familia fija `test` y `result` limitado a `PASS|FAIL` en `canonical-state` y `human-log` | primer comando de `PostToolUse` con matcher `Bash` |
 | `append-terraform-result` | subcomando y resultado resumido de Terraform | `time` (`HH:MM:SS` UTC), familia fija `terraform`, `terraform_subcommand` limitado a `plan|apply|init|validate` y `result` limitado a `OK|ERROR` en `canonical-state` y `human-log` | segundo comando de `PostToolUse` con matcher `Bash` |
 
 No se declara comportamiento para fin de sesión, inicio de herramienta, prompt, permiso, notificación ni compactación: no existen handlers vigentes para esas señales.
+
+## Sesiones correlacionables
+
+`sessions.jsonl` es append-only por `session_id`. El inicio registra `model: null` cuando el runtime no lo expone verazmente. Una observación posterior se agrega solo si difiere del último modelo no nulo de la sesión: A→A no duplica y A→B conserva ambos hechos. No se actualizan, borran ni reescriben líneas existentes. Los lectores deben aceptar líneas históricas de seis campos sin `record_type` como inicios legacy con identidad faltante.
+
+`runtime` admite `claude` y `opencode`. La versión y el commit se leen únicamente del manifiesto verificable de la distribución cargada; su ausencia o malformación produce `null`. Los adaptadores no consultan Git, red, caches arbitrarios, credenciales, auth stores ni configuración del proveedor. Esta limitación aplica MEF-ADR-0025, MEF-ADR-0031, MEF-ADR-0049, MEF-ADR-0050 y MEF-ADR-0053.
 
 ## Excepción transitoria del marker de release
 

@@ -1,6 +1,6 @@
 {
   "$schema": "interactive-hooks.schema.json",
-  "contractVersion": "1.0",
+  "contractVersion": "1.1",
   "bindings": [
     {
       "id": "record-active-release",
@@ -15,7 +15,15 @@
       "signal": "session.started",
       "action": "append-session",
       "destinations": ["canonical-state", "session-registry"],
-      "persistedFields": ["session_id", "transcript_path", "cwd", "source", "timestamp", "harness_version"],
+      "persistedFields": ["record_type", "session_id", "transcript_path", "cwd", "source", "timestamp", "runtime", "model", "harness_version", "harness_commit"],
+      "delivery": {"mode": "sync", "failure": "continue", "timeoutSeconds": null}
+    },
+    {
+      "id": "append-session-model",
+      "signal": "session.model-observed",
+      "action": "append-session-model",
+      "destinations": ["canonical-state", "session-registry"],
+      "persistedFields": ["record_type", "session_id", "timestamp", "runtime", "model", "harness_version", "harness_commit"],
       "delivery": {"mode": "sync", "failure": "continue", "timeoutSeconds": null}
     },
     {

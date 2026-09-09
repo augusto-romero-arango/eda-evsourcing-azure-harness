@@ -1,0 +1,1 @@
+{"record_type":"session.started","session_id":"claude-session","transcript_path":"/tmp/claude-session.jsonl","cwd":"/tmp/consumer","source":"startup","timestamp":"2026-09-09T12:00:00Z","runtime":"claude","model":"claude-sonnet-4-6","harness_version":"1.2.3","harness_commit":"0123456789abcdef0123456789abcdef01234567"}

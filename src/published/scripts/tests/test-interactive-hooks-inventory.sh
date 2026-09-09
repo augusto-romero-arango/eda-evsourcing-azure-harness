@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Demuestra la trazabilidad uno-a-uno desde los seis comandos legacy.
+# Demuestra la trazabilidad de los seis comandos legacy y el hecho neutral nuevo.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,7 +16,7 @@ echo "[pre] inventario legacy y contrato"
 if jq empty "$LEGACY" && jq empty "$CONTRACT"; then pass "ambos documentos son JSON validos"; else fail "algún documento no es JSON valido"; fi
 legacy_count=$(jq '[.hooks[][].hooks[]?.command] | length' "$LEGACY")
 contract_count=$(jq '.bindings | length' "$CONTRACT")
-[ "$legacy_count" = "6" ] && [ "$contract_count" = "6" ] && pass "ambos inventarios contienen exactamente seis comportamientos" || fail "conteos legacy=$legacy_count contrato=$contract_count"
+[ "$legacy_count" = "6" ] && [ "$contract_count" = "7" ] && pass "el inventario legacy tiene seis comportamientos y el contrato siete hechos" || fail "conteos legacy=$legacy_count contrato=$contract_count"
 
 trace() {
     local id="$1" filter="$2"
@@ -33,7 +33,10 @@ trace append-dotnet-test-result '[.hooks.PostToolUse[] | select(.matcher == "Bas
 trace append-terraform-result '[.hooks.PostToolUse[] | select(.matcher == "Bash") | .hooks[].command | select(contains("terraform (plan|apply|init|validate)"))] | length'
 
 ids=$(jq -r '[.bindings[].id] | sort | join(" ")' "$CONTRACT")
-expected='append-dotnet-test-result append-file-change append-session append-terraform-result record-active-release remind-field-notes'
+model_binding=$(jq -r '[.bindings[] | select(.id == "append-session-model" and .signal == "session.model-observed" and .action == "append-session-model")] | length' "$CONTRACT")
+[ "$model_binding" = "1" ] && pass "append-session-model declara el hecho posterior neutral" || fail "append-session-model no esta declarado exactamente una vez"
+
+expected='append-dotnet-test-result append-file-change append-session append-session-model append-terraform-result record-active-release remind-field-notes'
 [ "$ids" = "$expected" ] && pass "no hay bindings huerfanos" || fail "bindings inesperados: $ids"
 echo "RESULTADO: $PASS pasaron, $FAIL fallaron"
 [ "$FAIL" -eq 0 ]

@@ -1,9 +1,10 @@
 {
   "$schema": "interactive-hooks.schema.json",
-  "contractVersion": "1.0",
+  "contractVersion": "1.1",
   "bindings": [
     {"id":"record-active-release","signal":"session.started","action":"record-active-release","destinations":["canonical-state","release-identity","legacy-release-marker"],"persistedFields":["release_identity"],"delivery":{"mode":"sync","failure":"continue","timeoutSeconds":null}},
-    {"id":"append-session","signal":"session.started","action":"append-session","destinations":["canonical-state","session-registry"],"persistedFields":["session_id","transcript_path","cwd","source","timestamp","harness_version"],"delivery":{"mode":"sync","failure":"continue","timeoutSeconds":null}},
+    {"id":"append-session","signal":"session.started","action":"append-session","destinations":["canonical-state","session-registry"],"persistedFields":["record_type","session_id","transcript_path","cwd","source","timestamp","runtime","model","harness_version","harness_commit"],"delivery":{"mode":"sync","failure":"continue","timeoutSeconds":null}},
+    {"id":"append-session-model","signal":"session.model-observed","action":"append-session-model","destinations":["canonical-state","session-registry"],"persistedFields":["record_type","session_id","timestamp","runtime","model","harness_version","harness_commit"],"delivery":{"mode":"sync","failure":"continue","timeoutSeconds":null}},
     {"id":"remind-field-notes","signal":"plan.completed","action":"remind-field-notes","destinations":["human-log"],"persistedFields":[],"delivery":{"mode":"sync","failure":"continue","timeoutSeconds":null}},
     {"id":"append-file-change","signal":"file.changed","action":"append-file-change","destinations":["canonical-state","human-log"],"persistedFields":["time","family","file_path"],"delivery":{"mode":"sync","failure":"continue","timeoutSeconds":null}},
     {"id":"append-dotnet-test-result","signal":"dotnet-test.completed","action":"append-dotnet-test-result","destinations":["canonical-state","human-log"],"persistedFields":["time","family","result"],"delivery":{"mode":"sync","failure":"continue","timeoutSeconds":null}},
