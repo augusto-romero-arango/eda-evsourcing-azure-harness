@@ -54,4 +54,7 @@ La automatización reproducible de estos casos, incluidos `HOME`,
 directorios anidados de Skills, la restauración exacta de directorios previos,
 el rechazo de un ledger ajeno y los fallbacks de configuración. La evidencia no considera la
 mera presencia de archivos suficiente: registra el descubrimiento en una sesión
-OpenCode y ejecuta la prueba aislada del mecanismo (MEF-ADR-0031).
+OpenCode y ejecuta la prueba aislada del mecanismo (MEF-ADR-0031). Los Skills
+publicados se empaquetan bajo `dist/opencode/skills/mefisto-<id>/`: el directorio
+y el `name` de `SKILL.md` usan el mismo prefijo; los recursos relativos se copian
+sin transformación. El smoke de carga real con la tool `skill` queda para #1066.

@@ -103,12 +103,15 @@ else
     fail 'el generador no proceso ambos agentes en conjunto'
 fi
 generated_count="$(find "$WORK/dist" -type f 2>/dev/null | wc -l | tr -d '[:space:]')"
-[ "$generated_count" = 6 ] && pass 'la integracion genera cuatro agentes y dos inventarios' || fail "la integracion genero $generated_count salidas, no seis"
-if jq -e '.schemaVersion == 1 and .assets == []' "$WORK/dist/claude/.mefisto-generated-assets.json" "$WORK/dist/opencode/.mefisto-generated-assets.json" >/dev/null; then
-    pass 'los adaptadores sin assets productivos generan inventarios vacios validos'
+skill_file_count="$(find "$REPO_ROOT/skills" -type f | wc -l | tr -d '[:space:]')"
+expected_count=$((34 + skill_file_count))
+[ "$generated_count" = "$expected_count" ] && pass 'la integracion genera agentes, clausura, Skills e inventarios' || fail "la integracion genero $generated_count salidas, no $expected_count"
+if jq -e '.schemaVersion == 1 and (.assets | length == 14)' "$WORK/dist/claude/.mefisto-generated-assets.json" >/dev/null && jq -e --argjson count "$((14 + skill_file_count))" '.schemaVersion == 1 and (.assets | length == $count) and any(.assets[]; .destination == "skills/mefisto-projections/read-apis.md") and any(.assets[]; .destination == "skills/mefisto-comment-cleanup/ejemplos.md")' "$WORK/dist/opencode/.mefisto-generated-assets.json" >/dev/null; then
+    pass 'los inventarios atribuyen clausura y Skills OpenCode'
 else
-    fail 'los inventarios vacios de integracion son invalidos'
+    fail 'los inventarios de integracion no atribuyen los Skills'
 fi
+[ ! -e "$WORK/dist/claude/skills" ] && pass 'Claude no recibe Skills adaptados ni internos' || fail 'Claude recibio un arbol de Skills adaptado'
 for runtime in claude opencode; do
     for agent in tooling-writer tooling-reviewer; do
         if cmp -s "$FIXTURES/expected-$runtime-$agent.md" "$WORK/dist/$runtime/agents/$agent.md"; then
