@@ -35,6 +35,7 @@ git -C "$ROOT" checkout -q -b main
 mkdir -p "$ROOT/.claude-plugin" "$ROOT/src/internal/scripts/lib" "$ROOT/src/internal/scripts/stages" "$BIN"
 printf '{"name":"mefisto","version":"0.0.0"}\n' > "$ROOT/.claude-plugin/plugin.json"
 cp "$BATCH" "$ROOT/src/internal/scripts/mefisto-batch-pipeline.sh"
+cp "$REPO_ROOT/src/internal/scripts/mefisto-validate-batch-deps.sh" "$ROOT/src/internal/scripts/mefisto-validate-batch-deps.sh"
 cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$ROOT/src/internal/scripts/lib/"
 cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$ROOT/src/internal/scripts/lib/"
 cp -R "$REPO_ROOT/src/runtime" "$ROOT/src/"
@@ -60,6 +61,7 @@ ISSUE="$1" "$SCRIPT_DIR/stages/fake-stage.sh" reviewer
 echo "v PR creado: https://github.com/acme/mefisto/pull/$1"
 EOF
 chmod +x "$ROOT/src/internal/scripts/mefisto-batch-pipeline.sh"
+chmod +x "$ROOT/src/internal/scripts/mefisto-validate-batch-deps.sh"
 chmod +x "$ROOT/src/internal/scripts/mefisto-tooling-pipeline.sh"
 chmod +x "$ROOT/src/internal/scripts/stages/fake-stage.sh"
 git -C "$ROOT" add .

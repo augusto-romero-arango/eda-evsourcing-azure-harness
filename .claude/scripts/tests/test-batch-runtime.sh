@@ -209,7 +209,9 @@ EOF
     cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$dir/src/internal/scripts/lib/mefisto-state.sh"
     cp -R "$CANON_RUNTIME" "$dir/src/runtime"
     cp "$CANON_BATCH" "$dir/src/internal/scripts/mefisto-batch-pipeline.sh"
+    cp "$CANON_DEPS" "$dir/src/internal/scripts/mefisto-validate-batch-deps.sh"
     chmod +x "$dir/src/internal/scripts/mefisto-batch-pipeline.sh"
+    chmod +x "$dir/src/internal/scripts/mefisto-validate-batch-deps.sh"
 }
 
 # fake_tooling_pipeline <dir> <call_log> <failing_issue>

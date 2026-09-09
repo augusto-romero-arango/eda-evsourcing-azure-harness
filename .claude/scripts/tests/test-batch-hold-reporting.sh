@@ -245,7 +245,9 @@ EOF
     cp "$CANON_STATE_LIB" "$dir/src/internal/scripts/lib/mefisto-state.sh"
     cp -R "$CANON_RUNTIME" "$dir/src/runtime"
     cp "$CANON_BATCH" "$dir/src/internal/scripts/mefisto-batch-pipeline.sh"
+    cp "$REPO_ROOT/src/internal/scripts/mefisto-validate-batch-deps.sh" "$dir/src/internal/scripts/mefisto-validate-batch-deps.sh"
     chmod +x "$dir/src/internal/scripts/mefisto-batch-pipeline.sh"
+    chmod +x "$dir/src/internal/scripts/mefisto-validate-batch-deps.sh"
     git -C "$dir" config user.email "test@mefisto.local"
     git -C "$dir" config user.name "Mefisto Test"
 }
