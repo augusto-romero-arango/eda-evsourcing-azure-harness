@@ -85,7 +85,7 @@ done
 started_keys='["cwd","harness_commit","harness_version","model","record_type","runtime","session_id","source","timestamp","transcript_path"]'
 observed_keys='["harness_commit","harness_version","model","record_type","runtime","session_id","timestamp"]'
 for fixture in started-complete.jsonl started-null-model.jsonl missing-manifest.jsonl; do
-    if jq -e --argjson keys "$started_keys" 'keys == $keys and .record_type == "session.started" and (.runtime == "claude" or .runtime == "opencode") and (.model == null or (type == "string" and length > 0)) and (.harness_version == null or type == "string") and (.harness_commit == null or test("^[0-9a-f]{40}$"))' "$SESSION_FIXTURES/$fixture" >/dev/null 2>&1; then
+    if jq -e --argjson keys "$started_keys" 'keys == $keys and .record_type == "session.started" and (.runtime == "claude" or .runtime == "opencode") and (.model == null or (.model | type == "string" and length > 0)) and (.harness_version == null or (.harness_version | type == "string")) and (.harness_commit == null or (.harness_commit | test("^[0-9a-f]{40}$")))' "$SESSION_FIXTURES/$fixture" >/dev/null 2>&1; then
         pass "$fixture: inicio con identidad completa o degradada"
     else
         fail "$fixture: inicio no cumple el contrato"
