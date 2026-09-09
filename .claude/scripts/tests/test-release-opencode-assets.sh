@@ -23,8 +23,11 @@ assert_order() {
 
 setup() {
     CASE="$1"; TEST_REPO="$WORK/$CASE"; BIN="$TEST_REPO/bin"
-    mkdir -p "$BIN" "$TEST_REPO/.claude-plugin" "$TEST_REPO/src/published/scripts"
+    mkdir -p "$BIN" "$TEST_REPO/.claude-plugin" "$TEST_REPO/src/published/scripts" "$TEST_REPO/dist/claude"
     printf '{"name":"mefisto","version":"1.2.3"}\n' > "$TEST_REPO/.claude-plugin/plugin.json"
+    printf '{"schemaVersion":1,"version":"1.2.3","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}\n' > "$TEST_REPO/src/published/release-identity.json"
+    printf '{"schemaVersion":1,"runtime":"claude","version":"1.2.3","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}\n' > "$TEST_REPO/mefisto-manifest.json"
+    cp "$TEST_REPO/mefisto-manifest.json" "$TEST_REPO/dist/claude/mefisto-manifest.json"
     cat > "$TEST_REPO/CHANGELOG.md" <<'EOF'
 ## [1.2.3] - 2026-09-08
 
@@ -39,11 +42,18 @@ printf 'git %s\n' "$*" >> "${EVENTS:?}"
 case "$1 ${2:-}" in
   'rev-parse --show-toplevel') printf '%s\n' "$TEST_REPO" ;;
   'rev-parse --abbrev-ref') printf 'main\n' ;;
-  'rev-parse HEAD'|'rev-parse origin/main') printf '0123456789abcdef0123456789abcdef01234567\n' ;;
+   'rev-parse HEAD') printf '%s\n' "${HEAD_COMMIT:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" ;;
+   'rev-parse origin/main') printf '%s\n' "${ORIGIN_MAIN_COMMIT:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" ;;
+   'rev-parse HEAD^') printf '%s\n' "${HEAD_PARENT:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" ;;
   'status --porcelain') ;;
   'tag -l') printf 'v1.2.2\n' ;;
   'show origin/main:.claude-plugin/plugin.json') cat "$TEST_REPO/.claude-plugin/plugin.json" ;;
-  'rev-list --count') printf '0\n' ;;
+   'rev-list --count') printf '0\n' ;;
+   'diff --name-status')
+     [ "${DIFF_RC:-0}" = 0 ] || exit "$DIFF_RC"
+     if [ -n "${DELTA_PATH:-}" ]; then printf 'M\t%s\n' "$DELTA_PATH"; else
+       printf '%s\n' 'M	CHANGELOG.md' 'M	.claude-plugin/plugin.json' 'M	src/published/release-identity.json' 'A	mefisto-manifest.json' 'M	dist/claude/mefisto-manifest.json' 'M	dist/claude/.mefisto-generated-assets.json'
+     fi ;;
   'fetch origin'|'tag -a'|'tag -d') ;;
   'push origin') [ "${PUSH_RC:-0}" = 0 ] || exit "$PUSH_RC" ;;
   *) printf 'git falso no esperaba: %s\n' "$*" >&2; exit 64 ;;
@@ -75,13 +85,17 @@ set -u
 out="$2"; printf '%s\n' "$out" > "${PACKAGE_OUTPUT:?}"; printf 'package\n' >> "${EVENTS:?}"
 [ "${PACKAGE_RC:-0}" = 0 ] || exit "$PACKAGE_RC"
 name='mefisto-opencode-v1.2.3.tar.gz'; stage="$(mktemp -d)"; trap 'rm -rf "$stage"' EXIT
-printf '{"version":"%s","commit":"%s"}\n' "${MANIFEST_VERSION:-1.2.3}" "${MANIFEST_COMMIT:-0123456789abcdef0123456789abcdef01234567}" > "$stage/mefisto-manifest.json"
+    printf '{"version":"%s","commit":"%s"}\n' "${MANIFEST_VERSION:-1.2.3}" "${MANIFEST_COMMIT:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" > "$stage/mefisto-manifest.json"
 tar -czf "$out/$name" -C "$stage" mefisto-manifest.json
 (cd "$out" && shasum -a 256 "$name" > "$name.sha256")
 [ "${CORRUPT_CHECKSUM:-0}" != 1 ] || printf x >> "$out/$name"
 printf '%s\n%s\n' "$out/$name" "$out/$name.sha256"
 EOF
-    chmod +x "$BIN/git" "$BIN/gh" "$TEST_REPO/src/published/scripts/package-opencode-release.sh"
+    cat > "$TEST_REPO/src/published/scripts/generate-published-adapters.sh" <<'EOF'
+#!/usr/bin/env bash
+exit "${GENERATOR_RC:-0}"
+EOF
+    chmod +x "$BIN/git" "$BIN/gh" "$TEST_REPO/src/published/scripts/package-opencode-release.sh" "$TEST_REPO/src/published/scripts/generate-published-adapters.sh"
     EVENTS="$TEST_REPO/events"; PACKAGE_OUTPUT="$TEST_REPO/package-output"
     export TEST_REPO EVENTS PACKAGE_OUTPUT
 }
@@ -122,15 +136,35 @@ setup checksum-fails; CORRUPT_CHECKSUM=1 run_release; rc=$?
 assert_absent "$EVENTS" 'git tag -a' 'no crea tag si falla la revalidacion externa'
 assert_cleaned 'limpia el temporal tras checksum invalido'
 
-setup manifest-fails; MANIFEST_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa run_release; rc=$?
+setup manifest-fails; MANIFEST_COMMIT=cccccccccccccccccccccccccccccccccccccccc run_release; rc=$?
 [ "$rc" -ne 0 ] && pass 'un commit de manifiesto ajeno aborta' || fail 'el commit ajeno deberia abortar'
-assert_absent "$EVENTS" 'git tag -a' 'no crea tag si el manifiesto no es HEAD/origin/main'
+assert_absent "$EVENTS" 'git tag -a' 'no crea tag si el manifiesto no coincide con la identidad fuente'
 assert_cleaned 'limpia el temporal tras manifiesto invalido'
 
 setup version-fails; MANIFEST_VERSION=1.2.4 run_release; rc=$?
 [ "$rc" -ne 0 ] && pass 'una version de manifiesto distinta aborta' || fail 'la version de manifiesto distinta deberia abortar'
 assert_absent "$EVENTS" 'git tag -a' 'no crea tag si el manifiesto no coincide con plugin.json'
 assert_cleaned 'limpia el temporal tras version de manifiesto invalida'
+
+setup parent-fails; HEAD_PARENT=cccccccccccccccccccccccccccccccccccccccc run_release; rc=$?
+[ "$rc" -ne 0 ] && pass 'un padre distinto del commit fuente aborta' || fail 'el padre distinto deberia abortar'
+assert_absent "$EVENTS" 'git tag -a' 'no crea tag con merge no squash'
+
+setup main-advanced; ORIGIN_MAIN_COMMIT=cccccccccccccccccccccccccccccccccccccccc run_release; rc=$?
+[ "$rc" -ne 0 ] && pass 'un main avanzado aborta' || fail 'main avanzado deberia abortar'
+assert_absent "$EVENTS" 'git tag -a' 'no crea tag si HEAD ya no es origin/main'
+
+setup delta-fails; DELTA_PATH=scripts/intruso.sh run_release; rc=$?
+[ "$rc" -ne 0 ] && pass 'un path fuera de allowlist aborta' || fail 'path fuera de allowlist deberia abortar'
+assert_absent "$EVENTS" 'git tag -a' 'no crea tag con delta fuera de allowlist'
+
+setup diff-fails; DIFF_RC=7 run_release; rc=$?
+[ "$rc" -ne 0 ] && pass 'un fallo al calcular el delta aborta' || fail 'git diff fallido deberia abortar'
+assert_absent "$EVENTS" 'git tag -a' 'no interpreta un git diff fallido como delta vacio'
+
+setup source-edited; printf '{"schemaVersion":1,"version":"1.2.3","commit":"cccccccccccccccccccccccccccccccccccccccc"}\n' > "$TEST_REPO/src/published/release-identity.json"; run_release; rc=$?
+[ "$rc" -ne 0 ] && pass 'una edicion manual aislada de la fuente aborta' || fail 'fuente editada deberia abortar'
+assert_absent "$EVENTS" 'git tag -a' 'no crea tag con fuente editada manualmente'
 
 setup push-fails; PUSH_RC=8 run_release; rc=$?
 [ "$rc" -ne 0 ] && pass 'el fallo al subir el tag aborta' || fail 'el fallo al subir el tag deberia abortar'
