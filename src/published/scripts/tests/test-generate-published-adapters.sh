@@ -36,6 +36,21 @@ EOF
 ---
 fixture
 EOF
+    for source in \
+        scripts/_pipeline-common.sh scripts/tmux-pipeline.sh scripts/herdr-pipeline.sh scripts/stream-watch.sh scripts/tooling-pipeline.sh \
+        src/runtime/mefisto-run-agent.sh src/runtime/lib/mefisto-runtime.sh src/runtime/lib/mefisto-process.sh \
+        src/runtime/lib/runtime-claude.sh src/runtime/lib/runtime-opencode.sh; do
+        mkdir -p "$TEST_REPO/$(dirname "$source")"
+        printf '#!/usr/bin/env bash\n' > "$TEST_REPO/$source"
+        chmod 0755 "$TEST_REPO/$source"
+    done
+    for source in \
+        src/runtime/lib/mefisto-models.sh src/runtime/lib/runtime-claude.jq src/runtime/lib/runtime-opencode.jq \
+        src/runtime/contract/models.validate.jq; do
+        mkdir -p "$TEST_REPO/$(dirname "$source")"
+        printf 'fixture\n' > "$TEST_REPO/$source"
+        chmod 0644 "$TEST_REPO/$source"
+    done
 }
 
 add_assets_adapter() {
@@ -55,7 +70,7 @@ OUT="$WORK/salida con espacios"
 "$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md"; rc=$?
 assert_rc "$rc" 0 'dos adaptadores procesan fuente y paths con espacios'
 [ -f "$OUT/dist/alpha/artefactos/valida con espacios.md" ] && [ -f "$OUT/dist/beta/artefactos/valida con espacios.md" ] && pass 'salidas de ambos adaptadores' || fail 'faltan salidas'
-[ ! -e "$OUT/dist/alpha/.mefisto-generated-assets.json" ] && pass 'adaptador sin extension conserva su arbol anterior' || fail 'adaptador sin extension recibio inventario'
+jq -e '.assets | length == 14 and all(.[]; .adapter == "tooling-closure")' "$OUT/dist/alpha/.mefisto-generated-assets.json" >/dev/null && pass 'la clausura estatica atribuye assets aun con adaptador heredado' || fail 'inventario de clausura estatica invalido'
 if [ "$(sed -n '4p' "$OUT/dist/beta/artefactos/valida con espacios.md")" = '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/valida con espacios.md. No editar a mano. -->' ]; then
     pass 'el marcador puede ir despues del frontmatter'
 else
@@ -92,7 +107,7 @@ assert_rc "$rc" 0 'assets suplementarios se generan junto con Markdown'
 [ "$(cat "$OUT/dist/assets/runtime/config.json")" = 'renderizado:configuracion fuente' ] && pass 'asset se renderiza desde su fuente' || fail 'asset no se renderizo desde fuente'
 [ "$(file_mode "$OUT/dist/assets/bin/launcher")" = 755 ] && pass 'asset ejecutable conserva modo 0755' || fail 'asset ejecutable no conserva modo'
 inventory="$OUT/dist/assets/.mefisto-generated-assets.json"
-jq -e '.schemaVersion == 1 and (.assets | length) == 2 and .assets[0].source == "src/published/assets/config.txt" and .assets[1].mode == "0755" and (.assets[] | .sha256 | length == 64)' "$inventory" >/dev/null && pass 'inventario determinista atribuye assets' || fail 'inventario de assets invalido'
+jq -e '.schemaVersion == 1 and (.assets | length) == 16 and .assets[0].source == "src/published/assets/config.txt" and .assets[1].mode == "0755" and (.assets[] | .sha256 | length == 64)' "$inventory" >/dev/null && pass 'inventario determinista atribuye assets' || fail 'inventario de assets invalido'
 check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
 [ "$rc" -eq 0 ] && pass '--check acepta assets e inventario al dia' || fail "--check acepta assets e inventario al dia (exit $rc: $check_out)"
 printf 'alterado\n' > "$OUT/dist/assets/runtime/config.json"
@@ -140,6 +155,14 @@ setup_repo invalida
 GEN="$TEST_REPO/src/published/scripts/generate-published-adapters.sh"; OUT="$WORK/invalida-out"
 "$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/invalida.md" >/dev/null 2>&1; assert_rc "$?" 1 'validador rechaza antes de crear salida'
 [ ! -e "$OUT" ] && pass 'fuente invalida no crea salida' || fail 'fuente invalida creo salida'
+
+setup_repo clausura-ausente
+GEN="$TEST_REPO/src/published/scripts/generate-published-adapters.sh"; OUT="$WORK/clausura-ausente-out"
+rm "$TEST_REPO/src/runtime/lib/runtime-opencode.jq"
+diagnostic="$("$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" 2>&1)"; rc=$?
+assert_rc "$rc" 1 'clausura rechaza una fuente ausente antes de publicar'
+case "$diagnostic" in *'src/runtime/lib/runtime-opencode.jq'*) pass 'fuente ausente identifica la ruta exacta';; *) fail 'fuente ausente no identifica la ruta exacta';; esac
+[ ! -e "$OUT" ] && pass 'fuente de clausura ausente no deja salida parcial' || fail 'fuente de clausura ausente creo salida'
 
 setup_repo fallo
 GEN="$TEST_REPO/src/published/scripts/generate-published-adapters.sh"; OUT="$WORK/fallo-out"

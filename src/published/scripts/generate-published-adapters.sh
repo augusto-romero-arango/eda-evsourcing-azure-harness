@@ -31,6 +31,13 @@
 # escribe `.mefisto-generated-assets.json` solo en las raices cuyo adaptador
 # implementa `assets`: es su inventario versionado (schemaVersion 1), no el
 # manifest de releases.
+#
+# Clausura ejecutable del primer corte publicado de tooling (MEF-ADR-0053).
+# Es una frontera de producto deliberadamente plana y ordenada: no se amplia
+# mediante find/globs porque eso expondria pipelines, fixtures o adaptadores de
+# prueba que todavia no pertenecen a una release. El inventario generado en
+# cada dist/<runtime> atribuye cada copia a su fuente exacta sin insertar un
+# marcador que pudiera romper un shebang Bash o un programa jq.
 
 set -uo pipefail
 export LC_ALL=C
@@ -43,6 +50,22 @@ MARKER_SCRIPT="src/published/scripts/generate-published-adapters.sh"
 CHECK_MODE=0
 OUT_ROOT="$REPO_ROOT"
 FILES=()
+TOOLING_CLOSURE_ASSETS=(
+    'scripts/_pipeline-common.sh|0755'
+    'scripts/tmux-pipeline.sh|0755'
+    'scripts/herdr-pipeline.sh|0755'
+    'scripts/stream-watch.sh|0755'
+    'scripts/tooling-pipeline.sh|0755'
+    'src/runtime/mefisto-run-agent.sh|0755'
+    'src/runtime/lib/mefisto-runtime.sh|0755'
+    'src/runtime/lib/mefisto-models.sh|0644'
+    'src/runtime/lib/mefisto-process.sh|0755'
+    'src/runtime/lib/runtime-claude.sh|0755'
+    'src/runtime/lib/runtime-claude.jq|0644'
+    'src/runtime/lib/runtime-opencode.sh|0755'
+    'src/runtime/lib/runtime-opencode.jq|0644'
+    'src/runtime/contract/models.validate.jq|0644'
+)
 
 usage_error() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
 
@@ -268,6 +291,45 @@ for adapter_index in "${!ADAPTERS[@]}"; do
         ASSET_COUNT=$((ASSET_COUNT + 1))
         GENERATED+=("$full_rel")
     done < <(jq -c '.[]' "$assets_stdout")
+done
+
+# Proyecta la clausura estatica en CADA raiz publicada. A diferencia de los
+# assets propios de un adaptador, esta lista es neutral a runtime: conserva el
+# mismo layout relativo que el checkout para que el runner y los pipelines se
+# resuelvan igual desde la raiz de cualquier paquete.
+# Toda raiz recibe ahora assets, incluso si su adaptador Markdown es heredado y
+# no implementa `assets`; por eso el inventario se deriva de las raices, no de
+# esa capacidad opcional del adaptador.
+ASSET_ROOTS=("${ROOTS[@]}")
+for root in "${ROOTS[@]}"; do
+    for declared_asset in "${TOOLING_CLOSURE_ASSETS[@]}"; do
+        asset_source="${declared_asset%%|*}"
+        asset_mode="${declared_asset##*|}"
+        asset_id="tooling-closure/$asset_source"
+        asset_destination="$asset_source"
+        safe_relative_path "$asset_source" || usage_error "clausura tooling declaro una fuente insegura: $asset_source"
+        case "$asset_mode" in 0644|0755) ;; *) usage_error "clausura tooling declaro un modo desconocido: $asset_mode" ;; esac
+        asset_source_dir="$(cd "$(dirname "$REPO_ROOT/$asset_source")" 2>/dev/null && pwd -P)" || usage_error "clausura tooling declaro una fuente ausente: $asset_source"
+        absolute_asset_source="$asset_source_dir/$(basename "$asset_source")"
+        case "$absolute_asset_source" in "$REPO_ROOT"/*) ;; *) usage_error "clausura tooling declaro una fuente fuera del repositorio: $asset_source" ;; esac
+        [ -f "$absolute_asset_source" ] || usage_error "clausura tooling declaro una fuente ausente o no regular: $asset_source"
+        [ ! -L "$absolute_asset_source" ] || usage_error "clausura tooling declaro una fuente mediante symlink: $asset_source"
+        full_rel="$root/$asset_destination"
+        paths_overlap "$full_rel" "$root/.mefisto-generated-assets.json" && usage_error "clausura tooling colisiona con el inventario del motor: $full_rel"
+        for plan in ${ASSET_PLANS[@]+"${ASSET_PLANS[@]}"}; do
+            plan_destination="$(printf '%s' "$plan" | jq -r '.destination')"
+            ! paths_overlap "$plan_destination" "$full_rel" || usage_error "clausura tooling colisiona en destino: $full_rel"
+        done
+        for generated_path in ${GENERATED[@]+"${GENERATED[@]}"}; do
+            ! paths_overlap "$generated_path" "$full_rel" || usage_error "clausura tooling colisiona con salida agent/command: $full_rel"
+        done
+        mkdir -p "$(dirname "$STAGE_DIR/$full_rel")" || usage_error "no se pudo preparar $full_rel"
+        cp "$absolute_asset_source" "$STAGE_DIR/$full_rel" || usage_error "no se pudo copiar la clausura tooling: $asset_source"
+        chmod "$asset_mode" "$STAGE_DIR/$full_rel" || usage_error "no se pudo fijar el modo de $full_rel"
+        ASSET_PLANS+=("$(jq -cn --arg adapter 'tooling-closure' --arg id "$asset_id" --arg source "$asset_source" --arg destination "$full_rel" --arg mode "$asset_mode" --arg sha256 "$(sha256 "$STAGE_DIR/$full_rel")" '{adapter: $adapter, id: $id, source: $source, destination: $destination, mode: $mode, sha256: $sha256}')")
+        ASSET_COUNT=$((ASSET_COUNT + 1))
+        GENERATED+=("$full_rel")
+    done
 done
 
 for root in ${ASSET_ROOTS[@]+"${ASSET_ROOTS[@]}"}; do
