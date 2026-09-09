@@ -309,6 +309,7 @@ if command -v jq >/dev/null 2>&1; then
     mkdir -p "$FAKE_REPO/.claude/pipeline"
     git -C "$FAKE_REPO" init -q
     cp "$REPO_ROOT/scripts/metrics-report.sh" "$FAKE_REPO/metrics-report.sh"
+    cp "$REPO_ROOT/scripts/_pipeline-common.sh" "$FAKE_REPO/_pipeline-common.sh"
     chmod +x "$FAKE_REPO/metrics-report.sh"
 
     cat > "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" <<'EOF'

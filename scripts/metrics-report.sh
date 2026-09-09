@@ -97,8 +97,8 @@ if [ -f "$_REPO_TOP/.claude-plugin/plugin.json" ]; then
     exit 1
 fi
 
-# El historial vive SIEMPRE en el .claude/pipeline/ del repo principal: los
-# pipelines resuelven PIPELINE_DIR_ABS antes de hacer cd al worktree del issue.
+# El historial vive en el estado canonico o legacy del repo principal: los
+# pipelines resuelven su directorio de estado antes de hacer cd al worktree.
 # Como los worktrees son justo donde uno esta parado mientras corre un pipeline,
 # quedarse con --show-toplevel haria que el reporte dijera "0 corridas" en
 # silencio. --git-common-dir devuelve el .git compartido: absoluto desde un
@@ -837,9 +837,9 @@ EOF
     local history_files=()
     history_sources=$(mefisto_state_read_paths "pipeline-history.jsonl" "$_MAIN_REPO_TOP")
     if [ -z "$history_sources" ]; then
-        history_file="$_MAIN_REPO_TOP/.mefisto/pipeline/pipeline-history.jsonl"
-        history_files=("$history_file")
-        history_label="$history_file"
+        # No fabricar una ruta canonica aqui: el helper es la unica autoridad
+        # sobre ubicaciones de estado y una lista vacia es una entrada valida.
+        history_label="ningun historial existente"
     else
         while IFS= read -r history_file; do
             [ -n "$history_file" ] && history_files+=("$history_file")
@@ -848,7 +848,13 @@ EOF
     fi
 
     local agg
-    agg=$(compute_metrics_report_json "${history_files[@]}" "$desde" "$hasta") || true
+    if [ ${#history_files[@]} -eq 0 ]; then
+        # Bash 3.2 con nounset no permite expandir un array vacio; el agregador
+        # acepta cero fuentes antes de los dos limites de fecha.
+        agg=$(compute_metrics_report_json "$desde" "$hasta") || true
+    else
+        agg=$(compute_metrics_report_json "${history_files[@]}" "$desde" "$hasta") || true
+    fi
     if [ -z "$agg" ]; then
         echo "ERROR: no se pudo procesar el historial ($history_label)" >&2
         exit 1
