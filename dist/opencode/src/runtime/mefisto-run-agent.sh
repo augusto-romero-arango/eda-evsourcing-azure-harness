@@ -16,6 +16,7 @@
 #                         [--system-file <f>] [--timeout <s>]
 #                         [--raw-log <f>] [--stderr-log <f>]
 #                         [--events-log <archivo>] [--resume-session <id>]
+#                         [--redact-observability]
 #
 #   --runtime <id>       Fuerza el runtime (precedencia sobre MEFISTO_RUNTIME
 #                         y la autodeteccion, ver mefisto_resolve_runtime en
@@ -69,6 +70,13 @@
 #                         adaptador -- build_cmd nunca ve el flag en ese caso,
 #                         y el comportamiento es identico byte a byte al de
 #                         antes de #968.
+#   --redact-observability Persiste una proyeccion segura del stream neutral:
+#                         omite `message`, fija `tool.started.input_summary`
+#                         en null y reemplaza `error.detail` por un texto
+#                         estable derivado de `error.kind`. Aplica tanto a los
+#                         anexos en vivo como al volcado final. No redacta los
+#                         destinos explicitamente pedidos con --raw-log ni
+#                         --stderr-log.
 #
 # --event-log en vivo (CA-1/CA-2/CA-3, issue #924): mientras el agente corre,
 # este runner reanexa a --event-log, cada MEFISTO_RUN_AGENT_LIVE_INTERVAL
@@ -136,6 +144,7 @@ Uso: mefisto-run-agent.sh --agent <id> --cwd <dir> --prompt-file <f> --event-log
                            [--runtime <id>] [--model <opaco>] [--system-file <f>]
                            [--timeout <s>] [--raw-log <f>] [--stderr-log <f>]
                            [--events-log <archivo>] [--resume-session <id>]
+                           [--redact-observability] [--help]
 EOF
 }
 
@@ -177,6 +186,7 @@ OPT_RAW_LOG=""
 OPT_STDERR_LOG=""
 OPT_EVENTS_LOG=""
 OPT_RESUME_SESSION=""
+OPT_REDACT_OBSERVABILITY=false
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -192,6 +202,8 @@ while [ $# -gt 0 ]; do
         --stderr-log)  [ $# -ge 2 ] || abort_usage "--stderr-log requiere un valor"; OPT_STDERR_LOG="$2"; shift 2 ;;
         --events-log)  [ $# -ge 2 ] || abort_usage "--events-log requiere un valor"; OPT_EVENTS_LOG="$2"; shift 2 ;;
         --resume-session) [ $# -ge 2 ] || abort_usage "--resume-session requiere un valor"; OPT_RESUME_SESSION="$2"; shift 2 ;;
+        --redact-observability) OPT_REDACT_OBSERVABILITY=true; shift ;;
+        --help) usage; exit 0 ;;
         *) abort_usage "argumento desconocido: '$1'" ;;
     esac
 done
@@ -321,6 +333,10 @@ else
     STDERR_LOG="$RUN_TMP_DIR/stderr.log"
 fi
 
+if [ "$OPT_REDACT_OBSERVABILITY" = "true" ] && { [ -n "$OPT_RAW_LOG" ] || [ -n "$OPT_STDERR_LOG" ]; }; then
+    echo "AVISO: --redact-observability no redacta los destinos solicitados explicitamente (--raw-log: '${OPT_RAW_LOG:-<no solicitado>}', --stderr-log: '${OPT_STDERR_LOG:-<no solicitado>}'); no son observabilidad segura" >&2
+fi
+
 # Telemetria humana opt-in (CA-3/#1045): el nucleo no deriva rutas de estado.
 # Si el caller entrega una ruta, un fallo de escritura degrada a aviso.
 if [ -n "$OPT_EVENTS_LOG" ]; then
@@ -345,6 +361,27 @@ model_json_or_null() {
         printf '%s' "$1" | jq -Rr '@json'
     else
         printf 'null'
+    fi
+}
+
+# La persistencia redactada se aplica DESPUES de la traduccion nativa: los
+# adaptadores conservan su capacidad de clasificar el desenlace desde wire data
+# y stderr, pero ningun contenido de entrada/salida llega a la observabilidad.
+# Esta es la unica transformacion y la usan por igual el tick en vivo y el
+# volcado final para no exponer una linea durante el intervalo de reescritura.
+redact_observability_events() {
+    if [ "$OPT_REDACT_OBSERVABILITY" = "true" ]; then
+        printf '%s\n' "$1" | jq -c '
+            select(type == "object")
+            | if .type == "message" then empty
+              elif .type == "tool.started" then .input_summary = null
+              elif ((.error? | type) == "object") then
+                  .error.detail = ("detalle redactado: " + .error.kind)
+              else .
+              end
+        ' 2>/dev/null
+    else
+        printf '%s' "$1"
     fi
 }
 
@@ -384,6 +421,7 @@ live_tail_tick() {
     # exit_code y stderr_file vacios: solo afectan al terminal que este tick
     # descarta -- un raw log parcial no tiene ninguno de los dos todavia.
     translated="$("$TRANSLATE_FN" "$RAW_LOG" "$RUNTIME_ID" "$OPT_MODEL" "" "" 2>/dev/null)" || return 0
+    translated="$(redact_observability_events "$translated")" || return 0
     [ -n "$translated" ] || return 0
 
     non_terminal="$(printf '%s\n' "$translated" | jq -c 'select(type == "object") | select(.type != "run.completed" and .type != "run.failed")' 2>/dev/null)"
@@ -476,6 +514,7 @@ stop_live_tail
 # --- Traduccion del adaptador --------------------------------------------
 
 TRANSLATED="$("$TRANSLATE_FN" "$RAW_LOG" "$RUNTIME_ID" "$OPT_MODEL" "$ADAPTER_EXIT" "$STDERR_LOG" 2>/dev/null)"
+TRANSLATED="$(redact_observability_events "$TRANSLATED")"
 
 NON_TERMINAL_JSON=""
 TERMINAL_JSON=""
@@ -545,6 +584,7 @@ fi
 # pared alrededor de la invocacion COMPLETA -- sobreescribe lo que el
 # adaptador haya (o no) traducido, nunca un cero fabricado (MEF-ADR-0049 CA-1).
 CHOSEN_TERMINAL="$(printf '%s' "$CHOSEN_TERMINAL" | jq -c --argjson d "$ELAPSED_MS" '.duration_ms = $d')"
+CHOSEN_TERMINAL="$(redact_observability_events "$CHOSEN_TERMINAL")"
 
 # Anexo final: solo los no terminales PENDIENTES (CA-2, issue #924). El
 # bucle en vivo (ya detenido arriba, antes de traducir) pudo haber anexado

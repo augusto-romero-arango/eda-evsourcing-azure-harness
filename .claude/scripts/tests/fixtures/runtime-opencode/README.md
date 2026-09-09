@@ -27,6 +27,7 @@ de version en cada nombre de archivo.
 | `no-visible-text-1.18.29.jsonl` | Exit 0 sin ningun bloque `text`: solo tool call y cierre. Derivado de la misma corrida con tool, recortado antes del segundo paso. | (recorte de `success-tool-1.18.29.jsonl`) |
 | `malformed-1.18.29.jsonl` | Linea no-JSON: el `text` cortado a mitad de escritura. Derivado de `success-1.18.29.jsonl` truncando su segunda linea. | (recorte de `success-1.18.29.jsonl`) |
 | `empty-1.18.29.jsonl` | Stream vacio (cero lineas). | (archivo vacio a proposito) |
+| `sensitive-redaction-derived.jsonl` | Texto/input/output/metadata con centinelas sensibles para probar la proyeccion redactada del runner. | (fixture sintetico con la forma 1.18.29; issue #1128) |
 
 ## Regla de mantenimiento
 
