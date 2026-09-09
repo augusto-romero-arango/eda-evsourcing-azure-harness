@@ -104,9 +104,9 @@ else
 fi
 generated_count="$(find "$WORK/dist" -type f 2>/dev/null | wc -l | tr -d '[:space:]')"
 skill_file_count="$(find "$REPO_ROOT/skills" -type f | wc -l | tr -d '[:space:]')"
-expected_count=$((36 + skill_file_count))
+expected_count=$((37 + skill_file_count))
 [ "$generated_count" = "$expected_count" ] && pass 'la integracion genera agentes, clausura, Skills e inventarios' || fail "la integracion genero $generated_count salidas, no $expected_count"
-if jq -e '.schemaVersion == 1 and (.assets | length == 15) and any(.assets[]; .id == "mefisto-manifest" and .destination == "mefisto-manifest.json")' "$WORK/dist/claude/.mefisto-generated-assets.json" >/dev/null && jq -e --argjson count "$((15 + skill_file_count))" '.schemaVersion == 1 and (.assets | length == $count) and any(.assets[]; .destination == "skills/mefisto-projections/read-apis.md") and any(.assets[]; .destination == "skills/mefisto-comment-cleanup/ejemplos.md") and any(.assets[]; .id == "interactive-observability" and .destination == "plugins/mefisto-observability.js")' "$WORK/dist/opencode/.mefisto-generated-assets.json" >/dev/null; then
+if jq -e '.schemaVersion == 1 and (.assets | length == 15) and any(.assets[]; .id == "mefisto-manifest" and .destination == "mefisto-manifest.json")' "$WORK/dist/claude/.mefisto-generated-assets.json" >/dev/null && jq -e --argjson count "$((16 + skill_file_count))" '.schemaVersion == 1 and (.assets | length == $count) and any(.assets[]; .destination == "skills/mefisto-projections/read-apis.md") and any(.assets[]; .destination == "skills/mefisto-comment-cleanup/ejemplos.md") and any(.assets[]; .id == "interactive-observability" and .destination == "plugins/mefisto-observability.js") and any(.assets[]; .id == "mcp-config" and .destination == "plugins/mefisto-mcp.js")' "$WORK/dist/opencode/.mefisto-generated-assets.json" >/dev/null; then
     pass 'los inventarios atribuyen clausura y Skills OpenCode'
 else
     fail 'los inventarios de integracion no atribuyen los Skills'

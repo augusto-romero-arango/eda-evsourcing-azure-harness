@@ -10,6 +10,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd -P)"
 SKILLS_ROOT="$REPO_ROOT/skills"
 HOOKS_CONTRACT="$REPO_ROOT/src/published/hooks/interactive-hooks.json"
 HOOKS_VALIDATOR="$REPO_ROOT/src/published/scripts/validate-interactive-hooks.sh"
+MCP_REGISTRY="$REPO_ROOT/src/published/contract/mcp-servers.json"
+MCP_VALIDATOR="$REPO_ROOT/src/published/scripts/validate-published-mcp.sh"
 
 error() { printf '%s\n' "$1" >&2; return 1; }
 frontmatter() { awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$1"; }
@@ -327,6 +329,44 @@ export default async function mefistoObservability(context) {
 EOF
 }
 
+validate_published_mcp() {
+    local registry="${1:-$MCP_REGISTRY}"
+    [ -x "$MCP_VALIDATOR" ] || { error 'mcp: falta validador publicado ejecutable'; return 1; }
+    "$MCP_VALIDATOR" --registry "$registry" || return 1
+}
+
+render_mcp_plugin() {
+    local source="$1" bundled
+    validate_published_mcp "$source" || return 1
+    bundled="$(jq -c '[.servers[] | select(.provisioning == "bundled") | {key: .id, value: {type: "remote", url: .url, enabled: true, oauth: false}}] | from_entries' "$source")" || return 1
+    cat <<EOF
+// GENERADO por src/published/scripts/adapters/adapter-opencode.sh desde src/published/contract/mcp-servers.json. No editar a mano.
+const bundled = $bundled;
+const owns = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
+const identical = (actual, expected) => actual && typeof actual === "object" && !Array.isArray(actual) &&
+  Object.keys(actual).length === Object.keys(expected).length &&
+  Object.keys(expected).every((key) => actual[key] === expected[key]);
+const log = async (client, event, server) => {
+  try { await client?.app?.log?.({ body: { service: "mefisto", level: "warn", message: event, extra: { event, server } } }); } catch { /* failure: continue */ }
+};
+
+export default async function mefistoMcp({ client } = {}) {
+  return {
+    config: async (config) => {
+      try {
+        if (!config || typeof config !== "object" || Array.isArray(config)) throw new Error("invalid_config");
+        if (config.mcp === undefined) config.mcp = {};
+        if (!config.mcp || typeof config.mcp !== "object" || Array.isArray(config.mcp)) throw new Error("invalid_mcp");
+        for (const [server, expected] of Object.entries(bundled)) {
+          if (!owns(config.mcp, server)) { config.mcp[server] = { ...expected }; continue; }
+          if (!identical(config.mcp[server], expected)) await log(client, "mcp_config_conflict", server);
+        }
+      } catch { await log(client, "mcp_config_hook_failed", "microsoft-learn"); }
+    },
+  };
+}
+EOF
+}
 render() {
     local source="$1" marker="$2" rel fm instance kind artifact_id raw_body translated preamble='' mode permissions agent native_skills='[]'
     rel="${source#*/src/published/}"
@@ -371,9 +411,9 @@ case "${1:-}" in
     path)
         case "${2:-}" in src/published/agents/*.md) printf 'agents/%s\n' "$(basename "$2")" ;; src/published/commands/*.md) printf 'commands/mefisto:%s\n' "$(basename "$2")" ;; *) error "$2: path: fuente publicada desconocida" ;; esac ;;
     render) [ "$#" -eq 3 ] || error 'render: se esperaban fuente y marcador'; render "$2" "$3" ;;
-    assets) validate_interactive_hooks && { skill_assets | jq '. + [{id:"interactive-observability",source:"src/published/hooks/interactive-hooks.json",destination:"plugins/mefisto-observability.js",mode:"0644"}]'; } ;;
+    assets) validate_interactive_hooks && validate_published_mcp && { skill_assets | jq '. + [{id:"interactive-observability",source:"src/published/hooks/interactive-hooks.json",destination:"plugins/mefisto-observability.js",mode:"0644"},{id:"mcp-config",source:"src/published/contract/mcp-servers.json",destination:"plugins/mefisto-mcp.js",mode:"0644"}]'; } ;;
     render-asset)
         [ "$#" -eq 3 ] || error 'render-asset: se esperaban id y fuente'
-        case "$2" in interactive-observability) render_observability_plugin ;; *) render_skill_asset "$2" "$3" ;; esac ;;
+        case "$2" in interactive-observability) render_observability_plugin ;; mcp-config) render_mcp_plugin "$3" ;; *) render_skill_asset "$2" "$3" ;; esac ;;
     *) error 'uso: adapter-opencode.sh root|path|render|assets|render-asset' ;;
 esac

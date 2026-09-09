@@ -39,7 +39,7 @@ assert_not_contains "$command_path" 'mefisto-command' 'no usa id interno mefisto
 assets="$($ADAPTER assets)"; rc=$?
 [ "$rc" -eq 0 ] && pass 'enumera assets de Skills publicados' || fail 'no enumero assets de Skills publicados'
 skill_file_count="$(find "$REPO_ROOT/skills" -type f | wc -l | tr -d '[:space:]')"
-jq -e --argjson count "$skill_file_count" 'length == ($count + 1) and ([.[] | select(.source == "skills/projections/SKILL.md" and .destination == "skills/mefisto-projections/SKILL.md")] | length) == 1 and ([.[] | select(.id == "interactive-observability" and .source == "src/published/hooks/interactive-hooks.json" and .destination == "plugins/mefisto-observability.js" and .mode == "0644")] | length) == 1 and ([.[] | select(.destination == "mefisto-manifest.json")] | length) == 0' <<< "$assets" >/dev/null && pass 'assets preservan Skills y observabilidad sin usurpar el manifiesto del packager' || fail 'inventario de assets incompleto'
+jq -e --argjson count "$skill_file_count" 'length == ($count + 2) and ([.[] | select(.source == "skills/projections/SKILL.md" and .destination == "skills/mefisto-projections/SKILL.md")] | length) == 1 and ([.[] | select(.id == "interactive-observability" and .source == "src/published/hooks/interactive-hooks.json" and .destination == "plugins/mefisto-observability.js" and .mode == "0644")] | length) == 1 and ([.[] | select(.id == "mcp-config" and .source == "src/published/contract/mcp-servers.json" and .destination == "plugins/mefisto-mcp.js" and .mode == "0644")] | length) == 1 and ([.[] | select(.destination == "mefisto-manifest.json")] | length) == 0' <<< "$assets" >/dev/null && pass 'assets preservan Skills, observabilidad y MCP sin usurpar el manifiesto del packager' || fail 'inventario de assets incompleto'
 "$ADAPTER" render-asset interactive-observability "$REPO_ROOT/src/published/hooks/interactive-hooks.json" > "$WORK/mefisto-observability.js"; rc=$?
 [ "$rc" -eq 0 ] && grep -q 'session.model-observed' "$WORK/mefisto-observability.js" && grep -q 'plan.completed no soportado' "$WORK/mefisto-observability.js" && pass 'renderiza el plugin de observabilidad desde el contrato' || fail 'plugin de observabilidad no renderizado'
 "$ADAPTER" render-asset skills/projections/SKILL.md "$REPO_ROOT/skills/projections/SKILL.md" > "$WORK/projections-skill.md"; rc=$?
@@ -48,11 +48,16 @@ cmp -s "$REPO_ROOT/skills/projections/read-apis.md" <("$ADAPTER" render-asset sk
 
 printf '%s\n' '[skills] enumeracion abierta y validacion fail-closed'
 SKILL_REPO="$WORK/skill-repo"; FIXTURE_ADAPTER="$SKILL_REPO/src/published/scripts/adapters/adapter-opencode.sh"
-mkdir -p "$SKILL_REPO/src/published/scripts/adapters" "$SKILL_REPO/src/published/hooks" "$SKILL_REPO/skills/futuro"
+mkdir -p "$SKILL_REPO/src/published/scripts/adapters" "$SKILL_REPO/src/published/hooks" "$SKILL_REPO/src/published/contract" "$SKILL_REPO/skills/futuro"
 cp "$ADAPTER" "$FIXTURE_ADAPTER"; chmod +x "$FIXTURE_ADAPTER"
 cp "$REPO_ROOT/src/published/scripts/validate-interactive-hooks.sh" "$SKILL_REPO/src/published/scripts/"
+cp "$REPO_ROOT/src/published/scripts/validate-published-mcp.sh" "$SKILL_REPO/src/published/scripts/"
+mkdir -p "$SKILL_REPO/src/published/scripts/lib"
+cp "$REPO_ROOT/src/published/scripts/lib/jsonschema-lite.jq" "$SKILL_REPO/src/published/scripts/lib/"
+cp "$REPO_ROOT/src/published/contract/mcp-servers.json" "$REPO_ROOT/src/published/contract/mcp-servers.schema.json" "$REPO_ROOT/src/published/contract/published-artifact.schema.json" "$SKILL_REPO/src/published/contract/"
+cp "$REPO_ROOT/.mcp.json" "$SKILL_REPO/.mcp.json"
 cp "$REPO_ROOT/src/published/hooks/interactive-hooks.json" "$REPO_ROOT/src/published/hooks/interactive-hooks.schema.json" "$SKILL_REPO/src/published/hooks/"
-chmod +x "$SKILL_REPO/src/published/scripts/validate-interactive-hooks.sh"
+chmod +x "$SKILL_REPO/src/published/scripts/validate-interactive-hooks.sh" "$SKILL_REPO/src/published/scripts/validate-published-mcp.sh"
 write_future_skill() {
     printf '%s\n' '---' 'name: futuro' 'description: Skill futuro.' '---' '' '# Futuro' '[detalle](detalle.md)' > "$SKILL_REPO/skills/futuro/SKILL.md"
     printf 'detalle futuro\n' > "$SKILL_REPO/skills/futuro/detalle.md"
@@ -64,7 +69,7 @@ assert_skill_failure() {
 }
 write_future_skill
 future_assets="$("$FIXTURE_ADAPTER" assets)"; rc=$?
-[ "$rc" -eq 0 ] && jq -e 'length == 3 and ([.[] | select(.source == "skills/futuro/SKILL.md" and .destination == "skills/mefisto-futuro/SKILL.md")] | length) == 1 and ([.[] | select(.destination == "skills/mefisto-futuro/detalle.md")] | length) == 1 and ([.[] | select(.id == "interactive-observability")] | length) == 1' <<< "$future_assets" >/dev/null && pass 'un Skill futuro converge sin inventario hardcodeado' || fail 'un Skill futuro no fue enumerado'
+[ "$rc" -eq 0 ] && jq -e 'length == 4 and ([.[] | select(.source == "skills/futuro/SKILL.md" and .destination == "skills/mefisto-futuro/SKILL.md")] | length) == 1 and ([.[] | select(.destination == "skills/mefisto-futuro/detalle.md")] | length) == 1 and ([.[] | select(.id == "interactive-observability")] | length) == 1 and ([.[] | select(.id == "mcp-config")] | length) == 1' <<< "$future_assets" >/dev/null && pass 'un Skill futuro converge sin inventario hardcodeado' || fail 'un Skill futuro no fue enumerado'
 "$FIXTURE_ADAPTER" render-asset skills/futuro/SKILL.md "$SKILL_REPO/skills/futuro/SKILL.md" > "$WORK/futuro-rendered.md"
 awk 'NR == 2 { print "name: mefisto-futuro"; next } { print }' "$SKILL_REPO/skills/futuro/SKILL.md" > "$WORK/futuro-expected.md"
 cmp -s "$WORK/futuro-expected.md" "$WORK/futuro-rendered.md" && pass 'render futuro cambia exclusivamente name' || fail 'render futuro altero campos o body'

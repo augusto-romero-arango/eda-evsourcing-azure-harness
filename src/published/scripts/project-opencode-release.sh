@@ -110,7 +110,11 @@ report_capabilities() {
         if [ -d "$release/$kind" ] && [ -n "$(find "$release/$kind" -type f -print -quit)" ]; then printf 'Proyectado: %s.\n' "$label"
         else printf 'DEGRADACION VISIBLE: la release activa no contiene %s; no se simulan.\n' "$label"; fi
     done
-    printf 'DEGRADACION VISIBLE: MCP no es representable sin combinar configuracion; no se modifica opencode.json del usuario.\n'
+    if [ -f "$release/plugins/mefisto-mcp.js" ]; then
+        printf 'Proyectado: MCP bundleado mediante plugin local; opencode.json del usuario no se modifica.\n'
+    else
+        printf 'DEGRADACION VISIBLE: la release activa no contiene el plugin MCP bundleado; no se modifica opencode.json del usuario.\n'
+    fi
 }
 project() {
     local release paths rel target parent tmp previous_dirs='[]'
