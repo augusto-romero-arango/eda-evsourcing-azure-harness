@@ -98,6 +98,24 @@ assert_rc "$rc" 1 '--check combina divergencias con exit 1'
 "$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null
 check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
 [ "$rc" -eq 0 ] && [ -z "$check_out" ] && pass 'escritura reconcilia distintas, faltantes, huerfanas y manuales' || fail 'escritura no converge al arbol esperado'
+cmp -s "$OUT/dist/alpha/.mefisto-generated-assets.json" "$OUT/dist/beta/.mefisto-generated-assets.json" && pass 'inventarios de clausura son identicos entre runtimes' || fail 'inventarios de clausura divergen entre runtimes'
+printf 'alterada\n' >> "$OUT/dist/alpha/scripts/_pipeline-common.sh"
+check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
+assert_rc "$rc" 1 '--check detecta contenido divergente en clausura'; case "$check_out" in *'dist/alpha/scripts/_pipeline-common.sh: distinta'*) pass 'diagnostico contenido de clausura';; *) fail 'sin diagnostico contenido de clausura';; esac
+"$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null
+chmod 0644 "$OUT/dist/alpha/scripts/_pipeline-common.sh"
+check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
+assert_rc "$rc" 1 '--check detecta modo divergente en clausura'; case "$check_out" in *'dist/alpha/scripts/_pipeline-common.sh: modo divergente'*) pass 'diagnostico modo de clausura';; *) fail 'sin diagnostico modo de clausura';; esac
+"$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null
+rm "$OUT/dist/alpha/scripts/_pipeline-common.sh"
+ln -s "$TEST_REPO/scripts/_pipeline-common.sh" "$OUT/dist/alpha/scripts/_pipeline-common.sh"
+check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
+assert_rc "$rc" 1 '--check rechaza symlink en salida de clausura'; case "$check_out" in *'dist/alpha/scripts/_pipeline-common.sh: enlace simbolico'*) pass 'diagnostico symlink de clausura';; *) fail 'sin diagnostico symlink de clausura';; esac
+"$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null
+ln -s "$WORK/fuera-del-repo" "$OUT/dist/alpha/scripts/huerfano.sh"
+check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
+assert_rc "$rc" 1 '--check detecta symlink huerfano'; case "$check_out" in *'dist/alpha/scripts/huerfano.sh: enlace simbolico'*) pass 'diagnostico symlink huerfano';; *) fail 'sin diagnostico symlink huerfano';; esac
+"$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null
 
 setup_repo assets
 GEN="$TEST_REPO/src/published/scripts/generate-published-adapters.sh"; OUT="$WORK/assets-out"
@@ -163,6 +181,15 @@ diagnostic="$("$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con es
 assert_rc "$rc" 1 'clausura rechaza una fuente ausente antes de publicar'
 case "$diagnostic" in *'src/runtime/lib/runtime-opencode.jq'*) pass 'fuente ausente identifica la ruta exacta';; *) fail 'fuente ausente no identifica la ruta exacta';; esac
 [ ! -e "$OUT" ] && pass 'fuente de clausura ausente no deja salida parcial' || fail 'fuente de clausura ausente creo salida'
+
+setup_repo clausura-no-regular
+GEN="$TEST_REPO/src/published/scripts/generate-published-adapters.sh"; OUT="$WORK/clausura-no-regular-out"
+rm "$TEST_REPO/src/runtime/lib/runtime-opencode.jq"
+mkdir "$TEST_REPO/src/runtime/lib/runtime-opencode.jq"
+diagnostic="$("$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" 2>&1)"; rc=$?
+assert_rc "$rc" 1 'clausura rechaza una fuente no regular antes de publicar'
+case "$diagnostic" in *'src/runtime/lib/runtime-opencode.jq'*) pass 'fuente no regular identifica la ruta exacta';; *) fail 'fuente no regular no identifica la ruta exacta';; esac
+[ ! -e "$OUT" ] && pass 'fuente de clausura no regular no deja salida parcial' || fail 'fuente de clausura no regular creo salida'
 
 setup_repo fallo
 GEN="$TEST_REPO/src/published/scripts/generate-published-adapters.sh"; OUT="$WORK/fallo-out"

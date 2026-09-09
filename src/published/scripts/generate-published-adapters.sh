@@ -7,7 +7,7 @@
 # Sin archivos valida y procesa src/published/{agents,commands}/*.md en orden
 # LC_ALL=C. --out es la raiz que contiene dist/ (principalmente para tests).
 # --check nunca crea --out y lista <ruta>: faltante|distinta|huerfana|sin
-# marcador|modo divergente|inventario inconsistente.
+# marcador|modo divergente|inventario inconsistente|enlace simbolico.
 #
 # Interfaz de un adaptador ejecutable adapter-<runtime>.sh:
 #   root                          imprime su raiz relativa bajo --out (p.ej. dist/foo)
@@ -106,6 +106,18 @@ has_any_generated_marker() {
 
 file_mode() {
     stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"
+}
+
+output_path_has_symlink() {
+    local relpath="$1" current="$OUT_ROOT" segment
+    local segments=()
+    [ ! -L "$current" ] || return 0
+    IFS='/' read -r -a segments <<< "$relpath"
+    for segment in "${segments[@]}"; do
+        current="$current/$segment"
+        [ ! -L "$current" ] || return 0
+    done
+    return 1
 }
 
 sha256() {
@@ -366,7 +378,9 @@ if [ "$CHECK_MODE" -eq 1 ]; then
     divergent=0
     for relpath in ${GENERATED[@]+"${GENERATED[@]}"}; do
         existing="$OUT_ROOT/$relpath"
-        if [ ! -f "$existing" ]; then
+        if output_path_has_symlink "$relpath"; then
+            printf '%s: enlace simbolico\n' "$relpath"; divergent=1
+        elif [ ! -f "$existing" ]; then
             printf '%s: faltante\n' "$relpath"; divergent=1
         elif [ "$(basename "$relpath")" = '.mefisto-generated-assets.json' ]; then
             if ! cmp -s "$STAGE_DIR/$relpath" "$existing"; then
@@ -395,7 +409,9 @@ if [ "$CHECK_MODE" -eq 1 ]; then
             [ -n "$existing" ] || continue
             relpath="${existing#"$OUT_ROOT"/}"
             generated_contains "$relpath" && continue
-            if has_any_generated_marker "$existing"; then
+            if [ -L "$existing" ]; then
+                printf '%s: enlace simbolico\n' "$relpath"
+            elif has_any_generated_marker "$existing"; then
                 printf '%s: huerfana\n' "$relpath"
             elif was_supplemental_asset "$existing_inventory" "${relpath#"$root"/}"; then
                 printf '%s: huerfana\n' "$relpath"
@@ -405,7 +421,7 @@ if [ "$CHECK_MODE" -eq 1 ]; then
                 printf '%s: sin marcador\n' "$relpath"
             fi
             divergent=1
-        done < <(find "$OUT_ROOT/$root" -type f 2>/dev/null | sort)
+        done < <(find "$OUT_ROOT/$root" \( -type f -o -type l \) 2>/dev/null | sort)
     done
     exit "$divergent"
 fi
