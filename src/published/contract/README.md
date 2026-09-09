@@ -64,11 +64,11 @@ el del agente que los ejecuta y una denegación permanece visible.
 |---|---|---|
 | `skills: ["x"]` | frontmatter `skills: ["x"]` | preámbulo `skill` para `mefisto-x`; en agentes con capacidad `skill`, allowlist exacta en `permission.skill` |
 
-Toda referencia `skills` debe resolver a un `skills/<id>/SKILL.md` publicado.
-Las referencias `skills` y `agent`, igual que los argumentos `<id>` de las
-directivas, conservan ids fuente sin prefijo. Un runtime sin plugin transforma
-cada Skill en la salida a `mefisto-<id>`. El prefijo adaptado no pertenece a la
-fuente.
+Las referencias `agent`, igual que los argumentos `<id>` de las directivas,
+también conservan ids fuente sin prefijo. El prefijo adaptado no pertenece a la
+fuente. La carga on-demand y el override por agente custom siguen el contrato
+oficial de [Agent Skills de OpenCode
+1.18.29](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/web/src/content/docs/skills.mdx).
 
 ## Layout de Skills empaquetados
 

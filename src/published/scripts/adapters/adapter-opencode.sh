@@ -205,7 +205,6 @@ native_skills() {
     local rel="$1" instance="$2" skill adapted seen='|' output=''
     validate_skills || return 1
     while IFS= read -r skill; do
-        [ -z "$skill" ] && continue
         case "$skill" in
             mefisto-*) error "$rel: skills: la referencia '$skill' ya tiene prefijo OpenCode"; return 1 ;;
             *[!a-z0-9-]*|''|-*|*--*|*-) error "$rel: skills: referencia no representable '$skill'"; return 1 ;;

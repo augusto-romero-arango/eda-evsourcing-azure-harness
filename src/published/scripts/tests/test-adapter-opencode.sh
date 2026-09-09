@@ -106,6 +106,11 @@ assert_not_contains "$comando" '## Projections' 'comando no copia doctrina del S
 
 render "$FIXTURES/agent-completo.md" > "$WORK/completo.md"; rc=$?
 [ "$rc" -eq 0 ] && pass 'render de capacidades combinadas' || fail 'render de capacidades combinadas'
+if [ "$rc" -eq 0 ] && cmp -s "$FIXTURES/expected-agent-completo.md" "$WORK/completo.md"; then
+    pass 'snapshot byte a byte de agente con varios Skills'
+else
+    fail 'snapshot byte a byte de agente con varios Skills'
+fi
 completo="$(< "$WORK/completo.md")"
 assert_contains "$completo" 'description: "Lee, \"edita\" y ejecuta."' 'description queda escapada como YAML valido'
 assert_contains "$completo" '"edit":{"*":"allow"' 'edicion sobre alcance consumidor'
@@ -190,9 +195,20 @@ out="$(render "$WORK/duplicado.md" 2>&1)"; rc=$?
 make_agent prefijado '["skill"]' ',"skills":["mefisto-projections"]'
 out="$(render "$WORK/prefijado.md" 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && assert_contains "$out" 'ya tiene prefijo OpenCode' 'Skill prefijado falla' || fail 'Skill prefijado debio fallar'
+make_agent no-representable '["skill"]' ',"skills":["no_representable"]'
+out="$(render "$WORK/no-representable.md" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && assert_contains "$out" "referencia no representable 'no_representable'" 'Skill no representable falla' || fail 'Skill no representable debio fallar'
+make_agent vacio '["skill"]' ',"skills":[""]'
+out="$(render "$WORK/vacio.md" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && assert_contains "$out" "referencia no representable ''" 'Skill vacio no desaparece silenciosamente' || fail 'Skill vacio debio fallar'
 make_agent skill-sin-lista '["skill"]'
 skill_sin_lista="$(permission_of "$WORK/skill-sin-lista.md")"
 jq -e '.skill == "allow"' <<< "$skill_sin_lista" >/dev/null && pass 'capacidad skill sin referencias conserva politica general' || fail 'capacidad skill sin referencias altero politica'
+make_agent read-skill-sin-lista '["read","skill"]'
+make_agent read-skill-acotado '["read","skill"]' ',"skills":["projections"]'
+read_skill_general="$(permission_of "$WORK/read-skill-sin-lista.md")"
+read_skill_acotado="$(permission_of "$WORK/read-skill-acotado.md")"
+[ "$(printf '%s' "$read_skill_general" | jq -c 'del(.skill)')" = "$(printf '%s' "$read_skill_acotado" | jq -c 'del(.skill)')" ] && pass 'allowlist de Skills no altera otros permisos' || fail 'allowlist de Skills altero otros permisos'
 make_agent con-mcp '[]' ',"mcp":["terraform"]'
 out="$(render "$WORK/con-mcp.md" 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && assert_contains "$out" 'mcp: OpenCode no implementa' 'mcp no desaparece' || fail 'mcp debio fallar'
