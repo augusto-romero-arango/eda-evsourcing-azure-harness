@@ -71,8 +71,13 @@ done
 PLUGIN_JSON="$MEFISTO_REPO_ROOT/.claude-plugin/plugin.json"
 CHANGELOG="$MEFISTO_REPO_ROOT/CHANGELOG.md"
 OPENCODE_PACKAGER="$MEFISTO_REPO_ROOT/src/published/scripts/package-opencode-release.sh"
+PUBLISHED_GENERATOR="$MEFISTO_REPO_ROOT/src/published/scripts/generate-published-adapters.sh"
+RELEASE_IDENTITY="$MEFISTO_REPO_ROOT/src/published/release-identity.json"
+CLAUDE_MANIFEST="$MEFISTO_REPO_ROOT/mefisto-manifest.json"
+DIST_CLAUDE_MANIFEST="$MEFISTO_REPO_ROOT/dist/claude/mefisto-manifest.json"
 [ -f "$PLUGIN_JSON" ] || abort "No existe $PLUGIN_JSON"
 [ -f "$CHANGELOG" ]   || abort "No existe $CHANGELOG"
+[ -x "$PUBLISHED_GENERATOR" ] || abort "No existe o no es ejecutable el generador publicado: $PUBLISHED_GENERATOR"
 
 REPO_SLUG="${MEFISTO_REPO_SLUG:-}"
 if [ -z "$REPO_SLUG" ]; then
@@ -274,6 +279,70 @@ bump_plugin_json() {
     mv "$tmp" "$PLUGIN_JSON"
 }
 
+# write_release_identity <version> <source-commit>: la identidad se escribe en
+# un temporal y se publica con rename para que nunca exista JSON truncado.
+write_release_identity() {
+    local version="$1" source_commit="$2" tmp
+    tmp=$(mktemp "${RELEASE_IDENTITY}.XXXXXX") || return 1
+    jq -cn --arg version "$version" --arg commit "$source_commit" \
+        '{schemaVersion:1,version:$version,commit:$commit}' > "$tmp" \
+        && mv "$tmp" "$RELEASE_IDENTITY" || { rm -f "$tmp"; return 1; }
+}
+
+# write_claude_manifest: el mirror de raiz y dist/claude se comparan por bytes
+# durante publish; jq -c conserva una representacion canonica identica.
+write_claude_manifest() {
+    local version="$1" source_commit="$2" tmp
+    tmp=$(mktemp "${CLAUDE_MANIFEST}.XXXXXX") || return 1
+    jq -cn --arg version "$version" --arg commit "$source_commit" \
+        '{schemaVersion:1,runtime:"claude",version:$version,commit:$commit}' > "$tmp" \
+        && mv "$tmp" "$CLAUDE_MANIFEST" || { rm -f "$tmp"; return 1; }
+}
+
+discard_release_branch() {
+    local original_branch="$1" release_branch="$2"
+    git reset --hard >/dev/null 2>&1 || true
+    git switch "$original_branch" >/dev/null 2>&1 || true
+    git branch -D "$release_branch" >/dev/null 2>&1 || true
+}
+
+prepare_metadata() {
+    local version="$1" source_commit="$2"
+    write_release_identity "$version" "$source_commit" \
+        || return 1
+    write_claude_manifest "$version" "$source_commit" \
+        || return 1
+    bump_plugin_json "$version" \
+        || return 1
+    "$PUBLISHED_GENERATOR" \
+        || return 1
+    cmp -s "$CLAUDE_MANIFEST" "$DIST_CLAUDE_MANIFEST" \
+        || return 1
+}
+
+validate_release_identity() {
+    jq -e '
+        (keys | sort) == ["commit", "schemaVersion", "version"] and
+        .schemaVersion == 1 and
+        (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$")) and
+        (.commit | type == "string" and test("^[0-9a-f]{40}$"))
+    ' "$RELEASE_IDENTITY" >/dev/null 2>&1
+}
+
+validate_publish_delta() {
+    local source_commit="$1" status path
+    while IFS=$'\t' read -r status path; do
+        [ -n "$path" ] || continue
+        case "$path" in
+            CHANGELOG.md|docs/adr/INDICE-TEMATICO.md|.claude-plugin/plugin.json|src/published/release-identity.json|mefisto-manifest.json|dist/claude/mefisto-manifest.json|dist/claude/.mefisto-generated-assets.json) ;;
+            changelog.d/*.md)
+                [ "$status" = "D" ] && [ "$path" != "changelog.d/README.md" ] \
+                    || return 1 ;;
+            *) return 1 ;;
+        esac
+    done < <(git diff --name-status "$source_commit..HEAD")
+}
+
 # tag_exists_local <tag>
 tag_exists_local() {
     git rev-parse -q --verify "refs/tags/$1" >/dev/null 2>&1
@@ -386,9 +455,24 @@ EOF
     log_info "Actualizando refs desde origin..."
     git fetch origin --tags --quiet || abort "No se pudo hacer fetch desde origin"
 
+    # La identidad de una release es el commit que alimenta el squash, no el
+    # commit etiquetable que resultara del merge. Se captura una sola vez, desde
+    # la misma ref usada para crear la rama, antes de tocar metadata.
+    SOURCE_COMMIT=$(git rev-parse --verify 'origin/main^{commit}') \
+        || abort "No se pudo resolver origin/main como commit fuente"
+    [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] \
+        || abort "origin/main no resolvio un SHA completo y valido; no se modifico metadata"
+    [ "$(git rev-parse origin/main)" = "$SOURCE_COMMIT" ] \
+        || abort "origin/main divergio al capturar el commit fuente; reintenta antes de modificar metadata"
+    log_info "Commit fuente capturado: ${SOURCE_COMMIT}"
+
     log_info "Creando rama ${RELEASE_BRANCH} desde origin/main..."
     git switch -c "$RELEASE_BRANCH" origin/main >/dev/null 2>&1 \
         || abort "No se pudo crear la rama ${RELEASE_BRANCH} (verifica que origin/main existe)"
+    if [ "$(git rev-parse HEAD)" != "$SOURCE_COMMIT" ]; then
+        discard_release_branch "$CURRENT_BRANCH" "$RELEASE_BRANCH"
+        abort "La rama ${RELEASE_BRANCH} no se creo exactamente desde el commit fuente ${SOURCE_COMMIT}; no se modifico metadata"
+    fi
 
     # Gate de neutralidad de runtime (MEF-ADR-0049, issue #914): sobre la rama
     # de release recien creada, antes de consolidar changelog.d/ -- misma
@@ -430,25 +514,30 @@ Una release no se publica con fugas: corrigelas en main via PR de issue (el pipe
         abort "La seccion [Unreleased] del CHANGELOG esta vacia (ni fragmentos en changelog.d/ ni entradas previas). Agrega notas antes de hacer release."
     fi
 
-    # Reescribir CHANGELOG y bumpear plugin.json
+    # Reescribir CHANGELOG e identidad publicada. Si la generacion de cualquier
+    # manifest falla, se descarta toda la rama local antes de dejar un artefacto
+    # parcial que pudiera confundirse con una release preparada.
     log_info "Reescribiendo CHANGELOG.md..."
-    rewrite_changelog_prepare "$NEW_VERSION" "$PREV_VERSION" "$RELEASE_DATE" \
-        || abort "Fallo al reescribir CHANGELOG.md"
-
-    log_info "Bumpeando .claude-plugin/plugin.json a ${NEW_VERSION}..."
-    bump_plugin_json "$NEW_VERSION"
+    if ! rewrite_changelog_prepare "$NEW_VERSION" "$PREV_VERSION" "$RELEASE_DATE" \
+        || ! prepare_metadata "$NEW_VERSION" "$SOURCE_COMMIT"; then
+        discard_release_branch "$CURRENT_BRANCH" "$RELEASE_BRANCH"
+        abort "Fallo al generar la identidad o los manifiestos de release; la rama ${RELEASE_BRANCH} se descarto sin salida parcial"
+    fi
 
     # Verificar que tenemos cambios stage-ables (incluye docs/adr/INDICE-TEMATICO.md
-    # y el borrado de fragmentos consumidos en changelog.d/, ademas del CHANGELOG y plugin.json).
+    # y el borrado de fragmentos consumidos en changelog.d/, ademas del CHANGELOG,
+    # plugin.json, la fuente neutral y todos los manifests generados).
     # changelog.d/ se stagea aparte y bajo guarda: git no versiona directorios, asi
     # que la carpeta no existe en un checkout donde no quede ningun archivo dentro,
     # y con 'set -e' un pathspec sin match abortaria el release entero.
-    git add CHANGELOG.md docs/adr/INDICE-TEMATICO.md .claude-plugin/plugin.json
+    git add CHANGELOG.md docs/adr/INDICE-TEMATICO.md .claude-plugin/plugin.json \
+        src/published/release-identity.json mefisto-manifest.json \
+        dist/claude/mefisto-manifest.json dist/claude/.mefisto-generated-assets.json
     if [ -d changelog.d ]; then
         git add -A changelog.d/
     fi
     if git diff --cached --quiet; then
-        abort "No se produjeron cambios en CHANGELOG ni plugin.json (algo va mal)"
+        abort "No se produjeron cambios mecanicos de release (algo va mal)"
     fi
 
     COMMIT_MSG="chore(release): ${NEW_TAG}"
@@ -487,6 +576,7 @@ PR de release ${NEW_TAG} (${BUMP_PART}: ${PREV_VERSION} -> ${NEW_VERSION}).
 - Consolida los fragmentos de \`changelog.d/\` (CHANGELOG e indice de ADRs de \`docs/adr/INDICE-TEMATICO.md\`) y los borra.
 - Mueve \`[Unreleased]\` a \`[${NEW_VERSION}] - ${RELEASE_DATE}\` en \`CHANGELOG.md\`.
 - Bumpea \`.claude-plugin/plugin.json\` a ${NEW_VERSION}.
+- Persiste la identidad fuente \`${SOURCE_COMMIT}\` y regenera los manifiestos Claude.
 - Actualiza links de comparacion al pie del CHANGELOG.
 
 ## Categorias del release
@@ -631,6 +721,34 @@ if [ "$AHEAD_COUNT" -gt 0 ]; then
     abort "main local tiene ${AHEAD_COUNT} commit(s) que no estan en origin/main. Pushea o resetea antes de publicar."
 fi
 
+HEAD_COMMIT=$(git rev-parse HEAD) || abort "No se pudo resolver HEAD para validar publish"
+ORIGIN_MAIN_COMMIT=$(git rev-parse origin/main) || abort "No se pudo resolver origin/main para validar publish"
+[ "$HEAD_COMMIT" = "$ORIGIN_MAIN_COMMIT" ] \
+    || abort "HEAD no coincide exactamente con origin/main; sincroniza main y reintenta antes de crear el tag"
+
+# Publish no reescribe ni recalcula la identidad: comprueba la que dejo
+# prepare, su padre directo tras el squash y todas sus proyecciones publicadas.
+validate_release_identity \
+    || abort "release-identity.json es invalido; regenera la metadata con /mefisto-release <bump> antes de publicar"
+SOURCE_COMMIT=$(jq -r '.commit' "$RELEASE_IDENTITY")
+IDENTITY_VERSION=$(jq -r '.version' "$RELEASE_IDENTITY")
+HEAD_PARENT=$(git rev-parse 'HEAD^') \
+    || abort "HEAD no tiene padre directo para validar el commit fuente; regenera la metadata"
+[ "$HEAD_PARENT" = "$SOURCE_COMMIT" ] \
+    || abort "El padre directo de HEAD no coincide con el commit fuente de release-identity.json; la release debe mergearse por squash y regenerarse"
+[ "$IDENTITY_VERSION" = "$NEW_VERSION" ] \
+    || abort "release-identity.json reporta ${IDENTITY_VERSION}, no ${NEW_VERSION}; regenera la metadata"
+
+for manifest in "$CLAUDE_MANIFEST" "$DIST_CLAUDE_MANIFEST"; do
+    jq -e --arg version "$NEW_VERSION" --arg commit "$SOURCE_COMMIT" \
+        '. == {schemaVersion:1,runtime:"claude",version:$version,commit:$commit}' "$manifest" >/dev/null 2>&1 \
+        || abort "El manifiesto Claude ${manifest#$MEFISTO_REPO_ROOT/} no coincide con release-identity.json; regenera la metadata"
+done
+cmp -s "$CLAUDE_MANIFEST" "$DIST_CLAUDE_MANIFEST" \
+    || abort "Los manifiestos Claude de raiz y dist/claude difieren por bytes; regenera la metadata"
+validate_publish_delta "$SOURCE_COMMIT" \
+    || abort "El delta ${SOURCE_COMMIT}..HEAD contiene rutas ajenas a la allowlist mecanica de release; regenera la metadata en un squash limpio"
+
 # Verificar coherencia: el plugin.json mergeado debe coincidir con el actual
 MAIN_PLUGIN_VERSION=$(git show "origin/main:.claude-plugin/plugin.json" | jq -r '.version')
 if [ "$MAIN_PLUGIN_VERSION" != "$NEW_VERSION" ]; then
@@ -690,12 +808,10 @@ MANIFEST_VERSION=$(printf '%s' "$MANIFEST" | jq -er '.version | strings' 2>/dev/
     || abort "El manifiesto del tarball OpenCode no contiene una version valida; no se creo ni subio el tag ${NEW_TAG}."
 MANIFEST_COMMIT=$(printf '%s' "$MANIFEST" | jq -er '.commit | strings' 2>/dev/null) \
     || abort "El manifiesto del tarball OpenCode no contiene un commit valido; no se creo ni subio el tag ${NEW_TAG}."
-HEAD_COMMIT=$(git rev-parse HEAD) || abort "No se pudo resolver HEAD para validar el tarball OpenCode"
-ORIGIN_MAIN_COMMIT=$(git rev-parse origin/main) || abort "No se pudo resolver origin/main para validar el tarball OpenCode"
 [ "$MANIFEST_VERSION" = "$NEW_VERSION" ] \
     || abort "El manifiesto OpenCode reporta ${MANIFEST_VERSION}, no la version ${NEW_VERSION} de plugin.json; no se creo ni subio el tag ${NEW_TAG}."
-[ "$MANIFEST_COMMIT" = "$HEAD_COMMIT" ] && [ "$MANIFEST_COMMIT" = "$ORIGIN_MAIN_COMMIT" ] \
-    || abort "El manifiesto OpenCode no corresponde a HEAD/origin/main; no se creo ni subio el tag ${NEW_TAG}."
+[ "$MANIFEST_COMMIT" = "$SOURCE_COMMIT" ] \
+    || abort "El manifiesto OpenCode no coincide con el commit fuente de release-identity.json; regenera la metadata antes de crear el tag ${NEW_TAG}."
 
 # Extraer notas del bloque versionado. A diferencia del body del PR (issue
 # #405), aqui SI se publican integras. La documentacion oficial de la REST API
