@@ -2,11 +2,11 @@
 model: haiku
 ---
 
-Eres un dashboard unificado de todos los pipelines (TDD, Tooling, IaC). Descubre automaticamente que pipelines estan activos y muestra un panel consolidado.
+Eres un dashboard unificado de los pipelines del consumidor (TDD, Tooling e IaC). Descubre las corridas activas y muestra un panel consolidado. El estado canónico es `.mefisto/pipeline/`; durante el corte vertical también lees `.claude/pipeline/`, sin copiar, migrar ni escribir nada.
 
 ## Pre-condicion: cwd != Mefisto
 
-Este skill es del plugin publicado y solo aplica al repo consumidor. Para pipelines internos de Mefisto, usa `/mefisto-work-status`:
+Este skill publicado solo aplica al repositorio consumidor. Para pipelines internos de Mefisto usa `/mefisto-work-status`:
 
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
@@ -16,210 +16,65 @@ if [ -f "$REPO_ROOT/.claude-plugin/plugin.json" ]; then
 fi
 ```
 
-## Paso 1: Leer los datos
+## Paso 1: Leer y combinar los datos
 
-Lee estos archivos en paralelo usando Read, Glob y Bash:
+Define, en este orden fijo, los roots de **solo lectura**:
 
-1. `Glob .claude/pipeline/pipeline-status-*.json` -- todos los pipelines activos (formato nuevo tras #76)
-2. `Read` cada archivo encontrado por el glob
-3. `Read .claude/pipeline/pipeline-history.jsonl` -- historial unificado
-4. `Bash(date '+%Y-%m-%d %H:%M:%S')` -- hora actual para calcular tiempo transcurrido
-5. `Read .mefisto/pipeline/events.log` (o `Bash(tail -n 50 .mefisto/pipeline/events.log)` si es largo) -- para detectar una espera (hold) activa, ver Paso 1c
+1. canónico: `.mefisto/pipeline/`;
+2. legacy: `.claude/pipeline/`.
 
-## Paso 1b: Fallback retrocompatibilidad
+No elijas un directorio ni uses uno como sustituto del otro: ambos pueden contener poblaciones activas distintas mientras Tooling migra y TDD/IaC permanecen legacy. Ejecuta en paralelo:
 
-Solo si el glob de `pipeline-status-*.json` no encuentra nada Y `pipeline-history.jsonl` no existe o esta vacio:
+1. `Glob .mefisto/pipeline/pipeline-status-*.json`, luego `Read` cada resultado;
+2. `Glob .claude/pipeline/pipeline-status-*.json`, luego `Read` cada resultado;
+3. `Read .mefisto/pipeline/pipeline-history.jsonl` y `Read .claude/pipeline/pipeline-history.jsonl` si existen;
+4. `Read .mefisto/pipeline/events.log` y `Read .claude/pipeline/events.log` si existen (solo si hay corridas legacy `running` que puedan necesitar fallback de hold);
+5. `Bash(date '+%Y-%m-%d %H:%M:%S')`.
 
-6. `Glob .claude/pipeline/status*.json` -- status TDD viejo (incluye `status.json` y `status-{N}.json`)
-7. `Glob .claude/pipeline/tooling-status*.json` -- status tooling viejo
-8. `Read .claude/pipeline/infra-status.json` -- status infra viejo
-9. `Read .claude/pipeline/history.jsonl` -- historial TDD viejo
-10. `Read .claude/pipeline/tooling-history.jsonl` -- historial tooling viejo
-11. `Read .claude/pipeline/infra-history.jsonl` -- historial infra viejo
+Después, para cada root que no tenga status moderno ni historial moderno con contenido, busca **en ese mismo root** los formatos retrocompatibles: `status*.json`, `tooling-status*.json`, `infra-status.json`, `history.jsonl`, `tooling-history.jsonl` e `infra-history.jsonl`. Para un status antiguo sin `pipeline`, infiere `tdd` desde `status*.json`, `tooling` desde `tooling-status*.json` e `infra` desde `infra-status.json`.
 
-Para archivos de status viejos sin campo `"pipeline"`, inferir el tipo:
-- `status*.json` sin campo pipeline -> `"tdd"`
-- `tooling-status*.json` -> `"tooling"`
-- `infra-status.json` -> `"infra"`
+Conserva el origen de cada registro. Deduplica los status por la clave exacta `(pipeline, issue, variant)`; si existe la misma clave en ambos roots, conserva el canónico. Conserva todos los status disjuntos. Deduplica el historial por `(pipeline, issue, variant, started)` con la misma precedencia canónica y ordena las entradas retenidas de más reciente a más antigua. No modifiques ningún archivo durante esta lectura.
 
-## Paso 1c: Detectar espera (hold) activa (issue #973)
+### Paso 1b: Hold y actividad
 
-`events.log` es UN SOLO archivo por checkout, compartido por todos los pipelines lanzados desde el mismo checkout (batch, parallel, o uno suelto) -- no distingue de cual issue es la espera, pero un limite de uso agotado afecta a la cuenta completa, asi que basta con saber que hay una espera activa AHORA MISMO para aplicarla a todo pipeline con `state == "running"`.
+Un status moderno puede declarar su hold estructurado (por ejemplo, causa y próxima sonda). Atribúyelo únicamente a **esa** corrida: nunca propagues un hold estructurado a otra fila, aunque coincidan checkout, issue o runtime. Para una fila `running`, aplica esta prioridad:
 
-1. Busca la ULTIMA linea que matchee el patron `[HH:MM:SS][hold] <FAMILIA>: esperando, proxima sonda HH:MM:SS (techo HH:MM)` (la que escribe `agent_hold_wait`, issue #971). Ignora las lineas `[hold][resume]` (sub-eventos de la reanudacion de sesion dentro de un ciclo ya anunciado, no el anuncio de la espera en si).
-2. Si no hay ninguna: no hay espera activa.
-3. Si hay una, mira sus DOS horas -- la del anuncio (el `[HH:MM:SS]` del inicio de la linea) y la de "proxima sonda" -- contra la hora actual (Paso 1, item 4):
-   - La linea no lleva fecha, solo hora del dia. Si la hora del **anuncio esta en el futuro**, la linea no puede ser de hoy: es de una corrida de otro dia, tratala como NO activa. Sin este chequeo, un `events.log` cuyo ultimo hold es de ayer 18:00 con sonda 18:05 se leeria como espera activa durante todo el dia de hoy hasta las 18:05.
-   - Si la proxima sonda **todavia no llego**: hay una espera activa. Traduce `<FAMILIA>` a una causa legible -- `RATE_LIMIT` -> "limite de uso", `PROVIDER_UNAVAILABLE` -> "proveedor caido" -- y el `techo HH:MM` es cuando se agota el maximo de espera (default 6h).
-   - Si la proxima sonda **ya paso**: la espera se resolvio (o se agoto el techo) -- no la trates como activa, aunque sea la ultima linea de ese tipo en el archivo.
+1. hold estructurado vigente de su propio status: `EN ESPERA`;
+2. solo para un status legacy sin hold estructurado, el fallback textual de `events.log` de **su mismo root**;
+3. sin hold: si `updated` lleva más de 35 minutos sin cambiar, `SIN NOVEDADES`;
+4. en otro caso, muestra el stage normal.
+
+El fallback textual es exclusivamente legacy. En la cola del `events.log` legacy busca la última línea `[HH:MM:SS][hold] <FAMILIA>: esperando, proxima sonda HH:MM:SS (techo HH:MM)`, ignorando `[hold][resume]`. Si la hora del anuncio es futura o la próxima sonda ya pasó, no está activo. Traduce `RATE_LIMIT` como `limite de uso` y `PROVIDER_UNAVAILABLE` como `proveedor caido`. Como ese formato textual no identifica de forma fiable corrida ni runtime, úsalo solo para la fila legacy que se está evaluando; jamás marca en espera una corrida canónica ni una corrida de otro runtime. `SIN NOVEDADES` conserva prioridad posterior al hold.
 
 ## Paso 2: Generar el dashboard
 
-Ancho maximo 78 columnas. Usa caracteres ASCII (guion `-`, pipe `|`, `+`). NUNCA uses caracteres Unicode decorativos.
-
-### Encabezado
+Ancho máximo 78 columnas y únicamente ASCII (`-`, `|`, `+`). Encabezado:
 
 ```
 Work Status - {{fecha hora}}
 ```
 
-### Panel principal -- pipelines activos
-
-**Si hay uno o mas pipelines con `state == "running"`:**
+En cada fila muestra `pipeline`, `issue` (sufija `/{{variant}}` cuando exista), título truncado, `runtime`, stage y tiempo. `runtime` se muestra tal como viene en status/history; cuando falta, muestra `-`. Nunca lo infieras desde modelo, path, extensión o proveedor.
 
 ```
-+--------------------------------------------------------------------+
-| EN CURSO  N pipelines activos                                      |
-+--------------------------------------------------------------------+
-|  TDD      #42  Registrar marcacion de entr  IMPLEMENTER     3m 20s |
-|  TOOLING  #18  Agregar script de migracion  WRITER          1m 05s |
-|  INFRA    #55  Provisionar CosmosDB         REVIEWER        5m 40s |
-+--------------------------------------------------------------------+
++----------------------------------------------------------------------------+
+| EN CURSO  N pipelines activos                                               |
++----------------------------------------------------------------------------+
+|  TOOLING  #18/a  Migrar runner neutral  opencode  EN ESPERA       12m 40s  |
+|  TDD      #42    Registrar marcacion   -         IMPLEMENTER       3m 20s |
++----------------------------------------------------------------------------+
 ```
 
-Cada linea: tipo (ancho fijo 8), issue (#N), titulo truncado (hasta 24 chars), stage activo en MAYUSCULAS (ancho fijo 14), tiempo transcurrido alineado a la derecha. Los agentes completados se muestran con duracion abreviada tras el stage.
+Para `running`, `EN ESPERA` reemplaza el stage y muestra debajo causa, próxima sonda y techo; `SIN NOVEDADES` reemplaza el stage. Si solo hay una corrida activa y no está en espera ni sin novedades, muestra barra de progreso: TDD (`test-writer` 10%, `implementer` 40%, `smoke-test-writer` 55%, `reviewer` 70%, `coverage-gate` 90%), Tooling (`writer` 25%, `reviewer` 70%) e Infra (`infra-writer` 30%, `infra-reviewer` 80%). `projection-test-writer` y `projection-implementer` usan los porcentajes TDD equivalentes.
 
-**Tres variantes de una fila `running` (issue #973), en este orden de prioridad:**
-
-1. **Avanzando** (el caso de arriba): sin espera activa (Paso 1c) y el pipeline sigue su curso normal -- se muestra el stage tal cual.
-2. **En espera**: hay una espera activa (Paso 1c). Reemplaza el stage por `EN ESPERA` y anota la causa legible y la proxima sonda donde normalmente iria la duracion de agentes:
-
-   ```
-   |  TDD      #42  Registrar marcacion de entr  EN ESPERA      12m40s |
-   |    -> limite de uso, proxima sonda 14:37:07 (techo 20:32)         |
-   ```
-
-   Como `events.log` no distingue de cual issue es la espera (Paso 1c), aplica esta variante a TODO pipeline `running` mientras la espera este activa -- no solo al que la origino.
-3. **Sin novedades**: NO hay espera activa, pero el campo `updated` del status lleva mas de 35 minutos sin cambiar (holgura sobre el watchdog por agente, `AGENT_TIMEOUT_SECONDS=1800` = 30 minutos: si nada la resolvio y nada la esta esperando, algo dejo de llamar a `update_status` a tiempo). Ojo con el orden de prioridad: durante una espera, cada sonda corre bajo su propio watchdog de 30 minutos y nadie llama a `update_status`, asi que `updated` puede quedar horas sin cambiar de forma legitima -- por eso la variante 2 se evalua ANTES que esta. Reemplaza el stage por `SIN NOVEDADES`:
-
-   ```
-   |  TOOLING  #18  Agregar script de migracion  SIN NOVEDADES  38m12s |
-   ```
-
-   Esta es la senal que distingue un pipeline realmente colgado de uno legitimamente esperando (la motivacion original de este issue: sin ella, una espera de varias horas es indistinguible de un pipeline sin vida).
-
-Si solo hay 1 pipeline activo, muestra panel detallado con barra de progreso:
-
-```
-+--------------------------------------------------------------------+
-| EN CURSO  TDD  #42  Registrar marcacion de entrada                 |
-+--------------------------------------------------------------------+
-| [#### TEST-WRITER ............. implementer .......... reviewer ]   |
-|                                                           15%      |
-| Iniciado 08:54  -  Transcurrido: 3m 20s                           |
-| Agentes: - tw:120s                                                 |
-+--------------------------------------------------------------------+
-```
-
-Porcentajes por tipo de pipeline y stage:
-
-| Pipeline | Stages | Porcentajes |
-|---|---|---|
-| TDD | test-writer, implementer, smoke-test-writer, reviewer, coverage-gate | 10%, 40%, 55%, 70%, 90% |
-| Tooling | writer, reviewer | 25%, 70% |
-| Infra | infra-writer, infra-reviewer | 30%, 80% |
-
-Para calcular el porcentaje, extrae el nombre del agente del campo `stage` (ej: `"1-test-writer"` -> `test-writer`) y busca en la tabla.
-
-En un issue `tipo:projection` el pipeline TDD despacha la rama read-side (issue #371), asi que el campo `stage` trae `projection-test-writer` / `projection-implementer` en las etapas 1 y 2: usa los mismos porcentajes de `test-writer` / `implementer` (las etapas 2b, 3 y 4 no cambian de nombre).
-
-Agentes completados: muestra `- nombre(Ns)` con su duracion del campo `agents`.
-
-Si el unico pipeline activo esta en la variante "en espera" o "sin novedades" (arriba), omite la barra de progreso (no avanzo de stage) y reemplaza la linea `Agentes:` por la causa correspondiente:
-
-```
-+--------------------------------------------------------------------+
-| EN ESPERA  TDD  #42  Registrar marcacion de entrada                |
-+--------------------------------------------------------------------+
-| limite de uso -- proxima sonda 14:37:07 (techo 20:32)              |
-| Iniciado 08:54  -  Transcurrido: 12m 40s                           |
-+--------------------------------------------------------------------+
-```
-
-**Si hay pipelines con `state == "failed"`:**
-
-Muestra en el mismo panel con indicador de fallo:
-
-```
-|  TDD      #42  Registrar marcacion  FALLO test-writer   1m 05s    |
-```
-
-**Si no hay pipelines activos (ninguno running ni failed):**
-
-Muestra el ultimo pipeline completado del historial:
-
-```
-+--------------------------------------------------------------------+
-| ULTIMO  TDD  #42  Registrar marcacion de entrada                   |
-+--------------------------------------------------------------------+
-| tw:120s -> im:85s -> rv:200s   Tests: 8   PR: #45   Total: 6m 45s |
-+--------------------------------------------------------------------+
-```
-
-Para infra, en lugar de Tests muestra `env:{{ambiente}}`. Para tooling, si no hay tests omite ese campo.
-
-Si no hay datos en absoluto: `(sin pipelines registrados)`.
-
-### Historial reciente
-
-```
-----------------------------------------------------------------------
-  HISTORIAL
-----------------------------------------------------------------------
-  TDD      #42  ok   6m 45s  |  8 tests  |  PR #45
-  TOOLING  #18  ok   2m 30s  |           |  PR #20
-  INFRA    #55  ok   8m 10s  |  env:dev  |  PR #56
-  TDD      #40  FAIL tw      |  Stage 1 fallido
-----------------------------------------------------------------------
-```
-
-Muestra las ultimas 5 entradas de `pipeline-history.jsonl` (o de los historiales combinados en fallback), mas recientes primero.
-
-Cada linea: tipo (ancho fijo 8), issue (#N), resultado (`ok` o `FAIL`), duracion total o stage fallido, detalle (tests, env, PR).
-
-La duracion total se calcula como la suma de las duraciones de todos los agentes en el campo `agents`.
-
-Si no hay historial: `  (sin pipelines completados aun)`.
-
-### Preguntas disponibles
-
-```
-----------------------------------------------------------------------
-  - "Por que fallo?"  -  "Que tests se escribieron?"
-  - "Dame el resumen del reviewer"  -  "Cuanto tardo cada agente?"
-----------------------------------------------------------------------
-```
+Incluye los `failed` en el panel. Si no hay `running` ni `failed`, muestra la última entrada del historial deduplicado. Muestra hasta cinco entradas del historial reciente deduplicado, con pipeline, issue/variante, runtime, resultado, duración y detalle (tests, ambiente o PR). Si no existe ningún status ni historial en ambos roots, muestra `(sin pipelines registrados)`; si existe estado pero no historial, muestra `  (sin pipelines completados aun)`. Los formatos antiguos sin `variant` o `runtime` siguen siendo válidos y se presentan con `-` para runtime.
 
 ## Paso 3: Responder preguntas (drill-down)
 
-El comando debe saber que logs leer segun el tipo de pipeline. El campo `log` del JSON de status contiene la ruta al log principal. Para logs de agentes individuales, el patron de nombre depende del tipo:
+Primero usa el path `log` declarado en el status o la entrada del historial seleccionada. Respeta literalmente paths entrecomillados, incluidos espacios. Para errores, usa `last_error` y luego `Read <log declarado>` con un offset cercano al final.
 
-- TDD: `.claude/pipeline/logs/stage-{N}-{agent}-{TIMESTAMP}-issue-{N}.log`
-- Tooling: `.claude/pipeline/logs/tooling-stage-{N}-{agent}-{TIMESTAMP}.log`
-- Infra: `.claude/pipeline/logs/iac-stage-{N}-{agent}-{TIMESTAMP}.log`
+Solo si falta `log` o ese `Read` no existe, reconstruye el nombre legacy a partir de `pipeline`, `stage`, `started`, `issue` y `variant`; prueba el mismo nombre primero bajo `.mefisto/pipeline/logs/` y después bajo `.claude/pipeline/logs/`. Patrones legacy: TDD `stage-{N}-{agent}-{TIMESTAMP}-issue-{N}.log`, Tooling `tooling-stage-{N}-{agent}-{TIMESTAMP}.log`, Infra `iac-stage-{N}-{agent}-{TIMESTAMP}.log`.
 
-El TIMESTAMP se extrae del campo `started` del JSON de status.
+Para una corrida neutral en vuelo, si el log legible aún no existe, remite al `*.events.jsonl` hermano del log declarado o reconstruido y léelo como eventos normalizados. No intentes interpretar `*.stream.jsonl`, stderr ni salida raw de OpenCode o Claude desde este comando. Para duración y PR usa los campos `agents` y `pr` del status o historial. Si el usuario no especifica issue, usa el activo o el historial más reciente; si hay varios activos ambiguos, pide el issue/variante.
 
-En TDD el `.log` se **deriva al terminar** el stage a partir de la traza cruda
-que el pipeline captura (issue #645), asi que un stage todavia en vuelo aun no
-tiene `.log`. Si el Read falla sobre un stage cuyo status es `running`, lee en
-su lugar la traza viva del mismo nombre base: `...-issue-{N}.stream.jsonl` (un
-evento JSON por linea) o `...-issue-{N}.stderr.log`. No es un fallo del
-pipeline: el `.log` aparece cuando el agente termina.
-
-Para responder preguntas, usa Read sobre el archivo necesario (NO uses Bash):
-
-- **Por que fallo**: `last_error` del JSON de status. Para detalle: `Read <log_path>` usando el campo `log` (lee las ultimas 30 lineas con offset)
-- **Tests escritos**: `Read .claude/pipeline/logs/stage-1-test-writer-{{TIMESTAMP}}-issue-{{N}}.log` (solo TDD)
-- **Resumen del writer**: `Read .claude/pipeline/logs/tooling-stage-1-writer-{{TIMESTAMP}}.log` (solo Tooling)
-- **Resumen del reviewer**:
-  - TDD: `Read .claude/pipeline/logs/stage-3-reviewer-{{TIMESTAMP}}-issue-{{N}}.log`
-  - Tooling: `Read .claude/pipeline/logs/tooling-stage-2-reviewer-{{TIMESTAMP}}.log`
-  - Infra: `Read .claude/pipeline/logs/iac-stage-2-infra-reviewer-{{TIMESTAMP}}.log`
-- **Revision estatica de infra (fmt/validate) / hallazgos de seguridad-calidad**: `Read .claude/pipeline/logs/iac-stage-2-infra-reviewer-{{TIMESTAMP}}.log`. El plan real (recursos a crear/modificar/destruir) no corre en este pipeline local: se publica como comentario del PR por el workflow de CI `infra-cd.yml` (MEF-ADR-0022).
-- **Duracion de agentes**: campo `agents` del JSON de status o de la entrada del historial
-- **PR**: campo `pr` del JSON de status o del historial
-
-Si el usuario no especifica issue, usa el pipeline activo o el mas reciente del historial. Si hay multiples activos y la pregunta es ambigua, pregunta a cual se refiere.
-
-Responde en espanol, conciso, con listas `-` o tablas cuando sea apropiado.
+Responde en español, conciso, con listas o tablas cuando aplique.
