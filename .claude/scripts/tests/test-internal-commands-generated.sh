@@ -50,6 +50,9 @@
 #   [run-quoting] {{mefisto:run}} preserva sin alterar un argumento con
 #         espacios y comillas (`--models 'writer=a b'`) en ambos runtimes
 #         (CA-6, issue #867).
+#   [merge-reconcile] mefisto-merge reconcilia cada merge exitoso mediante la
+#         directiva neutral y conserva MERGED si el paso post-merge falla
+#         (issue #1160).
 #
 # Uso: .claude/scripts/tests/test-internal-commands-generated.sh
 # Exit code: 0 si todos los checks pasan, 1 si alguno falla.
@@ -318,6 +321,24 @@ check_run_invocation mefisto-tooling-verbose 'mefisto-tmux-pipeline.sh --tooling
 check_run_invocation mefisto-sequential 'mefisto-validate-batch-deps.sh <issue1> <issue2> ...'
 check_run_invocation mefisto-sequential 'mefisto-tmux-pipeline.sh --batch <issue1> <issue2> ...'
 check_run_invocation mefisto-release 'mefisto-release.sh $ARGUMENTS'
+
+echo ""
+echo "[merge-reconcile] mefisto-merge reconcilia cada cierre exitoso sin contaminar el resultado del merge (issue #1160)"
+merge_source="$COMMANDS_DIR/mefisto-merge.md"
+reconcile_directive='{{mefisto:run mefisto-validate-batch-deps.sh --reconcile-pr $pr}}'
+if [ "$(grep -cF "$reconcile_directive" "$merge_source" 2>/dev/null)" -eq 1 ]; then
+    pass "mefisto-merge: la fuente contiene una unica directiva neutral --reconcile-pr"
+else
+    fail "mefisto-merge: la fuente debe contener una unica directiva neutral --reconcile-pr"
+fi
+check_run_invocation mefisto-merge 'mefisto-validate-batch-deps.sh --reconcile-pr $pr'
+if grep -qF 'gh pr merge "$pr" --squash --delete-branch || {' "$merge_source" 2>/dev/null \
+    && grep -qF 'continue' "$merge_source" 2>/dev/null \
+    && grep -qF 'MERGED (POST-MERGE DEGRADADO)' "$merge_source" 2>/dev/null; then
+    pass "mefisto-merge: mezcla merges fallidos y exitosos; solo los exitosos se reconcilian y MERGED se conserva con warning"
+else
+    fail "mefisto-merge: falta aislar el fallo de merge o degradar solo el post-merge"
+fi
 
 echo ""
 echo "[exec-command-path] mefisto-tooling-verbose encadena mefisto-tooling apuntando al propio directorio de cada runtime (issue #867)"
