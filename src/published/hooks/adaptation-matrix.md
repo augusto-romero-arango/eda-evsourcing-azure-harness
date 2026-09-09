@@ -1,6 +1,6 @@
 # Matriz de adaptación de hooks interactivos
 
-Fecha de verificación: 2026-09-08. Fuentes: [Claude Code Hooks](https://code.claude.com/docs/en/hooks) (documentación oficial, sin versión de API publicada) y [OpenCode Plugins](https://opencode.ai/docs/plugins/) (documentación oficial, verificada para OpenCode 1.18.29, versión mínima registrada por MEF-ADR-0053). Un adaptador debe informar una degradación visible cuando una celda requerida sea `no soportado`; no puede omitir el binding silenciosamente.
+Fecha de verificación: 2026-09-08. Fuentes: [Claude Code Hooks](https://code.claude.com/docs/en/hooks) (documentación oficial, sin versión de API publicada), reportes públicos de Claude Code sobre [`SessionStart.model` ausente](https://github.com/anthropics/claude-code/issues/87045) y [cambios de `/model` sin hook](https://github.com/anthropics/claude-code/issues/75981), y [OpenCode Plugins](https://opencode.ai/docs/plugins/) más los tipos 1.18.29 fijados en `.opencode/node_modules/@opencode-ai/{plugin,sdk}` (la documentación oficial no detalla el payload completo). Un adaptador debe informar una degradación visible cuando una celda requerida sea `no soportado`; no puede omitir el binding silenciosamente.
 
 | Binding / señal neutral | Claude Code | Clasificación Claude | OpenCode | Clasificación OpenCode |
 |---|---|---|---|---|

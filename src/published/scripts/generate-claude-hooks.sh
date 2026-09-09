@@ -32,8 +32,9 @@ if [ "$VALIDATION_RC" -ne 0 ]; then
 fi
 command -v jq >/dev/null 2>&1 || usage_error "jq no esta instalado (MEF-ADR-0049: bash + jq)"
 
-# El descriptor validado es neutral; esta comprobacion declara exhaustivamente lo
-# que Claude puede representar antes de construir su topologia runtime-specific.
+# El descriptor validado es neutral; esta comprobacion evita omitir bindings en
+# silencio. append-session-model queda declarado como pendiente hasta #1136 y,
+# por eso, este issue conserva sin cambios la topologia Claude publicada.
 EXPECTED='append-dotnet-test-result append-file-change append-session append-session-model append-terraform-result record-active-release remind-field-notes'
 ACTUAL="$(jq -r '[.bindings[].id] | sort | join(" ")' "$CONTRACT")"
 [ "$ACTUAL" = "$EXPECTED" ] || usage_error "el contrato no contiene el conjunto exacto de siete bindings publicados"

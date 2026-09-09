@@ -37,7 +37,7 @@ ERRORS=$(jq -r --slurpfile specification "$SCHEMA" '
   elif keys_are(["$schema", "contractVersion", "bindings"]) | not then fail("raiz: propiedad adicional o faltante")
   elif .["$schema"] != $spec.properties["$schema"].const then fail("$schema: valor desconocido")
   elif .contractVersion != $spec.properties.contractVersion.const then fail("contractVersion: valor desconocido")
-   elif (.bindings | type) != "array" or (.bindings | length) != $spec.properties.bindings.minItems then fail("bindings: se esperaban exactamente siete bindings")
+  elif (.bindings | type) != "array" or (.bindings | length) != $spec.properties.bindings.minItems then fail("bindings: se esperaban exactamente siete bindings")
   else empty end),
   ($contract.bindings[]? |
     if type != "object" then fail("binding: debe ser objeto")
