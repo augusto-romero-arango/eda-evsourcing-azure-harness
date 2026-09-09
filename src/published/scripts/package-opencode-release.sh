@@ -15,6 +15,7 @@ LAUNCHER_SOURCE="$REPO_ROOT/src/published/scripts/mefisto-opencode"
 PROJECTOR_SOURCE="$REPO_ROOT/src/published/scripts/project-opencode-release.sh"
 DIAGNOSTIC_SOURCE="$REPO_ROOT/src/published/scripts/diagnose-installation-identity.sh"
 PLUGIN_JSON="$REPO_ROOT/.claude-plugin/plugin.json"
+RELEASE_IDENTITY="$REPO_ROOT/src/published/release-identity.json"
 MINIMUM_RUNTIME_VERSION="1.18.29"
 OUTPUT_DIR="$REPO_ROOT/dist/releases"
 
@@ -36,6 +37,7 @@ done
 [ -f "$PROJECTOR_SOURCE" ] || usage_error "no existe el proyector OpenCode"
 [ -f "$DIAGNOSTIC_SOURCE" ] || usage_error "no existe el diagnostico de identidad"
 [ -f "$PLUGIN_JSON" ] || usage_error "no existe .claude-plugin/plugin.json"
+[ -f "$RELEASE_IDENTITY" ] && [ ! -L "$RELEASE_IDENTITY" ] || usage_error "release-identity.json no existe o no es un archivo regular"
 command -v jq >/dev/null 2>&1 || usage_error "jq no esta instalado (MEF-ADR-0049: bash + jq)"
 command -v tar >/dev/null 2>&1 || usage_error "tar no esta instalado"
 command -v gzip >/dev/null 2>&1 || usage_error "gzip no esta instalado"
@@ -44,6 +46,19 @@ command -v shasum >/dev/null 2>&1 || usage_error "shasum no esta instalado"
 # Esta comprobacion ocurre antes de crear staging u outputs: el paquete nunca
 # puede ocultar una distribucion generada desactualizada.
 "$GENERATOR" --check || usage_error "la distribucion publicada no esta al dia"
+
+# La identidad neutral es la unica autoridad para los assets de release. Se
+# valida antes de crear staging u outputs para no dejar artefactos parciales.
+jq -e '
+    (keys | sort) == ["commit", "schemaVersion", "version"] and
+    .schemaVersion == 1 and
+    (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
+    (.commit | type == "string" and test("^[0-9a-f]{40}$"))
+' "$RELEASE_IDENTITY" >/dev/null 2>&1 || usage_error "release-identity.json contiene schema, version o commit invalidos"
+VERSION="$(jq -er '.version' "$RELEASE_IDENTITY")" || usage_error "release-identity.json no contiene una version valida"
+COMMIT="$(jq -er '.commit' "$RELEASE_IDENTITY")" || usage_error "release-identity.json no contiene un commit valido"
+PLUGIN_VERSION="$(jq -er '.version | strings' "$PLUGIN_JSON" 2>/dev/null)" || usage_error "plugin.json no contiene una version valida"
+[ "$PLUGIN_VERSION" = "$VERSION" ] || usage_error "release-identity.json contiene una version distinta de .claude-plugin/plugin.json"
 
 [ -d "$DIST_ROOT" ] && [ ! -L "$DIST_ROOT" ] || usage_error "dist/opencode no existe o es un enlace simbolico"
 [ -z "$(find "$DIST_ROOT" -mindepth 1 -print -quit)" ] && usage_error "dist/opencode esta vacio"
@@ -54,10 +69,6 @@ invalid_entry="$(find "$DIST_ROOT" -mindepth 1 \( -type l -o ! \( -type f -o -ty
 [ ! -e "$DIST_ROOT/install.sh" ] && [ ! -L "$DIST_ROOT/install.sh" ] || usage_error "dist/opencode no puede contener install.sh"
 [ ! -e "$DIST_ROOT/bin/mefisto-opencode" ] && [ ! -L "$DIST_ROOT/bin/mefisto-opencode" ] || usage_error "dist/opencode no puede contener bin/mefisto-opencode"
 [ ! -e "$DIST_ROOT/diagnose-installation-identity.sh" ] && [ ! -L "$DIST_ROOT/diagnose-installation-identity.sh" ] || usage_error "dist/opencode no puede contener el diagnostico de identidad"
-
-VERSION="$(jq -er '.version | strings | select(test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"))' "$PLUGIN_JSON" 2>/dev/null)" || usage_error "plugin.json no contiene una version SemVer valida"
-COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)" || usage_error "no se pudo resolver git rev-parse HEAD"
-case "$COMMIT" in *[!0123456789abcdef]*|'') usage_error "git rev-parse HEAD devolvio un commit invalido" ;; esac
 
 WORK="$(mktemp -d)" || usage_error "no se pudo crear el staging temporal"
 cleanup() { rm -rf "$WORK"; }
