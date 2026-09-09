@@ -78,15 +78,24 @@ check_invalid_mcp() {
     fi
 }
 check_invalid_mcp "bundled-without-url.json" "bundled exige"
+check_invalid_mcp "bundled-without-authentication.json" "bundled exige"
 check_invalid_mcp "external-with-connection.json" "external exige"
 check_invalid_mcp "sensitive-key.json" "headers: propiedad adicional"
 check_invalid_mcp "duplicate-id.json" "ids duplicados"
+check_invalid_mcp "out-of-order-ids.json" "ids fuera de orden"
+check_invalid_mcp "empty-servers.json" "cantidad minima de elementos"
 check_invalid_mcp "non-kebab-id.json" "id: 'Microsoft_Learn' no coincide"
 out=$(bash "$MCP_VALIDATOR" --artifact-schema "$MCP_FIXTURES/invalid/artifact-schema-divergent.json" 2>&1); rc=$?
-if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qF "enum mcp para agent difiere"; then pass "MCP detecta enum divergente"; else fail "MCP no detectó enum divergente: $out"; fi
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qF "enum mcp para agent difiere en orden"; then pass "MCP detecta orden divergente"; else fail "MCP no detectó orden divergente: $out"; fi
 out=$(bash "$MCP_VALIDATOR" --artifact-schema "$MCP_FIXTURES/invalid/artifact-schema-duplicate-enum.json" 2>&1); rc=$?
 if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qF "enum mcp para agent contiene ids duplicados"; then pass "MCP detecta enum duplicado"; else fail "MCP no detectó enum duplicado: $out"; fi
+out=$(bash "$MCP_VALIDATOR" --artifact-schema "$MCP_FIXTURES/invalid/artifact-schema-unknown-id.json" 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qF "enum mcp para agent contiene id desconocido: servidor-ajeno"; then pass "MCP detecta id desconocido"; else fail "MCP no detectó id desconocido: $out"; fi
+out=$(bash "$MCP_VALIDATOR" --artifact-schema "$MCP_FIXTURES/invalid/artifact-schema-missing-id.json" 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qF "enum mcp para agent omite id del registro: terraform"; then pass "MCP detecta diferencia de ids"; else fail "MCP no detectó diferencia de ids: $out"; fi
 out=$(bash "$MCP_VALIDATOR" --claude-config "$MCP_FIXTURES/invalid/claude-config-divergent.json" 2>&1); rc=$?
 if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qF "difiere de la proyeccion Claude"; then pass "MCP detecta .mcp.json divergente"; else fail "MCP no detectó .mcp.json divergente: $out"; fi
+out=$(bash "$MCP_VALIDATOR" --claude-config "$MCP_FIXTURES/valid/claude-config-reordered.json" 2>&1); rc=$?
+if [ "$rc" -eq 0 ]; then pass "MCP compara estructura y no orden de claves JSON"; else fail "MCP rechazó una proyección estructuralmente idéntica: $out"; fi
 echo "RESULTADO: $PASS pasaron, $FAIL fallaron"
 [ "$FAIL" -eq 0 ]
