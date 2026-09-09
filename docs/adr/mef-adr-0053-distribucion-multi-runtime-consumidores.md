@@ -74,7 +74,7 @@ forma de proyecto: no se asume que copiarla a `<config>` produzca una
 instalacion global valida. Los secrets/auth stores del runtime quedan fuera de
 esas rutas y de toda inspeccion de Mefisto, conforme a MEF-ADR-0025.
 
-### 3. Un release, dos adaptadores y diagnostico de deriva (CA-3)
+### 3. Un release, dos adaptadores y diagnostico de deriva (CA-3, enmendado por #1126)
 
 Cada release publica **una sola** version SemVer `<semver>` y el tag Git
 `v<semver>` para Claude Code y OpenCode. El destino Claude del release es
@@ -86,13 +86,45 @@ El destino OpenCode del mismo tag es el asset de GitHub Release
 `mefisto-opencode-v<semver>.tar.gz.sha256`. Una version no se reedita: tag,
 contenido de ambos adaptadores, asset y checksum son inmutables.
 
-Cada distribucion incluye esa identidad en metadata generada y el runtime la
-expone, sin secretos, como `runtime`, `version` SemVer y `commit` del artefacto.
-Al iniciar o inspeccionar un workspace, Mefisto lee exclusivamente esa metadata
-de las instalaciones Claude y OpenCode disponibles y compara las identidades.
-Si version o commit difieren, informa una degradacion visible con ambos valores
-y la accion de alinear/activar la version; no elige silenciosamente uno, ni lee
-tokens, auth stores, API keys o configuracion de proveedor para diagnosticarla.
+Cada distribucion incluye esa identidad en `mefisto-manifest.json` y el runtime
+la expone, sin secretos, como `runtime`, `version` SemVer y `commit`. El campo
+`commit` es el **commit fuente**: un SHA Git completo de 40 caracteres
+hexadecimales de `origin/main` desde el que `/mefisto-release` crea la rama de
+preparacion. Se captura inmediatamente despues de actualizar `origin/main` y
+antes de consolidar fragmentos, modificar `CHANGELOG.md`, cambiar la version o
+generar metadata. Responde a «¿de que snapshot funcional se construyeron ambos
+adaptadores?», mientras el tag/version responde «¿que release mecanico los
+publico?»; son valores distintos y comparables.
+
+El tag `v<semver>` apunta al commit squash de release posterior. Ese commit
+etiquetado debe tener un primer y unico padre igual al `commit fuente` declarado.
+Si `origin/main` avanza durante la preparacion, la rama se rebasa; si el merge no
+es squash y lineal; o si padre, SHA fuente o manifests no coinciden, `publish`
+aborta antes de crear el tag y exige regenerar la preparacion desde el
+`origin/main` vigente. Esta relacion es verificable localmente: el modelo de Git
+crea un commit a partir de un tree y sus padres, por lo que no puede contener en
+un archivo versionado el SHA del propio commit sin alterar el tree y producir
+otro SHA [Git `commit-tree`].
+
+El delta `commit fuente..commit etiquetado` queda limitado a la allowlist
+mecanica de release: version y metadata generada, consolidacion de CHANGELOG e
+indice ADR, y borrado de fragmentos ya consolidados. Ningun cambio ejecutable o
+doctrinal nuevo puede entrar en ese delta para quedar fuera de la procedencia
+declarada. El gate de release falla cerrado ante cualquier ruta fuera de esa
+allowlist.
+
+Claude y OpenCode exponen el mismo `version` y `commit fuente`, cada uno con su
+propio `runtime`; OpenCode puede conservar `minimumRuntimeVersion`. Al iniciar o
+inspeccionar un workspace, Mefisto lee exclusivamente esos manifiestos de las
+instalaciones disponibles y compara los tres campos. Si version o commit
+difieren, informa una degradacion visible con ambos valores y la accion de
+alinear/activar la version; no consulta Git, red, caches arbitrarios, tokens,
+auth stores, API keys ni configuracion de proveedor para diagnosticarla.
+
+Los tags historicos sin manifiesto Claude permanecen `metadata_missing`: no se
+reedita una version ni un tag existente. La primera release posterior a esta
+implementacion establece el contrato; una pareja instalacion vieja/nueva se
+reporta como degradacion, nunca recibe una identidad inventada.
 
 ### 4. Contrato canonico de consumidor con lectura legacy indefinida (CA-4)
 
@@ -128,7 +160,7 @@ El primer unico flujo publicado a migrar es `/mefisto:tooling`. Antes de migrar 
 2. descubrimiento de comandos, agentes, Skills, scripts, permisos, hooks y MCP en ambos runtimes;
 3. una ejecucion headless de `/mefisto:tooling` hasta un PR real y un smoke interactivo de la misma version que ejerza sus hooks; ambas modalidades deben producir observabilidad correlacionable;
 4. Herdr con Claude en la fila superior, OpenCode en la inferior y pools de panes separados por runtime;
-5. logs, metricas y sesiones que identifiquen `runtime`, `modelo`, `version` y `commit`, sin secretos ni inputs sensibles.
+5. logs, metricas y sesiones que identifiquen `runtime`, `modelo`, `version` y el `commit fuente`, sin secretos ni inputs sensibles.
 
 La presencia de archivos generados no satisface este gate: la evidencia debe ser ejecutable y repetible, en coherencia con MEF-ADR-0031. Si una variante falla o degrada, el rollout se detiene en el corte vertical; no se migra el resto del catalogo para ocultar la incompatibilidad entre volumen de adaptaciones.
 
@@ -154,12 +186,24 @@ La presencia de archivos generados no satisface este gate: la evidencia debe ser
 
 **Descartada**: multiplica superficie sin demostrar que una experiencia completa funciona. El gate de `/mefisto:tooling` expone antes incompatibilidades de runner, hooks, MCP y Herdr.
 
+### Alt f: SHA autorreferencial, solo SemVer, cache/Git/red del consumidor o hash de contenido
+
+**Descartada**: un SHA autorreferencial es imposible porque alterar el
+manifiesto altera el tree que identifica el commit. Solo SemVer no prueba la
+procedencia comun. El nombre de un cache, `git rev-parse` en el consumidor y una
+consulta de red por tag dependen de estado externo, mutable o no disponible y
+rompen el diagnostico local y sin credenciales. Un hash de contenido puede
+verificar bytes, pero renombrarlo `commit` oculta que no identifica el snapshot
+Git ni permite comprobar la relacion padre/tag.
+
 ## Consecuencias
 
 ### Positivas
 
 - Consumidores OpenCode obtienen una instalacion global estable, reversible y util desde checkout principal o worktree.
 - El mismo SemVer/tag permite atribuir una divergencia a un adaptador y no a versiones distintas.
+- El `commit fuente` permite atribuir ambos adaptadores al mismo snapshot
+  funcional sin volver circular la metadata del release.
 - El contrato canonico deja de llevar el nombre de un runtime sin romper consumidores legacy.
 - La certificacion valida la experiencia operativa completa y no solo la generacion de archivos.
 
@@ -179,6 +223,9 @@ La presencia de archivos generados no satisface este gate: la evidencia debe ser
 - MEF-ADR-0033: Agent Skills y frontmatter portable como parte de la distribucion.
 - MEF-ADR-0049: arquitectura neutral interna cuyo diferido publicado queda resuelto aqui.
 - MEF-ADR-0050: neutralidad, namespace `/mefisto:*` y prefijo `mefisto-` para Skills adaptados.
+- Git: [`git-commit-tree`](https://git-scm.com/docs/git-commit-tree), modelo de
+  creacion de commits desde tree y padres que fundamenta la imposibilidad de un
+  SHA autorreferencial y la verificacion de la relacion padre/tag.
 - OpenCode Docs: [CLI](https://opencode.ai/docs/cli/), [Config](https://opencode.ai/docs/config/), [Commands](https://opencode.ai/docs/commands/), [Agents](https://opencode.ai/docs/agents/), [Skills](https://opencode.ai/docs/skills/), [Plugins](https://opencode.ai/docs/plugins/), [Permissions](https://opencode.ai/docs/permissions/) y [MCP servers](https://opencode.ai/docs/mcp-servers/). Fuente de las rutas y formas globales de la decision 2; verificadas el 2026-09-08 contra OpenCode 1.18.29, la version minima soportada.
 - Claude Code Docs: [Plugins](https://docs.anthropic.com/en/docs/claude-code/plugins) y [Memory](https://docs.claude.com/en/docs/claude-code/memory).
 - [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/).
@@ -190,3 +237,4 @@ La presencia de archivos generados no satisface este gate: la evidencia debe ser
 - 2026-09-07: creacion como `aceptado` (issue #1042). Resuelve los diferidos publicados de MEF-ADR-0049: fuente neutral `src/published/`, nucleo exclusivo de runner/eventos `src/runtime/` y distribuciones generadas `dist/{claude,opencode}/`, sin poblar rutas antes de #1043; instalacion OpenCode global, versionada, inmutable y reversible con puntero activo atomico; un SemVer/tag para ambos adaptadores y diagnostico visible de deriva; contrato consumidor `AGENTS.md`/`.mefisto` con lectura legacy indefinida; paridad distribuible sin degradacion silenciosa; y corte vertical `/mefisto:tooling` certificado hasta PR antes de migrar el catalogo restante.
 - 2026-09-08: enmienda la decision 2 (issue #1091). Fija el proyector global por enlaces a `active`, la version minima OpenCode 1.18.29 y la preservacion no destructiva de configuracion ajena; registra degradaciones de capacidades que el release aun no contiene.
 - 2026-09-08: enmienda la decision 4 (issue #1099). Autoriza exclusivamente a `record-active-release` del adaptador publicado Claude a mantener temporalmente el mirror `.claude/pipeline/.plugin-root` y limpiar `.plugin-root.previous`, siempre junto a la escritura canonica primaria; reserva su retiro a un issue posterior con inventario verificable de lectores legacy eliminado.
+- 2026-09-08: enmienda la decision 3 (issue #1126). Define `commit` como el commit fuente de `origin/main` capturado antes de la preparacion mecanica, no como el commit etiquetado; exige que el commit squash del tag tenga ese SHA como padre unico, limita su delta a metadata mecanica y fija manifests comparables sin diagnostico externo. Descarta SHA autorreferencial, solo SemVer, cache, Git o red del consumidor y hash de contenido renombrado como commit. Follow-ups separados: #1135 (registro de raiz transitoria), #1131 (manifiesto Claude), #1134 (alineacion OpenCode), #1132 (release) y la futura raiz Claude autocontenida.
