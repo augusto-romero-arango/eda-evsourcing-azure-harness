@@ -476,6 +476,99 @@ fi
 
 # ============================================================================
 echo ""
+echo "[J] CA-1..CA-6 (issue #1128): persistencia redactada"
+
+redaction_has_no_sentinels() {
+    local file="$1"
+    ! grep -Eq 'PROMPT_SENTINEL|ASSISTANT_SENTINEL|COMMAND_SENTINEL|STDERR_SENTINEL|HEADER_SENTINEL|AUTH_TOKEN_SENTINEL' "$file"
+}
+
+J_SUCCESS="$TMP/j-sensitive-success.jsonl"
+J_RC=$(MEFISTO_FAKE_SCRIPT=sensitive-success run_fake_scenario "$J_SUCCESS" --redact-observability --model runtime-model-allowed)
+if [ "$J_RC" = "0" ] && redaction_has_no_sentinels "$J_SUCCESS" \
+    && ! jq -e 'select(.type == "message")' "$J_SUCCESS" >/dev/null 2>&1 \
+    && jq -e 'select(.type == "tool.started") | .input_summary == null' "$J_SUCCESS" >/dev/null 2>&1 \
+    && jq -e 'select(.type == "run.completed") | .runtime == "fake" and .model == "runtime-model-allowed"' "$J_SUCCESS" >/dev/null 2>&1; then
+    pass "J-1: exito redactado omite mensajes/inputs y conserva runtime/modelo/terminal sin centinelas"
+else
+    fail "J-1: el exito redactado filtro mal contenidos o cambio el desenlace"
+fi
+check_scenario "J-1 exito redactado" "$J_SUCCESS" 0 "success" "" "$J_RC"
+
+J_FAIL="$TMP/j-sensitive-fail.jsonl"
+MEFISTO_FAKE_SCRIPT=sensitive-fail MEFISTO_FAKE_EXIT_CODE=7 "$RUNNER" --runtime fake --agent test-agent --cwd "$WORKDIR" \
+    --prompt-file "$PROMPT_FILE" --event-log "$J_FAIL" --redact-observability >/dev/null 2>&1
+J_FAIL_RC=$?
+if [ "$J_FAIL_RC" = "7" ] && redaction_has_no_sentinels "$J_FAIL" \
+    && jq -e 'select(.type == "run.failed") | .status == "failed" and .error.kind == "api_error" and .error.detail == "detalle redactado: api_error"' "$J_FAIL" >/dev/null 2>&1; then
+    pass "J-2: fallo redactado conserva status/kind/exit y sustituye detail"
+else
+    fail "J-2: el fallo redactado filtro mal detail o cambio el desenlace"
+fi
+check_scenario "J-2 fallo redactado" "$J_FAIL" 7 "failed" "api_error" "$J_FAIL_RC"
+
+for J_SCRIPT in hang no-terminal malformed; do
+    J_EV="$TMP/j-${J_SCRIPT}.jsonl"
+    if [ "$J_SCRIPT" = hang ]; then
+        J_RC=$(MEFISTO_FAKE_SCRIPT="$J_SCRIPT" run_fake_scenario "$J_EV" --redact-observability --timeout 1)
+    else
+        J_RC=$(MEFISTO_FAKE_SCRIPT="$J_SCRIPT" run_fake_scenario "$J_EV" --redact-observability)
+    fi
+    case "$J_SCRIPT" in
+        hang) J_EXIT=124; J_STATUS=timeout; J_KIND=timeout ;;
+        *) J_EXIT=65; J_STATUS=protocol_invalid; J_KIND=protocol_invalid ;;
+    esac
+    check_scenario "J-3 $J_SCRIPT redactado" "$J_EV" "$J_EXIT" "$J_STATUS" "$J_KIND" "$J_RC"
+    if ! jq -e 'select(.type == "message")' "$J_EV" >/dev/null 2>&1 \
+        && jq -e 'select(.type == "run.failed") | .error.detail == ("detalle redactado: " + .error.kind)' "$J_EV" >/dev/null 2>&1; then
+        pass "J-3 $J_SCRIPT redactado: no convierte un desenlace anomalo en exito"
+    else
+        fail "J-3 $J_SCRIPT redactado: persistio message o detail no redactado"
+    fi
+done
+
+J_LIVE="$TMP/j-live.jsonl"
+J_LIVE_RC="$TMP/j-live.rc"
+(
+    MEFISTO_FAKE_SCRIPT=slow-success MEFISTO_FAKE_STEP_DELAY_S=2 MEFISTO_RUN_AGENT_LIVE_INTERVAL=1 \
+        "$RUNNER" --runtime fake --agent test-agent --cwd "$WORKDIR" --prompt-file "$PROMPT_FILE" \
+        --event-log "$J_LIVE" --redact-observability >/dev/null 2>&1
+    echo $? > "$J_LIVE_RC"
+) &
+J_LIVE_PID=$!
+J_LIVE_SEEN=false
+J_LIVE_WAIT=0
+while [ "$J_LIVE_WAIT" -lt 24 ]; do
+    if [ -s "$J_LIVE" ] && ! jq -e 'select(.type == "message")' "$J_LIVE" >/dev/null 2>&1 \
+        && jq -e 'select(.type == "tool.started") | .input_summary == null' "$J_LIVE" >/dev/null 2>&1; then
+        J_LIVE_SEEN=true
+        break
+    fi
+    kill -0 "$J_LIVE_PID" 2>/dev/null || break
+    sleep 0.25
+    J_LIVE_WAIT=$((J_LIVE_WAIT + 1))
+done
+if [ "$J_LIVE_SEEN" = true ]; then
+    pass "J-4: el anexo en vivo usa el mismo filtro redactado"
+else
+    fail "J-4: el anexo en vivo expuso mensaje o input_summary"
+fi
+wait "$J_LIVE_PID" 2>/dev/null
+check_scenario "J-4 vivo redactado" "$J_LIVE" 0 "success" "" "$(cat "$J_LIVE_RC")"
+
+J_RAW="$TMP/j-raw.log"; J_STDERR="$TMP/j-stderr.log"; J_WARNING="$TMP/j-warning.err"
+MEFISTO_FAKE_SCRIPT=sensitive-success "$RUNNER" --runtime fake --agent test-agent --cwd "$WORKDIR" \
+    --prompt-file "$PROMPT_FILE" --event-log "$TMP/j-warning.jsonl" --redact-observability \
+    --raw-log "$J_RAW" --stderr-log "$J_STDERR" >/dev/null 2>"$J_WARNING"
+if grep -Fq -- "$J_RAW" "$J_WARNING" && grep -Fq -- "$J_STDERR" "$J_WARNING" \
+    && grep -Fq -- 'no son observabilidad segura' "$J_WARNING"; then
+    pass "J-5: raw/stderr solicitados reciben advertencia con destinos explicitos"
+else
+    fail "J-5: falta advertencia explicita sobre raw/stderr no redactados"
+fi
+
+# ============================================================================
+echo ""
 echo "[E] Ida y vuelta de --model: recibido vs. omitido (CA-1)"
 
 EV="$TMP/e-model-received.jsonl"

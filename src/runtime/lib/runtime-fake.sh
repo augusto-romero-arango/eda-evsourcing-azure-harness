@@ -66,6 +66,11 @@
 #   two-terminals   Emite DOS eventos terminales validos. Exit 0.
 #   malformed       Emite una linea valida y luego una linea JSON truncada a
 #                   media escritura (nunca llega a un terminal valido). Exit 1.
+#   sensitive-success Emite centinelas representativos de prompt/texto/input y
+#                   auth para probar que la persistencia redactada no los deja
+#                   pasar. Exit 0.
+#   sensitive-fail  Emite un fallo con detail y stderr que contienen centinelas
+#                   para probar que solo sobrevive error.kind. Exit no cero.
 #   touch-tty       Repro determinista del aislamiento de tty (issue #943):
 #                   emite un message, intenta `read -r x </dev/tty`, despues
 #                   `stty -echo` (tcsetattr sobre stdin) y despues `read -r y`
@@ -139,7 +144,7 @@ runtime_fake_translate() {
         | if .fake == "message" then
               {v: 1, type: "message", ts: (now | todate), role: "assistant", text: (.text // "")}
           elif .fake == "tool_start" then
-              {v: 1, type: "tool.started", ts: (now | todate), tool: (.tool // "?"), input_summary: null}
+              {v: 1, type: "tool.started", ts: (now | todate), tool: (.tool // "?"), input_summary: (.input_summary // null)}
           elif .fake == "tool_end" then
               {v: 1, type: "tool.completed", ts: (now | todate), tool: (.tool // "?"),
                ok: (.ok // false), duration_ms: (.duration_ms // null)}
@@ -239,6 +244,19 @@ _runtime_fake_emit_main() {
             echo '{"fake":"message","text":"antes del corte"}'
             printf '{"fake":"terminal","status":"suc'
             exit 1
+            ;;
+        sensitive-success)
+            echo '{"fake":"message","text":"PROMPT_SENTINEL ASSISTANT_SENTINEL AUTH_TOKEN_SENTINEL HEADER_SENTINEL"}'
+            echo '{"fake":"tool_start","tool":"Bash","input_summary":"COMMAND_SENTINEL input"}'
+            echo '{"fake":"tool_end","tool":"Bash","ok":true,"duration_ms":5}'
+            printf '{"fake":"terminal","status":"success","model":%s}\n' "$model_json"
+            exit 0
+            ;;
+        sensitive-fail)
+            echo '{"fake":"message","text":"ASSISTANT_SENTINEL"}'
+            printf '{"fake":"terminal","status":"failed","model":%s,"error_kind":"api_error","error_detail":"STDERR_SENTINEL AUTH_TOKEN_SENTINEL"}\n' "$model_json"
+            echo 'STDERR_SENTINEL HEADER_SENTINEL AUTH_TOKEN_SENTINEL' >&2
+            exit "${MEFISTO_FAKE_EXIT_CODE:-3}"
             ;;
         touch-tty)
             echo '{"fake":"message","text":"tocando la tty antes de terminar"}'

@@ -103,7 +103,14 @@ mantener una segunda copia del contrato.
 
 `src/runtime/mefisto-run-agent.sh` recibe `--agent`, `--cwd`, `--prompt-file`
 y `--event-log`; acepta `--runtime`, modelo opaco, system prompt, timeout,
-raw/stderr logs, `--events-log` y `--resume-session`. `--events-log` es opt-in:
+raw/stderr logs, `--events-log`, `--resume-session` y
+`--redact-observability`. Este ultimo es opt-in y transforma por igual los
+anexos en vivo y el stream final: omite `message`, deja
+`tool.started.input_summary` en `null` y reemplaza `error.detail` por el texto
+estable `detalle redactado: <error.kind>`. Conserva el terminal, su `type`,
+`status`, `error.kind` y el exit del runner. No vuelve seguros `--raw-log` ni
+`--stderr-log`: si se combinan, el runner avisa explícitamente que esos destinos
+no estan redactados. `--events-log` es opt-in:
 el nucleo no deriva rutas de estado. Sus exits son 0 (exito), 64 (uso), 65
 (protocolo invalido), 69 (runtime/dependencia), 124 (timeout), o el exit no
 cero del adaptador.
