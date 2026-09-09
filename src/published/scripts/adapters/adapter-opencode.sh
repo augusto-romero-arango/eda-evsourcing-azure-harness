@@ -8,6 +8,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 MAPPING="$SCRIPT_DIR/../../contract/opencode-permissions.json"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd -P)"
 SKILLS_ROOT="$REPO_ROOT/skills"
+HOOKS_CONTRACT="$REPO_ROOT/src/published/hooks/interactive-hooks.json"
+HOOKS_VALIDATOR="$REPO_ROOT/src/published/scripts/validate-interactive-hooks.sh"
 
 error() { printf '%s\n' "$1" >&2; return 1; }
 frontmatter() { awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$1"; }
@@ -214,6 +216,88 @@ render_skill_asset() {
     awk -v name="$adapted" 'NR == 1 { print; next } $0 == "---" && !closed { closed=1; print; next } !closed && $0 ~ /^name:[[:space:]]*/ { print "name: " name; next } { print }' "$source"
 }
 
+validate_interactive_hooks() {
+    [ -x "$HOOKS_VALIDATOR" ] || { error 'interactive-hooks: falta validador ejecutable'; return 1; }
+    "$HOOKS_VALIDATOR" "$HOOKS_CONTRACT" || return 1
+    jq -e '[.bindings[] | {id,signal,action,destinations,persistedFields,delivery}] | length == 7 and ([.[].id] | sort) == ["append-dotnet-test-result","append-file-change","append-session","append-session-model","append-terraform-result","record-active-release","remind-field-notes"] and all(.[]; .delivery == {mode:"sync",failure:"continue",timeoutSeconds:null})' "$HOOKS_CONTRACT" >/dev/null || { error 'interactive-hooks: bindings o delivery no representables'; return 1; }
+}
+
+render_observability_plugin() {
+    validate_interactive_hooks || return 1
+    cat <<'EOF'
+// GENERADO por src/published/scripts/adapters/adapter-opencode.sh desde src/published/hooks/interactive-hooks.json. No editar a mano.
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const rootOf = (context) => {
+  const candidate = [context?.worktree, context?.directory].find((value) => typeof value === "string" && value.length > 0);
+  return candidate && path.isAbsolute(candidate) ? candidate : null;
+};
+const now = () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+const clock = () => new Date().toISOString().slice(11, 19);
+const pipeline = (root) => root && path.join(root, ".mefisto", "pipeline");
+const diagnostic = async (client, message) => { try { await client?.app?.log?.({ body: { service: "mefisto", level: "warn", message } }); } catch { /* failure: continue */ } };
+const safe = async (client, failure, work) => { try { await work(); } catch { await diagnostic(client, failure); } };
+const releaseRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const identity = async (client) => {
+  try {
+    const manifest = JSON.parse(await readFile(path.join(releaseRoot, "mefisto-manifest.json"), "utf8"));
+    const semver = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+    if (manifest?.schemaVersion === 1 && manifest.runtime === "opencode" && semver.test(manifest.version) && /^[0-9a-f]{40}$/.test(manifest.commit)) return manifest;
+  } catch { /* diagnosticado abajo */ }
+  await diagnostic(client, "Mefisto: manifiesto de release ausente o malformado.");
+  return { version: null, commit: null };
+};
+const append = async (root, file, line) => { const state = pipeline(root); if (!state) return; await mkdir(state, { recursive: true }); await appendFile(path.join(state, file), `${JSON.stringify(line)}\n`, "utf8"); };
+const sessionID = (input) => input?.sessionID ?? input?.properties?.info?.id;
+const toolName = (input) => String(input?.tool ?? input?.toolName ?? "").toLowerCase();
+const args = (input) => input?.args && typeof input.args === "object" ? input.args : {};
+const successful = (output) => Number.isInteger(output?.metadata?.exitCode) && output.metadata.exitCode === 0;
+const modelComponent = (value) => typeof value === "string" && value.length > 0 && value.length <= 256 && !/[\/\u0000-\u001f\u007f]/.test(value);
+
+export default async function mefistoObservability(context) {
+  const root = rootOf(context);
+  const release = await identity(context.client);
+  const observations = new Set();
+  let planReported = false;
+  const planUnsupported = async () => { if (!planReported) { planReported = true; await diagnostic(context.client, "Mefisto: plan.completed no soportado por OpenCode."); } };
+  await planUnsupported();
+  return {
+    event: async ({ event } = {}) => safe(context.client, "Mefisto: no se pudo registrar el inicio de sesion.", async () => {
+      if (event?.type !== "session.created") return;
+      const id = sessionID(event);
+      if (typeof id !== "string" || id.length === 0 || !root) { await diagnostic(context.client, "Mefisto: payload de session.created no representable."); return; }
+      const state = pipeline(root); await mkdir(state, { recursive: true });
+      await writeFile(path.join(state, ".plugin-root"), releaseRoot, "utf8");
+      await append(root, "sessions.jsonl", { record_type: "session.started", session_id: id, transcript_path: null, cwd: root, source: null, timestamp: now(), runtime: "opencode", model: null, harness_version: release.version, harness_commit: release.commit });
+    }),
+    "chat.params": async (input) => safe(context.client, "Mefisto: no se pudo registrar la observacion de modelo.", async () => {
+      const id = sessionID(input); const model = input?.model;
+      if (!root || typeof id !== "string" || id.length === 0 || !modelComponent(model?.providerID) || !modelComponent(model?.id)) { await diagnostic(context.client, "Mefisto: payload de chat.params no representable."); return; }
+      const value = `${model.providerID}/${model.id}`; const key = JSON.stringify([id, value]);
+      if (observations.has(key)) return;
+      observations.add(key);
+      try {
+        const text = await readFile(path.join(pipeline(root), "sessions.jsonl"), "utf8").catch((error) => { if (error?.code === "ENOENT") return ""; throw error; });
+        const exists = text.split("\n").some((line) => { try { const item = JSON.parse(line); return item.record_type === "session.model-observed" && item.session_id === id && item.model === value; } catch { return false; } });
+        if (!exists) await append(root, "sessions.jsonl", { record_type: "session.model-observed", session_id: id, timestamp: now(), runtime: "opencode", model: value, harness_version: release.version, harness_commit: release.commit });
+      } catch (error) { observations.delete(key); throw error; }
+    }),
+    "tool.execute.after": async (input, output) => safe(context.client, "Mefisto: no se pudo registrar el resumen de herramienta.", async () => {
+      if (!root) return; const tool = toolName(input); const inputArgs = args(input);
+      if (["write", "edit", "patch"].includes(tool)) { const candidate = inputArgs.filePath ?? inputArgs.file_path ?? inputArgs.path; const file = typeof candidate === "string" && candidate.length > 0 ? candidate : "(desconocido)"; await append(root, "events.log", { time: clock(), family: "archivo", file_path: file }); return; }
+      if (!["bash", "shell"].includes(tool)) return;
+      const command = typeof inputArgs.command === "string" ? inputArgs.command : "";
+      if (/^\s*dotnet\s+test(?:\s|$)/.test(command)) { await append(root, "events.log", { time: clock(), family: "test", result: successful(output) ? "PASS" : "FAIL" }); return; }
+      const match = /^\s*terraform\s+(plan|apply|init|validate)(?:\s|$)/.exec(command);
+      if (match) await append(root, "events.log", { time: clock(), family: "terraform", terraform_subcommand: match[1], result: successful(output) ? "OK" : "ERROR" });
+    }),
+  };
+}
+EOF
+}
+
 render() {
     local source="$1" marker="$2" rel fm instance kind artifact_id raw_body translated preamble='' mode permissions agent
     rel="${source#*/src/published/}"
@@ -248,7 +332,9 @@ case "${1:-}" in
     path)
         case "${2:-}" in src/published/agents/*.md) printf 'agents/%s\n' "$(basename "$2")" ;; src/published/commands/*.md) printf 'commands/mefisto:%s\n' "$(basename "$2")" ;; *) error "$2: path: fuente publicada desconocida" ;; esac ;;
     render) [ "$#" -eq 3 ] || error 'render: se esperaban fuente y marcador'; render "$2" "$3" ;;
-    assets) skill_assets ;;
-    render-asset) [ "$#" -eq 3 ] || error 'render-asset: se esperaban id y fuente'; render_skill_asset "$2" "$3" ;;
+    assets) validate_interactive_hooks && { skill_assets | jq '. + [{id:"interactive-observability",source:"src/published/hooks/interactive-hooks.json",destination:"plugins/mefisto-observability.js",mode:"0644"}]'; } ;;
+    render-asset)
+        [ "$#" -eq 3 ] || error 'render-asset: se esperaban id y fuente'
+        case "$2" in interactive-observability) render_observability_plugin ;; *) render_skill_asset "$2" "$3" ;; esac ;;
     *) error 'uso: adapter-opencode.sh root|path|render|assets|render-asset' ;;
 esac
