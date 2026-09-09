@@ -37,6 +37,21 @@ EOF
     printf '#!/usr/bin/env bash\nprintf "ejecutable\\n"\n' > "$TEST_REPO/dist/opencode/comandos/run.sh"
     chmod +x "$TEST_REPO/dist/opencode/comandos/run.sh"
     printf 'contenido\n' > "$TEST_REPO/dist/opencode/archivo con espacios.txt"
+    for source in \
+        scripts/_pipeline-common.sh scripts/tmux-pipeline.sh scripts/herdr-pipeline.sh scripts/stream-watch.sh scripts/tooling-pipeline.sh \
+        src/runtime/mefisto-run-agent.sh src/runtime/lib/mefisto-runtime.sh src/runtime/lib/mefisto-process.sh \
+        src/runtime/lib/runtime-claude.sh src/runtime/lib/runtime-opencode.sh; do
+        mkdir -p "$TEST_REPO/dist/opencode/$(dirname "$source")"
+        printf '#!/usr/bin/env bash\n' > "$TEST_REPO/dist/opencode/$source"
+        chmod 0755 "$TEST_REPO/dist/opencode/$source"
+    done
+    for source in \
+        src/runtime/lib/mefisto-models.sh src/runtime/lib/runtime-claude.jq src/runtime/lib/runtime-opencode.jq \
+        src/runtime/contract/models.validate.jq; do
+        mkdir -p "$TEST_REPO/dist/opencode/$(dirname "$source")"
+        printf 'runtime\n' > "$TEST_REPO/dist/opencode/$source"
+        chmod 0644 "$TEST_REPO/dist/opencode/$source"
+    done
     mkdir "$TEST_REPO/dist/opencode/directorio-vacio" "$TEST_REPO/.claude" "$TEST_REPO/src/internal" "$TEST_REPO/tests"
     printf 'no publicar\n' > "$TEST_REPO/.claude/local.json"
     printf 'no publicar\n' > "$TEST_REPO/src/internal/secreto.txt"
@@ -69,10 +84,23 @@ SHA_DIGEST="${SHA_VALUE%%  *}"; SHA_FILE="${SHA_VALUE#*  }"
 
 EXTRACT="$WORK/extract"; mkdir "$EXTRACT"; tar -xzf "$TAR" -C "$EXTRACT"
 [ -f "$EXTRACT/mefisto-manifest.json" ] && [ -x "$EXTRACT/comandos/run.sh" ] && [ -x "$EXTRACT/install.sh" ] && [ -x "$EXTRACT/project-opencode-release.sh" ] && [ -x "$EXTRACT/diagnose-installation-identity.sh" ] && [ -x "$EXTRACT/bin/mefisto-opencode" ] && [ -d "$EXTRACT/directorio-vacio" ] && pass 'extrae instalador, proyector, diagnostico y contenido sin envolvente' || fail 'layout o permisos incorrectos'
+closure_ok=true
+for source in \
+    scripts/_pipeline-common.sh scripts/tmux-pipeline.sh scripts/herdr-pipeline.sh scripts/stream-watch.sh scripts/tooling-pipeline.sh \
+    src/runtime/mefisto-run-agent.sh src/runtime/lib/mefisto-runtime.sh src/runtime/lib/mefisto-process.sh \
+    src/runtime/lib/runtime-claude.sh src/runtime/lib/runtime-opencode.sh; do
+    [ -x "$EXTRACT/$source" ] || closure_ok=false
+done
+for source in \
+    src/runtime/lib/mefisto-models.sh src/runtime/lib/runtime-claude.jq src/runtime/lib/runtime-opencode.jq \
+    src/runtime/contract/models.validate.jq; do
+    [ -f "$EXTRACT/$source" ] && [ ! -x "$EXTRACT/$source" ] || closure_ok=false
+done
+[ "$closure_ok" = true ] && pass 'extrae la clausura ejecutable declarada con sus modos' || fail 'falta o tiene modo incorrecto la clausura ejecutable'
 jq -e '.schemaVersion == 1 and .runtime == "opencode" and .version == "1.2.3" and .commit == "0123456789abcdef0123456789abcdef01234567" and .minimumRuntimeVersion == "1.18.29" and (keys | length == 5)' "$EXTRACT/mefisto-manifest.json" >/dev/null && pass 'manifiesto completo, minimo y versionado' || fail 'manifiesto invalido'
 tar -tzf "$TAR" | grep -Eq '(^/|\.\./)' && fail 'tarball contiene ruta insegura' || pass 'tarball no contiene rutas inseguras'
 CONTENTS="$(tar -tzf "$TAR")"
-case "$CONTENTS" in *'.claude'*|*'src/internal'*|*'tests/'*|*'CLAUDE_PLUGIN_ROOT'*|*'auth.json'*|*'.sha256'*) fail 'tarball incorporo archivos ajenos o checksum interno' ;; *) pass 'paquete limitado a dist/opencode y sin checksum interno' ;; esac
+case "$CONTENTS" in *'.claude'*|*'src/internal'*|*'src/runtime/tests'*|*'runtime-fake.sh'*|*'tests/'*|*'CLAUDE_PLUGIN_ROOT'*|*'auth.json'*|*'.sha256'*) fail 'tarball incorporo archivos ajenos o checksum interno' ;; *) pass 'paquete limitado a dist/opencode y sin checksum interno' ;; esac
 cp "$TAR" "$WORK/primero.tar.gz"
 (umask 077 && run_package --output "$OUT" >/dev/null)
 cmp -s "$TAR" "$WORK/primero.tar.gz" && pass 'reproducible byte a byte entre umasks' || fail 'tarball no reproducible'
