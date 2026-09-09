@@ -19,15 +19,25 @@ contains 'agent_events_denials' 'retry por permisos consume denials neutral'
 contains 'runtime_supports_resume' 'consulta capability de reanudacion'
 absent 'claude -p' 'no invoca Claude directamente'
 absent 'CLAUDE_CONFIG_DIR' 'no inspecciona stores privados'
+absent 'bypassPermissions' 'no fija permisos de un runtime'
+absent 'output-format' 'no fija formatos de stream de un runtime'
+absent 'kill -9' 'no conserva watchdog propio'
+contains 'if "$RUN_AGENT_BIN" "${args[@]}"' 'invoca el runner con un array, sin eval'
+contains 'agent_events_completed_successfully' 'exige terminal neutral de exito'
+contains 'summary_file="$WORKTREE_PATH/.claude/pipeline/summaries/' 'conserva la ruta publicada del summary'
 
 echo '[contrato] helpers JSONL'
 # shellcheck source=/dev/null
 source "$ROOT/scripts/_pipeline-common.sh"
 TMP="$(mktemp)"; trap 'rm -f "$TMP"' EXIT
-printf '%s\n' '{"type":"run.failed","session_id":"s 1","denials":2,"error":{"kind":"rate_limit","resets_at":"2030-01-01T00:00:00Z"}}' > "$TMP"
+printf '%s\n' '{"type":"run.failed","status":"failed","session_id":"s 1","denials":2,"resets_at":"2030-01-01T00:00:00Z","error":{"kind":"rate_limit"}}' > "$TMP"
 [ "$(agent_events_session_id "$TMP")" = 's 1' ] && pass 'lee session_id' || fail 'no lee session_id'
 [ "$(agent_events_denials "$TMP")" = 2 ] && pass 'lee denials' || fail 'no lee denials'
+[ "$(agent_events_resets_at "$TMP")" = '2030-01-01T00:00:00Z' ] && pass 'lee resets_at raiz' || fail 'no lee resets_at raiz'
 [ "$(classify_neutral_agent_failure 1 "$TMP")" = RATE_LIMIT ] && pass 'clasifica error.kind' || fail 'no clasifica error.kind'
+if agent_events_completed_successfully "$TMP"; then fail 'un terminal fallido no es exito'; else pass 'rechaza terminal fallido'; fi
+printf '%s\n' '{"type":"run.completed","status":"success","session_id":null,"denials":0,"error":null}' > "$TMP"
+if agent_events_completed_successfully "$TMP"; then pass 'acepta run.completed success'; else fail 'no acepta run.completed success'; fi
 
 printf '\nResultado: %s PASS, %s FAIL\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

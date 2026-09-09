@@ -140,8 +140,8 @@ if [ -n "$CFG_DIR_ORIG" ]; then export CLAUDE_CONFIG_DIR="$CFG_DIR_ORIG"; else u
 rm -rf "$CFG_DIR" "$WT_PROBE"
 
 echo ""
-echo "[2] CA-1 (estatico): las tres run_agent con hold consumen agent_resume_prompt y pasan \$RESUME_ARGS"
-for p in tdd-pipeline.sh tooling-pipeline.sh iac-pipeline.sh; do
+echo "[2] CA-1 (estatico): reanudacion legacy y neutral"
+for p in tdd-pipeline.sh iac-pipeline.sh; do
     FILE="$REPO_ROOT/scripts/$p"
     if grep -q 'agent_resume_prompt "\$stage" "\$agent"' "$FILE" \
         && grep -q 'claude \$RESUME_ARGS -p "\$attempt_prompt"' "$FILE"; then
@@ -150,6 +150,14 @@ for p in tdd-pipeline.sh tooling-pipeline.sh iac-pipeline.sh; do
         fail "$p: no encontro el patron esperado de reanudacion en la sonda"
     fi
 done
+TOOLING="$REPO_ROOT/scripts/tooling-pipeline.sh"
+if grep -q 'agent_events_session_id' "$TOOLING" \
+    && grep -q 'runtime_supports_resume' "$TOOLING" \
+    && grep -q 'args+=(--resume-session "$resume_session")' "$TOOLING"; then
+    pass "tooling-pipeline.sh: reanuda por session_id y capability neutrales"
+else
+    fail "tooling-pipeline.sh: perdio la reanudacion neutral"
+fi
 
 echo ""
 echo "[6] Ningun pipeline publicado usa --fork-session en la sonda de hold"

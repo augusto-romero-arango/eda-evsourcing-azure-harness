@@ -5,7 +5,7 @@
 #   ./scripts/tooling-pipeline.sh 42
 #   ./scripts/tooling-pipeline.sh --issue 42
 #   ./scripts/tooling-pipeline.sh 42 --from-stage 2   # Retomar desde Stage 2
-#   ./scripts/tooling-pipeline.sh 42 --models 'reviewer=opus,writer=sonnet'  # Modelo por stage (experimentos)
+#   ./scripts/tooling-pipeline.sh 42 --models 'reviewer=modelo profundo,writer=modelo balanceado'
 #   ./scripts/tooling-pipeline.sh 42 --variant experimento-a  # Corrida paralela del mismo issue (sin PR, rama local)
 #   MEFISTO_HOLD_MAX_SECONDS=<s> / MEFISTO_HOLD_PROBE_SECONDS=<s> ./scripts/tooling-pipeline.sh 42  # Techo (default 21600 = 6h) y cadencia de sondeo (default 300) de la espera ante RATE_LIMIT/PROVIDER_UNAVAILABLE (issue #971, MEF-ADR-0051)
 #
@@ -25,6 +25,10 @@ RUNTIME_DIR="$(cd "$SCRIPT_DIR/../src/runtime" 2>/dev/null && pwd -P)" \
     || { echo "ERROR: no se encontro src/runtime junto al paquete publicado" >&2; exit 1; }
 RUNTIME_LIB_DIR="$RUNTIME_DIR/lib"
 RUN_AGENT_BIN_DEFAULT="$RUNTIME_DIR/mefisto-run-agent.sh"
+[ -f "$RUNTIME_LIB_DIR/mefisto-runtime.sh" ] \
+    || { echo "ERROR: no se encontro mefisto-runtime.sh en la clausura publicada" >&2; exit 1; }
+[ -f "$RUNTIME_LIB_DIR/mefisto-models.sh" ] \
+    || { echo "ERROR: no se encontro mefisto-models.sh en la clausura publicada" >&2; exit 1; }
 source "$RUNTIME_LIB_DIR/mefisto-runtime.sh"
 source "$RUNTIME_LIB_DIR/mefisto-models.sh"
 
@@ -93,6 +97,7 @@ PIPELINE_TESTS=""
 PIPELINE_PR=""
 PIPELINE_ERROR=""
 LAST_AGENT_DURATION=0
+LAST_AGENT_DENIALS=0
 CURRENT_STAGE="setup"
 
 _strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
@@ -280,10 +285,13 @@ case "$MEFISTO_AGENT_TIMEOUT_SECONDS" in ''|*[!0-9]*) abort "MEFISTO_AGENT_TIMEO
 for cmd in gh git jq dotnet; do
     command -v "$cmd" &>/dev/null || abort "Falta comando requerido: $cmd"
 done
-[ -x "$RUN_AGENT_BIN_DEFAULT" ] || abort "No es ejecutable el runner neutral: $RUN_AGENT_BIN_DEFAULT"
-if ! MEFISTO_RUNTIME_RESUELTO="$(mefisto_resolve_runtime)"; then
-    abort "No se pudo resolver el runtime activo: $MEFISTO_RUNTIME_ERROR"
+[ -x "${MEFISTO_RUN_AGENT_BIN:-$RUN_AGENT_BIN_DEFAULT}" ] \
+    || abort "No es ejecutable el runner neutral: ${MEFISTO_RUN_AGENT_BIN:-$RUN_AGENT_BIN_DEFAULT}"
+RUN_AGENT_BIN="${MEFISTO_RUN_AGENT_BIN:-$RUN_AGENT_BIN_DEFAULT}"
+if ! mefisto_resolve_runtime >/dev/null; then
+    abort "No se pudo resolver el runtime activo: ${MEFISTO_RUNTIME_ERROR:-motivo desconocido}"
 fi
+MEFISTO_RUNTIME_RESUELTO="$MEFISTO_RESOLVED_RUNTIME"
 MEFISTO_RUNTIME_JSON="\"$MEFISTO_RUNTIME_RESUELTO\""
 if ! runtime_cli_available "$MEFISTO_RUNTIME_RESUELTO"; then
     abort "Falta el CLI del runtime resuelto ('$MEFISTO_RUNTIME_RESUELTO')"
@@ -314,12 +322,13 @@ fi
 # Modelos neutrales: el override publico gana por clave exacta; sin override
 # el mapping opcional del consumidor y el adaptador deciden, o se hereda.
 CONSUMER_MODELS_FILE="$(git rev-parse --show-toplevel)/.mefisto/models.json"
+RESOLVED_TOOLING_MODEL=""
 resolve_tooling_model() {
-    local key="$1" agent_id="$2" profile="$3" requested=""
-    requested="$(resolve_stage_model "$key" "")"
-    if [ -n "$requested" ]; then
-        printf '%s\n' "$requested"
-        echo "[$(date +%H:%M:%S)] MODELS: $key -> $requested (override --models; runtime $MEFISTO_RUNTIME_RESUELTO)" >> "$EVENTS_LOG_ABS"
+    local key="$1" agent_id="$2" profile="$3" explicit=""
+    explicit="$(resolve_stage_model "$key" "")"
+    if [ -n "$explicit" ]; then
+        RESOLVED_TOOLING_MODEL="$explicit"
+        echo "[$(date +%H:%M:%S)] MODELS: $key runtime=$MEFISTO_RUNTIME_RESUELTO perfil=$profile solicitado='$explicit' resuelto='$RESOLVED_TOOLING_MODEL' (override --models)" >> "$EVENTS_LOG_ABS"
         return 0
     fi
     local output
@@ -328,12 +337,13 @@ resolve_tooling_model() {
         rm -f "$output"
         abort "No se pudo resolver el modelo de $agent_id (perfil $profile): ${MEFISTO_MODELS_ERROR:-motivo desconocido}"
     fi
-    requested="$(cat "$output")"; rm -f "$output"
-    printf '%s\n' "$requested"
-    echo "[$(date +%H:%M:%S)] MODELS: $key -> ${requested:-<heredado>} (perfil $profile; runtime $MEFISTO_RUNTIME_RESUELTO)" >> "$EVENTS_LOG_ABS"
+    RESOLVED_TOOLING_MODEL="$(cat "$output")"; rm -f "$output"
+    echo "[$(date +%H:%M:%S)] MODELS: $key runtime=$MEFISTO_RUNTIME_RESUELTO perfil=$profile solicitado=<automatico> resuelto='${RESOLVED_TOOLING_MODEL:-<heredado>}'" >> "$EVENTS_LOG_ABS"
 }
-MODEL_WRITER="$(resolve_tooling_model writer tooling-writer balanced)"
-MODEL_REVIEWER="$(resolve_tooling_model reviewer tooling-reviewer deep)"
+resolve_tooling_model writer tooling-writer balanced
+MODEL_WRITER="$RESOLVED_TOOLING_MODEL"
+resolve_tooling_model reviewer tooling-reviewer deep
+MODEL_REVIEWER="$RESOLVED_TOOLING_MODEL"
 
 # --- Anunciar el modo variante (issue #710) -------------------------------
 # El label ya se valido y ya derivo los nombres de archivo arriba, junto al
@@ -430,306 +440,6 @@ collect_summary() {
     if [ -f "$f" ]; then cat "$f"; else echo "_(El agente no genero resumen)_"; fi
 }
 
-# --- Funcion auxiliar para invocar agentes ---
-# Nota (issue #972): $RESUME_ARGS se expande SIN comillas a proposito -- vacio
-# debe desaparecer del argv (mismo patron que $MODEL_ARGS en tdd-pipeline.sh).
-# La supresion de SC2086 va inline en la sonda que lo usa, no a nivel de la
-# funcion entera: run_agent es larga y un disable de funcion taparia tambien
-# expansiones sin comillas futuras que si serian bugs.
-legacy_claude_run_agent() {
-    local stage="$1"
-    local agent="$2"
-    local prompt="$3"
-    local log_stage="$LOG_DIR_ABS/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}.log"
-    local stream_file="${log_stage%.log}.stream.jsonl"
-    local stderr_file="${log_stage%.log}.stderr.log"
-    local start_ts
-    start_ts=$(date +%s)
-
-    echo "[$(date +%H:%M:%S)] === TOOLING STAGE $stage: $agent ===" >> "$EVENTS_LOG_ABS"
-    case "$agent" in
-        writer)   AGENT_WR_RES="running" ;;
-        reviewer) AGENT_RV_RES="running" ;;
-    esac
-    # Modelo por etapa: escritura (writer y merge) en sonnet, revision en opus.
-    # resolve_stage_model (issue #708) aplica el override de --models por clave
-    # exacta de agente; sin entrada en el mapa (o sin --models), cae en este
-    # default -- byte a byte el comportamiento previo al flag.
-    local AGENT_MODEL AGENT_MODEL_DEFAULT
-    case "$agent" in
-        reviewer) AGENT_MODEL_DEFAULT="opus" ;;
-        *)        AGENT_MODEL_DEFAULT="sonnet" ;;
-    esac
-    AGENT_MODEL="$(resolve_stage_model "$agent" "$AGENT_MODEL_DEFAULT")"
-    # Constancia por stage del override que SI hizo match (CA-4): el mapa que se
-    # loguea al arrancar no dice cuales claves aplicaron, y una clave con typo
-    # ('revieweer=opus') no sobreescribe nada -- sin esta linea el experimento
-    # correria con los defaults y el reporte lo atribuiria al override.
-    if [ "$AGENT_MODEL" != "$AGENT_MODEL_DEFAULT" ]; then
-        echo "[$(date +%H:%M:%S)] MODELS: stage $stage/$agent -> $AGENT_MODEL (default: $AGENT_MODEL_DEFAULT)" >> "$EVENTS_LOG_ABS"
-    fi
-    update_status "$stage-$agent" "running"
-    log "Invocando $agent..."
-
-    local AGENT_TIMEOUT_SECONDS=1800
-    # Linea base de transcripts del worktree ANTES de invocar al CLI (issue
-    # #972, CA-4): si tras el fallo el conteo no crecio, el intento muerto no
-    # dejo sesion y `-c` aterrizaria en la de un stage anterior de este mismo
-    # worktree -- la sonda lo detecta y no reanuda. Ver
-    # agent_session_transcript_count en _pipeline-common.sh.
-    local RESUME_BASELINE_SESSIONS
-    RESUME_BASELINE_SESSIONS=0 # legado inactivo; la frontera real usa session_id neutral.
-    local NONINTERACTIVE_SYSTEM="You are running in non-interactive print mode. There is no human to approve anything. You MUST use Write and Edit tools directly to create and modify files at any path including .claude/. Never output text asking for permissions or confirmations -- doing so causes pipeline failure."
-    if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
-        (cd "$WORKTREE_PATH" && "${MEFISTO_LEGACY_EXECUTABLE:-false}" -p "$prompt" --model "$AGENT_MODEL" \
-            --permission-mode bypassPermissions \
-            --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
-            --output-format stream-json --verbose \
-            >"$stream_file" 2>"$stderr_file") &
-    else
-        (cd "$WORKTREE_PATH" && "${MEFISTO_LEGACY_EXECUTABLE:-false}" -p "$prompt" --model "$AGENT_MODEL" \
-            --permission-mode bypassPermissions \
-            --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
-            --output-format text \
-            >"$log_stage" 2>&1) &
-    fi
-    local CLAUDE_PID=$!
-    (sleep $AGENT_TIMEOUT_SECONDS && kill -9 -$CLAUDE_PID 2>/dev/null && echo "[$(date +%H:%M:%S)] TIMEOUT: $agent supero ${AGENT_TIMEOUT_SECONDS}s" >> "$EVENTS_LOG_ABS") </dev/null >/dev/null 2>&1 &
-    local WATCHDOG_PID=$!
-
-    local CLAUDE_EXIT=0
-    wait $CLAUDE_PID || CLAUDE_EXIT=$?
-
-    kill $WATCHDOG_PID 2>/dev/null || true
-    wait $WATCHDOG_PID 2>/dev/null || true
-    local elapsed=$(( $(date +%s) - start_ts ))
-
-    # El .log de siempre se deriva del stream+stderr en la MISMA ruta,
-    # exito/fallo/SIGKILL por igual (patron de #645): los greps de
-    # clasificacion de abajo siguen leyendo $log_stage sin cambios.
-    if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
-        derive_stage_log_from_stream "$stream_file" "$stderr_file" "$log_stage"
-    fi
-
-    if [ "$CLAUDE_EXIT" -ne 0 ]; then
-        local failure_type
-        failure_type=$(classify_agent_failure "$CLAUDE_EXIT" "$elapsed" "$log_stage" "$stream_file")
-        log "$agent fallo despues de ${elapsed}s -- tipo: $failure_type"
-        echo "[$(date +%H:%M:%S)] FALLO $agent: $failure_type" >> "$EVENTS_LOG_ABS"
-
-        # Espera (hold) ante RATE_LIMIT/PROVIDER_UNAVAILABLE persistente (issue
-        # #971, doctrina de MEF-ADR-0051 -- mismos defaults/env vars que el
-        # lado interno, issue #967): el propio reintento hace de sonda, en un
-        # bucle acotado por agent_hold_wait (techo MEFISTO_HOLD_MAX_SECONDS).
-        # A diferencia del viejo retry one-shot de API_ERROR_SERVER, este
-        # camino NO exige "sin trabajo previo" ni restaura el worktree: ese
-        # trabajo parcial es el que la reanudacion de sesion de la sonda
-        # (issue #972, mas abajo) se apoya en conservar.
-        local HOLD_STARTED_TS="" HOLD_TOTAL_SECONDS=0 hold_attempt=0
-        # Reanudacion de sesion (issue #972, CA-1): mientras RESUME_DEGRADED
-        # siga en false, cada sonda del hold continua (-c) la conversacion
-        # truncada en vez de reenviar $prompt entero. SUMMARY_FILE es el
-        # mismo archivo que collect_summary lee al final del pipeline -- se
-        # reutiliza aqui solo como senal de si la sonda resumida llego al
-        # final de su contrato (CA-2).
-        local RESUME_DEGRADED=false
-        local SUMMARY_FILE="$WORKTREE_PATH/.claude/pipeline/summaries/stage-${stage}-${agent}.md"
-        while agent_failure_is_holdable "$failure_type"; do
-            [ -z "$HOLD_STARTED_TS" ] && HOLD_STARTED_TS=$(date +%s)
-            local hold_slept
-            if ! hold_slept=$(agent_hold_wait "$EVENTS_LOG_ABS" "$failure_type" "$HOLD_STARTED_TS"); then
-                warn "$agent: techo de espera (hold) agotado -- ultima senal: $failure_type"
-                log "$agent: techo de espera (hold) agotado tras $((HOLD_TOTAL_SECONDS / 60))m $((HOLD_TOTAL_SECONDS % 60))s"
-                break
-            fi
-            HOLD_TOTAL_SECONDS=$(( HOLD_TOTAL_SECONDS + hold_slept ))
-            hold_attempt=$((hold_attempt + 1))
-
-            # CA-1/CA-2: RESUME_ARGS vacio hace que $RESUME_ARGS desaparezca
-            # del argv (mismo patron que MODEL_ARGS de tdd-pipeline.sh) --
-            # degradado, la sonda reenvia el prompt original completo, byte a
-            # byte el comportamiento previo a este issue.
-            local attempt_used_resume=false RESUME_ARGS="" attempt_prompt="$prompt"
-            local sessions_now
-            sessions_now=0
-            if [ "$RESUME_DEGRADED" = true ]; then
-                warn "$agent: $failure_type -- en espera (hold), reintentando desde cero (sonda #$hold_attempt)..."
-            elif [ "$sessions_now" -le "$RESUME_BASELINE_SESSIONS" ]; then
-                # CA-2, primera degradacion: el intento muerto no dejo
-                # transcript en este worktree, asi que `-c` aterrizaria en la
-                # sesion de OTRO stage anterior (o en ninguna) -- y `-c` ignora
-                # en silencio `--agent`, asi que ese aterrizaje correria sin la
-                # definicion del agente. No es permanente: esta sonda deja su
-                # propia sesion, asi que la siguiente ya tendra que continuar.
-                warn "$agent: $failure_type -- en espera (hold), sin conversacion previa de este stage que continuar -- reintentando desde cero (sonda #$hold_attempt)"
-                echo "[$(date +%H:%M:%S)][hold][resume] $agent: el intento fallido no dejo transcript en el worktree -- reintento desde cero (sin -c)" >> "$EVENTS_LOG_ABS"
-            else
-                attempt_used_resume=true
-                RESUME_ARGS="-c"
-                attempt_prompt="$(agent_resume_prompt "$stage" "$agent")"
-                warn "$agent: $failure_type -- en espera (hold), reanudando sesion truncada (sonda #$hold_attempt)..."
-            fi
-
-            local log_stage_hold="$LOG_DIR_ABS/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-hold-${hold_attempt}.log"
-            local stream_file_hold="${log_stage_hold%.log}.stream.jsonl"
-            local stderr_file_hold="${log_stage_hold%.log}.stderr.log"
-            # CA-5: lo que no cuenta contra el watchdog de stage es la ESPERA
-            # (el `sleep` de agent_hold_wait, ya consumido arriba); la SONDA si
-            # corre bajo su propio watchdog de $AGENT_TIMEOUT_SECONDS, igual
-            # que el primer intento. Sin el, una sonda colgada dejaria el
-            # pipeline esperando para siempre y volveria decorativo el techo de
-            # agent_hold_wait, que solo se evalua al tope del bucle.
-            local probe_start_ts CLAUDE_PID_HOLD PROBE_WATCHDOG_PID
-            probe_start_ts=$(date +%s)
-            CLAUDE_EXIT=0
-            # shellcheck disable=SC2086  # RESUME_ARGS vacio debe desaparecer del argv (ver MODEL_ARGS en tdd-pipeline.sh)
-            if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
-                (cd "$WORKTREE_PATH" && "${MEFISTO_LEGACY_EXECUTABLE:-false}" $RESUME_ARGS -p "$attempt_prompt" --model "$AGENT_MODEL" \
-                    --permission-mode bypassPermissions \
-                    --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
-                    --output-format stream-json --verbose \
-                    >"$stream_file_hold" 2>"$stderr_file_hold") &
-            else
-                (cd "$WORKTREE_PATH" && "${MEFISTO_LEGACY_EXECUTABLE:-false}" $RESUME_ARGS -p "$attempt_prompt" --model "$AGENT_MODEL" \
-                    --permission-mode bypassPermissions \
-                    --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
-                    --output-format text \
-                    >"$log_stage_hold" 2>&1) &
-            fi
-            CLAUDE_PID_HOLD=$!
-            # Grupo primero y PID despues: sin job control (el caso de un
-            # pipeline no interactivo) la subshell de arriba NO es lider de su
-            # propio grupo, asi que la forma negativa falla sola y sin el
-            # fallback el watchdog de la sonda no mataria nada.
-            (sleep $AGENT_TIMEOUT_SECONDS && { kill -9 -$CLAUDE_PID_HOLD 2>/dev/null || kill -9 $CLAUDE_PID_HOLD 2>/dev/null; } && echo "[$(date +%H:%M:%S)] TIMEOUT: $agent (sonda de hold #$hold_attempt) supero ${AGENT_TIMEOUT_SECONDS}s" >> "$EVENTS_LOG_ABS") </dev/null >/dev/null 2>&1 &
-            PROBE_WATCHDOG_PID=$!
-            wait $CLAUDE_PID_HOLD || CLAUDE_EXIT=$?
-            kill $PROBE_WATCHDOG_PID 2>/dev/null || true
-            wait $PROBE_WATCHDOG_PID 2>/dev/null || true
-            if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
-                # Cada sonda escribe su propio stream/stderr y deriva su propio
-                # -hold-N.log, sin pisar los archivos de intentos anteriores.
-                derive_stage_log_from_stream "$stream_file_hold" "$stderr_file_hold" "$log_stage_hold"
-            fi
-            # La duracion que se reporta es la de la SONDA, no el reloj desde
-            # que arranco el stage: sumar ahi las horas de espera inflaria
-            # AGENT_*_DUR y las metricas de la corrida. El interno mide igual
-            # (por intento, attempt_start_ts) y reporta la espera aparte, con
-            # HOLD_TOTAL_SECONDS.
-            elapsed=$(( $(date +%s) - probe_start_ts ))
-            log_stage="$log_stage_hold"
-            stream_file="$stream_file_hold"
-
-            if [ "$CLAUDE_EXIT" -eq 0 ]; then
-                log "$agent: hold resuelto, reintento exitoso en ${elapsed}s (tras $((HOLD_TOTAL_SECONDS / 60))m $((HOLD_TOTAL_SECONDS % 60))s de espera)"
-                echo "[$(date +%H:%M:%S)] RETRY_OK $agent: exitoso tras hold" >> "$EVENTS_LOG_ABS"
-                break
-            fi
-
-            failure_type=$(classify_agent_failure "$CLAUDE_EXIT" "$elapsed" "$log_stage" "$stream_file")
-            log "$agent fallo tras sonda de hold -- tipo: $failure_type"
-            echo "[$(date +%H:%M:%S)] FALLO $agent: $failure_type (tras hold)" >> "$EVENTS_LOG_ABS"
-
-            # CA-2: la sonda resumida volvio a morir sin dejar el resumen del
-            # stage -- se degrada a "stage desde cero" de forma PERMANENTE
-            # para el resto de este run_agent (nunca se vuelve a intentar
-            # reanudar tras esta degradacion).
-            if [ "$attempt_used_resume" = true ] && [ ! -s "$SUMMARY_FILE" ]; then
-                warn "$agent: la sesion reanudada volvio a morir sin dejar el resumen del stage -- se degrada a stage desde cero"
-                echo "[$(date +%H:%M:%S)][hold][resume] $agent: sesion reanudada murio de nuevo sin resumen -- degradado a stage desde cero" >> "$EVENTS_LOG_ABS"
-                RESUME_DEGRADED=true
-            fi
-        done
-
-        # Retry para bloqueo por permisos (race condition en ejecucion paralela)
-        if [ "$CLAUDE_EXIT" -ne 0 ] && grep -qiE "permisos|permission|bloqueado|blocked|approve" "$log_stage" 2>/dev/null; then
-            local has_work_perm=false
-            if ! git -C "$WORKTREE_PATH" diff --quiet "${SNAPSHOT_COMMIT:-HEAD}..HEAD" 2>/dev/null; then
-                has_work_perm=true
-            fi
-            if [ "$has_work_perm" = false ]; then
-                warn "$agent: bloqueo por permisos detectado -- reintentando una vez..."
-                echo "[$(date +%H:%M:%S)] RETRY $agent: bloqueo por permisos" >> "$EVENTS_LOG_ABS"
-                local log_stage_perm_retry="$LOG_DIR_ABS/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-perm-retry.log"
-                local stream_file_perm_retry="${log_stage_perm_retry%.log}.stream.jsonl"
-                local stderr_file_perm_retry="${log_stage_perm_retry%.log}.stderr.log"
-                CLAUDE_EXIT=0
-                if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
-                    (cd "$WORKTREE_PATH" && "${MEFISTO_LEGACY_EXECUTABLE:-false}" -p "$prompt" --model "$AGENT_MODEL" \
-                        --permission-mode bypassPermissions \
-                        --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
-                        --output-format stream-json --verbose \
-                        >"$stream_file_perm_retry" 2>"$stderr_file_perm_retry") || CLAUDE_EXIT=$?
-                    derive_stage_log_from_stream "$stream_file_perm_retry" "$stderr_file_perm_retry" "$log_stage_perm_retry"
-                else
-                    (cd "$WORKTREE_PATH" && "${MEFISTO_LEGACY_EXECUTABLE:-false}" -p "$prompt" --model "$AGENT_MODEL" \
-                        --permission-mode bypassPermissions \
-                        --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
-                        --output-format text \
-                        >"$log_stage_perm_retry" 2>&1) || CLAUDE_EXIT=$?
-                fi
-                # Sigue midiendo el reloj del stage (comportamiento previo a
-                # #971, CA-4), menos lo que se estuvo esperando: si antes de
-                # este reintento hubo un hold, sumar sus horas aqui inflaria
-                # AGENT_*_DUR (CA-5: la espera no cuenta).
-                elapsed=$(( $(date +%s) - start_ts - HOLD_TOTAL_SECONDS ))
-                log_stage="$log_stage_perm_retry"
-                if [ "$CLAUDE_EXIT" -ne 0 ]; then
-                    log "$agent fallo tambien en reintento por permisos"
-                    echo "[$(date +%H:%M:%S)] RETRY_PERM_FALLO $agent" >> "$EVENTS_LOG_ABS"
-                else
-                    log "$agent: reintento por permisos exitoso en ${elapsed}s"
-                    echo "[$(date +%H:%M:%S)] RETRY_PERM_OK $agent" >> "$EVENTS_LOG_ABS"
-                fi
-            fi
-        fi
-
-        if [ "$CLAUDE_EXIT" -ne 0 ]; then
-            # Verificar si produjo trabajo util
-            local has_commits=false
-            local gate_passes=false
-
-            if ! git -C "$WORKTREE_PATH" diff --quiet "${SNAPSHOT_COMMIT:-HEAD}..HEAD" 2>/dev/null; then
-                has_commits=true
-            fi
-            # Hay trabajo util si el agente dejo en el worktree algo que no haya
-            # escrito el propio pipeline (issue #568, ver PIPELINE_OWN_WRITES).
-            # A diferencia de los gates de stage, este punto no puede neutralizar
-            # .claude/settings.json con un 'git checkout' -- el reintento posterior
-            # todavia usa la copia parcheada --, asi que lo hace el pathspec: sin
-            # esa exclusion el chequeo daria siempre true (misma grieta que #424
-            # corrigio en el pipeline interno: "bastaba cualquier archivo sucio en
-            # el worktree" para dar por bueno un agente que murio a mitad).
-            if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- . "${PIPELINE_OWN_WRITES[@]}" 2>/dev/null)" ]; then
-                has_commits=true
-            fi
-
-            if [ "$has_commits" = true ]; then
-                if dotnet build "$WORKTREE_PATH" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1; then
-                    gate_passes=true
-                fi
-            fi
-
-            if [ "$has_commits" = true ] && [ "$gate_passes" = true ]; then
-                warn "$agent: CLI retorno error ($failure_type) pero hay trabajo util -- continuando"
-                echo "[$(date +%H:%M:%S)] RECUPERADO $agent: trabajo util detectado" >> "$EVENTS_LOG_ABS"
-            else
-                case "$agent" in
-                    writer)   AGENT_WR_DUR=$elapsed; AGENT_WR_RES="failed" ;;
-                    reviewer) AGENT_RV_DUR=$elapsed; AGENT_RV_RES="failed" ;;
-                esac
-                update_status "$stage-$agent" "failed"
-                echo -e "\n${RED}-- Ultimas lineas del log de $agent:${NC}"
-                tail -20 "$log_stage"
-                abort "$agent fallo ($failure_type). Log completo: $log_stage"
-            fi
-        fi
-    fi
-
-    LAST_AGENT_DURATION=$elapsed
-    log "$agent completado en ${elapsed}s"
-}
-
 # --- Funcion auxiliar: auto-commit de seguridad ---
 auto_commit_if_needed() {
     local phase="$1"
@@ -766,6 +476,9 @@ run_agent() {
     printf '%s' "$prompt" > "$prompt_file"
     printf '%s\n' 'You are running in non-interactive print mode. There is no human to approve anything. Use editing tools directly; never ask for permission. Do not push or create pull requests.' > "$system_file"
     local agent_id model start_ts run_exit=0 elapsed=0 failure_type="" hold_started="" hold_total=0 resume_session="" resume_degraded=false
+    local denial_retry_used=false entry_commit summary_file
+    entry_commit="$(git -C "$WORKTREE_PATH" rev-parse HEAD)"
+    summary_file="$WORKTREE_PATH/.claude/pipeline/summaries/stage-${stage}-${agent}.md"
     case "$agent" in reviewer) agent_id="tooling-reviewer"; model="$MODEL_REVIEWER" ;; *) agent_id="tooling-writer"; model="$MODEL_WRITER" ;; esac
     case "$agent" in writer) AGENT_WR_RES="running" ;; reviewer) AGENT_RV_RES="running" ;; esac
     update_status "$stage-$agent" running; start_ts=$(date +%s)
@@ -779,10 +492,34 @@ run_agent() {
         local args=(--runtime "$MEFISTO_RUNTIME_RESUELTO" --agent "$agent_id" --cwd "$WORKTREE_PATH" --prompt-file "$attempt_prompt" --system-file "$system_file" --event-log "$events_file" --raw-log "$raw_file" --stderr-log "$stderr_file" --events-log "$EVENTS_LOG_ABS" --timeout "$MEFISTO_AGENT_TIMEOUT_SECONDS")
         [ -n "$model" ] && args+=(--model "$model")
         [ -n "$resume_session" ] && args+=(--resume-session "$resume_session")
-        if "$RUN_AGENT_BIN_DEFAULT" "${args[@]}" >>"${log_base}.runner.log" 2>&1; then run_exit=0; else run_exit=$?; fi
+        if "$RUN_AGENT_BIN" "${args[@]}" >>"${log_base}.runner.log" 2>&1; then run_exit=0; else run_exit=$?; fi
         elapsed=$(( $(date +%s) - start_ts ))
         derive_stage_log_from_stream "$events_file" "$stderr_file" "$log_stage"
-        [ "$run_exit" -eq 0 ] && break
+        local denials
+        denials="$(agent_events_denials "$events_file")"
+        case "$denials" in ''|*[!0-9]*) denials=0 ;; esac
+        LAST_AGENT_DENIALS="$denials"
+
+        # El retry publicado por permisos es unico y se decide solo con el
+        # contador neutral. Aplica incluso si el CLI termino en success pero
+        # sus denegaciones impidieron producir cambios.
+        local attempt_has_work=false
+        if ! git -C "$WORKTREE_PATH" diff --quiet "$entry_commit"..HEAD 2>/dev/null \
+            || [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- . "${PIPELINE_OWN_WRITES[@]}" 2>/dev/null)" ]; then
+            attempt_has_work=true
+        fi
+        if [ "$denials" -gt 0 ] && [ "$attempt_has_work" = false ] && [ "$denial_retry_used" = false ]; then
+            denial_retry_used=true
+            resume_session=""
+            warn "$agent: $denials denegacion(es) neutrales sin trabajo; reintentando una vez desde cero"
+            echo "[$(date +%H:%M:%S)] RETRY $agent: denials=$denials" >> "$EVENTS_LOG_ABS"
+            continue
+        fi
+
+        if [ "$run_exit" -eq 0 ] && agent_events_completed_successfully "$events_file"; then
+            failure_type=""
+            break
+        fi
         failure_type="$(classify_neutral_agent_failure "$run_exit" "$events_file")"
         if ! agent_failure_is_holdable "$failure_type"; then break; fi
         [ -z "$hold_started" ] && hold_started=$(date +%s)
@@ -790,7 +527,7 @@ run_agent() {
         resets="$(agent_events_resets_at "$events_file")"
         if ! slept=$(agent_hold_wait "$EVENTS_LOG_ABS" "$failure_type" "$hold_started" "$resets"); then break; fi
         hold_total=$((hold_total + slept))
-        if [ "$attempt_resume" = true ] && [ ! -s "$WORKTREE_PATH/.mefisto/pipeline/summaries/stage-${stage}-${agent}.md" ]; then
+        if [ "$attempt_resume" = true ] && [ ! -s "$summary_file" ]; then
             warn "$agent: la sesion reanudada termino sin resumen; se degrada permanentemente a inicio limpio"
             resume_degraded=true; resume_session=""
         elif [ "$resume_degraded" = false ]; then
@@ -800,12 +537,30 @@ run_agent() {
             fi
         fi
     done
-    if [ "$run_exit" -ne 0 ]; then
-        case "$failure_type" in TIMEOUT|KILLED|STREAM_CUT|PROTOCOL_INVALID) ;; *)
-            if [ "$(agent_events_denials "$events_file")" -gt 0 ] && git -C "$WORKTREE_PATH" diff --quiet "${SNAPSHOT_COMMIT:-HEAD}..HEAD"; then
-                warn "$agent: denial neutral detectado; reintentando una vez"
-                run_agent "$stage" "$agent" "$prompt"; return
-            fi;; esac
+    if [ -n "$failure_type" ]; then
+        # Se conserva la recuperacion publicada para fallos ordinarios: solo
+        # trabajo real que ademas pasa el gate de compilacion. Los desenlaces
+        # incompletos del protocolo nunca entran a este atajo.
+        local recoverable_work=false
+        case "$failure_type" in TIMEOUT|KILLED|STREAM_CUT|PROTOCOL_INVALID) ;;
+            *)
+                if ! git -C "$WORKTREE_PATH" diff --quiet "$entry_commit"..HEAD 2>/dev/null \
+                    || [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- . "${PIPELINE_OWN_WRITES[@]}" 2>/dev/null)" ]; then
+                    if dotnet build "$WORKTREE_PATH" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1; then
+                        recoverable_work=true
+                    fi
+                fi
+                ;;
+        esac
+        if [ "$recoverable_work" = true ]; then
+            warn "$agent: runner termino con $failure_type, pero el trabajo paso el gate de confianza"
+            echo "[$(date +%H:%M:%S)] RECUPERADO $agent: trabajo util detectado" >> "$EVENTS_LOG_ABS"
+            failure_type=""
+        fi
+    fi
+    if [ -n "$failure_type" ]; then
+        case "$agent" in writer) AGENT_WR_RES="failed" ;; reviewer) AGENT_RV_RES="failed" ;; esac
+        update_status "$stage-$agent" failed
         case "$failure_type" in TIMEOUT|KILLED|STREAM_CUT|PROTOCOL_INVALID) abort "$agent fallo ($failure_type); se descarta trabajo parcial" ;; esac
         abort "$agent fallo ($failure_type). Log completo: $log_stage"
     fi
@@ -850,7 +605,7 @@ CONTEXTO DE EJECUCION:
 - Nadie puede aprobar, confirmar ni responder preguntas.
 - DEBES usar las herramientas Write y Edit directamente para crear y modificar archivos.
 - Responder con texto pidiendo aprobacion causa un fallo del pipeline.
-- Tienes permisos completos (bypassPermissions activo).
+- Las capacidades de edicion requeridas por el agente ya estan habilitadas.
 - PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya.
 
 Instrucciones:
@@ -880,31 +635,7 @@ Instrucciones:
         HAS_UNSTAGED=true
     fi
     if [ "$HAS_COMMITS" = false ] && [ "$HAS_UNSTAGED" = false ]; then
-        # Detectar si el writer pidio permisos en vez de usar herramientas
-        writer_log="$LOG_DIR_ABS/tooling-stage-1-writer-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}.log"
-        if grep -qiE "necesito.*permiso|aprobar.*permiso|confirma.*escritura|approve.*permission|permiso.*escritura" "$writer_log" 2>/dev/null; then
-            warn "Writer pidio permisos en modo no-interactivo -- reintentando con prompt reforzado..."
-            echo "[$(date +%H:%M:%S)] RETRY writer: solicitud de permisos detectada en output" >> "$EVENTS_LOG_ABS"
-
-            RETRY_PROMPT="ATENCION: El intento anterior fallo porque generaste texto pidiendo permisos en lugar de usar herramientas Write/Edit.
-
-Estas en modo NO-INTERACTIVO. No hay humano. DEBES usar Write/Edit directamente. Cualquier respuesta de texto sin tool calls causa un fallo del pipeline.
-
-$STAGE1_PROMPT"
-
-            run_agent "1" "writer" "$RETRY_PROMPT"
-
-            # Re-validar cambios despues del retry
-            git -C "$WORKTREE_PATH" checkout -- .claude/settings.json 2>/dev/null || true
-            HAS_COMMITS=false; HAS_UNSTAGED=false
-            if ! git -C "$WORKTREE_PATH" diff --quiet "$SNAPSHOT_COMMIT" HEAD 2>/dev/null; then HAS_COMMITS=true; fi
-            # Mismo criterio de deteccion que el chequeo de arriba.
-            if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- . "${PIPELINE_OWN_WRITES[@]}" 2>/dev/null)" ]; then HAS_UNSTAGED=true; fi
-        fi
-
-        if [ "$HAS_COMMITS" = false ] && [ "$HAS_UNSTAGED" = false ]; then
-            abort "El writer no genero ningun cambio. Revisa el log: $LOG_DIR_ABS/tooling-stage-1-writer-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}.log"
-        fi
+        abort "El writer no genero ningun cambio. Revisa el log: $LOG_DIR_ABS/tooling-stage-1-writer-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}.log"
     fi
 
     # Gate 1: debe compilar (si hay codigo C#)
@@ -964,7 +695,7 @@ CONTEXTO DE EJECUCION:
 - Nadie puede aprobar, confirmar ni responder preguntas.
 - DEBES usar las herramientas Write y Edit directamente para corregir problemas.
 - Responder con texto pidiendo aprobacion causa un fallo del pipeline.
-- Tienes permisos completos (bypassPermissions activo).
+- Las capacidades de edicion requeridas por el agente ya estan habilitadas.
 - PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya.
 
 Instrucciones:

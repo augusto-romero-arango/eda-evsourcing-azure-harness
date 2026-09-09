@@ -727,6 +727,12 @@ agent_events_resets_at() { agent_events_value "$1" '[.[] | select(.type == "run.
 agent_events_session_id() { agent_events_value "$1" '[.[] | select(.type == "run.failed" or .type == "run.completed") | .session_id // empty] | last // empty'; }
 agent_events_denials() { agent_events_value "$1" '[.[] | select(.type == "run.failed" or .type == "run.completed") | .denials // 0] | last // 0'; }
 
+agent_events_completed_successfully() {
+    local events="$1"
+    [ -s "$events" ] || return 1
+    jq -e -s '[.[] | select(.type == "run.failed" or .type == "run.completed")] | last | .type == "run.completed" and .status == "success"' "$events" >/dev/null 2>&1
+}
+
 classify_neutral_agent_failure() {
     local run_exit="$1" events="$2" kind
     case "$run_exit" in 124) echo "TIMEOUT"; return ;; 65) echo "PROTOCOL_INVALID"; return ;; esac
@@ -734,7 +740,8 @@ classify_neutral_agent_failure() {
     case "$kind" in
         provider_unavailable) echo "PROVIDER_UNAVAILABLE" ;; rate_limit) echo "RATE_LIMIT" ;;
         timeout) echo "TIMEOUT" ;; killed) echo "KILLED" ;; stream_cut) echo "STREAM_CUT" ;;
-        protocol_invalid) echo "PROTOCOL_INVALID" ;; permission_denied) echo "DENIAL" ;;
+        protocol_invalid) echo "PROTOCOL_INVALID" ;; api_error) echo "API_ERROR_CLIENT" ;;
+        nonzero_exit|no_result) echo "CLI_ERROR" ;;
         *) echo "CLI_ERROR" ;;
     esac
 }
@@ -862,16 +869,13 @@ run_tests_projects() {
     return $combined_rc
 }
 
-# --- Captura de traza stream-json de las invocaciones `claude -p` (issue #645) -
+# --- Derivacion de log legible desde eventos de agente ----------------------
 
 # derive_stage_log_from_stream <stream_file> <stderr_file> <out_file>
 #
-# Deriva el log legible de un stage (patron portado de
-# .claude/scripts/_mefisto-common.sh, issue #431) a partir del stream JSON
-# crudo que `claude -p --output-format stream-json --verbose` escribe en
-# <stream_file>: una linea por bloque de texto del asistente y una linea
-# "[tool] <nombre>" por cada tool_use, en el orden del stream. Anexa
-# <stderr_file> tal cual al final. Sobreescribe <out_file> si ya existia.
+# Deriva el log legible de un stage desde el JSONL neutral del runner o, para
+# callers aun no migrados, desde su stream legacy. Anexa <stderr_file> y
+# sobreescribe <out_file>.
 #
 # El evento `result` con `is_error == true` tambien se deriva, prefijado con
 # "API Error: <status>" cuando el CLI reporta api_error_status: en una corrida
@@ -903,6 +907,9 @@ derive_stage_log_from_stream() {
                       | if .type == "text" then (.text // "")
                         elif .type == "tool_use" then "[tool] " + (.name // "?")
                         else empty end
+                  elif .type == "message" then (.text // "")
+                  elif .type == "tool.started" then "[tool] " + (.tool // "?")
+                  elif .type == "run.failed" then ((.error.detail // .error.kind // "error") | tostring)
                   elif .type == "result" and .is_error == true then
                       (if (.api_error_status // null) != null
                          then "API Error: " + (.api_error_status | tostring) + " "
@@ -1271,11 +1278,8 @@ agent_failure_is_holdable() {
 #                                 pared desde <hold_started_ts> (default
 #                                 21600s = 6h).
 #
-# A diferencia del interno, esta funcion NO consulta `resets_at` (ese dato
-# vive en el evento terminal del JSONL neutral, fuera de alcance de este
-# issue -- MEF-ADR-0050): siempre sondea a la cadencia fija, recortada al
-# remanente del techo -- el mismo piso que el interno ya acepta cuando
-# `resets_at` no esta disponible (MEF-ADR-0051, Consecuencias negativas).
+# Si el caller entrega `resets_at`, espera hasta ese instante mas el margen de
+# 60 segundos; si falta o no se puede parsear, usa la cadencia fija.
 #
 # Retorna 1 SIN dormir si el techo ya se agoto (remanente <= 0) -- el caller
 # rompe su bucle de espera y cae al trato ordinario de fallo. Retorna 0 tras

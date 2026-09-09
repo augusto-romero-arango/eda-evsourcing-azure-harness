@@ -319,14 +319,10 @@ else
     fail "G-6: jq dejo ruido por stderr: $(cat "$TMP/g-raro.stderr")"
 fi
 
-# --- [H] Los pipelines publicados invocan la captura (issue #689) ---
-# Guard estatico: tooling-pipeline.sh e iac-pipeline.sh deben capturar la
-# traza stream-json y derivar el .log de siempre, igual que tdd-pipeline.sh.
-# Un revert accidental a solo --output-format text (sin rama de captura)
-# dejaria al visor en vivo sin traza que seguir en esos pipelines.
+# --- [H] Los pipelines legacy capturan; tooling consume JSONL neutral -------
 echo ""
-echo "[H] tooling-pipeline.sh e iac-pipeline.sh capturan stream-json (#689)"
-for p in tooling-pipeline.sh iac-pipeline.sh tdd-pipeline.sh; do
+echo "[H] derivacion de logs por frontera de ejecucion"
+for p in iac-pipeline.sh tdd-pipeline.sh; do
     if grep -q -- "--output-format stream-json --verbose" "$REPO_ROOT/scripts/$p" \
         && grep -q "derive_stage_log_from_stream" "$REPO_ROOT/scripts/$p" \
         && grep -q "PIPELINE_CAPTURE_STREAM=true" "$REPO_ROOT/scripts/$p"; then
@@ -335,6 +331,13 @@ for p in tooling-pipeline.sh iac-pipeline.sh tdd-pipeline.sh; do
         fail "H: $p perdio la captura stream-json o la derivacion del .log"
     fi
 done
+if grep -q 'mefisto-run-agent.sh' "$REPO_ROOT/scripts/tooling-pipeline.sh" \
+    && grep -q 'derive_stage_log_from_stream "$events_file"' "$REPO_ROOT/scripts/tooling-pipeline.sh" \
+    && ! grep -q -- '--output-format' "$REPO_ROOT/scripts/tooling-pipeline.sh"; then
+    pass "H: tooling-pipeline.sh deriva el .log del JSONL neutral"
+else
+    fail "H: tooling-pipeline.sh no respeta la frontera neutral"
+fi
 
 echo ""
 echo "----------------------------------------"
