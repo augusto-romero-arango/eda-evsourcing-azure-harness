@@ -1,0 +1,2 @@
+{"type":"user","message":{"content":"SENTINELA_PROMPT"}}
+{"type":"assistant","message":{"model":"claude-sonnet-4-6","content":[{"type":"text","text":"SENTINELA_RESPUESTA"}]}}

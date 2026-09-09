@@ -1,6 +1,6 @@
 # Contrato neutral de hooks interactivos
 
-`interactive-hooks.json` expresa siete hechos publicados, sin fijar un runtime ni una forma ejecutable. `append-session-model` es una observación posterior al inicio: el adaptador Claude pendiente se implementa en #1136 y no se materializa todavía en `hooks/hooks.json`. `timeoutSeconds: null` significa que Mefisto no agrega un plazo: el límite efectivo es el que documente y aplique cada runtime.
+`interactive-hooks.json` expresa siete hechos publicados, sin fijar un runtime ni una forma ejecutable. Claude materializa `append-session-model` en `Stop`: lee únicamente el `transcript_path` que recibió en ese payload y observa el último `assistant.message.model` no vacío. `timeoutSeconds: null` significa que Mefisto no agrega un plazo: el límite efectivo es el que documente y aplique cada runtime.
 
 La persistencia se rige por allowlist (MEF-ADR-0025). Ningún binding conserva prompts, input completo de herramientas, comandos shell completos, tokens, cookies, headers, variables de credenciales ni auth stores.
 
@@ -18,7 +18,7 @@ No se declara comportamiento para fin de sesión, inicio de herramienta, prompt,
 
 ## Sesiones correlacionables
 
-`sessions.jsonl` es append-only por `session_id`. El inicio registra `model: null` cuando el runtime no lo expone verazmente. Una observación posterior se agrega solo si difiere del último modelo no nulo de la sesión: A→A no duplica y A→B conserva ambos hechos. No se actualizan, borran ni reescriben líneas existentes. Los lectores deben aceptar líneas históricas de seis campos sin `record_type` como inicios legacy con identidad faltante.
+`sessions.jsonl` es append-only por `session_id`. Claude conserva `SessionStart.model` cuando llega; tras `/clear` puede faltar y registra `null`. Al cierre de cada turno, observa el último modelo efectivo desde el transcript explícito; transcript ausente, ilegible o sin respuesta no agrega un hecho. Una observación posterior se agrega solo si difiere del último modelo no nulo de la sesión: A→A no duplica y A→B conserva ambos hechos. No se actualizan, borran ni reescriben líneas existentes. Los lectores deben aceptar líneas históricas de seis campos sin `record_type` como inicios legacy con identidad faltante.
 
 `runtime` admite `claude` y `opencode`. La versión y el commit se leen únicamente del manifiesto verificable de la distribución cargada; su ausencia o malformación produce `null`. Los adaptadores no consultan Git, red, caches arbitrarios, credenciales, auth stores ni configuración del proveedor. Esta limitación aplica MEF-ADR-0025, MEF-ADR-0031, MEF-ADR-0049, MEF-ADR-0050 y MEF-ADR-0053.
 
