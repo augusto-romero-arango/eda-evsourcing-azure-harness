@@ -44,6 +44,9 @@
 #       marcar $ARGUMENTS ni ${#ARRAY[@]} como falsos positivos -- y el guard
 #       SI detecta un $1 introducido a mano en un archivo sintetico (prueba de
 #       que el guard funciona, no solo que hoy no encuentra nada).
+#   [H] Reconciliacion post-merge: contrato de entrada, cierres multiples,
+#       parsing forward, estados issue/PR, fallos de API e idempotencia. Un
+#       control ejecuta el shim estable para probar tambien su delegacion.
 #
 # Uso: .claude/scripts/tests/test-batch-deps-validation.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -53,6 +56,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 SCRIPT="$REPO_ROOT/src/internal/scripts/mefisto-validate-batch-deps.sh"
+SHIM="$REPO_ROOT/.claude/scripts/mefisto-validate-batch-deps.sh"
 
 PASS=0
 FAIL=0
@@ -90,7 +94,7 @@ FAKE_DATA=$(mktemp -d)
 cleanup() { rm -rf "$FAKE_BIN" "$FAKE_DATA"; }
 trap cleanup EXIT
 
-# Stub de gh dirigido por fixtures en $FAKE_DATA_DIR/<issue>.{labels,body,state,pr_state}.
+# Stub de gh dirigido por fixtures en $FAKE_DATA_DIR/<issue>.{labels,body,state,pr_state,pr_body}.
 # Registra toda invocacion "issue edit" en $FAKE_DATA_DIR/gh_calls.log -- es lo
 # que permite afirmar que un batch abortado no muta ningun label (CA-3).
 cat > "$FAKE_BIN/gh" <<'EOF'
@@ -132,15 +136,25 @@ fi
 
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
     num="$3"
-    if [ -f "$DATA/$num.pr_state" ]; then
-        cat "$DATA/$num.pr_state"
-        exit 0
-    fi
+    field=$(json_field_of "$@")
+    case "$field" in
+        state) [ -f "$DATA/$num.pr_state" ] && cat "$DATA/$num.pr_state" && exit 0 ;;
+        body) [ -f "$DATA/$num.pr_body" ] && cat "$DATA/$num.pr_body" && exit 0 ;;
+    esac
     exit 1
+fi
+
+if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
+    [ -f "$DATA/blocked.list" ] && cat "$DATA/blocked.list"
+    exit 0
 fi
 
 if [ "$1" = "issue" ] && [ "$2" = "edit" ]; then
     echo "$*" >> "$DATA/gh_calls.log"
+    if [ -f "$DATA/blocked.list" ]; then
+        awk -v num="$3" '$0 != num' "$DATA/blocked.list" > "$DATA/blocked.list.next"
+        mv "$DATA/blocked.list.next" "$DATA/blocked.list"
+    fi
     exit 0
 fi
 
@@ -152,10 +166,16 @@ reset_fixtures() { rm -rf "$FAKE_DATA"; mkdir -p "$FAKE_DATA"; }
 set_labels() { echo "$2" > "$FAKE_DATA/$1.labels"; }
 set_state()  { echo "$2" > "$FAKE_DATA/$1.state"; }
 set_pr_state() { echo "$2" > "$FAKE_DATA/$1.pr_state"; }
+set_pr_body() { cat > "$FAKE_DATA/$1.pr_body"; }
 set_body() { cat > "$FAKE_DATA/$1.body"; }
 
 run_script() {
-    FAKE_DATA_DIR="$FAKE_DATA" PATH="$FAKE_BIN:$PATH" "$SCRIPT" "$@"
+    # El canónico debe funcionar con el bash 3.2 nativo de macOS.
+    FAKE_DATA_DIR="$FAKE_DATA" PATH="$FAKE_BIN:$PATH" /bin/bash "$SCRIPT" "$@"
+}
+
+run_shim() {
+    FAKE_DATA_DIR="$FAKE_DATA" PATH="$FAKE_BIN:$PATH" /bin/bash "$SHIM" "$@"
 }
 
 assert_gh_calls_empty() {
@@ -184,6 +204,163 @@ assert_issue_edit_not_called() {
         pass "$ctx: gh NO recibio 'issue edit $num'"
     fi
 }
+
+# -------- Bloque H: reconciliación post-merge (issue #1159) --------
+
+echo ""
+echo "[H] Reconciliación post-merge de labels 'bloqueado'"
+
+reset_fixtures
+set_pr_state 900 "MERGED"
+set_pr_body 900 <<'EOF'
+closes #100
+ClOsEs #101
+EOF
+echo "200" > "$FAKE_DATA/blocked.list"
+set_body 200 <<'EOF'
+## Dependencias
+Depende de #100
+Bloqueado por #101
+EOF
+set_state 100 "CLOSED"
+set_state 101 "CLOSED"
+OUTPUT=$(run_script --reconcile-pr 900 2>&1); RC=$?
+if [ "$RC" -eq 0 ] && echo "$OUTPUT" | grep -q "Quitado 'bloqueado' de #200"; then
+    pass "H-1: múltiples Closes canónicos desbloquean una dependencia única cerrada"
+else
+    fail "H-1: se esperaba desbloquear #200, rc=$RC: $OUTPUT"
+fi
+assert_issue_edit_called "H-1" 200
+
+reset_fixtures
+set_pr_state 901 "MERGED"
+set_pr_body 901 <<'EOF'
+Closes #110
+EOF
+echo "201" > "$FAKE_DATA/blocked.list"
+set_body 201 <<'EOF'
+## Dependencias
+Depende de #110
+Depende de #111
+EOF
+set_state 110 "CLOSED"
+set_state 111 "OPEN"
+OUTPUT=$(run_script --reconcile-pr 901 2>&1); RC=$?
+if [ "$RC" -eq 0 ] && echo "$OUTPUT" | grep -q "#111 está OPEN"; then
+    pass "H-2: otra dependencia abierta conserva el label con diagnóstico"
+else
+    fail "H-2: se esperaba conservar #201 por #111 abierta, rc=$RC: $OUTPUT"
+fi
+assert_gh_calls_empty "H-2"
+
+reset_fixtures
+set_pr_state 902 "MERGED"
+set_pr_body 902 <<'EOF'
+Closes #120
+EOF
+echo "202" > "$FAKE_DATA/blocked.list"
+set_body 202 <<'EOF'
+## Dependencias
+Bloqueado por #120
+EOF
+set_pr_state 120 "MERGED"
+OUTPUT=$(run_script --reconcile-pr 902 2>&1); RC=$?
+if [ "$RC" -eq 0 ]; then pass "H-3: dependencia-PR MERGED desbloquea"; else fail "H-3: rc=$RC: $OUTPUT"; fi
+assert_issue_edit_called "H-3" 202
+
+reset_fixtures
+set_pr_state 903 "MERGED"
+set_pr_body 903 <<'EOF'
+Closes #130
+EOF
+echo "203" > "$FAKE_DATA/blocked.list"
+set_body 203 <<'EOF'
+## Dependencias
+Bloquea #130
+Depende del write-side: #130
+EOF
+OUTPUT=$(run_script --reconcile-pr 903 2>&1); RC=$?
+if [ "$RC" -eq 0 ] && echo "$OUTPUT" | grep -qi "sin redacción canónica parseable\|sin redaccion canonica parseable"; then
+    pass "H-4: texto inverso/no canónico no desbloquea y emite warning"
+else
+    fail "H-4: se esperaba warning y no-op, rc=$RC: $OUTPUT"
+fi
+assert_gh_calls_empty "H-4"
+
+reset_fixtures
+set_pr_state 904 "CLOSED"
+OUTPUT=$(run_script --reconcile-pr 904 2>&1); RC=$?
+if [ "$RC" -ne 0 ] && echo "$OUTPUT" | grep -q "no está MERGED"; then pass "H-5: PR no mergeado falla sin mutar"; else fail "H-5: rc=$RC: $OUTPUT"; fi
+assert_gh_calls_empty "H-5"
+
+OUTPUT=$(run_script --reconcile-pr abc 2>&1); RC=$?
+if [ "$RC" -eq 2 ] && echo "$OUTPUT" | grep -q "uso:"; then pass "H-5: argumento de PR inválido falla con uso accionable"; else fail "H-5: argumento inválido rc=$RC: $OUTPUT"; fi
+
+OUTPUT=$(run_script --reconcile-pr 904 extra 2>&1); RC=$?
+if [ "$RC" -eq 2 ] && echo "$OUTPUT" | grep -q "uso:"; then pass "H-5: el modo exige exactamente un PR"; else fail "H-5: aridad inválida rc=$RC: $OUTPUT"; fi
+assert_gh_calls_empty "H-5 aridad"
+
+reset_fixtures
+OUTPUT=$(run_script --reconcile-pr 999 2>&1); RC=$?
+if [ "$RC" -ne 0 ] && echo "$OUTPUT" | grep -q "no se pudo consultar el PR #999"; then pass "H-5: PR inexistente falla con diagnóstico accionable"; else fail "H-5: PR inexistente rc=$RC: $OUTPUT"; fi
+assert_gh_calls_empty "H-5 inexistente"
+
+reset_fixtures
+set_pr_state 905 "MERGED"
+set_pr_body 905 <<'EOF'
+Sin cierre automático.
+EOF
+OUTPUT=$(run_script --reconcile-pr 905 2>&1); RC=$?
+if [ "$RC" -eq 0 ] && echo "$OUTPUT" | grep -q "no hay nada que reconciliar"; then pass "H-6: body sin Closes es no-op exitoso"; else fail "H-6: rc=$RC: $OUTPUT"; fi
+
+reset_fixtures
+set_pr_state 906 "MERGED"
+set_pr_body 906 <<'EOF'
+Closes #140
+EOF
+echo "204" > "$FAKE_DATA/blocked.list"
+set_body 204 <<'EOF'
+## Dependencias
+Depende de #140
+EOF
+OUTPUT=$(run_script --reconcile-pr 906 2>&1); RC=$?
+if [ "$RC" -ne 0 ] && echo "$OUTPUT" | grep -q "no se pudo determinar"; then pass "H-7: fallo de API conserva label y falla con diagnóstico"; else fail "H-7: rc=$RC: $OUTPUT"; fi
+assert_gh_calls_empty "H-7"
+
+reset_fixtures
+set_pr_state 907 "MERGED"
+set_pr_body 907 <<'EOF'
+Closes #150
+EOF
+echo "205" > "$FAKE_DATA/blocked.list"
+set_body 205 <<'EOF'
+## Dependencias
+Depende de #150
+EOF
+set_state 150 "CLOSED"
+OUTPUT=$(run_script --reconcile-pr 907 2>&1); RC=$?
+OUTPUT2=$(run_script --reconcile-pr 907 2>&1); RC2=$?
+EDIT_COUNT=$(grep -c "issue edit 205 --remove-label bloqueado" "$FAKE_DATA/gh_calls.log" 2>/dev/null || true)
+if [ "$RC" -eq 0 ] && [ "$RC2" -eq 0 ] && [ "$EDIT_COUNT" -eq 1 ]; then pass "H-8: invocación repetida es idempotente"; else fail "H-8: rc=$RC/$RC2, edits=$EDIT_COUNT: $OUTPUT $OUTPUT2"; fi
+
+reset_fixtures
+set_pr_state 908 "MERGED"
+set_pr_body 908 <<'EOF'
+Closes #160
+EOF
+echo "206" > "$FAKE_DATA/blocked.list"
+set_body 206 <<'EOF'
+## Dependencias
+Depende de #160
+EOF
+set_state 160 "CLOSED"
+OUTPUT=$(run_shim --reconcile-pr 908 2>&1); RC=$?
+if [ "$RC" -eq 0 ] && echo "$OUTPUT" | grep -q "Quitado 'bloqueado' de #206"; then
+    pass "H-9: el shim estable delega el modo de reconciliación al canónico"
+else
+    fail "H-9: el shim no delegó correctamente, rc=$RC: $OUTPUT"
+fi
+assert_issue_edit_called "H-9" 206
 
 # -------- Bloque A: pos_in_batch calcula la posicion correcta para los 3 --------
 # Extrae la funcion REAL del script (no la reimplementa): el test unitario

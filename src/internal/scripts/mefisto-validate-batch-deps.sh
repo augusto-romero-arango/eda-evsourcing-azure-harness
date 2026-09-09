@@ -22,11 +22,12 @@
 # Uso:
 #   src/internal/scripts/mefisto-validate-batch-deps.sh <issue1> <issue2> ...
 #   (el orden de los argumentos ES el orden del batch)
+#   src/internal/scripts/mefisto-validate-batch-deps.sh --reconcile-pr <pr>
 #
 # Exit codes:
-#   0 -- el batch se puede lanzar (ver clasificacion abajo)
-#   1 -- hay al menos un bloqueo real (tipo b): se aborta, no se muta ningun label
-#   2 -- invocado sin argumentos (guarda fail-loud: no se valido nada)
+#   0 -- validacion/reconciliacion exitosa (incluido el no-op sin Closes)
+#   1 -- bloqueo real del batch o fallo operativo durante la reconciliacion
+#   2 -- invocacion invalida (guarda fail-loud: no se valido nada)
 #
 # Clasificacion (issue #47, universo de analisis ampliado por issue #466): para
 # CADA issue del batch -- ya no solo los que llevan el label 'bloqueado', ver
@@ -61,6 +62,119 @@
 # falla a medio camino.
 
 set -uo pipefail
+
+dependencies_section() {
+    awk '/^##[[:space:]]*[Dd]ependencias/{f=1;next} /^##[[:space:]]/{f=0} f'
+}
+
+# Emite solo las dependencias forward canónicas de una sección Dependencias.
+forward_dependencies() {
+    dependencies_section | grep -ioE '(Depende de|Bloqueado por)[[:space:]]+#[0-9]+' \
+        | grep -oE '[0-9]+' | sort -u
+}
+
+contains_number() {
+    local numbers="$1" target="$2" number
+    for number in $numbers; do
+        [ "$number" = "$target" ] && return 0
+    done
+    return 1
+}
+
+reconcile_pr() {
+    local pr="$1" pr_state pr_body closed_issues blocked_numbers blocked body deps
+    local closed dep state candidate had_error=0
+
+    if ! pr_state=$(gh pr view "$pr" --json state -q '.state' 2>/dev/null); then
+        echo "ERROR: no se pudo consultar el PR #$pr. Verifica que exista y que gh tenga acceso." >&2
+        return 1
+    fi
+    if [ "$pr_state" != "MERGED" ]; then
+        echo "ERROR: el PR #$pr no está MERGED (estado: $pr_state). La reconciliación solo corre después del merge." >&2
+        return 1
+    fi
+    if ! pr_body=$(gh pr view "$pr" --json body -q '.body' 2>/dev/null); then
+        echo "ERROR: no se pudo leer el body del PR #$pr." >&2
+        return 1
+    fi
+
+    closed_issues=$(printf '%s\n' "$pr_body" | grep -ioE 'Closes[[:space:]]+#[0-9]+' | grep -oE '[0-9]+' | sort -u)
+    if [ -z "$closed_issues" ]; then
+        echo "PR #$pr no declara cierres 'Closes #N'; no hay nada que reconciliar."
+        return 0
+    fi
+
+    if ! blocked_numbers=$(gh issue list --state open --label "bloqueado" --json number -q '.[].number' 2>/dev/null); then
+        echo "ERROR: no se pudieron listar los issues abiertos con label 'bloqueado'." >&2
+        return 1
+    fi
+
+    for blocked in $blocked_numbers; do
+        if ! body=$(gh issue view "$blocked" --json body -q '.body' 2>/dev/null); then
+            echo "ERROR: no se pudo leer el body del issue bloqueado #$blocked." >&2
+            had_error=1
+            continue
+        fi
+        deps=$(printf '%s\n' "$body" | forward_dependencies)
+        candidate=0
+        for closed in $closed_issues; do
+            if contains_number "$deps" "$closed"; then
+                candidate=1
+                break
+            fi
+        done
+        if [ "$candidate" -ne 1 ]; then
+            for closed in $closed_issues; do
+                if printf '%s\n' "$body" | dependencies_section | grep -qE "#$closed([^0-9]|$)"; then
+                    echo "WARNING: issue #$blocked referencia el issue recién cerrado #$closed en '## Dependencias' sin redacción canónica parseable ('Depende de #N' / 'Bloqueado por #N'); no se pudo evaluar su desbloqueo automático." >&2
+                    break
+                fi
+            done
+            continue
+        fi
+
+        # Una candidata solo se desbloquea cuando TODAS sus dependencias forward
+        # están satisfechas; una consulta fallida es conservadora y deja evidencia.
+        for dep in $deps; do
+            state=$(gh issue view "$dep" --json state -q '.state' 2>/dev/null \
+                || gh pr view "$dep" --json state -q '.state' 2>/dev/null || true)
+            case "$state" in
+                CLOSED|MERGED) ;;
+                OPEN)
+                    echo "Issue #$blocked sigue bloqueado: la dependencia #$dep está OPEN." >&2
+                    candidate=0
+                    break
+                    ;;
+                *)
+                    echo "ERROR: issue #$blocked conserva 'bloqueado': no se pudo determinar el estado de la dependencia #$dep." >&2
+                    candidate=0
+                    had_error=1
+                    break
+                    ;;
+            esac
+        done
+        if [ "$candidate" -eq 1 ]; then
+            if gh issue edit "$blocked" --remove-label "bloqueado"; then
+                echo "Quitado 'bloqueado' de #$blocked: todas sus dependencias forward están CLOSED/MERGED."
+            else
+                echo "ERROR: no se pudo quitar 'bloqueado' de #$blocked." >&2
+                had_error=1
+            fi
+        fi
+    done
+    return "$had_error"
+}
+
+# El dispatch debe preceder la guarda posicional: --reconcile-pr no es un issue
+# del batch y mantener ambos contratos evita alterar el lanzamiento secuencial.
+if [ "${1:-}" = "--reconcile-pr" ]; then
+    if [ "$#" -ne 2 ] || ! [[ "$2" =~ ^[0-9]+$ ]]; then
+        echo "ERROR: uso: src/internal/scripts/mefisto-validate-batch-deps.sh --reconcile-pr <pr>" >&2
+        exit 2
+    fi
+    reconcile_pr "$2"
+    exit $?
+fi
 
 if [ "$#" -eq 0 ]; then
     echo "ERROR: se invoco sin issues. No se valido NADA (no interpretes esto como OK)." >&2
@@ -98,10 +212,7 @@ for ISSUE in $BATCH; do
     # refs inversas/notas ('Consumido por', 'Bloquea'/'Bloquea a', 'se traslada
     # a', 'Relacionado con', prosa). Se leen de TODOS los issues del batch, no
     # solo de los que llevan 'bloqueado'.
-    DEPS=$(gh issue view "$ISSUE" --json body -q '.body' \
-        | awk '/^##[[:space:]]*[Dd]ependencias/{f=1;next} /^##[[:space:]]/{f=0} f' \
-        | grep -ioE '(Depende de|Bloqueado por)[[:space:]]+#[0-9]+' \
-        | grep -oE '[0-9]+' | sort -u)
+    DEPS=$(gh issue view "$ISSUE" --json body -q '.body' | forward_dependencies)
 
     ISSUE_REAL=""    # bloqueos reales de ESTE issue
     ISSUE_ORDER=""   # deps tipo (a) de ESTE issue, resueltas por el orden del batch
