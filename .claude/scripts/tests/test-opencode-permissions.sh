@@ -209,13 +209,16 @@ assert_eq "deny" "$(eval_perm mefisto-fx-perm-read read 'infra/dev/.env')" "lect
 assert_eq "deny" "$(eval_perm mefisto-fx-perm-read read 'src/config/.aws/credentials')" "lectura bajo .aws/ deniega"
 
 echo ""
-echo "[edit] CA-2: src/Foo.cs deny, commands/x.md allow, resumen de stage allow"
+echo "[edit] CA-2: src/Foo.cs deny, commands/x.md allow, metadata generada deny, resumen de stage allow"
 assert_eq "deny" "$(eval_perm mefisto-fx-perm-writer edit 'src/Foo.cs')" "edicion de src/Foo.cs deniega (fuera de la allowlist interna)"
 assert_eq "allow" "$(eval_perm mefisto-fx-perm-writer edit 'commands/x.md')" "edicion de commands/x.md permite"
 assert_eq "allow" "$(eval_perm mefisto-fx-perm-writer edit '.mefisto/pipeline/summaries/stage-1-writer.md')" "edicion del resumen de stage (.mefisto/) permite"
 assert_eq "allow" "$(eval_perm mefisto-fx-perm-writer edit '.claude/pipeline/summaries/stage-1-writer.md')" "edicion del resumen de stage (.claude/) permite"
 assert_eq "allow" "$(eval_perm mefisto-fx-perm-writer edit 'src/runtime/lib/mefisto-models.sh')" "edicion de src/runtime/** permite"
 assert_eq "allow" "$(eval_perm mefisto-fx-perm-writer edit 'src/published/contract/README.md')" "edicion de src/published/** permite"
+assert_eq "deny" "$(eval_perm mefisto-fx-perm-writer edit 'mefisto-manifest.json')" "edicion manual de mefisto-manifest.json generado deniega"
+assert_eq "deny" "$(eval_perm mefisto-fx-perm-writer edit 'sub/mefisto-manifest.json')" "edicion de mefisto-manifest.json anidado deniega"
+assert_eq "deny" "$(eval_perm mefisto-fx-perm-writer edit 'mefisto-manifest.json.bak')" "edicion de un sufijo de mefisto-manifest.json deniega"
 for key in edit write patch; do
     assert_eq "deny" "$(eval_perm mefisto-fx-perm-writer "$key" 'dist/claude/plugin.json')" "$key deniega dist/** (salida generada)"
 done

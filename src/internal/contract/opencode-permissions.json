@@ -90,7 +90,7 @@
       ]
     },
     "edit": {
-      "$comment": "Las mismas rutas para `edit`, `write` y `patch` (issue #862 CA-2): replican is_path_in_mefisto_scope (src/internal/scripts/lib/_mefisto-common.sh) mas los dos directorios de resumenes de stage que OpenCode bloquearia sin regla explicita. `dist/**` es la excepcion deliberada: MEF-ADR-0053 decision 1 lo declara salida generada no editable a mano; se produce via `bash`, no con tools de edicion. Rutas relativas al worktree porque ese es el candidato que pasa la tool (ver $comment_semantica_verificada).",
+      "$comment": "Las mismas rutas para `edit`, `write` y `patch` (issue #862 CA-2): replican is_path_in_mefisto_scope (src/internal/scripts/lib/_mefisto-common.sh) mas los dos directorios de resumenes de stage que OpenCode bloquearia sin regla explicita. `dist/**` y `mefisto-manifest.json` son excepciones deliberadas: MEF-ADR-0053 los declara salidas generadas no editables a mano; se producen via `bash`, no con tools de edicion. Rutas relativas al worktree porque ese es el candidato que pasa la tool (ver $comment_semantica_verificada).",
       "keys": ["edit", "write", "patch"],
       "catch_all": "deny",
       "rules": [
@@ -147,6 +147,10 @@
     {
       "pattern": "dist/**",
       "reason": "MEF-ADR-0053 decision 1: dist/ es salida generada, reproducible y no editable a mano; el generador la produce via bash."
+    },
+    {
+      "pattern": "mefisto-manifest.json",
+      "reason": "MEF-ADR-0053 decision 3: mefisto-manifest.json es metadata generada de release, no editable a mano; #1132 la producira via bash."
     }
   ]
 }
