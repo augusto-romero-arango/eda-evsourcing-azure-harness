@@ -1,48 +1,27 @@
 ---
 description: "Lanza el pipeline de tooling del consumidor para un issue de GitHub dentro de una sesion tmux."
-argument-hint: "<issue> [--models 'agente=modelo[,agente=modelo...]'] [--variant <label>]"
-model: "haiku"
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/tooling.md. No editar a mano. -->
 ```bash
-mefisto_claude_root=''
-mefisto_claude_candidate="${CLAUDE_PLUGIN_ROOT:-}"
-if [ -z "$mefisto_claude_candidate" ]; then
-    mefisto_claude_cursor="$PWD"
-    while :; do
-        if [ -f "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root" ]; then
-            mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root")"
-            break
-        fi
-        if [ "$mefisto_claude_cursor" = / ]; then break; fi
-        mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-    done
-fi
-if [ -z "$mefisto_claude_candidate" ]; then
-    mefisto_claude_cursor="$PWD"
-    while :; do
-        if [ -f "$mefisto_claude_cursor/.claude/pipeline/.plugin-root" ]; then
-            mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.claude/pipeline/.plugin-root")"
-            break
-        fi
-        if [ "$mefisto_claude_cursor" = / ]; then break; fi
-        mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-    done
-fi
-case "$mefisto_claude_candidate" in
-    /*) ;;
-    *) printf '%s\n' 'ERROR Claude: no se encontro una raiz absoluta valida; reabra o reinstale el plugin.' >&2; exit 1 ;;
-esac
-mefisto_claude_root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || {
-    printf '%s\n' 'ERROR Claude: la raiz del plugin no existe; reabra o reinstale el plugin.' >&2; exit 1;
+mefisto_opencode_data_root() {
+    if [ -n "${XDG_DATA_HOME:-}" ]; then printf '%s/mefisto\n' "$XDG_DATA_HOME"
+    elif [ "$(uname -s)" = Darwin ]; then printf '%s/Library/Application Support/mefisto\n' "$HOME"
+    else printf '%s/.local/share/mefisto\n' "$HOME"; fi
 }
-if ! jq -e '
-  .name == "mefisto" and
-  (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"))
-' "$mefisto_claude_root/.claude-plugin/plugin.json" >/dev/null 2>&1; then
-    printf '%s\n' 'ERROR Claude: metadata del plugin invalida; reabra o reinstale el plugin.' >&2; exit 1
+mefisto_opencode_launcher="$(mefisto_opencode_data_root)/active/bin/mefisto-opencode"
+if [ ! -f "$mefisto_opencode_launcher" ] || [ -L "$mefisto_opencode_launcher" ] || [ ! -x "$mefisto_opencode_launcher" ]; then
+    printf '%s\n' 'ERROR OpenCode: no hay una release activa valida; instale o active la release OpenCode.' >&2; exit 1
 fi
-MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"
+MEFISTO_PACKAGE_ROOT="$("$mefisto_opencode_launcher" package-root)" || {
+    printf '%s\n' 'ERROR OpenCode: no se pudo resolver la release activa; instale o active la release OpenCode.' >&2; exit 1;
+}
+case "$MEFISTO_PACKAGE_ROOT" in
+    /*) ;;
+    *) printf '%s\n' 'ERROR OpenCode: la release activa no devolvio una raiz absoluta; reinstale o active la release OpenCode.' >&2; exit 1 ;;
+esac
+MEFISTO_PACKAGE_ROOT="$(cd "$MEFISTO_PACKAGE_ROOT" 2>/dev/null && pwd -P)" || {
+    printf '%s\n' 'ERROR OpenCode: la release activa no existe; reinstale o active la release OpenCode.' >&2; exit 1;
+}
 export MEFISTO_PACKAGE_ROOT
 ```
 

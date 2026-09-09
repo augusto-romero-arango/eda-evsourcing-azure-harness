@@ -60,6 +60,6 @@ check_invalid "extra-closing-brace.md" "directiva mefisto mal formada"
 check_invalid "prefixed-directive-id.md" "directiva mefisto mal formada"
 
 echo "[no-args] fuentes publicadas"
-out=$(bash "$VALIDATOR" 2>&1); rc=$?; [ "$rc" -eq 0 ] && pass "sin fuentes aún" || fail "sin argumentos: $out"
+out=$(bash "$VALIDATOR" 2>&1); rc=$?; [ "$rc" -eq 0 ] && pass "todas las fuentes publicadas validan" || fail "sin argumentos: $out"
 echo "RESULTADO: $PASS pasaron, $FAIL fallaron"
 [ "$FAIL" -eq 0 ]

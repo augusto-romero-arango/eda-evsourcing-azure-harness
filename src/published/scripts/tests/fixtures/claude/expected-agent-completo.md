@@ -50,6 +50,6 @@ export MEFISTO_PACKAGE_ROOT
 Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
 Rutas: .mefisto/harness.config.json y ${MEFISTO_PACKAGE_ROOT}.
 .mefisto/pipeline/logs/con-espacio.log
-Ejecuta ${MEFISTO_PACKAGE_ROOT}/scripts/prueba.sh "$ARGUMENTS con espacios" ahora.
+Ejecuta "${MEFISTO_PACKAGE_ROOT}/scripts/prueba.sh" "$ARGUMENTS con espacios" ahora.
 Consulta /mefisto:otra-orden.
 Guard inline: Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor. Fin.
