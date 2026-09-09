@@ -25,19 +25,20 @@
 # cualquier `right` y recorren la lista al reves: herdr inserta cada pane
 # inmediatamente debajo de la raiz. Con tres o mas filas, las inferiores
 # pueden quedar anidadas por la geometria de herdr; es un limite conocido y
-# aceptado. En consumidores se monta la unica fila explicita `claude`: sus
-# labels son `planner [claude]`/`ejecucion [claude]`, sus agentes llevan el
-# sufijo y los panes heredan MEFISTO_RUNTIME=claude. Los workspaces consumidores
-# legacy se migran in-place por label, sin tocar agentes ni geometria.
+# aceptado. En consumidores se montan las filas explicitas `claude` y
+# `opencode`, en ese orden; sus labels son `planner [<runtime>]`/
+# `ejecucion [<runtime>]` y los panes heredan su MEFISTO_RUNTIME. Los
+# workspaces consumidores legacy se normalizan por label antes de agregar la
+# fila OpenCode faltante.
 #
 # Los panes de cada fila de Mefisto arrancan con `--kind <kind>` y llevan
 # SIEMPRE `--env MEFISTO_RUNTIME=<kind>` (tambien para los defaults, porque el
 # despacho de #928 debe resolver el runtime de su fila), mas
-# MEFISTO_MODELS_FILE si esta definida. En un consumidor el runtime es Claude
-# Code (el plugin publicado aun no soporta OpenCode): un MEFISTO_RUNTIME
-# distinto de "claude" se ignora con un aviso y la fila recibe explicitamente
-# `MEFISTO_RUNTIME=claude`. El script nunca fija provider, modelo ni
-# credenciales, ni lee opencode.json o un auth store.
+# MEFISTO_MODELS_FILE si esta definida. En consumidores, MEFISTO_RUNTIMES y
+# MEFISTO_RUNTIME no eliminan ninguna fila requerida. Claude usa el planner
+# publicado; OpenCode se inicia sin `--agent`, pues su label planner solo
+# describe el rol visual durante el corte vertical de tooling. El script nunca
+# fija provider, modelo ni credenciales, ni lee opencode.json o un auth store.
 #
 # Los agentes se lanzan con `herdr agent start` bajo nombres unicos por
 # workspace: planner-<slug>-claude, ejecucion-<slug>-claude en un consumidor;
@@ -62,6 +63,8 @@
 # quedar anidado y se acepta para no reconstruir filas que ya estan activas.
 
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 # --- Colores ---
 RED='\033[0;31m'
@@ -138,12 +141,12 @@ planner_agent_for_repo() {
 # runtimes_for_repo <planner_agent>
 #
 # Imprime un kind por linea. En Mefisto normaliza la lista, elimina vacios y
-# duplicados conservando la primera aparicion. En consumidores siempre
-# devuelve `claude`, sin leer las variables.
+# duplicados conservando la primera aparicion. En consumidores siempre devuelve
+# las filas obligatorias `claude`, `opencode`, sin leer las variables.
 runtimes_for_repo() {
     local planner_agent="$1"
     if [ "$planner_agent" != "mefisto-planner" ]; then
-        echo "claude"
+        printf '%s\n' claude opencode
         return
     fi
 
@@ -165,6 +168,42 @@ runtimes_for_repo() {
             }
         }
     '
+}
+
+planner_agent_for_runtime() {
+    local planner_agent="$1" runtime_kind="$2"
+    if [ "$planner_agent" != "mefisto-planner" ] && [ "$runtime_kind" = "opencode" ]; then
+        printf '\n'
+    else
+        printf '%s\n' "$planner_agent"
+    fi
+}
+
+# Lee solamente manifiestos. La raiz Claude se deriva de este script, nunca del
+# cwd del consumidor ni de un cache; cualquier problema es una degradacion no
+# bloqueante que no selecciona ni activa releases.
+diagnose_consumer_identity() {
+    local claude_root diagnostic result status
+    claude_root="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+    diagnostic="$SCRIPT_DIR/../src/published/scripts/diagnose-installation-identity.sh"
+    if [ ! -x "$diagnostic" ]; then
+        warn "No se encontro el diagnostico de identidad publicado; conserva las filas y verifica Claude/OpenCode."
+        return 0
+    fi
+    result=$(bash "$diagnostic" --claude-root "$claude_root" 2>&1) || {
+        warn "El diagnostico de identidad no pudo ejecutarse; conserva las filas. Detalle: $(printf '%s' "$result" | head -c 200)"
+        return 0
+    }
+    status=$(printf '%s\n' "$result" | jq -r '.status // empty' 2>/dev/null || true)
+    if [ -z "$status" ]; then
+        warn "El diagnostico de identidad devolvio una respuesta invalida; conserva las filas."
+        return 0
+    fi
+    log "Diagnostico de identidad: $status."
+    printf '%s\n' "$result" | jq -r '.claude, .opencode | select(.state == "available") | "  \(.runtime): version=\(.version) commit=\(.commit)"' 2>/dev/null || true
+    if [ "$status" != "aligned" ]; then
+        warn "$(printf '%s\n' "$result" | jq -r '.message // "DEGRADACION VISIBLE: verifique los manifiestos de Claude y OpenCode."' 2>/dev/null)"
+    fi
 }
 
 # pane_label_lookup <workspace_id> <label>
@@ -418,7 +457,12 @@ mount_runtime_row() {
     planner_name=$(agent_name_for_role "planner" "$label" "$runtime_kind")
     ejecucion_name=$(agent_name_for_role "ejecucion" "$label" "$runtime_kind")
 
-    start_agent_in_pane "$planner_name" "$p_planner" "$planner_agent" "$runtime_kind"
+    local runtime_planner_agent
+    runtime_planner_agent=$(planner_agent_for_runtime "$planner_agent" "$runtime_kind")
+    if [ "$planner_agent" != "mefisto-planner" ] && [ "$runtime_kind" = "opencode" ]; then
+        warn "El pane 'planner [opencode]' identifica el rol, pero el agente planner publicado aun no forma parte del corte tooling; OpenCode se inicia sin --agent."
+    fi
+    start_agent_in_pane "$planner_name" "$p_planner" "$runtime_planner_agent" "$runtime_kind"
     [ -n "$p_ejecucion" ] && start_agent_in_pane "$ejecucion_name" "$p_ejecucion" "" "$runtime_kind"
 
     echo ""
@@ -477,7 +521,12 @@ mount_runtime_rows() {
         [ -n "$pane" ] || continue
         herdr pane rename "$pane" "planner [$kind]" >/dev/null 2>&1 || true
         [ -n "${ejecuciones[$i]:-}" ] && herdr pane rename "${ejecuciones[$i]}" "ejecucion [$kind]" >/dev/null 2>&1 || true
-        start_agent_in_pane "$(agent_name_for_role planner "$label" "$kind")" "$pane" "$planner_agent" "$kind"
+        local runtime_planner_agent
+        runtime_planner_agent=$(planner_agent_for_runtime "$planner_agent" "$kind")
+        if [ "$planner_agent" != "mefisto-planner" ] && [ "$kind" = "opencode" ]; then
+            warn "El pane 'planner [opencode]' identifica el rol, pero el agente planner publicado aun no forma parte del corte tooling; OpenCode se inicia sin --agent."
+        fi
+        start_agent_in_pane "$(agent_name_for_role planner "$label" "$kind")" "$pane" "$runtime_planner_agent" "$kind"
         [ -n "${ejecuciones[$i]:-}" ] && start_agent_in_pane "$(agent_name_for_role ejecucion "$label" "$kind")" "${ejecuciones[$i]}" "" "$kind"
     done
 
@@ -514,24 +563,11 @@ main() {
         | head -1)
 
     if [ "$planner_agent" != "mefisto-planner" ]; then
-        # --- Rama consumidor: una fila Claude explicita (issue #1147) ---
-        # El aviso va ANTES de la rama de idempotencia (comportamiento de
-        # #875): un MEFISTO_RUNTIME ignorado hay que decirlo tambien al
-        # reenfocar un workspace ya montado, no solo al crearlo.
-        if [ -n "${MEFISTO_RUNTIME:-}" ] && [ "$MEFISTO_RUNTIME" != "claude" ]; then
-            warn "El plugin publicado aun no soporta OpenCode (MEFISTO_RUNTIME=$MEFISTO_RUNTIME); se usa 'claude'."
-        fi
-        if [ -n "$existing" ]; then
-            normalize_consumer_claude_row "$existing" "$label"
-            herdr workspace focus "$existing" >/dev/null 2>&1 || true
-            success "El workspace '$label' ya existe ($existing): enfocado, sin duplicar panes ni agentes."
-            exit 0
-        fi
-        mount_first_row "$repo_root" "$label" "$planner_agent"
-        return
+        diagnose_consumer_identity
     fi
 
-    # --- Rama Mefisto: una fila por runtime configurado (issue #958) ---
+    # Mefisto admite la configuracion local de runtimes; los consumidores
+    # reciben siempre Claude y OpenCode, definidos por runtimes_for_repo.
     local runtimes=() runtime_kind
     while IFS= read -r runtime_kind; do
         [ -n "$runtime_kind" ] && runtimes+=("$runtime_kind")
@@ -541,6 +577,10 @@ main() {
     if [ -z "$existing" ]; then
         mount_runtime_rows "$repo_root" "$label" "$planner_agent" "${runtimes[@]}"
         return
+    fi
+
+    if [ "$planner_agent" != "mefisto-planner" ]; then
+        normalize_consumer_claude_row "$existing" "$label"
     fi
 
     local ws="$existing"

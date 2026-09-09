@@ -58,8 +58,8 @@ export MEFISTO_RUNTIMES
 [ "$(runtimes_for_repo mefisto-planner)" = $'opencode\nclaude\ncodex' ] \
     && pass "MEFISTO_RUNTIMES recorta, descarta vacios y colapsa duplicados" \
     || fail "normalizacion inesperada: $(runtimes_for_repo mefisto-planner)"
-[ "$(runtimes_for_repo mefisto:planner)" = "claude" ] \
-    && pass "consumidor ignora ambas variables y usa claude" \
+[ "$(runtimes_for_repo mefisto:planner)" = $'claude\nopencode' ] \
+    && pass "consumidor ignora ambas variables y conserva Claude + OpenCode" \
     || fail "el consumidor leyo configuracion de runtimes"
 MEFISTO_RUNTIMES=''
 export MEFISTO_RUNTIMES
@@ -310,7 +310,7 @@ fi
 assert_no_anchor_protocol F-3
 
 echo ""
-echo "[H] Consumidor nuevo: fila Claude explicita y path con espacios"
+echo "[H] Consumidor nuevo: dos filas y path con espacios"
 export MEFISTO_RUNTIME=opencode
 export HERDR_STUB_EXPECT_CWD="$FAKE_CONSUMER"
 run_workspace "$FAKE_CONSUMER"
@@ -319,74 +319,54 @@ EXPECTED=$(cat <<EOF
 herdr status server
 herdr workspace list
 herdr workspace create --cwd $FAKE_CONSUMER --label fake consumer repo --env MEFISTO_RUNTIME=claude
+herdr pane split --pane w1:p1 --direction down --cwd $FAKE_CONSUMER --no-focus --env MEFISTO_RUNTIME=opencode
 herdr pane split --pane w1:p1 --direction right --cwd $FAKE_CONSUMER --no-focus --env MEFISTO_RUNTIME=claude
+herdr pane split --pane w1:p2 --direction right --cwd $FAKE_CONSUMER --no-focus --env MEFISTO_RUNTIME=opencode
 herdr pane rename w1:p1 planner [claude]
-herdr pane rename w1:p2 ejecucion [claude]
+herdr pane rename w1:p3 ejecucion [claude]
 herdr pane process-info --pane w1:p1
 herdr agent start planner-fake-consumer-r-claude --kind claude --pane w1:p1 --timeout 90000 -- --agent mefisto:planner
+herdr pane process-info --pane w1:p3
+herdr agent start ejecucion-fake-consumer-r-claude --kind claude --pane w1:p3 --timeout 90000
+herdr pane rename w1:p2 planner [opencode]
+herdr pane rename w1:p4 ejecucion [opencode]
 herdr pane process-info --pane w1:p2
-herdr agent start ejecucion-fake-consumer-r-claude --kind claude --pane w1:p2 --timeout 90000
+herdr agent start planner-fake-consumer-opencode --kind opencode --pane w1:p2 --timeout 90000
+herdr pane process-info --pane w1:p4
+herdr agent start ejecucion-fake-consumer-opencode --kind opencode --pane w1:p4 --timeout 90000
 EOF
 )
 [ "$LAST_RC" -eq 0 ] && [ "$(cat "$HERDR_STUB_LOG")" = "$EXPECTED" ] \
-    && pass "H-1: una fila Claude con labels, nombres, kind y env exactos" \
+    && pass "H-1: filas Claude/OpenCode con labels, nombres, kind y env exactos" \
     || fail "H-1: rama consumidor cambio. Esperado:\n$EXPECTED\nObtenido:\n$(cat "$HERDR_STUB_LOG")"
-printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q 'El plugin publicado aun no soporta OpenCode' \
-    && pass "H-2: mantiene el aviso de runtime ignorado" \
-    || fail "H-2: falta el aviso de runtime ignorado"
+printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q 'Diagnostico de identidad: metadata_missing' \
+    && printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q 'planner \[opencode\].*sin --agent' \
+    && pass "H-2: diagnostica identidad y declara la degradacion del planner OpenCode" \
+    || fail "H-2: falta diagnostico o degradacion visible: $LAST_STDOUT$LAST_STDERR"
 assert_no_anchor_protocol H-3
 
 echo ""
-echo "[I] Consumidor legacy completo: renombra in-place y luego enfoca"
+echo "[I] Consumidor normalizado con OpenCode faltante: agrega solo la fila nueva"
 export HERDR_STUB_EXISTING_LABEL='fake consumer repo'
-export HERDR_STUB_PANES='planner=w1:p1;ejecucion=w1:p2'
+export HERDR_STUB_PANES='planner [claude]=w1:p1;ejecucion [claude]=w1:p3'
 run_workspace "$FAKE_CONSUMER"
 unset HERDR_STUB_EXISTING_LABEL HERDR_STUB_PANES
-grep -qxF 'herdr pane rename w1:p1 planner [claude]' "$HERDR_STUB_LOG" \
-    && grep -qxF 'herdr pane rename w1:p2 ejecucion [claude]' "$HERDR_STUB_LOG" \
-    && grep -qxF 'herdr workspace focus w1' "$HERDR_STUB_LOG" \
-    && ! grep -qE 'pane split|agent start|pane close' "$HERDR_STUB_LOG" \
-    && pass "I-1: migra ambos labels sin split, cierre ni reinicio" \
-    || fail "I-1: migracion inesperada: $(cat "$HERDR_STUB_LOG")"
-printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q 'normalizado a la fila Claude explicita' \
-    && pass "I-2: reporta la transicion" \
-    || fail "I-2: falta el reporte de transicion"
+grep -qxF "herdr pane split --pane w1:p1 --direction down --cwd $FAKE_CONSUMER --no-focus --env MEFISTO_RUNTIME=opencode" "$HERDR_STUB_LOG" \
+    && grep -qxF 'herdr agent start planner-fake-consumer-opencode --kind opencode --pane w1:p2 --timeout 90000' "$HERDR_STUB_LOG" \
+    && pass "I-1: agrega OpenCode sin tocar Claude y sin --agent del planner" \
+    || fail "I-1: agregado inesperado: $(cat "$HERDR_STUB_LOG")"
 assert_no_anchor_protocol I-3
 
 echo ""
-echo "[J] Consumidor existente: parcial, ambiguo y normalizado convergen sin reconstruir"
+echo "[J] Consumidor legacy: normaliza Claude y agrega OpenCode; ambas filas convergen"
 export HERDR_STUB_EXISTING_LABEL='fake consumer repo'
 export HERDR_STUB_PANES='planner=w1:p1'
 run_workspace "$FAKE_CONSUMER"
-[ "$(grep -c '^herdr pane rename ' "$HERDR_STUB_LOG")" -eq 1 ] \
+grep -qxF 'herdr pane rename w1:p1 planner [claude]' "$HERDR_STUB_LOG" \
     && ! grep -qE 'pane split|agent start|pane close' "$HERDR_STUB_LOG" \
-    && pass "J-1: planner legacy parcial se preserva sin crear ejecucion" \
-    || fail "J-1: parcial destructivo: $(cat "$HERDR_STUB_LOG")"
-export HERDR_STUB_PANES='planner=w1:p1;planner [claude]=w1:p3;ejecucion=w1:p2'
-run_workspace "$FAKE_CONSUMER"
-! grep -qE 'pane rename|pane split|agent start|pane close' "$HERDR_STUB_LOG" \
-    && printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q 'duplicados o ambiguos' \
-    && pass "J-2: mezcla ambigua en un rol avisa y no toca panes" \
-    || fail "J-2: ambiguedad no conservadora: $(cat "$HERDR_STUB_LOG")"
-export HERDR_STUB_PANES='planner=w1:p1;planner=w1:p3;ejecucion=w1:p2'
-run_workspace "$FAKE_CONSUMER"
-! grep -qE 'pane rename|pane split|agent start|pane close' "$HERDR_STUB_LOG" \
-    && printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q 'duplicados o ambiguos' \
-    && pass "J-3: planner duplicado avisa y no elige un pane" \
-    || fail "J-3: duplicado no conservador: $(cat "$HERDR_STUB_LOG")"
-export HERDR_STUB_PANES='ejecucion=w1:p2'
-run_workspace "$FAKE_CONSUMER"
-! grep -qE 'pane rename|pane split|agent start|pane close' "$HERDR_STUB_LOG" \
-    && printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q "no contiene 'planner'" \
-    && pass "J-4: workspace sin planner avisa y conserva el layout" \
-    || fail "J-4: ausencia de planner no conservadora: $(cat "$HERDR_STUB_LOG")"
-export HERDR_STUB_PANES='planner [claude]=w1:p1;ejecucion=w1:p2'
-run_workspace "$FAKE_CONSUMER"
-grep -qxF 'herdr pane rename w1:p2 ejecucion [claude]' "$HERDR_STUB_LOG" \
-    && ! grep -qE 'pane split|agent start|pane close' "$HERDR_STUB_LOG" \
-    && pass "J-5: un segundo intento completa el label de ejecucion pendiente" \
-    || fail "J-5: migracion parcial no reintentable: $(cat "$HERDR_STUB_LOG")"
-export HERDR_STUB_PANES='planner [claude]=w1:p1;ejecucion [claude]=w1:p2'
+    && pass "J-1: normaliza el planner legacy sin reconstruir el layout" \
+    || fail "J-1: transicion legacy inesperada: $(cat "$HERDR_STUB_LOG")"
+export HERDR_STUB_PANES='planner [claude]=w1:p1;ejecucion [claude]=w1:p2;planner [opencode]=w1:p3;ejecucion [opencode]=w1:p4'
 run_workspace "$FAKE_CONSUMER"
 FIRST_LOG=$(cat "$HERDR_STUB_LOG")
 run_workspace "$FAKE_CONSUMER"
@@ -395,8 +375,8 @@ unset HERDR_STUB_EXISTING_LABEL HERDR_STUB_PANES
 [ "$SECOND_LOG" = "$FIRST_LOG" ] \
     && grep -qxF 'herdr workspace focus w1' <<< "$SECOND_LOG" \
     && ! grep -qE 'pane rename|pane split|agent start|pane close' <<< "$SECOND_LOG" \
-    && pass "J-6: dos ejecuciones normalizadas solo enfocan byte a byte" \
-    || fail "J-6: normalizado no converge: $SECOND_LOG"
+    && pass "J-2: dos filas presentes solo enfocan byte a byte" \
+    || fail "J-2: normalizado no converge: $SECOND_LOG"
 
 echo ""
 echo "[Z] Protocolo retirado del script"
