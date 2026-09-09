@@ -1,0 +1,2 @@
+{"type":"assistant","timestamp":"2026-09-08T10:00:00Z","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"SECRETO-no-mostrar"}}]}}
+{"type":"result","is_error":false,"duration_ms":1000,"num_turns":1}
