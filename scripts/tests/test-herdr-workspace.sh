@@ -4,6 +4,10 @@
 
 set -uo pipefail
 
+# La suite compara argv literal: no debe heredar configuracion del checkout que
+# la ejecuta.
+unset MEFISTO_MODELS_FILE
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TARGET="$REPO_ROOT/scripts/herdr-workspace.sh"
@@ -65,7 +69,7 @@ export MEFISTO_RUNTIMES
 unset MEFISTO_RUNTIMES MEFISTO_RUNTIME
 
 FAKE_MEFISTO="$TMP/fake-mefisto-repo"
-FAKE_CONSUMER="$TMP/fake-consumer-repo"
+FAKE_CONSUMER="$TMP/fake consumer repo"
 FAKE_BIN="$TMP/bin"
 mkdir -p "$FAKE_MEFISTO/.claude-plugin" "$FAKE_CONSUMER/.claude" "$FAKE_BIN"
 printf '{}\n' > "$FAKE_MEFISTO/.claude-plugin/plugin.json"
@@ -283,25 +287,25 @@ fi
 assert_no_anchor_protocol F-3
 
 echo ""
-echo "[H] Consumidor: comportamiento previo byte a byte"
+echo "[H] Consumidor nuevo: fila Claude explicita y path con espacios"
 export MEFISTO_RUNTIME=opencode
 run_workspace "$FAKE_CONSUMER"
 unset MEFISTO_RUNTIME
 EXPECTED=$(cat <<EOF
 herdr status server
 herdr workspace list
-herdr workspace create --cwd $FAKE_CONSUMER --label fake-consumer-repo
-herdr pane split --pane w1:p1 --direction right --cwd $FAKE_CONSUMER --no-focus
-herdr pane rename w1:p1 planner
-herdr pane rename w1:p2 ejecucion
+herdr workspace create --cwd $FAKE_CONSUMER --label fake consumer repo --env MEFISTO_RUNTIME=claude
+herdr pane split --pane w1:p1 --direction right --cwd $FAKE_CONSUMER --no-focus --env MEFISTO_RUNTIME=claude
+herdr pane rename w1:p1 planner [claude]
+herdr pane rename w1:p2 ejecucion [claude]
 herdr pane process-info --pane w1:p1
-herdr agent start planner-fake-consumer-repo --kind claude --pane w1:p1 --timeout 90000 -- --agent mefisto:planner
+herdr agent start planner-fake-consumer-r-claude --kind claude --pane w1:p1 --timeout 90000 -- --agent mefisto:planner
 herdr pane process-info --pane w1:p2
-herdr agent start ejecucion-fake-consumer-repo --kind claude --pane w1:p2 --timeout 90000
+herdr agent start ejecucion-fake-consumer-r-claude --kind claude --pane w1:p2 --timeout 90000
 EOF
 )
 [ "$(cat "$HERDR_STUB_LOG")" = "$EXPECTED" ] \
-    && pass "H-1: una fila, labels sin sufijo y ningun --env" \
+    && pass "H-1: una fila Claude con labels, nombres, kind y env exactos" \
     || fail "H-1: rama consumidor cambio. Esperado:\n$EXPECTED\nObtenido:\n$(cat "$HERDR_STUB_LOG")"
 printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q 'El plugin publicado aun no soporta OpenCode' \
     && pass "H-2: mantiene el aviso de runtime ignorado" \
@@ -309,19 +313,48 @@ printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q 'El plugin publicado a
 assert_no_anchor_protocol H-3
 
 echo ""
-echo "[I] Consumidor existente: focus y aviso"
-export HERDR_STUB_EXISTING_LABEL=fake-consumer-repo
-export MEFISTO_RUNTIME=opencode
+echo "[I] Consumidor legacy completo: renombra in-place y luego enfoca"
+export HERDR_STUB_EXISTING_LABEL='fake consumer repo'
+export HERDR_STUB_PANES='planner=w1:p1;ejecucion=w1:p2'
 run_workspace "$FAKE_CONSUMER"
-unset HERDR_STUB_EXISTING_LABEL MEFISTO_RUNTIME
-grep -qxF 'herdr workspace focus w1' "$HERDR_STUB_LOG" \
-    && ! grep -qE 'pane split|agent start' "$HERDR_STUB_LOG" \
-    && pass "I-1: solo enfoca, sin duplicar panes ni agentes" \
-    || fail "I-1: reapertura inesperada: $(cat "$HERDR_STUB_LOG")"
-printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q 'El plugin publicado aun no soporta OpenCode' \
-    && pass "I-2: avisa tambien al reenfocar" \
-    || fail "I-2: falta el aviso al reenfocar"
+unset HERDR_STUB_EXISTING_LABEL HERDR_STUB_PANES
+grep -qxF 'herdr pane rename w1:p1 planner [claude]' "$HERDR_STUB_LOG" \
+    && grep -qxF 'herdr pane rename w1:p2 ejecucion [claude]' "$HERDR_STUB_LOG" \
+    && grep -qxF 'herdr workspace focus w1' "$HERDR_STUB_LOG" \
+    && ! grep -qE 'pane split|agent start|pane close' "$HERDR_STUB_LOG" \
+    && pass "I-1: migra ambos labels sin split, cierre ni reinicio" \
+    || fail "I-1: migracion inesperada: $(cat "$HERDR_STUB_LOG")"
+printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q 'normalizado a la fila Claude explicita' \
+    && pass "I-2: reporta la transicion" \
+    || fail "I-2: falta el reporte de transicion"
 assert_no_anchor_protocol I-3
+
+echo ""
+echo "[J] Consumidor existente: parcial, ambiguo y normalizado convergen sin reconstruir"
+export HERDR_STUB_EXISTING_LABEL='fake consumer repo'
+export HERDR_STUB_PANES='planner=w1:p1'
+run_workspace "$FAKE_CONSUMER"
+[ "$(grep -c '^herdr pane rename ' "$HERDR_STUB_LOG")" -eq 1 ] \
+    && ! grep -qE 'pane split|agent start|pane close' "$HERDR_STUB_LOG" \
+    && pass "J-1: planner legacy parcial se preserva sin crear ejecucion" \
+    || fail "J-1: parcial destructivo: $(cat "$HERDR_STUB_LOG")"
+export HERDR_STUB_PANES='planner=w1:p1;planner [claude]=w1:p3;ejecucion=w1:p2'
+run_workspace "$FAKE_CONSUMER"
+! grep -qE 'pane rename|pane split|agent start|pane close' "$HERDR_STUB_LOG" \
+    && printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q 'duplicados o ambiguos' \
+    && pass "J-2: mezcla ambigua avisa y no toca panes" \
+    || fail "J-2: ambiguedad no conservadora: $(cat "$HERDR_STUB_LOG")"
+export HERDR_STUB_PANES='planner [claude]=w1:p1;ejecucion [claude]=w1:p2'
+run_workspace "$FAKE_CONSUMER"
+FIRST_LOG=$(cat "$HERDR_STUB_LOG")
+run_workspace "$FAKE_CONSUMER"
+SECOND_LOG=$(cat "$HERDR_STUB_LOG")
+unset HERDR_STUB_EXISTING_LABEL HERDR_STUB_PANES
+[ "$SECOND_LOG" = "$FIRST_LOG" ] \
+    && grep -qxF 'herdr workspace focus w1' <<< "$SECOND_LOG" \
+    && ! grep -qE 'pane rename|pane split|agent start|pane close' <<< "$SECOND_LOG" \
+    && pass "J-3: dos ejecuciones normalizadas solo enfocan byte a byte" \
+    || fail "J-3: normalizado no converge: $SECOND_LOG"
 
 echo ""
 echo "[Z] Protocolo retirado del script"

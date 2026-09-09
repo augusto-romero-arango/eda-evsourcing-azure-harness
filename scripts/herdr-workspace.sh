@@ -25,7 +25,10 @@
 # cualquier `right` y recorren la lista al reves: herdr inserta cada pane
 # inmediatamente debajo de la raiz. Con tres o mas filas, las inferiores
 # pueden quedar anidadas por la geometria de herdr; es un limite conocido y
-# aceptado. En consumidores se conserva una fila sin variables de runtime.
+# aceptado. En consumidores se monta la unica fila explicita `claude`: sus
+# labels son `planner [claude]`/`ejecucion [claude]`, sus agentes llevan el
+# sufijo y los panes heredan MEFISTO_RUNTIME=claude. Los workspaces consumidores
+# legacy se migran in-place por label, sin tocar agentes ni geometria.
 #
 # Los panes de cada fila de Mefisto arrancan con `--kind <kind>` y llevan
 # SIEMPRE `--env MEFISTO_RUNTIME=<kind>` (tambien para los defaults, porque el
@@ -37,8 +40,8 @@
 # credenciales, ni lee opencode.json o un auth store.
 #
 # Los agentes se lanzan con `herdr agent start` bajo nombres unicos por
-# workspace: planner-<slug>, ejecucion-<slug> en un consumidor; en el propio
-# repo de Mefisto, planner-<slug>-<kind>, ejecucion-<slug>-<kind> -- el
+# workspace: planner-<slug>-claude, ejecucion-<slug>-claude en un consumidor;
+# en el propio repo de Mefisto, planner-<slug>-<kind>, ejecucion-<slug>-<kind> -- el
 # sufijo es SIEMPRE el runtime activo de esa fila (issue #930: tambien con
 # kind="claude"), para que dos filas no choquen de nombre y el sidebar de
 # herdr muestre de un vistazo que runtime corre cada agente. Si un
@@ -182,6 +185,23 @@ pane_label_lookup() {
         | head -1 || true
 }
 
+# pane_label_ids <workspace_id> <label>
+#
+# Imprime todos los panes con el label exacto. La transicion del consumidor no
+# adivina cual renombrar ante duplicados: el label es su unica autoridad.
+pane_label_ids() {
+    local ws="$1" label="$2"
+    herdr pane list --workspace "$ws" 2>/dev/null \
+        | jq -r --arg l "$label" '.result.panes[]? | select(.label == $l) | .pane_id' 2>/dev/null \
+        || true
+}
+
+pane_count() {
+    local ids="$1"
+    [ -z "$ids" ] && { echo 0; return; }
+    printf '%s\n' "$ids" | wc -l | tr -d '[:space:]'
+}
+
 # last_runtime_planner_lookup <workspace_id>
 #
 # Imprime el ultimo planner de runtime listado por herdr. Es el fallback para
@@ -280,31 +300,32 @@ start_agent_in_pane() {
 
 # mount_first_row <repo_root> <label> <planner_agent>
 #
-# Monta la unica fila de un consumidor, con el contrato previo intacto.
+# Monta la unica fila Claude explicita de un consumidor.
 mount_first_row() {
     local repo_root="$1" label="$2" planner_agent="$3"
+    local env_args=(--env "MEFISTO_RUNTIME=claude")
 
     log "Creando el workspace '$label' para $repo_root ..."
     local resp ws p1
-    resp=$(herdr workspace create --cwd "$repo_root" --label "$label" 2>&1) \
+    resp=$(herdr workspace create --cwd "$repo_root" --label "$label" "${env_args[@]}" 2>&1) \
         || abort "No se pudo crear el workspace: $resp"
     ws=$(echo "$resp" | jq -r '.result.workspace.workspace_id // empty')
     p1=$(echo "$resp" | jq -r '.result.root_pane.pane_id // empty')
     [ -n "$ws" ] && [ -n "$p1" ] || abort "herdr workspace create no devolvio ids. Respuesta: $resp"
 
     local p2=""
-    resp=$(herdr pane split --pane "$p1" --direction right --cwd "$repo_root" --no-focus 2>&1) \
+    resp=$(herdr pane split --pane "$p1" --direction right --cwd "$repo_root" --no-focus "${env_args[@]}" 2>&1) \
         && p2=$(echo "$resp" | jq -r '.result.pane.pane_id // empty')
     if [ -z "$p2" ]; then
         warn "No se pudo crear el pane de ejecucion (split fallo): el workspace queda con el pane del planner."
     fi
 
-    herdr pane rename "$p1" "planner" >/dev/null 2>&1 || true
-    [ -n "$p2" ] && herdr pane rename "$p2" "ejecucion" >/dev/null 2>&1 || true
+    herdr pane rename "$p1" "planner [claude]" >/dev/null 2>&1 || true
+    [ -n "$p2" ] && herdr pane rename "$p2" "ejecucion [claude]" >/dev/null 2>&1 || true
 
     local planner_name ejecucion_name
-    planner_name=$(agent_name_for_role "planner" "$label" "")
-    ejecucion_name=$(agent_name_for_role "ejecucion" "$label" "")
+    planner_name=$(agent_name_for_role "planner" "$label" "claude")
+    ejecucion_name=$(agent_name_for_role "ejecucion" "$label" "claude")
 
     start_agent_in_pane "$planner_name" "$p1" "$planner_agent" "claude"
     [ -n "$p2" ] && start_agent_in_pane "$ejecucion_name" "$p2" "" "claude"
@@ -313,6 +334,38 @@ mount_first_row() {
     success "Workspace '$label' listo ($ws): planner ($p1) + ejecucion (${p2:-no creado})."
     log "Desde el pane de ejecucion despacha issues con /implement, /tooling, /infra o /sequential:"
     log "dentro de herdr cada corrida abre su pane con el visor en vivo (issue #690)."
+}
+
+# normalize_consumer_claude_row <workspace_id> <label>
+#
+# Renombra la fila legacy detectable sin reconstruirla. Cualquier duplicado, o
+# mezcla legacy/canonica, es ambiguo y se conserva para diagnostico humano.
+normalize_consumer_claude_row() {
+    local ws="$1" label="$2"
+    local legacy_planner canonical_planner legacy_execution canonical_execution
+    legacy_planner=$(pane_label_ids "$ws" "planner")
+    canonical_planner=$(pane_label_ids "$ws" "planner [claude]")
+    legacy_execution=$(pane_label_ids "$ws" "ejecucion")
+    canonical_execution=$(pane_label_ids "$ws" "ejecucion [claude]")
+    local lp cp le ce
+    lp=$(pane_count "$legacy_planner"); cp=$(pane_count "$canonical_planner")
+    le=$(pane_count "$legacy_execution"); ce=$(pane_count "$canonical_execution")
+
+    if [ "$lp" -gt 1 ] || [ "$cp" -gt 1 ] || [ "$le" -gt 1 ] || [ "$ce" -gt 1 ] \
+        || { [ "$lp" -gt 0 ] && [ "$cp" -gt 0 ]; } \
+        || { [ "$le" -gt 0 ] && [ "$ce" -gt 0 ]; }; then
+        warn "El workspace '$label' ($ws) tiene labels Claude duplicados o ambiguos; revisa los panes 'planner'/'planner [claude]' y 'ejecucion'/'ejecucion [claude]' manualmente. Se enfoco sin modificar el layout."
+        return
+    fi
+    if [ "$lp" -eq 0 ] && [ "$cp" -eq 0 ]; then
+        warn "El workspace '$label' ($ws) no contiene 'planner' ni 'planner [claude]'; se enfoco sin reconstruir panes. Renombra el planner correcto a 'planner [claude]' para normalizarlo."
+        return
+    fi
+    if [ "$lp" -eq 1 ]; then
+        herdr pane rename "$legacy_planner" "planner [claude]" >/dev/null 2>&1 || true
+        [ "$le" -eq 1 ] && herdr pane rename "$legacy_execution" "ejecucion [claude]" >/dev/null 2>&1 || true
+        success "Workspace '$label' ($ws) normalizado a la fila Claude explicita; no se reiniciaron agentes ni se modifico el cwd."
+    fi
 }
 
 # mount_runtime_row <repo_root> <base_pane> <label> <planner_agent> <kind>
@@ -441,7 +494,7 @@ main() {
         | head -1)
 
     if [ "$planner_agent" != "mefisto-planner" ]; then
-        # --- Rama consumidor: layout de hoy, sin cambios (issue #931 CA-5) ---
+        # --- Rama consumidor: una fila Claude explicita (issue #1147) ---
         # El aviso va ANTES de la rama de idempotencia (comportamiento de
         # #875): un MEFISTO_RUNTIME ignorado hay que decirlo tambien al
         # reenfocar un workspace ya montado, no solo al crearlo.
@@ -449,6 +502,7 @@ main() {
             warn "El plugin publicado aun no soporta OpenCode (MEFISTO_RUNTIME=$MEFISTO_RUNTIME); se usa 'claude'."
         fi
         if [ -n "$existing" ]; then
+            normalize_consumer_claude_row "$existing" "$label"
             herdr workspace focus "$existing" >/dev/null 2>&1 || true
             success "El workspace '$label' ya existe ($existing): enfocado, sin duplicar panes ni agentes."
             exit 0
