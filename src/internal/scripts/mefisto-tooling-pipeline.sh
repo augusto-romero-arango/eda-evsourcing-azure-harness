@@ -44,9 +44,10 @@ source "$RUNTIME_LIB_DIR/mefisto-runtime.sh"
 source "$RUNTIME_LIB_DIR/mefisto-models.sh"
 
 # Version y SHA del propio plugin que corre esta corrida (issue #662),
-# calculados UNA sola vez aqui -- ANTES de crear el worktree del issue, sobre
-# el repo principal (get_harness_sha opera sobre el cwd). El trap de aborto
-# solo interpola las variables ya resueltas, nunca recalcula.
+# calculados UNA sola vez aqui -- ANTES de crear el worktree del issue. En una
+# corrida batch, el cwd es la raiz ejecutable aislada y por eso el SHA identifica
+# exactamente la maquinaria del eslabon, no el HEAD mutable del launcher. El
+# trap de aborto solo interpola las variables ya resueltas, nunca recalcula.
 HARNESS_VERSION="$(get_harness_version)"
 HARNESS_VERSION_JSON="null"
 [ -n "$HARNESS_VERSION" ] && HARNESS_VERSION_JSON="\"$HARNESS_VERSION\""
@@ -443,7 +444,7 @@ echo "$ISSUE_CONTEXT" > "$PIPELINE_DIR/mefisto-tooling-input.md"
 header "Preparando worktree"
 
 REPO_ROOT="${MEFISTO_LAUNCH_ROOT:-$MEFISTO_REPO_ROOT}"
-CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+CURRENT_BRANCH=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)
 
 SLUG=$(echo "$ISSUE_TITLE" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | sed 's/[^a-z0-9-]//g' | tr -s '-' | cut -c1-40 | sed 's/-$//')
 BRANCH_NAME="worktree-mefisto-issue-${ISSUE_NUM}-${SLUG}"
@@ -465,20 +466,20 @@ else
     fi
 
     log "Actualizando origin/main..."
-    git fetch origin main >>"$LOG_FILE" 2>&1 || abort "No se pudo hacer fetch de origin/main"
+    git -C "$REPO_ROOT" fetch origin main >>"$LOG_FILE" 2>&1 || abort "No se pudo hacer fetch de origin/main"
 
     if [ -d "$WORKTREE_PATH" ]; then
         warn "El worktree ya existe: $WORKTREE_PATH -- limpiando para reiniciar..."
-        git worktree remove --force "$WORKTREE_PATH" >>"$LOG_FILE" 2>&1 || true
-        git branch -D "$BRANCH_NAME" >>"$LOG_FILE" 2>&1 || true
+        git -C "$REPO_ROOT" worktree remove --force "$WORKTREE_PATH" >>"$LOG_FILE" 2>&1 || true
+        git -C "$REPO_ROOT" branch -D "$BRANCH_NAME" >>"$LOG_FILE" 2>&1 || true
     fi
-    if git show-ref --verify --quiet "refs/heads/$BRANCH_NAME" 2>/dev/null; then
+    if git -C "$REPO_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH_NAME" 2>/dev/null; then
         warn "La rama $BRANCH_NAME ya existe sin worktree -- eliminandola..."
-        git branch -D "$BRANCH_NAME" >>"$LOG_FILE" 2>&1 || true
+        git -C "$REPO_ROOT" branch -D "$BRANCH_NAME" >>"$LOG_FILE" 2>&1 || true
     fi
 
     log "Creando worktree: $WORKTREE_PATH (base: origin/main)"
-    git worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME" origin/main >>"$LOG_FILE" 2>&1 \
+    git -C "$REPO_ROOT" worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME" origin/main >>"$LOG_FILE" 2>&1 \
         || abort "No se pudo crear el worktree desde origin/main"
 
     success "Worktree creado: $WORKTREE_PATH"
@@ -1409,7 +1410,7 @@ header "Cleanup"
 log "Eliminando worktree..."
 cd "$REPO_ROOT"
 git -C "$WORKTREE_PATH" checkout -- .claude/ 2>/dev/null || true
-git worktree remove --force "$WORKTREE_PATH" >>"$LOG_FILE" 2>&1 \
+git -C "$REPO_ROOT" worktree remove --force "$WORKTREE_PATH" >>"$LOG_FILE" 2>&1 \
     || warn "No se pudo eliminar el worktree. Eliminalo manualmente: git worktree remove --force $WORKTREE_PATH"
 
 WORKTREE_PATH=""

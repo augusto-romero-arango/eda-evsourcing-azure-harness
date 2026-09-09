@@ -638,9 +638,16 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
     # MEFISTO_STATE_DIR ya apunta al checkout lanzador y se hereda. La raiz de
     # implementacion y el mapping local tambien viajan explicitamente para que
     # el snapshot no cree estado/configuracion paralelos propios.
-    MEFISTO_LAUNCH_ROOT="$REPO_ROOT" \
-        MEFISTO_MODELS_FILE="${MEFISTO_MODELS_FILE:-$REPO_ROOT/.mefisto/models.json}" \
-        "$PIPELINE_SCRIPT" "$ISSUE_NUM" 2>&1 | tee "$ISSUE_LOG" || PIPELINE_EXIT=$?
+    # El cwd tambien se fija al snapshot. Esto hace que assert_in_mefisto y
+    # get_harness_sha atribuyan la corrida al mismo commit que aporta el
+    # ejecutable; MEFISTO_LAUNCH_ROOT es la unica raiz para las operaciones
+    # deliberadas sobre el checkout lanzador.
+    (
+        cd "$EXECUTION_ROOT"
+        MEFISTO_LAUNCH_ROOT="$REPO_ROOT" \
+            MEFISTO_MODELS_FILE="${MEFISTO_MODELS_FILE:-$REPO_ROOT/.mefisto/models.json}" \
+            "$PIPELINE_SCRIPT" "$ISSUE_NUM"
+    ) 2>&1 | tee "$ISSUE_LOG" || PIPELINE_EXIT=$?
 
     # Agregar el log del issue al log general (sin codigos ANSI)
     _strip_ansi < "$ISSUE_LOG" >> "$LOG_FILE_ABS"

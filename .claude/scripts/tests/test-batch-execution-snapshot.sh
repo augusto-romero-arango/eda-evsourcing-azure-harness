@@ -2,9 +2,9 @@
 # test-batch-execution-snapshot.sh -- Regresion de la carrera #1075 (issue #1107).
 #
 # Ejecuta dos eslabones sin proveedor. Durante el primero, el stub cambia el
-# checkout lanzador a otra rama; writer/reviewer (representados por el mismo
-# tooling falso) deben seguir leyendo v1 desde su snapshot detached. El merge
-# falso publica v2 en origin/main y el segundo eslabon debe arrancar desde v2.
+# checkout lanzador a otra rama que reemplaza el helper de stage; writer y
+# reviewer deben seguir ejecutando v1 desde el mismo snapshot detached. El
+# merge falso publica v2 en origin/main y el segundo eslabon debe usar v2.
 
 set -uo pipefail
 
@@ -32,32 +32,45 @@ git clone -q "$BARE" "$ROOT"
 git -C "$ROOT" config user.email test@mefisto.local
 git -C "$ROOT" config user.name 'Mefisto Test'
 git -C "$ROOT" checkout -q -b main
-mkdir -p "$ROOT/.claude-plugin" "$ROOT/src/internal/scripts/lib" "$BIN"
+mkdir -p "$ROOT/.claude-plugin" "$ROOT/src/internal/scripts/lib" "$ROOT/src/internal/scripts/stages" "$BIN"
 printf '{"name":"mefisto","version":"0.0.0"}\n' > "$ROOT/.claude-plugin/plugin.json"
 cp "$BATCH" "$ROOT/src/internal/scripts/mefisto-batch-pipeline.sh"
 cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$ROOT/src/internal/scripts/lib/"
 cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$ROOT/src/internal/scripts/lib/"
 cp -R "$REPO_ROOT/src/runtime" "$ROOT/src/"
 printf 'v1\n' > "$ROOT/marker.txt"
+cat > "$ROOT/src/internal/scripts/stages/fake-stage.sh" <<'EOF'
+#!/usr/bin/env bash
+set -eu
+printf '%s|%s|v1|%s|%s\n' "$ISSUE" "$1" "$(git -C "$(dirname "$0")" rev-parse --show-toplevel)" "$MEFISTO_LAUNCH_ROOT" >> "$CALLS"
+EOF
 cat > "$ROOT/src/internal/scripts/mefisto-tooling-pipeline.sh" <<'EOF'
 #!/usr/bin/env bash
 set -eu
-version=v1
-printf '%s|%s|%s\n' "$1" "$version" "$MEFISTO_LAUNCH_ROOT" >> "$CALLS"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ISSUE="$1" "$SCRIPT_DIR/stages/fake-stage.sh" writer
 if [ "$1" = 1 ]; then
     git -C "$MEFISTO_LAUNCH_ROOT" switch -q docs/concurrent
-    [ "$version" = v1 ] || exit 91
+    printf 'modificado\n' >> "$MEFISTO_LAUNCH_ROOT/marker.txt"
+    printf 'staged\n' > "$MEFISTO_LAUNCH_ROOT/staged.txt"
+    git -C "$MEFISTO_LAUNCH_ROOT" add staged.txt
+    printf 'untracked\n' > "$MEFISTO_LAUNCH_ROOT/untracked.txt"
 fi
+ISSUE="$1" "$SCRIPT_DIR/stages/fake-stage.sh" reviewer
 echo "v PR creado: https://github.com/acme/mefisto/pull/$1"
 EOF
 chmod +x "$ROOT/src/internal/scripts/mefisto-batch-pipeline.sh"
 chmod +x "$ROOT/src/internal/scripts/mefisto-tooling-pipeline.sh"
+chmod +x "$ROOT/src/internal/scripts/stages/fake-stage.sh"
 git -C "$ROOT" add .
 git -C "$ROOT" commit -q -m base
 git -C "$ROOT" push -q origin main
 git -C "$ROOT" switch -q -c docs/concurrent
 printf 'mutable\n' > "$ROOT/marker.txt"
-git -C "$ROOT" add marker.txt && git -C "$ROOT" commit -q -m 'checkout mutable'
+sed 's/|v1|/|mutable|/' "$ROOT/src/internal/scripts/stages/fake-stage.sh" > "$ROOT/.stage.new"
+mv "$ROOT/.stage.new" "$ROOT/src/internal/scripts/stages/fake-stage.sh"
+chmod +x "$ROOT/src/internal/scripts/stages/fake-stage.sh"
+git -C "$ROOT" add marker.txt src/internal/scripts/stages/fake-stage.sh && git -C "$ROOT" commit -q -m 'checkout mutable'
 git -C "$ROOT" switch -q main
 git clone -q "$BARE" "$PUBLISHER"
 git -C "$PUBLISHER" config user.email test@mefisto.local
@@ -75,10 +88,10 @@ if [ "$1" = pr ] && [ "$2" = merge ]; then
     git -C "$PUBLISHER" pull -q --ff-only origin main
     if [ "$3" = 1 ]; then
         printf 'v2\n' > "$PUBLISHER/marker.txt"
-        sed 's/version=v1/version=v2/' "$PUBLISHER/src/internal/scripts/mefisto-tooling-pipeline.sh" > "$PUBLISHER/.pipeline.new"
-        mv "$PUBLISHER/.pipeline.new" "$PUBLISHER/src/internal/scripts/mefisto-tooling-pipeline.sh"
-        chmod +x "$PUBLISHER/src/internal/scripts/mefisto-tooling-pipeline.sh"
-        git -C "$PUBLISHER" add marker.txt src/internal/scripts/mefisto-tooling-pipeline.sh
+        sed 's/|v1|/|v2|/' "$PUBLISHER/src/internal/scripts/stages/fake-stage.sh" > "$PUBLISHER/.stage.new"
+        mv "$PUBLISHER/.stage.new" "$PUBLISHER/src/internal/scripts/stages/fake-stage.sh"
+        chmod +x "$PUBLISHER/src/internal/scripts/stages/fake-stage.sh"
+        git -C "$PUBLISHER" add marker.txt src/internal/scripts/stages/fake-stage.sh
         git -C "$PUBLISHER" commit -q -m snapshot-v2
     else
         git -C "$PUBLISHER" commit -q --allow-empty -m next-merge
@@ -101,9 +114,11 @@ chmod +x "$BIN/claude" "$BIN/gh"
 RC=$?
 
 if [ "$RC" -eq 0 ]; then pass "el batch completo sin proveedor termino en exito"; else fail "el batch termino con $RC: stdout=$(cat "$TMP/out") stderr=$(cat "$TMP/err")"; fi
-if grep -q '^1|v1|' "$CALLS"; then pass "el primer eslabon uso v1 y la raiz lanzadora explicita"; else fail "el primer eslabon no uso v1: $(cat "$CALLS")"; fi
-if grep -q '^2|v2|' "$CALLS"; then pass "el segundo eslabon uso el nuevo commit de origin/main"; else fail "el segundo eslabon no uso v2: $(cat "$CALLS")"; fi
+if [ "$(grep -c '^1|.*|v1|' "$CALLS")" -eq 2 ] && grep -q '^1|writer|v1|' "$CALLS" && grep -q '^1|reviewer|v1|' "$CALLS"; then pass "writer y reviewer del primer eslabon usaron el mismo helper v1"; else fail "el primer eslabon cambio de maquinaria: $(cat "$CALLS")"; fi
+if [ "$(grep -c '^2|.*|v2|' "$CALLS")" -eq 2 ] && grep -q '^2|writer|v2|' "$CALLS" && grep -q '^2|reviewer|v2|' "$CALLS"; then pass "el segundo eslabon completo con el helper v2 de origin/main"; else fail "el segundo eslabon no uso v2: $(cat "$CALLS")"; fi
+if ! grep -q "|$ROOT|$ROOT$" "$CALLS"; then pass "ningun stage resolvio su ejecutable desde el checkout lanzador"; else fail "un stage uso el checkout lanzador: $(cat "$CALLS")"; fi
 if [ "$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)" = docs/concurrent ]; then pass "la mutacion concurrente de HEAD del checkout principal se preservo"; else fail "el batch modifico HEAD del checkout principal"; fi
+if grep -q '^modificado$' "$ROOT/marker.txt" && ! git -C "$ROOT" diff --cached --quiet --exit-code -- staged.txt >/dev/null 2>&1 && [ -f "$ROOT/untracked.txt" ]; then pass "cambios modificados, staged y untracked del launcher sobrevivieron"; else fail "el batch descarto cambios locales del launcher"; fi
 if ! git -C "$ROOT" worktree list | grep -q 'mefisto-batch-execution-'; then pass "la raiz aislada se limpio al cerrar"; else fail "quedo una raiz aislada registrada"; fi
 
 echo "Resumen: $PASS pass, $FAIL fail"

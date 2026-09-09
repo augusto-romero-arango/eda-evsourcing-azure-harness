@@ -182,9 +182,11 @@ get_harness_version() {
 
 # get_harness_sha
 #
-# Imprime por stdout el SHA corto (`git rev-parse --short HEAD`) del repo
-# PRINCIPAL de Mefisto (issue #662) -- exclusivo del lado interno, sin
-# homologo publicado. Complementa a get_harness_version: en el repo de
+# Imprime por stdout el SHA corto (`git rev-parse --short HEAD`) de la raiz
+# ejecutable de Mefisto (issue #662/#1107) -- exclusivo del lado interno, sin
+# homologo publicado. En una corrida individual esa raiz es el checkout
+# principal; en un batch es el snapshot aislado del eslabon. Complementa a
+# get_harness_version: en el repo de
 # Mefisto '.version' solo cambia en /mefisto-release, y entre release y
 # release entran decenas de PRs -- justo lo que el plan de velocidad interno
 # (#645-#648) necesita comparar entre si. El SHA es lo que distingue esas
@@ -192,9 +194,8 @@ get_harness_version() {
 #
 # Opera sobre el cwd del proceso que la invoca: el caller (el prologo de
 # mefisto-tooling-pipeline.sh) debe llamarla ANTES de crear el worktree del
-# issue, cuando el cwd todavia es el checkout principal -- los scripts que
-# ejecutan la corrida son los del checkout principal, no los del worktree (que
-# arranca desde origin/main y puede estar en otro SHA).
+# issue y desde la misma raiz que aporta sus scripts. Esa raiz nunca es el
+# worktree de implementacion del issue.
 #
 # Degrada a cadena vacia -- sin abortar, exit 0 siempre -- si 'git' no esta
 # en PATH o si el cwd no es un repositorio git.

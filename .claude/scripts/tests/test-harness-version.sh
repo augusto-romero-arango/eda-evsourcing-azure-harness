@@ -5,7 +5,7 @@
 # Contexto: el pipeline interno tenia el mismo gap que los publicados (issue
 # #660) -- pipeline-history.jsonl no registraba con que version del harness
 # corrio. En el repo de Mefisto ademas de "harness_version" (que solo cambia
-# en /mefisto-release) hace falta "harness_sha" (HEAD del repo principal al
+# en /mefisto-release) hace falta "harness_sha" (HEAD de la raiz ejecutable al
 # arrancar): entre release y release entran decenas de PRs, y es justo lo que
 # el plan de velocidad interno (#645-#648) quiere comparar entre si. Este
 # issue agrega:
@@ -16,7 +16,7 @@
 #     vacia sin abortar, siempre retornan 0.
 #   - HARNESS_VERSION/HARNESS_VERSION_JSON y HARNESS_SHA/HARNESS_SHA_JSON
 #     calculados UNA vez en el prologo de mefisto-tooling-pipeline.sh (antes
-#     de crear el worktree, sobre el repo principal), interpolados como
+#     de crear el worktree, sobre la raiz ejecutable), interpolados como
 #     "harness_version"/"harness_sha" en las 2 escrituras de
 #     pipeline-history.jsonl (feliz + aborto).
 #
@@ -95,10 +95,11 @@ fi
 # .claude/).
 
 FIXTURE="$TMP/fixture"
-mkdir -p "$FIXTURE/.claude/scripts" "$FIXTURE/.claude-plugin" "$FIXTURE/src/internal/scripts/lib"
+mkdir -p "$FIXTURE/.claude/scripts" "$FIXTURE/.claude-plugin" "$FIXTURE/src/internal/scripts/lib" "$FIXTURE/src/runtime/lib"
 cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FIXTURE/src/internal/scripts/lib/_mefisto-common.sh"
 cp "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" "$FIXTURE/.claude/scripts/_mefisto-common.sh"
 cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FIXTURE/src/internal/scripts/lib/mefisto-state.sh"
+cp "$REPO_ROOT/src/runtime/lib/mefisto-process.sh" "$FIXTURE/src/runtime/lib/mefisto-process.sh"
 
 # -------- Bloque A: con jq, version valida --------
 
@@ -330,7 +331,7 @@ echo "[K] mefisto-metrics-report.sh agrega historial mixto legado + con los camp
 
 if command -v jq >/dev/null 2>&1; then
     FAKE_REPO="$TMP/fake-mefisto"
-    mkdir -p "$FAKE_REPO/.claude/scripts" "$FAKE_REPO/.claude-plugin" "$FAKE_REPO/.claude/pipeline" "$FAKE_REPO/src/internal/scripts/lib"
+    mkdir -p "$FAKE_REPO/.claude/scripts" "$FAKE_REPO/.claude-plugin" "$FAKE_REPO/.claude/pipeline" "$FAKE_REPO/src/internal/scripts/lib" "$FAKE_REPO/src/runtime/lib"
     git -C "$FAKE_REPO" init -q
     cat > "$FAKE_REPO/.claude-plugin/plugin.json" <<'EOF'
 {
@@ -341,6 +342,7 @@ EOF
     cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FAKE_REPO/src/internal/scripts/lib/_mefisto-common.sh"
     cp "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" "$FAKE_REPO/.claude/scripts/_mefisto-common.sh"
     cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_REPO/src/internal/scripts/lib/mefisto-state.sh"
+    cp "$REPO_ROOT/src/runtime/lib/mefisto-process.sh" "$FAKE_REPO/src/runtime/lib/mefisto-process.sh"
     cp "$REPO_ROOT/.claude/scripts/mefisto-metrics-report.sh" "$FAKE_REPO/.claude/scripts/mefisto-metrics-report.sh"
     chmod +x "$FAKE_REPO/.claude/scripts/mefisto-metrics-report.sh"
 

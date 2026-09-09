@@ -124,7 +124,7 @@ PIPE_PATH="$REPO_ROOT/src/internal/scripts/mefisto-tooling-pipeline.sh"
 echo ""
 echo "[11] --models se resuelve ANTES de crear el worktree (CA-1: un malformado no debe dejar un worktree a medias)"
 parse_line=$(grep -n 'parse_stage_models "\$MODELS_SPEC"' "$PIPE_PATH" | head -n1 | cut -d: -f1)
-worktree_line=$(grep -n 'git worktree add "\$WORKTREE_PATH"' "$PIPE_PATH" | head -n1 | cut -d: -f1)
+worktree_line=$(grep -n 'worktree add "\$WORKTREE_PATH"' "$PIPE_PATH" | head -n1 | cut -d: -f1)
 if [ -n "$parse_line" ] && [ -n "$worktree_line" ] && [ "$parse_line" -lt "$worktree_line" ]; then
     pass "parse_stage_models (linea $parse_line) antecede a git worktree add (linea $worktree_line)"
 else
