@@ -1,0 +1,1 @@
+{"schemaVersion":1,"servers":[{"id":"terraform","provisioning":"external","transport":"remote-http","url":"https://example.test/mcp","authentication":"none"}]}

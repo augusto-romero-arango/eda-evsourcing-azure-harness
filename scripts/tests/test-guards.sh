@@ -53,6 +53,13 @@ else
     exit 1
 fi
 
+if bash "$REPO_ROOT/src/published/scripts/validate-published-mcp.sh"; then
+    :
+else
+    echo "FAIL: el registro MCP publicado no valida" >&2
+    exit 1
+fi
+
 PASS=0
 FAIL=0
 
