@@ -644,6 +644,29 @@ else
     fail "modelo opaco: no se encontro el modelo opaco intacto: $(cat "$F_ARGS" 2>/dev/null)"
 fi
 
+F_EV="$TMP/f-redacted.jsonl"
+F_EVENTS="$TMP/f-redacted-events.log"
+RC=$(MEFISTO_CLAUDE_STUB_FIXTURE="$FIXTURES_DIR/sensitive-redaction.jsonl" MEFISTO_CLAUDE_STUB_STDERR="STDERR_SENTINEL AUTH_TOKEN_SENTINEL" MEFISTO_CLAUDE_STUB_EXIT=0 run_claude_scenario "$F_EV" --events-log "$F_EVENTS" --redact-observability)
+check_scenario "persistencia redactada Claude" "$F_EV" 0 "success" "" "$RC"
+if [ -s "$F_EVENTS" ] \
+    && ! grep -Eq 'PROMPT_SENTINEL|ASSISTANT_SENTINEL|COMMAND_SENTINEL|STDERR_SENTINEL|HEADER_SENTINEL|AUTH_TOKEN_SENTINEL' "$F_EV" "$F_EVENTS" \
+    && ! jq -e 'select(.type == "message")' "$F_EV" >/dev/null 2>&1 \
+    && jq -e 'select(.type == "tool.started") | .tool == "Bash" and .input_summary == null' "$F_EV" >/dev/null 2>&1 \
+    && jq -e 'select(.type == "run.completed") | .runtime == "claude" and .model == "claude-sonnet-5" and .session_id == "sess-redaction-claude" and .tokens.input == 21 and .tokens.output == 8 and .cost_usd == 0.02 and .turns == 2' "$F_EV" >/dev/null 2>&1; then
+    pass "redaccion Claude elimina centinelas y conserva identidad/metricas/tools"
+else
+    fail "redaccion Claude filtro contenido sensible o perdio evidencia operacional"
+fi
+
+F_EV="$TMP/f-redacted-rate-limit.jsonl"
+RC=$(MEFISTO_CLAUDE_STUB_FIXTURE="$FIXTURES_DIR/rate-limit-exhausted.jsonl" MEFISTO_CLAUDE_STUB_EXIT=1 run_claude_scenario "$F_EV" --redact-observability)
+check_scenario "persistencia redactada Claude rate limit" "$F_EV" 1 "failed" "rate_limit" "$RC"
+if jq -e 'select(.type == "run.failed") | .resets_at == "2026-05-07T22:40:00Z" and .error.detail == "detalle redactado: rate_limit"' "$F_EV" >/dev/null 2>&1; then
+    pass "redaccion Claude conserva resets_at y sustituye error.detail"
+else
+    fail "redaccion Claude perdio resets_at o dejo error.detail sin redactar"
+fi
+
 export PATH="$ORIG_PATH"
 
 echo ""

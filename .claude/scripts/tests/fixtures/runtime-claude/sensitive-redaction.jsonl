@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"sess-redaction-claude","model":"claude-sonnet-5"}
+{"type":"assistant","timestamp":"2026-09-08T10:00:00.000Z","message":{"model":"claude-sonnet-5","content":[{"type":"text","text":"PROMPT_SENTINEL ASSISTANT_SENTINEL HEADER_SENTINEL AUTH_TOKEN_SENTINEL"},{"type":"tool_use","id":"toolu_sensitive","name":"Bash","input":{"command":"COMMAND_SENTINEL --token AUTH_TOKEN_SENTINEL"}}]}}
+{"type":"user","timestamp":"2026-09-08T10:00:00.100Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_sensitive","content":"STDERR_SENTINEL AUTH_TOKEN_SENTINEL"}]}}
+{"type":"result","is_error":false,"subtype":"success","stop_reason":"end_turn","num_turns":2,"duration_ms":300,"duration_api_ms":250,"total_cost_usd":0.02,"usage":{"input_tokens":21,"output_tokens":8},"ttft_ms":40,"permission_denials":[],"timestamp":"2026-09-08T10:00:00.300Z"}

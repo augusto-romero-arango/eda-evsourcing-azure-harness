@@ -9,8 +9,7 @@
 #       [archivo] <ruta>` por cada tool.started con input_summary no nulo, y
 #       `[HH:MM:SS][stage] <agente> <status>` en el terminal. Ejercido contra
 #       el adaptador fake (runtime-fake.sh, #858) para no depender de un CLI
-#       real. Incluye el default `mefisto_state_path events.log` cuando no se
-#       pasa `--events-log`.
+#       real. Sin `--events-log` no deriva ni escribe una ruta de estado.
 #   [B] CA-1/CA-2: contra el fixture REAL de Claude Code
 #       (fixtures/runtime-claude/success.jsonl, tool Read con
 #       input.file_path:"x") -- el runner completo (stub `claude` en el PATH)
@@ -40,8 +39,7 @@ export LC_ALL=C
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-INTERNAL_SCRIPTS="$REPO_ROOT/src/internal/scripts"
-RUNNER="$INTERNAL_SCRIPTS/mefisto-run-agent.sh"
+RUNNER="$REPO_ROOT/src/runtime/mefisto-run-agent.sh"
 CLAUDE_FIXTURES="$SCRIPT_DIR/fixtures/runtime-claude"
 OPENCODE_FIXTURES="$SCRIPT_DIR/fixtures/runtime-opencode"
 
@@ -115,17 +113,17 @@ else
     fail "A-4: se esperaba '... demo ok -'. Contenido: $(cat "$EV_A1_LOG" 2>/dev/null)"
 fi
 
-# Default (sin --events-log): mefisto_state_path events.log, dentro de un
-# MEFISTO_STATE_DIR de prueba para no tocar el repo real.
+# Sin --events-log no hay destino implicito: el nucleo neutral no deriva rutas
+# de estado (contrato vigente desde la migracion a src/runtime/).
 STATE_DIR="$TMP/state/.mefisto/pipeline"
 EV_A5_JSONL="$TMP/a5-event.jsonl"
 RC=$(MEFISTO_FAKE_SCRIPT=success MEFISTO_STATE_DIR="$STATE_DIR" "$RUNNER" \
     --runtime fake --agent fx-agent --cwd "$WORKDIR" --prompt-file "$PROMPT_FILE" \
     --event-log "$EV_A5_JSONL" >/dev/null 2>&1; echo $?)
-if [ "$RC" = "0" ] && [ -f "$STATE_DIR/events.log" ]; then
-    pass "A-5: sin --events-log, el default resuelve a mefisto_state_path events.log"
+if [ "$RC" = "0" ] && [ ! -e "$STATE_DIR/events.log" ]; then
+    pass "A-5: sin --events-log no se deriva ningun destino de telemetria humana"
 else
-    fail "A-5: exit $RC, '$STATE_DIR/events.log' esperado (no encontrado)"
+    fail "A-5: exit $RC o se escribio un events.log implicito fuera del contrato neutral"
 fi
 
 # ============================================================================

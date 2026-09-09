@@ -143,8 +143,8 @@ usage() {
 Uso: mefisto-run-agent.sh --agent <id> --cwd <dir> --prompt-file <f> --event-log <jsonl>
                            [--runtime <id>] [--model <opaco>] [--system-file <f>]
                            [--timeout <s>] [--raw-log <f>] [--stderr-log <f>]
-                            [--events-log <archivo>] [--resume-session <id>]
-                            [--redact-observability]
+                           [--events-log <archivo>] [--resume-session <id>]
+                           [--redact-observability] [--help]
 EOF
 }
 
@@ -203,6 +203,7 @@ while [ $# -gt 0 ]; do
         --events-log)  [ $# -ge 2 ] || abort_usage "--events-log requiere un valor"; OPT_EVENTS_LOG="$2"; shift 2 ;;
         --resume-session) [ $# -ge 2 ] || abort_usage "--resume-session requiere un valor"; OPT_RESUME_SESSION="$2"; shift 2 ;;
         --redact-observability) OPT_REDACT_OBSERVABILITY=true; shift ;;
+        --help) usage; exit 0 ;;
         *) abort_usage "argumento desconocido: '$1'" ;;
     esac
 done

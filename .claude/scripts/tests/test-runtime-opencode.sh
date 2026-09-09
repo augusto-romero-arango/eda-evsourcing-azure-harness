@@ -782,6 +782,20 @@ case "$MSG" in
         fail "system-file: el mensaje capturado no empieza con el system-file: '$MSG'" ;;
 esac
 
+F_EV="$TMP/f-redacted.jsonl"
+F_EVENTS="$TMP/f-redacted-events.log"
+RC=$(MEFISTO_OPENCODE_STUB_FIXTURE="$FIXTURES_DIR/sensitive-redaction-derived.jsonl" MEFISTO_OPENCODE_STUB_STDERR="STDERR_SENTINEL AUTH_TOKEN_SENTINEL" MEFISTO_OPENCODE_STUB_EXIT=0 run_opencode_scenario "$F_EV" --events-log "$F_EVENTS" --redact-observability --model "openai/gpt-5")
+check_scenario "persistencia redactada OpenCode" "$F_EV" 0 "success" "" "$RC"
+if [ -s "$F_EVENTS" ] \
+    && ! grep -Eq 'PROMPT_SENTINEL|ASSISTANT_SENTINEL|COMMAND_SENTINEL|STDERR_SENTINEL|HEADER_SENTINEL|AUTH_TOKEN_SENTINEL' "$F_EV" "$F_EVENTS" \
+    && ! jq -e 'select(.type == "message")' "$F_EV" >/dev/null 2>&1 \
+    && jq -e 'select(.type == "tool.started") | .tool == "bash" and .input_summary == null' "$F_EV" >/dev/null 2>&1 \
+    && jq -e 'select(.type == "run.completed") | .runtime == "opencode" and .model == "openai/gpt-5" and .session_id == "sess-redaction-opencode" and .tokens.input == 13 and .tokens.output == 5 and .cost_usd == 0.01' "$F_EV" >/dev/null 2>&1; then
+    pass "redaccion OpenCode elimina centinelas y conserva identidad/metricas/tools"
+else
+    fail "redaccion OpenCode filtro contenido sensible o perdio evidencia operacional"
+fi
+
 export PATH="$ORIG_PATH"
 
 echo ""

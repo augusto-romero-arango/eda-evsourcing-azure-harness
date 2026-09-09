@@ -44,6 +44,9 @@
 #       MEFISTO_FAKE_ARGS_FILE) y, omitido, NO agrega ningun flag de
 #       reanudacion al argv -- la paridad "byte a byte igual a antes de
 #       #968" que exige CA-1.
+#   [J] CA-1..CA-6 (issue #1128): el modo redactado cubre stream final y vivo,
+#       exito/fallo/timeout/protocolo invalido, ambos logs observables, warning
+#       de raw/stderr, compatibilidad sin flag y limpieza de temporales.
 #   [G] El runner resuelve sus propias libs por su UBICACION, no por el cwd
 #       del caller: invocado desde un cwd fuera de todo repo git sigue
 #       corriendo (regresion de la resolucion via `git rev-parse`).
@@ -203,6 +206,13 @@ check_usage_exit64 "--timeout 0" \
     --agent a --cwd "$WORKDIR" --prompt-file "$PROMPT_FILE" --event-log "$TMP/ev-a8.jsonl" --timeout 0
 check_usage_exit64 "argumento desconocido" \
     --agent a --cwd "$WORKDIR" --prompt-file "$PROMPT_FILE" --event-log "$TMP/ev-a9.jsonl" --bogus-flag x
+
+HELP_OUT="$($RUNNER --help 2>&1)"
+if [ "$?" -eq 0 ] && printf '%s' "$HELP_OUT" | grep -q -- '--redact-observability'; then
+    pass "--help documenta --redact-observability y termina con exit 0"
+else
+    fail "--help no documento --redact-observability o termino con exit no cero"
+fi
 
 # ============================================================================
 echo ""
@@ -494,6 +504,24 @@ else
     fail "J-1: el exito redactado filtro mal contenidos o cambio el desenlace"
 fi
 check_scenario "J-1 exito redactado" "$J_SUCCESS" 0 "success" "" "$J_RC"
+J_FIRST_TYPE="$(jq -r '.type' "$J_SUCCESS" 2>/dev/null | sed -n '1p')"
+J_LAST_TYPE="$(jq -r '.type' "$J_SUCCESS" 2>/dev/null | tail -n1)"
+J_STARTED_COUNT="$(jq -c 'select(.type == "run.started")' "$J_SUCCESS" 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$J_FIRST_TYPE" = "run.started" ] && [ "$J_LAST_TYPE" = "run.completed" ] && [ "$J_STARTED_COUNT" = "1" ]; then
+    pass "J-1a: stream redactado inicia una vez y termina en su unico terminal"
+else
+    fail "J-1a: orden/cardinalidad invalido (first=$J_FIRST_TYPE last=$J_LAST_TYPE started=$J_STARTED_COUNT)"
+fi
+
+J_BASELINE="$TMP/j-sensitive-baseline.jsonl"
+J_BASELINE_RC=$(MEFISTO_FAKE_SCRIPT=sensitive-success run_fake_scenario "$J_BASELINE" --model runtime-model-allowed)
+if [ "$J_BASELINE_RC" = "0" ] && ! redaction_has_no_sentinels "$J_BASELINE" \
+    && jq -e 'select(.type == "message")' "$J_BASELINE" >/dev/null 2>&1 \
+    && jq -e 'select(.type == "tool.started") | .input_summary == "COMMAND_SENTINEL input"' "$J_BASELINE" >/dev/null 2>&1; then
+    pass "J-1b: sin flag conserva mensajes, input_summary y desenlace legacy"
+else
+    fail "J-1b: el modo omitido dejo de ser compatible con la persistencia vigente"
+fi
 
 J_FAIL="$TMP/j-sensitive-fail.jsonl"
 MEFISTO_FAKE_SCRIPT=sensitive-fail MEFISTO_FAKE_EXIT_CODE=7 "$RUNNER" --runtime fake --agent test-agent --cwd "$WORKDIR" \
@@ -506,6 +534,17 @@ else
     fail "J-2: el fallo redactado filtro mal detail o cambio el desenlace"
 fi
 check_scenario "J-2 fallo redactado" "$J_FAIL" 7 "failed" "api_error" "$J_FAIL_RC"
+J_FAIL_BASE="$TMP/j-sensitive-fail-baseline.jsonl"
+MEFISTO_FAKE_SCRIPT=sensitive-fail MEFISTO_FAKE_EXIT_CODE=7 "$RUNNER" --runtime fake --agent test-agent --cwd "$WORKDIR" \
+    --prompt-file "$PROMPT_FILE" --event-log "$J_FAIL_BASE" >/dev/null 2>&1
+J_FAIL_BASE_RC=$?
+J_FAIL_SHAPE="$(jq -c 'select(.type == "run.failed") | [.type, .status, .error.kind]' "$J_FAIL")"
+J_FAIL_BASE_SHAPE="$(jq -c 'select(.type == "run.failed") | [.type, .status, .error.kind]' "$J_FAIL_BASE")"
+if [ "$J_FAIL_RC" = "$J_FAIL_BASE_RC" ] && [ "$J_FAIL_SHAPE" = "$J_FAIL_BASE_SHAPE" ]; then
+    pass "J-2b: redaccion conserva type/status/error.kind/exit frente al modo vigente"
+else
+    fail "J-2b: redaccion cambio el desenlace respecto del modo vigente"
+fi
 
 for J_SCRIPT in hang no-terminal malformed; do
     J_EV="$TMP/j-${J_SCRIPT}.jsonl"
@@ -557,14 +596,36 @@ wait "$J_LIVE_PID" 2>/dev/null
 check_scenario "J-4 vivo redactado" "$J_LIVE" 0 "success" "" "$(cat "$J_LIVE_RC")"
 
 J_RAW="$TMP/j-raw.log"; J_STDERR="$TMP/j-stderr.log"; J_WARNING="$TMP/j-warning.err"
-MEFISTO_FAKE_SCRIPT=sensitive-success "$RUNNER" --runtime fake --agent test-agent --cwd "$WORKDIR" \
+MEFISTO_FAKE_SCRIPT=sensitive-fail "$RUNNER" --runtime fake --agent test-agent --cwd "$WORKDIR" \
     --prompt-file "$PROMPT_FILE" --event-log "$TMP/j-warning.jsonl" --redact-observability \
     --raw-log "$J_RAW" --stderr-log "$J_STDERR" >/dev/null 2>"$J_WARNING"
 if grep -Fq -- "$J_RAW" "$J_WARNING" && grep -Fq -- "$J_STDERR" "$J_WARNING" \
-    && grep -Fq -- 'no son observabilidad segura' "$J_WARNING"; then
-    pass "J-5: raw/stderr solicitados reciben advertencia con destinos explicitos"
+    && grep -Fq -- 'no son observabilidad segura' "$J_WARNING" \
+    && grep -Fq 'AUTH_TOKEN_SENTINEL' "$J_RAW" && grep -Fq 'AUTH_TOKEN_SENTINEL' "$J_STDERR"; then
+    pass "J-5: raw/stderr quedan intactos y reciben advertencia con destinos explicitos"
 else
-    fail "J-5: falta advertencia explicita sobre raw/stderr no redactados"
+    fail "J-5: falta evidencia de raw/stderr intactos o su advertencia explicita"
+fi
+
+J_EVENTS="$TMP/j-events.log"
+MEFISTO_FAKE_SCRIPT=sensitive-success "$RUNNER" --runtime fake --agent test-agent --cwd "$WORKDIR" \
+    --prompt-file "$PROMPT_FILE" --event-log "$TMP/j-events.jsonl" --events-log "$J_EVENTS" \
+    --redact-observability >/dev/null 2>&1
+if [ -s "$J_EVENTS" ] && redaction_has_no_sentinels "$J_EVENTS" \
+    && grep -q '\[tool\] test-agent Bash ok -' "$J_EVENTS"; then
+    pass "J-6: --events-log se deriva de la misma proyeccion redactada"
+else
+    fail "J-6: --events-log filtro un input sensible o perdio la cardinalidad de tools"
+fi
+
+J_PRIVATE_PARENT="$TMP/j-private"
+mkdir -p "$J_PRIVATE_PARENT"
+TMPDIR="$J_PRIVATE_PARENT/" MEFISTO_FAKE_SCRIPT=sensitive-success run_fake_scenario \
+    "$TMP/j-private.jsonl" --redact-observability >/dev/null
+if [ -z "$(ls -A "$J_PRIVATE_PARENT" 2>/dev/null)" ]; then
+    pass "J-7: raw/stderr temporales se eliminaron al salir"
+else
+    fail "J-7: quedaron archivos del temporal privado tras salir"
 fi
 
 # ============================================================================
