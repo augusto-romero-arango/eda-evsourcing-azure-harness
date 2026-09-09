@@ -8,6 +8,7 @@ INSTALLER_SOURCE="$REPO_ROOT/src/published/scripts/install-opencode-release.sh"
 LAUNCHER_SOURCE="$REPO_ROOT/src/published/scripts/mefisto-opencode"
 PROJECTOR_SOURCE="$REPO_ROOT/src/published/scripts/project-opencode-release.sh"
 DIAGNOSTIC_SOURCE="$REPO_ROOT/src/published/scripts/diagnose-installation-identity.sh"
+FIXTURES="$REPO_ROOT/src/published/scripts/tests/fixtures/release-identity"
 WORK="$(mktemp -d)"; trap 'chmod -R u+w "$WORK" 2>/dev/null || true; rm -rf "$WORK"' EXIT
 PASS=0; FAIL=0
 pass() { printf '  PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
@@ -16,7 +17,7 @@ assert_rc() { [ "$1" -eq "$2" ] && pass "$3" || fail "$3 (exit $1)"; }
 
 setup_repo() {
     TEST_REPO="$WORK/repo-$1"
-    mkdir -p "$TEST_REPO/src/published/scripts" "$TEST_REPO/dist/opencode/comandos" "$TEST_REPO/dist/opencode/skills/mefisto-projections" "$TEST_REPO/dist/opencode/skills/mefisto-comment-cleanup" "$TEST_REPO/.claude-plugin" "$TEST_REPO/bin"
+    mkdir -p "$TEST_REPO/src/published/scripts" "$TEST_REPO/src/published" "$TEST_REPO/dist/opencode/comandos" "$TEST_REPO/dist/opencode/skills/mefisto-projections" "$TEST_REPO/dist/opencode/skills/mefisto-comment-cleanup" "$TEST_REPO/.claude-plugin" "$TEST_REPO/bin"
     cp "$SOURCE" "$TEST_REPO/src/published/scripts/package-opencode-release.sh"
     cp "$INSTALLER_SOURCE" "$TEST_REPO/src/published/scripts/install-opencode-release.sh"
     cp "$LAUNCHER_SOURCE" "$TEST_REPO/src/published/scripts/mefisto-opencode"
@@ -25,6 +26,7 @@ setup_repo() {
     chmod +x "$TEST_REPO/src/published/scripts/package-opencode-release.sh" "$TEST_REPO/src/published/scripts/project-opencode-release.sh" "$TEST_REPO/src/published/scripts/diagnose-installation-identity.sh"
     chmod +x "$TEST_REPO/src/published/scripts/install-opencode-release.sh" "$TEST_REPO/src/published/scripts/mefisto-opencode"
     printf '{"version":"1.2.3"}\n' > "$TEST_REPO/.claude-plugin/plugin.json"
+    cp "$FIXTURES/valid.json" "$TEST_REPO/src/published/release-identity.json"
     cat > "$TEST_REPO/src/published/scripts/generate-published-adapters.sh" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "${GENERATOR_LOG:?}"
@@ -32,7 +34,7 @@ printf '%s\n' "$*" > "${GENERATOR_LOG:?}"
 exit "${GENERATOR_RC:-0}"
 EOF
     chmod +x "$TEST_REPO/src/published/scripts/generate-published-adapters.sh"
-    printf '#!/usr/bin/env bash\nif [ "$1" = "-C" ]; then shift 2; fi\n[ "$1" = "rev-parse" ] && printf "0123456789abcdef0123456789abcdef01234567\\n"\n' > "$TEST_REPO/bin/git"
+    printf '#!/usr/bin/env bash\nprintf "%s\\n" "git no debe participar en la identidad" >&2\nexit 99\n' > "$TEST_REPO/bin/git"
     chmod +x "$TEST_REPO/bin/git"
     printf '#!/usr/bin/env bash\nprintf "ejecutable\\n"\n' > "$TEST_REPO/dist/opencode/comandos/run.sh"
     chmod +x "$TEST_REPO/dist/opencode/comandos/run.sh"
@@ -102,13 +104,16 @@ for source in \
 done
 [ "$closure_ok" = true ] && pass 'extrae la clausura ejecutable declarada con sus modos' || fail 'falta o tiene modo incorrecto la clausura ejecutable'
 [ -f "$EXTRACT/skills/mefisto-projections/SKILL.md" ] && [ -f "$EXTRACT/skills/mefisto-projections/read-apis.md" ] && [ -f "$EXTRACT/skills/mefisto-comment-cleanup/ejemplos.md" ] && pass 'el paquete conserva Skills y recursos publicados' || fail 'el paquete omitio Skills publicados'
-jq -e '.schemaVersion == 1 and .runtime == "opencode" and .version == "1.2.3" and .commit == "0123456789abcdef0123456789abcdef01234567" and .minimumRuntimeVersion == "1.18.29" and (keys | length == 5)' "$EXTRACT/mefisto-manifest.json" >/dev/null && pass 'manifiesto completo, minimo y versionado' || fail 'manifiesto invalido'
+    jq -e '.schemaVersion == 1 and .runtime == "opencode" and .version == "1.2.3" and .commit == "0123456789abcdef0123456789abcdef01234567" and .minimumRuntimeVersion == "1.18.29" and (keys | length == 5)' "$EXTRACT/mefisto-manifest.json" >/dev/null && pass 'manifiesto completo usa la identidad neutral' || fail 'manifiesto invalido'
 tar -tzf "$TAR" | grep -Eq '(^/|\.\./)' && fail 'tarball contiene ruta insegura' || pass 'tarball no contiene rutas inseguras'
 CONTENTS="$(tar -tzf "$TAR")"
-case "$CONTENTS" in *'.claude'*|*'src/internal'*|*'src/runtime/tests'*|*'runtime-fake.sh'*|*'tests/'*|*'CLAUDE_PLUGIN_ROOT'*|*'auth.json'*|*'.sha256'*) fail 'tarball incorporo archivos ajenos o checksum interno' ;; *) pass 'paquete limitado a dist/opencode y sin checksum interno' ;; esac
-cp "$TAR" "$WORK/primero.tar.gz"
-(umask 077 && run_package --output "$OUT" >/dev/null)
-cmp -s "$TAR" "$WORK/primero.tar.gz" && pass 'reproducible byte a byte entre umasks' || fail 'tarball no reproducible'
+    case "$CONTENTS" in *'.claude'*|*'release-identity.json'*|*'src/internal'*|*'src/runtime/tests'*|*'runtime-fake.sh'*|*'tests/'*|*'CLAUDE_PLUGIN_ROOT'*|*'auth.json'*|*'.sha256'*) fail 'tarball incorporo metadata o archivos ajenos' ;; *) pass 'paquete limitado a dist/opencode sin fuentes de metadata' ;; esac
+    cp "$TAR" "$WORK/primero.tar.gz"
+    (umask 077 && run_package --output "$OUT" >/dev/null)
+    cmp -s "$TAR" "$WORK/primero.tar.gz" && pass 'reproducible byte a byte entre umasks' || fail 'tarball no reproducible'
+    setup_repo head-a; HEAD_A_OUT="$WORK/head-a"; run_package --output "$HEAD_A_OUT" >/dev/null
+    setup_repo head-b; HEAD_B_OUT="$WORK/head-b"; run_package --output "$HEAD_B_OUT" >/dev/null
+    cmp -s "$HEAD_A_OUT/mefisto-opencode-v1.2.3.tar.gz" "$HEAD_B_OUT/mefisto-opencode-v1.2.3.tar.gz" && cmp -s "$HEAD_A_OUT/mefisto-opencode-v1.2.3.tar.gz.sha256" "$HEAD_B_OUT/mefisto-opencode-v1.2.3.tar.gz.sha256" && pass 'checkouts con HEAD distintos no afectan los assets' || fail 'el HEAD afecto los assets'
 HOME="$WORK/home integrado"; XDG_DATA_HOME="$HOME/datos"; XDG_CONFIG_HOME="$HOME/config"; export HOME XDG_DATA_HOME XDG_CONFIG_HOME
 mkdir -p "$HOME"
 "$EXTRACT/install.sh" install 1.2.3 >/dev/null; assert_rc "$?" 0 'instala el paquete fixture sin checkout'
@@ -123,7 +128,13 @@ setup_repo link; ln -s archivo "$TEST_REPO/dist/opencode/link"; NEG_OUT="$WORK/l
 setup_repo special; mkfifo "$TEST_REPO/dist/opencode/pipe"; NEG_OUT="$WORK/special"; run_package --output "$NEG_OUT" >/dev/null 2>&1; assert_rc "$?" 1 'rechaza archivo especial'; assert_no_assets "$NEG_OUT" 'archivo especial no deja assets'
 setup_repo manifest; printf '{}' > "$TEST_REPO/dist/opencode/mefisto-manifest.json"; NEG_OUT="$WORK/manifest"; run_package --output "$NEG_OUT" >/dev/null 2>&1; assert_rc "$?" 1 'rechaza manifiesto preexistente'; assert_no_assets "$NEG_OUT" 'conflicto de manifiesto no deja assets'
 setup_repo write; printf x > "$WORK/no-directorio"; run_package --output "$WORK/no-directorio" >/dev/null 2>&1; assert_rc "$?" 1 'fallo al crear output no publica assets'
-setup_repo partial; PARTIAL_OUT="$WORK/partial"; mkdir -p "$PARTIAL_OUT/mefisto-opencode-v1.2.3.tar.gz.sha256"; run_package --output "$PARTIAL_OUT" >/dev/null 2>&1; assert_rc "$?" 1 'conflicto de destino aborta'; [ ! -e "$PARTIAL_OUT/mefisto-opencode-v1.2.3.tar.gz" ] && pass 'fallo de publicacion no deja tarball parcial' || fail 'fallo dejo tarball parcial'
+    setup_repo partial; PARTIAL_OUT="$WORK/partial"; mkdir -p "$PARTIAL_OUT/mefisto-opencode-v1.2.3.tar.gz.sha256"; run_package --output "$PARTIAL_OUT" >/dev/null 2>&1; assert_rc "$?" 1 'conflicto de destino aborta'; [ ! -e "$PARTIAL_OUT/mefisto-opencode-v1.2.3.tar.gz" ] && pass 'fallo de publicacion no deja tarball parcial' || fail 'fallo dejo tarball parcial'
+    for fixture in absent corrupt extra semver-invalido commit-invalido version-divergente; do
+        setup_repo "identity-$fixture"; NEG_OUT="$WORK/identity-$fixture";
+        if [ "$fixture" = absent ]; then rm "$TEST_REPO/src/published/release-identity.json"; else cp "$FIXTURES/$fixture.json" "$TEST_REPO/src/published/release-identity.json"; fi
+        run_package --output "$NEG_OUT" >/dev/null 2>&1; assert_rc "$?" 1 "identidad $fixture aborta antes de empaquetar"; assert_no_assets "$NEG_OUT" "identidad $fixture no deja assets"
+    done
+    setup_repo identity-change; CHANGE_OUT="$WORK/identity-change"; cp "$FIXTURES/changed.json" "$TEST_REPO/src/published/release-identity.json"; printf '{"version":"2.0.0"}\n' > "$TEST_REPO/.claude-plugin/plugin.json"; run_package --output "$CHANGE_OUT" >/dev/null; CHANGE_TAR="$CHANGE_OUT/mefisto-opencode-v2.0.0.tar.gz"; [ -f "$CHANGE_TAR" ] && ! cmp -s "$TAR" "$CHANGE_TAR" && tar -xOzf "$CHANGE_TAR" mefisto-manifest.json | jq -e '.version == "2.0.0" and .commit == "abcdef0123456789abcdef0123456789abcdef01"' >/dev/null && pass 'cambiar identidad cambia manifiesto y checksum deterministamente' || fail 'cambio de identidad no altero el asset'
 
 printf '\nResultado: %s PASS, %s FAIL\n' "$PASS" "$FAIL"
 exit "$FAIL"
