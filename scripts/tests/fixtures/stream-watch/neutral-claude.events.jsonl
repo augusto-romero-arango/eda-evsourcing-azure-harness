@@ -1,0 +1,5 @@
+{"v":1,"type":"run.started","ts":"2026-09-08T10:00:00Z","runtime":"claude","agent":"writer","model":"modelo-claude","cwd":"/tmp"}
+{"v":1,"type":"message","ts":"2026-09-08T10:00:01Z","role":"assistant","text":"SECRETO-no-mostrar","kind":"text"}
+{"v":1,"type":"tool.started","ts":"2026-09-08T10:00:02Z","tool":"Bash","input_summary":"SECRETO-no-mostrar"}
+{"v":1,"type":"tool.completed","ts":"2026-09-08T10:00:03Z","tool":"Bash","ok":true,"duration_ms":1000}
+{"v":1,"type":"run.completed","ts":"2026-09-08T10:00:04Z","status":"success","runtime":"claude","model":"modelo-claude","session_id":null,"duration_ms":4000,"tokens":{"input":1,"output":1},"cost_usd":null,"turns":null,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":null}
