@@ -85,6 +85,34 @@ permission_json() {
         else {} end)'
 }
 
+# OpenCode controla las tools MCP por agente con el prefijo del servidor. La
+# fuente conserva ids logicos y el registro determina la politica cerrada.
+mcp_tools_json() {
+    local rel="$1" requested="$2" registry id count pattern mapping
+    registry="$(jq -c '.' "$MCP_REGISTRY")" || { error "$rel: mcp: no se pudo leer el registro MCP"; return 1; }
+    mapping='{"microsoft-learn":"microsoft-learn_*","terraform":"terraform_*"}'
+    while IFS= read -r id; do
+        [ -n "$id" ] || continue
+        count="$(printf '%s' "$registry" | jq --arg id "$id" '[.servers[] | select(.id == $id)] | length')"
+        if [ "$count" -ne 1 ]; then error "$rel: mcp: id MCP '$id' duplicado en el registro"; return 1; fi
+        pattern="$(printf '%s' "$mapping" | jq -r --arg id "$id" '.[$id] // empty')"
+        [ -n "$pattern" ] || { error "$rel: mcp: id MCP '$id' sin mapping OpenCode"; return 1; }
+    done < <(printf '%s' "$registry" | jq -r '.servers[]?.id')
+    while IFS= read -r id; do
+        [ -n "$id" ] || continue
+        count="$(printf '%s' "$registry" | jq --arg id "$id" '[.servers[] | select(.id == $id)] | length')"
+        if [ "$count" -eq 0 ]; then error "$rel: mcp: id MCP '$id' ausente del registro"; return 1; fi
+    done < <(printf '%s' "$requested" | jq -r '.[]?')
+    if [ "$(printf '%s' "$requested" | jq 'length')" -ne "$(printf '%s' "$requested" | jq 'unique | length')" ]; then
+        error "$rel: mcp: referencia MCP duplicada"
+        return 1
+    fi
+    validate_published_mcp "$MCP_REGISTRY" || return 1
+    jq -cn --argjson registry "$registry" --argjson requested "$requested" --argjson mapping "$mapping" '
+      reduce $registry.servers[] as $server ({};
+        . + {($mapping[$server.id]): (($requested | index($server.id)) != null)})'
+}
+
 translate_body() {
     local rel="$1" input="$2" line original prefix suffix script args translated
     while IFS= read -r line || [ -n "$line" ]; do
@@ -368,7 +396,7 @@ export default async function mefistoMcp({ client } = {}) {
 EOF
 }
 render() {
-    local source="$1" marker="$2" rel fm instance kind artifact_id raw_body translated preamble='' mode permissions agent native_skills='[]'
+    local source="$1" marker="$2" rel fm instance kind artifact_id raw_body translated preamble='' mode permissions tools agent native_skills='[]'
     rel="${source#*/src/published/}"
     rel="src/published/$rel"
     fm="$(frontmatter "$source")" || { error "$rel: frontmatter: no se pudo extraer"; return 1; }
@@ -380,7 +408,6 @@ render() {
     if [ "$(printf '%s' "$native_skills" | jq 'length')" -gt 0 ]; then
         preamble="$(skill_preamble "$native_skills")"
     fi
-    if [ "$(printf '%s' "$instance" | jq '[.mcp[]?] | length')" -gt 0 ]; then error "$rel: mcp: OpenCode no implementa MCP publicado todavia"; return 1; fi
     translated="$(translate_body "$rel" "$raw_body")" || return 1
     if needs_package_root "$raw_body"; then
         [ -z "$preamble" ] || preamble="$preamble"$'\n'
@@ -395,7 +422,8 @@ render() {
             return 1
         fi
         permissions="$(permission_json "$rel" "$(printf '%s' "$instance" | jq -c '.capabilities // []')" "$mode" "$native_skills")" || return 1
-        printf 'mode: %s\npermission: %s\n' "$(printf '%s' "$mode" | jq -Rr '@json')" "$permissions"
+        tools="$(mcp_tools_json "$rel" "$(printf '%s' "$instance" | jq -c '.mcp // []')")" || return 1
+        printf 'mode: %s\npermission: %s\ntools: %s\n' "$(printf '%s' "$mode" | jq -Rr '@json')" "$permissions" "$tools"
     else
         agent="$(printf '%s' "$instance" | jq -r '.agent // empty')"
         [ -n "$agent" ] || agent="$(launch_agent_id "$raw_body")"
