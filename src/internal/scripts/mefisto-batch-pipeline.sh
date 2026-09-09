@@ -24,7 +24,8 @@
 #      origin/main y ejecutar desde ahi mefisto-tooling-pipeline.sh <issue>
 #   2. Extraer URL del PR del output
 #   3. gh pr merge <num> --squash --delete-branch
-#   4. Sync VERIFICADO: confirma que el commit de merge del PR llego a
+#   4. Reconciliar best-effort los labels `bloqueado` que el PR pudo liberar
+#   5. Sync VERIFICADO: confirma que el commit de merge del PR llego a
 #      origin/main (la base real de la que nace el SIGUIENTE worktree, issue
 #      #66) y, aparte, intenta dejar main LOCAL fast-forwardeado para el
 #      humano que sigue la corrida.
@@ -713,7 +714,21 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
         continue
     fi
 
-    # -- Stage 4: Sincronizar main de forma VERIFICADA para el siguiente issue --
+    # -- Stage 4: Reconciliar bloqueos post-merge (best-effort) --
+    # El reconciliador canonico centraliza el parsing de Closes/Dependencias y
+    # las mutaciones de labels (MEF-ADR-0019). Un fallo aqui es deuda de
+    # metadata: el PR ya se mergeo y no debe impedir el sync ni el siguiente
+    # eslabon (MEF-ADR-0017).
+    RECONCILE_SCRIPT="$EXECUTION_ROOT/src/internal/scripts/mefisto-validate-batch-deps.sh"
+    RECONCILE_EXIT=0
+    log "Reconciliando bloqueos liberados por el PR #$PR_NUM..."
+    "$RECONCILE_SCRIPT" --reconcile-pr "$PR_NUM" 2>&1 | tee -a "$ISSUE_LOG" || RECONCILE_EXIT=$?
+    _strip_ansi < "$ISSUE_LOG" >> "$LOG_FILE_ABS"
+    if [ "$RECONCILE_EXIT" -ne 0 ]; then
+        warn "El PR #$PR_NUM ya se mergeo, pero la reconciliacion post-merge de bloqueados fallo (exit $RECONCILE_EXIT). Se continua sin reintentar; revisa el log del issue: $ISSUE_LOG"
+    fi
+
+    # -- Stage 5: Sincronizar main de forma VERIFICADA para el siguiente issue --
     # Critico para cadenas con dependencias (issue #46): el siguiente eslabon DEBE
     # partir de un origin/main que ya incluye el merge de este. La severidad
     # distingue DONDE fallo el sync (issue #566, CA-3): si origin/main no tiene
