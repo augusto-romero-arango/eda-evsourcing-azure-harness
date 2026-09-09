@@ -90,17 +90,18 @@ Cada distribucion incluye esa identidad en `mefisto-manifest.json` y el runtime
 la expone, sin secretos, como `runtime`, `version` SemVer y `commit`. El campo
 `commit` es el **commit fuente**: un SHA Git completo de 40 caracteres
 hexadecimales de `origin/main` desde el que `/mefisto-release` crea la rama de
-preparacion. Se captura inmediatamente despues de actualizar `origin/main` y
-antes de consolidar fragmentos, modificar `CHANGELOG.md`, cambiar la version o
-generar metadata. Responde a «¿de que snapshot funcional se construyeron ambos
-adaptadores?», mientras el tag/version responde «¿que release mecanico los
-publico?»; son valores distintos y comparables.
+preparacion. Se resuelve y captura inmediatamente despues de actualizar
+`origin/main`; la rama nace exactamente en ese SHA, antes de consolidar
+fragmentos, modificar `CHANGELOG.md`, cambiar la version o generar metadata.
+Responde a «¿de que snapshot funcional se construyeron ambos adaptadores?»,
+mientras el tag/version responde «¿que release mecanico los publico?»; son
+valores distintos y comparables.
 
 El tag `v<semver>` apunta al commit squash de release posterior. Ese commit
 etiquetado debe tener un primer y unico padre igual al `commit fuente` declarado.
-Si `origin/main` avanza durante la preparacion, la rama se rebasa; si el merge no
-es squash y lineal; o si padre, SHA fuente o manifests no coinciden, `publish`
-aborta antes de crear el tag y exige regenerar la preparacion desde el
+Si `origin/main` avanza durante la preparacion, la rama queda rebasada; si el
+merge no es squash y lineal; o si padre, SHA fuente o manifiestos no coinciden,
+`publish` aborta antes de crear el tag y exige regenerar la preparacion desde el
 `origin/main` vigente. Esta relacion es verificable localmente: el modelo de Git
 crea un commit a partir de un tree y sus padres, por lo que no puede contener en
 un archivo versionado el SHA del propio commit sin alterar el tree y producir
@@ -116,15 +117,16 @@ allowlist.
 Claude y OpenCode exponen el mismo `version` y `commit fuente`, cada uno con su
 propio `runtime`; OpenCode puede conservar `minimumRuntimeVersion`. Al iniciar o
 inspeccionar un workspace, Mefisto lee exclusivamente esos manifiestos de las
-instalaciones disponibles y compara los tres campos. Si version o commit
-difieren, informa una degradacion visible con ambos valores y la accion de
-alinear/activar la version; no consulta Git, red, caches arbitrarios, tokens,
-auth stores, API keys ni configuracion de proveedor para diagnosticarla.
+instalaciones disponibles, valida el `runtime` esperado de cada uno y compara la
+igualdad de `version` y `commit`. Si version o commit difieren, informa una
+degradacion visible con ambos valores y la accion de alinear/activar la version;
+no consulta Git, red, caches arbitrarios, tokens, auth stores, API keys ni
+configuracion de proveedor para diagnosticarla.
 
 Los tags historicos sin manifiesto Claude permanecen `metadata_missing`: no se
-reedita una version ni un tag existente. La primera release posterior a esta
-implementacion establece el contrato; una pareja instalacion vieja/nueva se
-reporta como degradacion, nunca recibe una identidad inventada.
+reedita una version ni un tag existente. La primera release posterior a la
+implementacion operativa de este contrato lo establece; una pareja instalacion
+vieja/nueva se reporta como degradacion, nunca recibe una identidad inventada.
 
 ### 4. Contrato canonico de consumidor con lectura legacy indefinida (CA-4)
 
