@@ -123,11 +123,13 @@ render_fails_without_output "$WORK/directiva.md" 'body: directiva sin mapping Cl
 
 printf '%s\n' '[integracion] fallo atomico del generador'
 FAKE="$WORK/repo"
-mkdir -p "$FAKE/src/published/scripts/adapters" "$FAKE/src/published/scripts/lib" "$FAKE/src/published/contract" "$FAKE/src/published/agents" "$FAKE/dist/claude"
+mkdir -p "$FAKE/src/published/scripts/adapters" "$FAKE/src/published/scripts/lib" "$FAKE/src/published/contract" "$FAKE/src/published/agents" "$FAKE/src/published" "$FAKE/.claude-plugin" "$FAKE/dist/claude"
 cp "$REPO_ROOT/src/published/scripts/generate-published-adapters.sh" "$REPO_ROOT/src/published/scripts/validate-published-artifacts.sh" "$FAKE/src/published/scripts/"
 cp "$REPO_ROOT/src/published/scripts/adapters/adapter-claude.sh" "$FAKE/src/published/scripts/adapters/"
 cp "$REPO_ROOT/src/published/scripts/lib/adapter-claude.sh" "$REPO_ROOT/src/published/scripts/lib/jsonschema-lite.jq" "$FAKE/src/published/scripts/lib/"
 jq '(.oneOf[].properties.mcp.items.enum) += ["nuevo"]' "$REPO_ROOT/src/published/contract/published-artifact.schema.json" > "$FAKE/src/published/contract/published-artifact.schema.json"
+printf '%s\n' '{"name":"mefisto","version":"1.2.3"}' > "$FAKE/.claude-plugin/plugin.json"
+printf '%s\n' '{"schemaVersion":1,"version":"1.2.3","commit":"0123456789abcdef0123456789abcdef01234567"}' > "$FAKE/src/published/release-identity.json"
 printf '%s\n' 'salida anterior' > "$FAKE/dist/claude/anterior.md"
 printf '%s\n' '---' '{"kind":"agent","id":"atomico","description":"Prueba.","mode":"subagent","mcp":["nuevo"]}' '---' '{{mefisto:assert-consumer-repo}}' > "$FAKE/src/published/agents/atomico.md"
 out="$(bash "$FAKE/src/published/scripts/generate-published-adapters.sh" 2>&1)"; rc=$?
