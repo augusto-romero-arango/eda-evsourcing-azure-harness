@@ -55,6 +55,7 @@ cp "$REPO_ROOT/src/published/scripts/validate-published-mcp.sh" "$SKILL_REPO/src
 mkdir -p "$SKILL_REPO/src/published/scripts/lib"
 cp "$REPO_ROOT/src/published/scripts/lib/jsonschema-lite.jq" "$SKILL_REPO/src/published/scripts/lib/"
 cp "$REPO_ROOT/src/published/contract/mcp-servers.json" "$REPO_ROOT/src/published/contract/mcp-servers.schema.json" "$REPO_ROOT/src/published/contract/published-artifact.schema.json" "$SKILL_REPO/src/published/contract/"
+cp "$MAPPING" "$SKILL_REPO/src/published/contract/"
 cp "$REPO_ROOT/.mcp.json" "$SKILL_REPO/.mcp.json"
 cp "$REPO_ROOT/src/published/hooks/interactive-hooks.json" "$REPO_ROOT/src/published/hooks/interactive-hooks.schema.json" "$SKILL_REPO/src/published/hooks/"
 chmod +x "$SKILL_REPO/src/published/scripts/validate-interactive-hooks.sh" "$SKILL_REPO/src/published/scripts/validate-published-mcp.sh"
@@ -227,14 +228,51 @@ out="$(render "$WORK/ambos.md" 2>&1)"; rc=$?
 make_agent duplicado-mcp '[]' ',"mcp":["terraform","terraform"]'
 out="$(render "$WORK/duplicado-mcp.md" 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && assert_contains "$out" 'referencia MCP duplicada' 'MCP duplicado aborta visiblemente' || fail 'MCP duplicado debio fallar'
-make_agent desconocido-mcp '[]' ',"mcp":["servidor-ajeno"]'
-out="$(render "$WORK/desconocido-mcp.md" 2>&1)"; rc=$?
+out="$(render "$FIXTURES/agent-mcp-desconocido.md" 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && assert_contains "$out" "id MCP 'servidor-ajeno' ausente del registro" 'MCP ausente del registro aborta con id' || fail 'MCP ausente debio fallar'
+
+for fixture in agent-microsoft agent-terraform agent-ambos-mcp; do
+    if render "$FIXTURES/$fixture.md" > "$WORK/$fixture.md" && cmp -s "$FIXTURES/expected-$fixture.md" "$WORK/$fixture.md"; then
+        pass "snapshot byte a byte de $fixture"
+    else
+        fail "snapshot byte a byte de $fixture"
+    fi
+done
+
+rm -rf "$SKILL_REPO/skills"; mkdir -p "$SKILL_REPO/skills/futuro"; write_future_skill
+cp "$FIXTURES/agent-microsoft.md" "$SKILL_REPO/src/published/agent-microsoft.md"
+jq '.servers += [{"id":"servidor-sin-mapping","provisioning":"external","transport":null,"url":null,"authentication":null}]' "$REPO_ROOT/src/published/contract/mcp-servers.json" > "$SKILL_REPO/src/published/contract/mcp-servers.json"
+out="$("$FIXTURE_ADAPTER" render "$SKILL_REPO/src/published/agent-microsoft.md" '<!-- prueba -->' 2>&1)"; rc=$?
+if [ "$rc" -ne 0 ]; then
+    assert_contains "$out" 'agent-microsoft.md: mcp:' 'id sin mapping nombra el artefacto'
+    assert_contains "$out" "id MCP 'servidor-sin-mapping' sin mapping OpenCode" 'id sin mapping nombra el id afectado'
+else
+    fail 'id MCP sin mapping debio fallar'
+fi
+jq '.servers += [.servers[0]]' "$REPO_ROOT/src/published/contract/mcp-servers.json" > "$SKILL_REPO/src/published/contract/mcp-servers.json"
+out="$("$FIXTURE_ADAPTER" render "$SKILL_REPO/src/published/agent-microsoft.md" '<!-- prueba -->' 2>&1)"; rc=$?
+if [ "$rc" -ne 0 ]; then
+    assert_contains "$out" 'agent-microsoft.md: mcp:' 'registro duplicado nombra el artefacto'
+    assert_contains "$out" "id MCP 'microsoft-learn' duplicado en el registro" 'registro duplicado nombra el id afectado'
+else
+    fail 'id MCP duplicado en registro debio fallar'
+fi
 
 printf '%s\n' '[delegacion MCP] comandos y agente ejecutor'
 MCP_ROOT="$WORK/mcp-root"
-mkdir -p "$MCP_ROOT/src/published/agents" "$MCP_ROOT/src/published/commands" "$MCP_ROOT/src/published/contract"
+mkdir -p "$MCP_ROOT/src/published/agents" "$MCP_ROOT/src/published/commands" "$MCP_ROOT/src/published/contract" "$MCP_ROOT/src/published/scripts/lib"
 cp "$REPO_ROOT/src/published/contract/published-artifact.schema.json" "$MCP_ROOT/src/published/contract/"
+cp "$REPO_ROOT/src/published/scripts/validate-published-artifacts.sh" "$MCP_ROOT/src/published/scripts/"
+cp "$REPO_ROOT/src/published/scripts/lib/jsonschema-lite.jq" "$MCP_ROOT/src/published/scripts/lib/"
+chmod +x "$MCP_ROOT/src/published/scripts/validate-published-artifacts.sh"
+MCP_ARTIFACT_VALIDATOR="$MCP_ROOT/src/published/scripts/validate-published-artifacts.sh"
+cp "$FIXTURES/agent-ejecutor-mcp.md" "$MCP_ROOT/src/published/agents/ejecutor-mcp.md"
+cp "$FIXTURES/command-mcp-valido.md" "$MCP_ROOT/src/published/commands/command-mcp-valido.md"
+cp "$FIXTURES/command-mcp-invalido.md" "$MCP_ROOT/src/published/commands/command-mcp-invalido.md"
+out="$(cd "$MCP_ROOT" && src/published/scripts/validate-published-artifacts.sh src/published/commands/command-mcp-valido.md 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && pass 'fixture de comando MCP delega validamente con ruta relativa' || fail "fixture de delegacion MCP valida fue rechazada: $out"
+out="$("$MCP_ARTIFACT_VALIDATOR" "$MCP_ROOT/src/published/commands/command-mcp-invalido.md" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && assert_contains "$out" 'no delega a un agente neutral' 'fixture de comando MCP rechaza ausencia de agente' || fail 'fixture de comando sin agente debio fallar'
 write_mcp_agent() {
     printf '%s\n' '---' '{"kind":"agent","id":"ejecutor-mcp","description":"Ejecutor.","mode":"subagent","mcp":["microsoft-learn","terraform"]}' '---' '{{mefisto:assert-consumer-repo}}' > "$MCP_ROOT/src/published/agents/ejecutor-mcp.md"
 }
@@ -243,17 +281,17 @@ write_mcp_command() {
     printf '%s\n' '---' "{\"kind\":\"command\",\"id\":\"consulta-mcp\",\"description\":\"Consulta.\",\"mcp\":$mcp${agent:+,\"agent\":\"$agent\"}}" '---' '{{mefisto:assert-consumer-repo}}' > "$MCP_ROOT/src/published/commands/consulta-mcp.md"
 }
 write_mcp_agent; write_mcp_command '["microsoft-learn"]' ejecutor-mcp
-out="$(MEFISTO_PUBLISHED_ROOT="$MCP_ROOT" "$REPO_ROOT/src/published/scripts/validate-published-artifacts.sh" "$MCP_ROOT/src/published/commands/consulta-mcp.md" 2>&1)"; rc=$?
+out="$("$MCP_ARTIFACT_VALIDATOR" "$MCP_ROOT/src/published/commands/consulta-mcp.md" 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && pass 'comando MCP delega validamente a agente con superconjunto' || fail "delegacion MCP valida fue rechazada: $out"
 write_mcp_command '["microsoft-learn"]' inexistente
-out="$(MEFISTO_PUBLISHED_ROOT="$MCP_ROOT" "$REPO_ROOT/src/published/scripts/validate-published-artifacts.sh" "$MCP_ROOT/src/published/commands/consulta-mcp.md" 2>&1)"; rc=$?
+out="$("$MCP_ARTIFACT_VALIDATOR" "$MCP_ROOT/src/published/commands/consulta-mcp.md" 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && assert_contains "$out" "agente delegado 'inexistente' no existe" 'comando MCP rechaza agente inexistente' || fail 'agente inexistente debio fallar'
 write_mcp_command '["microsoft-learn"]' ''
-out="$(MEFISTO_PUBLISHED_ROOT="$MCP_ROOT" "$REPO_ROOT/src/published/scripts/validate-published-artifacts.sh" "$MCP_ROOT/src/published/commands/consulta-mcp.md" 2>&1)"; rc=$?
+out="$("$MCP_ARTIFACT_VALIDATOR" "$MCP_ROOT/src/published/commands/consulta-mcp.md" 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && assert_contains "$out" 'no delega a un agente neutral' 'comando MCP rechaza ausencia de agente' || fail 'comando sin agente debio fallar'
 write_mcp_command '["microsoft-learn"]' ejecutor-mcp
 printf '%s\n' '---' '{"kind":"agent","id":"ejecutor-mcp","description":"Ejecutor.","mode":"subagent","mcp":["terraform"]}' '---' '{{mefisto:assert-consumer-repo}}' > "$MCP_ROOT/src/published/agents/ejecutor-mcp.md"
-out="$(MEFISTO_PUBLISHED_ROOT="$MCP_ROOT" "$REPO_ROOT/src/published/scripts/validate-published-artifacts.sh" "$MCP_ROOT/src/published/commands/consulta-mcp.md" 2>&1)"; rc=$?
+out="$("$MCP_ARTIFACT_VALIDATOR" "$MCP_ROOT/src/published/commands/consulta-mcp.md" 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && assert_contains "$out" 'no declara todos los ids requeridos' 'comando MCP rechaza subconjunto incumplido' || fail 'subconjunto MCP incumplido debio fallar'
 make_agent directiva '[]'
 printf '%s\n' '{{mefisto:desconocida}}' >> "$WORK/directiva.md"

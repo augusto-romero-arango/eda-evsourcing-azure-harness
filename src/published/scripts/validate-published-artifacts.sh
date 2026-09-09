@@ -6,7 +6,7 @@ set -uo pipefail
 export LC_ALL=C
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="${MEFISTO_PUBLISHED_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 CONTRACT_DIR="$REPO_ROOT/src/published/contract"
 SCHEMA_FILE="$CONTRACT_DIR/published-artifact.schema.json"
 JSONSCHEMA_LITE="$SCRIPT_DIR/lib/jsonschema-lite.jq"
@@ -95,7 +95,7 @@ EOF
         fi
     done < <(body_lines "$file")
     [ "$has_guard" -eq 1 ] || { echo "$rel: body: falta {{mefisto:assert-consumer-repo}}"; status=1; }
-    if [ "$file" = "$REPO_ROOT/src/published/commands/"*.md ] && [ "$(printf '%s' "$instance_json" | jq -r '.kind')" = command ] && [ "$(printf '%s' "$instance_json" | jq '[.mcp[]?] | length')" -gt 0 ]; then
+    if [[ "$rel" = src/published/commands/*.md ]] && [ "$(printf '%s' "$instance_json" | jq -r '.kind')" = command ] && [ "$(printf '%s' "$instance_json" | jq '[.mcp[]?] | length')" -gt 0 ]; then
         agent="$(printf '%s' "$instance_json" | jq -r '.agent // empty')"
         [ -n "$agent" ] || agent="$(body_lines "$file" | cut -d: -f2- | grep -Eo '\{\{mefisto:launch-agent [a-z0-9]+(-[a-z0-9]+)*\}\}' | sed -E 's/.*launch-agent ([a-z0-9-]+).*/\1/' | head -n 1)"
         if [ -z "$agent" ]; then
