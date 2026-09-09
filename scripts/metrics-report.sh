@@ -8,8 +8,8 @@
 #   scripts/metrics-report.sh --desde 2026-08-01
 #   scripts/metrics-report.sh --desde 2026-08-01 --hasta 2026-08-15
 #
-# Agrega .claude/pipeline/pipeline-history.jsonl del consumidor (una linea por
-# corrida de tdd-pipeline.sh/tooling-pipeline.sh/iac-pipeline.sh, con
+# Agrega los pipeline-history.jsonl canonico y legacy del consumidor (una linea
+# por corrida de tdd-pipeline.sh/tooling-pipeline.sh/iac-pipeline.sh, con
 # agents.<stage>.metrics derivado de la traza por #645/#646): ranking de
 # herramientas, reparto API vs no-API del wall-clock (agregado y por corrida),
 # deriva de turnos por stage con su modelo declarado, y deriva temporal
@@ -78,6 +78,11 @@
 
 set -euo pipefail
 
+# El reader publicado conserva la transicion de estado de MEF-ADR-0053: el
+# helper devuelve las rutas existentes, canonica primero y legacy despues, sin
+# crear directorios ni migrar datos.
+source "$(dirname "${BASH_SOURCE[0]}")/_pipeline-common.sh"
+
 # Guard defensivo: este script es del lado publicado y solo aplica al
 # consumidor (mismo patron que scripts/appinsights-query.sh). Si detectamos
 # .claude-plugin/plugin.json en la raiz del repo, estamos en el repo de
@@ -92,8 +97,8 @@ if [ -f "$_REPO_TOP/.claude-plugin/plugin.json" ]; then
     exit 1
 fi
 
-# El historial vive SIEMPRE en el .claude/pipeline/ del repo principal: los
-# pipelines resuelven PIPELINE_DIR_ABS antes de hacer cd al worktree del issue.
+# El historial vive en el estado canonico o legacy del repo principal: los
+# pipelines resuelven su directorio de estado antes de hacer cd al worktree.
 # Como los worktrees son justo donde uno esta parado mientras corre un pipeline,
 # quedarse con --show-toplevel haria que el reporte dijera "0 corridas" en
 # silencio. --git-common-dir devuelve el .git compartido: absoluto desde un
@@ -120,7 +125,7 @@ JQ_ROW='def row: map(if . == null or . == "" then "null" else . end) | @tsv;'
 RULE_MAJOR=$(printf '%0102d' 0 | tr '0' '=')
 RULE_MINOR=$(printf '%0102d' 0 | tr '0' '-')
 
-# compute_metrics_report_json <history_file> <desde> <hasta>
+# compute_metrics_report_json <history_file>... <desde> <hasta>
 #
 # Agrega pipeline-history.jsonl en un unico objeto JSON compacto, segmentado
 # por pipeline: ranking de herramientas, reparto del wall-clock agregado/por-
@@ -130,9 +135,17 @@ RULE_MINOR=$(printf '%0102d' 0 | tr '0' '-')
 # lineas corruptas (se ignoran). Nunca aborta: ante cualquier fallo de jq
 # devuelve vacio y el caller decide.
 compute_metrics_report_json() {
-    local history_file="$1" desde="$2" hasta="$3"
-    local raw_content=""
-    [ -f "$history_file" ] && raw_content="$(cat "$history_file" 2>/dev/null || true)"
+    local desde hasta raw_content="" history_file source_count index desde_index hasta_index
+    source_count=$(( $# - 2 ))
+    desde_index=$(( source_count + 1 ))
+    hasta_index=$(( source_count + 2 ))
+    desde="${!desde_index}"
+    hasta="${!hasta_index}"
+    for ((index = 1; index <= source_count; index++)); do
+        history_file="${!index}"
+        [ -f "$history_file" ] || continue
+        raw_content="${raw_content}$(cat "$history_file" 2>/dev/null || true)"$'\n'
+    done
 
     printf '%s' "$raw_content" | jq -R -s -c --arg desde "$desde" --arg hasta "$hasta" '
 def median:
@@ -380,7 +393,15 @@ def pipeline_report:
       comparison: build_comparison($weekly; $monthly)
     };
 
-(split("\n") | map(select(length > 0)) | map(try fromjson catch empty) | map(select(type == "object"))) as $raw
+(split("\n")
+ | map(select(length > 0) | try fromjson catch empty)
+ | map(select(type == "object"))
+ | to_entries
+ # La posicion conserva la prioridad de entrada: el caller pasa primero la
+ # fuente canonica. Solo se colapsa la identidad completa de una corrida; una
+ # coincidencia parcial de issue o fecha nunca elimina una linea distinta.
+ | group_by([.value.pipeline, .value.issue, .value.variant, .value.started])
+ | map(min_by(.key).value)) as $raw
 
 | ($raw | map(select(
     (($desde == "") or ((( .started // "")[0:8]) as $d8 | ($d8 | length) == 8 and $d8 >= ($desde | gsub("-"; ""))))
@@ -812,12 +833,30 @@ EOF
         exit 1
     fi
 
-    local history_file="$_MAIN_REPO_TOP/.claude/pipeline/pipeline-history.jsonl"
+    local history_sources history_file history_label
+    local history_files=()
+    history_sources=$(mefisto_state_read_paths "pipeline-history.jsonl" "$_MAIN_REPO_TOP")
+    if [ -z "$history_sources" ]; then
+        # No fabricar una ruta canonica aqui: el helper es la unica autoridad
+        # sobre ubicaciones de estado y una lista vacia es una entrada valida.
+        history_label="ningun historial existente"
+    else
+        while IFS= read -r history_file; do
+            [ -n "$history_file" ] && history_files+=("$history_file")
+        done <<< "$history_sources"
+        history_label=$(printf '%s\n' "$history_sources" | tr '\n' ' ' | sed 's/ $//')
+    fi
 
     local agg
-    agg=$(compute_metrics_report_json "$history_file" "$desde" "$hasta") || true
+    if [ ${#history_files[@]} -eq 0 ]; then
+        # Bash 3.2 con nounset no permite expandir un array vacio; el agregador
+        # acepta cero fuentes antes de los dos limites de fecha.
+        agg=$(compute_metrics_report_json "$desde" "$hasta") || true
+    else
+        agg=$(compute_metrics_report_json "${history_files[@]}" "$desde" "$hasta") || true
+    fi
     if [ -z "$agg" ]; then
-        echo "ERROR: no se pudo procesar el historial ($history_file)" >&2
+        echo "ERROR: no se pudo procesar el historial ($history_label)" >&2
         exit 1
     fi
 
@@ -825,7 +864,7 @@ EOF
     if [ "$_MAIN_REPO_TOP" != "$_REPO_TOP" ]; then
         echo ""
         echo "Nota: estas parado en un worktree; el historial se leyo del repo principal"
-        echo "      ($history_file), que es donde lo escriben los pipelines."
+        echo "      ($history_label), que es donde lo escriben los pipelines."
     fi
 
     local total

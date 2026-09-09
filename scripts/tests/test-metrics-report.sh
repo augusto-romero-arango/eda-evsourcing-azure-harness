@@ -66,6 +66,9 @@
 #       son justo el par que un orden lexicografico invertiria (0.9.0 vs
 #       0.25.0, ambos alcanzables con el plugin ya en 0.25.0): N-11 fija el
 #       orden semver numerico.
+#   [O] Transicion de estado: fuentes canonica/legacy disjuntas se combinan y
+#       duplicados identicos o enriquecidos por identidad estable prefieren la
+#       entrada canonica; tambien cubre solo canonica y campos opacos.
 #
 # Uso: scripts/tests/test-metrics-report.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -123,10 +126,11 @@ else
 fi
 
 # --- Repo consumidor de mentira (SIN .claude-plugin/plugin.json) para las pruebas end-to-end ---
-FAKE_REPO="$TMP/fake-consumer"
+FAKE_REPO="$TMP/fake consumer"
 mkdir -p "$FAKE_REPO/.claude/pipeline"
 git -C "$FAKE_REPO" init -q
 cp "$REPORT_SCRIPT" "$FAKE_REPO/metrics-report.sh"
+cp "$REPO_ROOT/scripts/_pipeline-common.sh" "$FAKE_REPO/_pipeline-common.sh"
 chmod +x "$FAKE_REPO/metrics-report.sh"
 
 run_report() {
@@ -153,6 +157,11 @@ if [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "Corridas totales en la ventana: 0";
 else
     fail "historial inexistente: se esperaba exit 0 y '0 corridas', se obtuvo rc=$RC: $OUT"
 fi
+if [ ! -e "$FAKE_REPO/.mefisto/pipeline" ]; then
+    pass "historial inexistente: no crea el directorio canonico"
+else
+    fail "historial inexistente: creo .mefisto/pipeline pese a ser solo lectura"
+fi
 
 echo ""
 echo "[B] Guard: repo con .claude-plugin/plugin.json (Mefisto) aborta"
@@ -162,6 +171,7 @@ mkdir -p "$FAKE_PLUGIN/.claude-plugin"
 git -C "$FAKE_PLUGIN" init -q
 echo '{"name":"mefisto"}' > "$FAKE_PLUGIN/.claude-plugin/plugin.json"
 cp "$REPORT_SCRIPT" "$FAKE_PLUGIN/metrics-report.sh"
+cp "$REPO_ROOT/scripts/_pipeline-common.sh" "$FAKE_PLUGIN/_pipeline-common.sh"
 chmod +x "$FAKE_PLUGIN/metrics-report.sh"
 OUT=$(cd "$FAKE_PLUGIN" && ./metrics-report.sh 2>&1)
 RC=$?
@@ -498,6 +508,62 @@ if echo "$OUT" | grep -qE '^0\.9\.0 +2/2 +2m30s'; then
     pass "N-16: la fila trae su wall medio real (2m30s), no un '-' por clave mal leida"
 else
     fail "N-16: la columna WallMedia de 0.9.0 no muestra 2m30s: $(echo "$OUT" | grep -E '^0\.9\.0')"
+fi
+
+echo ""
+echo "[O] Fuentes canonica y legacy se combinan sin escribir ni duplicar (CA-1..CA-5)"
+
+mkdir -p "$FAKE_REPO/.mefisto/pipeline"
+rm -f "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl"
+cat > "$FAKE_REPO/.mefisto/pipeline/pipeline-history.jsonl" <<'EOF'
+{"issue":"899","pipeline":"tooling","variant":"solo-canonica","started":"20260901-080000","state":"completed","agents":{"writer":{"duration":10}}}
+EOF
+OUT=$(run_report)
+RC=$?
+if [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "Corridas totales en la ventana: 1"; then
+    pass "O-1: solo la fuente canonica se agrega"
+else
+    fail "O-1: fuente solo canonica no agregada, rc=$RC: $(echo "$OUT" | grep 'Corridas totales')"
+fi
+
+mkdir -p "$FAKE_REPO/.claude/pipeline"
+cat > "$FAKE_REPO/.mefisto/pipeline/pipeline-history.jsonl" <<'EOF'
+{"issue":"900","pipeline":"tooling","variant":"canonica","started":"20260901-090000","state":"completed","runtime":"abierto","harness_commit":"abc","result":"resultado-neutral","prompt":"SECRETO_PROMPT","token":"SECRETO_TOKEN","tool_input":"SECRETO_INPUT","error":"SECRETO_ERROR","agents":{"writer":{"duration":10}}}
+{"issue":"901","pipeline":"tooling","variant":"duplicada","started":"20260902-090000","state":"completed","runtime":"abierto","agents":{"writer":{"duration":10,"metrics":{"turns":7,"duration_ms":10000,"duration_api_ms":8000,"non_api_ms":2000,"cost_usd":0.1,"tokens":{"input":1,"output":1},"model":"modelo-abierto","tool_calls":[]}}}}
+{"issue":"903","pipeline":"tdd","variant":"identica","started":"20260903-100000","state":"completed","agents":{"writer":{"duration":5}}}
+{linea corrupta
+EOF
+cat > "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" <<'EOF'
+{"issue":"902","pipeline":"infra","started":"20260903-090000","state":"completed","agents":{"writer":{"duration":10}}}
+{"issue":"901","pipeline":"tooling","variant":"duplicada","started":"20260902-090000","state":"failed","agents":{"writer":{"duration":99}}}
+{"issue":"901","pipeline":"tooling","variant":"otra","started":"20260902-090000","state":"completed","agents":{"writer":{"duration":10}}}
+{"issue":"903","pipeline":"tdd","variant":"identica","started":"20260903-100000","state":"completed","agents":{"writer":{"duration":5}}}
+EOF
+
+CANONICAL_SUM=$(shasum -a 256 "$FAKE_REPO/.mefisto/pipeline/pipeline-history.jsonl" | cut -d' ' -f1)
+LEGACY_SUM=$(shasum -a 256 "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" | cut -d' ' -f1)
+AGG_O=$(compute_metrics_report_json "$FAKE_REPO/.mefisto/pipeline/pipeline-history.jsonl" "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" "" "")
+assert_field "O-2: fuentes disjuntas y duplicados cuentan cinco corridas" "5" "$(echo "$AGG_O" | jq -r '.meta.total')"
+assert_field "O-3: duplicado enriquecido prefiere la entrada canonica" "completed" "$(echo "$AGG_O" | jq -r '.pipelines.tooling.wallclock.per_run[] | select(.issue=="901") | .state')"
+assert_field "O-4: variant distinto no se deduplica" "3" "$(echo "$AGG_O" | jq -r '.pipelines.tooling.meta.total')"
+assert_field "O-5: duplicado identico se cuenta una sola vez" "1" "$(echo "$AGG_O" | jq -r '.pipelines.tdd.meta.total')"
+OUT=$(run_report --desde 2026-09-01 --hasta 2026-09-03)
+RC=$?
+if [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "Corridas totales en la ventana: 5"; then
+    pass "O-6: end-to-end combina ambas rutas y conserva filtros"
+else
+    fail "O-6: se esperaban cinco corridas combinadas, rc=$RC: $(echo "$OUT" | grep 'Corridas totales')"
+fi
+if [ "$CANONICAL_SUM" = "$(shasum -a 256 "$FAKE_REPO/.mefisto/pipeline/pipeline-history.jsonl" | cut -d' ' -f1)" ] \
+   && [ "$LEGACY_SUM" = "$(shasum -a 256 "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" | cut -d' ' -f1)" ]; then
+    pass "O-7: el reporte no modifica ninguno de los historiales"
+else
+    fail "O-7: el reporte modifico un historial"
+fi
+if ! printf '%s' "$OUT" | grep -qE 'SECRETO_(PROMPT|TOKEN|INPUT|ERROR)|resultado-neutral|abc'; then
+    pass "O-8: campos no allowlisted permanecen fuera de la salida"
+else
+    fail "O-8: la salida expuso campos ajenos a los agregados"
 fi
 
 echo ""
