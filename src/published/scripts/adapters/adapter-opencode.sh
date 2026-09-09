@@ -330,14 +330,15 @@ EOF
 }
 
 validate_published_mcp() {
+    local registry="${1:-$MCP_REGISTRY}"
     [ -x "$MCP_VALIDATOR" ] || { error 'mcp: falta validador publicado ejecutable'; return 1; }
-    "$MCP_VALIDATOR" || return 1
+    "$MCP_VALIDATOR" --registry "$registry" || return 1
 }
 
 render_mcp_plugin() {
-    local bundled
-    validate_published_mcp || return 1
-    bundled="$(jq -c '[.servers[] | select(.provisioning == "bundled") | {key: .id, value: {type: "remote", url: .url, enabled: true, oauth: false}}] | from_entries' "$MCP_REGISTRY")" || return 1
+    local source="$1" bundled
+    validate_published_mcp "$source" || return 1
+    bundled="$(jq -c '[.servers[] | select(.provisioning == "bundled") | {key: .id, value: {type: "remote", url: .url, enabled: true, oauth: false}}] | from_entries' "$source")" || return 1
     cat <<EOF
 // GENERADO por src/published/scripts/adapters/adapter-opencode.sh desde src/published/contract/mcp-servers.json. No editar a mano.
 const bundled = $bundled;
@@ -346,7 +347,7 @@ const identical = (actual, expected) => actual && typeof actual === "object" && 
   Object.keys(actual).length === Object.keys(expected).length &&
   Object.keys(expected).every((key) => actual[key] === expected[key]);
 const log = async (client, event, server) => {
-  try { await client?.app?.log?.({ body: { service: "mefisto", level: "warn", event, server } }); } catch { /* failure: continue */ }
+  try { await client?.app?.log?.({ body: { service: "mefisto", level: "warn", message: event, extra: { event, server } } }); } catch { /* failure: continue */ }
 };
 
 export default async function mefistoMcp({ client } = {}) {
@@ -357,7 +358,7 @@ export default async function mefistoMcp({ client } = {}) {
         if (config.mcp === undefined) config.mcp = {};
         if (!config.mcp || typeof config.mcp !== "object" || Array.isArray(config.mcp)) throw new Error("invalid_mcp");
         for (const [server, expected] of Object.entries(bundled)) {
-          if (!owns(config.mcp, server)) { config.mcp[server] = expected; continue; }
+          if (!owns(config.mcp, server)) { config.mcp[server] = { ...expected }; continue; }
           if (!identical(config.mcp[server], expected)) await log(client, "mcp_config_conflict", server);
         }
       } catch { await log(client, "mcp_config_hook_failed", "microsoft-learn"); }
@@ -413,6 +414,6 @@ case "${1:-}" in
     assets) validate_interactive_hooks && validate_published_mcp && { skill_assets | jq '. + [{id:"interactive-observability",source:"src/published/hooks/interactive-hooks.json",destination:"plugins/mefisto-observability.js",mode:"0644"},{id:"mcp-config",source:"src/published/contract/mcp-servers.json",destination:"plugins/mefisto-mcp.js",mode:"0644"}]'; } ;;
     render-asset)
         [ "$#" -eq 3 ] || error 'render-asset: se esperaban id y fuente'
-        case "$2" in interactive-observability) render_observability_plugin ;; mcp-config) render_mcp_plugin ;; *) render_skill_asset "$2" "$3" ;; esac ;;
+        case "$2" in interactive-observability) render_observability_plugin ;; mcp-config) render_mcp_plugin "$3" ;; *) render_skill_asset "$2" "$3" ;; esac ;;
     *) error 'uso: adapter-opencode.sh root|path|render|assets|render-asset' ;;
 esac

@@ -5,7 +5,7 @@ const identical = (actual, expected) => actual && typeof actual === "object" && 
   Object.keys(actual).length === Object.keys(expected).length &&
   Object.keys(expected).every((key) => actual[key] === expected[key]);
 const log = async (client, event, server) => {
-  try { await client?.app?.log?.({ body: { service: "mefisto", level: "warn", event, server } }); } catch { /* failure: continue */ }
+  try { await client?.app?.log?.({ body: { service: "mefisto", level: "warn", message: event, extra: { event, server } } }); } catch { /* failure: continue */ }
 };
 
 export default async function mefistoMcp({ client } = {}) {
@@ -16,7 +16,7 @@ export default async function mefistoMcp({ client } = {}) {
         if (config.mcp === undefined) config.mcp = {};
         if (!config.mcp || typeof config.mcp !== "object" || Array.isArray(config.mcp)) throw new Error("invalid_mcp");
         for (const [server, expected] of Object.entries(bundled)) {
-          if (!owns(config.mcp, server)) { config.mcp[server] = expected; continue; }
+          if (!owns(config.mcp, server)) { config.mcp[server] = { ...expected }; continue; }
           if (!identical(config.mcp[server], expected)) await log(client, "mcp_config_conflict", server);
         }
       } catch { await log(client, "mcp_config_hook_failed", "microsoft-learn"); }

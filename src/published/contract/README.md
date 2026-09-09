@@ -20,7 +20,7 @@ objetos rechazan propiedades adicionales.
 | `profile` | sí | sí | `model` resuelto por tabla del adaptador | no se emite `model`; hereda la configuración interactiva del usuario |
 | `capabilities` | sí | sí | `tools`/`allowed-tools` generados | `permission` generado |
 | `skills` | sí | sí | `skills` con ids fuente, sin prefijo | preámbulo que solicita la carga nativa on-demand de `mefisto-<id>` |
-| `mcp` | sí | sí | matcher scoped por id lógico | entrada `mcp`/permiso por id lógico |
+| `mcp` | sí | sí | matcher scoped por id lógico | traducción de permisos pendiente en #1145; el adaptador aborta hoy si un artefacto declara referencias |
 | `agent` | no | sí | delegación al agente generado | `agent` + ejecución como subtask |
 | `arguments` | no | sí | `argument-hint` | hint equivalente si el runtime lo admite |
 
@@ -59,6 +59,21 @@ credenciales. Para cada entrada `bundled`,
 (`remote-http` a `type: http`) y exige que `.mcp.json` sea idéntico, sin
 servidores externos ni claves adicionales. `.mcp.json` sigue versionado como
 adaptador Claude, no como autoridad conceptual.
+
+| Provisioning neutral | Claude Code | OpenCode |
+|---|---|---|
+| `microsoft-learn` / `bundled` | `.mcp.json`, HTTP remoto sin autenticación | `plugins/mefisto-mcp.js`, proyectado globalmente; el hook `config` agrega `type: "remote"`, `enabled: true` y `oauth: false` solo si la clave no existe |
+| `terraform` / `external` | instalación externa al plugin | instalación externa al plugin; nunca se agrega a `config.mcp` |
+
+El plugin OpenCode se genera como asset suplementario desde el registro, se
+instala y retira mediante el ledger global, y no lee ni modifica
+`opencode.json`. Ante una definición preexistente distinta, la configuración
+del usuario gana y el hook emite `mcp_config_conflict` sin incluir su valor.
+Los permisos por agente/comando llegan en #1145 y el smoke real de conexión y
+listado queda diferido a #1066. El formato del servidor remoto y la carga de
+plugins globales siguen la documentación oficial de OpenCode 1.18.29:
+[MCP servers](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/web/src/content/docs/mcp-servers.mdx)
+y [Plugins](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/web/src/content/docs/plugins.mdx).
 
 Toda referencia `skills` debe resolver a un `skills/<id>/SKILL.md` publicado,
 ser única y conservar el id lógico sin prefijo. Claude Code materializa esos

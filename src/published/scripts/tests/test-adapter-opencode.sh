@@ -48,16 +48,16 @@ cmp -s "$REPO_ROOT/skills/projections/read-apis.md" <("$ADAPTER" render-asset sk
 
 printf '%s\n' '[skills] enumeracion abierta y validacion fail-closed'
 SKILL_REPO="$WORK/skill-repo"; FIXTURE_ADAPTER="$SKILL_REPO/src/published/scripts/adapters/adapter-opencode.sh"
-    mkdir -p "$SKILL_REPO/src/published/scripts/adapters" "$SKILL_REPO/src/published/hooks" "$SKILL_REPO/src/published/contract" "$SKILL_REPO/skills/futuro"
+mkdir -p "$SKILL_REPO/src/published/scripts/adapters" "$SKILL_REPO/src/published/hooks" "$SKILL_REPO/src/published/contract" "$SKILL_REPO/skills/futuro"
 cp "$ADAPTER" "$FIXTURE_ADAPTER"; chmod +x "$FIXTURE_ADAPTER"
-    cp "$REPO_ROOT/src/published/scripts/validate-interactive-hooks.sh" "$SKILL_REPO/src/published/scripts/"
-    cp "$REPO_ROOT/src/published/scripts/validate-published-mcp.sh" "$SKILL_REPO/src/published/scripts/"
-    mkdir -p "$SKILL_REPO/src/published/scripts/lib"
-    cp "$REPO_ROOT/src/published/scripts/lib/jsonschema-lite.jq" "$SKILL_REPO/src/published/scripts/lib/"
-    cp "$REPO_ROOT/src/published/contract/mcp-servers.json" "$REPO_ROOT/src/published/contract/mcp-servers.schema.json" "$REPO_ROOT/src/published/contract/published-artifact.schema.json" "$SKILL_REPO/src/published/contract/"
-    cp "$REPO_ROOT/.mcp.json" "$SKILL_REPO/.mcp.json"
+cp "$REPO_ROOT/src/published/scripts/validate-interactive-hooks.sh" "$SKILL_REPO/src/published/scripts/"
+cp "$REPO_ROOT/src/published/scripts/validate-published-mcp.sh" "$SKILL_REPO/src/published/scripts/"
+mkdir -p "$SKILL_REPO/src/published/scripts/lib"
+cp "$REPO_ROOT/src/published/scripts/lib/jsonschema-lite.jq" "$SKILL_REPO/src/published/scripts/lib/"
+cp "$REPO_ROOT/src/published/contract/mcp-servers.json" "$REPO_ROOT/src/published/contract/mcp-servers.schema.json" "$REPO_ROOT/src/published/contract/published-artifact.schema.json" "$SKILL_REPO/src/published/contract/"
+cp "$REPO_ROOT/.mcp.json" "$SKILL_REPO/.mcp.json"
 cp "$REPO_ROOT/src/published/hooks/interactive-hooks.json" "$REPO_ROOT/src/published/hooks/interactive-hooks.schema.json" "$SKILL_REPO/src/published/hooks/"
-    chmod +x "$SKILL_REPO/src/published/scripts/validate-interactive-hooks.sh" "$SKILL_REPO/src/published/scripts/validate-published-mcp.sh"
+chmod +x "$SKILL_REPO/src/published/scripts/validate-interactive-hooks.sh" "$SKILL_REPO/src/published/scripts/validate-published-mcp.sh"
 write_future_skill() {
     printf '%s\n' '---' 'name: futuro' 'description: Skill futuro.' '---' '' '# Futuro' '[detalle](detalle.md)' > "$SKILL_REPO/skills/futuro/SKILL.md"
     printf 'detalle futuro\n' > "$SKILL_REPO/skills/futuro/detalle.md"
@@ -68,8 +68,8 @@ assert_skill_failure() {
     [ "$rc" -ne 0 ] && [ -n "$output" ] && pass "$label" || fail "$label"
 }
 write_future_skill
-    future_assets="$("$FIXTURE_ADAPTER" assets)"; rc=$?
-    [ "$rc" -eq 0 ] && jq -e 'length == 4 and ([.[] | select(.source == "skills/futuro/SKILL.md" and .destination == "skills/mefisto-futuro/SKILL.md")] | length) == 1 and ([.[] | select(.destination == "skills/mefisto-futuro/detalle.md")] | length) == 1 and ([.[] | select(.id == "interactive-observability")] | length) == 1 and ([.[] | select(.id == "mcp-config")] | length) == 1' <<< "$future_assets" >/dev/null && pass 'un Skill futuro converge sin inventario hardcodeado' || fail 'un Skill futuro no fue enumerado'
+future_assets="$("$FIXTURE_ADAPTER" assets)"; rc=$?
+[ "$rc" -eq 0 ] && jq -e 'length == 4 and ([.[] | select(.source == "skills/futuro/SKILL.md" and .destination == "skills/mefisto-futuro/SKILL.md")] | length) == 1 and ([.[] | select(.destination == "skills/mefisto-futuro/detalle.md")] | length) == 1 and ([.[] | select(.id == "interactive-observability")] | length) == 1 and ([.[] | select(.id == "mcp-config")] | length) == 1' <<< "$future_assets" >/dev/null && pass 'un Skill futuro converge sin inventario hardcodeado' || fail 'un Skill futuro no fue enumerado'
 "$FIXTURE_ADAPTER" render-asset skills/futuro/SKILL.md "$SKILL_REPO/skills/futuro/SKILL.md" > "$WORK/futuro-rendered.md"
 awk 'NR == 2 { print "name: mefisto-futuro"; next } { print }' "$SKILL_REPO/skills/futuro/SKILL.md" > "$WORK/futuro-expected.md"
 cmp -s "$WORK/futuro-expected.md" "$WORK/futuro-rendered.md" && pass 'render futuro cambia exclusivamente name' || fail 'render futuro altero campos o body'
