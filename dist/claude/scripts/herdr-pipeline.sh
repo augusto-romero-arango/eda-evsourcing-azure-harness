@@ -185,13 +185,15 @@ prune_report_panes() {
                 pane_runtime="${line#* }"
                 ;;
             *)
-                # Una entrada sin runtime no tiene identidad segura: no se
-                # reutiliza ni cierra. El pool legacy ni siquiera se abre.
-                kept="${kept}${line}
-"
-                continue
-                ;;
+                # Una entrada sin runtime no tiene identidad segura: se poda
+                # sin consultar ni cerrar su pane. El pool legacy ni se abre.
+                continue ;;
         esac
+        # El ledger canonico conserva exclusivamente el formato contractual
+        # "<pane_id> <runtime>". Una fila corrupta tampoco autoriza acciones
+        # sobre panes porque su identidad no es confiable.
+        case "$id" in ''|*[[:space:]]*) continue ;; esac
+        case "$pane_runtime" in ''|*[!a-z0-9_]*) continue ;; esac
         pane_exists "$id" || continue
         case "$id" in
             "$HERDR_WORKSPACE_ID:"*) ;;

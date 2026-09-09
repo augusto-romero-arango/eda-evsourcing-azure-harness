@@ -16,7 +16,8 @@
 #       con acquire_report_pane (una sola implementacion, sin duplicar el
 #       bucle).
 #   [B] (CA-2) No-op seguro fuera de contexto: sin HERDR_ENV=1, o sin
-#       PANES_STATE previo, sale 0 imprimiendo "0" sin invocar herdr.
+#       PANES_STATE previo, o con runtime invalido, sale 0 imprimiendo "0"
+#       sin invocar herdr ni mutar el pool.
 #   [C] (CA-4) Chequeo estatico de la extraccion: prune_report_panes se
 #       define una sola vez y la llaman los dos consumidores.
 #
@@ -175,6 +176,21 @@ assert_not_contains "registro final ya no tiene w1:p2 (cerrado)" "$FINAL_STATE" 
 assert_not_contains "registro final ya no tiene w1:p7 (muerto, podado)" "$FINAL_STATE" "w1:p7"
 assert_eq "pool legacy queda byte a byte intacto" "$LEGACY_BEFORE" "$LEGACY_AFTER"
 
+# La misma poda debe funcionar al invertir la fila activa: p4 queda como libre
+# reutilizable y p5/p6 convergen, sin cerrar panes Claude.
+OUT=$(run_collapse \
+    HERDR_ENV=1 HERDR_PANE_ID=w1:p0 HERDR_WORKSPACE_ID=w1 \
+    MEFISTO_RUNTIME=opencode)
+RC=$?
+STUB_CALLS=$(cat "$HERDR_STUB_LOG")
+FINAL_STATE=$(cat "$PANES_STATE")
+assert_eq "OpenCode: exit code 0" "0" "$RC"
+assert_eq "OpenCode: cierra sus dos libres sobrantes" "2" "$OUT"
+assert_contains "OpenCode: cierra w1:p5" "$STUB_CALLS" "pane close w1:p5"
+assert_contains "OpenCode: cierra w1:p6" "$STUB_CALLS" "pane close w1:p6"
+assert_not_contains "OpenCode: no cierra pane Claude" "$STUB_CALLS" "pane close w1:p1"
+assert_contains "OpenCode: conserva un libre propio" "$FINAL_STATE" "w1:p4 opencode"
+
 # --- [B] No-op fuera de contexto (CA-2) ---
 echo "[B] --collapse-panes: no-op seguro sin HERDR_ENV=1 o sin PANES_STATE previo"
 
@@ -185,6 +201,15 @@ STUB_CALLS=$(cat "$HERDR_STUB_LOG")
 assert_eq "sin HERDR_ENV=1: exit code 0" "0" "$RC"
 assert_eq "sin HERDR_ENV=1: stdout '0'" "0" "$OUT"
 assert_eq "sin HERDR_ENV=1: no invoca herdr" "0" "$(wc -l < "$HERDR_STUB_LOG" | tr -d ' ')"
+
+POOL_BEFORE=$(shasum "$PANES_STATE")
+OUT=$(run_collapse HERDR_ENV=1 HERDR_PANE_ID=w1:p0 HERDR_WORKSPACE_ID=w1 MEFISTO_RUNTIME=invalido)
+RC=$?
+POOL_AFTER=$(shasum "$PANES_STATE")
+assert_eq "runtime invalido: exit code 0 best-effort" "0" "$RC"
+assert_eq "runtime invalido: stdout '0'" "0" "$OUT"
+assert_eq "runtime invalido: pool intacto" "$POOL_BEFORE" "$POOL_AFTER"
+assert_eq "runtime invalido: no invoca herdr" "0" "$(wc -l < "$HERDR_STUB_LOG" | tr -d ' ')"
 
 rm -f "$PANES_STATE"
 OUT=$(run_collapse HERDR_ENV=1 HERDR_PANE_ID=w1:p0 HERDR_WORKSPACE_ID=w1)
