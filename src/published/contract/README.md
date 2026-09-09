@@ -19,7 +19,7 @@ objetos rechazan propiedades adicionales.
 | `mode` | requerido | no | selecciona la forma de ejecución; no se emite | `mode` |
 | `profile` | sí | sí | `model` resuelto por tabla del adaptador | no se emite `model`; hereda la configuración interactiva del usuario |
 | `capabilities` | sí | sí | `tools`/`allowed-tools` generados | `permission` generado |
-| `skills` | sí | sí | `skills` con ids fuente, sin prefijo | disponibilidad del Skill adaptado `mefisto-<id>` |
+| `skills` | sí | sí | `skills` con ids fuente, sin prefijo | preámbulo que solicita la carga nativa on-demand de `mefisto-<id>` |
 | `mcp` | sí | sí | matcher scoped por id lógico | entrada `mcp`/permiso por id lógico |
 | `agent` | no | sí | delegación al agente generado | `agent` + ejecución como subtask |
 | `arguments` | no | sí | `argument-hint` | hint equivalente si el runtime lo admite |
@@ -49,11 +49,26 @@ vocabulario cerrado: agregar otro id requiere actualizar el contrato y los
 mappings de todos los adaptadores. Si un runtime carece del mapping de un id
 declarado, su validación/generación aborta; nunca concede MCP genérico.
 
-Toda referencia `skills` debe resolver a un `skills/<id>/SKILL.md` publicado.
-Las referencias `skills` y `agent`, igual que los argumentos `<id>` de las
-directivas, conservan ids fuente sin prefijo. Un runtime sin plugin transforma
-cada Skill en la salida a `mefisto-<id>`. El prefijo adaptado no pertenece a la
-fuente.
+Toda referencia `skills` debe resolver a un `skills/<id>/SKILL.md` publicado,
+ser única y conservar el id lógico sin prefijo. Claude Code materializa esos
+ids directamente en su frontmatter. OpenCode transforma cada uno en
+`mefisto-<id>` y antepone una instrucción mínima para cargarlo mediante su tool
+nativa `skill`, antes del body; no copia la doctrina ni menciona rutas. En los
+agentes OpenCode, declarar referencias exige además la capacidad neutral
+`skill`: su `permission.skill` niega `*` y permite exactamente los nombres
+adaptados. Si la capacidad existe sin referencias, conserva la política general
+de la capacidad. Los comandos solo solicitan la carga: el permiso efectivo es
+el del agente que los ejecuta y una denegación permanece visible.
+
+| Referencia neutral | Claude Code | OpenCode |
+|---|---|---|
+| `skills: ["x"]` | frontmatter `skills: ["x"]` | preámbulo `skill` para `mefisto-x`; en agentes con capacidad `skill`, allowlist exacta en `permission.skill` |
+
+Las referencias `agent`, igual que los argumentos `<id>` de las directivas,
+también conservan ids fuente sin prefijo. El prefijo adaptado no pertenece a la
+fuente. La carga on-demand y el override por agente custom siguen el contrato
+oficial de [Agent Skills de OpenCode
+1.18.29](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/web/src/content/docs/skills.mdx).
 
 ## Layout de Skills empaquetados
 
