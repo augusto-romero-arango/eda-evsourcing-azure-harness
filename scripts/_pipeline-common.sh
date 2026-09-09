@@ -871,11 +871,12 @@ run_tests_projects() {
 
 # --- Derivacion de log legible desde eventos de agente ----------------------
 
-# derive_stage_log_from_stream <stream_file> <stderr_file> <out_file>
+# derive_stage_log_from_stream <events_file> <legacy_stderr_file> <out_file>
 #
-# Deriva el log legible de un stage desde el JSONL neutral del runner o, para
-# callers aun no migrados, desde su stream legacy. Anexa <stderr_file> y
-# sobreescribe <out_file>.
+# Deriva el log legible de un stage desde el JSONL neutral del runner. El segundo
+# argumento conserva la firma de callers legacy: solo se anexa cuando el primer
+# archivo contiene su vocabulario stream-json legado. Nunca se anexa stderr a la
+# evidencia neutral, porque stderr puede contener entradas sensibles.
 #
 # El evento `result` con `is_error == true` tambien se deriva, prefijado con
 # "API Error: <status>" cuando el CLI reporta api_error_status: en una corrida
@@ -899,10 +900,20 @@ derive_stage_log_from_stream() {
 
     if [ -s "$stream_file" ]; then
         if command -v jq >/dev/null 2>&1; then
-            jq -R -r '
-                fromjson?
-                | select(type == "object")
-                | if .type == "assistant" then
+            if jq -R -s -e 'split("\n") | map(try fromjson catch empty) | any(.[]; .type == "run.started" or .type == "run.completed" or .type == "run.failed")' "$stream_file" >/dev/null 2>&1; then
+                jq -R -r '
+                    fromjson?
+                    | select(type == "object")
+                    | if .type == "tool.started" then "[tool] " + (.tool // .name // "?")
+                    elif .type == "run.failed" then (.error.kind // "error")
+                    elif .type == "run.completed" then (.status // "completed")
+                    else empty end
+                ' "$stream_file" >> "$out_file" 2>/dev/null || true
+            else
+                jq -R -r '
+                    fromjson?
+                    | select(type == "object")
+                    | if .type == "assistant" then
                       (.message.content // [])[]?
                       | if .type == "text" then (.text // "")
                         elif .type == "tool_use" then "[tool] " + (.name // "?")
@@ -915,14 +926,16 @@ derive_stage_log_from_stream() {
                          then "API Error: " + (.api_error_status | tostring) + " "
                          else "" end)
                       + ((.result // .error // .terminal_reason // .subtype // "error") | tostring)
-                  else empty end
-            ' "$stream_file" >> "$out_file" 2>/dev/null || true
+                      else empty end
+                ' "$stream_file" >> "$out_file" 2>/dev/null || true
+            fi
         else
             echo "(jq no disponible: no se pudo derivar texto legible del stream crudo -- ver $stream_file)" >> "$out_file"
         fi
     fi
 
-    if [ -s "$stderr_file" ]; then
+    # Solo los callers legacy conservan este comportamiento transitorio.
+    if [ -s "$stderr_file" ] && ! jq -R -s -e 'split("\n") | map(try fromjson catch empty) | any(.[]; .type == "run.started" or .type == "run.completed" or .type == "run.failed")' "$stream_file" >/dev/null 2>&1; then
         [ -s "$out_file" ] && echo "" >> "$out_file"
         cat "$stderr_file" >> "$out_file" 2>/dev/null || true
     fi
@@ -960,6 +973,35 @@ compute_stage_metrics() {
     fi
     if [ ! -s "$stream_file" ]; then
         echo "null"
+        return 0
+    fi
+
+    # El protocolo neutral no expone texto/wire data. Su terminal contiene las
+    # cifras correlacionables; esta rama se selecciona por vocabulario, nunca por
+    # runtime, para no reinterpretar accidentalmente un stream nativo.
+    if jq -R -s -e 'split("\n") | map(try fromjson catch empty) | any(.[]; .type == "run.completed" or .type == "run.failed")' "$stream_file" >/dev/null 2>&1; then
+        local neutral
+        neutral=$(jq -R -s -c '
+            split("\n") | map(try fromjson catch empty)
+            | [.[] | select(.type == "run.completed" or .type == "run.failed")] | last as $t
+            | if $t == null then null else {
+                turns: ($t.turns // $t.num_turns),
+                duration_ms: ($t.duration_ms // $t.duration),
+                duration_api_ms: ($t.api_duration_ms // $t.duration_api_ms),
+                non_api_ms: (if (($t.duration_ms // $t.duration) != null and ($t.api_duration_ms // $t.duration_api_ms) != null) then (($t.duration_ms // $t.duration) - ($t.api_duration_ms // $t.duration_api_ms)) else null end),
+                cost_usd: ($t.cost_usd // $t.total_cost_usd),
+                tokens: ($t.tokens // {input: $t.usage.input_tokens, output: $t.usage.output_tokens, cache_read: $t.usage.cache_read_input_tokens, cache_creation: $t.usage.cache_creation_input_tokens}),
+                model: ($t.model // $t.effective_model),
+                is_error: ($t.type == "run.failed"),
+                stop_reason: $t.status,
+                terminal_reason: ($t.error.kind // null),
+                ttft_ms: $t.ttft_ms,
+                permission_denials: ($t.denials // null),
+                rate_limit_events: null,
+                tool_calls: []
+              } end
+        ' "$stream_file" 2>/dev/null) || neutral=""
+        printf '%s\n' "${neutral:-null}"
         return 0
     fi
 
@@ -1063,6 +1105,41 @@ compute_stage_metrics() {
         echo "null"
     fi
     return 0
+}
+
+# enrich_tooling_stage_metrics <events> <base_metrics> <issue> <variant_json>
+#                              <stage> <agent> <profile> <identity_json>
+#
+# Agrega dimensiones de correlacion del writer headless sin cambiar las claves
+# historicas que consume metrics-report.sh. Requested/effective model provienen
+# exclusivamente de run.started y del unico terminal neutral, respectivamente.
+enrich_tooling_stage_metrics() {
+    local events_file="$1" base_metrics="$2" issue="$3" variant_json="$4"
+    local stage="$5" agent="$6" profile="$7" identity_json="$8"
+    jq -R -s -c \
+        --argjson metrics "${base_metrics:-null}" \
+        --arg issue "$issue" --argjson variant "$variant_json" \
+        --arg stage "$stage" --arg agent "$agent" --arg profile "$profile" \
+        --argjson identity "$identity_json" '
+        split("\n") | map(try fromjson catch empty) as $events
+        | ($events | map(select(.type == "run.started")) | first) as $started
+        | ($events | map(select(.type == "run.completed" or .type == "run.failed")) | last) as $terminal
+        | ($metrics // {}) + {
+            pipeline: "tooling", issue: $issue, variant: $variant,
+            stage: $stage, agent: $agent,
+            runtime: ($terminal.runtime // $started.runtime // null),
+            profile: $profile,
+            requested_model: ($started.model // null),
+            effective_model: ($terminal.model // null),
+            inherited: (($started.model // null) == null),
+            session_id: ($terminal.session_id // null),
+            result: ($terminal.status // null),
+            error_kind: ($terminal.error.kind // null),
+            harness_version: $identity.harness_version,
+            harness_commit: $identity.harness_commit,
+            identity_state: $identity.identity_state
+          }
+    ' "$events_file" 2>/dev/null || printf '%s\n' 'null'
 }
 
 # build_agents_history_json <key1> <agent1> <dur1> <metrics1> [<key2> <agent2> <dur2> <metrics2> ...]
@@ -1967,6 +2044,32 @@ get_harness_version() {
 
     echo "$version"
     return 0
+}
+
+# get_harness_identity_json lee exclusivamente el manifiesto generado de la
+# distribucion. Metadata ausente, invalida o incompleta produce nulls y una
+# degradacion visible; nunca se infiere identidad desde Git, caches o plugin.json.
+get_harness_identity_json() {
+    local expected_runtime="${1:-}" script_dir manifest version commit state
+    script_dir="$(_pc_script_dir 2>/dev/null)" || script_dir=""
+    manifest="$script_dir/../mefisto-manifest.json"
+    version=""; commit=""
+    state="metadata_missing"
+    if [ -e "$manifest" ]; then
+        state="metadata_invalid"
+    fi
+    if [ -f "$manifest" ] && [ ! -L "$manifest" ] && command -v jq >/dev/null 2>&1 \
+       && jq -e --arg runtime "$expected_runtime" '
+            .schemaVersion == 1
+            and (.runtime | type == "string" and ($runtime == "" or . == $runtime))
+            and (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)([-+][0-9A-Za-z.-]+)?$"))
+            and (.commit | type == "string" and test("^[0-9a-f]{40}$"))
+        ' "$manifest" >/dev/null 2>&1; then
+        version=$(jq -r '.version' "$manifest")
+        commit=$(jq -r '.commit' "$manifest")
+        state="complete"
+    fi
+    jq -cn --arg version "$version" --arg commit "$commit" --arg state "$state" '{harness_version: (if $version == "" then null else $version end), harness_commit: (if $commit == "" then null else $commit end), identity_state: $state}'
 }
 
 # resolve_pipeline <issue_num> [override]

@@ -95,13 +95,25 @@ assert_field() {
 # -------- Bloque pre: funciones existen --------
 
 echo "[pre] Las funciones estan definidas en scripts/_pipeline-common.sh"
-for fn in compute_stage_metrics build_agents_history_json; do
+for fn in compute_stage_metrics enrich_tooling_stage_metrics build_agents_history_json; do
     if declare -F "$fn" >/dev/null; then
         pass "$fn definida"
     else
         fail "$fn NO definida"
     fi
 done
+
+cat > "$TMP/neutral.events.jsonl" <<'EOF'
+{"v":1,"type":"run.started","runtime":"opencode","agent":"tooling-writer","model":null}
+{"v":1,"type":"run.completed","status":"success","runtime":"opencode","model":"openai/gpt-5","session_id":"ses-1","duration_ms":900,"tokens":{"input":12,"output":4},"cost_usd":0.1,"turns":3,"denials":0,"ttft_ms":20,"api_duration_ms":700,"error":null}
+EOF
+N_BASE="$(compute_stage_metrics "$TMP/neutral.events.jsonl")"
+N_OUT="$(enrich_tooling_stage_metrics "$TMP/neutral.events.jsonl" "$N_BASE" 1063 '"variante-a"' 1 tooling-writer balanced '{"harness_version":"1.2.3","harness_commit":"0123456789abcdef0123456789abcdef01234567","identity_state":"complete"}')"
+if printf '%s' "$N_OUT" | jq -e '.pipeline == "tooling" and .issue == "1063" and .variant == "variante-a" and .stage == "1" and .agent == "tooling-writer" and .runtime == "opencode" and .profile == "balanced" and .requested_model == null and .effective_model == "openai/gpt-5" and .inherited == true and .session_id == "ses-1" and .result == "success" and .duration_api_ms == 700 and .non_api_ms == 200 and .harness_version == "1.2.3" and .identity_state == "complete"' >/dev/null; then
+    pass "pre-4: metricas neutrales conservan forma legacy y dimensiones de correlacion"
+else
+    fail "pre-4: metricas neutrales incompletas: $N_OUT"
+fi
 
 # -------- Bloque A: compute_stage_metrics, smoke test del porte --------
 
