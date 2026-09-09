@@ -31,9 +31,14 @@ No elijas un directorio ni uses uno como sustituto del otro: ambos pueden conten
 4. `Read .mefisto/pipeline/events.log` y `Read .claude/pipeline/events.log` si existen (solo si hay corridas legacy `running` que puedan necesitar fallback de hold);
 5. `Bash(date '+%Y-%m-%d %H:%M:%S')`.
 
-Después, para cada root que no tenga status moderno ni historial moderno con contenido, busca **en ese mismo root** los formatos retrocompatibles: `status*.json`, `tooling-status*.json`, `infra-status.json`, `history.jsonl`, `tooling-history.jsonl` e `infra-history.jsonl`. Para un status antiguo sin `pipeline`, infiere `tdd` desde `status*.json`, `tooling` desde `tooling-status*.json` e `infra` desde `infra-status.json`.
+Después aplica el fallback **por clase de dato y por root**, sin hacer que la presencia de historial oculte status ni viceversa:
 
-Conserva el origen de cada registro. Deduplica los status por la clave exacta `(pipeline, issue, variant)`; si existe la misma clave en ambos roots, conserva el canónico. Conserva todos los status disjuntos. Deduplica el historial por `(pipeline, issue, variant, started)` con la misma precedencia canónica y ordena las entradas retenidas de más reciente a más antigua. No modifiques ningún archivo durante esta lectura.
+- si un root no tiene status modernos, busca allí `status*.json`, `tooling-status*.json` e `infra-status.json`;
+- si un root no tiene historial moderno con contenido, lee allí `history.jsonl`, `tooling-history.jsonl` e `infra-history.jsonl`.
+
+Para un registro antiguo sin `pipeline`, infiere `tdd`, `tooling` o `infra` desde el nombre de su archivo de status **o historial**. Así, los historiales separados antiguos también entran en la combinación.
+
+Conserva el origen de cada registro. Para formar las claves, normaliza `variant` ausente a cadena vacía. Deduplica los status por `(pipeline, issue, variant)`; si existe la misma clave en ambos roots, conserva el canónico. Conserva todos los status disjuntos. Deduplica el historial por `(pipeline, issue, variant, started)` con la misma precedencia canónica y ordena las entradas retenidas de más reciente a más antigua. Las entradas antiguas sin `started` siguen siendo visibles después de las fechadas, preservando entre ellas el orden de más nueva a más vieja de cada archivo. No modifiques ningún archivo durante esta lectura.
 
 ### Paso 1b: Hold y actividad
 
@@ -44,7 +49,9 @@ Un status moderno puede declarar su hold estructurado (por ejemplo, causa y pró
 3. sin hold: si `updated` lleva más de 35 minutos sin cambiar, `SIN NOVEDADES`;
 4. en otro caso, muestra el stage normal.
 
-El fallback textual es exclusivamente legacy. En la cola del `events.log` legacy busca la última línea `[HH:MM:SS][hold] <FAMILIA>: esperando, proxima sonda HH:MM:SS (techo HH:MM)`, ignorando `[hold][resume]`. Si la hora del anuncio es futura o la próxima sonda ya pasó, no está activo. Traduce `RATE_LIMIT` como `limite de uso` y `PROVIDER_UNAVAILABLE` como `proveedor caido`. Como ese formato textual no identifica de forma fiable corrida ni runtime, úsalo solo para la fila legacy que se está evaluando; jamás marca en espera una corrida canónica ni una corrida de otro runtime. `SIN NOVEDADES` conserva prioridad posterior al hold.
+El fallback textual es exclusivamente legacy. En la cola del `events.log` legacy busca la última línea `[HH:MM:SS][hold] <FAMILIA>: esperando, proxima sonda HH:MM:SS (techo HH:MM)`, ignorando `[hold][resume]`. Si la hora del anuncio es futura o la próxima sonda ya pasó, no está activo. Traduce `RATE_LIMIT` como `limite de uso` y `PROVIDER_UNAVAILABLE` como `proveedor caido`.
+
+Ese texto no identifica de forma fiable corrida ni runtime: aplícalo únicamente cuando haya **una sola** fila legacy `running` elegible en ese root. Si hay dos o más, no atribuyas el hold textual a ninguna; conserva el stage o aplica `SIN NOVEDADES`. Nunca lo uses para una fila canónica ni para propagar una espera entre runtimes. `SIN NOVEDADES` conserva prioridad posterior al hold.
 
 ## Paso 2: Generar el dashboard
 
