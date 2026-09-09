@@ -689,6 +689,56 @@ format_stage_models_for_log() {
     return 0
 }
 
+# runtime_cli_available <runtime>
+# Consulta la disponibilidad a traves del adaptador descubierto, sin que un
+# pipeline tenga que conocer el nombre o el wire format de ningun runtime.
+runtime_cli_available() {
+    local runtime="$1" lib="${MEFISTO_RUNTIME_LIB_DIR:-}/runtime-${1}.sh" fn
+    [ -f "$lib" ] || return 1
+    (
+        source "$lib" >/dev/null 2>&1 || exit 1
+        fn="runtime_${runtime}_is_available"
+        declare -F "$fn" >/dev/null 2>&1 || exit 1
+        "$fn"
+    )
+}
+
+# runtime_supports_resume <runtime>
+runtime_supports_resume() {
+    local runtime="$1" lib="${MEFISTO_RUNTIME_LIB_DIR:-}/runtime-${1}.sh" fn
+    [ -f "$lib" ] || return 1
+    (
+        source "$lib" >/dev/null 2>&1 || exit 1
+        fn="runtime_${runtime}_supports_resume"
+        declare -F "$fn" >/dev/null 2>&1 || exit 1
+        "$fn"
+    )
+}
+
+# agent_events_value <events-jsonl> <jq-expression>
+# El terminal normalizado es la unica autoridad para politica de pipeline.
+agent_events_value() {
+    local events="$1" expression="$2"
+    [ -s "$events" ] || return 0
+    jq -r -s "$expression" "$events" 2>/dev/null || true
+}
+agent_events_kind() { agent_events_value "$1" '[.[] | select(.type == "run.failed" or .type == "run.completed") | .error.kind // empty] | last // empty'; }
+agent_events_resets_at() { agent_events_value "$1" '[.[] | select(.type == "run.failed" or .type == "run.completed") | .error.resets_at // .resets_at // empty] | last // empty'; }
+agent_events_session_id() { agent_events_value "$1" '[.[] | select(.type == "run.failed" or .type == "run.completed") | .session_id // empty] | last // empty'; }
+agent_events_denials() { agent_events_value "$1" '[.[] | select(.type == "run.failed" or .type == "run.completed") | .denials // 0] | last // 0'; }
+
+classify_neutral_agent_failure() {
+    local run_exit="$1" events="$2" kind
+    case "$run_exit" in 124) echo "TIMEOUT"; return ;; 65) echo "PROTOCOL_INVALID"; return ;; esac
+    kind="$(agent_events_kind "$events")"
+    case "$kind" in
+        provider_unavailable) echo "PROVIDER_UNAVAILABLE" ;; rate_limit) echo "RATE_LIMIT" ;;
+        timeout) echo "TIMEOUT" ;; killed) echo "KILLED" ;; stream_cut) echo "STREAM_CUT" ;;
+        protocol_invalid) echo "PROTOCOL_INVALID" ;; permission_denied) echo "DENIAL" ;;
+        *) echo "CLI_ERROR" ;;
+    esac
+}
+
 # --- Modo --variant: corridas paralelas del mismo issue (issue #710) --------
 #
 # Segunda pieza del mecanismo de experimentos por modelo (la primera es

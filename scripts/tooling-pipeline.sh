@@ -18,6 +18,16 @@ set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/_pipeline-common.sh"
 
+# La clausura publicada conserva src/runtime junto a este script. Solo estas
+# dos librerias son contrato del pipeline; el runner carga su adaptador aparte.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+RUNTIME_DIR="$(cd "$SCRIPT_DIR/../src/runtime" 2>/dev/null && pwd -P)" \
+    || { echo "ERROR: no se encontro src/runtime junto al paquete publicado" >&2; exit 1; }
+RUNTIME_LIB_DIR="$RUNTIME_DIR/lib"
+RUN_AGENT_BIN_DEFAULT="$RUNTIME_DIR/mefisto-run-agent.sh"
+source "$RUNTIME_LIB_DIR/mefisto-runtime.sh"
+source "$RUNTIME_LIB_DIR/mefisto-models.sh"
+
 # Guard defensivo: este pipeline es del lado publicado y solo aplica al consumidor.
 # Si detectamos .claude-plugin/plugin.json en la raiz, estamos en el repo de Mefisto.
 _REPO_TOP=$(git rev-parse --show-toplevel 2>/dev/null) || {
@@ -263,10 +273,21 @@ if ! [[ "$FROM_STAGE" =~ ^[1-2]$ ]]; then
     abort "--from-stage debe ser 1 o 2 (recibido: $FROM_STAGE)"
 fi
 
-# --- Verificar dependencias ---
-for cmd in claude gh git dotnet; do
+# --- Resolver frontera neutral antes de crear el worktree -------------------
+MEFISTO_AGENT_TIMEOUT_SECONDS="${MEFISTO_AGENT_TIMEOUT_SECONDS:-1800}"
+case "$MEFISTO_AGENT_TIMEOUT_SECONDS" in ''|*[!0-9]*) abort "MEFISTO_AGENT_TIMEOUT_SECONDS '$MEFISTO_AGENT_TIMEOUT_SECONDS' no es un entero" ;; esac
+[ "$MEFISTO_AGENT_TIMEOUT_SECONDS" -gt 0 ] || abort "MEFISTO_AGENT_TIMEOUT_SECONDS debe ser mayor que 0"
+for cmd in gh git jq dotnet; do
     command -v "$cmd" &>/dev/null || abort "Falta comando requerido: $cmd"
 done
+[ -x "$RUN_AGENT_BIN_DEFAULT" ] || abort "No es ejecutable el runner neutral: $RUN_AGENT_BIN_DEFAULT"
+if ! MEFISTO_RUNTIME_RESUELTO="$(mefisto_resolve_runtime)"; then
+    abort "No se pudo resolver el runtime activo: $MEFISTO_RUNTIME_ERROR"
+fi
+MEFISTO_RUNTIME_JSON="\"$MEFISTO_RUNTIME_RESUELTO\""
+if ! runtime_cli_available "$MEFISTO_RUNTIME_RESUELTO"; then
+    abort "Falta el CLI del runtime resuelto ('$MEFISTO_RUNTIME_RESUELTO')"
+fi
 
 # --- Preparar directorio de pipeline ---
 mkdir -p "$LOG_DIR"
@@ -290,6 +311,30 @@ if [ -n "$PIPELINE_STAGE_MODELS" ]; then
     echo "[$(date +%H:%M:%S)] MODELS: $STAGE_MODELS_LOG" >> "$EVENTS_LOG_ABS"
 fi
 
+# Modelos neutrales: el override publico gana por clave exacta; sin override
+# el mapping opcional del consumidor y el adaptador deciden, o se hereda.
+CONSUMER_MODELS_FILE="$(git rev-parse --show-toplevel)/.mefisto/models.json"
+resolve_tooling_model() {
+    local key="$1" agent_id="$2" profile="$3" requested=""
+    requested="$(resolve_stage_model "$key" "")"
+    if [ -n "$requested" ]; then
+        printf '%s\n' "$requested"
+        echo "[$(date +%H:%M:%S)] MODELS: $key -> $requested (override --models; runtime $MEFISTO_RUNTIME_RESUELTO)" >> "$EVENTS_LOG_ABS"
+        return 0
+    fi
+    local output
+    output="$(mktemp)"
+    if ! mefisto_resolve_model "$MEFISTO_RUNTIME_RESUELTO" "$agent_id" "$profile" "" "$CONSUMER_MODELS_FILE" > "$output"; then
+        rm -f "$output"
+        abort "No se pudo resolver el modelo de $agent_id (perfil $profile): ${MEFISTO_MODELS_ERROR:-motivo desconocido}"
+    fi
+    requested="$(cat "$output")"; rm -f "$output"
+    printf '%s\n' "$requested"
+    echo "[$(date +%H:%M:%S)] MODELS: $key -> ${requested:-<heredado>} (perfil $profile; runtime $MEFISTO_RUNTIME_RESUELTO)" >> "$EVENTS_LOG_ABS"
+}
+MODEL_WRITER="$(resolve_tooling_model writer tooling-writer balanced)"
+MODEL_REVIEWER="$(resolve_tooling_model reviewer tooling-reviewer deep)"
+
 # --- Anunciar el modo variante (issue #710) -------------------------------
 # El label ya se valido y ya derivo los nombres de archivo arriba, junto al
 # parseo de argumentos; aqui solo se anuncia, que es lo primero que se puede
@@ -297,18 +342,6 @@ fi
 if [ -n "$VARIANT_LABEL" ]; then
     log "Modo variante: '$VARIANT_LABEL' -- sin push, sin PR, sin comentario al issue (CA-3); rama queda local"
     echo "[$(date +%H:%M:%S)] VARIANT: $VARIANT_LABEL" >> "$EVENTS_LOG_ABS"
-fi
-
-# --- Captura stream-json de las invocaciones claude -p (issue #689) ---
-# Mismo gate que tdd-pipeline.sh (#645): jq ya es dependencia de facto del lado
-# publicado, pero un consumidor sin jq no debe perder la corrida por esto: los
-# stages caen a --output-format text, identico al comportamiento previo.
-if command -v jq &>/dev/null; then
-    PIPELINE_CAPTURE_STREAM=true
-else
-    PIPELINE_CAPTURE_STREAM=false
-    warn "jq no disponible: los stages corren con --output-format text (sin traza stream-json)"
-    echo "[$(date +%H:%M:%S)] WARN: jq no disponible, captura stream-json deshabilitada -- --output-format text" >> "$EVENTS_LOG_ABS"
 fi
 
 # --- Obtener issue ---
@@ -403,7 +436,7 @@ collect_summary() {
 # La supresion de SC2086 va inline en la sonda que lo usa, no a nivel de la
 # funcion entera: run_agent es larga y un disable de funcion taparia tambien
 # expansiones sin comillas futuras que si serian bugs.
-run_agent() {
+legacy_claude_run_agent() {
     local stage="$1"
     local agent="$2"
     local prompt="$3"
@@ -445,16 +478,16 @@ run_agent() {
     # worktree -- la sonda lo detecta y no reanuda. Ver
     # agent_session_transcript_count en _pipeline-common.sh.
     local RESUME_BASELINE_SESSIONS
-    RESUME_BASELINE_SESSIONS=$(agent_session_transcript_count "$WORKTREE_PATH")
+    RESUME_BASELINE_SESSIONS=0 # legado inactivo; la frontera real usa session_id neutral.
     local NONINTERACTIVE_SYSTEM="You are running in non-interactive print mode. There is no human to approve anything. You MUST use Write and Edit tools directly to create and modify files at any path including .claude/. Never output text asking for permissions or confirmations -- doing so causes pipeline failure."
     if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
-        (cd "$WORKTREE_PATH" && claude -p "$prompt" --model "$AGENT_MODEL" \
+        (cd "$WORKTREE_PATH" && "${MEFISTO_LEGACY_EXECUTABLE:-false}" -p "$prompt" --model "$AGENT_MODEL" \
             --permission-mode bypassPermissions \
             --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
             --output-format stream-json --verbose \
             >"$stream_file" 2>"$stderr_file") &
     else
-        (cd "$WORKTREE_PATH" && claude -p "$prompt" --model "$AGENT_MODEL" \
+        (cd "$WORKTREE_PATH" && "${MEFISTO_LEGACY_EXECUTABLE:-false}" -p "$prompt" --model "$AGENT_MODEL" \
             --permission-mode bypassPermissions \
             --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
             --output-format text \
@@ -518,7 +551,7 @@ run_agent() {
             # byte el comportamiento previo a este issue.
             local attempt_used_resume=false RESUME_ARGS="" attempt_prompt="$prompt"
             local sessions_now
-            sessions_now=$(agent_session_transcript_count "$WORKTREE_PATH")
+            sessions_now=0
             if [ "$RESUME_DEGRADED" = true ]; then
                 warn "$agent: $failure_type -- en espera (hold), reintentando desde cero (sonda #$hold_attempt)..."
             elif [ "$sessions_now" -le "$RESUME_BASELINE_SESSIONS" ]; then
@@ -551,13 +584,13 @@ run_agent() {
             CLAUDE_EXIT=0
             # shellcheck disable=SC2086  # RESUME_ARGS vacio debe desaparecer del argv (ver MODEL_ARGS en tdd-pipeline.sh)
             if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
-                (cd "$WORKTREE_PATH" && claude $RESUME_ARGS -p "$attempt_prompt" --model "$AGENT_MODEL" \
+                (cd "$WORKTREE_PATH" && "${MEFISTO_LEGACY_EXECUTABLE:-false}" $RESUME_ARGS -p "$attempt_prompt" --model "$AGENT_MODEL" \
                     --permission-mode bypassPermissions \
                     --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
                     --output-format stream-json --verbose \
                     >"$stream_file_hold" 2>"$stderr_file_hold") &
             else
-                (cd "$WORKTREE_PATH" && claude $RESUME_ARGS -p "$attempt_prompt" --model "$AGENT_MODEL" \
+                (cd "$WORKTREE_PATH" && "${MEFISTO_LEGACY_EXECUTABLE:-false}" $RESUME_ARGS -p "$attempt_prompt" --model "$AGENT_MODEL" \
                     --permission-mode bypassPermissions \
                     --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
                     --output-format text \
@@ -622,14 +655,14 @@ run_agent() {
                 local stderr_file_perm_retry="${log_stage_perm_retry%.log}.stderr.log"
                 CLAUDE_EXIT=0
                 if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
-                    (cd "$WORKTREE_PATH" && claude -p "$prompt" --model "$AGENT_MODEL" \
+                    (cd "$WORKTREE_PATH" && "${MEFISTO_LEGACY_EXECUTABLE:-false}" -p "$prompt" --model "$AGENT_MODEL" \
                         --permission-mode bypassPermissions \
                         --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
                         --output-format stream-json --verbose \
                         >"$stream_file_perm_retry" 2>"$stderr_file_perm_retry") || CLAUDE_EXIT=$?
                     derive_stage_log_from_stream "$stream_file_perm_retry" "$stderr_file_perm_retry" "$log_stage_perm_retry"
                 else
-                    (cd "$WORKTREE_PATH" && claude -p "$prompt" --model "$AGENT_MODEL" \
+                    (cd "$WORKTREE_PATH" && "${MEFISTO_LEGACY_EXECUTABLE:-false}" -p "$prompt" --model "$AGENT_MODEL" \
                         --permission-mode bypassPermissions \
                         --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
                         --output-format text \
@@ -720,6 +753,64 @@ auto_commit_if_needed() {
             >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 || true
         git -C "$WORKTREE_PATH" commit -m "$msg" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 || true
     fi
+}
+
+# Frontera neutral publicada. El runner es autoridad de watchdog, argv y
+# terminal; este nivel conserva exclusivamente la politica de hold/retry.
+run_agent() {
+    local stage="$1" agent="$2" prompt="$3" log_base="$LOG_DIR_ABS/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}"
+    local log_stage="${log_base}.log" raw_file="${log_base}.stream.jsonl" stderr_file="${log_base}.stderr.log" events_file="${log_base}.events.jsonl"
+    local prompt_file="$PIPELINE_DIR_ABS/prompts/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}.prompt.md"
+    local system_file="$PIPELINE_DIR_ABS/prompts/noninteractive-system.md"
+    mkdir -p "$(dirname "$prompt_file")"
+    printf '%s' "$prompt" > "$prompt_file"
+    printf '%s\n' 'You are running in non-interactive print mode. There is no human to approve anything. Use editing tools directly; never ask for permission. Do not push or create pull requests.' > "$system_file"
+    local agent_id model start_ts run_exit=0 elapsed=0 failure_type="" hold_started="" hold_total=0 resume_session="" resume_degraded=false
+    case "$agent" in reviewer) agent_id="tooling-reviewer"; model="$MODEL_REVIEWER" ;; *) agent_id="tooling-writer"; model="$MODEL_WRITER" ;; esac
+    case "$agent" in writer) AGENT_WR_RES="running" ;; reviewer) AGENT_RV_RES="running" ;; esac
+    update_status "$stage-$agent" running; start_ts=$(date +%s)
+    while :; do
+        local attempt_prompt="$prompt_file" attempt_resume=false
+        if [ -n "$resume_session" ]; then
+            attempt_resume=true
+            attempt_prompt="$PIPELINE_DIR_ABS/prompts/tooling-stage-${stage}-${agent}-${TIMESTAMP}-resume.prompt.md"
+            printf '%s\n' "Continue the same stage and complete its summary." > "$attempt_prompt"
+        fi
+        local args=(--runtime "$MEFISTO_RUNTIME_RESUELTO" --agent "$agent_id" --cwd "$WORKTREE_PATH" --prompt-file "$attempt_prompt" --system-file "$system_file" --event-log "$events_file" --raw-log "$raw_file" --stderr-log "$stderr_file" --events-log "$EVENTS_LOG_ABS" --timeout "$MEFISTO_AGENT_TIMEOUT_SECONDS")
+        [ -n "$model" ] && args+=(--model "$model")
+        [ -n "$resume_session" ] && args+=(--resume-session "$resume_session")
+        if "$RUN_AGENT_BIN_DEFAULT" "${args[@]}" >>"${log_base}.runner.log" 2>&1; then run_exit=0; else run_exit=$?; fi
+        elapsed=$(( $(date +%s) - start_ts ))
+        derive_stage_log_from_stream "$events_file" "$stderr_file" "$log_stage"
+        [ "$run_exit" -eq 0 ] && break
+        failure_type="$(classify_neutral_agent_failure "$run_exit" "$events_file")"
+        if ! agent_failure_is_holdable "$failure_type"; then break; fi
+        [ -z "$hold_started" ] && hold_started=$(date +%s)
+        local slept resets
+        resets="$(agent_events_resets_at "$events_file")"
+        if [ -n "$resets" ]; then MEFISTO_HOLD_PROBE_SECONDS=1; fi
+        if ! slept=$(agent_hold_wait "$EVENTS_LOG_ABS" "$failure_type" "$hold_started"); then break; fi
+        hold_total=$((hold_total + slept))
+        if [ "$attempt_resume" = true ] && [ ! -s "$WORKTREE_PATH/.mefisto/pipeline/summaries/stage-${stage}-${agent}.md" ]; then
+            warn "$agent: la sesion reanudada termino sin resumen; se degrada permanentemente a inicio limpio"
+            resume_degraded=true; resume_session=""
+        elif [ "$resume_degraded" = false ]; then
+            resume_session="$(agent_events_session_id "$events_file")"
+            if [ -z "$resume_session" ]; then warn "$agent: terminal sin session_id; la sonda inicia de cero";
+            elif ! runtime_supports_resume "$MEFISTO_RUNTIME_RESUELTO"; then warn "$agent: runtime sin capacidad de reanudacion; la sonda inicia de cero"; resume_session="";
+            fi
+        fi
+    done
+    if [ "$run_exit" -ne 0 ]; then
+        case "$failure_type" in TIMEOUT|KILLED|STREAM_CUT|PROTOCOL_INVALID) ;; *)
+            if [ "$(agent_events_denials "$events_file")" -gt 0 ] && git -C "$WORKTREE_PATH" diff --quiet "${SNAPSHOT_COMMIT:-HEAD}..HEAD"; then
+                warn "$agent: denial neutral detectado; reintentando una vez"
+                run_agent "$stage" "$agent" "$prompt"; return
+            fi;; esac
+        case "$failure_type" in TIMEOUT|KILLED|STREAM_CUT|PROTOCOL_INVALID) abort "$agent fallo ($failure_type); se descarta trabajo parcial" ;; esac
+        abort "$agent fallo ($failure_type). Log completo: $log_stage"
+    fi
+    LAST_AGENT_DURATION=$((elapsed - hold_total)); log "$agent completado en ${LAST_AGENT_DURATION}s"
 }
 
 # --- STAGE 1: Writer (implementacion) ---
