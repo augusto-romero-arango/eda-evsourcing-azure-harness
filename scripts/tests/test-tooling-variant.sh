@@ -380,10 +380,10 @@ else
     pass "ningun nombre de log de stage deriva de ISSUE_NUM directo"
 fi
 LOG_TAG_HITS=$(grep -cF 'ISSUE_LOG_TAG' "$PIPE")
-if [ "$LOG_TAG_HITS" -ge 6 ]; then
-    pass "ISSUE_LOG_TAG cablea los nombres de log de stage y sus reintentos ($LOG_TAG_HITS usos)"
+if [ "$LOG_TAG_HITS" -ge 5 ] && grep -qF 'log_base="$LOG_DIR_ABS/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}"' "$PIPE"; then
+    pass "ISSUE_LOG_TAG cablea el log_base neutral compartido por todos los intentos ($LOG_TAG_HITS usos)"
 else
-    fail "solo $LOG_TAG_HITS usos de ISSUE_LOG_TAG: falta cablear algun nombre de log (base, retry, perm-retry, writer_log)"
+    fail "ISSUE_LOG_TAG no cablea el log_base neutral ($LOG_TAG_HITS usos)"
 fi
 
 echo ""

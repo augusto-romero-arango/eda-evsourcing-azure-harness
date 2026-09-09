@@ -211,7 +211,9 @@ echo ""
 echo "[10] CA-6: los cuatro pipelines consumen la funcion compartida, no una copia"
 for f in tdd-pipeline.sh tooling-pipeline.sh iac-pipeline.sh scaffold-pipeline.sh; do
     path="$REPO_ROOT/scripts/$f"
-    if grep -q "classify_agent_failure" "$path"; then
+    classifier="classify_agent_failure"
+    [ "$f" = tooling-pipeline.sh ] && classifier="classify_neutral_agent_failure"
+    if grep -q "$classifier" "$path"; then
         pass "$f invoca classify_agent_failure"
     else
         fail "$f no invoca classify_agent_failure"
@@ -254,7 +256,7 @@ if grep -q "sonda de hold" "$REPO_ROOT/scripts/tdd-pipeline.sh" &&
 else
     fail "tdd-pipeline.sh: la sonda de hold no corre bajo watchdog"
 fi
-for f in tooling-pipeline.sh iac-pipeline.sh scaffold-pipeline.sh; do
+for f in iac-pipeline.sh scaffold-pipeline.sh; do
     path="$REPO_ROOT/scripts/$f"
     if grep -q "PROBE_WATCHDOG_PID" "$path" && grep -q "sonda de hold" "$path"; then
         pass "$f: sonda con watchdog propio"
@@ -262,6 +264,12 @@ for f in tooling-pipeline.sh iac-pipeline.sh scaffold-pipeline.sh; do
         fail "$f: la sonda de hold no corre bajo watchdog"
     fi
 done
+if grep -q 'mefisto-run-agent.sh' "$REPO_ROOT/scripts/tooling-pipeline.sh" \
+    && ! grep -q 'PROBE_WATCHDOG_PID' "$REPO_ROOT/scripts/tooling-pipeline.sh"; then
+    pass "tooling-pipeline.sh: la sonda delega el watchdog al runner neutral"
+else
+    fail "tooling-pipeline.sh: la sonda no delega el watchdog neutral"
+fi
 
 echo ""
 echo "----------------------------------------"

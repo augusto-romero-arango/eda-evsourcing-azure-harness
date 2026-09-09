@@ -129,9 +129,7 @@ EOF
         fail "B1: no llego al abort limpio esperado (rc=$RC_B1): $OUTPUT_B1"
     fi
 
-    # Escenario B2: log SI contiene frase de "pidio permisos" -> dispara retry
-    # (run_agent stubeado como no-op); tras el retry sigue sin cambios reales y
-    # debe llegar igualmente al abort limpio, sin crashear por 'local'.
+    # El texto libre ya no decide retries: el contrato neutral usa denials.
     OUTPUT_B2=$(run_block "El agente respondio: necesito permiso para continuar.")
     RC_B2=$?
 
@@ -141,19 +139,10 @@ EOF
         pass "B2 (con retry): el bloque no crashea con el error de 'local' top-level"
     fi
 
-    # Afirma que la rama de retry se ejercito de verdad: sin este chequeo, B2
-    # pasaria igual aunque la deteccion de "pidio permisos" (grep + path del
-    # writer_log) dejara de dispararse -- degradando en silencio a un clon de B1.
-    if echo "$OUTPUT_B2" | grep -q "Writer pidio permisos"; then
-        pass "B2 (con retry): la rama de retry se disparo (deteccion de 'pidio permisos')"
-    else
-        fail "B2 (con retry): la rama de retry NO se disparo -- el escenario no ejercita el retry: $OUTPUT_B2"
-    fi
-
     if [ "$RC_B2" -eq 42 ] && echo "$OUTPUT_B2" | grep -q "El writer no genero ningun cambio"; then
-        pass "B2 (con retry): llega al abort limpio tras el retry sin cambios"
+        pass "B2: texto de permisos no altera el desenlace estructurado"
     else
-        fail "B2 (con retry): no llego al abort limpio esperado (rc=$RC_B2): $OUTPUT_B2"
+        fail "B2: el texto libre altero el desenlace (rc=$RC_B2): $OUTPUT_B2"
     fi
 fi
 
