@@ -292,16 +292,21 @@ write_release_identity() {
 # write_claude_manifest: el mirror de raiz y dist/claude se comparan por bytes
 # durante publish; jq -c conserva una representacion canonica identica.
 write_claude_manifest() {
-    local version="$1" source_commit="$2" tmp
+    local tmp
     tmp=$(mktemp "${CLAUDE_MANIFEST}.XXXXXX") || return 1
-    jq -cn --arg version "$version" --arg commit "$source_commit" \
-        '{schemaVersion:1,runtime:"claude",version:$version,commit:$commit}' > "$tmp" \
+    jq -c '{schemaVersion:.schemaVersion,runtime:"claude",version:.version,commit:.commit}' \
+        "$RELEASE_IDENTITY" > "$tmp" \
         && mv "$tmp" "$CLAUDE_MANIFEST" || { rm -f "$tmp"; return 1; }
 }
 
 discard_release_branch() {
     local original_branch="$1" release_branch="$2"
     git reset --hard >/dev/null 2>&1 || true
+    # reset --hard no elimina archivos no trackeados. El mirror raiz nace en
+    # el primer release posterior a #1131, por lo que un generador fallido lo
+    # dejaria visible al volver a la rama original si no se limpia de forma
+    # explicita junto con las salidas Claude que el generador pudo crear.
+    git clean -fd -- mefisto-manifest.json dist/claude >/dev/null 2>&1 || true
     git switch "$original_branch" >/dev/null 2>&1 || true
     git branch -D "$release_branch" >/dev/null 2>&1 || true
 }
@@ -310,7 +315,7 @@ prepare_metadata() {
     local version="$1" source_commit="$2"
     write_release_identity "$version" "$source_commit" \
         || return 1
-    write_claude_manifest "$version" "$source_commit" \
+    write_claude_manifest \
         || return 1
     bump_plugin_json "$version" \
         || return 1
@@ -330,7 +335,10 @@ validate_release_identity() {
 }
 
 validate_publish_delta() {
-    local source_commit="$1" status path
+    local source_commit="$1" status path delta
+    # Una sustitucion de proceso ocultaria el exit code de git diff y podria
+    # convertir un objeto ausente/corrupto en un delta vacio valido.
+    delta=$(git diff --name-status "$source_commit..HEAD") || return 1
     while IFS=$'\t' read -r status path; do
         [ -n "$path" ] || continue
         case "$path" in
@@ -340,7 +348,7 @@ validate_publish_delta() {
                     || return 1 ;;
             *) return 1 ;;
         esac
-    done < <(git diff --name-status "$source_commit..HEAD")
+    done <<< "$delta"
 }
 
 # tag_exists_local <tag>

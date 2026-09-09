@@ -50,6 +50,7 @@ case "$1 ${2:-}" in
   'show origin/main:.claude-plugin/plugin.json') cat "$TEST_REPO/.claude-plugin/plugin.json" ;;
    'rev-list --count') printf '0\n' ;;
    'diff --name-status')
+     [ "${DIFF_RC:-0}" = 0 ] || exit "$DIFF_RC"
      if [ -n "${DELTA_PATH:-}" ]; then printf 'M\t%s\n' "$DELTA_PATH"; else
        printf '%s\n' 'M	CHANGELOG.md' 'M	.claude-plugin/plugin.json' 'M	src/published/release-identity.json' 'A	mefisto-manifest.json' 'M	dist/claude/mefisto-manifest.json' 'M	dist/claude/.mefisto-generated-assets.json'
      fi ;;
@@ -156,6 +157,14 @@ assert_absent "$EVENTS" 'git tag -a' 'no crea tag si HEAD ya no es origin/main'
 setup delta-fails; DELTA_PATH=scripts/intruso.sh run_release; rc=$?
 [ "$rc" -ne 0 ] && pass 'un path fuera de allowlist aborta' || fail 'path fuera de allowlist deberia abortar'
 assert_absent "$EVENTS" 'git tag -a' 'no crea tag con delta fuera de allowlist'
+
+setup diff-fails; DIFF_RC=7 run_release; rc=$?
+[ "$rc" -ne 0 ] && pass 'un fallo al calcular el delta aborta' || fail 'git diff fallido deberia abortar'
+assert_absent "$EVENTS" 'git tag -a' 'no interpreta un git diff fallido como delta vacio'
+
+setup source-edited; printf '{"schemaVersion":1,"version":"1.2.3","commit":"cccccccccccccccccccccccccccccccccccccccc"}\n' > "$TEST_REPO/src/published/release-identity.json"; run_release; rc=$?
+[ "$rc" -ne 0 ] && pass 'una edicion manual aislada de la fuente aborta' || fail 'fuente editada deberia abortar'
+assert_absent "$EVENTS" 'git tag -a' 'no crea tag con fuente editada manualmente'
 
 setup push-fails; PUSH_RC=8 run_release; rc=$?
 [ "$rc" -ne 0 ] && pass 'el fallo al subir el tag aborta' || fail 'el fallo al subir el tag deberia abortar'
