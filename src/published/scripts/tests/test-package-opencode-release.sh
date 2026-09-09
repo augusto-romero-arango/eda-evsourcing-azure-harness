@@ -8,7 +8,7 @@ INSTALLER_SOURCE="$REPO_ROOT/src/published/scripts/install-opencode-release.sh"
 LAUNCHER_SOURCE="$REPO_ROOT/src/published/scripts/mefisto-opencode"
 PROJECTOR_SOURCE="$REPO_ROOT/src/published/scripts/project-opencode-release.sh"
 DIAGNOSTIC_SOURCE="$REPO_ROOT/src/published/scripts/diagnose-installation-identity.sh"
-WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
+WORK="$(mktemp -d)"; trap 'chmod -R u+w "$WORK" 2>/dev/null || true; rm -rf "$WORK"' EXIT
 PASS=0; FAIL=0
 pass() { printf '  PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
 fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
@@ -16,7 +16,7 @@ assert_rc() { [ "$1" -eq "$2" ] && pass "$3" || fail "$3 (exit $1)"; }
 
 setup_repo() {
     TEST_REPO="$WORK/repo-$1"
-    mkdir -p "$TEST_REPO/src/published/scripts" "$TEST_REPO/dist/opencode/comandos" "$TEST_REPO/.claude-plugin" "$TEST_REPO/bin"
+    mkdir -p "$TEST_REPO/src/published/scripts" "$TEST_REPO/dist/opencode/comandos" "$TEST_REPO/dist/opencode/skills/mefisto-projections" "$TEST_REPO/dist/opencode/skills/mefisto-comment-cleanup" "$TEST_REPO/.claude-plugin" "$TEST_REPO/bin"
     cp "$SOURCE" "$TEST_REPO/src/published/scripts/package-opencode-release.sh"
     cp "$INSTALLER_SOURCE" "$TEST_REPO/src/published/scripts/install-opencode-release.sh"
     cp "$LAUNCHER_SOURCE" "$TEST_REPO/src/published/scripts/mefisto-opencode"
@@ -37,6 +37,10 @@ EOF
     printf '#!/usr/bin/env bash\nprintf "ejecutable\\n"\n' > "$TEST_REPO/dist/opencode/comandos/run.sh"
     chmod +x "$TEST_REPO/dist/opencode/comandos/run.sh"
     printf 'contenido\n' > "$TEST_REPO/dist/opencode/archivo con espacios.txt"
+    printf '%s\n' '---' 'name: mefisto-projections' 'description: Proyecciones.' '---' '[recurso](read-apis.md)' > "$TEST_REPO/dist/opencode/skills/mefisto-projections/SKILL.md"
+    printf 'recurso projections\n' > "$TEST_REPO/dist/opencode/skills/mefisto-projections/read-apis.md"
+    printf '%s\n' '---' 'name: mefisto-comment-cleanup' 'description: Comentarios.' '---' '[recurso](ejemplos.md)' > "$TEST_REPO/dist/opencode/skills/mefisto-comment-cleanup/SKILL.md"
+    printf 'recurso comentarios\n' > "$TEST_REPO/dist/opencode/skills/mefisto-comment-cleanup/ejemplos.md"
     for source in \
         scripts/_pipeline-common.sh scripts/tmux-pipeline.sh scripts/herdr-pipeline.sh scripts/stream-watch.sh scripts/tooling-pipeline.sh \
         src/runtime/mefisto-run-agent.sh src/runtime/lib/mefisto-runtime.sh src/runtime/lib/mefisto-process.sh \
@@ -97,6 +101,7 @@ for source in \
     [ -f "$EXTRACT/$source" ] && [ ! -x "$EXTRACT/$source" ] || closure_ok=false
 done
 [ "$closure_ok" = true ] && pass 'extrae la clausura ejecutable declarada con sus modos' || fail 'falta o tiene modo incorrecto la clausura ejecutable'
+[ -f "$EXTRACT/skills/mefisto-projections/SKILL.md" ] && [ -f "$EXTRACT/skills/mefisto-projections/read-apis.md" ] && [ -f "$EXTRACT/skills/mefisto-comment-cleanup/ejemplos.md" ] && pass 'el paquete conserva Skills y recursos publicados' || fail 'el paquete omitio Skills publicados'
 jq -e '.schemaVersion == 1 and .runtime == "opencode" and .version == "1.2.3" and .commit == "0123456789abcdef0123456789abcdef01234567" and .minimumRuntimeVersion == "1.18.29" and (keys | length == 5)' "$EXTRACT/mefisto-manifest.json" >/dev/null && pass 'manifiesto completo, minimo y versionado' || fail 'manifiesto invalido'
 tar -tzf "$TAR" | grep -Eq '(^/|\.\./)' && fail 'tarball contiene ruta insegura' || pass 'tarball no contiene rutas inseguras'
 CONTENTS="$(tar -tzf "$TAR")"
@@ -104,6 +109,11 @@ case "$CONTENTS" in *'.claude'*|*'src/internal'*|*'src/runtime/tests'*|*'runtime
 cp "$TAR" "$WORK/primero.tar.gz"
 (umask 077 && run_package --output "$OUT" >/dev/null)
 cmp -s "$TAR" "$WORK/primero.tar.gz" && pass 'reproducible byte a byte entre umasks' || fail 'tarball no reproducible'
+HOME="$WORK/home integrado"; XDG_DATA_HOME="$HOME/datos"; XDG_CONFIG_HOME="$HOME/config"; export HOME XDG_DATA_HOME XDG_CONFIG_HOME
+mkdir -p "$HOME"
+"$EXTRACT/install.sh" install 1.2.3 >/dev/null; assert_rc "$?" 0 'instala el paquete fixture sin checkout'
+"$XDG_DATA_HOME/mefisto/active/bin/mefisto-opencode" project >/dev/null; assert_rc "$?" 0 'proyecta la release instalada'
+[ -L "$XDG_CONFIG_HOME/opencode/skills/mefisto-projections/SKILL.md" ] && [ -L "$XDG_CONFIG_HOME/opencode/skills/mefisto-comment-cleanup/SKILL.md" ] && grep -q '^name: mefisto-projections$' "$XDG_CONFIG_HOME/opencode/skills/mefisto-projections/SKILL.md" && [ "$(< "$XDG_CONFIG_HOME/opencode/skills/mefisto-projections/read-apis.md")" = 'recurso projections' ] && [ "$(< "$XDG_CONFIG_HOME/opencode/skills/mefisto-comment-cleanup/ejemplos.md")" = 'recurso comentarios' ] && pass 'proyeccion global abre nombres y recursos relativos de ambos Skills' || fail 'proyeccion global de Skills incompleta'
 printf x >> "$TAR"; (cd "$OUT" && shasum -a 256 -c "$(basename "$SHA")" >/dev/null 2>&1); assert_rc "$?" 1 'checksum detecta tarball corrompido'
 
 setup_repo absent; rm -rf "$TEST_REPO/dist/opencode"; NEG_OUT="$WORK/absent"; run_package --output "$NEG_OUT" >/dev/null 2>&1; assert_rc "$?" 1 'rechaza dist ausente'; assert_no_assets "$NEG_OUT" 'dist ausente no deja assets'

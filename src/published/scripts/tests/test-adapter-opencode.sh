@@ -38,10 +38,45 @@ assert_not_contains "$command_path" 'mefisto-command' 'no usa id interno mefisto
 [ "$command_path" != commands/command-delegado.md ] && pass 'no publica comando sin namespace' || fail 'publico comando sin namespace'
 assets="$($ADAPTER assets)"; rc=$?
 [ "$rc" -eq 0 ] && pass 'enumera assets de Skills publicados' || fail 'no enumero assets de Skills publicados'
-jq -e 'length == 7 and all(.[]; .mode == "0644" and (.destination | startswith("skills/mefisto-"))) and ([.[] | select(.source == "skills/projections/SKILL.md" and .destination == "skills/mefisto-projections/SKILL.md")] | length) == 1 and ([.[] | select(.source == "skills/comment-cleanup/ejemplos.md" and .destination == "skills/mefisto-comment-cleanup/ejemplos.md")] | length) == 1' <<< "$assets" >/dev/null && pass 'assets preservan ambos Skills y recursos Nivel 3' || fail 'inventario de Skills incompleto'
+skill_file_count="$(find "$REPO_ROOT/skills" -type f | wc -l | tr -d '[:space:]')"
+jq -e --argjson count "$skill_file_count" 'length == $count and all(.[]; .mode == "0644" and (.destination | startswith("skills/mefisto-"))) and ([.[] | select(.source == "skills/projections/SKILL.md" and .destination == "skills/mefisto-projections/SKILL.md")] | length) == 1 and ([.[] | select(.source == "skills/comment-cleanup/ejemplos.md" and .destination == "skills/mefisto-comment-cleanup/ejemplos.md")] | length) == 1' <<< "$assets" >/dev/null && pass 'assets preservan ambos Skills y recursos Nivel 3' || fail 'inventario de Skills incompleto'
 "$ADAPTER" render-asset skills/projections/SKILL.md "$REPO_ROOT/skills/projections/SKILL.md" > "$WORK/projections-skill.md"; rc=$?
 [ "$rc" -eq 0 ] && grep -q '^name: mefisto-projections$' "$WORK/projections-skill.md" && ! grep -q '^name: projections$' "$WORK/projections-skill.md" && pass 'SKILL.md adapta solo el name OpenCode' || fail 'SKILL.md no adapta el name OpenCode'
 cmp -s "$REPO_ROOT/skills/projections/read-apis.md" <("$ADAPTER" render-asset skills/projections/read-apis.md "$REPO_ROOT/skills/projections/read-apis.md") && pass 'recursos Nivel 3 se conservan byte a byte' || fail 'recurso Nivel 3 fue transformado'
+
+printf '%s\n' '[skills] enumeracion abierta y validacion fail-closed'
+SKILL_REPO="$WORK/skill-repo"; FIXTURE_ADAPTER="$SKILL_REPO/src/published/scripts/adapters/adapter-opencode.sh"
+mkdir -p "$SKILL_REPO/src/published/scripts/adapters" "$SKILL_REPO/skills/futuro"
+cp "$ADAPTER" "$FIXTURE_ADAPTER"; chmod +x "$FIXTURE_ADAPTER"
+write_future_skill() {
+    printf '%s\n' '---' 'name: futuro' 'description: Skill futuro.' '---' '' '# Futuro' '[detalle](detalle.md)' > "$SKILL_REPO/skills/futuro/SKILL.md"
+    printf 'detalle futuro\n' > "$SKILL_REPO/skills/futuro/detalle.md"
+}
+assert_skill_failure() {
+    local label="$1" output rc
+    output="$("$FIXTURE_ADAPTER" assets 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && [ -n "$output" ] && pass "$label" || fail "$label"
+}
+write_future_skill
+future_assets="$("$FIXTURE_ADAPTER" assets)"; rc=$?
+[ "$rc" -eq 0 ] && jq -e 'length == 2 and .[0].source == "skills/futuro/SKILL.md" and .[1].destination == "skills/mefisto-futuro/detalle.md"' <<< "$future_assets" >/dev/null && pass 'un Skill futuro converge sin inventario hardcodeado' || fail 'un Skill futuro no fue enumerado'
+"$FIXTURE_ADAPTER" render-asset skills/futuro/SKILL.md "$SKILL_REPO/skills/futuro/SKILL.md" > "$WORK/futuro-rendered.md"
+awk 'NR == 2 { print "name: mefisto-futuro"; next } { print }' "$SKILL_REPO/skills/futuro/SKILL.md" > "$WORK/futuro-expected.md"
+cmp -s "$WORK/futuro-expected.md" "$WORK/futuro-rendered.md" && pass 'render futuro cambia exclusivamente name' || fail 'render futuro altero campos o body'
+printf '%s\n' '---' 'name: otro' 'description: Valida.' '---' > "$SKILL_REPO/skills/futuro/SKILL.md"
+assert_skill_failure 'rechaza name distinto del directorio'
+write_future_skill; printf '\n[roto](ausente.md)\n' >> "$SKILL_REPO/skills/futuro/SKILL.md"
+assert_skill_failure 'rechaza link local no resoluble'
+write_future_skill; printf 'ajeno\n' > "$WORK/ajeno.md"; rm "$SKILL_REPO/skills/futuro/detalle.md"; ln -s "$WORK/ajeno.md" "$SKILL_REPO/skills/futuro/detalle.md"
+assert_skill_failure 'rechaza recursos symlink'
+rm "$SKILL_REPO/skills/futuro/detalle.md"; write_future_skill; rm "$SKILL_REPO/skills/futuro/SKILL.md"
+assert_skill_failure 'rechaza Skill sin SKILL.md'
+write_future_skill; awk 'NR == 3 { print "name: futuro" } { print }' "$SKILL_REPO/skills/futuro/SKILL.md" > "$WORK/duplicado.md"; mv "$WORK/duplicado.md" "$SKILL_REPO/skills/futuro/SKILL.md"
+assert_skill_failure 'rechaza frontmatter ambiguo'
+write_future_skill; printf '%s\n' '---' 'name: futuro' 'description: ""' '---' > "$SKILL_REPO/skills/futuro/SKILL.md"
+assert_skill_failure 'rechaza description vacia aunque este entre comillas'
+long_id="$(printf 'a%.0s' {1..57})"; rm -rf "$SKILL_REPO/skills/futuro"; mkdir "$SKILL_REPO/skills/$long_id"; printf '%s\n' '---' "name: $long_id" 'description: Valida.' '---' > "$SKILL_REPO/skills/$long_id/SKILL.md"
+assert_skill_failure 'rechaza nombre OpenCode mayor de 64 caracteres'
 permission_count="$(jq -r '.supported_permissions | length' "$MAPPING")"
 [ "$permission_count" -eq 17 ] && pass 'mapping declara los 17 permisos soportados' || fail 'mapping no declara 17 permisos'
 

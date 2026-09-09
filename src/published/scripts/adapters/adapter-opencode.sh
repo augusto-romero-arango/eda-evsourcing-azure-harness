@@ -128,7 +128,31 @@ launch_agent_id() {
 # Claude; este borde adapta a la vez el directorio y el campo name (ADR-0050).
 skill_frontmatter_value() {
     local key="$1" source="$2"
-    awk -v key="$key" 'NR == 1 { if ($0 != "---") exit 1; next } $0 == "---" { exit } $0 ~ "^" key ":[[:space:]]*" { sub("^" key ":[[:space:]]*", ""); print; exit }' "$source"
+    awk -v key="$key" '
+        NR == 1 { if ($0 != "---") exit 1; next }
+        $0 == "---" { closed=1; exit }
+        $0 ~ "^" key ":[[:space:]]*" {
+            found++
+            value=$0
+            sub("^" key ":[[:space:]]*", "", value)
+            sub(/[[:space:]]+$/, "", value)
+        }
+        END {
+            if (!closed || found != 1) exit 1
+            print value
+        }
+    ' "$source"
+}
+
+skill_frontmatter_string() {
+    local key="$1" source="$2" raw
+    raw="$(skill_frontmatter_value "$key" "$source")" || return 1
+    case "$raw" in
+        \"*\") printf '%s' "$raw" | jq -Rer 'fromjson | strings' ;;
+        \'*\') printf '%s' "$raw" | sed "s/^'//; s/'$//; s/''/'/g" ;;
+        \"*|*\"|\'*|*\') return 1 ;;
+        *) printf '%s' "$raw" ;;
+    esac
 }
 
 validate_skill_links() {
@@ -146,18 +170,18 @@ validate_skill_links() {
 }
 
 validate_skills() {
-    local skill skill_id source_name description adapted link_source entry
+    local skill skill_id source_name description adapted link_source entry invalid_entry
     [ -d "$SKILLS_ROOT" ] && [ ! -L "$SKILLS_ROOT" ] || { error 'skills: la raiz publicada no existe o es un symlink'; return 1; }
     while IFS= read -r skill; do
         [ ! -L "$skill" ] || { error "${skill#"$REPO_ROOT/"}: skill no puede ser symlink"; return 1; }
         skill_id="$(basename "$skill")"
         printf '%s\n' "$skill_id" | grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*$' || { error "$skill_id: id de Skill invalido"; return 1; }
         [ -f "$skill/SKILL.md" ] && [ ! -L "$skill/SKILL.md" ] || { error "skills/$skill_id: falta SKILL.md regular"; return 1; }
-        source_name="$(skill_frontmatter_value name "$skill/SKILL.md")" || { error "skills/$skill_id/SKILL.md: frontmatter invalido"; return 1; }
+        source_name="$(skill_frontmatter_string name "$skill/SKILL.md")" || { error "skills/$skill_id/SKILL.md: frontmatter o name invalido"; return 1; }
         [ "$source_name" = "$skill_id" ] || { error "skills/$skill_id/SKILL.md: name debe coincidir con el directorio"; return 1; }
         adapted="mefisto-$skill_id"
         [ "${#adapted}" -le 64 ] || { error "skills/$skill_id: nombre OpenCode supera 64 caracteres"; return 1; }
-        description="$(skill_frontmatter_value description "$skill/SKILL.md")" || { error "skills/$skill_id/SKILL.md: falta description"; return 1; }
+        description="$(skill_frontmatter_string description "$skill/SKILL.md")" || { error "skills/$skill_id/SKILL.md: falta description valida"; return 1; }
         [ "${#description}" -ge 1 ] && [ "${#description}" -le 1024 ] || { error "skills/$skill_id/SKILL.md: description debe tener entre 1 y 1024 caracteres"; return 1; }
         while IFS= read -r link_source; do validate_skill_links "$skill" "$link_source" || return 1; done < <(find "$skill" -type f | LC_ALL=C sort)
     done < <(find "$SKILLS_ROOT" -mindepth 1 -maxdepth 1 -type d | LC_ALL=C sort)
@@ -166,6 +190,8 @@ validate_skills() {
         [ -d "$entry" ] || { error "${entry#"$REPO_ROOT/"}: un Skill debe ser un directorio"; return 1; }
     done
     if find "$SKILLS_ROOT" -type l -print -quit | grep -q .; then error 'skills: no se admiten symlinks en la fuente'; return 1; fi
+    invalid_entry="$(find "$SKILLS_ROOT" ! -type f ! -type d -print -quit)"
+    [ -z "$invalid_entry" ] || { error "${invalid_entry#"$REPO_ROOT/"}: recurso de Skill no regular"; return 1; }
 }
 
 skill_assets() {
