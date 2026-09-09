@@ -1,0 +1,4 @@
+{"v":1,"type":"run.started","ts":"2026-09-08T10:00:00Z","runtime":"claude","agent":"tooling-writer","model":"sonnet","cwd":"/tmp/proyecto con espacios"}
+{"v":1,"type":"tool.started","ts":"2026-09-08T10:00:01Z","tool":"Edit","input_summary":null}
+{"v":1,"type":"tool.completed","ts":"2026-09-08T10:00:02Z","tool":"Edit","ok":true,"duration_ms":1000}
+{"v":1,"type":"run.completed","ts":"2026-09-08T10:00:03Z","status":"success","runtime":"claude","model":"claude-sonnet","session_id":"ses-success","duration_ms":3000,"tokens":{"input":100,"output":25},"cost_usd":0.02,"turns":2,"denials":0,"ttft_ms":100,"api_duration_ms":2500,"error":null}

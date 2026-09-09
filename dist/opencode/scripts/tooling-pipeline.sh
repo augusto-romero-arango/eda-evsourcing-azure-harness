@@ -47,11 +47,8 @@ unset _REPO_TOP
 
 load_harness_config || exit 1
 
-# Version del plugin que corre este pipeline (issue #660), calculada UNA vez
-# aqui -- no en el trap de aborto, que solo interpola la variable ya resuelta.
-HARNESS_VERSION="$(get_harness_version)"
-HARNESS_VERSION_JSON="null"
-[ -n "$HARNESS_VERSION" ] && HARNESS_VERSION_JSON="\"$HARNESS_VERSION\""
+# Identidad declarada por el paquete; se revalida contra el runtime resuelto
+# antes de crear evidencia durable.
 HARNESS_IDENTITY_JSON="$(get_harness_identity_json)"
 
 # --- Colores ---
@@ -97,6 +94,12 @@ LAST_AGENT_DURATION=0
 LAST_AGENT_DENIALS=0
 CURRENT_STAGE="setup"
 HOLD_CAUSE_JSON="null" HOLD_NEXT_PROBE_JSON="null" HOLD_CEILING_JSON="null" HOLD_TOTAL=0
+PIPELINE_TMP_DIR=""
+
+cleanup_pipeline_temporaries() {
+    [ -z "$PIPELINE_TMP_DIR" ] || rm -rf "$PIPELINE_TMP_DIR" 2>/dev/null || true
+}
+trap cleanup_pipeline_temporaries EXIT
 
 _strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
 _log_file()   { echo -e "$1" | _strip_ansi >> "${LOG_FILE_ABS:-$LOG_FILE}"; }
@@ -145,8 +148,11 @@ abort() {
     fi
     if [ -n "${PIPELINE_DIR_ABS:-}" ]; then
         update_status "$CURRENT_STAGE" "failed"
-        echo "{\"issue\":\"${ISSUE_NUM:-}\",\"title\":\"$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')\",\"pipeline\":\"tooling\",\"variant\":${VARIANT_LABEL_JSON:-null},\"identity\":$HARNESS_IDENTITY_JSON,\"started\":\"${TIMESTAMP:-}\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"failed\",\"stage\":\"$CURRENT_STAGE\",\"error\":\"$PIPELINE_ERROR\"}" \
-            >> "$PIPELINE_DIR_ABS/pipeline-history.jsonl" 2>/dev/null || true
+        jq -cn --arg issue "${ISSUE_NUM:-}" --arg title "${ISSUE_TITLE:-}" --argjson variant "${VARIANT_LABEL_JSON:-null}" \
+            --argjson identity "$HARNESS_IDENTITY_JSON" --arg runtime "${MEFISTO_RUNTIME_RESUELTO:-}" --arg started "${TIMESTAMP:-}" --arg finished "$(date +%Y-%m-%dT%H:%M:%S)" \
+            --arg stage "$CURRENT_STAGE" --arg error "$PIPELINE_ERROR" --argjson writer "$AGENT_WR_METRICS" --argjson reviewer "$AGENT_RV_METRICS" \
+            '{issue:$issue,title:$title,pipeline:"tooling",variant:$variant,identity:$identity,runtime:(if $runtime == "" then null else $runtime end),started:$started,finished:$finished,state:"failed",stage:$stage,error:$error,agents:{writer:{metrics:$writer},reviewer:{metrics:$reviewer}}}' \
+            >> "$HISTORY_FILE" 2>/dev/null || true
     fi
     exit 1
 }
@@ -168,6 +174,7 @@ update_status() {
   "pipeline": "tooling",
   "variant": ${VARIANT_LABEL_JSON:-null},
   "identity": $HARNESS_IDENTITY_JSON,
+  "runtime": ${MEFISTO_RUNTIME_JSON:-null},
   "started": "$TIMESTAMP",
   "stage": "$stage",
   "state": "$state",
@@ -175,8 +182,8 @@ update_status() {
   "worktree": "${WORKTREE_PATH:-}",
   "log": "${LOG_FILE_ABS:-$LOG_FILE}",
   "agents": {
-    "writer":   {"duration": $wr_dur, "result": "$AGENT_WR_RES", "metrics": $AGENT_WR_METRICS},
-    "reviewer": {"duration": $rv_dur, "result": "$AGENT_RV_RES", "metrics": $AGENT_RV_METRICS}
+    "writer":   {"agent": "tooling-writer", "profile": "balanced", "requested_model": ${MODEL_WRITER_JSON:-null}, "inherited": ${MODEL_WRITER_INHERITED:-true}, "duration": $wr_dur, "result": "$AGENT_WR_RES", "metrics": $AGENT_WR_METRICS},
+    "reviewer": {"agent": "tooling-reviewer", "profile": "deep", "requested_model": ${MODEL_REVIEWER_JSON:-null}, "inherited": ${MODEL_REVIEWER_INHERITED:-true}, "duration": $rv_dur, "result": "$AGENT_RV_RES", "metrics": $AGENT_RV_METRICS}
   },
   "tests": $tests_val,
   "pr": $pr_val,
@@ -293,6 +300,7 @@ if ! mefisto_resolve_runtime >/dev/null; then
 fi
 MEFISTO_RUNTIME_RESUELTO="$MEFISTO_RESOLVED_RUNTIME"
 MEFISTO_RUNTIME_JSON="\"$MEFISTO_RUNTIME_RESUELTO\""
+HARNESS_IDENTITY_JSON="$(get_harness_identity_json "$MEFISTO_RUNTIME_RESUELTO")"
 if ! runtime_cli_available "$MEFISTO_RUNTIME_RESUELTO"; then
     abort "Falta el CLI del runtime resuelto ('$MEFISTO_RUNTIME_RESUELTO')"
 fi
@@ -306,8 +314,14 @@ LOG_DIR_ABS="$(dirname "$(mefisto_state_path 'logs/.state')")"
 LOG_FILE_ABS="$(mefisto_state_path "logs/$(basename "$LOG_FILE")")"
 LOG_FILE="$LOG_FILE_ABS"
 EVENTS_LOG_ABS="$(mefisto_state_path 'events.log')"
+HISTORY_FILE="$(mefisto_state_path 'pipeline-history.jsonl')"
+PIPELINE_TMP_DIR="$(mktemp -d -t mefisto-tooling)" || abort "No se pudo crear el directorio temporal del pipeline"
+[ -d "$PIPELINE_TMP_DIR" ] || abort "No se pudo crear el directorio temporal del pipeline"
 
 echo "=== SESSION TOOLING $TIMESTAMP issue:$ISSUE_NUM from-stage:$FROM_STAGE ===" >> "$EVENTS_LOG_ABS"
+if [ "$(printf '%s' "$HARNESS_IDENTITY_JSON" | jq -r '.identity_state')" != "complete" ]; then
+    warn "Identidad de distribucion degradada: metadata ausente o invalida; version/commit se registran como null"
+fi
 
 # --- Resolver --models (issue #708) --------------------------------------
 # Se valida ANTES de crear el worktree (CA-1): un --models malformado debe
@@ -345,6 +359,10 @@ resolve_tooling_model writer tooling-writer balanced
 MODEL_WRITER="$RESOLVED_TOOLING_MODEL"
 resolve_tooling_model reviewer tooling-reviewer deep
 MODEL_REVIEWER="$RESOLVED_TOOLING_MODEL"
+MODEL_WRITER_JSON="null"; MODEL_WRITER_INHERITED=true
+MODEL_REVIEWER_JSON="null"; MODEL_REVIEWER_INHERITED=true
+if [ -n "$MODEL_WRITER" ]; then MODEL_WRITER_JSON="$(printf '%s' "$MODEL_WRITER" | jq -Rr '@json')"; MODEL_WRITER_INHERITED=false; fi
+if [ -n "$MODEL_REVIEWER" ]; then MODEL_REVIEWER_JSON="$(printf '%s' "$MODEL_REVIEWER" | jq -Rr '@json')"; MODEL_REVIEWER_INHERITED=false; fi
 
 # --- Anunciar el modo variante (issue #710) -------------------------------
 # El label ya se valido y ya derivo los nombres de archivo arriba, junto al
@@ -372,11 +390,6 @@ ISSUE_CONTEXT="# Issue #$ISSUE_NUM: $ISSUE_TITLE
 
 $ISSUE_BODY"
 log "Issue: $ISSUE_TITLE"
-
-# El contexto del issue es un input y no forma parte de la evidencia durable.
-ISSUE_CONTEXT_FILE="$(mktemp)"
-printf '%s' "$ISSUE_CONTEXT" > "$ISSUE_CONTEXT_FILE"
-trap 'rm -f "${ISSUE_CONTEXT_FILE:-}"' EXIT
 
 # --- Preparar worktree ---
 header "Preparando worktree"
@@ -466,24 +479,26 @@ auto_commit_if_needed() {
 # terminal; este nivel conserva exclusivamente la politica de hold/retry.
 run_agent() {
     local stage="$1" agent="$2" prompt="$3" log_base="$LOG_DIR_ABS/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}"
-    local log_stage="${log_base}.log" events_file="${log_base}.events.jsonl"
-    local prompt_file system_file runner_file
-    prompt_file="$(mktemp)"; system_file="$(mktemp)"; runner_file="$(mktemp)"
-    trap 'rm -f "${prompt_file:-}" "${system_file:-}" "${runner_file:-}"' RETURN
+    local log_stage="${log_base}.log" events_file=""
+    local prompt_file="$PIPELINE_TMP_DIR/${stage}-${agent}.prompt.md"
+    local system_file="$PIPELINE_TMP_DIR/${stage}-${agent}.system.md"
+    local runner_file="$PIPELINE_TMP_DIR/${stage}-${agent}.runner.log"
     printf '%s' "$prompt" > "$prompt_file"
     printf '%s\n' 'You are running in non-interactive print mode. There is no human to approve anything. Use editing tools directly; never ask for permission. Do not push or create pull requests.' > "$system_file"
-    local agent_id model start_ts run_exit=0 elapsed=0 failure_type="" hold_started="" hold_total=0 resume_session="" resume_degraded=false
+    local agent_id model profile start_ts run_exit=0 elapsed=0 failure_type="" hold_started="" hold_total=0 resume_session="" resume_degraded=false attempt=0
     local denial_retry_used=false entry_commit summary_file
     entry_commit="$(git -C "$WORKTREE_PATH" rev-parse HEAD)"
     summary_file="$(mefisto_state_path "summaries/stage-${stage}-${agent}.md" "$WORKTREE_PATH")"
-    case "$agent" in reviewer) agent_id="tooling-reviewer"; model="$MODEL_REVIEWER" ;; *) agent_id="tooling-writer"; model="$MODEL_WRITER" ;; esac
+    case "$agent" in reviewer) agent_id="tooling-reviewer"; profile="deep"; model="$MODEL_REVIEWER" ;; *) agent_id="tooling-writer"; profile="balanced"; model="$MODEL_WRITER" ;; esac
     case "$agent" in writer) AGENT_WR_RES="running" ;; reviewer) AGENT_RV_RES="running" ;; esac
     update_status "$stage-$agent" running; start_ts=$(date +%s)
     while :; do
+        attempt=$((attempt + 1))
+        events_file="${log_base}-attempt-${attempt}.events.jsonl"
         local attempt_prompt="$prompt_file" attempt_resume=false
         if [ -n "$resume_session" ]; then
             attempt_resume=true
-            attempt_prompt="$(mktemp)"
+            attempt_prompt="$PIPELINE_TMP_DIR/${stage}-${agent}-resume-${attempt}.prompt.md"
             printf '%s\n' "Continue the same stage and complete its summary." > "$attempt_prompt"
         fi
         local args=(--runtime "$MEFISTO_RUNTIME_RESUELTO" --agent "$agent_id" --cwd "$WORKTREE_PATH" --prompt-file "$attempt_prompt" --system-file "$system_file" --event-log "$events_file" --events-log "$EVENTS_LOG_ABS" --redact-observability --timeout "$MEFISTO_AGENT_TIMEOUT_SECONDS")
@@ -495,6 +510,7 @@ run_agent() {
         derive_stage_log_from_stream "$events_file" "" "$log_stage"
         local metrics_json
         metrics_json="$(compute_stage_metrics "$events_file")"
+        metrics_json="$(enrich_tooling_stage_metrics "$events_file" "$metrics_json" "$ISSUE_NUM" "${VARIANT_LABEL_JSON:-null}" "$stage" "$agent_id" "$profile" "$HARNESS_IDENTITY_JSON")"
         printf '%s\n' "$metrics_json" > "$(mefisto_state_path "metrics/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}.json")"
         case "$agent" in writer) AGENT_WR_METRICS="$metrics_json" ;; reviewer) AGENT_RV_METRICS="$metrics_json" ;; esac
         local denials
@@ -527,7 +543,10 @@ run_agent() {
         [ -z "$hold_started" ] && hold_started=$(date +%s)
         HOLD_CAUSE_JSON="\"$failure_type\""
         HOLD_CEILING_JSON="${MEFISTO_HOLD_MAX_SECONDS:-21600}"
-        HOLD_NEXT_PROBE_JSON="\"$(date -u -v+"${MEFISTO_HOLD_PROBE_SECONDS:-300}"S +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)\""
+        local next_probe_epoch next_probe
+        next_probe_epoch=$(( $(date +%s) + ${MEFISTO_HOLD_PROBE_SECONDS:-300} ))
+        next_probe="$(date -u -r "$next_probe_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$next_probe_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+        [ -n "$next_probe" ] && HOLD_NEXT_PROBE_JSON="\"$next_probe\"" || HOLD_NEXT_PROBE_JSON="null"
         HOLD_TOTAL="$hold_total"
         update_status "$stage-$agent" "hold"
         local slept resets
@@ -886,8 +905,13 @@ update_status "done" "completed"
 # Historial
 PR_JSON="null"
 [ -n "$PR_URL" ] && PR_JSON="\"$PR_URL\""
-echo "{\"issue\":\"$ISSUE_NUM\",\"title\":\"$(echo "$ISSUE_TITLE" | sed 's/"/\\"/g')\",\"pipeline\":\"tooling\",\"variant\":${VARIANT_LABEL_JSON:-null},\"identity\":$HARNESS_IDENTITY_JSON,\"started\":\"$TIMESTAMP\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"completed\",\"agents\":{\"writer\":{\"duration\":${AGENT_WR_DUR:-null}},\"reviewer\":{\"duration\":${AGENT_RV_DUR:-null}}},\"tests\":${PIPELINE_TESTS:-null},\"pr\":$PR_JSON}" \
-    >> "$PIPELINE_DIR_ABS/pipeline-history.jsonl"
+jq -cn --arg issue "$ISSUE_NUM" --arg title "$ISSUE_TITLE" --argjson variant "${VARIANT_LABEL_JSON:-null}" \
+    --argjson identity "$HARNESS_IDENTITY_JSON" --arg runtime "$MEFISTO_RUNTIME_RESUELTO" --arg started "$TIMESTAMP" --arg finished "$(date +%Y-%m-%dT%H:%M:%S)" \
+    --argjson writer_duration "${AGENT_WR_DUR:-null}" --argjson reviewer_duration "${AGENT_RV_DUR:-null}" \
+    --argjson writer_metrics "$AGENT_WR_METRICS" --argjson reviewer_metrics "$AGENT_RV_METRICS" \
+    --argjson tests "${PIPELINE_TESTS:-null}" --argjson pr "$PR_JSON" \
+    '{issue:$issue,title:$title,pipeline:"tooling",variant:$variant,identity:$identity,runtime:$runtime,started:$started,finished:$finished,state:"completed",agents:{writer:{duration:$writer_duration,metrics:$writer_metrics},reviewer:{duration:$reviewer_duration,metrics:$reviewer_metrics}},tests:$tests,pr:$pr}' \
+    >> "$HISTORY_FILE"
 
 # Eliminar archivo de estado individual (ya esta en el historial)
 rm -f "$(mefisto_state_path "$STATUS_FILENAME")"

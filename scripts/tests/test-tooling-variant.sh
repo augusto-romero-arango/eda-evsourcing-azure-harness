@@ -416,11 +416,12 @@ if grep -qF '"variant": ${VARIANT_LABEL_JSON:-null},' "$PIPE"; then
 else
     fail "el JSON de status no declara el campo variant"
 fi
-HISTORY_VARIANT_HITS=$(grep -cF '\"variant\":${VARIANT_LABEL_JSON:-null}' "$PIPE")
-if [ "$HISTORY_VARIANT_HITS" -ge 2 ]; then
-    pass "las dos lineas de pipeline-history.jsonl (completed y failed) llevan variant ($HISTORY_VARIANT_HITS)"
+HISTORY_VARIANT_ARGS=$(grep -cF -- '--argjson variant "${VARIANT_LABEL_JSON:-null}"' "$PIPE")
+HISTORY_VARIANT_FIELDS=$(grep -cF 'variant:$variant' "$PIPE")
+if [ "$HISTORY_VARIANT_ARGS" -ge 2 ] && [ "$HISTORY_VARIANT_FIELDS" -ge 2 ]; then
+    pass "las entradas completed/failed de pipeline-history.jsonl reciben y escriben variant"
 else
-    fail "solo $HISTORY_VARIANT_HITS linea(s) de historial llevan variant: se esperan 2 (completed y failed)"
+    fail "el historial no cablea variant en sus dos desenlaces (args=$HISTORY_VARIANT_ARGS, fields=$HISTORY_VARIANT_FIELDS)"
 fi
 
 echo ""

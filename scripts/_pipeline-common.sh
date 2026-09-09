@@ -900,9 +900,11 @@ derive_stage_log_from_stream() {
 
     if [ -s "$stream_file" ]; then
         if command -v jq >/dev/null 2>&1; then
-            if jq -e -s 'any(.[]; .type == "run.started" or .type == "run.completed" or .type == "run.failed")' "$stream_file" >/dev/null 2>&1; then
-                jq -r '
-                    if .type == "tool.started" then "[tool] " + (.tool // .name // "?")
+            if jq -R -s -e 'split("\n") | map(try fromjson catch empty) | any(.[]; .type == "run.started" or .type == "run.completed" or .type == "run.failed")' "$stream_file" >/dev/null 2>&1; then
+                jq -R -r '
+                    fromjson?
+                    | select(type == "object")
+                    | if .type == "tool.started" then "[tool] " + (.tool // .name // "?")
                     elif .type == "run.failed" then (.error.kind // "error")
                     elif .type == "run.completed" then (.status // "completed")
                     else empty end
@@ -933,7 +935,7 @@ derive_stage_log_from_stream() {
     fi
 
     # Solo los callers legacy conservan este comportamiento transitorio.
-    if [ -s "$stderr_file" ] && ! jq -e -s 'any(.[]; .type == "run.started" or .type == "run.completed" or .type == "run.failed")' "$stream_file" >/dev/null 2>&1; then
+    if [ -s "$stderr_file" ] && ! jq -R -s -e 'split("\n") | map(try fromjson catch empty) | any(.[]; .type == "run.started" or .type == "run.completed" or .type == "run.failed")' "$stream_file" >/dev/null 2>&1; then
         [ -s "$out_file" ] && echo "" >> "$out_file"
         cat "$stderr_file" >> "$out_file" 2>/dev/null || true
     fi
@@ -977,15 +979,16 @@ compute_stage_metrics() {
     # El protocolo neutral no expone texto/wire data. Su terminal contiene las
     # cifras correlacionables; esta rama se selecciona por vocabulario, nunca por
     # runtime, para no reinterpretar accidentalmente un stream nativo.
-    if jq -e -s 'any(.[]; .type == "run.completed" or .type == "run.failed")' "$stream_file" >/dev/null 2>&1; then
+    if jq -R -s -e 'split("\n") | map(try fromjson catch empty) | any(.[]; .type == "run.completed" or .type == "run.failed")' "$stream_file" >/dev/null 2>&1; then
         local neutral
-        neutral=$(jq -s -c '
-            [.[] | select(.type == "run.completed" or .type == "run.failed")] | last as $t
+        neutral=$(jq -R -s -c '
+            split("\n") | map(try fromjson catch empty)
+            | [.[] | select(.type == "run.completed" or .type == "run.failed")] | last as $t
             | if $t == null then null else {
                 turns: ($t.turns // $t.num_turns),
                 duration_ms: ($t.duration_ms // $t.duration),
-                duration_api_ms: $t.duration_api_ms,
-                non_api_ms: (if (($t.duration_ms // $t.duration) != null and $t.duration_api_ms != null) then (($t.duration_ms // $t.duration) - $t.duration_api_ms) else null end),
+                duration_api_ms: ($t.api_duration_ms // $t.duration_api_ms),
+                non_api_ms: (if (($t.duration_ms // $t.duration) != null and ($t.api_duration_ms // $t.duration_api_ms) != null) then (($t.duration_ms // $t.duration) - ($t.api_duration_ms // $t.duration_api_ms)) else null end),
                 cost_usd: ($t.cost_usd // $t.total_cost_usd),
                 tokens: ($t.tokens // {input: $t.usage.input_tokens, output: $t.usage.output_tokens, cache_read: $t.usage.cache_read_input_tokens, cache_creation: $t.usage.cache_creation_input_tokens}),
                 model: ($t.model // $t.effective_model),
@@ -1102,6 +1105,41 @@ compute_stage_metrics() {
         echo "null"
     fi
     return 0
+}
+
+# enrich_tooling_stage_metrics <events> <base_metrics> <issue> <variant_json>
+#                              <stage> <agent> <profile> <identity_json>
+#
+# Agrega dimensiones de correlacion del writer headless sin cambiar las claves
+# historicas que consume metrics-report.sh. Requested/effective model provienen
+# exclusivamente de run.started y del unico terminal neutral, respectivamente.
+enrich_tooling_stage_metrics() {
+    local events_file="$1" base_metrics="$2" issue="$3" variant_json="$4"
+    local stage="$5" agent="$6" profile="$7" identity_json="$8"
+    jq -R -s -c \
+        --argjson metrics "${base_metrics:-null}" \
+        --arg issue "$issue" --argjson variant "$variant_json" \
+        --arg stage "$stage" --arg agent "$agent" --arg profile "$profile" \
+        --argjson identity "$identity_json" '
+        split("\n") | map(try fromjson catch empty) as $events
+        | ($events | map(select(.type == "run.started")) | first) as $started
+        | ($events | map(select(.type == "run.completed" or .type == "run.failed")) | last) as $terminal
+        | ($metrics // {}) + {
+            pipeline: "tooling", issue: $issue, variant: $variant,
+            stage: $stage, agent: $agent,
+            runtime: ($terminal.runtime // $started.runtime // null),
+            profile: $profile,
+            requested_model: ($started.model // null),
+            effective_model: ($terminal.model // null),
+            inherited: (($started.model // null) == null),
+            session_id: ($terminal.session_id // null),
+            result: ($terminal.status // null),
+            error_kind: ($terminal.error.kind // null),
+            harness_version: $identity.harness_version,
+            harness_commit: $identity.harness_commit,
+            identity_state: $identity.identity_state
+          }
+    ' "$events_file" 2>/dev/null || printf '%s\n' 'null'
 }
 
 # build_agents_history_json <key1> <agent1> <dur1> <metrics1> [<key2> <agent2> <dur2> <metrics2> ...]
@@ -2008,18 +2046,29 @@ get_harness_version() {
     return 0
 }
 
-# get_harness_identity_json lee exclusivamente metadata distribuida con el
-# paquete. La ausencia de commit se declara degradada; nunca se infiere de Git.
+# get_harness_identity_json lee exclusivamente el manifiesto generado de la
+# distribucion. Metadata ausente, invalida o incompleta produce nulls y una
+# degradacion visible; nunca se infiere identidad desde Git, caches o plugin.json.
 get_harness_identity_json() {
-    local script_dir plugin_json version commit state
+    local expected_runtime="${1:-}" script_dir manifest version commit state
     script_dir="$(_pc_script_dir 2>/dev/null)" || script_dir=""
-    plugin_json="$script_dir/../.claude-plugin/plugin.json"
+    manifest="$script_dir/../mefisto-manifest.json"
     version=""; commit=""
-    if [ -f "$plugin_json" ] && command -v jq >/dev/null 2>&1; then
-        version=$(jq -r '.version // empty' "$plugin_json" 2>/dev/null) || true
-        commit=$(jq -r '.harness_commit // .harnessCommit // .commit // empty' "$plugin_json" 2>/dev/null) || true
+    state="metadata_missing"
+    if [ -e "$manifest" ]; then
+        state="metadata_invalid"
     fi
-    [ -n "$version" ] && [ -n "$commit" ] && state="complete" || state="degraded"
+    if [ -f "$manifest" ] && [ ! -L "$manifest" ] && command -v jq >/dev/null 2>&1 \
+       && jq -e --arg runtime "$expected_runtime" '
+            .schemaVersion == 1
+            and (.runtime | type == "string" and ($runtime == "" or . == $runtime))
+            and (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)([-+][0-9A-Za-z.-]+)?$"))
+            and (.commit | type == "string" and test("^[0-9a-f]{40}$"))
+        ' "$manifest" >/dev/null 2>&1; then
+        version=$(jq -r '.version' "$manifest")
+        commit=$(jq -r '.commit' "$manifest")
+        state="complete"
+    fi
     jq -cn --arg version "$version" --arg commit "$commit" --arg state "$state" '{harness_version: (if $version == "" then null else $version end), harness_commit: (if $commit == "" then null else $commit end), identity_state: $state}'
 }
 
