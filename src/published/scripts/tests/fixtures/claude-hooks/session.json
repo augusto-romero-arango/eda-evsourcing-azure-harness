@@ -1,1 +1,1 @@
-{"session_id":"s","transcript_path":"/tmp/con espacios/s.jsonl","cwd":"/tmp/con espacios","source":"startup","prompt":"SENTINELA_PROMPT","token":"SENTINELA_TOKEN"}
+{"session_id":"s","transcript_path":"/tmp/con espacios/s.jsonl","cwd":"/tmp/con espacios","source":"clear","prompt":"SENTINELA_PROMPT","token":"SENTINELA_TOKEN","authorization":"SENTINELA_AUTH"}
