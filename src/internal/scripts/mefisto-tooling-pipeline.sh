@@ -35,7 +35,11 @@ assert_in_mefisto || exit 1
 RUNTIME_DIR="$(cd "$SCRIPT_DIR/../../runtime" && pwd)"
 RUNTIME_LIB_DIR="$RUNTIME_DIR/lib"
 RUN_AGENT_BIN_DEFAULT="$RUNTIME_DIR/mefisto-run-agent.sh"
-INTERNAL_MODELS_FILE="$MEFISTO_REPO_ROOT/.mefisto/models.json"
+# Cuando lo invoca el batch aislado, MEFISTO_LAUNCH_ROOT conserva la raiz que
+# posee estado y configuracion local; el codigo ejecutable sigue viniendo del
+# snapshot. La corrida unitaria no fija esa variable y conserva el contrato
+# previo. MEFISTO_MODELS_FILE sigue siendo el override explicito del launcher.
+INTERNAL_MODELS_FILE="${MEFISTO_MODELS_FILE:-${MEFISTO_LAUNCH_ROOT:-$MEFISTO_REPO_ROOT}/.mefisto/models.json}"
 source "$RUNTIME_LIB_DIR/mefisto-runtime.sh"
 source "$RUNTIME_LIB_DIR/mefisto-models.sh"
 
@@ -438,7 +442,7 @@ echo "$ISSUE_CONTEXT" > "$PIPELINE_DIR/mefisto-tooling-input.md"
 # --- Preparar worktree ---
 header "Preparando worktree"
 
-REPO_ROOT="$MEFISTO_REPO_ROOT"
+REPO_ROOT="${MEFISTO_LAUNCH_ROOT:-$MEFISTO_REPO_ROOT}"
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
 SLUG=$(echo "$ISSUE_TITLE" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | sed 's/[^a-z0-9-]//g' | tr -s '-' | cut -c1-40 | sed 's/-$//')

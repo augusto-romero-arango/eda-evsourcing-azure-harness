@@ -246,6 +246,8 @@ EOF
     cp -R "$CANON_RUNTIME" "$dir/src/runtime"
     cp "$CANON_BATCH" "$dir/src/internal/scripts/mefisto-batch-pipeline.sh"
     chmod +x "$dir/src/internal/scripts/mefisto-batch-pipeline.sh"
+    git -C "$dir" config user.email "test@mefisto.local"
+    git -C "$dir" config user.name "Mefisto Test"
 }
 
 # fake_tooling_pipeline_hold <dir> <call_log> <hold_spec...>
@@ -268,7 +270,7 @@ fake_tooling_pipeline_hold() {
     {
         echo '#!/usr/bin/env bash'
         echo "echo \"\$1\" >> \"$call_log\""
-        echo 'EVENTS_LOG="$PWD/.mefisto/pipeline/events.log"'
+        echo 'EVENTS_LOG="$MEFISTO_STATE_DIR/events.log"'
         echo 'mkdir -p "$(dirname "$EVENTS_LOG")"'
         echo 'echo "=== SESSION MEFISTO-TOOLING $(date +%Y%m%d-%H%M%S) issue:$1 from-stage:1 ===" >> "$EVENTS_LOG"'
         for spec in "${specs[@]}"; do
@@ -300,6 +302,9 @@ EOF
         echo 'exit 0'
     } > "$dir/src/internal/scripts/mefisto-tooling-pipeline.sh"
     chmod +x "$dir/src/internal/scripts/mefisto-tooling-pipeline.sh"
+    git -C "$dir" add .
+    git -C "$dir" commit -q -m "tooling falso"
+    git -C "$dir" push -q origin main
 }
 
 setup_fake_gh() {
@@ -308,6 +313,7 @@ setup_fake_gh() {
 #!/usr/bin/env bash
 if [ "$1" = "pr" ] && [ "$2" = "merge" ]; then
     num="$3"
+    git -C "$FAKE_GH_PUBLISHER" pull -q --ff-only origin main >/dev/null 2>&1
     git -C "$FAKE_GH_PUBLISHER" commit -q --allow-empty -m "merge PR #$num" >/dev/null 2>&1
     git -C "$FAKE_GH_PUBLISHER" push -q origin main >/dev/null 2>&1
     mkdir -p "$FAKE_GH_SHA_DIR"

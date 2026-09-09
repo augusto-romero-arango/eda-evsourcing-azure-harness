@@ -186,8 +186,15 @@ anterior. El batch lo garantiza asi:
 
 - **La base real de cada eslabon es `origin/main`.** El worktree del tooling-pipeline se
   crea **siempre** desde `origin/main` actualizado, sea cual sea la rama activa del repo
-  principal (issue #66, `mefisto-tooling-pipeline.sh:269`). Ese invariante no depende de
-  en que rama estes.
+   principal (issue #66, `mefisto-tooling-pipeline.sh:269`). Ese invariante no depende de
+   en que rama estes.
+- **Los ejecutables tambien quedan fijados.** Antes de cada eslabon, el batch crea un
+  worktree detached temporal en el SHA de `origin/main` que acaba de verificar y ejecuta
+  desde esa raiz el pipeline, prompts, librerias y runner. Writer y reviewer usan el mismo
+  snapshot; tras el merge/sync verificado, el siguiente eslabon crea uno nuevo. Estado,
+  logs, senal de parada y mapping local de modelos siguen en el checkout lanzador (issue
+  #1107). Si no puede crear el snapshot, aborta antes de iniciar el issue y lo limpia al
+  cerrar el batch, sin tocar HEAD ni cambios locales del checkout principal.
 - **Prevalidacion sincronica de la rama base.** Antes de crear, reutilizar o despachar un
   pane, el launcher del batch aplica el mismo gate que conserva el motor como defensa. Si
   estas fuera de main/master con el arbol **limpio**, se recupera a `main` (o `master` si

@@ -156,7 +156,7 @@ if grep -qF 'mefisto_resolve_model "$MEFISTO_RUNTIME_RESUELTO" "$agent_id" "$pro
 else
     fail "no se encontro la resolucion via mefisto_resolve_model"
 fi
-if grep -qF 'INTERNAL_MODELS_FILE="$MEFISTO_REPO_ROOT/.mefisto/models.json"' "$PIPE_PATH"; then
+if grep -qF 'INTERNAL_MODELS_FILE="${MEFISTO_MODELS_FILE:-${MEFISTO_LAUNCH_ROOT:-$MEFISTO_REPO_ROOT}/.mefisto/models.json}"' "$PIPE_PATH"; then
     pass "el mapping interno se pasa explicitamente al resolutor comun"
 else
     fail "no se encontro la ruta explicita al mapping interno de modelos"
