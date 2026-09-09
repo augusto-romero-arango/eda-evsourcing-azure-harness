@@ -11,6 +11,7 @@ WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 PASS=0; FAIL=0
 pass() { printf '  PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
 fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
+file_mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"; }
 assert_failure() {
     local label="$1" output rc
     output="$(bash "$ADAPTER" render-asset mefisto-manifest "$FAKE/src/published/release-identity.json" 2>&1)"; rc=$?
@@ -36,20 +37,42 @@ assets="$(bash "$ADAPTER" assets)"; rc=$?
 manifest="$(bash "$ADAPTER" render-asset mefisto-manifest "$FAKE/src/published/release-identity.json")"; rc=$?
 [ "$rc" -eq 0 ] && [ "$manifest" = '{"schemaVersion":1,"runtime":"claude","version":"1.2.3","commit":"0123456789abcdef0123456789abcdef01234567"}' ] && pass 'render snapshot del manifiesto Claude' || fail 'snapshot del manifiesto invalido'
 
+cp "$FAKE/src/published/release-identity.json" "$FAKE/identidad alternativa.json"
+printf '%s\n' '{"schemaVersion":1,"version":"rota","commit":"0123456789abcdef0123456789abcdef01234567"}' > "$FAKE/src/published/release-identity.json"
+manifest="$(bash "$ADAPTER" render-asset mefisto-manifest "$FAKE/identidad alternativa.json")"; rc=$?
+[ "$rc" -eq 0 ] && [ "$manifest" = '{"schemaVersion":1,"runtime":"claude","version":"1.2.3","commit":"0123456789abcdef0123456789abcdef01234567"}' ] && pass 'render-asset consume la fuente recibida por la interfaz' || fail 'render-asset ignoro su fuente'
+
 printf '%s\n' '{"schemaVersion":1,"version":"version-invalida","commit":"0123456789abcdef0123456789abcdef01234567"}' > "$FAKE/src/published/release-identity.json"; assert_failure 'SemVer invalido aborta'
+printf '%s\n' '{"schemaVersion":1,"version":"1.2.3-01","commit":"0123456789abcdef0123456789abcdef01234567"}' > "$FAKE/src/published/release-identity.json"; assert_failure 'identificador numerico SemVer con cero inicial aborta'
 printf '%s\n' '{"schemaVersion":1,"version":"1.2.3","commit":"corto"}' > "$FAKE/src/published/release-identity.json"; assert_failure 'SHA invalido aborta'
+printf '%s\n' '{"schemaVersion":2,"version":"1.2.3","commit":"0123456789abcdef0123456789abcdef01234567"}' > "$FAKE/src/published/release-identity.json"; assert_failure 'schemaVersion invalido aborta'
+printf '%s\n' '{"schemaVersion":1,"version":"1.2.3"}' > "$FAKE/src/published/release-identity.json"; assert_failure 'campo obligatorio ausente aborta'
 printf '%s\n' '{"schemaVersion":1,"version":"1.2.3","commit":"0123456789abcdef0123456789abcdef01234567","extra":true}' > "$FAKE/src/published/release-identity.json"; assert_failure 'campo extra aborta'
 printf '%s\n' '{"schemaVersion":1,"version":"2.0.0","commit":"0123456789abcdef0123456789abcdef01234567"}' > "$FAKE/src/published/release-identity.json"; assert_failure 'version divergente de plugin aborta'
 rm "$FAKE/src/published/release-identity.json"; assert_failure 'fuente ausente aborta'
 
 printf '[integracion] staging, inventario y diagnostico\n'
 OUT="$WORK/salida Claude con espacios"
+source_before="$(shasum "$REPO_ROOT/src/published/release-identity.json")"
 bash "$GENERATOR" --out "$OUT"; rc=$?
 [ "$rc" -eq 0 ] && jq -e '. == {schemaVersion:1,runtime:"claude",version:"0.37.0",commit:"cb54ee43966516092953d810639aad5888c23daf"}' "$OUT/dist/claude/mefisto-manifest.json" >/dev/null && pass 'generador renderiza manifiesto desde identidad neutral' || fail 'generador no renderizo manifiesto'
-[ "$(stat -f '%Lp' "$OUT/dist/claude/mefisto-manifest.json")" = 644 ] && pass 'manifiesto tiene modo 0644' || fail 'modo del manifiesto invalido'
+[ "$(file_mode "$OUT/dist/claude/mefisto-manifest.json")" = 644 ] && pass 'manifiesto tiene modo 0644' || fail 'modo del manifiesto invalido'
 jq -e '.assets[] | select(.adapter == "adapter-claude.sh" and .id == "mefisto-manifest" and .source == "src/published/release-identity.json" and .destination == "mefisto-manifest.json" and .mode == "0644")' "$OUT/dist/claude/.mefisto-generated-assets.json" >/dev/null && pass 'inventario atribuye el manifiesto a su fuente' || fail 'inventario no atribuye manifiesto'
 bash "$GENERATOR" --check --out "$OUT" >/dev/null; rc=$?
 [ "$rc" -eq 0 ] && pass '--check acepta contenido, modo e inventario al dia' || fail '--check rechazo salida al dia'
+first="$(shasum "$OUT/dist/claude/mefisto-manifest.json" "$OUT/dist/claude/.mefisto-generated-assets.json")"
+bash "$GENERATOR" --out "$OUT" >/dev/null
+second="$(shasum "$OUT/dist/claude/mefisto-manifest.json" "$OUT/dist/claude/.mefisto-generated-assets.json")"
+[ "$first" = "$second" ] && [ "$source_before" = "$(shasum "$REPO_ROOT/src/published/release-identity.json")" ] && pass 'generacion repetida es determinista y no modifica la fuente' || fail 'generacion no determinista o fuente modificada'
+chmod 0600 "$OUT/dist/claude/mefisto-manifest.json"
+check="$(bash "$GENERATOR" --check --out "$OUT")"; rc=$?
+[ "$rc" -eq 1 ] && case "$check" in *'dist/claude/mefisto-manifest.json: modo divergente'*) true ;; *) false ;; esac && pass '--check detecta modo divergente del manifiesto' || fail '--check no detecto modo divergente del manifiesto'
+bash "$GENERATOR" --out "$OUT" >/dev/null
+jq '.assets = []' "$OUT/dist/claude/.mefisto-generated-assets.json" > "$WORK/inventario-corrupto.json"
+mv "$WORK/inventario-corrupto.json" "$OUT/dist/claude/.mefisto-generated-assets.json"
+check="$(bash "$GENERATOR" --check --out "$OUT")"; rc=$?
+[ "$rc" -eq 1 ] && case "$check" in *'dist/claude/.mefisto-generated-assets.json: inventario inconsistente'*) true ;; *) false ;; esac && pass '--check detecta inventario del manifiesto divergente' || fail '--check no detecto inventario divergente'
+bash "$GENERATOR" --out "$OUT" >/dev/null
 printf 'corrupto\n' > "$OUT/dist/claude/mefisto-manifest.json"
 check="$(bash "$GENERATOR" --check --out "$OUT")"; rc=$?
 [ "$rc" -eq 1 ] && case "$check" in *'dist/claude/mefisto-manifest.json: distinta'*) true ;; *) false ;; esac && pass '--check detecta manifiesto divergente sin marcador JSON' || fail '--check no detecto manifiesto divergente'
