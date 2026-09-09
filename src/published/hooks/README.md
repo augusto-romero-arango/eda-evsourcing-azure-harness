@@ -18,7 +18,7 @@ No se declara comportamiento para fin de sesión, inicio de herramienta, prompt,
 
 ## Sesiones correlacionables
 
-`sessions.jsonl` es append-only por `session_id`. Claude conserva `SessionStart.model` cuando llega; tras `/clear` puede faltar y registra `null`. Al cierre de cada turno, observa el último modelo efectivo desde el transcript explícito; transcript ausente, ilegible o sin respuesta no agrega un hecho. Una observación posterior se agrega solo si difiere del último modelo no nulo de la sesión: A→A no duplica y A→B conserva ambos hechos. No se actualizan, borran ni reescriben líneas existentes. Los lectores deben aceptar líneas históricas de seis campos sin `record_type` como inicios legacy con identidad faltante.
+`sessions.jsonl` es append-only por `session_id`. Claude conserva `SessionStart.model` cuando llega; tras `/clear` puede faltar y registra `null`. Al cierre de cada turno, observa el último modelo efectivo desde el transcript explícito; transcript ausente, ilegible o sin un modelo observable no agrega un hecho. Una observación posterior se agrega solo si difiere del último modelo no nulo de la sesión: A→A no duplica y A→B conserva ambos hechos. No se actualizan, borran ni reescriben líneas existentes. Los lectores deben aceptar líneas históricas de seis campos sin `record_type` como inicios legacy con identidad faltante.
 
 `runtime` admite `claude` y `opencode`. La versión y el commit se leen únicamente del manifiesto verificable de la distribución cargada; su ausencia o malformación produce `null`. Los adaptadores no consultan Git, red, caches arbitrarios, credenciales, auth stores ni configuración del proveedor. Esta limitación aplica MEF-ADR-0025, MEF-ADR-0031, MEF-ADR-0049, MEF-ADR-0050 y MEF-ADR-0053.
 
