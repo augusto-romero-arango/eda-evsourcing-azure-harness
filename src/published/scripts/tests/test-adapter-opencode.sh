@@ -133,7 +133,8 @@ assert_not_contains "$completo" '{{mefisto:' 'siete directivas resueltas'
 assert_not_contains "$completo" '.claude/' 'sin ruta Claude'
 assert_not_contains "$completo" '/Users/' 'sin path de maquina'
 assert_not_contains "$completo" 'model:' 'agente hereda modelo'
-assert_not_contains "$completo" 'tools:' 'campo Claude omitido'
+assert_contains "$completo" 'tools: {"microsoft-learn_*":false,"terraform_*":false}' 'tools MCP cerradas por defecto y ordenadas'
+assert_not_contains "$completo" 'mcp__' 'no emite matchers MCP de Claude'
 assert_contains "$completo" '"skill":{"*":"deny","mefisto-projections":"allow","mefisto-comment-cleanup":"allow"}' 'allowlist exacta de Skills adaptados'
 assert_contains "$completo" 'usa la tool nativa `skill` para cargar, en este orden: `mefisto-projections`, `mefisto-comment-cleanup`' 'agente solicita carga nativa en orden fuente'
 assert_not_contains "$completo" '## Projections' 'agente no copia doctrina del Skill'
@@ -214,9 +215,46 @@ make_agent read-skill-acotado '["read","skill"]' ',"skills":["projections"]'
 read_skill_general="$(permission_of "$WORK/read-skill-sin-lista.md")"
 read_skill_acotado="$(permission_of "$WORK/read-skill-acotado.md")"
 [ "$(printf '%s' "$read_skill_general" | jq -c 'del(.skill)')" = "$(printf '%s' "$read_skill_acotado" | jq -c 'del(.skill)')" ] && pass 'allowlist de Skills no altera otros permisos' || fail 'allowlist de Skills altero otros permisos'
-make_agent con-mcp '[]' ',"mcp":["terraform"]'
-out="$(render "$WORK/con-mcp.md" 2>&1)"; rc=$?
-[ "$rc" -ne 0 ] && assert_contains "$out" 'mcp: OpenCode no implementa' 'mcp no desaparece' || fail 'mcp debio fallar'
+make_agent microsoft '[]' ',"mcp":["microsoft-learn"]'
+out="$(render "$WORK/microsoft.md" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && assert_contains "$out" 'tools: {"microsoft-learn_*":true,"terraform_*":false}' 'MCP Microsoft bundleado habilita solo su patron' || fail 'MCP Microsoft debio renderizar una allowlist cerrada'
+make_agent terraform '[]' ',"mcp":["terraform"]'
+out="$(render "$WORK/terraform.md" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && assert_contains "$out" 'tools: {"microsoft-learn_*":false,"terraform_*":true}' 'MCP Terraform externo habilita solo su patron' || fail 'MCP Terraform externo debio renderizar una allowlist cerrada'
+make_agent ambos '[]' ',"mcp":["microsoft-learn","terraform"]'
+out="$(render "$WORK/ambos.md" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && assert_contains "$out" 'tools: {"microsoft-learn_*":true,"terraform_*":true}' 'ambos ids MCP conservan el orden del registro' || fail 'ambos ids MCP debieron renderizarse'
+make_agent duplicado-mcp '[]' ',"mcp":["terraform","terraform"]'
+out="$(render "$WORK/duplicado-mcp.md" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && assert_contains "$out" 'referencia MCP duplicada' 'MCP duplicado aborta visiblemente' || fail 'MCP duplicado debio fallar'
+make_agent desconocido-mcp '[]' ',"mcp":["servidor-ajeno"]'
+out="$(render "$WORK/desconocido-mcp.md" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && assert_contains "$out" "id MCP 'servidor-ajeno' ausente del registro" 'MCP ausente del registro aborta con id' || fail 'MCP ausente debio fallar'
+
+printf '%s\n' '[delegacion MCP] comandos y agente ejecutor'
+MCP_ROOT="$WORK/mcp-root"
+mkdir -p "$MCP_ROOT/src/published/agents" "$MCP_ROOT/src/published/commands" "$MCP_ROOT/src/published/contract"
+cp "$REPO_ROOT/src/published/contract/published-artifact.schema.json" "$MCP_ROOT/src/published/contract/"
+write_mcp_agent() {
+    printf '%s\n' '---' '{"kind":"agent","id":"ejecutor-mcp","description":"Ejecutor.","mode":"subagent","mcp":["microsoft-learn","terraform"]}' '---' '{{mefisto:assert-consumer-repo}}' > "$MCP_ROOT/src/published/agents/ejecutor-mcp.md"
+}
+write_mcp_command() {
+    local mcp="$1" agent="$2"
+    printf '%s\n' '---' "{\"kind\":\"command\",\"id\":\"consulta-mcp\",\"description\":\"Consulta.\",\"mcp\":$mcp${agent:+,\"agent\":\"$agent\"}}" '---' '{{mefisto:assert-consumer-repo}}' > "$MCP_ROOT/src/published/commands/consulta-mcp.md"
+}
+write_mcp_agent; write_mcp_command '["microsoft-learn"]' ejecutor-mcp
+out="$(MEFISTO_PUBLISHED_ROOT="$MCP_ROOT" "$REPO_ROOT/src/published/scripts/validate-published-artifacts.sh" "$MCP_ROOT/src/published/commands/consulta-mcp.md" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && pass 'comando MCP delega validamente a agente con superconjunto' || fail "delegacion MCP valida fue rechazada: $out"
+write_mcp_command '["microsoft-learn"]' inexistente
+out="$(MEFISTO_PUBLISHED_ROOT="$MCP_ROOT" "$REPO_ROOT/src/published/scripts/validate-published-artifacts.sh" "$MCP_ROOT/src/published/commands/consulta-mcp.md" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && assert_contains "$out" "agente delegado 'inexistente' no existe" 'comando MCP rechaza agente inexistente' || fail 'agente inexistente debio fallar'
+write_mcp_command '["microsoft-learn"]' ''
+out="$(MEFISTO_PUBLISHED_ROOT="$MCP_ROOT" "$REPO_ROOT/src/published/scripts/validate-published-artifacts.sh" "$MCP_ROOT/src/published/commands/consulta-mcp.md" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && assert_contains "$out" 'no delega a un agente neutral' 'comando MCP rechaza ausencia de agente' || fail 'comando sin agente debio fallar'
+write_mcp_command '["microsoft-learn"]' ejecutor-mcp
+printf '%s\n' '---' '{"kind":"agent","id":"ejecutor-mcp","description":"Ejecutor.","mode":"subagent","mcp":["terraform"]}' '---' '{{mefisto:assert-consumer-repo}}' > "$MCP_ROOT/src/published/agents/ejecutor-mcp.md"
+out="$(MEFISTO_PUBLISHED_ROOT="$MCP_ROOT" "$REPO_ROOT/src/published/scripts/validate-published-artifacts.sh" "$MCP_ROOT/src/published/commands/consulta-mcp.md" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && assert_contains "$out" 'no declara todos los ids requeridos' 'comando MCP rechaza subconjunto incumplido' || fail 'subconjunto MCP incumplido debio fallar'
 make_agent directiva '[]'
 printf '%s\n' '{{mefisto:desconocida}}' >> "$WORK/directiva.md"
 out="$(render "$WORK/directiva.md" 2>&1)"; rc=$?

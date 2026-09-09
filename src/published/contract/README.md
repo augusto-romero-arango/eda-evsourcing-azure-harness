@@ -20,7 +20,7 @@ objetos rechazan propiedades adicionales.
 | `profile` | sí | sí | `model` resuelto por tabla del adaptador | no se emite `model`; hereda la configuración interactiva del usuario |
 | `capabilities` | sí | sí | `tools`/`allowed-tools` generados | `permission` generado |
 | `skills` | sí | sí | `skills` con ids fuente, sin prefijo | preámbulo que solicita la carga nativa on-demand de `mefisto-<id>` |
-| `mcp` | sí | sí | matcher scoped por id lógico | traducción de permisos pendiente en #1145; el adaptador aborta hoy si un artefacto declara referencias |
+| `mcp` | sí | sí | matcher scoped por id lógico | en agentes, política `tools` cerrada por servidor; en comandos, se materializa mediante el agente delegado |
 | `agent` | no | sí | delegación al agente generado | `agent` + ejecución como subtask |
 | `arguments` | no | sí | `argument-hint` | hint equivalente si el runtime lo admite |
 
@@ -69,8 +69,14 @@ El plugin OpenCode se genera como asset suplementario desde el registro, se
 instala y retira mediante el ledger global, y no lee ni modifica
 `opencode.json`. Ante una definición preexistente distinta, la configuración
 del usuario gana y el hook emite `mcp_config_conflict` sin incluir su valor.
-Los permisos por agente/comando llegan en #1145 y el smoke real de conexión y
-listado queda diferido a #1066. El formato del servidor remoto y la carga de
+OpenCode emite para cada agente una entrada `tools` por cada servidor del
+registro: `false` por defecto y `true` solo para `<id>_*` solicitado. Un
+comando no tiene un campo equivalente: si declara `mcp`, debe delegar a un
+agente neutral existente cuyo `mcp` sea un superconjunto; el validador rechaza
+la ausencia de agente o cualquier subconjunto incumplido. `external` no cambia
+esta allowlist y su ausencia queda visible en OpenCode; Mefisto no instala
+binarios, plugins ni credenciales. El smoke real de conexión y listado queda
+diferido a #1066. El formato del servidor remoto y la carga de
 plugins globales siguen la documentación oficial de OpenCode 1.18.29:
 [MCP servers](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/web/src/content/docs/mcp-servers.mdx)
 y [Plugins](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/web/src/content/docs/plugins.mdx).

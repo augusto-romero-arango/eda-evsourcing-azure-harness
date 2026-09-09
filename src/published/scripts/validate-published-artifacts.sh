@@ -6,7 +6,7 @@ set -uo pipefail
 export LC_ALL=C
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+REPO_ROOT="${MEFISTO_PUBLISHED_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
 CONTRACT_DIR="$REPO_ROOT/src/published/contract"
 SCHEMA_FILE="$CONTRACT_DIR/published-artifact.schema.json"
 JSONSCHEMA_LITE="$SCRIPT_DIR/lib/jsonschema-lite.jq"
@@ -33,7 +33,7 @@ extract_frontmatter() {
 body_lines() { awk 'NR==1 { next } $0 == "---" && !seen { seen=1; next } seen { print NR ":" $0 }' "$1"; }
 
 validate_file() {
-    local file="$1" rel="${1#"$REPO_ROOT"/}" basename_no_ext frontmatter rc instance_json schema_json errors status=0 id skill line text directive directives directive_count marker_count placeholders placeholder has_guard=0
+    local file="$1" rel="${1#"$REPO_ROOT"/}" basename_no_ext frontmatter rc instance_json schema_json errors status=0 id skill line text directive directives directive_count marker_count placeholders placeholder has_guard=0 agent agent_file command_mcp agent_mcp
     [ -f "$file" ] || { echo "$rel: archivo: no existe o no es un archivo regular"; return 1; }
     basename_no_ext="$(basename "$file" .md)"
     frontmatter="$(extract_frontmatter "$file")"; rc=$?
@@ -45,6 +45,10 @@ validate_file() {
     if [ "$(printf '%s' "$errors" | jq 'length')" -gt 0 ]; then printf '%s' "$errors" | jq -r --arg rel "$rel" '.[] | "\($rel): \(.)"'; status=1; fi
     id="$(printf '%s' "$instance_json" | jq -r 'if (.id? | type) == "string" then .id else empty end')"
     [ -z "$id" ] || [ "$id" = "$basename_no_ext" ] || { echo "$rel: id: '$id' distinto del nombre de archivo '$basename_no_ext'"; status=1; }
+    if [ "$(printf '%s' "$instance_json" | jq '[.mcp[]?] | length')" -ne "$(printf '%s' "$instance_json" | jq '[.mcp[]?] | unique | length')" ]; then
+        echo "$rel: mcp: referencias MCP duplicadas"
+        status=1
+    fi
     while IFS= read -r skill; do
         [ -z "$skill" ] || [ -f "$REPO_ROOT/skills/$skill/SKILL.md" ] || { echo "$rel: skills: '$skill' no resuelve a un Skill publicado real"; status=1; }
     done <<EOF
@@ -91,6 +95,27 @@ EOF
         fi
     done < <(body_lines "$file")
     [ "$has_guard" -eq 1 ] || { echo "$rel: body: falta {{mefisto:assert-consumer-repo}}"; status=1; }
+    if [ "$file" = "$REPO_ROOT/src/published/commands/"*.md ] && [ "$(printf '%s' "$instance_json" | jq -r '.kind')" = command ] && [ "$(printf '%s' "$instance_json" | jq '[.mcp[]?] | length')" -gt 0 ]; then
+        agent="$(printf '%s' "$instance_json" | jq -r '.agent // empty')"
+        [ -n "$agent" ] || agent="$(body_lines "$file" | cut -d: -f2- | grep -Eo '\{\{mefisto:launch-agent [a-z0-9]+(-[a-z0-9]+)*\}\}' | sed -E 's/.*launch-agent ([a-z0-9-]+).*/\1/' | head -n 1)"
+        if [ -z "$agent" ]; then
+            echo "$rel: mcp: el comando declara MCP pero no delega a un agente neutral"
+            status=1
+        else
+            agent_file="$REPO_ROOT/src/published/agents/$agent.md"
+            if [ ! -f "$agent_file" ]; then
+                echo "$rel: mcp: el agente delegado '$agent' no existe en src/published/agents"
+                status=1
+            else
+                command_mcp="$(printf '%s' "$instance_json" | jq -c '.mcp // []')"
+                agent_mcp="$(extract_frontmatter "$agent_file" | jq -c '.mcp // []' 2>/dev/null)" || agent_mcp='[]'
+                if ! jq -en --argjson command "$command_mcp" --argjson agent "$agent_mcp" '$command - $agent | length == 0' >/dev/null; then
+                    echo "$rel: mcp: el agente delegado '$agent' no declara todos los ids requeridos por el comando"
+                    status=1
+                fi
+            fi
+        fi
+    fi
     return "$status"
 }
 
