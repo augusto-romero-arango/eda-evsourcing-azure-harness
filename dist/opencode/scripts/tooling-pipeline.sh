@@ -477,6 +477,11 @@ auto_commit_if_needed() {
 
 # Frontera neutral publicada. El runner es autoridad de watchdog, argv y
 # terminal; este nivel conserva exclusivamente la politica de hold/retry.
+log_agent_model_invocation() {
+    local agent="$1" model="$2"
+    log "Invocando $agent (modelo: ${model:-<heredado>})..."
+}
+
 run_agent() {
     local stage="$1" agent="$2" prompt="$3" log_base="$LOG_DIR_ABS/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}"
     local log_stage="${log_base}.log" events_file=""
@@ -492,7 +497,7 @@ run_agent() {
     case "$agent" in reviewer) agent_id="tooling-reviewer"; profile="deep"; model="$MODEL_REVIEWER" ;; *) agent_id="tooling-writer"; profile="balanced"; model="$MODEL_WRITER" ;; esac
     case "$agent" in writer) AGENT_WR_RES="running" ;; reviewer) AGENT_RV_RES="running" ;; esac
     update_status "$stage-$agent" running
-    log "Invocando $agent (modelo: ${model:-<heredado>})..."
+    log_agent_model_invocation "$agent" "$model"
     start_ts=$(date +%s)
     while :; do
         attempt=$((attempt + 1))

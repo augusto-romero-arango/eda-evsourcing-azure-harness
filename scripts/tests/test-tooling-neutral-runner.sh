@@ -23,7 +23,7 @@ absent 'bypassPermissions' 'no fija permisos de un runtime'
 absent 'output-format' 'no fija formatos de stream de un runtime'
 absent 'kill -9' 'no conserva watchdog propio'
 contains 'if "$RUN_AGENT_BIN" "${args[@]}"' 'invoca el runner con un array, sin eval'
-contains 'log "Invocando $agent (modelo: ${model:-<heredado>})..."' 'anuncia el modelo resuelto antes de invocar writer, reviewer o merge'
+contains 'log_agent_model_invocation "$agent" "$model"' 'anuncia el modelo resuelto antes de invocar writer, reviewer o merge'
 contains '[ -n "$model" ] && args+=(--model "$model")' 'conserva intacto el argv condicional del runner'
 contains 'case "$agent" in reviewer) agent_id="tooling-reviewer"; profile="deep"; model="$MODEL_REVIEWER" ;; *) agent_id="tooling-writer"; profile="balanced"; model="$MODEL_WRITER" ;; esac' 'el anuncio usa el modelo ya resuelto por rol'
 contains 'agent_events_completed_successfully' 'exige terminal neutral de exito'
@@ -40,6 +40,20 @@ absent '.claude/settings.json 2>/dev/null' 'no parchea ni restaura settings de C
 contains 'get_harness_identity_json "$MEFISTO_RUNTIME_RESUELTO"' 'valida metadata distribuida contra el runtime activo'
 contains 'HISTORY_FILE="$(mefisto_state_path' 'history obtiene su destino con el helper canonico'
 absent 'pipeline-history.jsonl" 2>/dev/null' 'history no concatena a mano su ruta de escritura'
+
+eval "$(awk '/^log_agent_model_invocation\(\) \{/{p=1} p{print} p && /^}/{p=0}' "$PIPELINE")"
+MODEL_LOG="$(mktemp)"
+log() { printf '%s\n' "$*" >> "$MODEL_LOG"; }
+: > "$MODEL_LOG"
+log_agent_model_invocation writer 'vendor/model-v2'
+log_agent_model_invocation reviewer ''
+if grep -qxF 'Invocando writer (modelo: vendor/model-v2)...' "$MODEL_LOG" \
+    && grep -qxF 'Invocando reviewer (modelo: <heredado>)...' "$MODEL_LOG"; then
+    pass 'formatea modelo concreto y fallback heredado sin tocar el runner'
+else
+    fail 'no formatea correctamente modelo concreto/heredado'
+fi
+rm -f "$MODEL_LOG"
 
 echo '[contrato] helpers JSONL'
 # shellcheck source=/dev/null
