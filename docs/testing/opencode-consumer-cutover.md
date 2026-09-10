@@ -236,6 +236,28 @@ parchea el consumidor para simular paridad ni se repite sobre un baseline sucio.
 
 ## Matriz de corridas e issues fixture (#1181)
 
+### Estado de la corrida
+
+**Bloqueada antes de crear fixtures (2026-09-10).** La evidencia de #1180 no
+certifico una instalacion: registro que el consumidor privado devolvia HTTP 404
+para la identidad efectiva y que la release mas reciente observable seguia
+siendo `v0.37.0`, cuando este protocolo exige una candidata posterior. Una
+comprobacion de solo lectura al revisar #1181 reprodujo ambos resultados:
+
+| Comando sanitizado | Resultado sanitizado |
+|---|---|
+| `gh issue view 1180 --json state,stateReason,url` | #1180 esta cerrado como `COMPLETED`, pero su evidencia publicada conserva el estado "Bloqueada antes de instalar"; cerrar el issue documental no convierte ese intento en una certificacion. |
+| `gh release list --repo augusto-romero-arango/eda-evsourcing-azure-harness --limit 5` | La release mas reciente observable es `v0.37.0`; no hay una candidata posterior que pueda instalarse con identidad comun. |
+| `gh api repos/augusto-romero-arango/mefisto-consumer-certification` | HTTP 404; no se pueden verificar baseline, fixtures ni ejecuciones con la identidad efectiva. |
+
+Por ello no se crearon issues o PRs fixture, no se abrio Herdr y no se invoco
+`/mefisto:tooling`. Hacerlo sin esos prerrequisitos inventaria la evidencia que
+MEF-ADR-0031 y MEF-ADR-0053 exigen obtener de ejecuciones reales. Este estado no
+es un fallo de runtime y no abre un bug: #1181 debe repetirse desde el inicio
+cuando el consumidor sea accesible y exista una release certificable. El resto
+de esta seccion conserva el procedimiento reproducible para esa repeticion; no
+constituye un veredicto exitoso.
+
 Se abren **dos issues distintos**, ambos en el consumidor, con labels
 `tipo:tooling`, `dom:certificacion` y `estado:listo`: uno para Claude y uno para
 OpenCode. Cada issue produce su propia rama y PR. Esa separacion hace comparables
@@ -380,8 +402,9 @@ nunca capture variables de entorno completas.
    El instalador descarga `mefisto-opencode-v<version>.tar.gz`, valida su
    SHA-256 contra el `.sha256` del release y activa solo una release valida e
    inmutable. Guarde el digest y el resultado, no el tarball ni datos de auth.
-3. **Alinear identidad y preparar fixtures.** Desde la raiz del consumidor ejecute el diagnostico
-   de la release instalada, proporcionando la raiz Claude observada y el
+3. **Alinear identidad y preparar fixtures.** Desde la raiz del consumidor,
+   ejecute el diagnostico de la release instalada proporcionando la raiz Claude
+   observada y el
    `active` OpenCode cuando no sean los defaults:
 
    ```bash
@@ -394,17 +417,17 @@ nunca capture variables de entorno completas.
 
    La salida de `package-root` fija `<raiz-opencode-activa>`. En el JSON,
    `status=aligned` y `claude`/`opencode` con `version=<version>` y
-   `commit=<commit-fuente>` son precondiciones fail-closed. La ruta Claude es la de la instalacion cargada,
-   no una ruta de checkout; obtengala del marker canonico de release o de la
-    propia sesion despues del reload. Desde el planner **publicado** del
-    consumidor, cree los dos issues abiertos e independientes con los templates
-    exactos de las secciones anteriores y los tres labels explicitos. Registre
-    sus numeros, URLs y el mismo `<sha-baseline-inicial>` antes de abrir Herdr.
-    No cree, cierre ni modifique esos fixtures con el planner interno de
-    Mefisto ni con `gh -R`; los issues y PRs pertenecen exclusivamente al
-    consumidor.
+   `commit=<commit-fuente>` son precondiciones fail-closed. La ruta Claude es la
+   de la instalacion cargada, no una ruta de checkout; obtengala del marker
+   canonico de release o de la propia sesion despues del reload. Desde el
+   planner **publicado** del consumidor, cree los dos issues abiertos e
+   independientes con los templates exactos de las secciones anteriores y los
+   tres labels explicitos. Registre sus numeros, URLs y el mismo
+   `<sha-baseline-inicial>` antes de abrir Herdr. No cree, cierre ni modifique
+   esos fixtures con el planner interno de Mefisto ni con `gh -R`; los issues y
+   PRs pertenecen exclusivamente al consumidor.
 4. **Discovery separado.** En cada runtime descubra y registre, sin ejecutar
-    tooling: comandos, agentes, Agent Skills, scripts/runner,
+   tooling: comandos, agentes, Agent Skills, scripts/runner,
    permisos, hooks y MCP. Para Claude use `/help`, `/agents`, `/skills`,
    `/hooks` y `/mcp`, ademas del inventario de la raiz cargada. Para OpenCode
    use `opencode debug config`, `opencode agent list` y las rutas globales
@@ -421,58 +444,57 @@ nunca capture variables de entorno completas.
    equivalente realmente usado; no sustituya discovery por presencia de
    archivos.
 5. **Workspace Herdr.** Una vez por baseline alineado y con los dos issues
-    abiertos, ejecute la invocacion
+   abiertos, ejecute la invocacion
    real distribuida:
 
    ```bash
    <raiz-claude-instalada>/scripts/herdr-workspace.sh <ruta-del-consumidor>
    ```
 
-    Compruebe identidad `aligned`, la fila superior
-    `planner [claude]`/`ejecucion [claude]`, la inferior
-    `planner [opencode]`/`ejecucion [opencode]`, sus pools de panes separados,
-    `MEFISTO_RUNTIME` y el `--kind` heredados. La fila Claude inicia el planner
-    con `mefisto:planner`; la OpenCode no usa `--agent`. Ninguna fila fija
-    proveedor, modelo ni credenciales. Herdr monta y enfoca; no sustituye las
-    dos ejecuciones independientes de abajo.
+   Compruebe identidad `aligned`, la fila superior
+   `planner [claude]`/`ejecucion [claude]`, la inferior
+   `planner [opencode]`/`ejecucion [opencode]`, sus pools de panes separados,
+   `MEFISTO_RUNTIME` y el `--kind` heredados. La fila Claude inicia el planner
+   con `mefisto:planner`; la OpenCode no usa `--agent`. Ninguna fila fija
+   proveedor, modelo ni credenciales. Herdr monta y enfoca; no sustituye las
+   dos ejecuciones independientes de abajo.
 6. **Fila Claude.** Desde `ejecucion [claude]`, en la sesion Claude instalada,
-    ejecute directamente:
+   ejecute directamente:
 
    ```text
    /mefisto:tooling <issue-claude>
    ```
 
-    No agregue `--models` ni `--variant`. Esta invocacion directa es el smoke
-    interactivo de la fila; el pipeline que lanza ejecuta en print mode
-    headless. Espere un PR real con `Closes #<issue-claude>`, comentario del
-    pipeline y checks requeridos verdes. Confirme que los hooks naturales de
-    inicio, cambios y cierre dejaron eventos correlacionables con la sesion. El
-    comando despacha transitivamente `tmux-pipeline.sh`, `herdr-pipeline.sh`,
-    `tooling-pipeline.sh`, el runner neutral, exactamente `tooling-writer` y
-    `tooling-reviewer`; no invoque directamente ninguno de esos scripts o
-    agentes.
+   No agregue `--models` ni `--variant`. Esta invocacion directa es el smoke
+   interactivo de la fila; el pipeline que lanza ejecuta en print mode
+   headless. Espere un PR real con `Closes #<issue-claude>`, comentario del
+   pipeline y checks requeridos verdes. Confirme que los hooks naturales de
+   inicio, cambios y cierre dejaron eventos correlacionables con la sesion. El
+   comando despacha transitivamente `tmux-pipeline.sh`, `herdr-pipeline.sh`,
+   `tooling-pipeline.sh`, el runner neutral, exactamente `tooling-writer` y
+   `tooling-reviewer`; no invoque directamente ninguno de esos scripts o
+   agentes.
 7. **Fila OpenCode.** Con el baseline restaurado al SHA inicial, desde
     `ejecucion [opencode]` en la sesion OpenCode instalada, ejecute directamente:
 
    ```text
-    /mefisto:tooling <issue-opencode> --models 'writer=<modelo-verificado>,reviewer=<modelo-verificado>'
+   /mefisto:tooling <issue-opencode> --models 'writer=<modelo-verificado>,reviewer=<modelo-verificado>'
    ```
 
-    Los dos valores de `<modelo-verificado>` se obtienen del discovery efectivo
-    de OpenCode, no se infieren ni se sustituyen por un alias. No use
-    `--variant`. Igual que en Claude, esta invocacion directa es el smoke
-    interactivo y la escritura/revision ocurren headless. Espere un PR real con
-    `Closes #<issue-opencode>`, comentario del pipeline y checks requeridos
-    verdes; confirme eventos de los hooks naturales correlacionables con la
-    sesion. `tmux-pipeline.sh`, `herdr-pipeline.sh`, `tooling-pipeline.sh`, el
-    runner neutral, writer y reviewer son transitivos, no ejecuciones manuales.
+   Los dos valores de `<modelo-verificado>` se obtienen del discovery efectivo
+   de OpenCode, no se infieren ni se sustituyen por un alias. No use
+   `--variant`. Igual que en Claude, esta invocacion directa es el smoke
+   interactivo y la escritura/revision ocurren headless. Espere un PR real con
+   `Closes #<issue-opencode>`, comentario del pipeline y checks requeridos
+   verdes; confirme eventos de los hooks naturales correlacionables con la
+   sesion. `tmux-pipeline.sh`, `herdr-pipeline.sh`, `tooling-pipeline.sh`, el
+   runner neutral, writer y reviewer son transitivos, no ejecuciones manuales.
 8. **Comparar y preservar.** Compruebe que cada PR cambia solo su archivo
-    fixture de cinco lineas, contra el template correspondiente, y que ambos
-    conservan tag, version, commit fuente, baseline y resultado. Runtime,
-    modelo, IDs, timestamps y URLs son deliberadamente distintos. Antes de que
-    la limpieza retire los worktrees, copie el summary verificable de cada
-    corrida al body de su PR y registre el comentario del pipeline, commits y
-    checks.
+   fixture de cinco lineas, contra el template correspondiente, y que ambos
+   conservan tag, version, commit fuente, baseline y resultado. Runtime,
+   modelo, IDs, timestamps y URLs son deliberadamente distintos. Compruebe que
+   el pipeline copio los summaries al body de cada PR antes de retirar los
+   worktrees; registre ademas el comentario del pipeline, commits y checks.
 
 Los agentes de tooling exponen solo lectura, edicion y shell: tienen Agent
 Skills y MCP denegados. Por ello `projections`,
@@ -534,9 +556,11 @@ La ejecucion es fail-closed. Falla y bloquea el veredicto cualquier desalineacio
 de identidad, checksum, baseline, discovery requerido, fila/pane Herdr,
 contenido de fixture, PR/check, observabilidad correlacionable, prompt no
 atendido o centinela no redactable. Cree un issue `tipo:bug` en Mefisto con el
-manifiesto sanitizado, el paso fallido, hashes, URLs y diferencia observada; no
-migre ningun comando adicional mientras ese bug siga abierto. El protocolo solo
-certifica `/mefisto:tooling`.
+manifiesto sanitizado, el paso fallido, hashes, URLs y diferencia observada;
+añadalo como dependencia de #1181 y no migre ningun comando adicional mientras
+siga abierto. Repita **ambas** corridas desde un baseline limpio sobre una
+release nueva que contenga la correccion; una sola repeticion no restablece la
+comparabilidad. El protocolo solo certifica `/mefisto:tooling`.
 
 La limpieza corre tambien tras un fallo parcial. Tras capturar la evidencia,
 cierre sin merge ambos PRs fixture y elimine sus ramas remotas; cierre ambos
