@@ -63,6 +63,27 @@ fixture, abrir Herdr o invocar `/mefisto:tooling`; esas corridas E2E pertenecen
 a #1181. Los valores entre angulos son outputs de los prerrequisitos, no valores
 que se puedan anticipar, inferir desde `latest` ni sustituir por un checkout.
 
+### Estado de la corrida
+
+**Bloqueada antes de instalar (2026-09-10T01:12:39Z).** La identidad de GitHub
+efectiva para esta corrida ejecuto consultas de solo lectura por nombre exacto:
+
+| Comando sanitizado | Resultado sanitizado |
+|---|---|
+| `gh issue view 1179 --json state,url` | #1179 esta `CLOSED`: el protocolo requerido ya existe. |
+| `gh api repos/augusto-romero-arango/mefisto-consumer-certification` | HTTP 404: el consumidor privado no es accesible para la identidad efectiva; no se pudo obtener URL, visibilidad, SHA baseline ni evidencia de onboarding, CI o Azure. |
+| `gh release list --repo augusto-romero-arango/eda-evsourcing-azure-harness --limit 5` | La release mas reciente observable es `v0.37.0`; no existe una release posterior certificable. |
+| `gh release view v0.38.0 --repo augusto-romero-arango/eda-evsourcing-azure-harness` | No existe esa release; `v0.38.0` se consulto solo como nombre exacto, no se adopto como candidata. |
+
+Faltan, por tanto, los dos prerrequisitos operacionales de #1180. No se
+descargaron assets, no se modificaron instalaciones y no se intento discovery.
+Esto no es un veredicto de certificacion ni una divergencia del producto: la
+corrida no comenzo. #1180 debe permanecer abierto y repetirse desde el inicio
+cuando el consumidor completo sea accesible y `/mefisto-release patch` haya
+publicado la primera version posterior a `v0.37.0`. No se abre un bug por la
+ausencia de esos prerrequisitos; cualquier fallo que aparezca despues de
+satisfacerlos sigue el regimen fail-closed de esta seccion.
+
 ### Preflight del consumidor ajeno
 
 Desde un clone nuevo de
@@ -88,8 +109,9 @@ el preflight, se restaura o se vuelve a clonar antes de continuar; no se
 
 ### Verificacion de la release efectiva
 
-Ejecute `/mefisto-release patch` solo despues de integrar #1179 y conserve el
-registro de release que produce: `<tag-certificable>`, `<commit-etiquetado>`,
+La publicacion mediante `/mefisto-release patch`, posterior a la integracion de
+#1179, es un prerrequisito y no un paso ejecutado desde el consumidor. Conserve
+el registro que produce: `<tag-certificable>`, `<commit-etiquetado>`,
 `<commit-fuente>` y las URLs de los dos assets OpenCode. Antes de instalar,
 consulte el tag y release publicados por su nombre exacto `v<version>` y
 registre respuestas sanitizadas que prueben todos estos predicados:
@@ -98,7 +120,7 @@ registre respuestas sanitizadas que prueben todos estos predicados:
 |---|---|
 | Version publicable | `<version>` es SemVer y es estrictamente posterior a `0.37.0`; `<tag-certificable>` es exactamente `v<version>`. |
 | Procedencia Git | El commit del tag tiene un unico padre y ese padre es exactamente `<commit-fuente>`; el tag apunta a `<commit-etiquetado>`. |
-| Identidad Claude | El `plugin.json` de la distribucion marketplace y su `mefisto-manifest.json` declaran identidad `claude`, `<version>` y `<commit-fuente>`. |
+| Identidad Claude | El `plugin.json` de la distribucion marketplace declara `name=mefisto` y `<version>`; su `mefisto-manifest.json` declara `runtime=claude`, la misma `<version>` y `<commit-fuente>`. |
 | Identidad OpenCode | El manifiesto del artefacto OpenCode declara identidad `opencode`, `<version>` y `<commit-fuente>` (y su minimo de runtime). |
 | Assets | Las URLs del mismo tag descargan `mefisto-opencode-v<version>.tar.gz` y `mefisto-opencode-v<version>.tar.gz.sha256`; se registran ambas URLs y el SHA-256 publicado. |
 
@@ -130,12 +152,12 @@ es fallo. La certificacion no reescribe markers a mano: la sesion y su hook
 
 Registre `opencode --version` y confirme que la version efectiva es al menos
 1.18.29. En un directorio temporal, descargue ambos assets por sus URLs exactas,
-valide el checksum **antes** de extraer o ejecutar el bootstrap y ejecute el
-entrypoint `install.sh` empaquetado. Despues, mediante el launcher instalado,
-ejecute en este orden:
+valide el checksum **antes** de extraer o ejecutar el bootstrap y ejecute
+`./install.sh install <version>`, el entrypoint empaquetado. Ese comando instala
+y activa la release. Despues, mediante el launcher instalado, ejecute en este
+orden:
 
 ```bash
-<mefisto-opencode> install <version>
 <mefisto-opencode> project
 <mefisto-opencode> status
 <mefisto-opencode> diagnose
@@ -161,16 +183,36 @@ quedar completa:
 | Superficie | Claude Code | OpenCode |
 |---|---|---|
 | Comando y agentes tooling | `/mefisto:tooling`, `tooling-writer`, `tooling-reviewer` | `/mefisto:tooling`, `tooling-writer`, `tooling-reviewer` |
-| Clausura y permisos | scripts transitivos de clausura; solo `read`, `edit`, `shell` | equivalentes adaptados; solo `read`, `edit`, `shell` |
+| Clausura y permisos | clausura exacta enumerada abajo; solo `read`, `edit`, `shell` | misma clausura adaptada; solo `read`, `edit`, `shell` |
 | Skills | `projections`, `comment-cleanup` | `mefisto-projections`, `mefisto-comment-cleanup` |
 | Observabilidad y MCP | hooks/plugin de observabilidad y `microsoft-learn` bundled | plugin de observabilidad y `microsoft-learn` bundled |
 | Externo | `terraform` identificado como dependencia externa | `terraform` identificado como dependencia externa |
 
 Los agentes tooling no cargan Skills ni MCP: su ausencia en esos agentes es el
 resultado esperado, no una degradacion. Las Skills y MCP se certifican por la
-fila propia de discovery. El checkout principal y un worktree del consumidor
-deben resolver la misma instalacion `active` y la misma matriz; una diferencia
-por cwd es fallo.
+fila propia de discovery. La clausura exacta que ambos runtimes deben descubrir
+en la distribucion instalada es:
+
+```text
+scripts/_pipeline-common.sh
+scripts/tmux-pipeline.sh
+scripts/herdr-pipeline.sh
+scripts/stream-watch.sh
+scripts/tooling-pipeline.sh
+src/runtime/mefisto-run-agent.sh
+src/runtime/lib/mefisto-runtime.sh
+src/runtime/lib/mefisto-models.sh
+src/runtime/lib/mefisto-process.sh
+src/runtime/lib/runtime-claude.sh
+src/runtime/lib/runtime-claude.jq
+src/runtime/lib/runtime-opencode.sh
+src/runtime/lib/runtime-opencode.jq
+src/runtime/contract/models.validate.jq
+```
+
+El checkout principal y un worktree del consumidor deben resolver la misma
+raiz Claude cargada y el mismo `active` OpenCode, y producir la misma matriz;
+una diferencia por cwd es fallo.
 
 Por ultimo, invoque `diagnose-installation-identity.sh` solamente con
 `--claude-root <raiz-claude-cargada>` y
@@ -190,24 +232,24 @@ nunca persista el contenido que coincida.
 
 Cualquier fallo crea un issue `tipo:bug` en Mefisto, enlaza la evidencia
 sanitizada, se añade como dependencia de #1180 y conserva #1180 abierto. No se
-parchea el consumidor para simular paridad, no se repite sobre un baseline sucio
+parchea el consumidor para simular paridad ni se repite sobre un baseline sucio.
 
 ## Matriz de corridas e issues fixture
 
 Se abren **dos issues distintos**, ambos en el consumidor, con labels
-`tipo:tooling`, `dom:certificacion` y `estado:listo`: uno para Claude y uno para OpenCode. Cada issue
-produce su propia rama y PR. Esa separacion hace comparables las dos ejecuciones
-sin compartir worktree, logs, estado de pipeline ni commit de salida. No se usa
-`--variant`: una variante conserva una rama local y no abre PR, por lo que no
-ofrece la evidencia independiente requerida por el gate.
+`tipo:tooling`, `dom:certificacion` y `estado:listo`: uno para Claude y uno para
+OpenCode. Cada issue produce su propia rama y PR. Esa separacion hace comparables
+las dos ejecuciones sin compartir worktree, logs, estado de pipeline ni commit
+de salida. No se usa `--variant`: una variante conserva una rama local y no abre
+PR, por lo que no ofrece la evidencia independiente requerida por el gate.
 
 Defina `<run-id>` como `YYYYMMDD-HHMMSS-<tag-certificable>` normalizado (sin la
 `v` inicial si se necesita un nombre de archivo portable). Las plantillas son
 intencionalmente identicas salvo por runtime, ruta y contenido esperado.
 Al crear cada uno se pasan los tres labels de forma explicita, por ejemplo con
 `gh issue create --repo augusto-romero-arango/mefisto-consumer-certification
---label tipo:tooling --label dom:certificacion --label estado:listo --title <titulo> --body-file
-<template-runtime.md>`. La salida de ese comando fija `<issue-claude>` o
+--label tipo:tooling --label dom:certificacion --label estado:listo --title
+<titulo> --body-file <template-runtime.md>`. La salida de ese comando fija `<issue-claude>` o
 `<issue-opencode>`; no se reutiliza un numero entre filas.
 
 ### Template: Claude
@@ -362,11 +404,12 @@ nunca capture variables de entorno completas.
    use `opencode debug config`, `opencode agent list` y las rutas globales
    proyectadas (`commands`, `agents`, `skills`, `plugins`); compruebe tambien
    que el estado del proyector no reporte capacidades ausentes. Registre en
-    ambos `tooling`, `tooling-writer`, `tooling-reviewer`, los scripts del
-    cierre y los permisos efectivos. Registre `projections`/`comment-cleanup`
-    en Claude frente a `mefisto-projections`/`mefisto-comment-cleanup` en
-    OpenCode, el adaptador de hooks, `microsoft-learn` y `terraform` como
-    dependencia externa. Discovery prueba disponibilidad, no
+   ambos `/mefisto:tooling`, `tooling-writer`, `tooling-reviewer`, la clausura
+   exacta enumerada en la matriz y los permisos efectivos. Registre
+   `projections`/`comment-cleanup` en Claude frente a
+   `mefisto-projections`/`mefisto-comment-cleanup` en OpenCode, el adaptador de
+   hooks, `microsoft-learn` y `terraform` como dependencia externa. Discovery
+   prueba disponibilidad, no
    ejercita una tool MCP ni un hook ajeno al flujo. Si una version del runtime
    no ofrece alguno de esos listados, registre el comando de discovery
    equivalente realmente usado; no sustituya discovery por presencia de
