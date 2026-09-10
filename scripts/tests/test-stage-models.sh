@@ -267,6 +267,48 @@ assert_tdd_count "los tres caminos etiquetan el override con el origen canonico"
 assert_tdd_count "los tres caminos etiquetan frontmatter con el origen canonico" 3 'MODEL_ORIGIN="frontmatter"'
 assert_tdd_count "los tres caminos etiquetan heredado con el origen canonico" 3 'MODEL_ORIGIN="heredado"'
 
+# --- iac-pipeline.sh: default heredado observable sin override ----------------
+IAC_PIPELINE="$REPO_ROOT/scripts/iac-pipeline.sh"
+IAC_CONTENT=$(cat "$IAC_PIPELINE")
+
+assert_iac_contains() {
+    local description="$1" expected="$2"
+    case "$IAC_CONTENT" in
+        *"$expected"*) pass "$description" ;;
+        *) fail "$description -- no se encontro: $expected" ;;
+    esac
+}
+
+assert_iac_order() {
+    local description="$1" first="$2" second="$3" first_line second_line
+    first_line=$(grep -nF -- "$first" "$IAC_PIPELINE" | cut -d: -f1 | head -n1)
+    second_line=$(grep -nF -- "$second" "$IAC_PIPELINE" | cut -d: -f1 | head -n1)
+    if [ -n "$first_line" ] && [ -n "$second_line" ] && [ "$first_line" -lt "$second_line" ]; then
+        pass "$description"
+    else
+        fail "$description -- orden obtenido: '${first:-ausente}'=$first_line, '${second:-ausente}'=$second_line"
+    fi
+}
+
+echo ""
+echo "[10d] iac: anuncia el modelo heredado de ambos stages sin alterar el argv (CA-1 a CA-5)"
+assert_iac_contains "run_agent consulta el helper compartido" 'AGENT_MODEL_VISIBLE="$(resolve_declared_agent_model "$agent")"'
+assert_iac_contains "run_agent representa metadata ausente como heredado" 'AGENT_MODEL_VISIBLE="<heredado>"'
+assert_iac_contains "run_agent etiqueta frontmatter" 'AGENT_MODEL_ORIGIN="frontmatter"'
+assert_iac_contains "run_agent etiqueta heredado" 'AGENT_MODEL_ORIGIN="heredado"'
+assert_iac_contains "run_agent muestra el modelo antes del CLI" 'log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."'
+assert_iac_contains "run_agent persiste evidencia con el formato canonico" 'MODELS: stage $stage/$agent -> $AGENT_MODEL_VISIBLE ($AGENT_MODEL_ORIGIN)'
+assert_iac_contains "Stage 1 conserva infra-writer" 'run_agent "1" "infra-writer" "$STAGE1_PROMPT"'
+assert_iac_contains "Stage 2 conserva infra-reviewer" 'run_agent "2" "infra-reviewer" "$STAGE2_PROMPT"'
+assert_iac_order "run_agent resuelve el modelo antes de anunciarlo" 'AGENT_MODEL_VISIBLE="$(resolve_declared_agent_model "$agent")"' 'log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."'
+assert_iac_order "run_agent anuncia antes del primer argv de claude" 'log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."' 'claude -p "$prompt"'
+IAC_MODEL_ARG_COUNT=$(grep -cF -- '--model' "$IAC_PIPELINE" || true)
+if [ "$IAC_MODEL_ARG_COUNT" -eq 0 ]; then
+    pass "IaC no agrega --model al argv inicial ni a las sondas de hold"
+else
+    fail "IaC no deberia agregar --model (obtenidos $IAC_MODEL_ARG_COUNT)"
+fi
+
 # --- tmux-pipeline.sh: reenvio/rechazo de --models por modo (CA-3) -----------
 #
 # Mismo arnes que test-tmux-preparse.sh: consumidor falso (git init sin

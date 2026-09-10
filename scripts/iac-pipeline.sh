@@ -404,8 +404,19 @@ run_agent() {
         infra-writer)   AGENT_WR_RES="running" ;;
         infra-reviewer) AGENT_RV_RES="running" ;;
     esac
+    # El runtime conserva la seleccion declarada por el frontmatter: esta
+    # resolucion solo hace observable ese default y nunca alimenta el argv.
+    local AGENT_MODEL_VISIBLE AGENT_MODEL_ORIGIN
+    AGENT_MODEL_VISIBLE="$(resolve_declared_agent_model "$agent")"
+    if [ -n "$AGENT_MODEL_VISIBLE" ]; then
+        AGENT_MODEL_ORIGIN="frontmatter"
+    else
+        AGENT_MODEL_VISIBLE="<heredado>"
+        AGENT_MODEL_ORIGIN="heredado"
+    fi
     update_status "$stage-$agent" "running"
-    log "Invocando $agent..."
+    log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."
+    echo "[$(date +%H:%M:%S)] MODELS: stage $stage/$agent -> $AGENT_MODEL_VISIBLE ($AGENT_MODEL_ORIGIN)" >> "$EVENTS_LOG_ABS"
 
     local AGENT_TIMEOUT_SECONDS=1800
     # Linea base de transcripts del worktree ANTES de invocar al CLI (issue
