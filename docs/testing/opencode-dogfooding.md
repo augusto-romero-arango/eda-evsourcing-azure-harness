@@ -2,9 +2,11 @@
 
 Evidencia reproducible de que una sesion real de OpenCode, autenticada con la
 suscripcion ChatGPT del mantenedor (OAuth, sin API key), opera Mefisto. Este
-documento **no** certifica soporte para consumidores: MEF-ADR-0049 fija
-rollout interno-primero, y el lado publicado del plugin sigue sin soporte
-para OpenCode (ver "Que NO certifica este documento" al final).
+documento **no** certifica soporte para consumidores: la certificacion del
+corte publicado vive separadamente en
+[`opencode-consumer-cutover.md`](opencode-consumer-cutover.md), conforme al
+rollout interno-primero de MEF-ADR-0049 (ver tambien "Que NO certifica este
+documento" al final).
 
 ## Veredicto
 
