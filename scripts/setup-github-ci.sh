@@ -127,7 +127,7 @@ if [ -z "$REPO_SLUG" ] || [ "$REPO_SLUG" = "None" ]; then
     exit 1
 fi
 
-if ! [[ "$REPO_SLUG" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]]; then
+if ! [[ "$REPO_SLUG" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
     echo "ERROR: el repositorio debe tener el formato owner/repo; se recibio '${REPO_SLUG}'." >&2
     exit 1
 fi
@@ -154,15 +154,19 @@ resolve_github_repository_identity() {
     fi
     GITHUB_OWNER_ID="$owner_id"
     GITHUB_REPOSITORY_ID="$repository_id"
+    GITHUB_OWNER="${metadata_slug%%/*}"
+    GITHUB_REPOSITORY="${metadata_slug#*/}"
 }
 
-# GitHub documenta que el claim `sub` identifica el contexto del workflow. La
-# forma vigente por defecto incorpora repository_owner_id y repository_id; no
-# se infiere desde el slug nominal porque Entra compara el subject literalmente.
-# Fuente: https://docs.github.com/en/actions/reference/security/oidc
+# El formato inmutable intercala los IDs en el componente del repositorio:
+# `repo:<owner>@<owner_id>/<repo>@<repository_id>:<contexto>`. No se deben
+# confundir los nombres de los claims auxiliares con la sintaxis del `sub`.
+# Fuentes: https://docs.github.com/en/actions/reference/security/oidc y
+# https://learn.microsoft.com/entra/workload-id/workload-identities-github-immutable-subjects
 resolve_github_repository_identity || exit 1
-FED_SUBJECT_MAIN="repo:${REPO_SLUG}:repository_owner_id:${GITHUB_OWNER_ID}:repository_id:${GITHUB_REPOSITORY_ID}:ref:refs/heads/main"
-FED_SUBJECT_PR="repo:${REPO_SLUG}:repository_owner_id:${GITHUB_OWNER_ID}:repository_id:${GITHUB_REPOSITORY_ID}:pull_request"
+IMMUTABLE_REPOSITORY="${GITHUB_OWNER}@${GITHUB_OWNER_ID}/${GITHUB_REPOSITORY}@${GITHUB_REPOSITORY_ID}"
+FED_SUBJECT_MAIN="repo:${IMMUTABLE_REPOSITORY}:ref:refs/heads/main"
+FED_SUBJECT_PR="repo:${IMMUTABLE_REPOSITORY}:pull_request"
 
 # Fijar la suscripcion explicitamente despues de validar GitHub y antes de la
 # primera operacion Azure. Las operaciones de Entra usan el tenant activo.
@@ -274,34 +278,47 @@ az role assignment create \
 #    Fuentes: learn.microsoft.com/azure/app-service/deploy-github-actions y
 #    learn.microsoft.com/entra/workload-id/workload-identity-federation-create-trust.
 ensure_federated_credential() {
-    local name="$1" subject="$2" description="$3" existing_subject existing_by_subject params
-    existing_subject=$(az ad app federated-credential list --id "$APP_ID" \
-        --query "[?name=='${name}'] | [0].subject" -o tsv 2>/dev/null) || existing_subject=""
-    if [ "$existing_subject" = "$subject" ]; then
+    local name="$1" subject="$2" description="$3" credentials managed_count exact_count params
+    credentials=$(az ad app federated-credential list --id "$APP_ID" -o json) || {
+        echo "ERROR: no se pudieron inspeccionar las federated credentials de la aplicacion '${APP_ID}'." >&2
+        return 1
+    }
+    if ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$credentials"; then
+        echo "ERROR: Azure devolvio una lista invalida de federated credentials para '${APP_ID}'." >&2
+        return 1
+    fi
+    managed_count=$(jq --arg name "$name" '[.[] | select(.name == $name)] | length' <<<"$credentials")
+    if [ "$managed_count" -gt 1 ]; then
+        echo "ERROR: Azure devolvio mas de una federated credential con el nombre administrado '${name}'." >&2
+        return 1
+    fi
+    if [ "$managed_count" -eq 1 ] && jq -e --arg name "$name" --arg subject "$subject" \
+        '.[] | select(.name == $name) | .subject == $subject and
+         .issuer == "https://token.actions.githubusercontent.com" and
+         .audiences == ["api://AzureADTokenExchange"]' >/dev/null <<<"$credentials"; then
         echo "Federated credential administrada '${name}' ya existe; se reutiliza."
         return 0
     fi
-    params=$(cat <<EOF
-{
-  "name": "${name}",
-  "issuer": "https://token.actions.githubusercontent.com",
-  "subject": "${subject}",
-  "description": "${description}",
-  "audiences": ["api://AzureADTokenExchange"]
-}
-EOF
-)
-    if [ -n "$existing_subject" ] && [ "$existing_subject" != "None" ]; then
-        echo "Reconciliando federated credential administrada '${name}' al subject efectivo..."
+    params=$(jq -n --arg name "$name" --arg subject "$subject" --arg description "$description" '{
+        name: $name,
+        issuer: "https://token.actions.githubusercontent.com",
+        subject: $subject,
+        description: $description,
+        audiences: ["api://AzureADTokenExchange"]
+    }')
+    if [ "$managed_count" -eq 1 ]; then
+        echo "Reconciliando federated credential administrada '${name}' al subject, issuer y audience efectivos..."
         az ad app federated-credential update --id "$APP_ID" \
             --federated-credential-id "$name" --parameters "$params" -o none
         return 0
     fi
-    existing_by_subject=$(az ad app federated-credential list --id "$APP_ID" \
-        --query "[?subject=='${subject}'] | [0].name" -o tsv 2>/dev/null) || existing_by_subject=""
-    if [ -n "$existing_by_subject" ] && [ "$existing_by_subject" != "None" ]; then
-        echo "Federated credential existente '${existing_by_subject}' ya usa el subject efectivo; se reutiliza."
-        return 0
+    exact_count=$(jq --arg subject "$subject" '[.[] | select(
+        .issuer == "https://token.actions.githubusercontent.com" and .subject == $subject
+    )] | length' <<<"$credentials")
+    if [ "$exact_count" -ne 0 ]; then
+        echo "ERROR: una federated credential ajena ya usa el subject efectivo de '${name}'." >&2
+        echo "  Renombrala al nombre administrado '${name}' o retirala antes de reintentar; no se modifico automaticamente." >&2
+        return 1
     fi
     echo "Creando federated credential administrada '${name}' para el subject efectivo..."
     az ad app federated-credential create --id "$APP_ID" --parameters "$params" -o none
