@@ -27,6 +27,8 @@
 #                            --scaffold, --batch, --parallel, --attach, y varios
 #                            issues sueltos) lo siguen rechazando con mensaje
 #                            explicito en vez de tragarselo en silencio.
+#   tdd-pipeline.sh         - anuncia antes de cada invocacion el modelo
+#                            seleccionable y su origen, sin alterar el argv.
 #   herdr-pipeline.sh       - la otra mitad de CA-3: dentro de un pane herdr,
 #                            tmux-pipeline.sh delega con `exec herdr-pipeline.sh
 #                            "$@"`, asi que el flag tiene que sobrevivir tambien
@@ -187,6 +189,43 @@ echo ""
 echo "----------------------------------------"
 echo "  _pipeline-common.sh: $PASS pass, $FAIL fail (hasta aqui)"
 echo "----------------------------------------"
+
+# --- tdd-pipeline.sh: evidencia visible y persistente del modelo -------------
+TDD_PIPELINE="$REPO_ROOT/scripts/tdd-pipeline.sh"
+TDD_CONTENT=$(cat "$TDD_PIPELINE")
+
+assert_tdd_contains() {
+    local description="$1" expected="$2"
+    case "$TDD_CONTENT" in
+        *"$expected"*) pass "$description" ;;
+        *) fail "$description -- no se encontro: $expected" ;;
+    esac
+}
+
+echo ""
+echo "[10b] tdd: anuncia override, frontmatter y heredado antes de invocar, sin cambiar MODEL_ARGS (CA-1, CA-2, CA-5)"
+assert_tdd_contains "run_agent conserva el argv condicional --model" 'MODEL_ARGS="--model $AGENT_MODEL_OVERRIDE"'
+assert_tdd_contains "run_agent resuelve el frontmatter cuando no hay override" 'AGENT_MODEL_VISIBLE="$(resolve_declared_agent_model "$agent")"'
+assert_tdd_contains "run_agent representa la ausencia no observable como heredado" 'AGENT_MODEL_VISIBLE="<heredado>"'
+assert_tdd_contains "run_agent etiqueta el override" 'AGENT_MODEL_ORIGIN="override --models"'
+assert_tdd_contains "run_agent etiqueta el frontmatter" 'AGENT_MODEL_ORIGIN="frontmatter"'
+assert_tdd_contains "run_agent etiqueta el heredado" 'AGENT_MODEL_ORIGIN="heredado"'
+assert_tdd_contains "run_agent muestra el modelo antes del CLI" 'log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."'
+assert_tdd_contains "run_agent persiste la evidencia con el formato canonico" 'MODELS: stage $stage/$agent -> $AGENT_MODEL_VISIBLE ($AGENT_MODEL_ORIGIN)'
+for stage_call in 'run_agent "1" "$STAGE1_AGENT"' 'run_agent "2" "$STAGE2_AGENT"' 'run_agent "2b" "smoke-test-writer"' 'run_agent "3" "reviewer"' 'run_agent "merge" "implementer"'; do
+    assert_tdd_contains "stage normal conserva la ruta run_agent: $stage_call" "$stage_call"
+done
+
+echo ""
+echo "[10c] tdd: las remediaciones preservan la precedencia fina y anuncian los tres origenes (CA-3 a CA-5)"
+assert_tdd_contains "4b calcula primero el override fino" 'PATCH_TW_FINE_MODEL_OVERRIDE="$(resolve_stage_model "patch-test-writer" "")"'
+assert_tdd_contains "4b conserva el fallback del agente relanzado" 'PATCH_TW_AGENT_MODEL_OVERRIDE="$(resolve_stage_model "$STAGE1_AGENT" "")"'
+assert_tdd_contains "4b usa el frontmatter sin override" 'PATCH_TW_MODEL_VISIBLE="$(resolve_declared_agent_model "$STAGE1_AGENT")"'
+assert_tdd_contains "4b anuncia la evidencia persistente" 'MODELS: stage 4b/patch-test-writer -> $PATCH_TW_MODEL_VISIBLE ($PATCH_TW_MODEL_ORIGIN)'
+assert_tdd_contains "4c calcula primero el override fino" 'PATCH_IM_FINE_MODEL_OVERRIDE="$(resolve_stage_model "patch-implementer" "")"'
+assert_tdd_contains "4c conserva el fallback del agente relanzado" 'PATCH_IM_AGENT_MODEL_OVERRIDE="$(resolve_stage_model "$STAGE2_AGENT" "")"'
+assert_tdd_contains "4c usa el frontmatter sin override" 'PATCH_IM_MODEL_VISIBLE="$(resolve_declared_agent_model "$STAGE2_AGENT")"'
+assert_tdd_contains "4c anuncia la evidencia persistente" 'MODELS: stage 4c/patch-implementer -> $PATCH_IM_MODEL_VISIBLE ($PATCH_IM_MODEL_ORIGIN)'
 
 # --- tmux-pipeline.sh: reenvio/rechazo de --models por modo (CA-3) -----------
 #
