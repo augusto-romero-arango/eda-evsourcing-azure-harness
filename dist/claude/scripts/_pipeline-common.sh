@@ -581,6 +581,40 @@ upsert_harness_secret() {
     mv "$tmp" "$config"
 }
 
+# resolve_declared_agent_model <agente>
+#
+# Imprime el valor de la primera clave YAML `model:` del frontmatter publicado
+# de agents/<agente>.md. La ruta parte de esta biblioteca distribuida, nunca del
+# directorio actual del consumidor. La metadata es opcional: archivo ausente,
+# frontmatter sin clave o valor vacio producen stdout vacio y retorno 0.
+resolve_declared_agent_model() {
+    local agent="$1" script_dir agent_file line model in_frontmatter="false"
+
+    script_dir="$(_pc_script_dir 2>/dev/null)" || script_dir=""
+    [ -n "$script_dir" ] || return 0
+    agent_file="$script_dir/../agents/$agent.md"
+    [ -f "$agent_file" ] || return 0
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [ "$in_frontmatter" = "false" ]; then
+            [ "$line" = "---" ] && in_frontmatter="true"
+            continue
+        fi
+        [ "$line" = "---" ] && break
+        case "$line" in
+            model:|model:[[:space:]]*)
+                model="${line#*:}"
+                model="${model%%[[:space:]]#*}"
+                model=$(printf '%s' "$model" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+                [ -n "$model" ] && printf '%s\n' "$model"
+                return 0
+                ;;
+        esac
+    done < "$agent_file"
+
+    return 0
+}
+
 # --- Asignacion de modelo por stage (--models, issue #708) -------------------
 #
 # Mecanismo de experimentos A/B de desempeno del harness (calidad/velocidad/costo

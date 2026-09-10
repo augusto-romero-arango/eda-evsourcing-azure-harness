@@ -600,7 +600,8 @@ run_agent() {
         *)        MEFISTO_AGENT_ID="mefisto-writer";   AGENT_MODEL="$MODEL_WRITER" ;;
     esac
     update_status "$stage-$agent" "running"
-    log "Invocando $agent..."
+    local AGENT_MODEL_VISIBLE="${AGENT_MODEL:-<heredado>}"
+    log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."
 
     # Ya validado (entero > 0) y con su default aplicado ANTES de crear el
     # worktree -- ver el bloque MEFISTO_AGENT_TIMEOUT_SECONDS mas arriba.
@@ -970,6 +971,14 @@ CONTEXTO DE EJECUCION (sigue vigente): modo no-interactivo, sin humano al otro l
     LAST_AGENT_METRICS_JSON="$metrics_json"
     LAST_AGENT_HOLD_SECONDS=$HOLD_TOTAL_SECONDS
     LAST_AGENT_RESUMED=$RESUMED_ANY
+    # Cuando el CLI hereda el modelo, el terminal neutral es la unica evidencia
+    # durable del modelo que efectivamente eligio el runtime. Esta observacion
+    # es best-effort: metricas ausentes o sin modelo nunca cambian el desenlace.
+    if [ -z "$AGENT_MODEL" ]; then
+        local effective_model
+        effective_model=$(printf '%s' "$metrics_json" | jq -r 'if . != null and .model != null then .model else empty end' 2>/dev/null || true)
+        [ -n "$effective_model" ] && log "MODELS: stage $stage/$agent -> $effective_model (efectivo)"
+    fi
     if [ "$HOLD_TOTAL_SECONDS" -gt 0 ]; then
         # CA-6: un stage que se recupera tras esperar termina como exito
         # normal -- esta linea es la unica diferencia visible, y es lo que

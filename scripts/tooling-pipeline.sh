@@ -491,7 +491,9 @@ run_agent() {
     summary_file="$(mefisto_state_path "summaries/stage-${stage}-${agent}.md" "$WORKTREE_PATH")"
     case "$agent" in reviewer) agent_id="tooling-reviewer"; profile="deep"; model="$MODEL_REVIEWER" ;; *) agent_id="tooling-writer"; profile="balanced"; model="$MODEL_WRITER" ;; esac
     case "$agent" in writer) AGENT_WR_RES="running" ;; reviewer) AGENT_RV_RES="running" ;; esac
-    update_status "$stage-$agent" running; start_ts=$(date +%s)
+    update_status "$stage-$agent" running
+    log "Invocando $agent (modelo: ${model:-<heredado>})..."
+    start_ts=$(date +%s)
     while :; do
         attempt=$((attempt + 1))
         events_file="${log_base}-attempt-${attempt}.events.jsonl"

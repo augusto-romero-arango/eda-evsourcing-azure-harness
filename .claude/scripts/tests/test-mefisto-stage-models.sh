@@ -16,7 +16,7 @@
 #       con caracteres especiales (sin allowlist propia), las tres formas de
 #       entrada malformada (CA-1), resolve sin match/sin mapa, y el formato
 #       de auditoria (CA-4).
-#   mefisto-tooling-pipeline.sh (bloques 11-14) -- --models se resuelve ANTES
+#   mefisto-tooling-pipeline.sh (bloques 11-15) -- --models se resuelve ANTES
 #       de crear el worktree (CA-1: un malformado no debe dejar un worktree a
 #       medias), el mensaje de abort, el wiring del modelo por stage
 #       (resolve_stage_model por clave exacta sigue ganando, y sin match cae a
@@ -202,6 +202,33 @@ if grep -q -- "--models" <(bash "$PIPE_PATH" 2>&1 || true); then
     pass "el uso sin argumentos menciona --models"
 else
     fail "el mensaje de uso no menciona --models"
+fi
+
+echo ""
+echo "[15] el pipeline anuncia el modelo resuelto o heredado y, si aplica, el efectivo sin alterar el argv"
+if grep -qF 'local AGENT_MODEL_VISIBLE="${AGENT_MODEL:-<heredado>}"' "$PIPE_PATH" \
+    && grep -qF 'log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."' "$PIPE_PATH"; then
+    pass "la invocacion muestra el modelo concreto o <heredado> antes de writer, reviewer y merge"
+else
+    fail "no se encontro el anuncio de modelo concreto/heredado"
+fi
+if grep -qF 'log "MODELS: stage $stage/$agent -> $effective_model (efectivo)"' "$PIPE_PATH" \
+    && grep -qF 'if [ -z "$AGENT_MODEL" ]; then' "$PIPE_PATH"; then
+    pass "un modelo heredado registra el modelo efectivo solo cuando las metricas lo exponen"
+else
+    fail "no se encontro el registro best-effort del modelo efectivo"
+fi
+announce_line=$(grep -nF 'log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."' "$PIPE_PATH" | head -n1 | cut -d: -f1)
+argv_line=$(grep -nF '"$RUN_AGENT_BIN" "${RUN_AGENT_ARGS[@]}"' "$PIPE_PATH" | head -n1 | cut -d: -f1)
+if [ -n "$announce_line" ] && [ -n "$argv_line" ] && [ "$announce_line" -lt "$argv_line" ]; then
+    pass "el anuncio ocurre antes del runner"
+else
+    fail "orden incorrecto: anuncio=$announce_line runner=$argv_line"
+fi
+if grep -qF '[ -n "$AGENT_MODEL" ] && RUN_AGENT_ARGS+=(--model "$AGENT_MODEL")' "$PIPE_PATH"; then
+    pass "el argv condicional del runner permanece intacto"
+else
+    fail "el anuncio altero el argv condicional del runner"
 fi
 
 # --- mefisto-tmux-pipeline.sh / mefisto-herdr-pipeline.sh: reenvio/rechazo --
