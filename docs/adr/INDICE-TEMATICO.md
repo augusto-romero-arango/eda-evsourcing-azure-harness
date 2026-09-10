@@ -125,3 +125,11 @@ no necesita estar residente en cada sesión, solo cuando se busca en qué ADR vi
 | Codigo de exito HTTP integrado al test de precedencia de MEF-ADR-0043 (201/204/200/202 por paso, `Location` en create, extension del regimen de migracion a cambios de codigo de exito) | MEF-ADR-0043 |
 | Codigo de exito HTTP como cuarto elemento critico del contrato en el DoR de MEF-ADR-0011 | MEF-ADR-0011 |
 | Vinculo entre el status code esperado por un smoke test y el contrato HTTP declarado en el issue (nunca `202` por defecto), y distincion commit del event store vs. materializacion de proyeccion `Async` | MEF-ADR-0013 |
+| Distribucion multi-runtime para consumidores | MEF-ADR-0053 |
+| Resiliencia del pipeline ante limite de uso y caida del proveedor | MEF-ADR-0051 |
+| Resiliencia del pipeline ante límite de uso y caída del proveedor | MEF-ADR-0051 |
+| Resolucion comun de modelos y tabla por defecto extensible por runtime | MEF-ADR-0049 |
+| Extension abierta de defaults de modelo en adaptadores de runtime | MEF-ADR-0050 |
+| Distribución multi-runtime y proyección global OpenCode | MEF-ADR-0053 |
+| Distribucion multi-runtime de consumidores (enmienda de mirror temporal de identidad de release) | MEF-ADR-0053 |
+| Distribucion multi-runtime de Mefisto para consumidores | MEF-ADR-0053 |

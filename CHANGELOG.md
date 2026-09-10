@@ -4,6 +4,87 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.37.1] - 2026-09-10
+
+### Added
+
+- Se registra la arquitectura de distribucion multi-runtime para consumidores, con instalacion OpenCode global versionada, contrato canonico `.mefisto` y certificacion vertical previa a migrar el catalogo.
+- Se define el contrato neutral publicado para agentes y comandos, con schema, validador Bash+jq, documentación y fixtures de regresión.
+- Se anade el generador reproducible de adaptadores publicados, con staging atomico, verificacion de deriva y contrato extensible para runtimes.
+- Se anade el empaquetador reproducible del adaptador OpenCode con manifiesto de identidad y checksum SHA-256 externo.
+- Se añade el almacén por usuario de releases OpenCode verificadas, inmutables y reversibles con activación atómica, rollback y diagnóstico sin credenciales.
+- Se empaquetan los Agent Skills publicados para OpenCode bajo `skills/mefisto-<id>/`, con recursos relativos e inventario verificable.
+- Se añade el plugin MCP global de OpenCode que materializa Microsoft Learn sin modificar la configuración del usuario y reporta conflictos visibles.
+- Se define y valida el contrato neutral de los seis hooks interactivos publicados, con matriz de adaptación y trazabilidad del inventario legacy.
+- Se añade el plugin generado de observabilidad interactiva para OpenCode, con sesiones, observación de modelo y resúmenes allowlisted de herramientas.
+- Se anaden los agentes neutrales publicados `tooling-writer` y `tooling-reviewer` para las fases de escritura y revision del pipeline de tooling.
+- Se agrega el renderizador publicado de agentes y comandos para OpenCode con permisos deny-por-defecto y comandos `/mefisto:<id>`.
+- Se añade el renderizador Claude Code de artefactos publicados neutrales, con mappings cerrados de capacidades, MCP, Skills, perfiles y directivas.
+- Se añade la migración opt-in y conservadora de directivas canónicas al diagnóstico de `/onboard`.
+- Se añade la proyección no destructiva de la release OpenCode activa a su configuración global, con desactivación, detección de conflictos y degradaciones visibles.
+- Se anade el diagnostico JSON de identidad entre las instalaciones Claude y OpenCode, con degradaciones visibles y acciones de alineacion.
+- Se agrega la poda opt-in y confirmada de releases OpenCode inactivas, preservando la activa y su rollback inmediato.
+- Se incorpora a ambas distribuciones publicadas la clausura ejecutable mínima del pipeline tooling y su núcleo runtime.
+- Se agrega `--redact-observability` al runner neutral para persistir eventos observables sin mensajes, inputs de herramientas ni detalles de error sensibles.
+- Se genera el manifiesto de identidad de la distribución Claude desde la identidad neutral de release.
+- Se añade el registro neutral de servidores MCP publicados y su validación de equivalencia con la proyección Claude.
+- Se documenta el protocolo reproducible de certificacion multi-runtime del consumidor para el corte vertical publicado `/mefisto:tooling`.
+
+### Changed
+
+- Se registran `src/published/`, `src/runtime/` y `dist/` en los gates de scope y sus superficies operativas antes de poblar el layout publicado multi-runtime.
+- Se extrae el contrato JSONL neutral de eventos de runtime a `src/runtime/contract/`, compartido por callers publicados e internos.
+- Se extrae la frontera de ejecución headless completa a `src/runtime/`: runner, watchdog, discovery abierto y adaptadores/traductores, con shims internos temporales que conservan el default de telemetría `.mefisto`.
+- Reconectados los pipelines internos al núcleo común de runtime y modelos, eliminando los shims temporales sin consumidores y preservando las políticas internas y los artefactos de estado.
+- Se resuelve `harness.config.json` desde `.mefisto/` con fallback legacy de solo lectura y escrituras exclusivamente canonicas.
+- Se incorpora al helper publicado la resolucion del estado operativo canonico bajo `.mefisto/pipeline/`, con fallback de lectura legacy a `.claude/pipeline` sin migracion automatica, y el greenfield/onboarding protegen especificamente ese estado no versionado. La adopcion de logs, streams raw, eventos, metricas, history, status, sesiones, raiz activa, summaries y panes queda diferida a los issues posteriores #1059, #1062 y #1063; `pipeline-state/` no cambia.
+- Se canonicalizan en `AGENTS.md` las directivas neutrales del consumidor y `CLAUDE.md` queda como puente mínimo para Claude Code.
+- Se resuelve y valida la raíz activa de la distribución publicada antes de expandir scripts o assets en los adaptadores Claude Code y OpenCode.
+- Los hooks publicados de Claude Code se generan determinísticamente desde el contrato neutral, con estado canónico en `.mefisto/pipeline/` y el mirror transitorio autorizado de `.plugin-root`.
+- Se migra el comando publicado de tooling a su fuente neutral y se generan sus adaptadores Claude y OpenCode con mirror Claude verificado.
+- El pipeline publicado de tooling ejecuta writer, reviewer y resolucion de conflictos mediante el runner neutral de runtime.
+- El pipeline publicado de tooling ahora escribe su observabilidad canónica y redactada bajo `.mefisto/pipeline/`, con métricas neutrales, estado de identidad degradable y sin persistir prompts, raw ni stderr.
+- Se montan en Herdr las filas Claude y OpenCode de consumidores, con identidad diagnosticable, geometria por runtime y degradacion visible del planner OpenCode hasta completar el corte tooling.
+- Se extrae al nucleo reutilizable la resolucion de modelos y su contrato abierto de runtimes.
+- Los pipelines de tooling publicados e internos ahora anuncian el modelo resuelto antes de invocar cada agente y el interno registra el modelo efectivo cuando hereda la selección del runtime.
+- `/onboard` diagnostica las directivas canónicas en `AGENTS.md`, el puente exacto `CLAUDE.md` -> `@AGENTS.md` y las duplicaciones legacy sin modificar archivos del consumidor.
+- La publicacion de Mefisto empaqueta, revalida y adjunta el tarball OpenCode y su checksum al mismo GitHub Release SemVer.
+- El planner entrega sus field notes y deltas de glosario mediante una rama documental aislada y un PR, preservando el checkout inicial del consumidor.
+- El cierre de `mefisto-planner` entrega cada field note desde un worktree documental aislado mediante un PR reutilizable y conserva intacto el checkout que inicio la sesion.
+- Se modela la capacidad transitoria `legacy-release-marker` para que solo `record-active-release` del adaptador Claude refleje la identidad de release cargada mientras persistan lectores legacy.
+- Se extiende el generador de adaptadores publicados con assets suplementarios deterministas e inventarios verificables por runtime.
+- El visor publicado consume ahora el protocolo neutral `run-events.v1` desde el estado canonico, con fallback rotulado para streams Claude historicos.
+- El reporte publicado de métricas combina los historiales canónico y legacy sin duplicar corridas durante la transición de estado.
+- Se adapta `/work-status` para combinar el estado canónico y legacy durante la migración vertical, con deduplicación y drill-down neutral.
+- Se define el commit fuente comun que identifica las distribuciones Claude y OpenCode de un mismo release.
+- Se amplia el contrato neutral de hooks a 1.1 con hechos append-only de inicio y observación de modelo para sesiones correlacionables multi-runtime.
+- La preparación y publicación de releases preservan y verifican la identidad del commit fuente en los manifiestos publicados.
+- Se alinea el manifiesto de release OpenCode con la versión y el commit fuente de la identidad neutral.
+- Se registra `mefisto-manifest.json` raiz en los gates de scope de Mefisto y del consumidor antes de que el issue #1132 lo genere.
+- El adaptador Claude observa el modelo efectivo al cierre de cada turno desde el transcript indicado y lo registra append-only sin duplicar observaciones consecutivas.
+- Se traduce la referencia neutral de Agent Skills a la carga nativa y la allowlist acotada de OpenCode.
+- Se traducen las referencias MCP neutrales a allowlists `tools` cerradas por agente en el adaptador OpenCode y se valida la delegación de comandos.
+- Se normaliza la fila Claude de los workspaces Herdr de consumidores con identidad explicita por runtime y una migracion in-place no destructiva de labels legacy.
+- Se amplia el protocolo previo a E2E para certificar instalacion, identidad y
+  discovery multi-runtime sobre un consumidor completo y ajeno al checkout, y
+  se registra el bloqueo por los prerrequisitos operacionales aun ausentes.
+- Se documenta el intento E2E de consumidor para `/mefisto:tooling` bajo Claude y OpenCode, su bloqueo verificable por prerrequisitos ausentes y el procedimiento de repeticion con filas Herdr separadas, evidencia correlacionable y limpieza verificable.
+- Se incorpora un resolutor publicado del modelo declarado en el frontmatter de los agentes para que los pipelines lo consulten sin depender del directorio del consumidor.
+- El pipeline TDD anuncia y registra el modelo seleccionado y su origen en todos los stages y remediaciones.
+- El pipeline IaC ahora muestra y registra el modelo declarado o heredado de sus stages de escritura y revision sin alterar la seleccion del runtime.
+- El pipeline de scaffold ahora muestra y registra el modelo declarado de `domain-scaffolder`, con fallback a `<heredado>` cuando la metadata no esta disponible.
+
+### Fixed
+
+- Se separan por runtime los panes de reporte Herdr publicados y se propaga el runtime resuelto a cada runner.
+- Se sincronizan los permisos de edicion y ejecucion de scripts de OpenCode con las rutas neutrales internas, preservando `dist/` como salida generada no editable.
+- Se aisló cada eslabón del batch interno en un snapshot verificable de `origin/main`, evitando que cambios concurrentes del checkout principal alteren writer o reviewer.
+- Se reconcilian los labels `bloqueado` de issues internos después del merge de un PR, evaluando todas sus dependencias forward canónicas.
+- Se reconcilian los bloqueos de issues dependientes después de cada merge interno exitoso, sin confundir un fallo post-merge con el resultado del PR.
+- Se reconcilian los labels `bloqueado` tras cada merge exitoso del batch interno, sin detener la cadena si falla esa metadata post-merge.
+- Se sincronizan los artefactos OpenCode publicados y los snapshots de agentes de tooling con el generador determinista.
+- Se actualiza la regresion de version para verificar la identidad neutral completa del pipeline tooling sin perder la compatibilidad del historial legado.
+
 ## [0.37.0] - 2026-09-08
 
 ### Added
@@ -2275,7 +2356,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.1...HEAD
+[0.37.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.0...v0.37.1
 [0.37.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.34.0...v0.35.0
