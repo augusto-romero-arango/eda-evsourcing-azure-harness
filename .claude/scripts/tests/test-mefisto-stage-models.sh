@@ -16,7 +16,7 @@
 #       con caracteres especiales (sin allowlist propia), las tres formas de
 #       entrada malformada (CA-1), resolve sin match/sin mapa, y el formato
 #       de auditoria (CA-4).
-#   mefisto-tooling-pipeline.sh (bloques 11-14) -- --models se resuelve ANTES
+#   mefisto-tooling-pipeline.sh (bloques 11-15) -- --models se resuelve ANTES
 #       de crear el worktree (CA-1: un malformado no debe dejar un worktree a
 #       medias), el mensaje de abort, el wiring del modelo por stage
 #       (resolve_stage_model por clave exacta sigue ganando, y sin match cae a
@@ -24,11 +24,11 @@
 #       para reviewer -- ya sin los defaults fijos sonnet/opus; tambien ANTES
 #       del worktree, y run_agent solo selecciona lo ya resuelto, issue #910) y
 #       la ayuda del script.
-#   mefisto-tmux-pipeline.sh (bloques 15-18) -- --tooling reenvia --models
+#   mefisto-tmux-pipeline.sh (bloques 16-19) -- --tooling reenvia --models
 #       intacto al send-keys (con comillas simples, CA-3), se combina con
 #       --from-stage, --models sin valor aborta, y --batch lo rechaza
 #       explicito (ambiguo sobre varios issues).
-#   mefisto-herdr-pipeline.sh (bloques 19-23) -- la otra mitad de CA-3: dentro
+#   mefisto-herdr-pipeline.sh (bloques 20-24) -- la otra mitad de CA-3: dentro
 #       de un pane herdr el valor viaja crudo (sin las comillas que solo
 #       sirven al send-keys de tmux), sobrevive un id de modelo con caracteres
 #       de glob, y el mismo rechazo explicito en --batch.
@@ -204,6 +204,45 @@ else
     fail "el mensaje de uso no menciona --models"
 fi
 
+echo ""
+echo "[15] el pipeline anuncia el modelo resuelto o heredado y, si aplica, el efectivo sin alterar el argv"
+eval "$(awk '/^log_agent_model_invocation\(\) \{/{p=1} p{print} p && /^}/{p=0}' "$PIPE_PATH")"
+eval "$(awk '/^log_effective_stage_model\(\) \{/{p=1} p{print} p && /^}/{p=0}' "$PIPE_PATH")"
+MODEL_LOG="$(mktemp)"
+log() { printf '%s\n' "$*" >> "$MODEL_LOG"; }
+: > "$MODEL_LOG"
+log_agent_model_invocation writer 'vendor/model-v2'
+log_agent_model_invocation reviewer ''
+if grep -qxF 'Invocando writer (modelo: vendor/model-v2)...' "$MODEL_LOG" \
+    && grep -qxF 'Invocando reviewer (modelo: <heredado>)...' "$MODEL_LOG"; then
+    pass "la invocacion muestra modelos concretos y <heredado>"
+else
+    fail "el anuncio no preserva el modelo concreto o el fallback <heredado>"
+fi
+: > "$MODEL_LOG"
+log_effective_stage_model 1 writer '' '{"model":"runtime/model-effective"}'
+log_effective_stage_model 2 reviewer 'modelo/declarado' '{"model":"no-debe-aparecer"}'
+log_effective_stage_model merge writer '' 'null'
+if [ "$(wc -l < "$MODEL_LOG" | tr -d ' ')" = 1 ] \
+    && grep -qxF 'MODELS: stage 1/writer -> runtime/model-effective (efectivo)' "$MODEL_LOG"; then
+    pass "solo un modelo heredado con metrica no nula anuncia el efectivo"
+else
+    fail "el anuncio efectivo no respeta herencia/modelo nulo"
+fi
+rm -f "$MODEL_LOG"
+announce_line=$(grep -nF 'log_agent_model_invocation "$agent" "$AGENT_MODEL"' "$PIPE_PATH" | head -n1 | cut -d: -f1)
+argv_line=$(grep -nF '"$RUN_AGENT_BIN" "${RUN_AGENT_ARGS[@]}"' "$PIPE_PATH" | head -n1 | cut -d: -f1)
+if [ -n "$announce_line" ] && [ -n "$argv_line" ] && [ "$announce_line" -lt "$argv_line" ]; then
+    pass "el anuncio ocurre antes del runner"
+else
+    fail "orden incorrecto: anuncio=$announce_line runner=$argv_line"
+fi
+if grep -qF '[ -n "$AGENT_MODEL" ] && RUN_AGENT_ARGS+=(--model "$AGENT_MODEL")' "$PIPE_PATH"; then
+    pass "el argv condicional del runner permanece intacto"
+else
+    fail "el anuncio altero el argv condicional del runner"
+fi
+
 # --- mefisto-tmux-pipeline.sh / mefisto-herdr-pipeline.sh: reenvio/rechazo --
 #
 # Mismo arnes que test-harness-version.sh: fixture con .claude-plugin/plugin.json
@@ -288,7 +327,7 @@ run_wrapper() {
 }
 
 echo ""
-echo "[15] mefisto-tmux-pipeline.sh: --tooling reenvia --models intacto al send-keys (con comillas simples)"
+echo "[16] mefisto-tmux-pipeline.sh: --tooling reenvia --models intacto al send-keys (con comillas simples)"
 run_wrapper --tooling 709 --models "writer=sonnet,reviewer=opus"
 if [ "$LAST_RC" -eq 0 ]; then pass "--tooling + --models corre sin abortar (rc=$LAST_RC)"; else fail "--tooling + --models no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
 if grep -qF "mefisto-tooling-pipeline.sh 709 --models 'writer=sonnet,reviewer=opus'" "$TMUX_STUB_LOG"; then
@@ -298,7 +337,7 @@ else
 fi
 
 echo ""
-echo "[16] mefisto-tmux-pipeline.sh: --tooling combina --from-stage y --models en orden"
+echo "[17] mefisto-tmux-pipeline.sh: --tooling combina --from-stage y --models en orden"
 run_wrapper --tooling 709 --from-stage 2 --models "reviewer=opus"
 if [ "$LAST_RC" -eq 0 ]; then pass "combinado corre sin abortar"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
 if grep -qF "mefisto-tooling-pipeline.sh 709 --from-stage 2 --models 'reviewer=opus'" "$TMUX_STUB_LOG"; then
@@ -308,13 +347,13 @@ else
 fi
 
 echo ""
-echo "[17] mefisto-tmux-pipeline.sh: --models sin valor aborta con mensaje claro"
+echo "[18] mefisto-tmux-pipeline.sh: --models sin valor aborta con mensaje claro"
 run_wrapper --tooling 709 --models
 if [ "$LAST_RC" -eq 1 ]; then pass "--models sin valor aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
 if printf '%s' "$LAST_STDERR" | grep -q "Falta el valor de --models"; then pass "mensaje: falta el valor"; else fail "mensaje inesperado: $LAST_STDERR"; fi
 
 echo ""
-echo "[18] mefisto-tmux-pipeline.sh: --batch + --models aborta (ambiguo sobre varios issues, nunca en silencio)"
+echo "[19] mefisto-tmux-pipeline.sh: --batch + --models aborta (ambiguo sobre varios issues, nunca en silencio)"
 run_wrapper --batch 709 710 --models "writer=sonnet"
 if [ "$LAST_RC" -eq 1 ]; then pass "--batch + --models aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
 if printf '%s' "$LAST_STDERR" | grep -q "no es valido con --batch"; then pass "mensaje: no valido con --batch"; else fail "mensaje inesperado: $LAST_STDERR"; fi
@@ -397,7 +436,7 @@ run_herdr() {
 }
 
 echo ""
-echo "[19] mefisto-herdr-pipeline.sh: --tooling reenvia --models al pane run intacto (sin comillas literales)"
+echo "[20] mefisto-herdr-pipeline.sh: --tooling reenvia --models al pane run intacto (sin comillas literales)"
 run_herdr --tooling 709 --models "writer=sonnet,reviewer=opus"
 HERDR_CALLS=$(cat "$HERDR_STUB_LOG")
 if [ "$LAST_RC" -eq 0 ]; then pass "--tooling + --models corre sin abortar (rc=$LAST_RC)"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
@@ -417,7 +456,7 @@ else
 fi
 
 echo ""
-echo "[20] mefisto-herdr-pipeline.sh: --tooling combina --from-stage y --models"
+echo "[21] mefisto-herdr-pipeline.sh: --tooling combina --from-stage y --models"
 run_herdr --tooling 709 --from-stage 2 --models "reviewer=opus"
 HERDR_CALLS=$(cat "$HERDR_STUB_LOG")
 if [ "$LAST_RC" -eq 0 ]; then pass "combinado corre sin abortar"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
@@ -428,7 +467,7 @@ else
 fi
 
 echo ""
-echo "[21] mefisto-herdr-pipeline.sh: un id de modelo con caracteres de glob llega intacto"
+echo "[22] mefisto-herdr-pipeline.sh: un id de modelo con caracteres de glob llega intacto"
 run_herdr --tooling 709 --models 'writer=claude-opus-5[1m]'
 HERDR_CALLS=$(cat "$HERDR_STUB_LOG")
 HERDR_CALLS_UNQ=$(printf '%s' "$HERDR_CALLS" | tr -d '\\')
@@ -439,13 +478,13 @@ else
 fi
 
 echo ""
-echo "[22] mefisto-herdr-pipeline.sh: --models sin valor aborta con mensaje claro"
+echo "[23] mefisto-herdr-pipeline.sh: --models sin valor aborta con mensaje claro"
 run_herdr --tooling 709 --models
 if [ "$LAST_RC" -eq 1 ]; then pass "--models sin valor aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
 if printf '%s' "$LAST_STDERR" | grep -q "Falta el valor de --models"; then pass "mensaje: falta el valor"; else fail "mensaje inesperado: $LAST_STDERR"; fi
 
 echo ""
-echo "[23] mefisto-herdr-pipeline.sh: --batch + --models aborta (ambiguo sobre varios issues, nunca en silencio)"
+echo "[24] mefisto-herdr-pipeline.sh: --batch + --models aborta (ambiguo sobre varios issues, nunca en silencio)"
 run_herdr --batch 709 710 --models "writer=sonnet"
 if [ "$LAST_RC" -eq 1 ]; then pass "--batch + --models aborta"; else fail "deberia abortar (rc=$LAST_RC)"; fi
 if printf '%s' "$(cat "$HERDR_STUB_LOG")" | grep -q "pane run"; then fail "no deberia despachar ningun pane"; else pass "ningun pane despachado"; fi

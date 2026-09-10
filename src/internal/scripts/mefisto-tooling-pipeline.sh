@@ -558,6 +558,23 @@ runtime_supports_resume() {
     )
 }
 
+# La seleccion ya ocurrio antes de crear el worktree. Estos helpers solo hacen
+# visible esa evidencia y nunca participan en el argv ni en el desenlace.
+log_agent_model_invocation() {
+    local agent="$1" model="$2"
+    log "Invocando $agent (modelo: ${model:-<heredado>})..."
+}
+
+log_effective_stage_model() {
+    local stage="$1" agent="$2" declared_model="$3" metrics_json="$4"
+    [ -z "$declared_model" ] || return 0
+
+    local effective_model
+    effective_model=$(printf '%s' "$metrics_json" | jq -r 'if . != null and .model != null then .model else empty end' 2>/dev/null || true)
+    [ -n "$effective_model" ] && log "MODELS: stage $stage/$agent -> $effective_model (efectivo)"
+    return 0
+}
+
 # --- Funcion auxiliar para invocar agentes ---
 run_agent() {
     local stage="$1"
@@ -600,7 +617,7 @@ run_agent() {
         *)        MEFISTO_AGENT_ID="mefisto-writer";   AGENT_MODEL="$MODEL_WRITER" ;;
     esac
     update_status "$stage-$agent" "running"
-    log "Invocando $agent..."
+    log_agent_model_invocation "$agent" "$AGENT_MODEL"
 
     # Ya validado (entero > 0) y con su default aplicado ANTES de crear el
     # worktree -- ver el bloque MEFISTO_AGENT_TIMEOUT_SECONDS mas arriba.
@@ -901,6 +918,10 @@ CONTEXTO DE EJECUCION (sigue vigente): modo no-interactivo, sin humano al otro l
             break
         fi
     done
+
+    # El terminal neutral puede revelar el modelo efectivo incluso cuando el
+    # stage fallo. La observacion es best-effort y no cambia ese desenlace.
+    log_effective_stage_model "$stage" "$agent" "$AGENT_MODEL" "$metrics_json"
 
     # El wall-clock del stage incluye todos los intentos y sus esperas: es lo
     # que de verdad costo, y es lo que se reporta al historial.
