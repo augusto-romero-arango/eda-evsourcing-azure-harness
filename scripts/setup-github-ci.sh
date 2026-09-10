@@ -19,9 +19,8 @@
 # resuelve automaticamente con 'gh repo view' o el remote 'origin'; pasalo como
 # 2do argumento para forzarlo.
 #
-# Resuelve el nombre REAL de la Storage Account del tfstate (que bootstrap-backend.sh
-# pudo crear con un sufijo de unicidad global, issue #92) antes de asignar el rol,
-# para no apuntar a una cuenta inexistente. Correr DESPUES de bootstrap-backend.sh.
+# Resuelve la pareja REAL de Resource Group y Storage Account del tfstate desde
+# backend.tf antes de asignar el rol. Correr DESPUES de bootstrap-backend.sh.
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/_pipeline-common.sh"
@@ -63,7 +62,10 @@ resolve_tfstate_backend_pair() {
     for dir in infra/environments/*; do
         [ -d "$dir" ] || continue
         backend_count=$(grep -hE 'backend[[:space:]]*"azurerm"' "$dir"/*.tf 2>/dev/null | wc -l | tr -d '[:space:]') || backend_count=0
-        [ "$backend_count" -eq 0 ] && continue
+        if [ "$backend_count" -eq 0 ]; then
+            problems+=("${dir}: no contiene un bloque backend azurerm")
+            continue
+        fi
 
         if [ "$backend_count" -ne 1 ]; then
             problems+=("${dir}: contiene ${backend_count} bloques backend azurerm")

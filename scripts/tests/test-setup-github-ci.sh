@@ -117,6 +117,25 @@ terraform {
 }
 EOF
             ;;
+        absent)
+            mkdir -p "$FAKE_CONSUMER/infra/environments/dev"
+            printf '%s\n' 'terraform { required_version = ">= 1.9" }' \
+                > "$FAKE_CONSUMER/infra/environments/dev/versions.tf"
+            ;;
+        incomplete)
+            mkdir -p "$FAKE_CONSUMER/infra/environments/dev"
+            cat > "$FAKE_CONSUMER/infra/environments/dev/backend.tf" <<'EOF'
+terraform {
+  backend "azurerm" {
+    resource_group_name = "rg-tfstate-incompleto"
+  }
+}
+EOF
+            ;;
+        ambiguous)
+            write_backend dev 'rg-tfstate-dev' 'sttfstatecertdev001'
+            write_backend prod 'rg-tfstate-prod' 'sttfstatecertprod001'
+            ;;
         partial)
             write_backend dev 'rg-tfstate-mefisto-certification-dev-eus2-001' 'sttfstatemefisdeveus2001'
             ;;
@@ -147,7 +166,26 @@ if [ "$LAST_RC" -ne 0 ]; then pass "backend invalido aborta"; else fail "backend
 assert_contains "nombra candidato problematico" 'infra/environments/dev: resource_group_name y storage_account_name deben ser literales y completos' "$TMP_DIR/invalid.out"
 assert_not_contains "backend invalido no llama Azure" 'az account set' "$STUB_LOG"
 
-echo "[4] Reejecucion parcial: reutiliza identidad y completa roles/OIDC (CA-5)"
+echo "[4] Backend ausente: nombra el ambiente y aborta antes de Azure (CA-4)"
+run_case absent
+if [ "$LAST_RC" -ne 0 ]; then pass "backend ausente aborta"; else fail "backend ausente no debe continuar"; fi
+assert_contains "nombra ambiente sin backend" 'infra/environments/dev: no contiene un bloque backend azurerm' "$TMP_DIR/absent.out"
+assert_not_contains "backend ausente no llama Azure" 'az account set' "$STUB_LOG"
+
+echo "[5] Backend incompleto: nombra el ambiente y aborta antes de Azure (CA-4)"
+run_case incomplete
+if [ "$LAST_RC" -ne 0 ]; then pass "backend incompleto aborta"; else fail "backend incompleto no debe continuar"; fi
+assert_contains "nombra ambiente incompleto" 'infra/environments/dev: resource_group_name y storage_account_name deben ser literales y completos' "$TMP_DIR/incomplete.out"
+assert_not_contains "backend incompleto no llama Azure" 'az account set' "$STUB_LOG"
+
+echo "[6] Dos ambientes completos: rechaza la ambiguedad antes de Azure (CA-4)"
+run_case ambiguous
+if [ "$LAST_RC" -ne 0 ]; then pass "backend ambiguo aborta"; else fail "backend ambiguo no debe continuar"; fi
+assert_contains "reporta candidato dev" 'infra/environments/dev|rg-tfstate-dev|sttfstatecertdev001' "$TMP_DIR/ambiguous.out"
+assert_contains "reporta candidato prod" 'infra/environments/prod|rg-tfstate-prod|sttfstatecertprod001' "$TMP_DIR/ambiguous.out"
+assert_not_contains "backend ambiguo no llama Azure" 'az account set' "$STUB_LOG"
+
+echo "[7] Reejecucion parcial: reutiliza identidad y completa roles/OIDC (CA-5)"
 run_case partial
 if [ "$LAST_RC" -eq 0 ]; then pass "reejecucion parcial completa"; else fail "reejecucion parcial deberia completar (rc $LAST_RC)"; fi
 assert_not_contains "no recrea aplicacion existente" 'az ad app create' "$STUB_LOG"
