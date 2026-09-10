@@ -894,12 +894,21 @@ Los tres se emiten como `azurerm_role_assignment` con `scope` = la Storage Accou
 
 ## Paso 1.9 - Modulos opt-in del worker de proyecciones (MEF-ADR-0034)
 
-**Condicionado al token `projections.enabled` (CA-3).** Estos 3 modulos NO son parte de los 8 modulos base incondicionales de la seccion anterior -- MEF-ADR-0034 los suma como enmienda opt-in a MEF-ADR-0021 (issue #361), materializada por este paso (issue #368). Antes de tocar el filesystem, revalida el token que ya resolviste en el Paso 0:
+**Condicionado al token `projections.enabled` (CA-3).** Estos 3 modulos NO son parte de los 8 modulos base incondicionales de la seccion anterior -- MEF-ADR-0034 los suma como enmienda opt-in a MEF-ADR-0021 (issue #361), materializada por este paso (issue #368). Antes de tocar el filesystem, revalida el token que ya resolviste en el Paso 0. Como cada bloque `bash` corre en un shell nuevo, vuelve a resolver tanto `REPO_ROOT` como `CONFIG` con la misma precedencia canonico/fallback:
 
 ```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
+CONFIG="$REPO_ROOT/.mefisto/harness.config.json"
+if [ ! -f "$CONFIG" ]; then
+  CONFIG="$REPO_ROOT/.claude/harness.config.json"
+fi
+if [ ! -f "$CONFIG" ]; then
+  echo "ERROR: no se encontro .mefisto/harness.config.json ni el fallback legacy .claude/harness.config.json. No se puede resolver projections.enabled."
+  exit 1
+fi
 PROJECTIONS_ENABLED=$(jq -r '.projections.enabled // false' "$CONFIG" 2>/dev/null)
 if [ "$PROJECTIONS_ENABLED" != "true" ]; then
-  echo "projections.enabled no esta en 'true' (o falta harness.config.json): se omiten los 3 modulos de Container App (CA-3, retrocompatible)."
+  echo "projections.enabled no esta en 'true': se omiten los 3 modulos de Container App (CA-3, retrocompatible)."
 fi
 ```
 
@@ -1580,6 +1589,7 @@ A diferencia de los 8 modulos base (que solo se generan la **primera vez**, cuan
 > Sin esta comprobacion, el `terraform plan` del consumidor falla con `Reference to undeclared local value` -- un error que aparece recien en CI, despues del PR, y no en la corrida de este agente.
 
 ```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
 CONFIG="$REPO_ROOT/.mefisto/harness.config.json"
 if [ ! -f "$CONFIG" ]; then
   CONFIG="$REPO_ROOT/.claude/harness.config.json"
