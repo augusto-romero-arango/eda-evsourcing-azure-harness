@@ -48,12 +48,44 @@ FAIL=0
 pass() { echo "  PASS: $1"; PASS=$((PASS+1)); }
 fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 
+FAKE_CONSUMER="$(mktemp -d)"
+TMP_DIR="$(mktemp -d)"
+MODEL_PLUGIN="$TMP_DIR/plugin"
+mkdir -p "$MODEL_PLUGIN/scripts" "$MODEL_PLUGIN/agents"
+cp "$REPO_ROOT/scripts/_pipeline-common.sh" "$MODEL_PLUGIN/scripts/_pipeline-common.sh"
+printf '%s\n' '---' 'name: fixture-con-modelo' 'model: modelo-fixture' '---' > "$MODEL_PLUGIN/agents/con-modelo.md"
+printf '%s\n' '---' 'name: fixture-sin-modelo' '---' > "$MODEL_PLUGIN/agents/sin-modelo.md"
+printf '%s\n' '---' 'name: fixture-modelo-vacio' 'model:' 'model: no-debe-leerse' '---' > "$MODEL_PLUGIN/agents/modelo-vacio.md"
+trap 'rm -rf "$FAKE_CONSUMER" "$TMP_DIR"' EXIT
+
 # Las funciones viven en _pipeline-common.sh; sourcearlo solo las define (es una
 # libreria, no ejecuta nada), asi que es seguro incluso dentro del repo de Mefisto.
 set +u
-source "$REPO_ROOT/scripts/_pipeline-common.sh" 2>/dev/null
+source "$MODEL_PLUGIN/scripts/_pipeline-common.sh" 2>/dev/null
 set -u
 
+echo "[0] resolve_declared_agent_model: metadata publicada tolerante y ruta independiente del cwd (CA-1 a CA-3)"
+R=$(resolve_declared_agent_model "con-modelo")
+if [ "$R" = "modelo-fixture" ]; then pass "devuelve el modelo declarado del agente"; else fail "deberia devolver 'modelo-fixture' (obtenido '$R')"; fi
+
+R=$(resolve_declared_agent_model "sin-modelo")
+if [ -z "$R" ]; then pass "sin metadata model devuelve cadena vacia"; else fail "sin metadata deberia devolver vacio (obtenido '$R')"; fi
+
+R=$(resolve_declared_agent_model "modelo-vacio")
+if [ -z "$R" ]; then pass "la primera clave model vacia devuelve cadena vacia"; else fail "model vacio deberia devolver vacio (obtenido '$R')"; fi
+
+MODEL_STDERR="$TMP_DIR/model-stderr"
+if R=$(resolve_declared_agent_model "agente-inexistente" 2> "$MODEL_STDERR"); then
+    pass "archivo inexistente retorna codigo 0"
+else
+    fail "archivo inexistente no deberia retornar error"
+fi
+if [ -z "$R" ] && [ ! -s "$MODEL_STDERR" ]; then pass "archivo inexistente no produce salida ni diagnosticos"; else fail "archivo inexistente produjo stdout '$R' o stderr"; fi
+
+R=$(cd "$FAKE_CONSUMER" && resolve_declared_agent_model "con-modelo")
+if [ "$R" = "modelo-fixture" ]; then pass "resuelve agents desde el plugin fuera del cwd"; else fail "desde cwd ajeno deberia devolver 'modelo-fixture' (obtenido '$R')"; fi
+
+echo ""
 echo "[1] parse_stage_models: spec vacio deja el mapa vacio y no aborta (CA-2: sin --models, nada cambia)"
 if parse_stage_models ""; then pass "spec vacio retorna 0"; else fail "spec vacio no deberia abortar"; fi
 if [ -z "$PIPELINE_STAGE_MODELS" ]; then pass "mapa vacio"; else fail "mapa deberia quedar vacio (obtenido '$PIPELINE_STAGE_MODELS')"; fi
@@ -165,11 +197,8 @@ echo "----------------------------------------"
 export MEFISTO_UI=tmux
 TMUX_SCRIPT="$REPO_ROOT/scripts/tmux-pipeline.sh"
 
-FAKE_CONSUMER="$(mktemp -d)"
-TMP_DIR="$(mktemp -d)"
 FAKE_BIN="$TMP_DIR/bin"
 mkdir -p "$FAKE_BIN"
-trap 'rm -rf "$FAKE_CONSUMER" "$TMP_DIR"' EXIT
 
 (cd "$FAKE_CONSUMER" && git init -q)
 
