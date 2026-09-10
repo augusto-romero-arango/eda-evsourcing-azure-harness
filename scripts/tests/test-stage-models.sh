@@ -54,6 +54,24 @@ set +u
 source "$REPO_ROOT/scripts/_pipeline-common.sh" 2>/dev/null
 set -u
 
+echo "[0] resolve_declared_agent_model: metadata publicada tolerante y ruta independiente del cwd (CA-1 a CA-3)"
+R=$(resolve_declared_agent_model "implementer")
+if [ "$R" = "sonnet" ]; then pass "devuelve el modelo declarado del agente"; else fail "deberia devolver 'sonnet' (obtenido '$R')"; fi
+
+NO_MODEL_AGENT=".test-declared-agent-model-no-model"
+NO_MODEL_FILE="$REPO_ROOT/agents/$NO_MODEL_AGENT.md"
+printf '%s\n' '---' 'name: fixture-sin-modelo' 'description: Fixture temporal sin metadata model.' '---' > "$NO_MODEL_FILE"
+R=$(resolve_declared_agent_model "$NO_MODEL_AGENT")
+rm -f "$NO_MODEL_FILE"
+if [ -z "$R" ]; then pass "sin metadata model devuelve cadena vacia"; else fail "sin metadata deberia devolver vacio (obtenido '$R')"; fi
+
+R=$(resolve_declared_agent_model "agente-inexistente")
+if [ -z "$R" ]; then pass "archivo inexistente devuelve cadena vacia"; else fail "archivo inexistente deberia devolver vacio (obtenido '$R')"; fi
+
+R=$(cd /tmp && resolve_declared_agent_model "implementer")
+if [ "$R" = "sonnet" ]; then pass "resuelve agents desde el plugin fuera del cwd"; else fail "desde cwd ajeno deberia devolver 'sonnet' (obtenido '$R')"; fi
+
+echo ""
 echo "[1] parse_stage_models: spec vacio deja el mapa vacio y no aborta (CA-2: sin --models, nada cambia)"
 if parse_stage_models ""; then pass "spec vacio retorna 0"; else fail "spec vacio no deberia abortar"; fi
 if [ -z "$PIPELINE_STAGE_MODELS" ]; then pass "mapa vacio"; else fail "mapa deberia quedar vacio (obtenido '$PIPELINE_STAGE_MODELS')"; fi
