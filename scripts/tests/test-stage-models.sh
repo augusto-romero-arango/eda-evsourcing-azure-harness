@@ -66,6 +66,7 @@ printf '%s\n' '---' 'name: fixture-sin-modelo' '---' > "$MODEL_PLUGIN/agents/sin
 printf '%s\n' '---' 'name: fixture-modelo-vacio' 'model:' 'model: no-debe-leerse' '---' > "$MODEL_PLUGIN/agents/modelo-vacio.md"
 cp "$REPO_ROOT/agents/infra-writer.md" "$MODEL_PLUGIN/agents/infra-writer.md"
 cp "$REPO_ROOT/agents/infra-reviewer.md" "$MODEL_PLUGIN/agents/infra-reviewer.md"
+cp "$REPO_ROOT/agents/domain-scaffolder.md" "$MODEL_PLUGIN/agents/domain-scaffolder.md"
 trap 'rm -rf "$FAKE_CONSUMER" "$TMP_DIR"' EXIT
 
 # Las funciones viven en _pipeline-common.sh; sourcearlo solo las define (es una
