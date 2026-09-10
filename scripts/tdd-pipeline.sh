@@ -647,13 +647,15 @@ run_agent() {
         implementer|projection-implementer) AGENT_IM_RES="running" ;;
         reviewer)                           AGENT_RV_RES="running" ;;
     esac
-    # Modelo por stage (issue #712): sin --models, el agente NO recibe --model
+    # Modelo por stage (issues #712 y #1186): sin --models, el agente NO recibe --model
     # y manda el frontmatter `model:` del propio agente -- requisito invariante
     # del issue (byte a byte el comportamiento previo al flag). resolve_stage_model
     # (helper de #708) solo devuelve un valor no vacio si '$agent' tiene match
     # EXACTO en el mapa de --models; MODEL_ARGS queda "" (una palabra vacia que
     # el word-splitting sin comillas de abajo hace desaparecer del argv, sin el
     # riesgo de "unbound variable" de un array vacio bajo `set -u` en bash 3.2).
+    # resolve_declared_agent_model (#1185) solo aporta evidencia visible: nunca
+    # alimenta MODEL_ARGS ni cambia el modelo que el runtime selecciona.
     local AGENT_MODEL_OVERRIDE AGENT_MODEL_VISIBLE AGENT_MODEL_ORIGIN MODEL_ARGS=""
     AGENT_MODEL_OVERRIDE="$(resolve_stage_model "$agent" "")"
     if [ -n "$AGENT_MODEL_OVERRIDE" ]; then
