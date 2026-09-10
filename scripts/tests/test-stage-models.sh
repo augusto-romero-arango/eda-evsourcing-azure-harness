@@ -29,6 +29,9 @@
 #                            explicito en vez de tragarselo en silencio.
 #   tdd-pipeline.sh         - anuncia antes de cada invocacion el modelo
 #                            seleccionable y su origen, sin alterar el argv.
+#   iac-pipeline.sh         - anuncia una sola vez por stage el modelo declarado
+#                            por infra-writer/infra-reviewer (o <heredado>) y lo
+#                            persiste sin agregar overrides al argv.
 #   herdr-pipeline.sh       - la otra mitad de CA-3: dentro de un pane herdr,
 #                            tmux-pipeline.sh delega con `exec herdr-pipeline.sh
 #                            "$@"`, asi que el flag tiene que sobrevivir tambien
@@ -58,6 +61,8 @@ cp "$REPO_ROOT/scripts/_pipeline-common.sh" "$MODEL_PLUGIN/scripts/_pipeline-com
 printf '%s\n' '---' 'name: fixture-con-modelo' 'model: modelo-fixture' '---' > "$MODEL_PLUGIN/agents/con-modelo.md"
 printf '%s\n' '---' 'name: fixture-sin-modelo' '---' > "$MODEL_PLUGIN/agents/sin-modelo.md"
 printf '%s\n' '---' 'name: fixture-modelo-vacio' 'model:' 'model: no-debe-leerse' '---' > "$MODEL_PLUGIN/agents/modelo-vacio.md"
+cp "$REPO_ROOT/agents/infra-writer.md" "$MODEL_PLUGIN/agents/infra-writer.md"
+cp "$REPO_ROOT/agents/infra-reviewer.md" "$MODEL_PLUGIN/agents/infra-reviewer.md"
 trap 'rm -rf "$FAKE_CONSUMER" "$TMP_DIR"' EXIT
 
 # Las funciones viven en _pipeline-common.sh; sourcearlo solo las define (es una
@@ -86,6 +91,11 @@ if [ -z "$R" ] && [ ! -s "$MODEL_STDERR" ]; then pass "archivo inexistente no pr
 
 R=$(cd "$FAKE_CONSUMER" && resolve_declared_agent_model "con-modelo")
 if [ "$R" = "modelo-fixture" ]; then pass "resuelve agents desde el plugin fuera del cwd"; else fail "desde cwd ajeno deberia devolver 'modelo-fixture' (obtenido '$R')"; fi
+
+R=$(resolve_declared_agent_model "infra-writer")
+if [ "$R" = "sonnet" ]; then pass "infra-writer declara sonnet"; else fail "infra-writer deberia declarar 'sonnet' (obtenido '$R')"; fi
+R=$(resolve_declared_agent_model "infra-reviewer")
+if [ "$R" = "opus" ]; then pass "infra-reviewer declara opus"; else fail "infra-reviewer deberia declarar 'opus' (obtenido '$R')"; fi
 
 echo ""
 echo "[1] parse_stage_models: spec vacio deja el mapa vacio y no aborta (CA-2: sin --models, nada cambia)"
@@ -279,6 +289,16 @@ assert_iac_contains() {
     esac
 }
 
+assert_iac_count() {
+    local description="$1" expected="$2" needle="$3" actual
+    actual=$(grep -cF -- "$needle" "$IAC_PIPELINE" || true)
+    if [ "$actual" -eq "$expected" ]; then
+        pass "$description"
+    else
+        fail "$description -- esperado $expected, obtenido $actual: $needle"
+    fi
+}
+
 assert_iac_order() {
     local description="$1" first="$2" second="$3" first_line second_line
     first_line=$(grep -nF -- "$first" "$IAC_PIPELINE" | cut -d: -f1 | head -n1)
@@ -302,6 +322,10 @@ assert_iac_contains "Stage 1 conserva infra-writer" 'run_agent "1" "infra-writer
 assert_iac_contains "Stage 2 conserva infra-reviewer" 'run_agent "2" "infra-reviewer" "$STAGE2_PROMPT"'
 assert_iac_order "run_agent resuelve el modelo antes de anunciarlo" 'AGENT_MODEL_VISIBLE="$(resolve_declared_agent_model "$agent")"' 'log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."'
 assert_iac_order "run_agent anuncia antes del primer argv de claude" 'log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."' 'claude -p "$prompt"'
+assert_iac_count "run_agent resuelve el frontmatter una sola vez por stage" 1 'AGENT_MODEL_VISIBLE="$(resolve_declared_agent_model "$agent")"'
+assert_iac_count "run_agent emite una sola linea visible por stage" 1 'log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."'
+assert_iac_count "run_agent emite una sola evidencia durable por stage" 1 'MODELS: stage $stage/$agent -> $AGENT_MODEL_VISIBLE ($AGENT_MODEL_ORIGIN)'
+assert_iac_count "los cuatro argv inicial/hold conservan --agent sin override" 4 '--agent "$agent"'
 IAC_MODEL_ARG_COUNT=$(grep -cF -- '--model' "$IAC_PIPELINE" || true)
 if [ "$IAC_MODEL_ARG_COUNT" -eq 0 ]; then
     pass "IaC no agrega --model al argv inicial ni a las sondas de hold"
