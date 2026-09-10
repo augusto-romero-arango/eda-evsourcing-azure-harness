@@ -4,6 +4,12 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.37.3] - 2026-09-10
+
+### Fixed
+
+- Se resuelve la pareja real de Resource Group y Storage Account desde un único backend Terraform antes de asignar el rol de datos de CI, evitando scopes mezclados con naming CAF.
+
 ## [0.37.2] - 2026-09-10
 
 ### Fixed
@@ -2362,7 +2368,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.2...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.3...HEAD
+[0.37.3]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.2...v0.37.3
 [0.37.2]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.1...v0.37.2
 [0.37.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.0...v0.37.1
 [0.37.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.36.0...v0.37.0
