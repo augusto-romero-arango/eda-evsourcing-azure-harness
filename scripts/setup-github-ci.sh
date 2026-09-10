@@ -49,8 +49,60 @@ fi
 
 SUBSCRIPTION_ID="$1"
 SP_NAME="$HARNESS_SP_NAME"
-TFSTATE_RG="${HARNESS_RG_PREFIX}-tfstate"
 SCOPE="/subscriptions/${SUBSCRIPTION_ID}"
+
+# Resuelve la pareja durable del backend ANTES de la primera llamada a Azure. No
+# deriva ninguno de sus valores desde el config: backend.tf es el registro que
+# terraform init realmente consume (MEF-ADR-0045). Leer ambos helpers sobre
+# directorios distintos podria combinar ambientes, por eso se aceptan solo pares
+# completos del mismo directorio y se rechaza cualquier ambiguedad.
+resolve_tfstate_backend_pair() {
+    local dir rg storage backend_count
+    local pairs=() problems=()
+
+    for dir in infra/environments/*; do
+        [ -d "$dir" ] || continue
+        backend_count=$(grep -hE 'backend[[:space:]]*"azurerm"' "$dir"/*.tf 2>/dev/null | wc -l | tr -d '[:space:]') || backend_count=0
+        [ "$backend_count" -eq 0 ] && continue
+
+        if [ "$backend_count" -ne 1 ]; then
+            problems+=("${dir}: contiene ${backend_count} bloques backend azurerm")
+            continue
+        fi
+
+        rg=$(read_backend_resource_group_name "$dir")
+        storage=$(read_backend_storage_account_name "$dir")
+        if [ -z "$rg" ] || [ -z "$storage" ]; then
+            problems+=("${dir}: resource_group_name y storage_account_name deben ser literales y completos")
+            continue
+        fi
+        pairs+=("${dir}|${rg}|${storage}")
+    done
+
+    if [ ${#problems[@]} -gt 0 ] || [ ${#pairs[@]} -ne 1 ]; then
+        echo "ERROR: no se pudo resolver una unica pareja completa del backend Terraform." >&2
+        if [ ${#pairs[@]} -gt 0 ]; then
+            echo "  Candidatos completos:" >&2
+            printf '  - %s\n' "${pairs[@]}" >&2
+        fi
+        if [ ${#problems[@]} -gt 0 ]; then
+            echo "  Candidatos problematicos:" >&2
+            printf '  - %s\n' "${problems[@]}" >&2
+        fi
+        if [ ${#pairs[@]} -eq 0 ] && [ ${#problems[@]} -eq 0 ]; then
+            echo "  No se encontro un backend azurerm bajo infra/environments/*/." >&2
+        fi
+        echo "  Ejecuta scripts/bootstrap-backend.sh para un ambiente o corrige el backend antes de reintentar." >&2
+        return 1
+    fi
+
+    TFSTATE_RG="${pairs[0]#*|}"
+    TFSTATE_RG="${TFSTATE_RG%%|*}"
+    TFSTATE_STORAGE="${pairs[0]##*|}"
+    export TFSTATE_RG TFSTATE_STORAGE
+}
+
+resolve_tfstate_backend_pair || exit 1
 
 # Fijar la suscripcion explicitamente antes de cualquier operacion 'az'. El script
 # recibe la suscripcion como argumento, pero las operaciones 'az ad app/sp create' y el
@@ -85,37 +137,6 @@ if [ -z "$REPO_SLUG" ] || [ "$REPO_SLUG" = "None" ]; then
     echo "remote 'origin' de GitHub / autentica 'gh', y reintenta." >&2
     exit 1
 fi
-
-# Nombre de la Storage Account del tfstate: bootstrap-backend.sh le anexa un
-# sufijo de unicidad global (issue #92), asi que el nombre REAL puede no coincidir
-# con el campo base 'terraformStateStorage' del config. Resolver el nombre FINAL
-# para no asignar 'Storage Blob Data Contributor' sobre una cuenta inexistente (este
-# script corre DESPUES del bootstrap; ver README "Primeros pasos", paso 2). Mismo
-# orden de precedencia durable que usa el bootstrap, con los helpers compartidos:
-#   1. storage_account_name escrito en algun infra/environments/*/backend.tf
-#      (lo que el bootstrap acaba de escribir; es lo que usara 'terraform init').
-#   2. cuenta ya creada en el RG dedicado cuyo nombre arranca con la base truncada.
-#   3. fallback: el nombre base del config (compat con backends pre-#92 sin sufijo).
-resolve_tfstate_storage_name() {
-    local dir from_backend base existing
-    for dir in infra/environments/*/; do
-        from_backend=$(read_backend_storage_account_name "$dir")
-        if [ -n "$from_backend" ]; then
-            printf '%s' "$from_backend"; return 0
-        fi
-    done
-    base=$(truncate_storage_base "$HARNESS_TFSTATE_STORAGE")
-    existing=$(az storage account list \
-        --subscription "$SUBSCRIPTION_ID" \
-        --resource-group "$TFSTATE_RG" \
-        --query "[?starts_with(name, '${base}')].name | [0]" \
-        -o tsv 2>/dev/null) || existing=""
-    if [ -n "$existing" ] && [ "$existing" != "None" ]; then
-        printf '%s' "$existing"; return 0
-    fi
-    printf '%s' "$HARNESS_TFSTATE_STORAGE"
-}
-TFSTATE_STORAGE=$(resolve_tfstate_storage_name)
 
 echo "=== Setup CI para ${HARNESS_PROJECT_NAME} ==="
 echo "Repositorio GitHub: ${REPO_SLUG}"
