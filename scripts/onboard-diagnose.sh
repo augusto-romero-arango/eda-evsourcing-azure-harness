@@ -418,7 +418,7 @@ main() {
             done
         fi
     elif [ "$CONFIG_VALID" -eq 1 ]; then
-        row NV "secrets[] no declarado todavia (normal antes del primer /infra-base o si el config es invalido -- ver seccion Configuracion)"
+        row NV "secrets[] no declarado todavia (normal antes del primer /infra-base)"
     else
         row NV "secrets[] no verificado porque el config efectivo no pudo cargarse (revisa la seccion Configuracion)"
     fi

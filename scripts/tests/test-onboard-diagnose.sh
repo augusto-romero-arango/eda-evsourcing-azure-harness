@@ -14,7 +14,8 @@
 #   S-4: _mefisto_pipeline_ignored() -- exige el ignore especifico del estado y
 #        rechaza ignorar tambien la configuracion sibling versionada.
 #   S-5: diagnostico integrado -- config canónico efectivo, precedencia sobre el
-#        legacy y fallback legacy, incluidos los opt-outs explícitos.
+#        legacy y fallback legacy, incluidos los opt-outs explícitos y la
+#        degradación conservadora ante config inválido o ausente.
 #
 # El script se sourcea (no se ejecuta): scripts/onboard-diagnose.sh solo corre su
 # main() cuando BASH_SOURCE[0] == $0, asi que sourcearlo aqui carga row()/
@@ -341,13 +342,23 @@ printf '@AGENTS.md\n' > "$ONBOARD_REPO/CLAUDE.md"
 
 prepare_onboard_repo "$ONBOARD_REPO/.mefisto/harness.config.json" false
 prepare_onboard_repo "$ONBOARD_REPO/.claude/harness.config.json" true
+# Si se mezclara información, estos valores exclusivos del legacy aparecerían
+# aunque la fila de ruta efectiva siguiera nombrando correctamente el canónico.
+jq '.secrets = [{"name":"legacy-ignorado","source":{"type":"github-secret","value":"LEGACY_IGNORADO"}}]
+    | .tenancy.strategy = "multi-tenant-header"' \
+    "$ONBOARD_REPO/.claude/harness.config.json" > "$ONBOARD_REPO/.claude/harness.config.json.tmp"
+mv "$ONBOARD_REPO/.claude/harness.config.json.tmp" "$ONBOARD_REPO/.claude/harness.config.json"
 OUT=$(cd "$ONBOARD_REPO" && PATH="$ONBOARD_BIN:$PATH" bash "$REPO_ROOT/scripts/onboard-diagnose.sh")
-if printf '%s\n' "$OUT" | grep -Fq "config efectivo $ONBOARD_REPO_REAL/.mefisto/harness.config.json existe" && ! printf '%s\n' "$OUT" | grep -Fq "LegacyIgnorado"; then
+if printf '%s\n' "$OUT" | grep -Fq "[OK           ] config efectivo $ONBOARD_REPO_REAL/.mefisto/harness.config.json existe" \
+    && ! printf '%s\n' "$OUT" | grep -Fq "legacy-ignorado" \
+    && ! printf '%s\n' "$OUT" | grep -Fq "multi-tenant-header"; then
     pass "el config canónico prevalece y no mezcla datos del legacy"
 else
     fail "el diagnóstico no usó exclusivamente el config canónico efectivo"
 fi
-if printf '%s\n' "$OUT" | grep -Fq "secrets[] registra 0 entrada(s)" && printf '%s\n' "$OUT" | grep -Fq "mono-tenant-transitorio -- camino (B) POC" && printf '%s\n' "$OUT" | grep -Fq "projections.enabled=false -- opt-out explicito"; then
+if printf '%s\n' "$OUT" | grep -Fq "[OK           ] secrets[] registra 0 entrada(s)" \
+    && printf '%s\n' "$OUT" | grep -Fq "[OK           ] tenancy.strategy = mono-tenant-transitorio -- camino (B) POC" \
+    && printf '%s\n' "$OUT" | grep -Fq "[OK           ] projections.enabled=false -- opt-out explicito"; then
     pass "secrets[] vacío, tenancy POC y projections=false explícitos reportan OK"
 else
     fail "los tokens explícitos no recibieron el diagnóstico esperado"
@@ -355,10 +366,38 @@ fi
 
 rm -f "$ONBOARD_REPO/.mefisto/harness.config.json"
 OUT=$(cd "$ONBOARD_REPO" && PATH="$ONBOARD_BIN:$PATH" bash "$REPO_ROOT/scripts/onboard-diagnose.sh")
-if printf '%s\n' "$OUT" | grep -Fq "config efectivo $ONBOARD_REPO_REAL/.claude/harness.config.json existe" && printf '%s\n' "$OUT" | grep -Fq "projections.enabled=true, pero el worker"; then
+if printf '%s\n' "$OUT" | grep -Fq "[OK           ] config efectivo $ONBOARD_REPO_REAL/.claude/harness.config.json existe" \
+    && printf '%s\n' "$OUT" | grep -Fq "[OK           ] secrets[] registra 1 entrada(s)" \
+    && printf '%s\n' "$OUT" | grep -Fq "[OK           ] tenancy.strategy = multi-tenant-header" \
+    && printf '%s\n' "$OUT" | grep -Fq "[NO VERIFICADO] projections.enabled=true, pero el worker" \
+    && [ ! -e "$ONBOARD_REPO/.mefisto/harness.config.json" ]; then
     pass "el fallback legacy conserva el diagnóstico funcional sin escribir config canónico"
 else
     fail "el fallback legacy no usó su ruta efectiva o no diagnosticó projections"
+fi
+
+printf '{ JSON inválido\n' > "$ONBOARD_REPO/.mefisto/harness.config.json"
+OUT=$(cd "$ONBOARD_REPO" && PATH="$ONBOARD_BIN:$PATH" bash "$REPO_ROOT/scripts/onboard-diagnose.sh" 2>&1)
+if printf '%s\n' "$OUT" | grep -Fq "[FALTA        ] configuracion invalida o incompleta" \
+    && printf '%s\n' "$OUT" | grep -Fq "el JSON de $ONBOARD_REPO_REAL/.mefisto/harness.config.json no es parseable" \
+    && printf '%s\n' "$OUT" | grep -Fq "secrets[] no verificado porque el config efectivo no pudo cargarse" \
+    && printf '%s\n' "$OUT" | grep -Fq "tenancy.strategy no verificado porque el config efectivo no pudo cargarse" \
+    && printf '%s\n' "$OUT" | grep -Fq "projections.enabled no verificado porque el config efectivo no pudo cargarse" \
+    && ! printf '%s\n' "$OUT" | grep -Fq "config efectivo $ONBOARD_REPO_REAL/.claude/harness.config.json existe" \
+    && ! printf '%s\n' "$OUT" | grep -Fq "parse error"; then
+    pass "un canónico inválido falla cerrado sin mezclar el fallback ni disparar jq secundarios"
+else
+    fail "el config canónico inválido no degradó de forma conservadora y accionable"
+fi
+
+rm -f "$ONBOARD_REPO/.mefisto/harness.config.json" "$ONBOARD_REPO/.claude/harness.config.json"
+OUT=$(cd "$ONBOARD_REPO" && PATH="$ONBOARD_BIN:$PATH" bash "$REPO_ROOT/scripts/onboard-diagnose.sh" 2>&1)
+if printf '%s\n' "$OUT" | grep -Fq "no se encontro el config canonico requerido $ONBOARD_REPO_REAL/.mefisto/harness.config.json" \
+    && printf '%s\n' "$OUT" | grep -Fq "[FALTA        ] configuracion invalida o incompleta" \
+    && printf '%s\n' "$OUT" | grep -Fq "projections.enabled no verificado porque el config efectivo no pudo cargarse"; then
+    pass "la ausencia de ambos configs falla con la ruta canónica y sin lecturas directas"
+else
+    fail "la ausencia del config no produjo un diagnóstico conservador y accionable"
 fi
 
 echo ""
