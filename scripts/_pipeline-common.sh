@@ -590,7 +590,8 @@ upsert_harness_secret() {
 resolve_declared_agent_model() {
     local agent="$1" script_dir agent_file line model in_frontmatter="false"
 
-    script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P) || return 0
+    script_dir="$(_pc_script_dir 2>/dev/null)" || script_dir=""
+    [ -n "$script_dir" ] || return 0
     agent_file="$script_dir/../agents/$agent.md"
     [ -f "$agent_file" ] || return 0
 
@@ -601,7 +602,7 @@ resolve_declared_agent_model() {
         fi
         [ "$line" = "---" ] && break
         case "$line" in
-            [[:space:]]model:[[:space:]]*|model:[[:space:]]*)
+            model:|model:[[:space:]]*)
                 model="${line#*:}"
                 model="${model%%[[:space:]]#*}"
                 model=$(printf '%s' "$model" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
