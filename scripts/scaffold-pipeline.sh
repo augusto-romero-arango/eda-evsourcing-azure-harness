@@ -241,7 +241,16 @@ if [ -f "$REPO_ROOT/.claude/settings.json" ]; then
 fi
 
 # --- Invocar domain-scaffolder ---
-header "Invocando domain-scaffolder"
+# La resolucion solo hace observable la seleccion heredada del frontmatter;
+# nunca se reutiliza para construir el argv del runtime.
+SCAFFOLD_AGENT_MODEL_VISIBLE="$(resolve_declared_agent_model "domain-scaffolder")"
+if [ -n "$SCAFFOLD_AGENT_MODEL_VISIBLE" ]; then
+    SCAFFOLD_AGENT_MODEL_ORIGIN="frontmatter"
+else
+    SCAFFOLD_AGENT_MODEL_VISIBLE="<heredado>"
+    SCAFFOLD_AGENT_MODEL_ORIGIN="heredado"
+fi
+header "Invocando domain-scaffolder (modelo: $SCAFFOLD_AGENT_MODEL_VISIBLE)..."
 
 SCAFFOLD_PROMPT="Crea el scaffold para el dominio '$DOMAIN_NAME'. El usuario ya confirmo la creacion -- omite la confirmacion del Paso 0 y procede directamente a crear el proyecto.
 
@@ -252,6 +261,7 @@ SCAFFOLD_TIMEOUT=1800
 SCAFFOLD_LOG="$LOG_DIR/scaffold-agent-$TIMESTAMP-$DOMAIN_NAME-$$.log"
 
 echo "[$(date +%H:%M:%S)] === SCAFFOLD: domain-scaffolder para '$DOMAIN_NAME' ===" >> "$EVENTS_LOG"
+echo "[$(date +%H:%M:%S)] MODELS: stage scaffold/domain-scaffolder -> $SCAFFOLD_AGENT_MODEL_VISIBLE ($SCAFFOLD_AGENT_MODEL_ORIGIN)" >> "$EVENTS_LOG"
 
 scaffold_start=$(date +%s)
 
