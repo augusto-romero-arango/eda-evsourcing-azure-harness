@@ -106,19 +106,6 @@ resolve_tfstate_backend_pair() {
 
 resolve_tfstate_backend_pair || exit 1
 
-# Fijar la suscripcion explicitamente antes de cualquier operacion 'az'. El script
-# recibe la suscripcion como argumento, pero las operaciones 'az ad app/sp create' y el
-# 'az account show --query tenantId' (de donde sale AZURE_TENANT_ID) operan contra el
-# TENANT de la suscripcion ACTIVA, no contra la pasada como $1. Si difieren, la app/SP se
-# crearia en el tenant equivocado, AZURE_TENANT_ID quedaria mal y el role assignment
-# cross-tenant fallaria. Mismo patron que bootstrap-backend.sh.
-echo "Fijando la suscripcion activa..."
-az account set --subscription "$SUBSCRIPTION_ID" || {
-    echo "ERROR: no se pudo fijar la suscripcion '$SUBSCRIPTION_ID'." >&2
-    echo "  Verifica que 'az login' este hecho y que la suscripcion exista." >&2
-    exit 1
-}
-
 # Slug owner/repo para el subject del federated credential de OIDC. Precedencia:
 #   1. 2do argumento explicito.
 #   2. 'gh repo view' (resuelve el repo del cwd via la API de GitHub; gh es dependencia
@@ -139,6 +126,52 @@ if [ -z "$REPO_SLUG" ] || [ "$REPO_SLUG" = "None" ]; then
     echo "remote 'origin' de GitHub / autentica 'gh', y reintenta." >&2
     exit 1
 fi
+
+if ! [[ "$REPO_SLUG" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]]; then
+    echo "ERROR: el repositorio debe tener el formato owner/repo; se recibio '${REPO_SLUG}'." >&2
+    exit 1
+fi
+
+resolve_github_repository_identity() {
+    local metadata metadata_slug owner_id repository_id
+    metadata=$(gh api "repos/${REPO_SLUG}" 2>/dev/null) || {
+        echo "ERROR: no se pudo consultar la metadata de GitHub para '${REPO_SLUG}'." >&2
+        echo "  Autentica 'gh' con acceso al repositorio o verifica el argumento owner/repo antes de reintentar." >&2
+        return 1
+    }
+    metadata_slug=$(jq -r '.full_name // empty' <<<"$metadata" 2>/dev/null) || metadata_slug=""
+    owner_id=$(jq -r '.owner.id // empty' <<<"$metadata" 2>/dev/null) || owner_id=""
+    repository_id=$(jq -r '.id // empty' <<<"$metadata" 2>/dev/null) || repository_id=""
+    if [ "$metadata_slug" != "$REPO_SLUG" ]; then
+        echo "ERROR: GitHub devolvio metadata de '${metadata_slug:-un repositorio desconocido}', no de '${REPO_SLUG}'." >&2
+        echo "  Verifica el argumento owner/repo, el remote origin y la autenticacion de gh antes de reintentar." >&2
+        return 1
+    fi
+    if ! [[ "$owner_id" =~ ^[1-9][0-9]*$ ]] || ! [[ "$repository_id" =~ ^[1-9][0-9]*$ ]]; then
+        echo "ERROR: la metadata de GitHub para '${REPO_SLUG}' no contiene IDs inmutables validos de owner y repositorio." >&2
+        echo "  Verifica que 'gh api repos/${REPO_SLUG}' pueda leer .owner.id e .id antes de reintentar." >&2
+        return 1
+    fi
+    GITHUB_OWNER_ID="$owner_id"
+    GITHUB_REPOSITORY_ID="$repository_id"
+}
+
+# GitHub documenta que el claim `sub` identifica el contexto del workflow. La
+# forma vigente por defecto incorpora repository_owner_id y repository_id; no
+# se infiere desde el slug nominal porque Entra compara el subject literalmente.
+# Fuente: https://docs.github.com/en/actions/reference/security/oidc
+resolve_github_repository_identity || exit 1
+FED_SUBJECT_MAIN="repo:${REPO_SLUG}:repository_owner_id:${GITHUB_OWNER_ID}:repository_id:${GITHUB_REPOSITORY_ID}:ref:refs/heads/main"
+FED_SUBJECT_PR="repo:${REPO_SLUG}:repository_owner_id:${GITHUB_OWNER_ID}:repository_id:${GITHUB_REPOSITORY_ID}:pull_request"
+
+# Fijar la suscripcion explicitamente despues de validar GitHub y antes de la
+# primera operacion Azure. Las operaciones de Entra usan el tenant activo.
+echo "Fijando la suscripcion activa..."
+az account set --subscription "$SUBSCRIPTION_ID" || {
+    echo "ERROR: no se pudo fijar la suscripcion '$SUBSCRIPTION_ID'." >&2
+    echo "  Verifica que 'az login' este hecho y que la suscripcion exista." >&2
+    exit 1
+}
 
 echo "=== Setup CI para ${HARNESS_PROJECT_NAME} ==="
 echo "Repositorio GitHub: ${REPO_SLUG}"
@@ -241,15 +274,13 @@ az role assignment create \
 #    Fuentes: learn.microsoft.com/azure/app-service/deploy-github-actions y
 #    learn.microsoft.com/entra/workload-id/workload-identity-federation-create-trust.
 ensure_federated_credential() {
-    local name="$1" subject="$2" description="$3" existing
-    existing=$(az ad app federated-credential list --id "$APP_ID" \
-        --query "[?subject=='${subject}'] | [0].name" -o tsv 2>/dev/null) || existing=""
-    if [ -n "$existing" ] && [ "$existing" != "None" ]; then
-        echo "Federated credential para '${subject}' ya existe; se reutiliza."
+    local name="$1" subject="$2" description="$3" existing_subject existing_by_subject params
+    existing_subject=$(az ad app federated-credential list --id "$APP_ID" \
+        --query "[?name=='${name}'] | [0].subject" -o tsv 2>/dev/null) || existing_subject=""
+    if [ "$existing_subject" = "$subject" ]; then
+        echo "Federated credential administrada '${name}' ya existe; se reutiliza."
         return 0
     fi
-    echo "Creando federated credential para '${subject}'..."
-    local params
     params=$(cat <<EOF
 {
   "name": "${name}",
@@ -260,14 +291,25 @@ ensure_federated_credential() {
 }
 EOF
 )
+    if [ -n "$existing_subject" ] && [ "$existing_subject" != "None" ]; then
+        echo "Reconciliando federated credential administrada '${name}' al subject efectivo..."
+        az ad app federated-credential update --id "$APP_ID" \
+            --federated-credential-id "$name" --parameters "$params" -o none
+        return 0
+    fi
+    existing_by_subject=$(az ad app federated-credential list --id "$APP_ID" \
+        --query "[?subject=='${subject}'] | [0].name" -o tsv 2>/dev/null) || existing_by_subject=""
+    if [ -n "$existing_by_subject" ] && [ "$existing_by_subject" != "None" ]; then
+        echo "Federated credential existente '${existing_by_subject}' ya usa el subject efectivo; se reutiliza."
+        return 0
+    fi
+    echo "Creando federated credential administrada '${name}' para el subject efectivo..."
     az ad app federated-credential create --id "$APP_ID" --parameters "$params" -o none
 }
 
-FED_SUBJECT_MAIN="repo:${REPO_SLUG}:ref:refs/heads/main"
 ensure_federated_credential "github-actions-deploy-main" "$FED_SUBJECT_MAIN" \
     "GitHub Actions OIDC: deploy de codigo y apply de infra de ${HARNESS_PROJECT_NAME} desde la rama main"
 
-FED_SUBJECT_PR="repo:${REPO_SLUG}:pull_request"
 ensure_federated_credential "github-actions-plan-pr" "$FED_SUBJECT_PR" \
     "GitHub Actions OIDC: terraform plan de ${HARNESS_PROJECT_NAME} en pull requests"
 
