@@ -647,22 +647,33 @@ run_agent() {
         implementer|projection-implementer) AGENT_IM_RES="running" ;;
         reviewer)                           AGENT_RV_RES="running" ;;
     esac
-    update_status "$stage-$agent" "running"
-    log "Invocando $agent..."
-
-    # Modelo por stage (issue #712): sin --models, el agente NO recibe --model
+    # Modelo por stage (issues #712 y #1186): sin --models, el agente NO recibe --model
     # y manda el frontmatter `model:` del propio agente -- requisito invariante
     # del issue (byte a byte el comportamiento previo al flag). resolve_stage_model
     # (helper de #708) solo devuelve un valor no vacio si '$agent' tiene match
     # EXACTO en el mapa de --models; MODEL_ARGS queda "" (una palabra vacia que
     # el word-splitting sin comillas de abajo hace desaparecer del argv, sin el
     # riesgo de "unbound variable" de un array vacio bajo `set -u` en bash 3.2).
-    local AGENT_MODEL_OVERRIDE MODEL_ARGS=""
+    # resolve_declared_agent_model (#1185) solo aporta evidencia visible: nunca
+    # alimenta MODEL_ARGS ni cambia el modelo que el runtime selecciona.
+    local AGENT_MODEL_OVERRIDE AGENT_MODEL_VISIBLE AGENT_MODEL_ORIGIN MODEL_ARGS=""
     AGENT_MODEL_OVERRIDE="$(resolve_stage_model "$agent" "")"
     if [ -n "$AGENT_MODEL_OVERRIDE" ]; then
         MODEL_ARGS="--model $AGENT_MODEL_OVERRIDE"
-        echo "[$(date +%H:%M:%S)] MODELS: stage $stage/$agent -> $AGENT_MODEL_OVERRIDE (override; default: frontmatter del agente)" >> "$EVENTS_LOG_ABS"
+        AGENT_MODEL_VISIBLE="$AGENT_MODEL_OVERRIDE"
+        AGENT_MODEL_ORIGIN="override --models"
+    else
+        AGENT_MODEL_VISIBLE="$(resolve_declared_agent_model "$agent")"
+        if [ -n "$AGENT_MODEL_VISIBLE" ]; then
+            AGENT_MODEL_ORIGIN="frontmatter"
+        else
+            AGENT_MODEL_VISIBLE="<heredado>"
+            AGENT_MODEL_ORIGIN="heredado"
+        fi
     fi
+    update_status "$stage-$agent" "running"
+    log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."
+    echo "[$(date +%H:%M:%S)] MODELS: stage $stage/$agent -> $AGENT_MODEL_VISIBLE ($AGENT_MODEL_ORIGIN)" >> "$EVENTS_LOG_ABS"
 
     local AGENT_TIMEOUT_SECONDS=1800  # 30 minutos por agente
     # Linea base de transcripts del worktree ANTES de invocar al CLI (issue
@@ -1795,13 +1806,27 @@ IMPORTANTE:
         # Sin esa caida, un experimento '--models test-writer=X' correria el Stage 1
         # con X y la remediacion con el frontmatter: dos modelos para el mismo rol
         # dentro de la misma corrida, que es justo lo que el A/B quiere medir.
-        PATCH_TW_MODEL_OVERRIDE="$(resolve_stage_model "patch-test-writer" "$(resolve_stage_model "$STAGE1_AGENT" "")")"
+        PATCH_TW_FINE_MODEL_OVERRIDE="$(resolve_stage_model "patch-test-writer" "")"
+        PATCH_TW_AGENT_MODEL_OVERRIDE="$(resolve_stage_model "$STAGE1_AGENT" "")"
+        PATCH_TW_MODEL_OVERRIDE="$PATCH_TW_FINE_MODEL_OVERRIDE"
+        [ -z "$PATCH_TW_MODEL_OVERRIDE" ] && PATCH_TW_MODEL_OVERRIDE="$PATCH_TW_AGENT_MODEL_OVERRIDE"
         PATCH_TW_MODEL_ARGS=""
         if [ -n "$PATCH_TW_MODEL_OVERRIDE" ]; then
             PATCH_TW_MODEL_ARGS="--model $PATCH_TW_MODEL_OVERRIDE"
-            echo "[$(date +%H:%M:%S)] MODELS: stage 4b/patch-test-writer ($STAGE1_AGENT) -> $PATCH_TW_MODEL_OVERRIDE (override; default: frontmatter del agente)" >> "$EVENTS_LOG_ABS"
+            PATCH_TW_MODEL_VISIBLE="$PATCH_TW_MODEL_OVERRIDE"
+            PATCH_TW_MODEL_ORIGIN="override --models"
+        else
+            PATCH_TW_MODEL_VISIBLE="$(resolve_declared_agent_model "$STAGE1_AGENT")"
+            if [ -n "$PATCH_TW_MODEL_VISIBLE" ]; then
+                PATCH_TW_MODEL_ORIGIN="frontmatter"
+            else
+                PATCH_TW_MODEL_VISIBLE="<heredado>"
+                PATCH_TW_MODEL_ORIGIN="heredado"
+            fi
         fi
 
+        log "Invocando $STAGE1_AGENT (modelo: $PATCH_TW_MODEL_VISIBLE)..."
+        echo "[$(date +%H:%M:%S)] MODELS: stage 4b/patch-test-writer -> $PATCH_TW_MODEL_VISIBLE ($PATCH_TW_MODEL_ORIGIN)" >> "$EVENTS_LOG_ABS"
         log "Relanzando $STAGE1_AGENT para remediacion..."
         LOG_CG_TW="$LOG_DIR_ABS/stage-4-${STAGE1_AGENT}-patch-${TIMESTAMP}.log"
         STREAM_CG_TW="${LOG_CG_TW%.log}.stream.jsonl"
@@ -1881,13 +1906,27 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
                 # Modelo por stage (issue #712): misma cadena que "patch-test-writer"
                 # arriba -- clave fina "patch-implementer", y si no esta en el mapa,
                 # la del agente realmente invocado ($STAGE2_AGENT).
-                PATCH_IM_MODEL_OVERRIDE="$(resolve_stage_model "patch-implementer" "$(resolve_stage_model "$STAGE2_AGENT" "")")"
+                PATCH_IM_FINE_MODEL_OVERRIDE="$(resolve_stage_model "patch-implementer" "")"
+                PATCH_IM_AGENT_MODEL_OVERRIDE="$(resolve_stage_model "$STAGE2_AGENT" "")"
+                PATCH_IM_MODEL_OVERRIDE="$PATCH_IM_FINE_MODEL_OVERRIDE"
+                [ -z "$PATCH_IM_MODEL_OVERRIDE" ] && PATCH_IM_MODEL_OVERRIDE="$PATCH_IM_AGENT_MODEL_OVERRIDE"
                 PATCH_IM_MODEL_ARGS=""
                 if [ -n "$PATCH_IM_MODEL_OVERRIDE" ]; then
                     PATCH_IM_MODEL_ARGS="--model $PATCH_IM_MODEL_OVERRIDE"
-                    echo "[$(date +%H:%M:%S)] MODELS: stage 4c/patch-implementer ($STAGE2_AGENT) -> $PATCH_IM_MODEL_OVERRIDE (override; default: frontmatter del agente)" >> "$EVENTS_LOG_ABS"
+                    PATCH_IM_MODEL_VISIBLE="$PATCH_IM_MODEL_OVERRIDE"
+                    PATCH_IM_MODEL_ORIGIN="override --models"
+                else
+                    PATCH_IM_MODEL_VISIBLE="$(resolve_declared_agent_model "$STAGE2_AGENT")"
+                    if [ -n "$PATCH_IM_MODEL_VISIBLE" ]; then
+                        PATCH_IM_MODEL_ORIGIN="frontmatter"
+                    else
+                        PATCH_IM_MODEL_VISIBLE="<heredado>"
+                        PATCH_IM_MODEL_ORIGIN="heredado"
+                    fi
                 fi
 
+                log "Invocando $STAGE2_AGENT (modelo: $PATCH_IM_MODEL_VISIBLE)..."
+                echo "[$(date +%H:%M:%S)] MODELS: stage 4c/patch-implementer -> $PATCH_IM_MODEL_VISIBLE ($PATCH_IM_MODEL_ORIGIN)" >> "$EVENTS_LOG_ABS"
                 # $PATCH_IM_MODEL_ARGS sin comillas por el mismo motivo que arriba.
                 # shellcheck disable=SC2086
                 if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then

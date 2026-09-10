@@ -27,6 +27,8 @@
 #                            --scaffold, --batch, --parallel, --attach, y varios
 #                            issues sueltos) lo siguen rechazando con mensaje
 #                            explicito en vez de tragarselo en silencio.
+#   tdd-pipeline.sh         - anuncia antes de cada invocacion el modelo
+#                            seleccionable y su origen, sin alterar el argv.
 #   herdr-pipeline.sh       - la otra mitad de CA-3: dentro de un pane herdr,
 #                            tmux-pipeline.sh delega con `exec herdr-pipeline.sh
 #                            "$@"`, asi que el flag tiene que sobrevivir tambien
@@ -187,6 +189,83 @@ echo ""
 echo "----------------------------------------"
 echo "  _pipeline-common.sh: $PASS pass, $FAIL fail (hasta aqui)"
 echo "----------------------------------------"
+
+# --- tdd-pipeline.sh: evidencia visible y persistente del modelo -------------
+TDD_PIPELINE="$REPO_ROOT/scripts/tdd-pipeline.sh"
+TDD_CONTENT=$(cat "$TDD_PIPELINE")
+
+assert_tdd_contains() {
+    local description="$1" expected="$2"
+    case "$TDD_CONTENT" in
+        *"$expected"*) pass "$description" ;;
+        *) fail "$description -- no se encontro: $expected" ;;
+    esac
+}
+
+assert_tdd_count() {
+    local description="$1" expected="$2" needle="$3" actual
+    actual=$(grep -cF -- "$needle" "$TDD_PIPELINE" || true)
+    if [ "$actual" -eq "$expected" ]; then
+        pass "$description"
+    else
+        fail "$description -- esperado $expected, obtenido $actual: $needle"
+    fi
+}
+
+assert_tdd_order() {
+    local description="$1" first="$2" second="$3" first_line second_line
+    first_line=$(grep -nF -- "$first" "$TDD_PIPELINE" | cut -d: -f1 | head -n1)
+    second_line=$(grep -nF -- "$second" "$TDD_PIPELINE" | cut -d: -f1 | head -n1)
+    if [ -n "$first_line" ] && [ -n "$second_line" ] && [ "$first_line" -lt "$second_line" ]; then
+        pass "$description"
+    else
+        fail "$description -- orden obtenido: '${first:-ausente}'=$first_line, '${second:-ausente}'=$second_line"
+    fi
+}
+
+echo ""
+echo "[10b] tdd: anuncia override, frontmatter y heredado antes de invocar, sin cambiar MODEL_ARGS (CA-1, CA-2, CA-5)"
+assert_tdd_contains "run_agent conserva el argv condicional --model" 'MODEL_ARGS="--model $AGENT_MODEL_OVERRIDE"'
+assert_tdd_contains "run_agent resuelve el frontmatter cuando no hay override" 'AGENT_MODEL_VISIBLE="$(resolve_declared_agent_model "$agent")"'
+assert_tdd_contains "run_agent representa la ausencia no observable como heredado" 'AGENT_MODEL_VISIBLE="<heredado>"'
+assert_tdd_contains "run_agent etiqueta el override" 'AGENT_MODEL_ORIGIN="override --models"'
+assert_tdd_contains "run_agent etiqueta el frontmatter" 'AGENT_MODEL_ORIGIN="frontmatter"'
+assert_tdd_contains "run_agent etiqueta el heredado" 'AGENT_MODEL_ORIGIN="heredado"'
+assert_tdd_contains "run_agent muestra el modelo antes del CLI" 'log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."'
+assert_tdd_contains "run_agent persiste la evidencia con el formato canonico" 'MODELS: stage $stage/$agent -> $AGENT_MODEL_VISIBLE ($AGENT_MODEL_ORIGIN)'
+assert_tdd_contains "log escribe tambien en el log persistente" '_log_file "$m"'
+assert_tdd_order "run_agent resuelve el override antes de anunciar" 'AGENT_MODEL_OVERRIDE="$(resolve_stage_model "$agent" "")"' 'log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."'
+assert_tdd_order "run_agent anuncia antes del primer argv de claude" 'log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."' '--agent "$agent" $MODEL_ARGS'
+for stage_call in 'run_agent "1" "$STAGE1_AGENT"' 'run_agent "2" "$STAGE2_AGENT"' 'run_agent "2b" "smoke-test-writer"' 'run_agent "3" "reviewer"' 'run_agent "merge" "implementer"'; do
+    assert_tdd_contains "stage normal conserva la ruta run_agent: $stage_call" "$stage_call"
+done
+assert_tdd_count "run_agent conserva --model en sus cuatro argv (inicial/reintento, stream/text)" 4 '--agent "$agent" $MODEL_ARGS'
+
+echo ""
+echo "[10c] tdd: las remediaciones preservan la precedencia fina y anuncian los tres origenes (CA-3 a CA-5)"
+assert_tdd_contains "4b calcula primero el override fino" 'PATCH_TW_FINE_MODEL_OVERRIDE="$(resolve_stage_model "patch-test-writer" "")"'
+assert_tdd_contains "4b conserva el fallback del agente relanzado" 'PATCH_TW_AGENT_MODEL_OVERRIDE="$(resolve_stage_model "$STAGE1_AGENT" "")"'
+assert_tdd_contains "4b aplica el override fino antes del fallback" 'PATCH_TW_MODEL_OVERRIDE="$PATCH_TW_FINE_MODEL_OVERRIDE"'
+assert_tdd_contains "4b solo cae al override del agente cuando el fino esta vacio" '[ -z "$PATCH_TW_MODEL_OVERRIDE" ] && PATCH_TW_MODEL_OVERRIDE="$PATCH_TW_AGENT_MODEL_OVERRIDE"'
+assert_tdd_contains "4b conserva el argv condicional --model" 'PATCH_TW_MODEL_ARGS="--model $PATCH_TW_MODEL_OVERRIDE"'
+assert_tdd_contains "4b usa el frontmatter sin override" 'PATCH_TW_MODEL_VISIBLE="$(resolve_declared_agent_model "$STAGE1_AGENT")"'
+assert_tdd_contains "4b representa metadata ausente como heredado" 'PATCH_TW_MODEL_VISIBLE="<heredado>"'
+assert_tdd_contains "4b anuncia la evidencia persistente" 'MODELS: stage 4b/patch-test-writer -> $PATCH_TW_MODEL_VISIBLE ($PATCH_TW_MODEL_ORIGIN)'
+assert_tdd_order "4b anuncia antes del primer argv de claude" 'log "Invocando $STAGE1_AGENT (modelo: $PATCH_TW_MODEL_VISIBLE)..."' '--agent "$STAGE1_AGENT" $PATCH_TW_MODEL_ARGS'
+assert_tdd_count "4b conserva sus dos argv stream/text" 2 '--agent "$STAGE1_AGENT" $PATCH_TW_MODEL_ARGS'
+assert_tdd_contains "4c calcula primero el override fino" 'PATCH_IM_FINE_MODEL_OVERRIDE="$(resolve_stage_model "patch-implementer" "")"'
+assert_tdd_contains "4c conserva el fallback del agente relanzado" 'PATCH_IM_AGENT_MODEL_OVERRIDE="$(resolve_stage_model "$STAGE2_AGENT" "")"'
+assert_tdd_contains "4c aplica el override fino antes del fallback" 'PATCH_IM_MODEL_OVERRIDE="$PATCH_IM_FINE_MODEL_OVERRIDE"'
+assert_tdd_contains "4c solo cae al override del agente cuando el fino esta vacio" '[ -z "$PATCH_IM_MODEL_OVERRIDE" ] && PATCH_IM_MODEL_OVERRIDE="$PATCH_IM_AGENT_MODEL_OVERRIDE"'
+assert_tdd_contains "4c conserva el argv condicional --model" 'PATCH_IM_MODEL_ARGS="--model $PATCH_IM_MODEL_OVERRIDE"'
+assert_tdd_contains "4c usa el frontmatter sin override" 'PATCH_IM_MODEL_VISIBLE="$(resolve_declared_agent_model "$STAGE2_AGENT")"'
+assert_tdd_contains "4c representa metadata ausente como heredado" 'PATCH_IM_MODEL_VISIBLE="<heredado>"'
+assert_tdd_contains "4c anuncia la evidencia persistente" 'MODELS: stage 4c/patch-implementer -> $PATCH_IM_MODEL_VISIBLE ($PATCH_IM_MODEL_ORIGIN)'
+assert_tdd_order "4c anuncia antes del primer argv de claude" 'log "Invocando $STAGE2_AGENT (modelo: $PATCH_IM_MODEL_VISIBLE)..."' '--agent "$STAGE2_AGENT" $PATCH_IM_MODEL_ARGS'
+assert_tdd_count "4c conserva sus dos argv stream/text" 2 '--agent "$STAGE2_AGENT" $PATCH_IM_MODEL_ARGS'
+assert_tdd_count "los tres caminos etiquetan el override con el origen canonico" 3 'MODEL_ORIGIN="override --models"'
+assert_tdd_count "los tres caminos etiquetan frontmatter con el origen canonico" 3 'MODEL_ORIGIN="frontmatter"'
+assert_tdd_count "los tres caminos etiquetan heredado con el origen canonico" 3 'MODEL_ORIGIN="heredado"'
 
 # --- tmux-pipeline.sh: reenvio/rechazo de --models por modo (CA-3) -----------
 #
