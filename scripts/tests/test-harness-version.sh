@@ -15,9 +15,10 @@
 #   - TDD e IaC conservan HARNESS_VERSION/HARNESS_VERSION_JSON calculados UNA
 #     vez en el prologo e interpolados como "harness_version":<string o null>
 #     en sus escrituras feliz y de aborto de pipeline-history.jsonl.
-#   - Tooling resuelve HARNESS_IDENTITY_JSON una unica vez contra el runtime
-#     activo antes de producir evidencia durable, e incluye el objeto identity
-#     (version, commit y estado) en sus escrituras feliz y de aborto.
+#   - Tooling inicializa HARNESS_IDENTITY_JSON desde el paquete y lo revalida
+#     una unica vez contra el runtime activo antes de producir evidencia
+#     durable. Sus escrituras feliz y de aborto incluyen el objeto identity
+#     (version, commit y estado).
 #
 # Las pruebas de get_harness_version usan un fixture propio (copia de
 # _pipeline-common.sh + un .claude-plugin/plugin.json de prueba en un dir
@@ -43,7 +44,7 @@
 #       a plugin.json ausente: HARNESS_VERSION queda vacia y el script sigue
 #       corriendo, en vez de morir en el prologo (CA-1).
 #   [I] retrocompatibilidad: metrics-report.sh agrega sin cambios un historial
-#       mixto de lineas legadas (sin el campo) y nuevas (con el campo) --
+#       mixto de lineas legadas, con version plana y con identity --
 #       nada se migra ni se reescribe (CA-4).
 #
 # Uso: scripts/tests/test-harness-version.sh
@@ -241,11 +242,11 @@ else
 fi
 
 identity_line=$(grep -n 'HARNESS_IDENTITY_JSON="\$(get_harness_identity_json "\$MEFISTO_RUNTIME_RESUELTO")"' "$TOOLING_PATH" | head -n1 | cut -d: -f1)
-history_line=$(grep -n 'HISTORY_FILE="\$(mefisto_state_path' "$TOOLING_PATH" | head -n1 | cut -d: -f1)
-if [ -n "$identity_line" ] && [ -n "$history_line" ] && [ "$identity_line" -lt "$history_line" ]; then
+evidence_line=$(grep -n 'echo "Pipeline tooling iniciado: \$TIMESTAMP" > "\$LOG_FILE"' "$TOOLING_PATH" | head -n1 | cut -d: -f1)
+if [ -n "$identity_line" ] && [ -n "$evidence_line" ] && [ "$identity_line" -lt "$evidence_line" ]; then
     pass "F-4 (tooling-pipeline.sh): la identidad validada antecede a la evidencia durable"
 else
-    fail "F-4 (tooling-pipeline.sh): la identidad (linea $identity_line) no antecede al historial (linea $history_line)"
+    fail "F-4 (tooling-pipeline.sh): la identidad (linea $identity_line) no antecede a la primera evidencia durable (linea $evidence_line)"
 fi
 
 # -------- Bloque G: contratos de history por pipeline --------
@@ -265,7 +266,7 @@ done
 
 tooling_identity_args=$(grep -c -- '--argjson identity "\$HARNESS_IDENTITY_JSON"' "$TOOLING_PATH")
 tooling_identity_fields=$(grep -c 'identity:\$identity' "$TOOLING_PATH")
-tooling_flat_fields=$(grep -c '\\"harness_version\\"' "$TOOLING_PATH")
+tooling_flat_fields=$(grep -Ec '\\"harness_version\\"|(^|[,{[:space:]])harness_version[[:space:]]*:' "$TOOLING_PATH")
 if [ "$tooling_identity_args" = "2" ] && [ "$tooling_identity_fields" = "2" ]; then
     pass "G-2 (tooling-pipeline.sh): los historiales feliz y de aborto reciben el objeto identity"
 else
