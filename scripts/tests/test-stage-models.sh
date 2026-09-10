@@ -32,6 +32,9 @@
 #   iac-pipeline.sh         - anuncia una sola vez por stage el modelo declarado
 #                            por infra-writer/infra-reviewer (o <heredado>) y lo
 #                            persiste sin agregar overrides al argv.
+#   scaffold-pipeline.sh     - anuncia y persiste una vez el modelo declarado de
+#                            domain-scaffolder (o <heredado>) sin alterar sus
+#                            invocaciones iniciales ni las sondas de hold.
 #   herdr-pipeline.sh       - la otra mitad de CA-3: dentro de un pane herdr,
 #                            tmux-pipeline.sh delega con `exec herdr-pipeline.sh
 #                            "$@"`, asi que el flag tiene que sobrevivir tambien
@@ -96,6 +99,8 @@ R=$(resolve_declared_agent_model "infra-writer")
 if [ "$R" = "sonnet" ]; then pass "infra-writer declara sonnet"; else fail "infra-writer deberia declarar 'sonnet' (obtenido '$R')"; fi
 R=$(resolve_declared_agent_model "infra-reviewer")
 if [ "$R" = "opus" ]; then pass "infra-reviewer declara opus"; else fail "infra-reviewer deberia declarar 'opus' (obtenido '$R')"; fi
+R=$(resolve_declared_agent_model "domain-scaffolder")
+if [ "$R" = "sonnet" ]; then pass "domain-scaffolder declara sonnet"; else fail "domain-scaffolder deberia declarar 'sonnet' (obtenido '$R')"; fi
 
 echo ""
 echo "[1] parse_stage_models: spec vacio deja el mapa vacio y no aborta (CA-2: sin --models, nada cambia)"
@@ -331,6 +336,58 @@ if [ "$IAC_MODEL_ARG_COUNT" -eq 0 ]; then
     pass "IaC no agrega --model al argv inicial ni a las sondas de hold"
 else
     fail "IaC no deberia agregar --model (obtenidos $IAC_MODEL_ARG_COUNT)"
+fi
+
+# --- scaffold-pipeline.sh: modelo declarado sin override -----------------------
+SCAFFOLD_PIPELINE="$REPO_ROOT/scripts/scaffold-pipeline.sh"
+SCAFFOLD_CONTENT=$(cat "$SCAFFOLD_PIPELINE")
+
+assert_scaffold_contains() {
+    local description="$1" expected="$2"
+    case "$SCAFFOLD_CONTENT" in
+        *"$expected"*) pass "$description" ;;
+        *) fail "$description -- no se encontro: $expected" ;;
+    esac
+}
+
+assert_scaffold_count() {
+    local description="$1" expected="$2" needle="$3" actual
+    actual=$(grep -cF -- "$needle" "$SCAFFOLD_PIPELINE" || true)
+    if [ "$actual" -eq "$expected" ]; then
+        pass "$description"
+    else
+        fail "$description -- esperado $expected, obtenido $actual: $needle"
+    fi
+}
+
+assert_scaffold_order() {
+    local description="$1" first="$2" second="$3" first_line second_line
+    first_line=$(grep -nF -- "$first" "$SCAFFOLD_PIPELINE" | cut -d: -f1 | head -n1)
+    second_line=$(grep -nF -- "$second" "$SCAFFOLD_PIPELINE" | cut -d: -f1 | head -n1)
+    if [ -n "$first_line" ] && [ -n "$second_line" ] && [ "$first_line" -lt "$second_line" ]; then
+        pass "$description"
+    else
+        fail "$description -- orden obtenido: '${first:-ausente}'=$first_line, '${second:-ausente}'=$second_line"
+    fi
+}
+
+echo ""
+echo "[10e] scaffold: anuncia el modelo declarado una vez y conserva el argv (CA-1 a CA-5)"
+assert_scaffold_contains "consulta el helper compartido antes del encabezado" 'SCAFFOLD_AGENT_MODEL_VISIBLE="$(resolve_declared_agent_model "domain-scaffolder")"'
+assert_scaffold_contains "representa metadata ausente como heredado" 'SCAFFOLD_AGENT_MODEL_VISIBLE="<heredado>"'
+assert_scaffold_contains "etiqueta el modelo declarado" 'SCAFFOLD_AGENT_MODEL_ORIGIN="frontmatter"'
+assert_scaffold_contains "etiqueta el fallback heredado" 'SCAFFOLD_AGENT_MODEL_ORIGIN="heredado"'
+assert_scaffold_contains "muestra el modelo en el encabezado persistente y visible" 'header "Invocando domain-scaffolder (modelo: $SCAFFOLD_AGENT_MODEL_VISIBLE)"'
+assert_scaffold_contains "persiste evidencia con el formato canonico" 'MODELS: stage scaffold/domain-scaffolder -> $SCAFFOLD_AGENT_MODEL_VISIBLE ($SCAFFOLD_AGENT_MODEL_ORIGIN)'
+assert_scaffold_order "resuelve el modelo antes de anunciarlo" 'SCAFFOLD_AGENT_MODEL_VISIBLE="$(resolve_declared_agent_model "domain-scaffolder")"' 'header "Invocando domain-scaffolder (modelo: $SCAFFOLD_AGENT_MODEL_VISIBLE)"'
+assert_scaffold_order "registra evidencia durable antes del primer argv de claude" 'MODELS: stage scaffold/domain-scaffolder -> $SCAFFOLD_AGENT_MODEL_VISIBLE ($SCAFFOLD_AGENT_MODEL_ORIGIN)' '--agent domain-scaffolder'
+assert_scaffold_count "emite una sola evidencia durable, incluso con sondas de hold" 1 'MODELS: stage scaffold/domain-scaffolder -> $SCAFFOLD_AGENT_MODEL_VISIBLE ($SCAFFOLD_AGENT_MODEL_ORIGIN)'
+assert_scaffold_count "conserva los dos argv de claude para intento y sonda" 2 '--agent domain-scaffolder'
+SCAFFOLD_MODEL_ARG_COUNT=$(grep -cF -- '--model' "$SCAFFOLD_PIPELINE" || true)
+if [ "$SCAFFOLD_MODEL_ARG_COUNT" -eq 0 ]; then
+    pass "scaffold no agrega --model al argv inicial ni a las sondas de hold"
+else
+    fail "scaffold no deberia agregar --model (obtenidos $SCAFFOLD_MODEL_ARG_COUNT)"
 fi
 
 # --- tmux-pipeline.sh: reenvio/rechazo de --models por modo (CA-3) -----------
