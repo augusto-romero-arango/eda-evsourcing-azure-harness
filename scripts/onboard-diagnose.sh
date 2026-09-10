@@ -161,7 +161,8 @@ row() {
 }
 
 main() {
-    CONFIG=".claude/harness.config.json"
+    CONFIG=""
+    CONFIG_VALID=0
     N_OK=0
     N_FALTA=0
     N_NV=0
@@ -205,7 +206,7 @@ main() {
     echo ""
 
     # --- 1. Configuracion: reusa load_harness_config (#78 = fuente de verdad) ---
-    echo "Configuracion (.claude/harness.config.json):"
+    echo "Configuracion (harness.config.json efectivo):"
     COMMON="$SCRIPT_DIR/_pipeline-common.sh"
     if [ -f "$COMMON" ]; then
         source "$COMMON" >/dev/null 2>&1
@@ -215,14 +216,16 @@ main() {
         LHC_ERR=$(cat "$LHC_TMP" 2>/dev/null)
         rm -f "$LHC_TMP"
         if [ "$LHC_RC" -eq 0 ]; then
-            row OK "el archivo existe y parsea con jq"
+            CONFIG="$HARNESS_CONFIG_PATH"
+            CONFIG_VALID=1
+            row OK "config efectivo $CONFIG existe y parsea con jq"
             row OK "campos requeridos presentes (projectName, namespacePrefix, solutionFile)"
             if [ -n "${HARNESS_BC_NAME:-}" ]; then
                 row OK "boundedContext declarado: name='${HARNESS_BC_NAME}' domains='${HARNESS_BC_DOMAINS}'"
             else
                 row FALTA "boundedContext ausente o invalido (campo obligatorio, MEF-ADR-0023)"
                 PA_CONFIG_FALTA=1
-                ACTIONS="${ACTIONS}  - Falta 'boundedContext' en .claude/harness.config.json. Añade:
+                ACTIONS="${ACTIONS}  - Falta 'boundedContext' en $CONFIG. Añade:
     \"boundedContext\": { \"name\": \"<NombreDetuBC>\", \"domains\": [<tus domainLabels>] }
   Los dominios deben ser un subconjunto de domainLabels. Ver README seccion 'Migracion para consumidores existentes'.
 "
@@ -236,12 +239,12 @@ main() {
             row FALTA "configuracion invalida o incompleta"
             PA_CONFIG_FALTA=1
             printf '%s\n' "$LHC_ERR" | while IFS= read -r l; do [ -n "$l" ] && echo "                  $l"; done
-            ACTIONS="${ACTIONS}  - Corrige .claude/harness.config.json segun el detalle de arriba (README, seccion \"Configurar el consumidor\").
+            ACTIONS="${ACTIONS}  - Corrige el config canonico .mefisto/harness.config.json (o el fallback legacy efectivo que muestra el error) segun el detalle de arriba (README, seccion \"Configurar el consumidor\").
 "
         fi
     else
         row NV "no se hallo load_harness_config del plugin (config sin validar)"
-        if [ -f "$CONFIG" ]; then echo "                  (el archivo $CONFIG si existe)"; else echo "                  (el archivo $CONFIG no existe)"; fi
+        if [ -f ".mefisto/harness.config.json" ]; then echo "                  (el config canonico .mefisto/harness.config.json si existe)"; elif [ -f ".claude/harness.config.json" ]; then echo "                  (solo existe el fallback legacy .claude/harness.config.json)"; else echo "                  (no existe config canonico ni fallback legacy)"; fi
         ACTIONS="${ACTIONS}  - No se pudo resolver el plugin para reusar load_harness_config; reinstala mefisto o reabre la sesion (hook SessionStart).
 "
     fi
@@ -398,7 +401,7 @@ main() {
     # --- 7. Registro secrets[] (issue #256, informativo) ---
     echo ""
     echo "Registro harness.config.json > secrets[] (siembra data-driven -- MEF-ADR-0025, issue #256):"
-    if [ -n "${HARNESS_SECRETS_NAMES:-}" ]; then
+    if [ "$CONFIG_VALID" -eq 1 ] && jq -e 'has("secrets")' "$CONFIG" >/dev/null 2>&1; then
         read -ra SEC_NAMES <<<"$HARNESS_SECRETS_NAMES"
         read -ra SEC_TYPES <<<"$HARNESS_SECRETS_TYPES"
         read -ra SEC_VALUES <<<"$HARNESS_SECRETS_VALUES"
@@ -414,60 +417,55 @@ main() {
                 fi
             done
         fi
+    elif [ "$CONFIG_VALID" -eq 1 ]; then
+        row NV "secrets[] no declarado todavia (normal antes del primer /infra-base)"
     else
-        row NV "secrets[] no declarado todavia (normal antes del primer /infra-base o si el config es invalido -- ver seccion Configuracion)"
+        row NV "secrets[] no verificado porque el config efectivo no pudo cargarse (revisa la seccion Configuracion)"
     fi
 
     # --- 8. Bifurcacion de dos caminos de auth (tenancy.strategy, MEF-ADR-0028, issue #323 + #341, informativo) ---
     echo ""
     echo "Bifurcacion de dos caminos de auth -- (A) crecer / (B) POC (tenancy.strategy, MEF-ADR-0028):"
-    TENANCY_STRATEGY=$(jq -r '.tenancy.strategy // ""' "$CONFIG" 2>/dev/null)
-    case "$TENANCY_STRATEGY" in
-        "")
-            row NV "tenancy.strategy ausente -- camino (B) POC por defecto (etapa a, mono-tenant-transitorio, valido, no bloqueante)"
-            ;;
-        mono-tenant-transitorio)
-            row OK "tenancy.strategy = mono-tenant-transitorio -- camino (B) POC: sin autenticacion (etapa a)"
-            ;;
-        multi-tenant-header)
-            row OK "tenancy.strategy = multi-tenant-header -- camino (A) crecer: autenticacion orquestada desde el inicio (etapa b)"
-            PA_AUTH_PATH=1
-            ;;
-        *)
-            row NV "tenancy.strategy tiene un valor no reconocido: '$TENANCY_STRATEGY' (esperado mono-tenant-transitorio | multi-tenant-header)"
-            ;;
-    esac
+    if [ "$CONFIG_VALID" -eq 1 ]; then
+        TENANCY_STRATEGY=$(jq -r '.tenancy.strategy // ""' "$CONFIG")
+        case "$TENANCY_STRATEGY" in
+            "") row NV "tenancy.strategy ausente -- camino (B) POC por defecto (etapa a, mono-tenant-transitorio, valido, no bloqueante)" ;;
+            mono-tenant-transitorio) row OK "tenancy.strategy = mono-tenant-transitorio -- camino (B) POC: sin autenticacion (etapa a)" ;;
+            multi-tenant-header)
+                row OK "tenancy.strategy = multi-tenant-header -- camino (A) crecer: autenticacion orquestada desde el inicio (etapa b)"
+                PA_AUTH_PATH=1
+                ;;
+            *) row NV "tenancy.strategy tiene un valor no reconocido: '$TENANCY_STRATEGY' (esperado mono-tenant-transitorio | multi-tenant-header)" ;;
+        esac
+    else
+        row NV "tenancy.strategy no verificado porque el config efectivo no pudo cargarse (revisa la seccion Configuracion)"
+    fi
 
     # --- 9. Worker de proyecciones (projections.enabled, MEF-ADR-0034, issue #369, informativo) ---
     echo ""
     echo "Worker de proyecciones (projections.enabled, MEF-ADR-0034):"
-    # Fuente preferida: la variable derivada de load_harness_config. Pero esa funcion aborta
-    # (return 1, sin exportar nada) cuando el config es invalido -- p. ej. sin 'boundedContext',
-    # el estado exacto de un consumidor a medio migrar -- y ni siquiera corre cuando no se hallo
-    # el _pipeline-common.sh del plugin. En ambos casos la variable queda vacia, y reportar por eso
-    # "token ausente" seria FALSO: ademas apagaria en silencio el paso opt-in 6 (CA-4). Por eso, si
-    # no llego exportada, se re-deriva inline con jq desde $CONFIG -- mismo patron que la seccion 8
-    # (tenancy.strategy) y que los consumidores inline del token (infra-base-scaffolder,
-    # /scaffold-projections). Sin operador '//': en jq 'false' es falsy, asi que 'false // X'
-    # devuelve X y confundiria "deshabilitado" con "ausente".
     PROJECTIONS_ENABLED="${HARNESS_PROJECTIONS_ENABLED:-}"
     NS_PREFIX="${HARNESS_NAMESPACE_PREFIX:-}"
-    if [ -z "$PROJECTIONS_ENABLED" ]; then
-        PROJ_RAW=$(jq -r '.projections.enabled' "$CONFIG" 2>/dev/null)
-        if [ "$PROJ_RAW" = "true" ]; then PROJECTIONS_ENABLED="true"; else PROJECTIONS_ENABLED="false"; fi
-    fi
-    [ -z "$NS_PREFIX" ] && NS_PREFIX=$(jq -r '.namespacePrefix // ""' "$CONFIG" 2>/dev/null)
-    if [ "$PROJECTIONS_ENABLED" != "true" ]; then
-        row NV "projections.enabled ausente o en false -- BC no adopta proyecciones (opt-in, valido, no bloqueante)"
+    if [ "$CONFIG_VALID" -ne 1 ]; then
+        row NV "projections.enabled no verificado porque el config efectivo no pudo cargarse (revisa la seccion Configuracion)"
     elif [ -z "$NS_PREFIX" ]; then
-        row NV "projections.enabled=true, pero falta 'namespacePrefix' para derivar la ruta del worker (revisa la seccion Configuracion)"
+        row NV "projections.enabled no verificado: falta 'namespacePrefix' para derivar la ruta del worker (revisa la seccion Configuracion)"
     else
-        WORKER_CSPROJ="src/${NS_PREFIX}.Projections/${NS_PREFIX}.Projections.csproj"
-        if [ -f "$WORKER_CSPROJ" ]; then
-            row OK "projections.enabled=true -- worker ${NS_PREFIX}.Projections presente"
+        PROJ_RAW=$(jq -r 'if (.projections | type) == "object" and (.projections | has("enabled")) then .projections.enabled else "__AUSENTE__" end' "$CONFIG")
+        if [ "$PROJ_RAW" = "false" ]; then
+            row OK "projections.enabled=false -- opt-out explicito de proyecciones (valido)"
+        elif [ "$PROJ_RAW" = "__AUSENTE__" ] || [ "$PROJ_RAW" = "null" ]; then
+            row NV "projections.enabled ausente -- BC no declara proyecciones (opt-in, valido, no bloqueante)"
+        elif [ "$PROJECTIONS_ENABLED" != "true" ]; then
+            row NV "projections.enabled no es el booleano true ni false (opt-in no verificable, valido, no bloqueante)"
         else
-            row NV "projections.enabled=true, pero el worker ${NS_PREFIX}.Projections no existe todavia (corre /scaffold-projections)"
-            PA_PROJECTIONS_MISSING=1
+            WORKER_CSPROJ="src/${NS_PREFIX}.Projections/${NS_PREFIX}.Projections.csproj"
+            if [ -f "$WORKER_CSPROJ" ]; then
+                row OK "projections.enabled=true -- worker ${NS_PREFIX}.Projections presente"
+            else
+                row NV "projections.enabled=true, pero el worker ${NS_PREFIX}.Projections no existe todavia (corre /scaffold-projections)"
+                PA_PROJECTIONS_MISSING=1
+            fi
         fi
     fi
 
@@ -542,7 +540,7 @@ main() {
         fi
         if [ "$PA_CONFIG_FALTA" -eq 1 ]; then
             PA_STEP=$((PA_STEP + 1))
-            echo "  $PA_STEP. Corrige .claude/harness.config.json (detalle en \"Acciones sugeridas\" arriba)."
+            echo "  $PA_STEP. Corrige el config efectivo indicado arriba (canonico .mefisto/harness.config.json o fallback legacy)."
         fi
         if [ "$PA_LABELS_FALTA" -eq 1 ]; then
             PA_STEP=$((PA_STEP + 1))
