@@ -18,6 +18,7 @@ Se refinó #1180, segundo eslabón del gate consumidor multi-runtime, para preci
 - Los Agent Skills conservan `projections`/`comment-cleanup` en Claude y se adaptan como `mefisto-projections`/`mefisto-comment-cleanup` en OpenCode.
 - `tooling-writer` y `tooling-reviewer` solo declaran capacidades `read`, `edit` y `shell`; Skills/MCP se certifican por discovery, no ampliando sus permisos.
 - La raíz canónica que los hooks registran es `.mefisto/pipeline/.plugin-root`; Claude mantiene además el mirror legacy autorizado.
+- Una dependencia abierta impide lanzar un issue, pero no completar su Definition of Ready: el estado correcto es `estado:listo` junto con `bloqueado`.
 
 ## Decisiones
 
@@ -26,11 +27,11 @@ Se refinó #1180, segundo eslabón del gate consumidor multi-runtime, para preci
 - Exigir que `/mefisto-release patch` corra después de integrar #1179 y que la evidencia use el tag real, no `latest` ni la candidata v0.37.1 anticipada.
 - Retirar los smokes destructivos de runtime ausente/deriva del alcance real; #1180 certifica el camino alineado y deja esos estados a las suites existentes.
 - Mantener seis CAs homogéneos: baseline, release, instalación Claude, instalación OpenCode, discovery y diagnóstico/evidencia.
-- Conservar #1180 como `estado:borrador` y `bloqueado`: aún faltan el protocolo, la release y el consumidor completo materializados.
+- Marcar #1180 como `estado:listo` y conservar `bloqueado`: el body ya decide contexto, componente, ADRs, dependencias y verificaciones; el protocolo, la release y el consumidor completo producen inputs de ejecución, no decisiones de planeación.
 
 ## Descartado
 
-- Marcar #1180 `estado:listo` con referencias operacionales inexistentes.
+- Dejar #1180 en `estado:borrador` únicamente porque sus dependencias o referencias operacionales todavía no se materializaron.
 - Convertir #1180 en el aprovisionador de Azure/CI del consumidor; mezclaría repositorios, componentes y una tarea de varias horas.
 - Usar un baseline mínimo que permitiera `NO VERIFICADO` en Azure/CI.
 - Desactivar instalaciones globales reales para reproducir estados negativos ya cubiertos por tests.
