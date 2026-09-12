@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-scaffold-text-integrity.sh -- Gates de commit, integridad y pines OpenTelemetry del scaffold (#1229, #1237, #1242, #1246).
+# test-scaffold-text-integrity.sh -- Gates de commit, integridad y pines OpenTelemetry del scaffold (#1229, #1237, #1242, #1246, #1247).
 
 set -uo pipefail
 
@@ -81,7 +81,7 @@ case "$SCAFFOLD_FIXTURE" in
         ;;
     whitespace) printf 'namespace Certificacion.Prueba; \n' > "$PWD/src/Certificacion.Prueba/Program.cs" ;;
     crlf) printf 'namespace Certificacion.Prueba;\r\n' > "$PWD/src/Certificacion.Prueba/Program.cs" ;;
-    otel-1153|otel-exporter-1153|otel-hosting-duplicado|otel-exporter-duplicado)
+    otel-1131|otel-exporter-1131|otel-hosting-duplicado|otel-exporter-duplicado)
         printf 'namespace Certificacion.Prueba;\n' > "$PWD/src/Certificacion.Prueba/Program.cs"
         ;;
     runtime-solo)
@@ -89,17 +89,17 @@ case "$SCAFFOLD_FIXTURE" in
         ;;
 esac
 case "$SCAFFOLD_FIXTURE" in
-    otel-1153)
-        hosting_version="1.15.3"
-        exporter_version="1.15.3"
-        ;;
-    otel-exporter-1153)
-        hosting_version="1.13.1"
-        exporter_version="1.15.3"
-        ;;
-    *)
+    otel-1131)
         hosting_version="1.13.1"
         exporter_version="1.13.1"
+        ;;
+    otel-exporter-1131)
+        hosting_version="1.15.3"
+        exporter_version="1.13.1"
+        ;;
+    *)
+        hosting_version="1.15.3"
+        exporter_version="1.15.3"
         ;;
 esac
 if [ "$SCAFFOLD_FIXTURE" != "otel-function-ausente" ]; then
@@ -108,7 +108,7 @@ if [ "$SCAFFOLD_FIXTURE" != "otel-function-ausente" ]; then
 EOF_CSPROJ
 fi
 if [ "$SCAFFOLD_FIXTURE" = "otel-hosting-duplicado" ]; then
-    printf '<Project><ItemGroup><PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.13.1" /><PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.13.1" /></ItemGroup></Project>\n' > "$PWD/src/Certificacion.Prueba/Certificacion.Prueba.csproj"
+    printf '<Project><ItemGroup><PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" /><PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" /></ItemGroup></Project>\n' > "$PWD/src/Certificacion.Prueba/Certificacion.Prueba.csproj"
 fi
 if [ "$SCAFFOLD_FIXTURE" != "otel-tests-ausente" ]; then
     cat > "$PWD/tests/Certificacion.Prueba.Tests/Certificacion.Prueba.Tests.csproj" <<EOF_CSPROJ
@@ -116,7 +116,7 @@ if [ "$SCAFFOLD_FIXTURE" != "otel-tests-ausente" ]; then
 EOF_CSPROJ
 fi
 if [ "$SCAFFOLD_FIXTURE" = "otel-exporter-duplicado" ]; then
-    printf '<Project><ItemGroup><PackageReference Include="OpenTelemetry.Exporter.InMemory" Version="1.13.1" /><PackageReference Include="OpenTelemetry.Exporter.InMemory" Version="1.13.1" /></ItemGroup></Project>\n' > "$PWD/tests/Certificacion.Prueba.Tests/Certificacion.Prueba.Tests.csproj"
+    printf '<Project><ItemGroup><PackageReference Include="OpenTelemetry.Exporter.InMemory" Version="1.15.3" /><PackageReference Include="OpenTelemetry.Exporter.InMemory" Version="1.15.3" /></ItemGroup></Project>\n' > "$PWD/tests/Certificacion.Prueba.Tests/Certificacion.Prueba.Tests.csproj"
 fi
 if [ "$SCAFFOLD_FIXTURE" = "runtime-solo" ]; then
     git add src/Certificacion.Prueba/Program.cs \
@@ -133,34 +133,39 @@ EOF
     chmod +x "$bin/gh" "$bin/claude"
 }
 
-assert_otlp_gate_legacy_contract() {
+assert_otlp_gate_contract() {
     local resultado
-    resultado=$(python3 - "$PIPELINE" 2>&1 <<'PY'
+    resultado=$(python3 - "$PIPELINE" "$REPO_ROOT/agents/domain-scaffolder.md" 2>&1 <<'PY'
 import re
 import sys
 from pathlib import Path
 
 pipeline = Path(sys.argv[1]).read_text()
+agent = Path(sys.argv[2]).read_text()
 packages = (
     "OpenTelemetry.Extensions.Hosting",
     "OpenTelemetry.Exporter.InMemory",
 )
-# Issue #1246 actualiza la receta publicada pero excluye expresamente este pipeline: el gate
-# conserva 1.13.1 hasta el issue mecanico posterior. Este test sigue cubriendo su comportamiento
-# actual sin exigir que dos componentes que se entregan por separado cambien en el mismo PR.
-pin = "1.13.1"
+# Issue #1247 alinea el gate con las dos recetas publicadas despues de que #1246 establecio el
+# contrato: el pipeline debe rechazar cualquier pin que no pueda resolver el stack completo.
+pin = "1.15.3"
 if re.search(rf'OTEL_PIN_CANONICO="{re.escape(pin)}"', pipeline) is None:
-    raise SystemExit(f"el gate diferido no conserva su pin previo: {pin}")
+    raise SystemExit(f"el gate no fija el pin canonico: {pin}")
 
 for package in packages:
     if f'verificar_pin_otlp "{package}" "$OTEL_PIN_CANONICO"' not in pipeline:
-        raise SystemExit(f"el gate diferido no verifica {package}")
+        raise SystemExit(f"el gate no verifica {package}")
+    recipes = re.findall(
+        rf'<PackageReference Include="{re.escape(package)}" Version="([^"]+)" />', agent
+    )
+    if recipes != [pin]:
+        raise SystemExit(f"la receta de {package} no comparte el pin canonico {pin}: {recipes}")
 PY
 )
     if [ $? -eq 0 ]; then
-        pass "el gate mecanico diferido conserva su contrato previo sin seguir la receta nueva"
+        pass "el gate mecanico comparte el contrato 1.15.3 de las recetas"
     else
-        fail "contrato del gate mecanico diferido invalido: $resultado"
+        fail "contrato del gate mecanico invalido: $resultado"
     fi
 }
 
@@ -181,9 +186,9 @@ run_case() {
     LAST_GH_LOG="$GH_STUB_LOG"
 }
 
-echo "[1] Output sano: verifica el rango y conserva push/PR (CA-1/CA-4)"
+echo "[1] Output sano: verifica el rango y conserva push/PR (CA-1/CA-2)"
 assert_gate_order
-assert_otlp_gate_legacy_contract
+assert_otlp_gate_contract
 run_case sano
 if [ "$LAST_RC" -eq 0 ]; then pass "el scaffold sano completa"; else fail "el scaffold sano fallo (rc $LAST_RC)"; fi
 if git -C "$LAST_CONSUMER" ls-remote --exit-code origin refs/heads/scaffold-prueba >/dev/null 2>&1; then pass "el camino sano hace push"; else fail "el camino sano no publico la rama"; fi
@@ -218,25 +223,25 @@ if ! git -C "$LAST_CONSUMER" ls-remote --exit-code origin refs/heads/scaffold-pr
 if ! grep -qF 'gh pr create' "$LAST_GH_LOG"; then pass "CRLF no crea PR"; else fail "CRLF intento crear PR"; fi
 if grep -qF 'Program.cs:1:' "$LAST_CONSUMER/.claude/pipeline/logs/"scaffold-*.log 2>/dev/null; then pass "CRLF queda en el diagnostico"; else fail "CRLF no quedo en el diagnostico"; fi
 
-echo "[6] Pines OpenTelemetry: el runner rechaza la deriva observada antes del push (CA-1/CA-2/CA-3)"
-run_case otel-1153
-if [ "$LAST_RC" -ne 0 ]; then pass "los pines 1.15.3 abortan"; else fail "los pines 1.15.3 no deben completar"; fi
-if ! git -C "$LAST_CONSUMER" ls-remote --exit-code origin refs/heads/scaffold-prueba >/dev/null 2>&1; then pass "los pines 1.15.3 no hacen push"; else fail "los pines 1.15.3 publicaron una rama"; fi
-if ! grep -qF 'gh pr create' "$LAST_GH_LOG"; then pass "los pines 1.15.3 no crean PR"; else fail "los pines 1.15.3 intentaron crear PR"; fi
-if grep -qF 'OpenTelemetry.Extensions.Hosting' "$TMP_DIR/otel-1153.out" \
-    && grep -qF '1.13.1' "$TMP_DIR/otel-1153.out" \
-    && grep -qF 'Certificacion.Prueba.csproj' "$TMP_DIR/otel-1153.out"; then
+echo "[6] Pines OpenTelemetry: el runner rechaza 1.13.1 antes del push (CA-1/CA-3)"
+run_case otel-1131
+if [ "$LAST_RC" -ne 0 ]; then pass "los pines 1.13.1 abortan"; else fail "los pines 1.13.1 no deben completar"; fi
+if ! git -C "$LAST_CONSUMER" ls-remote --exit-code origin refs/heads/scaffold-prueba >/dev/null 2>&1; then pass "los pines 1.13.1 no hacen push"; else fail "los pines 1.13.1 publicaron una rama"; fi
+if ! grep -qF 'gh pr create' "$LAST_GH_LOG"; then pass "los pines 1.13.1 no crean PR"; else fail "los pines 1.13.1 intentaron crear PR"; fi
+if grep -qF 'OpenTelemetry.Extensions.Hosting' "$TMP_DIR/otel-1131.out" \
+    && grep -qF '1.15.3' "$TMP_DIR/otel-1131.out" \
+    && grep -qF 'Certificacion.Prueba.csproj' "$TMP_DIR/otel-1131.out"; then
     pass "el mismatch identifica paquete, pin esperado y csproj"
 else
     fail "el mismatch no deja diagnostico accionable"
 fi
 
-echo "[7] Pin de tests: el runner tambien rechaza su deriva antes del push (CA-2/CA-3)"
-run_case otel-exporter-1153
+echo "[7] Pin de tests: el runner tambien rechaza su deriva antes del push (CA-3)"
+run_case otel-exporter-1131
 if [ "$LAST_RC" -ne 0 ] && ! git -C "$LAST_CONSUMER" ls-remote --exit-code origin refs/heads/scaffold-prueba >/dev/null 2>&1 \
-    && grep -qF 'OpenTelemetry.Exporter.InMemory' "$TMP_DIR/otel-exporter-1153.out" \
-    && grep -qF '1.13.1' "$TMP_DIR/otel-exporter-1153.out" \
-    && grep -qF 'Certificacion.Prueba.Tests.csproj' "$TMP_DIR/otel-exporter-1153.out"; then
+    && grep -qF 'OpenTelemetry.Exporter.InMemory' "$TMP_DIR/otel-exporter-1131.out" \
+    && grep -qF '1.15.3' "$TMP_DIR/otel-exporter-1131.out" \
+    && grep -qF 'Certificacion.Prueba.Tests.csproj' "$TMP_DIR/otel-exporter-1131.out"; then
     pass "el mismatch de tests aborta antes del push con diagnostico completo"
 else
     fail "el mismatch de tests no fue rechazado correctamente"
@@ -246,7 +251,7 @@ echo "[8] Duplicados: ambos paquetes abortan antes del push (CA-3)"
 run_case otel-hosting-duplicado
 if [ "$LAST_RC" -ne 0 ] && ! git -C "$LAST_CONSUMER" ls-remote --exit-code origin refs/heads/scaffold-prueba >/dev/null 2>&1 \
     && grep -qF 'OpenTelemetry.Extensions.Hosting' "$TMP_DIR/otel-hosting-duplicado.out" \
-    && grep -qF '1.13.1' "$TMP_DIR/otel-hosting-duplicado.out" \
+    && grep -qF '1.15.3' "$TMP_DIR/otel-hosting-duplicado.out" \
     && grep -qF 'Certificacion.Prueba.csproj' "$TMP_DIR/otel-hosting-duplicado.out"; then
     pass "el duplicado de produccion aborta antes del push con diagnostico completo"
 else
@@ -255,7 +260,7 @@ fi
 run_case otel-exporter-duplicado
 if [ "$LAST_RC" -ne 0 ] && ! git -C "$LAST_CONSUMER" ls-remote --exit-code origin refs/heads/scaffold-prueba >/dev/null 2>&1 \
     && grep -qF 'OpenTelemetry.Exporter.InMemory' "$TMP_DIR/otel-exporter-duplicado.out" \
-    && grep -qF '1.13.1' "$TMP_DIR/otel-exporter-duplicado.out" \
+    && grep -qF '1.15.3' "$TMP_DIR/otel-exporter-duplicado.out" \
     && grep -qF 'Certificacion.Prueba.Tests.csproj' "$TMP_DIR/otel-exporter-duplicado.out"; then
     pass "el duplicado de tests aborta antes del push con diagnostico completo"
 else
@@ -266,7 +271,7 @@ echo "[9] Proyectos ausentes: ambos csproj abortan antes del push (CA-3)"
 run_case otel-function-ausente
 if [ "$LAST_RC" -ne 0 ] && ! git -C "$LAST_CONSUMER" ls-remote --exit-code origin refs/heads/scaffold-prueba >/dev/null 2>&1 \
     && grep -qF 'OpenTelemetry.Extensions.Hosting' "$TMP_DIR/otel-function-ausente.out" \
-    && grep -qF '1.13.1' "$TMP_DIR/otel-function-ausente.out" \
+    && grep -qF '1.15.3' "$TMP_DIR/otel-function-ausente.out" \
     && grep -qF 'Certificacion.Prueba.csproj' "$TMP_DIR/otel-function-ausente.out"; then
     pass "el proyecto de produccion ausente aborta antes del push con diagnostico completo"
 else
@@ -275,7 +280,7 @@ fi
 run_case otel-tests-ausente
 if [ "$LAST_RC" -ne 0 ] && ! git -C "$LAST_CONSUMER" ls-remote --exit-code origin refs/heads/scaffold-prueba >/dev/null 2>&1 \
     && grep -qF 'OpenTelemetry.Exporter.InMemory' "$TMP_DIR/otel-tests-ausente.out" \
-    && grep -qF '1.13.1' "$TMP_DIR/otel-tests-ausente.out" \
+    && grep -qF '1.15.3' "$TMP_DIR/otel-tests-ausente.out" \
     && grep -qF 'Certificacion.Prueba.Tests.csproj' "$TMP_DIR/otel-tests-ausente.out"; then
     pass "el proyecto de tests ausente aborta antes del push con diagnostico completo"
 else

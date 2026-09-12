@@ -391,7 +391,7 @@ success "Integridad textual verificada"
 # --- Gate de pines OpenTelemetry ---
 # El agente puede omitir su propio Paso 7 aunque termine exitosamente. Esta frontera
 # determinista valida el resultado consolidado antes de publicar la rama o crear el PR.
-OTEL_PIN_CANONICO="1.13.1"
+OTEL_PIN_CANONICO="1.15.3"
 FUNCTION_APP_CSPROJ="$WORKTREE_PATH/src/${HARNESS_NAMESPACE_PREFIX}.${PASCAL_CASE}/${HARNESS_NAMESPACE_PREFIX}.${PASCAL_CASE}.csproj"
 DOMAIN_TESTS_CSPROJ="$WORKTREE_PATH/tests/${HARNESS_NAMESPACE_PREFIX}.${PASCAL_CASE}.Tests/${HARNESS_NAMESPACE_PREFIX}.${PASCAL_CASE}.Tests.csproj"
 
