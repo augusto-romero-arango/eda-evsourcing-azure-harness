@@ -388,6 +388,71 @@ if ! git -C "$WORKTREE_PATH" diff --check origin/main...HEAD >>"$LOG_FILE" 2>&1;
 fi
 success "Integridad textual verificada"
 
+# --- Gate de pines OpenTelemetry ---
+# El agente puede omitir su propio Paso 7 aunque termine exitosamente. Esta frontera
+# determinista valida el resultado consolidado antes de cualquier efecto remoto.
+OTEL_PIN_CANONICO="1.13.1"
+FUNCTION_APP_CSPROJ="$WORKTREE_PATH/src/${HARNESS_NAMESPACE_PREFIX}.${PASCAL_CASE}/${HARNESS_NAMESPACE_PREFIX}.${PASCAL_CASE}.csproj"
+DOMAIN_TESTS_CSPROJ="$WORKTREE_PATH/tests/${HARNESS_NAMESPACE_PREFIX}.${PASCAL_CASE}.Tests/${HARNESS_NAMESPACE_PREFIX}.${PASCAL_CASE}.Tests.csproj"
+
+verificar_pin_otlp() {
+    local paquete="$1"
+    local version_esperada="$2"
+    local archivo="$3"
+
+    if [ ! -f "$archivo" ]; then
+        echo "ERROR: paquete $paquete: se esperaba el pin $version_esperada en $archivo, pero el archivo no existe."
+        return 1
+    fi
+
+    python3 - "$paquete" "$version_esperada" "$archivo" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+paquete, version_esperada, archivo = sys.argv[1:]
+
+try:
+    raiz = ET.parse(archivo).getroot()
+except ET.ParseError as error:
+    print(
+        f"ERROR: paquete {paquete}: se esperaba el pin {version_esperada} en {archivo}, "
+        f"pero el XML no es valido: {error}."
+    )
+    raise SystemExit(1)
+
+referencias = [
+    elemento
+    for elemento in raiz.iter()
+    if elemento.tag.rsplit("}", 1)[-1] == "PackageReference"
+    and elemento.get("Include") == paquete
+]
+
+if len(referencias) != 1:
+    print(
+        f"ERROR: paquete {paquete}: se esperaba exactamente una referencia con pin "
+        f"{version_esperada} en {archivo}; se encontraron {len(referencias)}."
+    )
+    raise SystemExit(1)
+
+version_real = referencias[0].get("Version")
+if version_real != version_esperada:
+    print(
+        f"ERROR: paquete {paquete}: se esperaba el pin {version_esperada} en {archivo}; "
+        f"se encontro {version_real or 'ningun valor'} como atributo Version."
+    )
+    raise SystemExit(1)
+PY
+}
+
+header "Verificando pines OpenTelemetry"
+if ! verificar_pin_otlp "OpenTelemetry.Extensions.Hosting" "$OTEL_PIN_CANONICO" "$FUNCTION_APP_CSPROJ" 2>&1 | tee -a "$LOG_FILE"; then
+    abort "El pin de OpenTelemetry.Extensions.Hosting debe ser $OTEL_PIN_CANONICO en $FUNCTION_APP_CSPROJ. Corrige el scaffold sin normalizarlo automaticamente."
+fi
+if ! verificar_pin_otlp "OpenTelemetry.Exporter.InMemory" "$OTEL_PIN_CANONICO" "$DOMAIN_TESTS_CSPROJ" 2>&1 | tee -a "$LOG_FILE"; then
+    abort "El pin de OpenTelemetry.Exporter.InMemory debe ser $OTEL_PIN_CANONICO en $DOMAIN_TESTS_CSPROJ. Corrige el scaffold sin normalizarlo automaticamente."
+fi
+success "Pines OpenTelemetry verificados"
+
 # --- Push + Crear PR ---
 header "Creando PR"
 
