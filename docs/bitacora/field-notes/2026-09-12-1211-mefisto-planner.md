@@ -2,7 +2,7 @@
 fecha: 2026-09-12
 hora: 12:11
 sesion: mefisto-planner
-tema: Bypass del gate de pines OpenTelemetry por domain-scaffolder
+tema: Inconsistencia del canon OpenTelemetry del write-side
 ---
 
 ## Contexto
@@ -13,24 +13,30 @@ La tercera corrida de `/scaffold certificacion`, ya con Mefisto `v0.37.10`, term
 - El PR #5 queda limpio ante `git diff --check`, es mergeable y su Terraform Plan esta verde con `7 add, 1 change, 0 destroy`.
 - Pese a #1230, el Function App volvio a emitir `OpenTelemetry.Extensions.Hosting 1.15.3` y sus tests `OpenTelemetry.Exporter.InMemory 1.15.3`; la receta y MEF-ADR-0003 fijan `1.13.1`.
 - #1230 implemento el gate dentro del Paso 7 del prompt de `domain-scaffolder`. Su prueba demuestra que la funcion existe y funciona de forma aislada, pero `scripts/scaffold-pipeline.sh` no la ejecuta ni verifica semanticamente los `.csproj`.
-- Un agente puede salir 0 omitiendo una instruccion; build, tests y `git diff --check` permanecen verdes porque `1.15.3` es una version valida, aunque diverja del contrato arquitectonico.
+- La replica de Claude demostro que bajar solo esos dos pines no es viable: `dotnet build` falla durante restore con NU1605 porque `Azure.Monitor.OpenTelemetry.Exporter 1.8.2` exige `OpenTelemetry.Extensions.Hosting >= 1.15.3`. Los 25 tests no llegan a ejecutarse.
+- El registro oficial de NuGet confirma que toda la linea 1.8.x del exporter exige al menos Hosting 1.15.3; conservar Hosting 1.13.1 requeriria bajar el exporter hasta 1.4.0.
+- GitHub Advisory Database identifica `OpenTelemetry.Api` anterior a 1.15.3 como vulnerable a GHSA-g94r-2vxg-569j y 1.15.3 como primera version corregida.
+- Mientras llegaba esta evidencia, #1242 se implemento y mergeo mediante PR #1244. La frontera mecanica es util, pero codifico `OTEL_PIN_CANONICO=1.13.1` y una fixture sana que no representa un restore posible del stack completo.
 
 ## Decisiones
-- No mergear el PR consumidor #5: el plan no destructivo no compensa la deriva semantica conocida.
-- Crear #1242 para llevar el enforcement a la frontera determinista de `scripts/scaffold-pipeline.sh`, despues del commit defensivo y antes del push.
+- Conservar los pines 1.15.3 del PR consumidor #5; las dos ediciones de downgrade quedan descartadas y no deben commitearse.
+- #1242 llevo correctamente el enforcement a la frontera determinista de `scripts/scaffold-pipeline.sh`, pero su valor concreto debe corregirse antes de la siguiente certificacion de `/scaffold`.
 - Mantener #1230 como contrato de la receta, pero no considerarlo suficiente como gate operativo.
-- No actualizar el pin a `1.15.3` dentro de este fix; una subida requiere su propia decision coherente sobre ADR, receta, comentarios y pruebas.
-- Tras dimensionar el delta, el usuario decidio no regenerar todo el scaffold: corregira transparentemente en el PR #5 las dos referencias a `1.13.1` y mantendra #1242 como correccion del harness. Esta salida permite avanzar el baseline, pero no se registra como una certificacion intacta de `/scaffold` en `v0.37.10`.
+- Corregir el harness en tres issues secuenciales y pequenos: #1245 decide el canon en MEF-ADR-0003; #1246 alinea `domain-scaffolder`; #1247 cambia el gate y sus fixtures.
+- No revertir la estructura del gate de PR #1244: su cardinalidad, parseo XML, diagnosticos y posicion previa al push siguen siendo validos.
 
 ## Descartado
-- Aceptar el PR porque compila o porque ambos paquetes quedaron alineados entre si en `1.15.3`.
-- Corregir los dos `.csproj` manualmente en el consumidor.
+- Tratar `1.15.3` como una deriva incorrecta solo porque contradice un ADR desactualizado.
+- Bajar Hosting e InMemory a 1.13.1: produce NU1605 y reintroduce una version afectada por GHSA-g94r-2vxg-569j.
+- Bajar `Azure.Monitor.OpenTelemetry.Exporter` a 1.4.0 para conservar 1.13.1: retrocede el exporter sin una necesidad tecnica.
+- Revertir por completo PR #1244 en vez de corregir su constante y fixtures.
 - Atribuir la salida a una instalacion vieja: ambos markers observados apuntan a `0.37.10`.
 
 ## Preguntas abiertas
-- Verificar que el PR #5 cambie unicamente los dos pines a `1.13.1`, conserve `git diff --check` limpio y vuelva a ejecutar los checks antes del merge/apply.
-- Evaluar en un issue separado si el pin write-side debe evolucionar desde `1.13.1`; no es requisito para cerrar el bypass.
+- Descartar las dos ediciones sin commit del worktree consumidor `scratchpad/wt-pr5`, restaurar el estado remoto 1.15.3 y volver a ejecutar build/tests antes de decidir el merge del PR #5.
+- Implementar y liberar #1245 -> #1246 -> #1247 antes de usar nuevamente `/scaffold` como certificacion intacta del harness.
 
 ## Referencias
-Issues creados: #1242
+Issues creados: #1242, #1245, #1246, #1247
+PR del gate ya mergeado: #1244
 PR consumidor bloqueado: #5
