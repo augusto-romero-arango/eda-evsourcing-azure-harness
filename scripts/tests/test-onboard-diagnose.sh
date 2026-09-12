@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-onboard-diagnose.sh -- Tests de scripts/onboard-diagnose.sh (issue #443).
+# test-onboard-diagnose.sh -- Tests de scripts/onboard-diagnose.sh (issues #443, #1225).
 #
 # Cubre, sin invocar gh/az/jq reales (CA-4):
 #   S-1: row() -- los tres estados (OK/FALTA/cualquier otra cosa -> NO VERIFICADO)
@@ -311,7 +311,16 @@ GH
 cat > "$ONBOARD_BIN/az" <<'AZ'
 #!/usr/bin/env bash
 if [ "$1" = "account" ]; then exit 0; fi
-if [ "$1" = "ad" ]; then printf 'APP_ID_CENTINELA_NO_PUBLICAR\n'; fi
+if [ "$*" = 'ad app list --display-name ci-diagnostico --query [0].appId -o tsv' ]; then
+    case "${AZ_APP_MODE:-success}" in
+        success) printf 'APP_ID_CENTINELA_NO_PUBLICAR\n' ;;
+        absent) printf 'None\n' ;;
+        error)
+            printf 'ERROR_AZURE_CON_APP_ID_CENTINELA_NO_PUBLICAR\n' >&2
+            exit 1
+            ;;
+    esac
+fi
 AZ
 chmod +x "$ONBOARD_BIN/gh" "$ONBOARD_BIN/az"
 
@@ -352,13 +361,17 @@ jq '.secrets = [{"name":"legacy-ignorado","source":{"type":"github-secret","valu
 mv "$ONBOARD_REPO/.claude/harness.config.json.tmp" "$ONBOARD_REPO/.claude/harness.config.json"
 OUT=$(cd "$ONBOARD_REPO" && PATH="$ONBOARD_BIN:$PATH" bash "$REPO_ROOT/scripts/onboard-diagnose.sh" 2>&1)
 if printf '%s\n' "$OUT" | grep -Fq "[OK           ] config efectivo $ONBOARD_REPO_REAL/.mefisto/harness.config.json existe" \
-    && printf '%s\n' "$OUT" | grep -Fq '[OK           ] aplicacion de Entra "ci-diagnostico" existe' \
-    && ! printf '%s\n' "$OUT" | grep -Fq 'APP_ID_CENTINELA_NO_PUBLICAR' \
     && ! printf '%s\n' "$OUT" | grep -Fq "legacy-ignorado" \
     && ! printf '%s\n' "$OUT" | grep -Fq "multi-tenant-header"; then
-    pass "el config canónico prevalece, conserva OK de Entra y no expone el appId centinela"
+    pass "el config canónico prevalece y no mezcla datos del legacy"
 else
-    fail "el diagnóstico no preservó el estado esperado o expuso datos del consumidor"
+    fail "el diagnóstico no usó exclusivamente el config canónico efectivo"
+fi
+if printf '%s\n' "$OUT" | grep -Fqx '  [OK           ] aplicacion de Entra "ci-diagnostico" existe' \
+    && ! printf '%s\n' "$OUT" | grep -Fq 'APP_ID_CENTINELA_NO_PUBLICAR'; then
+    pass "la aplicación Entra conserva nombre y OK sin exponer el appId en stdout/stderr"
+else
+    fail "la fila exitosa de Entra cambió de estado/formato o expuso el appId"
 fi
 if printf '%s\n' "$OUT" | grep -Fq "[OK           ] secrets[] registra 0 entrada(s)" \
     && printf '%s\n' "$OUT" | grep -Fq "[OK           ] tenancy.strategy = mono-tenant-transitorio -- camino (B) POC" \
@@ -366,6 +379,39 @@ if printf '%s\n' "$OUT" | grep -Fq "[OK           ] secrets[] registra 0 entrada
     pass "secrets[] vacío, tenancy POC y projections=false explícitos reportan OK"
 else
     fail "los tokens explícitos no recibieron el diagnóstico esperado"
+fi
+
+if [[ "$OUT" =~ Resumen:\ ([0-9]+)\ OK\ \|\ ([0-9]+)\ FALTA\ \|\ ([0-9]+)\ NO\ VERIFICADO ]]; then
+    SUCCESS_OK="${BASH_REMATCH[1]}"
+    SUCCESS_FALTA="${BASH_REMATCH[2]}"
+    SUCCESS_NV="${BASH_REMATCH[3]}"
+else
+    SUCCESS_OK=""
+    SUCCESS_FALTA=""
+    SUCCESS_NV=""
+    fail "la corrida exitosa no emitió el resumen de conteos esperado"
+fi
+
+OUT_ABSENT=$(cd "$ONBOARD_REPO" && AZ_APP_MODE=absent PATH="$ONBOARD_BIN:$PATH" bash "$REPO_ROOT/scripts/onboard-diagnose.sh" 2>&1)
+if [ -n "$SUCCESS_OK" ] \
+    && printf '%s\n' "$OUT_ABSENT" | grep -Fqx '  [FALTA        ] aplicacion de Entra "ci-diagnostico" no encontrada' \
+    && printf '%s\n' "$OUT_ABSENT" | grep -Fq 'setup-github-ci.sh <subscription-id>' \
+    && [[ "$OUT_ABSENT" =~ Resumen:\ ([0-9]+)\ OK\ \|\ ([0-9]+)\ FALTA\ \|\ ([0-9]+)\ NO\ VERIFICADO ]] \
+    && [ "${BASH_REMATCH[1]}" -eq $((SUCCESS_OK - 1)) ] \
+    && [ "${BASH_REMATCH[2]}" -eq $((SUCCESS_FALTA + 1)) ] \
+    && [ "${BASH_REMATCH[3]}" -eq "$SUCCESS_NV" ]; then
+    pass "una aplicación ausente conserva FALTA accionable y ajusta solo sus conteos"
+else
+    fail "una aplicación ausente perdió su estado, acción o conteos esperados"
+fi
+
+OUT_ERROR=$(cd "$ONBOARD_REPO" && AZ_APP_MODE=error PATH="$ONBOARD_BIN:$PATH" bash "$REPO_ROOT/scripts/onboard-diagnose.sh" 2>&1)
+if printf '%s\n' "$OUT_ERROR" | grep -Fqx '  [FALTA        ] aplicacion de Entra "ci-diagnostico" no encontrada' \
+    && printf '%s\n' "$OUT_ERROR" | grep -Fq 'setup-github-ci.sh <subscription-id>' \
+    && ! printf '%s\n' "$OUT_ERROR" | grep -Fq 'APP_ID_CENTINELA_NO_PUBLICAR'; then
+    pass "un error de Azure sigue siendo accionable sin filtrar identificadores por stderr"
+else
+    fail "un error de Azure dejó de ser accionable o filtró el identificador centinela"
 fi
 
 rm -f "$ONBOARD_REPO/.mefisto/harness.config.json"
