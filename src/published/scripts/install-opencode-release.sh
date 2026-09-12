@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Instala releases OpenCode verificadas bajo la raiz de datos del usuario.
-# Uso: install.sh install <semver> | install.sh activate <semver> | install.sh prune [--keep <n>] [--yes] | install.sh project | install.sh deactivate | install.sh status | install.sh diagnose | install.sh package-root
+# Uso: install.sh bootstrap <semver> | install.sh install <semver> | install.sh activate <semver> | install.sh prune [--keep <n>] [--yes] | install.sh project | install.sh deactivate | install.sh status | install.sh diagnose | install.sh package-root
 set -euo pipefail
 export LC_ALL=C
 
@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPOSITORY="${MEFISTO_OPENCODE_REPOSITORY:-augusto-romero-arango/eda-evsourcing-azure-harness}"
 
 error() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
-usage() { error 'uso: mefisto-opencode install <semver> | activate <semver> | prune [--keep <n>] [--yes] | project | deactivate | status | diagnose | package-root'; }
+usage() { error 'uso: mefisto-opencode bootstrap <semver> | install <semver> | activate <semver> | prune [--keep <n>] [--yes] | project | deactivate | status | diagnose | package-root'; }
 valid_version() {
     printf '%s\n' "$1" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
 }
@@ -105,7 +105,7 @@ copy_local_release() {
 }
 
 download_release() {
-    local version="$1" asset checksum_url tarball checksum staging entries verbose_entries checksum_line digest filename actual
+    local version="$1" asset checksum_url tarball checksum staging entries verbose_entries checksum_line checksum_lines digest filename actual
     asset="mefisto-opencode-v$version.tar.gz"
     checksum_url="${MEFISTO_OPENCODE_RELEASE_BASE_URL:-https://github.com/$REPOSITORY/releases/download}/v$version"
     tarball="$WORK/$asset"; checksum="$WORK/$asset.sha256"; staging="$WORK/release"
@@ -114,6 +114,9 @@ download_release() {
     command -v shasum >/dev/null 2>&1 || error 'shasum es requerido para validar SHA-256'
     curl --disable --fail --location --silent --show-error "$checksum_url/$asset" -o "$tarball" || error "no se pudo descargar $asset"
     curl --disable --fail --location --silent --show-error "$checksum_url/$asset.sha256" -o "$checksum" || error "no se pudo descargar el checksum de $asset"
+    checksum_lines="$(wc -l < "$checksum")" || error 'no se pudo inspeccionar el checksum del release'
+    checksum_lines="${checksum_lines//[[:space:]]/}"
+    [ "$checksum_lines" = 1 ] || error 'el archivo de checksum no tiene el formato canonico esperado'
     checksum_line="$(command cat "$checksum")" || error 'no se pudo leer el checksum del release'
     digest="${checksum_line%%  *}"; filename="${checksum_line#*  }"
     [ "${#digest}" -eq 64 ] && [ -z "${digest//[0123456789abcdef]/}" ] && [ "$filename" = "$asset" ] \
@@ -131,8 +134,8 @@ download_release() {
     publish_release "$staging" "$RELEASES/$version"
 }
 
-install() {
-    local version="$1" destination
+install_release() {
+    local version="$1" source="$2" destination
     valid_version "$version" || error "version SemVer invalida: $version"
     mkdir -p "$RELEASES" || error 'no se pudo crear el almacen de releases'
     destination="$RELEASES/$version"
@@ -141,9 +144,21 @@ install() {
             || error "la ruta de release existente $version no es valida o inmutable"
     else
         WORK="$(mktemp -d "$ROOT/.install.XXXXXX")" || error 'no se pudo crear el staging de instalacion'
-        if [ -z "${MEFISTO_OPENCODE_INSTALLED:-}" ]; then copy_local_release "$version" "$SCRIPT_DIR"; else download_release "$version"; fi
+        if [ "$source" = remote ]; then download_release "$version"; else copy_local_release "$version" "$SCRIPT_DIR"; fi
     fi
     activate "$version"
+}
+
+install() {
+    local source=local
+    [ -z "${MEFISTO_OPENCODE_INSTALLED:-}" ] || source=remote
+    install_release "$1" "$source"
+}
+
+bootstrap_remote() {
+    # Entry point publico para una copia confiable del instalador: no depende del
+    # detalle interno que el launcher exporta al actualizar una release activa.
+    install_release "$1" remote
 }
 
 status() {
@@ -323,6 +338,7 @@ parse_prune() {
 
 command -v jq >/dev/null 2>&1 || error 'jq es requerido para validar el manifiesto'
 case "${1:-}" in
+    bootstrap) [ "$#" -eq 2 ] || usage; acquire_lock; bootstrap_remote "$2" ;;
     install) [ "$#" -eq 2 ] || usage; acquire_lock; install "$2" ;;
     activate) [ "$#" -eq 2 ] || usage; acquire_lock; activate "$2" ;;
     prune) shift; parse_prune "$@" ;;
