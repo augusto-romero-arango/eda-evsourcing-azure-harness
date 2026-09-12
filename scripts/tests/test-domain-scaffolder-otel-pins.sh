@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Verifica que domain-scaffolder cierre el contrato de pines OpenTelemetry antes del commit (#1230).
+# Verifica que los agentes publicados cierren el contrato de pines OpenTelemetry (#1230, #1246).
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 AGENT="$REPO_ROOT/agents/domain-scaffolder.md"
+PROJECTIONS_AGENT="$REPO_ROOT/agents/projections-scaffolder.md"
 
-python3 - "$AGENT" <<'PY'
+python3 - "$AGENT" "$PROJECTIONS_AGENT" <<'PY'
 import re
 import subprocess
 import sys
@@ -17,6 +18,7 @@ from typing import Optional
 
 agente_path = Path(sys.argv[1])
 agente = agente_path.read_text()
+agente_proyecciones = Path(sys.argv[2]).read_text()
 pasaron = 0
 fallaron = 0
 
@@ -80,6 +82,16 @@ azure_exporter = re.findall(
 verificar(
     azure_exporter == ["1.8.2"],
     "la receta conserva Azure.Monitor.OpenTelemetry.Exporter en 1.8.2",
+)
+
+print("[coherencia] las instrucciones publicadas describen el canon write-side vigente")
+verificar(
+    "write-side en MEF-ADR-0003 (`1.15.3`/`1.8.2`" in agente_proyecciones,
+    "projections-scaffolder contrasta su pin independiente contra el write-side 1.15.3/1.8.2",
+)
+verificar(
+    "write-side en MEF-ADR-0003 (`1.13.1`/`1.8.2`" not in agente_proyecciones,
+    "projections-scaffolder no presenta 1.13.1 como el pin write-side vigente",
 )
 
 print("[comportamiento] el parser cuenta referencias XML, no lineas de texto")
