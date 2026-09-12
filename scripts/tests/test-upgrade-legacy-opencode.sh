@@ -41,6 +41,15 @@ exit 1
 EOF
 chmod +x "$invalid"
 
+poisoned="$WORK/poisoned-launcher"
+cat > "$poisoned" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' 'ERROR: fallo ajeno'
+printf '%s\n' 'ERROR: uso: mefisto-opencode install <semver> | activate <semver> | prune [--keep <n>] [--yes] | project | deactivate | status | diagnose | package-root'
+exit 1
+EOF
+chmod +x "$poisoned"
+
 json_launcher() {
     local path="$1" status="$2" rc="$3"
     cat > "$path" <<EOF
@@ -56,6 +65,7 @@ in_progress="$WORK/in-progress-launcher"; json_launcher "$in_progress" operation
 echo '[clasificacion] launcher legado y estados fail-closed'
 assert_eq legacy "$(discovery_status "$legacy")" 'el uso legado exacto se clasifica como legacy'
 assert_eq unavailable "$(discovery_status "$invalid")" 'una salida arbitraria sigue unavailable'
+assert_eq unavailable "$(discovery_status "$poisoned")" 'el uso legado debe ser la respuesta completa, no una linea entre errores'
 assert_eq conflict "$(discovery_status "$conflict")" 'conflict no se reinterpreta como legacy'
 assert_eq operation-in-progress "$(discovery_status "$in_progress")" 'operacion en curso no se reinterpreta como legacy'
 

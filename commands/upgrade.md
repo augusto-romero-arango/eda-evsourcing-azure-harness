@@ -51,8 +51,8 @@ if [ -x "$OPENCODE_LAUNCHER" ]; then
   # Un launcher anterior al contrato projection-status rechaza exactamente este
   # subcomando con su uso publico legado. Es una compatibilidad estrecha: no
   # convierte errores, JSON invalido ni usos de otra version en consentimiento.
-  if [ "$OPENCODE_PROJECTION_RC" -ne 0 ] && printf '%s\n' "$OPENCODE_PROJECTION_JSON" | grep -Fx \
-    'ERROR: uso: mefisto-opencode install <semver> | activate <semver> | prune [--keep <n>] [--yes] | project | deactivate | status | diagnose | package-root' >/dev/null; then
+  OPENCODE_LEGACY_USAGE='ERROR: uso: mefisto-opencode install <semver> | activate <semver> | prune [--keep <n>] [--yes] | project | deactivate | status | diagnose | package-root'
+  if [ "$OPENCODE_PROJECTION_RC" -ne 0 ] && [ "$OPENCODE_PROJECTION_JSON" = "$OPENCODE_LEGACY_USAGE" ]; then
     OPENCODE_PROJECTION=legacy
   elif command -v jq >/dev/null 2>&1 && printf '%s' "$OPENCODE_PROJECTION_JSON" | jq -e '
     .schemaVersion == 1 and
