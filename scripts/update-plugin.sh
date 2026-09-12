@@ -172,6 +172,7 @@ _alinear_opencode() {
         echo "ERROR: package-root no retorno una raiz fisica OpenCode valida." >&2
         return 1
     fi
+    echo "Release OpenCode activa: $version ($opencode_root)"
     diagnosis="$opencode_root/diagnose-installation-identity.sh"
     if [ ! -x "$diagnosis" ]; then
         echo "ERROR: la release OpenCode activa no contiene el diagnostico de identidad." >&2

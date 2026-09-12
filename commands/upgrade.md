@@ -42,10 +42,25 @@ fi
 OPENCODE_PROJECTION=disabled
 OPENCODE_PROJECTION_JSON=''
 if [ -x "$OPENCODE_LAUNCHER" ]; then
-  OPENCODE_PROJECTION_JSON=$("$OPENCODE_LAUNCHER" projection-status 2>&1)
-  OPENCODE_PROJECTION_RC=$?
-  if ! command -v jq >/dev/null 2>&1 || ! OPENCODE_PROJECTION=$(printf '%s' "$OPENCODE_PROJECTION_JSON" | jq -er '.status' 2>/dev/null); then
-    OPENCODE_PROJECTION=conflict
+  if OPENCODE_PROJECTION_JSON=$("$OPENCODE_LAUNCHER" projection-status 2>&1); then
+    OPENCODE_PROJECTION_RC=0
+  else
+    OPENCODE_PROJECTION_RC=$?
+  fi
+  OPENCODE_PROJECTION=unavailable
+  if command -v jq >/dev/null 2>&1 && printf '%s' "$OPENCODE_PROJECTION_JSON" | jq -e '
+    .schemaVersion == 1 and
+    (.status == "disabled" or .status == "enabled" or .status == "stale" or
+     .status == "conflict" or .status == "operation-in-progress") and
+    (.configRoot | type == "string") and
+    (.activeVersion == null or (.activeVersion | type == "string")) and
+    (.ledgerRelease == null or (.ledgerRelease | type == "string"))
+  ' >/dev/null 2>&1; then
+    OPENCODE_PROJECTION=$(printf '%s' "$OPENCODE_PROJECTION_JSON" | jq -r '.status')
+    case "$OPENCODE_PROJECTION:$OPENCODE_PROJECTION_RC" in
+      disabled:0|enabled:0|stale:0|conflict:1|operation-in-progress:1) ;;
+      *) OPENCODE_PROJECTION=unavailable ;;
+    esac
   fi
 fi
 printf 'Estado de proyeccion OpenCode: %s\n' "$OPENCODE_PROJECTION"
@@ -58,7 +73,7 @@ Interpreta solo estos estados del contrato:
 - `disabled`: no hay adhesion proyectada; incluye primera instalacion, una release instalada sin proyectar y un `deactivate` deliberado.
 - `conflict`: no es desactivacion. No repares ledger, enlaces ni configuracion global; informa el JSON y continua visiblemente solo con Claude.
 
-Si el launcher no existe, tratalo como `disabled`. Si la consulta devuelve `operation-in-progress`, JSON invalido u otro valor, tratalo como un estado seguro no alineable: informa que hay una operacion o diagnostico pendiente, no toques OpenCode y continua solo con Claude. No inventes consentimiento a partir de `active`.
+Si el launcher no existe, tratalo como `disabled`. `operation-in-progress` y el estado local `unavailable` (respuesta invalida, version desconocida del contrato, codigo de salida incoherente o `jq` ausente) son estados seguros no alineables: informa que hay una operacion o diagnostico pendiente, no toques OpenCode y continua solo con Claude. No los presentes como `conflict` ni inventes consentimiento a partir de `active`.
 
 ### 2. Decidir una sola vez la actualizacion
 

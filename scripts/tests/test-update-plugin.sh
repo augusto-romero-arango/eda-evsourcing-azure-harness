@@ -51,6 +51,14 @@ assert_igual() {
     fi
 }
 
+# assert_contiene <texto> <fragmento> <descripcion>
+assert_contiene() {
+    case "$1" in
+        *"$2"*) pass "$3" ;;
+        *) fail "$3 (no se encontro: '$2')" ;;
+    esac
+}
+
 source "$REPO_ROOT/scripts/update-plugin.sh"
 
 # Cache real observado en el issue #531 (0.10.0 ... 0.19.0), mas la version recien traida.
@@ -192,15 +200,20 @@ esac
 EOF
 chmod +x "$ALIGN_STUB/mefisto-opencode"
 
-(
+ALIGN_OUTPUT=$( (
     cd "$ALIGN_CONSUMER" || exit 1
     git init -q .
     export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode" OPENCODE_LOG OPENCODE_ROOT
     main --align-opencode
-) >/dev/null 2>&1
-assert_igual "0" "$?" "alinea una instalacion OpenCode existente"
+) 2>&1)
+ALIGN_RC=$?
+assert_igual "0" "$ALIGN_RC" "alinea una instalacion OpenCode existente"
 assert_igual $'status \npackage-root \ninstall 1.2.3\nactivate 1.2.3\nproject \nstatus \npackage-root ' "$(cat "$OPENCODE_LOG")" \
     "valida el launcher, instala, activa, proyecta, consulta status y resuelve package-root con la version del manifiesto"
+assert_contiene "$ALIGN_OUTPUT" "Release OpenCode activa: 1.2.3 ($OPENCODE_ROOT)" \
+    "presenta la version y raiz fisica de la release OpenCode activa"
+assert_contiene "$ALIGN_OUTPUT" '"status": "aligned"' \
+    "presenta el diagnostico objetivo de identidad Claude/OpenCode"
 
 # Repetir la operacion completa conserva el resultado y vuelve a usar la identidad exacta.
 : > "$OPENCODE_LOG"
