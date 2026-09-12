@@ -4,6 +4,22 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.37.12] - 2026-09-12
+
+### Changed
+
+- Se documenta el expediente reproducible, fail-closed y redactado para certificar la instalacion y el discovery multi-runtime en el consumidor sintetico.
+- Se registra de forma fail-closed que la certificacion E2E multi-runtime sigue bloqueada hasta que #1180 produzca evidencia operativa `PASA`; la existencia actual del consumidor y de una release candidata no sustituye la instalacion, el discovery ni la identidad alineada.
+- Se expone `bootstrap <semver>` en el instalador OpenCode para descargar de forma explícita y verificada una release remota del tag exacto solicitado, sin revelar la variable interna del launcher.
+- Se agrega la alineacion opt-in de OpenCode al actualizar Mefisto, usando la identidad verificada de la nueva raiz Claude y conservando las releases para rollback.
+- `/mefisto:upgrade` alinea desde Claude la distribución OpenCode adherida, ofrece habilitarla explícitamente cuando está desactivada y conserva visible y sin mutar cualquier conflicto de proyección.
+- Se expone `mefisto-opencode projection-status`, un estado JSON versionado y fail-closed de la proyección global OpenCode que distingue `disabled`, `enabled`, `stale` y `conflict`.
+- Se serializan install, activate, prune, project y deactivate de OpenCode mediante un lock comun con ownership, diagnostico accionable y limpieza segura ante señales.
+
+### Fixed
+
+- Se ejecutan restore, build Release y tests unitarios o de contrato del dominio en los pull requests, sin autenticar, publicar, desplegar ni correr smoke tests.
+
 ## [0.37.11] - 2026-09-12
 
 ### Fixed
@@ -2423,7 +2439,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.11...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.12...HEAD
+[0.37.12]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.11...v0.37.12
 [0.37.11]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.10...v0.37.11
 [0.37.10]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.9...v0.37.10
 [0.37.9]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.8...v0.37.9
