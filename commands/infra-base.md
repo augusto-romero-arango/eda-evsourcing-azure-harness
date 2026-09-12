@@ -60,11 +60,11 @@ Infraestructura base generada. Siguiente:
      TF_VAR_alert_email/TF_VAR_postgresql_admin_password, nunca via terraform.tfvars
      commiteado (MEF-ADR-0025). subscription_id ya no es una variable: se resuelve de
      ARM_SUBSCRIPTION_ID. Revisa tambien los defaults derivados en variables.tf
-      (project, project_short, postgresql_location, postgresql_region_short).
-      Si PostgreSQL debe ir a otra region por oferta, revisa ambos overrides no sensibles
-      juntos en el terraform.tfvars ignorado: por ejemplo, `postgresql_location = "centralus"`
-      y `postgresql_region_short = "cus"`. No derives la abreviatura: declarala segun la
-      convencion regional del consumidor (MEF-ADR-0045).
+     (project, project_short, postgresql_location, postgresql_region_short).
+     Si PostgreSQL debe ir a otra region por oferta, revisa ambos overrides no sensibles
+     juntos en el terraform.tfvars ignorado: por ejemplo, `postgresql_location = "centralus"`
+     y `postgresql_region_short = "cus"`. No derives la abreviatura: declarala segun la
+     convencion regional del consumidor (MEF-ADR-0045).
   3. Primer /infra: escribe y revisa el HCL, abre un PR. El apply real
      ocurre en CI al mergear a main (workflow Infra CD), nunca en local.
   4. /scaffold <dominio> agrega su service-plan/storage/function-app a este entorno.
