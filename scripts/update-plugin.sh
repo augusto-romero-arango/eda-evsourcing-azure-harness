@@ -86,7 +86,7 @@ usage() {
 # La raiz Claude ya fue elegida por el update del marketplace. Su manifiesto es la unica
 # autoridad para la version objetivo: no se consulta latest, Git ni el cache OpenCode.
 _alinear_opencode() {
-    local claude_root="$1" manifest version launcher installer opencode_root diagnosis launcher_valido=false
+    local claude_root="$1" manifest version launcher installer opencode_root diagnosis projection_result launcher_valido=false
     manifest="$claude_root/mefisto-manifest.json"
 
     if ! command -v jq >/dev/null 2>&1; then
@@ -167,6 +167,21 @@ _alinear_opencode() {
 
     "$launcher" project || { echo "ERROR: la proyeccion OpenCode conflicto o fallo; corrige el conflicto y reintenta." >&2; return 1; }
     "$launcher" status || { echo "ERROR: status OpenCode reporto una instalacion incompleta." >&2; return 1; }
+    if ! projection_result=$("$launcher" projection-status); then
+        echo "ERROR: projection-status OpenCode no confirmo la proyeccion alineada." >&2
+        return 1
+    fi
+    if ! printf '%s\n' "$projection_result" | jq -e --arg version "$version" '
+        (keys | sort) == ["activeVersion", "configRoot", "ledgerRelease", "schemaVersion", "status"] and
+        .schemaVersion == 1 and .status == "enabled" and
+        (.configRoot | type == "string") and
+        .activeVersion == $version and .ledgerRelease == $version
+    ' >/dev/null 2>&1; then
+        echo "ERROR: projection-status OpenCode no reporto enabled para la version $version." >&2
+        return 1
+    fi
+    echo "Estado de proyeccion OpenCode despues de alinear:"
+    printf '%s\n' "$projection_result" | jq .
     opencode_root=$("$launcher" package-root) || { echo "ERROR: no se pudo resolver la raiz fisica OpenCode activa." >&2; return 1; }
     if [ -z "$opencode_root" ] || [ ! -d "$opencode_root" ] || [ -L "$opencode_root" ]; then
         echo "ERROR: package-root no retorno una raiz fisica OpenCode valida." >&2

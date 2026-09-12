@@ -194,6 +194,7 @@ cat > "$ALIGN_STUB/mefisto-opencode" <<'EOF'
 printf '%s\n' "$1 ${2:-}" >> "$OPENCODE_LOG"
 case "$1" in
   install|activate|project|status) exit 0 ;;
+  projection-status) printf '%s\n' '{"schemaVersion":1,"status":"enabled","configRoot":"/tmp/opencode","activeVersion":"1.2.3","ledgerRelease":"1.2.3"}' ;;
   package-root) printf '%s\n' "$OPENCODE_ROOT" ;;
   *) exit 2 ;;
 esac
@@ -208,12 +209,14 @@ ALIGN_OUTPUT=$( (
 ) 2>&1)
 ALIGN_RC=$?
 assert_igual "0" "$ALIGN_RC" "alinea una instalacion OpenCode existente"
-assert_igual $'status \npackage-root \ninstall 1.2.3\nactivate 1.2.3\nproject \nstatus \npackage-root ' "$(cat "$OPENCODE_LOG")" \
-    "valida el launcher, instala, activa, proyecta, consulta status y resuelve package-root con la version del manifiesto"
+assert_igual $'status \npackage-root \ninstall 1.2.3\nactivate 1.2.3\nproject \nstatus \nprojection-status \npackage-root ' "$(cat "$OPENCODE_LOG")" \
+    "valida el launcher, instala, activa, proyecta y confirma projection-status con la version del manifiesto"
 assert_contiene "$ALIGN_OUTPUT" "Release OpenCode activa: 1.2.3 ($OPENCODE_ROOT)" \
     "presenta la version y raiz fisica de la release OpenCode activa"
 assert_contiene "$ALIGN_OUTPUT" '"status": "aligned"' \
     "presenta el diagnostico objetivo de identidad Claude/OpenCode"
+assert_contiene "$ALIGN_OUTPUT" '"status": "enabled"' \
+    "presenta projection-status enabled despues de alinear"
 
 # Repetir la operacion completa conserva el resultado y vuelve a usar la identidad exacta.
 : > "$OPENCODE_LOG"
@@ -223,7 +226,7 @@ assert_contiene "$ALIGN_OUTPUT" '"status": "aligned"' \
     main --align-opencode
 ) >/dev/null 2>&1
 assert_igual "0" "$?" "repetir la alineacion es idempotente"
-assert_igual $'status \npackage-root \ninstall 1.2.3\nactivate 1.2.3\nproject \nstatus \npackage-root ' "$(cat "$OPENCODE_LOG")" \
+assert_igual $'status \npackage-root \ninstall 1.2.3\nactivate 1.2.3\nproject \nstatus \nprojection-status \npackage-root ' "$(cat "$OPENCODE_LOG")" \
     "la repeticion conserva la secuencia y la version exacta"
 
 # Sin el flag no se invoca ninguna ruta OpenCode; conserva la semantica Claude previa.
@@ -335,6 +338,74 @@ assert_igual "1" "$?" "un diagnostico divergente no se acepta como aligned"
     main --prune --align-opencode
 ) >/dev/null 2>&1
 assert_igual "1" "$?" "rechaza combinar --align-opencode con --prune"
+
+echo ""
+echo "[S-6] launcher legado: solo 'si' alinea y el rechazo no toca OpenCode (issue #1270)"
+
+LEGACY_DIR="$(mktemp -d)"
+LEGACY_LAUNCHER="$LEGACY_DIR/mefisto-opencode"
+LEGACY_LOG="$LEGACY_DIR/invocaciones.log"
+LEGACY_ACTIVATED="$LEGACY_DIR/activated"
+LEGACY_RELEASES="$LEGACY_DIR/releases.sentinel"
+LEGACY_LEDGER="$LEGACY_DIR/ledger.sentinel"
+LEGACY_LINKS="$LEGACY_DIR/links.sentinel"
+LEGACY_CONFIG="$LEGACY_DIR/config.sentinel"
+trap 'rm -rf "$FAKE_CACHE" "$STUB_DIR" "$CONSUMER_DIR" "$FAKE_CACHE_S4" "$CLAUDE_LOG" "$OPENCODE_ROOT" "$ALIGN_CONSUMER" "$ALIGN_CACHE" "$ALIGN_STUB" "$OPENCODE_LOG" "$BOOTSTRAP_XDG" "$LEGACY_DIR"' EXIT
+printf 'releases-previas\n' > "$LEGACY_RELEASES"
+printf 'ledger-previo\n' > "$LEGACY_LEDGER"
+printf 'enlaces-previos\n' > "$LEGACY_LINKS"
+printf 'config-ajena\n' > "$LEGACY_CONFIG"
+jq -n '{schemaVersion:1,runtime:"opencode",version:"1.2.3",commit:"0123456789abcdef0123456789abcdef01234567",minimumRuntimeVersion:"1.18.29"}' > "$OPENCODE_ROOT/mefisto-manifest.json"
+cat > "$LEGACY_LAUNCHER" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$1 ${2:-}" >> "$LEGACY_LOG"
+case "$1" in
+  projection-status)
+    if [ -f "$LEGACY_ACTIVATED" ]; then
+      printf '%s\n' '{"schemaVersion":1,"status":"enabled","configRoot":"/tmp/opencode","activeVersion":"1.2.3","ledgerRelease":"1.2.3"}'
+      exit 0
+    fi
+    printf '%s\n' 'ERROR: uso: mefisto-opencode install <semver> | activate <semver> | prune [--keep <n>] [--yes] | project | deactivate | status | diagnose | package-root'
+    exit 1
+    ;;
+  status|install|project) exit 0 ;;
+  activate) [ "$2" = 1.2.3 ] || exit 2; : > "$LEGACY_ACTIVATED" ;;
+  package-root) printf '%s\n' "$OPENCODE_ROOT" ;;
+  *) exit 2 ;;
+esac
+EOF
+chmod +x "$LEGACY_LAUNCHER"
+
+LEGACY_USAGE_OUTPUT=$(LEGACY_LOG="$LEGACY_LOG" LEGACY_ACTIVATED="$LEGACY_ACTIVATED" OPENCODE_ROOT="$OPENCODE_ROOT" "$LEGACY_LAUNCHER" projection-status 2>&1)
+assert_igual "1" "$?" "el fixture reproduce un launcher sin projection-status"
+assert_contiene "$LEGACY_USAGE_OUTPUT" 'ERROR: uso: mefisto-opencode install <semver>' "el fixture expone el uso publico legado"
+
+run_legacy_upgrade() {
+    local answer="$1"
+    (
+        cd "$ALIGN_CONSUMER" || exit 1
+        export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE"
+        export MEFISTO_OPENCODE_LAUNCHER="$LEGACY_LAUNCHER" OPENCODE_ROOT LEGACY_LOG LEGACY_ACTIVATED
+        if [ "$answer" = si ]; then main --align-opencode; else main; fi
+    )
+}
+
+: > "$LEGACY_LOG"
+LEGACY_OUTPUT=$(run_legacy_upgrade si 2>&1); LEGACY_RC=$?
+assert_igual "0" "$LEGACY_RC" "la confirmacion exacta migra el launcher legado"
+assert_igual "1" "$(grep -c '^install 1.2.3$' "$LEGACY_LOG")" "la confirmacion invoca la alineacion una sola vez"
+assert_contiene "$LEGACY_OUTPUT" '"status": "enabled"' "la migracion termina con projection-status enabled"
+assert_contiene "$LEGACY_OUTPUT" '"status": "aligned"' "la migracion termina con identidad aligned"
+
+rm -f "$LEGACY_ACTIVATED"
+: > "$LEGACY_LOG"
+DECLINED_OUTPUT=$(run_legacy_upgrade '' 2>&1); DECLINED_RC=$?
+assert_igual "0" "$DECLINED_RC" "no responder conserva el update Claude-only"
+assert_igual "" "$(cat "$LEGACY_LOG")" "no responder no invoca el launcher legado"
+assert_igual "releases-previas" "$(cat "$LEGACY_RELEASES")" "no responder conserva releases OpenCode"
+assert_igual "ledger-previo" "$(cat "$LEGACY_LEDGER")" "no responder conserva el ledger OpenCode"
+assert_igual "enlaces-previos" "$(cat "$LEGACY_LINKS")" "no responder conserva enlaces OpenCode"
+assert_igual "config-ajena" "$(cat "$LEGACY_CONFIG")" "no responder conserva configuracion OpenCode"
 
 echo ""
 echo "===================================================================="
