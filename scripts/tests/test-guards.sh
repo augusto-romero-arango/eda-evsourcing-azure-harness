@@ -744,6 +744,25 @@ for scenario in \
     fi
 done
 
+# -------- Bloque K: finales de linea heredados de Azure Functions Core Tools --------
+
+echo ""
+echo "[K] domain-scaffolder: normalizacion LF de archivos heredados de func init"
+
+for required in \
+    '"$REPO_ROOT/src/<RootNamespace>.{PascalCase}/.gitignore"' \
+    '"$REPO_ROOT/src/<RootNamespace>.{PascalCase}/<RootNamespace>.{PascalCase}.csproj"' \
+    "tr -d '\\r'" \
+    'El comando es idempotente' \
+    'no reemplaces ni borres el `.gitignore`' \
+    'git diff --check'; do
+    if grep -qF -- "$required" "$DS"; then
+        pass "domain-scaffolder: conserva '$required' en la normalizacion LF"
+    else
+        fail "domain-scaffolder: falta '$required' en la normalizacion LF de archivos heredados"
+    fi
+done
+
 # -------- Resumen --------
 
 echo ""

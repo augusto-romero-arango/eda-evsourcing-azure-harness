@@ -196,6 +196,20 @@ func init "src/<RootNamespace>.{PascalCase}" \
   --target-framework net10.0
 ```
 
+**Normalizar a LF los archivos heredados de `func init` (issue #1228):** antes de eliminar o editar cualquier archivo generado, normaliza los finales de linea del `.gitignore` per-proyecto y del `.csproj` que acaba de crear Core Tools. Conserva ambos archivos y todo su contenido funcional; en particular, no reemplaces ni borres el `.gitignore`, porque sigue siendo el blindaje local de `local.settings.json` exigido por MEF-ADR-0025.
+
+```bash
+for archivo in \
+  "$REPO_ROOT/src/<RootNamespace>.{PascalCase}/.gitignore" \
+  "$REPO_ROOT/src/<RootNamespace>.{PascalCase}/<RootNamespace>.{PascalCase}.csproj"; do
+  temporal="${archivo}.lf"
+  tr -d '\r' < "$archivo" > "$temporal"
+  mv "$temporal" "$archivo"
+done
+```
+
+El comando es idempotente: sobre archivos que ya usan LF vuelve a escribir los mismos bytes, por lo que no introduce diferencias adicionales. Debe ejecutarse antes de las ediciones siguientes para que `git diff --check` no reporte whitespace de los archivos heredados.
+
 Despues de `func init`, elimina los archivos de scaffolding que no aportan (VS Code local, launch settings), pero **conserva el `.gitignore` per-proyecto que `func init` genera**:
 
 ```bash
