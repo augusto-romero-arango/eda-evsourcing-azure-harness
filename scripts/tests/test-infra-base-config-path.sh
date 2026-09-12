@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-infra-base-config-path.sh -- Contratos de config y naming de /infra-base (#1212, #1219, #1222).
+# test-infra-base-config-path.sh -- Contratos de config, naming y PostgreSQL de /infra-base (#1212, #1219, #1222, #1251).
 #
 # Cubre MEF-ADR-0053 para el prompt de infra-base-scaffolder: canonico, ambos
 # divergentes (prevalece canonico), legacy y ausencia. Tambien evita que una
@@ -143,6 +143,9 @@ POSTGRESQL_REGION_BLOCK=$(awk '/^variable "postgresql_region_short"/,/^}/' "$AGE
 POSTGRESQL_ZONE_BLOCK=$(awk '/^variable "postgresql_zone"/,/^}/' "$AGENT")
 POSTGRESQL_MODULE_BLOCK=$(awk '/^module "postgresql"/,/^}/' "$AGENT")
 POSTGRESQL_RECIPE_BLOCK=$(awk '/^### 1\.3 `infra\/modules\/postgresql\/main\.tf`/,/^### 1\.4 `infra\/modules\/service-bus\/main\.tf`/' "$AGENT")
+POSTGRESQL_RECIPE_ZONE_BLOCK=$(awk '/^variable "zone"/,/^}/' <<< "$POSTGRESQL_RECIPE_BLOCK")
+POSTGRESQL_RECIPE_SERVER_BLOCK=$(awk '/^resource "azurerm_postgresql_flexible_server" "this"/,/^}/' <<< "$POSTGRESQL_RECIPE_BLOCK")
+POSTGRESQL_RECIPE_LIFECYCLE_BLOCK=$(awk '/^  lifecycle \{$/,/^  }$/' <<< "$POSTGRESQL_RECIPE_SERVER_BLOCK")
 if grep -Fq 'variable "postgresql_region_short"' <<< "$POSTGRESQL_REGION_BLOCK" \
     && grep -Fq 'default     = "<azure_region_short>"' <<< "$POSTGRESQL_REGION_BLOCK" \
     && grep -Fq 'postgresql_region_seq_suffix = var.postgresql_region_short != "" ? "-${var.postgresql_region_short}-${var.resource_sequence}" : ""' "$AGENT" \
@@ -193,10 +196,11 @@ else
 fi
 
 echo "[7] PostgreSQL ignora el drift de zona asignada por Azure"
-if grep -Fq 'default     = null' <<< "$POSTGRESQL_RECIPE_BLOCK" \
-    && grep -Fq 'zone = var.zone' <<< "$POSTGRESQL_RECIPE_BLOCK" \
-    && grep -Fq 'prevent_destroy = true' <<< "$POSTGRESQL_RECIPE_BLOCK" \
-    && grep -Fq 'ignore_changes  = [zone]' <<< "$POSTGRESQL_RECIPE_BLOCK"; then
+if grep -Fq 'variable "zone"' <<< "$POSTGRESQL_RECIPE_ZONE_BLOCK" \
+    && grep -Fq 'default     = null' <<< "$POSTGRESQL_RECIPE_ZONE_BLOCK" \
+    && grep -Fq 'zone = var.zone' <<< "$POSTGRESQL_RECIPE_SERVER_BLOCK" \
+    && grep -Fq 'prevent_destroy = true' <<< "$POSTGRESQL_RECIPE_LIFECYCLE_BLOCK" \
+    && grep -Fq 'ignore_changes  = [zone]' <<< "$POSTGRESQL_RECIPE_LIFECYCLE_BLOCK"; then
     pass "la receta conserva create con zone null y protege lifecycle contra el drift de Azure"
 else
     fail "la receta PostgreSQL debe conservar default/wiring de zone, prevent_destroy e ignore_changes"
