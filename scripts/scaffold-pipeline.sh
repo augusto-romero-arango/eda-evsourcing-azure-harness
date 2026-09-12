@@ -379,6 +379,15 @@ if [ -z "$(git -C "$WORKTREE_PATH" log --oneline origin/main..HEAD 2>/dev/null)"
     abort "El scaffold no genero ningun commit sobre origin/main; nada que pushear. Revisa: $SCAFFOLD_LOG"
 fi
 
+# --- Gate de integridad textual ---
+# Evalua el rango ya consolidado por el agente y el commit defensivo. No corrige
+# los archivos: el diagnostico identifica el generador que debe repararse.
+header "Verificando integridad textual"
+if ! git -C "$WORKTREE_PATH" diff --check origin/main...HEAD >>"$LOG_FILE" 2>&1; then
+    abort "El scaffold contiene errores de whitespace detectados por 'git diff --check'. Corrige el output del generador sin normalizarlo automaticamente y revisa el diagnostico en: $LOG_FILE"
+fi
+success "Integridad textual verificada"
+
 # --- Push + Crear PR ---
 header "Creando PR"
 
