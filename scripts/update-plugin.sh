@@ -172,15 +172,23 @@ _alinear_opencode() {
         echo "ERROR: package-root no retorno una raiz fisica OpenCode valida." >&2
         return 1
     fi
+    echo "Release OpenCode activa: $version ($opencode_root)"
     diagnosis="$opencode_root/diagnose-installation-identity.sh"
     if [ ! -x "$diagnosis" ]; then
         echo "ERROR: la release OpenCode activa no contiene el diagnostico de identidad." >&2
         return 1
     fi
-    if ! "$diagnosis" --claude-root "$claude_root" --opencode-root "$opencode_root" | jq -e '.status == "aligned"' >/dev/null; then
+    local diagnosis_result
+    if ! diagnosis_result=$("$diagnosis" --claude-root "$claude_root" --opencode-root "$opencode_root"); then
+        echo "ERROR: no se pudo ejecutar el diagnostico de identidad entre Claude y OpenCode." >&2
+        return 1
+    fi
+    if ! printf '%s\n' "$diagnosis_result" | jq -e '.status == "aligned"' >/dev/null; then
         echo "ERROR: OpenCode no quedo aligned con la raiz Claude destino; las releases se conservan para reintento o rollback." >&2
         return 1
     fi
+    echo "Diagnostico de identidad Claude/OpenCode:"
+    printf '%s\n' "$diagnosis_result" | jq .
     echo "OK: OpenCode aligned con Claude v$version."
 }
 
