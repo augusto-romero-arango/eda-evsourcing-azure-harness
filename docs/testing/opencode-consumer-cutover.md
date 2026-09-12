@@ -234,6 +234,144 @@ Cualquier fallo crea un issue `tipo:bug` en Mefisto, enlaza la evidencia
 sanitizada, se añade como dependencia de #1180 y conserva #1180 abierto. No se
 parchea el consumidor para simular paridad ni se repite sobre un baseline sucio.
 
+### Expediente minimo de #1180
+
+El reporte de esta certificacion es un artefacto privado y redactado, separado
+de los logs crudos de cada runtime. Debe permitir auditar el procedimiento y
+repetirlo con acceso autorizado, sin distribuir el consumidor ni sus
+credenciales. Use esta estructura minima; se puede repetir `comando` y
+`evidencia` por paso. Un campo no verificable se marca `BLOQUEADO` con la URL o
+nombre sanitizado de la evidencia que falta, nunca se completa por inferencia:
+
+```text
+certificacion=#1180
+inicio=<ISO-8601-con-zona-horaria>
+fin=<ISO-8601-con-zona-horaria>
+veredicto=<PASA|FALLA|BLOQUEADO>
+comando=<paso>: <argv sanitizado>
+evidencia=<paso>: <URL o nombre sanitizado>
+
+[CA-1 baseline]
+consumidor.url=<URL privada>
+consumidor.visibilidad=private
+baseline.sha-inicial=<SHA completo>
+baseline.sha-final=<SHA completo; igual al inicial>
+baseline.limpio-antes=<SI|NO>
+baseline.limpio-despues=<SI|NO>
+referencia-mefisto.checkout=<NO|SI>
+referencia-mefisto.worktree=<NO|SI>
+referencia-mefisto.symlink=<NO|SI>
+referencia-mefisto.ruta-absoluta=<NO|SI>
+onboard.estado=<LISTO|BLOQUEADO>
+onboard.falta=<0|conteo>
+onboard.no-verificado=<0|conteo>
+ci-oidc=<VERDE|BLOQUEADO>
+azure-dedicado=<OPERATIVO|BLOQUEADO>
+
+[CA-2 release]
+tag=<vSemVer posterior a v0.37.0>
+commit-etiquetado=<SHA completo>
+commit-fuente=<SHA completo>
+padre-unico=<SI|NO>
+padre=<SHA completo; igual al commit-fuente>
+claude.plugin.name=<mefisto|otro>
+claude.plugin.version=<version>
+claude.manifest.runtime=<claude|otro>
+claude.manifest.version=<version>
+claude.manifest.commit=<commit-fuente>
+opencode.manifest.runtime=<opencode|otro>
+opencode.manifest.version=<version>
+opencode.manifest.commit=<commit-fuente>
+opencode.asset=<URL exacta del tag>
+opencode.sha256.asset=<URL exacta del tag>
+opencode.sha256=<digest>
+
+[CA-3 claude]
+claude.cli=<version>
+claude.plugin=<version>
+claude.origen=marketplace
+claude.scope=user
+claude.recarga=<reload-plugins|reinicio>
+claude.sesion-nueva=<SI|NO>
+claude.raiz-cargada=<ruta observada>
+claude.manifest.runtime=claude
+claude.manifest.version=<version>
+claude.manifest.commit=<commit-fuente>
+claude.plugin-root=<coincide|no coincide>
+claude.legacy-plugin-root=<coincide|ausente permitido|no coincide>
+
+[CA-4 opencode]
+opencode.cli=<version >= 1.18.29>
+opencode.checksum=<correcto|incorrecto>
+opencode.checksum-antes-bootstrap=<SI|NO>
+opencode.entrypoint=install.sh install <version>
+opencode.release=<version>
+opencode.commit=<commit-fuente>
+opencode.raiz-datos=<ruta observada>
+opencode.raiz-config=<ruta global efectiva observada>
+opencode.release-sin-enlace=<SI|NO>
+opencode.release-sin-escritura=<SI|NO>
+opencode.active.cantidad=<1|otro>
+opencode.active.destino=<releases/version|otro>
+opencode.project=<OK|DEGRADACION VISIBLE|FALLA>
+opencode.config-ajena=<CONSERVADA|ALTERADA>
+opencode.capacidades-ausentes=<DEGRADACION VISIBLE|ninguna|silenciosas>
+opencode.status=<OK|FALLA>
+opencode.diagnose=<OK|FALLA>
+
+[CA-5 discovery]
+claude.tooling=<presente|ausente>
+opencode.tooling=<presente|ausente>
+claude.agentes=<tooling-writer y tooling-reviewer presentes|ausentes>
+opencode.agentes=<tooling-writer y tooling-reviewer presentes|ausentes>
+claude.permisos-agentes=<solo read,edit,shell|otros>
+opencode.permisos-agentes=<solo read,edit,shell|otros>
+claude.skills-mcp-agentes=<ausentes|presentes>
+opencode.skills-mcp-agentes=<ausentes|presentes>
+claude.clausura=<14/14 rutas de la lista anterior|faltantes>
+opencode.clausura=<14/14 rutas adaptadas de la lista anterior|faltantes>
+claude.skills=<projections,comment-cleanup|faltantes>
+opencode.skills=<mefisto-projections,mefisto-comment-cleanup|faltantes>
+claude.observabilidad=<hooks/plugin presente|ausente>
+opencode.observabilidad=<plugin presente|ausente>
+claude.mcp=<microsoft-learn bundled|ausente>
+opencode.mcp=<microsoft-learn bundled|ausente>
+claude.terraform=<externo|otro>
+opencode.terraform=<externo|otro>
+claude.checkout-worktree=<misma raiz cargada|distintas>
+opencode.checkout-worktree=<mismo active|distintos>
+
+[CA-6 identidad y redaccion]
+diagnostico.argv=<diagnose-installation-identity.sh --claude-root raiz-cargada --opencode-root raiz-activa>
+diagnostico.status=<aligned|otro>
+diagnostico.claude.version=<version>
+diagnostico.claude.commit=<commit-fuente>
+diagnostico.opencode.version=<version>
+diagnostico.opencode.commit=<commit-fuente>
+artefacto-sanitizado=<ruta relativa; SHA-256; ID de patron; conteo; veredicto>
+centinelas.contenido-prompt=0
+centinelas.salida-cruda=0
+centinelas.salida-error=0
+centinelas.cabeceras=0
+centinelas.almacenes-auth=0
+centinelas.claves-api=0
+centinelas.tokens=0
+bug=<URL sanitizada|ninguno>
+```
+
+`consumidor.url` puede conservar la URL privada porque ya es un identificador
+del repositorio de certificacion; los restantes campos de evidencia externa se
+reducen a URL, nombre o estado. El expediente no incluye IDs de Entra/Azure,
+variables de entorno, contenido de manifests no requerido, rutas de auth store
+ni salida `stderr`. La ausencia de un secreto se demuestra exclusivamente por
+los conteos de centinelas sobre material previamente sanitizado. Cada linea
+`comando` conserva el programa, subcomando, flags y placeholders, no variables
+ni valores sensibles. Cada artefacto inspeccionado aporta su ruta relativa,
+hash, ID estable del patron de la seccion "Manifiesto de evidencia y redaccion",
+conteo y estado; el catalogo de patrones y este bloque de control no forman
+parte del payload escaneado, para que sus propios nombres no produzcan una
+coincidencia autorreferencial.
+
 ## Matriz de corridas e issues fixture (#1181)
 
 ### Estado de la corrida
