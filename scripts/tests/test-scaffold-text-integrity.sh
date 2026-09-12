@@ -85,8 +85,6 @@ case "$SCAFFOLD_FIXTURE" in
         ;;
     runtime-solo)
         printf 'namespace Certificacion.Prueba;\n' > "$PWD/src/Certificacion.Prueba/Program.cs"
-        git add src/Certificacion.Prueba/Program.cs
-        git commit -qm 'scaffold(prueba): nuevo dominio Prueba'
         ;;
 esac
 case "$SCAFFOLD_FIXTURE" in
@@ -109,6 +107,12 @@ if [ "$SCAFFOLD_FIXTURE" != "otel-tests-ausente" ]; then
     cat > "$PWD/tests/Certificacion.Prueba.Tests/Certificacion.Prueba.Tests.csproj" <<EOF_CSPROJ
 <Project><ItemGroup><PackageReference Include="OpenTelemetry.Exporter.InMemory" Version="$exporter_version" /></ItemGroup></Project>
 EOF_CSPROJ
+fi
+if [ "$SCAFFOLD_FIXTURE" = "runtime-solo" ]; then
+    git add src/Certificacion.Prueba/Program.cs \
+        src/Certificacion.Prueba/Certificacion.Prueba.csproj \
+        tests/Certificacion.Prueba.Tests/Certificacion.Prueba.Tests.csproj
+    git commit -qm 'scaffold(prueba): nuevo dominio Prueba'
 fi
 if [ "$SCAFFOLD_FIXTURE" = "marker-legitimo" ] || [ "$SCAFFOLD_FIXTURE" = "runtime-solo" ]; then
     mkdir -p "$PWD/.claude/pipeline"
