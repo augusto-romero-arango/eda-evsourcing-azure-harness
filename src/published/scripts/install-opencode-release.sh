@@ -23,14 +23,52 @@ ROOT="$(data_root)"
 RELEASES="$ROOT/releases"
 ACTIVE="$ROOT/active"
 
-acquire_lock() {
+lock_owner_description() {
+    local operation pid
+    operation="$(command cat "$LOCK/operation" 2>/dev/null || true)"
+    pid="$(command cat "$LOCK/pid" 2>/dev/null || true)"
+    [ -n "$operation" ] || operation='operacion desconocida'
+    [ -n "$pid" ] || pid='PID desconocido'
+    printf '%s (PID %s)' "$operation" "$pid"
+}
+
+release_lock() {
+    if [ -n "${WORK:-}" ] && [ -e "$WORK" ]; then
+        chmod -R u+w "$WORK" 2>/dev/null || true
+        rm -rf "$WORK"
+    fi
+    if [ -n "${LOCK:-}" ] && [ -n "${LOCK_TOKEN:-}" ] && [ -f "$LOCK/owner" ] \
+        && [ "$(command cat "$LOCK/owner" 2>/dev/null || true)" = "$LOCK_TOKEN" ]; then
+        rm -rf "$LOCK"
+    fi
+}
+
+try_acquire_lock() {
+    local operation="$1"
     mkdir -p "$RELEASES" || error 'no se pudo crear el almacen de releases'
     LOCK="$RELEASES/.operation.lock"
     if ! mkdir "$LOCK" 2>/dev/null; then
-        error "hay otra instalacion, activacion o poda en curso ($LOCK); espere y reintente"
+        return 1
     fi
-    trap 'if [ -n "${WORK:-}" ] && [ -e "$WORK" ]; then chmod -R u+w "$WORK" 2>/dev/null || true; rm -rf "$WORK"; fi; rm -rf "${LOCK:-}"' EXIT
+    LOCK_TOKEN="$$-${RANDOM}-${RANDOM}"
+    if ! printf '%s\n' "$LOCK_TOKEN" > "$LOCK/owner" || ! printf '%s\n' "$operation" > "$LOCK/operation" || ! printf '%s\n' "$$" > "$LOCK/pid"; then
+        rm -f "$LOCK/owner" "$LOCK/operation" "$LOCK/pid" 2>/dev/null || true
+        rmdir "$LOCK" 2>/dev/null || true
+        error 'no se pudo registrar la operacion que adquirio el lock'
+    fi
+    trap release_lock EXIT
     trap 'exit 1' HUP INT TERM
+    if [ -n "${MEFISTO_OPENCODE_TEST_HOLD_LOCK_SECONDS:-}" ]; then
+        sleep "$MEFISTO_OPENCODE_TEST_HOLD_LOCK_SECONDS"
+    fi
+}
+
+acquire_lock() {
+    local operation="$1" owner
+    if ! try_acquire_lock "$operation"; then
+        owner="$(lock_owner_description)"
+        error "hay una operacion OpenCode en curso: $owner ($LOCK); reintente cuando termine. Si quedo abandonado, revise su PID y retire el lock manualmente"
+    fi
 }
 
 manifest_valid() {
@@ -265,10 +303,7 @@ prune() {
     local kb=0 entry_kb marker confirmation candidate_count=0
     local -a protected candidates
     [ -d "$RELEASES" ] && [ ! -L "$RELEASES" ] || { printf 'No hay releases instaladas para podar.\n'; return 0; }
-    LOCK="$RELEASES/.operation.lock"
-    mkdir "$LOCK" 2>/dev/null || error "hay otra instalacion, activacion o poda en curso ($LOCK); espere y reintente"
-    trap 'rm -rf "$LOCK"' EXIT
-    trap 'exit 1' HUP INT TERM
+    acquire_lock prune
     active="$(active_version)"
     VALID_RELEASES_INITIALIZED=false
     for entry in "$RELEASES"/.[!.]* "$RELEASES"/..?* "$RELEASES"/*; do
@@ -338,9 +373,9 @@ parse_prune() {
 
 command -v jq >/dev/null 2>&1 || error 'jq es requerido para validar el manifiesto'
 case "${1:-}" in
-    bootstrap) [ "$#" -eq 2 ] || usage; acquire_lock; bootstrap_remote "$2" ;;
-    install) [ "$#" -eq 2 ] || usage; acquire_lock; install "$2" ;;
-    activate) [ "$#" -eq 2 ] || usage; acquire_lock; activate "$2" ;;
+    bootstrap) [ "$#" -eq 2 ] || usage; acquire_lock bootstrap; bootstrap_remote "$2" ;;
+    install) [ "$#" -eq 2 ] || usage; acquire_lock install; install "$2" ;;
+    activate) [ "$#" -eq 2 ] || usage; acquire_lock activate; activate "$2" ;;
     prune) shift; parse_prune "$@" ;;
     project) [ "$#" -eq 1 ] || usage; exec "$SCRIPT_DIR/project-opencode-release.sh" project ;;
     deactivate) [ "$#" -eq 1 ] || usage; exec "$SCRIPT_DIR/project-opencode-release.sh" deactivate ;;

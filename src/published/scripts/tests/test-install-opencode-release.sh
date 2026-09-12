@@ -19,6 +19,15 @@ assert_only_data_root() {
     outside="$(find "$HOME" -path "$XDG_DATA_HOME" -prune -o -mindepth 1 -print)"
     [ -z "$outside" ] && pass "$1" || fail "$1: escribio fuera de XDG_DATA_HOME"
 }
+wait_for_lock() {
+    local expected="$1" lock="$XDG_DATA_HOME/mefisto/releases/.operation.lock" attempt=0 operation=''
+    while [ "$attempt" -lt 50 ]; do
+        [ ! -f "$lock/operation" ] || operation="$(command cat "$lock/operation" 2>/dev/null || true)"
+        [ "$operation" != "$expected" ] || return 0
+        sleep 0.1; attempt=$((attempt + 1))
+    done
+    return 1
+}
 
 make_release() {
     local version="$1" commit="$2" root asset
@@ -68,9 +77,22 @@ mkdir -p "$HOME"
 EXTRACT="$WORK/extract inicial"; mkdir "$EXTRACT"; tar -xzf "$WORK/assets/v1.2.3/mefisto-opencode-v1.2.3.tar.gz" -C "$EXTRACT"
 "$EXTRACT/install.sh" install 1.2.3 >/dev/null; assert_rc "$?" 0 'primera instalacion desde bootstrap local verificado'
 assert_active 1.2.3 'primera instalacion activa la version inicial'
+[ -d "$XDG_DATA_HOME/mefisto/releases/.operation.lock" ] && fail 'install deja el lock adquirido' || pass 'install libera el lock antes de la siguiente operacion'
 [ -f "$XDG_DATA_HOME/mefisto/releases/1.2.3/contenido con espacios.txt" ] && pass 'release inmutable conserva paths con espacios' || fail 'release no conserva paths con espacios'
 [ -z "$(find "$XDG_DATA_HOME/mefisto/releases/1.2.3" \( -perm -0200 -o -perm -0020 -o -perm -0002 \) -print -quit)" ] && pass 'release instalada queda sin permisos de escritura' || fail 'release instalada conserva permisos de escritura'
 assert_only_data_root 'bootstrap solo escribe bajo la raiz de datos'
+
+MEFISTO_OPENCODE_TEST_HOLD_LOCK_SECONDS=5 "$EXTRACT/install.sh" install 1.2.3 >/dev/null 2>&1 & HOLDER=$!
+wait_for_lock install && pass 'install adquiere el lock global antes de cambiar active' || fail 'install no adquirio el lock global'
+OUTPUT="$(OPENCODE_CONFIG_DIR="$WORK/config contendida" bash "$PROJECTOR" project 2>&1)"; assert_rc "$?" 1 'project directo no se solapa con install'
+printf '%s\n' "$OUTPUT" | grep -q 'install (PID ' && printf '%s\n' "$OUTPUT" | grep -q 'reintente' && pass 'project identifica el install en curso y como reintentar' || fail 'project no diagnostica el install en curso'
+kill -TERM "$HOLDER"; wait "$HOLDER" 2>/dev/null; assert_rc "$?" 1 'TERM interrumpe install sin dejarlo en vuelo'
+[ ! -e "$XDG_DATA_HOME/mefisto/releases/.operation.lock" ] && pass 'TERM libera el lock adquirido por install' || fail 'TERM dejo el lock de install'
+assert_active 1.2.3 'interrumpir install conserva active resolviendo una release completa'
+OPENCODE_CONFIG_DIR="$WORK/config contendida" bash "$PROJECTOR" project >/dev/null; assert_rc "$?" 0 'project puede seguir a install sin autobloqueo'
+STATUS="$(OPENCODE_CONFIG_DIR="$WORK/config contendida" bash "$PROJECTOR" projection-status)"; rc=$?
+[ "$rc" -eq 0 ] && jq -e '.status == "enabled" and .activeVersion == "1.2.3" and .ledgerRelease == "1.2.3"' <<< "$STATUS" >/dev/null && pass 'install seguido de project deja estado estructurado consistente' || fail 'install seguido de project dejo estado inconsistente'
+OPENCODE_CONFIG_DIR="$WORK/config contendida" bash "$PROJECTOR" deactivate >/dev/null
 
 ACTIVE="$XDG_DATA_HOME/mefisto/active/bin/mefisto-opencode"
 PACKAGE_ROOT="$("$ACTIVE" package-root)"; rc=$?
