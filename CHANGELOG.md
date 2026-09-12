@@ -4,6 +4,13 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.37.10] - 2026-09-12
+
+### Fixed
+
+- Se anclan los hooks publicados de Claude a la raíz Git del consumidor para evitar estado `.mefisto/pipeline/` anidado al ejecutarse desde subdirectorios.
+- Se corrige el pathspec del commit defensivo de `/scaffold` para excluir el estado runtime bajo `.claude/` sin fallar cuando existe su marker de sesion.
+
 ## [0.37.9] - 2026-09-12
 
 ### Fixed
@@ -2406,7 +2413,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.9...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.10...HEAD
+[0.37.10]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.9...v0.37.10
 [0.37.9]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.8...v0.37.9
 [0.37.8]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.7...v0.37.8
 [0.37.7]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.6...v0.37.7
