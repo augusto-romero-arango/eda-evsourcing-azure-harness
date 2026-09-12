@@ -61,7 +61,7 @@
 # siguiente /mefisto:upgrade, como documenta el issue #531.
 #
 # Uso:
-#   scripts/update-plugin.sh                        # actualiza y reporta podables (no borra)
+#   scripts/update-plugin.sh [--align-opencode]     # actualiza Claude y, opcionalmente, OpenCode
 #   scripts/update-plugin.sh --prune [--loaded X]   # borra las podables (tras confirmar)
 #
 # Exit code: 0 si el modo pedido corrio completo; 1 si el guard cwd != Mefisto aborta,
@@ -73,11 +73,91 @@ PLUGIN_ROOT_FILE=".claude/pipeline/.plugin-root"
 MARKER_FILE=".claude/pipeline/.plugin-root.previous"
 
 usage() {
-    echo "Uso: $0 [--prune [--loaded <version>]]" >&2
+    echo "Uso: $0 [--align-opencode] [--prune [--loaded <version>]]" >&2
     echo "  (sin flags)        actualiza marketplace + plugin, reescribe .plugin-root, imprime el" >&2
     echo "                     delta de CHANGELOG y reporta versiones podables del cache (sin borrar)." >&2
     echo "  --prune            borra las versiones podables (solo tras confirmar con el usuario, CA-4)." >&2
     echo "  --loaded <version> version que la sesion activa tiene cargada; la poda nunca la borra." >&2
+    echo "  --align-opencode alinea OpenCode con el manifiesto de la nueva raiz Claude (sin podar releases OpenCode)." >&2
+}
+
+# _alinear_opencode <raiz-claude>
+#
+# La raiz Claude ya fue elegida por el update del marketplace. Su manifiesto es la unica
+# autoridad para la version objetivo: no se consulta latest, Git ni el cache OpenCode.
+_alinear_opencode() {
+    local claude_root="$1" manifest version launcher installer opencode_root diagnosis
+    manifest="$claude_root/mefisto-manifest.json"
+
+    if ! command -v jq >/dev/null 2>&1; then
+        echo "ERROR: jq es requerido para validar la identidad y alinear OpenCode." >&2
+        return 1
+    fi
+    if [ ! -f "$manifest" ] || [ -L "$manifest" ] || ! jq -e '
+        .schemaVersion == 1 and .runtime == "claude" and
+        (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
+        (.commit | type == "string" and test("^[0-9a-f]{40}$"))
+    ' "$manifest" >/dev/null 2>&1; then
+        echo "ERROR: el manifiesto Claude destino es invalido: $manifest." >&2
+        echo "       OpenCode no se modifico; corrige o reinstala esa version y reintenta." >&2
+        return 1
+    fi
+    version=$(jq -r '.version' "$manifest")
+
+    # El override solo existe para tests; el camino normal conserva el fallback de
+    # MEF-ADR-0053 y no inspecciona configuracion ni credenciales de ningun runtime.
+    if [ -n "${MEFISTO_OPENCODE_LAUNCHER:-}" ]; then
+        launcher="$MEFISTO_OPENCODE_LAUNCHER"
+    elif [ -n "${XDG_DATA_HOME:-}" ]; then
+        launcher="$XDG_DATA_HOME/mefisto/active/bin/mefisto-opencode"
+    elif [ "$(uname -s)" = Darwin ]; then
+        launcher="$HOME/Library/Application Support/mefisto/active/bin/mefisto-opencode"
+    else
+        launcher="$HOME/.local/share/mefisto/active/bin/mefisto-opencode"
+    fi
+
+    if [ -x "$launcher" ]; then
+        echo "Alineando OpenCode v$version mediante el launcher activo..."
+        "$launcher" install "$version" || {
+            echo "ERROR: la instalacion OpenCode mediante el launcher fallo; las releases existentes se conservaron para rollback." >&2
+            return 1
+        }
+        "$launcher" activate "$version" || {
+            echo "ERROR: no se pudo activar OpenCode v$version; reintenta o usa el launcher para rollback." >&2
+            return 1
+        }
+    else
+        installer="$claude_root/src/published/scripts/install-opencode-release.sh"
+        if [ ! -f "$installer" ] || [ -L "$installer" ] || [ ! -x "$installer" ]; then
+            echo "ERROR: no hay launcher OpenCode valido ni bootstrap publico confiable en la raiz Claude destino." >&2
+            echo "       OpenCode no se modifico; reinstala el plugin Claude y reintenta." >&2
+            return 1
+        fi
+        echo "Instalando OpenCode v$version con el bootstrap verificado de la raiz Claude destino..."
+        "$installer" bootstrap "$version" || {
+            echo "ERROR: el bootstrap OpenCode fallo; no se borraron releases ni configuracion ajena." >&2
+            return 1
+        }
+        # El bootstrap publico verifica el checksum antes de extraer o publicar la release.
+        [ -x "$launcher" ] || {
+            echo "ERROR: el bootstrap termino sin un launcher OpenCode activo y valido." >&2
+            return 1
+        }
+    fi
+
+    "$launcher" project || { echo "ERROR: la proyeccion OpenCode conflicto o fallo; corrige el conflicto y reintenta." >&2; return 1; }
+    "$launcher" status || { echo "ERROR: status OpenCode reporto una instalacion incompleta." >&2; return 1; }
+    opencode_root=$("$launcher" package-root) || { echo "ERROR: no se pudo resolver la raiz fisica OpenCode activa." >&2; return 1; }
+    diagnosis="$opencode_root/diagnose-installation-identity.sh"
+    if [ ! -x "$diagnosis" ]; then
+        echo "ERROR: la release OpenCode activa no contiene el diagnostico de identidad." >&2
+        return 1
+    fi
+    if ! "$diagnosis" --claude-root "$claude_root" --opencode-root "$opencode_root" | jq -e '.status == "aligned"' >/dev/null; then
+        echo "ERROR: OpenCode no quedo aligned con la raiz Claude destino; las releases se conservan para reintento o rollback." >&2
+        return 1
+    fi
+    echo "OK: OpenCode aligned con Claude v$version."
 }
 
 # _version_de_ruta <ruta-a-un-directorio-de-version>
@@ -207,10 +287,11 @@ main() {
         return 1
     fi
 
-    local prune=false loaded_cli=""
+    local prune=false align_opencode=false loaded_cli=""
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --prune) prune=true; shift ;;
+            --align-opencode) align_opencode=true; shift ;;
             --loaded)
                 if [ "$#" -lt 2 ] || [ -z "$2" ]; then
                     echo "ERROR: --loaded requiere una version (p. ej. --loaded 0.19.0)" >&2
@@ -292,6 +373,7 @@ main() {
             return 1
         fi
         echo ""
+
     fi
 
     # --- Version mas reciente del cache (CA-3) ----------------------------------------
@@ -325,6 +407,11 @@ main() {
             echo "ADVERTENCIA: no se pudo calcular el delta de CHANGELOG (version cargada desconocida o CHANGELOG.md ausente)."
         fi
         echo ""
+
+        if [ "$align_opencode" = true ]; then
+            _alinear_opencode "$new_version_dir" || return 1
+            echo ""
+        fi
     fi
 
     # --- Poda del cache, conservando {version nueva, version cargada} (CA-4) ----------
