@@ -46,4 +46,4 @@ La tercera corrida de `/scaffold certificacion`, ya con Mefisto `v0.37.10`, term
 ## Referencias
 Issues creados: #1242, #1245, #1246, #1247, #1248
 PR del gate ya mergeado: #1244
-PR consumidor bloqueado: #5
+PR consumidor apto para decision de merge: #5
