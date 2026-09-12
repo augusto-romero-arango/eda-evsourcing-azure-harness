@@ -80,6 +80,9 @@ MEFISTO_OPENCODE_RELEASE_BASE_URL="file://$WORK/assets" "$EXTRACT/install.sh" bo
 assert_active 2.0.0 'bootstrap remoto activa la version descargada'
 [ -d "$XDG_DATA_HOME/mefisto/releases/1.2.3" ] && [ -d "$XDG_DATA_HOME/mefisto/releases/2.0.0" ] && pass 'bootstrap remoto conserva release anterior'
 assert_only_data_root 'bootstrap remoto solo escribe bajo la raiz de datos'
+printf corrupto >> "$WORK/assets/v2.0.0/mefisto-opencode-v2.0.0.tar.gz"
+MEFISTO_OPENCODE_RELEASE_BASE_URL="file://$WORK/assets" "$EXTRACT/install.sh" bootstrap 2.0.0 >/dev/null 2>&1; assert_rc "$?" 0 'repetir bootstrap sobre una release valida es idempotente sin red'
+assert_active 2.0.0 'bootstrap idempotente conserva activa la release existente'
 
 "$ACTIVE" activate 1.2.3 >/dev/null; assert_rc "$?" 0 'activar version instalada hace rollback sin red'
 assert_active 1.2.3 'rollback reemplaza active atomicamente'
@@ -89,16 +92,20 @@ MEFISTO_OPENCODE_RELEASE_BASE_URL="file://$WORK/assets" MEFISTO_OPENCODE_TEST_AB
 assert_active 1.2.3 'interrupcion conserva el puntero activo anterior'
 [ -d "$XDG_DATA_HOME/mefisto/releases/3.0.0" ] && pass 'interrupcion solo deja una release completa e inactiva' || fail 'interrupcion dejo release parcial'
 
-MEFISTO_OPENCODE_RELEASE_BASE_URL="file://$WORK/assets" "$ACTIVE" install 2.0.0 >/dev/null 2>&1; assert_rc "$?" 0 'reinstalar una release ya valida es idempotente sin red'
-assert_active 2.0.0 'reinstalacion activa la release existente sin leer asset corrupto'
+MEFISTO_OPENCODE_RELEASE_BASE_URL="file://$WORK/assets" "$ACTIVE" install 2.0.0 >/dev/null 2>&1; assert_rc "$?" 0 'install mediante el launcher conserva su contrato idempotente'
+assert_active 2.0.0 'install activa la release existente sin leer el asset corrupto'
 "$ACTIVE" activate 1.2.3 >/dev/null
 printf corrupto >> "$WORK/assets/v4.0.0/mefisto-opencode-v4.0.0.tar.gz"
 MEFISTO_OPENCODE_RELEASE_BASE_URL="file://$WORK/assets" "$EXTRACT/install.sh" bootstrap 4.0.0 >/dev/null 2>&1; assert_rc "$?" 1 'bootstrap remoto rechaza checksum corrupto'
 assert_active 1.2.3 'checksum fallido conserva active aunque el destino falle'
 [ ! -e "$XDG_DATA_HOME/mefisto/releases/4.0.0" ] && pass 'checksum fallido no publica una release parcial' || fail 'checksum fallido publico un destino instalable'
 
-printf '%064d  ../fuera\n' 0 > "$WORK/assets/v4.0.0/mefisto-opencode-v4.0.0.tar.gz.sha256"
-MEFISTO_OPENCODE_RELEASE_BASE_URL="file://$WORK/assets" "$EXTRACT/install.sh" bootstrap 4.0.0 >/dev/null 2>&1; assert_rc "$?" 1 'bootstrap remoto rechaza checksum malformado sin leer esa ruta'
+(
+    cd "$WORK/assets/v4.0.0" || exit 1
+    shasum -a 256 mefisto-opencode-v4.0.0.tar.gz > mefisto-opencode-v4.0.0.tar.gz.sha256
+    printf '\n' >> mefisto-opencode-v4.0.0.tar.gz.sha256
+) || exit 1
+MEFISTO_OPENCODE_RELEASE_BASE_URL="file://$WORK/assets" "$EXTRACT/install.sh" bootstrap 4.0.0 >/dev/null 2>&1; assert_rc "$?" 1 'bootstrap remoto rechaza checksum con lineas adicionales'
 assert_active 1.2.3 'checksum no canonico conserva active'
 MEFISTO_OPENCODE_RELEASE_BASE_URL="file://$WORK/assets" "$EXTRACT/install.sh" bootstrap 5.0.0 >/dev/null 2>&1; assert_rc "$?" 1 'bootstrap remoto rechaza tarball con enlace antes de extraer'
 [ ! -e "$XDG_DATA_HOME/mefisto/releases/5.0.0" ] && pass 'tarball inseguro no publica una release' || fail 'tarball inseguro publico un destino'
@@ -112,6 +119,8 @@ MEFISTO_OPENCODE_RELEASE_BASE_URL="file://$WORK/assets" "$EXTRACT/install.sh" bo
 
 OPENCODE_CONFIG_DIR="$XDG_DATA_HOME/opencode config" "$ACTIVE" project >/dev/null; assert_rc "$?" 0 'project conserva el contrato mediante el launcher instalado'
 [ -f "$XDG_DATA_HOME/opencode config/.mefisto-projection.json" ] && pass 'project publica su ledger sin tocar configuracion ajena' || fail 'project no publico su ledger'
+OPENCODE_CONFIG_DIR="$XDG_DATA_HOME/opencode config" "$ACTIVE" deactivate >/dev/null; assert_rc "$?" 0 'deactivate conserva el contrato mediante el launcher instalado'
+[ ! -e "$XDG_DATA_HOME/opencode config/.mefisto-projection.json" ] && pass 'deactivate retira el ledger proyectado' || fail 'deactivate conservo el ledger proyectado'
 
 STATUS="$("$ACTIVE" status)"; case "$STATUS" in *'Runtime: opencode'*'Version: 1.2.3'*'Tag: v1.2.3'*'Commit: 0123456789abcdef0123456789abcdef01234567'*"$XDG_DATA_HOME/mefisto"*) pass 'status informa identidad y raiz sin secretos' ;; *) fail 'status no informa identidad esperada' ;; esac
 DIAGNOSIS="$("$ACTIVE" diagnose)"; printf '%s' "$DIAGNOSIS" | jq -e '.status == "opencode_only" and .opencode.version == "1.2.3"' >/dev/null && pass 'diagnose expone el diagnostico parseable de la release activa' || fail 'diagnose no expone la identidad activa'

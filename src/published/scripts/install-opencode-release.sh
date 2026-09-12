@@ -105,7 +105,7 @@ copy_local_release() {
 }
 
 download_release() {
-    local version="$1" asset checksum_url tarball checksum staging entries verbose_entries checksum_line digest filename actual
+    local version="$1" asset checksum_url tarball checksum staging entries verbose_entries checksum_line checksum_lines digest filename actual
     asset="mefisto-opencode-v$version.tar.gz"
     checksum_url="${MEFISTO_OPENCODE_RELEASE_BASE_URL:-https://github.com/$REPOSITORY/releases/download}/v$version"
     tarball="$WORK/$asset"; checksum="$WORK/$asset.sha256"; staging="$WORK/release"
@@ -114,6 +114,9 @@ download_release() {
     command -v shasum >/dev/null 2>&1 || error 'shasum es requerido para validar SHA-256'
     curl --disable --fail --location --silent --show-error "$checksum_url/$asset" -o "$tarball" || error "no se pudo descargar $asset"
     curl --disable --fail --location --silent --show-error "$checksum_url/$asset.sha256" -o "$checksum" || error "no se pudo descargar el checksum de $asset"
+    checksum_lines="$(wc -l < "$checksum")" || error 'no se pudo inspeccionar el checksum del release'
+    checksum_lines="${checksum_lines//[[:space:]]/}"
+    [ "$checksum_lines" = 1 ] || error 'el archivo de checksum no tiene el formato canonico esperado'
     checksum_line="$(command cat "$checksum")" || error 'no se pudo leer el checksum del release'
     digest="${checksum_line%%  *}"; filename="${checksum_line#*  }"
     [ "${#digest}" -eq 64 ] && [ -z "${digest//[0123456789abcdef]/}" ] && [ "$filename" = "$asset" ] \
