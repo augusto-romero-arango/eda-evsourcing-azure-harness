@@ -376,27 +376,27 @@ coincidencia autorreferencial.
 
 ### Estado de la corrida
 
-**Registro historico de intento bloqueado (2026-09-10).** La evidencia de #1180
-de aquella ejecucion no certifico una instalacion: registro que el consumidor
-privado devolvia HTTP 404 para la identidad efectiva y que la release mas
-reciente observable seguia siendo `v0.37.0`, cuando este protocolo exige una
-candidata posterior. Una comprobacion de solo lectura al revisar #1181 reprodujo
-ambos resultados:
+**Bloqueada antes de crear fixtures (2026-09-12T21:31:04Z).** El preflight de
+solo lectura confirma que ya existen el consumidor privado y una release
+posterior a `v0.37.0`, pero #1180 no conserva un expediente con veredicto `PASA`
+que certifique la instalacion, el discovery y la identidad `aligned` de esa
+misma release. El cierre administrativo de #1180 mediante un PR que agrego la
+plantilla del expediente no sustituye sus resultados operacionales:
 
 | Comando sanitizado | Resultado sanitizado |
 |---|---|
-| `gh issue view 1180 --json state,stateReason,url` | #1180 esta cerrado como `COMPLETED`, pero su evidencia publicada conserva el estado "Bloqueada antes de instalar"; cerrar el issue documental no convierte ese intento en una certificacion. |
-| `gh release list --repo augusto-romero-arango/eda-evsourcing-azure-harness --limit 5` | La release mas reciente observable es `v0.37.0`; no hay una candidata posterior que pueda instalarse con identidad comun. |
-| `gh api repos/augusto-romero-arango/mefisto-consumer-certification` | HTTP 404; no se pueden verificar baseline, fixtures ni ejecuciones con la identidad efectiva. |
+| `gh issue view 1180 --json state,stateReason,closedAt,url,comments` | #1180 esta cerrado como `COMPLETED` desde `2026-09-12T21:26:40Z`; su ultimo comentario solo enlaza el PR documental #1267 y el protocolo aun registra la corrida de instalacion como bloqueada. No hay expediente #1180 con veredicto `PASA`. |
+| `gh repo view augusto-romero-arango/mefisto-consumer-certification --json isPrivate,defaultBranchRef,url` y consulta de `commits/main` | El repositorio es accesible y privado; `main` apunta a `7a580f7ce7576f51dc1ed1fa5891864d7be3a2e6`. Este dato no demuestra por si solo onboarding, instalaciones ni discovery certificados. |
+| `gh release view v0.37.11 --repo augusto-romero-arango/eda-evsourcing-azure-harness --json tagName,publishedAt,url,assets` | `v0.37.11` fue publicada con los dos assets OpenCode esperados. No se infiere desde su existencia que ambos runtimes la tengan instalada ni alineada. |
 
 Por ello no se crearon issues o PRs fixture, no se abrio Herdr y no se invoco
-`/mefisto:tooling`. Hacerlo sin esos prerrequisitos inventaria la evidencia que
-MEF-ADR-0031 y MEF-ADR-0053 exigen obtener de ejecuciones reales. Este registro
-no es un fallo de runtime ni un veredicto de certificacion; tampoco describe la
-disponibilidad actual del consumidor o de una release posterior. Una nueva
-corrida debe repetir desde el inicio el preflight de #1180 y el procedimiento de
-esta seccion, y solo entonces puede sustituir este registro por su evidencia
-redactada y su veredicto.
+`/mefisto:tooling`. Hacerlo antes de ejecutar y conservar el preflight completo
+de #1180 inventaria la evidencia que MEF-ADR-0031 y MEF-ADR-0053 exigen obtener
+de operaciones reales. Este bloqueo de prerrequisito no demuestra un fallo de
+runtime y **no satisface #1181**. Primero se debe repetir #1180 sobre una release
+candidata concreta hasta obtener `PASA`; despues se repite desde el inicio el
+procedimiento de esta seccion y se sustituye este bloque por la evidencia
+redactada y el veredicto de las dos corridas.
 
 Se abren **dos issues distintos**, ambos en el consumidor, con labels
 `tipo:tooling`, `dom:certificacion` y `estado:listo`: uno para Claude y uno para
