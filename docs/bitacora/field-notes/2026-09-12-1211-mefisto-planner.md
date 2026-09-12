@@ -20,6 +20,7 @@ La tercera corrida de `/scaffold certificacion`, ya con Mefisto `v0.37.10`, term
 - Crear #1242 para llevar el enforcement a la frontera determinista de `scripts/scaffold-pipeline.sh`, despues del commit defensivo y antes del push.
 - Mantener #1230 como contrato de la receta, pero no considerarlo suficiente como gate operativo.
 - No actualizar el pin a `1.15.3` dentro de este fix; una subida requiere su propia decision coherente sobre ADR, receta, comentarios y pruebas.
+- Tras dimensionar el delta, el usuario decidio no regenerar todo el scaffold: corregira transparentemente en el PR #5 las dos referencias a `1.13.1` y mantendra #1242 como correccion del harness. Esta salida permite avanzar el baseline, pero no se registra como una certificacion intacta de `/scaffold` en `v0.37.10`.
 
 ## Descartado
 - Aceptar el PR porque compila o porque ambos paquetes quedaron alineados entre si en `1.15.3`.
@@ -27,7 +28,7 @@ La tercera corrida de `/scaffold certificacion`, ya con Mefisto `v0.37.10`, term
 - Atribuir la salida a una instalacion vieja: ambos markers observados apuntan a `0.37.10`.
 
 ## Preguntas abiertas
-- Tras implementar y publicar #1242, cerrar y limpiar el PR #5 y regenerar desde un baseline limpio.
+- Verificar que el PR #5 cambie unicamente los dos pines a `1.13.1`, conserve `git diff --check` limpio y vuelva a ejecutar los checks antes del merge/apply.
 - Evaluar en un issue separado si el pin write-side debe evolucionar desde `1.13.1`; no es requisito para cerrar el bypass.
 
 ## Referencias
