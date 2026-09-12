@@ -306,7 +306,7 @@ output "action_group_id" {
 
 ### 1.3 `infra/modules/postgresql/main.tf`
 
-Event store de Marten (MEF-ADR-0003). `prevent_destroy = true`. `zone` por defecto `null` (Azure asigna).
+Event store de Marten (MEF-ADR-0003). `prevent_destroy = true`. `zone` por defecto `null` para que Azure asigne la zona durante el create; el `lifecycle` ignora despues ese valor administrado por Azure, por lo que Terraform no intenta cambiarlo en updates posteriores.
 
 ```hcl
 variable "name" {
@@ -369,6 +369,7 @@ resource "azurerm_postgresql_flexible_server" "this" {
 
   lifecycle {
     prevent_destroy = true
+    ignore_changes  = [zone]
   }
 }
 
@@ -401,6 +402,13 @@ output "administrator_login" {
   value       = azurerm_postgresql_flexible_server.this.administrator_login
 }
 ```
+
+**Zona asignada por Azure.** La documentacion oficial del provider para
+`azurerm_postgresql_flexible_server` indica que Azure asigna una zona cuando no se
+especifica y recomienda `ignore_changes` para `zone` (HashiCorp,
+[`postgresql_flexible_server` -- Argument Reference](https://github.com/hashicorp/terraform-provider-azurerm/blob/main/website/docs/r/postgresql_flexible_server.html.markdown)). Por eso se conserva `zone = var.zone` y su default `null`: gobiernan solamente el create, mientras `ignore_changes = [zone]` impide que el valor efectivo que Azure devuelve al state provoque un update posterior. Este modulo aun no expone `high_availability`; si lo incorpora en el futuro, reevalua tambien `high_availability[0].standby_availability_zone`, como recomienda esa misma fuente.
+
+**Migracion de modulos ya provisionados.** La idempotencia de este agente nunca sobrescribe un `.tf` existente, asi que reejecutar `/infra-base` no modifica un `infra/modules/postgresql/main.tf` heredado. Agrega manualmente `ignore_changes = [zone]` al mismo bloque `lifecycle` que conserva `prevent_destroy = true`, y confirma en el plan de CI que ya no propone actualizar `zone` ni destruir/recrear el servidor.
 
 ### 1.4 `infra/modules/service-bus/main.tf`
 
