@@ -21,7 +21,7 @@ La preparación de la certificación publicada #1180 llegó al primer bootstrap 
 
 - Extender `/mefisto:upgrade` en lugar de crear otro slash command: la intención existente ya es actualizar Mefisto y debe seleccionar una sola versión para ambos adaptadores.
 - No usar un Agent Skill: la instalación es una operación explícita y verificable, no doctrina de carga progresiva.
-- Mantener una única confirmación solo para el primer bootstrap OpenCode. Si ya existe una instalación activa, los upgrades siguientes alinean y reproyectan automáticamente; si el usuario declina el bootstrap, el comportamiento Claude permanece intacto.
+- Mantener una única confirmación cuando no exista una proyección OpenCode activa. Una release instalada no equivale a OpenCode habilitado: solo un ledger de proyección Mefisto válido y sus enlaces administrados autorizan la alineación/reproyección automática. Sin proyección —incluido después de `deactivate`— `/upgrade` ofrece habilitar o reactivar, pero rechazarlo actualiza únicamente Claude.
 - Separar el trabajo en tres issues secuenciales por componente: entrypoint del instalador (#1256), orquestación mecánica de `update-plugin.sh` (#1257) y UX/documentación de `/upgrade` (#1258).
 - No podar releases OpenCode durante el upgrade. La instalación permanece aditiva y reversible; cualquier poda conserva su opt-in separado.
 - #1180 depende ahora de #1258 y recuperó el label `bloqueado`; la certificación debe probar la UX resultante y no el procedimiento manual rechazado.
@@ -32,6 +32,7 @@ La preparación de la certificación publicada #1180 llegó al primer bootstrap 
 - Crear un Agent Skill de instalación: no proporciona una entrada operativa explícita ni es el mecanismo adecuado para efectos globales.
 - Exponer `MEFISTO_OPENCODE_INSTALLED` desde el comando: convertiría un detalle privado del launcher en API y haría frágil el bootstrap.
 - Instalar OpenCode silenciosamente para todos los usuarios Claude en el primer upgrade: añade una proyección global nueva sin expresar consentimiento.
+- Interpretar `active` o la presencia del launcher como consentimiento permanente: desharía un `deactivate` deliberado e impediría que el modo solo Claude fuera una opción estable.
 - Proyectar `/upgrade` en `dist/opencode` antes de certificar `/mefisto:tooling`: ampliaría el catálogo antes del gate fijado por MEF-ADR-0053.
 
 ## Preguntas abiertas
