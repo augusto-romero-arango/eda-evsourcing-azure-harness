@@ -14,8 +14,9 @@
 #   S-4: _mefisto_pipeline_ignored() -- exige el ignore especifico del estado y
 #        rechaza ignorar tambien la configuracion sibling versionada.
 #   S-5: diagnostico integrado -- config canónico efectivo, precedencia sobre el
-#        legacy y fallback legacy, incluidos los opt-outs explícitos y la
-#        degradación conservadora ante config inválido o ausente.
+#        legacy y fallback legacy, incluidos los opt-outs explícitos, la
+#        redacción de identificadores Entra y la degradación conservadora ante
+#        config inválido o ausente.
 #
 # El script se sourcea (no se ejecuta): scripts/onboard-diagnose.sh solo corre su
 # main() cuando BASH_SOURCE[0] == $0, asi que sourcearlo aqui carga row()/
@@ -310,7 +311,7 @@ GH
 cat > "$ONBOARD_BIN/az" <<'AZ'
 #!/usr/bin/env bash
 if [ "$1" = "account" ]; then exit 0; fi
-if [ "$1" = "ad" ]; then printf 'app-id\n'; fi
+if [ "$1" = "ad" ]; then printf 'APP_ID_CENTINELA_NO_PUBLICAR\n'; fi
 AZ
 chmod +x "$ONBOARD_BIN/gh" "$ONBOARD_BIN/az"
 
@@ -322,6 +323,7 @@ prepare_onboard_repo() {
   "projectName": "Diagnostico",
   "namespacePrefix": "Diagnostico.Dominio",
   "solutionFile": "Diagnostico.slnx",
+  "githubServicePrincipalName": "ci-diagnostico",
   "domainLabels": ["dominio1"],
   "boundedContext": { "name": "Principal", "domains": ["dominio1"] },
   "secrets": [],
@@ -348,13 +350,15 @@ jq '.secrets = [{"name":"legacy-ignorado","source":{"type":"github-secret","valu
     | .tenancy.strategy = "multi-tenant-header"' \
     "$ONBOARD_REPO/.claude/harness.config.json" > "$ONBOARD_REPO/.claude/harness.config.json.tmp"
 mv "$ONBOARD_REPO/.claude/harness.config.json.tmp" "$ONBOARD_REPO/.claude/harness.config.json"
-OUT=$(cd "$ONBOARD_REPO" && PATH="$ONBOARD_BIN:$PATH" bash "$REPO_ROOT/scripts/onboard-diagnose.sh")
+OUT=$(cd "$ONBOARD_REPO" && PATH="$ONBOARD_BIN:$PATH" bash "$REPO_ROOT/scripts/onboard-diagnose.sh" 2>&1)
 if printf '%s\n' "$OUT" | grep -Fq "[OK           ] config efectivo $ONBOARD_REPO_REAL/.mefisto/harness.config.json existe" \
+    && printf '%s\n' "$OUT" | grep -Fq '[OK           ] aplicacion de Entra "ci-diagnostico" existe' \
+    && ! printf '%s\n' "$OUT" | grep -Fq 'APP_ID_CENTINELA_NO_PUBLICAR' \
     && ! printf '%s\n' "$OUT" | grep -Fq "legacy-ignorado" \
     && ! printf '%s\n' "$OUT" | grep -Fq "multi-tenant-header"; then
-    pass "el config canónico prevalece y no mezcla datos del legacy"
+    pass "el config canónico prevalece, conserva OK de Entra y no expone el appId centinela"
 else
-    fail "el diagnóstico no usó exclusivamente el config canónico efectivo"
+    fail "el diagnóstico no preservó el estado esperado o expuso datos del consumidor"
 fi
 if printf '%s\n' "$OUT" | grep -Fq "[OK           ] secrets[] registra 0 entrada(s)" \
     && printf '%s\n' "$OUT" | grep -Fq "[OK           ] tenancy.strategy = mono-tenant-transitorio -- camino (B) POC" \

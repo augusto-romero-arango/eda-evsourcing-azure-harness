@@ -350,7 +350,7 @@ main() {
     else
         APP_ID=$(az ad app list --display-name "$HARNESS_SP_NAME" --query "[0].appId" -o tsv 2>/dev/null)
         if [ -n "$APP_ID" ] && [ "$APP_ID" != "None" ]; then
-            row OK "aplicacion de Entra \"$HARNESS_SP_NAME\" existe (appId $APP_ID)"
+            row OK "aplicacion de Entra \"$HARNESS_SP_NAME\" existe"
         else
             row FALTA "aplicacion de Entra \"$HARNESS_SP_NAME\" no encontrada"
             PA_CI_FALTA=1
