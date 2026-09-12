@@ -3744,6 +3744,49 @@ cat .github/smoke-tests/{kebab}.json | python3 -m json.tool > /dev/null
 
 Ejecuta las verificaciones en orden. Detente e informa al usuario si alguna falla.
 
+**Pines OpenTelemetry del write-side (MEF-ADR-0003, MEF-ADR-0038, CA-1/CA-2):** antes de compilar, verifica el contrato publicado de las dos referencias OpenTelemetry que acabas de emitir. Un restore/build verde no basta: NuGet puede resolver una version transitoria valida aunque el `.csproj` ya no represente la receta cuya superficie y guardrails se verificaron. La linea canonica del write-side es **`1.13.1`** para ambos paquetes; no la actualices parcialmente ni la derives de una version transitiva.
+
+```bash
+verificar_pin_otlp() {
+    local paquete="$1"
+    local version_esperada="$2"
+    local archivo="$3"
+    local referencias cantidad
+
+    if [ ! -f "$archivo" ]; then
+        echo "ERROR: paquete $paquete: se esperaba el pin $version_esperada en $archivo, pero el archivo no existe."
+        return 1
+    fi
+
+    referencias=$(grep -E "<PackageReference[[:space:]][^>]*Include=\"$paquete\"[^>]*/>" "$archivo" || true)
+    cantidad=$(printf '%s\n' "$referencias" | grep -c . || true)
+    if [ "$cantidad" -ne 1 ]; then
+        echo "ERROR: paquete $paquete: se esperaba exactamente una referencia con pin $version_esperada en $archivo; se encontraron $cantidad."
+        return 1
+    fi
+
+    if ! printf '%s\n' "$referencias" | grep -Eq "Version=\"$version_esperada\""; then
+        echo "ERROR: paquete $paquete: se esperaba el pin $version_esperada en $archivo."
+        return 1
+    fi
+}
+
+verificar_pin_otlp \
+    "OpenTelemetry.Extensions.Hosting" \
+    "1.13.1" \
+    "$REPO_ROOT/src/<RootNamespace>.{PascalCase}/<RootNamespace>.{PascalCase}.csproj" || exit 1
+verificar_pin_otlp \
+    "OpenTelemetry.Exporter.InMemory" \
+    "1.13.1" \
+    "$REPO_ROOT/tests/<RootNamespace>.{PascalCase}.Tests/<RootNamespace>.{PascalCase}.Tests.csproj" || exit 1
+```
+
+Los dos chequeos exigen tanto el valor exacto como una unica referencia al paquete. Ante un mismatch,
+un duplicado o un archivo ausente, detente **antes del commit**: el mensaje ya nombra el paquete, el
+pin esperado y el `.csproj` afectado. Una actualizacion de esta linea es un cambio coherente y separado:
+actualiza juntos MEF-ADR-0003, las recetas, los comentarios y estas verificaciones; nunca solo uno de
+esos lugares (MEF-ADR-0038 y MEF-ADR-0053).
+
 **Aislamiento de los tres ensamblados de eventos (tres islas, MEF-ADR-0039 decision 2, CA-4):**
 
 ```bash
