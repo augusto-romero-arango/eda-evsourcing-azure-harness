@@ -44,16 +44,18 @@ EOF
 }
 
 assert_gate_order() {
-    local defensive_commit gate push
+    local defensive_commit text_gate otel_gate push
     defensive_commit=$(grep -nF 'commit -m "scaffold($DOMAIN_NAME): nuevo dominio $PASCAL_CASE"' "$PIPELINE" | cut -d: -f1)
-    gate=$(grep -nF 'diff --check origin/main...HEAD' "$PIPELINE" | cut -d: -f1)
+    text_gate=$(grep -nF 'diff --check origin/main...HEAD' "$PIPELINE" | cut -d: -f1)
+    otel_gate=$(grep -nF 'header "Verificando pines OpenTelemetry"' "$PIPELINE" | cut -d: -f1)
     push=$(grep -nF 'push -u origin "$BRANCH_NAME"' "$PIPELINE" | cut -d: -f1)
 
-    if [ -n "$defensive_commit" ] && [ -n "$gate" ] && [ -n "$push" ] \
-        && [ "$defensive_commit" -lt "$gate" ] && [ "$gate" -lt "$push" ]; then
-        pass "el gate cubre origin/main...HEAD despues del commit defensivo y antes del push"
+    if [ -n "$defensive_commit" ] && [ -n "$text_gate" ] && [ -n "$otel_gate" ] && [ -n "$push" ] \
+        && [ "$defensive_commit" -lt "$text_gate" ] && [ "$text_gate" -lt "$otel_gate" ] \
+        && [ "$otel_gate" -lt "$push" ]; then
+        pass "los gates validan el resultado consolidado despues del commit defensivo y antes del push"
     else
-        fail "orden invalido: commit=${defensive_commit:-ausente}, gate=${gate:-ausente}, push=${push:-ausente}"
+        fail "orden invalido: commit=${defensive_commit:-ausente}, texto=${text_gate:-ausente}, otel=${otel_gate:-ausente}, push=${push:-ausente}"
     fi
 }
 
@@ -75,12 +77,12 @@ EOF
 mkdir -p "$PWD/src/Certificacion.Prueba"
 mkdir -p "$PWD/tests/Certificacion.Prueba.Tests"
 case "$SCAFFOLD_FIXTURE" in
-    sano|marker-legitimo|otel-tests-ausente)
+    sano|marker-legitimo|otel-function-ausente|otel-tests-ausente)
         printf 'namespace Certificacion.Prueba;\n' > "$PWD/src/Certificacion.Prueba/Program.cs"
         ;;
     whitespace) printf 'namespace Certificacion.Prueba; \n' > "$PWD/src/Certificacion.Prueba/Program.cs" ;;
     crlf) printf 'namespace Certificacion.Prueba;\r\n' > "$PWD/src/Certificacion.Prueba/Program.cs" ;;
-    otel-1153|otel-duplicado)
+    otel-1153|otel-exporter-1153|otel-hosting-duplicado|otel-exporter-duplicado)
         printf 'namespace Certificacion.Prueba;\n' > "$PWD/src/Certificacion.Prueba/Program.cs"
         ;;
     runtime-solo)
@@ -92,21 +94,30 @@ case "$SCAFFOLD_FIXTURE" in
         hosting_version="1.15.3"
         exporter_version="1.15.3"
         ;;
+    otel-exporter-1153)
+        hosting_version="1.13.1"
+        exporter_version="1.15.3"
+        ;;
     *)
         hosting_version="1.13.1"
         exporter_version="1.13.1"
         ;;
 esac
-cat > "$PWD/src/Certificacion.Prueba/Certificacion.Prueba.csproj" <<EOF_CSPROJ
+if [ "$SCAFFOLD_FIXTURE" != "otel-function-ausente" ]; then
+    cat > "$PWD/src/Certificacion.Prueba/Certificacion.Prueba.csproj" <<EOF_CSPROJ
 <Project><ItemGroup><PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="$hosting_version" /></ItemGroup></Project>
 EOF_CSPROJ
-if [ "$SCAFFOLD_FIXTURE" = "otel-duplicado" ]; then
+fi
+if [ "$SCAFFOLD_FIXTURE" = "otel-hosting-duplicado" ]; then
     printf '<Project><ItemGroup><PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.13.1" /><PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.13.1" /></ItemGroup></Project>\n' > "$PWD/src/Certificacion.Prueba/Certificacion.Prueba.csproj"
 fi
 if [ "$SCAFFOLD_FIXTURE" != "otel-tests-ausente" ]; then
     cat > "$PWD/tests/Certificacion.Prueba.Tests/Certificacion.Prueba.Tests.csproj" <<EOF_CSPROJ
 <Project><ItemGroup><PackageReference Include="OpenTelemetry.Exporter.InMemory" Version="$exporter_version" /></ItemGroup></Project>
 EOF_CSPROJ
+fi
+if [ "$SCAFFOLD_FIXTURE" = "otel-exporter-duplicado" ]; then
+    printf '<Project><ItemGroup><PackageReference Include="OpenTelemetry.Exporter.InMemory" Version="1.13.1" /><PackageReference Include="OpenTelemetry.Exporter.InMemory" Version="1.13.1" /></ItemGroup></Project>\n' > "$PWD/tests/Certificacion.Prueba.Tests/Certificacion.Prueba.Tests.csproj"
 fi
 if [ "$SCAFFOLD_FIXTURE" = "runtime-solo" ]; then
     git add src/Certificacion.Prueba/Program.cs \
@@ -125,7 +136,7 @@ EOF
 
 assert_otlp_gate_contract() {
     local resultado
-    resultado=$(python3 - "$AGENT" "$PIPELINE" <<'PY'
+    resultado=$(python3 - "$AGENT" "$PIPELINE" 2>&1 <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -231,15 +242,46 @@ else
     fail "el mismatch no deja diagnostico accionable"
 fi
 
-echo "[7] Pines OpenTelemetry: duplicado y proyecto de tests ausente abortan (CA-3)"
-run_case otel-duplicado
+echo "[7] Pin de tests: el runner tambien rechaza su deriva antes del push (CA-2/CA-3)"
+run_case otel-exporter-1153
 if [ "$LAST_RC" -ne 0 ] && ! git -C "$LAST_CONSUMER" ls-remote --exit-code origin refs/heads/scaffold-prueba >/dev/null 2>&1 \
-    && grep -qF 'OpenTelemetry.Extensions.Hosting' "$TMP_DIR/otel-duplicado.out" \
-    && grep -qF '1.13.1' "$TMP_DIR/otel-duplicado.out" \
-    && grep -qF 'Certificacion.Prueba.csproj' "$TMP_DIR/otel-duplicado.out"; then
-    pass "el duplicado aborta antes del push con diagnostico completo"
+    && grep -qF 'OpenTelemetry.Exporter.InMemory' "$TMP_DIR/otel-exporter-1153.out" \
+    && grep -qF '1.13.1' "$TMP_DIR/otel-exporter-1153.out" \
+    && grep -qF 'Certificacion.Prueba.Tests.csproj' "$TMP_DIR/otel-exporter-1153.out"; then
+    pass "el mismatch de tests aborta antes del push con diagnostico completo"
 else
-    fail "el duplicado no fue rechazado correctamente"
+    fail "el mismatch de tests no fue rechazado correctamente"
+fi
+
+echo "[8] Duplicados: ambos paquetes abortan antes del push (CA-3)"
+run_case otel-hosting-duplicado
+if [ "$LAST_RC" -ne 0 ] && ! git -C "$LAST_CONSUMER" ls-remote --exit-code origin refs/heads/scaffold-prueba >/dev/null 2>&1 \
+    && grep -qF 'OpenTelemetry.Extensions.Hosting' "$TMP_DIR/otel-hosting-duplicado.out" \
+    && grep -qF '1.13.1' "$TMP_DIR/otel-hosting-duplicado.out" \
+    && grep -qF 'Certificacion.Prueba.csproj' "$TMP_DIR/otel-hosting-duplicado.out"; then
+    pass "el duplicado de produccion aborta antes del push con diagnostico completo"
+else
+    fail "el duplicado de produccion no fue rechazado correctamente"
+fi
+run_case otel-exporter-duplicado
+if [ "$LAST_RC" -ne 0 ] && ! git -C "$LAST_CONSUMER" ls-remote --exit-code origin refs/heads/scaffold-prueba >/dev/null 2>&1 \
+    && grep -qF 'OpenTelemetry.Exporter.InMemory' "$TMP_DIR/otel-exporter-duplicado.out" \
+    && grep -qF '1.13.1' "$TMP_DIR/otel-exporter-duplicado.out" \
+    && grep -qF 'Certificacion.Prueba.Tests.csproj' "$TMP_DIR/otel-exporter-duplicado.out"; then
+    pass "el duplicado de tests aborta antes del push con diagnostico completo"
+else
+    fail "el duplicado de tests no fue rechazado correctamente"
+fi
+
+echo "[9] Proyectos ausentes: ambos csproj abortan antes del push (CA-3)"
+run_case otel-function-ausente
+if [ "$LAST_RC" -ne 0 ] && ! git -C "$LAST_CONSUMER" ls-remote --exit-code origin refs/heads/scaffold-prueba >/dev/null 2>&1 \
+    && grep -qF 'OpenTelemetry.Extensions.Hosting' "$TMP_DIR/otel-function-ausente.out" \
+    && grep -qF '1.13.1' "$TMP_DIR/otel-function-ausente.out" \
+    && grep -qF 'Certificacion.Prueba.csproj' "$TMP_DIR/otel-function-ausente.out"; then
+    pass "el proyecto de produccion ausente aborta antes del push con diagnostico completo"
+else
+    fail "el proyecto de produccion ausente no fue rechazado correctamente"
 fi
 run_case otel-tests-ausente
 if [ "$LAST_RC" -ne 0 ] && ! git -C "$LAST_CONSUMER" ls-remote --exit-code origin refs/heads/scaffold-prueba >/dev/null 2>&1 \
