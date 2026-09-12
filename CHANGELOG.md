@@ -4,6 +4,12 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.37.6] - 2026-09-12
+
+### Fixed
+
+- Se corrige `/infra-base` para que el nombre de PostgreSQL use una abreviatura regional propia cuando `postgresql_location` difiere de la region primaria, sin alterar el naming de los demas recursos.
+
 ## [0.37.5] - 2026-09-10
 
 ### Fixed
@@ -2380,7 +2386,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.5...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.6...HEAD
+[0.37.6]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.5...v0.37.6
 [0.37.5]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.4...v0.37.5
 [0.37.4]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.3...v0.37.4
 [0.37.3]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.2...v0.37.3
