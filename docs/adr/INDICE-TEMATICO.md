@@ -134,3 +134,4 @@ no necesita estar residente en cada sesión, solo cuando se busca en qué ADR vi
 | Distribucion multi-runtime de consumidores (enmienda de mirror temporal de identidad de release) | MEF-ADR-0053 |
 | Distribucion multi-runtime de Mefisto para consumidores | MEF-ADR-0053 |
 | Persistencia en CI de los defaults regionales independientes de PostgreSQL | MEF-ADR-0021 |
+| Event Sourcing con Marten y Wolverine | MEF-ADR-0003 |
