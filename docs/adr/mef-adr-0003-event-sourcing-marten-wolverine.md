@@ -32,8 +32,9 @@ Se adoptan los siguientes paquetes para todos los dominios de ControlAsistencias
 | `Cosmos.EventDriven.Abstractions` | 2.1.0 | Interfaces de mensajeria (ICommandRouter, IPublicEventSender, etc.) |
 | `Microsoft.Azure.Functions.Worker` | 2.52.0 | Metapaquete del worker aislado; fijado en lockstep con `Worker.OpenTelemetry` para evitar desalineamiento Core/Grpc |
 | `Microsoft.Azure.Functions.Worker.OpenTelemetry` | 1.2.0 | Defaults de OpenTelemetry para el worker aislado de Functions |
-| `OpenTelemetry.Extensions.Hosting` | 1.13.1 | SDK de hosting de OpenTelemetry; minimo exigido por `Worker.OpenTelemetry` |
-| `Azure.Monitor.OpenTelemetry.Exporter` | 1.8.2 | Exporter de OpenTelemetry hacia Application Insights |
+| `OpenTelemetry.Extensions.Hosting` | 1.15.3 | SDK de hosting de OpenTelemetry del write-side; el limite efectivo lo impone `Azure.Monitor.OpenTelemetry.Exporter` 1.8.2, no solo `Worker.OpenTelemetry` |
+| `Azure.Monitor.OpenTelemetry.Exporter` | 1.8.2 | Exporter de OpenTelemetry hacia Application Insights; exige `OpenTelemetry.Extensions.Hosting >= 1.15.3` |
+| `OpenTelemetry.Exporter.InMemory` | 1.15.3 | Exclusivo de tests de composicion; alineado con el core OpenTelemetry del write-side |
 | `OpenTelemetry.Extensions.Hosting` | 1.17.0 | Read-side: SDK de hosting de OpenTelemetry del worker de proyecciones (MEF-ADR-0034 seccion 10) -- pin independiente del write-side, sin la restriccion de version minima que le impone `Worker.OpenTelemetry` a la fila de arriba |
 | `Azure.Monitor.OpenTelemetry.Exporter` | 1.8.3 | Read-side: exporter de OpenTelemetry hacia Application Insights del worker de proyecciones (MEF-ADR-0034 seccion 10) |
 
@@ -45,8 +46,20 @@ de arriba -- su pin se verifico de forma independiente contra NuGet.org al momen
 `.../azure.monitor.opentelemetry.exporter/index.json`: `1.17.0` y `1.8.3` son las ultimas estables
 de cada paquete, sin ningun `-rc`/`-beta` posterior). El patron de wildcard sin punto que valida
 el issue #460 (`WildcardHelper.GetWildcardRegex`) se reverifico por lectura de fuente contra el
-tag `core-1.17.0` de `open-telemetry/opentelemetry-dotnet` -- identico al de `core-1.13.1`, sin
-cambio de comportamiento entre ambas versiones del core que arrastra esta fila.
+tag `core-1.17.0` de `open-telemetry/opentelemetry-dotnet`, una version compatible con ese pin
+read-side; su comportamiento queda cubierto ademas por el test que valida dicho patron.
+
+Para el write-side, el minimo de `1.13.1` que declara
+`Microsoft.Azure.Functions.Worker.OpenTelemetry` no basta para resolver el grafo completo. El
+registro oficial de NuGet de `Azure.Monitor.OpenTelemetry.Exporter` 1.8.2 declara el rango
+`OpenTelemetry.Extensions.Hosting >= 1.15.3`; una referencia directa a 1.13.1 fuerza una
+resolucion descendente incompatible y, con NU1605 tratado como error, falla el restore. Por eso
+el canon fija 1.15.3 para `OpenTelemetry.Extensions.Hosting` y para
+`OpenTelemetry.Exporter.InMemory`, que solo usan los tests de composicion: los dos quedan
+alineados con el core que realmente resuelve el write-side. Esta linea elimina tambien la version
+vulnerable de `OpenTelemetry.Api`: la advisory
+[GHSA-g94r-2vxg-569j](https://github.com/advisories/GHSA-g94r-2vxg-569j) identifica 1.15.3 como la
+primera version corregida.
 
 `Cosmos.EventSourcing.CritterStack` 2.1.0 arrastra Marten 9.12.0 -- la misma version que ya fijaba
 1.3.0, sin cambio transitorio en este bump (verificado contra el nuspec real de
@@ -186,6 +199,8 @@ para el detalle completo, sin duplicarlo aqui.
 - Microsoft Learn: [Guide for running C# Azure Functions in the isolated worker model](https://learn.microsoft.com/azure/azure-functions/dotnet-isolated-process-guide#logging), [Use OpenTelemetry with Azure Functions](https://learn.microsoft.com/azure/azure-functions/opentelemetry-howto), [Monitor executions in Azure Functions](https://learn.microsoft.com/azure/azure-functions/functions-monitoring#telemetry-export-options).
 - MEF-ADR-0034 seccion 10: observabilidad del worker de proyecciones (read-side) -- `service.name` obligatorio, las fuentes `AddSource` (suma `Npgsql` frente al write-side) y el sampler read-side instalado por defecto con el filtro del polling del daemon (cuya doctrina fija MEF-ADR-0038); las dos filas read-side de la tabla de paquetes de arriba son su pin de version.
 - MEF-ADR-0038: control de volumen de telemetria -- destino de la doctrina que hasta el 2026-08-04 vivia en la seccion "Observabilidad" de este ADR (wiring de OpenTelemetry, orden del sampler frente al exporter, filtros de ruido en origen, frontera mecanismo-del-marco/valor-del-consumidor).
+- NuGet.org: [metadata de `Azure.Monitor.OpenTelemetry.Exporter` 1.8.2](https://api.nuget.org/v3/registration5-gz-semver2/azure.monitor.opentelemetry.exporter/index.json) -- declara `OpenTelemetry.Extensions.Hosting >= 1.15.3`.
+- GitHub Advisory Database: [GHSA-g94r-2vxg-569j](https://github.com/advisories/GHSA-g94r-2vxg-569j) -- `OpenTelemetry.Api` corregido desde 1.15.3.
 
 ## Control de cambios
 
@@ -195,3 +210,4 @@ para el detalle completo, sin duplicarlo aqui.
 - 2026-07-18: enmendado (issue #312, prerrequisito de issue #313) para bumpear los cinco paquetes `Cosmos.*` de `1.3.0` a `2.1.0`. El delta `1.3.0 -> 2.0.0 -> 2.1.0` se verifico decompilando con `ilspycmd` las tres versiones de cada `.dll` (los paquetes no publican codigo fuente ni release notes): Marten se mantiene en `9.12.0` (sin reintroducir GHSA-vmw2-qwm8-x84c/CVE-2026-45288) y los simbolos `IEventStore`, `ICommandRouter`, `ICommandHandlerAsync<T>`, `AgregarWolverineParaComandosServerless`, `AgregarWolverineCommandRouter`, `AgregarWolverineEventSender`, `AgregarMartenEventStore`, `CommandHandlerAsyncTest<T>` no cambiaron. Se encontro un breaking change real en `Cosmos.EventDriven.Abstractions` 2.0.0 (se conserva en 2.1.0): `IPrivateEventSender.PublishAsync(string groupId, ...)`/`IPublicEventSender.PublishAsync(string groupId, ...)` se reemplaza por `PublishAsync(PublishOptions options, ...)`; el mismo cambio corrige, ademas de `agents/domain-scaffolder.md` y este ADR, `agents/implementer.md` (seccion "`groupId` en `PublishAsync`") y `agents/test-writer.md`/`docs/testing/harness-cheatsheet.md` (DSL `ThenIsPublishedPrivately`/`ThenIsPublishedPublicly`), que citaban la firma vieja. 2.1.0 ademas agrega (aditivo, sin romper nada) `IPrivateEventHandlerAsync<TEvent>`, `IPrivateEventRouter`, `AgregarWolverinePrivateEventRouter()` y `PrivateEventHandlerAsyncTest<TEvent>` -- el prerrequisito que issue #313 necesita para enseñar el patron `PrivateEventHandler`. Queda diferido a un issue de seguimiento verificar si `PublishOptions.Headers` (nuevo desde 2.0.0) resuelve el "LIMITE verificado" de MEF-ADR-0027 sobre estampado de application properties arbitrarias.
 - 2026-07-29: enmendado (issue #457) para sumar a la tabla de paquetes las dos filas read-side del worker de proyecciones (`OpenTelemetry.Extensions.Hosting` 1.17.0, `Azure.Monitor.OpenTelemetry.Exporter` 1.8.3) que genera `projections-scaffolder` (MEF-ADR-0034 seccion 10, nueva) -- pin independiente del trio write-side de arriba, verificado contra NuGet.org al momento del cambio. Sin cambios en la seccion "Observabilidad" (write-side): sigue describiendo unicamente el trio de Functions.
 - 2026-08-04: enmendado (issue #463) para mudar integra la seccion "Observabilidad" a MEF-ADR-0038 (control de volumen de telemetria), criterio fijado al abrir el draft de ese issue durante el refinamiento de #457: si el marco llegaba a tener una MEF-ADR de observabilidad, la doctrina de esta seccion naceria ahi en una sola mudanza, en vez de quedar fragmentada entre dos documentos. Esta seccion queda como referencia sin doctrina duplicada; ningun paquete ni version de la tabla de arriba cambia.
+- 2026-09-12: enmendado (issue #1245) para corregir el canon OpenTelemetry del write-side: `Azure.Monitor.OpenTelemetry.Exporter` 1.8.2 exige `OpenTelemetry.Extensions.Hosting >= 1.15.3`, por lo que el pin previo 1.13.1 causaba NU1605 cuando este se trata como error. Se fija `OpenTelemetry.Extensions.Hosting` y el exporter exclusivo de tests `OpenTelemetry.Exporter.InMemory` en 1.15.3; esta version es tambien la primera correccion de `OpenTelemetry.Api` para GHSA-g94r-2vxg-569j.
