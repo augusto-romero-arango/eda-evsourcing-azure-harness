@@ -4,6 +4,14 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.37.9] - 2026-09-12
+
+### Fixed
+
+- Se normalizan a LF los archivos `.gitignore` y `.csproj` heredados de `func init` al scaffoldar un dominio, evitando whitespace espurio en el diff.
+- Se bloquea la publicacion de scaffolds con errores de whitespace detectados por `git diff --check`.
+- Se verifican antes del commit los pines OpenTelemetry emitidos por `domain-scaffolder`, incluidos duplicados y desalineamientos entre produccion y tests.
+
 ## [0.37.8] - 2026-09-12
 
 ### Fixed
@@ -2398,7 +2406,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.8...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.9...HEAD
+[0.37.9]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.8...v0.37.9
 [0.37.8]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.7...v0.37.8
 [0.37.7]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.6...v0.37.7
 [0.37.6]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.5...v0.37.6
