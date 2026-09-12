@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-infra-base-config-path.sh -- Contratos de config y naming de /infra-base (#1212, #1219).
+# test-infra-base-config-path.sh -- Contratos de config y naming de /infra-base (#1212, #1219, #1222).
 #
 # Cubre MEF-ADR-0053 para el prompt de infra-base-scaffolder: canonico, ambos
 # divergentes (prevalece canonico), legacy y ausencia. Tambien evita que una
@@ -13,6 +13,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 AGENT="$REPO_ROOT/agents/infra-base-scaffolder.md"
 COMMAND="$REPO_ROOT/commands/infra-base.md"
 README="$REPO_ROOT/README.md"
+ADR="$REPO_ROOT/docs/adr/mef-adr-0021-infraestructura-base.md"
 PASS=0
 FAIL=0
 
@@ -169,18 +170,22 @@ if grep -Fq 'defaults versionados' "$AGENT" \
     && grep -Fq 'variable "postgresql_region_short" { default = "cus" }' "$COMMAND" \
     && grep -Fq 'variables.tf' "$COMMAND" \
     && grep -Fq 'solo sirve para overrides locales no versionados' "$COMMAND" \
+    && grep -Fq 'nunca guardes alli postgresql_admin_password ni otro secreto' "$COMMAND" \
     && grep -Fq 'variable "postgresql_location" {' "$README" \
     && grep -Fq 'default = "centralus"' "$README" \
     && grep -Fq 'variable "postgresql_region_short" {' "$README" \
     && grep -Fq 'default = "cus"' "$README" \
     && grep -Fq 'no altera `location` ni `azure_region_short`' "$README" \
-    && grep -Fq 'nunca guardes allí `postgresql_admin_password` ni otro secreto' "$README"; then
-    pass "agente, comando y README versionan el par regional de CI como defaults HCL"
+    && grep -Fq 'nunca guardes allí `postgresql_admin_password` ni otro secreto' "$README" \
+    && grep -Fq 'default no sensible y versionado de `infra/environments/<env>/variables.tf`' "$ADR" \
+    && grep -Fq '`terraform.tfvars` ignorado queda reservado para overrides locales no versionados' "$ADR"; then
+    pass "agente, comando, README y ADR versionan el par regional de CI como defaults HCL"
 else
     fail "falta la receta versionada del par postgresql_location/postgresql_region_short"
 fi
-if grep -Fq 'juntos en el terraform.tfvars ignorado' "$AGENT" "$COMMAND" "$README" \
-    || grep -Fq 'ambos overrides no sensibles viven en el `terraform.tfvars` ignorado' "$AGENT" "$COMMAND" "$README"; then
+if grep -Fq 'juntos en el terraform.tfvars ignorado' "$AGENT" "$COMMAND" "$README" "$ADR" \
+    || grep -Fq 'ambos overrides no sensibles viven en el `terraform.tfvars` ignorado' "$AGENT" "$COMMAND" "$README" "$ADR" \
+    || grep -Fq 'revisable en `infra/environments/<env>/terraform.tfvars`' "$AGENT" "$COMMAND" "$README" "$ADR"; then
     fail "la receta regional vuelve a presentar terraform.tfvars ignorado como fuente de CI"
 else
     pass "terraform.tfvars ignorado no se presenta como fuente regional de CI"
