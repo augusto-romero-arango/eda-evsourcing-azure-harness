@@ -48,7 +48,13 @@ if [ -x "$OPENCODE_LAUNCHER" ]; then
     OPENCODE_PROJECTION_RC=$?
   fi
   OPENCODE_PROJECTION=unavailable
-  if command -v jq >/dev/null 2>&1 && printf '%s' "$OPENCODE_PROJECTION_JSON" | jq -e '
+  # Un launcher anterior al contrato projection-status rechaza exactamente este
+  # subcomando con su uso publico legado. Es una compatibilidad estrecha: no
+  # convierte errores, JSON invalido ni usos de otra version en consentimiento.
+  if [ "$OPENCODE_PROJECTION_RC" -ne 0 ] && printf '%s\n' "$OPENCODE_PROJECTION_JSON" | grep -Fx \
+    'ERROR: uso: mefisto-opencode install <semver> | activate <semver> | prune [--keep <n>] [--yes] | project | deactivate | status | diagnose | package-root' >/dev/null; then
+    OPENCODE_PROJECTION=legacy
+  elif command -v jq >/dev/null 2>&1 && printf '%s' "$OPENCODE_PROJECTION_JSON" | jq -e '
     .schemaVersion == 1 and
     (.status == "disabled" or .status == "enabled" or .status == "stale" or
      .status == "conflict" or .status == "operation-in-progress") and
@@ -72,8 +78,9 @@ Interpreta solo estos estados del contrato:
 - `enabled` o `stale`: el ledger y enlaces validos expresan adhesion. `stale` conserva esa adhesion; no es una desactivacion.
 - `disabled`: no hay adhesion proyectada; incluye primera instalacion, una release instalada sin proyectar y un `deactivate` deliberado.
 - `conflict`: no es desactivacion. No repares ledger, enlaces ni configuracion global; informa el JSON y continua visiblemente solo con Claude.
+- `legacy`: el launcher responde exactamente con el uso publico anterior a `projection-status`. Su presencia no prueba adhesion previa, pero la autoridad de actualizacion puede migrar su release mediante el bootstrap confiable ya incluido en la raiz Claude destino.
 
-Si el launcher no existe, tratalo como `disabled`. `operation-in-progress` y el estado local `unavailable` (respuesta invalida, version desconocida del contrato, codigo de salida incoherente o `jq` ausente) son estados seguros no alineables: informa que hay una operacion o diagnostico pendiente, no toques OpenCode y continua solo con Claude. No los presentes como `conflict` ni inventes consentimiento a partir de `active`.
+Si el launcher no existe, tratalo como `disabled`. `operation-in-progress` y el estado local `unavailable` (respuesta invalida, version desconocida del contrato distinta del uso `legacy` anterior, codigo de salida incoherente o `jq` ausente) son estados seguros no alineables: informa que hay una operacion o diagnostico pendiente, no toques OpenCode y continua solo con Claude. No los presentes como `conflict` ni inventes consentimiento a partir de `active`.
 
 ### 2. Decidir una sola vez la actualizacion
 
@@ -81,7 +88,8 @@ Decide **antes** de invocar el script, para ejecutarlo una sola vez:
 
 1. Para `enabled` o `stale`, invoca automaticamente el update con `--align-opencode`. No pidas confirmacion: la adhesión valida ya existe. El script instala/activa la misma version declarada por el manifiesto Claude destino, reproyecta, consulta `status` y verifica identidad.
 2. Para `disabled`, pide una unica confirmacion explicita: "OpenCode no esta habilitado para Mefisto. ¿Quieres habilitarlo o reactivarlo y alinearlo con esta actualizacion? [si/no]". Solo si responde exactamente `si`, usa `--align-opencode`; si declina o no responde, actualiza solo Claude. No crees, actives ni reproyectes OpenCode en ese caso.
-3. Para `conflict` o un estado seguro no alineable, explica que OpenCode requiere intervencion manual y actualiza solo Claude. Nunca pases `--align-opencode`.
+3. Para `legacy`, pide una unica confirmacion explicita: "OpenCode tiene un launcher de una version anterior que no declara `projection-status`. No se puede inferir que estuviera adherido a Mefisto. ¿Quieres migrarlo y alinearlo con esta actualizacion? [si/no]". Solo si responde exactamente `si`, usa una vez `--align-opencode`; si declina o no responde, actualiza solo Claude y no modifica releases, ledger, enlaces ni configuracion OpenCode. No remitas a bootstrap ni a diagnostico manual: `update-plugin.sh` ya valida el launcher o usa el bootstrap confiable de la raiz Claude destino.
+4. Para `conflict`, `operation-in-progress` o `unavailable`, explica que OpenCode requiere intervencion manual y actualiza solo Claude. Nunca pases `--align-opencode`; no los reinterpretes como `legacy` ni como consentimiento.
 
 ```bash
 UPDATE_SCRIPT="${PLUGIN_SCRIPTS}/update-plugin.sh"
