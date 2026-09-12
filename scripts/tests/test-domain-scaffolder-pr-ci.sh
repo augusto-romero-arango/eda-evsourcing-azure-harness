@@ -9,6 +9,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 python3 - "$REPO_ROOT/agents/domain-scaffolder.md" <<'PY'
 import re
 import sys
+from fnmatch import fnmatch
 from pathlib import Path
 
 agent = Path(sys.argv[1]).read_text()
@@ -45,11 +46,14 @@ pull_request = re.search(r"  pull_request:\n.*?(?=^  workflow_run:)", template, 
 check(push is not None, "la plantilla conserva el trigger push")
 check(pull_request is not None, "la plantilla declara el trigger pull_request")
 if push and pull_request:
-    for dependency in dependencies:
-        check(
-            f"- '{dependency}'" in push.group(0) and f"- '{dependency}'" in pull_request.group(0),
-            f"push y pull_request vigilan {dependency}",
-        )
+    path_pattern = re.compile(r"^\s+- '([^']+)'$", re.MULTILINE)
+    push_paths = path_pattern.findall(push.group(0))
+    pull_request_paths = path_pattern.findall(pull_request.group(0))
+    check(push_paths == dependencies, "push conserva exactamente las seis dependencias de build")
+    check(
+        pull_request_paths == push_paths,
+        "pull_request vigila exactamente las mismas dependencias que push",
+    )
 
 build = re.search(r"^  build-and-test:\n.*?(?=^  deploy:)", template, re.MULTILINE | re.DOTALL)
 check(build is not None, "la plantilla conserva el unico job build-and-test")
@@ -68,13 +72,29 @@ if build:
         'for proj in tests/<RootNamespace>.*.Tests/; do' in build_text,
         "el PR ejecuta todos los proyectos unitarios y de contrato",
     )
-    check(".SmokeTests/" not in build_text, "el glob de test no selecciona proyectos .SmokeTests")
+    test_glob = re.search(r"for proj in (tests/<RootNamespace>[^;]+); do", build_text)
+    check(test_glob is not None, "se encontro el glob de proyectos de test")
+    if test_glob:
+        pattern = test_glob.group(1)
+        check(
+            fnmatch("tests/<RootNamespace>.Ventas.Tests/", pattern)
+            and fnmatch("tests/<RootNamespace>.Ventas.Contract.Tests/", pattern),
+            "el glob selecciona proyectos unitarios y de contrato",
+        )
+        check(
+            not fnmatch("tests/<RootNamespace>.Ventas.SmokeTests/", pattern),
+            "el glob no selecciona proyectos .SmokeTests",
+        )
 
 safe_condition = "if: github.event_name != 'pull_request' && needs.determinar-alcance.outputs.debe_desplegar == 'true'"
 deploy = re.search(r"^  deploy:\n.*?(?=^  smoke-tests:)", template, re.MULTILINE | re.DOTALL)
 smoke = re.search(r"^  smoke-tests:\n.*", template, re.MULTILINE | re.DOTALL)
 check(deploy is not None and safe_condition in deploy.group(0), "deploy queda omitido en pull_request")
 check(smoke is not None and safe_condition in smoke.group(0), "smoke-tests queda omitido en pull_request")
+check(
+    smoke is not None and "needs: [determinar-alcance, deploy]" in smoke.group(0),
+    "smoke-tests conserva deploy y la salida de alcance como dependencias",
+)
 if deploy:
     check("uses: azure/login@v3" in deploy.group(0), "OIDC permanece dentro del job excluido en PR")
     check("- name: Publish" in deploy.group(0), "publish permanece dentro del job excluido en PR")
@@ -83,8 +103,17 @@ if deploy:
 check("workflow_run:\n    workflows: ['Infra CD']" in template, "se conserva workflow_run posterior a Infra CD")
 check("workflow_dispatch:" in template, "se conserva workflow_dispatch")
 check(
+    'if [ "${{ github.event_name }}" != "workflow_run" ]; then' in template,
+    "determinar-alcance habilita build-and-test para pull_request, push y workflow_dispatch",
+)
+check(
     "Repos ya scaffoldeados antes del fix del issue #1248" in agent,
     "la nota de idempotencia explica como portar el cambio a workflows existentes",
+)
+check(
+    "pull_request.paths` como copia exacta de `push.paths" in agent
+    and "TenantResolver/**` cuando el dominio ya la tenga" in agent,
+    "la nota de idempotencia conserva dependencias condicionales de dominios existentes",
 )
 
 print(f"\nResumen: {passed} pass, {failed} fail")
