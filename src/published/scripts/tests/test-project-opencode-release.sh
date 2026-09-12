@@ -10,6 +10,11 @@ PASS=0; FAIL=0
 pass() { printf '  PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
 fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
 assert_rc() { [ "$1" -eq "$2" ] && pass "$3" || fail "$3 (exit $1)"; }
+assert_projection_status() {
+    local output="$1" expected="$2" active="$3" ledger="$4" label="$5"
+    jq -e --arg expected "$expected" --arg config "$XDG_CONFIG_HOME/opencode" --argjson active "$active" --argjson ledger "$ledger" \
+        '.schemaVersion == 1 and .status == $expected and .configRoot == $config and .activeVersion == $active and .ledgerRelease == $ledger and (keys == ["activeVersion", "configRoot", "ledgerRelease", "schemaVersion", "status"])' <<< "$output" >/dev/null && pass "$label" || fail "$label"
+}
 make_release() {
     local version="$1" root="$XDG_DATA_HOME/mefisto/releases/$1"
     mkdir -p "$root/commands" "$root/agents" "$root/plugins" "$root/skills/mefisto-projections" "$root/skills/mefisto-comment-cleanup"
@@ -33,11 +38,15 @@ activate_fixture 1.2.3
 mkdir -p "$XDG_CONFIG_HOME/opencode/commands" "$XDG_CONFIG_HOME/opencode/plugins"
 printf '%s\n' '{"provider":{"usuario":{}},"model":"usuario/modelo","permission":{"bash":"deny"},"mcp":{"propio":{"type":"remote","url":"https://example.invalid"}}}' > "$XDG_CONFIG_HOME/opencode/opencode.json"
 CONFIG_SHA="$(shasum -a 256 "$XDG_CONFIG_HOME/opencode/opencode.json")"; printf 'propio\n' > "$XDG_CONFIG_HOME/opencode/commands/propio.md"
+STATUS="$(bash "$PROJECTOR" projection-status)"; rc=$?; assert_rc "$rc" 0 'estado disabled no exige proyeccion ni release ajena'; assert_projection_status "$STATUS" disabled '"1.2.3"' null 'estado disabled es JSON versionado y estable'
 bash "$PROJECTOR" project >/dev/null; assert_rc "$?" 0 'proyecta la release activa en XDG_CONFIG_HOME'
 [ -L "$XDG_CONFIG_HOME/opencode/commands/mefisto:tooling.md" ] && [ -L "$XDG_CONFIG_HOME/opencode/agents/mefisto-writer.md" ] && [ -L "$XDG_CONFIG_HOME/opencode/plugins/mefisto-mcp.js" ] && [ -L "$XDG_CONFIG_HOME/opencode/skills/mefisto-projections/SKILL.md" ] && [ -L "$XDG_CONFIG_HOME/opencode/skills/mefisto-comment-cleanup/SKILL.md" ] && grep -q '^name: mefisto-projections$' "$XDG_CONFIG_HOME/opencode/skills/mefisto-projections/SKILL.md" && grep -q '^name: mefisto-comment-cleanup$' "$XDG_CONFIG_HOME/opencode/skills/mefisto-comment-cleanup/SKILL.md" && [ "$(< "$XDG_CONFIG_HOME/opencode/skills/mefisto-projections/read-apis.md")" = 'recurso 1.2.3' ] && pass 'proyecta plugins MCP, Skills nativos y recursos relativos sin checkout' || fail 'faltan enlaces globales de plugin o Skills'
 [ "$(shasum -a 256 "$XDG_CONFIG_HOME/opencode/opencode.json")" = "$CONFIG_SHA" ] && [ -f "$XDG_CONFIG_HOME/opencode/commands/propio.md" ] && pass 'conserva providers, modelos, permisos, MCP y comandos propios' || fail 'altero estado ajeno'
 bash "$PROJECTOR" project >/dev/null; assert_rc "$?" 0 'reproyectar la misma version es idempotente'
-activate_fixture 2.0.0; OUTPUT="$(bash "$PROJECTOR" project)"; assert_rc "$?" 0 'cambiar active reproyecta'
+STATUS="$(bash "$PROJECTOR" projection-status)"; rc=$?; assert_rc "$rc" 0 'estado enabled es exitoso'; assert_projection_status "$STATUS" enabled '"1.2.3"' '"1.2.3"' 'estado enabled verifica enlaces y ledger'
+STATUS_REPEAT="$(bash "$PROJECTOR" projection-status)"; [ "$STATUS" = "$STATUS_REPEAT" ] && pass 'estado JSON es idempotente byte a byte' || fail 'estado JSON no es idempotente'
+activate_fixture 2.0.0; STATUS="$(bash "$PROJECTOR" projection-status)"; rc=$?; assert_rc "$rc" 0 'cambiar active deja proyeccion stale sin repararla'; assert_projection_status "$STATUS" stale '"2.0.0"' '"1.2.3"' 'estado stale distingue deriva de desactivacion'
+OUTPUT="$(bash "$PROJECTOR" project)"; assert_rc "$?" 0 'cambiar active reproyecta'
 grep -q '2.0.0' "$XDG_CONFIG_HOME/opencode/commands/mefisto:tooling.md" && pass 'enlace estable sigue la nueva release activa sin residuos' || fail 'no siguio la nueva release'
 [ ! -e "$XDG_CONFIG_HOME/opencode/plugins/mefisto.js" ] && [ ! -e "$XDG_CONFIG_HOME/opencode/plugins/mefisto-mcp.js" ] && [ ! -e "$XDG_CONFIG_HOME/opencode/skills/mefisto-projections/SKILL.md" ] && [ ! -e "$XDG_CONFIG_HOME/opencode/skills/mefisto-comment-cleanup/SKILL.md" ] && pass 'retira plugins MCP y capacidades ausentes en la nueva release' || fail 'dejo residuos de la release anterior'
 printf '%s\n' "$OUTPUT" | grep -q 'DEGRADACION VISIBLE:.*Skills' && printf '%s\n' "$OUTPUT" | grep -q 'DEGRADACION VISIBLE:.*plugins/hooks' && printf '%s\n' "$OUTPUT" | grep -q 'DEGRADACION VISIBLE:.*plugin MCP bundleado' && pass 'reporta todas las capacidades ausentes o no representables' || fail 'oculto una degradacion'
@@ -58,6 +67,15 @@ OPENCODE_CONFIG_DIR='' bash "$PROJECTOR" project >/dev/null 2>&1; assert_rc "$?"
 
 mkdir -p "$WORK/ledger-hostil"; ln -s "$WORK/afuera" "$WORK/ledger-hostil/.mefisto-projection.json"
 OPENCODE_CONFIG_DIR="$WORK/ledger-hostil" bash "$PROJECTOR" project >/dev/null 2>&1; assert_rc "$?" 1 'ledger simbolico ajeno aborta'
+
+STATUS="$(OPENCODE_CONFIG_DIR="$WORK/ledger-hostil" bash "$PROJECTOR" projection-status)"; rc=$?; assert_rc "$rc" 1 'ledger simbolico informa conflicto sin repararlo'; jq -e --arg config "$WORK/ledger-hostil" '.schemaVersion == 1 and .status == "conflict" and .configRoot == $config and .ledgerRelease == null' <<< "$STATUS" >/dev/null && pass 'conflicto conserva JSON parseable y no sensible' || fail 'conflicto no conserva JSON parseable'
+OPENCODE_CONFIG_DIR="$WORK/enlaces-conflictivos" bash "$PROJECTOR" project >/dev/null
+rm "$WORK/enlaces-conflictivos/commands/mefisto:tooling.md"
+STATUS="$(OPENCODE_CONFIG_DIR="$WORK/enlaces-conflictivos" bash "$PROJECTOR" projection-status)"; rc=$?; assert_rc "$rc" 1 'enlace administrado ausente informa conflicto'; jq -e '.status == "conflict"' <<< "$STATUS" >/dev/null && pass 'enlace ausente conserva salida JSON' || fail 'enlace ausente no conserva salida JSON'
+ln -s "$XDG_DATA_HOME/mefisto/active/commands/mefisto:tooling.md" "$WORK/enlaces-conflictivos/commands/mefisto:tooling.md"; rm "$WORK/enlaces-conflictivos/commands/mefisto:tooling.md"; ln -s "$WORK/ajeno" "$WORK/enlaces-conflictivos/commands/mefisto:tooling.md"
+STATUS="$(OPENCODE_CONFIG_DIR="$WORK/enlaces-conflictivos" bash "$PROJECTOR" projection-status)"; rc=$?; assert_rc "$rc" 1 'enlace administrado retargeteado informa conflicto'; jq -e '.status == "conflict"' <<< "$STATUS" >/dev/null && pass 'enlace retargeteado conserva salida JSON' || fail 'enlace retargeteado no conserva salida JSON'
+PROJECTION_STATUS_SOURCE="$(awk '/^projection_status\(\)/,/^case /' "$PROJECTOR")"
+printf '%s\n' "$PROJECTION_STATUS_SOURCE" | grep -Eq 'opencode\.json|auth|provider|model|token' && fail 'estado no debe leer opencode.json ni stores de auth' || pass 'estado no inspecciona opencode.json ni stores de auth'
 
 printf '\nResultado: %s PASS, %s FAIL\n' "$PASS" "$FAIL"
 exit "$FAIL"
