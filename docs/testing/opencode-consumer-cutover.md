@@ -376,11 +376,12 @@ coincidencia autorreferencial.
 
 ### Estado de la corrida
 
-**Bloqueada antes de crear fixtures (2026-09-10).** La evidencia de #1180 no
-certifico una instalacion: registro que el consumidor privado devolvia HTTP 404
-para la identidad efectiva y que la release mas reciente observable seguia
-siendo `v0.37.0`, cuando este protocolo exige una candidata posterior. Una
-comprobacion de solo lectura al revisar #1181 reprodujo ambos resultados:
+**Registro historico de intento bloqueado (2026-09-10).** La evidencia de #1180
+de aquella ejecucion no certifico una instalacion: registro que el consumidor
+privado devolvia HTTP 404 para la identidad efectiva y que la release mas
+reciente observable seguia siendo `v0.37.0`, cuando este protocolo exige una
+candidata posterior. Una comprobacion de solo lectura al revisar #1181 reprodujo
+ambos resultados:
 
 | Comando sanitizado | Resultado sanitizado |
 |---|---|
@@ -390,11 +391,12 @@ comprobacion de solo lectura al revisar #1181 reprodujo ambos resultados:
 
 Por ello no se crearon issues o PRs fixture, no se abrio Herdr y no se invoco
 `/mefisto:tooling`. Hacerlo sin esos prerrequisitos inventaria la evidencia que
-MEF-ADR-0031 y MEF-ADR-0053 exigen obtener de ejecuciones reales. Este estado no
-es un fallo de runtime y no abre un bug: #1181 debe repetirse desde el inicio
-cuando el consumidor sea accesible y exista una release certificable. El resto
-de esta seccion conserva el procedimiento reproducible para esa repeticion; no
-constituye un veredicto exitoso.
+MEF-ADR-0031 y MEF-ADR-0053 exigen obtener de ejecuciones reales. Este registro
+no es un fallo de runtime ni un veredicto de certificacion; tampoco describe la
+disponibilidad actual del consumidor o de una release posterior. Una nueva
+corrida debe repetir desde el inicio el preflight de #1180 y el procedimiento de
+esta seccion, y solo entonces puede sustituir este registro por su evidencia
+redactada y su veredicto.
 
 Se abren **dos issues distintos**, ambos en el consumidor, con labels
 `tipo:tooling`, `dom:certificacion` y `estado:listo`: uno para Claude y uno para
