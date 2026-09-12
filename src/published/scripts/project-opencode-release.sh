@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Proyecta la release OpenCode activa a la superficie global documentada.
-# Uso: project-opencode-release.sh project | deactivate | status
+# Uso: project-opencode-release.sh project | deactivate | status | projection-status
 set -euo pipefail
 export LC_ALL=C
 
@@ -46,6 +46,18 @@ active_release() {
     [ "$manifest_version" = "$version" ] || error 'active y el manifiesto declaran versiones distintas'
     printf '%s\n' "$release"
 }
+active_version_if_available() {
+    local target version release manifest_version
+    [ -L "$ACTIVE" ] || return 1
+    target="$(readlink "$ACTIVE")" || return 1
+    version="${target#releases/}"
+    [ "$target" = "releases/$version" ] && printf '%s\n' "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$' || return 1
+    release="$ROOT/releases/$version"
+    [ -d "$release" ] && [ ! -L "$release" ] && [ -f "$release/mefisto-manifest.json" ] && [ ! -L "$release/mefisto-manifest.json" ] || return 1
+    manifest_version="$(jq -er '.version | strings' "$release/mefisto-manifest.json" 2>/dev/null)" || return 1
+    [ "$manifest_version" = "$version" ] || return 1
+    printf '%s\n' "$version"
+}
 list_sources() {
     local release="$1" kind base file rel
     for kind in commands agents skills plugins; do
@@ -61,20 +73,22 @@ list_sources() {
 state_valid() {
     local rel
     [ -f "$STATE" ] && [ ! -L "$STATE" ] || return 1
-    jq -e '.schemaVersion == 1 and (.release | type == "string") and (.paths | type == "array" and all(.[]; type == "string")) and (.directories | type == "array" and all(.[]; type == "string"))' "$STATE" >/dev/null 2>&1 || return 1
+    jq -e 'keys == ["directories", "paths", "release", "schemaVersion"] and .schemaVersion == 1 and (.release | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and (.paths | type == "array" and all(.[]; type == "string") and length == (unique | length)) and (.directories | type == "array" and all(.[]; type == "string") and length == (unique | length))' "$STATE" >/dev/null 2>&1 || return 1
     while IFS= read -r rel; do safe_relative_path "$rel" || return 1; done < <(jq -r '.paths[]' "$STATE")
     while IFS= read -r rel; do [ "$rel" = . ] || safe_relative_path "$rel/x" || return 1; done < <(jq -r '.directories[]' "$STATE")
 }
 owns() { jq -e --arg path "$1" '.paths | index($path) != null' "$STATE" >/dev/null 2>&1; }
-validate_owned() {
+owned_links_valid() {
     local rel target
-    [ -e "$STATE" ] || [ -L "$STATE" ] || return 0
-    state_valid || error "conflicto: $STATE no es un ledger Mefisto valido; no se modificara"
     while IFS= read -r rel; do
         target="$CONFIG/$rel"
-        [ -L "$target" ] && [ "$(readlink "$target")" = "$ACTIVE/$rel" ] \
-            || error "conflicto: $target fue modificado fuera de Mefisto; no se modificara"
+        [ -L "$target" ] && [ "$(readlink "$target")" = "$ACTIVE/$rel" ] || return 1
     done < <(jq -r '.paths[]' "$STATE")
+}
+validate_owned() {
+    [ -e "$STATE" ] || [ -L "$STATE" ] || return 0
+    state_valid || error "conflicto: $STATE no es un ledger Mefisto valido; no se modificara"
+    owned_links_valid || error 'conflicto: al menos un enlace administrado fue modificado fuera de Mefisto; no se modificara'
 }
 remove_links() {
     local rel
@@ -154,4 +168,35 @@ status() {
     if [ -e "$STATE" ] || [ -L "$STATE" ]; then state_valid || error "conflicto: $STATE no es un ledger Mefisto valido"; printf 'Configuracion OpenCode: %s\nRelease proyectada: %s\n' "$CONFIG" "$(jq -r .release "$STATE")"
     else printf 'Configuracion OpenCode: %s\nEstado: sin proyeccion Mefisto\n' "$CONFIG"; fi
 }
-case "${1:-}" in project) [ "$#" -eq 1 ] || error 'uso: mefisto-opencode project | deactivate | status'; project;; deactivate) [ "$#" -eq 1 ] || error 'uso: mefisto-opencode project | deactivate | status'; deactivate;; status) [ "$#" -eq 1 ] || error 'uso: mefisto-opencode project | deactivate | status'; status;; *) error 'uso: mefisto-opencode project | deactivate | status';; esac
+projection_status_json() {
+    local projection_state="$1" active_version="$2" ledger_version="$3"
+    jq -n --arg status "$projection_state" --arg config_root "$CONFIG" --argjson active_version "$active_version" --argjson ledger_version "$ledger_version" \
+        '{schemaVersion: 1, status: $status, configRoot: $config_root, activeVersion: $active_version, ledgerRelease: $ledger_version}'
+}
+projection_status() {
+    local active='' ledger='' active_json='null' ledger_json='null'
+    command -v jq >/dev/null 2>&1 || error 'jq es requerido para consultar el estado de proyeccion'
+    active="$(active_version_if_available 2>/dev/null || true)"
+    [ -z "$active" ] || active_json="$(jq -Rn --arg value "$active" '$value')"
+    if [ ! -e "$STATE" ] && [ ! -L "$STATE" ]; then
+        projection_status_json disabled "$active_json" "$ledger_json"
+        return 0
+    fi
+    if ! state_valid; then
+        projection_status_json conflict "$active_json" "$ledger_json"
+        return 1
+    fi
+    ledger="$(jq -r '.release' "$STATE")"
+    ledger_json="$(jq -Rn --arg value "$ledger" '$value')"
+    if [ -z "$active" ]; then
+        projection_status_json conflict "$active_json" "$ledger_json"
+        return 1
+    fi
+    if ! owned_links_valid; then
+        projection_status_json conflict "$active_json" "$ledger_json"
+        return 1
+    fi
+    if [ "$ledger" = "$active" ]; then projection_status_json enabled "$active_json" "$ledger_json"
+    else projection_status_json stale "$active_json" "$ledger_json"; fi
+}
+case "${1:-}" in project) [ "$#" -eq 1 ] || error 'uso: mefisto-opencode project | deactivate | status | projection-status'; project;; deactivate) [ "$#" -eq 1 ] || error 'uso: mefisto-opencode project | deactivate | status | projection-status'; deactivate;; status) [ "$#" -eq 1 ] || error 'uso: mefisto-opencode project | deactivate | status | projection-status'; status;; projection-status) [ "$#" -eq 1 ] || error 'uso: mefisto-opencode project | deactivate | status | projection-status'; projection_status;; *) error 'uso: mefisto-opencode project | deactivate | status | projection-status';; esac

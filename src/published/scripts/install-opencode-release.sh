@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Instala releases OpenCode verificadas bajo la raiz de datos del usuario.
-# Uso: install.sh bootstrap <semver> | install.sh install <semver> | install.sh activate <semver> | install.sh prune [--keep <n>] [--yes] | install.sh project | install.sh deactivate | install.sh status | install.sh diagnose | install.sh package-root
+# Uso: install.sh bootstrap <semver> | install.sh install <semver> | install.sh activate <semver> | install.sh prune [--keep <n>] [--yes] | install.sh project | install.sh deactivate | install.sh status | install.sh projection-status | install.sh diagnose | install.sh package-root
 set -euo pipefail
 export LC_ALL=C
 
@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPOSITORY="${MEFISTO_OPENCODE_REPOSITORY:-augusto-romero-arango/eda-evsourcing-azure-harness}"
 
 error() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
-usage() { error 'uso: mefisto-opencode bootstrap <semver> | install <semver> | activate <semver> | prune [--keep <n>] [--yes] | project | deactivate | status | diagnose | package-root'; }
+usage() { error 'uso: mefisto-opencode bootstrap <semver> | install <semver> | activate <semver> | prune [--keep <n>] [--yes] | project | deactivate | status | projection-status | diagnose | package-root'; }
 valid_version() {
     printf '%s\n' "$1" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
 }
@@ -345,6 +345,7 @@ case "${1:-}" in
     project) [ "$#" -eq 1 ] || usage; exec "$SCRIPT_DIR/project-opencode-release.sh" project ;;
     deactivate) [ "$#" -eq 1 ] || usage; exec "$SCRIPT_DIR/project-opencode-release.sh" deactivate ;;
     status) [ "$#" -eq 1 ] || usage; status ;;
+    projection-status) [ "$#" -eq 1 ] || usage; exec "$SCRIPT_DIR/project-opencode-release.sh" projection-status ;;
     diagnose) [ "$#" -eq 1 ] || usage; exec "$SCRIPT_DIR/diagnose-installation-identity.sh" --opencode-root "$ROOT/active" ;;
     package-root) [ "$#" -eq 1 ] || usage; package_root ;;
     *) usage ;;

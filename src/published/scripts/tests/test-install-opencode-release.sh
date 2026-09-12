@@ -123,6 +123,8 @@ OPENCODE_CONFIG_DIR="$XDG_DATA_HOME/opencode config" "$ACTIVE" deactivate >/dev/
 [ ! -e "$XDG_DATA_HOME/opencode config/.mefisto-projection.json" ] && pass 'deactivate retira el ledger proyectado' || fail 'deactivate conservo el ledger proyectado'
 
 STATUS="$("$ACTIVE" status)"; case "$STATUS" in *'Runtime: opencode'*'Version: 1.2.3'*'Tag: v1.2.3'*'Commit: 0123456789abcdef0123456789abcdef01234567'*"$XDG_DATA_HOME/mefisto"*) pass 'status informa identidad y raiz sin secretos' ;; *) fail 'status no informa identidad esperada' ;; esac
+PROJECTION_STATUS="$(OPENCODE_CONFIG_DIR="$XDG_DATA_HOME/opencode config" "$ACTIVE" projection-status)"; rc=$?
+[ "$rc" -eq 0 ] && jq -e --arg config "$XDG_DATA_HOME/opencode config" '.schemaVersion == 1 and .status == "disabled" and .configRoot == $config and .activeVersion == "1.2.3" and .ledgerRelease == null' <<< "$PROJECTION_STATUS" >/dev/null && pass 'launcher estable delega el estado JSON de proyeccion sin alterar status humano' || fail 'launcher no delega el estado JSON de proyeccion'
 DIAGNOSIS="$("$ACTIVE" diagnose)"; printf '%s' "$DIAGNOSIS" | jq -e '.status == "opencode_only" and .opencode.version == "1.2.3"' >/dev/null && pass 'diagnose expone el diagnostico parseable de la release activa' || fail 'diagnose no expone la identidad activa'
 rm "$XDG_DATA_HOME/mefisto/active"; ln -s "$HOME" "$XDG_DATA_HOME/mefisto/active"
 "$XDG_DATA_HOME/mefisto/releases/1.2.3/bin/mefisto-opencode" status >/dev/null 2>&1; assert_rc "$?" 1 'status rechaza active fuera del almacen sin inspeccionarlo'
