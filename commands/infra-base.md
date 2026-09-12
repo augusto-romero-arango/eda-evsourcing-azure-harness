@@ -61,10 +61,13 @@ Infraestructura base generada. Siguiente:
      commiteado (MEF-ADR-0025). subscription_id ya no es una variable: se resuelve de
      ARM_SUBSCRIPTION_ID. Revisa tambien los defaults derivados en variables.tf
      (project, project_short, postgresql_location, postgresql_region_short).
-     Si PostgreSQL debe ir a otra region por oferta, revisa ambos overrides no sensibles
-     juntos en el terraform.tfvars ignorado: por ejemplo, `postgresql_location = "centralus"`
-     y `postgresql_region_short = "cus"`. No derives la abreviatura: declarala segun la
-     convencion regional del consumidor (MEF-ADR-0045).
+      Si PostgreSQL debe ir a otra region por oferta, versiona juntos sus dos defaults no
+      sensibles en infra/environments/<env>/variables.tf, para que CI los reciba. Por ejemplo:
+      `variable "postgresql_location" { default = "centralus" }` y
+      `variable "postgresql_region_short" { default = "cus" }`. No derives la abreviatura:
+      declarala segun la convencion regional del consumidor (MEF-ADR-0045). No cambies
+      `location` ni `azure_region_short`: siguen describiendo los recursos primarios en eastus2.
+      terraform.tfvars permanece ignorado y solo sirve para overrides locales no versionados.
   3. Primer /infra: escribe y revisa el HCL, abre un PR. El apply real
      ocurre en CI al mergear a main (workflow Infra CD), nunca en local.
   4. /scaffold <dominio> agrega su service-plan/storage/function-app a este entorno.

@@ -137,7 +137,7 @@ else
     fail "comando no documenta correctamente el contrato"
 fi
 
-echo "[6] Naming regional independiente de PostgreSQL"
+echo "[6] Naming regional independiente y persistente de PostgreSQL"
 POSTGRESQL_REGION_BLOCK=$(awk '/^variable "postgresql_region_short"/,/^}/' "$AGENT")
 POSTGRESQL_ZONE_BLOCK=$(awk '/^variable "postgresql_zone"/,/^}/' "$AGENT")
 POSTGRESQL_MODULE_BLOCK=$(awk '/^module "postgresql"/,/^}/' "$AGENT")
@@ -162,15 +162,28 @@ if grep -Fq 'location               = var.postgresql_location' <<< "$POSTGRESQL_
 else
     fail "se altero el aislamiento regional de PostgreSQL o el naming primario"
 fi
-if grep -Fq 'centralus' "$COMMAND" \
-    && grep -Fq 'postgresql_region_short = "cus"' "$COMMAND" \
-    && grep -Fq 'terraform.tfvars ignorado' "$COMMAND" \
-    && grep -Fq 'postgresql_location = "centralus"' "$README" \
-    && grep -Fq 'postgresql_region_short = "cus"' "$README" \
-    && grep -Fq 'terraform.tfvars` ignorado' "$README"; then
-    pass "el comando y README documentan juntos el override regional explicito"
+if grep -Fq 'defaults versionados' "$AGENT" \
+    && grep -Fq 'infra/environments/<env>/variables.tf' "$AGENT" \
+    && grep -Fq 'runner limpio de CI no lo recibe' "$AGENT" \
+    && grep -Fq 'variable "postgresql_location" { default = "centralus" }' "$COMMAND" \
+    && grep -Fq 'variable "postgresql_region_short" { default = "cus" }' "$COMMAND" \
+    && grep -Fq 'variables.tf' "$COMMAND" \
+    && grep -Fq 'solo sirve para overrides locales no versionados' "$COMMAND" \
+    && grep -Fq 'variable "postgresql_location" {' "$README" \
+    && grep -Fq 'default = "centralus"' "$README" \
+    && grep -Fq 'variable "postgresql_region_short" {' "$README" \
+    && grep -Fq 'default = "cus"' "$README" \
+    && grep -Fq 'no altera `location` ni `azure_region_short`' "$README" \
+    && grep -Fq 'nunca guardes allí `postgresql_admin_password` ni otro secreto' "$README"; then
+    pass "agente, comando y README versionan el par regional de CI como defaults HCL"
 else
-    fail "la documentacion no cubre el par postgresql_location/postgresql_region_short"
+    fail "falta la receta versionada del par postgresql_location/postgresql_region_short"
+fi
+if grep -Fq 'juntos en el terraform.tfvars ignorado' "$AGENT" "$COMMAND" "$README" \
+    || grep -Fq 'ambos overrides no sensibles viven en el `terraform.tfvars` ignorado' "$AGENT" "$COMMAND" "$README"; then
+    fail "la receta regional vuelve a presentar terraform.tfvars ignorado como fuente de CI"
+else
+    pass "terraform.tfvars ignorado no se presenta como fuente regional de CI"
 fi
 
 echo "----------------------------------------"
