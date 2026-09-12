@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Instala releases OpenCode verificadas bajo la raiz de datos del usuario.
-# Uso: install.sh install <semver> | install.sh activate <semver> | install.sh prune [--keep <n>] [--yes] | install.sh project | install.sh deactivate | install.sh status | install.sh diagnose | install.sh package-root
+# Uso: install.sh bootstrap <semver> | install.sh install <semver> | install.sh activate <semver> | install.sh prune [--keep <n>] [--yes] | install.sh project | install.sh deactivate | install.sh status | install.sh diagnose | install.sh package-root
 set -euo pipefail
 export LC_ALL=C
 
@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPOSITORY="${MEFISTO_OPENCODE_REPOSITORY:-augusto-romero-arango/eda-evsourcing-azure-harness}"
 
 error() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
-usage() { error 'uso: mefisto-opencode install <semver> | activate <semver> | prune [--keep <n>] [--yes] | project | deactivate | status | diagnose | package-root'; }
+usage() { error 'uso: mefisto-opencode bootstrap <semver> | install <semver> | activate <semver> | prune [--keep <n>] [--yes] | project | deactivate | status | diagnose | package-root'; }
 valid_version() {
     printf '%s\n' "$1" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
 }
@@ -131,8 +131,8 @@ download_release() {
     publish_release "$staging" "$RELEASES/$version"
 }
 
-install() {
-    local version="$1" destination
+install_release() {
+    local version="$1" source="$2" destination
     valid_version "$version" || error "version SemVer invalida: $version"
     mkdir -p "$RELEASES" || error 'no se pudo crear el almacen de releases'
     destination="$RELEASES/$version"
@@ -141,9 +141,21 @@ install() {
             || error "la ruta de release existente $version no es valida o inmutable"
     else
         WORK="$(mktemp -d "$ROOT/.install.XXXXXX")" || error 'no se pudo crear el staging de instalacion'
-        if [ -z "${MEFISTO_OPENCODE_INSTALLED:-}" ]; then copy_local_release "$version" "$SCRIPT_DIR"; else download_release "$version"; fi
+        if [ "$source" = remote ]; then download_release "$version"; else copy_local_release "$version" "$SCRIPT_DIR"; fi
     fi
     activate "$version"
+}
+
+install() {
+    local source=local
+    [ -z "${MEFISTO_OPENCODE_INSTALLED:-}" ] || source=remote
+    install_release "$1" "$source"
+}
+
+bootstrap_remote() {
+    # Entry point publico para una copia confiable del instalador: no depende del
+    # detalle interno que el launcher exporta al actualizar una release activa.
+    install_release "$1" remote
 }
 
 status() {
@@ -323,6 +335,7 @@ parse_prune() {
 
 command -v jq >/dev/null 2>&1 || error 'jq es requerido para validar el manifiesto'
 case "${1:-}" in
+    bootstrap) [ "$#" -eq 2 ] || usage; acquire_lock; bootstrap_remote "$2" ;;
     install) [ "$#" -eq 2 ] || usage; acquire_lock; install "$2" ;;
     activate) [ "$#" -eq 2 ] || usage; acquire_lock; activate "$2" ;;
     prune) shift; parse_prune "$@" ;;
