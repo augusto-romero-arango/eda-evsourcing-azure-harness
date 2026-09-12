@@ -3751,24 +3751,49 @@ verificar_pin_otlp() {
     local paquete="$1"
     local version_esperada="$2"
     local archivo="$3"
-    local referencias cantidad
 
     if [ ! -f "$archivo" ]; then
         echo "ERROR: paquete $paquete: se esperaba el pin $version_esperada en $archivo, pero el archivo no existe."
         return 1
     fi
 
-    referencias=$(grep -E "<PackageReference[[:space:]][^>]*Include=\"$paquete\"[^>]*/>" "$archivo" || true)
-    cantidad=$(printf '%s\n' "$referencias" | grep -c . || true)
-    if [ "$cantidad" -ne 1 ]; then
-        echo "ERROR: paquete $paquete: se esperaba exactamente una referencia con pin $version_esperada en $archivo; se encontraron $cantidad."
-        return 1
-    fi
+    python3 - "$paquete" "$version_esperada" "$archivo" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
 
-    if ! printf '%s\n' "$referencias" | grep -Eq "Version=\"$version_esperada\""; then
-        echo "ERROR: paquete $paquete: se esperaba el pin $version_esperada en $archivo."
-        return 1
-    fi
+paquete, version_esperada, archivo = sys.argv[1:]
+
+try:
+    raiz = ET.parse(archivo).getroot()
+except ET.ParseError as error:
+    print(
+        f"ERROR: paquete {paquete}: se esperaba el pin {version_esperada} en {archivo}, "
+        f"pero el XML no es valido: {error}."
+    )
+    raise SystemExit(1)
+
+referencias = [
+    elemento
+    for elemento in raiz.iter()
+    if elemento.tag.rsplit("}", 1)[-1] == "PackageReference"
+    and elemento.get("Include") == paquete
+]
+
+if len(referencias) != 1:
+    print(
+        f"ERROR: paquete {paquete}: se esperaba exactamente una referencia con pin "
+        f"{version_esperada} en {archivo}; se encontraron {len(referencias)}."
+    )
+    raise SystemExit(1)
+
+version_real = referencias[0].get("Version")
+if version_real != version_esperada:
+    print(
+        f"ERROR: paquete {paquete}: se esperaba el pin {version_esperada} en {archivo}; "
+        f"se encontro {version_real or 'ningun valor'} como atributo Version."
+    )
+    raise SystemExit(1)
+PY
 }
 
 verificar_pin_otlp \
@@ -3781,7 +3806,9 @@ verificar_pin_otlp \
     "$REPO_ROOT/tests/<RootNamespace>.{PascalCase}.Tests/<RootNamespace>.{PascalCase}.Tests.csproj" || exit 1
 ```
 
-Los dos chequeos exigen tanto el valor exacto como una unica referencia al paquete. Ante un mismatch,
+El parser XML cuenta el elemento aunque sus atributos cambien de orden, ocupe varias lineas o use
+etiqueta de cierre en vez de `/>`; no sustituyas este chequeo por un `grep` sensible al formato. Los
+dos chequeos exigen tanto el atributo `Version` exacto como una unica referencia al paquete. Ante un mismatch,
 un duplicado o un archivo ausente, detente **antes del commit**: el mensaje ya nombra el paquete, el
 pin esperado y el `.csproj` afectado. Una actualizacion de esta linea es un cambio coherente y separado:
 actualiza juntos MEF-ADR-0003, las recetas, los comentarios y estas verificaciones; nunca solo uno de
