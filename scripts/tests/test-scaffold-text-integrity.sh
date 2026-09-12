@@ -19,12 +19,12 @@ create_consumer() {
     local name="$1" consumer remote
     consumer="$TMP_DIR/$name/consumer"
     remote="$TMP_DIR/$name/origin.git"
-    mkdir -p "$consumer/.claude" "$TMP_DIR/$name"
+    mkdir -p "$consumer/.mefisto" "$TMP_DIR/$name"
     git init -q --bare "$remote"
     git init -q -b main "$consumer"
     git -C "$consumer" config user.name "Mefisto Test"
     git -C "$consumer" config user.email "mefisto-test@example.invalid"
-    cat > "$consumer/.claude/harness.config.json" <<'EOF'
+    cat > "$consumer/.mefisto/harness.config.json" <<'EOF'
 {
   "projectName": "Certificacion",
   "namespacePrefix": "Certificacion",
@@ -39,6 +39,20 @@ EOF
     git -C "$consumer" remote add origin "$remote"
     git -C "$consumer" push -qu origin main
     printf '%s\n' "$consumer"
+}
+
+assert_gate_order() {
+    local defensive_commit gate push
+    defensive_commit=$(grep -nF 'commit -m "scaffold($DOMAIN_NAME): nuevo dominio $PASCAL_CASE"' "$PIPELINE" | cut -d: -f1)
+    gate=$(grep -nF 'diff --check origin/main...HEAD' "$PIPELINE" | cut -d: -f1)
+    push=$(grep -nF 'push -u origin "$BRANCH_NAME"' "$PIPELINE" | cut -d: -f1)
+
+    if [ -n "$defensive_commit" ] && [ -n "$gate" ] && [ -n "$push" ] \
+        && [ "$defensive_commit" -lt "$gate" ] && [ "$gate" -lt "$push" ]; then
+        pass "el gate cubre origin/main...HEAD despues del commit defensivo y antes del push"
+    else
+        fail "orden invalido: commit=${defensive_commit:-ausente}, gate=${gate:-ausente}, push=${push:-ausente}"
+    fi
 }
 
 create_stubs() {
@@ -84,6 +98,7 @@ run_case() {
 }
 
 echo "[1] Output sano: verifica el rango y conserva push/PR (CA-1/CA-4)"
+assert_gate_order
 run_case sano
 if [ "$LAST_RC" -eq 0 ]; then pass "el scaffold sano completa"; else fail "el scaffold sano fallo (rc $LAST_RC)"; fi
 if git -C "$LAST_CONSUMER" ls-remote --exit-code origin refs/heads/scaffold-prueba >/dev/null 2>&1; then pass "el camino sano hace push"; else fail "el camino sano no publico la rama"; fi
@@ -96,6 +111,7 @@ if [ "$LAST_RC" -ne 0 ]; then pass "trailing whitespace aborta"; else fail "trai
 if ! git -C "$LAST_CONSUMER" ls-remote --exit-code origin refs/heads/scaffold-prueba >/dev/null 2>&1; then pass "trailing whitespace no hace push"; else fail "trailing whitespace publico una rama"; fi
 if ! grep -qF 'gh pr create' "$LAST_GH_LOG"; then pass "trailing whitespace no crea PR"; else fail "trailing whitespace intento crear PR"; fi
 if grep -qF "errores de whitespace detectados por 'git diff --check'" "$TMP_DIR/whitespace.out"; then pass "trailing whitespace muestra una ruta de diagnostico"; else fail "trailing whitespace no muestra diagnostico accionable"; fi
+if grep -qF 'Program.cs:1:' "$LAST_CONSUMER/.claude/pipeline/logs/"scaffold-*.log 2>/dev/null; then pass "trailing whitespace queda en el diagnostico"; else fail "trailing whitespace no quedo en el diagnostico"; fi
 
 echo "[3] Finales CRLF: abortan antes de publicar (CA-3)"
 run_case crlf
