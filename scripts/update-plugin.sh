@@ -86,7 +86,7 @@ usage() {
 # La raiz Claude ya fue elegida por el update del marketplace. Su manifiesto es la unica
 # autoridad para la version objetivo: no se consulta latest, Git ni el cache OpenCode.
 _alinear_opencode() {
-    local claude_root="$1" manifest version launcher installer opencode_root diagnosis
+    local claude_root="$1" manifest version launcher installer opencode_root diagnosis launcher_valido=false
     manifest="$claude_root/mefisto-manifest.json"
 
     if ! command -v jq >/dev/null 2>&1; then
@@ -94,8 +94,9 @@ _alinear_opencode() {
         return 1
     fi
     if [ ! -f "$manifest" ] || [ -L "$manifest" ] || ! jq -e '
+        (keys | sort) == ["commit", "runtime", "schemaVersion", "version"] and
         .schemaVersion == 1 and .runtime == "claude" and
-        (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
+        (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
         (.commit | type == "string" and test("^[0-9a-f]{40}$"))
     ' "$manifest" >/dev/null 2>&1; then
         echo "ERROR: el manifiesto Claude destino es invalido: $manifest." >&2
@@ -116,7 +117,25 @@ _alinear_opencode() {
         launcher="$HOME/.local/share/mefisto/active/bin/mefisto-opencode"
     fi
 
-    if [ -x "$launcher" ]; then
+    # No basta con que la ruta sea ejecutable: un active roto o una release incompleta
+    # deben recorrer el bootstrap confiable. El preflight solo consulta el contrato
+    # publico del launcher y su manifiesto; no lee configuracion de OpenCode.
+    if [ -x "$launcher" ] && "$launcher" status >/dev/null 2>&1; then
+        opencode_root=$("$launcher" package-root 2>/dev/null) || opencode_root=""
+        if [ -n "$opencode_root" ] && [ -d "$opencode_root" ] && [ ! -L "$opencode_root" ] \
+            && [ -f "$opencode_root/mefisto-manifest.json" ] && [ ! -L "$opencode_root/mefisto-manifest.json" ] \
+            && jq -e '
+                (keys | sort) == ["commit", "minimumRuntimeVersion", "runtime", "schemaVersion", "version"] and
+                .schemaVersion == 1 and .runtime == "opencode" and
+                (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
+                (.commit | type == "string" and test("^[0-9a-f]{40}$")) and
+                (.minimumRuntimeVersion | type == "string")
+            ' "$opencode_root/mefisto-manifest.json" >/dev/null 2>&1; then
+            launcher_valido=true
+        fi
+    fi
+
+    if [ "$launcher_valido" = true ]; then
         echo "Alineando OpenCode v$version mediante el launcher activo..."
         "$launcher" install "$version" || {
             echo "ERROR: la instalacion OpenCode mediante el launcher fallo; las releases existentes se conservaron para rollback." >&2
@@ -138,7 +157,8 @@ _alinear_opencode() {
             echo "ERROR: el bootstrap OpenCode fallo; no se borraron releases ni configuracion ajena." >&2
             return 1
         }
-        # El bootstrap publico verifica el checksum antes de extraer o publicar la release.
+        # El entrypoint publico bootstrap descarga el asset y su checksum y verifica
+        # SHA-256 antes de inspeccionarlo, extraerlo o publicar la release.
         [ -x "$launcher" ] || {
             echo "ERROR: el bootstrap termino sin un launcher OpenCode activo y valido." >&2
             return 1
@@ -148,6 +168,10 @@ _alinear_opencode() {
     "$launcher" project || { echo "ERROR: la proyeccion OpenCode conflicto o fallo; corrige el conflicto y reintenta." >&2; return 1; }
     "$launcher" status || { echo "ERROR: status OpenCode reporto una instalacion incompleta." >&2; return 1; }
     opencode_root=$("$launcher" package-root) || { echo "ERROR: no se pudo resolver la raiz fisica OpenCode activa." >&2; return 1; }
+    if [ -z "$opencode_root" ] || [ ! -d "$opencode_root" ] || [ -L "$opencode_root" ]; then
+        echo "ERROR: package-root no retorno una raiz fisica OpenCode valida." >&2
+        return 1
+    fi
     diagnosis="$opencode_root/diagnose-installation-identity.sh"
     if [ ! -x "$diagnosis" ]; then
         echo "ERROR: la release OpenCode activa no contiene el diagnostico de identidad." >&2
@@ -303,6 +327,11 @@ main() {
             *) echo "ERROR: argumento desconocido '$1'" >&2; usage; return 1 ;;
         esac
     done
+    if [ "$prune" = true ] && [ "$align_opencode" = true ]; then
+        echo "ERROR: --align-opencode pertenece al modo de actualizacion y no se combina con --prune." >&2
+        usage
+        return 1
+    fi
 
     # Overridable por entorno para que los tests puedan apuntar a un cache de mentira.
     local cache_root="${MEFISTO_CACHE_ROOT:-$HOME/.claude/plugins/cache}"

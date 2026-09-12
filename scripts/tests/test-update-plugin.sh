@@ -173,7 +173,7 @@ ALIGN_CLAUDE="$ALIGN_CACHE/$ALIGN_MARKETPLACE/mefisto/1.2.3"
 mkdir -p "$ALIGN_CLAUDE" "$ALIGN_CONSUMER/.claude/pipeline" "$OPENCODE_ROOT"
 printf '%s' "$ALIGN_CACHE/$ALIGN_MARKETPLACE/mefisto/1.2.2" > "$ALIGN_CONSUMER/.claude/pipeline/.plugin-root"
 jq -n '{schemaVersion:1,runtime:"claude",version:"1.2.3",commit:"0123456789abcdef0123456789abcdef01234567"}' > "$ALIGN_CLAUDE/mefisto-manifest.json"
-jq -n '{schemaVersion:1,runtime:"opencode",version:"1.2.3",commit:"0123456789abcdef0123456789abcdef01234567"}' > "$OPENCODE_ROOT/mefisto-manifest.json"
+jq -n '{schemaVersion:1,runtime:"opencode",version:"1.2.3",commit:"0123456789abcdef0123456789abcdef01234567",minimumRuntimeVersion:"1.18.29"}' > "$OPENCODE_ROOT/mefisto-manifest.json"
 cp "$REPO_ROOT/src/published/scripts/diagnose-installation-identity.sh" "$OPENCODE_ROOT/diagnose-installation-identity.sh"
 chmod +x "$OPENCODE_ROOT/diagnose-installation-identity.sh"
 cat > "$ALIGN_STUB/claude" <<'EOF'
@@ -199,8 +199,19 @@ chmod +x "$ALIGN_STUB/mefisto-opencode"
     main --align-opencode
 ) >/dev/null 2>&1
 assert_igual "0" "$?" "alinea una instalacion OpenCode existente"
-assert_igual $'install 1.2.3\nactivate 1.2.3\nproject \nstatus \npackage-root ' "$(cat "$OPENCODE_LOG")" \
-    "instala, activa, proyecta, consulta status y resuelve package-root con la version del manifiesto"
+assert_igual $'status \npackage-root \ninstall 1.2.3\nactivate 1.2.3\nproject \nstatus \npackage-root ' "$(cat "$OPENCODE_LOG")" \
+    "valida el launcher, instala, activa, proyecta, consulta status y resuelve package-root con la version del manifiesto"
+
+# Repetir la operacion completa conserva el resultado y vuelve a usar la identidad exacta.
+: > "$OPENCODE_LOG"
+(
+    cd "$ALIGN_CONSUMER" || exit 1
+    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode" OPENCODE_LOG OPENCODE_ROOT
+    main --align-opencode
+) >/dev/null 2>&1
+assert_igual "0" "$?" "repetir la alineacion es idempotente"
+assert_igual $'status \npackage-root \ninstall 1.2.3\nactivate 1.2.3\nproject \nstatus \npackage-root ' "$(cat "$OPENCODE_LOG")" \
+    "la repeticion conserva la secuencia y la version exacta"
 
 # Sin el flag no se invoca ninguna ruta OpenCode; conserva la semantica Claude previa.
 : > "$OPENCODE_LOG"
@@ -243,6 +254,24 @@ chmod +x "$ALIGN_CLAUDE/src/published/scripts/install-opencode-release.sh"
 ) >/dev/null 2>&1
 assert_igual "1" "$?" "la falla del bootstrap es visible y retorna error"
 
+# Un launcher activo y valido cuya instalacion falla debe propagar el error.
+cat > "$ALIGN_STUB/mefisto-opencode-install-fail" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  status) exit 0 ;;
+  package-root) printf '%s\n' "$OPENCODE_ROOT" ;;
+  install) exit 1 ;;
+  *) exit 0 ;;
+esac
+EOF
+chmod +x "$ALIGN_STUB/mefisto-opencode-install-fail"
+(
+    cd "$ALIGN_CONSUMER" || exit 1
+    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode-install-fail" OPENCODE_ROOT
+    main --align-opencode
+) >/dev/null 2>&1
+assert_igual "1" "$?" "la falla de install del launcher es visible y retorna error"
+
 # Un manifiesto Claude invalido aborta antes de tocar el launcher.
 printf '{invalido\n' > "$ALIGN_CLAUDE/mefisto-manifest.json"
 : > "$OPENCODE_LOG"
@@ -253,6 +282,15 @@ printf '{invalido\n' > "$ALIGN_CLAUDE/mefisto-manifest.json"
 ) >/dev/null 2>&1
 assert_igual "1" "$?" "un manifiesto Claude invalido falla cerrado"
 assert_igual "" "$(cat "$OPENCODE_LOG")" "el manifiesto Claude invalido no toca OpenCode"
+
+# Un identificador numerico de prerelease con cero inicial no es SemVer valido.
+jq -n '{schemaVersion:1,runtime:"claude",version:"1.2.3-01",commit:"0123456789abcdef0123456789abcdef01234567"}' > "$ALIGN_CLAUDE/mefisto-manifest.json"
+(
+    cd "$ALIGN_CONSUMER" || exit 1
+    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode" OPENCODE_LOG OPENCODE_ROOT
+    main --align-opencode
+) >/dev/null 2>&1
+assert_igual "1" "$?" "rechaza un prerelease que no cumple SemVer"
 
 # Restaura el manifiesto y fuerza una proyeccion conflictiva: la alineacion debe fallar.
 jq -n '{schemaVersion:1,runtime:"claude",version:"1.2.3",commit:"0123456789abcdef0123456789abcdef01234567"}' > "$ALIGN_CLAUDE/mefisto-manifest.json"
@@ -276,6 +314,14 @@ jq '.commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' "$OPENCODE_ROOT/mefist
     main --align-opencode
 ) >/dev/null 2>&1
 assert_igual "1" "$?" "un diagnostico divergente no se acepta como aligned"
+
+# El modo de poda no puede aceptar silenciosamente una alineacion que no ejecutaria.
+(
+    cd "$ALIGN_CONSUMER" || exit 1
+    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE"
+    main --prune --align-opencode
+) >/dev/null 2>&1
+assert_igual "1" "$?" "rechaza combinar --align-opencode con --prune"
 
 echo ""
 echo "===================================================================="
