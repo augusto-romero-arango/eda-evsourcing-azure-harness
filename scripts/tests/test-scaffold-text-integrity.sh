@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-scaffold-text-integrity.sh -- Gate de git diff --check del scaffold (#1229).
+# test-scaffold-text-integrity.sh -- Gates de commit defensivo y git diff --check del scaffold (#1229, #1237).
 
 set -uo pipefail
 
@@ -72,10 +72,19 @@ EOF
 #!/usr/bin/env bash
 mkdir -p "$PWD/src/Certificacion.Prueba"
 case "$SCAFFOLD_FIXTURE" in
-    sano) printf 'namespace Certificacion.Prueba;\n' > "$PWD/src/Certificacion.Prueba/Program.cs" ;;
+    sano|marker-legitimo) printf 'namespace Certificacion.Prueba;\n' > "$PWD/src/Certificacion.Prueba/Program.cs" ;;
     whitespace) printf 'namespace Certificacion.Prueba; \n' > "$PWD/src/Certificacion.Prueba/Program.cs" ;;
     crlf) printf 'namespace Certificacion.Prueba;\r\n' > "$PWD/src/Certificacion.Prueba/Program.cs" ;;
+    runtime-solo)
+        printf 'namespace Certificacion.Prueba;\n' > "$PWD/src/Certificacion.Prueba/Program.cs"
+        git add src/Certificacion.Prueba/Program.cs
+        git commit -qm 'scaffold(prueba): nuevo dominio Prueba'
+        ;;
 esac
+if [ "$SCAFFOLD_FIXTURE" = "marker-legitimo" ] || [ "$SCAFFOLD_FIXTURE" = "runtime-solo" ]; then
+    mkdir -p "$PWD/.claude/pipeline"
+    printf 'plugin-root' > "$PWD/.claude/pipeline/.plugin-root"
+fi
 EOF
     chmod +x "$bin/gh" "$bin/claude"
 }
@@ -105,7 +114,19 @@ if git -C "$LAST_CONSUMER" ls-remote --exit-code origin refs/heads/scaffold-prue
 if grep -qF 'gh pr create' "$LAST_GH_LOG"; then pass "el camino sano crea el PR"; else fail "el camino sano no crea el PR"; fi
 if grep -qF 'Integridad textual verificada' "$TMP_DIR/sano.out"; then pass "el camino sano informa el gate"; else fail "no informo la integridad textual"; fi
 
-echo "[2] Trailing whitespace: aborta antes de publicar y conserva diagnostico (CA-2/CA-3)"
+echo "[2] Marker runtime y archivo legitimo: el commit defensivo excluye .claude/ (CA-1/CA-2)"
+run_case marker-legitimo
+if [ "$LAST_RC" -eq 0 ]; then pass "el marker con suciedad legitima completa"; else fail "el marker con suciedad legitima fallo (rc $LAST_RC)"; fi
+if git -C "$LAST_CONSUMER" show "origin/scaffold-prueba:src/Certificacion.Prueba/Program.cs" >/dev/null 2>&1; then pass "el commit defensivo incluye el archivo legitimo"; else fail "el commit defensivo no incluye el archivo legitimo"; fi
+if ! git -C "$LAST_CONSUMER" show "origin/scaffold-prueba:.claude/pipeline/.plugin-root" >/dev/null 2>&1; then pass "el marker runtime queda fuera del indice"; else fail "el marker runtime fue incluido en el indice"; fi
+
+echo "[3] Solo estado runtime: el guard no crea un commit vacio (CA-3)"
+run_case runtime-solo
+if [ "$LAST_RC" -eq 0 ]; then pass "solo estado runtime completa"; else fail "solo estado runtime fallo (rc $LAST_RC)"; fi
+if ! grep -qF 'commiteando defensivamente' "$TMP_DIR/runtime-solo.out"; then pass "solo estado runtime no activa el commit defensivo"; else fail "solo estado runtime intento un commit defensivo vacio"; fi
+if ! git -C "$LAST_CONSUMER" show "origin/scaffold-prueba:.claude/pipeline/.plugin-root" >/dev/null 2>&1; then pass "solo estado runtime conserva el marker fuera del indice"; else fail "solo estado runtime incluyo el marker en el indice"; fi
+
+echo "[4] Trailing whitespace: aborta antes de publicar y conserva diagnostico (CA-2/CA-3)"
 run_case whitespace
 if [ "$LAST_RC" -ne 0 ]; then pass "trailing whitespace aborta"; else fail "trailing whitespace no debe completar"; fi
 if ! git -C "$LAST_CONSUMER" ls-remote --exit-code origin refs/heads/scaffold-prueba >/dev/null 2>&1; then pass "trailing whitespace no hace push"; else fail "trailing whitespace publico una rama"; fi
@@ -113,7 +134,7 @@ if ! grep -qF 'gh pr create' "$LAST_GH_LOG"; then pass "trailing whitespace no c
 if grep -qF "errores de whitespace detectados por 'git diff --check'" "$TMP_DIR/whitespace.out"; then pass "trailing whitespace muestra una ruta de diagnostico"; else fail "trailing whitespace no muestra diagnostico accionable"; fi
 if grep -qF 'Program.cs:1:' "$LAST_CONSUMER/.claude/pipeline/logs/"scaffold-*.log 2>/dev/null; then pass "trailing whitespace queda en el diagnostico"; else fail "trailing whitespace no quedo en el diagnostico"; fi
 
-echo "[3] Finales CRLF: abortan antes de publicar (CA-3)"
+echo "[5] Finales CRLF: abortan antes de publicar (CA-3)"
 run_case crlf
 if [ "$LAST_RC" -ne 0 ]; then pass "CRLF aborta"; else fail "CRLF no debe completar"; fi
 if ! git -C "$LAST_CONSUMER" ls-remote --exit-code origin refs/heads/scaffold-prueba >/dev/null 2>&1; then pass "CRLF no hace push"; else fail "CRLF publico una rama"; fi
