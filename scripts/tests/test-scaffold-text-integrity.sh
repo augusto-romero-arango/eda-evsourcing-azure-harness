@@ -34,6 +34,7 @@ create_consumer() {
 }
 EOF
     printf 'base\n' > "$consumer/README.md"
+    printf '.claude/pipeline/\n*.log\n' > "$consumer/.gitignore"
     git -C "$consumer" add .
     git -C "$consumer" commit -qm "base"
     git -C "$consumer" remote add origin "$remote"
@@ -84,6 +85,7 @@ esac
 if [ "$SCAFFOLD_FIXTURE" = "marker-legitimo" ] || [ "$SCAFFOLD_FIXTURE" = "runtime-solo" ]; then
     mkdir -p "$PWD/.claude/pipeline"
     printf 'plugin-root' > "$PWD/.claude/pipeline/.plugin-root"
+    git check-ignore -q .claude/pipeline/.plugin-root || exit 98
 fi
 EOF
     chmod +x "$bin/gh" "$bin/claude"
