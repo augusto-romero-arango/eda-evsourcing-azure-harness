@@ -4,6 +4,16 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.37.11] - 2026-09-12
+
+### Fixed
+
+- Se valida mecanicamente antes del push que los proyectos scaffoldeados conservan los pines canonicos de OpenTelemetry.
+- Se corrige el canon OpenTelemetry del write-side: `OpenTelemetry.Extensions.Hosting` y el exporter InMemory de tests se fijan en 1.15.3, compatible con Azure Monitor Exporter 1.8.2 y corregido para GHSA-g94r-2vxg-569j.
+- Se corrige `domain-scaffolder` para fijar Hosting e InMemory de OpenTelemetry en 1.15.3, alineados con Azure Monitor Exporter 1.8.2 y GHSA-g94r-2vxg-569j.
+- Se corrige el gate OpenTelemetry de `scaffold-pipeline` para exigir el pin resoluble 1.15.3 en produccion y tests.
+- Se evita el drift de zona asignada por Azure en el modulo PostgreSQL generado, conservando la asignacion automatica durante el create.
+
 ## [0.37.10] - 2026-09-12
 
 ### Fixed
@@ -2413,7 +2423,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.10...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.11...HEAD
+[0.37.11]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.10...v0.37.11
 [0.37.10]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.9...v0.37.10
 [0.37.9]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.8...v0.37.9
 [0.37.8]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.7...v0.37.8
