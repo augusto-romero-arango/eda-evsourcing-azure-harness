@@ -16,9 +16,13 @@ assert_projection_status() {
         '.schemaVersion == 1 and .status == $expected and .configRoot == $config and .activeVersion == $active and .ledgerRelease == $ledger and (keys == ["activeVersion", "configRoot", "ledgerRelease", "schemaVersion", "status"])' <<< "$output" >/dev/null && pass "$label" || fail "$label"
 }
 wait_for_lock() {
-    local lock="$XDG_DATA_HOME/mefisto/releases/.operation.lock" attempt=0
-    while [ ! -d "$lock" ] && [ "$attempt" -lt 50 ]; do sleep 0.1; attempt=$((attempt + 1)); done
-    [ -d "$lock" ]
+    local expected="$1" lock="$XDG_DATA_HOME/mefisto/releases/.operation.lock" attempt=0 operation=''
+    while [ "$attempt" -lt 50 ]; do
+        [ ! -f "$lock/operation" ] || operation="$(command cat "$lock/operation" 2>/dev/null || true)"
+        [ "$operation" != "$expected" ] || return 0
+        sleep 0.1; attempt=$((attempt + 1))
+    done
+    return 1
 }
 make_release() {
     local version="$1" root="$XDG_DATA_HOME/mefisto/releases/$1"
@@ -51,13 +55,18 @@ bash "$PROJECTOR" project >/dev/null; assert_rc "$?" 0 'reproyectar la misma ver
 STATUS="$(bash "$PROJECTOR" projection-status)"; rc=$?; assert_rc "$rc" 0 'estado enabled es exitoso'; assert_projection_status "$STATUS" enabled '"1.2.3"' '"1.2.3"' 'estado enabled verifica enlaces y ledger'
 STATUS_REPEAT="$(bash "$PROJECTOR" projection-status)"; [ "$STATUS" = "$STATUS_REPEAT" ] && pass 'estado JSON es idempotente byte a byte' || fail 'estado JSON no es idempotente'
 MEFISTO_OPENCODE_TEST_HOLD_LOCK_SECONDS=5 bash "$PROJECTOR" project >/dev/null 2>&1 & HOLDER=$!
-wait_for_lock && pass 'project adquiere el lock comun antes de mutar' || fail 'project no adquirio el lock comun'
-OUTPUT="$(bash "$PROJECTOR" deactivate 2>&1)"; assert_rc "$?" 1 'deactivate no se solapa con project'
+wait_for_lock project && pass 'project adquiere el lock comun antes de mutar' || fail 'project no adquirio el lock comun'
+OUTPUT="$(OPENCODE_CONFIG_DIR="$WORK/otra-config" bash "$PROJECTOR" deactivate 2>&1)"; assert_rc "$?" 1 'deactivate de otro config root no se solapa con project'
 printf '%s\n' "$OUTPUT" | grep -q 'project (PID ' && printf '%s\n' "$OUTPUT" | grep -q 'reintente' && pass 'contencion identifica la operacion y el reintento' || fail 'contencion no diagnostica la operacion en curso'
 STATUS="$(bash "$PROJECTOR" projection-status)"; rc=$?; assert_rc "$rc" 1 'estado no presenta estable una proyeccion en mutacion'; assert_projection_status "$STATUS" operation-in-progress null null 'estado estructurado informa operacion en curso'
 kill -HUP "$HOLDER"; wait "$HOLDER" 2>/dev/null; assert_rc "$?" 1 'HUP interrumpe la proyeccion retenida'
 [ ! -e "$XDG_DATA_HOME/mefisto/releases/.operation.lock" ] && pass 'HUP limpia solo el lock adquirido por project' || fail 'HUP no limpio el lock propio de project'
 bash "$PROJECTOR" project >/dev/null; assert_rc "$?" 0 'project puede reintentarse tras limpiar su lock'
+MEFISTO_OPENCODE_TEST_HOLD_LOCK_SECONDS=5 bash "$PROJECTOR" deactivate >/dev/null 2>&1 & HOLDER=$!
+wait_for_lock deactivate && pass 'deactivate adquiere el lock comun antes de mutar' || fail 'deactivate no adquirio el lock comun'
+kill -TERM "$HOLDER"; wait "$HOLDER" 2>/dev/null; assert_rc "$?" 1 'TERM interrumpe deactivate retenido'
+[ ! -e "$XDG_DATA_HOME/mefisto/releases/.operation.lock" ] && pass 'TERM limpia el lock adquirido por deactivate' || fail 'TERM no limpio el lock de deactivate'
+STATUS="$(bash "$PROJECTOR" projection-status)"; rc=$?; assert_rc "$rc" 0 'interrupcion previa a deactivate deja estado consultable'; assert_projection_status "$STATUS" enabled '"1.2.3"' '"1.2.3"' 'interrupcion de deactivate conserva ledger y enlaces consistentes'
 mkdir "$XDG_DATA_HOME/mefisto/releases/.operation.lock"; printf 'ajeno\n' > "$XDG_DATA_HOME/mefisto/releases/.operation.lock/owner"; printf 'activate\n' > "$XDG_DATA_HOME/mefisto/releases/.operation.lock/operation"; printf '99999\n' > "$XDG_DATA_HOME/mefisto/releases/.operation.lock/pid"
 bash "$PROJECTOR" deactivate >/dev/null 2>&1; assert_rc "$?" 1 'deactivate no elimina un lock ajeno'
 [ -d "$XDG_DATA_HOME/mefisto/releases/.operation.lock" ] && [ "$(< "$XDG_DATA_HOME/mefisto/releases/.operation.lock/owner")" = ajeno ] && pass 'lock abandonado conserva ownership para diagnostico manual' || fail 'deactivate elimino un lock ajeno'

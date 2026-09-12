@@ -34,13 +34,12 @@ release_lock() {
         rm -rf "$LOCK"
     fi
 }
-acquire_lock() {
-    local operation="$1" owner
+try_acquire_lock() {
+    local operation="$1"
     mkdir -p "$RELEASES" || error 'no se pudo crear el almacen de releases'
     LOCK="$RELEASES/.operation.lock"
     if ! mkdir "$LOCK" 2>/dev/null; then
-        owner="$(lock_owner_description)"
-        error "hay una operacion OpenCode en curso: $owner ($LOCK); reintente cuando termine. Si quedo abandonado, revise su PID y retire el lock manualmente"
+        return 1
     fi
     LOCK_TOKEN="$$-${RANDOM}-${RANDOM}"
     if ! printf '%s\n' "$LOCK_TOKEN" > "$LOCK/owner" || ! printf '%s\n' "$operation" > "$LOCK/operation" || ! printf '%s\n' "$$" > "$LOCK/pid"; then
@@ -54,9 +53,13 @@ acquire_lock() {
         sleep "$MEFISTO_OPENCODE_TEST_HOLD_LOCK_SECONDS"
     fi
 }
-operation_in_progress() {
-    LOCK="$RELEASES/.operation.lock"
-    [ -d "$LOCK" ]
+
+acquire_lock() {
+    local operation="$1" owner
+    if ! try_acquire_lock "$operation"; then
+        owner="$(lock_owner_description)"
+        error "hay una operacion OpenCode en curso: $owner ($LOCK); reintente cuando termine. Si quedo abandonado, revise su PID y retire el lock manualmente"
+    fi
 }
 safe_relative_path() {
     local value="$1" rest part
@@ -216,7 +219,7 @@ projection_status_json() {
 projection_status() {
     local active='' ledger='' active_json='null' ledger_json='null'
     command -v jq >/dev/null 2>&1 || error 'jq es requerido para consultar el estado de proyeccion'
-    if operation_in_progress; then
+    if ! try_acquire_lock projection-status; then
         projection_status_json operation-in-progress null null
         return 1
     fi

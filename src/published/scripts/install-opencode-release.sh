@@ -43,13 +43,12 @@ release_lock() {
     fi
 }
 
-acquire_lock() {
-    local operation="$1" owner
+try_acquire_lock() {
+    local operation="$1"
     mkdir -p "$RELEASES" || error 'no se pudo crear el almacen de releases'
     LOCK="$RELEASES/.operation.lock"
     if ! mkdir "$LOCK" 2>/dev/null; then
-        owner="$(lock_owner_description)"
-        error "hay una operacion OpenCode en curso: $owner ($LOCK); reintente cuando termine. Si quedo abandonado, revise su PID y retire el lock manualmente"
+        return 1
     fi
     LOCK_TOKEN="$$-${RANDOM}-${RANDOM}"
     if ! printf '%s\n' "$LOCK_TOKEN" > "$LOCK/owner" || ! printf '%s\n' "$operation" > "$LOCK/operation" || ! printf '%s\n' "$$" > "$LOCK/pid"; then
@@ -61,6 +60,14 @@ acquire_lock() {
     trap 'exit 1' HUP INT TERM
     if [ -n "${MEFISTO_OPENCODE_TEST_HOLD_LOCK_SECONDS:-}" ]; then
         sleep "$MEFISTO_OPENCODE_TEST_HOLD_LOCK_SECONDS"
+    fi
+}
+
+acquire_lock() {
+    local operation="$1" owner
+    if ! try_acquire_lock "$operation"; then
+        owner="$(lock_owner_description)"
+        error "hay una operacion OpenCode en curso: $owner ($LOCK); reintente cuando termine. Si quedo abandonado, revise su PID y retire el lock manualmente"
     fi
 }
 
