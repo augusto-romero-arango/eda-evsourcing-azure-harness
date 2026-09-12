@@ -136,6 +136,30 @@ else
     fail "comando no documenta correctamente el contrato"
 fi
 
+echo "[6] Naming regional independiente de PostgreSQL"
+if grep -Fq 'variable "postgresql_region_short"' "$AGENT" \
+    && grep -Fq 'default     = "<azure_region_short>"' "$AGENT" \
+    && grep -Fq 'postgresql_region_seq_suffix = var.postgresql_region_short != "" ? "-${var.postgresql_region_short}-${var.resource_sequence}" : ""' "$AGENT" \
+    && grep -Fq 'name                   = "pgsql-${var.project_short}-${var.environment}${local.postgresql_region_seq_suffix}"' "$AGENT"; then
+    pass "el agente declara el sufijo regional exclusivo y el nombre CAF de PostgreSQL"
+else
+    fail "falta la variable, el local o el nombre regional de PostgreSQL"
+fi
+if grep -Fq 'location               = var.postgresql_location' "$AGENT" \
+    && grep -Fq 'default     = null' "$AGENT" \
+    && grep -Fq 'name                = "sbns-interno-${local.prefix}"' "$AGENT" \
+    && grep -Fq 'name                = "kv-${var.project_short}-${var.environment}${local.region_seq_suffix}"' "$AGENT"; then
+    pass "PostgreSQL conserva location/zone y los demas recursos conservan el naming primario"
+else
+    fail "se altero el aislamiento regional de PostgreSQL o el naming primario"
+fi
+if grep -Fq 'centralus' "$COMMAND" \
+    && grep -Fq 'postgresql_region_short = "cus"' "$COMMAND"; then
+    pass "el comando documenta el override regional explicito"
+else
+    fail "el comando no documenta el par postgresql_location/postgresql_region_short"
+fi
+
 echo "----------------------------------------"
 echo "  Resumen: $PASS pass, $FAIL fail"
 echo "----------------------------------------"
