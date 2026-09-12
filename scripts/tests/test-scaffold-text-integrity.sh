@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# test-scaffold-text-integrity.sh -- Gates de commit, integridad y pines OpenTelemetry del scaffold (#1229, #1237, #1242).
+# test-scaffold-text-integrity.sh -- Gates de commit, integridad y pines OpenTelemetry del scaffold (#1229, #1237, #1242, #1246).
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PIPELINE="$REPO_ROOT/scripts/scaffold-pipeline.sh"
-AGENT="$REPO_ROOT/agents/domain-scaffolder.md"
 PASS=0
 FAIL=0
 
@@ -134,44 +133,34 @@ EOF
     chmod +x "$bin/gh" "$bin/claude"
 }
 
-assert_otlp_gate_contract() {
+assert_otlp_gate_legacy_contract() {
     local resultado
-    resultado=$(python3 - "$AGENT" "$PIPELINE" 2>&1 <<'PY'
+    resultado=$(python3 - "$PIPELINE" 2>&1 <<'PY'
 import re
 import sys
 from pathlib import Path
 
-agent = Path(sys.argv[1]).read_text()
-pipeline = Path(sys.argv[2]).read_text()
+pipeline = Path(sys.argv[1]).read_text()
 packages = (
     "OpenTelemetry.Extensions.Hosting",
     "OpenTelemetry.Exporter.InMemory",
 )
-pins = []
-for package in packages:
-    recipe = re.findall(
-        rf'<PackageReference Include="{re.escape(package)}" Version="([^"]+)" />', agent
-    )
-    if len(recipe) != 1:
-        raise SystemExit(f"receta invalida para {package}: {recipe}")
-    pins.append(recipe[0])
-
-if len(set(pins)) != 1:
-    raise SystemExit(f"las recetas divergen: {pins}")
-
-pin = pins[0]
+# Issue #1246 actualiza la receta publicada pero excluye expresamente este pipeline: el gate
+# conserva 1.13.1 hasta el issue mecanico posterior. Este test sigue cubriendo su comportamiento
+# actual sin exigir que dos componentes que se entregan por separado cambien en el mismo PR.
+pin = "1.13.1"
 if re.search(rf'OTEL_PIN_CANONICO="{re.escape(pin)}"', pipeline) is None:
-    raise SystemExit(f"el gate no usa el pin de las recetas: {pin}")
+    raise SystemExit(f"el gate diferido no conserva su pin previo: {pin}")
 
 for package in packages:
     if f'verificar_pin_otlp "{package}" "$OTEL_PIN_CANONICO"' not in pipeline:
-        raise SystemExit(f"el gate no verifica {package}")
+        raise SystemExit(f"el gate diferido no verifica {package}")
 PY
 )
     if [ $? -eq 0 ]; then
-        pass "el gate mecanico usa el pin comun de las dos recetas"
+        pass "el gate mecanico diferido conserva su contrato previo sin seguir la receta nueva"
     else
-        fail "contrato receta/gate invalido: $resultado"
+        fail "contrato del gate mecanico diferido invalido: $resultado"
     fi
 }
 
@@ -194,7 +183,7 @@ run_case() {
 
 echo "[1] Output sano: verifica el rango y conserva push/PR (CA-1/CA-4)"
 assert_gate_order
-assert_otlp_gate_contract
+assert_otlp_gate_legacy_contract
 run_case sano
 if [ "$LAST_RC" -eq 0 ]; then pass "el scaffold sano completa"; else fail "el scaffold sano fallo (rc $LAST_RC)"; fi
 if git -C "$LAST_CONSUMER" ls-remote --exit-code origin refs/heads/scaffold-prueba >/dev/null 2>&1; then pass "el camino sano hace push"; else fail "el camino sano no publico la rama"; fi
