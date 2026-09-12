@@ -159,6 +159,171 @@ assert_igual "$FAKE_CACHE_S4/$MARKETPLACE_FIXTURE/mefisto/0.21.0" \
     "de paso, reescribe .plugin-root a la version mas nueva del cache"
 
 echo ""
+echo "[S-5] --align-opencode: usa solo el manifiesto Claude destino y valida la identidad final"
+
+OPENCODE_ROOT="$(mktemp -d)"
+OPENCODE_LOG="$(mktemp)"
+ALIGN_CONSUMER="$(mktemp -d)"
+ALIGN_CACHE="$(mktemp -d)"
+ALIGN_STUB="$(mktemp -d)"
+trap 'rm -rf "$FAKE_CACHE" "$STUB_DIR" "$CONSUMER_DIR" "$FAKE_CACHE_S4" "$CLAUDE_LOG" "$OPENCODE_ROOT" "$ALIGN_CONSUMER" "$ALIGN_CACHE" "$ALIGN_STUB" "$OPENCODE_LOG"' EXIT
+
+ALIGN_MARKETPLACE="marketplace-alineado"
+ALIGN_CLAUDE="$ALIGN_CACHE/$ALIGN_MARKETPLACE/mefisto/1.2.3"
+mkdir -p "$ALIGN_CLAUDE" "$ALIGN_CONSUMER/.claude/pipeline" "$OPENCODE_ROOT"
+printf '%s' "$ALIGN_CACHE/$ALIGN_MARKETPLACE/mefisto/1.2.2" > "$ALIGN_CONSUMER/.claude/pipeline/.plugin-root"
+jq -n '{schemaVersion:1,runtime:"claude",version:"1.2.3",commit:"0123456789abcdef0123456789abcdef01234567"}' > "$ALIGN_CLAUDE/mefisto-manifest.json"
+jq -n '{schemaVersion:1,runtime:"opencode",version:"1.2.3",commit:"0123456789abcdef0123456789abcdef01234567",minimumRuntimeVersion:"1.18.29"}' > "$OPENCODE_ROOT/mefisto-manifest.json"
+cp "$REPO_ROOT/src/published/scripts/diagnose-installation-identity.sh" "$OPENCODE_ROOT/diagnose-installation-identity.sh"
+chmod +x "$OPENCODE_ROOT/diagnose-installation-identity.sh"
+cat > "$ALIGN_STUB/claude" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$ALIGN_STUB/claude"
+cat > "$ALIGN_STUB/mefisto-opencode" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$1 ${2:-}" >> "$OPENCODE_LOG"
+case "$1" in
+  install|activate|project|status) exit 0 ;;
+  package-root) printf '%s\n' "$OPENCODE_ROOT" ;;
+  *) exit 2 ;;
+esac
+EOF
+chmod +x "$ALIGN_STUB/mefisto-opencode"
+
+(
+    cd "$ALIGN_CONSUMER" || exit 1
+    git init -q .
+    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode" OPENCODE_LOG OPENCODE_ROOT
+    main --align-opencode
+) >/dev/null 2>&1
+assert_igual "0" "$?" "alinea una instalacion OpenCode existente"
+assert_igual $'status \npackage-root \ninstall 1.2.3\nactivate 1.2.3\nproject \nstatus \npackage-root ' "$(cat "$OPENCODE_LOG")" \
+    "valida el launcher, instala, activa, proyecta, consulta status y resuelve package-root con la version del manifiesto"
+
+# Repetir la operacion completa conserva el resultado y vuelve a usar la identidad exacta.
+: > "$OPENCODE_LOG"
+(
+    cd "$ALIGN_CONSUMER" || exit 1
+    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode" OPENCODE_LOG OPENCODE_ROOT
+    main --align-opencode
+) >/dev/null 2>&1
+assert_igual "0" "$?" "repetir la alineacion es idempotente"
+assert_igual $'status \npackage-root \ninstall 1.2.3\nactivate 1.2.3\nproject \nstatus \npackage-root ' "$(cat "$OPENCODE_LOG")" \
+    "la repeticion conserva la secuencia y la version exacta"
+
+# Sin el flag no se invoca ninguna ruta OpenCode; conserva la semantica Claude previa.
+: > "$OPENCODE_LOG"
+(
+    cd "$ALIGN_CONSUMER" || exit 1
+    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode" OPENCODE_LOG OPENCODE_ROOT
+    main
+) >/dev/null 2>&1
+assert_igual "" "$(cat "$OPENCODE_LOG")" "sin --align-opencode no invoca OpenCode"
+
+# Sin launcher, usa el bootstrap incluido en la raiz Claude ya validada. El fixture
+# representa al entrypoint remoto seguro: crea el launcher solo despues de su exito.
+BOOTSTRAP_XDG="$(mktemp -d)"
+trap 'rm -rf "$FAKE_CACHE" "$STUB_DIR" "$CONSUMER_DIR" "$FAKE_CACHE_S4" "$CLAUDE_LOG" "$OPENCODE_ROOT" "$ALIGN_CONSUMER" "$ALIGN_CACHE" "$ALIGN_STUB" "$OPENCODE_LOG" "$BOOTSTRAP_XDG"' EXIT
+mkdir -p "$ALIGN_CLAUDE/src/published/scripts"
+cat > "$ALIGN_CLAUDE/src/published/scripts/install-opencode-release.sh" <<'EOF'
+#!/usr/bin/env bash
+[ "$1" = bootstrap ] && [ "$2" = 1.2.3 ] || exit 2
+mkdir -p "$XDG_DATA_HOME/mefisto/active/bin"
+cp "$ALIGN_STUB/mefisto-opencode" "$XDG_DATA_HOME/mefisto/active/bin/mefisto-opencode"
+EOF
+chmod +x "$ALIGN_CLAUDE/src/published/scripts/install-opencode-release.sh"
+(
+    cd "$ALIGN_CONSUMER" || exit 1
+    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" XDG_DATA_HOME="$BOOTSTRAP_XDG" ALIGN_STUB OPENCODE_LOG OPENCODE_ROOT
+    unset MEFISTO_OPENCODE_LAUNCHER
+    main --align-opencode
+) >/dev/null 2>&1
+assert_igual "0" "$?" "la primera instalacion usa el bootstrap confiable de la raiz Claude destino"
+
+# Si el bootstrap falla no queda un launcher ni una activacion parcial que se presente como exito.
+rm -rf "$BOOTSTRAP_XDG/mefisto"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 1' > "$ALIGN_CLAUDE/src/published/scripts/install-opencode-release.sh"
+chmod +x "$ALIGN_CLAUDE/src/published/scripts/install-opencode-release.sh"
+(
+    cd "$ALIGN_CONSUMER" || exit 1
+    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" XDG_DATA_HOME="$BOOTSTRAP_XDG" ALIGN_STUB OPENCODE_LOG OPENCODE_ROOT
+    unset MEFISTO_OPENCODE_LAUNCHER
+    main --align-opencode
+) >/dev/null 2>&1
+assert_igual "1" "$?" "la falla del bootstrap es visible y retorna error"
+
+# Un launcher activo y valido cuya instalacion falla debe propagar el error.
+cat > "$ALIGN_STUB/mefisto-opencode-install-fail" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  status) exit 0 ;;
+  package-root) printf '%s\n' "$OPENCODE_ROOT" ;;
+  install) exit 1 ;;
+  *) exit 0 ;;
+esac
+EOF
+chmod +x "$ALIGN_STUB/mefisto-opencode-install-fail"
+(
+    cd "$ALIGN_CONSUMER" || exit 1
+    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode-install-fail" OPENCODE_ROOT
+    main --align-opencode
+) >/dev/null 2>&1
+assert_igual "1" "$?" "la falla de install del launcher es visible y retorna error"
+
+# Un manifiesto Claude invalido aborta antes de tocar el launcher.
+printf '{invalido\n' > "$ALIGN_CLAUDE/mefisto-manifest.json"
+: > "$OPENCODE_LOG"
+(
+    cd "$ALIGN_CONSUMER" || exit 1
+    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode" OPENCODE_LOG OPENCODE_ROOT
+    main --align-opencode
+) >/dev/null 2>&1
+assert_igual "1" "$?" "un manifiesto Claude invalido falla cerrado"
+assert_igual "" "$(cat "$OPENCODE_LOG")" "el manifiesto Claude invalido no toca OpenCode"
+
+# Un identificador numerico de prerelease con cero inicial no es SemVer valido.
+jq -n '{schemaVersion:1,runtime:"claude",version:"1.2.3-01",commit:"0123456789abcdef0123456789abcdef01234567"}' > "$ALIGN_CLAUDE/mefisto-manifest.json"
+(
+    cd "$ALIGN_CONSUMER" || exit 1
+    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode" OPENCODE_LOG OPENCODE_ROOT
+    main --align-opencode
+) >/dev/null 2>&1
+assert_igual "1" "$?" "rechaza un prerelease que no cumple SemVer"
+
+# Restaura el manifiesto y fuerza una proyeccion conflictiva: la alineacion debe fallar.
+jq -n '{schemaVersion:1,runtime:"claude",version:"1.2.3",commit:"0123456789abcdef0123456789abcdef01234567"}' > "$ALIGN_CLAUDE/mefisto-manifest.json"
+cat > "$ALIGN_STUB/mefisto-opencode-conflict" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in project) exit 1 ;; package-root) printf '%s\n' "$OPENCODE_ROOT" ;; *) exit 0 ;; esac
+EOF
+chmod +x "$ALIGN_STUB/mefisto-opencode-conflict"
+(
+    cd "$ALIGN_CONSUMER" || exit 1
+    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode-conflict" OPENCODE_ROOT
+    main --align-opencode
+) >/dev/null 2>&1
+assert_igual "1" "$?" "un conflicto de proyeccion falla cerrado"
+
+# Una identidad OpenCode divergente no se acepta aunque install/activate hayan respondido bien.
+jq '.commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' "$OPENCODE_ROOT/mefisto-manifest.json" > "$OPENCODE_ROOT/manifest.tmp" && mv "$OPENCODE_ROOT/manifest.tmp" "$OPENCODE_ROOT/mefisto-manifest.json"
+(
+    cd "$ALIGN_CONSUMER" || exit 1
+    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode" OPENCODE_LOG OPENCODE_ROOT
+    main --align-opencode
+) >/dev/null 2>&1
+assert_igual "1" "$?" "un diagnostico divergente no se acepta como aligned"
+
+# El modo de poda no puede aceptar silenciosamente una alineacion que no ejecutaria.
+(
+    cd "$ALIGN_CONSUMER" || exit 1
+    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE"
+    main --prune --align-opencode
+) >/dev/null 2>&1
+assert_igual "1" "$?" "rechaza combinar --align-opencode con --prune"
+
+echo ""
 echo "===================================================================="
 echo "  test-update-plugin.sh: $PASS pasaron, $FAIL fallaron"
 echo "===================================================================="
