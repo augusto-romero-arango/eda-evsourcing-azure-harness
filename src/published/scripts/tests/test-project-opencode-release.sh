@@ -69,13 +69,24 @@ mkdir -p "$WORK/ledger-hostil"; ln -s "$WORK/afuera" "$WORK/ledger-hostil/.mefis
 OPENCODE_CONFIG_DIR="$WORK/ledger-hostil" bash "$PROJECTOR" project >/dev/null 2>&1; assert_rc "$?" 1 'ledger simbolico ajeno aborta'
 
 STATUS="$(OPENCODE_CONFIG_DIR="$WORK/ledger-hostil" bash "$PROJECTOR" projection-status)"; rc=$?; assert_rc "$rc" 1 'ledger simbolico informa conflicto sin repararlo'; jq -e --arg config "$WORK/ledger-hostil" '.schemaVersion == 1 and .status == "conflict" and .configRoot == $config and .ledgerRelease == null' <<< "$STATUS" >/dev/null && pass 'conflicto conserva JSON parseable y no sensible' || fail 'conflicto no conserva JSON parseable'
+rm "$WORK/ledger-hostil/.mefisto-projection.json"; printf '{\n' > "$WORK/ledger-hostil/.mefisto-projection.json"
+STATUS="$(OPENCODE_CONFIG_DIR="$WORK/ledger-hostil" bash "$PROJECTOR" projection-status)"; rc=$?; assert_rc "$rc" 1 'ledger regular invalido informa conflicto'; jq -e '.status == "conflict" and .ledgerRelease == null' <<< "$STATUS" >/dev/null && pass 'ledger invalido conserva salida JSON' || fail 'ledger invalido no conserva salida JSON'
 OPENCODE_CONFIG_DIR="$WORK/enlaces-conflictivos" bash "$PROJECTOR" project >/dev/null
 rm "$WORK/enlaces-conflictivos/commands/mefisto:tooling.md"
 STATUS="$(OPENCODE_CONFIG_DIR="$WORK/enlaces-conflictivos" bash "$PROJECTOR" projection-status)"; rc=$?; assert_rc "$rc" 1 'enlace administrado ausente informa conflicto'; jq -e '.status == "conflict"' <<< "$STATUS" >/dev/null && pass 'enlace ausente conserva salida JSON' || fail 'enlace ausente no conserva salida JSON'
-ln -s "$XDG_DATA_HOME/mefisto/active/commands/mefisto:tooling.md" "$WORK/enlaces-conflictivos/commands/mefisto:tooling.md"; rm "$WORK/enlaces-conflictivos/commands/mefisto:tooling.md"; ln -s "$WORK/ajeno" "$WORK/enlaces-conflictivos/commands/mefisto:tooling.md"
+printf 'reemplazo ajeno\n' > "$WORK/enlaces-conflictivos/commands/mefisto:tooling.md"
+STATUS="$(OPENCODE_CONFIG_DIR="$WORK/enlaces-conflictivos" bash "$PROJECTOR" projection-status)"; rc=$?; assert_rc "$rc" 1 'enlace administrado reemplazado informa conflicto'; jq -e '.status == "conflict"' <<< "$STATUS" >/dev/null && pass 'enlace reemplazado conserva salida JSON' || fail 'enlace reemplazado no conserva salida JSON'
+rm "$WORK/enlaces-conflictivos/commands/mefisto:tooling.md"; ln -s "$WORK/ajeno" "$WORK/enlaces-conflictivos/commands/mefisto:tooling.md"
 STATUS="$(OPENCODE_CONFIG_DIR="$WORK/enlaces-conflictivos" bash "$PROJECTOR" projection-status)"; rc=$?; assert_rc "$rc" 1 'enlace administrado retargeteado informa conflicto'; jq -e '.status == "conflict"' <<< "$STATUS" >/dev/null && pass 'enlace retargeteado conserva salida JSON' || fail 'enlace retargeteado no conserva salida JSON'
 PROJECTION_STATUS_SOURCE="$(awk '/^projection_status\(\)/,/^case /' "$PROJECTOR")"
 printf '%s\n' "$PROJECTION_STATUS_SOURCE" | grep -Eq 'opencode\.json|auth|provider|model|token' && fail 'estado no debe leer opencode.json ni stores de auth' || pass 'estado no inspecciona opencode.json ni stores de auth'
+
+mkdir -p "$WORK/bin-macos" "$HOME/Library/Application Support/mefisto"
+printf '#!/usr/bin/env bash\nprintf "Darwin\\n"\n' > "$WORK/bin-macos/uname"; chmod +x "$WORK/bin-macos/uname"
+cp -R "$XDG_DATA_HOME/mefisto/releases" "$HOME/Library/Application Support/mefisto/"; ln -s 'releases/2.0.0' "$HOME/Library/Application Support/mefisto/active"
+unset XDG_DATA_HOME
+STATUS="$(PATH="$WORK/bin-macos:$PATH" OPENCODE_CONFIG_DIR="$WORK/macos-config" bash "$PROJECTOR" projection-status)"; rc=$?
+[ "$rc" -eq 0 ] && jq -e --arg config "$WORK/macos-config" '.status == "disabled" and .configRoot == $config and .activeVersion == "2.0.0" and .ledgerRelease == null' <<< "$STATUS" >/dev/null && pass 'estado resuelve el fallback de datos macOS y el override de configuracion' || fail 'estado no resuelve los roots efectivos en macOS'
 
 printf '\nResultado: %s PASS, %s FAIL\n' "$PASS" "$FAIL"
 exit "$FAIL"

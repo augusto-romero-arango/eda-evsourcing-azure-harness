@@ -78,15 +78,17 @@ state_valid() {
     while IFS= read -r rel; do [ "$rel" = . ] || safe_relative_path "$rel/x" || return 1; done < <(jq -r '.directories[]' "$STATE")
 }
 owns() { jq -e --arg path "$1" '.paths | index($path) != null' "$STATE" >/dev/null 2>&1; }
-validate_owned() {
+owned_links_valid() {
     local rel target
-    [ -e "$STATE" ] || [ -L "$STATE" ] || return 0
-    state_valid || error "conflicto: $STATE no es un ledger Mefisto valido; no se modificara"
     while IFS= read -r rel; do
         target="$CONFIG/$rel"
-        [ -L "$target" ] && [ "$(readlink "$target")" = "$ACTIVE/$rel" ] \
-            || error "conflicto: $target fue modificado fuera de Mefisto; no se modificara"
+        [ -L "$target" ] && [ "$(readlink "$target")" = "$ACTIVE/$rel" ] || return 1
     done < <(jq -r '.paths[]' "$STATE")
+}
+validate_owned() {
+    [ -e "$STATE" ] || [ -L "$STATE" ] || return 0
+    state_valid || error "conflicto: $STATE no es un ledger Mefisto valido; no se modificara"
+    owned_links_valid || error 'conflicto: al menos un enlace administrado fue modificado fuera de Mefisto; no se modificara'
 }
 remove_links() {
     local rel
@@ -172,7 +174,7 @@ projection_status_json() {
         '{schemaVersion: 1, status: $status, configRoot: $config_root, activeVersion: $active_version, ledgerRelease: $ledger_version}'
 }
 projection_status() {
-    local active='' ledger='' rel active_json='null' ledger_json='null'
+    local active='' ledger='' active_json='null' ledger_json='null'
     command -v jq >/dev/null 2>&1 || error 'jq es requerido para consultar el estado de proyeccion'
     active="$(active_version_if_available 2>/dev/null || true)"
     [ -z "$active" ] || active_json="$(jq -Rn --arg value "$active" '$value')"
@@ -190,12 +192,10 @@ projection_status() {
         projection_status_json conflict "$active_json" "$ledger_json"
         return 1
     fi
-    while IFS= read -r rel; do
-        [ -L "$CONFIG/$rel" ] && [ "$(readlink "$CONFIG/$rel")" = "$ACTIVE/$rel" ] || {
-            projection_status_json conflict "$active_json" "$ledger_json"
-            return 1
-        }
-    done < <(jq -r '.paths[]' "$STATE")
+    if ! owned_links_valid; then
+        projection_status_json conflict "$active_json" "$ledger_json"
+        return 1
+    fi
     if [ "$ledger" = "$active" ]; then projection_status_json enabled "$active_json" "$ledger_json"
     else projection_status_json stale "$active_json" "$ledger_json"; fi
 }
