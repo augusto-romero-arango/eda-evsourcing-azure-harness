@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-infra-base-config-path.sh -- Contrato de lectura de config de /infra-base (#1212).
+# test-infra-base-config-path.sh -- Contratos de config y naming de /infra-base (#1212, #1219).
 #
 # Cubre MEF-ADR-0053 para el prompt de infra-base-scaffolder: canonico, ambos
 # divergentes (prevalece canonico), legacy y ausencia. Tambien evita que una
@@ -12,6 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 AGENT="$REPO_ROOT/agents/infra-base-scaffolder.md"
 COMMAND="$REPO_ROOT/commands/infra-base.md"
+README="$REPO_ROOT/README.md"
 PASS=0
 FAIL=0
 
@@ -134,6 +135,42 @@ if grep -Fq '.mefisto/harness.config.json' "$COMMAND" \
     pass "comando documenta contrato canonico sin instruir migracion"
 else
     fail "comando no documenta correctamente el contrato"
+fi
+
+echo "[6] Naming regional independiente de PostgreSQL"
+POSTGRESQL_REGION_BLOCK=$(awk '/^variable "postgresql_region_short"/,/^}/' "$AGENT")
+POSTGRESQL_ZONE_BLOCK=$(awk '/^variable "postgresql_zone"/,/^}/' "$AGENT")
+POSTGRESQL_MODULE_BLOCK=$(awk '/^module "postgresql"/,/^}/' "$AGENT")
+if grep -Fq 'variable "postgresql_region_short"' <<< "$POSTGRESQL_REGION_BLOCK" \
+    && grep -Fq 'default     = "<azure_region_short>"' <<< "$POSTGRESQL_REGION_BLOCK" \
+    && grep -Fq 'postgresql_region_seq_suffix = var.postgresql_region_short != "" ? "-${var.postgresql_region_short}-${var.resource_sequence}" : ""' "$AGENT" \
+    && grep -Fq 'name                   = "pgsql-${var.project_short}-${var.environment}${local.postgresql_region_seq_suffix}"' <<< "$POSTGRESQL_MODULE_BLOCK"; then
+    pass "el agente declara el sufijo regional exclusivo y el nombre CAF de PostgreSQL"
+else
+    fail "falta la variable, el local o el nombre regional de PostgreSQL"
+fi
+if grep -Fq 'location               = var.postgresql_location' <<< "$POSTGRESQL_MODULE_BLOCK" \
+    && grep -Fq 'zone                   = var.postgresql_zone' <<< "$POSTGRESQL_MODULE_BLOCK" \
+    && grep -Fq 'default     = null' <<< "$POSTGRESQL_ZONE_BLOCK" \
+    && grep -Fq 'prefix      = "${var.project}-${var.environment}${local.region_seq_suffix}"' "$AGENT" \
+    && grep -Fq 'prefix_func = "${var.project_short}-${var.environment}${local.region_seq_suffix}"' "$AGENT" \
+    && grep -Fq 'name     = "rg-${local.prefix}"' "$AGENT" \
+    && grep -Fq 'name                     = local.prefix' "$AGENT" \
+    && grep -Fq 'name                = "sbns-interno-${local.prefix}"' "$AGENT" \
+    && grep -Fq 'name                = "kv-${var.project_short}-${var.environment}${local.region_seq_suffix}"' "$AGENT"; then
+    pass "PostgreSQL conserva location/zone y los demas recursos conservan los locals primarios"
+else
+    fail "se altero el aislamiento regional de PostgreSQL o el naming primario"
+fi
+if grep -Fq 'centralus' "$COMMAND" \
+    && grep -Fq 'postgresql_region_short = "cus"' "$COMMAND" \
+    && grep -Fq 'terraform.tfvars ignorado' "$COMMAND" \
+    && grep -Fq 'postgresql_location = "centralus"' "$README" \
+    && grep -Fq 'postgresql_region_short = "cus"' "$README" \
+    && grep -Fq 'terraform.tfvars` ignorado' "$README"; then
+    pass "el comando y README documentan juntos el override regional explicito"
+else
+    fail "la documentacion no cubre el par postgresql_location/postgresql_region_short"
 fi
 
 echo "----------------------------------------"
