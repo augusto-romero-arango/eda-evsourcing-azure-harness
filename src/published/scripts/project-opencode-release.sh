@@ -19,7 +19,45 @@ config_root() {
     fi
 }
 
-ROOT="$(data_root)"; ACTIVE="$ROOT/active"; CONFIG="$(config_root)"; STATE="$CONFIG/.mefisto-projection.json"
+ROOT="$(data_root)"; RELEASES="$ROOT/releases"; ACTIVE="$ROOT/active"; CONFIG="$(config_root)"; STATE="$CONFIG/.mefisto-projection.json"
+lock_owner_description() {
+    local operation pid
+    operation="$(command cat "$LOCK/operation" 2>/dev/null || true)"
+    pid="$(command cat "$LOCK/pid" 2>/dev/null || true)"
+    [ -n "$operation" ] || operation='operacion desconocida'
+    [ -n "$pid" ] || pid='PID desconocido'
+    printf '%s (PID %s)' "$operation" "$pid"
+}
+release_lock() {
+    if [ -n "${LOCK:-}" ] && [ -n "${LOCK_TOKEN:-}" ] && [ -f "$LOCK/owner" ] \
+        && [ "$(command cat "$LOCK/owner" 2>/dev/null || true)" = "$LOCK_TOKEN" ]; then
+        rm -rf "$LOCK"
+    fi
+}
+acquire_lock() {
+    local operation="$1" owner
+    mkdir -p "$RELEASES" || error 'no se pudo crear el almacen de releases'
+    LOCK="$RELEASES/.operation.lock"
+    if ! mkdir "$LOCK" 2>/dev/null; then
+        owner="$(lock_owner_description)"
+        error "hay una operacion OpenCode en curso: $owner ($LOCK); reintente cuando termine. Si quedo abandonado, revise su PID y retire el lock manualmente"
+    fi
+    LOCK_TOKEN="$$-${RANDOM}-${RANDOM}"
+    if ! printf '%s\n' "$LOCK_TOKEN" > "$LOCK/owner" || ! printf '%s\n' "$operation" > "$LOCK/operation" || ! printf '%s\n' "$$" > "$LOCK/pid"; then
+        rm -f "$LOCK/owner" "$LOCK/operation" "$LOCK/pid" 2>/dev/null || true
+        rmdir "$LOCK" 2>/dev/null || true
+        error 'no se pudo registrar la operacion que adquirio el lock'
+    fi
+    trap release_lock EXIT
+    trap 'exit 1' HUP INT TERM
+    if [ -n "${MEFISTO_OPENCODE_TEST_HOLD_LOCK_SECONDS:-}" ]; then
+        sleep "$MEFISTO_OPENCODE_TEST_HOLD_LOCK_SECONDS"
+    fi
+}
+operation_in_progress() {
+    LOCK="$RELEASES/.operation.lock"
+    [ -d "$LOCK" ]
+}
 safe_relative_path() {
     local value="$1" rest part
     case "$value" in ''|/*|*/|*//*|*$'\n'*|*$'\r'*) return 1 ;; esac
@@ -133,6 +171,7 @@ report_capabilities() {
 project() {
     local release paths rel target parent tmp previous_dirs='[]'
     command -v jq >/dev/null 2>&1 || error 'jq es requerido para proyectar la configuracion'
+    acquire_lock project
     release="$(active_release)"; paths="$(list_sources "$release")"
     validate_owned
     [ ! -f "$STATE" ] || previous_dirs="$(jq -c '.directories' "$STATE")"
@@ -160,6 +199,7 @@ project() {
 }
 deactivate() {
     command -v jq >/dev/null 2>&1 || error 'jq es requerido para retirar la proyeccion'
+    acquire_lock deactivate
     { [ -e "$STATE" ] || [ -L "$STATE" ]; } || { printf 'No hay proyeccion Mefisto que retirar en %s.\n' "$CONFIG"; return 0; }
     validate_owned; remove_links; remove_directories; rm -f "$STATE"; rmdir "$CONFIG" 2>/dev/null || true
     printf 'Proyeccion Mefisto retirada; la configuracion ajena permanece intacta.\n'
@@ -176,6 +216,10 @@ projection_status_json() {
 projection_status() {
     local active='' ledger='' active_json='null' ledger_json='null'
     command -v jq >/dev/null 2>&1 || error 'jq es requerido para consultar el estado de proyeccion'
+    if operation_in_progress; then
+        projection_status_json operation-in-progress null null
+        return 1
+    fi
     active="$(active_version_if_available 2>/dev/null || true)"
     [ -z "$active" ] || active_json="$(jq -Rn --arg value "$active" '$value')"
     if [ ! -e "$STATE" ] && [ ! -L "$STATE" ]; then

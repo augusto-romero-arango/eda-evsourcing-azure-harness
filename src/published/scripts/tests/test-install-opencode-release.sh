@@ -68,6 +68,7 @@ mkdir -p "$HOME"
 EXTRACT="$WORK/extract inicial"; mkdir "$EXTRACT"; tar -xzf "$WORK/assets/v1.2.3/mefisto-opencode-v1.2.3.tar.gz" -C "$EXTRACT"
 "$EXTRACT/install.sh" install 1.2.3 >/dev/null; assert_rc "$?" 0 'primera instalacion desde bootstrap local verificado'
 assert_active 1.2.3 'primera instalacion activa la version inicial'
+[ -d "$XDG_DATA_HOME/mefisto/releases/.operation.lock" ] && fail 'install deja el lock adquirido' || pass 'install libera el lock antes de la siguiente operacion'
 [ -f "$XDG_DATA_HOME/mefisto/releases/1.2.3/contenido con espacios.txt" ] && pass 'release inmutable conserva paths con espacios' || fail 'release no conserva paths con espacios'
 [ -z "$(find "$XDG_DATA_HOME/mefisto/releases/1.2.3" \( -perm -0200 -o -perm -0020 -o -perm -0002 \) -print -quit)" ] && pass 'release instalada queda sin permisos de escritura' || fail 'release instalada conserva permisos de escritura'
 assert_only_data_root 'bootstrap solo escribe bajo la raiz de datos'

@@ -15,6 +15,11 @@ assert_projection_status() {
     jq -e --arg expected "$expected" --arg config "$XDG_CONFIG_HOME/opencode" --argjson active "$active" --argjson ledger "$ledger" \
         '.schemaVersion == 1 and .status == $expected and .configRoot == $config and .activeVersion == $active and .ledgerRelease == $ledger and (keys == ["activeVersion", "configRoot", "ledgerRelease", "schemaVersion", "status"])' <<< "$output" >/dev/null && pass "$label" || fail "$label"
 }
+wait_for_lock() {
+    local lock="$XDG_DATA_HOME/mefisto/releases/.operation.lock" attempt=0
+    while [ ! -d "$lock" ] && [ "$attempt" -lt 50 ]; do sleep 0.1; attempt=$((attempt + 1)); done
+    [ -d "$lock" ]
+}
 make_release() {
     local version="$1" root="$XDG_DATA_HOME/mefisto/releases/$1"
     mkdir -p "$root/commands" "$root/agents" "$root/plugins" "$root/skills/mefisto-projections" "$root/skills/mefisto-comment-cleanup"
@@ -45,6 +50,18 @@ bash "$PROJECTOR" project >/dev/null; assert_rc "$?" 0 'proyecta la release acti
 bash "$PROJECTOR" project >/dev/null; assert_rc "$?" 0 'reproyectar la misma version es idempotente'
 STATUS="$(bash "$PROJECTOR" projection-status)"; rc=$?; assert_rc "$rc" 0 'estado enabled es exitoso'; assert_projection_status "$STATUS" enabled '"1.2.3"' '"1.2.3"' 'estado enabled verifica enlaces y ledger'
 STATUS_REPEAT="$(bash "$PROJECTOR" projection-status)"; [ "$STATUS" = "$STATUS_REPEAT" ] && pass 'estado JSON es idempotente byte a byte' || fail 'estado JSON no es idempotente'
+MEFISTO_OPENCODE_TEST_HOLD_LOCK_SECONDS=5 bash "$PROJECTOR" project >/dev/null 2>&1 & HOLDER=$!
+wait_for_lock && pass 'project adquiere el lock comun antes de mutar' || fail 'project no adquirio el lock comun'
+OUTPUT="$(bash "$PROJECTOR" deactivate 2>&1)"; assert_rc "$?" 1 'deactivate no se solapa con project'
+printf '%s\n' "$OUTPUT" | grep -q 'project (PID ' && printf '%s\n' "$OUTPUT" | grep -q 'reintente' && pass 'contencion identifica la operacion y el reintento' || fail 'contencion no diagnostica la operacion en curso'
+STATUS="$(bash "$PROJECTOR" projection-status)"; rc=$?; assert_rc "$rc" 1 'estado no presenta estable una proyeccion en mutacion'; assert_projection_status "$STATUS" operation-in-progress null null 'estado estructurado informa operacion en curso'
+kill -HUP "$HOLDER"; wait "$HOLDER" 2>/dev/null; assert_rc "$?" 1 'HUP interrumpe la proyeccion retenida'
+[ ! -e "$XDG_DATA_HOME/mefisto/releases/.operation.lock" ] && pass 'HUP limpia solo el lock adquirido por project' || fail 'HUP no limpio el lock propio de project'
+bash "$PROJECTOR" project >/dev/null; assert_rc "$?" 0 'project puede reintentarse tras limpiar su lock'
+mkdir "$XDG_DATA_HOME/mefisto/releases/.operation.lock"; printf 'ajeno\n' > "$XDG_DATA_HOME/mefisto/releases/.operation.lock/owner"; printf 'activate\n' > "$XDG_DATA_HOME/mefisto/releases/.operation.lock/operation"; printf '99999\n' > "$XDG_DATA_HOME/mefisto/releases/.operation.lock/pid"
+bash "$PROJECTOR" deactivate >/dev/null 2>&1; assert_rc "$?" 1 'deactivate no elimina un lock ajeno'
+[ -d "$XDG_DATA_HOME/mefisto/releases/.operation.lock" ] && [ "$(< "$XDG_DATA_HOME/mefisto/releases/.operation.lock/owner")" = ajeno ] && pass 'lock abandonado conserva ownership para diagnostico manual' || fail 'deactivate elimino un lock ajeno'
+rm -rf "$XDG_DATA_HOME/mefisto/releases/.operation.lock"
 activate_fixture 2.0.0; STATUS="$(bash "$PROJECTOR" projection-status)"; rc=$?; assert_rc "$rc" 0 'cambiar active deja proyeccion stale sin repararla'; assert_projection_status "$STATUS" stale '"2.0.0"' '"1.2.3"' 'estado stale distingue deriva de desactivacion'
 OUTPUT="$(bash "$PROJECTOR" project)"; assert_rc "$?" 0 'cambiar active reproyecta'
 grep -q '2.0.0' "$XDG_CONFIG_HOME/opencode/commands/mefisto:tooling.md" && pass 'enlace estable sigue la nueva release activa sin residuos' || fail 'no siguio la nueva release'
