@@ -203,8 +203,10 @@ for archivo in \
   "$REPO_ROOT/src/<RootNamespace>.{PascalCase}/.gitignore" \
   "$REPO_ROOT/src/<RootNamespace>.{PascalCase}/<RootNamespace>.{PascalCase}.csproj"; do
   temporal="${archivo}.lf"
-  tr -d '\r' < "$archivo" > "$temporal"
-  mv "$temporal" "$archivo"
+  tr -d '\r' < "$archivo" > "$temporal" && mv "$temporal" "$archivo" || {
+    rm -f "$temporal"
+    exit 1
+  }
 done
 ```
 
@@ -3857,6 +3859,10 @@ if [ -f "src/<RootNamespace>.Projections/Infraestructura/ConfiguracionMartenProj
     "src/<RootNamespace>.Projections/Infraestructura/ConfiguracionMartenProjections{PascalCase}.cs" \
     "src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj"
 fi
+
+# Incluye archivos nuevos porque se ejecuta despues de git add. Si encuentra whitespace invalido
+# (incluidos finales CRLF interpretados como CR al final de cada linea), detente antes del commit.
+git diff --cached --check
 
 git commit -m "scaffold({kebab}): nuevo dominio {PascalCase} - Function App, tests, Terraform y deploy workflow"
 ```

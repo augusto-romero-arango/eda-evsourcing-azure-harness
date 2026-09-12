@@ -749,19 +749,33 @@ done
 echo ""
 echo "[K] domain-scaffolder: normalizacion LF de archivos heredados de func init"
 
+# Acota los chequeos al bloque de normalizacion: ambas rutas aparecen tambien en
+# otras secciones del agente y buscarlas en el documento completo daria un falso
+# positivo si una dejara de estar cubierta por el loop.
+LF_BLOCK=$(awk '
+    /^\*\*Normalizar a LF los archivos heredados de `func init`/ { capture=1 }
+    capture && /^Despues de `func init`/ { exit }
+    capture { print }
+' "$DS")
+
 for required in \
     '"$REPO_ROOT/src/<RootNamespace>.{PascalCase}/.gitignore"' \
     '"$REPO_ROOT/src/<RootNamespace>.{PascalCase}/<RootNamespace>.{PascalCase}.csproj"' \
     "tr -d '\\r'" \
     'El comando es idempotente' \
-    'no reemplaces ni borres el `.gitignore`' \
-    'git diff --check'; do
-    if grep -qF -- "$required" "$DS"; then
+    'no reemplaces ni borres el `.gitignore`'; do
+    if grep -qF -- "$required" <<< "$LF_BLOCK"; then
         pass "domain-scaffolder: conserva '$required' en la normalizacion LF"
     else
         fail "domain-scaffolder: falta '$required' en la normalizacion LF de archivos heredados"
     fi
 done
+
+if grep -qF -- 'git diff --cached --check' "$DS"; then
+    pass "domain-scaffolder: verifica el diff staged, incluidos los archivos nuevos de func init"
+else
+    fail "domain-scaffolder: falta git diff --cached --check despues de agregar el scaffold"
+fi
 
 # -------- Resumen --------
 
