@@ -401,12 +401,18 @@ if grep -qE '^gh issue comment' "$PIPE"; then
 else
     pass "el comentario al issue no esta en el nivel superior"
 fi
+if grep -qE '^gh pr comment' "$PIPE"; then
+    fail "el comentario de metricas al PR esta en el nivel superior: correria tambien en modo variante"
+else
+    pass "el comentario de metricas al PR no esta en el nivel superior"
+fi
 if grep -qE '^ +git -C "\$WORKTREE_PATH" push -u origin' "$PIPE" \
     && grep -qE '^ +PR_URL=\$\(gh pr create' "$PIPE" \
+    && grep -qE '^ +gh pr comment' "$PIPE" \
     && grep -qE '^ +gh issue comment' "$PIPE"; then
-    pass "push, gh pr create y gh issue comment quedan anidados bajo el gate"
+    pass "push, PR y comentarios quedan anidados bajo el gate"
 else
-    fail "no se encontraron los tres efectos externos anidados bajo el gate (push / gh pr create / gh issue comment)"
+    fail "no se encontraron todos los efectos externos anidados bajo el gate (push / PR / comentarios)"
 fi
 
 echo ""

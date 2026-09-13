@@ -68,10 +68,11 @@ if grep -qF 'RUN_METRICS_TABLE=$(render_run_metrics_table' "$PIPELINE" \
    && grep -qF -- '--body "$RUN_METRICS_COMMENT"' "$PIPELINE" \
    && grep -qF -- '--repo "$REPO_SLUG_PR"' "$PIPELINE" \
    && grep -qF '|| warn "No se pudo publicar las metricas en el PR reutilizado' "$PIPELINE" \
-   && ! grep -qF -- '--body "## Metricas de la corrida\n' "$PIPELINE"; then
-    pass "la tabla se publica en PR nuevo o reutilizado con saltos reales y degradacion a warn"
+   && ! grep -qF -- '--body "## Metricas de la corrida\n' "$PIPELINE" \
+   && ! grep -qE '^RUN_METRICS_(TABLE|COMMENT)=|^gh pr comment' "$PIPELINE"; then
+    pass "la tabla se publica bajo el gate de variante, con saltos reales y degradacion a warn"
 else
-    fail "integracion de tabla o comentario no respeta el contrato"
+    fail "integracion de tabla, comentario o gate de variante no respeta el contrato"
 fi
 
 echo "[F] jq ausente nunca aborta y degrada la tabla"
