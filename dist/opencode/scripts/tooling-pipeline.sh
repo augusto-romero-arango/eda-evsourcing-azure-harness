@@ -95,11 +95,43 @@ LAST_AGENT_DENIALS=0
 CURRENT_STAGE="setup"
 HOLD_CAUSE_JSON="null" HOLD_NEXT_PROBE_JSON="null" HOLD_CEILING_JSON="null" HOLD_TOTAL=0
 PIPELINE_TMP_DIR=""
+PIPELINE_ABORTING=false
 
 cleanup_pipeline_temporaries() {
     [ -z "$PIPELINE_TMP_DIR" ] || rm -rf "$PIPELINE_TMP_DIR" 2>/dev/null || true
 }
-trap cleanup_pipeline_temporaries EXIT
+
+record_failed_history() {
+    [ -n "${HISTORY_FILE:-}" ] || return 0
+    jq -cn --arg issue "${ISSUE_NUM:-}" --arg title "${ISSUE_TITLE:-}" --argjson variant "${VARIANT_LABEL_JSON:-null}" \
+        --argjson identity "$HARNESS_IDENTITY_JSON" --arg runtime "${MEFISTO_RUNTIME_RESUELTO:-}" --arg started "${TIMESTAMP:-}" --arg finished "$(date +%Y-%m-%dT%H:%M:%S)" \
+        --arg stage "$CURRENT_STAGE" --arg error "$PIPELINE_ERROR" --argjson writer "$AGENT_WR_METRICS" --argjson reviewer "$AGENT_RV_METRICS" \
+        '{issue:$issue,title:$title,pipeline:"tooling",variant:$variant,identity:$identity,runtime:(if $runtime == "" then null else $runtime end),started:$started,finished:$finished,state:"failed",stage:$stage,error:$error,agents:{writer:{metrics:$writer},reviewer:{metrics:$reviewer}}}' \
+        >> "$HISTORY_FILE" 2>/dev/null || true
+}
+
+finalize_pipeline_exit() {
+    local exit_code=$? status_file
+    trap - EXIT
+    set +e
+
+    # Un abort que no alcanzo a completar su propia escritura conserva su error;
+    # cualquier otro cierre no controlado recibe un diagnostico generico.
+    status_file="${MEFISTO_STATE_DIR:-}/${STATUS_FILENAME:-}"
+    if [ "$exit_code" -ne 0 ] && [ -n "${STATUS_FILENAME:-}" ] \
+       && [ -n "${PIPELINE_DIR_ABS:-}" ] && [ -f "$status_file" ] \
+       && jq -e '.state == "running" or .state == "hold"' "$status_file" >/dev/null 2>&1; then
+        if [ "$PIPELINE_ABORTING" != true ]; then
+            PIPELINE_ERROR="Terminacion no controlada (exit code: $exit_code)"
+        fi
+        update_status "$CURRENT_STAGE" "failed" >/dev/null 2>&1 || true
+        record_failed_history
+    fi
+
+    cleanup_pipeline_temporaries
+    exit "$exit_code"
+}
+trap finalize_pipeline_exit EXIT
 
 _strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
 _log_file()   { echo -e "$1" | _strip_ansi >> "${LOG_FILE_ABS:-$LOG_FILE}"; }
@@ -137,6 +169,7 @@ abort() {
     # del mensaje que se acaba de imprimir -- ruido que ademas se come dos lineas
     # del contexto real que se quiere mostrar (issue #379).
     local log_tail
+    PIPELINE_ABORTING=true
     log_tail="$(_tail_log_for_abort "${LOG_FILE_ABS:-$LOG_FILE}" "$TAIL_LOG_LINES")" || log_tail=""
     PIPELINE_ERROR="$(echo "$1" | sed 's/"/\\"/g' | tr '\n' ' ')"
     echo -e "\n${RED}${BOLD}x ERROR: $1${NC}" | tee -a "${LOG_FILE_ABS:-$LOG_FILE}"
@@ -148,11 +181,7 @@ abort() {
     fi
     if [ -n "${PIPELINE_DIR_ABS:-}" ]; then
         update_status "$CURRENT_STAGE" "failed"
-        jq -cn --arg issue "${ISSUE_NUM:-}" --arg title "${ISSUE_TITLE:-}" --argjson variant "${VARIANT_LABEL_JSON:-null}" \
-            --argjson identity "$HARNESS_IDENTITY_JSON" --arg runtime "${MEFISTO_RUNTIME_RESUELTO:-}" --arg started "${TIMESTAMP:-}" --arg finished "$(date +%Y-%m-%dT%H:%M:%S)" \
-            --arg stage "$CURRENT_STAGE" --arg error "$PIPELINE_ERROR" --argjson writer "$AGENT_WR_METRICS" --argjson reviewer "$AGENT_RV_METRICS" \
-            '{issue:$issue,title:$title,pipeline:"tooling",variant:$variant,identity:$identity,runtime:(if $runtime == "" then null else $runtime end),started:$started,finished:$finished,state:"failed",stage:$stage,error:$error,agents:{writer:{metrics:$writer},reviewer:{metrics:$reviewer}}}' \
-            >> "$HISTORY_FILE" 2>/dev/null || true
+        record_failed_history
     fi
     exit 1
 }
