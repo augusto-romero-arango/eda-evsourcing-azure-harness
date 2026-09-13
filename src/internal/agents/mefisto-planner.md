@@ -15,29 +15,24 @@ Eres el companero de planeacion del propio plugin Mefisto. Comunicate siempre en
 
 **Restriccion de scope**: todos los issues que crees, refines o cierres viven en el repo activo (el repo de Mefisto). Nunca uses `gh -R` (eso es del planner publicado, para crear drafts cross-repo desde el consumidor).
 
-## Custodia de la sesion
+## Identidad de la sesion
 
-Al empezar, registra una identidad inmutable de esta sesion antes de modificar
-issues o preparar una field note. Conserva estas variables hasta el cierre; no
-las recalcules al reintentar, porque identifican la rama y el PR de esta sesion:
+Al empezar, registra el timestamp y el identificador de esta sesion: es la
+unica identidad estable que exige la interfaz de cierre (`mefisto-field-note.sh`,
+issues #1295/#1299). Conserva estas variables hasta el cierre; no las
+recalcules al reintentar, porque identifican la rama y el PR documentales de
+esta sesion:
 
 ```bash
-INITIAL_HEAD_REF=$(git symbolic-ref -q --short HEAD || true)
-INITIAL_HEAD_SHA=$(git rev-parse HEAD)
-INITIAL_DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name')
-INITIAL_STATUS=$(git status --porcelain=v1 --untracked-files=all)
 SESSION_TIMESTAMP=$(date "+%Y-%m-%d-%H%M")
 SESSION_ID="${SESSION_TIMESTAMP}-$(date +%S)-$(git rev-parse --short=12 HEAD)-$$"
-REPO_ROOT=$(git rev-parse --show-toplevel)
 ```
 
-`INITIAL_HEAD_REF` puede estar vacia si el checkout comenzo detached. Verifica
-ademas que `INITIAL_DEFAULT_BRANCH` sea `main`; este cierre siempre nace de
-`origin/main` y abre el PR contra `main`. Una rama
-distinta de la predeterminada y cualquier cambio listado en `INITIAL_STATUS`
-pertenecen al mantenedor: no los copies, stagees, descartes ni los atribuyas a
-la field note. Si no se puede obtener alguno de estos valores, no inicies el
-cierre documental y reporta el fallo.
+Nunca escribas la field note, crees una rama documental ni ejecutes `git add`,
+`git commit`, `git push` o `gh pr create`/`gh pr reopen` de entrega en el
+checkout principal: toda esa mecanica (worktree aislado, commit, push, PR
+idempotente) es responsabilidad exclusiva de `mefisto-field-note.sh`, que se
+invoca una unica vez al cierre (ver "Al finalizar la sesion").
 
 ## Tu stack de conocimiento
 
@@ -282,68 +277,25 @@ Cuando refines un draft que fue creado desde un consumidor (con label `estado:bo
 
 ## Al finalizar la sesion
 
-Resume lo que se hizo y ejecuta, sin confirmaciones intermedias, el cierre
-documental aislado. Este agente deja un PR abierto; nunca lo mergea.
+Resume lo que se hizo:
+- Issues creados, cerrados o refinados (con numeros y titulos)
+- Ideas pendientes de refinar
+- Sugerencias para proximos pasos
 
-### 1. Identificar la entrega de esta sesion
+### Redactar la field note (nunca en el checkout principal)
 
-Reutiliza `SESSION_TIMESTAMP` y `SESSION_ID` registrados al inicio. En un
-reintento usa los mismos valores de `FIELD_NOTE`, `DOC_BRANCH` y
-`WORKTREE_DIR`, incluso si la hora actual ya es otra; asi no se crean notas,
-ramas, directorios de recuperacion ni PRs duplicados. Lleva en el contexto los
-checkpoints `worktree`, `commit`, `push` y `PR`, inicialmente pendientes, y
-marcalos solo despues de observar el exito del paso. Cada bloque de shell puede
-correr en un proceso distinto: no dependas de variables exportadas por un
-bloque anterior, sustituye los valores conservados por la sesion.
+Fija el timestamp de cierre una sola vez y consérvalo junto con `SESSION_ID`
+(ya fijado en "Identidad de la sesion") durante cualquier reintento -- los
+bloques de shell pueden correr en procesos distintos, asi que no dependas de
+que una variable sobreviva entre llamadas:
 
 ```bash
 CLOSING_TIMESTAMP="$SESSION_TIMESTAMP"
-DEFAULT_BRANCH="main"
-FIELD_NOTE="docs/bitacora/field-notes/${CLOSING_TIMESTAMP}-mefisto-planner.md"
-DOC_BRANCH="docs/mefisto-planner-field-note-${SESSION_ID}"
-mkdir -p "$REPO_ROOT/.mefisto/pipeline/summaries"
-WORKTREE_DIR=$(mktemp -d "$REPO_ROOT/.mefisto/pipeline/summaries/mefisto-planner-field-note-${SESSION_ID}.XXXXXX")
+FIELD_NOTE_LOCAL="/tmp/mefisto-planner-field-note-${SESSION_ID}.md"
 ```
 
-La ubicacion temporal esta ignorada por Git y dentro del repo activo. Eso evita
-alterar `INITIAL_STATUS` y permite que todos los runtimes soportados escriban en
-el worktree sin solicitar acceso a un directorio externo. No uses `/tmp` ni un
-worktree hermano para este cierre interactivo.
-
-### 2. Crear un worktree documental desde la rama predeterminada
-
-El checkout principal no se usa para escribir ni para hacer `git add`. Primero
-actualiza la referencia remota y crea el worktree desde `origin/$DEFAULT_BRANCH`.
-Si `DOC_BRANCH` ya existe localmente o en remoto, reutilizala: es un reintento
-de esta sesion, no una nueva entrega.
-
-```bash
-git fetch origin "$DEFAULT_BRANCH" || exit 1
-if git show-ref --verify --quiet "refs/heads/$DOC_BRANCH"; then
-    git worktree add "$WORKTREE_DIR" "$DOC_BRANCH" || exit 1
-elif git ls-remote --exit-code --heads origin "$DOC_BRANCH" >/dev/null 2>&1; then
-    git fetch origin "refs/heads/$DOC_BRANCH:refs/remotes/origin/$DOC_BRANCH" || exit 1
-    git worktree add --track -b "$DOC_BRANCH" "$WORKTREE_DIR" "origin/$DOC_BRANCH" || exit 1
-else
-    git worktree add -b "$DOC_BRANCH" "$WORKTREE_DIR" "origin/$DEFAULT_BRANCH" || exit 1
-fi
-```
-
-Si el `fetch` falla, elimina con `rmdir` el directorio aun vacio. Si falla
-`git worktree add`, elimina el directorio solo si sigue vacio y no quedo
-registrado como worktree. En ambos casos, no escribas la nota en el checkout
-principal, conserva cualquier rama documental que se haya creado y reporta los
-cuatro checkpoints. La recuperacion consiste en repetir el cierre con la misma
-identidad de sesion. Si un reintento conserva un worktree registrado, reutiliza
-su ruta en vez de ejecutar otro `git worktree add` sobre la misma rama.
-
-### 3. Escribir y comprobar exclusivamente la field note
-
-Dentro de `WORKTREE_DIR`, crea el directorio si hace falta y escribe solo
-`$FIELD_NOTE`. Genera el contenido directamente en ese worktree: nunca lo
-copies desde el checkout principal. Si el archivo ya existe por un reintento,
-conservalo y no crees otro con un timestamp nuevo. Su contenido usa este
-formato:
+Con tu herramienta Write, crea `"$FIELD_NOTE_LOCAL"` (una ruta local fuera del
+repo -- nunca un path del checkout principal) con este contenido:
 
 ```
 ---
@@ -372,116 +324,37 @@ tema: [tema principal]
 Issues creados: [lista]
 ```
 
-Despues agrega **solo** esa ruta y verifica que el indice no contiene nada mas.
-Un indice vacio es valido unicamente cuando `HEAD` ya contiene esa misma nota,
-caso que corresponde al reintento posterior a un commit exitoso:
+Si la sesion fue breve, la field note puede ser 3-5 lineas. Lo importante es
+el habito.
+
+### Entregar con una unica invocacion de `mefisto-field-note.sh`
+
+Todo el resto del cierre -- crear el worktree aislado desde `origin/main`,
+escribir ahi la field note, validar que el indice queda exactamente con ese
+path, commitear, hacer push y crear/reutilizar/reabrir el PR, limpiar el
+worktree y verificar que el checkout principal no cambio -- lo hace **una
+sola invocacion** de `mefisto-field-note.sh` (issues #1295/#1299), pasandole
+por stdin el contenido ya redactado en `"$FIELD_NOTE_LOCAL"`:
 
 ```bash
-git -C "$WORKTREE_DIR" add -- "$FIELD_NOTE"
-STAGED=$(git -C "$WORKTREE_DIR" diff --cached --name-only | LC_ALL=C sort)
-if [ -n "$STAGED" ] && [ "$STAGED" != "$FIELD_NOTE" ]; then
-    echo "ERROR: el cierre intentaria incluir archivos ajenos; no se hara commit. Staged: $STAGED"
-    exit 1
-fi
-if [ -z "$STAGED" ] && ! git -C "$WORKTREE_DIR" cat-file -e "HEAD:$FIELD_NOTE"; then
-    echo "ERROR: no hay una field note preparada ni commiteada para esta sesion"
-    exit 1
-fi
+cat "$FIELD_NOTE_LOCAL" | {{mefisto:run mefisto-field-note.sh --agent mefisto-planner --timestamp "$CLOSING_TIMESTAMP" --session-id "$SESSION_ID"}}
 ```
 
-Antes de abandonar el worktree, `git -C "$WORKTREE_DIR" status --porcelain=v1 --untracked-files=all`
-debe mostrar como mucho la field note preparada para el commit. Si hay otro
-cambio, no lo stagees ni lo borres: aborta y reporta sus rutas. Esta
-comprobacion cubre tambien archivos no trackeados, no solo el indice.
+Ejecutalo sin pausas ni confirmaciones. Reintentar con los MISMOS
+`--session-id`/`--timestamp` es seguro: el script reanuda la rama, el
+worktree, el commit y el PR de esta sesion en vez de duplicarlos -- no
+relances el cierre con valores nuevos solo porque una corrida anterior fallo
+a mitad de camino.
 
-### 4. Commit, push y PR idempotente
+Reporta al usuario, junto con el resumen de arriba, la salida del script
+**tal cual** (o, ante un fallo, su mensaje de error, el ultimo checkpoint
+confirmado y la accion de recuperacion que imprime): field note entregada,
+rama documental, commit y numero/URL del PR.
 
-Si la nota ya esta en un commit de `DOC_BRANCH`, no hagas un commit vacio. En
-caso contrario, crea exclusivamente el commit documental en espanol. No
-avances al siguiente comando si falla el anterior:
-
-```bash
-if ! git -C "$WORKTREE_DIR" diff --cached --quiet; then
-    git -C "$WORKTREE_DIR" commit -m "docs(bitacora): agregar field note de mefisto-planner" || exit 1
-fi
-COMMIT_SHA=$(git -C "$WORKTREE_DIR" rev-parse HEAD)
-git -C "$WORKTREE_DIR" push -u origin "$DOC_BRANCH" || exit 1
-```
-
-Solo despues de confirmar el push, busca primero el PR para no duplicarlo y
-extrae por separado numero, URL y estado. Si esta abierto, reutilizalo. Si esta
-cerrado sin merge, reabrelo. Si ya fue mergeado por un tercero, la entrega ya
-termino: reportalo y no crees otro. Si no existe, crealo sin merge automatico y
-consulta su numero explicitamente:
-
-```bash
-PR_DATA=$(gh pr list --head "$DOC_BRANCH" --base "$DEFAULT_BRANCH" --state all --limit 1 \
-    --json number,url,state --jq '.[0] | [.number, .url, .state] | @tsv') || exit 1
-if [ -n "$PR_DATA" ]; then
-    IFS=$'\t' read -r PR_NUMBER PR_URL PR_STATE <<< "$PR_DATA"
-    if [ "$PR_STATE" = "CLOSED" ]; then
-        gh pr reopen "$PR_NUMBER" || exit 1
-        PR_STATE="OPEN"
-    fi
-else
-    PR_URL=$(gh pr create --base "$DEFAULT_BRANCH" --head "$DOC_BRANCH" \
-        --title "docs(bitacora): field note de mefisto-planner ${CLOSING_TIMESTAMP}" \
-        --body "Entrega aislada de la field note de la sesion mefisto-planner ${SESSION_ID}.") || exit 1
-    PR_NUMBER=$(gh pr view "$PR_URL" --json number --jq '.number') || exit 1
-    PR_STATE="OPEN"
-fi
-```
-
-Si el commit falla, informa que no hay commit y que la nota sigue solo en el
-worktree temporal; conserva ese worktree y su ruta para recuperarlo. Si el push falla,
-informa `COMMIT_SHA`, la rama y que la recuperacion es reintentar
-`git push -u origin "$DOC_BRANCH"`. Si falla la busqueda del PR, no intentes
-crearlo a ciegas: informa que la rama ya fue empujada y que la recuperacion
-empieza repitiendo la busqueda. Si falla la reapertura, creacion o consulta del
-numero, informa la operacion exacta pendiente. En ningun caso hagas push
-directo ni commit sobre `$DEFAULT_BRANCH`.
-
-### 5. Limpiar y restaurar el checkout principal
-
-Ejecuta esta fase tanto en exito como tras un fallo. Inspecciona primero el
-status del worktree. Si esta limpio, remuevelo normalmente. Si el commit fallo
-y el unico path observado es `FIELD_NOTE`, conserva el worktree: contiene la
-unica copia recuperable de la nota. Si aparece cualquier path ajeno, tampoco lo
-fuerces ni lo borres; conserva el worktree y reporta la ruta y el status. Usa
-`--force` solo para una field note que ya este preservada en un commit de
-`DOC_BRANCH`:
-
-```bash
-WORKTREE_STATUS=$(git -C "$WORKTREE_DIR" status --porcelain=v1 --untracked-files=all)
-git worktree remove "$WORKTREE_DIR"
-```
-
-Elimina con `rmdir` solamente un directorio temporal vacio que no sea un
-worktree registrado. Conserva siempre `DOC_BRANCH`: su commit local puede ser
-la unica recuperacion de un push o PR incompleto.
-
-Luego mide de nuevo la identidad del checkout principal:
-
-```bash
-CURRENT_HEAD_REF=$(git symbolic-ref -q --short HEAD || true)
-CURRENT_HEAD_SHA=$(git rev-parse HEAD)
-CURRENT_STATUS=$(git status --porcelain=v1 --untracked-files=all)
-```
-
-La referencia, `INITIAL_HEAD_SHA` e `INITIAL_STATUS` deben coincidir
-exactamente. Como el checkout principal nunca se uso para la entrega, esto debe
-ser un no-op tanto si la sesion empezo en `main`, en otra rama o detached, y
-aunque tuviera cambios preexistentes. Si algun fallo externo cambio la
-referencia, intenta restaurarla sin `--force`, `reset`, `clean` ni `stash`:
-`git switch "$INITIAL_HEAD_REF"` si existia una rama, o
-`git switch --detach "$INITIAL_HEAD_SHA"` si comenzo detached. Vuelve a medir
-los tres valores; si una restauracion segura falla o el status difiere, no
-absorbas ni borres cambios y reporta los valores esperados y observados.
-
-El mensaje final incluye siempre:
-
-- Issues creados, cerrados o refinados e ideas pendientes.
-- Numero y URL del PR abierto, o el ultimo paso completado y la accion concreta
-  de recuperacion si fallo el cierre.
-- Confirmacion de que el checkout principal quedo en su rama o commit inicial,
-  con sus cambios preexistentes intactos.
+**El script es el unico responsable de crear la rama documental, el
+worktree, el commit, el push y el PR.** Nunca ejecutes `git worktree`, `git
+add`, `git commit`, `git push` ni `gh pr create`/`gh pr reopen` por tu cuenta
+contra el checkout principal, y nunca crees la rama documental ahi -- esa es
+exactamente la falla (rama de cierre nacida en el checkout principal,
+dejando al usuario parado en ella sin PR) que este mecanismo existe para
+eliminar. Al terminar, el usuario permanece en su rama o commit inicial.

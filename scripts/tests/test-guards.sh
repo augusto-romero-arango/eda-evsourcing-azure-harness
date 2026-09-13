@@ -1097,55 +1097,44 @@ fi
 
 fn_cleanup
 
-# -------- Bloque J: cierre aislado de field notes de mefisto-planner --------
+# -------- Bloque J: planner interno delega el cierre en mefisto-field-note.sh --------
 
 echo ""
-echo "[J] Planner interno: cierre documental aislado, idempotente y recuperable"
+echo "[J] Planner interno: delega el cierre documental en mefisto-field-note.sh (issue #1298)"
 
 MEFISTO_PLANNER="$REPO_ROOT/src/internal/agents/mefisto-planner.md"
+
+# El cierre queda reducido a: identidad estable al inicio (timestamp +
+# session-id), redactar la field note con Write y una sola invocacion del
+# script, reportando su salida tal cual (CA-1/CA-2).
 for required in \
-    'INITIAL_HEAD_REF=$(git symbolic-ref -q --short HEAD || true)' \
-    'INITIAL_HEAD_SHA=$(git rev-parse HEAD)' \
-    'INITIAL_STATUS=$(git status --porcelain=v1 --untracked-files=all)' \
     'SESSION_TIMESTAMP=$(date "+%Y-%m-%d-%H%M")' \
     'SESSION_ID="${SESSION_TIMESTAMP}-$(date +%S)-$(git rev-parse --short=12 HEAD)-$$"' \
-    'REPO_ROOT=$(git rev-parse --show-toplevel)' \
-    'DEFAULT_BRANCH="main"' \
-    'FIELD_NOTE="docs/bitacora/field-notes/${CLOSING_TIMESTAMP}-mefisto-planner.md"' \
-    'DOC_BRANCH="docs/mefisto-planner-field-note-${SESSION_ID}"' \
-    'WORKTREE_DIR=$(mktemp -d "$REPO_ROOT/.mefisto/pipeline/summaries/' \
-    'git worktree add -b "$DOC_BRANCH" "$WORKTREE_DIR" "origin/$DEFAULT_BRANCH"' \
-    'git worktree add --track -b "$DOC_BRANCH" "$WORKTREE_DIR" "origin/$DOC_BRANCH"' \
-    'git -C "$WORKTREE_DIR" add -- "$FIELD_NOTE"' \
-    'git -C "$WORKTREE_DIR" cat-file -e "HEAD:$FIELD_NOTE"' \
-    'COMMIT_SHA=$(git -C "$WORKTREE_DIR" rev-parse HEAD)' \
-    'git -C "$WORKTREE_DIR" push -u origin "$DOC_BRANCH" || exit 1' \
-    "--jq '.[0] | [.number, .url, .state] | @tsv'" \
-    'IFS=$'"'"'\t'"'"' read -r PR_NUMBER PR_URL PR_STATE <<< "$PR_DATA"' \
-    'gh pr reopen "$PR_NUMBER" || exit 1' \
-    'PR_NUMBER=$(gh pr view "$PR_URL" --json number --jq '"'"'.number'"'"') || exit 1' \
-    'CURRENT_HEAD_REF=$(git symbolic-ref -q --short HEAD || true)' \
-    'CURRENT_HEAD_SHA=$(git rev-parse HEAD)' \
-    'CURRENT_STATUS=$(git status --porcelain=v1 --untracked-files=all)' \
-    'sin `--force`, `reset`, `clean` ni `stash`'; do
+    'Nunca escribas la field note, crees una rama documental' \
+    'FIELD_NOTE_LOCAL="/tmp/mefisto-planner-field-note-${SESSION_ID}.md"' \
+    'cat "$FIELD_NOTE_LOCAL" | {{mefisto:run mefisto-field-note.sh --agent mefisto-planner --timestamp "$CLOSING_TIMESTAMP" --session-id "$SESSION_ID"}}' \
+    'nunca crees la rama documental ahi'; do
     if grep -qF -- "$required" "$MEFISTO_PLANNER"; then
         pass "mefisto-planner: conserva '$required'"
     else
-        fail "mefisto-planner: falta la garantia documental '$required'"
+        fail "mefisto-planner: falta '$required'"
     fi
 done
 
-for scenario in \
-    'la sesion empezo en `main`, en otra rama o detached' \
-    'aunque tuviera cambios preexistentes' \
-    'Si el commit falla' \
-    'Si el push falla' \
-    'Si falla la busqueda del PR' \
-    'Si ya fue mergeado por un tercero'; do
-    if grep -qF -- "$scenario" "$MEFISTO_PLANNER"; then
-        pass "mefisto-planner: documenta escenario '$scenario'"
+# El cierre YA NO debe reimplementar la mecanica de git en prosa: ninguno de
+# estos fragmentos (que SI vivian ahi antes del issue #1298) puede seguir
+# presente, o la logica quedaria duplicada entre el prompt y el script.
+for forbidden in \
+    'INITIAL_HEAD_REF=$(git symbolic-ref -q --short HEAD || true)' \
+    'INITIAL_DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef' \
+    'git worktree add -b "$DOC_BRANCH"' \
+    'git -C "$WORKTREE_DIR" commit' \
+    'gh pr create --base "$DEFAULT_BRANCH" --head "$DOC_BRANCH"' \
+    'CURRENT_HEAD_REF=$(git symbolic-ref -q --short HEAD || true)'; do
+    if grep -qF -- "$forbidden" "$MEFISTO_PLANNER"; then
+        fail "mefisto-planner: todavia reimplementa la mecanica de cierre en prosa ('$forbidden'); debe delegar en mefisto-field-note.sh"
     else
-        fail "mefisto-planner: no documenta escenario '$scenario'"
+        pass "mefisto-planner: no reimplementa '$forbidden' (delega en mefisto-field-note.sh)"
     fi
 done
 
