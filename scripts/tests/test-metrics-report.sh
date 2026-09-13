@@ -523,7 +523,7 @@ cat > "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" <<'EOF'
 {"issue":"850","pipeline":"tdd","started":"20260910-090000","state":"completed","agents":{"writer":{"duration":10,"metrics":{"estimated_cost_usd":0,"tokens":{"input":10,"output":2,"cache_read":3,"cache_write":4,"reasoning":5},"turns":1,"duration_ms":10000,"api_duration_ms":9000,"tool_calls":[]}}}}
 {"issue":"851","pipeline":"tdd","started":"20260911-090000","state":"completed","agents":{"writer":{"duration":10,"metrics":{"cost_usd":0,"tokens":{"input":10,"output":2,"cache_read":3,"cache_creation":7},"turns":1,"duration_ms":10000,"duration_api_ms":9000,"tool_calls":[]}}}}
 {"issue":"852","pipeline":"tdd","started":"20260912-090000","state":"completed","agents":{"writer":{"duration":10,"metrics":{"estimated_cost_usd":2,"cost_usd":99,"tokens":{"input":10,"output":2,"cache_read":3,"cache_write":4,"reasoning":5},"turns":1,"duration_ms":10000,"api_duration_ms":9000,"tool_calls":[]}},"reviewer":{"duration":1,"metrics":{"estimated_cost_usd":null,"tokens":{"input":null,"output":null,"cache_read":null,"cache_write":null,"reasoning":null},"turns":null,"duration_ms":1000,"api_duration_ms":null,"tool_calls":[]}}}}
-{"issue":"853","pipeline":"tdd","started":"20260913-090000","state":"completed","agents":{"writer":{"duration":10,"metrics":{"estimated_cost_usd":null,"tokens":{"input":10,"output":2,"cache_read":3,"cache_write":4,"reasoning":null},"turns":1,"duration_ms":10000,"api_duration_ms":9000,"tool_calls":[]}}}}
+{"issue":"853","pipeline":"tdd","started":"20260917-090000","state":"completed","agents":{"writer":{"duration":10,"metrics":{"estimated_cost_usd":null,"tokens":{"input":10,"output":2,"cache_read":3,"cache_write":4,"reasoning":null},"turns":1,"duration_ms":10000,"api_duration_ms":9000,"tool_calls":[]}}}}
 EOF
 AGG_O=$(compute_metrics_report_json "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" "" "")
 assert_field "O-1: solo estimated_cost_usd entra al total por stage" "2" "$(echo "$AGG_O" | jq -r '.pipelines.tdd.wallclock.by_stage[] | select(.stage=="writer") | .estimated_cost_usd_total')"
@@ -536,13 +536,18 @@ assert_field "O-7: corrida nueva conserva el cero estimado real" "0" "$(echo "$A
 assert_field "O-8: corrida legacy muestra el cero reportado separado" "0" "$(echo "$AGG_O" | jq -r '.pipelines.tdd.wallclock.per_run[] | select(.issue=="851") | .legacy_reported_cost_usd')"
 assert_field "O-9: corrida mixta no reclasifica cost_usd" "null" "$(echo "$AGG_O" | jq -r '.pipelines.tdd.wallclock.per_run[] | select(.issue=="852") | .legacy_reported_cost_usd')"
 assert_field "O-10: cobertura parcial se declara cuando un stage no estima" "parcial" "$(echo "$AGG_O" | jq -r '.pipelines.tdd.wallclock.per_run[] | select(.issue=="852") | .estimated_cost_status')"
+assert_field "O-11: las cuatro corridas conservan su recuento instrumentado" "4" "$(echo "$AGG_O" | jq -r '.pipelines.tdd.meta.instrumented')"
+assert_field "O-12: tokens de historias nuevas, antiguas y mixtas conservan su media" "10" "$(echo "$AGG_O" | jq -r '.pipelines.tdd.series.monthly[] | select(.period=="2026-09") | .tokens_input_mean')"
+assert_field "O-13: duraciones de historias nuevas, antiguas y mixtas conservan su media" "10.25" "$(echo "$AGG_O" | jq -r '.pipelines.tdd.series.monthly[] | select(.period=="2026-09") | .wall_mean_s')"
+assert_field "O-14: costo desconocido al final conserva null en la comparacion" "null,null" "$(echo "$AGG_O" | jq -r '.pipelines.tdd.comparison.deltas[] | select(.key=="estimated_cost_usd_mean") | [.last, .pct] | map(tostring) | join(",")')"
 OUT=$(run_report)
 if echo "$OUT" | grep -q "Costo estimado con valor: 2 corridas (completas: 1, parciales: 1); sin estimacion: 2" \
    && echo "$OUT" | grep -q "Costo reportado legado: 1 corridas (separado; excluido de estimados)" \
-   && echo "$OUT" | grep -q "Cache.wr" && echo "$OUT" | grep -q "Reason"; then
-    pass "O-11: resumen y detalle separan estimacion, legado y tokens neutrales"
+   && echo "$OUT" | grep -q "Cache.wr" && echo "$OUT" | grep -q "Reason" \
+   && echo "$OUT" | grep -qE 'Costo estimado medio +1\.00 +- +n/d'; then
+    pass "O-15: resumen y detalle separan estimacion, legado, parcialidad y tokens neutrales"
 else
-    fail "O-11: faltan rotulos de costos/tokens neutrales: $OUT"
+    fail "O-15: faltan rotulos o se falsea un costo desconocido: $OUT"
 fi
 
 echo ""
@@ -556,9 +561,9 @@ EOF
 OUT=$(run_report)
 RC=$?
 if [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "Corridas totales en la ventana: 1"; then
-    pass "O-1: solo la fuente canonica se agrega"
+    pass "P-1: solo la fuente canonica se agrega"
 else
-    fail "O-1: fuente solo canonica no agregada, rc=$RC: $(echo "$OUT" | grep 'Corridas totales')"
+    fail "P-1: fuente solo canonica no agregada, rc=$RC: $(echo "$OUT" | grep 'Corridas totales')"
 fi
 
 mkdir -p "$FAKE_REPO/.claude/pipeline"
@@ -577,28 +582,28 @@ EOF
 
 CANONICAL_SUM=$(shasum -a 256 "$FAKE_REPO/.mefisto/pipeline/pipeline-history.jsonl" | cut -d' ' -f1)
 LEGACY_SUM=$(shasum -a 256 "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" | cut -d' ' -f1)
-AGG_O=$(compute_metrics_report_json "$FAKE_REPO/.mefisto/pipeline/pipeline-history.jsonl" "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" "" "")
-assert_field "O-2: fuentes disjuntas y duplicados cuentan cinco corridas" "5" "$(echo "$AGG_O" | jq -r '.meta.total')"
-assert_field "O-3: duplicado enriquecido prefiere la entrada canonica" "completed" "$(echo "$AGG_O" | jq -r '.pipelines.tooling.wallclock.per_run[] | select(.issue=="901") | .state')"
-assert_field "O-4: variant distinto no se deduplica" "3" "$(echo "$AGG_O" | jq -r '.pipelines.tooling.meta.total')"
-assert_field "O-5: duplicado identico se cuenta una sola vez" "1" "$(echo "$AGG_O" | jq -r '.pipelines.tdd.meta.total')"
+AGG_P=$(compute_metrics_report_json "$FAKE_REPO/.mefisto/pipeline/pipeline-history.jsonl" "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" "" "")
+assert_field "P-2: fuentes disjuntas y duplicados cuentan cinco corridas" "5" "$(echo "$AGG_P" | jq -r '.meta.total')"
+assert_field "P-3: duplicado enriquecido prefiere la entrada canonica" "completed" "$(echo "$AGG_P" | jq -r '.pipelines.tooling.wallclock.per_run[] | select(.issue=="901") | .state')"
+assert_field "P-4: variant distinto no se deduplica" "3" "$(echo "$AGG_P" | jq -r '.pipelines.tooling.meta.total')"
+assert_field "P-5: duplicado identico se cuenta una sola vez" "1" "$(echo "$AGG_P" | jq -r '.pipelines.tdd.meta.total')"
 OUT=$(run_report --desde 2026-09-01 --hasta 2026-09-03)
 RC=$?
 if [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "Corridas totales en la ventana: 5"; then
-    pass "O-6: end-to-end combina ambas rutas y conserva filtros"
+    pass "P-6: end-to-end combina ambas rutas y conserva filtros"
 else
-    fail "O-6: se esperaban cinco corridas combinadas, rc=$RC: $(echo "$OUT" | grep 'Corridas totales')"
+    fail "P-6: se esperaban cinco corridas combinadas, rc=$RC: $(echo "$OUT" | grep 'Corridas totales')"
 fi
 if [ "$CANONICAL_SUM" = "$(shasum -a 256 "$FAKE_REPO/.mefisto/pipeline/pipeline-history.jsonl" | cut -d' ' -f1)" ] \
    && [ "$LEGACY_SUM" = "$(shasum -a 256 "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" | cut -d' ' -f1)" ]; then
-    pass "O-7: el reporte no modifica ninguno de los historiales"
+    pass "P-7: el reporte no modifica ninguno de los historiales"
 else
-    fail "O-7: el reporte modifico un historial"
+    fail "P-7: el reporte modifico un historial"
 fi
 if ! printf '%s' "$OUT" | grep -qE 'SECRETO_(PROMPT|TOKEN|INPUT|ERROR)|resultado-neutral|abc'; then
-    pass "O-8: campos no allowlisted permanecen fuera de la salida"
+    pass "P-8: campos no allowlisted permanecen fuera de la salida"
 else
-    fail "O-8: la salida expuso campos ajenos a los agregados"
+    fail "P-8: la salida expuso campos ajenos a los agregados"
 fi
 
 echo ""

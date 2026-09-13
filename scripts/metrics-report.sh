@@ -118,12 +118,10 @@ fi
 
 JQ_ROW='def row: map(if . == null or . == "" then "null" else . end) | @tsv;'
 
-# Reglas horizontales. 102 columnas: ancho exacto de la tabla mas ancha (la de
-# "Por stage", que lleva stage + agente + modelo antes de las cifras) y cubre
-# de sobra al ranking de herramientas, el detalle por corrida y la deriva
-# temporal con sus cuatro desgloses de tokens.
-RULE_MAJOR=$(printf '%0102d' 0 | tr '0' '=')
-RULE_MINOR=$(printf '%0102d' 0 | tr '0' '-')
+# Reglas horizontales. 139 columnas: ancho exacto de la tabla temporal, que
+# ahora incluye los desgloses neutrales de tokens y ambos costos separados.
+RULE_MAJOR=$(printf '%0139d' 0 | tr '0' '=')
+RULE_MINOR=$(printf '%0139d' 0 | tr '0' '-')
 
 # compute_metrics_report_json <history_file>... <desde> <hasta>
 #
@@ -326,7 +324,9 @@ def delta_of(f; l):
   {
     first: f,
     last: l,
-    pct: (if (f // 0) == 0 then null else (((l // 0) - f) / f * 100) end)
+    # Un extremo desconocido no equivale a cero. En particular, una ventana
+    # posterior sin estimacion no representa una reduccion de costo de 100%.
+    pct: (if f == null or l == null or f == 0 then null else ((l - f) / f * 100) end)
   };
 
 def periods_with_data:
@@ -349,9 +349,9 @@ def build_comparison(weekly; monthly):
           ({key: "wall_mean_s", label: "Wall medio (corrida)", unit: "s"} + delta_of($c.first.wall_mean_instr_s; $c.last.wall_mean_instr_s)),
           ({key: "turns_mean", label: "Turnos medios", unit: "count1"} + delta_of($c.first.turns_mean; $c.last.turns_mean)),
           ({key: "tool_calls_mean", label: "Tool calls medios", unit: "count1"} + delta_of($c.first.tool_calls_mean; $c.last.tool_calls_mean)),
-           ({key: "tokens_input_mean", label: "Tokens in medios", unit: "count0"} + delta_of($c.first.tokens_input_mean; $c.last.tokens_input_mean)),
-           ({key: "non_api_s_mean", label: "No-API medio", unit: "s"} + delta_of(($c.first.non_api_ms_mean // 0) / 1000; ($c.last.non_api_ms_mean // 0) / 1000)),
-           ({key: "estimated_cost_usd_mean", label: "Costo estimado medio", unit: "usd"} + delta_of($c.first.estimated_cost_usd_mean; $c.last.estimated_cost_usd_mean))
+          ({key: "tokens_input_mean", label: "Tokens in medios", unit: "count0"} + delta_of($c.first.tokens_input_mean; $c.last.tokens_input_mean)),
+          ({key: "non_api_s_mean", label: "No-API medio", unit: "s"} + delta_of(($c.first.non_api_ms_mean // 0) / 1000; ($c.last.non_api_ms_mean // 0) / 1000)),
+          ({key: "estimated_cost_usd_mean", label: "Costo estimado medio", unit: "usd"} + delta_of($c.first.estimated_cost_usd_mean; $c.last.estimated_cost_usd_mean))
         ]
       }
     end;
@@ -386,19 +386,19 @@ def pipeline_report:
   | ($instr | map(run_tool_ms) | add // 0) as $agg_tool_ms
   | ($instr | sort_by(.started) | map({
       issue: .issue, started: .started, state: .state, wall_s: ._wall_s,
-       api_ms: run_api_ms, non_api_ms: run_non_api_ms, tool_ms: run_tool_ms,
-       estimated_cost_usd: run_estimated_cost_usd, estimated_cost_status: run_estimated_cost_status,
-       legacy_reported_cost_usd: run_legacy_reported_cost_usd,
+      api_ms: run_api_ms, non_api_ms: run_non_api_ms, tool_ms: run_tool_ms,
+      estimated_cost_usd: run_estimated_cost_usd, estimated_cost_status: run_estimated_cost_status,
+      legacy_reported_cost_usd: run_legacy_reported_cost_usd,
       pct_api: (if (run_api_ms + run_non_api_ms) > 0 then (run_api_ms / (run_api_ms + run_non_api_ms) * 100) else null end)
     })) as $per_run
   | ([$all[] | . as $e | ($e | run_stage_pairs)[] | {
-       stage: .stage, agent: .metrics.agent, model: (.metrics.model // "(desconocido)"),
-       turns: .metrics.turns, estimated_cost_usd: .metrics.estimated_cost_usd,
-       legacy_reported_cost_usd: .metrics.legacy_reported_cost_usd,
-       duration_ms: .metrics.duration_ms, duration_api_ms: .metrics.api_duration_ms,
+      stage: .stage, agent: .metrics.agent, model: (.metrics.model // "(desconocido)"),
+      turns: .metrics.turns, estimated_cost_usd: .metrics.estimated_cost_usd,
+      legacy_reported_cost_usd: .metrics.legacy_reported_cost_usd,
+      duration_ms: .metrics.duration_ms, duration_api_ms: .metrics.api_duration_ms,
       non_api_ms: .metrics.non_api_ms,
       tokens_input: .metrics.tokens.input, tokens_output: .metrics.tokens.output,
-       tokens_cache_read: .metrics.tokens.cache_read, tokens_cache_write: .metrics.tokens.cache_write, tokens_reasoning: .metrics.tokens.reasoning
+      tokens_cache_read: .metrics.tokens.cache_read, tokens_cache_write: .metrics.tokens.cache_write, tokens_reasoning: .metrics.tokens.reasoning
     }]) as $stage_rows
   | ($stage_rows
       | group_by([.stage, .agent, .model])
@@ -505,7 +505,7 @@ def pipeline_report:
     },
     pipelines: $pipelines
   }
- ' 2>/dev/null
+' 2>/dev/null
 }
 
 # --- Formateadores ------------------------------------------------------------
