@@ -1111,8 +1111,9 @@ for required in \
     'SESSION_TIMESTAMP=$(date "+%Y-%m-%d-%H%M")' \
     'SESSION_ID="${SESSION_TIMESTAMP}-$(date +%S)-$(git rev-parse --short=12 HEAD)-$$"' \
     'Nunca escribas la field note, crees una rama documental' \
-    'FIELD_NOTE_LOCAL="/tmp/mefisto-planner-field-note-${SESSION_ID}.md"' \
-    'cat "$FIELD_NOTE_LOCAL" | {{mefisto:run mefisto-field-note.sh --agent mefisto-planner --timestamp "$CLOSING_TIMESTAMP" --session-id "$SESSION_ID"}}' \
+    'FIELD_NOTE_DIR="$(git rev-parse --show-toplevel)/.mefisto/pipeline/summaries"' \
+    'FIELD_NOTE_LOCAL="$FIELD_NOTE_DIR/mefisto-planner-field-note-${SESSION_ID}.md"' \
+    '{{mefisto:run mefisto-field-note.sh --agent mefisto-planner --timestamp "$CLOSING_TIMESTAMP" --session-id "$SESSION_ID"}} < "$FIELD_NOTE_LOCAL"' \
     'nunca crees la rama documental ahi'; do
     if grep -qF -- "$required" "$MEFISTO_PLANNER"; then
         pass "mefisto-planner: conserva '$required'"
@@ -1123,14 +1124,20 @@ done
 
 # El cierre YA NO debe reimplementar la mecanica de git en prosa: ninguno de
 # estos fragmentos (que SI vivian ahi antes del issue #1298) puede seguir
-# presente, o la logica quedaria duplicada entre el prompt y el script.
+# presente, o la logica quedaria duplicada entre el prompt y el script. El
+# ultimo prohibido no es mecanica de git sino neutralidad (MEF-ADR-0050): el
+# borrador de la nota vive en `.mefisto/` (ignorado por Git, dentro del repo),
+# nunca en /tmp -- los agentes internos corren con `external_directory: deny`
+# (src/internal/contract/opencode-permissions.json), asi que una ruta externa
+# es inescribible en OpenCode.
 for forbidden in \
     'INITIAL_HEAD_REF=$(git symbolic-ref -q --short HEAD || true)' \
     'INITIAL_DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef' \
     'git worktree add -b "$DOC_BRANCH"' \
     'git -C "$WORKTREE_DIR" commit' \
     'gh pr create --base "$DEFAULT_BRANCH" --head "$DOC_BRANCH"' \
-    'CURRENT_HEAD_REF=$(git symbolic-ref -q --short HEAD || true)'; do
+    'CURRENT_HEAD_REF=$(git symbolic-ref -q --short HEAD || true)' \
+    'FIELD_NOTE_LOCAL="/tmp'; do
     if grep -qF -- "$forbidden" "$MEFISTO_PLANNER"; then
         fail "mefisto-planner: todavia reimplementa la mecanica de cierre en prosa ('$forbidden'); debe delegar en mefisto-field-note.sh"
     else

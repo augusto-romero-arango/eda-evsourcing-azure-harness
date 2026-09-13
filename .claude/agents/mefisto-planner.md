@@ -280,18 +280,25 @@ Resume lo que se hizo:
 
 ### Redactar la field note (nunca en el checkout principal)
 
-Fija el timestamp de cierre una sola vez y consérvalo junto con `SESSION_ID`
+Fija el timestamp de cierre una sola vez y conservalo junto con `SESSION_ID`
 (ya fijado en "Identidad de la sesion") durante cualquier reintento -- los
 bloques de shell pueden correr en procesos distintos, asi que no dependas de
 que una variable sobreviva entre llamadas:
 
 ```bash
 CLOSING_TIMESTAMP="$SESSION_TIMESTAMP"
-FIELD_NOTE_LOCAL="/tmp/mefisto-planner-field-note-${SESSION_ID}.md"
+FIELD_NOTE_DIR="$(git rev-parse --show-toplevel)/.mefisto/pipeline/summaries"
+mkdir -p "$FIELD_NOTE_DIR"
+FIELD_NOTE_LOCAL="$FIELD_NOTE_DIR/mefisto-planner-field-note-${SESSION_ID}.md"
 ```
 
-Con tu herramienta Write, crea `"$FIELD_NOTE_LOCAL"` (una ruta local fuera del
-repo -- nunca un path del checkout principal) con este contenido:
+`.mefisto/` esta ignorado por Git y vive dentro del repo activo: ese borrador
+no aparece en el status del checkout principal y cualquier runtime soportado
+puede escribirlo sin pedir acceso a un directorio externo (MEF-ADR-0050). No
+uses `/tmp` ni ninguna otra ruta fuera del repo.
+
+Con tu herramienta Write, crea `"$FIELD_NOTE_LOCAL"` (ese borrador ignorado por
+Git -- nunca un path versionado del checkout principal) con este contenido:
 
 ```
 ---
@@ -333,7 +340,7 @@ sola invocacion** de `mefisto-field-note.sh` (issues #1295/#1299), pasandole
 por stdin el contenido ya redactado en `"$FIELD_NOTE_LOCAL"`:
 
 ```bash
-cat "$FIELD_NOTE_LOCAL" | MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-field-note.sh --agent mefisto-planner --timestamp "$CLOSING_TIMESTAMP" --session-id "$SESSION_ID"
+MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-field-note.sh --agent mefisto-planner --timestamp "$CLOSING_TIMESTAMP" --session-id "$SESSION_ID" < "$FIELD_NOTE_LOCAL"
 ```
 
 Ejecutalo sin pausas ni confirmaciones. Reintentar con los MISMOS
