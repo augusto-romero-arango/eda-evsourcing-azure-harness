@@ -56,7 +56,7 @@ runtime_claude_default_model() {
     case "$1" in
         fast) printf '%s' "haiku" ;;
         balanced) printf '%s' "sonnet" ;;
-        deep) printf '%s' "" ;;
+        deep) printf '%s' "opus" ;;
         *) return 1 ;;
     esac
 }

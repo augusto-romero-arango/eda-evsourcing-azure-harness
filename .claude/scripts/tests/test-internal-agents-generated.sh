@@ -14,8 +14,12 @@
 #         adaptadores versionados en .claude/agents/ y .opencode/agents/
 #         coinciden byte-a-byte con lo que la fuente neutral produce (CA-2).
 #   [runtime-output] Los diez adaptadores generados llevan el marcador;
-#         Claude conserva su tabla y OpenCode omite `model:` para heredar la
-#         configuracion del usuario (CA-2, issue #961).
+#         Claude materializa su tabla (`balanced`->sonnet, `deep`->opus) y
+#         OpenCode omite `model:` para heredar la configuracion del usuario
+#         (CA-2, issue #961; tabla enmendada por issue #1309). El veto de
+#         alias Anthropic (fable/opus/claude-<id>) aplica SOLO a la salida
+#         OpenCode, donde no serian resolubles: en la salida Claude un alias
+#         es justamente lo que la tabla debe emitir.
 #   [opencode-cli] Si el CLI `opencode` esta instalado, `opencode agent list`
 #         corrido en la raiz del repo lista cada id con su modo -- `primary`
 #         para planner/investigator/historiador, `all` para writer/reviewer;
@@ -199,31 +203,28 @@ for id in $AGENT_IDS; do
 done
 
 for id in $AGENT_IDS; do
-    for out_file in "$REPO_ROOT/.claude/agents/$id.md" "$REPO_ROOT/.opencode/agents/$id.md"; do
-        rel="${out_file#"$REPO_ROOT"/}"
-        [ -f "$out_file" ] || { fail "$rel: no existe"; continue; }
-        if grep -qiE '\b(fable|opus)\b|claude-[a-z0-9]+-[0-9]' "$out_file"; then
-            fail "$rel: menciona un id de modelo prohibido (fable/opus o un id completo)"
-        else
-            pass "$rel: sin fable/opus ni id de modelo"
-        fi
-    done
+    out_file="$REPO_ROOT/.opencode/agents/$id.md"
+    rel="${out_file#"$REPO_ROOT"/}"
+    [ -f "$out_file" ] || { fail "$rel: no existe"; continue; }
+    if grep -qiE '\b(fable|opus)\b|claude-[a-z0-9]+-[0-9]' "$out_file"; then
+        fail "$rel: menciona un id de modelo prohibido (fable/opus o un id completo, irresoluble en OpenCode)"
+    else
+        pass "$rel: sin fable/opus ni id de modelo"
+    fi
 done
 
 for id in $AGENT_IDS; do
     profile=$(profile_for_agent "$id")
-    if [ "$profile" = "balanced" ]; then
-        if grep -q '^model: "sonnet"$' "$REPO_ROOT/.claude/agents/$id.md" 2>/dev/null; then
-            pass "$id: .claude/agents lleva model: \"sonnet\" (perfil balanced)"
-        else
-            fail "$id: .claude/agents no lleva model: \"sonnet\" (perfil balanced)"
-        fi
+    case "$profile" in
+        fast) expected="haiku" ;;
+        balanced) expected="sonnet" ;;
+        deep) expected="opus" ;;
+        *) fail "$id: perfil '$profile' sin modelo Claude esperado en este test"; continue ;;
+    esac
+    if grep -q "^model: \"$expected\"\$" "$REPO_ROOT/.claude/agents/$id.md" 2>/dev/null; then
+        pass "$id: .claude/agents lleva model: \"$expected\" (perfil $profile)"
     else
-        if grep -q '^model:' "$REPO_ROOT/.claude/agents/$id.md" 2>/dev/null; then
-            fail "$id: .claude/agents no deberia declarar 'model:' (perfil deep hereda la sesion)"
-        else
-            pass "$id: .claude/agents sin 'model:' (perfil deep)"
-        fi
+        fail "$id: .claude/agents no lleva model: \"$expected\" (perfil $profile)"
     fi
 done
 

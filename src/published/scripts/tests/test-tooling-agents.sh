@@ -80,7 +80,7 @@ contains "$claude_reviewer" 'name: "tooling-reviewer"' 'Claude expone el id del 
 contains "$claude_writer" 'tools: "Read, Glob, Grep, Edit, Write, Bash"' 'Claude writer deriva solo read/edit/shell'
 contains "$claude_reviewer" 'tools: "Read, Glob, Grep, Edit, Write, Bash"' 'Claude reviewer deriva solo read/edit/shell'
 contains "$claude_writer" 'model: "sonnet"' 'Claude materializa perfil balanced'
-absent "$claude_reviewer" 'model:' 'Claude preserva herencia del perfil deep'
+contains "$claude_reviewer" 'model: "opus"' 'Claude materializa perfil deep'
 
 echo '[marketplace] raiz Claude instalada y mirrors generados'
 if jq -e '(.plugins | length) == 1 and .plugins[0].name == "mefisto" and .plugins[0].source == "./"' "$REPO_ROOT/.claude-plugin/marketplace.json" >/dev/null; then
@@ -98,7 +98,7 @@ for agent in tooling-writer tooling-reviewer; do
     if [ "$agent" = tooling-writer ]; then
         contains "$(< "$mirror")" 'model: "sonnet"' 'mirror raiz del writer conserva perfil balanced'
     else
-        absent "$(< "$mirror")" 'model:' 'mirror raiz del reviewer conserva perfil deep heredado'
+        contains "$(< "$mirror")" 'model: "opus"' 'mirror raiz del reviewer materializa perfil deep'
     fi
     for forbidden in 'Skill' 'MCP' 'WebFetch' 'WebSearch' 'Task'; do
         absent "$(< "$mirror")" "$forbidden" "mirror raiz de $agent omite $forbidden"
