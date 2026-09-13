@@ -27,6 +27,10 @@
 #     trato que le tocaria a un runtime nuevo que no haya implementado
 #     resume. Un test que quiera ejercer el camino de reanudacion fija esta
 #     variable explicitamente.
+#   runtime_fake_interactive_refresh
+#     Retorna 1 sin imprimir si MEFISTO_FAKE_INTERACTIVE_REFRESH esta ausente o
+#     vacia; con valor, retorna 0 y lo imprime literalmente como estrategia de
+#     refresco interactivo.
 #   runtime_fake_translate <raw_file> <runtime_id> <model>
 #     Imprime por stdout el JSONL neutral derivado de <raw_file> (una linea
 #     por evento, sin emitir "run.started": eso lo hace el runner). El campo

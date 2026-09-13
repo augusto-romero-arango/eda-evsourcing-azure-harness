@@ -309,9 +309,12 @@ else
     fail "A-13: runtime_claude_supports_resume deberia retornar 0"
 fi
 
-if REFRESH_OUTPUT="$(runtime_claude_interactive_refresh)" && [ "$REFRESH_OUTPUT" = "prompt /reload-plugins" ]; then
-    pass "A-14: runtime_claude_interactive_refresh imprime exactamente 'prompt /reload-plugins' sin invocar el CLI"
+printf '%s\n' 'prompt /reload-plugins' > "$TMP/refresh-expected"
+if runtime_claude_interactive_refresh > "$TMP/refresh-actual" \
+    && cmp -s "$TMP/refresh-expected" "$TMP/refresh-actual"; then
+    pass "A-14: runtime_claude_interactive_refresh imprime exactamente una linea 'prompt /reload-plugins' sin invocar el CLI"
 else
+    REFRESH_OUTPUT="$(runtime_claude_interactive_refresh 2>/dev/null)"
     fail "A-14: refresh interactivo Claude inesperado: '$REFRESH_OUTPUT'"
 fi
 

@@ -32,16 +32,17 @@ unset MEFISTO_RUNTIME MEFISTO_RUNTIME_LIB_DIR
 # variable no soporta el contrato; un valor explicito se reenvia sin alterar.
 source "$ROOT/src/runtime/lib/runtime-fake.sh"
 unset MEFISTO_FAKE_INTERACTIVE_REFRESH
-if REFRESH_OUTPUT="$(runtime_fake_interactive_refresh 2>/dev/null)"; then
+if runtime_fake_interactive_refresh > "$TMP/fake-refresh-absent" 2>/dev/null; then
     fail "fake refresh ausente debe retornar 1"
-elif [ -n "$REFRESH_OUTPUT" ]; then
+elif [ -s "$TMP/fake-refresh-absent" ]; then
     fail "fake refresh ausente no debe imprimir"
 else
     pass
 fi
 MEFISTO_FAKE_INTERACTIVE_REFRESH='prompt /fake-refresh'
-if REFRESH_OUTPUT="$(runtime_fake_interactive_refresh)" \
-    && [ "$REFRESH_OUTPUT" = 'prompt /fake-refresh' ]; then
+printf '%s\n' 'prompt /fake-refresh' > "$TMP/fake-refresh-expected"
+if runtime_fake_interactive_refresh > "$TMP/fake-refresh-actual" \
+    && cmp -s "$TMP/fake-refresh-expected" "$TMP/fake-refresh-actual"; then
     pass
 else
     fail "fake refresh explicito debe reenviar el valor literal"

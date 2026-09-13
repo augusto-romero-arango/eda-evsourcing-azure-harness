@@ -326,9 +326,12 @@ else
     fail "A-13: runtime_opencode_supports_resume deberia retornar 0"
 fi
 
-if REFRESH_OUTPUT="$(runtime_opencode_interactive_refresh)" && [ "$REFRESH_OUTPUT" = "restart /exit" ]; then
-    pass "A-14: runtime_opencode_interactive_refresh imprime exactamente 'restart /exit' sin invocar el CLI"
+printf '%s\n' 'restart /exit' > "$TMP/refresh-expected"
+if runtime_opencode_interactive_refresh > "$TMP/refresh-actual" \
+    && cmp -s "$TMP/refresh-expected" "$TMP/refresh-actual"; then
+    pass "A-14: runtime_opencode_interactive_refresh imprime exactamente una linea 'restart /exit' sin invocar el CLI"
 else
+    REFRESH_OUTPUT="$(runtime_opencode_interactive_refresh 2>/dev/null)"
     fail "A-14: refresh interactivo OpenCode inesperado: '$REFRESH_OUTPUT'"
 fi
 
