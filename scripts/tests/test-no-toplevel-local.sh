@@ -100,7 +100,7 @@ ISSUE_LOG_TAG="999"
 EVENTS_LOG_ABS="$TMP_DIR/events.log"
 STAGE1_PROMPT="prompt original"
 WORKTREE_PATH="$worktree"
- SNAPSHOT_COMMIT="$snapshot"
+SNAPSHOT_COMMIT="$snapshot"
 mefisto_state_path() { printf '%s\n' "$worktree/.mefisto/pipeline/\$1"; }
 abort() { echo "ABORT: \$1"; exit 42; }
 HAS_COMMITS=false
@@ -131,6 +131,12 @@ No aplica.")
         pass "B1: muestra el bloqueo centinela del summary canonico"
     else
         fail "B1: no mostro el bloqueo centinela: $OUTPUT_B1"
+    fi
+
+    if ! echo "$OUTPUT_B1" | grep -q "Nada\." && ! echo "$OUTPUT_B1" | grep -q "No aplica\."; then
+        pass "B1: no muestra contenido de las secciones anterior ni posterior"
+    else
+        fail "B1: mostro contenido fuera de Pendiente/bloqueos: $OUTPUT_B1"
     fi
 
     if [ "$RC_B1" -eq 42 ] && echo "$OUTPUT_B1" | grep -q "El writer no genero ningun cambio"; then

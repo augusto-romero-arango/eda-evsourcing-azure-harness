@@ -708,7 +708,7 @@ Instrucciones:
         ' "$(mefisto_state_path 'summaries/stage-1-writer.md' "$WORKTREE_PATH")" 2>/dev/null)" || WRITER_BLOCKERS=""
         if [ -n "$(printf '%s' "$WRITER_BLOCKERS" | tr -d '[:space:]')" ]; then
             echo -e "${YELLOW}Pendiente/bloqueos informado por el writer:${NC}"
-            echo "$WRITER_BLOCKERS"
+            printf '%s\n' "$WRITER_BLOCKERS"
         fi
         abort "El writer no genero ningun cambio. Revisa el log: $LOG_DIR_ABS/tooling-stage-1-writer-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}.log"
     fi
