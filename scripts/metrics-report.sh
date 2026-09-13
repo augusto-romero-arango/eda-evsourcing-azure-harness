@@ -132,7 +132,9 @@ RULE_MINOR=$(printf '%0102d' 0 | tr '0' '-')
 # corrida/por-stage-y-modelo, series semanal y mensual, comparacion primer-vs-
 # ultimo periodo con datos y el conteo de corridas "sin instrumentar". <desde>/
 # <hasta> son "" (sin limite) o "YYYY-MM-DD". Tolera archivo ausente/vacio y
-# lineas corruptas (se ignoran). Nunca aborta: ante cualquier fallo de jq
+# lineas corruptas (se ignoran). Normaliza por stage la forma neutral nueva y
+# la legacy: estimated_cost_usd no se infiere nunca desde cost_usd (MEF-ADR-0054).
+# Nunca aborta: ante cualquier fallo de jq
 # devuelve vacio y el caller decide.
 compute_metrics_report_json() {
     local desde hasta raw_content="" history_file source_count index desde_index hasta_index
@@ -157,19 +159,45 @@ def median:
     end;
 
 def avgOrNull:
-  if length == 0 then null else (add / length) end;
+  map(select(. != null)) | if length == 0 then null else (add / length) end;
 
 def parse_started:
   if . == null then null
   else (try (strptime("%Y%m%d-%H%M%S") | mktime) catch null)
   end;
 
+# La forma publicada puede contener stages heterogeneos. La normalizacion se
+# hace antes de cualquier agregado para que la semantica no dependa del runtime.
+def normalize_agent_metrics:
+  if . == null then null
+  else . as $m
+  | (if $m.api_duration_ms != null then $m.api_duration_ms
+     elif $m.duration_api_ms != null then $m.duration_api_ms else null end) as $api_ms
+  | {
+      agent: $m.agent,
+      model: $m.model,
+      estimated_cost_usd: $m.estimated_cost_usd,
+      legacy_reported_cost_usd: (if $m | has("estimated_cost_usd") then null else $m.cost_usd end),
+      tokens: {
+        input: $m.tokens.input, output: $m.tokens.output,
+        cache_read: $m.tokens.cache_read,
+        cache_write: (if $m.tokens.cache_write != null then $m.tokens.cache_write else $m.tokens.cache_creation end),
+        reasoning: $m.tokens.reasoning
+      },
+      turns: $m.turns, duration_ms: $m.duration_ms, api_duration_ms: $api_ms,
+      non_api_ms: (if ($m.duration_ms != null and $api_ms != null) then $m.duration_ms - $api_ms else null end),
+      tool_calls: ($m.tool_calls // [])
+    }
+  end;
+
+def null_safe_sum: map(select(. != null)) | if length == 0 then null else add end;
+
 # run_stage_pairs -- las entradas de .agents (clave, metrics) cuya "metrics"
 # no es null. Indexar una clave ausente (coverage-gate no tiene "metrics") o
 # un valor null da null en jq sin error, asi que ninguna clave se nombra aqui:
 # la exclusion de coverage-gate es un efecto de su forma, no un caso especial.
 def run_stage_pairs:
-  ((.agents // {}) | to_entries | map(select(.value.metrics != null)) | map({stage: .key, metrics: .value.metrics}));
+  ((.agents // {}) | to_entries | map(select(.value.metrics != null)) | map({stage: .key, metrics: (.value.metrics | normalize_agent_metrics)}));
 
 def run_wall_s:
   (.agents // {}) as $ag
@@ -179,17 +207,24 @@ def run_wall_s:
 def run_has_metrics:
   ((.agents // {}) | [.[] | .metrics] | any(. != null));
 
-def run_api_ms: ([run_stage_pairs[] | (.metrics.duration_api_ms // 0)] | add // 0);
+def run_api_ms: ([run_stage_pairs[] | (.metrics.api_duration_ms // 0)] | add // 0);
 def run_non_api_ms: ([run_stage_pairs[] | (.metrics.non_api_ms // 0)] | add // 0);
 def run_tool_calls_arr: ([run_stage_pairs[] | (.metrics.tool_calls // [])[]]);
 def run_tool_ms: ([run_tool_calls_arr[] | (.duration_ms_sum // 0)] | add // 0);
 def run_tool_calls_count: ([run_tool_calls_arr[] | .count] | add // 0);
-def run_turns: ([run_stage_pairs[] | (.metrics.turns // 0)] | add // 0);
-def run_tokens_input: ([run_stage_pairs[] | (.metrics.tokens.input // 0)] | add // 0);
-def run_tokens_output: ([run_stage_pairs[] | (.metrics.tokens.output // 0)] | add // 0);
-def run_tokens_cache_read: ([run_stage_pairs[] | (.metrics.tokens.cache_read // 0)] | add // 0);
-def run_tokens_cache_creation: ([run_stage_pairs[] | (.metrics.tokens.cache_creation // 0)] | add // 0);
-def run_cost_usd: ([run_stage_pairs[] | (.metrics.cost_usd // 0)] | add // 0);
+def run_turns: ([run_stage_pairs[] | .metrics.turns] | null_safe_sum);
+def run_tokens_input: ([run_stage_pairs[] | .metrics.tokens.input] | null_safe_sum);
+def run_tokens_output: ([run_stage_pairs[] | .metrics.tokens.output] | null_safe_sum);
+def run_tokens_cache_read: ([run_stage_pairs[] | .metrics.tokens.cache_read] | null_safe_sum);
+def run_tokens_cache_write: ([run_stage_pairs[] | .metrics.tokens.cache_write] | null_safe_sum);
+def run_tokens_reasoning: ([run_stage_pairs[] | .metrics.tokens.reasoning] | null_safe_sum);
+def run_estimated_cost_usd: ([run_stage_pairs[] | .metrics.estimated_cost_usd] | null_safe_sum);
+def run_legacy_reported_cost_usd: ([run_stage_pairs[] | .metrics.legacy_reported_cost_usd] | null_safe_sum);
+def run_metrics_agents: (run_stage_pairs | length);
+def run_estimated_cost_agents: ([run_stage_pairs[] | .metrics.estimated_cost_usd] | map(select(. != null)) | length);
+def run_estimated_cost_status:
+  run_metrics_agents as $metrics_n | run_estimated_cost_agents as $estimated_n
+  | if $estimated_n == 0 then "sin estimacion" elif $estimated_n == $metrics_n then "completa" else "parcial" end;
 
 def week_key: if ._ts == null then null else (._ts | gmtime | strftime("%G-W%V")) end;
 def month_key: if ._ts == null then null else (._ts | gmtime | strftime("%Y-%m")) end;
@@ -200,8 +235,8 @@ def period_summary(keyfn):
       . as $group
       | ($group[0] | keyfn) as $period
       | ($group | map(select(._has_metrics))) as $g_instr
-      | ($g_instr | map(run_tokens_cache_read) | add // 0) as $cr_total
-      | ($g_instr | map(run_tokens_cache_creation) | add // 0) as $cc_total
+      | ($g_instr | map(run_tokens_cache_read) | map(select(. != null)) | add // 0) as $cr_total
+      | ($g_instr | map(run_tokens_cache_write) | map(select(. != null)) | add // 0) as $cc_total
       | {
           period: ($period // "(s/fecha)"),
           n_total: ($group | length),
@@ -218,8 +253,12 @@ def period_summary(keyfn):
           tokens_input_mean: ($g_instr | map(run_tokens_input) | avgOrNull),
           tokens_output_mean: ($g_instr | map(run_tokens_output) | avgOrNull),
           cache_read_mean: ($g_instr | map(run_tokens_cache_read) | avgOrNull),
-          cache_creation_mean: ($g_instr | map(run_tokens_cache_creation) | avgOrNull),
+          cache_write_mean: ($g_instr | map(run_tokens_cache_write) | map(select(. != null)) | avgOrNull),
+          reasoning_mean: ($g_instr | map(run_tokens_reasoning) | map(select(. != null)) | avgOrNull),
           cache_read_pct: (if ($cr_total + $cc_total) > 0 then ($cr_total / ($cr_total + $cc_total) * 100) else null end),
+          estimated_cost_usd_mean: ($g_instr | map(run_estimated_cost_usd) | map(select(. != null)) | avgOrNull),
+          estimated_cost_n: ($g_instr | map(run_estimated_cost_usd) | map(select(. != null)) | length),
+          legacy_reported_cost_usd_mean: ($g_instr | map(run_legacy_reported_cost_usd) | map(select(. != null)) | avgOrNull),
           non_api_ms_mean: ($g_instr | map(run_non_api_ms) | avgOrNull)
         }
     )
@@ -229,15 +268,18 @@ def summarize_stage_group:
   {
     n: length,
     turns_mean: (map(.turns) | map(select(. != null)) | avgOrNull),
-    cost_usd_mean: (map(.cost_usd) | map(select(. != null)) | avgOrNull),
-    cost_usd_total: (map(.cost_usd) | map(select(. != null)) | (if length == 0 then null else add end)),
+    estimated_cost_usd_mean: (map(.estimated_cost_usd) | map(select(. != null)) | avgOrNull),
+    estimated_cost_usd_total: (map(.estimated_cost_usd) | map(select(. != null)) | (if length == 0 then null else add end)),
+    legacy_reported_cost_usd_mean: (map(.legacy_reported_cost_usd) | map(select(. != null)) | avgOrNull),
+    legacy_reported_cost_usd_total: (map(.legacy_reported_cost_usd) | map(select(. != null)) | (if length == 0 then null else add end)),
     duration_ms_mean: (map(.duration_ms) | map(select(. != null)) | avgOrNull),
     duration_api_ms_mean: (map(.duration_api_ms) | map(select(. != null)) | avgOrNull),
     non_api_ms_mean: (map(.non_api_ms) | map(select(. != null)) | avgOrNull),
     tokens_input_mean: (map(.tokens_input) | map(select(. != null)) | avgOrNull),
     tokens_output_mean: (map(.tokens_output) | map(select(. != null)) | avgOrNull),
     tokens_cache_read_mean: (map(.tokens_cache_read) | map(select(. != null)) | avgOrNull),
-    tokens_cache_creation_mean: (map(.tokens_cache_creation) | map(select(. != null)) | avgOrNull)
+    tokens_cache_write_mean: (map(.tokens_cache_write) | map(select(. != null)) | avgOrNull),
+    tokens_reasoning_mean: (map(.tokens_reasoning) | map(select(. != null)) | avgOrNull)
   };
 
 # version_summary -- CA-1: mismos agregados de wallclock/turnos/costo que el
@@ -266,7 +308,9 @@ def version_summary:
       wall_mean_instr_s: ($g_instr | map(._wall_s) | map(select(. != null)) | avgOrNull),
       pct_api: (if ($api_total + $non_api_total) > 0 then ($api_total / ($api_total + $non_api_total) * 100) else null end),
       turns_mean: ($g_instr | map(run_turns) | avgOrNull),
-      cost_usd_mean: ($g_instr | map(run_cost_usd) | avgOrNull)
+      estimated_cost_usd_mean: ($g_instr | map(run_estimated_cost_usd) | map(select(. != null)) | avgOrNull),
+      estimated_cost_n: ($g_instr | map(run_estimated_cost_usd) | map(select(. != null)) | length),
+      legacy_reported_cost_usd_mean: ($g_instr | map(run_legacy_reported_cost_usd) | map(select(. != null)) | avgOrNull)
     };
 
 # version_sort_key -- orden semver NUMERICO por componente, no lexicografico:
@@ -305,8 +349,9 @@ def build_comparison(weekly; monthly):
           ({key: "wall_mean_s", label: "Wall medio (corrida)", unit: "s"} + delta_of($c.first.wall_mean_instr_s; $c.last.wall_mean_instr_s)),
           ({key: "turns_mean", label: "Turnos medios", unit: "count1"} + delta_of($c.first.turns_mean; $c.last.turns_mean)),
           ({key: "tool_calls_mean", label: "Tool calls medios", unit: "count1"} + delta_of($c.first.tool_calls_mean; $c.last.tool_calls_mean)),
-          ({key: "tokens_input_mean", label: "Tokens in medios", unit: "count0"} + delta_of($c.first.tokens_input_mean; $c.last.tokens_input_mean)),
-          ({key: "non_api_s_mean", label: "No-API medio", unit: "s"} + delta_of(($c.first.non_api_ms_mean // 0) / 1000; ($c.last.non_api_ms_mean // 0) / 1000))
+           ({key: "tokens_input_mean", label: "Tokens in medios", unit: "count0"} + delta_of($c.first.tokens_input_mean; $c.last.tokens_input_mean)),
+           ({key: "non_api_s_mean", label: "No-API medio", unit: "s"} + delta_of(($c.first.non_api_ms_mean // 0) / 1000; ($c.last.non_api_ms_mean // 0) / 1000)),
+           ({key: "estimated_cost_usd_mean", label: "Costo estimado medio", unit: "usd"} + delta_of($c.first.estimated_cost_usd_mean; $c.last.estimated_cost_usd_mean))
         ]
       }
     end;
@@ -341,22 +386,29 @@ def pipeline_report:
   | ($instr | map(run_tool_ms) | add // 0) as $agg_tool_ms
   | ($instr | sort_by(.started) | map({
       issue: .issue, started: .started, state: .state, wall_s: ._wall_s,
-      api_ms: run_api_ms, non_api_ms: run_non_api_ms, tool_ms: run_tool_ms,
+       api_ms: run_api_ms, non_api_ms: run_non_api_ms, tool_ms: run_tool_ms,
+       estimated_cost_usd: run_estimated_cost_usd, estimated_cost_status: run_estimated_cost_status,
+       legacy_reported_cost_usd: run_legacy_reported_cost_usd,
       pct_api: (if (run_api_ms + run_non_api_ms) > 0 then (run_api_ms / (run_api_ms + run_non_api_ms) * 100) else null end)
     })) as $per_run
   | ([$all[] | . as $e | ($e | run_stage_pairs)[] | {
-      stage: .stage, agent: .metrics.agent, model: (.metrics.model // "(desconocido)"),
-      turns: .metrics.turns, cost_usd: .metrics.cost_usd,
-      duration_ms: .metrics.duration_ms, duration_api_ms: .metrics.duration_api_ms,
+       stage: .stage, agent: .metrics.agent, model: (.metrics.model // "(desconocido)"),
+       turns: .metrics.turns, estimated_cost_usd: .metrics.estimated_cost_usd,
+       legacy_reported_cost_usd: .metrics.legacy_reported_cost_usd,
+       duration_ms: .metrics.duration_ms, duration_api_ms: .metrics.api_duration_ms,
       non_api_ms: .metrics.non_api_ms,
       tokens_input: .metrics.tokens.input, tokens_output: .metrics.tokens.output,
-      tokens_cache_read: .metrics.tokens.cache_read, tokens_cache_creation: .metrics.tokens.cache_creation
+       tokens_cache_read: .metrics.tokens.cache_read, tokens_cache_write: .metrics.tokens.cache_write, tokens_reasoning: .metrics.tokens.reasoning
     }]) as $stage_rows
   | ($stage_rows
       | group_by([.stage, .agent, .model])
       | map(summarize_stage_group + {stage: .[0].stage, agent: .[0].agent, model: .[0].model})
       | sort_by([.stage, (.agent // ""), .model])
     ) as $by_stage
+  | ($instr | map(run_estimated_cost_usd) | map(select(. != null)) | length) as $estimated_cost_n
+  | ($instr | map(run_legacy_reported_cost_usd) | map(select(. != null)) | length) as $legacy_cost_n
+  | ($instr | map(select(run_estimated_cost_status == "completa")) | length) as $estimated_complete_n
+  | ($instr | map(select(run_estimated_cost_status == "parcial")) | length) as $estimated_partial_n
   | ($all | period_summary(week_key)) as $weekly
   | ($all | period_summary(month_key)) as $monthly
   | ($legacy | sort_by(.started) | map({issue: .issue, started: .started, state: .state})) as $legacy_list
@@ -370,6 +422,11 @@ def pipeline_report:
         total: $total_n,
         instrumented: $instr_n,
         legacy: $legacy_n,
+        estimated_cost_runs: $estimated_cost_n,
+        estimated_cost_missing_runs: ($instr_n - $estimated_cost_n),
+        estimated_cost_complete_runs: $estimated_complete_n,
+        estimated_cost_partial_runs: $estimated_partial_n,
+        legacy_cost_runs: $legacy_cost_n,
         oldest_started: ($all | map(.started) | map(select(. != null)) | (sort | .[0])),
         newest_started: ($all | map(.started) | map(select(. != null)) | (sort | .[-1]))
       },
@@ -448,7 +505,7 @@ def pipeline_report:
     },
     pipelines: $pipelines
   }
-' 2>/dev/null
+ ' 2>/dev/null
 }
 
 # --- Formateadores ------------------------------------------------------------
@@ -543,13 +600,20 @@ render_overall_header() {
 
 render_pipeline_header() {
     local agg="$1" name="$2"
-    local total instr legacy
+    local total instr legacy estimated complete partial missing legacy_cost
     total=$(jq -r '.meta.total' <<<"$agg")
     instr=$(jq -r '.meta.instrumented' <<<"$agg")
     legacy=$(jq -r '.meta.legacy' <<<"$agg")
+    estimated=$(jq -r '.meta.estimated_cost_runs' <<<"$agg")
+    complete=$(jq -r '.meta.estimated_cost_complete_runs' <<<"$agg")
+    partial=$(jq -r '.meta.estimated_cost_partial_runs' <<<"$agg")
+    missing=$(jq -r '.meta.estimated_cost_missing_runs' <<<"$agg")
+    legacy_cost=$(jq -r '.meta.legacy_cost_runs' <<<"$agg")
     echo ""
     echo "$RULE_MAJOR"
     printf 'PIPELINE: %s (total=%s, instrumentadas=%s, sin instrumentar=%s)\n' "$name" "$total" "$instr" "$legacy"
+    echo "Costo estimado con valor: $estimated corridas (completas: $complete, parciales: $partial); sin estimacion: $missing"
+    echo "Costo reportado legado: $legacy_cost corridas (separado; excluido de estimados)"
     echo "$RULE_MAJOR"
 }
 
@@ -613,13 +677,13 @@ render_wallclock() {
 
     echo ""
     echo "Por corrida:"
-    printf '%-8s %-17s %-11s %8s %8s %8s %8s %7s\n' "Issue" "Inicio" "Estado" "Wall" "API" "No-API" "Tools" "%API"
-    while IFS=$'\t' read -r issue started state wall_s run_api run_non_api run_tool pct_a; do
-        printf '#%-7s %-17s %-11s %8s %8s %8s %8s %7s\n' \
+    printf '%-8s %-17s %-11s %8s %8s %8s %8s %7s %10s %-14s %10s\n' "Issue" "Inicio" "Estado" "Wall" "API" "No-API" "Tools" "%API" "Costo est." "Cobertura est." "Costo leg."
+    while IFS=$'\t' read -r issue started state wall_s run_api run_non_api run_tool pct_a estimated_cost estimated_status legacy_cost; do
+        printf '#%-7s %-17s %-11s %8s %8s %8s %8s %7s %10s %-14s %10s\n' \
             "$issue" "$(_txt "$started")" "$(_txt "$state")" \
             "$(_secs0 "$wall_s")" "$(_secs "$run_api")" "$(_secs "$run_non_api")" \
-            "$(_secs "$run_tool")" "$(fmt_pct "$pct_a")"
-    done < <(jq -r "$JQ_ROW"'.wallclock.per_run[] | [.issue, .started, .state, .wall_s, (.api_ms/1000), (.non_api_ms/1000), (.tool_ms/1000), .pct_api] | row' <<<"$agg")
+            "$(_secs "$run_tool")" "$(fmt_pct "$pct_a")" "$(_money "$estimated_cost")" "$estimated_status" "$(_money "$legacy_cost")"
+    done < <(jq -r "$JQ_ROW"'.wallclock.per_run[] | [.issue, .started, .state, .wall_s, (.api_ms/1000), (.non_api_ms/1000), (.tool_ms/1000), .pct_api, .estimated_cost_usd, .estimated_cost_status, .legacy_reported_cost_usd] | row' <<<"$agg")
 
     render_by_stage "$agg"
 }
@@ -641,19 +705,19 @@ render_by_stage() {
         return 0
     fi
 
-    printf '%-18s %-22s %-16s %4s %6s %8s %7s %7s %6s\n' \
-        "Stage" "Agente" "Modelo" "n" "Turnos" "Duracion" "API" "No-API" "Costo"
-    while IFS=$'\t' read -r stage agent model n turns dur api nonapi cost; do
-        printf '%-18s %-22s %-16s %4s %6s %8s %7s %7s %6s\n' \
+    printf '%-18s %-22s %-16s %4s %6s %8s %7s %7s %10s %10s\n' \
+        "Stage" "Agente" "Modelo" "n" "Turnos" "Duracion" "API" "No-API" "Costo est." "Costo leg."
+    while IFS=$'\t' read -r stage agent model n turns dur api nonapi estimated_cost legacy_cost; do
+        printf '%-18s %-22s %-16s %4s %6s %8s %7s %7s %10s %10s\n' \
             "$(_txt "$stage")" "$(_txt "$agent")" "$(_txt "$model")" "$n" "$(_num1 "$turns")" \
-            "$(fmt_dur_s "$dur")" "$(fmt_dur_s "$api")" "$(fmt_dur_s "$nonapi")" "$(_money "$cost")"
+            "$(fmt_dur_s "$dur")" "$(fmt_dur_s "$api")" "$(fmt_dur_s "$nonapi")" "$(_money "$estimated_cost")" "$(_money "$legacy_cost")"
     done < <(jq -r "$JQ_ROW"'
         .wallclock.by_stage[]
         | [.stage, .agent, .model, .n, .turns_mean,
            (if .duration_ms_mean == null then null else .duration_ms_mean/1000 end),
            (if .duration_api_ms_mean == null then null else .duration_api_ms_mean/1000 end),
            (if .non_api_ms_mean == null then null else .non_api_ms_mean/1000 end),
-           .cost_usd_mean]
+            .estimated_cost_usd_mean, .legacy_reported_cost_usd_mean]
         | row' <<<"$agg")
 }
 
@@ -672,18 +736,18 @@ render_period_table() {
     echo "n(t/i) = corridas totales / de ellas instrumentadas. El wall usa las"
     echo "totales; turnos, tools y tokens solo las instrumentadas."
     echo ""
-    printf '%-10s %-8s %9s %9s %7s %7s %8s %8s %8s %8s %7s\n' \
-        "Periodo" "n(t/i)" "WallMedia" "WallP50" "Turnos" "Tools" "Tok.in" "Tok.out" "Cache.rd" "Cache.cr" "%rd"
-    while IFS=$'\t' read -r period n_total n_instr wall_mean wall_median turns tools tin tout crd ccr cache_pct; do
+    printf '%-10s %-8s %9s %9s %7s %7s %8s %8s %8s %8s %8s %7s %8s %10s %10s\n' \
+        "Periodo" "n(t/i)" "WallMedia" "WallP50" "Turnos" "Tools" "Tok.in" "Tok.out" "Cache.rd" "Cache.wr" "Reason" "%rd" "n(est)" "Costo est." "Costo leg."
+    while IFS=$'\t' read -r period n_total n_instr wall_mean wall_median turns tools tin tout crd cwr reasoning cache_pct estimated_n estimated_mean legacy_mean; do
         local cache_disp
         if [ "$cache_pct" = "null" ]; then cache_disp="-"; else cache_disp=$(printf '%.1f%%' "$cache_pct"); fi
-        printf '%-10s %-8s %9s %9s %7s %7s %8s %8s %8s %8s %7s\n' \
+        printf '%-10s %-8s %9s %9s %7s %7s %8s %8s %8s %8s %8s %7s %8s %10s %10s\n' \
             "$period" "${n_total}/${n_instr}" "$(fmt_dur_s "$wall_mean")" "$(fmt_dur_s "$wall_median")" \
             "$(_num1 "$turns")" "$(_num1 "$tools")" "$(_numk "$tin")" "$(_numk "$tout")" \
-            "$(_numk "$crd")" "$(_numk "$ccr")" "$cache_disp"
-    done < <(jq -r "$JQ_ROW ${path}[] | [.period, .n_total, .n_instrumented, .wall_mean_s, .wall_median_s, .turns_mean, .tool_calls_mean, .tokens_input_mean, .tokens_output_mean, .cache_read_mean, .cache_creation_mean, .cache_read_pct] | row" <<<"$agg")
+            "$(_numk "$crd")" "$(_numk "$cwr")" "$(_numk "$reasoning")" "$cache_disp" "${estimated_n}/${n_instr}" "$(_money "$estimated_mean")" "$(_money "$legacy_mean")"
+    done < <(jq -r "$JQ_ROW ${path}[] | [.period, .n_total, .n_instrumented, .wall_mean_s, .wall_median_s, .turns_mean, .tool_calls_mean, .tokens_input_mean, .tokens_output_mean, .cache_read_mean, .cache_write_mean, .reasoning_mean, .cache_read_pct, .estimated_cost_n, .estimated_cost_usd_mean, .legacy_reported_cost_usd_mean] | row" <<<"$agg")
     echo ""
-    echo "%rd = cache_read / (cache_read + cache_creation): cae cuando el contexto"
+    echo "%rd = cache_read / (cache_read + cache_write): cae cuando el contexto"
     echo "      deja de acertar en cache."
 }
 
@@ -722,6 +786,9 @@ render_comparison() {
         elif [ "$unit" = "count0" ]; then
             first_disp=$(_num0 "$first")
             last_disp=$(_num0 "$last")
+        elif [ "$unit" = "usd" ]; then
+            first_disp=$(_money "$first")
+            last_disp=$(_money "$last")
         else
             first_disp=$(_num1 "$first")
             last_disp=$(_num1 "$last")
@@ -753,12 +820,12 @@ render_by_version() {
     echo "deriva temporal, aqui TODAS las cifras -- el wall incluido -- salen solo"
     echo "de las instrumentadas: comparar dos versiones exige el mismo denominador."
     echo ""
-    printf '%-20s %-8s %10s %7s %7s %10s\n' "Version" "n(t/i)" "WallMedia" "Turnos" "%API" "Costo"
-    while IFS=$'\t' read -r version n_total n_instr wall_mean turns pct_api cost_mean; do
-        printf '%-20s %-8s %10s %7s %7s %10s\n' \
+    printf '%-20s %-8s %10s %7s %7s %8s %10s %10s\n' "Version" "n(t/i)" "WallMedia" "Turnos" "%API" "n(est)" "Costo est." "Costo leg."
+    while IFS=$'\t' read -r version n_total n_instr wall_mean turns pct_api estimated_n estimated_mean legacy_mean; do
+        printf '%-20s %-8s %10s %7s %7s %8s %10s %10s\n' \
             "$(_txt "$version")" "${n_total}/${n_instr}" \
-            "$(fmt_dur_s "$wall_mean")" "$(_num1 "$turns")" "$(fmt_pct "$pct_api")" "$(_money "$cost_mean")"
-    done < <(jq -r "$JQ_ROW"'.by_version[] | [.version, .n_total, .n_instrumented, .wall_mean_instr_s, .turns_mean, .pct_api, .cost_usd_mean] | row' <<<"$agg")
+            "$(fmt_dur_s "$wall_mean")" "$(_num1 "$turns")" "$(fmt_pct "$pct_api")" "${estimated_n}/${n_instr}" "$(_money "$estimated_mean")" "$(_money "$legacy_mean")"
+    done < <(jq -r "$JQ_ROW"'.by_version[] | [.version, .n_total, .n_instrumented, .wall_mean_instr_s, .turns_mean, .pct_api, .estimated_cost_n, .estimated_cost_usd_mean, .legacy_reported_cost_usd_mean] | row' <<<"$agg")
 }
 
 render_legacy() {

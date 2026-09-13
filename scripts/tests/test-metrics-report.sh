@@ -66,7 +66,10 @@
 #       son justo el par que un orden lexicografico invertiria (0.9.0 vs
 #       0.25.0, ambos alcanzables con el plugin ya en 0.25.0): N-11 fija el
 #       orden semver numerico.
-#   [O] Transicion de estado: fuentes canonica/legacy disjuntas se combinan y
+#   [O] Costos estimados/legados y tokens neutrales: historias solo nueva, solo
+#       antigua y mixta conservan la cobertura, el alias cache_creation y el
+#       cero OAuth legado separado de los agregados estimados.
+#   [P] Transicion de estado: fuentes canonica/legacy disjuntas se combinan y
 #       duplicados identicos o enriquecidos por identidad estable prefieren la
 #       entrada canonica; tambien cubre solo canonica y campos opacos.
 #
@@ -472,7 +475,7 @@ assert_field "N-1: tres grupos en by_version (0.9.0, 0.25.0, sin version)" "3" "
 assert_field "N-2: 0.9.0.n_total (2 corridas)" "2" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="0.9.0") | .n_total')"
 assert_field "N-3: 0.9.0.n_instrumented" "2" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="0.9.0") | .n_instrumented')"
 assert_field "N-4: 0.9.0.turns_mean (10+20)/2" "15" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="0.9.0") | .turns_mean')"
-assert_field "N-5: 0.9.0.cost_usd_mean (0.5+0.7)/2" "0.6" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="0.9.0") | .cost_usd_mean')"
+assert_field "N-5: 0.9.0 no convierte costo legacy en estimacion" "null" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="0.9.0") | .estimated_cost_usd_mean')"
 assert_field "N-6: 0.9.0.wall_mean_instr_s (100+200)/2" "150" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="0.9.0") | .wall_mean_instr_s')"
 assert_field "N-7: 0.25.0.n_total (1 corrida)" "1" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="0.25.0") | .n_total')"
 assert_field "N-8: 0.25.0.turns_mean" "5" "$(echo "$AGG_N" | jq -r '.pipelines.tdd.by_version[] | select(.version=="0.25.0") | .turns_mean')"
@@ -511,7 +514,39 @@ else
 fi
 
 echo ""
-echo "[O] Fuentes canonica y legacy se combinan sin escribir ni duplicar (CA-1..CA-5)"
+echo "[O] Costos estimados/legados y tokens neutrales (CA-1..CA-5, issue #1328)"
+
+# 850 es nueva y conserva un cero estimado real. 851 es legacy: su cero OAuth
+# se muestra separado y no reduce el total estimado. 852 es mixta: el estimado
+# gana y cost_usd no se duplica. 853 deja el estimado desconocido.
+cat > "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" <<'EOF'
+{"issue":"850","pipeline":"tdd","started":"20260910-090000","state":"completed","agents":{"writer":{"duration":10,"metrics":{"estimated_cost_usd":0,"tokens":{"input":10,"output":2,"cache_read":3,"cache_write":4,"reasoning":5},"turns":1,"duration_ms":10000,"api_duration_ms":9000,"tool_calls":[]}}}}
+{"issue":"851","pipeline":"tdd","started":"20260911-090000","state":"completed","agents":{"writer":{"duration":10,"metrics":{"cost_usd":0,"tokens":{"input":10,"output":2,"cache_read":3,"cache_creation":7},"turns":1,"duration_ms":10000,"duration_api_ms":9000,"tool_calls":[]}}}}
+{"issue":"852","pipeline":"tdd","started":"20260912-090000","state":"completed","agents":{"writer":{"duration":10,"metrics":{"estimated_cost_usd":2,"cost_usd":99,"tokens":{"input":10,"output":2,"cache_read":3,"cache_write":4,"reasoning":5},"turns":1,"duration_ms":10000,"api_duration_ms":9000,"tool_calls":[]}},"reviewer":{"duration":1,"metrics":{"estimated_cost_usd":null,"tokens":{"input":null,"output":null,"cache_read":null,"cache_write":null,"reasoning":null},"turns":null,"duration_ms":1000,"api_duration_ms":null,"tool_calls":[]}}}}
+{"issue":"853","pipeline":"tdd","started":"20260913-090000","state":"completed","agents":{"writer":{"duration":10,"metrics":{"estimated_cost_usd":null,"tokens":{"input":10,"output":2,"cache_read":3,"cache_write":4,"reasoning":null},"turns":1,"duration_ms":10000,"api_duration_ms":9000,"tool_calls":[]}}}}
+EOF
+AGG_O=$(compute_metrics_report_json "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" "" "")
+assert_field "O-1: solo estimated_cost_usd entra al total por stage" "2" "$(echo "$AGG_O" | jq -r '.pipelines.tdd.wallclock.by_stage[] | select(.stage=="writer") | .estimated_cost_usd_total')"
+assert_field "O-2: costo OAuth legacy cero queda separado" "0" "$(echo "$AGG_O" | jq -r '.pipelines.tdd.wallclock.by_stage[] | select(.stage=="writer") | .legacy_reported_cost_usd_total')"
+assert_field "O-3: dos corridas tienen estimacion disponible" "2" "$(echo "$AGG_O" | jq -r '.pipelines.tdd.meta.estimated_cost_runs')"
+assert_field "O-4: legacy y nulo preservan ausencia de estimacion" "2" "$(echo "$AGG_O" | jq -r '.pipelines.tdd.meta.estimated_cost_missing_runs')"
+assert_field "O-5: cache_creation antiguo se presenta como cache_write" "4.75" "$(echo "$AGG_O" | jq -r '.pipelines.tdd.series.monthly[] | select(.period=="2026-09") | .cache_write_mean')"
+assert_field "O-6: reasoning se agrega sin falsearlo como cero" "5" "$(echo "$AGG_O" | jq -r '.pipelines.tdd.series.monthly[] | select(.period=="2026-09") | .reasoning_mean')"
+assert_field "O-7: corrida nueva conserva el cero estimado real" "0" "$(echo "$AGG_O" | jq -r '.pipelines.tdd.wallclock.per_run[] | select(.issue=="850") | .estimated_cost_usd')"
+assert_field "O-8: corrida legacy muestra el cero reportado separado" "0" "$(echo "$AGG_O" | jq -r '.pipelines.tdd.wallclock.per_run[] | select(.issue=="851") | .legacy_reported_cost_usd')"
+assert_field "O-9: corrida mixta no reclasifica cost_usd" "null" "$(echo "$AGG_O" | jq -r '.pipelines.tdd.wallclock.per_run[] | select(.issue=="852") | .legacy_reported_cost_usd')"
+assert_field "O-10: cobertura parcial se declara cuando un stage no estima" "parcial" "$(echo "$AGG_O" | jq -r '.pipelines.tdd.wallclock.per_run[] | select(.issue=="852") | .estimated_cost_status')"
+OUT=$(run_report)
+if echo "$OUT" | grep -q "Costo estimado con valor: 2 corridas (completas: 1, parciales: 1); sin estimacion: 2" \
+   && echo "$OUT" | grep -q "Costo reportado legado: 1 corridas (separado; excluido de estimados)" \
+   && echo "$OUT" | grep -q "Cache.wr" && echo "$OUT" | grep -q "Reason"; then
+    pass "O-11: resumen y detalle separan estimacion, legado y tokens neutrales"
+else
+    fail "O-11: faltan rotulos de costos/tokens neutrales: $OUT"
+fi
+
+echo ""
+echo "[P] Fuentes canonica y legacy se combinan sin escribir ni duplicar (CA-1..CA-5)"
 
 mkdir -p "$FAKE_REPO/.mefisto/pipeline"
 rm -f "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl"
