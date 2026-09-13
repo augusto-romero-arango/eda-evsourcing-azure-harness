@@ -151,12 +151,12 @@ runtime_fake_translate() {
           elif .fake == "terminal" and .status == "success" then
               {v: 1, type: "run.completed", ts: (now | todate), status: "success", runtime: $runtime,
                model: (.model // null), session_id: null, duration_ms: null,
-               tokens: {input: null, output: null}, cost_usd: null, turns: null,
+                tokens: {input: null, output: null, cache_read: null, cache_write: null, reasoning: null}, estimated_cost_usd: null, turns: null,
                denials: null, ttft_ms: null, api_duration_ms: null, error: null}
           elif .fake == "terminal" and .status == "failed" then
               {v: 1, type: "run.failed", ts: (now | todate), status: "failed", runtime: $runtime,
                model: (.model // null), session_id: null, duration_ms: null,
-               tokens: {input: null, output: null}, cost_usd: null, turns: null,
+                tokens: {input: null, output: null, cache_read: null, cache_write: null, reasoning: null}, estimated_cost_usd: null, turns: null,
                denials: null, ttft_ms: null, api_duration_ms: null,
                error: {kind: (.error_kind // "nonzero_exit"), detail: (.error_detail // "fallo del guion fake")}}
           else empty end

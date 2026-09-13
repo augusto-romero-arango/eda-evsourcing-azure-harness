@@ -37,7 +37,8 @@
 #       vacio) > protocol_invalid (linea no-JSON) > no_result (exit 0 sin
 #       texto visible). El TIMEOUT del watchdog no se ejercita aqui via
 #       translate directo (lo sintetiza el runner, ver seccion [F]).
-#   [D] CA-4: el terminal preserva session_id/tokens/cost_usd cuando el wire
+#   [D] CA-4: durante el corte el productor OpenCode conserva el terminal
+#       legacy con session_id/tokens/cost_usd hasta que integre el estimador.
 #       format los trae (SUMANDO todos los step_finish, que reportan por paso
 #       y no acumulado); turns/denials/ttft_ms/
 #       api_duration_ms SIEMPRE null (el wire format no tiene equivalente);
@@ -123,11 +124,16 @@ validate_event_line() {
     local sub_schema errors
     sub_schema="$(jq -c --arg t "$ev_type" '.definitions[$t]' "$SCHEMA_FILE" 2>/dev/null)"
     errors="$(jq -n --argjson schema "$sub_schema" --argjson instance "$line" -f "$JSONSCHEMA_LITE" 2>&1)"
-    if [ -z "$errors" ] || [ "$(printf '%s' "$errors" | jq 'length' 2>/dev/null)" = "0" ]; then
-        return 0
+    if [ -n "$errors" ] && [ "$(printf '%s' "$errors" | jq 'length' 2>/dev/null)" != "0" ]; then
+        printf '%s' "$errors" | jq -r '.[]'
+        return 1
     fi
-    printf '%s' "$errors" | jq -r '.[]'
-    return 1
+    case "$ev_type" in
+        run.completed|run.failed)
+            printf '%s' "$line" | jq -e 'has("estimated_cost_usd") or has("cost_usd")' >/dev/null 2>&1 || return 1
+            ;;
+    esac
+    return 0
 }
 
 count_terminals() {

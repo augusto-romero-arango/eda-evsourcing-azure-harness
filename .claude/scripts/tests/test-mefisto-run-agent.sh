@@ -110,11 +110,19 @@ validate_event_line() {
     local sub_schema errors
     sub_schema="$(jq -c --arg t "$ev_type" '.definitions[$t]' "$SCHEMA_FILE" 2>/dev/null)"
     errors="$(jq -n --argjson schema "$sub_schema" --argjson instance "$line" -f "$JSONSCHEMA_LITE" 2>&1)"
-    if [ -z "$errors" ] || [ "$(printf '%s' "$errors" | jq 'length' 2>/dev/null)" = "0" ]; then
-        return 0
+    if [ -n "$errors" ] && [ "$(printf '%s' "$errors" | jq 'length' 2>/dev/null)" != "0" ]; then
+        printf '%s' "$errors" | jq -r '.[]'
+        return 1
     fi
-    printf '%s' "$errors" | jq -r '.[]'
-    return 1
+    case "$ev_type" in
+        run.completed|run.failed)
+            if ! printf '%s' "$line" | jq -e 'has("estimated_cost_usd") or has("cost_usd")' >/dev/null 2>&1; then
+                echo "terminal sin estimated_cost_usd ni cost_usd"
+                return 1
+            fi
+            ;;
+    esac
+    return 0
 }
 
 # count_terminals <archivo-jsonl>
@@ -324,6 +332,7 @@ check_all_lines_valid "valid-timeout.jsonl" "$FIXTURES_DIR/valid-timeout.jsonl"
 # issue #965: terminal de un agotamiento de ventana de uso, uno por runtime.
 check_all_lines_valid "valid-rate-limit-claude.jsonl" "$FIXTURES_DIR/valid-rate-limit-claude.jsonl"
 check_all_lines_valid "valid-rate-limit-opencode.jsonl" "$FIXTURES_DIR/valid-rate-limit-opencode.jsonl"
+check_all_lines_valid "legacy-cost-usd.jsonl" "$FIXTURES_DIR/legacy-cost-usd.jsonl"
 
 if jq -e 'select(.type=="run.failed") | .error.kind == "rate_limit" and .resets_at == "2026-05-07T22:40:00Z"' "$FIXTURES_DIR/valid-rate-limit-claude.jsonl" >/dev/null 2>&1; then
     pass "valid-rate-limit-claude.jsonl: error.kind='rate_limit' con resets_at poblado"
@@ -373,6 +382,20 @@ if validate_event_line "$GOOD_LINE" >/dev/null 2>&1; then
     pass "valid-failed.jsonl: run.failed{status:'failed'} sigue validando tras partir el vocabulario"
 else
     fail "valid-failed.jsonl: la particion de status rompio un terminal legitimo"
+fi
+
+LEGACY_LINE="$(sed -n '2p' "$FIXTURES_DIR/legacy-cost-usd.jsonl")"
+if validate_event_line "$LEGACY_LINE" >/dev/null 2>&1; then
+    pass "legacy-cost-usd.jsonl: cost_usd v1 sigue siendo legible sin reinterpretarse"
+else
+    fail "legacy-cost-usd.jsonl: el lector del contrato rechazo el terminal v1"
+fi
+
+BAD_LINE="$(sed -n '2p' "$FIXTURES_DIR/invalid-missing-cost-name.jsonl")"
+if ! validate_event_line "$BAD_LINE" >/dev/null 2>&1; then
+    pass "invalid-missing-cost-name.jsonl: el gate exige estimated_cost_usd o cost_usd"
+else
+    fail "invalid-missing-cost-name.jsonl: el gate acepto un terminal sin ningun nombre de costo"
 fi
 
 # ============================================================================

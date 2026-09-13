@@ -17,12 +17,24 @@ Todo evento lleva `v: 1` y un `type` del vocabulario cerrado declarado en
 | `message` | `ts`, `role`, `text`, `kind?` (`text` o `thinking`) |
 | `tool.started` | `ts`, `tool`, `input_summary|null` |
 | `tool.completed` | `ts`, `tool`, `ok`, `duration_ms|null` |
-| `run.completed` / `run.failed` | `ts`, `status`, `runtime`, `model|null`, `session_id|null`, `duration_ms`, `tokens`, `cost_usd|null`, `turns|null`, `denials|null`, `ttft_ms|null`, `api_duration_ms|null`, `error|null`, `resets_at?` |
+| `run.completed` / `run.failed` | `ts`, `status`, `runtime`, `model|null`, `session_id|null`, `duration_ms`, `tokens`, `estimated_cost_usd|null`, `turns|null`, `denials|null`, `ttft_ms|null`, `api_duration_ms|null`, `error|null`, `resets_at?` |
 
-`tokens` contiene exactamente `input` y `output`, ambos numero o `null`. Los
-datos que un runtime no puede informar se representan con `null`, nunca con un
-cero ni otro valor inventado. Cada definicion cierra su forma con
+`tokens` conserva `input` y `output`, ambos numero o `null`, y puede incluir
+`cache_read`, `cache_write` y `reasoning`, tambien numero o `null`. `output`
+es la salida visible; `reasoning` queda separado cuando el runtime la expone.
+Claude informa `output_tokens` como `output`,
+`cache_read_input_tokens`/`cache_creation_input_tokens` como cache y deja
+`reasoning: null`. Los datos que un runtime no puede informar se representan
+con `null`, nunca con un cero ni otro valor inventado. Cada definicion cierra su forma con
 `additionalProperties: false`; lo mismo hacen `tokens` y `error`.
+
+`estimated_cost_usd` es una estimacion de equivalencia a tarifas API, no el
+costo marginal de una suscripcion (MEF-ADR-0054). Los escritores posteriores
+al corte emiten solo ese nombre. Para leer JSONL v1 local previo, el schema
+tambien acepta `cost_usd`; es costo reportado legado y no se reinterpreta como
+estimacion. Como el validador ligero no soporta `oneOf`, ambos campos son
+opcionales en el schema, pero el gate de contrato exige que cada terminal traiga
+al menos uno de los dos. No hay protocolo v2 ni doble escritura.
 
 ## Relacion entre terminal y estado
 
@@ -88,7 +100,9 @@ para que los productores emitan tipos arbitrarios.
 
 ## Fixtures
 
-`fixtures/run-events/valid-*.jsonl` contiene corridas validas. Los casos de
+`fixtures/run-events/valid-*.jsonl` contiene corridas validas del contrato
+nuevo y no usa `cost_usd`. `legacy-cost-usd.jsonl` identifica expresamente una
+lectura v1 previa al corte. Los casos de
 limite de uso muestran `resets_at` poblado cuando el runtime ofrece esa senal y
 `null` cuando no la ofrece. `invalid-missing-field.jsonl`,
 `invalid-unknown-type.jsonl` e `invalid-status-mismatch.jsonl` son rechazables
