@@ -18,6 +18,7 @@ make_plugin_root() {
     local root="$1" name="${2:-mefisto}" version="${3:-1.2.3}"
     mkdir -p "$root/.claude-plugin" "$root/scripts"
     jq -n --arg name "$name" --arg version "$version" '{name: $name, version: $version}' > "$root/.claude-plugin/plugin.json"
+    jq -n --arg version "$version" '{schemaVersion:1,runtime:"claude",version:$version,commit:"0123456789abcdef0123456789abcdef01234567"}' > "$root/mefisto-manifest.json"
     printf '%s\n' '#!/bin/sh' 'printf invoked > "$MEFISTO_TEST_TRACE"' > "$root/scripts/probe.sh"
     chmod +x "$root/scripts/probe.sh"
 }
@@ -85,6 +86,11 @@ printf '%s\n' "$OPENCODE_ROOT" > "$CONSUMER/.mefisto/pipeline/.plugin-root"
 printf '%s\n' "$LEGACY_ROOT" > "$CONSUMER/.claude/pipeline/.plugin-root"
 out="$(resolve_claude "$CONSUMER" '' "$WORK/contaminacion.trace" 2> "$WORK/contaminacion.err")"; rc=$?
 [ "$rc" -eq 0 ] && [ "$out" = "ROOT=$LEGACY_PHYSICAL" ] && [ -f "$WORK/contaminacion.trace" ] && [ "$(< "$CONSUMER/.mefisto/pipeline/.plugin-root")" = "$OPENCODE_ROOT" ] && pass 'marker OpenCode valido continua al mirror Claude sin mutarlo' || fail 'marker OpenCode no continuo al mirror Claude'
+PARENT_ROOT="$WORK/plugin canonico padre"; make_plugin_root "$PARENT_ROOT"
+mkdir -p "$WORK/.mefisto/pipeline"; printf '%s\n' "$PARENT_ROOT" > "$WORK/.mefisto/pipeline/.plugin-root"
+out="$(resolve_claude "$SUBDIR" '' "$WORK/nearest.trace" 2> "$WORK/nearest.err")"; rc=$?
+[ "$rc" -eq 0 ] && [ "$out" = "ROOT=$LEGACY_PHYSICAL" ] && pass 'contaminacion local no salta a un marker canonico padre' || fail 'se uso un marker canonico padre antes del mirror Claude local'
+rm "$WORK/.mefisto/pipeline/.plugin-root"
 printf '%s\n' "$CANONICAL_ROOT" > "$CONSUMER/.mefisto/pipeline/.plugin-root"
 printf '%s\n' "$OPENCODE_ROOT" > "$CONSUMER/.claude/pipeline/.plugin-root"
 out="$(resolve_claude "$CONSUMER" '' "$WORK/claude-despues.trace" 2> "$WORK/claude-despues.err")"; rc=$?
@@ -94,11 +100,27 @@ printf '%s\n' "$BAD_CANONICAL" > "$CONSUMER/.mefisto/pipeline/.plugin-root"
 printf '%s\n' "$LEGACY_ROOT" > "$CONSUMER/.claude/pipeline/.plugin-root"
 resolve_claude "$SUBDIR" '' "$WORK/malformed.trace" > "$WORK/malformed.stdout" 2> "$WORK/malformed.err"; rc=$?
 [ "$rc" -ne 0 ] && [ ! -e "$WORK/malformed.trace" ] && contains "$(< "$WORK/malformed.err")" 'marker canonico invalida' 'marker canonico malformado no acepta el fallback' || fail 'marker canonico malformado no debio ejecutar codigo'
+HYBRID_ROOT="$WORK/plugin OpenCode hibrido"; make_opencode_root "$HYBRID_ROOT"; mkdir -p "$HYBRID_ROOT/.claude-plugin" "$HYBRID_ROOT/scripts"
+printf '%s\n' '{"name":"mefisto","version":"1.2.3"}' > "$HYBRID_ROOT/.claude-plugin/plugin.json"
+printf '%s\n' '#!/bin/sh' 'printf invoked > "$MEFISTO_TEST_TRACE"' > "$HYBRID_ROOT/scripts/probe.sh"; chmod +x "$HYBRID_ROOT/scripts/probe.sh"
+printf '%s\n' "$HYBRID_ROOT" > "$CONSUMER/.mefisto/pipeline/.plugin-root"
+printf '%s\n' "$LEGACY_ROOT" > "$CONSUMER/.claude/pipeline/.plugin-root"
+out="$(resolve_claude "$SUBDIR" '' "$WORK/hybrid.trace" 2> "$WORK/hybrid.err")"; rc=$?
+[ "$rc" -eq 0 ] && [ "$out" = "ROOT=$LEGACY_PHYSICAL" ] && [ -f "$WORK/hybrid.trace" ] && pass 'raiz OpenCode con metadata Claude espuria nunca se ejecuta' || fail 'se ejecuto una raiz identificada como OpenCode'
+printf '%s\n' 'relativa/plugin' > "$CONSUMER/.mefisto/pipeline/.plugin-root"
+resolve_claude "$SUBDIR" '' "$WORK/relative-marker.trace" > "$WORK/relative-marker.stdout" 2> "$WORK/relative-marker.err"; rc=$?
+[ "$rc" -ne 0 ] && [ ! -e "$WORK/relative-marker.trace" ] && contains "$(< "$WORK/relative-marker.err")" 'marker canonico invalida' 'marker canonico relativo aborta sin aceptar el fallback' || fail 'marker canonico relativo no debio ejecutar codigo'
 printf '%s\n' "$OPENCODE_ROOT" > "$CONSUMER/.mefisto/pipeline/.plugin-root"
 printf '%s\n' "$LEGACY_ROOT" > "$CONSUMER/.claude/pipeline/.plugin-root"
 rm "$CONSUMER/.mefisto/pipeline/.plugin-root"
 out="$(resolve_claude "$SUBDIR" '' "$WORK/legacy.trace" 2> "$WORK/legacy.err")"; rc=$?
 [ "$rc" -eq 0 ] && [ "$out" = "ROOT=$LEGACY_PHYSICAL" ] && pass 'marker legacy queda como fallback' || fail 'marker legacy no se resolvio'
+printf '%s\n' "$OPENCODE_ROOT" > "$CONSUMER/.mefisto/pipeline/.plugin-root"; rm "$CONSUMER/.claude/pipeline/.plugin-root"
+resolve_claude "$SUBDIR" '' "$WORK/only-opencode.trace" > "$WORK/only-opencode.stdout" 2> "$WORK/only-opencode.err"; rc=$?
+[ "$rc" -ne 0 ] && [ ! -e "$WORK/only-opencode.trace" ] && contains "$(< "$WORK/only-opencode.err")" 'distribucion OpenCode y no existe un mirror Claude valido' 'diagnostico distingue contaminacion sin mirror Claude' || fail 'contaminacion sin mirror Claude no debio ejecutar codigo'
+rm "$CONSUMER/.mefisto/pipeline/.plugin-root"
+resolve_claude "$SUBDIR" '' "$WORK/missing.trace" > "$WORK/missing.stdout" 2> "$WORK/missing.err"; rc=$?
+[ "$rc" -ne 0 ] && [ ! -e "$WORK/missing.trace" ] && contains "$(< "$WORK/missing.err")" 'no se encontro una raiz Claude valida' 'diagnostico distingue instalacion Claude faltante' || fail 'ausencia de distribucion Claude no debio ejecutar codigo'
 
 assert_claude_resolution_fails() {
     local candidate="$1" label="$2" trace="$WORK/failure.trace" rc
