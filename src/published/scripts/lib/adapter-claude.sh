@@ -3,7 +3,7 @@
 # publica el staging completo de forma atomica.
 
 published_claude_error() { printf '%s: %s: %s\n' "$1" "$2" "$3" >&2; return 1; }
-published_claude_model() { case "$1" in fast) printf haiku ;; balanced) printf sonnet ;; deep) printf '' ;; *) return 1 ;; esac; }
+published_claude_model() { case "$1" in fast) printf haiku ;; balanced) printf sonnet ;; deep) printf opus ;; *) return 1 ;; esac; }
 published_claude_capability_tools() { case "$1" in read) printf 'Read, Glob, Grep' ;; edit) printf 'Edit, Write' ;; shell) printf Bash ;; web) printf 'WebFetch, WebSearch' ;; skill) printf Skill ;; task) printf Task ;; *) return 1 ;; esac; }
 published_claude_mcp_tools() { case "$1" in microsoft-learn) printf 'mcp__microsoft-learn__*' ;; terraform) printf 'mcp__terraform__*' ;; *) return 1 ;; esac; }
 

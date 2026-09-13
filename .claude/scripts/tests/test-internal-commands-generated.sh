@@ -18,7 +18,8 @@
 #         adaptadores versionados en .claude/commands/ y .opencode/commands/
 #         coinciden byte-a-byte con lo que la fuente neutral produce (CA-1).
 #   [claude-output] La salida Claude de los cuatro comandos `fast` lleva
-#         `model: "haiku"`; la de `fix-review` (`deep`) omite `model:` (CA-2).
+#         `model: "haiku"`; la de `fix-review` (`deep`) lleva `model: "opus"`
+#         (CA-2, tabla enmendada por issue #1309).
 #   [opencode-output] La salida OpenCode omite `model:` para heredar la
 #         configuracion del usuario (issue #961).
 #   [guard] El bloque del guard inverso (`.claude-plugin/plugin.json`) es
@@ -229,7 +230,7 @@ done
 [ "$ca5_ok" -eq 1 ] && pass "ninguna fuente cita CLAUDE.md como fuente de gobierno"
 
 echo ""
-echo "[claude-output] model: \"haiku\" en los cuatro fast; fix-review sin model:"
+echo "[claude-output] model: \"haiku\" en los cuatro fast; fix-review con model: \"opus\" (perfil deep)"
 for id in mefisto-plan mefisto-bug mefisto-bitacora mefisto-work-status; do
     out_file="$REPO_ROOT/.claude/commands/$id.md"
     if grep -q '^model: "haiku"$' "$out_file" 2>/dev/null; then
@@ -238,10 +239,10 @@ for id in mefisto-plan mefisto-bug mefisto-bitacora mefisto-work-status; do
         fail "$id: .claude/commands NO lleva model: \"haiku\" ($out_file)"
     fi
 done
-if grep -q '^model:' "$REPO_ROOT/.claude/commands/mefisto-fix-review.md" 2>/dev/null; then
-    fail "mefisto-fix-review: .claude/commands no deberia declarar 'model:' (perfil deep hereda la sesion)"
+if grep -q '^model: "opus"$' "$REPO_ROOT/.claude/commands/mefisto-fix-review.md" 2>/dev/null; then
+    pass "mefisto-fix-review: .claude/commands lleva model: \"opus\" (perfil deep)"
 else
-    pass "mefisto-fix-review: .claude/commands sin 'model:' (perfil deep)"
+    fail "mefisto-fix-review: .claude/commands NO lleva model: \"opus\" (perfil deep)"
 fi
 
 echo ""

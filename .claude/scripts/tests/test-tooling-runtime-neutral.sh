@@ -31,7 +31,7 @@
 #       (stream vacio, fixture congelado) y sale con exit 1, sin resumen.
 #   (d) [E] Defaults: sin .mefisto/models.json ni --models, OpenCode recibe
 #       Terra para writer y Sol para reviewer; Claude conserva sonnet para
-#       writer y herencia para reviewer deep.
+#       writer y opus para reviewer deep.
 #   (e) [F] Gate de neutralidad (issue #914): MEFISTO_RUNTIME=claude, el CLI
 #       falso del writer introduce ademas una fuga real -- un archivo nuevo
 #       src/internal/agents/fx-leak.md con `"model": "sonnet"` en el
@@ -332,13 +332,6 @@ _argv_has_flag_value() {
     jq -e --arg f "$2" --arg v "$3" '(index($f)) as $i | $i != null and .[$i+1] == $v' "$1" >/dev/null 2>&1
 }
 
-# _argv_has_no_model_flag <call.json> -- true si el argv no trae --model ni
-# -m y ningun elemento es la cadena vacia (un `--model ""` colado tambien
-# fallaria aqui, MEF-ADR-0049 decision 4).
-_argv_has_no_model_flag() {
-    jq -e '(index("-m") == null) and (index("--model") == null) and all(.[]; . != "")' "$1" >/dev/null 2>&1
-}
-
 # assert_stage_artifacts <prefijo> <runtime> <issue> <stage> <agent> --
 # chequeos -2 (events.jsonl terminal) y -3 (metrics) de un stage exitoso.
 assert_stage_artifacts() {
@@ -515,7 +508,7 @@ fi
 
 # ============================================================================
 # [E] Escenario (d): sin mapping local ni --models se aplican las tablas de
-# cada adaptador. Claude deep hereda; OpenCode usa Terra/Sol para los stages.
+# cada adaptador. Claude deep usa opus; OpenCode usa Terra/Sol para los stages.
 # ============================================================================
 
 echo ""
@@ -546,10 +539,10 @@ fi
 A_WRITER_CALL="$(_find_call "$A_CAP" claude stage-1-writer.md || true)"
 A_REVIEWER_CALL="$(_find_call "$A_CAP" claude stage-2-reviewer.md || true)"
 if [ -n "$A_REVIEWER_CALL" ]; then
-    if _argv_has_no_model_flag "$A_REVIEWER_CALL"; then
-        pass "E-3: claude -- la linea de comando del reviewer (perfil deep) no contiene --model ni -m ni flags vacios"
+    if _argv_has_flag_value "$A_REVIEWER_CALL" --model opus; then
+        pass "E-3: claude -- reviewer deep usa '--model opus'"
     else
-        fail "E-3: claude -- la linea de comando del reviewer SI trae --model/-m o un flag vacio: $(cat "$A_REVIEWER_CALL")"
+        fail "E-3: claude -- la linea de comando del reviewer no trae '--model opus': $(cat "$A_REVIEWER_CALL")"
     fi
 else
     fail "E-3: no se pudo localizar la invocacion del reviewer de la corrida (a)"

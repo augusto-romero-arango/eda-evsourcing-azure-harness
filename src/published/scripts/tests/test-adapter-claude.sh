@@ -160,7 +160,7 @@ make_agent perfil '[]' ',"profile":"desconocido"'
 render_fails_without_output "$WORK/perfil.md" 'profile: perfil '\''desconocido'\'' sin mapping Claude' 'perfil desconocido falla sin salida parcial'
 make_agent hereda '[]' ',"profile":"deep"'
 deep="$(render "$WORK/hereda.md")"; rc=$?
-[ "$rc" -eq 0 ] && absent "$deep" 'model:' 'perfil deep hereda sin clave model' || fail 'perfil deep debio renderizar'
+[ "$rc" -eq 0 ] && contains "$deep" 'model: "opus"' 'perfil deep declara model: "opus"' || fail 'perfil deep debio renderizar'
 make_agent directiva '[]'; printf '%s\n' '{{mefisto:desconocida}}' >> "$WORK/directiva.md"
 render_fails_without_output "$WORK/directiva.md" 'body: directiva sin mapping Claude' 'directiva desconocida falla sin salida parcial'
 
