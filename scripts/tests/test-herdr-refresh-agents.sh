@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-herdr-refresh-agents.sh -- Tests del modo --refresh-agents (#1333).
+# test-herdr-refresh-agents.sh -- Tests del modo --refresh-agents (#1333, #1335).
 
 set -uo pipefail
 
@@ -34,6 +34,7 @@ mkdir -p "$FAKE_BIN" "$FAKE_NO_JQ_BIN" "$FAKE_NO_HERDR_BIN" "$FAKE_RUNTIME"
 trap 'rm -rf "$FAKE_CONSUMER" "$TMP_DIR"' EXIT
 (cd "$FAKE_CONSUMER" && git init -q)
 export HERDR_STUB_LOG="$TMP_DIR/herdr.log"
+export HERDR_READY_POLLED="$TMP_DIR/ready-polled"
 
 cat > "$FAKE_BIN/herdr" <<'STUB'
 #!/usr/bin/env bash
@@ -53,7 +54,10 @@ case "${1:-} ${2:-}" in
       '{"agent":"broken","agent_status":"idle","cwd":"'"$(git rev-parse --show-toplevel)"'","pane_id":"w9:broken","workspace_id":"w9"},' \
       '{"agent":"prompted","agent_status":"idle","cwd":"'"$(git rev-parse --show-toplevel)"'","pane_id":"w9:ok","workspace_id":"w9"},' \
       '{"agent":"prompted","agent_status":"idle","cwd":"'"$(git rev-parse --show-toplevel)"'","pane_id":"w9:fail","workspace_id":"w9"},' \
-      '{"agent":"restarting","agent_status":"idle","cwd":"'"$(git rev-parse --show-toplevel)"'","pane_id":"w9:restart","workspace_id":"w9"},' \
+      '{"agent":"restarting","agent_status":"idle","cwd":"'"$(git rev-parse --show-toplevel)"'","name":"restart-nombrado","pane_id":"w9:restart-listo","workspace_id":"w9"},' \
+      '{"agent":"restarting","agent_status":"idle","cwd":"'"$(git rev-parse --show-toplevel)"'","pane_id":"w9:sin-nombre","workspace_id":"w9"},' \
+      '{"agent":"restarting","agent_status":"idle","cwd":"'"$(git rev-parse --show-toplevel)"'","pane_id":"w9:sin-salida","workspace_id":"w9"},' \
+      '{"agent":"restarting","agent_status":"idle","cwd":"'"$(git rev-parse --show-toplevel)"'","name":"restart-fallido","pane_id":"w9:inicio-falla","workspace_id":"w9"},' \
       '{"agent":"prompted","agent_status":"idle","cwd":"/otro","pane_id":"w9:other-cwd","workspace_id":"w9"},' \
       '{"agent":"prompted","agent_status":"idle","cwd":"'"$(git rev-parse --show-toplevel)"'","pane_id":"w8:other-workspace","workspace_id":"w8"}' \
       ']}}'
@@ -61,6 +65,28 @@ case "${1:-} ${2:-}" in
     ;;
   "agent prompt")
     [ "${3:-}" = "w9:fail" ] && exit 1
+    exit 0
+    ;;
+  "pane process-info")
+    case "${4:-}" in
+      w9:restart-listo)
+        if [ ! -f "$HERDR_READY_POLLED" ]; then
+          : > "$HERDR_READY_POLLED"
+          printf '%s\n' '{"result":{"process_info":{"foreground_process_group_id":99,"shell_pid":42}}}'
+        else
+          printf '%s\n' '{"result":{"process_info":{"foreground_process_group_id":42,"shell_pid":42}}}'
+        fi
+        ;;
+      w9:sin-nombre|w9:inicio-falla)
+        printf '%s\n' '{"result":{"process_info":{"foreground_process_group_id":42,"shell_pid":42}}}'
+        ;;
+      *)
+        printf '%s\n' '{"result":{"process_info":{"foreground_process_group_id":99,"shell_pid":42}}}'
+        ;;
+    esac
+    ;;
+  "agent start")
+    [ "${3:-}" = "restart-fallido" ] && exit 1
     exit 0
     ;;
 esac
@@ -92,11 +118,13 @@ ADAPTER
 
 run_refresh() {
     : > "$HERDR_STUB_LOG"
+    rm -f "$HERDR_READY_POLLED"
     (
         cd "$FAKE_CONSUMER" || exit 99
         env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_WORKSPACE_ID "$@" \
             PATH="$FAKE_BIN:$PATH" MEFISTO_RUNTIME_LIB_DIR="$FAKE_RUNTIME" \
-            HERDR_STUB_LOG="$HERDR_STUB_LOG" \
+            HERDR_STUB_LOG="$HERDR_STUB_LOG" HERDR_READY_POLLED="$HERDR_READY_POLLED" \
+            MEFISTO_REFRESH_EXIT_TIMEOUT="${MEFISTO_REFRESH_EXIT_TIMEOUT:-1}" \
             "$HERDR_SCRIPT" --refresh-agents \
             2>"$TMP_DIR/stderr.log"
     )
@@ -162,7 +190,10 @@ w9:without without omitido:sin-estrategia
 w9:broken broken omitido:sin-estrategia
 w9:ok prompted reload-enviado
 w9:fail prompted omitido:prompt-fallo
-w9:restart restarting omitido:restart-pendiente
+w9:restart-listo restarting reiniciado
+w9:sin-nombre restarting reiniciado
+w9:sin-salida restarting omitido:no-salio
+w9:inicio-falla restarting omitido:relanzamiento-fallo
 EOF
 )
 assert_eq "stdout es exactamente una linea por agente considerado" "$EXPECTED_OUT" "$OUT"
@@ -174,20 +205,23 @@ assert_contains "omite funcion ausente" "$OUT" "w9:without without omitido:sin-e
 assert_contains "omite estrategia fallida" "$OUT" "w9:broken broken omitido:sin-estrategia"
 assert_contains "envia prompt" "$OUT" "w9:ok prompted reload-enviado"
 assert_contains "continua tras fallo de prompt" "$OUT" "w9:fail prompted omitido:prompt-fallo"
-assert_contains "difiere restart" "$OUT" "w9:restart restarting omitido:restart-pendiente"
+assert_contains "reinicia tras salir del runtime" "$OUT" "w9:restart-listo restarting reiniciado"
+assert_contains "reinicia el agente sin nombre" "$OUT" "w9:sin-nombre restarting reiniciado"
+assert_contains "omite restart que no sale antes del timeout" "$OUT" "w9:sin-salida restarting omitido:no-salio"
+assert_contains "continua tras fallo de relanzamiento" "$OUT" "w9:inicio-falla restarting omitido:relanzamiento-fallo"
 assert_not_contains "no informa otro cwd" "$OUT" "other-cwd"
 assert_not_contains "no informa otro workspace" "$OUT" "other-workspace"
-EXPECTED_CALLS=$(cat <<'EOF'
-herdr <agent> <list>
-herdr <agent> <prompt> <w9:ok> <reload all>
-herdr <agent> <prompt> <w9:fail> <reload all>
-EOF
-)
-assert_eq "solo prompt invoca herdr, con pane_id y texto como argumentos" "$EXPECTED_CALLS" "$CALLS"
+assert_contains "envia la salida declarada al pane que reiniciara" "$CALLS" "herdr <agent> <prompt> <w9:restart-listo> </exit>"
+assert_contains "sondea el pane hasta encontrar su shell" "$CALLS" "herdr <pane> <process-info> <--pane> <w9:restart-listo>"
+assert_contains "relanza con el nombre reportado, kind y pane" "$CALLS" "herdr <agent> <start> <restart-nombrado> <--kind> <restarting> <--pane> <w9:restart-listo>"
+assert_contains "usa un nombre derivado del pane sin nombre" "$CALLS" "herdr <agent> <start> <mefisto-refresh-w9-sin-nombre> <--kind> <restarting> <--pane> <w9:sin-nombre>"
+assert_not_contains "no relanza un pane que no salio" "$CALLS" "herdr <agent> <start> <mefisto-refresh-w9-sin-salida> <--kind> <restarting> <--pane> <w9:sin-salida>"
+assert_contains "intenta el relanzamiento que falla" "$CALLS" "herdr <agent> <start> <restart-fallido> <--kind> <restarting> <--pane> <w9:inicio-falla>"
 
 echo "[C] Neutralidad estatica"
 REFRESH_BODY=$(extract_fn cmd_refresh_agents "$HERDR_SCRIPT")
 assert_eq "bloque nuevo no nombra runtimes" "0" "$(printf '%s' "$REFRESH_BODY" | grep -Eic 'claude|opencode')"
+assert_eq "timeout no envia senales ni mata procesos" "0" "$(printf '%s' "$REFRESH_BODY" | grep -Eic '(^|[;&|[:space:]])(kill|pkill|killall)([[:space:]]|$)')"
 
 echo ""
 echo "Resultado: $PASS PASS, $FAIL FAIL"

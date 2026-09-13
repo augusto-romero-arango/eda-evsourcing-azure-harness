@@ -779,12 +779,33 @@ cmd_collapse_panes() {
     echo "${closed:-0}"
 }
 
-# cmd_refresh_agents (issue #1333)
+# cmd_refresh_agents (issues #1333, #1335)
 #
 # Descubre los agentes interactivos del workspace y delega la estrategia de
 # refresco en su adaptador. Este modo no despacha pipelines: fuera de contexto
 # es un no-op silencioso para que los invocadores best-effort no deban detectar
 # previamente el entorno Herdr.
+refresh_agent_name() {
+    local reported_name="$1" pane_id="$2" pane_slug
+    if [ -n "$reported_name" ]; then
+        printf '%s\n' "$reported_name"
+        return
+    fi
+
+    # Los panes sin nombre corresponden a agentes arrancados a mano. El prefijo
+    # garantiza la letra inicial; el slug deja el nombre dentro de los 32
+    # caracteres admitidos por herdr.
+    pane_slug=$(printf '%s' "$pane_id" \
+        | tr '[:upper:]' '[:lower:]' \
+        | sed 's/[^a-z0-9_-]/-/g' \
+        | tr -s '-' \
+        | sed 's/^-//; s/-$//' \
+        | cut -c1-16 \
+        | sed 's/-$//')
+    [ -n "$pane_slug" ] || pane_slug="pane"
+    printf 'mefisto-refresh-%s\n' "$pane_slug"
+}
+
 cmd_refresh_agents() {
     if [ "${HERDR_ENV:-}" != "1" ] \
         || [ -z "${HERDR_PANE_ID:-}" ] || [ -z "${HERDR_WORKSPACE_ID:-}" ] \
@@ -792,10 +813,13 @@ cmd_refresh_agents() {
         return 0
     fi
 
-    local agents pane_id agent status adapter refresh_fn strategy action payload
+    local agents pane_id agent status agent_name adapter refresh_fn strategy action payload
+    local restart_name exit_timeout deadline exit_timed_out
+    exit_timeout="${MEFISTO_REFRESH_EXIT_TIMEOUT:-30}"
+    [[ "$exit_timeout" =~ ^[0-9]+$ ]] || exit_timeout=30
     agents=$(herdr agent list 2>/dev/null) || return 0
 
-    while IFS=$'\t' read -r pane_id agent status; do
+    while IFS=$'\t' read -r pane_id agent status agent_name; do
         [ -n "$pane_id" ] || continue
 
         if [ "$pane_id" = "$HERDR_PANE_ID" ]; then
@@ -835,7 +859,31 @@ cmd_refresh_agents() {
                     printf '%s %s %s\n' "$pane_id" "$agent" "omitido:prompt-fallo"
                 fi ;;
             restart)
-                printf '%s %s %s\n' "$pane_id" "$agent" "omitido:restart-pendiente" ;;
+                if [ "$payload" = "$strategy" ] || [ -z "$payload" ]; then
+                    printf '%s %s %s\n' "$pane_id" "$agent" "omitido:sin-estrategia"
+                    continue
+                fi
+                if ! herdr agent prompt "$pane_id" "$payload" >/dev/null 2>&1; then
+                    printf '%s %s %s\n' "$pane_id" "$agent" "omitido:prompt-fallo"
+                    continue
+                fi
+                deadline=$(( $(date +%s) + exit_timeout ))
+                exit_timed_out=0
+                while ! pane_is_free "$pane_id"; do
+                    if [ "$(date +%s)" -ge "$deadline" ]; then
+                        printf '%s %s %s\n' "$pane_id" "$agent" "omitido:no-salio"
+                        exit_timed_out=1
+                        break
+                    fi
+                    sleep 0.1
+                done
+                [ "$exit_timed_out" -eq 0 ] || continue
+                restart_name=$(refresh_agent_name "$agent_name" "$pane_id")
+                if herdr agent start "$restart_name" --kind "$agent" --pane "$pane_id" >/dev/null 2>&1; then
+                    printf '%s %s %s\n' "$pane_id" "$agent" "reiniciado"
+                else
+                    printf '%s %s %s\n' "$pane_id" "$agent" "omitido:relanzamiento-fallo"
+                fi ;;
             *)
                 printf '%s %s %s\n' "$pane_id" "$agent" "omitido:sin-estrategia" ;;
         esac
@@ -843,7 +891,7 @@ cmd_refresh_agents() {
         --arg workspace "$HERDR_WORKSPACE_ID" --arg cwd "$PROJECT_ROOT" '
             .result.agents[]
             | select(.workspace_id == $workspace and .cwd == $cwd)
-            | [(.pane_id // ""), (.agent // ""), (.agent_status // "")] | @tsv
+            | [(.pane_id // ""), (.agent // ""), (.agent_status // ""), (.name // "")] | @tsv
         ' 2>/dev/null)
 }
 
