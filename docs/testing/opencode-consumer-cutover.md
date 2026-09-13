@@ -376,27 +376,27 @@ coincidencia autorreferencial.
 
 ### Estado de la corrida
 
-**Bloqueada antes de crear fixtures (2026-09-12T21:31:04Z).** El preflight de
-solo lectura confirma que ya existen el consumidor privado y una release
-posterior a `v0.37.0`, pero #1180 no conserva un expediente con veredicto `PASA`
-que certifique la instalacion, el discovery y la identidad `aligned` de esa
-misma release. El cierre administrativo de #1180 mediante un PR que agrego la
-plantilla del expediente no sustituye sus resultados operacionales:
+**Bloqueada para repetir ambas corridas (2026-09-12).** La primera ejecucion
+real alcanzo el corte publicado y descubrio dos defectos que invalidan su
+evidencia como veredicto: Claude no resuelve su propia distribucion cuando el
+marker canonico fue escrito por OpenCode (#1293), y Herdr emite un warning falso
+de onboarding ante la configuracion canonica (#1294). Ambos issues son
+dependencias de esta certificacion; mientras no esten integrados en una release
+nueva, no se crean fixtures adicionales ni se completa una sola fila de forma
+aislada.
 
 | Comando sanitizado | Resultado sanitizado |
 |---|---|
-| `gh issue view 1180 --json state,stateReason,closedAt,url,comments` | #1180 esta cerrado como `COMPLETED` desde `2026-09-12T21:26:40Z`; su ultimo comentario solo enlaza el PR documental #1267 y el protocolo aun registra la corrida de instalacion como bloqueada. No hay expediente #1180 con veredicto `PASA`. |
-| `gh repo view augusto-romero-arango/mefisto-consumer-certification --json isPrivate,defaultBranchRef,url` y consulta de `commits/main` | El repositorio es accesible y privado; `main` apunta a `7a580f7ce7576f51dc1ed1fa5891864d7be3a2e6`. Este dato no demuestra por si solo onboarding, instalaciones ni discovery certificados. |
-| `gh release view v0.37.11 --repo augusto-romero-arango/eda-evsourcing-azure-harness --json tagName,publishedAt,url,assets` | `v0.37.11` fue publicada con los dos assets OpenCode esperados. No se infiere desde su existencia que ambos runtimes la tengan instalada ni alineada. |
+| Primera corrida real de `/mefisto:tooling` desde Herdr | Descubrio #1293 al resolver Claude contra un marker canonico escrito por OpenCode; la corrida no es reutilizable para el veredicto. |
+| Apertura real de `herdr-workspace.sh` sobre el consumidor | Descubrio #1294: la configuracion canonica produce un warning falso de onboarding; el warning impide aceptar la observacion como limpia. |
+| Repeticion posterior | Pendiente de una release que contenga #1293 y #1294, con #1180 certificado `PASA` para esa misma release. |
 
-Por ello no se crearon issues o PRs fixture, no se abrio Herdr y no se invoco
-`/mefisto:tooling`. Hacerlo antes de ejecutar y conservar el preflight completo
-de #1180 inventaria la evidencia que MEF-ADR-0031 y MEF-ADR-0053 exigen obtener
-de operaciones reales. Este bloqueo de prerrequisito no demuestra un fallo de
-runtime y **no satisface #1181**. Primero se debe repetir #1180 sobre una release
-candidata concreta hasta obtener `PASA`; despues se repite desde el inicio el
-procedimiento de esta seccion y se sustituye este bloque por la evidencia
-redactada y el veredicto de las dos corridas.
+La evidencia parcial no se mezcla con la repeticion: tras publicar la correccion,
+se repiten desde el inicio **las dos** corridas sobre el mismo baseline limpio y
+la misma identidad `aligned`. Completar solo Claude u OpenCode, o conservar
+panes, streams, worktrees, ramas o logs de este intento, no satisface #1181 ni
+MEF-ADR-0031/MEF-ADR-0053. El reporte final reemplaza este bloque con la evidencia
+redactada y el veredicto comun; hasta entonces #1181 permanece bloqueado.
 
 Se abren **dos issues distintos**, ambos en el consumidor, con labels
 `tipo:tooling`, `dom:certificacion` y `estado:listo`: uno para Claude y uno para
