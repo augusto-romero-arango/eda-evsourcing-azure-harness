@@ -19,16 +19,17 @@ El mantenedor informo que los issues #7 y #8 del consumidor privado `mefisto-con
 
 - Se registro en #1181 la confirmacion explicita del mantenedor: consumer #7 corresponde a Claude, consumer #8 a OpenCode, ambas corridas usaron v0.37.15, terminaron con checks verdes y dejaron el baseline limpio.
 - No se consulto ni modifico el repositorio consumidor desde el planner interno; se enlazaron sus issues y se preservo la frontera de MEF-ADR-0019.
-- #1181 queda listo para lanzarse con `/mefisto-tooling 1181` y documentar el expediente verificable; #1066 sigue esperando que #1181 cierre.
+- El PR #1304 cerro #1181, pero su revision verifico que los templates y fixtures persistidos aun identifican v0.37.14 y que faltan checks, observabilidad y limpieza demostrables. El mantenedor aclaro que v0.37.14 fue el intento fallido y que los mismos issues si completaron funcionalmente bajo v0.37.15.
+- Se reabrio #1181 con label `bloqueado`: el resultado funcional de v0.37.15 se conserva como valido, pero falta reconciliarlo con evidencia persistida que satisfaga CA-1 a CA-6. Se restauro tambien `bloqueado` en #1066.
 
 ## Descartado
 
-- Cerrar #1181 solo con la confirmacion verbal: el issue aun debe versionar la evidencia en `docs/testing/opencode-consumer-cutover.md`.
+- Mantener #1181 cerrado por el merge de #1304: ese PR documento un expediente fail-closed, no un veredicto `PASA`.
 - Gestionar o consultar los issues/PRs del consumidor mediante `gh -R`: esta prohibido para el planner interno.
 
 ## Preguntas abiertas
 
-- Falta ejecutar `/mefisto-tooling 1181`; despues podra refinarse o desbloquearse el veredicto final #1066.
+- Falta producir evidencia de v0.37.15 coherente con la ejecucion exitosa y completar checks, observabilidad, centinelas y limpieza; despues podra refinarse o desbloquearse #1066.
 
 ## Referencias
 
