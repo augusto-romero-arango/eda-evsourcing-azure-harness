@@ -2,7 +2,7 @@
 
 - **Fecha**: 2026-07-19
 - **Estado**: aceptado
-- **Aplica a**: `domain-scaffolder` (templates `deploy-*.yml`, `smoke-tests-dominio.yml`, endpoint `/api/version`, `Fixtures/ApiFixture.cs`); y, desde la seccion 5 (issue #462), `projections-scaffolder` (Dockerfile del worker de proyecciones, seam `ConfiguracionObservabilidadProjections`, `deploy-projections.yml`). Desde la seccion 6 (issue #671) suma el endpoint dedicado `/api/ready` (cobertura de la capa de datos) y el paso de poll correspondiente en `smoke-tests-dominio.yml`; la materializacion de ese alcance en `domain-scaffolder` es el issue #675 (bloqueado por este). La enmienda del presupuesto de `/api/version` se materializa separadamente en `domain-scaffolder` (issue #1273) y `mcp-scaffolder` (issue #1274), conservando sus implementaciones deliberadamente distintas. Cross-referencia MEF-ADR-0013 (smoke tests, contexto relacionado, no enmendado), MEF-ADR-0006 (naming del endpoint), MEF-ADR-0009 (mensajes `.resx` por handler, ancla el cuerpo diagnosticable de `/api/ready`), MEF-ADR-0018 (heuristicas de evolucion, ancla el no-cache sin parametro y la propagacion separada), MEF-ADR-0020 (hosting, ancla `WEBSITE_RUN_FROM_PACKAGE`, el piso de SKU y el default `always_on = true`) y MEF-ADR-0034 (worker de proyecciones sin ingress, seam de observabilidad que consume la seccion 5, y doctrina de compatibilidad de configuracion Marten que motiva diferir la Alt 5).
+- **Aplica a**: `domain-scaffolder` (templates `deploy-*.yml`, `smoke-tests-dominio.yml`, endpoint `/api/version`, `Fixtures/ApiFixture.cs`); y, desde la seccion 5 (issue #462), `projections-scaffolder` (Dockerfile del worker de proyecciones, seam `ConfiguracionObservabilidadProjections`, `deploy-projections.yml`). Desde la seccion 6 (issue #671) suma el endpoint dedicado `/api/ready` (cobertura de la capa de datos) y el paso de poll correspondiente en `smoke-tests-dominio.yml`; la materializacion de ese alcance en `domain-scaffolder` es el issue #675 (bloqueado por este). La enmienda del presupuesto de `/api/version` se materializa separadamente en `domain-scaffolder` (issue #1273) y `mcp-scaffolder` (issue #1274), conservando sus implementaciones deliberadamente distintas. Cross-referencia MEF-ADR-0013 (smoke tests, contexto relacionado, no enmendado), MEF-ADR-0006 (naming del endpoint), MEF-ADR-0009 (mensajes `.resx` por handler, ancla el cuerpo diagnosticable de `/api/ready`), MEF-ADR-0018 (heuristicas de evolucion, ancla el no-cache sin parametro y la propagacion separada), MEF-ADR-0020 (hosting, ancla `WEBSITE_RUN_FROM_PACKAGE`, el piso de SKU y el default `always_on = true`), MEF-ADR-0034 (worker de proyecciones sin ingress, seam de observabilidad que consume la seccion 5, y doctrina de compatibilidad de configuracion Marten que motiva diferir la Alt 5) y MEF-ADR-0048 (extiende este gate a los Function Apps MCP sin fijar un presupuesto propio).
 
 ## Contexto
 
@@ -92,10 +92,12 @@ fuera de alcance: requiere OIDC, permisos y parsing de logs anexados. Tampoco se
 primer startup fallido, porque App Service puede reintentar el mismo artefacto automaticamente **[10]**;
 necesitar mas de un reintento sigue siendo un fallo que debe salir rojo.
 
-La doctrina se propaga en dos issues separados: #1273 a `domain-scaffolder`, cuyo fixture usa deadline
-temporal e intervalo de 5 s, y #1274 a `mcp-scaffolder`, que conserva por ahora su conteo de intentos
-propio. Esta duplicacion deliberada sigue la heuristica de evolucion de MEF-ADR-0018: los agentes no se
-mezclan ni se extrae una abstraccion antes de evidencia de evolucion conjunta.
+La doctrina se propaga en dos issues separados: #1273 a `domain-scaffolder`, cuyo fixture ya usa un
+deadline temporal con intervalo de 5 s, y #1274 a `mcp-scaffolder`, cuya materializacion actual usa un
+conteo de 60 intentos con intervalo de 2 s. Esta duplicacion deliberada sigue la heuristica de evolucion
+de MEF-ADR-0018: los agentes no se mezclan ni se extrae una abstraccion antes de evidencia de evolucion
+conjunta. MEF-ADR-0048 extiende el mecanismo de este ADR a los Function Apps MCP, pero no fija una
+duracion propia; por eso #1274 debe adoptar este nuevo presupuesto sin enmendar aquel ADR.
 
 ### 4. Fallback a "solo 200" -- correcto solo si ningun deploy concurrente toca el FA bajo prueba
 
@@ -544,7 +546,8 @@ la causa.
 - MEF-ADR-0009 (mensajes en `.resx` por aggregate/handler): ancla `ReadyCheckMensajes.resx` (seccion 6),
   el cuerpo diagnosticable del 503 de `/api/ready`.
 - MEF-ADR-0018 (heuristicas de evolucion y reuso del codigo): ancla la decision de la seccion 6 de no
-  agregar un parametro de cache al probe sin un caso de uso que lo necesite.
+  agregar un parametro de cache al probe sin un caso de uso que lo necesite y la propagacion separada
+  de las dos implementaciones del gate por SHA.
 - MEF-ADR-0020 (hosting, un App Service Plan dedicado por dominio): ancla `WEBSITE_RUN_FROM_PACKAGE=1`
   (`agents/infra-base-scaffolder.md`) y el piso de SKU `B1` que descarta, por ahora, la Alt 4
   (deployment slots); y, ya enmendado por el issue #652, el default `always_on = true` que la seccion 6
@@ -557,13 +560,15 @@ la causa.
   `ConfiguracionObservabilidadProjections`, el consumidor de `SourceRevisionId` en el read-side); y la
   doctrina de compatibilidad de configuracion Marten write-side/read-side (los pares que deben
   coincidir) que la Alt 5 de la seccion 6 cita como motivo para diferir `ApplyAllDatabaseChangesOnStartup`.
+- MEF-ADR-0048 (testing de servidores MCP): extiende el mecanismo de `/api/version` de este ADR a los
+  Function Apps MCP sin fijar un presupuesto propio; la propagacion concreta corresponde al issue #1274.
 
 ## Control de cambios
 
 - 2026-07-19: creacion como `aceptado` (issue #325). Fija el mecanismo de readiness gate por SHA:
   `SourceRevisionId` horneado en el paso `dotnet build`, endpoint `/api/version` dedicado y anonimo,
-  warmup por poll en `ApiFixture` con timeout inicial de 120s, e input opcional `expected_sha` que degrada a
-  "solo 200" cuando no hay un deploy real al que atar el SHA esperado.
+  warmup por poll en `ApiFixture` con timeout inicial de 120 s, e input opcional `expected_sha` que
+  degrada a "solo 200" cuando no hay un deploy real al que atar el SHA esperado.
 - 2026-07-29: suma la seccion 5 (issue #462). Extiende el alcance al read-side: el worker de
   proyecciones (sin ingress, MEF-ADR-0034) reutiliza el mismo mecanismo de horneado de
   `SourceRevisionId`, pero horneado en el `dotnet publish` del Dockerfile (no en `dotnet build`, a
@@ -598,8 +603,8 @@ la causa.
   probe via `FetchStreamStateAsync` sobre un stream centinela inexistente (fuerza la
   verificacion/creacion de schema de Marten sin leer datos reales), sin cache del positivo (doctrina
   fija del marco, sin parametro, MEF-ADR-0018), 503 en vez de 500 con cuerpo diagnosticable
-   (`ReadyCheckMensajes.resx`, MEF-ADR-0009), y un timeout de poll de 120s, que entonces coincidia con
-   el presupuesto del punto 3.
+  (`ReadyCheckMensajes.resx`, MEF-ADR-0009), y un timeout de poll de 120 s, que entonces coincidia con
+  el presupuesto del punto 3.
   El fundamento es defensa en profundidad de bajo costo (instancia nueva en cada deploy aun con
   `always_on`, MEF-ADR-0020 ya enmendado por #652; y materializacion de esquema en el primer deploy de
   un dominio nuevo) -- explicitamente no la narrativa del incidente de 74s que origino el par de
@@ -616,8 +621,9 @@ la causa.
   (exit code 134), App Service reintento el mismo artefacto y este quedo sano despues de que el gate
   anterior ya habia salido rojo. El presupuesto cubre un unico reintento: 230 s del default de
   `WEBSITES_CONTAINER_START_TIME_LIMIT` + ~95 s de teardown/reinicio observado + 92 s del peor swap
-  sano = ~417 s, redondeados. Conserva como unico exito la coincidencia del SHA esperado y tolera HTTP
-  transitorio; al timeout exige reportar SHA esperado, ultima respuesta o SHA visto y la ruta manual
+  sano = ~417 s, redondeados. Conserva como unico exito la coincidencia del SHA esperado y tolera
+  indisponibilidad HTTP transitoria; al timeout exige reportar SHA esperado, ultima respuesta o SHA
+  visto y la ruta manual
   Kudu de StartupLogs, sin leerla activamente ni agregar OIDC o parsing. No falla rapido ante el primer
   startup fallido porque la plataforma puede reintentarlo; mas de un reintento sigue saliendo rojo.
   Mantiene `/api/ready` en 120 s como presupuesto independiente de Marten/Postgres, no como "el mismo"
