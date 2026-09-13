@@ -132,9 +132,14 @@ cero del adaptador.
 
 Cada `lib/runtime-<id>.sh` implementa `runtime_<id>_is_available` (probe sin
 leer credenciales), `runtime_<id>_build_cmd` y `runtime_<id>_translate`; puede
-implementar `runtime_<id>_supports_resume` y
-`runtime_<id>_default_model <profile>`. La ausencia de esta ultima funcion
-significa heredar el modelo activo. El resolutor respeta `--runtime` ->
+implementar `runtime_<id>_supports_resume`, `runtime_<id>_interactive_refresh`
+y `runtime_<id>_default_model <profile>`. `runtime_<id>_interactive_refresh` es
+opcional: imprime por stdout exactamente una linea `prompt <texto>` para
+inyectar `<texto>` como entrada en una sesion interactiva viva, o `restart
+<comando-de-salida>` para enviar ese comando, esperar que termine el proceso y
+relanzar el runtime en el mismo pane. La ausencia de la funcion significa que
+el runtime no sabe refrescarse y el consumidor omite ese pane. La ausencia de
+`runtime_<id>_default_model` significa heredar el modelo activo. El resolutor respeta `--runtime` ->
 `MEFISTO_RUNTIME` -> autodeteccion. Esta ultima escanea adaptadores y ejecuta
 sus probes: un runtime nuevo no exige modificar el runner ni el resolutor.
 

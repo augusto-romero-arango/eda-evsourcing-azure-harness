@@ -169,7 +169,7 @@ fi
 
 # shellcheck source=/dev/null
 source "$CLAUDE_LIB" 2>/dev/null
-for fn in runtime_claude_build_cmd runtime_claude_translate runtime_claude_supports_resume; do
+for fn in runtime_claude_build_cmd runtime_claude_translate runtime_claude_supports_resume runtime_claude_interactive_refresh; do
     if declare -F "$fn" >/dev/null 2>&1; then
         pass "$fn definida"
     else
@@ -307,6 +307,12 @@ if runtime_claude_supports_resume; then
     pass "A-13: runtime_claude_supports_resume retorna 0 (Claude Code soporta reanudacion)"
 else
     fail "A-13: runtime_claude_supports_resume deberia retornar 0"
+fi
+
+if REFRESH_OUTPUT="$(runtime_claude_interactive_refresh)" && [ "$REFRESH_OUTPUT" = "prompt /reload-plugins" ]; then
+    pass "A-14: runtime_claude_interactive_refresh imprime exactamente 'prompt /reload-plugins' sin invocar el CLI"
+else
+    fail "A-14: refresh interactivo Claude inesperado: '$REFRESH_OUTPUT'"
 fi
 
 # ============================================================================

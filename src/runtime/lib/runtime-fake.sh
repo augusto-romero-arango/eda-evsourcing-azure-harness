@@ -131,6 +131,16 @@ runtime_fake_supports_resume() {
     [ "${MEFISTO_FAKE_SUPPORTS_RESUME:-}" = "1" ]
 }
 
+# --- runtime_fake_interactive_refresh ------------------------------------
+
+# Conservador como runtime_fake_supports_resume: sin un guion explicito, el
+# fake simula que el runtime no conoce una estrategia de refresh interactivo.
+# Con valor, lo reenvia literal para que los tests puedan ejercer ambos modos.
+runtime_fake_interactive_refresh() {
+    [ -n "${MEFISTO_FAKE_INTERACTIVE_REFRESH:-}" ] || return 1
+    printf '%s\n' "$MEFISTO_FAKE_INTERACTIVE_REFRESH"
+}
+
 # --- runtime_fake_translate ----------------------------------------------
 
 runtime_fake_translate() {

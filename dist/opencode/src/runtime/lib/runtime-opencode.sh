@@ -274,6 +274,15 @@ runtime_opencode_supports_resume() {
     return 0
 }
 
+# runtime_opencode_interactive_refresh (issue #1332)
+#
+# OpenCode no recarga commands/agents/skills durante una sesion viva. `/exit`
+# es el comando de salida mostrado por la ayuda del TUI local; el consumidor lo
+# envia, espera el proceso y relanza el runtime en el mismo pane.
+runtime_opencode_interactive_refresh() {
+    printf '%s\n' 'restart /exit'
+}
+
 # --- runtime_opencode_translate ----------------------------------------------
 
 runtime_opencode_translate() {
