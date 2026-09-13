@@ -2324,9 +2324,8 @@ namespace <RootNamespace>.{PascalCase}.SmokeTests.Fixtures;
 
 public class ApiFixture : IAsyncLifetime
 {
-    // MEF-ADR-0031: el doble de la ventana de swap observada en el incidente de origen (~1 minuto),
-    // como margen de seguridad. Ajustable si un dominio concreto necesita mas.
-    private static readonly TimeSpan TimeoutGatePorVersion = TimeSpan.FromSeconds(120);
+    // MEF-ADR-0031: cubre un intento de startup de App Service, su posible reinicio y el swap sano.
+    private static readonly TimeSpan TimeoutGatePorVersion = TimeSpan.FromSeconds(420);
     private static readonly TimeSpan IntervaloPoll = TimeSpan.FromSeconds(5);
 
     public HttpClient Client { get; private set; } = null!;
@@ -2363,6 +2362,9 @@ public class ApiFixture : IAsyncLifetime
         // nuevo. Poll de /api/version hasta que reporte el SHA horneado en este deploy.
         var deadline = DateTime.UtcNow + TimeoutGatePorVersion;
         string? ultimoShaVisto = null;
+        var appHost = Client.BaseAddress.Host;
+        var appName = appHost[..^".azurewebsites.net".Length];
+        var startupLogsUrl = $"https://{appName}.scm.azurewebsites.net/api/vfs/LogFiles/StartupLogs/";
 
         while (DateTime.UtcNow < deadline)
         {
@@ -2390,7 +2392,8 @@ public class ApiFixture : IAsyncLifetime
 
         throw new InvalidOperationException(
             $"El entorno {baseUrl} no sirvio el SHA esperado ({expectedSha}) en " +
-            $"{TimeoutGatePorVersion.TotalSeconds}s. Ultimo SHA visto: {ultimoShaVisto ?? "ninguno"}.");
+            $"{TimeoutGatePorVersion.TotalSeconds}s. Ultimo SHA visto: {ultimoShaVisto ?? "ninguno"}. " +
+            $"Revisa los StartupLogs de Kudu: {startupLogsUrl}");
     }
 
     public ValueTask DisposeAsync()
@@ -3482,6 +3485,8 @@ Ambos archivos son **idempotentes** (misma logica de "si existe / si no existe" 
 >
 > **Orden obligatorio de los dos parches: primero el endpoint en todos los dominios, despues el workflow.** Este reutilizable es **uno por repo** y lo invocan los smoke tests de **todos** los dominios, asi que el step nuevo polea `/api/ready` tambien en los que se scaffoldearon antes de esta enmienda. Un dominio sin `ReadyCheck.cs` responde 404 a esa ruta, y `curl --fail` no distingue "todavia no arranco" de "este dominio no tiene el endpoint": la compuerta agota sus 120s y **tumba la suite** de ese dominio. Aplica primero el parche del Paso 1 (`ReadyCheck.cs` + `.Mensajes.cs` + `.resx` + probe + registro de DI) a **cada** dominio ya scaffoldeado, y solo entonces inserta el step aqui.
 
+> **Repos ya scaffoldeados antes del fix del issue #1273**: el scaffolder no sobrescribe proyectos ni workflows existentes. Actualiza manualmente `Fixtures/ApiFixture.cs` de cada suite de smoke: cambia `TimeoutGatePorVersion` a 420 s y agrega al error de agotamiento el SHA esperado, el ultimo SHA observado y la URL de `StartupLogs` de Kudu derivada del host de la Function App. El poll de `/api/ready` conserva su presupuesto independiente de 120 s.
+
 **Transcripcion byte-a-byte (issue #241).** Dos dominios pueden scaffoldearse en paralelo desde el mismo `origin/main`, cada uno viendo estos archivos ausentes y generandolos a la vez. Si ambas ramas los transcriben literal, el merge es un add/add de archivos identicos (benigno, sin conflicto); si alguna normaliza espacios, reordena claves o resume comentarios, el add/add se vuelve un conflicto real. Copia los bloques YAML de 6.1 y 6.2 **tal cual aparecen abajo**: sin normalizar indentacion, sin reordenar, sin resumir ni omitir comentarios.
 
 **6.1 - Reutilizable `smoke-tests-dominio.yml`**
@@ -3609,7 +3614,7 @@ jobs:
         # ventana de arranque frio que el always_on de MEF-ADR-0020 ya cerro. Corre siempre, sin
         # condicion sobre expected_sha: a diferencia del warmup por SHA (que necesita saber que
         # version espera), esta solo verifica que el event store este listo para recibir trafico.
-        # Mismo timeout de 120s que fija el punto 3 de ese ADR para /api/version.
+        # Presupuesto independiente de 120s para la capa de datos, no comparte el timeout del gate por SHA.
         run: |
           set -euo pipefail
           TIMEOUT=120
