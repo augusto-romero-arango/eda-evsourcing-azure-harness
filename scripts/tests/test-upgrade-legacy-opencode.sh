@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Verifica la clasificacion estrecha del launcher anterior a projection-status y
-# el contrato de confirmacion de commands/upgrade.md (issue #1270).
+# los contratos de confirmacion y refresco Herdr de commands/upgrade.md
+# (issues #1270 y #1336).
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,6 +14,7 @@ pass() { printf '  PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
 fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
 assert_eq() { [ "$1" = "$2" ] && pass "$3" || fail "$3 (esperado: $1; obtenido: $2)"; }
 assert_contains() { case "$1" in *"$2"*) pass "$3" ;; *) fail "$3" ;; esac; }
+assert_not_contains() { case "$1" in *"$2"*) fail "$3" ;; *) pass "$3" ;; esac; }
 
 # Ejecuta exactamente el bloque de discovery publicado contra un launcher fixture.
 discovery_status() {
@@ -75,6 +77,17 @@ assert_contains "$content" 'Solo si responde exactamente `si`, usa una vez `--al
 assert_contains "$content" 'si declina o no responde, actualiza solo Claude y no modifica releases, ledger, enlaces ni configuracion OpenCode' 'declinar legacy no muta OpenCode'
 assert_contains "$content" 'Para `conflict`, `operation-in-progress` o `unavailable`' 'estados fail-closed conservan su rama'
 assert_contains "$content" 'Nunca pases `--align-opencode`; no los reinterpretes como `legacy` ni como consentimiento.' 'estados fail-closed no habilitan alineacion'
+
+echo '[Herdr] refresh automatico desde la release destino'
+refresh_section=$(printf '%s\n' "$content" | awk '/^### 4\. Refrescar agentes Herdr/{capture=1} /^### 5\./{capture=0} capture')
+assert_contains "$refresh_section" 'if [ "${HERDR_ENV:-}" = "1" ]; then' 'el refresh solo se ejecuta dentro de Herdr'
+assert_contains "$refresh_section" 'PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null || true)' 'relee best-effort la raiz escrita por el update'
+assert_not_contains "$refresh_section" 'plugins/cache' 'no sustituye la raiz destino por una release inferida del cache'
+assert_contains "$refresh_section" 'HERDR_REFRESH=$("$PLUGIN_SCRIPTS/herdr-pipeline.sh" --refresh-agents 2>/dev/null || true)' 'descarta stderr y tolera fallos del refresh'
+assert_contains "$refresh_section" 'Sin panes Herdr que refrescar' 'declara el reporte para una salida vacia'
+assert_contains "$refresh_section" 'Pane`, `Runtime` y `Accion' 'declara la tabla sin reinterpretar acciones'
+assert_contains "$content" 'Si el reporte Herdr incluyo `omitido:working` u `omitido:blocked`' 'los panes ocupados conservan el reload manual diferido'
+assert_contains "$content" 'automatico y best-effort; nunca interrumpe un pane ocupado ni el pane propio' 'las reglas protegen panes ocupados y el propio'
 
 printf 'RESULTADO: %s pasaron, %s fallaron\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
