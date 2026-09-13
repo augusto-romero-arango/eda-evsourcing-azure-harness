@@ -985,13 +985,16 @@ derive_stage_log_from_stream() {
 #
 # Deriva las metricas de un stage a partir del stream JSON crudo que
 # tdd-pipeline.sh ya captura con `claude -p --output-format stream-json
-# --verbose` (issue #645): turnos, duraciones (total/API/no-API), costo,
+# --verbose` (issue #645): turnos, duraciones (total/API/no-API), costo
+# estimado o costo legado, tokens
 # tokens desglosados, modelo, motivo de fin y un histograma de tool calls por
 # nombre (count + tiempo atribuido, suma y mediana, via emparejamiento
 # tool_use.id <-> tool_use_id, ambos fechados por el `timestamp` ISO-8601 de
 # nivel superior de cada evento). Porte esencialmente literal del interno
-# (.claude/scripts/_mefisto-common.sh) -- mismo parseo tolerante y mismas
-# notas tecnicas, sin cambios de comportamiento.
+# interno neutral, conservando el fallback tolerante para trazas Claude previas
+# al contrato. Los terminales neutrales nuevos se copian sin reinterpretarlos;
+# una traza Claude previa conserva `total_cost_usd` exclusivamente como
+# `cost_usd` legado, nunca como estimacion.
 #
 # Imprime por stdout un JSON compacto de una sola linea, o el literal "null"
 # si no hay nada que derivar. Nunca aborta y siempre retorna 0 (CA-4): sin
@@ -1012,7 +1015,9 @@ compute_stage_metrics() {
 
     # El protocolo neutral no expone texto/wire data. Su terminal contiene las
     # cifras correlacionables; esta rama se selecciona por vocabulario, nunca por
-    # runtime, para no reinterpretar accidentalmente un stream nativo.
+    # runtime, para no reinterpretar accidentalmente un stream nativo. Los cinco
+    # contadores y estimated_cost_usd se copian tal cual: jq `//` conserva 0 y
+    # solo usa el operando derecho para null o false.
     if jq -R -s -e 'split("\n") | map(try fromjson catch empty) | any(.[]; .type == "run.completed" or .type == "run.failed")' "$stream_file" >/dev/null 2>&1; then
         local neutral
         neutral=$(jq -R -s -c '
@@ -1023,8 +1028,14 @@ compute_stage_metrics() {
                 duration_ms: ($t.duration_ms // $t.duration),
                 duration_api_ms: ($t.api_duration_ms // $t.duration_api_ms),
                 non_api_ms: (if (($t.duration_ms // $t.duration) != null and ($t.api_duration_ms // $t.duration_api_ms) != null) then (($t.duration_ms // $t.duration) - ($t.api_duration_ms // $t.duration_api_ms)) else null end),
-                cost_usd: ($t.cost_usd // $t.total_cost_usd),
-                tokens: ($t.tokens // {input: $t.usage.input_tokens, output: $t.usage.output_tokens, cache_read: $t.usage.cache_read_input_tokens, cache_creation: $t.usage.cache_creation_input_tokens}),
+                estimated_cost_usd: $t.estimated_cost_usd,
+                tokens: {
+                  input: ($t.tokens.input // $t.usage.input_tokens),
+                  output: ($t.tokens.output // $t.usage.output_tokens),
+                  cache_read: ($t.tokens.cache_read // $t.usage.cache_read_input_tokens),
+                  cache_write: ($t.tokens.cache_write // $t.tokens.cache_creation // $t.usage.cache_write_input_tokens // $t.usage.cache_creation_input_tokens),
+                  reasoning: ($t.tokens.reasoning // $t.usage.reasoning_tokens)
+                },
                 model: ($t.model // $t.effective_model),
                 is_error: ($t.type == "run.failed"),
                 stop_reason: $t.status,
@@ -1114,12 +1125,16 @@ compute_stage_metrics() {
                 duration_ms: $result.duration_ms,
                 duration_api_ms: $result.duration_api_ms,
                 non_api_ms: (if ($result.duration_ms != null and $result.duration_api_ms != null) then ($result.duration_ms - $result.duration_api_ms) else null end),
+                # total_cost_usd de Claude stream-json es un dato legado: se
+                # conserva bajo cost_usd y no se rebautiza como estimacion.
+                estimated_cost_usd: null,
                 cost_usd: $result.total_cost_usd,
                 tokens: {
                     input: $result.usage.input_tokens,
                     output: $result.usage.output_tokens,
                     cache_read: $result.usage.cache_read_input_tokens,
-                    cache_creation: $result.usage.cache_creation_input_tokens
+                    cache_write: $result.usage.cache_creation_input_tokens,
+                    reasoning: $result.usage.reasoning_tokens
                 },
                 model: ($model_from_init // $model_from_assistant),
                 is_error: $result.is_error,

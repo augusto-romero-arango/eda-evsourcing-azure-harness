@@ -10,7 +10,8 @@
 # _pipeline-common.sh:
 #
 #   - compute_stage_metrics <stream_file>: porte esencialmente literal del
-#     interno -- turnos, duraciones (total/API/no-API), costo, tokens
+#     interno -- turnos, duraciones (total/API/no-API), costo estimado o
+#     legado, tokens
 #     desglosados, modelo, motivo de fin y un histograma de tool calls por
 #     nombre. Imprime JSON compacto o "null"; nunca aborta (CA-4).
 #   - build_agents_history_json <key> <agent> <dur> <metrics> [...]:
@@ -31,26 +32,30 @@
 # Casos cubiertos:
 #   [pre] compute_stage_metrics y build_agents_history_json estan definidas
 #       en scripts/_pipeline-common.sh.
-#   [A] compute_stage_metrics: stream completo -> turnos/tokens/modelo/tool
-#       calls derivados (smoke test del porte).
-#   [B] compute_stage_metrics: sin evento result / stream vacio / jq ausente
+#   [A] compute_stage_metrics: terminal neutral nuevo completo, con costo
+#       estimado y los cinco tokens copiados sin recalcular.
+#   [B] compute_stage_metrics: terminal neutral nuevo con nulos/cero y
+#       terminal legacy, que conserva costo ausente como estimacion null.
+#   [C] compute_stage_metrics: fallback Claude previo al contrato conserva
+#       total_cost_usd solo como cost_usd legado.
+#   [D] compute_stage_metrics: sin evento result / stream vacio / jq ausente
 #       -> "null", nunca aborta (CA-4).
-#   [C] build_agents_history_json con 2 grupos (paridad con el interno):
+#   [E] build_agents_history_json con 2 grupos (paridad con el interno):
 #       agrega metrics preservando duration, agent se inyecta en
 #       metrics.agent.
-#   [D] build_agents_history_json: metrics null -> no se inventa un campo
+#   [F] build_agents_history_json: metrics null -> no se inventa un campo
 #       "agent" (CA-1 nota: el campo vive DENTRO del esquema de metrics, no
 #       hay donde anidarlo si metrics es null).
-#   [E] build_agents_history_json: agent="" no agrega el campo aunque metrics
+#   [G] build_agents_history_json: agent="" no agrega el campo aunque metrics
 #       si sea un objeto (clave que siempre usa el mismo agente, ej reviewer).
-#   [F] build_agents_history_json: N>2 grupos (generalizacion, CA-2 -- claves
+#   [H] build_agents_history_json: N>2 grupos (generalizacion, CA-2 -- claves
 #       nuevas solo aparecen cuando el caller las incluye).
-#   [G] build_agents_history_json: sin jq degrada a plano, SOLO "duration"
+#   [I] build_agents_history_json: sin jq degrada a plano, SOLO "duration"
 #       por clave, sin "metrics" ni "agent" (CA-4/CA-5).
-#   [H] Integracion: la linea de historial resultante es JSON valido de una
+#   [J] Integracion: la linea de historial resultante es JSON valido de una
 #       sola linea (CA-4/CA-6) y conserva duration numerico ademas de agregar
 #       metrics.
-#   [L] Cableado en tdd-pipeline.sh (CA-1 a CA-5):
+#   [K] Cableado en tdd-pipeline.sh (CA-1 a CA-5):
 #       - compute_stage_metrics se invoca al cierre de cada run_agent.
 #       - build_agents_history_json alimenta las dos entradas de historial
 #         (completed y la de abort).
@@ -105,61 +110,104 @@ done
 
 cat > "$TMP/neutral.events.jsonl" <<'EOF'
 {"v":1,"type":"run.started","runtime":"opencode","agent":"tooling-writer","model":null}
-{"v":1,"type":"run.completed","status":"success","runtime":"opencode","model":"openai/gpt-5","session_id":"ses-1","duration_ms":900,"tokens":{"input":12,"output":4},"cost_usd":0.1,"turns":3,"denials":0,"ttft_ms":20,"api_duration_ms":700,"error":null}
+{"v":1,"type":"run.completed","status":"success","runtime":"opencode","model":"openai/gpt-5","session_id":"ses-1","duration_ms":900,"tokens":{"input":12,"output":4,"cache_read":3,"cache_write":2,"reasoning":1},"estimated_cost_usd":0.1,"turns":3,"denials":0,"ttft_ms":20,"api_duration_ms":700,"error":null}
 EOF
 N_BASE="$(compute_stage_metrics "$TMP/neutral.events.jsonl")"
 N_OUT="$(enrich_tooling_stage_metrics "$TMP/neutral.events.jsonl" "$N_BASE" 1063 '"variante-a"' 1 tooling-writer balanced '{"harness_version":"1.2.3","harness_commit":"0123456789abcdef0123456789abcdef01234567","identity_state":"complete"}')"
-if printf '%s' "$N_OUT" | jq -e '.pipeline == "tooling" and .issue == "1063" and .variant == "variante-a" and .stage == "1" and .agent == "tooling-writer" and .runtime == "opencode" and .profile == "balanced" and .requested_model == null and .effective_model == "openai/gpt-5" and .inherited == true and .session_id == "ses-1" and .result == "success" and .duration_api_ms == 700 and .non_api_ms == 200 and .harness_version == "1.2.3" and .identity_state == "complete"' >/dev/null; then
-    pass "pre-4: metricas neutrales conservan forma legacy y dimensiones de correlacion"
+if printf '%s' "$N_OUT" | jq -e '.pipeline == "tooling" and .issue == "1063" and .variant == "variante-a" and .stage == "1" and .agent == "tooling-writer" and .runtime == "opencode" and .profile == "balanced" and .requested_model == null and .effective_model == "openai/gpt-5" and .inherited == true and .session_id == "ses-1" and .result == "success" and .duration_api_ms == 700 and .non_api_ms == 200 and .estimated_cost_usd == 0.1 and .tokens == {"input":12,"output":4,"cache_read":3,"cache_write":2,"reasoning":1} and (has("cost_usd") | not) and .harness_version == "1.2.3" and .identity_state == "complete"' >/dev/null; then
+    pass "pre-4: metricas neutrales conservan contrato nuevo y dimensiones de correlacion"
 else
     fail "pre-4: metricas neutrales incompletas: $N_OUT"
 fi
 
-# -------- Bloque A: compute_stage_metrics, smoke test del porte --------
+# -------- Bloque A: terminal neutral nuevo completo --------
 
 echo ""
-echo "[A] compute_stage_metrics: stream completo -> campos derivados (smoke test del porte)"
+echo "[A] compute_stage_metrics: terminal neutral nuevo copia costo estimado y tokens"
 
 cat > "$TMP/a-stream.jsonl" <<'EOF'
-{"type":"system","subtype":"init","session_id":"abc","model":"claude-sonnet-5"}
-{"type":"assistant","timestamp":"2026-08-16T10:00:00.000Z","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Read","input":{}}]}}
-{"type":"user","timestamp":"2026-08-16T10:00:00.400Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok"}]}}
-{"type":"result","num_turns":2,"duration_ms":1000,"duration_api_ms":700,"total_cost_usd":0.01,"is_error":false,"stop_reason":"end_turn","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":10,"cache_creation_input_tokens":0}}
+{"v":1,"type":"run.started","runtime":"opencode","agent":"writer","model":null}
+{"v":1,"type":"run.completed","status":"success","runtime":"opencode","model":"openai/gpt-5","session_id":"abc","duration_ms":1000,"api_duration_ms":700,"estimated_cost_usd":0.01,"tokens":{"input":100,"output":50,"cache_read":10,"cache_write":0,"reasoning":7},"turns":2,"denials":0,"ttft_ms":20,"error":null}
 EOF
 
 A_OUT=$(compute_stage_metrics "$TMP/a-stream.jsonl")
 assert_field "A-1: turns" "2" "$(echo "$A_OUT" | jq -r '.turns')"
-assert_field "A-2: model (desde system/init)" "claude-sonnet-5" "$(echo "$A_OUT" | jq -r '.model')"
+assert_field "A-2: model copiado del terminal" "openai/gpt-5" "$(echo "$A_OUT" | jq -r '.model')"
 assert_field "A-3: non_api_ms derivado" "300" "$(echo "$A_OUT" | jq -r '.non_api_ms')"
-assert_field "A-4: tool_calls[Read].count" "1" "$(echo "$A_OUT" | jq -r '.tool_calls[0].count')"
-assert_field "A-5: tool_calls[Read].duration_ms_sum" "400" "$(echo "$A_OUT" | jq -r '.tool_calls[0].duration_ms_sum')"
+assert_field "A-4: estimated_cost_usd copiado" "0.01" "$(echo "$A_OUT" | jq -r '.estimated_cost_usd')"
+if echo "$A_OUT" | jq -e '.tokens == {"input":100,"output":50,"cache_read":10,"cache_write":0,"reasoning":7} and (has("cost_usd") | not) and (.tokens | has("cache_creation") | not)' >/dev/null 2>&1; then
+    pass "A-5: conserva los cinco tokens, incluido cache_write cero, sin campos legacy"
+else
+    fail "A-5: contrato de tokens/costo inesperado: $A_OUT"
+fi
 if [ "$(printf '%s' "$A_OUT" | wc -l | tr -d ' ')" = "0" ] && echo "$A_OUT" | jq -e 'type == "object"' >/dev/null 2>&1; then
     pass "A-6: la salida es un objeto JSON valido en una sola linea"
 else
     fail "A-6: la salida no es un objeto JSON de una sola linea: $A_OUT"
 fi
 
-# -------- Bloque B: degradaciones a "null" (CA-4) --------
+# -------- Bloque B: terminales neutrales nulo/cero y legacy --------
 
 echo ""
-echo "[B] compute_stage_metrics degrada a \"null\" sin abortar (CA-4)"
+echo "[B] terminales neutrales: nulos/cero y legacy conservan la distincion de costo"
+
+cat > "$TMP/b-null-zero.events.jsonl" <<'EOF'
+{"v":1,"type":"run.completed","status":"success","runtime":"opencode","model":"openai/gpt-5","session_id":"ses-null","duration_ms":0,"api_duration_ms":0,"estimated_cost_usd":0,"tokens":{"input":0,"output":0,"cache_read":0,"cache_write":0,"reasoning":0},"turns":0,"denials":0,"ttft_ms":0,"error":null}
+EOF
+B_ZERO_OUT=$(compute_stage_metrics "$TMP/b-null-zero.events.jsonl")
+if echo "$B_ZERO_OUT" | jq -e '.estimated_cost_usd == 0 and .tokens == {"input":0,"output":0,"cache_read":0,"cache_write":0,"reasoning":0}' >/dev/null 2>&1; then
+    pass "B-1: costo cero estimado y los cinco contadores cero no se colapsan"
+else
+    fail "B-1: se perdio un cero presente: $B_ZERO_OUT"
+fi
+
+cat > "$TMP/b-legacy.events.jsonl" <<'EOF'
+{"v":1,"type":"run.completed","status":"success","runtime":"claude","model":"claude-sonnet-5","session_id":"ses-legacy","duration_ms":1,"api_duration_ms":1,"cost_usd":0.5,"tokens":{"input":1,"output":2,"cache_read":3,"cache_creation":4},"turns":1,"denials":0,"ttft_ms":1,"error":null}
+EOF
+B_LEGACY_OUT=$(compute_stage_metrics "$TMP/b-legacy.events.jsonl")
+if echo "$B_LEGACY_OUT" | jq -e '.estimated_cost_usd == null and .tokens == {"input":1,"output":2,"cache_read":3,"cache_write":4,"reasoning":null} and (has("cost_usd") | not) and (.tokens | has("cache_creation") | not)' >/dev/null 2>&1; then
+    pass "B-2: terminal legacy no aborta, normaliza tokens y no rebautiza su costo"
+else
+    fail "B-2: terminal legacy con forma inesperada: $B_LEGACY_OUT"
+fi
+
+# -------- Bloque C: fallback Claude previo al contrato --------
+
+echo ""
+echo "[C] fallback Claude previo al contrato conserva total_cost_usd como legado"
+
+cat > "$TMP/c-claude-stream.jsonl" <<'EOF'
+{"type":"system","subtype":"init","model":"claude-sonnet-5"}
+{"type":"result","num_turns":2,"duration_ms":1000,"duration_api_ms":700,"total_cost_usd":0.01,"is_error":false,"stop_reason":"end_turn","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":10,"cache_creation_input_tokens":0}}
+EOF
+C_LEGACY_OUT=$(compute_stage_metrics "$TMP/c-claude-stream.jsonl")
+if echo "$C_LEGACY_OUT" | jq -e '.cost_usd == 0.01 and .estimated_cost_usd == null and .model == "claude-sonnet-5" and .tokens == {"input":100,"output":50,"cache_read":10,"cache_write":0,"reasoning":null}' >/dev/null 2>&1; then
+    pass "C-1: fallback Claude mantiene modelo/tokens y etiqueta el costo como legado"
+else
+    fail "C-1: fallback Claude con forma inesperada: $C_LEGACY_OUT"
+fi
+
+# -------- Bloque D: degradaciones a "null" (CA-4) --------
+
+echo ""
+echo "[D] compute_stage_metrics degrada a \"null\" sin abortar (CA-4)"
 
 printf '{"type":"assistant","message":{"content":[{"type":"text","text":"trabajando"}]}}\n' > "$TMP/b-sin-result.jsonl"
 B1_OUT=$(compute_stage_metrics "$TMP/b-sin-result.jsonl")
 RC=$?
 if [ "$RC" -eq 0 ] && [ "$B1_OUT" = "null" ]; then
-    pass "B-1: sin evento result -> exit 0 y 'null'"
+    pass "D-1: sin evento result -> exit 0 y 'null'"
 else
-    fail "B-1: se esperaba exit 0 y 'null', se obtuvo rc=$RC salida='$B1_OUT'"
+    fail "D-1: se esperaba exit 0 y 'null', se obtuvo rc=$RC salida='$B1_OUT'"
 fi
 
 : > "$TMP/b-vacio.jsonl"
 B2_OUT=$(compute_stage_metrics "$TMP/b-vacio.jsonl")
 RC=$?
 if [ "$RC" -eq 0 ] && [ "$B2_OUT" = "null" ]; then
-    pass "B-2: stream vacio -> exit 0 y 'null'"
+    pass "D-2: stream vacio -> exit 0 y 'null'"
 else
-    fail "B-2: se esperaba exit 0 y 'null', se obtuvo rc=$RC salida='$B2_OUT'"
+    fail "D-2: se esperaba exit 0 y 'null', se obtuvo rc=$RC salida='$B2_OUT'"
 fi
 
 E_PATH_SIN_JQ="$TMP/bin-sin-jq"
@@ -173,9 +221,9 @@ mkdir -p "$E_PATH_SIN_JQ"
 RC=$?
 B3_OUT=$(cat "$TMP/b3-out.txt" 2>/dev/null)
 if [ "$RC" -eq 0 ] && [ "$B3_OUT" = "null" ]; then
-    pass "B-3: jq ausente -> exit 0 y 'null'"
+    pass "D-3: jq ausente -> exit 0 y 'null'"
 else
-    fail "B-3: se esperaba exit 0 y 'null' sin jq, se obtuvo rc=$RC salida='$B3_OUT'"
+    fail "D-3: se esperaba exit 0 y 'null' sin jq, se obtuvo rc=$RC salida='$B3_OUT'"
 fi
 
 # -------- Bloque C: build_agents_history_json con 2 grupos (paridad con el interno) --------
@@ -192,6 +240,12 @@ assert_field "C-2: preserva reviewer.duration" "300" "$(echo "$C_OUT" | jq -r '.
 assert_field "C-3: agrega test-writer.metrics.turns" "2" "$(echo "$C_OUT" | jq -r '.["test-writer"].metrics.turns')"
 assert_field "C-4: agent real distingue projection-test-writer bajo la clave test-writer (CA-1)" "projection-test-writer" "$(echo "$C_OUT" | jq -r '.["test-writer"].metrics.agent')"
 assert_field "C-5: reviewer.metrics es null cuando ese stage no corrio" "null" "$(echo "$C_OUT" | jq -r '.reviewer.metrics')"
+if echo "$C_OUT" | jq -e '[.. | objects | select(has("cost_usd") or has("cache_creation"))] | length == 0' >/dev/null 2>&1 \
+    && echo "$C_OUT" | jq -e '.["test-writer"].metrics.estimated_cost_usd == 0.01 and .["test-writer"].metrics.tokens.cache_write == 0' >/dev/null 2>&1; then
+    pass "C-6: historial nuevo persiste costo estimado y no escribe claves legacy"
+else
+    fail "C-6: el historial conserva claves legacy o perdio el contrato nuevo: $C_OUT"
+fi
 
 # -------- Bloque D: metrics null -> no inventa un campo "agent" --------
 
