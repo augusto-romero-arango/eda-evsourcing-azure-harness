@@ -170,6 +170,15 @@ get_opt() {
 }
 
 if [ "\$1" = "repo" ] && [ "\$2" = "view" ]; then
+    for a in "\$@"; do
+        case "\$a" in
+            --repo|-R)
+                echo "unknown flag: --repo" >&2
+                echo "Usage:  gh repo view [<repository>] [flags]" >&2
+                exit 1
+                ;;
+        esac
+    done
     if printf '%s\n' "\$@" | grep -q "nameWithOwner"; then
         echo "$REPO_SLUG"
         exit 0
