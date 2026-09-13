@@ -1329,9 +1329,24 @@ else
     log "Verificando si ya existe un PR abierto para la rama..."
     EXISTING_PR_URL=$(find_open_pr_for_branch "$BRANCH_NAME")
 
+    RUN_METRICS_TABLE=$(render_run_metrics_table \
+        "Writer" "${AGENT_WR_DUR:-}" "${AGENT_WR_METRICS_JSON:-}" \
+        "Reviewer" "${AGENT_RV_DUR:-}" "${AGENT_RV_METRICS_JSON:-}")
+
     if [ -n "$EXISTING_PR_URL" ]; then
         PR_URL="$EXISTING_PR_URL"
         success "PR existente reutilizado: $PR_URL"
+        RUN_METRICS_COMMENT=$(cat <<EOF
+## Metricas de la corrida
+
+Actualizado: $(date '+%Y-%m-%d %H:%M:%S %Z')
+
+$RUN_METRICS_TABLE
+EOF
+)
+        gh pr comment "$PR_URL" \
+            --body "$RUN_METRICS_COMMENT" \
+            >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 || warn "No se pudo publicar las metricas en el PR reutilizado: $PR_URL"
     else
         log "Creando PR..."
 
@@ -1392,6 +1407,10 @@ ${RV_SUMMARY}
 ## Commits
 
 $COMMITS_LIST
+
+## Metricas de la corrida
+
+$RUN_METRICS_TABLE
 
 Closes #$ISSUE_NUM
 EOF
