@@ -70,6 +70,7 @@ TOOLING_CLOSURE_ASSETS=(
 # Hasta que esa raiz sea una proyeccion autocontenida, los dos roles del corte
 # vertical de tooling se reflejan alli desde la misma renderizacion Claude.
 CLAUDE_ROOT_MIRRORS=(
+    'src/published/commands/tooling.md|commands/tooling.md'
     'src/published/agents/tooling-writer.md|agents/tooling-writer.md'
     'src/published/agents/tooling-reviewer.md|agents/tooling-reviewer.md'
 )
