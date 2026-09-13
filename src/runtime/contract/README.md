@@ -20,9 +20,10 @@ Todo evento lleva `v: 1` y un `type` del vocabulario cerrado declarado en
 | `run.completed` / `run.failed` | `ts`, `status`, `runtime`, `model|null`, `session_id|null`, `duration_ms`, `tokens`, `estimated_cost_usd|null`, `turns|null`, `denials|null`, `ttft_ms|null`, `api_duration_ms|null`, `error|null`, `resets_at?` |
 
 `tokens` conserva `input` y `output`, ambos numero o `null`, y puede incluir
-`cache_read`, `cache_write` y `reasoning`, tambien numero o `null`. `output`
-es la salida visible; `reasoning` queda separado cuando el runtime la expone.
-Claude informa `output_tokens` como `output`,
+`cache_read`, `cache_write` y `reasoning`, tambien numero o `null`. Cuando
+OpenCode expone ambos contadores, `output` representa la salida visible y
+`reasoning` queda separado. Claude conserva sin reinterpretar la semantica de
+su `output_tokens` en `output`, mapea
 `cache_read_input_tokens`/`cache_creation_input_tokens` como cache y deja
 `reasoning: null`. Los datos que un runtime no puede informar se representan
 con `null`, nunca con un cero ni otro valor inventado. Cada definicion cierra su forma con

@@ -385,7 +385,8 @@ else
 fi
 
 LEGACY_LINE="$(sed -n '2p' "$FIXTURES_DIR/legacy-cost-usd.jsonl")"
-if validate_event_line "$LEGACY_LINE" >/dev/null 2>&1; then
+if validate_event_line "$LEGACY_LINE" >/dev/null 2>&1 \
+    && printf '%s' "$LEGACY_LINE" | jq -e 'has("cost_usd") and (has("estimated_cost_usd") | not)' >/dev/null 2>&1; then
     pass "legacy-cost-usd.jsonl: cost_usd v1 sigue siendo legible sin reinterpretarse"
 else
     fail "legacy-cost-usd.jsonl: el lector del contrato rechazo el terminal v1"
@@ -396,6 +397,19 @@ if ! validate_event_line "$BAD_LINE" >/dev/null 2>&1; then
     pass "invalid-missing-cost-name.jsonl: el gate exige estimated_cost_usd o cost_usd"
 else
     fail "invalid-missing-cost-name.jsonl: el gate acepto un terminal sin ningun nombre de costo"
+fi
+
+BAD_FAILED_LINE="$(printf '%s' "$BAD_LINE" | jq -c '.type="run.failed" | .status="failed" | .error={kind:"nonzero_exit",detail:"fallo"}')"
+if ! validate_event_line "$BAD_FAILED_LINE" >/dev/null 2>&1; then
+    pass "gate de run.failed: tambien exige estimated_cost_usd o cost_usd"
+else
+    fail "gate de run.failed: acepto un terminal sin ningun nombre de costo"
+fi
+
+if grep -l '"cost_usd"' "$FIXTURES_DIR"/*.jsonl | grep -qv '/legacy-cost-usd.jsonl$'; then
+    fail "fixtures del contrato: solo el fixture legacy puede contener cost_usd"
+else
+    pass "fixtures del contrato: los nuevos usan estimated_cost_usd y el nombre legacy esta aislado"
 fi
 
 # ============================================================================
@@ -444,6 +458,14 @@ check_scenario() {
         pass "$desc: exactamente 1 evento terminal en --event-log"
     else
         fail "$desc: se contaron $terms eventos terminales (se esperaba 1)"
+    fi
+
+    if jq -e 'select(.type=="run.completed" or .type=="run.failed")
+        | has("estimated_cost_usd") and (has("cost_usd") | not)
+          and (.tokens | has("input") and has("output") and has("cache_read") and has("cache_write") and has("reasoning"))' "$ev" >/dev/null 2>&1; then
+        pass "$desc: fake/sintetico usa solo el contrato nuevo de costo y tokens"
+    else
+        fail "$desc: fake/sintetico emitio forma legacy o incompleta"
     fi
 
     local last_status last_kind

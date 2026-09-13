@@ -530,6 +530,7 @@ assert_field "D-1: session_id (del ultimo step_finish/evento con sessionID)" "se
 assert_field "D-2: tokens.input = SUMA de los dos step_finish (6127+6167), no el ultimo" "12294" "$(echo "$TERM" | jq -r '.tokens.input')"
 assert_field "D-3: tokens.output = SUMA de los dos step_finish (17+10), no el ultimo" "27" "$(echo "$TERM" | jq -r '.tokens.output')"
 assert_field "D-4: cost_usd = SUMA de los step_finish (incluso si el total es 0)" "0" "$(echo "$TERM" | jq -r '.cost_usd')"
+assert_field "D-4a: el productor transitorio no rebautiza el costo reportado como estimacion" "false" "$(echo "$TERM" | jq 'has("estimated_cost_usd")')"
 
 # Cada `step_finish` reporta lo de SU paso, no un acumulado: quedarse con el
 # ultimo reportaria el costo del cierre de la corrida como el de la corrida
