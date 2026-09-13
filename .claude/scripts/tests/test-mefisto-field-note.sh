@@ -18,6 +18,9 @@
 #         (como el gh real): se confirma la llamada real a 'gh pr create' (el
 #         defecto original -- @tsv emitiendo tabuladores para el PR nulo, que
 #         '[ -n "$PR_DATA" ]' tomaba como PR existente -- queda corregido),
+#         el argv posicional de 'gh repo view' (todos los stubs de gh de esta
+#         suite rechazan --repo/-R y cualquier flag que el binario real no
+#         acepte, issue #1310),
 #         unico path entregado (docs/bitacora/field-notes/...), URL de PR sin
 #         ruido de stderr pegado, checkout principal sin cambios (ref/sha/
 #         status identicos, incluido el archivo sucio preexistente) y
@@ -139,6 +142,29 @@ run_field_note() {
     echo $?
 }
 
+# Guard de argv de 'gh repo view', compartido por TODOS los stubs de gh de esta
+# suite (issue #1310). `gh repo view` recibe el repositorio como argumento
+# POSICIONAL: no acepta --repo/-R ni ningun flag fuera del set de abajo. Un stub
+# que decide su respuesta por coincidencia de substring acepta argv que el
+# binario real rechaza, y entonces no puede detectar una regresion de argv --
+# que fue exactamente lo que dejo pasar `gh repo view --repo <slug>` hasta que
+# el pipeline abortaba en toda invocacion real. Se define con heredoc CITADO
+# ('GUARD_EOF') para que su cuerpo quede literal: al interpolarlo dentro de los
+# heredocs EXPANDIDOS que escriben cada stub, el resultado de la expansion no se
+# vuelve a escanear, asi que los `$@`/`$a` llegan intactos al stub.
+read -r -d '' GH_REPO_VIEW_ARGV_GUARD <<'GUARD_EOF' || true
+    for a in "${@:3}"; do
+        case "${a%%=*}" in
+            -b|--branch|--json|-q|--jq|-t|--template|-w|--web|-h|--help) ;;
+            -*)
+                echo "unknown flag: ${a%%=*}" >&2
+                echo "Usage:  gh repo view [<repository>] [flags]" >&2
+                exit 1
+                ;;
+        esac
+    done
+GUARD_EOF
+
 # write_pr_store_gh <fakebin> <call_log> <store_file>
 #
 # Escribe en <fakebin>/gh un stub de 'gh' con un almacen de PRs PERSISTENTE
@@ -170,15 +196,7 @@ get_opt() {
 }
 
 if [ "\$1" = "repo" ] && [ "\$2" = "view" ]; then
-    for a in "\$@"; do
-        case "\$a" in
-            --repo|-R)
-                echo "unknown flag: --repo" >&2
-                echo "Usage:  gh repo view [<repository>] [flags]" >&2
-                exit 1
-                ;;
-        esac
-    done
+$GH_REPO_VIEW_ARGV_GUARD
     if printf '%s\n' "\$@" | grep -q "nameWithOwner"; then
         echo "$REPO_SLUG"
         exit 0
@@ -400,6 +418,7 @@ cat > "$FAKE_BIN_C/gh" <<EOF
 #!/usr/bin/env bash
 echo "\$@" >> "$GH_CALL_LOG_C"
 if [ "\$1" = "repo" ] && [ "\$2" = "view" ]; then
+$GH_REPO_VIEW_ARGV_GUARD
     if printf '%s\n' "\$@" | grep -q "nameWithOwner"; then
         echo "acme/mefisto-fake"
         exit 0
@@ -459,6 +478,17 @@ if grep -qE '^pr create ' "$GH_CALL_LOG_C"; then
     pass "CA-3: 'gh pr create' SI se ejecuto (defecto de @tsv/tabuladores corregido)"
 else
     fail "CA-3: 'gh pr create' nunca se ejecuto. Llamadas a gh: $(cat "$GH_CALL_LOG_C")"
+fi
+
+# Regresion de argv (issue #1310): el slug va POSICIONAL en 'gh repo view'. El
+# stub rechaza --repo/-R como el binario real, asi que la forma invalida aborta
+# la entrega entera mucho antes de llegar aqui; esta assercion deja ademas
+# constancia explicita de la forma esperada en el log de llamadas.
+REPO_VIEW_BRANCH_CALL=$(grep -E '^repo view .*defaultBranchRef' "$GH_CALL_LOG_C" || true)
+if [ -n "$REPO_VIEW_BRANCH_CALL" ] && ! printf '%s' "$REPO_VIEW_BRANCH_CALL" | grep -qE '(^| )(--repo|-R)( |$)'; then
+    pass "la rama predeterminada se resuelve con el slug posicional, sin --repo/-R"
+else
+    fail "argv invalido o ausente en 'gh repo view ... defaultBranchRef': '$REPO_VIEW_BRANCH_CALL'"
 fi
 
 DOC_BRANCH_C="docs/${AGENT_C}-field-note-${SESSION_ID_C}"
@@ -532,6 +562,7 @@ cat > "$FAKE_BIN_D_FAIL/gh" <<EOF
 #!/usr/bin/env bash
 echo "\$@" >> "$GH_CALL_LOG_D1"
 if [ "\$1" = "repo" ] && [ "\$2" = "view" ]; then
+$GH_REPO_VIEW_ARGV_GUARD
     if printf '%s\n' "\$@" | grep -q "nameWithOwner"; then echo "$REPO_SLUG"; exit 0; fi
     if printf '%s\n' "\$@" | grep -q "defaultBranchRef"; then echo "main"; exit 0; fi
     exit 1
@@ -853,6 +884,7 @@ cat > "$FAKE_BIN_H4/gh" <<EOF
 #!/usr/bin/env bash
 echo "\$@" >> "$TMP/h4/gh-calls.log"
 if [ "\$1" = "repo" ] && [ "\$2" = "view" ]; then
+$GH_REPO_VIEW_ARGV_GUARD
     if printf '%s\n' "\$@" | grep -q "nameWithOwner"; then echo "$REPO_SLUG"; exit 0; fi
     if printf '%s\n' "\$@" | grep -q "defaultBranchRef"; then echo "main"; exit 0; fi
     exit 1
@@ -899,6 +931,7 @@ cat > "$FAKE_BIN_H5/gh" <<EOF
 #!/usr/bin/env bash
 echo "\$@" >> "$TMP/h5/gh-calls.log"
 if [ "\$1" = "repo" ] && [ "\$2" = "view" ]; then
+$GH_REPO_VIEW_ARGV_GUARD
     if printf '%s\n' "\$@" | grep -q "nameWithOwner"; then echo "$REPO_SLUG"; exit 0; fi
     if printf '%s\n' "\$@" | grep -q "defaultBranchRef"; then echo "main"; exit 0; fi
     exit 1
@@ -930,6 +963,7 @@ cat > "$FAKE_BIN_H6/gh" <<EOF
 #!/usr/bin/env bash
 echo "\$@" >> "$TMP/h6/gh-calls.log"
 if [ "\$1" = "repo" ] && [ "\$2" = "view" ]; then
+$GH_REPO_VIEW_ARGV_GUARD
     if printf '%s\n' "\$@" | grep -q "nameWithOwner"; then echo "$REPO_SLUG"; exit 0; fi
     if printf '%s\n' "\$@" | grep -q "defaultBranchRef"; then echo "main"; exit 0; fi
     exit 1
