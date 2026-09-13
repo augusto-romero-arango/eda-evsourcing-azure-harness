@@ -2343,7 +2343,8 @@ public class ApiFixture : IAsyncLifetime
             ?? throw new InvalidOperationException(
                 "Api:BaseUrl no esta configurado. Usa appsettings.json, appsettings.local.json o la variable de entorno Api__BaseUrl.");
 
-        Client = new HttpClient { BaseAddress = new Uri(baseUrl) };
+        var apiBaseAddress = new Uri(baseUrl);
+        Client = new HttpClient { BaseAddress = apiBaseAddress };
 
         var expectedSha = configuration["Api:ExpectedSha"];
         if (string.IsNullOrWhiteSpace(expectedSha))
@@ -2362,7 +2363,7 @@ public class ApiFixture : IAsyncLifetime
         // nuevo. Poll de /api/version hasta que reporte el SHA horneado en este deploy.
         var deadline = DateTime.UtcNow + TimeoutGatePorVersion;
         string? ultimoShaVisto = null;
-        var appHost = Client.BaseAddress.Host;
+        var appHost = apiBaseAddress.Host;
         var appName = appHost[..^".azurewebsites.net".Length];
         var startupLogsUrl = $"https://{appName}.scm.azurewebsites.net/api/vfs/LogFiles/StartupLogs/";
 
