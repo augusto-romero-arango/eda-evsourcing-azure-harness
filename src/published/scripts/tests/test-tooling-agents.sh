@@ -81,6 +81,29 @@ contains "$claude_writer" 'tools: "Read, Glob, Grep, Edit, Write, Bash"' 'Claude
 contains "$claude_reviewer" 'tools: "Read, Glob, Grep, Edit, Write, Bash"' 'Claude reviewer deriva solo read/edit/shell'
 contains "$claude_writer" 'model: "sonnet"' 'Claude materializa perfil balanced'
 absent "$claude_reviewer" 'model:' 'Claude preserva herencia del perfil deep'
+
+echo '[marketplace] raiz Claude instalada y mirrors generados'
+if jq -e '(.plugins | length) == 1 and .plugins[0].name == "mefisto" and .plugins[0].source == "./"' "$REPO_ROOT/.claude-plugin/marketplace.json" >/dev/null; then
+    pass 'el marketplace instala la raiz Claude actual'
+else
+    fail 'el marketplace no instala la raiz Claude actual'
+fi
+for agent in tooling-writer tooling-reviewer; do
+    mirror="$REPO_ROOT/agents/$agent.md"
+    rendered="$REPO_ROOT/dist/claude/agents/$agent.md"
+    if [ -f "$mirror" ]; then pass "la raiz instalada descubre $agent"; else fail "falta $agent en la raiz instalada"; fi
+    if cmp -s "$mirror" "$rendered"; then pass "mirror raiz de $agent coincide byte a byte"; else fail "mirror raiz de $agent diverge de Claude"; fi
+    contains "$(< "$mirror")" '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/'"$agent"'.md. No editar a mano. -->' "mirror raiz de $agent conserva marcador generado"
+    contains "$(< "$mirror")" 'tools: "Read, Glob, Grep, Edit, Write, Bash"' "mirror raiz de $agent expone solo tools Claude"
+    if [ "$agent" = tooling-writer ]; then
+        contains "$(< "$mirror")" 'model: "sonnet"' 'mirror raiz del writer conserva perfil balanced'
+    else
+        absent "$(< "$mirror")" 'model:' 'mirror raiz del reviewer conserva perfil deep heredado'
+    fi
+    for forbidden in 'Skill' 'MCP' 'WebFetch' 'WebSearch' 'Task'; do
+        absent "$(< "$mirror")" "$forbidden" "mirror raiz de $agent omite $forbidden"
+    done
+done
 opencode_writer="$(< "$REPO_ROOT/dist/opencode/agents/tooling-writer.md")"
 opencode_reviewer="$(< "$REPO_ROOT/dist/opencode/agents/tooling-reviewer.md")"
 for rendered in "$opencode_writer" "$opencode_reviewer"; do
@@ -121,6 +144,13 @@ for runtime in claude opencode; do
         fi
     done
 done
+for agent in tooling-writer tooling-reviewer; do
+    if cmp -s "$WORK/agents/$agent.md" "$WORK/dist/claude/agents/$agent.md"; then
+        pass "integracion publica el mirror raiz de $agent"
+    else
+        fail "integracion no publica el mirror raiz de $agent"
+    fi
+done
 if "$GENERATOR" --check --out "$WORK" \
     "$REPO_ROOT/src/published/agents/tooling-writer.md" \
     "$REPO_ROOT/src/published/agents/tooling-reviewer.md" >/dev/null; then
@@ -128,6 +158,34 @@ if "$GENERATOR" --check --out "$WORK" \
 else
     fail 'check aislado detecto divergencias, huerfanos o copias manuales'
 fi
+
+echo '[integridad] ausencia y divergencia de cada artefacto Claude'
+for artifact in \
+    agents/tooling-writer.md \
+    agents/tooling-reviewer.md \
+    dist/claude/agents/tooling-writer.md \
+    dist/claude/agents/tooling-reviewer.md; do
+    backup="$WORK/backup-$(printf '%s' "$artifact" | tr '/' '-')"
+    cp "$WORK/$artifact" "$backup"
+    rm "$WORK/$artifact"
+    diagnostic="$($GENERATOR --check --out "$WORK" \
+        "$REPO_ROOT/src/published/agents/tooling-writer.md" \
+        "$REPO_ROOT/src/published/agents/tooling-reviewer.md" 2>&1)"
+    case "$diagnostic" in
+        *"$artifact: faltante"*) pass "$artifact ausente falla con diagnostico accionable" ;;
+        *) fail "$artifact ausente no produce diagnostico accionable" ;;
+    esac
+    cp "$backup" "$WORK/$artifact"
+    printf '\ndivergencia\n' >> "$WORK/$artifact"
+    diagnostic="$($GENERATOR --check --out "$WORK" \
+        "$REPO_ROOT/src/published/agents/tooling-writer.md" \
+        "$REPO_ROOT/src/published/agents/tooling-reviewer.md" 2>&1)"
+    case "$diagnostic" in
+        *"$artifact: distinta"*) pass "$artifact divergente falla con diagnostico accionable" ;;
+        *) fail "$artifact divergente no produce diagnostico accionable" ;;
+    esac
+    cp "$backup" "$WORK/$artifact"
+done
 if "$GENERATOR" --check >/dev/null; then pass 'generate-published-adapters --check esta al dia'; else fail 'generate-published-adapters --check detecto divergencias'; fi
 
 printf 'RESULTADO: %s pasaron, %s fallaron\n' "$PASS" "$FAIL"
