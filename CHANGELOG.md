@@ -4,6 +4,12 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.37.13] - 2026-09-13
+
+### Fixed
+
+- Se permite que `/mefisto:upgrade` ofrezca migrar con consentimiento explícito un launcher OpenCode legado sin `projection-status`, sin relajar los estados fail-closed.
+
 ## [0.37.12] - 2026-09-12
 
 ### Changed
@@ -2439,7 +2445,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.12...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.13...HEAD
+[0.37.13]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.12...v0.37.13
 [0.37.12]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.11...v0.37.12
 [0.37.11]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.10...v0.37.11
 [0.37.10]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.9...v0.37.10
