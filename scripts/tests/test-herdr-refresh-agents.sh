@@ -27,15 +27,21 @@ extract_fn() {
 FAKE_CONSUMER="$(mktemp -d)"
 TMP_DIR="$(mktemp -d)"
 FAKE_BIN="$TMP_DIR/bin"
+FAKE_NO_JQ_BIN="$TMP_DIR/bin-no-jq"
+FAKE_NO_HERDR_BIN="$TMP_DIR/bin-no-herdr"
 FAKE_RUNTIME="$TMP_DIR/runtime"
-mkdir -p "$FAKE_BIN" "$FAKE_RUNTIME"
+mkdir -p "$FAKE_BIN" "$FAKE_NO_JQ_BIN" "$FAKE_NO_HERDR_BIN" "$FAKE_RUNTIME"
 trap 'rm -rf "$FAKE_CONSUMER" "$TMP_DIR"' EXIT
 (cd "$FAKE_CONSUMER" && git init -q)
 export HERDR_STUB_LOG="$TMP_DIR/herdr.log"
 
 cat > "$FAKE_BIN/herdr" <<'STUB'
 #!/usr/bin/env bash
-printf 'herdr %s\n' "$*" >> "$HERDR_STUB_LOG"
+{
+    printf 'herdr'
+    printf ' <%s>' "$@"
+    printf '\n'
+} >> "$HERDR_STUB_LOG"
 case "${1:-} ${2:-}" in
   "agent list")
     printf '%s' '{"result":{"agents":[' \
@@ -61,8 +67,17 @@ esac
 STUB
 chmod +x "$FAKE_BIN/herdr"
 
+# PATH determinista con herdr pero sin jq. El script solo necesita estas
+# herramientas antes de que el no-op corte la ejecucion.
+for tool in env bash dirname git uname; do
+    ln -s "$(command -v "$tool")" "$FAKE_NO_JQ_BIN/$tool"
+    ln -s "$(command -v "$tool")" "$FAKE_NO_HERDR_BIN/$tool"
+done
+ln -s "$FAKE_BIN/herdr" "$FAKE_NO_JQ_BIN/herdr"
+ln -s "$(command -v jq)" "$FAKE_NO_HERDR_BIN/jq"
+
 cat > "$FAKE_RUNTIME/runtime-prompted.sh" <<'ADAPTER'
-runtime_prompted_interactive_refresh() { printf '%s\n' 'prompt /refresh'; }
+runtime_prompted_interactive_refresh() { printf '%s\n' 'prompt reload all'; }
 ADAPTER
 cat > "$FAKE_RUNTIME/runtime-restarting.sh" <<'ADAPTER'
 runtime_restarting_interactive_refresh() { printf '%s\n' 'restart /exit'; }
@@ -95,23 +110,62 @@ assert_eq "sin contexto sale 0" "0" "$RC"
 assert_eq "sin contexto no imprime panes" "" "$OUT"
 assert_eq "sin contexto no invoca herdr" "" "$CALLS"
 
-OUT=$(
-    cd "$FAKE_CONSUMER" || exit 99
-    env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_WORKSPACE_ID \
-        PATH="/usr/bin:/bin" MEFISTO_RUNTIME_LIB_DIR="$FAKE_RUNTIME" \
-        HERDR_ENV=1 HERDR_PANE_ID=w9:self HERDR_WORKSPACE_ID=w9 \
-        "$HERDR_SCRIPT" --refresh-agents 2>"$TMP_DIR/stderr.log"
-)
+for scenario in \
+    "sin HERDR_ENV|HERDR_PANE_ID=w9:self HERDR_WORKSPACE_ID=w9" \
+    "sin HERDR_PANE_ID|HERDR_ENV=1 HERDR_WORKSPACE_ID=w9" \
+    "sin HERDR_WORKSPACE_ID|HERDR_ENV=1 HERDR_PANE_ID=w9:self"; do
+    label="${scenario%%|*}"
+    variables="${scenario#*|}"
+    # shellcheck disable=SC2086 # fixture deliberado de asignaciones env.
+    OUT=$(run_refresh $variables)
+    RC=$?
+    CALLS=$(cat "$HERDR_STUB_LOG")
+    assert_eq "$label sale 0" "0" "$RC"
+    assert_eq "$label no imprime panes" "" "$OUT"
+    assert_eq "$label no invoca herdr" "" "$CALLS"
+done
+
+: > "$HERDR_STUB_LOG"
+OUT=$(cd "$FAKE_CONSUMER" && \
+    PATH="$FAKE_NO_JQ_BIN" MEFISTO_RUNTIME_LIB_DIR="$FAKE_RUNTIME" \
+    HERDR_STUB_LOG="$HERDR_STUB_LOG" HERDR_ENV=1 \
+    HERDR_PANE_ID=w9:self HERDR_WORKSPACE_ID=w9 \
+    "$HERDR_SCRIPT" --refresh-agents 2>"$TMP_DIR/stderr.log")
 RC=$?
-assert_eq "sin herdr en PATH sale 0" "0" "$RC"
+CALLS=$(cat "$HERDR_STUB_LOG")
+assert_eq "sin jq sale 0" "0" "$RC"
+assert_eq "sin jq no imprime panes" "" "$OUT"
+assert_eq "sin jq no invoca herdr" "" "$CALLS"
+
+: > "$HERDR_STUB_LOG"
+OUT=$(cd "$FAKE_CONSUMER" && \
+    PATH="$FAKE_NO_HERDR_BIN" MEFISTO_RUNTIME_LIB_DIR="$FAKE_RUNTIME" \
+    HERDR_STUB_LOG="$HERDR_STUB_LOG" HERDR_ENV=1 \
+    HERDR_PANE_ID=w9:self HERDR_WORKSPACE_ID=w9 \
+    "$HERDR_SCRIPT" --refresh-agents 2>"$TMP_DIR/stderr.log")
+RC=$?
+assert_eq "sin herdr sale 0" "0" "$RC"
 assert_eq "sin herdr no imprime panes" "" "$OUT"
+assert_eq "sin herdr no invoca herdr" "" "$(cat "$HERDR_STUB_LOG")"
 
 echo "[B] Descubrimiento, filtro y estrategias"
 OUT=$(run_refresh HERDR_ENV=1 HERDR_PANE_ID=w9:self HERDR_WORKSPACE_ID=w9)
 RC=$?
 CALLS=$(cat "$HERDR_STUB_LOG")
 assert_eq "recorrido sale 0 aunque un prompt falle" "0" "$RC"
-assert_eq "stdout tiene una linea por agente considerado" "9" "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')"
+EXPECTED_OUT=$(cat <<'EOF'
+w9:self prompted omitido:pane-propio
+w9:work prompted omitido:working
+w9:block prompted omitido:blocked
+w9:missing missing omitido:sin-estrategia
+w9:without without omitido:sin-estrategia
+w9:broken broken omitido:sin-estrategia
+w9:ok prompted reload-enviado
+w9:fail prompted omitido:prompt-fallo
+w9:restart restarting omitido:restart-pendiente
+EOF
+)
+assert_eq "stdout es exactamente una linea por agente considerado" "$EXPECTED_OUT" "$OUT"
 assert_contains "omite pane propio" "$OUT" "w9:self prompted omitido:pane-propio"
 assert_contains "omite working" "$OUT" "w9:work prompted omitido:working"
 assert_contains "omite blocked" "$OUT" "w9:block prompted omitido:blocked"
@@ -123,8 +177,13 @@ assert_contains "continua tras fallo de prompt" "$OUT" "w9:fail prompted omitido
 assert_contains "difiere restart" "$OUT" "w9:restart restarting omitido:restart-pendiente"
 assert_not_contains "no informa otro cwd" "$OUT" "other-cwd"
 assert_not_contains "no informa otro workspace" "$OUT" "other-workspace"
-assert_contains "prompt usa pane_id como target" "$CALLS" "agent prompt w9:ok /refresh"
-assert_not_contains "restart no invoca herdr" "$CALLS" "agent prompt w9:restart"
+EXPECTED_CALLS=$(cat <<'EOF'
+herdr <agent> <list>
+herdr <agent> <prompt> <w9:ok> <reload all>
+herdr <agent> <prompt> <w9:fail> <reload all>
+EOF
+)
+assert_eq "solo prompt invoca herdr, con pane_id y texto como argumentos" "$EXPECTED_CALLS" "$CALLS"
 
 echo "[C] Neutralidad estatica"
 REFRESH_BODY=$(extract_fn cmd_refresh_agents "$HERDR_SCRIPT")
