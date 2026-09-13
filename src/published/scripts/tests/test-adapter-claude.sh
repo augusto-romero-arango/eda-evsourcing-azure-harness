@@ -89,6 +89,13 @@ printf '%s\n' "$CANONICAL_ROOT" > "$CONSUMER/.mefisto/pipeline/.plugin-root"
 printf '%s\n' "$OPENCODE_ROOT" > "$CONSUMER/.claude/pipeline/.plugin-root"
 out="$(resolve_claude "$CONSUMER" '' "$WORK/claude-despues.trace" 2> "$WORK/claude-despues.err")"; rc=$?
 [ "$rc" -eq 0 ] && [ "$out" = "ROOT=$CANONICAL_PHYSICAL" ] && pass 'marker canonico Claude prevalece tras una sesion OpenCode' || fail 'marker canonico Claude no prevalecio'
+BAD_CANONICAL="$WORK/plugin canonico malformado"; mkdir -p "$BAD_CANONICAL"; printf '%s\n' '{' > "$BAD_CANONICAL/mefisto-manifest.json"
+printf '%s\n' "$BAD_CANONICAL" > "$CONSUMER/.mefisto/pipeline/.plugin-root"
+printf '%s\n' "$LEGACY_ROOT" > "$CONSUMER/.claude/pipeline/.plugin-root"
+resolve_claude "$SUBDIR" '' "$WORK/malformed.trace" > "$WORK/malformed.stdout" 2> "$WORK/malformed.err"; rc=$?
+[ "$rc" -ne 0 ] && [ ! -e "$WORK/malformed.trace" ] && contains "$(< "$WORK/malformed.err")" 'marker canonico invalida' 'marker canonico malformado no acepta el fallback' || fail 'marker canonico malformado no debio ejecutar codigo'
+printf '%s\n' "$OPENCODE_ROOT" > "$CONSUMER/.mefisto/pipeline/.plugin-root"
+printf '%s\n' "$LEGACY_ROOT" > "$CONSUMER/.claude/pipeline/.plugin-root"
 rm "$CONSUMER/.mefisto/pipeline/.plugin-root"
 out="$(resolve_claude "$SUBDIR" '' "$WORK/legacy.trace" 2> "$WORK/legacy.err")"; rc=$?
 [ "$rc" -eq 0 ] && [ "$out" = "ROOT=$LEGACY_PHYSICAL" ] && pass 'marker legacy queda como fallback' || fail 'marker legacy no se resolvio'
