@@ -14,10 +14,12 @@
 #         'git switch'/'git add'/'git commit' contra MEFISTO_REPO_ROOT.
 #   [C]   Primera entrega end-to-end (CA-2/CA-3/CA-4) sobre un repo Git
 #         temporal con checkout principal SUCIO, un remote BARE real y un
-#         'gh' controlado: se confirma la llamada real a 'gh pr create' (el
+#         'gh' controlado que emite ruido en stderr incluso al tener exito
+#         (como el gh real): se confirma la llamada real a 'gh pr create' (el
 #         defecto original -- @tsv emitiendo tabuladores para el PR nulo, que
 #         '[ -n "$PR_DATA" ]' tomaba como PR existente -- queda corregido),
-#         unico path entregado (docs/bitacora/field-notes/...), checkout
+#         unico path entregado (docs/bitacora/field-notes/...), URL de PR sin
+#         ruido de stderr pegado, checkout
 #         principal sin cambios (ref/sha/status identicos, incluido el
 #         archivo sucio preexistente) y worktree temporal limpiado.
 #
@@ -219,6 +221,13 @@ FAKE_BIN="$TMP/bin"
 mkdir -p "$FAKE_BIN"
 GH_CALL_LOG="$TMP/gh-calls.log"
 : > "$GH_CALL_LOG"
+PR_URL_ESPERADA="https://github.com/acme/mefisto-fake/pull/123"
+# El stub emite ruido en stderr AUNQUE tenga exito, igual que el gh real: `gh
+# pr create` escribe "Creating pull request for ... into ..." en stderr y solo
+# la URL en stdout, y cualquier subcomando puede anadir avisos (token por
+# expirar, version nueva). Es deliberado: un `2>&1` en el script canonico
+# convertiria DEFAULT_BRANCH y PR_URL en valores multilinea corruptos, y ese
+# defecto tiene que hacer fallar esta suite, no pasar desapercibido.
 cat > "$FAKE_BIN/gh" <<EOF
 #!/usr/bin/env bash
 echo "\$@" >> "$GH_CALL_LOG"
@@ -228,6 +237,7 @@ if [ "\$1" = "repo" ] && [ "\$2" = "view" ]; then
         exit 0
     fi
     if printf '%s\n' "\$@" | grep -q "defaultBranchRef"; then
+        echo "aviso de gh: hay una version mas nueva disponible" >&2
         echo "main"
         exit 0
     fi
@@ -237,7 +247,8 @@ if [ "\$1" = "pr" ] && [ "\$2" = "list" ]; then
     exit 0
 fi
 if [ "\$1" = "pr" ] && [ "\$2" = "create" ]; then
-    echo "https://github.com/acme/mefisto-fake/pull/123"
+    echo "Creating pull request for DOC_BRANCH into main in acme/mefisto-fake" >&2
+    echo "$PR_URL_ESPERADA"
     exit 0
 fi
 exit 1
@@ -277,6 +288,18 @@ if [ "$C_RC" -eq 0 ]; then
     pass "primera entrega: exit 0"
 else
     fail "primera entrega: exit $C_RC. stdout=$(cat "$OUT") stderr=$(cat "$ERR")"
+fi
+
+# Regresion de contaminacion por stderr: con `2>&1` en el `gh pr create` del
+# canonico, esta linea traeria pegado el "Creating pull request for ..." del
+# stub. Y si el `gh repo view --json defaultBranchRef` lo fusionara, el aviso
+# se habria colado en DEFAULT_BRANCH y la entrega entera habria abortado en el
+# `git fetch origin "<aviso>...main"` de mas arriba.
+REPORTED_PR_LINE=$(grep '^PR: ' "$OUT" || true)
+if [ "$REPORTED_PR_LINE" = "PR: $PR_URL_ESPERADA" ]; then
+    pass "la URL reportada es exactamente la de stdout de gh, sin ruido de stderr"
+else
+    fail "URL de PR contaminada o ausente: se esperaba 'PR: $PR_URL_ESPERADA', se obtuvo '$REPORTED_PR_LINE'. stdout completo: $(cat "$OUT")"
 fi
 
 if grep -qE '^pr create ' "$GH_CALL_LOG"; then

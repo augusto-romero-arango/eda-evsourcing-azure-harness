@@ -186,10 +186,18 @@ cleanup_and_verify() {
 trap cleanup_and_verify EXIT
 
 # --- Resolver la rama predeterminada (CA-2) ---------------------------------
-DEFAULT_BRANCH="$(gh repo view --repo "$MEFISTO_REPO_SLUG" --json defaultBranchRef --jq '.defaultBranchRef.name' 2>&1)"
+#
+# Sin `2>&1`: la salida de `gh` se usa como VALOR (nombre de rama que alimenta
+# `git fetch`, `git worktree add origin/<rama>` y `gh pr create --base`), asi
+# que fusionar su stderr la corromperia en cuanto gh emita cualquier aviso en
+# un exito (token por expirar, version nueva disponible). El stderr de gh cae
+# directo al stderr de este script -- el diagnostico no se pierde, solo deja de
+# contaminar el valor. Misma convencion que mefisto-release.sh y
+# mefisto-tooling-pipeline.sh.
+DEFAULT_BRANCH="$(gh repo view --repo "$MEFISTO_REPO_SLUG" --json defaultBranchRef --jq '.defaultBranchRef.name')"
 GH_REPO_VIEW_RC=$?
 if [ "$GH_REPO_VIEW_RC" -ne 0 ] || [ -z "$DEFAULT_BRANCH" ] || [ "$DEFAULT_BRANCH" = "null" ]; then
-    echo "ERROR: no se pudo resolver la rama predeterminada del repo via 'gh repo view': $DEFAULT_BRANCH" >&2
+    echo "ERROR: no se pudo resolver la rama predeterminada del repo via 'gh repo view' (rc=$GH_REPO_VIEW_RC); revisa 'gh auth status'" >&2
     exit 1
 fi
 
@@ -233,7 +241,10 @@ git -C "$WORKTREE_DIR" add -- "$FIELD_NOTE_REL" \
     || { echo "ERROR: 'git add' del worktree documental fallo" >&2; exit 1; }
 
 WORKTREE_STATUS="$(git -C "$WORKTREE_DIR" status --porcelain=v1 --untracked-files=all)"
-OTHER_PATHS="$(printf '%s\n' "$WORKTREE_STATUS" | grep -vF "A  $FIELD_NOTE_REL" | grep -v '^$' || true)"
+# `-x` (linea completa, no subcadena): sin el, cualquier entrada de status que
+# CONTENGA el path esperado -- un rename hacia el, un path mas largo con el
+# mismo prefijo -- se filtraria como si fuera la field note.
+OTHER_PATHS="$(printf '%s\n' "$WORKTREE_STATUS" | grep -vxF "A  $FIELD_NOTE_REL" | grep -v '^$' || true)"
 if [ -n "$OTHER_PATHS" ]; then
     echo "ERROR: el worktree documental contiene cambios fuera de '$FIELD_NOTE_REL':" >&2
     printf '%s\n' "$OTHER_PATHS" >&2
@@ -257,10 +268,15 @@ if [ -n "$EXISTING_PR_URL" ]; then
     PR_URL="$EXISTING_PR_URL"
     echo "PR ya existente reutilizado (no se llamo a 'gh pr create')"
 else
+    # Sin `2>&1` por la misma razon que arriba, y aqui es aun mas visible:
+    # `gh pr create` escribe su progreso ("Creating pull request for <head>
+    # into <base> in <repo>") en stderr y SOLO la URL en stdout. Fusionarlos
+    # dejaria PR_URL multilinea -- una "URL" que ni el reporte final ni quien
+    # consuma este script (issue #1298) podrian usar.
     PR_URL="$(gh pr create --repo "$MEFISTO_REPO_SLUG" --base "$DEFAULT_BRANCH" --head "$DOC_BRANCH" \
         --title "docs(bitacora): field note de $AGENT ${TIMESTAMP}" \
-        --body "Entrega aislada de la field note de la sesion $AGENT ${SESSION_ID}." 2>&1)" \
-        || { echo "ERROR: 'gh pr create' fallo: $PR_URL" >&2; exit 1; }
+        --body "Entrega aislada de la field note de la sesion $AGENT ${SESSION_ID}.")" \
+        || { echo "ERROR: 'gh pr create' fallo; la rama '$DOC_BRANCH' ya esta empujada, el PR queda pendiente" >&2; exit 1; }
 fi
 
 echo "Field note: $FIELD_NOTE_REL"
