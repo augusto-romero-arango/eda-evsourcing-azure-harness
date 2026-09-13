@@ -107,9 +107,26 @@ bash "$UPDATE_SCRIPT"
 
 Si el script termina con `ERROR`, muestra su salida tal cual. Una falla despues de aceptar habilitar OpenCode deja las releases existentes para reintento o rollback; no intentes una reparacion adicional ni una poda OpenCode.
 
-### 3. Presentar evidencia y poda Claude opt-in
+### 3. Presentar evidencia
 
 Muestra sin reinterpretar la salida del script. Reten la linea `Version cargada en esta sesion: <version>` y `Version destino: <version>`. Si OpenCode se alineo, muestra tambien su `status`, la release activa y el diagnostico JSON de identidad entre la raiz Claude destino y la raiz OpenCode activa. Nunca afirmes que la sesion viva ya cambio: la version cargada pertenece a esta sesion; la destino esta en disco para la proxima recarga.
+
+### 4. Refrescar agentes Herdr
+
+Solo si estas corriendo dentro de Herdr (`HERDR_ENV=1`), relee la raiz del plugin **despues** del update: el script acaba de escribir `.claude/pipeline/.plugin-root` con la version destino. Invoca desde esa raiz el `herdr-pipeline.sh` nuevo. Es best-effort: un fallo o salida vacia no debe impedir la poda ni el cierre.
+
+```bash
+if [ "${HERDR_ENV:-}" = "1" ]; then
+    PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+    [ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+    PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
+    HERDR_REFRESH=$("$PLUGIN_SCRIPTS/herdr-pipeline.sh" --refresh-agents 2>/dev/null || true)
+fi
+```
+
+Si el bloque se ejecuto, reporta `HERDR_REFRESH` sin reinterpretar sus acciones: por cada linea no vacia `<pane_id> <runtime> <accion>`, muestra una tabla con las columnas `Pane`, `Runtime` y `Accion`. Si no hubo lineas, muestra exactamente: `Sin panes Herdr que refrescar`. No afirmes que la sesion o pane propio cambio. Fuera de Herdr, no ejecutes ni menciones este paso.
+
+### 5. Poda Claude opt-in
 
 La poda aplica solo al cache Claude y solo si el script lista "Versiones podables en el cache". Muestra la lista exacta y pide confirmacion explicita. Si responde exactamente `si`, invoca de nuevo el script con `--prune --loaded <version-cargada>`; si la version cargada fue desconocida, omite `--loaded`. Si no confirma, no borres nada. Nunca podes releases OpenCode.
 
@@ -119,14 +136,15 @@ PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
 bash "${PLUGIN_ROOT%/}/scripts/update-plugin.sh" --prune --loaded <version-cargada>
 ```
 
-### 4. Cerrar con el reload
+### 6. Cerrar con el reload
 
-Independientemente de la poda o de OpenCode, termina siempre: "Corre `/reload-plugins` (o reinicia la sesion) para activar la version `<version-destino>` de Claude. La sesion actual sigue cargando `<version-cargada>` hasta entonces." Si OpenCode quedo habilitado, indica tambien que reinicie OpenCode para que descubra la proyeccion actualizada.
+Independientemente de la poda o de OpenCode, termina siempre: "Corre `/reload-plugins` (o reinicia la sesion) para activar la version `<version-destino>` de Claude. La sesion actual sigue cargando `<version-cargada>` hasta entonces." Si OpenCode quedo habilitado, indica tambien que reinicie OpenCode para que descubra la proyeccion actualizada. Si el reporte Herdr incluyo `omitido:working` u `omitido:blocked`, agrega que esos panes deben recargarse a mano cuando terminen.
 
 ## Reglas
 
 - `update-plugin.sh` es la autoridad para actualizar, bootstrap, activar, proyectar, consultar `status`, diagnosticar identidad y conservar releases de rollback; no reimplementes esos controles en el comando.
 - Todas las mutaciones OpenCode que el script realiza usan su exclusion compartida. Un conflicto nunca autoriza una mutacion automatica.
 - El update no borra nada. La unica operacion destructiva es la poda opt-in del cache Claude; nunca toca la version cargada en esta sesion ni la nueva.
+- El refresco de panes Herdr es automatico y best-effort; nunca interrumpe un pane ocupado ni el pane propio.
 - Nunca hardcodees el marketplace: el script lo deriva del cache cargado. Nunca aceptes argumentos: ignora `$ARGUMENTS`.
 - Este comando permanece transitoriamente disponible solo desde Claude Code; no lo proyectes en OpenCode antes del gate de certificacion de MEF-ADR-0053.
