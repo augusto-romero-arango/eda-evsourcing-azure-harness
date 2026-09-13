@@ -779,7 +779,7 @@ cmd_collapse_panes() {
     echo "${closed:-0}"
 }
 
-# cmd_refresh_agents (issue #1333)
+# cmd_refresh_agents (issues #1333, #1335)
 #
 # Descubre los agentes interactivos del workspace y delega la estrategia de
 # refresco en su adaptador. Este modo no despacha pipelines: fuera de contexto
@@ -814,7 +814,7 @@ cmd_refresh_agents() {
     fi
 
     local agents pane_id agent status agent_name adapter refresh_fn strategy action payload
-    local restart_name exit_timeout deadline
+    local restart_name exit_timeout deadline exit_timed_out
     exit_timeout="${MEFISTO_REFRESH_EXIT_TIMEOUT:-30}"
     [[ "$exit_timeout" =~ ^[0-9]+$ ]] || exit_timeout=30
     agents=$(herdr agent list 2>/dev/null) || return 0
@@ -868,13 +868,16 @@ cmd_refresh_agents() {
                     continue
                 fi
                 deadline=$(( $(date +%s) + exit_timeout ))
+                exit_timed_out=0
                 while ! pane_is_free "$pane_id"; do
                     if [ "$(date +%s)" -ge "$deadline" ]; then
                         printf '%s %s %s\n' "$pane_id" "$agent" "omitido:no-salio"
-                        continue 2
+                        exit_timed_out=1
+                        break
                     fi
                     sleep 0.1
                 done
+                [ "$exit_timed_out" -eq 0 ] || continue
                 restart_name=$(refresh_agent_name "$agent_name" "$pane_id")
                 if herdr agent start "$restart_name" --kind "$agent" --pane "$pane_id" >/dev/null 2>&1; then
                     printf '%s %s %s\n' "$pane_id" "$agent" "reiniciado"

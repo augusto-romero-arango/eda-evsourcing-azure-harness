@@ -215,12 +215,13 @@ assert_contains "envia la salida declarada al pane que reiniciara" "$CALLS" "her
 assert_contains "sondea el pane hasta encontrar su shell" "$CALLS" "herdr <pane> <process-info> <--pane> <w9:restart-listo>"
 assert_contains "relanza con el nombre reportado, kind y pane" "$CALLS" "herdr <agent> <start> <restart-nombrado> <--kind> <restarting> <--pane> <w9:restart-listo>"
 assert_contains "usa un nombre derivado del pane sin nombre" "$CALLS" "herdr <agent> <start> <mefisto-refresh-w9-sin-nombre> <--kind> <restarting> <--pane> <w9:sin-nombre>"
-assert_not_contains "no relanza un pane que no salio" "$CALLS" "<mefisto-refresh-w9-sin-salida>"
+assert_not_contains "no relanza un pane que no salio" "$CALLS" "herdr <agent> <start> <mefisto-refresh-w9-sin-salida> <--kind> <restarting> <--pane> <w9:sin-salida>"
 assert_contains "intenta el relanzamiento que falla" "$CALLS" "herdr <agent> <start> <restart-fallido> <--kind> <restarting> <--pane> <w9:inicio-falla>"
 
 echo "[C] Neutralidad estatica"
 REFRESH_BODY=$(extract_fn cmd_refresh_agents "$HERDR_SCRIPT")
 assert_eq "bloque nuevo no nombra runtimes" "0" "$(printf '%s' "$REFRESH_BODY" | grep -Eic 'claude|opencode')"
+assert_eq "timeout no envia senales ni mata procesos" "0" "$(printf '%s' "$REFRESH_BODY" | grep -Eic '(^|[;&|[:space:]])(kill|pkill|killall)([[:space:]]|$)')"
 
 echo ""
 echo "Resultado: $PASS PASS, $FAIL FAIL"
