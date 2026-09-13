@@ -21,6 +21,7 @@ El mantenedor informo que los issues #7 y #8 del consumidor privado `mefisto-con
 - No se consulto ni modifico el repositorio consumidor desde el planner interno; se enlazaron sus issues y se preservo la frontera de MEF-ADR-0019.
 - El PR #1304 cerro #1181, pero su revision verifico que los templates y fixtures persistidos aun identifican v0.37.14 y que faltan checks, observabilidad y limpieza demostrables. El mantenedor aclaro que v0.37.14 fue el intento fallido y que los mismos issues si completaron funcionalmente bajo v0.37.15.
 - Se reabrio #1181 con label `bloqueado`: el resultado funcional de v0.37.15 se conserva como valido, pero falta reconciliarlo con evidencia persistida que satisfaga CA-1 a CA-6. Se restauro tambien `bloqueado` en #1066.
+- Desde el consumidor se crearon #11 para Claude y #12 para OpenCode. Se enlazaron en #1181 como prerrequisitos externos, sin sintaxis `Depende de #N` que el grafo local pudiera confundir con issues homonimos de Mefisto.
 
 ## Descartado
 
@@ -33,4 +34,4 @@ El mantenedor informo que los issues #7 y #8 del consumidor privado `mefisto-con
 
 ## Referencias
 
-Issue actualizado: #1181, comentario https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/issues/1181#issuecomment-5651088289. Consumidor: issues #7 y #8. Release certificada: v0.37.15.
+Issue actualizado: #1181. Consumidor: intentos #7/#8 y nuevas corridas #11 Claude/#12 OpenCode. Release certificable: v0.37.15.
