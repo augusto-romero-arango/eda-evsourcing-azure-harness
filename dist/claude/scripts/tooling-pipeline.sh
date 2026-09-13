@@ -652,9 +652,8 @@ ALCANCE PERMITIDO de escritura:
 - pipeline-state/                            (senales del pipeline)
 - scripts/                                   (scripts ad-hoc del consumidor)
 - tests/                                     (SOLO fixtures, helpers, builders - NO logica de dominio)
-- docs/bitacora/, docs/ddd/, docs/adr-proyecto/, docs/adr/  (documentacion del consumidor;
-  docs/adr/ son los ADRs locales de ESTE repo -- con el prefijo propio que haya elegido
-  o sin prefijo. MEF-ADR-0030: no hay que reubicarlos fuera de docs/adr/)
+- docs/**                                  (documentacion del consumidor, incluido docs/testing/;
+  la unica exclusion documental es docs/adr/mef-adr-*, reservada al marco)
 
 PROHIBIDO MODIFICAR (pertenece al plugin Mefisto, no a este repo):
 - commands/, skills/, agents/, hooks/, .claude-plugin/, src/published/, src/runtime/, dist/
@@ -699,6 +698,18 @@ Instrucciones:
         HAS_UNSTAGED=true
     fi
     if [ "$HAS_COMMITS" = false ] && [ "$HAS_UNSTAGED" = false ]; then
+        # El summary canonico es evidencia runtime ignorada por Git: cuando el
+        # writer no deja diff, conserva el motivo estructurado que declaro sin
+        # convertirlo en parte del cambio ni depender del texto libre del log.
+        WRITER_BLOCKERS="$(awk '
+            /^## Pendiente\/bloqueos[[:space:]]*$/ { collecting=1; next }
+            collecting && /^##[[:space:]]/ { exit }
+            collecting { print }
+        ' "$(mefisto_state_path 'summaries/stage-1-writer.md' "$WORKTREE_PATH")" 2>/dev/null)" || WRITER_BLOCKERS=""
+        if [ -n "$(printf '%s' "$WRITER_BLOCKERS" | tr -d '[:space:]')" ]; then
+            echo -e "${YELLOW}Pendiente/bloqueos informado por el writer:${NC}"
+            echo "$WRITER_BLOCKERS"
+        fi
         abort "El writer no genero ningun cambio. Revisa el log: $LOG_DIR_ABS/tooling-stage-1-writer-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}.log"
     fi
 
@@ -747,7 +758,7 @@ Tu tarea: revisa la calidad del codigo producido por el writer.
 ALCANCE PERMITIDO de escritura (igual al del writer):
 .github/workflows/, .claude/harness.config.json, .claude/settings.json,
 .mefisto/pipeline/, pipeline-state/, scripts/, tests/ (fixtures/helpers),
-docs/bitacora/, docs/ddd/, docs/adr-proyecto/, docs/adr/.
+docs/** (incluido docs/testing/; salvo docs/adr/mef-adr-*).
 
 PROHIBIDO: commands/, skills/, agents/, hooks/, .claude-plugin/, src/published/, src/runtime/, dist/, docs/adr/mef-adr-*, src/.
 
