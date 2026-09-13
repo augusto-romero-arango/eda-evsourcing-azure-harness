@@ -259,8 +259,14 @@ def claude_input_summary($name; $input):
     model: $resolved_model,
     session_id: $session_id,
     duration_ms: null,
-    tokens: { input: ($result.usage.input_tokens // null), output: ($result.usage.output_tokens // null) },
-    cost_usd: ($result.total_cost_usd // null),
+    tokens: {
+      input: ($result.usage.input_tokens // null),
+      output: ($result.usage.output_tokens // null),
+      cache_read: ($result.usage.cache_read_input_tokens // null),
+      cache_write: ($result.usage.cache_creation_input_tokens // null),
+      reasoning: null
+    },
+    estimated_cost_usd: ($result.total_cost_usd // null),
     turns: ($result.num_turns // null),
     denials: (if (($result.permission_denials // null) | type) == "array" then ($result.permission_denials | length) else null end),
     ttft_ms: ($result.ttft_ms // null),

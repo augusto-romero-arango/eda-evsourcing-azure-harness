@@ -39,7 +39,7 @@
 #       stop_reason==end_turn), que gana sobre cualquier exit code (PR #446)
 #       dejando la muerte posterior documentada en `error` sin degradar el
 #       `status`.
-#   [D] CA-4: el terminal preserva session_id/tokens/cost_usd/turns/
+#   [D] CA-4: el terminal preserva session_id/tokens/estimated_cost_usd/turns/
 #       ttft_ms/denials/api_duration_ms cuando Claude los entrega: ausentes
 #       -> null, nunca 0 (success-minimal.jsonl).
 #   [E] CA-5: --raw-log conserva la traza cruda intacta (mismo contenido que
@@ -118,11 +118,16 @@ validate_event_line() {
     local sub_schema errors
     sub_schema="$(jq -c --arg t "$ev_type" '.definitions[$t]' "$SCHEMA_FILE" 2>/dev/null)"
     errors="$(jq -n --argjson schema "$sub_schema" --argjson instance "$line" -f "$JSONSCHEMA_LITE" 2>&1)"
-    if [ -z "$errors" ] || [ "$(printf '%s' "$errors" | jq 'length' 2>/dev/null)" = "0" ]; then
-        return 0
+    if [ -n "$errors" ] && [ "$(printf '%s' "$errors" | jq 'length' 2>/dev/null)" != "0" ]; then
+        printf '%s' "$errors" | jq -r '.[]'
+        return 1
     fi
-    printf '%s' "$errors" | jq -r '.[]'
-    return 1
+    case "$ev_type" in
+        run.completed|run.failed)
+            printf '%s' "$line" | jq -e 'has("estimated_cost_usd") or has("cost_usd")' >/dev/null 2>&1 || return 1
+            ;;
+    esac
+    return 0
 }
 
 count_terminals() {
@@ -476,7 +481,11 @@ TERM_FULL="$(jq -c 'select(.type=="run.completed")' "$D_FULL")"
 assert_field "D-1: session_id" "sess-abc" "$(echo "$TERM_FULL" | jq -r '.session_id')"
 assert_field "D-2: tokens.input" "100" "$(echo "$TERM_FULL" | jq -r '.tokens.input')"
 assert_field "D-3: tokens.output" "50" "$(echo "$TERM_FULL" | jq -r '.tokens.output')"
-assert_field "D-4: cost_usd" "0.01" "$(echo "$TERM_FULL" | jq -r '.cost_usd')"
+assert_field "D-4: estimated_cost_usd" "0.01" "$(echo "$TERM_FULL" | jq -r '.estimated_cost_usd')"
+assert_field "D-4b: tokens.cache_read" "11" "$(echo "$TERM_FULL" | jq -r '.tokens.cache_read')"
+assert_field "D-4c: tokens.cache_write" "12" "$(echo "$TERM_FULL" | jq -r '.tokens.cache_write')"
+assert_field "D-4d: tokens.reasoning" "null" "$(echo "$TERM_FULL" | jq -r '.tokens.reasoning')"
+assert_field "D-4e: el escritor no emite cost_usd legacy" "false" "$(echo "$TERM_FULL" | jq 'has("cost_usd")')"
 assert_field "D-5: turns" "2" "$(echo "$TERM_FULL" | jq -r '.turns')"
 assert_field "D-6: ttft_ms" "300" "$(echo "$TERM_FULL" | jq -r '.ttft_ms')"
 assert_field "D-7: denials (cardinalidad, no el arreglo)" "1" "$(echo "$TERM_FULL" | jq -r '.denials')"
@@ -486,7 +495,8 @@ D_MIN="$TMP/d-min.jsonl"; translate_fixture success-minimal.jsonl > "$D_MIN"
 TERM_MIN="$(jq -c 'select(.type=="run.completed")' "$D_MIN")"
 assert_field "D-9: session_id ausente -> null" "null" "$(echo "$TERM_MIN" | jq -r '.session_id')"
 assert_field "D-10: tokens.input ausente -> null" "null" "$(echo "$TERM_MIN" | jq -r '.tokens.input')"
-assert_field "D-11: cost_usd ausente -> null" "null" "$(echo "$TERM_MIN" | jq -r '.cost_usd')"
+assert_field "D-11: estimated_cost_usd ausente -> null" "null" "$(echo "$TERM_MIN" | jq -r '.estimated_cost_usd')"
+assert_field "D-11b: el escritor minimal tampoco emite cost_usd legacy" "false" "$(echo "$TERM_MIN" | jq 'has("cost_usd")')"
 assert_field "D-12: turns ausente -> null" "null" "$(echo "$TERM_MIN" | jq -r '.turns')"
 assert_field "D-13: ttft_ms ausente -> null" "null" "$(echo "$TERM_MIN" | jq -r '.ttft_ms')"
 assert_field "D-14: denials ausente -> null (nunca 0)" "null" "$(echo "$TERM_MIN" | jq -r '.denials')"
@@ -652,7 +662,7 @@ if [ -s "$F_EVENTS" ] \
     && ! grep -Eq 'PROMPT_SENTINEL|ASSISTANT_SENTINEL|COMMAND_SENTINEL|STDERR_SENTINEL|HEADER_SENTINEL|AUTH_TOKEN_SENTINEL' "$F_EV" "$F_EVENTS" \
     && ! jq -e 'select(.type == "message")' "$F_EV" >/dev/null 2>&1 \
     && jq -e 'select(.type == "tool.started") | .tool == "Bash" and .input_summary == null' "$F_EV" >/dev/null 2>&1 \
-    && jq -e 'select(.type == "run.completed") | .runtime == "claude" and .model == "claude-sonnet-5" and .session_id == "sess-redaction-claude" and .tokens.input == 21 and .tokens.output == 8 and .cost_usd == 0.02 and .turns == 2' "$F_EV" >/dev/null 2>&1; then
+    && jq -e 'select(.type == "run.completed") | .runtime == "claude" and .model == "claude-sonnet-5" and .session_id == "sess-redaction-claude" and .tokens.input == 21 and .tokens.output == 8 and .tokens.cache_read == null and .tokens.cache_write == null and .tokens.reasoning == null and .estimated_cost_usd == 0.02 and (has("cost_usd") | not) and .turns == 2' "$F_EV" >/dev/null 2>&1; then
     pass "redaccion Claude elimina centinelas y conserva identidad/metricas/tools"
 else
     fail "redaccion Claude filtro contenido sensible o perdio evidencia operacional"

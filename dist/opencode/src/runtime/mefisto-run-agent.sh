@@ -547,7 +547,7 @@ if [ "$TIMED_OUT" = "true" ]; then
         --arg ts "$(now_ts)" --arg runtime "$RUNTIME_ID" --argjson model "$RUN_STARTED_MODEL_JSON" \
         --arg detail "el watchdog mato el proceso tras superar ${TIMEOUT_S}s" \
         '{v: 1, type: "run.failed", ts: $ts, status: "timeout", runtime: $runtime, model: $model,
-          session_id: null, duration_ms: null, tokens: {input: null, output: null}, cost_usd: null,
+           session_id: null, duration_ms: null, tokens: {input: null, output: null, cache_read: null, cache_write: null, reasoning: null}, estimated_cost_usd: null,
           turns: null, denials: null, ttft_ms: null, api_duration_ms: null,
           error: {kind: "timeout", detail: $detail}}')"
     FINAL_EXIT=124
@@ -574,7 +574,7 @@ else
         --arg ts "$(now_ts)" --arg runtime "$RUNTIME_ID" --argjson model "$RUN_STARTED_MODEL_JSON" \
         --arg detail "$DETAIL" \
         '{v: 1, type: "run.failed", ts: $ts, status: "protocol_invalid", runtime: $runtime, model: $model,
-          session_id: null, duration_ms: null, tokens: {input: null, output: null}, cost_usd: null,
+           session_id: null, duration_ms: null, tokens: {input: null, output: null, cache_read: null, cache_write: null, reasoning: null}, estimated_cost_usd: null,
           turns: null, denials: null, ttft_ms: null, api_duration_ms: null,
           error: {kind: "protocol_invalid", detail: $detail}}')"
     FINAL_EXIT=65

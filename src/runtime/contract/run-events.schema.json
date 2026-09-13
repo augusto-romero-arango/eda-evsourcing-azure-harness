@@ -56,7 +56,7 @@
     },
     "run.completed": {
       "type": "object",
-      "required": ["v", "type", "ts", "status", "runtime", "model", "session_id", "duration_ms", "tokens", "cost_usd", "turns", "denials", "ttft_ms", "api_duration_ms", "error"],
+      "required": ["v", "type", "ts", "status", "runtime", "model", "session_id", "duration_ms", "tokens", "turns", "denials", "ttft_ms", "api_duration_ms", "error"],
       "properties": {
         "v": { "type": "number" },
         "type": { "type": "string", "enum": ["run.completed"] },
@@ -71,11 +71,15 @@
           "required": ["input", "output"],
           "properties": {
             "input": { "$comment": "number o null" },
-            "output": { "$comment": "number o null" }
+            "output": { "$comment": "number o null; salida visible cuando el runtime separa el razonamiento; para Claude conserva la semantica nativa de output_tokens" },
+            "cache_read": { "$comment": "number o null; tokens leidos desde cache" },
+            "cache_write": { "$comment": "number o null; tokens escritos/creados en cache" },
+            "reasoning": { "$comment": "number o null; tokens de razonamiento separados de la salida visible" }
           },
           "additionalProperties": false
         },
-        "cost_usd": { "$comment": "number o null" },
+        "estimated_cost_usd": { "$comment": "number o null; equivalencia estimada a tarifas API (MEF-ADR-0054)" },
+        "cost_usd": { "$comment": "number o null; SOLO compatibilidad de lectores para eventos v1 locales legacy. Los escritores nuevos no lo emiten." },
         "turns": { "$comment": "number o null" },
         "denials": { "$comment": "number o null" },
         "ttft_ms": { "$comment": "number o null" },
@@ -95,7 +99,7 @@
     },
     "run.failed": {
       "type": "object",
-      "required": ["v", "type", "ts", "status", "runtime", "model", "session_id", "duration_ms", "tokens", "cost_usd", "turns", "denials", "ttft_ms", "api_duration_ms", "error"],
+      "required": ["v", "type", "ts", "status", "runtime", "model", "session_id", "duration_ms", "tokens", "turns", "denials", "ttft_ms", "api_duration_ms", "error"],
       "properties": {
         "v": { "type": "number" },
         "type": { "type": "string", "enum": ["run.failed"] },
@@ -110,11 +114,15 @@
           "required": ["input", "output"],
           "properties": {
             "input": { "$comment": "number o null" },
-            "output": { "$comment": "number o null" }
+            "output": { "$comment": "number o null; salida visible cuando el runtime separa el razonamiento; para Claude conserva la semantica nativa de output_tokens" },
+            "cache_read": { "$comment": "number o null; tokens leidos desde cache" },
+            "cache_write": { "$comment": "number o null; tokens escritos/creados en cache" },
+            "reasoning": { "$comment": "number o null; tokens de razonamiento separados de la salida visible" }
           },
           "additionalProperties": false
         },
-        "cost_usd": { "$comment": "number o null" },
+        "estimated_cost_usd": { "$comment": "number o null; equivalencia estimada a tarifas API (MEF-ADR-0054)" },
+        "cost_usd": { "$comment": "number o null; SOLO compatibilidad de lectores para eventos v1 locales legacy. Los escritores nuevos no lo emiten." },
         "turns": { "$comment": "number o null" },
         "denials": { "$comment": "number o null" },
         "ttft_ms": { "$comment": "number o null" },

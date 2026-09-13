@@ -110,11 +110,19 @@ validate_event_line() {
     local sub_schema errors
     sub_schema="$(jq -c --arg t "$ev_type" '.definitions[$t]' "$SCHEMA_FILE" 2>/dev/null)"
     errors="$(jq -n --argjson schema "$sub_schema" --argjson instance "$line" -f "$JSONSCHEMA_LITE" 2>&1)"
-    if [ -z "$errors" ] || [ "$(printf '%s' "$errors" | jq 'length' 2>/dev/null)" = "0" ]; then
-        return 0
+    if [ -n "$errors" ] && [ "$(printf '%s' "$errors" | jq 'length' 2>/dev/null)" != "0" ]; then
+        printf '%s' "$errors" | jq -r '.[]'
+        return 1
     fi
-    printf '%s' "$errors" | jq -r '.[]'
-    return 1
+    case "$ev_type" in
+        run.completed|run.failed)
+            if ! printf '%s' "$line" | jq -e 'has("estimated_cost_usd") or has("cost_usd")' >/dev/null 2>&1; then
+                echo "terminal sin estimated_cost_usd ni cost_usd"
+                return 1
+            fi
+            ;;
+    esac
+    return 0
 }
 
 # count_terminals <archivo-jsonl>
@@ -324,6 +332,7 @@ check_all_lines_valid "valid-timeout.jsonl" "$FIXTURES_DIR/valid-timeout.jsonl"
 # issue #965: terminal de un agotamiento de ventana de uso, uno por runtime.
 check_all_lines_valid "valid-rate-limit-claude.jsonl" "$FIXTURES_DIR/valid-rate-limit-claude.jsonl"
 check_all_lines_valid "valid-rate-limit-opencode.jsonl" "$FIXTURES_DIR/valid-rate-limit-opencode.jsonl"
+check_all_lines_valid "legacy-cost-usd.jsonl" "$FIXTURES_DIR/legacy-cost-usd.jsonl"
 
 if jq -e 'select(.type=="run.failed") | .error.kind == "rate_limit" and .resets_at == "2026-05-07T22:40:00Z"' "$FIXTURES_DIR/valid-rate-limit-claude.jsonl" >/dev/null 2>&1; then
     pass "valid-rate-limit-claude.jsonl: error.kind='rate_limit' con resets_at poblado"
@@ -375,6 +384,34 @@ else
     fail "valid-failed.jsonl: la particion de status rompio un terminal legitimo"
 fi
 
+LEGACY_LINE="$(sed -n '2p' "$FIXTURES_DIR/legacy-cost-usd.jsonl")"
+if validate_event_line "$LEGACY_LINE" >/dev/null 2>&1 \
+    && printf '%s' "$LEGACY_LINE" | jq -e 'has("cost_usd") and (has("estimated_cost_usd") | not)' >/dev/null 2>&1; then
+    pass "legacy-cost-usd.jsonl: cost_usd v1 sigue siendo legible sin reinterpretarse"
+else
+    fail "legacy-cost-usd.jsonl: el lector del contrato rechazo el terminal v1"
+fi
+
+BAD_LINE="$(sed -n '2p' "$FIXTURES_DIR/invalid-missing-cost-name.jsonl")"
+if ! validate_event_line "$BAD_LINE" >/dev/null 2>&1; then
+    pass "invalid-missing-cost-name.jsonl: el gate exige estimated_cost_usd o cost_usd"
+else
+    fail "invalid-missing-cost-name.jsonl: el gate acepto un terminal sin ningun nombre de costo"
+fi
+
+BAD_FAILED_LINE="$(printf '%s' "$BAD_LINE" | jq -c '.type="run.failed" | .status="failed" | .error={kind:"nonzero_exit",detail:"fallo"}')"
+if ! validate_event_line "$BAD_FAILED_LINE" >/dev/null 2>&1; then
+    pass "gate de run.failed: tambien exige estimated_cost_usd o cost_usd"
+else
+    fail "gate de run.failed: acepto un terminal sin ningun nombre de costo"
+fi
+
+if grep -l '"cost_usd"' "$FIXTURES_DIR"/*.jsonl | grep -qv '/legacy-cost-usd.jsonl$'; then
+    fail "fixtures del contrato: solo el fixture legacy puede contener cost_usd"
+else
+    pass "fixtures del contrato: los nuevos usan estimated_cost_usd y el nombre legacy esta aislado"
+fi
+
 # ============================================================================
 echo ""
 echo "[D] CA-5/CA-6: runner real contra cada guion de runtime-fake.sh"
@@ -421,6 +458,14 @@ check_scenario() {
         pass "$desc: exactamente 1 evento terminal en --event-log"
     else
         fail "$desc: se contaron $terms eventos terminales (se esperaba 1)"
+    fi
+
+    if jq -e 'select(.type=="run.completed" or .type=="run.failed")
+        | has("estimated_cost_usd") and (has("cost_usd") | not)
+          and (.tokens | has("input") and has("output") and has("cache_read") and has("cache_write") and has("reasoning"))' "$ev" >/dev/null 2>&1; then
+        pass "$desc: fake/sintetico usa solo el contrato nuevo de costo y tokens"
+    else
+        fail "$desc: fake/sintetico emitio forma legacy o incompleta"
     fi
 
     local last_status last_kind

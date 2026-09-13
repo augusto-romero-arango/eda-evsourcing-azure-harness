@@ -2,4 +2,4 @@
 {"v":1,"type":"message","ts":"2026-09-05T10:00:01Z","role":"assistant","text":"Analizando el issue..."}
 {"v":1,"type":"tool.started","ts":"2026-09-05T10:00:02Z","tool":"Read","input_summary":null}
 {"v":1,"type":"tool.completed","ts":"2026-09-05T10:00:02Z","tool":"Read","ok":true,"duration_ms":42}
-{"v":1,"type":"run.completed","ts":"2026-09-05T10:00:03Z","status":"success","runtime":"fake","model":"demo-model","session_id":null,"duration_ms":3000,"tokens":{"input":1200,"output":340},"cost_usd":0.021,"turns":4,"denials":0,"ttft_ms":850,"api_duration_ms":2600,"error":null}
+{"v":1,"type":"run.completed","ts":"2026-09-05T10:00:03Z","status":"success","runtime":"fake","model":"demo-model","session_id":null,"duration_ms":3000,"tokens":{"input":1200,"output":340,"cache_read":100,"cache_write":50,"reasoning":null},"estimated_cost_usd":0.021,"turns":4,"denials":0,"ttft_ms":850,"api_duration_ms":2600,"error":null}
