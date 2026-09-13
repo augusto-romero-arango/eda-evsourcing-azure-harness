@@ -553,9 +553,11 @@ main() {
 
     local planner_agent
     planner_agent=$(planner_agent_for_repo "$repo_root")
-    if [ "$planner_agent" = "mefisto:planner" ] && [ ! -f "$repo_root/.claude/harness.config.json" ]; then
-        warn "El repo no tiene .claude/harness.config.json: parece no estar onboardeado a Mefisto (/onboard)."
-        warn "El workspace se abre igual, pero los pipelines fallaran hasta completar el onboarding."
+    if [ "$planner_agent" = "mefisto:planner" ] \
+        && [ ! -f "$repo_root/.mefisto/harness.config.json" ] \
+        && [ ! -f "$repo_root/.claude/harness.config.json" ]; then
+        warn "El repo no tiene .mefisto/harness.config.json ni el fallback legacy .claude/harness.config.json: parece no estar onboardeado a Mefisto (/onboard)."
+        warn "El workspace se abre igual; completa el onboarding antes de ejecutar pipelines que requieran configuracion."
     fi
 
     local label

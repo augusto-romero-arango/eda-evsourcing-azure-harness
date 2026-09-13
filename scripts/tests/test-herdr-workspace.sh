@@ -70,14 +70,18 @@ unset MEFISTO_RUNTIMES MEFISTO_RUNTIME
 
 FAKE_MEFISTO="$TMP/fake-mefisto-repo"
 FAKE_CONSUMER="$TMP/fake consumer repo"
+FAKE_LEGACY_CONSUMER="$TMP/fake legacy consumer repo"
+FAKE_UNCONFIGURED_CONSUMER="$TMP/fake unconfigured consumer repo"
 FAKE_WORKTREE="$TMP/fake consumer worktree"
 FAKE_PACKAGE="$TMP/fake package"
 FAKE_BIN="$TMP/bin"
 FAKE_XDG="$TMP/xdg"
-mkdir -p "$FAKE_MEFISTO/.claude-plugin" "$FAKE_CONSUMER/.claude" "$FAKE_BIN" \
+mkdir -p "$FAKE_MEFISTO/.claude-plugin" "$FAKE_CONSUMER/.mefisto" \
+    "$FAKE_LEGACY_CONSUMER/.claude" "$FAKE_UNCONFIGURED_CONSUMER" "$FAKE_BIN" \
     "$FAKE_PACKAGE/scripts" "$FAKE_PACKAGE/src/published/scripts" "$FAKE_XDG/mefisto/active"
 printf '{}\n' > "$FAKE_MEFISTO/.claude-plugin/plugin.json"
-printf '{}\n' > "$FAKE_CONSUMER/.claude/harness.config.json"
+printf '{}\n' > "$FAKE_CONSUMER/.mefisto/harness.config.json"
+printf '{}\n' > "$FAKE_LEGACY_CONSUMER/.claude/harness.config.json"
 cp "$TARGET" "$FAKE_PACKAGE/scripts/herdr-workspace.sh"
 cp "$REPO_ROOT/src/published/scripts/diagnose-installation-identity.sh" \
     "$FAKE_PACKAGE/src/published/scripts/diagnose-installation-identity.real.sh"
@@ -90,9 +94,13 @@ chmod +x "$FAKE_PACKAGE/scripts/herdr-workspace.sh" \
     "$FAKE_PACKAGE/src/published/scripts/diagnose-installation-identity.sh"
 (cd "$FAKE_MEFISTO" && git init -q && git -c user.email=test@example.com -c user.name=Test commit --allow-empty -q -m inicial)
 (cd "$FAKE_CONSUMER" && git init -q && git -c user.email=test@example.com -c user.name=Test commit --allow-empty -q -m inicial)
+(cd "$FAKE_LEGACY_CONSUMER" && git init -q && git -c user.email=test@example.com -c user.name=Test commit --allow-empty -q -m inicial)
+(cd "$FAKE_UNCONFIGURED_CONSUMER" && git init -q && git -c user.email=test@example.com -c user.name=Test commit --allow-empty -q -m inicial)
 git -C "$FAKE_CONSUMER" worktree add -q -b fixture-worktree "$FAKE_WORKTREE"
 FAKE_MEFISTO=$(cd "$FAKE_MEFISTO" && pwd -P)
 FAKE_CONSUMER=$(cd "$FAKE_CONSUMER" && pwd -P)
+FAKE_LEGACY_CONSUMER=$(cd "$FAKE_LEGACY_CONSUMER" && pwd -P)
+FAKE_UNCONFIGURED_CONSUMER=$(cd "$FAKE_UNCONFIGURED_CONSUMER" && pwd -P)
 FAKE_WORKTREE=$(cd "$FAKE_WORKTREE" && pwd -P)
 FAKE_PACKAGE=$(cd "$FAKE_PACKAGE" && pwd -P)
 export XDG_DATA_HOME="$FAKE_XDG"
@@ -335,6 +343,36 @@ else
     pass "F-2: no modifica la fila usada como base"
 fi
 assert_no_anchor_protocol F-3
+
+echo ""
+echo "[G] Preflight de configuracion del consumidor"
+export WORKSPACE_TARGET="$FAKE_PACKAGE/scripts/herdr-workspace.sh"
+run_workspace "$FAKE_CONSUMER"
+if [ "$LAST_RC" -eq 0 ] \
+    && ! printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q 'parece no estar onboardeado'; then
+    pass "G-1: el config canonico abre sin warning de onboarding"
+else
+    fail "G-1: el config canonico emitio warning o aborto: $LAST_STDOUT$LAST_STDERR"
+fi
+run_workspace "$FAKE_LEGACY_CONSUMER"
+if [ "$LAST_RC" -eq 0 ] \
+    && ! printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q 'parece no estar onboardeado'; then
+    pass "G-2: el config legacy conserva el fallback sin warning de onboarding"
+else
+    fail "G-2: el config legacy emitio warning o aborto: $LAST_STDOUT$LAST_STDERR"
+fi
+run_workspace "$FAKE_UNCONFIGURED_CONSUMER"
+if [ "$LAST_RC" -eq 0 ] \
+    && printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q '.mefisto/harness.config.json ni el fallback legacy .claude/harness.config.json' \
+    && ! printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q 'pipelines fallaran' \
+    && grep -qF "workspace create --cwd $FAKE_UNCONFIGURED_CONSUMER" "$HERDR_STUB_LOG" \
+    && [ ! -e "$FAKE_UNCONFIGURED_CONSUMER/.mefisto/harness.config.json" ] \
+    && [ ! -e "$FAKE_UNCONFIGURED_CONSUMER/.claude/harness.config.json" ]; then
+    pass "G-3: sin config avisa rutas canonica y legacy, abre sin modificar el consumidor"
+else
+    fail "G-3: preflight ausente no fue no bloqueante o modifico el consumidor: $LAST_STDOUT$LAST_STDERR"
+fi
+unset WORKSPACE_TARGET
 
 echo ""
 echo "[H] Consumidor nuevo: dos filas y path con espacios"
