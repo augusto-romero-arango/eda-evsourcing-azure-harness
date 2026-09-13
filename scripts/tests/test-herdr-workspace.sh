@@ -349,22 +349,28 @@ echo "[G] Preflight de configuracion del consumidor"
 export WORKSPACE_TARGET="$FAKE_PACKAGE/scripts/herdr-workspace.sh"
 run_workspace "$FAKE_CONSUMER"
 if [ "$LAST_RC" -eq 0 ] \
-    && ! printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q 'parece no estar onboardeado'; then
-    pass "G-1: el config canonico abre sin warning de onboarding"
+    && ! printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -Fq 'parece no estar onboardeado' \
+    && grep -qxF "herdr workspace create --cwd $FAKE_CONSUMER --label fake consumer repo --env MEFISTO_RUNTIME=claude" "$HERDR_STUB_LOG" \
+    && grep -qxF 'herdr pane rename w1:p1 planner [claude]' "$HERDR_STUB_LOG" \
+    && grep -qxF 'herdr pane rename w1:p2 planner [opencode]' "$HERDR_STUB_LOG"; then
+    pass "G-1: el config canonico abre ambas filas sin warning de onboarding"
 else
     fail "G-1: el config canonico emitio warning o aborto: $LAST_STDOUT$LAST_STDERR"
 fi
 run_workspace "$FAKE_LEGACY_CONSUMER"
 if [ "$LAST_RC" -eq 0 ] \
-    && ! printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q 'parece no estar onboardeado'; then
-    pass "G-2: el config legacy conserva el fallback sin warning de onboarding"
+    && ! printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -Fq 'parece no estar onboardeado' \
+    && grep -qxF "herdr workspace create --cwd $FAKE_LEGACY_CONSUMER --label fake legacy consumer repo --env MEFISTO_RUNTIME=claude" "$HERDR_STUB_LOG" \
+    && grep -qxF 'herdr pane rename w1:p1 planner [claude]' "$HERDR_STUB_LOG" \
+    && grep -qxF 'herdr pane rename w1:p2 planner [opencode]' "$HERDR_STUB_LOG"; then
+    pass "G-2: el config legacy conserva el fallback y abre ambas filas sin warning"
 else
     fail "G-2: el config legacy emitio warning o aborto: $LAST_STDOUT$LAST_STDERR"
 fi
 run_workspace "$FAKE_UNCONFIGURED_CONSUMER"
 if [ "$LAST_RC" -eq 0 ] \
-    && printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q '.mefisto/harness.config.json ni el fallback legacy .claude/harness.config.json' \
-    && ! printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q 'pipelines fallaran' \
+    && printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -Fq '.mefisto/harness.config.json ni el fallback legacy .claude/harness.config.json' \
+    && ! printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -Fq 'pipelines fallaran' \
     && grep -qF "workspace create --cwd $FAKE_UNCONFIGURED_CONSUMER" "$HERDR_STUB_LOG" \
     && [ ! -e "$FAKE_UNCONFIGURED_CONSUMER/.mefisto/harness.config.json" ] \
     && [ ! -e "$FAKE_UNCONFIGURED_CONSUMER/.claude/harness.config.json" ]; then
