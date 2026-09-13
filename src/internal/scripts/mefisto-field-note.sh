@@ -223,10 +223,10 @@ trap cleanup_and_verify EXIT
 # directo al stderr de este script -- el diagnostico no se pierde, solo deja de
 # contaminar el valor. Misma convencion que mefisto-release.sh y
 # mefisto-tooling-pipeline.sh.
-DEFAULT_BRANCH="$(gh repo view --repo "$MEFISTO_REPO_SLUG" --json defaultBranchRef --jq '.defaultBranchRef.name')"
+DEFAULT_BRANCH="$(gh repo view "$MEFISTO_REPO_SLUG" --json defaultBranchRef --jq '.defaultBranchRef.name')"
 GH_REPO_VIEW_RC=$?
 if [ "$GH_REPO_VIEW_RC" -ne 0 ] || [ -z "$DEFAULT_BRANCH" ] || [ "$DEFAULT_BRANCH" = "null" ]; then
-    echo "ERROR: no se pudo resolver la rama predeterminada del repo via 'gh repo view' (rc=$GH_REPO_VIEW_RC); revisa 'gh auth status'" >&2
+    echo "ERROR: no se pudo resolver la rama predeterminada del repo via 'gh repo view' (rc=$GH_REPO_VIEW_RC); revisa 'gh auth status', o si el argv de 'gh repo view' es valido (no acepta --repo, el slug va posicional)" >&2
     exit 1
 fi
 
