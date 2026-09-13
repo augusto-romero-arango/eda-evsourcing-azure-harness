@@ -4,6 +4,38 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.37.16] - 2026-09-13
+
+### Changed
+
+- Se actualiza el expediente de certificacion E2E de Herdr con el estado verificable de los fixtures parciales y los requisitos pendientes para repetir ambas corridas sobre una misma release corregida.
+- El adaptador de runtime Claude fija `opus` como default del perfil `deep` (antes vacio, es decir herencia de la sesion activa): `tooling-reviewer` (publicado) y `mefisto-planner`/`mefisto-investigator`/`mefisto-reviewer`/`mefisto-fix-review` (internos) ya reciben `--model opus` o `model: "opus"` sin necesitar `.mefisto/models.json`. `fast` (`haiku`) y `balanced` (`sonnet`) no cambian; el lado OpenCode tampoco.
+
+### Fixed
+
+- Se extrae a `mefisto-field-note.sh` (Bash probado) la primera entrega de field notes -- antes ~200 lineas de prosa shell en el epilogo de `mefisto-planner.md` -- y se corrige el defecto verificable de esa prosa: `gh pr list` sobre una lista vacia emitia tabuladores que `[ -n "$PR_DATA" ]` confundia con un PR ya existente, saltandose `gh pr create`.
+- Se extrae a `scripts/field-note.sh` (Bash probado, implementacion propia del lado publicado -- MEF-ADR-0019) el cierre documental del `planner` publicado -- antes ~120 lineas de prosa shell en el epilogo de `agents/planner.md` que competian con la doctrina de flujo de entrega del `AGENTS.md` del consumidor y, al compactarse el contexto, podian degradar a `git switch -c` de la rama documental en el checkout principal. El script agrega ademas, sobre el diseno validado en `mefisto-field-note.sh` (#1295/#1299), el delta opcional del glosario de lenguaje ubicuo (`docs/ddd/ubiquitous-language.yaml` o su ruta legada): valida que sigue siendo YAML valido tras el delta -- con el primer validador ya presente en el PATH del consumidor (python3+PyYAML, ruby o yq), sin instalar nada -- y que el indice de git queda exactamente con la field note y, cuando aplica, ese glosario, abortando ante cualquier otro path.
+- La seccion de cierre de `agents/planner.md` queda reducida a redactar el contenido + una sola invocacion de `field-note.sh` + reportar su salida, con la prohibicion explicita de crear la rama documental en el checkout principal.
+- El cierre documental de `mefisto-planner` (fuente neutral `src/internal/agents/mefisto-planner.md`) deja de reimplementar en prosa shell el worktree aislado, el commit, el push y el PR idempotente -- ~200 lineas que competian con el flujo Git general de `AGENTS.md` y dependian de que el modelo recordara una secuencia larga tras una conversacion susceptible de compactacion. Ahora solo conserva al inicio la identidad estable de la sesion (timestamp + session-id) y, al cerrar, redacta la field note con el template vigente y la entrega con una unica invocacion a `mefisto-field-note.sh` (#1295/#1299), reportando literalmente su salida o su recuperacion.
+- El bloque `[J]` de `scripts/tests/test-guards.sh` deja de validar por grep los snippets shell retirados y pasa a verificar la invocacion del script y la ausencia de la mecanica Git que antes vivia en el prompt.
+- El borrador local de la field note se redacta en `.mefisto/pipeline/summaries/` (ignorado por Git, dentro del repo activo) y no en `/tmp`: los agentes internos corren con `external_directory: deny` en OpenCode (`src/internal/contract/opencode-permissions.json`), asi que una ruta fuera del worktree no seria escribible en ese runtime (MEF-ADR-0050).
+- El pipeline interno de entrega de field notes (`mefisto-field-note.sh`) ahora tolera reintentos y fallos parciales: reanuda una entrega identificada por `--agent`/`--timestamp`/`--session-id` sin duplicar nota, rama, commit ni PR, y distingue los tres estados de PR (abierto, cerrado sin merge, mergeado) al consultar `gh pr list` en vez de asumir ausencia por longitud de tabuladores. Ante cualquier fallo de worktree, commit, push, consulta, reapertura o creacion del PR reporta el ultimo checkpoint confirmado y una accion concreta de recuperacion, conservando rama, commit o worktree cuando son la unica copia recuperable.
+- Al reanudar, el pipeline se niega a operar si la rama documental quedo checkouteada en el checkout principal: antes la tomaba por "el worktree de la sesion" y commiteaba, empujaba y abria el PR desde ahi -- el incidente que el propio pipeline existe para impedir.
+- Al reanudar con el contenido de la field note cambiado, el pipeline solo actualiza via `--amend` un commit propio de la sesion: si la nota ya vivia en la rama base (entrega previa ya mergeada con su rama borrada en origin), crea un commit nuevo encima en vez de reescribir y force-pushear el commit base ajeno.
+- El pipeline interno de entrega de field notes (`mefisto-field-note.sh`) resolvia
+  la rama predeterminada con `gh repo view --repo <slug>`, un flag que
+  `gh repo view` no acepta (el repositorio va como argumento posicional): abortaba
+  en toda invocacion real antes de crear el worktree y dejaba el cierre documental
+  de `mefisto-planner` sin salida. Corregido a la forma posicional, y el mensaje
+  de error de ese paso ya no atribuye el fallo solo a `gh auth status` — tambien
+  nombra un argv invalido como causa posible.
+- Los stubs de `gh` de `test-mefisto-field-note.sh` validan ahora el argv de
+  `repo view` contra el set de flags que acepta el binario real (rechazan
+  `--repo`/`-R` y cualquier otro desconocido) en vez de decidir su respuesta por
+  coincidencia de substring: un stub mas permisivo que el binario no puede
+  detectar una regresion de argv como esta.
+- Se alinea el scope documental de `/mefisto:tooling` con su gate y se muestran los bloqueos estructurados del writer cuando no genera cambios.
+
 ## [0.37.15] - 2026-09-13
 
 ### Fixed
@@ -2464,7 +2496,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.15...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.16...HEAD
+[0.37.16]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.15...v0.37.16
 [0.37.15]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.14...v0.37.15
 [0.37.14]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.13...v0.37.14
 [0.37.13]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.12...v0.37.13
