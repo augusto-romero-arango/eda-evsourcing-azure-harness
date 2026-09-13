@@ -2074,6 +2074,40 @@ else
     AGENT_CG_RES="skipped"
 fi
 
+# ─── Metricas publicables de la corrida ──────────────────────────────────────
+# Una unica lista conserva alineados el PR y el historial. Solo se agregan
+# etapas con duracion: una etapa omitida no debe convertirse en una fila falsa.
+_tdd_add_run_metrics_stage() {
+    local label="$1" duration="$2" metrics="$3" history_key="$4" agent="$5"
+    [ -n "$duration" ] || return 0
+    RUN_METRICS_STAGE_ARGS+=("$label" "$duration" "$metrics")
+    if [ "$history_key" = "coverage-gate" ]; then
+        HISTORY_COVERAGE_GATE_INCLUDED=true
+    else
+        HISTORY_AGENT_ARGS+=("$history_key" "$agent" "$duration" "$metrics")
+    fi
+}
+
+_tdd_collect_run_metrics_stages() {
+    RUN_METRICS_STAGE_ARGS=()
+    HISTORY_AGENT_ARGS=()
+    HISTORY_COVERAGE_GATE_INCLUDED=false
+
+    _tdd_add_run_metrics_stage "Scaffolder" "${AGENT_SCAFFOLD_DUR:-}" "${AGENT_SCAFFOLD_METRICS_JSON:-}" "scaffolder" "domain-scaffolder"
+    _tdd_add_run_metrics_stage "$STAGE1_LABEL" "${AGENT_TW_DUR:-}" "${AGENT_TW_METRICS_JSON:-}" "test-writer" "$STAGE1_AGENT"
+    _tdd_add_run_metrics_stage "$STAGE2_LABEL" "${AGENT_IM_DUR:-}" "${AGENT_IM_METRICS_JSON:-}" "implementer" "$STAGE2_AGENT"
+    _tdd_add_run_metrics_stage "Smoke Test Writer" "${AGENT_ST_DUR:-}" "${AGENT_ST_METRICS_JSON:-}" "smoke-test-writer" "smoke-test-writer"
+    _tdd_add_run_metrics_stage "Reviewer" "${AGENT_RV_DUR:-}" "${AGENT_RV_METRICS_JSON:-}" "reviewer" "reviewer"
+    _tdd_add_run_metrics_stage "Remediacion: $STAGE1_LABEL" "${AGENT_PATCH_TW_DUR:-}" "${AGENT_PATCH_TW_METRICS_JSON:-}" "patch-test-writer" "$STAGE1_AGENT"
+    _tdd_add_run_metrics_stage "Remediacion: $STAGE2_LABEL" "${AGENT_PATCH_IM_DUR:-}" "${AGENT_PATCH_IM_METRICS_JSON:-}" "patch-implementer" "$STAGE2_AGENT"
+    # MEF-ADR-0014: el gate es una etapa del pipeline, no un agente. Por eso su
+    # fila tiene duracion pero metricas null y deja el Total marcado como parcial.
+    _tdd_add_run_metrics_stage "coverage-gate" "${AGENT_CG_DUR:-}" "null" "coverage-gate" ""
+}
+
+_tdd_collect_run_metrics_stages
+RUN_METRICS_TABLE=$(render_run_metrics_table "${RUN_METRICS_STAGE_ARGS[@]}")
+
 # ─── Crear PR (en modo variante: NO -- CA-3) ─────────────────────────────────
 REPO_SLUG_PR="$(git -C "$WORKTREE_PATH" remote get-url origin | sed 's/.*github.com[:/]\(.*\)\.git/\1/')"
 
@@ -2109,6 +2143,18 @@ else
     if [ -n "$EXISTING_PR_URL" ]; then
         PR_URL="$EXISTING_PR_URL"
         success "PR existente reutilizado: $PR_URL"
+        RUN_METRICS_COMMENT=$(cat <<EOF
+## Metricas de la corrida
+
+Actualizado: $(date '+%Y-%m-%d %H:%M:%S %Z')
+
+$RUN_METRICS_TABLE
+EOF
+)
+        gh pr comment "$PR_URL" \
+            --body "$RUN_METRICS_COMMENT" \
+            --repo "$REPO_SLUG_PR" \
+            >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 || warn "No se pudo publicar las metricas en el PR reutilizado: $PR_URL"
     else
         CLOSES_LINE=""
         if [ -n "$ISSUE_NUM" ]; then
@@ -2232,6 +2278,10 @@ ${COVERAGE_SECTION}## Commits
 
 $COMMITS_LIST
 
+## Metricas de la corrida
+
+$RUN_METRICS_TABLE
+
 $CLOSES_LINE
 EOF
 )" \
@@ -2281,14 +2331,10 @@ update_status "done" "completed"
 
 # Append al historial
 #
-# CA-1/CA-2 (issue #646): agents.<clave>.metrics se agrega via
-# build_agents_history_json SIN tocar "duration" (test-writer/implementer/
-# reviewer siguen presentes aunque no hayan corrido en esta corrida) y solo
-# suma scaffolder/smoke-test-writer/patch-test-writer/patch-implementer
-# cuando ese stage de verdad corrio (metrics no vacio). "coverage-gate" no
-# pasa por el builder -- su forma (duration/result/gaps/patch_applied) no
-# cambia (ver notas tecnicas del issue): se compone aparte y se mezcla al
-# objeto que arma el builder.
+# La lista HISTORY_AGENT_ARGS nace junto a RUN_METRICS_STAGE_ARGS: PR e
+# historial enumeran exactamente las mismas etapas efectivamente corridas.
+# coverage-gate conserva su forma propia (MEF-ADR-0014) y no pasa por el
+# builder porque no tiene metricas de agente.
 #
 # CA-4: sin jq, PIPELINE_CAPTURE_STREAM es false y este bloque no corre --
 # AGENTS_JSON conserva la forma exacta de siempre (sin "metrics", sin las
@@ -2296,21 +2342,14 @@ update_status "done" "completed"
 AGENTS_JSON="{\"test-writer\":{\"duration\":${AGENT_TW_DUR:-null}},\"implementer\":{\"duration\":${AGENT_IM_DUR:-null}},\"reviewer\":{\"duration\":${AGENT_RV_DUR:-null}},\"coverage-gate\":{\"duration\":${AGENT_CG_DUR:-null},\"result\":\"$AGENT_CG_RES\",\"gaps\":$COV_GAPS_REMAINING,\"patch_applied\":$COV_PATCH_APPLIED}}"
 
 if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
-    HISTORY_AGENT_ARGS=(
-        "test-writer" "$STAGE1_AGENT" "${AGENT_TW_DUR:-}" "${AGENT_TW_METRICS_JSON:-}"
-        "implementer" "$STAGE2_AGENT" "${AGENT_IM_DUR:-}" "${AGENT_IM_METRICS_JSON:-}"
-        "reviewer" "reviewer" "${AGENT_RV_DUR:-}" "${AGENT_RV_METRICS_JSON:-}"
-    )
-    [ -n "$AGENT_SCAFFOLD_METRICS_JSON" ] && HISTORY_AGENT_ARGS+=("scaffolder" "domain-scaffolder" "${AGENT_SCAFFOLD_DUR:-}" "$AGENT_SCAFFOLD_METRICS_JSON")
-    [ -n "$AGENT_ST_METRICS_JSON" ] && HISTORY_AGENT_ARGS+=("smoke-test-writer" "smoke-test-writer" "${AGENT_ST_DUR:-}" "$AGENT_ST_METRICS_JSON")
-    [ -n "$AGENT_PATCH_TW_METRICS_JSON" ] && HISTORY_AGENT_ARGS+=("patch-test-writer" "$STAGE1_AGENT" "${AGENT_PATCH_TW_DUR:-}" "$AGENT_PATCH_TW_METRICS_JSON")
-    [ -n "$AGENT_PATCH_IM_METRICS_JSON" ] && HISTORY_AGENT_ARGS+=("patch-implementer" "$STAGE2_AGENT" "${AGENT_PATCH_IM_DUR:-}" "$AGENT_PATCH_IM_METRICS_JSON")
-
     CORE_AGENTS_JSON=$(build_agents_history_json "${HISTORY_AGENT_ARGS[@]}" 2>/dev/null) || CORE_AGENTS_JSON=""
     if [ -n "$CORE_AGENTS_JSON" ]; then
-        COVERAGE_GATE_JSON="{\"coverage-gate\":{\"duration\":${AGENT_CG_DUR:-null},\"result\":\"$AGENT_CG_RES\",\"gaps\":$COV_GAPS_REMAINING,\"patch_applied\":$COV_PATCH_APPLIED}}"
-        MERGED_AGENTS_JSON=$(jq -n -c --argjson a "$CORE_AGENTS_JSON" --argjson b "$COVERAGE_GATE_JSON" '$a + $b' 2>/dev/null) || MERGED_AGENTS_JSON=""
-        [ -n "$MERGED_AGENTS_JSON" ] && AGENTS_JSON="$MERGED_AGENTS_JSON"
+        AGENTS_JSON="$CORE_AGENTS_JSON"
+        if [ "$HISTORY_COVERAGE_GATE_INCLUDED" = true ]; then
+            COVERAGE_GATE_JSON="{\"coverage-gate\":{\"duration\":${AGENT_CG_DUR:-null},\"result\":\"$AGENT_CG_RES\",\"gaps\":$COV_GAPS_REMAINING,\"patch_applied\":$COV_PATCH_APPLIED}}"
+            MERGED_AGENTS_JSON=$(jq -n -c --argjson a "$CORE_AGENTS_JSON" --argjson b "$COVERAGE_GATE_JSON" '$a + $b' 2>/dev/null) || MERGED_AGENTS_JSON=""
+            [ -n "$MERGED_AGENTS_JSON" ] && AGENTS_JSON="$MERGED_AGENTS_JSON"
+        fi
     fi
 fi
 
