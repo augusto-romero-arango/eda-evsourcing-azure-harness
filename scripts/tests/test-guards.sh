@@ -187,7 +187,7 @@ echo "[C2] Scripts auxiliares publicados: el guard aborta cuando se ejecutan en 
 AUX_SCRIPTS=(
     appinsights-query.sh setup-github-ci.sh setup-github-labels.sh
     bootstrap-backend.sh seed-secret.sh onboard-diagnose.sh onboard-migrate-directives.sh update-plugin.sh
-    purge-store.sh next-order.sh
+    purge-store.sh next-order.sh field-note.sh
 )
 
 for aux in "${AUX_SCRIPTS[@]}"; do
@@ -663,34 +663,407 @@ else
     fail "se esperaban 3 concesiones de 'actions: read' en agents/domain-scaffolder.md (reutilizable + 2 invocadores), se encontraron $ACTIONS_READ"
 fi
 
-# -------- Bloque I: cierre aislado de field notes del planner publicado --------
+# -------- Bloque I: field-note.sh (cierre documental del planner publicado) --------
 
 echo ""
-echo "[I] Planner publicado: cierre documental aislado y recuperable"
+echo "[I] scripts/field-note.sh: presencia, invocacion desde agents/planner.md y mecanica sobre un repo temporal"
 
+FIELD_NOTE_SCRIPT="$REPO_ROOT/scripts/field-note.sh"
 PLANNER="$REPO_ROOT/agents/planner.md"
+
+if [ -f "$FIELD_NOTE_SCRIPT" ]; then
+    pass "field-note.sh: presente"
+else
+    fail "field-note.sh: ausente"
+fi
+if [ -x "$FIELD_NOTE_SCRIPT" ]; then
+    pass "field-note.sh: bit de ejecucion presente"
+else
+    fail "field-note.sh: sin bit de ejecucion"
+fi
+if bash -n "$FIELD_NOTE_SCRIPT" 2>/dev/null; then
+    pass "field-note.sh: sintaxis bash valida"
+else
+    fail "field-note.sh: sintaxis bash invalida"
+fi
+
+# El cierre de agents/planner.md queda reducido a redactar el contenido + una
+# sola invocacion del script + reportar su salida (CA-5), con la prohibicion
+# explicita de crear la rama documental en el checkout principal.
 for required in \
-    'INITIAL_HEAD_REF=$(git symbolic-ref -q --short HEAD || true)' \
-    'INITIAL_HEAD_SHA=$(git rev-parse HEAD)' \
-    'INITIAL_DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef' \
-    'INITIAL_STATUS=$(git status --porcelain=v1 --untracked-files=all)' \
-    'FIELD_NOTE="docs/bitacora/field-notes/${CLOSING_TIMESTAMP}-planner.md"' \
-    'git worktree add -b "$DOC_BRANCH" "$WORKTREE_DIR" "origin/$DEFAULT_BRANCH"' \
-    'git -C "$WORKTREE_DIR" add -- "$FIELD_NOTE"' \
-    'STAGED=$(git -C "$WORKTREE_DIR" diff --cached --name-only | LC_ALL=C sort)' \
-    'git -C "$WORKTREE_DIR" status --porcelain=v1 --untracked-files=all' \
-    'git worktree remove --force "$WORKTREE_DIR"' \
-    'PR_DATA=$(gh pr list --head "$DOC_BRANCH" --base "$DEFAULT_BRANCH" --state all' \
-    'gh pr reopen "$PR_NUMBER"' \
-    'gh pr create --base "$DEFAULT_BRANCH" --head "$DOC_BRANCH"' \
-    'git switch --detach "$INITIAL_HEAD_SHA"' \
-    'El cierre solo queda verificado cuando la referencia inicial, `INITIAL_HEAD_SHA` y `INITIAL_STATUS` coinciden exactamente.'; do
-    if grep -qF "$required" "$PLANNER"; then
+    '"$PLUGIN_ROOT/scripts/field-note.sh"' \
+    '--session-id "$SESSION_ID"' \
+    '--timestamp "$CLOSING_TIMESTAMP"' \
+    '--field-note "$FIELD_NOTE_LOCAL"' \
+    'nunca crees la rama documental ahí'; do
+    if grep -qF -- "$required" "$PLANNER"; then
         pass "planner: conserva '$required'"
     else
-        fail "planner: falta la garantia documental '$required'"
+        fail "planner: falta '$required'"
     fi
 done
+
+# El cierre YA NO debe reimplementar la mecanica de git en prosa: ninguno de
+# estos fragmentos (que SI vivian ahi antes del issue #1296) puede seguir
+# presente, o la logica quedaria duplicada entre el prompt y el script.
+for forbidden in \
+    'git worktree add -b "$DOC_BRANCH"' \
+    'git -C "$WORKTREE_DIR" commit' \
+    'gh pr create --base "$DEFAULT_BRANCH" --head "$DOC_BRANCH"'; do
+    if grep -qF -- "$forbidden" "$PLANNER"; then
+        fail "planner: todavia reimplementa la mecanica de cierre en prosa ('$forbidden'); debe delegar en field-note.sh"
+    else
+        pass "planner: no reimplementa '$forbidden' (delega en field-note.sh)"
+    fi
+done
+
+# ---- Mecanica end-to-end sobre un repo Git temporal ------------------------
+
+FN_TMP=$(mktemp -d)
+fn_cleanup() { rm -rf "$FN_TMP"; }
+
+FN_SAFE_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
+FN_REPO_SLUG="acme/consumer-fake"
+
+# new_consumer_repo <prefijo>
+#
+# Crea un checkout principal SIN .claude-plugin/plugin.json (para que el
+# guard publicado de field-note.sh lo trate como consumidor, no como Mefisto)
+# con el script ya copiado adentro, y un remote bare real con 'main' ya
+# empujado. Dependencia real de git/gh/jq/python3 -- solo se ejercitan
+# invocaciones locales, sin red.
+new_consumer_repo() {
+    local prefix="$1"
+    FN_MAIN="$FN_TMP/$prefix/main-checkout"
+    FN_BARE="$FN_TMP/$prefix/origin.git"
+    mkdir -p "$FN_MAIN/scripts"
+    git init -q "$FN_MAIN"
+    git -C "$FN_MAIN" symbolic-ref HEAD refs/heads/main
+    git -C "$FN_MAIN" config user.email "test@consumer.local"
+    git -C "$FN_MAIN" config user.name "Consumer Test"
+    cp "$FIELD_NOTE_SCRIPT" "$FN_MAIN/scripts/field-note.sh"
+    chmod +x "$FN_MAIN/scripts/field-note.sh"
+    echo "consumidor de prueba" > "$FN_MAIN/README.md"
+    git -C "$FN_MAIN" add .
+    git -C "$FN_MAIN" commit -q -m "base"
+    git init -q --bare "$FN_BARE"
+    git -C "$FN_MAIN" remote add origin "$FN_BARE"
+    git -C "$FN_MAIN" push -q origin main
+}
+
+# write_fake_gh <fakebin> <call_log> <pr_store> <fail_once_marker>
+#
+# 'gh' controlado con un almacen de PRs PERSISTENTE (TSV:
+# number|url|state|mergedAt|head|base). Si <fail_once_marker> existe, la
+# PRIMERA llamada a 'pr create' falla y borra el marker (simula el proceso
+# muerto justo despues del push, mismo escenario que el interno #1299).
+write_fake_gh() {
+    local fakebin="$1" call_log="$2" store="$3" fail_marker="$4"
+    mkdir -p "$fakebin"
+    : > "$store"
+    cat > "$fakebin/gh" <<EOF
+#!/usr/bin/env bash
+echo "\$@" >> "$call_log"
+
+get_opt() {
+    local want="\$1"; shift
+    local i=1
+    for a in "\$@"; do
+        i=\$((i+1))
+        if [ "\$a" = "\$want" ]; then
+            eval "echo \\"\\\${\$i}\\""
+            return 0
+        fi
+    done
+    echo ""
+}
+
+if [ "\$1" = "repo" ] && [ "\$2" = "view" ]; then
+    if printf '%s\n' "\$@" | grep -q "nameWithOwner"; then
+        echo "$FN_REPO_SLUG"
+        exit 0
+    fi
+    if printf '%s\n' "\$@" | grep -q "defaultBranchRef"; then
+        echo "main"
+        exit 0
+    fi
+    exit 1
+fi
+
+if [ "\$1" = "pr" ] && [ "\$2" = "list" ]; then
+    head=\$(get_opt --head "\$@")
+    base=\$(get_opt --base "\$@")
+    row=\$(awk -F'\t' -v h="\$head" -v b="\$base" '\$5 == h && \$6 == b { print; exit }' "$store" 2>/dev/null)
+    if [ -z "\$row" ]; then
+        echo "[]"
+        exit 0
+    fi
+    IFS=\$'\t' read -r num url state mergedat rhead rbase <<< "\$row"
+    if [ "\$mergedat" = "-" ]; then mergedat_json="null"; else mergedat_json="\"\$mergedat\""; fi
+    printf '[{"number":%s,"url":"%s","state":"%s","mergedAt":%s}]\n' "\$num" "\$url" "\$state" "\$mergedat_json"
+    exit 0
+fi
+
+if [ "\$1" = "pr" ] && [ "\$2" = "create" ]; then
+    if [ -f "$fail_marker" ]; then
+        rm -f "$fail_marker"
+        echo "fallo simulado creando el PR" >&2
+        exit 1
+    fi
+    head=\$(get_opt --head "\$@")
+    base=\$(get_opt --base "\$@")
+    num=\$(( \$(wc -l < "$store" 2>/dev/null || echo 0) + 1 ))
+    url="https://github.com/$FN_REPO_SLUG/pull/\$num"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "\$num" "\$url" "OPEN" "-" "\$head" "\$base" >> "$store"
+    echo "\$url"
+    exit 0
+fi
+
+if [ "\$1" = "pr" ] && [ "\$2" = "reopen" ]; then
+    num="\$3"
+    tmp="$store.tmp"
+    awk -F'\t' -v n="\$num" 'BEGIN{OFS="\t"} { if (\$1 == n) { \$3 = "OPEN"; \$4 = "-" } print }' "$store" > "\$tmp" && mv "\$tmp" "$store"
+    exit 0
+fi
+
+exit 1
+EOF
+    chmod +x "$fakebin/gh"
+}
+
+# run_field_note <fakebin> <out> <err> <args...>
+# Imprime el exit code por stdout (capturable con rc=$(...)).
+run_field_note() {
+    local fakebin="$1" out="$2" err="$3"
+    shift 3
+    (
+        cd "$FN_MAIN" && \
+        PATH="$fakebin:$FN_SAFE_PATH" \
+        ./scripts/field-note.sh "$@"
+    ) >"$out" 2>"$err"
+    echo $?
+}
+
+# -------- I.A: primera entrega end-to-end (sin glosario) --------
+
+new_consumer_repo "a"
+FAKEBIN_A="$FN_TMP/a/bin"
+write_fake_gh "$FAKEBIN_A" "$FN_TMP/a/calls.log" "$FN_TMP/a/pr-store.tsv" "$FN_TMP/a/never-fails"
+printf 'contenido de la field note A\n' > "$FN_TMP/a/field-note.md"
+
+REF_BEFORE_A="$(git -C "$FN_MAIN" symbolic-ref -q --short HEAD)"
+SHA_BEFORE_A="$(git -C "$FN_MAIN" rev-parse HEAD)"
+STATUS_BEFORE_A="$(git -C "$FN_MAIN" status --porcelain=v1 --untracked-files=all)"
+
+RC_A=$(run_field_note "$FAKEBIN_A" "$FN_TMP/a/out.txt" "$FN_TMP/a/err.txt" \
+    --session-id sess-a --timestamp 2026-01-01-0000 --field-note "$FN_TMP/a/field-note.md")
+
+if [ "$RC_A" -eq 0 ]; then
+    pass "I.A: primera entrega sale 0"
+else
+    fail "I.A: primera entrega no salio 0 (rc=$RC_A) -- stderr: $(cat "$FN_TMP/a/err.txt")"
+fi
+
+PR_ROWS_A=$(wc -l < "$FN_TMP/a/pr-store.tsv" | tr -d ' ')
+if [ "$PR_ROWS_A" = "1" ]; then
+    pass "I.A: se creo exactamente un PR"
+else
+    fail "I.A: se esperaba 1 fila en el almacen de PRs, se encontraron $PR_ROWS_A"
+fi
+
+if git -C "$FN_BARE" cat-file -e "refs/heads/docs/planner-field-notes-sess-a:docs/bitacora/field-notes/2026-01-01-0000-planner.md" 2>/dev/null; then
+    pass "I.A: la field note quedo en la rama documental de origin, no en main"
+else
+    fail "I.A: la field note no aparece en origin/docs/planner-field-notes-sess-a"
+fi
+
+REF_AFTER_A="$(git -C "$FN_MAIN" symbolic-ref -q --short HEAD)"
+SHA_AFTER_A="$(git -C "$FN_MAIN" rev-parse HEAD)"
+STATUS_AFTER_A="$(git -C "$FN_MAIN" status --porcelain=v1 --untracked-files=all)"
+if [ "$REF_AFTER_A" = "$REF_BEFORE_A" ] && [ "$SHA_AFTER_A" = "$SHA_BEFORE_A" ] && [ "$STATUS_AFTER_A" = "$STATUS_BEFORE_A" ]; then
+    pass "I.A: el checkout principal quedo exactamente como estaba (ref/sha/status, CA-1)"
+else
+    fail "I.A: el checkout principal cambio (ref '$REF_BEFORE_A'->'$REF_AFTER_A', sha '$SHA_BEFORE_A'->'$SHA_AFTER_A')"
+fi
+
+WT_COUNT_A=$(git -C "$FN_MAIN" worktree list --porcelain | grep -c '^worktree ')
+if [ "$WT_COUNT_A" = "1" ]; then
+    pass "I.A: el worktree temporal quedo limpiado (solo el checkout principal registrado)"
+else
+    fail "I.A: quedaron $WT_COUNT_A worktrees registrados, se esperaba 1"
+fi
+
+# -------- I.B: reintento tras fallo simulado de 'gh pr create' (sin duplicar PR) --------
+
+new_consumer_repo "b"
+FAKEBIN_B="$FN_TMP/b/bin"
+FAIL_MARKER_B="$FN_TMP/b/fail-once"
+touch "$FAIL_MARKER_B"
+write_fake_gh "$FAKEBIN_B" "$FN_TMP/b/calls.log" "$FN_TMP/b/pr-store.tsv" "$FAIL_MARKER_B"
+printf 'contenido de la field note B\n' > "$FN_TMP/b/field-note.md"
+
+RC_B1=$(run_field_note "$FAKEBIN_B" "$FN_TMP/b/out1.txt" "$FN_TMP/b/err1.txt" \
+    --session-id sess-b --timestamp 2026-01-01-0000 --field-note "$FN_TMP/b/field-note.md")
+if [ "$RC_B1" -eq 1 ] && grep -qF "Ultimo checkpoint confirmado: push" "$FN_TMP/b/err1.txt"; then
+    pass "I.B: primer intento aborta en creacion-pr con checkpoint 'push' confirmado (el commit ya viajo a origin)"
+else
+    fail "I.B: primer intento no aborto como se esperaba (rc=$RC_B1) -- stderr: $(cat "$FN_TMP/b/err1.txt")"
+fi
+
+COMMIT_COUNT_B1=$(git -C "$FN_BARE" rev-list --count "refs/heads/docs/planner-field-notes-sess-b" 2>/dev/null || echo "?")
+
+RC_B2=$(run_field_note "$FAKEBIN_B" "$FN_TMP/b/out2.txt" "$FN_TMP/b/err2.txt" \
+    --session-id sess-b --timestamp 2026-01-01-0000 --field-note "$FN_TMP/b/field-note.md")
+if [ "$RC_B2" -eq 0 ]; then
+    pass "I.B: el reintento con los mismos --session-id/--timestamp completa"
+else
+    fail "I.B: el reintento no completo (rc=$RC_B2) -- stderr: $(cat "$FN_TMP/b/err2.txt")"
+fi
+
+PR_ROWS_B=$(wc -l < "$FN_TMP/b/pr-store.tsv" | tr -d ' ')
+if [ "$PR_ROWS_B" = "1" ]; then
+    pass "I.B: el reintento no duplico el PR (una sola fila en el almacen)"
+else
+    fail "I.B: se esperaba 1 fila en el almacen de PRs tras el reintento, se encontraron $PR_ROWS_B"
+fi
+
+COMMIT_COUNT_B2=$(git -C "$FN_BARE" rev-list --count "refs/heads/docs/planner-field-notes-sess-b" 2>/dev/null || echo "?")
+if [ "$COMMIT_COUNT_B1" = "$COMMIT_COUNT_B2" ] && [ "$COMMIT_COUNT_B1" != "?" ]; then
+    pass "I.B: la rama documental conserva el mismo numero de commits tras el reintento ($COMMIT_COUNT_B1, no se duplico)"
+else
+    fail "I.B: el numero de commits de la rama documental cambio con el reintento (antes=$COMMIT_COUNT_B1, despues=$COMMIT_COUNT_B2)"
+fi
+
+# -------- I.C: aborta ante un path ajeno en el worktree reanudado --------
+
+new_consumer_repo "c"
+FAKEBIN_C="$FN_TMP/c/bin"
+write_fake_gh "$FAKEBIN_C" "$FN_TMP/c/calls.log" "$FN_TMP/c/pr-store.tsv" "$FN_TMP/c/never-fails"
+
+DOC_BRANCH_C="docs/planner-field-notes-sess-c"
+git -C "$FN_MAIN" branch -q "$DOC_BRANCH_C" main
+LEFTOVER_WT_C="$FN_TMP/c/leftover-worktree"
+git -C "$FN_MAIN" worktree add -q "$LEFTOVER_WT_C" "$DOC_BRANCH_C"
+echo "contenido que no deberia estar aqui" > "$LEFTOVER_WT_C/archivo-ajeno.txt"
+
+printf 'contenido de la field note C\n' > "$FN_TMP/c/field-note.md"
+
+REF_BEFORE_C="$(git -C "$FN_MAIN" symbolic-ref -q --short HEAD)"
+SHA_BEFORE_C="$(git -C "$FN_MAIN" rev-parse HEAD)"
+
+RC_C=$(run_field_note "$FAKEBIN_C" "$FN_TMP/c/out.txt" "$FN_TMP/c/err.txt" \
+    --session-id sess-c --timestamp 2026-01-01-0000 --field-note "$FN_TMP/c/field-note.md")
+
+if [ "$RC_C" -eq 1 ] && grep -qF "cambios fuera de los paths esperados" "$FN_TMP/c/err.txt"; then
+    pass "I.C: aborta con mensaje explicito ante el path ajeno del worktree reanudado"
+else
+    fail "I.C: no aborto como se esperaba ante el path ajeno (rc=$RC_C) -- stderr: $(cat "$FN_TMP/c/err.txt")"
+fi
+
+if [ -f "$LEFTOVER_WT_C/archivo-ajeno.txt" ]; then
+    pass "I.C: el path ajeno se conserva intacto (no se borro ni se forzo limpieza)"
+else
+    fail "I.C: el path ajeno desaparecio -- no debia tocarse"
+fi
+
+PR_ROWS_C=$(wc -l < "$FN_TMP/c/pr-store.tsv" | tr -d ' ')
+if [ "$PR_ROWS_C" = "0" ]; then
+    pass "I.C: no se creo ningun PR"
+else
+    fail "I.C: se creo un PR pese al abort (filas=$PR_ROWS_C)"
+fi
+
+REF_AFTER_C="$(git -C "$FN_MAIN" symbolic-ref -q --short HEAD)"
+SHA_AFTER_C="$(git -C "$FN_MAIN" rev-parse HEAD)"
+if [ "$REF_AFTER_C" = "$REF_BEFORE_C" ] && [ "$SHA_AFTER_C" = "$SHA_BEFORE_C" ]; then
+    pass "I.C: el checkout principal no se toco pese al abort"
+else
+    fail "I.C: el checkout principal cambio pese al abort"
+fi
+
+git -C "$FN_MAIN" worktree remove --force "$LEFTOVER_WT_C" >/dev/null 2>&1 || true
+
+# -------- I.D: glosario invalido tras el delta aborta antes del stage --------
+
+new_consumer_repo "d"
+FAKEBIN_D="$FN_TMP/d/bin"
+write_fake_gh "$FAKEBIN_D" "$FN_TMP/d/calls.log" "$FN_TMP/d/pr-store.tsv" "$FN_TMP/d/never-fails"
+printf 'contenido de la field note D\n' > "$FN_TMP/d/field-note.md"
+printf 'termino: [sin cerrar\n' > "$FN_TMP/d/glosario-invalido.yaml"
+
+RC_D=$(run_field_note "$FAKEBIN_D" "$FN_TMP/d/out.txt" "$FN_TMP/d/err.txt" \
+    --session-id sess-d --timestamp 2026-01-01-0000 --field-note "$FN_TMP/d/field-note.md" \
+    --glossary-path docs/ddd/ubiquitous-language.yaml --glossary "$FN_TMP/d/glosario-invalido.yaml")
+
+if [ "$RC_D" -eq 1 ] && grep -qiF "yaml" "$FN_TMP/d/err.txt"; then
+    pass "I.D: aborta ante YAML invalido del glosario"
+else
+    fail "I.D: no aborto como se esperaba ante YAML invalido (rc=$RC_D) -- stderr: $(cat "$FN_TMP/d/err.txt")"
+fi
+
+PR_ROWS_D=$(wc -l < "$FN_TMP/d/pr-store.tsv" | tr -d ' ')
+if [ "$PR_ROWS_D" = "0" ]; then
+    pass "I.D: no se creo ningun PR ni se hizo push (el abort ocurre antes del stage)"
+else
+    fail "I.D: se creo un PR pese al YAML invalido"
+fi
+
+if git -C "$FN_BARE" show-ref --verify --quiet "refs/heads/docs/planner-field-notes-sess-d" 2>/dev/null; then
+    fail "I.D: la rama documental se empujo a origin pese al YAML invalido"
+else
+    pass "I.D: la rama documental nunca llego a origin"
+fi
+
+# -------- I.E: --glossary-path fuera del whitelist aborta sin tocar git --------
+
+RC_E=$(run_field_note "$FAKEBIN_D" "$FN_TMP/d/out-e.txt" "$FN_TMP/d/err-e.txt" \
+    --session-id sess-e --timestamp 2026-01-01-0000 --field-note "$FN_TMP/d/field-note.md" \
+    --glossary-path docs/otro/glosario.yaml --glossary "$FN_TMP/d/glosario-invalido.yaml")
+if [ "$RC_E" -eq 1 ] && grep -qF "no es un destino admitido" "$FN_TMP/d/err-e.txt"; then
+    pass "I.E: --glossary-path fuera del whitelist (docs/ddd|docs/eda) aborta con mensaje explicito"
+else
+    fail "I.E: no aborto como se esperaba ante --glossary-path invalido (rc=$RC_E)"
+fi
+if git -C "$FN_MAIN" show-ref --verify --quiet "refs/heads/docs/planner-field-notes-sess-e" 2>/dev/null; then
+    fail "I.E: se creo una rama documental pese al --glossary-path invalido"
+else
+    pass "I.E: no se creo ninguna rama documental (abort antes de tocar git)"
+fi
+
+# -------- I.F: glosario valido se entrega junto a la field note --------
+
+new_consumer_repo "f"
+FAKEBIN_F="$FN_TMP/f/bin"
+write_fake_gh "$FAKEBIN_F" "$FN_TMP/f/calls.log" "$FN_TMP/f/pr-store.tsv" "$FN_TMP/f/never-fails"
+printf 'contenido de la field note F\n' > "$FN_TMP/f/field-note.md"
+printf 'terminos:\n  turno: definicion de prueba\n' > "$FN_TMP/f/glosario-valido.yaml"
+
+RC_F=$(run_field_note "$FAKEBIN_F" "$FN_TMP/f/out.txt" "$FN_TMP/f/err.txt" \
+    --session-id sess-f --timestamp 2026-01-01-0000 --field-note "$FN_TMP/f/field-note.md" \
+    --glossary-path docs/ddd/ubiquitous-language.yaml --glossary "$FN_TMP/f/glosario-valido.yaml")
+
+if [ "$RC_F" -eq 0 ]; then
+    pass "I.F: entrega con glosario valido sale 0"
+else
+    fail "I.F: entrega con glosario valido no salio 0 (rc=$RC_F) -- stderr: $(cat "$FN_TMP/f/err.txt")"
+fi
+
+if git -C "$FN_BARE" cat-file -e "refs/heads/docs/planner-field-notes-sess-f:docs/ddd/ubiquitous-language.yaml" 2>/dev/null \
+    && git -C "$FN_BARE" cat-file -e "refs/heads/docs/planner-field-notes-sess-f:docs/bitacora/field-notes/2026-01-01-0000-planner.md" 2>/dev/null; then
+    pass "I.F: la rama documental trae EXACTAMENTE la field note y el glosario"
+else
+    fail "I.F: la rama documental no trae ambos paths esperados"
+fi
+
+TRACKED_COUNT_F=$(git -C "$FN_BARE" ls-tree -r --name-only "refs/heads/docs/planner-field-notes-sess-f" | wc -l | tr -d ' ')
+BASE_TRACKED_COUNT_F=$(git -C "$FN_BARE" ls-tree -r --name-only "refs/heads/main" | wc -l | tr -d ' ')
+if [ "$TRACKED_COUNT_F" = "$((BASE_TRACKED_COUNT_F + 2))" ]; then
+    pass "I.F: la rama documental no trae ningun path adicional (base heredada de main + field note + glosario, ninguno mas)"
+else
+    fail "I.F: se esperaban $((BASE_TRACKED_COUNT_F + 2)) paths trackeados en la rama documental (base=$BASE_TRACKED_COUNT_F), se encontraron $TRACKED_COUNT_F"
+fi
+
+fn_cleanup
 
 # -------- Bloque J: cierre aislado de field notes de mefisto-planner --------
 
