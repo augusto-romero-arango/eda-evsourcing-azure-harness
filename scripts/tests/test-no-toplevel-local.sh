@@ -14,9 +14,9 @@
 #       da falsos positivos con la palabra "local" en prosa/prompts.
 #   [B] Comportamiento: cuando el writer del Stage 1 de tooling-pipeline.sh no
 #       genera cambios (HAS_COMMITS=false, HAS_UNSTAGED=false), el bloque real
-#       del script (extraido literal, sin reescribir) corre bajo `set -e` sin
-#       crashear por "local: can only be used in a function" y llega al abort
-#       limpio ("El writer no genero ningun cambio...").
+#       del script (extraido literal, sin reescribir) muestra exclusivamente el
+#       contenido no vacio de `## Pendiente/bloqueos` del summary canonico y
+#       conserva el abort limpio ("El writer no genero ningun cambio...").
 #
 # Uso: scripts/tests/test-no-toplevel-local.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -51,7 +51,7 @@ fi
 # -------- Bloque B: comportamiento -- writer del Stage 1 sin cambios --------
 
 echo ""
-echo "[B] tooling-pipeline.sh Stage 1: writer sin cambios llega al abort limpio"
+echo "[B] tooling-pipeline.sh Stage 1: writer sin cambios conserva bloqueos del summary"
 
 TOOLING_SCRIPT="$REPO_ROOT/scripts/tooling-pipeline.sh"
 
@@ -70,7 +70,7 @@ else
     trap 'rm -rf "$TMP_DIR"' EXIT
 
     run_block() {
-        local writer_log_content="$1"
+        local summary_content="$1"
         local worktree="$TMP_DIR/wt"
 
         rm -rf "$worktree"
@@ -84,9 +84,9 @@ else
         local snapshot
         snapshot=$(git -C "$worktree" rev-parse HEAD)
 
-        local writer_log="$TMP_DIR/writer.log"
-        if [ -n "$writer_log_content" ]; then
-            echo "$writer_log_content" > "$writer_log"
+        if [ -n "$summary_content" ]; then
+            mkdir -p "$worktree/.mefisto/pipeline/summaries"
+            printf '%s\n' "$summary_content" > "$worktree/.mefisto/pipeline/summaries/stage-1-writer.md"
         fi
 
         local test_script="$TMP_DIR/block.sh"
@@ -101,48 +101,85 @@ EVENTS_LOG_ABS="$TMP_DIR/events.log"
 STAGE1_PROMPT="prompt original"
 WORKTREE_PATH="$worktree"
 SNAPSHOT_COMMIT="$snapshot"
-warn() { echo "WARN: \$1"; }
-run_agent() { :; }
+mefisto_state_path() { printf '%s\n' "$worktree/.mefisto/pipeline/\$1"; }
 abort() { echo "ABORT: \$1"; exit 42; }
 HAS_COMMITS=false
 HAS_UNSTAGED=false
 $BLOCK
 echo "NO_ABORT_REACHED"
 EOF
-        mv "$writer_log" "$TMP_DIR/tooling-stage-1-writer-test-issue-999.log" 2>/dev/null || true
         bash "$test_script" 2>&1
     }
 
-    # Escenario B1: log sin frases de "pidio permisos" -> va directo al abort limpio
-    OUTPUT_B1=$(run_block "El writer reporto: no se encontraron cambios pendientes.")
+    # Escenario B1: el centinela de la seccion estructurada es visible antes del abort.
+    OUTPUT_B1=$(run_block "## Implementado
+
+Nada.
+
+## Pendiente/bloqueos
+
+BLOQUEO-CENTINELA-1315
+
+Detalle del bloqueo.
+
+## Verificacion
+
+No aplica.")
     RC_B1=$?
 
-    if echo "$OUTPUT_B1" | grep -q "local: can only be used in a function"; then
-        fail "B1: el bloque crashea con 'local: can only be used in a function'"
+    if echo "$OUTPUT_B1" | grep -q "BLOQUEO-CENTINELA-1315"; then
+        pass "B1: muestra el bloqueo centinela del summary canonico"
     else
-        pass "B1: el bloque no crashea con el error de 'local' top-level"
+        fail "B1: no mostro el bloqueo centinela: $OUTPUT_B1"
+    fi
+
+    if ! echo "$OUTPUT_B1" | grep -q "Nada\." && ! echo "$OUTPUT_B1" | grep -q "No aplica\."; then
+        pass "B1: no muestra contenido de las secciones anterior ni posterior"
+    else
+        fail "B1: mostro contenido fuera de Pendiente/bloqueos: $OUTPUT_B1"
     fi
 
     if [ "$RC_B1" -eq 42 ] && echo "$OUTPUT_B1" | grep -q "El writer no genero ningun cambio"; then
-        pass "B1: llega al abort limpio ('El writer no genero ningun cambio...')"
+        pass "B1: conserva el abort limpio ('El writer no genero ningun cambio...')"
     else
         fail "B1: no llego al abort limpio esperado (rc=$RC_B1): $OUTPUT_B1"
     fi
 
-    # El texto libre ya no decide retries: el contrato neutral usa denials.
-    OUTPUT_B2=$(run_block "El agente respondio: necesito permiso para continuar.")
+    # Escenario B2: summary ausente degrada al abort generico, sin fallo secundario.
+    OUTPUT_B2=$(run_block "")
     RC_B2=$?
 
-    if echo "$OUTPUT_B2" | grep -q "local: can only be used in a function"; then
-        fail "B2 (con retry): el bloque crashea con 'local: can only be used in a function'"
+    if [ "$RC_B2" -eq 42 ] && echo "$OUTPUT_B2" | grep -q "El writer no genero ningun cambio" \
+        && ! echo "$OUTPUT_B2" | grep -q "Pendiente/bloqueos informado"; then
+        pass "B2: summary ausente conserva el abort generico sin error secundario"
     else
-        pass "B2 (con retry): el bloque no crashea con el error de 'local' top-level"
+        fail "B2: summary ausente no degrado correctamente (rc=$RC_B2): $OUTPUT_B2"
     fi
 
-    if [ "$RC_B2" -eq 42 ] && echo "$OUTPUT_B2" | grep -q "El writer no genero ningun cambio"; then
-        pass "B2: texto de permisos no altera el desenlace estructurado"
+    # Escenario B3: una seccion ausente tampoco agrega diagnosticos secundarios.
+    OUTPUT_B3=$(run_block "## Implementado
+
+Sin cambios.")
+    RC_B3=$?
+    if [ "$RC_B3" -eq 42 ] && echo "$OUTPUT_B3" | grep -q "El writer no genero ningun cambio" \
+        && ! echo "$OUTPUT_B3" | grep -q "Pendiente/bloqueos informado"; then
+        pass "B3: seccion ausente conserva el abort generico"
     else
-        fail "B2: el texto libre altero el desenlace (rc=$RC_B2): $OUTPUT_B2"
+        fail "B3: seccion ausente no degrado correctamente (rc=$RC_B3): $OUTPUT_B3"
+    fi
+
+    # Escenario B4: una seccion vacia no se presenta como un bloqueo.
+    OUTPUT_B4=$(run_block "## Pendiente/bloqueos
+
+## Verificacion
+
+No aplica.")
+    RC_B4=$?
+    if [ "$RC_B4" -eq 42 ] && echo "$OUTPUT_B4" | grep -q "El writer no genero ningun cambio" \
+        && ! echo "$OUTPUT_B4" | grep -q "Pendiente/bloqueos informado"; then
+        pass "B4: seccion vacia conserva el abort generico"
+    else
+        fail "B4: seccion vacia no degrado correctamente (rc=$RC_B4): $OUTPUT_B4"
     fi
 fi
 

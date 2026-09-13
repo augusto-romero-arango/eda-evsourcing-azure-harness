@@ -268,7 +268,7 @@ echo "[E] is_path_in_consumer_blocklist clasifica correctamente"
     # (MEF-ADR-0030 decision #4) -- solo docs/adr/mef-adr-* es del marco
     # mefisto-manifest.json es una entrada exacta: vecinos, prefijos, sufijos,
     # subdirectorios y separadores alternativos siguen siendo rutas del consumidor.
-    for allowed in "src/Foo.cs" "src/publication/foo.md" "src/runtime-local/foo.sh" "distribution/foo.txt" "tests/Bar.cs" ".github/workflows/deploy.yml" ".claude/settings.json" "docs/bitacora/notes.md" "docs/adr/0028-x.md" "docs/adr/ca-adr-0009-x.md" ".opencode/agents/foo.md" "AGENTS.md" "opencode.json" "sub/mefisto-manifest.json" "mefisto-manifest.json.bak" "foo-mefisto-manifest.json" "mefisto-manifest.json/foo" "mefisto-manifest.json\\foo"; do
+    for allowed in "src/Foo.cs" "src/publication/foo.md" "src/runtime-local/foo.sh" "distribution/foo.txt" "tests/Bar.cs" ".github/workflows/deploy.yml" ".claude/settings.json" "docs/bitacora/notes.md" "docs/testing/mefisto-certification/fixture.md" "docs/adr/0028-x.md" "docs/adr/ca-adr-0009-x.md" ".opencode/agents/foo.md" "AGENTS.md" "opencode.json" "sub/mefisto-manifest.json" "mefisto-manifest.json.bak" "foo-mefisto-manifest.json" "mefisto-manifest.json/foo" "mefisto-manifest.json\\foo"; do
         if is_path_in_consumer_blocklist "$allowed"; then
             echo "  FAIL: '$allowed' detectado como blocklist (deberia estar permitido)"
             exit 1
@@ -276,6 +276,44 @@ echo "[E] is_path_in_consumer_blocklist clasifica correctamente"
             echo "  PASS: '$allowed' NO detectado como blocklist"
         fi
     done
+    exit 0
+) && PASS=$((PASS+1)) || FAIL=$((FAIL+1))
+
+# La frontera se prueba a traves del gate real, no solo de su predicado: los
+# fixtures documentales del consumidor pasan y los ADRs del marco siguen fuera.
+(
+    set +u
+    source "$REPO_ROOT/scripts/_pipeline-common.sh" 2>/dev/null
+    scope_fixture=$(mktemp -d)
+    trap 'rm -rf "$scope_fixture"' EXIT
+    git -C "$scope_fixture" init -q -b main
+    git -C "$scope_fixture" config user.email "test@local"
+    git -C "$scope_fixture" config user.name "Test"
+    touch "$scope_fixture/README.md"
+    git -C "$scope_fixture" add README.md
+    git -C "$scope_fixture" commit -q -m "base"
+    base=$(git -C "$scope_fixture" rev-parse HEAD)
+
+    mkdir -p "$scope_fixture/docs/testing/mefisto-certification"
+    touch "$scope_fixture/docs/testing/mefisto-certification/fixture.md"
+    git -C "$scope_fixture" add docs/testing/mefisto-certification/fixture.md
+    if validate_consumer_scope_changes "$scope_fixture" "$base"; then
+        echo "  PASS: validate_consumer_scope_changes acepta docs/testing/mefisto-certification/fixture.md"
+    else
+        echo "  FAIL: validate_consumer_scope_changes rechazo un fixture documental permitido"
+        exit 1
+    fi
+
+    rm -rf "$scope_fixture/docs/testing"
+    mkdir -p "$scope_fixture/docs/adr"
+    touch "$scope_fixture/docs/adr/mef-adr-0001-ejemplo.md"
+    git -C "$scope_fixture" add -A docs
+    if validate_consumer_scope_changes "$scope_fixture" "$base"; then
+        echo "  FAIL: validate_consumer_scope_changes acepto docs/adr/mef-adr-0001-ejemplo.md"
+        exit 1
+    else
+        echo "  PASS: validate_consumer_scope_changes rechaza docs/adr/mef-adr-0001-ejemplo.md"
+    fi
     exit 0
 ) && PASS=$((PASS+1)) || FAIL=$((FAIL+1))
 
