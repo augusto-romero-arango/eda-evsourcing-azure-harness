@@ -270,7 +270,11 @@ fi
 # Corre el pipeline REAL (via el shim) contra el clon fake-mefisto, con
 # env -u de todo el estado que esta MISMA sesion de test hereda (mismo motivo
 # que el bloque [G] de test-tooling-state-paths.sh: sin esto, la corrida
-# escribiria en el .mefisto/pipeline/ del repo real). Cada escenario usa su
+# escribiria en el .mefisto/pipeline/ del repo real). MEFISTO_RUNTIME_LIB_DIR
+# y MEFISTO_MODELS_FILE entran en esa lista porque un pipeline en curso los
+# exporta apuntando al checkout que lo lanzo: heredarlos haria que los
+# defaults del bloque [E] se resolvieran contra las tablas y el mapping de
+# OTRO arbol, no contra los del clon fake-mefisto que este test monta. Cada escenario usa su
 # propio directorio de captura (para que los contadores de invocacion
 # <cli>-call-N arranquen en 1 en cada corrida) y su propio numero de issue de
 # mentira (para que rama/worktree no colisionen entre escenarios que
@@ -287,6 +291,7 @@ run_scenario() {
         cd "$FAKE_MEFISTO" || exit 99
         env -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR -u MEFISTO_REPO_ROOT \
             -u MEFISTO_PROJECT_NAME -u MEFISTO_REPO_SLUG \
+            -u MEFISTO_RUNTIME_LIB_DIR -u MEFISTO_MODELS_FILE \
             PATH="$FAKE_BIN:$PATH" MEFISTO_RUNTIME="$runtime" MEFISTO_AGENT_RETRY_BACKOFF_SECONDS=0 \
             MEFISTO_TEST_CAPTURE_DIR="$capdir" MEFISTO_TEST_MODE="$mode" \
             MEFISTO_TEST_FIXTURE="$fixture" MEFISTO_TEST_EXIT_CODE="$exitcode" \

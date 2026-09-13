@@ -158,8 +158,8 @@ make_agent skill '[]' ',"skills":["no-existe"]'
 render_fails_without_output "$WORK/skill.md" 'skills: Skill publicado '\''no-existe'\'' no resuelve' 'Skill desconocido falla sin salida parcial'
 make_agent perfil '[]' ',"profile":"desconocido"'
 render_fails_without_output "$WORK/perfil.md" 'profile: perfil '\''desconocido'\'' sin mapping Claude' 'perfil desconocido falla sin salida parcial'
-make_agent hereda '[]' ',"profile":"deep"'
-deep="$(render "$WORK/hereda.md")"; rc=$?
+make_agent profundo '[]' ',"profile":"deep"'
+deep="$(render "$WORK/profundo.md")"; rc=$?
 [ "$rc" -eq 0 ] && contains "$deep" 'model: "opus"' 'perfil deep declara model: "opus"' || fail 'perfil deep debio renderizar'
 make_agent directiva '[]'; printf '%s\n' '{{mefisto:desconocida}}' >> "$WORK/directiva.md"
 render_fails_without_output "$WORK/directiva.md" 'body: directiva sin mapping Claude' 'directiva desconocida falla sin salida parcial'

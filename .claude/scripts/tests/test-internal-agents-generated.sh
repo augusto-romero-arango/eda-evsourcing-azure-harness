@@ -14,8 +14,12 @@
 #         adaptadores versionados en .claude/agents/ y .opencode/agents/
 #         coinciden byte-a-byte con lo que la fuente neutral produce (CA-2).
 #   [runtime-output] Los diez adaptadores generados llevan el marcador;
-#         Claude conserva su tabla y OpenCode omite `model:` para heredar la
-#         configuracion del usuario (CA-2, issue #961).
+#         Claude materializa su tabla (`balanced`->sonnet, `deep`->opus) y
+#         OpenCode omite `model:` para heredar la configuracion del usuario
+#         (CA-2, issue #961; tabla enmendada por issue #1309). El veto de
+#         alias Anthropic (fable/opus/claude-<id>) aplica SOLO a la salida
+#         OpenCode, donde no serian resolubles: en la salida Claude un alias
+#         es justamente lo que la tabla debe emitir.
 #   [opencode-cli] Si el CLI `opencode` esta instalado, `opencode agent list`
 #         corrido en la raiz del repo lista cada id con su modo -- `primary`
 #         para planner/investigator/historiador, `all` para writer/reviewer;
@@ -212,9 +216,10 @@ done
 for id in $AGENT_IDS; do
     profile=$(profile_for_agent "$id")
     case "$profile" in
+        fast) expected="haiku" ;;
         balanced) expected="sonnet" ;;
         deep) expected="opus" ;;
-        *) expected="" ;;
+        *) fail "$id: perfil '$profile' sin modelo Claude esperado en este test"; continue ;;
     esac
     if grep -q "^model: \"$expected\"\$" "$REPO_ROOT/.claude/agents/$id.md" 2>/dev/null; then
         pass "$id: .claude/agents lleva model: \"$expected\" (perfil $profile)"

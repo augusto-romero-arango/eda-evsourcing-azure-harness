@@ -59,7 +59,7 @@ Ningun componente de la fuente neutral (definida en la decision 2) nombra un pro
 - **`.mefisto/pipeline`** pasa a ser el **estado canonico** del harness (lo que hoy resuelve `.claude/pipeline`: worktrees activos, resumenes de stage, metricas). Es una ruta neutral a runtime, sin el prefijo `.claude/` que hoy ata ese estado a un runtime especifico.
 - **El fallback a `CLAUDE.md` y `.claude/pipeline` es indefinido: no lleva fecha de retiro.** Mientras el adaptador Claude Code siga siendo compatible (decision 1), cualquier pipeline o agente que busque directivas o estado puede seguir encontrando `CLAUDE.md`/`.claude/pipeline` si `AGENTS.md`/`.mefisto/pipeline` no existen todavia -- sin que este ADR fije un momento en el que ese fallback deje de honrarse. Fijar una fecha de retiro exigiria saber hoy cuando termina el dogfooding y que consumidores dependen de los nombres viejos, informacion que este ADR no tiene todavia.
 
-### 4. Perfiles logicos de modelo: `fast|balanced|deep` (CA-4, enmendada por issues #857 y #961)
+### 4. Perfiles logicos de modelo: `fast|balanced|deep` (CA-4, enmendada por issues #857, #961 y #1309)
 
 - **Vocabulario unico en la fuente neutral**: todo agente o comando de `src/internal/` que necesite declarar una preferencia de modelo lo hace con uno de tres perfiles logicos -- `fast`, `balanced`, `deep` -- nunca con un alias de proveedor (`sonnet`, `opus`, `fable`) ni con un ID de modelo. El perfil describe una intencion de costo/capacidad, no un modelo.
 - **Precedencia de resolucion, de mayor a menor prioridad** (`mefisto_resolve_model`, `src/runtime/lib/mefisto-models.sh`, issues #857 y #1072):
