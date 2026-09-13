@@ -95,13 +95,14 @@ LAST_AGENT_DENIALS=0
 CURRENT_STAGE="setup"
 HOLD_CAUSE_JSON="null" HOLD_NEXT_PROBE_JSON="null" HOLD_CEILING_JSON="null" HOLD_TOTAL=0
 PIPELINE_TMP_DIR=""
-PIPELINE_FAILURE_RECORDED=false
+PIPELINE_ABORTING=false
 
 cleanup_pipeline_temporaries() {
     [ -z "$PIPELINE_TMP_DIR" ] || rm -rf "$PIPELINE_TMP_DIR" 2>/dev/null || true
 }
 
 record_failed_history() {
+    [ -n "${HISTORY_FILE:-}" ] || return 0
     jq -cn --arg issue "${ISSUE_NUM:-}" --arg title "${ISSUE_TITLE:-}" --argjson variant "${VARIANT_LABEL_JSON:-null}" \
         --argjson identity "$HARNESS_IDENTITY_JSON" --arg runtime "${MEFISTO_RUNTIME_RESUELTO:-}" --arg started "${TIMESTAMP:-}" --arg finished "$(date +%Y-%m-%dT%H:%M:%S)" \
         --arg stage "$CURRENT_STAGE" --arg error "$PIPELINE_ERROR" --argjson writer "$AGENT_WR_METRICS" --argjson reviewer "$AGENT_RV_METRICS" \
@@ -114,13 +115,15 @@ finalize_pipeline_exit() {
     trap - EXIT
     set +e
 
-    # `abort()` ya dejo evidencia especifica. Solo reconciliamos una terminacion
-    # no controlada que alcanzo a publicar un estado que /work-status considera activo.
-    status_file="${MEFISTO_STATE_DIR:-}/$STATUS_FILENAME"
-    if [ "$exit_code" -ne 0 ] && [ "$PIPELINE_FAILURE_RECORDED" != true ] \
+    # Un abort que no alcanzo a completar su propia escritura conserva su error;
+    # cualquier otro cierre no controlado recibe un diagnostico generico.
+    status_file="${MEFISTO_STATE_DIR:-}/${STATUS_FILENAME:-}"
+    if [ "$exit_code" -ne 0 ] && [ -n "${STATUS_FILENAME:-}" ] \
        && [ -n "${PIPELINE_DIR_ABS:-}" ] && [ -f "$status_file" ] \
        && jq -e '.state == "running" or .state == "hold"' "$status_file" >/dev/null 2>&1; then
-        PIPELINE_ERROR="Terminacion no controlada (exit code: $exit_code)"
+        if [ "$PIPELINE_ABORTING" != true ]; then
+            PIPELINE_ERROR="Terminacion no controlada (exit code: $exit_code)"
+        fi
         update_status "$CURRENT_STAGE" "failed" >/dev/null 2>&1 || true
         record_failed_history
     fi
@@ -166,6 +169,7 @@ abort() {
     # del mensaje que se acaba de imprimir -- ruido que ademas se come dos lineas
     # del contexto real que se quiere mostrar (issue #379).
     local log_tail
+    PIPELINE_ABORTING=true
     log_tail="$(_tail_log_for_abort "${LOG_FILE_ABS:-$LOG_FILE}" "$TAIL_LOG_LINES")" || log_tail=""
     PIPELINE_ERROR="$(echo "$1" | sed 's/"/\\"/g' | tr '\n' ' ')"
     echo -e "\n${RED}${BOLD}x ERROR: $1${NC}" | tee -a "${LOG_FILE_ABS:-$LOG_FILE}"
@@ -176,7 +180,6 @@ abort() {
         echo -e "${YELLOW}Para inspeccionar: cd $WORKTREE_PATH${NC}"
     fi
     if [ -n "${PIPELINE_DIR_ABS:-}" ]; then
-        PIPELINE_FAILURE_RECORDED=true
         update_status "$CURRENT_STAGE" "failed"
         record_failed_history
     fi

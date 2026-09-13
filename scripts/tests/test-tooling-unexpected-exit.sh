@@ -40,7 +40,7 @@ MEFISTO_RUNTIME_RESUELTO=""; MEFISTO_RUNTIME_JSON="null"
 AGENT_WR_DUR=""; AGENT_RV_DUR=""; AGENT_WR_RES="pending"; AGENT_RV_RES="pending"
 AGENT_WR_METRICS="null"; AGENT_RV_METRICS="null"; PIPELINE_TESTS=""; PIPELINE_PR=""; PIPELINE_ERROR=""
 CURRENT_STAGE="setup"; HOLD_CAUSE_JSON="null"; HOLD_NEXT_PROBE_JSON="null"; HOLD_CEILING_JSON="null"; HOLD_TOTAL=0
-PIPELINE_TMP_DIR="\$(mktemp -d "$case_dir/pipeline.XXXXXX")"; PIPELINE_FAILURE_RECORDED=false
+PIPELINE_TMP_DIR="\$(mktemp -d "$case_dir/pipeline.XXXXXX")"; PIPELINE_ABORTING=false
 RED=''; BOLD=''; NC=''; YELLOW=''
 source "$FUNCTIONS"
 _tail_log_for_abort() { return 0; }
@@ -51,13 +51,22 @@ EOF
     CASE_DIR="$case_dir" CASE_RC="$rc" CASE_OUTPUT="$output"
 }
 
-run_case unhandled 'update_status setup running; printf "%s" "$PIPELINE_TMP_DIR" > "$PIPELINE_DIR_ABS/tmp-path"; false'
+run_case unhandled 'update_status setup running; printf "%s" "$PIPELINE_TMP_DIR" > "$PIPELINE_DIR_ABS/tmp-path"; bash -c "printf unhandled-diagnostic >&2; exit 23"'
 UNHANDLED_TMP="$(<"$CASE_DIR/state/tmp-path")"
-if [ "$CASE_RC" -ne 0 ] && jq -e '.state == "failed" and .stage == "setup"' "$CASE_DIR/state/pipeline-status-tooling-1286.json" >/dev/null \
+if [ "$CASE_RC" -eq 23 ] && [[ "$CASE_OUTPUT" == *unhandled-diagnostic* ]] \
+   && jq -e '.state == "failed" and .stage == "setup"' "$CASE_DIR/state/pipeline-status-tooling-1286.json" >/dev/null \
    && [ ! -d "$UNHANDLED_TMP" ] && [ "$(wc -l < "$CASE_DIR/state/pipeline-history.jsonl" | tr -d ' ')" = 1 ]; then
-    pass 'fallo no controlado conserva stage, falla status, registra una historia y limpia temporales'
+    pass 'fallo no controlado conserva codigo, diagnostico y stage; registra una historia y limpia temporales'
 else
     fail "fallo no controlado no se reconcilio (rc=$CASE_RC): $CASE_OUTPUT"
+fi
+
+run_case unhandled-hold 'update_status 2-reviewer hold; false'
+if [ "$CASE_RC" -eq 1 ] && jq -e '.state == "failed" and .stage == "2-reviewer"' "$CASE_DIR/state/pipeline-status-tooling-1286.json" >/dev/null \
+   && [ "$(wc -l < "$CASE_DIR/state/pipeline-history.jsonl" | tr -d ' ')" = 1 ]; then
+    pass 'fallo no controlado reconcilia tambien un estado hold y conserva su stage'
+else
+    fail "fallo no controlado desde hold no se reconcilio (rc=$CASE_RC): $CASE_OUTPUT"
 fi
 
 run_case prior-status 'printf "%s" "$PIPELINE_TMP_DIR" > "$PIPELINE_DIR_ABS/tmp-path"; false'
@@ -80,8 +89,8 @@ fi
 
 run_case success 'update_status setup running; exit 0'
 if [ "$CASE_RC" -eq 0 ] && jq -e '.state == "running"' "$CASE_DIR/state/pipeline-status-tooling-1286.json" >/dev/null \
-   && [ ! -e "$CASE_DIR/state/pipeline-history.jsonl" ]; then
-    pass 'salida exitosa no muta status ni historial'
+   && [ ! -e "$CASE_DIR/state/pipeline-history.jsonl" ] && [ ! -d "$CASE_DIR"/pipeline.* ]; then
+    pass 'salida exitosa no muta status ni historial y conserva la limpieza'
 else
     fail 'salida exitosa muto evidencia'
 fi
