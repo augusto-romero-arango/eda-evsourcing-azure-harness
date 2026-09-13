@@ -9,11 +9,10 @@
 # tool calls, o cache que dejo de acertar. Este issue agrega a
 # _pipeline-common.sh:
 #
-#   - compute_stage_metrics <stream_file>: porte esencialmente literal del
+#   - compute_stage_metrics <stream_file>: porte de la forma neutral del
 #     interno -- turnos, duraciones (total/API/no-API), costo estimado o
-#     legado, tokens
-#     desglosados, modelo, motivo de fin y un histograma de tool calls por
-#     nombre. Imprime JSON compacto o "null"; nunca aborta (CA-4).
+#     legado, tokens desglosados, modelo, motivo de fin y un histograma de tool
+#     calls por nombre. Imprime JSON compacto o "null"; nunca aborta (CA-4).
 #   - build_agents_history_json <key> <agent> <dur> <metrics> [...]:
 #     GENERALIZADO a N grupos variables (a diferencia del interno, especifico
 #     a writer/reviewer) -- tdd-pipeline.sh tiene hasta 7 claves variables.
@@ -22,12 +21,10 @@
 #     bajo la misma clave "test-writer", CA-1). Sin jq degrada a un objeto
 #     plano con solo "duration" por clave (CA-4).
 #
-# A diferencia del test interno equivalente, este NO reexamina exhaustivamente
-# compute_stage_metrics linea por linea (es un porte literal, ya cubierto por
-# .claude/scripts/tests/test-stage-metrics.sh) -- se enfoca en que el porte
-# compila/corre igual, y en la generalizacion de build_agents_history_json
-# (N grupos variables, no solo writer/reviewer) y su cableado en
-# tdd-pipeline.sh (CA-1 a CA-6).
+# A diferencia del test interno equivalente, este conserva la cobertura propia
+# de los fallbacks publicados y de la generalizacion de
+# build_agents_history_json (N grupos variables, no solo writer/reviewer),
+# ademas de su cableado en tdd-pipeline.sh.
 #
 # Casos cubiertos:
 #   [pre] compute_stage_metrics y build_agents_history_json estan definidas
@@ -151,14 +148,24 @@ fi
 echo ""
 echo "[B] terminales neutrales: nulos/cero y legacy conservan la distincion de costo"
 
-cat > "$TMP/b-null-zero.events.jsonl" <<'EOF'
+cat > "$TMP/b-null.events.jsonl" <<'EOF'
+{"v":1,"type":"run.completed","status":"success","runtime":"opencode","model":"openai/gpt-5","session_id":"ses-null","duration_ms":1,"api_duration_ms":null,"estimated_cost_usd":null,"tokens":{"input":null,"output":null,"cache_read":null,"cache_write":null,"reasoning":null},"turns":null,"denials":0,"ttft_ms":null,"error":null}
+EOF
+B_NULL_OUT=$(compute_stage_metrics "$TMP/b-null.events.jsonl")
+if echo "$B_NULL_OUT" | jq -e '.estimated_cost_usd == null and .tokens == {"input":null,"output":null,"cache_read":null,"cache_write":null,"reasoning":null} and (has("cost_usd") | not)' >/dev/null 2>&1; then
+    pass "B-1: costo estimado y contadores ausentes permanecen null"
+else
+    fail "B-1: los nulos del terminal nuevo cambiaron de semantica: $B_NULL_OUT"
+fi
+
+cat > "$TMP/b-zero.events.jsonl" <<'EOF'
 {"v":1,"type":"run.completed","status":"success","runtime":"opencode","model":"openai/gpt-5","session_id":"ses-null","duration_ms":0,"api_duration_ms":0,"estimated_cost_usd":0,"tokens":{"input":0,"output":0,"cache_read":0,"cache_write":0,"reasoning":0},"turns":0,"denials":0,"ttft_ms":0,"error":null}
 EOF
-B_ZERO_OUT=$(compute_stage_metrics "$TMP/b-null-zero.events.jsonl")
+B_ZERO_OUT=$(compute_stage_metrics "$TMP/b-zero.events.jsonl")
 if echo "$B_ZERO_OUT" | jq -e '.estimated_cost_usd == 0 and .tokens == {"input":0,"output":0,"cache_read":0,"cache_write":0,"reasoning":0}' >/dev/null 2>&1; then
-    pass "B-1: costo cero estimado y los cinco contadores cero no se colapsan"
+    pass "B-2: costo cero estimado y los cinco contadores cero no se colapsan"
 else
-    fail "B-1: se perdio un cero presente: $B_ZERO_OUT"
+    fail "B-2: se perdio un cero presente: $B_ZERO_OUT"
 fi
 
 cat > "$TMP/b-legacy.events.jsonl" <<'EOF'
@@ -166,9 +173,9 @@ cat > "$TMP/b-legacy.events.jsonl" <<'EOF'
 EOF
 B_LEGACY_OUT=$(compute_stage_metrics "$TMP/b-legacy.events.jsonl")
 if echo "$B_LEGACY_OUT" | jq -e '.estimated_cost_usd == null and .tokens == {"input":1,"output":2,"cache_read":3,"cache_write":4,"reasoning":null} and (has("cost_usd") | not) and (.tokens | has("cache_creation") | not)' >/dev/null 2>&1; then
-    pass "B-2: terminal legacy no aborta, normaliza tokens y no rebautiza su costo"
+    pass "B-3: terminal legacy no aborta, normaliza tokens y no rebautiza su costo"
 else
-    fail "B-2: terminal legacy con forma inesperada: $B_LEGACY_OUT"
+    fail "B-3: terminal legacy con forma inesperada: $B_LEGACY_OUT"
 fi
 
 # -------- Bloque C: fallback Claude previo al contrato --------
@@ -226,57 +233,57 @@ else
     fail "D-3: se esperaba exit 0 y 'null' sin jq, se obtuvo rc=$RC salida='$B3_OUT'"
 fi
 
-# -------- Bloque C: build_agents_history_json con 2 grupos (paridad con el interno) --------
+# -------- Bloque E: build_agents_history_json con 2 grupos (paridad con el interno) --------
 
 echo ""
-echo "[C] build_agents_history_json con 2 grupos: agrega metrics, agent va en metrics.agent"
+echo "[E] build_agents_history_json con 2 grupos: agrega metrics, agent va en metrics.agent"
 
 C_OUT=$(build_agents_history_json \
     "test-writer" "projection-test-writer" "125" "$A_OUT" \
     "reviewer" "reviewer" "300" "null")
 
-assert_field "C-1: preserva test-writer.duration" "125" "$(echo "$C_OUT" | jq -r '.["test-writer"].duration')"
-assert_field "C-2: preserva reviewer.duration" "300" "$(echo "$C_OUT" | jq -r '.reviewer.duration')"
-assert_field "C-3: agrega test-writer.metrics.turns" "2" "$(echo "$C_OUT" | jq -r '.["test-writer"].metrics.turns')"
-assert_field "C-4: agent real distingue projection-test-writer bajo la clave test-writer (CA-1)" "projection-test-writer" "$(echo "$C_OUT" | jq -r '.["test-writer"].metrics.agent')"
-assert_field "C-5: reviewer.metrics es null cuando ese stage no corrio" "null" "$(echo "$C_OUT" | jq -r '.reviewer.metrics')"
+assert_field "E-1: preserva test-writer.duration" "125" "$(echo "$C_OUT" | jq -r '.["test-writer"].duration')"
+assert_field "E-2: preserva reviewer.duration" "300" "$(echo "$C_OUT" | jq -r '.reviewer.duration')"
+assert_field "E-3: agrega test-writer.metrics.turns" "2" "$(echo "$C_OUT" | jq -r '.["test-writer"].metrics.turns')"
+assert_field "E-4: agent real distingue projection-test-writer bajo la clave test-writer (CA-1)" "projection-test-writer" "$(echo "$C_OUT" | jq -r '.["test-writer"].metrics.agent')"
+assert_field "E-5: reviewer.metrics es null cuando ese stage no corrio" "null" "$(echo "$C_OUT" | jq -r '.reviewer.metrics')"
 if echo "$C_OUT" | jq -e '[.. | objects | select(has("cost_usd") or has("cache_creation"))] | length == 0' >/dev/null 2>&1 \
     && echo "$C_OUT" | jq -e '.["test-writer"].metrics.estimated_cost_usd == 0.01 and .["test-writer"].metrics.tokens.cache_write == 0' >/dev/null 2>&1; then
-    pass "C-6: historial nuevo persiste costo estimado y no escribe claves legacy"
+    pass "E-6: historial nuevo persiste costo estimado y no escribe claves legacy"
 else
-    fail "C-6: el historial conserva claves legacy o perdio el contrato nuevo: $C_OUT"
+    fail "E-6: el historial conserva claves legacy o perdio el contrato nuevo: $C_OUT"
 fi
 
-# -------- Bloque D: metrics null -> no inventa un campo "agent" --------
+# -------- Bloque F: metrics null -> no inventa un campo "agent" --------
 
 echo ""
-echo "[D] metrics null -> no hay donde anidar agent, el campo no aparece"
+echo "[F] metrics null -> no hay donde anidar agent, el campo no aparece"
 
 D_OUT=$(build_agents_history_json "implementer" "projection-implementer" "" "")
 if echo "$D_OUT" | jq -e '.implementer.metrics == null' >/dev/null 2>&1 \
    && ! echo "$D_OUT" | jq -e '.implementer | has("agent")' >/dev/null 2>&1; then
-    pass "D-1: metrics null y sin campo agent a nivel de entrada"
+    pass "F-1: metrics null y sin campo agent a nivel de entrada"
 else
-    fail "D-1: forma inesperada con metrics null: $D_OUT"
+    fail "F-1: forma inesperada con metrics null: $D_OUT"
 fi
 
-# -------- Bloque E: agent="" no agrega el campo aunque metrics si sea un objeto --------
+# -------- Bloque G: agent="" no agrega el campo aunque metrics si sea un objeto --------
 
 echo ""
-echo "[E] agent vacio no agrega metrics.agent (clave con un solo agente posible, ej reviewer)"
+echo "[G] agent vacio no agrega metrics.agent (clave con un solo agente posible, ej reviewer)"
 
 E_OUT=$(build_agents_history_json "reviewer" "" "300" "{\"turns\":5}")
 if echo "$E_OUT" | jq -e '.reviewer.metrics.turns == 5' >/dev/null 2>&1 \
    && ! echo "$E_OUT" | jq -e '.reviewer.metrics | has("agent")' >/dev/null 2>&1; then
-    pass "E-1: agent vacio -- metrics conserva sus campos, sin agregar 'agent'"
+    pass "G-1: agent vacio -- metrics conserva sus campos, sin agregar 'agent'"
 else
-    fail "E-1: forma inesperada con agent vacio: $E_OUT"
+    fail "G-1: forma inesperada con agent vacio: $E_OUT"
 fi
 
-# -------- Bloque F: N>2 grupos (generalizacion, CA-2) --------
+# -------- Bloque H: N>2 grupos (generalizacion, CA-2) --------
 
 echo ""
-echo "[F] N grupos variables (CA-2: el caller decide cuantas claves incluir)"
+echo "[H] N grupos variables (CA-2: el caller decide cuantas claves incluir)"
 
 F_OUT=$(build_agents_history_json \
     "test-writer" "test-writer" "60" "null" \
@@ -288,9 +295,9 @@ F_OUT=$(build_agents_history_json \
     "patch-implementer" "implementer" "20" "null")
 
 F_KEY_COUNT=$(echo "$F_OUT" | jq 'keys | length')
-assert_field "F-1: las 7 claves estan presentes" "7" "$F_KEY_COUNT"
-assert_field "F-2: scaffolder.duration" "300" "$(echo "$F_OUT" | jq -r '.scaffolder.duration')"
-assert_field "F-3: patch-implementer.duration" "20" "$(echo "$F_OUT" | jq -r '.["patch-implementer"].duration')"
+assert_field "H-1: las 7 claves estan presentes" "7" "$F_KEY_COUNT"
+assert_field "H-2: scaffolder.duration" "300" "$(echo "$F_OUT" | jq -r '.scaffolder.duration')"
+assert_field "H-3: patch-implementer.duration" "20" "$(echo "$F_OUT" | jq -r '.["patch-implementer"].duration')"
 
 # Guarda del paso de argumentos a jq: si el separador de fin de opciones se
 # colara como un posicional literal, TODOS los grupos correrian un lugar y la
@@ -299,15 +306,15 @@ assert_field "F-3: patch-implementer.duration" "20" "$(echo "$F_OUT" | jq -r '.[
 # historial), asi que se afirma explicitamente.
 if ! echo "$F_OUT" | jq -e 'has("--")' >/dev/null 2>&1 \
    && echo "$F_OUT" | jq -e 'has("test-writer")' >/dev/null 2>&1; then
-    pass "F-4: los grupos no se desplazan (sin clave espuria '--')"
+    pass "H-4: los grupos no se desplazan (sin clave espuria '--')"
 else
-    fail "F-4: los grupos se desplazaron -- el objeto tiene una clave espuria: $F_OUT"
+    fail "H-4: los grupos se desplazaron -- el objeto tiene una clave espuria: $F_OUT"
 fi
 
-# -------- Bloque G: sin jq degrada a plano (CA-4/CA-5) --------
+# -------- Bloque I: sin jq degrada a plano (CA-4/CA-5) --------
 
 echo ""
-echo "[G] build_agents_history_json sin jq: solo duration, sin metrics ni agent"
+echo "[I] build_agents_history_json sin jq: solo duration, sin metrics ni agent"
 
 G_OUT=$(PATH="$E_PATH_SIN_JQ:/bin" build_agents_history_json \
     "test-writer" "projection-test-writer" "125" "$A_OUT" \
@@ -316,74 +323,74 @@ if echo "$G_OUT" | grep -qF '"test-writer":{"duration":125}' \
    && echo "$G_OUT" | grep -qF '"implementer":{"duration":null}' \
    && ! echo "$G_OUT" | grep -q "metrics" \
    && ! echo "$G_OUT" | grep -q "agent"; then
-    pass "G-1: sin jq, degrada a plano (solo duration, sin metrics ni agent)"
+    pass "I-1: sin jq, degrada a plano (solo duration, sin metrics ni agent)"
 else
-    fail "G-1: el degrade sin jq no coincide con lo esperado: $G_OUT"
+    fail "I-1: el degrade sin jq no coincide con lo esperado: $G_OUT"
 fi
 
-# -------- Bloque H: integracion -- linea de historial valida --------
+# -------- Bloque J: integracion -- linea de historial valida --------
 
 echo ""
-echo "[H] Integracion: la linea de historial resultante es JSON valido de una sola linea (CA-4/CA-6)"
+echo "[J] Integracion: la linea de historial resultante es JSON valido de una sola linea (CA-4/CA-6)"
 
 HISTORY_LINE="{\"issue\":\"646\",\"title\":\"Test\",\"pipeline\":\"tdd\",\"started\":\"20260816-100000\",\"finished\":\"2026-08-16T10:10:00\",\"state\":\"completed\",\"agents\":$C_OUT,\"tests\":10,\"pr\":\"https://github.com/x/y/pull/1\"}"
 
 if [ "$(echo "$HISTORY_LINE" | wc -l)" -eq 1 ] && echo "$HISTORY_LINE" | jq -e '.' >/dev/null 2>&1; then
-    pass "H-1: la entrada es JSON valido de una sola linea"
+    pass "J-1: la entrada es JSON valido de una sola linea"
 else
-    fail "H-1: la entrada no es JSON valido de una sola linea: $HISTORY_LINE"
+    fail "J-1: la entrada no es JSON valido de una sola linea: $HISTORY_LINE"
 fi
-assert_field "H-2: agents.test-writer.duration sigue siendo numerico" "125" "$(echo "$HISTORY_LINE" | jq -r '.agents["test-writer"].duration')"
-assert_field "H-3: agents.test-writer.metrics.turns presente (campo nuevo)" "2" "$(echo "$HISTORY_LINE" | jq -r '.agents["test-writer"].metrics.turns')"
+assert_field "J-2: agents.test-writer.duration sigue siendo numerico" "125" "$(echo "$HISTORY_LINE" | jq -r '.agents["test-writer"].duration')"
+assert_field "J-3: agents.test-writer.metrics.turns presente (campo nuevo)" "2" "$(echo "$HISTORY_LINE" | jq -r '.agents["test-writer"].metrics.turns')"
 
-# -------- Bloque L: cableado en tdd-pipeline.sh --------
+# -------- Bloque K: cableado en tdd-pipeline.sh --------
 
 echo ""
-echo "[L] Cableado en tdd-pipeline.sh (CA-1 a CA-5)"
+echo "[K] Cableado en tdd-pipeline.sh (CA-1 a CA-5)"
 
 PIPE="$REPO_ROOT/scripts/tdd-pipeline.sh"
 
 if grep -q "compute_stage_metrics" "$PIPE"; then
-    pass "L-1: el pipeline invoca compute_stage_metrics al cerrar cada stage"
+    pass "K-1: el pipeline invoca compute_stage_metrics al cerrar cada stage"
 else
-    fail "L-1: el pipeline NO invoca compute_stage_metrics"
+    fail "K-1: el pipeline NO invoca compute_stage_metrics"
 fi
 
 if [ "$(grep -c "build_agents_history_json" "$PIPE")" -ge 2 ]; then
-    pass "L-2: build_agents_history_json alimenta las dos entradas de historial (completed y la de abort)"
+    pass "K-2: build_agents_history_json alimenta las dos entradas de historial (completed y la de abort)"
 else
-    fail "L-2: build_agents_history_json no se usa en las dos entradas de historial"
+    fail "K-2: build_agents_history_json no se usa en las dos entradas de historial"
 fi
 
 if grep -q 'run_agent "merge" "implementer"' "$PIPE"; then
-    pass "L-3: existe el stage merge reusando el nombre de agente 'implementer' (premisa de L-4)"
+    pass "K-3: existe el stage merge reusando el nombre de agente 'implementer' (premisa de K-4)"
 else
-    fail "L-3: cambio el stage merge -- revisar si L-4 sigue teniendo sentido"
+    fail "K-3: cambio el stage merge -- revisar si K-4 sigue teniendo sentido"
 fi
 
 if grep -qE '2\)\s+AGENT_IM_METRICS_JSON="\$metrics_json"' "$PIPE" \
    && ! grep -qE 'implementer\).*AGENT_IM_METRICS_JSON="\$metrics_json"' "$PIPE"; then
-    pass "L-4: las metricas se cosechan por stage, no por nombre de agente (el merge no pisa al implementer de Stage 2)"
+    pass "K-4: las metricas se cosechan por stage, no por nombre de agente (el merge no pisa al implementer de Stage 2)"
 else
-    fail "L-4: las metricas se cosechan por nombre de agente -- un merge fallido pisaria las del implementer de Stage 2"
+    fail "K-4: las metricas se cosechan por nombre de agente -- un merge fallido pisaria las del implementer de Stage 2"
 fi
 
 if grep -q 'coverage-gate' "$PIPE" && grep -qF '\"coverage-gate\":{\"duration\"' "$PIPE"; then
-    pass "L-5: coverage-gate conserva su forma propia (duration/result/gaps/patch_applied), no pasa por el builder"
+    pass "K-5: coverage-gate conserva su forma propia (duration/result/gaps/patch_applied), no pasa por el builder"
 else
-    fail "L-5: no se encontro la forma esperada de coverage-gate"
+    fail "K-5: no se encontro la forma esperada de coverage-gate"
 fi
 
 if grep -qF 'PIPELINE_DIR_ABS/metrics/tdd-' "$PIPE"; then
-    pass "L-6: cada invocacion respalda su JSON individual en .claude/pipeline/metrics/ (CA-5)"
+    pass "K-6: cada invocacion respalda su JSON individual en .claude/pipeline/metrics/ (CA-5)"
 else
-    fail "L-6: no se encontro el respaldo por stage en .claude/pipeline/metrics/"
+    fail "K-6: no se encontro el respaldo por stage en .claude/pipeline/metrics/"
 fi
 
 if grep -qF 'mkdir -p "$PIPELINE_DIR/metrics"' "$PIPE"; then
-    pass "L-7: el pipeline crea .claude/pipeline/metrics/ al arrancar"
+    pass "K-7: el pipeline crea .claude/pipeline/metrics/ al arrancar"
 else
-    fail "L-7: falta el mkdir -p de .claude/pipeline/metrics/"
+    fail "K-7: falta el mkdir -p de .claude/pipeline/metrics/"
 fi
 
 echo ""

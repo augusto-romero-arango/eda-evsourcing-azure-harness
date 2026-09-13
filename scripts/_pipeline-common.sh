@@ -986,13 +986,13 @@ derive_stage_log_from_stream() {
 # Deriva las metricas de un stage a partir del stream JSON crudo que
 # tdd-pipeline.sh ya captura con `claude -p --output-format stream-json
 # --verbose` (issue #645): turnos, duraciones (total/API/no-API), costo
-# estimado o costo legado, tokens
-# tokens desglosados, modelo, motivo de fin y un histograma de tool calls por
+# estimado o costo legado, tokens desglosados, modelo, motivo de fin y un
+# histograma de tool calls por
 # nombre (count + tiempo atribuido, suma y mediana, via emparejamiento
 # tool_use.id <-> tool_use_id, ambos fechados por el `timestamp` ISO-8601 de
-# nivel superior de cada evento). Porte esencialmente literal del interno
-# interno neutral, conservando el fallback tolerante para trazas Claude previas
-# al contrato. Los terminales neutrales nuevos se copian sin reinterpretarlos;
+# nivel superior de cada evento). Porte de la forma neutral del interno,
+# conservando el fallback tolerante para trazas Claude previas al contrato. Los
+# terminales neutrales nuevos se copian sin reinterpretarlos;
 # una traza Claude previa conserva `total_cost_usd` exclusivamente como
 # `cost_usd` legado, nunca como estimacion.
 #
