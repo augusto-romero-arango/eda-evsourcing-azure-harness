@@ -483,7 +483,8 @@ log_agent_model_invocation() {
 }
 
 run_agent() {
-    local stage="$1" agent="$2" prompt="$3" log_base="$LOG_DIR_ABS/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}"
+    local stage="$1" agent="$2" prompt="$3"
+    local log_base="$LOG_DIR_ABS/tooling-stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}"
     local log_stage="${log_base}.log" events_file=""
     local prompt_file="$PIPELINE_TMP_DIR/${stage}-${agent}.prompt.md"
     local system_file="$PIPELINE_TMP_DIR/${stage}-${agent}.system.md"
