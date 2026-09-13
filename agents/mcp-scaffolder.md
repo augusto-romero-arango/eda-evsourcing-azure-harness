@@ -2704,10 +2704,11 @@ jobs:
                 echo "Version OK tras ${intentos} intento(s) (${transcurrido}s): ${body}"
                 break
               fi
-              echo "Intento ${intentos}: version desplegada '${body}' no coincide con '${expected_sha}'. Reintentando en ${INTERVALO_VERSION}s..."
               restante=$((TIMEOUT_VERSION - (SECONDS - INICIO)))
               (( restante <= 0 )) && break
-              sleep $(( restante < INTERVALO_VERSION ? restante : INTERVALO_VERSION ))
+              espera=$(( restante < INTERVALO_VERSION ? restante : INTERVALO_VERSION ))
+              echo "Intento ${intentos}: version desplegada '${body}' no coincide con '${expected_sha}'. Reintentando en ${espera}s..."
+              sleep "$espera"
             done
             if [[ "$ultimo_cuerpo" != *"$expected_sha"* ]]; then
               app_host="${{ inputs.base_url }}"

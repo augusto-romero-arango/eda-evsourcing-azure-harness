@@ -26,7 +26,12 @@ checks = [
         and "while (( SECONDS - INICIO < TIMEOUT_VERSION )); do" in version,
         "el presupuesto del gate por SHA se mide por reloj",
     ),
-    ("INTERVALO_VERSION=5" in version, "el gate por SHA usa un intervalo de 5 s"),
+    (
+        "INTERVALO_VERSION=5" in version
+        and "espera=$(( restante < INTERVALO_VERSION ? restante : INTERVALO_VERSION ))" in version
+        and 'sleep "$espera"' in version,
+        "el gate por SHA usa un intervalo de 5 s acotado por el tiempo restante",
+    ),
     (
         'curl -s --max-time "$timeout_peticion" "${{ inputs.base_url }}/api/version"' in version
         and "timeout_peticion=$(( restante < 15 ? restante : 15 ))" in version,
@@ -54,6 +59,8 @@ checks = [
     (
         "for i in $(seq 1 60); do" in ready
         and '--max-time 15 "${{ inputs.base_url }}/api/ready"' in ready
+        and "Reintentando en 2s" in ready
+        and "sleep 2" in ready
         and "Timeout: /api/ready no respondio 200 en 120s" in ready,
         "/api/ready conserva su presupuesto y timeout independientes",
     ),
