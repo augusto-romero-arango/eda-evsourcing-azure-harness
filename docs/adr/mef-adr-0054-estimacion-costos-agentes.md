@@ -33,13 +33,13 @@ Un valor cero procedente de OAuth, incluido el que OpenCode instala para OpenAI 
 
 El contrato neutral conserva separadas las responsabilidades:
 
-- El adaptador traduce los eventos y contadores crudos de su runtime a modelo, tokens, contexto y partes del paso; no expone su wire format a consumidores.
-- El estimador neutral resuelve tarifa y calcula `estimated_cost_usd`.
-- Pipelines, tablas, metricas y consumidores leen exclusivamente `estimated_cost_usd`; no inspeccionan OAuth, `total_cost_usd`, `step_finish.part.cost` ni otro campo del runtime.
+- El adaptador traduce los eventos y contadores crudos de su runtime a modelo, tokens, contexto y partes del paso; tambien puede traducir un importe nativo cuya semantica de equivalencia API este verificada. No expone su wire format a consumidores.
+- El estimador neutral resuelve tarifa y calcula `estimated_cost_usd` cuando el runtime no aporta ese importe representativo. OpenCode con OAuth sigue necesariamente esta ruta: su cero no satisface la semantica del campo.
+- Pipelines, tablas, metricas y consumidores usan `estimated_cost_usd` para estimaciones y totales; no inspeccionan OAuth, `total_cost_usd`, `step_finish.part.cost` ni otro campo del runtime. La unica excepcion de lectura es el historial legacy separado que fija la decision 5.
 
-### 2. Formula por paso y seleccion de tier antes de agregar la corrida (CA-2)
+### 2. Formula de OpenCode por paso y seleccion de tier antes de agregar la corrida (CA-2)
 
-Las tarifas del catalogo son USD por **millón de tokens** (MTok). Para cada paso `s`, el estimador toma el modelo `provider/model` ya resuelto y selecciona primero el tier de precios aplicable al contexto de ese paso. No escoge un tier unico para toda la corrida: una corrida puede cruzar un umbral de contexto y sus pasos se valorizan con tiers distintos.
+Las tarifas del catalogo son USD por **millón de tokens** (MTok). Para cada paso `s` traducido desde OpenCode, el estimador toma el modelo `provider/model` ya resuelto y selecciona primero el tier de precios aplicable al contexto de ese paso. No escoge un tier unico para toda la corrida: una corrida puede cruzar un umbral de contexto y sus pasos se valorizan con tiers distintos.
 
 Con las tarifas por MTok del tier `p` y los contadores de tokens del paso, el importe es:
 
@@ -56,17 +56,17 @@ cost_s = (
 estimated_cost_usd = sum(cost_s)
 ```
 
-`reasoning_s` usa deliberadamente la tarifa `output`; no se inventa una categoria de precio adicional. La normalizacion con `max(0, ...)` evita cobrar input negativo si un runtime reporta contadores inconsistentes; la implementacion debe dejar la inconsistencia como diagnostico, sin volver negativa la estimacion. Los campos ausentes se tratan como no resolubles, no como cero, salvo que el adaptador haya declarado explicitamente que esa clase de tokens no existe para ese runtime/modelo.
+`input_s` es el input total previo a descontar cache y tambien la medida de contexto del paso; `output_visible_s` excluye los tokens de reasoning. `reasoning_s` usa deliberadamente la tarifa `output`; no se inventa una categoria de precio adicional. La normalizacion con `max(0, ...)` evita cobrar input negativo si un runtime reporta contadores inconsistentes; la implementacion debe dejar la inconsistencia como diagnostico, sin volver negativa la estimacion. Los campos ausentes se tratan como no resolubles, no como cero, salvo que el adaptador haya declarado explicitamente que esa clase de tokens no existe para ese runtime/modelo.
 
-La seleccion del tier se hace con la medida de contexto que el evento del paso entrega para esa llamada, antes de sumar sus componentes. Si el catalogo no define tiers, se usa su precio base. Si el contexto requerido para seleccionar un tier falta o no corresponde a un tier valido, ese paso no es resoluble y la corrida degrada a `estimated_cost_usd: null`; nunca se adivina un tier base para aparentar precision.
+La seleccion del tier compara `input_s` con los umbrales de contexto del catalogo y elige el tier de mayor umbral que satisfaga `input_s > threshold`; si ninguno aplica o el catalogo no define tiers, usa el precio base. Esta desigualdad estricta reproduce la seleccion verificada en OpenCode: un input exactamente igual al umbral todavia usa el tier anterior. Si falta el contexto o el tier seleccionado no tiene costos validos, ese paso no es resoluble y la corrida degrada a `estimated_cost_usd: null`; nunca se adivina una tarifa para aparentar precision.
 
 ### 3. Models.dev es el registro de referencia, con cache propia y validacion UTC diaria (CA-3)
 
 Para IDs `provider/model`, el registro de referencia es Models.dev servido por `https://models.opencode.ai/api.json`. Mefisto lo consulta sin credenciales y usa los IDs exactos del catalogo; no construye nombres desde perfiles logicos ni altera el proveedor/modelo que resolvio el runtime. Esto permite, entre otros, resolver `openai/gpt-5.6-luna`, `openai/gpt-5.6-terra` y `openai/gpt-5.6-sol` contra la misma fuente publica que usa OpenCode.
 
-La implementacion guarda una cache **propia de Mefisto** bajo `MEFISTO_STATE_DIR`. No lee ni modifica la cache de OpenCode, su directorio de configuracion, credenciales ni auth store. La cache contiene el documento validado y metadata suficiente para conocer su fecha de validacion UTC y su procedencia. Una corrida valida el catalogo como maximo una vez por dia UTC; dentro del mismo dia puede reutilizar la cache valida.
+La implementacion guarda una cache **propia de Mefisto** bajo `MEFISTO_STATE_DIR`. No lee ni modifica la cache de OpenCode, su directorio de configuracion, credenciales ni auth store. La cache contiene el documento validado y metadata suficiente para conocer su fecha de validacion UTC y URL de procedencia. Una cache se considera vigente solo cuando su fecha de validacion coincide con la fecha UTC actual: el primer uso posterior intenta refrescarla; los usos del mismo dia UTC pueden reutilizarla. La actualizacion se serializa con un lock propio de Mefisto para que procesos concurrentes revaliden la fecha dentro del lock y no compitan por reemplazarla.
 
-Una actualizacion descarga a un temporal dentro del mismo directorio de estado, valida que el JSON tenga la estructura de catalogo necesaria para resolver `provider/model` y que todas las tarifas numéricas usadas sean finitas y no negativas, y solo entonces reemplaza la cache mediante renombre atomico. Un fallo de red, JSON malformado, precio negativo o documento incompleto nunca destruye ni sobrescribe la ultima cache valida. La implementacion no invoca `opencode models --refresh`: ese comando es evidencia de la procedencia de OpenCode, pero refresca estado del runtime y contradiria la custodia y reproducibilidad de una cache propia.
+Una actualizacion descarga a un temporal dentro del mismo directorio de estado, valida que el JSON tenga la estructura de catalogo necesaria para resolver IDs exactos `provider/model` y que cada tarifa base o de tier que pueda seleccionar la formula sea numerica, finita y no negativa, y solo entonces reemplaza la cache mediante renombre atomico en el mismo filesystem. Un fallo de red, JSON malformado, precio negativo o documento incompleto nunca destruye ni sobrescribe la ultima cache valida. La implementacion no invoca `opencode models --refresh`: ese comando es evidencia de la procedencia de OpenCode, pero refresca estado del runtime y contradiria la custodia y reproducibilidad de una cache propia.
 
 ### 4. Telemetria degradable: cache valida o `null`, nunca aborto (CA-4)
 
@@ -97,13 +97,13 @@ El rollout debe respetar este orden, sin adelantar reportes que vuelvan a interp
 4. **Lado publicado**: consumir el mismo contrato neutral y proyectar la misma distincion entre estimado y costo reportado legado.
 5. **#1311-#1313**: reconstruir la tabla y comparativas solo cuando los pasos anteriores produzcan evidencia reproducible; #1311 no usa los ceros observados de #1315 como costo relativo.
 
-Las fuentes verificadas el 2026-09-13 que fundamentan esta decision son:
+Las fuentes verificadas el 2026-09-13 que fundamentan esta decision quedan fijadas a los commits `a453386e9dd3cd5089714f1f0d4576002a96d30d` de OpenCode y `dfa3c8f02fb8a3e3ad80161f9b81bc25aeb723a1` de Models.dev:
 
-- `anomalyco/opencode`, [`packages/web/src/content/docs/models.mdx`](https://github.com/anomalyco/opencode/blob/main/packages/web/src/content/docs/models.mdx) y [`packages/opencode/src/cli/cmd/models.ts`](https://github.com/anomalyco/opencode/blob/main/packages/opencode/src/cli/cmd/models.ts): `--verbose` expone costos y `--refresh` refresca Models.dev.
-- `anomalyco/opencode`, [`packages/core/src/models-dev.ts`](https://github.com/anomalyco/opencode/blob/main/packages/core/src/models-dev.ts): fuente por defecto `https://models.opencode.ai`, ruta `/api.json`, cache, lock y refresh.
-- `anomalyco/opencode`, [`packages/opencode/src/plugin/openai/codex.ts`](https://github.com/anomalyco/opencode/blob/main/packages/opencode/src/plugin/openai/codex.ts): OAuth de OpenAI reemplaza input/output/cache por cero.
-- `anomalyco/opencode`, [`packages/opencode/src/session/session.ts`](https://github.com/anomalyco/opencode/blob/main/packages/opencode/src/session/session.ts): formula por llamada, descuento de cache, reasoning a tarifa de output y tier por contexto.
-- `anomalyco/models.dev`, [`gpt-5.6-luna.toml`](https://github.com/anomalyco/models.dev/blob/main/providers/openai/models/gpt-5.6-luna.toml), [`gpt-5.6-terra.toml`](https://github.com/anomalyco/models.dev/blob/main/providers/openai/models/gpt-5.6-terra.toml) y [`gpt-5.6-sol.toml`](https://github.com/anomalyco/models.dev/blob/main/providers/openai/models/gpt-5.6-sol.toml): IDs y tarifas registrados; sus entradas remiten a la documentacion de precios de OpenAI.
+- `anomalyco/opencode`, [`packages/web/src/content/docs/models.mdx`](https://github.com/anomalyco/opencode/blob/a453386e9dd3cd5089714f1f0d4576002a96d30d/packages/web/src/content/docs/models.mdx) y [`packages/opencode/src/cli/cmd/models.ts`](https://github.com/anomalyco/opencode/blob/a453386e9dd3cd5089714f1f0d4576002a96d30d/packages/opencode/src/cli/cmd/models.ts): OpenCode usa Models.dev; `--verbose` expone costos y `--refresh` refresca su cache.
+- `anomalyco/opencode`, [`packages/core/src/models-dev.ts`](https://github.com/anomalyco/opencode/blob/a453386e9dd3cd5089714f1f0d4576002a96d30d/packages/core/src/models-dev.ts): fuente por defecto `https://models.opencode.ai`, ruta `/api.json`, cache, lock y refresh.
+- `anomalyco/opencode`, [`packages/opencode/src/plugin/openai/codex.ts`](https://github.com/anomalyco/opencode/blob/a453386e9dd3cd5089714f1f0d4576002a96d30d/packages/opencode/src/plugin/openai/codex.ts): OAuth de OpenAI reemplaza input/output/cache por cero.
+- `anomalyco/opencode`, [`packages/opencode/src/session/session.ts`](https://github.com/anomalyco/opencode/blob/a453386e9dd3cd5089714f1f0d4576002a96d30d/packages/opencode/src/session/session.ts): formula por llamada, input total como contexto, descuento de cache, output visible separado de reasoning, reasoning a tarifa de output y seleccion estricta del tier por contexto.
+- `anomalyco/models.dev`, [`gpt-5.6-luna.toml`](https://github.com/anomalyco/models.dev/blob/dfa3c8f02fb8a3e3ad80161f9b81bc25aeb723a1/providers/openai/models/gpt-5.6-luna.toml), [`gpt-5.6-terra.toml`](https://github.com/anomalyco/models.dev/blob/dfa3c8f02fb8a3e3ad80161f9b81bc25aeb723a1/providers/openai/models/gpt-5.6-terra.toml) y [`gpt-5.6-sol.toml`](https://github.com/anomalyco/models.dev/blob/dfa3c8f02fb8a3e3ad80161f9b81bc25aeb723a1/providers/openai/models/gpt-5.6-sol.toml): IDs, tarifas base y tier de contexto registrados. Los archivos de Luna y Terra citan la [documentacion de precios de OpenAI](https://developers.openai.com/api/docs/pricing) como procedencia de su corte de tarifas.
 
 ## Alternativas consideradas
 
