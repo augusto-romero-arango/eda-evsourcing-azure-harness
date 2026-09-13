@@ -65,7 +65,7 @@
 #   [M] Normalizacion vieja/neutral y tabla POR RUNTIME (issue #908): fixture
 #       con una corrida forma vieja sin runtime de nivel de corrida, una
 #       forma neutral Claude con runtime, una forma neutral OpenCode con
-#       runtime, cost_usd:0 real y turns:null (ningun agente lo reporta), y
+#       runtime, estimated_cost_usd:0 real y turns:null (ningun agente lo reporta), y
 #       una sin instrumentar. Verifica que nada fuera de
 #       normalize_agent_metrics lee los campos crudos de la forma vieja
 #       (CA-1), que el ranking de herramientas admite el nombre de tool de
@@ -76,7 +76,9 @@
 #       agregan como n/d en vez de leerse como 0 (CA-3). Verificado contra
 #       compute_metrics_report_json y contra el render end-to-end de la
 #       seccion "POR RUNTIME", sin alterar las secciones existentes.
-#   [N] Historial en las DOS ubicaciones (issue #869): el fixture pone una
+#   [N] Costos estimados/legados y tokenizacion neutral (issue #1326): historias
+#       solo nueva, solo legacy y mixta; ceros, nulos y alias cache_creation.
+#   [O] Historial en las DOS ubicaciones (issue #869): el fixture pone una
 #       corrida en .claude/pipeline/ y otra en .mefisto/pipeline/ para entrar
 #       en la rama que las concatena en un temporal -- la que corre en
 #       cualquier repo real con historico legacy y que ningun otro bloque
@@ -146,12 +148,13 @@ fi
 
 # --- Repo Mefisto de mentira para las pruebas end-to-end (CLI real, sin tocar el repo real) ---
 FAKE_REPO="$TMP/fake-mefisto"
-mkdir -p "$FAKE_REPO/.claude-plugin" "$FAKE_REPO/.claude/scripts" "$FAKE_REPO/.claude/pipeline" "$FAKE_REPO/src/internal/scripts/lib"
+mkdir -p "$FAKE_REPO/.claude-plugin" "$FAKE_REPO/.claude/scripts" "$FAKE_REPO/.claude/pipeline" "$FAKE_REPO/src/internal/scripts/lib" "$FAKE_REPO/src/runtime/lib"
 git -C "$FAKE_REPO" init -q
 echo '{"name":"mefisto"}' > "$FAKE_REPO/.claude-plugin/plugin.json"
 cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FAKE_REPO/src/internal/scripts/lib/_mefisto-common.sh"
 cp "$COMMON_SCRIPT" "$FAKE_REPO/.claude/scripts/_mefisto-common.sh"
 cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_REPO/src/internal/scripts/lib/mefisto-state.sh"
+cp "$REPO_ROOT/src/runtime/lib/mefisto-process.sh" "$FAKE_REPO/src/runtime/lib/mefisto-process.sh"
 cp "$REPORT_SCRIPT" "$FAKE_REPO/.claude/scripts/mefisto-metrics-report.sh"
 chmod +x "$FAKE_REPO/.claude/scripts/mefisto-metrics-report.sh"
 
@@ -452,13 +455,13 @@ echo "[K] La tabla de deriva desglosa los tokens medios (CA-4)"
 
 OUT=$(run_report)
 if echo "$OUT" | grep -q "Tok.in" && echo "$OUT" | grep -q "Tok.out" \
-   && echo "$OUT" | grep -q "Cache.rd" && echo "$OUT" | grep -q "Cache.cr"; then
-    pass "K-1: la serie temporal trae input, output y el desglose cache_read/cache_creation"
+   && echo "$OUT" | grep -q "Cache.rd" && echo "$OUT" | grep -q "Cache.wr" && echo "$OUT" | grep -q "Reason"; then
+    pass "K-1: la serie temporal trae input, output, cache_read/cache_write y reasoning"
 else
     fail "K-1: falta alguna columna del desglose de tokens en la serie temporal"
 fi
 
-if echo "$OUT" | grep -qE '^2026-08 +1/1 +20m00s +20m00s +20\.0 +10\.0 +20\.0k +2\.0k +10\.0k +10\.0k +50\.0%'; then
+if echo "$OUT" | grep -qE '^2026-08 +1/1 +20m00s +20m00s +20\.0 +10\.0 +20\.0k +2\.0k +10\.0k +10\.0k +- +50\.0%'; then
     pass "K-2: fila mensual completa y alineada (agosto: 20k in / 2k out / 50% cache read)"
 else
     fail "K-2: fila mensual de agosto corrida o mal formada: $(echo "$OUT" | grep '^2026-08' || echo '(no aparece)')"
@@ -484,7 +487,7 @@ echo "  -- by_version (CA-1): 900/910 agrupan bajo 0.9.0, 920/930 caen a (sin ve
 assert_field "L-1: dos grupos en by_version (0.9.0, sin version)" "2" "$(echo "$AGG_L" | jq -r '.by_version | length')"
 assert_field "L-2: 0.9.0.n_total (900+910)" "2" "$(echo "$AGG_L" | jq -r '.by_version[] | select(.version=="0.9.0") | .n_total')"
 assert_field "L-3: 0.9.0.turns_mean (10+20)/2" "15" "$(echo "$AGG_L" | jq -r '.by_version[] | select(.version=="0.9.0") | .turns_mean')"
-assert_field "L-4: 0.9.0.cost_usd_mean (0.5+0.7)/2" "0.6" "$(echo "$AGG_L" | jq -r '.by_version[] | select(.version=="0.9.0") | .cost_usd_mean')"
+assert_field "L-4: 0.9.0 no convierte costo legacy en estimacion" "null" "$(echo "$AGG_L" | jq -r '.by_version[] | select(.version=="0.9.0") | .estimated_cost_usd_mean')"
 assert_field "L-5: 0.9.0.wall_mean_instr_s (100+200)/2" "150" "$(echo "$AGG_L" | jq -r '.by_version[] | select(.version=="0.9.0") | .wall_mean_instr_s')"
 assert_field "L-6: (sin version).n_total (920+930, con o sin sha)" "2" "$(echo "$AGG_L" | jq -r '.by_version[] | select(.version=="(sin version)") | .n_total')"
 assert_field "L-7: (sin version).turns_mean (5+12)/2" "8.5" "$(echo "$AGG_L" | jq -r '.by_version[] | select(.version=="(sin version)") | .turns_mean')"
@@ -562,9 +565,9 @@ fi
 # numeros esperados de abajo se derivaron a mano sumando estos mismos campos
 # (mismo criterio que los bloques [C]/[J]/[L]).
 cat > "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" <<'EOF'
-{"issue":"600","title":"Forma vieja sin runtime","pipeline":"mefisto-tooling","started":"20260901-090000","state":"completed","agents":{"writer":{"duration":250,"metrics":{"turns":6,"duration_ms":200000,"duration_api_ms":150000,"non_api_ms":50000,"cost_usd":0.35,"tokens":{"input":5000,"output":700,"cache_read":4000,"cache_creation":500},"model":"claude-opus","is_error":false,"stop_reason":"end_turn","terminal_reason":null,"tool_calls":[{"name":"Read","count":4,"duration_ms_sum":3000,"duration_ms_median":700}]}},"reviewer":{"duration":130,"metrics":{"turns":3,"duration_ms":100000,"duration_api_ms":70000,"non_api_ms":30000,"cost_usd":0.15,"tokens":{"input":2000,"output":300,"cache_read":1500,"cache_creation":200},"model":"claude-opus","is_error":false,"stop_reason":"end_turn","terminal_reason":null,"tool_calls":[{"name":"Bash","count":2,"duration_ms_sum":4000,"duration_ms_median":2000}]}}}}
-{"issue":"601","title":"Forma neutral Claude con runtime","pipeline":"mefisto-tooling","runtime":"claude","started":"20260902-090000","state":"completed","agents":{"writer":{"duration":310,"metrics":{"runtime":"claude","status":"success","error_kind":null,"model":"claude-sonnet-5","cost_usd":0.5,"tokens":{"input":8000,"output":900},"turns":9,"duration_ms":300000,"api_duration_ms":200000,"non_api_ms":100000,"tool_calls":[{"name":"Read","count":5,"duration_ms_sum":4000,"duration_ms_median":800}]}},"reviewer":{"duration":160,"metrics":{"runtime":"claude","status":"success","error_kind":null,"model":"claude-sonnet-5","cost_usd":0.2,"tokens":{"input":3000,"output":400},"turns":4,"duration_ms":150000,"api_duration_ms":100000,"non_api_ms":50000,"tool_calls":[{"name":"Edit","count":2,"duration_ms_sum":2000,"duration_ms_median":1000}]}}}}
-{"issue":"602","title":"Forma neutral OpenCode cost 0 turns null","pipeline":"mefisto-tooling","runtime":"opencode","started":"20260903-090000","state":"completed","agents":{"writer":{"duration":190,"metrics":{"runtime":"opencode","status":"success","error_kind":null,"model":null,"cost_usd":0,"tokens":{"input":6000,"output":500},"turns":null,"duration_ms":180000,"api_duration_ms":140000,"non_api_ms":40000,"tool_calls":[{"name":"glob","count":3,"duration_ms_sum":3000,"duration_ms_median":1000}]}},"reviewer":{"duration":null,"metrics":null}}}
+{"issue":"600","title":"Forma vieja sin runtime","pipeline":"mefisto-tooling","started":"20260901-090000","state":"completed","agents":{"writer":{"duration":250,"metrics":{"turns":6,"duration_ms":200000,"duration_api_ms":150000,"non_api_ms":50000,"estimated_cost_usd":0.35,"tokens":{"input":5000,"output":700,"cache_read":4000,"cache_creation":500},"model":"claude-opus","is_error":false,"stop_reason":"end_turn","terminal_reason":null,"tool_calls":[{"name":"Read","count":4,"duration_ms_sum":3000,"duration_ms_median":700}]}},"reviewer":{"duration":130,"metrics":{"turns":3,"duration_ms":100000,"duration_api_ms":70000,"non_api_ms":30000,"estimated_cost_usd":0.15,"tokens":{"input":2000,"output":300,"cache_read":1500,"cache_creation":200},"model":"claude-opus","is_error":false,"stop_reason":"end_turn","terminal_reason":null,"tool_calls":[{"name":"Bash","count":2,"duration_ms_sum":4000,"duration_ms_median":2000}]}}}}
+{"issue":"601","title":"Forma neutral Claude con runtime","pipeline":"mefisto-tooling","runtime":"claude","started":"20260902-090000","state":"completed","agents":{"writer":{"duration":310,"metrics":{"runtime":"claude","status":"success","error_kind":null,"model":"claude-sonnet-5","estimated_cost_usd":0.5,"tokens":{"input":8000,"output":900},"turns":9,"duration_ms":300000,"api_duration_ms":200000,"non_api_ms":100000,"tool_calls":[{"name":"Read","count":5,"duration_ms_sum":4000,"duration_ms_median":800}]}},"reviewer":{"duration":160,"metrics":{"runtime":"claude","status":"success","error_kind":null,"model":"claude-sonnet-5","estimated_cost_usd":0.2,"tokens":{"input":3000,"output":400},"turns":4,"duration_ms":150000,"api_duration_ms":100000,"non_api_ms":50000,"tool_calls":[{"name":"Edit","count":2,"duration_ms_sum":2000,"duration_ms_median":1000}]}}}}
+{"issue":"602","title":"Forma neutral OpenCode cost 0 turns null","pipeline":"mefisto-tooling","runtime":"opencode","started":"20260903-090000","state":"completed","agents":{"writer":{"duration":190,"metrics":{"runtime":"opencode","status":"success","error_kind":null,"model":null,"estimated_cost_usd":0,"tokens":{"input":6000,"output":500},"turns":null,"duration_ms":180000,"api_duration_ms":140000,"non_api_ms":40000,"tool_calls":[{"name":"glob","count":3,"duration_ms_sum":3000,"duration_ms_median":1000}]}},"reviewer":{"duration":null,"metrics":null}}}
 {"issue":"603","title":"Sin instrumentar","pipeline":"mefisto-tooling","started":"20260904-090000","state":"completed","agents":{"writer":{"duration":90},"reviewer":{"duration":40}}}
 EOF
 
@@ -583,10 +586,10 @@ assert_field "M-5: tres grupos en by_runtime" "3" "$(echo "$AGG_M" | jq -r '.by_
 
 assert_field "M-6: claude.n_total/n_instrumented" "1" "$(echo "$AGG_M" | jq -r '.by_runtime[] | select(.runtime=="claude") | .n_total')"
 assert_field "M-7: claude.turns_mean (9+4)" "13" "$(echo "$AGG_M" | jq -r '.by_runtime[] | select(.runtime=="claude") | .turns_mean')"
-assert_field "M-8: claude.cost_usd_mean (0.5+0.2)" "0.7" "$(echo "$AGG_M" | jq -r '.by_runtime[] | select(.runtime=="claude") | .cost_usd_mean')"
+assert_field "M-8: claude.estimated_cost_usd_mean (0.5+0.2)" "0.7" "$(echo "$AGG_M" | jq -r '.by_runtime[] | select(.runtime=="claude") | .estimated_cost_usd_mean')"
 
 assert_field "M-9: opencode.n_total/n_instrumented" "1" "$(echo "$AGG_M" | jq -r '.by_runtime[] | select(.runtime=="opencode") | .n_total')"
-assert_field "M-10: opencode.cost_usd_mean es el 0 REAL, no n/d ni perdido" "0" "$(echo "$AGG_M" | jq -r '.by_runtime[] | select(.runtime=="opencode") | .cost_usd_mean')"
+assert_field "M-10: opencode.estimated_cost_usd_mean es el 0 REAL, no n/d ni perdido" "0" "$(echo "$AGG_M" | jq -r '.by_runtime[] | select(.runtime=="opencode") | .estimated_cost_usd_mean')"
 assert_field "M-11: opencode.turns_mean es null (ningun agente reporto turnos, no se cuenta como 0)" "null" "$(echo "$AGG_M" | jq -r '.by_runtime[] | select(.runtime=="opencode") | .turns_mean')"
 
 assert_field "M-12: (sin runtime).n_total (600+603, el historico previo)" "2" "$(echo "$AGG_M" | jq -r '.by_runtime[] | select(.runtime=="(sin runtime)") | .n_total')"
@@ -618,7 +621,44 @@ else
 fi
 
 echo ""
-echo "[N] Historial en las DOS ubicaciones: se agregan ambas y el reporte cierra en 0 (issue #869)"
+echo "[N] Costos estimados/legados y tokens neutrales (issue #1326)"
+
+# 800 es historia solo nueva: conserva el cero estimado y los cinco desgloses.
+# 801 es solo legacy: incluso su cero queda fuera de toda cifra estimada. 802
+# mezcla ambos campos: estimated_cost_usd gana, por lo que cost_usd no se duplica.
+# 803 deja una estimacion nula para que el reporte declare su ausencia. En 802,
+# el reviewer instrumentado no pudo estimar, por lo que la corrida queda parcial.
+cat > "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" <<'EOF'
+{"issue":"800","pipeline":"mefisto-tooling","runtime":"opencode","started":"20260910-090000","state":"completed","agents":{"writer":{"duration":10,"metrics":{"estimated_cost_usd":0,"tokens":{"input":10,"output":2,"cache_read":3,"cache_write":4,"reasoning":5},"turns":1,"duration_ms":10000,"api_duration_ms":9000,"tool_calls":[]}},"reviewer":{"duration":null,"metrics":null}}}
+{"issue":"801","pipeline":"mefisto-tooling","started":"20260911-090000","state":"completed","agents":{"writer":{"duration":10,"metrics":{"cost_usd":0,"tokens":{"input":10,"output":2,"cache_read":3,"cache_creation":7},"turns":1,"duration_ms":10000,"api_duration_ms":9000,"tool_calls":[]}},"reviewer":{"duration":null,"metrics":null}}}
+{"issue":"802","pipeline":"mefisto-tooling","started":"20260912-090000","state":"completed","agents":{"writer":{"duration":10,"metrics":{"estimated_cost_usd":2,"cost_usd":99,"tokens":{"input":10,"output":2,"cache_read":3,"cache_write":4,"reasoning":5},"turns":1,"duration_ms":10000,"api_duration_ms":9000,"tool_calls":[]}},"reviewer":{"duration":1,"metrics":{"estimated_cost_usd":null,"tokens":{"input":null,"output":null,"cache_read":null,"cache_write":null,"reasoning":null},"turns":null,"duration_ms":1000,"api_duration_ms":null,"tool_calls":[]}}}}
+{"issue":"803","pipeline":"mefisto-tooling","started":"20260913-090000","state":"completed","agents":{"writer":{"duration":10,"metrics":{"estimated_cost_usd":null,"tokens":{"input":10,"output":2,"cache_read":3,"cache_write":4,"reasoning":null},"turns":1,"duration_ms":10000,"api_duration_ms":9000,"tool_calls":[]}},"reviewer":{"duration":null,"metrics":null}}}
+EOF
+AGG_N=$(compute_metrics_report_json "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" "")
+assert_field "N-1: solo los valores estimated_cost_usd entran al total" "2" "$(echo "$AGG_N" | jq -r '.wallclock.writer.estimated_cost_usd_total')"
+assert_field "N-2: el costo legado incluido el cero queda en su total separado" "0" "$(echo "$AGG_N" | jq -r '.wallclock.writer.legacy_reported_cost_usd_total')"
+assert_field "N-3: costo estimado disponible en 2 corridas; nulo explicita parcialidad" "2" "$(echo "$AGG_N" | jq -r '.meta.estimated_cost_runs')"
+assert_field "N-4: dos corridas sin estimacion (legacy y null)" "2" "$(echo "$AGG_N" | jq -r '.meta.estimated_cost_missing_runs')"
+assert_field "N-5: cache_creation antiguo se proyecta como cache_write" "4.75" "$(echo "$AGG_N" | jq -r '.series.monthly[] | select(.period=="2026-09") | .cache_write_mean')"
+assert_field "N-6: reasoning se incorpora al desglose" "5" "$(echo "$AGG_N" | jq -r '.series.monthly[] | select(.period=="2026-09") | .reasoning_mean')"
+assert_field "N-7: la fila solo nueva conserva costo estimado cero" "0" "$(echo "$AGG_N" | jq -r '.wallclock.per_run[] | select(.issue=="800") | .estimated_cost_usd')"
+assert_field "N-8: la fila solo legacy expone costo reportado cero separado" "0" "$(echo "$AGG_N" | jq -r '.wallclock.per_run[] | select(.issue=="801") | .legacy_reported_cost_usd')"
+assert_field "N-9: la fila mixta prioriza estimacion y no reclasifica cost_usd" "null" "$(echo "$AGG_N" | jq -r '.wallclock.per_run[] | select(.issue=="802") | .legacy_reported_cost_usd')"
+assert_field "N-10: un agente estimado y otro nulo hacen explicita la parcialidad" "parcial" "$(echo "$AGG_N" | jq -r '.wallclock.per_run[] | select(.issue=="802") | .estimated_cost_status')"
+assert_field "N-11: la cobertura distingue una corrida completa" "1" "$(echo "$AGG_N" | jq -r '.meta.estimated_cost_complete_runs')"
+assert_field "N-12: la cobertura distingue una corrida parcial" "1" "$(echo "$AGG_N" | jq -r '.meta.estimated_cost_partial_runs')"
+OUT=$(run_report)
+if echo "$OUT" | grep -q "Costo estimado con valor: 2 corridas (completas: 1, parciales: 1); sin estimacion: 2" \
+   && echo "$OUT" | grep -q "Costo reportado legado: 1 corridas (separado; excluido de estimados)" \
+   && echo "$OUT" | grep -q "Cobertura est." && echo "$OUT" | grep -q "Costo leg." \
+   && echo "$OUT" | grep -q "Cache write medio"; then
+    pass "N-13: resumen y detalle separan estimacion parcial, legado y tokenizacion neutral"
+else
+    fail "N-13: faltan rotulos de costos/tokens neutrales: $OUT"
+fi
+
+echo ""
+echo "[O] Historial en las DOS ubicaciones: se agregan ambas y el reporte cierra en 0 (issue #869)"
 
 # Hasta aqui el repo de mentira solo tenia .claude/pipeline/ (una sola fuente),
 # asi que ninguna prueba entraba en la rama que concatena las dos ubicaciones
