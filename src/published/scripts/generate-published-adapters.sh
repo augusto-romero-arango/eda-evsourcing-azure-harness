@@ -66,6 +66,13 @@ TOOLING_CLOSURE_ASSETS=(
     'src/runtime/lib/runtime-opencode.jq|0644'
     'src/runtime/contract/models.validate.jq|0644'
 )
+# El marketplace Claude instala hoy la raiz del checkout (`source: "./"`).
+# Hasta que esa raiz sea una proyeccion autocontenida, los dos roles del corte
+# vertical de tooling se reflejan alli desde la misma renderizacion Claude.
+CLAUDE_ROOT_MIRRORS=(
+    'src/published/agents/tooling-writer.md|agents/tooling-writer.md'
+    'src/published/agents/tooling-reviewer.md|agents/tooling-reviewer.md'
+)
 
 usage_error() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
 
@@ -246,6 +253,21 @@ generated_contains() {
     done
     return 1
 }
+
+# Los mirrors transitorios de la raiz instalada por el marketplace no son una
+# tercera fuente: reutilizan byte a byte la salida ya renderizada por Claude.
+# Se mantienen fuera de dist/ porque el marketplace aun apunta a `./`.
+for declared_mirror in "${CLAUDE_ROOT_MIRRORS[@]}"; do
+    mirror_source="${declared_mirror%%|*}"
+    mirror_destination="${declared_mirror##*|}"
+    mirror_generated="dist/claude/agents/$(basename "$mirror_source")"
+    safe_relative_path "$mirror_destination" || usage_error "mirror Claude declaro un destino inseguro: $mirror_destination"
+    generated_contains "$mirror_generated" || continue
+    paths_overlap "$mirror_destination" "dist" && usage_error "mirror Claude colisiona con dist/: $mirror_destination"
+    mkdir -p "$(dirname "$STAGE_DIR/$mirror_destination")" || usage_error "no se pudo preparar el mirror Claude: $mirror_destination"
+    cp "$STAGE_DIR/$mirror_generated" "$STAGE_DIR/$mirror_destination" || usage_error "no se pudo preparar el mirror Claude: $mirror_destination"
+    GENERATED+=("$mirror_destination")
+done
 
 # Los assets se enumeran despues de los Markdown para poder rechazar cualquier
 # colision contra sus salidas antes de publicar una sola raiz real.
@@ -466,5 +488,15 @@ if [ "$swapped" -ne "${#ROOTS[@]}" ]; then
     done
     usage_error "no se pudieron publicar todas las raices; se restauro la salida anterior"
 fi
+
+for declared_mirror in "${CLAUDE_ROOT_MIRRORS[@]}"; do
+    mirror_source="${declared_mirror%%|*}"
+    mirror_destination="${declared_mirror##*|}"
+    mirror_generated="dist/claude/agents/$(basename "$mirror_source")"
+    generated_contains "$mirror_generated" || continue
+    mkdir -p "$(dirname "$OUT_ROOT/$mirror_destination")" || usage_error "no se pudo preparar el mirror Claude: $mirror_destination"
+    cp "$STAGE_DIR/$mirror_destination" "$OUT_ROOT/$mirror_destination" || usage_error "no se pudo publicar el mirror Claude: $mirror_destination"
+    chmod 0644 "$OUT_ROOT/$mirror_destination" || usage_error "no se pudo fijar el modo del mirror Claude: $mirror_destination"
+done
 
 exit 0

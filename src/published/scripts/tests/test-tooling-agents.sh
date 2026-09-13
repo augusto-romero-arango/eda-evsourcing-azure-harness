@@ -81,6 +81,24 @@ contains "$claude_writer" 'tools: "Read, Glob, Grep, Edit, Write, Bash"' 'Claude
 contains "$claude_reviewer" 'tools: "Read, Glob, Grep, Edit, Write, Bash"' 'Claude reviewer deriva solo read/edit/shell'
 contains "$claude_writer" 'model: "sonnet"' 'Claude materializa perfil balanced'
 absent "$claude_reviewer" 'model:' 'Claude preserva herencia del perfil deep'
+
+echo '[marketplace] raiz Claude instalada y mirrors generados'
+if jq -e '(.plugins | length) == 1 and .plugins[0].name == "mefisto" and .plugins[0].source == "./"' "$REPO_ROOT/.claude-plugin/marketplace.json" >/dev/null; then
+    pass 'el marketplace instala la raiz Claude actual'
+else
+    fail 'el marketplace no instala la raiz Claude actual'
+fi
+for agent in tooling-writer tooling-reviewer; do
+    mirror="$REPO_ROOT/agents/$agent.md"
+    rendered="$REPO_ROOT/dist/claude/agents/$agent.md"
+    if [ -f "$mirror" ]; then pass "la raiz instalada descubre $agent"; else fail "falta $agent en la raiz instalada"; fi
+    if cmp -s "$mirror" "$rendered"; then pass "mirror raiz de $agent coincide byte a byte"; else fail "mirror raiz de $agent diverge de Claude"; fi
+    contains "$(< "$mirror")" '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/'"$agent"'.md. No editar a mano. -->' "mirror raiz de $agent conserva marcador generado"
+    contains "$(< "$mirror")" 'tools: "Read, Glob, Grep, Edit, Write, Bash"' "mirror raiz de $agent expone solo tools Claude"
+    for forbidden in 'Skill' 'MCP' 'WebFetch' 'WebSearch' 'Task'; do
+        absent "$(< "$mirror")" "$forbidden" "mirror raiz de $agent omite $forbidden"
+    done
+done
 opencode_writer="$(< "$REPO_ROOT/dist/opencode/agents/tooling-writer.md")"
 opencode_reviewer="$(< "$REPO_ROOT/dist/opencode/agents/tooling-reviewer.md")"
 for rendered in "$opencode_writer" "$opencode_reviewer"; do
@@ -120,6 +138,13 @@ for runtime in claude opencode; do
             fail "integracion $runtime/$agent difiere del snapshot"
         fi
     done
+done
+for agent in tooling-writer tooling-reviewer; do
+    if cmp -s "$WORK/agents/$agent.md" "$WORK/dist/claude/agents/$agent.md"; then
+        pass "integracion publica el mirror raiz de $agent"
+    else
+        fail "integracion no publica el mirror raiz de $agent"
+    fi
 done
 if "$GENERATOR" --check --out "$WORK" \
     "$REPO_ROOT/src/published/agents/tooling-writer.md" \
