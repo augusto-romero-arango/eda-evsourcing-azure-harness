@@ -11,6 +11,7 @@
 #   herdr-pipeline.sh --batch 42 43 44            # secuencial
 #   herdr-pipeline.sh --parallel 42 43            # paralelo: un pane apilado por issue
 #   herdr-pipeline.sh --collapse-panes            # poda paneles libres sobrantes sin despachar
+#   herdr-pipeline.sh --refresh-agents             # refresca agentes interactivos sin despachar
 #
 # En vez de crear una sesion tmux nueva con un pane de `tail -f events.log`
 # (que resulto innecesario), esta interfaz trabaja DENTRO del workspace herdr
@@ -54,7 +55,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/_pipeline-common.sh"
 # El runtime resuelto forma parte de la identidad del pool de panes: nunca se
 # infiere de un default concreto en esta capa neutral.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RUNTIME_LIB_DIR="$(cd "$SCRIPT_DIR/../src/runtime/lib" 2>/dev/null && pwd -P)" \
+RUNTIME_LIB_DIR="${MEFISTO_RUNTIME_LIB_DIR:-$(cd "$SCRIPT_DIR/../src/runtime/lib" 2>/dev/null && pwd -P)}"
+[ -d "$RUNTIME_LIB_DIR" ] \
     || { echo "ERROR: no se encontro src/runtime/lib junto al paquete publicado" >&2; exit 1; }
 [ -f "$RUNTIME_LIB_DIR/mefisto-runtime.sh" ] \
     || { echo "ERROR: no se encontro mefisto-runtime.sh en la clausura publicada" >&2; exit 1; }
@@ -777,6 +779,74 @@ cmd_collapse_panes() {
     echo "${closed:-0}"
 }
 
+# cmd_refresh_agents (issue #1333)
+#
+# Descubre los agentes interactivos del workspace y delega la estrategia de
+# refresco en su adaptador. Este modo no despacha pipelines: fuera de contexto
+# es un no-op silencioso para que los invocadores best-effort no deban detectar
+# previamente el entorno Herdr.
+cmd_refresh_agents() {
+    if [ "${HERDR_ENV:-}" != "1" ] \
+        || [ -z "${HERDR_PANE_ID:-}" ] || [ -z "${HERDR_WORKSPACE_ID:-}" ] \
+        || ! command -v herdr &>/dev/null || ! command -v jq &>/dev/null; then
+        return 0
+    fi
+
+    local agents pane_id agent status adapter refresh_fn strategy action payload
+    agents=$(herdr agent list 2>/dev/null) || return 0
+
+    while IFS=$'\t' read -r pane_id agent status; do
+        [ -n "$pane_id" ] || continue
+
+        if [ "$pane_id" = "$HERDR_PANE_ID" ]; then
+            printf '%s %s %s\n' "$pane_id" "$agent" "omitido:pane-propio"
+            continue
+        fi
+        case "$status" in
+            working|blocked)
+                printf '%s %s omitido:%s\n' "$pane_id" "$agent" "$status"
+                continue ;;
+        esac
+
+        case "$agent" in
+            ''|*[!a-z0-9_]*)
+                printf '%s %s %s\n' "$pane_id" "$agent" "omitido:sin-estrategia"
+                continue ;;
+        esac
+        adapter="$RUNTIME_LIB_DIR/runtime-${agent}.sh"
+        refresh_fn="runtime_${agent}_interactive_refresh"
+        if [ ! -f "$adapter" ] \
+            || ! strategy=$( ( source "$adapter" \
+                && declare -F "$refresh_fn" >/dev/null 2>&1 \
+                && "$refresh_fn" ) 2>/dev/null ); then
+            printf '%s %s %s\n' "$pane_id" "$agent" "omitido:sin-estrategia"
+            continue
+        fi
+
+        action="${strategy%% *}"
+        payload="${strategy#* }"
+        case "$action" in
+            prompt)
+                if [ "$payload" = "$strategy" ] || [ -z "$payload" ]; then
+                    printf '%s %s %s\n' "$pane_id" "$agent" "omitido:sin-estrategia"
+                elif herdr agent prompt "$pane_id" "$payload" >/dev/null 2>&1; then
+                    printf '%s %s %s\n' "$pane_id" "$agent" "reload-enviado"
+                else
+                    printf '%s %s %s\n' "$pane_id" "$agent" "omitido:prompt-fallo"
+                fi ;;
+            restart)
+                printf '%s %s %s\n' "$pane_id" "$agent" "omitido:restart-pendiente" ;;
+            *)
+                printf '%s %s %s\n' "$pane_id" "$agent" "omitido:sin-estrategia" ;;
+        esac
+    done < <(printf '%s' "$agents" | jq -r \
+        --arg workspace "$HERDR_WORKSPACE_ID" --arg cwd "$PROJECT_ROOT" '
+            .result.agents[]
+            | select(.workspace_id == $workspace and .cwd == $cwd)
+            | [(.pane_id // ""), (.agent // ""), (.agent_status // "")] | @tsv
+        ' 2>/dev/null)
+}
+
 cmd_help() {
     cat <<EOF
 
@@ -796,6 +866,7 @@ ${BOLD}Uso (misma superficie que tmux-pipeline.sh):${NC}
   herdr-pipeline.sh --batch 42 43 44                     Secuencial
   herdr-pipeline.sh --parallel 42 43                     Paralelo: un pane apilado por issue
   herdr-pipeline.sh --collapse-panes                     Poda paneles libres sobrantes sin despachar (usado por /merge)
+  herdr-pipeline.sh --refresh-agents                     Refresca los agentes interactivos del workspace
 
 ${BOLD}Que hace distinto de tmux-pipeline.sh:${NC}
   No crea sesiones tmux ni el pane de 'tail -f events.log'. Reutiliza (o
@@ -837,6 +908,14 @@ main() {
     if [ "$1" = "--collapse-panes" ]; then
         shift
         cmd_collapse_panes
+        exit $?
+    fi
+
+    # --refresh-agents tampoco pasa por el pre-parseo: no toma argumentos
+    # posicionales y solo opera best-effort sobre panes ya existentes.
+    if [ "$1" = "--refresh-agents" ]; then
+        shift
+        cmd_refresh_agents
         exit $?
     fi
 
