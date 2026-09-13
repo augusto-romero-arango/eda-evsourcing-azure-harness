@@ -135,3 +135,4 @@ no necesita estar residente en cada sesión, solo cuando se busca en qué ADR vi
 | Distribucion multi-runtime de Mefisto para consumidores | MEF-ADR-0053 |
 | Persistencia en CI de los defaults regionales independientes de PostgreSQL | MEF-ADR-0021 |
 | Event Sourcing con Marten y Wolverine | MEF-ADR-0003 |
+| Enmienda a MEF-ADR-0031: presupuesto de 420 s del gate por SHA para cubrir un reintento de App Service Linux, distinto del gate `/api/ready` de 120 s | MEF-ADR-0031 |
