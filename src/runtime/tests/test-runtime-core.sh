@@ -28,6 +28,27 @@ MEFISTO_RUNTIME=beta; mefisto_resolve_runtime alpha >/dev/null && [ "$MEFISTO_RE
 mefisto_resolve_runtime "" >/dev/null && [ "$MEFISTO_RESOLVED_RUNTIME" = beta ] && pass || fail "entorno gana"
 unset MEFISTO_RUNTIME MEFISTO_RUNTIME_LIB_DIR
 
+# El fake modela la capacidad opcional de refresh de forma conservadora: sin
+# variable no soporta el contrato; un valor explicito se reenvia sin alterar.
+source "$ROOT/src/runtime/lib/runtime-fake.sh"
+unset MEFISTO_FAKE_INTERACTIVE_REFRESH
+if runtime_fake_interactive_refresh > "$TMP/fake-refresh-absent" 2>/dev/null; then
+    fail "fake refresh ausente debe retornar 1"
+elif [ -s "$TMP/fake-refresh-absent" ]; then
+    fail "fake refresh ausente no debe imprimir"
+else
+    pass
+fi
+MEFISTO_FAKE_INTERACTIVE_REFRESH='prompt /fake-refresh'
+printf '%s\n' 'prompt /fake-refresh' > "$TMP/fake-refresh-expected"
+if runtime_fake_interactive_refresh > "$TMP/fake-refresh-actual" \
+    && cmp -s "$TMP/fake-refresh-expected" "$TMP/fake-refresh-actual"; then
+    pass
+else
+    fail "fake refresh explicito debe reenviar el valor literal"
+fi
+unset MEFISTO_FAKE_INTERACTIVE_REFRESH
+
 # Runner comun: no crea estado por omision y conserva outputs/opciones.
 mkdir -p "$TMP/wt" "$TMP/state"; printf 'prompt\n' > "$TMP/prompt"; printf 'system\n' > "$TMP/system"
 ARGS="$TMP/args"; EVENTS="$TMP/events.jsonl"; HUMAN="$TMP/human.log"

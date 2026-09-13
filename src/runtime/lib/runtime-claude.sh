@@ -94,6 +94,15 @@ runtime_claude_supports_resume() {
     return 0
 }
 
+# runtime_claude_interactive_refresh (issue #1332)
+#
+# Claude Code recarga los plugins de una sesion interactiva con el comando de
+# barra `/reload-plugins`, verificado en `claude --help` local. El consumidor
+# inyecta este texto en el pane; el adaptador no opera la sesion directamente.
+runtime_claude_interactive_refresh() {
+    printf '%s\n' 'prompt /reload-plugins'
+}
+
 # --- runtime_claude_translate -------------------------------------------------
 
 runtime_claude_translate() {

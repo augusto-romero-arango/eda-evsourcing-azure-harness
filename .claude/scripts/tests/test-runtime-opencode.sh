@@ -175,7 +175,7 @@ fi
 
 # shellcheck source=/dev/null
 source "$OPENCODE_LIB" 2>/dev/null
-for fn in runtime_opencode_build_cmd runtime_opencode_translate runtime_opencode_supports_resume runtime_opencode_prepare_pricing; do
+for fn in runtime_opencode_build_cmd runtime_opencode_translate runtime_opencode_supports_resume runtime_opencode_interactive_refresh runtime_opencode_prepare_pricing; do
     if declare -F "$fn" >/dev/null 2>&1; then
         pass "$fn definida"
     else
@@ -324,6 +324,15 @@ if runtime_opencode_supports_resume; then
     pass "A-13: runtime_opencode_supports_resume retorna 0 (OpenCode soporta reanudacion)"
 else
     fail "A-13: runtime_opencode_supports_resume deberia retornar 0"
+fi
+
+printf '%s\n' 'restart /exit' > "$TMP/refresh-expected"
+if runtime_opencode_interactive_refresh > "$TMP/refresh-actual" \
+    && cmp -s "$TMP/refresh-expected" "$TMP/refresh-actual"; then
+    pass "A-14: runtime_opencode_interactive_refresh imprime exactamente una linea 'restart /exit' sin invocar el CLI"
+else
+    REFRESH_OUTPUT="$(runtime_opencode_interactive_refresh 2>/dev/null)"
+    fail "A-14: refresh interactivo OpenCode inesperado: '$REFRESH_OUTPUT'"
 fi
 
 # ============================================================================

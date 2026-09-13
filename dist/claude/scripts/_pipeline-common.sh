@@ -985,13 +985,16 @@ derive_stage_log_from_stream() {
 #
 # Deriva las metricas de un stage a partir del stream JSON crudo que
 # tdd-pipeline.sh ya captura con `claude -p --output-format stream-json
-# --verbose` (issue #645): turnos, duraciones (total/API/no-API), costo,
-# tokens desglosados, modelo, motivo de fin y un histograma de tool calls por
+# --verbose` (issue #645): turnos, duraciones (total/API/no-API), costo
+# estimado o costo legado, tokens desglosados, modelo, motivo de fin y un
+# histograma de tool calls por
 # nombre (count + tiempo atribuido, suma y mediana, via emparejamiento
 # tool_use.id <-> tool_use_id, ambos fechados por el `timestamp` ISO-8601 de
-# nivel superior de cada evento). Porte esencialmente literal del interno
-# (.claude/scripts/_mefisto-common.sh) -- mismo parseo tolerante y mismas
-# notas tecnicas, sin cambios de comportamiento.
+# nivel superior de cada evento). Porte de la forma neutral del interno,
+# conservando el fallback tolerante para trazas Claude previas al contrato. Los
+# terminales neutrales nuevos se copian sin reinterpretarlos;
+# una traza Claude previa conserva `total_cost_usd` exclusivamente como
+# `cost_usd` legado, nunca como estimacion.
 #
 # Imprime por stdout un JSON compacto de una sola linea, o el literal "null"
 # si no hay nada que derivar. Nunca aborta y siempre retorna 0 (CA-4): sin
@@ -1012,7 +1015,9 @@ compute_stage_metrics() {
 
     # El protocolo neutral no expone texto/wire data. Su terminal contiene las
     # cifras correlacionables; esta rama se selecciona por vocabulario, nunca por
-    # runtime, para no reinterpretar accidentalmente un stream nativo.
+    # runtime, para no reinterpretar accidentalmente un stream nativo. Los cinco
+    # contadores y estimated_cost_usd se copian tal cual: jq `//` conserva 0 y
+    # solo usa el operando derecho para null o false.
     if jq -R -s -e 'split("\n") | map(try fromjson catch empty) | any(.[]; .type == "run.completed" or .type == "run.failed")' "$stream_file" >/dev/null 2>&1; then
         local neutral
         neutral=$(jq -R -s -c '
@@ -1023,8 +1028,14 @@ compute_stage_metrics() {
                 duration_ms: ($t.duration_ms // $t.duration),
                 duration_api_ms: ($t.api_duration_ms // $t.duration_api_ms),
                 non_api_ms: (if (($t.duration_ms // $t.duration) != null and ($t.api_duration_ms // $t.duration_api_ms) != null) then (($t.duration_ms // $t.duration) - ($t.api_duration_ms // $t.duration_api_ms)) else null end),
-                cost_usd: ($t.cost_usd // $t.total_cost_usd),
-                tokens: ($t.tokens // {input: $t.usage.input_tokens, output: $t.usage.output_tokens, cache_read: $t.usage.cache_read_input_tokens, cache_creation: $t.usage.cache_creation_input_tokens}),
+                estimated_cost_usd: $t.estimated_cost_usd,
+                tokens: {
+                  input: ($t.tokens.input // $t.usage.input_tokens),
+                  output: ($t.tokens.output // $t.usage.output_tokens),
+                  cache_read: ($t.tokens.cache_read // $t.usage.cache_read_input_tokens),
+                  cache_write: ($t.tokens.cache_write // $t.tokens.cache_creation // $t.usage.cache_write_input_tokens // $t.usage.cache_creation_input_tokens),
+                  reasoning: ($t.tokens.reasoning // $t.usage.reasoning_tokens)
+                },
                 model: ($t.model // $t.effective_model),
                 is_error: ($t.type == "run.failed"),
                 stop_reason: $t.status,
@@ -1114,12 +1125,16 @@ compute_stage_metrics() {
                 duration_ms: $result.duration_ms,
                 duration_api_ms: $result.duration_api_ms,
                 non_api_ms: (if ($result.duration_ms != null and $result.duration_api_ms != null) then ($result.duration_ms - $result.duration_api_ms) else null end),
+                # total_cost_usd de Claude stream-json es un dato legado: se
+                # conserva bajo cost_usd y no se rebautiza como estimacion.
+                estimated_cost_usd: null,
                 cost_usd: $result.total_cost_usd,
                 tokens: {
                     input: $result.usage.input_tokens,
                     output: $result.usage.output_tokens,
                     cache_read: $result.usage.cache_read_input_tokens,
-                    cache_creation: $result.usage.cache_creation_input_tokens
+                    cache_write: $result.usage.cache_creation_input_tokens,
+                    reasoning: $result.usage.reasoning_tokens
                 },
                 model: ($model_from_init // $model_from_assistant),
                 is_error: $result.is_error,
@@ -1174,6 +1189,122 @@ enrich_tooling_stage_metrics() {
             identity_state: $identity.identity_state
           }
     ' "$events_file" 2>/dev/null || printf '%s\n' 'null'
+}
+
+# render_run_metrics_table <etiqueta> <duracion_segundos> <metrics_json> [...]
+#
+# Renderiza la tabla Markdown de metricas de una corrida a partir del contrato
+# normalizado producido por compute_stage_metrics. Solo presenta el modelo,
+# tokens y estimated_cost_usd fijados por el terminal: no recalcula precios ni
+# consulta formatos de runtimes (MEF-ADR-0050 / MEF-ADR-0054).
+#
+# Cada grupo representa una etapa. Un JSON nulo, invalido, campos ausentes o la
+# falta de jq degradan la celda afectada a "-". La fila Total solo suma etapas
+# listadas; se marca parcial si falta algun contador de tokens, duracion o costo
+# necesario para formar un total completo. estimated_cost_usd: 0 es presente y
+# se muestra como $0.00. Nunca aborta: la telemetria es observabilidad, no un
+# gate del pipeline.
+_render_run_metric_count() {
+    local n="$1"
+    if ! [[ "$n" =~ ^[0-9]+$ ]]; then
+        echo "-"
+        return 0
+    fi
+    awk -v n="$n" 'BEGIN { if (n >= 1000000) printf "%.2fM", n/1000000; else if (n >= 1000) printf "%.1fk", n/1000; else printf "%d", n }' \
+        | sed 's/\.0\([kM]\)$/\1/' || echo "-"
+    return 0
+}
+
+render_run_metrics_table() {
+    local label duration metrics
+    local total_tokens=0 total_duration=0 total_cost="0" cost_values=0
+    local tokens_complete=true duration_complete=true cost_complete=true
+
+    echo "| Etapa | Modelo | Tokens | in/out/cache/reasoning | Tiempo | Costo estimado |"
+    echo "|---|---|---:|---|---:|---:|"
+
+    while [ "$#" -ge 3 ]; do
+        label="$1"
+        duration="$2"
+        metrics="$3"
+        shift 3
+
+        local model="-" tokens_display="-" breakdown="-" duration_display="-" cost_display="-"
+        local token_sum="" cost="" parsed="" input="" output="" cache_read="" cache_write="" reasoning=""
+
+        if [[ "$duration" =~ ^[0-9]+$ ]]; then
+            duration_display="$((duration / 60))m $((duration % 60))s"
+            total_duration=$((total_duration + duration))
+        else
+            duration_complete=false
+        fi
+
+        if command -v jq >/dev/null 2>&1 && [ -n "$metrics" ]; then
+            parsed=$(printf '%s' "$metrics" | jq -r '
+                if type != "object" then empty
+                else
+                    def count: if type == "number" and floor == . and . >= 0 then tostring else "" end;
+                    [
+                        (if (.model | type) == "string" and .model != "" then .model else "-" end),
+                        (.tokens.input | count),
+                        (.tokens.output | count),
+                        (.tokens.cache_read | count),
+                        (.tokens.cache_write | count),
+                        (.tokens.reasoning | count),
+                        (if (.estimated_cost_usd | type) == "number" and .estimated_cost_usd >= 0 then (.estimated_cost_usd | tostring) else "" end)
+                    ] | join("\u001c")
+                end
+            ' 2>/dev/null) || parsed=""
+        fi
+
+        if [ -n "$parsed" ]; then
+            IFS=$'\034' read -r model input output cache_read cache_write reasoning cost <<< "$parsed"
+            model=${model//$'\n'/ }
+            model=${model//|/\\|}
+            local cache=""
+            if [[ "$cache_read" =~ ^[0-9]+$ ]] && [[ "$cache_write" =~ ^[0-9]+$ ]]; then
+                cache=$((cache_read + cache_write))
+            fi
+            breakdown="$(_render_run_metric_count "$input") / $(_render_run_metric_count "$output") / $(_render_run_metric_count "$cache") / $(_render_run_metric_count "$reasoning")"
+            if [[ "$input" =~ ^[0-9]+$ ]] && [[ "$output" =~ ^[0-9]+$ ]] && [[ "$cache_read" =~ ^[0-9]+$ ]] && [[ "$cache_write" =~ ^[0-9]+$ ]] && [[ "$reasoning" =~ ^[0-9]+$ ]]; then
+                token_sum=$((input + output + cache_read + cache_write + reasoning))
+                tokens_display=$(_render_run_metric_count "$token_sum")
+                total_tokens=$((total_tokens + token_sum))
+            else
+                tokens_complete=false
+            fi
+            if [ -n "$cost" ]; then
+                cost_display=$(awk -v n="$cost" 'BEGIN { printf "$%.2f", n }')
+                total_cost=$(awk -v a="$total_cost" -v b="$cost" 'BEGIN { printf "%.12f", a + b }')
+                cost_values=$((cost_values + 1))
+            else
+                cost_complete=false
+            fi
+        else
+            tokens_complete=false
+            cost_complete=false
+        fi
+
+        label=${label//$'\n'/ }
+        label=${label//|/\\|}
+        echo "| $label | $model | $tokens_display | $breakdown | $duration_display | $cost_display |"
+    done
+
+    [ "$#" -eq 0 ] || { tokens_complete=false; duration_complete=false; cost_complete=false; }
+    local total_label="**Total**"
+    [ "$tokens_complete" = true ] && [ "$duration_complete" = true ] && [ "$cost_complete" = true ] || total_label="**Total (parcial)**"
+    local total_tokens_display="-" total_duration_display="-" total_cost_display="-"
+    if [ "$tokens_complete" = true ]; then
+        total_tokens_display="**$(awk -v n="$total_tokens" 'BEGIN { if (n >= 1000000) printf "%.2fM", n/1000000; else if (n >= 1000) printf "%.1fk", n/1000; else printf "%d", n }' | sed 's/\.0\([kM]\)$/\1/')**"
+    fi
+    if [ "$duration_complete" = true ]; then
+        total_duration_display="**$((total_duration / 60))m $((total_duration % 60))s**"
+    fi
+    if [ "$cost_values" -gt 0 ]; then
+        total_cost_display="**$(awk -v n="$total_cost" 'BEGIN { printf "$%.2f", n }')**"
+    fi
+    echo "| $total_label | - | $total_tokens_display | - | $total_duration_display | $total_cost_display |"
+    return 0
 }
 
 # build_agents_history_json <key1> <agent1> <dur1> <metrics1> [<key2> <agent2> <dur2> <metrics2> ...]
