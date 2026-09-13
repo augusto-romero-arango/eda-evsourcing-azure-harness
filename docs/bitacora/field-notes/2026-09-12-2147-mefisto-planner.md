@@ -16,6 +16,7 @@ Se consolido la evidencia acumulada de instalacion, identidad y discovery de Cla
 - El cierre de #1180 habilita las corridas funcionales E2E, pero no constituye por si solo el veredicto final de #1066.
 - La primera corrida Claude revelo que el marker canonico `.mefisto/pipeline/.plugin-root` puede contener la release OpenCode que inicio sesion mas recientemente; el preambulo Claude lo trataba como candidato definitivo y no alcanzaba su mirror valido.
 - `herdr-workspace.sh` comprueba solo `.claude/harness.config.json` para advertir sobre onboarding, aunque MEF-ADR-0053 fija `.mefisto/harness.config.json` como ruta canonica.
+- El warning separado del pane `planner [opencode]` sin `--agent` es la degradacion declarada del corte y CA-2 de #1181 la exige; no es un defecto ni pertenece a #1294.
 
 ## Decisiones
 
