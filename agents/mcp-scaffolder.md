@@ -2687,19 +2687,36 @@ jobs:
           expected_sha="${{ inputs.expected_sha }}"
           if [ -n "$expected_sha" ]; then
             echo "Esperando que ${{ inputs.base_url }}/api/version reporte el SHA ${expected_sha}..."
-            version_ok=0
-            for i in $(seq 1 60); do
-              body=$(curl -s "${{ inputs.base_url }}/api/version" || echo "")
+            TIMEOUT_VERSION=420
+            INTERVALO_VERSION=5
+            INICIO=$SECONDS
+            intentos=0
+            ultimo_cuerpo=""
+            while (( SECONDS - INICIO < TIMEOUT_VERSION )); do
+              intentos=$((intentos + 1))
+              restante=$((TIMEOUT_VERSION - (SECONDS - INICIO)))
+              (( restante <= 0 )) && break
+              timeout_peticion=$(( restante < 15 ? restante : 15 ))
+              body=$(curl -s --max-time "$timeout_peticion" "${{ inputs.base_url }}/api/version" || echo "")
+              ultimo_cuerpo="$body"
+              transcurrido=$((SECONDS - INICIO))
               if [[ "$body" == *"$expected_sha"* ]]; then
-                echo "Version OK tras ${i} intento(s) (~$((i*2))s): ${body}"
-                version_ok=1
+                echo "Version OK tras ${intentos} intento(s) (${transcurrido}s): ${body}"
                 break
               fi
-              echo "Intento ${i}: version desplegada '${body}' no coincide con '${expected_sha}'. Reintentando en 2s..."
-              sleep 2
+              restante=$((TIMEOUT_VERSION - (SECONDS - INICIO)))
+              (( restante <= 0 )) && break
+              espera=$(( restante < INTERVALO_VERSION ? restante : INTERVALO_VERSION ))
+              echo "Intento ${intentos}: version desplegada '${body}' no coincide con '${expected_sha}'. Reintentando en ${espera}s..."
+              sleep "$espera"
             done
-            if [ "$version_ok" -eq 0 ]; then
-              echo "Timeout: /api/version no reporto el SHA esperado (${expected_sha}) en 120s"
+            if [[ "$ultimo_cuerpo" != *"$expected_sha"* ]]; then
+              app_host="${{ inputs.base_url }}"
+              app_host="${app_host#https://}"
+              app_host="${app_host%%/*}"
+              app_name="${app_host%.azurewebsites.net}"
+              startup_logs_url="https://${app_name}.scm.azurewebsites.net/api/vfs/LogFiles/StartupLogs/"
+              echo "Timeout: /api/version no reporto el SHA esperado (${expected_sha}) en 420s. Ultimo cuerpo observado: '${ultimo_cuerpo}'. StartupLogs de Kudu: ${startup_logs_url}"
               exit 1
             fi
           fi
