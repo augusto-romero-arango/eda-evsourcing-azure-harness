@@ -46,6 +46,15 @@
 #     src/runtime/contract/README.md, "Interfaz de adaptador"), asi que los
 #     dos ultimos argumentos son mucho mas centrales aqui que en el adaptador
 #     Claude Code.
+#     Antes de invocar jq, se asegura (issue #1324, CA-1) una referencia
+#     estable del catalogo de tarifas via runtime_opencode_ensure_pricing:
+#     mefisto-run-agent.sh llama a esta funcion repetidamente durante una
+#     misma corrida (el anexo en vivo cada
+#     MEFISTO_RUN_AGENT_LIVE_INTERVAL segundos ademas de la traduccion
+#     final), y sin esa cota cada tick repetiria la validacion/refresco
+#     diario. jq recibe el contenido de esa referencia via `--rawfile
+#     pricing_catalog_text` (cadena vacia si no hay catalogo disponible), asi
+#     que la traduccion live y la final calculan el mismo importe.
 #
 # Flags que compone build_cmd (CA-1): `--agent <agent> --dir <cwd> --format
 # json --auto` siempre; `-m <model>` solo si el runner entrego un modelo no
@@ -87,6 +96,13 @@ runtime_opencode_default_model() {
 # OpenCode (MEF-ADR-0054 secciones 3 y 4). La integracion que traduce pasos y
 # calcula el importe consume la ruta global que deja esta preparacion.
 MEFISTO_OPENCODE_PRICING_CATALOG=""
+
+# Valor de MEFISTO_STATE_DIR para el que ya corrio runtime_opencode_prepare_pricing
+# en ESTE proceso (issue #1324, CA-1); ver runtime_opencode_ensure_pricing.
+# El sufijo fijo distingue "nunca preparado" de "preparado para
+# MEFISTO_STATE_DIR vacio/sin definir" (ambos son cadenas vacias sin el
+# sufijo).
+MEFISTO_OPENCODE_PRICING_PREPARED_FOR=""
 
 runtime_opencode_pricing_cache_is_valid() {
     local cache="$1"
@@ -236,6 +252,25 @@ runtime_opencode_prepare_pricing() {
     return $?
 }
 
+# runtime_opencode_ensure_pricing (issue #1324, CA-1)
+#
+# Punto unico por el que runtime_opencode_translate obtiene el catalogo:
+# prepara MEFISTO_OPENCODE_PRICING_CATALOG solo si todavia no se preparo para
+# el MEFISTO_STATE_DIR vigente en ESTE proceso. mefisto-run-agent.sh invoca
+# runtime_opencode_translate repetidamente durante una misma corrida (el
+# anexo en vivo cada MEFISTO_RUN_AGENT_LIVE_INTERVAL segundos ademas de la
+# traduccion final) y MEFISTO_STATE_DIR no cambia durante esa corrida real,
+# asi que memorizar el ultimo valor preparado evita repetir la
+# validacion/refresco diario en cada tick sin perder la reaccion a un cambio
+# real de MEFISTO_STATE_DIR (el caso de un test que ejercita varios
+# escenarios en el mismo proceso bash).
+runtime_opencode_ensure_pricing() {
+    local current="${MEFISTO_STATE_DIR:-}#prepared"
+    [ "$MEFISTO_OPENCODE_PRICING_PREPARED_FOR" = "$current" ] && return 0
+    runtime_opencode_prepare_pricing >/dev/null
+    MEFISTO_OPENCODE_PRICING_PREPARED_FOR="$current"
+}
+
 # --- runtime_opencode_build_cmd ---------------------------------------------
 
 runtime_opencode_build_cmd() {
@@ -303,11 +338,18 @@ runtime_opencode_translate() {
         stderr_src="$stderr_file"
     fi
 
+    runtime_opencode_ensure_pricing
+    local pricing_src="/dev/null"
+    if [ -n "$MEFISTO_OPENCODE_PRICING_CATALOG" ] && [ -f "$MEFISTO_OPENCODE_PRICING_CATALOG" ]; then
+        pricing_src="$MEFISTO_OPENCODE_PRICING_CATALOG"
+    fi
+
     jq -R -s -c \
         --arg runtime "$runtime_id" \
         --arg model_param "$model" \
         --arg exit_code "$exit_code" \
         --rawfile stderr_text "$stderr_src" \
+        --rawfile pricing_catalog_text "$pricing_src" \
         -f "$jq_program" \
         "$raw_file" 2>/dev/null
     return 0

@@ -58,6 +58,17 @@
 #   [G] CA #1322: cache diaria de Models.dev con forma real, refresh acotado,
 #       validacion, fallback stale, marca de intento y lock concurrente; curl
 #       y la fecha UTC son stubs, por lo que la suite nunca consulta Internet.
+#   [H] issue #1324 (MEF-ADR-0054): estimated_cost_usd por paso con tarifas
+#       REALES de gpt-5.6-luna/terra/sol (verificadas 2026-09-13, las mismas
+#       citadas en el ADR) inyectadas directo como cache ya validada (sin
+#       pasar por curl): reproduce los importes de #1315 (writer Terra,
+#       reviewer Sol), cache_read/cache_write/reasoning en la formula, cruce
+#       de tier dentro de un solo paso (con el caso limite exacto-al-umbral),
+#       varios pasos que individualmente no cruzan tier (tier por paso, nunca
+#       acumulado), modelo desconocido y catalogo ausente/stale -> null o
+#       degradacion con aviso segun corresponda, y que el catalogo se prepara
+#       UNA SOLA VEZ por MEFISTO_STATE_DIR aunque runtime_opencode_translate
+#       se invoque varias veces (anexo en vivo + traduccion final).
 #
 # Uso: .claude/scripts/tests/test-runtime-opencode.sh
 # Exit code: 0 si todos los checks pasan, 1 si alguno falla.
@@ -175,7 +186,7 @@ fi
 
 # shellcheck source=/dev/null
 source "$OPENCODE_LIB" 2>/dev/null
-for fn in runtime_opencode_build_cmd runtime_opencode_translate runtime_opencode_supports_resume runtime_opencode_interactive_refresh runtime_opencode_prepare_pricing; do
+for fn in runtime_opencode_build_cmd runtime_opencode_translate runtime_opencode_supports_resume runtime_opencode_interactive_refresh runtime_opencode_prepare_pricing runtime_opencode_ensure_pricing; do
     if declare -F "$fn" >/dev/null 2>&1; then
         pass "$fn definida"
     else
@@ -441,6 +452,7 @@ B_IGNORED_OUT="$TMP/raw-ignored.out.jsonl"
 jq -R -s -c \
     --arg runtime "opencode" --arg model_param "" --arg exit_code "0" \
     --rawfile stderr_text /dev/null \
+    --rawfile pricing_catalog_text /dev/null \
     -f "$OPENCODE_JQ" "$B_IGNORED_FIXTURE" > "$B_IGNORED_OUT" 2> "$B_IGNORED_ERR"
 if grep -q 'raw_ignored=2' "$B_IGNORED_ERR"; then
     pass "B-9: raw_ignored=2 por el canal de diagnostico (membresia EXACTA: 'step' no lo absorbe 'step_start')"
@@ -523,7 +535,7 @@ done
 
 # ============================================================================
 echo ""
-echo "[D] CA-4: el terminal SUMA los step_finish de session_id/tokens/cost_usd; turns/denials/ttft_ms/api_duration_ms siempre null; model degrada al parametro"
+echo "[D] CA-4: el terminal SUMA los step_finish de session_id/tokens; turns/denials/ttft_ms/api_duration_ms siempre null; model degrada al parametro; nunca emite cost_usd"
 
 D_OUT="$TMP/d-full.jsonl"; translate_fixture success-tool-1.18.29.jsonl "" 0 > "$D_OUT"
 TERM="$(jq -c 'select(.type=="run.completed")' "$D_OUT")"
@@ -538,26 +550,28 @@ assert_field() {
 assert_field "D-1: session_id (del ultimo step_finish/evento con sessionID)" "ses_f8b28e18effew6dRCNC6Tm8NHq" "$(echo "$TERM" | jq -r '.session_id')"
 assert_field "D-2: tokens.input = SUMA de los dos step_finish (6127+6167), no el ultimo" "12294" "$(echo "$TERM" | jq -r '.tokens.input')"
 assert_field "D-3: tokens.output = SUMA de los dos step_finish (17+10), no el ultimo" "27" "$(echo "$TERM" | jq -r '.tokens.output')"
-assert_field "D-4: cost_usd = SUMA de los step_finish (incluso si el total es 0)" "0" "$(echo "$TERM" | jq -r '.cost_usd')"
-assert_field "D-4a: el productor transitorio no rebautiza el costo reportado como estimacion" "false" "$(echo "$TERM" | jq 'has("estimated_cost_usd")')"
+assert_field "D-4: tokens.cache_read/cache_write/reasoning = 0 en el fixture real (siempre presentes, nunca 0 fabricado)" "0 0 0" "$(echo "$TERM" | jq -r '[.tokens.cache_read, .tokens.cache_write, .tokens.reasoning] | join(" ")')"
+assert_field "D-4a: sin MEFISTO_STATE_DIR/catalogo, estimated_cost_usd es null (nunca el .part.cost crudo)" "null" "$(echo "$TERM" | jq -r '.estimated_cost_usd')"
+assert_field "D-4b: el terminal OpenCode nuevo nunca emite cost_usd (issue #1324, CA-6)" "false" "$(echo "$TERM" | jq 'has("cost_usd")')"
 
 # Cada `step_finish` reporta lo de SU paso, no un acumulado: quedarse con el
 # ultimo reportaria el costo del cierre de la corrida como el de la corrida
-# entera, y mefisto-metrics-report.sh lo propaga a cost_usd_total. Con costos
-# distintos por paso el error se vuelve visible (el fixture real trae 0 en
-# ambos, que no distingue suma de "ultimo").
+# entera. tokens.cache_read/cache_write/reasoning suman igual que input/output.
 D_COST_FIXTURE="$TMP/multi-cost.jsonl"
 cat > "$D_COST_FIXTURE" <<'EOF'
-{"type":"step_finish","timestamp":1000,"sessionID":"ses_c","part":{"type":"step-finish","reason":"tool-calls","tokens":{"input":100,"output":10},"cost":0.25}}
+{"type":"step_finish","timestamp":1000,"sessionID":"ses_c","part":{"type":"step-finish","reason":"tool-calls","tokens":{"input":100,"output":10,"reasoning":2,"cache":{"read":5,"write":1}},"cost":0.25}}
 {"type":"text","timestamp":1001,"sessionID":"ses_c","part":{"type":"text","text":"listo"}}
-{"type":"step_finish","timestamp":1002,"sessionID":"ses_c","part":{"type":"step-finish","reason":"stop","tokens":{"input":200,"output":20},"cost":0.5}}
+{"type":"step_finish","timestamp":1002,"sessionID":"ses_c","part":{"type":"step-finish","reason":"stop","tokens":{"input":200,"output":20,"reasoning":3,"cache":{"read":7,"write":2}},"cost":0.5}}
 EOF
 D_COST_OUT="$TMP/d-multi-cost.jsonl"
 runtime_opencode_translate "$D_COST_FIXTURE" "opencode" "" 0 > "$D_COST_OUT"
 TERM_COST="$(jq -c 'select(.type=="run.completed")' "$D_COST_OUT")"
-assert_field "D-4b: cost_usd suma pasos con costo distinto (0.25+0.5)" "0.75" "$(echo "$TERM_COST" | jq -r '.cost_usd')"
 assert_field "D-4c: tokens.input suma pasos (100+200)" "300" "$(echo "$TERM_COST" | jq -r '.tokens.input')"
 assert_field "D-4d: tokens.output suma pasos (10+20)" "30" "$(echo "$TERM_COST" | jq -r '.tokens.output')"
+assert_field "D-4e: tokens.reasoning suma pasos (2+3)" "5" "$(echo "$TERM_COST" | jq -r '.tokens.reasoning')"
+assert_field "D-4f: tokens.cache_read suma pasos (5+7)" "12" "$(echo "$TERM_COST" | jq -r '.tokens.cache_read')"
+assert_field "D-4g: tokens.cache_write suma pasos (1+2)" "3" "$(echo "$TERM_COST" | jq -r '.tokens.cache_write')"
+assert_field "D-4h: sin catalogo, estimated_cost_usd sigue null aunque .part.cost trajera 0.25/0.5" "null" "$(echo "$TERM_COST" | jq -r '.estimated_cost_usd')"
 assert_field "D-5: turns siempre null (sin equivalente en el wire format)" "null" "$(echo "$TERM" | jq -r '.turns')"
 assert_field "D-6: denials siempre null (sin equivalente en el wire format)" "null" "$(echo "$TERM" | jq -r '.denials')"
 assert_field "D-7: ttft_ms siempre null (sin equivalente en el wire format)" "null" "$(echo "$TERM" | jq -r '.ttft_ms')"
@@ -571,7 +585,7 @@ D_EMPTY_OUT="$TMP/d-empty.jsonl"; translate_fixture empty-1.18.29.jsonl "" 0 > "
 TERM_EMPTY="$(jq -c 'select(.type=="run.failed")' "$D_EMPTY_OUT")"
 assert_field "D-11: session_id ausente (stream vacio) -> null" "null" "$(echo "$TERM_EMPTY" | jq -r '.session_id')"
 assert_field "D-12: tokens.input ausente -> null (nunca 0)" "null" "$(echo "$TERM_EMPTY" | jq -r '.tokens.input')"
-assert_field "D-13: cost_usd ausente -> null (nunca 0)" "null" "$(echo "$TERM_EMPTY" | jq -r '.cost_usd')"
+assert_field "D-13: estimated_cost_usd ausente -> null (nunca 0)" "null" "$(echo "$TERM_EMPTY" | jq -r '.estimated_cost_usd')"
 
 # ============================================================================
 echo ""
@@ -809,7 +823,7 @@ if [ -s "$F_EVENTS" ] \
     && ! grep -Eq 'PROMPT_SENTINEL|ASSISTANT_SENTINEL|COMMAND_SENTINEL|STDERR_SENTINEL|HEADER_SENTINEL|AUTH_TOKEN_SENTINEL' "$F_EV" "$F_EVENTS" \
     && ! jq -e 'select(.type == "message")' "$F_EV" >/dev/null 2>&1 \
     && jq -e 'select(.type == "tool.started") | .tool == "bash" and .input_summary == null' "$F_EV" >/dev/null 2>&1 \
-    && jq -e 'select(.type == "run.completed") | .runtime == "opencode" and .model == "openai/gpt-5" and .session_id == "sess-redaction-opencode" and .tokens.input == 13 and .tokens.output == 5 and .cost_usd == 0.01' "$F_EV" >/dev/null 2>&1; then
+    && jq -e 'select(.type == "run.completed") | .runtime == "opencode" and .model == "openai/gpt-5" and .session_id == "sess-redaction-opencode" and .tokens.input == 13 and .tokens.output == 5 and .estimated_cost_usd == null and (has("cost_usd") | not)' "$F_EV" >/dev/null 2>&1; then
     pass "redaccion OpenCode elimina centinelas y conserva identidad/metricas/tools"
 else
     fail "redaccion OpenCode filtro contenido sensible o perdio evidencia operacional"
@@ -886,6 +900,187 @@ if [ "$(wc -l < "$PRICING_CALLS" | tr -d ' ')" = "1" ] && runtime_opencode_prici
 G_NO_STATE="$TMP/pricing-no-state"; mkdir -p "$G_NO_STATE"
 if (cd "$G_NO_STATE" && env -u MEFISTO_STATE_DIR bash -c 'source "$1"; runtime_opencode_prepare_pricing' _ "$OPENCODE_LIB" >/dev/null 2>&1) \
     && [ -z "$(ls -A "$G_NO_STATE")" ]; then pass "G-8: sin state dir degrada sin escribir fuera del cwd"; else fail "G-8: sin state dir no degrado limpiamente"; fi
+
+# ============================================================================
+echo ""
+echo "[H] issue #1324: estimated_cost_usd por paso (MEF-ADR-0054), catalogo preparado una unica vez"
+
+# write_pricing_cache <state_dir> <validated_utc> <models_json> -- crea una
+# cache YA validada (nunca pasa por curl) mas su marker de intento fechado
+# HOY de verdad (fecha real del sistema, no un stub), para que
+# runtime_opencode_prepare_pricing nunca contacte red durante esta seccion:
+# ve el intento de hoy ya marcado y sirve directo el archivo que este helper
+# dejo listo.
+write_pricing_cache() {
+    local state_dir="$1" validated_utc="$2" models_json="$3"
+    local cache_dir="$state_dir/cache/model-pricing"
+    mkdir -p "$cache_dir"
+    jq -n --arg day "$validated_utc" --argjson models "$models_json" \
+        '{schema: 1, source_url: "https://models.opencode.ai/api.json", validated_utc: $day, models: $models}' \
+        > "$cache_dir/catalog.json"
+    date -u +%Y-%m-%d > "$cache_dir/attempted-utc"
+}
+
+# Tarifas base y de tier REALES de gpt-5.6-luna/terra/sol, verificadas contra
+# https://models.opencode.ai/api.json el 2026-09-13 (mismas fuentes citadas
+# en MEF-ADR-0054 seccion 6) -- no son inventadas para el test.
+H_MODELS='{
+  "openai/gpt-5.6-luna": {"input":0.2,"output":1.2,"cache_read":0.02,"cache_write":0.25,"context":1050000,
+    "tiers":[{"context":272000,"input":0.4,"output":1.8,"cache_read":0.04,"cache_write":0.5}]},
+  "openai/gpt-5.6-terra": {"input":2,"output":12,"cache_read":0.2,"cache_write":2.5,"context":1050000,
+    "tiers":[{"context":272000,"input":4,"output":18,"cache_read":0.4,"cache_write":5}]},
+  "openai/gpt-5.6-sol": {"input":4,"output":20,"cache_read":0.4,"cache_write":5,"context":1050000,
+    "tiers":[{"context":272000,"input":8,"output":30,"cache_read":0.8,"cache_write":10}]}
+}'
+H_STATE_MAIN="$TMP/h-state-main"
+write_pricing_cache "$H_STATE_MAIN" "2026-09-13" "$H_MODELS"
+
+h_step_fixture() {
+    # h_step_fixture <archivo> <tokens_json...> -- un step_finish por tokens_json,
+    # seguido de un `text` para que la corrida clasifique como exito.
+    local out="$1"; shift
+    : > "$out"
+    local i=0 tok
+    for tok in "$@"; do
+        i=$((i+1))
+        printf '{"type":"step_finish","timestamp":%s,"sessionID":"s","part":{"tokens":%s}}\n' "$i" "$tok" >> "$out"
+    done
+    printf '{"type":"text","timestamp":%s,"sessionID":"s","part":{"text":"ok"}}\n' "$((i+1))" >> "$out"
+}
+
+h_cost() {
+    # h_cost <state_dir> <model> <archivo> -- corre runtime_opencode_translate
+    # con MEFISTO_STATE_DIR=<state_dir> e imprime .estimated_cost_usd del terminal.
+    local state_dir="$1" model="$2" fixture="$3"
+    MEFISTO_STATE_DIR="$state_dir" runtime_opencode_translate "$fixture" "opencode" "$model" 0 2>/dev/null \
+        | jq -r 'select(.type=="run.completed" or .type=="run.failed") | .estimated_cost_usd'
+}
+
+# H-1/H-2: reproducen los importes citados en MEF-ADR-0054 (evidencia de
+# dimension de #1315) con tarifas base observadas -- writer Terra, reviewer
+# Sol. Los contadores de tokens son una reconstruccion (el transcript crudo
+# de #1315 no vive en este fixture set): se eligieron para que la formula
+# produzca EXACTAMENTE los mismos totales citados en el ADR.
+H1_FIXTURE="$TMP/h1-terra-writer.jsonl"
+h_step_fixture "$H1_FIXTURE" '{"input":250000,"output":7721}'
+assert_field "H-1: writer Terra reproduce el importe citado en MEF-ADR-0054 (USD 0.592652, tarifas base)" \
+    "0.592652" "$(h_cost "$H_STATE_MAIN" "openai/gpt-5.6-terra" "$H1_FIXTURE")"
+
+H2_FIXTURE="$TMP/h2-sol-reviewer.jsonl"
+h_step_fixture "$H2_FIXTURE" '{"input":135585,"output":15000,"cache":{"read":8,"write":0}}'
+assert_field "H-2: reviewer Sol reproduce el importe citado en MEF-ADR-0054 (USD 0.8423432, tarifas base + cache_read)" \
+    "0.8423432" "$(h_cost "$H_STATE_MAIN" "openai/gpt-5.6-sol" "$H2_FIXTURE")"
+
+# H-3: Luna (el tercer modelo del catalogo), caso simple sin cache/reasoning.
+H3_FIXTURE="$TMP/h3-luna.jsonl"
+h_step_fixture "$H3_FIXTURE" '{"input":1000,"output":100}'
+assert_field "H-3: Luna con tarifas base (1000 input, 100 output)" \
+    "0.00032" "$(h_cost "$H_STATE_MAIN" "openai/gpt-5.6-luna" "$H3_FIXTURE")"
+
+# H-4: cache_read + cache_write + reasoning en un mismo paso (Terra): reasoning
+# se cobra a tarifa de OUTPUT (nunca inventa una categoria de precio aparte).
+H4_FIXTURE="$TMP/h4-cache-reasoning.jsonl"
+h_step_fixture "$H4_FIXTURE" '{"input":1000,"output":200,"reasoning":50,"cache":{"read":300,"write":100}}'
+assert_field "H-4: cache_read/cache_write/reasoning entran en la formula (reasoning a tarifa output)" \
+    "0.00531" "$(h_cost "$H_STATE_MAIN" "openai/gpt-5.6-terra" "$H4_FIXTURE")"
+
+# H-5/H-6: cruce de tier DENTRO DE UN SOLO PASO (Terra, umbral 272000). El
+# contexto del paso es input+cache_read+cache_write; un contexto IGUAL al
+# umbral todavia usa la tarifa base -- solo un contexto ESTRICTAMENTE MAYOR
+# usa el tier.
+H5_FIXTURE="$TMP/h5-tier-cross.jsonl"
+h_step_fixture "$H5_FIXTURE" '{"input":300000,"output":1000}'
+assert_field "H-5: un paso con contexto > 272000 usa las tarifas del tier (no las base)" \
+    "1.218" "$(h_cost "$H_STATE_MAIN" "openai/gpt-5.6-terra" "$H5_FIXTURE")"
+
+H6_FIXTURE="$TMP/h6-tier-boundary.jsonl"
+h_step_fixture "$H6_FIXTURE" '{"input":272000,"output":0}'
+assert_field "H-6: contexto EXACTAMENTE igual al umbral usa todavia la tarifa base" \
+    "0.544" "$(h_cost "$H_STATE_MAIN" "openai/gpt-5.6-terra" "$H6_FIXTURE")"
+
+H6B_FIXTURE="$TMP/h6b-tier-boundary-plus1.jsonl"
+h_step_fixture "$H6B_FIXTURE" '{"input":272001,"output":0}'
+assert_field "H-6b: un token mas alla del umbral ya usa la tarifa del tier" \
+    "1.088004" "$(h_cost "$H_STATE_MAIN" "openai/gpt-5.6-terra" "$H6B_FIXTURE")"
+
+# H-7: VARIOS pasos que INDIVIDUALMENTE no cruzan el tier (200000 < 272000
+# cada uno) pero cuya SUMA si lo haria si se evaluara acumulada -- el tier se
+# elige POR PASO, nunca para la corrida completa (MEF-ADR-0054 seccion 2). Si
+# la implementacion sumara contexto antes de elegir tier, este caso daria
+# 1.6 (tier) en vez de 0.8 (base x2).
+H7_FIXTURE="$TMP/h7-multi-step-no-cross.jsonl"
+h_step_fixture "$H7_FIXTURE" '{"input":200000,"output":0}' '{"input":200000,"output":0}'
+assert_field "H-7: tier por paso, no acumulado (2 x 200000 < 272000 cada uno, nunca cruza)" \
+    "0.8" "$(h_cost "$H_STATE_MAIN" "openai/gpt-5.6-terra" "$H7_FIXTURE")"
+
+# H-8: modelo desconocido (ausente del catalogo) -> null, tokens se siguen sumando.
+H8_FIXTURE="$TMP/h8-unknown-model.jsonl"
+h_step_fixture "$H8_FIXTURE" '{"input":100,"output":10}'
+assert_field "H-8: modelo ausente del catalogo -> estimated_cost_usd null" \
+    "null" "$(h_cost "$H_STATE_MAIN" "openai/gpt-9-unknown" "$H8_FIXTURE")"
+H8_TOKENS_INPUT="$(MEFISTO_STATE_DIR="$H_STATE_MAIN" runtime_opencode_translate "$H8_FIXTURE" "opencode" "openai/gpt-9-unknown" 0 2>/dev/null | jq -r 'select(.type=="run.completed") | .tokens.input')"
+assert_field "H-8b: modelo desconocido no impide sumar tokens.input" "100" "$H8_TOKENS_INPUT"
+
+# H-9: catalogo AUSENTE (MEFISTO_STATE_DIR sin cache alguna, intento de hoy ya
+# marcado para no tocar red) -> null.
+H_STATE_ABSENT="$TMP/h-state-absent"
+mkdir -p "$H_STATE_ABSENT/cache/model-pricing"
+date -u +%Y-%m-%d > "$H_STATE_ABSENT/cache/model-pricing/attempted-utc"
+H9_FIXTURE="$TMP/h9-no-catalog.jsonl"
+h_step_fixture "$H9_FIXTURE" '{"input":100,"output":10}'
+assert_field "H-9: catalogo ausente -> estimated_cost_usd null (nunca 0 ni el .part.cost crudo)" \
+    "null" "$(h_cost "$H_STATE_ABSENT" "openai/gpt-5.6-terra" "$H9_FIXTURE")"
+
+# H-10: catalogo STALE pero estructuralmente valido (validated_utc de ayer,
+# intento de hoy ya marcado) -- ADR seccion 4: se sigue calculando con esa
+# cache (con aviso), nunca null solo por estar vencida.
+H_STATE_STALE="$TMP/h-state-stale"
+write_pricing_cache "$H_STATE_STALE" "2000-01-01" "$H_MODELS"
+H10_FIXTURE="$TMP/h10-stale.jsonl"
+h_step_fixture "$H10_FIXTURE" '{"input":1000,"output":100}'
+H10_ERR="$TMP/h10-stale.err"
+H10_OUT="$(MEFISTO_STATE_DIR="$H_STATE_STALE" runtime_opencode_translate "$H10_FIXTURE" "opencode" "openai/gpt-5.6-luna" 0 2>"$H10_ERR" | jq -r 'select(.type=="run.completed" or .type=="run.failed") | .estimated_cost_usd')"
+assert_field "H-10: catalogo stale (valido) sigue calculando el estimado, no degrada a null" "0.00032" "$H10_OUT"
+if grep -q "desactualizada" "$H10_ERR"; then
+    pass "H-10b: catalogo stale avisa por stderr (visible, no silencioso)"
+else
+    fail "H-10b: no se encontro el aviso de catalogo desactualizado: $(cat "$H10_ERR")"
+fi
+
+# H-11 (CA-1): runtime_opencode_translate se invoca repetidamente en una
+# misma corrida (anexo en vivo + traduccion final); con el MISMO
+# MEFISTO_STATE_DIR, el catalogo se prepara UNA SOLA VEZ por proceso -- las
+# llamadas siguientes reusan la referencia ya preparada. Se envuelve la
+# funcion real con un contador (nunca se edita el archivo de produccion) para
+# distinguir "se preparo" de "se sirvio del cache de proceso".
+eval "$(declare -f runtime_opencode_prepare_pricing | sed '1s/.*/runtime_opencode_prepare_pricing_h11_real ()/')"
+H11_CALLS="$TMP/h11-prepare-calls"
+: > "$H11_CALLS"
+runtime_opencode_prepare_pricing() {
+    printf 'x\n' >> "$H11_CALLS"
+    runtime_opencode_prepare_pricing_h11_real
+}
+MEFISTO_OPENCODE_PRICING_PREPARED_FOR=""
+H11_FIXTURE="$TMP/h11-live-tick.jsonl"
+h_step_fixture "$H11_FIXTURE" '{"input":10,"output":1}'
+MEFISTO_STATE_DIR="$H_STATE_MAIN" runtime_opencode_translate "$H11_FIXTURE" "opencode" "openai/gpt-5.6-terra" "" "" >/dev/null 2>&1
+MEFISTO_STATE_DIR="$H_STATE_MAIN" runtime_opencode_translate "$H11_FIXTURE" "opencode" "openai/gpt-5.6-terra" "" "" >/dev/null 2>&1
+MEFISTO_STATE_DIR="$H_STATE_MAIN" runtime_opencode_translate "$H11_FIXTURE" "opencode" "openai/gpt-5.6-terra" 0 "" >/dev/null 2>&1
+if [ "$(wc -l < "$H11_CALLS" | tr -d ' ')" = "1" ]; then
+    pass "H-11: 3 traducciones (2 live + 1 final) con el mismo MEFISTO_STATE_DIR preparan el catalogo UNA sola vez"
+else
+    fail "H-11: se preparo el catalogo $(wc -l < "$H11_CALLS" | tr -d ' ') veces (se esperaba 1)"
+fi
+MEFISTO_STATE_DIR="$H_STATE_STALE" runtime_opencode_translate "$H11_FIXTURE" "opencode" "openai/gpt-5.6-terra" 0 "" >/dev/null 2>&1
+if [ "$(wc -l < "$H11_CALLS" | tr -d ' ')" = "2" ]; then
+    pass "H-11b: un MEFISTO_STATE_DIR distinto SI vuelve a preparar (no es una cota ciega para siempre)"
+else
+    fail "H-11b: cambiar MEFISTO_STATE_DIR no disparo una nueva preparacion"
+fi
+unset -f runtime_opencode_prepare_pricing
+eval "$(declare -f runtime_opencode_prepare_pricing_h11_real | sed '1s/.*/runtime_opencode_prepare_pricing ()/')"
+unset -f runtime_opencode_prepare_pricing_h11_real
+MEFISTO_OPENCODE_PRICING_PREPARED_FOR=""
 
 echo ""
 echo "----------------------------------------"
