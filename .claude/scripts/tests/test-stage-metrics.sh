@@ -13,8 +13,9 @@
 # `run.failed`) y los eventos `tool.started`/`tool.completed` neutrales.
 #
 #   - compute_stage_metrics <events_file>: deriva runtime, model, status,
-#     error_kind, duraciones (total/API/no-API), ttft_ms, turns, cost_usd,
-#     tokens{input,output}, denials y un histograma de tool calls por nombre
+#     error_kind, duraciones (total/API/no-API), ttft_ms, turns,
+#     estimated_cost_usd, tokens{input,output,cache_read,cache_write,reasoning},
+#     denials y un histograma de tool calls por nombre
 #     (count desde `tool.started`, duracion desde `tool.completed.duration_ms`
 #     -- ya calculada por el traductor de cada runtime, sin emparejar por id).
 #     Imprime JSON compacto o el literal "null"; nunca aborta (CA-5).
@@ -34,10 +35,9 @@
 #       se ignora sin abortar; el resto de las metricas se deriva igual
 #       (CA-1/CA-5).
 #   [E] jq ausente -> degrada a "null" sin abortar (CA-5).
-#   [F] `cost_usd: 0` (el costo real de una corrida bajo suscripcion de
-#       OpenCode) se preserva tal cual -- NO se convierte en null. jq trata
-#       `0` igual que `false`/`null` para el operador `//`; copiar el campo
-#       sin ese operador es lo que evita el bug.
+#   [F] Un `estimated_cost_usd: 0` real se preserva; un evento legacy que solo
+#       trae `cost_usd: 0` produce estimacion null. jq `//` no colapsa cero:
+#       solo selecciona el operando derecho para null o false.
 #   [G] tool.completed con `duration_ms: null` (huerfana parcial) -> cuenta
 #       en `count`, no contribuye a `duration_ms_sum`/`duration_ms_median`.
 #   [H] tool.started sin ningun tool.completed emparejado (huerfana total,
@@ -83,6 +83,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 LIB_DIR="$REPO_ROOT/src/internal/scripts/lib"
+RUNTIME_LIB_DIR="$REPO_ROOT/src/runtime/lib"
 FIXTURES_CLAUDE="$SCRIPT_DIR/fixtures/runtime-claude"
 FIXTURES_OPENCODE="$SCRIPT_DIR/fixtures/runtime-opencode"
 
@@ -94,9 +95,9 @@ fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 # shellcheck source=/dev/null
 source "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" 2>/dev/null
 # shellcheck source=/dev/null
-source "$LIB_DIR/runtime-claude.sh" 2>/dev/null
+source "$RUNTIME_LIB_DIR/runtime-claude.sh" 2>/dev/null
 # shellcheck source=/dev/null
-source "$LIB_DIR/runtime-opencode.sh" 2>/dev/null
+source "$RUNTIME_LIB_DIR/runtime-opencode.sh" 2>/dev/null
 
 TMP=$(mktemp -d)
 cleanup() { rm -rf "$TMP"; }
@@ -137,7 +138,7 @@ cat > "$TMP/a-events.jsonl" <<'EOF'
 {"v":1,"type":"tool.completed","ts":"2026-07-27T22:09:35.900Z","tool":"Read","ok":true,"duration_ms":900}
 {"v":1,"type":"tool.started","ts":"2026-07-27T22:09:36.000Z","tool":"Write","input_summary":null}
 {"v":1,"type":"tool.completed","ts":"2026-07-27T22:09:37.000Z","tool":"Write","ok":true,"duration_ms":1000}
-{"v":1,"type":"run.completed","ts":"2026-07-27T22:09:37.500Z","status":"success","runtime":"claude","model":"claude-sonnet-5","session_id":"sess-abc","duration_ms":9451,"tokens":{"input":1200,"output":340},"cost_usd":0.0234,"turns":4,"denials":2,"ttft_ms":3797,"api_duration_ms":5289,"error":null}
+{"v":1,"type":"run.completed","ts":"2026-07-27T22:09:37.500Z","status":"success","runtime":"claude","model":"claude-sonnet-5","session_id":"sess-abc","duration_ms":9451,"tokens":{"input":1200,"output":340,"cache_read":500,"cache_write":120,"reasoning":80},"estimated_cost_usd":0.0234,"turns":4,"denials":2,"ttft_ms":3797,"api_duration_ms":5289,"error":null}
 EOF
 
 A_OUT=$(compute_stage_metrics "$TMP/a-events.jsonl")
@@ -151,22 +152,25 @@ assert_field "A-6: api_duration_ms" "5289" "$(echo "$A_OUT" | jq -r '.api_durati
 assert_field "A-7: non_api_ms derivado (9451-5289)" "4162" "$(echo "$A_OUT" | jq -r '.non_api_ms')"
 assert_field "A-8: ttft_ms" "3797" "$(echo "$A_OUT" | jq -r '.ttft_ms')"
 assert_field "A-9: turns" "4" "$(echo "$A_OUT" | jq -r '.turns')"
-assert_field "A-10: cost_usd" "0.0234" "$(echo "$A_OUT" | jq -r '.cost_usd')"
+assert_field "A-10: estimated_cost_usd" "0.0234" "$(echo "$A_OUT" | jq -r '.estimated_cost_usd')"
 assert_field "A-11: tokens.input" "1200" "$(echo "$A_OUT" | jq -r '.tokens.input')"
 assert_field "A-12: tokens.output" "340" "$(echo "$A_OUT" | jq -r '.tokens.output')"
-assert_field "A-13: denials" "2" "$(echo "$A_OUT" | jq -r '.denials')"
+assert_field "A-13: tokens.cache_read" "500" "$(echo "$A_OUT" | jq -r '.tokens.cache_read')"
+assert_field "A-14: tokens.cache_write" "120" "$(echo "$A_OUT" | jq -r '.tokens.cache_write')"
+assert_field "A-15: tokens.reasoning" "80" "$(echo "$A_OUT" | jq -r '.tokens.reasoning')"
+assert_field "A-16: denials" "2" "$(echo "$A_OUT" | jq -r '.denials')"
 
 # Histograma: Read aparece 2 veces (200ms y 900ms), Write 1 vez (1000ms)
-assert_field "A-14: tool_calls[Read].count" "2" "$(echo "$A_OUT" | jq -r '.tool_calls[] | select(.name=="Read") | .count')"
-assert_field "A-15: tool_calls[Read].duration_ms_sum (200+900)" "1100" "$(echo "$A_OUT" | jq -r '.tool_calls[] | select(.name=="Read") | .duration_ms_sum')"
-assert_field "A-16: tool_calls[Read].duration_ms_median" "550" "$(echo "$A_OUT" | jq -r '.tool_calls[] | select(.name=="Read") | .duration_ms_median')"
-assert_field "A-17: tool_calls[Write].count" "1" "$(echo "$A_OUT" | jq -r '.tool_calls[] | select(.name=="Write") | .count')"
-assert_field "A-18: tool_calls[Write].duration_ms_sum" "1000" "$(echo "$A_OUT" | jq -r '.tool_calls[] | select(.name=="Write") | .duration_ms_sum')"
+assert_field "A-17: tool_calls[Read].count" "2" "$(echo "$A_OUT" | jq -r '.tool_calls[] | select(.name=="Read") | .count')"
+assert_field "A-18: tool_calls[Read].duration_ms_sum (200+900)" "1100" "$(echo "$A_OUT" | jq -r '.tool_calls[] | select(.name=="Read") | .duration_ms_sum')"
+assert_field "A-19: tool_calls[Read].duration_ms_median" "550" "$(echo "$A_OUT" | jq -r '.tool_calls[] | select(.name=="Read") | .duration_ms_median')"
+assert_field "A-20: tool_calls[Write].count" "1" "$(echo "$A_OUT" | jq -r '.tool_calls[] | select(.name=="Write") | .count')"
+assert_field "A-21: tool_calls[Write].duration_ms_sum" "1000" "$(echo "$A_OUT" | jq -r '.tool_calls[] | select(.name=="Write") | .duration_ms_sum')"
 
 if [ "$(printf '%s' "$A_OUT" | wc -l | tr -d ' ')" = "0" ] && echo "$A_OUT" | jq -e 'type == "object"' >/dev/null 2>&1; then
-    pass "A-19: la salida es un objeto JSON valido en una sola linea"
+    pass "A-22: la salida es un objeto JSON valido en una sola linea"
 else
-    fail "A-19: la salida no es un objeto JSON de una sola linea: $A_OUT"
+    fail "A-22: la salida no es un objeto JSON de una sola linea: $A_OUT"
 fi
 
 # -------- Bloque B: sin evento terminal --------
@@ -206,7 +210,7 @@ echo "[D] Linea truncada a mitad, con terminal valido despues -> se ignora sin a
 {
     printf '{"v":1,"type":"tool.started","ts":"2026-07-27T22:09:34.000Z","tool":"Bash","input_summary":"ls'
     printf '\n'
-    printf '{"v":1,"type":"run.completed","ts":"2026-07-27T22:09:35.000Z","status":"success","runtime":"claude","model":"claude-sonnet-5","session_id":null,"duration_ms":100,"tokens":{"input":null,"output":null},"cost_usd":null,"turns":1,"denials":null,"ttft_ms":null,"api_duration_ms":80,"error":null}\n'
+    printf '{"v":1,"type":"run.completed","ts":"2026-07-27T22:09:35.000Z","status":"success","runtime":"claude","model":"claude-sonnet-5","session_id":null,"duration_ms":100,"tokens":{"input":null,"output":null,"cache_read":null,"cache_write":null,"reasoning":null},"estimated_cost_usd":null,"turns":1,"denials":null,"ttft_ms":null,"api_duration_ms":80,"error":null}\n'
 } > "$TMP/d-events.jsonl"
 
 (
@@ -229,10 +233,16 @@ else
     fail "D-2: no se derivaron las metricas del terminal valido: $D_OUT"
 fi
 
-if echo "$D_OUT" | jq -e '.tool_calls | length == 0' >/dev/null 2>&1; then
-    pass "D-3: la tool call de la linea truncada no aparece en el histograma"
+if echo "$D_OUT" | jq -e '.estimated_cost_usd == null and .tokens == {input:null, output:null, cache_read:null, cache_write:null, reasoning:null}' >/dev/null 2>&1; then
+    pass "D-3: campos estimados y tokens null se copian sin reconstruirlos"
 else
-    fail "D-3: la linea truncada dejo rastro en tool_calls: $D_OUT"
+    fail "D-3: no se preservaron los campos null del terminal: $D_OUT"
+fi
+
+if echo "$D_OUT" | jq -e '.tool_calls | length == 0' >/dev/null 2>&1; then
+    pass "D-4: la tool call de la linea truncada no aparece en el histograma"
+else
+    fail "D-4: la linea truncada dejo rastro en tool_calls: $D_OUT"
 fi
 
 # -------- Bloque E: jq ausente --------
@@ -258,21 +268,32 @@ else
     fail "E-1: se esperaba exit 0 y 'null', se obtuvo rc=$RC salida='$E_OUT'"
 fi
 
-# -------- Bloque F: cost_usd:0 se preserva --------
+# -------- Bloque F: costo estimado cero y evento legacy --------
 
 echo ""
-echo "[F] cost_usd:0 (costo real de una corrida bajo suscripcion) se preserva -- NO se convierte en null"
+echo "[F] estimated_cost_usd:0 se preserva; cost_usd legacy no se rebautiza"
 
 cat > "$TMP/f-events.jsonl" <<'EOF'
-{"v":1,"type":"run.completed","ts":"2026-07-27T22:09:30.000Z","status":"success","runtime":"opencode","model":null,"session_id":null,"duration_ms":500,"tokens":{"input":10,"output":5},"cost_usd":0,"turns":null,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":null}
+{"v":1,"type":"run.completed","ts":"2026-07-27T22:09:30.000Z","status":"success","runtime":"opencode","model":null,"session_id":null,"duration_ms":500,"tokens":{"input":10,"output":5,"cache_read":null,"cache_write":null,"reasoning":null},"estimated_cost_usd":0,"turns":null,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":null}
 EOF
 
 F_OUT=$(compute_stage_metrics "$TMP/f-events.jsonl")
-F_COST=$(echo "$F_OUT" | jq -r '.cost_usd')
+F_COST=$(echo "$F_OUT" | jq -r '.estimated_cost_usd')
 if [ "$F_COST" = "0" ]; then
-    pass "F-1: cost_usd:0 se preserva (jq trata 0 igual que null en el operador //; copiar el campo sin ese operador lo evita)"
+    pass "F-1: estimated_cost_usd:0 se preserva (jq // no colapsa cero)"
 else
-    fail "F-1: cost_usd deberia ser '0', se obtuvo '$F_COST': $F_OUT"
+    fail "F-1: estimated_cost_usd deberia ser '0', se obtuvo '$F_COST': $F_OUT"
+fi
+
+cat > "$TMP/f-legacy-events.jsonl" <<'EOF'
+{"v":1,"type":"run.completed","ts":"2026-07-27T22:09:30.000Z","status":"success","runtime":"opencode","model":null,"session_id":null,"duration_ms":500,"tokens":{"input":10,"output":5},"cost_usd":0,"turns":null,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":null}
+EOF
+
+F_LEGACY_OUT=$(compute_stage_metrics "$TMP/f-legacy-events.jsonl")
+if echo "$F_LEGACY_OUT" | jq -e 'has("estimated_cost_usd") and .estimated_cost_usd == null and (has("cost_usd") | not)' >/dev/null 2>&1; then
+    pass "F-2: evento legacy con cost_usd:0 produce estimated_cost_usd:null sin abortar"
+else
+    fail "F-2: el evento legacy rebautizo cost_usd o no produjo null: $F_LEGACY_OUT"
 fi
 
 # -------- Bloque G: tool.completed con duration_ms null (huerfana parcial) --------
@@ -335,14 +356,19 @@ assert_field "J-3: agrega writer.metrics.turns" "4" "$(echo "$J_OUT" | jq -r '.w
 assert_field "J-4: reviewer.metrics es null cuando no corrio ese stage" "null" "$(echo "$J_OUT" | jq -r '.reviewer.metrics')"
 assert_field "J-5: agrega writer.runtime (issue #907)" "claude" "$(echo "$J_OUT" | jq -r '.writer.runtime')"
 assert_field "J-6: reviewer.runtime es null cuando no hay metrics" "null" "$(echo "$J_OUT" | jq -r '.reviewer.runtime')"
+if echo "$J_OUT" | jq -e '[.[] | .metrics | select(. != null) | .. | objects | has("cost_usd") or has("cache_creation")] | any | not' >/dev/null 2>&1; then
+    pass "J-7: el historial nuevo no duplica cost_usd ni cache_creation dentro de metrics"
+else
+    fail "J-7: el historial nuevo conserva nombres legacy dentro de metrics: $J_OUT"
+fi
 
 J_NOJQ_OUT=$(PATH="$E_PATH_SIN_JQ:/bin" build_agents_history_json "125" "" "" "")
 if echo "$J_NOJQ_OUT" | grep -qF '"writer":{"duration":125}' \
     && ! echo "$J_NOJQ_OUT" | grep -q "metrics" \
     && ! echo "$J_NOJQ_OUT" | grep -q "runtime"; then
-    pass "J-7: sin jq, degrada al formato plano legado (mismas dos claves, sin 'metrics' ni 'runtime')"
+    pass "J-8: sin jq, degrada al formato plano legado (mismas dos claves, sin 'metrics' ni 'runtime')"
 else
-    fail "J-7: el degrade sin jq no coincide con el formato legado: $J_NOJQ_OUT"
+    fail "J-8: el degrade sin jq no coincide con el formato legado: $J_NOJQ_OUT"
 fi
 
 # -------- Bloque K: integracion -- linea de historial valida --------

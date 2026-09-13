@@ -1450,7 +1450,8 @@ agent_work_is_trustworthy() {
 # interpreta el vocabulario de ningun runtime concreto: todo lo que imprime
 # sale del vocabulario cerrado de src/runtime/contract/run-events.schema.json.
 # El evento terminal (`run.completed`/`run.failed`) ya trae runtime, model,
-# status, duration_ms, tokens{input,output}, cost_usd, turns, denials,
+# status, duration_ms, estimated_cost_usd,
+# tokens{input,output,cache_read,cache_write,reasoning}, turns, denials,
 # ttft_ms, api_duration_ms y error{kind,detail}|null calculados por el
 # traductor -- esta funcion solo los copia y arma el histograma de tool
 # calls agrupando por nombre los eventos `tool.started` (cuenta) y
@@ -1461,10 +1462,11 @@ agent_work_is_trustworthy() {
 # jq, con el archivo vacio, o si ningun evento terminal aparece (stage matado
 # a mitad de corrida sin evento sintetizado todavia), degrada a "null".
 #
-# `cost_usd` (y el resto de campos numericos del terminal) se copia tal
-# cual, sin el operador `//` de jq: un `0` real (el costo de una corrida bajo
-# suscripcion de OpenCode, ver runtime-opencode.jq) nunca debe degradar a
-# null, y `//` colapsa `0` igual que colapsa `false`/`null` si se usara aqui.
+# `estimated_cost_usd` y los campos de tokens se copian tal cual del terminal,
+# sin formulas ni interpretacion del runtime. jq conserva `0` con `//` (solo
+# usa el operando derecho para `null` o `false`), pero aqui ni siquiera hace
+# falta un fallback: un terminal legacy que solo trae `cost_usd` debe producir
+# `estimated_cost_usd: null`, sin rebautizar su costo legado como estimacion.
 #
 # `tool_calls` agrupa por NOMBRE, no por id: el contrato neutral ya no expone
 # un id de tool call (`tool.completed.duration_ms` viene precalculado por el
@@ -1540,8 +1542,14 @@ compute_stage_metrics() {
                 non_api_ms: (if ($terminal.duration_ms != null and $terminal.api_duration_ms != null) then ($terminal.duration_ms - $terminal.api_duration_ms) else null end),
                 ttft_ms: $terminal.ttft_ms,
                 turns: $terminal.turns,
-                cost_usd: $terminal.cost_usd,
-                tokens: { input: $terminal.tokens.input, output: $terminal.tokens.output },
+                estimated_cost_usd: $terminal.estimated_cost_usd,
+                tokens: {
+                    input: $terminal.tokens.input,
+                    output: $terminal.tokens.output,
+                    cache_read: $terminal.tokens.cache_read,
+                    cache_write: $terminal.tokens.cache_write,
+                    reasoning: $terminal.tokens.reasoning
+                },
                 denials: $terminal.denials,
                 tool_calls: $tool_calls
               }
