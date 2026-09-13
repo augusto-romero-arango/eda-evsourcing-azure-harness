@@ -58,9 +58,12 @@ rm -f "$MODEL_LOG"
 echo '[regresion] invocacion ejecutable de run_agent'
 REGRESSION_TMP="$(mktemp -d -t mefisto-tooling-run-agent)"
 REGRESSION_ARGS="$REGRESSION_TMP/runner.args"
-export REGRESSION_ARGS
+REGRESSION_CALLS="$REGRESSION_TMP/runner.calls"
+REGRESSION_CASE="$REGRESSION_TMP/run-agent-case.sh"
+export REGRESSION_ARGS REGRESSION_CALLS REGRESSION_TMP ROOT
 cat > "$REGRESSION_TMP/run-agent-double" <<'EOF'
 #!/usr/bin/env bash
+printf '%s\n' invoked >> "$REGRESSION_CALLS"
 printf '%s\n' "$@" > "$REGRESSION_ARGS"
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -70,58 +73,76 @@ while [ "$#" -gt 0 ]; do
 done
 EOF
 chmod +x "$REGRESSION_TMP/run-agent-double"
-(
+{
+    printf '%s\n' 'set -eu'
     # Extrae y ejecuta la funcion publicada real bajo nounset. Los dobles solo
     # reemplazan sus dependencias externas; el argv y las rutas los deriva
     # run_agent por si misma.
-    set -u
-    eval "$(awk '/^run_agent\(\) \{/{p=1} p{print} p && /^}/{p=0}' "$PIPELINE")"
-    LOG_DIR_ABS="$REGRESSION_TMP/logs"
-    TIMESTAMP='20260912-120000'
-    ISSUE_LOG_TAG='1283'
-    PIPELINE_TMP_DIR="$REGRESSION_TMP/pipeline"
-    WORKTREE_PATH="$ROOT"
-    RUN_AGENT_BIN="$REGRESSION_TMP/run-agent-double"
-    MEFISTO_RUNTIME_RESUELTO='fake'
-    MEFISTO_AGENT_TIMEOUT_SECONDS=60
-    EVENTS_LOG_ABS="$REGRESSION_TMP/events.log"
-    ISSUE_NUM=1283
-    VARIANT_LABEL_JSON='null'
-    HARNESS_IDENTITY_JSON='{}'
-    MODEL_WRITER=''
-    MODEL_REVIEWER=''
-    PIPELINE_OWN_WRITES=(':!.mefisto/pipeline')
-    mkdir -p "$LOG_DIR_ABS" "$PIPELINE_TMP_DIR"
-    log() { :; }
-    warn() { :; }
-    abort() { return 1; }
-    update_status() { :; }
-    mefisto_state_path() { mkdir -p "$REGRESSION_TMP/state/$(dirname "$1")"; printf '%s\n' "$REGRESSION_TMP/state/$1"; }
-    derive_stage_log_from_stream() { :; }
-    compute_stage_metrics() { printf '{}'; }
-    enrich_tooling_stage_metrics() { printf '%s' "$2"; }
-    agent_events_denials() { printf '0'; }
-    agent_events_completed_successfully() { return 0; }
-    classify_neutral_agent_failure() { printf 'UNKNOWN'; }
-    agent_failure_is_holdable() { return 1; }
-    run_agent '1' 'writer' 'prompt de regresion'
-)
+    awk '/^run_agent\(\) \{/{p=1} p{print} p && /^}/{p=0}' "$PIPELINE"
+    cat <<'EOF'
+LOG_DIR_ABS="$REGRESSION_TMP/logs"
+TIMESTAMP='20260912-120000'
+ISSUE_LOG_TAG='1283'
+PIPELINE_TMP_DIR="$REGRESSION_TMP/pipeline"
+WORKTREE_PATH="$ROOT"
+RUN_AGENT_BIN="$REGRESSION_TMP/run-agent-double"
+MEFISTO_RUNTIME_RESUELTO='fake'
+MEFISTO_AGENT_TIMEOUT_SECONDS=60
+EVENTS_LOG_ABS="$REGRESSION_TMP/events.log"
+ISSUE_NUM=1283
+VARIANT_LABEL_JSON='null'
+HARNESS_IDENTITY_JSON='{}'
+MODEL_WRITER=''
+MODEL_REVIEWER=''
+PIPELINE_OWN_WRITES=(':!.mefisto/pipeline')
+mkdir -p "$LOG_DIR_ABS" "$PIPELINE_TMP_DIR"
+log() { :; }
+warn() { :; }
+abort() { return 1; }
+update_status() { :; }
+log_agent_model_invocation() { :; }
+mefisto_state_path() { mkdir -p "$REGRESSION_TMP/state/$(dirname "$1")"; printf '%s\n' "$REGRESSION_TMP/state/$1"; }
+derive_stage_log_from_stream() { :; }
+compute_stage_metrics() { printf '{}'; }
+enrich_tooling_stage_metrics() { printf '%s' "$2"; }
+agent_events_denials() { printf '0'; }
+agent_events_completed_successfully() { return 0; }
+classify_neutral_agent_failure() { printf 'UNKNOWN'; }
+agent_failure_is_holdable() { return 1; }
+run_agent '1' 'writer' 'prompt de regresion'
+EOF
+} > "$REGRESSION_CASE"
 EXPECTED_EVENT_LOG="$REGRESSION_TMP/logs/tooling-stage-1-writer-20260912-120000-issue-1283-attempt-1.events.jsonl"
 EXPECTED_PROMPT="$REGRESSION_TMP/pipeline/1-writer.prompt.md"
 EXPECTED_SYSTEM="$REGRESSION_TMP/pipeline/1-writer.system.md"
-if [ "$(wc -l < "$REGRESSION_ARGS" | tr -d ' ')" -eq 17 ] \
-    && grep -Fx -- '--agent' "$REGRESSION_ARGS" >/dev/null \
-    && grep -Fx -- 'tooling-writer' "$REGRESSION_ARGS" >/dev/null \
-    && grep -Fx -- '--cwd' "$REGRESSION_ARGS" >/dev/null \
-    && grep -Fx -- "$ROOT" "$REGRESSION_ARGS" >/dev/null \
-    && grep -Fx -- "$EXPECTED_PROMPT" "$REGRESSION_ARGS" >/dev/null \
-    && grep -Fx -- "$EXPECTED_SYSTEM" "$REGRESSION_ARGS" >/dev/null \
-    && grep -Fx -- "$EXPECTED_EVENT_LOG" "$REGRESSION_ARGS" >/dev/null \
-    && [ -f "$EXPECTED_PROMPT" ] && [ -f "$EXPECTED_SYSTEM" ] && [ -f "$EXPECTED_EVENT_LOG" ]; then
-    pass 'run_agent deriva rutas e invoca una vez al runner neutral bajo nounset'
-else
-    fail 'run_agent no invoca el runner neutral esperado bajo nounset'
-fi
+EXPECTED_ARGS="$REGRESSION_TMP/expected.args"
+printf '%s\n' \
+    --runtime fake \
+    --agent tooling-writer \
+    --cwd "$ROOT" \
+    --prompt-file "$EXPECTED_PROMPT" \
+    --system-file "$EXPECTED_SYSTEM" \
+    --event-log "$EXPECTED_EVENT_LOG" \
+    --events-log "$REGRESSION_TMP/events.log" \
+    --redact-observability \
+    --timeout 60 > "$EXPECTED_ARGS"
+
+DEFAULT_BASH="$(command -v bash)"
+for REGRESSION_BASH in "$DEFAULT_BASH" /bin/bash; do
+    [ -x "$REGRESSION_BASH" ] || continue
+    : > "$REGRESSION_CALLS"
+    rm -f "$REGRESSION_ARGS" "$EXPECTED_PROMPT" "$EXPECTED_SYSTEM" "$EXPECTED_EVENT_LOG"
+    if "$REGRESSION_BASH" "$REGRESSION_CASE" \
+        && [ "$(wc -l < "$REGRESSION_CALLS" | tr -d ' ')" -eq 1 ] \
+        && cmp -s "$EXPECTED_ARGS" "$REGRESSION_ARGS" \
+        && [ "$(cat "$EXPECTED_PROMPT")" = 'prompt de regresion' ] \
+        && [ -f "$EXPECTED_SYSTEM" ] && [ -f "$EXPECTED_EVENT_LOG" ]; then
+        pass "run_agent deriva el argv exacto y hace una invocacion bajo nounset ($("$REGRESSION_BASH" --version | awk 'NR == 1 { print $1, $2, $3, $4 }'))"
+    else
+        fail "run_agent no invoca el runner neutral esperado bajo nounset con $REGRESSION_BASH"
+    fi
+    [ "$REGRESSION_BASH" != /bin/bash ] || break
+done
 rm -rf "$REGRESSION_TMP"
 
 echo '[contrato] helpers JSONL'
