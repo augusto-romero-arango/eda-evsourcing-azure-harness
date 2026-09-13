@@ -18,6 +18,15 @@ command -v jq >/dev/null 2>&1 || { echo "ERROR: jq requerido" >&2; exit 1; }
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/test-stream-watch.XXXXXX") || exit 1
 trap 'rm -rf "$TMP"' EXIT
 
+[ -x "$TARGET" ] && pass "el visor publicado es ejecutable" || fail "el visor publicado no es ejecutable"
+mkdir -p "$TMP/consumidor"
+git init -q "$TMP/consumidor" || exit 1
+HELP=$(cd "$TMP/consumidor" && "$TARGET" --help) || {
+    fail "la invocacion directa del visor devuelve 0"
+    HELP=""
+}
+assert_contains "$HELP" "Uso: stream-watch.sh" "la invocacion directa muestra el uso esperado"
+
 # Sourcing define funciones y solo carga el helper; no dispara el main.
 source "$TARGET"
 RED=""; YELLOW=""; BLUE=""; CYAN=""; BOLD=""; NC=""
