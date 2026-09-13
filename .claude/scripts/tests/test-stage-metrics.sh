@@ -210,7 +210,7 @@ echo "[D] Linea truncada a mitad, con terminal valido despues -> se ignora sin a
 {
     printf '{"v":1,"type":"tool.started","ts":"2026-07-27T22:09:34.000Z","tool":"Bash","input_summary":"ls'
     printf '\n'
-    printf '{"v":1,"type":"run.completed","ts":"2026-07-27T22:09:35.000Z","status":"success","runtime":"claude","model":"claude-sonnet-5","session_id":null,"duration_ms":100,"tokens":{"input":null,"output":null},"cost_usd":null,"turns":1,"denials":null,"ttft_ms":null,"api_duration_ms":80,"error":null}\n'
+    printf '{"v":1,"type":"run.completed","ts":"2026-07-27T22:09:35.000Z","status":"success","runtime":"claude","model":"claude-sonnet-5","session_id":null,"duration_ms":100,"tokens":{"input":null,"output":null,"cache_read":null,"cache_write":null,"reasoning":null},"estimated_cost_usd":null,"turns":1,"denials":null,"ttft_ms":null,"api_duration_ms":80,"error":null}\n'
 } > "$TMP/d-events.jsonl"
 
 (
