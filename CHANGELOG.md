@@ -4,6 +4,18 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.37.14] - 2026-09-13
+
+### Fixed
+
+- Se amplía a 420 s el presupuesto del gate por SHA para tolerar un reintento automático del contenedor de App Service Linux, manteniendo 120 s para el gate independiente de `/api/ready`.
+- Se amplía a 420 s el presupuesto del gate por SHA de los smoke tests de dominios y se agrega el enlace diagnóstico a StartupLogs de Kudu al agotarlo.
+- Se amplía a 420 s el gate por SHA del reusable MCP, con diagnóstico manual de StartupLogs de Kudu al agotar la espera.
+- Se exponen en la raiz instalada por el marketplace Claude los agentes generados `tooling-writer` y `tooling-reviewer`.
+- Se corrige el aborto bajo `nounset` de `/mefisto:tooling` antes de invocar al writer, separando la derivacion de su log de la captura de argumentos.
+- Se versiona `scripts/stream-watch.sh` como ejecutable para que el visor de Herdr inicie desde la instalacion Claude del marketplace.
+- Se reconcilian como fallidas las corridas tooling que terminan con un error no controlado tras publicar un estado activo.
+
 ## [0.37.13] - 2026-09-13
 
 ### Fixed
@@ -2445,7 +2457,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.13...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.14...HEAD
+[0.37.14]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.13...v0.37.14
 [0.37.13]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.12...v0.37.13
 [0.37.12]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.11...v0.37.12
 [0.37.11]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.10...v0.37.11
