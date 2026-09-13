@@ -44,6 +44,14 @@ prompt o que nunca habia existido.
   **grep literal de las lineas de prosa del prompt**. Mover la mecanica a bash los rompe:
   hay que reescribirlos, no ajustarlos.
 
+- **Bug encontrado ejecutando este mismo cierre**: el snippet de busqueda del PR que ambos
+  prompts prescriben usa `--jq '.[0] | [.number, .url, .state] | @tsv'`. Sobre una lista
+  vacia, `.[0]` es `null` y el resultado es `"\t\t"` -- **no** una cadena vacia. El guard
+  `if [ -n "$PR_DATA" ]` da verdadero, el agente cree que ya existe un PR, lee numero/URL
+  vacios y **nunca ejecuta `gh pr create`**. Reportado como "PR #" sin numero. Es decir: aun
+  siguiendo el cierre al pie de la letra, la primera entrega de cada sesion no abre PR.
+  Esto explica una parte del sintoma del usuario que no se debe a la compactacion.
+
 ## Decisiones
 
 - **Mover la mecanica del cierre a un pipeline bash.** El prompt se queda con una sola
