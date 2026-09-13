@@ -1336,8 +1336,16 @@ else
     if [ -n "$EXISTING_PR_URL" ]; then
         PR_URL="$EXISTING_PR_URL"
         success "PR existente reutilizado: $PR_URL"
+        RUN_METRICS_COMMENT=$(cat <<EOF
+## Metricas de la corrida
+
+Actualizado: $(date '+%Y-%m-%d %H:%M:%S %Z')
+
+$RUN_METRICS_TABLE
+EOF
+)
         gh pr comment "$PR_URL" \
-            --body "## Metricas de la corrida\n\nActualizado: $(date '+%Y-%m-%d %H:%M:%S %Z')\n\n$RUN_METRICS_TABLE" \
+            --body "$RUN_METRICS_COMMENT" \
             >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 || warn "No se pudo publicar las metricas en el PR reutilizado: $PR_URL"
     else
         log "Creando PR..."

@@ -40,18 +40,40 @@ else
 fi
 
 echo "[C] estimated_cost_usd:0 es presente y suma solo costos no nulos"
-CERO='{"model":"modelo-cero","tokens":{"input":1,"output":2,"cache_read":3,"cache_write":4,"reasoning":5},"estimated_cost_usd":0}'
+CERO='{"model":"modelo-cero","tokens":{"input":1,"output":2,"cache_read":3,"cache_write":4,"reasoning":5},"estimated_cost_usd":0,"cost_usd":99}'
 OUT=$(render_run_metrics_table Cero 1 "$CERO" SinCosto 2 "$NO_COST")
 if printf '%s' "$OUT" | grep -qF '| Cero | modelo-cero | 15 | 1 / 2 / 7 / 5 | 0m 1s | $0.00 |' \
    && printf '%s' "$OUT" | grep -qF '| **Total (parcial)** | - | **165** | - | **0m 3s** | **$0.00** |'; then
-    pass "cero se muestra y el total parcial excluye solo null"
+    pass "cero se muestra, el costo legado se ignora y el total parcial excluye null"
 else
     fail "costo cero o total parcial inesperado: $OUT"
 fi
 
-echo "[D] jq ausente nunca aborta y degrada la tabla"
+echo "[D] Un contador ausente degrada su celda y vuelve parcial el total"
+INCOMPLETA='{"model":"modelo-incompleto","tokens":{"input":10,"output":20,"cache_read":30,"cache_write":40},"estimated_cost_usd":1.25}'
+OUT=$(render_run_metrics_table Incompleta 5 "$INCOMPLETA")
+if printf '%s' "$OUT" | grep -qF '| Incompleta | modelo-incompleto | - | 10 / 20 / 70 / - | 0m 5s | $1.25 |' \
+   && printf '%s' "$OUT" | grep -qF '| **Total (parcial)** | - | - | - | **0m 5s** | **$1.25** |'; then
+    pass "contador ausente no se inventa como cero"
+else
+    fail "contador ausente deberia degradar la fila y el total: $OUT"
+fi
+
+echo "[E] El comentario de PR reutilizado conserva Markdown real y fallo no fatal"
+PIPELINE="$REPO_ROOT/src/internal/scripts/mefisto-tooling-pipeline.sh"
+if grep -qF 'RUN_METRICS_COMMENT=$(cat <<EOF' "$PIPELINE" \
+   && grep -qF "Actualizado: \$(date '+%Y-%m-%d %H:%M:%S %Z')" "$PIPELINE" \
+   && grep -qF -- '--body "$RUN_METRICS_COMMENT"' "$PIPELINE" \
+   && grep -qF '|| warn "No se pudo publicar las metricas en el PR reutilizado' "$PIPELINE" \
+   && ! grep -qF -- '--body "## Metricas de la corrida\n' "$PIPELINE"; then
+    pass "comentario usa saltos reales y gh pr comment degrada a warn"
+else
+    fail "integracion del comentario de PR reutilizado no respeta el contrato"
+fi
+
+echo "[F] jq ausente nunca aborta y degrada la tabla"
 NO_JQ=$(mktemp -d)
-OUT=$(PATH="$NO_JQ:/bin" render_run_metrics_table Writer 60 "$WRITER")
+OUT=$(PATH="$NO_JQ" render_run_metrics_table Writer 60 "$WRITER")
 RC=$?
 rm -rf "$NO_JQ"
 if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qF '| Writer | - | - | - | 1m 0s | - |' \

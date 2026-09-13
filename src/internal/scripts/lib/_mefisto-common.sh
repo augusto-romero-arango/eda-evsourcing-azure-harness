@@ -701,8 +701,19 @@ find_open_pr_for_branch() {
 # necesario para formar un total completo. estimated_cost_usd: 0 es un valor
 # presente y se muestra como $0.00. Nunca aborta ni depende de jq para retornar
 # exito: la telemetria es observabilidad, no un gate del pipeline.
+_render_run_metric_count() {
+    local n="$1"
+    if ! [[ "$n" =~ ^[0-9]+$ ]]; then
+        echo "-"
+        return 0
+    fi
+    awk -v n="$n" 'BEGIN { if (n >= 1000000) printf "%.2fM", n/1000000; else if (n >= 1000) printf "%.1fk", n/1000; else printf "%d", n }' \
+        | sed 's/\.0\([kM]\)$/\1/' || echo "-"
+    return 0
+}
+
 render_run_metrics_table() {
-    local rows=() label duration metrics
+    local label duration metrics
     local total_tokens=0 total_duration=0 total_cost="0" cost_values=0
     local tokens_complete=true duration_complete=true cost_complete=true
 
@@ -728,24 +739,29 @@ render_run_metrics_table() {
         if command -v jq >/dev/null 2>&1 && [ -n "$metrics" ]; then
             parsed=$(printf '%s' "$metrics" | jq -r '
                 if type != "object" then empty
-                else [(.model // "-"), .tokens.input, .tokens.output, .tokens.cache_read, .tokens.cache_write, .tokens.reasoning, (if .estimated_cost_usd != null and (.estimated_cost_usd | type == "number") then .estimated_cost_usd else null end)]
-                     | map(if . == null then "" else tostring end) | join("|")
+                else
+                    def count: if type == "number" and floor == . and . >= 0 then tostring else "" end;
+                    [
+                        (if (.model | type) == "string" and .model != "" then .model else "-" end),
+                        (.tokens.input | count),
+                        (.tokens.output | count),
+                        (.tokens.cache_read | count),
+                        (.tokens.cache_write | count),
+                        (.tokens.reasoning | count),
+                        (if (.estimated_cost_usd | type) == "number" and .estimated_cost_usd >= 0 then (.estimated_cost_usd | tostring) else "" end)
+                    ] | join("\u001c")
                 end
             ' 2>/dev/null) || parsed=""
         fi
 
         if [ -n "$parsed" ]; then
-            IFS='|' read -r model input output cache_read cache_write reasoning cost <<< "$parsed"
+            IFS=$'\034' read -r model input output cache_read cache_write reasoning cost <<< "$parsed"
+            model=${model//$'\n'/ }
+            model=${model//|/\\|}
             local cache=""
             if [[ "$cache_read" =~ ^[0-9]+$ ]] && [[ "$cache_write" =~ ^[0-9]+$ ]]; then
                 cache=$((cache_read + cache_write))
             fi
-            _render_run_metric_count() {
-                local n="$1"
-                if ! [[ "$n" =~ ^[0-9]+$ ]]; then echo "-"; return 0; fi
-                awk -v n="$n" 'BEGIN { if (n >= 1000000) printf "%.2fM", n/1000000; else if (n >= 1000) printf "%.1fk", n/1000; else printf "%d", n }' | sed 's/\.0\([kM]\)$/\1/'
-                return 0
-            }
             breakdown="$(_render_run_metric_count "$input") / $(_render_run_metric_count "$output") / $(_render_run_metric_count "$cache") / $(_render_run_metric_count "$reasoning")"
             if [[ "$input" =~ ^[0-9]+$ ]] && [[ "$output" =~ ^[0-9]+$ ]] && [[ "$cache_read" =~ ^[0-9]+$ ]] && [[ "$cache_write" =~ ^[0-9]+$ ]] && [[ "$reasoning" =~ ^[0-9]+$ ]]; then
                 token_sum=$((input + output + cache_read + cache_write + reasoning))
@@ -766,6 +782,8 @@ render_run_metrics_table() {
             cost_complete=false
         fi
 
+        label=${label//$'\n'/ }
+        label=${label//|/\\|}
         echo "| $label | $model | $tokens_display | $breakdown | $duration_display | $cost_display |"
     done
 
