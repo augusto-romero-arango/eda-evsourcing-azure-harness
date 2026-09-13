@@ -1155,9 +1155,15 @@ git -C "$(git rev-parse --show-toplevel)" show "origin/$INITIAL_DEFAULT_BRANCH:$
 
 ### Entregar con `field-note.sh`
 
-Todo el resto del cierre -- crear el worktree aislado desde `origin/$INITIAL_DEFAULT_BRANCH`, escribir ahí la field note y el glosario, validar que el índice queda exactamente con esos paths, validar el YAML del glosario, commitear, hacer push y crear/reutilizar/reabrir el PR, limpiar el worktree y verificar que el checkout principal no cambió -- lo hace **una sola invocación** de `scripts/field-note.sh` (usa el `$PLUGIN_ROOT` ya resuelto al inicio de la sesión):
+Todo el resto del cierre -- crear el worktree aislado desde `origin/$INITIAL_DEFAULT_BRANCH`, escribir ahí la field note y el glosario, validar que el índice queda exactamente con esos paths, validar el YAML del glosario, commitear, hacer push y crear/reutilizar/reabrir el PR, limpiar el worktree y verificar que el checkout principal no cambió -- lo hace **una sola invocación** de `scripts/field-note.sh` (usa el `$PLUGIN_ROOT` ya resuelto al inicio de la sesión, y sustituye los valores ya observados de `SESSION_ID`, `CLOSING_TIMESTAMP`, `FIELD_NOTE_LOCAL`, `GLOSSARY_PATH` y `GLOSSARY_LOCAL`):
 
 ```bash
+# Los flags del glosario solo viajan si de verdad preparaste el delta: una
+# sesion puramente tecnica no escribe "$GLOSSARY_LOCAL" aunque el consumidor
+# si tenga glosario, y pasar --glossary apuntando a un archivo inexistente
+# abortaria el cierre COMPLETO, field note incluida.
+[ -f "$GLOSSARY_LOCAL" ] || GLOSSARY_PATH=""
+
 "$PLUGIN_ROOT/scripts/field-note.sh" \
     --session-id "$SESSION_ID" \
     --timestamp "$CLOSING_TIMESTAMP" \

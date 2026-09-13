@@ -695,6 +695,7 @@ for required in \
     '--session-id "$SESSION_ID"' \
     '--timestamp "$CLOSING_TIMESTAMP"' \
     '--field-note "$FIELD_NOTE_LOCAL"' \
+    '[ -f "$GLOSSARY_LOCAL" ] || GLOSSARY_PATH=""' \
     'nunca crees la rama documental ahí'; do
     if grep -qF -- "$required" "$PLANNER"; then
         pass "planner: conserva '$required'"
@@ -722,7 +723,12 @@ done
 FN_TMP=$(mktemp -d)
 fn_cleanup() { rm -rf "$FN_TMP"; }
 
-FN_SAFE_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
+# El PATH real, con el 'gh' falso antepuesto (siempre gana), en vez de una
+# lista fija de directorios: field-note.sh busca un validador YAML YA presente
+# -- python3+PyYAML, ruby o yq -- y en muchas maquinas esos binarios viven
+# fuera de /usr/bin (Homebrew, pyenv, rbenv). Con la lista fija, I.F fallaria
+# por el entorno de quien corre la suite, no por un defecto del script.
+FN_SAFE_PATH="$PATH"
 FN_REPO_SLUG="acme/consumer-fake"
 
 # new_consumer_repo <prefijo>
@@ -1055,12 +1061,38 @@ else
     fail "I.F: la rama documental no trae ambos paths esperados"
 fi
 
+if [ "$(git -C "$FN_BARE" show "refs/heads/docs/planner-field-notes-sess-f:docs/ddd/ubiquitous-language.yaml" 2>/dev/null)" = "$(cat "$FN_TMP/f/glosario-valido.yaml")" ]; then
+    pass "I.F: el glosario entregado conserva exactamente el contenido pasado en --glossary (no la version del checkout principal)"
+else
+    fail "I.F: el glosario entregado no coincide con el archivo pasado en --glossary"
+fi
+
 TRACKED_COUNT_F=$(git -C "$FN_BARE" ls-tree -r --name-only "refs/heads/docs/planner-field-notes-sess-f" | wc -l | tr -d ' ')
 BASE_TRACKED_COUNT_F=$(git -C "$FN_BARE" ls-tree -r --name-only "refs/heads/main" | wc -l | tr -d ' ')
 if [ "$TRACKED_COUNT_F" = "$((BASE_TRACKED_COUNT_F + 2))" ]; then
     pass "I.F: la rama documental no trae ningun path adicional (base heredada de main + field note + glosario, ninguno mas)"
 else
     fail "I.F: se esperaban $((BASE_TRACKED_COUNT_F + 2)) paths trackeados en la rama documental (base=$BASE_TRACKED_COUNT_F), se encontraron $TRACKED_COUNT_F"
+fi
+
+# -------- I.G: --glossary inexistente aborta sin tocar git --------
+#
+# Es el modo de fallo que el gate `[ -f "$GLOSSARY_LOCAL" ] || GLOSSARY_PATH=""`
+# de agents/planner.md evita: una sesion puramente tecnica en un consumidor que
+# SI tiene glosario nunca escribe el archivo local del delta. Si los flags
+# viajaran igual, el cierre completo -- field note incluida -- se perderia.
+RC_G=$(run_field_note "$FAKEBIN_F" "$FN_TMP/f/out-g.txt" "$FN_TMP/f/err-g.txt" \
+    --session-id sess-g --timestamp 2026-01-01-0000 --field-note "$FN_TMP/f/field-note.md" \
+    --glossary-path docs/ddd/ubiquitous-language.yaml --glossary "$FN_TMP/f/delta-que-nunca-se-escribio.yaml")
+if [ "$RC_G" -eq 1 ] && grep -qF "no existe o no es un archivo" "$FN_TMP/f/err-g.txt"; then
+    pass "I.G: --glossary apuntando a un archivo inexistente aborta con mensaje explicito"
+else
+    fail "I.G: no aborto como se esperaba ante un --glossary inexistente (rc=$RC_G)"
+fi
+if git -C "$FN_MAIN" show-ref --verify --quiet "refs/heads/docs/planner-field-notes-sess-g" 2>/dev/null; then
+    fail "I.G: se creo una rama documental pese al --glossary inexistente"
+else
+    pass "I.G: no se creo ninguna rama documental (abort antes de tocar git)"
 fi
 
 fn_cleanup

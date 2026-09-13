@@ -219,8 +219,16 @@ with open(sys.argv[1], encoding="utf-8") as f:
 }
 
 if [ -n "$GLOSSARY_SRC" ]; then
-    if ! validate_yaml_file "$GLOSSARY_SRC"; then
-        echo "ERROR: '$GLOSSARY_SRC' no paso la validacion YAML (o no se encontro ningun validador ya presente en PATH -- se probo python3+PyYAML, ruby y yq; este script no instala nada nuevo)." >&2
+    validate_yaml_file "$GLOSSARY_SRC"
+    YAML_RC=$?
+    # Los dos motivos de aborto piden acciones distintas -- arreglar el delta
+    # frente a instalar un validador --, asi que no comparten mensaje.
+    if [ "$YAML_RC" -eq 2 ]; then
+        echo "ERROR: ningun validador YAML esta ya presente en PATH (se probo python3+PyYAML, ruby y yq) y este script no instala nada nuevo, asi que no puede confirmar que '$GLOSSARY_SRC' siga siendo YAML valido tras el delta." >&2
+        echo "Accion de recuperacion: deja disponible uno de esos tres validadores y reintenta con los mismos flags, o vuelve a invocar sin --glossary/--glossary-path para entregar solo la field note y llevar el delta del glosario aparte; no se toco git." >&2
+        exit 1
+    elif [ "$YAML_RC" -ne 0 ]; then
+        echo "ERROR: '$GLOSSARY_SRC' dejo de ser YAML valido tras aplicar el delta." >&2
         echo "Accion de recuperacion: reformula unicamente el delta del glosario contra la version en 'origin/<rama por defecto>' y reintenta; no se toco git." >&2
         exit 1
     fi
@@ -383,8 +391,12 @@ if [ -n "$GLOSSARY_SRC" ]; then
 
     # CA-3: se valida el archivo YA ESCRITO en el worktree documental --el
     # mismo que se va a stagear-- ANTES del 'git add' que lo staging.
-    if ! validate_yaml_file "$GLOSSARY_ABS"; then
-        recovery_abort "worktree" "'$GLOSSARY_PATH' dejo de ser YAML valido tras escribir el delta en '$WORKTREE_DIR' (o no se encontro ningun validador ya presente en PATH). No se stageo nada. Reformula unicamente el delta del glosario contra la version en 'origin/$DEFAULT_BRANCH' y reintenta con los mismos --session-id/--timestamp."
+    validate_yaml_file "$GLOSSARY_ABS"
+    YAML_RC=$?
+    if [ "$YAML_RC" -eq 2 ]; then
+        recovery_abort "worktree" "Ningun validador YAML esta ya presente en PATH (python3+PyYAML, ruby o yq), asi que no se puede confirmar que '$GLOSSARY_PATH' siga siendo YAML valido. No se stageo nada. Deja disponible uno de esos validadores y reintenta con los mismos --session-id/--timestamp."
+    elif [ "$YAML_RC" -ne 0 ]; then
+        recovery_abort "worktree" "'$GLOSSARY_PATH' dejo de ser YAML valido tras escribir el delta en '$WORKTREE_DIR'. No se stageo nada. Reformula unicamente el delta del glosario contra la version en 'origin/$DEFAULT_BRANCH' y reintenta con los mismos --session-id/--timestamp."
     fi
 
     git -C "$WORKTREE_DIR" add -- "$GLOSSARY_PATH" \
