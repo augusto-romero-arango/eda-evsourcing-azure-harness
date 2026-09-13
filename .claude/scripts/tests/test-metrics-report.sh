@@ -65,7 +65,7 @@
 #   [M] Normalizacion vieja/neutral y tabla POR RUNTIME (issue #908): fixture
 #       con una corrida forma vieja sin runtime de nivel de corrida, una
 #       forma neutral Claude con runtime, una forma neutral OpenCode con
-#       runtime, cost_usd:0 real y turns:null (ningun agente lo reporta), y
+#       runtime, estimated_cost_usd:0 real y turns:null (ningun agente lo reporta), y
 #       una sin instrumentar. Verifica que nada fuera de
 #       normalize_agent_metrics lee los campos crudos de la forma vieja
 #       (CA-1), que el ranking de herramientas admite el nombre de tool de
@@ -626,11 +626,12 @@ echo "[N] Costos estimados/legados y tokens neutrales (issue #1326)"
 # 800 es historia solo nueva: conserva el cero estimado y los cinco desgloses.
 # 801 es solo legacy: incluso su cero queda fuera de toda cifra estimada. 802
 # mezcla ambos campos: estimated_cost_usd gana, por lo que cost_usd no se duplica.
-# 803 deja una estimacion nula para que el reporte declare su parcialidad.
+# 803 deja una estimacion nula para que el reporte declare su ausencia. En 802,
+# el reviewer instrumentado no pudo estimar, por lo que la corrida queda parcial.
 cat > "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" <<'EOF'
 {"issue":"800","pipeline":"mefisto-tooling","runtime":"opencode","started":"20260910-090000","state":"completed","agents":{"writer":{"duration":10,"metrics":{"estimated_cost_usd":0,"tokens":{"input":10,"output":2,"cache_read":3,"cache_write":4,"reasoning":5},"turns":1,"duration_ms":10000,"api_duration_ms":9000,"tool_calls":[]}},"reviewer":{"duration":null,"metrics":null}}}
 {"issue":"801","pipeline":"mefisto-tooling","started":"20260911-090000","state":"completed","agents":{"writer":{"duration":10,"metrics":{"cost_usd":0,"tokens":{"input":10,"output":2,"cache_read":3,"cache_creation":7},"turns":1,"duration_ms":10000,"api_duration_ms":9000,"tool_calls":[]}},"reviewer":{"duration":null,"metrics":null}}}
-{"issue":"802","pipeline":"mefisto-tooling","started":"20260912-090000","state":"completed","agents":{"writer":{"duration":10,"metrics":{"estimated_cost_usd":2,"cost_usd":99,"tokens":{"input":10,"output":2,"cache_read":3,"cache_write":4,"reasoning":5},"turns":1,"duration_ms":10000,"api_duration_ms":9000,"tool_calls":[]}},"reviewer":{"duration":null,"metrics":null}}}
+{"issue":"802","pipeline":"mefisto-tooling","started":"20260912-090000","state":"completed","agents":{"writer":{"duration":10,"metrics":{"estimated_cost_usd":2,"cost_usd":99,"tokens":{"input":10,"output":2,"cache_read":3,"cache_write":4,"reasoning":5},"turns":1,"duration_ms":10000,"api_duration_ms":9000,"tool_calls":[]}},"reviewer":{"duration":1,"metrics":{"estimated_cost_usd":null,"tokens":{"input":null,"output":null,"cache_read":null,"cache_write":null,"reasoning":null},"turns":null,"duration_ms":1000,"api_duration_ms":null,"tool_calls":[]}}}}
 {"issue":"803","pipeline":"mefisto-tooling","started":"20260913-090000","state":"completed","agents":{"writer":{"duration":10,"metrics":{"estimated_cost_usd":null,"tokens":{"input":10,"output":2,"cache_read":3,"cache_write":4,"reasoning":null},"turns":1,"duration_ms":10000,"api_duration_ms":9000,"tool_calls":[]}},"reviewer":{"duration":null,"metrics":null}}}
 EOF
 AGG_N=$(compute_metrics_report_json "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" "")
@@ -640,12 +641,20 @@ assert_field "N-3: costo estimado disponible en 2 corridas; nulo explicita parci
 assert_field "N-4: dos corridas sin estimacion (legacy y null)" "2" "$(echo "$AGG_N" | jq -r '.meta.estimated_cost_missing_runs')"
 assert_field "N-5: cache_creation antiguo se proyecta como cache_write" "4.75" "$(echo "$AGG_N" | jq -r '.series.monthly[] | select(.period=="2026-09") | .cache_write_mean')"
 assert_field "N-6: reasoning se incorpora al desglose" "5" "$(echo "$AGG_N" | jq -r '.series.monthly[] | select(.period=="2026-09") | .reasoning_mean')"
+assert_field "N-7: la fila solo nueva conserva costo estimado cero" "0" "$(echo "$AGG_N" | jq -r '.wallclock.per_run[] | select(.issue=="800") | .estimated_cost_usd')"
+assert_field "N-8: la fila solo legacy expone costo reportado cero separado" "0" "$(echo "$AGG_N" | jq -r '.wallclock.per_run[] | select(.issue=="801") | .legacy_reported_cost_usd')"
+assert_field "N-9: la fila mixta prioriza estimacion y no reclasifica cost_usd" "null" "$(echo "$AGG_N" | jq -r '.wallclock.per_run[] | select(.issue=="802") | .legacy_reported_cost_usd')"
+assert_field "N-10: un agente estimado y otro nulo hacen explicita la parcialidad" "parcial" "$(echo "$AGG_N" | jq -r '.wallclock.per_run[] | select(.issue=="802") | .estimated_cost_status')"
+assert_field "N-11: la cobertura distingue una corrida completa" "1" "$(echo "$AGG_N" | jq -r '.meta.estimated_cost_complete_runs')"
+assert_field "N-12: la cobertura distingue una corrida parcial" "1" "$(echo "$AGG_N" | jq -r '.meta.estimated_cost_partial_runs')"
 OUT=$(run_report)
-if echo "$OUT" | grep -q "Costo estimado comparable: 2 corridas; sin estimacion: 2; costo reportado legado: 1" \
-   && echo "$OUT" | grep -q "Costo legado reportado" && echo "$OUT" | grep -q "Cache write medio"; then
-    pass "N-7: el render separa estimacion parcial, legado y tokenizacion neutral"
+if echo "$OUT" | grep -q "Costo estimado con valor: 2 corridas (completas: 1, parciales: 1); sin estimacion: 2" \
+   && echo "$OUT" | grep -q "Costo reportado legado: 1 corridas (separado; excluido de estimados)" \
+   && echo "$OUT" | grep -q "Cobertura est." && echo "$OUT" | grep -q "Costo leg." \
+   && echo "$OUT" | grep -q "Cache write medio"; then
+    pass "N-13: resumen y detalle separan estimacion parcial, legado y tokenizacion neutral"
 else
-    fail "N-7: faltan rotulos de costos/tokens neutrales: $OUT"
+    fail "N-13: faltan rotulos de costos/tokens neutrales: $OUT"
 fi
 
 echo ""

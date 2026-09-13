@@ -77,12 +77,11 @@ fi
 # nunca con `| @tsv` a secas.
 JQ_ROW='def row: map(if . == null or . == "" then "null" else . end) | @tsv;'
 
-# Reglas horizontales. 90 columnas: es el ancho de la tabla mas ancha (la
-# deriva temporal, con los cuatro desgloses de tokens de CA-4) y cubre tambien
-# el ranking de herramientas y el detalle por corrida, que ya desbordaban una
-# regla de 66.
-RULE_MAJOR=$(printf '%090d' 0 | tr '0' '=')
-RULE_MINOR=$(printf '%090d' 0 | tr '0' '-')
+# Reglas horizontales. El detalle por corrida incorpora costos estimado y
+# legado junto con la cobertura de la estimacion; una regla amplia evita que
+# esas columnas parezcan pertenecer a otra seccion.
+RULE_MAJOR=$(printf '%0120d' 0 | tr '0' '=')
+RULE_MINOR=$(printf '%0120d' 0 | tr '0' '-')
 
 # compute_metrics_report_json <history_file> <desde>
 #
@@ -189,6 +188,15 @@ def run_tokens_cache_write: null_safe_sum(wr_norm.tokens.cache_write; rv_norm.to
 def run_tokens_reasoning: null_safe_sum(wr_norm.tokens.reasoning; rv_norm.tokens.reasoning);
 def run_estimated_cost_usd: null_safe_sum(wr_norm.estimated_cost_usd; rv_norm.estimated_cost_usd);
 def run_legacy_reported_cost_usd: null_safe_sum(wr_norm.legacy_reported_cost_usd; rv_norm.legacy_reported_cost_usd);
+def run_metrics_agents: ([wr_norm, rv_norm] | map(select(. != null)) | length);
+def run_estimated_cost_agents: ([wr_norm.estimated_cost_usd, rv_norm.estimated_cost_usd] | map(select(. != null)) | length);
+def run_estimated_cost_status:
+  run_metrics_agents as $metrics_n
+  | run_estimated_cost_agents as $estimated_n
+  | if $estimated_n == 0 then "sin estimacion"
+    elif $estimated_n == $metrics_n then "completa"
+    else "parcial"
+    end;
 
 def week_key: if ._ts == null then null else (._ts | gmtime | strftime("%G-W%V")) end;
 def month_key: if ._ts == null then null else (._ts | gmtime | strftime("%Y-%m")) end;
@@ -200,7 +208,7 @@ def period_summary(keyfn):
       | ($group[0] | keyfn) as $period
       | ($group | map(select(._has_metrics))) as $g_instr
       | ($g_instr | map(run_tokens_cache_read) | add // 0) as $cr_total
-       | ($g_instr | map(run_tokens_cache_write) | add // 0) as $cw_total
+      | ($g_instr | map(run_tokens_cache_write) | add // 0) as $cw_total
       | {
           period: ($period // "(s/fecha)"),
           n_total: ($group | length),
@@ -218,11 +226,12 @@ def period_summary(keyfn):
           tokens_input_mean: ($g_instr | map(run_tokens_input) | map(select(. != null)) | avgOrNull),
           tokens_output_mean: ($g_instr | map(run_tokens_output) | map(select(. != null)) | avgOrNull),
           cache_read_mean: ($g_instr | map(run_tokens_cache_read) | map(select(. != null)) | avgOrNull),
-           cache_write_mean: ($g_instr | map(run_tokens_cache_write) | map(select(. != null)) | avgOrNull),
-           reasoning_mean: ($g_instr | map(run_tokens_reasoning) | map(select(. != null)) | avgOrNull),
-           cache_read_pct: (if ($cr_total + $cw_total) > 0 then ($cr_total / ($cr_total + $cw_total) * 100) else null end),
-           estimated_cost_usd_mean: ($g_instr | map(run_estimated_cost_usd) | map(select(. != null)) | avgOrNull),
-           estimated_cost_n: ($g_instr | map(run_estimated_cost_usd) | map(select(. != null)) | length),
+          cache_write_mean: ($g_instr | map(run_tokens_cache_write) | map(select(. != null)) | avgOrNull),
+          reasoning_mean: ($g_instr | map(run_tokens_reasoning) | map(select(. != null)) | avgOrNull),
+          cache_read_pct: (if ($cr_total + $cw_total) > 0 then ($cr_total / ($cr_total + $cw_total) * 100) else null end),
+          estimated_cost_usd_mean: ($g_instr | map(run_estimated_cost_usd) | map(select(. != null)) | avgOrNull),
+          estimated_cost_n: ($g_instr | map(run_estimated_cost_usd) | map(select(. != null)) | length),
+          legacy_reported_cost_usd_mean: ($g_instr | map(run_legacy_reported_cost_usd) | map(select(. != null)) | avgOrNull),
           non_api_ms_mean: ($g_instr | map(run_non_api_ms) | avgOrNull)
         }
     )
@@ -270,9 +279,9 @@ def group_summary:
       wall_mean_instr_s: ($g_instr | map(._wall_s) | map(select(. != null)) | avgOrNull),
       pct_api: (if ($api_total + $non_api_total) > 0 then ($api_total / ($api_total + $non_api_total) * 100) else null end),
       turns_mean: ($g_instr | map(run_turns) | map(select(. != null)) | avgOrNull),
-       estimated_cost_usd_mean: ($g_instr | map(run_estimated_cost_usd) | map(select(. != null)) | avgOrNull),
-       estimated_cost_n: ($g_instr | map(run_estimated_cost_usd) | map(select(. != null)) | length),
-       legacy_reported_cost_usd_mean: ($g_instr | map(run_legacy_reported_cost_usd) | map(select(. != null)) | avgOrNull)
+      estimated_cost_usd_mean: ($g_instr | map(run_estimated_cost_usd) | map(select(. != null)) | avgOrNull),
+      estimated_cost_n: ($g_instr | map(run_estimated_cost_usd) | map(select(. != null)) | length),
+      legacy_reported_cost_usd_mean: ($g_instr | map(run_legacy_reported_cost_usd) | map(select(. != null)) | avgOrNull)
     };
 
 # version_sort_key -- orden semver NUMERICO por componente, no lexicografico
@@ -285,7 +294,7 @@ def delta_of(f; l):
   {
     first: f,
     last: l,
-    pct: (if (f // 0) == 0 then null else (((l // 0) - f) / f * 100) end)
+    pct: (if f == null or l == null or f == 0 then null else ((l - f) / f * 100) end)
   };
 
 (split("\n") | map(select(length > 0)) | map(try fromjson catch empty) | map(select(type == "object"))) as $raw
@@ -320,6 +329,8 @@ def delta_of(f; l):
 | ($instr | length) as $instr_n
 | ($instr | map(run_estimated_cost_usd) | map(select(. != null)) | length) as $estimated_cost_n
 | ($instr | map(run_legacy_reported_cost_usd) | map(select(. != null)) | length) as $legacy_cost_n
+| ($instr | map(select(run_estimated_cost_status == "completa")) | length) as $estimated_complete_n
+| ($instr | map(select(run_estimated_cost_status == "parcial")) | length) as $estimated_partial_n
 
 | ( ($instr | map(run_tool_calls_arr) | add) // [] ) as $tool_blocks
 | ($tool_blocks
@@ -352,6 +363,9 @@ def delta_of(f; l):
     api_ms: run_api_ms,
     non_api_ms: run_non_api_ms,
     tool_ms: run_tool_ms,
+    estimated_cost_usd: run_estimated_cost_usd,
+    estimated_cost_status: run_estimated_cost_status,
+    legacy_reported_cost_usd: run_legacy_reported_cost_usd,
     pct_api: (if (run_api_ms + run_non_api_ms) > 0 then (run_api_ms / (run_api_ms + run_non_api_ms) * 100) else null end),
     # harness_sha (issue #664) NO es eje de agrupacion -- casi cada corrida
     # tendria su propio grupo -- solo columna por-corrida, null si la linea no
@@ -401,6 +415,8 @@ def delta_of(f; l):
       legacy: $legacy_n,
       estimated_cost_runs: $estimated_cost_n,
       estimated_cost_missing_runs: ($instr_n - $estimated_cost_n),
+      estimated_cost_complete_runs: $estimated_complete_n,
+      estimated_cost_partial_runs: $estimated_partial_n,
       legacy_cost_runs: $legacy_cost_n,
       desde: (if $desde == "" then null else $desde end),
       oldest_started: ($entries | map(.started) | map(select(. != null)) | (sort | .[0])),
@@ -470,12 +486,14 @@ fmt_signed_pct() {
 
 render_header() {
     local agg="$1"
-    local desde total instr legacy estimated missing legacy_cost oldest newest
+    local desde total instr legacy estimated complete partial missing legacy_cost oldest newest
     desde=$(jq -r '.meta.desde // "(todo el historico)"' <<<"$agg")
     total=$(jq -r '.meta.total' <<<"$agg")
     instr=$(jq -r '.meta.instrumented' <<<"$agg")
     legacy=$(jq -r '.meta.legacy' <<<"$agg")
     estimated=$(jq -r '.meta.estimated_cost_runs' <<<"$agg")
+    complete=$(jq -r '.meta.estimated_cost_complete_runs' <<<"$agg")
+    partial=$(jq -r '.meta.estimated_cost_partial_runs' <<<"$agg")
     missing=$(jq -r '.meta.estimated_cost_missing_runs' <<<"$agg")
     legacy_cost=$(jq -r '.meta.legacy_cost_runs' <<<"$agg")
     oldest=$(jq -r '.meta.oldest_started // "-"' <<<"$agg")
@@ -486,7 +504,8 @@ render_header() {
     echo "$RULE_MAJOR"
     echo "Filtro --desde: $desde"
     echo "Corridas mefisto-tooling en la ventana: $total (instrumentadas: $instr, sin instrumentar: $legacy)"
-    echo "Costo estimado comparable: $estimated corridas; sin estimacion: $missing; costo reportado legado: $legacy_cost"
+    echo "Costo estimado con valor: $estimated corridas (completas: $complete, parciales: $partial); sin estimacion: $missing"
+    echo "Costo reportado legado: $legacy_cost corridas (separado; excluido de estimados)"
     if [ "$total" -gt 0 ]; then
         echo "Rango: $oldest -> $newest"
     fi
@@ -552,13 +571,15 @@ render_wallclock() {
 
     echo ""
     echo "Por corrida:"
-    printf '%-8s %-17s %-11s %8s %8s %8s %8s %7s %9s\n' "Issue" "Inicio" "Estado" "Wall" "API" "No-API" "Tools" "%API" "SHA"
-    while IFS=$'\t' read -r issue started state wall_s run_api run_non_api run_tool pct_a sha; do
-        printf '#%-7s %-17s %-11s %8s %8s %8s %8s %7s %9s\n' \
+    printf '%-8s %-17s %-11s %8s %8s %8s %8s %7s %10s %-14s %10s %9s\n' \
+        "Issue" "Inicio" "Estado" "Wall" "API" "No-API" "Tools" "%API" "Costo est." "Cobertura est." "Costo leg." "SHA"
+    while IFS=$'\t' read -r issue started state wall_s run_api run_non_api run_tool pct_a estimated_cost estimated_status legacy_cost sha; do
+        printf '#%-7s %-17s %-11s %8s %8s %8s %8s %7s %10s %-14s %10s %9s\n' \
             "$issue" "$(_txt "$started")" "$(_txt "$state")" \
             "$(_secs0 "$wall_s")" "$(_secs "$run_api")" "$(_secs "$run_non_api")" \
-            "$(_secs "$run_tool")" "$(fmt_pct "$pct_a")" "$(_txt "$sha")"
-    done < <(jq -r "$JQ_ROW"'.wallclock.per_run[] | [.issue, .started, .state, .wall_s, (.api_ms/1000), (.non_api_ms/1000), (.tool_ms/1000), .pct_api, .harness_sha] | row' <<<"$agg")
+            "$(_secs "$run_tool")" "$(fmt_pct "$pct_a")" "$(_money "$estimated_cost")" \
+            "$estimated_status" "$(_money "$legacy_cost")" "$(_txt "$sha")"
+    done < <(jq -r "$JQ_ROW"'.wallclock.per_run[] | [.issue, .started, .state, .wall_s, (.api_ms/1000), (.non_api_ms/1000), (.tool_ms/1000), .pct_api, .estimated_cost_usd, .estimated_cost_status, .legacy_reported_cost_usd, .harness_sha] | row' <<<"$agg")
 
     echo ""
     echo "Writer vs Reviewer:"
@@ -648,16 +669,17 @@ render_period_table() {
     echo "n(t/i) = corridas totales / de ellas instrumentadas. El wall usa las"
     echo "totales; turnos, tools y tokens solo las instrumentadas."
     echo ""
-    printf '%-10s %-8s %9s %9s %7s %7s %8s %8s %8s %8s %8s %7s\n' \
-        "Periodo" "n(t/i)" "WallMedia" "WallP50" "Turnos" "Tools" "Tok.in" "Tok.out" "Cache.rd" "Cache.wr" "Reason" "%rd"
-    while IFS=$'\t' read -r period n_total n_instr wall_mean wall_median turns tools tin tout crd cwr reasoning cache_pct; do
+    printf '%-10s %-8s %9s %9s %7s %7s %8s %8s %8s %8s %8s %7s %8s %10s %10s\n' \
+        "Periodo" "n(t/i)" "WallMedia" "WallP50" "Turnos" "Tools" "Tok.in" "Tok.out" "Cache.rd" "Cache.wr" "Reason" "%rd" "n(est)" "Costo est." "Costo leg."
+    while IFS=$'\t' read -r period n_total n_instr wall_mean wall_median turns tools tin tout crd cwr reasoning cache_pct estimated_n estimated_mean legacy_mean; do
         local cache_disp
         if [ "$cache_pct" = "null" ]; then cache_disp="-"; else cache_disp=$(printf '%.1f%%' "$cache_pct"); fi
-        printf '%-10s %-8s %9s %9s %7s %7s %8s %8s %8s %8s %8s %7s\n' \
+        printf '%-10s %-8s %9s %9s %7s %7s %8s %8s %8s %8s %8s %7s %8s %10s %10s\n' \
             "$period" "${n_total}/${n_instr}" "$(fmt_dur_s "$wall_mean")" "$(fmt_dur_s "$wall_median")" \
             "$(_num1 "$turns")" "$(_num1 "$tools")" "$(_numk "$tin")" "$(_numk "$tout")" \
-            "$(_numk "$crd")" "$(_numk "$cwr")" "$(_numk "$reasoning")" "$cache_disp"
-    done < <(jq -r "$JQ_ROW ${path}[] | [.period, .n_total, .n_instrumented, .wall_mean_s, .wall_median_s, .turns_mean, .tool_calls_mean, .tokens_input_mean, .tokens_output_mean, .cache_read_mean, .cache_write_mean, .reasoning_mean, .cache_read_pct] | row" <<<"$agg")
+            "$(_numk "$crd")" "$(_numk "$cwr")" "$(_numk "$reasoning")" "$cache_disp" \
+            "${estimated_n}/${n_instr}" "$(_money "$estimated_mean")" "$(_money "$legacy_mean")"
+    done < <(jq -r "$JQ_ROW ${path}[] | [.period, .n_total, .n_instrumented, .wall_mean_s, .wall_median_s, .turns_mean, .tool_calls_mean, .tokens_input_mean, .tokens_output_mean, .cache_read_mean, .cache_write_mean, .reasoning_mean, .cache_read_pct, .estimated_cost_n, .estimated_cost_usd_mean, .legacy_reported_cost_usd_mean] | row" <<<"$agg")
     echo ""
     echo "%rd = cache_read / (cache_read + cache_write): cae cuando el contexto"
     echo "      deja de acertar en cache."
@@ -682,7 +704,10 @@ render_comparison() {
     fn=$(jq -r '.comparison.first.n_instrumented' <<<"$agg")
     lp=$(jq -r '.comparison.last.period' <<<"$agg")
     ln=$(jq -r '.comparison.last.n_instrumented' <<<"$agg")
-    echo "Comparando $fp (n=$fn) vs $lp (n=$ln):"
+    local fen len
+    fen=$(jq -r '.comparison.first.estimated_cost_n' <<<"$agg")
+    len=$(jq -r '.comparison.last.estimated_cost_n' <<<"$agg")
+    echo "Comparando $fp (n=$fn; costo estimado=$fen/$fn) vs $lp (n=$ln; costo estimado=$len/$ln):"
     echo "Todas las filas, el wall incluido, se calculan solo sobre esas corridas"
     echo "instrumentadas -- si no compartieran denominador la atribucion no valdria."
     echo ""
