@@ -95,11 +95,40 @@ LAST_AGENT_DENIALS=0
 CURRENT_STAGE="setup"
 HOLD_CAUSE_JSON="null" HOLD_NEXT_PROBE_JSON="null" HOLD_CEILING_JSON="null" HOLD_TOTAL=0
 PIPELINE_TMP_DIR=""
+PIPELINE_FAILURE_RECORDED=false
 
 cleanup_pipeline_temporaries() {
     [ -z "$PIPELINE_TMP_DIR" ] || rm -rf "$PIPELINE_TMP_DIR" 2>/dev/null || true
 }
-trap cleanup_pipeline_temporaries EXIT
+
+record_failed_history() {
+    jq -cn --arg issue "${ISSUE_NUM:-}" --arg title "${ISSUE_TITLE:-}" --argjson variant "${VARIANT_LABEL_JSON:-null}" \
+        --argjson identity "$HARNESS_IDENTITY_JSON" --arg runtime "${MEFISTO_RUNTIME_RESUELTO:-}" --arg started "${TIMESTAMP:-}" --arg finished "$(date +%Y-%m-%dT%H:%M:%S)" \
+        --arg stage "$CURRENT_STAGE" --arg error "$PIPELINE_ERROR" --argjson writer "$AGENT_WR_METRICS" --argjson reviewer "$AGENT_RV_METRICS" \
+        '{issue:$issue,title:$title,pipeline:"tooling",variant:$variant,identity:$identity,runtime:(if $runtime == "" then null else $runtime end),started:$started,finished:$finished,state:"failed",stage:$stage,error:$error,agents:{writer:{metrics:$writer},reviewer:{metrics:$reviewer}}}' \
+        >> "$HISTORY_FILE" 2>/dev/null || true
+}
+
+finalize_pipeline_exit() {
+    local exit_code=$? status_file
+    trap - EXIT
+    set +e
+
+    # `abort()` ya dejo evidencia especifica. Solo reconciliamos una terminacion
+    # no controlada que alcanzo a publicar un estado que /work-status considera activo.
+    status_file="${MEFISTO_STATE_DIR:-}/$STATUS_FILENAME"
+    if [ "$exit_code" -ne 0 ] && [ "$PIPELINE_FAILURE_RECORDED" != true ] \
+       && [ -n "${PIPELINE_DIR_ABS:-}" ] && [ -f "$status_file" ] \
+       && jq -e '.state == "running" or .state == "hold"' "$status_file" >/dev/null 2>&1; then
+        PIPELINE_ERROR="Terminacion no controlada (exit code: $exit_code)"
+        update_status "$CURRENT_STAGE" "failed" >/dev/null 2>&1 || true
+        record_failed_history
+    fi
+
+    cleanup_pipeline_temporaries
+    exit "$exit_code"
+}
+trap finalize_pipeline_exit EXIT
 
 _strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
 _log_file()   { echo -e "$1" | _strip_ansi >> "${LOG_FILE_ABS:-$LOG_FILE}"; }
@@ -147,12 +176,9 @@ abort() {
         echo -e "${YELLOW}Para inspeccionar: cd $WORKTREE_PATH${NC}"
     fi
     if [ -n "${PIPELINE_DIR_ABS:-}" ]; then
+        PIPELINE_FAILURE_RECORDED=true
         update_status "$CURRENT_STAGE" "failed"
-        jq -cn --arg issue "${ISSUE_NUM:-}" --arg title "${ISSUE_TITLE:-}" --argjson variant "${VARIANT_LABEL_JSON:-null}" \
-            --argjson identity "$HARNESS_IDENTITY_JSON" --arg runtime "${MEFISTO_RUNTIME_RESUELTO:-}" --arg started "${TIMESTAMP:-}" --arg finished "$(date +%Y-%m-%dT%H:%M:%S)" \
-            --arg stage "$CURRENT_STAGE" --arg error "$PIPELINE_ERROR" --argjson writer "$AGENT_WR_METRICS" --argjson reviewer "$AGENT_RV_METRICS" \
-            '{issue:$issue,title:$title,pipeline:"tooling",variant:$variant,identity:$identity,runtime:(if $runtime == "" then null else $runtime end),started:$started,finished:$finished,state:"failed",stage:$stage,error:$error,agents:{writer:{metrics:$writer},reviewer:{metrics:$reviewer}}}' \
-            >> "$HISTORY_FILE" 2>/dev/null || true
+        record_failed_history
     fi
     exit 1
 }
