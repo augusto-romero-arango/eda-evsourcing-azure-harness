@@ -86,7 +86,6 @@ runtime_opencode_default_model() {
 # validada, propia de Mefisto, sin consultar el estado ni las credenciales de
 # OpenCode (MEF-ADR-0054 secciones 3 y 4). La integracion que traduce pasos y
 # calcula el importe consume la ruta global que deja esta preparacion.
-RUNTIME_OPENCODE_PRICING_URL="https://models.opencode.ai/api.json"
 MEFISTO_OPENCODE_PRICING_CATALOG=""
 
 runtime_opencode_pricing_cache_is_valid() {
@@ -112,6 +111,30 @@ runtime_opencode_pricing_cache_is_valid() {
     ' "$cache" >/dev/null 2>&1
 }
 
+runtime_opencode_pricing_mark_attempt() {
+    local cache_dir="$1" attempt_file="$2" today="$3" marker_tmp=""
+    marker_tmp="$(mktemp "$cache_dir/.attempted-utc.XXXXXX" 2>/dev/null)" || return 1
+    if printf '%s\n' "$today" > "$marker_tmp" && mv "$marker_tmp" "$attempt_file"; then
+        return 0
+    fi
+    rm -f "$marker_tmp" 2>/dev/null || true
+    return 1
+}
+
+runtime_opencode_pricing_emit_cache() {
+    local cache_file="$1" today="$2"
+    if runtime_opencode_pricing_cache_is_valid "$cache_file"; then
+        MEFISTO_OPENCODE_PRICING_CATALOG="$cache_file"
+        printf '%s\n' "$cache_file"
+        if [ "$(jq -r '.validated_utc' "$cache_file" 2>/dev/null)" != "$today" ]; then
+            echo "AVISO: se usa una cache de tarifas de OpenCode desactualizada." >&2
+        fi
+    else
+        echo "AVISO: el catalogo de tarifas de OpenCode no esta disponible; se omite la estimacion." >&2
+    fi
+    return 0
+}
+
 # runtime_opencode_prepare_pricing
 #
 # Imprime la ruta de la ultima cache valida (o nada si no existe) y retorna
@@ -121,7 +144,7 @@ runtime_opencode_prepare_pricing() {
     MEFISTO_OPENCODE_PRICING_CATALOG=""
     [ -n "${MEFISTO_STATE_DIR:-}" ] || return 0
 
-    local cache_dir cache_file attempt_file lock_dir today tmp fetched=false lock_owned=false
+    local cache_dir cache_file attempt_file lock_dir today tmp="" normalized="" lock_owned=false
     cache_dir="$MEFISTO_STATE_DIR/cache/model-pricing"
     cache_file="$cache_dir/catalog.json"
     attempt_file="$cache_dir/attempted-utc"
@@ -152,13 +175,8 @@ runtime_opencode_prepare_pricing() {
         if mkdir "$lock_dir" 2>/dev/null; then
             lock_owned=true
         else
-            if runtime_opencode_pricing_cache_is_valid "$cache_file"; then
-                MEFISTO_OPENCODE_PRICING_CATALOG="$cache_file"
-                printf '%s\n' "$cache_file"
-            else
-                echo "AVISO: el catalogo de tarifas de OpenCode no esta disponible; se omite la estimacion." >&2
-            fi
-            return 0
+            runtime_opencode_pricing_emit_cache "$cache_file" "$today"
+            return $?
         fi
     fi
 
@@ -168,57 +186,54 @@ runtime_opencode_prepare_pricing() {
         :
     elif runtime_opencode_pricing_cache_is_valid "$cache_file" \
         && [ "$(jq -r '.validated_utc' "$cache_file" 2>/dev/null)" = "$today" ]; then
-        : > "$attempt_file"
-        printf '%s\n' "$today" > "$attempt_file"
-    else
-        printf '%s\n' "$today" > "$attempt_file"
+        runtime_opencode_pricing_mark_attempt "$cache_dir" "$attempt_file" "$today" || true
+    elif runtime_opencode_pricing_mark_attempt "$cache_dir" "$attempt_file" "$today"; then
         tmp="$(mktemp "$cache_dir/.catalog.XXXXXX" 2>/dev/null)"
+        if [ -n "$tmp" ]; then
+            normalized="$tmp.normalized"
+        fi
         if [ -n "$tmp" ] && command -v curl >/dev/null 2>&1 \
-            && curl --fail --silent --show-error --location "$RUNTIME_OPENCODE_PRICING_URL" > "$tmp" 2>/dev/null \
+            && curl --fail --silent --show-error --location --connect-timeout 5 --max-time 15 \
+                "https://models.opencode.ai/api.json" > "$tmp" 2>/dev/null \
             && jq -e --arg day "$today" '
                 def price: type == "number" and isfinite and . >= 0;
-                def cost: .cost // {};
-                def tier_cost: (.cost // .);
+                def price_set: type == "object" and (.input | price) and (.output | price)
+                  and (.cache_read | price) and (.cache_write | price);
                 {
                   schema: 1, source_url: "https://models.opencode.ai/api.json", validated_utc: $day,
                   models: [
-                    .providers | to_entries[] as $provider
-                    | $provider.value.models | to_entries[] as $model
-                    | ($model.value.cost // {}) as $base
+                    to_entries[] as $provider
+                    | select($provider.key | type == "string" and length > 0 and (contains("/") | not))
+                    | ($provider.value.models // {}) | to_entries[] as $model
+                    | select($model.key | type == "string" and length > 0)
+                    | ($model.value.cost // null) as $base
+                    | [($base.tiers // [])[]
+                        | {context: .tier.size, input, output, cache_read, cache_write}] as $tiers
+                    | select($base | price_set)
+                    | select(($model.value.limit.context // null) as $context
+                        | ($context == null or ($context | price)))
+                    | select(all($tiers[]; (.context | price) and price_set))
                     | {
                         key: ($provider.key + "/" + $model.key),
                         value: {
                           input: $base.input, output: $base.output,
                           cache_read: $base.cache_read, cache_write: $base.cache_write,
                           context: ($model.value.limit.context // null),
-                          tiers: [($base.tiers // $model.value.tiers // [])[]
-                            | . as $tier_entry | ($tier_entry.cost // $tier_entry) as $tier
-                            | {context: ($tier_entry.context // $tier_entry.limit.context), input: $tier.input,
-                               output: $tier.output, cache_read: $tier.cache_read,
-                               cache_write: $tier.cache_write}]
+                          tiers: $tiers
                         }
                       }
                   ] | from_entries
                 }
-            ' "$tmp" > "$tmp.normalized" 2>/dev/null \
-            && runtime_opencode_pricing_cache_is_valid "$tmp.normalized"; then
-            mv "$tmp.normalized" "$cache_file"
-            fetched=true
+            ' "$tmp" > "$normalized" 2>/dev/null \
+            && runtime_opencode_pricing_cache_is_valid "$normalized"; then
+            mv "$normalized" "$cache_file" 2>/dev/null || true
         fi
-        rm -f "$tmp" "$tmp.normalized" 2>/dev/null || true
+        rm -f "$tmp" "$normalized" 2>/dev/null || true
     fi
     rmdir "$lock_dir" 2>/dev/null || true
 
-    if runtime_opencode_pricing_cache_is_valid "$cache_file"; then
-        MEFISTO_OPENCODE_PRICING_CATALOG="$cache_file"
-        printf '%s\n' "$cache_file"
-        if [ "$(jq -r '.validated_utc' "$cache_file" 2>/dev/null)" != "$today" ]; then
-            echo "AVISO: se usa una cache de tarifas de OpenCode desactualizada." >&2
-        fi
-    else
-        echo "AVISO: el catalogo de tarifas de OpenCode no esta disponible; se omite la estimacion." >&2
-    fi
-    return 0
+    runtime_opencode_pricing_emit_cache "$cache_file" "$today"
+    return $?
 }
 
 # --- runtime_opencode_build_cmd ---------------------------------------------

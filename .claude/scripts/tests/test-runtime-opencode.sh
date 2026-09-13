@@ -54,6 +54,9 @@
 #       linea capturada), modelo opaco con "/" y espacios, y prefijo de
 #       --system-file presente al inicio del mensaje. Cada caso valida el
 #       JSONL contra run-events.schema.json y exactamente un terminal.
+#   [G] CA #1322: cache diaria de Models.dev con forma real, refresh acotado,
+#       validacion, fallback stale, marca de intento y lock concurrente; curl
+#       y la fecha UTC son stubs, por lo que la suite nunca consulta Internet.
 #
 # Uso: .claude/scripts/tests/test-runtime-opencode.sh
 # Exit code: 0 si todos los checks pasan, 1 si alguno falla.
@@ -807,15 +810,18 @@ PRICING_STATE="$TMP/pricing-state"
 PRICING_CALLS="$TMP/pricing-calls"
 PRICING_PAYLOAD="$TMP/pricing-payload.json"
 cat > "$PRICING_PAYLOAD" <<'EOF'
-{"providers":{"openai":{"models":{"gpt-test":{"cost":{"input":1,"output":2,"cache_read":0.1,"cache_write":0.2,"tiers":[{"context":100000,"input":3,"output":4,"cache_read":0.3,"cache_write":0.4}]},"limit":{"context":200000}}}}}}
+{"openai":{"id":"openai","models":{"gpt-test":{"id":"gpt-test","cost":{"input":1,"output":2,"cache_read":0.1,"cache_write":0.2,"tiers":[{"tier":{"type":"context","size":100000},"input":3,"output":4,"cache_read":0.3,"cache_write":0.4}]},"limit":{"context":200000}},"sin-cache":{"id":"sin-cache","cost":{"input":1,"output":2},"limit":{"context":1000}}}}}
 EOF
 cat > "$PRICING_BIN/curl" <<'EOF'
 #!/usr/bin/env bash
 printf 'x\n' >> "$MEFISTO_TEST_CURL_CALLS"
+printf '%s\n' "$*" >> "$MEFISTO_TEST_CURL_ARGS"
+[ -z "${MEFISTO_TEST_CURL_DELAY:-}" ] || sleep "$MEFISTO_TEST_CURL_DELAY"
 case "${MEFISTO_TEST_CURL_MODE:-ok}" in
     ok) cat "$MEFISTO_TEST_CURL_PAYLOAD" ;;
     invalid) printf '{truncado' ;;
-    incomplete) printf '{"providers":{"openai":{"models":{"sin-costos":{}}}}}' ;;
+    incomplete) printf '{"openai":{"models":{"sin-costos":{}}}}' ;;
+    negative) printf '{"openai":{"models":{"negativo":{"cost":{"input":-1,"output":2,"cache_read":0.1,"cache_write":0.2}}}}}' ;;
     fail) exit 22 ;;
 esac
 EOF
@@ -827,11 +833,15 @@ chmod +x "$PRICING_BIN/curl" "$PRICING_BIN/date"
 prepare_pricing() {
     PATH="$PRICING_BIN:$ORIG_PATH" MEFISTO_STATE_DIR="$PRICING_STATE" \
         MEFISTO_TEST_CURL_CALLS="$PRICING_CALLS" MEFISTO_TEST_CURL_PAYLOAD="$PRICING_PAYLOAD" \
+        MEFISTO_TEST_CURL_ARGS="$TMP/pricing-curl-args" \
         MEFISTO_TEST_UTC_DAY="$1" MEFISTO_TEST_CURL_MODE="$2" runtime_opencode_prepare_pricing
 }
 G_PATH="$(prepare_pricing 2026-09-13 ok)"
 if [ -f "$G_PATH" ] && [ "$(wc -l < "$PRICING_CALLS" | tr -d ' ')" = "1" ] \
-    && jq -e '.models["openai/gpt-test"].tiers[0].context == 100000' "$G_PATH" >/dev/null 2>&1; then
+    && jq -e '.models["openai/gpt-test"] == {input:1, output:2, cache_read:0.1, cache_write:0.2, context:200000, tiers:[{context:100000, input:3, output:4, cache_read:0.3, cache_write:0.4}]}
+        and (.models | has("openai/sin-cache") | not)' "$G_PATH" >/dev/null 2>&1 \
+    && grep -q -- '--connect-timeout 5 --max-time 15 https://models.opencode.ai/api.json' "$TMP/pricing-curl-args" \
+    && ! grep -Eq -- '(^| )(-H|--header)( |$)' "$TMP/pricing-curl-args"; then
     pass "G-1: primer fetch normaliza IDs, costos y tiers en la cache propia"
 else fail "G-1: primer fetch no dejo la cache normalizada esperada"; fi
 prepare_pricing 2026-09-13 ok >/dev/null
@@ -842,21 +852,24 @@ G_BEFORE="$(cat "$G_PATH")"; prepare_pricing 2026-09-15 invalid >/dev/null
 if [ "$(cat "$G_PATH")" = "$G_BEFORE" ]; then pass "G-4: payload invalido no reemplaza cache valida"; else fail "G-4: payload invalido reemplazo cache"; fi
 prepare_pricing 2026-09-16 incomplete >/dev/null
 if [ "$(cat "$G_PATH")" = "$G_BEFORE" ]; then pass "G-4b: forma incompleta no reemplaza cache valida"; else fail "G-4b: forma incompleta reemplazo cache"; fi
-G_STALE="$(prepare_pricing 2026-09-17 fail 2>"$TMP/g-stale.err")"
+prepare_pricing 2026-09-17 negative >/dev/null
+if [ "$(cat "$G_PATH")" = "$G_BEFORE" ]; then pass "G-4c: precio negativo no reemplaza cache valida"; else fail "G-4c: precio negativo reemplazo cache"; fi
+G_STALE="$(prepare_pricing 2026-09-18 fail 2>"$TMP/g-stale.err")"
 G_CALLS_AFTER_STALE="$(wc -l < "$PRICING_CALLS" | tr -d ' ')"
-prepare_pricing 2026-09-17 fail >/dev/null
+prepare_pricing 2026-09-18 fail >/dev/null
 if [ "$G_STALE" = "$G_PATH" ] && grep -q 'desactualizada' "$TMP/g-stale.err" \
     && [ "$(wc -l < "$PRICING_CALLS" | tr -d ' ')" = "$G_CALLS_AFTER_STALE" ]; then pass "G-5: fallo de red usa cache stale, avisa y queda marcado por dia"; else fail "G-5: fallo con cache stale no degrado correctamente"; fi
 G_EMPTY_STATE="$TMP/pricing-empty"
-G_EMPTY="$(PATH="$PRICING_BIN:$ORIG_PATH" MEFISTO_STATE_DIR="$G_EMPTY_STATE" MEFISTO_TEST_CURL_CALLS="$PRICING_CALLS" MEFISTO_TEST_CURL_PAYLOAD="$PRICING_PAYLOAD" MEFISTO_TEST_UTC_DAY=2026-09-17 MEFISTO_TEST_CURL_MODE=fail runtime_opencode_prepare_pricing 2>"$TMP/g-empty.err")"
+G_EMPTY="$(PATH="$PRICING_BIN:$ORIG_PATH" MEFISTO_STATE_DIR="$G_EMPTY_STATE" MEFISTO_TEST_CURL_CALLS="$PRICING_CALLS" MEFISTO_TEST_CURL_ARGS="$TMP/pricing-curl-args" MEFISTO_TEST_CURL_PAYLOAD="$PRICING_PAYLOAD" MEFISTO_TEST_UTC_DAY=2026-09-18 MEFISTO_TEST_CURL_MODE=fail runtime_opencode_prepare_pricing 2>"$TMP/g-empty.err")"
 if [ -z "$G_EMPTY" ] && grep -q 'no esta disponible' "$TMP/g-empty.err"; then pass "G-6: fallo sin cache retorna 0, ruta vacia y aviso"; else fail "G-6: fallo sin cache no degrado correctamente"; fi
 rm -rf "$PRICING_STATE"; : > "$PRICING_CALLS"
-(prepare_pricing 2026-09-18 ok >/dev/null) & G_PID_1=$!
-(prepare_pricing 2026-09-18 ok >/dev/null) & G_PID_2=$!
+(MEFISTO_TEST_CURL_DELAY=0.2 prepare_pricing 2026-09-19 ok >/dev/null) & G_PID_1=$!
+(MEFISTO_TEST_CURL_DELAY=0.2 prepare_pricing 2026-09-19 ok >/dev/null) & G_PID_2=$!
 wait "$G_PID_1"; wait "$G_PID_2"
 if [ "$(wc -l < "$PRICING_CALLS" | tr -d ' ')" = "1" ] && runtime_opencode_pricing_cache_is_valid "$PRICING_STATE/cache/model-pricing/catalog.json"; then pass "G-7: concurrencia usa lock y deja una cache valida"; else fail "G-7: concurrencia consulto mas de una vez o corrompio cache"; fi
-G_NO_STATE="$TMP/pricing-no-state"; rm -rf "$G_NO_STATE"
-if env -u MEFISTO_STATE_DIR bash -c 'source "$1"; runtime_opencode_prepare_pricing' _ "$OPENCODE_LIB" >/dev/null 2>&1 && [ ! -e "$G_NO_STATE" ]; then pass "G-8: sin state dir degrada sin escribir cache"; else fail "G-8: sin state dir no degrado limpiamente"; fi
+G_NO_STATE="$TMP/pricing-no-state"; mkdir -p "$G_NO_STATE"
+if (cd "$G_NO_STATE" && env -u MEFISTO_STATE_DIR bash -c 'source "$1"; runtime_opencode_prepare_pricing' _ "$OPENCODE_LIB" >/dev/null 2>&1) \
+    && [ -z "$(ls -A "$G_NO_STATE")" ]; then pass "G-8: sin state dir degrada sin escribir fuera del cwd"; else fail "G-8: sin state dir no degrado limpiamente"; fi
 
 echo ""
 echo "----------------------------------------"
