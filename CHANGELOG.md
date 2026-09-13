@@ -4,6 +4,13 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.37.15] - 2026-09-13
+
+### Fixed
+
+- Se evita que un marker canónico válido de OpenCode eclipse el mirror Claude al resolver comandos publicados.
+- Se corrige el preflight de Herdr para reconocer primero `.mefisto/harness.config.json` y conservar `.claude/harness.config.json` como fallback legacy.
+
 ## [0.37.14] - 2026-09-13
 
 ### Fixed
@@ -2457,7 +2464,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.14...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.15...HEAD
+[0.37.15]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.14...v0.37.15
 [0.37.14]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.13...v0.37.14
 [0.37.13]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.12...v0.37.13
 [0.37.12]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.11...v0.37.12
