@@ -255,6 +255,19 @@ find_worktree_path_for_branch() {
     '
 }
 
+# DOC_BRANCH checkouteada en el CHECKOUT PRINCIPAL es el unico estado previo
+# que no se reanuda: `git worktree list` lo incluye como un worktree mas, asi
+# que sin este corte el bloque de abajo lo tomaria por "el worktree de la
+# sesion" y escribiria, stagearia y commitearia dentro de el -- justo el
+# incidente que este script existe para impedir (CA-4). El trap lo detectaria
+# despues, pero ya con el commit hecho. Se aborta ANTES de tocar nada, y la
+# accion de recuperacion la ejecuta una persona: mover el checkout principal
+# fuera de la rama documental no es una decision que este pipeline pueda tomar
+# por su cuenta (puede haber trabajo sin commitear encima).
+if [ -n "$INITIAL_HEAD_REF" ] && [ "$INITIAL_HEAD_REF" = "$DOC_BRANCH" ]; then
+    recovery_abort "worktree" "La rama documental '$DOC_BRANCH' esta checkouteada en el CHECKOUT PRINCIPAL ('$MEFISTO_REPO_ROOT'); reanudar ahi violaria el aislamiento del checkout principal. Cambia ese checkout a su rama de trabajo habitual ('git -C $MEFISTO_REPO_ROOT switch <rama>', preservando lo que tengas sin commitear) y reintenta con los mismos --agent/--timestamp/--session-id."
+fi
+
 EXISTING_WT_PATH="$(find_worktree_path_for_branch "$DOC_BRANCH")"
 if [ -n "$EXISTING_WT_PATH" ] && [ ! -d "$EXISTING_WT_PATH" ]; then
     # git todavia registra el worktree pero su directorio ya no esta (borrado
@@ -335,18 +348,30 @@ fi
 HEAD_HAS_NOTE=0
 git -C "$WORKTREE_DIR" cat-file -e "HEAD:$FIELD_NOTE_REL" 2>/dev/null && HEAD_HAS_NOTE=1
 
+# HEAD_IS_BASE distingue "HEAD es el commit de field note de esta sesion" de
+# "HEAD es todavia la punta de la rama base". El segundo caso aparece cuando
+# una entrega previa de esta sesion se mergeo y su rama se borro en origin: el
+# worktree nace de origin/<default>, que YA trae la field note, y HEAD_HAS_NOTE
+# da 1 sin que exista ningun commit propio. Amendar ahi reescribiria un commit
+# ajeno de la rama base -- mensaje, autoria y arbol -- y el push lo publicaria
+# como si fuera la field note.
+HEAD_IS_BASE=0
+git -C "$WORKTREE_DIR" merge-base --is-ancestor HEAD "origin/$DEFAULT_BRANCH" 2>/dev/null && HEAD_IS_BASE=1
+
 if git -C "$WORKTREE_DIR" diff --cached --quiet -- "$FIELD_NOTE_REL"; then
     # Nada staged distinto de HEAD: si HEAD ya traia la nota, es un commit de
     # una entrega previa de esta misma sesion -- se reusa sin commitear de
     # nuevo. FIELD_NOTE_CONTENT ya se valido no vacio, asi que HEAD_HAS_NOTE=0
     # aqui no deberia ocurrir salvo un estado corrupto del worktree.
-    if [ "$HEAD_HAS_NOTE" -eq 1 ]; then
+    if [ "$HEAD_HAS_NOTE" -eq 1 ] && [ "$HEAD_IS_BASE" -eq 1 ]; then
+        echo "Commit ya existente reutilizado: '$FIELD_NOTE_REL' ya esta en '$DEFAULT_BRANCH' con este mismo contenido (entrega previa ya mergeada)"
+    elif [ "$HEAD_HAS_NOTE" -eq 1 ]; then
         echo "Commit ya existente de esta sesion reutilizado (contenido identico, no se creo uno nuevo)"
     else
         recovery_abort "commit" "El worktree en '$WORKTREE_DIR' quedo sin cambios staged pero HEAD tampoco tiene '$FIELD_NOTE_REL' -- estado inconsistente. Inspecciona 'git -C $WORKTREE_DIR log --oneline' y 'git -C $WORKTREE_DIR status' a mano antes de reintentar."
     fi
 else
-    if [ "$HEAD_HAS_NOTE" -eq 1 ]; then
+    if [ "$HEAD_HAS_NOTE" -eq 1 ] && [ "$HEAD_IS_BASE" -eq 0 ]; then
         git -C "$WORKTREE_DIR" commit --amend --no-edit \
             || recovery_abort "commit" "'git commit --amend' fallo en '$WORKTREE_DIR' al actualizar el contenido de la field note de una entrega previa; revisa 'git -C $WORKTREE_DIR status' (el commit anterior sigue intacto) y reintenta."
         echo "Commit existente de esta sesion actualizado via --amend (el contenido de la field note cambio respecto al intento anterior)"

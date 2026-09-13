@@ -38,6 +38,14 @@
 #         ('gh pr create' con exit 1). Cada uno verifica exit != 0, mensaje
 #         con el checkpoint confirmado y una accion concreta, y que el
 #         checkout principal (CA-4) sigue intacto pese al abort.
+#   [I]   La rama documental quedo checkouteada en el CHECKOUT PRINCIPAL por
+#         un incidente previo (git la lista como un worktree mas): el script
+#         aborta antes de escribir nada ahi, en vez de reanudar la entrega
+#         dentro del checkout principal (CA-4).
+#   [J]   La field note ya esta en la rama base (entrega previa mergeada, rama
+#         borrada en origin) y el contenido cambio: el commit base NO se
+#         amenda -- sobrevive como ancestro, con su mensaje intacto, y la
+#         nota nueva va en un commit propio encima (CA-1).
 #
 # Uso: .claude/scripts/tests/test-mefisto-field-note.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -929,6 +937,109 @@ else
     fail "H6 (creacion-pr rota): stderr inesperado: $(cat "$TMP/h6-stderr")"
 fi
 assert_main_untouched "H6" "$REPO_MAIN" "$REF_H6" "$SHA_H6" "$STATUS_H6"
+
+# -------- Bloque I: rama documental checkouteada en el principal (CA-4) -----
+
+echo ""
+echo "[I] La rama documental esta checkouteada en el checkout principal: aborta sin escribir ahi"
+
+new_repo "i"
+AGENT_I="mefisto-planner"
+TIMESTAMP_I="2026-09-13-2100"
+SESSION_ID_I="2026-09-13-2100-01-inmain-66666"
+DOC_BRANCH_I="docs/${AGENT_I}-field-note-${SESSION_ID_I}"
+FIELD_NOTE_REL_I="docs/bitacora/field-notes/${TIMESTAMP_I}-${AGENT_I}.md"
+
+# Reproduce el incidente que este script existe para impedir: una corrida
+# anterior dejo la rama documental checkouteada en el propio checkout
+# principal. 'git worktree list' la reporta como un worktree mas, asi que sin
+# el corte explicito el script la tomaria por "el worktree de la sesion".
+git -C "$REPO_MAIN" switch -q -c "$DOC_BRANCH_I"
+REF_I=$(git -C "$REPO_MAIN" symbolic-ref -q --short HEAD)
+SHA_I=$(git -C "$REPO_MAIN" rev-parse HEAD)
+STATUS_I=$(git -C "$REPO_MAIN" status --porcelain=v1 --untracked-files=all)
+
+FAKE_BIN_I="$TMP/i/bin"
+write_pr_store_gh "$FAKE_BIN_I" "$TMP/i/gh-calls.log" "$TMP/i/pr-store.tsv"
+I_RC=$(run_field_note "$FAKE_BIN_I" "$AGENT_I" "$TIMESTAMP_I" "$SESSION_ID_I" "contenido i" "$TMP/i-stdout" "$TMP/i-stderr")
+
+if [ "$I_RC" -ne 0 ] && grep -qF "CHECKOUT PRINCIPAL" "$TMP/i-stderr" && grep -qF "Accion de recuperacion:" "$TMP/i-stderr"; then
+    pass "CA-4: aborta identificando que la rama documental esta en el checkout principal"
+else
+    fail "CA-4: se esperaba abort por rama documental en el checkout principal, rc=$I_RC, stderr=$(cat "$TMP/i-stderr")"
+fi
+
+if [ -e "$REPO_MAIN/$FIELD_NOTE_REL_I" ]; then
+    fail "CA-4: el script escribio la field note DENTRO del checkout principal"
+else
+    pass "CA-4: no se escribio ninguna field note en el checkout principal"
+fi
+
+assert_main_untouched "I" "$REPO_MAIN" "$REF_I" "$SHA_I" "$STATUS_I"
+
+# -------- Bloque J: la nota ya vive en la base y el contenido cambio --------
+
+echo ""
+echo "[J] Nota ya mergeada en la base y rama borrada en origin: no reescribe el commit base"
+
+new_repo "j"
+AGENT_J="mefisto-planner"
+TIMESTAMP_J="2026-09-13-2200"
+SESSION_ID_J="2026-09-13-2200-01-merged-77777"
+DOC_BRANCH_J="docs/${AGENT_J}-field-note-${SESSION_ID_J}"
+FIELD_NOTE_REL_J="docs/bitacora/field-notes/${TIMESTAMP_J}-${AGENT_J}.md"
+
+# Estado de partida: la entrega anterior de esta sesion ya se mergeo a main y
+# su rama documental se borro en origin. El worktree nuevo nace entonces de
+# origin/main, que YA trae la field note -- 'HEAD tiene la nota' deja de
+# implicar 'HEAD es un commit mio'. Si el script amendara ahi, reescribiria
+# este commit de main (mensaje, autoria y arbol ajenos) y lo publicaria como
+# si fuera la field note.
+mkdir -p "$(dirname "$REPO_MAIN/$FIELD_NOTE_REL_J")"
+printf '%s\n' "contenido j (version ya mergeada)" > "$REPO_MAIN/$FIELD_NOTE_REL_J"
+git -C "$REPO_MAIN" add -- "$FIELD_NOTE_REL_J"
+git -C "$REPO_MAIN" commit -q -m "docs(bitacora): merge previo de la field note"
+git -C "$REPO_MAIN" push -q origin main
+MAIN_TIP_J=$(git --git-dir="$REPO_BARE" rev-parse main)
+MAIN_SUBJECT_J=$(git --git-dir="$REPO_BARE" log -1 --format=%s main)
+
+FAKE_BIN_J="$TMP/j/bin"
+write_pr_store_gh "$FAKE_BIN_J" "$TMP/j/gh-calls.log" "$TMP/j/pr-store.tsv"
+J_RC=$(run_field_note "$FAKE_BIN_J" "$AGENT_J" "$TIMESTAMP_J" "$SESSION_ID_J" "contenido j (version corregida)" "$TMP/j-stdout" "$TMP/j-stderr")
+
+if [ "$J_RC" -eq 0 ]; then
+    pass "nota ya en la base con contenido nuevo: exit 0"
+else
+    fail "nota ya en la base: exit $J_RC. stdout=$(cat "$TMP/j-stdout") stderr=$(cat "$TMP/j-stderr")"
+fi
+
+if git --git-dir="$REPO_BARE" merge-base --is-ancestor "$MAIN_TIP_J" "$DOC_BRANCH_J" 2>/dev/null; then
+    pass "CA-1: el commit de la rama base sobrevive intacto como ancestro de '$DOC_BRANCH_J' (no fue amendado)"
+else
+    fail "CA-1: el commit base $MAIN_TIP_J fue reescrito: ya no es ancestro de '$DOC_BRANCH_J'"
+fi
+
+MAIN_SUBJECT_AFTER_J=$(git --git-dir="$REPO_BARE" log -1 --format=%s main)
+if [ "$MAIN_SUBJECT_AFTER_J" = "$MAIN_SUBJECT_J" ] && [ "$(git --git-dir="$REPO_BARE" rev-parse main)" = "$MAIN_TIP_J" ]; then
+    pass "CA-1: 'main' en origin quedo en el mismo commit y mensaje"
+else
+    fail "CA-1: 'main' en origin cambio tras la entrega"
+fi
+
+COUNT_DOC_J=$(git --git-dir="$REPO_BARE" rev-list --count "$DOC_BRANCH_J")
+COUNT_MAIN_J=$(git --git-dir="$REPO_BARE" rev-list --count main)
+if [ "$COUNT_DOC_J" -eq $((COUNT_MAIN_J + 1)) ]; then
+    pass "CA-1: '$DOC_BRANCH_J' agrega exactamente un commit sobre main"
+else
+    fail "CA-1: se esperaban $((COUNT_MAIN_J + 1)) commits en '$DOC_BRANCH_J', hay $COUNT_DOC_J"
+fi
+
+DOC_CONTENT_J=$(git --git-dir="$REPO_BARE" show "$DOC_BRANCH_J:$FIELD_NOTE_REL_J")
+if [ "$DOC_CONTENT_J" = "contenido j (version corregida)" ]; then
+    pass "CA-1: la rama documental entrega el contenido nuevo de la field note"
+else
+    fail "CA-1: contenido inesperado en la rama documental: '$DOC_CONTENT_J'"
+fi
 
 echo ""
 echo "----------------------------------------"
