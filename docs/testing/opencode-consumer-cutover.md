@@ -376,27 +376,34 @@ coincidencia autorreferencial.
 
 ### Estado de la corrida
 
-**Bloqueada antes de crear fixtures (2026-09-12T21:31:04Z).** El preflight de
-solo lectura confirma que ya existen el consumidor privado y una release
-posterior a `v0.37.0`, pero #1180 no conserva un expediente con veredicto `PASA`
-que certifique la instalacion, el discovery y la identidad `aligned` de esa
-misma release. El cierre administrativo de #1180 mediante un PR que agrego la
-plantilla del expediente no sustituye sus resultados operacionales:
+**Bloqueada para una repeticion verificable (consulta de solo lectura:
+2026-09-13T04:21:49Z).** La primera apertura real descubrio que Claude no
+resolvia su distribucion cuando el marker canonico habia sido escrito por
+OpenCode ([#1293](https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/issues/1293))
+y que Herdr emitia un warning falso ante el config canonico
+([#1294](https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/issues/1294)).
+Ambos bugs ya estan corregidos y la release
+[`v0.37.15`](https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/releases/tag/v0.37.15)
+los contiene. Tambien existen dos ejecuciones posteriores, pero su estado
+persistido no satisface todavia el expediente fail-closed:
 
-| Comando sanitizado | Resultado sanitizado |
+| Evidencia verificable | Resultado sanitizado |
 |---|---|
-| `gh issue view 1180 --json state,stateReason,closedAt,url,comments` | #1180 esta cerrado como `COMPLETED` desde `2026-09-12T21:26:40Z`; su ultimo comentario solo enlaza el PR documental #1267 y el protocolo aun registra la corrida de instalacion como bloqueada. No hay expediente #1180 con veredicto `PASA`. |
-| `gh repo view augusto-romero-arango/mefisto-consumer-certification --json isPrivate,defaultBranchRef,url` y consulta de `commits/main` | El repositorio es accesible y privado; `main` apunta a `7a580f7ce7576f51dc1ed1fa5891864d7be3a2e6`. Este dato no demuestra por si solo onboarding, instalaciones ni discovery certificados. |
-| `gh release view v0.37.11 --repo augusto-romero-arango/eda-evsourcing-azure-harness --json tagName,publishedAt,url,assets` | `v0.37.11` fue publicada con los dos assets OpenCode esperados. No se infiere desde su existencia que ambos runtimes la tengan instalada ni alineada. |
+| Issues fixture [#7 Claude](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/7) y [#8 OpenCode](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/8) | Ambos siguen abiertos y conservan los tres labels requeridos, pero sus templates fijan `v0.37.14`, commit fuente `e8f6043be71a0a9cf71d50bc027007a466c53cdb` y run `20260913-025357-0.37.14`; no documentan `v0.37.15`. |
+| PR [#10 Claude](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/10), commit `bca730f1e5d7e07a1c7a5abca355c9499206c328` | Sigue abierto y agrega solo `docs/testing/mefisto-certification/20260913-025357-0.37.14-claude.md`, con cinco lineas. GitHub no reporta checks asociados. |
+| PR [#9 OpenCode](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/9), commit `6a1996da25eedd7dd014a9f1f6b944e87235e994` | Sigue abierto y agrega solo `docs/testing/mefisto-certification/20260913-025357-0.37.14-opencode.md`, con cinco lineas. GitHub no reporta checks asociados. |
+| Baseline `main` del consumidor | Permanece en `7a580f7ce7576f51dc1ed1fa5891864d7be3a2e6`, pero los dos PRs, issues y branches remotos continuan abiertos; por ello no esta demostrada la limpieza de CA-6. |
+| Resumenes preservados en los PRs | Prueban que writer y reviewer terminaron y que cada cambio se limito a su fixture. No conservan la matriz exigida por CA-5 con runtime, agente, perfil, modelo solicitado/efectivo, herencia, session id, version y commit fuente por stage, ni hashes/conteos de centinelas del resto de artefactos. |
 
-Por ello no se crearon issues o PRs fixture, no se abrio Herdr y no se invoco
-`/mefisto:tooling`. Hacerlo antes de ejecutar y conservar el preflight completo
-de #1180 inventaria la evidencia que MEF-ADR-0031 y MEF-ADR-0053 exigen obtener
-de operaciones reales. Este bloqueo de prerrequisito no demuestra un fallo de
-runtime y **no satisface #1181**. Primero se debe repetir #1180 sobre una release
-candidata concreta hasta obtener `PASA`; despues se repite desde el inicio el
-procedimiento de esta seccion y se sustituye este bloque por la evidencia
-redactada y el veredicto de las dos corridas.
+La declaracion operacional de que ambas filas usaron `v0.37.15` no puede
+reconciliarse con los templates y archivos `v0.37.14`; tampoco sustituye checks,
+observabilidad ni limpieza verificables. Conforme a MEF-ADR-0031 y
+MEF-ADR-0053, no se infiere `PASA` desde una confirmacion narrativa. Se deben
+cerrar y limpiar estos fixtures parciales y repetir **las dos** corridas desde
+el inicio, con un run nuevo cuyos templates identifiquen la misma release
+corregida que ejecutan. El reporte final reemplaza este bloque solo cuando
+correlacione la evidencia completa de CA-1 a CA-6 y confirme el cierre sin merge,
+la eliminacion de branches/worktrees y el baseline restaurado.
 
 Se abren **dos issues distintos**, ambos en el consumidor, con labels
 `tipo:tooling`, `dom:certificacion` y `estado:listo`: uno para Claude y uno para
