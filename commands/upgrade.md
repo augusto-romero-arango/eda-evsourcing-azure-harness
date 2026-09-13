@@ -117,8 +117,7 @@ Solo si estas corriendo dentro de Herdr (`HERDR_ENV=1`), relee la raiz del plugi
 
 ```bash
 if [ "${HERDR_ENV:-}" = "1" ]; then
-    PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
-    [ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+    PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null || true)
     PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
     HERDR_REFRESH=$("$PLUGIN_SCRIPTS/herdr-pipeline.sh" --refresh-agents 2>/dev/null || true)
 fi
