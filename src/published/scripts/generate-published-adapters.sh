@@ -448,6 +448,20 @@ if [ "$CHECK_MODE" -eq 1 ]; then
     exit "$divergent"
 fi
 
+# Valida los destinos fuera de dist/ antes de reemplazar las raices publicadas.
+# Ademas de evitar escrituras a traves de symlinks, este preflight impide que un
+# destino incompatible deje dist/ actualizado y el mirror raiz sin publicar.
+for declared_mirror in "${CLAUDE_ROOT_MIRRORS[@]}"; do
+    mirror_source="${declared_mirror%%|*}"
+    mirror_destination="${declared_mirror##*|}"
+    mirror_generated="dist/claude/agents/$(basename "$mirror_source")"
+    generated_contains "$mirror_generated" || continue
+    output_path_has_symlink "$mirror_destination" && usage_error "mirror Claude atraviesa un enlace simbolico: $mirror_destination"
+    if [ -e "$OUT_ROOT/$mirror_destination" ] && [ ! -f "$OUT_ROOT/$mirror_destination" ]; then
+        usage_error "mirror Claude tiene un destino no regular: $mirror_destination"
+    fi
+done
+
 # Se preparan arboles completos antes de reemplazar las raices declaradas. Esto
 # elimina huerfanos y archivos manuales, de modo que escribir y luego comprobar
 # siempre converge al mismo arbol.

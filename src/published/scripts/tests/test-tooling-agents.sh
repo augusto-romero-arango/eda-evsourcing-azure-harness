@@ -95,6 +95,11 @@ for agent in tooling-writer tooling-reviewer; do
     if cmp -s "$mirror" "$rendered"; then pass "mirror raiz de $agent coincide byte a byte"; else fail "mirror raiz de $agent diverge de Claude"; fi
     contains "$(< "$mirror")" '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/'"$agent"'.md. No editar a mano. -->' "mirror raiz de $agent conserva marcador generado"
     contains "$(< "$mirror")" 'tools: "Read, Glob, Grep, Edit, Write, Bash"' "mirror raiz de $agent expone solo tools Claude"
+    if [ "$agent" = tooling-writer ]; then
+        contains "$(< "$mirror")" 'model: "sonnet"' 'mirror raiz del writer conserva perfil balanced'
+    else
+        absent "$(< "$mirror")" 'model:' 'mirror raiz del reviewer conserva perfil deep heredado'
+    fi
     for forbidden in 'Skill' 'MCP' 'WebFetch' 'WebSearch' 'Task'; do
         absent "$(< "$mirror")" "$forbidden" "mirror raiz de $agent omite $forbidden"
     done
@@ -153,6 +158,34 @@ if "$GENERATOR" --check --out "$WORK" \
 else
     fail 'check aislado detecto divergencias, huerfanos o copias manuales'
 fi
+
+echo '[integridad] ausencia y divergencia de cada artefacto Claude'
+for artifact in \
+    agents/tooling-writer.md \
+    agents/tooling-reviewer.md \
+    dist/claude/agents/tooling-writer.md \
+    dist/claude/agents/tooling-reviewer.md; do
+    backup="$WORK/backup-$(printf '%s' "$artifact" | tr '/' '-')"
+    cp "$WORK/$artifact" "$backup"
+    rm "$WORK/$artifact"
+    diagnostic="$($GENERATOR --check --out "$WORK" \
+        "$REPO_ROOT/src/published/agents/tooling-writer.md" \
+        "$REPO_ROOT/src/published/agents/tooling-reviewer.md" 2>&1)"
+    case "$diagnostic" in
+        *"$artifact: faltante"*) pass "$artifact ausente falla con diagnostico accionable" ;;
+        *) fail "$artifact ausente no produce diagnostico accionable" ;;
+    esac
+    cp "$backup" "$WORK/$artifact"
+    printf '\ndivergencia\n' >> "$WORK/$artifact"
+    diagnostic="$($GENERATOR --check --out "$WORK" \
+        "$REPO_ROOT/src/published/agents/tooling-writer.md" \
+        "$REPO_ROOT/src/published/agents/tooling-reviewer.md" 2>&1)"
+    case "$diagnostic" in
+        *"$artifact: distinta"*) pass "$artifact divergente falla con diagnostico accionable" ;;
+        *) fail "$artifact divergente no produce diagnostico accionable" ;;
+    esac
+    cp "$backup" "$WORK/$artifact"
+done
 if "$GENERATOR" --check >/dev/null; then pass 'generate-published-adapters --check esta al dia'; else fail 'generate-published-adapters --check detecto divergencias'; fi
 
 printf 'RESULTADO: %s pasaron, %s fallaron\n' "$PASS" "$FAIL"
