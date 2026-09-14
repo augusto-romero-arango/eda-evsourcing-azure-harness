@@ -778,12 +778,16 @@ resource "azurerm_linux_function_app" "this" {
     }
   }
 
+  # WEBSITE_USE_PLACEHOLDER_DOTNETISOLATED no se fija a proposito: la referencia oficial lo
+  # acota a Consumption -- que MEF-ADR-0020 proscribe -- y un miembro del equipo de Azure
+  # Functions aclaro que la plataforma ya lo establece automaticamente, sin accion del usuario.
+  # https://learn.microsoft.com/azure/azure-functions/functions-app-settings#website_use_placeholder_dotnetisolated
+  # https://github.com/Azure/azure-functions-host/issues/10445#issuecomment-2330282715
   app_settings = merge(
     {
-      FUNCTIONS_EXTENSION_VERSION            = "~4"
-      FUNCTIONS_WORKER_RUNTIME               = "dotnet-isolated"
-      WEBSITE_USE_PLACEHOLDER_DOTNETISOLATED = "1"
-      WEBSITE_RUN_FROM_PACKAGE               = "1"
+      FUNCTIONS_EXTENSION_VERSION = "~4"
+      FUNCTIONS_WORKER_RUNTIME    = "dotnet-isolated"
+      WEBSITE_RUN_FROM_PACKAGE    = "1"
     },
     var.app_settings
   )

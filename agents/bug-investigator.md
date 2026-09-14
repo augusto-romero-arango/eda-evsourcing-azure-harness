@@ -43,7 +43,7 @@ Si el sintoma sugiere un fallo en el pipeline de deploy (Function App que no arr
      az appservice plan show --ids <id-del-plan> --query "numberOfSites"   # 1 => dedicado; >1 => compartido (viola MEF-ADR-0020)
      ```
      Tambien puedes revisar en Terraform que cada `module function_app_<dominio>` apunta a su propio `service_plan_id` (un `module service_plan_<dominio>` por dominio, sin plan compartido global). Un plan compartido reintroduce el *noisy neighbor* que origino #43: si el sintoma es timeouts, health checks lentos o fallos intermitentes de smoke, ve directo al «Patron de diagnostico: noisy neighbor por plan compartido» mas abajo.
-   - App settings obligatorios: `FUNCTIONS_WORKER_RUNTIME`, `FUNCTIONS_EXTENSION_VERSION`, `WEBSITE_USE_PLACEHOLDER_DOTNETISOLATED`, `WEBSITE_RUN_FROM_PACKAGE`.
+   - App settings obligatorios: `FUNCTIONS_WORKER_RUNTIME`, `FUNCTIONS_EXTENSION_VERSION`, `WEBSITE_RUN_FROM_PACKAGE`.
    - Comandos de publish: `-r linux-x64 --self-contained false`.
 
 **Principio**: nunca asumas que un error de deploy es de codigo. Errores tipo "malformed content" o "sync trigger failed" casi siempre son runtime/configuracion, no compilacion. Verifica con datos reales (logs del workflow, inspeccion del artefacto, Terraform) antes de proponer un fix.
