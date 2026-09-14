@@ -24,7 +24,18 @@ Plugin de [Claude Code](https://code.claude.com/docs/en/plugins) que provee un h
 - **Pipelines bash** que orquestan el ciclo TDD, IaC y tooling sobre `tmux` y `git worktree`.
 - **ADRs** del marco arquitectónico (prefijo `MEF-ADR-`, ver índice temático en `CLAUDE.md`).
 - **Hooks** para logging del pipeline.
-- Un **servidor MCP bundleado**: `microsoft-learn` (endpoint remoto oficial `https://learn.microsoft.com/api/mcp`, HTTP sin autenticación). En Claude Code se declara en `.mcp.json`; en OpenCode se proyecta globalmente como plugin local, sin modificar `opencode.json`. Terraform permanece externo: su instalación y los permisos por artefacto no forman parte de este bundle (la traducción de permisos OpenCode llega en #1145). El smoke real de conexión/listado MCP queda para #1066.
+- Un **servidor MCP bundleado**: `microsoft-learn` (endpoint remoto oficial `https://learn.microsoft.com/api/mcp`, HTTP sin autenticación). En Claude Code se declara en `.mcp.json`; en OpenCode se proyecta globalmente como plugin local, sin modificar `opencode.json`. Terraform permanece externo: su instalación y los permisos por artefacto no forman parte de este bundle (la traducción de permisos OpenCode llega en #1145). Discovery certificado; invocación real no certificada — ver el veredicto de [`docs/testing/opencode-consumer-cutover.md`](docs/testing/opencode-consumer-cutover.md#veredicto-final-del-corte-vertical-1066).
+
+## Soporte OpenCode: alcance certificado
+
+El [veredicto del corte vertical](docs/testing/opencode-consumer-cutover.md#veredicto-final-del-corte-vertical-1066) (issue #1066, `PASA` sobre la cadena `v0.37.14` → `v0.37.16`, con la desviación de release declarada allí) certifica soporte OpenCode publicado **exclusivamente para `/mefisto:tooling`**: instalación real con checksum del artefacto OpenCode, discovery de comandos/agentes/Skills/scripts/permisos/hooks/MCP, ejecución headless hasta PR real lanzada desde sesión interactiva, Herdr con pools de panes separados por runtime, y observabilidad correlacionable sin secretos.
+
+Queda **fuera** de esa certificación —discovery disponible, invocación real no ejercitada por el gate—:
+
+- el resto de slash commands publicados y sus pipelines (`/implement`, `/infra`, `/infra-base`, `/scaffold`, `/scaffold-projections`, `/scaffold-mcp`, `/parallel`, `/sequential`, `/merge` y los demás del catálogo de "Qué incluye");
+- todos los agentes fuera de `tooling-writer` y `tooling-reviewer`;
+- la carga real de Agent Skills bajo OpenCode (los agentes del corte declaran solo `read`/`edit`/`shell`);
+- la conexión y el listado real del MCP bundleado `microsoft-learn`, y la traducción de permisos MCP por agente/comando (#1145).
 
 ## Stack supuesto en el consumidor
 
