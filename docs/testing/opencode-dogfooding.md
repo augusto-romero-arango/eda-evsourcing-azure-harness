@@ -264,7 +264,16 @@ fail-closed el veredicto en vez de presentar un costo fabricado.
   **exitoso** (`af9a366` es ancestro). `HEAD` en el momento de esta corrida
   era `057bdd3` (#1357).
 - `af9a366` (#1350, "Estimar el costo equivalente de OpenCode") se fusiono el
-  2026-09-14 `01:02:50Z`, segun el propio issue #1355.
+  2026-09-14 `01:02:50Z`. Verificado contra el repo, no contra la cronologia
+  narrada en el issue: `git log -1 --format='%h %cI %s' af9a366` devuelve
+  `af9a366 2026-09-13T20:02:50-05:00 Estimar el costo equivalente de OpenCode
+  (#1350)`.
+- **Control automatizado previo (nota tecnica del issue):**
+  `.claude/scripts/tests/test-runtime-opencode.sh` conserva `156 pass, 0 fail`
+  en este commit. Esa suite ejercita el adaptador (traduccion del wire format,
+  cache, reasoning e importes de referencia de MEF-ADR-0054) con datos
+  sinteticos y capturados; **no** sustituye la corrida E2E que pide CA-2/CA-3,
+  y por si sola no certifica nada.
 - **No aplica el resto de CA-1** (timestamps de inicio/fin de writer y
   reviewer bajo OpenCode): no hubo corrida de esos stages en este intento --
   ver CA-2 a continuacion.
@@ -300,6 +309,11 @@ stages) ni CA-3 (`estimated_cost_usd` numerico y mayor que cero, con el
 snapshot de tarifas verificado) ni CA-4 (tabla del PR con los cuatro segmentos
 e importes `$...`) se produjeron en este intento.
 
+Lo corrobora un hecho independiente del razonamiento anterior: el worktree de
+esta corrida no tiene `.mefisto/pipeline/cache/model-pricing/` (el directorio
+no existe). Es decir, no se descargo ningun snapshot de tarifas Models.dev,
+porque ningun stage pidio una estimacion bajo el contrato de MEF-ADR-0054.
+
 ### Veredicto de este intento: **NO PASA**
 
 Conforme al regimen fail-closed de CA-6: ningun campo de costo o de tokens se
@@ -309,6 +323,17 @@ corrida, no porque el estimador haya fallado. Se abrio el draft
 con la evidencia sanitizada (sin prompts, credenciales ni transcript crudo) y
 la accion propuesta. El issue #1355 permanece abierto: este PR no certifica
 la corrida E2E y no se le debe atribuir el cierre de #1355.
+
+**Accion obligatoria al mergear este PR (CA-6).** El launcher interno fija
+`Closes #$ISSUE_NUM` en el cuerpo del PR que crea
+(`src/internal/scripts/mefisto-tooling-pipeline.sh:1415`), sin forma de
+desactivarlo por configuracion. El PR de este intento llegara entonces a `main`
+con `Closes #1355` y cerrara el issue al fusionarse, que es exactamente lo que
+CA-6 prohibe en el camino fail-closed. Para respetarlo hay que, antes del
+merge, editar el cuerpo del PR quitando esa linea (`gh pr edit <pr> --body
+...`); si ya se fusiono, reabrirlo (`gh issue reopen 1355`). Ningun stage del
+pipeline puede hacerlo por su cuenta: tienen prohibido operar sobre ramas y
+PRs.
 
 **Que falta para intentar de nuevo:** una corrida de
 `MEFISTO_RUNTIME=opencode ./.claude/scripts/mefisto-tooling-pipeline.sh <issue>`
