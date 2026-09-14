@@ -11,6 +11,11 @@ documento" al final). El
 (issue #1066) certifico `/mefisto:tooling` publicado sobre ambos runtimes; el
 alcance historico interno de este documento permanece sin cambios.
 
+**Estado de la certificacion del costo estimado (MEF-ADR-0054):** ver
+["Intento de certificacion del costo estimado post-#1324 (issue #1355,
+2026-09-14)"](#intento-de-certificacion-del-costo-estimado-post-1324-issue-1355-2026-09-14----no-pasa)
+mas abajo -- **NO PASA** en este intento; issue #1358 abierto con la causa.
+
 ## Veredicto
 
 **Certificacion PARCIAL en esta corrida (2026-09-06).**
@@ -127,6 +132,12 @@ la certificacion completa (los 6 CA) **no** paso en esta corrida.
 
 ## CA-3: procesar el issue #874 con `/mefisto-tooling 874` desde OpenCode
 
+> **Nota (2026-09-14, issue #1355):** el bloqueo por #879 que describe esta
+> seccion es historico -- #879 esta cerrado. El estado vigente del routing
+> real hacia OpenCode es el que certifica la seccion "Intento de
+> certificacion del costo estimado post-#1324" al final de este documento,
+> no el bloqueo que se describe aqui abajo.
+
 **No ejecutado, y hoy no es ejecutable: esta bloqueado por el issue #879**
 (`Conectar el tooling pipeline interno al runner neutral con agentes headless
 writer y reviewer`, abierto, `estado:listo`).
@@ -151,6 +162,16 @@ corrida real de `/mefisto-tooling <issue de prueba>` con
 no repetir el problema de recursividad), hasta un PR real.
 
 ## CA-4: `runtime`/modelo en el protocolo de eventos, `cost_usd`/`ttft_ms` nulos
+
+> **Nota (2026-09-14, issue #1355):** el `"cost_usd":0` de la muestra de esta
+> seccion es evidencia anterior al contrato `estimated_cost_usd` de
+> MEF-ADR-0054 (issue #1324, PR #1350, fusionado `af9a366` el 2026-09-14
+> `01:02:50Z`). Bajo ese contrato vigente, un cero de facturacion OAuth **no**
+> es una estimacion valida y esta prohibido propagarlo como
+> `estimated_cost_usd: 0` (MEF-ADR-0054 decision 1); el runtime recalcula el
+> importe con el catalogo Models.dev en su lugar. Esta seccion queda como
+> registro historico del comportamiento previo a ese contrato, no como
+> estado vigente.
 
 **Nivel de adaptador: verificado con datos reales** (no sinteticos). Se tomo
 la salida cruda capturada de la corrida `gpt-5.4-mini-fast` de CA-1 y se le
@@ -226,6 +247,76 @@ historial. Tienen valor **despues** de #879.
   GitHub-only equivalente, y el concepto de "version activa global por
   usuario" para un runtime neutral.
 
+## Intento de certificacion del costo estimado post-#1324 (issue #1355, 2026-09-14) -- NO PASA
+
+Issue #1355 pidio certificar `estimated_cost_usd` (MEF-ADR-0054) con una
+corrida real de `mefisto-tooling` bajo `MEFISTO_RUNTIME=opencode`, iniciada
+completamente despues de que #1350 (`af9a366`) fusionara el estimador. Los PRs
+candidatos anteriores no sirven de evidencia: #1351 arranco con el adaptador
+previo a `af9a366` aunque el PR se abriera despues del merge, y #1354 corrio
+enteramente bajo Claude Code. Este intento documenta por que tampoco esta
+corrida (la que procesa al propio #1355) certifica el estimador, y deja
+fail-closed el veredicto en vez de presentar un costo fabricado.
+
+### CA-1: SHA de `main` y ventana temporal -- parcialmente verificado
+
+- `git merge-base --is-ancestor af9a366 HEAD` desde el checkout del writer:
+  **exitoso** (`af9a366` es ancestro). `HEAD` en el momento de esta corrida
+  era `057bdd3` (#1357).
+- `af9a366` (#1350, "Estimar el costo equivalente de OpenCode") se fusiono el
+  2026-09-14 `01:02:50Z`, segun el propio issue #1355.
+- **No aplica el resto de CA-1** (timestamps de inicio/fin de writer y
+  reviewer bajo OpenCode): no hubo corrida de esos stages en este intento --
+  ver CA-2 a continuacion.
+
+### CA-2 a CA-4: no ejecutados -- bloqueo estructural del stage writer
+
+Esta certificacion la procesa un stage-1-writer no interactivo del pipeline
+`mefisto-tooling` para el propio issue #1355. Dos hechos verificables, sin
+reinterpretar el adaptador, explican por que ese stage no puede producir la
+corrida E2E que pide el issue:
+
+1. **Este mismo stage corre bajo `MEFISTO_RUNTIME=claude`, no `opencode`**:
+   confirmado con la variable de entorno del proceso y con el evento
+   `session.started` mas reciente de `.mefisto/pipeline/sessions.jsonl`
+   (`"runtime":"claude"`). El propio procesamiento de #1355 no es, el mismo,
+   evidencia de OpenCode -- igual que #1354.
+2. **El launcher que pide el issue crea rama y PR reales al terminar**:
+   `src/internal/scripts/mefisto-tooling-pipeline.sh:1382-1421` invoca
+   `gh pr create` (con `Closes #$ISSUE_NUM` fijo en el cuerpo, linea 1415) al
+   cierre del reviewer. Un writer tiene prohibido hacer `git push`/
+   `gh pr create` directamente: es responsabilidad exclusiva del
+   orquestador. Invocar el launcher para el propio #1355 desde dentro de su
+   mismo stage repetiria la recursividad que ya documento CA-3 arriba para
+   #874 ("esta corrida ya es el pipeline de tooling del propio issue...
+   invocarlo de nuevo desde adentro seria recursivo"); invocarlo contra un
+   issue de prueba distinto gastaria una segunda corrida real completa
+   (writer + reviewer, rama, PR) que un stage documental de un solo turno no
+   esta habilitado a decidir por su cuenta.
+
+Como consecuencia, ninguna de las metricas que piden CA-2 (`runtime: opencode`
+mas `input`/`output`/`cache_read`/`cache_write`/`reasoning` numericos en ambos
+stages) ni CA-3 (`estimated_cost_usd` numerico y mayor que cero, con el
+snapshot de tarifas verificado) ni CA-4 (tabla del PR con los cuatro segmentos
+e importes `$...`) se produjeron en este intento.
+
+### Veredicto de este intento: **NO PASA**
+
+Conforme al regimen fail-closed de CA-6: ningun campo de costo o de tokens se
+presenta aqui como cero ni como estimado -- quedan sin valor porque no hubo
+corrida, no porque el estimador haya fallado. Se abrio el draft
+[`bug` #1358](https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/issues/1358)
+con la evidencia sanitizada (sin prompts, credenciales ni transcript crudo) y
+la accion propuesta. El issue #1355 permanece abierto: este PR no certifica
+la corrida E2E y no se le debe atribuir el cierre de #1355.
+
+**Que falta para intentar de nuevo:** una corrida de
+`MEFISTO_RUNTIME=opencode ./.claude/scripts/mefisto-tooling-pipeline.sh <issue>`
+lanzada fuera de un stage-1-writer anidado -- por un mantenedor de forma
+interactiva, o por un modo del launcher pensado para certificacion que no
+abra PR -- contra un issue de prueba que no sea #1355 ni #874, para no repetir
+ninguna de las dos recursividades ya documentadas en este archivo.
+
 ## Backlog (pendiente para cerrar la certificacion completa)
 
 1. **Prerrequisito de todo lo demas**: cerrar #879 (conectar
@@ -245,3 +336,8 @@ historial. Tienen valor **despues** de #879.
 5. Decidir si el numero de agentes internos ("5" en la redaccion original de
    CA-2 vs. 3 reales hoy) fue un error de redaccion del issue o si faltan 2
    agentes por scaffoldear -- no se resuelve en este documento.
+6. **(2026-09-14, issue #1355)** Items 1-2 estan superados: #879 ya cerro y
+   `MEFISTO_RUNTIME` ya selecciona CLI. Lo que sigue pendiente es lanzar la
+   corrida E2E del estimador (`estimated_cost_usd`, MEF-ADR-0054) fuera de un
+   stage-1-writer anidado -- ver "Intento de certificacion del costo
+   estimado post-#1324" arriba y el issue de bug #1358.
