@@ -376,34 +376,76 @@ coincidencia autorreferencial.
 
 ### Estado de la corrida
 
-**Bloqueada para una repeticion verificable (consulta de solo lectura:
-2026-09-13T04:21:49Z).** La primera apertura real descubrio que Claude no
-resolvia su distribucion cuando el marker canonico habia sido escrito por
-OpenCode ([#1293](https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/issues/1293))
-y que Herdr emitia un warning falso ante el config canonico
-([#1294](https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/issues/1294)).
-Ambos bugs ya estan corregidos y la release
-[`v0.37.15`](https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/releases/tag/v0.37.15)
-los contiene. Tambien existen dos ejecuciones posteriores, pero su estado
-persistido no satisface todavia el expediente fail-closed:
+**PASA (2026-09-13).** El expediente sanitizado de la certificacion real esta
+preservado en los comentarios de los issues fixture: [#11, fila
+Claude](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/11#issuecomment-5655078146)
+y [#12, fila
+OpenCode](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/12#issuecomment-5655078692).
+Los datos siguientes son su indice verificable; no reproducen streams ni logs
+crudos.
 
-| Evidencia verificable | Resultado sanitizado |
+| Campo | Valor verificado |
 |---|---|
-| Issues fixture [#7 Claude](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/7) y [#8 OpenCode](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/8) | Ambos siguen abiertos y conservan los tres labels requeridos, pero sus templates fijan `v0.37.14`, commit fuente `e8f6043be71a0a9cf71d50bc027007a466c53cdb` y run `20260913-025357-0.37.14`; no documentan `v0.37.15`. |
-| PR [#10 Claude](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/10), commit `bca730f1e5d7e07a1c7a5abca355c9499206c328` | Sigue abierto y agrega solo `docs/testing/mefisto-certification/20260913-025357-0.37.14-claude.md`, con cinco lineas. GitHub no reporta checks asociados. |
-| PR [#9 OpenCode](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/9), commit `6a1996da25eedd7dd014a9f1f6b944e87235e994` | Sigue abierto y agrega solo `docs/testing/mefisto-certification/20260913-025357-0.37.14-opencode.md`, con cinco lineas. GitHub no reporta checks asociados. |
-| Baseline `main` del consumidor | Permanece en `7a580f7ce7576f51dc1ed1fa5891864d7be3a2e6`, pero los dos PRs, issues y branches remotos continuan abiertos; por ello no esta demostrada la limpieza de CA-6. |
-| Resumenes preservados en los PRs | Prueban que writer y reviewer terminaron y que cada cambio se limito a su fixture. No conservan la matriz exigida por CA-5 con runtime, agente, perfil, modelo solicitado/efectivo, herencia, session id, version y commit fuente por stage, ni hashes/conteos de centinelas del resto de artefactos. |
+| Release e identidad | `v0.37.16`, commit fuente `e9054d5f7576e13edf09b6ca304b79f8d95b0884`; el diagnostico de instalacion informo `aligned`. |
+| Baseline | SHA inicial y final de `main`: `c96e10ca129662a6bcc3cedcd8b08618f67f2d6e`. |
+| Fixtures | Los issues [#11](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/11) (Claude) y [#12](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/12) (OpenCode) se crearon desde el planner publicado, con `tipo:tooling`, `dom:certificacion` y `estado:listo`, templates canonicos y un baseline comun. |
+| PRs | [#18](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/18) y [#19](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/19) fueron PRs reales, cada uno con `Closes` hacia su issue, comentario de pipeline y un unico documento determinista bajo `docs/testing/mefisto-certification/`. |
+| Checks | `NO_APLICAN`: ambos PRs modificaron solo `docs/testing/mefisto-certification/**`; el unico workflow `pull_request`, `Infra CD`, filtra `infra/**`. Los SHA de ambos PRs tuvieron cero Actions runs y cero check-runs. No se declaro un verde inexistente. |
+| Limpieza | PRs cerrados sin merge, ramas remotas eliminadas, issues cerrados como `not planned`, cero worktrees, arbol limpio y baseline restaurado. |
 
-La declaracion operacional de que ambas filas usaron `v0.37.15` no puede
-reconciliarse con los templates y archivos `v0.37.14`; tampoco sustituye checks,
-observabilidad ni limpieza verificables. Conforme a MEF-ADR-0031 y
-MEF-ADR-0053, no se infiere `PASA` desde una confirmacion narrativa. Se deben
-cerrar y limpiar estos fixtures parciales y repetir **las dos** corridas desde
-el inicio, con un run nuevo cuyos templates identifiquen la misma release
-corregida que ejecutan. El reporte final reemplaza este bloque solo cuando
-correlacione la evidencia completa de CA-1 a CA-6 y confirme el cierre sin merge,
-la eliminacion de branches/worktrees y el baseline restaurado.
+### Corte E2E/Herdr certificado
+
+La invocacion real de `herdr-workspace.sh` sobre el consumidor monto el workspace
+con identidad `aligned`: arriba `planner [claude]` y `ejecucion [claude]`; abajo
+`planner [opencode]` y `ejecucion [opencode]`. Las dos filas heredaron su
+`MEFISTO_RUNTIME`, el `--kind` correspondiente y pools de panes distintos. La
+fila Claude inicio el planner con `mefisto:planner`; la fila OpenCode no uso
+`--agent`, degradacion declarada que no cambia la semantica del corte. Ninguna
+fila fijo proveedor, modelo o credenciales.
+
+Desde los panes de ejecucion se ejecutaron exactamente dos invocaciones reales:
+
+```text
+/mefisto:tooling #11
+/mefisto:tooling #12 --models 'writer=<modelo-verificado>,reviewer=<modelo-verificado>'
+```
+
+La primera no recibio `--models`; Claude resolvio automaticamente los perfiles
+por adaptador. La segunda conservo el override explicito de OpenCode. En ambas,
+el flujo efectivo fue `/mefisto:tooling` -> `tmux-pipeline.sh` ->
+`herdr-pipeline.sh` -> `tooling-pipeline.sh` -> `mefisto-run-agent.sh` ->
+adaptador de runtime, y ejecuto exactamente `tooling-writer` y
+`tooling-reviewer`. No se uso `--variant`, ni se modifico infraestructura o
+logica de dominio.
+
+Durante writer/reviewer, cada issue tuvo un solo reporte de `stream-watch.sh`
+filtrado por issue. `herdr-report-panes.txt` conserva panes del mismo workspace
+con identidades `claude` y `opencode`; panes, streams, worktrees, ramas, status y
+logs no se reutilizaron entre filas. La cobertura de poda y reutilizacion no se
+amplio con una tercera corrida y permanece en las suites Herdr dedicadas.
+
+### Correlacion, redaccion y veredicto
+
+Los expedientes enlazados correlacionan por issue, stage y sesion los streams
+neutrales redactados, logs derivados, `events.log`, metricas,
+`pipeline-history.jsonl`, sesiones interactivas y summaries copiados al body de
+cada PR. Cada stage registra runtime, agente, perfil, modelo solicitado y
+efectivo, origen de seleccion, session id, resultado, version y commit fuente.
+Cada stream tiene un unico terminal exitoso y el history enlaza el PR de su mismo
+issue.
+
+En Claude, el runner recibio los defaults resueltos (`sonnet` para writer y
+`opus` para reviewer) y registro `inherited=false`: es la resolucion automatica
+normal del adaptador, no un fallo ni un override del usuario. OpenCode registro
+el override explicito solicitado. Los centinelas sobre los artefactos persistentes
+informaron cero coincidencias para prompts, system prompts, eventos `message`,
+inputs de tools, raw, stderr, headers, auth stores, API keys y tokens. Solo se
+preservaron timestamps, comandos sanitizados, hashes, URLs y conclusiones.
+
+Por tanto, Herdr, observabilidad y centinelas **PASA** y los checks son
+`NO_APLICAN` por el filtro declarado del workflow consumidor. Esta evidencia
+satisface CA-1 a CA-6 de MEF-ADR-0053. Un gap futuro exige abrir un bug en
+Mefisto, declararlo dependencia y repetir ambas filas sobre una release nueva.
 
 Se abren **dos issues distintos**, ambos en el consumidor, con labels
 `tipo:tooling`, `dom:certificacion` y `estado:listo`: uno para Claude y uno para
