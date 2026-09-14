@@ -6,7 +6,10 @@ documento **no** certifica soporte para consumidores: la certificacion del
 corte publicado vive separadamente en
 [`opencode-consumer-cutover.md`](opencode-consumer-cutover.md), conforme al
 rollout interno-primero de MEF-ADR-0049 (ver tambien "Que NO certifica este
-documento" al final).
+documento" al final). El
+[veredicto final del corte vertical](opencode-consumer-cutover.md#veredicto-final-del-corte-vertical-1066)
+(issue #1066) certifico `/mefisto:tooling` publicado sobre ambos runtimes; el
+alcance historico interno de este documento permanece sin cambios.
 
 ## Veredicto
 

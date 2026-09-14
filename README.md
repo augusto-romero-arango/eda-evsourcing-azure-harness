@@ -24,7 +24,11 @@ Plugin de [Claude Code](https://code.claude.com/docs/en/plugins) que provee un h
 - **Pipelines bash** que orquestan el ciclo TDD, IaC y tooling sobre `tmux` y `git worktree`.
 - **ADRs** del marco arquitectónico (prefijo `MEF-ADR-`, ver índice temático en `CLAUDE.md`).
 - **Hooks** para logging del pipeline.
-- Un **servidor MCP bundleado**: `microsoft-learn` (endpoint remoto oficial `https://learn.microsoft.com/api/mcp`, HTTP sin autenticación). En Claude Code se declara en `.mcp.json`; en OpenCode se proyecta globalmente como plugin local, sin modificar `opencode.json`. Terraform permanece externo: su instalación y los permisos por artefacto no forman parte de este bundle (la traducción de permisos OpenCode llega en #1145). El smoke real de conexión/listado MCP queda para #1066.
+- Un **servidor MCP bundleado**: `microsoft-learn` (endpoint remoto oficial `https://learn.microsoft.com/api/mcp`, HTTP sin autenticación). En Claude Code se declara en `.mcp.json`; en OpenCode se proyecta globalmente como plugin local, sin modificar `opencode.json`. Terraform permanece externo: su instalación y los permisos por artefacto no forman parte de este bundle (la traducción de permisos OpenCode llega en #1145). Discovery certificado; invocación real no certificada — ver el veredicto de [`docs/testing/opencode-consumer-cutover.md`](docs/testing/opencode-consumer-cutover.md#veredicto-final-del-corte-vertical-1066).
+
+### Soporte OpenCode: alcance certificado
+
+El [veredicto del corte vertical](docs/testing/opencode-consumer-cutover.md#veredicto-final-del-corte-vertical-1066) (issue #1066, `PASA` sobre la cadena `v0.37.14` → `v0.37.16`) certifica soporte OpenCode publicado **exclusivamente para `/mefisto:tooling`**: instalación con checksum, discovery de comandos/agentes/Skills/scripts/permisos/hooks/MCP, ejecución headless hasta PR real con smoke interactivo, Herdr con pools separados por runtime, y observabilidad correlacionable sin secretos. Ninguna otra capacidad del catálogo (el resto de skills, agentes y pipelines) está certificada sobre OpenCode; su discovery de comandos/agentes puede estar disponible, pero su invocación real no fue ejercitada por este gate.
 
 ## Stack supuesto en el consumidor
 
