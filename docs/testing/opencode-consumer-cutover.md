@@ -376,20 +376,22 @@ coincidencia autorreferencial.
 
 ### Estado de la corrida
 
-**PASA (2026-09-13).** El expediente sanitizado de la certificacion real esta
-preservado en los comentarios de los issues fixture: [#11, fila
+**PASA (2026-09-13T13:06:13-05:00).** El expediente sanitizado de la
+certificacion real esta preservado en los comentarios de los issues fixture:
+[#11, fila
 Claude](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/11#issuecomment-5655078146)
 y [#12, fila
 OpenCode](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/12#issuecomment-5655078692).
-Los datos siguientes son su indice verificable; no reproducen streams ni logs
-crudos.
+El [addendum final](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/11#issuecomment-5655087957)
+registra la limpieza posterior. Los datos siguientes son su indice verificable;
+no reproducen streams ni logs crudos.
 
 | Campo | Valor verificado |
 |---|---|
 | Release e identidad | `v0.37.16`, commit fuente `e9054d5f7576e13edf09b6ca304b79f8d95b0884`; el diagnostico de instalacion informo `aligned`. |
 | Baseline | SHA inicial y final de `main`: `c96e10ca129662a6bcc3cedcd8b08618f67f2d6e`. |
 | Fixtures | Los issues [#11](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/11) (Claude) y [#12](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/12) (OpenCode) se crearon desde el planner publicado, con `tipo:tooling`, `dom:certificacion` y `estado:listo`, templates canonicos y un baseline comun. |
-| PRs | [#18](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/18) y [#19](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/19) fueron PRs reales, cada uno con `Closes` hacia su issue, comentario de pipeline y un unico documento determinista bajo `docs/testing/mefisto-certification/`. |
+| PRs | [#18](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/18), SHA `55ff30c2a08e82335781317ca08c7fbd5e81955a`, y [#19](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/19), SHA `680b0226cc0f12a4f608ca26a854e4452bcf6303`, fueron PRs reales. Cada uno tuvo `Closes` hacia su issue, comentario de pipeline y un unico documento determinista bajo `docs/testing/mefisto-certification/`. |
 | Checks | `NO_APLICAN`: ambos PRs modificaron solo `docs/testing/mefisto-certification/**`; el unico workflow `pull_request`, `Infra CD`, filtra `infra/**`. Los SHA de ambos PRs tuvieron cero Actions runs y cero check-runs. No se declaro un verde inexistente. |
 | Limpieza | PRs cerrados sin merge, ramas remotas eliminadas, issues cerrados como `not planned`, cero worktrees, arbol limpio y baseline restaurado. |
 
@@ -406,8 +408,8 @@ fila fijo proveedor, modelo o credenciales.
 Desde los panes de ejecucion se ejecutaron exactamente dos invocaciones reales:
 
 ```text
-/mefisto:tooling #11
-/mefisto:tooling #12 --models 'writer=<modelo-verificado>,reviewer=<modelo-verificado>'
+/mefisto:tooling 11
+/mefisto:tooling 12 --models 'writer=openai/gpt-5.6-terra,reviewer=openai/gpt-5.6-sol'
 ```
 
 La primera no recibio `--models`; Claude resolvio automaticamente los perfiles
@@ -434,13 +436,22 @@ efectivo, origen de seleccion, session id, resultado, version y commit fuente.
 Cada stream tiene un unico terminal exitoso y el history enlaza el PR de su mismo
 issue.
 
-En Claude, el runner recibio los defaults resueltos (`sonnet` para writer y
-`opus` para reviewer) y registro `inherited=false`: es la resolucion automatica
-normal del adaptador, no un fallo ni un override del usuario. OpenCode registro
-el override explicito solicitado. Los centinelas sobre los artefactos persistentes
-informaron cero coincidencias para prompts, system prompts, eventos `message`,
-inputs de tools, raw, stderr, headers, auth stores, API keys y tokens. Solo se
-preservaron timestamps, comandos sanitizados, hashes, URLs y conclusiones.
+| Issue | Runtime | Stage/agente | Perfil | Seleccion | Modelo efectivo | Session ID (SHA-256) |
+|---|---|---|---|---|---|---|
+| #11 | Claude | writer / `tooling-writer` | `balanced` | automatica, alias `sonnet` | `claude-sonnet-5` | `115c96113f02405900871df517fc7ee286e3d9e58dcf31c740fd4f363f29a3c3` |
+| #11 | Claude | reviewer / `tooling-reviewer` | `deep` | automatica, alias `opus` | `claude-opus-5` | `1ec0d1bb80d6de0767a857e7719683f8b74126042c251a6c3b13e00950516d2e` |
+| #12 | OpenCode | writer / `tooling-writer` | `balanced` | override explicito | `openai/gpt-5.6-terra` | `8cc48c328dd974ddb846caa8fab29fdc57b7b193136e53791cda0a4da1f14870` |
+| #12 | OpenCode | reviewer / `tooling-reviewer` | `deep` | override explicito | `openai/gpt-5.6-sol` | `2a69c0b570317cb8b62070bec23156657e3a264e2da92efc1d6c2cd446369a57` |
+
+Los cuatro stages terminaron exitosamente con version `0.37.16` y commit fuente
+`e9054d5f7576e13edf09b6ca304b79f8d95b0884`. En Claude, que el runner recibiera
+los aliases ya resueltos por perfil y registrara `inherited=false` fue la
+resolucion automatica normal del adaptador, no un override del usuario. OpenCode
+registro los dos overrides explicitos solicitados. Los centinelas sobre los
+artefactos persistentes informaron cero coincidencias para prompts, system
+prompts, eventos `message`, inputs de tools, raw, stderr, headers, auth stores,
+API keys y tokens. Solo se preservaron timestamps, comandos sanitizados, hashes,
+URLs y conclusiones.
 
 Por tanto, Herdr, observabilidad y centinelas **PASA** y los checks son
 `NO_APLICAN` por el filtro declarado del workflow consumidor. Esta evidencia
