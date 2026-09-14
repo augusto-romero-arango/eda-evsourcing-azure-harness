@@ -3,18 +3,25 @@
 # desde runtime_opencode_translate (runtime-opencode.sh) con `-R -s` (el
 # stream crudo entero como un unico string), `--arg runtime`,
 # `--arg model_param`, `--arg exit_code` (exit code del proceso, "" si el
-# caller no lo conoce) y `--rawfile stderr_text` (stderr crudo del proceso,
-# "" si no hubo).
+# caller no lo conoce), `--rawfile stderr_text` (stderr crudo del proceso,
+# "" si no hubo) y `--rawfile pricing_catalog_text` (issue #1324: el
+# contenido JSON de la cache de tarifas que runtime_opencode_ensure_pricing
+# dejo lista ANTES de invocar este programa, "" si no hay catalogo
+# disponible -- ver MEF-ADR-0054).
 #
 # Wire format (verificado con OpenCode 1.18.29, 2026-09-05, capturas reales
 # congeladas en .claude/scripts/tests/fixtures/runtime-opencode/*-1.18.29.jsonl):
 # una linea JSON compacta por evento, SIEMPRE con `.type`, `.timestamp` (epoch
 # ms, NUNCA un string ISO) y `.sessionID` de nivel superior. Tipos observados:
 #   - `step_start` / `step_finish`: limites de un paso de razonamiento.
-#     `step_finish.part.tokens{input,output,...}` y `.part.cost` son la unica
-#     fuente de metricas -- no hay un evento "result" unico como en Claude, y
-#     cada `step_finish` reporta lo de SU paso, asi que el terminal los suma
-#     (ver el bloque `$steps` mas abajo).
+#     `step_finish.part.tokens{input,output,reasoning,cache:{read,write}}` es
+#     la unica fuente de metricas -- no hay un evento "result" unico como en
+#     Claude, y cada `step_finish` reporta lo de SU paso, asi que el terminal
+#     los suma (ver el bloque `$steps` mas abajo). `.part.cost` tambien viaja
+#     en el wire pero este programa nunca lo lee (issue #1324): bajo ChatGPT
+#     OAuth ese campo queda fijo en cero, asi que `estimated_cost_usd` se
+#     recalcula con el catalogo Models.dev en vez de propagarlo (ver el
+#     bloque de estimacion mas abajo).
 #   - `text`: `.part.text` es un fragmento de texto visible del asistente.
 #   - `tool_use`: `.part.tool` (nombre), `.part.callID`, `.part.state.status`
 #     ("completed"/"error", nunca observado en "pending"/"running" en las dos
@@ -118,6 +125,88 @@ def opencode_input_summary($tool; $input):
     elif ($tool == "bash") then (($input.command // null) | if . == null then null else (tostring | .[0:80]) end)
     else null end;
 
+# --- Estimacion de costo equivalente API (issue #1324, MEF-ADR-0054) --------
+#
+# `estimated_cost_usd` reemplaza al viejo `.part.cost` de OpenCode: bajo
+# ChatGPT OAuth ese campo queda fijo en cero (no es una estimacion, es
+# facturacion marginal de una suscripcion -- MEF-ADR-0054 seccion 1), asi que
+# este programa nunca lo lee. En su lugar recalcula el importe con el mismo
+# catalogo Models.dev que usa OpenCode, tomado del snapshot que
+# runtime_opencode_ensure_pricing dejo listo ANTES de esta invocacion
+# ($pricing_catalog_text, ver cabecera).
+#
+# Tarifas y contadores se validan AQUI, antes de multiplicar (CA-4: "costos
+# invalidos emiten null"). runtime_opencode_pricing_cache_is_valid valida el
+# catalogo ANTES de instalarlo, pero este programa lo recibe por `--rawfile`
+# sin revalidarlo -- runtime_opencode_ensure_pricing sirve la cache ya
+# instalada del dia sin volver a parsearla entera en cada anexo en vivo. Un
+# documento corrupto tiene entonces que degradar a null, nunca abortar: un
+# aborto de jq aqui dejaria la traduccion ENTERA sin emitir un solo evento,
+# no solo sin costo.
+def opencode_price_ok:
+    type == "number" and (isnan | not) and (isinfinite | not) and . >= 0;
+
+def opencode_rates_ok:
+    type == "object" and (.input | opencode_price_ok) and (.output | opencode_price_ok)
+    and (.cache_read | opencode_price_ok) and (.cache_write | opencode_price_ok);
+
+# Un tier con umbral o tarifas invalidas vuelve no resoluble al modelo
+# ENTERO. La alternativa -- ignorar ese tier y dejar que la seleccion caiga
+# al anterior o a la tarifa base -- cobraria de menos sin que nada lo delate,
+# justo lo que MEF-ADR-0054 seccion 2 proscribe ("nunca se adivina una
+# tarifa para aparentar precision").
+def opencode_model_ok:
+    opencode_rates_ok and ((.tiers // []) | type == "array")
+    and all((.tiers // [])[]; (.context | opencode_price_ok) and opencode_rates_ok);
+
+# Contador de tokens saneado: ausente, nulo, no numerico o negativo vale 0.
+# Cubre el `max(0, ...)` de MEF-ADR-0054 seccion 2 (un contador inconsistente
+# no puede volver negativa la estimacion) y ademas impide que un valor no
+# numerico del wire aborte el programa al multiplicarse por una tarifa.
+def opencode_count:
+    if (type == "number" and (isnan | not) and (isinfinite | not) and . > 0) then . else 0 end;
+
+# `.cache` se lee via este helper y no como `$tok.cache.read` porque indexar
+# un escalar aborta jq: el sub-objeto que no sea objeto se trata como cache
+# ausente (0), igual que su ausencia.
+def opencode_cache_count($tok; $field):
+    ($tok.cache | if type == "object" then .[$field] else null end | opencode_count);
+
+# El wire de OpenCode entrega `tokens.input` ya NETO de cache (session.ts le
+# resta cache antes de reportarlo) y cache/reasoning separados: el costo de
+# CADA paso usa esos contadores tal cual llegan, sin volver a restar cache
+# (MEF-ADR-0054 seccion 2, "notas tecnicas" de #1324). El TIER de precios, en
+# cambio, lo decide el contexto TOTAL de la llamada -- por eso
+# opencode_step_context reconstruye ese total sumando el cache de vuelta al
+# input ya neteado.
+def opencode_step_context($tok):
+    ($tok.input | opencode_count)
+    + opencode_cache_count($tok; "read")
+    + opencode_cache_count($tok; "write");
+
+# Tier de mayor umbral que el contexto del paso supera ESTRICTAMENTE: un
+# contexto igual al umbral todavia usa el tier anterior/base (verificado en
+# session.ts, MEF-ADR-0054 seccion 2 -- "input exactamente igual al umbral
+# todavia usa el tier anterior"). Sin tiers aplicables (o sin tiers en el
+# catalogo), degrada a las tarifas base del propio modelo: $model ya paso por
+# opencode_model_ok, asi que sirve tal cual como objeto de tarifas.
+def opencode_rates_for($model; $context):
+    ($model.tiers // [])
+    | map(select((.context | opencode_price_ok) and $context > .context))
+    | sort_by(.context)
+    | if length > 0 then last else $model end;
+
+# Formula por paso (MEF-ADR-0054 seccion 2): input no cacheado (ya neto en el
+# wire) a tarifa input, cache_read/cache_write a sus tarifas propias, y
+# output visible + reasoning JUNTOS a tarifa output (reasoning nunca inventa
+# una categoria de precio aparte). Tarifas en USD por millon de tokens.
+def opencode_step_cost($rates; $tok):
+    ((($tok.input | opencode_count) * $rates.input)
+      + (opencode_cache_count($tok; "read") * $rates.cache_read)
+      + (opencode_cache_count($tok; "write") * $rates.cache_write)
+      + ((($tok.output | opencode_count) + ($tok.reasoning | opencode_count)) * $rates.output)
+    ) / 1000000;
+
 (now | todate) as $fallback_ts
 | ($model_param | if . == "" then null else . end) as $model_param_or_null
 | ($exit_code | if . == "" then null else (tonumber? // null) end) as $exit
@@ -135,10 +224,65 @@ def opencode_input_summary($tool; $input):
 # toma el ultimo: cada paso es una llamada facturada aparte, y quedarse con el
 # ultimo reportaria el costo del cierre de la corrida como si fuera el de la
 # corrida entera -- un sesgo que mefisto-metrics-report.sh propaga directo a
-# `cost_usd_total`/`cost_usd_mean`. `add` sobre una lista vacia o toda-null
-# devuelve null, que es exactamente lo que CA-4 pide cuando el wire format no
-# trae el dato (nunca un cero fabricado).
+# `estimated_cost_usd_total`/`estimated_cost_usd_mean`. `add` sobre una lista
+# vacia o toda-null devuelve null, que es exactamente lo que CA-4 pide cuando
+# el wire format no trae el dato (nunca un cero fabricado).
 | ($events | map(select(.type == "step_finish"))) as $steps
+
+# --- Estimacion de costo equivalente API (issue #1324, MEF-ADR-0054) --------
+# Formulas en opencode_step_context/opencode_rates_for/opencode_step_cost
+# (definidas en la cabecera). $pricing_catalog es el snapshot que preparo
+# runtime_opencode_ensure_pricing ANTES de esta invocacion: null si no hay
+# catalogo disponible (sin MEFISTO_STATE_DIR, sin cache valida, o cache
+# corrupta a pesar de la validacion previa -- degradacion defensiva, nunca un
+# error).
+| ($pricing_catalog_text | if . == "" then null else (try fromjson catch null) end) as $pricing_catalog
+
+# Lookup por el ID EXACTO `provider/model` que recibio el runner (CA-4 de
+# #1324): nunca se reinterpreta ni se normaliza. Modelo heredado (sin -m,
+# $model_param_or_null null -- no observable en ningun evento de esta
+# version del wire, ver cabecera), catalogo no disponible o modelo ausente
+# del catalogo dejan $pricing_model en null; ninguno de esos casos cae a `0`
+# ni al viejo `.part.cost`.
+| (
+    if $model_param_or_null == null
+        or ($pricing_catalog | type != "object")
+        or ($pricing_catalog.models | type != "object")
+    then null
+    else ($pricing_catalog.models[$model_param_or_null] // null)
+    end
+  ) as $catalog_entry
+| (
+    if $catalog_entry != null and ($catalog_entry | opencode_model_ok)
+    then $catalog_entry else null end
+  ) as $pricing_model
+
+# Suma de CADA paso valorizado con su propio tier (nunca un tier unico para
+# toda la corrida -- MEF-ADR-0054 seccion 2): una corrida puede cruzar el
+# umbral de contexto entre un `step_finish` y el siguiente. Sin modelo
+# resoluble, o sin ningun `step_finish`, `estimated_cost_usd` queda en null
+# (nunca un cero fabricado).
+#
+# Un `step_finish` sin objeto `tokens` tampoco vale 0: anula la corrida
+# entera. Cada contador ausente DENTRO de ese objeto si cuenta como 0 (el
+# wire los trae todos, y un paso sin cache no cachea nada), pero perder el
+# objeto completo es la senal de que este programa ya no entiende el wire
+# format -- y un wire format que dejo de entenderse produciria un importe
+# cercano a cero, exactamente el cero fabricado que MEF-ADR-0054 seccion 1
+# proscribe.
+| (
+    if $pricing_model == null then null
+    elif any($steps[]; (.part.tokens | type) != "object") then null
+    else (
+        [
+            $steps[] | .part.tokens as $tok
+            | opencode_step_context($tok) as $context
+            | opencode_rates_for($pricing_model; $context) as $rates
+            | opencode_step_cost($rates; $tok)
+        ] | add
+    )
+    end
+  ) as $estimated_cost_usd
 
 | ($stderr_text | split("\n") | map(select(length > 0))) as $stderr_lines
 | ($stderr_lines | (if length > 5 then .[-5:] else . end) | join("\n") | clip) as $stderr_tail
@@ -255,9 +399,12 @@ def opencode_input_summary($tool; $input):
     duration_ms: null,
     tokens: {
         input: ($steps | map(.part.tokens.input) | add),
-        output: ($steps | map(.part.tokens.output) | add)
+        output: ($steps | map(.part.tokens.output) | add),
+        cache_read: ($steps | map(.part.tokens.cache.read) | add),
+        cache_write: ($steps | map(.part.tokens.cache.write) | add),
+        reasoning: ($steps | map(.part.tokens.reasoning) | add)
     },
-    cost_usd: ($steps | map(.part.cost) | add),
+    estimated_cost_usd: $estimated_cost_usd,
     turns: null,
     denials: null,
     ttft_ms: null,
