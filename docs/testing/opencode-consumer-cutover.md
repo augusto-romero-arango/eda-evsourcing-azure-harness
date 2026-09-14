@@ -557,74 +557,6 @@ exactas anteriores. El pipeline debe llegar a un PR real.
 - Ninguna.
 ````
 
-## Veredicto final del corte vertical (#1066)
-
-### Identidad de ambos expedientes y desviacion declarada de MEF-ADR-0053 §6.1
-
-| Expediente | Release | Commit etiquetado | Commit fuente (padre unico) | Asset OpenCode | SHA-256 |
-|---|---|---|---|---|---|
-| #1180 | `v0.37.14` | `b5facdda76492991ecb4e24935a5bf8a46f6a699` | `e8f6043be71a0a9cf71d50bc027007a466c53cdb` | `mefisto-opencode-v0.37.14.tar.gz` | `3c24e89fc885b59c99add310c8cf688d52118d92c2d2a0d75339f48448c5da3f` |
-| #1181 | `v0.37.16` | `51cdd558c6b7cfe1d43246b76e22a1011392a92b` | `e9054d5f7576e13edf09b6ca304b79f8d95b0884` | `mefisto-opencode-v0.37.16.tar.gz` | `3196fc5892ddaf3d6ebdb5b54bb22b26403cb2ea5f08f56440c0c5082a22e252` |
-
-Verificado desde Mefisto (nunca desde checkout, cache o Git del consumidor) el
-2026-09-13: el tag `v0.37.14` resuelve al commit `b5facdd…`, con padre unico
-`e8f6043…`; el tag `v0.37.16` resuelve a `51cdd55…`, con padre unico
-`e9054d5…`. Ambos releases de GitHub exponen
-`mefisto-opencode-v<version>.tar.gz` junto con su `.sha256`, con el digest
-publicado por GitHub coincidiendo con el de la tabla.
-
-MEF-ADR-0053 §6.1 exige instalar la **misma** version/tag en Claude Code y
-OpenCode. #1180 certifico esa instalacion sobre `v0.37.14`; #1181 certifico
-las corridas E2E sobre `v0.37.16`, una version posterior. Este veredicto
-declara esa diferencia como **desviacion documentada** de §6.1 -- no una
-enmienda del ADR --, sostenida por tres hechos verificables desde este
-repositorio:
-
-a. **Identidad re-verificada en `v0.37.16`**: `herdr-workspace.sh` confirmo
-   `aligned` (mismo `version`/commit fuente en Claude y OpenCode) al montar el
-   workspace de #1181, y las dos filas ejercitaron `/mefisto:tooling`,
-   `tooling-writer` y `tooling-reviewer` bajo ambos runtimes.
-b. **Las superficies de discovery exclusivas de #1180 no cambiaron**:
-   `git diff --stat e8f6043..e9054d5` no toca `skills/`, `hooks/` ni
-   `.mcp.json` -- las tres superficies cuyo discovery solo consta en
-   `v0.37.14`.
-c. **Las superficies que si cambiaron fueron re-ejercitadas por #1181**: el
-   mismo diff toca, entre otros, `commands/tooling.md`,
-   `agents/tooling-reviewer.md`, `scripts/tooling-pipeline.sh`,
-   `src/runtime/lib/runtime-claude.sh` y
-   `src/published/scripts/lib/adapter-claude.sh` -- exactamente las rutas
-   fuente que `/mefisto:tooling` despacha en su camino real
-   (`tmux-pipeline.sh` -> `herdr-pipeline.sh` -> `tooling-pipeline.sh` ->
-   `mefisto-run-agent.sh` -> adaptador de runtime), y las dos corridas de
-   #1181 las ejercitaron hasta PR real.
-
-Los dos defectos abiertos durante #1180 (#1270, #1281) estan `CLOSED` y se
-corrigieron antes de su veredicto `PASA`; ninguno se parcheo en el
-consumidor.
-
-### Matriz de trazabilidad contra los cinco requisitos de MEF-ADR-0053 §6
-
-| Requisito §6 | Evidencia | Release | Modalidad |
-|---|---|---|---|
-| 1. Instalacion real de la misma version/tag en Claude y OpenCode, con checksum del artefacto OpenCode | "Certificacion de instalacion y discovery (#1180)", subsecciones "Instalacion Claude Code a scope de usuario" e "Instalacion y proyeccion OpenCode"; identidad `aligned` re-verificada por `herdr-workspace.sh` en "Matriz de corridas e issues fixture (#1181)" | `v0.37.14` (instalacion + checksum completos) y `v0.37.16` (identidad `aligned` re-verificada) | invocado |
-| 2. Discovery de comandos, agentes, Skills, scripts, permisos, hooks y MCP en ambos runtimes | "Certificacion de instalacion y discovery (#1180)", subseccion "Matriz de discovery y alineacion" | `v0.37.14` | descubierto |
-| 3. Ejecucion headless hasta PR real + smoke interactivo de la misma version, con observabilidad correlacionable | "Matriz de corridas e issues fixture (#1181)", subsecciones "Corte E2E/Herdr certificado" y "Correlacion, redaccion y veredicto": `/mefisto:tooling 11` y `/mefisto:tooling 12 --models ...` invocados en sesion interactiva, cada uno despacho headless de writer/reviewer hasta PR real (#18, #19) | `v0.37.16` | invocado |
-| 4. Herdr con Claude en fila superior, OpenCode en fila inferior y pools de panes separados | "Matriz de corridas e issues fixture (#1181)", subseccion "Corte E2E/Herdr certificado" | `v0.37.16` | invocado |
-| 5. Logs, metricas y sesiones con `runtime`, `modelo`, `version` y `commit fuente`, sin secretos ni inputs sensibles | "Certificacion de instalacion y discovery (#1180)", CA-6 (identidad sanitizada) y "Matriz de corridas e issues fixture (#1181)", subseccion "Correlacion, redaccion y veredicto" (tabla de stages, session IDs, centinelas en cero) | `v0.37.14` (identidad) y `v0.37.16` (stages y sesiones completos) | ambas |
-
-### Veredicto
-
-**PASA (2026-09-13).** La cadena `v0.37.14` -> `v0.37.16` (commits fuente
-`e8f6043be71a0a9cf71d50bc027007a466c53cdb` ->
-`e9054d5f7576e13edf09b6ca304b79f8d95b0884`) satisface los cinco requisitos de
-MEF-ADR-0053 §6 con la desviacion documentada de §6.1 arriba. No se detecto
-evidencia ausente, degradacion no prevista ni diferencia Claude/OpenCode
-distinta de esa desviacion. `/mefisto:tooling` queda certificado para
-consumidores publicados sobre ambos runtimes; ninguna otra capacidad del
-catalogo queda habilitada por este veredicto. Este resultado retira el
-bloqueo de #1262 y de cualquier otra migracion publicada posterior al corte
-`/mefisto:tooling`.
-
 ## Procedimiento reproducible
 
 Ejecute las filas en este orden desde el clone limpio del consumidor. Sustituya
@@ -849,6 +781,93 @@ Claude/OpenCode previa cuando la corrida hubiera cambiado su release activa;
 conserve los punteros y versiones previos en el manifiesto para poder verificar
 esa restauracion. No pode releases ni migre otro comando como parte de esta
 certificacion.
+
+## Veredicto final del corte vertical (#1066)
+
+### Identidad de ambos expedientes y desviacion declarada de MEF-ADR-0053 §6.1
+
+| Expediente | Release | Commit etiquetado | Commit fuente (padre unico) | Asset OpenCode | SHA-256 |
+|---|---|---|---|---|---|
+| #1180 | `v0.37.14` | `b5facdda76492991ecb4e24935a5bf8a46f6a699` | `e8f6043be71a0a9cf71d50bc027007a466c53cdb` | `mefisto-opencode-v0.37.14.tar.gz` | `3c24e89fc885b59c99add310c8cf688d52118d92c2d2a0d75339f48448c5da3f` |
+| #1181 | `v0.37.16` | `51cdd558c6b7cfe1d43246b76e22a1011392a92b` | `e9054d5f7576e13edf09b6ca304b79f8d95b0884` | `mefisto-opencode-v0.37.16.tar.gz` | `3196fc5892ddaf3d6ebdb5b54bb22b26403cb2ea5f08f56440c0c5082a22e252` |
+
+Verificado desde Mefisto -- nunca desde checkout, cache o Git del consumidor --
+el 2026-09-13 y reverificado al emitir este veredicto el 2026-09-14: el tag
+`v0.37.14` resuelve al commit `b5facdd…`, con padre unico `e8f6043…`; el tag
+`v0.37.16` resuelve a `51cdd55…`, con padre unico `e9054d5…`. Ambos releases de
+GitHub exponen `mefisto-opencode-v<version>.tar.gz` junto con su `.sha256`, y el
+digest publicado por GitHub para cada tarball coincide con el de la tabla.
+
+MEF-ADR-0053 §6.1 exige instalar la **misma** version/tag en Claude Code y
+OpenCode. #1180 certifico esa instalacion sobre `v0.37.14`; #1181 certifico las
+corridas E2E sobre `v0.37.16`, una version posterior. Este veredicto declara esa
+diferencia como **desviacion documentada** de §6.1 -- no una enmienda del ADR --,
+sostenida por tres hechos verificables desde este repositorio:
+
+a. **Identidad re-verificada en `v0.37.16`**: `herdr-workspace.sh` confirmo
+   `aligned` (mismo `version` y commit fuente en Claude y OpenCode) al montar el
+   workspace de #1181, y las dos filas ejercitaron `/mefisto:tooling`,
+   `tooling-writer` y `tooling-reviewer` bajo ambos runtimes.
+b. **Las superficies de discovery exclusivas de #1180 no cambiaron**:
+   `git diff --stat e8f6043..e9054d5` no toca `skills/`, `hooks/` ni `.mcp.json`
+   -- las tres superficies cuyo discovery solo consta en `v0.37.14`.
+c. **Las superficies que si cambiaron fueron re-ejercitadas por #1181**: el
+   mismo diff toca, entre otros, `commands/tooling.md`,
+   `agents/tooling-reviewer.md`, `scripts/tooling-pipeline.sh`,
+   `src/runtime/lib/runtime-claude.sh` y
+   `src/published/scripts/lib/adapter-claude.sh` -- exactamente las rutas fuente
+   que `/mefisto:tooling` despacha en su camino real (`tmux-pipeline.sh` ->
+   `herdr-pipeline.sh` -> `tooling-pipeline.sh` -> `mefisto-run-agent.sh` ->
+   adaptador de runtime), y las dos corridas de #1181 las ejercitaron hasta PR
+   real.
+
+Los dos defectos abiertos durante #1180 (#1270, #1281) estan `CLOSED` y se
+corrigieron antes de su veredicto `PASA`; ninguno se parcheo en el consumidor.
+
+### Matriz de trazabilidad contra los cinco requisitos de MEF-ADR-0053 §6
+
+| Requisito §6 | Evidencia | Release | Modalidad |
+|---|---|---|---|
+| 1. Instalacion real de la misma version/tag en Claude y OpenCode, con checksum del artefacto OpenCode | "Certificacion de instalacion y discovery (#1180)", subsecciones "Instalacion Claude Code a scope de usuario" e "Instalacion y proyeccion OpenCode"; identidad `aligned` re-verificada por `herdr-workspace.sh` en "Matriz de corridas e issues fixture (#1181)" | `v0.37.14` (instalacion + checksum completos) y `v0.37.16` (identidad `aligned` re-verificada) | invocado |
+| 2. Discovery de comandos, agentes, Skills, scripts, permisos, hooks y MCP en ambos runtimes | "Certificacion de instalacion y discovery (#1180)", subseccion "Matriz de discovery y alineacion" | `v0.37.14` | descubierto (Skills y MCP nunca se invocaron) |
+| 3. Ejecucion headless hasta PR real + smoke interactivo de la misma version, con observabilidad correlacionable | "Matriz de corridas e issues fixture (#1181)", subsecciones "Corte E2E/Herdr certificado" y "Correlacion, redaccion y veredicto": `/mefisto:tooling 11` y `/mefisto:tooling 12 --models ...` invocados en sesion interactiva, cada uno despacho headless de writer/reviewer hasta PR real (#18, #19) | `v0.37.16` | invocado |
+| 4. Herdr con Claude en fila superior, OpenCode en fila inferior y pools de panes separados | "Matriz de corridas e issues fixture (#1181)", subseccion "Corte E2E/Herdr certificado" | `v0.37.16` | invocado |
+| 5. Logs, metricas y sesiones con `runtime`, `modelo`, `version` y `commit fuente`, sin secretos ni inputs sensibles | "Certificacion de instalacion y discovery (#1180)", CA-6 (identidad sanitizada) y "Matriz de corridas e issues fixture (#1181)", subseccion "Correlacion, redaccion y veredicto" (tabla de stages, session IDs, centinelas en cero) | `v0.37.14` (identidad) y `v0.37.16` (stages y sesiones completos) | descubierto en `v0.37.14`; invocado en `v0.37.16` |
+
+Los agentes del corte declaran solo `read`/`edit`/`shell`: Skills y MCP
+bundleado quedan certificados por **discovery** en `v0.37.14`, no por
+invocacion. Ninguna otra fila del catalogo se apoya en esta matriz.
+
+### Barrido centinela sobre este documento
+
+Los cuatro centinelas de "Manifiesto de evidencia y redaccion" se ejecutaron
+sobre este archivo al emitir el veredicto. Conteo de contenido sensible: cero.
+Las dos unicas coincidencias pertenecen al propio aparato de redaccion y no a
+evidencia capturada -- el campo de reporte `centinelas.contenido-prompt=0` del
+expediente minimo de #1180 y la linea que define los patrones en el bloque de
+centinelas --, exactamente la excepcion que esa seccion admite. No hay prompts,
+salida raw, stderr, headers, auth stores, API keys ni tokens en el documento.
+
+### Veredicto
+
+**PASA (2026-09-14).** La cadena `v0.37.14` -> `v0.37.16` (commits fuente
+`e8f6043be71a0a9cf71d50bc027007a466c53cdb` ->
+`e9054d5f7576e13edf09b6ca304b79f8d95b0884`) satisface los cinco requisitos de
+MEF-ADR-0053 §6 con la desviacion documentada de §6.1 registrada arriba.
+`/mefisto:tooling` queda certificado para consumidores publicados sobre ambos
+runtimes; ninguna otra capacidad del catalogo queda habilitada por este
+veredicto. Este resultado retira el bloqueo de #1262 y de cualquier otra
+migracion publicada posterior al corte `/mefisto:tooling`.
+
+La desviacion de §6.1 es la **unica** aceptada, y se acepta declarada, no
+inferida como cumplimiento (MEF-ADR-0031). El regimen fail-closed de "Veredicto,
+fallos y limpieza" siguio vigente durante la auditoria: cualquier evidencia
+ausente, degradacion no prevista o diferencia Claude/OpenCode distinta de esa
+desviacion habria producido `NO PASA`, un bug `tipo:bug` en Mefisto enlazado
+como dependencia de #1066, la repeticion de ambas corridas sobre una release
+nueva y la permanencia de #1066 abierto y bloqueado. No se detecto ninguna. No
+se concedieron waivers adicionales ni se aplicaron correcciones manuales en el
+consumidor para sostener este resultado.
 
 ## Referencias
 
