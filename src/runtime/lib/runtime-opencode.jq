@@ -135,6 +135,43 @@ def opencode_input_summary($tool; $input):
 # runtime_opencode_ensure_pricing dejo listo ANTES de esta invocacion
 # ($pricing_catalog_text, ver cabecera).
 #
+# Tarifas y contadores se validan AQUI, antes de multiplicar (CA-4: "costos
+# invalidos emiten null"). runtime_opencode_pricing_cache_is_valid valida el
+# catalogo ANTES de instalarlo, pero este programa lo recibe por `--rawfile`
+# sin revalidarlo -- runtime_opencode_ensure_pricing sirve la cache ya
+# instalada del dia sin volver a parsearla entera en cada anexo en vivo. Un
+# documento corrupto tiene entonces que degradar a null, nunca abortar: un
+# aborto de jq aqui dejaria la traduccion ENTERA sin emitir un solo evento,
+# no solo sin costo.
+def opencode_price_ok:
+    type == "number" and (isnan | not) and (isinfinite | not) and . >= 0;
+
+def opencode_rates_ok:
+    type == "object" and (.input | opencode_price_ok) and (.output | opencode_price_ok)
+    and (.cache_read | opencode_price_ok) and (.cache_write | opencode_price_ok);
+
+# Un tier con umbral o tarifas invalidas vuelve no resoluble al modelo
+# ENTERO. La alternativa -- ignorar ese tier y dejar que la seleccion caiga
+# al anterior o a la tarifa base -- cobraria de menos sin que nada lo delate,
+# justo lo que MEF-ADR-0054 seccion 2 proscribe ("nunca se adivina una
+# tarifa para aparentar precision").
+def opencode_model_ok:
+    opencode_rates_ok and ((.tiers // []) | type == "array")
+    and all((.tiers // [])[]; (.context | opencode_price_ok) and opencode_rates_ok);
+
+# Contador de tokens saneado: ausente, nulo, no numerico o negativo vale 0.
+# Cubre el `max(0, ...)` de MEF-ADR-0054 seccion 2 (un contador inconsistente
+# no puede volver negativa la estimacion) y ademas impide que un valor no
+# numerico del wire aborte el programa al multiplicarse por una tarifa.
+def opencode_count:
+    if (type == "number" and (isnan | not) and (isinfinite | not) and . > 0) then . else 0 end;
+
+# `.cache` se lee via este helper y no como `$tok.cache.read` porque indexar
+# un escalar aborta jq: el sub-objeto que no sea objeto se trata como cache
+# ausente (0), igual que su ausencia.
+def opencode_cache_count($tok; $field):
+    ($tok.cache | if type == "object" then .[$field] else null end | opencode_count);
+
 # El wire de OpenCode entrega `tokens.input` ya NETO de cache (session.ts le
 # resta cache antes de reportarlo) y cache/reasoning separados: el costo de
 # CADA paso usa esos contadores tal cual llegan, sin volver a restar cache
@@ -143,19 +180,19 @@ def opencode_input_summary($tool; $input):
 # opencode_step_context reconstruye ese total sumando el cache de vuelta al
 # input ya neteado.
 def opencode_step_context($tok):
-    (($tok.input // 0) + ($tok.cache.read // 0) + ($tok.cache.write // 0));
+    ($tok.input | opencode_count)
+    + opencode_cache_count($tok; "read")
+    + opencode_cache_count($tok; "write");
 
 # Tier de mayor umbral que el contexto del paso supera ESTRICTAMENTE: un
 # contexto igual al umbral todavia usa el tier anterior/base (verificado en
 # session.ts, MEF-ADR-0054 seccion 2 -- "input exactamente igual al umbral
 # todavia usa el tier anterior"). Sin tiers aplicables (o sin tiers en el
-# catalogo), degrada a las tarifas base del propio modelo: $model ya trae
-# input/output/cache_read/cache_write validados por
-# runtime_opencode_pricing_cache_is_valid, asi que sirve tal cual como objeto
-# de tarifas.
+# catalogo), degrada a las tarifas base del propio modelo: $model ya paso por
+# opencode_model_ok, asi que sirve tal cual como objeto de tarifas.
 def opencode_rates_for($model; $context):
     ($model.tiers // [])
-    | map(select(.context != null and $context > .context))
+    | map(select((.context | opencode_price_ok) and $context > .context))
     | sort_by(.context)
     | if length > 0 then last else $model end;
 
@@ -164,10 +201,10 @@ def opencode_rates_for($model; $context):
 # output visible + reasoning JUNTOS a tarifa output (reasoning nunca inventa
 # una categoria de precio aparte). Tarifas en USD por millon de tokens.
 def opencode_step_cost($rates; $tok):
-    ((($tok.input // 0) * $rates.input)
-      + (($tok.cache.read // 0) * $rates.cache_read)
-      + (($tok.cache.write // 0) * $rates.cache_write)
-      + ((($tok.output // 0) + ($tok.reasoning // 0)) * $rates.output)
+    ((($tok.input | opencode_count) * $rates.input)
+      + (opencode_cache_count($tok; "read") * $rates.cache_read)
+      + (opencode_cache_count($tok; "write") * $rates.cache_write)
+      + ((($tok.output | opencode_count) + ($tok.reasoning | opencode_count)) * $rates.output)
     ) / 1000000;
 
 (now | todate) as $fallback_ts
@@ -208,9 +245,16 @@ def opencode_step_cost($rates; $tok):
 # del catalogo dejan $pricing_model en null; ninguno de esos casos cae a `0`
 # ni al viejo `.part.cost`.
 | (
-    if $model_param_or_null == null or $pricing_catalog == null then null
+    if $model_param_or_null == null
+        or ($pricing_catalog | type != "object")
+        or ($pricing_catalog.models | type != "object")
+    then null
     else ($pricing_catalog.models[$model_param_or_null] // null)
     end
+  ) as $catalog_entry
+| (
+    if $catalog_entry != null and ($catalog_entry | opencode_model_ok)
+    then $catalog_entry else null end
   ) as $pricing_model
 
 # Suma de CADA paso valorizado con su propio tier (nunca un tier unico para
@@ -218,8 +262,17 @@ def opencode_step_cost($rates; $tok):
 # umbral de contexto entre un `step_finish` y el siguiente. Sin modelo
 # resoluble, o sin ningun `step_finish`, `estimated_cost_usd` queda en null
 # (nunca un cero fabricado).
+#
+# Un `step_finish` sin objeto `tokens` tampoco vale 0: anula la corrida
+# entera. Cada contador ausente DENTRO de ese objeto si cuenta como 0 (el
+# wire los trae todos, y un paso sin cache no cachea nada), pero perder el
+# objeto completo es la senal de que este programa ya no entiende el wire
+# format -- y un wire format que dejo de entenderse produciria un importe
+# cercano a cero, exactamente el cero fabricado que MEF-ADR-0054 seccion 1
+# proscribe.
 | (
     if $pricing_model == null then null
+    elif any($steps[]; (.part.tokens | type) != "object") then null
     else (
         [
             $steps[] | .part.tokens as $tok

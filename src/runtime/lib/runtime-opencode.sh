@@ -97,8 +97,11 @@ runtime_opencode_default_model() {
 # calcula el importe consume la ruta global que deja esta preparacion.
 MEFISTO_OPENCODE_PRICING_CATALOG=""
 
-# Valor de MEFISTO_STATE_DIR para el que ya corrio runtime_opencode_prepare_pricing
-# en ESTE proceso (issue #1324, CA-1); ver runtime_opencode_ensure_pricing.
+# Valor de MEFISTO_STATE_DIR cuyo catalogo ya resolvio
+# runtime_opencode_ensure_pricing en ESTE shell (issue #1324, CA-1). Solo
+# acota a un caller que traduzca en su propio shell: el runner traduce dentro
+# de una sustitucion de comandos, y esa asignacion muere con el subshell --
+# de ahi que la cota real viva en disco (ver runtime_opencode_ensure_pricing).
 # El sufijo fijo distingue "nunca preparado" de "preparado para
 # MEFISTO_STATE_DIR vacio/sin definir" (ambos son cadenas vacias sin el
 # sufijo).
@@ -137,14 +140,19 @@ runtime_opencode_pricing_mark_attempt() {
     return 1
 }
 
+runtime_opencode_pricing_warn_if_stale() {
+    local cache_file="$1" today="$2"
+    if [ "$(jq -r '.validated_utc' "$cache_file" 2>/dev/null)" != "$today" ]; then
+        echo "AVISO: se usa una cache de tarifas de OpenCode desactualizada." >&2
+    fi
+}
+
 runtime_opencode_pricing_emit_cache() {
     local cache_file="$1" today="$2"
     if runtime_opencode_pricing_cache_is_valid "$cache_file"; then
         MEFISTO_OPENCODE_PRICING_CATALOG="$cache_file"
         printf '%s\n' "$cache_file"
-        if [ "$(jq -r '.validated_utc' "$cache_file" 2>/dev/null)" != "$today" ]; then
-            echo "AVISO: se usa una cache de tarifas de OpenCode desactualizada." >&2
-        fi
+        runtime_opencode_pricing_warn_if_stale "$cache_file" "$today"
     else
         echo "AVISO: el catalogo de tarifas de OpenCode no esta disponible; se omite la estimacion." >&2
     fi
@@ -254,19 +262,45 @@ runtime_opencode_prepare_pricing() {
 
 # runtime_opencode_ensure_pricing (issue #1324, CA-1)
 #
-# Punto unico por el que runtime_opencode_translate obtiene el catalogo:
-# prepara MEFISTO_OPENCODE_PRICING_CATALOG solo si todavia no se preparo para
-# el MEFISTO_STATE_DIR vigente en ESTE proceso. mefisto-run-agent.sh invoca
-# runtime_opencode_translate repetidamente durante una misma corrida (el
-# anexo en vivo cada MEFISTO_RUN_AGENT_LIVE_INTERVAL segundos ademas de la
-# traduccion final) y MEFISTO_STATE_DIR no cambia durante esa corrida real,
-# asi que memorizar el ultimo valor preparado evita repetir la
-# validacion/refresco diario en cada tick sin perder la reaccion a un cambio
-# real de MEFISTO_STATE_DIR (el caso de un test que ejercita varios
-# escenarios en el mismo proceso bash).
+# Punto unico por el que runtime_opencode_translate obtiene el catalogo, y
+# la cota que impide que el anexo en vivo repita el trabajo diario cada
+# MEFISTO_RUN_AGENT_LIVE_INTERVAL segundos.
+#
+# La cota NO puede vivir solo en una variable de shell: mefisto-run-agent.sh
+# invoca la traduccion dentro de una sustitucion de comandos
+# (`"$(runtime_..._translate ...)"`, dos veces -- el anexo en vivo y la
+# traduccion final), o sea en un SUBSHELL, y todo lo que ese subshell asigne
+# muere con el. Una memoria en variable solo acota a un caller que invoque la
+# traduccion en su propio shell (los tests de esta libreria), nunca al runner
+# real.
+#
+# La cota que si sobrevive es la del disco, que ya mantiene
+# runtime_opencode_prepare_pricing: con el intento de HOY marcado y una cache
+# instalada, el refresco diario ya ocurrio y no hay nada que decidir. En ese
+# caso se sirve el archivo directamente, sin lock ni revalidacion completa
+# del documento -- se instalo por rename atomico DESPUES de validarlo, y
+# runtime-opencode.jq degrada a `estimated_cost_usd:null` ante un documento
+# corrupto en vez de abortar la traduccion. Asi cada tick del anexo en vivo
+# cuesta una lectura de marca, no una adquisicion de lock mas dos pasadas de
+# jq sobre el catalogo entero.
 runtime_opencode_ensure_pricing() {
     local current="${MEFISTO_STATE_DIR:-}#prepared"
     [ "$MEFISTO_OPENCODE_PRICING_PREPARED_FOR" = "$current" ] && return 0
+
+    local cache_dir cache_file today
+    if [ -n "${MEFISTO_STATE_DIR:-}" ]; then
+        cache_dir="$MEFISTO_STATE_DIR/cache/model-pricing"
+        cache_file="$cache_dir/catalog.json"
+        today="$(date -u +%Y-%m-%d 2>/dev/null)"
+        if [ -s "$cache_file" ] && [ -n "$today" ] \
+            && [ "$(cat "$cache_dir/attempted-utc" 2>/dev/null)" = "$today" ]; then
+            MEFISTO_OPENCODE_PRICING_CATALOG="$cache_file"
+            runtime_opencode_pricing_warn_if_stale "$cache_file" "$today"
+            MEFISTO_OPENCODE_PRICING_PREPARED_FOR="$current"
+            return 0
+        fi
+    fi
+
     runtime_opencode_prepare_pricing >/dev/null
     MEFISTO_OPENCODE_PRICING_PREPARED_FOR="$current"
 }

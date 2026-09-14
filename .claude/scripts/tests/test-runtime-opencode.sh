@@ -66,9 +66,13 @@
 #       de tier dentro de un solo paso (con el caso limite exacto-al-umbral),
 #       varios pasos que individualmente no cruzan tier (tier por paso, nunca
 #       acumulado), modelo desconocido y catalogo ausente/stale -> null o
-#       degradacion con aviso segun corresponda, y que el catalogo se prepara
-#       UNA SOLA VEZ por MEFISTO_STATE_DIR aunque runtime_opencode_translate
-#       se invoque varias veces (anexo en vivo + traduccion final).
+#       degradacion con aviso segun corresponda; que el trabajo diario del
+#       catalogo no se repite en cada anexo en vivo cuando se invoca la
+#       traduccion COMO LO HACE EL RUNNER (dentro de una sustitucion de
+#       comandos, o sea en un subshell) y que live y final dan el mismo
+#       importe; y que un catalogo corrupto, una tarifa no numerica, un tier
+#       invalido o un step_finish sin objeto `tokens` degradan a null sin
+#       abortar la traduccion ni fabricar un cero.
 #
 # Uso: .claude/scripts/tests/test-runtime-opencode.sh
 # Exit code: 0 si todos los checks pasan, 1 si alguno falla.
@@ -1047,12 +1051,16 @@ else
     fail "H-10b: no se encontro el aviso de catalogo desactualizado: $(cat "$H10_ERR")"
 fi
 
-# H-11 (CA-1): runtime_opencode_translate se invoca repetidamente en una
-# misma corrida (anexo en vivo + traduccion final); con el MISMO
-# MEFISTO_STATE_DIR, el catalogo se prepara UNA SOLA VEZ por proceso -- las
-# llamadas siguientes reusan la referencia ya preparada. Se envuelve la
-# funcion real con un contador (nunca se edita el archivo de produccion) para
-# distinguir "se preparo" de "se sirvio del cache de proceso".
+# H-11 (CA-1): mefisto-run-agent.sh invoca la traduccion DENTRO DE UNA
+# SUSTITUCION DE COMANDOS -- `TRANSLATED="$("$TRANSLATE_FN" ...)"`, una vez
+# por tick del anexo en vivo y otra al cerrar -- o sea en un SUBSHELL. Este
+# bloque reproduce esa forma exacta (`$(...)`) y no una llamada en el shell
+# actual: una cota que viva solo en una variable de shell se pierde al
+# terminar cada subshell, asi que un test que llame a la traduccion en su
+# propio shell mediria una cota que el runner real nunca obtiene.
+#
+# Se envuelve la funcion real con un contador que escribe a un ARCHIVO (lo
+# unico que sobrevive al subshell; nunca se edita el archivo de produccion).
 eval "$(declare -f runtime_opencode_prepare_pricing | sed '1s/.*/runtime_opencode_prepare_pricing_h11_real ()/')"
 H11_CALLS="$TMP/h11-prepare-calls"
 : > "$H11_CALLS"
@@ -1060,26 +1068,113 @@ runtime_opencode_prepare_pricing() {
     printf 'x\n' >> "$H11_CALLS"
     runtime_opencode_prepare_pricing_h11_real
 }
+h11_prepare_count() { wc -l < "$H11_CALLS" | tr -d ' '; }
+h11_translate() {
+    # Misma forma que mefisto-run-agent.sh: subshell + captura.
+    local state_dir="$1" fixture="$2" exit_code="$3"
+    local _out
+    _out="$(MEFISTO_STATE_DIR="$state_dir" runtime_opencode_translate "$fixture" "opencode" "openai/gpt-5.6-terra" "$exit_code" "" 2>/dev/null)"
+    printf '%s' "$_out" > /dev/null
+}
 MEFISTO_OPENCODE_PRICING_PREPARED_FOR=""
 H11_FIXTURE="$TMP/h11-live-tick.jsonl"
 h_step_fixture "$H11_FIXTURE" '{"input":10,"output":1}'
-MEFISTO_STATE_DIR="$H_STATE_MAIN" runtime_opencode_translate "$H11_FIXTURE" "opencode" "openai/gpt-5.6-terra" "" "" >/dev/null 2>&1
-MEFISTO_STATE_DIR="$H_STATE_MAIN" runtime_opencode_translate "$H11_FIXTURE" "opencode" "openai/gpt-5.6-terra" "" "" >/dev/null 2>&1
-MEFISTO_STATE_DIR="$H_STATE_MAIN" runtime_opencode_translate "$H11_FIXTURE" "opencode" "openai/gpt-5.6-terra" 0 "" >/dev/null 2>&1
-if [ "$(wc -l < "$H11_CALLS" | tr -d ' ')" = "1" ]; then
-    pass "H-11: 3 traducciones (2 live + 1 final) con el mismo MEFISTO_STATE_DIR preparan el catalogo UNA sola vez"
+
+# Caso A -- el estado que ve el 99% de los ticks: el trabajo del dia ya esta
+# hecho en disco (intento de hoy marcado + cache instalada). Ningun tick
+# vuelve a tomar el lock ni a revalidar el catalogo entero.
+h11_translate "$H_STATE_MAIN" "$H11_FIXTURE" ""
+h11_translate "$H_STATE_MAIN" "$H11_FIXTURE" ""
+h11_translate "$H_STATE_MAIN" "$H11_FIXTURE" 0
+if [ "$(h11_prepare_count)" = "0" ]; then
+    pass "H-11: con el trabajo diario ya hecho en disco, 3 traducciones en subshell (2 live + 1 final) no repiten la preparacion"
 else
-    fail "H-11: se preparo el catalogo $(wc -l < "$H11_CALLS" | tr -d ' ') veces (se esperaba 1)"
+    fail "H-11: la preparacion se repitio $(h11_prepare_count) veces pese a que el intento de hoy ya estaba marcado"
 fi
-MEFISTO_STATE_DIR="$H_STATE_STALE" runtime_opencode_translate "$H11_FIXTURE" "opencode" "openai/gpt-5.6-terra" 0 "" >/dev/null 2>&1
-if [ "$(wc -l < "$H11_CALLS" | tr -d ' ')" = "2" ]; then
-    pass "H-11b: un MEFISTO_STATE_DIR distinto SI vuelve a preparar (no es una cota ciega para siempre)"
+
+# Caso B -- la cota no es ciega: un MEFISTO_STATE_DIR cuyo trabajo del dia
+# NO esta hecho (cache validada hoy pero sin marca de intento) si prepara, y
+# lo hace UNA sola vez: el primer tick deja la marca y los siguientes ya
+# entran por el camino rapido. La cache se fecha HOY a proposito para que la
+# preparacion no intente ninguna descarga (misma razon que write_pricing_cache).
+H_STATE_FRESH="$TMP/h-state-fresh"
+write_pricing_cache "$H_STATE_FRESH" "$(date -u +%Y-%m-%d)" "$H_MODELS"
+rm -f "$H_STATE_FRESH/cache/model-pricing/attempted-utc"
+h11_translate "$H_STATE_FRESH" "$H11_FIXTURE" ""
+h11_translate "$H_STATE_FRESH" "$H11_FIXTURE" ""
+h11_translate "$H_STATE_FRESH" "$H11_FIXTURE" 0
+if [ "$(h11_prepare_count)" = "1" ]; then
+    pass "H-11b: un state dir sin el trabajo del dia SI prepara, y solo en el primer tick (la cota no es ciega ni se repite)"
 else
-    fail "H-11b: cambiar MEFISTO_STATE_DIR no disparo una nueva preparacion"
+    fail "H-11b: se esperaba exactamente 1 preparacion para el state dir nuevo, hubo $(h11_prepare_count)"
 fi
+
+# H-11c: la cota no puede cambiar el importe -- el anexo en vivo y la
+# traduccion final de la MISMA corrida tienen que coincidir al centavo, que
+# es lo que CA-1 pide con "una unica referencia de catalogo".
+H11C_LIVE="$(h_cost "$H_STATE_MAIN" "openai/gpt-5.6-terra" "$H1_FIXTURE")"
+H11C_FINAL="$(h_cost "$H_STATE_MAIN" "openai/gpt-5.6-terra" "$H1_FIXTURE")"
+assert_field "H-11c: traduccion live y final de la misma corrida dan el mismo importe" \
+    "0.592652 0.592652" "$H11C_LIVE $H11C_FINAL"
+
 unset -f runtime_opencode_prepare_pricing
 eval "$(declare -f runtime_opencode_prepare_pricing_h11_real | sed '1s/.*/runtime_opencode_prepare_pricing ()/')"
 unset -f runtime_opencode_prepare_pricing_h11_real
+
+# H-12 (CA-4): un catalogo corrupto/incompleto que igual llego a servirse
+# -- el camino rapido de runtime_opencode_ensure_pricing no revalida el
+# documento entero en cada tick -- degrada a null SIN abortar la traduccion:
+# el resto de los eventos neutrales se sigue emitiendo.
+h12_case() {
+    # h12_case <slug> <contenido-del-catalogo>
+    local slug="$1" body="$2"
+    # `local a=$1 b=$TMP/$a` NO funciona: bash expande todos los argumentos de
+    # `local` antes de asignar ninguno, asi que $a todavia no existe.
+    local dir="$TMP/h12-$slug/cache/model-pricing"
+    mkdir -p "$dir"
+    printf '%s' "$body" > "$dir/catalog.json"
+    date -u +%Y-%m-%d > "$dir/attempted-utc"
+    printf '%s' "$TMP/h12-$slug"
+}
+H12_FIXTURE="$TMP/h12.jsonl"
+h_step_fixture "$H12_FIXTURE" '{"input":1000,"output":100}'
+H12_TODAY="$(date -u +%Y-%m-%d)"
+H12_BROKEN="$(h12_case broken 'esto no es JSON')"
+assert_field "H-12: catalogo que no parsea -> null (no aborta la traduccion)" \
+    "null" "$(h_cost "$H12_BROKEN" "openai/gpt-5.6-terra" "$H12_FIXTURE")"
+H12_NO_MODELS="$(h12_case nomodels "{\"schema\":1,\"validated_utc\":\"$H12_TODAY\",\"models\":\"no-es-objeto\"}")"
+assert_field "H-12b: catalogo con .models no-objeto -> null" \
+    "null" "$(h_cost "$H12_NO_MODELS" "openai/gpt-5.6-terra" "$H12_FIXTURE")"
+H12_BAD_RATE="$(h12_case badrate "{\"schema\":1,\"validated_utc\":\"$H12_TODAY\",\"models\":{\"openai/gpt-5.6-terra\":{\"input\":\"2\",\"output\":12,\"cache_read\":0.2,\"cache_write\":2.5,\"tiers\":[]}}}")"
+assert_field "H-12c: tarifa base no numerica -> null (nunca multiplica un string)" \
+    "null" "$(h_cost "$H12_BAD_RATE" "openai/gpt-5.6-terra" "$H12_FIXTURE")"
+H12_BAD_TIER="$(h12_case badtier "{\"schema\":1,\"validated_utc\":\"$H12_TODAY\",\"models\":{\"openai/gpt-5.6-terra\":{\"input\":2,\"output\":12,\"cache_read\":0.2,\"cache_write\":2.5,\"tiers\":[{\"context\":272000,\"input\":null,\"output\":18,\"cache_read\":0.4,\"cache_write\":5}]}}}")"
+assert_field "H-12d: tier con tarifa invalida -> null, no cae a la tarifa base (cobraria de menos en silencio)" \
+    "null" "$(h_cost "$H12_BAD_TIER" "openai/gpt-5.6-terra" "$H12_FIXTURE")"
+# Control positivo del mismo mecanismo: sin el, los cuatro casos de arriba
+# podrian estar dando null solo porque el catalogo nunca llego a servirse.
+H12_OK="$(h12_case ok "{\"schema\":1,\"validated_utc\":\"$H12_TODAY\",\"models\":{\"openai/gpt-5.6-terra\":{\"input\":2,\"output\":12,\"cache_read\":0.2,\"cache_write\":2.5,\"tiers\":[]}}}")"
+assert_field "H-12f: el mismo mecanismo con un catalogo sano SI calcula (control positivo de H-12a..d)" \
+    "0.003200" "$(printf '%.6f' "$(h_cost "$H12_OK" "openai/gpt-5.6-terra" "$H12_FIXTURE")")"
+
+H12_EVENTS="$(MEFISTO_STATE_DIR="$H12_BROKEN" runtime_opencode_translate "$H12_FIXTURE" "opencode" "openai/gpt-5.6-terra" 0 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$H12_EVENTS" -ge 2 ]; then
+    pass "H-12e: con catalogo corrupto la traduccion sigue emitiendo sus eventos (degradacion, no aborto)"
+else
+    fail "H-12e: la traduccion emitio $H12_EVENTS lineas con catalogo corrupto (se esperaba el JSONL completo)"
+fi
+
+# H-13 (CA-4): un `step_finish` sin objeto `tokens` no vale 0 -- anula la
+# corrida entera. Un wire format que dejara de traer ese objeto produciria,
+# si no, un importe cercano a cero indistinguible de una corrida barata.
+H13_FIXTURE="$TMP/h13-sin-tokens.jsonl"
+cat > "$H13_FIXTURE" <<'EOF'
+{"type":"step_finish","timestamp":1,"sessionID":"s","part":{"reason":"stop"}}
+{"type":"text","timestamp":2,"sessionID":"s","part":{"text":"ok"}}
+EOF
+assert_field "H-13: step_finish sin objeto tokens -> null (nunca un cero fabricado)" \
+    "null" "$(h_cost "$H_STATE_MAIN" "openai/gpt-5.6-terra" "$H13_FIXTURE")"
+
 MEFISTO_OPENCODE_PRICING_PREPARED_FOR=""
 
 echo ""
