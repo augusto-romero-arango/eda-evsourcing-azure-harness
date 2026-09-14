@@ -2,7 +2,7 @@
 fecha: 2026-09-14
 hora: 16:25
 sesion: mefisto-planner
-tema: Refinar #1360 y #1361 (tdd-pipeline.sh al runner neutral); brecha --agent del adaptador Claude
+tema: Refinar #1360 y #1361 (tdd-pipeline.sh al runner neutral); brecha --agent del adaptador Claude; drafts de agentes TDD neutrales
 ---
 
 ## Contexto
@@ -30,10 +30,21 @@ Refinar los drafts #1360 y #1361, primeros eslabones de la serie que migra `scri
 - Opcion B para `PIPELINE_CAPTURE_STREAM` (eliminarla en #1360): ampliaba el scope a l.525-560 y l.1836-1960, declaradas intocables por el propio issue.
 - Inyectar la doctrina de los agentes TDD por `--system-file` en vez de corregir el adaptador: 265 KB de system prompt y se pierden `tools:` y `skills:`.
 
+## Descubrimientos (agentes TDD como fuente neutral)
+- El contrato `published-artifact.schema.json` ya admite todo lo que los agentes TDD necesitan (`profile`, `capabilities`, `skills`, `mode`; `additionalProperties:false`): la migracion no toca el generador, solo agrega entradas a `CLAUDE_ROOT_MIRRORS`.
+- Renderer Claude (`src/published/scripts/lib/adapter-claude.sh`): `profile`->`model` (balanced->sonnet, deep->opus), `capabilities`->`tools`, `skills`->`skills: [...]` validando `skills/<name>/SKILL.md`; solo procesa placeholders `{{mefisto:...}}`, asi que las 35 expresiones `${{ }}` de GitHub Actions en `domain-scaffolder` deben sobrevivir (CA explicito).
+- `resolve_declared_agent_model` (`_pipeline-common.sh` l.590) no quita comillas: con el frontmatter generado `model: "sonnet"` devolveria `"sonnet"`. Riesgo concreto para `test-stage-models.sh`; lo corrige #1369.
+- Los cuerpos de los 7 agentes referencian `.claude/pipeline/...` (1-8 veces cada uno): se conservan; neutralizarlos es #1364.
+
+## Decisiones (agentes TDD)
+- Recomendacion aceptada: issues propios, no dentro de #1365, y como dependencia de #1365 (publicar `tdd-pipeline.sh` sin sus agentes dejaria un flujo que falla en Stage 1 bajo OpenCode).
+- Cuatro drafts (`estado:borrador`) agrupados por stage/eje homogeneo: #1369 test-writer + implementer (fija el patron, corrige el resolver, crea `test-tdd-agents.sh`); #1370 reviewer (perfil deep, skills `projections` + `comment-cleanup`); #1371 smoke-test-writer + projection-test-writer + projection-implementer (skill `projections`); #1372 domain-scaffolder (265 KB, conteo de `${{`). #1370-#1372 dependen de #1369 (`bloqueado`). #1365 pasa a depender de los cuatro.
+- CA comun: cuerpo generado identico al actual salvo la linea del guard `{{mefisto:assert-consumer-repo}}`; `model`/`tools`/`skills` equivalentes; tests acoplados al contenido de cada agente verdes sin cambios.
+
 ## Preguntas abiertas
-- Bajo OpenCode, `opencode run --agent test-writer` exige que el consumidor tenga los agentes TDD proyectados en `.opencode/agents/`; hoy solo `tooling-*` estan renderizados. Pertenece a #1365 (clausura publicada) o a un issue propio de proyeccion; no se abordo en esta sesion.
-- Orden sugerido del batch: #1368 -> #1360 -> #1361 (lo confirma `/mefisto-next-order`).
+- Orden sugerido del batch: #1368 -> #1360 -> #1361 -> #1369 -> {#1370, #1371, #1372} -> #1365 (lo confirma `/mefisto-next-order`).
+- #1362 (modelo por perfil) deberia usar el mismo mapeo sonnet->balanced / opus->deep que fijan los frontmatters neutrales de #1369-#1372.
 
 ## Referencias
-Issues creados: #1368.
+Issues creados: #1368 (listo); #1369, #1370, #1371, #1372 (borradores).
 Issues refinados: #1360, #1361 (`estado:borrador` -> `estado:listo`).
