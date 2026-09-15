@@ -323,30 +323,29 @@ porque ningun stage pidio una estimacion bajo el contrato de MEF-ADR-0054.
 
 Conforme al regimen fail-closed de CA-6: ningun campo de costo o de tokens se
 presenta aqui como cero ni como estimado -- quedan sin valor porque no hubo
-corrida, no porque el estimador haya fallado. El seguimiento continuo en el
+corrida, no porque el estimador haya fallado. El seguimiento continua en el
 issue #1358, con evidencia sanitizada (sin prompts, credenciales ni transcript
 crudo) y la accion propuesta. El PR #1359 de este intento se fusiono y **cerro
 #1355**, aunque este documento habia indicado incorrectamente que #1355
 permaneceria abierto. Este antecedente no convierte el intento en una
 certificacion ni altera su veredicto **NO PASA**.
 
-**Accion que era obligatoria antes del merge de ese PR (CA-6).** El launcher interno fija
+**Accion que era obligatoria antes del merge de ese PR (CA-6).** El launcher
+interno fija
 `Closes #$ISSUE_NUM` en el cuerpo del PR que crea
 (`src/internal/scripts/mefisto-tooling-pipeline.sh:1415`), sin forma de
-desactivarlo por configuracion. El PR de este intento llegara entonces a `main`
-con `Closes #1355` y cerrara el issue al fusionarse, que es exactamente lo que
-CA-6 prohibe en el camino fail-closed. Para respetarlo hay que, antes del
-merge, editar el cuerpo del PR quitando esa linea (`gh pr edit <pr> --body
-...`). No se hizo antes del merge de PR #1359 y #1355 quedo cerrado. Ningun
-stage del pipeline puede hacerlo por su cuenta: tienen prohibido operar sobre
-ramas y PRs.
+desactivarlo por configuracion. El PR de este intento llego a `main` con
+`Closes #1355` y cerro el issue al fusionarse, exactamente lo que CA-6 prohibia
+en el camino fail-closed. Para respetarlo habia que editar el cuerpo del PR y
+quitar esa linea antes del merge (`gh pr edit <pr> --body ...`). No se hizo
+antes del merge de PR #1359 y #1355 quedo cerrado. Ningun stage del pipeline
+puede hacerlo por su cuenta: tienen prohibido operar sobre ramas y PRs.
 
-**Que falta para intentar de nuevo:** una corrida de
-`MEFISTO_RUNTIME=opencode ./.claude/scripts/mefisto-tooling-pipeline.sh <issue>`
-lanzada fuera de un stage-1-writer anidado -- por un mantenedor de forma
-interactiva, o por un modo del launcher pensado para certificacion que no
-abra PR -- contra un issue de prueba que no sea #1355 ni #874, para no repetir
-ninguna de las dos recursividades ya documentadas en este archivo.
+**Correccion del siguiente paso historico:** no hacia falta otro modo del
+launcher ni un issue de prueba. La corrida valida se lanza desde el nivel de
+orquestacion contra #1358, con runtime explicito y sin `--variant`, como se
+registra en la seccion siguiente. De ese modo no hay pipeline anidado y el
+orquestador conserva la responsabilidad de crear rama y PR.
 
 ## Backlog (pendiente para cerrar la certificacion completa)
 
@@ -371,7 +370,7 @@ ninguna de las dos recursividades ya documentadas en este archivo.
     `MEFISTO_RUNTIME` ya selecciona CLI. Lo que sigue pendiente es lanzar la
     corrida E2E del estimador (`estimated_cost_usd`, MEF-ADR-0054) fuera de un
     stage-1-writer anidado -- ver "Intento de certificacion del costo
-    estimado post-#1324" arriba y el issue de bug #1358.
+    estimado post-#1324" arriba y el issue de seguimiento #1358.
 
 ## Certificacion orquestada del costo estimado (issue #1358)
 
@@ -387,6 +386,18 @@ solo el orquestador crea la rama, el PR y la tabla final de metricas. La
 segunda pasada documental sobre ese mismo PR debe registrar los valores finales
 de los archivos sanitizados; hasta entonces no se anticipa un veredicto ni se
 declara un costo.
+
+### Procedencia registrada al lanzamiento
+
+- SHA base de `origin/main`: `7b379534e446773d9c761b70f690db6372c2d63d`.
+  Es tambien el padre del primer commit de esta rama.
+- `git merge-base --is-ancestor af9a366 7b379534` termino con exit 0: la base
+  contiene `af9a366` (#1324).
+- Identificador de inicio del orquestador: `20260914-210748`; el estado
+  sanitizado de la corrida registra `runtime: opencode`, `variant: null` y el
+  paso `2-reviewer` en ejecucion. La ventana temporal final, la version y el
+  SHA del harness se toman de `pipeline-history.jsonl` cuando termine la
+  corrida; este registro provisional no los sustituye.
 
 ### Evidencia requerida para el veredicto
 
