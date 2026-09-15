@@ -33,7 +33,7 @@ Para `status`, si el launcher esta disponible, consulta una sola vez su estado e
 "$MEFISTO_LIFECYCLE_LAUNCHER" projection-status
 ```
 
-Si el launcher no esta disponible, informa `unavailable` y no lo invocas. Si responde, muestra siempre la raiz global efectiva `configRoot`, la release activa `activeVersion` y la release del ledger `ledgerRelease`, sin inspeccionar archivos de configuracion, proveedores, modelos, credenciales, tokens ni stores de autenticacion. Presenta visiblemente el estado `installed-disabled`, `enabled`, `stale` o `conflict`; conserva `operation-in-progress` como una operacion en curso que se debe reintentar, sin repararla.
+Si el launcher no esta disponible, informa `unavailable` y no lo invocas. Si responde, muestra siempre la raiz global efectiva `configRoot`, la release activa `activeVersion` y la release del ledger `ledgerRelease`, sin inspeccionar archivos de configuracion, proveedores, modelos, credenciales, tokens ni stores de autenticacion. Normaliza el estado estructurado `disabled` como `installed-disabled`; presenta tambien visiblemente `enabled`, `stale` o `conflict`; conserva `operation-in-progress` como una operacion en curso que se debe reintentar, sin repararla.
 
 El lifecycle del adaptador de plugin es administrado externamente por su propio gestor. Solo se informa esa limitacion: este comando no intenta habilitarlo ni deshabilitarlo.
 

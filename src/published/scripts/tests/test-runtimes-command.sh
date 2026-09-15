@@ -25,6 +25,7 @@ contains "$body" 'Uso: /mefisto:runtimes [status | enable opencode | disable ope
 contains "$body" 'selector' 'sin argumentos ofrece selector confirmado'
 contains "$body" 'unavailable' 'declara unavailable'
 contains "$body" 'installed-disabled' 'declara installed-disabled'
+contains "$body" 'Normaliza el estado estructurado `disabled` como `installed-disabled`' 'normaliza disabled del launcher'
 contains "$body" 'enabled' 'declara enabled'
 contains "$body" 'stale' 'declara stale'
 contains "$body" 'conflict' 'declara conflict'
