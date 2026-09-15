@@ -16,11 +16,14 @@ body() { awk 'NR == 1 { next } $0 == "---" && !seen { seen=1; next } seen { prin
 body_without_guard() { body "$1" | awk '!/\{\{mefisto:assert-consumer-repo\}\}/ && !/Antes de continuar, aborta si existe `src\/internal\/scripts\/generate-internal-adapters.sh`/ && !/^<!-- GENERADO por /'; }
 
 # La lista es el unico punto que los siguientes cortes de la serie deben ampliar.
-agents=(test-writer implementer reviewer)
+agents=(test-writer implementer reviewer smoke-test-writer projection-test-writer projection-implementer)
 descriptions=(
     'Escribe tests ES (fase roja TDD) con DSL Given/When/Then y stubs minimos de compilacion.'
     'Implementa logica de negocio (fase verde TDD) con event sourcing. AggregateRoots, CommandHandlers, Service Bus.'
     'Revisa y refactoriza el código producido en las fases roja y verde del pipeline ES (fase refactor). Verifica patrones de event sourcing y mantiene todos los tests pasando.'
+    'Escribe smoke tests black-box contra el entorno dev desplegado. Asume que el proyecto SmokeTests ya existe.'
+    'Escribe tests read-side (fase roja TDD) de proyecciones Marten -- unit tests de Create/Apply/ShouldDelete, config-test del worker y composicion de la Function GET. Nunca implementa.'
+    'Implementa proyecciones Marten (read models), el seam de registro read-side (Configurar{Dominio}) y las Functions HTTP GET de consulta. Nunca modifica tests.'
 )
 
 echo '[fuentes] contrato neutral, guard y doctrina preservada'
@@ -34,6 +37,12 @@ for index in "${!agents[@]}"; do
             expected_profile='deep'
             expected_capabilities='["read", "edit", "shell", "skill"]'
             expected_skills='["projections", "comment-cleanup"]'
+            expected_keys='["capabilities", "description", "id", "kind", "mode", "profile", "skills"]'
+            ;;
+        smoke-test-writer|projection-test-writer|projection-implementer)
+            expected_profile='balanced'
+            expected_capabilities='["read", "edit", "shell", "skill"]'
+            expected_skills='["projections"]'
             expected_keys='["capabilities", "description", "id", "kind", "mode", "profile", "skills"]'
             ;;
         *)
@@ -82,6 +91,11 @@ for agent in "${agents[@]}"; do
         grep -Fq 'tools: "Read, Glob, Grep, Edit, Write, Bash, Skill"' "$claude" && pass "$agent Claude materializa capacidades y Skill" || fail "$agent Claude no materializa Skill"
         grep -Fq 'skills: ["projections","comment-cleanup"]' "$claude" && pass "$agent Claude conserva skills" || fail "$agent Claude no conserva skills"
         grep -Fq '"skill":{"*":"deny","mefisto-projections":"allow","mefisto-comment-cleanup":"allow"}' "$opencode" && grep -Fq 'Antes de ejecutar este body, usa la tool nativa `skill` para cargar, en este orden: `mefisto-projections`, `mefisto-comment-cleanup`.' "$opencode" && pass "$agent OpenCode materializa skills" || fail "$agent OpenCode no materializa skills"
+    elif [ "$agent" = smoke-test-writer ] || [ "$agent" = projection-test-writer ] || [ "$agent" = projection-implementer ]; then
+        grep -Fq 'model: "sonnet"' "$claude" && pass "$agent Claude materializa balanced como sonnet" || fail "$agent Claude no materializa sonnet"
+        grep -Fq 'tools: "Read, Glob, Grep, Edit, Write, Bash, Skill"' "$claude" && pass "$agent Claude materializa capacidades y Skill" || fail "$agent Claude no materializa Skill"
+        grep -Fq 'skills: ["projections"]' "$claude" && pass "$agent Claude conserva skills" || fail "$agent Claude no conserva skills"
+        grep -Fq '"skill":{"*":"deny","mefisto-projections":"allow"}' "$opencode" && grep -Fq 'Antes de ejecutar este body, usa la tool nativa `skill` para cargar, en este orden: `mefisto-projections`.' "$opencode" && pass "$agent OpenCode materializa skills" || fail "$agent OpenCode no materializa skills"
     else
         grep -Fq 'model: "sonnet"' "$claude" && pass "$agent Claude materializa balanced como sonnet" || fail "$agent Claude no materializa sonnet"
         grep -Fq 'tools: "Read, Glob, Grep, Edit, Write, Bash"' "$claude" && pass "$agent Claude materializa capacidades" || fail "$agent Claude no materializa capacidades"
