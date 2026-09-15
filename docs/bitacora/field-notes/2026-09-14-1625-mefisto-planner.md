@@ -43,13 +43,16 @@ Refinar los drafts #1360 y #1361, primeros eslabones de la serie que migra `scri
 - Cuatro drafts (`estado:borrador`) agrupados por stage/eje homogeneo: #1369 test-writer + implementer (fija el patron, corrige el resolver, crea `test-tdd-agents.sh`); #1370 reviewer (perfil deep, skills `projections` + `comment-cleanup`); #1371 smoke-test-writer + projection-test-writer + projection-implementer (skill `projections`); #1372 domain-scaffolder (265 KB, conteo de `${{`). #1370-#1372 dependen de #1369 (`bloqueado`). #1365 pasa a depender de los cuatro.
 - CA comun: cuerpo generado identico al actual salvo la linea del guard `{{mefisto:assert-consumer-repo}}`; `model`/`tools`/`skills` equivalentes; tests acoplados al contenido de cada agente verdes sin cambios.
 - #1369 refinado a `estado:listo` (unico draft sin dependencias: entra ya a la cola lanzable). Notas verificadas: bug del resolver real, `find` del generador, `_pipeline-common.sh` en la clausura (regenerar `dist/*/scripts/_pipeline-common.sh`).
-- **Nuevo draft #1373 "Extender la politica bash de OpenCode para el toolchain de los agentes TDD"**, dependencia de #1365 (no de #1369). Deja abiertas dos opciones: A) extender `capability_map.shell.rules` global con `dotnet *`/`func *`/`terraform *`; B) nueva capacidad (`toolchain`) en el schema, declarada solo por agentes TDD. `rm *`/`curl *`/`az *` siguen deny salvo decision explicita.
+- **#1373 refinado a `estado:listo`** (sin dependencias). Mecanismo: ampliar las reglas globales de `shell` (opcion A); la capacidad nueva no compone porque `permission_json` fusiona `capability_map` por clave y una segunda capacidad con `bash` sobrescribiria las reglas de `shell`. Reglas: `dotnet *`, `func init *`, `terraform init -backend=false*`/`validate*`/`fmt*`, `python3 - *`, y `rm` acotado a `src/*` y `tests/*` (decision (b) del mantenedor tras descartar (a) deny total, (b') por nombre de plantilla y (c) `rm *` allow). `curl *`/`az *` siguen deny: la doctrina no los ejecuta. CA-1 exige verificar empiricamente el matcher de OpenCode 1.18.29 (si `*` cruza `/`, comillas, comandos compuestos, precedencia) antes de escribir las reglas.
+- **Asimetria Claude/OpenCode explicitada**: bajo Claude el pipeline corre con `--permission-mode bypassPermissions` y `tools: Bash` es por herramienta, asi que `rm -rf` de cualquier ruta ya es posible sin control; `hooks/hooks.json` publicado solo tiene `SessionStart`. La paridad de un guard en Claude queda como deuda separada, no abierta como issue.
+- **Nuevo draft #1374** "Normalizar las eliminaciones de plantillas de domain-scaffolder a rutas relativas del worktree" (`bloqueado` por #1372 y #1373): 6 de los 9 `rm` usan `"$REPO_ROOT/..."` absoluto y no casarian con `rm -f src/*`; el `rm -f "$temporal"` del bucle LF desaparece; `test-guards.sh` [K] fija literales que deben conservarse. #1365 depende ademas de #1374.
 
 ## Preguntas abiertas
-- Orden sugerido del batch: #1369 y #1368 (sin dependencias) -> #1360 -> #1361 -> {#1370, #1371, #1372} -> #1373 -> #1365 (lo confirma `/mefisto-next-order`; hoy la cola lanzable es #1262, #1368, #1369, #1360, #1361).
-- #1373: decidir opcion A (reglas globales) vs B (capacidad nueva) y si la doctrina de domain-scaffolder debe dejar de pedir `rm`/`curl` (#1372) o se acota la regla.
+- Orden sugerido del batch: #1369, #1368 y #1373 (sin dependencias) -> #1360 -> #1361 -> {#1370, #1371, #1372} -> #1374 -> #1365 (lo confirma `/mefisto-next-order`; hoy la cola lanzable es #1262, #1368, #1369, #1360, #1361).
+- Deuda no abierta: guard de comandos del lado Claude (PreToolUse o `permissions.deny`) para que la paridad MEF-ADR-0053 §5 no dependa solo de la politica OpenCode.
+- #1374 depende del hallazgo empirico de CA-1 de #1373 (semantica del matcher): refinarlo despues de ese PR.
 - #1362 (modelo por perfil) deberia usar el mismo mapeo sonnet->balanced / opus->deep que fijan los frontmatters neutrales de #1369-#1372.
 
 ## Referencias
-Issues creados: #1368, #1369 (listos); #1370, #1371, #1372, #1373 (borradores).
-Issues refinados: #1360, #1361, #1369 (`estado:borrador` -> `estado:listo`).
+Issues creados: #1368, #1369, #1373 (listos); #1370, #1371, #1372, #1374 (borradores).
+Issues refinados: #1360, #1361, #1369, #1373 (`estado:borrador` -> `estado:listo`).
