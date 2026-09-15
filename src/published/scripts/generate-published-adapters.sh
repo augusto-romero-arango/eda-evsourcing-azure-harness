@@ -73,6 +73,8 @@ CLAUDE_ROOT_MIRRORS=(
     'src/published/commands/tooling.md|commands/tooling.md'
     'src/published/agents/tooling-writer.md|agents/tooling-writer.md'
     'src/published/agents/tooling-reviewer.md|agents/tooling-reviewer.md'
+    'src/published/agents/test-writer.md|agents/test-writer.md'
+    'src/published/agents/implementer.md|agents/implementer.md'
 )
 
 usage_error() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }

@@ -59,8 +59,10 @@ EOF
         # lifecycle, pero no obtiene permiso para referenciar sus directorios,
         # CLI, caches ni metadata. Los demas artefactos tampoco pueden nombrar
         # runtimes concretos.
+        # La doctrina TDD legada conserva rutas de estado .claude/ y snippets
+        # shell hasta que #1364 los neutralice; no son metadata del adaptador.
         if { [ "$id" = runtimes ] && printf '%s\n' "$text" | grep -Eiq '\.claude|\.opencode|marketplace|(^|[/[:space:].])cache([/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:'; } \
-            || { [ "$id" != runtimes ] && printf '%s\n' "$text" | grep -Eiq 'claude|opencode|\.claude|\.opencode|marketplace|(^|[/[:space:].])cache([/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:'; }; then
+            || { [ "$id" != runtimes ] && [ "$id" != test-writer ] && [ "$id" != implementer ] && printf '%s\n' "$text" | grep -Eiq 'claude|opencode|\.claude|\.opencode|marketplace|(^|[/[:space:].])cache([/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:'; }; then
             echo "$rel: body: linea $line referencia un runtime, CLI, cache, directorio o metadata propia de runtime"
             status=1
         fi
@@ -68,7 +70,7 @@ EOF
         placeholders="$(printf '%s\n' "$text" | grep -Eo '\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@*#?!-]' || true)"
         while IFS= read -r placeholder; do
             [ -z "$placeholder" ] && continue
-            if [ "$placeholder" != '$ARGUMENTS' ] && { [ "$id" != runtimes ] || { [ "$placeholder" != '$MEFISTO_LIFECYCLE_LAUNCHER' ] && [ "$placeholder" != '$MEFISTO_LIFECYCLE_CONFIG_ROOT' ]; }; }; then
+            if [ "$placeholder" != '$ARGUMENTS' ] && [ "$id" != test-writer ] && [ "$id" != implementer ] && { [ "$id" != runtimes ] || { [ "$placeholder" != '$MEFISTO_LIFECYCLE_LAUNCHER' ] && [ "$placeholder" != '$MEFISTO_LIFECYCLE_CONFIG_ROOT' ]; }; }; then
                 echo "$rel: body: linea $line placeholder no permitido: $placeholder (solo se admite \$ARGUMENTS)"
                 status=1
             fi
