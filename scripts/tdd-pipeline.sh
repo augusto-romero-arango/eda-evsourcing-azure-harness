@@ -78,10 +78,14 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 # ─── Logging ─────────────────────────────────────────────────────────────────
-PIPELINE_DIR=".claude/pipeline"
-LOG_DIR="$PIPELINE_DIR/logs"
+PIPELINE_DIR="$(dirname "$(mefisto_state_path '.state')")"
+LOG_DIR="$(dirname "$(mefisto_state_path 'logs/.state')")"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 LOG_FILE="$LOG_DIR/pipeline-$TIMESTAMP.log"
+
+# Evidencia operacional del pipeline en el worktree: nunca es trabajo del
+# agente ni entra a sus commits, aunque el consumidor no la ignore en Git.
+PIPELINE_OWN_WRITES=(':!.mefisto/pipeline')
 
 # Lineas de log que abort() reemite al fallar (issue #379): la causa real de un
 # fallo externo (gh, git, dotnet...) vive en el log del pipeline, no en el
@@ -213,7 +217,7 @@ abort() {
             --arg started "${TIMESTAMP:-}" --arg finished "$(date +%Y-%m-%dT%H:%M:%S)" \
             --arg stage "$CURRENT_STAGE" --arg error "$PIPELINE_ERROR" --argjson agents "$abort_agents_json" \
             '{issue:$issue,title:$title,pipeline:"tdd",variant:$variant,identity:$identity,runtime:(if $runtime == "" then null else $runtime end),started:$started,finished:$finished,state:"failed",stage:$stage,agents:$agents,error:$error}' \
-            >> "$PIPELINE_DIR_ABS/pipeline-history.jsonl" 2>/dev/null || true
+            >> "$HISTORY_FILE" 2>/dev/null || true
     fi
     exit 1
 }
@@ -231,7 +235,7 @@ update_status() {
     [ -n "$PIPELINE_TESTS" ] && tests_val="$PIPELINE_TESTS"
     [ -n "$PIPELINE_PR" ]    && pr_val="\"$PIPELINE_PR\""
     [ -n "$PIPELINE_ERROR" ] && error_val="$(jq -cn --arg error "$PIPELINE_ERROR" '$error')"
-    cat > "$PIPELINE_DIR_ABS/$STATUS_FILENAME" <<EOJSON
+    cat > "$(mefisto_state_path "$STATUS_FILENAME")" <<EOJSON
 {
   "issue": "${ISSUE_NUM:-null}",
   "title": "$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')",
@@ -372,18 +376,15 @@ for cmd in gh git dotnet jq; do
 done
 
 # ─── Preparar directorio de pipeline ─────────────────────────────────────────
-mkdir -p "$LOG_DIR"
-mkdir -p "$PIPELINE_DIR/metrics"
-echo "Pipeline iniciado: $TIMESTAMP" > "$LOG_FILE"
-
-# Resolver rutas absolutas para uso dentro de subshells (cd al worktree)
-PIPELINE_DIR_ABS="$(realpath "$PIPELINE_DIR")"
-LOG_DIR_ABS="$(realpath "$LOG_DIR")"
-LOG_FILE_ABS="$(realpath "$LOG_FILE")"
-
-# [Cambio 5] Definir EVENTS_LOG_ABS aquí (fuera de bloques condicionales)
-# para que esté disponible tanto en modo normal como en --from-stage
-EVENTS_LOG_ABS="$PIPELINE_DIR_ABS/events.log"
+# Todas las escrituras de estado usan la raiz canonica; los helpers crean los
+# directorios padre necesarios sin migrar ni tocar el estado legacy.
+PIPELINE_DIR_ABS="$(dirname "$(mefisto_state_path '.state')")"
+LOG_DIR_ABS="$(dirname "$(mefisto_state_path 'logs/.state')")"
+LOG_FILE_ABS="$(mefisto_state_path "logs/$(basename "$LOG_FILE")")"
+LOG_FILE="$LOG_FILE_ABS"
+EVENTS_LOG_ABS="$(mefisto_state_path 'events.log')"
+HISTORY_FILE="$(mefisto_state_path 'pipeline-history.jsonl')"
+echo "Pipeline iniciado: $TIMESTAMP" > "$LOG_FILE_ABS"
 
 # Separador de sesión en events.log
 echo "─── SESSION $TIMESTAMP issue:${ISSUE_NUM:-file} from-stage:$FROM_STAGE ───" >> "$EVENTS_LOG_ABS"
@@ -562,7 +563,7 @@ elif [ -n "$INPUT_FILE" ]; then
 fi
 
 # Guardar contexto para referencia
-echo "$ISSUE_CONTEXT" > "$PIPELINE_DIR/input.md"
+echo "$ISSUE_CONTEXT" > "$(mefisto_state_path 'input.md')"
 
 # ─── Preparar worktree ───────────────────────────────────────────────────────
 header "Preparando worktree"
@@ -620,8 +621,6 @@ else
 
     success "Worktree creado: $WORKTREE_PATH"
 
-    mkdir -p "$WORKTREE_PATH/.claude/pipeline/summaries"
-
     update_status "setup" "running"
 
     SNAPSHOT_COMMIT=$(git -C "$WORKTREE_PATH" rev-parse HEAD)
@@ -653,7 +652,7 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
         AGENT_SCAFFOLD_METRICS_JSON="$(enrich_stage_metrics "tdd" "$EVENTS_SCAFFOLD" "$LAST_AGENT_METRICS_JSON" "${ISSUE_NUM:-}" "${VARIANT_LABEL_JSON:-null}" "0" "domain-scaffolder" "$(_tdd_agent_profile "domain-scaffolder")" "$HARNESS_IDENTITY_JSON")"
         # CA-3/CA-5 (issue #646): metricas del scaffold, cosechadas al cierre
         # del stage y respaldadas en disco ANTES de decidir si se aborta.
-        echo "$AGENT_SCAFFOLD_METRICS_JSON" > "$PIPELINE_DIR_ABS/metrics/tdd-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-0-domain-scaffolder.json" 2>/dev/null || true
+        echo "$AGENT_SCAFFOLD_METRICS_JSON" > "$(mefisto_state_path "metrics/tdd-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-0-domain-scaffolder.json")" 2>/dev/null || true
 
         if [ "$SCAFFOLD_EXIT" -ne 0 ] || ! agent_events_completed_successfully "$EVENTS_SCAFFOLD"; then
             echo "[$(date +%H:%M:%S)] FALLO domain-scaffolder (${SCAFFOLD_ELAPSED}s, exit $SCAFFOLD_EXIT)" >> "$EVENTS_LOG_ABS"
@@ -675,6 +674,14 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
         log "Snapshot actualizado post-scaffold: $SNAPSHOT_COMMIT"
     fi
 fi
+
+# La doctrina de agentes anterior a #1387 todavia intenta escribir summaries
+# en el estado legacy. Ambos directorios deben existir tambien al reanudar un
+# worktree; el pipeline solo escribe en el canonico y conserva el otro como
+# destino transitorio de esos agentes.
+mefisto_state_path 'summaries/.state' "$WORKTREE_PATH" >/dev/null
+legacy_summary_dir="$WORKTREE_PATH/$(basename "$(dirname "$MEFISTO_LEGACY_STATE_DIR")")/$(basename "$MEFISTO_LEGACY_STATE_DIR")/summaries"
+mkdir -p "$legacy_summary_dir"
 
 # Detectar señal de refactoring pre-existente (worktree previo con --from-stage)
 # Ubicacion: pipeline-state/ en la raiz del worktree (NO .claude/) — el runtime
@@ -714,7 +721,8 @@ mkdir -p "$WORKTREE_PATH/pipeline-state"
 # ─── Función auxiliar para recolectar resumen de agente ─────────────────────
 collect_summary() {
     local stage="$1" agent="$2"
-    local f="$WORKTREE_PATH/.claude/pipeline/summaries/stage-${stage}-${agent}.md"
+    local f
+    f="$(mefisto_state_read_first "summaries/stage-${stage}-${agent}.md" "$WORKTREE_PATH" 2>/dev/null || true)"
     if [ -f "$f" ]; then cat "$f"; else echo "_(El agente no generó resumen)_"; fi
 }
 
@@ -727,15 +735,21 @@ run_agent() {
     local system_file="$PIPELINE_TMP_DIR/${stage}-${agent}.system.md"
     local runner_file="$PIPELINE_TMP_DIR/${stage}-${agent}.runner.log"
     local start_ts run_exit=0 elapsed=0 failure_type="" hold_started="" hold_total=0 resume_session="" resume_degraded=false attempt=0 denial_retry_used=false
-    local entry_commit summary_file metrics_json="null"
+    local entry_commit summary_file legacy_summary_file summary_path metrics_json="null"
+    summary_path="$(mefisto_state_path "summaries/stage-${stage}-${agent}.md" "$WORKTREE_PATH")"
+    prompt="$prompt
+
+Al cerrar este stage, deja tu resumen en: $summary_path"
     printf '%s' "$prompt" > "$prompt_file"
     printf '%s\n' 'You are running in non-interactive print mode. There is no human to approve anything. Use editing tools directly; never ask for permission. Do not push or create pull requests.' > "$system_file"
     entry_commit="$(git -C "$WORKTREE_PATH" rev-parse HEAD)"
-    summary_file="$WORKTREE_PATH/.claude/pipeline/summaries/stage-${stage}-${agent}.md"
+    summary_file="$summary_path"
     # En --from-stage puede quedar el resumen de una corrida anterior. No puede
     # contar como evidencia de que una sonda reanudada de ESTA invocacion llego
     # al final de su contrato.
     rm -f "$summary_file"
+    legacy_summary_file="$(mefisto_state_read_first "summaries/stage-${stage}-${agent}.md" "$WORKTREE_PATH" 2>/dev/null || true)"
+    [ -z "$legacy_summary_file" ] || rm -f "$legacy_summary_file"
     echo "[$(date +%H:%M:%S)] === STAGE $stage: $agent ===" >> "$EVENTS_LOG_ABS"
     case "$agent" in test-writer|projection-test-writer) AGENT_TW_RES="running" ;; implementer|projection-implementer) AGENT_IM_RES="running" ;; reviewer) AGENT_RV_RES="running" ;; esac
     local AGENT_MODEL_OVERRIDE agent_profile
@@ -766,11 +780,12 @@ run_agent() {
         # agent/profile/runtime/modelo/identidad -- cruce con metrics-report.sh
         # y la estimacion de costos (MEF-ADR-0054).
         metrics_json="$(enrich_stage_metrics "tdd" "$events_file" "$metrics_json" "${ISSUE_NUM:-}" "${VARIANT_LABEL_JSON:-null}" "$stage" "$agent" "$agent_profile" "$HARNESS_IDENTITY_JSON")"
-        echo "$metrics_json" > "$PIPELINE_DIR_ABS/metrics/tdd-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-${stage}-${agent}.json" 2>/dev/null || true
+        echo "$metrics_json" > "$(mefisto_state_path "metrics/tdd-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-${stage}-${agent}.json")" 2>/dev/null || true
         local denials attempt_has_work=false
         denials="$(agent_events_denials "$events_file")"
         case "$denials" in ''|*[!0-9]*) denials=0 ;; esac
-        if ! git -C "$WORKTREE_PATH" diff --quiet "$entry_commit"..HEAD 2>/dev/null || [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ 2>/dev/null)" ]; then attempt_has_work=true; fi
+        if ! git -C "$WORKTREE_PATH" diff --quiet "$entry_commit"..HEAD -- . "${PIPELINE_OWN_WRITES[@]}" 2>/dev/null \
+            || [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ "${PIPELINE_OWN_WRITES[@]}" 2>/dev/null)" ]; then attempt_has_work=true; fi
         if [ "$denials" -gt 0 ] && [ "$attempt_has_work" = false ] && [ "$denial_retry_used" = false ]; then
             denial_retry_used=true
             resume_session=""
@@ -787,6 +802,7 @@ run_agent() {
         local slept
         if ! slept=$(agent_hold_wait "$EVENTS_LOG_ABS" "$failure_type" "$hold_started" "$(agent_events_resets_at "$events_file")"); then break; fi
         hold_total=$((hold_total + slept))
+        summary_file="$(mefisto_state_read_first "summaries/stage-${stage}-${agent}.md" "$WORKTREE_PATH" 2>/dev/null || true)"
         if [ "$attempt_resume" = true ] && [ ! -s "$summary_file" ]; then
             warn "$agent: la sesion reanudada termino sin resumen; se degrada permanentemente a inicio limpio"
             resume_degraded=true
@@ -804,7 +820,8 @@ run_agent() {
     if [ -n "$failure_type" ]; then
         local recoverable_work=false
         case "$failure_type" in TIMEOUT|KILLED|STREAM_CUT|PROTOCOL_INVALID) ;; *)
-            if ! git -C "$WORKTREE_PATH" diff --quiet "$entry_commit"..HEAD 2>/dev/null || [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ 2>/dev/null)" ]; then
+            if ! git -C "$WORKTREE_PATH" diff --quiet "$entry_commit"..HEAD -- . "${PIPELINE_OWN_WRITES[@]}" 2>/dev/null \
+                || [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ "${PIPELINE_OWN_WRITES[@]}" 2>/dev/null)" ]; then
                 case "$stage" in 1) dotnet build "$WORKTREE_PATH" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 && recoverable_work=true ;; 2|3|merge) local test_rc=0; run_tests_projects "$WORKTREE_PATH" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 || test_rc=$?; [ "$test_rc" -eq 0 ] && recoverable_work=true ;; esac
             fi ;; esac
         if [ "$recoverable_work" = true ]; then
@@ -900,7 +917,7 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
         if [ -f "$STAGE1_LOG" ] && grep -qiE "refactor.*pur|REFACTOR_ONLY|refactor-signal|refactoring puro" "$STAGE1_LOG"; then
             abort "El $STAGE1_AGENT detecto refactor puro pero no creo el archivo señal en $REFACTOR_SIGNAL_PATH (ni en la ubicacion legacy). Probable causa: el runtime intercepto la escritura. Revisa el log: $STAGE1_LOG"
         fi
-        abort "El $STAGE1_AGENT no generó ningún archivo. Verifica que la definición del agente (.claude/agents/${STAGE1_AGENT}.md) existe en el repo."
+        abort "El $STAGE1_AGENT no generó ningún archivo. Verifica que el agente '$STAGE1_AGENT' está disponible en el runtime activo."
     fi
 
     # Gate 1a: debe compilar
@@ -980,6 +997,8 @@ if [ "$IS_REFACTOR" = true ]; then
 elif [ "$FROM_STAGE" -le 2 ]; then
     header "Stage 2: $STAGE2_LABEL (fase verde)"
 
+    BLOCKAGE_REPORT_CANONICAL="$(mefisto_state_path 'blockage-report.md' "$WORKTREE_PATH")"
+
     STAGE2_PROMPT="Estás en el directorio raíz del proyecto ${HARNESS_PROJECT_NAME}.
 
 Contexto de la historia de usuario:
@@ -990,6 +1009,8 @@ El $STAGE1_AGENT creó/modificó los siguientes archivos:
 $STAGE1_FILES
 
 Tu tarea: implementa la lógica de negocio para hacer pasar todos los tests. Sigue todas las instrucciones de tu rol de $STAGE2_AGENT.
+
+Si detectas un bloqueo que no puedes resolver, escribe el reporte en: $BLOCKAGE_REPORT_CANONICAL
 
 ECONOMIA DE TURNOS:
 Cada turno tuyo cuesta ~5-6 s de reloj (turno sonnet) -- el trabajo que ese turno manda a hacer es barato en comparacion: en el diagnostico Fase 0, dotnet (build/test) ocupo solo ~11% del wall total de una corrida, frente a ~86% de tiempo de API (turnos). Lo caro es el turno, no la herramienta. Con eso en mente:
@@ -1008,7 +1029,7 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
     TEST_OUTPUT_G2=$(run_tests_projects "$WORKTREE_PATH" 2>&1) || g2_rc=$?
     echo "$TEST_OUTPUT_G2" | tee -a "${LOG_FILE_ABS:-$LOG_FILE}" >/dev/null
     if [ "$g2_rc" -ne 0 ]; then
-        BLOCKAGE_REPORT="$WORKTREE_PATH/.claude/pipeline/blockage-report.md"
+        BLOCKAGE_REPORT="$(mefisto_state_read_first 'blockage-report.md' "$WORKTREE_PATH" 2>/dev/null || true)"
         if [ -f "$BLOCKAGE_REPORT" ]; then
             warn "Stage 2: hay tests rojos pero el $STAGE2_AGENT reporto bloqueo — continuando al reviewer"
             echo "[$(date +%H:%M:%S)] BLOCKAGE: $STAGE2_AGENT reporto tests bloqueados, continuando" >> "$EVENTS_LOG_ABS"
@@ -1220,11 +1241,12 @@ Nota: el $STAGE1_AGENT señalizo que la fase roja del Stage 1 era estructuralmen
 
     # Agregar contexto de bloqueo al prompt si el implementer reporto tests bloqueados
     if [ "${HAS_BLOCKAGE:-false}" = true ]; then
-        BLOCKAGE_REPORT="$WORKTREE_PATH/.claude/pipeline/blockage-report.md"
+        BLOCKAGE_REPORT="$(mefisto_state_read_first 'blockage-report.md' "$WORKTREE_PATH" 2>/dev/null || true)"
         if [ -f "$BLOCKAGE_REPORT" ]; then
+            BLOCKAGE_REPORT_CANONICAL="$(mefisto_state_path 'blockage-report.md' "$WORKTREE_PATH")"
             STAGE3_PROMPT="$STAGE3_PROMPT
 
-ATENCION: El implementer reporto tests bloqueados. Lee el reporte en .claude/pipeline/blockage-report.md y sigue las instrucciones de tu seccion 2b para intentar resolverlos."
+ATENCION: El implementer reporto tests bloqueados. Lee el reporte en $BLOCKAGE_REPORT_CANONICAL y sigue las instrucciones de tu seccion 2b para intentar resolverlos."
         fi
     fi
 
@@ -1236,7 +1258,7 @@ ATENCION: El implementer reporto tests bloqueados. Lee el reporte en .claude/pip
     TEST_OUTPUT_G3=$(run_tests_projects "$WORKTREE_PATH" 2>&1) || g3_rc=$?
     echo "$TEST_OUTPUT_G3" | tee -a "${LOG_FILE_ABS:-$LOG_FILE}" >/dev/null
     if [ "$g3_rc" -ne 0 ]; then
-        BLOCKAGE_REPORT="$WORKTREE_PATH/.claude/pipeline/blockage-report.md"
+        BLOCKAGE_REPORT="$(mefisto_state_read_first 'blockage-report.md' "$WORKTREE_PATH" 2>/dev/null || true)"
         if [ "${HAS_BLOCKAGE:-false}" = true ] && [ -f "$BLOCKAGE_REPORT" ]; then
             warn "Stage 3: hay tests rojos pero el bloqueo persiste desde el implementer — continuando a PR"
             echo "[$(date +%H:%M:%S)] BLOCKAGE_PERSISTS: reviewer no resolvio tests bloqueados" >> "$EVENTS_LOG_ABS"
@@ -1608,8 +1630,7 @@ for bn, fullpath in logic_basenames.items():
         echo "[$(date +%H:%M:%S)] GAPS: $GAPS_COUNT archivos bajo ${THRESHOLD}%" >> "$EVENTS_LOG_ABS"
 
         # Generar coverage-patch-spec.md
-        PATCH_SPEC="$WORKTREE_PATH/.claude/pipeline/coverage-patch-spec.md"
-        mkdir -p "$(dirname "$PATCH_SPEC")"
+        PATCH_SPEC="$(mefisto_state_path 'coverage-patch-spec.md' "$WORKTREE_PATH")"
 
         {
             echo "## Coverage Patch Spec"
@@ -1674,6 +1695,8 @@ for pkg in root.findall('.//package'):
 
 El pipeline detecto brechas de cobertura en la implementacion existente. Tu tarea es agregar tests adicionales para cubrir los metodos y lineas que no estan siendo ejecutados por los tests existentes.
 
+La especificacion de remediacion esta en: $PATCH_SPEC
+
 $PATCH_SPEC_CONTENT
 
 IMPORTANTE:
@@ -1713,7 +1736,7 @@ IMPORTANTE:
         AGENT_PATCH_TW_METRICS_JSON="$(enrich_stage_metrics "tdd" "$EVENTS_CG_TW" "$LAST_AGENT_METRICS_JSON" "${ISSUE_NUM:-}" "${VARIANT_LABEL_JSON:-null}" "4b" "$STAGE1_AGENT" "$PATCH_TW_PROFILE" "$HARNESS_IDENTITY_JSON")"
         # CA-3/CA-5 (issue #646): metricas de este patch loop, cosechadas al
         # cierre del stage y respaldadas en disco antes de decidir el resultado.
-        echo "$AGENT_PATCH_TW_METRICS_JSON" > "$PIPELINE_DIR_ABS/metrics/tdd-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-4b-${STAGE1_AGENT}.json" 2>/dev/null || true
+        echo "$AGENT_PATCH_TW_METRICS_JSON" > "$(mefisto_state_path "metrics/tdd-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-4b-${STAGE1_AGENT}.json")" 2>/dev/null || true
 
         if [ "$CG_TW_EXIT" -ne 0 ] || ! agent_events_completed_successfully "$EVENTS_CG_TW"; then
             warn "$STAGE1_AGENT de remediacion fallo (exit $CG_TW_EXIT) — continuando con gaps pendientes"
@@ -1764,7 +1787,7 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
                 AGENT_PATCH_IM_METRICS_JSON="$(enrich_stage_metrics "tdd" "$EVENTS_CG_IM" "$LAST_AGENT_METRICS_JSON" "${ISSUE_NUM:-}" "${VARIANT_LABEL_JSON:-null}" "4c" "$STAGE2_AGENT" "$PATCH_IM_PROFILE" "$HARNESS_IDENTITY_JSON")"
                 # CA-3/CA-5 (issue #646): metricas de este patch loop, cosechadas
                 # al cierre del stage y respaldadas en disco.
-                echo "$AGENT_PATCH_IM_METRICS_JSON" > "$PIPELINE_DIR_ABS/metrics/tdd-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-4c-${STAGE2_AGENT}.json" 2>/dev/null || true
+                echo "$AGENT_PATCH_IM_METRICS_JSON" > "$(mefisto_state_path "metrics/tdd-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-4c-${STAGE2_AGENT}.json")" 2>/dev/null || true
 
                 if [ "$CG_IM_EXIT" -ne 0 ] || ! agent_events_completed_successfully "$EVENTS_CG_IM"; then
                     warn "$STAGE2_AGENT de remediacion fallo (exit $CG_IM_EXIT)"
@@ -1919,11 +1942,11 @@ if [ -n "$VARIANT_LABEL" ]; then
     # El reporte de bloqueo vive DENTRO del worktree, que el cleanup de mas
     # abajo elimina con --force: en la ruta normal sobrevive porque su contenido
     # viaja al comentario del PR, y sin PR se perderia entero. Se copia al
-    # .claude/pipeline del repo principal, con el sufijo de variante para no
+    # directorio canonico de estado del repo principal, con el sufijo de variante para no
     # pisar el de otra corrida, antes de que el cleanup lo borre.
     if [ "${HAS_BLOCKAGE:-false}" = true ]; then
-        BLOCKAGE_REPORT="$WORKTREE_PATH/.claude/pipeline/blockage-report.md"
-        VARIANT_BLOCKAGE_COPY="$PIPELINE_DIR_ABS/blockage-report-tdd-${ISSUE_LOG_TAG}.md"
+        BLOCKAGE_REPORT="$(mefisto_state_read_first 'blockage-report.md' "$WORKTREE_PATH" 2>/dev/null || true)"
+        VARIANT_BLOCKAGE_COPY="$(mefisto_state_path "blockage-report-tdd-${ISSUE_LOG_TAG}.md")"
         if [ -f "$BLOCKAGE_REPORT" ] && cp "$BLOCKAGE_REPORT" "$VARIANT_BLOCKAGE_COPY" 2>/dev/null; then
             warn "Hay tests bloqueados que ni $STAGE2_AGENT ni el reviewer resolvieron -- revisa $VARIANT_BLOCKAGE_COPY antes de promover esta variante."
         else
@@ -2100,7 +2123,7 @@ EOF
         PR_NUM=$(echo "$PR_URL" | grep -o '[0-9]*$')
         gh pr edit "$PR_NUM" --add-label "bloqueado" --repo "$REPO_SLUG_PR" >>"$LOG_FILE" 2>&1 \
             || warn "No se pudo agregar label 'bloqueado' al PR"
-        BLOCKAGE_REPORT="$WORKTREE_PATH/.claude/pipeline/blockage-report.md"
+        BLOCKAGE_REPORT="$(mefisto_state_read_first 'blockage-report.md' "$WORKTREE_PATH" 2>/dev/null || true)"
         if [ -f "$BLOCKAGE_REPORT" ]; then
             BLOCKAGE_CONTENT=$(cat "$BLOCKAGE_REPORT")
             gh pr comment "$PR_NUM" \
@@ -2156,10 +2179,10 @@ jq -cn --arg issue "${ISSUE_NUM:-}" --arg title "${ISSUE_TITLE:-}" --argjson var
     --argjson identity "$HARNESS_IDENTITY_JSON" --arg runtime "$MEFISTO_RUNTIME_RESUELTO" --arg started "$TIMESTAMP" --arg finished "$(date +%Y-%m-%dT%H:%M:%S)" \
     --argjson agents "$AGENTS_JSON" --argjson tests "${PIPELINE_TESTS:-null}" --argjson pr "$PR_JSON" \
     '{issue:$issue,title:$title,pipeline:"tdd",variant:$variant,identity:$identity,runtime:$runtime,started:$started,finished:$finished,state:"completed",agents:$agents,tests:$tests,pr:$pr}' \
-    >> "$PIPELINE_DIR_ABS/pipeline-history.jsonl"
+    >> "$HISTORY_FILE"
 
 # Eliminar archivo de estado individual (ya esta en el historial)
-rm -f "$PIPELINE_DIR_ABS/$STATUS_FILENAME"
+rm -f "$(mefisto_state_path "$STATUS_FILENAME")"
 
 # ─── Cleanup ──────────────────────────────────────────────────────────────────
 header "Cleanup"
