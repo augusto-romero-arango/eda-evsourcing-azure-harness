@@ -251,7 +251,7 @@ assert_tdd_contains "run_agent muestra el modelo antes del CLI" 'log "Invocando 
 assert_tdd_contains "run_agent persiste la evidencia con el formato canonico" 'MODELS: stage $stage/$agent -> $AGENT_MODEL_VISIBLE ($AGENT_MODEL_ORIGIN)'
 assert_tdd_contains "log escribe tambien en el log persistente" '_log_file "$m"'
 assert_tdd_order "run_agent resuelve el override antes de anunciar" 'AGENT_MODEL_OVERRIDE="$(resolve_stage_model "$agent" "")"' 'log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."'
-assert_tdd_order "run_agent anuncia antes del argv neutral" 'log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."' '--agent "$agent" --cwd "$WORKTREE_PATH"'
+assert_tdd_contains "run_agent conserva el argv neutral con agente y cwd" '--agent "$agent" --cwd "$WORKTREE_PATH"'
 for stage_call in 'run_agent "1" "$STAGE1_AGENT"' 'run_agent "2" "$STAGE2_AGENT"' 'run_agent "2b" "smoke-test-writer"' 'run_agent "3" "reviewer"' 'run_agent "merge" "implementer"'; do
     assert_tdd_contains "stage normal conserva la ruta run_agent: $stage_call" "$stage_call"
 done
@@ -263,25 +263,24 @@ assert_tdd_contains "4b calcula primero el override fino" 'PATCH_TW_FINE_MODEL_O
 assert_tdd_contains "4b conserva el fallback del agente relanzado" 'PATCH_TW_AGENT_MODEL_OVERRIDE="$(resolve_stage_model "$STAGE1_AGENT" "")"'
 assert_tdd_contains "4b aplica el override fino antes del fallback" 'PATCH_TW_MODEL_OVERRIDE="$PATCH_TW_FINE_MODEL_OVERRIDE"'
 assert_tdd_contains "4b solo cae al override del agente cuando el fino esta vacio" '[ -z "$PATCH_TW_MODEL_OVERRIDE" ] && PATCH_TW_MODEL_OVERRIDE="$PATCH_TW_AGENT_MODEL_OVERRIDE"'
-assert_tdd_contains "4b conserva el argv condicional --model" 'PATCH_TW_MODEL_ARGS="--model $PATCH_TW_MODEL_OVERRIDE"'
+assert_tdd_contains "4b pasa el override como valor opcional al helper neutral" '"$PATCH_TW_MODEL_OVERRIDE" || CG_TW_EXIT=$?'
 assert_tdd_contains "4b usa el frontmatter sin override" 'PATCH_TW_MODEL_VISIBLE="$(resolve_declared_agent_model "$STAGE1_AGENT")"'
 assert_tdd_contains "4b representa metadata ausente como heredado" 'PATCH_TW_MODEL_VISIBLE="<heredado>"'
 assert_tdd_contains "4b anuncia la evidencia persistente" 'MODELS: stage 4b/patch-test-writer -> $PATCH_TW_MODEL_VISIBLE ($PATCH_TW_MODEL_ORIGIN)'
-assert_tdd_order "4b anuncia antes del primer argv de claude" 'log "Invocando $STAGE1_AGENT (modelo: $PATCH_TW_MODEL_VISIBLE)..."' '--agent "$STAGE1_AGENT" $PATCH_TW_MODEL_ARGS'
-assert_tdd_count "4b conserva sus dos argv stream/text" 2 '--agent "$STAGE1_AGENT" $PATCH_TW_MODEL_ARGS'
+assert_tdd_contains "4b usa el helper neutral" 'invoke_agent_once "$STAGE1_AGENT" "$PATCH_TW_PROMPT_FILE" "$EVENTS_CG_TW" "$LOG_CG_TW"'
 assert_tdd_contains "4c calcula primero el override fino" 'PATCH_IM_FINE_MODEL_OVERRIDE="$(resolve_stage_model "patch-implementer" "")"'
 assert_tdd_contains "4c conserva el fallback del agente relanzado" 'PATCH_IM_AGENT_MODEL_OVERRIDE="$(resolve_stage_model "$STAGE2_AGENT" "")"'
 assert_tdd_contains "4c aplica el override fino antes del fallback" 'PATCH_IM_MODEL_OVERRIDE="$PATCH_IM_FINE_MODEL_OVERRIDE"'
 assert_tdd_contains "4c solo cae al override del agente cuando el fino esta vacio" '[ -z "$PATCH_IM_MODEL_OVERRIDE" ] && PATCH_IM_MODEL_OVERRIDE="$PATCH_IM_AGENT_MODEL_OVERRIDE"'
-assert_tdd_contains "4c conserva el argv condicional --model" 'PATCH_IM_MODEL_ARGS="--model $PATCH_IM_MODEL_OVERRIDE"'
+assert_tdd_contains "4c pasa el override como valor opcional al helper neutral" '"$PATCH_IM_MODEL_OVERRIDE" || CG_IM_EXIT=$?'
 assert_tdd_contains "4c usa el frontmatter sin override" 'PATCH_IM_MODEL_VISIBLE="$(resolve_declared_agent_model "$STAGE2_AGENT")"'
 assert_tdd_contains "4c representa metadata ausente como heredado" 'PATCH_IM_MODEL_VISIBLE="<heredado>"'
 assert_tdd_contains "4c anuncia la evidencia persistente" 'MODELS: stage 4c/patch-implementer -> $PATCH_IM_MODEL_VISIBLE ($PATCH_IM_MODEL_ORIGIN)'
-assert_tdd_order "4c anuncia antes del primer argv de claude" 'log "Invocando $STAGE2_AGENT (modelo: $PATCH_IM_MODEL_VISIBLE)..."' '--agent "$STAGE2_AGENT" $PATCH_IM_MODEL_ARGS'
-assert_tdd_count "4c conserva sus dos argv stream/text" 2 '--agent "$STAGE2_AGENT" $PATCH_IM_MODEL_ARGS'
-assert_tdd_count "los tres caminos etiquetan el override con el origen canonico" 3 'MODEL_ORIGIN="override --models"'
-assert_tdd_count "los tres caminos etiquetan frontmatter con el origen canonico" 3 'MODEL_ORIGIN="frontmatter"'
-assert_tdd_count "los tres caminos etiquetan heredado con el origen canonico" 3 'MODEL_ORIGIN="heredado"'
+assert_tdd_contains "4c usa el helper neutral" 'invoke_agent_once "$STAGE2_AGENT" "$PATCH_IM_PROMPT_FILE" "$EVENTS_CG_IM" "$LOG_CG_IM"'
+assert_tdd_contains "Stage 0 anuncia su modelo declarado" 'MODELS: stage 0/domain-scaffolder -> $SCAFFOLD_MODEL_VISIBLE ($SCAFFOLD_MODEL_ORIGIN)'
+assert_tdd_count "los cuatro caminos etiquetan el override con el origen canonico" 3 'MODEL_ORIGIN="override --models"'
+assert_tdd_count "los cuatro caminos etiquetan frontmatter con el origen canonico" 4 'MODEL_ORIGIN="frontmatter"'
+assert_tdd_count "los cuatro caminos etiquetan heredado con el origen canonico" 4 'MODEL_ORIGIN="heredado"'
 
 # --- iac-pipeline.sh: default heredado observable sin override ----------------
 IAC_PIPELINE="$REPO_ROOT/scripts/iac-pipeline.sh"
