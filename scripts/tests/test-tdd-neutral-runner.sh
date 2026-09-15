@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regresion focalizada de #1360: run_agent TDD solo consume el contrato JSONL.
+# Regresion focalizada de #1360/#1361: TDD solo consume el contrato JSONL.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
@@ -10,7 +10,9 @@ pass() { printf '  PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
 fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
 contains() { grep -Fq -- "$1" "$PIPELINE" && pass "$2" || fail "$2"; }
 run_agent_body() { awk '/^run_agent\(\) \{/{p=1} p{print} p && /^}/{p=0}' "$PIPELINE"; }
+invoke_agent_once_body() { awk '/^invoke_agent_once\(\) \{/{p=1} p{print} p && /^}/{p=0}' "$PIPELINE"; }
 absent_run_agent() { run_agent_body | grep -Fq -- "$1" && fail "$2" || pass "$2"; }
+absent_pipeline() { grep -Fq -- "$1" "$PIPELINE" && fail "$2" || pass "$2"; }
 
 echo '[estatico] frontera neutral'
 contains 'RUN_AGENT_BIN_DEFAULT="$RUNTIME_DIR/mefisto-run-agent.sh"' 'bootstrap localiza el runner neutral'
@@ -36,6 +38,17 @@ absent_run_agent 'kill -9' 'run_agent delega watchdog al runner'
 absent_run_agent 'agent_session_transcript_count' 'run_agent no inspecciona transcripts privados'
 absent_run_agent 'agent_resume_prompt' 'run_agent no construye reanudacion legacy'
 absent_run_agent 'RESUME_ARGS' 'run_agent no usa argv legacy de reanudacion'
+contains 'invoke_agent_once() {' 'Stage 0 y remediaciones comparten helper neutral sin hold'
+contains 'invoke_agent_once "domain-scaffolder"' 'Stage 0 usa el helper neutral'
+contains 'invoke_agent_once "$STAGE1_AGENT"' 'remediacion 4b usa el helper neutral'
+contains 'invoke_agent_once "$STAGE2_AGENT"' 'remediacion 4c usa el helper neutral'
+contains 'agent_events_completed_successfully "$EVENTS_SCAFFOLD"' 'Stage 0 exige terminal neutral exitoso'
+contains 'agent_events_completed_successfully "$EVENTS_CG_TW"' '4b exige terminal neutral exitoso y conserva continuidad'
+contains 'agent_events_completed_successfully "$EVENTS_CG_IM"' '4c exige terminal neutral exitoso y conserva continuidad'
+absent_pipeline 'PIPELINE_CAPTURE_STREAM' 'TDD no conserva bifurcacion legacy de captura'
+absent_pipeline 'claude -p' 'TDD no invoca un CLI de runtime directamente'
+absent_pipeline '--permission-mode' 'TDD no fija permisos de un runtime'
+absent_pipeline '--output-format' 'TDD no conoce formatos de un runtime'
 
 echo '[regresion] contrato ejecutable de run_agent'
 TMP="$(mktemp -d -t mefisto-tdd-neutral)"
@@ -184,6 +197,45 @@ if [ "$timeout_rc" -eq 99 ] && [ "$(cat "$TMP/calls")" = 1 ] \
     pass 'TIMEOUT descarta trabajo parcial sin ejecutar el atajo de recuperacion'
 else
     fail 'TIMEOUT entro al gate de recuperacion o no aborto'
+fi
+
+echo '[regresion] invocacion unica para Stage 0 y remediaciones'
+{
+    printf '%s\n' 'set -uo pipefail'
+    invoke_agent_once_body
+    cat <<'EOF'
+PIPELINE_TMP_DIR="$TMP/pipeline-once"
+MEFISTO_RUNTIME_RESUELTO=fake
+WORKTREE_PATH="$WT"
+RUN_AGENT_BIN="$TMP/runner"
+EVENTS_LOG_ABS="$TMP/events-once"
+MEFISTO_AGENT_TIMEOUT_SECONDS=60
+LAST_AGENT_DURATION=0
+LAST_AGENT_METRICS_JSON=null
+mkdir -p "$PIPELINE_TMP_DIR"
+derive_stage_log_from_stream(){ : > "$3"; }
+compute_stage_metrics(){ printf '{}'; }
+invoke_agent_once domain-scaffolder "$TMP/prompt" "$TMP/stage-0.events.jsonl" "$TMP/stage-0.log" "${MODEL:-}"
+EOF
+} > "$TMP/once-case.sh"
+printf 'prompt Stage 0' > "$TMP/prompt"
+reset_case
+if SCENARIO=success MODEL=vendor/model bash "$TMP/once-case.sh" \
+    && grep -A1 -Fx -- '--agent' "$TMP/call-1.args" | grep -Fxq domain-scaffolder \
+    && grep -A1 -Fx -- '--model' "$TMP/call-1.args" | grep -Fxq vendor/model \
+    && [ -f "$TMP/stage-0.log" ]; then
+    pass 'Stage 0 exitoso usa el argv neutral y deriva su log desde JSONL'
+else
+    fail 'Stage 0 exitoso no uso el contrato neutral esperado'
+fi
+
+reset_case
+once_rc=0
+SCENARIO=timeout bash "$TMP/once-case.sh" || once_rc=$?
+if [ "$once_rc" -eq 124 ] && [ "$(cat "$TMP/calls")" = 1 ]; then
+    pass 'fallo de runner en Stage 0/remediacion retorna sin hold ni reintento'
+else
+    fail 'fallo de runner en Stage 0/remediacion no conserva la semantica unica'
 fi
 
 printf '\nResultado: %s PASS, %s FAIL\n' "$PASS" "$FAIL"

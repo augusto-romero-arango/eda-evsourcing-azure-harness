@@ -92,8 +92,8 @@ AGENT_ST_METRICS_JSON=""
 AGENT_RV_METRICS_JSON=""
 LAST_AGENT_METRICS_JSON=""
 # Stage 0 (scaffold) y los dos sub-stages de remediacion del coverage gate
-# (Stage 4) no pasan por run_agent -- son bloques a medida que invocan
-# `claude` directo -- asi que llevan su propia duracion+metricas.
+# (Stage 4) conservan duracion y metricas propias porque no participan de las
+# politicas de hold, reanudacion ni retry de run_agent.
 AGENT_SCAFFOLD_DUR="" AGENT_SCAFFOLD_METRICS_JSON=""
 AGENT_PATCH_TW_DUR="" AGENT_PATCH_TW_METRICS_JSON=""
 AGENT_PATCH_IM_DUR="" AGENT_PATCH_IM_METRICS_JSON=""
@@ -178,24 +178,19 @@ abort() {
         # CA-3 (issue #646): agents.<clave>.metrics de los stages que ya
         # cerraron en esta corrida -- un fallo a mitad de pipeline es el caso
         # mas caro de diagnosticar, y hasta este issue la linea de fallo no
-        # llevaba ni "agents". Sin jq (PIPELINE_CAPTURE_STREAM=false) se omite
-        # por completo: la linea queda con la forma exacta de antes (CA-4).
-        local abort_agents_field=""
-        if [ "${PIPELINE_CAPTURE_STREAM:-false}" = true ]; then
-            local abort_agent_args=(
-                "test-writer" "$STAGE1_AGENT" "${AGENT_TW_DUR:-}" "${AGENT_TW_METRICS_JSON:-}"
-                "implementer" "$STAGE2_AGENT" "${AGENT_IM_DUR:-}" "${AGENT_IM_METRICS_JSON:-}"
-                "reviewer" "reviewer" "${AGENT_RV_DUR:-}" "${AGENT_RV_METRICS_JSON:-}"
-            )
-            [ -n "${AGENT_SCAFFOLD_METRICS_JSON:-}" ] && abort_agent_args+=("scaffolder" "domain-scaffolder" "${AGENT_SCAFFOLD_DUR:-}" "$AGENT_SCAFFOLD_METRICS_JSON")
-            [ -n "${AGENT_ST_METRICS_JSON:-}" ] && abort_agent_args+=("smoke-test-writer" "smoke-test-writer" "${AGENT_ST_DUR:-}" "$AGENT_ST_METRICS_JSON")
-            [ -n "${AGENT_PATCH_TW_METRICS_JSON:-}" ] && abort_agent_args+=("patch-test-writer" "$STAGE1_AGENT" "${AGENT_PATCH_TW_DUR:-}" "$AGENT_PATCH_TW_METRICS_JSON")
-            [ -n "${AGENT_PATCH_IM_METRICS_JSON:-}" ] && abort_agent_args+=("patch-implementer" "$STAGE2_AGENT" "${AGENT_PATCH_IM_DUR:-}" "$AGENT_PATCH_IM_METRICS_JSON")
-
-            local abort_agents_json
-            abort_agents_json=$(build_agents_history_json "${abort_agent_args[@]}" 2>/dev/null) || abort_agents_json=""
-            [ -n "$abort_agents_json" ] && abort_agents_field=",\"agents\":$abort_agents_json"
-        fi
+        # llevaba ni "agents".
+        local abort_agent_args=(
+            "test-writer" "$STAGE1_AGENT" "${AGENT_TW_DUR:-}" "${AGENT_TW_METRICS_JSON:-}"
+            "implementer" "$STAGE2_AGENT" "${AGENT_IM_DUR:-}" "${AGENT_IM_METRICS_JSON:-}"
+            "reviewer" "reviewer" "${AGENT_RV_DUR:-}" "${AGENT_RV_METRICS_JSON:-}"
+        )
+        [ -n "${AGENT_SCAFFOLD_METRICS_JSON:-}" ] && abort_agent_args+=("scaffolder" "domain-scaffolder" "${AGENT_SCAFFOLD_DUR:-}" "$AGENT_SCAFFOLD_METRICS_JSON")
+        [ -n "${AGENT_ST_METRICS_JSON:-}" ] && abort_agent_args+=("smoke-test-writer" "smoke-test-writer" "${AGENT_ST_DUR:-}" "$AGENT_ST_METRICS_JSON")
+        [ -n "${AGENT_PATCH_TW_METRICS_JSON:-}" ] && abort_agent_args+=("patch-test-writer" "$STAGE1_AGENT" "${AGENT_PATCH_TW_DUR:-}" "$AGENT_PATCH_TW_METRICS_JSON")
+        [ -n "${AGENT_PATCH_IM_METRICS_JSON:-}" ] && abort_agent_args+=("patch-implementer" "$STAGE2_AGENT" "${AGENT_PATCH_IM_DUR:-}" "$AGENT_PATCH_IM_METRICS_JSON")
+        local abort_agents_json abort_agents_field=""
+        abort_agents_json=$(build_agents_history_json "${abort_agent_args[@]}" 2>/dev/null) || abort_agents_json=""
+        [ -n "$abort_agents_json" ] && abort_agents_field=",\"agents\":$abort_agents_json"
         # M4: Registrar falla en historial para analisis de patrones
         echo "{\"issue\":\"${ISSUE_NUM:-}\",\"title\":\"$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')\",\"pipeline\":\"tdd\",\"variant\":${VARIANT_LABEL_JSON:-null},\"harness_version\":${HARNESS_VERSION_JSON:-null},\"started\":\"${TIMESTAMP:-}\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"failed\",\"stage\":\"$CURRENT_STAGE\"${abort_agents_field},\"error\":\"$PIPELINE_ERROR\"}" \
             >> "$PIPELINE_DIR_ABS/pipeline-history.jsonl" 2>/dev/null || true
@@ -350,7 +345,7 @@ elif [ -z "$STATUS_FILENAME" ]; then
 fi
 
 # ─── Verificar dependencias ───────────────────────────────────────────────────
-for cmd in claude gh git dotnet; do
+for cmd in gh git dotnet jq; do
     command -v "$cmd" &>/dev/null || abort "Falta comando requerido: $cmd"
 done
 
@@ -404,19 +399,6 @@ fi
 if [ -n "$VARIANT_LABEL" ]; then
     log "Modo variante: '$VARIANT_LABEL' -- sin push, sin PR, sin comentario al issue (CA-3); rama queda local"
     echo "[$(date +%H:%M:%S)] VARIANT: $VARIANT_LABEL" >> "$EVENTS_LOG_ABS"
-fi
-
-# ─── Captura stream-json de las invocaciones claude -p (issue #645) ─────────
-# jq ya es dependencia de facto del lado publicado (harness.config.json se
-# consume con jq via load_harness_config), pero un consumidor sin jq en el
-# PATH no debe perder la corrida por esto (CA-4): los 5 stages de este
-# pipeline caen a --output-format text, idéntico al comportamiento previo.
-if command -v jq &>/dev/null; then
-    PIPELINE_CAPTURE_STREAM=true
-else
-    PIPELINE_CAPTURE_STREAM=false
-    warn "jq no disponible: los stages corren con --output-format text (sin traza stream-json)"
-    echo "[$(date +%H:%M:%S)] WARN: jq no disponible, captura stream-json deshabilitada -- --output-format text" >> "$EVENTS_LOG_ABS"
 fi
 
 PIPELINE_TMP_DIR="$(mktemp -d -t mefisto-tdd)" || abort "No se pudo crear el directorio temporal del pipeline"
@@ -549,55 +531,28 @@ else
         update_status "scaffold" "running"
 
         LOG_SCAFFOLD="$LOG_DIR_ABS/stage-0-scaffold-${TIMESTAMP}.log"
-        STREAM_SCAFFOLD="${LOG_SCAFFOLD%.log}.stream.jsonl"
-        STDERR_SCAFFOLD="${LOG_SCAFFOLD%.log}.stderr.log"
-        SCAFFOLD_START_TS=$(date +%s)
+        EVENTS_SCAFFOLD="${LOG_SCAFFOLD%.log}.events.jsonl"
+        SCAFFOLD_PROMPT_FILE="$PIPELINE_TMP_DIR/0-domain-scaffolder.prompt.md"
         echo "[$(date +%H:%M:%S)] === STAGE 0: domain-scaffolder ===" >> "$EVENTS_LOG_ABS"
 
         SCAFFOLD_PROMPT="Crea el scaffold para el dominio '$SCAFFOLD_DOMAIN'. El usuario ya confirmo la creacion — omite la confirmacion del Paso 0 y procede directamente a crear el proyecto.
 
 PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
-
-        SCAFFOLD_TIMEOUT=1800
-        NONINTERACTIVE_SYSTEM="You are running in non-interactive print mode. There is no human to approve anything. You MUST use Write and Edit tools directly to create and modify files at any path including .claude/. Never output text asking for permissions or confirmations -- doing so causes pipeline failure."
-        if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
-            (cd "$WORKTREE_PATH" && claude -p "$SCAFFOLD_PROMPT" \
-                --agent domain-scaffolder \
-                --permission-mode bypassPermissions \
-                --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
-                --output-format stream-json --verbose \
-                >"$STREAM_SCAFFOLD" 2>"$STDERR_SCAFFOLD") &
-        else
-            (cd "$WORKTREE_PATH" && claude -p "$SCAFFOLD_PROMPT" \
-                --agent domain-scaffolder \
-                --permission-mode bypassPermissions \
-                --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
-                --output-format text \
-                >"$LOG_SCAFFOLD" 2>&1) &
-        fi
-        SCAFFOLD_PID=$!
-        (sleep $SCAFFOLD_TIMEOUT && kill -9 -$SCAFFOLD_PID 2>/dev/null && \
-            echo "[$(date +%H:%M:%S)] TIMEOUT: domain-scaffolder supero ${SCAFFOLD_TIMEOUT}s" >> "$EVENTS_LOG_ABS") </dev/null >/dev/null 2>&1 &
-        SCAFFOLD_WATCHDOG=$!
-
+        printf '%s' "$SCAFFOLD_PROMPT" > "$SCAFFOLD_PROMPT_FILE"
+        SCAFFOLD_MODEL_VISIBLE="$(resolve_declared_agent_model "domain-scaffolder")"
+        if [ -n "$SCAFFOLD_MODEL_VISIBLE" ]; then SCAFFOLD_MODEL_ORIGIN="frontmatter"; else SCAFFOLD_MODEL_VISIBLE="<heredado>"; SCAFFOLD_MODEL_ORIGIN="heredado"; fi
+        log "Invocando domain-scaffolder (modelo: $SCAFFOLD_MODEL_VISIBLE)..."
+        echo "[$(date +%H:%M:%S)] MODELS: stage 0/domain-scaffolder -> $SCAFFOLD_MODEL_VISIBLE ($SCAFFOLD_MODEL_ORIGIN)" >> "$EVENTS_LOG_ABS"
         SCAFFOLD_EXIT=0
-        wait $SCAFFOLD_PID || SCAFFOLD_EXIT=$?
-        kill $SCAFFOLD_WATCHDOG 2>/dev/null || true
-        wait $SCAFFOLD_WATCHDOG 2>/dev/null || true
-        SCAFFOLD_ELAPSED=$(( $(date +%s) - SCAFFOLD_START_TS ))
-
+        invoke_agent_once "domain-scaffolder" "$SCAFFOLD_PROMPT_FILE" "$EVENTS_SCAFFOLD" "$LOG_SCAFFOLD" || SCAFFOLD_EXIT=$?
+        SCAFFOLD_ELAPSED=$LAST_AGENT_DURATION
         AGENT_SCAFFOLD_DUR=$SCAFFOLD_ELAPSED
-        if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
-            derive_stage_log_from_stream "$STREAM_SCAFFOLD" "$STDERR_SCAFFOLD" "$LOG_SCAFFOLD"
-            AGENT_SCAFFOLD_METRICS_JSON=$(compute_stage_metrics "$STREAM_SCAFFOLD")
-        else
-            AGENT_SCAFFOLD_METRICS_JSON="null"
-        fi
+        AGENT_SCAFFOLD_METRICS_JSON=$LAST_AGENT_METRICS_JSON
         # CA-3/CA-5 (issue #646): metricas del scaffold, cosechadas al cierre
         # del stage y respaldadas en disco ANTES de decidir si se aborta.
         echo "$AGENT_SCAFFOLD_METRICS_JSON" > "$PIPELINE_DIR_ABS/metrics/tdd-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-0-domain-scaffolder.json" 2>/dev/null || true
 
-        if [ "$SCAFFOLD_EXIT" -ne 0 ]; then
+        if [ "$SCAFFOLD_EXIT" -ne 0 ] || ! agent_events_completed_successfully "$EVENTS_SCAFFOLD"; then
             echo "[$(date +%H:%M:%S)] FALLO domain-scaffolder (${SCAFFOLD_ELAPSED}s, exit $SCAFFOLD_EXIT)" >> "$EVENTS_LOG_ABS"
             abort "El scaffold del dominio '$SCAFFOLD_DOMAIN' fallo despues de ${SCAFFOLD_ELAPSED}s. Revisa: $LOG_SCAFFOLD"
         fi
@@ -658,6 +613,23 @@ collect_summary() {
     local stage="$1" agent="$2"
     local f="$WORKTREE_PATH/.claude/pipeline/summaries/stage-${stage}-${agent}.md"
     if [ -f "$f" ]; then cat "$f"; else echo "_(El agente no generó resumen)_"; fi
+}
+
+# ─── Invocacion neutral unica para stages sin politicas de run_agent ──────────
+# invoke_agent_once <agent_id> <prompt_file> <events_file> <log_file> [model]
+invoke_agent_once() {
+    local agent="$1" prompt_file="$2" events_file="$3" log_file="$4" model="${5:-}"
+    local system_file="$PIPELINE_TMP_DIR/noninteractive.system.md"
+    local runner_file="${events_file%.events.jsonl}.runner.log" start_ts run_exit=0
+    [ -f "$system_file" ] || printf '%s\n' 'You are running in non-interactive print mode. There is no human to approve anything. Use editing tools directly; never ask for permission. Do not push or create pull requests.' > "$system_file"
+    start_ts=$(date +%s)
+    local args=(--runtime "$MEFISTO_RUNTIME_RESUELTO" --agent "$agent" --cwd "$WORKTREE_PATH" --prompt-file "$prompt_file" --system-file "$system_file" --event-log "$events_file" --events-log "$EVENTS_LOG_ABS" --redact-observability --timeout "$MEFISTO_AGENT_TIMEOUT_SECONDS")
+    [ -n "$model" ] && args+=(--model "$model")
+    if "$RUN_AGENT_BIN" "${args[@]}" >"$runner_file" 2>&1; then run_exit=0; else run_exit=$?; fi
+    LAST_AGENT_DURATION=$(( $(date +%s) - start_ts ))
+    derive_stage_log_from_stream "$events_file" "" "$log_file"
+    LAST_AGENT_METRICS_JSON=$(compute_stage_metrics "$events_file")
+    return "$run_exit"
 }
 
 # ─── Frontera neutral para los stages TDD ────────────────────────────────────
@@ -1424,7 +1396,7 @@ if [ "$IS_REFACTOR" != true ] && [ "$FROM_STAGE" -le 4 ]; then
         local cov_output="$WORKTREE_PATH/coverage.cobertura.xml"
         if ! dotnet-coverage collect \
             --output "$cov_output" \
-            --output-format cobertura \
+            -f cobertura \
             "dotnet test --solution $WORKTREE_PATH/${HARNESS_SOLUTION_FILE} --no-build" \
             >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1; then
             warn "dotnet-coverage collect fallo"
@@ -1627,9 +1599,6 @@ IMPORTANTE:
 - Haz commit con mensaje: test(hu-${ISSUE_NUM:-?}): tests de cobertura para brechas detectadas
 - PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
-        CG_REMEDIATION_TIMEOUT=1800  # 30 minutos para remediacion
-        PATCH_TW_START=$(date +%s)
-
         # Modelo por stage (issue #712). Este relanzamiento no pasa por run_agent,
         # pero SI invoca al mismo agente del Stage 1, asi que resuelve por cadena:
         # primero la clave fina "patch-test-writer" (el stage key que ya usan
@@ -1642,9 +1611,7 @@ IMPORTANTE:
         PATCH_TW_AGENT_MODEL_OVERRIDE="$(resolve_stage_model "$STAGE1_AGENT" "")"
         PATCH_TW_MODEL_OVERRIDE="$PATCH_TW_FINE_MODEL_OVERRIDE"
         [ -z "$PATCH_TW_MODEL_OVERRIDE" ] && PATCH_TW_MODEL_OVERRIDE="$PATCH_TW_AGENT_MODEL_OVERRIDE"
-        PATCH_TW_MODEL_ARGS=""
         if [ -n "$PATCH_TW_MODEL_OVERRIDE" ]; then
-            PATCH_TW_MODEL_ARGS="--model $PATCH_TW_MODEL_OVERRIDE"
             PATCH_TW_MODEL_VISIBLE="$PATCH_TW_MODEL_OVERRIDE"
             PATCH_TW_MODEL_ORIGIN="override --models"
         else
@@ -1661,49 +1628,19 @@ IMPORTANTE:
         echo "[$(date +%H:%M:%S)] MODELS: stage 4b/patch-test-writer -> $PATCH_TW_MODEL_VISIBLE ($PATCH_TW_MODEL_ORIGIN)" >> "$EVENTS_LOG_ABS"
         log "Relanzando $STAGE1_AGENT para remediacion..."
         LOG_CG_TW="$LOG_DIR_ABS/stage-4-${STAGE1_AGENT}-patch-${TIMESTAMP}.log"
-        STREAM_CG_TW="${LOG_CG_TW%.log}.stream.jsonl"
-        STDERR_CG_TW="${LOG_CG_TW%.log}.stderr.log"
+        EVENTS_CG_TW="${LOG_CG_TW%.log}.events.jsonl"
+        PATCH_TW_PROMPT_FILE="$PIPELINE_TMP_DIR/4b-${STAGE1_AGENT}.prompt.md"
+        printf '%s' "$PATCH_TW_PROMPT" > "$PATCH_TW_PROMPT_FILE"
         echo "[$(date +%H:%M:%S)] REMEDIATION: relanzando $STAGE1_AGENT" >> "$EVENTS_LOG_ABS"
-
-        # $PATCH_TW_MODEL_ARGS sin comillas por el mismo motivo que $MODEL_ARGS en run_agent().
-        # shellcheck disable=SC2086
-        if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
-            (cd "$WORKTREE_PATH" && claude -p "$PATCH_TW_PROMPT" \
-                --agent "$STAGE1_AGENT" $PATCH_TW_MODEL_ARGS \
-                --permission-mode bypassPermissions \
-                --append-system-prompt "You are running in non-interactive print mode. No human is present. Use Write and Edit tools directly. Never ask for permissions." \
-                --output-format stream-json --verbose \
-                >"$STREAM_CG_TW" 2>"$STDERR_CG_TW") &
-        else
-            (cd "$WORKTREE_PATH" && claude -p "$PATCH_TW_PROMPT" \
-                --agent "$STAGE1_AGENT" $PATCH_TW_MODEL_ARGS \
-                --permission-mode bypassPermissions \
-                --append-system-prompt "You are running in non-interactive print mode. No human is present. Use Write and Edit tools directly. Never ask for permissions." \
-                --output-format text \
-                >"$LOG_CG_TW" 2>&1) &
-        fi
-        CG_TW_PID=$!
-        (sleep $CG_REMEDIATION_TIMEOUT && kill -9 $CG_TW_PID 2>/dev/null && \
-            echo "[$(date +%H:%M:%S)] TIMEOUT: coverage $STAGE1_AGENT supero ${CG_REMEDIATION_TIMEOUT}s" >> "$EVENTS_LOG_ABS") </dev/null >/dev/null 2>&1 &
-        CG_TW_WATCHDOG=$!
-
         CG_TW_EXIT=0
-        wait $CG_TW_PID || CG_TW_EXIT=$?
-        kill $CG_TW_WATCHDOG 2>/dev/null || true
-        wait $CG_TW_WATCHDOG 2>/dev/null || true
-
-        AGENT_PATCH_TW_DUR=$(( $(date +%s) - PATCH_TW_START ))
-        if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
-            derive_stage_log_from_stream "$STREAM_CG_TW" "$STDERR_CG_TW" "$LOG_CG_TW"
-            AGENT_PATCH_TW_METRICS_JSON=$(compute_stage_metrics "$STREAM_CG_TW")
-        else
-            AGENT_PATCH_TW_METRICS_JSON="null"
-        fi
+        invoke_agent_once "$STAGE1_AGENT" "$PATCH_TW_PROMPT_FILE" "$EVENTS_CG_TW" "$LOG_CG_TW" "$PATCH_TW_MODEL_OVERRIDE" || CG_TW_EXIT=$?
+        AGENT_PATCH_TW_DUR=$LAST_AGENT_DURATION
+        AGENT_PATCH_TW_METRICS_JSON=$LAST_AGENT_METRICS_JSON
         # CA-3/CA-5 (issue #646): metricas de este patch loop, cosechadas al
         # cierre del stage y respaldadas en disco antes de decidir el resultado.
         echo "$AGENT_PATCH_TW_METRICS_JSON" > "$PIPELINE_DIR_ABS/metrics/tdd-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-4b-${STAGE1_AGENT}.json" 2>/dev/null || true
 
-        if [ "$CG_TW_EXIT" -ne 0 ]; then
+        if [ "$CG_TW_EXIT" -ne 0 ] || ! agent_events_completed_successfully "$EVENTS_CG_TW"; then
             warn "$STAGE1_AGENT de remediacion fallo (exit $CG_TW_EXIT) — continuando con gaps pendientes"
             echo "[$(date +%H:%M:%S)] REMEDIATION_FAILED: $STAGE1_AGENT exit $CG_TW_EXIT" >> "$EVENTS_LOG_ABS"
             COV_REMEDIATION_SUMMARY="El $STAGE1_AGENT de remediacion fallo (exit $CG_TW_EXIT). Los gaps quedan pendientes."
@@ -1730,9 +1667,9 @@ Pista: revisa los ultimos archivos de test creados/modificados y corrige errores
 PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
                 LOG_CG_IM="$LOG_DIR_ABS/stage-4-${STAGE2_AGENT}-patch-${TIMESTAMP}.log"
-                STREAM_CG_IM="${LOG_CG_IM%.log}.stream.jsonl"
-                STDERR_CG_IM="${LOG_CG_IM%.log}.stderr.log"
-                PATCH_IM_START=$(date +%s)
+                EVENTS_CG_IM="${LOG_CG_IM%.log}.events.jsonl"
+                PATCH_IM_PROMPT_FILE="$PIPELINE_TMP_DIR/4c-${STAGE2_AGENT}.prompt.md"
+                printf '%s' "$PATCH_IM_PROMPT" > "$PATCH_IM_PROMPT_FILE"
                 echo "[$(date +%H:%M:%S)] REMEDIATION: relanzando $STAGE2_AGENT" >> "$EVENTS_LOG_ABS"
 
                 # Modelo por stage (issue #712): misma cadena que "patch-test-writer"
@@ -1742,9 +1679,7 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
                 PATCH_IM_AGENT_MODEL_OVERRIDE="$(resolve_stage_model "$STAGE2_AGENT" "")"
                 PATCH_IM_MODEL_OVERRIDE="$PATCH_IM_FINE_MODEL_OVERRIDE"
                 [ -z "$PATCH_IM_MODEL_OVERRIDE" ] && PATCH_IM_MODEL_OVERRIDE="$PATCH_IM_AGENT_MODEL_OVERRIDE"
-                PATCH_IM_MODEL_ARGS=""
                 if [ -n "$PATCH_IM_MODEL_OVERRIDE" ]; then
-                    PATCH_IM_MODEL_ARGS="--model $PATCH_IM_MODEL_OVERRIDE"
                     PATCH_IM_MODEL_VISIBLE="$PATCH_IM_MODEL_OVERRIDE"
                     PATCH_IM_MODEL_ORIGIN="override --models"
                 else
@@ -1759,45 +1694,15 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
 
                 log "Invocando $STAGE2_AGENT (modelo: $PATCH_IM_MODEL_VISIBLE)..."
                 echo "[$(date +%H:%M:%S)] MODELS: stage 4c/patch-implementer -> $PATCH_IM_MODEL_VISIBLE ($PATCH_IM_MODEL_ORIGIN)" >> "$EVENTS_LOG_ABS"
-                # $PATCH_IM_MODEL_ARGS sin comillas por el mismo motivo que arriba.
-                # shellcheck disable=SC2086
-                if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
-                    (cd "$WORKTREE_PATH" && claude -p "$PATCH_IM_PROMPT" \
-                        --agent "$STAGE2_AGENT" $PATCH_IM_MODEL_ARGS \
-                        --permission-mode bypassPermissions \
-                        --append-system-prompt "You are running in non-interactive print mode. No human is present. Use Write and Edit tools directly. Never ask for permissions." \
-                        --output-format stream-json --verbose \
-                        >"$STREAM_CG_IM" 2>"$STDERR_CG_IM") &
-                else
-                    (cd "$WORKTREE_PATH" && claude -p "$PATCH_IM_PROMPT" \
-                        --agent "$STAGE2_AGENT" $PATCH_IM_MODEL_ARGS \
-                        --permission-mode bypassPermissions \
-                        --append-system-prompt "You are running in non-interactive print mode. No human is present. Use Write and Edit tools directly. Never ask for permissions." \
-                        --output-format text \
-                        >"$LOG_CG_IM" 2>&1) &
-                fi
-                CG_IM_PID=$!
-                (sleep $CG_REMEDIATION_TIMEOUT && kill -9 $CG_IM_PID 2>/dev/null && \
-                    echo "[$(date +%H:%M:%S)] TIMEOUT: coverage $STAGE2_AGENT supero ${CG_REMEDIATION_TIMEOUT}s" >> "$EVENTS_LOG_ABS") </dev/null >/dev/null 2>&1 &
-                CG_IM_WATCHDOG=$!
-
                 CG_IM_EXIT=0
-                wait $CG_IM_PID || CG_IM_EXIT=$?
-                kill $CG_IM_WATCHDOG 2>/dev/null || true
-                wait $CG_IM_WATCHDOG 2>/dev/null || true
-
-                AGENT_PATCH_IM_DUR=$(( $(date +%s) - PATCH_IM_START ))
-                if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
-                    derive_stage_log_from_stream "$STREAM_CG_IM" "$STDERR_CG_IM" "$LOG_CG_IM"
-                    AGENT_PATCH_IM_METRICS_JSON=$(compute_stage_metrics "$STREAM_CG_IM")
-                else
-                    AGENT_PATCH_IM_METRICS_JSON="null"
-                fi
+                invoke_agent_once "$STAGE2_AGENT" "$PATCH_IM_PROMPT_FILE" "$EVENTS_CG_IM" "$LOG_CG_IM" "$PATCH_IM_MODEL_OVERRIDE" || CG_IM_EXIT=$?
+                AGENT_PATCH_IM_DUR=$LAST_AGENT_DURATION
+                AGENT_PATCH_IM_METRICS_JSON=$LAST_AGENT_METRICS_JSON
                 # CA-3/CA-5 (issue #646): metricas de este patch loop, cosechadas
                 # al cierre del stage y respaldadas en disco.
                 echo "$AGENT_PATCH_IM_METRICS_JSON" > "$PIPELINE_DIR_ABS/metrics/tdd-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-4c-${STAGE2_AGENT}.json" 2>/dev/null || true
 
-                if [ "$CG_IM_EXIT" -ne 0 ]; then
+                if [ "$CG_IM_EXIT" -ne 0 ] || ! agent_events_completed_successfully "$EVENTS_CG_IM"; then
                     warn "$STAGE2_AGENT de remediacion fallo (exit $CG_IM_EXIT)"
                     echo "[$(date +%H:%M:%S)] REMEDIATION_FAILED: $STAGE2_AGENT exit $CG_IM_EXIT" >> "$EVENTS_LOG_ABS"
                 fi
@@ -2168,20 +2073,14 @@ update_status "done" "completed"
 # coverage-gate conserva su forma propia (MEF-ADR-0014) y no pasa por el
 # builder porque no tiene metricas de agente.
 #
-# CA-4: sin jq, PIPELINE_CAPTURE_STREAM es false y este bloque no corre --
-# AGENTS_JSON conserva la forma exacta de siempre (sin "metrics", sin las
-# claves nuevas).
 AGENTS_JSON="{\"test-writer\":{\"duration\":${AGENT_TW_DUR:-null}},\"implementer\":{\"duration\":${AGENT_IM_DUR:-null}},\"reviewer\":{\"duration\":${AGENT_RV_DUR:-null}},\"coverage-gate\":{\"duration\":${AGENT_CG_DUR:-null},\"result\":\"$AGENT_CG_RES\",\"gaps\":$COV_GAPS_REMAINING,\"patch_applied\":$COV_PATCH_APPLIED}}"
-
-if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
-    CORE_AGENTS_JSON=$(build_agents_history_json "${HISTORY_AGENT_ARGS[@]}" 2>/dev/null) || CORE_AGENTS_JSON=""
-    if [ -n "$CORE_AGENTS_JSON" ]; then
-        AGENTS_JSON="$CORE_AGENTS_JSON"
-        if [ "$HISTORY_COVERAGE_GATE_INCLUDED" = true ]; then
-            COVERAGE_GATE_JSON="{\"coverage-gate\":{\"duration\":${AGENT_CG_DUR:-null},\"result\":\"$AGENT_CG_RES\",\"gaps\":$COV_GAPS_REMAINING,\"patch_applied\":$COV_PATCH_APPLIED}}"
-            MERGED_AGENTS_JSON=$(jq -n -c --argjson a "$CORE_AGENTS_JSON" --argjson b "$COVERAGE_GATE_JSON" '$a + $b' 2>/dev/null) || MERGED_AGENTS_JSON=""
-            [ -n "$MERGED_AGENTS_JSON" ] && AGENTS_JSON="$MERGED_AGENTS_JSON"
-        fi
+CORE_AGENTS_JSON=$(build_agents_history_json "${HISTORY_AGENT_ARGS[@]}" 2>/dev/null) || CORE_AGENTS_JSON=""
+if [ -n "$CORE_AGENTS_JSON" ]; then
+    AGENTS_JSON="$CORE_AGENTS_JSON"
+    if [ "$HISTORY_COVERAGE_GATE_INCLUDED" = true ]; then
+        COVERAGE_GATE_JSON="{\"coverage-gate\":{\"duration\":${AGENT_CG_DUR:-null},\"result\":\"$AGENT_CG_RES\",\"gaps\":$COV_GAPS_REMAINING,\"patch_applied\":$COV_PATCH_APPLIED}}"
+        MERGED_AGENTS_JSON=$(jq -n -c --argjson a "$CORE_AGENTS_JSON" --argjson b "$COVERAGE_GATE_JSON" '$a + $b' 2>/dev/null) || MERGED_AGENTS_JSON=""
+        [ -n "$MERGED_AGENTS_JSON" ] && AGENTS_JSON="$MERGED_AGENTS_JSON"
     fi
 fi
 
