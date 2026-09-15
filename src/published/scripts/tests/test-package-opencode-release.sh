@@ -49,7 +49,7 @@ EOF
     printf '%s\n' '---' 'name: mefisto-comment-cleanup' 'description: Comentarios.' '---' '[recurso](ejemplos.md)' > "$TEST_REPO/dist/opencode/skills/mefisto-comment-cleanup/SKILL.md"
     printf 'recurso comentarios\n' > "$TEST_REPO/dist/opencode/skills/mefisto-comment-cleanup/ejemplos.md"
     for source in \
-        scripts/_pipeline-common.sh scripts/tmux-pipeline.sh scripts/herdr-pipeline.sh scripts/stream-watch.sh scripts/tooling-pipeline.sh \
+        scripts/_pipeline-common.sh scripts/tmux-pipeline.sh scripts/herdr-pipeline.sh scripts/stream-watch.sh scripts/tooling-pipeline.sh scripts/tdd-pipeline.sh \
         src/runtime/mefisto-run-agent.sh src/runtime/lib/mefisto-runtime.sh src/runtime/lib/mefisto-process.sh \
         src/runtime/lib/runtime-claude.sh src/runtime/lib/runtime-opencode.sh; do
         mkdir -p "$TEST_REPO/dist/opencode/$(dirname "$source")"
@@ -104,7 +104,7 @@ EXTRACT="$WORK/extract"; mkdir "$EXTRACT"; tar -xzf "$TAR" -C "$EXTRACT"
 [ "$(file_mode "$EXTRACT/mefisto-manifest.json")" = 644 ] && pass 'manifiesto tiene modo 0644' || fail 'modo del manifiesto invalido'
 closure_ok=true
 for source in \
-    scripts/_pipeline-common.sh scripts/tmux-pipeline.sh scripts/herdr-pipeline.sh scripts/stream-watch.sh scripts/tooling-pipeline.sh \
+    scripts/_pipeline-common.sh scripts/tmux-pipeline.sh scripts/herdr-pipeline.sh scripts/stream-watch.sh scripts/tooling-pipeline.sh scripts/tdd-pipeline.sh \
     src/runtime/mefisto-run-agent.sh src/runtime/lib/mefisto-runtime.sh src/runtime/lib/mefisto-process.sh \
     src/runtime/lib/runtime-claude.sh src/runtime/lib/runtime-opencode.sh; do
     [ -x "$EXTRACT/$source" ] || closure_ok=false

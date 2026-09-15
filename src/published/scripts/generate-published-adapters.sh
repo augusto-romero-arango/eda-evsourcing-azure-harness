@@ -56,6 +56,7 @@ TOOLING_CLOSURE_ASSETS=(
     'scripts/herdr-pipeline.sh|0755'
     'scripts/stream-watch.sh|0755'
     'scripts/tooling-pipeline.sh|0755'
+    'scripts/tdd-pipeline.sh|0755'
     'src/runtime/mefisto-run-agent.sh|0755'
     'src/runtime/lib/mefisto-runtime.sh|0755'
     'src/runtime/lib/mefisto-models.sh|0644'
