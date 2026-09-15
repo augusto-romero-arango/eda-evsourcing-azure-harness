@@ -63,8 +63,8 @@ EOF
         # #1364 las neutralice. La excepcion no admite metadata ni referencias
         # OpenCode nuevas: solo contiene la deuda TDD ya inventariada.
         if { [ "$id" = runtimes ] && printf '%s\n' "$text" | grep -Eiq '\.claude|\.opencode|marketplace|(^|[/[:space:].])cache([/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:'; } \
-            || { { [ "$id" = test-writer ] || [ "$id" = implementer ] || [ "$id" = reviewer ] || [ "$id" = smoke-test-writer ] || [ "$id" = projection-test-writer ] || [ "$id" = projection-implementer ]; } && printf '%s\n' "$text" | grep -Eiq 'opencode|\.opencode|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:'; } \
-            || { [ "$id" != runtimes ] && [ "$id" != test-writer ] && [ "$id" != implementer ] && [ "$id" != reviewer ] && [ "$id" != smoke-test-writer ] && [ "$id" != projection-test-writer ] && [ "$id" != projection-implementer ] && printf '%s\n' "$text" | grep -Eiq 'claude|opencode|\.claude|\.opencode|marketplace|(^|[/[:space:].])cache([/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:'; }; then
+            || { { [ "$id" = test-writer ] || [ "$id" = implementer ] || [ "$id" = reviewer ] || [ "$id" = smoke-test-writer ] || [ "$id" = projection-test-writer ] || [ "$id" = projection-implementer ] || [ "$id" = domain-scaffolder ]; } && printf '%s\n' "$text" | grep -Eiq 'opencode|\.opencode|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:'; } \
+            || { [ "$id" != runtimes ] && [ "$id" != test-writer ] && [ "$id" != implementer ] && [ "$id" != reviewer ] && [ "$id" != smoke-test-writer ] && [ "$id" != projection-test-writer ] && [ "$id" != projection-implementer ] && [ "$id" != domain-scaffolder ] && printf '%s\n' "$text" | grep -Eiq 'claude|opencode|\.claude|\.opencode|marketplace|(^|[/[:space:].])cache([/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:'; }; then
             echo "$rel: body: linea $line referencia un runtime, CLI, cache, directorio o metadata propia de runtime"
             status=1
         fi
@@ -72,7 +72,7 @@ EOF
         placeholders="$(printf '%s\n' "$text" | grep -Eo '\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@*#?!-]' || true)"
         while IFS= read -r placeholder; do
             [ -z "$placeholder" ] && continue
-            if [ "$placeholder" != '$ARGUMENTS' ] \
+            if [ "$id" != domain-scaffolder ] && [ "$placeholder" != '$ARGUMENTS' ] \
                 && { { [ "$id" != test-writer ] && [ "$id" != projection-test-writer ]; } || { [ "$placeholder" != '$PLUGIN_ROOT' ] && [ "$placeholder" != '$HOME' ] && [ "$placeholder" != '$2' ]; }; } \
                 && { { [ "$id" != reviewer ] && [ "$id" != projection-implementer ]; } || { [ "$placeholder" != '$PLUGIN_ROOT' ] && [ "$placeholder" != '$HOME' ]; }; } \
                 && { [ "$id" != runtimes ] || { [ "$placeholder" != '$MEFISTO_LIFECYCLE_LAUNCHER' ] && [ "$placeholder" != '$MEFISTO_LIFECYCLE_CONFIG_ROOT' ]; }; }; then

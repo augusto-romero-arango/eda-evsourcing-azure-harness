@@ -79,6 +79,7 @@ CLAUDE_ROOT_MIRRORS=(
     'src/published/agents/smoke-test-writer.md|agents/smoke-test-writer.md'
     'src/published/agents/projection-test-writer.md|agents/projection-test-writer.md'
     'src/published/agents/projection-implementer.md|agents/projection-implementer.md'
+    'src/published/agents/domain-scaffolder.md|agents/domain-scaffolder.md'
 )
 
 usage_error() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
