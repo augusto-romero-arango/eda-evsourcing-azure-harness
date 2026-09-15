@@ -117,7 +117,7 @@ Registra el `FunctionEndpoint` y sus dependencias en `ComposicionServicios{Domin
    git add src/
    git commit -m "feat(hu-XX): proyeccion read-side [descripcion breve] (fase verde)"
    ```
-7. Escribe el resumen en `.claude/pipeline/summaries/stage-2-projection-implementer.md` -- el pipeline lo recolecta como `stage-<etapa>-<nombre del agente>.md`, asi que el nombre lleva **tu** nombre de agente, no el del generalista (mismo formato que `implementer.md`: enfoque, decisiones de diseno, ADRs consultados, desviaciones, resultado). No lo incluyas en el commit.
+7. Escribe el resumen en `.mefisto/pipeline/summaries/stage-2-projection-implementer.md` -- el pipeline lo recolecta como `stage-<etapa>-<nombre del agente>.md`, asi que el nombre lleva **tu** nombre de agente, no el del generalista (mismo formato que `implementer.md`: enfoque, decisiones de diseno, ADRs consultados, desviaciones, resultado). No lo incluyas en el commit.
 
 ## Reglas absolutas
 

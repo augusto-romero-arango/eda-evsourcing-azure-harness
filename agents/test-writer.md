@@ -275,10 +275,9 @@ Antes de escribir una sola linea de test, determina si esta tarea requiere tests
    transitorio del pipeline.
 
 > **Importante**: el archivo senal vive en `pipeline-state/refactor-signal.md`
-> en la raiz del worktree, **no** en `.claude/pipeline/`. Razon en MEF-ADR-0017: el
+> en la raiz del worktree, no dentro del directorio de estado del pipeline. Razon en MEF-ADR-0017: el
 > runtime de Claude Code intercepta escrituras a `.claude/**` en worktrees aun
-> con `bypassPermissions`. Si ves la ruta legacy `.claude/pipeline/refactor-signal.md`
-> en documentacion antigua, ignorala — usa siempre `pipeline-state/`.
+> con `bypassPermissions`. Cualquier ruta antigua de `refactor-signal.md` bajo el directorio de estado del pipeline es legacy: la unica valida es `pipeline-state/`.
 
 **Si NO es refactoring puro:** continua con el flujo normal.
 
@@ -1054,7 +1053,7 @@ git commit -m "test(hu-XX): tests para [descripcion breve] (fase roja)"
 
 ### 9. Escribir resumen de decisiones
 
-Crea el archivo `.claude/pipeline/summaries/stage-1-test-writer.md`:
+Crea el archivo `.mefisto/pipeline/summaries/stage-1-test-writer.md`:
 
 ```markdown
 ## ES Test Writer - Decisiones

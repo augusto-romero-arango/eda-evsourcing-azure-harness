@@ -572,7 +572,7 @@ Si la tool nueva o modificada rechaza algun input en su propia logica (no en la 
 
 ## Output
 
-Al finalizar, genera el summary en `.claude/pipeline/summaries/smoke-test-writer.md` (sin commitear):
+Al finalizar, genera el summary en `{{mefisto:state-path summaries/stage-2b-smoke-test-writer.md}}` (sin commitear):
 
 ```markdown
 ## Smoke Test Writer - Resumen
