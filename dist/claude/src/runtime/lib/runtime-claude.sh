@@ -17,9 +17,11 @@
 #     Rellena MEFISTO_RUNTIME_CMD con el argv de `claude -p` (sin `eval`,
 #     paridad con run_agent_with_watchdog -- ver #424/_mefisto-common.sh):
 #     el contenido de <prompt_file> viaja como UN elemento del array bash, sin
-#     volver a interpretarse. <agent>/<cwd> no participan del argv: <cwd> ya
-#     lo aplica run_agent_with_watchdog (`cd "$workdir"` antes de invocar),
-#     igual que runtime-fake.sh. <resume_session_id> (issue #968, CA-1/CA-2)
+#     volver a interpretarse. <agent> participa como `--agent <id>` para que
+#     Claude Code cargue la doctrina, skills y allowlist declaradas por el
+#     agente. <cwd> ya lo aplica run_agent_with_watchdog (`cd "$workdir"`
+#     antes de invocar), igual que runtime-fake.sh. <resume_session_id> (issue
+#     #968, CA-1/CA-2)
 #     es OPCIONAL y opaco -- vacio/ausente = comportamiento identico a antes
 #     de #968 (sin `--resume` en el argv); no vacio agrega `--resume <id>`
 #     (compatible con `-p`, verificado en `claude --help` local).
@@ -44,7 +46,9 @@
 # solo si el runner entrego un modelo no vacio (CA-1 de #858: vacio/ausente =
 # heredar, el adaptador real nunca debe ver un `--model ""`). El orden de los
 # flags es irrelevante para quien los consume (el CLI real, y el stub de
-# test-runtime-claude.sh que solo comprueba presencia/ausencia).
+# test-runtime-claude.sh que solo comprueba presencia/ausencia). Un `--model`
+# explicito del runner tiene precedencia sobre `model:` del frontmatter del
+# agente; sin `--model`, Claude Code aplica el frontmatter.
 #
 # Bash 3.2 + jq 1.7 (MEF-ADR-0049 CA-6): sin arrays asociativos.
 
@@ -68,7 +72,7 @@ runtime_claude_build_cmd() {
     local prompt
     prompt="$(cat "$prompt_file")"
 
-    MEFISTO_RUNTIME_CMD=(claude -p "$prompt" --permission-mode bypassPermissions --output-format stream-json --verbose)
+    MEFISTO_RUNTIME_CMD=(claude -p "$prompt" --agent "$agent" --permission-mode bypassPermissions --output-format stream-json --verbose)
 
     if [ -n "$model" ]; then
         MEFISTO_RUNTIME_CMD+=(--model "$model")

@@ -21,7 +21,7 @@
 #   [pre] Los archivos nuevos existen, tienen sintaxis valida y el programa
 #         jq corre sin errores.
 #   [A] CA-1: runtime_claude_build_cmd compone el argv completo -- flags fijos
-#       siempre presentes, --model solo si se recibe valor no vacio,
+#       siempre presentes incluido --agent, --model solo si se recibe valor no vacio,
 #       --append-system-prompt solo si se recibe --system-file, y el prompt
 #       viaja como UN elemento del array (backticks/`$()`/comillas del prompt
 #       no se re-interpretan: paridad con run_agent_with_watchdog, sin eval).
@@ -237,6 +237,12 @@ if contains_elem "--output-format" && contains_pair "--output-format" "stream-js
     pass "A-4: --output-format stream-json --verbose presente"
 else
     fail "A-4: falta --output-format stream-json --verbose: ${MEFISTO_RUNTIME_CMD[*]}"
+fi
+
+if contains_pair "--agent" "writer"; then
+    pass "A-4b: --agent writer presente siempre"
+else
+    fail "A-4b: falta --agent writer: ${MEFISTO_RUNTIME_CMD[*]}"
 fi
 
 if contains_pair "--model" "sonnet"; then
@@ -612,8 +618,14 @@ check_scenario() {
 }
 
 F_EV="$TMP/f-success.jsonl"
-RC=$(MEFISTO_CLAUDE_STUB_FIXTURE="$FIXTURES_DIR/success.jsonl" MEFISTO_CLAUDE_STUB_EXIT=0 run_claude_scenario "$F_EV")
+F_ARGS="$TMP/f-agent.args"
+RC=$(MEFISTO_CLAUDE_STUB_FIXTURE="$FIXTURES_DIR/success.jsonl" MEFISTO_CLAUDE_STUB_EXIT=0 MEFISTO_CLAUDE_STUB_ARGS_FILE="$F_ARGS" run_claude_scenario "$F_EV")
 check_scenario "exito" "$F_EV" 0 "success" "" "$RC"
+if [ -f "$F_ARGS" ] && grep -A1 -xF -- "--agent" "$F_ARGS" | tail -n1 | grep -qxF "test-agent"; then
+    pass "exito: la CLI falsa recibe --agent test-agent"
+else
+    fail "exito: la CLI falsa no recibio --agent test-agent: $(cat "$F_ARGS" 2>/dev/null)"
+fi
 
 F_EV="$TMP/f-529.jsonl"
 RC=$(MEFISTO_CLAUDE_STUB_FIXTURE="$FIXTURES_DIR/api-error-529.jsonl" MEFISTO_CLAUDE_STUB_EXIT=1 run_claude_scenario "$F_EV")
