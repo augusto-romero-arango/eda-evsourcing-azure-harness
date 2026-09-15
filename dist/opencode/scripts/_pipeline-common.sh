@@ -587,6 +587,16 @@ upsert_harness_secret() {
 # de agents/<agente>.md. La ruta parte de esta biblioteca distribuida, nunca del
 # directorio actual del consumidor. La metadata es opcional: archivo ausente,
 # frontmatter sin clave o valor vacio producen stdout vacio y retorno 0.
+#
+# Retiro acotado (issue #1362, CA-4): tdd-pipeline.sh ya no la usa -- resuelve
+# el modelo efectivo por perfil neutral con resolve_tdd_model/mefisto_resolve_model
+# (MEF-ADR-0049 decision 4), pasandolo siempre explicito via --model en vez de
+# dejar que el CLI adivine el frontmatter. Sigue viva aqui porque la usan los
+# otros dos pipelines publicados que todavia solo hacen observable la
+# seleccion heredada del frontmatter, sin pasarla al runner: iac-pipeline.sh
+# (l.410) y scaffold-pipeline.sh (l.246). Cuando migren a la misma resolucion
+# neutral, este helper puede retirarse -- este comentario es el patron a
+# seguir.
 resolve_declared_agent_model() {
     local agent="$1" script_dir agent_file line model in_frontmatter="false"
 

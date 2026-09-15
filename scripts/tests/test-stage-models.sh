@@ -27,8 +27,21 @@
 #                            --scaffold, --batch, --parallel, --attach, y varios
 #                            issues sueltos) lo siguen rechazando con mensaje
 #                            explicito en vez de tragarselo en silencio.
-#   tdd-pipeline.sh         - anuncia antes de cada invocacion el modelo
-#                            seleccionable y su origen, sin alterar el argv.
+#   tdd-pipeline.sh         - resuelve el modelo neutral por perfil de cada
+#                            stage (issue #1362, MEF-ADR-0049 decision 4): la
+#                            tabla agente->perfil, el helper resolve_tdd_model
+#                            (override --models por clave exacta -- incluida
+#                            la cadena fina patch-test-writer/patch-implementer
+#                            -> $STAGE1_AGENT/$STAGE2_AGENT -- o, si no hay,
+#                            mefisto_resolve_model con el mapping opcional del
+#                            consumidor y el adaptador del runtime activo) y su
+#                            uso en run_agent/Stage 0/remediacion 4b/4c, con
+#                            --model pasado siempre que el resuelto no sea
+#                            vacio. Cubre estatica (tabla, helper, formato
+#                            MODELS:) y un bloque ejecutable que corre
+#                            resolve_tdd_model bajo runtime-fake (CA-5), mas un
+#                            cruce estatico contra el `.profile` de
+#                            src/published/agents/*.md (CA-6).
 #   iac-pipeline.sh         - anuncia una sola vez por stage el modelo declarado
 #                            por infra-writer/infra-reviewer (o <heredado>) y lo
 #                            persiste sin agregar overrides al argv.
@@ -260,47 +273,178 @@ assert_tdd_order() {
 }
 
 echo ""
-echo "[10b] tdd: anuncia override, frontmatter y heredado antes de invocar el runner (CA-1, CA-2, CA-5)"
+echo "[10b] tdd: tabla agente->perfil, helper resolve_tdd_model y su uso en run_agent (CA-1, CA-2, CA-3)"
+if grep -qF 'resolve_declared_agent_model' "$TDD_PIPELINE"; then
+    fail "tdd retiene resolve_declared_agent_model (CA-4 exige retirarla de este pipeline)"
+else
+    pass "tdd retiro resolve_declared_agent_model (CA-4)"
+fi
+for absent_needle in 'MODEL_VISIBLE' 'MODEL_ORIGIN' 'MODEL_ARGS'; do
+    if grep -qF -- "$absent_needle" "$TDD_PIPELINE"; then
+        fail "tdd conserva la variable retirada $absent_needle"
+    else
+        pass "tdd no conserva la variable retirada $absent_needle"
+    fi
+done
+assert_tdd_contains "tabla agente->perfil: 6 agentes balanced" 'test-writer|projection-test-writer|implementer|projection-implementer|smoke-test-writer|domain-scaffolder)'
+assert_tdd_contains "tabla agente->perfil: balanced se imprime" "printf 'balanced'"
+assert_tdd_contains "tabla agente->perfil: reviewer deep" 'reviewer)'
+assert_tdd_contains "tabla agente->perfil: deep se imprime" "printf 'deep'"
+assert_tdd_contains "un agente fuera de la tabla no hereda en silencio" 'return 1'
+assert_tdd_contains "CONSUMER_MODELS_FILE se calcula antes del worktree" 'CONSUMER_MODELS_FILE="$(git rev-parse --show-toplevel)/.mefisto/models.json"'
+assert_tdd_order "CONSUMER_MODELS_FILE se calcula antes de crear el worktree" 'CONSUMER_MODELS_FILE="$(git rev-parse --show-toplevel)/.mefisto/models.json"' 'header "Preparando worktree"'
+assert_tdd_contains "resolve_tdd_model declara la firma de 3 parametros" 'local key="$1" agent_id="$2" profile="$3" explicit=""'
+assert_tdd_contains "resolve_tdd_model resuelve el override por clave exacta via resolve_stage_model" 'explicit="$(resolve_stage_model "$key" "$(resolve_stage_model "$agent_id" "")")"'
+assert_tdd_contains "resolve_tdd_model cae a mefisto_resolve_model con el mapping del consumidor" 'mefisto_resolve_model "$MEFISTO_RUNTIME_RESUELTO" "$agent_id" "$profile" "" "$CONSUMER_MODELS_FILE"'
+assert_tdd_contains "resolve_tdd_model aborta si la resolucion del adaptador falla" 'abort "No se pudo resolver el modelo de $agent_id (perfil $profile): ${MEFISTO_MODELS_ERROR:-motivo desconocido}"'
+assert_tdd_contains "resolve_tdd_model anuncia el override con el formato canonico" "MODELS: \$key runtime=\$MEFISTO_RUNTIME_RESUELTO perfil=\$profile solicitado='\$explicit' resuelto='\$RESOLVED_TDD_MODEL' (override --models)"
+assert_tdd_contains "resolve_tdd_model anuncia lo automatico con el formato canonico" "MODELS: \$key runtime=\$MEFISTO_RUNTIME_RESUELTO perfil=\$profile solicitado=<automatico> resuelto='\${RESOLVED_TDD_MODEL:-<heredado>}'"
+assert_tdd_contains "run_agent resuelve el perfil desde la tabla antes de invocar" 'agent_profile="$(_tdd_agent_profile "$agent")" || abort "Agente'
+assert_tdd_contains "run_agent usa resolve_tdd_model con clave y agente identicos" 'resolve_tdd_model "$agent" "$agent" "$agent_profile"'
+assert_tdd_contains "run_agent muestra el modelo resuelto antes del runner" 'log "Invocando $agent (modelo: ${AGENT_MODEL_OVERRIDE:-<heredado>})..."'
 assert_tdd_contains "run_agent conserva el argv condicional --model" '[ -n "$AGENT_MODEL_OVERRIDE" ] && args+=(--model "$AGENT_MODEL_OVERRIDE")'
-assert_tdd_contains "run_agent resuelve el frontmatter cuando no hay override" 'AGENT_MODEL_VISIBLE="$(resolve_declared_agent_model "$agent")"'
-assert_tdd_contains "run_agent representa la ausencia no observable como heredado" 'AGENT_MODEL_VISIBLE="<heredado>"'
-assert_tdd_contains "run_agent etiqueta el override" 'AGENT_MODEL_ORIGIN="override --models"'
-assert_tdd_contains "run_agent etiqueta el frontmatter" 'AGENT_MODEL_ORIGIN="frontmatter"'
-assert_tdd_contains "run_agent etiqueta el heredado" 'AGENT_MODEL_ORIGIN="heredado"'
-assert_tdd_contains "run_agent muestra el modelo antes del CLI" 'log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."'
-assert_tdd_contains "run_agent persiste la evidencia con el formato canonico" 'MODELS: stage $stage/$agent -> $AGENT_MODEL_VISIBLE ($AGENT_MODEL_ORIGIN)'
 assert_tdd_contains "log escribe tambien en el log persistente" '_log_file "$m"'
-assert_tdd_order "run_agent resuelve el override antes de anunciar" 'AGENT_MODEL_OVERRIDE="$(resolve_stage_model "$agent" "")"' 'log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."'
+assert_tdd_order "run_agent resuelve el perfil y el modelo antes de anunciar" 'resolve_tdd_model "$agent" "$agent" "$agent_profile"' 'log "Invocando $agent (modelo: ${AGENT_MODEL_OVERRIDE:-<heredado>})..."'
 assert_tdd_contains "run_agent conserva el argv neutral con agente y cwd" '--agent "$agent" --cwd "$WORKTREE_PATH"'
 for stage_call in 'run_agent "1" "$STAGE1_AGENT"' 'run_agent "2" "$STAGE2_AGENT"' 'run_agent "2b" "smoke-test-writer"' 'run_agent "3" "reviewer"' 'run_agent "merge" "implementer"'; do
     assert_tdd_contains "stage normal conserva la ruta run_agent: $stage_call" "$stage_call"
 done
 assert_tdd_count "run_agent declara una unica adicion condicional de --model" 1 '[ -n "$AGENT_MODEL_OVERRIDE" ] && args+=(--model "$AGENT_MODEL_OVERRIDE")'
+assert_tdd_contains "Stage 0 pasa el modelo resuelto al runner (a diferencia de antes de #1362)" 'invoke_agent_once "domain-scaffolder" "$SCAFFOLD_PROMPT_FILE" "$EVENTS_SCAFFOLD" "$LOG_SCAFFOLD" "$RESOLVED_TDD_MODEL"'
+assert_tdd_contains "Stage 0 resuelve via la tabla y el helper" 'resolve_tdd_model "domain-scaffolder" "domain-scaffolder" "$(_tdd_agent_profile "domain-scaffolder")"'
 
 echo ""
-echo "[10c] tdd: las remediaciones preservan la precedencia fina y anuncian los tres origenes (CA-3 a CA-5)"
-assert_tdd_contains "4b calcula primero el override fino" 'PATCH_TW_FINE_MODEL_OVERRIDE="$(resolve_stage_model "patch-test-writer" "")"'
-assert_tdd_contains "4b conserva el fallback del agente relanzado" 'PATCH_TW_AGENT_MODEL_OVERRIDE="$(resolve_stage_model "$STAGE1_AGENT" "")"'
-assert_tdd_contains "4b aplica el override fino antes del fallback" 'PATCH_TW_MODEL_OVERRIDE="$PATCH_TW_FINE_MODEL_OVERRIDE"'
-assert_tdd_contains "4b solo cae al override del agente cuando el fino esta vacio" '[ -z "$PATCH_TW_MODEL_OVERRIDE" ] && PATCH_TW_MODEL_OVERRIDE="$PATCH_TW_AGENT_MODEL_OVERRIDE"'
+echo "[10c] tdd: las remediaciones preservan la cadena fina via resolve_tdd_model (CA-2, CA-3)"
+assert_tdd_contains "4b deriva el perfil de la misma tabla que el Stage 1" 'PATCH_TW_PROFILE="$(_tdd_agent_profile "$STAGE1_AGENT")"'
+assert_tdd_contains "4b resuelve con la clave fina y el fallback del agente relanzado" 'resolve_tdd_model "patch-test-writer" "$STAGE1_AGENT" "$PATCH_TW_PROFILE"'
+assert_tdd_contains "4b toma el modelo resuelto de RESOLVED_TDD_MODEL" 'PATCH_TW_MODEL_OVERRIDE="$RESOLVED_TDD_MODEL"'
 assert_tdd_contains "4b pasa el override como valor opcional al helper neutral" '"$PATCH_TW_MODEL_OVERRIDE" || CG_TW_EXIT=$?'
-assert_tdd_contains "4b usa el frontmatter sin override" 'PATCH_TW_MODEL_VISIBLE="$(resolve_declared_agent_model "$STAGE1_AGENT")"'
-assert_tdd_contains "4b representa metadata ausente como heredado" 'PATCH_TW_MODEL_VISIBLE="<heredado>"'
-assert_tdd_contains "4b anuncia la evidencia persistente" 'MODELS: stage 4b/patch-test-writer -> $PATCH_TW_MODEL_VISIBLE ($PATCH_TW_MODEL_ORIGIN)'
-assert_tdd_contains "4b usa el helper neutral" 'invoke_agent_once "$STAGE1_AGENT" "$PATCH_TW_PROMPT_FILE" "$EVENTS_CG_TW" "$LOG_CG_TW"'
-assert_tdd_contains "4c calcula primero el override fino" 'PATCH_IM_FINE_MODEL_OVERRIDE="$(resolve_stage_model "patch-implementer" "")"'
-assert_tdd_contains "4c conserva el fallback del agente relanzado" 'PATCH_IM_AGENT_MODEL_OVERRIDE="$(resolve_stage_model "$STAGE2_AGENT" "")"'
-assert_tdd_contains "4c aplica el override fino antes del fallback" 'PATCH_IM_MODEL_OVERRIDE="$PATCH_IM_FINE_MODEL_OVERRIDE"'
-assert_tdd_contains "4c solo cae al override del agente cuando el fino esta vacio" '[ -z "$PATCH_IM_MODEL_OVERRIDE" ] && PATCH_IM_MODEL_OVERRIDE="$PATCH_IM_AGENT_MODEL_OVERRIDE"'
+assert_tdd_contains "4b anuncia el modelo resuelto antes de invocar" 'log "Invocando $STAGE1_AGENT (modelo: ${PATCH_TW_MODEL_OVERRIDE:-<heredado>})..."'
+assert_tdd_contains "4b usa el helper neutral" 'invoke_agent_once "$STAGE1_AGENT" "$PATCH_TW_PROMPT_FILE" "$EVENTS_CG_TW" "$LOG_CG_TW" "$PATCH_TW_MODEL_OVERRIDE"'
+assert_tdd_contains "4c deriva el perfil de la misma tabla que el Stage 2" 'PATCH_IM_PROFILE="$(_tdd_agent_profile "$STAGE2_AGENT")"'
+assert_tdd_contains "4c resuelve con la clave fina y el fallback del agente relanzado" 'resolve_tdd_model "patch-implementer" "$STAGE2_AGENT" "$PATCH_IM_PROFILE"'
+assert_tdd_contains "4c toma el modelo resuelto de RESOLVED_TDD_MODEL" 'PATCH_IM_MODEL_OVERRIDE="$RESOLVED_TDD_MODEL"'
 assert_tdd_contains "4c pasa el override como valor opcional al helper neutral" '"$PATCH_IM_MODEL_OVERRIDE" || CG_IM_EXIT=$?'
-assert_tdd_contains "4c usa el frontmatter sin override" 'PATCH_IM_MODEL_VISIBLE="$(resolve_declared_agent_model "$STAGE2_AGENT")"'
-assert_tdd_contains "4c representa metadata ausente como heredado" 'PATCH_IM_MODEL_VISIBLE="<heredado>"'
-assert_tdd_contains "4c anuncia la evidencia persistente" 'MODELS: stage 4c/patch-implementer -> $PATCH_IM_MODEL_VISIBLE ($PATCH_IM_MODEL_ORIGIN)'
-assert_tdd_contains "4c usa el helper neutral" 'invoke_agent_once "$STAGE2_AGENT" "$PATCH_IM_PROMPT_FILE" "$EVENTS_CG_IM" "$LOG_CG_IM"'
-assert_tdd_contains "Stage 0 anuncia su modelo declarado" 'MODELS: stage 0/domain-scaffolder -> $SCAFFOLD_MODEL_VISIBLE ($SCAFFOLD_MODEL_ORIGIN)'
-assert_tdd_count "los cuatro caminos etiquetan el override con el origen canonico" 3 'MODEL_ORIGIN="override --models"'
-assert_tdd_count "los cuatro caminos etiquetan frontmatter con el origen canonico" 4 'MODEL_ORIGIN="frontmatter"'
-assert_tdd_count "los cuatro caminos etiquetan heredado con el origen canonico" 4 'MODEL_ORIGIN="heredado"'
+assert_tdd_contains "4c anuncia el modelo resuelto antes de invocar" 'log "Invocando $STAGE2_AGENT (modelo: ${PATCH_IM_MODEL_OVERRIDE:-<heredado>})..."'
+assert_tdd_contains "4c usa el helper neutral" 'invoke_agent_once "$STAGE2_AGENT" "$PATCH_IM_PROMPT_FILE" "$EVENTS_CG_IM" "$LOG_CG_IM" "$PATCH_IM_MODEL_OVERRIDE"'
+assert_tdd_count "resolve_tdd_model se invoca exactamente una vez por camino (run_agent, scaffold, 4b, 4c)" 4 'resolve_tdd_model "'
+assert_tdd_count "solo la tabla imprime el literal del perfil balanced (ningun callsite lo repite)" 1 "printf 'balanced'"
+assert_tdd_count "solo la tabla imprime el literal del perfil deep (ningun callsite lo repite)" 1 "printf 'deep'"
+
+echo ""
+echo "[10f] tdd: resolve_tdd_model ejecutable bajo runtime-fake (CA-5)"
+# Extrae la funcion real publicada (mismo patron que test-tooling-neutral-runner.sh
+# para log_agent_model_invocation/run_agent): el argv y la precedencia los
+# deriva la funcion misma, los dobles solo reemplazan sus dependencias externas.
+TDD_MODEL_FN_SRC="$(awk '/^resolve_tdd_model\(\) \{/{p=1} p{print} p && /^}/{p=0}' "$TDD_PIPELINE")"
+if [ -z "$TDD_MODEL_FN_SRC" ]; then
+    fail "no se pudo extraer resolve_tdd_model de $TDD_PIPELINE"
+else
+    pass "resolve_tdd_model se extrae con awk"
+fi
+
+TDD_MODEL_TMP="$(mktemp -d)"
+export MEFISTO_RUNTIME_LIB_DIR="$REPO_ROOT/src/runtime/lib"
+export MEFISTO_MODELS_VALIDATOR="$REPO_ROOT/src/runtime/contract/models.validate.jq"
+# shellcheck source=/dev/null
+source "$REPO_ROOT/src/runtime/lib/mefisto-models.sh"
+run_resolve_tdd_model() {
+    local key="$1" agent_id="$2" profile="$3"
+    EVENTS_LOG_ABS="$TDD_MODEL_TMP/events.log"
+    : > "$EVENTS_LOG_ABS"
+    ABORT_CALLED=false
+    ABORT_MSG=""
+    abort() { ABORT_CALLED=true; ABORT_MSG="$1"; return 1; }
+    RESOLVED_TDD_MODEL=""
+    eval "$TDD_MODEL_FN_SRC"
+    resolve_tdd_model "$key" "$agent_id" "$profile"
+}
+
+echo "  [perfil default por agente]"
+parse_stage_models "" >/dev/null
+MEFISTO_RUNTIME_RESUELTO=fake CONSUMER_MODELS_FILE="$TDD_MODEL_TMP/sin-mapping.json" MEFISTO_FAKE_DEFAULT_MODEL=modelo-x \
+    run_resolve_tdd_model "test-writer" "test-writer" "balanced"
+if [ "$RESOLVED_TDD_MODEL" = "modelo-x" ]; then pass "sin override ni mapping, resuelve al default fake (MEFISTO_FAKE_DEFAULT_MODEL)"; else fail "deberia resolver 'modelo-x' (obtenido '$RESOLVED_TDD_MODEL')"; fi
+if grep -qF "MODELS: test-writer runtime=fake perfil=balanced solicitado=<automatico> resuelto='modelo-x'" "$EVENTS_LOG_ABS"; then pass "deja evidencia automatica en events.log"; else fail "no dejo la evidencia esperada: $(cat "$EVENTS_LOG_ABS")"; fi
+
+echo "  [override exacto]"
+parse_stage_models "reviewer=modelo-override" >/dev/null
+MEFISTO_RUNTIME_RESUELTO=fake CONSUMER_MODELS_FILE="$TDD_MODEL_TMP/sin-mapping.json" MEFISTO_FAKE_DEFAULT_MODEL=modelo-x \
+    run_resolve_tdd_model "reviewer" "reviewer" "deep"
+if [ "$RESOLVED_TDD_MODEL" = "modelo-override" ]; then pass "el override --models gana por clave exacta"; else fail "deberia resolver 'modelo-override' (obtenido '$RESOLVED_TDD_MODEL')"; fi
+if grep -qF "MODELS: reviewer runtime=fake perfil=deep solicitado='modelo-override' resuelto='modelo-override' (override --models)" "$EVENTS_LOG_ABS"; then pass "deja evidencia de override en events.log"; else fail "no dejo la evidencia esperada: $(cat "$EVENTS_LOG_ABS")"; fi
+
+echo "  [cadena fina patch-test-writer]"
+parse_stage_models "test-writer=modelo-agente" >/dev/null
+MEFISTO_RUNTIME_RESUELTO=fake CONSUMER_MODELS_FILE="$TDD_MODEL_TMP/sin-mapping.json" MEFISTO_FAKE_DEFAULT_MODEL=modelo-x \
+    run_resolve_tdd_model "patch-test-writer" "test-writer" "balanced"
+if [ "$RESOLVED_TDD_MODEL" = "modelo-agente" ]; then pass "sin clave fina, hereda el override de 'test-writer' (agent_id)"; else fail "deberia heredar 'modelo-agente' (obtenido '$RESOLVED_TDD_MODEL')"; fi
+
+parse_stage_models "test-writer=modelo-agente,patch-test-writer=modelo-fino" >/dev/null
+MEFISTO_RUNTIME_RESUELTO=fake CONSUMER_MODELS_FILE="$TDD_MODEL_TMP/sin-mapping.json" MEFISTO_FAKE_DEFAULT_MODEL=modelo-x \
+    run_resolve_tdd_model "patch-test-writer" "test-writer" "balanced"
+if [ "$RESOLVED_TDD_MODEL" = "modelo-fino" ]; then pass "la clave fina 'patch-test-writer' gana sobre la heredada de 'test-writer'"; else fail "deberia ganar 'modelo-fino' (obtenido '$RESOLVED_TDD_MODEL')"; fi
+
+echo "  [mapping del consumidor: agents.<id> gana a profiles.<perfil>]"
+CONSUMER_MAPPING="$TDD_MODEL_TMP/models.json"
+cat > "$CONSUMER_MAPPING" <<'JSON'
+{"fake": {"profiles": {"balanced": "modelo-perfil"}, "agents": {"test-writer": "modelo-agente-mapping"}}}
+JSON
+parse_stage_models "" >/dev/null
+MEFISTO_RUNTIME_RESUELTO=fake CONSUMER_MODELS_FILE="$CONSUMER_MAPPING" MEFISTO_FAKE_DEFAULT_MODEL=modelo-x \
+    run_resolve_tdd_model "test-writer" "test-writer" "balanced"
+if [ "$RESOLVED_TDD_MODEL" = "modelo-agente-mapping" ]; then pass "agents.<id> del mapping del consumidor gana a profiles.<perfil>"; else fail "deberia resolver 'modelo-agente-mapping' (obtenido '$RESOLVED_TDD_MODEL')"; fi
+MEFISTO_RUNTIME_RESUELTO=fake CONSUMER_MODELS_FILE="$CONSUMER_MAPPING" MEFISTO_FAKE_DEFAULT_MODEL=modelo-x \
+    run_resolve_tdd_model "implementer" "implementer" "balanced"
+if [ "$RESOLVED_TDD_MODEL" = "modelo-perfil" ]; then pass "sin agents.<id>, cae a profiles.<perfil> del mapping"; else fail "deberia resolver 'modelo-perfil' (obtenido '$RESOLVED_TDD_MODEL')"; fi
+
+echo "  [heredado]"
+parse_stage_models "" >/dev/null
+MEFISTO_RUNTIME_RESUELTO=fake CONSUMER_MODELS_FILE="$TDD_MODEL_TMP/sin-mapping.json" MEFISTO_FAKE_DEFAULT_MODEL="" \
+    run_resolve_tdd_model "implementer" "implementer" "balanced"
+if [ -z "$RESOLVED_TDD_MODEL" ]; then pass "sin mapping y sin default del adaptador, resuelve a vacio (heredar, sin --model)"; else fail "deberia resolver vacio (obtenido '$RESOLVED_TDD_MODEL')"; fi
+if grep -qF "resuelto='<heredado>'" "$EVENTS_LOG_ABS"; then pass "la evidencia muestra <heredado> cuando no hay modelo"; else fail "no mostro <heredado>: $(cat "$EVENTS_LOG_ABS")"; fi
+
+echo "  [fallo de resolucion: perfil invalido aborta]"
+parse_stage_models "" >/dev/null
+# El doble de abort() retorna en vez de terminar el proceso (el real hace exit),
+# asi que la funcion sigue corriendo y hace cat sobre el temporal ya borrado:
+# ese stderr es ruido esperado de la simulacion, no un fallo del pipeline.
+MEFISTO_RUNTIME_RESUELTO=fake CONSUMER_MODELS_FILE="$TDD_MODEL_TMP/sin-mapping.json" MEFISTO_FAKE_DEFAULT_MODEL=modelo-x \
+    run_resolve_tdd_model "implementer" "implementer" "perfil-invalido" 2>/dev/null || true
+if [ "$ABORT_CALLED" = true ]; then pass "perfil fuera del vocabulario fast|balanced|deep aborta"; else fail "deberia haber abortado (RESOLVED_TDD_MODEL='$RESOLVED_TDD_MODEL')"; fi
+if printf '%s' "$ABORT_MSG" | grep -q "No se pudo resolver el modelo de implementer"; then pass "el mensaje de abort nombra el agente y el perfil"; else fail "mensaje de abort inesperado: $ABORT_MSG"; fi
+
+unset -f abort 2>/dev/null || true
+rm -rf "$TDD_MODEL_TMP"
+
+echo ""
+echo "[10g] tdd: la tabla agente->perfil no diverge de src/published/agents/*.md (CA-6)"
+# Tolerante a fuentes aun no migradas (#1369-#1372): solo cruza los agentes
+# cuyo src/published/agents/<id>.md ya existe. Cuando los 7 existan (ya es el
+# caso hoy), este bloque los cubre completos sin depender de esos issues.
+frontmatter() { awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$1"; }
+TDD_TABLE_AGENTS=(test-writer projection-test-writer implementer projection-implementer smoke-test-writer domain-scaffolder reviewer)
+TDD_TABLE_PROFILES=(balanced balanced balanced balanced balanced balanced deep)
+TDD_TABLE_CHECKED=0
+for index in "${!TDD_TABLE_AGENTS[@]}"; do
+    agent="${TDD_TABLE_AGENTS[$index]}"
+    expected_profile="${TDD_TABLE_PROFILES[$index]}"
+    source="$REPO_ROOT/src/published/agents/$agent.md"
+    [ -f "$source" ] || continue
+    TDD_TABLE_CHECKED=$((TDD_TABLE_CHECKED + 1))
+    actual_profile="$(frontmatter "$source" | jq -r '.profile // empty' 2>/dev/null)"
+    if [ "$actual_profile" = "$expected_profile" ]; then
+        pass "$agent: tabla de tdd ($expected_profile) coincide con .profile de la fuente neutral"
+    else
+        fail "$agent: tabla de tdd dice '$expected_profile' pero src/published/agents/$agent.md declara '$actual_profile'"
+    fi
+done
+if [ "$TDD_TABLE_CHECKED" -eq "${#TDD_TABLE_AGENTS[@]}" ]; then
+    pass "los 7 agentes de la tabla ya tienen fuente neutral publicada (cobertura completa)"
+else
+    echo "  (info: $TDD_TABLE_CHECKED/${#TDD_TABLE_AGENTS[@]} agentes con fuente neutral publicada -- el resto migra en #1369-#1372)"
+fi
 
 # --- iac-pipeline.sh: default heredado observable sin override ----------------
 IAC_PIPELINE="$REPO_ROOT/scripts/iac-pipeline.sh"
