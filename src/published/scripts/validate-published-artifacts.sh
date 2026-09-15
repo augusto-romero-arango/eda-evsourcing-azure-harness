@@ -55,7 +55,13 @@ validate_file() {
 $(printf '%s' "$instance_json" | jq -r '.skills[]?')
 EOF
     while IFS=: read -r line text; do
-        if printf '%s\n' "$text" | grep -Eiq 'claude|opencode|\.claude|\.opencode|marketplace|(^|[/[:space:].])cache([/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:'; then
+        lifecycle_text="$text"
+        # `runtimes` administra identificadores de adaptador, no detalles de
+        # proveedor. Es la unica superficie neutral que puede nombrar el id
+        # portable de un lifecycle soportado; conserva el rechazo para todo
+        # otro artefacto publicado.
+        if [ "$id" = runtimes ]; then lifecycle_text="${lifecycle_text//opencode/<adapter>}"; fi
+        if printf '%s\n' "$lifecycle_text" | grep -Eiq 'claude|opencode|\.claude|\.opencode|marketplace|(^|[/[:space:].])cache([/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:'; then
             echo "$rel: body: linea $line referencia un runtime, CLI, cache, directorio o metadata propia de runtime"
             status=1
         fi
@@ -63,7 +69,7 @@ EOF
         placeholders="$(printf '%s\n' "$text" | grep -Eo '\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@*#?!-]' || true)"
         while IFS= read -r placeholder; do
             [ -z "$placeholder" ] && continue
-            if [ "$placeholder" != '$ARGUMENTS' ]; then
+            if [ "$placeholder" != '$ARGUMENTS' ] && { [ "$id" != runtimes ] || [ "$placeholder" != '$MEFISTO_LIFECYCLE_LAUNCHER' ]; }; then
                 echo "$rel: body: linea $line placeholder no permitido: $placeholder (solo se admite \$ARGUMENTS)"
                 status=1
             fi
@@ -84,7 +90,7 @@ EOF
                 [ -z "$directive" ] && continue
                 case "$directive" in
                     '{{mefisto:assert-consumer-repo}}') has_guard=1 ;;
-                    '{{mefisto:package-root}}'|'{{mefisto:config-path}}') ;;
+                    '{{mefisto:package-root}}'|'{{mefisto:config-path}}'|'{{mefisto:lifecycle-launcher}}') ;;
                     '{{mefisto:launch-agent '*'}}'|'{{mefisto:command '*'}}'|'{{mefisto:run '*'}}'|'{{mefisto:state-path '*'}}')
                         if ! printf '%s' "$directive" | grep -Eq '^\{\{mefisto:(launch-agent|command) [a-z0-9]+(-[a-z0-9]+)*\}\}$|^\{\{mefisto:run [a-z0-9][a-z0-9._/-]* [^{}]+\}\}$|^\{\{mefisto:state-path [A-Za-z0-9][A-Za-z0-9._/-]*\}\}$' || printf '%s' "$directive" | grep -Eq '(^|/)\.\.(/|[[:space:]]|\}\})' || printf '%s' "$directive" | grep -Eq '^\{\{mefisto:(launch-agent|command) mefisto-'; then echo "$rel: body: linea $line directiva mefisto mal formada: $directive"; status=1; fi ;;
                     *) echo "$rel: body: linea $line directiva mefisto desconocida: $directive"; status=1 ;;

@@ -37,6 +37,23 @@ published_claude_needs_package_root() {
     case "$1" in *'{{mefisto:run '*|*'{{mefisto:package-root}}'*) return 0 ;; *) return 1 ;; esac
 }
 
+published_claude_lifecycle_launcher_preamble() {
+    cat <<'EOF'
+```bash
+mefisto_lifecycle_data_root() {
+    if [ -n "${XDG_DATA_HOME:-}" ]; then printf '%s/mefisto\n' "$XDG_DATA_HOME"
+    elif [ "$(uname -s)" = Darwin ]; then printf '%s/Library/Application Support/mefisto\n' "$HOME"
+    else printf '%s/.local/share/mefisto\n' "$HOME"; fi
+}
+MEFISTO_LIFECYCLE_LAUNCHER="$(mefisto_lifecycle_data_root)/active/bin/mefisto-opencode"
+if [ ! -f "$MEFISTO_LIFECYCLE_LAUNCHER" ] || [ -L "$MEFISTO_LIFECYCLE_LAUNCHER" ] || [ ! -x "$MEFISTO_LIFECYCLE_LAUNCHER" ]; then
+    printf '%s\n' 'Estado OpenCode: unavailable (no hay launcher estable disponible).' >&2
+fi
+export MEFISTO_LIFECYCLE_LAUNCHER
+```
+EOF
+}
+
 # Este bloque se emite dentro del artefacto Claude, no en la fuente neutral. No
 # carga codigo desde el candidato: valida primero la metadata de distribucion.
 published_claude_package_root_preamble() {
@@ -134,6 +151,8 @@ published_claude_translate_body() {
                 prefix="${BASH_REMATCH[1]}"; script="${BASH_REMATCH[2]}"; args="${BASH_REMATCH[3]}"; suffix="${BASH_REMATCH[4]}"
                 args="$(printf '%s' "$args" | sed -E 's/[[:space:]]+$//')"
                 translated="${prefix}\"\${MEFISTO_PACKAGE_ROOT}/scripts/${script}\" ${args}${suffix}"
+            elif [[ "$line" =~ ^(.*)\{\{mefisto:lifecycle-launcher\}\}(.*)$ ]]; then
+                translated="${BASH_REMATCH[1]}$(published_claude_lifecycle_launcher_preamble)${BASH_REMATCH[2]}"
             elif [[ "$line" =~ ^(.*)\{\{mefisto:package-root\}\}(.*)$ ]]; then
                 translated="${BASH_REMATCH[1]}\${MEFISTO_PACKAGE_ROOT}${BASH_REMATCH[2]}"
             elif [[ "$line" =~ ^(.*)\{\{mefisto:config-path\}\}(.*)$ ]]; then
