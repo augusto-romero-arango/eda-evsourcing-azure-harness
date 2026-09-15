@@ -51,8 +51,8 @@
 #      exactamente lo que CA-2 proscribe para el modelo. Corridas viejas o
 #      degradadas sin metrics.agent salen con "-" en esa columna y forman su
 #      propio grupo, sin contaminar los de agente conocido.
-#   4. Segmentacion por harness_version (issue #663): cada linea trae el
-#      "harness_version" con que corrio (#660), asi que el reporte agrega
+#   4. Segmentacion por harness_version (issues #663/#1363): cada linea nueva
+#      trae `identity.harness_version`; el campo plano legado sigue aceptado.
 #      tambien una tabla "POR VERSION DE HARNESS" por pipeline -- misma media
 #      de wallclock/turnos/costo que el resto del reporte, restringida a las
 #      corridas instrumentadas de esa version (mismo denominador compartido
@@ -475,10 +475,11 @@ def pipeline_report:
     # global y en ninguna seccion, la unica forma de que el reporte pierda
     # corridas en silencio.
     _pipeline: (if (.pipeline | type) == "string" then .pipeline else "(sin-pipeline)" end),
-    # Igual patron que _pipeline: harness_version llego con #660, asi que todo
-    # historial previo (o cualquier linea futura que no lo traiga) cae en su
-    # propio cajon "(sin version)" en vez de romper la segmentacion por_version.
-    _version: (if (.harness_version | type) == "string" then .harness_version else "(sin version)" end)
+    # La identidad completa reemplazo el campo plano en tooling y TDD. El
+    # fallback conserva la lectura del historial previo a esa migracion.
+    _version: (if (.identity.harness_version | type) == "string" then .identity.harness_version
+               elif (.harness_version | type) == "string" then .harness_version
+               else "(sin version)" end)
   })) as $entries
 
 | ($entries | map(._pipeline) | unique) as $present_pipelines

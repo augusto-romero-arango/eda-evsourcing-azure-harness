@@ -133,7 +133,10 @@ if grep -qF '"variant": ${VARIANT_LABEL_JSON:-null},' "$PIPE"; then
 else
     fail "el JSON de status no declara el campo variant"
 fi
-HISTORY_VARIANT_HITS=$(grep -cF '\"variant\":${VARIANT_LABEL_JSON:-null}' "$PIPE")
+# Las dos lineas de historial se componen con jq -cn desde issue #1363 (antes,
+# interpolacion de cadenas): el campo viaja como --argjson variant, no como
+# literal "variant":${VARIANT_LABEL_JSON:-null}.
+HISTORY_VARIANT_HITS=$(grep -cF -- '--argjson variant "${VARIANT_LABEL_JSON:-null}"' "$PIPE")
 if [ "$HISTORY_VARIANT_HITS" -ge 2 ]; then
     pass "las dos lineas de pipeline-history.jsonl (completed y failed) llevan variant ($HISTORY_VARIANT_HITS)"
 else

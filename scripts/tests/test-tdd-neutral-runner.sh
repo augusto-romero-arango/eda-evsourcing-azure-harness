@@ -1,15 +1,22 @@
 #!/usr/bin/env bash
 # Regresion focalizada de #1360/#1361: TDD solo consume el contrato JSONL.
+# Extendida por #1363: identidad neutral, metricas por stage enriquecidas y
+# retiro del parche de .claude/settings.json (MEF-ADR-0050/0053/0054).
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 PIPELINE="$ROOT/scripts/tdd-pipeline.sh"
+COMMON="$ROOT/scripts/_pipeline-common.sh"
 PASS=0
 FAIL=0
 pass() { printf '  PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
 fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
 contains() { grep -Fq -- "$1" "$PIPELINE" && pass "$2" || fail "$2"; }
 run_agent_body() { awk '/^run_agent\(\) \{/{p=1} p{print} p && /^}/{p=0}' "$PIPELINE"; }
+# CA-4 (issue #1363): la implementacion REAL de derive_stage_log_from_stream
+# (no un stub) para el caso de redaccion -- necesita el filtro autentico para
+# comprobar que el .log derivado no expone message/input_summary/error.detail.
+derive_stage_log_from_stream_body() { awk '/^derive_stage_log_from_stream\(\) \{/{p=1} p{print} p && /^}/{p=0}' "$COMMON"; }
 invoke_agent_once_body() { awk '/^invoke_agent_once\(\) \{/{p=1} p{print} p && /^}/{p=0}' "$PIPELINE"; }
 stage_zero_body() { awk '/^    # --- Stage 0:/{p=1; next} p{print} p && /^    fi$/{exit}' "$PIPELINE"; }
 remediation_4b_failure_body() { awk '/^        CG_TW_EXIT=0$/{p=1} p && /^        else$/{print "        fi"; exit} p{print}' "$PIPELINE"; }
@@ -52,6 +59,16 @@ absent_pipeline 'claude -p' 'TDD no invoca un CLI de runtime directamente'
 absent_pipeline '--permission-mode' 'TDD no fija permisos de un runtime'
 absent_pipeline '--output-format' 'TDD no conoce formatos de un runtime'
 
+echo '[estatico] identidad, enrich por stage y observabilidad neutralizada (issue #1363)'
+contains 'HARNESS_IDENTITY_JSON="$(get_harness_identity_json)"' 'identidad se inicializa desde el paquete tras load_harness_config'
+contains 'HARNESS_IDENTITY_JSON="$(get_harness_identity_json "$MEFISTO_RUNTIME_RESUELTO")"' 'identidad se revalida contra el runtime resuelto'
+contains 'enrich_stage_metrics "tdd" "$events_file" "$metrics_json"' 'run_agent enriquece las metricas por stage (ruta 1/4)'
+contains 'enrich_stage_metrics "tdd" "$EVENTS_SCAFFOLD"' 'Stage 0 enriquece las metricas del scaffold (ruta 2/4)'
+contains 'enrich_stage_metrics "tdd" "$EVENTS_CG_TW"' 'remediacion 4b enriquece sus metricas (ruta 3/4)'
+contains 'enrich_stage_metrics "tdd" "$EVENTS_CG_IM"' 'remediacion 4c enriquece sus metricas (ruta 4/4)'
+absent_pipeline 'WORKTREE_PATH/.claude/settings.json' 'TDD no parchea settings.json del worktree (MEF-ADR-0050)'
+absent_pipeline 'checkout -- .claude' 'TDD no restaura .claude/ del worktree con git checkout'
+
 echo '[regresion] contrato ejecutable de run_agent'
 TMP="$(mktemp -d -t mefisto-tdd-neutral)"
 trap 'rm -rf "$TMP"' EXIT
@@ -64,6 +81,30 @@ printf 'base\n' > "$WT/tests/base.txt"
 git -C "$WT" add tests/base.txt
 git -C "$WT" commit -qm base
 
+# El chequeo estatico de los cuatro call sites se complementa con el contrato
+# ejecutable del helper generalizado: evita que el wrapper de tooling siga
+# verde mientras la ruta pipeline=tdd pierde alguna dimension de correlacion.
+cat > "$TMP/enrich.events.jsonl" <<'EOF'
+{"type":"run.started","runtime":"opencode","model":"vendor/requested"}
+{"type":"run.completed","runtime":"opencode","model":"vendor/effective","session_id":"session-tdd","status":"success","error":null}
+EOF
+ENRICHED_TDD="$(bash -c 'source "$1"; enrich_stage_metrics tdd "$2" '\''{"tokens":{"input":7}}'\'' 1363 '\''"variante-a"'\'' 4b projection-test-writer balanced '\''{"harness_version":"1.2.3","harness_commit":"0123456789abcdef0123456789abcdef01234567","identity_state":"complete"}'\''' _ "$COMMON" "$TMP/enrich.events.jsonl")"
+if printf '%s' "$ENRICHED_TDD" | jq -e '
+    .pipeline == "tdd" and .issue == "1363" and .variant == "variante-a"
+    and .stage == "4b" and .agent == "projection-test-writer"
+    and .profile == "balanced" and .runtime == "opencode"
+    and .requested_model == "vendor/requested"
+    and .effective_model == "vendor/effective"
+    and .session_id == "session-tdd" and .result == "success"
+    and .error_kind == null and .harness_version == "1.2.3"
+    and .harness_commit == "0123456789abcdef0123456789abcdef01234567"
+    and .identity_state == "complete" and .tokens.input == 7
+' >/dev/null; then
+    pass 'enrich_stage_metrics conserva metricas base y agrega todas las dimensiones de TDD'
+else
+    fail "enrich_stage_metrics no produjo el contrato TDD esperado: $ENRICHED_TDD"
+fi
+
 export TMP WT ROOT
 cat > "$TMP/runner" <<'EOF'
 #!/usr/bin/env bash
@@ -71,11 +112,12 @@ count=$(cat "$TMP/calls" 2>/dev/null || printf 0)
 count=$((count + 1))
 printf '%s' "$count" > "$TMP/calls"
 printf '%s\n' "$@" > "$TMP/call-${count}.args"
-event=""; cwd=""
+event=""; cwd=""; redact=false
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --event-log) event="$2"; shift 2 ;;
         --cwd) cwd="$2"; shift 2 ;;
+        --redact-observability) redact=true; shift ;;
         *) shift ;;
     esac
 done
@@ -99,6 +141,32 @@ case "$SCENARIO:$count" in
     terminal-failure:1)
         printf '%s\n' '{"type":"run.completed","status":"failed","session_id":null,"denials":0,"error":{"kind":"protocol_invalid"}}' > "$event"
         exit 0 ;;
+    redact:1)
+        # CA-4 (issue #1363): el doble aplica el MISMO filtro que
+        # redact_observability_events (src/runtime/mefisto-run-agent.sh)
+        # cuando recibe --redact-observability, sobre eventos crudos con
+        # contenido sensible -- verifica que run_agent() no reintroduce ese
+        # contenido en el events.jsonl persistido ni en el .log derivado.
+        : > "$event"
+        for raw in \
+            '{"type":"message","text":"SECRETO_PROMPT_TEXT"}' \
+            '{"type":"tool.started","tool":"Bash","input_summary":"SECRETO_INPUT_SUMMARY"}' \
+            '{"type":"run.failed","status":"failed","session_id":null,"denials":0,"error":{"kind":"protocol_invalid","detail":"SECRETO_ERROR_DETAIL"}}'; do
+            if [ "$redact" = true ]; then
+                printf '%s\n' "$raw" | jq -c '
+                    select(type == "object")
+                    | if .type == "message" then empty
+                      elif .type == "tool.started" then .input_summary = null
+                      elif ((.error? | type) == "object") then
+                          .error.detail = ("detalle redactado: " + .error.kind)
+                      else .
+                      end
+                ' >> "$event"
+            else
+                printf '%s\n' "$raw" >> "$event"
+            fi
+        done
+        exit 1 ;;
 esac
 exit 70
 EOF
@@ -107,6 +175,7 @@ chmod +x "$TMP/runner"
 {
     printf '%s\n' 'set -uo pipefail'
     run_agent_body
+    derive_stage_log_from_stream_body
     cat <<'EOF'
 LOG_DIR_ABS="$TMP/logs"
 TIMESTAMP=20260914-120000
@@ -124,8 +193,9 @@ log(){ :; }
 warn(){ :; }
 abort(){ printf 'ABORT:%s\n' "$1" > "$TMP/abort"; exit 99; }
 update_status(){ :; }
-derive_stage_log_from_stream(){ : > "$3"; }
 compute_stage_metrics(){ printf '{}'; }
+HARNESS_IDENTITY_JSON='null'
+enrich_stage_metrics(){ printf '%s' "${3:-null}"; }
 agent_events_value(){ jq -r -s "$2" "$1" 2>/dev/null || true; }
 agent_events_kind(){ agent_events_value "$1" '[.[] | select(.type == "run.failed" or .type == "run.completed") | .error.kind // empty] | last // empty'; }
 agent_events_resets_at(){ agent_events_value "$1" '[.[] | select(.type == "run.failed" or .type == "run.completed") | .error.resets_at // .resets_at // empty] | last // empty'; }
@@ -145,7 +215,7 @@ dotnet(){ printf called > "$TMP/gate-called"; return 0; }
 AGENT_TW_RES=pending; AGENT_IM_RES=pending; AGENT_ST_RES=pending; AGENT_RV_RES=pending
 AGENT_TW_METRICS_JSON=; AGENT_IM_METRICS_JSON=; AGENT_ST_METRICS_JSON=; AGENT_RV_METRICS_JSON=
 LAST_AGENT_DURATION=0; LAST_AGENT_METRICS_JSON=
-run_agent "$STAGE" "$AGENT" 'prompt de regresion'
+run_agent "$STAGE" "$AGENT" "${PROMPT:-prompt de regresion}"
 EOF
 } > "$TMP/case.sh"
 
@@ -154,7 +224,7 @@ reset_case() {
     rm -f "$WT/.claude/pipeline/summaries"/*.md
 }
 run_case() {
-    SCENARIO="$1" STAGE="${2:-1}" AGENT="${3:-test-writer}" WITH_MODEL="${4:-false}" bash "$TMP/case.sh"
+    SCENARIO="$1" STAGE="${2:-1}" AGENT="${3:-test-writer}" WITH_MODEL="${4:-false}" PROMPT="${5:-}" bash "$TMP/case.sh"
 }
 
 reset_case
@@ -204,6 +274,28 @@ if [ "$timeout_rc" -eq 99 ] && [ "$(cat "$TMP/calls")" = 1 ] \
     pass 'TIMEOUT descarta trabajo parcial sin ejecutar el atajo de recuperacion'
 else
     fail 'TIMEOUT entro al gate de recuperacion o no aborto'
+fi
+
+# CA-4 (issue #1363): runner doble que emite message/tool.started con
+# input_summary/run.failed con error.detail crudos, aplicando el mismo filtro
+# de --redact-observability que mefisto-run-agent.sh. Verifica que run_agent
+# sigue pasando --redact-observability y que ni el events.jsonl persistido ni
+# el .log derivado (derive_stage_log_from_stream) exponen ese contenido.
+reset_case
+redact_rc=0
+PROMPT_SECRET=SECRETO_PROMPT_TEXT
+run_case redact 1 test-writer false "$PROMPT_SECRET" || redact_rc=$?
+EVENTS_REDACT="$TMP/logs/stage-1-test-writer-20260914-120000-issue-1360-attempt-1.events.jsonl"
+LOG_REDACT="$TMP/logs/stage-1-test-writer-20260914-120000-issue-1360.log"
+if [ "$redact_rc" -eq 99 ] \
+    && grep -Fxq -- '--redact-observability' "$TMP/call-1.args" \
+    && [ "$(cat "$TMP/pipeline/1-test-writer.prompt.md")" = "$PROMPT_SECRET" ] \
+    && [ -s "$EVENTS_REDACT" ] && [ -s "$LOG_REDACT" ] \
+    && ! grep -Eq 'SECRETO_PROMPT_TEXT|SECRETO_INPUT_SUMMARY|SECRETO_ERROR_DETAIL' "$EVENTS_REDACT" \
+    && ! grep -Eq 'SECRETO_PROMPT_TEXT|SECRETO_INPUT_SUMMARY|SECRETO_ERROR_DETAIL' "$LOG_REDACT"; then
+    pass 'run_agent pasa --redact-observability; ni el events.jsonl persistido ni el .log derivado exponen message/input_summary/error.detail crudos'
+else
+    fail 'la redaccion no se sostuvo: argv, events.jsonl persistido o el log derivado no coinciden con el contrato'
 fi
 
 echo '[regresion] invocacion unica para Stage 0 y remediaciones'
@@ -277,6 +369,8 @@ _tdd_agent_profile(){ printf 'balanced'; }
 resolve_tdd_model(){ RESOLVED_TDD_MODEL=""; }
 derive_stage_log_from_stream(){ : > "$3"; }
 compute_stage_metrics(){ printf '{"tokens":{"input":1}}'; }
+HARNESS_IDENTITY_JSON='null'
+enrich_stage_metrics(){ printf '%s' "${3:-null}"; }
 agent_events_completed_successfully(){ jq -e -s '[.[] | select(.type == "run.completed")] | last | .status == "success"' "$1" >/dev/null 2>&1; }
 abort(){ printf 'ABORT:%s\n' "$1" > "$TMP/stage-zero-abort"; exit 99; }
 EOF
@@ -323,6 +417,7 @@ PATCH_TW_PROMPT_FILE="$TMP/prompt"
 EVENTS_CG_TW="$TMP/remediation.events.jsonl"
 LOG_CG_TW="$TMP/remediation.log"
 PATCH_TW_MODEL_OVERRIDE=
+PATCH_TW_PROFILE=balanced
 LAST_AGENT_DURATION=0
 LAST_AGENT_METRICS_JSON=null
 COV_REMEDIATION_SUMMARY=
@@ -330,6 +425,8 @@ mkdir -p "$PIPELINE_TMP_DIR" "$PIPELINE_DIR_ABS/metrics"
 warn(){ :; }
 derive_stage_log_from_stream(){ : > "$3"; }
 compute_stage_metrics(){ printf '{"tokens":{"input":1}}'; }
+HARNESS_IDENTITY_JSON='null'
+enrich_stage_metrics(){ printf '%s' "${3:-null}"; }
 agent_events_completed_successfully(){ jq -e -s '[.[] | select(.type == "run.completed")] | last | .status == "success"' "$1" >/dev/null 2>&1; }
 EOF
     remediation_4b_failure_body
