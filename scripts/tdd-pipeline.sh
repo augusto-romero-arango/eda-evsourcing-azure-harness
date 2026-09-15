@@ -9,6 +9,9 @@
 #   ./scripts/tdd-pipeline.sh 42 --from-stage 3   # Retomar desde Stage 3
 #   ./scripts/tdd-pipeline.sh 42 --from-stage 4   # Retomar desde Stage 4 (coverage gate)
 #   ./scripts/tdd-pipeline.sh 42 --models 'reviewer=opus,test-writer=sonnet'  # Modelo por stage (experimentos)
+#     El valor es pass-through: debe ser valido para el RUNTIME ACTIVO (alias como 'opus' bajo
+#     Claude Code; 'provider/model' bajo OpenCode). Sin --models manda el perfil neutral del
+#     agente (fast|balanced|deep), que cada adaptador traduce (issue #1362, MEF-ADR-0049).
 #   ./scripts/tdd-pipeline.sh 42 --variant experimento-a  # Corrida paralela del mismo issue (sin PR, rama local)
 #   MEFISTO_HOLD_MAX_SECONDS=<s> / MEFISTO_HOLD_PROBE_SECONDS=<s> ./scripts/tdd-pipeline.sh 42  # Techo (default 21600 = 6h) y cadencia de sondeo (default 300) de la espera ante RATE_LIMIT/PROVIDER_UNAVAILABLE (issue #971, MEF-ADR-0051)
 #
@@ -247,7 +250,7 @@ INPUT_FILE=""
 FROM_STAGE=1        # Por defecto, empezar desde Stage 1
 STATUS_FILENAME=""  # Se asigna despues del parseo (necesita ISSUE_NUM); override con --status-file
 SCAFFOLD_DOMAIN=""  # Nombre del dominio a scaffoldear antes de Stage 1 (kebab-case)
-MODELS_SPEC=""  # --models 'agente=modelo[,agente=modelo...]' (issue #712, reusa el parser de #708)
+MODELS_SPEC=""  # --models 'agente=modelo[,agente=modelo...]' (issue #712, reusa el parser de #708); valor pass-through, valido para el runtime activo (issue #1362)
 VARIANT_LABEL=""  # --variant <label>: corrida paralela del mismo issue, sin PR (issue #713, helper de #710)
 
 if [ $# -eq 0 ]; then
@@ -1664,7 +1667,12 @@ IMPORTANTE:
         # fallback "$STAGE1_AGENT" -- sin esa caida, un experimento
         # '--models test-writer=X' correria el Stage 1 con X y la remediacion
         # con el default, dos modelos para el mismo rol en la misma corrida.
-        resolve_tdd_model "patch-test-writer" "$STAGE1_AGENT" "balanced"
+        # El perfil sale de la MISMA tabla que el Stage 1 (_tdd_agent_profile,
+        # CA-1): repetir aqui el literal del perfil dejaria la remediacion
+        # corriendo con el perfil viejo el dia que la tabla cambie.
+        PATCH_TW_PROFILE="$(_tdd_agent_profile "$STAGE1_AGENT")" \
+            || abort "Agente '$STAGE1_AGENT' fuera de la tabla de perfiles TDD (CA-1, issue #1362)"
+        resolve_tdd_model "patch-test-writer" "$STAGE1_AGENT" "$PATCH_TW_PROFILE"
         PATCH_TW_MODEL_OVERRIDE="$RESOLVED_TDD_MODEL"
 
         log "Invocando $STAGE1_AGENT (modelo: ${PATCH_TW_MODEL_OVERRIDE:-<heredado>})..."
@@ -1716,8 +1724,11 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
 
                 # Modelo por stage (issue #1362): misma cadena que
                 # "patch-test-writer" arriba -- clave fina "patch-implementer"
-                # con fallback "$STAGE2_AGENT".
-                resolve_tdd_model "patch-implementer" "$STAGE2_AGENT" "balanced"
+                # con fallback "$STAGE2_AGENT", y el perfil tomado de la tabla
+                # del agente relanzado, no de un literal repetido aqui.
+                PATCH_IM_PROFILE="$(_tdd_agent_profile "$STAGE2_AGENT")" \
+                    || abort "Agente '$STAGE2_AGENT' fuera de la tabla de perfiles TDD (CA-1, issue #1362)"
+                resolve_tdd_model "patch-implementer" "$STAGE2_AGENT" "$PATCH_IM_PROFILE"
                 PATCH_IM_MODEL_OVERRIDE="$RESOLVED_TDD_MODEL"
 
                 log "Invocando $STAGE2_AGENT (modelo: ${PATCH_IM_MODEL_OVERRIDE:-<heredado>})..."

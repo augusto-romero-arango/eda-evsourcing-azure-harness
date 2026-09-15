@@ -315,17 +315,21 @@ assert_tdd_contains "Stage 0 resuelve via la tabla y el helper" 'resolve_tdd_mod
 
 echo ""
 echo "[10c] tdd: las remediaciones preservan la cadena fina via resolve_tdd_model (CA-2, CA-3)"
-assert_tdd_contains "4b resuelve con la clave fina y el fallback del agente relanzado" 'resolve_tdd_model "patch-test-writer" "$STAGE1_AGENT" "balanced"'
+assert_tdd_contains "4b deriva el perfil de la misma tabla que el Stage 1" 'PATCH_TW_PROFILE="$(_tdd_agent_profile "$STAGE1_AGENT")"'
+assert_tdd_contains "4b resuelve con la clave fina y el fallback del agente relanzado" 'resolve_tdd_model "patch-test-writer" "$STAGE1_AGENT" "$PATCH_TW_PROFILE"'
 assert_tdd_contains "4b toma el modelo resuelto de RESOLVED_TDD_MODEL" 'PATCH_TW_MODEL_OVERRIDE="$RESOLVED_TDD_MODEL"'
 assert_tdd_contains "4b pasa el override como valor opcional al helper neutral" '"$PATCH_TW_MODEL_OVERRIDE" || CG_TW_EXIT=$?'
 assert_tdd_contains "4b anuncia el modelo resuelto antes de invocar" 'log "Invocando $STAGE1_AGENT (modelo: ${PATCH_TW_MODEL_OVERRIDE:-<heredado>})..."'
 assert_tdd_contains "4b usa el helper neutral" 'invoke_agent_once "$STAGE1_AGENT" "$PATCH_TW_PROMPT_FILE" "$EVENTS_CG_TW" "$LOG_CG_TW" "$PATCH_TW_MODEL_OVERRIDE"'
-assert_tdd_contains "4c resuelve con la clave fina y el fallback del agente relanzado" 'resolve_tdd_model "patch-implementer" "$STAGE2_AGENT" "balanced"'
+assert_tdd_contains "4c deriva el perfil de la misma tabla que el Stage 2" 'PATCH_IM_PROFILE="$(_tdd_agent_profile "$STAGE2_AGENT")"'
+assert_tdd_contains "4c resuelve con la clave fina y el fallback del agente relanzado" 'resolve_tdd_model "patch-implementer" "$STAGE2_AGENT" "$PATCH_IM_PROFILE"'
 assert_tdd_contains "4c toma el modelo resuelto de RESOLVED_TDD_MODEL" 'PATCH_IM_MODEL_OVERRIDE="$RESOLVED_TDD_MODEL"'
 assert_tdd_contains "4c pasa el override como valor opcional al helper neutral" '"$PATCH_IM_MODEL_OVERRIDE" || CG_IM_EXIT=$?'
 assert_tdd_contains "4c anuncia el modelo resuelto antes de invocar" 'log "Invocando $STAGE2_AGENT (modelo: ${PATCH_IM_MODEL_OVERRIDE:-<heredado>})..."'
 assert_tdd_contains "4c usa el helper neutral" 'invoke_agent_once "$STAGE2_AGENT" "$PATCH_IM_PROMPT_FILE" "$EVENTS_CG_IM" "$LOG_CG_IM" "$PATCH_IM_MODEL_OVERRIDE"'
 assert_tdd_count "resolve_tdd_model se invoca exactamente una vez por camino (run_agent, scaffold, 4b, 4c)" 4 'resolve_tdd_model "'
+assert_tdd_count "solo la tabla imprime el literal del perfil balanced (ningun callsite lo repite)" 1 "printf 'balanced'"
+assert_tdd_count "solo la tabla imprime el literal del perfil deep (ningun callsite lo repite)" 1 "printf 'deep'"
 
 echo ""
 echo "[10f] tdd: resolve_tdd_model ejecutable bajo runtime-fake (CA-5)"
@@ -403,8 +407,11 @@ if grep -qF "resuelto='<heredado>'" "$EVENTS_LOG_ABS"; then pass "la evidencia m
 
 echo "  [fallo de resolucion: perfil invalido aborta]"
 parse_stage_models "" >/dev/null
+# El doble de abort() retorna en vez de terminar el proceso (el real hace exit),
+# asi que la funcion sigue corriendo y hace cat sobre el temporal ya borrado:
+# ese stderr es ruido esperado de la simulacion, no un fallo del pipeline.
 MEFISTO_RUNTIME_RESUELTO=fake CONSUMER_MODELS_FILE="$TDD_MODEL_TMP/sin-mapping.json" MEFISTO_FAKE_DEFAULT_MODEL=modelo-x \
-    run_resolve_tdd_model "implementer" "implementer" "perfil-invalido" || true
+    run_resolve_tdd_model "implementer" "implementer" "perfil-invalido" 2>/dev/null || true
 if [ "$ABORT_CALLED" = true ]; then pass "perfil fuera del vocabulario fast|balanced|deep aborta"; else fail "deberia haber abortado (RESOLVED_TDD_MODEL='$RESOLVED_TDD_MODEL')"; fi
 if printf '%s' "$ABORT_MSG" | grep -q "No se pudo resolver el modelo de implementer"; then pass "el mensaje de abort nombra el agente y el perfil"; else fail "mensaje de abort inesperado: $ABORT_MSG"; fi
 
