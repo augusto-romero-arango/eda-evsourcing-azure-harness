@@ -58,12 +58,17 @@ for index in "${!agents[@]}"; do
 done
 
 echo '[validador] excepciones transitorias acotadas'
-cp "$REPO_ROOT/src/published/agents/test-writer.md" "$WORK/test-writer.md"
-printf '\nmodel: runtime-inyectado\n' >> "$WORK/test-writer.md"
-if "$VALIDATOR" "$WORK/test-writer.md" >/dev/null 2>&1; then fail 'test-writer no admite metadata de runtime nueva'; else pass 'test-writer rechaza metadata de runtime nueva'; fi
-cp "$REPO_ROOT/src/published/agents/test-writer.md" "$WORK/test-writer.md"
-printf '\nVariable ajena: $TOKEN_AJENO\n' >> "$WORK/test-writer.md"
-if "$VALIDATOR" "$WORK/test-writer.md" >/dev/null 2>&1; then fail 'test-writer no admite placeholders arbitrarios'; else pass 'test-writer rechaza placeholders arbitrarios'; fi
+for agent in test-writer reviewer; do
+    cp "$REPO_ROOT/src/published/agents/$agent.md" "$WORK/$agent.md"
+    printf '\nmodel: runtime-inyectado\n' >> "$WORK/$agent.md"
+    if "$VALIDATOR" "$WORK/$agent.md" >/dev/null 2>&1; then fail "$agent no admite metadata de runtime nueva"; else pass "$agent rechaza metadata de runtime nueva"; fi
+    cp "$REPO_ROOT/src/published/agents/$agent.md" "$WORK/$agent.md"
+    printf '\nVariable ajena: $TOKEN_AJENO\n' >> "$WORK/$agent.md"
+    if "$VALIDATOR" "$WORK/$agent.md" >/dev/null 2>&1; then fail "$agent no admite placeholders arbitrarios"; else pass "$agent rechaza placeholders arbitrarios"; fi
+done
+cp "$REPO_ROOT/src/published/agents/reviewer.md" "$WORK/reviewer.md"
+printf '\nPosicional ajeno: $2\n' >> "$WORK/reviewer.md"
+if "$VALIDATOR" "$WORK/reviewer.md" >/dev/null 2>&1; then fail 'reviewer no hereda placeholders exclusivos de test-writer'; else pass 'reviewer rechaza placeholders exclusivos de test-writer'; fi
 
 echo '[salidas] proyecciones Claude y OpenCode'
 for agent in "${agents[@]}"; do

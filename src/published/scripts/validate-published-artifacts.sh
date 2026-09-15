@@ -61,7 +61,7 @@ EOF
         # runtimes concretos.
         # La doctrina TDD legada conserva referencias Claude/cache hasta que
         # #1364 las neutralice. La excepcion no admite metadata ni referencias
-        # OpenCode nuevas: solo contiene la deuda ya inventariada por #1369.
+        # OpenCode nuevas: solo contiene la deuda TDD ya inventariada.
         if { [ "$id" = runtimes ] && printf '%s\n' "$text" | grep -Eiq '\.claude|\.opencode|marketplace|(^|[/[:space:].])cache([/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:'; } \
             || { { [ "$id" = test-writer ] || [ "$id" = implementer ] || [ "$id" = reviewer ]; } && printf '%s\n' "$text" | grep -Eiq 'opencode|\.opencode|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:'; } \
             || { [ "$id" != runtimes ] && [ "$id" != test-writer ] && [ "$id" != implementer ] && [ "$id" != reviewer ] && printf '%s\n' "$text" | grep -Eiq 'claude|opencode|\.claude|\.opencode|marketplace|(^|[/[:space:].])cache([/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:'; }; then
@@ -73,7 +73,8 @@ EOF
         while IFS= read -r placeholder; do
             [ -z "$placeholder" ] && continue
             if [ "$placeholder" != '$ARGUMENTS' ] \
-                && { { [ "$id" != test-writer ] && [ "$id" != reviewer ]; } || { [ "$placeholder" != '$PLUGIN_ROOT' ] && [ "$placeholder" != '$HOME' ] && [ "$placeholder" != '$2' ]; }; } \
+                && { [ "$id" != test-writer ] || { [ "$placeholder" != '$PLUGIN_ROOT' ] && [ "$placeholder" != '$HOME' ] && [ "$placeholder" != '$2' ]; }; } \
+                && { [ "$id" != reviewer ] || { [ "$placeholder" != '$PLUGIN_ROOT' ] && [ "$placeholder" != '$HOME' ]; }; } \
                 && { [ "$id" != runtimes ] || { [ "$placeholder" != '$MEFISTO_LIFECYCLE_LAUNCHER' ] && [ "$placeholder" != '$MEFISTO_LIFECYCLE_CONFIG_ROOT' ]; }; }; then
                 echo "$rel: body: linea $line placeholder no permitido: $placeholder (solo se admite \$ARGUMENTS)"
                 status=1
