@@ -70,6 +70,7 @@ cp "$REPO_ROOT/agents/infra-reviewer.md" "$MODEL_PLUGIN/agents/infra-reviewer.md
 cp "$REPO_ROOT/agents/domain-scaffolder.md" "$MODEL_PLUGIN/agents/domain-scaffolder.md"
 cp "$REPO_ROOT/agents/test-writer.md" "$MODEL_PLUGIN/agents/test-writer.md"
 cp "$REPO_ROOT/agents/implementer.md" "$MODEL_PLUGIN/agents/implementer.md"
+cp "$REPO_ROOT/agents/reviewer.md" "$MODEL_PLUGIN/agents/reviewer.md"
 trap 'rm -rf "$FAKE_CONSUMER" "$TMP_DIR"' EXIT
 
 # Las funciones viven en _pipeline-common.sh; sourcearlo solo las define (es una
@@ -112,6 +113,8 @@ R=$(resolve_declared_agent_model "test-writer")
 if [ "$R" = "sonnet" ]; then pass "test-writer generado declara sonnet sin comillas"; else fail "test-writer deberia declarar 'sonnet' (obtenido '$R')"; fi
 R=$(resolve_declared_agent_model "implementer")
 if [ "$R" = "sonnet" ]; then pass "implementer generado declara sonnet sin comillas"; else fail "implementer deberia declarar 'sonnet' (obtenido '$R')"; fi
+R=$(resolve_declared_agent_model "reviewer")
+if [ "$R" = "opus" ]; then pass "reviewer generado declara opus sin comillas"; else fail "reviewer deberia declarar 'opus' (obtenido '$R')"; fi
 
 echo ""
 echo "[1] parse_stage_models: spec vacio deja el mapa vacio y no aborta (CA-2: sin --models, nada cambia)"
