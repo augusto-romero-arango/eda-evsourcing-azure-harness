@@ -206,10 +206,7 @@ for archivo in \
   "$REPO_ROOT/src/<RootNamespace>.{PascalCase}/.gitignore" \
   "$REPO_ROOT/src/<RootNamespace>.{PascalCase}/<RootNamespace>.{PascalCase}.csproj"; do
   temporal="${archivo}.lf"
-  tr -d '\r' < "$archivo" > "$temporal" && mv "$temporal" "$archivo" || {
-    rm -f "$temporal"
-    exit 1
-  }
+  tr -d '\r' < "$archivo" > "$temporal" && mv "$temporal" "$archivo" || exit 1
 done
 ```
 
@@ -218,8 +215,9 @@ El comando es idempotente: sobre archivos que ya usan LF vuelve a escribir los m
 Despues de `func init`, elimina los archivos de scaffolding que no aportan (VS Code local, launch settings), pero **conserva el `.gitignore` per-proyecto que `func init` genera**:
 
 ```bash
-rm -rf "$REPO_ROOT/src/<RootNamespace>.{PascalCase}/.vscode"
-rm -f "$REPO_ROOT/src/<RootNamespace>.{PascalCase}/Properties/launchSettings.json"
+cd "$REPO_ROOT"
+rm -rf src/<RootNamespace>.{PascalCase}/.vscode
+rm -f src/<RootNamespace>.{PascalCase}/Properties/launchSettings.json
 ```
 
 > **Dependencia de orden y blindaje de secretos (issue #241, MEF-ADR-0025):** el `.gitignore` **raiz** del repo lo emite `infra-base-scaffolder` (Paso 2c), no este agente -- por contrato ya corre antes del primer `/scaffold` (el Paso 4 de este agente asume los modulos base del entorno -- su HCL referencia `module.resource_group`, `local.tags`, `local.prefix_func` y `var.environment` del root module que genera y mantiene `infra-base-scaffolder`). Este agente no vuelve a emitir el raiz ni duplica su contenido (fuente unica). Por eso el `.gitignore` per-proyecto que `func init` acaba de generar **ya no se borra**: ya ignora `local.settings.json`, `bin/` y `obj/` por defecto, y es el guard local que evita que el secreto de desarrollo (`Password=postgres`, Paso 9) se cuele en el `git add` del Paso 8 aunque el raiz todavia no exista o el orden de invocacion se rompa. Vive en `src/<RootNamespace>.{PascalCase}/`, una ruta distinta por dominio, asi que dos scaffolds en paralelo nunca chocan en este archivo.
@@ -274,7 +272,7 @@ hacia ningun otro proyecto del repo):
 ```bash
 cd "$REPO_ROOT"
 dotnet new classlib -n "<RootNamespace>.PublicEvents" -o "src/<RootNamespace>.PublicEvents" -f net10.0
-rm -f "src/<RootNamespace>.PublicEvents/Class1.cs"
+rm -f src/<RootNamespace>.PublicEvents/Class1.cs
 ```
 
 ```xml
@@ -295,7 +293,7 @@ Si `PrivateEvents` **falta**, creelo -- la otra isla de bus, con el mismo cero `
 ```bash
 cd "$REPO_ROOT"
 dotnet new classlib -n "<RootNamespace>.PrivateEvents" -o "src/<RootNamespace>.PrivateEvents" -f net10.0
-rm -f "src/<RootNamespace>.PrivateEvents/Class1.cs"
+rm -f src/<RootNamespace>.PrivateEvents/Class1.cs
 ```
 
 ```xml
@@ -335,7 +333,7 @@ done
 ```bash
 cd "$REPO_ROOT"
 dotnet new classlib -n "<RootNamespace>.{PascalCase}.DomainEvents" -o "src/<RootNamespace>.{PascalCase}.DomainEvents" -f net10.0
-rm -f "src/<RootNamespace>.{PascalCase}.DomainEvents/Class1.cs"
+rm -f src/<RootNamespace>.{PascalCase}.DomainEvents/Class1.cs
 ```
 
 **Sin ningun `PackageReference` ni `ProjectReference`** (MEF-ADR-0039 decision 2, tres islas):
@@ -1298,7 +1296,8 @@ Luego:
 **1. Eliminar el archivo de test de ejemplo generado automaticamente:**
 
 ```bash
-rm -f "$REPO_ROOT/tests/<RootNamespace>.{PascalCase}.Tests/UnitTest1.cs"
+cd "$REPO_ROOT"
+rm -f tests/<RootNamespace>.{PascalCase}.Tests/UnitTest1.cs
 ```
 
 **2. Leer el `.csproj` de tests** para ver su contenido actual.
@@ -2195,7 +2194,7 @@ dotnet new xunit \
   -n "<RootNamespace>.PublicEvents.Tests" \
   --framework net10.0 \
   -o "tests/<RootNamespace>.PublicEvents.Tests"
-rm -f "$REPO_ROOT/tests/<RootNamespace>.PublicEvents.Tests/UnitTest1.cs"
+rm -f tests/<RootNamespace>.PublicEvents.Tests/UnitTest1.cs
 ```
 
 Unica diferencia de referencia frente al Paso 2 -- la regla de MEF-ADR-0039 decision 7 (enmendada
@@ -2217,7 +2216,7 @@ dotnet new xunit \
   -n "<RootNamespace>.PrivateEvents.Tests" \
   --framework net10.0 \
   -o "tests/<RootNamespace>.PrivateEvents.Tests"
-rm -f "$REPO_ROOT/tests/<RootNamespace>.PrivateEvents.Tests/UnitTest1.cs"
+rm -f tests/<RootNamespace>.PrivateEvents.Tests/UnitTest1.cs
 ```
 
 ```xml
