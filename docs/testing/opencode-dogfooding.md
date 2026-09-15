@@ -11,10 +11,15 @@ documento" al final). El
 (issue #1066) certifico `/mefisto:tooling` publicado sobre ambos runtimes; el
 alcance historico interno de este documento permanece sin cambios.
 
-**Estado de la certificacion del costo estimado (MEF-ADR-0054):** ver
+**Estado de la certificacion del costo estimado (MEF-ADR-0054):** el intento
+de #1355 queda registrado como **NO PASA**. Su PR #1359 se fusiono y cerro
+#1355 pese a que el documento de aquel intento indicaba que debia permanecer
+abierto; esa afirmacion historica se corrige en
 ["Intento de certificacion del costo estimado post-#1324 (issue #1355,
-2026-09-14)"](#intento-de-certificacion-del-costo-estimado-post-1324-issue-1355-2026-09-14----no-pasa)
-mas abajo -- **NO PASA** en este intento; issue #1358 abierto con la causa.
+2026-09-14)"](#intento-de-certificacion-del-costo-estimado-post-1324-issue-1355-2026-09-14----no-pasa).
+La certificacion E2E pendiente se sigue en #1358 y solo puede declararse
+**PASA** tras registrar la evidencia final de una corrida orquestada bajo
+OpenCode.
 
 ## Veredicto
 
@@ -318,22 +323,23 @@ porque ningun stage pidio una estimacion bajo el contrato de MEF-ADR-0054.
 
 Conforme al regimen fail-closed de CA-6: ningun campo de costo o de tokens se
 presenta aqui como cero ni como estimado -- quedan sin valor porque no hubo
-corrida, no porque el estimador haya fallado. Se abrio el draft
-[`bug` #1358](https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/issues/1358)
-con la evidencia sanitizada (sin prompts, credenciales ni transcript crudo) y
-la accion propuesta. El issue #1355 permanece abierto: este PR no certifica
-la corrida E2E y no se le debe atribuir el cierre de #1355.
+corrida, no porque el estimador haya fallado. El seguimiento continuo en el
+issue #1358, con evidencia sanitizada (sin prompts, credenciales ni transcript
+crudo) y la accion propuesta. El PR #1359 de este intento se fusiono y **cerro
+#1355**, aunque este documento habia indicado incorrectamente que #1355
+permaneceria abierto. Este antecedente no convierte el intento en una
+certificacion ni altera su veredicto **NO PASA**.
 
-**Accion obligatoria al mergear este PR (CA-6).** El launcher interno fija
+**Accion que era obligatoria antes del merge de ese PR (CA-6).** El launcher interno fija
 `Closes #$ISSUE_NUM` en el cuerpo del PR que crea
 (`src/internal/scripts/mefisto-tooling-pipeline.sh:1415`), sin forma de
 desactivarlo por configuracion. El PR de este intento llegara entonces a `main`
 con `Closes #1355` y cerrara el issue al fusionarse, que es exactamente lo que
 CA-6 prohibe en el camino fail-closed. Para respetarlo hay que, antes del
 merge, editar el cuerpo del PR quitando esa linea (`gh pr edit <pr> --body
-...`); si ya se fusiono, reabrirlo (`gh issue reopen 1355`). Ningun stage del
-pipeline puede hacerlo por su cuenta: tienen prohibido operar sobre ramas y
-PRs.
+...`). No se hizo antes del merge de PR #1359 y #1355 quedo cerrado. Ningun
+stage del pipeline puede hacerlo por su cuenta: tienen prohibido operar sobre
+ramas y PRs.
 
 **Que falta para intentar de nuevo:** una corrida de
 `MEFISTO_RUNTIME=opencode ./.claude/scripts/mefisto-tooling-pipeline.sh <issue>`
@@ -362,7 +368,48 @@ ninguna de las dos recursividades ya documentadas en este archivo.
    CA-2 vs. 3 reales hoy) fue un error de redaccion del issue o si faltan 2
    agentes por scaffoldear -- no se resuelve en este documento.
 6. **(2026-09-14, issue #1355)** Items 1-2 estan superados: #879 ya cerro y
-   `MEFISTO_RUNTIME` ya selecciona CLI. Lo que sigue pendiente es lanzar la
-   corrida E2E del estimador (`estimated_cost_usd`, MEF-ADR-0054) fuera de un
-   stage-1-writer anidado -- ver "Intento de certificacion del costo
-   estimado post-#1324" arriba y el issue de bug #1358.
+    `MEFISTO_RUNTIME` ya selecciona CLI. Lo que sigue pendiente es lanzar la
+    corrida E2E del estimador (`estimated_cost_usd`, MEF-ADR-0054) fuera de un
+    stage-1-writer anidado -- ver "Intento de certificacion del costo
+    estimado post-#1324" arriba y el issue de bug #1358.
+
+## Certificacion orquestada del costo estimado (issue #1358)
+
+Esta seccion se completa exclusivamente con los artefactos de la corrida que
+procesa #1358 desde el orquestador:
+
+```bash
+MEFISTO_RUNTIME=opencode ./.claude/scripts/mefisto-tooling-pipeline.sh 1358
+```
+
+No se relanza el launcher desde writer ni reviewer y no se usa `--variant`:
+solo el orquestador crea la rama, el PR y la tabla final de metricas. La
+segunda pasada documental sobre ese mismo PR debe registrar los valores finales
+de los archivos sanitizados; hasta entonces no se anticipa un veredicto ni se
+declara un costo.
+
+### Evidencia requerida para el veredicto
+
+| CA | Artefacto sanitizado | Condicion para **PASA** |
+|---|---|---|
+| CA-1 | `pipeline-history.jsonl` y SHA base | `origin/main` contiene `af9a366`; inicio y fin identifican `runtime: opencode`, version y SHA del harness. |
+| CA-2 | Metricas de writer y reviewer | Ambos `status: success`, modelo resuelto y los cinco contadores `input`, `output`, `cache_read`, `cache_write` y `reasoning` numericos. |
+| CA-3 | Metricas y cache propia `model-pricing/` | Ambos `estimated_cost_usd` son numericos y mayores que cero; el snapshot conserva `source_url`, `validated_utc` y el modelo exacto. |
+| CA-4 | Cuerpo del PR creado por el orquestador | Writer, reviewer y total muestran `$...`, los cuatro segmentos no tienen `-` y el total no es parcial. |
+| CA-5 | Esta seccion actualizada en la misma rama/PR | URL del PR, SHA base, ventana temporal, runtime, modelos, desglose, costos y veredicto final. |
+
+La comprobacion de CA-3 contrasta cada importe con la formula por paso de
+MEF-ADR-0054: descuenta `cache_read` y `cache_write` del input, cobra cache,
+output visible y reasoning (a tarifa de output), divide por un millon y suma
+los pasos despues de elegir el tier por contexto. El catalogo de referencia es
+`https://models.opencode.ai/api.json`; la evidencia conserva procedencia y
+fecha de validacion, nunca prompts, credenciales ni transcript crudo.
+
+### Regla fail-closed
+
+Un `null`, un `-`, un runtime distinto de OpenCode, un stage sin exito o un
+costo que no se pueda reproducir produce **NO PASA**. En ese caso el PR no se
+fusiona ni debe conservar `Closes #1358`; se registra la evidencia sanitizada y
+se abre un draft `bug` separado para la causa tecnica concreta. Esta regla no
+contradice la degradacion funcional de MEF-ADR-0054: la telemetria puede no
+abortar el pipeline, pero una telemetria degradada no certifica el estimador.
