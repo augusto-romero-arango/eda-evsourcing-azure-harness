@@ -28,7 +28,7 @@ validator_fixture() {
 }
 
 # La lista es el unico punto que los siguientes cortes de la serie deben ampliar.
-agents=(test-writer implementer reviewer smoke-test-writer projection-test-writer projection-implementer)
+agents=(test-writer implementer reviewer smoke-test-writer projection-test-writer projection-implementer domain-scaffolder)
 descriptions=(
     'Escribe tests ES (fase roja TDD) con DSL Given/When/Then y stubs minimos de compilacion.'
     'Implementa logica de negocio (fase verde TDD) con event sourcing. AggregateRoots, CommandHandlers, Service Bus.'
@@ -36,6 +36,7 @@ descriptions=(
     'Escribe smoke tests black-box contra el entorno dev desplegado. Asume que el proyecto SmokeTests ya existe.'
     'Escribe tests read-side (fase roja TDD) de proyecciones Marten -- unit tests de Create/Apply/ShouldDelete, config-test del worker y composicion de la Function GET. Nunca implementa.'
     'Implementa proyecciones Marten (read models), el seam de registro read-side (Configurar{Dominio}) y las Functions HTTP GET de consulta. Nunca modifica tests.'
+    'Crea el scaffold completo para un nuevo dominio (Function App, tests, Terraform, GitHub Actions).'
 )
 
 echo '[fuentes] contrato neutral, guard y doctrina preservada'
@@ -76,6 +77,12 @@ for index in "${!agents[@]}"; do
     if [ "$(body "$source" | awk 'NF { print; exit }')" = '{{mefisto:assert-consumer-repo}}' ]; then pass "$agent inicia con el guard"; else fail "$agent no inicia con el guard"; fi
     if grep -Fqx '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/'"$agent"'.md. No editar a mano. -->' "$mirror"; then pass "$agent generado conserva marcador"; else fail "$agent generado sin marcador"; fi
     if diff -u <(body_without_adapter_lines "$source") <(body_without_adapter_lines "$mirror") >/dev/null; then pass "$agent conserva el cuerpo al proyectar Claude"; else fail "$agent altera el cuerpo al proyectar Claude"; fi
+    if [ "$agent" = domain-scaffolder ]; then
+        if [ "$(grep -c '\${{' "$source")" -eq 35 ] && [ "$(grep -c '\${{' "$mirror")" -eq 35 ]; then pass 'domain-scaffolder conserva las 35 expresiones GitHub Actions'; else fail 'domain-scaffolder altera las expresiones GitHub Actions'; fi
+        source_separators="$(body "$source" | grep -cx -- '---')"
+        mirror_separators="$(body "$mirror" | grep -cx -- '---')"
+        if [ "$source_separators" -ge 4 ] && [ "$source_separators" -eq "$mirror_separators" ]; then pass 'domain-scaffolder conserva las cuatro lineas documentadas y los demas separadores del cuerpo'; else fail 'domain-scaffolder altera los separadores del cuerpo'; fi
+    fi
 done
 
 echo '[validador] excepciones transitorias acotadas'

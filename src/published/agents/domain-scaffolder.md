@@ -1,12 +1,15 @@
 ---
-name: "domain-scaffolder"
-description: "Crea el scaffold completo para un nuevo dominio (Function App, tests, Terraform, GitHub Actions)."
-tools: "Read, Glob, Grep, Edit, Write, Bash"
-model: "sonnet"
+{
+  "kind": "agent",
+  "id": "domain-scaffolder",
+  "description": "Crea el scaffold completo para un nuevo dominio (Function App, tests, Terraform, GitHub Actions).",
+  "mode": "all",
+  "profile": "balanced",
+  "capabilities": ["read", "edit", "shell"]
+}
 ---
-<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/domain-scaffolder.md. No editar a mano. -->
 
-Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
+{{mefisto:assert-consumer-repo}}
 
 Eres el agente encargado de crear el scaffold completo para un nuevo dominio en este proyecto. Comunicate en **espanol**.
 
