@@ -61,12 +61,15 @@ TMP_DIR="$(mktemp -d)"
 MODEL_PLUGIN="$TMP_DIR/plugin"
 mkdir -p "$MODEL_PLUGIN/scripts" "$MODEL_PLUGIN/agents"
 cp "$REPO_ROOT/scripts/_pipeline-common.sh" "$MODEL_PLUGIN/scripts/_pipeline-common.sh"
-printf '%s\n' '---' 'name: fixture-con-modelo' 'model: modelo-fixture' '---' > "$MODEL_PLUGIN/agents/con-modelo.md"
+printf '%s\n' '---' 'name: fixture-con-modelo' 'model: "modelo-fixture"' '---' > "$MODEL_PLUGIN/agents/con-modelo.md"
+printf '%s\n' '---' 'name: fixture-sin-comillas' 'model: modelo-sin-comillas' '---' > "$MODEL_PLUGIN/agents/sin-comillas.md"
 printf '%s\n' '---' 'name: fixture-sin-modelo' '---' > "$MODEL_PLUGIN/agents/sin-modelo.md"
 printf '%s\n' '---' 'name: fixture-modelo-vacio' 'model:' 'model: no-debe-leerse' '---' > "$MODEL_PLUGIN/agents/modelo-vacio.md"
 cp "$REPO_ROOT/agents/infra-writer.md" "$MODEL_PLUGIN/agents/infra-writer.md"
 cp "$REPO_ROOT/agents/infra-reviewer.md" "$MODEL_PLUGIN/agents/infra-reviewer.md"
 cp "$REPO_ROOT/agents/domain-scaffolder.md" "$MODEL_PLUGIN/agents/domain-scaffolder.md"
+cp "$REPO_ROOT/agents/test-writer.md" "$MODEL_PLUGIN/agents/test-writer.md"
+cp "$REPO_ROOT/agents/implementer.md" "$MODEL_PLUGIN/agents/implementer.md"
 trap 'rm -rf "$FAKE_CONSUMER" "$TMP_DIR"' EXIT
 
 # Las funciones viven en _pipeline-common.sh; sourcearlo solo las define (es una
@@ -78,6 +81,9 @@ set -u
 echo "[0] resolve_declared_agent_model: metadata publicada tolerante y ruta independiente del cwd (CA-1 a CA-3)"
 R=$(resolve_declared_agent_model "con-modelo")
 if [ "$R" = "modelo-fixture" ]; then pass "devuelve el modelo declarado del agente"; else fail "deberia devolver 'modelo-fixture' (obtenido '$R')"; fi
+
+R=$(resolve_declared_agent_model "sin-comillas")
+if [ "$R" = "modelo-sin-comillas" ]; then pass "tolera el modelo declarado sin comillas"; else fail "deberia devolver 'modelo-sin-comillas' (obtenido '$R')"; fi
 
 R=$(resolve_declared_agent_model "sin-modelo")
 if [ -z "$R" ]; then pass "sin metadata model devuelve cadena vacia"; else fail "sin metadata deberia devolver vacio (obtenido '$R')"; fi
@@ -102,6 +108,10 @@ R=$(resolve_declared_agent_model "infra-reviewer")
 if [ "$R" = "opus" ]; then pass "infra-reviewer declara opus"; else fail "infra-reviewer deberia declarar 'opus' (obtenido '$R')"; fi
 R=$(resolve_declared_agent_model "domain-scaffolder")
 if [ "$R" = "sonnet" ]; then pass "domain-scaffolder declara sonnet"; else fail "domain-scaffolder deberia declarar 'sonnet' (obtenido '$R')"; fi
+R=$(resolve_declared_agent_model "test-writer")
+if [ "$R" = "sonnet" ]; then pass "test-writer generado declara sonnet sin comillas"; else fail "test-writer deberia declarar 'sonnet' (obtenido '$R')"; fi
+R=$(resolve_declared_agent_model "implementer")
+if [ "$R" = "sonnet" ]; then pass "implementer generado declara sonnet sin comillas"; else fail "implementer deberia declarar 'sonnet' (obtenido '$R')"; fi
 
 echo ""
 echo "[1] parse_stage_models: spec vacio deja el mapa vacio y no aborta (CA-2: sin --models, nada cambia)"

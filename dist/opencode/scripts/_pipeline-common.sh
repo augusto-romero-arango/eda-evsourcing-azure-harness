@@ -606,6 +606,9 @@ resolve_declared_agent_model() {
                 model="${line#*:}"
                 model="${model%%[[:space:]]#*}"
                 model=$(printf '%s' "$model" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+                case "$model" in
+                    \"*\") model="${model#\"}"; model="${model%\"}" ;;
+                esac
                 [ -n "$model" ] && printf '%s\n' "$model"
                 return 0
                 ;;
