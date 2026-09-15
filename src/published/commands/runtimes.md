@@ -11,9 +11,9 @@
 
 Administra el lifecycle de las **proyecciones** de adaptadores ya instalados. Comunicate en **espanol**. No instala, actualiza ni selecciona releases; para esos cambios usa `/mefisto:upgrade`.
 
-{{mefisto:lifecycle-launcher}}
-
 ## Entrada
+
+Los argumentos de la invocacion estan en: `$ARGUMENTS`.
 
 Acepta exactamente una de estas formas:
 
@@ -23,23 +23,27 @@ Acepta exactamente una de estas formas:
 /mefisto:runtimes disable opencode
 ```
 
-Sin argumentos, muestra un selector con esas tres acciones, explica el efecto de cada una y pide una confirmacion antes de ejecutar la opcion elegida. Para cualquier otra entrada, muestra solamente este uso y no muta estado: `Uso: /mefisto:runtimes [status | enable opencode | disable opencode]`.
+Antes de ejecutar cualquier bloque, compara la entrada completa, sin evaluarla como shell, con esas tres formas. Sin argumentos, muestra un selector con esas tres acciones, explica el efecto de cada una y pide una confirmacion antes de ejecutar la opcion elegida. La confirmacion del selector cuenta como la confirmacion de la accion. Para cualquier otra entrada, muestra solamente este uso y no consulta ni muta estado: `Uso: /mefisto:runtimes [status | enable opencode | disable opencode]`.
+
+Despues de validar la entrada, resuelve el launcher y la raiz efectiva:
+
+{{mefisto:lifecycle-launcher}}
 
 ## Estado
 
-Para `status`, si el launcher esta disponible, consulta una sola vez su estado estructurado mediante:
+Para `status`, `enable opencode` o `disable opencode`, si el launcher esta disponible, consulta **una sola vez por invocacion** su estado estructurado mediante:
 
 ```bash
 "$MEFISTO_LIFECYCLE_LAUNCHER" projection-status
 ```
 
-Si el launcher no esta disponible, informa `unavailable` y no lo invocas. Si responde, muestra siempre la raiz global efectiva `configRoot`, la release activa `activeVersion` y la release del ledger `ledgerRelease`, sin inspeccionar archivos de configuracion, proveedores, modelos, credenciales, tokens ni stores de autenticacion. Normaliza el estado estructurado `disabled` como `installed-disabled`; presenta tambien visiblemente `enabled`, `stale` o `conflict`; conserva `operation-in-progress` como una operacion en curso que se debe reintentar, sin repararla.
+Captura por separado stdout y el codigo de salida. Acepta solo JSON con `schemaVersion: 1`, `configRoot` string, `activeVersion` y `ledgerRelease` string o null, y uno de estos pares estado/codigo: `disabled:0`, `enabled:0`, `stale:0`, `conflict:1` u `operation-in-progress:1`. Si el launcher no esta disponible o la respuesta no cumple exactamente ese contrato, informa `unavailable`, muestra `MEFISTO_LIFECYCLE_CONFIG_ROOT` como raiz global efectiva, muestra `activeVersion: null` y `ledgerRelease: null`, y no reproduzcas una respuesta invalida. En todo estado valido muestra `configRoot`, `activeVersion` y `ledgerRelease`, sin inspeccionar archivos de configuracion, proveedores, modelos, credenciales, tokens ni stores de autenticacion. Normaliza el estado estructurado `disabled` como `installed-disabled`; presenta tambien visiblemente `enabled`, `stale` o `conflict`; conserva `operation-in-progress` como una operacion en curso que se debe reintentar, sin repararla.
 
-El lifecycle del adaptador de plugin es administrado externamente por su propio gestor. Solo se informa esa limitacion: este comando no intenta habilitarlo ni deshabilitarlo.
+Muestra ademas `Claude Code (plugin): lifecycle administrado externamente`. Solo se informa esa limitacion: este comando no intenta habilitarlo ni deshabilitarlo.
 
 ## Habilitar
 
-Para `enable opencode`, primero consulta el estado estructurado. Si hay `conflict` u `operation-in-progress`, no muta nada. Si ya esta `enabled`, informa que no hubo cambios. Si esta `stale`, vuelve a proyectar exclusivamente la release activa. En cualquier otro estado con una release activa valida, ejecuta solo:
+Para `enable opencode`, usa la unica consulta descrita arriba. Si hay `conflict`, `operation-in-progress` o `unavailable`, no muta nada. Si ya esta `enabled`, informa que no hubo cambios. Si esta `stale`, vuelve a proyectar exclusivamente la release activa. Para `installed-disabled`, exige que `activeVersion` no sea null y ejecuta solo:
 
 ```bash
 "$MEFISTO_LIFECYCLE_LAUNCHER" project
@@ -49,7 +53,7 @@ La proyeccion adquiere el lock compartido. No consulta red, no descarga, no muev
 
 ## Deshabilitar
 
-Para `disable opencode`, primero consulta el estado estructurado. Si hay `conflict` u `operation-in-progress`, no muta nada. Si ya esta `installed-disabled` o `unavailable`, informa que no hubo cambios. Antes de confirmar, advierte que, si la invocacion actual usa ese adaptador, el comando dejara de estar disponible al terminar y que reactivarlo requerira otro Mefisto activo o el launcher estable.
+Para `disable opencode`, usa la unica consulta descrita arriba. Si hay `conflict` u `operation-in-progress`, no muta nada. Si ya esta `installed-disabled` o `unavailable`, informa que no hubo cambios. Antes de confirmar una invocacion directa -o antes de confirmar la opcion del selector-, advierte que, si la invocacion actual usa ese adaptador, el comando dejara de estar disponible al terminar y que reactivarlo requerira Claude Code con Mefisto activo o el launcher estable. No pidas una segunda confirmacion si la opcion ya se confirmo en el selector.
 
 Despues de la confirmacion ejecuta solo:
 

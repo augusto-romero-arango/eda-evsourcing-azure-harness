@@ -45,11 +45,23 @@ mefisto_lifecycle_data_root() {
     elif [ "$(uname -s)" = Darwin ]; then printf '%s/Library/Application Support/mefisto\n' "$HOME"
     else printf '%s/.local/share/mefisto\n' "$HOME"; fi
 }
+mefisto_lifecycle_config_root() {
+    if [ "${OPENCODE_CONFIG_DIR+x}" = x ]; then
+        [ -n "$OPENCODE_CONFIG_DIR" ] || return 1
+        printf '%s\n' "$OPENCODE_CONFIG_DIR"
+    else
+        printf '%s/opencode\n' "${XDG_CONFIG_HOME:-$HOME/.config}"
+    fi
+}
 MEFISTO_LIFECYCLE_LAUNCHER="$(mefisto_lifecycle_data_root)/active/bin/mefisto-opencode"
+MEFISTO_LIFECYCLE_CONFIG_ROOT="$(mefisto_lifecycle_config_root)" || {
+    printf '%s\n' 'Estado OpenCode: unavailable (OPENCODE_CONFIG_DIR esta definido pero vacio).' >&2
+    MEFISTO_LIFECYCLE_CONFIG_ROOT='unavailable'
+}
 if [ ! -f "$MEFISTO_LIFECYCLE_LAUNCHER" ] || [ -L "$MEFISTO_LIFECYCLE_LAUNCHER" ] || [ ! -x "$MEFISTO_LIFECYCLE_LAUNCHER" ]; then
-    printf '%s\n' 'Estado OpenCode: unavailable (no hay launcher estable disponible).' >&2
+    printf 'Estado OpenCode: unavailable (no hay launcher estable disponible). Raiz efectiva: %s\n' "$MEFISTO_LIFECYCLE_CONFIG_ROOT" >&2
 fi
-export MEFISTO_LIFECYCLE_LAUNCHER
+export MEFISTO_LIFECYCLE_LAUNCHER MEFISTO_LIFECYCLE_CONFIG_ROOT
 ```
 EOF
 }
