@@ -11,6 +11,8 @@ fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
 contains() { grep -Fq -- "$1" "$PIPELINE" && pass "$2" || fail "$2"; }
 run_agent_body() { awk '/^run_agent\(\) \{/{p=1} p{print} p && /^}/{p=0}' "$PIPELINE"; }
 invoke_agent_once_body() { awk '/^invoke_agent_once\(\) \{/{p=1} p{print} p && /^}/{p=0}' "$PIPELINE"; }
+stage_zero_body() { awk '/^    # --- Stage 0:/{p=1; next} p{print} p && /^    fi$/{exit}' "$PIPELINE"; }
+remediation_4b_failure_body() { awk '/^        CG_TW_EXIT=0$/{p=1} p && /^        else$/{print "        fi"; exit} p{print}' "$PIPELINE"; }
 absent_run_agent() { run_agent_body | grep -Fq -- "$1" && fail "$2" || pass "$2"; }
 absent_pipeline() { grep -Fq -- "$1" "$PIPELINE" && fail "$2" || pass "$2"; }
 
@@ -94,6 +96,9 @@ case "$SCENARIO:$count" in
         printf 'parcial\n' > "$cwd/src/partial.txt"
         printf '%s\n' '{"type":"run.failed","status":"failed","session_id":"session-timeout","denials":0,"error":{"kind":"timeout"}}' > "$event"
         exit 124 ;;
+    terminal-failure:1)
+        printf '%s\n' '{"type":"run.completed","status":"failed","session_id":null,"denials":0,"error":{"kind":"protocol_invalid"}}' > "$event"
+        exit 0 ;;
 esac
 exit 70
 EOF
@@ -236,6 +241,109 @@ if [ "$once_rc" -eq 124 ] && [ "$(cat "$TMP/calls")" = 1 ]; then
     pass 'fallo de runner en Stage 0/remediacion retorna sin hold ni reintento'
 else
     fail 'fallo de runner en Stage 0/remediacion no conserva la semantica unica'
+fi
+
+echo '[regresion] politicas ejecutables de Stage 0 y remediacion 4b'
+# El bloque real de Stage 0 queda despues de sus dobles y variables en el caso
+# ejecutable; se recompone en ese orden para no sustituir su politica.
+{
+    printf '%s\n' 'set -uo pipefail'
+    invoke_agent_once_body
+    cat <<'EOF'
+PIPELINE_TMP_DIR="$TMP/pipeline-stage-zero"
+MEFISTO_RUNTIME_RESUELTO=fake
+MEFISTO_AGENT_TIMEOUT_SECONDS=60
+WORKTREE_PATH="$WT"
+RUN_AGENT_BIN="$TMP/runner"
+EVENTS_LOG_ABS="$TMP/events-stage-zero"
+LOG_DIR_ABS="$TMP/logs-stage-zero"
+PIPELINE_DIR_ABS="$TMP/state-stage-zero"
+TIMESTAMP=20260914-120000
+ISSUE_LOG_TAG=1361
+SCAFFOLD_DOMAIN=catalogo
+HARNESS_NAMESPACE_PREFIX=Test
+LAST_AGENT_DURATION=0
+LAST_AGENT_METRICS_JSON=null
+AGENT_SCAFFOLD_DUR=
+AGENT_SCAFFOLD_METRICS_JSON=
+mkdir -p "$PIPELINE_TMP_DIR" "$LOG_DIR_ABS" "$PIPELINE_DIR_ABS/metrics"
+header(){ :; }
+update_status(){ :; }
+log(){ :; }
+success(){ :; }
+resolve_declared_agent_model(){ printf 'vendor/frontmatter'; }
+derive_stage_log_from_stream(){ : > "$3"; }
+compute_stage_metrics(){ printf '{"tokens":{"input":1}}'; }
+agent_events_completed_successfully(){ jq -e -s '[.[] | select(.type == "run.completed")] | last | .status == "success"' "$1" >/dev/null 2>&1; }
+abort(){ printf 'ABORT:%s\n' "$1" > "$TMP/stage-zero-abort"; exit 99; }
+EOF
+    stage_zero_body
+} > "$TMP/stage-zero-case.sh"
+
+reset_case
+rm -rf "$WT/src/Test.Catalogo" "$TMP/state-stage-zero" "$TMP/logs-stage-zero" "$TMP/pipeline-stage-zero"
+mkdir -p "$WT/src/Test.Catalogo"
+if SCENARIO=success bash "$TMP/stage-zero-case.sh" \
+    && [ "$(cat "$TMP/calls")" = 1 ] \
+    && ! grep -Fxq -- '--model' "$TMP/call-1.args" \
+    && [ -s "$TMP/state-stage-zero/metrics/tdd-20260914-120000-issue-1361-stage-0-domain-scaffolder.json" ]; then
+    pass 'Stage 0 exitoso ejecuta el bloque real, no fuerza modelo y respalda metricas'
+else
+    fail 'Stage 0 exitoso no conservo su politica completa'
+fi
+
+reset_case
+rm -f "$TMP/stage-zero-abort"
+stage_zero_rc=0
+SCENARIO=terminal-failure bash "$TMP/stage-zero-case.sh" || stage_zero_rc=$?
+if [ "$stage_zero_rc" -eq 99 ] && grep -Fq 'El scaffold del dominio' "$TMP/stage-zero-abort"; then
+    pass 'Stage 0 aborta ante terminal neutral sin status success aunque el runner retorne cero'
+else
+    fail 'Stage 0 acepto un terminal neutral fallido o no aborto'
+fi
+
+{
+    printf '%s\n' 'set -uo pipefail'
+    invoke_agent_once_body
+    cat <<'EOF'
+PIPELINE_TMP_DIR="$TMP/pipeline-remediation"
+MEFISTO_RUNTIME_RESUELTO=fake
+MEFISTO_AGENT_TIMEOUT_SECONDS=60
+WORKTREE_PATH="$WT"
+RUN_AGENT_BIN="$TMP/runner"
+EVENTS_LOG_ABS="$TMP/events-remediation"
+PIPELINE_DIR_ABS="$TMP/state-remediation"
+TIMESTAMP=20260914-120000
+ISSUE_LOG_TAG=1361
+STAGE1_AGENT=test-writer
+PATCH_TW_PROMPT_FILE="$TMP/prompt"
+EVENTS_CG_TW="$TMP/remediation.events.jsonl"
+LOG_CG_TW="$TMP/remediation.log"
+PATCH_TW_MODEL_OVERRIDE=
+LAST_AGENT_DURATION=0
+LAST_AGENT_METRICS_JSON=null
+COV_REMEDIATION_SUMMARY=
+mkdir -p "$PIPELINE_TMP_DIR" "$PIPELINE_DIR_ABS/metrics"
+warn(){ :; }
+derive_stage_log_from_stream(){ : > "$3"; }
+compute_stage_metrics(){ printf '{"tokens":{"input":1}}'; }
+agent_events_completed_successfully(){ jq -e -s '[.[] | select(.type == "run.completed")] | last | .status == "success"' "$1" >/dev/null 2>&1; }
+EOF
+    remediation_4b_failure_body
+    cat <<'EOF'
+printf 'CONTINUA:%s\n' "$COV_REMEDIATION_SUMMARY"
+EOF
+} > "$TMP/remediation-case.sh"
+
+reset_case
+rm -rf "$TMP/state-remediation" "$TMP/pipeline-remediation"
+remediation_output=$(SCENARIO=terminal-failure bash "$TMP/remediation-case.sh")
+if printf '%s' "$remediation_output" | grep -Fq 'CONTINUA:El test-writer de remediacion fallo (exit 0)' \
+    && grep -Fq 'REMEDIATION_FAILED: test-writer exit 0' "$TMP/events-remediation" \
+    && [ -s "$TMP/state-remediation/metrics/tdd-20260914-120000-issue-1361-stage-4b-test-writer.json" ]; then
+    pass 'remediacion 4b fallida registra evidencia y continua sin abortar ni reintentar'
+else
+    fail 'remediacion 4b fallida no conservo advertir-y-continuar con evidencia'
 fi
 
 printf '\nResultado: %s PASS, %s FAIL\n' "$PASS" "$FAIL"

@@ -405,6 +405,25 @@ PIPELINE_TMP_DIR="$(mktemp -d -t mefisto-tdd)" || abort "No se pudo crear el dir
 [ -d "$PIPELINE_TMP_DIR" ] || abort "No se pudo crear el directorio temporal del pipeline"
 trap 'rm -rf "${PIPELINE_TMP_DIR:-}"' EXIT
 
+# ─── Invocacion neutral unica para stages sin politicas de run_agent ──────────
+# Debe declararse antes de Stage 0: Bash solo conoce una funcion despues de
+# evaluar su definicion, y el scaffold se ejecuta durante el flujo superior.
+# invoke_agent_once <agent_id> <prompt_file> <events_file> <log_file> [model]
+invoke_agent_once() {
+    local agent="$1" prompt_file="$2" events_file="$3" log_file="$4" model="${5:-}"
+    local system_file="$PIPELINE_TMP_DIR/noninteractive.system.md"
+    local runner_file="${events_file%.events.jsonl}.runner.log" start_ts run_exit=0
+    [ -f "$system_file" ] || printf '%s\n' 'You are running in non-interactive print mode. There is no human to approve anything. Use editing tools directly; never ask for permission. Do not push or create pull requests.' > "$system_file"
+    start_ts=$(date +%s)
+    local args=(--runtime "$MEFISTO_RUNTIME_RESUELTO" --agent "$agent" --cwd "$WORKTREE_PATH" --prompt-file "$prompt_file" --system-file "$system_file" --event-log "$events_file" --events-log "$EVENTS_LOG_ABS" --redact-observability --timeout "$MEFISTO_AGENT_TIMEOUT_SECONDS")
+    [ -n "$model" ] && args+=(--model "$model")
+    if "$RUN_AGENT_BIN" "${args[@]}" >"$runner_file" 2>&1; then run_exit=0; else run_exit=$?; fi
+    derive_stage_log_from_stream "$events_file" "" "$log_file"
+    LAST_AGENT_METRICS_JSON=$(compute_stage_metrics "$events_file")
+    LAST_AGENT_DURATION=$(( $(date +%s) - start_ts ))
+    return "$run_exit"
+}
+
 # ─── Obtener contexto del issue/HU ───────────────────────────────────────────
 header "Preparando contexto"
 
@@ -613,23 +632,6 @@ collect_summary() {
     local stage="$1" agent="$2"
     local f="$WORKTREE_PATH/.claude/pipeline/summaries/stage-${stage}-${agent}.md"
     if [ -f "$f" ]; then cat "$f"; else echo "_(El agente no generó resumen)_"; fi
-}
-
-# ─── Invocacion neutral unica para stages sin politicas de run_agent ──────────
-# invoke_agent_once <agent_id> <prompt_file> <events_file> <log_file> [model]
-invoke_agent_once() {
-    local agent="$1" prompt_file="$2" events_file="$3" log_file="$4" model="${5:-}"
-    local system_file="$PIPELINE_TMP_DIR/noninteractive.system.md"
-    local runner_file="${events_file%.events.jsonl}.runner.log" start_ts run_exit=0
-    [ -f "$system_file" ] || printf '%s\n' 'You are running in non-interactive print mode. There is no human to approve anything. Use editing tools directly; never ask for permission. Do not push or create pull requests.' > "$system_file"
-    start_ts=$(date +%s)
-    local args=(--runtime "$MEFISTO_RUNTIME_RESUELTO" --agent "$agent" --cwd "$WORKTREE_PATH" --prompt-file "$prompt_file" --system-file "$system_file" --event-log "$events_file" --events-log "$EVENTS_LOG_ABS" --redact-observability --timeout "$MEFISTO_AGENT_TIMEOUT_SECONDS")
-    [ -n "$model" ] && args+=(--model "$model")
-    if "$RUN_AGENT_BIN" "${args[@]}" >"$runner_file" 2>&1; then run_exit=0; else run_exit=$?; fi
-    LAST_AGENT_DURATION=$(( $(date +%s) - start_ts ))
-    derive_stage_log_from_stream "$events_file" "" "$log_file"
-    LAST_AGENT_METRICS_JSON=$(compute_stage_metrics "$events_file")
-    return "$run_exit"
 }
 
 # ─── Frontera neutral para los stages TDD ────────────────────────────────────
