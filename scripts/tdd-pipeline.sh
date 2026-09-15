@@ -18,6 +18,20 @@ set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/_pipeline-common.sh"
 
+# La clausura publicada conserva el runner neutral junto al pipeline. El
+# pipeline solo conoce esta frontera; los adaptadores conocen cada runtime.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+RUNTIME_DIR="$(cd "$SCRIPT_DIR/../src/runtime" 2>/dev/null && pwd -P)" \
+    || { echo "ERROR: no se encontro src/runtime junto al paquete publicado" >&2; exit 1; }
+RUNTIME_LIB_DIR="$RUNTIME_DIR/lib"
+RUN_AGENT_BIN_DEFAULT="$RUNTIME_DIR/mefisto-run-agent.sh"
+[ -f "$RUNTIME_LIB_DIR/mefisto-runtime.sh" ] \
+    || { echo "ERROR: no se encontro mefisto-runtime.sh en la clausura publicada" >&2; exit 1; }
+[ -f "$RUNTIME_LIB_DIR/mefisto-models.sh" ] \
+    || { echo "ERROR: no se encontro mefisto-models.sh en la clausura publicada" >&2; exit 1; }
+source "$RUNTIME_LIB_DIR/mefisto-runtime.sh"
+source "$RUNTIME_LIB_DIR/mefisto-models.sh"
+
 # Guard defensivo: este pipeline es del lado publicado y solo aplica al consumidor.
 # Si detectamos .claude-plugin/plugin.json en la raiz, estamos en el repo de Mefisto.
 _REPO_TOP=$(git rev-parse --show-toplevel 2>/dev/null) || {
@@ -367,6 +381,21 @@ if [ -n "$PIPELINE_STAGE_MODELS" ]; then
     echo "[$(date +%H:%M:%S)] MODELS: $STAGE_MODELS_LOG" >> "$EVENTS_LOG_ABS"
 fi
 
+# La frontera neutral se resuelve antes de crear el worktree: un runtime o
+# runner invalido no debe dejar evidencia ni ramas transitorias en disco.
+MEFISTO_AGENT_TIMEOUT_SECONDS="${MEFISTO_AGENT_TIMEOUT_SECONDS:-1800}"
+case "$MEFISTO_AGENT_TIMEOUT_SECONDS" in ''|*[!0-9]*) abort "MEFISTO_AGENT_TIMEOUT_SECONDS '$MEFISTO_AGENT_TIMEOUT_SECONDS' no es un entero" ;; esac
+[ "$MEFISTO_AGENT_TIMEOUT_SECONDS" -gt 0 ] || abort "MEFISTO_AGENT_TIMEOUT_SECONDS debe ser mayor que 0"
+RUN_AGENT_BIN="${MEFISTO_RUN_AGENT_BIN:-$RUN_AGENT_BIN_DEFAULT}"
+[ -x "$RUN_AGENT_BIN" ] || abort "No es ejecutable el runner neutral: $RUN_AGENT_BIN"
+if ! mefisto_resolve_runtime >/dev/null; then
+    abort "No se pudo resolver el runtime activo: ${MEFISTO_RUNTIME_ERROR:-motivo desconocido}"
+fi
+MEFISTO_RUNTIME_RESUELTO="$MEFISTO_RESOLVED_RUNTIME"
+if ! runtime_cli_available "$MEFISTO_RUNTIME_RESUELTO"; then
+    abort "Falta el CLI del runtime resuelto ('$MEFISTO_RUNTIME_RESUELTO')"
+fi
+
 # --- Anunciar el modo variante (issue #713) -------------------------------
 # El label ya se valido y ya derivo los nombres de archivo arriba, junto al
 # parseo de argumentos; aqui solo se anuncia, que es lo primero que se puede
@@ -388,6 +417,10 @@ else
     warn "jq no disponible: los stages corren con --output-format text (sin traza stream-json)"
     echo "[$(date +%H:%M:%S)] WARN: jq no disponible, captura stream-json deshabilitada -- --output-format text" >> "$EVENTS_LOG_ABS"
 fi
+
+PIPELINE_TMP_DIR="$(mktemp -d -t mefisto-tdd)" || abort "No se pudo crear el directorio temporal del pipeline"
+[ -d "$PIPELINE_TMP_DIR" ] || abort "No se pudo crear el directorio temporal del pipeline"
+trap 'rm -rf "${PIPELINE_TMP_DIR:-}"' EXIT
 
 # ─── Obtener contexto del issue/HU ───────────────────────────────────────────
 header "Preparando contexto"
@@ -626,309 +659,78 @@ collect_summary() {
     if [ -f "$f" ]; then cat "$f"; else echo "_(El agente no generó resumen)_"; fi
 }
 
-# ─── Función auxiliar para invocar agentes ───────────────────────────────────
-# $MODEL_ARGS se expande SIN comillas a proposito: vacio debe desaparecer del argv
-# (sin --model manda el frontmatter del agente), y un array vacio revienta con
-# "unbound variable" bajo `set -u` en el bash 3.2 de macOS. De ahi el disable.
-# shellcheck disable=SC2086
+# ─── Frontera neutral para los stages TDD ────────────────────────────────────
 run_agent() {
-    local stage="$1"
-    local agent="$2"
-    local prompt="$3"
-    local log_stage="$LOG_DIR_ABS/stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}.log"
-    local stream_file="${log_stage%.log}.stream.jsonl"
-    local stderr_file="${log_stage%.log}.stderr.log"
-    local start_ts
-    start_ts=$(date +%s)
-
+    local stage="$1" agent="$2" prompt="$3"
+    local log_base="$LOG_DIR_ABS/stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}"
+    local log_stage="${log_base}.log" events_file=""
+    local prompt_file="$PIPELINE_TMP_DIR/${stage}-${agent}.prompt.md"
+    local system_file="$PIPELINE_TMP_DIR/${stage}-${agent}.system.md"
+    local runner_file="$PIPELINE_TMP_DIR/${stage}-${agent}.runner.log"
+    local start_ts run_exit=0 elapsed=0 failure_type="" hold_started="" hold_total=0 resume_session="" resume_degraded=false attempt=0 denial_retry_used=false
+    local entry_commit summary_file metrics_json="null"
+    printf '%s' "$prompt" > "$prompt_file"
+    printf '%s\n' 'You are running in non-interactive print mode. There is no human to approve anything. Use editing tools directly; never ask for permission. Do not push or create pull requests.' > "$system_file"
+    entry_commit="$(git -C "$WORKTREE_PATH" rev-parse HEAD)"
+    summary_file="$WORKTREE_PATH/.claude/pipeline/summaries/stage-${stage}-${agent}.md"
     echo "[$(date +%H:%M:%S)] === STAGE $stage: $agent ===" >> "$EVENTS_LOG_ABS"
-    case "$agent" in
-        test-writer|projection-test-writer) AGENT_TW_RES="running" ;;
-        implementer|projection-implementer) AGENT_IM_RES="running" ;;
-        reviewer)                           AGENT_RV_RES="running" ;;
-    esac
-    # Modelo por stage (issues #712 y #1186): sin --models, el agente NO recibe --model
-    # y manda el frontmatter `model:` del propio agente -- requisito invariante
-    # del issue (byte a byte el comportamiento previo al flag). resolve_stage_model
-    # (helper de #708) solo devuelve un valor no vacio si '$agent' tiene match
-    # EXACTO en el mapa de --models; MODEL_ARGS queda "" (una palabra vacia que
-    # el word-splitting sin comillas de abajo hace desaparecer del argv, sin el
-    # riesgo de "unbound variable" de un array vacio bajo `set -u` en bash 3.2).
-    # resolve_declared_agent_model (#1185) solo aporta evidencia visible: nunca
-    # alimenta MODEL_ARGS ni cambia el modelo que el runtime selecciona.
-    local AGENT_MODEL_OVERRIDE AGENT_MODEL_VISIBLE AGENT_MODEL_ORIGIN MODEL_ARGS=""
+    case "$agent" in test-writer|projection-test-writer) AGENT_TW_RES="running" ;; implementer|projection-implementer) AGENT_IM_RES="running" ;; reviewer) AGENT_RV_RES="running" ;; esac
+    local AGENT_MODEL_OVERRIDE AGENT_MODEL_VISIBLE AGENT_MODEL_ORIGIN
     AGENT_MODEL_OVERRIDE="$(resolve_stage_model "$agent" "")"
-    if [ -n "$AGENT_MODEL_OVERRIDE" ]; then
-        MODEL_ARGS="--model $AGENT_MODEL_OVERRIDE"
-        AGENT_MODEL_VISIBLE="$AGENT_MODEL_OVERRIDE"
-        AGENT_MODEL_ORIGIN="override --models"
-    else
-        AGENT_MODEL_VISIBLE="$(resolve_declared_agent_model "$agent")"
-        if [ -n "$AGENT_MODEL_VISIBLE" ]; then
-            AGENT_MODEL_ORIGIN="frontmatter"
-        else
-            AGENT_MODEL_VISIBLE="<heredado>"
-            AGENT_MODEL_ORIGIN="heredado"
-        fi
-    fi
+    if [ -n "$AGENT_MODEL_OVERRIDE" ]; then AGENT_MODEL_VISIBLE="$AGENT_MODEL_OVERRIDE"; AGENT_MODEL_ORIGIN="override --models"
+    else AGENT_MODEL_VISIBLE="$(resolve_declared_agent_model "$agent")"; if [ -n "$AGENT_MODEL_VISIBLE" ]; then AGENT_MODEL_ORIGIN="frontmatter"; else AGENT_MODEL_VISIBLE="<heredado>"; AGENT_MODEL_ORIGIN="heredado"; fi; fi
     update_status "$stage-$agent" "running"
     log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."
     echo "[$(date +%H:%M:%S)] MODELS: stage $stage/$agent -> $AGENT_MODEL_VISIBLE ($AGENT_MODEL_ORIGIN)" >> "$EVENTS_LOG_ABS"
-
-    local AGENT_TIMEOUT_SECONDS=1800  # 30 minutos por agente
-    # Linea base de transcripts del worktree ANTES de invocar al CLI (issue
-    # #972, CA-4): si tras el fallo el conteo no crecio, el intento muerto no
-    # dejo sesion y `-c` aterrizaria en la de un stage anterior de este mismo
-    # worktree -- la sonda lo detecta y no reanuda. Ver
-    # agent_session_transcript_count en _pipeline-common.sh.
-    local RESUME_BASELINE_SESSIONS
-    RESUME_BASELINE_SESSIONS=$(agent_session_transcript_count "$WORKTREE_PATH")
-    local NONINTERACTIVE_SYSTEM="You are running in non-interactive print mode. There is no human to approve anything. You MUST use Write and Edit tools directly to create and modify files at any path including .claude/. Never output text asking for permissions or confirmations -- doing so causes pipeline failure."
-    if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
-        (cd "$WORKTREE_PATH" && claude -p "$prompt" \
-            --agent "$agent" $MODEL_ARGS \
-            --permission-mode bypassPermissions \
-            --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
-            --output-format stream-json --verbose \
-            >"$stream_file" 2>"$stderr_file") &
-    else
-        (cd "$WORKTREE_PATH" && claude -p "$prompt" \
-            --agent "$agent" $MODEL_ARGS \
-            --permission-mode bypassPermissions \
-            --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
-            --output-format text \
-            >"$log_stage" 2>&1) &
-    fi
-    local CLAUDE_PID=$!
-    # M3: usar SIGKILL para garantizar que el proceso muere al timeout
-    (sleep $AGENT_TIMEOUT_SECONDS && kill -9 -$CLAUDE_PID 2>/dev/null && echo "[$(date +%H:%M:%S)] TIMEOUT: $agent superó ${AGENT_TIMEOUT_SECONDS}s — eliminado con SIGKILL" >> "$EVENTS_LOG_ABS") </dev/null >/dev/null 2>&1 &
-    local WATCHDOG_PID=$!
-
-    local CLAUDE_EXIT=0
-    wait $CLAUDE_PID || CLAUDE_EXIT=$?
-
-    kill $WATCHDOG_PID 2>/dev/null || true
-    wait $WATCHDOG_PID 2>/dev/null || true
-    local elapsed=$(( $(date +%s) - start_ts ))
-
-    # CA-2/CA-5: el .log de siempre se deriva del stream+stderr en la MISMA
-    # ruta, exito/fallo/SIGKILL por igual -- el stream truncado del watchdog
-    # queda en disco (nunca se borra) y la clasificacion de abajo sigue
-    # leyendo $log_stage sin cambios.
-    local metrics_json="null"
-    if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
-        derive_stage_log_from_stream "$stream_file" "$stderr_file" "$log_stage"
-        metrics_json=$(compute_stage_metrics "$stream_file")
-    fi
-    # CA-5: respaldo en disco de las metricas de ESTE stage, independiente de
-    # si el pipeline llega a escribir la linea de pipeline-history.jsonl.
-    echo "$metrics_json" > "$PIPELINE_DIR_ABS/metrics/tdd-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-${stage}-${agent}.json" 2>/dev/null || true
-
-    if [ "$CLAUDE_EXIT" -ne 0 ]; then
-        # M1: Clasificar tipo de fallo (funcion compartida, issue #971)
-        local failure_type
-        failure_type=$(classify_agent_failure "$CLAUDE_EXIT" "$elapsed" "$log_stage" "$stream_file")
+    start_ts=$(date +%s)
+    while :; do
+        attempt=$((attempt + 1))
+        events_file="${log_base}-attempt-${attempt}.events.jsonl"
+        local attempt_prompt="$prompt_file" attempt_resume=false
+        if [ -n "$resume_session" ]; then attempt_resume=true; attempt_prompt="$PIPELINE_TMP_DIR/${stage}-${agent}-resume-${attempt}.prompt.md"; printf '%s\n' 'Continue the same stage and complete its summary.' > "$attempt_prompt"; fi
+        local args=(--runtime "$MEFISTO_RUNTIME_RESUELTO" --agent "$agent" --cwd "$WORKTREE_PATH" --prompt-file "$attempt_prompt" --system-file "$system_file" --event-log "$events_file" --events-log "$EVENTS_LOG_ABS" --redact-observability --timeout "$MEFISTO_AGENT_TIMEOUT_SECONDS")
+        [ -n "$AGENT_MODEL_OVERRIDE" ] && args+=(--model "$AGENT_MODEL_OVERRIDE")
+        [ -n "$resume_session" ] && args+=(--resume-session "$resume_session")
+        if "$RUN_AGENT_BIN" "${args[@]}" >"$runner_file" 2>&1; then run_exit=0; else run_exit=$?; fi
+        [ "$attempt_prompt" = "$prompt_file" ] || rm -f "$attempt_prompt"
+        elapsed=$(( $(date +%s) - start_ts ))
+        derive_stage_log_from_stream "$events_file" "" "$log_stage"
+        metrics_json="$(compute_stage_metrics "$events_file")"
+        echo "$metrics_json" > "$PIPELINE_DIR_ABS/metrics/tdd-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-${stage}-${agent}.json" 2>/dev/null || true
+        local denials attempt_has_work=false
+        denials="$(agent_events_denials "$events_file")"; case "$denials" in ''|*[!0-9]*) denials=0 ;; esac
+        if ! git -C "$WORKTREE_PATH" diff --quiet "$entry_commit"..HEAD 2>/dev/null || [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ 2>/dev/null)" ]; then attempt_has_work=true; fi
+        if [ "$denials" -gt 0 ] && [ "$attempt_has_work" = false ] && [ "$denial_retry_used" = false ]; then denial_retry_used=true; resume_session=""; warn "$agent: $denials denegacion(es) neutrales sin trabajo; reintentando una vez desde cero"; continue; fi
+        if [ "$run_exit" -eq 0 ] && agent_events_completed_successfully "$events_file"; then failure_type=""; break; fi
+        failure_type="$(classify_neutral_agent_failure "$run_exit" "$events_file")"
         log "$agent falló después de ${elapsed}s — tipo: $failure_type"
         echo "[$(date +%H:%M:%S)] FALLO $agent: $failure_type" >> "$EVENTS_LOG_ABS"
-
-        # M6: espera (hold) ante RATE_LIMIT/PROVIDER_UNAVAILABLE persistente
-        # (issue #971, doctrina de MEF-ADR-0051 -- mismos defaults/env vars
-        # que el lado interno, issue #967): el propio reintento hace de
-        # sonda, en un bucle acotado por agent_hold_wait (techo
-        # MEFISTO_HOLD_MAX_SECONDS). A diferencia del viejo retry one-shot de
-        # API_ERROR_SERVER, este camino NO exige "sin trabajo previo" ni
-        # restaura el worktree: ese trabajo parcial es el que la reanudacion
-        # de sesion de la sonda (issue #972, mas abajo) se apoya en conservar.
-        local HOLD_STARTED_TS="" HOLD_TOTAL_SECONDS=0 hold_attempt=0
-        # Reanudacion de sesion (issue #972, CA-1): mientras RESUME_DEGRADED
-        # siga en false, cada sonda del hold continua (-c) la conversacion
-        # truncada en vez de reenviar $prompt entero. SUMMARY_FILE es el
-        # mismo archivo que collect_summary lee al final del pipeline -- se
-        # reutiliza aqui solo como senal de si la sonda resumida llego al
-        # final de su contrato (CA-2). CA-4: en un stage con varios agentes
-        # (test-writer -> implementer, u otro que corra en la misma secuencia
-        # dentro de este mismo WORKTREE_PATH), "-c" resuelve la conversacion
-        # mas reciente del directorio -- que en este punto es la de ESTE
-        # agente, el que acaba de fallar -- nunca la de un agente anterior ya
-        # terminado (verificado a mano, ver agent_resume_prompt en
-        # _pipeline-common.sh).
-        local RESUME_DEGRADED=false
-        local SUMMARY_FILE="$WORKTREE_PATH/.claude/pipeline/summaries/stage-${stage}-${agent}.md"
-        while agent_failure_is_holdable "$failure_type"; do
-            [ -z "$HOLD_STARTED_TS" ] && HOLD_STARTED_TS=$(date +%s)
-            local hold_slept
-            if ! hold_slept=$(agent_hold_wait "$EVENTS_LOG_ABS" "$failure_type" "$HOLD_STARTED_TS"); then
-                warn "$agent: techo de espera (hold) agotado -- ultima senal: $failure_type"
-                log "$agent: techo de espera (hold) agotado tras $((HOLD_TOTAL_SECONDS / 60))m $((HOLD_TOTAL_SECONDS % 60))s"
-                break
-            fi
-            HOLD_TOTAL_SECONDS=$(( HOLD_TOTAL_SECONDS + hold_slept ))
-            hold_attempt=$((hold_attempt + 1))
-
-            # CA-1/CA-2: RESUME_ARGS vacio hace que $RESUME_ARGS desaparezca
-            # del argv (mismo patron que $MODEL_ARGS de arriba) -- degradado,
-            # la sonda reenvia el prompt original completo, byte a byte el
-            # comportamiento previo a este issue.
-            local attempt_used_resume=false RESUME_ARGS="" attempt_prompt="$prompt"
-            local sessions_now
-            sessions_now=$(agent_session_transcript_count "$WORKTREE_PATH")
-            if [ "$RESUME_DEGRADED" = true ]; then
-                warn "$agent: $failure_type -- en espera (hold), reintentando desde cero (sonda #$hold_attempt)..."
-            elif [ "$sessions_now" -le "$RESUME_BASELINE_SESSIONS" ]; then
-                # CA-2, primera degradacion: el intento muerto no dejo
-                # transcript en este worktree, asi que `-c` aterrizaria en la
-                # sesion de OTRO stage anterior (o en ninguna) -- y `-c` ignora
-                # en silencio `--agent`, asi que ese aterrizaje correria sin la
-                # definicion del agente. No es permanente: esta sonda deja su
-                # propia sesion, asi que la siguiente ya tendra que continuar.
-                warn "$agent: $failure_type -- en espera (hold), sin conversacion previa de este stage que continuar -- reintentando desde cero (sonda #$hold_attempt)"
-                echo "[$(date +%H:%M:%S)][hold][resume] $agent: el intento fallido no dejo transcript en el worktree -- reintento desde cero (sin -c)" >> "$EVENTS_LOG_ABS"
-            else
-                attempt_used_resume=true
-                RESUME_ARGS="-c"
-                attempt_prompt="$(agent_resume_prompt "$stage" "$agent")"
-                warn "$agent: $failure_type -- en espera (hold), reanudando sesion truncada (sonda #$hold_attempt)..."
-            fi
-
-            local log_stage_hold="$LOG_DIR_ABS/stage-${stage}-${agent}-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-hold-${hold_attempt}.log"
-            local stream_file_hold="${log_stage_hold%.log}.stream.jsonl"
-            local stderr_file_hold="${log_stage_hold%.log}.stderr.log"
-            # CA-5: lo que no cuenta contra el watchdog de stage es la ESPERA
-            # (el `sleep` de agent_hold_wait, ya consumido arriba); la SONDA si
-            # corre bajo su propio watchdog de $AGENT_TIMEOUT_SECONDS, igual
-            # que el primer intento. Sin el, una sonda colgada dejaria el
-            # pipeline esperando para siempre y volveria decorativo el techo de
-            # agent_hold_wait, que solo se evalua al tope del bucle.
-            local probe_start_ts CLAUDE_PID_HOLD PROBE_WATCHDOG_PID
-            probe_start_ts=$(date +%s)
-            CLAUDE_EXIT=0
-            if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
-                (cd "$WORKTREE_PATH" && claude $RESUME_ARGS -p "$attempt_prompt" \
-                    --agent "$agent" $MODEL_ARGS \
-                    --permission-mode bypassPermissions \
-                    --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
-                    --output-format stream-json --verbose \
-                    >"$stream_file_hold" 2>"$stderr_file_hold") &
-            else
-                (cd "$WORKTREE_PATH" && claude $RESUME_ARGS -p "$attempt_prompt" \
-                    --agent "$agent" $MODEL_ARGS \
-                    --permission-mode bypassPermissions \
-                    --append-system-prompt "$NONINTERACTIVE_SYSTEM" \
-                    --output-format text \
-                    >"$log_stage_hold" 2>&1) &
-            fi
-            CLAUDE_PID_HOLD=$!
-            # Grupo primero y PID despues: sin job control (el caso de un
-            # pipeline no interactivo) la subshell de arriba NO es lider de su
-            # propio grupo, asi que la forma negativa falla sola y sin el
-            # fallback el watchdog de la sonda no mataria nada.
-            (sleep $AGENT_TIMEOUT_SECONDS && { kill -9 -$CLAUDE_PID_HOLD 2>/dev/null || kill -9 $CLAUDE_PID_HOLD 2>/dev/null; } && echo "[$(date +%H:%M:%S)] TIMEOUT: $agent (sonda de hold #$hold_attempt) superó ${AGENT_TIMEOUT_SECONDS}s" >> "$EVENTS_LOG_ABS") </dev/null >/dev/null 2>&1 &
-            PROBE_WATCHDOG_PID=$!
-            wait $CLAUDE_PID_HOLD || CLAUDE_EXIT=$?
-            kill $PROBE_WATCHDOG_PID 2>/dev/null || true
-            wait $PROBE_WATCHDOG_PID 2>/dev/null || true
-            if [ "$PIPELINE_CAPTURE_STREAM" = true ]; then
-                # Cada sonda escribe su propio stream/stderr y deriva su propio
-                # -hold-N.log, sin pisar los archivos de intentos anteriores.
-                derive_stage_log_from_stream "$stream_file_hold" "$stderr_file_hold" "$log_stage_hold"
-                # La sonda que resuelve el hold reemplaza al intento original
-                # para efectos de metricas (igual que ya reemplaza a
-                # $log_stage abajo), respaldadas en su propio archivo
-                # -hold-N.json (issue #646).
-                metrics_json=$(compute_stage_metrics "$stream_file_hold")
-                echo "$metrics_json" > "$PIPELINE_DIR_ABS/metrics/tdd-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-${stage}-${agent}-hold-${hold_attempt}.json" 2>/dev/null || true
-            fi
-            # La duracion que se reporta es la de la SONDA, no el reloj desde
-            # que arranco el stage: sumar ahi las horas de espera inflaria
-            # AGENT_*_DUR y las metricas de la corrida. El interno mide igual
-            # (por intento, attempt_start_ts) y reporta la espera aparte, con
-            # HOLD_TOTAL_SECONDS.
-            elapsed=$(( $(date +%s) - probe_start_ts ))
-            log_stage="$log_stage_hold"
-            stream_file="$stream_file_hold"
-
-            if [ "$CLAUDE_EXIT" -eq 0 ]; then
-                log "$agent: hold resuelto, reintento exitoso en ${elapsed}s (tras $((HOLD_TOTAL_SECONDS / 60))m $((HOLD_TOTAL_SECONDS % 60))s de espera)"
-                echo "[$(date +%H:%M:%S)] RETRY_OK $agent: exitoso tras hold" >> "$EVENTS_LOG_ABS"
-                break
-            fi
-
-            failure_type=$(classify_agent_failure "$CLAUDE_EXIT" "$elapsed" "$log_stage" "$stream_file")
-            log "$agent falló tras sonda de hold -- tipo: $failure_type"
-            echo "[$(date +%H:%M:%S)] FALLO $agent: $failure_type (tras hold)" >> "$EVENTS_LOG_ABS"
-
-            # CA-2: la sonda resumida volvio a morir sin dejar el resumen del
-            # stage -- se degrada a "stage desde cero" de forma PERMANENTE
-            # para el resto de este run_agent (nunca se vuelve a intentar
-            # reanudar tras esta degradacion).
-            if [ "$attempt_used_resume" = true ] && [ ! -s "$SUMMARY_FILE" ]; then
-                warn "$agent: la sesion reanudada volvio a morir sin dejar el resumen del stage -- se degrada a stage desde cero"
-                echo "[$(date +%H:%M:%S)][hold][resume] $agent: sesion reanudada murio de nuevo sin resumen -- degradado a stage desde cero" >> "$EVENTS_LOG_ABS"
-                RESUME_DEGRADED=true
-            fi
-        done
-
-        if [ "$CLAUDE_EXIT" -ne 0 ]; then
-            # M2: Verificar si el agente produjo trabajo util antes de abortar
-            local has_commits=false
-            local gate_passes=false
-
-            if ! git -C "$WORKTREE_PATH" diff --quiet "${SNAPSHOT_COMMIT:-HEAD}..HEAD" 2>/dev/null; then
-                has_commits=true
-            fi
-            if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ 2>/dev/null)" ]; then
-                has_commits=true
-            fi
-
-            if [ "$has_commits" = true ]; then
-                case "$stage" in
-                    1)
-                        if dotnet build "$WORKTREE_PATH" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1; then
-                            gate_passes=true
-                        fi
-                        ;;
-                    2|3|merge)
-                        local test_rc=0
-                        run_tests_projects "$WORKTREE_PATH" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 || test_rc=$?
-                        if [ "$test_rc" -eq 0 ]; then
-                            gate_passes=true
-                        fi
-                        ;;
-                esac
-            fi
-
-            if [ "$has_commits" = true ] && [ "$gate_passes" = true ]; then
-                warn "$agent: CLI retorno error ($failure_type) pero hay trabajo util completado — continuando"
-                echo "[$(date +%H:%M:%S)] RECUPERADO $agent: trabajo util detectado post-$failure_type, continuando" >> "$EVENTS_LOG_ABS"
-                # Continuar sin abortar — los gates del pipeline verificaran el resultado
-            else
-                case "$agent" in
-                    test-writer|projection-test-writer) AGENT_TW_DUR=$elapsed; AGENT_TW_RES="failed" ;;
-                    implementer|projection-implementer) AGENT_IM_DUR=$elapsed; AGENT_IM_RES="failed" ;;
-                    smoke-test-writer)                  AGENT_ST_DUR=$elapsed; AGENT_ST_RES="failed" ;;
-                    reviewer)                           AGENT_RV_DUR=$elapsed; AGENT_RV_RES="failed" ;;
-                esac
-                # CA-3 (issue #646): cosechar por STAGE, no por nombre de
-                # agente -- el stage "merge" reusa el agente "implementer" y
-                # con un case por agente pisaria las metricas del implementer
-                # de Stage 2 (mismo motivo del interno #426).
-                case "$stage" in
-                    1)  AGENT_TW_METRICS_JSON="$metrics_json" ;;
-                    2)  AGENT_IM_METRICS_JSON="$metrics_json" ;;
-                    2b) AGENT_ST_METRICS_JSON="$metrics_json" ;;
-                    3)  AGENT_RV_METRICS_JSON="$metrics_json" ;;
-                esac
-                update_status "$stage-$agent" "failed"
-                echo -e "\n${RED}── Ultimas lineas del log de $agent:${NC}"
-                tail -20 "$log_stage"
-                abort "$agent falló ($failure_type). Log completo: $log_stage"
-            fi
+        if ! agent_failure_is_holdable "$failure_type"; then break; fi
+        [ -z "$hold_started" ] && hold_started=$(date +%s)
+        local slept
+        if ! slept=$(agent_hold_wait "$EVENTS_LOG_ABS" "$failure_type" "$hold_started" "$(agent_events_resets_at "$events_file")"); then break; fi
+        hold_total=$((hold_total + slept))
+        if [ "$attempt_resume" = true ] && [ ! -s "$summary_file" ]; then warn "$agent: la sesion reanudada termino sin resumen; se degrada permanentemente a inicio limpio"; resume_degraded=true; resume_session=""
+        elif [ "$resume_degraded" = false ] && runtime_supports_resume "$MEFISTO_RUNTIME_RESUELTO"; then resume_session="$(agent_events_session_id "$events_file")"; fi
+    done
+    if [ -n "$failure_type" ]; then
+        local recoverable_work=false
+        case "$failure_type" in TIMEOUT|KILLED|STREAM_CUT|PROTOCOL_INVALID) ;; *)
+            if ! git -C "$WORKTREE_PATH" diff --quiet "$entry_commit"..HEAD 2>/dev/null || [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ 2>/dev/null)" ]; then
+                case "$stage" in 1) dotnet build "$WORKTREE_PATH" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 && recoverable_work=true ;; 2|3|merge) local test_rc=0; run_tests_projects "$WORKTREE_PATH" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 || test_rc=$?; [ "$test_rc" -eq 0 ] && recoverable_work=true ;; esac
+            fi ;; esac
+        if [ "$recoverable_work" = true ]; then warn "$agent: runner retorno $failure_type pero hay trabajo util completado — continuando"; failure_type=""
+        else
+            case "$agent" in test-writer|projection-test-writer) AGENT_TW_DUR=$elapsed; AGENT_TW_RES="failed" ;; implementer|projection-implementer) AGENT_IM_DUR=$elapsed; AGENT_IM_RES="failed" ;; smoke-test-writer) AGENT_ST_DUR=$elapsed; AGENT_ST_RES="failed" ;; reviewer) AGENT_RV_DUR=$elapsed; AGENT_RV_RES="failed" ;; esac
+            case "$stage" in 1) AGENT_TW_METRICS_JSON="$metrics_json" ;; 2) AGENT_IM_METRICS_JSON="$metrics_json" ;; 2b) AGENT_ST_METRICS_JSON="$metrics_json" ;; 3) AGENT_RV_METRICS_JSON="$metrics_json" ;; esac
+            update_status "$stage-$agent" "failed"
+            case "$failure_type" in TIMEOUT|KILLED|STREAM_CUT|PROTOCOL_INVALID) abort "$agent falló ($failure_type); se descarta trabajo parcial" ;; esac
+            abort "$agent falló ($failure_type). Log completo: $log_stage"
         fi
     fi
-
-    LAST_AGENT_DURATION=$elapsed
-    LAST_AGENT_METRICS_JSON="$metrics_json"
-    log "$agent completado en ${elapsed}s"
+    case "$stage" in 1) AGENT_TW_METRICS_JSON="$metrics_json" ;; 2) AGENT_IM_METRICS_JSON="$metrics_json" ;; 2b) AGENT_ST_METRICS_JSON="$metrics_json" ;; 3) AGENT_RV_METRICS_JSON="$metrics_json" ;; esac
+    LAST_AGENT_DURATION=$((elapsed - hold_total)); LAST_AGENT_METRICS_JSON="$metrics_json"
+    log "$agent completado en ${LAST_AGENT_DURATION}s"
 }
 
 # ─── Función auxiliar: auto-commit de seguridad ──────────────────────────────
