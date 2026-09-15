@@ -81,6 +81,30 @@ printf 'base\n' > "$WT/tests/base.txt"
 git -C "$WT" add tests/base.txt
 git -C "$WT" commit -qm base
 
+# El chequeo estatico de los cuatro call sites se complementa con el contrato
+# ejecutable del helper generalizado: evita que el wrapper de tooling siga
+# verde mientras la ruta pipeline=tdd pierde alguna dimension de correlacion.
+cat > "$TMP/enrich.events.jsonl" <<'EOF'
+{"type":"run.started","runtime":"opencode","model":"vendor/requested"}
+{"type":"run.completed","runtime":"opencode","model":"vendor/effective","session_id":"session-tdd","status":"success","error":null}
+EOF
+ENRICHED_TDD="$(bash -c 'source "$1"; enrich_stage_metrics tdd "$2" '\''{"tokens":{"input":7}}'\'' 1363 '\''"variante-a"'\'' 4b projection-test-writer balanced '\''{"harness_version":"1.2.3","harness_commit":"0123456789abcdef0123456789abcdef01234567","identity_state":"complete"}'\''' _ "$COMMON" "$TMP/enrich.events.jsonl")"
+if printf '%s' "$ENRICHED_TDD" | jq -e '
+    .pipeline == "tdd" and .issue == "1363" and .variant == "variante-a"
+    and .stage == "4b" and .agent == "projection-test-writer"
+    and .profile == "balanced" and .runtime == "opencode"
+    and .requested_model == "vendor/requested"
+    and .effective_model == "vendor/effective"
+    and .session_id == "session-tdd" and .result == "success"
+    and .error_kind == null and .harness_version == "1.2.3"
+    and .harness_commit == "0123456789abcdef0123456789abcdef01234567"
+    and .identity_state == "complete" and .tokens.input == 7
+' >/dev/null; then
+    pass 'enrich_stage_metrics conserva metricas base y agrega todas las dimensiones de TDD'
+else
+    fail "enrich_stage_metrics no produjo el contrato TDD esperado: $ENRICHED_TDD"
+fi
+
 export TMP WT ROOT
 cat > "$TMP/runner" <<'EOF'
 #!/usr/bin/env bash

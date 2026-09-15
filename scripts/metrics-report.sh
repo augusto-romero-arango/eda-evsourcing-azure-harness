@@ -51,8 +51,8 @@
 #      exactamente lo que CA-2 proscribe para el modelo. Corridas viejas o
 #      degradadas sin metrics.agent salen con "-" en esa columna y forman su
 #      propio grupo, sin contaminar los de agente conocido.
-#   4. Segmentacion por harness_version (issue #663): cada linea trae el
-#      "harness_version" con que corrio (#660), asi que el reporte agrega
+#   4. Segmentacion por harness_version (issues #663/#1363): cada linea nueva
+#      trae `identity.harness_version`; el campo plano legado sigue aceptado.
 #      tambien una tabla "POR VERSION DE HARNESS" por pipeline -- misma media
 #      de wallclock/turnos/costo que el resto del reporte, restringida a las
 #      corridas instrumentadas de esa version (mismo denominador compartido
