@@ -2,7 +2,7 @@
 fecha: 2026-09-14
 hora: 16:25
 sesion: mefisto-planner
-tema: Refinar #1360 y #1361 (tdd-pipeline.sh al runner neutral); brecha --agent del adaptador Claude; drafts de agentes TDD neutrales
+tema: Refinar #1360 y #1361 (tdd-pipeline.sh al runner neutral); brecha --agent del adaptador Claude; drafts de agentes TDD neutrales; politica bash OpenCode
 ---
 
 ## Contexto
@@ -35,16 +35,21 @@ Refinar los drafts #1360 y #1361, primeros eslabones de la serie que migra `scri
 - Renderer Claude (`src/published/scripts/lib/adapter-claude.sh`): `profile`->`model` (balanced->sonnet, deep->opus), `capabilities`->`tools`, `skills`->`skills: [...]` validando `skills/<name>/SKILL.md`; solo procesa placeholders `{{mefisto:...}}`, asi que las 35 expresiones `${{ }}` de GitHub Actions en `domain-scaffolder` deben sobrevivir (CA explicito).
 - `resolve_declared_agent_model` (`_pipeline-common.sh` l.590) no quita comillas: con el frontmatter generado `model: "sonnet"` devolveria `"sonnet"`. Riesgo concreto para `test-stage-models.sh`; lo corrige #1369.
 - Los cuerpos de los 7 agentes referencian `.claude/pipeline/...` (1-8 veces cada uno): se conservan; neutralizarlos es #1364.
+- Confirmado ejecutando el resolver: `resolve_declared_agent_model tooling-writer` devuelve `"sonnet"` con comillas (bug latente; ningun pipeline lo consulta hoy para agentes generados). El generador descubre fuentes con `find` (l.166); solo el mirror a la raiz necesita `CLAUDE_ROOT_MIRRORS`. `dist/` esta commiteado (46 archivos).
+- **La politica bash de OpenCode niega el toolchain TDD**: `capability_map.shell` es `catch_all: deny` con allow solo para git/gh/jq/cat/ls/find/grep/sort/scripts/mkdir/mktemp. Inventario de la doctrina: `dotnet` en los 7 agentes (2-35 ocurrencias), `func` 11 y `terraform` 6 en domain-scaffolder, `rm` 9 y `curl` 1 en domain-scaffolder (deny explicito hoy), `az` 1 en implementer/reviewer/smoke-test-writer. Bajo Claude no afecta (`tools: Bash` sin patrones).
 
 ## Decisiones (agentes TDD)
 - Recomendacion aceptada: issues propios, no dentro de #1365, y como dependencia de #1365 (publicar `tdd-pipeline.sh` sin sus agentes dejaria un flujo que falla en Stage 1 bajo OpenCode).
 - Cuatro drafts (`estado:borrador`) agrupados por stage/eje homogeneo: #1369 test-writer + implementer (fija el patron, corrige el resolver, crea `test-tdd-agents.sh`); #1370 reviewer (perfil deep, skills `projections` + `comment-cleanup`); #1371 smoke-test-writer + projection-test-writer + projection-implementer (skill `projections`); #1372 domain-scaffolder (265 KB, conteo de `${{`). #1370-#1372 dependen de #1369 (`bloqueado`). #1365 pasa a depender de los cuatro.
 - CA comun: cuerpo generado identico al actual salvo la linea del guard `{{mefisto:assert-consumer-repo}}`; `model`/`tools`/`skills` equivalentes; tests acoplados al contenido de cada agente verdes sin cambios.
+- #1369 refinado a `estado:listo` (unico draft sin dependencias: entra ya a la cola lanzable). Notas verificadas: bug del resolver real, `find` del generador, `_pipeline-common.sh` en la clausura (regenerar `dist/*/scripts/_pipeline-common.sh`).
+- **Nuevo draft #1373 "Extender la politica bash de OpenCode para el toolchain de los agentes TDD"**, dependencia de #1365 (no de #1369). Deja abiertas dos opciones: A) extender `capability_map.shell.rules` global con `dotnet *`/`func *`/`terraform *`; B) nueva capacidad (`toolchain`) en el schema, declarada solo por agentes TDD. `rm *`/`curl *`/`az *` siguen deny salvo decision explicita.
 
 ## Preguntas abiertas
-- Orden sugerido del batch: #1368 -> #1360 -> #1361 -> #1369 -> {#1370, #1371, #1372} -> #1365 (lo confirma `/mefisto-next-order`).
+- Orden sugerido del batch: #1369 y #1368 (sin dependencias) -> #1360 -> #1361 -> {#1370, #1371, #1372} -> #1373 -> #1365 (lo confirma `/mefisto-next-order`; hoy la cola lanzable es #1262, #1368, #1369, #1360, #1361).
+- #1373: decidir opcion A (reglas globales) vs B (capacidad nueva) y si la doctrina de domain-scaffolder debe dejar de pedir `rm`/`curl` (#1372) o se acota la regla.
 - #1362 (modelo por perfil) deberia usar el mismo mapeo sonnet->balanced / opus->deep que fijan los frontmatters neutrales de #1369-#1372.
 
 ## Referencias
-Issues creados: #1368 (listo); #1369, #1370, #1371, #1372 (borradores).
-Issues refinados: #1360, #1361 (`estado:borrador` -> `estado:listo`).
+Issues creados: #1368, #1369 (listos); #1370, #1371, #1372, #1373 (borradores).
+Issues refinados: #1360, #1361, #1369 (`estado:borrador` -> `estado:listo`).
