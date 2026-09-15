@@ -42,6 +42,35 @@ scope/gate del pipeline consumidor correspondiente: no sourcea ni replica como
 autoridad `is_path_in_mefisto_scope`. En OpenCode tampoco habilita `lsp` de
 forma implícita (MEF-ADR-0052).
 
+## Permisos Bash de OpenCode
+
+La capacidad neutral `shell` genera `permission.bash` con `"*": "deny"`.
+Solo se amplía para comandos que una doctrina publicada ejecuta, no para
+comandos que meramente menciona. La política vigente permite `git`, `gh`,
+`jq`, `cat`, `ls`, `find`, `grep`, `sort`, los scripts distribuidos, `mkdir` y
+`mktemp`; el toolchain TDD añade `dotnet`, `func init`, `terraform init
+-backend=false` / `validate` / `fmt`, `python3 -` (incluido `-m json.tool`),
+`cd`, `echo`, `test`, `[`, `touch`, `tr`, `mv` e `ilspycmd`. `terraform
+plan`/`apply`, `func start` y `az` continúan denegados por el default.
+
+`rm *`, `curl *`, `ssh *`, `scp *` y `sudo *` conservan denegación explícita.
+La excepción de `rm` permite exclusivamente `rm -f`/`rm -rf` bajo `src/` y
+`rm -f` bajo `tests/`, con variantes para una ruta entre comillas. `rm -rf
+tests/` y cualquier ruta fuera de esos árboles siguen denegados; además,
+`external_directory: deny` impide salir del worktree.
+
+La comprobación empírica contra OpenCode 1.18.29 (2026-09-15) estableció que
+el patrón `*` cruza `/`, que el candidato preserva las comillas literales y
+que se evalúa un candidato por cada nodo `command` del árbol de Bash (también
+en listas compuestas). Las reglas se resuelven por última coincidencia, por lo
+que el deny general de `rm` aparece antes de las excepciones acotadas que lo
+sobrescriben. Este orden y las variantes entre comillas son deliberados.
+
+Al ampliar esta lista, inventaría primero los comandos realmente ejecutados
+por la doctrina publicada, conserva la denegación por defecto y acota por
+prefijo de ruta cuando el matcher lo permita. La normalización pendiente de
+los `rm` de `domain-scaffolder` se apoya en estos hallazgos (issue #1374).
+
 `mcp` no es una tool ni un permiso de runtime: es una lista de ids lógicos
 kebab-case. `mcp-servers.json` es la autoridad neutral de esos ids y de su
 provisioning; `published-artifact.schema.json` debe conservar exactamente el
