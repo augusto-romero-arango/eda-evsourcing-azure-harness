@@ -10,40 +10,60 @@ PASS=0; FAIL=0
 pass() { printf '  PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
 fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
 
-declare -a CLOSURE_ASSETS=(
-    'scripts/_pipeline-common.sh'
-    'scripts/tooling-pipeline.sh'
-    'scripts/tdd-pipeline.sh'
-    'src/runtime/mefisto-run-agent.sh'
-    'src/runtime/lib/mefisto-runtime.sh'
-    'src/runtime/lib/mefisto-models.sh'
-)
+SCANNER="$WORK/scan-closure.py"
+cat > "$SCANNER" <<'PY'
+import pathlib
+import posixpath
+import re
+import sys
 
-is_declared_asset() {
-    local needle="$1" asset
-    for asset in "${CLOSURE_ASSETS[@]}"; do
-        [ "$asset" = "$needle" ] && return 0
-    done
-    return 1
+generator = pathlib.Path(sys.argv[1]).read_text()
+pipeline_path = pathlib.Path(sys.argv[2])
+
+array = re.search(r'^TOOLING_CLOSURE_ASSETS=\(\n(.*?)^\)', generator, re.M | re.S)
+if not array:
+    print('no se pudo leer TOOLING_CLOSURE_ASSETS del generador')
+    raise SystemExit(2)
+declared = {
+    match.group(1)
+    for match in re.finditer(r"^\s*'([^'|]+)\|(?:0644|0755)'\s*$", array.group(1), re.M)
 }
 
+bases = {
+    'SCRIPT_DIR': 'scripts',
+    'RUNTIME_DIR': 'src/runtime',
+    'RUNTIME_LIB_DIR': 'src/runtime/lib',
+}
+references = set()
+for raw_line in pipeline_path.read_text().splitlines():
+    line = raw_line.lstrip()
+    if not line or line.startswith('#'):
+        continue
+    if line.startswith('source ') and 'dirname ' in line:
+        match = re.search(r'\)["\']?/([A-Za-z0-9_./-]+\.(?:sh|jq))', line)
+        if match:
+            references.add(posixpath.normpath('scripts/' + match.group(1)))
+    for match in re.finditer(r'\$\{?(SCRIPT_DIR|RUNTIME_DIR|RUNTIME_LIB_DIR)\}?/([A-Za-z0-9_./-]+\.(?:sh|jq))', line):
+        references.add(posixpath.normpath(bases[match.group(1)] + '/' + match.group(2)))
+
+missing = sorted(reference for reference in references if reference not in declared)
+if missing:
+    print('\n'.join(missing))
+    raise SystemExit(1)
+if len(references) < 4:
+    print(f'el barrido solo reconocio {len(references)} dependencias; se esperaban al menos 4')
+    raise SystemExit(2)
+print(len(references))
+PY
+
 assert_dependency_closure() {
-    local pipeline="$1" line dependency=0
-    while IFS= read -r line; do
-        case "$line" in
-            *'source '*'_pipeline-common.sh'*) dependency='scripts/_pipeline-common.sh' ;;
-            *'source '*'$RUNTIME_LIB_DIR/mefisto-runtime.sh'*) dependency='src/runtime/lib/mefisto-runtime.sh' ;;
-            *'source '*'$RUNTIME_LIB_DIR/mefisto-models.sh'*) dependency='src/runtime/lib/mefisto-models.sh' ;;
-            *'$SCRIPT_DIR/../src/runtime'*) dependency='src/runtime/mefisto-run-agent.sh' ;;
-            *'$RUNTIME_DIR/mefisto-run-agent.sh'*) dependency='src/runtime/mefisto-run-agent.sh' ;;
-            *) continue ;;
-        esac
-        if ! is_declared_asset "$dependency"; then
-            fail "${pipeline##*/} referencia $dependency fuera de la clausura"
-            return
-        fi
-    done < "$pipeline"
-    pass "${pipeline##*/} solo referencia dependencias declaradas en la clausura"
+    local pipeline="$1" output rc=0
+    output="$(python3 "$SCANNER" "$REPO_ROOT/src/published/scripts/generate-published-adapters.sh" "$pipeline")" || rc=$?
+    if [ "$rc" -eq 0 ]; then
+        pass "${pipeline##*/} solo referencia dependencias declaradas en la clausura ($output verificadas)"
+    else
+        fail "${pipeline##*/} referencia assets fuera de TOOLING_CLOSURE_ASSETS: $output"
+    fi
 }
 
 echo '[pre] sintaxis y dependencias de clausura'
