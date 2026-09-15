@@ -82,6 +82,17 @@ for index in "${!agents[@]}"; do
         source_separators="$(body "$source" | grep -cx -- '---')"
         mirror_separators="$(body "$mirror" | grep -cx -- '---')"
         if [ "$source_separators" -ge 4 ] && [ "$source_separators" -eq "$mirror_separators" ]; then pass 'domain-scaffolder conserva las cuatro lineas documentadas y los demas separadores del cuerpo'; else fail 'domain-scaffolder altera los separadores del cuerpo'; fi
+        rm_lines="$(grep -E '^[[:space:]]*rm ' "$source" || true)"
+        if [ "$(printf '%s\n' "$rm_lines" | grep -c '^rm ')" -eq 8 ] && ! printf '%s\n' "$rm_lines" | grep -Eqv '^rm -r?f (src|tests)/[^ "$]+$'; then
+            pass 'domain-scaffolder normaliza las ocho eliminaciones de plantillas a rutas relativas sin comillas'
+        else
+            fail 'domain-scaffolder no conserva la forma canonica de las ocho eliminaciones de plantillas'
+        fi
+        if ! printf '%s\n' "$rm_lines" | grep -Eq '\$REPO_ROOT|"|\$temporal'; then
+            pass 'domain-scaffolder no usa REPO_ROOT, comillas ni temporales al eliminar plantillas'
+        else
+            fail 'domain-scaffolder conserva REPO_ROOT, comillas o temporales al eliminar plantillas'
+        fi
     fi
 done
 
