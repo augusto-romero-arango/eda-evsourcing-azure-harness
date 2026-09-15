@@ -63,8 +63,8 @@ EOF
         # #1364 las neutralice. La excepcion no admite metadata ni referencias
         # OpenCode nuevas: solo contiene la deuda ya inventariada por #1369.
         if { [ "$id" = runtimes ] && printf '%s\n' "$text" | grep -Eiq '\.claude|\.opencode|marketplace|(^|[/[:space:].])cache([/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:'; } \
-            || { { [ "$id" = test-writer ] || [ "$id" = implementer ]; } && printf '%s\n' "$text" | grep -Eiq 'opencode|\.opencode|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:'; } \
-            || { [ "$id" != runtimes ] && [ "$id" != test-writer ] && [ "$id" != implementer ] && printf '%s\n' "$text" | grep -Eiq 'claude|opencode|\.claude|\.opencode|marketplace|(^|[/[:space:].])cache([/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:'; }; then
+            || { { [ "$id" = test-writer ] || [ "$id" = implementer ] || [ "$id" = reviewer ]; } && printf '%s\n' "$text" | grep -Eiq 'opencode|\.opencode|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:'; } \
+            || { [ "$id" != runtimes ] && [ "$id" != test-writer ] && [ "$id" != implementer ] && [ "$id" != reviewer ] && printf '%s\n' "$text" | grep -Eiq 'claude|opencode|\.claude|\.opencode|marketplace|(^|[/[:space:].])cache([/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:'; }; then
             echo "$rel: body: linea $line referencia un runtime, CLI, cache, directorio o metadata propia de runtime"
             status=1
         fi
@@ -73,7 +73,7 @@ EOF
         while IFS= read -r placeholder; do
             [ -z "$placeholder" ] && continue
             if [ "$placeholder" != '$ARGUMENTS' ] \
-                && { [ "$id" != test-writer ] || { [ "$placeholder" != '$PLUGIN_ROOT' ] && [ "$placeholder" != '$HOME' ] && [ "$placeholder" != '$2' ]; }; } \
+                && { { [ "$id" != test-writer ] && [ "$id" != reviewer ]; } || { [ "$placeholder" != '$PLUGIN_ROOT' ] && [ "$placeholder" != '$HOME' ] && [ "$placeholder" != '$2' ]; }; } \
                 && { [ "$id" != runtimes ] || { [ "$placeholder" != '$MEFISTO_LIFECYCLE_LAUNCHER' ] && [ "$placeholder" != '$MEFISTO_LIFECYCLE_CONFIG_ROOT' ]; }; }; then
                 echo "$rel: body: linea $line placeholder no permitido: $placeholder (solo se admite \$ARGUMENTS)"
                 status=1
