@@ -147,6 +147,14 @@ respeta `--runtime` ->
 `MEFISTO_RUNTIME` -> autodeteccion. Esta ultima escanea adaptadores y ejecuta
 sus probes: un runtime nuevo no exige modificar el runner ni el resolutor.
 
+El id `<agent>` es opaco para el runner y obligatorio en su interfaz. Los dos
+adaptadores reales lo entregan al CLI como `--agent <id>` (Claude Code y
+OpenCode), para que cada runtime cargue el frontmatter, la doctrina y los
+permisos del agente seleccionado. El adaptador `fake` lo recibe pero lo ignora,
+pues solo modela escenarios de prueba. En Claude Code, un `--model` explicito
+que el runner entrega gana sobre `model:` del frontmatter; si el runner no
+entrega modelo, el runtime aplica el declarado por el agente.
+
 `lib/mefisto-process.sh` es la fuente unica del watchdog: ejecuta el argv sin
 `eval`, separa stdout/stderr y crea una sesion sin TTY de control. El runner
 decide timeout mediante la senal del watchdog y su reloj de pared conforme a

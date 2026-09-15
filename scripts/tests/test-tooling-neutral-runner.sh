@@ -11,6 +11,25 @@ contains() { grep -Fq -- "$1" "$PIPELINE" && pass "$2" || fail "$2"; }
 absent() { grep -Fq -- "$1" "$PIPELINE" && fail "$2" || pass "$2"; }
 
 echo '[frontera] runner neutral'
+agent_file_has_id() {
+    local path="$1" id="$2"
+    [ -f "$path" ] && sed -n 's/^name: "\([^"]*\)"$/\1/p' "$path" | sed -n '1p' | grep -qxF "$id"
+}
+
+for agent_spec in \
+    "agents/tooling-writer.md tooling-writer" \
+    "agents/tooling-reviewer.md tooling-reviewer" \
+    ".claude/agents/mefisto-writer.md mefisto-writer" \
+    ".claude/agents/mefisto-reviewer.md mefisto-reviewer"; do
+    agent_path=${agent_spec% *}
+    agent_id=${agent_spec##* }
+    if agent_file_has_id "$ROOT/$agent_path" "$agent_id"; then
+        pass "agente resoluble: $agent_path declara name: $agent_id"
+    else
+        fail "agente no resoluble: $agent_path debe existir y declarar name: $agent_id"
+    fi
+done
+
 contains 'mefisto-run-agent.sh' 'localiza el runner desde la clausura publicada'
 contains 'tooling-writer balanced' 'writer usa id y perfil neutral'
 contains 'tooling-reviewer deep' 'reviewer usa id y perfil neutral'
