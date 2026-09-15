@@ -81,13 +81,12 @@ for index in "${!agents[@]}"; do
         if [ "$(grep -c '\${{' "$source")" -eq 35 ] && [ "$(grep -c '\${{' "$mirror")" -eq 35 ]; then pass 'domain-scaffolder conserva las 35 expresiones GitHub Actions'; else fail 'domain-scaffolder altera las expresiones GitHub Actions'; fi
         source_separators="$(body "$source" | grep -cx -- '---')"
         mirror_separators="$(body "$mirror" | grep -cx -- '---')"
-        if [ "$source_separators" -ge 4 ] && [ "$source_separators" -eq "$mirror_separators" ]; then pass 'domain-scaffolder conserva los cuatro separadores documentados del cuerpo'; else fail 'domain-scaffolder altera los separadores del cuerpo'; fi
+        if [ "$source_separators" -ge 4 ] && [ "$source_separators" -eq "$mirror_separators" ]; then pass 'domain-scaffolder conserva las cuatro lineas documentadas y los demas separadores del cuerpo'; else fail 'domain-scaffolder altera los separadores del cuerpo'; fi
     fi
 done
 
 echo '[validador] excepciones transitorias acotadas'
 for agent in "${agents[@]}"; do
-    [ "$agent" = domain-scaffolder ] && continue
     validator_fixture "$agent" 'model: runtime-inyectado'
     if "$VALIDATOR" "$WORK/$agent.md" >/dev/null 2>&1; then fail "$agent no admite metadata de runtime nueva"; else pass "$agent rechaza metadata de runtime nueva"; fi
     validator_fixture "$agent" 'Variable ajena: $TOKEN_AJENO'

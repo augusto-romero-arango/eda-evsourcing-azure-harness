@@ -72,7 +72,14 @@ EOF
         placeholders="$(printf '%s\n' "$text" | grep -Eo '\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@*#?!-]' || true)"
         while IFS= read -r placeholder; do
             [ -z "$placeholder" ] && continue
-            if [ "$id" != domain-scaffolder ] && [ "$placeholder" != '$ARGUMENTS' ] \
+            # domain-scaffolder contiene recetas Bash/YAML literales. La excepcion
+            # enumera su inventario actual: no permite variables nuevas.
+            if [ "$id" = domain-scaffolder ]; then
+                case "$placeholder" in
+                    '$1'|'$2'|'$3'|'$AJENOS'|'$CSPROJ'|'$ESPERA'|'$GITHUB_OUTPUT'|'$INTENTOS'|'$INTRUSOS'|'$JOB_STATUS'|'$PENDIENTES'|'$PR_NUM'|'$REPO'|'$REPO_ROOT'|'$RUN'|'$RUN_ID'|'$SECONDS'|'$SHA'|'$TIMEOUT'|'$archivo'|'$destino'|'$f'|'$i'|'$paquete'|'$presupuesto'|'$proj'|'$temporal'|'$version_esperada'|'${PR_NUM}'|'${TIMEOUT}'|'${archivo}') continue ;;
+                esac
+            fi
+            if [ "$placeholder" != '$ARGUMENTS' ] \
                 && { { [ "$id" != test-writer ] && [ "$id" != projection-test-writer ]; } || { [ "$placeholder" != '$PLUGIN_ROOT' ] && [ "$placeholder" != '$HOME' ] && [ "$placeholder" != '$2' ]; }; } \
                 && { { [ "$id" != reviewer ] && [ "$id" != projection-implementer ]; } || { [ "$placeholder" != '$PLUGIN_ROOT' ] && [ "$placeholder" != '$HOME' ]; }; } \
                 && { [ "$id" != runtimes ] || { [ "$placeholder" != '$MEFISTO_LIFECYCLE_LAUNCHER' ] && [ "$placeholder" != '$MEFISTO_LIFECYCLE_CONFIG_ROOT' ]; }; }; then
