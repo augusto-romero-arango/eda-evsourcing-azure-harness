@@ -33,9 +33,7 @@ NC='\033[0m'
 
 # ─── Logging ─────────────────────────────────────────────────────────────────
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-PIPELINE_DIR=".claude/pipeline"
-LOG_DIR="$PIPELINE_DIR/logs"
-LOG_FILE="$LOG_DIR/batch-$TIMESTAMP.log"
+LOG_DIR=""
 
 _strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
 _log_file()   { echo -e "$1" | _strip_ansi >> "$LOG_FILE_ABS"; }
@@ -207,8 +205,8 @@ cd "$REPO_ROOT"
 # del batch se asumen del repo actual; gh issue view N consulta el repo del cwd.
 
 # ─── Inicializar log ──────────────────────────────────────────────────────────
-mkdir -p "$LOG_DIR"
-LOG_FILE_ABS="$REPO_ROOT/$LOG_FILE"
+LOG_DIR="$(dirname "$(mefisto_state_path 'logs/.state')")"
+LOG_FILE_ABS="$(mefisto_state_path "logs/batch-$TIMESTAMP.log")"
 touch "$LOG_FILE_ABS"
 
 # events.log del checkout (issue #973): el MISMO archivo que tdd-pipeline.sh/
@@ -227,14 +225,27 @@ touch "$LOG_FILE_ABS"
 #     El batch no la duplica: mientras el eslabon corre esta bloqueado en el `tee`.
 #   - AL CERRAR el eslabon: este script anota cuanto se espero, como nota
 #     ANEXA al desenlace real -- nunca como fallo (CA-1).
-EVENTS_LOG_ABS="$REPO_ROOT/$PIPELINE_DIR/events.log"
-mkdir -p "$(dirname "$EVENTS_LOG_ABS")"
+EVENTS_LOG_ABS="$(mefisto_state_path 'events.log')"
+EVENTS_LOG_LEGACY_ABS="$MEFISTO_LEGACY_STATE_DIR/events.log"
 touch "$EVENTS_LOG_ABS"
 
 # Tiempo total en espera (hold) de todo el batch: contador puramente
 # informativo, nunca leido en la logica de HAVE_ERRORS/FAILED/--stop-on-error
 # (CA-1/CA-5).
 BATCH_TOTAL_HOLD_SECONDS=0
+
+# hold_seconds_in_all_events_logs <issue> <canonical_from_line> <legacy_from_line>
+#
+# Las dos raices pueden contener sesiones activas distintas durante la
+# transicion. La legacy es solo lectura y puede aparecer despues de arrancar.
+hold_seconds_in_all_events_logs() {
+    local issue="$1" canonical_from_line="$2" legacy_from_line="$3" total
+    total=$(hold_seconds_in_range "$EVENTS_LOG_ABS" "$canonical_from_line" "$issue")
+    if [ -f "$EVENTS_LOG_LEGACY_ABS" ]; then
+        total=$(( total + $(hold_seconds_in_range "$EVENTS_LOG_LEGACY_ABS" "$legacy_from_line" "$issue") ))
+    fi
+    echo "$total"
+}
 
 # Inicializar status tracker
 for issue in "${ISSUE_NUMS[@]}"; do
@@ -310,7 +321,7 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
     # ── Stage 1: Ejecutar pipeline ────────────────────────────────────────────
     log "Ejecutando $PIPELINE_NAME para issue #$ISSUE_NUM..."
 
-    ISSUE_LOG="$REPO_ROOT/$LOG_DIR/batch-issue-${ISSUE_NUM}-${TIMESTAMP}.log"
+    ISSUE_LOG="$LOG_DIR/batch-issue-${ISSUE_NUM}-${TIMESTAMP}.log"
     touch "$ISSUE_LOG"
 
     # Marca de arranque para el reporte de hold de este eslabon (issue #973):
@@ -320,6 +331,11 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
     # regalaria sus esperas a este eslabon.
     HOLD_LINE_START=$(wc -l < "$EVENTS_LOG_ABS" 2>/dev/null | tr -d ' ')
     [ -z "$HOLD_LINE_START" ] && HOLD_LINE_START=0
+    HOLD_LINE_START_LEGACY=0
+    if [ -f "$EVENTS_LOG_LEGACY_ABS" ]; then
+        HOLD_LINE_START_LEGACY=$(wc -l < "$EVENTS_LOG_LEGACY_ABS" 2>/dev/null | tr -d ' ')
+        [ -z "$HOLD_LINE_START_LEGACY" ] && HOLD_LINE_START_LEGACY=0
+    fi
 
     PIPELINE_EXIT=0
     "$PIPELINE_SCRIPT" "$ISSUE_NUM" 2>&1 | tee "$ISSUE_LOG" || PIPELINE_EXIT=$?
@@ -332,7 +348,7 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
     # un eslabon puede haber esperado horas y fallar igual al agotar el techo
     # de espera, y ese tiempo explica su reloj. Nunca cambia
     # FAILED/HAVE_ERRORS/--stop-on-error ni el exit code (CA-1/CA-5).
-    ISSUE_HOLD_SECONDS=$(hold_seconds_in_range "$EVENTS_LOG_ABS" "$HOLD_LINE_START" "$ISSUE_NUM")
+    ISSUE_HOLD_SECONDS=$(hold_seconds_in_all_events_logs "$ISSUE_NUM" "$HOLD_LINE_START" "$HOLD_LINE_START_LEGACY")
     ISSUE_HELD_NOTE="$(hold_note_suffix "$ISSUE_HOLD_SECONDS")"
     if [ "$ISSUE_HOLD_SECONDS" -gt 0 ]; then
         BATCH_TOTAL_HOLD_SECONDS=$(( BATCH_TOTAL_HOLD_SECONDS + ISSUE_HOLD_SECONDS ))

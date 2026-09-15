@@ -85,7 +85,7 @@ NC='\033[0m'
 
 # PROJECT_ROOT: repo objetivo del consumidor (git toplevel del cwd del usuario).
 PROJECT_ROOT="$_REPO_TOP"
-LOG_DIR_ABS="$PROJECT_ROOT/.claude/pipeline/logs"
+LOG_DIR_ABS="$(dirname "$(mefisto_state_path 'logs/.state')")"
 # CAFF: prefijo "caffeinate -i" (o vacio fuera de macOS), calculado UNA vez
 # por corrida y antepuesto al lanzamiento en background del sub-pipeline
 # dentro de cmd_pane_runner -- issue #800. Evita que el Mac entre en
