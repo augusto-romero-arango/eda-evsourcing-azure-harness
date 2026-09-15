@@ -234,6 +234,19 @@ touch "$EVENTS_LOG_ABS"
 # (CA-1/CA-5).
 BATCH_TOTAL_HOLD_SECONDS=0
 
+# hold_seconds_in_all_events_logs <issue> <canonical_from_line> <legacy_from_line>
+#
+# Las dos raices pueden contener sesiones activas distintas durante la
+# transicion. La legacy es solo lectura y puede aparecer despues de arrancar.
+hold_seconds_in_all_events_logs() {
+    local issue="$1" canonical_from_line="$2" legacy_from_line="$3" total
+    total=$(hold_seconds_in_range "$EVENTS_LOG_ABS" "$canonical_from_line" "$issue")
+    if [ -f "$EVENTS_LOG_LEGACY_ABS" ]; then
+        total=$(( total + $(hold_seconds_in_range "$EVENTS_LOG_LEGACY_ABS" "$legacy_from_line" "$issue") ))
+    fi
+    echo "$total"
+}
+
 # Inicializar status tracker
 for issue in "${ISSUE_NUMS[@]}"; do
     set_status "$issue" "pendiente"
@@ -335,10 +348,7 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
     # un eslabon puede haber esperado horas y fallar igual al agotar el techo
     # de espera, y ese tiempo explica su reloj. Nunca cambia
     # FAILED/HAVE_ERRORS/--stop-on-error ni el exit code (CA-1/CA-5).
-    ISSUE_HOLD_SECONDS=$(hold_seconds_in_range "$EVENTS_LOG_ABS" "$HOLD_LINE_START" "$ISSUE_NUM")
-    if [ -f "$EVENTS_LOG_LEGACY_ABS" ]; then
-        ISSUE_HOLD_SECONDS=$(( ISSUE_HOLD_SECONDS + $(hold_seconds_in_range "$EVENTS_LOG_LEGACY_ABS" "$HOLD_LINE_START_LEGACY" "$ISSUE_NUM") ))
-    fi
+    ISSUE_HOLD_SECONDS=$(hold_seconds_in_all_events_logs "$ISSUE_NUM" "$HOLD_LINE_START" "$HOLD_LINE_START_LEGACY")
     ISSUE_HELD_NOTE="$(hold_note_suffix "$ISSUE_HOLD_SECONDS")"
     if [ "$ISSUE_HOLD_SECONDS" -gt 0 ]; then
         BATCH_TOTAL_HOLD_SECONDS=$(( BATCH_TOTAL_HOLD_SECONDS + ISSUE_HOLD_SECONDS ))

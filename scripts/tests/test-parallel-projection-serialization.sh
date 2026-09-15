@@ -52,6 +52,13 @@ if grep -q 'MEFISTO_LEGACY_STATE_DIR/events.log' "$PARALLEL_SCRIPT" \
 else
     fail "parallel no evalua el hold legacy"
 fi
+if grep -q 'PIPELINE_DIR=".claude/pipeline"' "$REPO_ROOT/scripts/batch-pipeline.sh" \
+    || grep -q 'PIPELINE_DIR=".claude/pipeline"' "$PARALLEL_SCRIPT" \
+    || grep -q '\.claude/pipeline/logs' "$REPO_ROOT/scripts/herdr-pipeline.sh"; then
+    fail "un orquestador conserva una ruta legacy de escritura"
+else
+    pass "batch, parallel y herdr no conservan rutas legacy de escritura"
+fi
 
 STATUS_TMP=$(mktemp -d)
 trap 'rm -rf "$STATUS_TMP"' EXIT

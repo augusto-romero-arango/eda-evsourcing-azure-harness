@@ -315,10 +315,28 @@ else
     fail "no se pudo extraer hold_active_in_any_events_log()"
 fi
 
-if grep -q 'hold_seconds_in_range "\$EVENTS_LOG_LEGACY_ABS" "\$HOLD_LINE_START_LEGACY"' "$BATCH_SCRIPT"; then
-    pass "batch suma el hold escrito en el events.log legacy"
+echo ""
+echo "[13c] Estado dual: batch contabiliza un hold escrito solo en la raiz legacy"
+BATCH_HOLD_SRC=$(awk '/^hold_seconds_in_all_events_logs\(\) \{/{p=1} p{print} p && /^}/{exit}' "$BATCH_SCRIPT")
+if [ -n "$BATCH_HOLD_SRC" ]; then
+    BATCH_CANONICAL_EVENTS="$TMP/batch-canonical-events.log"
+    BATCH_LEGACY_EVENTS="$TMP/batch-legacy-events.log"
+    : > "$BATCH_CANONICAL_EVENTS"
+    cat > "$BATCH_LEGACY_EVENTS" <<EOF
+=== SESSION TDD 20260101-000000 issue:42 from-stage:1 ===
+[10:00:00][hold] RATE_LIMIT: esperando, proxima sonda 10:02:00 (techo 23:59)
+EOF
+    EVENTS_LOG_ABS="$BATCH_CANONICAL_EVENTS"
+    EVENTS_LOG_LEGACY_ABS="$BATCH_LEGACY_EVENTS"
+    eval "$BATCH_HOLD_SRC"
+    BATCH_HOLD_SECONDS=$(hold_seconds_in_all_events_logs 42 0 0)
+    if [ "$BATCH_HOLD_SECONDS" = "120" ]; then
+        pass "batch contabiliza el hold que existe solo en legacy"
+    else
+        fail "batch contabilizo '$BATCH_HOLD_SECONDS' segundos para el hold legacy (esperaba 120)"
+    fi
 else
-    fail "batch no suma el hold legacy"
+    fail "no se pudo extraer hold_seconds_in_all_events_logs()"
 fi
 # El chequeo debe vivir DENTRO del while del scheduler, antes del bucle que
 # recorre PENDING_IDXS y lanza -- si no, gatearia el lanzamiento de nada.
@@ -352,7 +370,7 @@ fi
 
 echo ""
 echo "[15] CA-1/CA-5: batch-pipeline.sh anota la espera sin tocar FAILED/HAVE_ERRORS/STOP_ON_ERROR ni el exit code"
-HELD_BLOCK=$(awk '/ISSUE_HOLD_SECONDS=\$\(hold_seconds_in_range/{p=1} p{print} p && /^    fi$/{exit}' "$BATCH_SCRIPT")
+HELD_BLOCK=$(awk '/ISSUE_HOLD_SECONDS=\$\(hold_seconds_in_all_events_logs/{p=1} p{print} p && /^    fi$/{exit}' "$BATCH_SCRIPT")
 if [ -n "$HELD_BLOCK" ]; then
     pass "se extrajo el bloque de contabilidad de hold de batch-pipeline.sh"
 else

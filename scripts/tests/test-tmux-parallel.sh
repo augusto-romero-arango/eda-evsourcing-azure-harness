@@ -68,7 +68,8 @@ assert_eq() {
 echo "[pre] El visor tmux sigue ambas raices de estado sin escribir en la legacy"
 TMUX_SOURCE=$(cat "$TMUX_SCRIPT")
 assert_contains "usa tail -F para seguir archivos rotados" "$TMUX_SOURCE" "tail -F"
-assert_contains "el tail incluye la ruta legacy declarada" "$TMUX_SOURCE" "'\$EVENTS_LOG_LEGACY'"
+assert_contains "el tail sigue canonica y legacy, en ese orden" "$TMUX_SOURCE" "tail -F '\$EVENTS_LOG' '\$EVENTS_LOG_LEGACY'"
+assert_contains "ensure_events_log crea solo la ruta canonica" "$TMUX_SOURCE" "touch \"\$(mefisto_state_path 'events.log')\""
 assert_not_contains "no codifica .claude/pipeline en el visor" "$TMUX_SOURCE" ".claude/pipeline"
 
 # --- Consumidor falso + stubs de tmux, gh y sleep ---
