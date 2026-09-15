@@ -214,9 +214,9 @@ for f in tdd-pipeline.sh tooling-pipeline.sh iac-pipeline.sh scaffold-pipeline.s
     classifier="classify_agent_failure"
     [ "$f" = tooling-pipeline.sh ] || [ "$f" = tdd-pipeline.sh ] && classifier="classify_neutral_agent_failure"
     if grep -q "$classifier" "$path"; then
-        pass "$f invoca classify_agent_failure"
+        pass "$f invoca $classifier"
     else
-        fail "$f no invoca classify_agent_failure"
+        fail "$f no invoca $classifier"
     fi
     if grep -q "agent_failure_is_holdable" "$path" && grep -q "agent_hold_wait" "$path"; then
         pass "$f consume la politica de espera compartida"

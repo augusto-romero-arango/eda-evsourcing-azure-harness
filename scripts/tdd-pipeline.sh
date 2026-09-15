@@ -18,8 +18,9 @@ set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/_pipeline-common.sh"
 
-# La clausura publicada conserva el runner neutral junto al pipeline. El
-# pipeline solo conoce esta frontera; los adaptadores conocen cada runtime.
+# El layout fuente conserva el runner neutral junto al pipeline. El empaquetado
+# de esta clausura publicada se completa en #1365; esta frontera no conoce los
+# detalles de ningun runtime.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 RUNTIME_DIR="$(cd "$SCRIPT_DIR/../src/runtime" 2>/dev/null && pwd -P)" \
     || { echo "ERROR: no se encontro src/runtime junto al paquete publicado" >&2; exit 1; }
@@ -673,6 +674,10 @@ run_agent() {
     printf '%s\n' 'You are running in non-interactive print mode. There is no human to approve anything. Use editing tools directly; never ask for permission. Do not push or create pull requests.' > "$system_file"
     entry_commit="$(git -C "$WORKTREE_PATH" rev-parse HEAD)"
     summary_file="$WORKTREE_PATH/.claude/pipeline/summaries/stage-${stage}-${agent}.md"
+    # En --from-stage puede quedar el resumen de una corrida anterior. No puede
+    # contar como evidencia de que una sonda reanudada de ESTA invocacion llego
+    # al final de su contrato.
+    rm -f "$summary_file"
     echo "[$(date +%H:%M:%S)] === STAGE $stage: $agent ===" >> "$EVENTS_LOG_ABS"
     case "$agent" in test-writer|projection-test-writer) AGENT_TW_RES="running" ;; implementer|projection-implementer) AGENT_IM_RES="running" ;; reviewer) AGENT_RV_RES="running" ;; esac
     local AGENT_MODEL_OVERRIDE AGENT_MODEL_VISIBLE AGENT_MODEL_ORIGIN
@@ -687,7 +692,11 @@ run_agent() {
         attempt=$((attempt + 1))
         events_file="${log_base}-attempt-${attempt}.events.jsonl"
         local attempt_prompt="$prompt_file" attempt_resume=false
-        if [ -n "$resume_session" ]; then attempt_resume=true; attempt_prompt="$PIPELINE_TMP_DIR/${stage}-${agent}-resume-${attempt}.prompt.md"; printf '%s\n' 'Continue the same stage and complete its summary.' > "$attempt_prompt"; fi
+        if [ -n "$resume_session" ]; then
+            attempt_resume=true
+            attempt_prompt="$PIPELINE_TMP_DIR/${stage}-${agent}-resume-${attempt}.prompt.md"
+            printf '%s\n' 'Continue the same stage and complete its summary.' > "$attempt_prompt"
+        fi
         local args=(--runtime "$MEFISTO_RUNTIME_RESUELTO" --agent "$agent" --cwd "$WORKTREE_PATH" --prompt-file "$attempt_prompt" --system-file "$system_file" --event-log "$events_file" --events-log "$EVENTS_LOG_ABS" --redact-observability --timeout "$MEFISTO_AGENT_TIMEOUT_SECONDS")
         [ -n "$AGENT_MODEL_OVERRIDE" ] && args+=(--model "$AGENT_MODEL_OVERRIDE")
         [ -n "$resume_session" ] && args+=(--resume-session "$resume_session")
@@ -698,9 +707,16 @@ run_agent() {
         metrics_json="$(compute_stage_metrics "$events_file")"
         echo "$metrics_json" > "$PIPELINE_DIR_ABS/metrics/tdd-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-${stage}-${agent}.json" 2>/dev/null || true
         local denials attempt_has_work=false
-        denials="$(agent_events_denials "$events_file")"; case "$denials" in ''|*[!0-9]*) denials=0 ;; esac
+        denials="$(agent_events_denials "$events_file")"
+        case "$denials" in ''|*[!0-9]*) denials=0 ;; esac
         if ! git -C "$WORKTREE_PATH" diff --quiet "$entry_commit"..HEAD 2>/dev/null || [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ 2>/dev/null)" ]; then attempt_has_work=true; fi
-        if [ "$denials" -gt 0 ] && [ "$attempt_has_work" = false ] && [ "$denial_retry_used" = false ]; then denial_retry_used=true; resume_session=""; warn "$agent: $denials denegacion(es) neutrales sin trabajo; reintentando una vez desde cero"; continue; fi
+        if [ "$denials" -gt 0 ] && [ "$attempt_has_work" = false ] && [ "$denial_retry_used" = false ]; then
+            denial_retry_used=true
+            resume_session=""
+            warn "$agent: $denials denegacion(es) neutrales sin trabajo; reintentando una vez desde cero"
+            echo "[$(date +%H:%M:%S)] RETRY $agent: denials=$denials" >> "$EVENTS_LOG_ABS"
+            continue
+        fi
         if [ "$run_exit" -eq 0 ] && agent_events_completed_successfully "$events_file"; then failure_type=""; break; fi
         failure_type="$(classify_neutral_agent_failure "$run_exit" "$events_file")"
         log "$agent falló después de ${elapsed}s — tipo: $failure_type"
@@ -710,8 +726,19 @@ run_agent() {
         local slept
         if ! slept=$(agent_hold_wait "$EVENTS_LOG_ABS" "$failure_type" "$hold_started" "$(agent_events_resets_at "$events_file")"); then break; fi
         hold_total=$((hold_total + slept))
-        if [ "$attempt_resume" = true ] && [ ! -s "$summary_file" ]; then warn "$agent: la sesion reanudada termino sin resumen; se degrada permanentemente a inicio limpio"; resume_degraded=true; resume_session=""
-        elif [ "$resume_degraded" = false ] && runtime_supports_resume "$MEFISTO_RUNTIME_RESUELTO"; then resume_session="$(agent_events_session_id "$events_file")"; fi
+        if [ "$attempt_resume" = true ] && [ ! -s "$summary_file" ]; then
+            warn "$agent: la sesion reanudada termino sin resumen; se degrada permanentemente a inicio limpio"
+            resume_degraded=true
+            resume_session=""
+        elif [ "$resume_degraded" = false ]; then
+            resume_session="$(agent_events_session_id "$events_file")"
+            if [ -z "$resume_session" ]; then
+                warn "$agent: terminal sin session_id; la sonda inicia de cero"
+            elif ! runtime_supports_resume "$MEFISTO_RUNTIME_RESUELTO"; then
+                warn "$agent: runtime sin capacidad de reanudacion; la sonda inicia de cero"
+                resume_session=""
+            fi
+        fi
     done
     if [ -n "$failure_type" ]; then
         local recoverable_work=false
@@ -719,7 +746,10 @@ run_agent() {
             if ! git -C "$WORKTREE_PATH" diff --quiet "$entry_commit"..HEAD 2>/dev/null || [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ 2>/dev/null)" ]; then
                 case "$stage" in 1) dotnet build "$WORKTREE_PATH" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 && recoverable_work=true ;; 2|3|merge) local test_rc=0; run_tests_projects "$WORKTREE_PATH" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 || test_rc=$?; [ "$test_rc" -eq 0 ] && recoverable_work=true ;; esac
             fi ;; esac
-        if [ "$recoverable_work" = true ]; then warn "$agent: runner retorno $failure_type pero hay trabajo util completado — continuando"; failure_type=""
+        if [ "$recoverable_work" = true ]; then
+            warn "$agent: runner retorno $failure_type pero hay trabajo util completado — continuando"
+            echo "[$(date +%H:%M:%S)] RECUPERADO $agent: trabajo util detectado post-$failure_type, continuando" >> "$EVENTS_LOG_ABS"
+            failure_type=""
         else
             case "$agent" in test-writer|projection-test-writer) AGENT_TW_DUR=$elapsed; AGENT_TW_RES="failed" ;; implementer|projection-implementer) AGENT_IM_DUR=$elapsed; AGENT_IM_RES="failed" ;; smoke-test-writer) AGENT_ST_DUR=$elapsed; AGENT_ST_RES="failed" ;; reviewer) AGENT_RV_DUR=$elapsed; AGENT_RV_RES="failed" ;; esac
             case "$stage" in 1) AGENT_TW_METRICS_JSON="$metrics_json" ;; 2) AGENT_IM_METRICS_JSON="$metrics_json" ;; 2b) AGENT_ST_METRICS_JSON="$metrics_json" ;; 3) AGENT_RV_METRICS_JSON="$metrics_json" ;; esac

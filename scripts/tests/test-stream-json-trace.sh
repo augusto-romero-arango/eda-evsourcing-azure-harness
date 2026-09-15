@@ -331,6 +331,15 @@ for p in iac-pipeline.sh; do
         fail "H: $p perdio la captura stream-json o la derivacion del .log"
     fi
 done
+# Hasta #1361, Stage 0 y las remediaciones de cobertura de TDD conservan la
+# captura legacy. Esta asercion evita retirarla accidentalmente al neutralizar
+# exclusivamente run_agent.
+if grep -q -- '--output-format stream-json --verbose' "$REPO_ROOT/scripts/tdd-pipeline.sh" \
+    && grep -q 'PIPELINE_CAPTURE_STREAM=true' "$REPO_ROOT/scripts/tdd-pipeline.sh"; then
+    pass "H: tdd-pipeline.sh conserva captura legacy fuera de run_agent hasta #1361"
+else
+    fail "H: tdd-pipeline.sh perdio la captura legacy de Stage 0/remediacion"
+fi
 for p in tdd-pipeline.sh tooling-pipeline.sh; do
     if grep -q 'mefisto-run-agent.sh' "$REPO_ROOT/scripts/$p" \
         && grep -q 'derive_stage_log_from_stream "$events_file"' "$REPO_ROOT/scripts/$p"; then
