@@ -138,6 +138,8 @@ agent_hold_wait(){ printf 0; }
 runtime_supports_resume(){ return 0; }
 resolve_stage_model(){ [ "${WITH_MODEL:-false}" = true ] && printf 'vendor/model'; return 0; }
 resolve_declared_agent_model(){ :; }
+_tdd_agent_profile(){ printf 'balanced'; }
+resolve_tdd_model(){ RESOLVED_TDD_MODEL=""; [ "${WITH_MODEL:-false}" = true ] && RESOLVED_TDD_MODEL='vendor/model'; }
 run_tests_projects(){ printf called > "$TMP/gate-called"; return 0; }
 dotnet(){ printf called > "$TMP/gate-called"; return 0; }
 AGENT_TW_RES=pending; AGENT_IM_RES=pending; AGENT_ST_RES=pending; AGENT_RV_RES=pending
@@ -271,7 +273,8 @@ header(){ :; }
 update_status(){ :; }
 log(){ :; }
 success(){ :; }
-resolve_declared_agent_model(){ printf 'vendor/frontmatter'; }
+_tdd_agent_profile(){ printf 'balanced'; }
+resolve_tdd_model(){ RESOLVED_TDD_MODEL=""; }
 derive_stage_log_from_stream(){ : > "$3"; }
 compute_stage_metrics(){ printf '{"tokens":{"input":1}}'; }
 agent_events_completed_successfully(){ jq -e -s '[.[] | select(.type == "run.completed")] | last | .status == "success"' "$1" >/dev/null 2>&1; }

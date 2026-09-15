@@ -392,6 +392,65 @@ if ! runtime_cli_available "$MEFISTO_RUNTIME_RESUELTO"; then
     abort "Falta el CLI del runtime resuelto ('$MEFISTO_RUNTIME_RESUELTO')"
 fi
 
+# --- Modelos neutrales por perfil (issue #1362, MEF-ADR-0049 decision 4) -----
+# El override publico (--models) gana por clave exacta; sin override el
+# mapping opcional del consumidor y el adaptador del runtime activo deciden, o
+# se hereda -- misma precedencia que tooling-pipeline.sh (resolve_tooling_model,
+# l.370-390), generalizada a la tabla de 7 agentes de este pipeline. Se calcula
+# antes del worktree (CA-1): un mapping malformado o un runtime sin adaptador
+# debe abortar temprano, no a mitad de un stage con un worktree ya en disco.
+CONSUMER_MODELS_FILE="$(git rev-parse --show-toplevel)/.mefisto/models.json"
+
+# _tdd_agent_profile <agent_id>
+#
+# Tabla agente -> perfil de los stages TDD (CA-1): unico punto que decide el
+# perfil neutral de cada agente del pipeline. Imprime el perfil por stdout y
+# retorna 0; un agente fuera de la tabla retorna 1 sin imprimir nada -- el
+# caller debe abortar, nunca heredar en silencio.
+_tdd_agent_profile() {
+    case "$1" in
+        test-writer|projection-test-writer|implementer|projection-implementer|smoke-test-writer|domain-scaffolder)
+            printf 'balanced' ;;
+        reviewer)
+            printf 'deep' ;;
+        *)
+            return 1 ;;
+    esac
+}
+
+# resolve_tdd_model <clave> <agent_id> <perfil>
+#
+# Plantilla: resolve_tooling_model (scripts/tooling-pipeline.sh l.370-390).
+# El override de <clave> gana (o, si no hay, el de <agent_id> -- la cadena
+# fina que usan los sub-stages de remediacion, patch-test-writer/patch-
+# implementer -> $STAGE1_AGENT/$STAGE2_AGENT, CA-2: sin esa caida un
+# experimento '--models test-writer=X' correria el Stage 1 con X y la
+# remediacion con el default, dos modelos para el mismo rol en una corrida).
+# Sin override, mefisto_resolve_model decide con el mapping opcional del
+# consumidor y el adaptador del runtime activo. Dos efectos de lado antes de
+# retornar (CA-3): fija RESOLVED_TDD_MODEL (vacio = heredar, solo cuando ni el
+# mapping ni el adaptador fijan modelo para ese perfil) y escribe la evidencia
+# en events.log. Aborta si la resolucion del adaptador falla -- nunca deja
+# pasar un modelo indefinido en silencio (CA-1).
+RESOLVED_TDD_MODEL=""
+resolve_tdd_model() {
+    local key="$1" agent_id="$2" profile="$3" explicit=""
+    explicit="$(resolve_stage_model "$key" "$(resolve_stage_model "$agent_id" "")")"
+    if [ -n "$explicit" ]; then
+        RESOLVED_TDD_MODEL="$explicit"
+        echo "[$(date +%H:%M:%S)] MODELS: $key runtime=$MEFISTO_RUNTIME_RESUELTO perfil=$profile solicitado='$explicit' resuelto='$RESOLVED_TDD_MODEL' (override --models)" >> "$EVENTS_LOG_ABS"
+        return 0
+    fi
+    local output
+    output="$(mktemp)"
+    if ! mefisto_resolve_model "$MEFISTO_RUNTIME_RESUELTO" "$agent_id" "$profile" "" "$CONSUMER_MODELS_FILE" > "$output"; then
+        rm -f "$output"
+        abort "No se pudo resolver el modelo de $agent_id (perfil $profile): ${MEFISTO_MODELS_ERROR:-motivo desconocido}"
+    fi
+    RESOLVED_TDD_MODEL="$(cat "$output")"; rm -f "$output"
+    echo "[$(date +%H:%M:%S)] MODELS: $key runtime=$MEFISTO_RUNTIME_RESUELTO perfil=$profile solicitado=<automatico> resuelto='${RESOLVED_TDD_MODEL:-<heredado>}'" >> "$EVENTS_LOG_ABS"
+}
+
 # --- Anunciar el modo variante (issue #713) -------------------------------
 # El label ya se valido y ya derivo los nombres de archivo arriba, junto al
 # parseo de argumentos; aqui solo se anuncia, que es lo primero que se puede
@@ -558,12 +617,10 @@ else
 
 PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
         printf '%s' "$SCAFFOLD_PROMPT" > "$SCAFFOLD_PROMPT_FILE"
-        SCAFFOLD_MODEL_VISIBLE="$(resolve_declared_agent_model "domain-scaffolder")"
-        if [ -n "$SCAFFOLD_MODEL_VISIBLE" ]; then SCAFFOLD_MODEL_ORIGIN="frontmatter"; else SCAFFOLD_MODEL_VISIBLE="<heredado>"; SCAFFOLD_MODEL_ORIGIN="heredado"; fi
-        log "Invocando domain-scaffolder (modelo: $SCAFFOLD_MODEL_VISIBLE)..."
-        echo "[$(date +%H:%M:%S)] MODELS: stage 0/domain-scaffolder -> $SCAFFOLD_MODEL_VISIBLE ($SCAFFOLD_MODEL_ORIGIN)" >> "$EVENTS_LOG_ABS"
+        resolve_tdd_model "domain-scaffolder" "domain-scaffolder" "$(_tdd_agent_profile "domain-scaffolder")"
+        log "Invocando domain-scaffolder (modelo: ${RESOLVED_TDD_MODEL:-<heredado>})..."
         SCAFFOLD_EXIT=0
-        invoke_agent_once "domain-scaffolder" "$SCAFFOLD_PROMPT_FILE" "$EVENTS_SCAFFOLD" "$LOG_SCAFFOLD" || SCAFFOLD_EXIT=$?
+        invoke_agent_once "domain-scaffolder" "$SCAFFOLD_PROMPT_FILE" "$EVENTS_SCAFFOLD" "$LOG_SCAFFOLD" "$RESOLVED_TDD_MODEL" || SCAFFOLD_EXIT=$?
         SCAFFOLD_ELAPSED=$LAST_AGENT_DURATION
         AGENT_SCAFFOLD_DUR=$SCAFFOLD_ELAPSED
         AGENT_SCAFFOLD_METRICS_JSON=$LAST_AGENT_METRICS_JSON
@@ -654,13 +711,12 @@ run_agent() {
     rm -f "$summary_file"
     echo "[$(date +%H:%M:%S)] === STAGE $stage: $agent ===" >> "$EVENTS_LOG_ABS"
     case "$agent" in test-writer|projection-test-writer) AGENT_TW_RES="running" ;; implementer|projection-implementer) AGENT_IM_RES="running" ;; reviewer) AGENT_RV_RES="running" ;; esac
-    local AGENT_MODEL_OVERRIDE AGENT_MODEL_VISIBLE AGENT_MODEL_ORIGIN
-    AGENT_MODEL_OVERRIDE="$(resolve_stage_model "$agent" "")"
-    if [ -n "$AGENT_MODEL_OVERRIDE" ]; then AGENT_MODEL_VISIBLE="$AGENT_MODEL_OVERRIDE"; AGENT_MODEL_ORIGIN="override --models"
-    else AGENT_MODEL_VISIBLE="$(resolve_declared_agent_model "$agent")"; if [ -n "$AGENT_MODEL_VISIBLE" ]; then AGENT_MODEL_ORIGIN="frontmatter"; else AGENT_MODEL_VISIBLE="<heredado>"; AGENT_MODEL_ORIGIN="heredado"; fi; fi
+    local AGENT_MODEL_OVERRIDE agent_profile
+    agent_profile="$(_tdd_agent_profile "$agent")" || abort "Agente '$agent' fuera de la tabla de perfiles TDD (CA-1, issue #1362)"
+    resolve_tdd_model "$agent" "$agent" "$agent_profile"
+    AGENT_MODEL_OVERRIDE="$RESOLVED_TDD_MODEL"
     update_status "$stage-$agent" "running"
-    log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."
-    echo "[$(date +%H:%M:%S)] MODELS: stage $stage/$agent -> $AGENT_MODEL_VISIBLE ($AGENT_MODEL_ORIGIN)" >> "$EVENTS_LOG_ABS"
+    log "Invocando $agent (modelo: ${AGENT_MODEL_OVERRIDE:-<heredado>})..."
     start_ts=$(date +%s)
     while :; do
         attempt=$((attempt + 1))
@@ -1601,33 +1657,17 @@ IMPORTANTE:
 - Haz commit con mensaje: test(hu-${ISSUE_NUM:-?}): tests de cobertura para brechas detectadas
 - PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
-        # Modelo por stage (issue #712). Este relanzamiento no pasa por run_agent,
-        # pero SI invoca al mismo agente del Stage 1, asi que resuelve por cadena:
-        # primero la clave fina "patch-test-writer" (el stage key que ya usan
-        # build_agents_history_json y las metricas de este bloque), y si no esta
-        # en el mapa cae a la clave del agente realmente invocado ($STAGE1_AGENT).
-        # Sin esa caida, un experimento '--models test-writer=X' correria el Stage 1
-        # con X y la remediacion con el frontmatter: dos modelos para el mismo rol
-        # dentro de la misma corrida, que es justo lo que el A/B quiere medir.
-        PATCH_TW_FINE_MODEL_OVERRIDE="$(resolve_stage_model "patch-test-writer" "")"
-        PATCH_TW_AGENT_MODEL_OVERRIDE="$(resolve_stage_model "$STAGE1_AGENT" "")"
-        PATCH_TW_MODEL_OVERRIDE="$PATCH_TW_FINE_MODEL_OVERRIDE"
-        [ -z "$PATCH_TW_MODEL_OVERRIDE" ] && PATCH_TW_MODEL_OVERRIDE="$PATCH_TW_AGENT_MODEL_OVERRIDE"
-        if [ -n "$PATCH_TW_MODEL_OVERRIDE" ]; then
-            PATCH_TW_MODEL_VISIBLE="$PATCH_TW_MODEL_OVERRIDE"
-            PATCH_TW_MODEL_ORIGIN="override --models"
-        else
-            PATCH_TW_MODEL_VISIBLE="$(resolve_declared_agent_model "$STAGE1_AGENT")"
-            if [ -n "$PATCH_TW_MODEL_VISIBLE" ]; then
-                PATCH_TW_MODEL_ORIGIN="frontmatter"
-            else
-                PATCH_TW_MODEL_VISIBLE="<heredado>"
-                PATCH_TW_MODEL_ORIGIN="heredado"
-            fi
-        fi
+        # Modelo por stage (issue #1362). Este relanzamiento no pasa por
+        # run_agent, pero SI invoca al mismo agente del Stage 1: resolve_tdd_model
+        # encadena la clave fina "patch-test-writer" (el stage key que ya usan
+        # build_agents_history_json y las metricas de este bloque) con el
+        # fallback "$STAGE1_AGENT" -- sin esa caida, un experimento
+        # '--models test-writer=X' correria el Stage 1 con X y la remediacion
+        # con el default, dos modelos para el mismo rol en la misma corrida.
+        resolve_tdd_model "patch-test-writer" "$STAGE1_AGENT" "balanced"
+        PATCH_TW_MODEL_OVERRIDE="$RESOLVED_TDD_MODEL"
 
-        log "Invocando $STAGE1_AGENT (modelo: $PATCH_TW_MODEL_VISIBLE)..."
-        echo "[$(date +%H:%M:%S)] MODELS: stage 4b/patch-test-writer -> $PATCH_TW_MODEL_VISIBLE ($PATCH_TW_MODEL_ORIGIN)" >> "$EVENTS_LOG_ABS"
+        log "Invocando $STAGE1_AGENT (modelo: ${PATCH_TW_MODEL_OVERRIDE:-<heredado>})..."
         log "Relanzando $STAGE1_AGENT para remediacion..."
         LOG_CG_TW="$LOG_DIR_ABS/stage-4-${STAGE1_AGENT}-patch-${TIMESTAMP}.log"
         EVENTS_CG_TW="${LOG_CG_TW%.log}.events.jsonl"
@@ -1674,28 +1714,13 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
                 printf '%s' "$PATCH_IM_PROMPT" > "$PATCH_IM_PROMPT_FILE"
                 echo "[$(date +%H:%M:%S)] REMEDIATION: relanzando $STAGE2_AGENT" >> "$EVENTS_LOG_ABS"
 
-                # Modelo por stage (issue #712): misma cadena que "patch-test-writer"
-                # arriba -- clave fina "patch-implementer", y si no esta en el mapa,
-                # la del agente realmente invocado ($STAGE2_AGENT).
-                PATCH_IM_FINE_MODEL_OVERRIDE="$(resolve_stage_model "patch-implementer" "")"
-                PATCH_IM_AGENT_MODEL_OVERRIDE="$(resolve_stage_model "$STAGE2_AGENT" "")"
-                PATCH_IM_MODEL_OVERRIDE="$PATCH_IM_FINE_MODEL_OVERRIDE"
-                [ -z "$PATCH_IM_MODEL_OVERRIDE" ] && PATCH_IM_MODEL_OVERRIDE="$PATCH_IM_AGENT_MODEL_OVERRIDE"
-                if [ -n "$PATCH_IM_MODEL_OVERRIDE" ]; then
-                    PATCH_IM_MODEL_VISIBLE="$PATCH_IM_MODEL_OVERRIDE"
-                    PATCH_IM_MODEL_ORIGIN="override --models"
-                else
-                    PATCH_IM_MODEL_VISIBLE="$(resolve_declared_agent_model "$STAGE2_AGENT")"
-                    if [ -n "$PATCH_IM_MODEL_VISIBLE" ]; then
-                        PATCH_IM_MODEL_ORIGIN="frontmatter"
-                    else
-                        PATCH_IM_MODEL_VISIBLE="<heredado>"
-                        PATCH_IM_MODEL_ORIGIN="heredado"
-                    fi
-                fi
+                # Modelo por stage (issue #1362): misma cadena que
+                # "patch-test-writer" arriba -- clave fina "patch-implementer"
+                # con fallback "$STAGE2_AGENT".
+                resolve_tdd_model "patch-implementer" "$STAGE2_AGENT" "balanced"
+                PATCH_IM_MODEL_OVERRIDE="$RESOLVED_TDD_MODEL"
 
-                log "Invocando $STAGE2_AGENT (modelo: $PATCH_IM_MODEL_VISIBLE)..."
-                echo "[$(date +%H:%M:%S)] MODELS: stage 4c/patch-implementer -> $PATCH_IM_MODEL_VISIBLE ($PATCH_IM_MODEL_ORIGIN)" >> "$EVENTS_LOG_ABS"
+                log "Invocando $STAGE2_AGENT (modelo: ${PATCH_IM_MODEL_OVERRIDE:-<heredado>})..."
                 CG_IM_EXIT=0
                 invoke_agent_once "$STAGE2_AGENT" "$PATCH_IM_PROMPT_FILE" "$EVENTS_CG_IM" "$LOG_CG_IM" "$PATCH_IM_MODEL_OVERRIDE" || CG_IM_EXIT=$?
                 AGENT_PATCH_IM_DUR=$LAST_AGENT_DURATION
