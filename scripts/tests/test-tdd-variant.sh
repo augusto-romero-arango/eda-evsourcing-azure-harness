@@ -120,8 +120,8 @@ echo "[3b] tdd-pipeline.sh: el reporte de bloqueo se preserva fuera del worktree
 # -- que el cleanup elimina con --force al cierre. Si el aviso apunta al path
 # del worktree en vez de a una copia en el repo principal, senala un archivo ya
 # borrado en el momento en que el usuario lo lee.
-if grep -qF 'VARIANT_BLOCKAGE_COPY="$PIPELINE_DIR_ABS/blockage-report-tdd-${ISSUE_LOG_TAG}.md"' "$PIPE"; then
-    pass "el reporte se copia al .claude/pipeline del repo principal, con el sufijo de variante"
+if grep -qF 'VARIANT_BLOCKAGE_COPY="$(mefisto_state_path "blockage-report-tdd-${ISSUE_LOG_TAG}.md")"' "$PIPE"; then
+    pass "el reporte se copia al estado canonico del repo principal, con el sufijo de variante"
 else
     fail "el reporte de bloqueo no se preserva fuera del worktree: el cleanup lo borra antes de que se pueda leer"
 fi

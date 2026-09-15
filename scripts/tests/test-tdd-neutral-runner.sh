@@ -73,7 +73,7 @@ echo '[regresion] contrato ejecutable de run_agent'
 TMP="$(mktemp -d -t mefisto-tdd-neutral)"
 trap 'rm -rf "$TMP"' EXIT
 WT="$TMP/worktree"
-mkdir -p "$WT/tests" "$WT/src" "$WT/.claude/pipeline/summaries"
+mkdir -p "$WT/tests" "$WT/src" "$WT/.mefisto/pipeline/summaries" "$WT/.claude/pipeline/summaries"
 git -C "$WT" init -q
 git -C "$WT" config user.email test@example.invalid
 git -C "$WT" config user.name Test
@@ -123,6 +123,11 @@ while [ "$#" -gt 0 ]; do
 done
 case "$SCENARIO:$count" in
     success:1|denials:2)
+        printf '%s\n' '{"type":"run.completed","status":"success","session_id":null,"denials":0,"error":null}' > "$event"
+        exit 0 ;;
+    legacy-summary:1)
+        mkdir -p "$cwd/.claude/pipeline/summaries"
+        printf 'summary legacy\n' > "$cwd/.claude/pipeline/summaries/stage-1-test-writer.md"
         printf '%s\n' '{"type":"run.completed","status":"success","session_id":null,"denials":0,"error":null}' > "$event"
         exit 0 ;;
     hold:1)
@@ -189,6 +194,9 @@ EVENTS_LOG_ABS="$TMP/events"
 PIPELINE_DIR_ABS="$TMP/state"
 LOG_FILE="$TMP/pipeline.log"
 mkdir -p "$LOG_DIR_ABS" "$PIPELINE_TMP_DIR" "$PIPELINE_DIR_ABS/metrics"
+PIPELINE_OWN_WRITES=(':!.mefisto/pipeline')
+mefisto_state_path(){ local rel="$1" root="${2:-}"; local base; if [ -n "$root" ]; then base="$root/.mefisto/pipeline"; else base="$PIPELINE_DIR_ABS"; fi; mkdir -p "$(dirname "$base/$rel")"; printf '%s\n' "$base/$rel"; }
+mefisto_state_read_first(){ local rel="$1" root="$2"; local canonical="$root/.mefisto/pipeline/$rel" legacy="$root/.claude/pipeline/$rel"; [ -e "$canonical" ] && { printf '%s\n' "$canonical"; return 0; }; [ -e "$legacy" ] && printf '%s\n' "$legacy"; }
 log(){ :; }
 warn(){ :; }
 abort(){ printf 'ABORT:%s\n' "$1" > "$TMP/abort"; exit 99; }
@@ -221,7 +229,7 @@ EOF
 
 reset_case() {
     rm -f "$TMP"/call-*.args "$TMP/calls" "$TMP/abort" "$TMP/gate-called" "$WT/src/partial.txt"
-    rm -f "$WT/.claude/pipeline/summaries"/*.md
+    rm -f "$WT/.mefisto/pipeline/summaries"/*.md "$WT/.claude/pipeline/summaries"/*.md
 }
 run_case() {
     SCENARIO="$1" STAGE="${2:-1}" AGENT="${3:-test-writer}" WITH_MODEL="${4:-false}" PROMPT="${5:-}" bash "$TMP/case.sh"
@@ -242,11 +250,21 @@ printf '%s\n' \
     --model vendor/model > "$EXPECTED"
 if run_case success 1 test-writer true && [ "$(cat "$TMP/calls")" = 1 ] \
     && cmp -s "$EXPECTED" "$TMP/call-1.args" \
-    && [ "$(cat "$TMP/pipeline/1-test-writer.prompt.md")" = 'prompt de regresion' ] \
+    && grep -Fqx 'prompt de regresion' "$TMP/pipeline/1-test-writer.prompt.md" \
+    && grep -Fqx "Al cerrar este stage, deja tu resumen en: $WT/.mefisto/pipeline/summaries/stage-1-test-writer.md" "$TMP/pipeline/1-test-writer.prompt.md" \
     && [ -s "$TMP/pipeline/1-test-writer.system.md" ]; then
     pass 'exito envia el argv exacto, incluido --model condicional'
 else
     fail 'argv neutral de exito distinto al contrato'
+fi
+
+reset_case
+if run_case legacy-summary 1 test-writer false \
+    && [ -f "$WT/.claude/pipeline/summaries/stage-1-test-writer.md" ] \
+    && [ ! -f "$WT/.mefisto/pipeline/summaries/stage-1-test-writer.md" ]; then
+    pass 'summary presente solo en la ruta legacy sigue siendo legible'
+else
+    fail 'summary legacy no se resolvio como fallback'
 fi
 
 reset_case
@@ -289,7 +307,7 @@ EVENTS_REDACT="$TMP/logs/stage-1-test-writer-20260914-120000-issue-1360-attempt-
 LOG_REDACT="$TMP/logs/stage-1-test-writer-20260914-120000-issue-1360.log"
 if [ "$redact_rc" -eq 99 ] \
     && grep -Fxq -- '--redact-observability' "$TMP/call-1.args" \
-    && [ "$(cat "$TMP/pipeline/1-test-writer.prompt.md")" = "$PROMPT_SECRET" ] \
+    && grep -Fqx "$PROMPT_SECRET" "$TMP/pipeline/1-test-writer.prompt.md" \
     && [ -s "$EVENTS_REDACT" ] && [ -s "$LOG_REDACT" ] \
     && ! grep -Eq 'SECRETO_PROMPT_TEXT|SECRETO_INPUT_SUMMARY|SECRETO_ERROR_DETAIL' "$EVENTS_REDACT" \
     && ! grep -Eq 'SECRETO_PROMPT_TEXT|SECRETO_INPUT_SUMMARY|SECRETO_ERROR_DETAIL' "$LOG_REDACT"; then
@@ -361,6 +379,7 @@ LAST_AGENT_METRICS_JSON=null
 AGENT_SCAFFOLD_DUR=
 AGENT_SCAFFOLD_METRICS_JSON=
 mkdir -p "$PIPELINE_TMP_DIR" "$LOG_DIR_ABS" "$PIPELINE_DIR_ABS/metrics"
+mefisto_state_path(){ local rel="$1"; mkdir -p "$(dirname "$PIPELINE_DIR_ABS/$rel")"; printf '%s\n' "$PIPELINE_DIR_ABS/$rel"; }
 header(){ :; }
 update_status(){ :; }
 log(){ :; }
@@ -422,6 +441,7 @@ LAST_AGENT_DURATION=0
 LAST_AGENT_METRICS_JSON=null
 COV_REMEDIATION_SUMMARY=
 mkdir -p "$PIPELINE_TMP_DIR" "$PIPELINE_DIR_ABS/metrics"
+mefisto_state_path(){ local rel="$1"; mkdir -p "$(dirname "$PIPELINE_DIR_ABS/$rel")"; printf '%s\n' "$PIPELINE_DIR_ABS/$rel"; }
 warn(){ :; }
 derive_stage_log_from_stream(){ : > "$3"; }
 compute_stage_metrics(){ printf '{"tokens":{"input":1}}'; }

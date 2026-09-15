@@ -60,7 +60,7 @@
 #         de agente -- el stage "merge" reusa el agente "implementer" y con
 #         un case por agente pisaria las metricas del implementer de Stage 2.
 #       - coverage-gate no pasa por el builder (su forma no cambia).
-#       - cada invocacion deja su JSON individual en .claude/pipeline/metrics/
+#       - cada invocacion deja su JSON individual en la ruta canonica de estado.
 #         del consumidor.
 #
 # Uso: scripts/tests/test-stage-metrics.sh
@@ -381,16 +381,17 @@ else
     fail "K-5: no se encontro la forma esperada de coverage-gate"
 fi
 
-if grep -qF 'PIPELINE_DIR_ABS/metrics/tdd-' "$PIPE"; then
-    pass "K-6: cada invocacion respalda su JSON individual en .claude/pipeline/metrics/ (CA-5)"
+if grep -qF 'mefisto_state_path "metrics/tdd-' "$PIPE"; then
+    pass "K-6: cada invocacion respalda su JSON individual con mefisto_state_path"
 else
-    fail "K-6: no se encontro el respaldo por stage en .claude/pipeline/metrics/"
+    fail "K-6: no se encontro el respaldo por stage mediante mefisto_state_path"
 fi
 
-if grep -qF 'mkdir -p "$PIPELINE_DIR/metrics"' "$PIPE"; then
-    pass "K-7: el pipeline crea .claude/pipeline/metrics/ al arrancar"
+if grep -qF "mefisto_state_path 'logs/.state'" "$PIPE" \
+    && ! grep -qF 'mkdir -p "$PIPELINE_DIR/metrics"' "$PIPE"; then
+    pass "K-7: el estado y sus directorios padre se resuelven con mefisto_state_path"
 else
-    fail "K-7: falta el mkdir -p de .claude/pipeline/metrics/"
+    fail "K-7: el pipeline no resuelve el estado canonico o conserva el mkdir legacy"
 fi
 
 echo ""
