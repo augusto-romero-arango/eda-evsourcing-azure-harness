@@ -21,8 +21,8 @@
 #   [pre] Los archivos nuevos existen, tienen sintaxis valida y el programa
 #         jq corre sin errores.
 #   [A] CA-1: runtime_claude_build_cmd compone el argv completo -- flags fijos
-#       siempre presentes incluido --agent, --model solo si se recibe valor no vacio,
-#       --append-system-prompt solo si se recibe --system-file, y el prompt
+#       siempre presentes incluido --agent, --model solo si se recibe valor
+#       no vacio, --append-system-prompt solo si se recibe --system-file, y el prompt
 #       viaja como UN elemento del array (backticks/`$()`/comillas del prompt
 #       no se re-interpretan: paridad con run_agent_with_watchdog, sin eval).
 #   [B] CA-2: runtime_claude_translate mapea assistant/text -> message,

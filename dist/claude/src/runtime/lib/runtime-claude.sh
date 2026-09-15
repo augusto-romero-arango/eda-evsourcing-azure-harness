@@ -40,15 +40,16 @@
 #     ausentes, la clasificacion degrada a lo que el stream si permite
 #     afirmar, nunca inventa un veredicto.
 #
-# Flags que compone build_cmd (CA-1): `--permission-mode bypassPermissions`
-# y `--output-format stream-json --verbose` siempre; `--append-system-prompt
-# "$(cat <system_file>)"` solo si <system_file> no es vacio; `--model <model>`
-# solo si el runner entrego un modelo no vacio (CA-1 de #858: vacio/ausente =
-# heredar, el adaptador real nunca debe ver un `--model ""`). El orden de los
-# flags es irrelevante para quien los consume (el CLI real, y el stub de
-# test-runtime-claude.sh que solo comprueba presencia/ausencia). Un `--model`
-# explicito del runner tiene precedencia sobre `model:` del frontmatter del
-# agente; sin `--model`, Claude Code aplica el frontmatter.
+# Flags que compone build_cmd (CA-1): `--agent <agent>`, `--permission-mode
+# bypassPermissions` y `--output-format stream-json --verbose` siempre;
+# `--append-system-prompt "$(cat <system_file>)"` solo si <system_file> no es
+# vacio; `--model <model>` solo si el runner entrego un modelo no vacio (CA-1
+# de #858: vacio/ausente = heredar, el adaptador real nunca debe ver un
+# `--model ""`). El orden de los flags es irrelevante para quien los consume
+# (el CLI real, y el stub de test-runtime-claude.sh que solo comprueba
+# presencia/ausencia). Un `--model` explicito del runner tiene precedencia
+# sobre `model:` del frontmatter del agente; sin `--model`, Claude Code aplica
+# el frontmatter.
 #
 # Bash 3.2 + jq 1.7 (MEF-ADR-0049 CA-6): sin arrays asociativos.
 

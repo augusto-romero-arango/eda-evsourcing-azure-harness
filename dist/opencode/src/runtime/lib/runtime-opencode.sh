@@ -23,12 +23,13 @@
 #                              [<resume_session_id>]
 #     Rellena MEFISTO_RUNTIME_CMD con el argv de `opencode run` (sin `eval`,
 #     paridad con run_agent_with_watchdog): el mensaje viaja como UN elemento
-#     del array bash, sin volver a interpretarse. A diferencia de
-#     runtime-claude.sh, aqui <agent> y <cwd> SI participan del argv
-#     (`--agent <id> --dir <cwd>`) porque `opencode run` los exige como flags
-#     propios -- `run_agent_with_watchdog` sigue haciendo `cd "$workdir"`
-#     antes de invocar, pero OpenCode ademas necesita que se le diga
-#     explicitamente donde correr (CA-1). <resume_session_id> (issue #968,
+#     del array bash, sin volver a interpretarse. <agent> participa del argv
+#     en ambos adaptadores reales; OpenCode lo recibe como `--agent <id>`.
+#     A diferencia de runtime-claude.sh, aqui <cwd> tambien participa como
+#     `--dir <cwd>` porque `opencode run` lo exige como flag propio:
+#     `run_agent_with_watchdog` sigue haciendo `cd "$workdir"` antes de
+#     invocar, pero OpenCode ademas necesita que se le diga explicitamente
+#     donde correr (CA-1). <resume_session_id> (issue #968,
 #     CA-1/CA-2) es OPCIONAL y opaco -- vacio/ausente = comportamiento
 #     identico a antes de #968 (sin `--session` en el argv); no vacio agrega
 #     `--session <id>` (verificado en `opencode run --help` local). `--fork`
