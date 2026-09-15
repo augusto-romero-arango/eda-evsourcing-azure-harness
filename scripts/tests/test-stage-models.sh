@@ -71,6 +71,9 @@ cp "$REPO_ROOT/agents/domain-scaffolder.md" "$MODEL_PLUGIN/agents/domain-scaffol
 cp "$REPO_ROOT/agents/test-writer.md" "$MODEL_PLUGIN/agents/test-writer.md"
 cp "$REPO_ROOT/agents/implementer.md" "$MODEL_PLUGIN/agents/implementer.md"
 cp "$REPO_ROOT/agents/reviewer.md" "$MODEL_PLUGIN/agents/reviewer.md"
+cp "$REPO_ROOT/agents/smoke-test-writer.md" "$MODEL_PLUGIN/agents/smoke-test-writer.md"
+cp "$REPO_ROOT/agents/projection-test-writer.md" "$MODEL_PLUGIN/agents/projection-test-writer.md"
+cp "$REPO_ROOT/agents/projection-implementer.md" "$MODEL_PLUGIN/agents/projection-implementer.md"
 trap 'rm -rf "$FAKE_CONSUMER" "$TMP_DIR"' EXIT
 
 # Las funciones viven en _pipeline-common.sh; sourcearlo solo las define (es una
@@ -115,6 +118,10 @@ R=$(resolve_declared_agent_model "implementer")
 if [ "$R" = "sonnet" ]; then pass "implementer generado declara sonnet sin comillas"; else fail "implementer deberia declarar 'sonnet' (obtenido '$R')"; fi
 R=$(resolve_declared_agent_model "reviewer")
 if [ "$R" = "opus" ]; then pass "reviewer generado declara opus sin comillas"; else fail "reviewer deberia declarar 'opus' (obtenido '$R')"; fi
+for agent in smoke-test-writer projection-test-writer projection-implementer; do
+    R=$(resolve_declared_agent_model "$agent")
+    if [ "$R" = "sonnet" ]; then pass "$agent generado declara sonnet con metadata JSON"; else fail "$agent deberia declarar 'sonnet' (obtenido '$R')"; fi
+done
 
 echo ""
 echo "[1] parse_stage_models: spec vacio deja el mapa vacio y no aborta (CA-2: sin --models, nada cambia)"

@@ -13,7 +13,19 @@ pass() { printf '  PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
 fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
 frontmatter() { awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$1"; }
 body() { awk 'NR == 1 { next } $0 == "---" && !seen { seen=1; next } seen { print }' "$1"; }
-body_without_guard() { body "$1" | awk '!/\{\{mefisto:assert-consumer-repo\}\}/ && !/Antes de continuar, aborta si existe `src\/internal\/scripts\/generate-internal-adapters.sh`/ && !/^<!-- GENERADO por /'; }
+body_without_adapter_lines() {
+    body "$1" | awk \
+        '!/\{\{mefisto:assert-consumer-repo\}\}/ &&
+         !/Antes de continuar, aborta si existe `src\/internal\/scripts\/generate-internal-adapters.sh`/ &&
+         !/^<!-- GENERADO por / &&
+         !/^Antes de ejecutar este body, usa la tool nativa `skill` para cargar, en este orden: /'
+}
+validator_fixture() {
+    local agent="$1" extra="$2" destination="$WORK/$agent.md"
+    printf '%s\n' '---' > "$destination"
+    frontmatter "$REPO_ROOT/src/published/agents/$agent.md" >> "$destination"
+    printf '%s\n\n%s\n%s\n' '---' '{{mefisto:assert-consumer-repo}}' "$extra" >> "$destination"
+}
 
 # La lista es el unico punto que los siguientes cortes de la serie deben ampliar.
 agents=(test-writer implementer reviewer smoke-test-writer projection-test-writer projection-implementer)
@@ -63,27 +75,29 @@ for index in "${!agents[@]}"; do
     fi
     if [ "$(body "$source" | awk 'NF { print; exit }')" = '{{mefisto:assert-consumer-repo}}' ]; then pass "$agent inicia con el guard"; else fail "$agent no inicia con el guard"; fi
     if grep -Fqx '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/'"$agent"'.md. No editar a mano. -->' "$mirror"; then pass "$agent generado conserva marcador"; else fail "$agent generado sin marcador"; fi
-    if diff -u <(body_without_guard "$source") <(body_without_guard "$mirror") >/dev/null; then pass "$agent conserva el cuerpo al proyectar Claude"; else fail "$agent altera el cuerpo al proyectar Claude"; fi
+    if diff -u <(body_without_adapter_lines "$source") <(body_without_adapter_lines "$mirror") >/dev/null; then pass "$agent conserva el cuerpo al proyectar Claude"; else fail "$agent altera el cuerpo al proyectar Claude"; fi
 done
 
 echo '[validador] excepciones transitorias acotadas'
-for agent in test-writer reviewer; do
-    cp "$REPO_ROOT/src/published/agents/$agent.md" "$WORK/$agent.md"
-    printf '\nmodel: runtime-inyectado\n' >> "$WORK/$agent.md"
+for agent in "${agents[@]}"; do
+    validator_fixture "$agent" 'model: runtime-inyectado'
     if "$VALIDATOR" "$WORK/$agent.md" >/dev/null 2>&1; then fail "$agent no admite metadata de runtime nueva"; else pass "$agent rechaza metadata de runtime nueva"; fi
-    cp "$REPO_ROOT/src/published/agents/$agent.md" "$WORK/$agent.md"
-    printf '\nVariable ajena: $TOKEN_AJENO\n' >> "$WORK/$agent.md"
+    validator_fixture "$agent" 'Variable ajena: $TOKEN_AJENO'
     if "$VALIDATOR" "$WORK/$agent.md" >/dev/null 2>&1; then fail "$agent no admite placeholders arbitrarios"; else pass "$agent rechaza placeholders arbitrarios"; fi
 done
-cp "$REPO_ROOT/src/published/agents/reviewer.md" "$WORK/reviewer.md"
-printf '\nPosicional ajeno: $2\n' >> "$WORK/reviewer.md"
+validator_fixture reviewer 'Posicional ajeno: $2'
 if "$VALIDATOR" "$WORK/reviewer.md" >/dev/null 2>&1; then fail 'reviewer no hereda placeholders exclusivos de test-writer'; else pass 'reviewer rechaza placeholders exclusivos de test-writer'; fi
+validator_fixture projection-implementer 'Posicional ajeno: $2'
+if "$VALIDATOR" "$WORK/projection-implementer.md" >/dev/null 2>&1; then fail 'projection-implementer no hereda placeholders exclusivos de projection-test-writer'; else pass 'projection-implementer rechaza placeholders exclusivos de projection-test-writer'; fi
+validator_fixture smoke-test-writer 'Ruta ajena: $PLUGIN_ROOT'
+if "$VALIDATOR" "$WORK/smoke-test-writer.md" >/dev/null 2>&1; then fail 'smoke-test-writer no hereda placeholders de los agentes de proyeccion'; else pass 'smoke-test-writer rechaza placeholders de los agentes de proyeccion'; fi
 
 echo '[salidas] proyecciones Claude y OpenCode'
 for agent in "${agents[@]}"; do
     claude="$REPO_ROOT/dist/claude/agents/$agent.md"
     opencode="$REPO_ROOT/dist/opencode/agents/$agent.md"
     if cmp -s "$claude" "$REPO_ROOT/agents/$agent.md"; then pass "$agent mirror Claude coincide byte a byte"; else fail "$agent mirror Claude diverge"; fi
+    if diff -u <(body_without_adapter_lines "$REPO_ROOT/src/published/agents/$agent.md") <(body_without_adapter_lines "$opencode") >/dev/null; then pass "$agent conserva el cuerpo al proyectar OpenCode"; else fail "$agent altera el cuerpo al proyectar OpenCode"; fi
     grep -Fq '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh' "$opencode" && pass "$agent OpenCode conserva marcador" || fail "$agent OpenCode no conserva marcador"
     if ! grep -Fq '{{mefisto:' "$claude" && ! grep -Fq '{{mefisto:' "$opencode"; then pass "$agent no filtra directivas a las salidas"; else fail "$agent filtra directivas a las salidas"; fi
     if [ "$agent" = reviewer ]; then
@@ -108,10 +122,10 @@ echo '[inventarios] clausura publicada actualizada'
 for runtime in claude opencode; do
     inventory="$REPO_ROOT/dist/$runtime/.mefisto-generated-assets.json"
     expected_sha="$(shasum -a 256 "$REPO_ROOT/scripts/_pipeline-common.sh" | cut -d ' ' -f 1)"
-    if jq -e --arg sha "$expected_sha" 'any(.assets[]; .source == "scripts/_pipeline-common.sh" and .destination == "scripts/_pipeline-common.sh" and .sha256 == $sha)' "$inventory" >/dev/null; then
-        pass "$runtime inventaria el resolver distribuido con su sha256"
+    if jq -e --arg sha "$expected_sha" '.schemaVersion == 1 and (.assets | length > 0) and all(.assets[]; (.sha256 | test("^[0-9a-f]{64}$"))) and any(.assets[]; .source == "scripts/_pipeline-common.sh" and .destination == "scripts/_pipeline-common.sh" and .sha256 == $sha)' "$inventory" >/dev/null; then
+        pass "$runtime conserva un inventario completo con sha256"
     else
-        fail "$runtime no inventaria el resolver distribuido con su sha256"
+        fail "$runtime tiene un inventario incompleto o sin sha256"
     fi
 done
 
