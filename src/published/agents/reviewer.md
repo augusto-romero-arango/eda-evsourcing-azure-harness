@@ -93,7 +93,7 @@ Si hay tests fallando al inicio, verifica si existe reporte de bloqueo (paso 2b)
 
 ### 2b. Manejo de tests rojos heredados del implementer
 
-Si hay tests fallando al inicio, verifica si existe `.claude/pipeline/blockage-report.md`.
+Si hay tests fallando al inicio, verifica si existe `{{mefisto:state-path blockage-report.md}}`.
 
 Si el reporte existe:
 1. **Lee el reporte** — entiende que se intento y por que fallo
@@ -101,7 +101,7 @@ Si el reporte existe:
 3. Tienes **5 intentos enfocados** por cada test bloqueado (misma definicion de "intento" que el implementer: un enfoque distinto deliberado, no un test run incidental)
 4. Si despues de 5 intentos no lo resuelves:
    - Continua con tu trabajo normal de revision y refactor sobre el codigo que SI funciona
-   - **Actualiza el reporte** `.claude/pipeline/blockage-report.md` agregando tu seccion:
+   - **Actualiza el reporte** `{{mefisto:state-path blockage-report.md}}` agregando tu seccion:
 
 ```markdown
 ## Reporte de bloqueo - Reviewer
@@ -616,7 +616,7 @@ git commit -m "refactor(hu-XX): [descripcion de lo que mejoro]"
 
 Si no hay nada que mejorar, **no hagas commit**. Reporta: "El codigo esta limpio, no se requieren cambios."
 
-Crea el archivo `.claude/pipeline/summaries/stage-3-reviewer.md` con el siguiente formato:
+Crea el archivo `{{mefisto:state-path summaries/stage-3-reviewer.md}}` con el siguiente formato:
 
 ```markdown
 ## ES Reviewer - Revision

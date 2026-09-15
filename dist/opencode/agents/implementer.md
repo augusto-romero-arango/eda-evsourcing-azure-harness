@@ -1218,7 +1218,7 @@ El issue debe tener una seccion `## ADRs aplicables` que enumera los ADRs que ri
 
 Si el issue **no** tiene la seccion `## ADRs aplicables` o esta vacia:
 - Detente. No asumas que no hay ADRs que apliquen.
-- Reporta el gap al llamador del pipeline (escribe en `.claude/pipeline/blockage-report.md` seccion "Issue incompleto: falta ADRs aplicables") y termina normalmente.
+- Reporta el gap al llamador del pipeline (escribe en `.mefisto/pipeline/blockage-report.md` seccion "Issue incompleto: falta ADRs aplicables") y termina normalmente.
 - El planner debe completar el issue antes de que el pipeline reanude.
 
 **Precedente ≠ autoridad**: si vas a replicar un patron visto en otro archivo del proyecto o en un PR previo, **verifica primero que ese patron cumple los ADRs aplicables**. Si descubres que el precedente viola un ADR (por ejemplo, un archivo existente usa `[JsonConstructor]` en ctor privado cuando MEF-ADR-0012 lo proscribe), **NO lo repliques**. Reporta el hallazgo en tu resumen de decisiones y aplica el patron correcto.
@@ -1283,7 +1283,7 @@ Si despues de **5 intentos enfocados** (5 enfoques distintos) el mismo test sigu
 
 1. **Deja de intentar** ese test especifico. No sigas en loop.
 2. **Haz commit de tu progreso parcial** — los tests que si pusiste verdes se preservan.
-3. **Escribe el reporte de bloqueo** en `.claude/pipeline/blockage-report.md`.
+3. **Escribe el reporte de bloqueo** en `.mefisto/pipeline/blockage-report.md`.
 
 **Antes de escribir el reporte, pregunta:** ¿el test no pasa porque el test-writer dejo una contradiccion estructural sin resolver (ej. test en proyecto A que necesita API de B inaccesible; test obsoleto cuya precondicion ya no es cubrible bajo el ADR aplicado)? Si es asi, el reporte debe declararlo explicitamente en "Hipotesis" — el reviewer tiene autoridad para resolverlo como parte del refactor (ver seccion 2b de su agente). Esto cambia la naturaleza del bloqueo: no es "no se como hacer pasar el test", es "el test esta mal planteado dada la estructura del proyecto, y la fase verde no es el lugar donde se resuelve".
 
@@ -1345,7 +1345,7 @@ git commit -m "feat(hu-XX): implementacion [descripcion breve] (fase verde)"
 
 ### 9. Escribir resumen de decisiones
 
-Crea el archivo `.claude/pipeline/summaries/stage-2-implementer.md`:
+Crea el archivo `.mefisto/pipeline/summaries/stage-2-implementer.md`:
 
 ```markdown
 ## ES Implementer - Decisiones

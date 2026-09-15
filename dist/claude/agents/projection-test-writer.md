@@ -119,11 +119,11 @@ En ese caso:
 4. Documenta la señal en tu resumen de stage bajo un encabezado explicito, ej. "Señal no-red: <justificacion>".
 
 > **Importante**: el archivo señal vive en `pipeline-state/no-red-signal.md` en la
-> raiz del worktree, **no** en `.claude/pipeline/` -- mismo motivo que
+> raiz del worktree, no dentro del directorio de estado del pipeline -- mismo motivo que
 > MEF-ADR-0017 documenta para `refactor-signal.md` (seccion "Evaluar tipo de
 > tarea" de `test-writer.md`): el runtime de Claude Code intercepta escrituras a
 > `.claude/**` en worktrees aun con `bypassPermissions`. A diferencia de
-> `refactor-signal.md`, esta señal **no** tiene ubicacion legacy que aceptar:
+> `refactor-signal.md`, esta señal no tiene ubicacion legacy que aceptar:
 > nace directo en `pipeline-state/`.
 
 Esta señal solo la honra el gate 1b del pipeline en la ruta read-side (`STAGE1_AGENT = projection-test-writer`) -- nunca en la ruta write-side. Si el issue mezcla ambos lados (no deberia: tu responsabilidad es solo read-side), la parte write-side siempre necesita un rojo alcanzable.
@@ -169,7 +169,7 @@ Si los tests referencian tipos que no existen, crealos con `throw new NotImpleme
    git add tests/ src/
    git commit -m "test(hu-XX): tests read-side para [descripcion breve] (fase roja)"
    ```
-7. Escribe el resumen en `.claude/pipeline/summaries/stage-1-projection-test-writer.md` -- el pipeline lo recolecta como `stage-<etapa>-<nombre del agente>.md`, asi que el nombre lleva **tu** nombre de agente, no el del generalista (mismo formato que `test-writer.md`: tests creados, estructura elegida, stubs creados, cobertura de criterios, señal no-red si aplica, desviaciones del plan del planner). No lo incluyas en el commit.
+7. Escribe el resumen en `.mefisto/pipeline/summaries/stage-1-projection-test-writer.md` -- el pipeline lo recolecta como `stage-<etapa>-<nombre del agente>.md`, asi que el nombre lleva **tu** nombre de agente, no el del generalista (mismo formato que `test-writer.md`: tests creados, estructura elegida, stubs creados, cobertura de criterios, señal no-red si aplica, desviaciones del plan del planner). No lo incluyas en el commit.
 
 ## Reglas absolutas
 

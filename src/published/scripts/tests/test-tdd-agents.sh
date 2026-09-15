@@ -6,6 +6,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$HERE/../../../.." && pwd -P)"
 GENERATOR="$REPO_ROOT/src/published/scripts/generate-published-adapters.sh"
 VALIDATOR="$REPO_ROOT/src/published/scripts/validate-published-artifacts.sh"
+source "$REPO_ROOT/src/published/scripts/lib/adapter-claude.sh"
+source "$REPO_ROOT/src/published/scripts/adapters/adapter-opencode.sh"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 PASS=0; FAIL=0
@@ -19,6 +21,14 @@ body_without_adapter_lines() {
          !/Antes de continuar, aborta si existe `src\/internal\/scripts\/generate-internal-adapters.sh`/ &&
          !/^<!-- GENERADO por / &&
          !/^Antes de ejecutar este body, usa la tool nativa `skill` para cargar, en este orden: /'
+}
+translated_source_body() {
+    local runtime="$1" source="$2" source_body
+    source_body="$(body_without_adapter_lines "$source")"
+    case "$runtime" in
+        claude) published_claude_translate_body "$source" "$source_body" ;;
+        opencode) published_opencode_translate_body "$source" "$source_body" ;;
+    esac
 }
 validator_fixture() {
     local agent="$1" extra="$2" destination="$WORK/$agent.md"
@@ -38,6 +48,16 @@ descriptions=(
     'Implementa proyecciones Marten (read models), el seam de registro read-side (Configurar{Dominio}) y las Functions HTTP GET de consulta. Nunca modifica tests.'
     'Crea el scaffold completo para un nuevo dominio (Function App, tests, Terraform, GitHub Actions).'
 )
+state_agents=(test-writer implementer reviewer smoke-test-writer projection-test-writer projection-implementer)
+state_summaries=(
+    'stage-1-test-writer'
+    'stage-2-implementer'
+    'stage-3-reviewer'
+    'stage-2b-smoke-test-writer'
+    'stage-1-projection-test-writer'
+    'stage-2-projection-implementer'
+)
+state_blockage_counts=(0 2 2 0 0 0)
 
 echo '[fuentes] contrato neutral, guard y doctrina preservada'
 for index in "${!agents[@]}"; do
@@ -76,7 +96,7 @@ for index in "${!agents[@]}"; do
     fi
     if [ "$(body "$source" | awk 'NF { print; exit }')" = '{{mefisto:assert-consumer-repo}}' ]; then pass "$agent inicia con el guard"; else fail "$agent no inicia con el guard"; fi
     if grep -Fqx '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/'"$agent"'.md. No editar a mano. -->' "$mirror"; then pass "$agent generado conserva marcador"; else fail "$agent generado sin marcador"; fi
-    if diff -u <(body_without_adapter_lines "$source") <(body_without_adapter_lines "$mirror") >/dev/null; then pass "$agent conserva el cuerpo al proyectar Claude"; else fail "$agent altera el cuerpo al proyectar Claude"; fi
+    if diff -u <(translated_source_body claude "$source") <(body_without_adapter_lines "$mirror") >/dev/null; then pass "$agent conserva el cuerpo traducido al proyectar Claude"; else fail "$agent altera el cuerpo al proyectar Claude"; fi
     if [ "$agent" = domain-scaffolder ]; then
         if [ "$(grep -c '\${{' "$source")" -eq 35 ] && [ "$(grep -c '\${{' "$mirror")" -eq 35 ]; then pass 'domain-scaffolder conserva las 35 expresiones GitHub Actions'; else fail 'domain-scaffolder altera las expresiones GitHub Actions'; fi
         source_separators="$(body "$source" | grep -cx -- '---')"
@@ -94,6 +114,16 @@ for index in "${!agents[@]}"; do
             fail 'domain-scaffolder conserva REPO_ROOT, comillas o temporales al eliminar plantillas'
         fi
     fi
+done
+
+echo '[estado] rutas neutrales de los agentes TDD'
+for index in "${!state_agents[@]}"; do
+    agent="${state_agents[$index]}"
+    source="$REPO_ROOT/src/published/agents/$agent.md"
+    summary="{{mefisto:state-path summaries/${state_summaries[$index]}.md}}"
+    if ! grep -Fq '.claude/pipeline/summaries' "$source" && ! grep -Fq '.claude/pipeline/blockage-report' "$source" && ! grep -Fq '`.claude/pipeline/`' "$source"; then pass "$agent no conserva rutas legacy de estado"; else fail "$agent conserva rutas legacy de estado"; fi
+    if [ "$(grep -Fc "$summary" "$source")" -eq 1 ]; then pass "$agent declara su summary neutral exacto"; else fail "$agent no declara su summary neutral exacto"; fi
+    if [ "$(grep -Fc '{{mefisto:state-path blockage-report.md}}' "$source")" -eq "${state_blockage_counts[$index]}" ]; then pass "$agent declara las rutas neutrales esperadas de bloqueo"; else fail "$agent no declara las rutas neutrales esperadas de bloqueo"; fi
 done
 
 echo '[validador] excepciones transitorias acotadas'
@@ -115,7 +145,7 @@ for agent in "${agents[@]}"; do
     claude="$REPO_ROOT/dist/claude/agents/$agent.md"
     opencode="$REPO_ROOT/dist/opencode/agents/$agent.md"
     if cmp -s "$claude" "$REPO_ROOT/agents/$agent.md"; then pass "$agent mirror Claude coincide byte a byte"; else fail "$agent mirror Claude diverge"; fi
-    if diff -u <(body_without_adapter_lines "$REPO_ROOT/src/published/agents/$agent.md") <(body_without_adapter_lines "$opencode") >/dev/null; then pass "$agent conserva el cuerpo al proyectar OpenCode"; else fail "$agent altera el cuerpo al proyectar OpenCode"; fi
+    if diff -u <(translated_source_body opencode "$REPO_ROOT/src/published/agents/$agent.md") <(body_without_adapter_lines "$opencode") >/dev/null; then pass "$agent conserva el cuerpo traducido al proyectar OpenCode"; else fail "$agent altera el cuerpo al proyectar OpenCode"; fi
     grep -Fq '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh' "$opencode" && pass "$agent OpenCode conserva marcador" || fail "$agent OpenCode no conserva marcador"
     if ! grep -Fq '{{mefisto:' "$claude" && ! grep -Fq '{{mefisto:' "$opencode"; then pass "$agent no filtra directivas a las salidas"; else fail "$agent filtra directivas a las salidas"; fi
     if [ "$agent" = reviewer ]; then
@@ -135,6 +165,12 @@ for agent in "${agents[@]}"; do
     grep -Fq 'permission: ' "$opencode" && grep -Fq '"read":{"*":"allow"' "$opencode" && grep -Fq '"edit":{"*":"allow"' "$opencode" && grep -Fq '"bash":{"*":"deny"' "$opencode" && pass "$agent OpenCode materializa permisos" || fail "$agent OpenCode no materializa permisos"
     grep -Fq 'mode: "all"' "$opencode" && pass "$agent OpenCode conserva mode all" || fail "$agent OpenCode no conserva mode all"
 done
+
+if grep -Fq '.mefisto/pipeline/summaries/stage-2b-smoke-test-writer.md' "$REPO_ROOT/agents/smoke-test-writer.md" && grep -Fq '.mefisto/pipeline/summaries/stage-2b-smoke-test-writer.md' "$REPO_ROOT/dist/claude/agents/smoke-test-writer.md" && grep -Fq '.mefisto/pipeline/summaries/stage-2b-smoke-test-writer.md' "$REPO_ROOT/dist/opencode/agents/smoke-test-writer.md"; then
+    pass 'los generados conservan el summary canonico de smoke stage 2b'
+else
+    fail 'los generados no conservan el summary canonico de smoke stage 2b'
+fi
 
 echo '[inventarios] clausura publicada actualizada'
 for runtime in claude opencode; do

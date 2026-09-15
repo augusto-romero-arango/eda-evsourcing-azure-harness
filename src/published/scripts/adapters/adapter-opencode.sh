@@ -113,7 +113,7 @@ mcp_tools_json() {
         . + {($mapping[$server.id]): (($requested | index($server.id)) != null)})'
 }
 
-translate_body() {
+published_opencode_translate_body() {
     local rel="$1" input="$2" line original prefix suffix script args translated
     while IFS= read -r line || [ -n "$line" ]; do
         original="$line"
@@ -439,7 +439,7 @@ render() {
     if [ "$(printf '%s' "$native_skills" | jq 'length')" -gt 0 ]; then
         preamble="$(skill_preamble "$native_skills")"
     fi
-    translated="$(translate_body "$rel" "$raw_body")" || return 1
+    translated="$(published_opencode_translate_body "$rel" "$raw_body")" || return 1
     if needs_package_root "$raw_body"; then
         [ -z "$preamble" ] || preamble="$preamble"$'\n'
         preamble="$preamble$(package_root_preamble)"
@@ -465,14 +465,16 @@ render() {
     printf '%s\n' "$translated"
 }
 
-case "${1:-}" in
-    root) printf '%s\n' 'dist/opencode' ;;
-    path)
-        case "${2:-}" in src/published/agents/*.md) printf 'agents/%s\n' "$(basename "$2")" ;; src/published/commands/*.md) printf 'commands/mefisto:%s\n' "$(basename "$2")" ;; *) error "$2: path: fuente publicada desconocida" ;; esac ;;
-    render) [ "$#" -eq 3 ] || error 'render: se esperaban fuente y marcador'; render "$2" "$3" ;;
-    assets) validate_interactive_hooks && validate_published_mcp && { skill_assets | jq '. + [{id:"interactive-observability",source:"src/published/hooks/interactive-hooks.json",destination:"plugins/mefisto-observability.js",mode:"0644"},{id:"mcp-config",source:"src/published/contract/mcp-servers.json",destination:"plugins/mefisto-mcp.js",mode:"0644"}]'; } ;;
-    render-asset)
-        [ "$#" -eq 3 ] || error 'render-asset: se esperaban id y fuente'
-        case "$2" in interactive-observability) render_observability_plugin ;; mcp-config) render_mcp_plugin "$3" ;; *) render_skill_asset "$2" "$3" ;; esac ;;
-    *) error 'uso: adapter-opencode.sh root|path|render|assets|render-asset' ;;
-esac
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    case "${1:-}" in
+        root) printf '%s\n' 'dist/opencode' ;;
+        path)
+            case "${2:-}" in src/published/agents/*.md) printf 'agents/%s\n' "$(basename "$2")" ;; src/published/commands/*.md) printf 'commands/mefisto:%s\n' "$(basename "$2")" ;; *) error "$2: path: fuente publicada desconocida" ;; esac ;;
+        render) [ "$#" -eq 3 ] || error 'render: se esperaban fuente y marcador'; render "$2" "$3" ;;
+        assets) validate_interactive_hooks && validate_published_mcp && { skill_assets | jq '. + [{id:"interactive-observability",source:"src/published/hooks/interactive-hooks.json",destination:"plugins/mefisto-observability.js",mode:"0644"},{id:"mcp-config",source:"src/published/contract/mcp-servers.json",destination:"plugins/mefisto-mcp.js",mode:"0644"}]'; } ;;
+        render-asset)
+            [ "$#" -eq 3 ] || error 'render-asset: se esperaban id y fuente'
+            case "$2" in interactive-observability) render_observability_plugin ;; mcp-config) render_mcp_plugin "$3" ;; *) render_skill_asset "$2" "$3" ;; esac ;;
+        *) error 'uso: adapter-opencode.sh root|path|render|assets|render-asset' ;;
+    esac
+fi
