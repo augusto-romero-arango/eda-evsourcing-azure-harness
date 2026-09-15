@@ -13,6 +13,7 @@ pass() { printf '  PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
 fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
 contains() { grep -Fq -- "$1" "$PIPELINE" && pass "$2" || fail "$2"; }
 run_agent_body() { awk '/^run_agent\(\) \{/{p=1} p{print} p && /^}/{p=0}' "$PIPELINE"; }
+collect_summary_body() { awk '/^collect_summary\(\) \{/{p=1} p{print} p && /^}/{p=0}' "$PIPELINE"; }
 # CA-4 (issue #1363): la implementacion REAL de derive_stage_log_from_stream
 # (no un stub) para el caso de redaccion -- necesita el filtro autentico para
 # comprobar que el .log derivado no expone message/input_summary/error.detail.
@@ -130,6 +131,16 @@ case "$SCENARIO:$count" in
         printf 'summary legacy\n' > "$cwd/.claude/pipeline/summaries/stage-1-test-writer.md"
         printf '%s\n' '{"type":"run.completed","status":"success","session_id":null,"denials":0,"error":null}' > "$event"
         exit 0 ;;
+    denials-state:1)
+        mkdir -p "$cwd/.mefisto/pipeline"
+        printf 'estado transitorio\n' > "$cwd/.mefisto/pipeline/agent-state.txt"
+        git -C "$cwd" add -f .mefisto/pipeline/agent-state.txt
+        git -C "$cwd" commit -qm 'test: estado transitorio'
+        printf '%s\n' '{"type":"run.completed","status":"success","session_id":null,"denials":2,"error":null}' > "$event"
+        exit 0 ;;
+    denials-state:2)
+        printf '%s\n' '{"type":"run.completed","status":"success","session_id":null,"denials":0,"error":null}' > "$event"
+        exit 0 ;;
     hold:1)
         printf '%s\n' '{"type":"run.failed","status":"failed","session_id":"session-1360","denials":0,"error":{"kind":"rate_limit","resets_at":null}}' > "$event"
         exit 1 ;;
@@ -180,6 +191,7 @@ chmod +x "$TMP/runner"
 {
     printf '%s\n' 'set -uo pipefail'
     run_agent_body
+    collect_summary_body
     derive_stage_log_from_stream_body
     cat <<'EOF'
 LOG_DIR_ABS="$TMP/logs"
@@ -224,12 +236,14 @@ AGENT_TW_RES=pending; AGENT_IM_RES=pending; AGENT_ST_RES=pending; AGENT_RV_RES=p
 AGENT_TW_METRICS_JSON=; AGENT_IM_METRICS_JSON=; AGENT_ST_METRICS_JSON=; AGENT_RV_METRICS_JSON=
 LAST_AGENT_DURATION=0; LAST_AGENT_METRICS_JSON=
 run_agent "$STAGE" "$AGENT" "${PROMPT:-prompt de regresion}"
+collect_summary "$STAGE" "$AGENT" > "$TMP/collected-summary"
 EOF
 } > "$TMP/case.sh"
 
 reset_case() {
-    rm -f "$TMP"/call-*.args "$TMP/calls" "$TMP/abort" "$TMP/gate-called" "$WT/src/partial.txt"
+    rm -f "$TMP"/call-*.args "$TMP/calls" "$TMP/abort" "$TMP/gate-called" "$TMP/collected-summary" "$WT/src/partial.txt"
     rm -f "$WT/.mefisto/pipeline/summaries"/*.md "$WT/.claude/pipeline/summaries"/*.md
+    git -C "$WT" reset -q --hard HEAD~1 2>/dev/null || true
 }
 run_case() {
     SCENARIO="$1" STAGE="${2:-1}" AGENT="${3:-test-writer}" WITH_MODEL="${4:-false}" PROMPT="${5:-}" bash "$TMP/case.sh"
@@ -261,10 +275,18 @@ fi
 reset_case
 if run_case legacy-summary 1 test-writer false \
     && [ -f "$WT/.claude/pipeline/summaries/stage-1-test-writer.md" ] \
-    && [ ! -f "$WT/.mefisto/pipeline/summaries/stage-1-test-writer.md" ]; then
-    pass 'summary presente solo en la ruta legacy sigue siendo legible'
+    && [ ! -f "$WT/.mefisto/pipeline/summaries/stage-1-test-writer.md" ] \
+    && [ "$(cat "$TMP/collected-summary")" = 'summary legacy' ]; then
+    pass 'collect_summary recolecta un summary presente solo en la ruta legacy'
 else
-    fail 'summary legacy no se resolvio como fallback'
+    fail 'collect_summary no resolvio el summary legacy como fallback'
+fi
+
+reset_case
+if run_case denials-state && [ "$(cat "$TMP/calls")" = 2 ]; then
+    pass 'estado canonico commiteado no cuenta como trabajo util ante denegaciones'
+else
+    fail 'estado canonico commiteado impidio el retry sin trabajo util'
 fi
 
 reset_case

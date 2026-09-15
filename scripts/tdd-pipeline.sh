@@ -621,10 +621,6 @@ else
 
     success "Worktree creado: $WORKTREE_PATH"
 
-    mefisto_state_path 'summaries/.state' "$WORKTREE_PATH" >/dev/null
-    legacy_summary_dir="$WORKTREE_PATH/$(basename "$(dirname "$MEFISTO_LEGACY_STATE_DIR")")/$(basename "$MEFISTO_LEGACY_STATE_DIR")/summaries"
-    mkdir -p "$legacy_summary_dir"
-
     update_status "setup" "running"
 
     SNAPSHOT_COMMIT=$(git -C "$WORKTREE_PATH" rev-parse HEAD)
@@ -678,6 +674,14 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
         log "Snapshot actualizado post-scaffold: $SNAPSHOT_COMMIT"
     fi
 fi
+
+# La doctrina de agentes anterior a #1387 todavia intenta escribir summaries
+# en el estado legacy. Ambos directorios deben existir tambien al reanudar un
+# worktree; el pipeline solo escribe en el canonico y conserva el otro como
+# destino transitorio de esos agentes.
+mefisto_state_path 'summaries/.state' "$WORKTREE_PATH" >/dev/null
+legacy_summary_dir="$WORKTREE_PATH/$(basename "$(dirname "$MEFISTO_LEGACY_STATE_DIR")")/$(basename "$MEFISTO_LEGACY_STATE_DIR")/summaries"
+mkdir -p "$legacy_summary_dir"
 
 # Detectar señal de refactoring pre-existente (worktree previo con --from-stage)
 # Ubicacion: pipeline-state/ en la raiz del worktree (NO .claude/) — el runtime
@@ -780,7 +784,8 @@ Al cerrar este stage, deja tu resumen en: $summary_path"
         local denials attempt_has_work=false
         denials="$(agent_events_denials "$events_file")"
         case "$denials" in ''|*[!0-9]*) denials=0 ;; esac
-        if ! git -C "$WORKTREE_PATH" diff --quiet "$entry_commit"..HEAD 2>/dev/null || [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ "${PIPELINE_OWN_WRITES[@]}" 2>/dev/null)" ]; then attempt_has_work=true; fi
+        if ! git -C "$WORKTREE_PATH" diff --quiet "$entry_commit"..HEAD -- . "${PIPELINE_OWN_WRITES[@]}" 2>/dev/null \
+            || [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ "${PIPELINE_OWN_WRITES[@]}" 2>/dev/null)" ]; then attempt_has_work=true; fi
         if [ "$denials" -gt 0 ] && [ "$attempt_has_work" = false ] && [ "$denial_retry_used" = false ]; then
             denial_retry_used=true
             resume_session=""
@@ -815,7 +820,8 @@ Al cerrar este stage, deja tu resumen en: $summary_path"
     if [ -n "$failure_type" ]; then
         local recoverable_work=false
         case "$failure_type" in TIMEOUT|KILLED|STREAM_CUT|PROTOCOL_INVALID) ;; *)
-            if ! git -C "$WORKTREE_PATH" diff --quiet "$entry_commit"..HEAD 2>/dev/null || [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ "${PIPELINE_OWN_WRITES[@]}" 2>/dev/null)" ]; then
+            if ! git -C "$WORKTREE_PATH" diff --quiet "$entry_commit"..HEAD -- . "${PIPELINE_OWN_WRITES[@]}" 2>/dev/null \
+                || [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ "${PIPELINE_OWN_WRITES[@]}" 2>/dev/null)" ]; then
                 case "$stage" in 1) dotnet build "$WORKTREE_PATH" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 && recoverable_work=true ;; 2|3|merge) local test_rc=0; run_tests_projects "$WORKTREE_PATH" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 || test_rc=$?; [ "$test_rc" -eq 0 ] && recoverable_work=true ;; esac
             fi ;; esac
         if [ "$recoverable_work" = true ]; then
@@ -991,6 +997,8 @@ if [ "$IS_REFACTOR" = true ]; then
 elif [ "$FROM_STAGE" -le 2 ]; then
     header "Stage 2: $STAGE2_LABEL (fase verde)"
 
+    BLOCKAGE_REPORT_CANONICAL="$(mefisto_state_path 'blockage-report.md' "$WORKTREE_PATH")"
+
     STAGE2_PROMPT="Estás en el directorio raíz del proyecto ${HARNESS_PROJECT_NAME}.
 
 Contexto de la historia de usuario:
@@ -1001,6 +1009,8 @@ El $STAGE1_AGENT creó/modificó los siguientes archivos:
 $STAGE1_FILES
 
 Tu tarea: implementa la lógica de negocio para hacer pasar todos los tests. Sigue todas las instrucciones de tu rol de $STAGE2_AGENT.
+
+Si detectas un bloqueo que no puedes resolver, escribe el reporte en: $BLOCKAGE_REPORT_CANONICAL
 
 ECONOMIA DE TURNOS:
 Cada turno tuyo cuesta ~5-6 s de reloj (turno sonnet) -- el trabajo que ese turno manda a hacer es barato en comparacion: en el diagnostico Fase 0, dotnet (build/test) ocupo solo ~11% del wall total de una corrida, frente a ~86% de tiempo de API (turnos). Lo caro es el turno, no la herramienta. Con eso en mente:
