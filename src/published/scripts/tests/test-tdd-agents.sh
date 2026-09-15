@@ -57,6 +57,7 @@ state_summaries=(
     'stage-1-projection-test-writer'
     'stage-2-projection-implementer'
 )
+state_blockage_counts=(0 2 2 0 0 0)
 
 echo '[fuentes] contrato neutral, guard y doctrina preservada'
 for index in "${!agents[@]}"; do
@@ -122,6 +123,7 @@ for index in "${!state_agents[@]}"; do
     summary="{{mefisto:state-path summaries/${state_summaries[$index]}.md}}"
     if ! grep -Fq '.claude/pipeline/summaries' "$source" && ! grep -Fq '.claude/pipeline/blockage-report' "$source" && ! grep -Fq '`.claude/pipeline/`' "$source"; then pass "$agent no conserva rutas legacy de estado"; else fail "$agent conserva rutas legacy de estado"; fi
     if [ "$(grep -Fc "$summary" "$source")" -eq 1 ]; then pass "$agent declara su summary neutral exacto"; else fail "$agent no declara su summary neutral exacto"; fi
+    if [ "$(grep -Fc '{{mefisto:state-path blockage-report.md}}' "$source")" -eq "${state_blockage_counts[$index]}" ]; then pass "$agent declara las rutas neutrales esperadas de bloqueo"; else fail "$agent no declara las rutas neutrales esperadas de bloqueo"; fi
 done
 
 echo '[validador] excepciones transitorias acotadas'
