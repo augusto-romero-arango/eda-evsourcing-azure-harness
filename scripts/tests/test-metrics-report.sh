@@ -456,16 +456,15 @@ fi
 echo ""
 echo "[N] Segmentacion por harness_version (CA-1..CA-4, issue #663)"
 
-# Mezcla: 2 corridas en "0.9.0", 1 en "0.25.0", 1 sin el campo (historial previo
-# a #660) -- todas tdd e instrumentadas, para poder derivar a mano wall/turnos/
-# costo por grupo. Los numeros esperados abajo se calcularon sumando estos
-# mismos campos (ver CA-1: agregados restringidos a cada version). Las dos
-# versiones no son decorativas: 0.9.0 y 0.25.0 son el par que un sort_by de
+# Mezcla: 2 corridas con version plana "0.9.0", 1 con la identidad completa
+# nueva en "0.25.0" y 1 sin version (historial previo a #660). Todas son TDD e
+# instrumentadas, para poder derivar a mano wall/turnos/costo por grupo. Las
+# dos versiones no son decorativas: 0.9.0 y 0.25.0 son el par que un sort_by de
 # cadenas invertiria, y ambas son alcanzables con el plugin ya en 0.25.0.
 cat > "$FAKE_REPO/.claude/pipeline/pipeline-history.jsonl" <<'EOF'
 {"issue":"800","title":"TDD version 0.9.0 (a)","pipeline":"tdd","harness_version":"0.9.0","started":"20260806-090000","state":"completed","agents":{"test-writer":{"duration":100,"metrics":{"turns":10,"duration_ms":100000,"duration_api_ms":80000,"non_api_ms":20000,"cost_usd":0.5,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"model":"claude-sonnet-5","agent":"test-writer","tool_calls":[]}}}}
 {"issue":"810","title":"TDD version 0.9.0 (b)","pipeline":"tdd","harness_version":"0.9.0","started":"20260807-090000","state":"completed","agents":{"test-writer":{"duration":200,"metrics":{"turns":20,"duration_ms":200000,"duration_api_ms":150000,"non_api_ms":50000,"cost_usd":0.7,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"model":"claude-sonnet-5","agent":"test-writer","tool_calls":[]}}}}
-{"issue":"820","title":"TDD version 0.25.0","pipeline":"tdd","harness_version":"0.25.0","started":"20260808-090000","state":"completed","agents":{"test-writer":{"duration":50,"metrics":{"turns":5,"duration_ms":50000,"duration_api_ms":30000,"non_api_ms":20000,"cost_usd":0.2,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"model":"claude-sonnet-5","agent":"test-writer","tool_calls":[]}}}}
+{"issue":"820","title":"TDD version 0.25.0","pipeline":"tdd","identity":{"harness_version":"0.25.0","harness_commit":"0123456789abcdef0123456789abcdef01234567","identity_state":"complete"},"started":"20260808-090000","state":"completed","agents":{"test-writer":{"duration":50,"metrics":{"turns":5,"duration_ms":50000,"duration_api_ms":30000,"non_api_ms":20000,"cost_usd":0.2,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"model":"claude-sonnet-5","agent":"test-writer","tool_calls":[]}}}}
 {"issue":"830","title":"TDD sin harness_version (historial previo a #660)","pipeline":"tdd","started":"20260809-090000","state":"completed","agents":{"test-writer":{"duration":150,"metrics":{"turns":12,"duration_ms":150000,"duration_api_ms":100000,"non_api_ms":50000,"cost_usd":0.3,"tokens":{"input":1000,"output":100,"cache_read":900,"cache_creation":100},"model":"claude-sonnet-5","agent":"test-writer","tool_calls":[]}}}}
 EOF
 

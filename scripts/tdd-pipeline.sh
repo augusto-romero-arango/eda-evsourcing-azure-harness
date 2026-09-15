@@ -16,6 +16,15 @@
 #   MEFISTO_HOLD_MAX_SECONDS=<s> / MEFISTO_HOLD_PROBE_SECONDS=<s> ./scripts/tdd-pipeline.sh 42  # Techo (default 21600 = 6h) y cadencia de sondeo (default 300) de la espera ante RATE_LIMIT/PROVIDER_UNAVAILABLE (issue #971, MEF-ADR-0051)
 #
 # Ciclo completo: Issue → Worktree → Test Writer → Implementer → Reviewer → Sync main → Coverage Gate → PR → Cleanup
+#
+# Observabilidad (issue #1363, MEF-ADR-0050): este pipeline nunca parchea
+# .claude/settings.json del worktree. El events.log del PIPELINE recibe
+# [tool]/[stage] (y [archivo] cuando el runner lo sintetiza) exclusivamente
+# via --events-log del runner neutral. Las lineas [test]/[terraform]/[archivo]
+# que emiten los hooks PUBLICADOS del plugin (hooks/hooks.json, PostToolUse en
+# Claude, sintesis por plugin en OpenCode) quedan en
+# <worktree>/.mefisto/pipeline/events.log -- el events.log DEL WORKTREE, no el
+# de este pipeline -- en ambos runtimes.
 
 set -euo pipefail
 
@@ -52,11 +61,12 @@ unset _REPO_TOP
 
 load_harness_config || exit 1
 
-# Version del plugin que corre este pipeline (issue #660), calculada UNA vez
-# aqui -- no en el trap de aborto, que solo interpola la variable ya resuelta.
-HARNESS_VERSION="$(get_harness_version)"
-HARNESS_VERSION_JSON="null"
-[ -n "$HARNESS_VERSION" ] && HARNESS_VERSION_JSON="\"$HARNESS_VERSION\""
+# Identidad declarada por el paquete (issue #1363, MEF-ADR-0053 S6.5); se
+# revalida contra el runtime resuelto mas abajo, antes de la primera
+# escritura de status/history durable -- mismo patron de dos fases que
+# tooling-pipeline.sh (l.52/l.332). Esta asignacion temprana solo cubre un
+# abort() entre aqui y la resolucion del runtime, bajo 'set -u'.
+HARNESS_IDENTITY_JSON="$(get_harness_identity_json)"
 
 # ─── Colores ────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -168,7 +178,7 @@ abort() {
     # del contexto real que se quiere mostrar (issue #379).
     local log_tail
     log_tail="$(_tail_log_for_abort "${LOG_FILE_ABS:-$LOG_FILE}" "$TAIL_LOG_LINES")" || log_tail=""
-    PIPELINE_ERROR="$(echo "$1" | sed 's/"/\\"/g' | tr '\n' ' ')"
+    PIPELINE_ERROR="$(printf '%s' "$1" | tr '\n' ' ')"
     echo -e "\n${RED}${BOLD}✗ ERROR: $1${NC}" | tee -a "${LOG_FILE_ABS:-$LOG_FILE}"
     echo -e "${YELLOW}Revisa el log: ${LOG_FILE_ABS:-$LOG_FILE}${NC}"
     if [ -n "$log_tail" ]; then echo "$log_tail"; fi
@@ -191,11 +201,18 @@ abort() {
         [ -n "${AGENT_ST_METRICS_JSON:-}" ] && abort_agent_args+=("smoke-test-writer" "smoke-test-writer" "${AGENT_ST_DUR:-}" "$AGENT_ST_METRICS_JSON")
         [ -n "${AGENT_PATCH_TW_METRICS_JSON:-}" ] && abort_agent_args+=("patch-test-writer" "$STAGE1_AGENT" "${AGENT_PATCH_TW_DUR:-}" "$AGENT_PATCH_TW_METRICS_JSON")
         [ -n "${AGENT_PATCH_IM_METRICS_JSON:-}" ] && abort_agent_args+=("patch-implementer" "$STAGE2_AGENT" "${AGENT_PATCH_IM_DUR:-}" "$AGENT_PATCH_IM_METRICS_JSON")
-        local abort_agents_json abort_agents_field=""
+        local abort_agents_json
         abort_agents_json=$(build_agents_history_json "${abort_agent_args[@]}" 2>/dev/null) || abort_agents_json=""
-        [ -n "$abort_agents_json" ] && abort_agents_field=",\"agents\":$abort_agents_json"
-        # M4: Registrar falla en historial para analisis de patrones
-        echo "{\"issue\":\"${ISSUE_NUM:-}\",\"title\":\"$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')\",\"pipeline\":\"tdd\",\"variant\":${VARIANT_LABEL_JSON:-null},\"harness_version\":${HARNESS_VERSION_JSON:-null},\"started\":\"${TIMESTAMP:-}\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"failed\",\"stage\":\"$CURRENT_STAGE\"${abort_agents_field},\"error\":\"$PIPELINE_ERROR\"}" \
+        [ -n "$abort_agents_json" ] || abort_agents_json="null"
+        # M4: Registrar falla en historial para analisis de patrones. Identidad
+        # y runtime via jq -cn, no interpolacion de cadenas (CA-1, issue #1363,
+        # MEF-ADR-0053 S6.5) -- mismo patron que tooling-pipeline.sh
+        # record_failed_history (l.104-110).
+        jq -cn --arg issue "${ISSUE_NUM:-}" --arg title "${ISSUE_TITLE:-}" --argjson variant "${VARIANT_LABEL_JSON:-null}" \
+            --argjson identity "$HARNESS_IDENTITY_JSON" --arg runtime "${MEFISTO_RUNTIME_RESUELTO:-}" \
+            --arg started "${TIMESTAMP:-}" --arg finished "$(date +%Y-%m-%dT%H:%M:%S)" \
+            --arg stage "$CURRENT_STAGE" --arg error "$PIPELINE_ERROR" --argjson agents "$abort_agents_json" \
+            '{issue:$issue,title:$title,pipeline:"tdd",variant:$variant,identity:$identity,runtime:(if $runtime == "" then null else $runtime end),started:$started,finished:$finished,state:"failed",stage:$stage,agents:$agents,error:$error}' \
             >> "$PIPELINE_DIR_ABS/pipeline-history.jsonl" 2>/dev/null || true
     fi
     exit 1
@@ -213,13 +230,15 @@ update_status() {
     local tests_val="null" pr_val="null" error_val="null"
     [ -n "$PIPELINE_TESTS" ] && tests_val="$PIPELINE_TESTS"
     [ -n "$PIPELINE_PR" ]    && pr_val="\"$PIPELINE_PR\""
-    [ -n "$PIPELINE_ERROR" ] && error_val="\"$PIPELINE_ERROR\""
+    [ -n "$PIPELINE_ERROR" ] && error_val="$(jq -cn --arg error "$PIPELINE_ERROR" '$error')"
     cat > "$PIPELINE_DIR_ABS/$STATUS_FILENAME" <<EOJSON
 {
   "issue": "${ISSUE_NUM:-null}",
   "title": "$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')",
   "pipeline": "tdd",
   "variant": ${VARIANT_LABEL_JSON:-null},
+  "identity": ${HARNESS_IDENTITY_JSON:-null},
+  "runtime": ${MEFISTO_RUNTIME_JSON:-null},
   "started": "$TIMESTAMP",
   "stage": "$stage",
   "state": "$state",
@@ -391,8 +410,16 @@ if ! mefisto_resolve_runtime >/dev/null; then
     abort "No se pudo resolver el runtime activo: ${MEFISTO_RUNTIME_ERROR:-motivo desconocido}"
 fi
 MEFISTO_RUNTIME_RESUELTO="$MEFISTO_RESOLVED_RUNTIME"
+MEFISTO_RUNTIME_JSON="\"$MEFISTO_RUNTIME_RESUELTO\""
+# Segunda fase de la identidad (issue #1363): revalidada contra el runtime ya
+# resuelto, antes de la primera escritura de status/history durable. Mismo
+# texto de degradacion que tooling-pipeline.sh l.352.
+HARNESS_IDENTITY_JSON="$(get_harness_identity_json "$MEFISTO_RUNTIME_RESUELTO")"
 if ! runtime_cli_available "$MEFISTO_RUNTIME_RESUELTO"; then
     abort "Falta el CLI del runtime resuelto ('$MEFISTO_RUNTIME_RESUELTO')"
+fi
+if [ "$(printf '%s' "$HARNESS_IDENTITY_JSON" | jq -r '.identity_state')" != "complete" ]; then
+    warn "Identidad de distribucion degradada: metadata ausente o invalida; version/commit se registran como null"
 fi
 
 # --- Modelos neutrales por perfil (issue #1362, MEF-ADR-0049 decision 4) -----
@@ -595,12 +622,6 @@ else
 
     mkdir -p "$WORKTREE_PATH/.claude/pipeline/summaries"
 
-    # Parchear settings.json del worktree con ruta absoluta del events.log
-    if [ -f "$REPO_ROOT/.claude/settings.json" ]; then
-        sed "s|\.claude/pipeline/events\.log|${EVENTS_LOG_ABS}|g" \
-            "$REPO_ROOT/.claude/settings.json" > "$WORKTREE_PATH/.claude/settings.json"
-    fi
-
     update_status "setup" "running"
 
     SNAPSHOT_COMMIT=$(git -C "$WORKTREE_PATH" rev-parse HEAD)
@@ -626,7 +647,10 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
         invoke_agent_once "domain-scaffolder" "$SCAFFOLD_PROMPT_FILE" "$EVENTS_SCAFFOLD" "$LOG_SCAFFOLD" "$RESOLVED_TDD_MODEL" || SCAFFOLD_EXIT=$?
         SCAFFOLD_ELAPSED=$LAST_AGENT_DURATION
         AGENT_SCAFFOLD_DUR=$SCAFFOLD_ELAPSED
-        AGENT_SCAFFOLD_METRICS_JSON=$LAST_AGENT_METRICS_JSON
+        # CA-2 (issue #1363): enriquecida con pipeline/issue/variant/stage/
+        # agent/profile/runtime/modelo/identidad -- misma forma que las
+        # metricas de run_agent.
+        AGENT_SCAFFOLD_METRICS_JSON="$(enrich_stage_metrics "tdd" "$EVENTS_SCAFFOLD" "$LAST_AGENT_METRICS_JSON" "${ISSUE_NUM:-}" "${VARIANT_LABEL_JSON:-null}" "0" "domain-scaffolder" "$(_tdd_agent_profile "domain-scaffolder")" "$HARNESS_IDENTITY_JSON")"
         # CA-3/CA-5 (issue #646): metricas del scaffold, cosechadas al cierre
         # del stage y respaldadas en disco ANTES de decidir si se aborta.
         echo "$AGENT_SCAFFOLD_METRICS_JSON" > "$PIPELINE_DIR_ABS/metrics/tdd-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-0-domain-scaffolder.json" 2>/dev/null || true
@@ -738,6 +762,10 @@ run_agent() {
         elapsed=$(( $(date +%s) - start_ts ))
         derive_stage_log_from_stream "$events_file" "" "$log_stage"
         metrics_json="$(compute_stage_metrics "$events_file")"
+        # CA-2 (issue #1363): enriquecida con pipeline/issue/variant/stage/
+        # agent/profile/runtime/modelo/identidad -- cruce con metrics-report.sh
+        # y la estimacion de costos (MEF-ADR-0054).
+        metrics_json="$(enrich_stage_metrics "tdd" "$events_file" "$metrics_json" "${ISSUE_NUM:-}" "${VARIANT_LABEL_JSON:-null}" "$stage" "$agent" "$agent_profile" "$HARNESS_IDENTITY_JSON")"
         echo "$metrics_json" > "$PIPELINE_DIR_ABS/metrics/tdd-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-${stage}-${agent}.json" 2>/dev/null || true
         local denials attempt_has_work=false
         denials="$(agent_events_denials "$events_file")"
@@ -801,10 +829,6 @@ run_agent() {
 auto_commit_if_needed() {
     local phase="$1"     # "roja", "verde", "refactor"
     local msg="$2"       # mensaje de commit
-
-    # [Cambio 1] Restaurar settings.json antes de verificar estado git
-    # El pipeline lo parchea a propósito, pero no debe interferir con git
-    git -C "$WORKTREE_PATH" checkout -- .claude/settings.json 2>/dev/null || true
 
     # Revisar si hay cambios en tests/ o src/ específicamente
     if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/)" ]; then
@@ -1685,7 +1709,8 @@ IMPORTANTE:
         CG_TW_EXIT=0
         invoke_agent_once "$STAGE1_AGENT" "$PATCH_TW_PROMPT_FILE" "$EVENTS_CG_TW" "$LOG_CG_TW" "$PATCH_TW_MODEL_OVERRIDE" || CG_TW_EXIT=$?
         AGENT_PATCH_TW_DUR=$LAST_AGENT_DURATION
-        AGENT_PATCH_TW_METRICS_JSON=$LAST_AGENT_METRICS_JSON
+        # CA-2 (issue #1363): misma forma enriquecida que Stage 1/run_agent.
+        AGENT_PATCH_TW_METRICS_JSON="$(enrich_stage_metrics "tdd" "$EVENTS_CG_TW" "$LAST_AGENT_METRICS_JSON" "${ISSUE_NUM:-}" "${VARIANT_LABEL_JSON:-null}" "4b" "$STAGE1_AGENT" "$PATCH_TW_PROFILE" "$HARNESS_IDENTITY_JSON")"
         # CA-3/CA-5 (issue #646): metricas de este patch loop, cosechadas al
         # cierre del stage y respaldadas en disco antes de decidir el resultado.
         echo "$AGENT_PATCH_TW_METRICS_JSON" > "$PIPELINE_DIR_ABS/metrics/tdd-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-4b-${STAGE1_AGENT}.json" 2>/dev/null || true
@@ -1735,7 +1760,8 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
                 CG_IM_EXIT=0
                 invoke_agent_once "$STAGE2_AGENT" "$PATCH_IM_PROMPT_FILE" "$EVENTS_CG_IM" "$LOG_CG_IM" "$PATCH_IM_MODEL_OVERRIDE" || CG_IM_EXIT=$?
                 AGENT_PATCH_IM_DUR=$LAST_AGENT_DURATION
-                AGENT_PATCH_IM_METRICS_JSON=$LAST_AGENT_METRICS_JSON
+                # CA-2 (issue #1363): misma forma enriquecida que Stage 2/run_agent.
+                AGENT_PATCH_IM_METRICS_JSON="$(enrich_stage_metrics "tdd" "$EVENTS_CG_IM" "$LAST_AGENT_METRICS_JSON" "${ISSUE_NUM:-}" "${VARIANT_LABEL_JSON:-null}" "4c" "$STAGE2_AGENT" "$PATCH_IM_PROFILE" "$HARNESS_IDENTITY_JSON")"
                 # CA-3/CA-5 (issue #646): metricas de este patch loop, cosechadas
                 # al cierre del stage y respaldadas en disco.
                 echo "$AGENT_PATCH_IM_METRICS_JSON" > "$PIPELINE_DIR_ABS/metrics/tdd-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-4c-${STAGE2_AGENT}.json" 2>/dev/null || true
@@ -2124,7 +2150,12 @@ fi
 
 PR_JSON="null"
 [ -n "$PR_URL" ] && PR_JSON="\"$PR_URL\""
-echo "{\"issue\":\"${ISSUE_NUM:-}\",\"title\":\"$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')\",\"pipeline\":\"tdd\",\"variant\":${VARIANT_LABEL_JSON:-null},\"harness_version\":${HARNESS_VERSION_JSON:-null},\"started\":\"$TIMESTAMP\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"completed\",\"agents\":$AGENTS_JSON,\"tests\":${PIPELINE_TESTS:-null},\"pr\":$PR_JSON}" \
+# Identidad y runtime via jq -cn (CA-1, issue #1363, MEF-ADR-0053 S6.5) --
+# mismo patron que tooling-pipeline.sh (l.975-983).
+jq -cn --arg issue "${ISSUE_NUM:-}" --arg title "${ISSUE_TITLE:-}" --argjson variant "${VARIANT_LABEL_JSON:-null}" \
+    --argjson identity "$HARNESS_IDENTITY_JSON" --arg runtime "$MEFISTO_RUNTIME_RESUELTO" --arg started "$TIMESTAMP" --arg finished "$(date +%Y-%m-%dT%H:%M:%S)" \
+    --argjson agents "$AGENTS_JSON" --argjson tests "${PIPELINE_TESTS:-null}" --argjson pr "$PR_JSON" \
+    '{issue:$issue,title:$title,pipeline:"tdd",variant:$variant,identity:$identity,runtime:$runtime,started:$started,finished:$finished,state:"completed",agents:$agents,tests:$tests,pr:$pr}' \
     >> "$PIPELINE_DIR_ABS/pipeline-history.jsonl"
 
 # Eliminar archivo de estado individual (ya esta en el historial)
@@ -2133,10 +2164,8 @@ rm -f "$PIPELINE_DIR_ABS/$STATUS_FILENAME"
 # ─── Cleanup ──────────────────────────────────────────────────────────────────
 header "Cleanup"
 
-# [Cambio 1/2] Restaurar archivos sucios antes de remover, y usar --force
 log "Eliminando worktree..."
 cd "$REPO_ROOT"
-git -C "$WORKTREE_PATH" checkout -- .claude/ 2>/dev/null || true
 git worktree remove --force "$WORKTREE_PATH" >>"$LOG_FILE" 2>&1 \
     || warn "No se pudo eliminar el worktree automáticamente. Elimínalo manualmente: git worktree remove --force $WORKTREE_PATH"
 

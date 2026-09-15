@@ -475,10 +475,11 @@ def pipeline_report:
     # global y en ninguna seccion, la unica forma de que el reporte pierda
     # corridas en silencio.
     _pipeline: (if (.pipeline | type) == "string" then .pipeline else "(sin-pipeline)" end),
-    # Igual patron que _pipeline: harness_version llego con #660, asi que todo
-    # historial previo (o cualquier linea futura que no lo traiga) cae en su
-    # propio cajon "(sin version)" en vez de romper la segmentacion por_version.
-    _version: (if (.harness_version | type) == "string" then .harness_version else "(sin version)" end)
+    # La identidad completa reemplazo el campo plano en tooling y TDD. El
+    # fallback conserva la lectura del historial previo a esa migracion.
+    _version: (if (.identity.harness_version | type) == "string" then .identity.harness_version
+               elif (.harness_version | type) == "string" then .harness_version
+               else "(sin version)" end)
   })) as $entries
 
 | ($entries | map(._pipeline) | unique) as $present_pipelines

@@ -1169,16 +1169,20 @@ compute_stage_metrics() {
     return 0
 }
 
-# enrich_tooling_stage_metrics <events> <base_metrics> <issue> <variant_json>
-#                              <stage> <agent> <profile> <identity_json>
+# enrich_stage_metrics <pipeline> <events> <base_metrics> <issue> <variant_json>
+#                       <stage> <agent> <profile> <identity_json>
 #
 # Agrega dimensiones de correlacion del writer headless sin cambiar las claves
 # historicas que consume metrics-report.sh. Requested/effective model provienen
 # exclusivamente de run.started y del unico terminal neutral, respectivamente.
-enrich_tooling_stage_metrics() {
-    local events_file="$1" base_metrics="$2" issue="$3" variant_json="$4"
-    local stage="$5" agent="$6" profile="$7" identity_json="$8"
+# Generalizada desde enrich_tooling_stage_metrics (issue #1063) a cualquier
+# pipeline publicado (issue #1363): <pipeline> viaja explicito en vez de fijo
+# a "tooling", para que tdd-pipeline.sh reuse la misma forma de metricas.
+enrich_stage_metrics() {
+    local pipeline="$1" events_file="$2" base_metrics="$3" issue="$4" variant_json="$5"
+    local stage="$6" agent="$7" profile="$8" identity_json="$9"
     jq -R -s -c \
+        --arg pipeline "$pipeline" \
         --argjson metrics "${base_metrics:-null}" \
         --arg issue "$issue" --argjson variant "$variant_json" \
         --arg stage "$stage" --arg agent "$agent" --arg profile "$profile" \
@@ -1187,7 +1191,7 @@ enrich_tooling_stage_metrics() {
         | ($events | map(select(.type == "run.started")) | first) as $started
         | ($events | map(select(.type == "run.completed" or .type == "run.failed")) | last) as $terminal
         | ($metrics // {}) + {
-            pipeline: "tooling", issue: $issue, variant: $variant,
+            pipeline: $pipeline, issue: $issue, variant: $variant,
             stage: $stage, agent: $agent,
             runtime: ($terminal.runtime // $started.runtime // null),
             profile: $profile,
@@ -1202,6 +1206,16 @@ enrich_tooling_stage_metrics() {
             identity_state: $identity.identity_state
           }
     ' "$events_file" 2>/dev/null || printf '%s\n' 'null'
+}
+
+# enrich_tooling_stage_metrics <events> <base_metrics> <issue> <variant_json>
+#                              <stage> <agent> <profile> <identity_json>
+#
+# Wrapper historico con pipeline="tooling" fijo (issue #1063): conserva su
+# firma exacta -- tooling-pipeline.sh, test-stage-metrics.sh y
+# test-tooling-neutral-runner.sh la invocan sin el argumento <pipeline>.
+enrich_tooling_stage_metrics() {
+    enrich_stage_metrics "tooling" "$@"
 }
 
 # render_run_metrics_table <etiqueta> <duracion_segundos> <metrics_json> [...]

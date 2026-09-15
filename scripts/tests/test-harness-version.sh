@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-harness-version.sh -- Tests de get_harness_version y de los contratos
-# de identidad/version en los pipelines publicados (issues #660, #1198).
+# de identidad/version en los pipelines publicados (issues #660, #1198, #1363).
 #
 # Contexto: pipeline-history.jsonl no registraba con que version del plugin
 # corrio cada pipeline -- el unico rastro de version (.claude/pipeline/.plugin-root)
@@ -12,13 +12,15 @@
 #     _pc_script_dir) y no al cwd del pipeline. Con jq, lee '.version'; sin
 #     jq, degrada a extraccion con sed; si nada funciona o el archivo no
 #     existe, imprime cadena vacia. Nunca aborta, siempre retorna 0.
-#   - TDD e IaC conservan HARNESS_VERSION/HARNESS_VERSION_JSON calculados UNA
-#     vez en el prologo e interpolados como "harness_version":<string o null>
-#     en sus escrituras feliz y de aborto de pipeline-history.jsonl.
-#   - Tooling inicializa HARNESS_IDENTITY_JSON desde el paquete y lo revalida
-#     una unica vez contra el runtime activo antes de producir evidencia
-#     durable. Sus escrituras feliz y de aborto incluyen el objeto identity
-#     (version, commit y estado).
+#   - IaC conserva HARNESS_VERSION/HARNESS_VERSION_JSON calculados UNA vez en
+#     el prologo e interpolados como "harness_version":<string o null> en sus
+#     escrituras feliz y de aborto de pipeline-history.jsonl.
+#   - TDD y tooling inicializan HARNESS_IDENTITY_JSON desde el paquete y lo
+#     revalidan una unica vez contra el runtime activo antes de producir
+#     evidencia durable (issue #1363 neutraliza a TDD sobre el mismo patron de
+#     tooling, #1198). Sus escrituras feliz y de aborto incluyen el objeto
+#     identity (version, commit y estado) y el runtime, sin el campo plano
+#     harness_version.
 #
 # Las pruebas de get_harness_version usan un fixture propio (copia de
 # _pipeline-common.sh + un .claude-plugin/plugin.json de prueba en un dir
@@ -34,12 +36,13 @@
 #   [C] sin jq en PATH: fallback con sed extrae la misma version (CA-1).
 #   [D] plugin.json ausente: cadena vacia, exit 0, nunca aborta (CA-1).
 #   [E] smoke test contra el plugin.json REAL del repo (con y sin jq).
-#   [F] cableado: TDD/IaC calculan HARNESS_VERSION una sola vez en el prologo;
-#       tooling revalida HARNESS_IDENTITY_JSON una unica vez contra el runtime
-#       activo, antes de producir evidencia durable (CA-1, CA-2).
-#   [G] cableado: TDD/IaC conservan harness_version plano; tooling persiste el
-#       objeto identity en los historiales feliz y de aborto, sin el campo plano
-#       retirado (CA-1, CA-3).
+#   [F] cableado: IaC calcula HARNESS_VERSION una sola vez en el prologo; TDD y
+#       tooling revalidan HARNESS_IDENTITY_JSON una unica vez contra el
+#       runtime activo, antes de producir evidencia durable (issue #1363
+#       CA-1; CA-2 del #1198).
+#   [G] cableado: IaC conserva harness_version plano; TDD y tooling persisten
+#       el objeto identity en los historiales feliz y de aborto, sin el campo
+#       plano retirado (issue #1363 CA-1; CA-3 del #1198).
 #   [H] un caller con 'set -euo pipefail' (como los tres pipelines) sobrevive
 #       a plugin.json ausente: HARNESS_VERSION queda vacia y el script sigue
 #       corriendo, en vez de morir en el prologo (CA-1).
@@ -210,9 +213,9 @@ fi
 # -------- Bloque F: contratos de inicializacion de identidad/version --------
 
 echo ""
-echo "[F] TDD/IaC conservan version plana; tooling revalida identidad neutral (CA-1, CA-2)"
+echo "[F] IaC conserva version plana; TDD y tooling revalidan identidad neutral (issue #1363 CA-1; CA-2 del #1198)"
 
-for pipe in tdd-pipeline.sh iac-pipeline.sh; do
+for pipe in iac-pipeline.sh; do
     PIPE_PATH="$REPO_ROOT/scripts/$pipe"
     occurrences=$(grep -c 'HARNESS_VERSION="\$(get_harness_version)"' "$PIPE_PATH")
     if [ "$occurrences" = "1" ]; then
@@ -233,13 +236,19 @@ for pipe in tdd-pipeline.sh iac-pipeline.sh; do
     fi
 done
 
+# TDD sale del bucle version-plana de arriba (issue #1363): igual que tooling
+# (#1198), revalida su identidad exactamente una vez contra el runtime ya
+# resuelto -- ninguno de los dos recalcula HARNESS_VERSION.
 TOOLING_PATH="$REPO_ROOT/scripts/tooling-pipeline.sh"
-identity_occurrences=$(grep -c 'HARNESS_IDENTITY_JSON="\$(get_harness_identity_json "\$MEFISTO_RUNTIME_RESUELTO")"' "$TOOLING_PATH")
-if [ "$identity_occurrences" = "1" ]; then
-    pass "F-3 (tooling-pipeline.sh): HARNESS_IDENTITY_JSON se revalida exactamente una vez contra el runtime activo"
-else
-    fail "F-3 (tooling-pipeline.sh): se esperaba 1 revalidacion de identidad contra el runtime, se encontraron $identity_occurrences"
-fi
+TDD_PATH="$REPO_ROOT/scripts/tdd-pipeline.sh"
+for revalidated in "$TOOLING_PATH" "$TDD_PATH"; do
+    identity_occurrences=$(grep -c 'HARNESS_IDENTITY_JSON="\$(get_harness_identity_json "\$MEFISTO_RUNTIME_RESUELTO")"' "$revalidated")
+    if [ "$identity_occurrences" = "1" ]; then
+        pass "F-3 ($(basename "$revalidated")): HARNESS_IDENTITY_JSON se revalida exactamente una vez contra el runtime activo"
+    else
+        fail "F-3 ($(basename "$revalidated")): se esperaba 1 revalidacion de identidad contra el runtime, se encontraron $identity_occurrences"
+    fi
+done
 
 identity_line=$(grep -n 'HARNESS_IDENTITY_JSON="\$(get_harness_identity_json "\$MEFISTO_RUNTIME_RESUELTO")"' "$TOOLING_PATH" | head -n1 | cut -d: -f1)
 evidence_line=$(grep -n 'echo "Pipeline tooling iniciado: \$TIMESTAMP" > "\$LOG_FILE"' "$TOOLING_PATH" | head -n1 | cut -d: -f1)
@@ -252,9 +261,9 @@ fi
 # -------- Bloque G: contratos de history por pipeline --------
 
 echo ""
-echo "[G] TDD/IaC escriben harness_version; tooling escribe identity completo (CA-1, CA-3)"
+echo "[G] IaC escribe harness_version; TDD y tooling escriben identity completo (issue #1363 CA-1; CA-3 del #1198)"
 
-for pipe in tdd-pipeline.sh iac-pipeline.sh; do
+for pipe in iac-pipeline.sh; do
     PIPE_PATH="$REPO_ROOT/scripts/$pipe"
     field_count=$(grep -c '\\"harness_version\\"' "$PIPE_PATH")
     if [ "$field_count" = "2" ]; then
@@ -276,6 +285,33 @@ if [ "$tooling_flat_fields" = "0" ]; then
     pass "G-3 (tooling-pipeline.sh): no reintroduce harness_version plano"
 else
     fail "G-3 (tooling-pipeline.sh): se esperaban 0 campos harness_version planos, se encontraron $tooling_flat_fields"
+fi
+
+# TDD (issue #1363): mismo par de aserciones que tooling arriba -- las dos
+# lineas de history reciben el objeto identity via jq -cn y no reintroducen
+# la clave plana harness_version.
+tdd_identity_args=$(grep -c -- '--argjson identity "\$HARNESS_IDENTITY_JSON"' "$TDD_PATH")
+tdd_identity_fields=$(grep -c 'identity:\$identity' "$TDD_PATH")
+tdd_flat_fields=$(grep -Ec '\\"harness_version\\"|(^|[,{[:space:]])harness_version[[:space:]]*:' "$TDD_PATH")
+if [ "$tdd_identity_args" = "2" ] && [ "$tdd_identity_fields" = "2" ]; then
+    pass "G-4 (tdd-pipeline.sh): los historiales feliz y de aborto reciben el objeto identity"
+else
+    fail "G-4 (tdd-pipeline.sh): se esperaban 2 argumentos y 2 campos identity, se encontraron args=$tdd_identity_args campos=$tdd_identity_fields"
+fi
+if [ "$tdd_flat_fields" = "0" ]; then
+    pass "G-5 (tdd-pipeline.sh): no reintroduce harness_version plano"
+else
+    fail "G-5 (tdd-pipeline.sh): se esperaban 0 campos harness_version planos, se encontraron $tdd_flat_fields"
+fi
+
+# El mismo error alimenta el status y el historial construido por jq. Debe
+# conservarse crudo hasta entregarlo a jq para evitar una segunda capa de
+# barras invertidas cuando contiene comillas.
+if grep -Fq 'PIPELINE_ERROR="$(printf '\''%s'\'' "$1" | tr '\''\n'\'' '\'' '\'')"' "$TDD_PATH" \
+    && grep -Fq 'error_val="$(jq -cn --arg error "$PIPELINE_ERROR" '\''$error'\'')"' "$TDD_PATH"; then
+    pass "G-6 (tdd-pipeline.sh): el error queda crudo hasta su serializacion con jq"
+else
+    fail "G-6 (tdd-pipeline.sh): el error se preescapa o no se serializa con jq"
 fi
 
 # -------- Bloque H: un caller con 'set -euo pipefail' no muere (CA-1) --------
