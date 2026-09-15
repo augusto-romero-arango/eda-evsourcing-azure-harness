@@ -319,10 +319,10 @@ else
     fail "G-6: jq dejo ruido por stderr: $(cat "$TMP/g-raro.stderr")"
 fi
 
-# --- [H] Los pipelines legacy capturan; tooling consume JSONL neutral -------
+# --- [H] Los pipelines legacy capturan; TDD/tooling consumen JSONL neutral ---
 echo ""
 echo "[H] derivacion de logs por frontera de ejecucion"
-for p in iac-pipeline.sh tdd-pipeline.sh; do
+for p in iac-pipeline.sh; do
     if grep -q -- "--output-format stream-json --verbose" "$REPO_ROOT/scripts/$p" \
         && grep -q "derive_stage_log_from_stream" "$REPO_ROOT/scripts/$p" \
         && grep -q "PIPELINE_CAPTURE_STREAM=true" "$REPO_ROOT/scripts/$p"; then
@@ -331,13 +331,23 @@ for p in iac-pipeline.sh tdd-pipeline.sh; do
         fail "H: $p perdio la captura stream-json o la derivacion del .log"
     fi
 done
-if grep -q 'mefisto-run-agent.sh' "$REPO_ROOT/scripts/tooling-pipeline.sh" \
-    && grep -q 'derive_stage_log_from_stream "$events_file"' "$REPO_ROOT/scripts/tooling-pipeline.sh" \
-    && ! grep -q -- '--output-format' "$REPO_ROOT/scripts/tooling-pipeline.sh"; then
-    pass "H: tooling-pipeline.sh deriva el .log del JSONL neutral"
+# Hasta #1361, Stage 0 y las remediaciones de cobertura de TDD conservan la
+# captura legacy. Esta asercion evita retirarla accidentalmente al neutralizar
+# exclusivamente run_agent.
+if grep -q -- '--output-format stream-json --verbose' "$REPO_ROOT/scripts/tdd-pipeline.sh" \
+    && grep -q 'PIPELINE_CAPTURE_STREAM=true' "$REPO_ROOT/scripts/tdd-pipeline.sh"; then
+    pass "H: tdd-pipeline.sh conserva captura legacy fuera de run_agent hasta #1361"
 else
-    fail "H: tooling-pipeline.sh no respeta la frontera neutral"
+    fail "H: tdd-pipeline.sh perdio la captura legacy de Stage 0/remediacion"
 fi
+for p in tdd-pipeline.sh tooling-pipeline.sh; do
+    if grep -q 'mefisto-run-agent.sh' "$REPO_ROOT/scripts/$p" \
+        && grep -q 'derive_stage_log_from_stream "$events_file"' "$REPO_ROOT/scripts/$p"; then
+        pass "H: $p deriva run_agent desde el JSONL neutral"
+    else
+        fail "H: $p no respeta la frontera neutral"
+    fi
+done
 
 echo ""
 echo "----------------------------------------"

@@ -240,8 +240,8 @@ assert_tdd_order() {
 }
 
 echo ""
-echo "[10b] tdd: anuncia override, frontmatter y heredado antes de invocar, sin cambiar MODEL_ARGS (CA-1, CA-2, CA-5)"
-assert_tdd_contains "run_agent conserva el argv condicional --model" 'MODEL_ARGS="--model $AGENT_MODEL_OVERRIDE"'
+echo "[10b] tdd: anuncia override, frontmatter y heredado antes de invocar el runner (CA-1, CA-2, CA-5)"
+assert_tdd_contains "run_agent conserva el argv condicional --model" '[ -n "$AGENT_MODEL_OVERRIDE" ] && args+=(--model "$AGENT_MODEL_OVERRIDE")'
 assert_tdd_contains "run_agent resuelve el frontmatter cuando no hay override" 'AGENT_MODEL_VISIBLE="$(resolve_declared_agent_model "$agent")"'
 assert_tdd_contains "run_agent representa la ausencia no observable como heredado" 'AGENT_MODEL_VISIBLE="<heredado>"'
 assert_tdd_contains "run_agent etiqueta el override" 'AGENT_MODEL_ORIGIN="override --models"'
@@ -251,11 +251,11 @@ assert_tdd_contains "run_agent muestra el modelo antes del CLI" 'log "Invocando 
 assert_tdd_contains "run_agent persiste la evidencia con el formato canonico" 'MODELS: stage $stage/$agent -> $AGENT_MODEL_VISIBLE ($AGENT_MODEL_ORIGIN)'
 assert_tdd_contains "log escribe tambien en el log persistente" '_log_file "$m"'
 assert_tdd_order "run_agent resuelve el override antes de anunciar" 'AGENT_MODEL_OVERRIDE="$(resolve_stage_model "$agent" "")"' 'log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."'
-assert_tdd_order "run_agent anuncia antes del primer argv de claude" 'log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."' '--agent "$agent" $MODEL_ARGS'
+assert_tdd_order "run_agent anuncia antes del argv neutral" 'log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."' '--agent "$agent" --cwd "$WORKTREE_PATH"'
 for stage_call in 'run_agent "1" "$STAGE1_AGENT"' 'run_agent "2" "$STAGE2_AGENT"' 'run_agent "2b" "smoke-test-writer"' 'run_agent "3" "reviewer"' 'run_agent "merge" "implementer"'; do
     assert_tdd_contains "stage normal conserva la ruta run_agent: $stage_call" "$stage_call"
 done
-assert_tdd_count "run_agent conserva --model en sus cuatro argv (inicial/reintento, stream/text)" 4 '--agent "$agent" $MODEL_ARGS'
+assert_tdd_count "run_agent declara una unica adicion condicional de --model" 1 '[ -n "$AGENT_MODEL_OVERRIDE" ] && args+=(--model "$AGENT_MODEL_OVERRIDE")'
 
 echo ""
 echo "[10c] tdd: las remediaciones preservan la precedencia fina y anuncian los tres origenes (CA-3 a CA-5)"

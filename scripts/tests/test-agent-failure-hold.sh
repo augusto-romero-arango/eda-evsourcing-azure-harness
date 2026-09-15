@@ -212,11 +212,11 @@ echo "[10] CA-6: los cuatro pipelines consumen la funcion compartida, no una cop
 for f in tdd-pipeline.sh tooling-pipeline.sh iac-pipeline.sh scaffold-pipeline.sh; do
     path="$REPO_ROOT/scripts/$f"
     classifier="classify_agent_failure"
-    [ "$f" = tooling-pipeline.sh ] && classifier="classify_neutral_agent_failure"
+    [ "$f" = tooling-pipeline.sh ] || [ "$f" = tdd-pipeline.sh ] && classifier="classify_neutral_agent_failure"
     if grep -q "$classifier" "$path"; then
-        pass "$f invoca classify_agent_failure"
+        pass "$f invoca $classifier"
     else
-        fail "$f no invoca classify_agent_failure"
+        fail "$f no invoca $classifier"
     fi
     if grep -q "agent_failure_is_holdable" "$path" && grep -q "agent_hold_wait" "$path"; then
         pass "$f consume la politica de espera compartida"
@@ -250,11 +250,11 @@ echo "[11] CA-5: la sonda del bucle de espera corre bajo el watchdog de stage"
 # watchdog por el `sleep <timeout>` que lo acompana: si la sonda volviera a
 # invocar el CLI de forma sincrona (sin `&` y sin watchdog), una invocacion
 # colgada dejaria el pipeline esperando indefinidamente.
-if grep -q "sonda de hold" "$REPO_ROOT/scripts/tdd-pipeline.sh" &&
-   grep -q "PROBE_WATCHDOG_PID" "$REPO_ROOT/scripts/tdd-pipeline.sh"; then
-    pass "tdd-pipeline.sh: sonda con watchdog propio"
+if grep -q 'mefisto-run-agent.sh' "$REPO_ROOT/scripts/tdd-pipeline.sh" &&
+   ! grep -q 'PROBE_WATCHDOG_PID' "$REPO_ROOT/scripts/tdd-pipeline.sh"; then
+    pass "tdd-pipeline.sh: la sonda delega el watchdog al runner neutral"
 else
-    fail "tdd-pipeline.sh: la sonda de hold no corre bajo watchdog"
+    fail "tdd-pipeline.sh: la sonda no delega el watchdog neutral"
 fi
 for f in iac-pipeline.sh scaffold-pipeline.sh; do
     path="$REPO_ROOT/scripts/$f"
