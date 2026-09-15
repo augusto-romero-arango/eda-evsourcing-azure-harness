@@ -42,9 +42,7 @@ NC='\033[0m'
 
 # ─── Logging ─────────────────────────────────────────────────────────────────
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-PIPELINE_DIR=".claude/pipeline"
-LOG_DIR="$PIPELINE_DIR/logs"
-LOG_FILE="$LOG_DIR/parallel-$TIMESTAMP.log"
+LOG_DIR=""
 
 _strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
 _log_file()   { echo -e "$1" | _strip_ansi >> "$LOG_FILE_ABS"; }
@@ -145,9 +143,8 @@ cd "$REPO_ROOT"
 # evitar mezclar repos.
 
 # ─── Inicializar log ──────────────────────────────────────────────────────────
-mkdir -p "$LOG_DIR"
-LOG_FILE_ABS="$REPO_ROOT/$LOG_FILE"
-PIPELINE_DIR_ABS="$REPO_ROOT/$PIPELINE_DIR"
+LOG_DIR="$(dirname "$(mefisto_state_path 'logs/.state')")"
+LOG_FILE_ABS="$(mefisto_state_path "logs/parallel-$TIMESTAMP.log")"
 touch "$LOG_FILE_ABS"
 
 # events.log del checkout (issue #973): el MISMO archivo que tdd-pipeline.sh/
@@ -156,8 +153,8 @@ touch "$LOG_FILE_ABS"
 # worktree del issue). hold_recently_active/format_hold_status
 # (_pipeline-common.sh) lo consultan para saber si HAY una espera activa
 # ahora mismo, sin bloquear a este proceso.
-EVENTS_LOG_ABS="$PIPELINE_DIR_ABS/events.log"
-mkdir -p "$(dirname "$EVENTS_LOG_ABS")"
+EVENTS_LOG_ABS="$(mefisto_state_path 'events.log')"
+EVENTS_LOG_LEGACY_ABS="$MEFISTO_LEGACY_STATE_DIR/events.log"
 touch "$EVENTS_LOG_ABS"
 
 # Linea del archivo al arrancar: todo lo anterior es de corridas pasadas y no
@@ -166,6 +163,11 @@ touch "$EVENTS_LOG_ABS"
 # este scheduler se negara a lanzar la cola por una espera que ya no existe.
 EVENTS_LOG_LINES_AT_START=$(wc -l < "$EVENTS_LOG_ABS" 2>/dev/null | tr -d ' ')
 [ -z "$EVENTS_LOG_LINES_AT_START" ] && EVENTS_LOG_LINES_AT_START=0
+EVENTS_LOG_LEGACY_LINES_AT_START=0
+if [ -f "$EVENTS_LOG_LEGACY_ABS" ]; then
+    EVENTS_LOG_LEGACY_LINES_AT_START=$(wc -l < "$EVENTS_LOG_LEGACY_ABS" 2>/dev/null | tr -d ' ')
+    [ -z "$EVENTS_LOG_LEGACY_LINES_AT_START" ] && EVENTS_LOG_LEGACY_LINES_AT_START=0
+fi
 
 # ─── Verificar dependencias ───────────────────────────────────────────────────
 MISSING_DEPS=""
@@ -283,14 +285,14 @@ launch_pipeline() {
         *iac*)     pipeline_type="infra" ;;
     esac
     local status_file="pipeline-status-${pipeline_type}-${issue}.json"
-    local issue_log="$REPO_ROOT/$LOG_DIR/parallel-issue-${issue}-${TIMESTAMP}.log"
+    local issue_log="$LOG_DIR/parallel-issue-${issue}-${TIMESTAMP}.log"
     touch "$issue_log"
 
     "$pipeline_script" "$issue" --status-file "$status_file" \
         >"$issue_log" 2>&1 &
 
     PIDS[$idx]=$!
-    STATUS_FILES[$idx]="$PIPELINE_DIR_ABS/$status_file"
+    STATUS_FILES[$idx]="$status_file"
     ISSUE_LOGS[$idx]="$issue_log"
     START_TIMES[$idx]="$(date +%s)"
 
@@ -325,12 +327,12 @@ is_projection_running() {
 
 # ─── Función de lectura de status ────────────────────────────────────────────
 read_status_field() {
-    local file="$1" field="$2"
-    [ -f "$file" ] || { echo "-"; return; }
+    local file="$1" field="$2" status_path
+    status_path=$(mefisto_state_read_first "$file" 2>/dev/null) || { echo "-"; return; }
     python3 -c "
 import json, sys
 try:
-    d = json.load(open('$file'))
+    d = json.load(open('$status_path'))
     print(d.get('$field', '-') or '-')
 except:
     print('-')
@@ -338,16 +340,28 @@ except:
 }
 
 read_agent_result() {
-    local file="$1" agent="$2" subfield="$3"
-    [ -f "$file" ] || { echo "-"; return; }
+    local file="$1" agent="$2" subfield="$3" status_path
+    status_path=$(mefisto_state_read_first "$file" 2>/dev/null) || { echo "-"; return; }
     python3 -c "
 import json, sys
 try:
-    d = json.load(open('$file'))
+    d = json.load(open('$status_path'))
     print(d.get('agents', {}).get('$agent', {}).get('$subfield', '-') or '-')
 except:
     print('-')
 " 2>/dev/null || echo "-"
+}
+
+hold_active_in_any_events_log() {
+    hold_recently_active "$EVENTS_LOG_ABS" "$EVENTS_LOG_LINES_AT_START" && return 0
+    [ -f "$EVENTS_LOG_LEGACY_ABS" ] \
+        && hold_recently_active "$EVENTS_LOG_LEGACY_ABS" "$EVENTS_LOG_LEGACY_LINES_AT_START"
+}
+
+format_active_hold_status() {
+    format_hold_status "$EVENTS_LOG_ABS" "$EVENTS_LOG_LINES_AT_START" && return 0
+    [ -f "$EVENTS_LOG_LEGACY_ABS" ] \
+        && format_hold_status "$EVENTS_LOG_LEGACY_ABS" "$EVENTS_LOG_LEGACY_LINES_AT_START"
 }
 
 # ─── Dashboard de progreso ────────────────────────────────────────────────────
@@ -358,7 +372,7 @@ print_dashboard() {
     # relee events.log; evitarlo por fila no cambia el resultado (el archivo
     # no se toca dentro de este mismo refresco) y ahorra N-1 lecturas.
     local hold_status
-    hold_status=$(format_hold_status "$EVENTS_LOG_ABS" "$EVENTS_LOG_LINES_AT_START") || hold_status=""
+    hold_status=$(format_active_hold_status) || hold_status=""
     local header_str="${CYAN}${BOLD}parallel-pipeline — $TOTAL issue(s) en proceso${NC}"
     echo -e "\n$header_str"
     printf "%s\n" "----------------------------------------------------------------------"
@@ -494,10 +508,10 @@ while [ ${#PENDING_IDXS[@]} -gt 0 ]; do
     # pendientes se marca "aplazado" (a diferencia de la parada suave de
     # arriba, esto no es una parada: en cuanto la espera se resuelva, el
     # scheduler retoma el lanzamiento normal sin intervencion humana).
-    if hold_recently_active "$EVENTS_LOG_ABS" "$EVENTS_LOG_LINES_AT_START"; then
+    if hold_active_in_any_events_log; then
         print_dashboard
         echo ""
-        log "Espera (hold) activa -- $(format_hold_status "$EVENTS_LOG_ABS" "$EVENTS_LOG_LINES_AT_START"). ${#PENDING_IDXS[@]} issue(s) en cola esperan a que se libere antes de lanzar el siguiente."
+        log "Espera (hold) activa -- $(format_active_hold_status). ${#PENDING_IDXS[@]} issue(s) en cola esperan a que se libere antes de lanzar el siguiente."
         sleep "$MONITOR_INTERVAL"
         continue
     fi
@@ -677,8 +691,10 @@ echo ""
 if [ "$KEEP_STATUS" = "false" ]; then
     for issue in "${ISSUE_NUMS[@]}"; do
         # Borrar archivos de status con patron normalizado (cualquier tipo de pipeline)
-        for sf in "$PIPELINE_DIR_ABS"/pipeline-status-*-"${issue}.json"; do
-            [ -f "$sf" ] && rm -f "$sf"
+        for state_dir in "$MEFISTO_STATE_DIR" "$MEFISTO_LEGACY_STATE_DIR"; do
+            for sf in "$state_dir"/pipeline-status-*-"${issue}.json"; do
+                [ -f "$sf" ] && rm -f "$sf"
+            done
         done
     done
 fi

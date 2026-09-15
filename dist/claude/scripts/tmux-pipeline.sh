@@ -59,7 +59,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # donde se crean las sesiones tmux, los logs y events.log. NO se deriva de
 # SCRIPT_DIR porque el plugin ya no vive dentro del repo del consumidor.
 PROJECT_ROOT="$_REPO_TOP"
-EVENTS_LOG="$PROJECT_ROOT/.claude/pipeline/events.log"
+EVENTS_LOG="$(mefisto_state_path 'events.log')"
+EVENTS_LOG_LEGACY="$MEFISTO_LEGACY_STATE_DIR/events.log"
 # CAFF: prefijo "caffeinate -i" (o vacio fuera de macOS), calculado UNA vez
 # por corrida y antepuesto al send-keys que lanza cada sub-pipeline -- issue
 # #800. Evita que el Mac entre en suspension idle durante la corrida.
@@ -116,8 +117,7 @@ should_delegate_to_herdr() {
 
 # Asegurar que events.log existe para que tail no falle
 ensure_events_log() {
-    mkdir -p "$(dirname "$EVENTS_LOG")"
-    touch "$EVENTS_LOG"
+    touch "$(mefisto_state_path 'events.log')"
 }
 
 # Nombre de sesion seguro para tmux (sin espacios ni caracteres especiales)
@@ -328,7 +328,7 @@ cmd_single() {
     tmux new-session -d -s "$session" -n "main" -c "$PROJECT_ROOT"
     tail_pane=$(tmux list-panes -t "$session:main" -F '#{pane_id}' | head -n1)
     tmux set-option -t "$session" remain-on-exit on
-    tmux send-keys -t "$tail_pane" "tail -f '$EVENTS_LOG'" Enter
+    tmux send-keys -t "$tail_pane" "tail -F '$EVENTS_LOG' '$EVENTS_LOG_LEGACY'" Enter
 
     # Pane derecho: pipeline. La ruta del sub-script va entre comillas simples
     # por si el plugin esta instalado bajo una ruta con espacios (mismo criterio
@@ -385,7 +385,7 @@ cmd_batch() {
     tmux new-session -d -s "$session" -n "main" -c "$PROJECT_ROOT"
     tail_pane=$(tmux list-panes -t "$session:main" -F '#{pane_id}' | head -n1)
     tmux set-option -t "$session" remain-on-exit on
-    tmux send-keys -t "$tail_pane" "tail -f '$EVENTS_LOG'" Enter
+    tmux send-keys -t "$tail_pane" "tail -F '$EVENTS_LOG' '$EVENTS_LOG_LEGACY'" Enter
 
     # Pane derecho: batch pipeline
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
@@ -491,7 +491,7 @@ cmd_parallel() {
     tmux new-session -d -s "$session" -n "main" -c "$PROJECT_ROOT"
     tail_pane=$(tmux list-panes -t "$session:main" -F '#{pane_id}' | head -n1)
     tmux set-option -t "$session" remain-on-exit on
-    tmux send-keys -t "$tail_pane" "tail -f '$EVENTS_LOG'" Enter
+    tmux send-keys -t "$tail_pane" "tail -F '$EVENTS_LOG' '$EVENTS_LOG_LEGACY'" Enter
 
     # Un pane por issue (escalonado para evitar contencion de API).
     # Cada split-window devuelve su propio pane_id (-P -F '#{pane_id}') y el
@@ -556,7 +556,7 @@ cmd_tooling() {
     tmux new-session -d -s "$session" -n "main" -c "$PROJECT_ROOT"
     tail_pane=$(tmux list-panes -t "$session:main" -F '#{pane_id}' | head -n1)
     tmux set-option -t "$session" remain-on-exit on
-    tmux send-keys -t "$tail_pane" "tail -f '$EVENTS_LOG'" Enter
+    tmux send-keys -t "$tail_pane" "tail -F '$EVENTS_LOG' '$EVENTS_LOG_LEGACY'" Enter
 
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
     tmux send-keys -t "$pipe_pane" "$CAFF '$SCRIPT_DIR/tooling-pipeline.sh' $issue $extra_args" Enter
@@ -589,7 +589,7 @@ cmd_infra() {
     tmux new-session -d -s "$session" -n "main" -c "$PROJECT_ROOT"
     tail_pane=$(tmux list-panes -t "$session:main" -F '#{pane_id}' | head -n1)
     tmux set-option -t "$session" remain-on-exit on
-    tmux send-keys -t "$tail_pane" "tail -f '$EVENTS_LOG'" Enter
+    tmux send-keys -t "$tail_pane" "tail -F '$EVENTS_LOG' '$EVENTS_LOG_LEGACY'" Enter
 
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
     tmux send-keys -t "$pipe_pane" "$CAFF '$SCRIPT_DIR/iac-pipeline.sh' $issue $extra_args" Enter
@@ -653,7 +653,7 @@ cmd_scaffold() {
     tmux new-session -d -s "$session" -n "main" -c "$PROJECT_ROOT"
     tail_pane=$(tmux list-panes -t "$session:main" -F '#{pane_id}' | head -n1)
     tmux set-option -t "$session" remain-on-exit on
-    tmux send-keys -t "$tail_pane" "tail -f '$EVENTS_LOG'" Enter
+    tmux send-keys -t "$tail_pane" "tail -F '$EVENTS_LOG' '$EVENTS_LOG_LEGACY'" Enter
 
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
     tmux send-keys -t "$pipe_pane" "$CAFF '$SCRIPT_DIR/scaffold-pipeline.sh' $pipeline_args" Enter

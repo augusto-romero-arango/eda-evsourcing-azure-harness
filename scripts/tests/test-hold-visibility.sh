@@ -289,10 +289,41 @@ if grep -q 'hold_recently_active "\$EVENTS_LOG_ABS" "\$EVENTS_LOG_LINES_AT_START
 else
     fail "parallel-pipeline.sh no invoca hold_recently_active con la marca de arranque"
 fi
+
+echo ""
+echo "[13b] Estado dual: parallel detecta un hold escrito solo en la raiz legacy"
+HOLD_ANY_SRC=$(awk '/^hold_active_in_any_events_log\(\) \{/{p=1} p{print} p && /^}/{exit}' "$PARALLEL_SCRIPT")
+if [ -n "$HOLD_ANY_SRC" ]; then
+    LEGACY_EVENTS="$TMP/legacy-events.log"
+    CANONICAL_EVENTS="$TMP/canonical-events.log"
+    : > "$CANONICAL_EVENTS"
+    cat > "$LEGACY_EVENTS" <<EOF
+=== SESSION TOOLING 20260101-000000 issue:42 from-stage:1 ===
+[$(hms_at -180)][hold] RATE_LIMIT: esperando, proxima sonda $(hms_at 120) (techo 23:59)
+EOF
+    EVENTS_LOG_ABS="$CANONICAL_EVENTS"
+    EVENTS_LOG_LINES_AT_START=0
+    EVENTS_LOG_LEGACY_ABS="$LEGACY_EVENTS"
+    EVENTS_LOG_LEGACY_LINES_AT_START=0
+    eval "$HOLD_ANY_SRC"
+    if hold_active_in_any_events_log; then
+        pass "parallel detecta el hold que existe solo en legacy"
+    else
+        fail "parallel no detecto el hold legacy"
+    fi
+else
+    fail "no se pudo extraer hold_active_in_any_events_log()"
+fi
+
+if grep -q 'hold_seconds_in_range "\$EVENTS_LOG_LEGACY_ABS" "\$HOLD_LINE_START_LEGACY"' "$BATCH_SCRIPT"; then
+    pass "batch suma el hold escrito en el events.log legacy"
+else
+    fail "batch no suma el hold legacy"
+fi
 # El chequeo debe vivir DENTRO del while del scheduler, antes del bucle que
 # recorre PENDING_IDXS y lanza -- si no, gatearia el lanzamiento de nada.
 SCHED_BLOCK=$(awk '/^while \[ \$\{#PENDING_IDXS\[@\]\} -gt 0 \]; do/{p=1} p{print} p && /^done$/{exit}' "$PARALLEL_SCRIPT")
-if echo "$SCHED_BLOCK" | grep -q "hold_recently_active" && echo "$SCHED_BLOCK" | grep -q "for idx in \"\${PENDING_IDXS\[@\]}\""; then
+if echo "$SCHED_BLOCK" | grep -q "hold_active_in_any_events_log" && echo "$SCHED_BLOCK" | grep -q "for idx in \"\${PENDING_IDXS\[@\]}\""; then
     pass "el chequeo de hold vive dentro del while del scheduler, junto al lanzamiento de pendientes"
 else
     fail "no se pudo confirmar que el chequeo de hold este dentro del while del scheduler"

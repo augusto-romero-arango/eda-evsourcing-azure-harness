@@ -65,6 +65,12 @@ assert_eq() {
     fi
 }
 
+echo "[pre] El visor tmux sigue ambas raices de estado sin escribir en la legacy"
+TMUX_SOURCE=$(cat "$TMUX_SCRIPT")
+assert_contains "usa tail -F para seguir archivos rotados" "$TMUX_SOURCE" "tail -F"
+assert_contains "el tail incluye la ruta legacy declarada" "$TMUX_SOURCE" "'\$EVENTS_LOG_LEGACY'"
+assert_not_contains "no codifica .claude/pipeline en el visor" "$TMUX_SOURCE" ".claude/pipeline"
+
 # --- Consumidor falso + stubs de tmux, gh y sleep ---
 FAKE_CONSUMER="$(mktemp -d)"
 TMP_DIR="$(mktemp -d)"
