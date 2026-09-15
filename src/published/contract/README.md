@@ -50,14 +50,20 @@ comandos que meramente menciona. La política vigente permite `git`, `gh`,
 `jq`, `cat`, `ls`, `find`, `grep`, `sort`, los scripts distribuidos, `mkdir` y
 `mktemp`; el toolchain TDD añade `dotnet`, `func init`, `terraform init
 -backend=false` / `validate` / `fmt`, `python3 -` (incluido `-m json.tool`),
-`cd`, `echo`, `test`, `[`, `touch`, `tr`, `mv` e `ilspycmd`. `terraform
-plan`/`apply`, `func start` y `az` continúan denegados por el default.
+`cd`, `echo`, `test`, `[`, `touch`, `tr`, `head`, `tail`, `awk`, `sed`, `mv` e
+`ilspycmd`. Las cuatro últimas utilidades de texto previas a `mv` cubren
+subcomandos reales de tuberías y sustituciones de comando de esa doctrina.
+`terraform plan`/`apply`, `func start` y `az` continúan denegados por el
+default (MEF-ADR-0049 y MEF-ADR-0053).
 
 `rm *`, `curl *`, `ssh *`, `scp *` y `sudo *` conservan denegación explícita.
-La excepción de `rm` permite exclusivamente `rm -f`/`rm -rf` bajo `src/` y
-`rm -f` bajo `tests/`, con variantes para una ruta entre comillas. `rm -rf
-tests/` y cualquier ruta fuera de esos árboles siguen denegados; además,
-`external_directory: deny` impide salir del worktree.
+La excepción de `rm` casa exclusivamente candidatos cuyo texto comienza por
+`rm -f`/`rm -rf` y una ruta relativa bajo `src/`, o por `rm -f` y una ruta
+relativa bajo `tests/`, con variantes para una ruta entre comillas. Es una
+contención léxica por prefijo, que no sustituye la normalización de comandos
+de #1374. `rm -rf tests/` y los candidatos que comienzan por una ruta fuera de
+esos árboles siguen denegados; además, `external_directory: deny` contiene el
+acceso fuera del worktree.
 
 La comprobación empírica contra OpenCode 1.18.29 (2026-09-15) estableció que
 el patrón `*` cruza `/`, que el candidato preserva las comillas literales y
@@ -66,10 +72,11 @@ en listas compuestas). Las reglas se resuelven por última coincidencia, por lo
 que el deny general de `rm` aparece antes de las excepciones acotadas que lo
 sobrescriben. Este orden y las variantes entre comillas son deliberados.
 
-Al ampliar esta lista, inventaría primero los comandos realmente ejecutados
-por la doctrina publicada, conserva la denegación por defecto y acota por
-prefijo de ruta cuando el matcher lo permita. La normalización pendiente de
-los `rm` de `domain-scaffolder` se apoya en estos hallazgos (issue #1374).
+Al ampliar esta lista, se inventarían primero los comandos realmente
+ejecutados por la doctrina publicada, se conservaría la denegación por defecto
+y se acotaría por prefijo de ruta cuando el matcher lo permita
+(MEF-ADR-0031). La normalización pendiente de los `rm` de
+`domain-scaffolder` se apoya en estos hallazgos (issue #1374).
 
 `mcp` no es una tool ni un permiso de runtime: es una lista de ids lógicos
 kebab-case. `mcp-servers.json` es la autoridad neutral de esos ids y de su
