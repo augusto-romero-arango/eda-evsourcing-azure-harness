@@ -33,7 +33,7 @@ extract_frontmatter() {
 body_lines() { awk 'NR==1 { next } $0 == "---" && !seen { seen=1; next } seen { print NR ":" $0 }' "$1"; }
 
 validate_file() {
-    local file="$1" rel="${1#"$REPO_ROOT"/}" basename_no_ext frontmatter rc instance_json schema_json errors status=0 id skill has_guard=0 agent agent_file command_mcp agent_mcp
+    local file="$1" rel="${1#"$REPO_ROOT"/}" basename_no_ext frontmatter rc instance_json schema_json errors status=0 id skill body_validation has_guard=0 agent agent_file command_mcp agent_mcp
     [ -f "$file" ] || { echo "$rel: archivo: no existe o no es un archivo regular"; return 1; }
     basename_no_ext="$(basename "$file" .md)"
     frontmatter="$(extract_frontmatter "$file")"; rc=$?
@@ -56,7 +56,7 @@ $(printf '%s' "$instance_json" | jq -r '.skills[]?')
 EOF
     # Una sola pasada interpreta todas las reglas del cuerpo. Las excepciones se
     # seleccionan por artefacto, no por línea, para evitar procesos por hallazgo.
-    body_validation="$(body_lines "$file" | awk -v id="$id" -v rel="$rel" '
+    body_validation="$(awk -v id="$id" -v rel="$rel" '
         function allowed_placeholder(value) {
             if (value == "$ARGUMENTS") return 1
             if (id == "domain-scaffolder" && value ~ /^\$(1|2|3|AJENOS|CSPROJ|ESPERA|GITHUB_OUTPUT|INTENTOS|INTRUSOS|JOB_STATUS|PENDIENTES|PR_NUM|REPO|REPO_ROOT|RUN|RUN_ID|SECONDS|SHA|TIMEOUT|archivo|destino|f|i|paquete|presupuesto|proj|temporal|version_esperada)$/) return 1
@@ -69,11 +69,15 @@ EOF
         function valid_directive(value) {
             return value ~ /^\{\{mefisto:(launch-agent|command) [a-z0-9]+(-[a-z0-9]+)*\}\}$/ || value ~ /^\{\{mefisto:run [a-z0-9][a-z0-9._\/-]* [^{}]+\}\}$/ || value ~ /^\{\{mefisto:state-path [A-Za-z0-9][A-Za-z0-9._\/-]*\}\}$/
         }
+        NR == 1 { next }
+        $0 == "---" && !body { body=1; next }
+        !body { next }
         {
-            split($0, parts, ":"); line=parts[1]; text=substr($0, length(line) + 2); lower=tolower(text)
+            line=NR; text=$0; lower=tolower(text); runtime_text=lower
             legacy=(id == "test-writer" || id == "implementer" || id == "reviewer" || id == "smoke-test-writer" || id == "projection-test-writer" || id == "projection-implementer" || id == "domain-scaffolder")
             runtime_pattern="claude|opencode|\\.claude|\\.opencode|marketplace|(^|[/[:space:].])cache([/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:"
-            if ((id == "runtimes" && lower ~ /\.claude|\.opencode|marketplace|(^|[\/[:space:].])cache([\/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:/) || (legacy && lower !~ /core tools:/ && lower ~ /opencode|\.opencode|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:/) || (!legacy && id != "runtimes" && lower ~ runtime_pattern)) {
+            if (id == "domain-scaffolder") sub(/azure functions core tools:/, "azure functions core tools", runtime_text)
+            if ((id == "runtimes" && lower ~ /\.claude|\.opencode|marketplace|(^|[\/[:space:].])cache([\/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:/) || (legacy && runtime_text ~ /opencode|\.opencode|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:/) || (!legacy && id != "runtimes" && lower ~ runtime_pattern)) {
                 print rel ": body: linea " line " referencia un runtime, CLI, cache, directorio o metadata propia de runtime"
             }
             rest=text
@@ -87,7 +91,13 @@ EOF
                 while ((position=index(rest, "{{mefisto:")) > 0) { markers++; rest=substr(rest, position + 10) }
                 directives=0; rest=text
                 while (match(rest, /\{\{mefisto:[^}]*\}\}/)) {
-                    directive=substr(rest, RSTART, RLENGTH); directives++
+                    directives++
+                    rest=substr(rest, RSTART + RLENGTH)
+                }
+                if (markers != directives || text ~ /\{\{mefisto:[^{}]*\}\}\}/) print rel ": body: linea " line " directiva mefisto mal formada"
+                rest=text
+                while (match(rest, /\{\{mefisto:[^}]*\}\}/)) {
+                    directive=substr(rest, RSTART, RLENGTH)
                     if (directive == "{{mefisto:assert-consumer-repo}}") guard=1
                     else if (directive == "{{mefisto:package-root}}" || directive == "{{mefisto:config-path}}" || directive == "{{mefisto:lifecycle-launcher}}") {}
                     else if (directive ~ /^\{\{mefisto:(launch-agent|command|run|state-path) /) {
@@ -95,11 +105,10 @@ EOF
                     } else print rel ": body: linea " line " directiva mefisto desconocida: " directive
                     rest=substr(rest, RSTART + RLENGTH)
                 }
-                if (markers != directives || text ~ /\{\{mefisto:[^{}]*\}\}\}/) print rel ": body: linea " line " directiva mefisto mal formada"
             }
         }
         END { if (guard) print "__MEFISTO_GUARD__" }
-    ')"
+    ' "$file")"
     case "$body_validation" in *"$rel: "*) printf '%s\n' "$body_validation" | grep -v '^__MEFISTO_GUARD__$'; status=1 ;; esac
     case "$body_validation" in *'__MEFISTO_GUARD__'*) has_guard=1 ;; esac
     [ "$has_guard" -eq 1 ] || { echo "$rel: body: falta {{mefisto:assert-consumer-repo}}"; status=1; }

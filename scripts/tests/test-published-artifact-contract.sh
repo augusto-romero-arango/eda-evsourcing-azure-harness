@@ -31,6 +31,14 @@ check_invalid() {
     else fail "$name fue rechazado por otro motivo: $out"
     fi
 }
+check_invalid_exact() {
+    local name="$1" expected="$2" out rc
+    out=$(bash "$VALIDATOR" "$CONTRACT_DIR/fixtures/invalid/$name" 2>&1); rc=$?
+    if [ "$rc" -eq 0 ]; then fail "$name fue aceptado"
+    elif [ "$out" = "$expected" ]; then pass "$name conserva diagnostico exacto"
+    else fail "$name cambio su diagnostico: $out"
+    fi
+}
 check_invalid "frontmatter-not-json.md" "frontmatter: no es JSON valido"
 check_invalid "missing-description.md" "description: campo requerido ausente"
 check_invalid "extra-property.md" "foo: propiedad adicional no permitida"
@@ -48,18 +56,19 @@ check_invalid "allowed-tools-field.md" "allowed-tools: propiedad adicional"
 check_invalid "permission-field.md" "permission: propiedad adicional"
 check_invalid "mode-on-command.md" "mode: propiedad adicional"
 check_invalid "command-fields-on-agent.md" "agent: propiedad adicional"
-check_invalid "body-runtime-reference.md" "body: linea 5 referencia un runtime"
+check_invalid_exact "body-runtime-reference.md" "src/published/contract/fixtures/invalid/body-runtime-reference.md: body: linea 5 referencia un runtime, CLI, cache, directorio o metadata propia de runtime"
 check_invalid "missing-guard.md" "body: falta {{mefisto:assert-consumer-repo}}"
 check_invalid "unknown-directive.md" "directiva mefisto desconocida"
-check_invalid "malformed-directive.md" "directiva mefisto mal formada"
+check_invalid_exact "malformed-directive.md" "src/published/contract/fixtures/invalid/malformed-directive.md: body: linea 5 directiva mefisto mal formada: {{mefisto:launch-agent invalid:id}}"
 check_invalid "malformed-mcp.md" "mcp.0"
 check_invalid "unknown-mcp.md" "mcp.0: valor"
 check_invalid "missing-skill.md" "skills: 'skill-inexistente' no resuelve"
 check_invalid "prefixed-skill.md" "skills.0: 'mefisto-projections' no coincide"
 check_invalid "prefixed-agent-reference.md" "agent: 'mefisto-example-agent' no coincide"
-check_invalid "runtime-variable.md" 'placeholder no permitido: $CLAUDE_PLUGIN_ROOT'
+check_invalid_exact "runtime-variable.md" 'src/published/contract/fixtures/invalid/runtime-variable.md: body: linea 5 referencia un runtime, CLI, cache, directorio o metadata propia de runtime
+src/published/contract/fixtures/invalid/runtime-variable.md: body: linea 5 placeholder no permitido: $CLAUDE_PLUGIN_ROOT (solo se admite $ARGUMENTS)'
 check_invalid "guard-outside-body.md" "body: falta {{mefisto:assert-consumer-repo}}"
-check_invalid "partially-malformed-directive.md" "directiva mefisto mal formada"
+check_invalid_exact "partially-malformed-directive.md" "src/published/contract/fixtures/invalid/partially-malformed-directive.md: body: linea 4 directiva mefisto mal formada"
 check_invalid "extra-closing-brace.md" "directiva mefisto mal formada"
 check_invalid "prefixed-directive-id.md" "directiva mefisto mal formada"
 
