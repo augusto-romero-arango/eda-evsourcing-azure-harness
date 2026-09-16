@@ -37,7 +37,7 @@
 #   [C] Cierre de stage (terminal) con TODOS los campos presentes -> "OK" y
 #       ningun "n/d" en la salida (CA-2/CA-3).
 #   [D] Cierre de stage con los campos ausentes tipicos de una corrida
-#       degradada (session_id/cost_usd/turns/tokens/ttft_ms/api_duration_ms
+#       degradada (session_id/costo estimado/turns/tokens/ttft_ms/api_duration_ms
 #       en null) -> "n/d" en cada uno, nunca 0 ni el layout roto; el status
 #       no-exitoso se señala como "ERROR: <error.kind>" (CA-3). Un terminal
 #       success con `error` no nulo (la muerte posterior que el contrato
@@ -74,9 +74,9 @@
 #   [O] CA-5: el JSONL neutral que producen los adaptadores REALES de #859 y
 #       #860 sobre sus fixtures de traza cruda (no JSONL escrito a mano)
 #       rinde el mismo conteo de tools y el mismo estado terminal en ambos
-#       runtimes; los "n/d" aparecen solo en la corrida OpenCode, y los
-#       campos que OpenCode si reporta (cost_usd=0, session_id) no se
-#       degradan a "n/d".
+#       runtimes; los "n/d" aparecen solo en los campos ausentes de OpenCode,
+#       mientras que session_id se conserva. Tambien verifica la lectura de
+#       compatibilidad de un terminal legacy que solo contiene cost_usd.
 #   [P] CA-6: el script no contiene ninguno de los campos propios de la
 #       traza cruda de Claude (`"assistant"`, `"result"`, `tool_use`,
 #       `num_turns`, `total_cost_usd`) ni `.claude/pipeline`, y si localiza
@@ -864,8 +864,8 @@ echo "    el mismo conteo de tools y el mismo estado terminal; los n/d aparecen 
 # y OpenCode"). La diferencia importa: inventar el JSONL neutral deja al test
 # afirmando lo que el autor CREE que reporta cada runtime, no lo que reporta.
 # Contra los adaptadores reales queda a la vista, por ejemplo, que OpenCode SI
-# trae session_id y que su cost_usd llega en 0 (no en null) -- dos campos que
-# un fixture a mano marcaria como ausentes.
+# trae session_id aun cuando su estimacion de costo no es resoluble -- dos
+# campos cuya presencia difiere y que un fixture a mano podria falsear.
 #
 # neutral_run <lib> <fn> <fixture-dir> <fixture> <runtime> <modelo> <destino>
 #
@@ -884,7 +884,7 @@ neutral_run() {
         >> "$dest"
 }
 
-LIB_DIR="$REPO_ROOT/src/internal/scripts/lib"
+LIB_DIR="$REPO_ROOT/src/runtime/lib"
 FIX_CLAUDE="$SCRIPT_DIR/fixtures/runtime-claude"
 FIX_OC="$SCRIPT_DIR/fixtures/runtime-opencode"
 
@@ -926,6 +926,20 @@ else
     pass "O-3: la corrida Claude no muestra ningun n/d (reporta todas las metricas del contrato)"
 fi
 
+# MEF-ADR-0054, seccion 5: los lectores conservan la compatibilidad con el
+# historial que solo trae cost_usd, aunque los escritores nuevos emiten
+# estimated_cost_usd. Este JSONL manual aísla esa ruta de lectura legacy.
+reset_stage_state
+STREAM_LEGACY="$TMP/legacy-cost.events.jsonl"
+printf '%s\n' '{"v":1,"type":"run.completed","ts":"2026-09-05T10:00:00Z","status":"success","runtime":"claude","model":"claude-sonnet-5","session_id":null,"duration_ms":100,"tokens":{"input":10,"output":5},"cost_usd":0.02,"turns":1,"denials":null,"ttft_ms":null,"api_duration_ms":80,"error":null}' > "$STREAM_LEGACY"
+run_process_new_lines "$STREAM_LEGACY" "$TMP/legacy-cost-out.txt"
+OUT_LEGACY=$(cat "$TMP/legacy-cost-out.txt")
+if printf '%s' "$OUT_LEGACY" | grep -q "costo_usd=0.02"; then
+    pass "O-3b: un terminal legacy con solo cost_usd conserva su costo reportado"
+else
+    fail "O-3b: el terminal legacy no mostro costo_usd=0.02: $OUT_LEGACY"
+fi
+
 if printf '%s' "$OUT_OC" | grep -q "modelo=n/d" && printf '%s' "$OUT_OC" | grep -q "turnos=n/d" \
     && printf '%s' "$OUT_OC" | grep -q "ttft=n/d" && printf '%s' "$OUT_OC" | grep -q "api=n/d"; then
     pass "O-4: la corrida OpenCode muestra n/d en los campos que ese runtime no reporta (modelo, turnos, ttft, api)"
@@ -933,14 +947,13 @@ else
     fail "O-4: la corrida OpenCode no mostro los n/d esperados: $OUT_OC"
 fi
 
-# El contraste que da sentido a CA-3: un campo que OpenCode SI reporta no se
-# degrada a n/d por venir de un runtime "pobre". cost_usd=0 es el caso filoso
-# -- 0 es un valor, no un dato ausente, y confundirlos es justo el error que
-# MEF-ADR-0049 prohibe en la direccion contraria.
-if printf '%s' "$OUT_OC" | grep -q "costo_usd=0" && ! printf '%s' "$OUT_OC" | grep -q "session_id=n/d"; then
-    pass "O-5: los campos que OpenCode si reporta (cost_usd=0, session_id) no se degradan a n/d"
+# MEF-ADR-0054, seccion 1: el cero de OAuth no es una estimacion; cuando modelo
+# y tokens no permiten resolverla, el adaptador emite estimated_cost_usd:null.
+# session_id si esta presente debe conservarse aunque la estimacion sea n/d.
+if printf '%s' "$OUT_OC" | grep -q "costo_usd=n/d" && ! printf '%s' "$OUT_OC" | grep -q "session_id=n/d"; then
+    pass "O-5: OpenCode muestra costo_usd=n/d sin degradar su session_id presente"
 else
-    fail "O-5: un campo presente de la corrida OpenCode se mostro como ausente: $OUT_OC"
+    fail "O-5: OpenCode no distinguio costo no resoluble de session_id presente: $OUT_OC"
 fi
 
 # -------- Bloque P: CA-6 -- neutralidad del script fuente --------
