@@ -1122,7 +1122,7 @@ CONTEXTO DE EJECUCION:
 - PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya.
 
 ECONOMIA DE TURNOS:
-Cada turno tuyo cuesta ~13 s de reloj (el 96,6% del tiempo de una corrida es el modelo escribiendo tokens, no las herramientas ejecutandose). El trabajo que ese turno manda a hacer cuesta ~1 s y el presupuesto completo del stage es ${MEFISTO_AGENT_TIMEOUT_SECONDS} s. Lo caro es el turno, no el trabajo. Con eso en mente:
+Cada turno tuyo cuesta ~13 s de reloj (el 96,6% del tiempo de una corrida es el modelo escribiendo tokens, no las herramientas ejecutandose). El presupuesto completo del stage es ${MEFISTO_AGENT_TIMEOUT_SECONDS} s. Lo caro suele ser el turno, pero los tests tambien consumen ese presupuesto. Con eso en mente:
 - Agrupa en un mismo turno las tool calls independientes entre si (varias busquedas, varias lecturas, varias escrituras a archivos distintos). No las encadenes de a una: hoy el 82% de los turnos del pipeline gasta una sola tool call, y cada una de esas cadenas paga 13 s por eslabon.
 - Al cerrar, corre UNA vez scripts/tests/test-guards.sh y los tests de scripts/tests/ y .claude/scripts/tests/ cuyo nombre o contenido mencione los archivos que tocaste (busca con grep -l). No corras el bucle completo sobre scripts/tests/test-*.sh .claude/scripts/tests/test-*.sh: son mas de 120 scripts y superan por si solos el presupuesto del stage (${MEFISTO_AGENT_TIMEOUT_SECONDS} s).
 - No re-inspecciones el arbol con 'git status' ni 'git diff' para confirmar algo que acabas de escribir: Write y Edit fallan con error si no aplican, asi que el exito de la herramienta ya es la confirmacion.
@@ -1208,7 +1208,7 @@ CONTEXTO DE EJECUCION:
 - PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya.
 
 ECONOMIA DE TURNOS:
-Cada turno tuyo cuesta ~13 s de reloj (el 96,6% del tiempo de una corrida es el modelo escribiendo tokens, no las herramientas ejecutandose). El trabajo que ese turno manda a hacer cuesta ~1 s y el presupuesto completo del stage es ${MEFISTO_AGENT_TIMEOUT_SECONDS} s. Lo caro es el turno, no el trabajo. Con eso en mente:
+Cada turno tuyo cuesta ~13 s de reloj (el 96,6% del tiempo de una corrida es el modelo escribiendo tokens, no las herramientas ejecutandose). El presupuesto completo del stage es ${MEFISTO_AGENT_TIMEOUT_SECONDS} s. Lo caro suele ser el turno, pero los tests tambien consumen ese presupuesto. Con eso en mente:
 - Agrupa en un mismo turno las tool calls independientes entre si (varias busquedas, varias lecturas, varias escrituras a archivos distintos). No las encadenes de a una: hoy el 82% de los turnos del pipeline gasta una sola tool call, y cada una de esas cadenas paga 13 s por eslabon.
 - Al cerrar, corre UNA vez scripts/tests/test-guards.sh y los tests de scripts/tests/ y .claude/scripts/tests/ cuyo nombre o contenido mencione los archivos que tocaste (busca con grep -l). No corras el bucle completo sobre scripts/tests/test-*.sh .claude/scripts/tests/test-*.sh: son mas de 120 scripts y superan por si solos el presupuesto del stage (${MEFISTO_AGENT_TIMEOUT_SECONDS} s).
 - Ya tienes el diff completo del writer aqui arriba: no lo vuelvas a pedir con 'git diff'. Y no re-inspecciones el arbol con 'git status' para confirmar algo que acabas de escribir -- Write y Edit fallan con error si no aplican, asi que el exito de la herramienta ya es la confirmacion.
