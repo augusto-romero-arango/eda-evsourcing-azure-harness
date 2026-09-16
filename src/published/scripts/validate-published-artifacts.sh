@@ -33,7 +33,7 @@ extract_frontmatter() {
 body_lines() { awk 'NR==1 { next } $0 == "---" && !seen { seen=1; next } seen { print NR ":" $0 }' "$1"; }
 
 validate_file() {
-    local file="$1" rel="${1#"$REPO_ROOT"/}" basename_no_ext frontmatter rc instance_json schema_json errors status=0 id skill declared_skills body_validation has_guard=0 agent agent_file command_mcp agent_mcp
+    local file="$1" rel="${1#"$REPO_ROOT"/}" basename_no_ext frontmatter rc instance_json schema_json errors status=0 id skill skill_file declared_skills available_skills body_validation has_guard=0 agent agent_file command_mcp agent_mcp
     [ -f "$file" ] || { echo "$rel: archivo: no existe o no es un archivo regular"; return 1; }
     basename_no_ext="$(basename "$file" .md)"
     frontmatter="$(extract_frontmatter "$file")"; rc=$?
@@ -55,9 +55,14 @@ validate_file() {
 $(printf '%s' "$instance_json" | jq -r '.skills[]?')
 EOF
     declared_skills="|$(printf '%s' "$instance_json" | jq -r '.skills[]?' | tr '\n' '|')"
+    available_skills='|'
+    for skill_file in "$REPO_ROOT"/skills/*/SKILL.md; do
+        [ -f "$skill_file" ] || continue
+        available_skills="${available_skills}$(basename "$(dirname "$skill_file")")|"
+    done
     # Una sola pasada interpreta todas las reglas del cuerpo. Las excepciones se
     # seleccionan por artefacto, no por línea, para evitar procesos por hallazgo.
-    body_validation="$(awk -v id="$id" -v rel="$rel" -v declared_skills="$declared_skills" '
+    body_validation="$(awk -v id="$id" -v rel="$rel" -v declared_skills="$declared_skills" -v available_skills="$available_skills" '
         function allowed_placeholder(value) {
             if (value == "$ARGUMENTS") return 1
             if (id == "domain-scaffolder" && value ~ /^\$(1|2|3|AJENOS|CSPROJ|ESPERA|GITHUB_OUTPUT|INTENTOS|INTRUSOS|JOB_STATUS|PENDIENTES|PR_NUM|REPO|REPO_ROOT|RUN|RUN_ID|SECONDS|SHA|TIMEOUT|archivo|destino|f|i|paquete|presupuesto|proj|temporal|version_esperada)$/) return 1
@@ -108,6 +113,7 @@ EOF
                             sub(/^\{\{mefisto:skill-root /, "", skill)
                             sub(/\}\}$/, "", skill)
                             if (index(declared_skills, "|" skill "|") == 0) print rel ": body: linea " line " directiva skill-root " skill " no esta declarada en skills"
+                            if (index(available_skills, "|" skill "|") == 0) print rel ": body: linea " line " directiva skill-root " skill " no resuelve a skills/" skill "/SKILL.md"
                         }
                     }
                     else if (directive ~ /^\{\{mefisto:(launch-agent|command|run|state-path) /) {
