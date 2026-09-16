@@ -129,7 +129,8 @@ CURRENT_CWD=""
 #                 que `tool_started` no haya mostrado ya).
 #   "terminal" -> cierre de stage (`run.completed`/`run.failed`): status,
 #                 runtime, model, session_id, duration_ms, api_duration_ms,
-#                 cost_usd, turns, tokens.input/output, ttft_ms, denials,
+#                 estimated_cost_usd (o cost_usd legado), turns,
+#                 tokens.input/output, ttft_ms, denials,
 #                 error.kind.
 #   "ignored"  -> una linea JSON valida pero no-objeto, o con un `.type` fuera
 #                 del vocabulario reconocido (CA-4). Una linea que ni
@@ -191,7 +192,7 @@ else
     else
       ($e.ts | epoch_ms) as $ems
       | ["terminal", $ems, $e.status, $e.runtime, ($e.model // null), ($e.session_id // null),
-         $e.duration_ms, ($e.api_duration_ms // null), ($e.cost_usd // null), ($e.turns // null),
+         $e.duration_ms, ($e.api_duration_ms // null), ($e.estimated_cost_usd // $e.cost_usd // null), ($e.turns // null),
          ($e.tokens.input // null), ($e.tokens.output // null), ($e.ttft_ms // null),
          ($e.denials // null), (($e.error.kind) // null)]
         | row
@@ -424,7 +425,7 @@ fmt_delta_s() {
 # fmt_nd <valor>
 #
 # <valor> tal cual si esta presente, "n/d" si es un campo ausente
-# (is_missing) -- CA-3: turns/cost_usd/tokens/session_id/denials/model nunca
+# (is_missing) -- CA-3: turns/costo estimado/tokens/session_id/denials/model nunca
 # se muestran como 0 ni en blanco cuando el runtime no los provee.
 fmt_nd() {
     local v="$1"
@@ -465,7 +466,8 @@ ms_to_s() {
 }
 
 # render_terminal_summary <hora> <status> <runtime> <model> <session_id>
-#   <duration_ms> <api_duration_ms> <cost_usd> <turns> <tokens_in>
+#   <duration_ms> <api_duration_ms> <estimated_cost_usd_o_cost_usd_legacy>
+#   <turns> <tokens_in>
 #   <tokens_out> <ttft_ms> <denials> <error_kind> <ignored_count>
 #
 # Imprime el cierre de stage (CA-2/CA-3): estado (OK si `status=="success"`,
@@ -534,7 +536,8 @@ render_terminal_summary() {
 #                       linea si p4="false" (issue #925: un exito ya se vio
 #                       al arrancar via tool_started).
 #   kind=terminal    -> p3..p15 = status,runtime,model,session_id,
-#                       duration_ms,api_duration_ms,cost_usd,turns,
+#                       duration_ms,api_duration_ms,estimated_cost_usd (o
+#                       cost_usd legado),turns,
 #                       tokens_in,tokens_out,ttft_ms,denials,error_kind
 #                       (cierre de stage).
 #
