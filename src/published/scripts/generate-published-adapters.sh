@@ -76,6 +76,7 @@ KNOWLEDGE_CLOSURE_ASSETS=()
 # vertical de tooling se reflejan alli desde la misma renderizacion Claude.
 CLAUDE_ROOT_MIRRORS=(
     'src/published/commands/tooling.md|commands/tooling.md'
+    'src/published/commands/implement.md|commands/implement.md'
     'src/published/agents/tooling-writer.md|agents/tooling-writer.md'
     'src/published/agents/tooling-reviewer.md|agents/tooling-reviewer.md'
     'src/published/agents/test-writer.md|agents/test-writer.md'
