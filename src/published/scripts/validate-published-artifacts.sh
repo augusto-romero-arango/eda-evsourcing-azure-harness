@@ -68,7 +68,7 @@ EOF
             if (id == "domain-scaffolder" && value ~ /^\$(1|2|3|AJENOS|CSPROJ|ESPERA|GITHUB_OUTPUT|INTENTOS|INTRUSOS|JOB_STATUS|PENDIENTES|PR_NUM|REPO|REPO_ROOT|RUN|RUN_ID|SECONDS|SHA|TIMEOUT|archivo|destino|f|i|paquete|presupuesto|proj|temporal|version_esperada)$/) return 1
             if (id == "domain-scaffolder" && (value == "${PR_NUM}" || value == "${TIMEOUT}" || value == "${archivo}")) return 1
             if (id == "projection-test-writer" && (value == "$PLUGIN_ROOT" || value == "$HOME" || value == "$2")) return 1
-            if ((id == "reviewer" || id == "projection-implementer") && (value == "$PLUGIN_ROOT" || value == "$HOME")) return 1
+            if (id == "reviewer" && (value == "$PLUGIN_ROOT" || value == "$HOME")) return 1
             if (id == "runtimes" && (value == "$MEFISTO_LIFECYCLE_LAUNCHER" || value == "$MEFISTO_LIFECYCLE_CONFIG_ROOT")) return 1
             return 0
         }
