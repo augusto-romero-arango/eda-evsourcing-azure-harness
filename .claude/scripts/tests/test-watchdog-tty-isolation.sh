@@ -48,9 +48,8 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-INTERNAL_SCRIPTS="$REPO_ROOT/src/internal/scripts"
-LIB_DIR="$INTERNAL_SCRIPTS/lib"
-RUNNER="$INTERNAL_SCRIPTS/mefisto-run-agent.sh"
+LIB_DIR="$REPO_ROOT/src/runtime/lib"
+RUNNER="$REPO_ROOT/src/runtime/mefisto-run-agent.sh"
 FAKE_LIB="$LIB_DIR/runtime-fake.sh"
 COMMON_LIB="$REPO_ROOT/.claude/scripts/_mefisto-common.sh"
 
