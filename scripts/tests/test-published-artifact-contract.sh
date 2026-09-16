@@ -71,6 +71,16 @@ check_invalid "guard-outside-body.md" "body: falta {{mefisto:assert-consumer-rep
 check_invalid_exact "partially-malformed-directive.md" "src/published/contract/fixtures/invalid/partially-malformed-directive.md: body: linea 4 directiva mefisto mal formada"
 check_invalid "extra-closing-brace.md" "directiva mefisto mal formada"
 check_invalid "prefixed-directive-id.md" "directiva mefisto mal formada"
+check_invalid "skill-root-invalid-id.md" "directiva mefisto mal formada: {{mefisto:skill-root mefisto-projections}}"
+check_invalid "skill-root-undeclared.md" "directiva skill-root comment-cleanup no esta declarada en skills"
+check_invalid "skill-root-missing.md" "directiva skill-root skill-inexistente no resuelve a skills/skill-inexistente/SKILL.md"
+
+skill_root_source="$(< "$CONTRACT_DIR/fixtures/valid/skill-root.md")"
+if printf '%s' "$skill_root_source" | grep -Eq 'Claude|OpenCode|mefisto-projections|MEFISTO_PACKAGE_ROOT|\.claude|\.opencode'; then
+    fail "skill-root.md acopla la fuente neutral a un runtime"
+else
+    pass "skill-root.md conserva exclusivamente el id logico"
+fi
 
 echo "[no-args] fuentes publicadas"
 out=$(bash "$VALIDATOR" 2>&1); rc=$?; [ "$rc" -eq 0 ] && pass "todas las fuentes publicadas validan" || fail "sin argumentos: $out"
