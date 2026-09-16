@@ -132,7 +132,7 @@ run_collapse() {
     : > "$HERDR_STUB_LOG"
     (
         cd "$FAKE_CONSUMER" || exit 99
-        env -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR "$@" \
+        env -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR -u HERDR_ENV "$@" \
             PATH="$FAKE_BIN:$PATH" \
             HERDR_STUB_LOG="$HERDR_STUB_LOG" \
             "$HERDR_SCRIPT" --collapse-panes 2>"$TMP_DIR/stderr.log"
