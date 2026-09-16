@@ -536,7 +536,8 @@ render_terminal_summary() {
 #                       linea si p4="false" (issue #925: un exito ya se vio
 #                       al arrancar via tool_started).
 #   kind=terminal    -> p3..p15 = status,runtime,model,session_id,
-#                       duration_ms,api_duration_ms,cost_usd,turns,
+#                       duration_ms,api_duration_ms,estimated_cost_usd (o
+#                       cost_usd legado),turns,
 #                       tokens_in,tokens_out,ttft_ms,denials,error_kind
 #                       (cierre de stage).
 #

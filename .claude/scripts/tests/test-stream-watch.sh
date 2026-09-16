@@ -920,10 +920,10 @@ else
     fail "O-2: el estado terminal no coincide -- claude='$OUT_CLAUDE' opencode='$OUT_OC'"
 fi
 
-if printf '%s' "$OUT_CLAUDE" | grep -q "n/d"; then
-    fail "O-3: la corrida Claude reporta todas las metricas, no deberia mostrar ningun n/d: $OUT_CLAUDE"
+if printf '%s' "$OUT_CLAUDE" | grep -q "costo_usd=0.01" && ! printf '%s' "$OUT_CLAUDE" | grep -q "n/d"; then
+    pass "O-3: la corrida Claude muestra estimated_cost_usd=0.01 y todas sus metricas"
 else
-    pass "O-3: la corrida Claude no muestra ningun n/d (reporta todas las metricas del contrato)"
+    fail "O-3: la corrida Claude no mostro costo_usd=0.01 o degrado alguna metrica a n/d: $OUT_CLAUDE"
 fi
 
 # MEF-ADR-0054, seccion 5: los lectores conservan la compatibilidad con el
@@ -950,7 +950,8 @@ fi
 # MEF-ADR-0054, seccion 1: el cero de OAuth no es una estimacion; cuando modelo
 # y tokens no permiten resolverla, el adaptador emite estimated_cost_usd:null.
 # session_id si esta presente debe conservarse aunque la estimacion sea n/d.
-if printf '%s' "$OUT_OC" | grep -q "costo_usd=n/d" && ! printf '%s' "$OUT_OC" | grep -q "session_id=n/d"; then
+if printf '%s' "$OUT_OC" | grep -q "costo_usd=n/d" \
+    && printf '%s' "$OUT_OC" | grep -q "session_id=ses_f8b28e18effew6dRCNC6Tm8NHq"; then
     pass "O-5: OpenCode muestra costo_usd=n/d sin degradar su session_id presente"
 else
     fail "O-5: OpenCode no distinguio costo no resoluble de session_id presente: $OUT_OC"
