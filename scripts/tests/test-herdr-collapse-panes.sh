@@ -128,11 +128,16 @@ chmod +x "$FAKE_BIN/herdr"
 PANES_STATE="$FAKE_CONSUMER/.mefisto/pipeline/herdr-report-panes.txt"
 LEGACY_STATE="$FAKE_CONSUMER/.claude/pipeline/herdr-report-panes.txt"
 
+# Limpia el contexto herdr heredado: si la suite corre dentro de un pane, el
+# HERDR_ENV/HERDR_PANE_ID/HERDR_WORKSPACE_ID del padre se colaria al subproceso
+# y los escenarios "fuera de herdr" entrarian al flujo herdr. Cada escenario
+# repone por argumento las variables que necesita.
 run_collapse() {
     : > "$HERDR_STUB_LOG"
     (
         cd "$FAKE_CONSUMER" || exit 99
-        env -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR "$@" \
+        env -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR \
+            -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_WORKSPACE_ID "$@" \
             PATH="$FAKE_BIN:$PATH" \
             HERDR_STUB_LOG="$HERDR_STUB_LOG" \
             "$HERDR_SCRIPT" --collapse-panes 2>"$TMP_DIR/stderr.log"
