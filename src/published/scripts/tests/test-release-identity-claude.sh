@@ -29,7 +29,7 @@ setup_fake() {
 }
 
 printf '[pre] sintaxis y bootstrap\n'
-bash -n "$ADAPTER_SOURCE" && jq -e '(keys | sort) == ["commit", "schemaVersion", "version"] and .schemaVersion == 1 and .version == "0.37.0" and .commit == "cb54ee43966516092953d810639aad5888c23daf"' "$REPO_ROOT/src/published/release-identity.json" >/dev/null && pass 'bootstrap cerrado coincide con la release etiquetada' || fail 'bootstrap invalido'
+bash -n "$ADAPTER_SOURCE" && jq -e --arg v "$(jq -r .version "$REPO_ROOT/.claude-plugin/plugin.json")" '(keys | sort) == ["commit", "schemaVersion", "version"] and .schemaVersion == 1 and .version == $v and (.version | test("^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$")) and (.commit | test("^[0-9a-f]{40}$"))' "$REPO_ROOT/src/published/release-identity.json" >/dev/null && pass 'bootstrap cerrado coincide con la identidad vigente' || fail 'bootstrap invalido'
 
 setup_fake
 assets="$(bash "$ADAPTER" assets)"; rc=$?
@@ -55,7 +55,8 @@ printf '[integracion] staging, inventario y diagnostico\n'
 OUT="$WORK/salida Claude con espacios"
 source_before="$(shasum "$REPO_ROOT/src/published/release-identity.json")"
 bash "$GENERATOR" --out "$OUT" "$REPO_ROOT/src/published/agents/tooling-reviewer.md"; rc=$?
-[ "$rc" -eq 0 ] && jq -e '. == {schemaVersion:1,runtime:"claude",version:"0.37.0",commit:"cb54ee43966516092953d810639aad5888c23daf"}' "$OUT/dist/claude/mefisto-manifest.json" >/dev/null && pass 'generador renderiza manifiesto desde identidad neutral' || fail 'generador no renderizo manifiesto'
+expected="$(jq -c '{schemaVersion, runtime:"claude", version, commit}' "$REPO_ROOT/src/published/release-identity.json")"
+[ "$rc" -eq 0 ] && jq -e --argjson e "$expected" '. == $e' "$OUT/dist/claude/mefisto-manifest.json" >/dev/null && pass 'generador renderiza manifiesto desde identidad neutral' || fail 'generador no renderizo manifiesto'
 [ "$(file_mode "$OUT/dist/claude/mefisto-manifest.json")" = 644 ] && pass 'manifiesto tiene modo 0644' || fail 'modo del manifiesto invalido'
 jq -e '.assets[] | select(.adapter == "adapter-claude.sh" and .id == "mefisto-manifest" and .source == "src/published/release-identity.json" and .destination == "mefisto-manifest.json" and .mode == "0644")' "$OUT/dist/claude/.mefisto-generated-assets.json" >/dev/null && pass 'inventario atribuye el manifiesto a su fuente' || fail 'inventario no atribuye manifiesto'
 bash "$GENERATOR" --check --out "$OUT" "$REPO_ROOT/src/published/agents/tooling-reviewer.md" >/dev/null; rc=$?
