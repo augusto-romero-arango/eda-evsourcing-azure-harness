@@ -63,6 +63,10 @@ EOF
         printf 'runtime\n' > "$TEST_REPO/dist/opencode/$source"
         chmod 0644 "$TEST_REPO/dist/opencode/$source"
     done
+    mkdir -p "$TEST_REPO/dist/opencode/docs/adr" "$TEST_REPO/dist/opencode/docs/testing"
+    printf 'Definition of Ready\n' > "$TEST_REPO/dist/opencode/docs/adr/mef-adr-0011.md"
+    printf 'Harness cheatsheet\n' > "$TEST_REPO/dist/opencode/docs/testing/harness-cheatsheet.md"
+    chmod 0644 "$TEST_REPO/dist/opencode/docs/adr/mef-adr-0011.md" "$TEST_REPO/dist/opencode/docs/testing/harness-cheatsheet.md"
     mkdir "$TEST_REPO/dist/opencode/directorio-vacio" "$TEST_REPO/.claude" "$TEST_REPO/src/internal" "$TEST_REPO/tests"
     printf 'no publicar\n' > "$TEST_REPO/.claude/local.json"
     printf 'no publicar\n' > "$TEST_REPO/src/internal/secreto.txt"
@@ -115,6 +119,7 @@ for source in \
     [ -f "$EXTRACT/$source" ] && [ ! -x "$EXTRACT/$source" ] || closure_ok=false
 done
 [ "$closure_ok" = true ] && pass 'extrae la clausura ejecutable declarada con sus modos' || fail 'falta o tiene modo incorrecto la clausura ejecutable'
+[ "$(< "$EXTRACT/docs/adr/mef-adr-0011.md")" = 'Definition of Ready' ] && [ "$(< "$EXTRACT/docs/testing/harness-cheatsheet.md")" = 'Harness cheatsheet' ] && [ "$(file_mode "$EXTRACT/docs/adr/mef-adr-0011.md")" = 644 ] && [ "$(file_mode "$EXTRACT/docs/testing/harness-cheatsheet.md")" = 644 ] && pass 'el package-root activo conserva el ADR y cheatsheet TDD' || fail 'el paquete no conserva el conocimiento TDD'
 [ -f "$EXTRACT/skills/mefisto-projections/SKILL.md" ] && [ -f "$EXTRACT/skills/mefisto-projections/read-apis.md" ] && [ -f "$EXTRACT/skills/mefisto-comment-cleanup/ejemplos.md" ] && pass 'el paquete conserva Skills y recursos publicados' || fail 'el paquete omitio Skills publicados'
 jq -e '.schemaVersion == 1 and .runtime == "opencode" and .version == "1.2.3" and .commit == "0123456789abcdef0123456789abcdef01234567" and .minimumRuntimeVersion == "1.18.29" and (keys | length == 5)' "$EXTRACT/mefisto-manifest.json" >/dev/null && pass 'manifiesto completo usa la identidad neutral' || fail 'manifiesto invalido'
 tar -tzf "$TAR" | grep -Eq '(^/|\.\./)' && fail 'tarball contiene ruta insegura' || pass 'tarball no contiene rutas inseguras'
