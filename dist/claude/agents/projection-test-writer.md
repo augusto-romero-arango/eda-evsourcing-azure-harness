@@ -93,10 +93,10 @@ Este agente es deliberadamente delgado (MEF-ADR-0033): la doctrina completa de p
 
 ## Localizar los ADRs y los recursos de Nivel 3 del Skill
 
-El Skill `projections` (ya precargado como texto) y los ADRs del marco viven **dentro de la release activa e inmutable del plugin**, no en el repo donde corres este agente (`cwd = repo consumidor`). Los links relativos del Skill no se resuelven solos: abre los ADRs desde `${MEFISTO_PACKAGE_ROOT}/docs/adr/` y los recursos de Nivel 3 desde `"${MEFISTO_PACKAGE_ROOT}/skills/projections"`.
+El Skill `projections` (ya precargado como texto) y los ADRs del marco viven **dentro de la release activa e inmutable del plugin**, no en el repo donde corres este agente (`cwd = repo consumidor`). Los links relativos del Skill no se resuelven solos: abre los ADRs desde `"${MEFISTO_PACKAGE_ROOT}/docs/adr/"` y los recursos de Nivel 3 desde `"${MEFISTO_PACKAGE_ROOT}/skills/projections"`.
 
 - Recursos de Nivel 3 del Skill: `"${MEFISTO_PACKAGE_ROOT}/skills/projections"/modelos-marten.md`, `"${MEFISTO_PACKAGE_ROOT}/skills/projections"/naming.md`, `"${MEFISTO_PACKAGE_ROOT}/skills/projections"/read-apis.md`, `"${MEFISTO_PACKAGE_ROOT}/skills/projections"/config-test.md`.
-- ADRs citados por el Skill: `${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0035-doctrina-proyeccion-query-read-side.md`, `${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0034-worker-proyecciones-read-models.md`, `${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0006-convenciones-nombramiento-funciones-azure.md`, `${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0041-forma-propia-vista-read-side.md`. Para naming de tests y oraculo independiente, `${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0016-convencion-naming-tests.md` y `${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0002-estrategia-testing-event-sourcing.md`.
+- ADRs citados por el Skill: `"${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0035-doctrina-proyeccion-query-read-side.md"`, `"${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0034-worker-proyecciones-read-models.md"`, `"${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0006-convenciones-nombramiento-funciones-azure.md"`, `"${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0041-forma-propia-vista-read-side.md"`. Para naming de tests y oraculo independiente, `"${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0016-convencion-naming-tests.md"` y `"${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0002-estrategia-testing-event-sourcing.md"`.
 
 **Nunca uses las rutas relativas** `docs/adr/...` ni las de recursos del Skill: con `cwd = repo consumidor` resolverian contra el repo equivocado (inexistente ahi).
 
