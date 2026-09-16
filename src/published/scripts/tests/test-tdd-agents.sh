@@ -38,6 +38,7 @@ expected_rendered_body() {
     esac
     translated_source_body "$runtime" "$source"
 }
+first_bash_block() { awk '/^```bash$/{inside=1; next} /^```$/{if (inside) exit} inside' "$1"; }
 validator_fixture() {
     local agent="$1" extra="$2" destination="$WORK/$agent.md"
     printf '%s\n' '---' > "$destination"
@@ -210,8 +211,44 @@ for artifact in "$REPO_ROOT/src/published/agents/reviewer.md" "$REPO_ROOT/agents
     if ! grep -Eq "$legacy_pattern" "$artifact"; then pass "$(basename "$(dirname "$artifact")") reviewer no conserva resolucion de runtime legado"; else fail "$(basename "$(dirname "$artifact")") reviewer conserva resolucion de runtime legado"; fi
 done
 
-package_root="$REPO_ROOT/dist/opencode"
-if MEFISTO_PACKAGE_ROOT="$package_root" bash -c 'test -f "${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0016-convencion-naming-tests.md" && test -f "${MEFISTO_PACKAGE_ROOT}/skills/mefisto-projections/modelos-marten.md" && test -f "${MEFISTO_PACKAGE_ROOT}/skills/mefisto-projections/read-apis.md" && test -f "${MEFISTO_PACKAGE_ROOT}/skills/mefisto-projections/naming.md" && test -f "${MEFISTO_PACKAGE_ROOT}/skills/mefisto-projections/config-test.md"'; then pass 'el paquete OpenCode contiene el conocimiento que reviewer abre desde sus raices adaptadas'; else fail 'el paquete OpenCode no empaqueta todo el conocimiento requerido por reviewer'; fi
+for runtime in claude opencode; do
+    package_root="$REPO_ROOT"
+    skill_dir='skills/projections'
+    if [ "$runtime" = opencode ]; then package_root="$REPO_ROOT/dist/opencode"; skill_dir='skills/mefisto-projections'; fi
+    if MEFISTO_PACKAGE_ROOT="$package_root" SKILL_DIR="$skill_dir" bash -c '
+        test -f "${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0016-convencion-naming-tests.md" &&
+        test -f "${MEFISTO_PACKAGE_ROOT}/${SKILL_DIR}/modelos-marten.md" &&
+        test -f "${MEFISTO_PACKAGE_ROOT}/${SKILL_DIR}/read-apis.md" &&
+        test -f "${MEFISTO_PACKAGE_ROOT}/${SKILL_DIR}/naming.md" &&
+        test -f "${MEFISTO_PACKAGE_ROOT}/${SKILL_DIR}/config-test.md"
+    '; then pass "el paquete $runtime contiene el conocimiento que reviewer abre desde sus raices adaptadas"; else fail "el paquete $runtime no contiene todo el conocimiento requerido por reviewer"; fi
+done
+
+# MEF-ADR-0031: prueba la resolucion ejecutable desde los agentes generados, no
+# solo la presencia textual de las directivas en la fuente. Las dos fixtures
+# usan una raiz con espacios y contienen bytes de las distribuciones reales.
+claude_package="$WORK/paquete Claude con espacios"
+mkdir -p "$claude_package/.claude-plugin" "$claude_package/docs/adr" "$claude_package/skills/projections"
+cp "$REPO_ROOT/.claude-plugin/plugin.json" "$claude_package/.claude-plugin/plugin.json"
+cp "$REPO_ROOT/mefisto-manifest.json" "$claude_package/mefisto-manifest.json"
+cp "$REPO_ROOT/dist/claude/docs/adr/mef-adr-0016-convencion-naming-tests.md" "$claude_package/docs/adr/"
+for resource in modelos-marten.md read-apis.md naming.md config-test.md; do cp "$REPO_ROOT/skills/projections/$resource" "$claude_package/skills/projections/$resource"; done
+claude_physical="$(cd "$claude_package" && pwd -P)"
+claude_preamble="$(first_bash_block "$REPO_ROOT/dist/claude/agents/reviewer.md")"
+claude_resolved="$(CLAUDE_PLUGIN_ROOT="$claude_package/" bash -c "$claude_preamble"$'\n''test -f "$MEFISTO_PACKAGE_ROOT/docs/adr/mef-adr-0016-convencion-naming-tests.md" && for resource in modelos-marten.md read-apis.md naming.md config-test.md; do test -f "$MEFISTO_PACKAGE_ROOT/skills/projections/$resource" || exit 1; done && printf "%s\n" "$MEFISTO_PACKAGE_ROOT"' 2>/dev/null)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$claude_resolved" = "$claude_physical" ] && pass 'reviewer Claude generado abre ADRs y Skill desde un package root con espacios' || fail 'reviewer Claude generado no resuelve su conocimiento desde el package root efectivo'
+
+opencode_package="$WORK/paquete OpenCode con espacios"
+opencode_data="$WORK/datos OpenCode con espacios"
+mkdir -p "$opencode_package/docs/adr" "$opencode_package/skills/mefisto-projections" "$opencode_data/mefisto/active/bin"
+cp "$REPO_ROOT/dist/opencode/docs/adr/mef-adr-0016-convencion-naming-tests.md" "$opencode_package/docs/adr/"
+for resource in modelos-marten.md read-apis.md naming.md config-test.md; do cp "$REPO_ROOT/dist/opencode/skills/mefisto-projections/$resource" "$opencode_package/skills/mefisto-projections/$resource"; done
+printf '%s\n' '#!/bin/sh' '[ "$1" = package-root ] || exit 2' 'printf "%s\n" "$MEFISTO_TEST_PACKAGE_ROOT"' > "$opencode_data/mefisto/active/bin/mefisto-opencode"
+chmod +x "$opencode_data/mefisto/active/bin/mefisto-opencode"
+opencode_physical="$(cd "$opencode_package" && pwd -P)"
+opencode_preamble="$(first_bash_block "$REPO_ROOT/dist/opencode/agents/reviewer.md")"
+opencode_resolved="$(XDG_DATA_HOME="$opencode_data" MEFISTO_TEST_PACKAGE_ROOT="$opencode_package/" bash -c "$opencode_preamble"$'\n''test -f "$MEFISTO_PACKAGE_ROOT/docs/adr/mef-adr-0016-convencion-naming-tests.md" && for resource in modelos-marten.md read-apis.md naming.md config-test.md; do test -f "$MEFISTO_PACKAGE_ROOT/skills/mefisto-projections/$resource" || exit 1; done && printf "%s\n" "$MEFISTO_PACKAGE_ROOT"' 2>/dev/null)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$opencode_resolved" = "$opencode_physical" ] && pass 'reviewer OpenCode generado abre ADRs y Skill desde un package root con espacios' || fail 'reviewer OpenCode generado no resuelve su conocimiento desde el package root efectivo'
 
 if grep -Fq '.mefisto/pipeline/summaries/stage-2b-smoke-test-writer.md' "$REPO_ROOT/agents/smoke-test-writer.md" && grep -Fq '.mefisto/pipeline/summaries/stage-2b-smoke-test-writer.md' "$REPO_ROOT/dist/claude/agents/smoke-test-writer.md" && grep -Fq '.mefisto/pipeline/summaries/stage-2b-smoke-test-writer.md' "$REPO_ROOT/dist/opencode/agents/smoke-test-writer.md"; then
     pass 'los generados conservan el summary canonico de smoke stage 2b'
