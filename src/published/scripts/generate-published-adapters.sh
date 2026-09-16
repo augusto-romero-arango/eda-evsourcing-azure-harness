@@ -67,6 +67,10 @@ TOOLING_CLOSURE_ASSETS=(
     'src/runtime/lib/runtime-opencode.jq|0644'
     'src/runtime/contract/models.validate.jq|0644'
 )
+# Conocimiento no ejecutable requerido por el flujo TDD. Los ADRs se descubren
+# por convencion para que uno nuevo entre en cada runtime sin una lista manual;
+# el cheatsheet es una dependencia explicita de test-writer.
+KNOWLEDGE_CLOSURE_ASSETS=()
 # El marketplace Claude instala hoy la raiz del checkout (`source: "./"`).
 # Hasta que esa raiz sea una proyeccion autocontenida, los dos roles del corte
 # vertical de tooling se reflejan alli desde la misma renderizacion Claude.
@@ -263,6 +267,41 @@ generated_contains() {
     return 1
 }
 
+project_static_assets() {
+    local collection_name="$1" declared_asset root asset_source asset_mode asset_id asset_destination asset_source_dir absolute_asset_source full_rel plan plan_destination
+    shift
+    for root in "${ROOTS[@]}"; do
+        for declared_asset in "$@"; do
+            asset_source="${declared_asset%%|*}"
+            asset_mode="${declared_asset##*|}"
+            asset_id="$collection_name/$asset_source"
+            asset_destination="$asset_source"
+            safe_relative_path "$asset_source" || usage_error "$collection_name declaro una fuente insegura: $asset_source"
+            case "$asset_mode" in 0644|0755) ;; *) usage_error "$collection_name declaro un modo desconocido: $asset_mode" ;; esac
+            asset_source_dir="$(cd "$(dirname "$REPO_ROOT/$asset_source")" 2>/dev/null && pwd -P)" || usage_error "$collection_name declaro una fuente ausente: $asset_source"
+            absolute_asset_source="$asset_source_dir/$(basename "$asset_source")"
+            case "$absolute_asset_source" in "$REPO_ROOT"/*) ;; *) usage_error "$collection_name declaro una fuente fuera del repositorio: $asset_source" ;; esac
+            [ -f "$absolute_asset_source" ] || usage_error "$collection_name declaro una fuente ausente o no regular: $asset_source"
+            [ ! -L "$absolute_asset_source" ] || usage_error "$collection_name declaro una fuente mediante symlink: $asset_source"
+            full_rel="$root/$asset_destination"
+            paths_overlap "$full_rel" "$root/.mefisto-generated-assets.json" && usage_error "$collection_name colisiona con el inventario del motor: $full_rel"
+            for plan in ${ASSET_PLANS[@]+"${ASSET_PLANS[@]}"}; do
+                plan_destination="$(printf '%s' "$plan" | jq -r '.destination')"
+                ! paths_overlap "$plan_destination" "$full_rel" || usage_error "$collection_name colisiona en destino: $full_rel"
+            done
+            for generated_path in ${GENERATED[@]+"${GENERATED[@]}"}; do
+                ! paths_overlap "$generated_path" "$full_rel" || usage_error "$collection_name colisiona con salida agent/command: $full_rel"
+            done
+            mkdir -p "$(dirname "$STAGE_DIR/$full_rel")" || usage_error "no se pudo preparar $full_rel"
+            cp "$absolute_asset_source" "$STAGE_DIR/$full_rel" || usage_error "no se pudo copiar $collection_name: $asset_source"
+            chmod "$asset_mode" "$STAGE_DIR/$full_rel" || usage_error "no se pudo fijar el modo de $full_rel"
+            ASSET_PLANS+=("$(jq -cn --arg adapter "$collection_name" --arg id "$asset_id" --arg source "$asset_source" --arg destination "$full_rel" --arg mode "$asset_mode" --arg sha256 "$(sha256 "$STAGE_DIR/$full_rel")" '{adapter: $adapter, id: $id, source: $source, destination: $destination, mode: $mode, sha256: $sha256}')")
+            ASSET_COUNT=$((ASSET_COUNT + 1))
+            GENERATED+=("$full_rel")
+        done
+    done
+}
+
 # Los mirrors transitorios de la raiz instalada por el marketplace no son una
 # tercera fuente: reutilizan byte a byte la salida ya renderizada por Claude.
 # Se mantienen fuera de dist/ porque el marketplace aun apunta a `./`.
@@ -344,36 +383,12 @@ done
 # no implementa `assets`; por eso el inventario se deriva de las raices, no de
 # esa capacidad opcional del adaptador.
 ASSET_ROOTS=("${ROOTS[@]}")
-for root in "${ROOTS[@]}"; do
-    for declared_asset in "${TOOLING_CLOSURE_ASSETS[@]}"; do
-        asset_source="${declared_asset%%|*}"
-        asset_mode="${declared_asset##*|}"
-        asset_id="tooling-closure/$asset_source"
-        asset_destination="$asset_source"
-        safe_relative_path "$asset_source" || usage_error "clausura tooling declaro una fuente insegura: $asset_source"
-        case "$asset_mode" in 0644|0755) ;; *) usage_error "clausura tooling declaro un modo desconocido: $asset_mode" ;; esac
-        asset_source_dir="$(cd "$(dirname "$REPO_ROOT/$asset_source")" 2>/dev/null && pwd -P)" || usage_error "clausura tooling declaro una fuente ausente: $asset_source"
-        absolute_asset_source="$asset_source_dir/$(basename "$asset_source")"
-        case "$absolute_asset_source" in "$REPO_ROOT"/*) ;; *) usage_error "clausura tooling declaro una fuente fuera del repositorio: $asset_source" ;; esac
-        [ -f "$absolute_asset_source" ] || usage_error "clausura tooling declaro una fuente ausente o no regular: $asset_source"
-        [ ! -L "$absolute_asset_source" ] || usage_error "clausura tooling declaro una fuente mediante symlink: $asset_source"
-        full_rel="$root/$asset_destination"
-        paths_overlap "$full_rel" "$root/.mefisto-generated-assets.json" && usage_error "clausura tooling colisiona con el inventario del motor: $full_rel"
-        for plan in ${ASSET_PLANS[@]+"${ASSET_PLANS[@]}"}; do
-            plan_destination="$(printf '%s' "$plan" | jq -r '.destination')"
-            ! paths_overlap "$plan_destination" "$full_rel" || usage_error "clausura tooling colisiona en destino: $full_rel"
-        done
-        for generated_path in ${GENERATED[@]+"${GENERATED[@]}"}; do
-            ! paths_overlap "$generated_path" "$full_rel" || usage_error "clausura tooling colisiona con salida agent/command: $full_rel"
-        done
-        mkdir -p "$(dirname "$STAGE_DIR/$full_rel")" || usage_error "no se pudo preparar $full_rel"
-        cp "$absolute_asset_source" "$STAGE_DIR/$full_rel" || usage_error "no se pudo copiar la clausura tooling: $asset_source"
-        chmod "$asset_mode" "$STAGE_DIR/$full_rel" || usage_error "no se pudo fijar el modo de $full_rel"
-        ASSET_PLANS+=("$(jq -cn --arg adapter 'tooling-closure' --arg id "$asset_id" --arg source "$asset_source" --arg destination "$full_rel" --arg mode "$asset_mode" --arg sha256 "$(sha256 "$STAGE_DIR/$full_rel")" '{adapter: $adapter, id: $id, source: $source, destination: $destination, mode: $mode, sha256: $sha256}')")
-        ASSET_COUNT=$((ASSET_COUNT + 1))
-        GENERATED+=("$full_rel")
-    done
-done
+while IFS= read -r knowledge_source; do
+    [ -n "$knowledge_source" ] && KNOWLEDGE_CLOSURE_ASSETS+=("${knowledge_source#"$REPO_ROOT/"}|0644")
+done < <(find "$REPO_ROOT/docs/adr" -maxdepth 1 -type f -name 'mef-adr-*.md' | sort)
+KNOWLEDGE_CLOSURE_ASSETS+=('docs/testing/harness-cheatsheet.md|0644')
+project_static_assets 'tooling-closure' "${TOOLING_CLOSURE_ASSETS[@]}"
+project_static_assets 'tooling-knowledge' "${KNOWLEDGE_CLOSURE_ASSETS[@]}"
 
 for root in ${ASSET_ROOTS[@]+"${ASSET_ROOTS[@]}"}; do
     inventory="$root/.mefisto-generated-assets.json"

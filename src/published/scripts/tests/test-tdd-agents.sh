@@ -30,6 +30,14 @@ translated_source_body() {
         opencode) published_opencode_translate_body "$source" "$source_body" ;;
     esac
 }
+expected_rendered_body() {
+    local runtime="$1" source="$2"
+    case "$runtime" in
+        claude) published_claude_package_root_preamble ;;
+        opencode) package_root_preamble ;;
+    esac
+    translated_source_body "$runtime" "$source"
+}
 validator_fixture() {
     local agent="$1" extra="$2" destination="$WORK/$agent.md"
     printf '%s\n' '---' > "$destination"
@@ -96,7 +104,9 @@ for index in "${!agents[@]}"; do
     fi
     if [ "$(body "$source" | awk 'NF { print; exit }')" = '{{mefisto:assert-consumer-repo}}' ]; then pass "$agent inicia con el guard"; else fail "$agent no inicia con el guard"; fi
     if grep -Fqx '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/'"$agent"'.md. No editar a mano. -->' "$mirror"; then pass "$agent generado conserva marcador"; else fail "$agent generado sin marcador"; fi
-    if diff -u <(translated_source_body claude "$source") <(body_without_adapter_lines "$mirror") >/dev/null; then pass "$agent conserva el cuerpo traducido al proyectar Claude"; else fail "$agent altera el cuerpo al proyectar Claude"; fi
+    if [ "$agent" = test-writer ]; then
+        if diff -u <(expected_rendered_body claude "$source") <(body_without_adapter_lines "$mirror") >/dev/null; then pass "$agent conserva exactamente un preambulo y el cuerpo traducido al proyectar Claude"; else fail "$agent altera el preambulo o el cuerpo al proyectar Claude"; fi
+    elif diff -u <(translated_source_body claude "$source") <(body_without_adapter_lines "$mirror") >/dev/null; then pass "$agent conserva el cuerpo traducido al proyectar Claude"; else fail "$agent altera el cuerpo al proyectar Claude"; fi
     if [ "$agent" = domain-scaffolder ]; then
         if [ "$(grep -c '\${{' "$source")" -eq 35 ] && [ "$(grep -c '\${{' "$mirror")" -eq 35 ]; then pass 'domain-scaffolder conserva las 35 expresiones GitHub Actions'; else fail 'domain-scaffolder altera las expresiones GitHub Actions'; fi
         source_separators="$(body "$source" | grep -cx -- '---')"
@@ -135,6 +145,8 @@ for agent in "${agents[@]}"; do
 done
 validator_fixture reviewer 'Posicional ajeno: $2'
 if "$VALIDATOR" "$WORK/reviewer.md" >/dev/null 2>&1; then fail 'reviewer no hereda placeholders exclusivos de test-writer'; else pass 'reviewer rechaza placeholders exclusivos de test-writer'; fi
+validator_fixture test-writer 'Ruta legacy: $PLUGIN_ROOT'
+if "$VALIDATOR" "$WORK/test-writer.md" >/dev/null 2>&1; then fail 'test-writer aun admite el placeholder de raiz legacy'; else pass 'test-writer rechaza el placeholder de raiz legacy'; fi
 validator_fixture projection-implementer 'Posicional ajeno: $2'
 if "$VALIDATOR" "$WORK/projection-implementer.md" >/dev/null 2>&1; then fail 'projection-implementer no hereda placeholders exclusivos de projection-test-writer'; else pass 'projection-implementer rechaza placeholders exclusivos de projection-test-writer'; fi
 validator_fixture smoke-test-writer 'Ruta ajena: $PLUGIN_ROOT'
@@ -145,7 +157,9 @@ for agent in "${agents[@]}"; do
     claude="$REPO_ROOT/dist/claude/agents/$agent.md"
     opencode="$REPO_ROOT/dist/opencode/agents/$agent.md"
     if cmp -s "$claude" "$REPO_ROOT/agents/$agent.md"; then pass "$agent mirror Claude coincide byte a byte"; else fail "$agent mirror Claude diverge"; fi
-    if diff -u <(translated_source_body opencode "$REPO_ROOT/src/published/agents/$agent.md") <(body_without_adapter_lines "$opencode") >/dev/null; then pass "$agent conserva el cuerpo traducido al proyectar OpenCode"; else fail "$agent altera el cuerpo al proyectar OpenCode"; fi
+    if [ "$agent" = test-writer ]; then
+        if diff -u <(expected_rendered_body opencode "$REPO_ROOT/src/published/agents/$agent.md") <(body_without_adapter_lines "$opencode") >/dev/null; then pass "$agent conserva exactamente un preambulo y el cuerpo traducido al proyectar OpenCode"; else fail "$agent altera el preambulo o el cuerpo al proyectar OpenCode"; fi
+    elif diff -u <(translated_source_body opencode "$REPO_ROOT/src/published/agents/$agent.md") <(body_without_adapter_lines "$opencode") >/dev/null; then pass "$agent conserva el cuerpo traducido al proyectar OpenCode"; else fail "$agent altera el cuerpo al proyectar OpenCode"; fi
     grep -Fq '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh' "$opencode" && pass "$agent OpenCode conserva marcador" || fail "$agent OpenCode no conserva marcador"
     if ! grep -Fq '{{mefisto:' "$claude" && ! grep -Fq '{{mefisto:' "$opencode"; then pass "$agent no filtra directivas a las salidas"; else fail "$agent filtra directivas a las salidas"; fi
     if [ "$agent" = reviewer ]; then
@@ -164,6 +178,25 @@ for agent in "${agents[@]}"; do
     fi
     grep -Fq 'permission: ' "$opencode" && grep -Fq '"read":{"*":"allow"' "$opencode" && grep -Fq '"edit":{"*":"allow"' "$opencode" && grep -Fq '"bash":{"*":"deny"' "$opencode" && pass "$agent OpenCode materializa permisos" || fail "$agent OpenCode no materializa permisos"
     grep -Fq 'mode: "all"' "$opencode" && pass "$agent OpenCode conserva mode all" || fail "$agent OpenCode no conserva mode all"
+done
+
+echo '[conocimiento] test-writer usa la release activa'
+for artifact in "$REPO_ROOT/src/published/agents/test-writer.md" "$REPO_ROOT/agents/test-writer.md" "$REPO_ROOT/dist/claude/agents/test-writer.md" "$REPO_ROOT/dist/opencode/agents/test-writer.md"; do
+    rendered="$(< "$artifact")"
+    if [[ "$artifact" = "$REPO_ROOT/src/"* ]]; then root='{{mefisto:package-root}}'; else root='${MEFISTO_PACKAGE_ROOT}'; fi
+    if [[ "$rendered" = *"$root/docs/adr/mef-adr-0002-estrategia-testing-event-sourcing.md"* && "$rendered" = *"$root/docs/adr/mef-adr-0016-convencion-naming-tests.md"* && "$rendered" = *"$root/docs/testing/harness-cheatsheet.md"* ]]; then pass "$(basename "$(dirname "$artifact")") test-writer resuelve ADRs y cheatsheet desde package root"; else fail "$(basename "$(dirname "$artifact")") test-writer no resuelve todo el conocimiento desde package root"; fi
+    if [[ "$artifact" != "$REPO_ROOT/src/"* ]] && { { [[ "$artifact" = *'/opencode/'* ]] && [ "$(grep -c 'mefisto_opencode_launcher" package-root' "$artifact")" -eq 1 ]; } || { [[ "$artifact" != *'/opencode/'* ]] && [ "$(grep -c 'MEFISTO_PACKAGE_ROOT="\$mefisto_claude_root"' "$artifact")" -eq 1 ]; }; } && grep -Fq 'cat "${MEFISTO_PACKAGE_ROOT}/docs/testing/harness-cheatsheet.md"' "$artifact"; then pass "$(basename "$(dirname "$artifact")") cita el conocimiento con raiz que preserva espacios"; elif [[ "$artifact" = "$REPO_ROOT/src/"* ]]; then :; else fail "$(basename "$(dirname "$artifact")") no cita el conocimiento con raiz segura"; fi
+    if [[ "$artifact" = "$REPO_ROOT/src/"* ]]; then legacy_pattern='\.claude/pipeline/\.plugin-root|PLUGIN_ROOT=|plugins/cache|\$HOME/.claude'; else legacy_pattern='PLUGIN_ROOT=|plugins/cache|\$HOME/.claude'; fi
+    if ! grep -Eq "$legacy_pattern" "$artifact"; then pass "$(basename "$(dirname "$artifact")") no conserva resolver de runtime legado"; else fail "$(basename "$(dirname "$artifact")") conserva resolver de runtime legado"; fi
+done
+
+for runtime in claude opencode; do
+    package_root="$REPO_ROOT/dist/$runtime"
+    if MEFISTO_PACKAGE_ROOT="$package_root" bash -c '
+        test -f "${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0002-estrategia-testing-event-sourcing.md" &&
+        test -f "${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0016-convencion-naming-tests.md" &&
+        test -f "${MEFISTO_PACKAGE_ROOT}/docs/testing/harness-cheatsheet.md"
+    '; then pass "$runtime contiene el conocimiento que test-writer abre desde package root"; else fail "$runtime no empaqueta todo el conocimiento requerido por test-writer"; fi
 done
 
 if grep -Fq '.mefisto/pipeline/summaries/stage-2b-smoke-test-writer.md' "$REPO_ROOT/agents/smoke-test-writer.md" && grep -Fq '.mefisto/pipeline/summaries/stage-2b-smoke-test-writer.md' "$REPO_ROOT/dist/claude/agents/smoke-test-writer.md" && grep -Fq '.mefisto/pipeline/summaries/stage-2b-smoke-test-writer.md' "$REPO_ROOT/dist/opencode/agents/smoke-test-writer.md"; then

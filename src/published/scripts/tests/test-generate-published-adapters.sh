@@ -51,6 +51,12 @@ EOF
         printf 'fixture\n' > "$TEST_REPO/$source"
         chmod 0644 "$TEST_REPO/$source"
     done
+    mkdir -p "$TEST_REPO/docs/adr" "$TEST_REPO/docs/testing"
+    printf 'ADR uno\n' > "$TEST_REPO/docs/adr/mef-adr-0011.md"
+    printf 'ADR dos\n' > "$TEST_REPO/docs/adr/mef-adr-0053.md"
+    printf 'indice excluido\n' > "$TEST_REPO/docs/adr/INDICE-TEMATICO.md"
+    printf 'cheatsheet\n' > "$TEST_REPO/docs/testing/harness-cheatsheet.md"
+    printf 'documento excluido\n' > "$TEST_REPO/docs/testing/otro.md"
 }
 
 add_assets_adapter() {
@@ -70,7 +76,8 @@ OUT="$WORK/salida con espacios"
 "$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md"; rc=$?
 assert_rc "$rc" 0 'dos adaptadores procesan fuente y paths con espacios'
 [ -f "$OUT/dist/alpha/artefactos/valida con espacios.md" ] && [ -f "$OUT/dist/beta/artefactos/valida con espacios.md" ] && pass 'salidas de ambos adaptadores' || fail 'faltan salidas'
-jq -e '.assets | length == 15 and all(.[]; .adapter == "tooling-closure") and any(.[]; .source == "scripts/tdd-pipeline.sh" and .destination == "scripts/tdd-pipeline.sh" and .mode == "0755" and (.sha256 | length == 64))' "$OUT/dist/alpha/.mefisto-generated-assets.json" >/dev/null && pass 'la clausura estatica atribuye tdd-pipeline con checksum aun con adaptador heredado' || fail 'inventario de clausura estatica invalido'
+jq -e '.assets | length == 18 and any(.[]; .adapter == "tooling-closure" and .source == "scripts/tdd-pipeline.sh" and .destination == "scripts/tdd-pipeline.sh" and .mode == "0755" and (.sha256 | length == 64)) and ([.[] | select(.adapter == "tooling-knowledge") | .source] == ["docs/adr/mef-adr-0011.md", "docs/adr/mef-adr-0053.md", "docs/testing/harness-cheatsheet.md"])' "$OUT/dist/alpha/.mefisto-generated-assets.json" >/dev/null && pass 'la clausura estatica atribuye pipeline y conocimiento TDD con checksum' || fail 'inventario de clausura estatica invalido'
+[ "$(< "$OUT/dist/alpha/docs/adr/mef-adr-0011.md")" = 'ADR uno' ] && [ "$(< "$OUT/dist/beta/docs/testing/harness-cheatsheet.md")" = 'cheatsheet' ] && [ "$(file_mode "$OUT/dist/alpha/docs/adr/mef-adr-0011.md")" = 644 ] && [ ! -e "$OUT/dist/alpha/docs/adr/INDICE-TEMATICO.md" ] && [ ! -e "$OUT/dist/alpha/docs/testing/otro.md" ] && pass 'conocimiento TDD conserva bytes y modo, excluyendo el resto de docs' || fail 'proyeccion de conocimiento TDD invalida'
 if [ "$(sed -n '4p' "$OUT/dist/beta/artefactos/valida con espacios.md")" = '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/valida con espacios.md. No editar a mano. -->' ]; then
     pass 'el marcador puede ir despues del frontmatter'
 else
@@ -125,7 +132,7 @@ assert_rc "$rc" 0 'assets suplementarios se generan junto con Markdown'
 [ "$(cat "$OUT/dist/assets/runtime/config.json")" = 'renderizado:configuracion fuente' ] && pass 'asset se renderiza desde su fuente' || fail 'asset no se renderizo desde fuente'
 [ "$(file_mode "$OUT/dist/assets/bin/launcher")" = 755 ] && pass 'asset ejecutable conserva modo 0755' || fail 'asset ejecutable no conserva modo'
 inventory="$OUT/dist/assets/.mefisto-generated-assets.json"
-jq -e '.schemaVersion == 1 and (.assets | length) == 17 and .assets[0].source == "src/published/assets/config.txt" and .assets[1].mode == "0755" and (.assets[] | .sha256 | length == 64)' "$inventory" >/dev/null && pass 'inventario determinista atribuye assets' || fail 'inventario de assets invalido'
+ jq -e '.schemaVersion == 1 and (.assets | length) == 20 and .assets[0].source == "src/published/assets/config.txt" and .assets[1].mode == "0755" and (.assets[] | .sha256 | length == 64)' "$inventory" >/dev/null && pass 'inventario determinista atribuye assets' || fail 'inventario de assets invalido'
 check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
 [ "$rc" -eq 0 ] && pass '--check acepta assets e inventario al dia' || fail "--check acepta assets e inventario al dia (exit $rc: $check_out)"
 printf 'alterado\n' > "$OUT/dist/assets/runtime/config.json"
