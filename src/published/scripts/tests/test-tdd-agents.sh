@@ -104,7 +104,7 @@ for index in "${!agents[@]}"; do
     fi
     if [ "$(body "$source" | awk 'NF { print; exit }')" = '{{mefisto:assert-consumer-repo}}' ]; then pass "$agent inicia con el guard"; else fail "$agent no inicia con el guard"; fi
     if grep -Fqx '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/'"$agent"'.md. No editar a mano. -->' "$mirror"; then pass "$agent generado conserva marcador"; else fail "$agent generado sin marcador"; fi
-    if [ "$agent" = test-writer ]; then
+    if [ "$agent" = test-writer ] || [ "$agent" = reviewer ]; then
         if diff -u <(expected_rendered_body claude "$source") <(body_without_adapter_lines "$mirror") >/dev/null; then pass "$agent conserva exactamente un preambulo y el cuerpo traducido al proyectar Claude"; else fail "$agent altera el preambulo o el cuerpo al proyectar Claude"; fi
     elif diff -u <(translated_source_body claude "$source") <(body_without_adapter_lines "$mirror") >/dev/null; then pass "$agent conserva el cuerpo traducido al proyectar Claude"; else fail "$agent altera el cuerpo al proyectar Claude"; fi
     if [ "$agent" = domain-scaffolder ]; then
@@ -157,7 +157,7 @@ for agent in "${agents[@]}"; do
     claude="$REPO_ROOT/dist/claude/agents/$agent.md"
     opencode="$REPO_ROOT/dist/opencode/agents/$agent.md"
     if cmp -s "$claude" "$REPO_ROOT/agents/$agent.md"; then pass "$agent mirror Claude coincide byte a byte"; else fail "$agent mirror Claude diverge"; fi
-    if [ "$agent" = test-writer ]; then
+    if [ "$agent" = test-writer ] || [ "$agent" = reviewer ]; then
         if diff -u <(expected_rendered_body opencode "$REPO_ROOT/src/published/agents/$agent.md") <(body_without_adapter_lines "$opencode") >/dev/null; then pass "$agent conserva exactamente un preambulo y el cuerpo traducido al proyectar OpenCode"; else fail "$agent altera el preambulo o el cuerpo al proyectar OpenCode"; fi
     elif diff -u <(translated_source_body opencode "$REPO_ROOT/src/published/agents/$agent.md") <(body_without_adapter_lines "$opencode") >/dev/null; then pass "$agent conserva el cuerpo traducido al proyectar OpenCode"; else fail "$agent altera el cuerpo al proyectar OpenCode"; fi
     grep -Fq '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh' "$opencode" && pass "$agent OpenCode conserva marcador" || fail "$agent OpenCode no conserva marcador"
@@ -198,6 +198,20 @@ for runtime in claude opencode; do
         test -f "${MEFISTO_PACKAGE_ROOT}/docs/testing/harness-cheatsheet.md"
     '; then pass "$runtime contiene el conocimiento que test-writer abre desde package root"; else fail "$runtime no empaqueta todo el conocimiento requerido por test-writer"; fi
 done
+
+echo '[conocimiento] reviewer usa la release activa y el Skill adaptado'
+for artifact in "$REPO_ROOT/src/published/agents/reviewer.md" "$REPO_ROOT/agents/reviewer.md" "$REPO_ROOT/dist/claude/agents/reviewer.md" "$REPO_ROOT/dist/opencode/agents/reviewer.md"; do
+    rendered="$(< "$artifact")"
+    rendered_without_quotes="${rendered//\"/}"
+    if [[ "$artifact" = "$REPO_ROOT/src/"* ]]; then package_root='{{mefisto:package-root}}'; skill_root='{{mefisto:skill-root projections}}'; else package_root='${MEFISTO_PACKAGE_ROOT}'; skill_root='${MEFISTO_PACKAGE_ROOT}/skills/projections'; [[ "$artifact" = *'/opencode/'* ]] && skill_root='${MEFISTO_PACKAGE_ROOT}/skills/mefisto-projections'; fi
+    if [[ "$rendered_without_quotes" = *"$package_root/docs/adr/mef-adr-0016-convencion-naming-tests.md"* && "$rendered_without_quotes" = *"$skill_root/modelos-marten.md"* && "$rendered_without_quotes" = *"$skill_root/read-apis.md"* && "$rendered_without_quotes" = *"$skill_root/naming.md"* && "$rendered_without_quotes" = *"$skill_root/config-test.md"* ]]; then pass "$(basename "$(dirname "$artifact")") reviewer resuelve ADRs y Skill desde la release activa"; else fail "$(basename "$(dirname "$artifact")") reviewer no resuelve todo el conocimiento desde la release activa"; fi
+    if [[ "$artifact" != "$REPO_ROOT/src/"* ]] && { { [[ "$artifact" = *'/opencode/'* ]] && [ "$(grep -c 'mefisto_opencode_launcher" package-root' "$artifact")" -eq 1 ]; } || { [[ "$artifact" != *'/opencode/'* ]] && [ "$(grep -c 'MEFISTO_PACKAGE_ROOT="\$mefisto_claude_root"' "$artifact")" -eq 1 ]; }; }; then pass "$(basename "$(dirname "$artifact")") reviewer conserva un solo preambulo que preserva espacios"; elif [[ "$artifact" = "$REPO_ROOT/src/"* ]]; then :; else fail "$(basename "$(dirname "$artifact")") reviewer no conserva el preambulo de package root"; fi
+    if [[ "$artifact" = "$REPO_ROOT/src/"* ]]; then legacy_pattern='\.claude/pipeline/\.plugin-root|PLUGIN_ROOT=|plugins/cache|\$HOME/.claude|OpenCode|Claude'; else legacy_pattern='PLUGIN_ROOT=|plugins/cache|\$HOME/.claude'; fi
+    if ! grep -Eq "$legacy_pattern" "$artifact"; then pass "$(basename "$(dirname "$artifact")") reviewer no conserva resolucion de runtime legado"; else fail "$(basename "$(dirname "$artifact")") reviewer conserva resolucion de runtime legado"; fi
+done
+
+package_root="$REPO_ROOT/dist/opencode"
+if MEFISTO_PACKAGE_ROOT="$package_root" bash -c 'test -f "${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0016-convencion-naming-tests.md" && test -f "${MEFISTO_PACKAGE_ROOT}/skills/mefisto-projections/modelos-marten.md" && test -f "${MEFISTO_PACKAGE_ROOT}/skills/mefisto-projections/read-apis.md" && test -f "${MEFISTO_PACKAGE_ROOT}/skills/mefisto-projections/naming.md" && test -f "${MEFISTO_PACKAGE_ROOT}/skills/mefisto-projections/config-test.md"'; then pass 'el paquete OpenCode contiene el conocimiento que reviewer abre desde sus raices adaptadas'; else fail 'el paquete OpenCode no empaqueta todo el conocimiento requerido por reviewer'; fi
 
 if grep -Fq '.mefisto/pipeline/summaries/stage-2b-smoke-test-writer.md' "$REPO_ROOT/agents/smoke-test-writer.md" && grep -Fq '.mefisto/pipeline/summaries/stage-2b-smoke-test-writer.md' "$REPO_ROOT/dist/claude/agents/smoke-test-writer.md" && grep -Fq '.mefisto/pipeline/summaries/stage-2b-smoke-test-writer.md' "$REPO_ROOT/dist/opencode/agents/smoke-test-writer.md"; then
     pass 'los generados conservan el summary canonico de smoke stage 2b'
