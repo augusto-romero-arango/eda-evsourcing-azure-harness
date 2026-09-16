@@ -15,6 +15,46 @@ contains() { case "$1" in *"$2"*) pass "$3" ;; *) fail "$3" ;; esac; }
 absent() { case "$1" in *"$2"*) fail "$3" ;; *) pass "$3" ;; esac; }
 frontmatter() { awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$1"; }
 body() { awk 'NR == 1 { next } $0 == "---" && !seen { seen=1; next } seen { print }' "$1"; }
+sha256() {
+    if command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | cut -d ' ' -f 1
+    else
+        sha256sum "$1" | cut -d ' ' -f 1
+    fi
+}
+
+# Deriva la clausura desde TOOLING_CLOSURE_ASSETS con el mismo patron de
+# extraccion que test-tdd-pipeline-closure.sh: nunca una segunda autoridad
+# manual sobre el tamano o el contenido de la clausura publicada.
+CLOSURE_EXTRACTOR="$WORK/extract-tooling-closure.py"
+cat > "$CLOSURE_EXTRACTOR" <<'PY'
+import pathlib
+import re
+import sys
+
+generator = pathlib.Path(sys.argv[1]).read_text()
+array = re.search(r'^TOOLING_CLOSURE_ASSETS=\(\n(.*?)^\)', generator, re.M | re.S)
+if not array:
+    print('no se pudo leer TOOLING_CLOSURE_ASSETS del generador', file=sys.stderr)
+    raise SystemExit(2)
+for match in re.finditer(r"^\s*'([^'|]+)\|(0644|0755)'\s*$", array.group(1), re.M):
+    print(f'{match.group(1)}|{match.group(2)}')
+PY
+CLOSURE_SOURCES=()
+CLOSURE_MODES=()
+while IFS='|' read -r closure_source closure_mode; do
+    [ -n "$closure_source" ] || continue
+    CLOSURE_SOURCES+=("$closure_source")
+    CLOSURE_MODES+=("$closure_mode")
+done < <(python3 "$CLOSURE_EXTRACTOR" "$GENERATOR")
+CLOSURE_COUNT="${#CLOSURE_SOURCES[@]}"
+closure_has() {
+    local needle="$1" i
+    for i in "${!CLOSURE_SOURCES[@]}"; do
+        [ "${CLOSURE_SOURCES[$i]}" = "$needle" ] && return 0
+    done
+    return 1
+}
 
 echo '[fuentes] contrato neutral y responsabilidades'
 for agent in tooling-writer tooling-reviewer; do
@@ -117,6 +157,12 @@ for rendered in "$opencode_writer" "$opencode_reviewer"; do
     absent "$rendered" 'model:' 'OpenCode hereda modelo'
 done
 
+echo '[clausura] TOOLING_CLOSURE_ASSETS declara los scripts que arrancan TDD publicado'
+[ "$CLOSURE_COUNT" -gt 0 ] && pass "se derivaron $CLOSURE_COUNT assets de clausura" || fail 'no se pudo derivar TOOLING_CLOSURE_ASSETS'
+for required in scripts/tdd-pipeline.sh src/runtime/lib/mefisto-process.sh; do
+    if closure_has "$required"; then pass "la clausura declara $required"; else fail "la clausura no declara $required"; fi
+done
+
 echo '[integracion] generacion de las cuatro salidas y check limpio'
 if "$GENERATOR" --out "$WORK" \
     "$REPO_ROOT/src/published/agents/tooling-writer.md" \
@@ -125,15 +171,50 @@ if "$GENERATOR" --out "$WORK" \
 else
     fail 'el generador no proceso ambos agentes en conjunto'
 fi
-generated_count="$(find "$WORK/dist" -type f 2>/dev/null | wc -l | tr -d '[:space:]')"
-skill_file_count="$(find "$REPO_ROOT/skills" -type f | wc -l | tr -d '[:space:]')"
-expected_count=$((37 + skill_file_count))
-[ "$generated_count" = "$expected_count" ] && pass 'la integracion genera agentes, clausura, Skills e inventarios' || fail "la integracion genero $generated_count salidas, no $expected_count"
-if jq -e '.schemaVersion == 1 and (.assets | length == 15) and any(.assets[]; .id == "mefisto-manifest" and .destination == "mefisto-manifest.json")' "$WORK/dist/claude/.mefisto-generated-assets.json" >/dev/null && jq -e --argjson count "$((16 + skill_file_count))" '.schemaVersion == 1 and (.assets | length == $count) and any(.assets[]; .destination == "skills/mefisto-projections/read-apis.md") and any(.assets[]; .destination == "skills/mefisto-comment-cleanup/ejemplos.md") and any(.assets[]; .id == "interactive-observability" and .destination == "plugins/mefisto-observability.js") and any(.assets[]; .id == "mcp-config" and .destination == "plugins/mefisto-mcp.js")' "$WORK/dist/opencode/.mefisto-generated-assets.json" >/dev/null; then
-    pass 'los inventarios atribuyen clausura y Skills OpenCode'
-else
-    fail 'los inventarios de integracion no atribuyen los Skills'
-fi
+# El inventario de cada distribucion es la unica autoridad sobre lo generado:
+# en disco deben estar exactamente sus destinos, mas el propio inventario y
+# los dos agentes renderizados que esta suite somete a prueba. No queda ningun
+# conteo base manual: todo sale de la clausura derivada y de los inventarios.
+closure_expected="$(for i in "${!CLOSURE_SOURCES[@]}"; do printf '%s|%s\n' "${CLOSURE_SOURCES[$i]}" "${CLOSURE_MODES[$i]}"; done | sort)"
+skill_expected="$(cd "$REPO_ROOT/skills" && find . -type f | sed 's|^\./||' | sed 's|^\(.*\)$|skills/\1 skills/mefisto-\1|' | sort)"
+for runtime in claude opencode; do
+    inventory="$WORK/dist/$runtime/.mefisto-generated-assets.json"
+    expected_files="$({ jq -r '.assets[].destination' "$inventory"; printf '%s\n' '.mefisto-generated-assets.json' 'agents/tooling-writer.md' 'agents/tooling-reviewer.md'; } | sort)"
+    actual_files="$(cd "$WORK/dist/$runtime" && find . -type f | sed 's|^\./||' | sort)"
+    if [ "$expected_files" = "$actual_files" ]; then
+        pass "$runtime genera exactamente sus assets inventariados, su inventario y los dos agentes bajo prueba"
+    else
+        fail "$runtime difiere entre disco e inventario: $(diff <(printf '%s\n' "$expected_files") <(printf '%s\n' "$actual_files") | tr '\n' ' ')"
+    fi
+    if jq -e '.schemaVersion == 1' "$inventory" >/dev/null; then pass "$runtime inventaria con schemaVersion 1"; else fail "$runtime no inventaria con schemaVersion 1"; fi
+    closure_actual="$(jq -r '.assets[] | select(.adapter == "tooling-closure") | "\(.source)|\(.mode)"' "$inventory" | sort)"
+    if [ "$closure_actual" = "$closure_expected" ]; then
+        pass "$runtime inventaria la clausura completa derivada de TOOLING_CLOSURE_ASSETS ($CLOSURE_COUNT assets)"
+    else
+        fail "$runtime no inventaria la clausura derivada de TOOLING_CLOSURE_ASSETS"
+    fi
+    for i in "${!CLOSURE_SOURCES[@]}"; do
+        closure_source="${CLOSURE_SOURCES[$i]}"
+        closure_mode="${CLOSURE_MODES[$i]}"
+        actual_file="$WORK/dist/$runtime/$closure_source"
+        if [ -f "$actual_file" ]; then expected_sha="$(sha256 "$actual_file")"; else expected_sha=''; fi
+        if jq -e --arg source "$closure_source" --arg mode "$closure_mode" --arg sha "$expected_sha" \
+            'any(.assets[]; .adapter == "tooling-closure" and .source == $source and .destination == $source and .mode == $mode and .sha256 == $sha)' \
+            "$inventory" >/dev/null; then
+            pass "$runtime inventaria $closure_source con source/destination/mode/sha256"
+        else
+            fail "$runtime no inventaria $closure_source con source/destination/mode/sha256"
+        fi
+    done
+done
+# Lo no-clausura de cada distribucion se afirma como conjunto semantico: el
+# manifiesto en Claude, y observabilidad + MCP + todo el arbol de Skills en
+# OpenCode, derivado de skills/ en vez de muestrear dos archivos sueltos.
+claude_extra="$(jq -r '.assets[] | select(.adapter != "tooling-closure") | "\(.id) \(.destination)"' "$WORK/dist/claude/.mefisto-generated-assets.json" | sort)"
+opencode_extra="$(jq -r '.assets[] | select(.adapter != "tooling-closure") | "\(.id) \(.destination)"' "$WORK/dist/opencode/.mefisto-generated-assets.json" | sort)"
+opencode_extra_expected="$(printf '%s\n%s\n%s\n' 'interactive-observability plugins/mefisto-observability.js' 'mcp-config plugins/mefisto-mcp.js' "$skill_expected" | sort)"
+[ "$claude_extra" = 'mefisto-manifest mefisto-manifest.json' ] && pass 'Claude inventaria el manifiesto y nada mas fuera de la clausura' || fail "Claude inventaria fuera de la clausura: $claude_extra"
+[ "$opencode_extra" = "$opencode_extra_expected" ] && pass 'OpenCode inventaria observabilidad, MCP y todos los archivos de Skills' || fail 'OpenCode no inventaria observabilidad, MCP y todos los archivos de Skills'
 [ ! -e "$WORK/dist/claude/skills" ] && pass 'Claude no recibe Skills adaptados ni internos' || fail 'Claude recibio un arbol de Skills adaptado'
 for runtime in claude opencode; do
     for agent in tooling-writer tooling-reviewer; do
