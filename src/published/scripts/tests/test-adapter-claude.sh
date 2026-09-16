@@ -62,11 +62,17 @@ contains "$agent" '"${MEFISTO_PACKAGE_ROOT}/scripts/prueba.sh" "$ARGUMENTS con e
 contains "$agent" 'MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"' 'preambulo Claude exporta la raiz efectiva'
 contains "$agent" '/mefisto:otra-orden' 'command con namespace del plugin'
 contains "$agent" 'Guard inline: Antes de continuar' 'assert-consumer-repo conserva texto circundante'
-absent "$agent" '{{mefisto:' 'las siete directivas quedan resueltas'
+absent "$agent" '{{mefisto:' 'las directivas quedan resueltas'
 absent "$agent" '/Users/' 'sin rutas de maquina'
 absent "$agent" 'mefisto-agent-completo' 'sin prefijo interno'
 command="$(< "$WORK/command.md")"
 absent "$command" 'MEFISTO_PACKAGE_ROOT' 'body sin directivas de raiz no recibe preambulo'
+make_agent raiz-skill '["skill"]' ',"skills":["projections"]'
+printf '%s\n' 'Recursos: {{mefisto:skill-root projections}}/read-apis.md y {{mefisto:skill-root projections}}/recipes.md.' >> "$WORK/raiz-skill.md"
+skill_root_rendered="$(render "$WORK/raiz-skill.md")"; rc=$?
+skill_root_preambles="$(printf '%s\n' "$skill_root_rendered" | grep -c 'MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"')"
+[ "$rc" -eq 0 ] && contains "$skill_root_rendered" '"${MEFISTO_PACKAGE_ROOT}/skills/projections"/read-apis.md' 'skill-root Claude resuelve el Skill lógico' || fail 'skill-root Claude debio renderizar'
+[ "$skill_root_preambles" -eq 1 ] && pass 'varias directivas skill-root emiten un solo preambulo Claude' || fail 'skill-root Claude duplico el preambulo'
 
 printf '%s\n' '[resolucion] precedencia, normalizacion y fallos Claude'
 PREAMBLE_CODE="$(extract_preamble "$WORK/agent.md")"

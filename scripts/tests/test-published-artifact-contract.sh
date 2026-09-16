@@ -71,6 +71,9 @@ check_invalid "guard-outside-body.md" "body: falta {{mefisto:assert-consumer-rep
 check_invalid_exact "partially-malformed-directive.md" "src/published/contract/fixtures/invalid/partially-malformed-directive.md: body: linea 4 directiva mefisto mal formada"
 check_invalid "extra-closing-brace.md" "directiva mefisto mal formada"
 check_invalid "prefixed-directive-id.md" "directiva mefisto mal formada"
+check_invalid "skill-root-invalid-id.md" "directiva mefisto mal formada: {{mefisto:skill-root mefisto-projections}}"
+check_invalid "skill-root-undeclared.md" "directiva skill-root comment-cleanup no esta declarada en skills"
+check_invalid "skill-root-missing.md" "skills: 'skill-inexistente' no resuelve"
 
 echo "[no-args] fuentes publicadas"
 out=$(bash "$VALIDATOR" 2>&1); rc=$?; [ "$rc" -eq 0 ] && pass "todas las fuentes publicadas validan" || fail "sin argumentos: $out"

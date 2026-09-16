@@ -34,7 +34,7 @@ published_claude_validate_skills() {
 }
 
 published_claude_needs_package_root() {
-    case "$1" in *'{{mefisto:run '*|*'{{mefisto:package-root}}'*) return 0 ;; *) return 1 ;; esac
+    case "$1" in *'{{mefisto:run '*|*'{{mefisto:package-root}}'*|*'{{mefisto:skill-root '*) return 0 ;; *) return 1 ;; esac
 }
 
 published_claude_lifecycle_launcher_preamble() {
@@ -167,6 +167,8 @@ published_claude_translate_body() {
                 translated="${BASH_REMATCH[1]}$(published_claude_lifecycle_launcher_preamble)${BASH_REMATCH[2]}"
             elif [[ "$line" =~ ^(.*)\{\{mefisto:package-root\}\}(.*)$ ]]; then
                 translated="${BASH_REMATCH[1]}\${MEFISTO_PACKAGE_ROOT}${BASH_REMATCH[2]}"
+            elif [[ "$line" =~ ^(.*)\{\{mefisto:skill-root[[:space:]]+([a-z0-9]+(-[a-z0-9]+)*)\}\}(.*)$ ]]; then
+                translated="${BASH_REMATCH[1]}\"\${MEFISTO_PACKAGE_ROOT}/skills/${BASH_REMATCH[2]}\"${BASH_REMATCH[4]}"
             elif [[ "$line" =~ ^(.*)\{\{mefisto:config-path\}\}(.*)$ ]]; then
                 translated="${BASH_REMATCH[1]}.mefisto/harness.config.json${BASH_REMATCH[2]}"
             elif [[ "$line" =~ ^(.*)\{\{mefisto:state-path[[:space:]]+([A-Za-z0-9][A-Za-z0-9._/-]*)\}\}(.*)$ ]]; then
