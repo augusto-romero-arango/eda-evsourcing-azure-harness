@@ -206,7 +206,7 @@ Cuando tengas una duda sobre el harness (¿`Given` soporta X? ¿`Then` con un so
    # Ruta esperada: /Users/<user>/.nuget/packages/cosmos.eventsourcing.testing.utilities/<version>/
 
    # Si el package shipea DLL (sin .cs), descompilar:
-    ilspycmd "$(dotnet nuget locals global-packages --list | cut -d: -f2- | tr -d ' ')/cosmos.eventsourcing.testing.utilities/<version>/lib/net10.0/Cosmos.EventSourcing.Testing.Utilities.dll" \
+    ilspycmd "$(dotnet nuget locals global-packages --list | cut -d' ' -f2-)/cosmos.eventsourcing.testing.utilities/<version>/lib/net10.0/Cosmos.EventSourcing.Testing.Utilities.dll" \
      -p -o /tmp/cosmos-testing-decompiled
    ls /tmp/cosmos-testing-decompiled
    ```
