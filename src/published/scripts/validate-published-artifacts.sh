@@ -33,7 +33,7 @@ extract_frontmatter() {
 body_lines() { awk 'NR==1 { next } $0 == "---" && !seen { seen=1; next } seen { print NR ":" $0 }' "$1"; }
 
 validate_file() {
-    local file="$1" rel="${1#"$REPO_ROOT"/}" basename_no_ext frontmatter rc instance_json schema_json errors status=0 id skill line text directive directives directive_count marker_count placeholders placeholder has_guard=0 agent agent_file command_mcp agent_mcp
+    local file="$1" rel="${1#"$REPO_ROOT"/}" basename_no_ext frontmatter rc instance_json schema_json errors status=0 id skill has_guard=0 agent agent_file command_mcp agent_mcp
     [ -f "$file" ] || { echo "$rel: archivo: no existe o no es un archivo regular"; return 1; }
     basename_no_ext="$(basename "$file" .md)"
     frontmatter="$(extract_frontmatter "$file")"; rc=$?
@@ -54,65 +54,54 @@ validate_file() {
     done <<EOF
 $(printf '%s' "$instance_json" | jq -r '.skills[]?')
 EOF
-    while IFS=: read -r line text; do
-        # `runtimes` puede nombrar ids de adaptador para administrar su
-        # lifecycle, pero no obtiene permiso para referenciar sus directorios,
-        # CLI, caches ni metadata. Los demas artefactos tampoco pueden nombrar
-        # runtimes concretos.
-        # La doctrina TDD legada conserva referencias Claude/cache hasta que
-        # #1364 las neutralice. La excepcion no admite metadata ni referencias
-        # OpenCode nuevas: solo contiene la deuda TDD ya inventariada.
-        if { [ "$id" = runtimes ] && printf '%s\n' "$text" | grep -Eiq '\.claude|\.opencode|marketplace|(^|[/[:space:].])cache([/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:'; } \
-            || { { [ "$id" = test-writer ] || [ "$id" = implementer ] || [ "$id" = reviewer ] || [ "$id" = smoke-test-writer ] || [ "$id" = projection-test-writer ] || [ "$id" = projection-implementer ] || [ "$id" = domain-scaffolder ]; } && printf '%s\n' "$text" | grep -Eiq 'opencode|\.opencode|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:'; } \
-            || { [ "$id" != runtimes ] && [ "$id" != test-writer ] && [ "$id" != implementer ] && [ "$id" != reviewer ] && [ "$id" != smoke-test-writer ] && [ "$id" != projection-test-writer ] && [ "$id" != projection-implementer ] && [ "$id" != domain-scaffolder ] && printf '%s\n' "$text" | grep -Eiq 'claude|opencode|\.claude|\.opencode|marketplace|(^|[/[:space:].])cache([/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:'; }; then
-            echo "$rel: body: linea $line referencia un runtime, CLI, cache, directorio o metadata propia de runtime"
-            status=1
-        fi
-
-        placeholders="$(printf '%s\n' "$text" | grep -Eo '\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@*#?!-]' || true)"
-        while IFS= read -r placeholder; do
-            [ -z "$placeholder" ] && continue
-            # domain-scaffolder contiene recetas Bash/YAML literales. La excepcion
-            # enumera su inventario actual: no permite variables nuevas.
-            if [ "$id" = domain-scaffolder ]; then
-                case "$placeholder" in
-                    '$1'|'$2'|'$3'|'$AJENOS'|'$CSPROJ'|'$ESPERA'|'$GITHUB_OUTPUT'|'$INTENTOS'|'$INTRUSOS'|'$JOB_STATUS'|'$PENDIENTES'|'$PR_NUM'|'$REPO'|'$REPO_ROOT'|'$RUN'|'$RUN_ID'|'$SECONDS'|'$SHA'|'$TIMEOUT'|'$archivo'|'$destino'|'$f'|'$i'|'$paquete'|'$presupuesto'|'$proj'|'$temporal'|'$version_esperada'|'${PR_NUM}'|'${TIMEOUT}'|'${archivo}') continue ;;
-                esac
-            fi
-            if [ "$placeholder" != '$ARGUMENTS' ] \
-                && { { [ "$id" != test-writer ] && [ "$id" != projection-test-writer ]; } || { [ "$placeholder" != '$PLUGIN_ROOT' ] && [ "$placeholder" != '$HOME' ] && [ "$placeholder" != '$2' ]; }; } \
-                && { { [ "$id" != reviewer ] && [ "$id" != projection-implementer ]; } || { [ "$placeholder" != '$PLUGIN_ROOT' ] && [ "$placeholder" != '$HOME' ]; }; } \
-                && { [ "$id" != runtimes ] || { [ "$placeholder" != '$MEFISTO_LIFECYCLE_LAUNCHER' ] && [ "$placeholder" != '$MEFISTO_LIFECYCLE_CONFIG_ROOT' ]; }; }; then
-                echo "$rel: body: linea $line placeholder no permitido: $placeholder (solo se admite \$ARGUMENTS)"
-                status=1
-            fi
-        done <<EOF
-$placeholders
-EOF
-
-        if printf '%s' "$text" | grep -q '{{mefisto:'; then
-            directives="$(printf '%s\n' "$text" | grep -o '{{mefisto:[^}]*}}' || true)"
-            marker_count="$(printf '%s\n' "$text" | awk '{ n=0; s=$0; needle="{{mefisto:"; while ((p=index(s, needle)) > 0) { n++; s=substr(s, p + length(needle)) } print n }')"
-            directive_count=0
-            [ -z "$directives" ] || directive_count="$(printf '%s\n' "$directives" | wc -l | tr -d '[:space:]')"
-            if [ "$marker_count" -ne "$directive_count" ] || printf '%s\n' "$text" | grep -Eq '\{\{mefisto:[^{}]*\}\}\}'; then
-                echo "$rel: body: linea $line directiva mefisto mal formada"
-                status=1
-            fi
-            while IFS= read -r directive; do
-                [ -z "$directive" ] && continue
-                case "$directive" in
-                    '{{mefisto:assert-consumer-repo}}') has_guard=1 ;;
-                    '{{mefisto:package-root}}'|'{{mefisto:config-path}}'|'{{mefisto:lifecycle-launcher}}') ;;
-                    '{{mefisto:launch-agent '*'}}'|'{{mefisto:command '*'}}'|'{{mefisto:run '*'}}'|'{{mefisto:state-path '*'}}')
-                        if ! printf '%s' "$directive" | grep -Eq '^\{\{mefisto:(launch-agent|command) [a-z0-9]+(-[a-z0-9]+)*\}\}$|^\{\{mefisto:run [a-z0-9][a-z0-9._/-]* [^{}]+\}\}$|^\{\{mefisto:state-path [A-Za-z0-9][A-Za-z0-9._/-]*\}\}$' || printf '%s' "$directive" | grep -Eq '(^|/)\.\.(/|[[:space:]]|\}\})' || printf '%s' "$directive" | grep -Eq '^\{\{mefisto:(launch-agent|command) mefisto-'; then echo "$rel: body: linea $line directiva mefisto mal formada: $directive"; status=1; fi ;;
-                    *) echo "$rel: body: linea $line directiva mefisto desconocida: $directive"; status=1 ;;
-                esac
-            done <<EOF
-$directives
-EOF
-        fi
-    done < <(body_lines "$file")
+    # Una sola pasada interpreta todas las reglas del cuerpo. Las excepciones se
+    # seleccionan por artefacto, no por línea, para evitar procesos por hallazgo.
+    body_validation="$(body_lines "$file" | awk -v id="$id" -v rel="$rel" '
+        function allowed_placeholder(value) {
+            if (value == "$ARGUMENTS") return 1
+            if (id == "domain-scaffolder" && value ~ /^\$(1|2|3|AJENOS|CSPROJ|ESPERA|GITHUB_OUTPUT|INTENTOS|INTRUSOS|JOB_STATUS|PENDIENTES|PR_NUM|REPO|REPO_ROOT|RUN|RUN_ID|SECONDS|SHA|TIMEOUT|archivo|destino|f|i|paquete|presupuesto|proj|temporal|version_esperada)$/) return 1
+            if (id == "domain-scaffolder" && (value == "${PR_NUM}" || value == "${TIMEOUT}" || value == "${archivo}")) return 1
+            if ((id == "test-writer" || id == "projection-test-writer") && (value == "$PLUGIN_ROOT" || value == "$HOME" || value == "$2")) return 1
+            if ((id == "reviewer" || id == "projection-implementer") && (value == "$PLUGIN_ROOT" || value == "$HOME")) return 1
+            if (id == "runtimes" && (value == "$MEFISTO_LIFECYCLE_LAUNCHER" || value == "$MEFISTO_LIFECYCLE_CONFIG_ROOT")) return 1
+            return 0
+        }
+        function valid_directive(value) {
+            return value ~ /^\{\{mefisto:(launch-agent|command) [a-z0-9]+(-[a-z0-9]+)*\}\}$/ || value ~ /^\{\{mefisto:run [a-z0-9][a-z0-9._\/-]* [^{}]+\}\}$/ || value ~ /^\{\{mefisto:state-path [A-Za-z0-9][A-Za-z0-9._\/-]*\}\}$/
+        }
+        {
+            split($0, parts, ":"); line=parts[1]; text=substr($0, length(line) + 2); lower=tolower(text)
+            legacy=(id == "test-writer" || id == "implementer" || id == "reviewer" || id == "smoke-test-writer" || id == "projection-test-writer" || id == "projection-implementer" || id == "domain-scaffolder")
+            runtime_pattern="claude|opencode|\\.claude|\\.opencode|marketplace|(^|[/[:space:].])cache([/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:"
+            if ((id == "runtimes" && lower ~ /\.claude|\.opencode|marketplace|(^|[\/[:space:].])cache([\/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:/) || (legacy && lower !~ /core tools:/ && lower ~ /opencode|\.opencode|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:/) || (!legacy && id != "runtimes" && lower ~ runtime_pattern)) {
+                print rel ": body: linea " line " referencia un runtime, CLI, cache, directorio o metadata propia de runtime"
+            }
+            rest=text
+            while (match(rest, /\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@*#?!-]/)) {
+                placeholder=substr(rest, RSTART, RLENGTH)
+                if (!allowed_placeholder(placeholder)) print rel ": body: linea " line " placeholder no permitido: " placeholder " (solo se admite $ARGUMENTS)"
+                rest=substr(rest, RSTART + RLENGTH)
+            }
+            if (index(text, "{{mefisto:") > 0) {
+                markers=0; rest=text
+                while ((position=index(rest, "{{mefisto:")) > 0) { markers++; rest=substr(rest, position + 10) }
+                directives=0; rest=text
+                while (match(rest, /\{\{mefisto:[^}]*\}\}/)) {
+                    directive=substr(rest, RSTART, RLENGTH); directives++
+                    if (directive == "{{mefisto:assert-consumer-repo}}") guard=1
+                    else if (directive == "{{mefisto:package-root}}" || directive == "{{mefisto:config-path}}" || directive == "{{mefisto:lifecycle-launcher}}") {}
+                    else if (directive ~ /^\{\{mefisto:(launch-agent|command|run|state-path) /) {
+                        if (!valid_directive(directive) || directive ~ /(^|\/)\.\.([\/[:space:]]|\}\})/ || directive ~ /^\{\{mefisto:(launch-agent|command) mefisto-/) print rel ": body: linea " line " directiva mefisto mal formada: " directive
+                    } else print rel ": body: linea " line " directiva mefisto desconocida: " directive
+                    rest=substr(rest, RSTART + RLENGTH)
+                }
+                if (markers != directives || text ~ /\{\{mefisto:[^{}]*\}\}\}/) print rel ": body: linea " line " directiva mefisto mal formada"
+            }
+        }
+        END { if (guard) print "__MEFISTO_GUARD__" }
+    ')"
+    case "$body_validation" in *"$rel: "*) printf '%s\n' "$body_validation" | grep -v '^__MEFISTO_GUARD__$'; status=1 ;; esac
+    case "$body_validation" in *'__MEFISTO_GUARD__'*) has_guard=1 ;; esac
     [ "$has_guard" -eq 1 ] || { echo "$rel: body: falta {{mefisto:assert-consumer-repo}}"; status=1; }
     if [[ "$rel" = src/published/commands/*.md ]] && [ "$(printf '%s' "$instance_json" | jq -r '.kind')" = command ] && [ "$(printf '%s' "$instance_json" | jq '[.mcp[]?] | length')" -gt 0 ]; then
         agent="$(printf '%s' "$instance_json" | jq -r '.agent // empty')"
