@@ -52,22 +52,16 @@ expected_effective_contract_body() {
     translated_source_body "$runtime" "$source"
 }
 # projection-test-writer combina ambos preambulos (#1428): package-root/skill-root
-# para ADRs y recursos del Skill (#1425) + el contrato efectivo de instructions-path
-# para RootNamespace, en ese orden -- a diferencia de domain-scaffolder, que solo
-# necesita el segundo.
+# para las rutas de conocimiento -- ADRs y recursos de Nivel 3 del Skill (#1446) --
+# mas el contrato efectivo de instructions-path para RootNamespace, en ese orden.
+# A diferencia de domain-scaffolder, que solo necesita el segundo.
 expected_package_root_and_effective_contract_body() {
-    local runtime="$1" source="$2" raw_body needs_config=0 needs_instructions=0
+    local runtime="$1" source="$2"
     case "$runtime" in
         claude) published_claude_package_root_preamble ;;
         opencode) package_root_preamble ;;
     esac
-    raw_body="$(body_without_adapter_lines "$source")"
-    published_effective_contract_needs_config "$raw_body" && needs_config=1
-    published_effective_contract_needs_instructions "$raw_body" && needs_instructions=1
-    if [ "$needs_config" -eq 1 ] || [ "$needs_instructions" -eq 1 ]; then
-        published_effective_contract_preamble "$needs_config" "$needs_instructions"
-    fi
-    translated_source_body "$runtime" "$source"
+    expected_effective_contract_body "$runtime" "$source"
 }
 first_bash_block() { awk '/^```bash$/{inside=1; next} /^```$/{if (inside) exit} inside' "$1"; }
 validator_fixture() {
