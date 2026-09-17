@@ -15,7 +15,7 @@ Eres el agente encargado de crear el scaffold completo para un nuevo dominio en 
 
 ## Contrato con el consumidor
 
-Antes de cualquier accion, lee {{mefisto:instructions-path}} para resolver estos tokens. Los ejemplos y bloques de codigo que siguen los usan literalmente; tu debes sustituirlos por su valor real:
+Antes de cualquier accion, lee `{{mefisto:instructions-path}}` para resolver estos tokens. Los ejemplos y bloques de codigo que siguen los usan literalmente; tu debes sustituirlos por su valor real:
 
 - `<RootNamespace>` -- prefijo del namespace .NET del proyecto (ej: `<RootNamespace>`). Se declara en el archivo efectivo como `RootNamespace`.
 - `<SolutionFile>` -- nombre del archivo de solucion (ej: `<SolutionFile>`). Se declara en el archivo efectivo como `SolutionFile`.
@@ -23,7 +23,7 @@ Antes de cualquier accion, lee {{mefisto:instructions-path}} para resolver estos
 
 Si el archivo efectivo no declara `RootNamespace` o `SolutionFile`, detente antes de crear o modificar cualquier archivo, informa al usuario que faltan y remitelo a {{mefisto:command onboard}} para completarlos.
 
-Ademas, lee {{mefisto:config-path}} para resolver el **backbone compartido** del producto (MEF-ADR-0024 decision #4, #7): los alias declarados en `serviceBus.external` con `alcance == "compartido"` son los que este dominio wirea como brokers nombrados de Wolverine (Paso 1) y como app settings `SERVICE_BUS_CONNECTION_<ALIAS>` provistos por referencia de Key Vault (Paso 4). Ver el detalle de resolucion en el Paso 0.
+Ademas, lee `{{mefisto:config-path}}` para resolver el **backbone compartido** del producto (MEF-ADR-0024 decision #4, #7): los alias declarados en `serviceBus.external` con `alcance == "compartido"` son los que este dominio wirea como brokers nombrados de Wolverine (Paso 1) y como app settings `SERVICE_BUS_CONNECTION_<ALIAS>` provistos por referencia de Key Vault (Paso 4). Ver el detalle de resolucion en el Paso 0.
 
 ## Parametros de entrada
 
@@ -139,7 +139,7 @@ Estos valores alimentan el `module service_plan_{snake_case}` que emitiras en el
 **Resolver alias del backbone compartido (MEF-ADR-0024, decision #4 y #7):**
 
 ```bash
-jq -r '.serviceBus.external // [] | map(select(.alcance == "compartido")) | .[].alias' {{mefisto:config-path}} 2>/dev/null
+jq -r '.serviceBus.external // [] | map(select(.alcance == "compartido")) | .[].alias' "{{mefisto:config-path}}" 2>/dev/null
 ```
 
 Cada alias resultante es una clave de broker nombrado (== alias declarado en `serviceBus.external`, contrato de `harness.config.json` fijado en issue #163) y determina el app setting `SERVICE_BUS_CONNECTION_<ALIAS>` que se lee en `Program.cs` (Paso 1) y se provisiona por referencia de Key Vault en Terraform (Paso 4). Si la lista viene vacia (el BC aun no declara ningun alias `compartido`), el dominio arranca sin brokers nombrados: solo el broker default (`SERVICE_BUS_CONNECTION_INTERNO`). **No wirees ningun alias con `alcance == "externo"`**: la integracion verdaderamente externa queda diferida y default-off (MEF-ADR-0024 decision #5).
@@ -147,10 +147,10 @@ Cada alias resultante es una clave de broker nombrado (== alias declarado en `se
 **Resolver estrategia de tenancy (MEF-ADR-0028, issue #323):**
 
 ```bash
-jq -r '.tenancy.strategy // "mono-tenant-transitorio"' {{mefisto:config-path}} 2>/dev/null
+jq -r '.tenancy.strategy // "mono-tenant-transitorio"' "{{mefisto:config-path}}" 2>/dev/null
 ```
 
-El token `tenancy.strategy` (opcional en `harness.config.json`; ausente equivale a `"mono-tenant-transitorio"`) declara en cual de las dos etapas de MEF-ADR-0028 esta el proyecto. **No lo sondees en codigo** -- no hay señal fiable (el harness no referencia ningun tipo `Cosmos.MultiTenancy.*`/autenticacion); es un token declarado por el humano, el mismo que escribe `/onboard` bajo confirmacion. Dos valores:
+El token `tenancy.strategy` (opcional en `harness.config.json`; ausente equivale a `"mono-tenant-transitorio"`) declara en cual de las dos etapas de MEF-ADR-0028 esta el proyecto. **No lo sondees en codigo** -- no hay señal fiable (el harness no referencia ningun tipo `Cosmos.MultiTenancy.*`/autenticacion); es un token declarado por el humano, el mismo que escribe {{mefisto:command onboard}} bajo confirmacion. Dos valores:
 
 - **`mono-tenant-transitorio`** (etapa a, default): genera el `ITenantResolver` mono-tenant transitorio de #318, **sin ningun cambio**. Ver el detalle en el punto 10f del Paso 1.
 - **`multi-tenant-header`** (etapa b): en vez del default transitorio, referencia la biblioteca scaffoldeada `src/<RootNamespace>.TenantResolver/` (patron AsyncLocal + middleware, MEF-ADR-0028 seccion 4, creada por `/install-apim`) si ya existe en el repo consumidor -- con verificacion de presencia obligatoria y fallback a "proponer" si todavia no existe. Ver el detalle completo (incluida la verificacion CA-6 y el fallback CA-7) en el punto 10f del Paso 1.
