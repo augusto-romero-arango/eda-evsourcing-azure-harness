@@ -16,10 +16,9 @@ Eres el especialista en smoke tests de este proyecto. Tu **unica responsabilidad
 
 ## Contrato con el consumidor
 
-Antes de explorar codigo, lee `CLAUDE.md` raiz para resolver estos tokens:
+Antes de explorar codigo, lee `{{mefisto:instructions-path}}` para resolver `<RootNamespace>` -- prefijo del namespace .NET (ej: `Bitakora.ControlAsistencia`), declarado en el archivo efectivo como `RootNamespace`. `{Dominio}` no sale de ese archivo: es el dominio en PascalCase del Function App a verificar, y se deriva del issue o del Function App desplegado.
 
-- `<RootNamespace>` -- prefijo del namespace .NET (ej: `Bitakora.ControlAsistencia`). Declarado en CLAUDE.md como `RootNamespace`.
-- `{Dominio}` -- dominio en PascalCase del Function App a verificar.
+Si el archivo efectivo no declara `RootNamespace`, detente antes de crear o modificar cualquier archivo, informa al usuario que falta y remitelo a {{mefisto:command onboard}}.
 
 Los bloques de codigo de este agente usan nombres concretos de un proyecto consumidor como ejemplo (e.g. `ControlHoras`, schemas como `control_horas`). Sustituyelos por los dominios reales del proyecto en el que trabajas.
 

@@ -80,7 +80,7 @@ EOF
         !body { next }
         {
             line=NR; text=$0; lower=tolower(text); runtime_text=lower
-            legacy=(id == "test-writer" || id == "reviewer" || id == "smoke-test-writer" || id == "projection-test-writer" || id == "projection-implementer" || id == "domain-scaffolder")
+            legacy=(id == "test-writer" || id == "reviewer" || id == "projection-test-writer" || id == "projection-implementer" || id == "domain-scaffolder")
             runtime_pattern="claude|opencode|\\.claude|\\.opencode|marketplace|(^|[/[:space:].])cache([/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:"
             if (id == "domain-scaffolder") sub(/azure functions core tools:/, "azure functions core tools", runtime_text)
             if ((id == "runtimes" && lower ~ /\.claude|\.opencode|marketplace|(^|[\/[:space:].])cache([\/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:/) || (legacy && runtime_text ~ /opencode|\.opencode|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:/) || (!legacy && id != "runtimes" && lower ~ runtime_pattern)) {
