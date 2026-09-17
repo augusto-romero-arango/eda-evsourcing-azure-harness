@@ -437,6 +437,70 @@ sanitizado (CA-5)".
 | CA-5 expediente correlacionado | | |
 | CA-6 centinelas y limpieza | | |
 
+## Resultado read-side (#1436)
+
+Punto de registro de la evidencia de las dos corridas read-side reales
+(Claude y OpenCode) exigidas por #1436, sobre los templates de "Fixtures
+write-side/read-side (CA-2)" y el lanzamiento de "Lanzamiento real desde Herdr
+(CA-4)". Parte del mismo `<sha-baseline-inicial>` del par write-side y nunca
+del PR write-side descartado (seccion "Eleccion del dominio certificable"), y
+no depende de que ese PR se fusione. Las dos corridas read-side se lanzan
+secuencialmente entre si -- nunca en paralelo con el par write-side ni entre
+Claude y OpenCode -- para no compartir el worker de proyecciones en vuelo
+(MEF-ADR-0034), igual que fija la nota tecnica del issue. No redefine el
+protocolo: fija el formato con el que se consigna su resultado, identico al de
+"### Estado de la corrida" de "Resultado write-side (#1435)" arriba y de
+"Certificacion de instalacion y discovery (#1180)"/"Matriz de corridas e
+issues fixture (#1181)" en `opencode-consumer-cutover.md`.
+
+### Estado de la corrida
+
+**PENDIENTE DE EJECUCION.** El par read-side todavia no se ha lanzado. Las dos
+corridas exigen una sesion operada en vivo sobre el consumidor privado: los
+dos issues fixture `tipo:projection` creados desde su planner **publicado**
+(nunca con `gh -R` cross-repo desde Mefisto, MEF-ADR-0019), los panes Herdr de
+cada runtime -- lanzados uno tras otro para no compartir el worker de
+proyecciones -- y la espera de los checks de CI sobre su Azure dedicado. Esa
+evidencia solo existe cuando esa sesion corre de verdad; consignar aqui un
+resultado sin ejecutarla seria evidencia simulada, justo lo que MEF-ADR-0031
+prohibe.
+
+"Pendiente de ejecucion" no es el veredicto `BLOQUEADO` de "Fail-closed y
+limpieza (CA-6)": aquel describe una corrida ya lanzada cuyo recurso resulto
+inaccesible y obliga a abrir un `tipo:bug` dependiente de #1411. Mientras no
+haya corrida no hay defecto que reportar, y #1411 sigue bloqueado por ausencia
+de evidencia, no por un fallo observado. El veredicto de #1411 requiere ademas
+que esta seccion y "Resultado write-side (#1435)" esten completas y
+reconciliadas entre si, igual que #1066 reconcilio #1180 y #1181.
+
+Quien ejecute el par completa esta seccion rellenando las dos tablas
+siguientes y enlazando el comentario de cierre sanitizado de cada issue
+fixture. Las tablas conservan solo indices, URLs y veredictos; los streams,
+prompts y logs crudos quedan fuera, conforme a "Manifiesto de evidencia
+sanitizado (CA-5)".
+
+| Campo | Valor verificado |
+|---|---|
+| Release e identidad | `<tag-certificable>`, `<version>`, commit fuente `<commit-fuente>`, `<checksum-opencode>` verificado; `diagnose-installation-identity.sh` en `aligned` para ambos runtimes, mismo baseline/release que el par write-side. |
+| Baseline | `<sha-baseline-inicial>` y `<sha-baseline-final>` coincidentes, con arbol limpio antes y despues de cada corrida; parte del baseline y nunca del PR write-side descartado. |
+| Fixtures | issues read-side Claude y read-side OpenCode `tipo:projection`, creados desde el planner publicado del consumidor con `dom:certificacion` y `estado:listo`, sobre `<evento-certificable>`/`<vista-certificable>` ya materializados en el baseline; lanzados secuencialmente para no compartir el worker de proyecciones. |
+| Discovery | `/mefisto:implement`, `projection-test-writer`, `projection-implementer`, `smoke-test-writer`, `reviewer`, el Skill `projections` con sus recursos Nivel 3, la clausura del ciclo TDD y los permisos requeridos, observados en ambos runtimes antes de lanzar. |
+| PRs | un PR real por corrida, con `Closes #<issue>`, alcance limitado al fixture y comentario de cierre del pipeline. |
+| Stages | Stage 1 (fase roja o señal `no-red` valida/justificada segun `agents/projection-test-writer.md`)/2/2b/3/4 de cada corrida con su resultado y un unico terminal; Stage 2b sobre la Function GET, nunca `skipped`; Stage 0 no ejecutado. |
+| Checks | conclusiones de los checks requeridos de cada PR, o `NO_APLICAN` con su motivo. |
+| Diferencias de adaptador | cada divergencia Claude/OpenCode explicada -- incluida la disponibilidad de ADRs y recursos del Skill `projections` adaptados por runtime --, sin reducir stages, gates ni alcance. |
+| Centinelas | barrido sobre la evidencia persistente sin prompts, raw, `stderr`, tool inputs, cabeceras de auth ni tokens. |
+| Limpieza | PRs cerrados sin merge, ramas eliminadas, issues fixture cerrados desde el consumidor, cero worktrees, baseline restaurado. |
+
+| CA de #1436 | Resultado | Sintesis |
+|---|---|---|
+| CA-1 preflight y fixtures secuenciales | | |
+| CA-2 discovery read-side en Herdr | | |
+| CA-3 corrida Claude | | |
+| CA-4 corrida OpenCode | | |
+| CA-5 expediente correlacionado | | |
+| CA-6 centinelas y limpieza | | |
+
 ## Referencias
 
 - `docs/testing/opencode-consumer-cutover.md`: protocolo, consumidor y
@@ -450,6 +514,11 @@ sanitizado (CA-5)".
   protocolo persiste credenciales, prompts o auth stores.
 - MEF-ADR-0031: un gate exige evidencia ejecutable y repetible, no presencia
   de archivos generados.
+- MEF-ADR-0033/MEF-ADR-0034/MEF-ADR-0035: Skill `projections` y doctrina
+  read-side (recetas de proyeccion, read model canonico, read APIs
+  tenant-scoped) que las corridas read-side deben descubrir y aplicar; el
+  worker de proyecciones compartido de MEF-ADR-0034 es la razon de que las dos
+  corridas read-side se lancen secuencialmente entre si.
 - MEF-ADR-0050: toda operacion nace neutral a runtime; este protocolo verifica
   la misma operacion (`/mefisto:implement`) bajo ambos adaptadores.
 - MEF-ADR-0053, seccion 6: gate reproducible de corte vertical que este
