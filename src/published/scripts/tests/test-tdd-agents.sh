@@ -178,8 +178,8 @@ validator_fixture reviewer 'Posicional ajeno: $2'
 if "$VALIDATOR" "$WORK/reviewer.md" >/dev/null 2>&1; then fail 'reviewer no hereda placeholders exclusivos de test-writer'; else pass 'reviewer rechaza placeholders exclusivos de test-writer'; fi
 validator_fixture implementer 'Este agente corre dentro de Claude Code'
 if "$VALIDATOR" "$WORK/implementer.md" >/dev/null 2>&1; then fail 'implementer aun admite referencias a Claude/OpenCode tras salir de la excepcion legacy (#1430)'; else pass 'implementer rechaza referencias a Claude/OpenCode tras salir de la excepcion legacy (#1430)'; fi
-validator_fixture implementer 'Instalado via OpenCode'
-if "$VALIDATOR" "$WORK/implementer.md" >/dev/null 2>&1; then fail 'implementer aun admite referencias a OpenCode tras salir de la excepcion legacy (#1430)'; else pass 'implementer rechaza referencias a OpenCode tras salir de la excepcion legacy (#1430)'; fi
+validator_fixture implementer 'Se instala desde el marketplace del plugin'
+if "$VALIDATOR" "$WORK/implementer.md" >/dev/null 2>&1; then fail 'implementer aun admite vocabulario de distribucion de runtime tras salir de la excepcion legacy (#1430)'; else pass 'implementer rechaza vocabulario de distribucion de runtime tras salir de la excepcion legacy (#1430)'; fi
 validator_fixture test-writer 'Ruta legacy: $PLUGIN_ROOT'
 if "$VALIDATOR" "$WORK/test-writer.md" >/dev/null 2>&1; then fail 'test-writer aun admite el placeholder de raiz legacy'; else pass 'test-writer rechaza el placeholder de raiz legacy'; fi
 validator_fixture projection-implementer 'Posicional ajeno: $2'
