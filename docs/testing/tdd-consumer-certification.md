@@ -381,6 +381,48 @@ ausentes o un arbol ya restaurado no altera el resultado. Este protocolo no
 certifica ninguna otra capacidad del catalogo publicado ni migra un comando
 adicional.
 
+## Resultado write-side (#1435)
+
+Esta seccion es el punto de registro de la evidencia de las dos corridas
+write-side reales (Claude y OpenCode) exigidas por #1435, sobre los templates
+ya fijados en "Fixtures write-side/read-side (CA-2)" y el lanzamiento descrito
+en "Lanzamiento real desde Herdr (CA-4)". No redefine el protocolo: solo
+documenta su resultado, con el mismo esquema de "### Estado de la corrida" que
+`opencode-consumer-cutover.md` uso para #1180/#1181.
+
+### Estado de la corrida
+
+**BLOQUEADO (evidencia aun no producida).** El pipeline automatizado de
+`/mefisto-tooling` que redacto esta seccion opera en un unico stage no
+interactivo, sin sesion humana ni acceso a paneles Herdr, y no puede satisfacer
+por si mismo las precondiciones operativas de #1435:
+
+1. CA-1 exige crear los dos issues fixture **desde el planner publicado del
+   consumidor**, nunca con `gh -R` cross-repo desde Mefisto (MEF-ADR-0019,
+   seccion "Fixtures write-side/read-side (CA-2)" arriba); eso requiere una
+   sesion de agente real instalada en el checkout del consumidor, no una
+   llamada de herramienta lanzada desde este repositorio.
+2. CA-2/CA-3/CA-4 exigen lanzar `/mefisto:implement` en vivo desde paneles
+   Herdr bajo Claude Code y bajo OpenCode, con sesiones de agente reales que
+   recorren Stage 1 a Stage 4 y abren un PR real, incluyendo la espera de
+   checks de CI sobre la infraestructura Azure dedicada del consumidor. Es un
+   proceso operativo de varias horas que excede el acceso a herramientas y el
+   presupuesto de un stage automatizado de escritura.
+3. Completar esta seccion sin ejecutar de verdad esas dos corridas violaria
+   MEF-ADR-0031 (el gate exige evidencia ejecutable y repetible, nunca
+   simulada) ademas de contradecir la nota tecnica del propio issue ("no
+   corrige defectos ni fusiona los PRs fixture", que presupone PRs reales).
+
+Por lo anterior, este PR no cierra #1435 ni marca ninguno de sus CA como
+cumplido: deja fijado donde y como se registra el resultado para que quien
+ejecute las dos corridas reales (el mismo operador que corrio #1180/#1181 para
+#1066) complete esta seccion con la tabla de identidad, la tabla de CAs por
+`CA-1`..`CA-6` y el enlace al comentario de cierre sanitizado, siguiendo
+exactamente el formato de "### Estado de la corrida" de la seccion
+"Certificacion de instalacion y discovery (#1180)" en
+`opencode-consumer-cutover.md`. #1411 permanece bloqueado hasta que esa
+evidencia exista y se reconcilie con la del par read-side.
+
 ## Referencias
 
 - `docs/testing/opencode-consumer-cutover.md`: protocolo, consumidor y
