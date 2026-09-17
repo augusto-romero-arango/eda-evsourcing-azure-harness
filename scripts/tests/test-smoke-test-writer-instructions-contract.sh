@@ -127,16 +127,20 @@ build_probe() {
     } > "$out"
 }
 
-for probe in "Claude:Este agente asume que corre dentro de Claude Code." "OpenCode:Este agente asume que corre dentro de OpenCode."; do
+# Ambas fixtures usan vocabulario que la excepcion `legacy` toleraba: una
+# referencia a Claude Code y el lexico de marketplace. Una referencia a
+# OpenCode no discriminaria -- el validador ya la rechazaba dentro de la
+# excepcion (#1430).
+for probe in "Claude Code:Este agente asume que corre dentro de Claude Code." "marketplace:Se instala desde el marketplace del plugin."; do
     label="${probe%%:*}"; injected="${probe#*:}"
-    mkdir -p "$WORK/probe-$label"
-    probe_file="$WORK/probe-$label/smoke-test-writer.md"
+    mkdir -p "$WORK/probe-${label// /-}"
+    probe_file="$WORK/probe-${label// /-}/smoke-test-writer.md"
     build_probe "$injected" "$probe_file"
     out="$(bash "$VALIDATOR" "$probe_file" 2>&1)"; rc=$?
     if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qF 'referencia un runtime'; then
-        pass "una referencia nueva a $label se rechaza (ya no aplica la excepcion legacy)"
+        pass "vocabulario nuevo de $label se rechaza (ya no aplica la excepcion legacy)"
     else
-        fail "una referencia nueva a $label no fue rechazada (rc=$rc, out='$out')"
+        fail "vocabulario nuevo de $label no fue rechazado (rc=$rc, out='$out')"
     fi
 done
 

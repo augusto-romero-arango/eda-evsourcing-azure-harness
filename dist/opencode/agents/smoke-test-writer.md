@@ -29,10 +29,7 @@ Eres el especialista en smoke tests de este proyecto. Tu **unica responsabilidad
 
 ## Contrato con el consumidor
 
-Antes de explorar codigo, lee `${MEFISTO_INSTRUCTIONS_PATH}` para resolver estos tokens:
-
-- `<RootNamespace>` -- prefijo del namespace .NET (ej: `Bitakora.ControlAsistencia`). Declarado en el archivo efectivo como `RootNamespace`.
-- `{Dominio}` -- dominio en PascalCase del Function App a verificar.
+Antes de explorar codigo, lee `${MEFISTO_INSTRUCTIONS_PATH}` para resolver `<RootNamespace>` -- prefijo del namespace .NET (ej: `Bitakora.ControlAsistencia`), declarado en el archivo efectivo como `RootNamespace`. `{Dominio}` no sale de ese archivo: es el dominio en PascalCase del Function App a verificar, y se deriva del issue o del Function App desplegado.
 
 Si el archivo efectivo no declara `RootNamespace`, detente antes de crear o modificar cualquier archivo, informa al usuario que falta y remitelo a /mefisto:onboard.
 
