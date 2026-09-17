@@ -5,6 +5,35 @@ permission: {"external_directory":"deny","doom_loop":"deny","lsp":"deny","todowr
 tools: {"microsoft-learn_*":false,"terraform_*":false}
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/domain-scaffolder.md. No editar a mano. -->
+```bash
+if [ -f ".mefisto/harness.config.json" ]; then
+    if [ -f ".claude/harness.config.json" ]; then
+        printf '%s\n' 'AVISO: se usara el config canonico .mefisto/harness.config.json; se ignora el legacy .claude/harness.config.json. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
+    fi
+    MEFISTO_CONFIG_PATH=".mefisto/harness.config.json"
+elif [ -f ".claude/harness.config.json" ]; then
+    MEFISTO_CONFIG_PATH=".claude/harness.config.json"
+else
+    printf '%s\n' 'ERROR: no se encontro el config canonico requerido .mefisto/harness.config.json.' >&2
+    printf '%s\n' '  Se acepta solo para lectura el fallback legacy .claude/harness.config.json.' >&2
+    exit 1
+fi
+export MEFISTO_CONFIG_PATH
+if [ -f "AGENTS.md" ]; then
+    if [ -f "CLAUDE.md" ]; then
+        printf '%s\n' 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
+    fi
+    MEFISTO_INSTRUCTIONS_PATH="AGENTS.md"
+elif [ -f "CLAUDE.md" ]; then
+    MEFISTO_INSTRUCTIONS_PATH="CLAUDE.md"
+else
+    printf '%s\n' 'ERROR: no se encontro AGENTS.md, la fuente canonica de directivas del consumidor.' >&2
+    printf '%s\n' '  Se acepta solo para lectura el fallback legacy CLAUDE.md.' >&2
+    printf '%s\n' '  Ejecuta /mefisto:onboard para diagnosticar y completar el contrato del consumidor.' >&2
+    exit 1
+fi
+export MEFISTO_INSTRUCTIONS_PATH
+```
 
 Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
 
@@ -12,15 +41,15 @@ Eres el agente encargado de crear el scaffold completo para un nuevo dominio en 
 
 ## Contrato con el consumidor
 
-Antes de cualquier accion, lee `CLAUDE.md` raiz del proyecto para resolver estos tokens. Los ejemplos y bloques de codigo que siguen los usan literalmente; tu debes sustituirlos por su valor real:
+Antes de cualquier accion, lee `${MEFISTO_INSTRUCTIONS_PATH}` para resolver estos tokens. Los ejemplos y bloques de codigo que siguen los usan literalmente; tu debes sustituirlos por su valor real:
 
-- `<RootNamespace>` -- prefijo del namespace .NET del proyecto (ej: `<RootNamespace>`). Se declara en CLAUDE.md raiz como `RootNamespace`.
-- `<SolutionFile>` -- nombre del archivo de solucion (ej: `<SolutionFile>`). Se declara en CLAUDE.md raiz como `SolutionFile`.
+- `<RootNamespace>` -- prefijo del namespace .NET del proyecto (ej: `<RootNamespace>`). Se declara en el archivo efectivo como `RootNamespace`.
+- `<SolutionFile>` -- nombre del archivo de solucion (ej: `<SolutionFile>`). Se declara en el archivo efectivo como `SolutionFile`.
 - `{PascalCase}` -- nombre del dominio en PascalCase, derivado del input del usuario.
 
-Si CLAUDE.md no declara `RootNamespace` o `SolutionFile`, detente y pide al usuario que los declare antes de continuar.
+Si el archivo efectivo no declara `RootNamespace` o `SolutionFile`, detente antes de crear o modificar cualquier archivo, informa al usuario que faltan y remitelo a /mefisto:onboard para completarlos.
 
-Ademas, lee `.claude/harness.config.json` para resolver el **backbone compartido** del producto (MEF-ADR-0024 decision #4, #7): los alias declarados en `serviceBus.external` con `alcance == "compartido"` son los que este dominio wirea como brokers nombrados de Wolverine (Paso 1) y como app settings `SERVICE_BUS_CONNECTION_<ALIAS>` provistos por referencia de Key Vault (Paso 4). Ver el detalle de resolucion en el Paso 0.
+Ademas, lee `${MEFISTO_CONFIG_PATH}` para resolver el **backbone compartido** del producto (MEF-ADR-0024 decision #4, #7): los alias declarados en `serviceBus.external` con `alcance == "compartido"` son los que este dominio wirea como brokers nombrados de Wolverine (Paso 1) y como app settings `SERVICE_BUS_CONNECTION_<ALIAS>` provistos por referencia de Key Vault (Paso 4). Ver el detalle de resolucion en el Paso 0.
 
 ## Parametros de entrada
 
@@ -136,7 +165,7 @@ Estos valores alimentan el `module service_plan_{snake_case}` que emitiras en el
 **Resolver alias del backbone compartido (MEF-ADR-0024, decision #4 y #7):**
 
 ```bash
-jq -r '.serviceBus.external // [] | map(select(.alcance == "compartido")) | .[].alias' /ruta-del-proyecto/.claude/harness.config.json 2>/dev/null
+jq -r '.serviceBus.external // [] | map(select(.alcance == "compartido")) | .[].alias' "${MEFISTO_CONFIG_PATH}" 2>/dev/null
 ```
 
 Cada alias resultante es una clave de broker nombrado (== alias declarado en `serviceBus.external`, contrato de `harness.config.json` fijado en issue #163) y determina el app setting `SERVICE_BUS_CONNECTION_<ALIAS>` que se lee en `Program.cs` (Paso 1) y se provisiona por referencia de Key Vault en Terraform (Paso 4). Si la lista viene vacia (el BC aun no declara ningun alias `compartido`), el dominio arranca sin brokers nombrados: solo el broker default (`SERVICE_BUS_CONNECTION_INTERNO`). **No wirees ningun alias con `alcance == "externo"`**: la integracion verdaderamente externa queda diferida y default-off (MEF-ADR-0024 decision #5).
@@ -144,10 +173,10 @@ Cada alias resultante es una clave de broker nombrado (== alias declarado en `se
 **Resolver estrategia de tenancy (MEF-ADR-0028, issue #323):**
 
 ```bash
-jq -r '.tenancy.strategy // "mono-tenant-transitorio"' /ruta-del-proyecto/.claude/harness.config.json 2>/dev/null
+jq -r '.tenancy.strategy // "mono-tenant-transitorio"' "${MEFISTO_CONFIG_PATH}" 2>/dev/null
 ```
 
-El token `tenancy.strategy` (opcional en `harness.config.json`; ausente equivale a `"mono-tenant-transitorio"`) declara en cual de las dos etapas de MEF-ADR-0028 esta el proyecto. **No lo sondees en codigo** -- no hay señal fiable (el harness no referencia ningun tipo `Cosmos.MultiTenancy.*`/autenticacion); es un token declarado por el humano, el mismo que escribe `/onboard` bajo confirmacion. Dos valores:
+El token `tenancy.strategy` (opcional en `harness.config.json`; ausente equivale a `"mono-tenant-transitorio"`) declara en cual de las dos etapas de MEF-ADR-0028 esta el proyecto. **No lo sondees en codigo** -- no hay señal fiable (el harness no referencia ningun tipo `Cosmos.MultiTenancy.*`/autenticacion); es un token declarado por el humano, el mismo que escribe /mefisto:onboard bajo confirmacion. Dos valores:
 
 - **`mono-tenant-transitorio`** (etapa a, default): genera el `ITenantResolver` mono-tenant transitorio de #318, **sin ningun cambio**. Ver el detalle en el punto 10f del Paso 1.
 - **`multi-tenant-header`** (etapa b): en vez del default transitorio, referencia la biblioteca scaffoldeada `src/<RootNamespace>.TenantResolver/` (patron AsyncLocal + middleware, MEF-ADR-0028 seccion 4, creada por `/install-apim`) si ya existe en el repo consumidor -- con verificacion de presencia obligatoria y fallback a "proponer" si todavia no existe. Ver el detalle completo (incluida la verificacion CA-6 y el fallback CA-7) en el punto 10f del Paso 1.
