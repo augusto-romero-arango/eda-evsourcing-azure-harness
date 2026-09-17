@@ -268,7 +268,7 @@ generated_contains() {
 }
 
 project_static_assets() {
-    local collection_name="$1" declared_asset root asset_source asset_mode asset_id asset_destination asset_source_dir absolute_asset_source full_rel plan plan_destination
+    local collection_name="$1" declared_asset root asset_source asset_mode asset_id asset_destination asset_source_dir absolute_asset_source full_rel generated_path
     shift
     for root in "${ROOTS[@]}"; do
         for declared_asset in "$@"; do
@@ -285,12 +285,8 @@ project_static_assets() {
             [ ! -L "$absolute_asset_source" ] || usage_error "$collection_name declaro una fuente mediante symlink: $asset_source"
             full_rel="$root/$asset_destination"
             paths_overlap "$full_rel" "$root/.mefisto-generated-assets.json" && usage_error "$collection_name colisiona con el inventario del motor: $full_rel"
-            for plan in ${ASSET_PLANS[@]+"${ASSET_PLANS[@]}"}; do
-                plan_destination="$(printf '%s' "$plan" | jq -r '.destination')"
-                ! paths_overlap "$plan_destination" "$full_rel" || usage_error "$collection_name colisiona en destino: $full_rel"
-            done
             for generated_path in ${GENERATED[@]+"${GENERATED[@]}"}; do
-                ! paths_overlap "$generated_path" "$full_rel" || usage_error "$collection_name colisiona con salida agent/command: $full_rel"
+                ! paths_overlap "$generated_path" "$full_rel" || usage_error "$collection_name colisiona con una salida generada: $full_rel"
             done
             mkdir -p "$(dirname "$STAGE_DIR/$full_rel")" || usage_error "no se pudo preparar $full_rel"
             cp "$absolute_asset_source" "$STAGE_DIR/$full_rel" || usage_error "no se pudo copiar $collection_name: $asset_source"
@@ -386,6 +382,7 @@ ASSET_ROOTS=("${ROOTS[@]}")
 while IFS= read -r knowledge_source; do
     [ -n "$knowledge_source" ] && KNOWLEDGE_CLOSURE_ASSETS+=("${knowledge_source#"$REPO_ROOT/"}|0644")
 done < <(find "$REPO_ROOT/docs/adr" -maxdepth 1 -type f -name 'mef-adr-*.md' | sort)
+[ "${#KNOWLEDGE_CLOSURE_ASSETS[@]}" -gt 0 ] || usage_error "tooling-knowledge no descubrio ningun docs/adr/mef-adr-*.md"
 KNOWLEDGE_CLOSURE_ASSETS+=('docs/testing/harness-cheatsheet.md|0644')
 project_static_assets 'tooling-closure' "${TOOLING_CLOSURE_ASSETS[@]}"
 project_static_assets 'tooling-knowledge' "${KNOWLEDGE_CLOSURE_ASSETS[@]}"

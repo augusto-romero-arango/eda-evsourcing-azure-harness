@@ -77,7 +77,18 @@ OUT="$WORK/salida con espacios"
 assert_rc "$rc" 0 'dos adaptadores procesan fuente y paths con espacios'
 [ -f "$OUT/dist/alpha/artefactos/valida con espacios.md" ] && [ -f "$OUT/dist/beta/artefactos/valida con espacios.md" ] && pass 'salidas de ambos adaptadores' || fail 'faltan salidas'
 jq -e '.assets | length == 18 and any(.[]; .adapter == "tooling-closure" and .source == "scripts/tdd-pipeline.sh" and .destination == "scripts/tdd-pipeline.sh" and .mode == "0755" and (.sha256 | length == 64)) and ([.[] | select(.adapter == "tooling-knowledge") | .source] == ["docs/adr/mef-adr-0011.md", "docs/adr/mef-adr-0053.md", "docs/testing/harness-cheatsheet.md"])' "$OUT/dist/alpha/.mefisto-generated-assets.json" >/dev/null && pass 'la clausura estatica atribuye pipeline y conocimiento TDD con checksum' || fail 'inventario de clausura estatica invalido'
-[ "$(< "$OUT/dist/alpha/docs/adr/mef-adr-0011.md")" = 'ADR uno' ] && [ "$(< "$OUT/dist/beta/docs/testing/harness-cheatsheet.md")" = 'cheatsheet' ] && [ "$(file_mode "$OUT/dist/alpha/docs/adr/mef-adr-0011.md")" = 644 ] && [ ! -e "$OUT/dist/alpha/docs/adr/INDICE-TEMATICO.md" ] && [ ! -e "$OUT/dist/alpha/docs/testing/otro.md" ] && pass 'conocimiento TDD conserva bytes y modo, excluyendo el resto de docs' || fail 'proyeccion de conocimiento TDD invalida'
+if cmp -s "$TEST_REPO/docs/adr/mef-adr-0011.md" "$OUT/dist/alpha/docs/adr/mef-adr-0011.md" \
+    && cmp -s "$TEST_REPO/docs/adr/mef-adr-0011.md" "$OUT/dist/beta/docs/adr/mef-adr-0011.md" \
+    && cmp -s "$TEST_REPO/docs/testing/harness-cheatsheet.md" "$OUT/dist/alpha/docs/testing/harness-cheatsheet.md" \
+    && cmp -s "$TEST_REPO/docs/testing/harness-cheatsheet.md" "$OUT/dist/beta/docs/testing/harness-cheatsheet.md" \
+    && [ "$(file_mode "$OUT/dist/alpha/docs/adr/mef-adr-0011.md")" = 644 ] \
+    && [ "$(file_mode "$OUT/dist/beta/docs/testing/harness-cheatsheet.md")" = 644 ] \
+    && [ ! -e "$OUT/dist/alpha/docs/adr/INDICE-TEMATICO.md" ] \
+    && [ ! -e "$OUT/dist/alpha/docs/testing/otro.md" ]; then
+    pass 'conocimiento TDD conserva bytes y modo en ambos runtimes, excluyendo el resto de docs'
+else
+    fail 'proyeccion de conocimiento TDD invalida'
+fi
 if [ "$(sed -n '4p' "$OUT/dist/beta/artefactos/valida con espacios.md")" = '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/valida con espacios.md. No editar a mano. -->' ]; then
     pass 'el marcador puede ir despues del frontmatter'
 else
@@ -106,6 +117,22 @@ assert_rc "$rc" 1 '--check combina divergencias con exit 1'
 check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
 [ "$rc" -eq 0 ] && [ -z "$check_out" ] && pass 'escritura reconcilia distintas, faltantes, huerfanas y manuales' || fail 'escritura no converge al arbol esperado'
 cmp -s "$OUT/dist/alpha/.mefisto-generated-assets.json" "$OUT/dist/beta/.mefisto-generated-assets.json" && pass 'inventarios de clausura son identicos entre runtimes' || fail 'inventarios de clausura divergen entre runtimes'
+printf 'ADR alterado\n' > "$OUT/dist/alpha/docs/adr/mef-adr-0011.md"
+check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
+assert_rc "$rc" 1 '--check detecta conocimiento divergente'; case "$check_out" in *'dist/alpha/docs/adr/mef-adr-0011.md: distinta'*) pass 'diagnostico conocimiento divergente';; *) fail 'sin diagnostico conocimiento divergente';; esac
+"$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null
+chmod 0755 "$OUT/dist/beta/docs/testing/harness-cheatsheet.md"
+check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
+assert_rc "$rc" 1 '--check detecta modo divergente del conocimiento'; case "$check_out" in *'dist/beta/docs/testing/harness-cheatsheet.md: modo divergente'*) pass 'diagnostico modo del conocimiento';; *) fail 'sin diagnostico modo del conocimiento';; esac
+"$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null
+rm "$OUT/dist/alpha/docs/adr/mef-adr-0053.md"
+check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
+assert_rc "$rc" 1 '--check detecta conocimiento faltante'; case "$check_out" in *'dist/alpha/docs/adr/mef-adr-0053.md: faltante'*) pass 'diagnostico conocimiento faltante';; *) fail 'sin diagnostico conocimiento faltante';; esac
+"$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null
+rm "$TEST_REPO/docs/adr/mef-adr-0053.md"
+check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
+assert_rc "$rc" 1 '--check detecta conocimiento huerfano'; case "$check_out" in *'dist/alpha/docs/adr/mef-adr-0053.md: huerfana'*'dist/beta/docs/adr/mef-adr-0053.md: huerfana'*) pass 'diagnostico conocimiento huerfano en ambos runtimes';; *) fail 'sin diagnostico conocimiento huerfano';; esac
+"$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null
 printf 'alterada\n' >> "$OUT/dist/alpha/scripts/_pipeline-common.sh"
 check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
 assert_rc "$rc" 1 '--check detecta contenido divergente en clausura'; case "$check_out" in *'dist/alpha/scripts/_pipeline-common.sh: distinta'*) pass 'diagnostico contenido de clausura';; *) fail 'sin diagnostico contenido de clausura';; esac
@@ -132,7 +159,7 @@ assert_rc "$rc" 0 'assets suplementarios se generan junto con Markdown'
 [ "$(cat "$OUT/dist/assets/runtime/config.json")" = 'renderizado:configuracion fuente' ] && pass 'asset se renderiza desde su fuente' || fail 'asset no se renderizo desde fuente'
 [ "$(file_mode "$OUT/dist/assets/bin/launcher")" = 755 ] && pass 'asset ejecutable conserva modo 0755' || fail 'asset ejecutable no conserva modo'
 inventory="$OUT/dist/assets/.mefisto-generated-assets.json"
- jq -e '.schemaVersion == 1 and (.assets | length) == 20 and .assets[0].source == "src/published/assets/config.txt" and .assets[1].mode == "0755" and (.assets[] | .sha256 | length == 64)' "$inventory" >/dev/null && pass 'inventario determinista atribuye assets' || fail 'inventario de assets invalido'
+jq -e '.schemaVersion == 1 and (.assets | length) == 20 and .assets[0].source == "src/published/assets/config.txt" and .assets[1].mode == "0755" and (.assets[] | .sha256 | length == 64)' "$inventory" >/dev/null && pass 'inventario determinista atribuye assets' || fail 'inventario de assets invalido'
 check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
 [ "$rc" -eq 0 ] && pass '--check acepta assets e inventario al dia' || fail "--check acepta assets e inventario al dia (exit $rc: $check_out)"
 printf 'alterado\n' > "$OUT/dist/assets/runtime/config.json"
@@ -197,6 +224,14 @@ diagnostic="$("$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con es
 assert_rc "$rc" 1 'clausura rechaza una fuente no regular antes de publicar'
 case "$diagnostic" in *'src/runtime/lib/runtime-opencode.jq'*) pass 'fuente no regular identifica la ruta exacta';; *) fail 'fuente no regular no identifica la ruta exacta';; esac
 [ ! -e "$OUT" ] && pass 'fuente de clausura no regular no deja salida parcial' || fail 'fuente de clausura no regular creo salida'
+
+setup_repo conocimiento-ausente
+GEN="$TEST_REPO/src/published/scripts/generate-published-adapters.sh"; OUT="$WORK/conocimiento-ausente-out"
+rm "$TEST_REPO/docs/adr/"mef-adr-*.md
+diagnostic="$("$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" 2>&1)"; rc=$?
+assert_rc "$rc" 1 'clausura rechaza la desaparicion total de ADRs'
+case "$diagnostic" in *'no descubrio ningun docs/adr/mef-adr-*.md'*) pass 'ausencia de ADRs produce diagnostico accionable';; *) fail 'ausencia de ADRs no produce diagnostico accionable';; esac
+[ ! -e "$OUT" ] && pass 'ausencia de ADRs no deja salida parcial' || fail 'ausencia de ADRs creo salida'
 
 setup_repo fallo
 GEN="$TEST_REPO/src/published/scripts/generate-published-adapters.sh"; OUT="$WORK/fallo-out"
