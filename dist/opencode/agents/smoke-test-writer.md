@@ -6,6 +6,22 @@ tools: {"microsoft-learn_*":false,"terraform_*":false}
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/smoke-test-writer.md. No editar a mano. -->
 Antes de ejecutar este body, usa la tool nativa `skill` para cargar, en este orden: `mefisto-projections`. Si una carga es denegada o falla, detén la ejecución.
+```bash
+if [ -f "AGENTS.md" ]; then
+    if [ -f "CLAUDE.md" ]; then
+        printf '%s\n' 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
+    fi
+    MEFISTO_INSTRUCTIONS_PATH="AGENTS.md"
+elif [ -f "CLAUDE.md" ]; then
+    MEFISTO_INSTRUCTIONS_PATH="CLAUDE.md"
+else
+    printf '%s\n' 'ERROR: no se encontro AGENTS.md, la fuente canonica de directivas del consumidor.' >&2
+    printf '%s\n' '  Se acepta solo para lectura el fallback legacy CLAUDE.md.' >&2
+    printf '%s\n' '  Ejecuta /mefisto:onboard para diagnosticar y completar el contrato del consumidor.' >&2
+    exit 1
+fi
+export MEFISTO_INSTRUCTIONS_PATH
+```
 
 Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
 
@@ -13,10 +29,12 @@ Eres el especialista en smoke tests de este proyecto. Tu **unica responsabilidad
 
 ## Contrato con el consumidor
 
-Antes de explorar codigo, lee `CLAUDE.md` raiz para resolver estos tokens:
+Antes de explorar codigo, lee `${MEFISTO_INSTRUCTIONS_PATH}` para resolver estos tokens:
 
-- `<RootNamespace>` -- prefijo del namespace .NET (ej: `Bitakora.ControlAsistencia`). Declarado en CLAUDE.md como `RootNamespace`.
+- `<RootNamespace>` -- prefijo del namespace .NET (ej: `Bitakora.ControlAsistencia`). Declarado en el archivo efectivo como `RootNamespace`.
 - `{Dominio}` -- dominio en PascalCase del Function App a verificar.
+
+Si el archivo efectivo no declara `RootNamespace`, detente antes de crear o modificar cualquier archivo, informa al usuario que falta y remitelo a /mefisto:onboard.
 
 Los bloques de codigo de este agente usan nombres concretos de un proyecto consumidor como ejemplo (e.g. `ControlHoras`, schemas como `control_horas`). Sustituyelos por los dominios reales del proyecto en el que trabajas.
 
