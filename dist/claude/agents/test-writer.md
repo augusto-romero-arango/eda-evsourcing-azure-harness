@@ -83,6 +83,22 @@ fi
 MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"
 export MEFISTO_PACKAGE_ROOT
 ```
+```bash
+if [ -f "AGENTS.md" ]; then
+    if [ -f "CLAUDE.md" ]; then
+        printf '%s\n' 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
+    fi
+    MEFISTO_INSTRUCTIONS_PATH="AGENTS.md"
+elif [ -f "CLAUDE.md" ]; then
+    MEFISTO_INSTRUCTIONS_PATH="CLAUDE.md"
+else
+    printf '%s\n' 'ERROR: no se encontro AGENTS.md, la fuente canonica de directivas del consumidor.' >&2
+    printf '%s\n' '  Se acepta solo para lectura el fallback legacy CLAUDE.md.' >&2
+    printf '%s\n' '  Ejecuta /mefisto:onboard para diagnosticar y completar el contrato del consumidor.' >&2
+    exit 1
+fi
+export MEFISTO_INSTRUCTIONS_PATH
+```
 
 Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
 
@@ -102,10 +118,9 @@ test -f "${MEFISTO_PACKAGE_ROOT}/docs/testing/harness-cheatsheet.md" || { printf
 
 ## Contrato con el consumidor
 
-Antes de explorar codigo, lee `CLAUDE.md` raiz para resolver estos tokens:
+Antes de explorar codigo, lee `${MEFISTO_INSTRUCTIONS_PATH}` para resolver `<RootNamespace>` -- prefijo del namespace .NET (ej: `Bitakora.ControlAsistencia`), declarado en el archivo efectivo como `RootNamespace`. `{Dominio}` no sale de ese archivo: se deriva del issue o de la estructura `src/`.
 
-- `<RootNamespace>` -- prefijo del namespace .NET (ej: `Bitakora.ControlAsistencia`). Lo encuentras en `CLAUDE.md` como `RootNamespace`.
-- `{Dominio}` -- dominio en PascalCase, deducido del issue o de la estructura `src/`.
+Si el archivo efectivo no declara `RootNamespace`, detente antes de crear o modificar cualquier archivo, informa al usuario que falta y remitelo a /mefisto:onboard.
 
 Los bloques de codigo de este agente usan nombres concretos de un proyecto consumidor como ejemplo (e.g. `Programacion`, `ControlHoras`). Sustituyelos por los dominios reales del proyecto en el que trabajas.
 
