@@ -28,8 +28,8 @@
 # esta extension pueden rechazar `assets` sin salida y conservan su conducta.
 # La ausencia heredada se indica rechazando `assets` sin salida. Cualquier
 # salida junto a un exit no-cero se considera un fallo de enumeracion. El motor
-# escribe `.mefisto-generated-assets.json` solo en las raices cuyo adaptador
-# implementa `assets`: es su inventario versionado (schemaVersion 1), no el
+# escribe `.mefisto-generated-assets.json` como inventario versionado
+# (schemaVersion 1) de las salidas Markdown y los assets de cada raiz; no es el
 # manifest de releases.
 #
 # Clausura ejecutable del primer corte publicado de tooling (MEF-ADR-0053).
@@ -72,8 +72,8 @@ TOOLING_CLOSURE_ASSETS=(
 # el cheatsheet es una dependencia explicita de test-writer.
 KNOWLEDGE_CLOSURE_ASSETS=()
 # El marketplace Claude instala hoy la raiz del checkout (`source: "./"`).
-# Hasta que esa raiz sea una proyeccion autocontenida, los dos roles del corte
-# vertical de tooling se reflejan alli desde la misma renderizacion Claude.
+# Hasta que esa raiz sea una proyeccion autocontenida, los entrypoints y roles
+# publicados se reflejan alli desde la misma renderizacion Claude.
 CLAUDE_ROOT_MIRRORS=(
     'src/published/commands/tooling.md|commands/tooling.md'
     'src/published/commands/implement.md|commands/implement.md'
@@ -221,6 +221,7 @@ cleanup() {
 trap cleanup EXIT
 GENERATED=()
 ASSET_PLANS=()
+RENDERED_PLANS=()
 ASSET_COUNT=0
 ASSET_ROOTS=()
 
@@ -256,6 +257,7 @@ for file in ${FILES[@]+"${FILES[@]}"}; do
         fi
         has_marker "$marker" "$STAGE_DIR/$full_rel" || usage_error "$adapter_name no escribio el marcador estable para $rel_source"
         chmod 0644 "$STAGE_DIR/$full_rel" || usage_error "no se pudo fijar el modo de $full_rel"
+        RENDERED_PLANS+=("$(jq -cn --arg adapter "$adapter_name" --arg id "$rel_source" --arg source "$rel_source" --arg destination "$full_rel" --arg sha256 "$(sha256 "$STAGE_DIR/$full_rel")" '{adapter: $adapter, id: $id, source: $source, destination: $destination, mode: "0644", sha256: $sha256}')")
         GENERATED+=("$full_rel")
     done
 done
@@ -393,10 +395,10 @@ project_static_assets 'tooling-knowledge' "${KNOWLEDGE_CLOSURE_ASSETS[@]}"
 
 for root in ${ASSET_ROOTS[@]+"${ASSET_ROOTS[@]}"}; do
     inventory="$root/.mefisto-generated-assets.json"
-    if [ "$ASSET_COUNT" -eq 0 ]; then
+    if [ "$ASSET_COUNT" -eq 0 ] && [ ${#RENDERED_PLANS[@]} -eq 0 ]; then
         inventory_assets='[]'
     else
-        inventory_assets="$(printf '%s\n' "${ASSET_PLANS[@]}" | jq -s --arg root "$root" '[.[] | select(.destination | startswith($root + "/")) | {adapter, id, source, destination: (.destination | ltrimstr($root + "/")), mode, sha256}] | sort_by(.adapter, .id)')"
+        inventory_assets="$({ printf '%s\n' ${ASSET_PLANS[@]+"${ASSET_PLANS[@]}"}; printf '%s\n' ${RENDERED_PLANS[@]+"${RENDERED_PLANS[@]}"}; } | jq -s --arg root "$root" '[.[] | select(.destination | startswith($root + "/")) | {adapter, id, source, destination: (.destination | ltrimstr($root + "/")), mode, sha256}] | sort_by(.adapter, .id)')"
     fi
     jq -cn --argjson assets "$inventory_assets" '{schemaVersion: 1, assets: $assets}' > "$STAGE_DIR/$inventory" || usage_error "no se pudo escribir el inventario de $root"
     chmod 0644 "$STAGE_DIR/$inventory" || usage_error "no se pudo fijar el modo de $inventory"

@@ -49,7 +49,7 @@ Extrae `ISSUE_NUM` como el primer token numerico de `$ARGUMENTS`. Reenvia `$ARGU
 
 Consulta el issue con `gh issue view ISSUE_NUM --json number,title,state,labels,body`. Muestra titulo, estado y labels. Si no es consultable, no existe o esta cerrado (`CLOSED`), informa el motivo y detente.
 
-Exige exactamente un tipo TDD: `tipo:feature`, `tipo:refactor` o `tipo:projection`. Si hay `tipo:tooling`, informa que debe lanzarse con /mefisto:tooling y detente. Si falta un tipo TDD, hay mas de uno, o hay un tipo no compatible, muestra los labels detectados y detente.
+Cuenta todos los labels `tipo:*` y exige exactamente uno, que debe ser `tipo:feature`, `tipo:refactor` o `tipo:projection`. Si el unico tipo es `tipo:tooling`, informa que debe lanzarse con /mefisto:tooling y detente. Si falta el tipo, hay mas de uno o el unico tipo no es compatible, muestra los labels detectados y detente.
 
 ### 2. Validar Definition of Ready
 
@@ -59,19 +59,32 @@ Si uno o mas criterios fallan, muestra la lista completa de lo que falta, sugier
 
 ### 3. Verificar label bloqueado
 
-Si lleva el label `bloqueado`, lee solo la seccion `## Dependencias` del body, hasta el siguiente encabezado de nivel dos, y considera exclusivamente las lineas canonicas `Depende de #N` o `Bloqueado por #N` (tambien si llevan marcador de lista). Ignora cualquier otro `#N`.
+Si lleva el label `bloqueado`, lee solo la seccion `## Dependencias` del body, hasta el siguiente encabezado de nivel dos, y considera exclusivamente lineas completas que sigan el patron canonico `Depende de #N` o `Bloqueado por #N`, con un marcador de lista `-` o `*` opcional. Ignora cualquier otro `#N`, incluidas las lineas `Bloquea #N` y las referencias informativas.
 
-Para cada numero, intenta primero `gh pr view` y, si no corresponde a un PR, `gh issue view`, consultando titulo y estado. Si no hay una dependencia canonica consultable, o una dependencia `OPEN` o no consultable, conserva el label, muestra el bloqueo visible y detente; nunca supongas que un fallo significa cierre.
+Para cada numero, consulta primero titulo y estado con `gh pr view`. Solo si GitHub confirma que el numero no corresponde a un PR, consulta `gh issue view`; cualquier otro fallo de la consulta del PR es no consultable y bloquea. Si no hay una dependencia canonica consultable, o una dependencia esta `OPEN` o no es consultable, conserva el label, muestra el bloqueo visible y detente; nunca supongas que un fallo significa cierre.
 
 Solo cuando todas las dependencias canonicas declaradas cerraron (`CLOSED`) o se integraron (`MERGED`), retira el label `bloqueado` y continua. Con `--variant`, nunca mutas labels: informa que el label permanece y continua solo si todas las dependencias cerraron.
 
 ### 4. Detectar dominio(s) y necesidad de scaffold
 
-Obtiene todos los labels `dom:*` del issue. Para cada dominio, obtiene `namespacePrefix` desde `.mefisto/harness.config.json` y lo convierte a PascalCase para comprobar `src/<namespacePrefix>.{Dominio}/`.
+Obtiene todos los labels `dom:*` del issue y `namespacePrefix` desde `.mefisto/harness.config.json`. Si la configuracion no es consultable o `namespacePrefix` falta o esta vacio, informa el error y detente. Conserva `namespacePrefix` literalmente; para cada label convierte solo el nombre del dominio de kebab-case a PascalCase y comprueba `src/<namespacePrefix>.{DominioPascalCase}/`.
 
-La necesidad de scaffold se deriva solo del alcance declarado: lee la seccion cuyo encabezado empieza con `## Impacto`, hasta el siguiente encabezado de nivel dos. Si esa seccion no existe o no menciona `src/<namespacePrefix>.{Dominio}/`, no preguntes por ese dominio. Si la menciona y el directorio no existe, es candidato a scaffold.
+La necesidad de scaffold se deriva solo del alcance declarado: lee la seccion cuyo encabezado empieza con `## Impacto`, hasta el siguiente encabezado de nivel dos. Si esa seccion no existe o no menciona `src/<namespacePrefix>.{DominioPascalCase}/`, no preguntes por ese dominio. Si la menciona y el directorio no existe, es candidato a scaffold.
 
-Si no hay candidatos, continua al lanzamiento sin scaffold. Para cada candidato, muestra exactamente las tres opciones: (1) scaffoldear el dominio antes de lanzar el pipeline, (2) continuar sin scaffold y (3) abortar. La opcion 3 detiene la ejecucion. La opcion 2 no agrega scaffold.
+Si no hay candidatos, continua al lanzamiento sin scaffold. Para cada candidato, explica que el scaffold se hara dentro del worktree del issue y que el mismo PR incluira:
+
+- Function App: `src/<namespacePrefix>.{DominioPascalCase}/`.
+- Tests: `tests/<namespacePrefix>.{DominioPascalCase}.Tests/`.
+- Terraform: `infra/environments/dev/dominio-{dominio-kebab}.tf` (storage + Function App).
+- Workflow: `.github/workflows/deploy-{dominio-kebab}.yml`.
+
+Luego pregunta exactamente estas tres opciones:
+
+1. Scaffoldear el dominio antes de lanzar el pipeline.
+2. Continuar sin scaffold y dejar que Stage 1 falle de forma visible si realmente necesita el directorio.
+3. Abortar sin lanzar el pipeline.
+
+La opcion 3 detiene la ejecucion. La opcion 2 no agrega scaffold.
 
 Si mas de un dominio recibe opcion 1, no lances el pipeline: informa que solo se admite un scaffold por invocacion, pide scaffoldear los adicionales por separado y volver a ejecutar el comando. Nunca autorices mas de un scaffold por invocacion.
 
