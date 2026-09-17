@@ -179,7 +179,7 @@ closure_expected="$(for i in "${!CLOSURE_SOURCES[@]}"; do printf '%s|%s\n' "${CL
 skill_expected="$(cd "$REPO_ROOT/skills" && find . -type f | sed 's|^\./||' | sed 's|^\(.*\)$|skills/\1 skills/mefisto-\1|' | sort)"
 for runtime in claude opencode; do
     inventory="$WORK/dist/$runtime/.mefisto-generated-assets.json"
-    expected_files="$({ jq -r '.assets[].destination' "$inventory"; printf '%s\n' '.mefisto-generated-assets.json' 'agents/tooling-writer.md' 'agents/tooling-reviewer.md'; } | sort)"
+    expected_files="$({ jq -r '.assets[].destination' "$inventory"; printf '%s\n' '.mefisto-generated-assets.json'; } | sort)"
     actual_files="$(cd "$WORK/dist/$runtime" && find . -type f | sed 's|^\./||' | sort)"
     if [ "$expected_files" = "$actual_files" ]; then
         pass "$runtime genera exactamente sus assets inventariados, su inventario y los dos agentes bajo prueba"
@@ -210,8 +210,8 @@ done
 # Lo no-clausura de cada distribucion se afirma como conjunto semantico: el
 # manifiesto en Claude, y observabilidad + MCP + todo el arbol de Skills en
 # OpenCode, derivado de skills/ en vez de muestrear dos archivos sueltos.
-claude_extra="$(jq -r '.assets[] | select(.adapter != "tooling-closure" and .adapter != "tooling-knowledge") | "\(.id) \(.destination)"' "$WORK/dist/claude/.mefisto-generated-assets.json" | sort)"
-opencode_extra="$(jq -r '.assets[] | select(.adapter != "tooling-closure" and .adapter != "tooling-knowledge") | "\(.id) \(.destination)"' "$WORK/dist/opencode/.mefisto-generated-assets.json" | sort)"
+claude_extra="$(jq -r '.assets[] | select(.adapter != "tooling-closure" and .adapter != "tooling-knowledge" and (.source | startswith("src/published/agents/") | not)) | "\(.id) \(.destination)"' "$WORK/dist/claude/.mefisto-generated-assets.json" | sort)"
+opencode_extra="$(jq -r '.assets[] | select(.adapter != "tooling-closure" and .adapter != "tooling-knowledge" and (.source | startswith("src/published/agents/") | not)) | "\(.id) \(.destination)"' "$WORK/dist/opencode/.mefisto-generated-assets.json" | sort)"
 opencode_extra_expected="$(printf '%s\n%s\n%s\n' 'interactive-observability plugins/mefisto-observability.js' 'mcp-config plugins/mefisto-mcp.js' "$skill_expected" | sort)"
 [ "$claude_extra" = 'mefisto-manifest mefisto-manifest.json' ] && pass 'Claude inventaria el manifiesto fuera de las clausuras compartidas' || fail "Claude inventaria assets inesperados fuera de las clausuras: $claude_extra"
 [ "$opencode_extra" = "$opencode_extra_expected" ] && pass 'OpenCode inventaria observabilidad, MCP y todos los archivos de Skills' || fail 'OpenCode no inventaria observabilidad, MCP y todos los archivos de Skills'
