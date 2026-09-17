@@ -9,7 +9,11 @@ Este documento certifica exclusivamente `/mefisto:tooling`. La superficie de
 `/mefisto:implement` (dos rutas de agentes, fase roja/verde, Stage 2b
 condicional, coverage gate) tiene su propio protocolo, que reutiliza el
 consumidor y la mecanica de instalacion de este documento como prerrequisito:
-ver [`tdd-consumer-certification.md`](./tdd-consumer-certification.md).
+ver [`tdd-consumer-certification.md`](./tdd-consumer-certification.md). Su
+[veredicto final](./tdd-consumer-certification.md#veredicto-final-del-corte-tdd-multi-runtime-1411)
+(#1411) cerro `NO PASA`: las cuatro corridas write-side/read-side x
+Claude/OpenCode exigidas por #1435/#1436 nunca se ejecutaron en vivo, asi que
+`/mefisto:implement` sigue sin certificar bajo ningun runtime.
 
 No se ejecuta durante la redaccion de este documento. Requiere que exista una
 release candidata y el repositorio fixture descrito abajo. La primera candidata

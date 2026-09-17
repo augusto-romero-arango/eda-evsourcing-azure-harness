@@ -519,6 +519,100 @@ sanitizado (CA-5)".
 | CA-5 expediente correlacionado | | |
 | CA-6 centinelas y limpieza | | |
 
+## Veredicto final del corte TDD multi-runtime (#1411)
+
+Esta seccion audita, sin repetir ejecuciones, los dos expedientes de corrida
+exigidos por el protocolo de #1434: "Resultado write-side (#1435)" y
+"Resultado read-side (#1436)" arriba. No redefine el protocolo ni sus
+templates; solo emite el veredicto documental fail-closed conforme a la
+seccion "Fail-closed y limpieza (CA-6)" del protocolo y al CA-4 de #1411.
+
+### Estado auditado de los dos expedientes
+
+| Expediente | Estado registrado | Celdas con evidencia real | Fixtures creados | PRs reales |
+|---|---|---|---|---|
+| #1435 (write-side) | `PENDIENTE DE EJECUCION` | 0/2 (Claude, OpenCode) | Ninguno | Ninguno |
+| #1436 (read-side) | `PENDIENTE DE EJECUCION` | 0/2 (Claude, OpenCode) | Ninguno | Ninguno |
+
+Ambos issues fixture-madre se cerraron como `COMPLETED` en el rastreador de
+Mefisto, pero esa clausura corresponde a la redaccion del punto de registro
+("Resultado write-side (#1435)"/"Resultado read-side (#1436)") descrita en sus
+propios PRs (#1462, #1463) -- ninguno de los dos ejecuto la sesion en vivo que
+el protocolo exige. Las tablas de identidad y de CA-1..CA-6 de ambas secciones
+permanecen con todas sus celdas vacias: no registran `<sha-baseline-inicial>`,
+`<tag-certificable>`, `<version>`, `<commit-fuente>`, `<checksum-opencode>`,
+issue de fixture, PR, session id, stage ni check alguno.
+
+### Matriz 2x2 auditada (CA-1/CA-2 de #1411)
+
+Sin un `<sha-baseline-inicial>`/`<tag-certificable>`/`<version>`/`<commit-fuente>`/
+`<checksum-opencode>` comun registrado por ninguna corrida, no existe una
+identidad `aligned` que confirmar entre #1435 y #1436, y por lo tanto tampoco
+existe una matriz 2x2 de evidencia real que auditar: la aplicacion de CA-1 y
+CA-2 de #1411 sobre un expediente vacio produce el mismo resultado en las
+cuatro celdas.
+
+| Celda | Agentes forzados | Discovery vs. invocacion | Evidencia disponible |
+|---|---|---|---|
+| write-side Claude | `test-writer` -> `implementer` -> `smoke-test-writer` -> `reviewer` | Ninguna de las dos observada | Ninguna: issue fixture no creado, PR no abierto |
+| write-side OpenCode | idem | Ninguna de las dos observada | Ninguna |
+| read-side Claude | `projection-test-writer` -> `projection-implementer` -> `smoke-test-writer` -> `reviewer` | Ninguna de las dos observada | Ninguna |
+| read-side OpenCode | idem | Ninguna de las dos observada | Ninguna |
+
+### Observabilidad (CA-3 de #1411)
+
+No aplica: sin corridas lanzadas no existe issue/PR/session de fixture que
+correlacionar, ni stages, agentes, perfiles, modelos efectivos/origen,
+version, commit fuente, metricas, summaries o history que comparar entre
+celdas. La comparacion de observabilidad exigida por CA-3 de #1411 no puede
+ejecutarse sobre evidencia inexistente sin violar MEF-ADR-0031.
+
+### Centinelas y limpieza
+
+No aplica por el mismo motivo: sin evidencia persistida no hay artefactos
+sobre los que correr el barrido de centinelas de "Manifiesto de evidencia y
+redaccion" (`opencode-consumer-cutover.md`), y sin corridas lanzadas no hay
+PRs, ramas, issues fixture ni worktrees que limpiar. Ningun centinela dio
+positivo porque no hay contenido que escanear; esto no se registra como un
+`PASA` de esa fila, sino como no ejecutada.
+
+### Veredicto
+
+**NO PASA (2026-09-17).** Las cuatro celdas de la matriz write-side/read-side
+x Claude/OpenCode carecen de evidencia real. #1435 y #1436, aunque cerrados
+como completados, dejaron sus secciones "Resultado write-side (#1435)" y
+"Resultado read-side (#1436)" en `PENDIENTE DE EJECUCION`: sin fixtures
+creados en el consumidor, sin sesiones Herdr operadas en vivo y sin PRs
+reales. Fabricar una identidad, matriz u observabilidad para satisfacer CA-1
+a CA-3 de #1411 sin esa operacion violaria MEF-ADR-0031; este veredicto se
+sostiene sobre la ausencia constatada, no sobre datos inferidos desde el
+protocolo o desde certificaciones anteriores.
+
+Conforme al CA-4 de #1411, esta ausencia de evidencia:
+
+- No otorga soporte parcial ni total de `/mefisto:implement` bajo ningun
+  runtime ni ruta: `README.md` mantiene `/implement` fuera del alcance
+  certificado en su seccion "Soporte OpenCode: alcance certificado".
+- Abre el issue
+  [#1464](https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/issues/1464)
+  (`bug`, `tipo:tooling`, `estado:listo`) como dependencia de este veredicto,
+  documentando la ejecucion pendiente de las cuatro corridas reales sobre una
+  release nueva.
+- Exige repetir integramente el par write-side (#1435) y el par read-side
+  (#1436) -- las cuatro corridas, no un subconjunto, porque ninguna se llego a
+  ejecutar -- sobre la release vigente al momento de reabrir la
+  certificacion, siguiendo el protocolo ya fijado por #1434 sin modificarlo.
+
+Este veredicto cierra #1411: su CA-4 se cumple emitiendo `NO PASA` con causa
+documentada, en vez de dejar el issue abierto indefinidamente a la espera de
+una operacion en vivo que excede el alcance de un stage de escritura
+automatizado -- la misma razon que dejo a #1435/#1436 en `PENDIENTE DE
+EJECUCION`. `/mefisto:implement` permanece sin certificar para consumidores
+publicados bajo ningun runtime hasta que el bug
+[#1464](https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/issues/1464)
+se cierre con las cuatro corridas reales documentadas y un nuevo issue de
+veredicto las reconcilie.
+
 ## Referencias
 
 - `docs/testing/opencode-consumer-cutover.md`: protocolo, consumidor y
@@ -541,3 +635,7 @@ sanitizado (CA-5)".
   la misma operacion (`/mefisto:implement`) bajo ambos adaptadores.
 - MEF-ADR-0053, seccion 6: gate reproducible de corte vertical que este
   protocolo extiende de `/mefisto:tooling` a `/mefisto:implement`.
+- [#1464](https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/issues/1464):
+  bug abierto por el veredicto `NO PASA` de "Veredicto final del corte TDD
+  multi-runtime (#1411)"; rastrea la ejecucion real de las cuatro corridas que
+  #1435/#1436 dejaron `PENDIENTE DE EJECUCION`.
