@@ -84,6 +84,22 @@ fi
 MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"
 export MEFISTO_PACKAGE_ROOT
 ```
+```bash
+if [ -f "AGENTS.md" ]; then
+    if [ -f "CLAUDE.md" ]; then
+        printf '%s\n' 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
+    fi
+    MEFISTO_INSTRUCTIONS_PATH="AGENTS.md"
+elif [ -f "CLAUDE.md" ]; then
+    MEFISTO_INSTRUCTIONS_PATH="CLAUDE.md"
+else
+    printf '%s\n' 'ERROR: no se encontro AGENTS.md, la fuente canonica de directivas del consumidor.' >&2
+    printf '%s\n' '  Se acepta solo para lectura el fallback legacy CLAUDE.md.' >&2
+    printf '%s\n' '  Ejecuta /mefisto:onboard para diagnosticar y completar el contrato del consumidor.' >&2
+    exit 1
+fi
+export MEFISTO_INSTRUCTIONS_PATH
+```
 
 Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
 
@@ -102,7 +118,11 @@ El Skill `projections` (ya precargado como texto) y los ADRs del marco viven **d
 
 ## Contrato con el consumidor
 
-Antes de explorar codigo, lee el archivo de instrucciones raiz para resolver `<RootNamespace>` y `{Dominio}` -- mismo contrato que `test-writer.md`. Los bloques de codigo de este agente usan nombres de ejemplo de un proyecto consumidor (`Turno`, `Programacion`); sustituyelos por los reales.
+Antes de explorar codigo, lee `${MEFISTO_INSTRUCTIONS_PATH}` para resolver `<RootNamespace>` -- prefijo del namespace .NET del proyecto, declarado en el archivo efectivo como `RootNamespace`. `{Dominio}` no sale de ese archivo: se deriva del issue (`tipo:projection`) o de la estructura ya existente bajo `src/` (ver "Proceso" mas abajo).
+
+Si el archivo efectivo no declara `RootNamespace`, detente antes de crear o modificar cualquier archivo, informa al usuario que falta y remitelo a /mefisto:onboard.
+
+Los bloques de codigo de este agente usan nombres de ejemplo de un proyecto consumidor (`Turno`, `Programacion`); sustituyelos por los reales.
 
 ## Principio fundamental
 
