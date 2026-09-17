@@ -210,10 +210,10 @@ done
 # Lo no-clausura de cada distribucion se afirma como conjunto semantico: el
 # manifiesto en Claude, y observabilidad + MCP + todo el arbol de Skills en
 # OpenCode, derivado de skills/ en vez de muestrear dos archivos sueltos.
-claude_extra="$(jq -r '.assets[] | select(.adapter != "tooling-closure") | "\(.id) \(.destination)"' "$WORK/dist/claude/.mefisto-generated-assets.json" | sort)"
-opencode_extra="$(jq -r '.assets[] | select(.adapter != "tooling-closure") | "\(.id) \(.destination)"' "$WORK/dist/opencode/.mefisto-generated-assets.json" | sort)"
+claude_extra="$(jq -r '.assets[] | select(.adapter != "tooling-closure" and .adapter != "tooling-knowledge") | "\(.id) \(.destination)"' "$WORK/dist/claude/.mefisto-generated-assets.json" | sort)"
+opencode_extra="$(jq -r '.assets[] | select(.adapter != "tooling-closure" and .adapter != "tooling-knowledge") | "\(.id) \(.destination)"' "$WORK/dist/opencode/.mefisto-generated-assets.json" | sort)"
 opencode_extra_expected="$(printf '%s\n%s\n%s\n' 'interactive-observability plugins/mefisto-observability.js' 'mcp-config plugins/mefisto-mcp.js' "$skill_expected" | sort)"
-[ "$claude_extra" = 'mefisto-manifest mefisto-manifest.json' ] && pass 'Claude inventaria el manifiesto y nada mas fuera de la clausura' || fail "Claude inventaria fuera de la clausura: $claude_extra"
+[ "$claude_extra" = 'mefisto-manifest mefisto-manifest.json' ] && pass 'Claude inventaria el manifiesto fuera de las clausuras compartidas' || fail "Claude inventaria assets inesperados fuera de las clausuras: $claude_extra"
 [ "$opencode_extra" = "$opencode_extra_expected" ] && pass 'OpenCode inventaria observabilidad, MCP y todos los archivos de Skills' || fail 'OpenCode no inventaria observabilidad, MCP y todos los archivos de Skills'
 [ ! -e "$WORK/dist/claude/skills" ] && pass 'Claude no recibe Skills adaptados ni internos' || fail 'Claude recibio un arbol de Skills adaptado'
 for runtime in claude opencode; do

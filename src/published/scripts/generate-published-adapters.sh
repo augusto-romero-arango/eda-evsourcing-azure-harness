@@ -386,6 +386,7 @@ ASSET_ROOTS=("${ROOTS[@]}")
 while IFS= read -r knowledge_source; do
     [ -n "$knowledge_source" ] && KNOWLEDGE_CLOSURE_ASSETS+=("${knowledge_source#"$REPO_ROOT/"}|0644")
 done < <(find "$REPO_ROOT/docs/adr" -maxdepth 1 -type f -name 'mef-adr-*.md' | sort)
+[ "${#KNOWLEDGE_CLOSURE_ASSETS[@]}" -gt 0 ] || usage_error "tooling-knowledge no descubrio ningun docs/adr/mef-adr-*.md"
 KNOWLEDGE_CLOSURE_ASSETS+=('docs/testing/harness-cheatsheet.md|0644')
 project_static_assets 'tooling-closure' "${TOOLING_CLOSURE_ASSETS[@]}"
 project_static_assets 'tooling-knowledge' "${KNOWLEDGE_CLOSURE_ASSETS[@]}"
