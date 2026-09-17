@@ -543,21 +543,40 @@ permanecen con todas sus celdas vacias: no registran `<sha-baseline-inicial>`,
 `<tag-certificable>`, `<version>`, `<commit-fuente>`, `<checksum-opencode>`,
 issue de fixture, PR, session id, stage ni check alguno.
 
-### Matriz 2x2 auditada (CA-1/CA-2 de #1411)
+### Identidad comun de release (CA-1 de #1411)
 
-Sin un `<sha-baseline-inicial>`/`<tag-certificable>`/`<version>`/`<commit-fuente>`/
-`<checksum-opencode>` comun registrado por ninguna corrida, no existe una
-identidad `aligned` que confirmar entre #1435 y #1436, y por lo tanto tampoco
-existe una matriz 2x2 de evidencia real que auditar: la aplicacion de CA-1 y
-CA-2 de #1411 sobre un expediente vacio produce el mismo resultado en las
-cuatro celdas.
+CA-1 exige fijar un `<sha-baseline-inicial>`, `<tag-certificable>`, `<version>`,
+`<commit-fuente>` y `<checksum-opencode>` comunes a #1435 y #1436, y confirmar
+identidad `aligned` en ambos runtimes con `diagnose-installation-identity.sh`.
+Ninguna corrida registro ninguno de esos cinco valores, de modo que no hay
+identidad que confirmar ni release que comparar entre los dos expedientes.
 
-| Celda | Agentes forzados | Discovery vs. invocacion | Evidencia disponible |
-|---|---|---|---|
-| write-side Claude | `test-writer` -> `implementer` -> `smoke-test-writer` -> `reviewer` | Ninguna de las dos observada | Ninguna: issue fixture no creado, PR no abierto |
-| write-side OpenCode | idem | Ninguna de las dos observada | Ninguna |
-| read-side Claude | `projection-test-writer` -> `projection-implementer` -> `smoke-test-writer` -> `reviewer` | Ninguna de las dos observada | Ninguna |
-| read-side OpenCode | idem | Ninguna de las dos observada | Ninguna |
+Esa ausencia tampoco se rellena por inferencia: reutilizar la release que
+certifico `/mefisto:tooling` en #1066, leer la version del checkout de
+desarrollo o derivarla del cache de plugins instalado produciria una identidad
+que ninguna corrida verifico. La seccion "Invariantes y prerrequisitos (CA-1)"
+del protocolo y MEF-ADR-0031 rechazan exactamente esa sustitucion, y este
+veredicto la rechaza tambien.
+
+### Matriz 2x2 auditada (CA-2 de #1411)
+
+Sin identidad `aligned` ni corridas lanzadas, la matriz write-side/read-side x
+Claude/OpenCode se audita dimension por dimension y arroja el mismo resultado
+en las cuatro celdas. La columna "Esperado por el protocolo" conserva lo que
+cada celda deberia haber evidenciado, para que #1464 pueda completarla sin
+reconstruir el criterio.
+
+| Dimension exigida por CA-2 | Esperado por el protocolo | write-side Claude | write-side OpenCode | read-side Claude | read-side OpenCode |
+|---|---|---|---|---|---|
+| Agentes efectivos | write-side: `test-writer` -> `implementer` -> `smoke-test-writer` -> `reviewer`; read-side: `projection-test-writer` -> `projection-implementer` -> `smoke-test-writer` -> `reviewer` | sin invocacion | sin invocacion | sin invocacion | sin invocacion |
+| Discovery vs. invocacion | discovery listado en Herdr antes de lanzar **y** invocacion efectiva durante la corrida, distinguidos entre si | ninguno de los dos observado | ninguno de los dos observado | ninguno de los dos observado | ninguno de los dos observado |
+| Acceso a conocimiento / Skill | ADRs alcanzables y, read-side, Skill `projections` con sus recursos Nivel 3 cargado y usado (MEF-ADR-0033/0034/0035) | sin evidencia | sin evidencia | sin evidencia | sin evidencia |
+| Fase roja o `no-red` (Stage 1) | fase roja real; `no-red` solo con la justificacion acotada de "Rutas de agentes forzadas y alcance del pipeline (CA-3)" | stage no ejecutado | stage no ejecutado | stage no ejecutado | stage no ejecutado |
+| Stage 2b | ejecutado sobre la Function del fixture, nunca `skipped` | stage no ejecutado | stage no ejecutado | stage no ejecutado | stage no ejecutado |
+| Reviewer (Stage 3) | veredicto del reviewer con un unico terminal | stage no ejecutado | stage no ejecutado | stage no ejecutado | stage no ejecutado |
+| Coverage gate (Stage 4) | resultado del gate consignado, sin remediacion ejercida | stage no ejecutado | stage no ejecutado | stage no ejecutado | stage no ejecutado |
+| PR y checks | PR real con `Closes #<issue>` y checks requeridos verdes o `NO_APLICAN` justificado | sin issue fixture y sin PR | sin issue fixture y sin PR | sin issue fixture y sin PR | sin issue fixture y sin PR |
+| Limpieza | PR cerrado sin merge, rama eliminada, issue fixture cerrado desde el consumidor, cero worktrees, baseline restaurado | nada que limpiar | nada que limpiar | nada que limpiar | nada que limpiar |
 
 ### Observabilidad (CA-3 de #1411)
 
@@ -602,6 +621,27 @@ Conforme al CA-4 de #1411, esta ausencia de evidencia:
   (#1436) -- las cuatro corridas, no un subconjunto, porque ninguna se llego a
   ejecutar -- sobre la release vigente al momento de reabrir la
   certificacion, siguiendo el protocolo ya fijado por #1434 sin modificarlo.
+
+Este `NO PASA` no contradice a "Resultado write-side (#1435)"/"Resultado
+read-side (#1436)", que anticipan que "mientras no haya corrida no hay defecto
+que reportar" y que #1411 "sigue bloqueado por ausencia de evidencia". Ese
+razonamiento describe la ausencia de un **defecto tecnico** del harness
+-- ninguna corrida fallo, porque ninguna se lanzo -- y por eso este veredicto
+no es el `BLOQUEADO` de "Fail-closed y limpieza (CA-6)", que presupone una
+corrida lanzada con un recurso inaccesible. El bug #1464 no reporta un fallo
+observado del pipeline: rastrea la operacion en vivo faltante y hereda la
+dependencia que esas dos secciones declaraban sobre #1411. Ambas quedan
+intactas como punto de registro vacio; quien ejecute #1464 las completa con
+evidencia real sin tocar el protocolo de #1434.
+
+**Alcance de lo que este veredicto juzga.** Cubre unicamente las rutas
+write-side y `tipo:projection` normales de `/mefisto:implement`.
+`--scaffold-domain`, `--from-stage`, `--variant` y la remediacion de coverage
+no ejercida quedan explicitamente fuera: no se juzgan aqui y tampoco quedaran
+certificados cuando #1464 reponga la evidencia, salvo que un protocolo
+posterior los incorpore. Como ninguna celda pasa, ninguna ruta de
+`/mefisto:implement` queda certificada bajo Claude ni bajo OpenCode: no hay
+soporte parcial que declarar, y menos aun presentarlo como completo.
 
 Este veredicto cierra #1411: su CA-4 se cumple emitiendo `NO PASA` con causa
 documentada, en vez de dejar el issue abierto indefinidamente a la espera de
