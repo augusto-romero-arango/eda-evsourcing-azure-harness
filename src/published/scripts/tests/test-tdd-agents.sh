@@ -51,11 +51,11 @@ expected_effective_contract_body() {
     fi
     translated_source_body "$runtime" "$source"
 }
-# projection-test-writer (#1428) y test-writer (#1429) combinan ambos preambulos:
-# package-root/skill-root para las rutas de conocimiento -- ADRs, cheatsheet y
-# recursos de Nivel 3 del Skill (#1446) -- mas el contrato efectivo de
-# instructions-path para RootNamespace, en ese orden. A diferencia de
-# domain-scaffolder, que solo necesita el segundo.
+# projection-test-writer (#1428), test-writer (#1429) y projection-implementer
+# (#1433) combinan ambos preambulos: package-root/skill-root para las rutas de
+# conocimiento -- ADRs, cheatsheet y recursos de Nivel 3 del Skill (#1446) --
+# mas el contrato efectivo de instructions-path para RootNamespace, en ese
+# orden. A diferencia de domain-scaffolder, que solo necesita el segundo.
 expected_package_root_and_effective_contract_body() {
     local runtime="$1" source="$2"
     case "$runtime" in
@@ -131,11 +131,11 @@ for index in "${!agents[@]}"; do
     fi
     if [ "$(body "$source" | awk 'NF { print; exit }')" = '{{mefisto:assert-consumer-repo}}' ]; then pass "$agent inicia con el guard"; else fail "$agent no inicia con el guard"; fi
     if grep -Fqx '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/'"$agent"'.md. No editar a mano. -->' "$mirror"; then pass "$agent generado conserva marcador"; else fail "$agent generado sin marcador"; fi
-    if [ "$agent" = reviewer ] || [ "$agent" = projection-implementer ]; then
+    if [ "$agent" = reviewer ]; then
         if diff -u <(expected_rendered_body claude "$source") <(body_without_adapter_lines "$mirror") >/dev/null; then pass "$agent conserva exactamente un preambulo y el cuerpo traducido al proyectar Claude"; else fail "$agent altera el preambulo o el cuerpo al proyectar Claude"; fi
     elif [ "$agent" = domain-scaffolder ] || [ "$agent" = implementer ] || [ "$agent" = smoke-test-writer ]; then
         if diff -u <(expected_effective_contract_body claude "$source") <(body_without_adapter_lines "$mirror") >/dev/null; then pass "$agent conserva exactamente el preambulo del contrato efectivo y el cuerpo traducido al proyectar Claude"; else fail "$agent altera el preambulo del contrato efectivo o el cuerpo al proyectar Claude"; fi
-    elif [ "$agent" = projection-test-writer ] || [ "$agent" = test-writer ]; then
+    elif [ "$agent" = projection-test-writer ] || [ "$agent" = test-writer ] || [ "$agent" = projection-implementer ]; then
         if diff -u <(expected_package_root_and_effective_contract_body claude "$source") <(body_without_adapter_lines "$mirror") >/dev/null; then pass "$agent conserva exactamente ambos preambulos y el cuerpo traducido al proyectar Claude"; else fail "$agent altera alguno de los preambulos o el cuerpo al proyectar Claude"; fi
     elif diff -u <(translated_source_body claude "$source") <(body_without_adapter_lines "$mirror") >/dev/null; then pass "$agent conserva el cuerpo traducido al proyectar Claude"; else fail "$agent altera el cuerpo al proyectar Claude"; fi
     if [ "$agent" = domain-scaffolder ]; then
@@ -196,11 +196,11 @@ for agent in "${agents[@]}"; do
     claude="$REPO_ROOT/dist/claude/agents/$agent.md"
     opencode="$REPO_ROOT/dist/opencode/agents/$agent.md"
     if cmp -s "$claude" "$REPO_ROOT/agents/$agent.md"; then pass "$agent mirror Claude coincide byte a byte"; else fail "$agent mirror Claude diverge"; fi
-    if [ "$agent" = reviewer ] || [ "$agent" = projection-implementer ]; then
+    if [ "$agent" = reviewer ]; then
         if diff -u <(expected_rendered_body opencode "$REPO_ROOT/src/published/agents/$agent.md") <(body_without_adapter_lines "$opencode") >/dev/null; then pass "$agent conserva exactamente un preambulo y el cuerpo traducido al proyectar OpenCode"; else fail "$agent altera el preambulo o el cuerpo al proyectar OpenCode"; fi
     elif [ "$agent" = domain-scaffolder ] || [ "$agent" = implementer ] || [ "$agent" = smoke-test-writer ]; then
         if diff -u <(expected_effective_contract_body opencode "$REPO_ROOT/src/published/agents/$agent.md") <(body_without_adapter_lines "$opencode") >/dev/null; then pass "$agent conserva exactamente el preambulo del contrato efectivo y el cuerpo traducido al proyectar OpenCode"; else fail "$agent altera el preambulo del contrato efectivo o el cuerpo al proyectar OpenCode"; fi
-    elif [ "$agent" = projection-test-writer ] || [ "$agent" = test-writer ]; then
+    elif [ "$agent" = projection-test-writer ] || [ "$agent" = test-writer ] || [ "$agent" = projection-implementer ]; then
         if diff -u <(expected_package_root_and_effective_contract_body opencode "$REPO_ROOT/src/published/agents/$agent.md") <(body_without_adapter_lines "$opencode") >/dev/null; then pass "$agent conserva exactamente ambos preambulos y el cuerpo traducido al proyectar OpenCode"; else fail "$agent altera alguno de los preambulos o el cuerpo al proyectar OpenCode"; fi
     elif diff -u <(translated_source_body opencode "$REPO_ROOT/src/published/agents/$agent.md") <(body_without_adapter_lines "$opencode") >/dev/null; then pass "$agent conserva el cuerpo traducido al proyectar OpenCode"; else fail "$agent altera el cuerpo al proyectar OpenCode"; fi
     grep -Fq '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh' "$opencode" && pass "$agent OpenCode conserva marcador" || fail "$agent OpenCode no conserva marcador"

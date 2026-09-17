@@ -27,7 +27,11 @@ El Skill `projections` (ya precargado como texto) y los ADRs del marco viven **d
 
 ## Contrato con el consumidor
 
-`<RootNamespace>` / `{Dominio}` -- mismo contrato que `implementer.md`. Los bloques de codigo de este agente usan nombres de ejemplo de un proyecto consumidor; sustituyelos por los reales.
+Antes de explorar codigo, lee `{{mefisto:instructions-path}}` para resolver `<RootNamespace>` -- prefijo del namespace .NET del proyecto, declarado en el archivo efectivo como `RootNamespace`. `{Dominio}` no sale de ese archivo: se deriva del issue (`tipo:projection`) o de la estructura ya existente bajo `src/`.
+
+Si el archivo efectivo no declara `RootNamespace`, detente antes de crear o modificar cualquier archivo, informa al usuario que falta y remitelo a {{mefisto:command onboard}}.
+
+Los bloques de codigo de este agente usan nombres de ejemplo de un proyecto consumidor; sustituyelos por los reales.
 
 ## Principio fundamental
 
