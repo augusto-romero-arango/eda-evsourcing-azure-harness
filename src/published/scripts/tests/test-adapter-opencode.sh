@@ -133,7 +133,7 @@ assert_contains "$completo" 'MEFISTO_INSTRUCTIONS_PATH="AGENTS.md"' 'preambulo d
 [ "$(printf '%s\n' "$completo" | grep -c '^```bash$')" -eq 2 ] && pass 'config-path e instructions-path comparten un unico preambulo OpenCode adicional' || fail 'config-path e instructions-path no comparten preambulo OpenCode'
 assert_contains "$completo" '.mefisto/pipeline/logs/con-espacio.log' 'state-path traducida'
 assert_contains "$completo" '/mefisto:otra-orden' 'command conserva namespace'
-assert_not_contains "$completo" '{{mefisto:' 'siete directivas resueltas'
+assert_not_contains "$completo" '{{mefisto:' 'ocho directivas resueltas'
 assert_contains "$completo" '.claude/harness.config.json' 'contrato efectivo nombra el fallback legacy de config solo en la salida adaptada'
 assert_contains "$completo" 'CLAUDE.md' 'contrato efectivo nombra el fallback legacy de instrucciones solo en la salida adaptada'
 assert_not_contains "$completo" '/Users/' 'sin path de maquina'

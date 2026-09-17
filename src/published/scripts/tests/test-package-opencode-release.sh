@@ -10,6 +10,7 @@ PROJECTOR_SOURCE="$REPO_ROOT/src/published/scripts/project-opencode-release.sh"
 DIAGNOSTIC_SOURCE="$REPO_ROOT/src/published/scripts/diagnose-installation-identity.sh"
 CLAUDE_ADAPTER_SOURCE="$REPO_ROOT/src/published/scripts/adapters/adapter-claude.sh"
 CLAUDE_LIB_SOURCE="$REPO_ROOT/src/published/scripts/lib/adapter-claude.sh"
+EFFECTIVE_CONTRACT_SOURCE="$REPO_ROOT/src/published/scripts/lib/effective-contract.sh"
 FIXTURES="$REPO_ROOT/src/published/scripts/tests/fixtures/release-identity"
 WORK="$(mktemp -d)"; trap 'chmod -R u+w "$WORK" 2>/dev/null || true; rm -rf "$WORK"' EXIT
 PASS=0; FAIL=0
@@ -28,6 +29,7 @@ setup_repo() {
     cp "$DIAGNOSTIC_SOURCE" "$TEST_REPO/src/published/scripts/diagnose-installation-identity.sh"
     cp "$CLAUDE_ADAPTER_SOURCE" "$TEST_REPO/src/published/scripts/adapters/adapter-claude.sh"
     cp "$CLAUDE_LIB_SOURCE" "$TEST_REPO/src/published/scripts/lib/adapter-claude.sh"
+    cp "$EFFECTIVE_CONTRACT_SOURCE" "$TEST_REPO/src/published/scripts/lib/effective-contract.sh"
     chmod +x "$TEST_REPO/src/published/scripts/package-opencode-release.sh" "$TEST_REPO/src/published/scripts/project-opencode-release.sh" "$TEST_REPO/src/published/scripts/diagnose-installation-identity.sh"
     chmod +x "$TEST_REPO/src/published/scripts/install-opencode-release.sh" "$TEST_REPO/src/published/scripts/mefisto-opencode"
     printf '{"version":"1.2.3"}\n' > "$TEST_REPO/.claude-plugin/plugin.json"

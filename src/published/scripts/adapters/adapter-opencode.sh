@@ -12,7 +12,7 @@ HOOKS_CONTRACT="$REPO_ROOT/src/published/hooks/interactive-hooks.json"
 HOOKS_VALIDATOR="$REPO_ROOT/src/published/scripts/validate-interactive-hooks.sh"
 MCP_REGISTRY="$REPO_ROOT/src/published/contract/mcp-servers.json"
 MCP_VALIDATOR="$REPO_ROOT/src/published/scripts/validate-published-mcp.sh"
-source "$SCRIPT_DIR/../lib/effective-contract.sh"
+source "$SCRIPT_DIR/../lib/effective-contract.sh" || { printf '%s\n' "ERROR: falta src/published/scripts/lib/effective-contract.sh; sin esa biblioteca las rutas efectivas del contrato consumidor no se resolverian." >&2; exit 1; }
 
 error() { printf '%s\n' "$1" >&2; return 1; }
 frontmatter() { awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$1"; }
