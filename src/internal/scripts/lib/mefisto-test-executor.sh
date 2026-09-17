@@ -82,6 +82,27 @@
 #     consumidor, no de esta biblioteca), 130 si la corrida termino por INT,
 #     143 si termino por TERM.
 #
+# `set -euo pipefail` del caller: todo pipeline interno de Mefisto lo activa
+# (mefisto-tooling-pipeline.sh, mefisto-release.sh, mefisto-batch-pipeline.sh...)
+# y el consumidor #1416 no sera la excepcion, asi que esta biblioteca esta
+# escrita para sobrevivirlo sin que el caller tenga que apagarlo:
+#   - Todo comando cuyo exit no-cero es DATO, no error, va dentro de una lista
+#     '||' (la ejecucion de cada entrada, los `wait` de los workers): con
+#     set -e heredado, 'cmd; rc=$?' a secas aborta el subshell del worker en la
+#     primera entrada roja -- el carril entero quedaria CANCELLED y las
+#     entradas siguientes no correrian, exactamente lo contrario de CA-3.
+#   - Ningun argumento se lee sin default ('${1:-}'): con set -u, una llamada
+#     incompleta debe morir en la validacion explicita de abajo, con un mensaje
+#     accionable, no con un 'unbound variable' del shell.
+# El bloque [J] de .claude/scripts/tests/test-mefisto-test-executor.sh corre la
+# biblioteca bajo `set -euo pipefail` para que la regresion no vuelva en
+# silencio.
+#
+# Cortesia con el shell del caller: mefisto_test_executor_run deja el monitor
+# mode ('set -m') y los traps de INT/TERM como los encontro -- los traps
+# previos se capturan con 'trap -p' y se restauran con 'eval', en vez de un
+# 'trap - INT TERM' que borraria el manejador de limpieza del consumidor.
+#
 # Bash 3.2 (macOS): sin 'declare -A', sin 'wait -n', sin 'mapfile'/'readarray'.
 # Los tres workers se identifican por variable suelta (pid1/pid2/pid3), nunca
 # por array indexado por PID -- ni hace falta un array: son siempre tres. Los
@@ -193,8 +214,12 @@ _mefisto_test_executor_run_one() {
     start_epoch=$(date -u +%s)
     start_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-    ( cd "$repo_root" && "$repo_root/$ruta" ) >"$log_file" 2>&1
-    local exit_code=$?
+    # '|| exit_code=$?' y NO 'cmd; exit_code=$?': dentro de una lista '||' el
+    # exit no-cero de la entrada no dispara el set -e que el worker heredo del
+    # caller (ver la cabecera). Con la forma a secas, la primera entrada roja
+    # mataria el subshell del worker y el resto del carril quedaria sin correr.
+    local exit_code=0
+    ( cd "$repo_root" && "$repo_root/$ruta" ) >"$log_file" 2>&1 || exit_code=$?
 
     local end_epoch end_iso duration
     end_epoch=$(date -u +%s)
@@ -319,6 +344,12 @@ _mefisto_test_executor_reconcile_lane() {
 # cual estaba en el instante de la senal, y depender de ese detalle de
 # alcance dinamico es mas fragil que un puñado de globales que la propia
 # mefisto_test_executor_run resetea al empezar cada corrida.
+#
+# Los tres globales se inicializan aqui, al sourcear, para que la funcion sea
+# legible bajo 'set -u' aunque alguien la invoque antes de la primera corrida.
+_MEFISTO_TEST_EXECUTOR_SIGNAL=""
+_MEFISTO_TEST_EXECUTOR_CANCEL_FILE=""
+_MEFISTO_TEST_EXECUTOR_WORKER_PIDS=""
 _mefisto_test_executor_on_signal() {
     local senal="$1"
     _MEFISTO_TEST_EXECUTOR_SIGNAL="$senal"
@@ -326,9 +357,16 @@ _mefisto_test_executor_on_signal() {
 
     local pid
     for pid in $_MEFISTO_TEST_EXECUTOR_WORKER_PIDS; do
-        kill -"$senal" -"$pid" 2>/dev/null
-        kill -9 -"$pid" 2>/dev/null
+        # Fallback al PID suelto si el grupo no existe: 'set -m' puede no
+        # conceder job control en algun entorno (shell sin terminal de
+        # control), y ahi el worker se queda en el grupo del coordinador, con
+        # lo que 'kill -SENAL -$pid' falla por grupo inexistente. Matar al
+        # coordinador por error no es un riesgo: '-$pid' solo puede resolver a
+        # un grupo cuyo lider es ese worker recien forkeado, nunca al propio.
+        kill -"$senal" -"$pid" 2>/dev/null || kill -"$senal" "$pid" 2>/dev/null
+        kill -9 -"$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null
     done
+    return 0
 }
 
 # --- Entry point --------------------------------------------------------
@@ -343,10 +381,10 @@ _mefisto_test_executor_on_signal() {
 # `mefisto_test_executor_run ...; rc=$?`) -- nunca por stdout: esta funcion no
 # imprime nada por si misma (CA-1, "no imprime un UI final").
 mefisto_test_executor_run() {
-    local repo_root="$1" run_dir="$2"
-    local carril1="$3" entradas1="$4"
-    local carril2="$5" entradas2="$6"
-    local carril3="$7" entradas3="$8"
+    local repo_root="${1:-}" run_dir="${2:-}"
+    local carril1="${3:-}" entradas1="${4:-}"
+    local carril2="${5:-}" entradas2="${6:-}"
+    local carril3="${7:-}" entradas3="${8:-}"
 
     if [ -z "$repo_root" ] || [ -z "$run_dir" ] || [ -z "$carril1" ] || [ -z "$carril2" ] || [ -z "$carril3" ]; then
         echo "ERROR: [ejecutor-tests] repo_root, run_dir y los tres nombres de carril son obligatorios" >&2
@@ -373,6 +411,14 @@ mefisto_test_executor_run() {
     # esto (job control no lo gestiona), pero para no depender de esa asimetria
     # ambos traps se instalan en el mismo lugar, ya con los tres workers
     # arrancados y sus PID capturados.
+    # Traps y monitor mode del caller: se capturan ANTES de tocarlos y se
+    # restauran al final, para no dejar al consumidor sin su propio manejador
+    # de limpieza de INT/TERM (ni con job control encendido si no lo estaba).
+    local prev_trap_int prev_trap_term prev_monitor=0
+    prev_trap_int="$(trap -p INT)"
+    prev_trap_term="$(trap -p TERM)"
+    case "$-" in *m*) prev_monitor=1 ;; esac
+
     local pid1 pid2 pid3
     set -m
     ( _mefisto_test_executor_run_lane "$repo_root" "$run_dir" "$carril1" "$entradas1" "$_MEFISTO_TEST_EXECUTOR_CANCEL_FILE" ) &
@@ -381,7 +427,7 @@ mefisto_test_executor_run() {
     pid2=$!
     ( _mefisto_test_executor_run_lane "$repo_root" "$run_dir" "$carril3" "$entradas3" "$_MEFISTO_TEST_EXECUTOR_CANCEL_FILE" ) &
     pid3=$!
-    set +m
+    [ "$prev_monitor" -eq 1 ] || set +m
 
     _MEFISTO_TEST_EXECUTOR_WORKER_PIDS="$pid1 $pid2 $pid3"
 
@@ -394,14 +440,20 @@ mefisto_test_executor_run() {
     # terminado de morir -- el segundo bloque de `wait` (uno por PID, no un
     # `wait -n`: no existe en bash 3.2) cierra esa ventana sin importar el
     # comportamiento exacto de la version de bash que lo corre.
-    wait "$pid1" "$pid2" "$pid3" 2>/dev/null
+    #
+    # Los cuatro `wait` van en lista '||': el exit no-cero de un worker (una
+    # entrada roja, o el 130/143 del worker señalado) es DATO para esta lib, y
+    # sin el '||' abortaria al coordinador bajo el set -e heredado del caller
+    # -- sin reconciliar CANCELLED ni devolver 130/143 (ver cabecera).
+    wait "$pid1" "$pid2" "$pid3" 2>/dev/null || true
     if [ -n "$_MEFISTO_TEST_EXECUTOR_SIGNAL" ]; then
-        wait "$pid1" 2>/dev/null
-        wait "$pid2" 2>/dev/null
-        wait "$pid3" 2>/dev/null
+        wait "$pid1" 2>/dev/null || true
+        wait "$pid2" 2>/dev/null || true
+        wait "$pid3" 2>/dev/null || true
     fi
 
-    trap - INT TERM
+    if [ -n "$prev_trap_int" ]; then eval "$prev_trap_int"; else trap - INT; fi
+    if [ -n "$prev_trap_term" ]; then eval "$prev_trap_term"; else trap - TERM; fi
 
     # Reconciliacion incondicional (ver docstring de la funcion): en el
     # camino feliz no encuentra nada, en el interrumpido rellena CANCELLED.

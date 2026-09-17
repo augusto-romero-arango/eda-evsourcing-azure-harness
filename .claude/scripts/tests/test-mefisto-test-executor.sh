@@ -27,6 +27,10 @@
 #       carril producen results.tsv con tantas lineas como entradas, orden
 #       1..N sin huecos ni duplicados, cada linea con 8 campos -- sin
 #       escrituras concurrentes que la corrompan.
+#   [J] Consumidor con 'set -euo pipefail' (CA-1/CA-3): sourceada desde un
+#       pipeline interno tipico, una entrada roja no aborta el worker (el
+#       carril sigue y la fila queda FAIL, no CANCELLED) y los traps de INT y
+#       el monitor mode del caller quedan como estaban.
 #   [H] Senal INT (CA-4): dentro de una pty real (tmux, igual que
 #       test-watchdog-tty-isolation.sh), termina en <130> con las entradas no
 #       completadas marcadas CANCELLED, sin descendientes huerfanos (`ps`
@@ -188,25 +192,29 @@ source "$LIB"
 EOF
 chmod +x "$B_RUNNER"
 
-B_RESULTS=$("$BASH_BIN" "$B_RUNNER" mefisto_test_executor_results_file /tmp/run1 publicado)
-if [ "$B_RESULTS" = "/tmp/run1/publicado/results.tsv" ]; then
+# Ruta inexistente y unica de esta corrida (nunca un '/tmp/run1' compartido:
+# B-3 comprueba que los helpers NO la crean, y con una ruta global el test
+# fallaria por un directorio ajeno -- y lo borraria al limpiar).
+B_FAKE_RUN="$TMPDIR_ROOT/no-such-run"
+
+B_RESULTS=$("$BASH_BIN" "$B_RUNNER" mefisto_test_executor_results_file "$B_FAKE_RUN" publicado)
+if [ "$B_RESULTS" = "$B_FAKE_RUN/publicado/results.tsv" ]; then
     pass "B-1: mefisto_test_executor_results_file compone <run_dir>/<carril>/results.tsv"
 else
-    fail "B-1: se esperaba '/tmp/run1/publicado/results.tsv', se obtuvo '$B_RESULTS'"
+    fail "B-1: se esperaba '$B_FAKE_RUN/publicado/results.tsv', se obtuvo '$B_RESULTS'"
 fi
 
-B_LOGDIR=$("$BASH_BIN" "$B_RUNNER" mefisto_test_executor_log_dir /tmp/run1 interno)
-if [ "$B_LOGDIR" = "/tmp/run1/interno/logs" ]; then
+B_LOGDIR=$("$BASH_BIN" "$B_RUNNER" mefisto_test_executor_log_dir "$B_FAKE_RUN" interno)
+if [ "$B_LOGDIR" = "$B_FAKE_RUN/interno/logs" ]; then
     pass "B-2: mefisto_test_executor_log_dir compone <run_dir>/<carril>/logs"
 else
-    fail "B-2: se esperaba '/tmp/run1/interno/logs', se obtuvo '$B_LOGDIR'"
+    fail "B-2: se esperaba '$B_FAKE_RUN/interno/logs', se obtuvo '$B_LOGDIR'"
 fi
 
-if [ ! -e /tmp/run1 ]; then
+if [ ! -e "$B_FAKE_RUN" ]; then
     pass "B-3: ninguno de los dos helpers crea nada en disco (solo formatea rutas)"
 else
-    fail "B-3: /tmp/run1 no deberia existir -- los helpers tienen efectos secundarios"
-    rm -rf /tmp/run1
+    fail "B-3: '$B_FAKE_RUN' no deberia existir -- los helpers tienen efectos secundarios"
 fi
 
 # ============================================================================
@@ -369,6 +377,78 @@ if [ "$G_BAD_LINES" = "0" ]; then
     pass "G-3: las 15 lineas tienen exactamente 8 campos cada una (ninguna linea torcida/corrupta)"
 else
     fail "G-3: $G_BAD_LINES linea(s) con un numero de campos distinto de 8"
+fi
+
+# ============================================================================
+echo ""
+echo "[J] Consumidor con 'set -euo pipefail': una entrada roja no aborta el carril, y los traps del caller sobreviven"
+
+# Regresion: todo pipeline interno de Mefisto corre con 'set -euo pipefail', y
+# el consumidor #1416 sourceara esta lib desde uno. Con set -e heredado, un
+# 'cmd; rc=$?' dentro del worker aborta el subshell en la PRIMERA entrada roja:
+# el carril entero termina CANCELLED, las entradas siguientes no corren y la
+# funcion devuelve 0 igual -- un rojo disfrazado de "cancelado", el peor modo
+# de falla posible para un runner de pruebas.
+J_RUNNER="$TMPDIR_ROOT/.j-runner.sh"
+cat > "$J_RUNNER" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+source "$LIB"
+trap 'echo TRAP_PREVIO_DEL_CALLER' INT
+
+# La llamada va DESNUDA, nunca dentro de un '|| ...': bash desactiva set -e
+# durante todo el cuerpo de una funcion invocada como parte de una lista
+# '&&'/'||', con lo que el propio blindaje del test ocultaria la regresion que
+# este bloque existe para detectar. Si un set -e heredado aborta la corrida,
+# este script muere aqui y '.rc' nunca se escribe -- J-1 lo delata.
+mefisto_test_executor_run "\$1" "\$2" laneA "\$3" laneB "t/ok.sh" laneC ""
+echo "rc=\$?" > "\$2/.rc"
+trap -p INT > "\$2/.trap-int"
+case "\$-" in *m*) echo "monitor-on" ;; *) echo "monitor-off" ;; esac > "\$2/.monitor"
+EOF
+chmod +x "$J_RUNNER"
+
+RUN_J="$TMPDIR_ROOT/run-j"
+mkdir -p "$RUN_J"
+ENT_J=$(printf '%s\n' "t/fail7.sh" "t/ok.sh")
+"$BASH_BIN" "$J_RUNNER" "$BASE" "$RUN_J" "$ENT_J" >/dev/null 2>&1
+J_RC="$(cat "$RUN_J/.rc" 2>/dev/null)"
+
+if [ "$J_RC" = "rc=0" ]; then
+    pass "J-1: bajo 'set -euo pipefail' la corrida completa retorna 0 (no aborta al coordinador)"
+else
+    fail "J-1: se esperaba 'rc=0', se obtuvo '$J_RC'"
+fi
+
+J_LANEA="$(cat "$RUN_J/laneA/results.tsv" 2>/dev/null)"
+if printf '%s\n' "$J_LANEA" | sed -n '1p' | grep -qF $'1\tt/fail7.sh\tFAIL\t7\t'; then
+    pass "J-2: la entrada roja queda FAIL con su exit code real (no CANCELLED por un set -e heredado)"
+else
+    fail "J-2: no se encontro la fila FAIL esperada bajo set -e: $J_LANEA"
+fi
+if printf '%s\n' "$J_LANEA" | sed -n '2p' | grep -qF $'2\tt/ok.sh\tPASS\t0\t'; then
+    pass "J-3: la entrada siguiente SI corre pese al set -e del caller (CA-3 se sostiene)"
+else
+    fail "J-3: la segunda entrada no corrio bajo set -e: $J_LANEA"
+fi
+
+J_LANEB="$(cut -f3 "$RUN_J/laneB/results.tsv" 2>/dev/null)"
+if [ "$J_LANEB" = "PASS" ]; then
+    pass "J-4: el otro carril tampoco se ve afectado bajo set -e"
+else
+    fail "J-4: se esperaba PASS en laneB, se obtuvo '$J_LANEB'"
+fi
+
+if grep -q "TRAP_PREVIO_DEL_CALLER" "$RUN_J/.trap-int" 2>/dev/null; then
+    pass "J-5: el trap de INT del caller sigue instalado tras la corrida (la lib lo restaura, no lo borra)"
+else
+    fail "J-5: la lib dejo al caller sin su trap de INT: $(cat "$RUN_J/.trap-int" 2>/dev/null)"
+fi
+
+if [ "$(cat "$RUN_J/.monitor" 2>/dev/null)" = "monitor-off" ]; then
+    pass "J-6: el monitor mode queda como estaba (apagado) tras la corrida"
+else
+    fail "J-6: la lib dejo 'set -m' encendido en el shell del caller"
 fi
 
 # ============================================================================
