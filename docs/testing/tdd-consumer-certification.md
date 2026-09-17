@@ -69,9 +69,10 @@ explicitos, y ninguno depende de que otro PR fixture se fusione:
 | read-side Claude | Claude Code | `tipo:projection` | `projection-test-writer` -> `projection-implementer` -> `smoke-test-writer` -> `reviewer` |
 | read-side OpenCode | OpenCode | `tipo:projection` | `projection-test-writer` -> `projection-implementer` -> `smoke-test-writer` -> `reviewer` |
 
-Los cuatro parten del mismo `<sha-baseline-inicial>`, se abren **abiertos e
-independientes** (nunca con `--variant`, que no produce PR) y cada uno cumple
-el Definition of Ready de la columna correspondiente
+Los cuatro se crean **abiertos e independientes**, los cuatro parten del mismo
+`<sha-baseline-inicial>` -- el baseline se restaura a ese SHA antes de cada una
+de las cuatro corridas, que es lo que hace que ninguna dependa del PR de otra --
+y cada uno cumple el Definition of Ready de la columna correspondiente
 (`docs/adr/mef-adr-0011-definition-of-ready.md`): CAs deterministas, seccion
 `## Modelo de eventos` (write-side) o `## Necesidad de lectura` +
 `## Endpoints / rutas` + `## Capas de test esperadas` (read-side), y `##
@@ -83,11 +84,22 @@ misma que corre en produccion; este protocolo no la relaja ni la duplica.
 
 Antes de redactar los cuatro fixtures se registra `<dominio-certificable>`:
 un dominio ya scaffoldeado del baseline con Function App existente y su
-proyecto `tests/<NamespacePrefix>.<dominio-certificable>.SmokeTests` ya creado.
+proyecto `tests/<namespacePrefix>.<dominio-certificable>.SmokeTests` ya creado.
+`<namespacePrefix>` es el valor de la clave homonima de
+`.mefisto/harness.config.json` del consumidor -- el mismo que `tdd-pipeline.sh`
+lee como `HARNESS_NAMESPACE_PREFIX` para resolver el proyecto SmokeTests del
+dominio en Stage 2b, de modo que el placeholder de este protocolo y la deteccion
+real del pipeline no pueden divergir.
+
 Esa eleccion es la que deja **Stage 0 explicitamente fuera de alcance** (CA-3):
 ninguna de las cuatro corridas ofrece ni acepta scaffold de dominio, porque el
-directorio `src/<NamespacePrefix>.<dominio-certificable>/` ya existe antes de
+directorio `src/<namespacePrefix>.<dominio-certificable>/` ya existe antes de
 lanzar `/mefisto:implement`.
+
+La corrida write-side registra ademas `<aggregate-certificable>` y
+`<comando-certificable>`: un aggregate del mismo `<dominio-certificable>` y uno
+de sus comandos HTTP ya existentes, elegidos porque el campo sobre el que se
+agrega la regla de validacion ya viaja en ese comando.
 
 La corrida read-side elige ademas `<evento-certificable>`/`<vista-certificable>`:
 un evento y su read model **ya materializados en el baseline**, nunca el
@@ -97,9 +109,13 @@ dependa de una corrida distinta para tener contenido que leer.
 
 ### Templates de fixture
 
-Cada template deja placeholders para `<dominio-certificable>`,
-`<run-id>` (mismo formato `YYYYMMDD-HHMMSS-<tag-certificable>` del corte
-anterior) y el runtime de la fila. Las cuatro corridas usan la misma forma,
+Cada template deja placeholders para los valores ya registrados arriba
+(`<namespacePrefix>`, `<dominio-certificable>`, `<aggregate-certificable>`,
+`<comando-certificable>` en write-side; `<evento-certificable>`,
+`<vista-certificable>` en read-side), para la identidad de la release
+(`<tag-certificable>`, `<version>`, `<commit-fuente>`), para `<run-id>` (mismo
+formato `YYYYMMDD-HHMMSS-<tag-certificable>` del corte anterior) y para el
+runtime de la fila. Las cuatro corridas usan la misma forma,
 solo el `tipo:`, el runtime y el contenido determinista cambian.
 
 #### Template: write-side (Claude u OpenCode)
@@ -122,10 +138,12 @@ determinista y acotada sobre un campo existente de `<comando-certificable>`
 (por ejemplo, un rango o formato adicional) que hoy no esta cubierta por
 ningun test.
 
-## Contrato HTTP del comando
-
-`<comando-certificable>` ya expone su endpoint HTTP; este fixture no cambia
-verbo, ruta ni codigo de exito. Los conserva sin modificacion.
+`<comando-certificable>` ya expone su endpoint HTTP y este fixture no lo
+introduce ni lo modifica: conserva verbo, ruta y codigo de exito sin cambio,
+asi que la fila "Contrato HTTP del comando" del DoR queda *No aplica*. Esta
+constancia va aqui, dentro de `## Modelo de eventos`, y no bajo un encabezado
+propio: MEF-ADR-0011 fija que esa fila es la unica de la tabla que no nombra
+una seccion del body.
 
 ## Criterios de aceptacion
 
@@ -134,9 +152,9 @@ verbo, ruta ni codigo de exito. Los conserva sin modificacion.
 - CA-2: la implementacion hace pasar ese test sin modificar ningun test
   existente ni el contrato HTTP del comando.
 - CA-3: el diff toca al menos un archivo bajo
-  `src/<NamespacePrefix>.<dominio-certificable>/.../Function/`, de modo que
+  `src/<namespacePrefix>.<dominio-certificable>/.../Function/`, de modo que
   Stage 2b se ejecuta contra el proyecto SmokeTests ya existente del dominio.
-- CA-4: `tests/<NamespacePrefix>.<dominio-certificable>.SmokeTests` gana un
+- CA-4: `tests/<namespacePrefix>.<dominio-certificable>.SmokeTests` gana un
   caso nuevo para la regla de validacion.
 - CA-5: todos los tests (unitarios y de compilacion de smoke tests) pasan al
   cierre del pipeline.
@@ -144,9 +162,9 @@ verbo, ruta ni codigo de exito. Los conserva sin modificacion.
 ## Impacto en archivos
 
 - Modifica: el aggregate/handler de `<comando-certificable>` y su Function en
-  `src/<NamespacePrefix>.<dominio-certificable>/`.
+  `src/<namespacePrefix>.<dominio-certificable>/`.
 - Modifica: los tests correspondientes en
-  `tests/<NamespacePrefix>.<dominio-certificable>.Tests/` y en el proyecto
+  `tests/<namespacePrefix>.<dominio-certificable>.Tests/` y en el proyecto
   SmokeTests del dominio.
 - No crea proyectos nuevos ni toca otro dominio.
 
@@ -200,14 +218,14 @@ colision de nombres porque no se crea ninguna Function.
   (patron `Obtener*/FunctionEndpoint.cs` o `Listar*/FunctionEndpoint.cs`), de
   modo que Stage 2b se ejecuta contra el proyecto SmokeTests ya existente del
   dominio.
-- CA-4: `tests/<NamespacePrefix>.<dominio-certificable>.SmokeTests` gana un
+- CA-4: `tests/<namespacePrefix>.<dominio-certificable>.SmokeTests` gana un
   caso que verifica el campo nuevo end-to-end.
 - CA-5: todos los tests pasan al cierre del pipeline.
 
 ## Impacto en archivos
 
 - Modifica: la proyeccion `<vista-certificable>` y su Function GET en
-  `src/<NamespacePrefix>.<dominio-certificable>/`.
+  `src/<namespacePrefix>.<dominio-certificable>/`.
 - Modifica: los tests de proyeccion y el proyecto SmokeTests del dominio.
 - No crea proyeccion, store ni Function nuevos.
 
@@ -241,11 +259,15 @@ En las cuatro corridas:
   divergencia, no un resultado aceptable de este protocolo).
 - **Stage 3 (reviewer, fase refactor)** debe dejar todos los tests pasando y
   no introducir cambios funcionales fuera del alcance declarado.
-- **Stage 4 (coverage gate) debe emitir un resultado** -- `passed` o
-  `skipped` con motivo explicito (por ejemplo, "sin archivos de logica que
-  evaluar" si el cambio cae integramente en excluidos) -- nunca ausencia de
+- **Stage 4 (coverage gate) debe emitir un resultado** -- uno de los tres que
+  `tdd-pipeline.sh` sabe producir en `AGENT_CG_RES`: `passed` (cobertura sobre
+  el umbral), `gaps` (umbral no alcanzado; el gate advierte y continua, no
+  aborta) o `skipped` con motivo explicito (sin `dotnet-coverage`, sin archivos
+  de logica que evaluar, o medicion no concluyente). Nunca ausencia de
   registro. `AGENT_CG_RES` queda en el manifiesto de cada corrida
-  independientemente del valor.
+  independientemente del valor; `gaps` es un resultado registrable, no un fallo
+  del protocolo, y solo abre divergencia si difiere entre las dos corridas
+  espejo del mismo fixture sin causa atribuible a runtime/modelo.
 - **Stage 0 (scaffold de dominio) queda explicitamente fuera de alcance**: la
   eleccion de `<dominio-certificable>` con Function App ya existente asegura
   que ninguna corrida ofrece ni ejecuta scaffold. Este protocolo no certifica
@@ -272,7 +294,12 @@ Desde cada pane de ejecucion se invoca directamente, sin pipeline anidado:
 Ninguna invocacion agrega `--variant` (no produce PR, no sirve a este gate) ni
 fija proveedor o modelo: las cuatro corridas dejan que cada runtime resuelva su
 perfil neutral (`fast`/`balanced`/`deep`) automaticamente, igual que la fila
-Claude de #1181. Registra por cada stage de cada corrida: perfil neutral
+Claude de #1181. Esto **se desvia deliberadamente** de la fila OpenCode del
+corte anterior, que si pasaba `--models 'writer=...,reviewer=...'`: aqui la
+seleccion automatica es parte de lo que se certifica, asi que fijar el modelo
+enmascararia justo la diferencia de adaptador que MEF-ADR-0050 exige dejar
+visible. Si una corrida no arranca sin `--models`, eso es un `NO PASA` con bug
+en Mefisto, no una licencia para agregar el flag. Registra por cada stage de cada corrida: perfil neutral
 solicitado, modelo efectivo, origen de la seleccion (automatica o heredada),
 runtime y `<version>`/`<commit-fuente>` de la release activa. La espera de
 agentes y checks de CI quedan fuera de la estimacion activa de quien ejecuta el
@@ -297,7 +324,7 @@ correlacionado por issue/stage/session, con el mismo regimen de redaccion que
 | Ventana temporal | inicio/fin de la corrida completa y de cada stage, con zona horaria |
 | Argv | invocacion exacta de `/mefisto:implement <issue>` sin variables ni valores sensibles |
 | Identidad de ejecucion | runtime, perfil neutral por stage, modelo efectivo/origen, session id (hash) |
-| Stages y gates | resultado de Stage 1/2/2b/3/4 (`passed`/`skipped`/motivo), explicitamente marcando Stage 0 como no ejecutado |
+| Stages y gates | resultado de Stage 1/2/2b/3/4 con el vocabulario real del pipeline (`passed`/`blocked`/`failed` en 1/2/3, `passed`/`skipped` + motivo en 2b, `passed`/`gaps`/`skipped` + motivo en 4), explicitamente marcando Stage 0 como no ejecutado |
 | Checks | conclusiones de los checks requeridos del PR, o `NO_APLICAN` con el motivo (igual criterio que #1181 cuando el workflow no cubre las rutas tocadas) |
 | Summaries | los summaries de cada agente copiados al cuerpo del PR |
 | Streams y logs | streams neutrales redactados por stage, `events.log` y `pipeline-history.jsonl` correlacionados por issue/stage/session |
