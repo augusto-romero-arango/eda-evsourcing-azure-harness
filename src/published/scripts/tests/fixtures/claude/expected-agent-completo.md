@@ -84,8 +84,37 @@ fi
 MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"
 export MEFISTO_PACKAGE_ROOT
 ```
+```bash
+if [ -f ".mefisto/harness.config.json" ]; then
+    if [ -f ".claude/harness.config.json" ]; then
+        printf '%s\n' 'AVISO: se usara el config canonico .mefisto/harness.config.json; se ignora el legacy .claude/harness.config.json. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
+    fi
+    MEFISTO_CONFIG_PATH=".mefisto/harness.config.json"
+elif [ -f ".claude/harness.config.json" ]; then
+    MEFISTO_CONFIG_PATH=".claude/harness.config.json"
+else
+    printf '%s\n' 'ERROR: no se encontro el config canonico requerido .mefisto/harness.config.json.' >&2
+    printf '%s\n' '  Se acepta solo para lectura el fallback legacy .claude/harness.config.json.' >&2
+    exit 1
+fi
+export MEFISTO_CONFIG_PATH
+if [ -f "AGENTS.md" ]; then
+    if [ -f "CLAUDE.md" ]; then
+        printf '%s\n' 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
+    fi
+    MEFISTO_INSTRUCTIONS_PATH="AGENTS.md"
+elif [ -f "CLAUDE.md" ]; then
+    MEFISTO_INSTRUCTIONS_PATH="CLAUDE.md"
+else
+    printf '%s\n' 'ERROR: no se encontro AGENTS.md, la fuente canonica de directivas del consumidor.' >&2
+    printf '%s\n' '  Se acepta solo para lectura el fallback legacy CLAUDE.md.' >&2
+    printf '%s\n' '  Ejecuta /mefisto:onboard para diagnosticar y completar el contrato del consumidor.' >&2
+    exit 1
+fi
+export MEFISTO_INSTRUCTIONS_PATH
+```
 Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
-Rutas: .mefisto/harness.config.json y ${MEFISTO_PACKAGE_ROOT}.
+Rutas: ${MEFISTO_CONFIG_PATH}, ${MEFISTO_INSTRUCTIONS_PATH} y ${MEFISTO_PACKAGE_ROOT}.
 .mefisto/pipeline/logs/con-espacio.log
 Ejecuta "${MEFISTO_PACKAGE_ROOT}/scripts/prueba.sh" "$ARGUMENTS con espacios" ahora.
 Consulta /mefisto:otra-orden.

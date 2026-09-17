@@ -12,6 +12,7 @@ HOOKS_CONTRACT="$REPO_ROOT/src/published/hooks/interactive-hooks.json"
 HOOKS_VALIDATOR="$REPO_ROOT/src/published/scripts/validate-interactive-hooks.sh"
 MCP_REGISTRY="$REPO_ROOT/src/published/contract/mcp-servers.json"
 MCP_VALIDATOR="$REPO_ROOT/src/published/scripts/validate-published-mcp.sh"
+source "$SCRIPT_DIR/../lib/effective-contract.sh"
 
 error() { printf '%s\n' "$1" >&2; return 1; }
 frontmatter() { awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$1"; }
@@ -137,7 +138,9 @@ published_opencode_translate_body() {
                 elif [[ "$line" =~ ^(.*)\{\{mefisto:lifecycle-launcher\}\}(.*)$ ]]; then
                     translated="${BASH_REMATCH[1]}$(lifecycle_launcher_preamble)${BASH_REMATCH[2]}"
                 elif [[ "$line" =~ ^(.*)\{\{mefisto:config-path\}\}(.*)$ ]]; then
-                    translated="${BASH_REMATCH[1]}.mefisto/harness.config.json${BASH_REMATCH[2]}"
+                    translated="${BASH_REMATCH[1]}"'${MEFISTO_CONFIG_PATH}'"${BASH_REMATCH[2]}"
+                elif [[ "$line" =~ ^(.*)\{\{mefisto:instructions-path\}\}(.*)$ ]]; then
+                    translated="${BASH_REMATCH[1]}"'${MEFISTO_INSTRUCTIONS_PATH}'"${BASH_REMATCH[2]}"
                 elif [[ "$line" =~ ^(.*)\{\{mefisto:state-path[[:space:]]+([A-Za-z0-9][A-Za-z0-9._/-]*)\}\}(.*)$ ]]; then
                     translated="${BASH_REMATCH[1]}.mefisto/pipeline/${BASH_REMATCH[2]}${BASH_REMATCH[3]}"
                 elif [[ "$line" =~ ^(.*)\{\{mefisto:command[[:space:]]+([a-z0-9-]+)\}\}(.*)$ ]]; then
@@ -445,6 +448,13 @@ render() {
     if needs_package_root "$raw_body"; then
         [ -z "$preamble" ] || preamble="$preamble"$'\n'
         preamble="$preamble$(package_root_preamble)"
+    fi
+    local needs_config=0 needs_instructions=0
+    published_effective_contract_needs_config "$raw_body" && needs_config=1
+    published_effective_contract_needs_instructions "$raw_body" && needs_instructions=1
+    if [ "$needs_config" -eq 1 ] || [ "$needs_instructions" -eq 1 ]; then
+        [ -z "$preamble" ] || preamble="$preamble"$'\n'
+        preamble="$preamble$(published_effective_contract_preamble "$needs_config" "$needs_instructions")"
     fi
     printf '%s\n' '---'
     printf 'description: %s\n' "$(printf '%s' "$instance" | jq -r '.description | @json')"

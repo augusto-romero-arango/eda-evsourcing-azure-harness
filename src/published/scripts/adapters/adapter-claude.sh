@@ -4,6 +4,7 @@ set -uo pipefail
 export LC_ALL=C
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd -P)"
+source "$SCRIPT_DIR/../lib/effective-contract.sh"
 source "$SCRIPT_DIR/../lib/adapter-claude.sh"
 error() { printf '%s\n' "$1" >&2; return 1; }
 

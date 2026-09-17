@@ -27,7 +27,7 @@ permission_of() {
 }
 
 printf '%s\n' '[pre] adaptador, rutas y vocabulario'
-bash -n "$ADAPTER" && pass 'sintaxis Bash valida' || fail 'sintaxis Bash invalida'
+bash -n "$ADAPTER" && bash -n "$REPO_ROOT/src/published/scripts/lib/effective-contract.sh" && pass 'sintaxis Bash valida' || fail 'sintaxis Bash invalida'
 [ -x "$ADAPTER" ] && pass 'adaptador ejecutable' || fail 'adaptador no ejecutable'
 [ "$("$ADAPTER" root)" = dist/opencode ] && pass 'raiz dist/opencode' || fail 'raiz incorrecta'
 agent_path="$("$ADAPTER" path src/published/agents/agent-minimo.md)"
@@ -53,7 +53,7 @@ cp "$ADAPTER" "$FIXTURE_ADAPTER"; chmod +x "$FIXTURE_ADAPTER"
 cp "$REPO_ROOT/src/published/scripts/validate-interactive-hooks.sh" "$SKILL_REPO/src/published/scripts/"
 cp "$REPO_ROOT/src/published/scripts/validate-published-mcp.sh" "$SKILL_REPO/src/published/scripts/"
 mkdir -p "$SKILL_REPO/src/published/scripts/lib"
-cp "$REPO_ROOT/src/published/scripts/lib/jsonschema-lite.jq" "$SKILL_REPO/src/published/scripts/lib/"
+cp "$REPO_ROOT/src/published/scripts/lib/jsonschema-lite.jq" "$REPO_ROOT/src/published/scripts/lib/effective-contract.sh" "$SKILL_REPO/src/published/scripts/lib/"
 cp "$REPO_ROOT/src/published/contract/mcp-servers.json" "$REPO_ROOT/src/published/contract/mcp-servers.schema.json" "$REPO_ROOT/src/published/contract/published-artifact.schema.json" "$SKILL_REPO/src/published/contract/"
 cp "$MAPPING" "$SKILL_REPO/src/published/contract/"
 cp "$REPO_ROOT/.mcp.json" "$SKILL_REPO/.mcp.json"
@@ -127,11 +127,15 @@ assert_contains "$completo" '"todowrite":"deny"' 'permiso sin capacidad neutral 
 assert_contains "$completo" '"${MEFISTO_PACKAGE_ROOT}/scripts/prueba.sh" "$ARGUMENTS con espacios"' 'run cita la ruta y preserva argumentos con espacios'
 assert_contains "$completo" 'package-root' 'preambulo OpenCode consulta el launcher activo'
 assert_contains "$completo" 'export MEFISTO_PACKAGE_ROOT' 'preambulo OpenCode exporta la raiz efectiva'
-assert_contains "$completo" 'Rutas: .mefisto/harness.config.json y ${MEFISTO_PACKAGE_ROOT}.' 'varias directivas preservan texto circundante'
+assert_contains "$completo" 'Rutas: ${MEFISTO_CONFIG_PATH}, ${MEFISTO_INSTRUCTIONS_PATH} y ${MEFISTO_PACKAGE_ROOT}.' 'varias directivas preservan texto circundante'
+assert_contains "$completo" 'MEFISTO_CONFIG_PATH=".mefisto/harness.config.json"' 'preambulo del contrato efectivo resuelve config canonico'
+assert_contains "$completo" 'MEFISTO_INSTRUCTIONS_PATH="AGENTS.md"' 'preambulo del contrato efectivo resuelve instructions canonico'
+[ "$(printf '%s\n' "$completo" | grep -c '^```bash$')" -eq 2 ] && pass 'config-path e instructions-path comparten un unico preambulo OpenCode adicional' || fail 'config-path e instructions-path no comparten preambulo OpenCode'
 assert_contains "$completo" '.mefisto/pipeline/logs/con-espacio.log' 'state-path traducida'
 assert_contains "$completo" '/mefisto:otra-orden' 'command conserva namespace'
 assert_not_contains "$completo" '{{mefisto:' 'siete directivas resueltas'
-assert_not_contains "$completo" '.claude/' 'sin ruta Claude'
+assert_contains "$completo" '.claude/harness.config.json' 'contrato efectivo nombra el fallback legacy de config solo en la salida adaptada'
+assert_contains "$completo" 'CLAUDE.md' 'contrato efectivo nombra el fallback legacy de instrucciones solo en la salida adaptada'
 assert_not_contains "$completo" '/Users/' 'sin path de maquina'
 assert_not_contains "$completo" 'model:' 'agente hereda modelo'
 assert_contains "$completo" 'tools: {"microsoft-learn_*":false,"terraform_*":false}' 'tools MCP cerradas por defecto y ordenadas'
@@ -147,6 +151,80 @@ skill_root_preambles="$(printf '%s\n' "$skill_root_rendered" | grep -c 'mefisto_
 [ "$rc" -eq 0 ] && assert_contains "$skill_root_rendered" '"${MEFISTO_PACKAGE_ROOT}/skills/mefisto-projections"/read-apis.md' 'skill-root OpenCode adapta el layout físico' || fail 'skill-root OpenCode debio renderizar'
 [ "$rc" -eq 0 ] && assert_contains "$skill_root_rendered" 'paquete ${MEFISTO_PACKAGE_ROOT}; ejecuta "${MEFISTO_PACKAGE_ROOT}/scripts/prueba.sh" "$ARGUMENTS con espacios"' 'skill-root convive con package-root y run en OpenCode' || fail 'directivas de raiz combinadas no se tradujeron en OpenCode'
 [ "$skill_root_preambles" -eq 1 ] && pass 'varias directivas skill-root emiten un solo preambulo OpenCode' || fail 'skill-root OpenCode duplico el preambulo'
+
+printf '%s\n' '[contrato-efectivo] config-path e instructions-path'
+make_agent contrato-config '["read"]'
+printf '%s\n' '{{mefisto:config-path}}' >> "$WORK/contrato-config.md"
+render "$WORK/contrato-config.md" > "$WORK/contrato-config.rendered.md"
+CONFIG_PREAMBLE_CODE="$(extract_preamble "$WORK/contrato-config.rendered.md")"
+make_agent contrato-instrucciones '["read"]'
+printf '%s\n' '{{mefisto:instructions-path}}' >> "$WORK/contrato-instrucciones.md"
+render "$WORK/contrato-instrucciones.md" > "$WORK/contrato-instrucciones.rendered.md"
+INSTRUCTIONS_PREAMBLE_CODE="$(extract_preamble "$WORK/contrato-instrucciones.rendered.md")"
+resolve_config() { local cwd="$1"; (cd "$cwd" && bash -c "$CONFIG_PREAMBLE_CODE"$'\n''printf "%s\n" "$MEFISTO_CONFIG_PATH"'); }
+resolve_instructions() { local cwd="$1"; (cd "$cwd" && bash -c "$INSTRUCTIONS_PREAMBLE_CODE"$'\n''printf "%s\n" "$MEFISTO_INSTRUCTIONS_PATH"'); }
+
+CONTRATO="$WORK/contrato consumidor"; mkdir -p "$CONTRATO/.mefisto" "$CONTRATO/.claude"
+
+printf '{}' > "$CONTRATO/.mefisto/harness.config.json"
+out="$(resolve_config "$CONTRATO" 2>"$WORK/config-canonico.err")"; rc=$?
+[ "$rc" -eq 0 ] && [ "$out" = '.mefisto/harness.config.json' ] && [ ! -s "$WORK/config-canonico.err" ] && pass 'config-path: solo canonico resuelve sin aviso' || fail 'config-path: solo canonico'
+
+rm -f "$CONTRATO/.mefisto/harness.config.json"
+printf '{}' > "$CONTRATO/.claude/harness.config.json"
+out="$(resolve_config "$CONTRATO" 2>"$WORK/config-legacy.err")"; rc=$?
+[ "$rc" -eq 0 ] && [ "$out" = '.claude/harness.config.json' ] && [ ! -s "$WORK/config-legacy.err" ] && pass 'config-path: solo legacy resuelve como fallback' || fail 'config-path: solo legacy'
+
+printf '{}' > "$CONTRATO/.mefisto/harness.config.json"
+out="$(resolve_config "$CONTRATO" 2>"$WORK/config-ambos.err")"; rc=$?
+[ "$rc" -eq 0 ] && [ "$out" = '.mefisto/harness.config.json' ] && grep -qF 'se usara el config canonico .mefisto/harness.config.json; se ignora el legacy .claude/harness.config.json' "$WORK/config-ambos.err" && pass 'config-path: coexistencia elige canonico y avisa sin mezclar' || fail 'config-path: coexistencia'
+
+rm -f "$CONTRATO/.mefisto/harness.config.json" "$CONTRATO/.claude/harness.config.json"
+out="$(resolve_config "$CONTRATO" 2>"$WORK/config-ausente.err")"; rc=$?
+[ "$rc" -ne 0 ] && [ -z "$out" ] && grep -qF 'no se encontro el config canonico requerido .mefisto/harness.config.json' "$WORK/config-ausente.err" && grep -qF 'fallback legacy .claude/harness.config.json' "$WORK/config-ausente.err" && pass 'config-path: ausencia total aborta nombrando canonico y legacy' || fail 'config-path: ausencia total'
+
+printf '{}' > "$CONTRATO/.mefisto/harness.config.json"; chmod 000 "$CONTRATO/.mefisto/harness.config.json"
+out="$(resolve_config "$CONTRATO" 2>"$WORK/config-ilegible.err")"; rc=$?
+if [ "$(id -u)" -eq 0 ]; then
+    pass 'config-path: no legible (omitido bajo root, sin aplicacion de permisos)'
+else
+    [ "$rc" -eq 0 ] && [ "$out" = '.mefisto/harness.config.json' ] && pass 'config-path: canonico no legible se sigue seleccionando, igual que resolve_harness_config_path' || fail 'config-path: canonico no legible'
+fi
+chmod 644 "$CONTRATO/.mefisto/harness.config.json"
+
+printf '%s\n' '@AGENTS.md' > "$CONTRATO/AGENTS.md"
+out="$(resolve_instructions "$CONTRATO" 2>"$WORK/instrucciones-canonico.err")"; rc=$?
+[ "$rc" -eq 0 ] && [ "$out" = 'AGENTS.md' ] && [ ! -s "$WORK/instrucciones-canonico.err" ] && pass 'instructions-path: solo canonico resuelve sin aviso' || fail 'instructions-path: solo canonico'
+
+rm -f "$CONTRATO/AGENTS.md"
+printf '%s\n' '@AGENTS.md' > "$CONTRATO/CLAUDE.md"
+out="$(resolve_instructions "$CONTRATO" 2>"$WORK/instrucciones-legacy.err")"; rc=$?
+[ "$rc" -eq 0 ] && [ "$out" = 'CLAUDE.md' ] && [ ! -s "$WORK/instrucciones-legacy.err" ] && pass 'instructions-path: solo legacy resuelve como fallback' || fail 'instructions-path: solo legacy'
+
+printf '%s\n' '@AGENTS.md' > "$CONTRATO/AGENTS.md"
+out="$(resolve_instructions "$CONTRATO" 2>"$WORK/instrucciones-ambos.err")"; rc=$?
+[ "$rc" -eq 0 ] && [ "$out" = 'AGENTS.md' ] && grep -qF 'se usara AGENTS.md; se ignora el legacy CLAUDE.md' "$WORK/instrucciones-ambos.err" && pass 'instructions-path: coexistencia elige canonico y avisa sin mezclar' || fail 'instructions-path: coexistencia'
+
+rm -f "$CONTRATO/AGENTS.md" "$CONTRATO/CLAUDE.md"
+out="$(resolve_instructions "$CONTRATO" 2>"$WORK/instrucciones-ausente.err")"; rc=$?
+[ "$rc" -ne 0 ] && [ -z "$out" ] && grep -qF 'no se encontro AGENTS.md' "$WORK/instrucciones-ausente.err" && grep -qF 'fallback legacy CLAUDE.md' "$WORK/instrucciones-ausente.err" && grep -qF '/mefisto:onboard' "$WORK/instrucciones-ausente.err" && pass 'instructions-path: ausencia total aborta con diagnostico de onboarding' || fail 'instructions-path: ausencia total'
+
+printf '%s\n' '@AGENTS.md' > "$CONTRATO/AGENTS.md"; chmod 000 "$CONTRATO/AGENTS.md"
+out="$(resolve_instructions "$CONTRATO" 2>"$WORK/instrucciones-ilegible.err")"; rc=$?
+if [ "$(id -u)" -eq 0 ]; then
+    pass 'instructions-path: no legible (omitido bajo root, sin aplicacion de permisos)'
+else
+    [ "$rc" -eq 0 ] && [ "$out" = 'AGENTS.md' ] && pass 'instructions-path: canonico no legible se sigue seleccionando' || fail 'instructions-path: canonico no legible'
+fi
+chmod 644 "$CONTRATO/AGENTS.md"
+
+make_agent contrato-repetido '["read"]'
+printf '%s\n' 'Primero {{mefisto:config-path}} y de nuevo {{mefisto:config-path}}; tambien {{mefisto:instructions-path}} y otra vez {{mefisto:instructions-path}}.' >> "$WORK/contrato-repetido.md"
+repetido_rendered="$(render "$WORK/contrato-repetido.md")"; rc=$?
+repetido_blocks="$(printf '%s\n' "$repetido_rendered" | grep -c '^```bash$')"
+[ "$rc" -eq 0 ] && [ "$repetido_blocks" -eq 1 ] && pass 'usos repetidos de config-path/instructions-path comparten un unico preambulo OpenCode' || fail 'usos repetidos duplicaron el preambulo OpenCode'
+[ "$(printf '%s\n' "$repetido_rendered" | grep -Fo '${MEFISTO_CONFIG_PATH}' | wc -l | tr -d '[:space:]')" -eq 2 ] && pass 'config-path conserva cada uso inline repetido' || fail 'config-path perdio un uso inline repetido'
+[ "$(printf '%s\n' "$repetido_rendered" | grep -Fo '${MEFISTO_INSTRUCTIONS_PATH}' | wc -l | tr -d '[:space:]')" -eq 2 ] && pass 'instructions-path conserva cada uso inline repetido' || fail 'instructions-path perdio un uso inline repetido'
 
 printf '%s\n' '[resolucion] launcher XDG y fallos OpenCode'
 PREAMBLE_CODE="$(extract_preamble "$WORK/completo.md")"

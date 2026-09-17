@@ -82,6 +82,21 @@ fi
 MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"
 export MEFISTO_PACKAGE_ROOT
 ```
+```bash
+if [ -f ".mefisto/harness.config.json" ]; then
+    if [ -f ".claude/harness.config.json" ]; then
+        printf '%s\n' 'AVISO: se usara el config canonico .mefisto/harness.config.json; se ignora el legacy .claude/harness.config.json. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
+    fi
+    MEFISTO_CONFIG_PATH=".mefisto/harness.config.json"
+elif [ -f ".claude/harness.config.json" ]; then
+    MEFISTO_CONFIG_PATH=".claude/harness.config.json"
+else
+    printf '%s\n' 'ERROR: no se encontro el config canonico requerido .mefisto/harness.config.json.' >&2
+    printf '%s\n' '  Se acepta solo para lectura el fallback legacy .claude/harness.config.json.' >&2
+    exit 1
+fi
+export MEFISTO_CONFIG_PATH
+```
 
 Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
 
@@ -125,7 +140,7 @@ Solo cuando todas las dependencias canonicas declaradas cerraron (`CLOSED`) o se
 
 ### 4. Detectar dominio(s) y necesidad de scaffold
 
-Obtiene todos los labels `dom:*` del issue y `namespacePrefix` desde `.mefisto/harness.config.json`. Si la configuracion no es consultable o `namespacePrefix` falta o esta vacio, informa el error y detente. Conserva `namespacePrefix` literalmente; para cada label convierte solo el nombre del dominio de kebab-case a PascalCase y comprueba `src/<namespacePrefix>.{DominioPascalCase}/`.
+Obtiene todos los labels `dom:*` del issue y `namespacePrefix` desde `${MEFISTO_CONFIG_PATH}`. Si la configuracion no es consultable o `namespacePrefix` falta o esta vacio, informa el error y detente. Conserva `namespacePrefix` literalmente; para cada label convierte solo el nombre del dominio de kebab-case a PascalCase y comprueba `src/<namespacePrefix>.{DominioPascalCase}/`.
 
 La necesidad de scaffold se deriva solo del alcance declarado: lee la seccion cuyo encabezado empieza con `## Impacto`, hasta el siguiente encabezado de nivel dos. Si esa seccion no existe o no menciona `src/<namespacePrefix>.{DominioPascalCase}/`, no preguntes por ese dominio. Si la menciona y el directorio no existe, es candidato a scaffold.
 

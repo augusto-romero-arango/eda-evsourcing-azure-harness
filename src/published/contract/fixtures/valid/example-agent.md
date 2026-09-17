@@ -4,3 +4,4 @@
 
 {{mefisto:assert-consumer-repo}}
 {{mefisto:config-path}}
+{{mefisto:instructions-path}}
