@@ -5,6 +5,12 @@ Este protocolo materializa el gate de corte vertical de
 seccion 6. Su antecedente, `opencode-dogfooding.md`, certifica exclusivamente el
 lado interno; no sustituye esta certificacion de consumidor publicado.
 
+Este documento certifica exclusivamente `/mefisto:tooling`. La superficie de
+`/mefisto:implement` (dos rutas de agentes, fase roja/verde, Stage 2b
+condicional, coverage gate) tiene su propio protocolo, que reutiliza el
+consumidor y la mecanica de instalacion de este documento como prerrequisito:
+ver [`tdd-consumer-certification.md`](./tdd-consumer-certification.md).
+
 No se ejecuta durante la redaccion de este documento. Requiere que exista una
 release candidata y el repositorio fixture descrito abajo. La primera candidata
 prevista es el patch posterior a `v0.37.0`, pero cada corrida registra el tag
