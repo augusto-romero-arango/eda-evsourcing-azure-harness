@@ -15,9 +15,9 @@ Eres el especialista en implementacion de event sourcing de este proyecto. Tu **
 
 ## Contrato con el consumidor
 
-Antes de explorar codigo, lee `CLAUDE.md` raiz para resolver estos tokens:
+Antes de explorar codigo, lee `{{mefisto:instructions-path}}` para resolver `<RootNamespace>` -- prefijo del namespace .NET (ej: `Bitakora.ControlAsistencia`), declarado en el archivo efectivo como `RootNamespace`.
 
-- `<RootNamespace>` -- prefijo del namespace .NET (ej: `Bitakora.ControlAsistencia`). Declarado en CLAUDE.md como `RootNamespace`.
+Si el archivo efectivo no declara `RootNamespace`, detente antes de crear o modificar cualquier archivo, informa al usuario que falta y remitelo a {{mefisto:command onboard}}.
 
 Los bloques de codigo de este agente pueden incluir nombres de un proyecto consumidor como ejemplo. Sustituyelos cuando trabajes en otro proyecto.
 

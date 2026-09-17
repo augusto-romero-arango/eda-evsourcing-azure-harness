@@ -133,7 +133,7 @@ for index in "${!agents[@]}"; do
     if grep -Fqx '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/'"$agent"'.md. No editar a mano. -->' "$mirror"; then pass "$agent generado conserva marcador"; else fail "$agent generado sin marcador"; fi
     if [ "$agent" = reviewer ] || [ "$agent" = projection-implementer ]; then
         if diff -u <(expected_rendered_body claude "$source") <(body_without_adapter_lines "$mirror") >/dev/null; then pass "$agent conserva exactamente un preambulo y el cuerpo traducido al proyectar Claude"; else fail "$agent altera el preambulo o el cuerpo al proyectar Claude"; fi
-    elif [ "$agent" = domain-scaffolder ]; then
+    elif [ "$agent" = domain-scaffolder ] || [ "$agent" = implementer ]; then
         if diff -u <(expected_effective_contract_body claude "$source") <(body_without_adapter_lines "$mirror") >/dev/null; then pass "$agent conserva exactamente el preambulo del contrato efectivo y el cuerpo traducido al proyectar Claude"; else fail "$agent altera el preambulo del contrato efectivo o el cuerpo al proyectar Claude"; fi
     elif [ "$agent" = projection-test-writer ] || [ "$agent" = test-writer ]; then
         if diff -u <(expected_package_root_and_effective_contract_body claude "$source") <(body_without_adapter_lines "$mirror") >/dev/null; then pass "$agent conserva exactamente ambos preambulos y el cuerpo traducido al proyectar Claude"; else fail "$agent altera alguno de los preambulos o el cuerpo al proyectar Claude"; fi
@@ -176,6 +176,10 @@ for agent in "${agents[@]}"; do
 done
 validator_fixture reviewer 'Posicional ajeno: $2'
 if "$VALIDATOR" "$WORK/reviewer.md" >/dev/null 2>&1; then fail 'reviewer no hereda placeholders exclusivos de test-writer'; else pass 'reviewer rechaza placeholders exclusivos de test-writer'; fi
+validator_fixture implementer 'Este agente corre dentro de Claude Code'
+if "$VALIDATOR" "$WORK/implementer.md" >/dev/null 2>&1; then fail 'implementer aun admite referencias a Claude/OpenCode tras salir de la excepcion legacy (#1430)'; else pass 'implementer rechaza referencias a Claude/OpenCode tras salir de la excepcion legacy (#1430)'; fi
+validator_fixture implementer 'Instalado via OpenCode'
+if "$VALIDATOR" "$WORK/implementer.md" >/dev/null 2>&1; then fail 'implementer aun admite referencias a OpenCode tras salir de la excepcion legacy (#1430)'; else pass 'implementer rechaza referencias a OpenCode tras salir de la excepcion legacy (#1430)'; fi
 validator_fixture test-writer 'Ruta legacy: $PLUGIN_ROOT'
 if "$VALIDATOR" "$WORK/test-writer.md" >/dev/null 2>&1; then fail 'test-writer aun admite el placeholder de raiz legacy'; else pass 'test-writer rechaza el placeholder de raiz legacy'; fi
 validator_fixture projection-implementer 'Posicional ajeno: $2'
@@ -190,7 +194,7 @@ for agent in "${agents[@]}"; do
     if cmp -s "$claude" "$REPO_ROOT/agents/$agent.md"; then pass "$agent mirror Claude coincide byte a byte"; else fail "$agent mirror Claude diverge"; fi
     if [ "$agent" = reviewer ] || [ "$agent" = projection-implementer ]; then
         if diff -u <(expected_rendered_body opencode "$REPO_ROOT/src/published/agents/$agent.md") <(body_without_adapter_lines "$opencode") >/dev/null; then pass "$agent conserva exactamente un preambulo y el cuerpo traducido al proyectar OpenCode"; else fail "$agent altera el preambulo o el cuerpo al proyectar OpenCode"; fi
-    elif [ "$agent" = domain-scaffolder ]; then
+    elif [ "$agent" = domain-scaffolder ] || [ "$agent" = implementer ]; then
         if diff -u <(expected_effective_contract_body opencode "$REPO_ROOT/src/published/agents/$agent.md") <(body_without_adapter_lines "$opencode") >/dev/null; then pass "$agent conserva exactamente el preambulo del contrato efectivo y el cuerpo traducido al proyectar OpenCode"; else fail "$agent altera el preambulo del contrato efectivo o el cuerpo al proyectar OpenCode"; fi
     elif [ "$agent" = projection-test-writer ] || [ "$agent" = test-writer ]; then
         if diff -u <(expected_package_root_and_effective_contract_body opencode "$REPO_ROOT/src/published/agents/$agent.md") <(body_without_adapter_lines "$opencode") >/dev/null; then pass "$agent conserva exactamente ambos preambulos y el cuerpo traducido al proyectar OpenCode"; else fail "$agent altera alguno de los preambulos o el cuerpo al proyectar OpenCode"; fi
