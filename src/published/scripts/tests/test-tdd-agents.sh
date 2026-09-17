@@ -30,6 +30,15 @@ translated_source_body() {
         opencode) published_opencode_translate_body "$source" "$source_body" ;;
     esac
 }
+expected_rendered_body() {
+    local runtime="$1" source="$2"
+    case "$runtime" in
+        claude) published_claude_package_root_preamble ;;
+        opencode) package_root_preamble ;;
+    esac
+    translated_source_body "$runtime" "$source"
+}
+first_bash_block() { awk '/^```bash$/{inside=1; next} /^```$/{if (inside) exit} inside' "$1"; }
 validator_fixture() {
     local agent="$1" extra="$2" destination="$WORK/$agent.md"
     printf '%s\n' '---' > "$destination"
@@ -96,7 +105,9 @@ for index in "${!agents[@]}"; do
     fi
     if [ "$(body "$source" | awk 'NF { print; exit }')" = '{{mefisto:assert-consumer-repo}}' ]; then pass "$agent inicia con el guard"; else fail "$agent no inicia con el guard"; fi
     if grep -Fqx '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/'"$agent"'.md. No editar a mano. -->' "$mirror"; then pass "$agent generado conserva marcador"; else fail "$agent generado sin marcador"; fi
-    if diff -u <(translated_source_body claude "$source") <(body_without_adapter_lines "$mirror") >/dev/null; then pass "$agent conserva el cuerpo traducido al proyectar Claude"; else fail "$agent altera el cuerpo al proyectar Claude"; fi
+    if [ "$agent" = test-writer ] || [ "$agent" = reviewer ] || [ "$agent" = projection-test-writer ] || [ "$agent" = projection-implementer ]; then
+        if diff -u <(expected_rendered_body claude "$source") <(body_without_adapter_lines "$mirror") >/dev/null; then pass "$agent conserva exactamente un preambulo y el cuerpo traducido al proyectar Claude"; else fail "$agent altera el preambulo o el cuerpo al proyectar Claude"; fi
+    elif diff -u <(translated_source_body claude "$source") <(body_without_adapter_lines "$mirror") >/dev/null; then pass "$agent conserva el cuerpo traducido al proyectar Claude"; else fail "$agent altera el cuerpo al proyectar Claude"; fi
     if [ "$agent" = domain-scaffolder ]; then
         if [ "$(grep -c '\${{' "$source")" -eq 35 ] && [ "$(grep -c '\${{' "$mirror")" -eq 35 ]; then pass 'domain-scaffolder conserva las 35 expresiones GitHub Actions'; else fail 'domain-scaffolder altera las expresiones GitHub Actions'; fi
         source_separators="$(body "$source" | grep -cx -- '---')"
@@ -135,6 +146,8 @@ for agent in "${agents[@]}"; do
 done
 validator_fixture reviewer 'Posicional ajeno: $2'
 if "$VALIDATOR" "$WORK/reviewer.md" >/dev/null 2>&1; then fail 'reviewer no hereda placeholders exclusivos de test-writer'; else pass 'reviewer rechaza placeholders exclusivos de test-writer'; fi
+validator_fixture test-writer 'Ruta legacy: $PLUGIN_ROOT'
+if "$VALIDATOR" "$WORK/test-writer.md" >/dev/null 2>&1; then fail 'test-writer aun admite el placeholder de raiz legacy'; else pass 'test-writer rechaza el placeholder de raiz legacy'; fi
 validator_fixture projection-implementer 'Posicional ajeno: $2'
 if "$VALIDATOR" "$WORK/projection-implementer.md" >/dev/null 2>&1; then fail 'projection-implementer no hereda placeholders exclusivos de projection-test-writer'; else pass 'projection-implementer rechaza placeholders exclusivos de projection-test-writer'; fi
 validator_fixture smoke-test-writer 'Ruta ajena: $PLUGIN_ROOT'
@@ -145,7 +158,9 @@ for agent in "${agents[@]}"; do
     claude="$REPO_ROOT/dist/claude/agents/$agent.md"
     opencode="$REPO_ROOT/dist/opencode/agents/$agent.md"
     if cmp -s "$claude" "$REPO_ROOT/agents/$agent.md"; then pass "$agent mirror Claude coincide byte a byte"; else fail "$agent mirror Claude diverge"; fi
-    if diff -u <(translated_source_body opencode "$REPO_ROOT/src/published/agents/$agent.md") <(body_without_adapter_lines "$opencode") >/dev/null; then pass "$agent conserva el cuerpo traducido al proyectar OpenCode"; else fail "$agent altera el cuerpo al proyectar OpenCode"; fi
+    if [ "$agent" = test-writer ] || [ "$agent" = reviewer ] || [ "$agent" = projection-test-writer ] || [ "$agent" = projection-implementer ]; then
+        if diff -u <(expected_rendered_body opencode "$REPO_ROOT/src/published/agents/$agent.md") <(body_without_adapter_lines "$opencode") >/dev/null; then pass "$agent conserva exactamente un preambulo y el cuerpo traducido al proyectar OpenCode"; else fail "$agent altera el preambulo o el cuerpo al proyectar OpenCode"; fi
+    elif diff -u <(translated_source_body opencode "$REPO_ROOT/src/published/agents/$agent.md") <(body_without_adapter_lines "$opencode") >/dev/null; then pass "$agent conserva el cuerpo traducido al proyectar OpenCode"; else fail "$agent altera el cuerpo al proyectar OpenCode"; fi
     grep -Fq '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh' "$opencode" && pass "$agent OpenCode conserva marcador" || fail "$agent OpenCode no conserva marcador"
     if ! grep -Fq '{{mefisto:' "$claude" && ! grep -Fq '{{mefisto:' "$opencode"; then pass "$agent no filtra directivas a las salidas"; else fail "$agent filtra directivas a las salidas"; fi
     if [ "$agent" = reviewer ]; then
@@ -165,6 +180,129 @@ for agent in "${agents[@]}"; do
     grep -Fq 'permission: ' "$opencode" && grep -Fq '"read":{"*":"allow"' "$opencode" && grep -Fq '"edit":{"*":"allow"' "$opencode" && grep -Fq '"bash":{"*":"deny"' "$opencode" && pass "$agent OpenCode materializa permisos" || fail "$agent OpenCode no materializa permisos"
     grep -Fq 'mode: "all"' "$opencode" && pass "$agent OpenCode conserva mode all" || fail "$agent OpenCode no conserva mode all"
 done
+
+echo '[conocimiento] test-writer usa la release activa'
+for artifact in "$REPO_ROOT/src/published/agents/test-writer.md" "$REPO_ROOT/agents/test-writer.md" "$REPO_ROOT/dist/claude/agents/test-writer.md" "$REPO_ROOT/dist/opencode/agents/test-writer.md"; do
+    rendered="$(< "$artifact")"
+    if [[ "$artifact" = "$REPO_ROOT/src/"* ]]; then root='{{mefisto:package-root}}'; else root='${MEFISTO_PACKAGE_ROOT}'; fi
+    if [[ "$rendered" = *"$root/docs/adr/mef-adr-0002-estrategia-testing-event-sourcing.md"* && "$rendered" = *"$root/docs/adr/mef-adr-0016-convencion-naming-tests.md"* && "$rendered" = *"$root/docs/testing/harness-cheatsheet.md"* ]]; then pass "$(basename "$(dirname "$artifact")") test-writer resuelve ADRs y cheatsheet desde package root"; else fail "$(basename "$(dirname "$artifact")") test-writer no resuelve todo el conocimiento desde package root"; fi
+    if [[ "$artifact" != "$REPO_ROOT/src/"* ]] && { { [[ "$artifact" = *'/opencode/'* ]] && [ "$(grep -c 'mefisto_opencode_launcher" package-root' "$artifact")" -eq 1 ]; } || { [[ "$artifact" != *'/opencode/'* ]] && [ "$(grep -c 'MEFISTO_PACKAGE_ROOT="\$mefisto_claude_root"' "$artifact")" -eq 1 ]; }; } && grep -Fq 'cat "${MEFISTO_PACKAGE_ROOT}/docs/testing/harness-cheatsheet.md"' "$artifact"; then pass "$(basename "$(dirname "$artifact")") cita el conocimiento con raiz que preserva espacios"; elif [[ "$artifact" = "$REPO_ROOT/src/"* ]]; then :; else fail "$(basename "$(dirname "$artifact")") no cita el conocimiento con raiz segura"; fi
+    if [[ "$artifact" = "$REPO_ROOT/src/"* ]]; then legacy_pattern='\.claude/pipeline/\.plugin-root|PLUGIN_ROOT=|plugins/cache|\$HOME/.claude'; else legacy_pattern='PLUGIN_ROOT=|plugins/cache|\$HOME/.claude'; fi
+    if ! grep -Eq "$legacy_pattern" "$artifact"; then pass "$(basename "$(dirname "$artifact")") no conserva resolver de runtime legado"; else fail "$(basename "$(dirname "$artifact")") conserva resolver de runtime legado"; fi
+done
+
+for runtime in claude opencode; do
+    package_root="$REPO_ROOT/dist/$runtime"
+    if MEFISTO_PACKAGE_ROOT="$package_root" bash -c '
+        test -f "${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0002-estrategia-testing-event-sourcing.md" &&
+        test -f "${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0016-convencion-naming-tests.md" &&
+        test -f "${MEFISTO_PACKAGE_ROOT}/docs/testing/harness-cheatsheet.md"
+    '; then pass "$runtime contiene el conocimiento que test-writer abre desde package root"; else fail "$runtime no empaqueta todo el conocimiento requerido por test-writer"; fi
+done
+
+echo '[conocimiento] reviewer usa la release activa y el Skill adaptado'
+for artifact in "$REPO_ROOT/src/published/agents/reviewer.md" "$REPO_ROOT/agents/reviewer.md" "$REPO_ROOT/dist/claude/agents/reviewer.md" "$REPO_ROOT/dist/opencode/agents/reviewer.md"; do
+    rendered="$(< "$artifact")"
+    rendered_without_quotes="${rendered//\"/}"
+    if [[ "$artifact" = "$REPO_ROOT/src/"* ]]; then package_root='{{mefisto:package-root}}'; skill_root='{{mefisto:skill-root projections}}'; else package_root='${MEFISTO_PACKAGE_ROOT}'; skill_root='${MEFISTO_PACKAGE_ROOT}/skills/projections'; [[ "$artifact" = *'/opencode/'* ]] && skill_root='${MEFISTO_PACKAGE_ROOT}/skills/mefisto-projections'; fi
+    if [[ "$rendered_without_quotes" = *"$package_root/docs/adr/mef-adr-0016-convencion-naming-tests.md"* && "$rendered_without_quotes" = *"$skill_root/modelos-marten.md"* && "$rendered_without_quotes" = *"$skill_root/read-apis.md"* && "$rendered_without_quotes" = *"$skill_root/naming.md"* && "$rendered_without_quotes" = *"$skill_root/config-test.md"* ]]; then pass "$(basename "$(dirname "$artifact")") reviewer resuelve ADRs y Skill desde la release activa"; else fail "$(basename "$(dirname "$artifact")") reviewer no resuelve todo el conocimiento desde la release activa"; fi
+    if [[ "$artifact" != "$REPO_ROOT/src/"* ]] && { { [[ "$artifact" = *'/opencode/'* ]] && [ "$(grep -c 'mefisto_opencode_launcher" package-root' "$artifact")" -eq 1 ]; } || { [[ "$artifact" != *'/opencode/'* ]] && [ "$(grep -c 'MEFISTO_PACKAGE_ROOT="\$mefisto_claude_root"' "$artifact")" -eq 1 ]; }; }; then pass "$(basename "$(dirname "$artifact")") reviewer conserva un solo preambulo que preserva espacios"; elif [[ "$artifact" = "$REPO_ROOT/src/"* ]]; then :; else fail "$(basename "$(dirname "$artifact")") reviewer no conserva el preambulo de package root"; fi
+    if [[ "$artifact" = "$REPO_ROOT/src/"* ]]; then legacy_pattern='\.claude/pipeline/\.plugin-root|PLUGIN_ROOT=|plugins/cache|\$HOME/.claude|OpenCode|Claude'; else legacy_pattern='PLUGIN_ROOT=|plugins/cache|\$HOME/.claude'; fi
+    if ! grep -Eq "$legacy_pattern" "$artifact"; then pass "$(basename "$(dirname "$artifact")") reviewer no conserva resolucion de runtime legado"; else fail "$(basename "$(dirname "$artifact")") reviewer conserva resolucion de runtime legado"; fi
+done
+
+echo '[conocimiento] projection-implementer usa la release activa y el Skill adaptado'
+for artifact in "$REPO_ROOT/src/published/agents/projection-implementer.md" "$REPO_ROOT/agents/projection-implementer.md" "$REPO_ROOT/dist/claude/agents/projection-implementer.md" "$REPO_ROOT/dist/opencode/agents/projection-implementer.md"; do
+    rendered="$(< "$artifact")"
+    rendered_without_quotes="${rendered//\"/}"
+    if [[ "$artifact" = "$REPO_ROOT/src/"* ]]; then package_root='{{mefisto:package-root}}'; skill_root='{{mefisto:skill-root projections}}'; else package_root='${MEFISTO_PACKAGE_ROOT}'; skill_root='${MEFISTO_PACKAGE_ROOT}/skills/projections'; [[ "$artifact" = *'/opencode/'* ]] && skill_root='${MEFISTO_PACKAGE_ROOT}/skills/mefisto-projections'; fi
+    if [[ "$rendered_without_quotes" = *"$package_root/docs/adr/mef-adr-0035-doctrina-proyeccion-query-read-side.md"* && "$rendered_without_quotes" = *"$package_root/docs/adr/mef-adr-0034-worker-proyecciones-read-models.md"* && "$rendered_without_quotes" = *"$package_root/docs/adr/mef-adr-0006-convenciones-nombramiento-funciones-azure.md"* && "$rendered_without_quotes" = *"$package_root/docs/adr/mef-adr-0041-forma-propia-vista-read-side.md"* && "$rendered_without_quotes" = *"$package_root/docs/adr/mef-adr-0028-estrategia-tenancy.md"* && "$rendered_without_quotes" = *"$package_root/docs/adr/mef-adr-0029-test-composicion-host.md"* && "$rendered_without_quotes" = *"$skill_root/modelos-marten.md"* && "$rendered_without_quotes" = *"$skill_root/naming.md"* && "$rendered_without_quotes" = *"$skill_root/read-apis.md"* && "$rendered_without_quotes" = *"$skill_root/config-test.md"* ]]; then pass "$(basename "$(dirname "$artifact")") projection-implementer resuelve ADRs y Skill desde la release activa"; else fail "$(basename "$(dirname "$artifact")") projection-implementer no resuelve todo el conocimiento desde la release activa"; fi
+    if [[ "$artifact" != "$REPO_ROOT/src/"* ]] && { { [[ "$artifact" = *'/opencode/'* ]] && [ "$(grep -c 'mefisto_opencode_launcher" package-root' "$artifact")" -eq 1 ]; } || { [[ "$artifact" != *'/opencode/'* ]] && [ "$(grep -c 'MEFISTO_PACKAGE_ROOT="\$mefisto_claude_root"' "$artifact")" -eq 1 ]; }; }; then pass "$(basename "$(dirname "$artifact")") projection-implementer conserva un solo preambulo que preserva espacios"; elif [[ "$artifact" = "$REPO_ROOT/src/"* ]]; then :; else fail "$(basename "$(dirname "$artifact")") projection-implementer no conserva el preambulo de package root"; fi
+    if [[ "$artifact" = "$REPO_ROOT/src/"* ]]; then legacy_pattern='\.claude/pipeline/\.plugin-root|PLUGIN_ROOT=|plugins/cache|\$HOME/.claude|OpenCode|Claude'; else legacy_pattern='PLUGIN_ROOT=|plugins/cache|\$HOME/.claude'; fi
+    if ! grep -Eq "$legacy_pattern" "$artifact"; then pass "$(basename "$(dirname "$artifact")") projection-implementer no conserva resolucion de runtime legado"; else fail "$(basename "$(dirname "$artifact")") projection-implementer conserva resolucion de runtime legado"; fi
+done
+
+echo '[conocimiento] projection-test-writer usa la release activa y el Skill adaptado'
+for artifact in "$REPO_ROOT/src/published/agents/projection-test-writer.md" "$REPO_ROOT/agents/projection-test-writer.md" "$REPO_ROOT/dist/claude/agents/projection-test-writer.md" "$REPO_ROOT/dist/opencode/agents/projection-test-writer.md"; do
+    rendered="$(< "$artifact")"
+    rendered_without_quotes="${rendered//\"/}"
+    if [[ "$artifact" = "$REPO_ROOT/src/"* ]]; then package_root='{{mefisto:package-root}}'; skill_root='{{mefisto:skill-root projections}}'; else package_root='${MEFISTO_PACKAGE_ROOT}'; skill_root='${MEFISTO_PACKAGE_ROOT}/skills/projections'; [[ "$artifact" = *'/opencode/'* ]] && skill_root='${MEFISTO_PACKAGE_ROOT}/skills/mefisto-projections'; fi
+    if [[ "$rendered_without_quotes" = *"$package_root/docs/adr/mef-adr-0035-doctrina-proyeccion-query-read-side.md"* && "$rendered_without_quotes" = *"$package_root/docs/adr/mef-adr-0034-worker-proyecciones-read-models.md"* && "$rendered_without_quotes" = *"$package_root/docs/adr/mef-adr-0006-convenciones-nombramiento-funciones-azure.md"* && "$rendered_without_quotes" = *"$package_root/docs/adr/mef-adr-0041-forma-propia-vista-read-side.md"* && "$rendered_without_quotes" = *"$package_root/docs/adr/mef-adr-0016-convencion-naming-tests.md"* && "$rendered_without_quotes" = *"$package_root/docs/adr/mef-adr-0002-estrategia-testing-event-sourcing.md"* && "$rendered_without_quotes" = *"$skill_root/modelos-marten.md"* && "$rendered_without_quotes" = *"$skill_root/naming.md"* && "$rendered_without_quotes" = *"$skill_root/read-apis.md"* && "$rendered_without_quotes" = *"$skill_root/config-test.md"* ]]; then pass "$(basename "$(dirname "$artifact")") projection-test-writer resuelve ADRs y Skill desde la release activa"; else fail "$(basename "$(dirname "$artifact")") projection-test-writer no resuelve todo el conocimiento desde la release activa"; fi
+    if [[ "$artifact" != "$REPO_ROOT/src/"* ]] && [[ "$rendered" = *'"${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0035-doctrina-proyeccion-query-read-side.md"'* && "$rendered" = *'"${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0002-estrategia-testing-event-sourcing.md"'* && "$rendered" = *'"${MEFISTO_PACKAGE_ROOT}/skills/'*'"/modelos-marten.md'* && "$rendered" = *'"${MEFISTO_PACKAGE_ROOT}/skills/'*'"/config-test.md'* ]]; then pass "$(basename "$(dirname "$artifact")") projection-test-writer conserva rutas citables con espacios"; elif [[ "$artifact" = "$REPO_ROOT/src/"* ]]; then :; else fail "$(basename "$(dirname "$artifact")") projection-test-writer deja rutas sensibles a espacios sin citar"; fi
+    if [[ "$artifact" != "$REPO_ROOT/src/"* ]] && { { [[ "$artifact" = *'/opencode/'* ]] && [ "$(grep -c 'mefisto_opencode_launcher" package-root' "$artifact")" -eq 1 ]; } || { [[ "$artifact" != *'/opencode/'* ]] && [ "$(grep -c 'MEFISTO_PACKAGE_ROOT="\$mefisto_claude_root"' "$artifact")" -eq 1 ]; }; }; then pass "$(basename "$(dirname "$artifact")") projection-test-writer conserva un solo preambulo que preserva espacios"; elif [[ "$artifact" = "$REPO_ROOT/src/"* ]]; then :; else fail "$(basename "$(dirname "$artifact")") projection-test-writer no conserva el preambulo de package root"; fi
+    if [[ "$artifact" = "$REPO_ROOT/src/"* ]]; then legacy_pattern='\.claude/pipeline/\.plugin-root|PLUGIN_ROOT=|plugins/cache|\$HOME/.claude|OpenCode|Claude'; else legacy_pattern='PLUGIN_ROOT=|plugins/cache|\$HOME/.claude'; fi
+    if ! grep -Eq "$legacy_pattern" "$artifact"; then pass "$(basename "$(dirname "$artifact")") projection-test-writer no conserva resolucion de runtime legado"; else fail "$(basename "$(dirname "$artifact")") projection-test-writer conserva resolucion de runtime legado"; fi
+done
+
+for runtime in claude opencode; do
+    package_root="$REPO_ROOT/dist/$runtime"
+    skill_dir='skills/projections'
+    if [ "$runtime" = claude ]; then package_root="$REPO_ROOT"; else skill_dir='skills/mefisto-projections'; fi
+    if MEFISTO_PACKAGE_ROOT="$package_root" SKILL_DIR="$skill_dir" bash -c '
+        test -f "${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0035-doctrina-proyeccion-query-read-side.md" &&
+        test -f "${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0034-worker-proyecciones-read-models.md" &&
+        test -f "${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0006-convenciones-nombramiento-funciones-azure.md" &&
+        test -f "${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0041-forma-propia-vista-read-side.md" &&
+        test -f "${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0028-estrategia-tenancy.md" &&
+        test -f "${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0029-test-composicion-host.md" &&
+        for resource in modelos-marten.md naming.md read-apis.md config-test.md; do test -f "${MEFISTO_PACKAGE_ROOT}/${SKILL_DIR}/$resource" || exit 1; done
+    '; then pass "el paquete $runtime contiene el conocimiento que projection-implementer abre desde sus raices adaptadas"; else fail "el paquete $runtime no contiene todo el conocimiento requerido por projection-implementer"; fi
+done
+
+for runtime in claude opencode; do
+    package_root="$REPO_ROOT"
+    skill_dir='skills/projections'
+    if [ "$runtime" = opencode ]; then package_root="$REPO_ROOT/dist/opencode"; skill_dir='skills/mefisto-projections'; fi
+    if MEFISTO_PACKAGE_ROOT="$package_root" SKILL_DIR="$skill_dir" bash -c '
+        test -f "${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0016-convencion-naming-tests.md" &&
+        test -f "${MEFISTO_PACKAGE_ROOT}/${SKILL_DIR}/modelos-marten.md" &&
+        test -f "${MEFISTO_PACKAGE_ROOT}/${SKILL_DIR}/read-apis.md" &&
+        test -f "${MEFISTO_PACKAGE_ROOT}/${SKILL_DIR}/naming.md" &&
+        test -f "${MEFISTO_PACKAGE_ROOT}/${SKILL_DIR}/config-test.md"
+    '; then pass "el paquete $runtime contiene el conocimiento que reviewer abre desde sus raices adaptadas"; else fail "el paquete $runtime no contiene todo el conocimiento requerido por reviewer"; fi
+done
+
+# MEF-ADR-0031: prueba la resolucion ejecutable desde los agentes generados, no
+# solo la presencia textual de las directivas en la fuente. Las dos fixtures
+# usan una raiz con espacios y contienen bytes de las distribuciones reales.
+claude_package="$WORK/paquete Claude con espacios"
+mkdir -p "$claude_package/.claude-plugin" "$claude_package/docs/adr" "$claude_package/skills/projections"
+cp "$REPO_ROOT/.claude-plugin/plugin.json" "$claude_package/.claude-plugin/plugin.json"
+cp "$REPO_ROOT/mefisto-manifest.json" "$claude_package/mefisto-manifest.json"
+for adr in mef-adr-0002-estrategia-testing-event-sourcing.md mef-adr-0016-convencion-naming-tests.md mef-adr-0035-doctrina-proyeccion-query-read-side.md mef-adr-0034-worker-proyecciones-read-models.md mef-adr-0006-convenciones-nombramiento-funciones-azure.md mef-adr-0041-forma-propia-vista-read-side.md mef-adr-0028-estrategia-tenancy.md mef-adr-0029-test-composicion-host.md; do cp "$REPO_ROOT/dist/claude/docs/adr/$adr" "$claude_package/docs/adr/"; done
+for resource in modelos-marten.md read-apis.md naming.md config-test.md; do cp "$REPO_ROOT/skills/projections/$resource" "$claude_package/skills/projections/$resource"; done
+claude_physical="$(cd "$claude_package" && pwd -P)"
+claude_preamble="$(first_bash_block "$REPO_ROOT/dist/claude/agents/reviewer.md")"
+claude_resolved="$(CLAUDE_PLUGIN_ROOT="$claude_package/" bash -c "$claude_preamble"$'\n''test -f "$MEFISTO_PACKAGE_ROOT/docs/adr/mef-adr-0016-convencion-naming-tests.md" && for resource in modelos-marten.md read-apis.md naming.md config-test.md; do test -f "$MEFISTO_PACKAGE_ROOT/skills/projections/$resource" || exit 1; done && printf "%s\n" "$MEFISTO_PACKAGE_ROOT"' 2>/dev/null)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$claude_resolved" = "$claude_physical" ] && pass 'reviewer Claude generado abre ADRs y Skill desde un package root con espacios' || fail 'reviewer Claude generado no resuelve su conocimiento desde el package root efectivo'
+
+opencode_package="$WORK/paquete OpenCode con espacios"
+opencode_data="$WORK/datos OpenCode con espacios"
+mkdir -p "$opencode_package/docs/adr" "$opencode_package/skills/mefisto-projections" "$opencode_data/mefisto/active/bin"
+for adr in mef-adr-0002-estrategia-testing-event-sourcing.md mef-adr-0016-convencion-naming-tests.md mef-adr-0035-doctrina-proyeccion-query-read-side.md mef-adr-0034-worker-proyecciones-read-models.md mef-adr-0006-convenciones-nombramiento-funciones-azure.md mef-adr-0041-forma-propia-vista-read-side.md mef-adr-0028-estrategia-tenancy.md mef-adr-0029-test-composicion-host.md; do cp "$REPO_ROOT/dist/opencode/docs/adr/$adr" "$opencode_package/docs/adr/"; done
+for resource in modelos-marten.md read-apis.md naming.md config-test.md; do cp "$REPO_ROOT/dist/opencode/skills/mefisto-projections/$resource" "$opencode_package/skills/mefisto-projections/$resource"; done
+printf '%s\n' '#!/bin/sh' '[ "$1" = package-root ] || exit 2' 'printf "%s\n" "$MEFISTO_TEST_PACKAGE_ROOT"' > "$opencode_data/mefisto/active/bin/mefisto-opencode"
+chmod +x "$opencode_data/mefisto/active/bin/mefisto-opencode"
+opencode_physical="$(cd "$opencode_package" && pwd -P)"
+opencode_preamble="$(first_bash_block "$REPO_ROOT/dist/opencode/agents/reviewer.md")"
+opencode_resolved="$(XDG_DATA_HOME="$opencode_data" MEFISTO_TEST_PACKAGE_ROOT="$opencode_package/" bash -c "$opencode_preamble"$'\n''test -f "$MEFISTO_PACKAGE_ROOT/docs/adr/mef-adr-0016-convencion-naming-tests.md" && for resource in modelos-marten.md read-apis.md naming.md config-test.md; do test -f "$MEFISTO_PACKAGE_ROOT/skills/mefisto-projections/$resource" || exit 1; done && printf "%s\n" "$MEFISTO_PACKAGE_ROOT"' 2>/dev/null)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$opencode_resolved" = "$opencode_physical" ] && pass 'reviewer OpenCode generado abre ADRs y Skill desde un package root con espacios' || fail 'reviewer OpenCode generado no resuelve su conocimiento desde el package root efectivo'
+
+claude_preamble="$(first_bash_block "$REPO_ROOT/dist/claude/agents/projection-implementer.md")"
+claude_resolved="$(CLAUDE_PLUGIN_ROOT="$claude_package/" bash -c "$claude_preamble"$'\n''for adr in mef-adr-0035-doctrina-proyeccion-query-read-side.md mef-adr-0034-worker-proyecciones-read-models.md mef-adr-0006-convenciones-nombramiento-funciones-azure.md mef-adr-0041-forma-propia-vista-read-side.md mef-adr-0028-estrategia-tenancy.md mef-adr-0029-test-composicion-host.md; do test -f "$MEFISTO_PACKAGE_ROOT/docs/adr/$adr" || exit 1; done && for resource in modelos-marten.md naming.md read-apis.md config-test.md; do test -f "$MEFISTO_PACKAGE_ROOT/skills/projections/$resource" || exit 1; done && printf "%s\n" "$MEFISTO_PACKAGE_ROOT"' 2>/dev/null)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$claude_resolved" = "$claude_physical" ] && pass 'projection-implementer Claude generado abre ADRs y Skill desde un package root con espacios' || fail 'projection-implementer Claude generado no resuelve su conocimiento desde el package root efectivo'
+
+opencode_preamble="$(first_bash_block "$REPO_ROOT/dist/opencode/agents/projection-implementer.md")"
+opencode_resolved="$(XDG_DATA_HOME="$opencode_data" MEFISTO_TEST_PACKAGE_ROOT="$opencode_package/" bash -c "$opencode_preamble"$'\n''for adr in mef-adr-0035-doctrina-proyeccion-query-read-side.md mef-adr-0034-worker-proyecciones-read-models.md mef-adr-0006-convenciones-nombramiento-funciones-azure.md mef-adr-0041-forma-propia-vista-read-side.md mef-adr-0028-estrategia-tenancy.md mef-adr-0029-test-composicion-host.md; do test -f "$MEFISTO_PACKAGE_ROOT/docs/adr/$adr" || exit 1; done && for resource in modelos-marten.md naming.md read-apis.md config-test.md; do test -f "$MEFISTO_PACKAGE_ROOT/skills/mefisto-projections/$resource" || exit 1; done && printf "%s\n" "$MEFISTO_PACKAGE_ROOT"' 2>/dev/null)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$opencode_resolved" = "$opencode_physical" ] && pass 'projection-implementer OpenCode generado abre ADRs y Skill desde un package root con espacios' || fail 'projection-implementer OpenCode generado no resuelve su conocimiento desde el package root efectivo'
+
+claude_preamble="$(first_bash_block "$REPO_ROOT/dist/claude/agents/projection-test-writer.md")"
+claude_resolved="$(CLAUDE_PLUGIN_ROOT="$claude_package/" bash -c "$claude_preamble"$'\n''for adr in mef-adr-0035-doctrina-proyeccion-query-read-side.md mef-adr-0034-worker-proyecciones-read-models.md mef-adr-0006-convenciones-nombramiento-funciones-azure.md mef-adr-0041-forma-propia-vista-read-side.md mef-adr-0016-convencion-naming-tests.md mef-adr-0002-estrategia-testing-event-sourcing.md; do test -f "$MEFISTO_PACKAGE_ROOT/docs/adr/$adr" || exit 1; done && for resource in modelos-marten.md naming.md read-apis.md config-test.md; do test -f "$MEFISTO_PACKAGE_ROOT/skills/projections/$resource" || exit 1; done && printf "%s\n" "$MEFISTO_PACKAGE_ROOT"' 2>/dev/null)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$claude_resolved" = "$claude_physical" ] && pass 'projection-test-writer Claude generado abre ADRs y Skill desde un package root con espacios' || fail 'projection-test-writer Claude generado no resuelve su conocimiento desde el package root efectivo'
+
+opencode_preamble="$(first_bash_block "$REPO_ROOT/dist/opencode/agents/projection-test-writer.md")"
+opencode_resolved="$(XDG_DATA_HOME="$opencode_data" MEFISTO_TEST_PACKAGE_ROOT="$opencode_package/" bash -c "$opencode_preamble"$'\n''for adr in mef-adr-0035-doctrina-proyeccion-query-read-side.md mef-adr-0034-worker-proyecciones-read-models.md mef-adr-0006-convenciones-nombramiento-funciones-azure.md mef-adr-0041-forma-propia-vista-read-side.md mef-adr-0016-convencion-naming-tests.md mef-adr-0002-estrategia-testing-event-sourcing.md; do test -f "$MEFISTO_PACKAGE_ROOT/docs/adr/$adr" || exit 1; done && for resource in modelos-marten.md naming.md read-apis.md config-test.md; do test -f "$MEFISTO_PACKAGE_ROOT/skills/mefisto-projections/$resource" || exit 1; done && printf "%s\n" "$MEFISTO_PACKAGE_ROOT"' 2>/dev/null)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$opencode_resolved" = "$opencode_physical" ] && pass 'projection-test-writer OpenCode generado abre ADRs y Skill desde un package root con espacios' || fail 'projection-test-writer OpenCode generado no resuelve su conocimiento desde el package root efectivo'
 
 if grep -Fq '.mefisto/pipeline/summaries/stage-2b-smoke-test-writer.md' "$REPO_ROOT/agents/smoke-test-writer.md" && grep -Fq '.mefisto/pipeline/summaries/stage-2b-smoke-test-writer.md' "$REPO_ROOT/dist/claude/agents/smoke-test-writer.md" && grep -Fq '.mefisto/pipeline/summaries/stage-2b-smoke-test-writer.md' "$REPO_ROOT/dist/opencode/agents/smoke-test-writer.md"; then
     pass 'los generados conservan el summary canonico de smoke stage 2b'
