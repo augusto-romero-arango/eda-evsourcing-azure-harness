@@ -37,6 +37,8 @@ Queda **fuera** de esa certificación —discovery disponible, invocación real 
 - la carga real de Agent Skills bajo OpenCode (los agentes del corte declaran solo `read`/`edit`/`shell`);
 - la conexión y el listado real del MCP bundleado `microsoft-learn`, y la traducción de permisos MCP por agente/comando (#1145).
 
+`/mefisto:implement` (rutas write-side y `tipo:projection`) tiene su propio protocolo de certificación en [`docs/testing/tdd-consumer-certification.md`](docs/testing/tdd-consumer-certification.md), pero su [veredicto](docs/testing/tdd-consumer-certification.md#veredicto-final-del-corte-tdd-multi-runtime-1411) (#1411) cerró **`NO PASA`**: las cuatro corridas reales write-side/read-side × Claude/OpenCode exigidas por #1435/#1436 nunca se ejecutaron en vivo. `/mefisto:implement` permanece sin certificar bajo ningún runtime hasta que el bug dependiente ([#1464](https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/issues/1464)) las ejecute y un nuevo veredicto las reconcilie.
+
 ## Stack supuesto en el consumidor
 
 - .NET 10 + Azure Functions isolated worker

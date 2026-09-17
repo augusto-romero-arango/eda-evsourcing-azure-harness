@@ -519,6 +519,140 @@ sanitizado (CA-5)".
 | CA-5 expediente correlacionado | | |
 | CA-6 centinelas y limpieza | | |
 
+## Veredicto final del corte TDD multi-runtime (#1411)
+
+Esta seccion audita, sin repetir ejecuciones, los dos expedientes de corrida
+exigidos por el protocolo de #1434: "Resultado write-side (#1435)" y
+"Resultado read-side (#1436)" arriba. No redefine el protocolo ni sus
+templates; solo emite el veredicto documental fail-closed conforme a la
+seccion "Fail-closed y limpieza (CA-6)" del protocolo y al CA-4 de #1411.
+
+### Estado auditado de los dos expedientes
+
+| Expediente | Estado registrado | Celdas con evidencia real | Fixtures creados | PRs reales |
+|---|---|---|---|---|
+| #1435 (write-side) | `PENDIENTE DE EJECUCION` | 0/2 (Claude, OpenCode) | Ninguno | Ninguno |
+| #1436 (read-side) | `PENDIENTE DE EJECUCION` | 0/2 (Claude, OpenCode) | Ninguno | Ninguno |
+
+Ambos issues fixture-madre se cerraron como `COMPLETED` en el rastreador de
+Mefisto, pero esa clausura corresponde a la redaccion del punto de registro
+("Resultado write-side (#1435)"/"Resultado read-side (#1436)") descrita en sus
+propios PRs (#1462, #1463) -- ninguno de los dos ejecuto la sesion en vivo que
+el protocolo exige. Las tablas de identidad y de CA-1..CA-6 de ambas secciones
+permanecen con todas sus celdas vacias: no registran `<sha-baseline-inicial>`,
+`<tag-certificable>`, `<version>`, `<commit-fuente>`, `<checksum-opencode>`,
+issue de fixture, PR, session id, stage ni check alguno.
+
+### Identidad comun de release (CA-1 de #1411)
+
+CA-1 exige fijar un `<sha-baseline-inicial>`, `<tag-certificable>`, `<version>`,
+`<commit-fuente>` y `<checksum-opencode>` comunes a #1435 y #1436, y confirmar
+identidad `aligned` en ambos runtimes con `diagnose-installation-identity.sh`.
+Ninguna corrida registro ninguno de esos cinco valores, de modo que no hay
+identidad que confirmar ni release que comparar entre los dos expedientes.
+
+Esa ausencia tampoco se rellena por inferencia: reutilizar la release que
+certifico `/mefisto:tooling` en #1066, leer la version del checkout de
+desarrollo o derivarla del cache de plugins instalado produciria una identidad
+que ninguna corrida verifico. La seccion "Invariantes y prerrequisitos (CA-1)"
+del protocolo y MEF-ADR-0031 rechazan exactamente esa sustitucion, y este
+veredicto la rechaza tambien.
+
+### Matriz 2x2 auditada (CA-2 de #1411)
+
+Sin identidad `aligned` ni corridas lanzadas, la matriz write-side/read-side x
+Claude/OpenCode se audita dimension por dimension y arroja el mismo resultado
+en las cuatro celdas. La columna "Esperado por el protocolo" conserva lo que
+cada celda deberia haber evidenciado, para que #1464 pueda completarla sin
+reconstruir el criterio.
+
+| Dimension exigida por CA-2 | Esperado por el protocolo | write-side Claude | write-side OpenCode | read-side Claude | read-side OpenCode |
+|---|---|---|---|---|---|
+| Agentes efectivos | write-side: `test-writer` -> `implementer` -> `smoke-test-writer` -> `reviewer`; read-side: `projection-test-writer` -> `projection-implementer` -> `smoke-test-writer` -> `reviewer` | sin invocacion | sin invocacion | sin invocacion | sin invocacion |
+| Discovery vs. invocacion | discovery listado en Herdr antes de lanzar **y** invocacion efectiva durante la corrida, distinguidos entre si | ninguno de los dos observado | ninguno de los dos observado | ninguno de los dos observado | ninguno de los dos observado |
+| Acceso a conocimiento / Skill | ADRs alcanzables y, read-side, Skill `projections` con sus recursos Nivel 3 cargado y usado (MEF-ADR-0033/0034/0035) | sin evidencia | sin evidencia | sin evidencia | sin evidencia |
+| Fase roja o `no-red` (Stage 1) | fase roja real; `no-red` solo con la justificacion acotada de "Rutas de agentes forzadas y alcance del pipeline (CA-3)" | stage no ejecutado | stage no ejecutado | stage no ejecutado | stage no ejecutado |
+| Stage 2b | ejecutado sobre la Function del fixture, nunca `skipped` | stage no ejecutado | stage no ejecutado | stage no ejecutado | stage no ejecutado |
+| Reviewer (Stage 3) | veredicto del reviewer con un unico terminal | stage no ejecutado | stage no ejecutado | stage no ejecutado | stage no ejecutado |
+| Coverage gate (Stage 4) | resultado del gate consignado, sin remediacion ejercida | stage no ejecutado | stage no ejecutado | stage no ejecutado | stage no ejecutado |
+| PR y checks | PR real con `Closes #<issue>` y checks requeridos verdes o `NO_APLICAN` justificado | sin issue fixture y sin PR | sin issue fixture y sin PR | sin issue fixture y sin PR | sin issue fixture y sin PR |
+| Limpieza | PR cerrado sin merge, rama eliminada, issue fixture cerrado desde el consumidor, cero worktrees, baseline restaurado | nada que limpiar | nada que limpiar | nada que limpiar | nada que limpiar |
+
+### Observabilidad (CA-3 de #1411)
+
+No aplica: sin corridas lanzadas no existe issue/PR/session de fixture que
+correlacionar, ni stages, agentes, perfiles, modelos efectivos/origen,
+version, commit fuente, metricas, summaries o history que comparar entre
+celdas. La comparacion de observabilidad exigida por CA-3 de #1411 no puede
+ejecutarse sobre evidencia inexistente sin violar MEF-ADR-0031.
+
+### Centinelas y limpieza
+
+No aplica por el mismo motivo: sin evidencia persistida no hay artefactos
+sobre los que correr el barrido de centinelas de "Manifiesto de evidencia y
+redaccion" (`opencode-consumer-cutover.md`), y sin corridas lanzadas no hay
+PRs, ramas, issues fixture ni worktrees que limpiar. Ningun centinela dio
+positivo porque no hay contenido que escanear; esto no se registra como un
+`PASA` de esa fila, sino como no ejecutada.
+
+### Veredicto
+
+**NO PASA (2026-09-17).** Las cuatro celdas de la matriz write-side/read-side
+x Claude/OpenCode carecen de evidencia real. #1435 y #1436, aunque cerrados
+como completados, dejaron sus secciones "Resultado write-side (#1435)" y
+"Resultado read-side (#1436)" en `PENDIENTE DE EJECUCION`: sin fixtures
+creados en el consumidor, sin sesiones Herdr operadas en vivo y sin PRs
+reales. Fabricar una identidad, matriz u observabilidad para satisfacer CA-1
+a CA-3 de #1411 sin esa operacion violaria MEF-ADR-0031; este veredicto se
+sostiene sobre la ausencia constatada, no sobre datos inferidos desde el
+protocolo o desde certificaciones anteriores.
+
+Conforme al CA-4 de #1411, esta ausencia de evidencia:
+
+- No otorga soporte parcial ni total de `/mefisto:implement` bajo ningun
+  runtime ni ruta: `README.md` mantiene `/implement` fuera del alcance
+  certificado en su seccion "Soporte OpenCode: alcance certificado".
+- Abre el issue
+  [#1464](https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/issues/1464)
+  (`bug`, `tipo:tooling`, `estado:listo`) como dependencia de este veredicto,
+  documentando la ejecucion pendiente de las cuatro corridas reales sobre una
+  release nueva.
+- Exige repetir integramente el par write-side (#1435) y el par read-side
+  (#1436) -- las cuatro corridas, no un subconjunto, porque ninguna se llego a
+  ejecutar -- sobre la release vigente al momento de reabrir la
+  certificacion, siguiendo el protocolo ya fijado por #1434 sin modificarlo.
+
+Este `NO PASA` no contradice a "Resultado write-side (#1435)"/"Resultado
+read-side (#1436)", que anticipan que "mientras no haya corrida no hay defecto
+que reportar" y que #1411 "sigue bloqueado por ausencia de evidencia". Ese
+razonamiento describe la ausencia de un **defecto tecnico** del harness
+-- ninguna corrida fallo, porque ninguna se lanzo -- y por eso este veredicto
+no es el `BLOQUEADO` de "Fail-closed y limpieza (CA-6)", que presupone una
+corrida lanzada con un recurso inaccesible. El bug #1464 no reporta un fallo
+observado del pipeline: rastrea la operacion en vivo faltante y hereda la
+dependencia que esas dos secciones declaraban sobre #1411. Ambas quedan
+intactas como punto de registro vacio; quien ejecute #1464 las completa con
+evidencia real sin tocar el protocolo de #1434.
+
+**Alcance de lo que este veredicto juzga.** Cubre unicamente las rutas
+write-side y `tipo:projection` normales de `/mefisto:implement`.
+`--scaffold-domain`, `--from-stage`, `--variant` y la remediacion de coverage
+no ejercida quedan explicitamente fuera: no se juzgan aqui y tampoco quedaran
+certificados cuando #1464 reponga la evidencia, salvo que un protocolo
+posterior los incorpore. Como ninguna celda pasa, ninguna ruta de
+`/mefisto:implement` queda certificada bajo Claude ni bajo OpenCode: no hay
+soporte parcial que declarar, y menos aun presentarlo como completo.
+
+Este veredicto cierra #1411: su CA-4 se cumple emitiendo `NO PASA` con causa
+documentada, en vez de dejar el issue abierto indefinidamente a la espera de
+una operacion en vivo que excede el alcance de un stage de escritura
+automatizado -- la misma razon que dejo a #1435/#1436 en `PENDIENTE DE
+EJECUCION`. `/mefisto:implement` permanece sin certificar para consumidores
+publicados bajo ningun runtime hasta que el bug
+[#1464](https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/issues/1464)
+se cierre con las cuatro corridas reales documentadas y un nuevo issue de
+veredicto las reconcilie.
+
 ## Referencias
 
 - `docs/testing/opencode-consumer-cutover.md`: protocolo, consumidor y
@@ -541,3 +675,7 @@ sanitizado (CA-5)".
   la misma operacion (`/mefisto:implement`) bajo ambos adaptadores.
 - MEF-ADR-0053, seccion 6: gate reproducible de corte vertical que este
   protocolo extiende de `/mefisto:tooling` a `/mefisto:implement`.
+- [#1464](https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/issues/1464):
+  bug abierto por el veredicto `NO PASA` de "Veredicto final del corte TDD
+  multi-runtime (#1411)"; rastrea la ejecucion real de las cuatro corridas que
+  #1435/#1436 dejaron `PENDIENTE DE EJECUCION`.
