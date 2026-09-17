@@ -381,6 +381,62 @@ ausentes o un arbol ya restaurado no altera el resultado. Este protocolo no
 certifica ninguna otra capacidad del catalogo publicado ni migra un comando
 adicional.
 
+## Resultado write-side (#1435)
+
+Punto de registro de la evidencia de las dos corridas write-side reales
+(Claude y OpenCode) exigidas por #1435, sobre los templates de "Fixtures
+write-side/read-side (CA-2)" y el lanzamiento de "Lanzamiento real desde Herdr
+(CA-4)". No redefine el protocolo: fija el formato con el que se consigna su
+resultado, identico al de "### Estado de la corrida" de "Certificacion de
+instalacion y discovery (#1180)" y "Matriz de corridas e issues fixture
+(#1181)" en `opencode-consumer-cutover.md`.
+
+### Estado de la corrida
+
+**PENDIENTE DE EJECUCION.** El par write-side todavia no se ha lanzado. Las
+dos corridas exigen una sesion operada en vivo sobre el consumidor privado:
+los dos issues fixture creados desde su planner **publicado** (nunca con
+`gh -R` cross-repo desde Mefisto, MEF-ADR-0019), los panes Herdr de cada
+runtime y la espera de los checks de CI sobre su Azure dedicado. Esa evidencia
+solo existe cuando esa sesion corre de verdad; consignar aqui un resultado sin
+ejecutarla seria evidencia simulada, justo lo que MEF-ADR-0031 prohibe.
+
+"Pendiente de ejecucion" no es el veredicto `BLOQUEADO` de "Fail-closed y
+limpieza (CA-6)": aquel describe una corrida ya lanzada cuyo recurso resulto
+inaccesible y obliga a abrir un `tipo:bug` dependiente de #1411. Mientras no
+haya corrida no hay defecto que reportar, y #1411 sigue bloqueado por ausencia
+de evidencia, no por un fallo observado. El veredicto de #1411 requiere ademas
+que esta seccion y la del par read-side esten completas y reconciliadas entre
+si, igual que #1066 reconcilio #1180 y #1181.
+
+Quien ejecute el par completa esta seccion rellenando las dos tablas
+siguientes y enlazando el comentario de cierre sanitizado de cada issue
+fixture. Las tablas conservan solo indices, URLs y veredictos; los streams,
+prompts y logs crudos quedan fuera, conforme a "Manifiesto de evidencia
+sanitizado (CA-5)".
+
+| Campo | Valor verificado |
+|---|---|
+| Release e identidad | `<tag-certificable>`, `<version>`, commit fuente `<commit-fuente>`, `<checksum-opencode>` verificado; `diagnose-installation-identity.sh` en `aligned` para ambos runtimes. |
+| Baseline | `<sha-baseline-inicial>` y `<sha-baseline-final>` coincidentes, con arbol limpio antes y despues de cada corrida. |
+| Fixtures | issues write-side Claude y write-side OpenCode, creados desde el planner publicado del consumidor con `tipo:feature`, `dom:certificacion` y `estado:listo`. |
+| Discovery | `/mefisto:implement`, `test-writer`, `implementer`, `smoke-test-writer`, `reviewer`, la clausura del ciclo TDD y los permisos requeridos, observados en ambos runtimes antes de lanzar. |
+| PRs | un PR real por corrida, con `Closes #<issue>`, alcance limitado al fixture y comentario de cierre del pipeline. |
+| Stages | Stage 1/2/2b/3/4 de cada corrida con su resultado y un unico terminal; Stage 2b nunca `skipped`; Stage 0 no ejecutado. |
+| Checks | conclusiones de los checks requeridos de cada PR, o `NO_APLICAN` con su motivo. |
+| Diferencias de adaptador | cada divergencia Claude/OpenCode explicada, sin reducir stages, gates ni alcance. |
+| Centinelas | barrido sobre la evidencia persistente sin prompts, raw, `stderr`, tool inputs, cabeceras de auth ni tokens. |
+| Limpieza | PRs cerrados sin merge, ramas eliminadas, issues fixture cerrados desde el consumidor, cero worktrees. |
+
+| CA de #1435 | Resultado | Sintesis |
+|---|---|---|
+| CA-1 preflight y fixtures | | |
+| CA-2 discovery en Herdr | | |
+| CA-3 corrida Claude | | |
+| CA-4 corrida OpenCode | | |
+| CA-5 expediente correlacionado | | |
+| CA-6 centinelas y limpieza | | |
+
 ## Referencias
 
 - `docs/testing/opencode-consumer-cutover.md`: protocolo, consumidor y
