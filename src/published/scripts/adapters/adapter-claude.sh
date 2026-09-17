@@ -4,6 +4,7 @@ set -uo pipefail
 export LC_ALL=C
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd -P)"
+source "$SCRIPT_DIR/../lib/effective-contract.sh" || { printf '%s\n' "ERROR: falta src/published/scripts/lib/effective-contract.sh; sin esa biblioteca las rutas efectivas del contrato consumidor no se resolverian." >&2; exit 1; }
 source "$SCRIPT_DIR/../lib/adapter-claude.sh"
 error() { printf '%s\n' "$1" >&2; return 1; }
 

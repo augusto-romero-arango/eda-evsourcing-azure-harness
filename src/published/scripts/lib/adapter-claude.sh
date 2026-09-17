@@ -170,7 +170,9 @@ published_claude_translate_body() {
             elif [[ "$line" =~ ^(.*)\{\{mefisto:skill-root[[:space:]]+([a-z0-9]+(-[a-z0-9]+)*)\}\}(.*)$ ]]; then
                 translated="${BASH_REMATCH[1]}\"\${MEFISTO_PACKAGE_ROOT}/skills/${BASH_REMATCH[2]}\"${BASH_REMATCH[4]}"
             elif [[ "$line" =~ ^(.*)\{\{mefisto:config-path\}\}(.*)$ ]]; then
-                translated="${BASH_REMATCH[1]}.mefisto/harness.config.json${BASH_REMATCH[2]}"
+                translated="${BASH_REMATCH[1]}\${MEFISTO_CONFIG_PATH}${BASH_REMATCH[2]}"
+            elif [[ "$line" =~ ^(.*)\{\{mefisto:instructions-path\}\}(.*)$ ]]; then
+                translated="${BASH_REMATCH[1]}\${MEFISTO_INSTRUCTIONS_PATH}${BASH_REMATCH[2]}"
             elif [[ "$line" =~ ^(.*)\{\{mefisto:state-path[[:space:]]+([A-Za-z0-9][A-Za-z0-9._/-]*)\}\}(.*)$ ]]; then
                 translated="${BASH_REMATCH[1]}.mefisto/pipeline/${BASH_REMATCH[2]}${BASH_REMATCH[3]}"
             elif [[ "$line" =~ ^(.*)\{\{mefisto:command[[:space:]]+([a-z0-9-]+)\}\}(.*)$ ]]; then
@@ -197,6 +199,13 @@ published_claude_render() {
     raw_body="$(awk 'NR == 1 { next } $0 == "---" && !seen { seen=1; next } seen { print }' "$source")" || { published_claude_error "$rel" body 'no se pudo extraer'; return 1; }
     translated="$(published_claude_translate_body "$rel" "$raw_body")" || return 1
     if published_claude_needs_package_root "$raw_body"; then preamble="$(published_claude_package_root_preamble)"; fi
+    local needs_config=0 needs_instructions=0
+    published_effective_contract_needs_config "$raw_body" && needs_config=1
+    published_effective_contract_needs_instructions "$raw_body" && needs_instructions=1
+    if [ "$needs_config" -eq 1 ] || [ "$needs_instructions" -eq 1 ]; then
+        [ -z "$preamble" ] || preamble="$preamble"$'\n'
+        preamble="$preamble$(published_effective_contract_preamble "$needs_config" "$needs_instructions")"
+    fi
     tools="$(published_claude_tools "$rel" "$instance")" || return 1
     published_claude_validate_skills "$rel" "$instance" "$repo_root" || return 1
     profile="$(printf '%s' "$instance" | jq -r '.profile // empty')"

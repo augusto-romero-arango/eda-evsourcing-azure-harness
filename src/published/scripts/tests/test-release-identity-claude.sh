@@ -7,6 +7,7 @@ REPO_ROOT="$(cd "$HERE/../../../.." && pwd -P)"
 GENERATOR="$REPO_ROOT/src/published/scripts/generate-published-adapters.sh"
 ADAPTER_SOURCE="$REPO_ROOT/src/published/scripts/adapters/adapter-claude.sh"
 LIB_SOURCE="$REPO_ROOT/src/published/scripts/lib/adapter-claude.sh"
+EFFECTIVE_CONTRACT_SOURCE="$REPO_ROOT/src/published/scripts/lib/effective-contract.sh"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 PASS=0; FAIL=0
 pass() { printf '  PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
@@ -22,7 +23,7 @@ setup_fake() {
     ADAPTER="$FAKE/src/published/scripts/adapters/adapter-claude.sh"
     mkdir -p "$FAKE/src/published/scripts/adapters" "$FAKE/src/published/scripts/lib" "$FAKE/src/published" "$FAKE/.claude-plugin"
     cp "$ADAPTER_SOURCE" "$FAKE/src/published/scripts/adapters/"
-    cp "$LIB_SOURCE" "$FAKE/src/published/scripts/lib/"
+    cp "$LIB_SOURCE" "$EFFECTIVE_CONTRACT_SOURCE" "$FAKE/src/published/scripts/lib/"
     chmod 0755 "$ADAPTER"
     printf '%s\n' '{"name":"mefisto","version":"1.2.3"}' > "$FAKE/.claude-plugin/plugin.json"
     printf '%s\n' '{"schemaVersion":1,"version":"1.2.3","commit":"0123456789abcdef0123456789abcdef01234567"}' > "$FAKE/src/published/release-identity.json"

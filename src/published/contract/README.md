@@ -162,7 +162,8 @@ o mal formada se rechaza.
 | `{{mefisto:run <script> <args>}}` | script bajo `MEFISTO_PACKAGE_ROOT` + argumentos | script bajo `MEFISTO_PACKAGE_ROOT` + argumentos |
 | `{{mefisto:package-root}}` | `MEFISTO_PACKAGE_ROOT` | `MEFISTO_PACKAGE_ROOT` |
 | `{{mefisto:skill-root <id>}}` | raíz de `skills/<id>/` bajo `MEFISTO_PACKAGE_ROOT` | raíz de `skills/mefisto-<id>/` bajo `MEFISTO_PACKAGE_ROOT` |
-| `{{mefisto:config-path}}` | `.mefisto/harness.config.json` del consumidor | `.mefisto/harness.config.json` del consumidor |
+| `{{mefisto:config-path}}` | `MEFISTO_CONFIG_PATH` (ruta efectiva de lectura) | `MEFISTO_CONFIG_PATH` (ruta efectiva de lectura) |
+| `{{mefisto:instructions-path}}` | `MEFISTO_INSTRUCTIONS_PATH` (ruta efectiva de lectura) | `MEFISTO_INSTRUCTIONS_PATH` (ruta efectiva de lectura) |
 | `{{mefisto:state-path <rel>}}` | `.mefisto/pipeline/<rel>` del consumidor | `.mefisto/pipeline/<rel>` del consumidor |
 | `{{mefisto:command <id>}}` | `/mefisto:<id>` | `/mefisto:<id>` |
 
@@ -180,6 +181,26 @@ que valida y exporta una única raíz física sin barra final:
 de runtime o los markers canónico/legacy del consumidor; OpenCode consulta el
 launcher de la release activa. Esta mecánica es exclusiva de cada salida: la
 fuente neutral y sus callers no conocen variables ni layouts de runtime.
+
+`config-path` e `instructions-path` no traducen a una ruta canónica literal:
+resuelven la ruta efectiva de lectura del contrato consumidor descrita en
+MEF-ADR-0053 sección 4 (canónica primero, fallback legacy de lectura
+únicamente si la canónica falta, aborto con diagnóstico si no existe ninguna).
+Cuando un body usa una o ambas directivas, el adaptador antepone un único
+bloque Bash adicional -- independiente del de `package-root` -- que resuelve
+cada ruta usada exactamente una vez y exporta `MEFISTO_CONFIG_PATH` y/o
+`MEFISTO_INSTRUCTIONS_PATH`; cada aparición inline de la directiva se traduce
+a la variable ya resuelta, de modo que varios usos en el mismo body comparten
+esa única inicialización. Si existen ambas variantes de una misma ruta, el
+bloque generado elige la canónica, informa por stderr que ignora la legacy y
+nunca combina contenido de las dos. Para `config-path`, la precedencia y el
+texto de los diagnósticos coinciden con `resolve_harness_config_path read` de
+`scripts/_pipeline-common.sh` -- con las rutas expresadas relativas a la raíz
+del consumidor, donde el resolver las interpola absolutas; para `instructions-path`, el mismo mecanismo
+aplica sobre las directivas del consumidor y el diagnóstico de ausencia total
+apunta a `{{mefisto:command onboard}}`. Los nombres de archivo legacy
+concretos sólo existen dentro de ese bloque generado, nunca en la fuente
+neutral ni en este contrato.
 
 ## Validación
 
