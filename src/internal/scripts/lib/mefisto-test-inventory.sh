@@ -17,9 +17,22 @@
 #                        (registro explicito, ver
 #                        MEFISTO_TEST_INVENTORY_ADDITIONAL_SOURCES mas abajo).
 #
-# Uso: source "$(dirname "${BASH_SOURCE[0]}")/lib/mefisto-test-inventory.sh"
-# (o, desde .claude/scripts/, via el shim homonimo -- ver
-# src/internal/scripts/README.md, "Plantilla del shim de compatibilidad").
+# Los nombres de carril describen SUPERFICIES DEL REPO, no CLIs de runtime
+# (MEF-ADR-0050): 'interno' se seguira llamando asi si las pruebas internas se
+# mudan algun dia fuera de .claude/scripts/tests/. Lo unico que cambiaria
+# entonces es el subdirectorio que escanea mefisto_test_inventory_lane_interno;
+# ningun consumidor del contrato se entera.
+#
+# Uso: se `source`a por ruta relativa al archivo del caller, igual que el resto
+# de la libreria interna -- desde src/internal/scripts/:
+#
+#   source "$(dirname "${BASH_SOURCE[0]}")/lib/mefisto-test-inventory.sh"
+#
+# No tiene shim en .claude/scripts/ ni lo necesita: la "Plantilla del shim de
+# compatibilidad" de src/internal/scripts/README.md cubre EJECUTABLES invocados
+# por una ruta estable (reenvian con `exec`), y esta lib no se ejecuta -- el
+# unico shim de lib que existe es el de _mefisto-common.sh, excepcion
+# documentada en ese mismo README.
 #
 # API publica:
 #   mefisto_test_inventory_lane_publicado [repo_root]
