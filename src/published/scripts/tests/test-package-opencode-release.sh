@@ -146,8 +146,11 @@ printf '%s' "$DIAGNOSIS" | jq -e '.status == "drift" and .claude.version == .ope
 HOME="$WORK/home integrado"; XDG_DATA_HOME="$HOME/datos"; XDG_CONFIG_HOME="$HOME/config"; export HOME XDG_DATA_HOME XDG_CONFIG_HOME
 mkdir -p "$HOME"
 "$EXTRACT/install.sh" install 1.2.3 >/dev/null; assert_rc "$?" 0 'instala el paquete fixture sin checkout'
+ACTIVE_ROOT="$XDG_DATA_HOME/mefisto/active"
+[ "$(< "$ACTIVE_ROOT/docs/adr/mef-adr-0011.md")" = 'Definition of Ready' ] && [ "$(< "$ACTIVE_ROOT/docs/testing/harness-cheatsheet.md")" = 'Harness cheatsheet' ] && pass 'la raiz activa abre el ADR y cheatsheet instalados' || fail 'la raiz activa no conserva el conocimiento TDD'
 "$XDG_DATA_HOME/mefisto/active/bin/mefisto-opencode" project >/dev/null; assert_rc "$?" 0 'proyecta la release instalada'
 [ -L "$XDG_CONFIG_HOME/opencode/skills/mefisto-projections/SKILL.md" ] && [ -L "$XDG_CONFIG_HOME/opencode/skills/mefisto-comment-cleanup/SKILL.md" ] && grep -q '^name: mefisto-projections$' "$XDG_CONFIG_HOME/opencode/skills/mefisto-projections/SKILL.md" && [ "$(< "$XDG_CONFIG_HOME/opencode/skills/mefisto-projections/read-apis.md")" = 'recurso projections' ] && [ "$(< "$XDG_CONFIG_HOME/opencode/skills/mefisto-comment-cleanup/ejemplos.md")" = 'recurso comentarios' ] && pass 'proyeccion global abre nombres y recursos relativos de ambos Skills' || fail 'proyeccion global de Skills incompleta'
+[ ! -e "$XDG_CONFIG_HOME/opencode/docs" ] && pass 'el conocimiento permanece en la release y no se proyecta globalmente' || fail 'el conocimiento TDD se proyecto fuera de la release'
 printf x >> "$TAR"; (cd "$OUT" && shasum -a 256 -c "$(basename "$SHA")" >/dev/null 2>&1); assert_rc "$?" 1 'checksum detecta tarball corrompido'
 
 setup_repo absent; rm -rf "$TEST_REPO/dist/opencode"; NEG_OUT="$WORK/absent"; run_package --output "$NEG_OUT" >/dev/null 2>&1; assert_rc "$?" 1 'rechaza dist ausente'; assert_no_assets "$NEG_OUT" 'dist ausente no deja assets'

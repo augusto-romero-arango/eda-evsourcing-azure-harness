@@ -6,6 +6,28 @@ tools: {"microsoft-learn_*":false,"terraform_*":false}
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/projection-implementer.md. No editar a mano. -->
 Antes de ejecutar este body, usa la tool nativa `skill` para cargar, en este orden: `mefisto-projections`. Si una carga es denegada o falla, detén la ejecución.
+```bash
+mefisto_opencode_data_root() {
+    if [ -n "${XDG_DATA_HOME:-}" ]; then printf '%s/mefisto\n' "$XDG_DATA_HOME"
+    elif [ "$(uname -s)" = Darwin ]; then printf '%s/Library/Application Support/mefisto\n' "$HOME"
+    else printf '%s/.local/share/mefisto\n' "$HOME"; fi
+}
+mefisto_opencode_launcher="$(mefisto_opencode_data_root)/active/bin/mefisto-opencode"
+if [ ! -f "$mefisto_opencode_launcher" ] || [ -L "$mefisto_opencode_launcher" ] || [ ! -x "$mefisto_opencode_launcher" ]; then
+    printf '%s\n' 'ERROR OpenCode: no hay una release activa valida; instale o active la release OpenCode.' >&2; exit 1
+fi
+MEFISTO_PACKAGE_ROOT="$("$mefisto_opencode_launcher" package-root)" || {
+    printf '%s\n' 'ERROR OpenCode: no se pudo resolver la release activa; instale o active la release OpenCode.' >&2; exit 1;
+}
+case "$MEFISTO_PACKAGE_ROOT" in
+    /*) ;;
+    *) printf '%s\n' 'ERROR OpenCode: la release activa no devolvio una raiz absoluta; reinstale o active la release OpenCode.' >&2; exit 1 ;;
+esac
+MEFISTO_PACKAGE_ROOT="$(cd "$MEFISTO_PACKAGE_ROOT" 2>/dev/null && pwd -P)" || {
+    printf '%s\n' 'ERROR OpenCode: la release activa no existe; reinstale o active la release OpenCode.' >&2; exit 1;
+}
+export MEFISTO_PACKAGE_ROOT
+```
 
 Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
 
@@ -15,19 +37,12 @@ Este agente es deliberadamente delgado (MEF-ADR-0033): la doctrina completa de p
 
 ## Localizar los ADRs y los recursos de Nivel 3 del Skill
 
-El Skill `projections` (ya precargado como texto) y los ADRs del marco viven **dentro del plugin instalado**, no en el repo donde corres este agente (`cwd = repo consumidor`). Los links relativos del Skill no se resuelven solos: antes de abrirlos, o de citar un ADR, resuelve la raiz del plugin:
+El Skill `projections` (ya precargado como texto) y los ADRs del marco viven **dentro de la release activa e inmutable del plugin**, no en el repo donde corres este agente (`cwd = repo consumidor`). Los links relativos del Skill no se resuelven solos: abre los ADRs desde `${MEFISTO_PACKAGE_ROOT}/docs/adr/` y los recursos de Nivel 3 desde `"${MEFISTO_PACKAGE_ROOT}/skills/mefisto-projections"`.
 
-```bash
-PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
-[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
-PLUGIN_ROOT="${PLUGIN_ROOT%/}"   # normaliza: sin barra final
-echo "Raiz del plugin: $PLUGIN_ROOT"
-```
+- Recursos de Nivel 3 del Skill: `"${MEFISTO_PACKAGE_ROOT}/skills/mefisto-projections"/modelos-marten.md`, `"${MEFISTO_PACKAGE_ROOT}/skills/mefisto-projections"/naming.md`, `"${MEFISTO_PACKAGE_ROOT}/skills/mefisto-projections"/read-apis.md`, `"${MEFISTO_PACKAGE_ROOT}/skills/mefisto-projections"/config-test.md`.
+- ADRs citados por el Skill: `${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0035-doctrina-proyeccion-query-read-side.md`, `${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0034-worker-proyecciones-read-models.md`, `${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0006-convenciones-nombramiento-funciones-azure.md`, `${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0041-forma-propia-vista-read-side.md`, `${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0028-estrategia-tenancy.md`, `${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0029-test-composicion-host.md`.
 
-- Recursos de Nivel 3 del Skill: `"$PLUGIN_ROOT/skills/projections/modelos-marten.md"`, `.../naming.md`, `.../read-apis.md`, `.../config-test.md`.
-- ADRs citados por el Skill: `"$PLUGIN_ROOT/docs/adr/mef-adr-0035-doctrina-proyeccion-query-read-side.md"`, `mef-adr-0034-worker-proyecciones-read-models.md`, `mef-adr-0006-convenciones-nombramiento-funciones-azure.md`, `mef-adr-0041-forma-propia-vista-read-side.md`, `mef-adr-0028-estrategia-tenancy.md`, `mef-adr-0029-test-composicion-host.md`.
-
-**Nunca uses la ruta relativa** `docs/adr/...` ni `skills/projections/...`: con `cwd = repo consumidor` resolverian contra el repo equivocado (inexistente ahi).
+**Nunca uses rutas relativas** `docs/adr/...` ni `skills/projections/...`: con `cwd = repo consumidor` resolverian contra el repo equivocado (inexistente ahi).
 
 ## Contrato con el consumidor
 

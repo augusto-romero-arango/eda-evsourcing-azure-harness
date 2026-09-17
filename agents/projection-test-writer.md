@@ -6,6 +6,84 @@ skills: ["projections"]
 model: "sonnet"
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/projection-test-writer.md. No editar a mano. -->
+```bash
+mefisto_claude_root=''
+mefisto_claude_canonical_contaminated=0
+mefisto_claude_root_from_candidate() {
+    local root
+    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
+    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
+    jq -e '
+      .name == "mefisto" and
+      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"))
+    ' "$root/.claude-plugin/plugin.json" >/dev/null 2>&1 || return 1
+    jq -e --arg version "$(jq -er '.version | strings' "$root/.claude-plugin/plugin.json" 2>/dev/null)" '
+      (keys | sort) == ["commit", "runtime", "schemaVersion", "version"] and
+      .schemaVersion == 1 and .runtime == "claude" and .version == $version and
+      (.commit | type == "string" and test("^[0-9a-f]{40}$"))
+    ' "$root/mefisto-manifest.json" >/dev/null 2>&1 || return 1
+    printf '%s\n' "$root"
+}
+mefisto_claude_is_opencode_root() {
+    local root
+    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
+    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
+    jq -e '
+      (keys | sort) == ["commit", "minimumRuntimeVersion", "runtime", "schemaVersion", "version"] and
+      .schemaVersion == 1 and .runtime == "opencode" and
+      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
+      (.commit | type == "string" and test("^[0-9a-f]{40}$")) and
+      (.minimumRuntimeVersion | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
+    ' "$root/mefisto-manifest.json" >/dev/null 2>&1
+}
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+    mefisto_claude_candidate="$CLAUDE_PLUGIN_ROOT"
+    mefisto_claude_root="$(mefisto_claude_root_from_candidate)" || {
+        printf '%s\n' 'ERROR Claude: la raiz indicada por CLAUDE_PLUGIN_ROOT es invalida; reabra o reinstale el plugin.' >&2; exit 1;
+    }
+else
+    mefisto_claude_cursor="$PWD"
+    while :; do
+        if [ -f "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root" ]; then
+            mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root")"
+            if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
+            if mefisto_claude_is_opencode_root; then
+                mefisto_claude_canonical_contaminated=1
+                break
+            else
+                printf '%s\n' 'ERROR Claude: metadata del marker canonico invalida; reabra o reinstale el plugin.' >&2; exit 1
+            fi
+        fi
+        if [ "$mefisto_claude_cursor" = / ]; then break; fi
+        mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
+    done
+    if [ -z "$mefisto_claude_root" ]; then
+        mefisto_claude_cursor="$PWD"
+        while :; do
+            if [ -f "$mefisto_claude_cursor/.claude/pipeline/.plugin-root" ]; then
+                mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.claude/pipeline/.plugin-root")"
+                if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
+                if mefisto_claude_is_opencode_root; then
+                    printf '%s\n' 'ERROR Claude: el marker Claude identifica una distribucion de otro runtime; reabra Claude o reinstale el plugin.' >&2; exit 1
+                fi
+                printf '%s\n' 'ERROR Claude: metadata del marker Claude invalida; reabra o reinstale el plugin.' >&2; exit 1
+            fi
+            if [ "$mefisto_claude_cursor" = / ]; then break; fi
+            mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
+        done
+    fi
+fi
+if [ -z "$mefisto_claude_root" ]; then
+    if [ "$mefisto_claude_canonical_contaminated" -eq 1 ]; then
+        printf '%s\n' 'ERROR Claude: el marker canonico identifica una distribucion OpenCode y no existe un mirror Claude valido; reabra Claude o reinstale el plugin.' >&2
+    else
+        printf '%s\n' 'ERROR Claude: no se encontro una raiz Claude valida; reabra o reinstale el plugin.' >&2
+    fi
+    exit 1
+fi
+MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"
+export MEFISTO_PACKAGE_ROOT
+```
 
 Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
 
@@ -15,23 +93,16 @@ Este agente es deliberadamente delgado (MEF-ADR-0033): la doctrina completa de p
 
 ## Localizar los ADRs y los recursos de Nivel 3 del Skill
 
-El Skill `projections` (ya precargado como texto) y los ADRs del marco viven **dentro del plugin instalado**, no en el repo donde corres este agente (`cwd = repo consumidor`). Los links relativos del Skill (`naming.md`, `modelos-marten.md`, etc.) no se resuelven solos: antes de abrirlos, o de citar un ADR, resuelve la raiz del plugin:
+El Skill `projections` (ya precargado como texto) y los ADRs del marco viven **dentro de la release activa e inmutable del plugin**, no en el repo donde corres este agente (`cwd = repo consumidor`). Los links relativos del Skill no se resuelven solos: abre los ADRs desde `"${MEFISTO_PACKAGE_ROOT}/docs/adr/"` y los recursos de Nivel 3 desde `"${MEFISTO_PACKAGE_ROOT}/skills/projections"`.
 
-```bash
-PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
-[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
-PLUGIN_ROOT="${PLUGIN_ROOT%/}"   # normaliza: sin barra final
-echo "Raiz del plugin: $PLUGIN_ROOT"
-```
+- Recursos de Nivel 3 del Skill: `"${MEFISTO_PACKAGE_ROOT}/skills/projections"/modelos-marten.md`, `"${MEFISTO_PACKAGE_ROOT}/skills/projections"/naming.md`, `"${MEFISTO_PACKAGE_ROOT}/skills/projections"/read-apis.md`, `"${MEFISTO_PACKAGE_ROOT}/skills/projections"/config-test.md`.
+- ADRs citados por el Skill: `"${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0035-doctrina-proyeccion-query-read-side.md"`, `"${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0034-worker-proyecciones-read-models.md"`, `"${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0006-convenciones-nombramiento-funciones-azure.md"`, `"${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0041-forma-propia-vista-read-side.md"`. Para naming de tests y oraculo independiente, `"${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0016-convencion-naming-tests.md"` y `"${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0002-estrategia-testing-event-sourcing.md"`.
 
-- Recursos de Nivel 3 del Skill: `"$PLUGIN_ROOT/skills/projections/modelos-marten.md"`, `.../naming.md`, `.../read-apis.md`, `.../config-test.md`.
-- ADRs citados por el Skill: `"$PLUGIN_ROOT/docs/adr/mef-adr-0035-doctrina-proyeccion-query-read-side.md"`, `mef-adr-0034-worker-proyecciones-read-models.md`, `mef-adr-0006-convenciones-nombramiento-funciones-azure.md`, `mef-adr-0041-forma-propia-vista-read-side.md`. Para naming de tests y oraculo independiente, `mef-adr-0016-convencion-naming-tests.md` y `mef-adr-0002-estrategia-testing-event-sourcing.md`.
-
-**Nunca uses la ruta relativa** `docs/adr/...` ni `skills/projections/...`: con `cwd = repo consumidor` resolverian contra el repo equivocado (inexistente ahi).
+**Nunca uses las rutas relativas** `docs/adr/...` ni las de recursos del Skill: con `cwd = repo consumidor` resolverian contra el repo equivocado (inexistente ahi).
 
 ## Contrato con el consumidor
 
-Antes de explorar codigo, lee `CLAUDE.md` raiz para resolver `<RootNamespace>` y `{Dominio}` -- mismo contrato que `test-writer.md`. Los bloques de codigo de este agente usan nombres de ejemplo de un proyecto consumidor (`Turno`, `Programacion`); sustituyelos por los reales.
+Antes de explorar codigo, lee el archivo de instrucciones raiz para resolver `<RootNamespace>` y `{Dominio}` -- mismo contrato que `test-writer.md`. Los bloques de codigo de este agente usan nombres de ejemplo de un proyecto consumidor (`Turno`, `Programacion`); sustituyelos por los reales.
 
 ## Principio fundamental
 
@@ -121,8 +192,8 @@ En ese caso:
 > **Importante**: el archivo señal vive en `pipeline-state/no-red-signal.md` en la
 > raiz del worktree, no dentro del directorio de estado del pipeline -- mismo motivo que
 > MEF-ADR-0017 documenta para `refactor-signal.md` (seccion "Evaluar tipo de
-> tarea" de `test-writer.md`): el runtime de Claude Code intercepta escrituras a
-> `.claude/**` en worktrees aun con `bypassPermissions`. A diferencia de
+> tarea" de `test-writer.md`): el runtime puede interceptar escrituras a su
+> directorio de configuracion en worktrees aun con permisos ampliados. A diferencia de
 > `refactor-signal.md`, esta señal no tiene ubicacion legacy que aceptar:
 > nace directo en `pipeline-state/`.
 

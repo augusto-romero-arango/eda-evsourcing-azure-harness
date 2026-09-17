@@ -18,19 +18,12 @@ Este agente es deliberadamente delgado (MEF-ADR-0033): la doctrina completa de p
 
 ## Localizar los ADRs y los recursos de Nivel 3 del Skill
 
-El Skill `projections` (ya precargado como texto) y los ADRs del marco viven **dentro del plugin instalado**, no en el repo donde corres este agente (`cwd = repo consumidor`). Los links relativos del Skill no se resuelven solos: antes de abrirlos, o de citar un ADR, resuelve la raiz del plugin:
+El Skill `projections` (ya precargado como texto) y los ADRs del marco viven **dentro de la release activa e inmutable del plugin**, no en el repo donde corres este agente (`cwd = repo consumidor`). Los links relativos del Skill no se resuelven solos: abre los ADRs desde `{{mefisto:package-root}}/docs/adr/` y los recursos de Nivel 3 desde `{{mefisto:skill-root projections}}`.
 
-```bash
-PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
-[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
-PLUGIN_ROOT="${PLUGIN_ROOT%/}"   # normaliza: sin barra final
-echo "Raiz del plugin: $PLUGIN_ROOT"
-```
+- Recursos de Nivel 3 del Skill: `{{mefisto:skill-root projections}}/modelos-marten.md`, `{{mefisto:skill-root projections}}/naming.md`, `{{mefisto:skill-root projections}}/read-apis.md`, `{{mefisto:skill-root projections}}/config-test.md`.
+- ADRs citados por el Skill: `{{mefisto:package-root}}/docs/adr/mef-adr-0035-doctrina-proyeccion-query-read-side.md`, `{{mefisto:package-root}}/docs/adr/mef-adr-0034-worker-proyecciones-read-models.md`, `{{mefisto:package-root}}/docs/adr/mef-adr-0006-convenciones-nombramiento-funciones-azure.md`, `{{mefisto:package-root}}/docs/adr/mef-adr-0041-forma-propia-vista-read-side.md`, `{{mefisto:package-root}}/docs/adr/mef-adr-0028-estrategia-tenancy.md`, `{{mefisto:package-root}}/docs/adr/mef-adr-0029-test-composicion-host.md`.
 
-- Recursos de Nivel 3 del Skill: `"$PLUGIN_ROOT/skills/projections/modelos-marten.md"`, `.../naming.md`, `.../read-apis.md`, `.../config-test.md`.
-- ADRs citados por el Skill: `"$PLUGIN_ROOT/docs/adr/mef-adr-0035-doctrina-proyeccion-query-read-side.md"`, `mef-adr-0034-worker-proyecciones-read-models.md`, `mef-adr-0006-convenciones-nombramiento-funciones-azure.md`, `mef-adr-0041-forma-propia-vista-read-side.md`, `mef-adr-0028-estrategia-tenancy.md`, `mef-adr-0029-test-composicion-host.md`.
-
-**Nunca uses la ruta relativa** `docs/adr/...` ni `skills/projections/...`: con `cwd = repo consumidor` resolverian contra el repo equivocado (inexistente ahi).
+**Nunca uses rutas relativas** `docs/adr/...` ni `skills/projections/...`: con `cwd = repo consumidor` resolverian contra el repo equivocado (inexistente ahi).
 
 ## Contrato con el consumidor
 

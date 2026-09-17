@@ -161,6 +161,7 @@ o mal formada se rechaza.
 | `{{mefisto:launch-agent <id>}}` | delegación al agente generado del plugin | delegación al agente global generado |
 | `{{mefisto:run <script> <args>}}` | script bajo `MEFISTO_PACKAGE_ROOT` + argumentos | script bajo `MEFISTO_PACKAGE_ROOT` + argumentos |
 | `{{mefisto:package-root}}` | `MEFISTO_PACKAGE_ROOT` | `MEFISTO_PACKAGE_ROOT` |
+| `{{mefisto:skill-root <id>}}` | raíz de `skills/<id>/` bajo `MEFISTO_PACKAGE_ROOT` | raíz de `skills/mefisto-<id>/` bajo `MEFISTO_PACKAGE_ROOT` |
 | `{{mefisto:config-path}}` | `.mefisto/harness.config.json` del consumidor | `.mefisto/harness.config.json` del consumidor |
 | `{{mefisto:state-path <rel>}}` | `.mefisto/pipeline/<rel>` del consumidor | `.mefisto/pipeline/<rel>` del consumidor |
 | `{{mefisto:command <id>}}` | `/mefisto:<id>` | `/mefisto:<id>` |
@@ -169,7 +170,11 @@ Los adaptadores materializan comandos como `/mefisto:<id>`. El body no puede
 nombrar CLIs, variables, cachés, directorios ni metadata de un runtime. Tampoco
 admite placeholders distintos de `$ARGUMENTS`.
 
-Cuando un body usa `run` o `package-root`, el adaptador antepone un bloque Bash
+`skill-root` acepta exclusivamente un id kebab-case lógico, sin prefijo de
+runtime. El id debe existir bajo `skills/<id>/SKILL.md` y estar declarado en
+`skills` por ese mismo artefacto; por tanto expresa una dependencia ya cargada,
+no un inventario alternativo. Cuando un body usa `run`, `package-root` o
+`skill-root`, el adaptador antepone un bloque Bash
 que valida y exporta una única raíz física sin barra final:
 `MEFISTO_PACKAGE_ROOT`. Claude valida la distribución cargada desde su variable
 de runtime o los markers canónico/legacy del consumidor; OpenCode consulta el
