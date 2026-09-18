@@ -352,6 +352,12 @@ _stage2_prompt_files() {
     find "$STATE_DIR/prompts" -name "mefisto-tooling-stage-2-reviewer-*-issue-${1}.prompt.md" 2>/dev/null | sort
 }
 
+# _stage1_prompt_files <issue_num> -- mismo criterio que _stage2_prompt_files,
+# para el prompt de Stage 1 (writer) de ese issue.
+_stage1_prompt_files() {
+    find "$STATE_DIR/prompts" -name "mefisto-tooling-stage-1-writer-*-issue-${1}.prompt.md" 2>/dev/null | sort
+}
+
 # _find_call <capdir> <cli> <aguja> -- ruta del primer <cli>-call-N.json cuyo
 # argv (array JSON) tiene algun elemento que CONTIENE <aguja>. Sirve para
 # ubicar la invocacion de un stage por contenido, no por orden de llamada.
@@ -463,6 +469,61 @@ A_ISSUE="912101"
 run_scenario claude "$A_ISSUE" success "$FIXTURES_CLAUDE_DIR/success.jsonl" 0
 A_CAP="$SCEN_CAP"
 assert_success_run B claude "$A_ISSUE" "$A_CAP"
+
+# ============================================================================
+# [N] Doctrina de neutralidad de runtime en los prompts del pipeline (issue
+# #1468). El marcador "NEUTRALIDAD DE RUNTIME:" vive en una unica variable
+# Bash que se interpola sin cambios en STAGE1_PROMPT y STAGE2_PROMPT -- se
+# verifica sobre los prompt.md REALES que la corrida (a) ya dejo en disco, no
+# releyendo la fuente. Por separado, se verifica que ni ese bloque ni el
+# resto de la fuente canonica del pipeline nombran los literales que R3
+# persigue (esta suite vive bajo .claude/scripts/tests/**, rules: ["ALL"],
+# asi que SI puede nombrarlos para afirmar su ausencia).
+# ============================================================================
+
+echo ""
+echo "[N] Doctrina de neutralidad de runtime en los prompts del pipeline (issue #1468)"
+
+N_STAGE1_PROMPT="$(_stage1_prompt_files "$A_ISSUE" | tail -n1)"
+if [ -n "$N_STAGE1_PROMPT" ] && grep -qF 'NEUTRALIDAD DE RUNTIME:' "$N_STAGE1_PROMPT"; then
+    pass "N-1: el prompt de Stage 1 (writer) trae el bloque 'NEUTRALIDAD DE RUNTIME:'"
+else
+    fail "N-1: el prompt de Stage 1 no trae el bloque de neutralidad de runtime"
+fi
+
+N_STAGE2_PROMPT="$(_stage2_prompt_files "$A_ISSUE" | tail -n1)"
+if [ -n "$N_STAGE2_PROMPT" ] && grep -qF 'NEUTRALIDAD DE RUNTIME:' "$N_STAGE2_PROMPT"; then
+    pass "N-2: el prompt de Stage 2 (reviewer) trae el bloque 'NEUTRALIDAD DE RUNTIME:'"
+else
+    fail "N-2: el prompt de Stage 2 no trae el bloque de neutralidad de runtime"
+fi
+
+if ! grep -qE 'CLAUDE_PLUGIN_ROOT|CLAUDE_PROJECT_DIR|\.claude/pipeline' "$CANON_PIPE"; then
+    pass "N-3: mefisto-tooling-pipeline.sh (fuente canonica, bloque incluido) no nombra ningun literal de R3"
+else
+    fail "N-3: mefisto-tooling-pipeline.sh nombra un literal de R3: $(grep -nE 'CLAUDE_PLUGIN_ROOT|CLAUDE_PROJECT_DIR|\.claude/pipeline' "$CANON_PIPE")"
+fi
+
+# El bloque nace unificado (CA-1): una sola definicion en la fuente y dos
+# interpolaciones, una por prompt. Si alguien lo copiara a mano en el segundo
+# prompt, N-1/N-2 seguirian verdes y la divergencia pasaria inadvertida.
+N_DEF_COUNT="$(grep -c '^NEUTRALITY_RUNTIME_BLOCK=' "$CANON_PIPE" || true)"
+N_USE_COUNT="$(grep -cF '${NEUTRALITY_RUNTIME_BLOCK}' "$CANON_PIPE" || true)"
+if [ "$N_DEF_COUNT" = "1" ] && [ "$N_USE_COUNT" = "2" ]; then
+    pass "N-4: el bloque se define una sola vez y se interpola en los dos prompts (1 definicion, 2 usos)"
+else
+    fail "N-4: el bloque deberia tener 1 definicion y 2 usos; hay $N_DEF_COUNT definicion(es) y $N_USE_COUNT uso(s)"
+fi
+
+# CA-2: al reviewer no le basta con conocer la regla -- tiene que corregir la
+# fuga en su propia revision, sin reportarla ni ampliar la allowlist.
+if [ -n "$N_STAGE2_PROMPT" ] \
+    && grep -qF 'reformulalos tu mismo en esta misma revision' "$N_STAGE2_PROMPT" \
+    && grep -qF 'propongas ampliar la allowlist' "$N_STAGE2_PROMPT"; then
+    pass "N-5: el prompt de Stage 2 manda reformular la fuga en la propia revision, sin ampliar la allowlist"
+else
+    fail "N-5: el prompt de Stage 2 no trae la instruccion de reformular la fuga sin ampliar la allowlist"
+fi
 
 # ============================================================================
 # [C] Escenario (b): MEFISTO_RUNTIME=opencode, exito de punta a punta

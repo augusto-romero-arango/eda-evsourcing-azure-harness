@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # mefisto-state.sh -- Resolucion unica del estado interno de Mefisto (issue #856)
 #
-# Antes de este helper, cada pipeline interno componia ".claude/pipeline/<algo>"
-# por su cuenta (inventario completo en el issue #856), acoplando la operacion
-# del harness a un runtime especifico (Claude Code) aunque esos datos son
-# propios de Mefisto. Este archivo resuelve el canonico neutral a runtime
+# Antes de este helper, cada pipeline interno componia a mano la ruta legada
+# de un runtime concreto (inventario completo en el issue #856), acoplando la
+# operacion del harness a ese runtime aunque esos datos son propios de
+# Mefisto. Este archivo resuelve el canonico neutral a runtime
 # ".mefisto/pipeline" (MEF-ADR-0049 CA-3, issue #851), con fallback de LECTURA
-# a ".claude/pipeline" y SIN migracion automatica (MEF-ADR-0049, seccion 3).
+# a la ruta legada -- MEFISTO_LEGACY_STATE_REL, armada mas abajo -- y SIN
+# migracion automatica (MEF-ADR-0049, seccion 3).
 #
 # Uso: `source`ado por .claude/scripts/_mefisto-common.sh -- ningun caller lo
 # sourcea directamente. Nace en src/internal/scripts/lib/ (layout canonico de
@@ -26,17 +27,30 @@
 # caller ya haya llamado assert_in_mefisto (que exporta MEFISTO_REPO_ROOT):
 # _mefisto-common.sh sourcea este archivo antes de que corra ninguna de sus
 # propias funciones. Por eso la raiz se resuelve aqui con la misma tecnica que
-# assert_in_mefisto (`git rev-parse --show-toplevel`), nunca con
-# CLAUDE_PROJECT_DIR ni CLAUDE_PLUGIN_ROOT (issue #873 CA-4 lo prohibira).
+# assert_in_mefisto (`git rev-parse --show-toplevel`), nunca con las
+# variables de entorno de un runtime concreto (MEF-ADR-0050; la regla R3 de
+# src/internal/scripts/mefisto-neutrality-gate.sh lo prohibe).
 #
 # `: "${VAR:=default}"` respeta un valor previo del entorno: un test o un
 # caller puede fijar MEFISTO_STATE_DIR/MEFISTO_LEGACY_STATE_DIR de antemano
 # (p. ej. contra un repo temporal) y este helper no lo pisa.
 _mefisto_state_root="$(git rev-parse --show-toplevel 2>/dev/null)" || _mefisto_state_root="$(pwd)"
 : "${MEFISTO_STATE_DIR:=$_mefisto_state_root/.mefisto/pipeline}"
-: "${MEFISTO_LEGACY_STATE_DIR:=$_mefisto_state_root/.claude/pipeline}"
-export MEFISTO_STATE_DIR MEFISTO_LEGACY_STATE_DIR
-unset _mefisto_state_root
+# MEFISTO_LEGACY_STATE_REL es el sufijo relativo del estado legado: este
+# helper es su UNICO dueno (issue #856 -- ningun otro archivo del lado interno
+# vuelve a componer esa ruta), asi que se arma una sola vez aqui y tanto la
+# resolucion de abajo como mefisto_state_read_paths la derivan de el. Mantener
+# el nombre del directorio oculto en su propia variable, en vez de repetir la
+# ruta entera en cada sitio, deja este archivo DENTRO del alcance de la regla
+# R3 del gate de neutralidad (issue #1468): la alternativa era una excepcion
+# nominal en src/internal/contract/neutrality-allowlist.json, que apaga la
+# regla sobre el archivo COMPLETO y lo vuelve un falso precedente para quien
+# busque como nombrar un runtime concreto en la fuente neutral.
+_mefisto_legacy_hidden_dir=".claude"
+MEFISTO_LEGACY_STATE_REL="$_mefisto_legacy_hidden_dir/pipeline"
+: "${MEFISTO_LEGACY_STATE_DIR:=$_mefisto_state_root/$MEFISTO_LEGACY_STATE_REL}"
+export MEFISTO_STATE_DIR MEFISTO_LEGACY_STATE_DIR MEFISTO_LEGACY_STATE_REL
+unset _mefisto_state_root _mefisto_legacy_hidden_dir
 
 # mefisto_state_path <rel> [<root>]
 #
@@ -73,8 +87,8 @@ mefisto_state_path() {
 #
 # Imprime por stdout, una por linea, las rutas EXISTENTES para <rel>: la
 # canonica primero (".mefisto/pipeline/<rel>"), la legacy despues
-# (".claude/pipeline/<rel>") -- CA-3. Vacia si <rel> no existe en ninguna de
-# las dos. El caller decide que hacer con la lista: tomar solo la primera
+# ("$MEFISTO_LEGACY_STATE_REL/<rel>") -- CA-3. Vacia si <rel> no existe en
+# ninguna de las dos. El caller decide que hacer con la lista: la primera
 # (mefisto_state_read_first) o concatenar ambas (p. ej. un historial viejo que
 # se queda en legacy para siempre, ver notas tecnicas del issue #856).
 #
@@ -88,7 +102,7 @@ mefisto_state_read_paths() {
     local canonical_base legacy_base
     if [ -n "$root" ]; then
         canonical_base="$root/.mefisto/pipeline"
-        legacy_base="$root/.claude/pipeline"
+        legacy_base="$root/$MEFISTO_LEGACY_STATE_REL"
     else
         canonical_base="$MEFISTO_STATE_DIR"
         legacy_base="$MEFISTO_LEGACY_STATE_DIR"

@@ -1081,6 +1081,17 @@ Corrige las fugas en el worktree ($WORKTREE_PATH) y retoma con:
   ./.claude/scripts/mefisto-tooling-pipeline.sh $ISSUE_NUM --from-stage $stage${VARIANT_LABEL:+ --variant $VARIANT_LABEL}"
 }
 
+# --- Bloque compartido: doctrina de neutralidad de runtime (issue #1468) ---
+# Se define UNA sola vez y se interpola sin cambios en STAGE1_PROMPT y
+# STAGE2_PROMPT para que no diverja entre los dos prompts. Este archivo vive
+# bajo src/internal/scripts/, sujeto a las mismas reglas R1-R3 que describe
+# -- por eso el bloque no nombra ninguno de los literales que persigue cada
+# regla, solo los describe por categoria y remite a la cabecera del gate y a
+# MEF-ADR-0050. No contiene "$", asi que se interpola por expansion normal de
+# variable (a diferencia de $ISSUE_CONTEXT, que usa sustitucion tardia).
+NEUTRALITY_RUNTIME_BLOCK="NEUTRALIDAD DE RUNTIME:
+Un gate de cierre de stage (reglas R1-R3 de src/internal/scripts/mefisto-neutrality-gate.sh) escanea src/internal/** y los scripts de nivel superior de .claude/scripts/ con grep sobre texto crudo: mencionar un literal prohibido en un comentario, un string o en prosa cuenta igual que usarlo, incluso cuando la frase lo niega o lo desaconseja. Una sola fuga aborta la corrida entera al cierre del stage y se pierde todo el trabajo hecho hasta ahi, asi que revisa el texto que escribes antes de darlo por cerrado. La lista exacta de literales por regla esta en la cabecera de ese script -- R1: alias/ids de modelo y claves de permiso crudas de un runtime concreto; R2: invocaciones directas del CLI de un runtime concreto; R3: rutas y variables de entorno propias de un runtime concreto. Los pocos archivos que hoy los nombran pasan por una excepcion nominal en src/internal/contract/neutrality-allowlist.json, con un motivo que justifica por que esa mencion es correcta y permanente en ese archivo puntual; su fraseo no es un patron replicable en un archivo nuevo. Para referirte a cualquiera de esos conceptos en prosa neutral, cita MEF-ADR-0050 (nunca con variables de entorno ni rutas de un runtime concreto). No resuelvas una fuga anadiendo una excepcion nueva a esa allowlist: registrar una excepcion nueva y usarla son dos PRs distintos, y este no es el de registro (MEF-ADR-0019 seccion E)."
+
 # --- STAGE 1: Writer (implementacion) ---
 if [ "$FROM_STAGE" -le 1 ]; then
     header "Stage 1: Writer (implementacion)"
@@ -1128,6 +1139,8 @@ Cada turno tuyo cuesta ~13 s de reloj (el 96,6% del tiempo de una corrida es el 
 - No re-inspecciones el arbol con 'git status' ni 'git diff' para confirmar algo que acabas de escribir: Write y Edit fallan con error si no aplican, asi que el exito de la herramienta ya es la confirmacion.
 - No verifiques el scope de un archivo antes de escribirlo (ni con 'git status' ni releyendo is_path_in_mefisto_scope): un hook PostToolUse te avisa EN EL INSTANTE, gratis, si un Edit/Write cae fuera de la allowlist -- no hay motivo para inspeccionar preventivamente algo que el hook ya te va a decir si sale mal. Eso no reemplaza los gates finales (validate_mefisto_scope_changes y mefisto-neutrality-gate.sh siguen corriendo al cierre del stage): el hook es aviso temprano, no el juez.
 Estas reglas no cubren todos los casos; ante cualquier otro, decide con el mismo criterio -- un turno extra cuesta ~13 s, y solo vale la pena si te ahorra un error que costaria mas.
+
+${NEUTRALITY_RUNTIME_BLOCK}
 
 Instrucciones:
 1. Lee los archivos existentes relevantes antes de escribir nuevos.
@@ -1231,13 +1244,16 @@ Cada turno tuyo cuesta ~13 s de reloj (el 96,6% del tiempo de una corrida es el 
 - No verifiques el scope de un archivo antes de escribirlo: un hook PostToolUse te avisa EN EL INSTANTE, gratis, si un Edit/Write cae fuera de la allowlist -- no hay motivo para inspeccionar preventivamente algo que el hook ya te va a decir si sale mal. Eso no reemplaza los gates finales (validate_mefisto_scope_changes y mefisto-neutrality-gate.sh siguen corriendo al cierre del stage): el hook es aviso temprano, no el juez.
 Estas reglas no cubren todos los casos; ante cualquier otro, decide con el mismo criterio -- un turno extra cuesta ~13 s, y solo vale la pena si te ahorra un error que costaria mas.
 
+${NEUTRALITY_RUNTIME_BLOCK}
+
 Instrucciones:
 1. Verifica que los cambios cumplen con lo pedido en el issue.
 2. Revisa coherencia con las convenciones del proyecto (AGENTS.md, ADRs).
 3. Revisa que los skills/agentes/pipelines modificados sigan los patrones del resto.
 4. Corrige problemas que encuentres directamente (no solo los reportes).
 5. Haz commit de tus correcciones con mensajes descriptivos.
-6. Al terminar, escribe un resumen en .mefisto/pipeline/summaries/stage-2-reviewer.md"
+6. Verifica que el diff del writer no introduce los literales que describe el bloque NEUTRALIDAD DE RUNTIME bajo src/internal/** ni en los scripts de nivel superior de .claude/scripts/; si aparecen, reformulalos tu mismo en esta misma revision -- nunca los reportes sin corregir ni propongas ampliar la allowlist.
+7. Al terminar, escribe un resumen en .mefisto/pipeline/summaries/stage-2-reviewer.md"
 
     STAGE2_PROMPT="${STAGE2_PROMPT//\$ISSUE_CONTEXT/$ISSUE_CONTEXT}"
     STAGE2_PROMPT="${STAGE2_PROMPT//\$DIFF_STAT/$DIFF_STAT}"

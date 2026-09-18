@@ -104,13 +104,6 @@
       "motivo": "Runtime falso de pruebas (issue #879): construye a mano JSON de eventos con la clave `model` del contrato neutral run-events.schema.json para simular corridas en los tests, sin invocar ningun CLI real."
     },
     {
-      "path": "src/internal/scripts/lib/mefisto-state.sh",
-      "rules": [
-        "R3"
-      ],
-      "motivo": "Comenta (nunca invoca) CLAUDE_PROJECT_DIR/CLAUDE_PLUGIN_ROOT al documentar por que esta lib resuelve su ruta via BASH_SOURCE en vez de esas variables (issue #856; la prohibicion la formaliza este mismo issue #911 CA-3)."
-    },
-    {
       "path": ".claude/settings.json",
       "rules": [
         "R3"
