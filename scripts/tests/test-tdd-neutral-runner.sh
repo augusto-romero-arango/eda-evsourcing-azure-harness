@@ -350,11 +350,16 @@ git -C "$CTX_WT" add base.txt
 git -C "$CTX_WT" commit -qm base
 CTX_SNAPSHOT="$(git -C "$CTX_WT" rev-parse HEAD)"
 mkdir -p "$CTX_WT/tests"
-dd if=/dev/zero of="$CTX_WT/tests/generated.bin" bs=1024 count=3072 status=none
+# Texto, no binario: git no emite contenido para un blob binario, asi que un archivo
+# binario grande dejaria el assert de tamano del prompt sin poder de deteccion.
+awk 'BEGIN{for(i=0;i<50000;i++) printf "linea %d de contenido generado por el test-writer para inflar el diff\n", i}' > "$CTX_WT/tests/generated.txt"
 printf 'contenido nuevo\n' > "$CTX_WT/tests/nota.md"
-git -C "$CTX_WT" add tests/generated.bin tests/nota.md
+git -C "$CTX_WT" add tests/generated.txt tests/nota.md
 git -C "$CTX_WT" commit -qm 'test-writer: fases roja y verde con archivo grande'
 CTX_HEAD="$(git -C "$CTX_WT" rev-parse HEAD)"
+CTX_RAW_DIFF_BYTES=$(git -C "$CTX_WT" diff "$CTX_SNAPSHOT"..HEAD | wc -c | tr -d ' ')
+[ "$CTX_RAW_DIFF_BYTES" -ge 3145728 ] \
+    || fail "premisa invalida: el diff completo mide ${CTX_RAW_DIFF_BYTES} bytes (< 3 MB), el caso no discriminaria el contexto acotado"
 CTX_LOGS="$CTX_TMP/logs"
 CTX_PIPELINE_TMP="$CTX_TMP/pipeline"
 mkdir -p "$CTX_LOGS" "$CTX_PIPELINE_TMP"
@@ -421,11 +426,11 @@ if bash "$CTX_TMP/case.sh"; then
     if [ -f "$CTX_PROMPT" ] && [ -n "$CTX_SIZE" ] && [ "$CTX_SIZE" -lt 65536 ] \
         && grep -Fq "$CTX_SNAPSHOT" "$CTX_PROMPT" \
         && grep -Fq "$CTX_HEAD" "$CTX_PROMPT" \
-        && grep -Fq 'tests/generated.bin' "$CTX_PROMPT" \
+        && grep -Fq 'tests/generated.txt' "$CTX_PROMPT" \
         && grep -Fq 'tests/nota.md' "$CTX_PROMPT" \
         && ! grep -Fq 'diff --git' "$CTX_PROMPT" \
         && ! grep -Fq '@@' "$CTX_PROMPT"; then
-        pass "prompt del reviewer Stage 3 acotado a SHA/stat/rutas: ${CTX_SIZE} bytes con fases roja/verde que dejaron un archivo >= 3 MB"
+        pass "prompt del reviewer Stage 3 acotado a SHA/stat/rutas: ${CTX_SIZE} bytes frente a un diff crudo de las fases roja y verde de ${CTX_RAW_DIFF_BYTES} bytes"
     else
         fail "prompt del reviewer Stage 3 no cumple el contrato acotado (tamano=${CTX_SIZE:-desconocido})"
     fi

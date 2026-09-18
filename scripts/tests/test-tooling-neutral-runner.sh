@@ -176,11 +176,16 @@ git -C "$CTX_WT" add base.txt
 git -C "$CTX_WT" commit -qm base
 CTX_SNAPSHOT="$(git -C "$CTX_WT" rev-parse HEAD)"
 mkdir -p "$CTX_WT/scaffold"
-dd if=/dev/zero of="$CTX_WT/scaffold/generated.bin" bs=1024 count=3072 status=none
+# Texto, no binario: git no emite contenido para un blob binario, asi que un archivo
+# binario grande dejaria el assert de tamano del prompt sin poder de deteccion.
+awk 'BEGIN{for(i=0;i<50000;i++) printf "linea %d de contenido generado por el writer para inflar el diff\n", i}' > "$CTX_WT/scaffold/generated.txt"
 printf 'contenido nuevo\n' > "$CTX_WT/scaffold/nota.md"
-git -C "$CTX_WT" add scaffold/generated.bin scaffold/nota.md
+git -C "$CTX_WT" add scaffold/generated.txt scaffold/nota.md
 git -C "$CTX_WT" commit -qm 'writer: scaffold grande'
 CTX_HEAD="$(git -C "$CTX_WT" rev-parse HEAD)"
+CTX_RAW_DIFF_BYTES=$(git -C "$CTX_WT" diff "$CTX_SNAPSHOT"..HEAD | wc -c | tr -d ' ')
+[ "$CTX_RAW_DIFF_BYTES" -ge 3145728 ] \
+    || fail "premisa invalida: el diff completo mide ${CTX_RAW_DIFF_BYTES} bytes (< 3 MB), el caso no discriminaria el contexto acotado"
 CTX_LOGS="$CTX_TMP/logs"
 CTX_PIPELINE_TMP="$CTX_TMP/pipeline"
 mkdir -p "$CTX_LOGS" "$CTX_PIPELINE_TMP"
@@ -243,11 +248,11 @@ if bash "$CTX_TMP/case.sh"; then
     if [ -f "$CTX_PROMPT" ] && [ -n "$CTX_SIZE" ] && [ "$CTX_SIZE" -lt 65536 ] \
         && grep -Fq "$CTX_SNAPSHOT" "$CTX_PROMPT" \
         && grep -Fq "$CTX_HEAD" "$CTX_PROMPT" \
-        && grep -Fq 'scaffold/generated.bin' "$CTX_PROMPT" \
+        && grep -Fq 'scaffold/generated.txt' "$CTX_PROMPT" \
         && grep -Fq 'scaffold/nota.md' "$CTX_PROMPT" \
         && ! grep -Fq 'diff --git' "$CTX_PROMPT" \
         && ! grep -Fq '@@' "$CTX_PROMPT"; then
-        pass "prompt del reviewer acotado a SHA/stat/rutas: ${CTX_SIZE} bytes con un writer que dejo un archivo >= 3 MB"
+        pass "prompt del reviewer acotado a SHA/stat/rutas: ${CTX_SIZE} bytes frente a un diff crudo del writer de ${CTX_RAW_DIFF_BYTES} bytes"
     else
         fail "prompt del reviewer no cumple el contrato acotado (tamano=${CTX_SIZE:-desconocido})"
     fi
