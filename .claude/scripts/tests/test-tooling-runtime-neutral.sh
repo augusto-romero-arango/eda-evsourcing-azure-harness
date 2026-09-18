@@ -504,6 +504,27 @@ else
     fail "N-3: mefisto-tooling-pipeline.sh nombra un literal de R3: $(grep -nE 'CLAUDE_PLUGIN_ROOT|CLAUDE_PROJECT_DIR|\.claude/pipeline' "$CANON_PIPE")"
 fi
 
+# El bloque nace unificado (CA-1): una sola definicion en la fuente y dos
+# interpolaciones, una por prompt. Si alguien lo copiara a mano en el segundo
+# prompt, N-1/N-2 seguirian verdes y la divergencia pasaria inadvertida.
+N_DEF_COUNT="$(grep -c '^NEUTRALITY_RUNTIME_BLOCK=' "$CANON_PIPE" || true)"
+N_USE_COUNT="$(grep -cF '${NEUTRALITY_RUNTIME_BLOCK}' "$CANON_PIPE" || true)"
+if [ "$N_DEF_COUNT" = "1" ] && [ "$N_USE_COUNT" = "2" ]; then
+    pass "N-4: el bloque se define una sola vez y se interpola en los dos prompts (1 definicion, 2 usos)"
+else
+    fail "N-4: el bloque deberia tener 1 definicion y 2 usos; hay $N_DEF_COUNT definicion(es) y $N_USE_COUNT uso(s)"
+fi
+
+# CA-2: al reviewer no le basta con conocer la regla -- tiene que corregir la
+# fuga en su propia revision, sin reportarla ni ampliar la allowlist.
+if [ -n "$N_STAGE2_PROMPT" ] \
+    && grep -qF 'reformulalos tu mismo en esta misma revision' "$N_STAGE2_PROMPT" \
+    && grep -qF 'propongas ampliar la allowlist' "$N_STAGE2_PROMPT"; then
+    pass "N-5: el prompt de Stage 2 manda reformular la fuga en la propia revision, sin ampliar la allowlist"
+else
+    fail "N-5: el prompt de Stage 2 no trae la instruccion de reformular la fuga sin ampliar la allowlist"
+fi
+
 # ============================================================================
 # [C] Escenario (b): MEFISTO_RUNTIME=opencode, exito de punta a punta
 # ============================================================================

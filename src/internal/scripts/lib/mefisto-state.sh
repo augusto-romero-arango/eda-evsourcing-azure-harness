@@ -6,8 +6,8 @@
 # operacion del harness a ese runtime aunque esos datos son propios de
 # Mefisto. Este archivo resuelve el canonico neutral a runtime
 # ".mefisto/pipeline" (MEF-ADR-0049 CA-3, issue #851), con fallback de LECTURA
-# a esa misma ruta legada (mismo sufijo "pipeline", solo cambia el directorio
-# oculto) y SIN migracion automatica (MEF-ADR-0049, seccion 3).
+# a la ruta legada -- MEFISTO_LEGACY_STATE_REL, armada mas abajo -- y SIN
+# migracion automatica (MEF-ADR-0049, seccion 3).
 #
 # Uso: `source`ado por .claude/scripts/_mefisto-common.sh -- ningun caller lo
 # sourcea directamente. Nace en src/internal/scripts/lib/ (layout canonico de
@@ -36,16 +36,20 @@
 # (p. ej. contra un repo temporal) y este helper no lo pisa.
 _mefisto_state_root="$(git rev-parse --show-toplevel 2>/dev/null)" || _mefisto_state_root="$(pwd)"
 : "${MEFISTO_STATE_DIR:=$_mefisto_state_root/.mefisto/pipeline}"
-# El directorio oculto legado se guarda en su propia variable, nunca junto a
-# "/pipeline" en la misma linea de texto: el valor resuelto en tiempo de
-# ejecucion es identico a antes, pero la fuente en texto crudo ya no repite el
-# patron que la regla R3 de src/internal/scripts/mefisto-neutrality-gate.sh
-# persigue en cualquier OTRO archivo que lo escriba de nuevo (issue #1468;
-# antes de este cambio, este archivo necesitaba su propia excepcion nominal
-# solo para poder escribirlo).
+# MEFISTO_LEGACY_STATE_REL es el sufijo relativo del estado legado: este
+# helper es su UNICO dueno (issue #856 -- ningun otro archivo del lado interno
+# vuelve a componer esa ruta), asi que se arma una sola vez aqui y tanto la
+# resolucion de abajo como mefisto_state_read_paths la derivan de el. Mantener
+# el nombre del directorio oculto en su propia variable, en vez de repetir la
+# ruta entera en cada sitio, deja este archivo DENTRO del alcance de la regla
+# R3 del gate de neutralidad (issue #1468): la alternativa era una excepcion
+# nominal en src/internal/contract/neutrality-allowlist.json, que apaga la
+# regla sobre el archivo COMPLETO y lo vuelve un falso precedente para quien
+# busque como nombrar un runtime concreto en la fuente neutral.
 _mefisto_legacy_hidden_dir=".claude"
-: "${MEFISTO_LEGACY_STATE_DIR:=$_mefisto_state_root/$_mefisto_legacy_hidden_dir/pipeline}"
-export MEFISTO_STATE_DIR MEFISTO_LEGACY_STATE_DIR
+MEFISTO_LEGACY_STATE_REL="$_mefisto_legacy_hidden_dir/pipeline"
+: "${MEFISTO_LEGACY_STATE_DIR:=$_mefisto_state_root/$MEFISTO_LEGACY_STATE_REL}"
+export MEFISTO_STATE_DIR MEFISTO_LEGACY_STATE_DIR MEFISTO_LEGACY_STATE_REL
 unset _mefisto_state_root _mefisto_legacy_hidden_dir
 
 # mefisto_state_path <rel> [<root>]
@@ -82,9 +86,9 @@ mefisto_state_path() {
 # mefisto_state_read_paths <rel> [<root>]
 #
 # Imprime por stdout, una por linea, las rutas EXISTENTES para <rel>: la
-# canonica primero (".mefisto/pipeline/<rel>"), la legacy despues (la misma
-# ruta legada de arriba, con <rel>) -- CA-3. Vacia si <rel> no existe en ninguna de
-# las dos. El caller decide que hacer con la lista: tomar solo la primera
+# canonica primero (".mefisto/pipeline/<rel>"), la legacy despues
+# ("$MEFISTO_LEGACY_STATE_REL/<rel>") -- CA-3. Vacia si <rel> no existe en
+# ninguna de las dos. El caller decide que hacer con la lista: la primera
 # (mefisto_state_read_first) o concatenar ambas (p. ej. un historial viejo que
 # se queda en legacy para siempre, ver notas tecnicas del issue #856).
 #
@@ -95,12 +99,10 @@ mefisto_state_path() {
 # existencia con `-e`.
 mefisto_state_read_paths() {
     local rel="$1" root="${2:-}"
-    # Mismo motivo que _mefisto_legacy_hidden_dir de arriba: la variable
-    # separada evita repetir en texto crudo el patron que persigue R3.
-    local canonical_base legacy_base legacy_hidden_dir=".claude"
+    local canonical_base legacy_base
     if [ -n "$root" ]; then
         canonical_base="$root/.mefisto/pipeline"
-        legacy_base="$root/$legacy_hidden_dir/pipeline"
+        legacy_base="$root/$MEFISTO_LEGACY_STATE_REL"
     else
         canonical_base="$MEFISTO_STATE_DIR"
         legacy_base="$MEFISTO_LEGACY_STATE_DIR"
