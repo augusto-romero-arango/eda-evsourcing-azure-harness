@@ -107,7 +107,16 @@
 #     (issue #968) es el ultimo argumento, OPCIONAL para el adaptador --
 #     ignorarlo es una implementacion valida (equivale a no soportar
 #     reanudacion); este runner SIEMPRE lo pasa (vacio si --resume-session no
-#     se recibio).
+#     se recibio). Antes de invocarse, este runner ya expuso
+#     MEFISTO_RUNTIME_WORK_DIR (directorio temporal de la corrida, se borra al
+#     cerrar) y dejo MEFISTO_RUNTIME_STDIN_FILE en "". Un adaptador puede
+#     materializar ahi un archivo (p. ej. el prompt) y fijar
+#     MEFISTO_RUNTIME_STDIN_FILE a su ruta absoluta (issue #1447): este runner
+#     conecta ESE archivo a la entrada estandar del proceso en vez de
+#     /dev/null -- un canal no sujeto a ARG_MAX. Dejarla vacia (default)
+#     preserva el comportamiento de siempre. Si queda no vacia apuntando a
+#     algo que no es un archivo regular legible, este runner aborta con exit
+#     69 antes de lanzar el proceso.
 #   runtime_<id>_supports_resume (issue #968, sin argumentos)
 #     0 si el adaptador soporta reanudacion, 1 si no. Este runner NO la
 #     consulta (reenvia --resume-session sin condicion): la decision de
@@ -267,34 +276,28 @@ if ! declare -F "$TRANSLATE_FN" >/dev/null 2>&1; then
     exit 69
 fi
 
-MEFISTO_RUNTIME_CMD=()
-"$BUILD_FN" "$OPT_AGENT" "$OPT_CWD" "$OPT_PROMPT_FILE" "$OPT_MODEL" "$OPT_SYSTEM_FILE" "$OPT_RESUME_SESSION"
-if [ "${#MEFISTO_RUNTIME_CMD[@]}" -eq 0 ]; then
-    echo "ERROR: $BUILD_FN no genero ningun comando (MEFISTO_RUNTIME_CMD vacio)" >&2
-    exit 69
-fi
-
-# --- Archivos de trabajo ------------------------------------------------
-
-mkdir -p "$(dirname "$OPT_EVENT_LOG")" 2>/dev/null || true
-if ! : > "$OPT_EVENT_LOG" 2>/dev/null; then
-    abort_usage "--event-log '$OPT_EVENT_LOG' no es escribible"
-fi
-
+# --- Directorio de trabajo por corrida (CA-3, issue #1447) -----------------
 # Un unico directorio temporal por corrida, del que cuelga todo lo efimero
 # (traza cruda y stderr cuando no se pidieron por flag, log de texto del
-# watchdog y senal de timeout). La senal NECESITA un nombre que ninguna otra
-# corrida pueda recibir: si el watchdog de una corrida anterior sobrevive a su
-# kill y luego hace `touch` sobre un nombre reciclado, ESTA corrida se
-# clasifica como TIMEOUT sin haberse agotado -- exactamente el riesgo que
-# mefisto-tooling-pipeline.sh ya evita numerando su senal por intento. `mktemp
-# -d` reserva el directorio en disco; `mktemp -u` solo proponia un nombre libre
-# y lo dejaba disponible para el siguiente que preguntara.
+# watchdog, senal de timeout y, desde este issue, lo que un adaptador
+# materialice para MEFISTO_RUNTIME_STDIN_FILE). La senal NECESITA un nombre
+# que ninguna otra corrida pueda recibir: si el watchdog de una corrida
+# anterior sobrevive a su kill y luego hace `touch` sobre un nombre
+# reciclado, ESTA corrida se clasifica como TIMEOUT sin haberse agotado --
+# exactamente el riesgo que mefisto-tooling-pipeline.sh ya evita numerando su
+# senal por intento. `mktemp -d` reserva el directorio en disco; `mktemp -u`
+# solo proponia un nombre libre y lo dejaba disponible para el siguiente que
+# preguntara.
+#
+# Se crea y se exporta ANTES de build_cmd (mas abajo): un adaptador que
+# quiera transportar el prompt por stdin necesita un lugar donde
+# materializar el archivo antes de que este runner lo valide.
 RUN_TMP_DIR="$(mktemp -d -t mefisto-run-agent)"
 if [ -z "$RUN_TMP_DIR" ] || [ ! -d "$RUN_TMP_DIR" ]; then
     echo "ERROR: no se pudo crear el directorio temporal de la corrida" >&2
     exit 69
 fi
+export MEFISTO_RUNTIME_WORK_DIR="$RUN_TMP_DIR"
 
 # Senal de parada del bucle en vivo (CA-2/CA-3, issue #924): un archivo, nunca
 # un `kill` -- el bucle puede estar a mitad de un `printf` de anexo y un
@@ -318,6 +321,37 @@ cleanup() {
     rm -rf "$RUN_TMP_DIR" 2>/dev/null || true
 }
 trap cleanup EXIT
+
+# --- Construccion del comando del adaptador (build_cmd) ---------------------
+# MEFISTO_RUNTIME_STDIN_FILE (CA-3, issue #1447): canal opcional de stdin no
+# sujeto a ARG_MAX (incidente de #1407: un prompt de 3.237.916 bytes en el
+# argv hizo que el kernel rechazara el `exec` antes de que el runtime
+# arrancara). Se inicializa vacia -- "" == /dev/null, el comportamiento de
+# siempre -- y solo un adaptador que la fije explicitamente la activa. Si la
+# deja no vacia apuntando a algo que no es un archivo regular legible, este
+# runner aborta ANTES de invocar run_agent_with_watchdog: un stdin roto en
+# silencio (una ruta que nunca se materializo, un directorio) es peor que
+# fallar rapido con un mensaje explicito.
+MEFISTO_RUNTIME_CMD=()
+MEFISTO_RUNTIME_STDIN_FILE=""
+"$BUILD_FN" "$OPT_AGENT" "$OPT_CWD" "$OPT_PROMPT_FILE" "$OPT_MODEL" "$OPT_SYSTEM_FILE" "$OPT_RESUME_SESSION"
+if [ "${#MEFISTO_RUNTIME_CMD[@]}" -eq 0 ]; then
+    echo "ERROR: $BUILD_FN no genero ningun comando (MEFISTO_RUNTIME_CMD vacio)" >&2
+    exit 69
+fi
+if [ -n "$MEFISTO_RUNTIME_STDIN_FILE" ]; then
+    if [ ! -f "$MEFISTO_RUNTIME_STDIN_FILE" ] || [ ! -r "$MEFISTO_RUNTIME_STDIN_FILE" ]; then
+        echo "ERROR: $BUILD_FN fijo MEFISTO_RUNTIME_STDIN_FILE='$MEFISTO_RUNTIME_STDIN_FILE', que no es un archivo regular legible" >&2
+        exit 69
+    fi
+fi
+
+# --- Archivos de trabajo ------------------------------------------------
+
+mkdir -p "$(dirname "$OPT_EVENT_LOG")" 2>/dev/null || true
+if ! : > "$OPT_EVENT_LOG" 2>/dev/null; then
+    abort_usage "--event-log '$OPT_EVENT_LOG' no es escribible"
+fi
 
 if [ -n "$OPT_RAW_LOG" ]; then
     RAW_LOG="$OPT_RAW_LOG"

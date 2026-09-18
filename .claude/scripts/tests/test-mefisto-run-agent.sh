@@ -47,6 +47,11 @@
 #   [J] CA-1..CA-6 (issue #1128): el modo redactado cubre stream final y vivo,
 #       exito/fallo/timeout/protocolo invalido, ambos logs observables, warning
 #       de raw/stderr, compatibilidad sin flag y limpieza de temporales.
+#   [K] CA-3 (issue #1447): un adaptador de prueba que fija
+#       MEFISTO_RUNTIME_STDIN_FILE a una ruta inexistente hace que el runner
+#       aborte con exit 69, un mensaje que nombra la variable, y SIN lanzar
+#       el proceso del adaptador (se verifica con un marcador que solo se
+#       crearia si el comando llegara a ejecutarse).
 #   [G] El runner resuelve sus propias libs por su UBICACION, no por el cwd
 #       del caller: invocado desde un cwd fuera de todo repo git sigue
 #       corriendo (regresion de la resolucion via `git rev-parse`).
@@ -527,6 +532,52 @@ if jq -e 'select(.type=="message")' "$EV" >/dev/null 2>&1; then
     pass "malformed: el mensaje emitido ANTES del corte sobrevive en --event-log"
 else
     fail "malformed: se perdio el mensaje valido emitido antes de la linea rota"
+fi
+
+# ============================================================================
+echo ""
+echo "[K] CA-3 (issue #1447): MEFISTO_RUNTIME_STDIN_FILE invalida aborta sin lanzar el proceso"
+
+BADSTDIN_LIBDIR="$TMP/libdir-badstdin"; mkdir -p "$BADSTDIN_LIBDIR"
+BADSTDIN_MARKER="$TMP/k-badstdin-ran"
+BADSTDIN_BOGUS_PATH="$TMP/does-not-exist/mefisto-stdin-1447"
+rm -f "$BADSTDIN_MARKER"
+
+# El adaptador de prueba deja MEFISTO_RUNTIME_STDIN_FILE apuntando a una ruta
+# que nunca existe, y su argv (si llegara a correr) dejaria un marcador en
+# disco -- la unica forma de comprobar desde afuera que run_agent_with_watchdog
+# NUNCA se invoco.
+{
+    echo 'runtime_badstdin_is_available() { return 0; }'
+    printf 'runtime_badstdin_build_cmd() {\n'
+    printf '    MEFISTO_RUNTIME_CMD=(bash -c "touch %q")\n' "$BADSTDIN_MARKER"
+    printf '    MEFISTO_RUNTIME_STDIN_FILE=%q\n' "$BADSTDIN_BOGUS_PATH"
+    printf '}\n'
+    echo 'runtime_badstdin_translate() { :; }'
+} > "$BADSTDIN_LIBDIR/runtime-badstdin.sh"
+
+K_EV="$TMP/k-badstdin.jsonl"
+K_ERR="$TMP/k-badstdin.err"
+MEFISTO_RUNTIME_LIB_DIR="$BADSTDIN_LIBDIR" "$RUNNER" --runtime badstdin --agent test-agent --cwd "$WORKDIR" \
+    --prompt-file "$PROMPT_FILE" --event-log "$K_EV" >/dev/null 2>"$K_ERR"
+K_RC=$?
+
+if [ "$K_RC" = "69" ]; then
+    pass "K-1: MEFISTO_RUNTIME_STDIN_FILE apuntando a una ruta inexistente -> exit 69"
+else
+    fail "K-1: exit $K_RC (esperaba 69). stderr: $(cat "$K_ERR" 2>/dev/null)"
+fi
+
+if grep -q "MEFISTO_RUNTIME_STDIN_FILE" "$K_ERR" 2>/dev/null; then
+    pass "K-2: el mensaje de error nombra MEFISTO_RUNTIME_STDIN_FILE explicitamente"
+else
+    fail "K-2: el mensaje de error no menciona MEFISTO_RUNTIME_STDIN_FILE: $(cat "$K_ERR" 2>/dev/null)"
+fi
+
+if [ ! -f "$BADSTDIN_MARKER" ]; then
+    pass "K-3: el proceso del adaptador NUNCA se lanzo (el marcador no se creo)"
+else
+    fail "K-3: el proceso se lanzo pese a la validacion fallida de MEFISTO_RUNTIME_STDIN_FILE"
 fi
 
 # ============================================================================

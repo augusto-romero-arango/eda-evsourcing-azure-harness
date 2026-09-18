@@ -18,7 +18,15 @@
 #     no vacio agrega `--fake-resume <id>`, que el "CLI fake" solo usa para
 #     dejar constancia en MEFISTO_FAKE_ARGS_FILE (ver mas abajo) -- ningun
 #     guion cambia de comportamiento por reanudar, porque el fake no modela
-#     una sesion real con memoria.
+#     una sesion real con memoria. Ademas (issue #1447) fija la variable
+#     global MEFISTO_RUNTIME_STDIN_FILE: materializa el prompt -- prefijado
+#     con el contenido de <system_file> y una linea en blanco, si se paso uno
+#     -- dentro de MEFISTO_RUNTIME_WORK_DIR (que este runner ya expuso antes
+#     de llamar a esta funcion) y apunta ahi. Los guiones existentes ignoran
+#     stdin, asi que fijar esta variable no les cambia el comportamiento;
+#     solo el guion `dump-stdin` la consume. Sin MEFISTO_RUNTIME_WORK_DIR (un
+#     caller que invoque esta funcion sin pasar por mefisto-run-agent.sh), no
+#     materializa nada y deja la variable como la recibio.
 #   runtime_fake_supports_resume
 #     0 (soporta) solo si MEFISTO_FAKE_SUPPORTS_RESUME="1"; 1 en cualquier
 #     otro caso, INCLUIDO el default sin fijar -- a proposito: el fake existe
@@ -82,9 +90,13 @@
 #                   detuvieron un writer real en STAT=T. Ignora los fallos de
 #                   las tres (este archivo no usa `set -e`): con terminal de
 #                   control, cualquiera de ellas detiene al grupo; sin ella
-#                   (sesion nueva + stdin en /dev/null), fallan rapido y sin
-#                   senal (ENXIO / "not a terminal" / EOF). Termina con
-#                   terminal status=success. Exit 0.
+#                   (sesion nueva + stdin en un archivo regular o /dev/null --
+#                   desde #1447 build_cmd declara el canal de stdin, asi que
+#                   el `read` de stdin lee una linea del prompt materializado
+#                   en vez de ver EOF), fallan rapido y sin senal (ENXIO /
+#                   "not a terminal" / EOF o linea leida): ninguna de las dos
+#                   variantes es una tty, que es lo unico que #943 necesita.
+#                   Termina con terminal status=success. Exit 0.
 #   self-stop       Repro determinista del detector STOPPED (issue #945):
 #                   emite un message y se auto-detiene con `kill -STOP $$`
 #                   (SIGSTOP directo, sin depender de ninguna tty) -- solo un
@@ -93,6 +105,18 @@
 #                   diferencia de `touch-tty` (que reproduce la CAUSA de
 #                   #943), este guion reproduce la CLASE de evento que #945
 #                   detecta y sana, sin importar la causa.
+#   dump-stdin      Repro determinista del canal de stdin (issue #1447):
+#                   emite un message, copia la entrada estandar BYTE A BYTE a
+#                   MEFISTO_FAKE_STDIN_DUMP_FILE (si esta vacia, descarta a
+#                   /dev/null) y registra si esa entrada era una tty
+#                   (`[ -t 0 ]`, ANTES de leerla) como una linea
+#                   "STDIN_TTY=0|1" en MEFISTO_FAKE_ARGS_FILE si esta fijada,
+#                   o si no en un archivo hermano
+#                   "<MEFISTO_FAKE_STDIN_DUMP_FILE>.tty". Termina con terminal
+#                   status=success. Exit 0. Existe para que un test pueda
+#                   demostrar, de punta a punta, que un prompt de cualquier
+#                   tamano viaja por stdin y nunca toca el argv (`exec`,
+#                   sujeto a ARG_MAX -- ver runtime_fake_build_cmd arriba).
 # Default sin MEFISTO_FAKE_SCRIPT: "success".
 #
 # Bash 3.2 + jq 1.7: sin arrays asociativos, sin dependencias de red.
@@ -126,6 +150,23 @@ runtime_fake_build_cmd() {
     fi
     if [ -n "$resume_session_id" ]; then
         MEFISTO_RUNTIME_CMD+=(--fake-resume "$resume_session_id")
+    fi
+
+    # MEFISTO_RUNTIME_STDIN_FILE (CA-4, issue #1447): materializa el prompt
+    # (con el system file como prefijo, separado por una linea en blanco, si
+    # se paso uno) dentro de MEFISTO_RUNTIME_WORK_DIR y lo declara como canal
+    # de stdin. Los guiones existentes ignoran stdin: fijar esta variable no
+    # les cambia el comportamiento, solo la consume el guion dump-stdin.
+    if [ -n "${MEFISTO_RUNTIME_WORK_DIR:-}" ] && [ -d "$MEFISTO_RUNTIME_WORK_DIR" ]; then
+        local stdin_file="$MEFISTO_RUNTIME_WORK_DIR/fake-stdin-prompt"
+        if [ -n "$system_file" ] && [ -f "$system_file" ]; then
+            cat "$system_file" > "$stdin_file"
+            printf '\n\n' >> "$stdin_file"
+            cat "$prompt_file" >> "$stdin_file"
+        else
+            cat "$prompt_file" > "$stdin_file"
+        fi
+        MEFISTO_RUNTIME_STDIN_FILE="$stdin_file"
     fi
 }
 
@@ -283,6 +324,26 @@ _runtime_fake_emit_main() {
         self-stop)
             echo '{"fake":"message","text":"a punto de auto-detenerme con SIGSTOP"}'
             kill -STOP $$
+            printf '{"fake":"terminal","status":"success","model":%s}\n' "$model_json"
+            exit 0
+            ;;
+        dump-stdin)
+            echo '{"fake":"message","text":"volcando stdin a MEFISTO_FAKE_STDIN_DUMP_FILE"}'
+            # [ -t 0 ] ANTES de leer nada de stdin: la comprobacion no
+            # consume datos, pero se deja constancia antes del `cat` para que
+            # el orden del guion refleje el orden del check real.
+            local stdin_is_tty=0
+            [ -t 0 ] && stdin_is_tty=1
+            if [ -n "${MEFISTO_FAKE_ARGS_FILE:-}" ]; then
+                printf 'STDIN_TTY=%s\n' "$stdin_is_tty" >> "$MEFISTO_FAKE_ARGS_FILE"
+            elif [ -n "${MEFISTO_FAKE_STDIN_DUMP_FILE:-}" ]; then
+                printf '%s\n' "$stdin_is_tty" > "${MEFISTO_FAKE_STDIN_DUMP_FILE}.tty"
+            fi
+            if [ -n "${MEFISTO_FAKE_STDIN_DUMP_FILE:-}" ]; then
+                cat > "$MEFISTO_FAKE_STDIN_DUMP_FILE"
+            else
+                cat > /dev/null
+            fi
             printf '{"fake":"terminal","status":"success","model":%s}\n' "$model_json"
             exit 0
             ;;
