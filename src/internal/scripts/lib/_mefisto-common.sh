@@ -1823,7 +1823,7 @@ mefisto_neutrality_remedy() {
         echo "R4: restaura el shim byte a byte desde la plantilla documentada en src/internal/scripts/README.md; si el archivo de verdad no es un shim, registralo en 'not_migrated' de la allowlist en vez de reformularlo."
     fi
     if [ "$have_adapters" = true ]; then
-        echo "adapters-check: regenera los adaptadores con src/internal/scripts/generate-internal-adapters.sh (sin --check); nunca edites a mano la salida generada."
+        echo "adapters-check: regenera los adaptadores con src/internal/scripts/generate-internal-adapters.sh (sin --check); su salida (.claude/{agents,commands}/, .opencode/{agents,commands}/) no se edita a mano -- se edita la fuente neutral de src/internal/{agents,commands}/ y se regenera."
     fi
     for rule in ${unknown_rules[@]+"${unknown_rules[@]}"}; do
         echo "$rule: regla no reconocida por este remedio -- revisa la cabecera de src/internal/scripts/mefisto-neutrality-gate.sh."
