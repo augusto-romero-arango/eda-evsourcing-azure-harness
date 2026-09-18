@@ -174,6 +174,19 @@ pues solo modela escenarios de prueba. En Claude Code, un `--model` explicito
 que el runner entrega gana sobre `model:` del frontmatter; si el runner no
 entrega modelo, el runtime aplica el declarado por el agente.
 
+Ninguno de los dos adaptadores reales pone el prompt en argv (issue #1448):
+ambos lo transportan por el canal de stdin de la seccion anterior. Claude Code
+fija `MEFISTO_RUNTIME_STDIN_FILE` directo a `<prompt_file>`, sin releerlo, y
+recibe el system prompt como `--append-system-prompt-file <system_file>` (la
+RUTA, nunca el contenido). OpenCode no tiene un flag equivalente para el
+system prompt ni para el mensaje: materializa
+`<MEFISTO_RUNTIME_WORK_DIR>/opencode-message.md` con `system + "\n\n" +
+prompt` (o solo `prompt` sin system-file) y apunta `MEFISTO_RUNTIME_STDIN_FILE`
+ahi, porque `opencode run` concatena mensaje posicional y stdin cuando llegan
+los dos (`resolveRunInput`, `packages/opencode/src/cli/cmd/run.ts`,
+verificado en 1.18.29) -- cualquier texto en argv corromperia el mensaje que
+recibe el modelo.
+
 `lib/mefisto-process.sh` es la fuente unica del watchdog: ejecuta el argv sin
 `eval`, separa stdout/stderr y crea una sesion sin TTY de control. El runner
 decide timeout mediante la senal del watchdog y su reloj de pared conforme a

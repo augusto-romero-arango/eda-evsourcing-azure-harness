@@ -7,7 +7,7 @@
 #
 # Claude Code sigue siendo runtime soportado por compatibilidad, nunca
 # dependencia del nucleo (MEF-ADR-0049): ningun otro archivo del harness debe
-# nombrar `claude`, `--permission-mode`, `--append-system-prompt` ni
+# nombrar `claude`, `--permission-mode`, `--append-system-prompt-file` ni
 # `--output-format stream-json` -- eso vive aqui.
 #
 # Implementa la interfaz de funciones que todo adaptador de runtime debe
@@ -15,16 +15,25 @@
 #   runtime_claude_build_cmd <agent> <cwd> <prompt_file> <model> <system_file>
 #                            [<resume_session_id>]
 #     Rellena MEFISTO_RUNTIME_CMD con el argv de `claude -p` (sin `eval`,
-#     paridad con run_agent_with_watchdog -- ver #424/_mefisto-common.sh):
-#     el contenido de <prompt_file> viaja como UN elemento del array bash, sin
-#     volver a interpretarse. <agent> participa como `--agent <id>` para que
-#     Claude Code cargue la doctrina, skills y allowlist declaradas por el
-#     agente. <cwd> ya lo aplica run_agent_with_watchdog (`cd "$workdir"`
-#     antes de invocar), igual que runtime-fake.sh. <resume_session_id> (issue
-#     #968, CA-1/CA-2)
-#     es OPCIONAL y opaco -- vacio/ausente = comportamiento identico a antes
-#     de #968 (sin `--resume` en el argv); no vacio agrega `--resume <id>`
-#     (compatible con `-p`, verificado en `claude --help` local).
+#     paridad con run_agent_with_watchdog -- ver #424/_mefisto-common.sh) y
+#     SIN prompt posicional (issue #1448; incidente de #1407): fija la
+#     variable global MEFISTO_RUNTIME_STDIN_FILE a <prompt_file> tal cual --
+#     ya es un archivo regular legible que mefisto-run-agent.sh valido antes
+#     de invocar esta funcion, asi que declararlo como canal de stdin no
+#     exige releer su contenido: esta funcion nunca vuelca ese archivo a una
+#     variable ni lo concatena.
+#     `lib/mefisto-process.sh` conecta ESE archivo a la entrada estandar del
+#     proceso en vez del argv, que sigue sujeto a ARG_MAX (1.048.576 bytes en
+#     macOS, `getconf ARG_MAX`; el incidente de #1407 fue un prompt de
+#     3.237.916 bytes que el kernel rechazo en el `exec`, antes de que Claude
+#     Code arrancara). <agent> participa como `--agent <id>` para que Claude
+#     Code cargue la doctrina, skills y allowlist declaradas por el agente.
+#     <cwd> ya lo aplica run_agent_with_watchdog (`cd "$workdir"` antes de
+#     invocar), igual que runtime-fake.sh. <resume_session_id> (issue #968,
+#     CA-1/CA-2) es OPCIONAL y opaco -- vacio/ausente = comportamiento
+#     identico a antes de #968 (sin `--resume` en el argv); no vacio agrega
+#     `--resume <id>` (compatible con `-p`, verificado en `claude --help`
+#     local).
 #   runtime_claude_translate <raw_file> <runtime_id> <model>
 #                            [<exit_code>] [<stderr_file>]
 #     Delega en runtime-claude.jq (`jq -R -s -c -f`, mismo idiom que
@@ -42,14 +51,15 @@
 #
 # Flags que compone build_cmd (CA-1): `--agent <agent>`, `--permission-mode
 # bypassPermissions` y `--output-format stream-json --verbose` siempre;
-# `--append-system-prompt "$(cat <system_file>)"` solo si <system_file> no es
-# vacio; `--model <model>` solo si el runner entrego un modelo no vacio (CA-1
-# de #858: vacio/ausente = heredar, el adaptador real nunca debe ver un
-# `--model ""`). El orden de los flags es irrelevante para quien los consume
-# (el CLI real, y el stub de test-runtime-claude.sh que solo comprueba
-# presencia/ausencia). Un `--model` explicito del runner tiene precedencia
-# sobre `model:` del frontmatter del agente; sin `--model`, Claude Code aplica
-# el frontmatter.
+# `--append-system-prompt-file <system_file>` (issue #1448: la RUTA, nunca el
+# contenido -- `claude --help` local confirma que este flag existe ademas de
+# `--append-system-prompt`) solo si <system_file> no es vacio; `--model
+# <model>` solo si el runner entrego un modelo no vacio (CA-1 de #858:
+# vacio/ausente = heredar, el adaptador real nunca debe ver un `--model ""`).
+# El orden de los flags es irrelevante para quien los consume (el CLI real, y
+# el stub de test-runtime-claude.sh que solo comprueba presencia/ausencia). Un
+# `--model` explicito del runner tiene precedencia sobre `model:` del
+# frontmatter del agente; sin `--model`, Claude Code aplica el frontmatter.
 #
 # Bash 3.2 + jq 1.7 (MEF-ADR-0049 CA-6): sin arrays asociativos.
 
@@ -70,22 +80,26 @@ runtime_claude_default_model() {
 
 runtime_claude_build_cmd() {
     local agent="$1" cwd="$2" prompt_file="$3" model="$4" system_file="$5" resume_session_id="${6:-}"
-    local prompt
-    prompt="$(cat "$prompt_file")"
 
-    MEFISTO_RUNTIME_CMD=(claude -p "$prompt" --agent "$agent" --permission-mode bypassPermissions --output-format stream-json --verbose)
+    MEFISTO_RUNTIME_CMD=(claude -p --agent "$agent" --permission-mode bypassPermissions --output-format stream-json --verbose)
 
     if [ -n "$model" ]; then
         MEFISTO_RUNTIME_CMD+=(--model "$model")
     fi
 
-    if [ -n "$system_file" ]; then
-        MEFISTO_RUNTIME_CMD+=(--append-system-prompt "$(cat "$system_file")")
-    fi
-
     if [ -n "$resume_session_id" ]; then
         MEFISTO_RUNTIME_CMD+=(--resume "$resume_session_id")
     fi
+
+    if [ -n "$system_file" ]; then
+        MEFISTO_RUNTIME_CMD+=(--append-system-prompt-file "$system_file")
+    fi
+
+    # MEFISTO_RUNTIME_STDIN_FILE (issue #1448): <prompt_file> viaja tal cual,
+    # sin volver a leerlo ni tocarlo -- el canal de stdin, no el argv, es lo
+    # que transporta el prompt (ver cabecera de este archivo y "Runner y
+    # adaptadores" en src/runtime/contract/README.md).
+    MEFISTO_RUNTIME_STDIN_FILE="$prompt_file"
 }
 
 # runtime_claude_supports_resume (issue #968, CA-4 caso b)

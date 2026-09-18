@@ -20,11 +20,18 @@
 # Casos cubiertos:
 #   [pre] Los archivos nuevos existen, tienen sintaxis valida y el programa
 #         jq corre sin errores.
-#   [A] CA-1: runtime_claude_build_cmd compone el argv completo -- flags fijos
-#       siempre presentes incluido --agent, --model solo si se recibe valor
-#       no vacio, --append-system-prompt solo si se recibe --system-file, y el prompt
-#       viaja como UN elemento del array (backticks/`$()`/comillas del prompt
-#       no se re-interpretan: paridad con run_agent_with_watchdog, sin eval).
+#   [A] CA-1: runtime_claude_build_cmd compone el argv completo SIN prompt
+#       posicional -- flags fijos siempre presentes incluido --agent, --model
+#       solo si se recibe valor no vacio, --append-system-prompt-file (la
+#       RUTA de --system-file, nunca su contenido) solo si se recibe uno, y
+#       MEFISTO_RUNTIME_STDIN_FILE queda fijada a --prompt-file tal cual
+#       (ningun centinela del prompt ni del system-file aparece en el argv;
+#       backticks/`$()`/comillas del prompt viajan intactos solo por stdin).
+#   [G] CA-3/CA-4 (issue #1448): paridad ante ARG_MAX -- un prompt >=
+#       `getconf ARG_MAX` + 65536 bytes corre por stdin (nunca por argv) via
+#       el runner real contra la CLI falsa, con exit 0, exactamente un
+#       run.completed y el volcado de stdin identico byte a byte (cmp) al
+#       fixture; el stub deja constancia de que stdin no era TTY.
 #   [B] CA-2: runtime_claude_translate mapea assistant/text -> message,
 #       tool_use -> tool.started, tool_result -> tool.completed (con el
 #       nombre de tool resuelto por emparejamiento de id), en el orden del
@@ -193,6 +200,7 @@ SYSTEM_FILE="$TMP/system.txt"
 printf 'You are running in non-interactive print mode.' > "$SYSTEM_FILE"
 
 MEFISTO_RUNTIME_CMD=()
+MEFISTO_RUNTIME_STDIN_FILE=""
 runtime_claude_build_cmd "writer" "$TMP" "$PROMPT_PLAIN" "sonnet" "$SYSTEM_FILE"
 
 if [ "${MEFISTO_RUNTIME_CMD[0]}" = "claude" ] && [ "${MEFISTO_RUNTIME_CMD[1]}" = "-p" ]; then
@@ -201,10 +209,26 @@ else
     fail "A-1: el argv no arranca con 'claude -p': ${MEFISTO_RUNTIME_CMD[*]}"
 fi
 
-if [ "${MEFISTO_RUNTIME_CMD[2]}" = "Instrucciones de prueba." ]; then
-    pass "A-2: el prompt viaja como UN elemento del array, igual al contenido de --prompt-file"
+# A-2 (CA-1/CA-5, issue #1448): ni el contenido del prompt ni el del
+# system-file aparecen en NINGUN elemento del argv -- el prompt SOLO viaja
+# por MEFISTO_RUNTIME_STDIN_FILE.
+argv_contains_needle() {
+    local needle="$1" e
+    for e in "${MEFISTO_RUNTIME_CMD[@]}"; do
+        case "$e" in *"$needle"*) return 0 ;; esac
+    done
+    return 1
+}
+if ! argv_contains_needle "Instrucciones de prueba."; then
+    pass "A-2: el contenido del prompt no aparece en ningun elemento del argv"
 else
-    fail "A-2: el prompt no coincide: '${MEFISTO_RUNTIME_CMD[2]}'"
+    fail "A-2: el contenido del prompt aparecio en el argv: ${MEFISTO_RUNTIME_CMD[*]}"
+fi
+
+if [ "$MEFISTO_RUNTIME_STDIN_FILE" = "$PROMPT_PLAIN" ]; then
+    pass "A-2b: MEFISTO_RUNTIME_STDIN_FILE apunta a --prompt-file tal cual, sin releerlo"
+else
+    fail "A-2b: MEFISTO_RUNTIME_STDIN_FILE='$MEFISTO_RUNTIME_STDIN_FILE' (se esperaba '$PROMPT_PLAIN')"
 fi
 
 contains_pair() {
@@ -251,10 +275,15 @@ else
     fail "A-5: falta --model sonnet: ${MEFISTO_RUNTIME_CMD[*]}"
 fi
 
-if contains_pair "--append-system-prompt" "You are running in non-interactive print mode."; then
-    pass "A-6: --append-system-prompt con el contenido de --system-file"
+if contains_pair "--append-system-prompt-file" "$SYSTEM_FILE"; then
+    pass "A-6: --append-system-prompt-file con la RUTA de --system-file (nunca su contenido)"
 else
-    fail "A-6: falta --append-system-prompt correcto: ${MEFISTO_RUNTIME_CMD[*]}"
+    fail "A-6: falta --append-system-prompt-file correcto: ${MEFISTO_RUNTIME_CMD[*]}"
+fi
+if ! argv_contains_needle "You are running in non-interactive print mode."; then
+    pass "A-6b: el contenido de --system-file no aparece en ningun elemento del argv"
+else
+    fail "A-6b: el contenido de --system-file aparecio en el argv: ${MEFISTO_RUNTIME_CMD[*]}"
 fi
 
 # Modelo vacio (heredar, CA-1 de #858): NUNCA debe verse --model en el argv.
@@ -265,21 +294,23 @@ if ! contains_elem "--model"; then
 else
     fail "A-7: modelo vacio pero el argv trae --model: ${MEFISTO_RUNTIME_CMD[*]}"
 fi
-if ! contains_elem "--append-system-prompt"; then
-    pass "A-8: --system-file vacio -> ningun --append-system-prompt en el argv"
+if ! contains_elem "--append-system-prompt-file"; then
+    pass "A-8: --system-file vacio -> ningun --append-system-prompt-file en el argv"
 else
-    fail "A-8: --system-file vacio pero el argv trae --append-system-prompt: ${MEFISTO_RUNTIME_CMD[*]}"
+    fail "A-8: --system-file vacio pero el argv trae --append-system-prompt-file: ${MEFISTO_RUNTIME_CMD[*]}"
 fi
 
-# El prompt puede traer backticks/$()/comillas -- sin eval, viajan literales.
+# El prompt puede traer backticks/$()/comillas -- sin eval, viajan intactos
+# solo por MEFISTO_RUNTIME_STDIN_FILE, nunca por argv.
 PROMPT_DANGEROUS="$TMP/prompt-dangerous.txt"
 printf 'Linea con `comando`, $(echo pwned) y "comillas".' > "$PROMPT_DANGEROUS"
 MEFISTO_RUNTIME_CMD=()
+MEFISTO_RUNTIME_STDIN_FILE=""
 runtime_claude_build_cmd "writer" "$TMP" "$PROMPT_DANGEROUS" "" ""
-if [ "${MEFISTO_RUNTIME_CMD[2]}" = 'Linea con `comando`, $(echo pwned) y "comillas".' ]; then
-    pass "A-9: backticks/\$()/comillas del prompt viajan literales, sin re-interpretarse (sin eval)"
+if ! argv_contains_needle '`comando`' && [ "$MEFISTO_RUNTIME_STDIN_FILE" = "$PROMPT_DANGEROUS" ]; then
+    pass "A-9: backticks/\$()/comillas del prompt nunca tocan el argv -- MEFISTO_RUNTIME_STDIN_FILE apunta al archivo intacto"
 else
-    fail "A-9: el prompt se corrompio: '${MEFISTO_RUNTIME_CMD[2]}'"
+    fail "A-9: el prompt peligroso aparecio en argv o STDIN_FILE no coincide: argv=${MEFISTO_RUNTIME_CMD[*]} stdin=$MEFISTO_RUNTIME_STDIN_FILE"
 fi
 
 # Modelo opaco con '[1m]' -- el adaptador nunca lo interpreta, solo lo reenvia.
@@ -535,6 +566,18 @@ fi
 if [ -n "${MEFISTO_CLAUDE_STUB_SLEEP:-}" ]; then
     sleep "$MEFISTO_CLAUDE_STUB_SLEEP"
 fi
+# CA-4 (issue #1448): [ -t 0 ] ANTES de leer nada de stdin -- mismo orden que
+# runtime-fake.sh dump-stdin (#1447). Vuelca stdin BYTE A BYTE a
+# MEFISTO_CLAUDE_STUB_STDIN_FILE (o la descarta si no se pidio) y deja
+# constancia de si era TTY en un archivo hermano "<STDIN_FILE>.tty".
+if [ -n "${MEFISTO_CLAUDE_STUB_STDIN_FILE:-}" ]; then
+    STDIN_IS_TTY=0
+    [ -t 0 ] && STDIN_IS_TTY=1
+    printf '%s\n' "$STDIN_IS_TTY" > "${MEFISTO_CLAUDE_STUB_STDIN_FILE}.tty"
+    cat > "$MEFISTO_CLAUDE_STUB_STDIN_FILE"
+else
+    cat > /dev/null
+fi
 if [ -n "${MEFISTO_CLAUDE_STUB_FIXTURE:-}" ] && [ -f "$MEFISTO_CLAUDE_STUB_FIXTURE" ]; then
     cat "$MEFISTO_CLAUDE_STUB_FIXTURE"
 fi
@@ -696,6 +739,76 @@ if jq -e 'select(.type == "run.failed") | .resets_at == "2026-05-07T22:40:00Z" a
     pass "redaccion Claude conserva resets_at y sustituye error.detail"
 else
     fail "redaccion Claude perdio resets_at o dejo error.detail sin redactar"
+fi
+
+# ============================================================================
+echo ""
+echo "[G] CA-3/CA-4: paridad ante ARG_MAX (issue #1448) -- el prompt viaja por stdin, nunca por argv"
+
+G_ARG_MAX="$(getconf ARG_MAX 2>/dev/null)"
+case "$G_ARG_MAX" in
+    ''|*[!0-9]*)
+        fail "G-0: getconf ARG_MAX no devolvio un entero ('$G_ARG_MAX')"
+        G_ARG_MAX=0
+        ;;
+    *)
+        pass "G-0: getconf ARG_MAX = $G_ARG_MAX"
+        ;;
+esac
+
+G_SENTINEL="$(printf '%-64s' 'MEFISTO_1448_CLAUDE_SENTINEL')"
+G_TARGET_SIZE=$((G_ARG_MAX + 65536))
+G_BODY_SIZE=$((G_TARGET_SIZE - ${#G_SENTINEL}))
+G_BLOCK="$TMP/g-block.txt"
+printf 'linea con tab\tdolar $HOME y barra \\ y unicode: ñáéíóú 日本語\n' > "$G_BLOCK"
+G_FIXTURE="$TMP/g-fixture-argmax.bin"
+yes "$(cat "$G_BLOCK")" 2>/dev/null | head -c "$G_BODY_SIZE" > "$G_FIXTURE"
+printf '%s' "$G_SENTINEL" >> "$G_FIXTURE"
+
+G_FIXTURE_SIZE="$(wc -c < "$G_FIXTURE" | tr -d ' ')"
+if [ "$G_FIXTURE_SIZE" -ge "$G_TARGET_SIZE" ]; then
+    pass "G-1: fixture ARG_MAX = $G_FIXTURE_SIZE bytes (>= $G_TARGET_SIZE)"
+else
+    fail "G-1: fixture ARG_MAX = $G_FIXTURE_SIZE bytes (se esperaba >= $G_TARGET_SIZE)"
+fi
+
+G_EV="$TMP/g-event-log.jsonl"
+G_DUMP="$TMP/g-stdin-dump.bin"
+G_ARGS="$TMP/g-args.txt"
+RC=$(MEFISTO_CLAUDE_STUB_FIXTURE="$FIXTURES_DIR/success.jsonl" MEFISTO_CLAUDE_STUB_EXIT=0 \
+    MEFISTO_CLAUDE_STUB_ARGS_FILE="$G_ARGS" MEFISTO_CLAUDE_STUB_STDIN_FILE="$G_DUMP" \
+    "$RUNNER" --runtime claude --agent test-agent --cwd "$WORKDIR" \
+        --prompt-file "$G_FIXTURE" --event-log "$G_EV" --timeout 60 >/dev/null 2>&1; echo $?)
+
+if [ "$RC" = "0" ]; then
+    pass "G-2: el runner termina con exit 0 pese a un prompt >= ARG_MAX"
+else
+    fail "G-2: exit $RC (se esperaba 0)"
+fi
+
+G_TERMS=$(count_terminals "$G_EV")
+if [ "$G_TERMS" = "1" ]; then
+    pass "G-3: exactamente 1 evento terminal en --event-log"
+else
+    fail "G-3: se contaron $G_TERMS eventos terminales (se esperaba 1)"
+fi
+
+if [ -f "$G_DUMP" ] && cmp -s "$G_FIXTURE" "$G_DUMP"; then
+    pass "G-4: el volcado de stdin del stub es identico byte a byte al fixture (cmp)"
+else
+    fail "G-4: el volcado de stdin difiere del fixture original"
+fi
+
+if [ -f "$G_ARGS" ] && ! grep -qF "$G_SENTINEL" "$G_ARGS"; then
+    pass "G-5: el centinela del prompt NO aparece en el volcado de argv (nunca viajo por argv)"
+else
+    fail "G-5: el centinela aparecio en el volcado de argv: $(cat "$G_ARGS" 2>/dev/null)"
+fi
+
+if [ -f "${G_DUMP}.tty" ] && [ "$(cat "${G_DUMP}.tty")" = "0" ]; then
+    pass "G-6: stdin del stub NO era TTY (el aislamiento de #943 se conserva con el canal de #1447/#1448)"
+else
+    fail "G-6: no se registro TTY=0 junto al volcado de stdin: $(cat "${G_DUMP}.tty" 2>/dev/null)"
 fi
 
 export PATH="$ORIG_PATH"

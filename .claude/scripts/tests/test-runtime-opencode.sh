@@ -15,13 +15,20 @@
 # Casos cubiertos:
 #   [pre] Los archivos nuevos existen, tienen sintaxis valida y el programa
 #         jq corre sin errores.
-#   [A] CA-1: runtime_opencode_build_cmd compone `opencode run --agent <id>
-#       --dir <cwd> --format json --auto [-m <modelo>] "<mensaje>"` -- flags
-#       fijos siempre presentes, -m solo si se recibe modelo no vacio,
-#       --system-file inyectado como PREFIJO del mensaje (nunca un flag), el
-#       mensaje viaja como UN elemento del array (sin eval, paridad con
-#       run_agent_with_watchdog), y el modelo opaco (con "/" y espacios)
+#   [A] CA-2 (issue #1448): runtime_opencode_build_cmd compone `opencode run
+#       --agent <id> --dir <cwd> --format json --auto [-m <modelo>]
+#       [--session <id>]` SIN mensaje posicional -- flags fijos siempre
+#       presentes, -m solo si se recibe modelo no vacio, --system-file
+#       inyectado como PREFIJO del mensaje (nunca un flag ni texto en argv),
+#       el mensaje se materializa en
+#       "$MEFISTO_RUNTIME_WORK_DIR/opencode-message.md" y se declara via
+#       MEFISTO_RUNTIME_STDIN_FILE, y el modelo opaco (con "/" y espacios)
 #       reenviado literal.
+#   [I] CA-3/CA-4 (issue #1448): paridad ante ARG_MAX -- un prompt >=
+#       `getconf ARG_MAX` + 65536 bytes corre por stdin (nunca por argv) via
+#       el runner real contra la CLI falsa, con exit 0, exactamente un
+#       run.completed y el volcado de stdin identico byte a byte (cmp) al
+#       fixture; el stub deja constancia de que stdin no era TTY.
 #   [B] CA-2: runtime_opencode_translate mapea text->message, tool_use
 #       (segun state.status)->tool.started/tool.completed sintetizados desde
 #       la MISMA linea (OpenCode 1.18.29 no separa tool_use/tool_result como
@@ -206,14 +213,22 @@ fi
 
 # ============================================================================
 echo ""
-echo "[A] CA-1: runtime_opencode_build_cmd compone el argv completo, sin eval"
+echo "[A] CA-2 (issue #1448): runtime_opencode_build_cmd compone el argv completo, SIN mensaje posicional"
 
 PROMPT_PLAIN="$TMP/prompt-plain.txt"
 printf 'Instrucciones de prueba.' > "$PROMPT_PLAIN"
 SYSTEM_FILE="$TMP/system.txt"
 printf 'You are running in non-interactive print mode.' > "$SYSTEM_FILE"
 
+# build_cmd materializa el mensaje DENTRO de MEFISTO_RUNTIME_WORK_DIR (issue
+# #1448): un caller que la invoque fuera del runner real (como esta seccion)
+# tiene que exponerla igual que lo hace mefisto-run-agent.sh antes de invocar
+# build_cmd.
+export MEFISTO_RUNTIME_WORK_DIR="$TMP/work-a"
+mkdir -p "$MEFISTO_RUNTIME_WORK_DIR"
+
 MEFISTO_RUNTIME_CMD=()
+MEFISTO_RUNTIME_STDIN_FILE=""
 runtime_opencode_build_cmd "writer" "$TMP" "$PROMPT_PLAIN" "openai/gpt-5" "$SYSTEM_FILE"
 
 if [ "${MEFISTO_RUNTIME_CMD[0]}" = "opencode" ] && [ "${MEFISTO_RUNTIME_CMD[1]}" = "run" ]; then
@@ -266,40 +281,62 @@ else
     fail "A-5: falta -m openai/gpt-5: ${MEFISTO_RUNTIME_CMD[*]}"
 fi
 
-LAST_IDX=$(( ${#MEFISTO_RUNTIME_CMD[@]} - 1 ))
-MESSAGE="${MEFISTO_RUNTIME_CMD[$LAST_IDX]}"
-EXPECTED_MESSAGE="You are running in non-interactive print mode."$'\n\n'"Instrucciones de prueba."
-if [ "$MESSAGE" = "$EXPECTED_MESSAGE" ]; then
-    pass "A-6: el mensaje final es '<system-file>\\n\\n<prompt>' como UN elemento del array"
+# A-6 (CA-2/CA-5, issue #1448): ni el mensaje ni ningun fragmento suyo
+# aparece en el argv -- viaja SOLO por MEFISTO_RUNTIME_STDIN_FILE.
+argv_contains_needle() {
+    local needle="$1" e
+    for e in "${MEFISTO_RUNTIME_CMD[@]}"; do
+        case "$e" in *"$needle"*) return 0 ;; esac
+    done
+    return 1
+}
+if ! argv_contains_needle "Instrucciones de prueba."; then
+    pass "A-6: el contenido del mensaje no aparece en ningun elemento del argv"
 else
-    fail "A-6: el mensaje no coincide: '$MESSAGE'"
+    fail "A-6: el mensaje aparecio en el argv: ${MEFISTO_RUNTIME_CMD[*]}"
 fi
+
+EXPECTED_MESSAGE="You are running in non-interactive print mode."$'\n\n'"Instrucciones de prueba."
+if [ -n "$MEFISTO_RUNTIME_STDIN_FILE" ] && [ -f "$MEFISTO_RUNTIME_STDIN_FILE" ] \
+    && [ "$(cat "$MEFISTO_RUNTIME_STDIN_FILE")" = "$EXPECTED_MESSAGE" ]; then
+    pass "A-6b: MEFISTO_RUNTIME_STDIN_FILE contiene '<system-file>\\n\\n<prompt>' materializado"
+else
+    fail "A-6b: el archivo de stdin no coincide: '$(cat "${MEFISTO_RUNTIME_STDIN_FILE:-/dev/null}" 2>/dev/null)'"
+fi
+
+case "$MEFISTO_RUNTIME_STDIN_FILE" in
+    "$MEFISTO_RUNTIME_WORK_DIR"/*) pass "A-6c: el archivo de mensaje vive dentro de MEFISTO_RUNTIME_WORK_DIR" ;;
+    *) fail "A-6c: MEFISTO_RUNTIME_STDIN_FILE fuera de MEFISTO_RUNTIME_WORK_DIR: '$MEFISTO_RUNTIME_STDIN_FILE'" ;;
+esac
 
 # Modelo vacio (heredar, CA-1 de #858): NUNCA debe verse -m en el argv.
 MEFISTO_RUNTIME_CMD=()
+MEFISTO_RUNTIME_STDIN_FILE=""
 runtime_opencode_build_cmd "writer" "$TMP" "$PROMPT_PLAIN" "" ""
 if ! contains_elem "-m"; then
     pass "A-7: modelo vacio (heredar) -> ningun -m en el argv"
 else
     fail "A-7: modelo vacio pero el argv trae -m: ${MEFISTO_RUNTIME_CMD[*]}"
 fi
-LAST_IDX=$(( ${#MEFISTO_RUNTIME_CMD[@]} - 1 ))
-if [ "${MEFISTO_RUNTIME_CMD[$LAST_IDX]}" = "Instrucciones de prueba." ]; then
-    pass "A-8: --system-file vacio -> el mensaje es SOLO el prompt, sin prefijo"
+if [ -f "$MEFISTO_RUNTIME_STDIN_FILE" ] && [ "$(cat "$MEFISTO_RUNTIME_STDIN_FILE")" = "Instrucciones de prueba." ]; then
+    pass "A-8: --system-file vacio -> el archivo de mensaje es SOLO el prompt, sin prefijo"
 else
-    fail "A-8: el mensaje trae un prefijo espurio: '${MEFISTO_RUNTIME_CMD[$LAST_IDX]}'"
+    fail "A-8: el archivo de mensaje trae un prefijo espurio: '$(cat "${MEFISTO_RUNTIME_STDIN_FILE:-/dev/null}" 2>/dev/null)'"
 fi
 
-# El prompt puede traer backticks/$()/comillas -- sin eval, viajan literales.
+# El prompt puede traer backticks/$()/comillas -- sin eval, viajan intactos
+# dentro del archivo de mensaje, nunca por argv.
 PROMPT_DANGEROUS="$TMP/prompt-dangerous.txt"
 printf 'Linea con `comando`, $(echo pwned) y "comillas".' > "$PROMPT_DANGEROUS"
 MEFISTO_RUNTIME_CMD=()
+MEFISTO_RUNTIME_STDIN_FILE=""
 runtime_opencode_build_cmd "writer" "$TMP" "$PROMPT_DANGEROUS" "" ""
-LAST_IDX=$(( ${#MEFISTO_RUNTIME_CMD[@]} - 1 ))
-if [ "${MEFISTO_RUNTIME_CMD[$LAST_IDX]}" = 'Linea con `comando`, $(echo pwned) y "comillas".' ]; then
-    pass "A-9: backticks/\$()/comillas del prompt viajan literales, sin re-interpretarse (sin eval)"
+if ! argv_contains_needle '`comando`' \
+    && [ -f "$MEFISTO_RUNTIME_STDIN_FILE" ] \
+    && [ "$(cat "$MEFISTO_RUNTIME_STDIN_FILE")" = 'Linea con `comando`, $(echo pwned) y "comillas".' ]; then
+    pass "A-9: backticks/\$()/comillas del prompt viajan literales en el archivo de mensaje, nunca por argv"
 else
-    fail "A-9: el prompt se corrompio: '${MEFISTO_RUNTIME_CMD[$LAST_IDX]}'"
+    fail "A-9: el prompt peligroso aparecio en argv o el archivo de mensaje no coincide"
 fi
 
 # Modelo opaco con '/' y espacios -- el adaptador nunca lo interpreta, solo lo reenvia.
@@ -314,17 +351,17 @@ fi
 # --- Reanudacion de sesion (issue #968) ---
 
 MEFISTO_RUNTIME_CMD=()
+MEFISTO_RUNTIME_STDIN_FILE=""
 runtime_opencode_build_cmd "writer" "$TMP" "$PROMPT_PLAIN" "" "" "sess-xyz-789"
 if contains_pair "--session" "sess-xyz-789"; then
     pass "A-11: resume_session_id no vacio -> --session <id> en el argv"
 else
     fail "A-11: falta --session sess-xyz-789: ${MEFISTO_RUNTIME_CMD[*]}"
 fi
-LAST_IDX=$(( ${#MEFISTO_RUNTIME_CMD[@]} - 1 ))
-if [ "${MEFISTO_RUNTIME_CMD[$LAST_IDX]}" = "Instrucciones de prueba." ]; then
-    pass "A-11b: el mensaje sigue siendo el ULTIMO elemento del argv con --session presente"
+if [ -f "$MEFISTO_RUNTIME_STDIN_FILE" ] && [ "$(cat "$MEFISTO_RUNTIME_STDIN_FILE")" = "Instrucciones de prueba." ]; then
+    pass "A-11b: el mensaje se sigue materializando igual con --session presente (nunca se mezcla con el argv)"
 else
-    fail "A-11b: --session desplazo el mensaje del final: '${MEFISTO_RUNTIME_CMD[$LAST_IDX]}'"
+    fail "A-11b: --session altero el archivo de mensaje: '$(cat "${MEFISTO_RUNTIME_STDIN_FILE:-/dev/null}" 2>/dev/null)'"
 fi
 
 MEFISTO_RUNTIME_CMD=()
@@ -608,6 +645,8 @@ SECRET_ANTHROPIC="sk-ant-fake-secret-value-abc-123"
 (
     export OPENAI_API_KEY="$SECRET_OPENAI"
     export ANTHROPIC_API_KEY="$SECRET_ANTHROPIC"
+    export MEFISTO_RUNTIME_WORK_DIR="$TMP/work-e"
+    mkdir -p "$MEFISTO_RUNTIME_WORK_DIR"
     MEFISTO_RUNTIME_CMD=()
     runtime_opencode_build_cmd "writer" "$TMP" "$PROMPT_PLAIN" "" "$SYSTEM_FILE"
     printf '%s\0' "${MEFISTO_RUNTIME_CMD[@]}" > "$TMP/e-argv.bin"
@@ -649,9 +688,9 @@ PROMPT_FILE="$TMP/prompt-f.txt"; echo "prompt" > "$PROMPT_FILE"
 STUB_BIN="$TMP/bin-stub"; mkdir -p "$STUB_BIN"
 cat > "$STUB_BIN/opencode" <<'STUBEOF'
 #!/usr/bin/env bash
-# NUL-separado (no newline-separado): el mensaje final del argv trae saltos
-# de linea EMBEBIDOS (system-file + "\n\n" + prompt, CA-1), y un separador de
-# newline lo partiria en varios campos espurios.
+# NUL-separado (no newline-separado, issue #1448): el argv ya no lleva el
+# mensaje (viaja por stdin), pero se conserva NUL-separado por si algun valor
+# opaco (modelo, id de sesion) trajera un caracter fuera de lo comun.
 if [ -n "${MEFISTO_OPENCODE_STUB_ARGS_FILE:-}" ]; then
     : > "$MEFISTO_OPENCODE_STUB_ARGS_FILE"
     for a in "$@"; do
@@ -660,6 +699,16 @@ if [ -n "${MEFISTO_OPENCODE_STUB_ARGS_FILE:-}" ]; then
 fi
 if [ -n "${MEFISTO_OPENCODE_STUB_SLEEP:-}" ]; then
     sleep "$MEFISTO_OPENCODE_STUB_SLEEP"
+fi
+# CA-4 (issue #1448): mismo patron que MEFISTO_CLAUDE_STUB_STDIN_FILE de
+# test-runtime-claude.sh. [ -t 0 ] ANTES de leer nada de stdin.
+if [ -n "${MEFISTO_OPENCODE_STUB_STDIN_FILE:-}" ]; then
+    STDIN_IS_TTY=0
+    [ -t 0 ] && STDIN_IS_TTY=1
+    printf '%s\n' "$STDIN_IS_TTY" > "${MEFISTO_OPENCODE_STUB_STDIN_FILE}.tty"
+    cat > "$MEFISTO_OPENCODE_STUB_STDIN_FILE"
+else
+    cat > /dev/null
 fi
 if [ -n "${MEFISTO_OPENCODE_STUB_FIXTURE:-}" ] && [ -f "$MEFISTO_OPENCODE_STUB_FIXTURE" ]; then
     cat "$MEFISTO_OPENCODE_STUB_FIXTURE"
@@ -805,19 +854,25 @@ else
 fi
 
 F_EV="$TMP/f-system-prefix.jsonl"
-F_ARGS="$TMP/f-system-prefix.args"
+F_STDIN="$TMP/f-system-prefix.stdin"
 SYSTEM_FILE_F="$TMP/system-f.txt"; printf 'You are running in non-interactive print mode.' > "$SYSTEM_FILE_F"
-RC=$(MEFISTO_OPENCODE_STUB_FIXTURE="$FIXTURES_DIR/success-1.18.29.jsonl" MEFISTO_OPENCODE_STUB_EXIT=0 MEFISTO_OPENCODE_STUB_ARGS_FILE="$F_ARGS" run_opencode_scenario "$F_EV" --system-file "$SYSTEM_FILE_F")
-check_scenario "prefijo de --system-file al inicio del mensaje" "$F_EV" 0 "success" "" "$RC"
-read_nul_args "$F_ARGS"
-MSG_IDX=$(( ${#NUL_ARGS[@]} - 1 ))
-MSG="${NUL_ARGS[$MSG_IDX]}"
-case "$MSG" in
-    "You are running in non-interactive print mode."$'\n\n'*)
-        pass "system-file: el mensaje capturado (ultimo elemento del argv) empieza con el contenido de --system-file" ;;
-    *)
-        fail "system-file: el mensaje capturado no empieza con el system-file: '$MSG'" ;;
-esac
+RC=$(MEFISTO_OPENCODE_STUB_FIXTURE="$FIXTURES_DIR/success-1.18.29.jsonl" MEFISTO_OPENCODE_STUB_EXIT=0 MEFISTO_OPENCODE_STUB_STDIN_FILE="$F_STDIN" run_opencode_scenario "$F_EV" --system-file "$SYSTEM_FILE_F")
+check_scenario "prefijo de --system-file al inicio del mensaje (via stdin, issue #1448)" "$F_EV" 0 "success" "" "$RC"
+# Comparacion por archivo (cmp), no por cadena: una comparacion de cadenas
+# via `$(head -c ...)` pierde los saltos de linea finales de la sustitucion
+# de comandos, y el prefijo esperado TERMINA justo en "\n\n".
+EXPECTED_PREFIX="You are running in non-interactive print mode."$'\n\n'
+EXPECTED_PREFIX_FILE="$TMP/f-system-prefix.expected"
+printf '%s' "$EXPECTED_PREFIX" > "$EXPECTED_PREFIX_FILE"
+ACTUAL_PREFIX_FILE="$TMP/f-system-prefix.actual"
+if [ -f "$F_STDIN" ]; then
+    head -c "${#EXPECTED_PREFIX}" "$F_STDIN" > "$ACTUAL_PREFIX_FILE"
+fi
+if [ -f "$ACTUAL_PREFIX_FILE" ] && cmp -s "$EXPECTED_PREFIX_FILE" "$ACTUAL_PREFIX_FILE"; then
+    pass "system-file: el mensaje recibido por stdin empieza con el contenido de --system-file"
+else
+    fail "system-file: el mensaje por stdin no empieza con el system-file: '$(cat "$F_STDIN" 2>/dev/null)'"
+fi
 
 F_EV="$TMP/f-redacted.jsonl"
 F_EVENTS="$TMP/f-redacted-events.log"
@@ -831,6 +886,76 @@ if [ -s "$F_EVENTS" ] \
     pass "redaccion OpenCode elimina centinelas y conserva identidad/metricas/tools"
 else
     fail "redaccion OpenCode filtro contenido sensible o perdio evidencia operacional"
+fi
+
+# ============================================================================
+echo ""
+echo "[I] CA-3/CA-4: paridad ante ARG_MAX (issue #1448) -- el mensaje viaja por stdin, nunca por argv"
+
+I_ARG_MAX="$(getconf ARG_MAX 2>/dev/null)"
+case "$I_ARG_MAX" in
+    ''|*[!0-9]*)
+        fail "I-0: getconf ARG_MAX no devolvio un entero ('$I_ARG_MAX')"
+        I_ARG_MAX=0
+        ;;
+    *)
+        pass "I-0: getconf ARG_MAX = $I_ARG_MAX"
+        ;;
+esac
+
+I_SENTINEL="$(printf '%-64s' 'MEFISTO_1448_OPENCODE_SENTINEL')"
+I_TARGET_SIZE=$((I_ARG_MAX + 65536))
+I_BODY_SIZE=$((I_TARGET_SIZE - ${#I_SENTINEL}))
+I_BLOCK="$TMP/i-block.txt"
+printf 'linea con tab\tdolar $HOME y barra \\ y unicode: ñáéíóú 日本語\n' > "$I_BLOCK"
+I_FIXTURE="$TMP/i-fixture-argmax.bin"
+yes "$(cat "$I_BLOCK")" 2>/dev/null | head -c "$I_BODY_SIZE" > "$I_FIXTURE"
+printf '%s' "$I_SENTINEL" >> "$I_FIXTURE"
+
+I_FIXTURE_SIZE="$(wc -c < "$I_FIXTURE" | tr -d ' ')"
+if [ "$I_FIXTURE_SIZE" -ge "$I_TARGET_SIZE" ]; then
+    pass "I-1: fixture ARG_MAX = $I_FIXTURE_SIZE bytes (>= $I_TARGET_SIZE)"
+else
+    fail "I-1: fixture ARG_MAX = $I_FIXTURE_SIZE bytes (se esperaba >= $I_TARGET_SIZE)"
+fi
+
+I_EV="$TMP/i-event-log.jsonl"
+I_DUMP="$TMP/i-stdin-dump.bin"
+I_ARGS="$TMP/i-args.bin"
+RC=$(MEFISTO_OPENCODE_STUB_FIXTURE="$FIXTURES_DIR/success-1.18.29.jsonl" MEFISTO_OPENCODE_STUB_EXIT=0 \
+    MEFISTO_OPENCODE_STUB_ARGS_FILE="$I_ARGS" MEFISTO_OPENCODE_STUB_STDIN_FILE="$I_DUMP" \
+    "$RUNNER" --runtime opencode --agent test-agent --cwd "$WORKDIR" \
+        --prompt-file "$I_FIXTURE" --event-log "$I_EV" --timeout 60 >/dev/null 2>&1; echo $?)
+
+if [ "$RC" = "0" ]; then
+    pass "I-2: el runner termina con exit 0 pese a un prompt >= ARG_MAX"
+else
+    fail "I-2: exit $RC (se esperaba 0)"
+fi
+
+I_TERMS=$(count_terminals "$I_EV")
+if [ "$I_TERMS" = "1" ]; then
+    pass "I-3: exactamente 1 evento terminal en --event-log"
+else
+    fail "I-3: se contaron $I_TERMS eventos terminales (se esperaba 1)"
+fi
+
+if [ -f "$I_DUMP" ] && cmp -s "$I_FIXTURE" "$I_DUMP"; then
+    pass "I-4: el volcado de stdin del stub es identico byte a byte al fixture (cmp)"
+else
+    fail "I-4: el volcado de stdin difiere del fixture original"
+fi
+
+if [ -f "$I_ARGS" ] && ! grep -qaF "$I_SENTINEL" "$I_ARGS"; then
+    pass "I-5: el centinela del prompt NO aparece en el volcado de argv (nunca viajo por argv)"
+else
+    fail "I-5: el centinela aparecio en el volcado de argv"
+fi
+
+if [ -f "${I_DUMP}.tty" ] && [ "$(cat "${I_DUMP}.tty")" = "0" ]; then
+    pass "I-6: stdin del stub NO era TTY (el aislamiento de #943 se conserva con el canal de #1447/#1448)"
+else
+    fail "I-6: no se registro TTY=0 junto al volcado de stdin: $(cat "${I_DUMP}.tty" 2>/dev/null)"
 fi
 
 export PATH="$ORIG_PATH"
