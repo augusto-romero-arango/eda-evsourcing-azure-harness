@@ -80,8 +80,8 @@ runner solo usa bash, coreutils y git.
 Tres carriles, tal como los define el inventario (descubrimiento dinamico, sin
 conteos fijos que mantener al dia aqui):
 
-- `publicado`: `test-*.sh` bajo `scripts/tests/`.
-- `interno`: `test-*.sh` bajo `.claude/scripts/tests/`.
+- `publicado`: `test-*.sh` ejecutables bajo `scripts/tests/`.
+- `interno`: `test-*.sh` ejecutables bajo `.claude/scripts/tests/`.
 - `canonico-adicional`: fuentes canonicas sin shim homonimo en `scripts/tests/`
   (registro explicito en `mefisto-test-inventory.sh`).
 
@@ -92,12 +92,14 @@ casos se conservan los logs ya escritos.
 
 Logs y resultados: cada corrida crea (o reutiliza, con `--log-dir`) un
 directorio unico bajo `.mefisto/pipeline/test-suite/<run>/` (ignorado por
-Git), con el `results.tsv` de cada carril y el log de cada entrada.
+Git), con un subdirectorio por carril dentro: `<run>/<carril>/results.tsv`
+(una linea por entrada) y `<run>/<carril>/logs/` (un log por entrada).
 
 Costo esperado: minutos, no segundos -- nunca dentro de un stage con
-presupuesto de agente acotado. Ninguna cifra de este README es una promesa:
-la carga de la maquina, el cache y el crecimiento del inventario la mueven de
-una corrida a otra (evidencia informativa fechada en el PR de la issue #1439).
+presupuesto de agente acotado. Aqui no vive ninguna cifra a proposito, porque
+ninguna seria una promesa: la carga de la maquina, el cache y el crecimiento
+del inventario mueven la duracion de una corrida a otra (la medicion real,
+fechada y con sha, queda en el PR del issue #1439).
 
 Casos de uso explicitos: una persona antes de mergear un cambio transversal a
 los tres carriles; un agente fuera de stage al que se le pida deliberadamente
