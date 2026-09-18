@@ -27,10 +27,13 @@
 #       'publicado' en terminar, el resumen siempre imprime publicado ->
 #       interno -> canonico-adicional.
 #   [H] Determinismo (CA-3): dos corridas con el mismo --log-dir y los mismos
-#       resultados producen el mismo resumen tras normalizar digitos
-#       (timestamps/duraciones son la unica variacion permitida).
-#   [I] Inventario invalido (carril vacio): aborta en 1 SIN crear ningun run
-#       dir nuevo bajo .mefisto/pipeline/test-suite/.
+#       resultados producen el mismo resumen tras normalizar SOLO las
+#       duraciones (la unica variacion que CA-3 permite); los conteos y el
+#       orden se comparan literalmente.
+#   [I] Inventario invalido (carril vacio + fuente canonica huerfana): aborta
+#       en 1 SIN crear ningun run dir nuevo bajo .mefisto/pipeline/test-suite/,
+#       y reporta las violaciones de las DOS validaciones (no corta en la
+#       primera que falla).
 #   [J] Cobertura canonica incompleta (fuente sin shim ni registro): aborta
 #       en 1 sin lanzar ninguna prueba.
 #   [K] Senal INT dentro de una pty real (tmux, igual que
@@ -373,7 +376,7 @@ fi
 
 # ============================================================================
 echo ""
-echo "[H] Determinismo (CA-3): mismo --log-dir, mismos resultados -> mismo resumen salvo digitos"
+echo "[H] Determinismo (CA-3): mismo --log-dir, mismos resultados -> mismo resumen salvo duraciones"
 
 new_fixture "determinism-case"
 DET_BASE="$FIXTURE"
@@ -385,13 +388,26 @@ rm -rf "$DET_LOGDIR"
 H_OUT2="$(run_suite "$DET_BASE" --log-dir "$DET_LOGDIR")"
 H_RC2=$?
 
-H_NORM1="$(printf '%s' "$H_OUT1" | sed -E 's/[0-9]+/N/g')"
-H_NORM2="$(printf '%s' "$H_OUT2" | sed -E 's/[0-9]+/N/g')"
+# La normalizacion se acota a las duraciones (unico dato que CA-3 permite que
+# varie entre dos corridas con los mismos resultados). Normalizar TODOS los
+# digitos -- como haria un 's/[0-9]+/N/g' a secas -- enmascararia tambien los
+# conteos y las posiciones de orden, que es justo lo que este bloque debe
+# vigilar: con esta version, una deriva de '3 PASS' a '2 PASS' entre corridas
+# rompe el check en vez de pasar desapercibida.
+norm_durations() {
+    sed -E \
+        -e 's/^(  \[[A-Z]+\]) [0-9]+s /\1 Ns /' \
+        -e 's/\(([0-9]+) entradas, [0-9]+s acumulados\)/(\1 entradas, Ns acumulados)/' \
+        -e 's/^Tiempo de pared: [0-9]+s$/Tiempo de pared: Ns/'
+}
+
+H_NORM1="$(printf '%s\n' "$H_OUT1" | norm_durations)"
+H_NORM2="$(printf '%s\n' "$H_OUT2" | norm_durations)"
 
 if [ "$H_RC1" -eq 0 ] && [ "$H_RC2" -eq 0 ] && [ "$H_NORM1" = "$H_NORM2" ]; then
-    pass "H-1: dos corridas con los mismos resultados producen el mismo resumen tras normalizar digitos"
+    pass "H-1: dos corridas con los mismos resultados producen el mismo resumen tras normalizar solo las duraciones"
 else
-    fail "H-1: los resumenes difieren mas alla de digitos.
+    fail "H-1: los resumenes difieren mas alla de las duraciones.
 --- corrida 1 (normalizada) ---
 $H_NORM1
 --- corrida 2 (normalizada) ---
@@ -400,11 +416,17 @@ fi
 
 # ============================================================================
 echo ""
-echo "[I] Inventario invalido (carril vacio): aborta en 1 sin crear un run dir nuevo"
+echo "[I] Inventario invalido (carril vacio + fuente huerfana): aborta en 1 sin crear un run dir nuevo, reportando las DOS validaciones"
 
 new_fixture "invalid-inventory"
 INVALID_BASE="$FIXTURE"
 rm -f "$INVALID_BASE/scripts/tests/test-pub-ok.sh"
+# Ademas del carril vacio (que rompe mefisto_test_inventory_validate), una
+# fuente canonica huerfana que rompe mefisto_test_inventory_check_canonical_coverage:
+# CA-2 exige que el runner corra AMBAS validaciones, no que corte en la primera.
+mkdir -p "$INVALID_BASE/src/published/scripts/tests"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$INVALID_BASE/src/published/scripts/tests/test-huerfano.sh"
+chmod +x "$INVALID_BASE/src/published/scripts/tests/test-huerfano.sh"
 
 RUNS_BEFORE=0
 [ -d "$INVALID_BASE/.mefisto/pipeline/test-suite" ] && RUNS_BEFORE=$(find "$INVALID_BASE/.mefisto/pipeline/test-suite" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')
@@ -429,6 +451,12 @@ if printf '%s\n' "$I_OUT" | grep -qi "inventario"; then
     pass "I-3: el mensaje de la biblioteca de inventario se propaga tal cual (no se reformula)"
 else
     fail "I-3: no se encontro el mensaje esperado del inventario en: $I_OUT"
+fi
+if printf '%s\n' "$I_OUT" | grep -q "carril 'publicado'" \
+    && printf '%s\n' "$I_OUT" | grep -q "test-huerfano.sh"; then
+    pass "I-4: corren las DOS validaciones (validate y check_canonical_coverage): la primera en fallar no corta a la segunda"
+else
+    fail "I-4: falta la violacion de una de las dos validaciones en: $I_OUT"
 fi
 
 # ============================================================================

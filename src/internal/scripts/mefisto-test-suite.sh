@@ -223,9 +223,13 @@ emit_lane_summary() {
                 FAIL) nfail=$((nfail + 1)) ;;
                 CANCELLED) ncancel=$((ncancel + 1)) ;;
             esac
-            if [ "$duracion" != "-" ]; then
-                dur_sum=$((dur_sum + duracion))
-            fi
+            # Solo se acumula un entero: el placeholder '-' de una entrada
+            # CANCELLED (y cualquier campo corrupto) no debe convertir la
+            # linea de subtotal en un error de aritmetica del shell.
+            case "$duracion" in
+                ''|*[!0-9]*) ;;
+                *) dur_sum=$((dur_sum + duracion)) ;;
+            esac
             local dur_display="$duracion"
             [ "$dur_display" != "-" ] && dur_display="${dur_display}s"
             printf '  [%s] %s  %s\n' "$estado" "$dur_display" "$ruta"
@@ -251,6 +255,13 @@ echo "=== Totales ==="
 echo "Entradas: $GLOBAL_TOTAL ($GLOBAL_PASS PASS, $GLOBAL_FAIL FAIL, $GLOBAL_CANCEL CANCELLED)"
 echo "Tiempo de pared: ${WALL_ELAPSED}s"
 
+# El veredicto se decide sobre lo que quedo REGISTRADO en los results.tsv, no
+# sobre el codigo de retorno del ejecutor: CA-4 pide exit 0 "solo si todas las
+# entradas terminan PASS", y hay dos caminos sin senal que no cumplen eso
+# aunque mefisto_test_executor_run devuelva 0 -- un worker muerto por una via
+# que no pasa por su handler (un SIGKILL externo, la OOM del sistema) deja sus
+# entradas CANCELLED, y una corrida que no registro ninguna fila no es una
+# suite verde sino una suite que no corrio. Ambos son rojos.
 VEREDICTO="PASS"
 if [ "$EXEC_RC" -eq 130 ]; then
     VEREDICTO="INTERRUMPIDA (INT)"
@@ -258,6 +269,10 @@ elif [ "$EXEC_RC" -eq 143 ]; then
     VEREDICTO="INTERRUMPIDA (TERM)"
 elif [ "$GLOBAL_FAIL" -gt 0 ]; then
     VEREDICTO="FAIL"
+elif [ "$GLOBAL_TOTAL" -eq 0 ]; then
+    VEREDICTO="FAIL (la corrida no registro ninguna entrada)"
+elif [ "$GLOBAL_CANCEL" -gt 0 ]; then
+    VEREDICTO="FAIL (entradas CANCELLED sin senal de interrupcion)"
 fi
 echo "Veredicto: $VEREDICTO"
 echo "Run dir: $RUN_DIR"
@@ -267,7 +282,7 @@ case "$EXEC_RC" in
         exit "$EXEC_RC"
         ;;
     0)
-        if [ "$GLOBAL_FAIL" -gt 0 ]; then
+        if [ "$GLOBAL_FAIL" -gt 0 ] || [ "$GLOBAL_CANCEL" -gt 0 ] || [ "$GLOBAL_TOTAL" -eq 0 ]; then
             exit 1
         fi
         exit 0
