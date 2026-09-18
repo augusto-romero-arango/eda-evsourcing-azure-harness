@@ -338,6 +338,107 @@ else
     fail 'la redaccion no se sostuvo: argv, events.jsonl persistido o el log derivado no coinciden con el contrato'
 fi
 
+echo '[regresion] contexto acotado del reviewer en Stage 3 (issue #1450)'
+CTX_TMP="$(mktemp -d -t mefisto-tdd-reviewer-ctx)"
+CTX_WT="$CTX_TMP/worktree"
+mkdir -p "$CTX_WT"
+git -C "$CTX_WT" init -q
+git -C "$CTX_WT" config user.email test@example.invalid
+git -C "$CTX_WT" config user.name Test
+printf 'base\n' > "$CTX_WT/base.txt"
+git -C "$CTX_WT" add base.txt
+git -C "$CTX_WT" commit -qm base
+CTX_SNAPSHOT="$(git -C "$CTX_WT" rev-parse HEAD)"
+mkdir -p "$CTX_WT/tests"
+# Texto, no binario: git no emite contenido para un blob binario, asi que un archivo
+# binario grande dejaria el assert de tamano del prompt sin poder de deteccion.
+awk 'BEGIN{for(i=0;i<50000;i++) printf "linea %d de contenido generado por el test-writer para inflar el diff\n", i}' > "$CTX_WT/tests/generated.txt"
+printf 'contenido nuevo\n' > "$CTX_WT/tests/nota.md"
+git -C "$CTX_WT" add tests/generated.txt tests/nota.md
+git -C "$CTX_WT" commit -qm 'test-writer: fases roja y verde con archivo grande'
+CTX_HEAD="$(git -C "$CTX_WT" rev-parse HEAD)"
+CTX_RAW_DIFF_BYTES=$(git -C "$CTX_WT" diff "$CTX_SNAPSHOT"..HEAD | wc -c | tr -d ' ')
+[ "$CTX_RAW_DIFF_BYTES" -ge 3145728 ] \
+    || fail "premisa invalida: el diff completo mide ${CTX_RAW_DIFF_BYTES} bytes (< 3 MB), el caso no discriminaria el contexto acotado"
+CTX_LOGS="$CTX_TMP/logs"
+CTX_PIPELINE_TMP="$CTX_TMP/pipeline"
+mkdir -p "$CTX_LOGS" "$CTX_PIPELINE_TMP"
+export CTX_TMP CTX_WT CTX_SNAPSHOT CTX_LOGS CTX_PIPELINE_TMP
+
+cat > "$CTX_TMP/run-agent-double" <<'EOF'
+#!/usr/bin/env bash
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --event-log) printf '%s\n' '{"type":"run.completed","status":"success","session_id":null,"denials":0,"error":null}' > "$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+EOF
+chmod +x "$CTX_TMP/run-agent-double"
+
+{
+    printf '%s\n' 'set -eu'
+    run_agent_body
+    derive_stage_log_from_stream_body
+    cat <<'EOF'
+LOG_DIR_ABS="$CTX_LOGS"
+TIMESTAMP='20260918-000000'
+ISSUE_LOG_TAG='1450'
+PIPELINE_TMP_DIR="$CTX_PIPELINE_TMP"
+WORKTREE_PATH="$CTX_WT"
+SNAPSHOT_COMMIT="$CTX_SNAPSHOT"
+RUN_AGENT_BIN="$CTX_TMP/run-agent-double"
+MEFISTO_RUNTIME_RESUELTO='fake'
+MEFISTO_AGENT_TIMEOUT_SECONDS=60
+EVENTS_LOG_ABS="$CTX_TMP/events.log"
+PIPELINE_DIR_ABS="$CTX_TMP/state"
+LOG_FILE="$CTX_TMP/pipeline.log"
+ISSUE_NUM=1450
+HARNESS_PROJECT_NAME='proyecto-consumidor-test'
+ISSUE_CONTEXT='# Issue de prueba con contexto minimo'
+PIPELINE_OWN_WRITES=(':!.mefisto/pipeline')
+mkdir -p "$LOG_DIR_ABS" "$PIPELINE_TMP_DIR" "$PIPELINE_DIR_ABS/metrics"
+mefisto_state_path(){ local rel="$1" root="${2:-}"; local base; if [ -n "$root" ]; then base="$root/.mefisto/pipeline"; else base="$PIPELINE_DIR_ABS"; fi; mkdir -p "$(dirname "$base/$rel")"; printf '%s\n' "$base/$rel"; }
+mefisto_state_read_first(){ local rel="$1" root="$2"; local canonical="$root/.mefisto/pipeline/$rel" legacy="$root/.claude/pipeline/$rel"; [ -e "$canonical" ] && { printf '%s\n' "$canonical"; return 0; }; [ -e "$legacy" ] && printf '%s\n' "$legacy"; }
+log(){ :; }
+warn(){ :; }
+abort(){ printf 'ABORT:%s\n' "$1" > "$CTX_TMP/abort"; return 1; }
+update_status(){ :; }
+compute_stage_metrics(){ printf '{}'; }
+HARNESS_IDENTITY_JSON='null'
+enrich_stage_metrics(){ printf '%s' "${3:-null}"; }
+agent_events_denials(){ printf '0'; }
+agent_events_completed_successfully(){ return 0; }
+classify_neutral_agent_failure(){ printf 'UNKNOWN'; }
+agent_failure_is_holdable(){ return 1; }
+_tdd_agent_profile(){ printf 'balanced'; }
+resolve_tdd_model(){ RESOLVED_TDD_MODEL=""; }
+AGENT_TW_RES=pending; AGENT_IM_RES=pending; AGENT_ST_RES=pending; AGENT_RV_RES=pending
+AGENT_TW_METRICS_JSON=; AGENT_IM_METRICS_JSON=; AGENT_ST_METRICS_JSON=; AGENT_RV_METRICS_JSON=
+EOF
+    awk '/^        WRITER_HEAD_SHA=\$\(git -C "\$WORKTREE_PATH" rev-parse HEAD\)$/{p=1} p{print} p && /^PROHIBIDO hacer .git push. o .gh pr create. \(ni ninguna operacion de publicacion de rama\/PR\): eso es responsabilidad exclusiva del pipeline, nunca tuya\."$/{exit}' "$PIPELINE"
+    printf '\n%s\n' 'run_agent "3" "reviewer" "$STAGE3_PROMPT"'
+} > "$CTX_TMP/case.sh"
+
+if bash "$CTX_TMP/case.sh"; then
+    CTX_PROMPT="$CTX_PIPELINE_TMP/3-reviewer.prompt.md"
+    CTX_SIZE=$(wc -c < "$CTX_PROMPT" 2>/dev/null | tr -d ' ')
+    if [ -f "$CTX_PROMPT" ] && [ -n "$CTX_SIZE" ] && [ "$CTX_SIZE" -lt 65536 ] \
+        && grep -Fq "$CTX_SNAPSHOT" "$CTX_PROMPT" \
+        && grep -Fq "$CTX_HEAD" "$CTX_PROMPT" \
+        && grep -Fq 'tests/generated.txt' "$CTX_PROMPT" \
+        && grep -Fq 'tests/nota.md' "$CTX_PROMPT" \
+        && ! grep -Fq 'diff --git' "$CTX_PROMPT" \
+        && ! grep -Fq '@@' "$CTX_PROMPT"; then
+        pass "prompt del reviewer Stage 3 acotado a SHA/stat/rutas: ${CTX_SIZE} bytes frente a un diff crudo de las fases roja y verde de ${CTX_RAW_DIFF_BYTES} bytes"
+    else
+        fail "prompt del reviewer Stage 3 no cumple el contrato acotado (tamano=${CTX_SIZE:-desconocido})"
+    fi
+else
+    fail 'la construccion del prompt de Stage 3 (reviewer, rama no-refactor) fallo'
+fi
+rm -rf "$CTX_TMP"
+
 echo '[regresion] invocacion unica para Stage 0 y remediaciones'
 {
     printf '%s\n' 'set -uo pipefail'

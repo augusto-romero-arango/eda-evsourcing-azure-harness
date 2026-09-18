@@ -164,6 +164,103 @@ for REGRESSION_BASH in "$DEFAULT_BASH" /bin/bash; do
 done
 rm -rf "$REGRESSION_TMP"
 
+echo '[regresion] contexto acotado del reviewer (issue #1450)'
+CTX_TMP="$(mktemp -d -t mefisto-tooling-reviewer-ctx)"
+CTX_WT="$CTX_TMP/worktree"
+mkdir -p "$CTX_WT"
+git -C "$CTX_WT" init -q
+git -C "$CTX_WT" config user.email test@example.invalid
+git -C "$CTX_WT" config user.name Test
+printf 'base\n' > "$CTX_WT/base.txt"
+git -C "$CTX_WT" add base.txt
+git -C "$CTX_WT" commit -qm base
+CTX_SNAPSHOT="$(git -C "$CTX_WT" rev-parse HEAD)"
+mkdir -p "$CTX_WT/scaffold"
+# Texto, no binario: git no emite contenido para un blob binario, asi que un archivo
+# binario grande dejaria el assert de tamano del prompt sin poder de deteccion.
+awk 'BEGIN{for(i=0;i<50000;i++) printf "linea %d de contenido generado por el writer para inflar el diff\n", i}' > "$CTX_WT/scaffold/generated.txt"
+printf 'contenido nuevo\n' > "$CTX_WT/scaffold/nota.md"
+git -C "$CTX_WT" add scaffold/generated.txt scaffold/nota.md
+git -C "$CTX_WT" commit -qm 'writer: scaffold grande'
+CTX_HEAD="$(git -C "$CTX_WT" rev-parse HEAD)"
+CTX_RAW_DIFF_BYTES=$(git -C "$CTX_WT" diff "$CTX_SNAPSHOT"..HEAD | wc -c | tr -d ' ')
+[ "$CTX_RAW_DIFF_BYTES" -ge 3145728 ] \
+    || fail "premisa invalida: el diff completo mide ${CTX_RAW_DIFF_BYTES} bytes (< 3 MB), el caso no discriminaria el contexto acotado"
+CTX_LOGS="$CTX_TMP/logs"
+CTX_PIPELINE_TMP="$CTX_TMP/pipeline"
+mkdir -p "$CTX_LOGS" "$CTX_PIPELINE_TMP"
+export CTX_TMP CTX_WT CTX_SNAPSHOT CTX_LOGS CTX_PIPELINE_TMP
+
+cat > "$CTX_TMP/run-agent-double" <<'EOF'
+#!/usr/bin/env bash
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --event-log) printf '%s\n' '{"type":"run.completed","status":"success","session_id":null,"denials":0,"error":null}' > "$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+EOF
+chmod +x "$CTX_TMP/run-agent-double"
+
+{
+    printf '%s\n' 'set -eu'
+    awk '/^run_agent\(\) \{/{p=1} p{print} p && /^}/{p=0}' "$PIPELINE"
+    cat <<'EOF'
+LOG_DIR_ABS="$CTX_LOGS"
+TIMESTAMP='20260918-000000'
+ISSUE_LOG_TAG='1450'
+PIPELINE_TMP_DIR="$CTX_PIPELINE_TMP"
+WORKTREE_PATH="$CTX_WT"
+SNAPSHOT_COMMIT="$CTX_SNAPSHOT"
+RUN_AGENT_BIN="$CTX_TMP/run-agent-double"
+MEFISTO_RUNTIME_RESUELTO='fake'
+MEFISTO_AGENT_TIMEOUT_SECONDS=60
+EVENTS_LOG_ABS="$CTX_TMP/events.log"
+ISSUE_NUM=1450
+VARIANT_LABEL_JSON='null'
+HARNESS_IDENTITY_JSON='{}'
+HARNESS_PROJECT_NAME='proyecto-consumidor-test'
+ISSUE_CONTEXT='# Issue de prueba con contexto minimo'
+MODEL_WRITER=''
+MODEL_REVIEWER=''
+PIPELINE_OWN_WRITES=(':!.mefisto/pipeline')
+mkdir -p "$LOG_DIR_ABS" "$PIPELINE_TMP_DIR"
+log() { :; }
+warn() { :; }
+abort() { return 1; }
+update_status() { :; }
+log_agent_model_invocation() { :; }
+mefisto_state_path() { mkdir -p "$CTX_TMP/state/$(dirname "$1")"; printf '%s\n' "$CTX_TMP/state/$1"; }
+derive_stage_log_from_stream() { :; }
+compute_stage_metrics() { printf '{}'; }
+enrich_tooling_stage_metrics() { printf '%s' "$2"; }
+agent_events_denials() { printf '0'; }
+agent_events_completed_successfully() { return 0; }
+classify_neutral_agent_failure() { printf 'UNKNOWN'; }
+agent_failure_is_holdable() { return 1; }
+EOF
+    awk '/^    WRITER_HEAD_SHA=\$\(git -C "\$WORKTREE_PATH" rev-parse HEAD\)$/{p=1} p{print} p && /^    run_agent "2" "reviewer" "\$STAGE2_PROMPT"$/{exit}' "$PIPELINE"
+} > "$CTX_TMP/case.sh"
+
+if bash "$CTX_TMP/case.sh"; then
+    CTX_PROMPT="$CTX_PIPELINE_TMP/2-reviewer.prompt.md"
+    CTX_SIZE=$(wc -c < "$CTX_PROMPT" 2>/dev/null | tr -d ' ')
+    if [ -f "$CTX_PROMPT" ] && [ -n "$CTX_SIZE" ] && [ "$CTX_SIZE" -lt 65536 ] \
+        && grep -Fq "$CTX_SNAPSHOT" "$CTX_PROMPT" \
+        && grep -Fq "$CTX_HEAD" "$CTX_PROMPT" \
+        && grep -Fq 'scaffold/generated.txt' "$CTX_PROMPT" \
+        && grep -Fq 'scaffold/nota.md' "$CTX_PROMPT" \
+        && ! grep -Fq 'diff --git' "$CTX_PROMPT" \
+        && ! grep -Fq '@@' "$CTX_PROMPT"; then
+        pass "prompt del reviewer acotado a SHA/stat/rutas: ${CTX_SIZE} bytes frente a un diff crudo del writer de ${CTX_RAW_DIFF_BYTES} bytes"
+    else
+        fail "prompt del reviewer no cumple el contrato acotado (tamano=${CTX_SIZE:-desconocido})"
+    fi
+else
+    fail 'la construccion del prompt de Stage 2 (reviewer) fallo'
+fi
+rm -rf "$CTX_TMP"
+
 echo '[contrato] helpers JSONL'
 # shellcheck source=/dev/null
 source "$ROOT/scripts/_pipeline-common.sh"
