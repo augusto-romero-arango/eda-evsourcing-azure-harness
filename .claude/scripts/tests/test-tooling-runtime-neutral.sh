@@ -47,6 +47,16 @@
 #       tambien falla; el escenario [G] (modo "leak-then-fix") cubre el
 #       camino donde ese mismo intento SI corrige la fuga y la corrida
 #       completa hasta crear el PR.
+#   (f) [H] Contexto acotado del reviewer (issue #1449): el writer deja un
+#       archivo de >= 3 MB dentro del scope y el prompt de Stage 2 no crece
+#       con el.
+#   (g) [I] Reanudacion --from-stage 2 (issue #1449): calcula el mismo commit
+#       base / HEAD del writer que la corrida completa.
+#   (h) [G] Intento de correccion del gate de neutralidad (issue #1473):
+#       MEFISTO_RUNTIME=claude y la misma fuga de (e), pero el CLI falso solo
+#       la deja en su primera llamada -- el intento que run_neutrality_gate
+#       antepone a su abort() la elimina, el gate pasa en la segunda pasada y
+#       la corrida llega a crear PR.
 #
 # CA-2 (evidencia verificable, MEF-ADR-0031 -- los artefactos de una corrida
 # real, no la lectura del codigo): <log_base>.events.jsonl de cada stage
@@ -777,10 +787,10 @@ else
     fail "F-9: se esperaban exactamente 2 llamadas al CLI falso, se registraron $F_CALL_COUNT"
 fi
 
-if grep -qF "persiste" "$STATE_DIR/events.log" 2>/dev/null; then
-    pass "F-10: events.log registra que la fuga persiste tras el intento de correccion"
+if grep -qF -- "[neutralidad][fix] writer: persiste" "$STATE_DIR/events.log" 2>/dev/null; then
+    pass "F-10: events.log registra '[neutralidad][fix] writer: persiste' tras el intento de correccion"
 else
-    fail "F-10: events.log no registra que la fuga persiste tras el intento de correccion"
+    fail "F-10: events.log no registra '[neutralidad][fix] writer: persiste'. events.log: $(grep -F '[neutralidad]' "$STATE_DIR/events.log" 2>/dev/null)"
 fi
 
 # ============================================================================
@@ -814,10 +824,20 @@ else
     fail "G-7: no se encontro metrics/*-stage-1-fix-writer.json para el issue $G_ISSUE"
 fi
 
-if grep -qF "corregido" "$STATE_DIR/events.log" 2>/dev/null; then
-    pass "G-8: events.log registra que la fuga se corrigio en el intento"
+if grep -qF -- "[neutralidad][fix] writer: corregido" "$STATE_DIR/events.log" 2>/dev/null; then
+    pass "G-8: events.log registra '[neutralidad][fix] writer: corregido'"
 else
-    fail "G-8: events.log no registra que la fuga se corrigio"
+    fail "G-8: events.log no registra '[neutralidad][fix] writer: corregido'. events.log: $(grep -F '[neutralidad]' "$STATE_DIR/events.log" 2>/dev/null)"
+fi
+
+# CA-3: la duracion del intento se registra APARTE, en su propia linea de
+# events.log -- es lo unico que queda de ella, porque LAST_AGENT_DURATION se
+# restaura a la de la corrida principal (lo que comprueba G-9 por el lado de
+# las metricas).
+if grep -qE '\[neutralidad\]\[fix\] writer: [0-9]+s$' "$STATE_DIR/events.log" 2>/dev/null; then
+    pass "G-10: events.log registra aparte la duracion del intento de correccion"
+else
+    fail "G-10: events.log no registra la duracion del intento ('[neutralidad][fix] writer: <s>s')"
 fi
 
 G_MAIN_METRICS="$(_metrics_file "$G_ISSUE" 1 writer)"

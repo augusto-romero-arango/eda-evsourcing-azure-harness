@@ -1106,6 +1106,10 @@ $remedy
 
 Tu tarea: corrige EXACTAMENTE esas lineas, y solo esas. No reformules nada que el gate no haya senalado, no toques src/internal/contract/neutrality-allowlist.json (registrar una excepcion ahi es un PR previo y distinto, ver MEF-ADR-0019 seccion E) y no cambies ninguna regla del propio gate. Cuando termines, deja la correccion comiteada con un mensaje descriptivo.
 
+Este es el UNICO intento de correccion: si el gate sigue en rojo despues de ti, el stage aborta y se pierde todo el trabajo de la corrida. Relee lo que escribas antes de cerrarlo.
+
+$NEUTRALITY_RUNTIME_BLOCK
+
 CONTEXTO DE EJECUCION: modo no-interactivo, sin humano al otro lado. Nadie puede aprobar, confirmar ni responder preguntas. PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso sigue siendo responsabilidad exclusiva del pipeline, nunca tuya."
 
     # CA-3: LAST_AGENT_* deben seguir reflejando la corrida PRINCIPAL de este
