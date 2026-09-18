@@ -39,7 +39,9 @@
 #       el gate de scope da via libre y el UNICO gate que puede frenar la
 #       corrida es mefisto-neutrality-gate.sh. Stage 1 aborta citando la
 #       violacion 'src/internal/agents/fx-leak.md:<linea>: R1' y el comando
-#       de retoma --from-stage 1, sin llegar a crear PR.
+#       de retoma --from-stage 1, sin llegar a crear PR. El mensaje tambien
+#       incluye el remedio de R1 (issue #1469: mefisto_neutrality_remedy) y
+#       NO el de R4/adapters-check, que no aplican a esta fuga.
 #
 # CA-2 (evidencia verificable, MEF-ADR-0031 -- los artefactos de una corrida
 # real, no la lectura del codigo): <log_base>.events.jsonl de cada stage
@@ -710,6 +712,21 @@ if grep -qF -- "--from-stage 1" "$SCEN_ERR"; then
     pass "F-5: el mensaje de aborto incluye el comando de retoma --from-stage 1"
 else
     fail "F-5: el mensaje de aborto no incluye el comando de retoma. stderr: $(cat "$SCEN_ERR")"
+fi
+
+# F-7/F-8 (issue #1469): la fuga sintetica de este escenario es R1 (fx-leak.md
+# con "model": "sonnet") -- el remedio compuesto debe ofrecer el de R1 y NO el
+# de R4/adapters-check, que no aplican a esta violacion.
+if grep -qF -- "R1:" "$SCEN_ERR"; then
+    pass "F-7: el mensaje de aborto incluye el remedio de R1"
+else
+    fail "F-7: el mensaje de aborto no incluye el remedio de R1. stderr: $(cat "$SCEN_ERR")"
+fi
+
+if grep -qF -- "R4:" "$SCEN_ERR" || grep -qF -- "adapters-check:" "$SCEN_ERR"; then
+    fail "F-8: el mensaje de aborto no deberia incluir el remedio de R4 ni de adapters-check. stderr: $(cat "$SCEN_ERR")"
+else
+    pass "F-8: el mensaje de aborto no incluye el remedio de R4 ni de adapters-check"
 fi
 
 F_HIST="$STATE_DIR/pipeline-history.jsonl"

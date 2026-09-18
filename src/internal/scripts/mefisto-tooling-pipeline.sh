@@ -1074,9 +1074,16 @@ run_neutrality_gate() {
         success "Gate de neutralidad: sin fugas"
         return 0
     fi
+    # Remedio por regla (issue #1469): mefisto_neutrality_remedy antepone
+    # "reformula la mencion" como primera opcion para R1-R3, y solo nombra la
+    # allowlist como ultimo recurso -- sustituye la vieja linea unica de "dos
+    # PRs" que se ofrecia siempre, incluso cuando la fuga era una mencion de
+    # coste cero en prosa.
+    local remedy
+    remedy="$(echo "$out" | mefisto_neutrality_remedy)"
     abort "Stage $stage fallido: el $role dejo fuga(s) de neutralidad de runtime (MEF-ADR-0049):
 $out
-Registrar una excepcion nueva en la allowlist y usarla son dos PRs distintos -- el de registro va primero (MEF-ADR-0019 seccion E).
+$remedy
 Corrige las fugas en el worktree ($WORKTREE_PATH) y retoma con:
   ./.claude/scripts/mefisto-tooling-pipeline.sh $ISSUE_NUM --from-stage $stage${VARIANT_LABEL:+ --variant $VARIANT_LABEL}"
 }
