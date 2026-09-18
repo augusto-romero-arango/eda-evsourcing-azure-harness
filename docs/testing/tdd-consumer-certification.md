@@ -653,7 +653,7 @@ publicados bajo ningun runtime hasta que el bug
 se cierre con las cuatro corridas reales documentadas y un nuevo issue de
 veredicto las reconcilie.
 
-## Bloqueo estructural de #1464 para pipelines automatizados
+## Bloqueo estructural de la ejecucion automatizada (#1464)
 
 Esta seccion registra por que el intento de resolver
 [#1464](https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/issues/1464)
@@ -710,9 +710,15 @@ fijado arriba ("Invariantes y prerrequisitos (CA-1)" a "Fail-closed y limpieza
    resolverse, conforme al CA-5 del bug.
 
 Este bug permanece **abierto** hasta que esa sesion humana ocurra: ningun PR
-generado por `/mefisto:tooling` sobre #1464 lo cierra, precisamente porque
-ninguno puede ejecutar la operacion en vivo que sus criterios de aceptacion
-exigen.
+generado por `/mefisto:tooling` sobre #1464 resuelve sus criterios de
+aceptacion, precisamente porque ninguno puede ejecutar la operacion en vivo
+que exigen. Esto obliga a una accion explicita al mergear: el cuerpo de PR que
+`src/internal/scripts/mefisto-tooling-pipeline.sh` genera incluye siempre
+`Closes #<issue>`, de modo que GitHub cerrara #1464 al fusionar el PR de esta
+seccion aunque la evidencia siga ausente. Quien mergee debe **reabrir #1464**
+inmediatamente despues; el unico cierre valido de este bug es el issue de
+veredicto del paso 4, conforme a su CA-5. Cerrarlo por el `Closes` automatico
+repetiria literalmente el defecto que #1411 audito en #1435/#1436.
 
 ## Referencias
 
