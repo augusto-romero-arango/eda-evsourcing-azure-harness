@@ -1181,7 +1181,14 @@ fi
 if [ "$FROM_STAGE" -le 2 ]; then
     header "Stage 2: Reviewer (revision)"
 
-    FULL_DIFF=$(git -C "$WORKTREE_PATH" diff "$SNAPSHOT_COMMIT"..HEAD)
+    # Contexto acotado del reviewer (issue #1449): en vez del diff completo
+    # (podia superar ARG_MAX y desperdiciar contexto, ver #1407/#1447), se le
+    # pasan solo los SHA, el --stat y las rutas cambiadas. El diff completo
+    # sigue disponible en el worktree; el reviewer lo pide por archivo cuando
+    # lo necesita.
+    WRITER_HEAD_SHA=$(git -C "$WORKTREE_PATH" rev-parse HEAD)
+    DIFF_STAT=$(git -C "$WORKTREE_PATH" diff --stat=120 "$SNAPSHOT_COMMIT"..HEAD)
+    DIFF_NAME_STATUS=$(git -C "$WORKTREE_PATH" diff --name-status "$SNAPSHOT_COMMIT"..HEAD)
 
     STAGE2_PROMPT="Estas en el directorio raiz del repo de Mefisto (${MEFISTO_PROJECT_NAME}).
 
@@ -1189,9 +1196,18 @@ Contexto de la tarea:
 
 \$ISSUE_CONTEXT
 
-Diff completo de los cambios del writer:
+Cambios del writer:
 
-\$FULL_DIFF
+Commit base: ${SNAPSHOT_COMMIT}
+HEAD del writer: ${WRITER_HEAD_SHA}
+
+Resumen (git diff --stat=120 ${SNAPSHOT_COMMIT}..HEAD):
+
+\$DIFF_STAT
+
+Rutas cambiadas (git diff --name-status ${SNAPSHOT_COMMIT}..HEAD):
+
+\$DIFF_NAME_STATUS
 
 Tu tarea: revisa la calidad de los cambios producidos por el writer.
 
@@ -1211,7 +1227,7 @@ ECONOMIA DE TURNOS:
 Cada turno tuyo cuesta ~13 s de reloj (el 96,6% del tiempo de una corrida es el modelo escribiendo tokens, no las herramientas ejecutandose). El presupuesto completo del stage es ${MEFISTO_AGENT_TIMEOUT_SECONDS} s. Lo caro suele ser el turno, pero los tests tambien consumen ese presupuesto. Con eso en mente:
 - Agrupa en un mismo turno las tool calls independientes entre si (varias busquedas, varias lecturas, varias escrituras a archivos distintos). No las encadenes de a una: hoy el 82% de los turnos del pipeline gasta una sola tool call, y cada una de esas cadenas paga 13 s por eslabon.
 - Al cerrar, corre UNA vez scripts/tests/test-guards.sh y los tests de scripts/tests/ y .claude/scripts/tests/ cuyo nombre o contenido mencione los archivos que tocaste (busca con grep -l). No corras la suite completa dentro de este stage: el presupuesto (${MEFISTO_AGENT_TIMEOUT_SECONDS} s) no la cubre. Si alguien fuera de este stage necesita la regresion completa, el destino es .claude/scripts/mefisto-test-suite.sh, no un bucle propio.
-- Ya tienes el diff completo del writer aqui arriba: no lo vuelvas a pedir con 'git diff'. Y no re-inspecciones el arbol con 'git status' para confirmar algo que acabas de escribir -- Write y Edit fallan con error si no aplican, asi que el exito de la herramienta ya es la confirmacion.
+- Ya tienes el commit base, el HEAD del writer, el --stat y las rutas cambiadas aqui arriba: para ver el diff de una ruta puntual pidelo bajo demanda con 'git diff ${SNAPSHOT_COMMIT}..HEAD -- <ruta>' (o 'git show <sha>' para inspeccionar un commit), agrupando varias rutas en el mismo turno si necesitas mas de una. No re-inspecciones el arbol con 'git status' para confirmar algo que acabas de escribir -- Write y Edit fallan con error si no aplican, asi que el exito de la herramienta ya es la confirmacion.
 - No verifiques el scope de un archivo antes de escribirlo: un hook PostToolUse te avisa EN EL INSTANTE, gratis, si un Edit/Write cae fuera de la allowlist -- no hay motivo para inspeccionar preventivamente algo que el hook ya te va a decir si sale mal. Eso no reemplaza los gates finales (validate_mefisto_scope_changes y mefisto-neutrality-gate.sh siguen corriendo al cierre del stage): el hook es aviso temprano, no el juez.
 Estas reglas no cubren todos los casos; ante cualquier otro, decide con el mismo criterio -- un turno extra cuesta ~13 s, y solo vale la pena si te ahorra un error que costaria mas.
 
@@ -1224,7 +1240,8 @@ Instrucciones:
 6. Al terminar, escribe un resumen en .mefisto/pipeline/summaries/stage-2-reviewer.md"
 
     STAGE2_PROMPT="${STAGE2_PROMPT//\$ISSUE_CONTEXT/$ISSUE_CONTEXT}"
-    STAGE2_PROMPT="${STAGE2_PROMPT//\$FULL_DIFF/$FULL_DIFF}"
+    STAGE2_PROMPT="${STAGE2_PROMPT//\$DIFF_STAT/$DIFF_STAT}"
+    STAGE2_PROMPT="${STAGE2_PROMPT//\$DIFF_NAME_STATUS/$DIFF_NAME_STATUS}"
 
     run_agent "2" "reviewer" "$STAGE2_PROMPT"
 

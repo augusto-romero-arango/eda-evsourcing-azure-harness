@@ -143,7 +143,16 @@ mkdir -p "$FAKE_BIN"
 # una fuga real de neutralidad -- src/internal/agents/fx-leak.md con
 # `"model": "sonnet"` en el frontmatter -- dentro del scope permitido, para
 # que el UNICO gate que frene la corrida sea mefisto-neutrality-gate.sh, no el
-# de scope. Sale con MEFISTO_TEST_EXIT_CODE.
+# de scope. En modo "big" (issue #1449, CA-3) el writer ademas crea un archivo
+# de >= 3 MB dentro del scope (docs/1449-big-file.md), para probar que el
+# prompt del reviewer NO crece con el tamano del diff. En modo "fail-stage2"
+# (issue #1449, CA-4) la llamada N=1 (writer) tiene exito igual que "success",
+# pero cualquier llamada posterior (reviewer) falla sin salida -- sirve para
+# dejar el worktree con el commit del writer y comparar el prompt de Stage 2
+# entre la corrida completa y una reanudada con --from-stage 2. En modo
+# "always-fail" el CLI falla siempre, sin escribir nada -- para la segunda
+# mitad de ese mismo escenario de reanudacion. Sale con MEFISTO_TEST_EXIT_CODE
+# (salvo "fail-stage2"/"always-fail", que fijan su propio exit code).
 write_cli_stub() {
     local name="$1"
     cat > "$FAKE_BIN/$name" <<'STUB'
@@ -155,7 +164,22 @@ N=$(( $(cat "$N_FILE" 2>/dev/null || echo 0) + 1 ))
 echo "$N" > "$N_FILE"
 jq -n --args '$ARGS.positional' -- "$@" > "$CAP/$ME-call-$N.json" 2>/dev/null || true
 
-if [ "${MEFISTO_TEST_MODE:-success}" = "success" ] || [ "${MEFISTO_TEST_MODE:-success}" = "leak" ]; then
+if [ "${MEFISTO_TEST_MODE:-success}" = "always-fail" ]; then
+    exit 1
+fi
+
+if [ "${MEFISTO_TEST_MODE:-success}" = "fail-stage2" ]; then
+    if [ "$N" = "1" ]; then
+        mkdir -p .mefisto/pipeline/summaries docs changelog.d
+        echo "resumen stub writer ($ME)" > .mefisto/pipeline/summaries/stage-1-writer.md
+        echo "cambio del stub e2e resume ($ME)" >> docs/1449-resume-marker.md
+        echo "- cambio del stub e2e (resume)" > changelog.d/1449-resume.added.md
+        exit 0
+    fi
+    exit 1
+fi
+
+if [ "${MEFISTO_TEST_MODE:-success}" = "success" ] || [ "${MEFISTO_TEST_MODE:-success}" = "leak" ] || [ "${MEFISTO_TEST_MODE:-success}" = "big" ]; then
     mkdir -p .mefisto/pipeline/summaries docs changelog.d
     echo "resumen stub writer ($ME)" > .mefisto/pipeline/summaries/stage-1-writer.md
     echo "resumen stub reviewer ($ME)" > .mefisto/pipeline/summaries/stage-2-reviewer.md
@@ -166,6 +190,10 @@ fi
 if [ "${MEFISTO_TEST_MODE:-success}" = "leak" ]; then
     mkdir -p src/internal/agents
     printf -- '---\n{"id": "fx-leak", "kind": "agent", "model": "sonnet"}\n---\n\nFuga de neutralidad de runtime para el escenario negativo (issue #914): el campo `model` no debe aparecer en la fuente neutral src/internal/**.\n' > src/internal/agents/fx-leak.md
+fi
+
+if [ "${MEFISTO_TEST_MODE:-success}" = "big" ] && [ "$N" = "1" ]; then
+    dd if=/dev/zero bs=1024 count=3072 2>/dev/null | tr '\0' 'x' > docs/1449-big-file.md
 fi
 
 if [ -n "${MEFISTO_TEST_FIXTURE:-}" ]; then
@@ -279,9 +307,12 @@ fi
 # <cli>-call-N arranquen en 1 en cada corrida) y su propio numero de issue de
 # mentira (para que rama/worktree no colisionen entre escenarios que
 # reutilizan el mismo origin/clon). Deja SCEN_RC/SCEN_OUT/SCEN_ERR/SCEN_CAP
-# poblados para que el caller haga sus aserciones.
+# poblados para que el caller haga sus aserciones. Los argumentos extra ($6,
+# opcional, p. ej. "--from-stage 2") se pasan tal cual al pipeline -- reusan
+# el mismo capdir del issue si ya existia (issue #1449, escenario de
+# reanudacion: la segunda invocacion no reinicia los contadores de llamada).
 run_scenario() {
-    local runtime="$1" issue_num="$2" mode="$3" fixture="$4" exitcode="$5"
+    local runtime="$1" issue_num="$2" mode="$3" fixture="$4" exitcode="$5" extra_args="${6:-}"
     local capdir="$TMP/capture-${issue_num}"
     mkdir -p "$capdir"
     local out="$TMP/scenario-${issue_num}.out"
@@ -290,12 +321,12 @@ run_scenario() {
     (
         cd "$FAKE_MEFISTO" || exit 99
         env -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR -u MEFISTO_REPO_ROOT \
-            -u MEFISTO_PROJECT_NAME -u MEFISTO_REPO_SLUG \
+            -u MEFISTO_PROJECT_NAME -u MEFISTO_REPO_SLUG -u MEFISTO_LAUNCH_ROOT \
             -u MEFISTO_RUNTIME_LIB_DIR -u MEFISTO_MODELS_FILE \
             PATH="$FAKE_BIN:$PATH" MEFISTO_RUNTIME="$runtime" MEFISTO_AGENT_RETRY_BACKOFF_SECONDS=0 \
             MEFISTO_TEST_CAPTURE_DIR="$capdir" MEFISTO_TEST_MODE="$mode" \
             MEFISTO_TEST_FIXTURE="$fixture" MEFISTO_TEST_EXIT_CODE="$exitcode" \
-            ./.claude/scripts/mefisto-tooling-pipeline.sh "$issue_num"
+            ./.claude/scripts/mefisto-tooling-pipeline.sh "$issue_num" $extra_args
     ) </dev/null >"$out" 2>"$err"
     SCEN_RC=$?
     SCEN_OUT="$out"
@@ -312,6 +343,13 @@ _events_file() {
 # _metrics_file <issue_num> <stage> <agent> -- ruta del metrics/*.json del stage.
 _metrics_file() {
     find "$STATE_DIR/metrics" -name "mefisto-tooling-*-issue-${1}-stage-${2}-${3}.json" 2>/dev/null | head -n1
+}
+
+# _stage2_prompt_files <issue_num> -- todas las rutas de prompt.md de Stage 2
+# (reviewer) de ese issue, una por linea (issue #1449: puede haber mas de una
+# si el issue se corrio mas de una vez, p. ej. corrida completa + reanudacion).
+_stage2_prompt_files() {
+    find "$STATE_DIR/prompts" -name "mefisto-tooling-stage-2-reviewer-*-issue-${1}.prompt.md" 2>/dev/null | sort
 }
 
 # _find_call <capdir> <cli> <aguja> -- ruta del primer <cli>-call-N.json cuyo
@@ -620,6 +658,112 @@ if [ "${F_FAILED_COUNT:-0}" -ge 1 ] && [ "${F_COMPLETED_COUNT:-0}" = "0" ]; then
     pass "F-6: pipeline-history.jsonl tiene una entrada 'failed' del issue $F_ISSUE y ninguna 'completed'"
 else
     fail "F-6: historial inesperado -- failed=$F_FAILED_COUNT completed=$F_COMPLETED_COUNT"
+fi
+
+# ============================================================================
+# [G] Escenario (f): contexto acotado del reviewer (issue #1449, CA-3) -- el
+# writer deja en el worktree un archivo de >= 3 MB dentro del scope; el prompt
+# de Stage 2 debe pesar bien por debajo de esa magnitud (no contiene el diff
+# completo) y aun asi traer los SHA y las rutas cambiadas.
+# ============================================================================
+
+echo ""
+echo "[G] Escenario (f): MEFISTO_RUNTIME=claude, diff de >= 3 MB -- el prompt de Stage 2 no crece con el (CA-3, #1449)"
+
+G_ISSUE="912106"
+run_scenario claude "$G_ISSUE" big "$FIXTURES_CLAUDE_DIR/success.jsonl" 0
+G_CAP="$SCEN_CAP"
+assert_success_run G claude "$G_ISSUE" "$G_CAP"
+
+G_PROMPT="$(_stage2_prompt_files "$G_ISSUE" | tail -n1)"
+if [ -n "$G_PROMPT" ] && [ -f "$G_PROMPT" ]; then
+    G_PROMPT_BYTES=$(wc -c < "$G_PROMPT" | tr -d ' ')
+    if [ "$G_PROMPT_BYTES" -lt 65536 ]; then
+        pass "G-6: el prompt de Stage 2 pesa $G_PROMPT_BYTES bytes (< 64 KiB) pese al diff de >= 3 MB del writer"
+    else
+        fail "G-6: el prompt de Stage 2 pesa $G_PROMPT_BYTES bytes (>= 64 KiB) -- volvio a crecer con el tamano del diff"
+    fi
+
+    if grep -qE '^diff --git' "$G_PROMPT" || grep -qE '^@@' "$G_PROMPT"; then
+        fail "G-7: el prompt de Stage 2 todavia contiene cuerpo de diff ('diff --git' o '@@')"
+    else
+        pass "G-7: el prompt de Stage 2 no contiene ninguna linea 'diff --git' ni '@@'"
+    fi
+
+    if grep -qE '^Commit base: [0-9a-f]{7,40}$' "$G_PROMPT" && grep -qE '^HEAD del writer: [0-9a-f]{7,40}$' "$G_PROMPT"; then
+        pass "G-8: el prompt de Stage 2 trae 'Commit base' y 'HEAD del writer' con SHA"
+    else
+        fail "G-8: el prompt de Stage 2 no trae ambos SHA esperados: $(grep -E 'Commit base|HEAD del writer' "$G_PROMPT")"
+    fi
+
+    if grep -qF "docs/1449-big-file.md" "$G_PROMPT"; then
+        pass "G-9: el prompt de Stage 2 trae la ruta cambiada (--name-status) del archivo grande"
+    else
+        fail "G-9: el prompt de Stage 2 no menciona docs/1449-big-file.md"
+    fi
+else
+    fail "G-6..9: no se encontro el prompt de Stage 2 para el issue $G_ISSUE"
+fi
+
+# ============================================================================
+# [H] Escenario (g): reanudacion --from-stage 2 calcula el mismo contexto que
+# la corrida completa (issue #1449, CA-4). Primera corrida: el writer tiene
+# exito (mode "fail-stage2", N=1) y el reviewer falla siempre (N>=2) sin
+# reintentos utiles -- el pipeline aborta en Stage 2 pero el worktree, con el
+# commit del writer, sobrevive (solo el camino de exito completo lo borra).
+# Segunda corrida: mismo issue, --from-stage 2, reviewer siempre falla (modo
+# "always-fail") -- solo interesa el prompt que vuelve a generar.
+# ============================================================================
+
+echo ""
+echo "[H] Escenario (g): --from-stage 2 calcula el mismo commit base/HEAD que la corrida completa (CA-4, #1449)"
+
+H_ISSUE="912107"
+run_scenario claude "$H_ISSUE" fail-stage2 "$FIXTURES_CLAUDE_DIR/api-error-404.jsonl" 1
+H_PROMPT_1="$(_stage2_prompt_files "$H_ISSUE" | tail -n1)"
+
+if [ "$SCEN_RC" -ne 0 ]; then
+    pass "H-1: la corrida completa aborta en Stage 2 (rc=$SCEN_RC != 0)"
+else
+    fail "H-1: se esperaba que la corrida completa abortara en Stage 2 (rc=0)"
+fi
+
+H_SNAP_1="$TMP/h-stage2-prompt-corrida-completa.md"
+if [ -n "$H_PROMPT_1" ] && [ -f "$H_PROMPT_1" ]; then
+    # Copia aparte antes de la segunda corrida: el nombre del prompt lleva el
+    # TIMESTAMP del pipeline con resolucion de segundos, asi que una colision
+    # sobrescribiria el prompt de la corrida completa y H-4 se quedaria sin
+    # evidencia con que comparar.
+    cp "$H_PROMPT_1" "$H_SNAP_1"
+    pass "H-2: la corrida completa dejo un prompt de Stage 2 antes de abortar"
+else
+    fail "H-2: no se encontro el prompt de Stage 2 de la corrida completa para el issue $H_ISSUE"
+fi
+
+# Garantiza que la reanudacion caiga en un segundo distinto (mismo motivo: el
+# TIMESTAMP del nombre del prompt tiene resolucion de segundos).
+sleep 1
+run_scenario claude "$H_ISSUE" always-fail "" 1 "--from-stage 2"
+H_PROMPT_2="$(_stage2_prompt_files "$H_ISSUE" | tail -n1)"
+
+if [ -n "$H_PROMPT_2" ] && [ "$H_PROMPT_2" != "$H_PROMPT_1" ] && [ -f "$H_PROMPT_2" ]; then
+    pass "H-3: la reanudacion con --from-stage 2 genero un prompt de Stage 2 nuevo"
+else
+    fail "H-3: la reanudacion no genero un prompt de Stage 2 distinto del de la corrida completa"
+fi
+
+if [ -f "$H_SNAP_1" ] && [ -n "$H_PROMPT_2" ] && [ -f "$H_PROMPT_2" ]; then
+    H_BASE_1="$(grep -E '^Commit base: ' "$H_SNAP_1")"
+    H_HEAD_1="$(grep -E '^HEAD del writer: ' "$H_SNAP_1")"
+    H_BASE_2="$(grep -E '^Commit base: ' "$H_PROMPT_2")"
+    H_HEAD_2="$(grep -E '^HEAD del writer: ' "$H_PROMPT_2")"
+    if [ -n "$H_BASE_1" ] && [ "$H_BASE_1" = "$H_BASE_2" ] && [ -n "$H_HEAD_1" ] && [ "$H_HEAD_1" = "$H_HEAD_2" ]; then
+        pass "H-4: '$H_BASE_1' / '$H_HEAD_1' -- mismo commit base y HEAD del writer en la corrida completa y en la reanudacion"
+    else
+        fail "H-4: SHA distintos entre corrida completa (${H_BASE_1:-?}/${H_HEAD_1:-?}) y reanudacion (${H_BASE_2:-?}/${H_HEAD_2:-?})"
+    fi
+else
+    fail "H-4: faltan uno o ambos prompts de Stage 2 para comparar SHA"
 fi
 
 echo ""
