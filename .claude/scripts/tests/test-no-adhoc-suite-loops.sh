@@ -109,6 +109,11 @@ REASON_BASHSH="bash/sh invocado con el glob de la suite completa como argumento 
 # Imprime '<ruta>:<linea>: <motivo>' por cada linea de un archivo VERSIONADO
 # de <root> que matchea <regex>, salvo que su ruta este exenta o la linea sea
 # un comentario completo (primer caracter no-blanco '#').
+#
+# grep corre con -I: un archivo binario versionado emitiria 'Binary file X
+# matches', una linea SIN numero que corromperia el parseo posicional
+# '<ruta>:<linea>:<contenido>' de mas abajo. Con -I esos archivos no producen
+# salida, y ninguna infraccion ejecutable puede vivir en un binario.
 _grep_pattern() {
     local root="$1" re="$2" reason="$3"
     local line relpath rest lineno content
@@ -119,9 +124,9 @@ _grep_pattern() {
         lineno="${rest%%:*}"
         content="${rest#*:}"
         is_exempt_path "$relpath" && continue
-        printf '%s' "$content" | grep -Eq '^[[:space:]]*#' && continue
+        [[ "$content" =~ ^[[:space:]]*# ]] && continue
         printf '%s:%s: %s\n' "$relpath" "$lineno" "$reason"
-    done < <(cd "$root" && git ls-files -z | xargs -0 grep -nHE -- "$re" 2>/dev/null)
+    done < <(cd "$root" && git ls-files -z | xargs -0 grep -InHE -- "$re" 2>/dev/null)
 }
 
 # scan_adhoc_suite_loops <root>
@@ -163,6 +168,14 @@ for t in scripts/tests/test-*.sh .claude/scripts/tests/test-*.sh; do
 done
 EOF
 
+cat > "$TMPDIR_ROOT/scripts/ci/adhoc-for-plain-glob.sh" <<'EOF'
+#!/usr/bin/env bash
+set -e
+for f in .claude/scripts/tests/*.sh; do
+    bash "$f"
+done
+EOF
+
 cat > "$TMPDIR_ROOT/scripts/ci/adhoc-find.sh" <<'EOF'
 #!/usr/bin/env bash
 set -e
@@ -190,6 +203,8 @@ jobs:
 EOF
 
 # [B] Casos negativos (CA-2): invocacion individual, discovery via grep -l,
+# el 'for proj in tests/X.Tests/' de la suite .NET del CONSUMIDOR (discrimina
+# por REGEX, no por exencion de ruta: el archivo NO esta exento), y
 # prosa/comentario.
 
 cat > "$TMPDIR_ROOT/scripts/ci/individual.sh" <<'EOF'
@@ -201,6 +216,13 @@ EOF
 cat > "$TMPDIR_ROOT/scripts/ci/discovery.sh" <<'EOF'
 #!/usr/bin/env bash
 grep -l archivo.sh scripts/tests/*.sh .claude/scripts/tests/*.sh
+EOF
+
+cat > "$TMPDIR_ROOT/scripts/ci/dotnet-tests.sh" <<'EOF'
+#!/usr/bin/env bash
+for proj in tests/Cosmos.Dominio.*.Tests/; do
+    dotnet test "$proj"
+done
 EOF
 
 cat > "$TMPDIR_ROOT/scripts/ci/prose.sh" <<'EOF'
@@ -227,9 +249,11 @@ for t in scripts/tests/test-*.sh .claude/scripts/tests/test-*.sh; do
 done
 EOF
 
+# Una UNICA invocacion por root: la asignacion desde una sustitucion de
+# comando propaga el exit code del comando sustituido, asi que capturar '$?'
+# acto seguido da el rc sin repetir las 4 pasadas de grep sobre todo el repo.
 FIXTURE_OUT="$(scan_adhoc_suite_loops "$TMPDIR_ROOT" 2>&1)"
-FIXTURE_RC=0
-scan_adhoc_suite_loops "$TMPDIR_ROOT" >/dev/null 2>&1 || FIXTURE_RC=$?
+FIXTURE_RC=$?
 
 echo "[A] Casos positivos: se reportan con <ruta>:<linea> exactos"
 
@@ -241,6 +265,7 @@ fi
 
 for expected in \
     "scripts/ci/adhoc-for.sh:3:" \
+    "scripts/ci/adhoc-for-plain-glob.sh:3:" \
     "scripts/ci/adhoc-find.sh:3:" \
     "scripts/ci/adhoc-xargs.sh:3:" \
     ".github/workflows/regression.yml:9:"
@@ -253,11 +278,12 @@ do
 done
 
 echo ""
-echo "[B] Casos negativos (CA-2): invocacion individual, grep -l, prosa/comentario"
+echo "[B] Casos negativos (CA-2): invocacion individual, grep -l, suite .NET del consumidor, prosa/comentario"
 
 for negative in \
     "scripts/ci/individual.sh" \
     "scripts/ci/discovery.sh" \
+    "scripts/ci/dotnet-tests.sh" \
     "scripts/ci/prose.sh"
 do
     if printf '%s\n' "$FIXTURE_OUT" | grep -qF "$negative"; then
@@ -296,13 +322,13 @@ echo ""
 echo "[E] Smoke contra el repo REAL: scan_adhoc_suite_loops sale 0"
 
 REAL_OUT="$(scan_adhoc_suite_loops "$REPO_ROOT" 2>&1)"
-REAL_RC=0
-scan_adhoc_suite_loops "$REPO_ROOT" >/dev/null 2>&1 || REAL_RC=$?
+REAL_RC=$?
 
 if [ "$REAL_RC" -eq 0 ]; then
     pass "scan_adhoc_suite_loops sale 0 sobre el repo real (sin infractores)"
 else
-    fail "scan_adhoc_suite_loops encontro infractores en el repo real:$REAL_OUT"
+    fail "scan_adhoc_suite_loops encontro infractores en el repo real:"
+    printf '%s\n' "$REAL_OUT"
 fi
 
 echo ""
