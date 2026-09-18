@@ -52,10 +52,15 @@
 # Flags que compone build_cmd (CA-1): `--agent <agent>`, `--permission-mode
 # bypassPermissions` y `--output-format stream-json --verbose` siempre;
 # `--append-system-prompt-file <system_file>` (issue #1448: la RUTA, nunca el
-# contenido -- `claude --help` local confirma que este flag existe ademas de
-# `--append-system-prompt`) solo si <system_file> no es vacio; `--model
+# contenido) solo si <system_file> no es vacio; `--model
 # <model>` solo si el runner entrego un modelo no vacio (CA-1 de #858:
 # vacio/ausente = heredar, el adaptador real nunca debe ver un `--model ""`).
+# `--append-system-prompt-file` existe ademas de `--append-system-prompt`,
+# verificado en Claude Code 2.1.276 local: `claude --help` lo lista en forma
+# abreviada (`--append-system-prompt[-file]`) y la sonda
+# `claude -p --append-system-prompt-file <ruta-inexistente>` responde
+# "Error: Append system prompt file not found: <ruta>" -- es decir, el parser
+# lo acepta (una opcion desconocida responde "error: unknown option").
 # El orden de los flags es irrelevante para quien los consume (el CLI real, y
 # el stub de test-runtime-claude.sh que solo comprueba presencia/ausencia). Un
 # `--model` explicito del runner tiene precedencia sobre `model:` del

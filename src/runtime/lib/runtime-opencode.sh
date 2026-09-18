@@ -320,11 +320,16 @@ runtime_opencode_ensure_pricing() {
 # --- runtime_opencode_build_cmd ---------------------------------------------
 
 runtime_opencode_build_cmd() {
-    # El tercer posicional se llama "prompt_path", no "prompt_file", a
-    # proposito (issue #1448): esta funcion SI necesita leer su contenido
-    # (no hay `--append-system-prompt-file` equivalente en `opencode run`,
-    # ver cabecera), a diferencia de runtime-claude.sh, que solo declara la
-    # ruta como canal de stdin sin releerla.
+    # El tercer posicional del CONTRATO se llama <prompt_file> (ver cabecera y
+    # src/runtime/contract/README.md); aqui el local se llama "prompt_path"
+    # para marcar que este adaptador solo lo ATRAVIESA como archivo -- `cat`
+    # o `cp` hacia el archivo de mensaje -- y nunca vuelca su contenido a una
+    # variable: el idiom retirado por #1448 -- volcar <prompt_file> a una
+    # variable con una sustitucion de comandos y pasarla en el argv, rehen de
+    # ARG_MAX -- no queda ni como ocurrencia parcial.
+    # `opencode run` no tiene equivalente de `--append-system-prompt-file`,
+    # asi que a diferencia de runtime-claude.sh este adaptador si tiene que
+    # componer un archivo propio.
     local agent="$1" cwd="$2" prompt_path="$3" model="$4" system_file="$5" resume_session_id="${6:-}"
 
     MEFISTO_RUNTIME_CMD=(opencode run --agent "$agent" --dir "$cwd" --format json --auto)
@@ -343,13 +348,35 @@ runtime_opencode_build_cmd() {
     # invocar esta funcion (ver src/runtime/contract/README.md) -- nunca en
     # /tmp suelto ni en el worktree. `cp` para el caso sin system-file evita
     # una lectura completa innecesaria del archivo.
+    # Sin directorio de corrida no hay donde materializarlo, y la alternativa
+    # (volver a poner el mensaje en el argv, o escribirlo en la raiz del
+    # filesystem si la variable llega vacia) es exactamente lo que este issue
+    # elimina: se falla explicito y se vacia MEFISTO_RUNTIME_CMD, la senal que
+    # mefisto-run-agent.sh ya traduce a exit 69. Sin este guardia, un caller
+    # con `set -u` (el propio runner lo usa) moriria antes con un
+    # "unbound variable" que no nombra la causa. Mismo criterio defensivo que
+    # runtime-fake.sh.
+    if [ -z "${MEFISTO_RUNTIME_WORK_DIR:-}" ] || [ ! -d "$MEFISTO_RUNTIME_WORK_DIR" ]; then
+        echo "ERROR: runtime_opencode_build_cmd necesita MEFISTO_RUNTIME_WORK_DIR (directorio de la corrida, issue #1447) para materializar el mensaje del CLI" >&2
+        MEFISTO_RUNTIME_CMD=()
+        return 1
+    fi
+
     local message_file="$MEFISTO_RUNTIME_WORK_DIR/opencode-message.md"
+    # Una sola redireccion para los tres tramos (no tres `>>`): si la escritura
+    # falla a medias, el mensaje que recibiria el modelo estaria TRUNCADO y el
+    # CLI arrancaria igual -- un fallo silencioso de la misma familia que
+    # #1407. El `||` lo convierte en aborto explicito.
     if [ -n "$system_file" ]; then
-        cat "$system_file" > "$message_file"
-        printf '\n\n' >> "$message_file"
-        cat "$prompt_path" >> "$message_file"
-    else
-        cp "$prompt_path" "$message_file"
+        if ! { cat "$system_file" && printf '\n\n' && cat "$prompt_path"; } > "$message_file"; then
+            echo "ERROR: runtime_opencode_build_cmd no pudo escribir el mensaje en '$message_file'" >&2
+            MEFISTO_RUNTIME_CMD=()
+            return 1
+        fi
+    elif ! cp "$prompt_path" "$message_file"; then
+        echo "ERROR: runtime_opencode_build_cmd no pudo copiar el prompt a '$message_file'" >&2
+        MEFISTO_RUNTIME_CMD=()
+        return 1
     fi
     MEFISTO_RUNTIME_STDIN_FILE="$message_file"
 }

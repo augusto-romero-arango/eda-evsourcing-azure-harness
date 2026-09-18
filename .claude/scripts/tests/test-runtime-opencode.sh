@@ -22,8 +22,9 @@
 #       inyectado como PREFIJO del mensaje (nunca un flag ni texto en argv),
 #       el mensaje se materializa en
 #       "$MEFISTO_RUNTIME_WORK_DIR/opencode-message.md" y se declara via
-#       MEFISTO_RUNTIME_STDIN_FILE, y el modelo opaco (con "/" y espacios)
-#       reenviado literal.
+#       MEFISTO_RUNTIME_STDIN_FILE (sin esa variable, build_cmd falla
+#       explicito en vez de degradar al argv), y el modelo opaco (con "/" y
+#       espacios) reenviado literal.
 #   [I] CA-3/CA-4 (issue #1448): paridad ante ARG_MAX -- un prompt >=
 #       `getconf ARG_MAX` + 65536 bytes corre por stdin (nunca por argv) via
 #       el runner real contra la CLI falsa, con exit 0, exactamente un
@@ -308,6 +309,22 @@ case "$MEFISTO_RUNTIME_STDIN_FILE" in
     "$MEFISTO_RUNTIME_WORK_DIR"/*) pass "A-6c: el archivo de mensaje vive dentro de MEFISTO_RUNTIME_WORK_DIR" ;;
     *) fail "A-6c: MEFISTO_RUNTIME_STDIN_FILE fuera de MEFISTO_RUNTIME_WORK_DIR: '$MEFISTO_RUNTIME_STDIN_FILE'" ;;
 esac
+
+# A-6d: sin MEFISTO_RUNTIME_WORK_DIR no hay donde materializar el mensaje. El
+# adaptador NO puede degradar a poner el mensaje en el argv (es justo lo que
+# #1448 elimina) ni escribir en la raiz del filesystem: falla explicito,
+# nombrando la variable, y deja MEFISTO_RUNTIME_CMD vacio -- la senal que
+# mefisto-run-agent.sh ya traduce a exit 69.
+A6D_ERR="$TMP/a6d-stderr.txt"
+if ( unset MEFISTO_RUNTIME_WORK_DIR
+     MEFISTO_RUNTIME_CMD=()
+     MEFISTO_RUNTIME_STDIN_FILE=""
+     ! runtime_opencode_build_cmd "writer" "$TMP" "$PROMPT_PLAIN" "" "" 2>"$A6D_ERR" ) \
+   && grep -q "MEFISTO_RUNTIME_WORK_DIR" "$A6D_ERR" && [ ! -e /opencode-message.md ]; then
+    pass "A-6d: sin MEFISTO_RUNTIME_WORK_DIR build_cmd falla explicito nombrando la variable, sin escribir fuera del directorio de la corrida"
+else
+    fail "A-6d: build_cmd no fallo explicito sin MEFISTO_RUNTIME_WORK_DIR: '$(cat "$A6D_ERR" 2>/dev/null)'"
+fi
 
 # Modelo vacio (heredar, CA-1 de #858): NUNCA debe verse -m en el argv.
 MEFISTO_RUNTIME_CMD=()

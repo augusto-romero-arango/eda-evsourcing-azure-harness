@@ -316,9 +316,11 @@ _metrics_file() {
 
 # _find_call <capdir> <cli> <aguja> -- ruta del primer <cli>-call-N.json cuyo
 # argv (array JSON) tiene algun elemento que CONTIENE <aguja>. Sirve para
-# ubicar la invocacion de un stage por contenido, no por orden de llamada:
-# en claude el agente no viaja como flag, pero el prompt del stage nombra
-# su propio archivo de resumen (stage-1-writer.md / stage-2-reviewer.md).
+# ubicar la invocacion de un stage por contenido, no por orden de llamada.
+# La aguja util es el id del agente (`--agent mefisto-writer` /
+# `--agent mefisto-reviewer`): desde #1368 lo pasan AMBOS adaptadores reales,
+# y desde #1448 es lo unico del stage que queda en el argv -- el prompt (que
+# antes nombraba el archivo de resumen del stage) viaja por stdin.
 _find_call() {
     local f
     for f in "$1/$2"-call-*.json; do
@@ -539,10 +541,11 @@ else
     fail "E-2: no se pudo localizar la invocacion del writer de la corrida (b)"
 fi
 
-# En claude el agente no viaja como flag: se ubica cada stage por el archivo
-# de resumen que su prompt nombra.
-A_WRITER_CALL="$(_find_call "$A_CAP" claude stage-1-writer.md || true)"
-A_REVIEWER_CALL="$(_find_call "$A_CAP" claude stage-2-reviewer.md || true)"
+# Cada stage se ubica por su `--agent <id>`, igual que en opencode (#1368):
+# el prompt -- que antes nombraba stage-1-writer.md / stage-2-reviewer.md
+# dentro del argv -- ya no esta ahi, viaja por stdin (issue #1448).
+A_WRITER_CALL="$(_find_call "$A_CAP" claude mefisto-writer || true)"
+A_REVIEWER_CALL="$(_find_call "$A_CAP" claude mefisto-reviewer || true)"
 if [ -n "$A_REVIEWER_CALL" ]; then
     if _argv_has_flag_value "$A_REVIEWER_CALL" --model opus; then
         pass "E-3: claude -- reviewer deep usa '--model opus'"
