@@ -653,6 +653,73 @@ publicados bajo ningun runtime hasta que el bug
 se cierre con las cuatro corridas reales documentadas y un nuevo issue de
 veredicto las reconcilie.
 
+## Bloqueo estructural de la ejecucion automatizada (#1464)
+
+Esta seccion registra por que el intento de resolver
+[#1464](https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/issues/1464)
+a traves de `/mefisto:tooling` (el pipeline no-interactivo de tooling interno
+de Mefisto) tampoco produjo las cuatro corridas reales que exige ese bug, para
+no repetir el error que ya audito "Veredicto final del corte TDD
+multi-runtime (#1411)": cerrar un issue declarandolo resuelto sin la sesion en
+vivo que su propio criterio de aceptacion exige.
+
+CA-1 a CA-3 de #1464 exigen, en este orden: fijar una release candidata e
+identidad `aligned` verificadas contra Claude Code y OpenCode instalados de
+verdad; crear cuatro issues fixture **desde el planner publicado del
+consumidor privado** `augusto-romero-arango/mefisto-consumer-certification`
+(nunca con `gh -R` cross-repo desde Mefisto, MEF-ADR-0019); lanzar las cuatro
+corridas reales desde paneles Herdr operando runtimes instalados en ese
+consumidor; y esperar PRs reales con checks de CI verdes sobre su Azure
+dedicado. Ninguna de esas cuatro operaciones es alcanzable por un stage de
+escritura no-interactivo como este: no tiene credenciales ni alcance sobre el
+repositorio privado del consumidor, no puede operar sesiones Herdr en vivo (un
+proceso con paneles tmux que un humano dirige) y no puede esperar minutos u
+horas a que un pipeline de CI ajeno resuelva. Esto no es una limitacion nueva:
+es exactamente lo que anticipa la seccion "Notas tecnicas" del propio #1464 y
+lo que ya cerro #1411 con su `NO PASA` -- "una operacion en vivo que excede el
+alcance de un stage de escritura automatizado".
+
+En consecuencia, este documento **no completa** las tablas de "Resultado
+write-side (#1435)" ni "Resultado read-side (#1436)": ambas permanecen
+`PENDIENTE DE EJECUCION`, y la matriz auditada de "Veredicto final del corte
+TDD multi-runtime (#1411)" permanece sin cambios. Rellenar esas tablas sin la
+sesion real violaria MEF-ADR-0031 de la misma forma que #1435/#1436 ya lo
+hicieron al cerrarse como `COMPLETED` sin evidencia -- el defecto que este
+mismo bug existe para corregir.
+
+CA-1 a CA-5 de #1464 quedan pendientes de una sesion operada por un humano con
+acceso al consumidor privado y a Herdr, siguiendo integramente el protocolo ya
+fijado arriba ("Invariantes y prerrequisitos (CA-1)" a "Fail-closed y limpieza
+(CA-6)") sin modificarlo. Quien opere esa sesion:
+
+1. Ejecuta el preflight de "Invariantes y prerrequisitos (CA-1)" sobre una
+   release candidata vigente al momento de la corrida (no la ya usada por
+   #1180/#1181), fijando `<sha-baseline-inicial>`, `<tag-certificable>`,
+   `<version>`, `<commit-fuente>` y `<checksum-opencode>` comunes con
+   identidad `aligned` verificada.
+2. Crea los cuatro issues fixture de "Fixtures write-side/read-side (CA-2)"
+   desde el planner publicado del consumidor y lanza las cuatro corridas desde
+   Herdr conforme a "Lanzamiento real desde Herdr (CA-4)", sin `--variant` ni
+   override de modelo.
+3. Rellena directamente las tablas de "Resultado write-side (#1435)" y
+   "Resultado read-side (#1436)" con la evidencia real correlacionada por
+   issue/PR/stage/session, y ejecuta la limpieza de "Fail-closed y limpieza
+   (CA-6)".
+4. Abre el nuevo issue de veredicto (equivalente a #1411) que audita esa
+   evidencia real y emite `PASA` o `NO PASA`; ese issue cierra #1464 al
+   resolverse, conforme al CA-5 del bug.
+
+Este bug permanece **abierto** hasta que esa sesion humana ocurra: ningun PR
+generado por `/mefisto:tooling` sobre #1464 resuelve sus criterios de
+aceptacion, precisamente porque ninguno puede ejecutar la operacion en vivo
+que exigen. Esto obliga a una accion explicita al mergear: el cuerpo de PR que
+`src/internal/scripts/mefisto-tooling-pipeline.sh` genera incluye siempre
+`Closes #<issue>`, de modo que GitHub cerrara #1464 al fusionar el PR de esta
+seccion aunque la evidencia siga ausente. Quien mergee debe **reabrir #1464**
+inmediatamente despues; el unico cierre valido de este bug es el issue de
+veredicto del paso 4, conforme a su CA-5. Cerrarlo por el `Closes` automatico
+repetiria literalmente el defecto que #1411 audito en #1435/#1436.
+
 ## Referencias
 
 - `docs/testing/opencode-consumer-cutover.md`: protocolo, consumidor y
