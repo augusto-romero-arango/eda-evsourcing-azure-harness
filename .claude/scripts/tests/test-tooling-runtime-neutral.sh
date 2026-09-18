@@ -41,7 +41,12 @@
 #       violacion 'src/internal/agents/fx-leak.md:<linea>: R1' y el comando
 #       de retoma --from-stage 1, sin llegar a crear PR. El mensaje tambien
 #       incluye el remedio de R1 (issue #1469: mefisto_neutrality_remedy) y
-#       NO el de R4/adapters-check, que no aplican a esta fuga.
+#       NO el de R4/adapters-check, que no aplican a esta fuga. Desde el
+#       issue #1473, [F] usa el modo "leak" (la fuga NUNCA se corrige) para
+#       cubrir el camino donde el intento de correccion previo al abort()
+#       tambien falla; el escenario [G] (modo "leak-then-fix") cubre el
+#       camino donde ese mismo intento SI corrige la fuga y la corrida
+#       completa hasta crear el PR.
 #
 # CA-2 (evidencia verificable, MEF-ADR-0031 -- los artefactos de una corrida
 # real, no la lectura del codigo): <log_base>.events.jsonl de cada stage
@@ -138,14 +143,20 @@ mkdir -p "$FAKE_BIN"
 # por basename "$0"). Reproduce tal cual (cat, sin editarlo) el fixture crudo
 # congelado que indique MEFISTO_TEST_FIXTURE, captura su argv completo como
 # array JSON con jq --args (issue #863: el prompt puede traer saltos de
-# linea, un separador de texto no serviria) y, en modo "success" o "leak",
-# escribe el resumen de AMBOS stages + un archivo notable dentro del scope +
-# un fragmento de changelog.d/ (para que el gate de fragmentos del issue #380
-# de via libre hasta crear el PR). En modo "leak" (issue #914) anade ademas
-# una fuga real de neutralidad -- src/internal/agents/fx-leak.md con
-# `"model": "sonnet"` en el frontmatter -- dentro del scope permitido, para
-# que el UNICO gate que frene la corrida sea mefisto-neutrality-gate.sh, no el
-# de scope. En modo "big" (issue #1449, CA-3) el writer ademas crea un archivo
+# linea, un separador de texto no serviria) y, en modo "success", "leak" o
+# "leak-then-fix", escribe el resumen de AMBOS stages + un archivo notable
+# dentro del scope + un fragmento de changelog.d/ (para que el gate de
+# fragmentos del issue #380 de via libre hasta crear el PR). En modo "leak"
+# (issue #914) anade ademas una fuga real de neutralidad --
+# src/internal/agents/fx-leak.md con `"model": "sonnet"` en el frontmatter --
+# dentro del scope permitido, para que el UNICO gate que frene la corrida sea
+# mefisto-neutrality-gate.sh, no el de scope: esa fuga NUNCA se corrige
+# (persiste incluso tras el intento de correccion de #1473). En modo
+# "leak-then-fix" (issue #1473) la MISMA fuga aparece solo en la llamada 1 (el
+# writer principal); desde la llamada 2 en adelante el stub la elimina --
+# reproduce que el intento de correccion que compone run_neutrality_gate (un
+# segundo run_agent sobre el mismo rol) SI limpia el arbol antes de que el
+# gate se re-evalue. En modo "big" (issue #1449, CA-3) el writer ademas crea un archivo
 # de >= 3 MB dentro del scope (docs/1449-big-file.md), para probar que el
 # prompt del reviewer NO crece con el tamano del diff. En modo "fail-stage2"
 # (issue #1449, CA-4) la llamada N=1 (writer) tiene exito igual que "success",
@@ -181,7 +192,7 @@ if [ "${MEFISTO_TEST_MODE:-success}" = "fail-stage2" ]; then
     exit 1
 fi
 
-if [ "${MEFISTO_TEST_MODE:-success}" = "success" ] || [ "${MEFISTO_TEST_MODE:-success}" = "leak" ] || [ "${MEFISTO_TEST_MODE:-success}" = "big" ]; then
+if [ "${MEFISTO_TEST_MODE:-success}" = "success" ] || [ "${MEFISTO_TEST_MODE:-success}" = "leak" ] || [ "${MEFISTO_TEST_MODE:-success}" = "leak-then-fix" ] || [ "${MEFISTO_TEST_MODE:-success}" = "big" ]; then
     mkdir -p .mefisto/pipeline/summaries docs changelog.d
     echo "resumen stub writer ($ME)" > .mefisto/pipeline/summaries/stage-1-writer.md
     echo "resumen stub reviewer ($ME)" > .mefisto/pipeline/summaries/stage-2-reviewer.md
@@ -192,6 +203,15 @@ fi
 if [ "${MEFISTO_TEST_MODE:-success}" = "leak" ]; then
     mkdir -p src/internal/agents
     printf -- '---\n{"id": "fx-leak", "kind": "agent", "model": "sonnet"}\n---\n\nFuga de neutralidad de runtime para el escenario negativo (issue #914): el campo `model` no debe aparecer en la fuente neutral src/internal/**.\n' > src/internal/agents/fx-leak.md
+fi
+
+if [ "${MEFISTO_TEST_MODE:-success}" = "leak-then-fix" ]; then
+    if [ "$N" = "1" ]; then
+        mkdir -p src/internal/agents
+        printf -- '---\n{"id": "fx-leak", "kind": "agent", "model": "sonnet"}\n---\n\nFuga de neutralidad de runtime para el escenario de correccion (issue #1473): el campo `model` no debe aparecer en la fuente neutral src/internal/**.\n' > src/internal/agents/fx-leak.md
+    else
+        rm -f src/internal/agents/fx-leak.md
+    fi
 fi
 
 if [ "${MEFISTO_TEST_MODE:-success}" = "big" ] && [ "$N" = "1" ]; then
@@ -673,7 +693,14 @@ fi
 # [F] Escenario (e): gate de neutralidad (issue #914) -- el CLI falso del
 # writer introduce una fuga real (src/internal/agents/fx-leak.md con
 # "model": "sonnet") DENTRO del scope permitido, asi que el gate de scope da
-# via libre y Stage 1 aborta por mefisto-neutrality-gate.sh, sin PR.
+# via libre y Stage 1 aborta por mefisto-neutrality-gate.sh, sin PR. Desde el
+# issue #1473, antes de abortar el pipeline le da al writer UN intento de
+# correccion (segundo run_agent sobre el mismo rol, con la salida del gate +
+# su remedio); el modo "leak" de este escenario nunca la corrige (el stub
+# reintroduce la misma fuga en cada llamada), asi que el intento falla y el
+# pipeline aborta igual -- ahora tras exactamente 2 llamadas al CLI falso
+# (writer + intento) en vez de 1. El escenario [G] (nuevo, mismo issue) cubre
+# el camino donde el intento SI corrige la fuga.
 # ============================================================================
 
 echo ""
@@ -738,53 +765,115 @@ else
     fail "F-6: historial inesperado -- failed=$F_FAILED_COUNT completed=$F_COMPLETED_COUNT"
 fi
 
+# F-9/F-10 (issue #1473): en modo "leak" la fuga es PERMANENTE (el stub la
+# reintroduce en cada llamada), asi que el intento de correccion que ahora
+# antepone run_neutrality_gate a su abort() no la elimina -- el pipeline
+# aborta igual, pero solo despues de una segunda llamada al CLI falso (el
+# intento) y dejando constancia de que la fuga persistio.
+F_CALL_COUNT=$(cat "$F_CAP/claude-call-count" 2>/dev/null || echo 0)
+if [ "$F_CALL_COUNT" = "2" ]; then
+    pass "F-9: el CLI falso recibio exactamente 2 llamadas (writer + intento de correccion, sin llegar al reviewer)"
+else
+    fail "F-9: se esperaban exactamente 2 llamadas al CLI falso, se registraron $F_CALL_COUNT"
+fi
+
+if grep -qF "persiste" "$STATE_DIR/events.log" 2>/dev/null; then
+    pass "F-10: events.log registra que la fuga persiste tras el intento de correccion"
+else
+    fail "F-10: events.log no registra que la fuga persiste tras el intento de correccion"
+fi
+
 # ============================================================================
-# [G] Escenario (f): contexto acotado del reviewer (issue #1449, CA-3) -- el
+# [G] Escenario (h): intento de correccion exitoso (issue #1473) -- el CLI
+# falso del writer deja la fuga solo en la llamada 1 (modo "leak-then-fix"); a
+# partir de la llamada 2 (el intento de correccion que compone
+# run_neutrality_gate, un segundo run_agent sobre el mismo rol) elimina
+# src/internal/agents/fx-leak.md, el gate pasa en la segunda pasada y el stage
+# sigue -- corrida completa hasta crear el PR, sin abortar.
+# ============================================================================
+
+echo ""
+echo "[G] Escenario (h): MEFISTO_RUNTIME=claude, fuga corregida en el intento -- la corrida completa (CA-1/CA-2/CA-3, #1473)"
+
+G_ISSUE="912105"
+run_scenario claude "$G_ISSUE" leak-then-fix "$FIXTURES_CLAUDE_DIR/success.jsonl" 0
+G_CAP="$SCEN_CAP"
+assert_success_run G claude "$G_ISSUE" "$G_CAP"
+
+G_CALL_COUNT=$(cat "$G_CAP/claude-call-count" 2>/dev/null || echo 0)
+if [ "$G_CALL_COUNT" -ge 3 ]; then
+    pass "G-6: el CLI falso recibio $G_CALL_COUNT llamadas (>= 3: writer + intento de correccion + reviewer)"
+else
+    fail "G-6: se esperaban >= 3 llamadas al CLI falso, se registraron $G_CALL_COUNT"
+fi
+
+G_FIX_METRICS=$(find "$STATE_DIR/metrics" -name "mefisto-tooling-*-issue-${G_ISSUE}-stage-1-fix-writer.json" 2>/dev/null | head -n1)
+if [ -n "$G_FIX_METRICS" ] && [ -f "$G_FIX_METRICS" ]; then
+    pass "G-7: existe metrics/*-stage-1-fix-writer.json del intento de correccion"
+else
+    fail "G-7: no se encontro metrics/*-stage-1-fix-writer.json para el issue $G_ISSUE"
+fi
+
+if grep -qF "corregido" "$STATE_DIR/events.log" 2>/dev/null; then
+    pass "G-8: events.log registra que la fuga se corrigio en el intento"
+else
+    fail "G-8: events.log no registra que la fuga se corrigio"
+fi
+
+G_MAIN_METRICS="$(_metrics_file "$G_ISSUE" 1 writer)"
+case "$G_MAIN_METRICS" in
+    "") fail "G-9: no se encontro metrics/*-stage-1-writer.json (corrida principal) para el issue $G_ISSUE" ;;
+    *stage-1-fix-writer.json) fail "G-9: _metrics_file devolvio el archivo del fix en vez del de la corrida principal: $G_MAIN_METRICS" ;;
+    *) pass "G-9: _metrics_file del issue $G_ISSUE stage 1 writer sigue siendo el de la corrida principal (no el del fix)" ;;
+esac
+
+# ============================================================================
+# [H] Escenario (f): contexto acotado del reviewer (issue #1449, CA-3) -- el
 # writer deja en el worktree un archivo de >= 3 MB dentro del scope; el prompt
 # de Stage 2 debe pesar bien por debajo de esa magnitud (no contiene el diff
 # completo) y aun asi traer los SHA y las rutas cambiadas.
 # ============================================================================
 
 echo ""
-echo "[G] Escenario (f): MEFISTO_RUNTIME=claude, diff de >= 3 MB -- el prompt de Stage 2 no crece con el (CA-3, #1449)"
+echo "[H] Escenario (f): MEFISTO_RUNTIME=claude, diff de >= 3 MB -- el prompt de Stage 2 no crece con el (CA-3, #1449)"
 
-G_ISSUE="912106"
-run_scenario claude "$G_ISSUE" big "$FIXTURES_CLAUDE_DIR/success.jsonl" 0
-G_CAP="$SCEN_CAP"
-assert_success_run G claude "$G_ISSUE" "$G_CAP"
+H_ISSUE="912106"
+run_scenario claude "$H_ISSUE" big "$FIXTURES_CLAUDE_DIR/success.jsonl" 0
+H_CAP="$SCEN_CAP"
+assert_success_run H claude "$H_ISSUE" "$H_CAP"
 
-G_PROMPT="$(_stage2_prompt_files "$G_ISSUE" | tail -n1)"
-if [ -n "$G_PROMPT" ] && [ -f "$G_PROMPT" ]; then
-    G_PROMPT_BYTES=$(wc -c < "$G_PROMPT" | tr -d ' ')
-    if [ "$G_PROMPT_BYTES" -lt 65536 ]; then
-        pass "G-6: el prompt de Stage 2 pesa $G_PROMPT_BYTES bytes (< 64 KiB) pese al diff de >= 3 MB del writer"
+H_PROMPT="$(_stage2_prompt_files "$H_ISSUE" | tail -n1)"
+if [ -n "$H_PROMPT" ] && [ -f "$H_PROMPT" ]; then
+    H_PROMPT_BYTES=$(wc -c < "$H_PROMPT" | tr -d ' ')
+    if [ "$H_PROMPT_BYTES" -lt 65536 ]; then
+        pass "H-6: el prompt de Stage 2 pesa $H_PROMPT_BYTES bytes (< 64 KiB) pese al diff de >= 3 MB del writer"
     else
-        fail "G-6: el prompt de Stage 2 pesa $G_PROMPT_BYTES bytes (>= 64 KiB) -- volvio a crecer con el tamano del diff"
+        fail "H-6: el prompt de Stage 2 pesa $H_PROMPT_BYTES bytes (>= 64 KiB) -- volvio a crecer con el tamano del diff"
     fi
 
-    if grep -qE '^diff --git' "$G_PROMPT" || grep -qE '^@@' "$G_PROMPT"; then
-        fail "G-7: el prompt de Stage 2 todavia contiene cuerpo de diff ('diff --git' o '@@')"
+    if grep -qE '^diff --git' "$H_PROMPT" || grep -qE '^@@' "$H_PROMPT"; then
+        fail "H-7: el prompt de Stage 2 todavia contiene cuerpo de diff ('diff --git' o '@@')"
     else
-        pass "G-7: el prompt de Stage 2 no contiene ninguna linea 'diff --git' ni '@@'"
+        pass "H-7: el prompt de Stage 2 no contiene ninguna linea 'diff --git' ni '@@'"
     fi
 
-    if grep -qE '^Commit base: [0-9a-f]{7,40}$' "$G_PROMPT" && grep -qE '^HEAD del writer: [0-9a-f]{7,40}$' "$G_PROMPT"; then
-        pass "G-8: el prompt de Stage 2 trae 'Commit base' y 'HEAD del writer' con SHA"
+    if grep -qE '^Commit base: [0-9a-f]{7,40}$' "$H_PROMPT" && grep -qE '^HEAD del writer: [0-9a-f]{7,40}$' "$H_PROMPT"; then
+        pass "H-8: el prompt de Stage 2 trae 'Commit base' y 'HEAD del writer' con SHA"
     else
-        fail "G-8: el prompt de Stage 2 no trae ambos SHA esperados: $(grep -E 'Commit base|HEAD del writer' "$G_PROMPT")"
+        fail "H-8: el prompt de Stage 2 no trae ambos SHA esperados: $(grep -E 'Commit base|HEAD del writer' "$H_PROMPT")"
     fi
 
-    if grep -qF "docs/1449-big-file.md" "$G_PROMPT"; then
-        pass "G-9: el prompt de Stage 2 trae la ruta cambiada (--name-status) del archivo grande"
+    if grep -qF "docs/1449-big-file.md" "$H_PROMPT"; then
+        pass "H-9: el prompt de Stage 2 trae la ruta cambiada (--name-status) del archivo grande"
     else
-        fail "G-9: el prompt de Stage 2 no menciona docs/1449-big-file.md"
+        fail "H-9: el prompt de Stage 2 no menciona docs/1449-big-file.md"
     fi
 else
-    fail "G-6..9: no se encontro el prompt de Stage 2 para el issue $G_ISSUE"
+    fail "H-6..9: no se encontro el prompt de Stage 2 para el issue $H_ISSUE"
 fi
 
 # ============================================================================
-# [H] Escenario (g): reanudacion --from-stage 2 calcula el mismo contexto que
+# [I] Escenario (g): reanudacion --from-stage 2 calcula el mismo contexto que
 # la corrida completa (issue #1449, CA-4). Primera corrida: el writer tiene
 # exito (mode "fail-stage2", N=1) y el reviewer falla siempre (N>=2) sin
 # reintentos utiles -- el pipeline aborta en Stage 2 pero el worktree, con el
@@ -794,54 +883,54 @@ fi
 # ============================================================================
 
 echo ""
-echo "[H] Escenario (g): --from-stage 2 calcula el mismo commit base/HEAD que la corrida completa (CA-4, #1449)"
+echo "[I] Escenario (g): --from-stage 2 calcula el mismo commit base/HEAD que la corrida completa (CA-4, #1449)"
 
-H_ISSUE="912107"
-run_scenario claude "$H_ISSUE" fail-stage2 "$FIXTURES_CLAUDE_DIR/api-error-404.jsonl" 1
-H_PROMPT_1="$(_stage2_prompt_files "$H_ISSUE" | tail -n1)"
+I_ISSUE="912107"
+run_scenario claude "$I_ISSUE" fail-stage2 "$FIXTURES_CLAUDE_DIR/api-error-404.jsonl" 1
+I_PROMPT_1="$(_stage2_prompt_files "$I_ISSUE" | tail -n1)"
 
 if [ "$SCEN_RC" -ne 0 ]; then
-    pass "H-1: la corrida completa aborta en Stage 2 (rc=$SCEN_RC != 0)"
+    pass "I-1: la corrida completa aborta en Stage 2 (rc=$SCEN_RC != 0)"
 else
-    fail "H-1: se esperaba que la corrida completa abortara en Stage 2 (rc=0)"
+    fail "I-1: se esperaba que la corrida completa abortara en Stage 2 (rc=0)"
 fi
 
-H_SNAP_1="$TMP/h-stage2-prompt-corrida-completa.md"
-if [ -n "$H_PROMPT_1" ] && [ -f "$H_PROMPT_1" ]; then
+I_SNAP_1="$TMP/i-stage2-prompt-corrida-completa.md"
+if [ -n "$I_PROMPT_1" ] && [ -f "$I_PROMPT_1" ]; then
     # Copia aparte antes de la segunda corrida: el nombre del prompt lleva el
     # TIMESTAMP del pipeline con resolucion de segundos, asi que una colision
-    # sobrescribiria el prompt de la corrida completa y H-4 se quedaria sin
+    # sobrescribiria el prompt de la corrida completa y I-4 se quedaria sin
     # evidencia con que comparar.
-    cp "$H_PROMPT_1" "$H_SNAP_1"
-    pass "H-2: la corrida completa dejo un prompt de Stage 2 antes de abortar"
+    cp "$I_PROMPT_1" "$I_SNAP_1"
+    pass "I-2: la corrida completa dejo un prompt de Stage 2 antes de abortar"
 else
-    fail "H-2: no se encontro el prompt de Stage 2 de la corrida completa para el issue $H_ISSUE"
+    fail "I-2: no se encontro el prompt de Stage 2 de la corrida completa para el issue $I_ISSUE"
 fi
 
 # Garantiza que la reanudacion caiga en un segundo distinto (mismo motivo: el
 # TIMESTAMP del nombre del prompt tiene resolucion de segundos).
 sleep 1
-run_scenario claude "$H_ISSUE" always-fail "" 1 "--from-stage 2"
-H_PROMPT_2="$(_stage2_prompt_files "$H_ISSUE" | tail -n1)"
+run_scenario claude "$I_ISSUE" always-fail "" 1 "--from-stage 2"
+I_PROMPT_2="$(_stage2_prompt_files "$I_ISSUE" | tail -n1)"
 
-if [ -n "$H_PROMPT_2" ] && [ "$H_PROMPT_2" != "$H_PROMPT_1" ] && [ -f "$H_PROMPT_2" ]; then
-    pass "H-3: la reanudacion con --from-stage 2 genero un prompt de Stage 2 nuevo"
+if [ -n "$I_PROMPT_2" ] && [ "$I_PROMPT_2" != "$I_PROMPT_1" ] && [ -f "$I_PROMPT_2" ]; then
+    pass "I-3: la reanudacion con --from-stage 2 genero un prompt de Stage 2 nuevo"
 else
-    fail "H-3: la reanudacion no genero un prompt de Stage 2 distinto del de la corrida completa"
+    fail "I-3: la reanudacion no genero un prompt de Stage 2 distinto del de la corrida completa"
 fi
 
-if [ -f "$H_SNAP_1" ] && [ -n "$H_PROMPT_2" ] && [ -f "$H_PROMPT_2" ]; then
-    H_BASE_1="$(grep -E '^Commit base: ' "$H_SNAP_1")"
-    H_HEAD_1="$(grep -E '^HEAD del writer: ' "$H_SNAP_1")"
-    H_BASE_2="$(grep -E '^Commit base: ' "$H_PROMPT_2")"
-    H_HEAD_2="$(grep -E '^HEAD del writer: ' "$H_PROMPT_2")"
-    if [ -n "$H_BASE_1" ] && [ "$H_BASE_1" = "$H_BASE_2" ] && [ -n "$H_HEAD_1" ] && [ "$H_HEAD_1" = "$H_HEAD_2" ]; then
-        pass "H-4: '$H_BASE_1' / '$H_HEAD_1' -- mismo commit base y HEAD del writer en la corrida completa y en la reanudacion"
+if [ -f "$I_SNAP_1" ] && [ -n "$I_PROMPT_2" ] && [ -f "$I_PROMPT_2" ]; then
+    I_BASE_1="$(grep -E '^Commit base: ' "$I_SNAP_1")"
+    I_HEAD_1="$(grep -E '^HEAD del writer: ' "$I_SNAP_1")"
+    I_BASE_2="$(grep -E '^Commit base: ' "$I_PROMPT_2")"
+    I_HEAD_2="$(grep -E '^HEAD del writer: ' "$I_PROMPT_2")"
+    if [ -n "$I_BASE_1" ] && [ "$I_BASE_1" = "$I_BASE_2" ] && [ -n "$I_HEAD_1" ] && [ "$I_HEAD_1" = "$I_HEAD_2" ]; then
+        pass "I-4: '$I_BASE_1' / '$I_HEAD_1' -- mismo commit base y HEAD del writer en la corrida completa y en la reanudacion"
     else
-        fail "H-4: SHA distintos entre corrida completa (${H_BASE_1:-?}/${H_HEAD_1:-?}) y reanudacion (${H_BASE_2:-?}/${H_HEAD_2:-?})"
+        fail "I-4: SHA distintos entre corrida completa (${I_BASE_1:-?}/${I_HEAD_1:-?}) y reanudacion (${I_BASE_2:-?}/${I_HEAD_2:-?})"
     fi
 else
-    fail "H-4: faltan uno o ambos prompts de Stage 2 para comparar SHA"
+    fail "I-4: faltan uno o ambos prompts de Stage 2 para comparar SHA"
 fi
 
 echo ""

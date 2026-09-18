@@ -1054,6 +1054,14 @@ auto_commit_if_needed() {
 # checkout principal, nunca el worktree -- MEF-ADR-0019 seccion E: el PR bajo
 # revision no puede alterar el gate que lo juzga) y escanea el arbol del
 # worktree via --root. Una corrida limpia no imprime mas que la linea de exito.
+#
+# Antes de abortar (issue #1473), el mismo rol recibe la salida cruda del gate
+# mas su remedio por regla y tiene EXACTAMENTE un intento acotado de corregir
+# la fuga (run_agent "<stage>-fix" <rol> ...) -- sin variable de entorno ni
+# flag que amplie ese numero: las fugas reales de #1416/#1439 eran una linea de
+# prosa cuyo arreglo cuesta un turno de agente, y abortar la corrida entera de
+# una perdia todo el trabajo del stage. Si el intento no la elimina, se aborta
+# exactamente como antes de este issue.
 run_neutrality_gate() {
     local stage="$1" role="$2"
     local out
@@ -1081,7 +1089,62 @@ run_neutrality_gate() {
     # coste cero en prosa.
     local remedy
     remedy="$(echo "$out" | mefisto_neutrality_remedy)"
-    abort "Stage $stage fallido: el $role dejo fuga(s) de neutralidad de runtime (MEF-ADR-0049):
+
+    local leak_count
+    leak_count=$(printf '%s\n' "$out" | awk 'NF{c++} END{print c+0}')
+    warn "$role: $leak_count violacion(es) de neutralidad -- intento de correccion"
+    echo "[$(date +%H:%M:%S)] [neutralidad][fix] $role: $leak_count violacion(es), intento de correccion" >> "$EVENTS_LOG_ABS"
+
+    local FIX_PROMPT="Estas en el worktree de un stage de tooling del repo de Mefisto (${MEFISTO_PROJECT_NAME}) ya en curso (issue #$ISSUE_NUM).
+
+El gate de neutralidad de runtime (MEF-ADR-0049) encontro la(s) siguiente(s) fuga(s) al cierre de este stage, en el trabajo que acabas de dejar:
+
+$out
+
+Remedio por regla:
+$remedy
+
+Tu tarea: corrige EXACTAMENTE esas lineas, y solo esas. No reformules nada que el gate no haya senalado, no toques src/internal/contract/neutrality-allowlist.json (registrar una excepcion ahi es un PR previo y distinto, ver MEF-ADR-0019 seccion E) y no cambies ninguna regla del propio gate. Cuando termines, deja la correccion comiteada con un mensaje descriptivo.
+
+CONTEXTO DE EJECUCION: modo no-interactivo, sin humano al otro lado. Nadie puede aprobar, confirmar ni responder preguntas. PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso sigue siendo responsabilidad exclusiva del pipeline, nunca tuya."
+
+    # CA-3: LAST_AGENT_* deben seguir reflejando la corrida PRINCIPAL de este
+    # rol -- la que el bloque de Stage 1/2 lee justo despues de este gate --,
+    # asi que se guardan antes del intento y se restauran despues: un segundo
+    # run_agent (el del intento) las pisaria si no.
+    local SAVED_LAST_AGENT_DURATION="$LAST_AGENT_DURATION"
+    local SAVED_LAST_AGENT_METRICS_JSON="$LAST_AGENT_METRICS_JSON"
+    local SAVED_LAST_AGENT_HOLD_SECONDS="$LAST_AGENT_HOLD_SECONDS"
+    local SAVED_LAST_AGENT_RESUMED="$LAST_AGENT_RESUMED"
+
+    local fix_start_ts fix_elapsed
+    fix_start_ts=$(date +%s)
+    run_agent "${stage}-fix" "$role" "$FIX_PROMPT"
+    fix_elapsed=$(( $(date +%s) - fix_start_ts ))
+    echo "[$(date +%H:%M:%S)] [neutralidad][fix] $role: ${fix_elapsed}s" >> "$EVENTS_LOG_ABS"
+
+    LAST_AGENT_DURATION="$SAVED_LAST_AGENT_DURATION"
+    LAST_AGENT_METRICS_JSON="$SAVED_LAST_AGENT_METRICS_JSON"
+    LAST_AGENT_HOLD_SECONDS="$SAVED_LAST_AGENT_HOLD_SECONDS"
+    LAST_AGENT_RESUMED="$SAVED_LAST_AGENT_RESUMED"
+
+    # CA-2: mismo orden que el cierre normal del stage -- scope primero, gate
+    # despues (con el mismo `git add -A` previo).
+    if ! validate_mefisto_scope_changes "$WORKTREE_PATH" "$SNAPSHOT_COMMIT"; then
+        abort "Stage $stage fallido: el intento de correccion de neutralidad ($role) toco archivos fuera del scope de Mefisto."
+    fi
+
+    git -C "$WORKTREE_PATH" add -A >/dev/null 2>&1 || true
+
+    if out="$("$SCRIPT_DIR/mefisto-neutrality-gate.sh" --root "$WORKTREE_PATH" 2>&1)"; then
+        success "$role: fuga de neutralidad corregida"
+        echo "[$(date +%H:%M:%S)] [neutralidad][fix] $role: corregido" >> "$EVENTS_LOG_ABS"
+        return 0
+    fi
+
+    remedy="$(echo "$out" | mefisto_neutrality_remedy)"
+    echo "[$(date +%H:%M:%S)] [neutralidad][fix] $role: persiste" >> "$EVENTS_LOG_ABS"
+    abort "El intento de correccion de neutralidad ya fallo -- la fuga persiste. Stage $stage fallido: el $role dejo fuga(s) de neutralidad de runtime (MEF-ADR-0049):
 $out
 $remedy
 Corrige las fugas en el worktree ($WORKTREE_PATH) y retoma con:
