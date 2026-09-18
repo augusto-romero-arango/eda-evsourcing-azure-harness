@@ -130,6 +130,25 @@ el nucleo no deriva rutas de estado. Sus exits son 0 (exito), 64 (uso), 65
 (protocolo invalido), 69 (runtime/dependencia), 124 (timeout), o el exit no
 cero del adaptador.
 
+`src/runtime/mefisto-run-agent.sh` crea un directorio de trabajo por corrida
+(`mktemp -d`) y lo expone en la variable global `MEFISTO_RUNTIME_WORK_DIR`
+(ruta absoluta) ANTES de invocar `build_cmd`; lo borra al terminar la
+corrida. `runtime_<id>_build_cmd` puede ademas fijar la variable global
+`MEFISTO_RUNTIME_STDIN_FILE` con la ruta absoluta de un archivo regular
+legible: `lib/mefisto-process.sh` conecta ese archivo a la entrada estandar
+del proceso invocado, en vez de `/dev/null` (comportamiento por defecto
+cuando la variable queda vacia o sin fijar -- byte a byte igual a antes de
+este canal). No esta sujeto a `ARG_MAX` (issue #1447; incidente de #1407: un
+prompt de 3.237.916 bytes en el argv supero el limite del host y el kernel
+rechazo el `exec` antes de que el runtime arrancara -- `duration_ms: 0`,
+`session_id: null`, sin tokens). Un adaptador que necesite transportar un
+prompt arbitrariamente grande lo materializa dentro de
+`MEFISTO_RUNTIME_WORK_DIR` y apunta `MEFISTO_RUNTIME_STDIN_FILE` ahi; este
+runner valida, antes de lanzar el proceso, que la ruta declarada sea un
+archivo regular legible, y aborta con exit 69 si no lo es. El aislamiento de
+#943 se conserva sin condiciones: un archivo regular nunca es TTY, asi que
+conectarlo a stdin no reintroduce SIGTTIN/SIGTTOU.
+
 Cada `lib/runtime-<id>.sh` implementa `runtime_<id>_is_available` (probe sin
 leer credenciales), `runtime_<id>_build_cmd` y `runtime_<id>_translate`; puede
 implementar `runtime_<id>_supports_resume`,
