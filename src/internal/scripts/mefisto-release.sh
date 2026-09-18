@@ -501,9 +501,15 @@ EOF
         # vienen de origin/main, asi que la rama de release tampoco era el
         # lugar para corregirlas.
         git switch "$CURRENT_BRANCH" >/dev/null 2>&1 && git branch -D "$RELEASE_BRANCH" >/dev/null 2>&1 || true
+        # Remedio por regla (issue #1469): misma funcion que consume el
+        # pipeline de tooling (mefisto-tooling-pipeline.sh), sin duplicar el
+        # texto -- solo cambia el marco alrededor (fuga en origin/main, rama
+        # de release ya deshecha, reintento del propio comando de release).
+        NEUTRALITY_REMEDY="$(echo "$NEUTRALITY_OUT" | mefisto_neutrality_remedy)"
         abort "Fuga(s) de neutralidad de runtime (MEF-ADR-0049) en origin/main:
 $NEUTRALITY_OUT
-Una release no se publica con fugas: corrigelas en main via PR de issue (el pipeline de tooling corre este mismo gate) y reintenta '/mefisto-release ${BUMP_PART}'. Registrar una excepcion nueva en la allowlist y usarla son dos PRs distintos -- el de registro va primero (MEF-ADR-0019 seccion E). La rama ${RELEASE_BRANCH} se deshizo (no tenia commits propios); estas de vuelta en ${CURRENT_BRANCH}."
+$NEUTRALITY_REMEDY
+Una release no se publica con fugas: corrigelas en main via PR de issue (el pipeline de tooling corre este mismo gate) y reintenta '/mefisto-release ${BUMP_PART}'. La rama ${RELEASE_BRANCH} se deshizo (no tenia commits propios); estas de vuelta en ${CURRENT_BRANCH}."
     fi
 
     # Consolidar fragmentos de changelog.d/ (issue #380): cada PR anoto su

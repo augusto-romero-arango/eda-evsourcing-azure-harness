@@ -1755,3 +1755,79 @@ caffeinate_prefix() {
         printf '%s' "caffeinate -i"
     fi
 }
+
+# mefisto_neutrality_remedy (issue #1469)
+#
+# Lee por stdin la salida cruda de mefisto-neutrality-gate.sh (una linea por
+# violacion, "<ruta>:<linea>: <regla>" para las reglas de texto o
+# "<ruta>: <estado>: adapters-check" / la generica de exit para la
+# verificacion estructural). Por cada linea, la regla es su ultimo campo tras
+# ": " (`${line##*: }`, Bash puro). Deduplica por regla y emite en stdout UNA
+# linea de remedio por regla presente, en orden fijo R1, R2, R3, R4,
+# adapters-check; una regla no reconocida (typo, version futura del gate)
+# produce su propia linea generica, deduplicada por su propio texto, que
+# remite a la cabecera del gate. Entrada vacia no emite nada. Retorna siempre
+# 0 -- esto es composicion de texto para abort(), nunca una segunda pasada de
+# validacion.
+#
+# Bash 3.2 (CA-1): sin `declare -A` ni `mapfile`, solo variables planas y un
+# array indexado para las reglas desconocidas.
+#
+# Este archivo vive bajo src/internal/scripts/lib/, sujeto a las mismas
+# reglas R1-R3 que describe: por eso el texto de cada remedio nombra la regla
+# solo por su codigo (R1/R2/.../adapters-check) y describe la categoria en
+# prosa neutral -- nunca un alias/id de modelo, una invocacion de CLI o una
+# ruta/variable de entorno de un runtime concreto (MEF-ADR-0050). El remedio
+# de R1/R2/R3 es siempre "reformula la mencion" primero -- registrar una
+# excepcion en la allowlist es el ultimo recurso, solo para contenido correcto
+# y permanente (MEF-ADR-0019 seccion E); el de R4 y de adapters-check es
+# estructural y no pasa por la allowlist.
+mefisto_neutrality_remedy() {
+    local raw
+    raw="$(cat)"
+    [ -z "$raw" ] && return 0
+
+    local have_r1=false have_r2=false have_r3=false have_r4=false have_adapters=false
+    local unknown_rules=()
+    local line rule known found
+
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        rule="${line##*: }"
+        case "$rule" in
+            R1) have_r1=true ;;
+            R2) have_r2=true ;;
+            R3) have_r3=true ;;
+            R4) have_r4=true ;;
+            adapters-check) have_adapters=true ;;
+            *)
+                found=false
+                for known in ${unknown_rules[@]+"${unknown_rules[@]}"}; do
+                    [ "$known" = "$rule" ] && { found=true; break; }
+                done
+                [ "$found" = false ] && unknown_rules+=("$rule")
+                ;;
+        esac
+    done <<< "$raw"
+
+    if [ "$have_r1" = true ]; then
+        echo "R1: reformula la mencion (alias/id de modelo o clave de tool/permiso citada como texto crudo) en prosa neutral; solo como ultimo recurso, y solo si el contenido es correcto y permanente, registra una excepcion en la allowlist en un PR previo (MEF-ADR-0019 seccion E)."
+    fi
+    if [ "$have_r2" = true ]; then
+        echo "R2: reformula la mencion (invocacion directa de CLI citada como texto) en prosa neutral; solo como ultimo recurso, y solo si el contenido es correcto y permanente, registra una excepcion en la allowlist en un PR previo (MEF-ADR-0019 seccion E)."
+    fi
+    if [ "$have_r3" = true ]; then
+        echo "R3: reformula la mencion citando MEF-ADR-0050 en vez de nombrar la ruta o la variable de entorno de un runtime concreto; solo como ultimo recurso, y solo si el contenido es correcto y permanente, registra una excepcion en la allowlist en un PR previo (MEF-ADR-0019 seccion E)."
+    fi
+    if [ "$have_r4" = true ]; then
+        echo "R4: restaura el shim byte a byte desde la plantilla documentada en src/internal/scripts/README.md; si el archivo de verdad no es un shim, registralo en 'not_migrated' de la allowlist en vez de reformularlo."
+    fi
+    if [ "$have_adapters" = true ]; then
+        echo "adapters-check: regenera los adaptadores con src/internal/scripts/generate-internal-adapters.sh (sin --check); nunca edites a mano la salida generada."
+    fi
+    for rule in ${unknown_rules[@]+"${unknown_rules[@]}"}; do
+        echo "$rule: regla no reconocida por este remedio -- revisa la cabecera de src/internal/scripts/mefisto-neutrality-gate.sh."
+    done
+
+    return 0
+}
