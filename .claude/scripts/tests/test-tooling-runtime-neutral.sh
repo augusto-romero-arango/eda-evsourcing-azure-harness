@@ -728,12 +728,21 @@ else
     fail "H-1: se esperaba que la corrida completa abortara en Stage 2 (rc=0)"
 fi
 
+H_SNAP_1="$TMP/h-stage2-prompt-corrida-completa.md"
 if [ -n "$H_PROMPT_1" ] && [ -f "$H_PROMPT_1" ]; then
+    # Copia aparte antes de la segunda corrida: el nombre del prompt lleva el
+    # TIMESTAMP del pipeline con resolucion de segundos, asi que una colision
+    # sobrescribiria el prompt de la corrida completa y H-4 se quedaria sin
+    # evidencia con que comparar.
+    cp "$H_PROMPT_1" "$H_SNAP_1"
     pass "H-2: la corrida completa dejo un prompt de Stage 2 antes de abortar"
 else
     fail "H-2: no se encontro el prompt de Stage 2 de la corrida completa para el issue $H_ISSUE"
 fi
 
+# Garantiza que la reanudacion caiga en un segundo distinto (mismo motivo: el
+# TIMESTAMP del nombre del prompt tiene resolucion de segundos).
+sleep 1
 run_scenario claude "$H_ISSUE" always-fail "" 1 "--from-stage 2"
 H_PROMPT_2="$(_stage2_prompt_files "$H_ISSUE" | tail -n1)"
 
@@ -743,9 +752,9 @@ else
     fail "H-3: la reanudacion no genero un prompt de Stage 2 distinto del de la corrida completa"
 fi
 
-if [ -n "$H_PROMPT_1" ] && [ -n "$H_PROMPT_2" ] && [ -f "$H_PROMPT_1" ] && [ -f "$H_PROMPT_2" ]; then
-    H_BASE_1="$(grep -E '^Commit base: ' "$H_PROMPT_1")"
-    H_HEAD_1="$(grep -E '^HEAD del writer: ' "$H_PROMPT_1")"
+if [ -f "$H_SNAP_1" ] && [ -n "$H_PROMPT_2" ] && [ -f "$H_PROMPT_2" ]; then
+    H_BASE_1="$(grep -E '^Commit base: ' "$H_SNAP_1")"
+    H_HEAD_1="$(grep -E '^HEAD del writer: ' "$H_SNAP_1")"
     H_BASE_2="$(grep -E '^Commit base: ' "$H_PROMPT_2")"
     H_HEAD_2="$(grep -E '^HEAD del writer: ' "$H_PROMPT_2")"
     if [ -n "$H_BASE_1" ] && [ "$H_BASE_1" = "$H_BASE_2" ] && [ -n "$H_HEAD_1" ] && [ "$H_HEAD_1" = "$H_HEAD_2" ]; then

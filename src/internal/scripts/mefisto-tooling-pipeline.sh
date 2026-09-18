@@ -1201,7 +1201,11 @@ Cambios del writer:
 Commit base: ${SNAPSHOT_COMMIT}
 HEAD del writer: ${WRITER_HEAD_SHA}
 
+Resumen (git diff --stat=120 ${SNAPSHOT_COMMIT}..HEAD):
+
 \$DIFF_STAT
+
+Rutas cambiadas (git diff --name-status ${SNAPSHOT_COMMIT}..HEAD):
 
 \$DIFF_NAME_STATUS
 
