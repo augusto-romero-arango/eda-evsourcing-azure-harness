@@ -55,6 +55,58 @@ cargandose desde el checkout principal. `mefisto-batch-pipeline.sh` (issue
 #870), `mefisto-tmux-pipeline.sh` (issue #871) y `mefisto-herdr-pipeline.sh`
 (issue #872) siguieron a `mefisto-tooling-pipeline.sh` a este mismo layout.
 
+## Runner de la suite completa: mefisto-test-suite.sh (issue #1439)
+
+`.claude/scripts/mefisto-test-suite.sh` es la superficie estable (shim, ver la
+plantilla arriba) sobre `src/internal/scripts/mefisto-test-suite.sh`, el runner
+repo-only de la suite COMPLETA de Mefisto (issue #1416): compone el inventario
+autoritativo (`src/internal/scripts/lib/mefisto-test-inventory.sh`, issue
+#1438) con el ejecutor concurrente (issue #1440) sin reimplementar ninguno de
+los dos contratos. La cabecera del script tiene el detalle completo; aqui solo
+el contrato de uso.
+
+Invocacion:
+
+```bash
+MEFISTO_RUNTIME=opencode ./.claude/scripts/mefisto-test-suite.sh [--log-dir <dir>]
+MEFISTO_RUNTIME=opencode ./.claude/scripts/mefisto-test-suite.sh --help
+```
+
+`MEFISTO_RUNTIME=opencode` es la convencion `{{mefisto:run}}` del lado interno
+para invocar un script neutral desde texto de doctrina (MEF-ADR-0049); no es
+una dependencia del runner con ese runtime en particular (MEF-ADR-0050) -- el
+runner solo usa bash, coreutils y git.
+
+Tres carriles, tal como los define el inventario (descubrimiento dinamico, sin
+conteos fijos que mantener al dia aqui):
+
+- `publicado`: `test-*.sh` bajo `scripts/tests/`.
+- `interno`: `test-*.sh` bajo `.claude/scripts/tests/`.
+- `canonico-adicional`: fuentes canonicas sin shim homonimo en `scripts/tests/`
+  (registro explicito en `mefisto-test-inventory.sh`).
+
+Exit codes: `0` toda la suite termino PASS; `1` inventario invalido, cobertura
+canonica incompleta, argumentos invalidos, o al menos una entrada termino
+FAIL; `130` la corrida se interrumpio con INT; `143` con TERM. En los cuatro
+casos se conservan los logs ya escritos.
+
+Logs y resultados: cada corrida crea (o reutiliza, con `--log-dir`) un
+directorio unico bajo `.mefisto/pipeline/test-suite/<run>/` (ignorado por
+Git), con el `results.tsv` de cada carril y el log de cada entrada.
+
+Costo esperado: minutos, no segundos -- nunca dentro de un stage con
+presupuesto de agente acotado. Ninguna cifra de este README es una promesa:
+la carga de la maquina, el cache y el crecimiento del inventario la mueven de
+una corrida a otra (evidencia informativa fechada en el PR de la issue #1439).
+
+Casos de uso explicitos: una persona antes de mergear un cambio transversal a
+los tres carriles; un agente fuera de stage al que se le pida deliberadamente
+la regresion completa; una CI futura, si se adopta, de forma opt-in. No es una
+operacion publicada al proyecto consumidor (MEF-ADR-0019): vive solo del lado
+interno de Mefisto. Tampoco es gate de ningun stage interno -- los prompts de
+`mefisto-tooling-pipeline.sh` siguen cerrando con `scripts/tests/test-guards.sh`
+mas los tests del diff, nunca con esta suite completa.
+
 ## Deuda conocida: `python3` en el resumen del CHANGELOG
 
 `mefisto-release.sh` usa `python3` en 6 puntos (extraccion y reescritura de
