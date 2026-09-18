@@ -90,9 +90,13 @@
 #                   detuvieron un writer real en STAT=T. Ignora los fallos de
 #                   las tres (este archivo no usa `set -e`): con terminal de
 #                   control, cualquiera de ellas detiene al grupo; sin ella
-#                   (sesion nueva + stdin en /dev/null), fallan rapido y sin
-#                   senal (ENXIO / "not a terminal" / EOF). Termina con
-#                   terminal status=success. Exit 0.
+#                   (sesion nueva + stdin en un archivo regular o /dev/null --
+#                   desde #1447 build_cmd declara el canal de stdin, asi que
+#                   el `read` de stdin lee una linea del prompt materializado
+#                   en vez de ver EOF), fallan rapido y sin senal (ENXIO /
+#                   "not a terminal" / EOF o linea leida): ninguna de las dos
+#                   variantes es una tty, que es lo unico que #943 necesita.
+#                   Termina con terminal status=success. Exit 0.
 #   self-stop       Repro determinista del detector STOPPED (issue #945):
 #                   emite un message y se auto-detiene con `kill -STOP $$`
 #                   (SIGSTOP directo, sin depender de ninguna tty) -- solo un

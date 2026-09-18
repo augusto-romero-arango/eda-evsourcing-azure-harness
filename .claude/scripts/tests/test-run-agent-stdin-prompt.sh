@@ -45,6 +45,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 RUNNER="$REPO_ROOT/src/runtime/mefisto-run-agent.sh"
 
+# El runner resuelve su adaptador via MEFISTO_RUNTIME_LIB_DIR y la EXPORTA
+# (mefisto-runtime.sh la fija con `:=` solo si viene vacia). Un stage de
+# pipeline de Mefisto ya la trae apuntando al repo de LANZAMIENTO, no al
+# worktree en curso: sin fijarla, este test cargaria el runtime-fake.sh de
+# ese otro arbol -- uno sin el guion `dump-stdin` -- y reprobaria un canal de
+# stdin que en realidad esta bien (o peor: aprobaria el ajeno). Se pincha al
+# lib/ de ESTE repo, mismo criterio que los bloques de PATH/LIB_DIR
+# controlados de test-mefisto-run-agent.sh.
+export MEFISTO_RUNTIME_LIB_DIR="$REPO_ROOT/src/runtime/lib"
+
 PASS=0
 FAIL=0
 pass() { echo "  PASS: $1"; PASS=$((PASS+1)); }

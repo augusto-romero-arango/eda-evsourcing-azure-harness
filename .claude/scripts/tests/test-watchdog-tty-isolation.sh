@@ -10,8 +10,9 @@
 # pty del pane -- el kernel detiene al grupo ENTERO con SIGTTIN/SIGTTOU en
 # ese caso. El arreglo (_mefisto-common.sh, run_agent_with_watchdog) lanza el
 # comando en una sesion nueva (setsid o su fallback Perl) sin terminal de
-# control y con stdin desde /dev/null: sin terminal de control,
-# SIGTTIN/SIGTTOU son imposibles.
+# control y con stdin desde /dev/null -- o desde el archivo regular que un
+# adaptador declare en MEFISTO_RUNTIME_STDIN_FILE (issue #1447), que tampoco
+# es una tty: sin terminal de control, SIGTTIN/SIGTTOU son imposibles.
 #
 # Casos cubiertos:
 #   [CA-3] Repro determinista dentro de una pty real (tmux): el guion
