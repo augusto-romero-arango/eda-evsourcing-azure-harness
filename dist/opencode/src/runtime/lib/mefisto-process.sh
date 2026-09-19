@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 # Ejecucion vigilada neutral. Fuente unica del watchdog headless (issue #1045).
 # Preserva argv sin eval, separa stdout/stderr y aisla la terminal de control.
+#
+# MEFISTO_RUNTIME_STDIN_FILE (issue #1447): variable global opcional, con
+# default "" == /dev/null (comportamiento de siempre). Si un adaptador la fija
+# a la ruta de un archivo regular legible (ver mefisto-run-agent.sh, que la
+# valida ANTES de invocar esta funcion), las tres ramas de abajo conectan ESE
+# archivo a la entrada estandar del proceso en vez de /dev/null -- el canal de
+# stdin que #1447 abre para transportar un prompt sin pasar por el argv
+# (sujeto a ARG_MAX). Se prefirio una variable global sobre un octavo
+# posicional: la firma de 7 posicionales + argv ya la consumen
+# test-watchdog-tty-isolation.sh, test-watchdog-trabajo-util.sh,
+# test-stream-json-trace.sh y test-agent-retry.sh. Un archivo regular nunca es
+# TTY, asi que el aislamiento de #943 (SIGTTIN/SIGTTOU imposibles) se
+# conserva sin condiciones.
 
 run_agent_with_watchdog() {
     local workdir="$1" timeout_s="$2" stdout_file="$3" stderr_file="$4" events_log="$5" label="$6" signal_file="$7"
@@ -10,15 +23,15 @@ run_agent_with_watchdog() {
 
     local pid
     if command -v setsid >/dev/null 2>&1; then
-        ( cd "$workdir" && exec setsid "$@" ) </dev/null >"$stdout_file" 2>"$stderr_file" &
+        ( cd "$workdir" && exec setsid "$@" ) <"${MEFISTO_RUNTIME_STDIN_FILE:-/dev/null}" >"$stdout_file" 2>"$stderr_file" &
         pid=$!
     elif command -v perl >/dev/null 2>&1; then
-        ( cd "$workdir" && exec perl -e 'use POSIX; POSIX::setsid() or die; exec @ARGV' -- "$@" ) </dev/null >"$stdout_file" 2>"$stderr_file" &
+        ( cd "$workdir" && exec perl -e 'use POSIX; POSIX::setsid() or die; exec @ARGV' -- "$@" ) <"${MEFISTO_RUNTIME_STDIN_FILE:-/dev/null}" >"$stdout_file" 2>"$stderr_file" &
         pid=$!
     else
         echo "[$(date +%H:%M:%S)] WARN: $label corre con terminal de control (sin setsid ni perl): riesgo de SIGTTIN" >> "$events_log"
         set -m
-        ( cd "$workdir" && "$@" ) </dev/null >"$stdout_file" 2>"$stderr_file" &
+        ( cd "$workdir" && "$@" ) <"${MEFISTO_RUNTIME_STDIN_FILE:-/dev/null}" >"$stdout_file" 2>"$stderr_file" &
         pid=$!
         set +m
     fi
