@@ -266,5 +266,25 @@ assert_rc "$rc" 0 'modo default valida y genera todas las fuentes'
 [ "$(wc -l < "$WORK/validator.log" | tr -d ' ')" -eq 1 ] && pass 'el validador se invoca una vez antes de generar' || fail 'invocacion inesperada del validador'
 [ -f "$OUT/dist/alpha/artefactos/alfa.md" ] && [ -f "$OUT/dist/alpha/artefactos/zeta.md" ] && pass 'scan default cubre agents y commands' || fail 'scan default incompleto'
 
+echo '[perf] adaptador con >= 150 assets no reintroduce la cuadratica con jq'
+setup_repo muchos-assets
+GEN="$TEST_REPO/src/published/scripts/generate-published-adapters.sh"; OUT="$WORK/muchos-assets-out"
+cp "$FIXTURES/adapter-many-assets.sh" "$TEST_REPO/src/published/scripts/adapters/"
+chmod +x "$TEST_REPO/src/published/scripts/adapters/adapter-many-assets.sh"
+export MANY_ASSETS_COUNT=160
+mkdir -p "$TEST_REPO/src/published/assets"
+printf 'configuracion fuente\n' > "$TEST_REPO/src/published/assets/config.txt"
+"$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null; rc=$?
+assert_rc "$rc" 0 'fixture de 160 assets genera la salida inicial'
+jq -e '(.assets | length) >= 160' "$OUT/dist/many/.mefisto-generated-assets.json" >/dev/null && pass 'inventario del fixture registra los 160 assets' || fail 'inventario del fixture no registra los 160 assets'
+start="$(date +%s)"
+check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
+elapsed=$(( $(date +%s) - start ))
+[ "$rc" -eq 0 ] && [ -z "$check_out" ] && pass 'fixture de 160 assets: --check al dia' || fail "fixture de 160 assets: --check al dia (exit $rc: $check_out)"
+# Umbral generoso a proposito (issue #1499, CA-4): con la cuadratica previa esto
+# tardaba minutos; con la deteccion de colisiones en arrays bash basta con
+# quedar comodamente por debajo.
+[ "$elapsed" -lt 20 ] && pass "fixture de 160 assets: --check completo en ${elapsed}s (< 20s)" || fail "fixture de 160 assets: --check tardo ${elapsed}s (>= 20s)"
+
 printf '\nResultado: %s PASS, %s FAIL\n' "$PASS" "$FAIL"
 exit "$FAIL"
