@@ -741,7 +741,9 @@ fi
 if [ "$FROM_STAGE" -le 2 ]; then
     header "Stage 2: Reviewer (revision)"
 
-    FULL_DIFF=$(git -C "$WORKTREE_PATH" diff "$SNAPSHOT_COMMIT"..HEAD)
+    WRITER_HEAD_SHA=$(git -C "$WORKTREE_PATH" rev-parse HEAD)
+    DIFF_STAT=$(git -C "$WORKTREE_PATH" diff --stat=120 "$SNAPSHOT_COMMIT"..HEAD)
+    DIFF_NAME_STATUS=$(git -C "$WORKTREE_PATH" diff --name-status "$SNAPSHOT_COMMIT"..HEAD)
 
     STAGE2_PROMPT="Estas en el directorio raiz del proyecto consumidor ${HARNESS_PROJECT_NAME}.
 
@@ -749,9 +751,18 @@ Contexto de la tarea:
 
 $ISSUE_CONTEXT
 
-Diff completo de los cambios del writer:
+Cambios del writer:
 
-$FULL_DIFF
+Commit base: ${SNAPSHOT_COMMIT}
+HEAD del writer: ${WRITER_HEAD_SHA}
+
+Resumen (git diff --stat=120 ${SNAPSHOT_COMMIT}..HEAD):
+
+$DIFF_STAT
+
+Rutas cambiadas (git diff --name-status ${SNAPSHOT_COMMIT}..HEAD):
+
+$DIFF_NAME_STATUS
 
 Tu tarea: revisa la calidad del codigo producido por el writer.
 
@@ -772,6 +783,9 @@ CONTEXTO DE EJECUCION:
 - Responder con texto pidiendo aprobacion causa un fallo del pipeline.
 - Las capacidades de edicion requeridas por el agente ya estan habilitadas.
 - PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya.
+
+ECONOMIA DE TURNOS:
+- Ya tienes el commit base, el HEAD del writer, el --stat y las rutas cambiadas aqui arriba: para ver el diff de una ruta puntual pidelo bajo demanda con 'git diff ${SNAPSHOT_COMMIT}..HEAD -- <ruta>' (o 'git show <sha>' para inspeccionar un commit), agrupando varias rutas en el mismo turno si necesitas mas de una. No re-inspecciones el arbol con 'git status' para confirmar algo que acabas de escribir: Write y Edit fallan con error si no aplican, asi que el exito de la herramienta ya es la confirmacion.
 
 Instrucciones:
 1. Verifica que los cambios cumplen con lo pedido en el issue.
