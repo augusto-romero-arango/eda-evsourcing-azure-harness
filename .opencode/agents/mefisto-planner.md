@@ -262,6 +262,18 @@ Si el issue depende de otro no cerrado, agrega `--label "bloqueado"`.
 
 Si el issue corrige un defecto, agrega `--label "bug"` ademas de `tipo:tooling`.
 
+### Labels de cierre
+
+| Label | Cuando aplicarlo |
+|---|---|
+| `cierre:manual` | Cuando el PR del pipeline no resuelve por si mismo el issue y su cierre valido depende de evidencia o de otro issue; el pipeline usa `Refs` en vez de `Closes`. |
+
+Crear el label si aun no existe:
+
+```bash
+gh label create cierre:manual --description "El PR del pipeline no cierra este issue; usa Refs en vez de Closes"
+```
+
 ### Drafts (creados desde el consumidor)
 
 Cuando refines un draft que fue creado desde un consumidor (con label `estado:borrador`), revisa:
