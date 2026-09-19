@@ -221,6 +221,13 @@ cleanup() {
 trap cleanup EXIT
 GENERATED=()
 ASSET_PLANS=()
+# Arrays paralelos a ASSET_PLANS (mismo indice) con los campos que los tres
+# bucles de deteccion de colisiones consultaban antes con un `jq -r` por plan
+# acumulado; evitan la cuadratica de lanzar un proceso jq por cada asset ya
+# procesado, por cada asset o archivo nuevo.
+ASSET_PLAN_ADAPTERS=()
+ASSET_PLAN_IDS=()
+ASSET_PLAN_DESTINATIONS=()
 RENDERED_PLANS=()
 ASSET_COUNT=0
 ASSET_ROOTS=()
@@ -271,7 +278,7 @@ generated_contains() {
 }
 
 project_static_assets() {
-    local collection_name="$1" declared_asset root asset_source asset_mode asset_id asset_destination asset_source_dir absolute_asset_source full_rel plan plan_destination
+    local collection_name="$1" declared_asset root asset_source asset_mode asset_id asset_destination asset_source_dir absolute_asset_source full_rel plan_destination
     shift
     for root in "${ROOTS[@]}"; do
         for declared_asset in "$@"; do
@@ -288,8 +295,7 @@ project_static_assets() {
             [ ! -L "$absolute_asset_source" ] || usage_error "$collection_name declaro una fuente mediante symlink: $asset_source"
             full_rel="$root/$asset_destination"
             paths_overlap "$full_rel" "$root/.mefisto-generated-assets.json" && usage_error "$collection_name colisiona con el inventario del motor: $full_rel"
-            for plan in ${ASSET_PLANS[@]+"${ASSET_PLANS[@]}"}; do
-                plan_destination="$(printf '%s' "$plan" | jq -r '.destination')"
+            for plan_destination in ${ASSET_PLAN_DESTINATIONS[@]+"${ASSET_PLAN_DESTINATIONS[@]}"}; do
                 ! paths_overlap "$plan_destination" "$full_rel" || usage_error "$collection_name colisiona en destino: $full_rel"
             done
             for generated_path in ${GENERATED[@]+"${GENERATED[@]}"}; do
@@ -299,6 +305,9 @@ project_static_assets() {
             cp "$absolute_asset_source" "$STAGE_DIR/$full_rel" || usage_error "no se pudo copiar $collection_name: $asset_source"
             chmod "$asset_mode" "$STAGE_DIR/$full_rel" || usage_error "no se pudo fijar el modo de $full_rel"
             ASSET_PLANS+=("$(jq -cn --arg adapter "$collection_name" --arg id "$asset_id" --arg source "$asset_source" --arg destination "$full_rel" --arg mode "$asset_mode" --arg sha256 "$(sha256 "$STAGE_DIR/$full_rel")" '{adapter: $adapter, id: $id, source: $source, destination: $destination, mode: $mode, sha256: $sha256}')")
+            ASSET_PLAN_ADAPTERS+=("$collection_name")
+            ASSET_PLAN_IDS+=("$asset_id")
+            ASSET_PLAN_DESTINATIONS+=("$full_rel")
             ASSET_COUNT=$((ASSET_COUNT + 1))
             GENERATED+=("$full_rel")
         done
@@ -341,10 +350,8 @@ for adapter_index in "${!ADAPTERS[@]}"; do
     ASSET_ROOTS+=("$root")
     jq -e 'type == "array" and all(.[]; type == "object" and (keys | sort) == ["destination", "id", "mode", "source"] and (.id | type == "string") and (.source | type == "string") and (.destination | type == "string") and (.mode | type == "string"))' "$assets_stdout" >/dev/null 2>&1 || usage_error "$adapter_name declaro assets suplementarios invalidos"
     while IFS= read -r asset; do
-        asset_id="$(printf '%s' "$asset" | jq -r '.id')"
-        asset_source="$(printf '%s' "$asset" | jq -r '.source')"
-        asset_destination="$(printf '%s' "$asset" | jq -r '.destination')"
-        asset_mode="$(printf '%s' "$asset" | jq -r '.mode')"
+        asset_fields="$(printf '%s' "$asset" | jq -r '[.id, .source, .destination, .mode] | @tsv')"
+        IFS=$'\t' read -r asset_id asset_source asset_destination asset_mode <<< "$asset_fields"
         safe_relative_path "$asset_id" || usage_error "$adapter_name asset '$asset_id' declaro un id inseguro"
         safe_relative_path "$asset_source" || usage_error "$adapter_name asset '$asset_id' declaro una fuente insegura"
         safe_relative_path "$asset_destination" || usage_error "$adapter_name asset '$asset_id' declaro un destino inseguro"
@@ -356,10 +363,10 @@ for adapter_index in "${!ADAPTERS[@]}"; do
         [ ! -L "$absolute_asset_source" ] || usage_error "$adapter_name asset '$asset_id' declaro una fuente fuera del repositorio mediante symlink: $asset_source"
         full_rel="$root/$asset_destination"
         paths_overlap "$full_rel" "$root/.mefisto-generated-assets.json" && usage_error "$adapter_name asset '$asset_id' colisiona con el inventario del motor: $full_rel"
-        for plan in ${ASSET_PLANS[@]+"${ASSET_PLANS[@]}"}; do
-            plan_adapter="$(printf '%s' "$plan" | jq -r '.adapter')"
-            plan_id="$(printf '%s' "$plan" | jq -r '.id')"
-            plan_destination="$(printf '%s' "$plan" | jq -r '.destination')"
+        for plan_index in "${!ASSET_PLAN_DESTINATIONS[@]}"; do
+            plan_adapter="${ASSET_PLAN_ADAPTERS[$plan_index]}"
+            plan_id="${ASSET_PLAN_IDS[$plan_index]}"
+            plan_destination="${ASSET_PLAN_DESTINATIONS[$plan_index]}"
             [ "$plan_adapter:$plan_id" != "$adapter_name:$asset_id" ] || usage_error "$adapter_name asset '$asset_id' repite un id"
             ! paths_overlap "$plan_destination" "$full_rel" || usage_error "$adapter_name asset '$asset_id' colisiona en destino con otro asset: $full_rel"
         done
@@ -373,6 +380,9 @@ for adapter_index in "${!ADAPTERS[@]}"; do
         fi
         chmod "$asset_mode" "$STAGE_DIR/$full_rel" || usage_error "no se pudo fijar el modo de $full_rel"
         ASSET_PLANS+=("$(jq -cn --arg adapter "$adapter_name" --arg id "$asset_id" --arg source "$asset_source" --arg destination "$full_rel" --arg mode "$asset_mode" --arg sha256 "$(sha256 "$STAGE_DIR/$full_rel")" '{adapter: $adapter, id: $id, source: $source, destination: $destination, mode: $mode, sha256: $sha256}')")
+        ASSET_PLAN_ADAPTERS+=("$adapter_name")
+        ASSET_PLAN_IDS+=("$asset_id")
+        ASSET_PLAN_DESTINATIONS+=("$full_rel")
         ASSET_COUNT=$((ASSET_COUNT + 1))
         GENERATED+=("$full_rel")
     done < <(jq -c '.[]' "$assets_stdout")
@@ -407,10 +417,10 @@ for root in ${ASSET_ROOTS[@]+"${ASSET_ROOTS[@]}"}; do
 done
 
 is_supplemental_asset() {
-    local needle="$1" plan
+    local needle="$1" plan_destination
     [ "$ASSET_COUNT" -gt 0 ] || return 1
-    for plan in "${ASSET_PLANS[@]}"; do
-        [ "$(printf '%s' "$plan" | jq -r '.destination')" = "$needle" ] && return 0
+    for plan_destination in "${ASSET_PLAN_DESTINATIONS[@]}"; do
+        [ "$plan_destination" = "$needle" ] && return 0
     done
     return 1
 }
