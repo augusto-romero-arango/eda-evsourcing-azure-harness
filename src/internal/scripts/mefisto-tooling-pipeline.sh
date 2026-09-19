@@ -423,7 +423,7 @@ fi
 header "Preparando contexto"
 
 log "Descargando issue #$ISSUE_NUM del repo de Mefisto..."
-ISSUE_JSON=$(gh issue view "$ISSUE_NUM" --json number,title,body,state 2>>"${LOG_FILE_ABS:-$LOG_FILE}") \
+ISSUE_JSON=$(gh issue view "$ISSUE_NUM" --json number,title,body,state,labels 2>>"${LOG_FILE_ABS:-$LOG_FILE}") \
     || abort "No se pudo obtener el issue #$ISSUE_NUM (debe existir en este repo)"
 ISSUE_STATE=$(echo "$ISSUE_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['state'])" 2>/dev/null || echo "UNKNOWN")
 if [ "$ISSUE_STATE" != "OPEN" ]; then
@@ -433,6 +433,13 @@ ISSUE_TITLE=$(echo "$ISSUE_JSON" | python3 -c "import sys,json; print(json.load(
     || echo "$ISSUE_JSON" | grep -o '"title":"[^"]*"' | sed 's/"title":"//;s/"//')
 ISSUE_BODY=$(echo "$ISSUE_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['body'])" 2>/dev/null \
     || echo "$ISSUE_JSON" | sed 's/.*"body":"//;s/","[^"]*":".*//;s/\\n/\n/g;s/\\r//g')
+ISSUE_PR_REFERENCE="Closes"
+ISSUE_COMPLETION_NOTE=""
+if echo "$ISSUE_JSON" | python3 -c "import sys,json; print(any(label['name'] == 'cierre:manual' for label in json.load(sys.stdin).get('labels', [])))" 2>/dev/null | grep -qx "True"; then
+    ISSUE_PR_REFERENCE="Refs"
+    ISSUE_COMPLETION_NOTE=" Este PR no cierra el issue (label cierre:manual)."
+    warn "El issue #$ISSUE_NUM tiene el label cierre:manual: el PR usara Refs y no cerrara el issue."
+fi
 ISSUE_CONTEXT="# Issue #$ISSUE_NUM: $ISSUE_TITLE
 
 $ISSUE_BODY"
@@ -1519,7 +1526,7 @@ $COMMITS_LIST
 
 $RUN_METRICS_TABLE
 
-Closes #$ISSUE_NUM
+$ISSUE_PR_REFERENCE #$ISSUE_NUM
 EOF
 )" \
             --base main \
@@ -1531,7 +1538,7 @@ EOF
     fi
 
     gh issue comment "$ISSUE_NUM" \
-        --body "Pipeline mefisto-tooling completado. PR: $PR_URL" \
+        --body "Pipeline mefisto-tooling completado. PR: $PR_URL$ISSUE_COMPLETION_NOTE" \
         >>"$LOG_FILE" 2>&1 || warn "No se pudo comentar en el issue #$ISSUE_NUM"
 fi
 
@@ -1576,7 +1583,7 @@ if [ -n "$VARIANT_LABEL" ]; then
     echo ""
     echo -e "${YELLOW}Si esta variante gana la comparacion, promuevela a mano:${NC}"
     echo -e "${YELLOW}  git -C $REPO_ROOT push -u origin $BRANCH_NAME${NC}"
-    echo -e "${YELLOW}  gh pr create --base main --head $BRANCH_NAME --title \"$ISSUE_TITLE\" --body \"Closes #$ISSUE_NUM\"${NC}"
+    echo -e "${YELLOW}  gh pr create --base main --head $BRANCH_NAME --title \"$ISSUE_TITLE\" --body \"$ISSUE_PR_REFERENCE #$ISSUE_NUM\"${NC}"
     echo -e "${YELLOW}O relanza el pipeline sin --variant para que una corrida normal abra el PR.${NC}"
 else
     echo -e "${CYAN}${BOLD}=== Pipeline mefisto-tooling completado ===${NC}"
