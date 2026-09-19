@@ -93,6 +93,7 @@ case "$1 ${2:-}" in
   'status --porcelain') ;;
   'tag -l') printf 'v1.2.2\n' ;;
   'ls-remote --tags') exit 1 ;;
+  'rev-parse -q') exit 1 ;;
   'show-ref --verify') exit 1 ;;
   'fetch origin'|'switch -c'|'add CHANGELOG.md'|'add -A'|'commit -m'|'push -u') ;;
   'diff --cached') exit 1 ;;
@@ -157,7 +158,11 @@ cmp -s "$TEST_REPO/identity.before" "$TEST_REPO/src/published/release-identity.j
 printf '[A3] El mensaje de aborto compone la salida del gate con el remedio real (CA-3)\n'
 grep -qF "$GATE_LINE" "$TEST_REPO/out" \
     && pass 'CA-3: incluye la linea cruda del gate' || fail 'CA-3: falta la linea del gate'
-grep -qF 'adapters-check: regenera los adaptadores con' "$TEST_REPO/out" \
+# La linea de remedio se afirma por su encabezado de regla, no por su prosa
+# (de eso se ocupa test-neutrality-remedy.sh): basta con que sea la de
+# adapters-check y no la generica de regla no reconocida.
+grep -qE '^adapters-check: ' "$TEST_REPO/out" \
+    && ! grep -qF 'adapters-check: regla no reconocida' "$TEST_REPO/out" \
     && pass 'CA-3: incluye el remedio real de adapters-check' || fail 'CA-3: falta el remedio de adapters-check'
 grep -qF '/mefisto-release patch' "$TEST_REPO/out" \
     && pass 'CA-3: incluye el comando de reintento' || fail 'CA-3: falta el comando de reintento'
