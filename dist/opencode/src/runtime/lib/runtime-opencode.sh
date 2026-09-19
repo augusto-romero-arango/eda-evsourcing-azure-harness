@@ -22,11 +22,22 @@
 #   runtime_opencode_build_cmd <agent> <cwd> <prompt_file> <model> <system_file>
 #                              [<resume_session_id>]
 #     Rellena MEFISTO_RUNTIME_CMD con el argv de `opencode run` (sin `eval`,
-#     paridad con run_agent_with_watchdog): el mensaje viaja como UN elemento
-#     del array bash, sin volver a interpretarse. <agent> participa del argv
-#     en ambos adaptadores reales; OpenCode lo recibe como `--agent <id>`.
-#     A diferencia de runtime-claude.sh, aqui <cwd> tambien participa como
-#     `--dir <cwd>` porque `opencode run` lo exige como flag propio:
+#     paridad con run_agent_with_watchdog) SIN mensaje posicional (issue
+#     #1448; incidente de #1407): `resolveRunInput` de OpenCode
+#     (packages/opencode/src/cli/cmd/run.ts:416-418, verificado en 1.18.29)
+#     CONCATENA el mensaje posicional y stdin cuando llegan los dos
+#     (`value + "\n" + piped`), asi que cualquier texto en argv corromperia el
+#     mensaje que recibe el modelo -- el argv nunca vuelve a llevar el
+#     mensaje. En su lugar, esta funcion materializa
+#     "$MEFISTO_RUNTIME_WORK_DIR/opencode-message.md" con el mismo contenido
+#     que antes viajaba por argv (system + "\n\n" + prompt, o solo el prompt
+#     sin system-file) y fija la variable global MEFISTO_RUNTIME_STDIN_FILE a
+#     esa ruta: `lib/mefisto-process.sh` conecta ese archivo a la entrada
+#     estandar del proceso en vez del argv, que sigue sujeto a ARG_MAX
+#     (1.048.576 bytes en macOS, `getconf ARG_MAX`). <agent> participa del
+#     argv en ambos adaptadores reales; OpenCode lo recibe como `--agent
+#     <id>`. A diferencia de runtime-claude.sh, aqui <cwd> tambien participa
+#     como `--dir <cwd>` porque `opencode run` lo exige como flag propio:
 #     `run_agent_with_watchdog` sigue haciendo `cd "$workdir"` antes de
 #     invocar, pero OpenCode ademas necesita que se le diga explicitamente
 #     donde correr (CA-1). <resume_session_id> (issue #968,
@@ -59,17 +70,17 @@
 #
 # Flags que compone build_cmd (CA-1): `--agent <agent> --dir <cwd> --format
 # json --auto` siempre; `-m <model>` solo si el runner entrego un modelo no
-# vacio (heredar = el CLI real nunca ve un `-m` vacio); el mensaje final es
-# SIEMPRE el ultimo elemento del argv. `--auto` ("auto-approve permissions
-# that are not explicitly denied") es el UNICO flag de permisos que este
-# adaptador conoce -- la politica deny-por-defecto la genera #862 en el
-# frontmatter del agente, nunca este archivo.
+# vacio (heredar = el CLI real nunca ve un `-m` vacio); NINGUN elemento del
+# argv es ni contiene el mensaje (issue #1448) -- viaja por
+# MEFISTO_RUNTIME_STDIN_FILE. `--auto` ("auto-approve permissions that are
+# not explicitly denied") es el UNICO flag de permisos que este adaptador
+# conoce -- la politica deny-por-defecto la genera #862 en el frontmatter del
+# agente, nunca este archivo.
 #
 # `--system-file` no tiene flag equivalente en `opencode run` (verificado:
 # `opencode run --help` no lista nada parecido a `--append-system-prompt`):
-# se inyecta como PREFIJO del mensaje ("$system\n\n$prompt"), paridad con
-# `claude -p "$prompt"` en que el prompt completo viaja como un unico
-# argumento posicional, nunca como flag.
+# se inyecta como PREFIJO del mensaje ("$system\n\n$prompt") dentro del
+# archivo que build_cmd materializa, nunca como flag ni como texto en argv.
 #
 # El valor de <model> es OPACO para este adaptador (CA-1): viaja tal cual a
 # `-m`, con `/`, `.`, `-` o espacios, sin interpretarlo ni validarlo -- la
@@ -309,15 +320,17 @@ runtime_opencode_ensure_pricing() {
 # --- runtime_opencode_build_cmd ---------------------------------------------
 
 runtime_opencode_build_cmd() {
-    local agent="$1" cwd="$2" prompt_file="$3" model="$4" system_file="$5" resume_session_id="${6:-}"
-    local prompt message
-
-    prompt="$(cat "$prompt_file")"
-    if [ -n "$system_file" ]; then
-        message="$(cat "$system_file")"$'\n\n'"$prompt"
-    else
-        message="$prompt"
-    fi
+    # El tercer posicional del CONTRATO se llama <prompt_file> (ver cabecera y
+    # src/runtime/contract/README.md); aqui el local se llama "prompt_path"
+    # para marcar que este adaptador solo lo ATRAVIESA como archivo -- `cat`
+    # o `cp` hacia el archivo de mensaje -- y nunca vuelca su contenido a una
+    # variable: el idiom retirado por #1448 -- volcar <prompt_file> a una
+    # variable con una sustitucion de comandos y pasarla en el argv, rehen de
+    # ARG_MAX -- no queda ni como ocurrencia parcial.
+    # `opencode run` no tiene equivalente de `--append-system-prompt-file`,
+    # asi que a diferencia de runtime-claude.sh este adaptador si tiene que
+    # componer un archivo propio.
+    local agent="$1" cwd="$2" prompt_path="$3" model="$4" system_file="$5" resume_session_id="${6:-}"
 
     MEFISTO_RUNTIME_CMD=(opencode run --agent "$agent" --dir "$cwd" --format json --auto)
 
@@ -329,7 +342,43 @@ runtime_opencode_build_cmd() {
         MEFISTO_RUNTIME_CMD+=(--session "$resume_session_id")
     fi
 
-    MEFISTO_RUNTIME_CMD+=("$message")
+    # MEFISTO_RUNTIME_STDIN_FILE (issue #1448): el mensaje (system + "\n\n" +
+    # prompt, o solo el prompt sin system-file) se materializa DENTRO de
+    # MEFISTO_RUNTIME_WORK_DIR -- que mefisto-run-agent.sh ya expuso antes de
+    # invocar esta funcion (ver src/runtime/contract/README.md) -- nunca en
+    # /tmp suelto ni en el worktree. `cp` para el caso sin system-file evita
+    # una lectura completa innecesaria del archivo.
+    # Sin directorio de corrida no hay donde materializarlo, y la alternativa
+    # (volver a poner el mensaje en el argv, o escribirlo en la raiz del
+    # filesystem si la variable llega vacia) es exactamente lo que este issue
+    # elimina: se falla explicito y se vacia MEFISTO_RUNTIME_CMD, la senal que
+    # mefisto-run-agent.sh ya traduce a exit 69. Sin este guardia, un caller
+    # con `set -u` (el propio runner lo usa) moriria antes con un
+    # "unbound variable" que no nombra la causa. Mismo criterio defensivo que
+    # runtime-fake.sh.
+    if [ -z "${MEFISTO_RUNTIME_WORK_DIR:-}" ] || [ ! -d "$MEFISTO_RUNTIME_WORK_DIR" ]; then
+        echo "ERROR: runtime_opencode_build_cmd necesita MEFISTO_RUNTIME_WORK_DIR (directorio de la corrida, issue #1447) para materializar el mensaje del CLI" >&2
+        MEFISTO_RUNTIME_CMD=()
+        return 1
+    fi
+
+    local message_file="$MEFISTO_RUNTIME_WORK_DIR/opencode-message.md"
+    # Una sola redireccion para los tres tramos (no tres `>>`): si la escritura
+    # falla a medias, el mensaje que recibiria el modelo estaria TRUNCADO y el
+    # CLI arrancaria igual -- un fallo silencioso de la misma familia que
+    # #1407. El `||` lo convierte en aborto explicito.
+    if [ -n "$system_file" ]; then
+        if ! { cat "$system_file" && printf '\n\n' && cat "$prompt_path"; } > "$message_file"; then
+            echo "ERROR: runtime_opencode_build_cmd no pudo escribir el mensaje en '$message_file'" >&2
+            MEFISTO_RUNTIME_CMD=()
+            return 1
+        fi
+    elif ! cp "$prompt_path" "$message_file"; then
+        echo "ERROR: runtime_opencode_build_cmd no pudo copiar el prompt a '$message_file'" >&2
+        MEFISTO_RUNTIME_CMD=()
+        return 1
+    fi
+    MEFISTO_RUNTIME_STDIN_FILE="$message_file"
 }
 
 # runtime_opencode_supports_resume (issue #968, CA-4 caso b)
