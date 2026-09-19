@@ -137,3 +137,4 @@ no necesita estar residente en cada sesión, solo cuando se busca en qué ADR vi
 | Event Sourcing con Marten y Wolverine | MEF-ADR-0003 |
 | Enmienda a MEF-ADR-0031: presupuesto de 420 s del gate por SHA para cubrir un reintento de App Service Linux, distinto del gate `/api/ready` de 120 s | MEF-ADR-0031 |
 | Default del perfil `deep` en la tabla del adaptador Claude (`opus`, enmienda) | MEF-ADR-0049 |
+| Estimacion reproducible del costo de agentes | MEF-ADR-0054 |
