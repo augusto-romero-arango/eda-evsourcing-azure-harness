@@ -142,11 +142,13 @@ output_path_has_symlink() {
 }
 
 sha256() {
+    local digest
     if command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 "$1" | cut -d ' ' -f 1
+        digest="$(shasum -a 256 "$1")" || return 1
     else
-        sha256sum "$1" | cut -d ' ' -f 1
+        digest="$(sha256sum "$1")" || return 1
     fi
+    printf '%s\n' "${digest%% *}"
 }
 
 while [ $# -gt 0 ]; do
@@ -278,9 +280,14 @@ generated_contains() {
 }
 
 project_static_assets() {
-    local collection_name="$1" declared_asset root asset_source asset_mode asset_id asset_destination asset_source_dir absolute_asset_source full_rel plan_destination
+    local collection_name="$1" declared_asset root asset_source asset_mode asset_id asset_destination asset_source_parent asset_source_dir absolute_asset_source asset_sha full_rel plan_destination stage_parent resolved_index
+    # La resolucion de la fuente y su checksum no dependen de la raiz: se
+    # calculan en la primera pasada y se reutilizan por indice en las raices
+    # siguientes (el orden de los assets es identico en todas).
+    local resolved_sources=() resolved_shas=()
     shift
     for root in "${ROOTS[@]}"; do
+        resolved_index=0
         for declared_asset in "$@"; do
             asset_source="${declared_asset%%|*}"
             asset_mode="${declared_asset##*|}"
@@ -288,11 +295,21 @@ project_static_assets() {
             asset_destination="$asset_source"
             safe_relative_path "$asset_source" || usage_error "$collection_name declaro una fuente insegura: $asset_source"
             case "$asset_mode" in 0644|0755) ;; *) usage_error "$collection_name declaro un modo desconocido: $asset_mode" ;; esac
-            asset_source_dir="$(cd "$(dirname "$REPO_ROOT/$asset_source")" 2>/dev/null && pwd -P)" || usage_error "$collection_name declaro una fuente ausente: $asset_source"
-            absolute_asset_source="$asset_source_dir/$(basename "$asset_source")"
-            case "$absolute_asset_source" in "$REPO_ROOT"/*) ;; *) usage_error "$collection_name declaro una fuente fuera del repositorio: $asset_source" ;; esac
-            [ -f "$absolute_asset_source" ] || usage_error "$collection_name declaro una fuente ausente o no regular: $asset_source"
-            [ ! -L "$absolute_asset_source" ] || usage_error "$collection_name declaro una fuente mediante symlink: $asset_source"
+            if [ "$resolved_index" -lt "${#resolved_sources[@]}" ]; then
+                absolute_asset_source="${resolved_sources[$resolved_index]}"
+                asset_sha="${resolved_shas[$resolved_index]}"
+            else
+                case "$asset_source" in */*) asset_source_parent="$REPO_ROOT/${asset_source%/*}" ;; *) asset_source_parent="$REPO_ROOT" ;; esac
+                asset_source_dir="$(cd "$asset_source_parent" 2>/dev/null && pwd -P)" || usage_error "$collection_name declaro una fuente ausente: $asset_source"
+                absolute_asset_source="$asset_source_dir/${asset_source##*/}"
+                case "$absolute_asset_source" in "$REPO_ROOT"/*) ;; *) usage_error "$collection_name declaro una fuente fuera del repositorio: $asset_source" ;; esac
+                [ -f "$absolute_asset_source" ] || usage_error "$collection_name declaro una fuente ausente o no regular: $asset_source"
+                [ ! -L "$absolute_asset_source" ] || usage_error "$collection_name declaro una fuente mediante symlink: $asset_source"
+                asset_sha="$(sha256 "$absolute_asset_source")"
+                resolved_sources+=("$absolute_asset_source")
+                resolved_shas+=("$asset_sha")
+            fi
+            resolved_index=$((resolved_index + 1))
             full_rel="$root/$asset_destination"
             paths_overlap "$full_rel" "$root/.mefisto-generated-assets.json" && usage_error "$collection_name colisiona con el inventario del motor: $full_rel"
             for plan_destination in ${ASSET_PLAN_DESTINATIONS[@]+"${ASSET_PLAN_DESTINATIONS[@]}"}; do
@@ -301,10 +318,11 @@ project_static_assets() {
             for generated_path in ${GENERATED[@]+"${GENERATED[@]}"}; do
                 ! paths_overlap "$generated_path" "$full_rel" || usage_error "$collection_name colisiona con salida agent/command: $full_rel"
             done
-            mkdir -p "$(dirname "$STAGE_DIR/$full_rel")" || usage_error "no se pudo preparar $full_rel"
+            stage_parent="$STAGE_DIR/${full_rel%/*}"
+            [ -d "$stage_parent" ] || mkdir -p "$stage_parent" || usage_error "no se pudo preparar $full_rel"
             cp "$absolute_asset_source" "$STAGE_DIR/$full_rel" || usage_error "no se pudo copiar $collection_name: $asset_source"
             chmod "$asset_mode" "$STAGE_DIR/$full_rel" || usage_error "no se pudo fijar el modo de $full_rel"
-            ASSET_PLANS+=("$(jq -cn --arg adapter "$collection_name" --arg id "$asset_id" --arg source "$asset_source" --arg destination "$full_rel" --arg mode "$asset_mode" --arg sha256 "$(sha256 "$STAGE_DIR/$full_rel")" '{adapter: $adapter, id: $id, source: $source, destination: $destination, mode: $mode, sha256: $sha256}')")
+            ASSET_PLANS+=("$(jq -cn --arg adapter "$collection_name" --arg id "$asset_id" --arg source "$asset_source" --arg destination "$full_rel" --arg mode "$asset_mode" --arg sha256 "$asset_sha" '{adapter: $adapter, id: $id, source: $source, destination: $destination, mode: $mode, sha256: $sha256}')")
             ASSET_PLAN_ADAPTERS+=("$collection_name")
             ASSET_PLAN_IDS+=("$asset_id")
             ASSET_PLAN_DESTINATIONS+=("$full_rel")
@@ -350,14 +368,20 @@ for adapter_index in "${!ADAPTERS[@]}"; do
     ASSET_ROOTS+=("$root")
     jq -e 'type == "array" and all(.[]; type == "object" and (keys | sort) == ["destination", "id", "mode", "source"] and (.id | type == "string") and (.source | type == "string") and (.destination | type == "string") and (.mode | type == "string"))' "$assets_stdout" >/dev/null 2>&1 || usage_error "$adapter_name declaro assets suplementarios invalidos"
     while IFS= read -r asset; do
-        asset_fields="$(printf '%s' "$asset" | jq -r '[.id, .source, .destination, .mode] | @tsv')"
-        IFS=$'\t' read -r asset_id asset_source asset_destination asset_mode <<< "$asset_fields"
+        # Un `jq -r` por campo: `@tsv` escaparia \\t, \\n y \\\\ dentro de los valores,
+        # y un destino con salto de linea real dejaria de ser rechazado por
+        # safe_relative_path. Son 4 procesos por asset (lineal), no por par.
+        asset_id="$(printf '%s' "$asset" | jq -r '.id')"
+        asset_source="$(printf '%s' "$asset" | jq -r '.source')"
+        asset_destination="$(printf '%s' "$asset" | jq -r '.destination')"
+        asset_mode="$(printf '%s' "$asset" | jq -r '.mode')"
         safe_relative_path "$asset_id" || usage_error "$adapter_name asset '$asset_id' declaro un id inseguro"
         safe_relative_path "$asset_source" || usage_error "$adapter_name asset '$asset_id' declaro una fuente insegura"
         safe_relative_path "$asset_destination" || usage_error "$adapter_name asset '$asset_id' declaro un destino inseguro"
         case "$asset_mode" in 0644|0755) ;; *) usage_error "$adapter_name asset '$asset_id' declaro un modo desconocido: $asset_mode" ;; esac
-        asset_source_dir="$(cd "$(dirname "$REPO_ROOT/$asset_source")" 2>/dev/null && pwd -P)" || usage_error "$adapter_name asset '$asset_id' declaro una fuente ausente: $asset_source"
-        absolute_asset_source="$asset_source_dir/$(basename "$asset_source")"
+        case "$asset_source" in */*) asset_source_parent="$REPO_ROOT/${asset_source%/*}" ;; *) asset_source_parent="$REPO_ROOT" ;; esac
+        asset_source_dir="$(cd "$asset_source_parent" 2>/dev/null && pwd -P)" || usage_error "$adapter_name asset '$asset_id' declaro una fuente ausente: $asset_source"
+        absolute_asset_source="$asset_source_dir/${asset_source##*/}"
         case "$absolute_asset_source" in "$REPO_ROOT"/*) ;; *) usage_error "$adapter_name asset '$asset_id' declaro una fuente fuera del repositorio: $asset_source" ;; esac
         [ -f "$absolute_asset_source" ] || usage_error "$adapter_name asset '$asset_id' declaro una fuente ausente: $asset_source"
         [ ! -L "$absolute_asset_source" ] || usage_error "$adapter_name asset '$asset_id' declaro una fuente fuera del repositorio mediante symlink: $asset_source"
@@ -373,7 +397,8 @@ for adapter_index in "${!ADAPTERS[@]}"; do
         for generated_path in ${GENERATED[@]+"${GENERATED[@]}"}; do
             ! paths_overlap "$generated_path" "$full_rel" || usage_error "$adapter_name asset '$asset_id' colisiona con salida agent/command: $full_rel"
         done
-        mkdir -p "$(dirname "$STAGE_DIR/$full_rel")" || usage_error "no se pudo preparar $full_rel"
+        stage_parent="$STAGE_DIR/${full_rel%/*}"
+        [ -d "$stage_parent" ] || mkdir -p "$stage_parent" || usage_error "no se pudo preparar $full_rel"
         if ! "$adapter" render-asset "$asset_id" "$absolute_asset_source" > "$STAGE_DIR/$full_rel"; then
             printf "ERROR: %s no pudo renderizar el asset '%s'; no se escribio nada\n" "$adapter_name" "$asset_id" >&2
             exit 1
@@ -442,7 +467,7 @@ if [ "$CHECK_MODE" -eq 1 ]; then
             printf '%s: enlace simbolico\n' "$relpath"; divergent=1
         elif [ ! -f "$existing" ]; then
             printf '%s: faltante\n' "$relpath"; divergent=1
-        elif [ "$(basename "$relpath")" = '.mefisto-generated-assets.json' ]; then
+        elif [ "${relpath##*/}" = '.mefisto-generated-assets.json' ]; then
             if ! cmp -s "$STAGE_DIR/$relpath" "$existing"; then
                 printf '%s: inventario inconsistente\n' "$relpath"
                 divergent=1
@@ -475,7 +500,7 @@ if [ "$CHECK_MODE" -eq 1 ]; then
                 printf '%s: huerfana\n' "$relpath"
             elif was_supplemental_asset "$existing_inventory" "${relpath#"$root"/}"; then
                 printf '%s: huerfana\n' "$relpath"
-            elif [ "$(basename "$existing")" = '.mefisto-generated-assets.json' ]; then
+            elif [ "${existing##*/}" = '.mefisto-generated-assets.json' ]; then
                 printf '%s: inventario inconsistente\n' "$relpath"
             else
                 printf '%s: sin marcador\n' "$relpath"

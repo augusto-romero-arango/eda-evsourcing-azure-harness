@@ -271,6 +271,7 @@ setup_repo muchos-assets
 GEN="$TEST_REPO/src/published/scripts/generate-published-adapters.sh"; OUT="$WORK/muchos-assets-out"
 cp "$FIXTURES/adapter-many-assets.sh" "$TEST_REPO/src/published/scripts/adapters/"
 chmod +x "$TEST_REPO/src/published/scripts/adapters/adapter-many-assets.sh"
+export MANY_ASSETS_COUNT=160
 mkdir -p "$TEST_REPO/src/published/assets"
 printf 'configuracion fuente\n' > "$TEST_REPO/src/published/assets/config.txt"
 "$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" >/dev/null; rc=$?
