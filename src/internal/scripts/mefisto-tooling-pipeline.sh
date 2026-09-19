@@ -438,7 +438,6 @@ ISSUE_COMPLETION_NOTE=""
 if echo "$ISSUE_JSON" | python3 -c "import sys,json; print(any(label['name'] == 'cierre:manual' for label in json.load(sys.stdin).get('labels', [])))" 2>/dev/null | grep -qx "True"; then
     ISSUE_PR_REFERENCE="Refs"
     ISSUE_COMPLETION_NOTE=" Este PR no cierra el issue (label cierre:manual)."
-    warn "El issue #$ISSUE_NUM tiene el label cierre:manual: el PR usara Refs y no cerrara el issue."
 fi
 ISSUE_CONTEXT="# Issue #$ISSUE_NUM: $ISSUE_TITLE
 
@@ -1462,6 +1461,9 @@ EOF
             --body "$RUN_METRICS_COMMENT" \
             >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 || warn "No se pudo publicar las metricas en el PR reutilizado: $PR_URL"
     else
+        if [ "$ISSUE_PR_REFERENCE" = "Refs" ]; then
+            warn "El issue #$ISSUE_NUM tiene el label cierre:manual: el PR usara Refs y no cerrara el issue."
+        fi
         log "Creando PR..."
 
         WR_SUMMARY=$(collect_summary "1" "writer")

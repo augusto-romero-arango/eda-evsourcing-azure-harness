@@ -47,22 +47,32 @@ if grep -qF 'ISSUE_PR_REFERENCE="Refs"' "$PIPE"; then
 else
     fail "falta la referencia Refs para cierre:manual"
 fi
+DEFAULT_LINE=$(grep -nF 'ISSUE_PR_REFERENCE="Closes"' "$PIPE" | cut -d: -f1)
+MANUAL_IF_LINE=$(grep -nF "label['name'] == 'cierre:manual'" "$PIPE" | cut -d: -f1)
+MANUAL_BRANCH=$(awk -v start="$MANUAL_IF_LINE" 'NR >= start { print; if (NR > start && $0 == "fi") exit }' "$PIPE")
 if [ "$(grep -cF 'ISSUE_PR_REFERENCE="Closes"' "$PIPE")" -eq 1 ] \
-    && [ "$(grep -cF 'ISSUE_PR_REFERENCE="Refs"' "$PIPE")" -eq 1 ]; then
-    pass "Closes y Refs aparecen solo en sus ramas respectivas"
+    && [ "$(grep -cF 'ISSUE_PR_REFERENCE="Refs"' "$PIPE")" -eq 1 ] \
+    && [ -n "$DEFAULT_LINE" ] \
+    && [ -n "$MANUAL_IF_LINE" ] \
+    && [ "$DEFAULT_LINE" -lt "$MANUAL_IF_LINE" ] \
+    && printf '%s\n' "$MANUAL_BRANCH" | grep -qF 'ISSUE_PR_REFERENCE="Refs"' \
+    && ! printf '%s\n' "$MANUAL_BRANCH" | grep -qF 'ISSUE_PR_REFERENCE="Closes"'; then
+    pass "Closes queda como default sin label y Refs solo en la rama cierre:manual"
 else
-    fail "Closes o Refs no estan limitados a una sola rama"
+    fail "Closes o Refs no estan limitados a la rama que corresponde"
 fi
-if grep -qF '$ISSUE_PR_REFERENCE #$ISSUE_NUM' "$PIPE"; then
-    pass "el cuerpo del PR usa la referencia decidida"
+if [ "$(grep -cF '$ISSUE_PR_REFERENCE #$ISSUE_NUM' "$PIPE")" -eq 2 ]; then
+    pass "el cuerpo del PR y la sugerencia manual usan la referencia decidida"
 else
-    fail "el cuerpo del PR no usa la referencia decidida"
+    fail "el cuerpo del PR y la sugerencia manual deben reutilizar la referencia exactamente dos veces"
 fi
 
 echo ""
 echo "[3] Evidencia visible para cierre manual (CA-4)"
-if grep -qF 'warn "El issue #$ISSUE_NUM tiene el label cierre:manual' "$PIPE"; then
-    pass "el pipeline advierte antes de crear el PR"
+WARN_LINE=$(grep -nF 'warn "El issue #$ISSUE_NUM tiene el label cierre:manual' "$PIPE" | cut -d: -f1)
+CREATE_LINE=$(grep -nF 'log "Creando PR..."' "$PIPE" | cut -d: -f1)
+if [ -n "$WARN_LINE" ] && [ -n "$CREATE_LINE" ] && [ "$WARN_LINE" -lt "$CREATE_LINE" ]; then
+    pass "el pipeline advierte inmediatamente antes de crear el PR"
 else
     fail "falta la advertencia de cierre:manual"
 fi
@@ -72,7 +82,7 @@ else
     fail "falta la explicacion en el comentario final"
 fi
 if grep -qF 'gh pr create --base main --head $BRANCH_NAME' "$PIPE" \
-    && grep -qF 'ISSUE_PR_REFERENCE #$ISSUE_NUM' "$PIPE"; then
+    && grep -qF -- '--body \"$ISSUE_PR_REFERENCE #$ISSUE_NUM\"' "$PIPE"; then
     pass "la sugerencia manual reutiliza la referencia decidida"
 else
     fail "la sugerencia manual no reutiliza la referencia decidida"
