@@ -322,7 +322,7 @@ STUB
         # suite tiene tanto `claude` como `opencode` instalados de verdad en
         # el PATH real (detras de $FAKE_BIN) -- fijarlo hace la corrida
         # deterministica sin importar el toolchain del host.
-        env -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR -u MEFISTO_REPO_ROOT \
+        env -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR -u MEFISTO_REPO_ROOT -u MEFISTO_LAUNCH_ROOT \
             -u MEFISTO_PROJECT_NAME -u MEFISTO_REPO_SLUG \
             PATH="$FAKE_BIN:$PATH" MEFISTO_RUNTIME=claude MEFISTO_AGENT_RETRY_BACKOFF_SECONDS=0 \
             ./.claude/scripts/mefisto-tooling-pipeline.sh 869
@@ -413,7 +413,7 @@ STUB
     J1_START=$(date +%s)
     (
         cd "$FAKE_MEFISTO" || exit 99
-        env -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR -u MEFISTO_REPO_ROOT \
+        env -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR -u MEFISTO_REPO_ROOT -u MEFISTO_LAUNCH_ROOT \
             -u MEFISTO_PROJECT_NAME -u MEFISTO_REPO_SLUG \
             PATH="$FAKE_BIN:$PATH" MEFISTO_RUNTIME=claude MEFISTO_AGENT_RETRY_BACKOFF_SECONDS=0 \
             MEFISTO_AGENT_TIMEOUT_SECONDS=1 MEFISTO_AGENT_MAX_ATTEMPTS=1 \
@@ -441,7 +441,7 @@ STUB
     J4_ERR="$G_TMP/j4-stderr"
     (
         cd "$FAKE_MEFISTO" || exit 99
-        env -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR -u MEFISTO_REPO_ROOT \
+        env -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR -u MEFISTO_REPO_ROOT -u MEFISTO_LAUNCH_ROOT \
             -u MEFISTO_PROJECT_NAME -u MEFISTO_REPO_SLUG \
             PATH="$FAKE_BIN:$PATH" MEFISTO_RUNTIME=claude MEFISTO_AGENT_TIMEOUT_SECONDS=abc \
             ./.claude/scripts/mefisto-tooling-pipeline.sh 871
