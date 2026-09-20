@@ -229,37 +229,37 @@ if [ -z "$INSTRUCTIONS_RESOLVER" ]; then
 else
     resolve_instructions() {
         local root="$1"
-        (cd "$root" && bash -c "$INSTRUCTIONS_RESOLVER"$'\n''printf "%s\\n" "$MEFISTO_INSTRUCTIONS_PATH"')
+        (cd "$root" && bash -c "$INSTRUCTIONS_RESOLVER"$'\n''root_namespace=$(awk -F '\''[:][[:space:]]*'\'' '\''$1 == "RootNamespace" { print $2; exit }'\'' "$MEFISTO_INSTRUCTIONS_PATH"); printf "%s|%s.Projections\\n" "$MEFISTO_INSTRUCTIONS_PATH" "$root_namespace"')
     }
 
     INSTRUCTIONS_CANONICAL="$TMP_DIR/instructions-canonical"
     mkdir -p "$INSTRUCTIONS_CANONICAL"
-    printf '## Tokens del harness\nRootNamespace: Canonical.Projections\n' > "$INSTRUCTIONS_CANONICAL/AGENTS.md"
+    printf '## Tokens del harness\nRootNamespace: Canonical\n' > "$INSTRUCTIONS_CANONICAL/AGENTS.md"
     printf '@AGENTS.md\n' > "$INSTRUCTIONS_CANONICAL/CLAUDE.md"
     out=$(resolve_instructions "$INSTRUCTIONS_CANONICAL" 2>"$TMP_DIR/instructions-canonical.err"); rc=$?
-    if [ "$rc" -eq 0 ] && [ "$out" = 'AGENTS.md' ] && grep -Fq 'se ignora el legacy CLAUDE.md' "$TMP_DIR/instructions-canonical.err"; then
-        pass "canonico resuelve AGENTS.md y conserva visible el aviso de coexistencia"
+    if [ "$rc" -eq 0 ] && [ "$out" = 'AGENTS.md|Canonical.Projections' ] && grep -Fq 'se ignora el legacy CLAUDE.md' "$TMP_DIR/instructions-canonical.err"; then
+        pass "canonico resuelve desde AGENTS.md el service.name de la alerta y conserva visible el aviso"
     else
         fail "canonico no resolvio AGENTS.md con aviso (rc=$rc, out='$out', err='$(cat "$TMP_DIR/instructions-canonical.err")')"
     fi
 
     INSTRUCTIONS_LEGACY="$TMP_DIR/instructions-legacy"
     mkdir -p "$INSTRUCTIONS_LEGACY"
-    printf '## Tokens del harness\nRootNamespace: Legacy.Projections\n' > "$INSTRUCTIONS_LEGACY/CLAUDE.md"
+    printf '## Tokens del harness\nRootNamespace: Legacy\n' > "$INSTRUCTIONS_LEGACY/CLAUDE.md"
     out=$(resolve_instructions "$INSTRUCTIONS_LEGACY" 2>"$TMP_DIR/instructions-legacy.err"); rc=$?
-    if [ "$rc" -eq 0 ] && [ "$out" = 'CLAUDE.md' ] && [ ! -s "$TMP_DIR/instructions-legacy.err" ]; then
-        pass "solo legacy resuelve CLAUDE.md como fallback de lectura"
+    if [ "$rc" -eq 0 ] && [ "$out" = 'CLAUDE.md|Legacy.Projections' ] && [ ! -s "$TMP_DIR/instructions-legacy.err" ]; then
+        pass "solo legacy resuelve el service.name desde CLAUDE.md como fallback de lectura"
     else
         fail "legacy no resolvio como fallback (rc=$rc, out='$out', err='$(cat "$TMP_DIR/instructions-legacy.err")')"
     fi
 
     INSTRUCTIONS_BOTH="$TMP_DIR/instructions-both"
     mkdir -p "$INSTRUCTIONS_BOTH"
-    printf '## Tokens del harness\nRootNamespace: Canonical.Projections\n' > "$INSTRUCTIONS_BOTH/AGENTS.md"
-    printf '## Tokens del harness\nRootNamespace: Legacy.Projections\n' > "$INSTRUCTIONS_BOTH/CLAUDE.md"
+    printf '## Tokens del harness\nRootNamespace: Canonical\n' > "$INSTRUCTIONS_BOTH/AGENTS.md"
+    printf '## Tokens del harness\nRootNamespace: Legacy\n' > "$INSTRUCTIONS_BOTH/CLAUDE.md"
     out=$(resolve_instructions "$INSTRUCTIONS_BOTH" 2>"$TMP_DIR/instructions-both.err"); rc=$?
-    if [ "$rc" -eq 0 ] && [ "$out" = 'AGENTS.md' ] && grep -Fq 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md.' "$TMP_DIR/instructions-both.err"; then
-        pass "coexistencia conserva AGENTS.md y avisa que ignora el legacy"
+    if [ "$rc" -eq 0 ] && [ "$out" = 'AGENTS.md|Canonical.Projections' ] && grep -Fq 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md.' "$TMP_DIR/instructions-both.err"; then
+        pass "coexistencia usa el RootNamespace canonico para la alerta y avisa que ignora el legacy"
     else
         fail "coexistencia no preservo la precedencia canonica (rc=$rc, out='$out', err='$(cat "$TMP_DIR/instructions-both.err")')"
     fi
@@ -287,6 +287,24 @@ if grep -Eq 'declare `?RootNamespace`?.*CLAUDE\.md|CLAUDE\.md.*declare `?RootNam
     fail "el Paso 5 vuelve a pedir declarar RootNamespace en CLAUDE.md"
 else
     pass "el Paso 5 no pide declarar RootNamespace en CLAUDE.md"
+fi
+AGENT_WITHOUT_RESOLVER=$(awk '
+    /^if \[ -f "AGENTS\.md" \]; then$/ { resolver=1; next }
+    resolver && /^export MEFISTO_INSTRUCTIONS_PATH$/ { resolver=0; next }
+    !resolver { print }
+' "$AGENT")
+if grep -Fq 'CLAUDE.md' <<< "$AGENT_WITHOUT_RESOLVER"; then
+    fail "CLAUDE.md aparece fuera del bloque literal de fallback"
+else
+    pass "CLAUDE.md queda confinado al bloque literal de fallback"
+fi
+if grep -Fq 'projections_service_name' "$AGENT" \
+    && grep -Fq '`${MEFISTO_INSTRUCTIONS_PATH}`' "$AGENT" \
+    && grep -Fq 'omite **solo** el recurso de la alerta' "$AGENT" \
+    && grep -Fq 'declarar `RootNamespace` en `AGENTS.md`, seccion "Tokens del harness"' "$AGENT"; then
+    pass "la alerta usa el token efectivo y conserva la omision acotada y su diagnostico canonico"
+else
+    fail "falta el contrato que conecta RootNamespace efectivo con la alerta de proyecciones"
 fi
 
 echo "----------------------------------------"

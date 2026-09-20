@@ -2483,7 +2483,7 @@ Imprime un resumen claro:
 1. **NUNCA** ejecutes `terraform plan`, `terraform apply` ni `terraform destroy`. Solo `fmt`, `init -backend=false` y `validate`.
 2. **NUNCA** sobrescribas un `.tf` existente (idempotencia, MEF-ADR-0021/CA-7): omitelo y reportalo.
 3. **NUNCA** generes `backend.tf` ni un bloque `backend "azurerm"` (lo escribe `bootstrap-backend.sh`).
-4. **NUNCA** hardcodees valores de un proyecto concreto (emails, nombres de DB, prefijos): generalizalos a variables y derivalos del `harness.config.json`/`CLAUDE.md`.
+4. **NUNCA** hardcodees valores de un proyecto concreto (emails, nombres de DB, prefijos): generalizalos a variables y derivalos del `harness.config.json` o del archivo efectivo de directivas, segun corresponda.
 5. **NO** instancies Function Apps en el esqueleto greenfield: eso es trabajo del `domain-scaffolder`.
 6. Recursos criticos (`postgresql`, `service-bus`, `storage`, `key-vault`) llevan `prevent_destroy = true`.
 7. **NO** termines sin que `terraform validate` pase (salvo que `terraform` no este instalado, en cuyo caso lo dejas como pendiente manual explicito).
