@@ -56,6 +56,13 @@ run_seed_secret() {
     ) > "$output" 2>&1
 }
 
+echo "[0] Sintaxis del script"
+if bash -n "$SCRIPT"; then
+    pass "seed-secret.sh tiene sintaxis Bash valida"
+else
+    fail "seed-secret.sh tiene errores de sintaxis Bash"
+fi
+
 echo "[1] Consumidor canonico: registra y anuncia la ruta escrita"
 CANONICAL_ROOT="$TMP_DIR/canonical"
 prepare_consumer "$CANONICAL_ROOT"
@@ -82,16 +89,19 @@ prepare_consumer "$BOTH_ROOT"
 write_config "$BOTH_ROOT/.mefisto/harness.config.json" canonical
 write_config "$BOTH_ROOT/.claude/harness.config.json" legacy
 cp "$BOTH_ROOT/.claude/harness.config.json" "$TMP_DIR/legacy-both.before"
-RC=0; run_seed_secret "$BOTH_ROOT" "$TMP_DIR/both.out" || RC=$?
+BOTH_OUT="$TMP_DIR/both.out"
+BOTH_PATH="$(cd "$BOTH_ROOT" && pwd -P)/.mefisto/harness.config.json"
+RC=0; run_seed_secret "$BOTH_ROOT" "$BOTH_OUT" || RC=$?
 if [ "$RC" -eq 0 ] && cmp -s "$TMP_DIR/legacy-both.before" "$BOTH_ROOT/.claude/harness.config.json"; then
     pass "ambos conserva byte a byte el legacy"
 else
     fail "ambos fallo o modifico el legacy"
 fi
-if [ "$(jq -r '.secrets[0].name' "$BOTH_ROOT/.mefisto/harness.config.json")" = "stripe-api-key" ]; then
-    pass "ambos registra solo en el canonico"
+if [ "$(jq -r '.secrets[0].name' "$BOTH_ROOT/.mefisto/harness.config.json")" = "stripe-api-key" ] \
+    && grep -Fxq "Registro: $BOTH_PATH" "$BOTH_OUT"; then
+    pass "ambos registra y anuncia solo el canonico"
 else
-    fail "ambos no registro en el canonico"
+    fail "ambos no registro o anuncio el canonico"
 fi
 
 echo "[3] Consumidor solo legacy: aborta sin mutar ni migrar"

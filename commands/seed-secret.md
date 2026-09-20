@@ -74,23 +74,20 @@ git switch -c seed-secret/<nombre-en-kebab>
 
 ### 4. Registrar el secreto y resolver el dominio
 
-Resuelve `$PLUGIN_SCRIPTS` con el mismo patron que el resto de los skills e invoca el script del plugin (nunca `./scripts/...`: los scripts del harness no viven en el repo consumidor):
+Resuelve `$PLUGIN_SCRIPTS` con el mismo patron que el resto de los skills. Invoca el script del
+plugin una sola vez (nunca `./scripts/...`: los scripts del harness no viven en el repo
+consumidor), con el flag de fuente recibido en `$ARGUMENTS`. Captura stdout y stderr en
+`SCRIPT_OUTPUT`, muestralos y extrae de la linea `Registro: <ruta>` la variable
+`REGISTRO_PATH`. Esa linea es la unica fuente de verdad de la ruta que el script escribio:
 
 ```bash
 PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
 [ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
 PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
 
-"$PLUGIN_SCRIPTS/seed-secret.sh" "<nombre>" --domain "<Dominio>" --env "<env>" \
-    --from-output "<output>"          # o: --from-github-secret "<NOMBRE>"
-```
-
-Captura la salida completa del script en `SCRIPT_OUTPUT`, muestrala y extrae de su linea
-`Registro: <ruta>` la variable `REGISTRO_PATH`. Esa linea es la unica fuente de verdad de la
-ruta que el script escribio:
-
-```bash
-if ! SCRIPT_OUTPUT=$("$PLUGIN_SCRIPTS/seed-secret.sh" "<nombre>" --domain "<Dominio>" --env "<env>" --from-output "<output>"); then
+SOURCE_ARGS=(--from-output "<output>") # o: (--from-github-secret "<NOMBRE>")
+if ! SCRIPT_OUTPUT=$("$PLUGIN_SCRIPTS/seed-secret.sh" "<nombre>" --domain "<Dominio>" \
+    --env "<env>" "${SOURCE_ARGS[@]}" 2>&1); then
     printf '%s\n' "$SCRIPT_OUTPUT"
     exit 1
 fi
