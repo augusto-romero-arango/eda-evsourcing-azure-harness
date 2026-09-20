@@ -60,11 +60,17 @@ else
 fi
 
 echo "[4] fix-review.md remite a mef-adr-0019 en la(s) linea(s) del routing cross-repo"
-ROUTING_LINES=$(grep -i 'Routing cross-repo' "$FIX_REVIEW")
-if [ -n "$ROUTING_LINES" ] && echo "$ROUTING_LINES" | grep -qi 'mef-adr-0019'; then
-    pass "fix-review.md nombra mef-adr-0019 en la linea del routing"
+ROUTING_LINES=$(grep -n -i 'Routing cross-repo: solo drafts' "$FIX_REVIEW")
+if [ -z "$ROUTING_LINES" ]; then
+    fail "fix-review.md no cita la seccion \"Routing cross-repo: solo drafts\" en ninguna linea"
 else
-    fail "fix-review.md no nombra mef-adr-0019 en ninguna linea de routing cross-repo"
+    SIN_ADR=$(echo "$ROUTING_LINES" | grep -v -i 'mef-adr-0019')
+    if [ -z "$SIN_ADR" ]; then
+        pass "fix-review.md nombra mef-adr-0019 en todas sus lineas de routing cross-repo"
+    else
+        fail "fix-review.md tiene linea(s) de routing sin remitir a mef-adr-0019:"
+        echo "$SIN_ADR" | sed 's/^/    /'
+    fi
 fi
 
 echo "----------------------------------------"

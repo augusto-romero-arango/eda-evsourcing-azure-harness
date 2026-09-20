@@ -227,7 +227,7 @@ Listo. PR #N:
 
 Cada comentario de review es evidencia de un gap en las instrucciones de un agente. Esta fase traza las correcciones hasta su origen y propone mejoras.
 
-> **Modelo plugin.** Tras la extraccion del harness al plugin `mefisto`, los agentes/skills del marco ya **no viven en el repo consumidor**: estan en el cache del plugin (`~/.claude/plugins/cache/.../mefisto/<version>/agents/`), read-only y versionado. Por eso una mejora a un agente/skill del harness **no se puede editar en la rama del PR del consumidor**: se enruta como **draft** (`estado:borrador`) al repo de Mefisto via `gh -R`, igual que hacen el `planner` y el `tooling-investigator` publicados (ver la seccion C "Routing cross-repo: solo drafts" de MEF-ADR-0019, `docs/adr/mef-adr-0019-skills-publicados-vs-internos.md` del plugin). La edicion en-rama queda reservada a lo que realmente vive en el consumidor (un ADR local del proyecto, convenciones de su `AGENTS.md` -- o de su `CLAUDE.md` legacy --, un fixture/helper propio).
+> **Modelo plugin.** Tras la extraccion del harness al plugin `mefisto`, los agentes/skills del marco ya **no viven en el repo consumidor**: estan en el cache del plugin (`~/.claude/plugins/cache/.../mefisto/<version>/agents/`), read-only y versionado. Por eso una mejora a un agente/skill del harness **no se puede editar en la rama del PR del consumidor**: se enruta como **draft** (`estado:borrador`) al repo de Mefisto via `gh -R`, igual que hacen el `planner` y el `tooling-investigator` publicados (ver la seccion C "Routing cross-repo: solo drafts" de MEF-ADR-0019, `<raiz del plugin>/docs/adr/mef-adr-0019-skills-publicados-vs-internos.md`, nunca la ruta relativa desde el consumidor). La edicion en-rama queda reservada a lo que realmente vive en el consumidor (un ADR local del proyecto, convenciones de su `AGENTS.md` -- o de su `CLAUDE.md` legacy --, un fixture/helper propio).
 
 ### 5.1 Trazar correcciones a su origen
 
@@ -295,7 +295,7 @@ fi
 
 #### Si el ajuste es al harness: crear un draft cross-repo
 
-Reutiliza el mismo routing que el `planner` y el `tooling-investigator` publicados (ver la seccion C "Routing cross-repo: solo drafts" de MEF-ADR-0019, `docs/adr/mef-adr-0019-skills-publicados-vs-internos.md` del plugin). Lee el slug del repo de Mefisto (configurable para forks):
+Reutiliza el mismo routing que el `planner` y el `tooling-investigator` publicados (ver la seccion C "Routing cross-repo: solo drafts" de MEF-ADR-0019, `<raiz del plugin>/docs/adr/mef-adr-0019-skills-publicados-vs-internos.md`, nunca la ruta relativa desde el consumidor). Lee el slug del repo de Mefisto (configurable para forks):
 
 Ruta efectiva del config (contrato canonico `.mefisto/harness.config.json`; `.claude/harness.config.json` solo como fallback de lectura si el canonico no existe, MEF-ADR-0053 decision 4); `repoSlug` es opcional -- si no hay config, falta el campo o esta vacio, aplica el default sin abortar:
 
