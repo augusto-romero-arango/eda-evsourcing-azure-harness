@@ -59,7 +59,7 @@ fi
 export MEFISTO_INSTRUCTIONS_PATH
 ```
 
-Lee `${MEFISTO_INSTRUCTIONS_PATH}` para resolver `<RootNamespace>` (token `RootNamespace`). Si el archivo efectivo no lo declara, detente e informa que falta declararlo en `AGENTS.md` antes de continuar (mismo contrato que `domain-scaffolder`).
+Lee `${MEFISTO_INSTRUCTIONS_PATH}` para resolver `<RootNamespace>` (token `RootNamespace`). Si el archivo efectivo no lo declara, detente e informa que falta declararlo en `AGENTS.md` antes de continuar (mismo contrato que `domain-scaffolder`). No crees, copies, migres ni escribas `AGENTS.md` ni el fallback legacy `CLAUDE.md`.
 
 Deriva `{PascalCase}` del dominio destino recibido (si vino en kebab-case, aplica la misma regla de `domain-scaffolder` Paso 0: primera letra de cada palabra en mayuscula, sin guiones).
 
