@@ -35,6 +35,12 @@
 #      modelo como `awk '{print }'`. Replica en el lado publicado (issue #443) el
 #      guard que el bloque G de .claude/scripts/tests/test-batch-deps-validation.sh
 #      aplica a .claude/commands/*.md (issue #436).
+#   L) Todo test-*.sh de primer nivel en scripts/tests/ y .claude/scripts/tests/
+#      tiene bit de ejecucion, tanto en disco como en el modo versionado en git
+#      (100755, no 100644): _mefisto_test_inventory_scan_lane descarta con
+#      `[ -x "$file" ] || continue` cualquiera que no lo tenga, asi que ese
+#      archivo nunca entra en la suite completa -- sin PASS, sin FAIL, sin
+#      linea en el reporte de mefisto-test-suite.sh (issue #1509).
 #
 # Uso: scripts/tests/test-guards.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -1214,6 +1220,115 @@ if grep -qF -- 'git diff --cached --check' "$DS"; then
     pass "domain-scaffolder: verifica el diff staged, incluidos los archivos nuevos de func init"
 else
     fail "domain-scaffolder: falta git diff --cached --check despues de agregar el scaffold"
+fi
+
+# -------- Bloque L: bit de ejecucion de tests versionados (issue #1509) --------
+#
+# _mefisto_test_inventory_scan_lane (src/internal/scripts/lib/mefisto-test-inventory.sh)
+# descubre los carriles publicado/interno con `find ... -name 'test-*.sh'` y
+# descarta con `[ -x "$file" ] || continue` cualquiera sin bit de ejecucion: ese
+# archivo pasa al correrlo a mano con bash, pero nunca entra en la suite
+# completa -- sin PASS, sin FAIL, sin linea en el reporte. Este bloque cubre
+# tanto el bit en disco (CA-1) como el modo versionado en git (CA-2): un
+# `chmod +x` hecho DESPUES de `git add` sin volver a agregar deja el archivo
+# ejecutable en el worktree actual pero 100644 en el commit, y el mismo hueco
+# reaparece en cualquier otro checkout.
+
+echo ""
+echo "[L] Tests versionados con bit de ejecucion (scripts/tests/ y .claude/scripts/tests/, issue #1509)"
+
+# check_test_exec_bits <repo_root> -- imprime una linea por violacion (vacio =
+# OK). Alcance identico al de _mefisto_test_inventory_scan_lane: un solo nivel
+# (-maxdepth 1) de scripts/tests/ y .claude/scripts/tests/, sin recursar en
+# fixtures/. Bucle 'while IFS= read -r' en vez de 'find -perm -u+x' por
+# portabilidad bash 3.2/macOS (GNU vs. BSD find difieren en -perm).
+check_test_exec_bits() {
+    local repo_root="$1"
+    local subdir dir file rel
+
+    for subdir in scripts/tests .claude/scripts/tests; do
+        dir="$repo_root/$subdir"
+        [ -d "$dir" ] || continue
+        find "$dir" -maxdepth 1 -type f -name 'test-*.sh' 2>/dev/null | LC_ALL=C sort | while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            rel="${file#"$repo_root"/}"
+            [ -x "$file" ] || printf '%s: sin bit de ejecucion en disco (chmod +x %s)\n' "$rel" "$rel"
+        done
+    done
+
+    # Modo versionado: un archivo sin trackear no aparece en 'ls-files -s' y
+    # por lo tanto se juzga solo por el chequeo de disco de arriba. El pathspec
+    # es el directorio a secas y el recorte a un solo nivel lo hace awk: un
+    # pathspec con glob ('scripts/tests/test-*.sh') NO equivale a -maxdepth 1
+    # porque el '*' de git cruza '/' salvo con la magia :(glob), asi que
+    # marcaria archivos de subdirectorios que el inventario nunca escanea.
+    # awk parte por TAB (el formato de ls-files -s es '<modo> <sha> <stage>\t<ruta>')
+    # para no romperse con rutas que contengan espacios.
+    git -C "$repo_root" ls-files -s -- scripts/tests .claude/scripts/tests 2>/dev/null |
+        awk -F'\t' '
+            {
+                split($1, meta, " ")
+                if (meta[1] != "100644") next
+                path = $2
+                n = split(path, seg, "/")
+                base = seg[n]
+                if (base !~ /^test-/ || base !~ /\.sh$/) next
+                dir = substr(path, 1, length(path) - length(base) - 1)
+                if (dir != "scripts/tests" && dir != ".claude/scripts/tests") next
+                print path
+            }' |
+        while IFS= read -r rel; do
+            [ -z "$rel" ] && continue
+            printf '%s: versionado en git con modo 100644 (chmod +x %s && git add %s)\n' "$rel" "$rel" "$rel"
+        done
+}
+
+L_VIOLATIONS="$(check_test_exec_bits "$REPO_ROOT")"
+if [ -z "$L_VIOLATIONS" ]; then
+    pass "todos los test-*.sh de scripts/tests/ y .claude/scripts/tests/ tienen bit de ejecucion en disco y en git"
+else
+    fail "test-*.sh sin bit de ejecucion (en disco o versionado con 100644):
+$L_VIOLATIONS"
+fi
+
+# Verificacion positiva/negativa (CA-3, mismo patron que el bloque G): sobre un
+# repo git temporal, un test-*.sh en modo 644 debe detectarse; el mismo archivo
+# en 755 y agregado al indice no debe reportar nada (sin falsos positivos). El
+# fixture se limpia siempre.
+SYNTH_DIR_L=$(mktemp -d)
+git -C "$SYNTH_DIR_L" init -q -b main
+git -C "$SYNTH_DIR_L" config user.email "test@local"
+git -C "$SYNTH_DIR_L" config user.name "Test"
+mkdir -p "$SYNTH_DIR_L/scripts/tests/fixtures"
+printf '#!/usr/bin/env bash\necho ok\n' > "$SYNTH_DIR_L/scripts/tests/test-sintetico.sh"
+chmod 644 "$SYNTH_DIR_L/scripts/tests/test-sintetico.sh"
+# Anidado en 644: fuera del alcance (-maxdepth 1), no debe reportarse nunca.
+printf '#!/usr/bin/env bash\necho ok\n' > "$SYNTH_DIR_L/scripts/tests/fixtures/test-anidado.sh"
+chmod 644 "$SYNTH_DIR_L/scripts/tests/fixtures/test-anidado.sh"
+git -C "$SYNTH_DIR_L" add scripts/tests/test-sintetico.sh scripts/tests/fixtures/test-anidado.sh
+git -C "$SYNTH_DIR_L" commit -q -m "base"
+
+HITS_L_NEG="$(check_test_exec_bits "$SYNTH_DIR_L")"
+if echo "$HITS_L_NEG" | grep -q 'scripts/tests/test-sintetico\.sh'; then
+    pass "[L] detecta un test-*.sh en modo 644 en un repo sintetico"
+else
+    fail "[L] NO detecto un test-*.sh en modo 644 (guard ciego)"
+fi
+
+if echo "$HITS_L_NEG" | grep -q 'fixtures/test-anidado\.sh'; then
+    fail "falso positivo de [L]: reporto un test-*.sh anidado, fuera del alcance -maxdepth 1"
+else
+    pass "[L] ignora un test-*.sh anidado en fixtures/ (mismo alcance que _mefisto_test_inventory_scan_lane)"
+fi
+
+chmod 755 "$SYNTH_DIR_L/scripts/tests/test-sintetico.sh"
+git -C "$SYNTH_DIR_L" add scripts/tests/test-sintetico.sh
+HITS_L_POS="$(check_test_exec_bits "$SYNTH_DIR_L")"
+rm -rf "$SYNTH_DIR_L"
+if [ -z "$HITS_L_POS" ]; then
+    pass "[L] no marca un test-*.sh en modo 755 ya agregado al indice (sin falsos positivos)"
+else
+    fail "falso positivo de [L] sobre un test-*.sh ya en modo 755: $HITS_L_POS"
 fi
 
 # -------- Resumen --------
