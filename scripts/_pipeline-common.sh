@@ -153,10 +153,10 @@ resolve_harness_config_path() {
 #                                 mismo estandar (MEF-ADR-0045). "001" si el campo esta
 #                                 ausente o vacio -- nunca aborta la carga.
 #
-# Campos opcionales del config (no se exportan via load_harness_config; se leen
-# inline desde "$HARNESS_CONFIG_PATH" -- la ruta efectiva que esta funcion
-# exporta abajo (contrato canonico, o legacy solo como fallback de lectura)
-# -- donde se necesitan):
+# Campos opcionales del config (no se exportan via load_harness_config; quien
+# los necesite hace jq inline sobre "$HARNESS_CONFIG_PATH", la ruta efectiva
+# que esta funcion exporta: el contrato canonico, o el legacy solo como
+# fallback de lectura):
 #   repoSlug  - Slug owner/repo del fork de Mefisto a usar para drafts cross-repo
 #               y mensajes de error. Default: augusto-romero-arango/eda-evsourcing-azure-harness
 #

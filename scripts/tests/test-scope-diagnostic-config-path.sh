@@ -83,12 +83,16 @@ echo "[2] Config legacy resuelto por load_harness_config (sin canonico)"
     set +u
     source "$LIB" 2>/dev/null
     fixture=$(make_scope_fixture)
-    trap 'rm -rf "$fixture"' EXIT
+    trap 'rm -rf "$fixture" "${neutral:-}"' EXIT
     legacy_config="$fixture/.claude/harness.config.json"
     write_minimal_config "$legacy_config" "org/legacy-fork"
     base=$(git -C "$fixture" rev-parse HEAD)
+    neutral=$(mktemp -d)
     (
         cd "$fixture" && load_harness_config >/dev/null 2>&1
+        # El cwd neutral (sin config alguno) prueba CA-2: el slug sale de
+        # HARNESS_CONFIG_PATH ya exportada, no de una lectura relativa al cwd.
+        cd "$neutral" || exit 1
         output=$(validate_consumer_scope_changes "$fixture" "$base" 2>&1 >/dev/null)
         if grep -Fq "pertenecen al plugin (repo org/legacy-fork)" <<< "$output" \
             && grep -Fq "gh issue create -R org/legacy-fork" <<< "$output" \
@@ -137,10 +141,16 @@ echo "[4] Config sin repoSlug -> default"
 ) | tail -n1 | grep -q '^OK$' && pass "config sin repoSlug aplica el default" || fail "config sin repoSlug no aplico el default"
 
 echo "[5] Anti-regresion: no reaparece una lectura directa del literal legacy"
-if grep -Eq '(^|[;&|[:space:]])(jq|cat)[[:space:]].*\.claude/harness\.config\.json|<[[:space:]]*[^[:space:]]*\.claude/harness\.config\.json' "$LIB"; then
+# El '(' del char class inicial cubre la forma real del mutante: repo_slug=$(jq ...).
+if grep -Eq '(^|[;&|([:space:]])(jq|cat)[[:space:]].*\.claude/harness\.config\.json|<[[:space:]]*[^[:space:]]*\.claude/harness\.config\.json' "$LIB"; then
     fail "reaparecio una lectura directa del literal .claude/harness.config.json"
 else
     pass "no hay lecturas directas del literal .claude/harness.config.json"
+fi
+if grep -Fq "jq -r '.repoSlug // empty' \"\$HARNESS_CONFIG_PATH\"" "$LIB"; then
+    pass "repoSlug se lee desde HARNESS_CONFIG_PATH"
+else
+    fail "repoSlug no usa HARNESS_CONFIG_PATH"
 fi
 
 echo "----------------------------------------"
