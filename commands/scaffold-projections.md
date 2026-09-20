@@ -18,15 +18,23 @@ fi
 
 ## Pre-condicion 2: token `projections.enabled` (CA-1)
 
-El worker solo se genera si el BC declaro explicitamente que adopta proyecciones. El token vive en `.claude/harness.config.json` bajo `projections.enabled` -- mecanismo de deteccion que fija MEF-ADR-0034 (seccion 8); su contrato formal completo en `harness.config.json` (validacion via `HARNESS_PROJECTIONS_ENABLED` en `load_harness_config`, reporte de `/onboard`) lo fija el issue #369. Este skill sigue consumiendo el token en la forma minima que necesita (no pasa por `load_harness_config`, que requiere `boundedContext` obligatorio y otros campos que este skill no necesita).
+El worker solo se genera si el BC declaro explicitamente que adopta proyecciones. El token vive en el contrato canonico `.mefisto/harness.config.json` bajo `projections.enabled`; `.claude/harness.config.json` se acepta solo como fallback de lectura si el canonico no existe (MEF-ADR-0053, decision 4). El mecanismo de deteccion lo fija MEF-ADR-0034 (seccion 8); su contrato formal completo en `harness.config.json` (validacion via `HARNESS_PROJECTIONS_ENABLED` en `load_harness_config`, reporte de `/onboard`) lo fija el issue #369. Este skill sigue consumiendo el token en la forma minima que necesita (no pasa por `load_harness_config`, que requiere `boundedContext` obligatorio y otros campos que este skill no necesita).
 
 Cada bloque `bash` corre en un shell nuevo: `REPO_ROOT` se vuelve a derivar aqui, no se hereda del bloque anterior (mismo patron que `/onboard`, que lo re-deriva en cada bloque).
 
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
-CONFIG="$REPO_ROOT/.claude/harness.config.json"
-if [ ! -f "$CONFIG" ]; then
-    echo "ERROR: no existe .claude/harness.config.json. Corre /onboard antes de este skill."
+CONFIG="$REPO_ROOT/.mefisto/harness.config.json"
+LEGACY_CONFIG="$REPO_ROOT/.claude/harness.config.json"
+if [ -f "$CONFIG" ]; then
+    if [ -f "$LEGACY_CONFIG" ]; then
+        echo "AVISO: se usara el config canonico $CONFIG; se ignora el legacy $LEGACY_CONFIG. Migra o elimina conscientemente el archivo legacy para evitar divergencias." >&2
+    fi
+elif [ -f "$LEGACY_CONFIG" ]; then
+    CONFIG="$LEGACY_CONFIG"
+else
+    echo "ERROR: no se encontro el config canonico requerido .mefisto/harness.config.json."
+    echo "  Se acepta solo para lectura el fallback legacy .claude/harness.config.json. Corre /onboard antes de este skill."
     exit 1
 fi
 # Sin '//' en el filtro jq: 'false // "null"' devuelve "null" (false es falsy en jq) y
@@ -38,10 +46,10 @@ if [ "$RAW" != "true" ]; then
     else
         MOTIVO="deshabilitado (projections.enabled = $RAW)"
     fi
-    echo "ERROR: el token 'projections.enabled' esta $MOTIVO en .claude/harness.config.json."
+    echo "ERROR: el token 'projections.enabled' esta $MOTIVO en .mefisto/harness.config.json."
     echo ""
     echo "Este BC no declaro que adopta el worker de proyecciones (MEF-ADR-0034)."
-    echo "Para habilitarlo, agrega en .claude/harness.config.json:"
+    echo "Para habilitarlo, agrega en .mefisto/harness.config.json:"
     echo ""
     echo '  "projections": { "enabled": true }'
     echo ""
