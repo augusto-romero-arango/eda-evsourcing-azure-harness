@@ -90,13 +90,6 @@
       "motivo": "Documentacion arquitectonica del contrato neutral (MEF-ADR-0049): describe DELIBERADAMENTE ambos runtimes, sus CLIs (`claude -p`, `opencode run`), los alias de modelo que el contrato prohibe (`sonnet`, `opus`, `haiku`, `fable`) y la ruta legacy `.claude/pipeline`, precisamente para explicar por que estan prohibidos en la fuente neutral. No es codigo ejecutable ni fuente neutral sujeta a esas reglas."
     },
     {
-      "path": ".claude/skills/harness-config-contract/SKILL.md",
-      "rules": [
-        "R2"
-      ],
-      "motivo": "Documenta el log append-only de sesiones que el hook SessionStart anota en cada arranque, incluidas las sesiones headless de `claude -p` que corren los stages: prosa descriptiva, no invocacion."
-    },
-    {
       "path": "src/internal/scripts/lib/runtime-fake.sh",
       "rules": [
         "R1"
