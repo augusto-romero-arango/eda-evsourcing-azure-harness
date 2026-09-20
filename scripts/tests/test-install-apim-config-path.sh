@@ -30,6 +30,12 @@ extract_bash_after_heading() {
 
 FLIP_BLOCK="$(extract_bash_after_heading '#### 9.2 Flip del token')"
 COMMIT_BLOCK="$(extract_bash_after_heading '### 10. Commitear la migracion de tenancy')"
+STAGE_BLOCK="$(awk '/^if \[ "\$TENANCY_TOKEN_FLIPPED" = true \]; then$/,/^fi$/' <<< "$COMMIT_BLOCK")"
+BASH_BLOCKS="$(awk '
+    /^```bash$/ { inside=1; next }
+    /^```$/ && inside { inside=0; next }
+    inside { print }
+' "$COMMAND")"
 
 write_config() {
     local path="$1" strategy="$2" extra="$3"
@@ -47,7 +53,13 @@ prepare_repo() {
 
 run_flip() {
     local repo="$1" output="$2"
-    (cd "$repo" && bash -c "$FLIP_BLOCK") >"$output" 2>&1
+    (cd "$repo" && bash -c "$FLIP_BLOCK
+$STAGE_BLOCK") >"$output" 2>&1
+}
+
+canonical_is_staged() {
+    local repo="$1"
+    git -C "$repo" diff --cached --name-only --diff-filter=A | grep -Fxq '.mefisto/harness.config.json'
 }
 
 assert_valid_flip() {
@@ -67,6 +79,11 @@ prepare_repo "$CANON"
 write_config "$CANON/.mefisto/harness.config.json" 'mono-tenant-transitorio' 'preservar'
 if run_flip "$CANON" "$WORK/canonico.out"; then
     assert_valid_flip 'canónico etapa (a)' "$CANON" "$WORK/canonico.out"
+    if canonical_is_staged "$CANON"; then
+        pass 'canónico etapa (a) agrega al índice el config efectivamente escrito'
+    else
+        fail 'canónico etapa (a) no agregó al índice el config efectivamente escrito'
+    fi
 else
     fail "canónico etapa (a) abortó: $(cat "$WORK/canonico.out")"
 fi
@@ -77,7 +94,8 @@ prepare_repo "$ALREADY"
 write_config "$ALREADY/.mefisto/harness.config.json" 'multi-tenant-header' 'preservar'
 BEFORE="$(cksum "$ALREADY/.mefisto/harness.config.json")"
 if run_flip "$ALREADY" "$WORK/ya-b.out" && [ "$BEFORE" = "$(cksum "$ALREADY/.mefisto/harness.config.json")" ] \
-    && grep -Fq 'ya esta en etapa (b)' "$WORK/ya-b.out"; then
+    && grep -Fq 'ya esta en etapa (b)' "$WORK/ya-b.out" \
+    && ! canonical_is_staged "$ALREADY"; then
     pass 'canónico etapa (b) no toca el archivo'
 else
     fail "canónico etapa (b) modificó o no reportó el archivo: $(cat "$WORK/ya-b.out")"
@@ -92,8 +110,10 @@ LEGACY_BEFORE="$(cksum "$BOTH/.claude/harness.config.json")"
 if run_flip "$BOTH" "$WORK/ambos.out"; then
     assert_valid_flip 'coexistencia divergente' "$BOTH" "$WORK/ambos.out"
     if [ "$LEGACY_BEFORE" = "$(cksum "$BOTH/.claude/harness.config.json")" ] \
-        && grep -Fq 'se ignora el legacy' "$WORK/ambos.out"; then
-        pass 'coexistencia lee y escribe solo el canónico; legacy intacto'
+        && grep -Fq 'se ignora el legacy' "$WORK/ambos.out" \
+        && canonical_is_staged "$BOTH" \
+        && ! git -C "$BOTH" diff --cached --name-only | grep -Fxq '.claude/harness.config.json'; then
+        pass 'coexistencia lee, escribe y agrega solo el canónico; legacy intacto'
     else
         fail "coexistencia no preservó el legacy o no emitió aviso: $(cat "$WORK/ambos.out")"
     fi
@@ -134,15 +154,10 @@ else
 fi
 
 echo '[5] Antirregresión de instrucciones directas legacy y staging'
-if grep -Eq 'jq[[:space:]].*\.claude/harness\.config\.json' "$COMMAND"; then
-    fail 'reapareció una lectura o escritura jq directa del config legacy'
+if grep -Fq '.claude/harness.config.json' <<< "$BASH_BLOCKS"; then
+    fail 'reapareció una lectura, escritura o staging directo del config legacy en un bloque bash'
 else
-    pass 'no hay lectura ni escritura jq directa del config legacy'
-fi
-if grep -Eq 'git add[[:space:]]+\.claude/harness\.config\.json' "$COMMAND"; then
-    fail 'reapareció git add directo del config legacy'
-else
-    pass 'el staging no nombra el config legacy'
+    pass 'ningún bloque bash lee, escribe ni agrega directamente el config legacy'
 fi
 if grep -Fq 'source "$COMMON"' <<< "$FLIP_BLOCK" \
     && grep -Fq 'CONFIG=$(resolve_harness_config_path write "$REPO_ROOT")' <<< "$FLIP_BLOCK" \
