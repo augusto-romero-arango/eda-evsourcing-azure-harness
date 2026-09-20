@@ -41,7 +41,7 @@ El texto de la idea esta en: $ARGUMENTS
    - **Titulo**: usa el formato `[verbo infinitivo] [que cosa]`. Maximo 70 caracteres.
    - **Tipo probable**: `tipo:feature` (default), `tipo:infra`, `tipo:refactor`, o `tipo:tooling`
    - **Es un defecto?**: si la idea describe un bug o defecto, agregar tambien el label `bug` (ademas del `tipo:` que corresponda; default `tipo:refactor` para bugs)
-   - **Dominio probable**: lee la lista de dominios validos de `.claude/harness.config.json` (campo `domainLabels`) y elige el que mejor encaje. Si no queda claro, omite el label de dominio.
+   - **Dominio probable**: lee la lista de dominios validos de `.mefisto/harness.config.json` (campo `domainLabels`; `.claude/harness.config.json` solo se acepta como fallback de lectura, MEF-ADR-0053) y elige el que mejor encaje. Si no queda claro, omite el label de dominio.
 
 3. Crea el issue:
 

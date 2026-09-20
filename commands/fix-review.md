@@ -297,9 +297,16 @@ fi
 
 Reutiliza el mismo routing que el `planner` y el `tooling-investigator` publicados (ver `CLAUDE.md` "Routing cross-repo: solo drafts" y MEF-ADR-0019). Lee el slug del repo de Mefisto (configurable para forks):
 
+Ruta efectiva del config (contrato canonico `.mefisto/harness.config.json`; `.claude/harness.config.json` solo como fallback de lectura si el canonico no existe, MEF-ADR-0053 decision 4); `repoSlug` es opcional -- si no hay config, falta el campo o esta vacio, aplica el default sin abortar:
+
 ```bash
-HARNESS_REPO_SLUG=$(jq -r '.repoSlug // empty' .claude/harness.config.json 2>/dev/null)
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+CONFIG="$REPO_ROOT/.mefisto/harness.config.json"
+[ -f "$CONFIG" ] || CONFIG="$REPO_ROOT/.claude/harness.config.json"
+HARNESS_REPO_SLUG=""
+[ -f "$CONFIG" ] && HARNESS_REPO_SLUG=$(jq -r '.repoSlug // empty' "$CONFIG" 2>/dev/null)
 [ -z "$HARNESS_REPO_SLUG" ] && HARNESS_REPO_SLUG="augusto-romero-arango/eda-evsourcing-azure-harness"
+echo "$HARNESS_REPO_SLUG"
 ```
 
 Crea un draft por cada ajuste aprobado (o uno agrupando ajustes al mismo agente), describiendo el gap y el cambio propuesto:

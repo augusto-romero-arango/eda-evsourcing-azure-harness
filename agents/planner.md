@@ -94,9 +94,16 @@ Antes de crear o refinar cualquier issue, decide a qué **repo** pertenece:
 
 ### Slug del repo de Mefisto
 
+Lee `repoSlug` desde la ruta efectiva del config (contrato canonico `.mefisto/harness.config.json`; `.claude/harness.config.json` solo como fallback de lectura si el canonico no existe, MEF-ADR-0053 decision 4). El campo es opcional: si no hay config, falta el campo o esta vacio, aplica el default sin abortar.
+
 ```bash
-HARNESS_REPO_SLUG=$(jq -r '.repoSlug // empty' .claude/harness.config.json 2>/dev/null)
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+CONFIG="$REPO_ROOT/.mefisto/harness.config.json"
+[ -f "$CONFIG" ] || CONFIG="$REPO_ROOT/.claude/harness.config.json"
+HARNESS_REPO_SLUG=""
+[ -f "$CONFIG" ] && HARNESS_REPO_SLUG=$(jq -r '.repoSlug // empty' "$CONFIG" 2>/dev/null)
 [ -z "$HARNESS_REPO_SLUG" ] && HARNESS_REPO_SLUG="augusto-romero-arango/eda-evsourcing-azure-harness"
+echo "$HARNESS_REPO_SLUG"
 ```
 
 ### Crear draft cross-repo (única operación permitida hacia Mefisto)
@@ -788,7 +795,7 @@ Sin prefijos de tipo, dominio o número en el título. Los labels y el número d
 
 ### Template para issues de dominio
 
-Cuando una idea esté lista para convertirse en issue, confirma con el usuario el tipo y el dominio, y usa (los `dom:` válidos viven en `.claude/harness.config.json`, campo `domainLabels`):
+Cuando una idea esté lista para convertirse en issue, confirma con el usuario el tipo y el dominio, y usa (los `dom:` válidos viven en `.mefisto/harness.config.json`, campo `domainLabels`; `.claude/harness.config.json` solo se acepta como fallback de lectura, MEF-ADR-0053):
 
 ```bash
 gh issue create \

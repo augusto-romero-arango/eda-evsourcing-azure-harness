@@ -13,7 +13,7 @@ Eres el investigador de bugs de tooling de este proyecto. Tu trabajo es diagnost
 
 Antes de investigar, orienta tu contexto leyendo solo lo que existe en el repo del consumidor:
 - `CLAUDE.md` — el stack, los principios, la arquitectura (incluye los "Tokens del harness")
-- `.claude/harness.config.json` — tokens operativos del consumidor que consumen los pipelines
+- `.mefisto/harness.config.json` — tokens operativos del consumidor que consumen los pipelines (`.claude/harness.config.json` solo se acepta como fallback de lectura si el canonico no existe, MEF-ADR-0053 decision 4)
 - `docs/bitacora/field-notes/` — investigaciones recientes (no repetir terreno ya cubierto)
 - `.github/workflows/`, `tests/`, `scripts/`, `infra/`, `src/` propios del consumidor cuando el sintoma los mencione
 
@@ -51,8 +51,9 @@ Inspecciona la configuracion local del consumidor:
 
 ```bash
 # Configuracion del harness (la fuente de verdad de los pipelines)
+ls -la .mefisto/ 2>/dev/null
 ls -la .claude/
-cat .claude/harness.config.json 2>/dev/null || echo "No existe"
+cat .mefisto/harness.config.json 2>/dev/null || cat .claude/harness.config.json 2>/dev/null || echo "No existe"
 
 # Workflows y scripts del consumidor (no del plugin)
 ls .github/workflows/ 2>/dev/null
@@ -115,15 +116,22 @@ Antes de proponer `gh issue create`, decide donde vive la causa raiz:
 | Causa raiz vive en | Repo destino | Como |
 |---|---|---|
 | Pipeline bash del plugin, agente del plugin, skill del plugin, hook (`hooks/hooks.json`), ADR del marco (`docs/adr/`), metadata del plugin (`.claude-plugin/`) | **Repo de Mefisto** | Crear DRAFT con `gh -R` y `estado:borrador` |
-| Workflow del consumidor (`.github/workflows/`), configuracion del consumidor (`.claude/harness.config.json`, `.claude/settings.json`), fixtures/helpers del consumidor (`tests/`), Terraform del consumidor (`infra/`), codigo de dominio (`src/`) | **Repo del consumidor** (este) | Crear issue completo con labels del consumidor |
+| Workflow del consumidor (`.github/workflows/`), configuracion del consumidor (`.mefisto/harness.config.json` -- `.claude/harness.config.json` solo como fallback de lectura, MEF-ADR-0053 -- , `.claude/settings.json`), fixtures/helpers del consumidor (`tests/`), Terraform del consumidor (`infra/`), codigo de dominio (`src/`) | **Repo del consumidor** (este) | Crear issue completo con labels del consumidor |
 | Ambiguo (parece tocar ambos lados) | Preguntar al usuario antes de crear | -- |
 
 #### Si el bug vive en Mefisto: crear DRAFT cross-repo
 
 Lee el slug del repo de Mefisto (configurable para forks):
+
+Ruta efectiva del config (contrato canonico `.mefisto/harness.config.json`; `.claude/harness.config.json` solo como fallback de lectura si el canonico no existe, MEF-ADR-0053 decision 4); `repoSlug` es opcional -- si no hay config, falta el campo o esta vacio, aplica el default sin abortar:
 ```bash
-HARNESS_REPO_SLUG=$(jq -r '.repoSlug // empty' .claude/harness.config.json 2>/dev/null)
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+CONFIG="$REPO_ROOT/.mefisto/harness.config.json"
+[ -f "$CONFIG" ] || CONFIG="$REPO_ROOT/.claude/harness.config.json"
+HARNESS_REPO_SLUG=""
+[ -f "$CONFIG" ] && HARNESS_REPO_SLUG=$(jq -r '.repoSlug // empty' "$CONFIG" 2>/dev/null)
 [ -z "$HARNESS_REPO_SLUG" ] && HARNESS_REPO_SLUG="augusto-romero-arango/eda-evsourcing-azure-harness"
+echo "$HARNESS_REPO_SLUG"
 ```
 
 Crea el draft (con confirmacion del usuario):
@@ -147,7 +155,7 @@ Si `gh -R` falla con 403 (sin permisos), no insistas: indica al usuario que cree
 gh issue create --title "Corregir [descripcion]" --body "..." --label "bug,tipo:tooling,estado:listo"
 ```
 
-**No agregues `dom:tooling`.** Los labels `dom:*` son para dominios de negocio (los que vienen de `domainLabels` en `.claude/harness.config.json`); tooling no es un dominio. `setup-github-labels.sh` no provisiona `dom:tooling`, asi que agregarlo provoca fallos o requiere creacion manual. Esto se alinea con `mefisto-investigator` (el investigador interno de Mefisto), que tambien usa solo `tipo:tooling` sin `dom:`.
+**No agregues `dom:tooling`.** Los labels `dom:*` son para dominios de negocio (los que vienen de `domainLabels` en `.mefisto/harness.config.json`; `.claude/harness.config.json` solo se acepta como fallback de lectura, MEF-ADR-0053); tooling no es un dominio. `setup-github-labels.sh` no provisiona `dom:tooling`, asi que agregarlo provoca fallos o requiere creacion manual. Esto se alinea con `mefisto-investigator` (el investigador interno de Mefisto), que tambien usa solo `tipo:tooling` sin `dom:`.
 
 ### Workarounds inmediatos
 
