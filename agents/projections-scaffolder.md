@@ -63,12 +63,29 @@ fi
 
 ## Paso 0 - Resolver tokens del consumidor
 
-Lee `CLAUDE.md` raiz del proyecto (seccion "Tokens del harness") para resolver:
+```bash
+if [ -f "AGENTS.md" ]; then
+    if [ -f "CLAUDE.md" ]; then
+        printf '%s\n' 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
+    fi
+    MEFISTO_INSTRUCTIONS_PATH="AGENTS.md"
+elif [ -f "CLAUDE.md" ]; then
+    MEFISTO_INSTRUCTIONS_PATH="CLAUDE.md"
+else
+    printf '%s\n' 'ERROR: no se encontro AGENTS.md, la fuente canonica de directivas del consumidor.' >&2
+    printf '%s\n' '  Se acepta solo para lectura el fallback legacy CLAUDE.md.' >&2
+    printf '%s\n' '  Ejecuta /mefisto:onboard para diagnosticar y completar el contrato del consumidor.' >&2
+    exit 1
+fi
+export MEFISTO_INSTRUCTIONS_PATH
+```
+
+Lee `${MEFISTO_INSTRUCTIONS_PATH}` (seccion "Tokens del harness") para resolver:
 
 - `<RootNamespace>` -- prefijo del namespace .NET (token `RootNamespace`).
 - `<SolutionFile>` -- nombre del archivo de solucion (token `SolutionFile`).
 
-Si `CLAUDE.md` no declara alguno de los dos, detente y pide al usuario que los declare antes de continuar.
+Si `AGENTS.md` no declara alguno de los dos, detente y pide al usuario que los declare antes de continuar. No crees, copies, migres ni escribas `AGENTS.md` ni el fallback legacy.
 
 **Probe de idempotencia (gate de todo el Paso 1):**
 
