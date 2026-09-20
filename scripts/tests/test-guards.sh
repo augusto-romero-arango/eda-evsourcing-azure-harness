@@ -1257,9 +1257,26 @@ check_test_exec_bits() {
     done
 
     # Modo versionado: un archivo sin trackear no aparece en 'ls-files -s' y
-    # por lo tanto se juzga solo por el chequeo de disco de arriba.
-    git -C "$repo_root" ls-files -s -- 'scripts/tests/test-*.sh' '.claude/scripts/tests/test-*.sh' 2>/dev/null |
-        awk '$1 == "100644" { print $4 }' |
+    # por lo tanto se juzga solo por el chequeo de disco de arriba. El pathspec
+    # es el directorio a secas y el recorte a un solo nivel lo hace awk: un
+    # pathspec con glob ('scripts/tests/test-*.sh') NO equivale a -maxdepth 1
+    # porque el '*' de git cruza '/' salvo con la magia :(glob), asi que
+    # marcaria archivos de subdirectorios que el inventario nunca escanea.
+    # awk parte por TAB (el formato de ls-files -s es '<modo> <sha> <stage>\t<ruta>')
+    # para no romperse con rutas que contengan espacios.
+    git -C "$repo_root" ls-files -s -- scripts/tests .claude/scripts/tests 2>/dev/null |
+        awk -F'\t' '
+            {
+                split($1, meta, " ")
+                if (meta[1] != "100644") next
+                path = $2
+                n = split(path, seg, "/")
+                base = seg[n]
+                if (base !~ /^test-/ || base !~ /\.sh$/) next
+                dir = substr(path, 1, length(path) - length(base) - 1)
+                if (dir != "scripts/tests" && dir != ".claude/scripts/tests") next
+                print path
+            }' |
         while IFS= read -r rel; do
             [ -z "$rel" ] && continue
             printf '%s: versionado en git con modo 100644 (chmod +x %s && git add %s)\n' "$rel" "$rel" "$rel"
@@ -1282,17 +1299,26 @@ SYNTH_DIR_L=$(mktemp -d)
 git -C "$SYNTH_DIR_L" init -q -b main
 git -C "$SYNTH_DIR_L" config user.email "test@local"
 git -C "$SYNTH_DIR_L" config user.name "Test"
-mkdir -p "$SYNTH_DIR_L/scripts/tests"
+mkdir -p "$SYNTH_DIR_L/scripts/tests/fixtures"
 printf '#!/usr/bin/env bash\necho ok\n' > "$SYNTH_DIR_L/scripts/tests/test-sintetico.sh"
 chmod 644 "$SYNTH_DIR_L/scripts/tests/test-sintetico.sh"
-git -C "$SYNTH_DIR_L" add scripts/tests/test-sintetico.sh
+# Anidado en 644: fuera del alcance (-maxdepth 1), no debe reportarse nunca.
+printf '#!/usr/bin/env bash\necho ok\n' > "$SYNTH_DIR_L/scripts/tests/fixtures/test-anidado.sh"
+chmod 644 "$SYNTH_DIR_L/scripts/tests/fixtures/test-anidado.sh"
+git -C "$SYNTH_DIR_L" add scripts/tests/test-sintetico.sh scripts/tests/fixtures/test-anidado.sh
 git -C "$SYNTH_DIR_L" commit -q -m "base"
 
 HITS_L_NEG="$(check_test_exec_bits "$SYNTH_DIR_L")"
-if [ -n "$HITS_L_NEG" ]; then
+if echo "$HITS_L_NEG" | grep -q 'scripts/tests/test-sintetico\.sh'; then
     pass "[L] detecta un test-*.sh en modo 644 en un repo sintetico"
 else
     fail "[L] NO detecto un test-*.sh en modo 644 (guard ciego)"
+fi
+
+if echo "$HITS_L_NEG" | grep -q 'fixtures/test-anidado\.sh'; then
+    fail "falso positivo de [L]: reporto un test-*.sh anidado, fuera del alcance -maxdepth 1"
+else
+    pass "[L] ignora un test-*.sh anidado en fixtures/ (mismo alcance que _mefisto_test_inventory_scan_lane)"
 fi
 
 chmod 755 "$SYNTH_DIR_L/scripts/tests/test-sintetico.sh"
