@@ -58,7 +58,18 @@ else
     fail "el consumidor canonico no resolvio AGENTS.md (out='$out', err='$(cat "$WORK/canonico.err")')"
 fi
 
-echo "[2] Consumidor solo legacy"
+echo "[2] Consumidor canonico con puente minimo"
+BRIDGE="$WORK/puente"; mkdir -p "$BRIDGE"
+write_tokens "$BRIDGE/AGENTS.md" Puente
+printf '@AGENTS.md\n' > "$BRIDGE/CLAUDE.md"
+out="$(resolve "$BRIDGE" 2>"$WORK/puente.err")"; rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = 'AGENTS.md' ] && [ "$(tokens "$BRIDGE/$out")" = 'RootNamespace: Puente.Namespace|SolutionFile: Puente.slnx|ProjectDisplayName: Puente Display|BoundedContext: Puente Context|' ] && grep -Fqx 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' "$WORK/puente.err"; then
+    pass "el puente minimo no impide resolver los cuatro tokens canonicos"
+else
+    fail "el consumidor con puente minimo no resolvio AGENTS.md (out='$out', err='$(cat "$WORK/puente.err")')"
+fi
+
+echo "[3] Consumidor solo legacy"
 LEGACY="$WORK/legacy"; mkdir -p "$LEGACY"
 write_tokens "$LEGACY/CLAUDE.md" Legacy
 out="$(resolve "$LEGACY" 2>"$WORK/legacy.err")"; rc=$?
@@ -68,7 +79,7 @@ else
     fail "el fallback legacy no resolvio como se esperaba (out='$out', err='$(cat "$WORK/legacy.err")')"
 fi
 
-echo "[3] Coexistencia"
+echo "[4] Coexistencia divergente"
 BOTH="$WORK/ambos"; mkdir -p "$BOTH"
 write_tokens "$BOTH/AGENTS.md" Canonico
 write_tokens "$BOTH/CLAUDE.md" Legacy
@@ -79,7 +90,7 @@ else
     fail "la coexistencia no uso exclusivamente AGENTS.md (out='$out', err='$(cat "$WORK/ambos.err")')"
 fi
 
-echo "[4] Ausencia"
+echo "[5] Ausencia"
 MISSING="$WORK/ausente"; mkdir -p "$MISSING"
 out="$(resolve "$MISSING" 2>"$WORK/ausente.err")"; rc=$?
 if [ "$rc" -ne 0 ] && [ -z "$out" ] && grep -Fqx 'ERROR: no se encontro AGENTS.md, la fuente canonica de directivas del consumidor.' "$WORK/ausente.err" && grep -Fqx '  Ejecuta /mefisto:onboard para diagnosticar y completar el contrato del consumidor.' "$WORK/ausente.err"; then
@@ -88,19 +99,41 @@ else
     fail "la ausencia no aborto con el diagnostico esperado (rc=$rc, out='$out', err='$(cat "$WORK/ausente.err")')"
 fi
 
-echo "[5] Prosa y lecturas"
+echo "[6] Prosa y lecturas"
 if grep -Fq 'Tokens de `CLAUDE.md`' "$AGENT" || grep -Fq '`CLAUDE.md` raiz' "$AGENT"; then
     fail "reaparecio una referencia legacy directa a los tokens"
 else
     pass "la prosa no remite los tokens a CLAUDE.md"
 fi
-if grep -Eiq '(lee|leela|Read)[^\n]*CLAUDE\.md' "$AGENT"; then
-    fail "reaparecio una instruccion de leer tokens desde CLAUDE.md"
+if python3 - "$AGENT" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text()
+blocks = re.findall(r"```bash\n(.*?)\n```", text, re.S)
+resolver = next((block for block in blocks if "MEFISTO_INSTRUCTIONS_PATH" in block), None)
+if resolver is None:
+    raise SystemExit(1)
+prose = text.replace(f"```bash\n{resolver}\n```", "", 1)
+direct_read = re.compile(
+    r"(?:lee|leela|leer|Read)[^\n]*CLAUDE\.md|"
+    r"CLAUDE\.md[^\n]*(?:tokens?[^\n]*(?:viene|sale|resuelve)|(?:lee|leela|leer|Read)[^\n]*tokens?)",
+    re.IGNORECASE,
+)
+if direct_read.search(prose):
+    raise SystemExit(1)
+PY
+then
+    pass "no hay lectura directa de tokens desde CLAUDE.md fuera del fallback"
 else
-    pass "no hay lectura directa de tokens desde CLAUDE.md"
+    fail "reaparecio una instruccion de leer tokens desde CLAUDE.md fuera del fallback"
 fi
-if grep -Fq '`${MEFISTO_INSTRUCTIONS_PATH}`' "$AGENT" && grep -Fq 'Si `AGENTS.md` no declara alguno de los cuatro' "$AGENT"; then
-    pass "la prosa usa el archivo efectivo y remite la declaracion a AGENTS.md"
+if grep -Fq '`${MEFISTO_INSTRUCTIONS_PATH}`' "$AGENT" \
+    && grep -Fq 'Si el archivo efectivo no declara alguno de los cuatro' "$AGENT" \
+    && grep -Fq 'los declare en `AGENTS.md`, seccion "Tokens del harness"' "$AGENT" \
+    && grep -Fq 'No crees, copies, migres ni escribas `AGENTS.md` ni el fallback legacy `CLAUDE.md`.' "$AGENT"; then
+    pass "la prosa usa el archivo efectivo, remite la declaracion a AGENTS.md y prohibe mutar instrucciones"
 else
     fail "la prosa no conserva el contrato del archivo efectivo"
 fi

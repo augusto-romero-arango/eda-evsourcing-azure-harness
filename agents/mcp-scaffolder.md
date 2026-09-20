@@ -64,7 +64,7 @@ printf '%s\n' "$MEFISTO_INSTRUCTIONS_PATH"
 - `ProjectDisplayName` -- nombre legible del proyecto (para `host.json.extensions.mcp.serverName`).
 - `BoundedContext` -- nombre del BC (para el texto de `instructions` de `host.json`).
 
-Si `AGENTS.md` no declara alguno de los cuatro, detente y pide al usuario que los declare en su seccion "Tokens del harness" antes de continuar.
+Si el archivo efectivo no declara alguno de los cuatro, detente y pide al usuario que los declare en `AGENTS.md`, seccion "Tokens del harness", antes de continuar. No crees, copies, migres ni escribas `AGENTS.md` ni el fallback legacy `CLAUDE.md`.
 
 **El dominio de ejemplo**, del contrato canonico `.mefisto/harness.config.json`; acepta
 `.claude/harness.config.json` solo como fallback de lectura si el canonico no existe
