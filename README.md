@@ -22,7 +22,7 @@ Plugin de [Claude Code](https://code.claude.com/docs/en/plugins) que provee un h
 - **Skills** (slash commands): `/onboard`, `/upgrade`, `/runtimes`, `/implement`, `/tooling`, `/infra`, `/infra-base`, `/scaffold`, `/scaffold-projections`, `/scaffold-mcp`, `/seed-secret`, `/install-workos`, `/install-apim`, `/install-auth`, `/parallel`, `/batch-stop`, `/next-order`, `/sequential`, `/bug`, `/draft`, `/fix-review`, `/health-check`, `/work-status`, `/eraser-diagram`, `/merge`, `/bitacora`, `/purge-store`.
 - **Agentes** especializados: `planner`, `test-writer`, `implementer`, `projection-test-writer`, `projection-implementer`, `projections-scaffolder`, `reviewer`, `smoke-test-writer`, `domain-scaffolder`, `infra-base-scaffolder`, `apim-gateway-scaffolder`, `workos-identity-scaffolder`, `historiador`, `infra-writer`, `infra-reviewer`, `infra-bootstrap`, `pr-sync`, `bug-investigator`, `tooling-investigator`.
 - **Pipelines bash** que orquestan el ciclo TDD, IaC y tooling sobre `tmux` y `git worktree`.
-- **ADRs** del marco arquitectónico (prefijo `MEF-ADR-`, ver índice temático en `CLAUDE.md`).
+- **ADRs** del marco arquitectónico (prefijo `MEF-ADR-`, ver [índice temático](docs/adr/INDICE-TEMATICO.md)).
 - **Hooks** para logging del pipeline.
 - Un **servidor MCP bundleado**: `microsoft-learn` (endpoint remoto oficial `https://learn.microsoft.com/api/mcp`, HTTP sin autenticación). En Claude Code se declara en `.mcp.json`; en OpenCode se proyecta globalmente como plugin local, sin modificar `opencode.json`. Terraform permanece externo: su instalación y los permisos por artefacto no forman parte de este bundle (la traducción de permisos OpenCode llega en #1145). Discovery certificado; invocación real no certificada — ver el veredicto de [`docs/testing/opencode-consumer-cutover.md`](docs/testing/opencode-consumer-cutover.md#veredicto-final-del-corte-vertical-1066).
 
@@ -167,7 +167,7 @@ Crea (o extiende) `.claude/settings.json` en la raíz del repo consumidor con tr
 
 ### 3. Configurar el consumidor
 
-Crea `.claude/harness.config.json` en la raíz del proyecto consumidor:
+Crea `.mefisto/harness.config.json` en la raíz del proyecto consumidor. Agrega exactamente `.mefisto/pipeline/` a tu `.gitignore` — nunca ignores `.mefisto/` completo: `.mefisto/harness.config.json` debe versionarse (misma regla que valida `/mefisto:onboard`, ver `scripts/onboard-diagnose.sh`):
 
 ```json
 {
@@ -360,7 +360,7 @@ Comprueba que el plugin cargó (mismo criterio que "Verificar instalación", pas
 
 > **Por qué scope `user` y no `project` (requisito para los pipelines).** Los pipelines (`/infra`, `/implement`, `/scaffold`) **no** corren sus agentes dentro de tu repo: crean un **git worktree** en `${REPO_ROOT}/../<rama>` —un directorio **hermano del repo consumidor, fuera de él**— e invocan cada agente ahí con `claude -p ... --agent <nombre> ...` (ver `scripts/iac-pipeline.sh`, `scripts/tdd-pipeline.sh` y `scripts/scaffold-pipeline.sh`, que comparten el patrón `WORKTREE_PATH="${REPO_ROOT}/../${BRANCH_NAME}"`). Con el plugin a **scope `project`**, Claude Code solo lo carga para el path del repo consumidor; ese worktree hermano queda fuera de alcance, el agente no se encuentra y el pipeline aborta con `agent '<nombre>' not found`. El **scope `user`** carga el plugin para todos los paths de tu usuario —incluido el worktree—, por eso es **requisito antes del paso 5 (Bootstrap de infraestructura / `/infra`)**, el primer paso de esta guía que dispara un pipeline. En Claude Code 2.1.x `--scope user` es además el default de `claude plugin install`; declararlo explícito evita que un flujo interactivo previo lo haya dejado a scope `project` (la causa raíz del fallo en el primer greenfield real del harness).
 
-### 2. Crear `.claude/harness.config.json`
+### 2. Crear `.mefisto/harness.config.json`
 
 Crea el archivo de configuración en la raíz del consumidor (sección Instalación, paso 3). Para el bootstrap de infra conviene declarar también el campo opcional `azureLocation` con tu región de Azure (ej. `"eastus2"`), así no tienes que pasar `--location` en cada corrida. Añade además las secciones "Tokens del harness" y "Verificación de fuentes" a tu `AGENTS.md` raíz y el puente `CLAUDE.md` con `@AGENTS.md`.
 
@@ -388,7 +388,7 @@ Antes del primer `/draft` o `/implement`, tu repo necesita dos prerequisitos ope
 
 Para verificar de un vistazo qué falta (labels ausentes, CI sin configurar) antes y después de este paso, corre el doctor de onboarding `/mefisto:onboard` (por defecto solo diagnostica; bajo tu confirmación puede provisionar los labels faltantes y configurar el CI hacia Azure —este último, después del bootstrap del backend del paso 5).
 
-**a. Labels de GitHub** — `setup-github-labels.sh`. El `planner`, `/draft` y los pipelines exigen los labels dimensionales `tipo:*`, `dom:*` y `estado:{borrador|listo}` como prerequisito operativo (**MEF-ADR-0007**); sin ellos el primer `/draft` falla al etiquetar. El script **borra 8 de los 9 labels default de GitHub** (`documentation`, `duplicate`, `enhancement`, `good first issue`, `help wanted`, `invalid`, `question`, `wontfix`) y **recrea `bug`** con el esquema del harness, además de crear el resto del esquema, incluyendo un `dom:<x>` por cada entrada de `domainLabels` en `.claude/harness.config.json`. **Prerequisitos**: `gh auth login` y el campo `domainLabels` ya declarado en el config (paso 2).
+**a. Labels de GitHub** — `setup-github-labels.sh`. El `planner`, `/draft` y los pipelines exigen los labels dimensionales `tipo:*`, `dom:*` y `estado:{borrador|listo}` como prerequisito operativo (**MEF-ADR-0007**); sin ellos el primer `/draft` falla al etiquetar. El script **borra 8 de los 9 labels default de GitHub** (`documentation`, `duplicate`, `enhancement`, `good first issue`, `help wanted`, `invalid`, `question`, `wontfix`) y **recrea `bug`** con el esquema del harness, además de crear el resto del esquema, incluyendo un `dom:<x>` por cada entrada de `domainLabels` en `.mefisto/harness.config.json`. **Prerequisitos**: `gh auth login` y el campo `domainLabels` ya declarado en el config (paso 2).
 
 ```bash
 PLUGIN_ROOT=$(cat .mefisto/pipeline/.plugin-root 2>/dev/null)
@@ -485,7 +485,7 @@ Si tu dominio necesita un secreto nuevo (una API key de un proveedor externo, ot
 | `bootstrap-backend.sh`, `setup-github-ci.sh`, `iac-pipeline.sh`, `tdd-pipeline.sh`, ... | operan sobre tu repo consumidor | binario en el plugin; se resuelven vía `$PLUGIN_SCRIPTS` |
 | `terraform plan` (en cada PR) / `terraform apply` (al mergear a `main`) | **runner de GitHub Actions**, nunca tu máquina | workflow `.github/workflows/infra-cd.yml` (lo genera `/infra-base`; MEF-ADR-0021, MEF-ADR-0022) |
 | ADRs del marco (`docs/adr/`) | — | en el plugin; los agentes los leen vía `$PLUGIN_ROOT/docs/adr/` |
-| `.claude/harness.config.json`, `AGENTS.md`, `CLAUDE.md` (puente), `src/`, `tests/`, `infra/` | tu repo consumidor | **tu repo** (los crea/edita el harness operando sobre el consumidor) |
+| `.mefisto/harness.config.json`, `AGENTS.md`, `CLAUDE.md` (puente), `src/`, `tests/`, `infra/` | tu repo consumidor | **tu repo** (los crea/edita el harness operando sobre el consumidor) |
 | `infra/environments/<env>/backend.tf` | tu repo consumidor | **tu repo** (lo escribe `bootstrap-backend.sh` en runtime) |
 
 Regla mnemónica: **los binarios viven en el plugin; los archivos del proyecto viven en tu repo.** Nunca edites archivos dentro del cache del plugin ni invoques sus scripts con rutas relativas. Y desde la reforma de la oleada "apply en CI" (MEF-ADR-0021, MEF-ADR-0022): **el plan/apply de infraestructura vive en CI, nunca en tu máquina** — la única excepción es el bootstrap inicial (backend + CI, sección "Bootstrap de infraestructura" arriba), una operación privilegiada de una sola vez que corre un admin con permisos de Azure. La siembra de los secretos de Key Vault (mismo paso 5) **ya no** es un tercer perfil manual recurrente: es un step automático dentro del mismo `apply` de CI, habilitado por el rol de datos que el propio `apply` se autoasigna sobre el vault (mecanismo M1, MEF-ADR-0022) — ningún humano necesita un rol de datos de Key Vault. Los perfiles de acceso **humanos** del marco quedan en dos (el tercer perfil de la decisión #10, la siembra, ya no lo ejecuta una persona sino CI): (a) desarrollador ongoing, cero credenciales de Azure, y (b) bootstrap, privilegiado y de una sola vez.
@@ -546,6 +546,16 @@ Cuando descubras desde un consumidor un problema atribuible al plugin, el toolin
 
 ## Migración para consumidores existentes
 
+### Migrar el config al canónico `.mefisto/harness.config.json`
+
+El legacy `.claude/harness.config.json` sigue siendo legible como fallback de lectura indefinido (MEF-ADR-0053, decisión 4), pero los escritores (`/onboard` paso 6, `/seed-secret`) rechazan un consumidor solo-legacy y piden migrar conscientemente el archivo completo. No existe una herramienta automática: migra a mano.
+
+1. `mkdir -p .mefisto && git mv .claude/harness.config.json .mefisto/harness.config.json` — mueve el legacy al canónico; el directorio destino debe existir antes del `git mv`.
+2. Commitea el movimiento.
+3. Corre `/mefisto:onboard` para verificar; ahí también te avisa si falta `.mefisto/pipeline/` en tu `.gitignore`.
+
+No conserves ambos archivos: los lectores avisan de la coexistencia y usan igualmente el canónico.
+
 ### Migrar directivas canónicas desde `CLAUDE.md`
 
 Cuando `AGENTS.md` todavía no existe, un `CLAUDE.md` legacy con "Tokens del harness" y "Verificación de fuentes" sigue siendo legible como fallback indefinido. Para que ambos runtimes consuman esas directivas desde la fuente canónica sin duplicarlas:
@@ -560,7 +570,7 @@ Las demás convenciones del proyecto también pueden vivir en `AGENTS.md`, pero 
 
 El campo `boundedContext` es **obligatorio** (MEF-ADR-0023). Si actualizas desde una versión que no lo exigía, `load_harness_config` abortará con un mensaje que muestra el shape exacto a añadir. Para migrar:
 
-1. **Abre `.claude/harness.config.json`** de tu proyecto y añade el campo `boundedContext` antes del cierre `}`:
+1. **Abre `.mefisto/harness.config.json`** de tu proyecto y añade el campo `boundedContext` antes del cierre `}`:
 
    ```json
    "boundedContext": {
