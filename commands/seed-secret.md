@@ -46,7 +46,7 @@ Muestra exactamente lo que se va a hacer y pide confirmacion explicita -- este s
 ```
 Se va a sembrar el secreto "<nombre>" (fuente: <output <x> | github-secret <NAME>>):
 
-  - Registro:  .claude/harness.config.json > secrets[] (agrega o actualiza la entrada, idempotente)
+  - Registro:  .mefisto/harness.config.json > secrets[] (agrega o actualiza la entrada, idempotente)
   - Cableado:  infra/environments/<env>/dominio-<kebab-del-dominio>.tf
                app setting <APP_SETTING_KEY> -> referencia @Microsoft.KeyVault(...) versionless
                Rol "Key Vault Secrets User": se verifica que ya lo emita domain-scaffolder
@@ -74,25 +74,36 @@ git switch -c seed-secret/<nombre-en-kebab>
 
 ### 4. Registrar el secreto y resolver el dominio
 
-Resuelve `$PLUGIN_SCRIPTS` con el mismo patron que el resto de los skills e invoca el script del plugin (nunca `./scripts/...`: los scripts del harness no viven en el repo consumidor):
+Resuelve `$PLUGIN_SCRIPTS` con el mismo patron que el resto de los skills. Invoca el script del
+plugin una sola vez (nunca `./scripts/...`: los scripts del harness no viven en el repo
+consumidor), con el flag de fuente recibido en `$ARGUMENTS`. Captura stdout y stderr en
+`SCRIPT_OUTPUT`, muestralos y extrae de la linea `Registro: <ruta>` la variable
+`REGISTRO_PATH`. Esa linea es la unica fuente de verdad de la ruta que el script escribio:
 
 ```bash
 PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
 [ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
 PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
 
-"$PLUGIN_SCRIPTS/seed-secret.sh" "<nombre>" --domain "<Dominio>" --env "<env>" \
-    --from-output "<output>"          # o: --from-github-secret "<NOMBRE>"
+SOURCE_ARGS=(--from-output "<output>") # o: (--from-github-secret "<NOMBRE>")
+if ! SCRIPT_OUTPUT=$("$PLUGIN_SCRIPTS/seed-secret.sh" "<nombre>" --domain "<Dominio>" \
+    --env "<env>" "${SOURCE_ARGS[@]}" 2>&1); then
+    printf '%s\n' "$SCRIPT_OUTPUT"
+    exit 1
+fi
+printf '%s\n' "$SCRIPT_OUTPUT"
+REGISTRO_PATH=$(printf '%s\n' "$SCRIPT_OUTPUT" | grep '^Registro: ' | cut -c 11-)
+[ -n "$REGISTRO_PATH" ] || { echo "ERROR: el script no informo la ruta de registro."; exit 1; }
 ```
 
 El script:
 
 1. Valida que exista `infra/environments/<env>/dominio-<kebab>.tf` para el dominio (la fuente de verdad de que el dominio ya esta scaffoldeado); si no lo encuentra, aborta con un mensaje claro.
-2. Registra/actualiza, de forma idempotente, la entrada en `.claude/harness.config.json > secrets[]`.
+2. Registra/actualiza, de forma idempotente, la entrada en el contrato canonico `.mefisto/harness.config.json > secrets[]`.
 3. Si la fuente es `--from-github-secret`, valida (con `gh secret list`) si ese GitHub secret ya existe en el repo y, si no, imprime un recordatorio -- no bloquea, porque crear el secret puede ser un paso posterior de un admin.
 4. Imprime el `APP_SETTING_KEY` derivado, la referencia `@Microsoft.KeyVault(...)` completa, y la ruta del archivo Terraform del dominio (`DOMAIN_TF_FILE`) donde cablear.
 
-Si el script termina con error (dominio no encontrado, flags invalidos), muestra el mensaje tal cual y **detente sin editar ningun otro archivo**.
+Si el script termina con error (incluido config solo legacy, JSON invalido, dominio no encontrado o flags invalidos), muestra el mensaje tal cual y **detente sin editar ningun otro archivo**.
 
 ### 5. Cablear la referencia en el archivo Terraform del dominio
 
@@ -127,7 +138,7 @@ Si `terraform validate` falla, corrige el HCL insertado y vuelve a validar. Si `
 ### 8. Commitear
 
 ```bash
-git add .claude/harness.config.json "infra/environments/<env>/dominio-<kebab>.tf"
+git add "$REGISTRO_PATH" "infra/environments/<env>/dominio-<kebab>.tf"
 git commit -m "seed-secret(<nombre>): registrar y cablear en <dominio>"
 ```
 
@@ -135,7 +146,7 @@ git commit -m "seed-secret(<nombre>): registrar y cablear en <dominio>"
 
 Resumen claro:
 
-- **Registro**: entrada nueva o actualizada en `secrets[]` (`name`, `source.type`, `source.value`).
+- **Registro**: entrada nueva o actualizada en `$REGISTRO_PATH > secrets[]` (`name`, `source.type`, `source.value`).
 - **Cableado**: app setting agregado, o ya presente (sin duplicar).
 - **Rol `Key Vault Secrets User`**: verificado, o agregado si faltaba.
 - Si la fuente es `--from-github-secret` y el script reporto que el GitHub secret **no** existe: recuerda explicitamente crearlo (*Settings > Secrets and variables > Actions*) **antes** del proximo `apply` que deba sembrar este secreto -- si no, ese `apply` fallara al no encontrar el valor.
