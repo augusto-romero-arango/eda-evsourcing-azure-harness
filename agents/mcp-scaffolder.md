@@ -48,14 +48,28 @@ Si el guard dispara, detente sin escribir nada.
 
 Si `CLAUDE.md` no declara alguno de los cuatro, detente y pide al usuario que los declare antes de continuar.
 
-**El dominio de ejemplo**, de `.claude/harness.config.json`:
+**El dominio de ejemplo**, del contrato canonico `.mefisto/harness.config.json`; acepta
+`.claude/harness.config.json` solo como fallback de lectura si el canonico no existe
+(MEF-ADR-0053, decision 4). Nunca copies, migres ni escribas el archivo legacy:
 
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel)
-CONFIG="$REPO_ROOT/.claude/harness.config.json"
+CONFIG="$REPO_ROOT/.mefisto/harness.config.json"
+if [ -f "$CONFIG" ]; then
+    if [ -f "$REPO_ROOT/.claude/harness.config.json" ]; then
+        echo "AVISO: se usara el config canonico $CONFIG; se ignora el legacy $REPO_ROOT/.claude/harness.config.json. Migra o elimina conscientemente el archivo legacy para evitar divergencias." >&2
+    fi
+else
+    CONFIG="$REPO_ROOT/.claude/harness.config.json"
+fi
+if [ ! -f "$CONFIG" ]; then
+    echo "ERROR: no se encontro el config canonico requerido $REPO_ROOT/.mefisto/harness.config.json." >&2
+    echo "  Se acepta solo para lectura el fallback legacy $REPO_ROOT/.claude/harness.config.json." >&2
+    exit 1
+fi
 PRIMER_DOMINIO_KEBAB=$(jq -r '.boundedContext.domains[0] // ""' "$CONFIG")
 if [ -z "$PRIMER_DOMINIO_KEBAB" ]; then
-    echo "ERROR: 'boundedContext.domains' esta vacio o ausente en .claude/harness.config.json."
+    echo "ERROR: 'boundedContext.domains' esta vacio o ausente en .mefisto/harness.config.json."
     exit 1
 fi
 # PascalCase: primera letra de cada palabra en mayuscula, sin guiones (mismo criterio que
@@ -65,11 +79,25 @@ echo "$PRIMER_DOMINIO_KEBAB" | awk -F'-' '{for(i=1;i<=NF;i++) printf "%s", toupp
 
 Llama al resultado `{DominioEjemplo}` (PascalCase) y a la forma cruda `{dominio-ejemplo-kebab}`. **Este es el unico dominio que la tool de ejemplo consume** -- sumar un `HttpClient` tipado por cada dominio adicional que una tool nueva necesite es trabajo de quien implemente esa tool despues, siguiendo el mismo patron que fija el Paso 1 (`ConfiguracionClientesHttp`).
 
-**Estado de auth del BC**, mismo `.claude/harness.config.json` (jq inline, mismo patron que usa `domain-scaffolder` Paso 0 para `tenancy.strategy` -- ver su nota en `harness-config-contract`):
+**Estado de auth del BC**, del mismo contrato canonico `.mefisto/harness.config.json`
+(con fallback legacy de solo lectura; jq inline, mismo patron que usa `domain-scaffolder`
+Paso 0 para `tenancy.strategy`):
 
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel)
-CONFIG="$REPO_ROOT/.claude/harness.config.json"
+CONFIG="$REPO_ROOT/.mefisto/harness.config.json"
+if [ -f "$CONFIG" ]; then
+    if [ -f "$REPO_ROOT/.claude/harness.config.json" ]; then
+        echo "AVISO: se usara el config canonico $CONFIG; se ignora el legacy $REPO_ROOT/.claude/harness.config.json. Migra o elimina conscientemente el archivo legacy para evitar divergencias." >&2
+    fi
+else
+    CONFIG="$REPO_ROOT/.claude/harness.config.json"
+fi
+if [ ! -f "$CONFIG" ]; then
+    echo "ERROR: no se encontro el config canonico requerido $REPO_ROOT/.mefisto/harness.config.json." >&2
+    echo "  Se acepta solo para lectura el fallback legacy $REPO_ROOT/.claude/harness.config.json." >&2
+    exit 1
+fi
 TENANCY_STRATEGY=$(jq -r '.tenancy.strategy // "mono-tenant-transitorio"' "$CONFIG" 2>/dev/null)
 echo "tenancy.strategy=$TENANCY_STRATEGY"
 ```
@@ -1751,7 +1779,19 @@ razon que la Validacion 3 de `domain-scaffolder` Paso 0). Filtra por existencia:
 
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel)
-CONFIG="$REPO_ROOT/.claude/harness.config.json"
+CONFIG="$REPO_ROOT/.mefisto/harness.config.json"
+if [ -f "$CONFIG" ]; then
+    if [ -f "$REPO_ROOT/.claude/harness.config.json" ]; then
+        echo "AVISO: se usara el config canonico $CONFIG; se ignora el legacy $REPO_ROOT/.claude/harness.config.json. Migra o elimina conscientemente el archivo legacy para evitar divergencias." >&2
+    fi
+else
+    CONFIG="$REPO_ROOT/.claude/harness.config.json"
+fi
+if [ ! -f "$CONFIG" ]; then
+    echo "ERROR: no se encontro el config canonico requerido $REPO_ROOT/.mefisto/harness.config.json." >&2
+    echo "  Se acepta solo para lectura el fallback legacy $REPO_ROOT/.claude/harness.config.json." >&2
+    exit 1
+fi
 for dominio_kebab in $(jq -r '.boundedContext.domains[]' "$CONFIG"); do
     if [ -f "$REPO_ROOT/infra/environments/dev/dominio-${dominio_kebab}.tf" ]; then
         dominio_pascal=$(echo "$dominio_kebab" | awk -F'-' '{for(i=1;i<=NF;i++) printf "%s", toupper(substr($i,1,1)) substr($i,2); print ""}')
