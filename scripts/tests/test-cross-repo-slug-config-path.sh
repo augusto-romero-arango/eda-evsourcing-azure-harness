@@ -151,11 +151,11 @@ SANCTIONED_LINE='cat .mefisto/harness.config.json 2>/dev/null || cat .claude/har
 ANY_LEAK=0
 for f in "$PLANNER" "$INVESTIGATOR" "$FIX_REVIEW" "$DRAFT"; do
     FILTERED=$(grep -vF "$SANCTIONED_LINE" "$f")
-    if grep -Eq '(^|[;&|[:space:]])jq[[:space:]].*\.claude/harness\.config\.json' <<< "$FILTERED"; then
+    if grep -Eq '(^|[;&|(`$[:space:]])jq[[:space:]].*\.claude/harness\.config\.json' <<< "$FILTERED"; then
         fail "$(basename "$f") tiene una lectura jq directa del config legacy"
         ANY_LEAK=1
     fi
-    if grep -Eq '(^|[;&|[:space:]])(cat|sed|awk|grep|python|python3)[[:space:]].*\.claude/harness\.config\.json|<[[:space:]]*[^[:space:]]*\.claude/harness\.config\.json' <<< "$FILTERED"; then
+    if grep -Eq '(^|[;&|(`$[:space:]])(cat|sed|awk|grep|python|python3)[[:space:]].*\.claude/harness\.config\.json|<[[:space:]]*[^[:space:]]*\.claude/harness\.config\.json' <<< "$FILTERED"; then
         fail "$(basename "$f") tiene una lectura directa (cat/sed/awk/grep/python/<) del config legacy fuera del fallback sancionado"
         ANY_LEAK=1
     fi

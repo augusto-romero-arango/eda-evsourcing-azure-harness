@@ -309,6 +309,8 @@ HARNESS_REPO_SLUG=""
 echo "$HARNESS_REPO_SLUG"
 ```
 
+Cada bloque `bash` corre en un shell nuevo: al llegar al `gh issue create -R "$HARNESS_REPO_SLUG"` de mas abajo, interpola el slug que imprimio este bloque (no asumas que la variable sobrevive entre bloques).
+
 Crea un draft por cada ajuste aprobado (o uno agrupando ajustes al mismo agente), describiendo el gap y el cambio propuesto:
 
 ```bash

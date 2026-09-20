@@ -106,6 +106,8 @@ HARNESS_REPO_SLUG=""
 echo "$HARNESS_REPO_SLUG"
 ```
 
+Cada bloque `bash` corre en un shell nuevo: al llegar al `gh issue create -R "$HARNESS_REPO_SLUG"` de mas abajo, interpola el slug que imprimio este bloque (no asumas que la variable sobrevive entre bloques).
+
 ### Crear draft cross-repo (única operación permitida hacia Mefisto)
 
 Cuando el target es Mefisto, solo puedes hacer esto:

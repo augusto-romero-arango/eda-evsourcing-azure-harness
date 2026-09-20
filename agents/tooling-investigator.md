@@ -124,6 +124,7 @@ Antes de proponer `gh issue create`, decide donde vive la causa raiz:
 Lee el slug del repo de Mefisto (configurable para forks):
 
 Ruta efectiva del config (contrato canonico `.mefisto/harness.config.json`; `.claude/harness.config.json` solo como fallback de lectura si el canonico no existe, MEF-ADR-0053 decision 4); `repoSlug` es opcional -- si no hay config, falta el campo o esta vacio, aplica el default sin abortar:
+
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 CONFIG="$REPO_ROOT/.mefisto/harness.config.json"
@@ -133,6 +134,8 @@ HARNESS_REPO_SLUG=""
 [ -z "$HARNESS_REPO_SLUG" ] && HARNESS_REPO_SLUG="augusto-romero-arango/eda-evsourcing-azure-harness"
 echo "$HARNESS_REPO_SLUG"
 ```
+
+Cada bloque `bash` corre en un shell nuevo: al llegar al `gh issue create -R "$HARNESS_REPO_SLUG"` de mas abajo, interpola el slug que imprimio este bloque (no asumas que la variable sobrevive entre bloques).
 
 Crea el draft (con confirmacion del usuario):
 ```bash
