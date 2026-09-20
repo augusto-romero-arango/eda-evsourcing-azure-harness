@@ -416,7 +416,7 @@ Tu rol:
    - Si la causa es tamaño o ejes múltiples, propón un **desglose** (cambia al modo `desglosar` para cortar el issue en sub-issues que sí pasen el checklist).
    - Si la causa es ambigüedad o falta de decisión estructural, resuélvela con el usuario antes de continuar. No es aceptable pasar al DoR con ambigüedades activas.
 
-7. **Enumera los ADRs aplicables** en la sección `## ADRs aplicables` del issue. Consulta el índice temático en `CLAUDE.md` y agrega cada ADR que el issue toca (serialización, errores ES, naming, topics, etc.). Esta sección es el anclaje contractual del issue a la arquitectura — el implementer y el reviewer la leen antes de decidir patrones. No copies el contenido del ADR; solo lista nombre + descripción breve.
+7. **Enumera los ADRs aplicables** en la sección `## ADRs aplicables` del issue. Consulta el índice temático en `"$PLUGIN_ROOT/docs/adr/INDICE-TEMATICO.md"` (resuelve `$PLUGIN_ROOT` como en "Localizar los ADRs del marco") y agrega cada ADR que el issue toca (serialización, errores ES, naming, topics, etc.). Esta sección es el anclaje contractual del issue a la arquitectura — el implementer y el reviewer la leen antes de decidir patrones. No copies el contenido del ADR; solo lista nombre + descripción breve.
 
 8. Verifica el Definition of Ready antes de marcar como listo:
 
@@ -832,7 +832,7 @@ gh issue create \
 (Si el issue no involucra comportamiento de dominio — ej: refactor, tooling — omitir esta seccion)
 
 ## ADRs aplicables
-Enumera los ADRs que rigen este issue (nombre + descripcion breve, sin copiar su contenido). Referencia el indice tematico de `CLAUDE.md` para cuales aplican. Ejemplos:
+Enumera los ADRs que rigen este issue (nombre + descripcion breve, sin copiar su contenido). Referencia el indice tematico en `"$PLUGIN_ROOT/docs/adr/INDICE-TEMATICO.md"` (resuelve `$PLUGIN_ROOT` como en "Localizar los ADRs del marco") para cuales aplican. Ejemplos:
 - MEF-ADR-0012: modelado de objetos de dominio (este issue crea value objects con invariantes / tipos con ctor privado).
 - MEF-ADR-0004: manejo de errores en event sourcing (si hay eventos de fallo o Apply() del aggregate).
 - MEF-ADR-0001: topics por evento (si se publica a Service Bus).

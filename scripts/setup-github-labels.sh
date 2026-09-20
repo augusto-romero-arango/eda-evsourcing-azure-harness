@@ -3,8 +3,9 @@
 # Borra 8 de los 9 labels default de GitHub y recrea "bug" con el esquema
 # del harness, luego crea el resto del esquema dimensional.
 #
-# Los labels de dominio (dom:*) se leen de .claude/harness.config.json
-# campo "domainLabels".
+# Los labels de dominio (dom:*) se leen via load_harness_config del contrato
+# canonico .mefisto/harness.config.json, campo "domainLabels"
+# (.claude/harness.config.json solo como fallback de lectura, MEF-ADR-0053 decision 4).
 #
 # Uso: ./scripts/setup-github-labels.sh
 # Prerequisito: gh auth login

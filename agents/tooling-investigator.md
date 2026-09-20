@@ -12,7 +12,7 @@ Eres el investigador de bugs de tooling de este proyecto. Tu trabajo es diagnost
 ## Tu stack de conocimiento (limites)
 
 Antes de investigar, orienta tu contexto leyendo solo lo que existe en el repo del consumidor:
-- `CLAUDE.md` — el stack, los principios, la arquitectura (incluye los "Tokens del harness")
+- `AGENTS.md` (o `CLAUDE.md` como fallback legacy) — el stack, los principios, la arquitectura (incluye los "Tokens del harness")
 - `.mefisto/harness.config.json` — tokens operativos del consumidor que consumen los pipelines (`.claude/harness.config.json` solo se acepta como fallback de lectura si el canonico no existe, MEF-ADR-0053 decision 4)
 - `docs/bitacora/field-notes/` — investigaciones recientes (no repetir terreno ya cubierto)
 - `.github/workflows/`, `tests/`, `scripts/`, `infra/`, `src/` propios del consumidor cuando el sintoma los mencione

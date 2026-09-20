@@ -227,7 +227,7 @@ Listo. PR #N:
 
 Cada comentario de review es evidencia de un gap en las instrucciones de un agente. Esta fase traza las correcciones hasta su origen y propone mejoras.
 
-> **Modelo plugin.** Tras la extraccion del harness al plugin `mefisto`, los agentes/skills del marco ya **no viven en el repo consumidor**: estan en el cache del plugin (`~/.claude/plugins/cache/.../mefisto/<version>/agents/`), read-only y versionado. Por eso una mejora a un agente/skill del harness **no se puede editar en la rama del PR del consumidor**: se enruta como **draft** (`estado:borrador`) al repo de Mefisto via `gh -R`, igual que hacen el `planner` y el `tooling-investigator` publicados (ver `CLAUDE.md` "Routing cross-repo: solo drafts" y MEF-ADR-0019). La edicion en-rama queda reservada a lo que realmente vive en el consumidor (un ADR local del proyecto, convenciones de su `CLAUDE.md`, un fixture/helper propio).
+> **Modelo plugin.** Tras la extraccion del harness al plugin `mefisto`, los agentes/skills del marco ya **no viven en el repo consumidor**: estan en el cache del plugin (`~/.claude/plugins/cache/.../mefisto/<version>/agents/`), read-only y versionado. Por eso una mejora a un agente/skill del harness **no se puede editar en la rama del PR del consumidor**: se enruta como **draft** (`estado:borrador`) al repo de Mefisto via `gh -R`, igual que hacen el `planner` y el `tooling-investigator` publicados (ver la seccion C "Routing cross-repo: solo drafts" de MEF-ADR-0019, `<raiz del plugin>/docs/adr/mef-adr-0019-skills-publicados-vs-internos.md`, nunca la ruta relativa desde el consumidor). La edicion en-rama queda reservada a lo que realmente vive en el consumidor (un ADR local del proyecto, convenciones de su `AGENTS.md` -- o de su `CLAUDE.md` legacy --, un fixture/helper propio).
 
 ### 5.1 Trazar correcciones a su origen
 
@@ -258,7 +258,7 @@ Para cada gap identificado, proponer:
 ### Ajuste 2: ...
 ```
 
-El **destino** se decide por donde vive el archivo a tocar: un agente/skill/pipeline/hook del harness va como **draft a Mefisto** (no es editable desde el consumidor); un ADR local o una convencion del `CLAUDE.md` del consumidor se **edita en-rama**. La Fase 5.4 detalla cada caso.
+El **destino** se decide por donde vive el archivo a tocar: un agente/skill/pipeline/hook del harness va como **draft a Mefisto** (no es editable desde el consumidor); un ADR local o una convencion del `AGENTS.md` (o del `CLAUDE.md` legacy) del consumidor se **edita en-rama**. La Fase 5.4 detalla cada caso.
 
 Si el PR no tuvo correcciones que ameriten mejoras (todos los comentarios eran "explicar" o "resuelto"), indica que no hay ajustes necesarios y salta a la field note.
 
@@ -277,7 +277,7 @@ Cada ajuste aprobado tiene un **destino** segun donde viva el archivo a tocar:
 | Destino | Donde vive el archivo | Accion |
 |---|---|---|
 | **Harness** (`mefisto`) | Cache del plugin (`~/.claude/plugins/cache/.../mefisto/<version>/`), read-only y versionado | **Crear un draft** (`estado:borrador`) en el repo de Mefisto via `gh -R` |
-| **Consumidor** (este repo) | ADR local del proyecto (`docs/adr/`), convencion de su `CLAUDE.md`, fixture/helper propio | **Editar en-rama** con `Edit`, commit en la rama del PR |
+| **Consumidor** (este repo) | ADR local del proyecto (`docs/adr/`), convencion de su `AGENTS.md` (o de su `CLAUDE.md` legacy), fixture/helper propio | **Editar en-rama** con `Edit`, commit en la rama del PR |
 
 #### Detectar el modelo (plugin vs local)
 
@@ -295,7 +295,7 @@ fi
 
 #### Si el ajuste es al harness: crear un draft cross-repo
 
-Reutiliza el mismo routing que el `planner` y el `tooling-investigator` publicados (ver `CLAUDE.md` "Routing cross-repo: solo drafts" y MEF-ADR-0019). Lee el slug del repo de Mefisto (configurable para forks):
+Reutiliza el mismo routing que el `planner` y el `tooling-investigator` publicados (ver la seccion C "Routing cross-repo: solo drafts" de MEF-ADR-0019, `<raiz del plugin>/docs/adr/mef-adr-0019-skills-publicados-vs-internos.md`, nunca la ruta relativa desde el consumidor). Lee el slug del repo de Mefisto (configurable para forks):
 
 Ruta efectiva del config (contrato canonico `.mefisto/harness.config.json`; `.claude/harness.config.json` solo como fallback de lectura si el canonico no existe, MEF-ADR-0053 decision 4); `repoSlug` es opcional -- si no hay config, falta el campo o esta vacio, aplica el default sin abortar:
 
@@ -340,7 +340,7 @@ DRAFTEOF
 
 #### Si el ajuste es local del consumidor: editar en-rama
 
-Solo para lo que **realmente vive en el consumidor** (un ADR local del proyecto, una convencion de su `CLAUDE.md`, un fixture/helper). Edita con `Edit` y commitea en la **misma rama del PR**, en commit separado del de correcciones de codigo.
+Solo para lo que **realmente vive en el consumidor** (un ADR local del proyecto, una convencion de su `AGENTS.md` -- o de su `CLAUDE.md` legacy --, un fixture/helper). Edita con `Edit` y commitea en la **misma rama del PR**, en commit separado del de correcciones de codigo.
 
 Antes de commitear, verifica que **no estas en `main`** (guard idempotente; en el flujo normal ya estas en la rama del PR por el `git checkout <headRefName>` de la Fase 1.1, asi que no dispara):
 
@@ -365,7 +365,7 @@ docs(convenciones): ajustar [archivo local] a partir del review del PR #N
 Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
 ```
 
-Push a la rama del PR. No pushees nunca directo a `main`: la politica del marco (ver `CLAUDE.md` raiz) exige entregar siempre via rama + PR.
+Push a la rama del PR. No pushees nunca directo a `main`: la politica del marco (ver el archivo efectivo de instrucciones: `AGENTS.md`; `CLAUDE.md` solo como puente legacy) exige entregar siempre via rama + PR.
 
 ### 5.5 Field note
 
@@ -414,6 +414,6 @@ Estructura:
 - **Agrupa cambios relacionados en un solo commit.** No hagas un commit por comentario.
 - **Si el triaje revela que todos los comentarios ya estan resueltos**, salta directamente a la Fase 4 (responder).
 - **Siempre verifica build + tests antes de hacer push.** Si fallan, no hagas push.
-- **Las mejoras a agentes/skills del harness se enrutan como draft (`estado:borrador`) al repo de Mefisto via `gh -R`**, no se editan en la rama del PR del consumidor: esos archivos viven en el cache del plugin (read-only). Solo los ajustes a archivos que viven en el consumidor (ADR local, convenciones de su `CLAUDE.md`, fixtures propios) se editan en-rama, en commit separado y nunca directo a `main`.
+- **Las mejoras a agentes/skills del harness se enrutan como draft (`estado:borrador`) al repo de Mefisto via `gh -R`**, no se editan en la rama del PR del consumidor: esos archivos viven en el cache del plugin (read-only). Solo los ajustes a archivos que viven en el consumidor (ADR local, convenciones de su `AGENTS.md` -- o de su `CLAUDE.md` legacy --, fixtures propios) se editan en-rama, en commit separado y nunca directo a `main`.
 - **La field note siempre se genera**, incluso si no hubo mejoras a agentes — el registro del review tiene valor historico.
 - Comunica en espanol. Las respuestas a los comentarios del PR se redactan en el mismo idioma del comentario original.
