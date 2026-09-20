@@ -68,6 +68,14 @@ write_config_without_tenancy() {
 run_write() {
     local repo="$1" estrategia="$2" output="$3"
     local block="${WRITE_BLOCK/<mono-tenant-transitorio|multi-tenant-header>/$estrategia}"
+    # Si el placeholder de ESTRATEGIA cambia de texto, la sustitucion no aplica
+    # y el bloque escribiria el literal del placeholder: sin este guard el
+    # fallo aparece como "no preservo los demas campos", que apunta al filtro
+    # jq equivocado en vez de a la extraccion.
+    if [ "$block" = "$WRITE_BLOCK" ]; then
+        echo 'el bloque del paso 6 ya no expone el placeholder de ESTRATEGIA esperado' >"$output"
+        return 1
+    fi
     (cd "$repo" && bash -c "$block") >"$output" 2>&1
 }
 
